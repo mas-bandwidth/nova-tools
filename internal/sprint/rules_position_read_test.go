@@ -22,6 +22,22 @@ func TestPositionAnswersThatDoNotAnswerTheirReadAreRefused(t *testing.T) {
 		rp, _ := posRule(t, ruleNeeds).Read([]AgendaKey{posKeyOf("needs:n")}, posBounds, 0)
 		return rp, tw.answer(rp)
 	}
+	// the head of a made need after the waiter w2, of three in wait:n
+	after := func(tw *posTwin) (ReadPlan, ReadAnswer) {
+		rp, _ := posRule(t, ruleNeeds).Read([]AgendaKey{{Key: "made:n+w2", Seq: 9}}, posBounds, 0)
+		return rp, tw.answer(rp)
+	}
+	threeWaiters := func() *posTwin {
+		tw := newPosTwin("s1")
+		tw.card("n", "s1", Waiting, 0)
+		tw.missing["n"] = true
+		for i, id := range []string{"w1", "w2", "w3"} {
+			tw.card(id, "s1", Waiting, float64(i+1))
+			tw.waiter("n", id)
+		}
+		return tw
+	}
+	record := func(id string) TableCard { return TableCard{Work, &Card{ID: id, Row: "s1", Col: Waiting}} }
 	streams := func(tw *posTwin) (ReadPlan, ReadAnswer) {
 		rp, _ := posRule(t, ruleDone).Read([]AgendaKey{posKeyOf("done")}, posBounds, 0)
 		return rp, tw.answer(rp)
@@ -78,6 +94,26 @@ func TestPositionAnswersThatDoNotAnswerTheirReadAreRefused(t *testing.T) {
 			a.Sprint[0].Needs[0].Waiters = []string{"w1", "w2"}
 			a.Sprint[0].Records = []TableCard{{Work, &Card{ID: "w1", Row: "s1", Col: Waiting}}, {Work, &Card{ID: "w2", Row: "s1", Col: Waiting}}}
 		}},
+		{"a head that starts at the cursor", after, threeWaiters, func(rp *ReadPlan, a *ReadAnswer) {
+			a.Sprint[0].Needs[0].Waiters = []string{"w2", "w3"}
+			a.Sprint[0].Records = append(a.Sprint[0].Records, record("w2"))
+		}},
+		{"a head from before the cursor", after, threeWaiters, func(rp *ReadPlan, a *ReadAnswer) {
+			a.Sprint[0].Needs[0].Waiters = []string{"w1", "w3"}
+			a.Sprint[0].Records = append(a.Sprint[0].Records, record("w1"))
+		}},
+		{"a head out of the order of wait:n", waiters, threeWaiters, func(rp *ReadPlan, a *ReadAnswer) {
+			a.Sprint[0].Needs[0].Waiters = []string{"w2", "w1"}
+			a.Sprint[0].Records = []TableCard{record("w1"), record("w2")}
+		}},
+		{"a head that repeats a waiter", waiters, threeWaiters, func(rp *ReadPlan, a *ReadAnswer) {
+			a.Sprint[0].Needs[0].Waiters = []string{"w1", "w1"}
+			a.Sprint[0].Records = []TableCard{record("w1")}
+		}},
+		{"more waiters and none given", waiters, threeWaiters, func(rp *ReadPlan, a *ReadAnswer) {
+			a.Sprint[0].Needs[0].Waiters = nil
+			a.Sprint[0].Needs[0].More = true
+		}},
 		{"stuck ids of a stream the query does not list", streams, func() *posTwin { return posDoneTwin(2, false) }, func(rp *ReadPlan, a *ReadAnswer) {
 			a.Sprint[0].Stuck = []StuckAnswer{{Stream: "elsewhere", IDs: nil}}
 		}},
@@ -108,7 +144,7 @@ func TestPositionAnswersThatDoNotAnswerTheirReadAreRefused(t *testing.T) {
 // form of key: the plan finds its answer by it.
 func TestWaitersQueryKeyIsTheKeyItWasBuiltFrom(t *testing.T) {
 	t.Parallel()
-	for _, key := range []string{"needs:n", "needs@7", "needs@7+100", "made:n", "made:n+150", "made@7", "made@7+300"} {
+	for _, key := range []string{"needs:n", "needs@7", "needs@7+100", "made:n", "made:n+w150", "made@7", "made@7+300"} {
 		rp, left := posRule(t, ruleNeeds).Read([]AgendaKey{{Key: key, Seq: 3}}, posBounds, 0)
 		if len(left) != 0 || len(rp.Sprint) != 1 {
 			t.Fatalf("%s: %+v left %v", key, rp, left)

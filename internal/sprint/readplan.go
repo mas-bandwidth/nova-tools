@@ -374,12 +374,14 @@ type SprintQ struct {
 	// a `streams` query gives for every stream it lists (the rows are the
 	// query's own, AL3).
 	Keys, Counts []string
-	// WaiterOffset is where `waiters` starts the head of wait:n, for a source
-	// of one id: after the first WaiterOffset waiters. Missing says the head of
-	// wait:n is read only for the ids that have a score in {p}missing@e (a made
-	// need, 2.3 R4).
-	WaiterOffset int
-	Missing      bool
+	// WaiterAfter is where `waiters` starts the head of wait:n, for a source of
+	// one id: after the waiter of that id, in the order of wait:n's members (by
+	// id); "" starts at the first. It is a place in that order and not a count:
+	// a waiter that has left wait:n since the last head, the one WaiterAfter names
+	// included, moves nothing. Missing says the head of wait:n is read only for
+	// the ids that have a score in {p}missing@e (a made need, 2.3 R4).
+	WaiterAfter string
+	Missing     bool
 }
 
 // ReadPlan is what one read asks the store (1.5.1): the records of ids by

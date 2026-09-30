@@ -3,6 +3,7 @@ package sprint
 import (
 	"errors"
 	"fmt"
+	"maps"
 	"math/rand"
 	"os"
 	"reflect"
@@ -678,6 +679,44 @@ func TestCrossHeldBackForADroppingStream(t *testing.T) {
 	}
 }
 
+// A stopped stream that is being dropped is left out while another stream
+// resumes in the same plan, and the key stays in the agenda for it: the key is
+// requeued (it moved something and left something out), held back on the next
+// run, and planned again to resume the dropped stream's card once the mark
+// clears. The unfreeze queues the rules it names (resolve, pullback, deal) and
+// not cross, so a key that was marked done here would lose that resume.
+func TestCrossKeepsItsKeyForADroppingStreamLeftOutBesideAResumedOne(t *testing.T) {
+	t.Parallel()
+	tw := newPosTwin("s1", "s2", "s3")
+	tw.card("x", "s3", Landed, 1)
+	tw.ctl("s3")
+	for _, s := range []string{"s1", "s2"} {
+		tw.ctl(s, "state", StreamStopped, "cause", "cross", "other", "x", "card", "m-"+s)
+		tw.stuck(s, "m-"+s, 1)
+	}
+	tw.dropping["s2"] = true
+	k := posKeyOf("cross")
+	tw.agenda[k.Key] = k.Seq
+	p, out := tw.run(t, "cross", 0, k)
+	if out.refused != "" || !reflect.DeepEqual(posUnitIDs(p), []string{"ctl-s1"}) || !posHas(p.Requeue, "cross") || posHas(p.Done, "cross") || len(p.HeldBack) != 0 {
+		t.Fatalf("first run: %+v units %v requeue %v done %v held %v", out, posUnitIDs(p), p.Requeue, p.Done, p.HeldBack)
+	}
+	if _, ok := tw.agenda["cross"]; !ok || tw.merge["ctl-s2"].f["state"] != StreamStopped {
+		t.Fatalf("the key is owed for s2: agenda %v, s2 is %s", tw.agenda, tw.merge["ctl-s2"].f["state"])
+	}
+	// nothing more moves while the mark stands: the key is held back
+	p, out = tw.run(t, "cross", 0, k)
+	if out.refused != "" || len(p.Plan.Units) != 0 || !posHas(p.HeldBack, "cross") || len(p.Done) != 0 || len(p.Requeue) != 0 {
+		t.Fatalf("second run: %+v units %d held %v done %v requeue %v", out, len(p.Plan.Units), p.HeldBack, p.Done, p.Requeue)
+	}
+	delete(tw.dropping, "s2")
+	tw.heldKeys = map[string]bool{}
+	tw.drain(t, "cross", 0, 5)
+	if tw.merge["ctl-s2"].f["state"] != StreamMerging || tw.merge["m-s2"].col != Queued || len(tw.agenda) != 0 {
+		t.Fatalf("after the mark cleared: s2 is %s, m-s2 %s, agenda %v", tw.merge["ctl-s2"].f["state"], tw.merge["m-s2"].col, tw.agenda)
+	}
+}
+
 func TestCrossStuckReadBounded(t *testing.T) {
 	t.Parallel()
 	rows := make([]string, 250)
@@ -795,6 +834,22 @@ func TestDoneStreamsCounterGuard(t *testing.T) {
 	p = tw.plan(t, "done", 0, k)
 	if len(p.Notes) != 0 {
 		t.Fatalf("the sprint is not done: %+v", p.Notes)
+	}
+	// the close carries the counter too (2.3: COUNTER on {p}next@e.streams as
+	// read): a stream added between the read and the apply refuses it, and the
+	// judgment stays open
+	tw = posDoneTwin(3, true)
+	tw.judge(NSprintDone, "", SprintSubject)
+	p = tw.plan(t, "done", 0, k)
+	if len(p.Notes) != 1 || p.Notes[0].Op != posClose {
+		t.Fatalf("the close: %+v", p.Notes)
+	}
+	tw.rows = append(tw.rows, "s-new")
+	tw.streams++
+	tw.card("fresh", "s-new", Waiting, 1)
+	out = tw.apply(p)
+	if out.refused != "COUNTER" || !tw.opened(NSprintDone, "", SprintSubject) {
+		t.Fatalf("apply of a close after a stream was added: %+v, judged %v", out, tw.judged)
 	}
 }
 
@@ -1002,7 +1057,7 @@ func TestEveryKeyOfThePositionRulesIsServed(t *testing.T) {
 			}
 		}
 	}
-	for _, key := range []string{"made:n", "made:n+3", "made@9", "made@9+100", "needs:n", "needs@9+100", "resolve:s1", "cross", "done", "pullback:s1"} {
+	for _, key := range []string{"made:n", "made:n+w3", "made@9", "made@9+100", "needs:n", "needs@9+100", "resolve:s1", "cross", "done", "pullback:s1"} {
 		rule := ServingRule(key)
 		if _, ok := registered[rule]; !ok {
 			t.Errorf("the key %q is served by %q, which is not registered", key, rule)
@@ -1141,7 +1196,7 @@ func TestPositionReadsFitBounds(t *testing.T) {
 		needs[i] = AgendaKey{Key: "needs:c" + strconv.Itoa(i), Seq: uint64(i + 1)}
 		pulls[i] = AgendaKey{Key: "pullback:s" + strconv.Itoa(i), Seq: uint64(i + 1)}
 	}
-	needs = append(needs, AgendaKey{Key: "needs@5", Seq: 5}, AgendaKey{Key: "made@6+300", Seq: 6}, AgendaKey{Key: "made:m+40", Seq: 7})
+	needs = append(needs, AgendaKey{Key: "needs@5", Seq: 5}, AgendaKey{Key: "made@6+300", Seq: 6}, AgendaKey{Key: "made:m+w40", Seq: 7})
 	cases := []struct {
 		rule string
 		keys []AgendaKey
@@ -1270,7 +1325,7 @@ func TestNeedsReadSizesTheHead(t *testing.T) {
 	rp, left := posRule(t, ruleNeeds).Read(single, posBounds, 0)
 	q := rp.Sprint[0]
 	if len(left) != 0 || len(rp.Sprint) != 100 || q.Limit != 99 || q.Source.Kind != SourceIDs || !reflect.DeepEqual(q.Source.IDs, []string{"n0"}) ||
-		q.Missing || q.WaiterOffset != 0 || !reflect.DeepEqual(q.Keys, []string{KeyDropping}) {
+		q.Missing || q.WaiterAfter != "" || !reflect.DeepEqual(q.Keys, []string{KeyDropping}) {
 		t.Fatalf("100 needs: %d queries, %+v, %d left", len(rp.Sprint), q, len(left))
 	}
 	// many more keys than a read holds: the rest wait, and the head never goes
@@ -1288,11 +1343,12 @@ func TestNeedsReadSizesTheHead(t *testing.T) {
 	if src := q.Source; src.Kind != SourceLine || src.Seq != 41 || src.Offset != 200 || src.Limit != needsLineWindow || !q.Missing || q.Limit != 99 {
 		t.Fatalf("a made line: %+v", q)
 	}
-	// a made need carried past its first waiters reads the head after them
-	rp, _ = posRule(t, ruleNeeds).Read([]AgendaKey{{Key: "made:n+150", Seq: 41}}, posBounds, 0)
+	// a made need carried past its first waiters reads the head after the last
+	// one served
+	rp, _ = posRule(t, ruleNeeds).Read([]AgendaKey{{Key: "made:n+w150", Seq: 41}}, posBounds, 0)
 	q = rp.Sprint[0]
-	if q.Source.Kind != SourceIDs || !reflect.DeepEqual(q.Source.IDs, []string{"n"}) || q.WaiterOffset != 150 || !q.Missing || q.Limit != 2000 {
-		t.Fatalf("a made need from its 151st waiter: %+v", q)
+	if q.Source.Kind != SourceIDs || !reflect.DeepEqual(q.Source.IDs, []string{"n"}) || q.WaiterAfter != "w150" || !q.Missing || q.Limit != 2000 {
+		t.Fatalf("a made need from after w150: %+v", q)
 	}
 	// the read is sized within the bounds by its declared cost, bytes included
 	for _, b := range []ReadBounds{{Queries: 1024, Records: 10000, RangeIDs: 20000, Bytes: 1 << 20}, {Queries: 4, Records: 500, RangeIDs: 400, Bytes: 8 << 20}} {
@@ -1319,7 +1375,9 @@ func TestPositionKeysSplit(t *testing.T) {
 		{"made@7+2000", posKey{rule: "made", line: 7, offset: 2000, byLine: true}},
 		{"needs:n1", posKey{rule: "needs", subject: "n1"}},
 		{"made:n1", posKey{rule: "made", subject: "n1"}},
-		{"made:n1+150", posKey{rule: "made", subject: "n1", waiter: 150}},
+		{"made:n1+w150", posKey{rule: "made", subject: "n1", after: "w150"}},
+		{"made:n1+c-w.3", posKey{rule: "made", subject: "n1", after: "c-w.3"}},
+		{"made:n1+7", posKey{rule: "made", subject: "n1", after: "7"}},
 	}
 	for _, g := range good {
 		got, ok := posSplitKey(AgendaKey{Key: g.key})
@@ -1328,7 +1386,7 @@ func TestPositionKeysSplit(t *testing.T) {
 		}
 	}
 	for _, bad := range []string{"", "needs:", "needs@", "needs@x", "needs@0", "needs@5+", "needs@5+-1", "needs@5+x",
-		"made:n+0", "made:n+", "made:n+-1", "made:n+x", "made:+3", "needs:n+3", "resolve:s1+2", "pullback:s1+1"} {
+		"made:n+", "made:+w3", "made:n+w+1", "made:n+a:b", "made:n+a@b", "needs:n+w3", "resolve:s1+w2", "pullback:s1+w1"} {
 		if _, ok := posSplitKey(AgendaKey{Key: bad}); ok {
 			t.Fatalf("%q was read as a key", bad)
 		}
@@ -1339,9 +1397,9 @@ func TestPositionKeysSplit(t *testing.T) {
 			t.Fatalf("%v put back together as %v", k, again)
 		}
 	}
-	for _, k := range []AgendaKey{{Key: "needs:n", Seq: 9}, {Key: "made:n", Seq: 9}, {Key: "made:n+3", Seq: 9}} {
+	for _, k := range []AgendaKey{{Key: "needs:n", Seq: 9}, {Key: "made:n", Seq: 9}, {Key: "made:n+w3", Seq: 9}} {
 		p, _ := posSplitKey(k)
-		if again := posNeedKey(p.rule, p.subject, p.waiter, k.Seq); again != k {
+		if again := posNeedKey(p.rule, p.subject, p.after, k.Seq); again != k {
 			t.Fatalf("%v put back together as %v", k, again)
 		}
 	}
@@ -1658,12 +1716,16 @@ func TestNeedsFrozenHeadHoldsTheKey(t *testing.T) {
 	}
 }
 
+// posWaiterID is the id of the i-th waiter of a made need: the ids sort as i
+// does, so the order of wait:n (by id) is the order the tests count in.
+func posWaiterID(i int) string { return fmt.Sprintf("w%03d", i) }
+
 func posMadeTwin(waiters int) *posTwin {
 	tw := newPosTwin("s1", "s2")
 	tw.card("n", "s2", Waiting, 0)
 	tw.missing["n"] = true
 	for i := 0; i < waiters; i++ {
-		id := "w" + strconv.Itoa(i)
+		id := posWaiterID(i)
 		tw.card(id, "s1", Waiting, float64(10+i), "open", "1", "needs", "n")
 		tw.waiter("n", id)
 		tw.judge(NMissingNeed, "n", id)
@@ -1703,13 +1765,13 @@ func TestMadeWithMoreWaitersThanTheHeadServesThemAll(t *testing.T) {
 		t.Fatalf("after the first head: missing %v, %d judgments open", tw.missing, tw.openMissing())
 	}
 	posSameStrings(t, "done", keyTexts(p.Done), []string{"made@31"})
-	posSameStrings(t, "requeue", keyTexts(p.Requeue), []string{"made:n+99"})
+	posSameStrings(t, "requeue", keyTexts(p.Requeue), []string{"made:n+" + posWaiterID(98)})
 	if p.Requeue[0].Seq != 31 || len(p.HeldBack) != 0 {
 		t.Fatalf("the key carried: %+v held %v", p.Requeue, p.HeldBack)
 	}
 	p, out = tw.run(t, ruleNeeds, 0, p.Requeue[0])
 	if out.refused != "" || len(p.Notes) != 1 || len(p.Notes[0].Subjects) != 51 || len(p.Intents) != 1 || p.Intents[0].Kind != posMade ||
-		!posHas(p.Done, "made:n+99") || len(p.Requeue) != 0 {
+		!posHas(p.Done, "made:n+"+posWaiterID(98)) || len(p.Requeue) != 0 {
 		t.Fatalf("second run: %+v notes %+v intents %+v done %v requeue %v", out, p.Notes, p.Intents, p.Done, p.Requeue)
 	}
 	if tw.missing["n"] || tw.openMissing() != 0 || len(tw.agenda) != 0 {
@@ -1717,7 +1779,7 @@ func TestMadeWithMoreWaitersThanTheHeadServesThemAll(t *testing.T) {
 	}
 	// the waiters stay in wait:n with open unchanged: they wait for n to land
 	for i := 0; i < 150; i++ {
-		w := "w" + strconv.Itoa(i)
+		w := posWaiterID(i)
 		if !tw.wait["n"][w] || tw.work[w].f["open"] != "1" {
 			t.Fatalf("%s did not stay waiting", w)
 		}
@@ -1744,14 +1806,14 @@ func TestMadeHeadOfOneClosesOneWaiterARun(t *testing.T) {
 			t.Fatalf("run %d: agenda %v", run, tw.agenda)
 		}
 		p, out := tw.run(t, ruleNeeds, posMaxHalvings, AgendaKey{Key: keys[0], Seq: tw.agenda[keys[0]]})
-		if out.refused != "" || len(p.Notes) != 1 || len(p.Notes[0].Subjects) != 1 || p.Notes[0].Subjects[0] != "w"+strconv.Itoa(run-1) {
+		if out.refused != "" || len(p.Notes) != 1 || len(p.Notes[0].Subjects) != 1 || p.Notes[0].Subjects[0] != posWaiterID(run-1) {
 			t.Fatalf("run %d: %+v %+v", run, out, p.Notes)
 		}
 		last := run == 5
 		if last == tw.missing["n"] || tw.openMissing() != 5-run || last != (len(p.Intents) == 1) {
 			t.Fatalf("run %d: missing %v, %d open, intents %+v", run, tw.missing, tw.openMissing(), p.Intents)
 		}
-		want := "made:n+" + strconv.Itoa(run)
+		want := "made:n+" + posWaiterID(run-1)
 		if !last && (len(p.Requeue) != 1 || p.Requeue[0].Key != want || !posHas(p.Done, keys[0])) {
 			t.Fatalf("run %d: requeue %v done %v, want %s", run, p.Requeue, p.Done, want)
 		}
@@ -1769,16 +1831,16 @@ func TestMadeHeadOfOneClosesOneWaiterARun(t *testing.T) {
 func TestMadeFrozenWaiterInTheHeadHoldsTheNeedAtItsOffset(t *testing.T) {
 	t.Parallel()
 	tw := posMadeTwin(3)
-	tw.work["w1"].row = "s2"
+	tw.work[posWaiterID(1)].row = "s2"
 	tw.dropping["s2"] = true
 	k := posKeyOf("made:n")
 	tw.agenda[k.Key] = k.Seq
 	tw.drain(t, ruleNeeds, posMaxHalvings, 6)
 	// w0 was closed, and the key stands held at the frozen waiter
-	if !tw.missing["n"] || tw.openMissing() != 2 || tw.opened(NMissingNeed, "n", "w0") {
+	if !tw.missing["n"] || tw.openMissing() != 2 || tw.opened(NMissingNeed, "n", posWaiterID(0)) {
 		t.Fatalf("missing %v, %d open", tw.missing, tw.openMissing())
 	}
-	if _, ok := tw.agenda["made:n+1"]; !ok || !tw.heldKeys["made:n+1"] || len(tw.agenda) != 1 {
+	if held := "made:n+" + posWaiterID(0); !tw.heldKeys[held] || len(tw.agenda) != 1 || tw.agenda[held] == 0 {
 		t.Fatalf("agenda %v held %v", tw.agenda, tw.heldKeys)
 	}
 	delete(tw.dropping, "s2")
@@ -1786,6 +1848,121 @@ func TestMadeFrozenWaiterInTheHeadHoldsTheNeedAtItsOffset(t *testing.T) {
 	tw.drain(t, ruleNeeds, posMaxHalvings, 6)
 	if tw.missing["n"] || tw.openMissing() != 0 || len(tw.agenda) != 0 {
 		t.Fatalf("after the mark cleared: missing %v, %d open, agenda %v", tw.missing, tw.openMissing(), tw.agenda)
+	}
+}
+
+// A waiter that leaves wait:n between two heads of a made need moves nobody: the
+// key carries the last waiter served, a place in the order of wait:n, and not a
+// count of the waiters closed. Before, the offset was a count: with a closed
+// waiter gone from wait:n the next head began one waiter late, n left missing
+// with that waiter still blocked on it (the second cold read of #4752). n leaves
+// missing only when the cursor has passed every waiter, whichever waiters left.
+func TestMadeWaiterLeavingBetweenTwoHeadsSkipsNobody(t *testing.T) {
+	t.Parallel()
+	const waiters, halvings = 50, 6
+	cases := []struct {
+		name  string
+		leave func(head int) []int // the waiters that leave wait:n between the heads, by place
+	}{
+		{"one already closed", func(head int) []int { return []int{0} }},
+		{"the one the cursor names", func(head int) []int { return []int{head - 1} }},
+		{"the whole first head", func(head int) []int {
+			var out []int
+			for i := 0; i < head; i++ {
+				out = append(out, i)
+			}
+			return out
+		}},
+		{"one not yet served", func(head int) []int { return []int{head + 3} }},
+		{"one closed and one not yet served", func(head int) []int { return []int{0, head + 3} }},
+	}
+	for _, c := range cases {
+		for _, start := range []string{"made:n", "made@31"} {
+			t.Run(c.name+"/"+start, func(t *testing.T) {
+				t.Parallel()
+				tw := posMadeTwin(waiters)
+				tw.card("x", "s2", Waiting, 1)
+				tw.lines[31] = []string{"x", "n"}
+				k := AgendaKey{Key: start, Seq: 31}
+				tw.agenda[k.Key] = k.Seq
+				p, out := tw.run(t, ruleNeeds, halvings, k)
+				if out.refused != "" || len(p.Notes) != 1 || len(p.Requeue) != 1 {
+					t.Fatalf("first head: %+v notes %d requeue %v", out, len(p.Notes), p.Requeue)
+				}
+				head := len(p.Notes[0].Subjects)
+				if head < 4 || head+4 > waiters {
+					t.Fatalf("a head of %d does not leave waiters beyond it", head)
+				}
+				if want := "made:n+" + posWaiterID(head-1); p.Requeue[0].Key != want {
+					t.Fatalf("the key carried is %s, want %s: the last waiter served", p.Requeue[0].Key, want)
+				}
+				// waiters leave wait:n between the heads: a card leaving waiting closes
+				// its judgments and is taken from every wait:n it is in (1.3.3)
+				for _, i := range c.leave(head) {
+					id := posWaiterID(i)
+					delete(tw.wait["n"], id)
+					delete(tw.judged, posJKey(NMissingNeed, "n", id))
+				}
+				for run := 2; ; run++ {
+					if run > waiters || len(tw.agenda) != 1 {
+						t.Fatalf("run %d: agenda %v", run, tw.agenda)
+					}
+					var key AgendaKey
+					for text, seq := range tw.agenda {
+						key = AgendaKey{Key: text, Seq: seq}
+					}
+					p, out := tw.run(t, ruleNeeds, halvings, key)
+					if out.refused != "" {
+						t.Fatalf("run %d: %+v", run, out)
+					}
+					if len(p.Requeue) == 0 {
+						// the last head: the cursor has passed every waiter
+						if tw.missing["n"] || len(tw.agenda) != 0 {
+							t.Fatalf("run %d is the last: missing %v agenda %v", run, tw.missing, tw.agenda)
+						}
+						break
+					}
+					if !tw.missing["n"] {
+						t.Fatalf("run %d left missing with more waiters beyond its head: %v", run, p.Requeue)
+					}
+				}
+				for id := range tw.wait["n"] {
+					if tw.opened(NMissingNeed, "n", id) {
+						t.Fatalf("%s is still blocked on a missing n", id)
+					}
+				}
+				if n := tw.openMissing(); n != 0 {
+					t.Fatalf("%d judgments still open", n)
+				}
+			})
+		}
+	}
+}
+
+// A made key cut at its head and delivered a second time plans the close of its
+// first head again and requeues the same carried key: the waiters stay in wait:n
+// until the need is made, so the head as read is the same. It writes nothing (J
+// drops the close of a judgment that is not open), puts no second key in the
+// agenda, and the need is still served to the end (E7, the second delivery of a
+// key).
+func TestMadeCutKeyDeliveredTwiceWritesNothing(t *testing.T) {
+	t.Parallel()
+	tw := posMadeTwin(50)
+	k := posKeyOf("made:n")
+	tw.agenda[k.Key] = k.Seq
+	first, out := tw.run(t, ruleNeeds, 6, k)
+	if out.refused != "" || !out.wrote || len(first.Requeue) != 1 {
+		t.Fatalf("first delivery: %+v requeue %v", out, first.Requeue)
+	}
+	agenda := maps.Clone(tw.agenda)
+	judged := maps.Clone(tw.judged)
+	_, out = tw.run(t, ruleNeeds, 6, k)
+	if out.refused != "" || out.wrote || !maps.Equal(tw.agenda, agenda) || !maps.Equal(tw.judged, judged) || !tw.missing["n"] {
+		t.Fatalf("second delivery: %+v agenda %v want %v", out, tw.agenda, agenda)
+	}
+	tw.drain(t, ruleNeeds, 6, 10)
+	if tw.missing["n"] || tw.openMissing() != 0 || len(tw.agenda) != 0 {
+		t.Fatalf("after the end: missing %v, %d open, agenda %v", tw.missing, tw.openMissing(), tw.agenda)
 	}
 }
 

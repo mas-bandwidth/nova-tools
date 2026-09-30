@@ -52,12 +52,15 @@ import (
 //	Intent of Kind posMade (Need n, Waiters the waiters of the last head).
 //	A made need with more waiters than one read's head. The waiters stay in
 //	wait:n, so a second read of the same head would find the same waiters: the
-//	key carries a waiter offset (made:n+w, w the waiters closed so far), the
-//	need stays in missing, and n leaves it in the read that reaches the end of
-//	wait:n. A need with a waiter of a dropping stream in its head is left out
-//	whole (no close, no removal from missing) and its key stays held, since a
-//	close for some of them would be planned again by every run.
-//	A key that names a line cannot carry a waiter offset: a need of a line that
+//	key carries a cursor (made:n+w, w the last waiter closed, by id), the need
+//	stays in missing, and n leaves it in the read that reaches the end of wait:n.
+//	The cursor is a place in the order of wait:n's members and not a count of the
+//	waiters closed, so a waiter that leaves wait:n between two heads, the one the
+//	cursor names included, skips nobody: n leaves missing only when the cursor
+//	has passed every waiter. A need with a waiter of a dropping stream in its
+//	head is left out whole (no close, no removal from missing) and its key stays
+//	held, since a close for some of them would be planned again by every run.
+//	A key that names a line cannot carry a cursor: a need of a line that
 //	is not finished, and cannot move on in place, is carried by a key of its own
 //	(needs:n, made:n or made:n+w) and the line's offset moves past it. A need
 //	whose only remaining waiters are in dropping streams is carried the same
@@ -98,7 +101,7 @@ import (
 //	Order}: posSplitKey, posLineKey and posNeedKey are the places that take a
 //	key apart and put one together.
 //	The reads take the sprint keys and the answers of the queries from
-//	SprintQ.Keys, SprintQ.Counts, SprintQ.WaiterOffset, SprintQ.Missing and the
+//	SprintQ.Keys, SprintQ.Counts, SprintQ.WaiterAfter, SprintQ.Missing and the
 //	fields of Answer that rules_position_read.go names; IT05's shapes have none
 //	of them.
 
@@ -229,9 +232,10 @@ type posKey struct {
 	line   uint64
 	offset int
 	byLine bool
-	// waiter is the waiters of wait:n a key of a made need has closed: it reads
-	// the head of wait:n after them (made:n+w). No other key has one.
-	waiter int
+	// after is the last waiter of wait:n a key of a made need has closed: it
+	// reads the head of wait:n after that id (made:n+w, w the id). No other key
+	// has one.
+	after string
 }
 
 // posSplitKey takes a key apart; false when it is none of the forms.
@@ -244,12 +248,12 @@ func posSplitKey(k AgendaKey) (posKey, bool) {
 	rest := k.Key[i+1:]
 	if k.Key[i] == ':' {
 		if p.rule == posMadeRule {
-			if subject, off, has := strings.Cut(rest, "+"); has {
-				w, err := strconv.Atoi(off)
-				if err != nil || w < 1 || subject == "" {
+			if subject, after, has := strings.Cut(rest, "+"); has {
+				// no id has a '+', a ':' or an '@': the cursor is one id
+				if subject == "" || after == "" || strings.ContainsAny(after, "+:@") {
 					return posKey{}, false
 				}
-				p.subject, p.waiter = subject, w
+				p.subject, p.after = subject, after
 				return p, true
 			}
 		}
@@ -283,11 +287,12 @@ func posLineKey(rule string, line uint64, offset int, order uint64) AgendaKey {
 }
 
 // posNeedKey is the key of a rule for one need from a waiter: rule:n, or
-// made:n+w past the first w waiters of wait:n. Only a made key has an offset.
-func posNeedKey(rule, need string, waiter int, order uint64) AgendaKey {
+// made:n+w past the waiter w of wait:n, the last one served. Only a made key has
+// a cursor.
+func posNeedKey(rule, need, after string, order uint64) AgendaKey {
 	key := rule + ":" + need
-	if waiter > 0 && rule == posMadeRule {
-		key += "+" + strconv.Itoa(waiter)
+	if after != "" && rule == posMadeRule {
+		key += "+" + after
 	}
 	return AgendaKey{Key: key, Seq: order}
 }
@@ -645,8 +650,8 @@ func posNeedsHead(b ReadBounds, ids, chunk int) int {
 }
 
 // readNeeds is R4's read (2.3): waiters for the needs of each key. A key that
-// names one need (needs:n, made:n, made:n+w) reads that one, from its waiter
-// offset; a key that names a line (needs@seq, made@seq, with an offset) names the
+// names one need (needs:n, made:n, made:n+w) reads that one, after its cursor (the
+// last waiter served: only a made key has one); a key that names a line (needs@seq, made@seq, with an offset) names the
 // line by its seq as the id source and reads the next needsLineWindow of its ids
 // from the offset. Every need is read for the head of wait:n up to the chunk,
 // cut so that the ids of the read at their head fit layer 1's records, range
@@ -689,7 +694,7 @@ func readNeeds(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []Agenda
 			if p.byLine {
 				q.Source = IDSource{Kind: SourceLine, Seq: p.line, Offset: p.offset, Limit: needsLineWindow}
 			} else {
-				q.Source, q.WaiterOffset = IDSource{Kind: SourceIDs, IDs: []string{p.subject}}, p.waiter
+				q.Source, q.WaiterAfter = IDSource{Kind: SourceIDs, IDs: []string{p.subject}}, p.after
 			}
 			qs = append(qs, q)
 		}
@@ -726,15 +731,16 @@ const (
 	// could be planned: the work stays, held back until the mark clears.
 	needHeld
 	// needContinue: a made need's head was closed and its waiters stay in wait:n:
-	// the work resumes after that many of them (next).
+	// the work resumes after the last of them served (next), a place in wait:n
+	// that a waiter leaving it does not move.
 	needContinue
 )
 
-// needResult is a need's status and, for needContinue, the waiter offset the
-// key resumes at.
+// needResult is a need's status and, for needContinue, the last waiter served:
+// the key resumes after it.
 type needResult struct {
 	status needStatus
-	next   int
+	next   string
 }
 
 // planNeeds is R4 on the partial snapshot, for keys of two names, needs and
@@ -750,8 +756,8 @@ type needResult struct {
 //     missing: n" on the waiters of the head (NoteReq close). The waiters stay in
 //     wait:n with open unchanged, so each now waits for n to land; n leaves
 //     missing (Intent made) when the head reaches the end of wait:n, and while
-//     more waiters are beyond it the key resumes after the ones closed
-//     (made:n+w).
+//     more waiters are beyond it the key resumes after the last one closed, by
+//     id (made:n+w).
 //
 // A waiter of a dropping stream is left out of the plan and the key stays for
 // it, held back when that was all its work (1.3.5). The key is requeued at the
@@ -823,7 +829,7 @@ func (rp *RulePlan) needsKey(s *Snapshot, k AgendaKey, p posKey, kv posKeyView, 
 		var key AgendaKey
 		switch r.status {
 		case needHeld:
-			key = posNeedKey(p.rule, kv.Needs[j].Need, 0, k.Seq)
+			key = posNeedKey(p.rule, kv.Needs[j].Need, "", k.Seq)
 		case needContinue:
 			key = posNeedKey(p.rule, kv.Needs[j].Need, r.next, k.Seq)
 		default:
@@ -868,7 +874,7 @@ func (rp *RulePlan) planNeed(s *Snapshot, made bool, p posKey, nv posNeed) needR
 				Text: nv.Need + " was created; its waiters now wait for it to land"})
 		}
 		if nv.More {
-			return needResult{status: needContinue, next: p.waiter + len(nv.Waiters)}
+			return needResult{status: needContinue, next: nv.Waiters[len(nv.Waiters)-1].ID}
 		}
 		rp.Intents = append(rp.Intents, Intent{Kind: posMade, Need: nv.Need, Waiters: posIDs(ws)})
 		return needResult{}

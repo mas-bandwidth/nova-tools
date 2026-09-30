@@ -64,10 +64,11 @@ type HeadAnswer struct {
 
 // NeedAnswer is the answer of `waiters` for one id n of its source: n's place
 // in the work table ("" when it has none), whether it has a score in
-// {p}missing@e, and the head of wait:n after the query's WaiterOffset, up to its
-// Limit, whose records are in the answer's Records. More says wait:n has members
-// beyond the head. A query that reads only the ids in {p}missing@e (Missing)
-// leaves Waiters empty for the others.
+// {p}missing@e, and the head of wait:n after the query's WaiterAfter, up to its
+// Limit, in the order of wait:n's members (by id), whose records are in the
+// answer's Records. More says wait:n has members beyond the head, and a head
+// that is empty has none. A query that reads only the ids in {p}missing@e
+// (Missing) leaves Waiters empty for the others.
 type NeedAnswer struct {
 	ID      string
 	Place   string
@@ -140,7 +141,7 @@ func posQueryKey(q SprintQ) string {
 	if len(q.Source.IDs) != 1 {
 		return ""
 	}
-	return posNeedKey(rule, q.Source.IDs[0], q.WaiterOffset, 0).Key
+	return posNeedKey(rule, q.Source.IDs[0], q.WaiterAfter, 0).Key
 }
 
 // loadPosition loads what the answer of query i holds for the position rules and
@@ -189,10 +190,20 @@ func (p *Partial) loadPosition(s *Snapshot, i int, q SprintQ, a Answer) error {
 			if n.ID != ids[j] || len(n.Waiters) > q.Limit {
 				return misaligned("composite query %d: need %d is %q with %d waiters, the id is %q and the head is %d", i, j, n.ID, len(n.Waiters), ids[j], q.Limit)
 			}
+			if n.More && len(n.Waiters) == 0 {
+				return misaligned("composite query %d: %s has more waiters and none were given", i, n.ID)
+			}
+			// the cursor is a place in the order of wait:n's members, so a head that
+			// is not after it, in that order, is not the head that was asked
+			last := q.WaiterAfter
 			for _, w := range n.Waiters {
+				if w <= last {
+					return misaligned("composite query %d: %q heads the waiters of %s after %q, out of the order of wait:n", i, w, n.ID, last)
+				}
 				if !hasRecord(w) {
 					return misaligned("composite query %d: %q waits for %s and its record is not in the answer", i, w, n.ID)
 				}
+				last = w
 			}
 		}
 		if key := posQueryKey(q); key != "" {

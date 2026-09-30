@@ -362,19 +362,15 @@ func (tw *posTwin) answerWaiters(q SprintQ) Answer {
 			na.Place = r.col
 		}
 		if !q.Missing || na.Missing {
+			// wait:n is read in the order of its members' ids, after the cursor: a
+			// place in that order, which a waiter leaving wait:n does not move
 			var ws []*posRec
 			for w := range tw.wait[n] {
-				if r := tw.work[w]; r != nil && !tw.quar[w] {
+				if r := tw.work[w]; r != nil && !tw.quar[w] && w > q.WaiterAfter {
 					ws = append(ws, r)
 				}
 			}
-			sort.Slice(ws, func(i, j int) bool {
-				if ws[i].score != ws[j].score {
-					return ws[i].score < ws[j].score
-				}
-				return ws[i].id < ws[j].id
-			})
-			ws = ws[min(q.WaiterOffset, len(ws)):]
+			sort.Slice(ws, func(i, j int) bool { return ws[i].id < ws[j].id })
 			na.More = len(ws) > q.Limit
 			if na.More {
 				ws = ws[:q.Limit]
