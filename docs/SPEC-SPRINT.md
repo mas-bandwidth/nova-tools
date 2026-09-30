@@ -205,6 +205,32 @@ and it is the coordinator's decision, receipted.
   member and takes it down; `fleet up <member>` releases the hold, adding a
   member the sprint does not know, and brings it up at once when its beat is
   fresh.
+- The fleet comes from the inventory. `nova-sprint fleet sync` makes the fleet
+  table match nova-config's machine rows, in one step, and types no machine name
+  and no width. The inventory is read through the config package by the config
+  tool's own address rules (`--pg`, else `NOVA_PG_DSN`, the password from the
+  variable `NOVA_PG_PASSWORD_ENV` names; the friends' beats from the sprint's
+  Redis). A machine is a member when it has room: its width is its `slots` less
+  the friend slots charged to it (`nova-config machine width`), and a machine
+  with `slots` 0, or whose friends take the whole ceiling, is none. The sync
+  writes only what differs: a member the table lacks is added at its width,
+  down until it beats (presence brings it up, as for `fleet up`); a member whose
+  width differs has its width set; a row the inventory no longer names is held,
+  never deleted, and its unfinished work cards are dealt to the members that
+  stay up (the same move as `fleet down`). A member that stays has its status
+  untouched, and the deal's rolling index moves only with the cards a held
+  member's redeal places. A hold is marked by who made it (the control card's
+  `held_by`): the sync marks the holds it makes, and releases them when the
+  machine is back in the inventory with room (the member comes up when it
+  beats). A hold the coordinator made with `fleet down` carries no mark and
+  stays: the member takes its width, and the sync says so and names the
+  `fleet up` that releases it. A sync after a sync writes nothing and says so. `--check` prints the drift and
+  writes nothing: exit 0 when there is none, 2 when there is, 3 when the config
+  or the sprint store cannot be read, or the config holds no machine row (a store that is not the fleet's would
+  hold every member down). It is the coordinator's verb, like every fleet move.
+  The sync adds no state: each move is one `fleet up` or `fleet down` already
+  makes, for many members in one plan, and the drift it reports is exactly the
+  plan it writes.
 - The tick's first part (presence) applies one change of derived status a
   tick, ups first: a member going down has its unfinished work cards dealt to
   the members up, or withdrawn when none is; a member coming up levels the
