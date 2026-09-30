@@ -50,6 +50,22 @@ const (
 	assumedLineBytes = 512
 )
 
+// RulesFieldMax is the most bytes of the heartbeat's rules field (1.4.1): the
+// heartbeat's read reserves 8 KiB for it (IT30). A tick whose rules are longer
+// writes the field empty.
+const RulesFieldMax = 8192
+
+// rulesField is the heartbeat's rules field of a tick (1.4.1): its rules'
+// parts as JSON, or empty when that is over RulesFieldMax, so the field never
+// shows an earlier tick's.
+func rulesField(rules map[string]*RuleStat) string {
+	b, err := json.Marshal(rules)
+	if err != nil || len(b) > RulesFieldMax {
+		return ""
+	}
+	return string(b)
+}
+
 // The judgment types the tick opens (2.2; 1.3.5).
 const (
 	TypeStepRefused = "the machine's step was refused"
@@ -110,10 +126,11 @@ type Loop struct {
 	lastLook int64  // the store's wall ms of the last look while STOPPED
 	lineB    int    // bytes a line of the last page
 
-	halvings map[string]int  // key -> halvings after a LIMIT or a BUDGET (1.3.5, 1.3.6)
-	heldBack map[string]int  // key -> the dropping marks when it was held back (1.3.5)
-	parked   map[string]bool // keys this loop parked, until a read shows them gone
-	owed     errorStep       // the error step of the next RT1
+	halvings map[string]int    // key -> halvings after a LIMIT or a BUDGET (1.3.5, 1.3.6)
+	heldBack map[string]int    // key -> the dropping marks when it was held back (1.3.5)
+	heldSeq  map[string]uint64 // a held back key -> its order in the agenda
+	parked   map[string]bool   // keys this loop parked, until a read shows them gone
+	owed     errorStep         // the error step of the next RT1
 
 	hb       map[string]string // the heartbeat fields of the last tick (A3)
 	ticks    uint64
@@ -300,7 +317,7 @@ func NewLoop(cfg Config) (*Loop, error) {
 		b = DefaultBudget()
 	}
 	l := &Loop{cfg: cfg, rules: rules, byName: map[string]sprint.Rule{}, budget: b, epoch: "0",
-		halvings: map[string]int{}, heldBack: map[string]int{}, parked: map[string]bool{}, hb: map[string]string{},
+		halvings: map[string]int{}, heldBack: map[string]int{}, heldSeq: map[string]uint64{}, parked: map[string]bool{}, hb: map[string]string{},
 		pusher: newPusher(cfg.Deliver)}
 	for _, r := range rules {
 		l.byName[r.Name] = r
@@ -371,6 +388,9 @@ type Report struct {
 	// EntriesNotes and RequestBytes what they cost (1.0, the tick budget).
 	Dealt                               []string
 	Changes, EntriesNotes, RequestBytes int
+	// HeldChanges are the members R16's steps change, against its own budget
+	// (Budget.HeldCards).
+	HeldChanges int
 	// Applied counts the steps that applied, Refused the refusals by code.
 	Applied int
 	Refused map[string]int
@@ -450,9 +470,7 @@ func Tick(ctx context.Context, c sprintfn.Client, l *Loop) (Report, error) {
 	l.hb["ticks"] = strconv.FormatUint(l.ticks, 10)
 	l.hb["failures"] = strconv.Itoa(l.failures)
 	l.hb["error"] = l.lastErr
-	if b, err := json.Marshal(rep.Rules); err == nil && len(b) <= 8192 {
-		l.hb["rules"] = string(b) // the heartbeat's read reserves 8 KiB for it (IT30)
-	}
+	l.hb["rules"] = rulesField(rep.Rules)
 	rep.Cur, rep.Epoch = l.cur, l.epoch
 	for k, h := range l.halvings {
 		rep.Halved[k] = h
@@ -469,17 +487,23 @@ type rt1 struct {
 	items                     []sprintfn.Item
 	lease, errStep, page, get int
 	errChunk                  errChunk // what the error step carries of what is owed
+	bands                     int      // the agenda head's ranges (agendaRanges)
 	pageLimit                 int
 	parkedAsked               []string // the parked keys the read names
 }
 
-// The atomic read of RT1, by index (1.4.2; errata 1's addendum: the
-// sprint-key reads).
+// The atomic read of RT1 (1.4.2; errata 1's addendum: the sprint-key reads):
+// the agenda head's ranges (Layer 1 range, raw key form, one or more), then
+// the held queue's head and Layer 2's last; the sprint keys follow.
 const (
-	rtAgenda = iota // Layer 1 range, raw key form: the agenda's head
-	rtHeldQ         // the held queue's head
-	rtLast          // Layer 2's last
+	rtHeldQ = iota // after the agenda's ranges: the held queue's head
+	rtLast         // Layer 2's last
 )
+
+// agendaBandsMax is the most ranges RT1 reads of the agenda's head: with the
+// held queue's, ten ranges of 2,000 are the read's 20,000 range ids (L1 6;
+// 1.3.5: "RT1 reads 2,000 + h keys of the agenda's head, h at most 18,000").
+const agendaBandsMax = 9
 const (
 	rsClock = iota
 	rsTick
@@ -521,12 +545,43 @@ func (l *Loop) rt1() rt1 {
 		sq = append(sq, w)
 	}
 	r.get = len(r.items)
-	r.items = append(r.items, sprintfn.Item{Read: &sprintfn.ReadRequest{Epoch: l.epoch, Tset: []tset.ReadQuery{
-		{Kind: "range", Key: l.cfg.Names.Key("agenda") + "@" + string(l.epoch), Min: "-inf", Max: "+inf", Limit: b.AgendaHead},
-		{Kind: "range", Key: l.cfg.Names.Key("heldq") + "@" + string(l.epoch), Min: "-inf", Max: "+inf", Limit: b.HeldHead},
-		{Kind: "last"},
-	}, Sprint: sq}})
+	ranges := l.agendaRanges()
+	r.bands = len(ranges)
+	r.items = append(r.items, sprintfn.Item{Read: &sprintfn.ReadRequest{Epoch: l.epoch, Tset: append(ranges,
+		tset.ReadQuery{Kind: "range", Key: l.cfg.Names.Key("heldq") + "@" + string(l.epoch), Min: "-inf", Max: "+inf", Limit: b.HeldHead},
+		tset.ReadQuery{Kind: "last"},
+	), Sprint: sq}})
 	return r
+}
+
+// agendaRanges are RT1's ranges of the agenda's head (1.3.5: "so that they
+// never hide older keys, RT1 reads 2,000 + h keys of the agenda's head, h
+// being the keys the loop holds back"). Layer 1 bounds one range at 2,000 and
+// has no offset, so the head is read in bands cut at the orders of the held
+// back keys: [-inf, s1], (s1, s2], ..., (sn, +inf], each of AgendaHead keys,
+// at most agendaBandsMax of them. With no key held back it is one range.
+// parseRT1 keeps the bands up to the first that was cut, so the keys it gives
+// are always the agenda's true head: the held back keys sit at the ends of
+// the bands, and a band that is cut holds AgendaHead keys ahead of them.
+func (l *Loop) agendaRanges() []tset.ReadQuery {
+	key := l.cfg.Names.Key("agenda") + "@" + string(l.epoch)
+	seen := map[uint64]bool{}
+	var cuts []uint64
+	for _, s := range l.heldSeq {
+		if !seen[s] {
+			seen[s] = true
+			cuts = append(cuts, s)
+		}
+	}
+	sort.Slice(cuts, func(i, j int) bool { return cuts[i] < cuts[j] })
+	cuts = cuts[:min(len(cuts), agendaBandsMax-1)]
+	var out []tset.ReadQuery
+	lo := "-inf"
+	for _, c := range cuts {
+		out = append(out, tset.ReadQuery{Kind: "range", Key: key, Min: lo, Max: string(decimal(c)), Limit: l.budget.AgendaHead})
+		lo = "(" + string(decimal(c))
+	}
+	return append(out, tset.ReadQuery{Kind: "range", Key: key, Min: lo, Max: "+inf", Limit: l.budget.AgendaHead})
 }
 
 // pageLimit is the next page's line limit: the page's bytes over the last
@@ -604,7 +659,7 @@ func (l *Loop) tick(ctx context.Context, c sprintfn.Client, rep *Report) error {
 	if read.Read == nil {
 		return resultErr("the tick's read", read)
 	}
-	rd, err := parseRT1(read.Read)
+	rd, err := parseRT1(read.Read, r1.bands)
 	if err != nil {
 		return err
 	}
@@ -690,6 +745,7 @@ func (l *Loop) tick(ctx context.Context, c sprintfn.Client, rep *Report) error {
 	for k, marks := range l.heldBack {
 		if fresh[k] || rd.marks != marks {
 			delete(l.heldBack, k)
+			delete(l.heldSeq, k)
 		}
 	}
 	keys := mergeKeys(rd.agenda, rd.heldq, in.Keys, rd.parked)
@@ -852,7 +908,7 @@ func (l *Loop) tick(ctx context.Context, c sprintfn.Client, rep *Report) error {
 		}
 		quarantine = append(quarantine, rp.Quarantine...)
 		for _, k := range rp.HeldBack {
-			l.heldBack[k.Key] = rd.marks
+			l.heldBack[k.Key], l.heldSeq[k.Key] = rd.marks, k.Seq
 		}
 		p, err := l.cut(rule, bt, rp, rep)
 		if err != nil {
@@ -889,7 +945,7 @@ func (l *Loop) tick(ctx context.Context, c sprintfn.Client, rep *Report) error {
 		if ref != nil {
 			return fmt.Errorf("machine: the quarantine step: %w", ref)
 		}
-		reserve = reserve.add(cost)
+		reserve = reserve.add(cost, false)
 		qAt = 0
 		out = append(out, qreq)
 		for _, q := range quarantine {
@@ -897,7 +953,7 @@ func (l *Loop) tick(ctx context.Context, c sprintfn.Client, rep *Report) error {
 		}
 	}
 	order, index, spent := deal(plans, l.budget, reserve)
-	rep.Changes, rep.EntriesNotes, rep.RequestBytes = spent.changes, spent.entriesNotes, spent.bytes
+	rep.Changes, rep.HeldChanges, rep.EntriesNotes, rep.RequestBytes = spent.changes, spent.heldChanges, spent.entriesNotes, spent.bytes
 	for i, p := range order {
 		out = append(out, p.reqs[index[i]])
 		rep.Dealt = append(rep.Dealt, p.batch.Rule)
@@ -967,7 +1023,7 @@ func (l *Loop) tick(ctx context.Context, c sprintfn.Client, rep *Report) error {
 func (l *Loop) newEpoch(e tset.Decimal) {
 	l.epoch = e
 	l.cur, l.curKnown = "", false
-	l.halvings, l.heldBack, l.parked = map[string]int{}, map[string]int{}, map[string]bool{}
+	l.halvings, l.heldBack, l.heldSeq, l.parked = map[string]int{}, map[string]int{}, map[string]uint64{}, map[string]bool{}
 	l.owed = errorStep{}
 }
 
@@ -1402,14 +1458,15 @@ func headText(n int, more bool) string {
 	return s
 }
 
-// parseRT1 decodes RT1's read.
-func parseRT1(rep *sprintfn.ReadReply) (rt1Read, error) {
+// parseRT1 decodes RT1's read, whose agenda head is in bands ranges
+// (agendaRanges).
+func parseRT1(rep *sprintfn.ReadReply, bands int) (rt1Read, error) {
 	out := rt1Read{epoch: rep.ActiveEpoch, timeMS: string(rep.TimeMS)}
 	var err error
 	if out.wall, err = strconv.ParseInt(string(rep.TimeMS), 10, 64); err != nil {
 		return out, fmt.Errorf("machine: the read's time %q", rep.TimeMS)
 	}
-	if len(rep.Tset) != 3 || len(rep.Sprint) != 5 {
+	if bands < 1 || len(rep.Tset) != bands+2 || len(rep.Sprint) != 5 {
 		return out, errors.New("machine: the tick's read is not aligned with its queries")
 	}
 	keys := func(a tset.ReadAnswer) ([]sprint.AgendaKey, error) {
@@ -1423,14 +1480,23 @@ func parseRT1(rep *sprintfn.ReadReply) (rt1Read, error) {
 		}
 		return ks, nil
 	}
-	if out.agenda, err = keys(rep.Tset[rtAgenda]); err != nil {
+	for _, band := range rep.Tset[:bands] {
+		ks, err := keys(band)
+		if err != nil {
+			return out, err
+		}
+		out.agenda = append(out.agenda, ks...)
+		if band.HasMore {
+			out.agendaMore = true // the bands after a cut one may not follow it
+			break
+		}
+	}
+	rest := rep.Tset[bands:]
+	if out.heldq, err = keys(rest[rtHeldQ]); err != nil {
 		return out, err
 	}
-	if out.heldq, err = keys(rep.Tset[rtHeldQ]); err != nil {
-		return out, err
-	}
-	out.agendaMore, out.heldMore = rep.Tset[rtAgenda].HasMore, rep.Tset[rtHeldQ].HasMore
-	out.last = seqOf(rep.Tset[rtLast].LastSeq)
+	out.heldMore = rest[rtHeldQ].HasMore
+	out.last = seqOf(rest[rtLast].LastSeq)
 	decode := func(i int, kind string) (sprintfn.QueryResult, error) {
 		return sprintfn.DecodeResult(kind, rep.Sprint[i])
 	}

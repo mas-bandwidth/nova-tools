@@ -26,6 +26,12 @@ type Budget struct {
 	PageLines, PageIDs, PageBytes int
 	// Pop is the most due and cut entries RT1 pops (1.2: 1,000).
 	Pop int
+	// HeldCards is R16's own budget (1.4.2: "then R16 (held) on its own queue
+	// and its own budget of 2,000 cards"): the members R16's steps change
+	// count against it and not against Changes, and dealing to the other rules
+	// never spends it. Its steps still count against the entries and notes,
+	// the request bytes and the steps, which bound RT3 itself.
+	HeldCards int
 	// Read is the bounds one rule's read is planned within (L1 6, 7; 1.4.2).
 	Read sprint.ReadBounds
 }
@@ -36,13 +42,17 @@ func DefaultBudget() Budget {
 		Changes: 10000, EntriesNotes: 2500, RequestBytes: 2 << 20, Steps: 32, StepBytes: 2 << 20,
 		AgendaHead: sprint.MaxRangeLimit, HeldHead: sprint.MaxRangeLimit,
 		PageLines: 5000, PageIDs: 20000, PageBytes: 2 << 20,
-		Pop:  sprintfn.PopMax,
-		Read: sprint.L1ReadBounds(),
+		Pop:       sprintfn.PopMax,
+		HeldCards: 2000,
+		Read:      sprint.L1ReadBounds(),
 	}
 }
 
-// spend is what the steps dealt so far cost.
-type spend struct{ changes, entriesNotes, bytes, steps int }
+// spend is what the steps dealt so far cost: heldChanges are R16's (HeldCards).
+type spend struct{ changes, heldChanges, entriesNotes, bytes, steps int }
+
+// ruleHeld is R16's name (2.3), whose changes count against HeldCards.
+const ruleHeld = "held"
 
 // stepCost is one step's cost against the budget: the members its entries
 // change (candidates, no-ops included, 1.0), its entries and notes, and its
@@ -70,15 +80,24 @@ func changesMembers(e tset.Entry) bool {
 	return e.Kind == "create" || e.Kind == "move" || e.Kind == "remove"
 }
 
-// fits says a step of cost c can still be dealt.
-func (b Budget) fits(s spend, c stepCost) bool {
-	return s.steps < b.Steps && s.changes+c.changes <= b.Changes && s.entriesNotes+c.entriesNotes <= b.EntriesNotes &&
-		s.bytes+c.bytes <= b.RequestBytes
+// fits says a step of cost c can still be dealt; held says it is R16's.
+func (b Budget) fits(s spend, c stepCost, held bool) bool {
+	changes := s.changes+c.changes <= b.Changes
+	if held {
+		changes = s.heldChanges+c.changes <= b.HeldCards
+	}
+	return s.steps < b.Steps && changes && s.entriesNotes+c.entriesNotes <= b.EntriesNotes && s.bytes+c.bytes <= b.RequestBytes
 }
 
-// add is the spend with one more step.
-func (s spend) add(c stepCost) spend {
-	return spend{changes: s.changes + c.changes, entriesNotes: s.entriesNotes + c.entriesNotes, bytes: s.bytes + c.bytes, steps: s.steps + 1}
+// add is the spend with one more step; held says it is R16's.
+func (s spend) add(c stepCost, held bool) spend {
+	out := spend{changes: s.changes, heldChanges: s.heldChanges, entriesNotes: s.entriesNotes + c.entriesNotes, bytes: s.bytes + c.bytes, steps: s.steps + 1}
+	if held {
+		out.heldChanges += c.changes
+	} else {
+		out.changes += c.changes
+	}
+	return out
 }
 
 // planned is one rule's plan of this tick, cut into requests, ready to deal.
@@ -102,7 +121,8 @@ type planned struct {
 // does not fit blocks the rest of its rule's plan for this tick (its keys stay
 // queued, T3), and dealing goes on with the others. reserve is the spend of
 // the steps the tick sends besides the rules' (the quarantine step), dealt
-// first.
+// first. R16's steps are dealt in the same rounds against its own budget of
+// cards (HeldCards).
 func deal(ps []*planned, b Budget, reserve spend) ([]*planned, []int, spend) {
 	var order []*planned
 	var index []int
@@ -114,11 +134,12 @@ func deal(ps []*planned, b Budget, reserve spend) ([]*planned, []int, spend) {
 				continue
 			}
 			any = true
-			if !b.fits(s, p.costs[round]) {
+			held := p.batch.Rule == ruleHeld
+			if !b.fits(s, p.costs[round], held) {
 				p.blocked = true
 				continue
 			}
-			s = s.add(p.costs[round])
+			s = s.add(p.costs[round], held)
 			p.dealt++
 			order, index = append(order, p), append(index, round)
 		}
