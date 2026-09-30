@@ -478,14 +478,14 @@ func TestRevertOnRedAFailedRerunFilesTheIssueToo(t *testing.T) {
 }
 
 // The comment is the one call after the revert: a failure still files the issue
-// and is red, and says the revert already landed.
+// and is red, and says the revert is already pushed or opened as a pull request.
 func TestRevertOnRedAFailedCommentIsRedAndFilesTheIssue(t *testing.T) {
 	t.Parallel()
 	w := defaultWorld()
 	w.failCmd = "gh api repos/o/r/issues/5/comments"
 	code, out, errb, r := runRevert(t, w, "--run-attempt", "2", "--push-revert")
 	assert.Equal(t, 1, code, "stdout %q", out)
-	assert.Contains(t, errb, "commenting on #5 exited 1; the revert is already landed")
+	assert.Contains(t, errb, "commenting on #5 exited 1; the revert is already pushed or its pull request opened")
 	assert.Equal(t, 1, countPrefix(r, "gh issue create"))
 }
 
