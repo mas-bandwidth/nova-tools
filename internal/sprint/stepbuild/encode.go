@@ -18,12 +18,14 @@ import "sort"
 // encodes it again with cjson, and refuses LIMIT request_bytes when that
 // encoding is over 4 MiB (the tset-l1 branch at 72b425b6d, table_set.lua:
 // 328-331; table_set_validate.lua:5-20 has the codec), and cjson writes a slash
-// in two bytes and DEL in six. A request written in cjson's own spelling is
-// its own re-encoding, so one size, Step.Bytes, is the size of the request as
-// sent and as Layer 1 measures it; and the generated lines, which a Layer 2 in
-// the same function most likely encodes with cjson too, are sized by the same
-// spelling. Object keys are written in byte order, entry keys in the fixed order
-// of emitMember, so the same step always encodes to the same bytes.
+// in two bytes and DEL in six. A request written in cjson's own spelling is the
+// same length when cjson encodes it again (the members may come out in another
+// order, so the bytes can differ, and the length cannot), so one size,
+// Step.Bytes, is the size of the request as sent and as Layer 1 measures it; and
+// the generated lines, which a Layer 2 in the same function most likely encodes
+// with cjson too, are sized by the same spelling. Object keys are written in byte
+// order, entry keys in the fixed order of emitMember, so the same step always
+// encodes to the same bytes.
 
 // sink is what the emitters write to.
 type sink interface {
