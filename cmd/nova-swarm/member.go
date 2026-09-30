@@ -55,14 +55,19 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	f.wantCount(*width, "width", "the most cards this machine runs at once")
 	f.want(*harness, "harness", "the harness binary path a card runs under (nova-swarm native --harness)")
 	f.want(*model, "model", "provider/model")
+	if *model != "" {
+		if _, ok := providerOf(*model); !ok {
+			f.add(fmt.Sprintf("--model %q is not provider/model (one slash, both sides nonempty); every card would be refused by native", *model))
+		}
+	}
 	f.want(*root, "root", "the root directory slots and results sit under")
-	f.want(*tokensWord, "tokens", "a token budget per card, or unmetered")
+	f.tokens(*tokensWord) // the word is read here, once, so a typo is one refusal and not one failed card each
 	if deadline.d <= 0 {
 		f.add("--deadline is required; it wants the wall bound per card; refusing to guess")
 	}
 	// The store is nova-sprint's to know: the member passes its environment
 	// through (NOVA_SPRINT_REDIS, or a seat) and names no address itself.
-	if !safepath.NameOK(*as) {
+	if *as != "" && !safepath.NameOK(*as) {
 		f.add(fmt.Sprintf("--as %q is not a name (letters, digits, - _ .)", *as))
 	}
 	if f.refused(stderr) {
