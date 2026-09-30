@@ -14,8 +14,8 @@ import (
 //
 // The sprint profile is the composed profile's fragments, Layer 2's log among
 // them, followed by SprintFragments, under a registration filter that admits
-// Layer 1's two callbacks and SprintFunctions (tset_loader.go's TSetSource and
-// registrationFilter). It loads only on a test's own store: a production
+// Layer 1's functions (TSetFunctions) and SprintFunctions (tset_loader.go's
+// TSetSource and tsetFilter). It loads only on a test's own store: a production
 // loader, which drops ns_tset_step (L1 9), waits on gate G0 (Layer 2's
 // contract accepted again against Layer 1's revision 4).
 const TSetSprint TSetProfile = "sprint"

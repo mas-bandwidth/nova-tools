@@ -7,6 +7,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/sprintfn"
+	"github.com/mas-bandwidth/nova-tools/internal/tset"
 )
 
 // The heartbeat and what is computed from it with no loop running (1.4.1). The
@@ -80,7 +81,7 @@ func ClockOf(c sprintfn.ClockResult) Clock {
 		n, _ := strconv.ParseInt(*p, 10, 64)
 		return n
 	}
-	if c.Clock.StoppedSinceMS != nil && *c.Clock.StoppedSinceMS != "" {
+	if !tset.ClockRunning(c.Clock.StoppedSinceMS) {
 		out.Stopped, out.StoppedSince = true, num(c.Clock.StoppedSinceMS)
 	}
 	out.StoppedMS = num(c.Clock.StoppedMS)

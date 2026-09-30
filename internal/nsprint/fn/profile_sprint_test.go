@@ -241,8 +241,8 @@ func TestSprintLuaOrdersMatchGo(t *testing.T) {
 
 // TestSprintProfileAssembles: the sprint profile is the composed profile's
 // source followed by every sprint fragment in load order, under a filter that
-// admits Layer 1's two callbacks and the sprint's two; no other tset profile
-// carries a sprint fragment.
+// admits Layer 1's functions (TSetFunctions) and the sprint's two; no other
+// tset profile carries a sprint fragment.
 func TestSprintProfileAssembles(t *testing.T) {
 	t.Parallel()
 	sprintSource, err := TSetSource(TSetSprint)
@@ -261,9 +261,10 @@ func TestSprintProfileAssembles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	filter := "name == 'ns_tset_step' or name == 'ns_tset_read' or name == 'ns_sprint_step' or name == 'ns_sprint_read'"
+	filter := "name == 'ns_tset_step' or name == 'ns_tset_read' or name == 'ns_tset_define' or name == 'ns_tset_teardown'" +
+		" or name == 'ns_sprint_step' or name == 'ns_sprint_read'"
 	if !strings.Contains(sprintSource, "    if "+filter+" then\n") {
-		t.Fatal("the sprint profile's registration filter is not Layer 1's two callbacks and SprintFunctions")
+		t.Fatal("the sprint profile's registration filter is not TSetFunctions and SprintFunctions")
 	}
 	if strings.Contains(composed, "ns_sprint_step' or") || strings.Contains(standalone, "ns_sprint_step' or") {
 		t.Fatal("a tset profile admits the sprint's functions")
@@ -271,7 +272,7 @@ func TestSprintProfileAssembles(t *testing.T) {
 	if !strings.Contains(sprintSource, "\n-- lua/table_set_log.lua\n") {
 		t.Fatal("the sprint profile leaves out Layer 2's log")
 	}
-	last := strings.Index(sprintSource, "\n-- lua/table_set_validate.lua\n")
+	last := strings.Index(sprintSource, "\n-- "+tsetFragments[len(tsetFragments)-1]+"\n")
 	for _, name := range names {
 		at := strings.Index(sprintSource, "\n-- "+name+"\n")
 		if at < 0 || at < last {

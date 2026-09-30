@@ -1154,5 +1154,9 @@ do
     if #keys~=0 or #args~=2 then return S.run_context(bad_args) end
     return S.read(args[1],args[2],NS.tlog and NS.tlog.read or nil)
   end})
+  -- Layer 1's lifecycle (the L1 contract amendment, lifecycle, 2026-09-30):
+  -- table_set_lifecycle.lua installs both callbacks, resolved when called.
+  redis.register_function('ns_tset_define',function(keys,args) return S.run_context(S.lifecycle_define,keys,args) end)
+  redis.register_function('ns_tset_teardown',function(keys,args) return S.run_context(S.lifecycle_teardown,keys,args) end)
 end
 end

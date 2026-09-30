@@ -55,10 +55,18 @@ func newComposedTSetFixture(t *testing.T) *tsetFixture {
 
 func newTSetFixtureProfile(t *testing.T, profile fn.TSetProfile) *tsetFixture {
 	t.Helper()
+	return newTSetFixtureSpace(t, profile, "l1:")
+}
+
+// newTSetFixtureSpace is a fixture of its own server whose namespace is space:
+// the lifecycle's tests use a space of its grammar, {<name>}: (lifecycle.go
+// ValidNamespace).
+func newTSetFixtureSpace(t *testing.T, profile fn.TSetProfile, space string) *tsetFixture {
+	t.Helper()
 	addr := testutil.Start(t)
 	client := redis.NewClient(&redis.Options{Addr: addr, MaxRetries: -1})
 	t.Cleanup(func() { _ = client.Close() })
-	fx := &tsetFixture{Client: client, Space: "l1:", Epoch: "0", profile: profile, t: t, tables: []string{}}
+	fx := &tsetFixture{Client: client, Space: space, Epoch: "0", profile: profile, t: t, tables: []string{}}
 	fx.seedEpoch(t)
 	return fx
 }
@@ -496,7 +504,10 @@ func (fx *tsetFixture) SemanticSnapshot(t *testing.T) MemSnapshot {
 		Receipts:    make(map[Decimal]map[string]MemReceiptSnapshot),
 		ZSets:       make(map[string]map[string]string),
 	}
-	known := map[string]bool{fx.Space + "sprint:epoch": true}
+	// The lifecycle's view and receipt stream (lifecycle.go) are not table
+	// state: a defined space's snapshot passes over them.
+	known := map[string]bool{fx.Space + "sprint:epoch": true, fx.Space + "sprint:view": true,
+		fx.Space + "sprint:lifecycle": true}
 	for _, key := range keys {
 		if strings.HasPrefix(key, fx.Space+"sprint:epoch@") {
 			epoch := Decimal(strings.TrimPrefix(key, fx.Space+"sprint:epoch@"))
