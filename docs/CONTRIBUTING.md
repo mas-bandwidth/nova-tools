@@ -333,7 +333,9 @@ first run), [TESTS.md](TESTS.md) (the transcripts the tests execute),
 ## When a tool refuses
 
 **The remedy on the line is the contract.** An unusable invocation costs one
-line — `<tool>[ <verb>]: <what was wrong>; run: <tool> help` — and exits 2, and
+line per problem — `<TOKEN> REFUSED: <what was wrong>; run: <tool> help`, or
+`<tool>[ <verb>]: <what was wrong>; run: <tool> help` on a tool not yet built on
+`internal/tool` — and exits 2, and
 where the guidance is a sentence of its own it follows on one further indented
 line. Do that, rather than guessing. A class test's refusal names its
 `remedy="…"`; do what it says instead of adding an allowlist row. A `FAIL` line

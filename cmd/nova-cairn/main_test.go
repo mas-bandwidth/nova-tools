@@ -66,7 +66,7 @@ func TestOpenAppendIndexReceiptRoundTrip(t *testing.T) {
 	if !strings.Contains(out, "INDEX ENTRY session=s1 entry=e1") {
 		t.Fatalf("index printed %q", out)
 	}
-	if !strings.Contains(out, "INDEX COVERAGE sessions=1 entries=1") {
+	if !strings.Contains(out, "INDEX OK sessions=1 entries=1") {
 		t.Fatalf("coverage printed %q", out)
 	}
 	raw, err := os.ReadFile(filepath.Join(store, "entries", "s1", "e1.json"))
@@ -202,7 +202,7 @@ func TestConcurrentRecordsAndAlternateHeaders(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, _ := runOK(t, "", "index", "--store", store)
-	if !strings.Contains(out, "INDEX COVERAGE sessions=2 entries=2") {
+	if !strings.Contains(out, "INDEX OK sessions=2 entries=2") {
 		t.Fatalf("index printed %q", out)
 	}
 	out, _ = runOK(t, "", "index", "--store", store, "--session", "alpha")

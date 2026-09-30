@@ -123,8 +123,14 @@ func (l *List) More() {
 	if l.total <= l.shown {
 		return
 	}
-	fmt.Fprintf(l.w, "%s MORE kind=%s shown=%d total=%d %s\n",
-		oneline.Field(l.token), oneline.Field(l.kind), l.shown, l.total, oneline.Escape(l.remedy))
+	fmt.Fprintln(l.w, MoreLine(l.token, l.kind, l.shown, l.total, l.remedy))
+}
+
+// MoreLine is the MORE line itself, the one spelling every listing prints:
+// internal/tool renders a capped result's MORE through it.
+func MoreLine(token, kind string, shown, total int, remedy string) string {
+	return fmt.Sprintf("%s MORE kind=%s shown=%d total=%d %s",
+		oneline.Field(token), oneline.Field(kind), shown, total, oneline.Escape(remedy))
 }
 
 // Shown is how many item lines reached the stream.

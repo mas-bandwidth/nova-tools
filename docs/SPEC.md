@@ -134,6 +134,16 @@ BUS FAIL <path, path:line, or lane>: <reason>
 
 `OK` lines go to stdout; `FAIL` lines and refusals go to stderr (except `nova-self-talk`'s `SELFTALK FAIL files=…` summary count line, which goes to stdout alongside the advisory note).
 
+**One value, two renderings.** A tool built on `internal/tool` returns one result
+per verb and prints it as lines or, with `--json` (every verb takes it), as one
+JSON object on stdout holding the same value:
+`{"result":{"verb","status":"ok|failed|refused","exit","remedy","why"},"facts":{},"items":[{"kind","fields"}],"more":[{"kind","shown","total","remedy"}],"notes":[]}`.
+The lines are `<TOKEN> OK|FAIL|REFUSED k=v ...` first, then `<TOKEN> <KIND> k=v ...`
+per item, the MORE line per capped kind, and `<TOKEN> NOTE <text>`; a refusal names
+every problem of the invocation at once, one line each,
+`<TOKEN> REFUSED: <what>; run: <remedy>`. The status follows the exit: ok 0,
+failed 1 (it ran and said no), refused 2 (it could not run).
+
 **An event is exactly one line, and nothing a caller supplies or a file holds
 can add a second.** This is one guarantee, stated once here and met by every
 binary the same way, through `internal/oneline`. Every path, file name, reason,
@@ -216,8 +226,9 @@ lines for two lines of verdict; and a 674-entry open list is more than a
   one line however many there are. So is a passing `eval` row: it is counted
   in `hits=` on the summary line, never listed.
 - **An unusable invocation costs ONE line.** A flag typo, an unknown verb or a
-  bare invocation prints `<tool>[ <verb>]: <what was wrong>; run: <tool> help`
-  and never the usage banner, which is 32 to 102 lines depending on the binary.
+  bare invocation prints `<TOKEN> REFUSED: <what was wrong>; run: <tool> help`
+  (`<tool>[ <verb>]: <what was wrong>; run: <tool> help` on a tool not yet built
+  on `internal/tool`), one line per problem, and never the usage banner, which is 32 to 102 lines depending on the binary.
   `<tool> help` prints it, on stdout, exit 0. Where this repo's guidance law
   requires a refusal to say what the input WANTS, the hint follows on one
   further line.

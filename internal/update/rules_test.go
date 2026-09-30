@@ -378,19 +378,24 @@ func TestHelpIsTheSpecsVerbsBlock(t *testing.T) {
 		t.Fatalf("help does not open with the verbs block:\n%s", printed.String())
 	}
 	printed.Reset()
-	help("nova-version", &printed)
-	if !strings.HasPrefix(printed.String(), versionVerbs+"\n") {
-		t.Fatalf("nova-version's help does not open with its two lines:\n%s", printed.String())
+	printed.WriteString(VersionTool("", Environment{}).Banner())
+	// nova-version's usage lines are its verbs' own (versiontool.go): the
+	// banner lists them under usage:, after what the tool is and how it works.
+	lines := map[string]string{}
+	for _, l := range strings.Split(printed.String(), "\n") {
+		if f := strings.Fields(l); len(f) > 1 && f[0] == "nova-version" {
+			lines[f[1]] += l + "\n"
+		}
 	}
 	// The spec says nova-version's lines are the report line's flags under that
 	// name, so every flag the report line offers a plain report must appear.
 	for _, flag := range []string{"--file <manifest: " + manifestShape + ">", "--host <label>", "--snapshot <path>", "--max <n>", "--timeout <d>", "--budget <d>", "--kind <k>"} {
-		if !strings.Contains(versionVerbs, flag) {
+		if !strings.Contains(lines["report"], flag) {
 			t.Errorf("nova-version's report line does not carry %s", flag)
 		}
 	}
 	for _, flag := range []string{"--bus <path>", "--remote <r>", "--branch <b>", "--as <friend>", "--to <who,who>"} {
-		if !strings.Contains(versionVerbs, flag) {
+		if !strings.Contains(lines["send"], flag) {
 			t.Errorf("nova-version's send line does not carry %s", flag)
 		}
 	}
@@ -404,7 +409,7 @@ func TestHelpNamesTheSnapshotVerb(t *testing.T) {
 	t.Parallel()
 
 	var printed bytes.Buffer
-	help("nova-version", &printed)
+	printed.WriteString(VersionTool("", Environment{}).Banner())
 	if !strings.Contains(printed.String(), "nova-version snapshot --bin <dir> --out <file.tsv>") {
 		t.Fatalf("nova-version help omits the snapshot verb:\n%s", printed.String())
 	}
@@ -420,7 +425,7 @@ func TestUsageAndRefusalSayWhatTheFileIs(t *testing.T) {
 	t.Parallel()
 
 	var printed bytes.Buffer
-	help("nova-version", &printed)
+	printed.WriteString(VersionTool("", Environment{}).Banner())
 	if !strings.Contains(printed.String(), manifestShape) {
 		t.Fatalf("nova-version's help does not carry the shape sentence:\n%s", printed.String())
 	}
