@@ -434,6 +434,25 @@ func planOps(b *stepOps, p sprint.Plan) error {
 	return nil
 }
 
+// propEntries are the plan's table properties as Layer 1 entries (the deal's
+// and the ask's rolling index, round.go; L1 contract amendment, table
+// properties): each a propguard on the value the plan read, then the prop, in
+// the same step as the cards they place, as the tick's step builder writes them
+// (machine.stepBodies.extras).
+func propEntries(p sprint.Plan) []tset.Entry {
+	var out []tset.Entry
+	for _, pw := range p.Props {
+		guard := tset.Entry{Kind: "propguard", Table: pw.Table, Name: pw.Name}
+		if !pw.WasAbsent {
+			was := pw.Was
+			guard.Value = &was
+		}
+		value := pw.Value
+		out = append(out, guard, tset.Entry{Kind: "prop", Table: pw.Table, Name: pw.Name, Value: &value})
+	}
+	return out
+}
+
 func changeOp(b *stepOps, table string, e ntable.BatchMemberEntry) error {
 	op := stepOp{table: table, id: e.ID, set: e.Set, unset: e.Unset}
 	if x := e.Expect; x != nil {
@@ -1300,7 +1319,10 @@ var reworkFollow = []string{sprint.FollowRCards, sprint.FollowWork, sprint.Follo
 // fleet's rows, counts and members' status, which it deals the next attempt
 // from, and the readers' rows, which the judgment of a primary it refuses
 // reads.
-var reworkBeside = []sprint.SprintQ{{Kind: sprint.QueryFleet, Fields: []string{"status"}}, {Kind: sprint.QueryReaders, Fields: []string{}}}
+// The fleet is read with each member's width and the deal's rolling index
+// (round.go, errata 3 amendments 5 and 9): the next attempt goes to the next
+// member round the fleet below its width, and the step moves the index.
+var reworkBeside = []sprint.SprintQ{{Kind: sprint.QueryFleet, Fields: []string{"status", sprint.FieldWidth}, Props: []string{sprint.PropDealIndex}}, {Kind: sprint.QueryReaders, Fields: []string{}}}
 
 // reworkEach is the most members one primary's rework changes: the primary,
 // its read cards (at most 15), its withdrawn work card and the new one.
@@ -1398,7 +1420,7 @@ func planRework(va *verbAnswer, ids []string, fix, who string) (*sprintfn.Reques
 	if err != nil {
 		return nil, p, err
 	}
-	r := &sprintfn.Request{Meta: sprintfn.Meta{Verb: "rework"}, Body: sprintfn.Body{Entries: entries}}
+	r := &sprintfn.Request{Meta: sprintfn.Meta{Verb: "rework"}, Body: sprintfn.Body{Entries: append(entries, propEntries(p)...)}}
 	var k closer
 	var reworked []string
 	for _, u := range p.Units {
