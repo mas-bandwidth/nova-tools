@@ -113,7 +113,7 @@ func applyMoves(s *sprint.Snapshot, ms []refmodel.Move) error {
 		switch m.Kind {
 		case refmodel.KindRow:
 			if !tb.HasRow(m.Card) {
-				tb.Rows = append(tb.Rows, m.Card)
+				tb.SetRows(append(tb.Rows(), m.Card))
 			}
 		case refmodel.KindCreate:
 			row, col, _ := strings.Cut(m.To, ":")
@@ -170,7 +170,7 @@ func setFields(c *sprint.Card, m refmodel.Move) error {
 func cards(s *sprint.Snapshot) string {
 	var lines []string
 	for _, tb := range []*sprint.Table{s.Work, s.Readers, s.Merge, s.Fleet} {
-		lines = append(lines, fmt.Sprintf("%s rows %q", tb.Name, tb.Rows))
+		lines = append(lines, fmt.Sprintf("%s rows %q", tb.Name, tb.Rows()))
 		for id, c := range tb.Cards {
 			lines = append(lines, fmt.Sprintf("%s %s %s:%s %v %v", tb.Name, id, c.Row, c.Col, c.Score, c.Fields))
 		}

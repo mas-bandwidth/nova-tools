@@ -132,6 +132,17 @@ var followCosts = map[string]int{
 	FollowNeeds:  64,
 }
 
+// followTables are the tables whose cards of a primary a follow reads: the read
+// cards are in the readers' table, the merge card in the merge table, and the
+// live and the withdrawn work card in the fleet's (a member's cells). A follow
+// not here reaches no card that Table.Of answers for.
+var followTables = map[string]string{
+	FollowRCards:    Readers,
+	FollowMerge:     Merge,
+	FollowWork:      Fleet,
+	FollowWithdrawn: Fleet,
+}
+
 // followCostDefault is what a follow not in followCosts adds (1.0: 1 a follow).
 const followCostDefault = 1
 

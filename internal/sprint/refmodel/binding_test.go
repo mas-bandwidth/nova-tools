@@ -76,8 +76,8 @@ func loadSample(tb testing.TB, s sample) *loaded {
 	for _, name := range store.All {
 		tab := t.T(name)
 		stored := l.st.Names.Table(name)
-		if len(tab.Rows) > 0 {
-			l.must(l.m.RowsAdd(l.ctx, stored, tab.Rows))
+		if len(tab.Rows()) > 0 {
+			l.must(l.m.RowsAdd(l.ctx, stored, tab.Rows()))
 		}
 		var placed, kept, removed []ntable.BatchMemberEntry
 		for _, id := range slices.Sorted(maps.Keys(tab.Cards)) {
@@ -88,10 +88,10 @@ func loadSample(tb testing.TB, s sample) *loaded {
 				placed = append(placed, e)
 				continue
 			}
-			e.Create = &ntable.MemberCreateOp{Row: tab.Rows[0], Col: firstCell[name], Score: c.Score}
+			e.Create = &ntable.MemberCreateOp{Row: tab.Rows()[0], Col: firstCell[name], Score: c.Score}
 			kept = append(kept, e)
 			removed = append(removed, ntable.BatchMemberEntry{ID: id, Remove: true,
-				Expect: &ntable.MemberExpect{Place: &ntable.PlaceExpect{Row: tab.Rows[0], Col: firstCell[name]}}})
+				Expect: &ntable.MemberExpect{Place: &ntable.PlaceExpect{Row: tab.Rows()[0], Col: firstCell[name]}}})
 		}
 		l.apply(stored, placed)
 		l.apply(stored, kept)
@@ -327,7 +327,7 @@ func (l *loaded) tables(want *sprint.Snapshot) *sprint.Snapshot {
 	for i, name := range store.All {
 		tab := sprint.NewTable(name)
 		for _, r := range shapes[i].Rows {
-			tab.Rows = append(tab.Rows, r.Key)
+			tab.SetRows(append(tab.Rows(), r.Key))
 		}
 		ids := map[string]bool{}
 		for id := range want.T(name).Cards {

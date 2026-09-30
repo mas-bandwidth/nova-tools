@@ -82,7 +82,7 @@ func TestAskClosesTheJudgmentForTooFewReadersWhenAReaderIsAdded(t *testing.T) {
 	if len(ids) != 1 {
 		t.Fatalf("the fixture: %d judgments that it cannot ask", len(ids))
 	}
-	w.s.Readers.Rows = append(w.s.Readers.Rows, "reader-b")
+	w.s.Readers.SetRows(append(w.s.Readers.Rows(), "reader-b"))
 	got := refmodel.AskMoves(w.snapshot(w.fresh()), later(0))
 	// today's tick also raises "stranded in review" here: it plans the close of
 	// the judgment on the read where the primary is still in review and not yet

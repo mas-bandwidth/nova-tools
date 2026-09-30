@@ -24,7 +24,7 @@ func newWorld(t *testing.T, readers ...string) *world {
 	t.Helper()
 	s := &Snapshot{Now: t0, Work: NewTable(Work), Readers: NewTable(Readers), Merge: NewTable(Merge), Fleet: NewTable(Fleet),
 		Coordinator: "coordinator", Actor: "coordinator"}
-	s.Readers.Rows = append(s.Readers.Rows, readers...)
+	s.Readers.SetRows(append(s.Readers.Rows(), readers...))
 	return &world{t: t, s: s}
 }
 
@@ -36,7 +36,7 @@ func (w *world) do(p Plan) Plan {
 	for _, ra := range p.Rows {
 		tb := w.s.T(ra.Table)
 		if !tb.HasRow(ra.Row) {
-			tb.Rows = append(tb.Rows, ra.Row)
+			tb.SetRows(append(tb.Rows(), ra.Row))
 		}
 	}
 	for _, u := range p.Units {

@@ -27,7 +27,7 @@ type world struct {
 func newWorld(readers ...string) *world {
 	s := &sprint.Snapshot{Now: t0, Work: sprint.NewTable(sprint.Work), Readers: sprint.NewTable(sprint.Readers),
 		Merge: sprint.NewTable(sprint.Merge), Fleet: sprint.NewTable(sprint.Fleet), Coordinator: "coordinator", Actor: "coordinator"}
-	s.Readers.Rows = append(s.Readers.Rows, readers...)
+	s.Readers.SetRows(append(s.Readers.Rows(), readers...))
 	return &world{s: s}
 }
 
@@ -49,7 +49,7 @@ func (w *world) must(t *testing.T, p sprint.Plan) {
 func (w *world) apply(p sprint.Plan) error {
 	for _, r := range p.Rows {
 		if tb := w.s.T(r.Table); !tb.HasRow(r.Row) {
-			tb.Rows = append(tb.Rows, r.Row)
+			tb.SetRows(append(tb.Rows(), r.Row))
 		}
 	}
 	for _, u := range p.Units {

@@ -47,7 +47,7 @@ func dump(s refmodel.Snapshot) string {
 	t := s.Tables
 	fmt.Fprintf(&b, "tables now=%s epoch=%d cleared=%s coordinator=%q actor=%q\n", t.Now.Format(time.RFC3339Nano), t.Epoch, t.Cleared.Format(time.RFC3339Nano), t.Coordinator, t.Actor)
 	for _, tb := range []*sprint.Table{t.Work, t.Readers, t.Merge, t.Fleet} {
-		fmt.Fprintf(&b, "table %s epoch=%d revision=%d rows=%q\n", tb.Name, tb.Epoch, tb.Revision, tb.Rows)
+		fmt.Fprintf(&b, "table %s epoch=%d revision=%d rows=%q\n", tb.Name, tb.Epoch, tb.Revision, tb.Rows())
 		for _, row := range slices.Sorted(maps.Keys(tb.Texts)) {
 			fmt.Fprintf(&b, "  text %s %v\n", row, tb.Texts[row])
 		}
@@ -82,7 +82,7 @@ func TestDumpSeesEveryPartOfASnapshot(t *testing.T) {
 		"untold":      func(s *refmodel.Snapshot) { s.Untold = append(s.Untold, "zed") },
 		"now":         func(s *refmodel.Snapshot) { s.Tables.Now = t0 },
 		"coordinator": func(s *refmodel.Snapshot) { s.Tables.Coordinator = "zed" },
-		"row":         func(s *refmodel.Snapshot) { s.Tables.Work.Rows = append(s.Tables.Work.Rows, "zed") },
+		"row":         func(s *refmodel.Snapshot) { s.Tables.Work.SetRows(append(s.Tables.Work.Rows(), "zed")) },
 		"text":        func(s *refmodel.Snapshot) { s.Tables.Fleet.Texts["zed"] = map[string]string{"a": "b"} },
 		"card":        func(s *refmodel.Snapshot) { s.Tables.Work.Put(&sprint.Card{ID: "zed", Row: "s1", Col: "ready"}) },
 		"field": func(s *refmodel.Snapshot) {
@@ -111,7 +111,7 @@ func TestACloneSharesNothingWithItsSnapshot(t *testing.T) {
 		before := dump(s.snap)
 		c := s.snap.Clone()
 		for _, tb := range []*sprint.Table{c.Tables.Work, c.Tables.Readers, c.Tables.Merge, c.Tables.Fleet} {
-			tb.Rows = append(tb.Rows, "zed")
+			tb.SetRows(append(tb.Rows(), "zed"))
 			for _, card := range tb.Cards {
 				card.Fields["zed"], card.Score = "1", card.Score+1
 			}

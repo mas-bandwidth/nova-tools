@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -98,7 +99,7 @@ func loadPartial(rp ReadPlan, ans ReadAnswer, strict bool) (*Snapshot, error) {
 	for _, name := range ViewOrder {
 		t := NewTable(name)
 		t.Epoch = epoch
-		t.part = &loadedCells{whole: map[[2]string]bool{}, counts: map[[2]string]int{}, log: log}
+		t.part = &loadedCells{whole: map[[2]string]bool{}, counts: map[[2]string]int{}, followed: map[string]bool{}, log: log}
 		switch name {
 		case Work:
 			s.Work = t
@@ -372,7 +373,7 @@ func (p *Partial) loadSprint(s *Snapshot, rp ReadPlan, ans ReadAnswer) error {
 			}
 			for _, name := range tables {
 				t := s.T(name)
-				t.Rows = append([]string(nil), a.Rows...)
+				t.SetRows(append([]string(nil), a.Rows...))
 				t.part.rows = true
 			}
 		}
@@ -387,19 +388,77 @@ func (p *Partial) loadSprint(s *Snapshot, rp ReadPlan, ans ReadAnswer) error {
 			}
 			p.Fronts[q.Stream] = *a.Front
 		}
+		if q.Kind == QueryRelated {
+			if err := p.followed(s, i, q, a); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// followed records the primaries whose cards `related` read with a follow that
+// reaches a table's cards of a primary (followTables), so that Table.Of answers
+// for them. The ids are the ones the query's source lists, or, for a head or a
+// line, the ones the answer says the source named.
+func (p *Partial) followed(s *Snapshot, i int, q SprintQ, a Answer) error {
+	ids := q.Source.IDs
+	if q.Source.Kind == SourceIDs {
+		if len(a.IDs) != 0 && !slices.Equal(a.IDs, q.Source.IDs) {
+			return misaligned("composite query %d names ids, and its answer names others", i)
+		}
+	} else {
+		most, _ := q.Source.size()
+		if len(a.IDs) > most {
+			return misaligned("composite query %d: its source names at most %d ids, the answer names %d", i, most, len(a.IDs))
+		}
+		ids = a.IDs
+	}
+	for _, f := range q.Follow {
+		name, ok := followTables[f]
+		if !ok {
+			continue
+		}
+		t := s.T(name)
+		for _, id := range ids {
+			t.part.followed[id] = true
+		}
 	}
 	return nil
 }
 
 // Unloaded is what the planners read of the snapshot that its plan did not
-// load (1.5.2): the cells, counts and positions, each named. A release build
-// does not panic at such a read: it plans on nothing, and the caller refuses
-// the plan when this is not empty. A snapshot built whole has none.
+// load (1.5.2): the cells, counts, rows, lines, cards of a primary and
+// positions, each named. A release build does not panic at such a read: it
+// plans on nothing, and the caller refuses the plan when this is not empty
+// (UnloadedErr). A snapshot built whole has none.
 func (s *Snapshot) Unloaded() []string {
 	if s == nil || s.Partial == nil {
 		return nil
 	}
 	return s.Partial.log.list()
+}
+
+// ErrUnloaded is the refusal of a plan made on a read that did not load what
+// the planner read (1.5.2): errors.Is(err, ErrUnloaded) names it.
+var ErrUnloaded = errors.New(unloadedMessage)
+
+// UnloadedError is ErrUnloaded with the reads that were refused, each named.
+type UnloadedError struct{ Reads []string }
+
+func (e *UnloadedError) Error() string { return strings.Join(e.Reads, "; ") }
+
+// Is says the error is ErrUnloaded.
+func (e *UnloadedError) Is(target error) bool { return target == ErrUnloaded }
+
+// UnloadedErr is nil when the planners read only what the snapshot's plan
+// loaded, and otherwise an *UnloadedError naming what they read that it did not:
+// the tick refuses the rule's plan then, as a release build refuses (1.5.2).
+func (s *Snapshot) UnloadedErr() error {
+	if reads := s.Unloaded(); len(reads) > 0 {
+		return &UnloadedError{Reads: reads}
+	}
+	return nil
 }
 
 // FirstSentinel is the first sentinel of the stream (the lowest score of its

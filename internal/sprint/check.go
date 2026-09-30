@@ -206,7 +206,7 @@ func Check(s *Snapshot, pending *Pending) []Violation {
 		}
 	}
 	// 9. A stopped stream has an open judgment notification.
-	for _, st := range s.Merge.Rows {
+	for _, st := range s.Merge.Rows() {
 		ctl := s.StreamCtl(st)
 		if !quiet || ctl.F("state") != StreamStopped {
 			continue

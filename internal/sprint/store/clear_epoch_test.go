@@ -216,7 +216,7 @@ func TestEmptyClearsThenTeardown(t *testing.T) {
 		if err != nil {
 			t.Fatalf("epoch %d unreadable: %v", e, err)
 		}
-		if len(s.Work.Rows)+len(s.Fleet.Rows)+len(s.Work.Cards) != 0 {
+		if len(s.Work.Rows())+len(s.Fleet.Rows())+len(s.Work.Cards) != 0 {
 			t.Fatalf("epoch %d is not empty", e)
 		}
 	}
@@ -307,8 +307,8 @@ func TestRowAddedDuringClearIsKept(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := h.snap()
-	if !slices.Contains(s.Fleet.Rows, "m3") || s.MemberCtl("m3").F("status") != sprint.Up {
-		t.Errorf("a member brought up before the advance was lost by the clear: rows %v", s.Fleet.Rows)
+	if !slices.Contains(s.Fleet.Rows(), "m3") || s.MemberCtl("m3").F("status") != sprint.Up {
+		t.Errorf("a member brought up before the advance was lost by the clear: rows %v", s.Fleet.Rows())
 	}
 	if s.MemberCtl("m1").F("status") != sprint.Down {
 		t.Errorf("m1 taken down before the advance is up again at the new epoch")

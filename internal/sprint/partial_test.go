@@ -27,7 +27,9 @@ func pcard(id, row, col string, score float64, kv ...string) *Card {
 // and merge tables and the fleet's.
 func wholeSnapshot(streams, members []string, work ...*Card) *Snapshot {
 	s := &Snapshot{Epoch: 3, Work: NewTable(Work), Readers: NewTable(Readers), Merge: NewTable(Merge), Fleet: NewTable(Fleet)}
-	s.Work.Rows, s.Merge.Rows, s.Fleet.Rows = streams, streams, members
+	s.Work.SetRows(streams)
+	s.Merge.SetRows(streams)
+	s.Fleet.SetRows(members)
 	for _, c := range work {
 		s.Work.Put(c)
 	}
@@ -195,9 +197,9 @@ func TestLoadPartialFromReadAnswer(t *testing.T) {
 	if got := ids(s.Work.Column("ready")); !reflect.DeepEqual(got, []string{"p1", "p2"}) {
 		t.Fatalf("Column(ready) over the rows read: %v", got)
 	}
-	if !reflect.DeepEqual(s.Work.Rows, []string{"s1", "s2"}) || !reflect.DeepEqual(s.Merge.Rows, []string{"s1", "s2"}) ||
-		!reflect.DeepEqual(s.Fleet.Rows, []string{"m1"}) {
-		t.Fatalf("rows: work %v merge %v fleet %v", s.Work.Rows, s.Merge.Rows, s.Fleet.Rows)
+	if !reflect.DeepEqual(s.Work.Rows(), []string{"s1", "s2"}) || !reflect.DeepEqual(s.Merge.Rows(), []string{"s1", "s2"}) ||
+		!reflect.DeepEqual(s.Fleet.Rows(), []string{"m1"}) {
+		t.Fatalf("rows: work %v merge %v fleet %v", s.Work.Rows(), s.Merge.Rows(), s.Fleet.Rows())
 	}
 	if got := s.Streams(); !reflect.DeepEqual(got, []string{"s1", "s2"}) {
 		t.Fatalf("Streams: %v", got)
@@ -654,7 +656,7 @@ func TestPartialAgreesWithWhole(t *testing.T) {
 		// partly read; the position of every stream; a few ids; the rows.
 		rp := ReadPlan{IDs: map[string][]string{}}
 		rp.Sprint = append(rp.Sprint, SprintQ{Kind: QueryStreams}, SprintQ{Kind: QueryFleet})
-		for _, st := range whole.Work.Rows {
+		for _, st := range whole.Work.Rows() {
 			rp.Sprint = append(rp.Sprint, SprintQ{Kind: QueryFront, Stream: st})
 			for _, state := range States {
 				cell := st + ":" + state
@@ -684,7 +686,7 @@ func TestPartialAgreesWithWhole(t *testing.T) {
 		}
 
 		// What the read loaded is what the whole holds.
-		for _, st := range whole.Work.Rows {
+		for _, st := range whole.Work.Rows() {
 			for _, state := range States {
 				if part.Work.Loaded(st, state) {
 					if got, want := ids(part.Work.Cell(st, state)), ids(whole.Work.Cell(st, state)); !reflect.DeepEqual(got, want) {
@@ -716,8 +718,8 @@ func TestPartialAgreesWithWhole(t *testing.T) {
 				t.Fatalf("round %d: rcount %d: OpenBefore(%s, %v) = %d, whole %d", round, i, row, score, got, want)
 			}
 		}
-		if !reflect.DeepEqual(part.Work.Rows, whole.Work.Rows) || !reflect.DeepEqual(part.Fleet.Rows, whole.Fleet.Rows) {
-			t.Fatalf("round %d: rows %v %v, whole %v %v", round, part.Work.Rows, part.Fleet.Rows, whole.Work.Rows, whole.Fleet.Rows)
+		if !reflect.DeepEqual(part.Work.Rows(), whole.Work.Rows()) || !reflect.DeepEqual(part.Fleet.Rows(), whole.Fleet.Rows()) {
+			t.Fatalf("round %d: rows %v %v, whole %v %v", round, part.Work.Rows(), part.Fleet.Rows(), whole.Work.Rows(), whole.Fleet.Rows())
 		}
 		if got := part.Unloaded(); len(got) != 0 {
 			t.Fatalf("round %d: %v", round, got)

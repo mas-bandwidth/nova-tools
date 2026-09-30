@@ -1025,7 +1025,7 @@ func fleetStepPlan(s *Snapshot, r FleetReq) Plan {
 			}
 		}
 		if comeUp {
-			level(s, &p, orderLike(s.Fleet.Rows, append(liveFor(s, r), r.Member), r.Member))
+			level(s, &p, orderLike(s.Fleet.Rows(), append(liveFor(s, r), r.Member), r.Member))
 		}
 		headOf(&p, r.Member, head, n, line)
 	case "down", "hold":

@@ -112,7 +112,7 @@ func presence(s *Snapshot, r TickReq) (Plan, int) {
 		return Plan{}, 0
 	}
 	var live, ups, downs []string
-	for _, m := range s.Fleet.Rows {
+	for _, m := range s.Fleet.Rows() {
 		ctl := s.MemberCtl(m)
 		if ctl == nil {
 			continue

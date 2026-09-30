@@ -71,8 +71,8 @@ func TestClearStopsTheSprintAndClearsAllWork(t *testing.T) {
 		t.Fatalf("epoch %d", after.Epoch)
 	}
 	for _, pair := range [][2]*sprint.Table{{before.Work, after.Work}, {before.Readers, after.Readers}, {before.Merge, after.Merge}, {before.Fleet, after.Fleet}} {
-		if !slices.Equal(pair[0].Rows, pair[1].Rows) {
-			t.Fatalf("%s rows %v, were %v", pair[1].Name, pair[1].Rows, pair[0].Rows)
+		if !slices.Equal(pair[0].Rows(), pair[1].Rows()) {
+			t.Fatalf("%s rows %v, were %v", pair[1].Name, pair[1].Rows(), pair[0].Rows())
 		}
 		for _, c := range pair[1].Cards {
 			if c.Placed() && c.Col != sprint.Ctl {

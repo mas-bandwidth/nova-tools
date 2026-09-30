@@ -159,11 +159,11 @@ func (w wholeStore) query(q SprintQ) Answer {
 		}
 		a.Front = &f
 	case QueryStreams:
-		a.Rows = append([]string(nil), w.s.Work.Rows...)
+		a.Rows = append([]string(nil), w.s.Work.Rows()...)
 	case QueryFleet:
-		a.Rows = append([]string(nil), w.s.Fleet.Rows...)
+		a.Rows = append([]string(nil), w.s.Fleet.Rows()...)
 	case QueryReaders:
-		a.Rows = append([]string(nil), w.s.Readers.Rows...)
+		a.Rows = append([]string(nil), w.s.Readers.Rows()...)
 	}
 	return a
 }

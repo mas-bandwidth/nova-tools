@@ -41,9 +41,13 @@ type Table struct {
 	Name     string // logical name
 	Epoch    uint64
 	Revision uint64
-	Rows     []string
 	Texts    map[string]map[string]string // row -> text column -> value
 	Cards    map[string]*Card
+
+	// rows are the table's rows in order, read by Rows and set by SetRows: on a
+	// table loaded from a read plan the rows are read only when the plan asked
+	// for them, and a field could not say so.
+	rows []string
 
 	cells     map[[2]string][]*Card // built on first use; Put resets it
 	byPrimary map[string][]*Card
@@ -73,6 +77,10 @@ type loadedCells struct {
 	// rows says the table's rows were read (a stream, member or reader
 	// query), so that a read of a column knows which cells it means.
 	rows bool
+	// followed are the primaries whose cards in this table a `related` query
+	// read with a follow that reaches them (readers' read cards, the merge
+	// card, the fleet's work cards): Of answers for these and no others.
+	followed map[string]bool
 	// log is where a read of anything else is put; the snapshot's tables share
 	// one.
 	log *unloadedLog
@@ -174,9 +182,40 @@ func NewTable(name string) *Table {
 	return &Table{Name: name, Texts: map[string]map[string]string{}, Cards: map[string]*Card{}}
 }
 
-// HasRow says the table declares the row.
+// Rows are the table's rows in order, not to be changed. On a table loaded from
+// a read plan, the rows are the ones a stream, member or reader query listed,
+// and a table whose rows the plan did not read has none to give: the read is
+// refused (see Loaded), and the result is empty, never the rows that happen to
+// be known.
+func (t *Table) Rows() []string {
+	if t == nil || !t.needRows() {
+		return nil
+	}
+	return t.rows
+}
+
+// SetRows sets the table's rows, in order: it builds a table, and loads one
+// from a read that listed its rows.
+func (t *Table) SetRows(rows []string) { t.rows = rows }
+
+// needRows is the guard of every read of the table's rows: true when they are
+// known (a table built whole, or one whose plan read them), and otherwise the
+// read is put in the snapshot's log.
+func (t *Table) needRows() bool {
+	if t.part == nil || t.part.rows {
+		return true
+	}
+	t.part.log.note(unloadedMessage + ": " + t.Name + " rows")
+	return false
+}
+
+// HasRow says the table declares the row. On a table loaded from a read plan
+// whose rows were not read it is refused (see Rows) and says no.
 func (t *Table) HasRow(row string) bool {
-	for _, r := range t.Rows {
+	if !t.needRows() {
+		return false
+	}
+	for _, r := range t.rows {
 		if r == row {
 			return true
 		}
@@ -218,12 +257,11 @@ func (t *Table) Cell(row, col string) []*Card {
 // result is empty, never the cards that happen to be known.
 func (t *Table) Column(cols ...string) []*Card {
 	if t.part != nil {
-		if !t.part.rows {
-			t.part.log.note(unloadedMessage + ": " + t.Name + " rows")
+		if !t.needRows() {
 			return nil
 		}
 		whole := true
-		for _, r := range t.Rows {
+		for _, r := range t.rows {
 			for _, col := range cols {
 				whole = t.need(r, col) && whole
 			}
@@ -234,7 +272,7 @@ func (t *Table) Column(cols ...string) []*Card {
 	}
 	t.index()
 	var out []*Card
-	for _, r := range t.Rows {
+	for _, r := range t.rows {
 		for _, col := range cols {
 			out = append(out, t.cells[[2]string{r, col}]...)
 		}
@@ -259,8 +297,18 @@ func (t *Table) Count(row, col string) int {
 	return len(t.cells[k])
 }
 
-// Of is the placed cards whose primary field names p, in score order.
+// Of is the placed cards whose primary field names p, in score order. On a
+// table loaded from a read plan it answers only for a primary whose cards in
+// this table a `related` query read with a follow that reaches them (rcards for
+// the readers' read cards, merge for the merge card, work and withdrawn for the
+// fleet's work cards), and gives the cards that follow loaded; for any other
+// primary it is refused (see Loaded), and the result is empty, never the cards
+// that happen to be known.
 func (t *Table) Of(p string) []*Card {
+	if t.part != nil && !t.part.followed[p] {
+		t.part.log.note(unloadedMessage + ": " + t.Name + " cards of " + p)
+		return nil
+	}
 	t.index()
 	return t.byPrimary[p]
 }
@@ -329,10 +377,12 @@ func (s *Snapshot) StreamCtl(stream string) *Card { return s.Merge.Placed(CtlID(
 // MemberCtl is a fleet member's control card.
 func (s *Snapshot) MemberCtl(member string) *Card { return s.Fleet.Placed(CtlID(member)) }
 
-// UpMembers is the fleet members whose status is up, in row order.
+// UpMembers is the fleet members whose status is up, in row order. On a
+// snapshot loaded from a read plan that did not read the fleet's rows it is
+// refused (see Table.Rows).
 func (s *Snapshot) UpMembers() []string {
 	var out []string
-	for _, m := range s.Fleet.Rows {
+	for _, m := range s.Fleet.Rows() {
 		if s.MemberCtl(m).F("status") == Up {
 			out = append(out, m)
 		}
@@ -340,8 +390,9 @@ func (s *Snapshot) UpMembers() []string {
 	return out
 }
 
-// Streams is the work table's streams, in row order.
-func (s *Snapshot) Streams() []string { return s.Work.Rows }
+// Streams is the work table's streams, in row order. On a snapshot loaded from
+// a read plan that did not read them it is refused (see Table.Rows).
+func (s *Snapshot) Streams() []string { return s.Work.Rows() }
 
 // Split is a comma list, without empty items.
 func Split(s string) []string {

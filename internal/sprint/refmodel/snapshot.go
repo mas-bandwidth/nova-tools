@@ -89,7 +89,8 @@ func cloneTable(t *sprint.Table) *sprint.Table {
 		return nil
 	}
 	c := sprint.NewTable(t.Name)
-	c.Epoch, c.Revision, c.Rows = t.Epoch, t.Revision, slices.Clone(t.Rows)
+	c.Epoch, c.Revision = t.Epoch, t.Revision
+	c.SetRows(slices.Clone(t.Rows()))
 	for row, texts := range t.Texts {
 		c.Texts[row] = maps.Clone(texts)
 	}
