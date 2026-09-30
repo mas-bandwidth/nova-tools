@@ -596,6 +596,12 @@ func definitionFields(t Table) map[string]string {
 	return m
 }
 
+// DefinitionFields is the definition hash of t.
+func DefinitionFields(t Table) map[string]string { return definitionFields(t) }
+
+// DecodeDefinition reads a definition hash; ok is false for an absent table.
+func DecodeDefinition(name string, h map[string]string) (Table, bool, error) { return decodeDefinition(name, h) }
+
 // decodeDefinition reads a definition hash; ok is false for an absent table
 // (an empty hash).
 func decodeDefinition(name string, h map[string]string) (Table, bool, error) {

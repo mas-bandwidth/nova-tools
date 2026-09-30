@@ -26,6 +26,7 @@ type application struct {
 	addr     string
 	defaults ntable.WriteOptions
 	receipts bool
+	twins    map[string]*twin
 	// getenv is the environment the login is read from (login); nil is the
 	// process's. A test hands its own, so it runs in parallel.
 	getenv func(string) string
@@ -107,7 +108,7 @@ func (c *connection) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.P
 }
 
 func (c *connection) Close() error {
-	if c.shared {
+	if c == nil || c.shared || c.Conn == nil {
 		return nil
 	}
 	return c.Conn.Close()
@@ -121,12 +122,20 @@ type tripWindow struct {
 }
 
 func (c *connection) CountTrips() *tripWindow {
+	if c == nil || c.Conn == nil {
+		return &tripWindow{}
+	}
 	if c.counter == nil {
 		c.counter = redisconn.CountTrips(c.Client())
 	}
 	return &tripWindow{c.counter, c.counter.N()}
 }
-func (w *tripWindow) N() int64 { return w.counter.N() - w.before }
+func (w *tripWindow) N() int64 {
+	if w.counter == nil {
+		return 0
+	}
+	return w.counter.N() - w.before
+}
 
 func (app *application) cmdShell(args []string, stdout, stderr io.Writer) int {
 	const verb = "shell"
@@ -159,6 +168,16 @@ func (app *application) cmdShell(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, verb, "--redis <addr> is required (or a configured seat)")
 	}
 	getenv := app.env()
+	if isTwin(*addr) {
+		if *addr == "mem" || *addr == twinPrefix {
+			return refuse(stderr, verb, "a twin is a file: --redis mem:<file> (a store in memory alone would be gone when this command ends); the twin is for learning and tests, not for a fleet")
+		}
+		if _, err := app.twinBackend(*addr); err != nil {
+			return refuse(stderr, verb, err.Error())
+		}
+		child := &application{in: in, shared: sharedConnection(nil, nil), addr: *addr, defaults: *defaults, receipts: *receipts, getenv: getenv, twins: app.twins}
+		return child.readCommands(in, stdout, stderr, *keepGoing, interactive)
+	}
 	// The login is resolved on entering, as it always was (a seat that cannot
 	// be read, a password variable that is empty, refuse the shell here); the
 	// store is dialed by the first line that needs it.
@@ -171,7 +190,7 @@ func (app *application) cmdShell(args []string, stdout, stderr io.Writer) int {
 		return openShellStore(*addr, getenv)
 	}), addr: *addr, defaults: *defaults, receipts: *receipts, getenv: getenv}
 	// prepare may replace the connection, so close the final owner, not the first.
-	defer func() { _ = child.shared.Conn.Close() }()
+	defer func() { _ = child.shared.Close() }()
 	return child.readCommands(in, stdout, stderr, *keepGoing, interactive)
 }
 

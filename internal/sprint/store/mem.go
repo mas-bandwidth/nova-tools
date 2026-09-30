@@ -275,11 +275,18 @@ func (m *Mem) Shapes(_ context.Context, tables []string) ([]ntable.Table, error)
 			}
 			for j, c := range s.Columns {
 				if c.HasSet() {
-					for _, mm := range t.members {
+					for id, mm := range t.members {
 						if mm.epoch == e && mm.placed && mm.row == r && mm.col == c.Name {
 							row.Cells[j].Count++
+							row.Cells[j].Members = append(row.Cells[j].Members, ntable.Member{Member: id, Score: mm.score})
 						}
 					}
+					sort.Slice(row.Cells[j].Members, func(a, b int) bool {
+						if row.Cells[j].Members[a].Score != row.Cells[j].Members[b].Score {
+							return row.Cells[j].Members[a].Score < row.Cells[j].Members[b].Score
+						}
+						return row.Cells[j].Members[a].Member < row.Cells[j].Members[b].Member
+					})
 				}
 			}
 			s.Rows = append(s.Rows, row)

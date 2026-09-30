@@ -34,9 +34,9 @@ A stale epoch is refused. drop keeps the saved column definition unless
 View configuration has no table epoch or receipt.
 Quote column specs containing parentheses, for example 'done,pct:pct(done)'.
 
-Store verbs take --redis <addr> (host:port or an absolute Unix socket path)
-(else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the seat's address) and
-dial as the seat --seat <name> or NOVA_SEAT names, else as
+Store verbs take --redis <addr> (host:port, an absolute Unix socket path, or
+mem:<file>) (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the seat's
+address) and dial as the seat --seat <name> or NOVA_SEAT names, else as
 NOVA_SPRINT_REDIS_USER with the password in the variable
 NOVA_SPRINT_REDIS_PASSWORD_ENV names. Flags may follow the words.
 
@@ -125,6 +125,12 @@ func run(args []string, stdout, stderr io.Writer) int {
 
 func (app *application) run(args []string, stdout, stderr io.Writer) (code int) {
 	defer recoverHelp(stdout, &code)
+	defer func() {
+		if err := app.saveTwins(); err != nil {
+			fmt.Fprintf(stderr, "nova-table: %s\n", oneline.Escape(err.Error()))
+			code = 2
+		}
+	}()
 	if len(args) == 0 {
 		return refuse(stderr, "", "no verb; available: "+rootNames())
 	}
@@ -329,15 +335,32 @@ func login(addr string, sel *seatcred.Selection, getenv func(string) string) (re
 }
 
 // client is open's connection for a verb, or its refusal.
-func (app *application) client(ctx context.Context, verb, addr string, stderr io.Writer) (*connection, *redis.Client, int) {
+func (app *application) client(ctx context.Context, verb, addr string, stderr io.Writer) (*connection, redis.Cmdable, int) {
 	if app.shared != nil {
 		if addr != app.addr {
 			return nil, nil, refuse(stderr, verb, "the shell connection is fixed; choose --redis when entering nova-table shell")
+		}
+		if isTwin(addr) {
+			tw, err := app.twinBackend(addr)
+			if err != nil {
+				return nil, nil, refuse(stderr, verb, err.Error())
+			}
+			return app.shared, tw.cmdable(), 0
 		}
 		if err := app.shared.prepare(); err != nil {
 			return nil, nil, refuse(stderr, verb, err.Error())
 		}
 		return app.shared, app.shared.Client(), 0
+	}
+	if isTwin(addr) {
+		if addr == "mem" || addr == twinPrefix {
+			return nil, nil, refuse(stderr, verb, "a twin is a file: --redis mem:<file> (a store in memory alone would be gone when this command ends); the twin is for learning and tests, not for a fleet")
+		}
+		tw, err := app.twinBackend(addr)
+		if err != nil {
+			return nil, nil, refuse(stderr, verb, err.Error())
+		}
+		return &connection{}, tw.cmdable(), 0
 	}
 	conn, err := open(ctx, addr, app.env())
 	if err != nil {
