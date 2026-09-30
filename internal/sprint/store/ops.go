@@ -111,6 +111,18 @@ func (st *Store) check(ctx context.Context, reads int, streams bool) (CheckRepor
 			rep.InFlight = s.Now.Sub(pending.At) < st.grace()
 			ops = pendingOf(*pending, st.Names)
 		}
+		// What is always true holds of the sprint as the pump will leave its
+		// work table: the tables with the work table's queue applied. The
+		// log's rules hold of the tables as stored: the log's move lines
+		// are the pump's.
+		stored := s
+		if f2.Queued > 0 {
+			q, err := st.B.QueueRead(ctx)
+			if err != nil {
+				return rep, nil, err
+			}
+			s = sprint.WithQueue(s, q)
+		}
 		rep.Violations = sprint.Check(s, ops)
 		if pending == nil && streams {
 			lines, err := st.logUpTo(ctx, logTail)
@@ -121,7 +133,7 @@ func (st *Store) check(ctx context.Context, reads int, streams bool) (CheckRepor
 			if err != nil {
 				return rep, nil, err
 			}
-			rep.Violations = append(rep.Violations, sprint.LogViolations(s, lines)...)
+			rep.Violations = append(rep.Violations, sprint.LogViolations(stored, lines)...)
 			rep.Violations = append(rep.Violations, sprint.StreamViolations(lines, inbox)...)
 		}
 		held, err := st.heldState(ctx, s, pending)
