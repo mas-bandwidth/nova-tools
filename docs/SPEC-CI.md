@@ -1104,6 +1104,39 @@ bounds; the class tests do not time a hosted leg, dev's push run does.
 The heavy list is named from one reader measurement, not from a hosted
 per-package timing.
 
+### `darwin-gate` — the darwin unit shards run only where the target branch is dev or main
+
+**The rule.** ci.yml's `test-packages` deals the unit matrix, and its `list` step
+deals the darwin shards only when `DARWIN_BRANCHES` (`main dev`, the integration
+list of the concurrency group in short form) holds the event's target branch: a
+pull_request's `github.base_ref`, the merge queue's `github.event.merge_group.base_ref`
+(its `refs/heads/` prefix cut), a push's `github.ref_name`. `schedule` and
+`workflow_dispatch` keep the shape they have. With the gate off every selected
+package rides the Linux shards, the darwin-only packages (`cmd/nova-sandbox`,
+`internal/sandbox`) have no leg, the darwin-sensitivity analysis does not run, and
+a change that selected only darwin-only packages gets the one leg that prints
+"nothing to test for this change". Linux shards are unchanged, `ci-ok` reads the
+`test` job whose matrix has no darwin entry on a working branch, and
+certification.yml (which runs on pushes to dev, nightly and on dispatch, and certifies on darwin) is untouched. A change that touches only darwin-only packages gets no test run until it reaches dev. No ruleset
+applies to a working branch, so no darwin check is required there.
+**The mistake it prevents.** The Go is the same Go on both OSes and the darwin legs
+are the slowest and the scarcest: cancelled at the two-minute cap whenever their
+host is loaded, they turned a working-branch pull request red for a reason the
+change did not cause and held the queue behind them.
+**The test.** `TestDarwinShardsRunOnlyForIntegrationBranches`
+(`internal/ci/darwin_gate_class_test.go`) reads ci.yml's list step: the branch list
+equals the integration list, each event reads its own target branch, the deal loop
+sends every package to a Linux shard before it can append to the darwin group
+while the gate is off, the darwin-only-only change falls back to the empty leg, and
+no other job carries a macOS label on a `runs-on` list (any position, quoted or
+block form, any case) or runs macos-latest on a pull_request or merge_group.
+`TestMacOSRunnerMatchCatchesEveryPosition` holds that label match itself.
+**Its allowlist.** None.
+**Its remedy line.** Put the darwin leg behind `darwin_on`, or add the branch to the
+integration list and to `DARWIN_BRANCHES` together.
+**Its narrowings.** It reads the workflow as text and does not run the step; the
+branch expressions are GitHub's.
+
 ### `cert-race-shards` — the whole-tree race run meets the cap by shards, its cache saved before the tests
 
 **The rule.** certification.yml's `test` job keeps `timeout-minutes: 2` and meets
@@ -2487,6 +2520,42 @@ the original failed measurement.
 **What is found.** The name inventory of `generality_class_test.go` (no name is added by this test), and three patterns: `tailnet-address` (an IPv4 address in `100.64.0.0/10`, an IPv6 address under the tailnet prefix, a `.ts.net` hostname; the two ranges written as CIDRs are the concept and pass), `home-path` (`/Users/<name>`, `/home/<name>`, `C:\Users\<name>` whose name is not a generic one: a documented placeholder, a container user this repository defines, a hosted runner's), and any reference to the organisation's account other than the project's own public links, which are its identity and not fleet names (a documented pattern, not list rows): the repository's own path (the module path and issue references), the seed repository it grows from, the secrets store design's repository, (each anchored on the left: the start of a line, a character that cannot continue a path, or a URL prefix, so a longer path that merely ends in one does not pass), and the project's two published contact addresses, those exact addresses and no other local part, in `docs/SECURITY.md` only.
 **Its lists.** `internal/ci/testdata/generality_text_fixtures_allowlist.txt`, `path reason`, whole files that are recorded data (captured output, a verbatim excerpt of a real record, a recorded reply of a public repository), a reason on every row; and `internal/ci/testdata/generality_text_allowlist.txt`, `path:token count`, the debt that existed when the scan was widened. Both only shrink: an unlisted finding, a rising count, a falling count and a stale row each fail, and `NOVA_CI_UPDATE=1` removes rows and never adds one.
 **Its narrowings.** The scan reads the files the shared walk finds with a suffix of `.lua .tsv .yml .yaml .j2 .md .sh .json .txt .ini .tmpl .tla .lisp .sexp .cfg .card .sql .py .ps1 .jsonl .log .notes`, and the files named `Makefile` and `Containerfile`; `.go` files are the other test's, and `deprecated/` and `.git` are never read. There is no marked-example exemption: a doc example is written with a generic name. A `[:space:]` character class is syntax and not a finding.
+
+### `remedy` — every refusal in the tools names its next step
+
+**The rule.** The owner's rule for every tool (2026-09-30): "they should never fail silently, and they should always provide helpful breadcrumbs how to fix anything going wrong." Every refusal site in a non-test `.go` file under `cmd/` prints a remedy in the house form: `run: <command>` (a malformed invocation's is `<tool> <verb> -h`), `remedy=` on an event line, `wants <x>`, `see <where>`, `rerun`, or an imperative naming the flag, the file or the value (`pass --overwrite`, `give 1 to 64`). The forms are one list, `oneline.HasRemedy`, which the rule and the printers share; a printer ends a line that names none with `oneline.WithRemedy(what, next)`.
+**The mistake it prevents.** A refusal that says what is wrong and nothing about what to do: `DRAFT REFUSED: write <path>: permission denied`, `nova-sandbox version` exiting 0 over a flag it never read, `SECRETS EXEC FAIL invocation: missing '--' delimiter` with no pointer to the form.
+**The test.** `TestEveryRefusalCarriesARemedy` (`internal/ci/remedy_class_test.go`), with the three sites proved over source in `TestRemedyRuleReadsTheThreeSites`. It finds a refusal three ways: a call to the package's refusal printer (a function with an `io.Writer` parameter whose name holds `refus`; it is clear when the printer prints a remedy itself, directly or through another printer, or when its arguments do); a `fmt` print whose text holds `REFUSED`, `refused`, `refusing` or `cannot`; and an exit-2 path (`return 2`, `os.Exit(2)`), read with the prints just before it in its block. The runtime half is `testverbhelp.RefusalProblems`, run by every tool's verb-help test: each verb handed `--no-such-flag-breadcrumb` exits non-zero, says something on stderr that names the flag, the usage or a remedy, closes no stdout line with OK, and writes nothing.
+**Its allowlist.** `internal/ci/testdata/remedy_allowlist.txt`, `file:function:kind <sites> <why>`, kind `refuse-call`, `refuse-print` or `exit-2`; `<sites>` is how many unremedied sites the row covers. Shrink-only by site and by row: a new site under a listed key makes the measured count exceed the row's and the run is red; a fixed site leaves the count too high and the run is red until it is lowered (`NOVA_CI_UPDATE=1` lowers a count and drops a row with no site left, and never raises a count or adds a row); the row count has a `# ceiling:`; a row with no reason is red.
+**Its remedy line.** `` <file:function:kind> prints no remedy (<text>); end the line with `; run: <command>` (or `remedy:`, `wants <x>`, `see <tool> help <verb>`) so the reader knows the next step``; for a row whose count is exceeded, `<ledger> lists <key> at <n> sites, but <m> are there now (<the sites>)`; for a row whose count is too high, `lower the row's count to <m>`; for a stale row, `delete the stale row (the list only shrinks; NOVA_CI_UPDATE=1 drops it)`. A remedy is what `oneline.HasRemedy` reads: `run:`, `remedy:`, `fix:`, `wants`, a help pointer (`nova-<tool> help <verb>`), an imperative that names a flag, or `see`/`retry`/`try`/`want` followed by a flag or a command in backticks; the bare words `see`, `want`, `retry` and `help` in a sentence are not one.
+**Its narrowings.** The text read is the call's string literals and the package's string constants: a remedy carried inside an error's own text (redisconn's `next:` step) is not seen, and a line built into a variable before it is printed is read as no line. An exit 2 inside `if <check>(..., stderr) { return 2 }`, after `fs.Parse`, or on a flag an earlier printed refusal set (`bad = true`, `if bad { return 2 }`) is judged where the line was printed. A print that says `usage` or runs to three lines is help, not a refusal. Fixtures under `testdata/` are not read.
+
+### `no-ok-on-failure` — a failed run's last word is never OK
+
+**The rule.** An OK line is never followed by a non-zero exit, and a FAIL or REFUSED line never by exit 0 (docs/CLI-STYLE.md (e): the closing status of a failed run is FAIL). A line printed OK on every outcome and then an exit code carried in a variable is the same mistake.
+**The mistake it prevents.** `QUICKSTART OK done=2 worst-exit=1` over two failed checks: a reader who stops at the word reads a pass.
+**The test.** `TestNoOKOnFailure` (`internal/ci/okonfailure_class_test.go`), with `TestOKOnFailureRuleReadsBothWays` over source. In every block of a non-test `.go` file under `cmd/` it pairs each `return <n>` or `os.Exit(<n>)` with the `fmt` prints just before it: the word that counts is the last status line the run printed (the last line holding an OK event word, or a FAIL or REFUSED word): an OK event line (upper-case tokens, then `OK`) then a non-zero literal is `ok-nonzero`, a FAIL or REFUSED line then 0 is `fail-zero`, and an OK line then `return code` (a variable named for an exit) is `ok-carried`. An OK printed after a REFUSED, then `return 2`, is `ok-nonzero`. The runtime half is `testverbhelp.RefusalProblems` (see `remedy`).
+**Its allowlist.** `internal/ci/testdata/okonfailure_allowlist.txt`, `file:function:kind <sites> <why>`, shrink-only by site and by row as in `remedy`.
+**Its remedy line.** `prints "<line>", then exits <n>; a failed run's last word is FAIL or REFUSED, never OK`, and for `ok-carried`, `print OK only when <code> is 0, FAIL otherwise`.
+**Its narrowings.** Only prints that stand directly before the exit in the same block are read, and only literal exit codes (or, for `ok-carried`, a variable named `code`, `worst`, `exit`, `rc`, `status` or `result`); an OK printed by a helper, or a code decided far from its line, is not seen.
+
+### `discarded` — no error thrown away without its reason
+
+**The rule.** In every non-test `.go` file under `cmd/`, `internal/` and `tools/`, three shapes carry `// ignored: <reason>` on their line or the line above: `_ = <call>` and `_, _ = <call>` (every left side blank) and `_ = err`; `if err != nil { ... return }` with a bare return and no read of `err`; and `err = nil`. The reason is real (a best-effort cleanup whose failure path returns the error that matters, a close after a read that already succeeded, a kill of a process that may already be gone); a failure that hides is fixed instead: returned, or printed as one line with its remedy.
+**The mistake it prevents.** A staged checkout whose origin still named the mirror; a secrets invariant that skipped a file it could not read and passed over it; a decision-log row and a usage row lost with no line.
+**The test.** `TestNoErrorIsDiscarded` (`internal/ci/discarded_class_test.go`), with `TestDiscardedRuleReadsTheThreeShapes` over source and `TestSiteLedgerShrinksBySiteNotByRow` for the counted ledger the four never-silent rules (`remedy`, `no-ok-on-failure`, `discarded`, `script-hide`) share.
+**Its allowlist.** `internal/ci/testdata/discarded_allowlist.txt`, `file:function:shape <sites> <why>`, shape `blank`, `bare-return` or `err-nil`; each row a failure that goes silent today and wants more than a comment (a writer the function does not have, a caller that drops what it returns, a design call). Shrink-only by site and by row as in `remedy`: a discard with no `// ignored:` under a listed function raises the function's count and the run is red, so a site leaves the ledger by gaining its reason or its fix, and then its count is lowered. A row with no reason is red.
+**Its remedy line.** `the call's error is dropped; return it, print it as one line with its remedy, or say why it is safe with `// ignored: <reason>` on this line or the one above` (and the same for the other two shapes).
+**Its narrowings.** The rule reads syntax, not types: `_ = <call>` is read whatever the call returns, except a builtin, a conversion and a flag definition (`fs.String(name, value, usage)`, which returns a pointer); a call whose error is dropped as a bare statement (`f.Close()`, `defer f.Close()`) is not read. A comment in `internal/tlc/suite.go` restales every TLC record, so that site waits in the ledger for the next TLC run.
+
+### `script-hide` — no script or play hides a failure without its reason
+
+**The rule.** Every line of a script or a play under `fleet/`, `scripts/`, `infra/` and `tools/` (`.sh`, `.yml`, `.yaml`, `.j2`, `.ps1`; `*_test.sh` and `testdata/` aside) that forces an exit to success (`|| true`), sends an error stream nowhere (`2>/dev/null`, `&>/dev/null`, `>/dev/null 2>&1`, `2>$null`), or makes a task unable to fail (`failed_when: false`, `ignore_errors: true`) carries `# ignored: <reason>` on the line or the line above. `command -v x >/dev/null 2>&1` asks a question whose answer is the exit and is not read.
+**The mistake it prevents.** A bench check that runs `nova-secrets check >/dev/null 2>&1` and prints its own line, dropping the check's reason and remedy; a sweep whose `rm -rf` errors go nowhere while the disk stays full; a formatter whose parse errors read as formatted.
+**The test.** `TestNoScriptHidesAFailure` (`internal/ci/discarded_class_test.go`), with `TestScriptHideRuleReadsTheShapes` for the line reader.
+**Its allowlist.** `internal/ci/testdata/scripthide_allowlist.txt`, `file:shape <sites> <why>`, shape `or-true`, `stderr-null`, `failed-when-false` or `ignore-errors`; the reason names the lines that hide a failure the operator should see. `fleet/` is being reworked, so its rows wait for that. Shrink-only by site and by row as in `remedy`: a new `|| true` or `2>/dev/null` in a listed file raises that file's count for the shape and the run is red, and a line leaves the ledger by gaining its `# ignored: <reason>` or its fix, after which the row's count is lowered.
+**Its remedy line.** `"<line>" throws a failure away; let it show, or say why it is safe with `# ignored: <reason>` on this line or the one above`.
+**Its narrowings.** Keyed by file and shape and counted by line: each unreasoned line of a listed shape in a listed file is a site. A Go string literal holding a script (`tools/functionalrun`) is the `silent` rule's, on the live path only.
 
 ## How the class tests read the tree: one walk, one parse, in parallel
 

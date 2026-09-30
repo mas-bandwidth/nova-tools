@@ -109,11 +109,14 @@ func killPidWithStrategy(pid int, started string, force bool, strat WindowsKillS
 	case StrategyTaskkill:
 		if err := killPidTaskkill(pid, force); err != nil {
 			// Fallback to direct syscall if taskkill executable fails or is unavailable
+			// ignored: the fallback after taskkill failed; the caller reads liveness afterwards
 			_ = killPidSyscall(pid)
 		}
 	case StrategySyscall:
+		// ignored: a kill of a process that may already have exited; the caller reads liveness afterwards
 		_ = killPidSyscall(pid)
 	default:
+		// ignored: a kill of a process that may already have exited; the caller reads liveness afterwards
 		_ = killPidSyscall(pid)
 	}
 }

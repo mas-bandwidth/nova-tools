@@ -82,6 +82,11 @@ type twin struct {
 	mem  *store.Mem
 	last []byte
 	mu   sync.Mutex
+	// idErr is the first failure to record the id counter: newID has no error
+	// to return (store.Store.NewID is a func() string), and a counter that was
+	// not kept would hand the same id out again, so saveTwins reports it and the
+	// verb fails rather than repeating an id.
+	idErr error
 }
 
 // keyIDs is the twin's record of the operation-id families it has handed out.
@@ -102,7 +107,9 @@ func (t *twin) newID() string {
 		n, _ = strconv.Atoi(v)
 	}
 	n++
-	_ = t.mem.SetKey(ctx, keyIDs, strconv.Itoa(n))
+	if err := t.mem.SetKey(ctx, keyIDs, strconv.Itoa(n)); err != nil && t.idErr == nil {
+		t.idErr = fmt.Errorf("the twin file %s could not record its id counter: %w; run the verb again", t.path, err)
+	}
 	return "t" + strconv.Itoa(n)
 }
 
@@ -142,6 +149,13 @@ func (a *app) twinBackend(addr string) (store.Backend, error) {
 func (a *app) saveTwins() error {
 	var first error
 	for _, t := range a.twins {
+		t.mu.Lock()
+		idErr := t.idErr
+		t.idErr = nil
+		t.mu.Unlock()
+		if idErr != nil && first == nil {
+			first = idErr
+		}
 		doc, err := t.mem.Snapshot()
 		if err == nil && string(doc) == string(t.last) {
 			continue
@@ -183,7 +197,7 @@ func writeAtomic(path string, doc []byte) error {
 		err = os.Rename(name, path)
 	}
 	if err != nil {
-		_ = os.Remove(name)
+		_ = os.Remove(name) // ignored: a best-effort removal of the temporary file; the write's error is the one returned
 	}
 	return err
 }

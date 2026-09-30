@@ -272,6 +272,7 @@ func runHarness(ctx context.Context, o ReplayOptions, dir, label string, mutate 
 	if err != nil {
 		return "", err
 	}
+	// ignored: a deferred cleanup of this call's own scratch directory
 	defer func() { _ = safepath.RemoveUnder(dir, root) }()
 	for _, m := range modelModules {
 		raw, err := os.ReadFile(filepath.Join(o.Models, m+".tla"))

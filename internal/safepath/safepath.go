@@ -416,6 +416,7 @@ func (p Policy) RemoveUnderRoots(path string, roots ...string) error {
 // addUserWrite makes the tree writable, best effort, the way the old script's
 // `chmod -R u+w` ran before its `rm -rf`.
 func addUserWrite(root string) {
+	// ignored: best effort by design (see the comment above); the removal that follows reports what it could not remove
 	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return nil
@@ -427,6 +428,7 @@ func addUserWrite(root string) {
 		if err != nil {
 			return nil
 		}
+		// ignored: best effort by design; the removal that follows reports what it could not remove
 		_ = os.Chmod(p, info.Mode().Perm()|0o200)
 		return nil
 	})

@@ -211,7 +211,7 @@ func PrintedArguments(t *testing.T, cfg Config) {
 	files := sources(t)
 	consts := packageConsts(files)
 
-	escapers := map[string]bool{"oneline.Escape": true, "oneline.Field": true, "oneline.Err": true}
+	escapers := map[string]bool{"oneline.Escape": true, "oneline.Field": true, "oneline.Err": true, "oneline.WithRemedy": true}
 	for _, e := range cfg.Escapers {
 		escapers[e] = true
 	}

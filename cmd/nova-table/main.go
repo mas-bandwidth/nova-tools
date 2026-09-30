@@ -309,6 +309,7 @@ func login(addr string, sel *seatcred.Selection, getenv func(string) string) (re
 			return o, nil, err
 		}
 		var password string
+		// ignored: Use fails only when its function is nil or fails, and this one does neither
 		_ = c.Password.Use(func(pw string) error { password = pw; return nil })
 		o.User, o.PasswordEnv = c.User, c.Key
 		return o, func(k string) string {
