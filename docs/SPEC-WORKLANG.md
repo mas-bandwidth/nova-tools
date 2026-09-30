@@ -10,9 +10,9 @@ The living caller is `nova-tokens fold --units <set.lisp>`. It loads the set wit
 `Branch()` and `Lane()` to attribute a transcript's spend to a unit;
 [SPEC-TOKENS.md](SPEC-TOKENS.md) specifies that attribution rule.
 
-The package also holds a plan form (`ParsePlan`, `ExpandPlan`, `Plan.Graph`), a checker
-(`WorkSet.Check`, `Ready`, `Blocked`), an attempt writer (`Record`, `Take`) and an admission
-request (`Unit.Request`). No living tool calls them, and this page does not specify them.
+The package also holds a plan form (`ParsePlan`, `Plan.Graph`), a checker
+(`WorkSet.Check`, `Ready`, `Blocked`) and an attempt writer (`Record`, `Take`). No living
+tool calls them, and this page does not specify them.
 
 ## 1. The reader
 

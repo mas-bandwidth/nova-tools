@@ -71,7 +71,6 @@ var DefaultCatalog = []Entry{
 	E("internal/goenv", "Go environment scrubber for child processes", "go test ./internal/goenv", "go test ./internal/goenv"),
 	E("internal/hostload", "a machine's load: CPU busy percent of all its cores, else the load average over them", "go test ./internal/hostload", "go test ./internal/hostload"),
 	E("internal/hygiene", "clean checkout and leak assertions", "go test ./internal/hygiene", "go test ./internal/hygiene"),
-	E("internal/jobs", "the job graph and admission kernel internal/worklang imports", "go test ./internal/jobs", "go test ./internal/jobs"),
 	E("internal/keyshape", "cryptographic key format verification", "go test ./internal/keyshape", "go test ./internal/keyshape"),
 	E("internal/lanes", "lane cursor and dispatch isolation", "go test ./internal/lanes", "go test ./internal/lanes"),
 	E("internal/log", "structured logging helpers", "go test ./internal/log", "go test ./internal/log"),

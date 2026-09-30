@@ -851,3 +851,15 @@ internal/wake/slotlease_test.go internal/wake is deleted (dead code: a second sl
 internal/wake/state_test.go internal/wake is deleted (dead code: the retired nova-wake watch state)
 internal/wake/waitbookkeeping_test.go internal/wake is deleted (dead code: the retired nova-wake wait bookkeeping)
 internal/wake/waitbookkeepingspec_test.go internal/wake is deleted (dead code: the retired nova-wake wait bookkeeping spec)
+internal/jobs/admission_test.go internal/jobs is deleted (dead code: the job graph and admission kernel, reached only by the unbuilt deprecated nova-work)
+internal/jobs/duplicateneeds_test.go internal/jobs is deleted (dead code: the job graph and admission kernel, reached only by the unbuilt deprecated nova-work)
+internal/jobs/issue1796_test.go internal/jobs is deleted (dead code: the job graph and admission kernel, reached only by the unbuilt deprecated nova-work)
+internal/jobs/issue2239_test.go internal/jobs is deleted (dead code: the job graph and admission kernel, reached only by the unbuilt deprecated nova-work)
+internal/jobs/issue2240_test.go internal/jobs is deleted (dead code: the job graph and admission kernel, reached only by the unbuilt deprecated nova-work)
+internal/jobs/issue2250_test.go internal/jobs is deleted (dead code: the job graph and admission kernel, reached only by the unbuilt deprecated nova-work)
+internal/jobs/jobs_test.go internal/jobs is deleted (dead code: the job graph and admission kernel, reached only by the unbuilt deprecated nova-work)
+internal/worklang/admit_test.go worklang's plan expansion (ExpandPlan, ExpandDir) and admission request (Unit.Request) are deleted (dead code: only the unbuilt deprecated nova-work called them); ParseWorkSet, Read, Form, Limits and Refusal keep their tests
+internal/worklang/expand_test.go worklang's plan expansion (ExpandPlan, ExpandDir) and admission request (Unit.Request) are deleted (dead code: only the unbuilt deprecated nova-work called them); ParseWorkSet, Read, Form, Limits and Refusal keep their tests
+internal/worklang/expandfields_test.go worklang's plan expansion (ExpandPlan, ExpandDir) and admission request (Unit.Request) are deleted (dead code: only the unbuilt deprecated nova-work called them); ParseWorkSet, Read, Form, Limits and Refusal keep their tests
+internal/worklang/issue2187_test.go worklang's plan expansion (ExpandPlan, ExpandDir) and admission request (Unit.Request) are deleted (dead code: only the unbuilt deprecated nova-work called them); ParseWorkSet, Read, Form, Limits and Refusal keep their tests
+internal/worklang/issue2246_test.go worklang's plan expansion (ExpandPlan, ExpandDir) and admission request (Unit.Request) are deleted (dead code: only the unbuilt deprecated nova-work called them); ParseWorkSet, Read, Form, Limits and Refusal keep their tests

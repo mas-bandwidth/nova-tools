@@ -163,8 +163,6 @@ internal/fleet/registry.go:vision 1
 internal/fuse/fuse.go:space 4
 internal/hygiene/glob.go:emma 1
 internal/hygiene/hygiene.go:space 1
-internal/jobs/admission.go:stella 1
-internal/jobs/admission.go:studio 1
 internal/log/slog.go:space 1
 internal/memindex/memindex.go:space 5
 internal/memindex/verify.go:space 1

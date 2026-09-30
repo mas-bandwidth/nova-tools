@@ -121,7 +121,6 @@ github.com/mas-bandwidth/nova-tools/internal/ci/slowtests	-	0.6
 github.com/mas-bandwidth/nova-tools/internal/dispatch	-	0.6
 github.com/mas-bandwidth/nova-tools/internal/fleet	-	0.6
 github.com/mas-bandwidth/nova-tools/internal/goenv	-	0.6
-github.com/mas-bandwidth/nova-tools/internal/jobs	-	0.6
 github.com/mas-bandwidth/nova-tools/internal/log	-	0.6
 github.com/mas-bandwidth/nova-tools/internal/oneline/audit	-	0.6
 github.com/mas-bandwidth/nova-tools/internal/ci	-	-
