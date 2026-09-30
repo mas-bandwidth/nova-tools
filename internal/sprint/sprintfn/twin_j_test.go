@@ -109,20 +109,23 @@ func (r *jRig) line(seq int) jLine {
 	return l
 }
 
-func jkey(name string) string { return testPrefix + "sprint:" + name + "@0" }
+// jk is a per epoch sprint key at epoch 0, with the test deployment's prefix.
+func jk(name string) string { return testPrefix + "sprint:" + name + "@0" }
 
-func req(op, typ, cause string, subjects ...string) NoteReq {
+// jReq is a note request with no text, decisions or time.
+func jReq(op, typ, cause string, subjects ...string) NoteReq {
 	return NoteReq{Op: op, Type: typ, Cause: cause, Subjects: subjects}
 }
 
-// hold is a wait on a condition the tick keeps, until running time until.
-func hold(typ, cause string, until int64, subjects ...string) NoteReq {
-	r := req(JOpHold, typ, cause, subjects...)
+// jHold is a wait on a condition the tick keeps, until running time until.
+func jHold(typ, cause string, until int64, subjects ...string) NoteReq {
+	r := jReq(JOpHold, typ, cause, subjects...)
 	r.Until = until
 	return r
 }
 
-func str(n int64) string { return strconv.FormatInt(n, 10) }
+// jStr is a decimal.
+func jStr(n int64) string { return strconv.FormatInt(n, 10) }
 
 func (r *jRig) hash(key string) map[string]string {
 	return r.keys()[key].Hash
@@ -161,11 +164,11 @@ func (r *jRig) wantZSet(key string, want map[string]float64) {
 // Types of 2.2 and 2.5 the tests use. "no fleet member is up" is one the tick
 // keeps whose words Layer 3's ingest also has (its owner key is deal).
 const (
-	tCannotAsk = "cannot ask"
-	tNoMember  = "no fleet member is up"
-	tBlocked   = "a primary is blocked on something dropped"
-	tDone      = "the sprint is done"
-	tStopped   = "the machine is STOPPED and moves are due"
+	jtCannotAsk = "cannot ask"
+	jtNoMember  = "no fleet member is up"
+	jtBlocked   = "a primary is blocked on something dropped"
+	jtDone      = "the sprint is done"
+	jtStopped   = "the machine is STOPPED and moves are due"
 )
 
 // TestJOnePerCauseRace (8.1 IT15): two steps planned from one read, each asking
@@ -175,28 +178,28 @@ const (
 func TestJOnePerCauseRace(t *testing.T) {
 	t.Parallel()
 	r := newJRig(t, false)
-	first := r.step(req(JOpOpen, tCannotAsk, "c", "p1"))
+	first := r.step(jReq(JOpOpen, jtCannotAsk, "c", "p1"))
 	if first.Reply.Lines != 1 || first.Reply.FirstSeq != "1" {
 		t.Fatalf("the first step wrote %d lines from %s", first.Reply.Lines, first.Reply.FirstSeq)
 	}
-	r.wantHash(jkey("jopen:p1"), map[string]string{"cannot ask|c": "n1"})
+	r.wantHash(jk("jopen:p1"), map[string]string{"cannot ask|c": "n1"})
 	before := r.img()
 
-	second := r.step(req(JOpOpen, tCannotAsk, "c", "p1"))
+	second := r.step(jReq(JOpOpen, jtCannotAsk, "c", "p1"))
 	if second.Reply.Lines != 0 || r.img() != before {
 		t.Fatalf("the second step wrote %d lines or changed the twin: one judgment per cause", second.Reply.Lines)
 	}
 
-	both := r.step(req(JOpOpen, tCannotAsk, "c", "p1", "p2"))
+	both := r.step(jReq(JOpOpen, jtCannotAsk, "c", "p1", "p2"))
 	if both.Reply.Lines != 1 {
 		t.Fatalf("a step of a subject that has it and one that has not wrote %d lines, want 1", both.Reply.Lines)
 	}
 	if l := r.line(2); !reflect.DeepEqual(l.About, []string{"p2"}) {
 		t.Fatalf("the new note names %v, want only p2", l.About)
 	}
-	r.wantHash(jkey("jopen:p1"), map[string]string{"cannot ask|c": "n1"})
-	r.wantHash(jkey("jopen:p2"), map[string]string{"cannot ask|c": "n2"})
-	r.wantHash(jkey("jn"), map[string]string{"n1": "1", "n2": "1"})
+	r.wantHash(jk("jopen:p1"), map[string]string{"cannot ask|c": "n1"})
+	r.wantHash(jk("jopen:p2"), map[string]string{"cannot ask|c": "n2"})
+	r.wantHash(jk("jn"), map[string]string{"n1": "1", "n2": "1"})
 }
 
 // TestJWaitHoldsUntilTime (8.1 IT15): a wait on a condition the tick keeps
@@ -207,50 +210,50 @@ func TestJOnePerCauseRace(t *testing.T) {
 func TestJWaitHoldsUntilTime(t *testing.T) {
 	t.Parallel()
 	r := newJRig(t, false)
-	r.step(req(JOpOpen, tCannotAsk, "c", "p1"))
+	r.step(jReq(JOpOpen, jtCannotAsk, "c", "p1"))
 	until := r.wall() + 60_000
-	held := r.step(hold(tCannotAsk, "c", until, "p1"))
+	held := r.step(jHold(jtCannotAsk, "c", until, "p1"))
 	if held.Reply.Lines != 1 {
 		t.Fatalf("the wait wrote %d lines, want its hold line", held.Reply.Lines)
 	}
-	r.wantHash(jkey("jopen:p1"), map[string]string{"cannot ask|c": "hn1"})
-	r.wantZSet(jkey("due"), map[string]float64{"hold:n1": float64(until)})
-	r.wantZSet(jkey("jnotes"), nil)
-	r.wantHash(jkey("jn"), nil)
-	r.wantZSet(jkey("askwait"), map[string]float64{"p1": float64(r.wall())})
-	if l := r.line(2); l.Meta["op"] != "hold" || l.Meta["note"] != "n1" || l.Meta["until"] != str(until) || l.Meta["kind"] != nil {
+	r.wantHash(jk("jopen:p1"), map[string]string{"cannot ask|c": "hn1"})
+	r.wantZSet(jk("due"), map[string]float64{"hold:n1": float64(until)})
+	r.wantZSet(jk("jnotes"), nil)
+	r.wantHash(jk("jn"), nil)
+	r.wantZSet(jk("askwait"), map[string]float64{"p1": float64(r.wall())})
+	if l := r.line(2); l.Meta["op"] != "hold" || l.Meta["note"] != "n1" || l.Meta["until"] != jStr(until) || l.Meta["kind"] != nil {
 		t.Fatalf("the hold line's meta is %v", l.Meta)
 	}
 
 	// Under the hold the owner rule raises nothing of that cause and subject.
 	img := r.img()
-	if again := r.step(req(JOpOpen, tCannotAsk, "c", "p1")); again.Reply.Lines != 0 || r.img() != img {
+	if again := r.step(jReq(JOpOpen, jtCannotAsk, "c", "p1")); again.Reply.Lines != 0 || r.img() != img {
 		t.Fatalf("an open under a hold wrote %d lines or changed the twin", again.Reply.Lines)
 	}
 	// Another cause on the same subject is not held.
-	if other := r.step(req(JOpOpen, tCannotAsk, "d", "p1")); other.Reply.Lines != 1 {
+	if other := r.step(jReq(JOpOpen, jtCannotAsk, "d", "p1")); other.Reply.Lines != 1 {
 		t.Fatalf("an open of another cause wrote %d lines, want 1", other.Reply.Lines)
 	}
 
 	// The hold runs out: R13 unholds, and the owner rule raises the judgment again.
 	r.now = r.now.Add(61 * time.Second)
-	un := r.step(req(JOpUnhold, tCannotAsk, "c", "p1"))
+	un := r.step(jReq(JOpUnhold, jtCannotAsk, "c", "p1"))
 	if un.Reply.Lines != 1 {
 		t.Fatalf("the unhold wrote %d lines, want its unheld line", un.Reply.Lines)
 	}
-	if _, there := r.hash(jkey("jopen:p1"))["cannot ask|c"]; there {
+	if _, there := r.hash(jk("jopen:p1"))["cannot ask|c"]; there {
 		t.Fatal("the unhold left the field in jopen")
 	}
-	if _, there := r.zset(jkey("askwait"))["p1"]; !there {
+	if _, there := r.zset(jk("askwait"))["p1"]; !there {
 		t.Fatal("the cause d of p1 is open, and askwait names p1 while any is")
 	}
 	if l := r.line(4); l.Meta["op"] != "unhold" || l.Meta["note"] != "n1" || l.Meta["kind"] != sprint.Decided {
 		t.Fatalf("the unheld line's meta is %v", l.Meta)
 	}
-	again := r.step(req(JOpOpen, tCannotAsk, "c", "p1"))
-	if again.Reply.Lines != 1 || r.hash(jkey("jopen:p1"))["cannot ask|c"] != "n5" {
+	again := r.step(jReq(JOpOpen, jtCannotAsk, "c", "p1"))
+	if again.Reply.Lines != 1 || r.hash(jk("jopen:p1"))["cannot ask|c"] != "n5" {
 		t.Fatalf("after the hold the owner rule raises the judgment again: lines %d, field %q",
-			again.Reply.Lines, r.hash(jkey("jopen:p1"))["cannot ask|c"])
+			again.Reply.Lines, r.hash(jk("jopen:p1"))["cannot ask|c"])
 	}
 }
 
@@ -262,31 +265,31 @@ func TestJWaitHoldsUntilTime(t *testing.T) {
 func TestJHoldEndsWhenConditionClears(t *testing.T) {
 	t.Parallel()
 	r := newJRig(t, false)
-	r.step(req(JOpOpen, tNoMember, "c", "sprint"))
+	r.step(jReq(JOpOpen, jtNoMember, "c", "sprint"))
 	until := r.wall() + 60_000
-	r.step(hold(tNoMember, "c", until, "sprint"))
-	r.wantHash(jkey("jopen:sprint"), map[string]string{"no fleet member is up|c": "hn1"})
+	r.step(jHold(jtNoMember, "c", until, "sprint"))
+	r.wantHash(jk("jopen:sprint"), map[string]string{"no fleet member is up|c": "hn1"})
 
-	closed := r.step(req(JOpClose, tNoMember, "c", "sprint"))
+	closed := r.step(jReq(JOpClose, jtNoMember, "c", "sprint"))
 	if closed.Reply.Lines != 1 {
 		t.Fatalf("the close wrote %d lines, want 1", closed.Reply.Lines)
 	}
-	r.wantHash(jkey("jopen:sprint"), nil)
-	r.wantHash(jkey("jn"), nil)
+	r.wantHash(jk("jopen:sprint"), nil)
+	r.wantHash(jk("jn"), nil)
 	if l := r.line(3); l.Meta["op"] != "close" || l.Meta["note"] != "n1" || l.Meta["kind"] != sprint.Decided {
 		t.Fatalf("the close line's meta is %v", l.Meta)
 	}
-	if _, there := r.zset(jkey("due"))["hold:n1"]; !there {
+	if _, there := r.zset(jk("due"))["hold:n1"]; !there {
 		t.Fatal("the hold entry was removed by a close; it is left to fire (one hold may name several subjects)")
 	}
 
 	// The hold entry fires: R13's unhold finds no hold and writes nothing.
 	img := r.img()
-	if un := r.step(req(JOpUnhold, tNoMember, "c", "sprint")); un.Reply.Lines != 0 || r.img() != img {
+	if un := r.step(jReq(JOpUnhold, jtNoMember, "c", "sprint")); un.Reply.Lines != 0 || r.img() != img {
 		t.Fatalf("an unhold of nothing wrote %d lines or changed the twin", un.Reply.Lines)
 	}
 	// And the wait has ended: the owner rule raises again at once.
-	if again := r.step(req(JOpOpen, tNoMember, "c", "sprint")); again.Reply.Lines != 1 {
+	if again := r.step(jReq(JOpOpen, jtNoMember, "c", "sprint")); again.Reply.Lines != 1 {
 		t.Fatalf("an open after the close wrote %d lines, want 1", again.Reply.Lines)
 	}
 }
@@ -302,7 +305,7 @@ func (r *jRig) eventOf(seq int) sprint.Event {
 	return ev
 }
 
-func ingestKeys(evs ...sprint.Event) []string {
+func jIngestKeys(evs ...sprint.Event) []string {
 	var out []string
 	for _, k := range sprint.Ingest(evs).Keys {
 		out = append(out, k.Key)
@@ -319,23 +322,23 @@ func ingestKeys(evs ...sprint.Event) []string {
 func TestJHoldLineQueuesNothing(t *testing.T) {
 	t.Parallel()
 	r := newJRig(t, false)
-	r.step(req(JOpOpen, tNoMember, "c", "sprint")) // line 1
-	r.step(hold(tNoMember, "c", r.wall()+60_000, "sprint"))
-	r.step(req(JOpUnhold, tNoMember, "c", "sprint")) // line 3
-	r.step(req(JOpOpen, tNoMember, "c", "sprint"))   // line 4
-	r.step(req(JOpClose, tNoMember, "c", "sprint"))  // line 5
+	r.step(jReq(JOpOpen, jtNoMember, "c", "sprint")) // line 1
+	r.step(jHold(jtNoMember, "c", r.wall()+60_000, "sprint"))
+	r.step(jReq(JOpUnhold, jtNoMember, "c", "sprint")) // line 3
+	r.step(jReq(JOpOpen, jtNoMember, "c", "sprint"))   // line 4
+	r.step(jReq(JOpClose, jtNoMember, "c", "sprint"))  // line 5
 
 	opens, holds := r.eventOf(1), r.eventOf(2)
 	if !opens.Opens || opens.Closes || opens.Kind != sprint.Judgment {
 		t.Fatalf("the open line reads as %+v", opens)
 	}
-	if got := ingestKeys(opens); len(got) != 0 {
+	if got := jIngestKeys(opens); len(got) != 0 {
 		t.Fatalf("the open line queues %v", got)
 	}
-	if holds.Opens || holds.Closes || holds.NoteType != tNoMember {
+	if holds.Opens || holds.Closes || holds.NoteType != jtNoMember {
 		t.Fatalf("the hold line reads as %+v: a plain note of the type", holds)
 	}
-	if got := ingestKeys(holds); len(got) != 0 {
+	if got := jIngestKeys(holds); len(got) != 0 {
 		t.Fatalf("the hold line queues %v, want nothing (2.1)", got)
 	}
 	for _, seq := range []int{3, 5} {
@@ -343,7 +346,7 @@ func TestJHoldLineQueuesNothing(t *testing.T) {
 		if !ev.Closes {
 			t.Fatalf("line %d reads as %+v: it closes the judgment", seq, ev)
 		}
-		if got := ingestKeys(ev); !reflect.DeepEqual(got, []string{"deal"}) {
+		if got := jIngestKeys(ev); !reflect.DeepEqual(got, []string{"deal"}) {
 			t.Fatalf("line %d queues %v, want the owner key deal", seq, got)
 		}
 	}
@@ -352,7 +355,7 @@ func TestJHoldLineQueuesNothing(t *testing.T) {
 // fleetSeed creates the fleet member's row m1 and the work card w1 in
 // m1:ready with a due_untaken field, and the reader r1's read card rc in
 // readers r1:reading with due_unreported, for the lateness tests.
-func fleetSeed() *Request {
+func jFleetSeed() *Request {
 	return &Request{Epoch: "0", Meta: Meta{Verb: "add", Actor: "coordinator"}, Body: Body{Entries: []tset.Entry{
 		{Kind: "rows", Table: sprint.Fleet, Add: []string{"m1", "m2"}},
 		{Kind: "rows", Table: sprint.Readers, Add: []string{"r1"}},
@@ -372,35 +375,35 @@ func fleetSeed() *Request {
 func TestJClosesLatenessWhenStateEnds(t *testing.T) {
 	t.Parallel()
 	r := newJRig(t, true)
-	r.send(fleetSeed()) // lines 1 to 4
-	record := func(card string) NoteReq { return req(JOpRequest, "record", "", card) }
+	r.send(jFleetSeed()) // lines 1 to 4
+	record := func(card string) NoteReq { return jReq(JOpRequest, "record", "", card) }
 	step := func(verb string, e tset.Entry, card string) {
 		r.t.Helper()
 		r.send(&Request{Epoch: "0", Meta: Meta{Verb: verb, Actor: "m1"},
 			Body: Body{Entries: []tset.Entry{e}, Notes: []NoteReq{record(card)}}})
 	}
 	// R11 raised "not taken" on w1 and w2 (note n5) and "not reported" on rc (n6).
-	r.step(req(JOpOpen, jTypeWorkLate, "untaken", "w1", "w2"), req(JOpOpen, jTypeReadLate, "unreported", "rc"))
-	r.step(hold(jTypeWorkLate, "untaken", r.wall()+60_000, "w2")) // the coordinator waits on w2's
-	r.wantHash(jkey("jopen:w1"), map[string]string{jTypeWorkLate + "|untaken": "n5"})
-	r.wantHash(jkey("jopen:w2"), map[string]string{jTypeWorkLate + "|untaken": "hn5"})
-	r.wantHash(jkey("jn"), map[string]string{"n5": "1", "n6": "1"})
+	r.step(jReq(JOpOpen, jTypeWorkLate, "untaken", "w1", "w2"), jReq(JOpOpen, jTypeReadLate, "unreported", "rc"))
+	r.step(jHold(jTypeWorkLate, "untaken", r.wall()+60_000, "w2")) // the coordinator waits on w2's
+	r.wantHash(jk("jopen:w1"), map[string]string{jTypeWorkLate + "|untaken": "n5"})
+	r.wantHash(jk("jopen:w2"), map[string]string{jTypeWorkLate + "|untaken": "hn5"})
+	r.wantHash(jk("jn"), map[string]string{"n5": "1", "n6": "1"})
 
 	// A level: w1 moves to another member's ready cell, and stays untaken.
 	step("level", tset.Entry{Kind: "move", Table: sprint.Fleet, From: "m1:ready", To: "m2:ready", IDs: []string{"w1"}, About: []string{"p1"}}, "w1")
-	r.wantHash(jkey("jopen:w1"), map[string]string{jTypeWorkLate + "|untaken": "n5"})
+	r.wantHash(jk("jopen:w1"), map[string]string{jTypeWorkLate + "|untaken": "n5"})
 
 	// w1 is taken: the open judgment closes, and its note, left with no open
 	// subject, leaves jnotes and loses its overdue entry. w2's is held, and stays.
 	step("take", tset.Entry{Kind: "move", Table: sprint.Fleet, From: "m2:ready", To: "m2:working", IDs: []string{"w1"},
 		Set: map[string]string{"due_unfinished": "7000"}, Unset: []string{"due_untaken"}, About: []string{"p1"}}, "w1")
-	r.wantHash(jkey("jopen:w1"), nil)
-	r.wantHash(jkey("jopen:w2"), map[string]string{jTypeWorkLate + "|untaken": "hn5"})
-	r.wantHash(jkey("jn"), map[string]string{"n6": "1"})
-	if _, there := r.zset(jkey("jnotes"))["n5"]; there {
+	r.wantHash(jk("jopen:w1"), nil)
+	r.wantHash(jk("jopen:w2"), map[string]string{jTypeWorkLate + "|untaken": "hn5"})
+	r.wantHash(jk("jn"), map[string]string{"n6": "1"})
+	if _, there := r.zset(jk("jnotes"))["n5"]; there {
 		t.Fatal("n5 is in jnotes with no open subject")
 	}
-	if _, there := r.zset(jkey("due"))["overdue:n5"]; there {
+	if _, there := r.zset(jk("due"))["overdue:n5"]; there {
 		t.Fatal("n5 kept its overdue entry with no open subject")
 	}
 	// The step's notes are in order: the verb's record, then the close J added.
@@ -414,14 +417,14 @@ func TestJClosesLatenessWhenStateEnds(t *testing.T) {
 	// w2 is taken while its judgment is held: the hold ends with the state.
 	step("take", tset.Entry{Kind: "move", Table: sprint.Fleet, From: "m1:ready", To: "m1:working", IDs: []string{"w2"},
 		Unset: []string{"due_untaken"}, About: []string{"p2"}}, "w2")
-	r.wantHash(jkey("jopen:w2"), nil)
+	r.wantHash(jk("jopen:w2"), nil)
 
 	// rc is reported: "a read card is past its deadline" closes, with "reported".
 	step("read", tset.Entry{Kind: "move", Table: sprint.Readers, From: "r1:reading", To: "r1:ok", IDs: []string{"rc"},
 		Unset: []string{"due_unreported"}, About: []string{"p1"}}, "rc")
-	r.wantHash(jkey("jopen:rc"), nil)
-	r.wantHash(jkey("jn"), nil)
-	r.wantZSet(jkey("jnotes"), nil)
+	r.wantHash(jk("jopen:rc"), nil)
+	r.wantHash(jk("jn"), nil)
+	r.wantZSet(jk("jnotes"), nil)
 	found := false
 	for seq := 1; seq <= len(r.log.Lines(testPrefix, "0")); seq++ {
 		if m := r.line(seq).Meta; m["op"] == "close" && m["type"] == jTypeReadLate {
@@ -440,17 +443,17 @@ func TestJClosesLatenessWhenStateEnds(t *testing.T) {
 func TestJNoteIdsFromSeqs(t *testing.T) {
 	t.Parallel()
 	r := newJRig(t, false)
-	r.step(req(JOpOpen, tCannotAsk, "c", "p2")) // n1
-	reply := r.step(req(JOpOpen, tCannotAsk, "c", "p1"), req(JOpOpen, tCannotAsk, "c", "p2"), req(JOpOpen, tNoMember, "c", "sprint"))
+	r.step(jReq(JOpOpen, jtCannotAsk, "c", "p2")) // n1
+	reply := r.step(jReq(JOpOpen, jtCannotAsk, "c", "p1"), jReq(JOpOpen, jtCannotAsk, "c", "p2"), jReq(JOpOpen, jtNoMember, "c", "sprint"))
 	if reply.Reply.Lines != 2 || reply.Reply.FirstSeq != "2" || reply.Reply.LastSeq != "3" {
 		t.Fatalf("lines %d seqs %s..%s, want 2 lines 2..3: the skipped request has no line",
 			reply.Reply.Lines, reply.Reply.FirstSeq, reply.Reply.LastSeq)
 	}
-	r.wantHash(jkey("jopen:p1"), map[string]string{"cannot ask|c": "n2"})
-	r.wantHash(jkey("jopen:p2"), map[string]string{"cannot ask|c": "n1"})
-	r.wantHash(jkey("jopen:sprint"), map[string]string{"no fleet member is up|c": "n3"})
-	r.wantHash(jkey("jn"), map[string]string{"n1": "1", "n2": "1", "n3": "1"})
-	if got := r.list(jkey("notes")); !reflect.DeepEqual(got, []string{"1", "2", "3"}) {
+	r.wantHash(jk("jopen:p1"), map[string]string{"cannot ask|c": "n2"})
+	r.wantHash(jk("jopen:p2"), map[string]string{"cannot ask|c": "n1"})
+	r.wantHash(jk("jopen:sprint"), map[string]string{"no fleet member is up|c": "n3"})
+	r.wantHash(jk("jn"), map[string]string{"n1": "1", "n2": "1", "n3": "1"})
+	if got := r.list(jk("notes")); !reflect.DeepEqual(got, []string{"1", "2", "3"}) {
 		t.Fatalf("the notes list is %v, want the seqs of the three lines", got)
 	}
 	for seq, about := range map[int]string{2: "p1", 3: "sprint"} {
@@ -474,17 +477,17 @@ func TestJNotesCountPerNote(t *testing.T) {
 		return out
 	}
 	r := newJRig(t, false)
-	big := req(JOpOpen, tCannotAsk, "c", many("p", 2000)...)
+	big := jReq(JOpOpen, jtCannotAsk, "c", many("p", 2000)...)
 	reply := r.step(big)
 	if reply.Reply.Lines != 1 {
 		t.Fatalf("a note naming 2,000 subjects wrote %d lines, want 1", reply.Reply.Lines)
 	}
-	if n := len(r.hash(jkey("jn"))); n != 1 || r.hash(jkey("jn"))["n1"] != "2000" {
-		t.Fatalf("jn is %v, want one note of 2,000", r.hash(jkey("jn")))
+	if n := len(r.hash(jk("jn"))); n != 1 || r.hash(jk("jn"))["n1"] != "2000" {
+		t.Fatalf("jn is %v, want one note of 2,000", r.hash(jk("jn")))
 	}
 
-	st := &State{Prefix: testPrefix, Epoch: "0", NowMS: tset.Decimal(str(r.wall())), Names: testNames, Keys: &Keys{ks: newKeyspace()}}
-	cost, ref := JCost(st, []NoteReq{big, req(JOpOpen, tNoMember, "c", "sprint")}, nil, nil)
+	st := &State{Prefix: testPrefix, Epoch: "0", NowMS: tset.Decimal(jStr(r.wall())), Names: testNames, Keys: &Keys{ks: newKeyspace()}}
+	cost, ref := JCost(st, []NoteReq{big, jReq(JOpOpen, jtNoMember, "c", "sprint")}, nil, nil)
 	if ref != nil || cost.Notes != 2 {
 		t.Fatalf("JCost of 2 requests: %+v, %v; want 2 notes however many subjects", cost, ref)
 	}
@@ -497,7 +500,7 @@ func TestJNotesCountPerNote(t *testing.T) {
 	// 100 notes are the bound of a step; a 101st is LIMIT, and nothing was written.
 	var notices []NoteReq
 	for i := 0; i <= jNotesMax; i++ {
-		notices = append(notices, req(JOpKnow, "ci green", strconv.Itoa(i), "p"+strconv.Itoa(i)))
+		notices = append(notices, jReq(JOpKnow, "ci green", strconv.Itoa(i), "p"+strconv.Itoa(i)))
 	}
 	img := r.img()
 	if ref := r.refused(notices...); ref.Code != CodeLimit || ref.Detail.Budget != "notes" || ref.Phase != PhaseJ {
@@ -511,10 +514,10 @@ func TestJNotesCountPerNote(t *testing.T) {
 	}
 	// 3 notes of 1,400 subjects are 4,200 about ids: over the step's 4,000.
 	a, b, c := many("a", 1400), many("b", 1400), many("c", 1400)
-	if ref := r.refused(req(JOpKnow, "ci green", "", a...), req(JOpKnow, "ci green", "x", b...), req(JOpKnow, "ci green", "y", c...)); ref.Code != CodeLimit || ref.Detail.Budget != "about" {
+	if ref := r.refused(jReq(JOpKnow, "ci green", "", a...), jReq(JOpKnow, "ci green", "x", b...), jReq(JOpKnow, "ci green", "y", c...)); ref.Code != CodeLimit || ref.Detail.Budget != "about" {
 		t.Fatalf("4,200 about ids: %+v, want LIMIT on about", ref)
 	}
-	if ref := r.refused(req(JOpKnow, "ci green", "", many("z", 2001)...)); ref.Code != CodeLimit || ref.Detail.Budget != "about" {
+	if ref := r.refused(jReq(JOpKnow, "ci green", "", many("z", 2001)...)); ref.Code != CodeLimit || ref.Detail.Budget != "about" {
 		t.Fatalf("a note of 2,001 subjects: %+v, want LIMIT on about", ref)
 	}
 }
@@ -528,36 +531,36 @@ func TestJOverdueOnOpen(t *testing.T) {
 	t.Parallel()
 	r := newJRig(t, false)
 	wall := r.wall()
-	r.step(req(JOpOpen, tCannotAsk, "c", "p1"), req(JOpOpen, tBlocked, "n0", "w1", "w2"))
+	r.step(jReq(JOpOpen, jtCannotAsk, "c", "p1"), jReq(JOpOpen, jtBlocked, "n0", "w1", "w2"))
 	R := float64(wall)
-	r.wantZSet(jkey("due"), map[string]float64{"overdue:n1": R + 600_000, "overdue:n2": R + 600_000})
-	r.wantZSet(jkey("jnotes"), map[string]float64{"n1": R, "n2": R})
-	r.wantHash(jkey("jn"), map[string]string{"n1": "1", "n2": "2"})
-	r.wantZSet(jkey("askwait"), map[string]float64{"p1": R})
+	r.wantZSet(jk("due"), map[string]float64{"overdue:n1": R + 600_000, "overdue:n2": R + 600_000})
+	r.wantZSet(jk("jnotes"), map[string]float64{"n1": R, "n2": R})
+	r.wantHash(jk("jn"), map[string]string{"n1": "1", "n2": "2"})
+	r.wantZSet(jk("askwait"), map[string]float64{"p1": R})
 
 	// The sprint is done: a note that is never overdue.
-	r.step(req(JOpOpen, tDone, "d", "sprint"))
-	if _, there := r.zset(jkey("due"))["overdue:n3"]; there {
+	r.step(jReq(JOpOpen, jtDone, "d", "sprint"))
+	if _, there := r.zset(jk("due"))["overdue:n3"]; there {
 		t.Fatal("\"the sprint is done\" has an overdue entry; it is never overdue (2.2)")
 	}
-	if _, there := r.zset(jkey("jnotes"))["n3"]; !there {
+	if _, there := r.zset(jk("jnotes"))["n3"]; !there {
 		t.Fatal("\"the sprint is done\" is not in jnotes")
 	}
 
 	// A machine STOPPED for 100 s before now, and one STOPPED since 5 s ago.
 	r.now = r.now.Add(time.Minute)
 	r.put(Command("HSET", testPrefix+"sprint:clock", kindHash, "stopped_ms", "100000", "stopped_since_ms", ""))
-	r.step(req(JOpOpen, tBlocked, "n1", "w3"))
+	r.step(jReq(JOpOpen, jtBlocked, "n1", "w3"))
 	r1 := float64(r.wall() - 100_000)
-	r.wantZSet(jkey("jnotes"), map[string]float64{"n1": R, "n2": R, "n3": R, "n4": r1})
-	if got := r.zset(jkey("due"))["overdue:n4"]; got != r1+600_000 {
+	r.wantZSet(jk("jnotes"), map[string]float64{"n1": R, "n2": R, "n3": R, "n4": r1})
+	if got := r.zset(jk("due"))["overdue:n4"]; got != r1+600_000 {
 		t.Fatalf("overdue:n4 at %v, want R + 10 min = %v with 100 s STOPPED before now", got, r1+600_000)
 	}
 	r.now = r.now.Add(time.Minute)
-	r.put(Command("HSET", testPrefix+"sprint:clock", kindHash, "stopped_since_ms", str(r.wall()-5_000)))
-	r.step(req(JOpOpen, tBlocked, "n2", "w4"))
+	r.put(Command("HSET", testPrefix+"sprint:clock", kindHash, "stopped_since_ms", jStr(r.wall()-5_000)))
+	r.step(jReq(JOpOpen, jtBlocked, "n2", "w4"))
 	r2 := float64(r.wall() - 5_000 - 100_000)
-	if got := r.zset(jkey("jnotes"))["n5"]; got != r2 {
+	if got := r.zset(jk("jnotes"))["n5"]; got != r2 {
 		t.Fatalf("jnotes n5 at %v, want R = %v while STOPPED since 5 s ago", got, r2)
 	}
 }
@@ -571,33 +574,33 @@ func TestJOverdueOnOpen(t *testing.T) {
 func TestJCloseCountsSubjectsPerNote(t *testing.T) {
 	t.Parallel()
 	r := newJRig(t, false)
-	r.step(req(JOpOpen, tBlocked, "n0", "w1", "w2", "w3"))
-	r.wantHash(jkey("jn"), map[string]string{"n1": "3"})
+	r.step(jReq(JOpOpen, jtBlocked, "n0", "w1", "w2", "w3"))
+	r.wantHash(jk("jn"), map[string]string{"n1": "3"})
 
-	r.step(req(JOpClose, tBlocked, "n0", "w1"))
-	r.wantHash(jkey("jn"), map[string]string{"n1": "2"})
-	r.wantHash(jkey("jopen:w1"), nil)
-	if _, there := r.zset(jkey("jnotes"))["n1"]; !there {
+	r.step(jReq(JOpClose, jtBlocked, "n0", "w1"))
+	r.wantHash(jk("jn"), map[string]string{"n1": "2"})
+	r.wantHash(jk("jopen:w1"), nil)
+	if _, there := r.zset(jk("jnotes"))["n1"]; !there {
 		t.Fatal("n1 left jnotes with two open subjects")
 	}
-	if _, there := r.zset(jkey("due"))["overdue:n1"]; !there {
+	if _, there := r.zset(jk("due"))["overdue:n1"]; !there {
 		t.Fatal("n1 lost its overdue entry with two open subjects")
 	}
 
 	img := r.img()
-	if none := r.step(req(JOpClose, tBlocked, "n0", "w1")); none.Reply.Lines != 0 || r.img() != img {
+	if none := r.step(jReq(JOpClose, jtBlocked, "n0", "w1")); none.Reply.Lines != 0 || r.img() != img {
 		t.Fatalf("a close of a subject with no judgment wrote %d lines or changed the twin", none.Reply.Lines)
 	}
 
-	two := r.step(req(JOpClose, tBlocked, "n0", "w2"), req(JOpClose, tBlocked, "n0", "w3"))
+	two := r.step(jReq(JOpClose, jtBlocked, "n0", "w2"), jReq(JOpClose, jtBlocked, "n0", "w3"))
 	if two.Reply.Lines != 2 {
 		t.Fatalf("two closes wrote %d lines, want 2", two.Reply.Lines)
 	}
-	r.wantHash(jkey("jn"), nil)
-	r.wantZSet(jkey("jnotes"), nil)
-	r.wantZSet(jkey("due"), nil)
+	r.wantHash(jk("jn"), nil)
+	r.wantZSet(jk("jnotes"), nil)
+	r.wantZSet(jk("due"), nil)
 	for _, s := range []string{"w1", "w2", "w3"} {
-		r.wantHash(jkey("jopen:"+s), nil)
+		r.wantHash(jk("jopen:"+s), nil)
 	}
 }
 
@@ -608,10 +611,10 @@ func TestJCloseCountsSubjectsPerNote(t *testing.T) {
 func TestJUpdateWritesOnlyTheLine(t *testing.T) {
 	t.Parallel()
 	r := newJRig(t, false)
-	r.step(req(JOpOpen, tCannotAsk, "c", "p1", "p2"))
-	r.step(hold(tCannotAsk, "c", r.wall()+1000, "p2")) // p2 is held
+	r.step(jReq(JOpOpen, jtCannotAsk, "c", "p1", "p2"))
+	r.step(jHold(jtCannotAsk, "c", r.wall()+1000, "p2")) // p2 is held
 	keysBefore := r.keys()
-	up := req(JOpUpdate, tCannotAsk, "c", "p1", "p2", "p3")
+	up := jReq(JOpUpdate, jtCannotAsk, "c", "p1", "p2", "p3")
 	up.Text = "now there is one reader"
 	reply := r.step(up)
 	if reply.Reply.Lines != 1 {
@@ -626,11 +629,11 @@ func TestJUpdateWritesOnlyTheLine(t *testing.T) {
 		t.Fatalf("the update line reads as %+v: it neither opens nor closes", ev)
 	}
 	after := r.keys()
-	keysBefore[jkey("notes")] = after[jkey("notes")] // the one key an update writes
+	keysBefore[jk("notes")] = after[jk("notes")] // the one key an update writes
 	if !reflect.DeepEqual(keysBefore, after) {
 		t.Fatal("an update changed a key besides the notes list")
 	}
-	if got := r.list(jkey("notes")); !reflect.DeepEqual(got, []string{"1", "2", "3"}) {
+	if got := r.list(jk("notes")); !reflect.DeepEqual(got, []string{"1", "2", "3"}) {
 		t.Fatalf("the notes list is %v", got)
 	}
 }
@@ -641,9 +644,9 @@ func TestJUpdateWritesOnlyTheLine(t *testing.T) {
 func TestJKnowAndRequestWriteOnlyTheLine(t *testing.T) {
 	t.Parallel()
 	r := newJRig(t, false)
-	know := req(JOpKnow, "ci green", "", "p1", "p2", "p1")
+	know := jReq(JOpKnow, "ci green", "", "p1", "p2", "p1")
 	know.Text = "ci is green at the head"
-	reply := r.step(know, req(JOpRequest, "unfrozen", "", "s1", "s2"))
+	reply := r.step(know, jReq(JOpRequest, "unfrozen", "", "s1", "s2"))
 	if reply.Reply.Lines != 2 {
 		t.Fatalf("a notice and a request wrote %d lines, want 2", reply.Reply.Lines)
 	}
@@ -655,7 +658,7 @@ func TestJKnowAndRequestWriteOnlyTheLine(t *testing.T) {
 		t.Fatalf("the request line is %+v", l)
 	}
 	keys := r.keys()
-	if len(keys) != 1 || !reflect.DeepEqual(keys[jkey("notes")].List, []string{"1", "2"}) {
+	if len(keys) != 1 || !reflect.DeepEqual(keys[jk("notes")].List, []string{"1", "2"}) {
 		t.Fatalf("a notice and a request wrote keys %v, want only the notes list", keys)
 	}
 }
@@ -666,19 +669,19 @@ func TestJKnowAndRequestWriteOnlyTheLine(t *testing.T) {
 func TestJReviewWaitMovesOverdue(t *testing.T) {
 	t.Parallel()
 	r := newJRig(t, false)
-	r.step(req(JOpOpen, tBlocked, "n0", "w1"), req(JOpOpen, tDone, "d", "sprint"))
+	r.step(jReq(JOpOpen, jtBlocked, "n0", "w1"), jReq(JOpOpen, jtDone, "d", "sprint"))
 	review := r.wall() + 3_600_000
-	reply := r.step(hold(tBlocked, "n0", review, "w1"), hold(tDone, "d", review, "sprint"))
+	reply := r.step(jHold(jtBlocked, "n0", review, "w1"), jHold(jtDone, "d", review, "sprint"))
 	if reply.Reply.Lines != 2 {
 		t.Fatalf("two waits wrote %d lines", reply.Reply.Lines)
 	}
-	r.wantZSet(jkey("due"), map[string]float64{"overdue:n1": float64(review)})
-	r.wantHash(jkey("jopen:w1"), map[string]string{tBlocked + "|n0": "n1"})
-	r.wantHash(jkey("jopen:sprint"), map[string]string{tDone + "|d": "n2"})
-	if l := r.line(3); l.Meta["op"] != "review" || l.Meta["until"] != str(review) || l.Meta["kind"] != nil {
+	r.wantZSet(jk("due"), map[string]float64{"overdue:n1": float64(review)})
+	r.wantHash(jk("jopen:w1"), map[string]string{jtBlocked + "|n0": "n1"})
+	r.wantHash(jk("jopen:sprint"), map[string]string{jtDone + "|d": "n2"})
+	if l := r.line(3); l.Meta["op"] != "review" || l.Meta["until"] != jStr(review) || l.Meta["kind"] != nil {
 		t.Fatalf("the review line is %+v", l)
 	}
-	if got := len(r.hash(jkey("jn"))); got != 2 {
+	if got := len(r.hash(jk("jn"))); got != 2 {
 		t.Fatalf("jn has %d notes; both stay open", got)
 	}
 }
@@ -689,12 +692,12 @@ func TestJReviewWaitMovesOverdue(t *testing.T) {
 func TestJStoppedWaitSetsStophold(t *testing.T) {
 	t.Parallel()
 	r := newJRig(t, false)
-	r.step(req(JOpOpen, tStopped, "c", "sprint"))
+	r.step(jReq(JOpOpen, jtStopped, "c", "sprint"))
 	wall := r.wall() + 120_000
-	r.step(hold(tStopped, "c", wall, "sprint"))
-	r.wantHash(jkey("jopen:sprint"), map[string]string{tStopped + "|c": "hn1"})
-	r.wantHash(testPrefix+"sprint:clock", map[string]string{"stophold_ms": str(wall)})
-	if _, there := r.zset(jkey("due"))["hold:n1"]; there {
+	r.step(jHold(jtStopped, "c", wall, "sprint"))
+	r.wantHash(jk("jopen:sprint"), map[string]string{jtStopped + "|c": "hn1"})
+	r.wantHash(testPrefix+"sprint:clock", map[string]string{"stophold_ms": jStr(wall)})
+	if _, there := r.zset(jk("due"))["hold:n1"]; there {
 		t.Fatal("a wait on the STOPPED judgment entered a hold entry in running time")
 	}
 }
@@ -707,17 +710,17 @@ func TestJAskwaitFollowsCannotAsk(t *testing.T) {
 	t.Parallel()
 	r := newJRig(t, false)
 	R := float64(r.wall())
-	r.step(req(JOpOpen, tCannotAsk, "c", "p1", "p2"), req(JOpOpen, tCannotAsk, "d", "p1"))
-	r.wantZSet(jkey("askwait"), map[string]float64{"p1": R, "p2": R})
-	r.step(req(JOpClose, tCannotAsk, "c", "p1", "p2"))
-	r.wantZSet(jkey("askwait"), map[string]float64{"p1": R}) // p2 had only c; p1 has d
-	r.step(hold(tCannotAsk, "d", r.wall()+1000, "p1"))
-	r.wantZSet(jkey("askwait"), map[string]float64{"p1": R}) // held is still named
+	r.step(jReq(JOpOpen, jtCannotAsk, "c", "p1", "p2"), jReq(JOpOpen, jtCannotAsk, "d", "p1"))
+	r.wantZSet(jk("askwait"), map[string]float64{"p1": R, "p2": R})
+	r.step(jReq(JOpClose, jtCannotAsk, "c", "p1", "p2"))
+	r.wantZSet(jk("askwait"), map[string]float64{"p1": R}) // p2 had only c; p1 has d
+	r.step(jHold(jtCannotAsk, "d", r.wall()+1000, "p1"))
+	r.wantZSet(jk("askwait"), map[string]float64{"p1": R}) // held is still named
 	// Raise c again and close d in one step: p1 keeps its place.
-	r.step(req(JOpOpen, tCannotAsk, "c", "p1"), req(JOpUnhold, tCannotAsk, "d", "p1"))
-	r.wantZSet(jkey("askwait"), map[string]float64{"p1": R})
-	r.step(req(JOpClose, tCannotAsk, "c", "p1"))
-	r.wantZSet(jkey("askwait"), nil)
+	r.step(jReq(JOpOpen, jtCannotAsk, "c", "p1"), jReq(JOpUnhold, jtCannotAsk, "d", "p1"))
+	r.wantZSet(jk("askwait"), map[string]float64{"p1": R})
+	r.step(jReq(JOpClose, jtCannotAsk, "c", "p1"))
+	r.wantZSet(jk("askwait"), nil)
 }
 
 // TestJSecondRunWritesNothing (E7, ReplayNoop): the requests of a step run a
@@ -732,10 +735,10 @@ func TestJSecondRunWritesNothing(t *testing.T) {
 		step []NoteReq
 		prep []NoteReq
 	}{
-		{"open", []NoteReq{req(JOpOpen, tCannotAsk, "c", "p1", "p2")}, nil},
-		{"hold", []NoteReq{hold(tCannotAsk, "c", until, "p1")}, nil},
-		{"unhold", []NoteReq{req(JOpUnhold, tCannotAsk, "c", "p1")}, nil},
-		{"close", []NoteReq{req(JOpClose, tCannotAsk, "c", "p2")}, nil},
+		{"open", []NoteReq{jReq(JOpOpen, jtCannotAsk, "c", "p1", "p2")}, nil},
+		{"hold", []NoteReq{jHold(jtCannotAsk, "c", until, "p1")}, nil},
+		{"unhold", []NoteReq{jReq(JOpUnhold, jtCannotAsk, "c", "p1")}, nil},
+		{"close", []NoteReq{jReq(JOpClose, jtCannotAsk, "c", "p2")}, nil},
 	} {
 		first := r.step(tc.step...)
 		if first.Reply.Lines != 1 {
@@ -755,39 +758,39 @@ func TestJSecondRunWritesNothing(t *testing.T) {
 // another type WRONGTYPE, or a clock that is no clock CONFIG.
 func TestJRefusals(t *testing.T) {
 	t.Parallel()
-	jopen := func(s string) string { return jkey("jopen:" + s) }
+	jopen := func(s string) string { return jk("jopen:" + s) }
 	cases := []struct {
 		name string
 		seed []Cmd
 		reqs []NoteReq
 		code string
 	}{
-		{"an op J does not take", nil, []NoteReq{req("frobnicate", tCannotAsk, "c", "p1")}, CodeRequest},
-		{"no subject", nil, []NoteReq{req(JOpOpen, tCannotAsk, "c")}, CodeRequest},
-		{"an empty subject", nil, []NoteReq{req(JOpOpen, tCannotAsk, "c", "")}, CodeRequest},
-		{"a subject over 256 bytes", nil, []NoteReq{req(JOpOpen, tCannotAsk, "c", strings.Repeat("s", 257))}, CodeRequest},
-		{"a judgment type 2.2 does not have", nil, []NoteReq{req(JOpOpen, "made up", "c", "p1")}, CodeRequest},
-		{"a notice asked as a judgment", nil, []NoteReq{req(JOpOpen, "ci green", "c", "p1")}, CodeRequest},
-		{"a judgment asked as a notice", nil, []NoteReq{req(JOpKnow, tCannotAsk, "", "p1")}, CodeRequest},
-		{"a type with a bar", nil, []NoteReq{req(JOpOpen, "a|b", "c", "p1")}, CodeRequest},
-		{"an empty cause on a judgment", nil, []NoteReq{req(JOpOpen, tCannotAsk, "", "p1")}, CodeRequest},
-		{"a hold with no time", nil, []NoteReq{req(JOpHold, tCannotAsk, "c", "p1")}, CodeRequest},
-		{"text that is not UTF-8", nil, []NoteReq{{Op: JOpOpen, Type: tCannotAsk, Cause: "c", Subjects: []string{"p1"}, Text: "\xff"}}, CodeRequest},
-		{"one field named by two requests", nil, []NoteReq{req(JOpOpen, tCannotAsk, "c", "p1", "p2"), req(JOpClose, tCannotAsk, "c", "p2")}, CodeRequest},
-		{"2,001 subjects", nil, []NoteReq{req(JOpKnow, "ci green", "", seqNames("p", 2001)...)}, CodeLimit},
-		{"a value in jopen that is no note", []Cmd{Command("HSET", jopen("p1"), kindHash, tCannotAsk+"|c", "zzz")},
-			[]NoteReq{req(JOpOpen, tCannotAsk, "c", "p1")}, jCodeDrift},
-		{"a note open in jopen with no count in jn", []Cmd{Command("HSET", jopen("p1"), kindHash, tBlocked+"|c", "n1")},
-			[]NoteReq{req(JOpClose, tBlocked, "c", "p1")}, jCodeDrift},
-		{"a count in jn below what a close takes", []Cmd{Command("HSET", jopen("p1"), kindHash, tBlocked+"|c", "n1"),
-			Command("HSET", jopen("p2"), kindHash, tBlocked+"|c", "n1"), Command("HSET", jkey("jn"), kindHash, "n1", "1")},
-			[]NoteReq{req(JOpClose, tBlocked, "c", "p1", "p2")}, jCodeDrift},
+		{"an op J does not take", nil, []NoteReq{jReq("frobnicate", jtCannotAsk, "c", "p1")}, CodeRequest},
+		{"no subject", nil, []NoteReq{jReq(JOpOpen, jtCannotAsk, "c")}, CodeRequest},
+		{"an empty subject", nil, []NoteReq{jReq(JOpOpen, jtCannotAsk, "c", "")}, CodeRequest},
+		{"a subject over 256 bytes", nil, []NoteReq{jReq(JOpOpen, jtCannotAsk, "c", strings.Repeat("s", 257))}, CodeRequest},
+		{"a judgment type 2.2 does not have", nil, []NoteReq{jReq(JOpOpen, "made up", "c", "p1")}, CodeRequest},
+		{"a notice asked as a judgment", nil, []NoteReq{jReq(JOpOpen, "ci green", "c", "p1")}, CodeRequest},
+		{"a judgment asked as a notice", nil, []NoteReq{jReq(JOpKnow, jtCannotAsk, "", "p1")}, CodeRequest},
+		{"a type with a bar", nil, []NoteReq{jReq(JOpOpen, "a|b", "c", "p1")}, CodeRequest},
+		{"an empty cause on a judgment", nil, []NoteReq{jReq(JOpOpen, jtCannotAsk, "", "p1")}, CodeRequest},
+		{"a hold with no time", nil, []NoteReq{jReq(JOpHold, jtCannotAsk, "c", "p1")}, CodeRequest},
+		{"text that is not UTF-8", nil, []NoteReq{{Op: JOpOpen, Type: jtCannotAsk, Cause: "c", Subjects: []string{"p1"}, Text: "\xff"}}, CodeRequest},
+		{"one field named by two requests", nil, []NoteReq{jReq(JOpOpen, jtCannotAsk, "c", "p1", "p2"), jReq(JOpClose, jtCannotAsk, "c", "p2")}, CodeRequest},
+		{"2,001 subjects", nil, []NoteReq{jReq(JOpKnow, "ci green", "", jSeqNames("p", 2001)...)}, CodeLimit},
+		{"a value in jopen that is no note", []Cmd{Command("HSET", jopen("p1"), kindHash, jtCannotAsk+"|c", "zzz")},
+			[]NoteReq{jReq(JOpOpen, jtCannotAsk, "c", "p1")}, jCodeDrift},
+		{"a note open in jopen with no count in jn", []Cmd{Command("HSET", jopen("p1"), kindHash, jtBlocked+"|c", "n1")},
+			[]NoteReq{jReq(JOpClose, jtBlocked, "c", "p1")}, jCodeDrift},
+		{"a count in jn below what a close takes", []Cmd{Command("HSET", jopen("p1"), kindHash, jtBlocked+"|c", "n1"),
+			Command("HSET", jopen("p2"), kindHash, jtBlocked+"|c", "n1"), Command("HSET", jk("jn"), kindHash, "n1", "1")},
+			[]NoteReq{jReq(JOpClose, jtBlocked, "c", "p1", "p2")}, jCodeDrift},
 		{"a jopen key of another type", []Cmd{Command("ZADD", jopen("p1"), kindZSet, "1", "m")},
-			[]NoteReq{req(JOpOpen, tCannotAsk, "c", "p1")}, CodeWrongType},
-		{"a jn key of another type", []Cmd{Command("HSET", jopen("p1"), kindHash, tBlocked+"|c", "n1"), Command("ZADD", jkey("jn"), kindZSet, "1", "m")},
-			[]NoteReq{req(JOpClose, tBlocked, "c", "p1")}, CodeWrongType},
+			[]NoteReq{jReq(JOpOpen, jtCannotAsk, "c", "p1")}, CodeWrongType},
+		{"a jn key of another type", []Cmd{Command("HSET", jopen("p1"), kindHash, jtBlocked+"|c", "n1"), Command("ZADD", jk("jn"), kindZSet, "1", "m")},
+			[]NoteReq{jReq(JOpClose, jtBlocked, "c", "p1")}, CodeWrongType},
 		{"a clock that is no clock", []Cmd{Command("HSET", testPrefix+"sprint:clock", kindHash, "stopped_ms", "soon")},
-			[]NoteReq{req(JOpOpen, tCannotAsk, "c", "p1")}, CodeConfig},
+			[]NoteReq{jReq(JOpOpen, jtCannotAsk, "c", "p1")}, CodeConfig},
 	}
 	for _, tc := range cases {
 		r := newJRig(t, false)
@@ -805,7 +808,7 @@ func TestJRefusals(t *testing.T) {
 	}
 }
 
-func seqNames(prefix string, n int) []string {
+func jSeqNames(prefix string, n int) []string {
 	out := make([]string, n)
 	for i := range out {
 		out[i] = prefix + strconv.Itoa(i)
@@ -819,17 +822,17 @@ func seqNames(prefix string, n int) []string {
 // the notices the tests use are rows of 2.5. A table that moves breaks here.
 func TestJTypesAreInTheTables(t *testing.T) {
 	t.Parallel()
-	for _, typ := range []string{jTypeCannotAsk, jTypeStopped, jTypeDone, jTypeWorkLate, jTypeReadLate, jTypeStreamLate, tNoMember, tBlocked} {
+	for _, typ := range []string{jTypeCannotAsk, jTypeStopped, jTypeDone, jTypeWorkLate, jTypeReadLate, jTypeStreamLate, jtNoMember, jtBlocked} {
 		if _, ok := sprint.Judgments[typ]; !ok {
 			t.Errorf("%q is no row of 2.2", typ)
 		}
 	}
-	for _, typ := range []string{jTypeCannotAsk, jTypeStopped, tNoMember, jTypeWorkLate, jTypeReadLate, jTypeStreamLate} {
+	for _, typ := range []string{jTypeCannotAsk, jTypeStopped, jtNoMember, jTypeWorkLate, jTypeReadLate, jTypeStreamLate} {
 		if kept, _ := jJudgment(typ); !kept {
 			t.Errorf("%q is not kept by the tick: a wait on it would not hold", typ)
 		}
 	}
-	for _, typ := range []string{tBlocked, jTypeDone} {
+	for _, typ := range []string{jtBlocked, jTypeDone} {
 		if kept, _ := jJudgment(typ); kept {
 			t.Errorf("%q is kept by the tick: a wait on it would hold, not review", typ)
 		}
@@ -860,14 +863,14 @@ func TestJTypesAreInTheTables(t *testing.T) {
 func TestJLinesParseAsEvents(t *testing.T) {
 	t.Parallel()
 	r := newJRig(t, false)
-	r.step(req(JOpOpen, tNoMember, "c", "sprint"), req(JOpOpen, tBlocked, "n0", "w1")) // 1, 2
-	r.step(req(JOpUpdate, tNoMember, "c", "sprint"))                                   // 3
-	r.step(hold(tBlocked, "n0", r.wall()+1000, "w1"))                                  // 4: review
-	r.step(hold(tNoMember, "c", r.wall()+1000, "sprint"))                              // 5: hold
-	r.step(req(JOpUnhold, tNoMember, "c", "sprint"))                                   // 6
-	r.step(req(JOpKnow, "ci green", "", "p1"))                                         // 7
-	r.step(req(JOpRequest, "unfrozen", "", "s1"))                                      // 8
-	r.step(req(JOpClose, tBlocked, "n0", "w1"))                                        // 9
+	r.step(jReq(JOpOpen, jtNoMember, "c", "sprint"), jReq(JOpOpen, jtBlocked, "n0", "w1")) // 1, 2
+	r.step(jReq(JOpUpdate, jtNoMember, "c", "sprint"))                                     // 3
+	r.step(jHold(jtBlocked, "n0", r.wall()+1000, "w1"))                                    // 4: review
+	r.step(jHold(jtNoMember, "c", r.wall()+1000, "sprint"))                                // 5: hold
+	r.step(jReq(JOpUnhold, jtNoMember, "c", "sprint"))                                     // 6
+	r.step(jReq(JOpKnow, "ci green", "", "p1"))                                            // 7
+	r.step(jReq(JOpRequest, "unfrozen", "", "s1"))                                         // 8
+	r.step(jReq(JOpClose, jtBlocked, "n0", "w1"))                                          // 9
 	want := []struct {
 		seq           int
 		kind          string
@@ -891,7 +894,7 @@ func TestJLinesParseAsEvents(t *testing.T) {
 func TestJOpLessStepCarriesNoOp(t *testing.T) {
 	t.Parallel()
 	r := newJRig(t, false)
-	r.step(req(JOpOpen, tCannotAsk, "c", "p1"))
+	r.step(jReq(JOpOpen, jtCannotAsk, "c", "p1"))
 	snap, err := r.m.Snapshot(testPrefix)
 	if err != nil {
 		t.Fatal(err)
@@ -903,7 +906,7 @@ func TestJOpLessStepCarriesNoOp(t *testing.T) {
 		t.Fatalf("the log has %d lines, want J's one", got)
 	}
 	reply := r.send(&Request{Epoch: "0", Meta: Meta{Verb: "drop"}, Body: Body{Op: &Op{ID: "op-1", Intent: "drop p1"},
-		Notes: []NoteReq{req(JOpClose, tCannotAsk, "c", "p1")}}})
+		Notes: []NoteReq{jReq(JOpClose, jtCannotAsk, "c", "p1")}}})
 	if reply.Reply.Lines != 1 || reply.Reply.Status != "ok" {
 		t.Fatalf("a step with an op and a note: %+v", reply.Reply)
 	}
@@ -915,7 +918,7 @@ func TestJOpLessStepCarriesNoOp(t *testing.T) {
 func jUnitState(now int64, seed ...Cmd) *State {
 	ks := newKeyspace()
 	ks.apply(seed)
-	return &State{Prefix: testPrefix, Epoch: "0", NowMS: tset.Decimal(str(now)), Names: testNames, Keys: &Keys{ks: ks}}
+	return &State{Prefix: testPrefix, Epoch: "0", NowMS: tset.Decimal(jStr(now)), Names: testNames, Keys: &Keys{ks: ks}}
 }
 
 func jObs(recs ...tset.MemberRecord) *Before {
@@ -930,9 +933,9 @@ func jObs(recs ...tset.MemberRecord) *Before {
 	return b
 }
 
-// card is a record in a table at a cell with fields; its ID is "table/id", which
+// jCard is a record in a table at a cell with fields; its ID is "table/id", which
 // jObs splits.
-func card(table, id, row, col string, fields map[string]string) tset.MemberRecord {
+func jCard(table, id, row, col string, fields map[string]string) tset.MemberRecord {
 	rec := tset.MemberRecord{ID: table + "/" + id, Exists: true, Place: &tset.CellPlace{Row: row, Col: col}, Fields: map[string]tset.FieldValue{}}
 	for k, v := range fields {
 		rec.Fields[k] = tset.FieldValue{Present: true, Value: v}
@@ -948,8 +951,8 @@ func card(table, id, row, col string, fields map[string]string) tset.MemberRecor
 func TestJEnds(t *testing.T) {
 	t.Parallel()
 	due := map[string]string{"due_untaken": "5000"}
-	untaken := card(sprint.Fleet, "w1", "m1", "ready", due)
-	stream := card(sprint.Merge, "s1ctl", "s1", "ctl", map[string]string{"due_mergeidle": "9000"})
+	untaken := jCard(sprint.Fleet, "w1", "m1", "ready", due)
+	stream := jCard(sprint.Merge, "s1ctl", "s1", "ctl", map[string]string{"due_mergeidle": "9000"})
 	cases := []struct {
 		name    string
 		entry   tset.Entry
@@ -966,9 +969,9 @@ func TestJEnds(t *testing.T) {
 		{"the due field set empty for the card", tset.Entry{Kind: "move", Table: sprint.Fleet, From: "m1:ready", IDs: []string{"w1"}, Each: []map[string]string{{"due_untaken": ""}}}, untaken, "w1", "cleared"},
 		{"the due field moved", tset.Entry{Kind: "move", Table: sprint.Fleet, From: "m1:ready", IDs: []string{"w1"}, Set: map[string]string{"due_untaken": "8000"}}, untaken, "", ""},
 		{"a card with no due field", tset.Entry{Kind: "move", Table: sprint.Fleet, From: "m1:ready", To: "m1:working", IDs: []string{"w1"}},
-			card(sprint.Fleet, "w1", "m1", "ready", nil), "", ""},
+			jCard(sprint.Fleet, "w1", "m1", "ready", nil), "", ""},
 		{"a card in another column", tset.Entry{Kind: "move", Table: sprint.Fleet, From: "m1:working", To: "m1:ok", IDs: []string{"w1"}},
-			card(sprint.Fleet, "w1", "m1", "working", due), "", ""},
+			jCard(sprint.Fleet, "w1", "m1", "working", due), "", ""},
 		{"a stream keyed by row changing row", tset.Entry{Kind: "move", Table: sprint.Merge, From: "s1:ctl", To: "s2:ctl", IDs: []string{"s1ctl"}}, stream, "s1", "stream no longer merging"},
 		{"a stream's due field unset", tset.Entry{Kind: "move", Table: sprint.Merge, From: "s1:ctl", IDs: []string{"s1ctl"}, Unset: []string{"due_mergeidle"}}, stream, "s1", "cleared"},
 	}
@@ -990,7 +993,7 @@ func TestJEnds(t *testing.T) {
 
 	// A request already naming the (type, cause, subject) is not closed twice.
 	named := map[[3]string]bool{{jTypeWorkLate, "untaken", "w1"}: true}
-	if got := jEndings([]tset.Entry{cases[0].entry}, jObs(card(sprint.Fleet, "w1", "m1", "ready", due)), named); len(got) != 0 {
+	if got := jEndings([]tset.Entry{cases[0].entry}, jObs(jCard(sprint.Fleet, "w1", "m1", "ready", due)), named); len(got) != 0 {
 		t.Errorf("a close was added beside the caller's own: %+v", got)
 	}
 }
@@ -1000,11 +1003,11 @@ func TestJEnds(t *testing.T) {
 // step's own; and JBefore asks the due fields of the cards a step moves.
 func TestJDecideNeedsEntriesForLateness(t *testing.T) {
 	t.Parallel()
-	judged := Command("HSET", jkey("jopen:w1"), kindHash, jField(jTypeWorkLate, "untaken"), "n5")
-	counted := Command("HSET", jkey("jn"), kindHash, "n5", "1")
+	judged := Command("HSET", jk("jopen:w1"), kindHash, jField(jTypeWorkLate, "untaken"), "n5")
+	counted := Command("HSET", jk("jn"), kindHash, "n5", "1")
 	st := jUnitState(1_790_000_000_000, judged, counted)
 	take := tset.Entry{Kind: "move", Table: sprint.Fleet, From: "m1:ready", To: "m1:working", IDs: []string{"w1"}}
-	obs := jObs(card(sprint.Fleet, "w1", "m1", "ready", map[string]string{"due_untaken": "5000"}))
+	obs := jObs(jCard(sprint.Fleet, "w1", "m1", "ready", map[string]string{"due_untaken": "5000"}))
 
 	if notes, jp, ref := JDecide(st, nil, obs); ref != nil || len(notes) != 0 || len(jp.Notes) != 0 {
 		t.Fatalf("JDecide of no requests: %v %v %v", notes, jp, ref)
@@ -1047,34 +1050,34 @@ func TestJCmdsOrder(t *testing.T) {
 	seqs := LogPlan{NoteSeqs: []tset.Decimal{"7"}}
 
 	st := jUnitState(1_790_000_000_000)
-	_, jp, ref := JDecide(st, []NoteReq{req(JOpOpen, tCannotAsk, "c", "p1")}, nil)
+	_, jp, ref := JDecide(st, []NoteReq{jReq(JOpOpen, jtCannotAsk, "c", "p1")}, nil)
 	if ref != nil {
 		t.Fatal(ref)
 	}
 	cmds := JCmds(st, jp, seqs)
-	states := index(cmds, "HSET", jkey("jopen:p1"))
-	for _, rec := range [][2]string{{"RPUSH", jkey("notes")}, {"ZADD", jkey("due")}, {"ZADD", jkey("jnotes")}, {"HSET", jkey("jn")}, {"ZADD", jkey("askwait")}} {
+	states := index(cmds, "HSET", jk("jopen:p1"))
+	for _, rec := range [][2]string{{"RPUSH", jk("notes")}, {"ZADD", jk("due")}, {"ZADD", jk("jnotes")}, {"HSET", jk("jn")}, {"ZADD", jk("askwait")}} {
 		if i := index(cmds, rec[0], rec[1]); i < 0 || i > states {
 			t.Errorf("an open: %s %s is at %d, and jopen's HSET at %d; owed work is recorded first", rec[0], rec[1], i, states)
 		}
 	}
 
 	held := jUnitState(1_790_000_000_000,
-		Command("HSET", jkey("jopen:p1"), kindHash, jField(tCannotAsk, "c"), "n3"), Command("HSET", jkey("jn"), kindHash, "n3", "1"))
-	hold := hold(tCannotAsk, "c", 1_790_000_060_000, "p1")
+		Command("HSET", jk("jopen:p1"), kindHash, jField(jtCannotAsk, "c"), "n3"), Command("HSET", jk("jn"), kindHash, "n3", "1"))
+	hold := jHold(jtCannotAsk, "c", 1_790_000_060_000, "p1")
 	_, jp, _ = JDecide(held, []NoteReq{hold}, nil)
 	cmds = JCmds(held, jp, seqs)
-	if i, j := index(cmds, "ZADD", jkey("due")), index(cmds, "HSET", jkey("jopen:p1")); i < 0 || j < 0 || i > j {
+	if i, j := index(cmds, "ZADD", jk("due")), index(cmds, "HSET", jk("jopen:p1")); i < 0 || j < 0 || i > j {
 		t.Errorf("a hold: the hold entry is at %d and the field at %d; the entry comes first", i, j)
 	}
-	if j, k := index(cmds, "HSET", jkey("jopen:p1")), index(cmds, "HDEL", jkey("jn")); j < 0 || k < 0 || k < j {
+	if j, k := index(cmds, "HSET", jk("jopen:p1")), index(cmds, "HDEL", jk("jn")); j < 0 || k < 0 || k < j {
 		t.Errorf("a hold: the field is at %d and the count's removal at %d; the field comes first", j, k)
 	}
 
-	_, jp, _ = JDecide(held, []NoteReq{req(JOpClose, tCannotAsk, "c", "p1")}, nil)
+	_, jp, _ = JDecide(held, []NoteReq{jReq(JOpClose, jtCannotAsk, "c", "p1")}, nil)
 	cmds = JCmds(held, jp, seqs)
-	field := index(cmds, "HDEL", jkey("jopen:p1"))
-	for _, forget := range [][2]string{{"HDEL", jkey("jn")}, {"ZREM", jkey("jnotes")}, {"ZREM", jkey("askwait")}, {"ZREM", jkey("due")}} {
+	field := index(cmds, "HDEL", jk("jopen:p1"))
+	for _, forget := range [][2]string{{"HDEL", jk("jn")}, {"ZREM", jk("jnotes")}, {"ZREM", jk("askwait")}, {"ZREM", jk("due")}} {
 		if i := index(cmds, forget[0], forget[1]); field < 0 || i < field {
 			t.Errorf("a close: %s %s is at %d and the field's removal at %d; the field goes first", forget[0], forget[1], i, field)
 		}
@@ -1086,7 +1089,7 @@ func TestJCmdsOrder(t *testing.T) {
 func TestJCmdsSkipsANoteWithNoSeq(t *testing.T) {
 	t.Parallel()
 	st := jUnitState(1_790_000_000_000)
-	_, jp, _ := JDecide(st, []NoteReq{req(JOpOpen, tCannotAsk, "c", "p1")}, nil)
+	_, jp, _ := JDecide(st, []NoteReq{jReq(JOpOpen, jtCannotAsk, "c", "p1")}, nil)
 	if cmds := JCmds(st, jp, LogPlan{}); len(cmds) != 0 {
 		t.Fatalf("a note with no seq wrote %d commands", len(cmds))
 	}
@@ -1101,5 +1104,44 @@ func TestJPhasesAreTheTwinsDefaults(t *testing.T) {
 	t.Parallel()
 	if defaultPhases.JDecide == nil || defaultPhases.JCmds == nil {
 		t.Fatal("the default phases have no J")
+	}
+}
+
+// TestJNoteOfTwoThousandSubjectsStoreTime (8.1 IT15, Limit): a note naming 2,000
+// subjects takes at most 10 ms of store time, SLOWLOG in the container. It needs
+// the store.
+func TestJNoteOfTwoThousandSubjectsStoreTime(t *testing.T) {
+	t.Parallel()
+	t.Skip("G0: needs the store (Layer 1 revision 4 pinned, Layer 2 accepted again) and its container's SLOWLOG")
+}
+
+// TestJLuaEqualsTwinOnAStore: the Lua half run by a store makes what the twin
+// makes, step for step and image for image. Tonight the two are held to the same
+// golden vectors (TestJVectorsGo here, TestSprintJLuaVectors under gopher-lua in
+// internal/nsprint/fn); the store half needs the store.
+func TestJLuaEqualsTwinOnAStore(t *testing.T) {
+	t.Parallel()
+	t.Skip("G0: needs the store (Layer 1 revision 4 pinned, Layer 2 accepted again) to load sprint_j.lua")
+}
+
+// TestJDefaultPhasesRunOnTheTwin: a twin made with NewTwin, given only X (which
+// another item fills), runs a note request through J as its init registered it:
+// the judgment opens, with its line and its keys.
+func TestJDefaultPhasesRunOnTheTwin(t *testing.T) {
+	t.Parallel()
+	m := newTestMem(t)
+	log := NewLogStub()
+	tw := NewTwin(m, log, testNames)
+	tw.parts = NewPartRegistry()
+	tw.SetClock(func() time.Time { return testTime })
+	pass := passX()
+	tw.phases.XPre, tw.phases.XCmds = pass.XPre, pass.XCmds
+	reply := mustStep(t, tw, &Request{Epoch: "0", Meta: Meta{Rule: "j", Tick: true},
+		Body: Body{Notes: []NoteReq{jReq(JOpOpen, jtCannotAsk, "c", "p1")}}})
+	if reply.Reply.Lines != 1 {
+		t.Fatalf("the step wrote %d lines, want J's one", reply.Reply.Lines)
+	}
+	if got := tw.SprintKeys()[jk("jopen:p1")].Hash[jtCannotAsk+"|c"]; got != "n1" {
+		t.Fatalf("jopen holds %q, want n1", got)
 	}
 }

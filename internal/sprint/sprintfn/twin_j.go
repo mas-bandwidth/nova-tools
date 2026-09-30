@@ -21,8 +21,10 @@ import (
 // vectors in testdata/j_vectors.json.
 //
 // What J reads (the pre stage): {p}jopen:<subject>@e for each subject a
-// request names, at the field <type>|<cause>; {p}jn@e for each note a close or
-// a hold would shrink; {p}clock for R. What J writes (X.plan, commands only):
+// request names, at the field <type>|<cause>, and all its fields for a subject
+// that a close or an unhold may take out of askwait (another cause of "cannot
+// ask" keeps it there); {p}jn@e for each note a close or a hold would shrink;
+// {p}clock for R, when a note opens. What J writes (X.plan, commands only):
 // {p}jopen:<subject>@e, {p}jnotes@e, {p}jn@e, {p}notes@e, {p}askwait@e, and in
 // {p}due@e the overdue:<note> and hold:<note> entries, and {p}clock's
 // stophold_ms for a wait on the STOPPED judgment. The note ids are "n" and the
@@ -51,8 +53,25 @@ import (
 //	know     a notice (Notices[type]): its line, and nothing else.
 //	request  a request line, and nothing else.
 //
+// JPlan is IT12's type and its meaning is J's: Notes has one JNote for each note
+// J made, Index the note's place in the step's notes (so LogPlan.NoteSeqs[Index]
+// is its line's seq), Req the request resolved to that line (the op, with a wait
+// on a judgment the tick does not keep as "review", and the subjects the line is
+// about) and Existing "" for a new note, else the note id the subjects' fields
+// held, with "h" before it for a hold. A request that changes nothing has none.
+//
 // A step that ends a timed state closes the lateness judgment of that kind on
-// the card without being asked (JDecideEntries).
+// the card without being asked (JDecideEntries). LatenessJudgment is the type
+// and cause R11 must raise it with. JBefore names the fields that takes; JCost
+// counts what a step's J costs, as the step builder does (8.0: Coster).
+//
+// What the twin's composition lacks for J, which is IT12's to give and not
+// changed here: State carries no entries, so JDecide, the function the twin's J
+// phase is, closes no lateness judgment, and a composing twin calls
+// JDecideEntries itself (the tests do); the twin calls J only for a step that
+// carries a note request, so a verb's step that ends a timed state and raises no
+// note does not reach it; and the pre stage's asks are one function, so JBefore
+// is for whoever composes them (Phases.Before).
 //
 // Where the design is silent or contradicts itself, the narrower reading is
 // taken, and the rest is left to ask. What the reading took:
@@ -81,6 +100,9 @@ import (
 //	has holds, review and never overdue; J holds the one type that is never
 //	overdue itself.
 //	the overdue span (1.2): written + 10 min; Until is not read on an open.
+//	askwait's score (1.3.1: id -> R): an open writes R, also for a subject that
+//	another cause keeps there, since Layer 1's registry has no ZADD NX (errata 2,
+//	item 5).
 //	the stream of a note (events.go): NoteReq has no stream, so a line's meta
 //	has none, and ingest's rows that key on a stream find none.
 
@@ -156,6 +178,15 @@ const jOverdueSpanMS int64 = 10 * 60 * 1000
 // have: a millisecond clock of 15 digits is below 2^53, so the Lua half holds
 // it exactly.
 const jClockDigitsMax = 15
+
+// jUntilMax is the largest time a hold or a review may name: 15 digits, which the
+// Lua half holds exactly as a number.
+const jUntilMax int64 = 999_999_999_999_999
+
+// jCountDigitsMax is the most digits a count in jn may have: a note names at
+// most 2,000 subjects, so a count of 10 digits is a key that disagrees with
+// itself.
+const jCountDigitsMax = 9
 
 // jSeqCeiling is the live sequence ceiling, 2^53 - 1 (L2 2): the seq JCost
 // counts a command's bytes with, the longest one a line can have.
@@ -310,6 +341,9 @@ func jCheck(i int, r NoteReq) *Refusal {
 			return jRefuse(i, CodeRequest, "is on a judgment type 2.2 does not have")
 		}
 	}
+	if r.Until < 0 || r.Until > jUntilMax {
+		return jRefuse(i, CodeRequest, "has a time that is negative or over 15 digits")
+	}
 	if r.Op == JOpHold && r.Until <= 0 {
 		return jRefuse(i, CodeRequest, "holds with no time to hold until")
 	}
@@ -365,8 +399,11 @@ func (d *jDecider) jopenFields(subject string) map[string]string {
 	if f, ok := d.all[subject]; ok {
 		return f
 	}
-	d.probes++
 	f := d.st.Keys.HGetAll(jKey(d.st, jKeyJopen+subject))
+	d.probes++ // HLEN
+	if len(f) != 0 {
+		d.probes++ // and HKEYS, which the Lua half reads bounded by the length
+	}
 	d.all[subject] = f
 	return f
 }
@@ -409,7 +446,7 @@ func (d *jDecider) count(note string) (int, *Refusal) {
 		d.jn[note] = r
 	}
 	n, err := strconv.Atoi(r.val)
-	if !r.present || err != nil || n < 1 || strconv.Itoa(n) != r.val {
+	if !r.present || len(r.val) > jCountDigitsMax || err != nil || n < 1 || strconv.Itoa(n) != r.val {
 		return 0, refuse(PhaseJ, jCodeDrift, RefusalDetail{})
 	}
 	return n, nil
@@ -717,6 +754,9 @@ type jOutcome struct {
 // jRun is J's pre stage. entries is the step's combined entries, nil where the
 // caller has none to give.
 func jRun(st *State, in []NoteReq, obs *Before, entries []tset.Entry) (jOutcome, *Refusal) {
+	if st == nil || st.Keys == nil {
+		return jOutcome{}, refuse(PhaseJ, CodeConfig, RefusalDetail{})
+	}
 	for i, r := range in {
 		if ref := jCheck(i, r); ref != nil {
 			return jOutcome{}, ref
@@ -763,12 +803,13 @@ func jRun(st *State, in []NoteReq, obs *Before, entries []tset.Entry) (jOutcome,
 	}
 	// A close or a hold of open subjects takes them off their note's count: it
 	// must have the count, and one to take them from (jn agrees with jopen).
-	for note, n := range jOpenTaken(out.plan) {
+	taken, order := jOpenTaken(out.plan)
+	for _, note := range order {
 		have, ref := d.count(note)
 		if ref != nil {
 			return jOutcome{}, ref
 		}
-		if have < n {
+		if have < taken[note] {
 			return jOutcome{}, refuse(PhaseJ, jCodeDrift, RefusalDetail{})
 		}
 	}
@@ -831,18 +872,23 @@ func jAskwaitDrops(jp JPlan, fields func(subject string) map[string]string) []st
 }
 
 // jOpenTaken is how many subjects a step takes off each open note's count: a
-// close of open subjects and a hold of them leave the open set.
-func jOpenTaken(jp JPlan) map[string]int {
+// close of open subjects and a hold of them leave the open set. The notes are
+// listed in the order they first appear in.
+func jOpenTaken(jp JPlan) (map[string]int, []string) {
 	out := map[string]int{}
+	var order []string
 	for _, n := range jp.Notes {
 		if n.Existing == "" || strings.HasPrefix(n.Existing, jHoldPrefix) {
 			continue
 		}
 		if n.Req.Op == JOpClose || n.Req.Op == JOpHold {
+			if _, seen := out[n.Existing]; !seen {
+				order = append(order, n.Existing)
+			}
 			out[n.Existing] += len(n.Req.Subjects)
 		}
 	}
-	return out
+	return out, order
 }
 
 // JDecide is J's pre stage for the requests of a step (1.3.4; Phases.JDecide):
@@ -1016,6 +1062,9 @@ func JCmds(st *State, jp JPlan, lp LogPlan) []Cmd {
 // JCounts is what J costs a step: the commands and argv bytes it plans, the
 // key reads it makes and the notes it writes (8.0's step.Cost, which IT04's
 // builder counts a step's X and J with; the step package is not on this base).
+// Probes are the typed reads the Lua half issues: one for each subject and
+// field, one for each jn count, an HLEN and an HKEYS for each subject whose
+// askwait a close may end, and one for the clock when a note opens.
 type JCounts struct {
 	Commands, ArgvBytes, Probes, Notes int
 }
