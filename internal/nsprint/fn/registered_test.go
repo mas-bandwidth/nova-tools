@@ -10,9 +10,20 @@ import (
 )
 
 var (
-	goFunctionNameRx = regexp.MustCompile(`"(ns_[a-z0-9_]+)"`)
-	luaRegisterRx    = regexp.MustCompile(`register_function\(\s*'(ns_[a-z0-9_]+)'|function_name = '(ns_[a-z0-9_]+)'`)
+	goFunctionNameRx    = regexp.MustCompile(`"(ns_[a-z0-9_]+)"`)
+	luaStringRegisterRx = regexp.MustCompile(`redis\.register_function\s*\(\s*'(ns_[a-z0-9_]+)'`)
+	luaTableRegisterRx  = regexp.MustCompile(`redis\.register_function\s*(?:\(\s*)?\{\s*function_name\s*=\s*'(ns_[a-z0-9_]+)'`)
 )
+
+func luaFunctionRegistrations(source string) map[string]bool {
+	registered := map[string]bool{}
+	for _, rx := range []*regexp.Regexp{luaStringRegisterRx, luaTableRegisterRx} {
+		for _, match := range rx.FindAllStringSubmatch(source, -1) {
+			registered[match[1]] = true
+		}
+	}
+	return registered
+}
 
 // TestEveryGoFunctionNameIsRegistered is the #4405 fix round's item 5
 // (#4322): every ns_* function name a Go source outside the tests names
@@ -26,10 +37,7 @@ func TestEveryGoFunctionNameIsRegistered(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	registered := map[string]bool{}
-	for _, m := range luaRegisterRx.FindAllStringSubmatch(src, -1) {
-		registered[m[1]+m[2]] = true
-	}
+	registered := luaFunctionRegistrations(src)
 	if !registered["ns_task_push"] || !registered["ns_ws_paths_repair"] {
 		t.Fatalf("the library registers %d functions, not ns_task_push and ns_ws_paths_repair", len(registered))
 	}
@@ -58,5 +66,48 @@ func TestEveryGoFunctionNameIsRegistered(t *testing.T) {
 	}
 	if named == 0 {
 		t.Fatal("no Go source names an ns_* function: the walk read nothing")
+	}
+}
+
+func TestStandaloneTSetProfileRegistersWriterAndReader(t *testing.T) {
+	t.Parallel()
+
+	source, err := TSetSource(TSetStandalone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	registered := luaFunctionRegistrations(source)
+	for _, name := range []string{"ns_tset_step", "ns_tset_read"} {
+		if !registered[name] {
+			t.Errorf("standalone tset profile does not declare %s", name)
+		}
+	}
+}
+
+func TestRegistrationInventoryDetectsMissingTSetRead(t *testing.T) {
+	t.Parallel()
+
+	source, err := TSetSource(TSetStandalone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var readDeclaration string
+	for _, match := range luaTableRegisterRx.FindAllStringSubmatch(source, -1) {
+		if match[1] == "ns_tset_read" {
+			readDeclaration = match[0]
+			break
+		}
+	}
+	if readDeclaration == "" {
+		t.Fatal("standalone profile has no table-form ns_tset_read registration to guard")
+	}
+	withoutRead := strings.Replace(source, readDeclaration,
+		strings.Replace(readDeclaration, "redis.register_function", "redis.not_register_function", 1), 1)
+	registered := luaFunctionRegistrations(withoutRead)
+	if registered["ns_tset_read"] {
+		t.Fatal("registration inventory accepted a standalone profile with ns_tset_read removed")
+	}
+	if !registered["ns_tset_step"] {
+		t.Fatal("removing ns_tset_read also hid the string-form ns_tset_step registration")
 	}
 }

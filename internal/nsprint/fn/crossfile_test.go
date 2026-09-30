@@ -19,7 +19,8 @@ var allowedGlobals = map[string]bool{
 	"string": true, "table": true, "math": true,
 	"tonumber": true, "tostring": true, "type": true, "pairs": true, "ipairs": true,
 	"next": true, "select": true, "unpack": true, "error": true, "pcall": true, "assert": true,
-	"NS": true,
+	"getmetatable": true, // Lua builtin used to recognize Redis cjson array tables.
+	"NS":           true,
 }
 
 // freeNames compiles one Lua file on its own (Lua 5.1, the Redis dialect) and
@@ -70,6 +71,28 @@ var (
 	nsRead     = regexp.MustCompile(`\bNS\.([A-Za-z_][A-Za-z0-9_]*)`)
 )
 
+// nsFieldAvailable keeps profile inputs separate from exports made by earlier
+// fragments. These two exact seams do not waive any free-global/write check.
+func nsFieldAvailable(name, field string, exported map[string]string) bool {
+	if _, ok := exported[field]; ok {
+		return true
+	}
+	if field == "tset_profile" {
+		// TSetSource sets this feature key in its prelude. Legacy Source leaves
+		// it nil deliberately: the explicit tset fragments remain inert there.
+		for _, fragment := range tsetFragments {
+			if name == fragment {
+				return true
+			}
+		}
+	}
+	// The core resolves this dependency inside registered callbacks, after
+	// the composed assembler must have loaded the required Layer 2 provider.
+	// TestTSetComposedSourceIsExplicit still refuses an absent provider. This
+	// load-order exception is neither provider nor callback execution evidence.
+	return name == "lua/table_set.lua" && field == "tlog"
+}
+
 // TestNoBareCrossFileReferences is the guard for dev red at a42285c5: #3606
 // wrapped every file in its own do-block, and task_claim.lua still read
 // hold.lua's local HD and land.lua still called capacity.lua's local
@@ -77,7 +100,7 @@ var (
 // "nonexistent global variable 'HD'" while FUNCTION LOAD succeeded. It fails
 // when any file reads a free name outside allowedGlobals, writes any global
 // (Redis refuses both), or reads an NS field no file at or before it (in load
-// order) assigns.
+// order) assigns, apart from the exact documented profile seams below.
 func TestNoBareCrossFileReferences(t *testing.T) {
 	t.Parallel()
 
@@ -108,8 +131,8 @@ func TestNoBareCrossFileReferences(t *testing.T) {
 			}
 		}
 		for _, m := range nsRead.FindAllStringSubmatch(code, -1) {
-			if _, ok := exported[m[1]]; !ok {
-				t.Errorf("%s reads NS.%s, which no file at or before it in load order assigns", name, m[1])
+			if !nsFieldAvailable(name, m[1], exported) {
+				t.Errorf("%s reads NS.%s, which no file at or before it in load order assigns and no profile seam supplies", name, m[1])
 			}
 		}
 	}
@@ -131,5 +154,39 @@ func TestCrossFileGuardSeesTheBrokenShape(t *testing.T) {
 	reads, _ = freeNames(t, "fixed.lua", fixed)
 	if strings.Join(reads, ",") != "NS,redis" {
 		t.Fatalf("fixed shape reads %v, want [NS redis]", reads)
+	}
+}
+
+// Profile exceptions must not turn into exemptions for a file, an NS namespace,
+// or a similarly named global. The original broken-shape control stays above.
+func TestCrossFileGuardAllowsOnlyProfileSeams(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name, field string
+		want        bool
+	}{
+		{"lua/table_set.lua", "tset_profile", true},
+		{"lua/table_set_validate.lua", "tset_profile", true},
+		{"lua/table_set.lua", "tlog", true},
+		{"lua/task.lua", "tset_profile", false},
+		{"lua/table_set_unknown.lua", "tset_profile", false},
+		{"lua/task.lua", "tlog", false},
+		{"lua/table_set_read.lua", "tlog", false},
+		{"lua/table_set.lua", "tlog_typo", false},
+		{"lua/table_set.lua", "tset_profiel", false},
+		{"lua/table_set.lua", "unknown", false},
+		{"lua/task.lua", "known", true},
+	} {
+		if got := nsFieldAvailable(tc.name, tc.field, map[string]string{"known": "lua/earlier.lua"}); got != tc.want {
+			t.Errorf("%s NS.%s available=%v, want %v", tc.name, tc.field, got, tc.want)
+		}
+	}
+	reads, writes := freeNames(t, "builtin.lua", "return getmetatable({}), getmetatabl({})")
+	if strings.Join(reads, ",") != "getmetatabl,getmetatable" || len(writes) != 0 {
+		t.Fatalf("builtin control reads=%v writes=%v", reads, writes)
+	}
+	if !allowedGlobals["getmetatable"] || allowedGlobals["getmetatabl"] {
+		t.Fatal("builtin allowance must remain exact")
 	}
 }
