@@ -245,6 +245,9 @@ func TestSourceACLTableReaderKeepsReadOnlyAccess(t *testing.T) {
 	if ms, err := ntable.CellMembers(ctx, reader, "demo", "r", "ready"); err != nil || len(ms) != 1 || ms[0].Member != "job" {
 		t.Fatalf("reader members: %v %v", ms, err)
 	}
+	if _, err := ntable.ReadSetMembers(ctx, reader, "demo", []string{"job"}); err != nil {
+		t.Fatalf("reader read set: %v", err)
+	}
 	if _, err := ntable.CellAdd(ctx, reader, "demo", "r", "ready", "forbidden", 1); err == nil || !strings.Contains(err.Error(), "NOPERM") {
 		t.Fatalf("reader wrote: %v", err)
 	}
