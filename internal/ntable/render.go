@@ -1,6 +1,7 @@
 package ntable
 
 import (
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -443,4 +444,53 @@ func foldText(cols []Column, c Column, rows []Row, j int) string {
 		return strings.Join(names, ",")
 	}
 	return ""
+}
+
+// SummaryLine is a stored view's summary line over its first table's
+// snapshot, "" for no line: the view's state alone while it has one
+// ("STOPPED", nothing more: no counts, no percent, no ETA), else
+// "x/y z% -> ETA" when the view names a done column. The counts pool the first
+// table's count columns; unread input, hidden rows and columns included,
+// leaves them unknown. ETA has no value until change-stream rate sampling is
+// available.
+func SummaryLine(v View, first Table) string {
+	switch {
+	case v.State != "":
+		return oneline.Escape(v.State)
+	case v.Summary != "":
+		return countSummary(first, v.Summary)
+	}
+	return ""
+}
+
+func countSummary(t Table, column string) string {
+	found := false
+	for _, col := range t.Columns {
+		if col.Name == column && col.Projection == Count {
+			found = true
+		}
+	}
+	if !found {
+		return "?/? ? -> ETA"
+	}
+	var part, total int64
+	for _, r := range t.Rows {
+		for k, col := range t.Columns {
+			if col.Projection != Count {
+				continue
+			}
+			if k >= len(r.Cells) || r.Cells[k].Unread {
+				return "?/? ? -> ETA"
+			}
+			total += r.Cells[k].Count
+			if col.Name == column {
+				part += r.Cells[k].Count
+			}
+		}
+	}
+	pct := "0.0%" // empty known totals use the same numeric display as other percentages
+	if total > 0 {
+		pct = strconv.FormatFloat(100*float64(part)/float64(total), 'f', 1, 64) + "%"
+	}
+	return fmt.Sprintf("%d/%d %s -> ETA", part, total, pct)
 }

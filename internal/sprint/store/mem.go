@@ -626,8 +626,18 @@ func (m *Mem) ViewSet(_ context.Context, v ntable.View) error {
 			return err
 		}
 	}
+	// A view set leaves the view's state as it is, as the table layer's does.
+	v.State = m.views[v.Name].State
 	m.views[v.Name] = v
 	return nil
+}
+
+// View is a stored view as the store holds it, and whether it is there.
+func (m *Mem) View(name string) (ntable.View, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	v, ok := m.views[name]
+	return v, ok
 }
 
 func (m *Mem) ViewDelete(_ context.Context, name string) error {

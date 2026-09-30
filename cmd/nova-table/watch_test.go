@@ -200,22 +200,51 @@ func TestRenderAllJoinsTablesWithOneBlankLine(t *testing.T) {
 
 func TestViewSummaryUsesAllKnownCounts(t *testing.T) {
 	t.Parallel()
-	if got := viewSummary(demoTable(0), "ready"); got != "0/0 0.0% -> ETA" {
+	if got := ntable.SummaryLine(ntable.View{Summary: "ready"}, demoTable(0)); got != "0/0 0.0% -> ETA" {
 		t.Fatalf("empty known counts: %s", got)
 	}
 	tb := demoTable(3)
 	tb.Hidden = []string{"ready"}
 	tb.Rows[0].Hidden = true
-	if got := viewSummary(tb, "ready"); got != "3/3 100.0% -> ETA" {
+	if got := ntable.SummaryLine(ntable.View{Summary: "ready"}, tb); got != "3/3 100.0% -> ETA" {
 		t.Fatalf("hidden counts: %s", got)
 	}
 	tb.Rows[0].Cells[1].Unread = true
-	if got := viewSummary(tb, "ready"); got != "?/? ? -> ETA" {
+	if got := ntable.SummaryLine(ntable.View{Summary: "ready"}, tb); got != "?/? ? -> ETA" {
 		t.Fatalf("unknown count: %s", got)
 	}
 	tb.Rows[0].Cells[1].Unread = false
-	if got := viewSummary(tb, "missing"); got != "?/? ? -> ETA" {
+	if got := ntable.SummaryLine(ntable.View{Summary: "missing"}, tb); got != "?/? ? -> ETA" {
 		t.Fatalf("missing column: %s", got)
+	}
+}
+
+// A view's frame: while the view has a state, the summary line is that state
+// alone, with no counts, percent or ETA; without one, the counts.
+func TestAViewsFrameShowsItsStateAloneAsTheSummaryLine(t *testing.T) {
+	t.Parallel()
+	tb := demoTable(3)
+	for _, c := range []struct{ state, want string }{
+		{"STOPPED", "SPRINT TABLE\n\nSTOPPED\n\n"},
+		{"", "SPRINT TABLE\n\n3/3 100.0% -> ETA\n\n"},
+	} {
+		viewGet := func(context.Context, redis.Cmdable, string) (ntable.View, error) {
+			return ntable.View{Name: "sprint", Title: "SPRINT TABLE", Tables: []string{"demo"}, Summary: "ready", State: c.state}, nil
+		}
+		snapshotter := func(redis.Cmdable, []string) func(context.Context) ([]ntable.Table, error) {
+			return func(context.Context) ([]ntable.Table, error) { return []ntable.Table{tb}, nil }
+		}
+		got, err := viewReaderWith(nil, "sprint", ntable.RenderOpts{}, false, viewGet, snapshotter, nil)(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, frame, _ := strings.Cut(got, "\n\n") // the clock line first
+		if !strings.HasPrefix(frame, c.want) {
+			t.Fatalf("state %q: frame\n%s\nwant it to open with %q", c.state, frame, c.want)
+		}
+		if c.state != "" && strings.Contains(frame, "ETA") {
+			t.Fatalf("state %q: the frame still counts:\n%s", c.state, frame)
+		}
 	}
 }
 

@@ -54,7 +54,7 @@ cmd/nova-secrets/main.go:mini 2
 cmd/nova-secrets/main.go:rowan 14
 cmd/nova-table/main.go:space 1
 cmd/nova-table/order.go:glenn 1
-cmd/nova-table/watch.go:glenn 6
+cmd/nova-table/watch.go:glenn 5
 cmd/nova-tokens/main.go:emma 2
 cmd/nova-tokens/version.go:space 1
 internal/bus/address.go:space 2

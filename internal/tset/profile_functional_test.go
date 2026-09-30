@@ -184,7 +184,7 @@ var profileForbiddenFunctions = []string{
 	"ns_table_list", "ns_table_member_create", "ns_table_member_find", "ns_table_members",
 	"ns_table_read", "ns_table_read_set", "ns_table_row_add", "ns_table_row_del", "ns_table_row_set",
 	"ns_table_rows_add", "ns_table_rows_hide", "ns_table_set",
-	"ns_view_del", "ns_view_get", "ns_view_list", "ns_view_set",
+	"ns_view_del", "ns_view_get", "ns_view_list", "ns_view_set", "ns_view_state",
 	"ns_sprint_step", "ns_tset_init", "ns_tset_teardown",
 }
 

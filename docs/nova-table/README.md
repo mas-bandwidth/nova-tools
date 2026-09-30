@@ -279,6 +279,7 @@ nova-table show <table> [--at-epoch <n>]
 nova-table render <table> [--at-epoch <n>] [--hide-zero-rows] [--width <col=n,...>] [--label-width <n>]
 nova-table render --view <name> [--hide-zero-rows] [--width <col=n,...>] [--label-width <n>]
 nova-table view set <name> --tables <a,b,...> [--title <text>] [--summary <count-column>]
+nova-table view state <name> (<text> | --clear)
 nova-table view show <name>
 nova-table view list
 nova-table view del <name>
@@ -330,6 +331,15 @@ stored views read active epochs. `view del` deletes only that configuration and 
 and their receipts remain. Dropping or renaming a table does not rewrite a view;
 edit or delete the reference explicitly. A view summary names a **count** column
 in its first table, such as `done`, not a `pct(done)` formula.
+
+`view state <name> <text>` gives a view a state: while it has one, the summary
+line is that text alone, in place of the counts, the percent and the ETA, and
+`--clear` removes it so the counts show again. A state is one line of at most
+64 bytes. `view set` leaves a view's state as it is; `view show` prints it. A
+tool that fills a view writes its state with its own record in one
+transaction (`ntable.QueueViewState`), so the two never disagree:
+`nova-sprint` writes `STOPPED` with the machine's state record on `stop`,
+`clear` and `init`, and clears it on `start`.
 
 ## Editing, batches and rename
 
@@ -384,7 +394,8 @@ Stored views are presentation configuration, separate from table epoch receipts.
 A view write validates all references and command permissions before either its
 hash or registry is changed. `watch --view` reloads the view each frame and reads
 its tables in one pipeline: two application exchanges, including a summary.
-The timestamp, title, pooled summary and tables form the frame. The summary uses
+The timestamp, title, summary line and tables form the frame. The summary line is
+the view's state alone while it has one, and otherwise the pooled summary, which uses
 the same table snapshot as the body; unread inputs print `?`. ETA has no value
 until change-stream rate sampling is implemented. Edit a view to change its
 tables or title without restarting watch.
@@ -546,7 +557,7 @@ the store owner. Writers need `FCALL` grants for `ns_table_create`, `drop`,
 `ns_table_read`, `ns_table_list`, and `ns_table_members`, plus the underlying
 commands and authorized key patterns. Writers also need `HDEL`, `TYPE`,
 `XINFO STREAM` and `XADD` for records and receipt preflight; revision counters
-use the existing `HGET`/`HSET` grants. Rename additionally needs `SCAN` and `RENAME`. Stored views need `ns_view_set`/`ns_view_get` and grants for `view:*` and `views`. The explicit maintenance check needs
+use the existing `HGET`/`HSET` grants. Rename additionally needs `SCAN` and `RENAME`. Stored views need `ns_view_set`/`ns_view_get` (and `ns_view_state` to set a state) and grants for `view:*` and `views`. The explicit maintenance check needs
 `FCALL_RO ns_table_check` and `SCAN`; these are not added to the display-only
 reader role. Custom epoch/record namespaces require their own key grants. The standalone ordered-set move retains
 `ns_oset_move`. `SCARD` and `SISMEMBER` preflight the registry type before

@@ -31,6 +31,17 @@ line (landed / all primaries, percent, ETA, with no machine text) when it is
 running; a RUNNING machine that has not ticked for 5 s shows
 `STOPPED (no tick for Ns)`. Every count cell is an ordered set.
 
+The stored view `sprint` (`nova-table watch --view sprint`) says the same:
+its summary line is `STOPPED`, and nothing more (no counts, no percent, no
+ETA), while the machine is STOPPED, and the progress line
+(`3/10 30.0% -> ETA`) while it is RUNNING. The view carries the text as its
+state (`nova-table view state`): `init`, `stop` and `clear` write `STOPPED` and
+`start` clears it, each in the same MULTI/EXEC as the machine's state record,
+so the view and the record never disagree. A `stop` or `start` that finds the
+machine in that state already writes the view's state again from the record.
+The view knows no heartbeat: a RUNNING machine that has stopped ticking keeps
+its progress line there, and `where` and `inbox` say it is not ticking.
+
 A frame of the view holds the time, the words `SPRINT TABLE`, that line and the
 tables, and nothing else: no pending operation, no stalled stream, no line about
 the people and no coordinator (`where --json` carries them; `check`, `inbox` and

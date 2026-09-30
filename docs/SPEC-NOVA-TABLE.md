@@ -147,6 +147,7 @@ nova-table show   <table> [--at-epoch <n>]
 nova-table render <table> | --view <name> [--at-epoch <n>] [--hide-zero-rows] [--width <col=n,...>] [--label-width <n>]
 nova-table watch  <table>[,<table>...] | --view <name> [--every <duration>] [--out <file>] [--title <text>] [--hide-zero-rows] [--width <col=n,...>] [--label-width <n>] [--check] [--once]
 nova-table view set  <name> --tables <a,b,...> [--title <text>] [--summary <count-column>]
+nova-table view state <name> (<text> | --clear)
 nova-table view show <name>
 nova-table view list
 nova-table view del  <name>

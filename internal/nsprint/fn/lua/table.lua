@@ -1409,6 +1409,21 @@ do
     for _, cmd in ipairs(commands) do redis.call(unpack(cmd)) end
     return {'OK'}
   end)
+  -- A view's state text: shown alone as the summary line while set, in place
+  -- of the counts (the machine that fills the view is STOPPED, say). '' clears
+  -- it. A view set leaves it as it is; only this function writes it.
+  redis.register_function('ns_view_state', function(keys, args)
+    if #args ~= 2 or not T.name(args[1]) then return T.refuse('ARGS', 'view_state') end
+    if args[2] ~= '' and (not T.word(args[2]) or #args[2] > 64) then return T.refuse('ARGS', 'state') end
+    local key = 'view:' .. args[1]
+    local h = T.hash(key)
+    if not next(h) then return T.refuse('NOVIEW', args[1]) end
+    local cmd = {'HSET', key, 'state', args[2]}
+    if args[2] == '' then cmd = {'HDEL', key, 'state'} end
+    if not redis.acl_check_cmd(unpack(cmd)) then return T.refuse('NOPERM', cmd[1], cmd[2]) end
+    redis.call(unpack(cmd))
+    return {'OK'}
+  end)
   redis.register_function{function_name = 'ns_view_get', flags = {'no-writes'}, callback = function(keys, args)
     if #args ~= 1 or not T.name(args[1]) then return T.refuse('ARGS', 'view_get') end
     local h = redis.call('HGETALL', 'view:' .. args[1])

@@ -40,6 +40,14 @@ func (c *clearOnCall) SetKey(ctx context.Context, name, value string) error {
 	return c.kv.SetKey(ctx, name, value)
 }
 
+func (c *clearOnCall) SetKeyShowing(ctx context.Context, name, value, view, state string) error {
+	return c.kv.SetKeyShowing(ctx, name, value, view, state)
+}
+
+func (c *clearOnCall) ShowState(ctx context.Context, view, state string) error {
+	return c.kv.ShowState(ctx, view, state)
+}
+
 func (c *clearOnCall) ReadFence(ctx context.Context) (Fence, error) {
 	c.at("fence")
 	return c.Backend.ReadFence(ctx)
