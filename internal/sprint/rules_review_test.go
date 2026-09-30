@@ -230,7 +230,7 @@ func (tw rvTwin) lineIDs(seq uint64) []string {
 		return ids
 	}
 	var cs []*Card
-	for _, c := range tw.s.Work.Cards {
+	for _, c := range tw.s.Work.Cards() {
 		if c.Placed() {
 			cs = append(cs, c)
 		}
@@ -766,8 +766,8 @@ func TestAcceptRefusesAMergeRecordElsewhere(t *testing.T) {
 	// no control card for the stream
 	w2 := rvReview(t, 1, 0)
 	rvAllOK(w2, "s1-1")
-	w2.s.Merge.Cards[CtlID("s1")].Col = ""
-	w2.s.Merge.Put(w2.s.Merge.Cards[CtlID("s1")])
+	w2.s.Merge.Card(CtlID("s1")).Col = ""
+	w2.s.Merge.Put(w2.s.Merge.Card(CtlID("s1")))
 	rp = rvPlan(w2, ruleAccept, "accept:s1-1")
 	if len(rp.Plan.Refused) != 1 || !strings.Contains(rp.Plan.Refused[0].Why, "has no merge row") {
 		t.Errorf("refused %+v", rp.Plan.Refused)
@@ -1094,7 +1094,8 @@ func TestReviewRulesOnAnEmptySnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for name, plan := range map[string]func(*Snapshot, []AgendaKey, Now) RulePlan{ruleAsk: planAsk, ruleAccept: planAccept, ruleRework: planRework} {
+	for _, name := range []string{ruleAsk, ruleAccept, ruleRework} {
+		plan := rvRule(t, name).Plan // the registered rule's
 		for _, s := range []*Snapshot{{}, {Work: NewTable(Work)}, {Work: NewTable(Work), Readers: NewTable(Readers), Merge: NewTable(Merge), Fleet: NewTable(Fleet)}, partial} {
 			rp := plan(s, rvKeys(name+":p", name+"@4"), rvNow())
 			if !rvEmpty(rp) || len(rp.Done) != 2 {
@@ -1255,16 +1256,15 @@ func rvNamed(rp ReadPlan) int {
 	return n
 }
 
-// rvRule is the review rule of that name.
-func rvRule(t *testing.T, name string) reviewRule {
+// rvRule is the registered rule of that name: the read and the plan the tick
+// runs, never the table the registry was made from.
+func rvRule(t *testing.T, name string) Rule {
 	t.Helper()
-	for _, r := range reviewRules {
-		if r.name == name {
-			return r
-		}
+	r, ok := rvRuleOf(name)
+	if !ok {
+		t.Fatalf("no rule %q is registered", name)
 	}
-	t.Fatalf("no review rule %q", name)
-	return reviewRule{}
+	return r
 }
 
 // A read is sized by the declared cost of what it asks, against every bound of
@@ -1279,7 +1279,7 @@ func TestReviewReadSizesKeys(t *testing.T) {
 	for i := 0; i < 1000; i++ {
 		keys = append(keys, fmt.Sprintf("ask:s1-%d", i))
 	}
-	rp, left := r.read(rvKeys(keys...), b, 0)
+	rp, left := r.Read(rvKeys(keys...), b, 0)
 	fit := rvNamed(rp)
 	if fit < 100 || fit+len(left) != 1000 || !within(rp.Queries(), rp.Cost(), b) {
 		t.Fatalf("read %d keys and left %d, costing %+v in %d queries", fit, len(left), rp.Cost(), rp.Queries())
@@ -1291,27 +1291,27 @@ func TestReviewReadSizesKeys(t *testing.T) {
 		t.Errorf("the readers are not read: %+v", rp.Sprint)
 	}
 	// one key more would not fit: the read took as many as the bounds hold
-	more, _ := r.read(rvKeys(keys[:fit+1]...), ReadBounds{}, 0)
+	more, _ := r.Read(rvKeys(keys[:fit+1]...), ReadBounds{}, 0)
 	if within(more.Queries(), more.Cost(), b) {
 		t.Errorf("%d keys fit the bounds, and the read took %d", fit+1, fit)
 	}
 	// each halving halves what is named, down to one key
 	for h := 1; h <= 12; h++ {
-		if rp, _ := r.read(rvKeys(keys...), b, h); rvNamed(rp) != Halved(fit, h) {
+		if rp, _ := r.Read(rvKeys(keys...), b, h); rvNamed(rp) != Halved(fit, h) {
 			t.Errorf("halvings %d: %d keys, want %d", h, rvNamed(rp), Halved(fit, h))
 		}
 	}
-	if rp, left := r.read(rvKeys(keys...), b, 40); rvNamed(rp) != 1 || len(left) != 999 {
+	if rp, left := r.Read(rvKeys(keys...), b, 40); rvNamed(rp) != 1 || len(left) != 999 {
 		t.Errorf("halvings 40: %d keys, %d left, want one", rvNamed(rp), len(left))
 	}
 
 	// a line is read from its offset, up to what is left of the read
-	rp, left = r.read(rvKeys("ask@9+500", "ask:s1-1", "askwait"), b, 0)
+	rp, left = r.Read(rvKeys("ask@9+500", "ask:s1-1", "askwait"), b, 0)
 	if src := rp.Sprint[0].Source; len(left) != 2 || len(rp.Sprint) != 2 || src.Kind != SourceLine || src.Seq != 9 || src.Offset != 500 || src.Limit != fit {
 		t.Errorf("a line that does not fit the read: %+v, left %v, want a window of %d ids from 500", rp.Sprint, left, fit)
 	}
 	// a line that ends before the read does leaves room for the keys behind it
-	rp, left = r.read(rvKeys("ask@9+1990", "ask:s1-1", "askwait"), b, 0)
+	rp, left = r.Read(rvKeys("ask@9+1990", "ask:s1-1", "askwait"), b, 0)
 	if len(left) != 0 || len(rp.Sprint) != 4 {
 		t.Fatalf("a line of ten ids and keys behind it: %d queries, left %v", len(rp.Sprint), left)
 	}
@@ -1325,20 +1325,20 @@ func TestReviewReadSizesKeys(t *testing.T) {
 		t.Errorf("askwait takes what is left of the read (%d): %+v", fit-1-10, head)
 	}
 	// askwait alone
-	rp, left = r.read(rvKeys("askwait", "ask:s1-1"), b, 0)
+	rp, left = r.Read(rvKeys("askwait", "ask:s1-1"), b, 0)
 	if head := rp.Sprint[0].Source; len(left) != 1 || head.Kind != SourceHead || head.Limit != fit {
 		t.Errorf("askwait: %+v, left %v", rp.Sprint, left)
 	}
 	// a line past the end of what a line holds, a key that names nothing: costless, taken
 	for _, k := range []string{"ask@9+2000", "ask@9+2500", "ask@x", "ask", "ask:"} {
-		if rp, left = r.read(rvKeys(k), b, 0); len(rp.Sprint) != 0 || len(left) != 0 {
+		if rp, left = r.Read(rvKeys(k), b, 0); len(rp.Sprint) != 0 || len(left) != 0 {
 			t.Errorf("%q: %+v %v", k, rp.Sprint, left)
 		}
 	}
-	if rp, left = r.read(rvKeys("ask@x", "ask:s1-1"), b, 0); rvNamed(rp) != 1 || len(left) != 0 {
+	if rp, left = r.Read(rvKeys("ask@x", "ask:s1-1"), b, 0); rvNamed(rp) != 1 || len(left) != 0 {
 		t.Errorf("a key that names nothing costs nothing: %+v %v", rp.Sprint, left)
 	}
-	if rp, left = r.read(nil, b, 0); len(rp.Sprint) != 0 || len(left) != 0 {
+	if rp, left = r.Read(nil, b, 0); len(rp.Sprint) != 0 || len(left) != 0 {
 		t.Errorf("no keys: %+v %v", rp.Sprint, left)
 	}
 }
@@ -1350,23 +1350,23 @@ func TestReviewReadsFitTheBoundsWhateverTheKeys(t *testing.T) {
 	t.Parallel()
 	rng := rand.New(rand.NewPCG(9, 21))
 	for iter := 0; iter < 3000; iter++ {
-		r := reviewRules[rng.IntN(len(reviewRules))]
+		r := rvRule(t, []string{ruleAsk, ruleAccept, ruleRework}[rng.IntN(3)])
 		var keys []AgendaKey
 		var primaries []string
 		for i, n := 0, 1+rng.IntN(40); i < n; i++ {
 			var k string
 			switch rng.IntN(5) {
 			case 0:
-				k = fmt.Sprintf("%s@%d", r.name, 1+rng.IntN(500))
+				k = fmt.Sprintf("%s@%d", r.Name, 1+rng.IntN(500))
 			case 1:
-				k = fmt.Sprintf("%s@%d+%d", r.name, 1+rng.IntN(500), rng.IntN(2400))
+				k = fmt.Sprintf("%s@%d+%d", r.Name, 1+rng.IntN(500), rng.IntN(2400))
 			case 2:
-				k = r.name + "@x"
-				if r.name == ruleAsk {
+				k = r.Name + "@x"
+				if r.Name == ruleAsk {
 					k = "askwait"
 				}
 			default:
-				k = fmt.Sprintf("%s:s1-%d", r.name, i)
+				k = fmt.Sprintf("%s:s1-%d", r.Name, i)
 			}
 			keys = append(keys, AgendaKey{Key: k, Seq: uint64(i + 1)})
 		}
@@ -1375,13 +1375,16 @@ func TestReviewReadsFitTheBoundsWhateverTheKeys(t *testing.T) {
 			b = L1ReadBounds()
 		}
 		h := rng.IntN(6)
-		rp, left := r.read(keys, b, h)
+		rp, left := r.Read(keys, b, h)
+		if err := rp.Validate(); err != nil {
+			t.Fatalf("%s: the read plan is refused: %v", r.Name, err)
+		}
 		taken := keys[:len(keys)-len(left)]
 		if len(taken) == 0 || !slices.Equal(left, keys[len(taken):]) {
-			t.Fatalf("%s: %d keys, %d taken", r.name, len(keys), len(taken))
+			t.Fatalf("%s: %d keys, %d taken", r.Name, len(keys), len(taken))
 		}
 		if len(rp.Sprint) > 0 && !within(rp.Queries(), rp.Cost(), b) {
-			t.Fatalf("%s %v halvings %d: the read costs %+v in %d queries, over %+v", r.name, keys, h, rp.Cost(), rp.Queries(), b)
+			t.Fatalf("%s %v halvings %d: the read costs %+v in %d queries, over %+v", r.Name, keys, h, rp.Cost(), rp.Queries(), b)
 		}
 		for _, k := range taken {
 			if rk, ok := parseReviewKey(k); ok && rk.kind == keyPrimary {
@@ -1398,46 +1401,56 @@ func TestReviewReadsFitTheBoundsWhateverTheKeys(t *testing.T) {
 				listed = append(listed, src.IDs...)
 			case SourceLine:
 				if src.Limit < 1 || src.Offset+src.Limit > MaxLineIDs {
-					t.Fatalf("%s: a line window of %d from %d", r.name, src.Limit, src.Offset)
+					t.Fatalf("%s: a line window of %d from %d", r.Name, src.Limit, src.Offset)
 				}
 			case SourceHead:
 				if src.Limit < 1 || src.Limit > AskwaitChunk {
-					t.Fatalf("%s: askwait window of %d", r.name, src.Limit)
+					t.Fatalf("%s: askwait window of %d", r.Name, src.Limit)
 				}
 			}
 		}
 		if !slices.Equal(listed, primaries) {
-			t.Fatalf("%s: the primaries read %v, the keys taken name %v", r.name, listed, primaries)
+			t.Fatalf("%s: the primaries read %v, the keys taken name %v", r.Name, listed, primaries)
 		}
-		if rp2, _ := r.read(keys, b, h+1); rvNamed(rp2) > rvNamed(rp) {
-			t.Fatalf("%s: a halving read %d ids after %d", r.name, rvNamed(rp2), rvNamed(rp))
+		if rp2, _ := r.Read(keys, b, h+1); rvNamed(rp2) > rvNamed(rp) {
+			t.Fatalf("%s: a halving read %d ids after %d", r.Name, rvNamed(rp2), rvNamed(rp))
 		}
 	}
 }
 
 // The three reads project what their rules read and follow what the design says:
-// ask follows the read cards and the judgments and asks for the readers, accept
-// follows the merge card and the control card too, rework follows the work card
-// and asks for the fleet.
+// ask follows the read cards and the judgments and asks for the readers (their
+// counts, and no field of their control cards), accept follows the merge card and
+// the control card too, rework follows the work card and asks for the fleet (its
+// members' status).
 func TestReviewReadsFollowTheDesign(t *testing.T) {
 	t.Parallel()
 	b := L1ReadBounds()
 	for name, c := range map[string]struct {
 		follow []string
 		fixed  string
+		fields []string // what the last query projects; not nil when empty: the summary
 	}{
-		ruleAsk:    {[]string{FollowRCards, FollowJOpen}, QueryReaders},
-		ruleAccept: {[]string{FollowRCards, FollowMerge, FollowControl, FollowJOpen}, ""},
-		ruleRework: {[]string{FollowRCards, FollowWork}, QueryFleet},
+		ruleAsk:    {[]string{FollowRCards, FollowJOpen}, QueryReaders, []string{}},
+		ruleAccept: {[]string{FollowRCards, FollowMerge, FollowControl, FollowJOpen}, "", nil},
+		ruleRework: {[]string{FollowRCards, FollowWork}, QueryFleet, []string{"status"}},
 	} {
-		rp, _ := rvRule(t, name).read(rvKeys(name+":p"), b, 0)
+		rp, _ := rvRule(t, name).Read(rvKeys(name+":p"), b, 0)
+		if err := rp.Validate(); err != nil {
+			t.Errorf("%s: the read plan is refused: %v", name, err)
+		}
 		q := rp.Sprint[0]
 		if q.Kind != QueryRelated || q.Table != Work || q.Source.Kind != SourceIDs || strings.Join(q.Follow, ",") != strings.Join(c.follow, ",") || len(q.Fields) == 0 {
 			t.Errorf("%s: %+v", name, rp.Sprint)
 		}
 		last := rp.Sprint[len(rp.Sprint)-1]
-		if c.fixed != "" && (last.Kind != c.fixed || len(last.Fields) == 0) || c.fixed == "" && last.Kind != QueryRelated {
-			t.Errorf("%s: its last query is %+v", name, last)
+		switch {
+		case c.fixed == "":
+			if last.Kind != QueryRelated {
+				t.Errorf("%s: its last query is %+v", name, last)
+			}
+		case last.Kind != c.fixed || (last.Fields == nil) != (c.fields == nil) || !slices.Equal(last.Fields, c.fields):
+			t.Errorf("%s: its last query is %+v, want a %s query projecting %#v", name, last, c.fixed, c.fields)
 		}
 	}
 }
@@ -1462,6 +1475,173 @@ func TestTheTwinLoadsOnlyWhatTheReadNamed(t *testing.T) {
 	mustPanic(t, func() { run.S.Merge.Of("s1-1") })
 	if rows := run.S.Readers.Rows(); len(rows) != 3 {
 		t.Errorf("the readers' rows: %v", rows)
+	}
+}
+
+// R10 unsets the result and the readers of a primary it reworks (and its bound,
+// which only the coordinator's rework meets: the machine leaves a bound alone),
+// and its avoid when the attempt's work card names no member, on the snapshot of
+// its read as on the whole one. A field the read did not name is refused when the plan asks
+// for it, never taken for an absent one whose unset is dropped: the reworked
+// primary would keep the readers of the attempt before it.
+func TestReworkUnsetsWhatItUnsetsOnAPartialSnapshot(t *testing.T) {
+	t.Parallel()
+	check := func(name string, w *world, want []string) {
+		t.Helper()
+		req := ReworkReq{Sel: Sel{IDs: []string{"s1-1"}}, Who: "coordinator"}
+		whole := rvEntries(ReworkAt(w.s, req, rvNow()), Work, "s1-1")
+		run := rvExec(w, nil, ruleRework, rvNow(), rvKeys("rework:s1-1"), L1ReadBounds(), 0)
+		move := rvEntries(run.Plan.Plan, Work, "s1-1")
+		if len(move) != 1 || len(whole) != 1 {
+			t.Fatalf("%s: the primary's entries: %d on its read, %d on the whole snapshot", name, len(move), len(whole))
+		}
+		if !slices.Equal(move[0].Unset, want) || !slices.Equal(whole[0].Unset, want) {
+			t.Errorf("%s: unset %v on the snapshot of its read and %v on the whole one, want %v", name, move[0].Unset, whole[0].Unset, want)
+		}
+		w.rvApply(run.Plan)
+		pr := w.s.Work.Card("s1-1")
+		for _, f := range want {
+			if _, ok := pr.Fields[f]; ok {
+				t.Errorf("%s: after the rework the primary still has %s = %q", name, f, pr.Fields[f])
+			}
+		}
+	}
+
+	// failed work, and the readers a return or an accept left on the primary
+	w := rvReview(t, 0, 1)
+	pr := w.s.Work.Card("s1-1")
+	pr.Fields["readers"] = "reader-a,reader-b"
+	check("failed work", w, []string{"result", "readers"})
+
+	// a broken read, and a work card that is gone: no member to avoid, so the
+	// avoid of an earlier attempt goes too
+	w = rvReview(t, 1, 0)
+	pr = w.s.Work.Card("s1-1")
+	pr.Fields["readers"] = "reader-a,reader-b"
+	pr.Fields["avoid"] = "m1"
+	rvPutRead(w, "s1-1", 1, "reader-a", Broken).Fields["finding"] = "off by one"
+	delete(w.s.Fleet.cards, pr.F("work"))
+	w.do(Plan{})
+	check("no work card", w, []string{"result", "readers", "avoid"})
+}
+
+// A plan asks whether a card has a field, to unset it, as it asks for the field's
+// value: a field the read did not name is refused in a test build, and in a
+// release build is recorded and unset nothing (Snapshot.Unloaded), never taken
+// for one the card lacks. A field the read named and the card lacks, or has with
+// no value, is told as it is.
+func TestUnsetPresentIsAskedThroughTheGuard(t *testing.T) {
+	t.Parallel()
+	w := rvReview(t, 1, 0)
+	w.s.Work.Card("s1-1").Fields["readers"] = "reader-a,reader-b"
+	w.s.Work.Card("s1-1").Fields["refused"] = "" // read, and no value
+	r := rvRule(t, ruleAsk)                      // ask's read does not name readers
+	rp, _ := r.Read(rvKeys("ask:s1-1"), L1ReadBounds(), 0)
+	ans := rvTwin{s: w.s, fail: t.Fatalf}.answer(rp)
+
+	s, err := LoadPartial(rp, ans)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pr := s.Work.Card("s1-1")
+	mustPanic(t, func() { pr.Has("readers") })
+	mustPanic(t, func() { unsetPresent(pr, []string{"attempt", "readers"}) })
+	if !pr.Has("attempt") || !pr.Has("refused") || pr.Has("asked") {
+		t.Errorf("a field the read named: attempt %v, refused with no value %v, asked which the card lacks %v", pr.Has("attempt"), pr.Has("refused"), pr.Has("asked"))
+	}
+
+	s, err = loadPartial(rp, ans, false) // a release build
+	if err != nil {
+		t.Fatal(err)
+	}
+	pr = s.Work.Card("s1-1")
+	if got := unsetPresent(pr, []string{"attempt", "readers", "refused", "asked"}); !slices.Equal(got, []string{"attempt", "refused"}) {
+		t.Errorf("unset %v, want attempt and refused, which the read named and the card has", got)
+	}
+	if err := s.UnloadedErr(); err == nil || !strings.Contains(err.Error(), "s1-1 readers") {
+		t.Errorf("the read of readers is not recorded: %v", err)
+	}
+
+	// a card built whole holds every field
+	whole := &Card{ID: "x", Fields: map[string]string{"a": "", "b": "1"}}
+	if !whole.Has("a") || !whole.Has("b") || whole.Has("c") || (*Card)(nil).Has("a") {
+		t.Errorf("Has on a whole card: a %v, b %v, c %v", whole.Has("a"), whole.Has("b"), whole.Has("c"))
+	}
+	if got := unsetPresent(whole, []string{"c", "a", "b"}); !slices.Equal(got, []string{"a", "b"}) {
+		t.Errorf("unset %v, want the fields the card has, in the order asked", got)
+	}
+}
+
+// R10 plans the next attempt's work card, whose id it derives from the attempt its
+// read returns, so no read can name it beforehand: a card that exists already is
+// refused by the coordinator's rework, which plans on the whole snapshot, and is
+// not seen by the machine's, which creates it guarded absent (Expect.Absent) and
+// leaves the refusal to the store. This is a limit of the design, open question 17:
+// the check (IT26) must name such a card. The test fails, and the question goes,
+// when a read loads the id.
+func TestReworkSeesAStrayNextWorkCardOnlyOnAWholeSnapshot(t *testing.T) {
+	t.Parallel()
+	w := rvReview(t, 0, 1)
+	stray := WorkCardID("s1-1", 2)
+	w.s.Fleet.Put(&Card{ID: stray, Row: "m1", Col: Ready, Rev: 1, Fields: map[string]string{"kind": "work", "primary": "s1-1", "attempt": "2", "member": "m1"}})
+	w.do(Plan{})
+
+	p := ReworkAt(w.s, ReworkReq{Sel: Sel{IDs: []string{"s1-1"}}, Who: "coordinator"}, rvNow())
+	if len(p.Units) != 0 || len(p.Refused) != 1 || !strings.Contains(p.Refused[0].Why, "work card "+stray+" exists already") {
+		t.Errorf("the coordinator's rework: units %d, refused %+v", len(p.Units), p.Refused)
+	}
+	rp := rvPlan(w, ruleRework, "rework:s1-1")
+	creates := rvCreates(rp.Plan, Fleet)
+	if len(rp.Plan.Refused) != 0 || len(creates) != 1 || creates[0].ID != stray || creates[0].Expect == nil || !creates[0].Expect.Absent {
+		t.Errorf("the machine's rework: refused %+v, creates %+v, want %s created guarded absent", rp.Plan.Refused, creates, stray)
+	}
+}
+
+// A read stops at the bound on queries as at the others: every line key it takes
+// costs a query, and the read leaves the keys that would make it more than the
+// bound allows (the one key it must take aside), whatever the rule and the
+// bound, with room left in records, ids and bytes.
+func TestReviewReadStopsAtTheQueriesBound(t *testing.T) {
+	t.Parallel()
+	const lines = 12
+	for _, name := range []string{ruleAsk, ruleAccept, ruleRework} {
+		r := rvRule(t, name)
+		// the queries of the rule's that no key costs: the readers or the fleet
+		one, _ := r.Read(rvKeys(name+"@1+1990"), L1ReadBounds(), 0)
+		fixed := 0
+		for _, q := range one.Sprint {
+			if q.Kind != QueryRelated {
+				fixed++
+			}
+		}
+		var line, both []AgendaKey
+		for i := 1; i <= lines; i++ {
+			line = append(line, AgendaKey{Key: fmt.Sprintf("%s@%d+1990", name, i), Seq: uint64(i)})
+		}
+		both = append([]AgendaKey{{Key: name + ":s1-1", Seq: 99}}, line...)
+		for q := 4; q <= 12; q++ {
+			b := L1ReadBounds()
+			b.Queries = q
+			// lines alone: a source costs a query each
+			rp, left := r.Read(line, b, 0)
+			taken := lines - len(left)
+			if want := max(1, q-fixed-1); taken != want || rp.Queries() > q {
+				t.Errorf("%s, %d queries: %d lines taken in %d queries, want %d", name, q, taken, rp.Queries(), want)
+			}
+			if !slices.Equal(left, line[taken:]) {
+				t.Errorf("%s, %d queries: the keys left are not those after the %d taken: %v", name, q, taken, left)
+			}
+			// a primary first adds the query of its ids, which the lines leave room for
+			rp, left = r.Read(both, b, 0)
+			taken = len(both) - len(left) - 1
+			if want := q - fixed - 1; taken != want || rp.Queries() != q {
+				t.Errorf("%s, %d queries: with a primary first, %d lines taken in %d queries, want %d in %d", name, q, taken, rp.Queries(), want, q)
+			}
+		}
+		// with the queries of layer 1, every line fits
+		if rp, left := r.Read(line, L1ReadBounds(), 0); len(left) != 0 || len(rp.Sprint) != lines+fixed {
+			t.Errorf("%s: %d lines of ten ids at layer 1's bounds: %d queries, %d keys left", name, lines, len(rp.Sprint), len(left))
+		}
 	}
 }
 
@@ -2126,8 +2306,9 @@ func TestReworkAtTakesTheRedealBoundOfTheDesign(t *testing.T) {
 }
 
 // rvScans is what a Go source reads of a table that a plan of a partial snapshot
-// may not: a call of Column, Cell or Of, and a range over every card the table
-// holds, but in the functions that list the primaries a read loaded.
+// may not: a call of Column, Cell, Of or Cards (the scan of the whole table), and
+// one of LoadedCards (every card the read loaded) but in the functions that list
+// the primaries a read loaded.
 func rvScans(t *testing.T, name string, src any) []string {
 	t.Helper()
 	fset := token.NewFileSet()
@@ -2145,12 +2326,15 @@ func rvScans(t *testing.T, name string, src any) []string {
 		ast.Inspect(fn.Body, func(n ast.Node) bool {
 			switch n := n.(type) {
 			case *ast.CallExpr:
-				if sel, ok := n.Fun.(*ast.SelectorExpr); ok && (sel.Sel.Name == "Column" || sel.Sel.Name == "Cell" || sel.Sel.Name == "Of") {
-					out = append(out, fmt.Sprintf("%s: %s calls %s", fset.Position(n.Pos()), fn.Name.Name, sel.Sel.Name))
+				sel, ok := n.Fun.(*ast.SelectorExpr)
+				if !ok {
+					break
 				}
-			case *ast.RangeStmt:
-				if sel, ok := n.X.(*ast.SelectorExpr); ok && sel.Sel.Name == "Cards" && !listsPrimaries[fn.Name.Name] {
-					out = append(out, fmt.Sprintf("%s: %s ranges over the cards of a table", fset.Position(n.Pos()), fn.Name.Name))
+				switch name := sel.Sel.Name; {
+				case name == "Column" || name == "Cell" || name == "Of" || name == "Cards":
+					out = append(out, fmt.Sprintf("%s: %s calls %s", fset.Position(n.Pos()), fn.Name.Name, name))
+				case name == "LoadedCards" && !listsPrimaries[fn.Name.Name]:
+					out = append(out, fmt.Sprintf("%s: %s lists every card the read loaded", fset.Position(n.Pos()), fn.Name.Name))
 				}
 			}
 			return true
@@ -2166,18 +2350,24 @@ func TestReviewRulesNeverScanACell(t *testing.T) {
 	t.Parallel()
 	bad := `package p
 func f(s *S) {
-	for range s.Work.Cards {
+	for range s.Work.Cards() {
+	}
+	for range s.Work.LoadedCards() {
 	}
 	s.Work.Cell("a", "b")
 	s.Readers.Column("x")
 	s.Merge.Of("p")
 }
 func reviewPrimaries(s *S) {
-	for range s.Work.Cards {
+	for range s.Work.LoadedCards() {
+	}
+}
+func reviewPool(s *S) {
+	for range s.Work.Cards() {
 	}
 }`
-	if got := rvScans(t, "bad.go", bad); len(got) != 4 {
-		t.Fatalf("the check finds %d scans of a source with four: %v", len(got), got)
+	if got := rvScans(t, "bad.go", bad); len(got) != 6 {
+		t.Fatalf("the check finds %d scans of a source with six: %v", len(got), got)
 	}
 	src, err := os.ReadFile("rules_review.go")
 	if err != nil {

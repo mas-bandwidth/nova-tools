@@ -150,11 +150,14 @@ func nonEmpty(m map[string]string) map[string]string {
 }
 
 // unsetPresent keeps the unset names the card has: unsetting an absent field
-// is a no-op the manifest need not carry.
+// is a no-op the manifest need not carry. The card is asked through Has, as
+// every read of a field is, so that on a card loaded from a read plan a field
+// the plan did not load is refused and never taken for an absent one (which
+// would drop the unset): a rule that unsets a field projects it.
 func unsetPresent(c *Card, names []string) []string {
 	var out []string
 	for _, n := range names {
-		if _, ok := c.Fields[n]; ok {
+		if c.Has(n) {
 			out = append(out, n)
 		}
 	}

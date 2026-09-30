@@ -142,7 +142,9 @@ var reviewFixWhenSilent = map[string]string{
 // returns, the primaries and the read cards, merge card, control card and work
 // card the follows reach alike: a query has one projection, and a read of a
 // field it did not name is refused in a test and recorded in a release
-// (Snapshot.Unloaded). A test loads each plan through LoadPartial from an
+// (Snapshot.Unloaded). PrimaryField is not read by the plan: Table.Of finds the
+// cards a follow reaches by it, and ReadPlan.Validate refuses a plan that follows
+// them and leaves it out. A test loads each plan through LoadPartial from an
 // answer that holds only these fields, so a field a plan reads that is not
 // here fails there.
 type reviewRule struct {
@@ -155,26 +157,31 @@ type reviewRule struct {
 }
 
 // reviewMemberFields is what R10 reads of a member's control card: whether it
-// is up. The readers' control cards are read for their counts, and no field.
+// is up.
 var reviewMemberFields = []string{"status"}
+
+// reviewNoFields is the projection of no field, the summary of a record (a list
+// that is not nil and has no field: Layer 1 reads a nil list as every field):
+// what R8 reads of a reader's control card, whose count is all it wants.
+var reviewNoFields = []string{}
 
 var reviewRules = []reviewRule{
 	{
 		name: ruleAsk, section: "2.3 R8",
-		fields: []string{"attempt", "result", "asked", "refused", "rcards", "head"},
+		fields: []string{PrimaryField, "attempt", "result", "asked", "refused", "rcards", "head"},
 		follow: []string{FollowRCards, FollowJOpen},
-		fixed:  []SprintQ{{Kind: QueryReaders, Fields: reviewMemberFields}},
+		fixed:  []SprintQ{{Kind: QueryReaders, Fields: reviewNoFields}},
 		plan:   planAsk,
 	},
 	{
 		name: ruleAccept, section: "2.3 R9",
-		fields: []string{"attempt", "head", "ci", "ci_head", "refused", "rcards", "reader", "state", "outcome"},
+		fields: []string{PrimaryField, "attempt", "head", "ci", "ci_head", "refused", "rcards", "reader", "state", "outcome"},
 		follow: []string{FollowRCards, FollowMerge, FollowControl, FollowJOpen},
 		plan:   planAccept,
 	},
 	{
 		name: ruleRework, section: "2.3 R10",
-		fields: []string{"attempt", "result", "asked", "refused", "rcards", "work", "bound", "reworks", "broken_reads", "reader", "finding", "member", "report"},
+		fields: []string{PrimaryField, "attempt", "result", "asked", "refused", "rcards", "work", "bound", "reworks", "broken_reads", "readers", "avoid", "reader", "finding", "member", "report"},
 		follow: []string{FollowRCards, FollowWork},
 		fixed:  []SprintQ{{Kind: QueryFleet, Fields: reviewMemberFields}},
 		plan:   planRework,
@@ -548,13 +555,14 @@ func reviewCIRed(c *Card) bool {
 }
 
 // reviewPrimaries is the primaries in review the snapshot holds, in work
-// order: the records its read loaded, never the cells of the review column.
+// order: the records its read loaded (LoadedCards), never the cells of the review
+// column and never a scan of the whole table (Cards).
 func reviewPrimaries(s *Snapshot) []*Card {
 	if s == nil || s.Work == nil {
 		return nil
 	}
 	var out []*Card
-	for _, c := range s.Work.Cards {
+	for _, c := range s.Work.LoadedCards() {
 		if reviewInReview(c) {
 			out = append(out, c)
 		}
@@ -1229,7 +1237,7 @@ func reviewPool(s *Snapshot) []*Card {
 		return nil
 	}
 	var out []*Card
-	for _, c := range s.Work.Cards {
+	for _, c := range s.Work.LoadedCards() {
 		if reviewInReview(c) || c.Placed() && c.Col == Ready && reviewAtRedealBound(s, c) != nil {
 			out = append(out, c)
 		}
