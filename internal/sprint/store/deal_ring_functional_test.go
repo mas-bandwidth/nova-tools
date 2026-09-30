@@ -21,3 +21,9 @@ func TestRedisTheIndexesGoOnFromTickToTick(t *testing.T) {
 	h, _ := liveHarness(t)
 	dealRingAcrossTicks(t, h)
 }
+
+func TestRedisTheRedealsGoRoundTheFleetInARunWithFailures(t *testing.T) {
+	t.Parallel()
+	h, _ := liveHarness(t)
+	dealRingWithFailures(t, h)
+}
