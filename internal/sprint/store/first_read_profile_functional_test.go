@@ -17,6 +17,7 @@ import (
 )
 
 func TestProfileFirstRead(t *testing.T) {
+	t.Parallel()
 	st, c := liveStore(t)
 	ctx := context.Background()
 
@@ -406,6 +407,7 @@ func TestProfileFirstRead(t *testing.T) {
 }
 
 func TestFirstReadProfile(t *testing.T) {
+	t.Parallel()
 	st, c := liveStore(t)
 	ctx := context.Background()
 

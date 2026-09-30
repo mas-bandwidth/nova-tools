@@ -55,6 +55,45 @@ type TableChanger interface {
 	TableChanges(ctx context.Context, table string, from, to uint64) (ids []string, ok bool, err error)
 }
 
+// View is what a read of the twin reads first: the fence, the tables'
+// shapes, the open judgments and the coordinator.
+type View struct {
+	Fence       Fence
+	Shapes      []ntable.Table
+	Open        []sprint.Open
+	Coordinator string
+}
+
+// ViewReader is a store that reads a View in fewer exchanges than one each.
+type ViewReader interface {
+	ReadView(ctx context.Context, tables []string) (View, error)
+}
+
+// readView reads the view: in one exchange where the store can, else one
+// read each, in the order a fresh read takes them (the fence first).
+func (st *Store) readView(ctx context.Context, load []string) (View, error) {
+	stored := make([]string, len(load))
+	for i, t := range load {
+		stored[i] = st.Names.Table(t)
+	}
+	if vr, ok := st.B.(ViewReader); ok && !st.old {
+		return vr.ReadView(ctx, stored)
+	}
+	var v View
+	var err error
+	if v.Fence, err = st.B.ReadFence(ctx); err != nil || v.Fence.Pending != nil {
+		return v, err
+	}
+	if v.Shapes, err = st.shapes(ctx, stored); err != nil {
+		return v, err
+	}
+	if v.Open, err = st.B.OpenNotes(ctx); err != nil {
+		return v, err
+	}
+	v.Coordinator, err = st.B.Coordinator(ctx)
+	return v, err
+}
+
 // Twin is a copy of the sprint (see above). The zero value is empty: its
 // first read reads the four tables whole.
 type Twin struct {
@@ -73,6 +112,10 @@ type Twin struct {
 	absent      map[string]map[string]bool
 	queue       []sprint.QueuedChange
 	queueKnown  bool
+	// last is the last snapshot read from the twin (its judgments, its
+	// coordinator, the machine's state): what peek answers with beside the
+	// tables.
+	last *sprint.Snapshot
 }
 
 // NewTwin is an empty twin: its first read reads the store whole.
@@ -114,10 +157,11 @@ func (st *Store) twin() *Twin {
 func (st *Store) twinRead(ctx context.Context, tw *Twin, load []string, extras func(*sprint.Snapshot) map[string][]string, repaired *[]string) (*sprint.Snapshot, Fence, error) {
 	r := st.retry(ctx)
 	for r.next(st.attempts()) {
-		f, err := st.B.ReadFence(ctx)
+		v, err := st.readView(ctx, load)
 		if err != nil {
 			return nil, Fence{}, err
 		}
+		f := v.Fence
 		if f.Pending != nil {
 			res, err := st.finish(ctx, *f.Pending)
 			if err != nil {
@@ -137,7 +181,7 @@ func (st *Store) twinRead(ctx context.Context, tw *Twin, load []string, extras f
 		if tw.tables == nil || tw.epoch != st.epoch {
 			tw.reset(st.epoch)
 		}
-		snap, err := st.twinView(ctx, tw, load, extras)
+		snap, err := st.twinView(ctx, tw, load, v, extras)
 		var moved *movedError
 		if errors.As(err, &moved) {
 			continue
@@ -159,6 +203,7 @@ func (st *Store) twinRead(ctx context.Context, tw *Twin, load []string, extras f
 		tw.valid, tw.gen = true, f.Gen
 		snap.QueueLen, snap.Running = f2.Queued, f2.Running
 		f2.Gen = f.Gen
+		tw.last = snap
 		if st.CheckTwin != nil {
 			if err := st.checkTwin(ctx, snap, f.Gen, load, extras); err != nil {
 				return nil, Fence{}, err
@@ -188,15 +233,8 @@ func (st *Store) checkTwin(ctx context.Context, snap *sprint.Snapshot, gen uint6
 // tables' shapes, the records written since, the open judgments, the
 // coordinator, the records the step's extras name) and is it as a step's
 // snapshot. A table that moved while it was read is a movedError.
-func (st *Store) twinView(ctx context.Context, tw *Twin, load []string, extras func(*sprint.Snapshot) map[string][]string) (*sprint.Snapshot, error) {
-	stored := make([]string, len(load))
-	for i, t := range load {
-		stored[i] = st.Names.Table(t)
-	}
-	shapes, err := st.shapes(ctx, stored)
-	if err != nil {
-		return nil, err
-	}
+func (st *Store) twinView(ctx context.Context, tw *Twin, load []string, v View, extras func(*sprint.Snapshot) map[string][]string) (*sprint.Snapshot, error) {
+	shapes := v.Shapes
 	s := &sprint.Snapshot{Now: st.now(), Epoch: st.epoch, Cleared: st.cleared, Actor: st.Actor}
 	for _, shape := range shapes {
 		if shape.Epoch != st.epoch {
@@ -263,14 +301,8 @@ func (st *Store) twinView(ctx context.Context, tw *Twin, load []string, extras f
 			s.Fleet = tw.tables[name]
 		}
 	}
-	open, err := st.B.OpenNotes(ctx)
-	if err != nil {
-		return nil, err
-	}
-	s.Open, s.Acked = sprint.SplitOpen(open)
-	if s.Coordinator, err = st.B.Coordinator(ctx); err != nil {
-		return nil, err
-	}
+	s.Open, s.Acked = sprint.SplitOpen(v.Open)
+	s.Coordinator = v.Coordinator
 	if err := st.showExtras(ctx, tw, s, load, extras); err != nil {
 		return nil, err
 	}
@@ -409,6 +441,33 @@ func (st *Store) showExtras(ctx context.Context, tw *Twin, s *sprint.Snapshot, l
 		}
 	}
 	return nil
+}
+
+// peek is the twin as the steps that wrote through it left it, read from no
+// store: the tables with their receipts applied, the queue as their commits
+// left it (projected for a step other than the pump's, as its step plans on
+// it), and the last read's judgments and coordinator. nil when the twin is not
+// known (dropped, or held by another step). The tick asks it only whether a
+// part has anything to do; the part's step then reads the store.
+func (st *Store) peek(tw *Twin, pump bool) *sprint.Snapshot {
+	if tw == nil || !tw.mu.TryLock() {
+		return nil
+	}
+	defer tw.mu.Unlock()
+	if !tw.valid || tw.last == nil || tw.tables == nil || !tw.queueKnown {
+		return nil
+	}
+	s := *tw.last
+	s.Now = st.now()
+	s.Work, s.Readers, s.Merge, s.Fleet = tw.tables[sprint.Work], tw.tables[sprint.Readers], tw.tables[sprint.Merge], tw.tables[sprint.Fleet]
+	if s.Work == nil || s.Readers == nil || s.Merge == nil || s.Fleet == nil {
+		return nil
+	}
+	s.QueueLen, s.Queue = len(tw.queue), nil
+	if !pump && len(tw.queue) > 0 {
+		return sprint.WithQueue(&s, slices.Clone(tw.queue))
+	}
+	return &s
 }
 
 // twinQueue is the work table's queue at the generation the step read: the

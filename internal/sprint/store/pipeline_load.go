@@ -203,7 +203,7 @@ func (st *Store) pipelinedLoadOnceWithFence(ctx context.Context, tables []string
 		return nil, f2, err
 	}
 	if len(openMap) > 0 {
-		openNotes, err := r.fetchOpenNotes(ctx, openMap)
+		openNotes, err := r.openOf(ctx, openMap)
 		if err != nil {
 			return nil, f2, err
 		}
