@@ -43,9 +43,10 @@ const usage = `nova-memory: search your own markdown notes, and check a draft ag
 
 how it works: each run reads the --root directories and builds its index in
 memory (bm25 words, trigrams); nothing is written. search prints the k best
-passages with file:line and the quoted text; check names the notes a draft
-repeats; verify gates links and frontmatter. The CAL line is the score a fixed
-unrelated probe gets here: a hit scoring at or below it is no better than noise.
+passages with file:line and the quoted text (--channels bm25 --k 3); check names
+the notes a draft repeats (check values: 2-3); verify gates links and
+frontmatter. The CAL line is the score a fixed unrelated probe gets here: a hit
+scoring at or below it is no better than noise.
 first run: quickstart --root on any folder of .md files, or copy the included
 corpus (the setup line above example:) and run the lines under example:.
 
@@ -53,8 +54,8 @@ usage:
   nova-memory version    print this build identity (--version also accepted)
   nova-memory quickstart --root <dir>... [--words <w>]... [--draft <file>] [--exclude <glob>]...
   nova-memory stats  --root <dir>... [--exclude <glob>]...
-  nova-memory search --root <dir>... --channels <list> --k <n> [--exclude <glob>]... <words>...
-  nova-memory check  --root <dir>... --channels <list> --k <n> [--exclude <glob>]... <file|->
+  nova-memory search --root <dir>... --channels bm25 --k 3 [--exclude <glob>]... <words>...
+  nova-memory check  --root <dir>... --channels bm25 --k 2-3 [--exclude <glob>]... <file|->
   nova-memory verify --root <dir> --links <gate|info> [--coverage <A:B>]...
                      [--frontmatter <glob>]... [--exempt <prefix>]... [--exclude <glob>]...
                      [--fail-max <n>]
@@ -80,9 +81,11 @@ flags:
                         Required: which retrieval you ran is part of what an
                         answer means, and no channel set is right by default —
                         on the corpus this was ported from, eval measured
-                        bm25+trigram WORSE than bm25 alone.
+                        bm25+trigram WORSE than bm25 alone. bm25 alone is the
+                        usual start (--channels bm25).
   --k <n>               receipts per query, positive. Required: k IS the mind's
-                        budget, and zero is not "unlimited".
+                        budget, and zero is not "unlimited" (search: 3 to 5,
+                        e.g. --k 3; check values: 2-3 per paragraph).
   --exclude <glob>      path or glob to skip, repeatable. Nothing is excluded
                         by default except .git; every exclusion is yours,
                         stated this run.
