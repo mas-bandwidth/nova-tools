@@ -6,10 +6,8 @@ package sprint
 // here, only shapes; the rules that fill them, the step builder that cuts
 // them and the parts that apply them are other files.
 //
-// Not here: AgendaKey lives in events.go (IT01). Rule, RegisterRule and
-// RuleTable live with ReadPlan and QueryCost in the files of IT05's later
-// parts (rule.go, readplan.go), since a Rule names ReadPlan and SprintQ and
-// the design gives their shapes only there.
+// Not here: AgendaKey lives in events.go (IT01). ReadPlan and SprintQ, which a
+// Rule names, are in readplan.go, and RegisterRule and RuleTable in rule.go.
 
 // Now is the one reading of the clocks a tick plans against (1.2, 1.4.2): the
 // store's TIME is frozen at the start of a call, so R and Wall are read once.
@@ -118,3 +116,22 @@ type ReadBounds struct{ Queries, Records, RangeIDs, Bytes int }
 // Cost is what a query, or a read plan, may cost the store (1.0): the records
 // it may return, the ids its ranges may name and the bytes of its answer.
 type Cost struct{ Records, RangeIDs, Bytes int }
+
+// Rule is one rule of the tick (2.3).
+type Rule struct {
+	// Name is the rule's name, the one the table of rule keys uses (2.1).
+	Name string
+	// Priority orders the rules, lowest first: it is the order of the tick's
+	// round robin, so that every rule with keys gets a step before any gets a
+	// second (1.4.2). Two rules of one priority are ordered by name.
+	Priority int
+	// MaxSteps is the most steps a tick gives the rule; 0 is no cap, and R19
+	// is 1.
+	MaxSteps int
+	// Read is the plan of the read the keys need, and the keys it left for
+	// later, cut to fit the read bounds; halvings is more than 0 after a BUDGET
+	// or a LIMIT (1.3.5), and the read is then half its size (Halved).
+	Read func(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []AgendaKey)
+	// Plan is what the rule does on the snapshot the read loaded.
+	Plan func(s *Snapshot, keys []AgendaKey, now Now) RulePlan
+}
