@@ -470,6 +470,18 @@ func mergeCardAt(id, col string) func(w *world) {
 	}
 }
 
+// mergeCardIs is a premise of a hand seed: the merge card of the card is in the
+// column, so that the state seeded is the one the test names.
+func mergeCardIs(id, col string) func(w *world) {
+	return func(w *world) {
+		w.t.Helper()
+		m := w.s.Merge.Placed(id)
+		if m == nil || m.Col != col {
+			w.t.Fatalf("the merge card of %s is not in %s: %v", id, col, m)
+		}
+	}
+}
+
 // atRedealBound takes every member down, so that the card in working is
 // withdrawn and back in ready, and sets the redeals its work card has had.
 func atRedealBound(id string, redeals int) func(w *world) {
@@ -576,11 +588,28 @@ func TestAStoppedStreamOffersWhatIsLeftAfterADecision(t *testing.T) {
 		{"cross, the needed card landed", cross, stoppedForCross, landed("s2-1"),
 			[]string{"card", "return <card>", "drop <card>", "wait"}, offeredAnyway("rank", "<needed card>"), `offers "rank <needed card>": rank refuses s2-1: landed; landed is final`},
 
+		// A card the judgment names that landed is no card to drop: a landed card is
+		// not open (a hand seed: the present build does not land a card of a stopped
+		// stream's note while the stream stays stopped).
+		{"conflict, the card landed", conflict, stoppedForConflict, landed("s1-2"),
+			[]string{"resume --stream s --did"}, offeredAnyway("drop", "<card>"), `offers "drop <card>": drop refuses s1-2: landed; landed is final`},
+
+		// An orphan whose merge card is stuck, as the cross stop leaves it, is a card
+		// return takes back, as it does one whose merge card is queued (a hand seed:
+		// the premise is checked).
+		{"cross, the card an orphan with its merge card stuck", cross, stoppedForCross, inOrder(orphaned("s1-1"), mergeCardIs("s1-1", Stuck)),
+			[]string{"rank <needed card>", "card", "return <card>", "drop <card>", "wait"}, nil, ""},
+
 		{"rejected, nothing decided", rejected, stoppedForRejection, nil,
 			[]string{"resume --did", "return", "drop"}, nil, ""},
 		{"rejected, the batch returned", rejected, stoppedForRejection, returnCards("s1-1", "s1-2"),
 			[]string{"resume --did", "drop"}, offeredAnyway("return"), `offers "return": return refuses s1-1: not merging (it is review)`},
 		{"rejected, one card of the batch returned", rejected, stoppedForRejection, returnCards("s1-1"),
+			[]string{"resume --did", "return", "drop"}, nil, ""},
+		// drop, like return and rework, is accepted when it takes one card of the
+		// batch (the verb refuses the card dropped and takes the other): a real
+		// state, made by the coordinator's own verbs.
+		{"rejected, one card of the batch dropped", rejected, stoppedForRejection, dropCards("s1-1"),
 			[]string{"resume --did", "return", "drop"}, nil, ""},
 		{"rejected, a card of the batch an orphan, the other returned", rejected, stoppedForRejection, inOrder(orphaned("s1-1"), returnCards("s1-2")),
 			[]string{"resume --did", "return", "drop"}, nil, ""},

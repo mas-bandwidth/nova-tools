@@ -706,6 +706,18 @@ var conditionSeeds = []seeded{
 		return w, raise(w, "a stream has had no merge step past its deadline", StreamSubject("s1"), judgedStream("s1", ""))
 	}, []string{"card", "wait"}},
 
+	// merge is refused for a stream that landed, whatever is queued in it (a hand
+	// seed: the present build does not make a landed stream with a card queued).
+	{"no merge step past its deadline, the stream landed with a card queued", "a stream has had no merge step past its deadline", func(t *testing.T) (*world, Open) {
+		w := setup(t, 2)
+		accepted(w, "s1-1")
+		w.s.StreamCtl("s1").Fields["state"] = StreamLanded
+		if w.s.Merge.Count("s1", Queued) == 0 {
+			t.Fatalf("nothing is queued in stream s1")
+		}
+		return w, raise(w, "a stream has had no merge step past its deadline", StreamSubject("s1"), judgedStream("s1", ""))
+	}, []string{"card", "wait"}},
+
 	{"a card reached its bound, in neither", "a card reached its bound", func(t *testing.T) (*world, Open) {
 		w := setup(t, 1)
 		toReview(w, "s1-1", false)
