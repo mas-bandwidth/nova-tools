@@ -458,3 +458,86 @@ func TestEveryIsBoundedUnderTheBeatDeadline(t *testing.T) {
 		t.Fatalf("--every 5s: exit %d, stderr %q, want it accepted", code, errb.String())
 	}
 }
+
+// memberWithoutOnce returns the required member flags without --once.
+func memberWithoutOnce(root string) []string {
+	var args []string
+	for _, a := range memberFull(root) {
+		if a != "--once" {
+			args = append(args, a)
+		}
+	}
+	return args
+}
+
+// TestMemberRefusesCombiningOnceWithTicks pins the mutual exclusion between
+// --once and --ticks: specifying both is refused with exit 2 before anything
+// is made or asked.
+func TestMemberRefusesCombiningOnceWithTicks(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	args := append(memberFull(root), "--ticks", "3")
+	var out, errb bytes.Buffer
+	if code := run(args, strings.NewReader(""), &out, &errb, time.Now()); code != 2 || !strings.Contains(errb.String(), "--once and --ticks are exclusive") {
+		t.Fatalf("exit %d, stderr %q, want exit 2 naming exclusive", code, errb.String())
+	}
+	if out.Len() != 0 {
+		t.Fatalf("stdout %q, want empty", out.String())
+	}
+	if _, err := os.Stat(filepath.Join(root, "slots")); !os.IsNotExist(err) {
+		t.Fatalf("directories made before refusal: %v", err)
+	}
+}
+
+// TestMemberRefusesZeroOrNegativeTicks pins that --ticks requires a positive count:
+// 0, -1, and negative values are refused with exit 2 and not read as unbounded.
+func TestMemberRefusesZeroOrNegativeTicks(t *testing.T) {
+	t.Parallel()
+	for _, val := range []string{"0", "-1", "-5"} {
+		root := t.TempDir()
+		args := append(memberWithoutOnce(root), "--ticks", val)
+		var out, errb bytes.Buffer
+		if code := run(args, strings.NewReader(""), &out, &errb, time.Now()); code != 2 || !strings.Contains(errb.String(), "--ticks is at least 1, got "+val) {
+			t.Errorf("--ticks %s: exit %d, stderr %q, want exit 2 naming at least 1", val, code, errb.String())
+		}
+		if out.Len() != 0 {
+			t.Errorf("--ticks %s: stdout %q, want empty", val, out.String())
+		}
+		if _, err := os.Stat(filepath.Join(root, "slots")); !os.IsNotExist(err) {
+			t.Errorf("--ticks %s made directories before refusal: %v", val, err)
+		}
+	}
+}
+
+// TestMemberRefusesBothOnceAndNonPositiveTicksNamesBothPins pins collecting all
+// problems on one run: combining --once with --ticks 0 reports both faults.
+func TestMemberRefusesBothOnceAndNonPositiveTicksNamesBothPins(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	args := append(memberFull(root), "--ticks", "0")
+	var out, errb bytes.Buffer
+	if code := run(args, strings.NewReader(""), &out, &errb, time.Now()); code != 2 {
+		t.Fatalf("exit %d, want 2", code)
+	}
+	if !strings.Contains(errb.String(), "--once and --ticks are exclusive") {
+		t.Errorf("stderr %q missing exclusivity error", errb.String())
+	}
+	if !strings.Contains(errb.String(), "--ticks is at least 1, got 0") {
+		t.Errorf("stderr %q missing positivity error", errb.String())
+	}
+}
+
+// TestMemberAcceptsPositiveTicks pins that valid positive --ticks runs for the
+// specified tick count and terminates cleanly.
+func TestMemberAcceptsPositiveTicks(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	args := append(memberWithoutOnce(root), "--ticks", "2", "--every", "1ms", "--sprint", filepath.Join(root, "absent-sprint"))
+	var out, errb bytes.Buffer
+	if code := run(args, strings.NewReader(""), &out, &errb, time.Now()); code != 0 {
+		t.Fatalf("exit %d, stderr %q, want exit 0", code, errb.String())
+	}
+	if !strings.Contains(out.String(), "MEMBER OK as=m1 ticks=2 running=0") {
+		t.Fatalf("stdout %q, want completion after 2 ticks", out.String())
+	}
+}

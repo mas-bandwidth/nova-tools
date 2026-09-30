@@ -319,6 +319,86 @@ func TestAWorkingCardWithNoChildOfOursIsRestartedFromItsPacket(t *testing.T) {
 	}
 }
 
+// TestRecoveryWithExcessInFlightPacketsDoesNotExceedWidth pins that recovery
+// clamps in-flight working packets to member width so a restart never oversubscribes:
+// excess cards remain queued and are recovered on subsequent passes as capacity opens.
+func TestRecoveryWithExcessInFlightPacketsDoesNotExceedWidth(t *testing.T) {
+	t.Parallel()
+	g := newRig(Config{As: "m", Width: 2})
+	p1, p2, p3 := pk("c1"), pk("c2"), pk("c3")
+	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p1), working("c2", 1, &p2), working("c3", 1, &p3)))
+	acted, err := g.tick(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if acted != 2 || g.m.Running() != 2 {
+		t.Fatalf("acted=%d running=%d, want 2 and 2 (clamped to width 2)", acted, g.m.Running())
+	}
+	if got := g.r.started(); !slices.Equal(got, []string{"c1", "c2"}) {
+		t.Fatalf("started=%v, want c1 c2 only (c3 left for subsequent pass)", got)
+	}
+	if len(g.s.lines("take")) != 0 {
+		t.Fatalf("take called: %q, want none", g.s.lines("take"))
+	}
+
+	// When c1 finishes and is reported, the freed slot allows c3 to be recovered.
+	g.r.child("c1").end(Result{Ran: true, OK: true, Head: "head-1", Report: "done c1"})
+	g.s.reset()
+	// Next pass: queue still reports working cards until sprint processes finish.
+	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p1), working("c2", 1, &p2), working("c3", 1, &p3)))
+	acted, err = g.tick(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if acted != 2 || g.m.Running() != 2 {
+		t.Fatalf("second pass acted=%d running=%d, want 2 (1 finish + 1 start) and running 2", acted, g.m.Running())
+	}
+	if got := g.s.lines("finish"); len(got) != 1 || !strings.Contains(got[0], "c1@1") {
+		t.Fatalf("finish lines: %q, want finish for c1@1", got)
+	}
+	if got := g.r.started(); !slices.Equal(got, []string{"c1", "c2", "c3"}) {
+		t.Fatalf("started=%v, want c1 c2 c3", got)
+	}
+}
+
+// TestReaderRecoveryWithExcessInFlightPacketsDoesNotExceedWidth pins the same
+// width clamping for a reader recovering reading packets.
+func TestReaderRecoveryWithExcessInFlightPacketsDoesNotExceedWidth(t *testing.T) {
+	t.Parallel()
+	g := newRig(Config{As: "r", Width: 1, Reader: true})
+	r1 := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7}
+	r2 := Packet{Card: "r2", Kind: "read", As: "r", Attempt: 1, Epoch: 7}
+	g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &r1), reading("r2", &r2)))
+	acted, err := g.tick(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if acted != 1 || g.m.Running() != 1 {
+		t.Fatalf("acted=%d running=%d, want 1 and 1 (clamped to width 1)", acted, g.m.Running())
+	}
+	if got := g.r.started(); !slices.Equal(got, []string{"r1"}) {
+		t.Fatalf("started=%v, want r1 only", got)
+	}
+
+	// When r1 finishes with a verdict, reporting it frees the slot for r2.
+	g.r.child("r1").end(Result{Ran: true, OK: true, Verdict: "ok", Report: "clean"})
+	g.s.reset()
+	g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &r1), reading("r2", &r2)))
+	acted, err = g.tick(t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if acted != 2 || g.m.Running() != 1 {
+		t.Fatalf("second pass acted=%d running=%d, want 2 (1 report + 1 start) and running 1", acted, g.m.Running())
+	}
+	if got := g.s.lines("report"); len(got) != 1 || !strings.Contains(got[0], "r1") {
+		t.Fatalf("report lines: %q, want report for r1", got)
+	}
+	if got := g.r.started(); !slices.Equal(got, []string{"r1", "r2"}) {
+		t.Fatalf("started=%v, want r1 r2", got)
+	}
+}
+
 // TestNoTakeWhenWidthIsFullOrNothingIsReady pins both refusals to ask.
 func TestNoTakeWhenWidthIsFullOrNothingIsReady(t *testing.T) {
 	t.Parallel()
