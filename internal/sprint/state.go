@@ -123,7 +123,7 @@ type Table struct {
 
 	// cards are the table's cards by id, read by Card, Placed, Cards and
 	// LoadedCards and set by Put: on a table loaded from a read plan the cards are
-	// only some of the table's, and a field could not say so.
+	// only some of the table's, and an exported field could not say so.
 	cards map[string]*Card
 
 	// rows are the table's rows in order, read by Rows and set by SetRows: on a

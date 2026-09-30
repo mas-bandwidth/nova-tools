@@ -491,9 +491,9 @@ func (p *Partial) followed(s *Snapshot, i int, q SprintQ, a Answer) error {
 
 // Unloaded is what the planners read of the snapshot that its plan did not
 // load (1.5.2): the cells, counts, rows, lines, cards of a primary, scans of a
-// table's cards and positions, each named. A release build does not panic at such a read: it
-// plans on nothing, and the caller refuses the plan when this is not empty
-// (UnloadedErr). A snapshot built whole has none.
+// table's cards and positions, each named. A release build does not panic at
+// such a read: it plans on nothing, and the caller refuses the plan when this is
+// not empty (UnloadedErr). A snapshot built whole has none.
 func (s *Snapshot) Unloaded() []string {
 	if s == nil || s.Partial == nil {
 		return nil
