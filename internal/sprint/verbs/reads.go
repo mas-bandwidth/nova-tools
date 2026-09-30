@@ -186,12 +186,15 @@ func wallOf(rd *sprintfn.ReadReply) int64 {
 // ---- inbox
 
 // InboxPage is the most open notes one inbox lists: the second read reads each
-// note's line by its seq, one query a note, inside a read's 1,024 queries
-// (AL4).
-const InboxPage = 1000
+// note's line by its seq, one lines query a note, and a note's line names up
+// to 2,000 subjects (J cuts a note there, 1.3.4), so 100 notes are 200,000
+// ids, Layer 2's bound on the ids one read returns (L2 4: 200,000 ids and
+// 8 MiB, about 2 MiB here); an atomic read over it is refused BUDGET whole.
+// More says open notes lie past the page.
+const InboxPage = 100
 
 // inboxNoticeLines is the most lines after the cursor one inbox reads for
-// the notices it lists (2.5).
+// the notices it lists (2.5); NoticesMore says lines lie past them.
 const inboxNoticeLines = 1000
 
 // InboxReq is inbox's request: the cursor after which notices are listed, and
@@ -207,14 +210,18 @@ type InboxReq struct {
 // InboxView is the inbox as a program reads it, in the command's JSON shape
 // (cmd/nova-sprint's inbox --json): the groups, the last seq read and the
 // cursor as given, the read's time and the machine's line. More says open
-// notes lie past the page.
+// notes lie past the page, and NoticesMore lines past the notices read (Last
+// is the last of those read: the next inbox from it lists the rest). A
+// judgment group's Count is the subjects its notes were raised on, not the
+// ones still open on them (judgmentGroups).
 type InboxView struct {
-	Groups  []sprint.Group `json:"groups"`
-	Last    string         `json:"last"`
-	Cursor  string         `json:"cursor"`
-	At      time.Time      `json:"at"`
-	Machine string         `json:"machine"`
-	More    bool           `json:"more,omitempty"`
+	Groups      []sprint.Group `json:"groups"`
+	Last        string         `json:"last"`
+	Cursor      string         `json:"cursor"`
+	At          time.Time      `json:"at"`
+	Machine     string         `json:"machine"`
+	More        bool           `json:"more,omitempty"`
+	NoticesMore bool           `json:"notices_more,omitempty"`
 }
 
 // noteSeqRE is a note id's seq and epoch.
@@ -282,7 +289,7 @@ func Inbox(ctx context.Context, e *Env, req InboxReq) (Result, error) {
 		return &sprintfn.ReadRequest{Epoch: epoch,
 			Tset: []tset.ReadQuery{
 				{Kind: "range", Key: e.Names.Prefix + "sprint:jnotes@" + string(epoch), Min: "-inf", Max: "+inf", Limit: limit},
-				{Kind: "lines", AfterSeq: after, Limit: inboxNoticeLines},
+				{Kind: "lines", AfterSeq: after, Limit: inboxNoticeLines + 1},
 			},
 			Sprint: []sprintfn.SprintQuery{keyQuery(sprintfn.KeyQ{Kind: sprintfn.KeyHeartbeat}), keyQuery(sprintfn.KeyQ{Kind: sprintfn.KeyClock})}}
 	}})
@@ -340,8 +347,13 @@ func Inbox(ctx context.Context, e *Env, req InboxReq) (Result, error) {
 		v.Groups = append(v.Groups, judg...)
 	}
 
-	// The notices after the cursor (2.5), grouped by type.
-	notices, last, err := noticeGroups(rd.Tset[1])
+	// The notices after the cursor (2.5), grouped by type: one line more than
+	// the page is read, to say lines lie past it.
+	after1 := rd.Tset[1]
+	if len(after1.Lines) > inboxNoticeLines {
+		after1.Lines, v.NoticesMore = after1.Lines[:inboxNoticeLines], true
+	}
+	notices, last, err := noticeGroups(after1)
 	if err != nil {
 		return res, err
 	}
@@ -361,24 +373,37 @@ func Inbox(ctx context.Context, e *Env, req InboxReq) (Result, error) {
 
 // judgmentGroups groups the open notes by type and cause: one group of the
 // notes one cause raised (a need's 50 notes of 2,000 waiters are one group),
-// its subjects counted, the first MaxListed listed, its decisions the ones
-// printed with no card read (IT06's Printed on an empty snapshot).
+// its decisions the ones printed with no card read (IT06's Printed on an empty
+// snapshot). Its subjects are the ones its notes' lines name, read in O(notes)
+// (decision 56): the subjects the notes were raised on, counted and the first
+// MaxListed listed. A subject answered since (closed or held on it alone) is
+// still among them: which subjects are still open is each subject's jopen,
+// O(subjects), and the count of them in O(notes) is IT30's (a notes-only
+// jnote, owed). The inbox prints the count as "raised on", never as open.
 func judgmentGroups(ids []string, rd *sprintfn.ReadReply) ([]sprint.Group, error) {
 	if len(rd.Tset) != len(ids) {
 		return nil, errors.New("inbox: the notes' read answered the wrong number of queries")
 	}
+	lines := make([]noteLine, len(ids))
+	for i, id := range ids {
+		if len(rd.Tset[i].Lines) != 1 {
+			return nil, fmt.Errorf("inbox: note %s has no line", id)
+		}
+		if err := json.Unmarshal(rd.Tset[i].Lines[0], &lines[i]); err != nil {
+			return nil, fmt.Errorf("inbox: note %s's line: %w", id, err)
+		}
+	}
+	return groupLines(ids, lines), nil
+}
+
+// groupLines groups judgment notes' lines by type and cause (judgmentGroups).
+func groupLines(ids []string, lines []noteLine) []sprint.Group {
 	var out []sprint.Group
 	at := map[string]int{}
 	members := map[int]map[string]bool{}
 	empty := &sprint.Snapshot{}
 	for i, id := range ids {
-		if len(rd.Tset[i].Lines) != 1 {
-			return nil, fmt.Errorf("inbox: note %s has no line", id)
-		}
-		var l noteLine
-		if err := json.Unmarshal(rd.Tset[i].Lines[0], &l); err != nil {
-			return nil, fmt.Errorf("inbox: note %s's line: %w", id, err)
-		}
+		l := lines[i]
 		typ, cause := l.meta("type"), l.meta("cause")
 		k := typ + "\x00" + cause
 		g, ok := at[k]
@@ -414,7 +439,7 @@ func judgmentGroups(ids []string, rd *sprintfn.ReadReply) ([]sprint.Group, error
 		out[g].Members = sortedKeys(members[g])
 		out[g].Size = len(out[g].Members)
 	}
-	return out, nil
+	return out
 }
 
 // noticeGroups groups the notices among the lines after the cursor by type,
@@ -466,29 +491,49 @@ func inboxText(v InboxView) string {
 		} else {
 			other++
 		}
-		fmt.Fprintf(&b, "%s %s %s  x%d", strings.ToUpper(g.Kind), g.ID, g.Type, g.Count)
-		if len(g.Primaries) > 0 {
-			ps := g.Primaries
-			if len(ps) > 8 {
-				ps = ps[:8]
-			}
-			fmt.Fprintf(&b, "  (%s)", strings.Join(ps, ","))
+		b.WriteString(groupText(g))
+	}
+	more := ""
+	if v.More {
+		more += " more=notes"
+	}
+	if v.NoticesMore {
+		more += " more=notices"
+	}
+	fmt.Fprintf(&b, "INBOX OK judgments=%d happened=%d cursor=%s last=%s%s\n%s\n", judg, other, v.Cursor, v.Last, more, v.Machine)
+	return b.String()
+}
+
+// groupText is a group as the inbox prints it: its line, with what a
+// judgment was raised on (not what is still open on it, judgmentGroups) or a
+// notice's count, and its commands.
+func groupText(g sprint.Group) string {
+	var b strings.Builder
+	count := fmt.Sprintf("x%d", g.Count)
+	if g.Kind == sprint.Judgment && len(g.Notes) > 0 {
+		count = fmt.Sprintf("raised on %d", g.Count)
+	}
+	fmt.Fprintf(&b, "%s %s %s  %s", strings.ToUpper(g.Kind), g.ID, g.Type, count)
+	if len(g.Primaries) > 0 {
+		ps := g.Primaries
+		if len(ps) > 8 {
+			ps = ps[:8]
 		}
-		if g.What != "" {
-			b.WriteString("  " + g.What)
-		}
-		if len(g.Decisions) > 0 {
-			b.WriteString("  -> " + strings.Join(g.Decisions, " | "))
-		}
-		b.WriteString("\n")
-		for _, c := range g.Commands {
-			fmt.Fprintf(&b, "  %s:\n", c.Decision)
-			for _, l := range c.Lines {
-				fmt.Fprintf(&b, "    %s\n", l)
-			}
+		fmt.Fprintf(&b, "  (%s)", strings.Join(ps, ","))
+	}
+	if g.What != "" {
+		b.WriteString("  " + g.What)
+	}
+	if len(g.Decisions) > 0 {
+		b.WriteString("  -> " + strings.Join(g.Decisions, " | "))
+	}
+	b.WriteString("\n")
+	for _, c := range g.Commands {
+		fmt.Fprintf(&b, "  %s:\n", c.Decision)
+		for _, l := range c.Lines {
+			fmt.Fprintf(&b, "    %s\n", l)
 		}
 	}
-	fmt.Fprintf(&b, "INBOX OK judgments=%d happened=%d cursor=%s\n%s\n", judg, other, v.Cursor, v.Machine)
 	return b.String()
 }
 
@@ -1025,12 +1070,14 @@ type CardReq struct {
 // cards, its read cards, its merge card, its stream's control card, its
 // member's, its needs, its judgments' count, its due entries and its
 // indexes). Quarantined says the card is in {p}quarantine@e (1.3.5): every
-// sprint query leaves it out, so nothing of it is read.
+// sprint query leaves it out, so nothing of it is read; NotShown says what
+// of it the view cannot show, and why.
 type CardView struct {
 	ID          string             `json:"id"`
 	Record      *tset.MemberRecord `json:"record,omitempty"`
 	Follows     *sprintfn.Follows  `json:"follows,omitempty"`
 	Quarantined bool               `json:"quarantined"`
+	NotShown    string             `json:"not_shown,omitempty"`
 }
 
 // Card shows one card (section 3, card): one read, one round trip, of
@@ -1060,6 +1107,9 @@ func Card(ctx context.Context, e *Env, req CardReq) (Result, error) {
 		return res, err
 	}
 	v := CardView{ID: req.ID, Quarantined: contains(rel.LeftOut, req.ID)}
+	if v.Quarantined {
+		v.NotShown = quarantineUnshown
+	}
 	for _, it := range rel.Items {
 		if it.ID == req.ID {
 			rec := it.Record
@@ -1071,7 +1121,7 @@ func Card(ctx context.Context, e *Env, req CardReq) (Result, error) {
 	}
 	switch {
 	case v.Quarantined:
-		res.Said = fmt.Sprintf("card %s is quarantined: a lower layer refused it, and every read leaves it out (1.3.5)", req.ID)
+		res.Said = fmt.Sprintf("card %s is quarantined: a lower layer refused it, and every read leaves it out (1.3.5); %s", req.ID, quarantineUnshown)
 	case v.Record == nil || !v.Record.Exists:
 		res.Said = fmt.Sprintf("card %s has no record", req.ID)
 	default:
@@ -1084,6 +1134,13 @@ func Card(ctx context.Context, e *Env, req CardReq) (Result, error) {
 	return res, nil
 }
 
+// quarantineUnshown is what card cannot show of a quarantined card, and why:
+// the design's row shows what {p}quarantine@e kept of the refusal (code, rule,
+// cells), and no read of the query set reads that key yet (IT30's list of
+// sprint-key reads, errata 1); the card's history is cardlines, which the
+// twin does not serve yet.
+const quarantineUnshown = "the refusal's code, rule and cells are not shown: no read of the quarantine record exists yet (owed by the sprint-key reads, IT30)"
+
 // cardIDRE is a card id of the sprint's alphabet: a primary and its derived
 // parts (<p>.w<k>, <p>.r<k>.<reader>).
 var cardIDRE = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]{0,255}$`)
@@ -1092,88 +1149,118 @@ func validCardID(id string) bool { return cardIDRE.MatchString(id) }
 
 // ---- log
 
-// LogPage is the most lines one page of log reads.
+// LogPage is the most lines one page of log --since or --stream reads (Layer
+// 2's lines page takes up to 5,000, L2 4).
 const LogPage = 1000
 
+// LogCardPage is the most lines one page of log --card reads: Layer 1's and
+// Layer 2's bound on a cardlines page (L1 7; L2 4: at most 500 lines across
+// the page's slots).
+const LogCardPage = 500
+
 // LogReq is log's request: --card, --stream or --since (the seq after which
-// to read), a page's size (0 is LogPage), and where the view goes.
+// to read), a page's size (0 is LogPage, or LogCardPage for --card), the
+// cursor of --card's next page, and where the view goes.
 type LogReq struct {
 	Card   string
 	Stream string
 	Since  uint64
-	Limit  int
-	Out    *LogView
+	// CardCursor is --card's next page: the CardNext of the page before (L2
+	// 4's cursor, {epoch, fields, include_meta, positions}); nil is the first.
+	CardCursor *tset.CardCursor
+	Limit      int
+	Out        *LogView
 }
 
 // LogView is one page of the log: the lines (Layer 2's semantic lines, L2 4)
-// and, for --stream, only the stream's; Next is the seq to read after for the
-// next page, and Exhausted says the page reached the log's last line.
+// and, for --stream, only the stream's; the epoch they are of; Next, the seq
+// to read after for the next page of --since or --stream, and CardNext, the
+// cursor of --card's next page; Exhausted says the page reached the last line.
 type LogView struct {
 	Lines     []json.RawMessage `json:"lines"`
+	Epoch     uint64            `json:"epoch"`
 	Next      uint64            `json:"next"`
+	CardNext  *tset.CardCursor  `json:"card_next,omitempty"`
 	Exhausted bool              `json:"exhausted"`
 }
 
 // Log reads the log (section 3, log): --since and --stream read Layer 2's
-// lines in pages after a seq (L2 4), one round trip a page, --stream keeping
-// the lines of the stream; --card reads the card's lines through Layer 2's
-// cardlines. The twin serves pages through IT12's log stub; cardlines waits
-// for Layer 2's log twin (J9), so --card is the store's until then.
+// lines in pages after a seq (L2 4), --stream keeping the lines of the
+// stream; --card reads the card's lines through Layer 2's cardlines in pages
+// of at most 500, each page's cursor the next's (L2 4). One round trip a
+// page. The page is read at the Env's epoch, and a page that names another
+// active epoch is read again at it (the Env's epoch moves, as a verb's read
+// moves it, AL2): one round trip more when the Env was behind a clear. A
+// --card page after the first is read at its cursor's epoch, which the store
+// keeps until teardown. A page item of cardlines is refused REQUEST by the
+// write path's client until its page item admits cardlines beside lines
+// (sprintfn's checkPage; errata 1 E2 names lines only), and the twin serves
+// no cardlines until Layer 2's log twin does (J9).
 func Log(ctx context.Context, e *Env, req LogReq) (Result, error) {
 	const verb = "log"
 	res := Result{Verb: verb, Epoch: e.epoch()}
-	limit := req.Limit
-	if limit <= 0 || limit > LogPage {
-		limit = LogPage
-	}
 	if req.Card != "" && req.Stream != "" {
 		return res, refuseLocal(verb, sprintfn.CodeRequest, "log takes --card or --stream, not both")
 	}
-	epoch := dec(e.epoch())
-	var v LogView
+	var q tset.ReadQuery
 	if req.Card != "" {
 		if !validCardID(req.Card) {
 			return res, refuseLocal(verb, sprintfn.CodeRequest, "%q is not a card id", req.Card)
 		}
-		r, err := sprintfn.Read(ctx, e.C, &sprintfn.ReadRequest{Epoch: epoch, Tset: []tset.ReadQuery{{Kind: "cardlines",
-			Abouts: []string{req.Card}, Limit: limit}}})
-		res.Trips++
-		if err != nil {
-			return res, err
+		limit := req.Limit
+		if limit <= 0 || limit > LogCardPage {
+			limit = LogCardPage
 		}
-		if r.Err != nil {
-			return res, r.Err
-		}
-		if r.Refusal != nil {
-			return res, &Refused{Verb: verb, Refusal: r.Refusal}
-		}
-		v.Lines, v.Exhausted = r.Read.Tset[0].Lines, true
+		q = tset.ReadQuery{Kind: "cardlines", Abouts: []string{req.Card}, Limit: limit, IncludeMeta: true, Cursor: req.CardCursor}
 	} else {
+		if req.CardCursor != nil {
+			return res, refuseLocal(verb, sprintfn.CodeRequest, "a cardlines cursor is --card's")
+		}
 		if req.Stream != "" && !sprint.ValidID(req.Stream) {
 			return res, refuseLocal(verb, sprintfn.CodeRequest, "%q is not a stream", req.Stream)
 		}
-		out, err := e.C.Pipeline(ctx, []sprintfn.Item{{Page: &tset.ReadPlan{Epoch: epoch, Space: e.Names.Prefix, Mode: "page",
-			Queries: []tset.ReadQuery{{Kind: "lines", AfterSeq: tset.Decimal(strconv.FormatUint(req.Since, 10)), Limit: limit}}}}})
-		res.Trips++
-		if err != nil {
-			return res, err
+		limit := req.Limit
+		if limit <= 0 || limit > LogPage {
+			limit = LogPage
 		}
-		if len(out) != 1 {
-			return res, fmt.Errorf("log: a pipeline of one returned %d results", len(out))
+		q = tset.ReadQuery{Kind: "lines", AfterSeq: tset.Decimal(strconv.FormatUint(req.Since, 10)), Limit: limit}
+	}
+	page, epoch, err := logPage(ctx, e, &res, q, req.CardCursor)
+	if err != nil {
+		return res, err
+	}
+	res.Epoch = epoch
+	v := LogView{Epoch: epoch, Next: req.Since, Exhausted: page.Exhausted}
+	if req.Card != "" {
+		v.Lines = page.Items
+		if len(page.Next) > 0 && string(page.Next) != "null" {
+			var c tset.CardCursor
+			if err := json.Unmarshal(page.Next, &c); err != nil {
+				return res, fmt.Errorf("log --card: the page's cursor: %w", err)
+			}
+			v.CardNext = &c
 		}
-		if out[0].Err != nil {
-			return res, out[0].Err
+	} else {
+		if len(page.Next) > 0 && string(page.Next) != "null" {
+			var next string
+			if json.Unmarshal(page.Next, &next) != nil {
+				next = string(page.Next)
+			}
+			n, err := strconv.ParseUint(next, 10, 64)
+			if err != nil {
+				return res, fmt.Errorf("log: the page's next %s is not a seq", page.Next)
+			}
+			v.Next = n
 		}
-		if out[0].Refusal != nil {
-			return res, &Refused{Verb: verb, Refusal: out[0].Refusal}
-		}
-		page := out[0].Page
-		v.Next, v.Exhausted = req.Since, page.Exhausted
-		for i, raw := range page.Items {
-			seq := req.Since + uint64(i) + 1
-			v.Next = seq
+		for _, raw := range page.Items {
 			if req.Stream != "" {
-				ev, err := sprint.ParseEvent(strconv.FormatUint(seq, 10)+"-0", raw)
+				var l struct {
+					Seq string `json:"seq"`
+				}
+				if json.Unmarshal(raw, &l) != nil {
+					continue
+				}
+				ev, err := sprint.ParseEvent(l.Seq+"-0", raw)
 				if err != nil || !lineOfStream(ev, req.Stream) {
 					continue
 				}
@@ -1194,6 +1281,60 @@ func Log(ctx context.Context, e *Env, req LogReq) (Result, error) {
 	}
 	res.Said = b.String()
 	return res, nil
+}
+
+// logPage reads one page of the log: at the cursor's epoch when there is one,
+// else at the Env's, moving to the active epoch a reply names (STALE and
+// EPOCHAHEAD reload it; a page of an older epoch than the active one is read
+// again at the active one), at most Retries times.
+func logPage(ctx context.Context, e *Env, res *Result, q tset.ReadQuery, cursor *tset.CardCursor) (tset.ReadReply, uint64, error) {
+	const verb = "log"
+	pinned := cursor != nil
+	epoch := e.epoch()
+	if pinned {
+		n, ok := undec(cursor.Epoch)
+		if !ok {
+			return tset.ReadReply{}, 0, refuseLocal(verb, sprintfn.CodeRequest, "the cursor's epoch %q is not an epoch", cursor.Epoch)
+		}
+		epoch = n
+	}
+	for tries := 0; ; tries++ {
+		out, err := e.C.Pipeline(ctx, []sprintfn.Item{{Page: &tset.ReadPlan{Epoch: dec(epoch), Space: e.Names.Prefix, Mode: "page",
+			Queries: []tset.ReadQuery{q}}}})
+		res.Trips++
+		if err != nil {
+			return tset.ReadReply{}, epoch, err
+		}
+		if len(out) != 1 {
+			return tset.ReadReply{}, epoch, fmt.Errorf("log: a pipeline of one returned %d results", len(out))
+		}
+		if out[0].Err != nil {
+			return tset.ReadReply{}, epoch, out[0].Err
+		}
+		if ref := out[0].Refusal; ref != nil {
+			if !pinned && epochMoved(ref.Code) && tries < Retries && e.reload(ref) {
+				res.Retries++
+				epoch = e.epoch()
+				continue
+			}
+			return tset.ReadReply{}, epoch, &Refused{Verb: verb, Refusal: ref, Retries: res.Retries}
+		}
+		page := out[0].Page
+		if page == nil {
+			return tset.ReadReply{}, epoch, errors.New("log: the page has no reply")
+		}
+		if active, ok := undec(page.ActiveEpoch); ok && active != epoch && !pinned {
+			if tries >= Retries {
+				return tset.ReadReply{}, epoch, &Refused{Verb: verb, Retries: tries, Refusal: &sprintfn.Refusal{Code: sprintfn.CodeStale,
+					Message: "the epoch kept moving under log"}}
+			}
+			res.Retries++
+			e.setEpoch(active)
+			epoch = active
+			continue
+		}
+		return *page, epoch, nil
+	}
 }
 
 // lineOfStream says a line is the stream's: its stream, or a place in its row

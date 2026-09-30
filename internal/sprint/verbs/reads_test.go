@@ -3,6 +3,7 @@ package verbs
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strconv"
 	"strings"
 	"sync"
@@ -397,6 +398,13 @@ func TestCardShowsQuarantine(t *testing.T) {
 	if res.Trips != 1 || !v.Quarantined || v.Record != nil || !strings.Contains(res.Said, "quarantined") {
 		t.Fatalf("card of a quarantined card: %d round trips, %+v, %q", res.Trips, v, res.Said)
 	}
+	// What the design's row shows of the quarantine record (code, rule, cells)
+	// has no read yet: the card says what it cannot show, and why.
+	for _, want := range []string{"code, rule and cells are not shown", "no read of the quarantine record", "IT30"} {
+		if !strings.Contains(res.Said, want) || !strings.Contains(v.NotShown, want) {
+			t.Fatalf("card of a quarantined card does not say %q: %q, not shown %q", want, res.Said, v.NotShown)
+		}
+	}
 	var v2 CardView
 	res, err = Card(context.Background(), w.env, CardReq{ID: "p2", Out: &v2})
 	if err != nil {
@@ -449,5 +457,236 @@ func TestLogPagesAndStream(t *testing.T) {
 	}
 	if _, err := Log(context.Background(), w.env, LogReq{Card: "p1", Stream: "s1"}); refusedCode(err) != sprintfn.CodeRequest {
 		t.Fatalf("log --card and --stream: %v, want REQUEST", err)
+	}
+}
+
+// TestInboxPagesAtAHundredFullNotes: the inbox's second read reads one line a
+// note, and a note's line names up to 2,000 subjects, so a page is at most 100
+// notes: 200,000 ids, Layer 2's bound on one read (L2 4), which an atomic
+// read over it refuses BUDGET whole (the twin does not charge it). With 101
+// full notes open the page is 100 and More says the rest lie past it.
+func TestInboxPagesAtAHundredFullNotes(t *testing.T) {
+	t.Parallel()
+	w := newJRWorld(t)
+	const notes, per = InboxPage + 1, 2000
+	for k := 0; k < notes; k++ {
+		subjects := make([]string, per)
+		for i := range subjects {
+			subjects[i] = "w" + strconv.Itoa(k*per+i)
+		}
+		w.open(typeBlockedMissing, "ghost", subjects...)
+	}
+	rec := &jrRecorder{C: w.tw}
+	env := &Env{C: rec, Names: jrNames, Actor: jrCoord, noWait: true}
+	var v InboxView
+	if _, err := Inbox(context.Background(), env, InboxReq{Limit: 1000, Out: &v}); err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.reads) != 2 || len(rec.reads[1].Tset) != InboxPage {
+		t.Fatalf("inbox read %d times, the second with %d lines queries; want 2 and %d", len(rec.reads), len(rec.reads[1].Tset), InboxPage)
+	}
+	g, _ := groupOf(v, typeBlockedMissing)
+	if !v.More || len(g.Notes) != InboxPage || g.Count != InboxPage*per || g.Count > 200_000 {
+		t.Fatalf("a page of %d notes naming %d subjects, more %v; want %d notes, at most 200,000 ids, more", len(g.Notes), g.Count, v.More, InboxPage)
+	}
+}
+
+// TestInboxNoticesMore: the lines after the cursor are read a page at a time
+// (1,000 lines); with more after them the inbox says so, and Last is the last
+// line read, so the next inbox from it reads the rest.
+func TestInboxNoticesMore(t *testing.T) {
+	t.Parallel()
+	w := newJRWorld(t)
+	first := w.lastSeq()
+	for step := 0; step < 11; step++ {
+		var ns []sprintfn.NoteReq
+		for i := 0; i < 100; i++ {
+			k := strconv.Itoa(step*100 + i)
+			ns = append(ns, sprintfn.NoteReq{Op: sprintfn.JOpOpen, Type: typeStepRefused, Cause: "c" + k, Subjects: []string{"k" + k}, Text: "raised by the test"})
+		}
+		w.step(&sprintfn.Request{Meta: sprintfn.Meta{Verb: "test", Rule: "test"}, Body: sprintfn.Body{Notes: ns}})
+	}
+	var v InboxView
+	res, err := Inbox(context.Background(), w.env, InboxReq{After: first, Out: &v})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !v.NoticesMore || v.Last != strconv.FormatUint(first+inboxNoticeLines, 10) || !strings.Contains(res.Said, "more=notices") {
+		t.Fatalf("1,100 lines after the cursor: notices more %v, last %s (want %d), said %q", v.NoticesMore, v.Last, first+inboxNoticeLines, res.Said)
+	}
+	var rest InboxView
+	if _, err := Inbox(context.Background(), w.env, InboxReq{After: first + inboxNoticeLines, Out: &rest}); err != nil {
+		t.Fatal(err)
+	}
+	if rest.NoticesMore || rest.Last != strconv.FormatUint(first+1100, 10) {
+		t.Fatalf("the rest: notices more %v, last %s, want none past %d", rest.NoticesMore, rest.Last, first+1100)
+	}
+}
+
+// lastSeq is the log's last seq at epoch 0.
+func (w *jrWorld) lastSeq() uint64 {
+	w.t.Helper()
+	rd := w.read(&sprintfn.ReadRequest{Tset: []tset.ReadQuery{{Kind: "last"}}})
+	n, _ := strconv.ParseUint(string(rd.Tset[0].LastSeq), 10, 64)
+	return n
+}
+
+// TestInboxCountsRaisedOn: a judgment's group counts the subjects its notes
+// were raised on, read in O(notes); a subject answered since is among them,
+// so the inbox prints the count as "raised on", never as open (which subjects
+// are still open is each one's jopen, O(subjects): IT30's notes-only jnote).
+func TestInboxCountsRaisedOn(t *testing.T) {
+	t.Parallel()
+	w := newJRWorld(t)
+	note := w.open(typeStepRefused, "LIMIT", "k1", "k2", "k3")
+	w.step(&sprintfn.Request{Meta: sprintfn.Meta{Verb: "test", Rule: "test"}, Body: sprintfn.Body{
+		Notes: []sprintfn.NoteReq{{Op: sprintfn.JOpClose, Type: typeStepRefused, Cause: "LIMIT", Subjects: []string{"k1", "k2"}, Text: "closed"}}}})
+	var v InboxView
+	res, err := Inbox(context.Background(), w.env, InboxReq{Out: &v})
+	if err != nil {
+		t.Fatal(err)
+	}
+	g, ok := groupOf(v, typeStepRefused)
+	if !ok || g.Count != 3 || len(g.Notes) != 1 || g.Notes[0] != note {
+		t.Fatalf("the group of %s: %+v", note, g)
+	}
+	if !strings.Contains(res.Said, "raised on 3") || strings.Contains(res.Said, typeStepRefused+"  x3") {
+		t.Fatalf("the inbox prints the count as open: %q", res.Said)
+	}
+}
+
+// TestLogAfterClearReadsTheActiveEpoch: log on an Env that has not seen a
+// clear reads the active epoch's lines, not the cleared epoch's: the page
+// names the active epoch, and the page is read again there, one round trip
+// more; the Env's epoch moves with it.
+func TestLogAfterClearReadsTheActiveEpoch(t *testing.T) {
+	t.Parallel()
+	w := newJRWorld(t)
+	w.admit(jrCard{id: "p1", col: "ready"})
+	if _, err := Clear(context.Background(), w.env, ClearReq{Confirm: jrPrefix}); err != nil {
+		t.Fatalf("clear: %v", err)
+	}
+	fresh := &Env{C: w.cc, Names: jrNames, Actor: jrCoord, noWait: true}
+	w.cc.Reset()
+	var v LogView
+	res, err := Log(context.Background(), fresh, LogReq{Out: &v})
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := w.read(&sprintfn.ReadRequest{Epoch: "1", Tset: []tset.ReadQuery{{Kind: "lines", AfterSeq: "0", Limit: 5000}}}).Tset[0].Lines
+	if v.Epoch != 1 || fresh.Epoch != 1 || res.Epoch != 1 || res.Trips != 2 || len(v.Lines) != len(now) {
+		t.Fatalf("log after a clear: epoch %d (env %d), %d round trips, %d lines; want epoch 1's %d lines in 2",
+			v.Epoch, fresh.Epoch, res.Trips, len(v.Lines), len(now))
+	}
+	for i := range now {
+		if string(v.Lines[i]) != string(now[i]) {
+			t.Fatalf("line %d is %s, want epoch 1's %s", i+1, v.Lines[i], now[i])
+		}
+	}
+	w.cc.Reset()
+	if res, err := Log(context.Background(), fresh, LogReq{Out: &v}); err != nil || res.Trips != 1 {
+		t.Fatalf("log on a warm Env: %v, %d round trips, want 1", err, res.Trips)
+	}
+}
+
+// jrCardPager serves Layer 2's cardlines in page mode for one card (L2 4):
+// the card's history of n lines, pages of at most 500 across the cursor, which
+// carries the high-water the first page took. It refuses LIMIT a page over
+// 500, as Layer 1's plan check does, and passes every other item to the twin.
+// The write path's client and the twin do not serve cardlines pages yet: this
+// stands for the store, to drive log --card's paging.
+type jrCardPager struct {
+	C     sprintfn.Client
+	about string
+	n     int
+	mu    sync.Mutex
+	pages []tset.ReadQuery
+}
+
+func (p *jrCardPager) Pipeline(ctx context.Context, items []sprintfn.Item) ([]sprintfn.Result, error) {
+	if len(items) != 1 || items[0].Page == nil || items[0].Page.Queries[0].Kind != "cardlines" {
+		return p.C.Pipeline(ctx, items)
+	}
+	plan := items[0].Page
+	q := plan.Queries[0]
+	p.mu.Lock()
+	p.pages = append(p.pages, q)
+	p.mu.Unlock()
+	if err := tset.ValidateReadPlan(*plan); err != nil {
+		code := sprintfn.CodeRequest
+		var r *tset.Refusal
+		if errors.As(err, &r) {
+			code = r.Code
+		}
+		return []sprintfn.Result{{Refusal: &sprintfn.Refusal{Code: code, Message: err.Error()}}}, nil
+	}
+	from, through := int64(0), int64(p.n-1)
+	if q.Cursor != nil {
+		from, through = q.Cursor.Positions[0].NextIndex, q.Cursor.Positions[0].ThroughIndex
+	}
+	rep := tset.ReadReply{Status: "page", Epoch: plan.Epoch, ActiveEpoch: plan.Epoch, Items: []json.RawMessage{}}
+	i := from
+	for ; i <= through && len(rep.Items) < q.Limit; i++ {
+		rep.Items = append(rep.Items, json.RawMessage(`{"seq":"`+strconv.FormatInt(i+1, 10)+`","kind":"note","about":["`+p.about+`"]}`))
+	}
+	rep.Exhausted = i > through
+	if !rep.Exhausted {
+		c := tset.CardCursor{Epoch: plan.Epoch, Fields: []string{}, IncludeMeta: q.IncludeMeta,
+			Positions: []tset.CardCursorPosition{{About: p.about, NextIndex: i, ThroughIndex: through}}}
+		b, _ := json.Marshal(c)
+		rep.Next = b
+	}
+	return []sprintfn.Result{{Page: &rep}}, nil
+}
+
+// TestLogCardPages: log --card reads the card's lines through cardlines in
+// pages of at most 500 (L1 7; L2 4), each page's cursor the next's, one round
+// trip a page, until the page that reaches the high-water. A page asked over
+// 500 is cut to 500, never sent to be refused LIMIT.
+func TestLogCardPages(t *testing.T) {
+	t.Parallel()
+	w := newJRWorld(t)
+	pager := &jrCardPager{C: w.tw, about: "p1", n: 1_234}
+	cc := &Counting{C: pager}
+	env := &Env{C: cc, Names: jrNames, Actor: jrCoord, noWait: true}
+	var got []json.RawMessage
+	var cursor *tset.CardCursor
+	pages := 0
+	for {
+		var v LogView
+		res, err := Log(context.Background(), env, LogReq{Card: "p1", CardCursor: cursor, Limit: 5000, Out: &v})
+		if err != nil {
+			t.Fatalf("page %d: %v", pages+1, err)
+		}
+		pages++
+		if res.Trips != 1 {
+			t.Fatalf("page %d took %d round trips, want 1", pages, res.Trips)
+		}
+		got = append(got, v.Lines...)
+		if v.Exhausted {
+			if v.CardNext != nil {
+				t.Fatalf("the last page carries a cursor")
+			}
+			break
+		}
+		if v.CardNext == nil || pages > 10 {
+			t.Fatalf("page %d is not the last and carries no cursor", pages)
+		}
+		cursor = v.CardNext
+	}
+	if pages != 3 || len(got) != pager.n {
+		t.Fatalf("log --card read %d lines in %d pages, want %d in 3", len(got), pages, pager.n)
+	}
+	for i, q := range pager.pages {
+		if q.Limit != LogCardPage || len(q.Abouts) != 1 || q.Abouts[0] != "p1" || (i == 0) != (q.Cursor == nil) {
+			t.Fatalf("page %d asked %+v, want cardlines of p1, limit %d, the cursor after the first", i+1, q, LogCardPage)
+		}
+	}
+	if string(got[pager.n-1]) != `{"seq":"1234","kind":"note","about":["p1"]}` {
+		t.Fatalf("the last line is %s", got[pager.n-1])
+	}
+	var v LogView
+	if _, err := Log(context.Background(), env, LogReq{Card: "p1", Out: &v}); err != nil || len(v.Lines) != LogCardPage {
+		t.Fatalf("log --card with the default page: %v, %d lines, want a page of %d", err, len(v.Lines), LogCardPage)
 	}
 }
