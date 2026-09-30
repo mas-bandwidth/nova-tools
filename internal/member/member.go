@@ -42,11 +42,17 @@ type Child interface {
 	Result() Result
 }
 
-// Result is how a child ended.
+// Result is how a child ended. Ran is whether the child ran to its end (its
+// harness answered); OK is its verdict: a work card's, that the work is done,
+// a read's, the reader's `verdict: ok` in RESULT.md. A read whose child did
+// not run or gave no verdict has no finding to report: the read is left as it
+// is for the sprint's lateness rule, never filed as broken against the work.
 type Result struct {
-	OK     bool
-	Head   string
-	Report string
+	Ran     bool
+	OK      bool
+	Verdict string // a read's: "ok", "broken", or "" when the reader gave none
+	Head    string
+	Report  string
 }
 
 // Packet is what a card hands the member, as `nova-sprint queue --json` and
@@ -99,19 +105,31 @@ type Config struct {
 	Reader bool   // run the readers-table loop instead of the fleet's
 }
 
+// launch is one child and the claim it was started for: the card at the
+// generation (a read: the attempt) and the epoch of the packet it was handed,
+// so its result settles that claim and no other (a card cleared and dealt
+// again is a new claim, and an old child's result is reaped, never reported).
+type launch struct {
+	child   Child
+	gen     int
+	attempt int
+	epoch   uint64
+	branch  string
+}
+
 // Member is the loop's state: the children running, by card id.
 type Member struct {
 	cfg     Config
 	sprint  Sprint
 	runner  Runner
 	out     io.Writer
-	running map[string]Child // by card id (a work card's id, a read card's id)
+	running map[string]launch // by card id (a work card's id, a read card's id)
 	epoch   uint64
 }
 
 // New is a member with nothing running.
 func New(cfg Config, s Sprint, r Runner, out io.Writer) *Member {
-	return &Member{cfg: cfg, sprint: s, runner: r, out: out, running: map[string]Child{}}
+	return &Member{cfg: cfg, sprint: s, runner: r, out: out, running: map[string]launch{}}
 }
 
 // Running is how many children are running.
@@ -159,7 +177,17 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 		if !inFlight {
 			continue
 		}
-		ch, ours := m.running[id]
+		l, ours := m.running[id]
+		if ours && c.Packet != nil && (l.epoch != c.Packet.Epoch || (!m.cfg.Reader && l.gen != c.Packet.Gen) || (m.cfg.Reader && l.attempt != c.Packet.Attempt)) {
+			// the claim moved under the child (a clear, a redeal): its result
+			// is nobody's; it is reaped when it ends and the new claim is run
+			if !l.child.Done() {
+				continue
+			}
+			fmt.Fprintf(m.out, "reap %s: the claim moved (epoch %d gen %d attempt %d, now epoch %d gen %d attempt %d)\n", id, l.epoch, l.gen, l.attempt, c.Packet.Epoch, c.Packet.Gen, c.Packet.Attempt)
+			delete(m.running, id)
+			ours = false
+		}
 		if !ours {
 			if c.Packet == nil {
 				continue
@@ -169,29 +197,37 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 			}
 			continue
 		}
-		if !ch.Done() {
+		if !l.child.Done() {
 			continue
 		}
-		r := ch.Result()
+		r := l.child.Result()
+		launched := []string{"--epoch", strconv.FormatUint(l.epoch, 10)}
 		var args []string
 		if m.cfg.Reader {
+			if !r.Ran || (r.Verdict != "ok" && r.Verdict != "broken") {
+				// no verdict is no finding: the read stays reading for the
+				// sprint's lateness rule to re-ask; the child is let go
+				fmt.Fprintf(m.out, "read %s: no verdict (ran=%t verdict=%q); left for the sprint to re-ask\n", id, r.Ran, r.Verdict)
+				delete(m.running, id)
+				continue
+			}
 			word := "--ok"
-			if !r.OK {
+			if r.Verdict == "broken" {
 				word = "--broken"
 			}
-			args = append([]string{"read", "--as", m.cfg.As, word, id, "--finding", oneLine(r.Report)}, held...)
+			args = append([]string{"read", "--as", m.cfg.As, word, id, "--finding", oneLine(r.Report)}, launched...)
 		} else {
-			args = []string{"finish", "--as", m.cfg.As, id + "@" + strconv.Itoa(c.Gen), "--report", oneLine(r.Report)}
+			args = []string{"finish", "--as", m.cfg.As, id + "@" + strconv.Itoa(l.gen), "--report", oneLine(r.Report)}
 			if r.Head != "" {
 				args = append(args, "--head", r.Head)
 			}
-			if c.Packet != nil && c.Packet.Branch != "" {
-				args = append(args, "--branch", c.Packet.Branch)
+			if l.branch != "" {
+				args = append(args, "--branch", l.branch)
 			}
 			if !r.OK {
 				args = append(args, "--failed")
 			}
-			args = append(args, held...)
+			args = append(args, launched...)
 		}
 		code, out := m.sprint.Run(args...)
 		fmt.Fprintf(m.out, "%s %s ok=%t exit=%d\n", args[0], id, r.OK, code)
@@ -204,8 +240,8 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 	// A child whose card the queue no longer lists (the sprint was cleared, the
 	// card was dealt elsewhere) has nothing left to report to: once it has
 	// ended it is forgotten, so it does not hold a place of the width for ever.
-	for id, ch := range m.running {
-		if _, listed := byID[id]; !listed && ch.Done() {
+	for id, l := range m.running {
+		if _, listed := byID[id]; !listed && l.child.Done() {
 			delete(m.running, id)
 			fmt.Fprintf(m.out, "drop %s: no longer in the queue\n", id)
 		}
@@ -224,12 +260,18 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 	if ready == 0 {
 		return acted, nil
 	}
-	if ready < room {
-		room = ready
-	}
 	var packets []Packet
 	if m.cfg.Reader {
-		args := append([]string{"read", "--as", m.cfg.As, "--begin", "--limit", strconv.Itoa(room), "--json"}, held...)
+		// the reads begun are named: the first n asked in queue order, so what
+		// is started is exactly what was claimed
+		var ids []string
+		for _, c := range q.Cards {
+			if c.Col == "asked" && c.Packet != nil && len(ids) < room {
+				ids = append(ids, c.ID)
+				packets = append(packets, *c.Packet)
+			}
+		}
+		args := append(append([]string{"read", "--as", m.cfg.As, "--begin"}, ids...), held...)
 		code, out := m.sprint.Run(args...)
 		if code == 2 {
 			return acted, fmt.Errorf("read --begin: the store did not answer: %s", strings.TrimSpace(string(out)))
@@ -237,14 +279,6 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 		if code != 0 {
 			fmt.Fprintf(m.out, "read --begin refused: %s\n", strings.TrimSpace(string(out)))
 			return acted, nil
-		}
-		// the read cards begun are the asked ones, first n in queue order
-		n := 0
-		for _, c := range q.Cards {
-			if c.Col == "asked" && c.Packet != nil && n < room {
-				packets = append(packets, *c.Packet)
-				n++
-			}
 		}
 	} else {
 		args := append([]string{"take", "--as", m.cfg.As, "--limit", strconv.Itoa(room), "--json"}, held...)
@@ -273,6 +307,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 // start runs a packet as a child, unless one is already running for it.
 func (m *Member) start(p Packet) bool {
 	if _, ok := m.running[p.Card]; ok {
+		fmt.Fprintf(m.out, "start %s: already running\n", p.Card)
 		return false
 	}
 	ch, err := m.runner.Start(p)
@@ -280,7 +315,7 @@ func (m *Member) start(p Packet) bool {
 		fmt.Fprintf(m.out, "start %s: %v\n", p.Card, err)
 		return false
 	}
-	m.running[p.Card] = ch
+	m.running[p.Card] = launch{child: ch, gen: p.Gen, attempt: p.Attempt, epoch: p.Epoch, branch: p.Branch}
 	fmt.Fprintf(m.out, "start %s attempt=%d gen=%d running=%d/%d\n", p.Card, p.Attempt, p.Gen, len(m.running), m.cfg.Width)
 	return true
 }
@@ -340,6 +375,9 @@ func CardText(p Packet, sprintBin string) string {
 		if strings.TrimSpace(n) != "" {
 			fmt.Fprintf(&b, "Note:\n\n%s\n\n", strings.TrimSpace(n))
 		}
+	}
+	if p.Kind == "read" {
+		b.WriteString("Your verdict goes in RESULT.md's Head as one line, `verdict: ok` or `verdict: broken` (broken means the work is wrong for the card, with the finding in your One line; a problem of your own run is not a verdict, leave the line out). ")
 	}
 	b.WriteString("Your RESULT.md's One line is what the sprint records as your report; the member reports it for you as:\n\n")
 	if p.Kind == "read" {

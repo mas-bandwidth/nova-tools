@@ -213,9 +213,11 @@ func TestTickWithTwoReadyAndWidthTwoTakesTwoInOneVerb(t *testing.T) {
 	}
 }
 
-// TestTakeLimitIsTheSmallerOfRoomAndReady pins that the member asks for what
-// is there: three places and one ready card is `--limit 1`.
-func TestTakeLimitIsTheSmallerOfRoomAndReady(t *testing.T) {
+// TestTakeLimitIsTheRoom pins that the member asks for its whole room, not
+// for what its queue snapshot showed: a deal that lands between the queue
+// read and the take is taken in the same tick. Three places, one ready card
+// seen: `--limit 3`.
+func TestTakeLimitIsTheRoom(t *testing.T) {
 	t.Parallel()
 	g := newRig(Config{As: "m", Width: 3})
 	g.s.set("queue", 0, queueJSON(t, 7, ready("c1")))
@@ -223,7 +225,7 @@ func TestTakeLimitIsTheSmallerOfRoomAndReady(t *testing.T) {
 	if _, err := g.tick(t); err != nil {
 		t.Fatal(err)
 	}
-	if got := g.s.lines("take"); !slices.Equal(got, []string{"take --as m --limit 1 --json --epoch 7"}) {
+	if got := g.s.lines("take"); !slices.Equal(got, []string{"take --as m --limit 3 --json --epoch 7"}) {
 		t.Fatalf("take lines: %q", got)
 	}
 }
@@ -235,12 +237,13 @@ func TestEndedOkCardIsFinishedWithItsHeadBranchAndEpoch(t *testing.T) {
 	t.Parallel()
 	g := newRig(Config{As: "m", Width: 2})
 	g.s.set("queue", 0, queueJSON(t, 7, ready("c1")))
-	g.s.set("take", 0, takeJSON(t, pk("c1")))
+	p := pk("c1")
+	p.Gen = 3 // the take hands the card at its generation; the queue says the same
+	g.s.set("take", 0, takeJSON(t, p))
 	if _, err := g.tick(t); err != nil {
 		t.Fatal(err)
 	}
-	g.r.child("c1").end(Result{OK: true, Head: "abc123", Report: "# Result\n\nlanded the thing\nsecond line"})
-	p := pk("c1")
+	g.r.child("c1").end(Result{Ran: true, OK: true, Head: "abc123", Report: "# Result\n\nlanded the thing\nsecond line"})
 	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 3, &p)))
 	g.s.reset()
 	acted, err := g.tick(t)
@@ -265,11 +268,12 @@ func TestEndedNotOkCardIsFinishedFailed(t *testing.T) {
 	t.Parallel()
 	g := newRig(Config{As: "m", Width: 2})
 	p := pk("c1")
+	p.Gen = 2
 	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 2, &p)))
 	if _, err := g.tick(t); err != nil { // restart: the child is ours now
 		t.Fatal(err)
 	}
-	g.r.child("c1").end(Result{OK: false, Report: "the harness fell over"})
+	g.r.child("c1").end(Result{Ran: true, OK: false, Report: "the harness fell over"})
 	g.s.reset()
 	if _, err := g.tick(t); err != nil {
 		t.Fatal(err)
@@ -286,11 +290,12 @@ func TestFinishWithoutABranchInThePacketCarriesNone(t *testing.T) {
 	t.Parallel()
 	g := newRig(Config{As: "m", Width: 1})
 	p := pk("c1")
+	p.Branch = "" // the branch is the launch's packet's; none here
 	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p)))
 	if _, err := g.tick(t); err != nil {
 		t.Fatal(err)
 	}
-	g.r.child("c1").end(Result{OK: true, Head: "h1", Report: "done"})
+	g.r.child("c1").end(Result{Ran: true, OK: true, Head: "h1", Report: "done"})
 	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, nil)))
 	g.s.reset()
 	if _, err := g.tick(t); err != nil {
@@ -373,7 +378,7 @@ func TestReaderLoopBeginsAskedCardsAndReportsEndedReads(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := g.s.lines("begin"); !slices.Equal(got, []string{"read --as r --begin --limit 2 --json --epoch 7"}) {
+	if got := g.s.lines("begin"); !slices.Equal(got, []string{"read --as r --begin r1 r2 --epoch 7"}) {
 		t.Fatalf("begin lines: %q", got)
 	}
 	if acted != 2 || !slices.Equal(g.r.started(), []string{"r1", "r2"}) {
@@ -382,8 +387,8 @@ func TestReaderLoopBeginsAskedCardsAndReportsEndedReads(t *testing.T) {
 	if got := g.s.lines("beat"); len(got) != 0 {
 		t.Fatalf("a reader beats no fleet row: %q", got)
 	}
-	g.r.child("r1").end(Result{OK: true, Report: "clean\nsecond"})
-	g.r.child("r2").end(Result{OK: false, Report: "## Finding\nthe merge is wrong"})
+	g.r.child("r1").end(Result{Ran: true, OK: true, Verdict: "ok", Report: "clean\nsecond"})
+	g.r.child("r2").end(Result{Ran: true, OK: false, Verdict: "broken", Report: "## Finding\nthe merge is wrong"})
 	reading := func(id string, p *Packet) queueCard { return queueCard{ID: id, Col: "reading", Packet: p} }
 	g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &a1), reading("r2", &a2)))
 	g.s.reset()
@@ -445,7 +450,7 @@ func TestAStoreThatDoesNotAnswerStopsTheTickActingOnNothing(t *testing.T) {
 		if _, err := g.tick(t); err != nil {
 			t.Fatal(err)
 		}
-		g.r.child("c1").end(Result{OK: true, Head: "h", Report: "r"})
+		g.r.child("c1").end(Result{Ran: true, OK: true, Head: "h", Report: "r"})
 		g.s.set("finish", 2, "no route to the store")
 		if _, err := g.tick(t); err == nil {
 			t.Fatal("a finish the store never answered is an error")
@@ -467,11 +472,12 @@ func TestARefusedTakeIsPrintedAndTheTickContinues(t *testing.T) {
 	t.Parallel()
 	g := newRig(Config{As: "m", Width: 1})
 	p := pk("c1")
+	p.Gen = 1
 	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p)))
 	if _, err := g.tick(t); err != nil {
 		t.Fatal(err)
 	}
-	g.r.child("c1").end(Result{OK: true, Head: "h", Report: "r"})
+	g.r.child("c1").end(Result{Ran: true, OK: true, Head: "h", Report: "r"})
 	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p), ready("c2")))
 	g.s.set("take", 1, "the sprint is stopped")
 	acted, err := g.tick(t)
@@ -533,6 +539,7 @@ func TestACardTheQueueNoLongerListsIsReapedWhenItsChildEnds(t *testing.T) {
 	t.Parallel()
 	g := newRig(Config{As: "m", Width: 1})
 	p := pk("c1")
+	p.Gen = 1
 	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p)))
 	if _, err := g.tick(t); err != nil {
 		t.Fatal(err)
@@ -544,7 +551,7 @@ func TestACardTheQueueNoLongerListsIsReapedWhenItsChildEnds(t *testing.T) {
 	if g.m.Running() != 1 {
 		t.Fatalf("running=%d: a child still running is left alone", g.m.Running())
 	}
-	g.r.child("c1").end(Result{OK: true, Head: "h", Report: "r"})
+	g.r.child("c1").end(Result{Ran: true, OK: true, Head: "h", Report: "r"})
 	if _, err := g.tick(t); err != nil {
 		t.Fatal(err)
 	}

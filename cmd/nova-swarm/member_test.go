@@ -25,7 +25,7 @@ func resultFixture(t *testing.T, body string) string {
 func TestReadResultTakesTheHeadFromRevAndTheReportFromOneLine(t *testing.T) {
 	t.Parallel()
 	p := resultFixture(t, "# Result\n\nrev: 0a1b2c3d\n\n## One line\n\n  landed the member loop  \nsecond line of it\n\n## Details\n\nnot this\n")
-	head, report := readResult(p)
+	head, _, report := readResult(p)
 	if head != "0a1b2c3d" || report != "landed the member loop" {
 		t.Fatalf("readResult = (%q, %q), want (0a1b2c3d, landed the member loop)", head, report)
 	}
@@ -34,7 +34,7 @@ func TestReadResultTakesTheHeadFromRevAndTheReportFromOneLine(t *testing.T) {
 // TestReadResultOneLineHeadingIsCaseInsensitive pins the section's name.
 func TestReadResultOneLineHeadingIsCaseInsensitive(t *testing.T) {
 	t.Parallel()
-	_, report := readResult(resultFixture(t, "## ONE line\nshouted\n"))
+	_, _, report := readResult(resultFixture(t, "## ONE line\nshouted\n"))
 	if report != "shouted" {
 		t.Fatalf("report = %q, want shouted", report)
 	}
@@ -45,7 +45,7 @@ func TestReadResultOneLineHeadingIsCaseInsensitive(t *testing.T) {
 // `rev:` line is never the report).
 func TestReadResultWithoutAOneLineUsesTheFirstProse(t *testing.T) {
 	t.Parallel()
-	head, report := readResult(resultFixture(t, "# Result\n\nrev: cafe0123\nstatus: done\n\nDid the thing.\nAnd then more.\n"))
+	head, _, report := readResult(resultFixture(t, "# Result\n\nrev: cafe0123\nstatus: done\n\nDid the thing.\nAnd then more.\n"))
 	if head != "cafe0123" {
 		t.Fatalf("head = %q, want cafe0123", head)
 	}
@@ -63,7 +63,7 @@ func TestReadResultRefusesARevThatIsNotASha(t *testing.T) {
 		"a tab":    "abc\tdef",
 		"too long": strings.Repeat("a", 65),
 	} {
-		head, report := readResult(resultFixture(t, "rev: "+rev+"\n## One line\nthe line\n"))
+		head, _, report := readResult(resultFixture(t, "rev: "+rev+"\n## One line\nthe line\n"))
 		if head != "" {
 			t.Errorf("%s: head = %q, want empty", name, head)
 		}
@@ -71,7 +71,7 @@ func TestReadResultRefusesARevThatIsNotASha(t *testing.T) {
 			t.Errorf("%s: report = %q, the report is kept when the head is refused", name, report)
 		}
 	}
-	if head, _ := readResult(resultFixture(t, "rev: "+strings.Repeat("b", 64)+"\n")); head != strings.Repeat("b", 64) {
+	if head, _, _ := readResult(resultFixture(t, "rev: "+strings.Repeat("b", 64)+"\n")); head != strings.Repeat("b", 64) {
 		t.Errorf("a 64-byte rev is kept, got %q", head)
 	}
 }
@@ -81,7 +81,7 @@ func TestReadResultRefusesARevThatIsNotASha(t *testing.T) {
 func TestReadResultOfNothing(t *testing.T) {
 	t.Parallel()
 	for _, p := range []string{"", filepath.Join(t.TempDir(), "absent", "RESULT.md")} {
-		if head, report := readResult(p); head != "" || report != "" {
+		if head, _, report := readResult(p); head != "" || report != "" {
 			t.Errorf("readResult(%q) = (%q, %q), want empty", p, head, report)
 		}
 	}

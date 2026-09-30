@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/member"
@@ -63,6 +64,9 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	f.tokens(*tokensWord) // the word is read here, once, so a typo is one refusal and not one failed card each
 	if deadline.d <= 0 {
 		f.add("--deadline is required; it wants the wall bound per card; refusing to guess")
+	}
+	if every.d <= 0 || every.d > 5*time.Second {
+		f.add("--every is between 1ms and 5s: the beat it carries has a 15s deadline in the fleet")
 	}
 	// The store is nova-sprint's to know: the member passes its environment
 	// through (NOVA_SPRINT_REDIS, or a seat) and names no address itself.
@@ -157,19 +161,36 @@ func (r *nativeRunner) Start(p member.Packet) (member.Child, error) {
 	if !safepath.NameOK(p.Card) {
 		return nil, fmt.Errorf("card %q is not a name", p.Card)
 	}
-	slot := filepath.Join(r.slots, p.Card)
+	// one slot and one results root per launch (the card at its generation, or
+	// attempt, in its epoch), so a result can only be this launch's; a launch
+	// whose pid file names a live process is adopted, never run twice
+	name := launchName(p)
+	slot := filepath.Join(r.slots, name)
+	results := filepath.Join(r.resultsRoot, name)
+	logPath := filepath.Join(r.slots, name+".native.log")
+	pidPath := filepath.Join(r.slots, name+".pid")
+	if pid := livePID(pidPath); pid > 0 {
+		c := &nativeChild{card: p.Card, logPath: logPath, results: results, done: make(chan struct{})}
+		go func() {
+			for processAlive(pid) {
+				time.Sleep(time.Second)
+			}
+			close(c.done)
+		}()
+		return c, nil
+	}
 	if err := safepath.RemoveUnder(r.slots, slot); err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
 	if err := os.MkdirAll(slot, 0o755); err != nil {
 		return nil, err
 	}
-	cardPath := filepath.Join(r.slots, p.Card+".card.md")
+	cardPath := filepath.Join(r.slots, name+".card.md")
 	if err := os.WriteFile(cardPath, []byte(member.CardText(p, r.sprintBin)), 0o644); err != nil {
 		return nil, err
 	}
 	args := []string{"native", "--harness", r.harness, "--model", r.model, "--card", cardPath, "--slot", slot,
-		"--root", r.root, "--deadline", r.deadline.String(), "--tokens", r.tokens, "--label", p.Card, "--results-root", r.resultsRoot}
+		"--root", r.root, "--deadline", r.deadline.String(), "--tokens", r.tokens, "--label", p.Card, "--results-root", results}
 	if r.auth != "" {
 		args = append(args, "--auth", r.auth)
 	}
@@ -183,7 +204,6 @@ func (r *nativeRunner) Start(p member.Packet) (member.Child, error) {
 		args = append(args, "--no-wall")
 	}
 	cmd := exec.Command(r.self, args...)
-	logPath := filepath.Join(r.slots, p.Card+".native.log")
 	logf, err := os.Create(logPath)
 	if err != nil {
 		return nil, err
@@ -193,13 +213,48 @@ func (r *nativeRunner) Start(p member.Packet) (member.Child, error) {
 		logf.Close()
 		return nil, err
 	}
-	c := &nativeChild{card: p.Card, logPath: logPath, results: filepath.Join(r.resultsRoot, p.Card), done: make(chan struct{})}
+	_ = os.WriteFile(pidPath, []byte(strconv.Itoa(cmd.Process.Pid)+"\n"), 0o644)
+	c := &nativeChild{card: p.Card, logPath: logPath, results: results, done: make(chan struct{})}
 	go func() {
 		c.err = cmd.Wait()
 		logf.Close()
+		_ = safepath.RemoveUnder(r.slots, pidPath)
 		close(c.done)
 	}()
 	return c, nil
+}
+
+// launchName is the name of one launch: the card at its generation (a read:
+// its attempt) in its epoch; a card dealt again is another launch.
+func launchName(p member.Packet) string {
+	// a path element, built by concatenation (the card id passed safepath.NameOK)
+	e := ".e" + strconv.FormatUint(p.Epoch, 10)
+	if p.Kind == "read" {
+		return p.Card + ".a" + strconv.Itoa(p.Attempt) + e
+	}
+	return p.Card + ".g" + strconv.Itoa(p.Gen) + e
+}
+
+// livePID is the pid a pid file names when that process is alive, else 0.
+func livePID(path string) int {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil || pid <= 0 || !processAlive(pid) {
+		return 0
+	}
+	return pid
+}
+
+// processAlive is whether a signal 0 reaches the process.
+func processAlive(pid int) bool {
+	p, err := os.FindProcess(pid)
+	if err != nil {
+		return false
+	}
+	return p.Signal(syscall.Signal(0)) == nil
 }
 
 type nativeChild struct {
@@ -226,21 +281,21 @@ var nativeRC = regexp.MustCompile(`\bNATIVE (\S+) .*\brc=(-?\d+)\b.*\bharness=(\
 // head, its "One line" section the report).
 func (c *nativeChild) Result() member.Result {
 	c.once.Do(func() {
-		ok := false
+		ran := false
 		if b, err := os.ReadFile(c.logPath); err == nil {
 			if m := nativeRC.FindSubmatch(b); m != nil {
-				ok = string(m[1]) == "OK" && string(m[2]) == "0" && string(m[3]) == "ok"
+				ran = string(m[1]) == "OK" && string(m[2]) == "0" && string(m[3]) == "ok"
 			}
 		}
-		head, report := readResult(newestResult(c.results))
+		head, verdict, report := readResult(newestResult(c.results))
 		if report == "" {
-			if ok {
+			if ran {
 				report = "finished; the child published no one-line report"
 			} else {
 				report = "the child ended without a result (see " + c.logPath + ")"
 			}
 		}
-		c.result = member.Result{OK: ok, Head: head, Report: report}
+		c.result = member.Result{Ran: ran, OK: ran, Verdict: verdict, Head: head, Report: report}
 	})
 	return c.result
 }
@@ -258,15 +313,16 @@ func newestResult(dir string) string {
 	return best
 }
 
-// readResult reads a RESULT.md: the head from a `rev: <sha>` line, the report
-// from the "## One line" section (else the first paragraph of the head).
-func readResult(path string) (head, report string) {
+// readResult reads a RESULT.md: the head from a `rev: <sha>` line, a read's
+// verdict from a `verdict: ok|broken` line, the report from the "## One line"
+// section (else the first prose line with no colon).
+func readResult(path string) (head, verdict, report string) {
 	if path == "" {
-		return "", ""
+		return "", "", ""
 	}
 	f, err := os.Open(path)
 	if err != nil {
-		return "", ""
+		return "", "", ""
 	}
 	defer f.Close()
 	sc := bufio.NewScanner(f)
@@ -277,6 +333,9 @@ func readResult(path string) (head, report string) {
 		l := strings.TrimSpace(sc.Text())
 		if strings.HasPrefix(l, "rev:") && head == "" {
 			head = strings.TrimSpace(strings.TrimPrefix(l, "rev:"))
+		}
+		if strings.HasPrefix(l, "verdict:") && verdict == "" {
+			verdict = strings.ToLower(strings.TrimSpace(strings.TrimPrefix(l, "verdict:")))
 		}
 		if strings.HasPrefix(l, "## ") {
 			inOne = strings.EqualFold(strings.TrimSpace(strings.TrimPrefix(l, "## ")), "one line")
@@ -295,7 +354,5 @@ func readResult(path string) (head, report string) {
 	if strings.ContainsAny(head, " \t") || len(head) > 64 {
 		head = ""
 	}
-	return head, report
+	return head, verdict, report
 }
-
-var _ = strconv.Itoa
