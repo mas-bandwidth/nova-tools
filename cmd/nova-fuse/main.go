@@ -32,6 +32,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/fuse"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/verbout"
 )
 
 const usage = `nova-fuse: the ingestion fuse -- lockdown and quarantine (see docs/SPEC.md)
@@ -173,14 +174,26 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) int {
 // names every problem it can find: `nova-fuse quarantine` with nothing at all
 // used to say --box and stop, and the second run then learned it also wanted a
 // surface and a reason.
-func parseBox(name string, args []string, stderr io.Writer) (box string, positional []string, boxOK, parsed bool) {
-	return parseBoxWith(name, args, stderr, nil)
+func hasJSON(args []string) bool {
+	for _, a := range args {
+		if a == "--" {
+			break
+		}
+		if a == "--json" || a == "-json" || strings.HasPrefix(a, "--json=") || strings.HasPrefix(a, "-json=") {
+			return true
+		}
+	}
+	return false
+}
+
+func parseBox(name string, args []string, stdout, stderr io.Writer) (box string, positional []string, asJSON bool, boxOK, parsed bool) {
+	return parseBoxWith(name, args, stdout, stderr, nil)
 }
 
 // parseBoxWith is parseBox with a hook for a verb that has a flag of its own, so that a
 // second flag never means a second parser -- and therefore never a second place where
 // package flag could be handed a stream to print an argument through.
-func parseBoxWith(name string, args []string, stderr io.Writer, extra func(*flag.FlagSet)) (box string, positional []string, boxOK, parsed bool) {
+func parseBoxWith(name string, args []string, stdout, stderr io.Writer, extra func(*flag.FlagSet)) (box string, positional []string, asJSON bool, boxOK, parsed bool) {
 	var flagArgs, postArgs []string
 	hasDashDash := false
 	for i, a := range args {
@@ -207,6 +220,7 @@ func parseBoxWith(name string, args []string, stderr io.Writer, extra func(*flag
 	// package default is one line away from printing again if that ever changes.
 	fs.Usage = func() {}
 	boxFlag := fs.String("box", "", "path to the fuse box JSON file (required; no default)")
+	jsonFlag := verbout.Flag(fs)
 	if extra != nil {
 		extra(fs)
 	}
@@ -218,33 +232,58 @@ func parseBoxWith(name string, args []string, stderr io.Writer, extra func(*flag
 	fs.VisitAll(func(f *flag.Flag) { f.Value = &onceValue{Value: f.Value, name: f.Name, repeated: &repeated} })
 	if err := fs.Parse(flagArgs); err != nil {
 		if repeated != "" {
-			refuse(stderr, " "+name, fmt.Sprintf("--%s is given more than once; every flag takes one value, and a second is never taken over the first", oneline.Escape(repeated)))
-			return "", nil, false, false
+			if !hasJSON(flagArgs) {
+				refuse(stderr, " "+name, fmt.Sprintf("--%s is given more than once; every flag takes one value, and a second is never taken over the first", oneline.Escape(repeated)))
+			} else {
+				out := verbout.Refuse(name, fmt.Sprintf("--%s is given more than once; every flag takes one value, and a second is never taken over the first", oneline.Escape(repeated)), "nova-fuse help")
+				_ = out.RenderJSON(stdout)
+			}
+			return "", nil, false, false, false
 		}
 		// -h and -help land here as flag.ErrHelp and are refused like any other unusable
 		// invocation: exit 2, never 0. `check` answers PERMISSION with 0, and a surface
 		// named "-h" must not be able to reach that answer.
-		refuse(stderr, " "+name, oneline.Cap(err.Error(), oneline.TailBytes))
-		return "", nil, false, false
+		if !hasJSON(flagArgs) {
+			refuse(stderr, " "+name, oneline.Cap(err.Error(), oneline.TailBytes))
+		} else {
+			out := verbout.Refuse(name, oneline.Cap(err.Error(), oneline.TailBytes), "nova-fuse help")
+			_ = out.RenderJSON(stdout)
+		}
+		return "", nil, false, false, false
 	}
 	for _, arg := range fs.Args() {
 		if strings.HasPrefix(arg, "-") {
-			refuse(stderr, " "+name, fmt.Sprintf("flags come before positional arguments, got %q late", arg))
-			return "", nil, false, false
+			if !*jsonFlag {
+				refuse(stderr, " "+name, fmt.Sprintf("flags come before positional arguments, got %q late", arg))
+			} else {
+				out := verbout.Refuse(name, fmt.Sprintf("flags come before positional arguments, got %q late", arg), "nova-fuse help")
+				_ = out.RenderJSON(stdout)
+			}
+			return "", nil, false, false, false
 		}
 	}
 	positional = append(fs.Args(), postArgs...)
 	if strings.HasPrefix(*boxFlag, "-") {
 		// `--box --box=./x` hands package flag "--box=./x" as the first --box's
 		// value. A box path never begins with "-"; a box in such a file is ./-name.
-		refuse(stderr, " "+name, fmt.Sprintf("--box %q begins with \"-\", the shape of a flag, not a path; name a file that begins with - as ./-name", *boxFlag))
-		return "", nil, false, false
+		if !*jsonFlag {
+			refuse(stderr, " "+name, fmt.Sprintf("--box %q begins with \"-\", the shape of a flag, not a path; name a file that begins with - as ./-name", *boxFlag))
+		} else {
+			out := verbout.Refuse(name, fmt.Sprintf("--box %q begins with \"-\", the shape of a flag, not a path; name a file that begins with - as ./-name", *boxFlag), "nova-fuse help")
+			_ = out.RenderJSON(stdout)
+		}
+		return "", nil, false, false, false
 	}
 	if *boxFlag == "" {
-		fmt.Fprintf(stderr, "nova-fuse %s: --box is required; refusing to guess; run: nova-fuse help\n%s", name, hintFor("box"))
-		return "", positional, false, true
+		if !*jsonFlag {
+			fmt.Fprintf(stderr, "nova-fuse %s: --box is required; refusing to guess; run: nova-fuse help\n%s", name, hintFor("box"))
+		} else {
+			out := verbout.Refuse(name, "--box is required; refusing to guess", "nova-fuse help")
+			_ = out.RenderJSON(stdout)
+		}
+		return "", positional, *jsonFlag, false, true
 	}
-	return *boxFlag, positional, true, true
+	return *boxFlag, positional, *jsonFlag, true, true
 }
 
 // onceValue is a flag's value that refuses a second Set, and names the flag in
@@ -292,7 +331,19 @@ func cmdLift(rest []string, stdout, stderr io.Writer) int {
 	if len(rest) == 0 {
 		return refuse(stderr, " lift", "takes a power first: `lift quarantine --box <path> <surface>` -- and `lift lockdown` is refused by design")
 	}
-	switch rest[0] {
+	power := rest[0]
+	subRest := rest[1:]
+	if power == "--json" || power == "-json" {
+		if len(rest) == 1 {
+			out := verbout.Refuse("lift", "takes a power first: `lift quarantine --box <path> <surface>` -- and `lift lockdown` is refused by design", "nova-fuse help")
+			_ = out.RenderJSON(stdout)
+			return 2
+		}
+		power = rest[1]
+		subRest = append([]string{"--json"}, rest[2:]...)
+	}
+
+	switch power {
 	case "lockdown":
 		// FOREVER, and BEFORE anything is read. Not an optimisation: the refusal must not
 		// depend on a flag being parsed, the box being readable, whether a lockdown is
@@ -300,40 +351,62 @@ func cmdLift(rest []string, stdout, stderr io.Writer) int {
 		// a lever. There is no code path from here to clearing a lockdown, there is
 		// deliberately no override flag or environment variable, and the remedy named is a
 		// conversation, not a mechanism.
+		if hasJSON(rest) {
+			out := verbout.Refuse("lift", "forever, by design -- a blown fuse is not reset, it is REPLACED, and only in a live conversation with your person", "go talk with your person now")
+			out.Fact("power", "lockdown")
+			return out.Emit(stdout, stderr, true)
+		}
 		fmt.Fprint(stderr, "nova-fuse lift lockdown: REFUSED, forever, by design -- a blown fuse is not\n"+
 			"reset, it is REPLACED, and only in a live conversation with your person.\n"+
 			"Nothing this tool is told changes that. Stop, and go talk with your person now.\n")
 		return 2
 	case "quarantine":
-		box, positional, ok, parsed := parseBox("lift quarantine", rest[1:], stderr)
+		box, positional, asJSON, ok, parsed := parseBox("lift quarantine", subRest, stdout, stderr)
 		if !parsed {
 			return 2
 		}
 		if len(positional) != 1 || fuse.Surface(positional[0]) == "" {
 			// Printed even when --box was missing too: the two are independent,
 			// and one run should name both.
-			refuse(stderr, " lift quarantine", "needs exactly one surface: `lift quarantine --box <path> <surface>`")
+			if !asJSON {
+				refuse(stderr, " lift quarantine", "needs exactly one surface: `lift quarantine --box <path> <surface>`")
+			} else if ok {
+				out := verbout.Refuse("lift", "needs exactly one surface: `lift quarantine --box <path> <surface>`", "nova-fuse help")
+				_ = out.RenderJSON(stdout)
+			}
 			ok = false
 		}
 		if !ok {
 			return 2
 		}
-		return liftQuarantine(box, positional[0], stdout, stderr)
+		return liftQuarantine(box, positional[0], stdout, stderr, asJSON)
 	}
-	return refuse(stderr, " lift", fmt.Sprintf("does not know %q -- lift takes a power first: `lift quarantine --box <path> <surface>` (`lift lockdown` is refused by design)", rest[0]))
+	if hasJSON(rest) {
+		out := verbout.Refuse("lift", fmt.Sprintf("does not know %q -- lift takes a power first: `lift quarantine --box <path> <surface>` (`lift lockdown` is refused by design)", power), "nova-fuse help")
+		_ = out.RenderJSON(stdout)
+		return 2
+	}
+	return refuse(stderr, " lift", fmt.Sprintf("does not know %q -- lift takes a power first: `lift quarantine --box <path> <surface>` (`lift lockdown` is refused by design)", power))
 }
 
 // liftQuarantine rescinds ONE quarantine: the soft dial, turned the other way. Same
 // discipline as blowing one -- the write is verified by re-reading the box, and the
 // rescind is announced, because a quarantine that vanishes silently is a decision nobody
 // can audit.
-func liftQuarantine(box, surface string, stdout, stderr io.Writer) int {
+func liftQuarantine(box, surface string, stdout, stderr io.Writer, asJSON bool) int {
 	b, readErr := fuse.ReadBox(box)
 	if readErr != nil {
 		// REFUSE, the mirror of quarantine's refusal to narrow: while the box is
 		// unreadable every fuse is treated as BLOWN, and nothing provable can be lifted
 		// from a box that cannot be read. The corrupt bytes stay put -- they are evidence.
-		fmt.Fprintf(stderr, "nova-fuse lift quarantine: %s -- while the box cannot be read every fuse is treated as BLOWN; nothing provable can be lifted from it; %s; run: nova-fuse help\n", oneline.Err(readErr), oneline.Escape(remedy(readErr, box)))
+		if !asJSON {
+			fmt.Fprintf(stderr, "nova-fuse lift quarantine: %s -- while the box cannot be read every fuse is treated as BLOWN; nothing provable can be lifted from it; %s; run: nova-fuse help\n", oneline.Err(readErr), oneline.Escape(remedy(readErr, box)))
+		} else {
+			out := verbout.Refuse("lift", fmt.Sprintf("%s -- while the box cannot be read every fuse is treated as BLOWN; nothing provable can be lifted from it; %s", oneline.Err(readErr), oneline.Escape(remedy(readErr, box))), "nova-fuse help")
+			out.Fact("box", box)
+			out.Fact("surface", fuse.Surface(surface))
+			_ = out.RenderJSON(stdout)
+		}
 		return 2
 	}
 
@@ -349,27 +422,60 @@ func liftQuarantine(box, surface string, stdout, stderr io.Writer) int {
 			}
 			listed = strings.Join(shown, ", ")
 		}
-		fmt.Fprintf(stderr, "LIFT FAIL quarantine=%s: nothing to lift; not quarantined (quarantined now: %s)\n",
-			oneline.Field(fuse.Surface(surface)), listed)
+		if !asJSON {
+			fmt.Fprintf(stderr, "LIFT FAIL quarantine=%s: nothing to lift; not quarantined (quarantined now: %s)\n",
+				oneline.Field(fuse.Surface(surface)), listed)
+		} else {
+			out := verbout.Failed("lift", 1)
+			out.Fact("surface", fuse.Surface(surface))
+			out.Fact("box", box)
+			out.Fact("reason", "nothing to lift; not quarantined")
+			out.Fact("quarantined_now", listed)
+			_ = out.RenderJSON(stdout)
+		}
 		return 1
 	}
 
 	if err := fuse.WriteBox(box, b); err != nil {
-		fmt.Fprintf(stderr, "LIFT FAIL quarantine=%s: could not write box: %s (the box was not replaced, so the quarantine still stands)\n",
-			oneline.Field(fuse.Surface(surface)), oneline.Err(err))
+		if !asJSON {
+			fmt.Fprintf(stderr, "LIFT FAIL quarantine=%s: could not write box: %s (the box was not replaced, so the quarantine still stands)\n",
+				oneline.Field(fuse.Surface(surface)), oneline.Err(err))
+		} else {
+			out := verbout.Failed("lift", 1)
+			out.Fact("surface", fuse.Surface(surface))
+			out.Fact("box", box)
+			out.Fact("reason", fmt.Sprintf("could not write box: %s", oneline.Err(err)))
+			_ = out.RenderJSON(stdout)
+		}
 		return 1
 	}
 
 	// Re-ask. The exit code of a remedy is not evidence the remedy worked.
 	after, err := fuse.ReadBox(box)
 	if err != nil {
-		fmt.Fprintf(stderr, "LIFT FAIL quarantine=%s: written but unverifiable: %s (do not trust it; treat the surface as still quarantined and tell your person)\n",
-			oneline.Field(fuse.Surface(surface)), oneline.Err(err))
+		if !asJSON {
+			fmt.Fprintf(stderr, "LIFT FAIL quarantine=%s: written but unverifiable: %s (do not trust it; treat the surface as still quarantined and tell your person)\n",
+				oneline.Field(fuse.Surface(surface)), oneline.Err(err))
+		} else {
+			out := verbout.Failed("lift", 1)
+			out.Fact("surface", fuse.Surface(surface))
+			out.Fact("box", box)
+			out.Fact("reason", fmt.Sprintf("written but unverifiable: %s", oneline.Err(err)))
+			_ = out.RenderJSON(stdout)
+		}
 		return 1
 	}
 	if name, _, still := after.Quarantined(surface); still {
-		fmt.Fprintf(stderr, "LIFT FAIL quarantine=%s: lift did not take; %s is still quarantined on re-read (do not trust this run; tell your person)\n",
-			oneline.Field(fuse.Surface(surface)), oneline.Escape(name))
+		if !asJSON {
+			fmt.Fprintf(stderr, "LIFT FAIL quarantine=%s: lift did not take; %s is still quarantined on re-read (do not trust this run; tell your person)\n",
+				oneline.Field(fuse.Surface(surface)), oneline.Escape(name))
+		} else {
+			out := verbout.Failed("lift", 1)
+			out.Fact("surface", fuse.Surface(surface))
+			out.Fact("box", box)
+			out.Fact("reason", fmt.Sprintf("lift did not take; %s is still quarantined on re-read", oneline.Escape(name)))
+			_ = out.RenderJSON(stdout)
+		}
 		return 1
 	}
 
@@ -379,17 +485,40 @@ func liftQuarantine(box, surface string, stdout, stderr io.Writer) int {
 		names = append(names, n)
 	}
 	sort.Strings(names)
+	if !asJSON {
+		for _, n := range names {
+			f := removed[n]
+			fmt.Fprintf(stdout, "LIFT OK quarantine=%s was since=%s: %s\n", oneline.Field(n), since(f), why(f))
+		}
+		fmt.Fprintf(stdout, "LIFT OK verified: %s is no longer quarantined (soft: your own dial, both directions; a rescind is announced, never silent -- say so out loud)\n",
+			oneline.Escape(fuse.Surface(surface)))
+		if after.Lockdown != nil {
+			fmt.Fprintf(stderr, "nova-fuse lift quarantine: NOTE lockdown is still blown (since=%s) and blocks everything regardless\n",
+				since(*after.Lockdown))
+		}
+		return 0
+	}
+
+	out := verbout.OK("lift")
+	out.Fact("surface", fuse.Surface(surface))
+	out.Fact("box", box)
+	out.Fact("status", "lifted")
 	for _, n := range names {
 		f := removed[n]
-		fmt.Fprintf(stdout, "LIFT OK quarantine=%s was since=%s: %s\n", oneline.Field(n), since(f), why(f))
+		fields := verbout.NewFacts()
+		fields.Set("quarantine", n)
+		fields.Set("was_since", since(f))
+		fields.Set("reason", why(f))
+		out.Items = append(out.Items, verbout.Item{
+			Kind:   "quarantine",
+			Fields: fields,
+			Text:   fmt.Sprintf("quarantine=%s was since=%s: %s", oneline.Field(n), since(f), why(f)),
+		})
 	}
-	fmt.Fprintf(stdout, "LIFT OK verified: %s is no longer quarantined (soft: your own dial, both directions; a rescind is announced, never silent -- say so out loud)\n",
-		oneline.Escape(fuse.Surface(surface)))
 	if after.Lockdown != nil {
-		fmt.Fprintf(stderr, "nova-fuse lift quarantine: NOTE lockdown is still blown (since=%s) and blocks everything regardless\n",
-			since(*after.Lockdown))
+		out.Note(fmt.Sprintf("lockdown is still blown (since=%s) and blocks everything regardless", since(*after.Lockdown)))
 	}
-	return 0
+	return out.Emit(stdout, stderr, true)
 }
 
 // cmdStatus REPORTS. It exits 0 whenever the box was readable, blown or not, because
@@ -397,19 +526,29 @@ func liftQuarantine(box, surface string, stdout, stderr io.Writer) int {
 // then it did not answer at all. Never gate on the exit code of status; check is the gate.
 func cmdStatus(rest []string, stdout, stderr io.Writer) int {
 	var max int
-	box, positional, ok, parsed := parseBoxWith("status", rest, stderr, func(fs *flag.FlagSet) {
+	box, positional, asJSON, ok, parsed := parseBoxWith("status", rest, stdout, stderr, func(fs *flag.FlagSet) {
 		fs.IntVar(&max, "max", bounded.Default, "quarantine lines to list before one MORE line stands for the rest; 0 lists all")
 	})
 	if !parsed {
 		return 2
 	}
 	if len(positional) > 0 {
-		refuse(stderr, " status", fmt.Sprintf("unexpected argument %q", positional[0]))
+		if !asJSON {
+			refuse(stderr, " status", fmt.Sprintf("unexpected argument %q", positional[0]))
+		} else if ok {
+			out := verbout.Refuse("status", fmt.Sprintf("unexpected argument %q", positional[0]), "nova-fuse help")
+			_ = out.RenderJSON(stdout)
+		}
 		ok = false
 	}
 	if max < 0 {
 		// Zero already means "all", so a negative ceiling is a typo with two readings.
-		fmt.Fprintf(stderr, "nova-fuse status: --max must be a line ceiling of zero or more (got %d); 0 lists them all; run: nova-fuse help\n", max)
+		if !asJSON {
+			fmt.Fprintf(stderr, "nova-fuse status: --max must be a line ceiling of zero or more (got %d); 0 lists them all; run: nova-fuse help\n", max)
+		} else if ok {
+			out := verbout.Refuse("status", fmt.Sprintf("--max must be a line ceiling of zero or more (got %d); 0 lists them all", max), "nova-fuse help")
+			_ = out.RenderJSON(stdout)
+		}
 		ok = false
 	}
 	if !ok {
@@ -418,45 +557,94 @@ func cmdStatus(rest []string, stdout, stderr io.Writer) int {
 
 	b, err := fuse.ReadBox(box)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-fuse status: %s -- a box that cannot be read is treated as BLOWN, never as clear; %s; run: nova-fuse help\n", oneline.Err(err), oneline.Escape(remedy(err, box)))
+		if !asJSON {
+			fmt.Fprintf(stderr, "nova-fuse status: %s -- a box that cannot be read is treated as BLOWN, never as clear; %s; run: nova-fuse help\n", oneline.Err(err), oneline.Escape(remedy(err, box)))
+		} else {
+			out := verbout.Refuse("status", fmt.Sprintf("%s -- a box that cannot be read is treated as BLOWN, never as clear; %s", oneline.Err(err), oneline.Escape(remedy(err, box))), "nova-fuse help")
+			out.Fact("box", box)
+			_ = out.RenderJSON(stdout)
+		}
 		return 2
 	}
 
 	names := b.Surfaces()
+	if !asJSON {
+		if b.Lockdown != nil {
+			fmt.Fprintf(stdout, "STATUS OK lockdown=blown since=%s quarantines=%d: %s\n",
+				since(*b.Lockdown), len(names), why(*b.Lockdown))
+		} else {
+			fmt.Fprintf(stdout, "STATUS OK lockdown=clear quarantines=%d\n", len(names))
+		}
+		// THE COUNT IS NEVER CAPPED and the listing always is. quarantines= above is the truth
+		// about the box; the lines below are a sample of it in the box's own order, and the
+		// MORE line says how big the sample was. Three hundred quarantined surfaces used to
+		// be three hundred and one lines, on a verb whose whole job is to be glanced at.
+		list := bounded.Capped(stdout, max, "STATUS", "quarantine", maxRemedy)
+		for _, n := range names {
+			f := b.Quarantine[n]
+			list.Line(fmt.Sprintf("STATUS OK quarantine=%s since=%s: %s", oneline.Field(n), since(f), why(f)))
+		}
+		list.More()
+		return 0
+	}
+
+	out := verbout.OK("status")
 	if b.Lockdown != nil {
-		fmt.Fprintf(stdout, "STATUS OK lockdown=blown since=%s quarantines=%d: %s\n",
-			since(*b.Lockdown), len(names), why(*b.Lockdown))
+		out.Fact("lockdown", "blown")
+		out.Fact("since", since(*b.Lockdown))
+		out.FactInt("quarantines", len(names))
+		out.Fact("reason", why(*b.Lockdown))
 	} else {
-		fmt.Fprintf(stdout, "STATUS OK lockdown=clear quarantines=%d\n", len(names))
+		out.Fact("lockdown", "clear")
+		out.FactInt("quarantines", len(names))
 	}
-	// THE COUNT IS NEVER CAPPED and the listing always is. quarantines= above is the truth
-	// about the box; the lines below are a sample of it in the box's own order, and the
-	// MORE line says how big the sample was. Three hundred quarantined surfaces used to
-	// be three hundred and one lines, on a verb whose whole job is to be glanced at.
-	list := bounded.Capped(stdout, max, "STATUS", "quarantine", maxRemedy)
-	for _, n := range names {
+	out.Fact("box", box)
+
+	cappedNames := names
+	if max > 0 && len(names) > max {
+		cappedNames = names[:max]
+		out.AddMore("quarantine", max, len(names), maxRemedy)
+	}
+	for _, n := range cappedNames {
 		f := b.Quarantine[n]
-		list.Line(fmt.Sprintf("STATUS OK quarantine=%s since=%s: %s", oneline.Field(n), since(f), why(f)))
+		fields := verbout.NewFacts()
+		fields.Set("quarantine", n)
+		fields.Set("since", since(f))
+		fields.Set("reason", why(f))
+		out.Items = append(out.Items, verbout.Item{
+			Kind:   "quarantine",
+			Fields: fields,
+			Text:   fmt.Sprintf("quarantine=%s since=%s: %s", oneline.Field(n), since(f), why(f)),
+		})
 	}
-	list.More()
-	return 0
+	return out.Emit(stdout, stderr, true)
 }
 
 // cmdCheck GATES. This is the one every ingestion path calls, and only exit 0 is
 // permission: 1 means a fuse is positively blown, 2 means it could not be proven clear.
 func cmdCheck(rest []string, stdout, stderr io.Writer) int {
-	box, positional, ok, parsed := parseBox("check", rest, stderr)
+	box, positional, asJSON, ok, parsed := parseBox("check", rest, stdout, stderr)
 	if !parsed {
 		return 2
 	}
 	if len(positional) > 1 {
-		refuse(stderr, " check", fmt.Sprintf("takes at most one surface, got %q too", positional[1]))
+		if !asJSON {
+			refuse(stderr, " check", fmt.Sprintf("takes at most one surface, got %q too", positional[1]))
+		} else if ok {
+			out := verbout.Refuse("check", fmt.Sprintf("takes at most one surface, got %q too", positional[1]), "nova-fuse help")
+			_ = out.RenderJSON(stdout)
+		}
 		ok = false
 	}
 	surface := ""
 	if len(positional) == 1 {
 		if fuse.Surface(positional[0]) == "" {
-			refuse(stderr, " check", "surface must not be blank; omit it to check lockdown only")
+			if !asJSON {
+				refuse(stderr, " check", "surface must not be blank; omit it to check lockdown only")
+			} else if ok {
+				out := verbout.Refuse("check", "surface must not be blank; omit it to check lockdown only", "nova-fuse help")
+				_ = out.RenderJSON(stdout)
+			}
 			ok = false
 		}
 		surface = positional[0]
@@ -469,20 +657,51 @@ func cmdCheck(rest []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		// FAIL CLOSED, and say WHICH fact this is: "could not be read" is deliberately not
 		// "a fuse is blown" -- a claim must never outrun the measurement. Both refuse.
-		fmt.Fprintf(stderr, "nova-fuse check: %s -- cannot prove no fuse is blown, so treating every fuse as BLOWN, never as clear; %s; run: nova-fuse help\n", oneline.Err(err), oneline.Escape(remedy(err, box)))
+		if !asJSON {
+			fmt.Fprintf(stderr, "nova-fuse check: %s -- cannot prove no fuse is blown, so treating every fuse as BLOWN, never as clear; %s; run: nova-fuse help\n", oneline.Err(err), oneline.Escape(remedy(err, box)))
+		} else {
+			out := verbout.Refuse("check", fmt.Sprintf("%s -- cannot prove no fuse is blown, so treating every fuse as BLOWN, never as clear; %s", oneline.Err(err), oneline.Escape(remedy(err, box))), "nova-fuse help")
+			out.Fact("box", box)
+			if surface != "" {
+				out.Fact("surface", fuse.Surface(surface))
+			}
+			_ = out.RenderJSON(stdout)
+		}
 		return 2
 	}
 
 	if b.Lockdown != nil {
-		fmt.Fprintf(stderr, "FUSE FAIL lockdown since=%s: %s (hard: all untrusted reads and surface-driven acts stop, authored outbound continues; replaced only in a live conversation with your person)\n",
-			since(*b.Lockdown), why(*b.Lockdown))
-		return 1
+		if !asJSON {
+			fmt.Fprintf(stderr, "FUSE FAIL lockdown since=%s: %s (hard: all untrusted reads and surface-driven acts stop, authored outbound continues; replaced only in a live conversation with your person)\n",
+				since(*b.Lockdown), why(*b.Lockdown))
+			return 1
+		}
+		out := verbout.Failed("check", 1)
+		if surface != "" {
+			out.Fact("surface", fuse.Surface(surface))
+		}
+		out.Fact("box", box)
+		out.Fact("lockdown", "blown")
+		out.Fact("since", since(*b.Lockdown))
+		out.Fact("reason", why(*b.Lockdown))
+		return out.Emit(stdout, stderr, true)
 	}
 
-	if name, f, ok := b.Quarantined(surface); ok {
-		fmt.Fprintf(stderr, "FUSE FAIL quarantine=%s since=%s: %s (soft: yours to lift when the surface is safe again: %s)\n",
-			oneline.Field(name), since(f), why(f), oneline.Escape(liftRemedy(box, fuse.Surface(name))))
-		return 1
+	if name, f, okQuar := b.Quarantined(surface); okQuar {
+		if !asJSON {
+			fmt.Fprintf(stderr, "FUSE FAIL quarantine=%s since=%s: %s (soft: yours to lift when the surface is safe again: %s)\n",
+				oneline.Field(name), since(f), why(f), oneline.Escape(liftRemedy(box, fuse.Surface(name))))
+			return 1
+		}
+		out := verbout.Failed("check", 1)
+		out.Fact("surface", fuse.Surface(surface))
+		out.Fact("box", box)
+		out.Fact("lockdown", "clear")
+		out.Fact("quarantine", "blown")
+		out.Fact("since", since(f))
+		out.Fact("reason", why(f))
+		out.Fact("remedy", liftRemedy(box, fuse.Surface(name)))
+		return out.Emit(stdout, stderr, true)
 	}
 
 	if surface == "" {
@@ -490,17 +709,31 @@ func cmdCheck(rest []string, stdout, stderr io.Writer) int {
 		// there is no lockdown; it has checked no quarantine at all, and a caller that
 		// reads "clear" as "this surface is clear" is exactly the drift that leaves reads
 		// reaching the wire ungated.
-		fmt.Fprintln(stdout, "FUSE OK lockdown=clear (no surface named; no quarantine checked)")
+		if !asJSON {
+			fmt.Fprintln(stdout, "FUSE OK lockdown=clear (no surface named; no quarantine checked)")
+			return 0
+		}
+		out := verbout.OK("check")
+		out.Fact("box", box)
+		out.Fact("lockdown", "clear")
+		return out.Emit(stdout, stderr, true)
+	}
+	if !asJSON {
+		fmt.Fprintf(stdout, "FUSE OK lockdown=clear quarantine=clear surface=%s\n", oneline.Field(fuse.Surface(surface)))
 		return 0
 	}
-	fmt.Fprintf(stdout, "FUSE OK lockdown=clear quarantine=clear surface=%s\n", oneline.Field(fuse.Surface(surface)))
-	return 0
+	out := verbout.OK("check")
+	out.Fact("surface", fuse.Surface(surface))
+	out.Fact("box", box)
+	out.Fact("lockdown", "clear")
+	out.Fact("quarantine", "clear")
+	return out.Emit(stdout, stderr, true)
 }
 
 // cmdLockdown stops everything. It is the one command that must work even when the fuse
 // box is already broken: a fuse you cannot blow is not a fuse.
 func cmdLockdown(rest []string, stdout, stderr io.Writer, now time.Time) int {
-	box, positional, ok, parsed := parseBox("lockdown", rest, stderr)
+	box, positional, asJSON, ok, parsed := parseBox("lockdown", rest, stdout, stderr)
 	if !parsed {
 		return 2
 	}
@@ -515,7 +748,12 @@ func cmdLockdown(rest []string, stdout, stderr io.Writer, now time.Time) int {
 	reason := keepableReason(strings.Join(positional, " "))
 	if reason == "" {
 		// Printed even when --box was missing too: one run, every problem.
-		refuse(stderr, " lockdown", "needs a reason: `lockdown --box <path> \"<reason>\"`")
+		if !asJSON {
+			refuse(stderr, " lockdown", "needs a reason: `lockdown --box <path> \"<reason>\"`")
+		} else if ok {
+			out := verbout.Refuse("lockdown", "needs a reason: `lockdown --box <path> \"<reason>\"`", "nova-fuse help")
+			_ = out.RenderJSON(stdout)
+		}
 		ok = false
 	}
 	if !ok {
@@ -544,7 +782,15 @@ func cmdLockdown(rest []string, stdout, stderr io.Writer, now time.Time) int {
 
 	b.Lockdown = &fuse.Fuse{At: stamp(now), Reason: reason}
 	if err := fuse.WriteBox(box, b); err != nil {
-		fmt.Fprintf(stderr, "LOCKDOWN FAIL could not write box: %s (the write is temp-file + rename, so a failure cannot leave it torn; stop by hand and tell your person now)\n", oneline.Err(err))
+		if !asJSON {
+			fmt.Fprintf(stderr, "LOCKDOWN FAIL could not write box: %s (the write is temp-file + rename, so a failure cannot leave it torn; stop by hand and tell your person now)\n", oneline.Err(err))
+		} else {
+			out := verbout.Failed("lockdown", 1)
+			out.Fact("box", box)
+			out.Fact("reason", reason)
+			out.Fact("error", fmt.Sprintf("could not write box: %s", oneline.Err(err)))
+			_ = out.RenderJSON(stdout)
+		}
 		return 1
 	}
 
@@ -552,18 +798,34 @@ func cmdLockdown(rest []string, stdout, stderr io.Writer, now time.Time) int {
 	// is. Re-ask, always.
 	after, err := fuse.ReadBox(box)
 	if err != nil || after.Lockdown == nil {
-		fmt.Fprintf(stderr, "LOCKDOWN FAIL written but unverifiable (%s): do not trust it; stop by hand and tell your person now\n", oneline.Err(err))
+		if !asJSON {
+			fmt.Fprintf(stderr, "LOCKDOWN FAIL written but unverifiable (%s): do not trust it; stop by hand and tell your person now\n", oneline.Err(err))
+		} else {
+			out := verbout.Failed("lockdown", 1)
+			out.Fact("box", box)
+			out.Fact("reason", reason)
+			out.Fact("error", fmt.Sprintf("written but unverifiable (%s)", oneline.Err(err)))
+			_ = out.RenderJSON(stdout)
+		}
 		return 1
 	}
 
-	fmt.Fprintf(stdout, "LOCKDOWN OK since=%s: %s (verified by re-reading the box; all untrusted reads and surface-driven acts stop, authored outbound continues; replaced only in a live conversation with your person -- go have it now)\n",
-		oneline.Field(after.Lockdown.At), oneline.Escape(reason))
-	return 0
+	if !asJSON {
+		fmt.Fprintf(stdout, "LOCKDOWN OK since=%s: %s (verified by re-reading the box; all untrusted reads and surface-driven acts stop, authored outbound continues; replaced only in a live conversation with your person -- go have it now)\n",
+			oneline.Field(after.Lockdown.At), oneline.Escape(reason))
+		return 0
+	}
+	out := verbout.OK("lockdown")
+	out.Fact("box", box)
+	out.Fact("lockdown", "blown")
+	out.Fact("since", after.Lockdown.At)
+	out.Fact("reason", reason)
+	return out.Emit(stdout, stderr, true)
 }
 
 // cmdQuarantine stops ONE surface.
 func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time) int {
-	box, positional, ok, parsed := parseBox("quarantine", rest, stderr)
+	box, positional, asJSON, ok, parsed := parseBox("quarantine", rest, stdout, stderr)
 	if !parsed {
 		return 2
 	}
@@ -574,7 +836,12 @@ func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	if surface == "" || reason == "" {
 		// Printed even when --box was missing too: one run, every problem.
-		refuse(stderr, " quarantine", "needs a surface and a reason: `quarantine --box <path> <surface> \"<reason>\"`")
+		if !asJSON {
+			refuse(stderr, " quarantine", "needs a surface and a reason: `quarantine --box <path> <surface> \"<reason>\"`")
+		} else if ok {
+			out := verbout.Refuse("quarantine", "needs a surface and a reason: `quarantine --box <path> <surface> \"<reason>\"`", "nova-fuse help")
+			_ = out.RenderJSON(stdout)
+		}
 		ok = false
 	}
 	if !ok {
@@ -586,7 +853,14 @@ func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time) int {
 		// REFUSE, for the same reason as an unreadable box: with no box there every
 		// surface is refused, and a new box holding only this quarantine would clear
 		// the rest.
-		fmt.Fprintf(stderr, "nova-fuse quarantine: %s -- refusing to make a box holding only this quarantine: with no box every surface is refused, and that box would clear the rest; make the box first (%s), or blow lockdown; run: nova-fuse help\n", oneline.Err(readErr), oneline.Escape(boxRemedy("init", box)))
+		if !asJSON {
+			fmt.Fprintf(stderr, "nova-fuse quarantine: %s -- refusing to make a box holding only this quarantine: with no box every surface is refused, and that box would clear the rest; make the box first (%s), or blow lockdown; run: nova-fuse help\n", oneline.Err(readErr), oneline.Escape(boxRemedy("init", box)))
+		} else {
+			out := verbout.Refuse("quarantine", fmt.Sprintf("%s -- refusing to make a box holding only this quarantine: with no box every surface is refused, and that box would clear the rest; make the box first (%s), or blow lockdown", oneline.Err(readErr), oneline.Escape(boxRemedy("init", box))), "nova-fuse help")
+			out.Fact("box", box)
+			out.Fact("surface", surface)
+			_ = out.RenderJSON(stdout)
+		}
 		return 2
 	}
 	if readErr != nil {
@@ -594,13 +868,28 @@ func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time) int {
 		// An unreadable box blocks EVERY surface. Replacing it with a fresh box holding
 		// only this one quarantine would UNBLOCK everything else, so the safety-shaped
 		// action would be a fail-OPEN. Under doubt, no.
-		fmt.Fprintf(stderr, "nova-fuse quarantine: %s -- refusing to narrow an unreadable box: while unreadable it already blocks EVERY surface, and a fresh box holding only this one quarantine would UNBLOCK the rest; blow lockdown instead (`lockdown --box %s \"<reason>\"`), or repair the box with your person; run: nova-fuse help\n", oneline.Err(readErr), oneline.Escape(box))
+		if !asJSON {
+			fmt.Fprintf(stderr, "nova-fuse quarantine: %s -- refusing to narrow an unreadable box: while unreadable it already blocks EVERY surface, and a fresh box holding only this one quarantine would UNBLOCK the rest; blow lockdown instead (`lockdown --box %s \"<reason>\"`), or repair the box with your person; run: nova-fuse help\n", oneline.Err(readErr), oneline.Escape(box))
+		} else {
+			out := verbout.Refuse("quarantine", fmt.Sprintf("%s -- refusing to narrow an unreadable box: while unreadable it already blocks EVERY surface, and a fresh box holding only this one quarantine would UNBLOCK the rest; blow lockdown instead (`lockdown --box %s \"<reason>\"`), or repair the box with your person", oneline.Err(readErr), oneline.Escape(box)), "nova-fuse help")
+			out.Fact("box", box)
+			out.Fact("surface", surface)
+			_ = out.RenderJSON(stdout)
+		}
 		return 2
 	}
 
 	b.Quarantine[surface] = fuse.Fuse{At: stamp(now), Reason: reason}
 	if err := fuse.WriteBox(box, b); err != nil {
-		fmt.Fprintf(stderr, "QUARANTINE FAIL %s: could not write box: %s (the box was not replaced; stop reading that surface by hand and tell your person)\n", oneline.Field(surface), oneline.Err(err))
+		if !asJSON {
+			fmt.Fprintf(stderr, "QUARANTINE FAIL %s: could not write box: %s (the box was not replaced; stop reading that surface by hand and tell your person)\n", oneline.Field(surface), oneline.Err(err))
+		} else {
+			out := verbout.Failed("quarantine", 1)
+			out.Fact("surface", surface)
+			out.Fact("box", box)
+			out.Fact("reason", fmt.Sprintf("could not write box: %s", oneline.Err(err)))
+			_ = out.RenderJSON(stdout)
+		}
 		return 1
 	}
 
@@ -613,13 +902,30 @@ func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time) int {
 	after, err := fuse.ReadBox(box)
 	landed, ok2 := after.Quarantine[surface]
 	if err != nil || !ok2 {
-		fmt.Fprintf(stderr, "QUARANTINE FAIL %s: written but unverifiable (%s): do not trust it; stop reading that surface by hand and tell your person\n", oneline.Field(surface), oneline.Err(err))
+		if !asJSON {
+			fmt.Fprintf(stderr, "QUARANTINE FAIL %s: written but unverifiable (%s): do not trust it; stop reading that surface by hand and tell your person\n", oneline.Field(surface), oneline.Err(err))
+		} else {
+			out := verbout.Failed("quarantine", 1)
+			out.Fact("surface", surface)
+			out.Fact("box", box)
+			out.Fact("reason", fmt.Sprintf("written but unverifiable (%s)", oneline.Err(err)))
+			_ = out.RenderJSON(stdout)
+		}
 		return 1
 	}
 
-	fmt.Fprintf(stdout, "QUARANTINE OK %s since=%s: %s (verified by re-reading the box; soft: yours to lift when the surface is safe again; tell your person now)\n",
-		oneline.Field(surface), since(landed), oneline.Escape(reason))
-	return 0
+	if !asJSON {
+		fmt.Fprintf(stdout, "QUARANTINE OK %s since=%s: %s (verified by re-reading the box; soft: yours to lift when the surface is safe again; tell your person now)\n",
+			oneline.Field(surface), since(landed), oneline.Escape(reason))
+		return 0
+	}
+	out := verbout.OK("quarantine")
+	out.Fact("surface", surface)
+	out.Fact("box", box)
+	out.Fact("since", landed.At)
+	out.Fact("reason", reason)
+	out.Fact("remedy", liftRemedy(box, surface))
+	return out.Emit(stdout, stderr, true)
 }
 
 // cmdInit makes an empty box where none is. It is the one way a box comes into being
@@ -633,12 +939,17 @@ func cmdQuarantine(rest []string, stdout, stderr io.Writer, now time.Time) int {
 // replaces a box and that a lockdown always blows (MCFuseBox*.cfg, five reversed
 // witnesses).
 func cmdInit(rest []string, stdout, stderr io.Writer) int {
-	box, positional, ok, parsed := parseBox("init", rest, stderr)
+	box, positional, asJSON, ok, parsed := parseBox("init", rest, stdout, stderr)
 	if !parsed {
 		return 2
 	}
 	if len(positional) > 0 {
-		refuse(stderr, " init", fmt.Sprintf("unexpected argument %q", positional[0]))
+		if !asJSON {
+			refuse(stderr, " init", fmt.Sprintf("unexpected argument %q", positional[0]))
+		} else if ok {
+			out := verbout.Refuse("init", fmt.Sprintf("unexpected argument %q", positional[0]), "nova-fuse help")
+			_ = out.RenderJSON(stdout)
+		}
 		ok = false
 	}
 	if !ok {
@@ -646,38 +957,78 @@ func cmdInit(rest []string, stdout, stderr io.Writer) int {
 	}
 	if err := fuse.CreateBox(box); err != nil {
 		if errors.Is(err, fs.ErrExist) {
-			fmt.Fprintf(stderr, "INIT FAIL box=%s: something is already there, and init never replaces a box (a blown lockdown is replaced only in a live conversation with your person); read it with %s\n", oneline.Field(box), oneline.Escape(boxRemedy("status", box)))
+			if !asJSON {
+				fmt.Fprintf(stderr, "INIT FAIL box=%s: something is already there, and init never replaces a box (a blown lockdown is replaced only in a live conversation with your person); read it with %s\n", oneline.Field(box), oneline.Escape(boxRemedy("status", box)))
+			} else {
+				out := verbout.Failed("init", 1)
+				out.Fact("box", box)
+				out.Fact("reason", "something is already there, and init never replaces a box")
+				out.Fact("remedy", boxRemedy("status", box))
+				_ = out.RenderJSON(stdout)
+			}
 			return 1
 		}
-		fmt.Fprintf(stderr, "INIT FAIL box=%s: could not make the box: %s\n", oneline.Field(box), oneline.Err(err))
+		if !asJSON {
+			fmt.Fprintf(stderr, "INIT FAIL box=%s: could not make the box: %s\n", oneline.Field(box), oneline.Err(err))
+		} else {
+			out := verbout.Failed("init", 1)
+			out.Fact("box", box)
+			out.Fact("reason", fmt.Sprintf("could not make the box: %s", oneline.Err(err)))
+			_ = out.RenderJSON(stdout)
+		}
 		return 1
 	}
 	// Re-ask. The exit code of a remedy is not evidence the remedy worked.
 	after, err := fuse.ReadBox(box)
 	if err != nil || after.Lockdown != nil || len(after.Quarantine) != 0 {
-		fmt.Fprintf(stderr, "INIT FAIL box=%s: made but unverifiable (%s): do not trust it; tell your person\n", oneline.Field(box), oneline.Err(err))
+		if !asJSON {
+			fmt.Fprintf(stderr, "INIT FAIL box=%s: made but unverifiable (%s): do not trust it; tell your person\n", oneline.Field(box), oneline.Err(err))
+		} else {
+			out := verbout.Failed("init", 1)
+			out.Fact("box", box)
+			out.Fact("reason", fmt.Sprintf("made but unverifiable (%s)", oneline.Err(err)))
+			_ = out.RenderJSON(stdout)
+		}
 		return 1
 	}
-	fmt.Fprintf(stdout, "INIT OK box=%s: an empty box, no fuse blown (verified by re-reading the box)\n", oneline.Field(box))
-	return 0
+	if !asJSON {
+		fmt.Fprintf(stdout, "INIT OK box=%s: an empty box, no fuse blown (verified by re-reading the box)\n", oneline.Field(box))
+		return 0
+	}
+	out := verbout.OK("init")
+	out.Fact("box", box)
+	out.Fact("lockdown", "clear")
+	out.FactInt("quarantines", 0)
+	return out.Emit(stdout, stderr, true)
 }
 
 // cmdPath echoes the box path this invocation would use. With no default paths anywhere,
 // this verb exists to verify plumbing: what one caller passes is what another sees.
 func cmdPath(rest []string, stdout, stderr io.Writer) int {
-	box, positional, ok, parsed := parseBox("path", rest, stderr)
+	box, positional, asJSON, ok, parsed := parseBox("path", rest, stdout, stderr)
 	if !parsed {
 		return 2
 	}
 	if len(positional) > 0 {
-		refuse(stderr, " path", fmt.Sprintf("unexpected argument %q", positional[0]))
+		if !asJSON {
+			refuse(stderr, " path", fmt.Sprintf("unexpected argument %q", positional[0]))
+		} else if ok {
+			out := verbout.Refuse("path", fmt.Sprintf("unexpected argument %q", positional[0]), "nova-fuse help")
+			_ = out.RenderJSON(stdout)
+		}
 		ok = false
 	}
 	if !ok {
 		return 2
 	}
-	fmt.Fprintln(stdout, box)
-	return 0
+	if !asJSON {
+		fmt.Fprintln(stdout, box)
+		return 0
+	}
+	out := verbout.OK("path")
+	out.Fact("box", box)
+	out.Fact("path", box)
+	return out.Emit(stdout, stderr, true)
 }
 
 // ----------------------------------------------------------------------------- plumbing

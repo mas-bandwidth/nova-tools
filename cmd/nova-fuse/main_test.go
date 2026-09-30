@@ -1503,6 +1503,7 @@ var fuseAudit = audit.Config{
 		// else.
 		`"github.com/mas-bandwidth/nova-tools/internal/bounded"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/fuse"`,
+		`"github.com/mas-bandwidth/nova-tools/internal/verbout"`,
 	},
 	MinClassified: 40,
 }
