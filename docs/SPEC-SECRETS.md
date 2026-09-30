@@ -721,12 +721,12 @@ holding a line's send credential is a worker that can post as that line.
 One call, at the start of a seat, from the line's launcher:
 
 ```
-git -C /Users/rowan/secrets pull --ff-only && \
-nova-secrets exec --store /Users/rowan/secrets --as rowan \
-  --key /Users/rowan/.config/nova-secrets/rowan.key \
+git -C <home>/secrets pull --ff-only && \
+nova-secrets exec --store <home>/secrets --as <seat> \
+  --key <home>/.config/nova-secrets/<seat>.key \
   --sops /opt/homebrew/bin/sops \
   --only GH_TOKEN,DEEPSEEK_API_KEY,SPACE_USER,SPACE_HOST --require GH_TOKEN -- \
-  nova-sandbox --read /opt/homebrew --write /Users/rowan --net-deny -- <harness> <args…>
+  nova-sandbox --read /opt/homebrew --write <home> --net-deny -- <harness> <args…>
 ```
 
 The pull is the launcher's, never the tool's (invariant 8). The `--only` names the four this
