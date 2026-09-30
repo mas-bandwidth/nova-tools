@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -27,8 +28,9 @@ type DropReq struct {
 	Chunk   int
 }
 
-// dropFields is what drop reads of a primary: what its follows derive from.
-var dropFields = []string{sprint.PrimaryField, "attempt", "rcards"}
+// dropFields is what drop reads of a primary: what its follows derive from,
+// and its needs (the causes of the blocked judgments on a waiter).
+var dropFields = []string{sprint.PrimaryField, "attempt", "rcards", "needs"}
 
 // dropFollow are a primary's live cards (1.5.4: a primary goes with its live
 // cards in the same part): its work card, live or withdrawn, its read cards,
@@ -71,6 +73,7 @@ func Drop(ctx context.Context, e *Env, req DropReq) (Result, error) {
 		},
 		func(va *verbAnswer, part []string) (*sprintfn.Request, error) {
 			var b stepOps
+			var k closer
 			var refused []sprint.Refusal
 			for _, id := range part {
 				c := primaryOf(va.snap, id)
@@ -78,7 +81,7 @@ func Drop(ctx context.Context, e *Env, req DropReq) (Result, error) {
 					refused = append(refused, sprint.Refusal{Key: id, Why: "not open on the table (" + placeOf(c) + ")"})
 					continue
 				}
-				dropPrimary(&b, va, c, req.Reason)
+				dropPrimary(&b, &k, va, c, req.Reason)
 			}
 			if len(refused) != 0 {
 				return nil, refusedIDs(verb, refused)
@@ -87,14 +90,22 @@ func Drop(ctx context.Context, e *Env, req DropReq) (Result, error) {
 			if err != nil {
 				return nil, err
 			}
-			return &sprintfn.Request{Meta: sprintfn.Meta{Verb: verb}, Body: sprintfn.Body{Entries: entries}}, nil
+			return &sprintfn.Request{Meta: sprintfn.Meta{Verb: verb}, Body: sprintfn.Body{Entries: entries, Notes: k.notes(dropText(req.Reason))}}, nil
 		})
 }
 
 // dropPrimary removes a primary and its live cards: its work card of its
 // attempt (live or withdrawn), every read card of it still placed, and its
-// merge card when placed.
-func dropPrimary(b *stepOps, va *verbAnswer, c *sprint.Card, reason string) {
+// merge card when placed; and closes every judgment on it (the model's
+// DropEff: JCloseSubj of the card's subjects, tla/SprintEvents.tla; section
+// 3: "judgments on p closed"). No checked read lists a subject's jopen
+// fields, so the close names every field a card can hold
+// (sprint.CardJudgmentFields), and for a waiter the two blocked fields of
+// each need it names; J closes those the card holds at apply and writes
+// nothing for the rest (1.3.4), so nothing opened between the read and the
+// step is left open. The judgments on its work card and read cards are the
+// two lateness rows, which J closes itself as the step removes them (1.3.4).
+func dropPrimary(b *stepOps, k *closer, va *verbAnswer, c *sprint.Card, reason string) {
 	s, wall := va.snap, wallStamp(va.now)
 	retired := map[string]string{"retired": wall, "retired_by": "drop"}
 	if wc := s.Fleet.Card(sprint.WorkCardID(c.ID, c.Int("attempt"))); wc.Placed() {
@@ -113,6 +124,22 @@ func dropPrimary(b *stepOps, va *verbAnswer, c *sprint.Card, reason string) {
 		set["drop_reason"] = reason
 	}
 	b.remove(sprint.Work, c, set)
+	for _, f := range sprint.CardJudgmentFields() {
+		k.add(f, c.ID)
+	}
+	if c.Col == sprint.Waiting {
+		for _, f := range sprint.BlockedJudgmentFields(sprint.Split(c.F("needs"))) {
+			k.add(f, c.ID)
+		}
+	}
+}
+
+// dropText is the text of a drop's closes.
+func dropText(reason string) string {
+	if reason == "" {
+		return "dropped by the coordinator"
+	}
+	return "dropped by the coordinator: " + reason
 }
 
 // dropCont is a drop of streams' continuation: the stream index and the cell
@@ -142,7 +169,10 @@ func abortIntent(names sprint.Names, epoch tset.Decimal, op string) (string, err
 // freezefirst: part 1 reads before the freeze exists, and a card that moved
 // back to a passed cell refuses the part RANGECOUNT, a race, which is planned
 // again on a fresh read that finds it); a part that finds the stream empty
-// guards all its cells empty and moves to the next. The continuation's cell
+// guards all its cells empty and moves to the next, and a part that ends a
+// stream guards the cell it drained to hold at most what it removes and the
+// later cells empty, so the end is the state's at apply (PartApply's final).
+// Each card removed has its judgments closed (dropPrimary, DropEff). The continuation's cell
 // is where the last part drained, for the reader of the receipt. The last part deletes the marks and
 // writes the request line naming the streams (typeUnfrozen), which queues the
 // work skipped while they were frozen. A drop of one part freezes nothing.
@@ -248,6 +278,7 @@ func dropStreams(ctx context.Context, e *Env, req DropReq) (Result, error) {
 					break
 				}
 			}
+			var k closer
 			var guarded []string
 			streamDone := at < 0
 			if at >= 0 {
@@ -258,7 +289,7 @@ func dropStreams(ctx context.Context, e *Env, req DropReq) (Result, error) {
 					if c == nil || !c.Placed() {
 						continue
 					}
-					dropPrimary(&b, va, c, req.Reason)
+					dropPrimary(&b, &k, va, c, req.Reason)
 					removed++
 				}
 				left := counts[at] - removed
@@ -266,17 +297,19 @@ func dropStreams(ctx context.Context, e *Env, req DropReq) (Result, error) {
 					left += n
 				}
 				streamDone = left <= 0
+				if streamDone {
+					// Done is decided on the state at apply, as the model's
+					// PartApply decides final on T1: the drained cell holds at
+					// most the cards this part removes and each later cell
+					// none, or the part is refused RANGECOUNT, a race planned
+					// again on a fresh read (errata 3, H11's sibling).
+					atMost(&b, s, cols[at:at+1], uint64(removed))
+					atMost(&b, s, cols[at+1:], 0)
+				}
 			} else {
 				guarded = cols // the stream holds nothing: every cell of it is guarded empty
 			}
-			if len(guarded) != 0 {
-				var cells []string
-				for _, col := range guarded {
-					cells = append(cells, s+":"+col)
-				}
-				zero := uint64(0)
-				b.entry(tset.Entry{Kind: "rcount", Table: sprint.Work, Cells: cells, ScoreMin: "-inf", ScoreMax: "+inf", AtMost: &zero})
-			}
+			atMost(&b, s, guarded, 0)
 			next := dc
 			last := false
 			if streamDone {
@@ -289,14 +322,14 @@ func dropStreams(ctx context.Context, e *Env, req DropReq) (Result, error) {
 			if err != nil {
 				return Part{}, err
 			}
-			r := &sprintfn.Request{Meta: sprintfn.Meta{Verb: "drop"}, Body: sprintfn.Body{Entries: entries}}
+			r := &sprintfn.Request{Meta: sprintfn.Meta{Verb: "drop"}, Body: sprintfn.Body{Entries: entries, Notes: k.notes(dropText(req.Reason))}}
 			first := cont == ""
 			switch {
 			case first && !last:
 				r.Sprint = &sprintfn.SprintPart{Dropping: marks(streams, op)}
 			case last && !first:
 				r.Sprint = &sprintfn.SprintPart{Undrop: marks(streams, op)}
-				r.Body.Notes = []sprintfn.NoteReq{unfrozen(streams, op)}
+				r.Body.Notes = append(r.Body.Notes, unfrozen(streams, op))
 			}
 			nb := ""
 			if !last {
@@ -305,6 +338,19 @@ func dropStreams(ctx context.Context, e *Env, req DropReq) (Result, error) {
 			}
 			return Part{Req: r, Next: nb, Last: last}, nil
 		}})
+}
+
+// atMost guards that the cells of stream s hold at most n cards together,
+// on the state before the step (an rcount entry; none for no cell).
+func atMost(b *stepOps, s string, cols []string, n uint64) {
+	if len(cols) == 0 {
+		return
+	}
+	cells := make([]string, len(cols))
+	for i, col := range cols {
+		cells[i] = s + ":" + col
+	}
+	b.entry(tset.Entry{Kind: "rcount", Table: sprint.Work, Cells: cells, ScoreMin: "-inf", ScoreMax: "+inf", AtMost: &n})
 }
 
 // marks is every stream frozen by op (1.5.4: {p}dropping@e[s] = op).
@@ -322,31 +368,52 @@ func unfrozen(streams []string, op string) sprintfn.NoteReq {
 	return note(sprintfn.JOpRequest, typeUnfrozen, op, "the drop of op "+op+" unfroze its streams", streamSubjects(streams))
 }
 
-// DropAbortReq is the abort's request: the op, and the streams its drop named
-// (the design's `drop --abort --op <op>` names the op alone; the dropping
-// marks are a hash by stream that Layer 1's checked reads do not enumerate,
-// so the abort is given the streams it reads the marks of).
+// DropAbortReq is the abort's request: the op, and optionally the streams it
+// reads the marks of. The design's `drop --abort --op <op>` names the op
+// alone: with no streams, the abort reads the sprint's streams (at most
+// sprint.MaxStreams) and the marks of each, and aborts every stream the op
+// froze. Streams narrow the read to those named (a mark on a name that is no
+// stream of the sprint is reached only so), and a named stream another op
+// froze refuses the abort.
 type DropAbortReq struct {
 	Op      string
 	Streams []string
 }
 
 // DropAbort ends a drop of streams that stopped before its end (1.5.4,
-// "Abort"; section 3): in one step, it deletes the op's marks, writes the
-// request line naming the streams, and names what was left (each stream's
-// open cells and their counts not yet dropped), under its own receipt
-// <op>/abort, so a resume of the op is refused. A stream marked by another op
-// is refused, naming it. A repeat of an applied abort is its recorded result
-// and writes nothing. The op's cut entry is not deleted here: no part writes
-// one yet (the driver's cut clock is owed, 1.5.4). Two round trips.
+// "Abort"; section 3; the model's AbortApply, tla/SprintEvents.tla): in one
+// step, it deletes the op's marks, writes the request line naming the streams,
+// and names what was left (each stream's open cells and their counts not yet
+// dropped), under its own receipt <op>/abort, so a resume of the op is
+// refused. A repeat of an applied abort is its recorded result and writes
+// nothing. The op's cut entry is not deleted here: no part writes one yet (the
+// driver's cut clock is owed, 1.5.4). Two round trips with Streams; three
+// without, the first reading the sprint's streams, since the marks are a hash
+// by stream that a sprint-key read reads by name (an all-marks read, IT30,
+// makes it two).
 func DropAbort(ctx context.Context, e *Env, req DropAbortReq) (Result, error) {
 	const verb = "drop --abort"
 	if !validOp(req.Op) {
 		return Result{Verb: verb}, refuseLocal(verb, sprintfn.CodeRequest, "--op %q is not an op", req.Op)
 	}
-	streams, err := sortedIDs(verb, req.Streams)
-	if err != nil {
-		return Result{Verb: verb}, err
+	named := len(req.Streams) != 0
+	listed := 0
+	var streams []string
+	if named {
+		var err error
+		if streams, err = sortedIDs(verb, req.Streams); err != nil {
+			return Result{Verb: verb}, err
+		}
+	} else {
+		var err error
+		streams, err = sprintStreams(ctx, e, verb)
+		listed = 1
+		if err != nil {
+			return Result{Verb: verb, Trips: listed}, err
+		}
+		if len(streams) == 0 {
+			return Result{Verb: verb, Trips: listed}, refuseLocal(verb, sprintfn.CodeRequest, "the sprint has no stream: op %s freezes nothing", req.Op)
+		}
 	}
 	var cells []string
 	for _, s := range streams {
@@ -414,15 +481,22 @@ func DropAbort(ctx context.Context, e *Env, req DropAbortReq) (Result, error) {
 					others = append(others, s+" (frozen by op "+m+")")
 				}
 			}
-			if len(others) != 0 {
+			if named && len(others) != 0 {
 				return nil, refuseLocal(verb, sprintfn.CodeDropping, "not frozen by op %s: %s", req.Op, strings.Join(others, ", "))
 			}
 			if len(mine) == 0 {
-				return nil, refuseLocal(verb, sprintfn.CodeRequest, "op %s freezes none of %s: there is nothing to abort", req.Op, strings.Join(streams, ", "))
+				where := "any stream of the sprint"
+				if named {
+					where = strings.Join(streams, ", ")
+				}
+				return nil, refuseLocal(verb, sprintfn.CodeRequest, "op %s freezes none of %s: there is nothing to abort", req.Op, where)
 			}
 			counts := countsOf(va, 0)
 			var left []string
 			for i, s := range streams {
+				if !contains(mine, s) {
+					continue
+				}
 				var in []string
 				for j, col := range openCols {
 					if n := counts[i*len(openCols)+j]; n > 0 {
@@ -450,6 +524,7 @@ func DropAbort(ctx context.Context, e *Env, req DropAbortReq) (Result, error) {
 					Op: &sprintfn.Op{ID: req.Op + "/abort", Intent: intent, Result: said}}}, nil
 		}})
 	res.Op = req.Op
+	res.Trips += listed
 	if err != nil {
 		return res, err
 	}
@@ -461,4 +536,38 @@ func DropAbort(ctx context.Context, e *Env, req DropAbortReq) (Result, error) {
 		res.Said = fmt.Sprintf("drop --abort: op %s aborted, its streams unfrozen; %s", req.Op, res.Recorded)
 	}
 	return res, nil
+}
+
+// sprintStreams are the sprint's streams, read by the `streams` listing (1.0;
+// at most sprint.MaxStreams): the streams whose marks an abort reads.
+func sprintStreams(ctx context.Context, e *Env, verb string) ([]string, error) {
+	q, ref := sprintfn.EncodeSprintQ(sprint.SprintQ{Kind: sprint.QueryStreams, Fields: []string{}})
+	if ref != nil {
+		return nil, &Refused{Verb: verb, Refusal: ref, Local: true}
+	}
+	r, err := sprintfn.Read(ctx, e.C, &sprintfn.ReadRequest{Epoch: dec(e.epoch()), Sprint: []sprintfn.SprintQuery{q}})
+	switch {
+	case err != nil:
+		return nil, err
+	case r.Err != nil:
+		return nil, r.Err
+	case r.Refusal != nil:
+		return nil, &Refused{Verb: verb, Refusal: r.Refusal}
+	case len(r.Read.Sprint) != 1:
+		return nil, fmt.Errorf("verbs: the streams listing answered %d queries", len(r.Read.Sprint))
+	}
+	qr, err := sprintfn.DecodeResult(sprint.QueryStreams, r.Read.Sprint[0])
+	if err != nil {
+		return nil, err
+	}
+	sr, ok := qr.(sprintfn.StreamsResult)
+	if !ok {
+		return nil, fmt.Errorf("verbs: the streams answer is of another kind")
+	}
+	if sr.HasMore {
+		return nil, refuseLocal(verb, sprintfn.CodeLimit, "the sprint lists more than %d streams: name the streams with --stream", len(sr.Rows))
+	}
+	out := append([]string(nil), sr.Rows...)
+	sort.Strings(out)
+	return out, nil
 }
