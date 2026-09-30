@@ -330,9 +330,9 @@ func (l *commandLog) readPipelines() int {
 // contentNames are the commands that read the content of a key.
 var contentNames = map[string]bool{"dump": true, "hgetall": true, "smembers": true, "zrange": true}
 
-// refusal is the error of a write the server refused, which is an answer of
+// serverRefused is the error of a write the server refused, which is an answer of
 // the server and not a failure to reach it.
-func refusal(err error) bool {
+func serverRefused(err error) bool {
 	var answer redis.Error
 	return errors.As(err, &answer)
 }
@@ -537,7 +537,7 @@ func TestImageOnARealStore(t *testing.T) {
 			{[]any{"EXPIRE", key("set"), "soon"}, "not an integer"},
 		} {
 			err := c.Do(ctx, w.args...).Err()
-			if err == nil || !refusal(err) || !strings.Contains(err.Error(), w.why) {
+			if err == nil || !serverRefused(err) || !strings.Contains(err.Error(), w.why) {
 				t.Fatalf("%v was answered %v; want the server's refusal, %q", w.args, err, w.why)
 			}
 		}
