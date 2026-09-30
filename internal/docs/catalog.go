@@ -96,6 +96,7 @@ var DefaultCatalog = []Entry{
 	E("internal/swarm", "swarm worker pool and execution engine", "go test ./internal/swarm", "go test ./internal/swarm"),
 	E("internal/testbin", "places a built program into a test dir", "go test ./internal/testbin", "go test ./internal/testbin"),
 	E("internal/testguard", "host seam and leak interception", "go test ./internal/testguard", "go test ./internal/testguard"),
+	E("internal/testkit", "test rigs shared by every package: a tool's entry point run in process with both streams captured, and the files a test writes and reads", "go test ./internal/testkit", "go test ./internal/testkit"),
 	E("internal/testredis", "a throwaway redis-server for one test: loopback only, nothing kept, never outlives its test binary; Far puts a store at a distance", "go test ./internal/testredis", "go test ./internal/testredis"),
 	E("internal/testverbhelp", "per-tool check that every verb answers -h at exit 0 and touches nothing", "go test ./internal/testverbhelp", "go test ./internal/testverbhelp"),
 	E("internal/tablemodel", "the table model's checks: the suites, the finding witnesses and the receipt replay against EpochMemberTable", "go test ./internal/tablemodel", "go test -tags functional ./internal/tablemodel"),
