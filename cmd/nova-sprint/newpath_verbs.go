@@ -405,7 +405,7 @@ func init() {
 				}
 				return nil
 			},
-			notYet: map[string]string{"read-ok": "accept takes ids or --stream", "limit": "accept takes ids or --stream", "group": "the new inbox has no --group selection yet", "expect": "the new inbox has no --group selection yet", "answers": "accept's request carries no answers"},
+			notYet: map[string]string{"limit": "accept takes ids, --stream or --read-ok", "group": "the new inbox has no --group selection yet", "expect": "the new inbox has no --group selection yet", "answers": "accept's request carries no answers"},
 			call:   callAccept, writes: true},
 		{name: "rework", syntax: "(<id>... | --group <id> [--expect <n>]) [--fix <text>] [--answers <note>]", item: "IT21", words: wordsAny,
 			flags:  setFlags(false, flagDef{name: "fix", usage: "the fix for every primary"}, fAnswers),

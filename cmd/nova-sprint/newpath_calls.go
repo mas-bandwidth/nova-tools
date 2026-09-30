@@ -277,7 +277,7 @@ func callAsk(ctx context.Context, e *spverbs.Env, p *parsed) (spverbs.Result, er
 }
 
 func callAccept(ctx context.Context, e *spverbs.Env, p *parsed) (spverbs.Result, error) {
-	return spverbs.Accept(ctx, e, spverbs.AcceptReq{Op: p.c.op, IDs: p.words, Streams: sprint.Split(p.str("stream"))})
+	return spverbs.Accept(ctx, e, spverbs.AcceptReq{Op: p.c.op, IDs: p.words, Streams: sprint.Split(p.str("stream")), ReadOK: p.on("read-ok")})
 }
 
 func callRework(ctx context.Context, e *spverbs.Env, p *parsed) (spverbs.Result, error) {

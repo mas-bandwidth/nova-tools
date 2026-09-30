@@ -899,6 +899,9 @@ type AcceptReq struct {
 	IDs     []string
 	Streams []string
 	Chunk   int
+	// ReadOK is accept --read-ok: every primary in review with ok reads from
+	// two different readers, in every stream (the walk of Streams over all).
+	ReadOK bool
 }
 
 // acceptFields is what accept reads of a primary and what its follows reach:
@@ -926,9 +929,35 @@ const acceptEach = 2 + sprint.MaxRCards - sprint.AcceptReaders + 1
 // accept refuses the part, naming it, and the parts before stay applied
 // (1.5.3). With Streams, the parts walk each stream's review cell from a
 // cursor to its boundary (1.5.4): the eligible are accepted, the others left
-// in review. n + 1 round trips.
+// in review. n + 1 round trips. With ReadOK, the walk is over every stream of
+// the work table, read first (one more round trip): the primaries with two ok
+// reads are accepted, the others left in review.
 func Accept(ctx context.Context, e *Env, req AcceptReq) (Result, error) {
 	const verb = "accept"
+	if req.ReadOK {
+		if len(req.IDs) != 0 || len(req.Streams) != 0 {
+			return Result{Verb: verb}, refuseLocal(verb, sprintfn.CodeRequest, "--read-ok takes no ids and no --stream")
+		}
+		res, err := e.Do(ctx, Planned{Verb: verb, Read: func(epoch tset.Decimal) *sprintfn.ReadRequest {
+			return &sprintfn.ReadRequest{Epoch: epoch, Tset: []tset.ReadQuery{{Kind: "rows", Table: sprint.Work}}}
+		}})
+		if err != nil {
+			return res, err
+		}
+		if res.Read == nil || len(res.Read.Tset) != 1 {
+			return res, fmt.Errorf("accept: the rows read answered nothing")
+		}
+		for _, r := range res.Read.Tset[0].Rows {
+			req.Streams = append(req.Streams, r.Row)
+		}
+		if len(req.Streams) == 0 {
+			res.Said = "accept: no stream, nothing to accept"
+			return res, nil
+		}
+		out, err := walkReview(ctx, e, acceptWalk(req.Streams), req.Op, req.Streams, req.Chunk)
+		out.Trips += res.Trips
+		return out, err
+	}
 	if len(req.Streams) != 0 {
 		if len(req.IDs) != 0 {
 			return Result{Verb: verb}, refuseLocal(verb, sprintfn.CodeRequest, "names cards and --stream both")
