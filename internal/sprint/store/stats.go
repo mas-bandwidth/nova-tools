@@ -55,8 +55,8 @@ func (st *Store) trips() int64 {
 
 // meter is a part's counters at its start.
 type meter struct {
-	st                      *Store
-	began                   time.Time
+	st                           *Store
+	began                        time.Time
 	trips, reads, rows, stl, mis int64
 }
 

@@ -7,6 +7,7 @@ package store
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -178,5 +179,82 @@ func TestATwinReadCutShortLeavesNoTableHalfRead(t *testing.T) {
 	}
 	if len(snap.Merge.LoadedCards()) == 0 {
 		t.Fatal("the merge table is empty: the check shows nothing")
+	}
+}
+
+// The exchanges of one writing part of the tick, by kind, after another
+// writer changed a table: the fence read twice (with the view, and last), the
+// four shapes once, the open judgments and the coordinator once each, the
+// changed table caught up from its change stream and its changed records read
+// in one read set, the work table's queue once (the world's take queued its
+// change, which this part plans on), then one acquire, one apply for the one
+// table written and one release. No whole-table read (no cells), and no read of the machine's
+// state or of the stuck record of its own: both come with the fence (the
+// fold; a part that is passed over makes no exchange at all).
+func TestAWritingPartsExchangesArePinned(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setup(4)
+	h.startMachine()
+	h.st.CheckTwin = nil // the check's own fresh reads are not the part's
+	epoch := h.st.PinnedEpoch()
+	tw := NewTwin()
+	part := func(name string, fn sprint.TickPartFn) Step {
+		s := TickPartStep(name, fn, sprint.TickReq{Who: sprint.MachineActor}, &epoch, nil, nil)
+		s.Twin, s.Halts = tw, true
+		return s
+	}
+	h.must(part("deal", sprint.TickDeal)) // the twin's first read: whole
+	world := &Store{B: h.m, Names: h.st.Names, Actor: "m1", Now: h.st.Now, NewID: h.st.NewID, Sleep: h.st.Sleep}
+	if res, err := world.Run(h.ctx, TakeStep(sprint.TakeReq{As: "m1", Sel: sprint.Sel{Limit: 100}, Who: "m1"})); err != nil || len(res.Moved) == 0 {
+		t.Fatalf("the world's take: %v %+v", err, res)
+	}
+	before := map[string]int{}
+	for k, v := range h.m.Calls {
+		before[k] = v
+	}
+	if res := h.must(part("ping", ping(sprint.Fleet, 1))); len(res.Moved) == 0 {
+		t.Fatalf("the part wrote nothing: %+v", res)
+	}
+	got := map[string]int{}
+	for k, v := range h.m.Calls {
+		if d := v - before[k]; d != 0 {
+			got[k] = d
+		}
+	}
+	want := map[string]int{"fence": 2, "shapes": 1, "open": 1, "coord": 1, "changes": 1, "readset": 1, "queue": 1, "acquire": 1, "apply": 1, "release": 1}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("a writing part's exchanges: %v, want %v", got, want)
+	}
+}
+
+// A tick's parts read the machine's state and the stuck record with their
+// fence, not by reads of their own before each part: the round trips of each
+// part a busy tick runs are pinned (in this store's exchanges; a read of the
+// machine's state before a part, as the tick made before the fold, is one
+// more in each, and the test fails).
+func TestATicksPartsTripsArePinned(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setup(40)
+	h.startMachine()
+	h.st.CheckTwin = nil
+	h.machine()
+	h.machine()
+	h.work("m1")
+	h.work("m2")
+	busy := h.machine()
+	got := map[string]int64{}
+	for _, p := range busy.Times {
+		if p.Table != "" {
+			got[p.Table+"/"+p.Name] = p.Trips
+		}
+	}
+	// each part: its read of the twin (the view, the fence last, the queue),
+	// its acquire, one apply for each table it writes, its release; the ask
+	// also catches the readers table up from its change stream
+	want := map[string]int64{"work/drain": 8, "readers/ask": 9}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("the busy tick's parts made %v round trips, want %v: %s", got, want, busy.TimesLine())
 	}
 }

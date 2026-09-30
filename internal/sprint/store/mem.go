@@ -758,6 +758,7 @@ func (m *Mem) ReadFence(context.Context) (Fence, error) {
 		var mc Machine
 		f.Running = json.Unmarshal([]byte(raw), &mc) == nil && mc.Running()
 	}
+	f.Stuck = m.kv[keyStuck]
 	if l.fence != nil {
 		op := *l.fence
 		f.Pending = &op
@@ -867,6 +868,7 @@ func (m *Mem) QueueRead(context.Context) ([]sprint.QueuedChange, error) {
 func (m *Mem) Done(_ context.Context, callerOp string) (string, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.count("done")
 	l := m.log()
 	v, ok := l.done[callerOp]
 	return v, ok, nil
@@ -921,6 +923,7 @@ func (m *Mem) Pending() *OpRecord {
 func (m *Mem) OpenNotes(context.Context) ([]sprint.Open, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.count("open")
 	l := m.log()
 	var out []sprint.Open
 	for k, nid := range l.open {
@@ -1013,6 +1016,7 @@ func (m *Mem) SetCursor(_ context.Context, id string) error {
 func (m *Mem) Coordinator(context.Context) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.count("coord")
 	return m.kv[keyCoordinator], nil
 }
 
@@ -1053,6 +1057,7 @@ func (m *Mem) Revision(table string) uint64 {
 func (m *Mem) TableChanges(_ context.Context, table string, from, to uint64) ([]string, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.count("changes")
 	t := m.tables[table]
 	if t == nil || to < from {
 		return nil, false, nil
@@ -1075,3 +1080,25 @@ func (m *Mem) TableChanges(_ context.Context, table string, from, to uint64) ([]
 }
 
 var _ TableChanger = (*Mem)(nil)
+
+// count counts one exchange of the kind (Calls), for a kind that did not count
+// itself before; the lock is held.
+func (m *Mem) count(kind string) {
+	if m.Calls != nil {
+		m.Calls[kind]++
+	}
+}
+
+// Trips is the exchanges made so far, every kind (Calls): what a store's round
+// trips are to the tick's cost (stats.go).
+func (m *Mem) Trips() int64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, c := range m.Calls {
+		n += c
+	}
+	return int64(n)
+}
+
+var _ Tripper = (*Mem)(nil)

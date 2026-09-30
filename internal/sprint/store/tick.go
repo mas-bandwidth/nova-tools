@@ -989,12 +989,6 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 			}
 		}
 		began := t.st.meter()
-		if halted, err := t.st.halted(t.ctx, t.res, part.Name); err != nil {
-			t.err = err
-			return tickFailed
-		} else if halted {
-			return tickHalted
-		}
 		due := 0
 		var done *sprint.Note
 		var planned sprint.Plan
@@ -1016,7 +1010,15 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 		}
 		step := TickPartStep(part.Name, fn, t.req, &t.at, nil, &due)
 		step.Pump, step.Drain, step.Twin = table == sprint.Work, drain, t.twin
+		// the machine's state is read with the step's fence: STOPPED halts the
+		// tick before the part begins
+		step.Halts = true
 		r, err := t.st.Run(t.ctx, step)
+		if err == nil && r.Halted {
+			t.res.State = Stopped
+			t.res.Halted = "the machine was stopped during the tick: the part " + part.Name + " did not begin"
+			return tickHalted
+		}
 		for _, d := range r.Drained {
 			// a drain the part's step made before it planned is the tick's
 			// move too: named in its report, never silent
@@ -1103,6 +1105,7 @@ func (t *tickRun) end(out tickOutcome, last, unfinished, seen Heartbeat) (Heartb
 func (m *Mem) GetKey(_ context.Context, name string) (string, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.count("kv")
 	if err := m.fail("kv"); err != nil {
 		return "", false, err
 	}
@@ -1114,6 +1117,7 @@ func (m *Mem) GetKey(_ context.Context, name string) (string, bool, error) {
 func (m *Mem) SetKeyShowing(_ context.Context, name, value, view, state string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.count("kv")
 	if err := m.fail("kv"); err != nil {
 		return err
 	}
@@ -1147,6 +1151,7 @@ func (m *Mem) showState(view, state string) {
 func (m *Mem) SetKey(_ context.Context, name, value string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.count("kv")
 	if err := m.fail("kv"); err != nil {
 		return err
 	}
@@ -1205,6 +1210,7 @@ func viewShown(err error) error {
 func (m *Mem) GetKeys(_ context.Context, names []string) ([]string, []bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.count("kv")
 	if err := m.fail("kv"); err != nil {
 		return nil, nil, err
 	}

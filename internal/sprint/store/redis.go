@@ -284,7 +284,7 @@ func (r *Redis) ReadFence(ctx context.Context) (Fence, error) {
 // queueFence queues the fence's read on a pipeline: the fence, its
 // generation and the machine's state, and the queue's length.
 func (r *Redis) queueFence(ctx context.Context, p redis.Pipeliner) (*redis.SliceCmd, *redis.IntCmd) {
-	return p.MGet(ctx, r.key(keyFence), r.key(keyGen), r.Names.Key(keyMachine)), p.LLen(ctx, r.key(keyQueue))
+	return p.MGet(ctx, r.key(keyFence), r.key(keyGen), r.Names.Key(keyMachine), r.Names.Key(keyStuck)), p.LLen(ctx, r.key(keyQueue))
 }
 
 // fenceOf is the fence a pipeline read.
@@ -301,6 +301,9 @@ func fenceOf(mget *redis.SliceCmd, llen *redis.IntCmd) (Fence, error) {
 	}
 	if s, ok := vals[1].(string); ok {
 		f.Gen, _ = strconv.ParseUint(s, 10, 64)
+	}
+	if len(vals) > 3 {
+		f.Stuck, _ = vals[3].(string)
 	}
 	if s, ok := vals[0].(string); ok {
 		var op OpRecord

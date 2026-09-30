@@ -119,6 +119,11 @@ type Step struct {
 	// drain: it reads the queue with its tables and its commit takes what it
 	// read off the queue (sprint.Drain).
 	Pump, Drain bool
+	// Halts, when set (a part of the tick), makes the step begin nothing when
+	// the machine's state, read with its first fence, is STOPPED: its result
+	// says Halted, and it writes nothing (the stop's rule: the part in flight
+	// finishes, and no part begins after the flag says STOPPED).
+	Halts bool
 	// Twin, when set, is the tick's twin (twin.go): a step that loads the four
 	// tables plans on it while the fence is at its generation, instead of
 	// reading them, and applies its receipts to it when it commits.
@@ -198,6 +203,9 @@ type Result struct {
 	// it planned (a STOPPED machine's queue, or one a step left after a
 	// pump's first read): each is a move of the work table, and said.
 	Drained []Result `json:"drained,omitempty"`
+	// Halted says a step that Halts found the machine STOPPED as it read the
+	// sprint, and began nothing.
+	Halted bool `json:"-"`
 }
 
 // ErrUnknown is a write the store did not confirm: changed=unknown.
@@ -369,6 +377,12 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 				return r, err
 			}
 		}
+		if step.Halts && !fence.Running && res.Attempts == 1 {
+			// a part that began (its first read found the machine RUNNING)
+			// finishes: only its first read halts it
+			res.Halted = true
+			return res, nil
+		}
 		if fence.Queued > 0 && !step.Pump && !fence.Running && drains < MaxDrains {
 			// A STOPPED machine has no next tick: the queue it left is drained
 			// before any step, which then writes the work table itself. Past
@@ -431,7 +445,7 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		}
 		// The fence is free: a stuck operation's judgment rides with this
 		// step, once.
-		stuck, isStuck, err := st.stuck(ctx)
+		stuck, isStuck, err := stuckOf(fence)
 		if err != nil {
 			return res, err
 		}

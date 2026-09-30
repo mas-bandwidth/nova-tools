@@ -2,10 +2,8 @@ package store
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"strconv"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
@@ -153,8 +151,7 @@ func (st *Store) pipelinedLoadOnceWithFence(ctx context.Context, tables []string
 	coordCmd := pipe.Get(ctx, r.Names.Key(keyCoordinator))
 
 	// Queue Trailing Fence (f2) at the tail of Stage 2 pipeline
-	fenceCmd := pipe.MGet(ctx, r.key(keyFence), r.key(keyGen), r.Names.Key(keyMachine))
-	queueCmd := pipe.LLen(ctx, r.key(keyQueue))
+	fenceCmd, queueCmd := r.queueFence(ctx, pipe)
 
 	// Execute Stage 2 in 1 single network round trip
 	if _, err := pipe.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
@@ -162,31 +159,9 @@ func (st *Store) pipelinedLoadOnceWithFence(ctx context.Context, tables []string
 	}
 
 	// Decode Trailing Fence f2
-	vals, err := fenceCmd.Result()
-	if err != nil && !errors.Is(err, redis.Nil) {
-		return nil, Fence{}, err
-	}
-	var f2 Fence
-	f2.Queued = int(queueCmd.Val())
-	if len(vals) > 2 {
-		if str, ok := vals[2].(string); ok {
-			var m Machine
-			f2.Running = json.Unmarshal([]byte(str), &m) == nil && m.Running()
-		}
-	}
-	if len(vals) > 1 {
-		if str, ok := vals[1].(string); ok {
-			f2.Gen, _ = strconv.ParseUint(str, 10, 64)
-		}
-	}
-	if len(vals) > 0 && vals[0] != nil {
-		if str, ok := vals[0].(string); ok {
-			var op OpRecord
-			if err := json.Unmarshal([]byte(str), &op); err != nil {
-				return nil, f2, fmt.Errorf("the fence holds an unreadable operation record: %w", err)
-			}
-			f2.Pending = &op
-		}
+	f2, err := fenceOf(fenceCmd, queueCmd)
+	if err != nil {
+		return nil, f2, err
 	}
 
 	// Decode Coordinator

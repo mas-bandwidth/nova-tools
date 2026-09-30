@@ -125,6 +125,10 @@ type Fence struct {
 	// pump queues its work-table changes (queue.go).
 	Running bool
 	Queued  int
+	// Stuck is the stuck record (stuck.go) as it was read with the fence, ""
+	// for none: the step that writes next carries its judgment, and reads no
+	// record of its own for it.
+	Stuck string
 }
 
 // OpRecord is a step's operation, held in the fence while it applies: its
