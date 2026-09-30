@@ -33,10 +33,12 @@ func TestAddBriefFileStoresTheBriefByteForByte(t *testing.T) {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	dir := t.TempDir()
+	// the brief is the card lint's passing brief, then the paragraphs under test
+	rules := strings.TrimSuffix(passingBrief("Fix the empty case."), "\n")
 	for _, c := range []struct{ name, file, want string }{
-		{"paragraphs", "Fix the empty case.\n\nThen:\n\t- keep the tab\n  - keep the indent, and \"quotes\", 'ticks', ünï\n", "Fix the empty case.\n\nThen:\n\t- keep the tab\n  - keep the indent, and \"quotes\", 'ticks', ünï"},
-		{"two newlines leave one", "one line\n\n", "one line\n"},
-		{"no newline", "one line", "one line"},
+		{"paragraphs", rules + "\n\nThen:\n\t- keep the tab\n  - keep the indent, and \"quotes\", 'ticks', ünï\n", rules + "\n\nThen:\n\t- keep the tab\n  - keep the indent, and \"quotes\", 'ticks', ünï"},
+		{"two newlines leave one", rules + "\n\n", rules + "\n"},
+		{"no newline", rules, rules},
 	} {
 		path := filepath.Join(dir, strings.ReplaceAll(c.name, " ", "-")+".md")
 		if err := os.WriteFile(path, []byte(c.file), 0o600); err != nil {
