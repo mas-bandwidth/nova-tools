@@ -56,8 +56,8 @@
 # the per-package ceiling opens no extra shard here; the rule stays because the
 # next measurement may not be so kind.
 #
-# UNMEASURED PACKAGES: never guessed downward. One package with tests is absent
-# from the darwin table (internal/redisq) and eight have no test files at all.
+# UNMEASURED PACKAGES: never guessed downward. A package with tests may be absent
+# from the darwin table, and some have no test files at all.
 # The rule this lane has not yet written into code: a package with tests and no
 # measurement is charged the largest measured size, and a package with no test
 # files is charged nothing, which needs the plan job to know which is which.

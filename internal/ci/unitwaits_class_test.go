@@ -38,9 +38,8 @@ import (
 // and is not found: the test calls the seam, never package time. The seams the
 // tree already has: internal/wake.Clock (a fake that advances on Sleep),
 // internal/bus lockClock, internal/swarm batchClock and pullClock,
-// internal/nsprint/land.Clock, internal/log.Clock, and the injected
-// `Sleep func(time.Duration)` / `now func() time.Time` fields of internal/merge,
-// internal/gh, internal/swarm and cmd/nova-merge.
+// internal/log.Clock, and the injected `Sleep func(time.Duration)` /
+// `now func() time.Time` fields of internal/swarm.
 //
 // THE LEDGER. A wait is keyed by its package directory and the top-level
 // function it is written in (a Test, a helper, a method `Type.Method`), and it

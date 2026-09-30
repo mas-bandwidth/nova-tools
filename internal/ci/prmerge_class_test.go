@@ -23,8 +23,8 @@ import (
 // The fix is not to remember not to type it. `gh pr merge` in any spelling is refused in
 // every non-test Go file of the tools and in every file under .github/, with ONE exception
 // named in a list that can only shrink: the audit's `--disable-auto`, which takes an
-// auto-merge OFF. Admission to a merge queue is internal/merge.Enqueuer.Enqueue, the
-// enqueuePullRequest mutation, and nothing else.
+// auto-merge OFF. Admission to a merge queue is the enqueuePullRequest mutation, and
+// nothing else.
 //
 // This is a class test and not a bug fix, for the reason pit stop 3 gave: a fixed instance
 // comes back under another name, and a fixed CLASS cannot.
@@ -67,7 +67,7 @@ func TestNoGhPrMergeSpellingInTheToolsGo(t *testing.T) {
 					seen[key] = true
 					if !allow.Has(key) {
 						violations = append(violations, fmt.Sprintf(
-							"%s:%d builds a `gh pr merge` call in %s; admission to a merge queue is internal/merge.Enqueuer.Enqueue (the enqueuePullRequest mutation), and a merge of a pull request is a batch that landed -- if this is the audit's --disable-auto, list it in %s with its reason",
+							"%s:%d builds a `gh pr merge` call in %s; admission to a merge queue is the enqueuePullRequest mutation, and a merge of a pull request is a batch that landed -- if this is the audit's --disable-auto, list it in %s with its reason",
 							rel, w.line, w.fn, prMergeAllowlistPath))
 					}
 				case w.value == "--auto" || strings.HasPrefix(w.value, "--auto="):
