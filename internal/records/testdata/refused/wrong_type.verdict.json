@@ -1,5 +1,0 @@
-{
-  "field": "body.model.id",
-  "rule": "wrong_type",
-  "verdict": "refused"
-}
