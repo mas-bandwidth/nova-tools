@@ -12,6 +12,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint/sprintfn"
 	spverbs "github.com/mas-bandwidth/nova-tools/internal/sprint/verbs"
 )
 
@@ -388,7 +389,7 @@ func init() {
 		{name: "rework", syntax: "(<id>... | --group <id> [--expect <n>]) [--fix <text>] [--answers <note>]", item: "IT21", words: wordsAny,
 			flags: setFlags(false, flagDef{name: "fix", usage: "the fix for every primary"}, fAnswers),
 			check: needsSet("wants ids (or --group, --stream); --fix <text> for all, else each primary's own finding or report"),
-			call:  stubbed("IT21, verbs.Rework")},
+			call:  callRework},
 		{name: "return", syntax: "(<id>... | --group <id> [--expect <n>]) [--reason <text>] [--answers <note>]", item: "IT21", words: wordsAny,
 			flags: setFlags(false, flagDef{name: "reason", usage: "why it goes back to review"}, fAnswers),
 			check: needsSet("wants ids, --stream <s> or --group <id>"),
@@ -411,7 +412,7 @@ func init() {
 				}
 				return nil
 			},
-			call: stubbed("IT21, verbs.Drop and verbs.DropAbort")},
+			call: callDrop},
 		{name: "ci", syntax: "<id>... (--red | --green) [--head <h>] [--run <id>] [--source <s>] [--note <text>]", item: "IT21", words: wordsAny,
 			flags: setFlags(false, flagDef{name: "red", kind: kBool, usage: "the run failed"}, flagDef{name: "green", kind: kBool, usage: "the run passed"},
 				flagDef{name: "head", usage: "the head the run tested"}, flagDef{name: "run", usage: "the run's id"},
@@ -660,6 +661,48 @@ func callInit(ctx context.Context, e *spverbs.Env, p *parsed) (spverbs.Result, e
 		return spverbs.InitCoordinator(ctx, e, req)
 	}
 	return spverbs.Init(ctx, e, req)
+}
+
+// callDrop is drop, or drop --abort (item IT21).
+func callDrop(ctx context.Context, e *spverbs.Env, p *parsed) (spverbs.Result, error) {
+	if p.on("abort") {
+		return spverbs.DropAbort(ctx, e, spverbs.DropAbortReq{Op: p.c.op})
+	}
+	if p.str("group") != "" {
+		return spverbs.Result{Verb: p.verb}, &spverbs.Refused{Verb: p.verb, Local: true, Refusal: &sprintfn.Refusal{Code: codeNotOnNewPath,
+			Message: "--group is not on the new path yet (IT22 builds inbox); nothing was sent"}}
+	}
+	var streams []string
+	if s := p.str("stream"); s != "" {
+		streams = sprint.Split(s)
+	}
+	return spverbs.Drop(ctx, e, spverbs.DropReq{
+		Op:      p.c.op,
+		IDs:     p.words,
+		Streams: streams,
+		Col:     p.str("col"),
+		Reason:  p.str("reason"),
+		Chunk:   p.num("limit"),
+	})
+}
+
+// callRework is rework (item IT21).
+func callRework(ctx context.Context, e *spverbs.Env, p *parsed) (spverbs.Result, error) {
+	if p.str("group") != "" {
+		return spverbs.Result{Verb: p.verb}, &spverbs.Refused{Verb: p.verb, Local: true, Refusal: &sprintfn.Refusal{Code: codeNotOnNewPath,
+			Message: "--group is not on the new path yet (IT22 builds inbox); nothing was sent"}}
+	}
+	var streams []string
+	if s := p.str("stream"); s != "" {
+		streams = sprint.Split(s)
+	}
+	return spverbs.Rework(ctx, e, spverbs.ReworkReq{
+		Op:      p.c.op,
+		IDs:     p.words,
+		Streams: streams,
+		Fix:     p.str("fix"),
+		Chunk:   p.num("limit"),
+	})
 }
 
 // checkAdd is add's grammar, as the present add checks it.

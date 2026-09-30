@@ -262,11 +262,11 @@ func npCases() []npCase {
 		stub("ask", "ask s1-1 --another", "IT21"),
 		stub("accept", "accept s1-1", "IT21"),
 		stub("accept", "accept --stream s1,s2", "IT21"),
-		stub("rework", "rework s1-1 --fix 'handle the empty case'", "IT21"),
+		{verb: "rework", line: "rework s1-1 --fix 'handle the empty case'", code: exitRefused, want: []string{"REWORK FAIL code=REQUEST", "no such card on the table"}},
 		stub("return", "return s1-1 --reason suspect", "IT21"),
-		stub("drop", "drop s1-1 --reason obsolete", "IT21"),
-		stub("drop", "drop --stream s1,s2 --col ready --reason obsolete", "IT21"),
-		stub("drop", "drop --abort --op op-drop-1", "IT21"),
+		{verb: "drop", line: "drop s1-1 --reason obsolete", code: exitRefused, want: []string{"DROP FAIL code=REQUEST", "not open on the table"}},
+		{verb: "drop", line: "drop --stream s1,s2 --col ready --reason obsolete", code: exitRefused, want: []string{"DROP FAIL code=NOROW"}},
+		{verb: "drop", line: "drop --abort --op op-drop-1", code: exitRefused, want: []string{"DROP FAIL code=REQUEST", "the sprint has no stream: op op-drop-1 freezes nothing"}},
 		{verb: "drop", line: "drop --abort", code: exitRefused, want: []string{"drop --abort takes --op <op> alone"}},
 		stub("ci", "ci s1-1 --red --run 812", "IT21"),
 		stub("merge", "merge --stream s1 --batch 100 --red --suspect s1-4 s1-5", "IT21"),
@@ -533,5 +533,82 @@ func TestNewTableCoversThePresentVerbs(t *testing.T) {
 	}
 	if strings.Join(added, ",") != "remove" {
 		t.Errorf("verbs the new path adds: %v, want [remove] (section 3)", added)
+	}
+}
+
+// TestReworkAndDropOnNewPath (IT21 on IT23): rework and drop driven through
+// the command entry point on the new path over the twin.
+func TestReworkAndDropOnNewPath(t *testing.T) {
+	t.Parallel()
+	na := newNPApp(t)
+	na.ok("init")
+	na.ok("start")
+
+	// Initialize score counter once:
+	res, err := sprintfn.Step(context.Background(), na.tw, &sprintfn.Request{
+		Epoch:  "0",
+		Meta:   sprintfn.Meta{Verb: "fixture", Actor: "coord"},
+		Sprint: &sprintfn.SprintPart{Counter: &sprintfn.CounterChange{Read: map[string]string{"score": ""}, Set: map[string]string{"score": "1000000"}}},
+	})
+	if err != nil || res.Refusal != nil || res.Err != nil {
+		t.Fatalf("init counter: %v %v %v", err, res.Refusal, res.Err)
+	}
+
+	raw := func(entries ...tset.Entry) {
+		t.Helper()
+		res, err := sprintfn.Step(context.Background(), na.tw, &sprintfn.Request{
+			Epoch: "0",
+			Meta:  sprintfn.Meta{Verb: "fixture", Actor: "coord"},
+			Body:  sprintfn.Body{Entries: entries},
+		})
+		if err != nil || res.Refusal != nil || res.Err != nil {
+			t.Fatalf("fixture: err %v, refusal %v, result err %v", err, res.Refusal, res.Err)
+		}
+	}
+
+	raw(
+		tset.Entry{Kind: "rows", Table: sprint.Work, Add: []string{"s1"}},
+		tset.Entry{Kind: "rows", Table: sprint.Fleet, Add: []string{"m1", "m2"}},
+		tset.Entry{Kind: "create", Table: sprint.Work, To: "s1:review", IDs: []string{"p1"}, Scores: []string{"1"},
+			Each: []map[string]string{{"kind": "work", "attempt": "1", "head": "h1", "result": "failed", "work": sprint.WorkCardID("p1", 1)}}, About: []string{"p1"}},
+		tset.Entry{Kind: "create", Table: sprint.Fleet, To: "m1:working", IDs: []string{sprint.WorkCardID("p1", 1)}, Scores: []string{"1"},
+			Each: []map[string]string{{"kind": "work", sprint.PrimaryField: "p1", "stream": "s1", "attempt": "1", "member": "m1"}}, About: []string{sprint.WorkCardID("p1", 1)}},
+	)
+
+	// rework p1:
+	out := na.ok("rework p1 --fix 'fix error handling'")
+	if !strings.Contains(out, "REWORK OK") {
+		t.Fatalf("rework: %s", out)
+	}
+
+	// Now drop p1:
+	out = na.ok("drop p1 --reason obsolete")
+	if !strings.Contains(out, "DROP OK") {
+		t.Fatalf("drop: %s", out)
+	}
+
+	// Drop a stream:
+	raw(
+		tset.Entry{Kind: "rows", Table: sprint.Work, Add: []string{"s2"}},
+		tset.Entry{Kind: "create", Table: sprint.Work, To: "s2:ready", IDs: []string{"p2"}, Scores: []string{"1"},
+			Each: []map[string]string{{"kind": "work", "attempt": "0"}}, About: []string{"p2"}},
+	)
+	out = na.ok("drop --stream s2 --reason 'out of scope'")
+	if !strings.Contains(out, "DROP OK") {
+		t.Fatalf("drop --stream: %s", out)
+	}
+
+	// Freeze s1 with op-abort-1 and abort it:
+	res, err = sprintfn.Step(context.Background(), na.tw, &sprintfn.Request{
+		Epoch:  "0",
+		Meta:   sprintfn.Meta{Verb: "fixture", Actor: "coord"},
+		Sprint: &sprintfn.SprintPart{Dropping: map[string]string{"s1": "op-abort-1"}},
+	})
+	if err != nil || res.Refusal != nil || res.Err != nil {
+		t.Fatalf("freeze fixture: %v %v %v", err, res.Refusal, res.Err)
+	}
+	out = na.ok("drop --abort --op op-abort-1")
+	if !strings.Contains(out, "DROP OK") || !strings.Contains(out, "op-abort-1 aborted") {
+		t.Fatalf("drop --abort: %s", out)
 	}
 }
