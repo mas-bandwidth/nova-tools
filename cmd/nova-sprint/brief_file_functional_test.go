@@ -51,7 +51,7 @@ func TestAddBriefFileOnTheStore(t *testing.T) {
 		t.Fatal(err)
 	}
 	var out, errb bytes.Buffer
-	if code := a.run([]string{"add", "--stream", "s0", "--count", "1", "--brief-file", bare}, &out, &errb); code != 2 || !strings.Contains(errb.String(), "LINT DRIFT brief rule-gocache") || out.Len() != 0 {
+	if code := a.run([]string{"add", "--stream", "s0", "--count", "1", "--brief-file", bare}, &out, &errb); code != 2 || !strings.Contains(errb.String(), "LINT DRIFT brief rule-worktree") || out.Len() != 0 {
 		t.Fatalf("a brief without the child rules: exit %d, out %q, err %q; want exit 2 with the lint's lines", code, out.String(), errb.String())
 	}
 	run("add", "--stream", "s1", "--count", "1", "--brief-file", path)
