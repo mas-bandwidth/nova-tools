@@ -47,6 +47,7 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	config := fs.String("config", "", "")
 	workerFile := fs.String("worker", "", "")
 	noWall := fs.Bool("no-wall", false, "")
+	repos := fs.String("repos", "", "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -86,7 +87,7 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	rn := &nativeRunner{
 		self: self, sprintBin: *sprintBin, harness: *harness, model: *model, root: *root, slots: *slots,
 		resultsRoot: *resultsRoot, deadline: deadline.d, tokens: *tokensWord, auth: *auth, config: *config,
-		worker: *workerFile, noWall: *noWall, stderr: stderr,
+		worker: *workerFile, noWall: *noWall, repos: *repos, stderr: stderr,
 	}
 	m := member.New(member.Config{As: *as, Width: *width, Reader: *reader}, sp, rn, stdout)
 	kind := "member"
@@ -143,7 +144,7 @@ func (s *execSprint) Run(args ...string) (int, []byte) {
 type nativeRunner struct {
 	self, sprintBin, harness, model, root, slots, resultsRoot string
 	deadline                                                  time.Duration
-	tokens, auth, config, worker                              string
+	tokens, auth, config, worker, repos                       string
 	noWall                                                    bool
 	stderr                                                    io.Writer
 }
@@ -176,6 +177,11 @@ func (r *nativeRunner) Start(p member.Packet) (member.Child, error) {
 	}
 	if r.noWall {
 		args = append(args, "--no-wall")
+	}
+	for _, repo := range strings.Split(r.repos, ",") {
+		if repo = strings.TrimSpace(repo); repo != "" {
+			args = append(args, "--repos", repo)
+		}
 	}
 	cmd := exec.Command(r.self, args...)
 	logPath := filepath.Join(r.slots, p.Card+".native.log")
