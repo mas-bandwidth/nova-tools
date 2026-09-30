@@ -111,6 +111,10 @@ func TestTickBusyAtMostThree(t *testing.T) {
 	if rep.RoundTrips > 3 || w.place("q1") != "s1:working" {
 		t.Fatalf("the next tick: %d round trips, q1 at %q", rep.RoundTrips, w.place("q1"))
 	}
+	// The busy tick's rules are in the heartbeat, by field (1.4.1).
+	if rules := w.hash("heartbeat")["rules"]; !strings.Contains(rules, `"deal":{"keys":1,"steps":1,"applied":1,"changes":2}`) {
+		t.Fatalf("the heartbeat's rules: %s", rules)
+	}
 }
 
 // bigRule is a rule whose plan, whatever it reads, moves n cards of s1 (ids

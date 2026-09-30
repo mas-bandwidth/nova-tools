@@ -247,8 +247,46 @@ type Report struct {
 	Halved                        map[string]int
 	// Outcomes are R14 phase 2's pushes.
 	Outcomes []Outcome
+	// Rules is each rule's part of the tick, which the heartbeat's rules field
+	// carries (1.4.1).
+	Rules map[string]*RuleStat
 	// Err is what failed the tick.
 	Err error
+}
+
+// RuleStat is one rule's tick (1.4.1, the heartbeat's rules): the keys it
+// read and left, the steps dealt to it, how many applied, the members they
+// change, and its refusals by code.
+type RuleStat struct {
+	Keys    int            `json:"keys"`
+	Left    int            `json:"left,omitempty"`
+	Steps   int            `json:"steps,omitempty"`
+	Applied int            `json:"applied,omitempty"`
+	Changes int            `json:"changes,omitempty"`
+	Refused map[string]int `json:"refused,omitempty"`
+}
+
+// stat is a rule's RuleStat in the report.
+func (r *Report) stat(rule string) *RuleStat {
+	if r.Rules == nil {
+		r.Rules = map[string]*RuleStat{}
+	}
+	st := r.Rules[rule]
+	if st == nil {
+		st = &RuleStat{}
+		r.Rules[rule] = st
+	}
+	return st
+}
+
+// refused counts a refusal of a rule's read or step.
+func (r *Report) refused(rule, code string) {
+	r.Refused[code]++
+	st := r.stat(rule)
+	if st.Refused == nil {
+		st.Refused = map[string]int{}
+	}
+	st.Refused[code]++
 }
 
 // leaseReply is the lease part's reply (IT16): who holds the lease.
@@ -274,6 +312,9 @@ func Tick(ctx context.Context, c sprintfn.Client, l *Loop) (Report, error) {
 	l.hb["ticks"] = strconv.FormatUint(l.ticks, 10)
 	l.hb["failures"] = strconv.Itoa(l.failures)
 	l.hb["error"] = l.lastErr
+	if b, err := json.Marshal(rep.Rules); err == nil && len(b) <= 8192 {
+		l.hb["rules"] = string(b) // the heartbeat's read reserves 8 KiB for it (IT30)
+	}
 	rep.Cur, rep.Epoch = l.cur, l.epoch
 	for k, h := range l.halvings {
 		rep.Halved[k] = h
@@ -427,11 +468,9 @@ func (l *Loop) tick(ctx context.Context, c sprintfn.Client, rep *Report) error {
 	if err != nil {
 		return fmt.Errorf("machine: the lease's generation %q", lr.Gen)
 	}
-	if gen != l.gen {
-		// A take: whatever the loop owed as another generation's error step is
-		// sent at this one.
-		l.gen = gen
-	}
+	// A take moves the generation: whatever the loop owed as another
+	// generation's error step is sent at this one next tick.
+	l.gen = gen
 	rep.Held, rep.Gen = true, gen
 	if r1.errStep >= 0 {
 		l.settleErrorStep(res[r1.errStep], rep)
@@ -515,6 +554,8 @@ func (l *Loop) tick(ctx context.Context, c sprintfn.Client, rep *Report) error {
 		at    int
 	}
 	var reads []sent
+	var quarantine []sprint.Quarantined
+	var notes []sprint.NoteReq
 	for _, bt := range batches {
 		if bt.NoRule {
 			for _, k := range bt.Rest {
@@ -523,21 +564,29 @@ func (l *Loop) tick(ctx context.Context, c sprintfn.Client, rep *Report) error {
 			continue
 		}
 		rep.Left[bt.Rule] += len(bt.Rest)
+		rep.stat(bt.Rule).Left += len(bt.Rest)
 		if len(bt.Keys) == 0 {
 			continue
 		}
 		rr, err := readRequest(l.cfg.Names, l.epoch, bt.Plan)
 		if err != nil {
-			l.onBug(bt, "REQUEST", "", fmt.Sprintf("its read plan cannot be sent: %v", err), rep)
+			// Refused before it is sent: a query past a bound of L1 6 or 7 is
+			// a LIMIT, read at half next tick; any other is a bug, parked (1.3.5).
+			var ref *sprintfn.Refusal
+			if errors.As(err, &ref) && ref.Code == sprintfn.CodeLimit {
+				rep.refused(bt.Rule, ref.Code)
+				notes = append(notes, l.halve(bt, ref.Code, ref.Detail.Budget, "its read", rep)...)
+			} else {
+				l.onBug(bt, sprintfn.CodeRequest, "", fmt.Sprintf("its read plan cannot be sent: %v", err), rep)
+			}
 			continue
 		}
 		rep.Read[bt.Rule] += len(bt.Keys)
+		rep.stat(bt.Rule).Keys += len(bt.Keys)
 		reads = append(reads, sent{bt, len(items)})
 		items = append(items, sprintfn.Item{Read: rr})
 	}
-	var quarantine []sprint.Quarantined
-	var notes []sprint.NoteReq
-	if len(items) == 0 && !look {
+	if len(items) == 0 && !look && len(notes) == 0 {
 		// Idle: no new line and no key to plan (the held back and the parked
 		// are not), so the tick was its lease renewal alone (1.4.2, T5).
 		return nil
@@ -593,7 +642,11 @@ func (l *Loop) tick(ctx context.Context, c sprintfn.Client, rep *Report) error {
 		}
 		if !now.Running {
 			dry = append(dry, rp)
-			continue
+			if !cutClockOnly(s.batch.Keys) || !notesAndKeysOnly(rp) {
+				continue
+			}
+			// R11's cut clock is judged while STOPPED (1.4.5; D4): its keys'
+			// steps of notes and sprint keys are sent at a look.
 		}
 		quarantine = append(quarantine, rp.Quarantine...)
 		for _, k := range rp.HeldBack {
@@ -646,6 +699,9 @@ func (l *Loop) tick(ctx context.Context, c sprintfn.Client, rep *Report) error {
 	for i, p := range order {
 		out = append(out, p.reqs[index[i]])
 		rep.Dealt = append(rep.Dealt, p.batch.Rule)
+		st := rep.stat(p.batch.Rule)
+		st.Steps++
+		st.Changes += p.costs[index[i]].changes
 	}
 	if len(out) == 0 {
 		return nil
@@ -678,6 +734,7 @@ func (l *Loop) tick(ctx context.Context, c sprintfn.Client, rep *Report) error {
 		switch {
 		case r.Step != nil:
 			rep.Applied++
+			rep.stat(p.batch.Rule).Applied++
 			if p.whole {
 				for _, k := range p.batch.Keys {
 					delete(l.halvings, k.Key) // a plan of it applied whole (1.3.6)
@@ -687,7 +744,7 @@ func (l *Loop) tick(ctx context.Context, c sprintfn.Client, rep *Report) error {
 				claims = append(claims, l.cfg.Claims(p.batch.Rule, snapshots[p], p.plan)...)
 			}
 		case r.Refusal != nil:
-			rep.Refused[r.Refusal.Code]++
+			rep.refused(p.batch.Rule, r.Refusal.Code)
 			l.onStepRefused(p, r.Refusal, rep)
 		}
 		// An unknown outcome (r.Err) is settled by the next tick's fresh plan:
@@ -833,7 +890,7 @@ func (l *Loop) onReadRefused(bt Batch, r sprintfn.Result, rep *Report) ([]sprint
 	if ref == nil {
 		return nil, nil // the read's reply is lost: the keys stay and read again
 	}
-	rep.Refused[ref.Code]++
+	rep.refused(bt.Rule, ref.Code)
 	switch {
 	case cardCodes[ref.Code]:
 		if len(ref.Detail.IDs) == 0 {
@@ -961,6 +1018,18 @@ func stepRefusedNote(bt Batch, code, budget, why string) sprint.NoteReq {
 	}
 	text += fmt.Sprintf(", %d keys)", len(subjects))
 	return sprint.NoteReq{Op: "open", Type: TypeStepRefused, Cause: code, Subjects: subjects, Text: text}
+}
+
+// cutClockOnly says every key is a cut clock's, late:cut:<op> (1.2), the one
+// kind of rule key whose step is sent while STOPPED besides R17's
+// (SprintEvents.tla PlanOrLook: the late:cut keys and StopK).
+func cutClockOnly(keys []sprint.AgendaKey) bool {
+	for _, k := range keys {
+		if !strings.HasPrefix(k.Key, "late:cut:") {
+			return false
+		}
+	}
+	return len(keys) != 0
 }
 
 // nowOf is the clocks a rule plans against at its read's time: R moves with
