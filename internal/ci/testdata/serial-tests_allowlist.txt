@@ -203,8 +203,6 @@ internal/swarm/opencode_test.go:TestOpenCodeSourceWithoutSQLiteIsANamedRefusal s
 internal/swarm/opencode_functional_test.go:TestTheOpenCodeSourceSumsTheMessageRows serial: t.Setenv
 internal/swarm/prewarm_functional_test.go:TestPrewarmGitChildrenDropSecrets serial: t.Setenv
 internal/swarm/publicbatch_functional_test.go:TestBatchPublicGateListedRunsUnlistedRefused serial: swaps package var swarm.probeClient
-internal/swarm/pullworker_test.go:TestExecuteContainerRefusesSeatWithoutNovaSecrets serial: t.Setenv
-internal/swarm/pullworker_functional_test.go:TestExecuteContainerRunsThroughNovaSecrets serial: t.Setenv
 internal/swarm/queue_test.go:TestStealWaitsOutAReplaceCollision serial: swaps package var swarm.forceTransientIO
 internal/swarm/queue_test.go:TestTakeCardWaitsOutAReplaceCollision serial: swaps package var swarm.forceTransientIO
 internal/swarm/result_collision_test.go:TestAReportWhoseReadsCollideIsStillClassifiedFromItsContent serial: swaps package var swarm.forceTransientIO

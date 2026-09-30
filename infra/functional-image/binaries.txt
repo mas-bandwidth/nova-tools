@@ -23,7 +23,6 @@ bash	base	bash
 c++	absent	only the macOS sandbox tests compile with it; the darwin body is skipped on Linux by design
 cmd.exe	absent	Windows only; a Linux container has no Windows shell
 diskutil	absent	macOS only; the volume tests that call it are darwin tests
-docker	absent	a container engine is never run inside the container; the swarm engine probe finds none and picks none
 echo	base	coreutils
 gh	absent	reaches the forge over the network, which the container has none of; the tier fakes it
 git	apt	git
@@ -36,11 +35,9 @@ make	apt	make
 mkdir	base	coreutils
 nc	absent	only the darwin sandbox socket test dials with it and that test skips on Linux
 nova-check	tree	built from the checkout by the tests, or stubbed by them; never expected on the PATH
-nova-secrets	tree	built from the checkout by the tests, or stubbed by them; never expected on the PATH
 nova-swarm	tree	built from the checkout by the tests, or stubbed by them; never expected on the PATH
 opencode	absent	the vendor harness binary belongs to the card image; the tier drives a fake harness
 pg_ctl	apt	postgresql-16
-podman	absent	a container engine is never run inside the container; the swarm engine probe finds none and picks none
 ps	apt	procps
 python3	apt	python3
 redis-server	source	redis-build
