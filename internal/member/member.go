@@ -201,6 +201,15 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 		delete(m.running, id) // refused (1) too: the card is no longer ours to report
 		acted++
 	}
+	// A child whose card the queue no longer lists (the sprint was cleared, the
+	// card was dealt elsewhere) has nothing left to report to: once it has
+	// ended it is forgotten, so it does not hold a place of the width for ever.
+	for id, ch := range m.running {
+		if _, listed := byID[id]; !listed && ch.Done() {
+			delete(m.running, id)
+			fmt.Fprintf(m.out, "drop %s: no longer in the queue\n", id)
+		}
+	}
 	// 2. Take (begin) up to the width, in one verb, and start each.
 	room := m.cfg.Width - len(m.running)
 	if room <= 0 {
