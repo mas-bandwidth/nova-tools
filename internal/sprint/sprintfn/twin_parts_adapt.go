@@ -34,3 +34,18 @@ func PartsBefore(st *State, req *Request) []BeforeAsk {
 	}
 	return []BeforeAsk{{Table: sprint.Fleet, IDs: ids, Fields: []string{memberStatus}}}
 }
+
+// The write path's before hook asks what the parts read (1.0, S.before): this
+// init runs before X's (the files' order), and X's hook appends what it is
+// given, so a twin made by NewTwin asks for a beat's control cards as the beat
+// part needs (1.4.4) and a beat step is never refused CONFIG for want of them.
+func init() {
+	prev := defaultPhases.Before
+	defaultPhases.Before = func(st *State, req *Request) []BeforeAsk {
+		asks := PartsBefore(st, req)
+		if prev != nil {
+			asks = append(asks, prev(st, req)...)
+		}
+		return asks
+	}
+}
