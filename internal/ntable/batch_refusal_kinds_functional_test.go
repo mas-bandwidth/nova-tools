@@ -163,9 +163,7 @@ func TestBatchRefusalsDoNotEchoALongValue(t *testing.T) {
 			t.Errorf("%s: %v", name, err)
 			continue
 		}
-		if len(err.Error()) > 700 {
-			t.Errorf("%s: the refusal is %d bytes: it echoes a long value", name, len(err.Error()))
-		}
+		assert.LessOrEqual(t, len(err.Error()), 700, "%s: the refusal is %d bytes: it echoes a long value", name, len(err.Error()))
 		if name == "equals" || name == "absent" {
 			assert.ErrorContains(t, err, "(50000 bytes)", "%s: the refusal gives no length for the value: %.300s", name, err)
 		}

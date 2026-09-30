@@ -27,9 +27,7 @@ func TestIssue1451EveryMissingFlagRefusalNamesTheDoor(t *testing.T) {
 	seen := map[string]bool{}
 	for _, ex := range examples {
 		fields := strings.Fields(ex)
-		if len(fields) < 2 {
-			t.Fatalf("the help example %q names no verb", ex)
-		}
+		require.GreaterOrEqual(t, len(fields), 2, "the help example %q names no verb", ex)
 		verb := fields[1]
 		if seen[verb] {
 			continue

@@ -72,8 +72,7 @@ func TestEscapeEveryControlCharacter(t *testing.T) {
 			if tc.in != "" && got == "" {
 				t.Errorf("Escape(%q) emptied the text; a reason must never vanish", tc.in)
 			}
-			again := Escape(tc.in)
-			assert.Equal(t, again, got, "Escape(%q) is not deterministic: %q then %q", tc.in, got, again)
+			assert.Equal(t, got, Escape(tc.in), "Escape(%q) is not deterministic", tc.in)
 		})
 	}
 }
@@ -142,8 +141,7 @@ func TestFieldIsOneTokenHoldingNoEquals(t *testing.T) {
 			if tc.in != "" && got == "" {
 				t.Errorf("Field(%q) emptied the text", tc.in)
 			}
-			again := Field(tc.in)
-			assert.Equal(t, again, got, "Field(%q) is not deterministic: %q then %q", tc.in, got, again)
+			assert.Equal(t, got, Field(tc.in), "Field(%q) is not deterministic", tc.in)
 		})
 	}
 }
@@ -233,16 +231,12 @@ func TestCapMarksWhatItDropped(t *testing.T) {
 
 	s := strings.Repeat("x", 1000)
 	got := Cap(s, 100)
-	if len(got) > 100 {
-		t.Errorf("Cap(1000, 100) returned %d bytes", len(got))
-	}
+	assert.LessOrEqual(t, len(got), 100, "Cap(1000, 100) returned %d bytes", len(got))
 	if !strings.HasPrefix(got, "xxxx") {
 		t.Errorf("the head of the tail is gone: %q", got[:20])
 	}
 	i := strings.Index(got, "...+")
-	if i < 0 {
-		t.Fatalf("no mark in %q", got)
-	}
+	require.GreaterOrEqual(t, i, 0, "no mark in %q", got)
 	var n int
 	_, err := fmt.Sscanf(got[i:], "...+%dB", &n)
 	require.NoError(t, err, "mark %q does not parse: %v", got[i:], err)
@@ -292,9 +286,7 @@ func TestCapOnInvalidUTF8(t *testing.T) {
 
 	s := strings.Repeat("\xff\xfe", 500)
 	got := Cap(s, 60)
-	if len(got) > 60 {
-		t.Errorf("returned %d bytes for a 60-byte ceiling", len(got))
-	}
+	assert.LessOrEqual(t, len(got), 60, "returned %d bytes for a 60-byte ceiling", len(got))
 	assert.Contains(t, got, "...+", "no mark: %q", got)
 	assert.NotContains(t, Escape(got), "\n", "Escape over a capped invalid tail is not one line")
 }

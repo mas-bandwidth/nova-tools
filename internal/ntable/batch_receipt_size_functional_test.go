@@ -37,20 +37,15 @@ func TestBatchReceiptRecordsLongValuesByLengthAndDigest(t *testing.T) {
 		quoted[i] = `"` + n + `"`
 	}
 	raw := manifestWith(probeRev(ctx, c), "big-unset", `{"id":"a","expect":{},"unset":[`+strings.Join(quoted, ",")+`]}`)
-	if len(raw) > 2000 {
-		t.Fatalf("the manifest is %d bytes", len(raw))
-	}
+	require.LessOrEqual(t, len(raw), 2000, "the manifest is %d bytes", len(raw))
 	ans, err := rawApply(ctx, c, raw)
 	if err != nil || ans[0] != "OK" {
 		t.Fatalf("apply: %.200v %v", ans, err)
 	}
-	if size := len(fmt.Sprint(ans)); size > 64<<10 {
-		t.Errorf("the receipt is %d bytes for a %d-byte manifest", size, len(raw))
-	}
+	size := len(fmt.Sprint(ans))
+	assert.LessOrEqual(t, size, 64<<10, "the receipt is %d bytes for a %d-byte manifest", size, len(raw))
 	record := c.HGet(ctx, ntable.DefKey("demo")+":ops", "0:big-unset").Val()
-	if len(record) > 120<<10 {
-		t.Errorf("the stored operation record is %d bytes", len(record))
-	}
+	assert.LessOrEqual(t, len(record), 120<<10, "the stored operation record is %d bytes", len(record))
 
 	// what the receipt says of a value is its length and digest
 	r, err := ntable.ApplyBatch(ctx, c, ntable.BatchManifest{Schema: 1, Table: "demo", Epoch: "0", ExpectedTableRevision: probeRev(ctx, c), OperationID: "big-unset-2", Members: []ntable.BatchMemberEntry{

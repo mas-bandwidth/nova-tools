@@ -21,9 +21,7 @@ func luaLimits(t *testing.T) map[string]int {
 	require.NoError(t, err)
 	block := func(head string) string {
 		i := strings.Index(string(src), head)
-		if i < 0 {
-			t.Fatalf("table.lua has no %s", head)
-		}
+		require.GreaterOrEqual(t, i, 0, "table.lua has no %s", head)
 		rest := string(src)[i:]
 		return rest[:strings.Index(rest, "\n  }")]
 	}
@@ -108,9 +106,7 @@ func TestSpecBatchSectionDescribesWhatIs(t *testing.T) {
 	require.NoError(t, err)
 	text := string(src)
 	i := strings.Index(text, "## Batched member read and conditional write")
-	if i < 0 {
-		t.Fatal("no batch section")
-	}
+	require.GreaterOrEqual(t, i, 0, "no batch section")
 	for _, phrase := range []string{" gate", "mini-quack", "card manager", "card layer", "Use the existing", "Tests must", "must pin", "Extend the", "The design must", "resumes"} {
 		assert.NotContains(t, text[i:], phrase, "the batch section holds %q: it describes process, not what is", phrase)
 	}
@@ -187,9 +183,8 @@ func TestScoreTextBoundHoldsEveryScoreTheStorePrints(t *testing.T) {
 			longest = n
 		}
 	}
-	if got := scoreTextBytes(t); got < longest {
-		t.Errorf("T.score_text_bytes %d is shorter than a score the store prints (%d)", got, longest)
-	}
+	got := scoreTextBytes(t)
+	assert.GreaterOrEqual(t, got, longest, "T.score_text_bytes %d is shorter than a score the store prints (%d)", got, longest)
 }
 
 // The receipt's bound is the manifest's: one MiB, in the server, the library and

@@ -55,9 +55,7 @@ func TestBatchReceiptOverTheBoundIsRefusedBeforeAnyWrite(t *testing.T) {
 
 	// the manifest is under its own bound, the receipt it would make is not
 	raw := manifestWith(probeRev(ctx, c), "big-unset", unset(0, members))
-	if len(raw) > ntable.LimitManifestBytes {
-		t.Fatalf("the manifest is %d bytes, over its bound", len(raw))
-	}
+	require.LessOrEqual(t, len(raw), int(ntable.LimitManifestBytes), "the manifest is %d bytes, over its bound", len(raw))
 	before := storeImage(t, c)
 	ans, err := rawApply(ctx, c, raw)
 	if err != nil || len(ans) < 5 || ans[0] != "REFUSED" || ans[1] != "LIMIT" || ans[2] != "receipt bytes" ||
@@ -85,9 +83,8 @@ func TestBatchReceiptOverTheBoundIsRefusedBeforeAnyWrite(t *testing.T) {
 		t.Fatalf("four members: %.200v %v", ans, err)
 	}
 	ev := c.XRevRangeN(ctx, ntable.DefKey("demo")+":changes", "+", "-", 1).Val()
-	if got := len(fmt.Sprint(ev[0].Values["batch_delta"])); got > ntable.LimitReceiptBytes {
-		t.Errorf("an accepted batch left a delta of %d bytes, over %d", got, ntable.LimitReceiptBytes)
-	}
+	got := len(fmt.Sprint(ev[0].Values["batch_delta"]))
+	assert.LessOrEqual(t, got, int(ntable.LimitReceiptBytes), "an accepted batch left a delta of %d bytes, over %d", got, ntable.LimitReceiptBytes)
 }
 
 func TestBatchReceiptDigestsALongValueInEveryRecordOfIt(t *testing.T) {

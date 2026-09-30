@@ -15,6 +15,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"pgregory.net/rapid"
 )
@@ -36,9 +37,7 @@ func TestTableMemberBatchesAgainstModel(t *testing.T) {
 				t.Errorf("batch generator missed acceptance/refusal for %s: %v; this run is insufficient coverage", []string{"add", "remove", "move"}[op], counts)
 			}
 		}
-		if len(tally.gapOrder) > 0 {
-			t.Errorf("contract gaps: %v", tally.gapOrder)
-		}
+		assert.Empty(t, tally.gapOrder, "contract gaps: %v", tally.gapOrder)
 	}()
 	present := storeHasFunction(t, ctx, c, checkFn)
 	rapid.Check(t, func(rt *rapid.T) {

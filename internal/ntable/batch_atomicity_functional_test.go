@@ -299,9 +299,7 @@ func TestBatchOverBoundGuardsRefuseByName(t *testing.T) {
 			t.Errorf("%s: %v %v; want a LIMIT refusal", name, trunc(ans), err)
 			continue
 		}
-		if len(fmt.Sprint(ans)) > 200 {
-			t.Errorf("%s: the refusal is %d bytes; it echoes the input", name, len(fmt.Sprint(ans)))
-		}
+		assert.LessOrEqual(t, len(fmt.Sprint(ans)), 200, "%s: the refusal is %d bytes; it echoes the input", name, len(fmt.Sprint(ans)))
 	}
 	assert.Equal(t, before, storeImage(t, c), "a refused over-bound manifest changed the store")
 }
