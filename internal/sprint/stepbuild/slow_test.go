@@ -10,10 +10,13 @@ import (
 )
 
 // The longer tier of the property test (make test-slow): 10,000 random
-// inputs at the contract's own bounds, and the scaled-down inputs of the unit
-// tier again with the full accounting on every one. The inputs at the
-// contract's numbers are built to reach them: thousands of members, hundreds
-// of entries, megabytes of fields, a hundred notes, the row bound.
+// inputs at the contract's own bounds, the scaled-down inputs of the unit
+// tier again (the same seeds) with the full accounting and the fullness check
+// on every one, where the unit tier applies them to one in sampleEvery, and the
+// worst case of every kind of entry against Layer 1's layout at the contract's
+// own 8 MiB of planned argv bytes. The inputs at the contract's numbers are
+// built to reach them: thousands of members, hundreds of entries, megabytes of
+// fields, a hundred notes, the row bound.
 
 // bigFragments are the shapes of input that reach a bound of section 6; an
 // input is one to three of them, on ids that may overlap.
@@ -90,12 +93,17 @@ var bigFragments = []func(g gen, prefix string) []Entry{
 		return []Entry{e, gd(g.table(), g.pick("g", 1+g.r.IntN(50), 50))}
 	},
 	// rows and members: thousands of members that leave a row and enter one,
-	// with the rows entries that add the one and delete the other, in any order
+	// with the rows entries that add the one and delete the other (or the one entry
+	// that does both), in any order
 	func(g gen, prefix string) []Entry {
 		table := g.table()
 		e := mv(table, g.pick(prefix, 1500+g.r.IntN(2500), 4000))
 		e.From, e.To = "src:c", "dst:c"
 		out := []Entry{e, {Kind: KindRows, Table: table, Add: []string{"dst"}}, {Kind: KindRows, Table: table, Del: []string{"src"}}}
+		if g.coin(50) {
+			// the rename of a row: one rows entry that adds the one and deletes the other
+			out = []Entry{e, {Kind: KindRows, Table: table, Add: []string{"dst"}, Del: []string{"src"}}}
+		}
 		g.r.Shuffle(len(out), func(i, j int) { out[i], out[j] = out[j], out[i] })
 		return out
 	},
@@ -159,4 +167,24 @@ func TestSlowPropertyFullAccountingOnEveryScaledInput(t *testing.T) {
 func TestSlowPropertyEveryBoundAtRandomFullAccounting(t *testing.T) {
 	t.Parallel()
 	propertyRandomBounds(t, propertyInputs, 8, 1)
+}
+
+// The worst case of every kind of entry (argv_layout_test.go) at the
+// contract's own bound: no step the builder emits has a count over 8 MiB by
+// Layer 1's layout, which is the step Layer 1 would refuse LIMIT at prepare.
+func TestSlowPlannedArgvIsInsideLayerOnesOwnCountAtTheContractsBound(t *testing.T) {
+	t.Parallel()
+	for _, tc := range argvWorstCases() {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			// Rows and notes are held by their own bounds (100 row names, 100 notes)
+			// long before 8 MiB of argv: a step of them cannot reach it, and their
+			// case keeps the bound it has in the unit tier.
+			n, bound := 4500, LimitPlannedArgvBytes
+			if tc.bound != 0 {
+				n, bound = 5000, tc.bound
+			}
+			checkArgvWorstCase(t, tc, n, bound)
+		})
+	}
 }

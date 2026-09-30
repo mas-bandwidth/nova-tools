@@ -272,6 +272,7 @@ func TestARowsDeleteStartsANewStepAfterTheMembersThatNameItsRow(t *testing.T) {
 		steps := must(t, cfg(), tc.entries)
 		if len(steps) != tc.steps {
 			t.Errorf("%s: %d steps, want %d", tc.name, len(steps), tc.steps)
+			continue // a step that is not there is a failure, never an index out of range
 		}
 		if tc.steps == 2 && (len(steps[0].Entries) != 1 || steps[1].Entries[0].Kind != KindRows) {
 			t.Errorf("%s: the delete does not lead the second step: %v %v", tc.name, kinds(steps[0]), kinds(steps[1]))
@@ -359,20 +360,15 @@ func TestRowsAndMembersGiveTheSameResultWhereverTheStepsAreCut(t *testing.T) {
 			order:   []int{0, 1, 2},
 		},
 		{
-			name:    "a move to a new row, and the row it left deleted, the rows first",
+			// The rename of a row: one rows entry adds the new row and deletes the
+			// old, and the moves between them. Its adds come first, then the moves,
+			// then its deletes: legal in every cut, as the whole is.
+			name:    "a move to a new row, and the row it left deleted, by one rows entry",
 			entries: []Entry{rowsEntry("t", []string{"n"}, []string{"r"}), moveTo("t", "r:c", "n:c", "x", "z")},
-			code:    "cycle",
+			order:   []int{0, 1, 0},
 		},
 	} {
 		want, wantCode := start.applyStep(wholeOf(tc.entries))
-		if tc.code == "cycle" {
-			_, err := Build(cfg(), tc.entries)
-			var ie *InputError
-			if !errors.As(err, &ie) || ie.Field != "add/del" || !strings.Contains(ie.Reason, "wait on each other") {
-				t.Errorf("%s: %v", tc.name, err)
-			}
-			continue
-		}
 		if wantCode != tc.code {
 			t.Fatalf("%s: the model refuses the whole with %q, the case says %q", tc.name, wantCode, tc.code)
 		}
@@ -468,24 +464,159 @@ func TestARowsEntryThatDeletesARowItsOwnGuardNamesIsRefused(t *testing.T) {
 	}
 }
 
-// Entries that wait on each other refuse the build, naming the first of them.
+// Entries that wait on each other refuse the build, naming the first of them:
+// a rows entry that adds a row a member entry goes to, and guards the member
+// that entry moves, waits for the entry that has to come after it.
 func TestEntriesThatWaitOnEachOtherRefuseTheBuild(t *testing.T) {
 	t.Parallel()
+	adds := rowsEntry("t", []string{"n"}, nil)
+	adds.Guards = []Entry{gdAt("t", "r:c", "x")} // x is named by the move below: it goes first
 	entries := []Entry{
 		{Kind: KindNote, Notes: []Note{{About: []string{"p"}}}},
-		rowsEntry("t", []string{"n"}, []string{"r"}),
-		moveTo("t", "r:c", "n:c", "x"),
+		moveTo("t", "r:c", "n:c", "x"), // waits for the row n, which the next entry adds
+		adds,                           // waits for the entry that names x before it
 	}
 	steps, err := Build(cfg(), entries)
 	var ie *InputError
-	if steps != nil || !errors.As(err, &ie) || ie.Entry != 1 || ie.Field != "add/del" || !errors.Is(err, ErrInput) {
+	if steps != nil || !errors.As(err, &ie) || ie.Entry != 1 || ie.Field != "add/del" || !errors.Is(err, ErrInput) || !strings.Contains(ie.Reason, "wait on each other") {
 		t.Fatalf("%v (%d steps)", err, len(steps))
 	}
-	// Split into its adds and its deletes, the same input is placed.
-	split := []Entry{rowsEntry("t", []string{"n"}, nil), rowsEntry("t", nil, []string{"r"}), entries[2]}
-	steps = must(t, cfg(), split)
-	if got, want := placed(steps), []int{0, 2, 1}; !reflect.DeepEqual(got, want) {
+	// Without the guard on x the two are ordered, the rows entry first.
+	adds.Guards = nil
+	steps = must(t, cfg(), []Entry{entries[1], adds})
+	if got, want := placed(steps), []int{1, 0}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("placed %v, want %v", got, want)
+	}
+	// A rows entry that adds a row and deletes another does not wait on itself:
+	// the builder splits it (TestARowRenameIsPlacedAsTheAddsTheMovesAndTheDeletes).
+	rename := rowsEntry("t", []string{"n"}, []string{"r"})
+	if _, err := Build(cfg(), []Entry{rename, moveTo("t", "r:c", "n:c", "x")}); err != nil {
+		t.Fatalf("a rename: %v", err)
+	}
+}
+
+// The rename of a row: one rows entry adds the new row and deletes the old one,
+// and the members move between them. The whole is legal (n is added, r emptied
+// in the same step), so it is legal in every cut: the builder places the entry's
+// adds, then the moves, then the entry's deletes, as the two wire entries of the
+// adds and of the deletes.
+func TestARowRenameIsPlacedAsTheAddsTheMovesAndTheDeletes(t *testing.T) {
+	t.Parallel()
+	start := world{
+		rows:  map[string][]string{"t": {"r", "q"}},
+		place: map[[2]string]string{{"t", "x"}: "r:c", {"t", "z"}: "r:c", {"t", "g"}: "q:c"},
+	}
+	rename := rowsEntry("t", []string{"n"}, []string{"r"})
+	rename.Guards = []Entry{gdAt("t", "q:c", "g")}
+	rename.Notes = []Note{{Meta: map[string]string{"n": "1"}, About: []string{"p"}}}
+	in := []Entry{rename, moveTo("t", "r:c", "n:c", "x", "z")}
+	want, wantCode := start.applyStep(wholeOf(in))
+	if wantCode != "" {
+		t.Fatalf("the whole is refused: %s", wantCode)
+	}
+	// At the contract's bounds: the adds and the moves in one step; the deletes
+	// lead the next (a delete starts a step that holds a member entry naming its row).
+	steps := must(t, cfg(), in)
+	if len(steps) != 2 {
+		t.Fatalf("%d steps", len(steps))
+	}
+	if got := kinds(steps[0]); !reflect.DeepEqual(got, []string{"guard", "rows", "move"}) || !reflect.DeepEqual(steps[0].Entries[1].Add, []string{"n"}) || steps[0].Entries[1].Del != nil {
+		t.Fatalf("the first step: %v, %+v", got, steps[0].Entries)
+	}
+	if got := kinds(steps[1]); !reflect.DeepEqual(got, []string{"guard", "rows"}) || !reflect.DeepEqual(steps[1].Entries[1].Del, []string{"r"}) || steps[1].Entries[1].Add != nil {
+		t.Fatalf("the second step: %v, %+v", got, steps[1].Entries)
+	}
+	// The guards travel with both halves, once per step; the notes follow the last.
+	if len(steps[0].Notes) != 0 || len(steps[1].Notes) != 1 || steps[1].Notes[0].Source != 0 {
+		t.Fatalf("the notes: %d in the first step, %+v in the second", len(steps[0].Notes), steps[1].Notes)
+	}
+	if got := placed(steps); !reflect.DeepEqual(got, []int{0, 1, 0}) {
+		t.Fatalf("placed %v", got)
+	}
+	// In every cut the steps end where the whole ends (a step holds at least an
+	// entry and its guard).
+	for n := 2; n <= 5; n++ {
+		steps := must(t, entriesBound(n), in)
+		got, code := start.run(steps)
+		if code != "" || got.String() != want.String() {
+			t.Errorf("%d entries a step: %d steps end %q in %s, the whole ends in %s", n, len(steps), code, got, want)
+		}
+		if p := placed(steps); !reflect.DeepEqual(p, []int{0, 1, 0}) {
+			t.Errorf("%d entries a step: placed %v", n, p)
+		}
+	}
+	one := Contract()
+	one.Candidates, one.RowPairs = 1, 1
+	c := cfg()
+	c.Bounds = one
+	steps = must(t, c, in)
+	if got, code := start.run(steps); code != "" || got.String() != want.String() {
+		t.Errorf("a candidate and a row a step: %d steps end %q in %s, the whole ends in %s", len(steps), code, got, want)
+	}
+	// The rename of the same members in the other direction, placed by one entry
+	// that deletes first in the input: the same three pieces.
+	back := []Entry{moveTo("t", "r:c", "n:c", "x", "z"), rowsEntry("t", []string{"n"}, []string{"r"})}
+	steps = must(t, cfg(), back)
+	if got, code := start.run(steps); code != "" || got.String() != want.String() {
+		t.Errorf("the rename after its moves: %d steps end %q in %s", len(steps), code, got)
+	}
+	// A rows entry that adds and deletes, with nothing between, is one wire entry.
+	steps = must(t, cfg(), []Entry{rowsEntry("t", []string{"n"}, []string{"q"})})
+	if len(steps) != 1 || len(steps[0].Entries) != 1 || steps[0].Entries[0].Add == nil || steps[0].Entries[0].Del == nil {
+		t.Fatalf("an entry that needs no split is split: %+v", steps)
+	}
+}
+
+// A rows entry that deletes a row, and after it a member entry whose destination
+// is that row: the whole is ROWCONFLICT (a delete with an incoming member), and
+// however the bounds cut it the outcome is the same: the delete lands, and the
+// member entry is refused NOROW in the step after it. It no longer depends on
+// whether the two share a step.
+func TestAMemberEntryIntoARowThatAnEarlierEntryDeletesStartsANewStep(t *testing.T) {
+	t.Parallel()
+	start := world{
+		rows:  map[string][]string{"t": {"r", "q"}},
+		place: map[[2]string]string{{"t", "x"}: "q:c"},
+	}
+	for _, tc := range []struct {
+		name string
+		in   []Entry
+	}{
+		{"a create into the row", []Entry{rowsEntry("t", nil, []string{"r"}), createAt("t", "r:c", "y")}},
+		{"a move into the row", []Entry{rowsEntry("t", nil, []string{"r"}), moveTo("t", "q:c", "r:c", "x")}},
+	} {
+		if _, code := start.applyStep(wholeOf(tc.in)); code != "ROWCONFLICT" {
+			t.Fatalf("%s: the whole ends %q", tc.name, code)
+		}
+		var end string
+		for _, bd := range []Bounds{Contract(), entriesBound(1).Bounds, entriesBound(2).Bounds, entriesBound(3).Bounds, func() Bounds { b := Contract(); b.Candidates, b.RowPairs = 1, 1; return b }()} {
+			c := cfg()
+			c.Bounds = bd
+			steps := must(t, c, tc.in)
+			if len(steps) != 2 || steps[0].Entries[0].Kind != KindRows || len(steps[0].Entries) != 1 {
+				t.Errorf("%s, entries %d: %d steps, the delete does not lead alone: %v", tc.name, bd.Entries, len(steps), kinds(steps[0]))
+				continue
+			}
+			got, code := start.run(steps)
+			if code != "step 2: NOROW" || got.String() != "t=[q] t/x@q:c" {
+				t.Errorf("%s, entries %d: the steps end %q in %s", tc.name, bd.Entries, code, got)
+			}
+			if end != "" && end != code+got.String() {
+				t.Errorf("%s, entries %d: the outcome depends on the cut: %q, before %q", tc.name, bd.Entries, code+got.String(), end)
+			}
+			end = code + got.String()
+		}
+	}
+	// The mirror of the rule for a delete after the members that name its row: an
+	// add of the row is not kept apart from the members that go into it.
+	if steps := must(t, cfg(), []Entry{rowsEntry("t", []string{"n"}, nil), createAt("t", "n:c", "y")}); len(steps) != 1 {
+		t.Errorf("an add and then a create into the row: %d steps", len(steps))
+	}
+	// A move into another row, or another table, is not kept apart.
+	for _, e := range []Entry{createAt("t", "q:c", "y"), createAt("u", "r:c", "y")} {
+		if steps := must(t, cfg(), []Entry{rowsEntry("t", nil, []string{"r"}), e}); len(steps) != 1 {
+			t.Errorf("a delete of r and then %s at %s: %d steps", e.Table, e.To, len(steps))
+		}
 	}
 }
 
@@ -606,7 +737,7 @@ func (g worldGen) input(w world) []Entry {
 func TestRowsAndMembersAtEveryCutPoint(t *testing.T) {
 	t.Parallel()
 	const inputs, shards = 6000, 4
-	var results [shards][4]int // per shard: inputs, moved, cycles, legal wholes
+	var results [shards][4]int // per shard: inputs, moved, split rows entries, legal wholes
 	for shard := 0; shard < shards; shard++ {
 		t.Run(strconv.Itoa(shard), func(t *testing.T) {
 			t.Parallel()
@@ -639,10 +770,12 @@ func TestRowsAndMembersAtEveryCutPoint(t *testing.T) {
 					steps, err := Build(c, in)
 					var ie *InputError
 					if errors.As(err, &ie) && ie.Field == "add/del" {
-						if bd == bounds[0] {
+						t.Fatalf("seed %d: entries that wait on each other: %v\n%s", seed, err, describe(w, in))
+					}
+					if bd == bounds[0] {
+						if _, split, _ := refPlacement(in); split {
 							results[shard][2]++
 						}
-						break
 					}
 					if err != nil {
 						t.Fatalf("seed %d: %v\n%s", seed, err, describe(w, in))
@@ -671,10 +804,10 @@ func TestRowsAndMembersAtEveryCutPoint(t *testing.T) {
 			}
 		}
 		// The inputs must exercise what is proved: entries moved, legal wholes
-		// (the cuts of a legal whole must all be legal), and entries that wait
-		// on each other (refused).
+		// (the cuts of a legal whole must all be legal), and rows entries that
+		// add and delete split to be placed (the renames of a row).
 		if total[0] != inputs || total[1] < inputs/50 || total[3] < inputs/5 || total[2] == 0 {
-			t.Errorf("%d inputs, %d placed out of order, %d that wait on each other, %d legal wholes", total[0], total[1], total[2], total[3])
+			t.Errorf("%d inputs, %d placed out of order, %d with a rows entry split, %d legal wholes", total[0], total[1], total[2], total[3])
 		}
 	})
 }

@@ -98,9 +98,10 @@ func argvCases() []argvCase {
 	}
 }
 
-// Every term of the model is counted by the builder: a step's model count,
-// used as the bound, is one step, and one byte fewer is more; and the strict
-// count of a step is never over the model's, or the bound.
+// Every term of the model is counted by the builder: a step's model count with
+// the margin on top (charged), used as the bound, is one step, and one byte
+// fewer is more; and the strict count of a step, Layer 1's own layout, is never
+// over the model's, or the bound.
 func TestPlannedArgvIsTheModelOfEveryShape(t *testing.T) {
 	t.Parallel()
 	for _, sh := range argvCases() {
@@ -118,18 +119,19 @@ func TestPlannedArgvIsTheModelOfEveryShape(t *testing.T) {
 		if m.strict > m.argv {
 			t.Errorf("%s: the strict count is %d, the model %d: a model that is no upper bound", sh.name, m.strict, m.argv)
 		}
-		c.Bounds.PlannedArgvBytes = m.argv
+		bound := charged(m.argv)
+		c.Bounds.PlannedArgvBytes = bound
 		if steps := must(t, c, sh.entries); len(steps) != 1 {
-			t.Errorf("%s: a bound of exactly the model's %d: %d steps", sh.name, m.argv, len(steps))
+			t.Errorf("%s: a bound of exactly the model's %d with its margin, %d: %d steps", sh.name, m.argv, bound, len(steps))
 		}
-		c.Bounds.PlannedArgvBytes = m.argv - 1
+		c.Bounds.PlannedArgvBytes = bound - 1
 		steps = must(t, c, sh.entries)
 		if len(steps) < 2 {
-			t.Errorf("%s: a bound of the model's %d less one: %d steps: the builder counts less than the model", sh.name, m.argv, len(steps))
+			t.Errorf("%s: a bound of the model's %d with its margin, %d, less one: %d steps: the builder counts less than the model", sh.name, m.argv, bound, len(steps))
 		}
 		for _, s := range steps {
-			if got := measureKeys(t, s.Encode(), sh.kc); got.argv > m.argv-1 || got.strict > m.argv-1 {
-				t.Errorf("%s: step %d plans %d by the model, %d strictly, over %d", sh.name, s.Part, got.argv, got.strict, m.argv-1)
+			if got := measureKeys(t, s.Encode(), sh.kc); charged(got.argv) > bound-1 || got.strict > bound-1 {
+				t.Errorf("%s: step %d plans %d by the model, %d strictly, over %d", sh.name, s.Part, got.argv, got.strict, bound-1)
 			}
 		}
 	}
@@ -157,7 +159,7 @@ func TestPlannedArgvOfIDsOf256BytesIsCutAtTheBound(t *testing.T) {
 	if held := countMembers(steps[:1]); held >= 1806 {
 		t.Fatalf("the first step holds %d members: the keys and IDs are not counted", held)
 	}
-	pos := []int{0}
+	pl := identityPlace(1)
 	for k, s := range steps {
 		m := measure(t, s.Encode())
 		if m.strict > LimitPlannedArgvBytes || m.argv > LimitPlannedArgvBytes || len(m.within(Contract())) != 0 {
@@ -168,7 +170,7 @@ func TestPlannedArgvOfIDsOf256BytesIsCutAtTheBound(t *testing.T) {
 		if k+1 < len(steps) {
 			hyp := s
 			hyp.Entries = append([]Placed(nil), s.Entries...)
-			if !addFirstPiece(&hyp, s, steps[k+1], pos) {
+			if !addFirstPiece(&hyp, s, steps[k+1], pl) {
 				t.Fatalf("step %d: nothing to add", k+1)
 			}
 			bad := measure(t, hyp.Encode()).within(Contract())
@@ -185,10 +187,10 @@ func TestTheMemberPrefixIsCounted(t *testing.T) {
 	e.Set = map[string]string{"f": pad(2000)}
 	small, big := cfg(), cfg()
 	small.MemberPrefixBytes = 8
-	big.MemberPrefixBytes = 256
+	big.MemberPrefixBytes = DefaultMemberPrefixBytes
 	a, b := must(t, small, []Entry{e}), must(t, big, []Entry{e})
-	if in8, in256 := countMembers(a[:1]), countMembers(b[:1]); in8 <= in256 {
-		t.Fatalf("a prefix of 8 bytes gives a first step of %d members, one of 256 gives %d: the prefix is not counted", in8, in256)
+	if in8, inBig := countMembers(a[:1]), countMembers(b[:1]); in8 <= inBig {
+		t.Fatalf("a prefix of 8 bytes gives a first step of %d members, one of %d gives %d: the prefix is not counted", in8, DefaultMemberPrefixBytes, inBig)
 	}
 	for _, s := range a {
 		if m := measureKeys(t, s.Encode(), keyCfg{8}); len(m.within(Contract())) != 0 {
@@ -196,11 +198,11 @@ func TestTheMemberPrefixIsCounted(t *testing.T) {
 		}
 	}
 	for _, s := range b {
-		if m := measureKeys(t, s.Encode(), keyCfg{256}); len(m.within(Contract())) != 0 {
-			t.Fatalf("a prefix of 256, step %d: %v", s.Part, m.within(Contract()))
+		if m := measureKeys(t, s.Encode(), keyCfg{DefaultMemberPrefixBytes}); len(m.within(Contract())) != 0 {
+			t.Fatalf("a prefix of %d, step %d: %v", DefaultMemberPrefixBytes, s.Part, m.within(Contract()))
 		}
 	}
-	// Zero is DefaultMemberPrefixBytes, the same steps as 256 said outright.
+	// Zero is DefaultMemberPrefixBytes, the same steps as it said outright.
 	zero := must(t, cfg(), []Entry{e})
 	if len(zero) != len(b) || zero[0].Bytes != b[0].Bytes || zero[0].Cursor != b[0].Cursor {
 		t.Fatalf("the default is not %d bytes: %d steps against %d", DefaultMemberPrefixBytes, len(zero), len(b))

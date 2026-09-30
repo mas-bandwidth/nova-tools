@@ -252,7 +252,7 @@ func measureKeys(t testing.TB, raw []byte, kc keyCfg) measured {
 		switch e.Kind {
 		case "create", "move", "remove":
 			m.candidates += len(e.IDs)
-			m.maxLineIDs = max(m.maxLineIDs, len(e.IDs))
+			m.maxLineIDs = max(m.maxLineIDs, len(e.IDs)+len(union(e.About))) // its members and its distinct about IDs
 			ls.entries[ei] = modelLine(t, e)
 			m.maxLine = max(m.maxLine, ls.entries[ei])
 			for i := range e.IDs {
@@ -290,6 +290,12 @@ func measureKeys(t testing.TB, raw []byte, kc keyCfg) measured {
 		default:
 			t.Fatalf("a kind the builder never writes: %q", e.Kind)
 		}
+		if e.Kind != "rows" && e.To != "" {
+			// A member entry whose destination a rows entry of the step deletes.
+			if added, in := rows[[2]string{e.T, rowOf(e.To)}]; in && !added {
+				m.repeats = append(m.repeats, "dst-of-deleted-row "+e.T+"/"+rowOf(e.To))
+			}
+		}
 		for _, ref := range []string{e.From, e.To} {
 			if ref != "" && e.Kind != "rows" {
 				memRows[[2]string{e.T, rowOf(ref)}] = struct{}{}
@@ -311,37 +317,50 @@ func measureKeys(t testing.TB, raw []byte, kc keyCfg) measured {
 // notes, counted once for the counters of the planned argv bytes.
 type lineSizes struct{ entries, notes []int }
 
-// The planned argv bytes, counted twice, by two accountings written apart.
+// The planned argv bytes, counted twice, by two accountings written apart from
+// the builder's (layout.go).
 //
-// modelArgv is the builder's upper bound as the tests read it (cost.go's
-// comment on the planned commands): per changed member an HSET, an HDEL when
-// it unsets, a ZREM, a ZADD and an RPUSH per about, each with its command
-// name and its key at the widest the key can be, and the widths of what the
-// store supplies at their widest. The builder cuts to it, and the property
-// test holds it to the sum of each step it emits.
+// modelArgv is the builder's upper bound as the tests read it (layout.go's
+// comment): per changed member the commands its kind needs (an HSET, an HDEL
+// for the names it unsets and for a remove's placement, a ZREM, a ZADD, an
+// RPUSH per about), each with its command name and its key at the widest the
+// key can be, and the widths of what the store supplies at their widest. The
+// builder cuts to it with a margin on top (charged), and the property test
+// holds it to the sum of each step it emits.
 //
-// strictArgv is the safety check. It does not use the builder's sizes for a
-// key or a value: it builds every command as real strings under a reference
-// layout of the keys, and sums the length of every argument. The layout is the
+// strictArgv is the safety check, and Layer 1's own layout. It uses none of
+// the builder's sizes for a key or a value: it builds every command as real
+// strings, the way the tset-l1 branch's table_set.lua builds them (lines 64-72 for
+// the keys, 414-425 for a member's commands, table_set_rows.lua and
+// table_set_receipt.lua for a rows entry's and the receipt's), and sums the
+// length of every argument. Where the layout leaves room it takes the
 // strictest reading: no batching (every member is its own command of each
-// kind, the most commands any splitting could make), the keys built from the
-// names in them, and each value the store supplies as wide as the contract
-// lets it be (a revision at 20 digits, a seq and a rank at 16, a score at 24
-// bytes). Layer 1 refuses LIMIT at prepare when this exceeds the bound, so no
-// step the builder emits may have a strict count over it; and the strict count
-// of a step is never over the model's, or the model is not an upper bound.
+// kind, the most commands any splitting could make), and each value the store
+// supplies as wide as the contract lets it be (a revision at 20 digits, a seq
+// and a rank at 16, a score at 24 bytes). Layer 1 refuses LIMIT at prepare
+// when this exceeds 8 MiB, so no step the builder emits may have a strict count
+// over it; and the strict count of a step is never over the model's, or the
+// model is not an upper bound. Layer 2 is not on that branch: its commands are
+// the contract's (sections 1.2 to 1.4), the XADD's line field named "line" and
+// the seq of an XADD or an RPUSH at the ceiling of section 4.
 //
-// The reference layout of the keys:
-//
-//	record   <prefix><id>
-//	cell     <ns>sprint:cell:<table>:<epoch>:<row>:<col>
-//	rows     <ns>sprint:rows:<table>@<epoch>
-//	log      <ns>sprint:log@<epoch>
-//	history  <ns>sprint:cl:<about>@<epoch>
-//	done     <ns>sprint:done@<epoch>
-//
-// with the prefix a run of the configured length. A record's HSET carries its
-// own epoch, revision and placement fields beside the application's.
+// The record of a member is the prefix, a run of the configured length, and
+// its ID.
+
+// The widths the model works to, typed here from the contract and not taken
+// from the builder: a decimal uint64 (a revision, section 4), a row rank and a
+// seq (at most 2^53-1, sections 3 and 4) and a store's widest score spelling.
+const (
+	wideUint  = 20
+	wideRank  = 16
+	wideScore = 24
+)
+
+// charged is a model count with the builder's margin on top, rounded up: what
+// the builder compares to the bound (25 percent, written here apart from the
+// builder's).
+func charged(n int) int { return n + (n*25+99)/100 }
+
 func strictArgv(t testing.TB, req wireRequest, kc keyCfg, ls lineSizes) int {
 	t.Helper()
 	ns, ep := req.Space, req.Epoch
@@ -353,27 +372,41 @@ func strictArgv(t testing.TB, req wireRequest, kc keyCfg, ls lineSizes) int {
 			total += len(a)
 		}
 	}
+	// The keys of table_set.lua:64-72.
+	tablePrefix := func(table string) string {
+		if ep == "0" {
+			return ns + "table:" + table
+		}
+		return ns + "table:" + table + ":" + ep
+	}
 	cellKey := func(table, ref string) string {
 		i := strings.LastIndex(ref, ":")
-		return ns + "sprint:cell:" + table + ":" + ep + ":" + ref[:i] + ":" + ref[i+1:]
+		return tablePrefix(table) + ":cell:" + ref[:i] + ":" + ref[i+1:]
 	}
-	rowsKey := func(table string) string { return ns + "sprint:rows:" + table + "@" + ep }
+	rowsKey := func(table string) string { return tablePrefix(table) + ":rows" }
 	logKey := ns + "sprint:log@" + ep
+	historyKey := func(about string) string { return ns + "sprint:cl:" + about + "@" + ep }
 	xadd := func(line int) { cmd("XADD", logKey, seq+"-0", "line"); total += line }
 	for ei, e := range req.Entries {
 		switch e.Kind {
 		case "create", "move", "remove":
-			src, dst := e.From, e.To
-			if src == "" {
-				src = dst
-			}
-			if dst == "" {
-				dst = src
+			// table_set.lua:364: a member's destination is the entry's to, else its
+			// from (a member that stays), and none for a remove.
+			src, dest := e.From, e.To
+			if dest == "" && e.Kind != "remove" {
+				dest = e.From
 			}
 			xadd(ls.entries[ei])
 			for i, id := range e.IDs {
 				rec := prefix + id
-				hset := []string{"HSET", rec, "epoch", ep, "revision", rev, "place:" + dst[strings.LastIndex(dst, ":")+1:], rowOf(dst)}
+				// table_set.lua:415-419
+				hargs := []string{"revision", rev}
+				if e.Kind == "create" {
+					hargs = append(hargs, "epoch", ep)
+				}
+				if dest != "" {
+					hargs = append(hargs, "place:"+e.T, dest)
+				}
 				eff := map[string]string{}
 				for k, v := range e.Set {
 					eff[k] = v
@@ -384,20 +417,29 @@ func strictArgv(t testing.TB, req wireRequest, kc keyCfg, ls lineSizes) int {
 					}
 				}
 				for k, v := range eff {
-					hset = append(hset, k, v)
+					hargs = append(hargs, k, v)
 				}
-				cmd(hset...)
-				if len(e.Unset) > 0 {
-					cmd(append([]string{"HDEL", rec}, e.Unset...)...)
+				cmd(append([]string{"HSET", rec}, hargs...)...)
+				// table_set.lua:420-422
+				dels := append([]string(nil), e.Unset...)
+				if e.Kind == "remove" {
+					dels = append(dels, "place:"+e.T)
+				}
+				if len(dels) > 0 {
+					cmd(append([]string{"HDEL", rec}, dels...)...)
 				}
 				score := strings.Repeat("9", 24)
 				if e.Scores != nil {
 					score = e.Scores[i]
 				}
-				cmd("ZREM", cellKey(e.T, src), id)
-				cmd("ZADD", cellKey(e.T, dst), score, id)
+				if src != "" {
+					cmd("ZREM", cellKey(e.T, src), id) // table_set.lua:424
+				}
+				if dest != "" {
+					cmd("ZADD", cellKey(e.T, dest), score, id) // table_set.lua:425
+				}
 				if e.About != nil {
-					cmd("RPUSH", ns+"sprint:cl:"+e.About[i]+"@"+ep, seq)
+					cmd("RPUSH", historyKey(e.About[i]), seq)
 				}
 			}
 		case "rows":
@@ -422,7 +464,7 @@ func strictArgv(t testing.TB, req wireRequest, kc keyCfg, ls lineSizes) int {
 	for ni, n := range req.Notes {
 		xadd(ls.notes[ni])
 		for _, a := range n.About {
-			cmd("RPUSH", ns+"sprint:cl:"+a+"@"+ep, seq)
+			cmd("RPUSH", historyKey(a), seq)
 		}
 	}
 	if req.Op != "" {
@@ -440,26 +482,32 @@ type rowsAdded struct {
 func modelArgv(t testing.TB, req wireRequest, kc keyCfg, ls lineSizes) int {
 	t.Helper()
 	ns, ep := len(req.Space), len(req.Epoch)
-	structural := func(n int) int { return ns + structTagBytes + n }
-	cell := func(table, ref string) int { return structural(len(table) + ep + len(ref)) }
-	rowsKey := func(table string) int { return structural(len(table) + ep) }
-	hist := func(about string) int { return structural(len(about) + ep) }
-	xadd := cmdNameBytes + structural(ep) + streamIDBytes + streamFieldBytes
+	const seq = len("9007199254740991")
+	cell := func(table, ref string) int {
+		return ns + len("table:") + len(table) + len(":") + ep + len(":cell:") + len(ref)
+	}
+	rowsKey := func(table string) int { return ns + len("table:") + len(table) + len(":") + ep + len(":rows") }
+	hist := func(about string) int { return ns + len("sprint:cl:") + len(about) + len("@") + ep }
+	xadd := len("XADD") + ns + len("sprint:log@") + ep + seq + len("-0") + 16
 	total := 0
 	for ei, e := range req.Entries {
 		switch e.Kind {
 		case "create", "move", "remove":
 			src, dst := e.From, e.To
-			if src == "" {
-				src = dst
-			}
-			if dst == "" {
-				dst = src
+			if dst == "" && e.Kind != "remove" {
+				dst = e.From
 			}
 			total += xadd + ls.entries[ei]
 			for i, id := range e.IDs {
 				rec := kc.bytes() + len(id)
-				total += cmdNameBytes + rec + len("epoch") + ep + len("revision") + uintBytes + 2*len("place:col") + len(dst) - 1
+				hset := len("HSET") + rec + len("revision") + wideUint
+				switch e.Kind {
+				case "create":
+					hset += len("epoch") + ep + len("place:") + len(e.T) + len(dst)
+				case "move":
+					hset += len("place:") + len(e.T) + len(dst)
+				}
+				total += hset
 				eff := map[string]string{}
 				for k, v := range e.Set {
 					eff[k] = v
@@ -472,20 +520,27 @@ func modelArgv(t testing.TB, req wireRequest, kc keyCfg, ls lineSizes) int {
 				for k, v := range eff {
 					total += len(k) + len(v)
 				}
-				if len(e.Unset) > 0 {
-					total += cmdNameBytes + rec
+				if len(e.Unset) > 0 || e.Kind == "remove" {
+					total += len("HDEL") + rec
 					for _, u := range e.Unset {
 						total += len(u)
 					}
+					if e.Kind == "remove" {
+						total += len("place:") + len(e.T)
+					}
 				}
-				score := scoreBytes
+				score := wideScore
 				if e.Scores != nil {
 					score = max(score, len(e.Scores[i]))
 				}
-				total += cmdNameBytes + cell(e.T, src) + len(id)
-				total += cmdNameBytes + cell(e.T, dst) + score + len(id)
+				if src != "" {
+					total += len("ZREM") + cell(e.T, src) + len(id)
+				}
+				if dst != "" {
+					total += len("ZADD") + cell(e.T, dst) + score + len(id)
+				}
 				if e.About != nil {
-					total += cmdNameBytes + hist(e.About[i]) + uintBytes
+					total += len("RPUSH") + hist(e.About[i]) + seq
 				}
 			}
 		case "rows":
@@ -495,25 +550,25 @@ func modelArgv(t testing.TB, req wireRequest, kc keyCfg, ls lineSizes) int {
 				Table      string      `json:"table"`
 				Added      []rowsAdded `json:"added"`
 				Deleted    []string    `json:"deleted"`
-			}{"rows", json.Number(strings.Repeat("9", uintBytes)), e.T, []rowsAdded{}, []string{}}
+			}{"rows", json.Number(strings.Repeat("9", wideUint)), e.T, []rowsAdded{}, []string{}}
 			total += xadd + jsonLen(t, lineEnv{uint64Max, uint64Max, uint64Max, head})
 			for _, r := range e.Add {
-				total += cmdNameBytes + rowsKey(e.T) + rankBytes + len(r)
-				total += jsonLen(t, rowsAdded{r, strings.Repeat("9", rankBytes)}) + 1
+				total += len("ZADD") + rowsKey(e.T) + wideRank + len(r)
+				total += jsonLen(t, rowsAdded{r, strings.Repeat("9", wideRank)}) + 1
 			}
 			for _, r := range e.Del {
-				total += cmdNameBytes + rowsKey(e.T) + len(r) + jsonLen(t, r) + 1
+				total += len("ZREM") + rowsKey(e.T) + len(r) + jsonLen(t, r) + 1
 			}
 		}
 	}
 	for ni, n := range req.Notes {
 		total += xadd + ls.notes[ni]
 		for _, a := range n.About {
-			total += cmdNameBytes + hist(a) + uintBytes
+			total += len("RPUSH") + hist(a) + seq
 		}
 	}
 	if req.Op != "" {
-		total += cmdNameBytes + structural(ep) + len(req.Op) + LimitReceiptBytes
+		total += len("HSET") + ns + len("sprint:done@") + ep + len(req.Op) + LimitReceiptBytes
 	}
 	return total
 }
@@ -559,7 +614,7 @@ func (m measured) within(bd Bounds) []string {
 		{"field observations", m.obs, bd.FieldObservations},
 		{"line bytes", m.maxLine, bd.LineBytes},
 		{"line ids", m.maxLineIDs, bd.LineIDs},
-		{"planned argv", m.argv, bd.PlannedArgvBytes},
+		{"planned argv, with the margin", charged(m.argv), bd.PlannedArgvBytes},
 		{"strict planned argv", m.strict, bd.PlannedArgvBytes},
 		{"strict planned argv over the model's", m.strict, m.argv},
 		{"nesting", m.depth, LimitNesting},
@@ -676,7 +731,7 @@ func measureLite(s Step, raw []byte) measured {
 		switch p.Kind {
 		case KindCreate, KindMove, KindRemove:
 			m.candidates += len(p.IDs)
-			m.maxLineIDs = max(m.maxLineIDs, len(p.IDs))
+			m.maxLineIDs = max(m.maxLineIDs, len(p.IDs)+len(union(p.About)))
 			shared := union(keys(p.Set), p.Unset, p.BeforeFields)
 			for i := range p.IDs {
 				m.obs += len(shared)
@@ -707,6 +762,11 @@ func measureLite(s Step, raw []byte) measured {
 					rows[k] = dir.add
 					m.rowNames++
 				}
+			}
+		}
+		if p.Kind != KindRows && p.To != "" {
+			if added, in := rows[[2]string{p.Table, rowOf(p.To)}]; in && !added {
+				m.repeats = append(m.repeats, "dst-of-deleted-row "+p.Table+"/"+rowOf(p.To))
 			}
 		}
 		if p.Kind != KindRows {

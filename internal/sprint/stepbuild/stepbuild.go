@@ -1,8 +1,23 @@
 // Package stepbuild cuts any list of entries into steps that Layer 1 of the
-// sprint's table store accepts: each step inside every bound of section 6 of
-// the Layer 1 table contract (tset/1, contract revision 3), such that applying
-// the steps in order is applying the whole. It is pure: no store, no socket,
-// no clock.
+// sprint's table store accepts: each step inside every modelled bound of
+// section 6 of the Layer 1 table contract (tset/1, contract revision 3), such
+// that applying the steps in order is applying the whole. It is pure: no store,
+// no socket, no clock.
+//
+// What is modelled, and what is not. The bounds the cut works to are the
+// constants of limits.go, each with its section: the encoded request, the
+// entries, tables, member candidates and guard-only members, the IDs of an
+// entry and of a line, the row names, the notes and about IDs, the field-value
+// observations, the generated line's bytes, the planned argv bytes, and the
+// bounds of a name, a value, an intent and a result. NOT modelled, and not
+// claimed: the planned commands (65,536 a step), the cell and key probes
+// (20,000), the raw payload a step fetches (8 MiB: it depends on the values
+// the store holds, which the request does not carry), and count, rcount and
+// advance entries (they carry cells or an epoch, not members). The generated
+// line and the planned argv bytes are counted as upper bounds over a layout
+// the contract does not fix (cost.go; layout.go). So a step this package
+// emits is inside every modelled bound; it is not claimed to be inside the
+// bounds that are not modelled.
 //
 // An entry names a table, a kind (create, move, remove, guard, rows, or a
 // note-only entry), a set of members with the fields to set, and optional
@@ -41,13 +56,30 @@
 // the result depend on the cut: a rows entry that adds a row goes before the
 // member entries whose destination it is, and the member entries whose source
 // is a row go before the rows entry that deletes it (order.go). A rows entry
-// that deletes a row also ends the step of the member entries that name it
-// (place.go).
+// that deletes a row also ends the step of the member entries that name it, and
+// a member entry that goes into a row a rows entry of the step deletes starts
+// the next step (place.go).
 //
 // The contract's bounds are constants (limits.go), each with its section. Where
 // the contract is silent (the size of a generated log line, the commands a
 // step plans and their argv bytes) this package takes the stricter reading, an
-// upper bound, and says so where it applies it (cost.go, place.go).
+// upper bound, and says so where it applies it (cost.go, layout.go). The planned
+// argv bytes are counted over Layer 1's own command layout, one row of a table
+// for each command and key with its section beside it, and a step is cut to
+// the count with a margin of 25 percent on top.
+//
+// Rows and members: a rows entry that adds a row and deletes another is placed
+// as its adds, the members that move between them and its deletes when it
+// cannot be placed whole (the rename of a row), as two wire entries.
+//
+// Tests. The unit tier holds a sample of the property test's inputs to every
+// bound, by the lite accounting, and one in sixteen of those to the full
+// accounting (the generated line by encoding/json, the planned argv bytes by
+// the model and by Layer 1's own layout counted from real commands) and to the
+// fullness check: the unit tier's package budget is 2 s. The slow tier (go test
+// -tags slow, make test-slow) cuts more inputs, the unit tier's seeds among them,
+// with the full accounting and the fullness check on every one, and cuts the
+// worst case of every kind of entry at the contract's own 8 MiB.
 //
 // The cut is linear in the input: each member's strings are read once, to
 // validate and size them, and each member is placed by constant-time checks
@@ -159,7 +191,9 @@ type Config struct {
 	// MemberPrefixBytes is the length of the longest member prefix of the
 	// tables the entries name: a record's key is the prefix and the stored ID
 	// (section 1.2), and the planned argv bytes of every command that writes a
-	// record count that key (cost.go). Zero is DefaultMemberPrefixBytes.
+	// record count that key (layout.go). Zero is DefaultMemberPrefixBytes, the
+	// longest Layer 1 accepts; a step is inside the planned argv bound for a
+	// prefix of at most this length.
 	MemberPrefixBytes int
 }
 
@@ -227,8 +261,10 @@ func After(steps []Step, done Cursor) ([]Step, error) {
 // them in their order and finds every member no step could hold, all before it
 // places any, so a refusal returns no step at all (and, but for an identity
 // that leaves a member no room, before cfg.Ident is called). An empty input
-// is no steps. The steps are numbered from 1 and each is inside every bound
-// of cfg.Bounds (the contract's, by default).
+// is no steps. The steps are numbered from 1 and each is inside every modelled
+// bound of cfg.Bounds (the contract's, by default): not the planned commands,
+// the cell and key probes, the fetched payload, nor count, rcount and advance
+// entries, which the package does not model (see the package documentation).
 func Build(cfg Config, entries []Entry) ([]Step, error) {
 	b, err := newBuilder(cfg)
 	if err != nil {

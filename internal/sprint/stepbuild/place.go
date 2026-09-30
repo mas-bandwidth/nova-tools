@@ -14,7 +14,7 @@ type usage struct {
 	noteBytes  int // encoded bytes of the notes, commas not counted
 	about      int // about IDs of member entries and notes, before dedup
 	obs        int // field-value observations
-	argv       int // planned argv bytes, an upper bound (cost.go)
+	argv       int // planned argv bytes, an upper bound over Layer 1's layout (layout.go); cut to with a margin on top
 }
 
 func add(a, b usage) usage {
@@ -83,7 +83,7 @@ func (s *stepState) over(d usage, bd Bounds) *breach {
 		{boundNotes, bd.Notes, t.notes},
 		{boundAbout, bd.AboutIDs, t.about},
 		{boundObserved, bd.FieldObservations, t.obs},
-		{boundArgv, bd.PlannedArgvBytes, t.argv},
+		{boundArgv, bd.PlannedArgvBytes, withMargin(t.argv)},
 	} {
 		if c.use > c.limit {
 			return breachOf(c.b, c.limit, c.use)
@@ -332,24 +332,60 @@ func (es *entryState) addMember(d usage, j, k, line int) (usage, int) {
 
 // fitMembers takes members of a change or guard entry from pos, at most most,
 // while every bound of the step and of the wire entry (its IDs, its generated
-// line) holds and no member is one the step already names.
+// line) holds and no member is one the step already names. A step that holds a
+// rows entry that deletes the row a member entry goes to is closed before it
+// (see below).
+//
+// The generated line of a change entry carries the members it changes and, when
+// the entry has about IDs, the distinct about IDs, and both count against the
+// IDs a line may hold (section 6), the stricter reading: a note's line counts
+// its about IDs the same way.
 func (b *builder) fitMembers(es *entryState, pos, most int) (int, usage, *breach) {
 	s := b.cur
 	d, br := b.headUsage(es)
 	if br != nil {
 		return 0, d, br
 	}
+	// A member entry whose destination is a row a rows entry of the step
+	// deletes can never be applied in that step (section 3: a delete with an
+	// incoming member is ROWCONFLICT), and cut after the delete it fails NOROW.
+	// Which of the two it met would depend on where the bounds cut, and whether
+	// the delete landed with it; so the entry starts the next step, and the
+	// delete has landed before it, however the bounds cut (the mirror of the
+	// rule fitRows keeps for a delete after the member entries that name its row).
+	for _, k := range es.dstRows {
+		if added, in := s.rows[k]; in && !added {
+			return 0, d, repeated()
+		}
+	}
 	line, k := es.lineHead, 0
+	var abouts map[string]struct{} // the distinct about IDs of the wire entry
+	if es.e.About != nil {
+		abouts = map[string]struct{}{}
+	}
 	for j := pos; j < es.n && k < most; j++ {
 		nd, nl := es.addMember(d, j, k, line)
 		if br := s.over(nd, b.bounds); br != nil {
 			return k, d, br
 		}
-		if br := b.wireBreach(es, k+1, nl); br != nil {
+		newAbout := ""
+		if abouts != nil {
+			if _, dup := abouts[es.e.About[j]]; !dup {
+				newAbout = es.e.About[j]
+			}
+		}
+		lineIDs := k + 1 + len(abouts)
+		if newAbout != "" {
+			lineIDs++
+		}
+		if br := b.wireBreach(es, k+1, nl, lineIDs); br != nil {
 			return k, d, br
 		}
 		if _, in := s.seen[memberKey{es.e.Table, es.e.IDs[j]}]; in {
 			return k, d, repeated()
+		}
+		if newAbout != "" {
+			abouts[newAbout] = struct{}{}
 		}
 		d, line, k = nd, nl, k+1
 	}
@@ -357,15 +393,16 @@ func (b *builder) fitMembers(es *entryState, pos, most int) (int, usage, *breach
 }
 
 // wireBreach is the bound a wire entry of ids members and a generated line of
-// line bytes would break by itself, or nil.
-func (b *builder) wireBreach(es *entryState, ids, line int) *breach {
+// line bytes, carrying lineIDs IDs (its members and their distinct about IDs),
+// would break by itself, or nil.
+func (b *builder) wireBreach(es *entryState, ids, line, lineIDs int) *breach {
 	switch {
 	case ids > b.bounds.EntryIDs:
 		return breachOf(boundEntryIDs, b.bounds.EntryIDs, ids)
 	case es.class != classChange:
 		return nil
-	case ids > b.bounds.LineIDs:
-		return breachOf(boundLineIDs, b.bounds.LineIDs, ids)
+	case lineIDs > b.bounds.LineIDs:
+		return breachOf(boundLineIDs, b.bounds.LineIDs, lineIDs)
 	case line > b.bounds.LineBytes:
 		return breachOf(boundLineBytes, b.bounds.LineBytes, line)
 	}

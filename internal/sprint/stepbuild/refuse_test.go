@@ -133,31 +133,54 @@ func TestARefusalNamesTheSameFaultEveryRun(t *testing.T) {
 // The member no step can hold is found before any step is opened, so before
 // the identity of any step is asked for: an Ident that allocates an op, or
 // writes a manifest, is not called for steps of a build that is then refused.
+// A note is asked of an empty step as a member is (fitAlone): a note that only
+// a lowered bound of the step refuses, after thousands of members, is refused
+// before the first of their steps is opened.
 func TestAMemberNoStepCanHoldIsRefusedBeforeAnyIdentityIsAsked(t *testing.T) {
 	t.Parallel()
-	var asked []int
-	c := cfg()
-	c.Ident = func(part int) Ident {
-		asked = append(asked, part)
-		return Ident{Op: fmt.Sprint("op", part), Intent: "i"}
-	}
 	bad := mv("work", []string{"bad"})
 	bad.Set = fat(128, LimitFieldValueBytes)
 	rows := Entry{Kind: KindRows, Table: "work", Add: []string{"r"}, Guards: []Entry{gd("merge", names("a", 2000)), gd("merge", names("b", 2000)), gd("merge", names("c", 2000))}}
 	note := Entry{Kind: KindNote, Notes: []Note{{Meta: map[string]string{"big": pad(LimitLineBytes)}}}}
+	// A note whose own line is inside every bound of the contract, so that only
+	// the lowered bound of the step refuses it, and only fitAlone sees it.
+	lowered := func(mod func(*Bounds)) func(Config) Config {
+		return func(c Config) Config {
+			c.Bounds = Contract()
+			mod(&c.Bounds)
+			return c
+		}
+	}
+	smallNote := Entry{Kind: KindNote, Notes: []Note{{Meta: map[string]string{"big": pad(60000)}, About: []string{"p"}}}}
 	for _, tc := range []struct {
 		name    string
+		config  func(Config) Config
 		entries []Entry
 		member  string
 		bound   string
+		note    int
 	}{
-		{"a member with 8 MiB of fields", []Entry{mv("work", names("m", 5000)), mv("merge", names("n", 3000)), bad}, "bad", boundRequest.name},
-		{"guards no step can hold on a rows entry", []Entry{mv("work", names("m", 5000)), rows}, "r", boundGuardOnly.name},
-		{"a note too large for a line", []Entry{mv("work", names("m", 5000)), note}, "", boundLineBytes.name},
+		{"a member with 8 MiB of fields", nil, []Entry{mv("work", names("m", 5000)), mv("merge", names("n", 3000)), bad}, "bad", boundRequest.name, -1},
+		{"guards no step can hold on a rows entry", nil, []Entry{mv("work", names("m", 5000)), rows}, "r", boundGuardOnly.name, -1},
+		{"a note too large for a line", nil, []Entry{mv("work", names("m", 5000)), note}, "", boundLineBytes.name, 0},
+		{"a note over a lowered request bound, after 3,000 members", lowered(func(b *Bounds) { b.RequestBytes = 50000 }),
+			[]Entry{mv("work", names("m", 3000)), smallNote}, "", boundRequest.name, 0},
+		{"a note over a lowered argv bound, after 3,000 members", lowered(func(b *Bounds) { b.PlannedArgvBytes = 60000 }),
+			[]Entry{mv("work", names("m", 3000)), smallNote}, "", boundArgv.name, 0},
+		{"a note over a lowered note-line bound on the second of two notes", lowered(func(b *Bounds) { b.RequestBytes = 50000 }),
+			[]Entry{mv("work", names("m", 3000)), {Kind: KindNote, Notes: []Note{{About: []string{"p"}}, smallNote.Notes[0]}}}, "", boundRequest.name, 1},
 	} {
-		asked = nil
+		var asked []int
+		c := cfg()
+		if tc.config != nil {
+			c = tc.config(c)
+		}
+		c.Ident = func(part int) Ident {
+			asked = append(asked, part)
+			return Ident{Op: fmt.Sprint("op", part), Intent: "i"}
+		}
 		le := refused(t, c, tc.entries)
-		if len(asked) != 0 || le.Member != tc.member || le.Bound != tc.bound {
+		if len(asked) != 0 || le.Member != tc.member || le.Bound != tc.bound || le.Note != tc.note {
 			t.Errorf("%s: %+v, the identity was asked for parts %v", tc.name, le, asked)
 		}
 	}
@@ -169,10 +192,10 @@ func TestAnIdentityThatLeavesAMemberNoRoomRefusesAfterItIsAsked(t *testing.T) {
 	t.Parallel()
 	e := mv("work", []string{"m"})
 	e.Set = map[string]string{"f": pad(100)}
-	// A bound of exactly what the member plans without a receipt.
+	// A bound of exactly what the member plans without a receipt, margin included.
 	c := cfg()
 	c.Bounds = Contract()
-	c.Bounds.PlannedArgvBytes = measure(t, must(t, c, []Entry{e})[0].Encode()).argv
+	c.Bounds.PlannedArgvBytes = charged(measure(t, must(t, c, []Entry{e})[0].Encode()).argv)
 	if steps := must(t, c, []Entry{e}); len(steps) != 1 {
 		t.Fatalf("%d steps", len(steps))
 	}

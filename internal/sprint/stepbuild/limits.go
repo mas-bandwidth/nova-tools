@@ -25,7 +25,7 @@ const (
 	LimitFieldObservations = 768000  // section 6: field-value observations per write (128 x 6,000)
 	LimitLineBytes         = 1 << 20 // section 6: one generated log line
 	LimitLineIDs           = 2000    // section 6: IDs in one log line
-	LimitPlannedArgvBytes  = 8 << 20 // section 6: summed encoded argv bytes of the planned commands (an upper bound, cost.go)
+	LimitPlannedArgvBytes  = 8 << 20 // section 6: summed encoded argv bytes of the planned commands (counted as an upper bound with a margin, layout.go)
 
 	// LimitReceiptBytes is the stored done receipt's cap (section 6 and
 	// section 5). A step with an op reserves it whole in its planned argv
@@ -53,8 +53,12 @@ const (
 	// when Config.MemberPrefixBytes is zero: a record's key is its table's
 	// member prefix and the stored ID (section 1.2), and every command that
 	// writes a record carries that key. The prefixes are a definition's, not
-	// the contract's; a caller that knows the longest of its own passes it.
-	DefaultMemberPrefixBytes = 256
+	// the contract's, and the contract sets no bound on one; the default is
+	// the longest that Layer 1 accepts for a definition (the tset-l1 branch,
+	// table_set.lua:443 refuses a longer prefix with CONFIG), so that a caller
+	// who names none is safe. A caller that knows the longest of its own
+	// passes it, and the cut is finer for it.
+	DefaultMemberPrefixBytes = 512
 )
 
 // Bounds is the step-level bounds one build cuts to. The zero Bounds is
@@ -146,7 +150,7 @@ var (
 	boundObserved    = bound{"field-value observations per step", "section 6"}
 	boundLineBytes   = bound{"generated log line bytes", "section 6"}
 	boundLineIDs     = bound{"IDs in one log line", "section 6"}
-	boundArgv        = bound{"planned argv bytes", "section 6"}
+	boundArgv        = bound{"planned argv bytes (an upper bound with a margin of 25 percent)", "section 6"}
 	boundName        = bound{"name bytes", "section 6"}
 	boundFieldValue  = bound{"field value bytes", "section 6"}
 	boundIntent      = bound{"intent bytes", "section 6"}

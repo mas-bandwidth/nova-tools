@@ -159,7 +159,9 @@ func TestNotesFollowTheMembersOfTheirEntry(t *testing.T) {
 	next := mv("work", []string{"z"})
 	next.Notes = []Note{{Meta: map[string]string{"n": "z"}}}
 	steps = must(t, cfg(), []Entry{full, next})
-	if len(steps) != 2 || len(steps[0].Notes) != 1 || len(steps[0].Entries) != 1 {
+	// The 2,000 members and their 2,000 distinct about IDs are 4,000 IDs, and a
+	// line holds 2,000: the step holds the members as two wire entries.
+	if len(steps) != 2 || len(steps[0].Notes) != 1 || len(steps[0].Entries) != 2 || countMembers(steps[:1]) != LimitCandidates {
 		t.Fatalf("%d steps", len(steps))
 	}
 	if len(steps[1].Notes) != 2 || steps[1].Notes[0].Source != 0 || steps[1].Notes[1].Source != 1 || steps[1].Entries[0].IDs[0] != "z" {

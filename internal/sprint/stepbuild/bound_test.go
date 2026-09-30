@@ -456,6 +456,72 @@ func TestBoundLineIDs(t *testing.T) {
 	}
 }
 
+// The line of a member entry carries its members and their distinct about IDs,
+// and both count against the IDs a line may hold, as a note's line counts its
+// about IDs: 2,000 members with 2,000 distinct about IDs write a line of 4,000.
+func TestBoundLineIDsCountsTheDistinctAboutIDsOfAMemberLine(t *testing.T) {
+	t.Parallel()
+	c := cfg()
+	c.Bounds = Contract()
+	c.Bounds.LineIDs = 1000
+	withAbout := func(n int, about func(i int) string) []Entry {
+		e := mv("work", names("m", n))
+		e.About = make([]string, n)
+		for i := range e.About {
+			e.About[i] = about(i)
+		}
+		return []Entry{e}
+	}
+	distinct := func(i int) string { return fmt.Sprintf("p%d", i) }
+	same := func(int) string { return "p" }
+	// 500 members and 500 distinct about IDs are 1,000: one wire entry; 501 are
+	// 1,002 and make two.
+	steps := must(t, c, withAbout(500, distinct))
+	if len(steps) != 1 || len(steps[0].Entries) != 1 {
+		t.Fatalf("500 members with 500 abouts in a line of 1,000: %d steps, %v", len(steps), kinds(steps[0]))
+	}
+	steps = must(t, c, withAbout(501, distinct))
+	if len(steps) != 1 || len(steps[0].Entries) != 2 || len(steps[0].Entries[0].IDs) != 500 || len(steps[0].Entries[1].IDs) != 1 {
+		t.Fatalf("501 members with 501 abouts in a line of 1,000: %d steps, %v", len(steps), kinds(steps[0]))
+	}
+	// About IDs that are the same primary count once: 999 members and their one
+	// about ID are 1,000, and a 1,000th member makes two wire entries.
+	steps = must(t, c, withAbout(999, same))
+	if len(steps) != 1 || len(steps[0].Entries) != 1 {
+		t.Fatalf("999 members with one about in a line of 1,000: %v", kinds(steps[0]))
+	}
+	steps = must(t, c, withAbout(1000, same))
+	if len(steps) != 1 || len(steps[0].Entries) != 2 || len(steps[0].Entries[0].IDs) != 999 {
+		t.Fatalf("1,000 members with one about in a line of 1,000: %d steps, %v", len(steps), kinds(steps[0]))
+	}
+	// The distinct IDs of one wire entry, not of the step: a second wire entry
+	// counts its own.
+	steps = must(t, c, withAbout(1994, func(i int) string { return fmt.Sprintf("p%d", i%3) }))
+	if len(steps) != 1 || len(steps[0].Entries) != 2 || len(steps[0].Entries[0].IDs) != 997 || len(steps[0].Entries[1].IDs) != 997 {
+		t.Fatalf("1,994 members with three abouts in a line of 1,000: %v", kinds(steps[0]))
+	}
+	// At the contract's number: 2,000 members with 2,000 distinct about IDs are
+	// two wire entries of 1,000, one step; the line of every one is inside its
+	// bound counted from the encoded request.
+	steps = must(t, cfg(), withAbout(LimitCandidates, distinct))
+	if len(steps) != 1 || len(steps[0].Entries) != 2 || len(steps[0].Entries[0].IDs) != LimitLineIDs/2 {
+		t.Fatalf("2,000 members with 2,000 abouts: %d steps, %v", len(steps), kinds(steps[0]))
+	}
+	if m := measure(t, steps[0].Encode()); m.maxLineIDs != LimitLineIDs || len(m.within(Contract())) != 0 {
+		t.Fatalf("the widest line has %d IDs: %v", m.maxLineIDs, m.within(Contract()))
+	}
+	// A member and its about ID cannot be a line of one: no step holds it.
+	c.Bounds.LineIDs = 1
+	le := refused(t, c, withAbout(3, distinct))
+	if le.Bound != boundLineIDs.name || le.Member != "m0" || le.Actual != 2 || le.Limit != 1 {
+		t.Fatalf("%+v", le)
+	}
+	// Without an about ID a member is a line of one.
+	if steps := must(t, c, []Entry{mv("work", names("m", 3))}); len(steps) != 1 || len(steps[0].Entries) != 3 {
+		t.Fatalf("members without about IDs in a line of 1: %v", kinds(steps[0]))
+	}
+}
+
 // TestBoundPlannedArgvBytes takes the planned argv bytes of a padded step as
 // the independent count gives them, and sets the bound to that number, then to
 // one less: the step fits the first and is cut for the second.
@@ -470,10 +536,11 @@ func TestBoundPlannedArgvBytes(t *testing.T) {
 	if len(steps) != 1 {
 		t.Fatalf("the whole in one step: %d steps", len(steps))
 	}
-	argv := measure(t, steps[0].Encode()).argv
-	if want := 20 * (20000 + 1 + len("gone")); argv < want {
-		t.Fatalf("the count is short of the record writes alone: %d < %d", argv, want)
+	model := measure(t, steps[0].Encode()).argv
+	if want := 20 * (20000 + 1 + len("gone")); model < want {
+		t.Fatalf("the count is short of the record writes alone: %d < %d", model, want)
 	}
+	argv := charged(model) // the count with the builder's margin on top
 	c.Bounds.PlannedArgvBytes = argv
 	if steps := must(t, c, entries); len(steps) != 1 {
 		t.Fatalf("a bound of exactly %d: %d steps", argv, len(steps))
@@ -484,7 +551,7 @@ func TestBoundPlannedArgvBytes(t *testing.T) {
 		t.Fatalf("a bound of %d: %d steps", argv-1, len(steps))
 	}
 	for _, s := range steps {
-		if got := measure(t, s.Encode()).argv; got > argv-1 {
+		if got := charged(measure(t, s.Encode()).argv); got > argv-1 {
 			t.Fatalf("step %d plans %d > %d", s.Part, got, argv-1)
 		}
 	}

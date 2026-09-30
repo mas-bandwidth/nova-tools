@@ -26,13 +26,21 @@ import (
 // which these already hold is placed as it stands. Entries that name one
 // member keep their order (TWICE), as do the rows entries that add (a row's
 // rank is its place in the order of first occurrence) and the rows entries
-// that name one row (an add and a delete of it, in order). Entries that cannot
-// be ordered so (each waits for the other) refuse the build; the one such
-// input a caller is likely to write is a rows entry that both adds a row and
-// deletes another with the members that need them between, and it is split
-// into an entry of the adds and an entry of the deletes. A rows entry that
+// that name one row (an add and a delete of it, in order). A rows entry that
 // deletes a row is also kept out of the step of the member entries that name
-// that row (place.go: fitRows).
+// that row, and a member entry whose destination is a row a rows entry of the
+// step deletes is kept out of that step (place.go: fitRows, fitMembers).
+//
+// A rows entry that adds a row and deletes another can wait for both ways: its
+// adds have to come before the members that go into the new row, and its
+// deletes after the members that leave the old one (the rename of a row: the
+// adds, then the moves, then the deletes). Placed as one entry it would wait on
+// itself. When the entries cannot be ordered so, the rows entries that both add
+// and delete are each split into an entry of the adds and an entry of the
+// deletes, which are then ordered like any two entries, and placed as the two
+// wire entries they are (a step may hold both, as the input's one entry did).
+// Entries that still cannot be ordered (each waits for the other) refuse the
+// build.
 
 // intHeap is a min-heap of entry indices: the entries ready to place, the
 // lowest index first.
@@ -62,8 +70,64 @@ func appendOnce(list []int, i int) []int {
 type precedence struct{ before, after []int }
 
 // order puts the entries in the order they are placed in, sets each one's pos,
-// and returns them so.
+// and returns them so. An input in which a rows entry that both adds and
+// deletes cannot be placed as one entry is placed with that entry split into
+// its adds and its deletes (see the top of this file).
 func (b *builder) order(states []*entryState) ([]*entryState, error) {
+	out, err := orderStates(states)
+	if err == nil {
+		return out, nil
+	}
+	split, pairs := splitMixed(states)
+	if pairs == nil {
+		return nil, err
+	}
+	out, err = orderStates(split)
+	if err != nil {
+		return nil, err
+	}
+	// The notes of an entry follow its last part: the piece placed last holds them.
+	for _, p := range pairs {
+		if adds, dels := p[0], p[1]; adds.pos > dels.pos {
+			adds.e.Notes, dels.e.Notes = dels.e.Notes, nil
+			adds.notes, dels.notes = dels.notes, nil
+		}
+	}
+	return out, nil
+}
+
+// splitMixed is the states with each rows entry that adds and deletes replaced
+// by two, the adds and then the deletes, and the pairs it made; the pairs are
+// nil when no entry was split. The two share the input entry (its index, and so
+// its guards, which travel in every step that holds either), the costs of its
+// rows and its head; the deletes hold the notes until the order says which is
+// placed last.
+func splitMixed(states []*entryState) ([]*entryState, [][2]*entryState) {
+	var out []*entryState
+	var pairs [][2]*entryState
+	for _, es := range states {
+		if es.class != classRows || len(es.e.Add) == 0 || len(es.e.Del) == 0 {
+			out = append(out, es)
+			continue
+		}
+		na := len(es.e.Add)
+		adds, dels := *es, *es
+		ea, ed := *es.e, *es.e
+		ea.Del, ea.Notes = nil, nil
+		ed.Add = nil
+		adds.e, dels.e = &ea, &ed
+		adds.n, dels.n = na, es.n-na
+		adds.cost, dels.cost = es.cost[:na:na], es.cost[na:]
+		adds.notes = nil
+		out = append(out, &adds, &dels)
+		pairs = append(pairs, [2]*entryState{&adds, &dels})
+	}
+	return out, pairs
+}
+
+// orderStates is the order of the entries under the rules of this file, without
+// splitting any: the input's own when it is in that order, else the sort of it.
+func orderStates(states []*entryState) ([]*entryState, error) {
 	adders, deleters := map[memberKey][]int{}, map[memberKey][]int{}
 	for i, es := range states {
 		if es.class != classRows {
@@ -265,7 +329,7 @@ func sortEntries(states []*entryState, rules []precedence, adders, deleters map[
 		for placed[first] {
 			first++
 		}
-		return nil, (site{entry: states[first].idx}).input("add/del", "", "cannot be placed: it and the entries it waits for wait on each other (a rows entry that adds a row and deletes another, with the members that need them between, is split in two)")
+		return nil, (site{entry: states[first].idx}).input("add/del", "", "cannot be placed: it and the entries it waits for wait on each other")
 	}
 	return out, nil
 }

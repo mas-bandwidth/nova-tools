@@ -23,7 +23,7 @@ type memberKey struct{ table, id string }
 
 // cost is what one member adds to a wire entry and to a step, in every unit a
 // bound measures. Sizes are exact; commas between members are the entry's,
-// except argv, an upper bound (see the planned commands below).
+// except argv, an upper bound (layout.go).
 type cost struct {
 	req   int // its items in the entry's member arrays (ids, scores, revs, each, about)
 	line  int // its share of the generated line
@@ -52,7 +52,7 @@ type entryState struct {
 	lineArrays int // arrays of the generated line: the commas between members
 	argvHead   int // planned argv bytes of a wire entry before its first member: its log line's fixed part
 
-	hset, zrem, zadd int // planned argv bytes of the entry's HSET, ZREM and ZADD beside their members: name, and the record's own fields or the cell key
+	cmds memberCommands // planned argv bytes of the commands of each member of the entry, beside the member's own (layout.go)
 
 	tables    []string // distinct: the entry's table and its guards'
 	guards    []*entryState
@@ -231,7 +231,7 @@ func (b *builder) fitAlone(states []*entryState) error {
 				}
 				br := s.over(nd, b.bounds)
 				if br == nil && es.class != classRows {
-					br = b.wireBreach(es, 1, line)
+					br = b.wireBreach(es, 1, line, 1+flag(es.e.About != nil))
 				}
 				if br != nil {
 					return b.refuse(es, j, br)
@@ -455,98 +455,6 @@ const (
 	lineNoteAbout   = `,"about":` // a note's line carries the IDs it is about
 )
 
-// The planned commands, modelled. Section 6 bounds the summed argv bytes of
-// every command the step plans, and section 1.4 says an argv is the command
-// name and every argument, keys included. The commands' layout is Layer 1's;
-// this package takes the strictest reading of it, an upper bound, so that a
-// step it emits is never refused LIMIT at prepare for its argv:
-//
-//   - every changed member is charged as its own command of each kind (an HSET
-//     of its record, an HDEL of its unset names, a ZREM out of its cell, a ZADD
-//     into its cell, an RPUSH of its seq to each history it is about), the
-//     most commands any batching could make, each with its command name and
-//     its key at the widest the key can be;
-//   - a record's key is the member prefix (Config.MemberPrefixBytes) and the
-//     stored ID; the other keys are the widest namespace the header can carry,
-//     a fixed tag, and the names in the key (structural);
-//   - a value the store supplies (a seq, a revision, a rank, a score the
-//     request leaves out) is charged at its widest, and the record's own
-//     fields in its HSET (epoch, revision, placement) with the epoch, the
-//     widest revision and the cell it lands in (recordOwn);
-//   - each wire entry and each note is one log line (an XADD with its stream
-//     ID and field name), each row name one ZADD or ZREM of the rows key and
-//     one item of the topology line, and a step with an op the receipt's
-//     HSET, with its key, its op and the receipt in full.
-//
-// The commands of an advance are not modelled: the builder does not cut
-// advance entries. Commands that only read are not planned argv.
-const (
-	cmdNameBytes     = len("RPUSH")            // the longest command name planned (HSET, HDEL, ZREM, ZADD, RPUSH, XADD)
-	uintBytes        = len(maxUintText)        // a revision, a seq or an epoch: a decimal uint64 at its widest
-	scoreBytes       = lineScoreBytes - 2      // a score at its widest canonical spelling, unquoted
-	rankBytes        = len("9007199254740991") // a row rank: at most 2^53-1 (section 3)
-	streamIDBytes    = 2*uintBytes + 1         // an XADD's stream ID: <ms>-<seq>, each a uint64
-	streamFieldBytes = 16                      // the name of the field an XADD carries the line in: Layer 2's to name
-	structTagBytes   = 24                      // the fixed text of a structural key beyond the namespace and its names
-
-	maxUintText = "18446744073709551615"
-)
-
-// keySizes are the sizes the planned keys work to, from the Config: the
-// longest member prefix, the widest namespace (the longest header value: the
-// request's namespace member is a name and every structural key starts with
-// it) and the epoch's digits.
-type keySizes struct{ member, ns, epoch int }
-
-func newKeySizes(cfg Config) keySizes {
-	k := keySizes{member: cfg.MemberPrefixBytes, epoch: len(cfg.Epoch)}
-	if k.member == 0 {
-		k.member = DefaultMemberPrefixBytes
-	}
-	for _, m := range cfg.Header {
-		k.ns = max(k.ns, len(m.Value))
-	}
-	return k
-}
-
-// recordOwn is the bytes of the record's own fields in its HSET, for a member
-// that lands in the cell ref: the names epoch and revision and their values (the
-// epoch, a revision at its widest), and the placement, which is the row and the
-// column and the names of two fields at the longest a placement's can be (one
-// for the row and one for the column, or one named for the column that holds
-// the row).
-func (k keySizes) recordOwn(ref string) int {
-	return len("epoch") + k.epoch + len("revision") + uintBytes + 2*len("place:col") + len(ref) - 1
-}
-
-// structural is a structural key that holds names of n bytes in all.
-func (k keySizes) structural(n int) int { return k.ns + structTagBytes + n }
-
-func (k keySizes) record(id string) int { return k.member + len(id) }
-
-// cell is a cell key of table and the cell reference "<row>:<col>".
-func (k keySizes) cell(table, ref string) int { return k.structural(len(table) + k.epoch + len(ref)) }
-
-func (k keySizes) history(about string) int { return k.structural(len(about) + k.epoch) }
-
-func (k keySizes) rows(table string) int { return k.structural(len(table) + k.epoch) }
-
-func (k keySizes) log() int { return k.structural(k.epoch) }
-
-func (k keySizes) done() int { return k.structural(k.epoch) }
-
-// xadd is the planned argv bytes of a log line beside the line itself.
-func (k keySizes) xadd() int { return cmdNameBytes + k.log() + streamIDBytes + streamFieldBytes }
-
-// rpush is the planned argv bytes of one history append.
-func (k keySizes) rpush(about string) int { return cmdNameBytes + k.history(about) + uintBytes }
-
-// receipt is the planned argv bytes of the done HSET of a step whose op is op:
-// the receipt is reserved whole, its size not being known before the step runs.
-func (k keySizes) receipt(op string) int {
-	return cmdNameBytes + k.done() + len(op) + LimitReceiptBytes
-}
-
 // The topology line of a rows entry (section 1.3: kind, entry_index, table,
 // added rows with their ranks, deleted rows), modelled as the change lines
 // are: the widest entry_index, each item with a comma.
@@ -702,9 +610,7 @@ func (b *builder) costMembers(es *entryState, st site, seen map[memberKey]struct
 		if dst == "" {
 			dst = src
 		}
-		es.hset = cmdNameBytes + b.keys.recordOwn(dst)
-		es.zrem = cmdNameBytes + b.keys.cell(e.Table, src)
-		es.zadd = cmdNameBytes + b.keys.cell(e.Table, dst)
+		es.cmds = b.keys.commands(e.Kind, e.Table, src, dst, len(e.Unset) > 0)
 		if e.To != "" {
 			es.dstRows = append(es.dstRows, memberKey{e.Table, cellRow(e.To)})
 		}
@@ -823,15 +729,21 @@ func (b *builder) costMember(es *entryState, st site, sh *shared, j int) (cost, 
 		c.line = qid + lineScoreBytes + after + 2*lineRevBytes + aboutBytes +
 			len(lineChangeOpen) + eff + len(lineChangeUnset) + sh.unsetArr + len(lineChangeClose)
 		rec := b.keys.record(id)
-		c.argv += es.hset + rec // the HSET's name, key and the record's own fields; its effective fields are in c.argv
-		if len(e.Unset) > 0 {
-			c.argv += cmdNameBytes + rec + sh.rawUnset // the HDEL
+		cmds := es.cmds
+		c.argv += cmds.hset + rec // the HSET's name, key and the record's own fields; its effective fields are in c.argv
+		if cmds.hdel > 0 {
+			c.argv += cmds.hdel + rec + sh.rawUnset // the HDEL: the unset names, and a remove's placement
 		}
 		score := scoreBytes // a score the request leaves out is the one the member has: at its widest
 		if e.Scores != nil {
 			score = max(score, len(e.Scores[j]))
 		}
-		c.argv += es.zrem + len(id) + es.zadd + score + len(id) // the ZREM and the ZADD
+		if cmds.zrem > 0 {
+			c.argv += cmds.zrem + len(id) // the ZREM out of its cell
+		}
+		if cmds.zadd > 0 {
+			c.argv += cmds.zadd + score + len(id) // the ZADD into its cell
+		}
 		if e.About != nil {
 			c.argv += b.keys.rpush(e.About[j])
 		}
@@ -893,7 +805,6 @@ func (b *builder) costRows(es *entryState, st site) error {
 	}
 	es.cost = make([]cost, es.n)
 	adds := make(map[string]struct{}, len(e.Add))
-	rk := b.keys.rows(e.Table)
 	for j := 0; j < es.n; j++ {
 		row, field := rowAt(e, j)
 		if err := st.name(field, "", row); err != nil {
@@ -905,12 +816,12 @@ func (b *builder) costRows(es *entryState, st site) error {
 		if j < len(e.Add) {
 			adds[row] = struct{}{}
 			// the ZADD of the row into the rows key and its item of the topology line
-			es.cost[j].argv = cmdNameBytes + rk + rankBytes + len(row) + len(lineRowAdd) + quoted(row) + rankBytes + 1
+			es.cost[j].argv = b.keys.rowAdd(e.Table, row) + len(lineRowAdd) + quoted(row) + rankBytes + 1
 		} else if _, clash := adds[row]; clash {
 			return st.input("del", "", "names a row the entry adds")
 		} else {
 			// the ZREM of the row from the rows key and its item of the topology line
-			es.cost[j].argv = cmdNameBytes + rk + len(row) + quoted(row) + 1
+			es.cost[j].argv = b.keys.rowDel(e.Table, row) + quoted(row) + 1
 		}
 		es.cost[j].req = quoted(row)
 	}
