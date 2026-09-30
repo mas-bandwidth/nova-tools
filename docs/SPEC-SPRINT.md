@@ -662,7 +662,7 @@ command that loads it.
 | verb | does |
 |---|---|
 | init | creates the four tables and the view; `--readers`, `--members`, `--coordinator` (the one actor who releases sentinels; default the actor) |
-| add | admits primaries into a stream: waiting if they need something, else ready; `--count n` generates ids; `--sentinel <id>`, `--before`/`--after <id>` (section 16) |
+| add | admits primaries into a stream: waiting if they need something, else ready; `--count n` generates ids; `--sentinel <id>`, `--before`/`--after <id>` (section 16); `--brief <text>` or `--brief-file <path>` gives the brief (the file's bytes as they are, its one trailing newline cut; both together, or a file that cannot be read, is refused with exit 2), and every packet carries it whole |
 | release | lands reached sentinels, the coordinator's alone, with `--reason` |
 | resolve | waiting -> ready where needs have landed (the tick does it; by hand for a stuck case) |
 | start, stop | set the machine RUNNING or STOPPED (section 14) |
@@ -685,7 +685,7 @@ command that loads it.
 | ci | records a CI observation for primaries in any state |
 | wait | sets a judgment's next review time |
 | ack | closes a judgment the coordinator looked at, with the reason |
-| inbox | every open judgment and the notifications since the cursor, grouped, judgment first; `--open <id>`, `--read` |
+| inbox | every open judgment and the notifications since the cursor, grouped, judgment first; `--open <id>`, `--read`; `--json` carries `judgments` (each with `id`, `kind`, `type`, `what`, `stream`, `size`, `cards` whole, `notes`, and `answers`: every decision with the exact command lines that make it, in order), `happened` (the notifications since the cursor, grouped), `done` (the machine has stopped because the sprint is done) and `groups`, every group in the order the text prints |
 | card | one primary's story, told from the log: for a card in flight, first what holds it now (each open judgment with the commands that answer it, or the actor and its deadline); its place in its stream's line; its brief, and the fix its attempt was given; its timeline in local time, an attempt at a time ("attempt 2, because attempt 1 failed"), one line per event a person would name (two readers asked, a merge and its batch, a step and its answer are one line each), a finish and a read with the first line of their words; the reports, findings and fixes whole as paragraphs; a card that has ended says so in one line; `--fields` prints every field of the primary and its cards instead; `--json` carries both, the timeline's events with the log lines each tells |
 | queue --as, take | a member's or a reader's cards, each with its packet: what it is handed so that it needs no other read to learn its task (the card, its epoch and generation, the brief, this attempt's fix, the notes on it, and for a work card the branch to work on, `sprint/<card>`, and the one to start from, the attempt before's branch for a rework; for a read card the work it reads: the worker, its head, branch and base, and the worker's report), and the command that reports it; take prints the packets of the cards it took, `--json` as `packets`; finish takes `--branch` and `--base`, which the work card keeps and the reader's packet and card show |
 | log | the epoch's log, every line in order: --card (a primary with its work, read and merge cards), --stream, --member, --since, --at-epoch, --json (section 17) |
@@ -700,12 +700,18 @@ The read verbs (queue, where, inbox, card, check) have `--json`, one object for 
 program; `queue --stream <s> --col waiting` lists a stream's waiting cards;
 `card` shows each need with its state and what needs the card; where, inbox and card take `--at-epoch <n>` to read an earlier epoch as
 it was. Every store verb takes `--epoch <n>`, the epoch the caller holds. Every
-report of an outside actor (take by id, finish, read, a merge step, ci) must
-name it: `queue`, `card` and the inbox's printed merge commands print it, and
-a report without it, or with an epoch the sprint has left, is refused naming
-the clear, so a worker, reader or merger from before a clear never reports on
-the new epoch's card of the same name. The coordinator's own verbs read the
-current epoch.
+report of an outside actor on a card it was handed (take by id, finish, read,
+ci, and a merge step by an actor other than the coordinator) must name it:
+`queue`, `card` and the inbox's printed merge commands print it, and a report
+without it, or with an epoch the sprint has left, is refused naming the clear.
+A clear moves the epoch and a card of the same name in the new epoch is
+another card, so the guard keeps a worker, reader or merger from before a
+clear from reporting on it. The coordinator's verbs (accept, merge, rework,
+drop, rank, resume, return, release, resolve, start, stop and the rest) name
+no handed card: each acts on the cards it reads in the step's own read of the
+epoch, and with no `--epoch` runs at the epoch that read finds (a clear between
+the read and the write is read again), so they need none; the coordinator
+given `--epoch` is held to it like any other actor.
 
 ## 12. The driver
 
