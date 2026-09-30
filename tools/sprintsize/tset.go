@@ -398,7 +398,7 @@ func tsetFillEntries(cards, first, count int) ([]tset.Entry, error) {
 }
 
 // tsetSizeSampler reads a matched FCALL SLOWLOG record through the direct
-// observer, while Store may use either direct Redis or Emma's delay proxy.
+// observer, while Store may use either direct Redis or the delay proxy.
 // The owned container must already have SLOWLOG threshold zero and enough
 // capacity. The sampler never changes server configuration.
 type tsetSizeSampler struct {
@@ -1382,7 +1382,7 @@ func tsetBootstrap(ctx context.Context, direct *redis.Client, store tset.Store, 
 
 // tsetRunL1 is the opt-in execution path for the section 1.8 rows. A row
 // remains NOT MEASURED if its prerequisites or measurement fail. The caller
-// supplies the profile loader and Store constructor; Emma's proxy is only an
+// supplies the profile loader and Store constructor; the delay proxy is only an
 // explicit address and is not recreated here.
 type tsetOwnedStore interface {
 	tset.Store
@@ -1843,7 +1843,7 @@ func tsetMemoryCLI(ctx context.Context, cfg tsetSizeConfig, cards int, out io.Wr
 		NamespaceKeyMemory map[string]tsetMemoryClassTotal `json:"namespace_key_memory"`
 		AccountingNote     string                          `json:"accounting_note"`
 	}{
-		Status:  "NOT MEASURED: Rowan L2 full-lifecycle post-GC dataset-per-primary gate is outside this fill-only diagnostic",
+		Status:  "NOT MEASURED: the L2 full-lifecycle post-GC dataset-per-primary gate is outside this fill-only diagnostic",
 		Profile: "composed+test-only tset_size_gc_probe; timing profile differs",
 		Cards:   cards, Space: space, BaselinePostGC: baseline, FixturePostGC: prefill,
 		FillPreGC: preGC, FillPostGC: postGC,

@@ -505,7 +505,7 @@ func (w *witness) checkSandboxNetwork() {
 	url := orDefault(w.get("NOVA_PROBE_URL"), defaultProbeURL)
 	dir, err := w.h.MkdirTemp(filepath.Join(w.home, "nova-bench"), "nova-probe.*")
 	if err != nil {
-		w.drift("sandbox-network: cannot make probe dir under %s/nova-bench", w.home)
+		w.drift("sandbox-network: cannot make probe dir under %s/nova-bench: %v", w.home, err)
 		return
 	}
 	defer w.h.RemoveUnder(filepath.Join(w.home, "nova-bench"), dir)
@@ -664,7 +664,7 @@ func (w *witness) checkDisk() {
 	}
 	kb, ok := w.freeKB()
 	if !ok {
-		w.drift("disk free unknown: df answered nothing readable for %s; a bench whose space cannot be read is not known to be conforming", w.home)
+		w.drift("disk free unknown: df answered nothing readable for %s; a bench whose free disk cannot be read is not known to be conforming", w.home)
 		return
 	}
 	w.freeG = strconv.FormatInt(kb/1048576, 10)

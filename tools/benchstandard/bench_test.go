@@ -26,19 +26,19 @@ type answer struct {
 type fakeHost struct {
 	osHost // the file probes, against the real temp directory
 
-	mu       sync.Mutex
-	osName   string
-	environ  []string
-	sourced  map[string]string
+	mu         sync.Mutex
+	osName     string
+	environ    []string
+	sourced    map[string]string
 	sourceSaid string // what sourcing the sdk env file printed
-	sourceEr error
-	answers  []answer
-	cgroups  map[string]string
-	ran      []string // every process started: "base arg arg"
-	ranSpecs []runSpec
-	killed   []int
-	made     []string // MkdirTemp results
-	removed  []string // RemoveUnder paths
+	sourceEr   error
+	answers    []answer
+	cgroups    map[string]string
+	ran        []string // every process started: "base arg arg"
+	ranSpecs   []runSpec
+	killed     []int
+	made       []string // MkdirTemp results
+	removed    []string // RemoveUnder paths
 }
 
 func (f *fakeHost) OS() string        { return f.osName }

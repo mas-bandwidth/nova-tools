@@ -16,7 +16,7 @@
 # - Adding a second occurrence to an already-allowed file exceeds the ceiling and fails.
 # - A count lower than the allowed count requires shrinking the allowlist entry.
 #
-# ceiling: 240
+# ceiling: 242
 cmd/nova-bus/main.go:glenn 2
 cmd/nova-bus/main.go:johnny 3
 cmd/nova-bus/main.go:space 10
@@ -257,3 +257,5 @@ internal/update/snapverb.go:studio 1
 internal/worklang/worklang.go:space 5
 internal/yield/nice_linux.go:hetzner 1
 internal/yield/yield.go:glenn 1
+tools/sprintsize/main.go:space 5
+tools/sprintsize/tset.go:space 8
