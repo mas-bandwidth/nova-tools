@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
@@ -143,4 +144,19 @@ func presence(s *Snapshot, r TickReq) (Plan, int) {
 		return FleetStep(s, FleetReq{Op: "down", Member: m, Who: r.who(), Live: live, Why: why}), len(downs)
 	}
 	return Plan{}, 0
+}
+
+// StrangerNotes is the plan that tells the coordinator of each unknown machine
+// that beats and was not told of yet: one happened notification for each name,
+// in name order, none for a machine that has a row in the fleet by now.
+func StrangerNotes(s *Snapshot, names []string) Plan {
+	var p Plan
+	for _, m := range slices.Sorted(slices.Values(names)) {
+		if s.Fleet.HasRow(m) {
+			continue
+		}
+		p.Notes = append(p.Notes, Note{Kind: Happened, Type: NUnknownMachine, Who: MachineActor, At: s.Now,
+			What: "an unknown machine is beating: " + m + "; add it with nova-sprint fleet up " + m})
+	}
+	return p
 }

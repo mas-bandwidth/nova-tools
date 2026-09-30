@@ -310,7 +310,7 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			}
 		}
 		// Every plan is held to the lifecycle here, whatever step built it.
-		plan := sprint.OnePerCause(snap, sprint.Lawful(step.Plan(snap)))
+		plan := sprint.Applied(snap, step.Plan(snap))
 		if step.Named && len(plan.Refused) > 0 && len(plan.Units)+len(plan.Notes)+len(plan.Closes)+len(plan.Rows) > 0 {
 			return allOrNone(res, plan), nil
 		}
