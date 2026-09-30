@@ -6,11 +6,8 @@ import (
 	"go/parser"
 	"go/token"
 	"regexp"
-	"sort"
 	"strings"
 	"testing"
-
-	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
 )
 
 // okOnFailureAllowlistPath is the shrink-only ledger of the print-then-exit
@@ -46,9 +43,7 @@ func TestNoOKOnFailure(t *testing.T) {
 	t.Parallel()
 
 	tree := repoTree(t)
-	allow := readReasonedAllowlist(t, okOnFailureAllowlistPath)
-	seen := map[string]bool{}
-	var violations []string
+	ledger := newSiteLedger(t, okOnFailureAllowlistPath)
 	for _, files := range goFilesByDir(livingCmdFiles(tree)) {
 		var asts []*ast.File
 		for _, f := range files {
@@ -60,22 +55,11 @@ func TestNoOKOnFailure(t *testing.T) {
 		pkg := newCmdPackage(asts)
 		for _, f := range files {
 			for _, s := range pkg.okOnFailureSites(tree.FSet, f.AST) {
-				key := f.Rel + ":" + s.fn + ":" + s.kind
-				seen[key] = true
-				if allow.Has(key) {
-					continue
-				}
-				violations = append(violations, fmt.Sprintf("%s:%d: %s: %s", f.Rel, s.line, key, s.text))
+				ledger.add(f.Rel+":"+s.fn+":"+s.kind, fmt.Sprintf("%s:%d: %s", f.Rel, s.line, s.text))
 			}
 		}
 	}
-	for _, row := range allowlist.Check(t, allow, seen).Stale {
-		violations = append(violations, fmt.Sprintf(
-			"%s lists %s, but that word and exit agree now or are gone; delete the stale row (the list only shrinks; NOVA_CI_UPDATE=1 drops it)",
-			okOnFailureAllowlistPath, row.Key))
-	}
-	sort.Strings(violations)
-	for _, v := range violations {
+	for _, v := range ledger.violations(t, "the word and the exit must agree: OK only at 0, FAIL or REFUSED only above it (a row's count only falls)") {
 		t.Error(v)
 	}
 }

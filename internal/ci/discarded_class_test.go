@@ -58,9 +58,7 @@ func TestNoErrorIsDiscarded(t *testing.T) {
 	t.Parallel()
 
 	tree := repoTree(t)
-	allow := readReasonedAllowlist(t, discardedAllowlistPath)
-	seen := map[string]bool{}
-	var violations []string
+	ledger := newSiteLedger(t, discardedAllowlistPath)
 	for _, src := range tree.GoFilesUnder(false, discardedDirs...) {
 		if src.HasDirNamed("testdata") {
 			continue
@@ -73,30 +71,17 @@ func TestNoErrorIsDiscarded(t *testing.T) {
 			if reasonedAt(lines, s.line) {
 				continue
 			}
-			key := src.Rel + ":" + s.fn + ":" + s.shape
-			seen[key] = true
-			if allow.Has(key) {
-				continue
-			}
-			violations = append(violations, fmt.Sprintf("%s:%d: %s (%s): %s", src.Rel, s.line, key, s.text, discardedRemedy[s.shape]))
+			ledger.add(src.Rel+":"+s.fn+":"+s.shape, fmt.Sprintf("%s:%d (%s)", src.Rel, s.line, s.text))
 		}
 	}
-	for _, row := range allowlist.Check(t, allow, seen).Stale {
-		violations = append(violations, fmt.Sprintf(
-			"%s lists %s, but no unreasoned site of that shape is there any more; delete the stale row (the list only shrinks; NOVA_CI_UPDATE=1 drops it)",
-			discardedAllowlistPath, row.Key))
-	}
-	sort.Strings(violations)
-	for _, v := range violations {
+	for _, v := range ledger.violations(t, discardedRemedy) {
 		t.Error(v)
 	}
 }
 
-var discardedRemedy = map[string]string{
-	shapeBlank:     "the call's error is dropped; return it, print it as one line with its remedy, or say why it is safe with `// ignored: <reason>` on this line or the one above",
-	shapeBareRet:   "the function ends early on an error and says nothing; return, print or count the error, or say why with `// ignored: <reason>` on this line or the one above",
-	shapeErrNilled: "a failure is overwritten; keep it, or say why it is safe with `// ignored: <reason>` on this line or the one above",
-}
+// discardedRemedy is what a finding says to do: fix the site or give it its reason. A
+// row in the ledger is how an old site is carried, never how a new one is admitted.
+const discardedRemedy = "the error is dropped, or the function ends early, or a failure is overwritten; return it, print it as one line with its remedy, or say why it is safe with `// ignored: <reason>` on this line or the one above (a row's count only falls)"
 
 // discardedSite is one place the rule reads.
 type discardedSite struct {
@@ -269,17 +254,72 @@ func exprText(e ast.Expr) string {
 	return "<expr>"
 }
 
-// readReasonedAllowlist loads a shrink-only ledger and refuses a row that
-// carries no reason: a row with no reason is a parking place, not a judgement.
-func readReasonedAllowlist(t *testing.T, path string) *allowlist.List {
+// countedLedger is the options of the four never-silent ledgers (discarded,
+// scripthide, okonfailure, remedy): shrink-only by site, not by row. A row is
+// `key sites reason`, and the measured number of sites under the key must equal
+// its count, so a new site under an existing row is red, and a site that has been
+// fixed asks for its count to be lowered (NOVA_CI_UPDATE=1 lowers it).
+var countedLedger = allowlist.Options{Ceiling: true, Counted: true}
+
+// requireReasons refuses a counted ledger row that carries no reason after its
+// site count: a row with no reason is a parking place, not a judgement.
+func requireReasons(t *testing.T, path string, allow *allowlist.List) {
 	t.Helper()
-	allow := loadAllowlist(t, path, shrinkOnly)
 	for _, row := range allow.Rows() {
-		if _, reason, _ := strings.Cut(row.Text, " "); strings.TrimSpace(reason) == "" {
-			t.Errorf("%s: %q carries no reason; a row says why the site is left as it is", path, row.Text)
+		if f := strings.Fields(row.Text); len(f) < 3 {
+			t.Errorf("%s: %q carries no reason after its site count; a row says why the sites are left as they are", path, row.Text)
 		}
 	}
-	return allow
+}
+
+// siteLedger is one class test's run against its counted ledger: the sites it
+// measured, each under its key, and what the ledger makes of them.
+type siteLedger struct {
+	path  string
+	allow *allowlist.List
+	sites map[string][]string // key -> "file:line: text", in the order found
+}
+
+func newSiteLedger(t *testing.T, path string) *siteLedger {
+	t.Helper()
+	allow := loadAllowlist(t, path, countedLedger)
+	requireReasons(t, path, allow)
+	return &siteLedger{path: path, allow: allow, sites: map[string][]string{}}
+}
+
+// add records one unremedied site under its key.
+func (l *siteLedger) add(key, where string) { l.sites[key] = append(l.sites[key], where) }
+
+// violations checks the measured sites against the ledger: a key with no row is red
+// at each of its sites (remedy says how to fix one); a key with more sites than its
+// row lists is red with every site named, because the new one cannot be told from the
+// listed ones; a key with fewer sites than its row lists is red until the count is
+// lowered; and a row whose key has no site left is stale. Each message says how to
+// shrink the row.
+func (l *siteLedger) violations(t *testing.T, remedy string) []string {
+	t.Helper()
+	measured := map[string]int{}
+	for k, w := range l.sites {
+		measured[k] = len(w)
+	}
+	var out []string
+	res := allowlist.CheckCounted(t, l.allow, measured)
+	for _, k := range res.Unlisted {
+		for _, w := range l.sites[k] {
+			out = append(out, fmt.Sprintf("%s: %s (no row in %s): %s", w, k, l.path, remedy))
+		}
+	}
+	for _, c := range res.Over {
+		out = append(out, fmt.Sprintf("%s lists %s at %d sites, but %d are there now (%s); a new site is not covered by a row that was written for fewer: %s", l.path, c.Key, c.Listed, c.Measured, strings.Join(l.sites[c.Key], "; "), remedy))
+	}
+	for _, c := range res.Lowered {
+		out = append(out, fmt.Sprintf("%s lists %s at %d sites, but only %d are there now; lower the row's count to %d (the list only shrinks; NOVA_CI_UPDATE=1 lowers it)", l.path, c.Key, c.Listed, c.Measured, c.Measured))
+	}
+	for _, row := range res.Stale {
+		out = append(out, fmt.Sprintf("%s lists %s, but no site of that key is there any more; delete the stale row (the list only shrinks; NOVA_CI_UPDATE=1 drops it)", l.path, row.Key))
+	}
+	sort.Strings(out)
+	return out
 }
 
 // TestDiscardedRuleReadsTheThreeShapes proves the rule over source: each shape
@@ -376,9 +416,7 @@ func TestNoScriptHidesAFailure(t *testing.T) {
 	t.Parallel()
 
 	tree := repoTree(t)
-	allow := readReasonedAllowlist(t, scriptHideAllowlistPath)
-	seen := map[string]bool{}
-	var violations []string
+	ledger := newSiteLedger(t, scriptHideAllowlistPath)
 	for _, f := range tree.Files {
 		if f.Go || !f.InAnyDir(scriptHideDirs...) || f.HasDirNamed("testdata") || strings.HasSuffix(f.Rel, "_test.sh") || !hasAnySuffix(f.Rel, scriptHideExts) {
 			continue
@@ -393,22 +431,11 @@ func TestNoScriptHidesAFailure(t *testing.T) {
 				if scriptReasonedAt(lines, i) {
 					continue
 				}
-				key := f.Rel + ":" + shape
-				seen[key] = true
-				if allow.Has(key) {
-					continue
-				}
-				violations = append(violations, fmt.Sprintf("%s:%d: %s: %q throws a failure away; let it show, or say why it is safe with `# ignored: <reason>` on this line or the one above", f.Rel, i+1, key, strings.TrimSpace(line)))
+				ledger.add(f.Rel+":"+shape, fmt.Sprintf("%s:%d %q", f.Rel, i+1, strings.TrimSpace(line)))
 			}
 		}
 	}
-	for _, row := range allowlist.Check(t, allow, seen).Stale {
-		violations = append(violations, fmt.Sprintf(
-			"%s lists %s, but no unreasoned line of that shape is there any more; delete the stale row (the list only shrinks; NOVA_CI_UPDATE=1 drops it)",
-			scriptHideAllowlistPath, row.Key))
-	}
-	sort.Strings(violations)
-	for _, v := range violations {
+	for _, v := range ledger.violations(t, "the line throws a failure away; let it show, or say why it is safe with `# ignored: <reason>` on this line or the one above (a row's count only falls)") {
 		t.Error(v)
 	}
 }
@@ -465,5 +492,47 @@ func TestScriptHideRuleReadsTheShapes(t *testing.T) {
 	}
 	if !scriptReasonedAt([]string{"# ignored: a probe whose answer is the exit", "kill -0 1 2>/dev/null"}, 1) {
 		t.Error("a reason on the line above was not read")
+	}
+}
+
+// TestSiteLedgerShrinksBySiteNotByRow proves the four never-silent ledgers are
+// shrink-only by site: a site under a key a row already lists is red (the row's
+// count is what the ledger allows), a fixed site asks for a lower count, a key with
+// no row is red at each site, and a count that matches is quiet.
+func TestSiteLedgerShrinksBySiteNotByRow(t *testing.T) {
+	t.Parallel()
+	if allowlist.Updating() {
+		t.Skip("an update run rewrites lists; this test reads one from memory")
+	}
+	allow, err := allowlist.Parse("test_allowlist.txt", "# ceiling: 2\na.go:f:blank 2 two sites\nb.sh:or-true 1 one site\n", countedLedger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run := func(sites map[string]int) []string {
+		l := &siteLedger{path: "test_allowlist.txt", allow: allow, sites: map[string][]string{}}
+		for k, n := range sites {
+			for i := 0; i < n; i++ {
+				l.add(k, fmt.Sprintf("%s#%d", k, i+1))
+			}
+		}
+		return l.violations(t, "REMEDY")
+	}
+	if got := run(map[string]int{"a.go:f:blank": 2, "b.sh:or-true": 1}); len(got) != 0 {
+		t.Errorf("a ledger that matches is quiet, got %q", got)
+	}
+	if got := run(map[string]int{"a.go:f:blank": 3, "b.sh:or-true": 1}); len(got) != 1 || !strings.Contains(got[0], "lists a.go:f:blank at 2 sites, but 3 are there now") || !strings.Contains(got[0], "REMEDY") {
+		t.Errorf("a new site under a listed key must be red with the remedy, got %q", got)
+	}
+	if got := run(map[string]int{"a.go:f:blank": 2, "b.sh:or-true": 2}); len(got) != 1 || !strings.Contains(got[0], "b.sh:or-true at 1 sites, but 2") {
+		t.Errorf("a second site under a one-site row must be red, got %q", got)
+	}
+	if got := run(map[string]int{"a.go:f:blank": 1, "b.sh:or-true": 1}); len(got) != 1 || !strings.Contains(got[0], "lower the row's count to 1") {
+		t.Errorf("a fixed site must ask for a lower count, got %q", got)
+	}
+	if got := run(map[string]int{"a.go:f:blank": 2, "b.sh:or-true": 1, "c.go:g:blank": 2}); len(got) != 2 || !strings.Contains(got[0], "c.go:g:blank#") {
+		t.Errorf("a key with no row must be red at each of its sites, got %q", got)
+	}
+	if got := run(map[string]int{"a.go:f:blank": 2}); len(got) != 1 || !strings.Contains(got[0], "b.sh:or-true, but no site") {
+		t.Errorf("a row with no site left is stale, got %q", got)
 	}
 }
