@@ -115,6 +115,7 @@ type launch struct {
 	attempt int
 	epoch   uint64
 	branch  string
+	spent   bool // a read whose child ended with no verdict: not ours to report, not run again until the sprint moves the card
 }
 
 // Member is the loop's state: the children running, by card id.
@@ -132,8 +133,16 @@ func New(cfg Config, s Sprint, r Runner, out io.Writer) *Member {
 	return &Member{cfg: cfg, sprint: s, runner: r, out: out, running: map[string]launch{}}
 }
 
-// Running is how many children are running.
-func (m *Member) Running() int { return len(m.running) }
+// Running is how many children are running (a spent launch holds no place).
+func (m *Member) Running() int {
+	n := 0
+	for _, l := range m.running {
+		if !l.spent {
+			n++
+		}
+	}
+	return n
+}
 
 // Tick is one pass of the loop: beat, read the queue, report every child
 // that ended, take (begin) up to the width, start each card taken. It returns
@@ -143,7 +152,7 @@ func (m *Member) Running() int { return len(m.running) }
 func (m *Member) Tick(now time.Time) (acted int, err error) {
 	load := 0
 	if m.cfg.Width > 0 {
-		load = len(m.running) * 100 / m.cfg.Width
+		load = m.Running() * 100 / m.cfg.Width
 	}
 	if !m.cfg.Reader {
 		if code, out := m.sprint.Run("fleet", "beat", m.cfg.As, "--load", strconv.Itoa(load)); code == 2 {
@@ -197,7 +206,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 			}
 			continue
 		}
-		if !l.child.Done() {
+		if l.spent || !l.child.Done() {
 			continue
 		}
 		r := l.child.Result()
@@ -208,7 +217,8 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 				// no verdict is no finding: the read stays reading for the
 				// sprint's lateness rule to re-ask; the child is let go
 				fmt.Fprintf(m.out, "read %s: no verdict (ran=%t verdict=%q); left for the sprint to re-ask\n", id, r.Ran, r.Verdict)
-				delete(m.running, id)
+				l.spent = true
+				m.running[id] = l
 				continue
 			}
 			word := "--ok"
@@ -247,7 +257,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 		}
 	}
 	// 2. Take (begin) up to the width, in one verb, and start each.
-	room := m.cfg.Width - len(m.running)
+	room := m.cfg.Width - m.Running()
 	if room <= 0 {
 		return acted, nil
 	}
@@ -316,7 +326,7 @@ func (m *Member) start(p Packet) bool {
 		return false
 	}
 	m.running[p.Card] = launch{child: ch, gen: p.Gen, attempt: p.Attempt, epoch: p.Epoch, branch: p.Branch}
-	fmt.Fprintf(m.out, "start %s attempt=%d gen=%d running=%d/%d\n", p.Card, p.Attempt, p.Gen, len(m.running), m.cfg.Width)
+	fmt.Fprintf(m.out, "start %s attempt=%d gen=%d running=%d/%d\n", p.Card, p.Attempt, p.Gen, m.Running(), m.cfg.Width)
 	return true
 }
 
