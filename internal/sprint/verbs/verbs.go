@@ -21,6 +21,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha1"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -257,11 +258,11 @@ func Intent(names sprint.Names, epoch tset.Decimal, verb string, part int, args 
 	return string(b), nil
 }
 
-// IDsDigest is a list of named ids as an intent carries it (1.5.4): the SHA-1
-// of the sorted ids, one a line. SHA-1 is the digest Layer 1's receipts use.
+// IDsDigest is a list of named ids as an intent carries it (1.5.4: "a named
+// id list replaced by its SHA256 over the sorted ids"), one id a line.
 func IDsDigest(sorted []string) string {
-	sum := sha1.Sum([]byte(strings.Join(sorted, "\n")))
-	return "sha1:" + hex.EncodeToString(sum[:])
+	sum := sha256.Sum256([]byte(strings.Join(sorted, "\n")))
+	return "sha256:" + hex.EncodeToString(sum[:])
 }
 
 // digest is an intent's digest as done compares it (L1 5: SHA1 of the intent
@@ -315,7 +316,7 @@ func (e *Env) wait(ctx context.Context, retries int) error {
 func (e *Env) Do(ctx context.Context, p Planned) (Result, error) {
 	res := Result{Verb: p.Verb, Op: p.Op}
 	if p.Op != "" && !validOp(p.Op) {
-		return res, refuseLocal(p.Verb, sprintfn.CodeRequest, "--op %q is not an op (text of at most 200 bytes, no space, '~' or '/')", p.Op)
+		return res, refuseLocal(p.Verb, sprintfn.CodeRequest, "--op %q is not an op (text of at most 200 bytes, no blank, '~' or '/')", p.Op)
 	}
 	askDone := p.Op != ""
 	for {
@@ -627,7 +628,15 @@ func partID(op string, k int) string { return op + "/p" + strconv.Itoa(k) }
 // race is planned again on a fresh read, at most Retries times a part; a
 // LIMIT plans the part again at half the chunk, and the parts after it keep
 // the half. Any other refusal ends the op: the parts before stay applied and
-// the refusal says how to go on.
+// the refusal says how to go on. The model's actions are PartApply (a part
+// applies once, its receipt holding its continuation and, in the last part,
+// final) and VerbCrash (the verb dies between its read and its step, or
+// between parts), tla/SprintEvents.tla.
+//
+// The cut entry cut:<op> in {p}cut@e, which each part moves to wall + 10 min
+// and the last part removes (1.5.4), is not written: no part of the write path
+// carries it yet (IT16's sprint part has no field for it). The finished mark
+// is the last part's receipt (errata 3, H4), which done reads.
 func (e *Env) Parts(ctx context.Context, op string, pp PartsPlan) (Result, error) {
 	res := Result{Verb: pp.Verb}
 	resume := op != ""
@@ -636,7 +645,7 @@ func (e *Env) Parts(ctx context.Context, op string, pp PartsPlan) (Result, error
 	}
 	res.Op = op
 	if !validOp(op) {
-		return res, refuseLocal(pp.Verb, sprintfn.CodeRequest, "--op %q is not an op (text of at most 200 bytes, no space, '~' or '/')", op)
+		return res, refuseLocal(pp.Verb, sprintfn.CodeRequest, "--op %q is not an op (text of at most 200 bytes, no blank, '~' or '/')", op)
 	}
 	chunk := pp.Chunk
 	if chunk <= 0 || chunk > StepChunk {
