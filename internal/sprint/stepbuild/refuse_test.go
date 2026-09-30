@@ -152,6 +152,10 @@ func TestAMemberNoStepCanHoldIsRefusedBeforeAnyIdentityIsAsked(t *testing.T) {
 		}
 	}
 	smallNote := Entry{Kind: KindNote, Notes: []Note{{Meta: map[string]string{"big": pad(60000)}, About: []string{"p"}}}}
+	// A member with an about ID is a line of two IDs: a member the members before
+	// it do not show, that a line of one cannot hold.
+	aboutMember := mv("work", []string{"b0"})
+	aboutMember.About = []string{"p"}
 	for _, tc := range []struct {
 		name    string
 		config  func(Config) Config
@@ -167,6 +171,8 @@ func TestAMemberNoStepCanHoldIsRefusedBeforeAnyIdentityIsAsked(t *testing.T) {
 			[]Entry{mv("work", names("m", 3000)), smallNote}, "", boundRequest.name, 0},
 		{"a note over a lowered argv bound, after 3,000 members", lowered(func(b *Bounds) { b.PlannedArgvBytes = 60000 }),
 			[]Entry{mv("work", names("m", 3000)), smallNote}, "", boundArgv.name, 0},
+		{"a member and its about ID over a line of one ID, after 3,000 members", lowered(func(b *Bounds) { b.LineIDs = 1 }),
+			[]Entry{mv("work", names("m", 3000)), aboutMember}, "b0", boundLineIDs.name, -1},
 		{"a note over a lowered note-line bound on the second of two notes", lowered(func(b *Bounds) { b.RequestBytes = 50000 }),
 			[]Entry{mv("work", names("m", 3000)), {Kind: KindNote, Notes: []Note{{About: []string{"p"}}, smallNote.Notes[0]}}}, "", boundRequest.name, 1},
 	} {
