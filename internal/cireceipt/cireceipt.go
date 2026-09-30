@@ -9,8 +9,7 @@
 // The row's reader is `nova-wake watch --store` (internal/wake.EvGithub),
 // which blocks on ev:github for the pull requests it names and reads repo,
 // number, kind, action, head, sender and at. The fields are exactly the ones
-// `nova-sprint ci github --from-runner` wrote (internal/nsprint/webhook,
-// deprecated), so that reader is unchanged. The ci:<repo>:<sha>:gh fold and
+// `nova-sprint ci github --from-runner` wrote, so that reader is unchanged. The ci:<repo>:<sha>:gh fold and
 // the pr:<repo>:<n> claim that verb also wrote are not written here: their
 // only readers were nova-sprint's own (land pr, read brief --pr, its Lua).
 //

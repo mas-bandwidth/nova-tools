@@ -21,9 +21,7 @@ age-keygen	source	age
 ansible-inventory	absent	the one test that runs it reads only a wrapper script and skips when it is not installed; ansible is a control-node tool, not carried by the runner image
 bash	base	bash
 c++	absent	only the macOS sandbox tests compile with it; the darwin body is skipped on Linux by design
-cat	base	coreutils
 cmd.exe	absent	Windows only; a Linux container has no Windows shell
-date	base	coreutils
 diskutil	absent	macOS only; the volume tests that call it are darwin tests
 docker	absent	a container engine is never run inside the container; the swarm engine probe finds none and picks none
 echo	base	coreutils
@@ -32,7 +30,6 @@ git	apt	git
 go	source	fetch
 icacls	absent	Windows only; a Linux container has no Windows file ACLs
 java	absent	runs the TLC model checker on a bench, not in the functional tier
-kill	apt	procps
 log	absent	macOS unified logging; only the darwin sandbox tests read it
 lsof	apt	lsof
 make	apt	make

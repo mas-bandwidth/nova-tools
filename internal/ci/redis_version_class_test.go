@@ -88,7 +88,6 @@ var redisVersionNamedFiles = []string{
 var redisVersionHistory = []struct{ Prefix, Why string }{
 	{"CHANGELOG.md", "release history: it records what each release said"},
 	{"docs/RELEASE-NOTES-", "release history: the notes of a release that shipped"},
-	{"internal/nsprint/acl/", "deprecated in place (deprecated/PACKAGES): its fixtures are the recorded output of redis-server 7.0.15, 8.0.5 and 8.10.2"},
 }
 
 var (
@@ -345,7 +344,7 @@ func TestRedisVersionRuleSeesEachShape(t *testing.T) {
 		}
 	}
 	for _, rel := range []string{
-		"CHANGELOG.md", "docs/RELEASE-NOTES-1.2.3.md", "internal/nsprint/acl/acl_test.go",
+		"CHANGELOG.md", "docs/RELEASE-NOTES-1.2.3.md",
 		"internal/foo/testdata/capture.json", "internal/foo/testdata/info.txt", "internal/foo/testdata/deep/x/reply.py",
 		"vendor/x/y.go", "web/node_modules/p/package.json",
 		"tools/.venv/bin/a.py", "venv/lib/x.py", "tools/venv/a.py",

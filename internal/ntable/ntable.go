@@ -3,8 +3,7 @@
 // should be a concept of ordered sets" / "The work stream table is really just
 // a series of ordered sets, per-cell" / "and the value printed, happens to be
 // for each cell, |s|" / "(but it doesn't need to be always)"). It knows
-// nothing about sprints: the sprint table's stream block is its first table
-// (internal/nsprint/table/streams.go), and the nova-table tool is its face.
+// nothing about sprints: the nova-table tool is its face.
 //
 // A table has three kinds of cell (Glenn, the same day: "there are cells
 // that are headers for columns, and cells that are headers for rows" / "and

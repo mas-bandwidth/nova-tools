@@ -57,16 +57,11 @@ var specAllowlist = []allowlistEntry{
 	// Card header (SPEC-CARD)
 	{file: "internal/swarm/lintheader.go", fn: "cardKeyCheck", record: "SPEC-CARD"},
 	{file: "internal/swarm/lintheader.go", fn: "cardTypedKeys", record: "SPEC-CARD"},
-	{file: "internal/nsprint/card/lint.go", fn: "requiredKeys", record: "SPEC-CARD"},
 
 	// Issue-body card keys
-	{file: "internal/nsprint/file/file.go", fn: "requiredKeys", record: "Issue-body"},
-	{file: "internal/nsprint/file/file.go", fn: "TaskTitle", record: "Issue-body"},
 
 	// Other records
-	{file: "internal/nsprint/consume/okfriend.go", fn: "onHarvested", record: "Lua-reply"},
 	{file: "internal/wake/bus.go", fn: "waitBookkeeping", record: "wake-bus"},
-	{file: "internal/nsprint/deal/ready.go", fn: "entryWhy", record: "Redis-outcome"},
 	{file: "internal/secrets/seal.go", fn: "carry", record: "git-HEAD"},
 	{file: "internal/swarm/wall.go", fn: "WallCommits", record: "git-HEAD"},
 	{file: "internal/swarm/wall.go", fn: "repoCommits", record: "git-HEAD"},
@@ -82,54 +77,10 @@ var specAllowlist = []allowlistEntry{
 var driftAllowlist = []allowlistEntry{
 	{file: "cmd/nova-swarm/nativeevent.go", fn: "failWord", record: "verdict", since: "7644669f",
 		reason: "first word of a nova-swarm native verdict line (BLOCKED, RED), an event record, not RESULT line 2"},
-	{file: "internal/nsprint/taskcard/complete.go", fn: "specFields", record: "SPEC-CARD", since: "98b5b444",
-		reason: "the issue's card header keys (ROUTE, KIND, REPO, PATHS, ...) that task push --issue fills the record from (#3916), read before any RESULT exists"},
 	{file: "internal/swarm/sparse.go", fn: "cardPATHS", record: "SPEC-CARD", since: "dd08d6e3",
 		reason: "the card's PATHS header for the sparse checkout, read before any RESULT exists"},
-	{file: "internal/nsprint/ready/ready.go", fn: "entryBlocker", record: "Redis-outcome", since: "26a5ddb0",
-		reason: "the Redis card hash outcome field, the same typed value as nsprint/deal/ready.go entryWhy"},
-	{file: "internal/sprintline/line.go", fn: "ParseSuggest", record: "calibration", since: "0c89f897",
-		reason: "the KIND report lines of nova-pulse sprint calibration stdout"},
-	{file: "internal/sprintline/line.go", fn: "suggestOf", record: "calibration", since: "0c89f897",
-		reason: "the SUGGEST lines of nova-pulse sprint calibration stdout"},
-	{file: "internal/nsprint/task/take.go", fn: "Take", record: "task-take-status", since: "7aebc02f",
-		reason: "task take status BLOCKED, the ns task-take function's reply word, not a RESULT field"},
-	{file: "internal/nsprint/task/take.go", fn: "TakeAvailable", record: "task-take-status", since: "8904dd03",
-		reason: "batch task take status BLOCKED, the ns_task_take_n function's per-entry reply word, not a RESULT field"},
-	{file: "internal/nsprint/reconcile/devred.go", fn: "stateOf", record: "Redis-CI-verdict", since: "72a2ecf8",
-		reason: "the verdict field of a Redis CI hash (civerdict.Field: OK, FAIL, RED, FAILURE), a CI reply word, not RESULT line 2"},
-	{file: "internal/nsprint/disposition/line.go", fn: "Parse", record: "DISPOSITION", since: "73980a14",
-		reason: "first line of a typed DISPOSITION/REPAIR comment (#3092), a friend read record, not RESULT line 2"},
-	{file: "internal/nsprint/task/take.go", fn: "DoneTyped", record: "task-done-status", since: "50fbecdb",
-		reason: "task done status DONE, the ns task-done function's reply word, not a RESULT field"},
-	{file: "internal/nsprint/land/eval_records.go", fn: "ParseInboundObjection", record: "objection", since: "362dde93",
-		reason: "first word of an inbound comment/review or PR body (HOLD, BLOCKED), the lander's B2 objection record (#3139), not RESULT line 2"},
 	{file: "internal/swarm/stage.go", fn: "ReadCardBase", record: "SPEC-CARD", since: "5778de35",
 		reason: "the card's REPO: header for staging (#3711), read before any RESULT exists, like sparse.go cardPATHS"},
-	{file: "internal/nsprint/card/cut.go", fn: "cutKeys", record: "Issue-body", since: "dd8168a7",
-		reason: "the issue-body card keys a cut reads (#3623), like nsprint/file/file.go requiredKeys, not a RESULT parse"},
-	{file: "internal/nsprint/card/cut.go", fn: "RenderCut", record: "SPEC-CARD", since: "dd8168a7",
-		reason: "renders the cut card's KIND/REPO/PATHS header lines and checks the issue's PATHS key (#3623), a card writer, not a RESULT parse"},
-	{file: "internal/nsprint/card/quack.go", fn: "QuackIssue", record: "SPEC-CARD", since: "4e9f4d70",
-		reason: "renders the quack primary's KIND/REPO/PATHS header lines (#3648, the copy-model template of #4307), a card writer, not a RESULT parse"},
-	{file: "internal/nsprint/digest/digest.go", fn: "holder", record: "DISPOSITION", since: "9b97df0c",
-		reason: "the kind of a read line (SCORE, DISPOSITION) in the land event log (#3158), a friend read record, not RESULT line 2"},
-	{file: "internal/nsprint/reap/reap.go", fn: "Run", record: "reap-verdict", since: "3257009a",
-		reason: "the reap package's own Done verdict const (\"DONE\") in a switch (#3156), not a RESULT status word"},
-	{file: "internal/nsprint/table/check.go", fn: "tableCells", record: "sprint-table", since: "19c5dfb9",
-		reason: "the sprint table's own \"RED <n>\" error rows in a Render() body (#3253), not a RESULT RED field"},
-	{file: "internal/jev/jev.go", fn: "fields", record: "PR-body", since: "04c639c1",
-		reason: "the PR body's typed PATHS: line Jev's lint pass checks (#3631), like nsprint/file/file.go requiredKeys, not a RESULT parse"},
-	{file: "internal/nsprint/jev/plan.go", fn: "CutState", record: "SPEC-CARD", since: "b27e5029",
-		reason: "renders the card's KIND/REPO/PATHS header lines from its Redis hash for Jev's cut question (#4316), a card writer like card/cut.go RenderCut, not a RESULT parse"},
-	{file: "internal/nsprint/jev/plan.go", fn: "ReviewState", record: "Redis-review", since: "b27e5029",
-		reason: "renders a failed copy's review fields (PR, PATHS) from its Redis hash for Jev's review question (#4316), a writer, not a RESULT parse"},
-	{file: "internal/nsprint/jev/plan.go", fn: "ReadState", record: "Redis-read", since: "b27e5029",
-		reason: "renders a read's HEAD line from its Redis hash for Jev's read question (#4316), a writer, not a RESULT parse"},
-	{file: "internal/nsprint/read/pr_brief.go", fn: "RenderPR", record: "SPEC-CARD", since: "587628fd",
-		reason: "renders the card's KIND/PATHS header lines from its Redis hash in read brief --pr (#4335), a card writer like card/cut.go RenderCut, not a RESULT parse"},
-	{file: "internal/nsprint/fleetbuild/play.go", fn: "cloneSha", record: "git-HEAD", since: "5c9588e0",
-		reason: "the HEAD revision in the argv of git rev-parse for fleet play's receipt sha (#4356 C), like secrets/seal.go RunSeal, not a RESULT field"},
 }
 
 var allowlist = append(append([]allowlistEntry{}, specAllowlist...), driftAllowlist...)
@@ -715,15 +666,15 @@ func TestOneTypedParser(t *testing.T) {
 			}
 		}
 
-		// The spec's list after part B: 21 entries, none tagged part=B.
+		// The spec's list after part B and the deleted packages: 6 entries, none tagged part=B.
 		partB := 0
 		for _, a := range specAllowlist {
 			if a.partB {
 				partB++
 			}
 		}
-		if len(specAllowlist) != 11 || partB != 0 {
-			t.Errorf("spec allowlist: %d entries, %d part=B; want 11 and 0", len(specAllowlist), partB)
+		if len(specAllowlist) != 6 || partB != 0 {
+			t.Errorf("spec allowlist: %d entries, %d part=B; want 6 and 0", len(specAllowlist), partB)
 		}
 		// Every drift entry names the commit that added it and why it stays.
 		for _, a := range driftAllowlist {
