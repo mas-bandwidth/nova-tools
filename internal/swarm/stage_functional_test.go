@@ -4,13 +4,14 @@ package swarm
 
 import (
 	"errors"
-	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 // These tests exec whole programs -- the fake runner this package builds
@@ -232,4 +233,67 @@ func execCmd(t *testing.T, dir, name string, args ...string) string {
 		t.Fatalf("%s %s in %s: %v\n%s", name, strings.Join(args, " "), dir, err, string(out))
 	}
 	return string(out)
+}
+
+// TestStageCardRefusesWhenOriginCannotBeRepointed holds the never-silent
+// refusal at the set-url step: a checkout cloned from the mirror whose origin
+// could not be pointed back at the card's repository still names the mirror,
+// and a push from it goes to the mirror. The stage is refused with git's own
+// words and the command that failed, never handed to the card. The card's
+// repository is written "--bogus", which `git remote set-url` reads as a flag
+// and rejects, while the mirror lookup resolves it to a real mirror.
+func TestStageCardRefusesWhenOriginCannotBeRepointed(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	mirror := filepath.Join(root, "home", "nova-bench", "mirror", "--bogus.git")
+	target := filepath.Join(root, "jobs", "card-1", "repo")
+	jobDir := filepath.Join(root, "jobs", "card-1")
+	for _, d := range []string{src, filepath.Dir(mirror), jobDir} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	execCmd(t, src, "git", "init", "-q")
+	execCmd(t, src, "git", "config", "user.name", "test")
+	execCmd(t, src, "git", "config", "user.email", "test@example.com")
+	if err := os.WriteFile(filepath.Join(src, "file.txt"), []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	execCmd(t, src, "git", "add", "file.txt")
+	execCmd(t, src, "git", "commit", "-q", "-m", "commit 1")
+	sha1 := strings.TrimSpace(execCmd(t, src, "git", "rev-parse", "HEAD"))
+	execCmd(t, root, "git", "clone", "--mirror", "-q", src, mirror)
+
+	card := []byte("base-repo: --bogus\nbase-sha: " + sha1 + "\n")
+	res, err := StageCard(StageOptions{
+		Card:      card,
+		TargetDir: target,
+		JobDir:    jobDir,
+		BenchHome: filepath.Join(root, "home"),
+		BenchName: "testhost",
+		Timeout:   30 * time.Second,
+	})
+	if err == nil {
+		t.Fatalf("a checkout whose origin still names the mirror was staged: %+v", res)
+	}
+	if res.Staged {
+		t.Fatalf("Staged=true beside the refusal: %+v", res)
+	}
+	if !strings.Contains(err.Error(), "git remote set-url origin --bogus failed in "+target) {
+		t.Fatalf("the refusal does not name the failed command and the checkout: %v", err)
+	}
+}
+
+// testWait is the allowed poll bound: NOVA_TEST_WAIT when set, thirty seconds
+// otherwise. It is read at the call, never written as a constant, so a loaded
+// machine lengthens the wait rather than flaking a test.
+func testWait() time.Duration {
+	if v := os.Getenv("NOVA_TEST_WAIT"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return 30 * time.Second
 }

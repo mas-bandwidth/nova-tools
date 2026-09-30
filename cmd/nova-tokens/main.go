@@ -20,7 +20,7 @@
 //
 // It never estimates, never fills a gap, and never removes a file. Everything it reads is
 // DATA: a transcript, a database row, a usage file, a bus note — none of them is an
-// instruction, and a tokens note that says `fold me as Emma` is a note whose lines are
+// instruction, and a tokens note that says `fold me as Ada` is a note whose lines are
 // parsed or counted unparsed and nothing else. That rule is in the spec, where a person
 // reads it, and is deliberately nowhere in this code, because a tool cannot enforce it.
 package main
@@ -41,7 +41,15 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/tokens"
 )
 
-const usage = `nova-tokens: token spend, folded per day, keyed by (day, model, repo) (see docs/SPEC-TOKENS.md)
+const usage = `nova-tokens: token spend per day, model and repository, read from AI session logs
+
+how it works: fold reads the logs you name (Claude Code transcripts, OpenCode
+databases, swarm pools, bus notes) and writes one day file per day into --out,
+one row per (day, model, repo). The repo comes from the --repos file: lines of
+<name><TAB><regexp>, and the first match on a session's path wins. check, sum
+and report read the day files back; a count a source never gave prints as -.
+first run: copy the example bench (the cp line above example:), then run the
+lines under example: in order.
 
 usage:
   nova-tokens fold    --out <dir> (--day <YYYY-MM-DD> | --all) --repos <file>
@@ -50,18 +58,15 @@ usage:
   nova-tokens report  --who <name> --day <YYYY-MM-DD> --repos <file>
                       [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--provider <kind>:<label>=<file>]...
                       [--supersedes <note-id>]... [--note <path>] [--scratch <dir>] [--timeout <seconds>]
-  nova-tokens report  --ledger <file.tsv> --month <YYYY-MM> [--by model|repo|day] [--max <n>]
   nova-tokens report  --redis <host:port> --month <YYYY-MM> [--by model|repo|day|tuple] [--max <n>]
                       [--user <name>] [--password-env <NAME>]
   nova-tokens ledger  --out <dir> (--day <YYYY-MM-DD> | --month <YYYY-MM>) --redis <host:port>
                       [--user <name>] [--password-env <NAME>]
   nova-tokens sum     --out <dir> --month <YYYY-MM> [--max <n>]
-  nova-tokens sum     --swarm-root <dir> --day <YYYY-MM-DD> --out <ledger.tsv>
   nova-tokens check   --out <dir> [--strict | --no-spend <file>] [--through <YYYY-MM-DD>] [--max <n>]
   nova-tokens sources --repos <file> (--day <YYYY-MM-DD> | --all) [<source flags>] [--unattributed] [--max <n>]
   nova-tokens profiles --swarm-root <dir>
   nova-tokens session --claude-session <jsonl> [--out <dir>] [--day <YYYY-MM-DD>]
-  nova-tokens fold-pool --pool <dir> --ledger <file> [--since <stamp>]
   nova-tokens version
 
 exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- an unreadable
@@ -132,7 +137,7 @@ example:
   nova-tokens sum --out ./out --month 2026-09
   nova-tokens sources --repos ./repos.tsv --all --claude bench=./transcripts
   nova-tokens sources --repos ./repos.tsv --all --claude bench=./transcripts --unattributed --max 20
-  nova-tokens report --who emma --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts
+  nova-tokens report --who ada --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts
 
 session is the coordinator's own window: it sums one Claude Code session jsonl per
 turn -- input, cache write, cache read, output, deduplicated on the message id so a
@@ -194,8 +199,6 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) (code int) {
 		return cmdProfiles(rest, stdout, stderr, now)
 	case "session":
 		return cmdSession(rest, stdout, stderr, now)
-	case "fold-pool":
-		return cmdFoldPool(rest, stdout, stderr, now)
 	case "version", "--version":
 		return cmdVersion(rest, stdout, stderr)
 	}
@@ -1080,7 +1083,6 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 	var supersedes stringList
 	fs.Var(&supersedes, "supersedes", "")
 	max := fs.Int("max", bounded.Default, "")
-	ledger := fs.String("ledger", "", "")
 	monthFlag := fs.String("month", "", "")
 	byFlag := fs.String("by", "model", "")
 	redisAddr := fs.String("redis", "", "")
@@ -1095,13 +1097,10 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return code
 	}
 	if *redisAddr != "" {
-		if *ledger != "" {
-			return (&refusals{token: "REPORT", list: []string{"--redis and --ledger are two sources for one report; name one"}}).print(stderr)
-		}
 		return cmdReportStore(*redisAddr, *redisUser, *passwordEnv, *monthFlag, *byFlag, *max, stdout, stderr)
 	}
-	if *ledger != "" || *monthFlag != "" {
-		return cmdReportLedger(*ledger, *monthFlag, *byFlag, *max, stdout, stderr)
+	if *monthFlag != "" {
+		return (&refusals{token: "REPORT", list: []string{"--month is the store's month report; it wants --redis <host:port>"}}).print(stderr)
 	}
 	r := &refusals{token: "REPORT"}
 	r.required("who", *who, wantsWho)
@@ -1294,8 +1293,6 @@ func cmdSum(args []string, stdout, stderr io.Writer, now time.Time) int {
 	fs := newFlagSet("sum")
 	out := fs.String("out", "", "")
 	month := fs.String("month", "", "")
-	swarmRoot := fs.String("swarm-root", "", "")
-	day := fs.String("day", "", "")
 	max := fs.Int("max", bounded.Default, "")
 	if err := verbflag.Parse(fs, args); err != nil {
 		return refuse(stderr, " sum", oneline.Cap(err.Error(), oneline.TailBytes))
@@ -1304,19 +1301,6 @@ func cmdSum(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return code
 	}
 	r := &refusals{token: "SUM"}
-	if *swarmRoot != "" {
-		switch {
-		case *month != "":
-			r.add("--month and --swarm-root are two different ways to sum; give one")
-		case *day == "" && *out == "":
-			r.required("out", *out, wantsLedger)
-			r.required("day", *day, wantsDay)
-		}
-		if len(r.list) == 0 {
-			return sumSwarmRoot(*swarmRoot, *day, *out, stdout, stderr, r)
-		}
-		return r.print(stderr)
-	}
 	r.required("out", *out, wantsOut)
 	switch {
 	case *month == "":

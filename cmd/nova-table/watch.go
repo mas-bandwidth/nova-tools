@@ -299,11 +299,12 @@ func watchLoop(ctx context.Context, w, stderr io.Writer, read func(context.Conte
 		}
 		if out == "" {
 			if _, err := io.WriteString(w, clearScreen+text); err != nil {
-				fmt.Fprintf(stderr, "nova-table watch: stdout: %s\n", oneline.Escape(err.Error()))
+				fmt.Fprintf(stderr, "nova-table watch: stdout: %s; next: repair or replace the stdout consumer, then rerun this watch\n", oneline.Escape(err.Error()))
 				return 1
 			}
 		} else if err := writeAtomic(out, text); err != nil {
-			fmt.Fprintf(stderr, "nova-table watch: %s\n", oneline.Escape(err.Error()))
+			fmt.Fprintf(stderr, "nova-table watch: %s; next: make --out %q writable (and its parent directory present and writable), then rerun this watch\n", oneline.Escape(err.Error()), out)
+			return 1
 		}
 		select {
 		case <-ctx.Done():
@@ -342,20 +343,26 @@ func writeAtomic(path, body string) error {
 		return fmt.Errorf("--out: %w", err)
 	}
 	if _, err := io.WriteString(f, body); err != nil {
+		// ignored: a close on the failure path; the write error is the one returned
 		_ = f.Close()
+		// ignored: a best-effort cleanup of the temp file; the write error is the one returned
 		_ = os.Remove(tmp)
 		return fmt.Errorf("--out: %w", err)
 	}
 	if err := f.Sync(); err != nil {
+		// ignored: a close on the failure path; the sync error is the one returned
 		_ = f.Close()
+		// ignored: a best-effort cleanup of the temp file; the sync error is the one returned
 		_ = os.Remove(tmp)
 		return fmt.Errorf("--out: %w", err)
 	}
 	if err := f.Close(); err != nil {
+		// ignored: a best-effort cleanup of the temp file; the close error is the one returned
 		_ = os.Remove(tmp)
 		return fmt.Errorf("--out: %w", err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
+		// ignored: a best-effort cleanup of the temp file; the rename error is the one returned
 		_ = os.Remove(tmp)
 		return fmt.Errorf("--out: %w", err)
 	}

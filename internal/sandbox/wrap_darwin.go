@@ -130,6 +130,7 @@ func Run(p *Policy, env []string, stdin io.Reader, stdout, stderr io.Writer, okL
 				if sig, ok := s.(syscall.Signal); ok && cmd.Process != nil {
 					// The CHILD, not -pid: with no group of its own, -pid would name a
 					// process group this tool never created and does not own.
+					// ignored: a signal passed on to a child that may already have exited; the child's exit is the report
 					_ = cmd.Process.Signal(sig)
 				}
 			case <-done:

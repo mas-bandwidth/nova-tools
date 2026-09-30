@@ -67,7 +67,7 @@ func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 		refused := false
 		for _, name := range replyOnlyFlags {
 			if given[name] {
-				fmt.Fprintf(stderr, "DRAFT REFUSED: --%s belongs to --reply-to; without it draft runs no git, and without --out it writes no file\n", name)
+				fmt.Fprintf(stderr, "DRAFT REFUSED: --%s belongs to --reply-to; without it draft runs no git, and without --out it writes no file; run: nova-bus draft -h\n", name)
 				refused = true
 			}
 		}
@@ -90,7 +90,7 @@ func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	c, err := bus.LoadConfig(*busDir)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-bus draft: %s\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "nova-bus draft: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus draft -h"))
 		return 2
 	}
 	// Collected, like send's: a draft asked for with a misspelled name and a Re that is
@@ -157,20 +157,27 @@ func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if len(re) > 0 {
 		t, terr := bus.ReadBus(*busDir, c)
 		if terr != nil {
-			fmt.Fprintf(stderr, "nova-bus draft: %s\n", oneline.Err(terr))
+			fmt.Fprintf(stderr, "nova-bus draft: %s\n", oneline.WithRemedy(oneline.Err(terr), "nova-bus draft -h"))
 			return 2
 		}
 		var open []bus.OpenEntry
+		var openErr error
 		if known && me.Lane != "" {
-			if entries, oerr := bus.ReadOpen(*busDir, me.Lane); oerr == nil {
-				open = entries
-			}
+			open, openErr = bus.ReadOpen(*busDir, me.Lane)
 		}
+		openErrReported := false
 		for i, r := range re {
 			if r == "new" {
 				continue
 			}
 			if _, found := t.Resolve(r); found {
+				continue
+			}
+			if openErr != nil {
+				if !openErrReported {
+					problems = append(problems, draftOpenReadFailure(*busDir, me, openErr))
+					openErrReported = true
+				}
 				continue
 			}
 			matches := bus.MatchOpenSubject(open, r)
@@ -189,7 +196,7 @@ func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	if len(problems) > 0 {
 		for _, reason := range problems {
-			fmt.Fprintf(stderr, "DRAFT REFUSED: %s\n", oneline.Err(reason))
+			fmt.Fprintf(stderr, "DRAFT REFUSED: %s\n", oneline.WithRemedy(oneline.Err(reason), "nova-bus draft -h"))
 		}
 		return 2
 	}
@@ -200,6 +207,17 @@ func cmdDraft(args []string, stdout, stderr io.Writer, now time.Time) int {
 	fmt.Fprint(stdout, skeleton)
 	fmt.Fprintf(stderr, "DRAFT NOTE redirect this to a file, then send: nova-bus send --file <that file>\n")
 	return 0
+}
+
+func draftOpenReadFailure(busDir string, me bus.Participant, err error) error {
+	recovery := fmt.Sprintf("nova-bus inbox --bus %s --as %s --receipt-max-words '<receipt-word-limit>' --full --carry-history --advance --remote '<your-remote>' --branch '<your-branch>'", oneline.Escape(shellQuote(busDir)), oneline.Escape(shellQuote(me.Name)))
+	recoveryNote := "--carry-history preserves existing history, avoids first-advance refusal or discarding prior notes, and --advance moves and pushes the cursor"
+	placeholders := "replace the receipt-word-limit, remote, and branch placeholders; receipt-word-limit is a positive word-count threshold for classifying short receipts"
+	var pathErr *os.PathError
+	if errors.As(err, &pathErr) {
+		return fmt.Errorf("cannot read %s (%v); repair access to that OPEN path first, then rebuild it from the bus; %s; run: %s; %s", bus.OpenPath(me.Lane), err, recoveryNote, recovery, placeholders)
+	}
+	return fmt.Errorf("%s is invalid (%v); rebuild it from the bus; %s; run: %s; %s", bus.OpenPath(me.Lane), err, recoveryNote, recovery, placeholders)
 }
 
 func writeDraftOut(path string, overwrite bool, skeleton string, stdout, stderr io.Writer) int {
@@ -217,16 +235,16 @@ func writeDraftOut(path string, overwrite bool, skeleton string, stdout, stderr 
 				fmt.Fprintf(stderr, "DRAFT REFUSED: %s exists; pass --overwrite to replace it\n", oneline.Field(path))
 				return 1
 			}
-			fmt.Fprintf(stderr, "DRAFT REFUSED: write %s: %s\n", oneline.Field(path), oneline.Err(err))
+			fmt.Fprintf(stderr, "DRAFT REFUSED: write %s: %s\n", oneline.Field(path), oneline.WithRemedy(oneline.Err(err), "nova-bus draft -h"))
 			return 2
 		}
 		if _, err := fmt.Fprint(f, skeleton); err != nil {
 			f.Close()
-			fmt.Fprintf(stderr, "DRAFT REFUSED: write %s: %s\n", oneline.Field(path), oneline.Err(err))
+			fmt.Fprintf(stderr, "DRAFT REFUSED: write %s: %s\n", oneline.Field(path), oneline.WithRemedy(oneline.Err(err), "nova-bus draft -h"))
 			return 2
 		}
 		if err := f.Close(); err != nil {
-			fmt.Fprintf(stderr, "DRAFT REFUSED: write %s: %s\n", oneline.Field(path), oneline.Err(err))
+			fmt.Fprintf(stderr, "DRAFT REFUSED: write %s: %s\n", oneline.Field(path), oneline.WithRemedy(oneline.Err(err), "nova-bus draft -h"))
 			return 2
 		}
 		fmt.Fprintf(stdout, "DRAFT OK path=%s\n", oneline.Field(path))
@@ -237,26 +255,26 @@ func writeDraftOut(path string, overwrite bool, skeleton string, stdout, stderr 
 	// If path exists (including as a dangling or valid symlink):
 	if fi, err := os.Lstat(path); err == nil {
 		if fi.IsDir() {
-			fmt.Fprintf(stderr, "DRAFT REFUSED: %s is a directory\n", oneline.Field(path))
+			fmt.Fprintf(stderr, "DRAFT REFUSED: %s is a directory; run: nova-bus draft -h\n", oneline.Field(path))
 			return 1
 		}
 		if err := os.Remove(path); err != nil {
-			fmt.Fprintf(stderr, "DRAFT REFUSED: overwrite %s: %s\n", oneline.Field(path), oneline.Err(err))
+			fmt.Fprintf(stderr, "DRAFT REFUSED: overwrite %s: %s\n", oneline.Field(path), oneline.WithRemedy(oneline.Err(err), "nova-bus draft -h"))
 			return 2
 		}
 	}
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL|bus.ONoFollow, 0o666)
 	if err != nil {
-		fmt.Fprintf(stderr, "DRAFT REFUSED: write %s: %s\n", oneline.Field(path), oneline.Err(err))
+		fmt.Fprintf(stderr, "DRAFT REFUSED: write %s: %s\n", oneline.Field(path), oneline.WithRemedy(oneline.Err(err), "nova-bus draft -h"))
 		return 2
 	}
 	if _, err := fmt.Fprint(f, skeleton); err != nil {
 		f.Close()
-		fmt.Fprintf(stderr, "DRAFT REFUSED: write %s: %s\n", oneline.Field(path), oneline.Err(err))
+		fmt.Fprintf(stderr, "DRAFT REFUSED: write %s: %s\n", oneline.Field(path), oneline.WithRemedy(oneline.Err(err), "nova-bus draft -h"))
 		return 2
 	}
 	if err := f.Close(); err != nil {
-		fmt.Fprintf(stderr, "DRAFT REFUSED: write %s: %s\n", oneline.Field(path), oneline.Err(err))
+		fmt.Fprintf(stderr, "DRAFT REFUSED: write %s: %s\n", oneline.Field(path), oneline.WithRemedy(oneline.Err(err), "nova-bus draft -h"))
 		return 2
 	}
 	fmt.Fprintf(stdout, "DRAFT OK path=%s\n", oneline.Field(path))

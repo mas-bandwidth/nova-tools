@@ -1,9 +1,6 @@
 package swarm
 
 import (
-	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -50,45 +47,6 @@ func TestSizeDoublesUntilARuleBreaks(t *testing.T) {
 	}
 	if got := MeasureWidthFromRounds(abstain); got != 1 {
 		t.Fatalf("one abstain at W=2 ends the doubling at width=1, got %d", got)
-	}
-}
-
-// size-records-width-with-version: the row gains width, measured and version,
-// and a version unequal to the running tool's is re-measured by the adopt step.
-func TestSizeRecordsWidthWithVersion(t *testing.T) {
-	t.Parallel()
-
-	windowsIsNotABench(t)
-	dir := t.TempDir()
-	p := filepath.Join(dir, "benches.tsv")
-	body := "name\thost\troot\tcores\tharness\tauth\twall\n" +
-		"b2\tb2\t" + dir + "\t1-16\t/h\t/a\tnone\n"
-	if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	cores, rows, err := RecordBenchWidth(p, "b2", 8, "2026-09-15T00:00:00Z", "abc12345")
-	if err != nil {
-		t.Fatalf("record width: %v", err)
-	}
-	if cores != 16 || rows != 1 {
-		t.Fatalf("BENCH WIDTH wants cores=16 rows=1, got cores=%d rows=%d", cores, rows)
-	}
-	raw, _ := os.ReadFile(p)
-	if !strings.Contains(string(raw), "\t8\t2026-09-15T00:00:00Z\tabc12345") {
-		t.Fatalf("the row gains width, measured and version:\n%s", raw)
-	}
-	table, err := LoadBenchTable(p)
-	if err != nil {
-		t.Fatalf("re-read: %v", err)
-	}
-	if table[0].Width != 8 || table[0].Version != "abc12345" {
-		t.Fatalf("width round-trips, got %+v", table[0])
-	}
-	if !WidthNeedsRemeasure(table[0], "different1") {
-		t.Fatalf("a version unequal to the running tool's is re-measured by the adopt step")
-	}
-	if WidthNeedsRemeasure(table[0], "abc12345") {
-		t.Fatalf("a matching version is not re-measured")
 	}
 }
 

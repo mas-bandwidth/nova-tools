@@ -27,6 +27,7 @@ func main() {
 	go func() {
 		defer wg.Done()
 		swarm.CheckPausePoint("test-pause")
+		// ignored: a test probe; the test reads after.txt and fails on its absence
 		_ = os.WriteFile(filepath.Join(dir, "after.txt"), []byte("written after resume\n"), 0o644)
 	}()
 	wg.Wait()

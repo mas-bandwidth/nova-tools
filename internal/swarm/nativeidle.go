@@ -2,21 +2,18 @@ package swarm
 
 // THE CARD THAT STOPS IS ENDED WHEN IT STOPS, NOT AT ITS DEADLINE.
 //
-// `nova-swarm batch` has watched its cards for idleness since issue #593: a card is idle
-// when NEITHER its log NOR its process tree has moved for --idle, so a `go test` that prints
-// nothing for minutes is not mistaken for a dead one. `nova-swarm native` -- the verb every
-// card on the fleet actually runs through, on every bench and in every runner -- has never
-// had it. Its wait has exactly three ends: the child exits, the deadline fires, or a TERM
-// arrives from outside. Nothing looks at the card in between.
+// A card is idle when NEITHER its log NOR its process tree has moved for --idle (issue #593),
+// so a `go test` that prints nothing for minutes is not mistaken for a dead one. Without this
+// watch, `nova-swarm native`'s wait has exactly three ends: the child exits, the deadline
+// fires, or a TERM arrives from outside, and nothing looks at the card in between.
 //
 // THE COST, measured: `js-under-20-bytes` stopped making progress at 14:53:36Z and was
 // reaped by its deadline at 15:13:36Z. Eighteen of those twenty minutes were a live process
 // producing no output, a bench slot held, and a coordinator with nothing to read. The card
 // returned no RESULT.md and $0.0244 bought nothing.
 //
-// This is batch's monitor for one card, reusing its two readings and its rule unchanged --
-// log growth, then the process tree's CPU, and idle only when neither moved for the whole
-// window. Nothing new is invented about what "working" means: the definition that kept
+// The watch has two readings and one rule -- log growth, then the process tree's CPU, and
+// idle only when neither moved for the whole window. Nothing new is invented about what "working" means: the definition that kept
 // cards 664-670 alive is the definition here.
 
 import (
@@ -27,16 +24,14 @@ import (
 )
 
 // DefaultNativeIdle is the window a native run gives a card that is saying nothing and
-// spending no CPU. It is 300 seconds, which is `batch --idle`'s own default: one number for
-// the two verbs, so a card does not mean two different things on two paths. It is not a
+// spending no CPU. It is 300 seconds. It is not a
 // provider read deadline. A response whose headers arrived and then sent no body bytes
 // is UNKNOWN, and that deadline is the provider proxy's body timer, not this window.
 // Whole-card silence is not that evidence: a quiet think looks the same, and it stays
 // CARD IDLE.
 const DefaultNativeIdle = 300 * time.Second
 
-// NoIdleWindow is the window `--idle 0` reaches WatchIdle as: no watch at all, which is the
-// behaviour every native run had before this file existed. It is named because a bare zero
+// NoIdleWindow is the window `--idle 0` reaches WatchIdle as: no watch at all. It is named because a bare zero
 // beside a duration reads like an oversight, and this one is a choice a caller can type.
 const NoIdleWindow = time.Duration(0)
 
@@ -80,8 +75,7 @@ const nativeBusyShare = 10
 // its own reading.
 const nativeLogDribble = 4096
 
-// nativeIdlePoll is how often the log's size is re-read, batch's idlePollInterval by the
-// same reasoning: short enough that the end lands near the window rather than a tick past
+// nativeIdlePoll is how often the log's size is re-read: short enough that the end lands near the window rather than a tick past
 // it, and cheap because it is one stat of one file.
 const nativeIdlePoll = 100 * time.Millisecond
 

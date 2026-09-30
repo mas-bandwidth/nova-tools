@@ -193,7 +193,7 @@ func TestDoctorOKWhenTheLocalBinaryIsAbsent(t *testing.T) {
 	}
 }
 
-// THE LAUNCH SEAM. `batch` and `native` are the verbs that start a card, and the preflight is
+// THE LAUNCH SEAM. `native` is the verb that starts a card, and the preflight is
 // what main calls before the dispatcher: a shadowed pair stops the launch with exit 2
 // before anything is spent. A verb that starts nothing is untouched.
 func TestPreflightRefusesALaunchUnderAShadowedBinary(t *testing.T) {
@@ -215,11 +215,11 @@ func TestPreflightRefusesALaunchUnderAShadowedBinary(t *testing.T) {
 		t.Errorf("the preflight prints both stamps:\n%s", both)
 	}
 
-	// A flag value spelled -h (like `batch --id -h` or `native --card -h`) is NOT a help request:
+	// A flag value spelled -h (like `native --label -h` or `native --card -h`) is NOT a help request:
 	// under a shadowed binary, the preflight must refuse it with exit 2 rather than stand aside.
 	errOut.Reset()
-	if code, stop := env.preflight([]string{"batch", "--id", "-h"}, &errOut); !stop || code != 2 {
-		t.Errorf("batch --id -h: preflight(exit=%d, stop=%v), want (2, true)", code, stop)
+	if code, stop := env.preflight([]string{"native", "--label", "-h"}, &errOut); !stop || code != 2 {
+		t.Errorf("native --label -h: preflight(exit=%d, stop=%v), want (2, true)", code, stop)
 	}
 	errOut.Reset()
 	if code, stop := env.preflight([]string{"native", "--card", "-h"}, &errOut); !stop || code != 2 {
@@ -290,7 +290,7 @@ func TestDoctorRefusesAnUnreadablePATHBinary(t *testing.T) {
 func TestPreflightDoctorStandsAsideForHelp(t *testing.T) {
 	t.Parallel()
 	var errOut bytes.Buffer
-	for _, verb := range []string{"batch", "native"} {
+	for _, verb := range []string{"native"} {
 		for _, flag := range []string{"-h", "--help", "-help", "--h"} {
 			if code, stop := preflightDoctor([]string{verb, flag}, &errOut); stop || code != 0 {
 				t.Errorf("%s %s: preflight(exit=%d, stop=%v), want (0, false)", verb, flag, code, stop)
@@ -298,8 +298,8 @@ func TestPreflightDoctorStandsAsideForHelp(t *testing.T) {
 		}
 	}
 	// Flag value followed by actual help stands aside
-	if code, stop := preflightDoctor([]string{"batch", "--id", "-h", "-h"}, &errOut); stop || code != 0 {
-		t.Errorf("batch --id -h -h: preflight(exit=%d, stop=%v), want (0, false)", code, stop)
+	if code, stop := preflightDoctor([]string{"native", "--label", "-h", "-h"}, &errOut); stop || code != 0 {
+		t.Errorf("native --label -h -h: preflight(exit=%d, stop=%v), want (0, false)", code, stop)
 	}
 	if code, stop := preflightDoctor([]string{"native", "--card", "-h", "-h"}, &errOut); stop || code != 0 {
 		t.Errorf("native --card -h -h: preflight(exit=%d, stop=%v), want (0, false)", code, stop)
@@ -449,7 +449,7 @@ func TestPreflightRefusesAnUnreadableBinary(t *testing.T) {
 				defer close(done)
 				dcode = env.cmdDoctor(nil, &out, &derr)
 			}()
-			code, stop := env.preflight([]string{"batch", "--tokens", "unmetered"}, &errOut)
+			code, stop := env.preflight([]string{"native", "--tokens", "unmetered"}, &errOut)
 			<-done
 			if want := c.wantExit != 0; stop != want || code != c.wantExit {
 				t.Fatalf("preflight(exit=%d, stop=%v), want exit %d\n%s", code, stop, c.wantExit, errOut.String())
@@ -618,15 +618,15 @@ func TestPreflightReadsArgumentsAfterTheGlobalFlagsAreStripped(t *testing.T) {
 		args []string
 		stop bool
 	}{
-		{"help after --seat", []string{"batch", "--seat", "foo", "-h"}, false},
+		{"help after --seat", []string{"native", "--seat", "foo", "-h"}, false},
 		{"help after --seat=", []string{"native", "--seat=foo", "--help"}, false},
-		{"help before --seat", []string{"batch", "-h", "--seat", "foo"}, false},
-		{"--seat before the verb, help", []string{"--seat", "foo", "batch", "-h"}, false},
-		{"--seat before the verb is a launch", []string{"--seat", "foo", "batch", "--tokens", "1"}, true},
+		{"help before --seat", []string{"native", "-h", "--seat", "foo"}, false},
+		{"--seat before the verb, help", []string{"--seat", "foo", "native", "-h"}, false},
+		{"--seat before the verb is a launch", []string{"--seat", "foo", "native", "--tokens", "1"}, true},
 		{"--seat=name before the verb is a launch", []string{"--seat=foo", "native", "--card", "c"}, true},
-		{"--seat after the verb is a launch", []string{"batch", "--seat", "foo", "--tokens", "1"}, true},
-		{"a value spelled -h is still a value", []string{"--seat", "foo", "batch", "--id", "-h"}, true},
-		{"no seat name is the dispatcher's refusal", []string{"batch", "--seat"}, false},
+		{"--seat after the verb is a launch", []string{"native", "--seat", "foo", "--tokens", "1"}, true},
+		{"a value spelled -h is still a value", []string{"--seat", "foo", "native", "--label", "-h"}, true},
+		{"no seat name is the dispatcher's refusal", []string{"native", "--seat"}, false},
 		{"another verb is untouched", []string{"--seat", "foo", "template", "--name", "read-pr"}, false},
 	}
 	for _, c := range cases {
@@ -712,7 +712,7 @@ func TestDoctorSaysWhenThereIsNothingToCompare(t *testing.T) {
 	if strings.Contains(out.String(), "devel") || strings.Contains(out.String(), "stamp=") {
 		t.Errorf("the line reports a stamp nobody read: %q", out.String())
 	}
-	if code, stop := env.preflight([]string{"batch", "--tokens", "1"}, &errOut); code != 0 || stop {
+	if code, stop := env.preflight([]string{"native", "--tokens", "1"}, &errOut); code != 0 || stop {
 		t.Errorf("the launch is refused with nothing to compare: (%d, %v)", code, stop)
 	}
 }

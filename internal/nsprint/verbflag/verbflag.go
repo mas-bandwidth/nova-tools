@@ -69,6 +69,7 @@ func Parse(fs *flag.FlagSet, args []string) error {
 		panic(Help{FS: fs})
 	}
 	if err != nil {
+		// ignored: the flag package's own message to the set's output; the parse error is the one returned
 		_, _ = out.Write(held.Bytes())
 		if asked {
 			usage()
@@ -110,8 +111,11 @@ func RecoverWith(out io.Writer, prog, banner string, code *int, extra func(verb 
 	}
 	var b strings.Builder
 	Print(&b, prog, banner, h.FS)
-	_, _ = io.WriteString(out, Insert(b.String(), extra(Verb(prog, h.FS))))
 	*code = 0
+	if _, err := io.WriteString(out, Insert(b.String(), extra(Verb(prog, h.FS)))); err != nil {
+		// the help did not reach its reader (a closed stdout): the exit code says so
+		*code = 1
+	}
 }
 
 // Insert puts lines into a printed verb help above its flags (above its
@@ -177,6 +181,7 @@ func Print(out io.Writer, prog, banner string, fs *flag.FlagSet) {
 	for _, l := range exitCodes(banner, prog) {
 		b.WriteString(l + "\n")
 	}
+	// ignored: help written to stdout; a closed stdout has no reader to tell
 	_, _ = io.WriteString(out, b.String())
 }
 
@@ -302,4 +307,20 @@ func HelpIfAsked(args []string, name string, flags ...string) {
 		fs.String(f, "", "")
 	}
 	panic(Help{FS: fs})
+}
+
+// BoolAsked reports whether args set the boolean flag name (-name, --name,
+// or =true) before any --: the question a dispatcher asks of a flag it must
+// honour before a flag set has parsed, such as --json on a refusal.
+func BoolAsked(args []string, name string) bool {
+	for _, a := range args {
+		if a == "--" {
+			return false
+		}
+		switch a {
+		case "-" + name, "--" + name, "-" + name + "=true", "--" + name + "=true":
+			return true
+		}
+	}
+	return false
 }

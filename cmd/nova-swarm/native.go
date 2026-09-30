@@ -585,6 +585,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	configSHA, reason, proxy := writeJobConfig(cfg, provider, dataHome, jobDir, reads, errOut)
 	if reason != "" {
 		if proxy != nil {
+			// ignored: a close on the refusal path; the reason printed below is the one reported
 			_ = proxy.Close()
 		}
 		refuseNative(errOut, reason)
@@ -1367,25 +1368,23 @@ func fenceRejected(jobDir string) string {
 // A SILENT HARNESS IS NOT A QUIET MODEL. The run this closes was a local model whose tool
 // calls the harness never parsed: the child emitted them as raw text, no tool ran, nothing
 // was written, and the process exited 0, so the one line a coordinator reads said OK and the
-// batch behind it scored `no-result` -- the token for a model that chose to publish nothing.
+// card scored `no-result` -- the token for a model that chose to publish nothing.
 // The two are different faults with different remedies (a harness that cannot drive this
 // model; a model that had nothing to say), and the line now tells them apart. A harness that
 // SPOKE and published nothing is `ok` and scores `no-result`: there is evidence to read.
 //
 // THE FILE IS THE RUN'S OWN CAPTURE, `<job>/harness-output.log` (issue #608) -- never
-// `harness.log`, which the legacy supervisor and a `batch`'s runner pin already own. Reading
-// the capture rather than a file this process does not write is what keeps the token honest
-// on a bench, where the batch's own runner pin may not exist at all.
+// `harness.log`, which a runner pin may own. Reading the capture rather than a file this
+// process does not write is what keeps the token honest on a bench.
 //
 // THE WALL'S OWN LINES ARE NOT THE HARNESS SPEAKING. The wall prints `SANDBOX ...` on the
 // child's stderr, which this capture also holds, and counting those bytes would make a WALLED
 // run -- the very run that wrote issue #591 -- impossible to call silent. They are skipped
-// here exactly as the gather's own `log=<n>` count skips them (internal/swarm/batch.go).
+// here.
 //
-// THE RESULT IS LOOKED FOR WHERE THE GATHER LOOKS FOR IT, by the gather's own lookup
-// (swarm.FindCardResult): the job root, then `repo/` and one directory below it (issue #594).
-// A card's STEP 1 makes `repo/` the model's cwd, so a working run publishes there and the
-// batch copies it up; a shallower lookup here would print `harness=silent` about a run that
+// THE RESULT IS LOOKED FOR by the one lookup (swarm.FindCardResult): the job root, then
+// `repo/` and one directory below it (issue #594). A card's STEP 1 makes `repo/` the model's
+// cwd, so a working run publishes there; a shallower lookup here would print `harness=silent` about a run that
 // worked, which is the same class of fault this token exists to end.
 func harnessState(jobDir string) string {
 	if harnessSpoke(filepath.Join(jobDir, "harness-output.log")) {
@@ -1436,7 +1435,7 @@ func wroteBytes(path string) bool {
 
 // refuseNative writes the one REFUSED line the run owes its caller.
 func refuseNative(w io.Writer, reason string) {
-	fmt.Fprintf(w, "NATIVE REFUSED: %s\n", oneline.Escape(reason))
+	fmt.Fprintf(w, "NATIVE REFUSED: %s\n", oneline.Escape(oneline.WithRemedy(reason, "nova-swarm native -h")))
 }
 
 // sandboxHostRules asks the wall, once, whether it can express a repo allow rule: network
@@ -1873,7 +1872,9 @@ func writeNativeUsage(cfg nativeRunConfig, dataHome, provider, model string, sta
 			fmt.Fprintf(errOut, "NATIVE NOTE: the usage.tsv could not be written: %s\n", oneline.Escape(err.Error()))
 		}
 	}
-	_ = swarm.AppendCardUsage(filepath.Join(cfg.slotDir, "usage.tsv"), row)
+	if err := swarm.AppendCardUsage(filepath.Join(cfg.slotDir, "usage.tsv"), row); err != nil {
+		fmt.Fprintf(errOut, "NATIVE NOTE: the slot's usage.tsv could not be written: %s\n", oneline.Escape(err.Error()))
+	}
 	if note != "" {
 		fmt.Fprintf(errOut, "NATIVE NOTE: %s\n", oneline.Escape(note))
 	}
@@ -2103,8 +2104,11 @@ func copyAuth(src, provider, dataHome string) string {
 		return fmt.Sprintf("the auth copy would not be 0600: %s ended mode %04o", oneline.Field(dst), dstSt.Mode().Perm())
 	}
 	ocDir := filepath.Join(dataHome, "opencode")
-	if err := os.MkdirAll(ocDir, 0o755); err == nil {
-		_ = os.WriteFile(filepath.Join(ocDir, "auth.json"), body, 0o600)
+	if err := os.MkdirAll(ocDir, 0o755); err != nil {
+		return fmt.Sprintf("the auth directory %s could not be made: %s", oneline.Field(ocDir), oneline.Escape(err.Error()))
+	}
+	if err := os.WriteFile(filepath.Join(ocDir, "auth.json"), body, 0o600); err != nil {
+		return fmt.Sprintf("the auth copy %s could not be written: %s", oneline.Field(filepath.Join(ocDir, "auth.json")), oneline.Escape(err.Error()))
 	}
 	return ""
 }
@@ -2207,6 +2211,7 @@ func writeJobConfig(cfg nativeRunConfig, provider, dataHome, jobDir string, read
 			}
 			pointed, ok := swarm.PointProviderAtProxy(body, provider, opened.HarnessURL())
 			if !ok {
+				// ignored: a close on the refusal path; the reason returned below is the one reported
 				_ = opened.Close()
 				return "", fmt.Sprintf("the provider %s could not be pointed at the read-deadline proxy", oneline.Field(provider)), nil
 			}
@@ -2221,12 +2226,14 @@ func writeJobConfig(cfg nativeRunConfig, provider, dataHome, jobDir string, read
 	dst := filepath.Join(dataHome, ".config", "opencode", "opencode.json")
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		if proxy != nil {
+			// ignored: a close on the refusal path; the reason returned below is the one reported
 			_ = proxy.Close()
 		}
 		return "", fmt.Sprintf("the config directory %s could not be made: %s", oneline.Field(filepath.Dir(dst)), oneline.Escape(err.Error())), nil
 	}
 	if err := os.WriteFile(dst, body, 0o600); err != nil {
 		if proxy != nil {
+			// ignored: a close on the refusal path; the reason returned below is the one reported
 			_ = proxy.Close()
 		}
 		return "", fmt.Sprintf("the config copy %s could not be written: %s", oneline.Field(dst), oneline.Escape(err.Error())), nil

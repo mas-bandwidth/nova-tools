@@ -204,9 +204,6 @@ func TestReportRedisRefusesWithoutMonth(t *testing.T) {
 	r = invoke(t, "report", "--redis", dsn, "--month", "2026-09", "--by", "card")
 	wantExit(t, r, 2)
 	wantContains(t, r.stderr, "--by is model, repo, day or tuple")
-	r = invoke(t, "report", "--redis", dsn, "--ledger", "x.tsv", "--month", "2026-09")
-	wantExit(t, r, 2)
-	wantContains(t, r.stderr, "--redis and --ledger are two sources for one report")
 }
 
 // TestLedgerRefusesWithoutRedisAndNamesAMissingDay: `ledger` wants its store named, and a

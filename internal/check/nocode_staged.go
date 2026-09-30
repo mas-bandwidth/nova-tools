@@ -200,6 +200,7 @@ func OpenCatFileBatch(dir string) (*CatFileBatch, error) {
 	}
 	stdoutR, stdoutW, err := os.Pipe()
 	if err != nil {
+		// ignored: a close on the failure path; the pipe error is the one returned
 		_ = in.Close()
 		cancel()
 		return nil, fmt.Errorf("cat-file --batch stdout pipe: %w", err)
@@ -207,8 +208,11 @@ func OpenCatFileBatch(dir string) (*CatFileBatch, error) {
 	cmd.Stdout = stdoutW
 	stderrR, stderrW, err := os.Pipe()
 	if err != nil {
+		// ignored: a close on the failure path; the pipe error is the one returned
 		_ = in.Close()
+		// ignored: a close on the failure path; the pipe error is the one returned
 		_ = stdoutW.Close()
+		// ignored: a close on the failure path; the pipe error is the one returned
 		_ = stdoutR.Close()
 		cancel()
 		return nil, fmt.Errorf("cat-file --batch stderr pipe: %w", err)
@@ -216,15 +220,22 @@ func OpenCatFileBatch(dir string) (*CatFileBatch, error) {
 	cmd.Stderr = stderrW
 	cmd.WaitDelay = time.Second
 	if err := cmd.Start(); err != nil {
+		// ignored: a close on the failure path; the start error is the one returned
 		_ = in.Close()
+		// ignored: a close on the failure path; the start error is the one returned
 		_ = stdoutW.Close()
+		// ignored: a close on the failure path; the start error is the one returned
 		_ = stdoutR.Close()
+		// ignored: a close on the failure path; the start error is the one returned
 		_ = stderrW.Close()
+		// ignored: a close on the failure path; the start error is the one returned
 		_ = stderrR.Close()
 		cancel()
 		return nil, fmt.Errorf("cat-file --batch start: %w", err)
 	}
+	// ignored: the parent's copy of the child's write end; the child holds its own, and reads see EOF when it ends
 	_ = stdoutW.Close()
+	// ignored: the parent's copy of the child's write end; the child holds its own, and reads see EOF when it ends
 	_ = stderrW.Close()
 	return &CatFileBatch{
 		cmd:    cmd,
@@ -276,6 +287,7 @@ func (b *CatFileBatch) ReadHead(oid string, n int) (BatchReply, error) {
 		return rep, fmt.Errorf("cat-file batch write %s: %w", oid, err)
 	}
 	if b.errb != nil {
+		// ignored: a deadline the platform may not support; the read below is bounded by gitBatchWall either way
 		_ = b.errb.SetReadDeadline(time.Now().Add(gitBatchWall))
 	}
 	header, err := b.out.ReadString('\n')
@@ -339,12 +351,15 @@ func (b *CatFileBatch) Close() error {
 		b.cancel()
 	}
 	if b.in != nil {
+		// ignored: Close ends the batch after its answers were read; a close failure has nothing left to lose
 		_ = b.in.Close()
 	}
 	if b.errb != nil {
+		// ignored: Close ends the batch after its answers were read; a close failure has nothing left to lose
 		_ = b.errb.Close()
 	}
 	if b.cmd != nil && b.cmd.Process != nil {
+		// ignored: the child was cancelled above; its exit after the answers were read is not a finding
 		_ = b.cmd.Wait()
 	}
 	return nil
