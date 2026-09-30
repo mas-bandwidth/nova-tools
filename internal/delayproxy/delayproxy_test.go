@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"slices"
 	"strings"
 	"sync"
@@ -536,6 +537,10 @@ func TestAClientPastTheBoundWaitsForASlot(t *testing.T) {
 // A target that does not answer is the client's hang-up, and the proxy says
 // which target, and why, through Logf. The proxy is given a dial that refuses,
 // so the test dials no port and owns no socket: the client is one end of a pipe.
+// The hang-up is observed: the client's read ends in end of stream, and a proxy
+// that left the client open fails it by name when the read gives up at the
+// ceiling, where a read that only found nothing would pass a proxy that said
+// nothing to the client at all.
 func TestATargetThatRefusesHangsUpTheClient(t *testing.T) {
 	t.Parallel()
 
@@ -552,8 +557,12 @@ func TestATargetThatRefusesHangsUpTheClient(t *testing.T) {
 	}
 	t.Cleanup(p.Stop)
 	c := ln.client(t)
-	if got, err := io.ReadAll(c); len(got) != 0 {
-		t.Fatalf("a client of a target that refuses read %q, %v; want a hang-up", got, err)
+	got, err := io.ReadAll(c) // nil when the proxy closed the client: end of stream
+	switch {
+	case errors.Is(err, os.ErrDeadlineExceeded):
+		t.Fatalf("a client of a target that refuses was not hung up on before the ceiling (%v); want the proxy to close it", err)
+	case err != nil || len(got) != 0:
+		t.Fatalf("a client of a target that refuses read %q, %v; want a hang-up: end of stream with nothing", got, err)
 	}
 	// The proxy says so before it hangs up, so what it said is already here.
 	select {
@@ -719,6 +728,33 @@ func TestAListenerThatFailsIsClosedSoClientsAreRefused(t *testing.T) {
 		}
 	default:
 		t.Fatal("the listener was closed and Logf said nothing")
+	}
+}
+
+// The window is three numbers the docs state in words. The window test that
+// follows drives the proxy through the constants symbolically, so it follows a
+// change of any of them and cannot see that one happened: a queue of half the
+// size is caught, but inFlight at 128 or at 512 passes every unit test. This test
+// makes a change to the window a visible edit: the words in delayproxy.go (the
+// package doc and Writes) and in far.go say 16 KiB, 256 reads and 4 MiB, and
+// change with the number, or it fails. The 4 MiB is also the figure fardelay's
+// help prints, read from WindowBytes, so the help follows on its own.
+func TestTheWindowIsTheSizeTheDocsSay(t *testing.T) {
+	t.Parallel()
+
+	for _, c := range []struct {
+		name      string
+		got, want int
+		said      string // what the docs say
+		where     string // the files that say it
+	}{
+		{"ChunkBytes", ChunkBytes, 16 << 10, "16 KiB", "delayproxy.go and far.go"},
+		{"inFlight", inFlight, 256, "256 reads", "delayproxy.go"},
+		{"WindowBytes", WindowBytes, 4 << 20, "4 MiB", "delayproxy.go and far.go"},
+	} {
+		if c.got != c.want {
+			t.Errorf("%s is %d, want %d: the docs say %q in %s; change the words with the number, or put the number back", c.name, c.got, c.want, c.said, c.where)
+		}
 	}
 }
 
