@@ -5,6 +5,9 @@ if NS.tset_profile then
   local MAX_RANK = '9007199254740991'
   local MAX_REPLY = 8388608
   local trusted_readcmd, begin_query, load_current_defs, read_row_cache
+  -- Captured only in an FCALL. FUNCTION LOAD does not expose all raw Lua
+  -- primitives, and no callback receives this private table.
+  local raw_ops
   -- Redis runs one Function callback at a time. Core clears this one private
   -- slot on context replacement and on every protected entrypoint exit.
   local private_ctx, probe_prefixes, encoded_ledger, private_defs,
@@ -28,23 +31,50 @@ if NS.tset_profile then
     return copied
   end
 
-  local function same_value(current, saved, depth)
-    if type(current) ~= type(saved) then return false end
-    if type(saved) ~= 'table' then return current == saved end
-    if depth > 8 or S.is_array(current) ~= S.is_array(saved) then return false end
-    for key, item in pairs(saved) do
-      if not same_value(current[key], item, depth + 1) then return false end
+  local function inert_array(value)
+    local mt = raw_ops.meta(value)
+    if mt == nil then return false end
+    if raw_ops.kind(mt) ~= 'table' or raw_ops.meta(mt) ~= nil or
+        raw_ops.get(mt, '__is_cjson_array') ~= true then return nil end
+    local count = 0
+    for key, item in raw_ops.iter, mt do
+      if key ~= '__is_cjson_array' or item ~= true then return nil end
+      count = count + 1
     end
-    for key in pairs(current) do if saved[key] == nil then return false end end
+    if count ~= 1 then return nil end
+    -- An actual protected metatable can lie through __metatable. Reassigning
+    -- the reported marker succeeds only for the real, unprotected marker.
+    local ok = raw_ops.call(raw_ops.setmeta, value, mt)
+    if not ok then return nil end
+    return true
+  end
+
+  local function same_value(current, saved, depth)
+    if raw_ops.kind(current) ~= raw_ops.kind(saved) then return false end
+    if raw_ops.kind(saved) ~= 'table' then return raw_ops.same(current, saved) end
+    if depth > 8 then return false end
+    local array = inert_array(current)
+    if array == nil or array ~= (raw_ops.meta(saved) ~= nil) then return false end
+    for key, item in raw_ops.iter, saved do
+      if not same_value(raw_ops.get(current, key), item, depth + 1) then return false end
+    end
+    for key in raw_ops.iter, current do
+      if raw_ops.get(saved, key) == nil then return false end
+    end
     return true
   end
 
   local function defs_intact(ctx)
-    if ctx ~= private_ctx or ctx.defs ~= public_defs or not private_defs then return false end
-    for t, def in pairs(private_defs) do
-      if not same_value(ctx.defs[t], def, 0) then return false end
+    if not raw_ops or not raw_ops.same(ctx, private_ctx) or
+        raw_ops.meta(ctx) ~= nil or not private_defs then return false end
+    local defs = raw_ops.get(ctx, 'defs')
+    if not raw_ops.same(defs, public_defs) or raw_ops.meta(defs) ~= nil then return false end
+    for t, def in raw_ops.iter, private_defs do
+      if not same_value(raw_ops.get(defs, t), def, 0) then return false end
     end
-    for t in pairs(ctx.defs) do if not private_defs[t] then return false end end
+    for t in raw_ops.iter, defs do
+      if raw_ops.get(private_defs, t) == nil then return false end
+    end
     return true
   end
 
@@ -303,7 +333,18 @@ if NS.tset_profile then
   -- Composite readers discover table names after open_state has examined the
   -- top-level queries. A retained read must never fall back to today's hash.
   function S.ensure_read_table(ctx, t, index)
-    if not ctx or ctx.operation ~= 'read' or type(t) ~= 'string' or #t > 256 or
+    if not ctx or not raw_ops or raw_ops.kind(ctx) ~= 'table' then
+      return nil, fail('REQUEST', index, t)
+    end
+    -- Keep the prior inert-context REQUEST admission without executing an
+    -- __index. A poisoned actual read context is an authority failure.
+    if raw_ops.same(ctx, private_ctx) and raw_ops.meta(ctx) ~= nil then
+      return nil, fail('CONFIG', index, t)
+    end
+    if raw_ops.get(ctx, 'operation') ~= 'read' then
+      return nil, fail('REQUEST', index, t)
+    end
+    if type(t) ~= 'string' or #t > 256 or
         not string.match(t, '^[A-Za-z0-9_][A-Za-z0-9_.-]*$') then
       return nil, fail('REQUEST', index, t)
     end
@@ -689,7 +730,13 @@ if NS.tset_profile then
       for name, value in pairs(budget) do
         if type(value) == 'number' then prior[name] = value end
       end
-      local result, err = S.read_callback(ctx, extension.read, q, index)
+      local result, err, boundary_valid = S.read_callback(ctx, extension.read, q, index)
+      if boundary_valid ~= true then
+        -- The core has already returned a fresh, indexed CONFIG. Only the
+        -- lexical ledger may be touched until the enclosing read encodes it.
+        state.emit = nil
+        return nil, err, false
+      end
       local valid_emit = ctx.read_emit == public_emit and
         public_emit.index == index and public_emit.preceding == preceding and
         (ctx.read_encoded or 512) == state.bytes
@@ -725,6 +772,9 @@ if NS.tset_profile then
   end
 
   local function read_inner(version, raw_plan, log_reader, extension)
+    raw_ops = {kind = type, get = rawget, same = rawequal, iter = next,
+      meta = getmetatable, setmeta = setmetatable, call = pcall}
+    local boundary_encode = S.json.encode
     local request, err = S.validate(version, raw_plan, 'read', extension)
     if err then return S.json.encode(err) end
     if not log_reader then
@@ -760,7 +810,9 @@ if NS.tset_profile then
       begun, err = begin_query(ctx, n - 1)
       if err then return S.json.encode(observed_epoch(err, ctx, n - 1)) end
       if not begun then return S.json.encode(fail('CONFIG', n - 1)) end
-      result, err = answer(ctx, q, n - 1, log_reader, extension, extension_kinds)
+      local boundary_valid
+      result, err, boundary_valid = answer(ctx, q, n - 1, log_reader, extension, extension_kinds)
+      if boundary_valid == false then return boundary_encode(err) end
       if err then
         return S.json.encode(observed_epoch(err, ctx, n - 1))
       end

@@ -8,10 +8,12 @@ do
   local read_cleanup,log_cleanup
   local bindings_open=true
   local log_bound=false
+  local read_bound=false
   local scope_active=false
   local callback_depth=0
   local active_callback_ctx
-  local original_unchanged
+  local original_unchanged,read_identity_unchanged
+  local raw_ops
   local load_defs
   S.profile = NS.tset_profile
   S.limits = {request_bytes=4194304,read_request_bytes=4194304,entries=256,queries=1024,
@@ -45,20 +47,75 @@ do
     return n
   end
   S.payload_bytes = payload
+  -- Capture runtime primitives before any read callback. FUNCTION LOAD does
+  -- not expose these builtins, and the private table is never given to callers.
+  local function capture_raw_ops()
+    if not raw_ops then
+      raw_ops={kind=type,get=rawget,same=rawequal,iter=next,
+        meta=getmetatable,setmeta=setmetatable,call=pcall}
+    end
+  end
+  local function same_context(ctx)
+    return raw_ops and raw_ops.same(ctx,current_ctx)
+  end
+  -- The only inert metatable admitted by the wire is the cjson array marker.
+  -- Reassigning it proves getmetatable did not hide a protected impostor.
+  local function inert_table(value)
+    local mt=raw_ops.meta(value)
+    if mt==nil then return true end
+    if raw_ops.kind(mt)~='table' or raw_ops.meta(mt)~=nil or
+        raw_ops.get(mt,'__is_cjson_array')~=true then return false end
+    local count=0
+    for key,item in raw_ops.iter,mt do
+      if key~='__is_cjson_array' or item~=true then return false end
+      count=count+1
+    end
+    if count~=1 then return false end
+    raw_ops.setmeta(value,mt)
+    return true
+  end
+  -- Iterative raw graph traversal covers both keys and values. The active
+  -- state detects cycles; finished aliases are scanned only once. Retaining
+  -- entry tables also covers containers detached from ctx by the callback.
+  local function graph_tables(roots)
+    local states,stack,retained={},{},{}
+    for _,root in ipairs(roots) do
+      if raw_ops.kind(root)=='table' then stack[#stack+1]={value=root} end
+    end
+    while #stack>0 do
+      local frame=stack[#stack];stack[#stack]=nil
+      local value=frame.value
+      if frame.exit then states[value]=2
+      elseif states[value]==1 then return nil
+      elseif states[value]~=2 then
+        if not inert_table(value) then return nil end
+        states[value]=1;retained[#retained+1]=value
+        stack[#stack+1]={value=value,exit=true}
+        for key,item in raw_ops.iter,value do
+          if raw_ops.kind(key)=='table' then stack[#stack+1]={value=key} end
+          if raw_ops.kind(item)=='table' then stack[#stack+1]={value=item} end
+        end
+      end
+    end
+    return retained
+  end
   local function budget_monotone(ctx,remember)
-    local saved=ctx==current_ctx and current_seal or nil
+    local saved=same_context(ctx) and current_seal or nil
     local window=saved and saved.callback
-    if callback_depth>0 and (ctx~=active_callback_ctx or not original_unchanged(ctx)) then return nil,S.refuse('CONFIG') end
+    if callback_depth>0 and (not raw_ops.same(ctx,active_callback_ctx) or
+        not read_identity_unchanged(ctx,saved)) then return nil,S.refuse('CONFIG') end
     if not window then return true,nil end
-    if ctx.query_index~=window.index then return nil,S.refuse('CONFIG') end
-    if ctx.budget~=window.budget then return nil,S.refuse('CONFIG') end
-    for key,value in pairs(ctx.budget) do
-      if type(value)~='number' or value<0 or value==math.huge or value~=math.floor(value) then return nil,S.refuse('CONFIG') end
+    local budget=raw_ops.get(ctx,'budget')
+    if raw_ops.get(ctx,'query_index')~=window.index or
+        not raw_ops.same(budget,window.budget) or raw_ops.meta(budget)~=nil then return nil,S.refuse('CONFIG') end
+    for key,value in raw_ops.iter,budget do
+      if raw_ops.kind(value)~='number' or value<0 or value==math.huge or value~=math.floor(value) then return nil,S.refuse('CONFIG') end
     end
-    for key,floor in pairs(window.floors) do
-      if type(ctx.budget[key])~='number' or ctx.budget[key]<floor then return nil,S.refuse('CONFIG') end
+    for key,floor in raw_ops.iter,window.floors do
+      local value=raw_ops.get(budget,key)
+      if raw_ops.kind(value)~='number' or value<floor then return nil,S.refuse('CONFIG') end
     end
-    if remember then for key,value in pairs(ctx.budget) do window.floors[key]=value end end
+    if remember then for key,value in raw_ops.iter,budget do window.floors[key]=value end end
     return true,nil
   end
   function S.charge(ctx, unit, count)
@@ -112,7 +169,7 @@ do
     return true
   end
   original_unchanged=function(ctx)
-    local saved=ctx==current_ctx and current_seal or nil
+    local saved=same_context(ctx) and current_seal or nil
     if not saved or type(ctx.request)~='table' then return false end
     for _,field in ipairs(sealed_fields) do if ctx[field]~=saved.fields[field] then return false end end
     for _,field in ipairs(request_identity) do if ctx.request[field]~=saved.request[field] then return false end end
@@ -134,21 +191,31 @@ do
         ctx.active_epoch~=saved.active_epoch or ctx.now_ms~=saved.now_ms) then return false end
     return true
   end
-  -- Trusted built-ins cannot mutate the validated request. Check its sealed
-  -- identity in fixed work; reserve the full tree walk for callback boundaries
-  -- and accesses made while an extension can change the public context.
-  local function read_identity_unchanged(ctx,saved)
-    if not saved or ctx~=current_ctx or saved~=current_seal or saved.fields.operation~='read' or
-        ctx.request~=saved.read_request then return false end
-    for _,field in ipairs(sealed_fields) do if ctx[field]~=saved.fields[field] then return false end end
-    for _,field in ipairs(request_identity) do if ctx.request[field]~=saved.request[field] then return false end end
-    if saved.read_active_epoch and ctx.active_epoch~=saved.read_active_epoch then return false end
-    if saved.opened and (ctx.raw_request~=saved.raw_request or ctx.request_hash~=saved.request_hash or
-        ctx.active_epoch~=saved.active_epoch or ctx.now_ms~=saved.now_ms) then return false end
+  -- Helpers consume sealed identity/private projections. Whole graph/request
+  -- validation belongs at callback entry/exit, not every metered access.
+  local read_maps={'budget','accesses','types','stream_info','defs','limits'}
+  read_identity_unchanged=function(ctx,saved)
+    if not raw_ops or not saved or not same_context(ctx) or saved~=current_seal or
+        saved.fields.operation~='read' or raw_ops.meta(ctx)~=nil then return false end
+    local request=raw_ops.get(ctx,'request')
+    if not raw_ops.same(request,saved.read_request) or raw_ops.meta(request)~=nil then return false end
+    for _,field in ipairs(sealed_fields) do
+      if not raw_ops.same(raw_ops.get(ctx,field),saved.fields[field]) then return false end
+    end
+    for _,field in ipairs(request_identity) do
+      if not raw_ops.same(raw_ops.get(request,field),saved.request[field]) then return false end
+    end
+    for _,field in ipairs(read_maps) do
+      local value=raw_ops.get(ctx,field)
+      if raw_ops.kind(value)~='table' or raw_ops.meta(value)~=nil then return false end
+    end
+    if saved.read_active_epoch and raw_ops.get(ctx,'active_epoch')~=saved.read_active_epoch then return false end
+    if saved.opened and (raw_ops.get(ctx,'raw_request')~=saved.raw_request or
+        raw_ops.get(ctx,'request_hash')~=saved.request_hash or raw_ops.get(ctx,'active_epoch')~=saved.active_epoch or
+        raw_ops.get(ctx,'now_ms')~=saved.now_ms) then return false end
     return true
   end
   local function read_unchanged(ctx,saved)
-    if callback_depth>0 then return original_unchanged(ctx) end
     return read_identity_unchanged(ctx,saved)
   end
   local function clear_context()
@@ -175,6 +242,7 @@ do
   end
   function S.context(request, operation)
     if callback_depth>0 then return nil,S.refuse('CONFIG') end
+    capture_raw_ops()
     bindings_open=false
     clear_context()
     local space = request.space
@@ -191,12 +259,16 @@ do
     local advance_index = #original_rowsets + 1
     local advance = request.entries and request.entries[advance_index]
     local original_advance = advance and advance.kind == 'advance' or false
+    local limits={}
+    for name,value in raw_ops.iter,S.limits do
+      if raw_ops.kind(name)=='string' and raw_ops.kind(value)=='number' then limits[name]=value end
+    end
     local ctx = {operation=operation,profile=S.profile,version='tset/1',request=request,
       space=space,op=request.op,intent=request.intent,result=request.result or '',
       original_fence=request.fence==true,
       notes=request.notes,notes_array=request.notes,notes_implicit=notes_implicit,
       original_note_count=original_note_count,
-      request_epoch=request.epoch,write_epoch=request.epoch,limits=S.limits,
+      request_epoch=request.epoch,write_epoch=request.epoch,limits=limits,
       original_rowsets=original_rowsets,original_advance=original_advance,
       original_advance_index=advance_index,
       original_advance_from=original_advance and advance.from or nil,
@@ -313,7 +385,7 @@ do
     return readcmd(ctx,descriptor,reserve_bytes,probe_kind)
   end
   local function begin_query(ctx,index)
-    local saved=ctx==current_ctx and current_seal or nil
+    local saved=same_context(ctx) and current_seal or nil
     if callback_depth>0 or not saved or saved.fields.operation~='read' or
         not read_unchanged(ctx,saved) or type(index)~='number' or index~=math.floor(index) or
         index<0 or index>=#saved.request.queries or index~=(saved.dispatch_index or -1)+1 then
@@ -325,7 +397,7 @@ do
     return true,nil
   end
   local function read_cache_state(ctx)
-    local saved=ctx==current_ctx and current_seal or nil
+    local saved=same_context(ctx) and current_seal or nil
     if not saved or saved.fields.operation~='read' or not read_unchanged(ctx,saved) or
         saved.dispatch_index==nil or ctx.query_index~=saved.dispatch_index then return nil,S.refuse('CONFIG') end
     local _,err=budget_monotone(ctx,false);if err then return nil,err end
@@ -336,11 +408,14 @@ do
   function S.bind_read_helpers(factory)
     S.bind_read_helpers=nil
     if not bindings_open then error('tset read helpers must bind during initialization',0) end
+    local require_first_read_binding=not read_bound and function() end
+    require_first_read_binding()
+    read_bound=true
     read_cleanup=factory(function(ctx,descriptor,reserve_bytes,probe_kind)
       if callback_depth>0 then return readcmd(ctx,descriptor,reserve_bytes,probe_kind) end
       return S.readcmd(ctx,descriptor,reserve_bytes,probe_kind)
     end,begin_query,function(ctx,t)
-      local saved=ctx==current_ctx and current_seal or nil
+      local saved=same_context(ctx) and current_seal or nil
       if not saved or saved.fields.operation~='read' or not read_unchanged(ctx,saved) or
           saved.dispatch_index==nil or ctx.query_index~=saved.dispatch_index or
           saved.fields.request_epoch~=saved.read_active_epoch then return nil,S.refuse('CONFIG') end
@@ -369,7 +444,7 @@ do
       line_raw_reservation%1==0 and function() end
     require_valid_log_reservation()
     local function authorize_line(ctx,seq,index)
-      local saved=ctx==current_ctx and current_seal or nil
+      local saved=same_context(ctx) and current_seal or nil
       if not saved or saved.fields.operation~='read' or not read_unchanged(ctx,saved) or
           saved.dispatch_index==nil or index~=saved.dispatch_index or ctx.query_index~=index or
           (callback_depth>0 and (ctx~=active_callback_ctx or not saved.callback or saved.callback.index~=index)) then
@@ -397,21 +472,34 @@ do
     log_cleanup=cleanup
   end
   function S.read_callback(ctx,fn,q,index)
-    local saved=ctx==current_ctx and current_seal or nil
-    if callback_depth>0 or not saved or saved.callback or not original_unchanged(ctx) or
-        saved.fields.operation~='read' or saved.dispatch_index==nil or
-        index~=saved.dispatch_index or ctx.query_index~=index then return nil,S.refuse('CONFIG') end
-    local floors={};for key,value in pairs(ctx.budget) do floors[key]=value end
-    saved.callback={floors=floors,budget=ctx.budget,index=index}
+    local saved=same_context(ctx) and current_seal or nil
+    if callback_depth>0 or not saved or saved.callback or saved.fields.operation~='read' or
+        saved.dispatch_index==nil or index~=saved.dispatch_index then return nil,S.refuse('CONFIG'),false end
+    local boundary_error=S.refuse('CONFIG',{query_index=index})
+    -- Keep the authority window closed until every check has completed. No
+    -- caller-owned table may be inspected after a failed boundary at depth 0.
     callback_depth=callback_depth+1
     active_callback_ctx=ctx
-    local ok,value,problem=pcall(fn,ctx,q,index)
+    local ok,value,problem,valid=raw_ops.call(function()
+      local retained=graph_tables({ctx,q})
+      if not retained or not original_unchanged(ctx) or
+          not read_identity_unchanged(ctx,saved) or raw_ops.get(ctx,'query_index')~=index then return nil,nil,false end
+      local budget=raw_ops.get(ctx,'budget')
+      local floors={};for key,item in raw_ops.iter,budget do floors[key]=item end
+      saved.callback={floors=floors,budget=budget,index=index}
+      local called,result,err=raw_ops.call(fn,ctx,q,index)
+      if raw_ops.kind(result)=='table' then retained[#retained+1]=result end
+      if raw_ops.kind(err)=='table' then retained[#retained+1]=err end
+      if not graph_tables(retained) then return nil,nil,false end
+      local _,budget_error=budget_monotone(ctx,false)
+      if not called or budget_error or not original_unchanged(ctx) then return nil,nil,false end
+      return result,err,true
+    end)
+    saved.callback=nil
     callback_depth=callback_depth-1
     active_callback_ctx=nil
-    local monotone,budget_error=budget_monotone(ctx,false)
-    saved.callback=nil
-    if not ok or budget_error or not original_unchanged(ctx) then return nil,budget_error or S.refuse('CONFIG') end
-    return value,problem
+    if not ok or not valid then return nil,boundary_error,false end
+    return value,problem,true
   end
   function S.writecmd(ctx, argv, access)
     local bytes,err=scalar_argv(argv); if err then return nil,err end
@@ -916,7 +1004,8 @@ do
       if type(extra_t)~='string' or #extra_t>256 or not string.match(extra_t,'^[A-Za-z0-9_][A-Za-z0-9_.-]*$') then return nil,S.refuse('REQUEST') end
       names[1]=extra_t;seen[extra_t]=true
     end
-    local entries=ctx.operation=='read' and ctx.request.queries or ctx.request.entries
+    local request=callback_depth>0 and current_seal.request or ctx.request
+    local entries=ctx.operation=='read' and request.queries or request.entries
     for _,e in ipairs(entries or {}) do if e.t and not seen[e.t] then seen[e.t]=true;names[#names+1]=e.t end end
     if ctx.original_advance then
       if not ctx.catalog then

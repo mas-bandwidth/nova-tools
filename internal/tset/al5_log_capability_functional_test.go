@@ -54,24 +54,27 @@ redis.register_function('ns_tset_l1_line_cap_probe',function(keys,args)
   end
   extension.read=function(ctx,q,index)
     local seq='7'
-    if mode=='old_context' then
+    if mode=='old_context' or mode=='badseq_old_context' then
       if not prior_ctx then return nil,expected_capability_refusal(nil,index) end
+      if mode=='badseq_old_context' then seq='bad' end
       return nil,denied_capability(prior_ctx,seq,index,index)
     end
-    if mode=='fake_context' or mode=='zero_budget_copy' then
+    if mode=='fake_context' or mode=='zero_budget_copy' or mode=='badseq_fake_context' then
       local fake={}
       for k,v in pairs(ctx) do fake[k]=v end
       if mode=='zero_budget_copy' then
         fake.budget={fetched_bytes=0,cell=0,store_commands=0}
       end
+      if mode=='badseq_fake_context' then seq='bad' end
       return nil,denied_capability(fake,seq,index,index)
     end
     if mode=='bad_zero' then seq='0'
     elseif mode=='bad_leading' then seq='07'
     elseif mode=='bad_over' then seq='9007199254740992'
-    elseif mode=='bad_text' then seq='bad'
+    elseif mode=='bad_text' or mode=='badseq_valid_authority' or
+        mode=='badseq_wrong_index' then seq='bad'
     elseif mode=='absent' then seq='8' end
-    if mode=='wrong_index' then
+    if mode=='wrong_index' or mode=='badseq_wrong_index' then
       return nil,denied_capability(ctx,seq,index,index+1)
     end
     if mode=='mutated_index' then
@@ -283,6 +286,40 @@ func TestL1ExactLineCapabilityAuthorityAndAccounting(t *testing.T) {
 		if after := commitProbeImage(t, fx.Client); !reflect.DeepEqual(before, after) {
 			t.Fatalf("%s changed Redis image", tc.mode)
 		}
+	}
+}
+
+func TestL1ExactLineCapabilityAuthorityBeforeSeq(t *testing.T) {
+	t.Parallel()
+	fx := newTSetFixture(t)
+	fx.ActivateWithLua(t, l1LineCapabilityProbeLua)
+	seedL1LineCapabilityStream(t, fx.Client, fx.Space+"sprint:log@0", "7-0", "inside")
+	if reply := l1LineCapabilityCall(t, fx, "0", "remember"); reply.Status != "read" ||
+		len(reply.Answers) != 1 || reply.Answers[0].Data != "inside" {
+		t.Fatalf("stale-context setup = %+v, want one real line", reply)
+	}
+	before := commitProbeImage(t, fx.Client)
+	for _, tc := range []struct{ mode, code string }{
+		{mode: "badseq_wrong_index", code: "CONFIG"},
+		{mode: "badseq_fake_context", code: "CONFIG"},
+		{mode: "badseq_old_context", code: "CONFIG"},
+		{mode: "badseq_valid_authority", code: "REQUEST"},
+	} {
+		t.Run(tc.mode, func(t *testing.T) {
+			statsBefore := readExtensionCommandStats(t, fx.Client)
+			reply := l1LineCapabilityCall(t, fx, "0", tc.mode)
+			statsAfter := readExtensionCommandStats(t, fx.Client)
+			if got := readExtensionExecutedDelta(t, statsBefore, statsAfter, "XRANGE"); got != 0 {
+				t.Errorf("%s executed %d XRANGE, want none", tc.mode, got)
+			}
+			if reply.Status != "refused" || reply.Code != tc.code || len(reply.Answers) != 0 ||
+				reply.Detail.QueryIndex == nil || *reply.Detail.QueryIndex != 0 {
+				t.Errorf("%s refusal = %+v, want %s at query 0 without answers", tc.mode, reply, tc.code)
+			}
+			if after := commitProbeImage(t, fx.Client); !reflect.DeepEqual(before, after) {
+				t.Fatal("authority/seq refusal changed the whole Redis image")
+			}
+		})
 	}
 }
 
@@ -502,5 +539,33 @@ redis.register_function('ns_tset_l1_invalid_line_bind_probe',function() return '
 				t.Errorf("failed line binding installed a library for %s: %+v err=%v", tc.name, libraries, err)
 			}
 		})
+	}
+}
+
+func TestL1ReadHelpersRejectCapturedSecondBindAtLoad(t *testing.T) {
+	t.Parallel()
+	fx := newTSetFixture(t)
+	source, err := fn.TSetSource(fn.TSetStandalone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const marker = "\n-- lua/table_set_read.lua\n"
+	if strings.Count(source, marker) != 1 {
+		t.Fatal("cannot isolate read fragment for captured-binder probe")
+	}
+	// Capture the binder before the real read fragment uses it. The public
+	// field is then nil, but this lexical reference remains callable at load.
+	source = strings.Replace(source, marker,
+		"local captured_read=NS.tset.bind_read_helpers\n"+marker, 1)
+	source += "\ncaptured_read(function() return function() end end)\n"
+	const diagnostic = "attempt to call local 'require_first_read_binding' (a boolean value)"
+	if err := fx.Client.FunctionLoad(context.Background(), source).Err(); err == nil ||
+		!strings.Contains(err.Error(), diagnostic) {
+		t.Fatalf("captured second read bind = %v, want %q", err, diagnostic)
+	}
+	libraries, err := fx.Client.FunctionList(context.Background(),
+		redis.FunctionListQuery{LibraryNamePattern: fn.Library}).Result()
+	if err != nil || len(libraries) != 0 {
+		t.Fatalf("failed second binding installed a library: %+v err=%v", libraries, err)
 	}
 }
