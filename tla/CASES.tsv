@@ -285,7 +285,7 @@ MCDirtyTickG1.cfg	MCDirtyTick.tla	invariant	TickBounded	ignore-terminal	dirtytic
 MCDirtyTickG1Live.cfg	MCDirtyTick.tla	temporal	Terminates	ignore-terminal	dirtytick-goals	required	-
 MCDirtyTickG2.cfg	MCDirtyTick.tla	invariant	WidthRespected	ignore-terminal	dirtytick-goals	required	-
 MCDirtyTickG3.cfg	MCDirtyTick.tla	action	WorkChangesOnlyInPump	ignore-terminal	dirtytick-goals	required	-
-MCDirtyTickRead.cfg	MCDirtyTickRead.tla	pass	-	ignore-terminal	dirtytickread	bench	-
+MCDirtyTickRead.cfg	MCDirtyTickRead.tla	pass	-	ignore-terminal	dirtytickread	required	-
 MCDirtyTickReadAcquire.cfg	MCDirtyTickRead.tla	invariant	TwinIsTheStore	ignore-terminal	dirtytickread-acquire	required	-
 MCDirtyTickReadHalt.cfg	MCDirtyTickRead.tla	invariant	BeganRunning	ignore-terminal	dirtytickread-halt	required	-
 MCDirtyTickReadCatchup.cfg	MCDirtyTickRead.tla	invariant	ViewIsSnapshot	ignore-terminal	dirtytickread-catchup	required	-
