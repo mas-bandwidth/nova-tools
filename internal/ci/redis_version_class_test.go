@@ -31,8 +31,14 @@ import (
 //   - a sweep over every text file of the living tree reads any three-part
 //     version written right after the word Redis in the shapes a version takes
 //     (`Redis 8.10.2`, `redis-server 8.10.2`, `redis-8.10.2.tar.gz`,
-//     `REDIS_VERSION=8.10.2`, `redis_version:8.10.2`, `redis:8.10.2`), so a
-//     place added tomorrow is held the day it lands with no list to edit.
+//     `REDIS_VERSION=8.10.2`, `REDIS_VERSION="8.10.2"`, the JSON key
+//     `"REDIS_VERSION": "8.10.2"`, `redis_version:8.10.2`,
+//     `redis:8.10.2`, the apt pin `redis-server=6:8.10.2-1`, the output of
+//     `redis-server --version` (`v=8.10.2`), a version or a name in backticks),
+//     so a place added tomorrow is held the day it lands with no list to edit.
+//     The files it reads are the Go, Markdown, YAML, shell, JSON, Python, env,
+//     text and config files and the ones named Containerfile, Dockerfile or
+//     Makefile (redisVersionReadsFile).
 //
 // What it does not read: release history (CHANGELOG.md, the release notes),
 // captured data under testdata, deprecated/ (the shared tree does not walk it),
@@ -73,18 +79,27 @@ var redisVersionHistory = []struct{ Prefix, Why string }{
 }
 
 var (
-	// redisVersionRe: the word Redis, an optional server/cli/version word, a
-	// separator, then a three-part version. Case-insensitive, so REDIS_VERSION=
-	// and redis_version: read too.
-	redisVersionRe = regexp.MustCompile(`(?i)\bredis(?:[-_ ]?(?:server|cli|version))?[ =:@v-]{1,2}(\d+\.\d+\.\d+)`)
+	// redisVersionRe: the word Redis, an optional server/cli/tools/version word
+	// that may be closed by a quote or a backtick (a JSON key `"REDIS_VERSION"`,
+	// a name in backticks; a bare `"redis"` key is a client library's pin and is
+	// not read), a separator (one or two of ` =:@v-`, or the ` v=` of
+	// `redis-server --version`), an optional quote or backtick opening the
+	// version, an optional apt epoch (`6:`), then a three-part version.
+	// Case-insensitive, so REDIS_VERSION= and redis_version: read too. \x60 is
+	// the backtick.
+	redisVersionRe = regexp.MustCompile(`(?i)\bredis(?:[-_ ]?(?:server|cli|tools|version)["'\x60]?|\x60)?(?:[ =:@v-]{1,2}|[ ]v=)["'\x60]?(?:\d+:)?(\d+\.\d+\.\d+)`)
 	// redisInstallerPinRe: the installer's `ver=8.10.2`, read only in that file.
 	redisInstallerPinRe = regexp.MustCompile(`^\s*ver=["']?(\d+\.\d+\.\d+)["']?\s*$`)
 	// redisVersionTextExts are the extensions of the files the sweep reads.
 	redisVersionTextExts = map[string]bool{
 		".go": true, ".md": true, ".yml": true, ".yaml": true, ".sh": true, ".txt": true,
 		".ini": true, ".j2": true, ".lua": true, ".card": true, ".ps1": true, ".toml": true,
+		".json": true, ".env": true, ".py": true,
 	}
-	redisVersionTextNames = map[string]bool{"Containerfile": true, "Makefile": true}
+	redisVersionTextNames = map[string]bool{"Containerfile": true, "Dockerfile": true, "Makefile": true}
+	// redisVersionUnreadDirs are the directories no file under is read: captured
+	// data and other people's code, none of which says what the repository runs.
+	redisVersionUnreadDirs = []string{"testdata", "vendor", "node_modules"}
 )
 
 // redisVersionSite is one place a Redis version is written.
@@ -167,6 +182,25 @@ func redisVersionSkipped(rel string) bool {
 	return false
 }
 
+// redisVersionReadsFile says whether the sweep reads the file at this
+// repo-relative path: not this test, not release history, not captured data or
+// vendored code, and only a text kind: an extension of redisVersionTextExts, or a
+// name of redisVersionTextNames. (deprecated/ never reaches the sweep: the
+// shared tree does not walk it.)
+func redisVersionReadsFile(rel string) bool {
+	if redisVersionSkipped(rel) {
+		return false
+	}
+	f := &treeFile{Rel: rel}
+	for _, d := range redisVersionUnreadDirs {
+		if f.HasDirNamed(d) {
+			return false
+		}
+	}
+	base := rel[strings.LastIndex(rel, "/")+1:]
+	return redisVersionTextExts[filepath.Ext(rel)] || redisVersionTextNames[base]
+}
+
 // TestRedisIsOneVersionEverywhere: every place the repository names a Redis
 // version names the same one, the version the functional image builds.
 func TestRedisIsOneVersionEverywhere(t *testing.T) {
@@ -194,11 +228,7 @@ func TestRedisIsOneVersionEverywhere(t *testing.T) {
 	var sites []redisVersionSite
 	perFile := map[string]int{}
 	for _, f := range tree.Files {
-		if redisVersionSkipped(f.Rel) || f.HasDirNamed("testdata") || f.HasDirNamed("vendor") || f.HasDirNamed("node_modules") {
-			continue
-		}
-		base := f.Rel[strings.LastIndex(f.Rel, "/")+1:]
-		if !redisVersionTextExts[filepath.Ext(f.Rel)] && !redisVersionTextNames[base] {
+		if !redisVersionReadsFile(f.Rel) {
 			continue
 		}
 		src := f.Src
@@ -244,11 +274,45 @@ func TestRedisVersionRuleSeesEachShape(t *testing.T) {
 		{"a.md", "install Redis v8.0.5 first", "8.0.5"},
 		{"a.md", "brew install redis@8.0.5", "8.0.5"},
 		{redisVersionInstaller, "\tver=8.10.2", "8.10.2"},
+		// a quoted pin, double and single
+		{"a.sh", `REDIS_VERSION="8.0.5"`, "8.0.5"},
+		{"a.sh", `export REDIS_VERSION='8.0.5'`, "8.0.5"},
+		{"a.json", `{"REDIS_VERSION": "8.0.5"}`, "8.0.5"},
+		// an apt pin: the epoch before the version, the package revision after
+		{"a.md", "sudo apt-get install -y redis-server=6:8.0.5-1", "8.0.5"},
+		{"a.md", "sudo apt-get install -y redis-tools=6:8.0.5-1", "8.0.5"},
+		// the output of `redis-server --version`
+		{"a.txt", "Redis server v=8.0.5 sha=00000000:0 malloc=jemalloc-5.3.0 bits=64 build=0", "8.0.5"},
+		// a version in backticks, and a name in backticks
+		{"a.md", "the server is Redis `8.10.2`, built from source", "8.10.2"},
+		{"a.md", "the `redis-server` 8.10.2 binary", "8.10.2"},
+		{"a.md", "`REDIS_VERSION`=8.10.2", "8.10.2"},
 	}
 	for _, c := range seen {
 		got := redisVersionSites(c.rel, c.text)
 		if len(got) != 1 || got[0].Version != c.want {
 			t.Errorf("%s %q: the reader found %v, want one site naming %s", c.rel, c.text, got, c.want)
+		}
+	}
+	// The files the sweep reads: the text kinds by extension or by name, and
+	// nothing that is history or captured data.
+	for _, rel := range []string{
+		"a.go", "docs/a.md", "x/a.yml", "x/a.yaml", ".github/scripts/a.sh", "a.txt",
+		"infra/functional-image/Containerfile", "Containerfile", "Dockerfile", "infra/x/Dockerfile", "Makefile",
+		"fleet/land/ruleset.json", "a.json", ".env", "deploy/prod.env", "tools/check.py",
+	} {
+		if !redisVersionReadsFile(rel) {
+			t.Errorf("%s: the sweep must read this file (a version written there is a place the repository names one)", rel)
+		}
+	}
+	for _, rel := range []string{
+		"CHANGELOG.md", "docs/RELEASE-NOTES-1.2.3.md", "internal/nsprint/acl/acl_test.go",
+		"internal/foo/testdata/capture.json", "internal/foo/testdata/info.txt", "internal/foo/testdata/deep/x/reply.py",
+		"vendor/x/y.go", "web/node_modules/p/package.json",
+		redisVersionSelf, "a.png", "a.bin", "notes",
+	} {
+		if redisVersionReadsFile(rel) {
+			t.Errorf("%s: the sweep must not read this file (release history, captured data, another's code, or not text)", rel)
 		}
 	}
 	unseen := []struct{ rel, text string }{
@@ -262,6 +326,15 @@ func TestRedisVersionRuleSeesEachShape(t *testing.T) {
 		{"a.txt", "260 1 02-00:00:00 0.0 501 redis-server 127.0.0.1:26491"},
 		{"a.go", "miniredis v2.35.0"},
 		{"a.sh", "ver=8.10.2"},
+		{"a.md", "`go-redis` v9.22.0 is the client"},
+		{"a.md", "`nova-redis` 1.0.0 is the tool"},
+		{"a.md", "install Redis `7` or later"},
+		{"a.sh", `REDIS_VERSION="7"`},
+		{"a.md", "sudo apt-get install -y redis-server"},
+		{"a.txt", "Redis server v=7 sha=00000000:0"},
+		{"a.md", "the address is redis=127.0.0.1:6379"},
+		{"a.json", `{"redis": "4.6.0"}`},
+		{"a.json", `{"go-redis": "9.22.0"}`},
 	}
 	for _, c := range unseen {
 		if got := redisVersionSites(c.rel, c.text); len(got) != 0 {
