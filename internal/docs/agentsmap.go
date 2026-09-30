@@ -168,7 +168,7 @@ func renderPage(root, dir string, idx CatalogIndex) string {
 	var b strings.Builder
 	if dir == "" {
 		b.WriteString("# AGENTS.md — generated map\n\n")
-		b.WriteString("Do not edit. `make map` regenerates this file. Glenn, 2026-09-18: AGENTS.md alone — no `CLAUDE.md`, no pointer, no symlink.\n\n")
+		b.WriteString("Do not edit. `make map` regenerates this file. AGENTS.md alone: no `CLAUDE.md`, no pointer, no symlink.\n\n")
 		b.WriteString("Nova Tools is machinery: command-line tools that AI friends and people run against their own records, on their own machines, with their own identities. Adoption is a choice — one tool is a fine number. The standard is below; how review goes: [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).\n\n")
 		b.WriteString("```\nmake build          # go build ./...\nmake test           # the fast tier, plus the per-package time budget\nmake map            # regenerate AGENTS.md and per-directory maps\n```\n\n")
 		b.WriteString(embedStandard(root))

@@ -121,7 +121,7 @@ internal/decide/registry.go:stella 1
 internal/decide/routelog.go:glenn 1
 internal/decide/routelog.go:rowan 4
 internal/decide/routelog.go:stella 1
-internal/docs/agentsmap.go:glenn 2
+internal/docs/agentsmap.go:glenn 1
 internal/dogfood/authors.go:rowan 1
 internal/dogfood/authors.go:stella 1
 internal/dogfood/cli.go:glenn 1

@@ -41,8 +41,8 @@ Discussions and no issue templates, and nova's routing table and its fast lane
 for typo and clarity PRs are written for a repo whose product is prose.
 
 On terms: this repo is MIT, see [LICENSE](../LICENSE), and nothing in this file
-adds to or subtracts from it. No tool contributed from outside has been accepted
-yet, so there is no precedent here — only the bar below.
+adds to or subtracts from it. The bar below is the whole of the precedent: a
+contribution from outside is judged on it, like every other.
 
 ## The standard every PR meets
 
@@ -153,8 +153,7 @@ it gates a release and not a change.
 Where CI runs follows the cost of the machine, not the shape of the change.
 Pull requests run on the self-hosted runners only: one job per `./cmd/<tool>`
 plus `./internal/...` grouped into at most eight groups, fanned out across the
-four Linux space runners and the four macOS studio runners in parallel with
-fail-fast off, and every self-hosted job is guarded so fork code never runs on
+self-hosted runners in parallel with fail-fast off, and every self-hosted job is guarded so fork code never runs on
 our machines. The GitHub-hosted runners (ubuntu-latest, macos-latest,
 windows-latest) run only on push to main and on the nightly schedule, with the
 full suite, and a new push to a pull request cancels the in-progress run.
@@ -186,8 +185,8 @@ with a skip (never a red): a head commit that is itself a revert (no revert
 loops), a parent run that was not green (the red predates this push), or a
 `main` that has already moved on (the newer run decides).
 
-**To verify:** the repository ruleset must let the github-actions app push to
-`main` or auto-merge a `revert/<sha>` pull request. Until that is true, the
+**The rule:** the repository ruleset lets the github-actions app push to
+`main` or auto-merge a `revert/<sha>` pull request; without that, the
 mechanical revert lands as a pull request awaiting an approving reviewer and
 the red stays.
 

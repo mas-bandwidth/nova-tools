@@ -43,7 +43,6 @@
 .github/workflows/ci.yml:vision 10
 .github/workflows/nightly-slow.yml:glenn 1
 .github/workflows/revert-on-red.yml:glenn 1
-AGENTS.md:glenn 1
 CHANGELOG.md:batman 4
 CHANGELOG.md:emma 8
 CHANGELOG.md:glenn 11
@@ -90,8 +89,6 @@ docs/CLI.md:stella 7
 docs/CLI.md:studio 11
 docs/CONTRIBUTING.md:glenn 1
 docs/CONTRIBUTING.md:mas-bandwidth 1
-docs/CONTRIBUTING.md:space 1
-docs/CONTRIBUTING.md:studio 1
 docs/MAPPING-TOKENS-ANTIGRAVITY.md:emma 3
 docs/MAPPING-TOKENS-ANTIGRAVITY.md:mas-bandwidth 1
 docs/MAPPING-TOKENS-ANTIGRAVITY.md:studio 2
@@ -100,8 +97,6 @@ docs/MAPPING-TOKENS-GROK.md:johnny 2
 docs/MAPPING-TOKENS-GROK.md:stella 2
 docs/MODELS.md:mini 1
 docs/MODELS.md:space 2
-docs/ONBOARDING.md:emma 1
-docs/ONBOARDING.md:glenn 1
 docs/PROPOSAL-TOKENS-RECORDS-185.md:emma 2
 docs/PROPOSAL-TOKENS-RECORDS-185.md:stella 4
 docs/PROPOSAL-TOKENS-RECORDS-185.md:studio 2

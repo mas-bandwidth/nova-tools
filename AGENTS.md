@@ -1,6 +1,6 @@
 # AGENTS.md — generated map
 
-Do not edit. `make map` regenerates this file. Glenn, 2026-09-18: AGENTS.md alone — no `CLAUDE.md`, no pointer, no symlink.
+Do not edit. `make map` regenerates this file. AGENTS.md alone: no `CLAUDE.md`, no pointer, no symlink.
 
 Nova Tools is machinery: command-line tools that AI friends and people run against their own records, on their own machines, with their own identities. Adoption is a choice — one tool is a fine number. The standard is below; how review goes: [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).
 
@@ -14,11 +14,27 @@ The standard below is [docs/STANDARD.md](docs/STANDARD.md), embedded whole; ever
 
 ## The standard: how a nova tool is built
 
-This is the standard every tool and module in this repository is built to, and the one a new tool is built to first. It states where the tree goes. Each rule names the check that holds it where one exists; where the tree does not yet meet a check, the gap is its ledger, a shrink-only allowlist under `internal/ci/testdata` with one row per place still short, and a new row is a refusal, not a parking place. The goal all of it serves: the minimal code that is performant and correct. Less code is the best code; the tests are what let the code get less.
+This is the standard every tool and module in this repository is built to, and the one a new tool is built to first. It states where the tree goes. Each rule names the check that holds it where one exists; where the tree does not yet meet a check, the gap is its ledger, a shrink-only allowlist under `internal/ci/testdata` with one row per place still short, and a new row is a refusal, not a parking place. A check is written `TestName` (`rule`); the rule's entry is in docs/SPEC-CI.md. The goal all of it serves: the minimal code that is performant and correct. Less code is the best code; the tests are what let the code get less.
 
-### 1. A tool is for an AI
+### 1. Working in the tree
 
-The reader of every banner, refusal and result is an AI meeting the tool cold and deciding whether to depend on it. The question a tool answers is "is this a good tool for an AI to use?" Tools are rated by other AIs, never by their makers, and the ratings drive the fixes. A tool is rated by one note on the bus asking three raters of different sizes to use it cold on a real task and score it; the ratings are kept as tables in the bus repository's design directory, one row per rater and tool.
+These hold for every worker, AI or person. A card is the whole brief one worker is handed (section 2), and the coordinator is the one that hands cards out. The rule set is a file the coordinator names, these rules its default; the card lint refuses a card missing any rule in it:
+
+- Work only in the new worktree the card names; touch only your own branch; a worktree goes with `git worktree remove`.
+- Export a private `GOCACHE` (the path the card names) and `GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1` before any go command. Never `go clean`, and never clean a shared cache.
+- Never start a redis-server on this machine, and never kill a process you did not start. Functional tests (any test that needs Redis) run only inside the container through `tools/functionalrun` (`--fresh-gocache --deadline 15m`), never against any other store.
+- Every `go test` gets `-timeout 600s`. Every new test opens with `t.Parallel()`. Run `go test -count=1 -timeout 600s ./internal/ci/` before each push.
+- No `rm -rf` outside the job directory.
+- Never force-push, never rebase, do not use git stash (the stash list is shared by every worktree), never merge: open pull requests against the base the card names.
+- Touch only the files the card names, and keep the diff minimal: every added line traceable to one sentence of the card. A fix that needs another file goes into the report as a proposed diff, not a commit.
+- No names of people, machines or friends in code, comments or docs; docs and comments in the present tense. Cite the model or the design section from every function that implements a rule.
+- Commit messages end with `Co-Authored-By: Claude <your model> <noreply@anthropic.com>`; PR bodies end with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`, state the diff stat and what was deleted, and list the tests, each with what it pins, and every local helper added.
+- Report under 80 lines: PR number and sha, every test package line, what you could not do and why.
+- A new verb or class rule starts from its scaffold: `nova-ci new-verb <tool> <verb>` or `nova-ci new-rule <name>` lays down the file, test, fixture and make target.
+
+### 2. A tool is for an AI
+
+The reader of every banner, refusal and result is an AI meeting the tool cold and deciding whether to depend on it. The question a tool answers is "is this a good tool for an AI to use?" Tools are rated by other AIs, never by their makers, and the ratings drive the fixes. A tool is rated by one note on the bus (nova-bus, messages over git) asking three raters of different sizes to use it cold on a real task and score it; the ratings are kept as tables in the bus repository's design directory, one row per rater and tool.
 
 A rating is read beside the rater's size: a tool a small model finds dense and a frontier model finds clear is a frontier tool and its help says so; a tool every size finds hard is the one to fix.
 
@@ -28,8 +44,8 @@ The properties that make the difference in those ratings, in order:
 - **The banner answers three questions.** Line 1: what it does, in one sentence, and the README's sentence for the tool is that same line. Then how it works, in at most five lines naming the tool's nouns and where its state lives. Then how I use it: a first run of three to six real commands in an `example:` block that runs as printed. Check: `TestEveryCommandMeetsTheOnboardingStandard` (functional tier) holds the `example:` block: present, with no placeholder in it.
 - **It refuses to guess, and recovery takes one turn.** A missing input is named, with what it wants, its unit and its role, every problem at once, so a reader fixes the call once. A bad state is refused with the remedy in the line. The tool never does something plausible instead.
 - **Its effects are explicit.** Every verb's help says which it is: an inspection, a local write, a store write, or an external delivery (a push, a send, a machine). A dry run says which reads it still makes.
-- **It never fails silently, and every refusal carries a breadcrumb.** No OK word on a non-zero exit, no failure word on zero, no error discarded without a line saying why it is safe (`// ignored: <reason>`). Check: `TestNoSilentFailureOnTheLivePath` (`silent`).
-- **Exit codes tell the truth and the banner states them.** 0 done; 1 the verb ran and said no; 2 usage or a store that did not answer; a tool's further codes listed. Every verb's `-h` quotes the table.
+- **It never fails silently, and every refusal carries a breadcrumb.** No OK word on a non-zero exit, no failure word on zero, no error discarded without a line saying why it is safe (`// ignored: <reason>`). Check: `TestNoSilentFailureOnTheLivePath` (`silent`) holds the discarded error.
+- **Exit codes tell the truth and the banner states them.** 0 done; 1 the verb ran and said no; 2 usage or a store that did not answer; a tool's further codes listed. A gate that cannot decide exits 2, never 0. Every verb's `-h` quotes the table (nova-fuse: `nova-fuse help <verb>`).
 - **One output structure, two renderings.** Every verb builds one value: `result {verb, status ok|refused|failed, exit, remedy}`, `facts {k: v}`, `items` (typed rows, with `more {shown, total}` when a listing is bounded), `notes`. The typed line is one rendering (`VERB OK k=v ...`, one item per line, `MORE`, `NOTE`); `--json` is the other, from the same value, so the two cannot drift. Every verb accepts `--json`.
 - **The status word leads every line.** After the verb's name the first word is `OK`, `REFUSED` or `FAILED`; a continuation line opens with `MORE` or `NOTE`. A refusal is one line in one grammar: `VERB REFUSED: <reason>; run: <remedy>`.
 - **A result names the next command.** Where a reader has a next step, the result prints it as a command that runs, so the next turn is a paste, not a search.
@@ -38,13 +54,13 @@ The properties that make the difference in those ratings, in order:
 - **Idempotent by an op id.** A write verb takes `--op <id>`, an id the caller chooses for one operation; the same id again, for the same verb and arguments, returns the recorded result and changes nothing, so a retry after a timeout is safe.
 - **Nothing hidden.** Every state a tool writes can be read back with a verb. No silent fallback, no default that stands in for a missing input.
 - **What an AI worker is handed is a whole brief.** A card is a complete child brief: the repository, the branch and base, the working directory, what it may not touch, the exact commands, the rules, what to write in its result and how it is reported. A one-line card makes a wandering child. The card lint (`swarm.LintCardChild`, which `nova-sprint add` calls on every card) holds every rule the coordinator gives a child, and `add` refuses a card that fails it.
-- **One shape across the set.** The same flag means the same thing in every tool: `--json`; `--max` with its `MORE` line; `--redis` with the seat-first default (the verb's own environment default first, then the Redis address of the seat `--seat` selects); `--actor <name>`, the name a write is recorded under; `--op`; `-h` with the exit table. A tool is its verbs plus one call into the shared skeleton, `internal/tool`: verb dispatch, help, version, the banner, the refusal printer, the standard flags, the envelope encoder. A new tool inherits the whole shape.
+- **One shape across the set.** The same flag means the same thing in every tool: `--json`; `--max` with its `MORE` line; `--redis` with the seat-first default (a seat: one named store and identity in nova-config; the verb's own environment default first, then the Redis address of the seat `--seat` selects); `--actor <name>`, the name a write is recorded under; `--op`; `-h` with the exit table. A tool is its verbs plus one call into the shared skeleton, `internal/tool`: verb dispatch, help, version, the banner, the refusal printer, the standard flags, the encoder of the one output value above. A new tool inherits the whole shape.
 
-### 2. Help and refusal: the five onboarding points
+### 3. Help and refusal: the five onboarding points
 
 A newcomer's first stumble is the spec for this section. Every binary under `cmd/` meets all five points; code cites them as "ONBOARDING point N".
 
-1. **`<tool> help` prints usage, the usage ends in an `example:` block whose lines actually run, and a bare command NAMES that door in one line.** Not sketches — commands a stranger can paste. A line that runs answers 0 or 1; exit 2 is "could not run", and an example exiting 2 is a broken example. An invocation the tool cannot run prints one line — `<tool>[ <verb>]: <what was wrong>; run: <tool> help` — and exits 2, while `<tool> help` prints the banner on stdout and exits 0. Where the guidance is a sentence of its own it follows on one indented line, and two lines is the ceiling.
+1. **`<tool> help` prints usage, the usage ends in an `example:` block whose lines actually run, and a bare command NAMES that door in one line.** Not sketches — commands a stranger can paste. A line that runs answers 0 or 1; exit 2 is "could not run", and an example exiting 2 is a broken example. An invocation the tool cannot run prints `<tool>[ <verb>] REFUSED: <what was wrong>; run: <tool> help` (a hint follows as one indented NOTE line) and exits 2, while `<tool> help` prints the banner on stdout and exits 0. Two lines is the ceiling.
 2. **Every refusal says what the flag or input WANTS, not only what was wrong, and one run reports every problem it can find.** A missing flag is still a refusal, never a default. Flags that depend on one another may still be reported in order.
 3. **The tool's section in `docs/CLI.md` opens with `### First run`:** the one or two commands a stranger runs first, the real transcript shape they print, how to read it, and the things a first run gets wrong with what each one wants. The transcript is produced by RUNNING the tool on its fixture, never written by hand.
 4. **A `quickstart` verb where the tool has a natural first run** — one line needing nothing the caller has to invent. Where there is none, the command reference says so and why: a verb added for symmetry writes state nobody asked for.
@@ -54,21 +70,21 @@ Check: `TestEveryCommandMeetsTheOnboardingStandard` walks every directory under 
 
 **Help is never a refusal.** `<tool> <verb> -h` (or `--help`, or `<tool> help <verb>`) prints that verb's help on stdout and exits 0, before anything is read, dialled or written. Every verb parses its flags through the one seam, `internal/nsprint/verbflag`; `internal/testverbhelp` is the per-tool check, and the functional walk in `internal/ci` holds every verb of every living tool to it. nova-fuse is the one exception: its exit 0 means CLEAR, so its verbs refuse `-h`.
 
-### 3. General, never one fleet
+### 4. General, never one fleet
 
 The tools carry the concepts and none of the fleet: no host, machine, seat, person or friend name, no address, no home path, in any file. A fleet is one configuration in nova-config; identity, inventory, widths and ceilings come from it and are never kept a second time. Check: `TestGeneralityGuardrail` over Go (`generality`) and `TestGeneralityText` over every living text file (`generality-text`).
 
-### 4. Correct: a model where there is a machine
+### 5. Correct: a model where there is a machine
 
-Anything with states and transitions (a protocol, a session, a lease, a queue, a landing, a table, a tick) has a TLA+ module beside it: the actions are the verbs, the duties and the outside events; the invariants and liveness are the rules the design keeps. TLC runs on a bench, never on a working machine. Check: `TestTLCRecordsCoverCurrentModels` (`tlc`) keeps each model's TLC record fresh by hash. What TLC checks is safety and liveness. Reachability is shown by a reversed witness: an invariant written to be false in a state the design must reach, so TLC's counterexample is the proof the state is reached, and the witness passes only when it fails on exactly that named property. Multi-step and statistical properties belong to the drive (the tool run end to end on a live store at a stated size, with its gates, reporting the measured numbers) and to the differential test against the reference model (a small, plainly correct implementation of the same rules that the real code is compared against, case by case). A real run's log is a trace the model can be checked against.
+Anything with states and transitions (a protocol, a session, a lease, a queue, a landing, a table, a tick (one pass of a tool's loop over its rows)) has a TLA+ module beside it: the actions are the verbs, the duties and the outside events; the invariants and liveness are the rules the design keeps. TLC runs on a bench (a machine the fleet names for builds and tests), never on a working machine. Check: `TestTLCRecordsCoverCurrentModels` (`tlc`) keeps each model's TLC record fresh by hash. What TLC checks is safety and liveness. Reachability is shown by a reversed witness: an invariant written to be false in a state the design must reach, so TLC's counterexample is the proof the state is reached, and the witness passes only when it fails on exactly that named property. Multi-step and statistical properties belong to the drive (the tool run end to end on a live store at a stated size, with its gates, reporting the measured numbers) and to the differential test against the reference model (a small, plainly correct implementation of the same rules that the real code is compared against, case by case). A real run's log is a trace the model can be checked against.
 
-### 5. Performant: a number in the gate
+### 6. Performant: a number in the gate
 
 A requirement that is not a test is a hope. A design brings its layer list before any code: for each layer, the structure, the guarantee it keeps, the check that holds it, and the cost column (how many things and the bound per operation), with the structure chosen for that number. Every layer states its cost bound as a number (a tick under one second at a stated size; round trips per verb; a drive's floor), the gate prints and asserts it, and the report gives the measured number beside the bound. Redis is always batched: one round trip per verb, the connect is a handshake only. A row at a time is never done; the set is planned in one call. When a bound is missed, the profile names the decision and the structure changes; nothing is tuned around a wrong structure.
 
-### 6. Minimal: less code is the best code
+### 7. Minimal: less code is the best code
 
-- A verb nobody runs is removed. Used means delivered: a dated log (the sprint's log, the token reports, loops.tsv) shows it ran; a verb, tool or module the record does not show is not kept because it might be wanted.
+- A verb nobody runs is removed. Used means delivered: a dated log (the sprint's log, the token reports, a loop's run log) shows it ran; a verb, tool or module the record does not show is not kept because it might be wanted.
 - Nothing lands that no shipped tool reaches. Reachability over the tools' roots (three operating systems, every build tag) is zero; a deletion of a test declares it in `internal/ci/testdata/deleted-tests.txt` (`classtests`).
 - Duplicated function becomes one lower-level module the others depend on; a copy is a bug.
 - The standard library or a well-known module is used before anything is written by hand: `exec.CommandContext` with a deadline and `WaitDelay` for every subprocess, `encoding/csv`, `text/tabwriter`, `slices`, `maps`, `cmp.Or`, `x/mod/semver`. Kept custom on purpose, with the reason beside it: a reader that must not evaluate, an escape that is a house rule, an encoder that must match a store byte for byte.
@@ -76,11 +92,11 @@ A requirement that is not a test is a hope. A design brings its layer list befor
 - A spec is normative: where the code and its spec under `docs/` disagree, one has a bug and the tests decide which. Read the spec before the code.
 - Docs are present tense only: what the tools do now. A parked tool or verb has no entry, example or link in README or `docs/`.
 
-### 7. Tests
+### 8. Tests
 
-Tests are the reason the code can change: without them a change breaks things unseen. They are table-driven: the code once, the cases as data, one function with named cases and `t.Run`. Shared rigs, fakes and harnesses live in `internal/testkit`, small test packages a test imports, never copies. Assertions are one line (testify). A test names what it pins, and a rule's test is shown by a mutation that turns it red: break the rule in the code, watch the test fail, restore. Overlap from layering is expected; a test is removed only when it covers and states nothing the others do not. Every test opens with `t.Parallel()` (`TestEveryTestOpensWithTParallel`, `parallel`). Unit tests own no sockets and start no redis-server (`TestUnitTierRefusesRedisServer`, `tiers`); functional tests carry `//go:build functional` and run in a container that cleans up every dependency. A fake is strict like the real tool: it refuses what the real one refuses. A wall-clock bound lives behind `-tags perf`, which gates a release, never a change.
+Tests are the reason the code can change: without them a change breaks things unseen. They are table-driven: the code once, the cases as data, one function with named cases and `t.Run`. Shared rigs, fakes and harnesses live in `internal/testkit`, small test packages a test imports, never copies. Assertions are one line (testify). A test names what it pins, and a rule's test is shown by a mutation that turns it red: break the rule in the code, watch the test fail, restore. Overlap from layering is expected; a test is removed only when it covers and states nothing the others do not. Every test opens with `t.Parallel()` (`TestEveryTestOpensWithTParallel`, `parallel`). Unit tests own no sockets and start no redis-server (`TestUnitTierRefusesRedisServer`, `tiers`); functional tests carry `//go:build functional` and run in a container that cleans up every dependency. A fake is strict like the real tool: it refuses what the real one refuses. Tests run on the benches: build and test on the bench the card names before calling anything green. A wall-clock bound lives behind `-tags perf`, which gates a release, never a change.
 
-### 8. The ten rules never to break
+### 9. The ten rules never to break
 
 Each rule names the class test that enforces it. A class test reads this repository's own text and refuses a SHAPE wherever it stands, so a rule lands with its sweep of the tree or it does not land.
 
@@ -90,25 +106,10 @@ Each rule names the class test that enforces it. A class test reads this reposit
 4. **No test asserts a bound under ten seconds** — a short bound asserts the machine's load, not the code (`wall clock`: `TestNoTestAssertsAWallClockBoundUnderTenSeconds`).
 5. **No unit package over 2 s, no unit test over 1 s** — per-change CI answers in one minute ideally, two at most. Every leg prints the CI-SLOW lines; the nightly whole-tree run fails on them; the allowlist only shrinks (`slowtests`, `tiers`: `TestSlowAllowlistRowsNameTheirMeasurement`, `TestUnitBudgetsJudgeTheTestNotTheLoad`).
 6. **The Makefile is the one entry for build, test and lint** — a workflow or a script calls a target, never its own `go test` line (`make`: `TestMakefileIsTheOneEntry`, `TestCIBuildTestLintCommandsGoThroughMake`).
-7. **Every command meets the onboarding standard** — `<tool> help` with runnable examples, a refusal that says what the input WANTS, a `### First run` section in `docs/CLI.md` (`onboarding`: `TestEveryCommandMeetsTheOnboardingStandard`).
+7. **Every command meets the onboarding standard** — `<tool> help` with runnable examples, a refusal that says what the input WANTS, a `### First run` in `docs/CLI.md` whose transcript `docs/TESTS.md` executes (`onboarding`: `TestEveryCommandMeetsTheOnboardingStandard`).
 8. **Every tool prints the one version line** — one shape, every binary (`version`: `TestEveryToolPrintsTheOneVersionLine`).
 9. **No `os.RemoveAll` of a computed path** — deletion is a verb over a validated path below a root (`removeall`: `TestRemoveAllOnlyOnTempOrThroughSafepath`).
 10. **A test writes and lists only inside its own `t.TempDir()`** — never `os.TempDir()`, and every path a tool writes is named there (`testoutpath`: `TestToolRunsInTestsWriteIntoATempDir`; `sharedtemp`: `TestNoTestGlobsTheSharedTempDir`).
-
-**The rest of the class tests, by name.** `tlc`, `cap` (every job two minutes, every platform), `templates`, `goenv`, `pathassert`, `busprogress`, `outputs`, `cache`, `pinned-actions`, `ci-ok`, `nightly-tags`, `functional` (a test that starts a redis-server, execs a whole program or asserts a real-time bound is behind `//go:build functional`), `functional-image`, `redis-version`, `selection`, `toolchainroots`, `walltoolchain`, `hostseam`, `ciworkspace`, `namedpaths` (a path the text names exists: `TestEveryNamedRepoPathExists`), `one section`, `testbins`, `fieldsindex`, `cardtemplates`, `transcripts`, `parallel`, `slowwaits`, `unitwaits`, `allowlist`, `seatwrap`, `tiers`, `hosted-shards`, `cert-race-shards`, `release-legs`, `seatredis` (no verb that selects a seat refuses an empty `--redis`), `wholetree` (no doc or card spells a whole-tree `go test`; run `nova-ci local`), `silent`, `classtests`, `ci-receipt`, `generality`, `generality-text`. Every entry is written out in `docs/SPEC-CI.md` under **The class tests** with its rule, the mistake it prevents, its allowlist, its remedy line and its narrowings; read the entry, not the test. After a removal, `NOVA_CI_UPDATE=1 go test -count=1 ./internal/ci/` drops the stale rows from every list and fails once with `updated, rerun`. This page itself is held by `TestCommittedMapMatchesTree` (`make map` regenerates `AGENTS.md`, which embeds it).
-
-### 9. Working in the tree
-
-These hold for every worker, AI or person, and a card quotes them (the card lint refuses one that does not):
-
-- Work only in your own new worktree, on your own branch; a worktree goes with `git worktree remove`.
-- Export a private `GOCACHE` before any go command. Never `go clean`, and never clean a shared cache.
-- Never `git stash`: the stash list is shared by every worktree.
-- Never `rm -rf` or `rm -r`; make a fresh directory per probe with `mktemp -d`.
-- Never start a redis-server on a working machine, and never kill a process you did not start. Functional tests run only inside the container through `tools/functionalrun`, never against any other store.
-- Every `go test` gets a `-timeout`. Run `go test -count=1 -timeout 600s ./internal/ci/` before each push.
-- Never force-push, never rebase, never merge your own pull request.
-- A new verb or class rule starts from its scaffold: `nova-ci new-verb <tool> <verb>` or `nova-ci new-rule <name>` lays down the file, test, fixture and make target.
 
 ### 10. Landing
 
@@ -117,6 +118,10 @@ Every change is small, is read cold by a reader with no memory of the author's r
 ### 11. The rhythm
 
 Work expands: a stretch gives every idea code, and the tree grows wider than the working set. Then it contracts: the shape that ran is kept, the tree is pulled down to what it needs, and it is secured with the numbers above before the next expansion starts from less. A contraction is scheduled, never left to chance; its sign is a tree growing while the working set does not. The passes: scope down and release; delete the replaced; reachability to zero; the superseded against the delivery record; duplications into lower modules; tests into small shared packages; libraries over hand-rolled code; Go where the host does not demand otherwise; performance as the gate; the comfort pass by ratings; generality over every file; models where they pay. Each pass reports its measure before and after: lines of code, the slowest tick at the stated size, the tools' ratings, and each ledger's row count.
+
+### 12. Class rules by name
+
+The ten rules above name their class tests; the rest, by name: `tlc`, `cap` (every job two minutes, every platform), `templates`, `goenv`, `pathassert`, `busprogress`, `outputs`, `cache`, `pinned-actions`, `ci-ok`, `nightly-tags`, `functional` (a test that starts a redis-server or execs a whole program is behind `//go:build functional`), `functional-image`, `redis-version`, `selection`, `toolchainroots`, `walltoolchain`, `hostseam`, `ciworkspace`, `namedpaths` (a path the text names exists: `TestEveryNamedRepoPathExists`), `one section`, `testbins`, `fieldsindex`, `cardtemplates`, `transcripts`, `parallel`, `slowwaits`, `unitwaits`, `allowlist`, `seatwrap`, `tiers`, `hosted-shards`, `cert-race-shards`, `release-legs`, `seatredis` (no verb that selects a seat refuses an empty `--redis`), `wholetree` (no doc or card spells a whole-tree `go test`; run `nova-ci local`), `silent`, `classtests`, `ci-receipt`, `generality`, `generality-text`. Every entry is written out in `docs/SPEC-CI.md` under **The class tests** with its rule, the mistake it prevents, its allowlist, its remedy line and its narrowings; read the entry, not the test. After a removal, `NOVA_CI_UPDATE=1 go test -count=1 ./internal/ci/` drops the stale rows from every list and fails once with `updated, rerun`. This page is held by `TestCommittedMapMatchesTree` (`make map` regenerates `AGENTS.md`, which embeds it).
 
 | dir | purpose | guard | command |
 | --- | --- | --- | --- |
