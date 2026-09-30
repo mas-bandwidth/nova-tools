@@ -4,11 +4,11 @@ package ntable_test
 
 import (
 	"context"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/stretchr/testify/require"
 )
 
 // TestNamedFormulasOnAStore: a table with a named share and a sum over hidden
@@ -21,57 +21,41 @@ func TestNamedFormulasOnAStore(t *testing.T) {
 	_, c := live(t)
 	ctx := context.Background()
 	cols, err := ntable.ParseColumns("ready,ok,failed,done:sum(ok+failed),okpct:pct(ok/ok+failed):pooled:ok%")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := ntable.Create(ctx, c, ntable.Table{Name: "fleet", Columns: cols, FooterLabel: "total", Hidden: []string{"ok", "failed"}}, time.Now()); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ntable.RowsAdd(ctx, c, "fleet", []string{"m1", "m2"}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ntable.CellsAdd(ctx, c, "fleet", "m1", "ok", 1, []string{"a", "b", "c"}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ntable.CellAdd(ctx, c, "fleet", "m1", "failed", "d", 1); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	require.NoError(t, ntable.Create(ctx, c, ntable.Table{Name: "fleet", Columns: cols, FooterLabel: "total", Hidden: []string{"ok", "failed"}}, time.Now()))
+	_, err = ntable.RowsAdd(ctx, c, "fleet", []string{"m1", "m2"})
+	require.NoError(t, err)
+	_, err = ntable.CellsAdd(ctx, c, "fleet", "m1", "ok", 1, []string{"a", "b", "c"})
+	require.NoError(t, err)
+	_, err = ntable.CellAdd(ctx, c, "fleet", "m1", "failed", "d", 1)
+	require.NoError(t, err)
 	tb, err := ntable.Read(ctx, c, "fleet")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	want := "fleet | ready | done | ok%\n" +
 		"------+-------+------+------\n" +
 		"m1    |     0 |    4 | 75.0%\n" +
 		"m2    |     0 |    0 | 0.0%\n" +
 		"------+-------+------+------\n" +
 		"total |     0 |    4 | 75.0%\n"
-	if got := ntable.Render(tb, ntable.RenderOpts{Title: "fleet"}); got != want {
-		t.Fatalf("read back:\n%s\nwant:\n%s", got, want)
-	}
+	got := ntable.Render(tb, ntable.RenderOpts{Title: "fleet"})
+	require.Equal(t, want, got, "read back:\n%s\nwant:\n%s", got, want)
 	for _, key := range []string{ntable.CellKey("fleet", "m1", "done"), ntable.CellKey("fleet", "m1", "okpct")} {
 		if n, err := c.Exists(ctx, key).Result(); err != nil || n != 0 {
 			t.Fatalf("a formula cell has a set %s: %d %v", key, n, err)
 		}
 	}
-	if _, err := ntable.CellAdd(ctx, c, "fleet", "m1", "done", "e", 1); err == nil {
-		t.Fatal("a member was added to a sum column")
-	}
+	_, err = ntable.CellAdd(ctx, c, "fleet", "m1", "done", "e", 1)
+	require.Error(t, err, "a member was added to a sum column")
 	share, _ := ntable.ParseColumn("readypct:pct(ready/ready+ok+failed)")
-	if _, err := ntable.Set(ctx, c, "fleet", ntable.SetOpts{ColAdd: &share}); err != nil {
-		t.Fatalf("col add of a named share: %v", err)
-	}
+	_, err = ntable.Set(ctx, c, "fleet", ntable.SetOpts{ColAdd: &share})
+	require.NoError(t, err, "col add of a named share")
 	bad, _ := ntable.ParseColumn("x:sum(ok+nope)")
-	if _, err := ntable.Set(ctx, c, "fleet", ntable.SetOpts{ColAdd: &bad}); err == nil || !strings.Contains(err.Error(), `col add 'fleet' 'nope'`) {
-		t.Fatalf("col add of a sum over a missing column: %v", err)
-	}
-	if _, err := ntable.Set(ctx, c, "fleet", ntable.SetOpts{ColDel: "readypct"}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ntable.Set(ctx, c, "fleet", ntable.SetOpts{ColDel: "ready"}); err != nil {
-		t.Fatalf("ready is read by no formula now: %v", err)
-	}
-	if _, err := ntable.Set(ctx, c, "fleet", ntable.SetOpts{ColDel: "failed"}); err == nil || !strings.Contains(err.Error(), `col del 'fleet' 'done'`) {
-		t.Fatalf("col del of a column a sum reads: %v", err)
-	}
+	_, err = ntable.Set(ctx, c, "fleet", ntable.SetOpts{ColAdd: &bad})
+	require.ErrorContains(t, err, `col add 'fleet' 'nope'`, "col add of a sum over a missing column")
+	_, err = ntable.Set(ctx, c, "fleet", ntable.SetOpts{ColDel: "readypct"})
+	require.NoError(t, err)
+	_, err = ntable.Set(ctx, c, "fleet", ntable.SetOpts{ColDel: "ready"})
+	require.NoError(t, err, "ready is read by no formula now")
+	_, err = ntable.Set(ctx, c, "fleet", ntable.SetOpts{ColDel: "failed"})
+	require.ErrorContains(t, err, `col del 'fleet' 'done'`, "col del of a column a sum reads")
 }

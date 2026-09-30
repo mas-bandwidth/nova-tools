@@ -11,13 +11,14 @@ package ntable_test
 import (
 	"context"
 	"fmt"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // holdMembers creates n placed members named <prefix>0.. in batches of 128.
@@ -44,9 +45,7 @@ func holdFill(t *testing.T, ctx context.Context, c *redis.Client, prefix string,
 		for j := 0; j < fields; j++ {
 			f[fmt.Sprintf("f%d", j)] = value
 		}
-		if err := c.HSet(ctx, ntable.MemberKey(fmt.Sprintf("%s%d", prefix, i)), f).Err(); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, c.HSet(ctx, ntable.MemberKey(fmt.Sprintf("%s%d", prefix, i)), f).Err())
 	}
 }
 
@@ -72,9 +71,7 @@ func holdApply(t *testing.T, ctx context.Context, c *redis.Client, name, raw str
 	start := time.Now()
 	ans, err := rawApply(ctx, slow, raw)
 	took := time.Since(start)
-	if err != nil {
-		t.Fatalf("%s: %v", name, err)
-	}
+	require.NoError(t, err, "%s: %v", name, err)
 	t.Logf("HOLD %s: manifest %d bytes, %s, %v", name, len(raw), holdWords(ans), took)
 	return ans, took
 }
@@ -119,12 +116,8 @@ func TestBatchValueBytesAreBoundedAndCountedBeforeAnyRead(t *testing.T) {
 	before := storeImage(t, c)
 	ans, _ = holdApply(t, ctx, c, "16 MiB and one field refused", manifestWith(probeRev(ctx, c), "over", holdUnset("m", 2, perMember)+`,{"id":"m2","expect":{},"unset":["f0"]}`))
 	requireRefusedLimit(t, "one field over", ans, "value bytes per batch", ntable.LimitBatchValueBytes)
-	if !reflect.DeepEqual(before, storeImage(t, c)) {
-		t.Errorf("a refused batch changed the store")
-	}
-	if c.HExists(ctx, ntable.DefKey("demo")+":ops", "0:over").Val() {
-		t.Errorf("a refused batch left an operation record")
-	}
+	assert.Equal(t, before, storeImage(t, c), "a refused batch changed the store")
+	assert.False(t, c.HExists(ctx, ntable.DefKey("demo")+":ops", "0:over").Val(), "a refused batch left an operation record")
 
 	// the refusal costs what the manifest names, not what the store holds: 256 MiB
 	holdMembers(t, ctx, c, "w", 32)
@@ -185,7 +178,5 @@ func TestBatchLargestManifestsHoldTheStoreUnderASecond(t *testing.T) {
 	before := storeImage(t, c)
 	ans, _ = holdApply(t, ctx, c, "receipt over its bound refused", manifestWith(probeRev(ctx, c), "over", holdUnset("h", 128, 1000)))
 	requireRefusedLimit(t, "receipt over", ans, "receipt bytes", ntable.LimitReceiptBytes)
-	if !reflect.DeepEqual(before, storeImage(t, c)) {
-		t.Errorf("a refused batch changed the store")
-	}
+	assert.Equal(t, before, storeImage(t, c), "a refused batch changed the store")
 }

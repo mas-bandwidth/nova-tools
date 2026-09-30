@@ -5,6 +5,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // A retry is a receipt for the existing entry, not a new event. Exercise both
@@ -23,9 +26,7 @@ func TestAppendRetryReportsTheStoredStamp(t *testing.T) {
 			wantStamp := "2026-09-28T01:02:03.456Z"
 			if bench {
 				path = filepath.Join(store, "s.md")
-				if err := os.WriteFile(path, []byte("# Session s\n"), 0600); err != nil {
-					t.Fatal(err)
-				}
+				require.NoError(t, os.WriteFile(path, []byte("# Session s\n"), 0600))
 				// Bench headings store whole seconds; the receipt must match that record.
 				wantStamp = "2026-09-28T01:02:03Z"
 			} else {
@@ -34,9 +35,7 @@ func TestAppendRetryReportsTheStoredStamp(t *testing.T) {
 			args := []string{"append", "--store", store, "--session", "s", "--entry", "e", "--text", "the original words", "--publish", "manual", "--now"}
 			first, _ := runOK(t, "", append(append([]string{}, args...), "2026-09-28T01:02:03.456Z")...)
 			before, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
 			retryArgs := append(append([]string{}, args...), "2026-09-29T04:05:06Z")
 			if !bench {
 				retryArgs = append(retryArgs, "--source", "different-retry-source")
@@ -46,36 +45,23 @@ func TestAppendRetryReportsTheStoredStamp(t *testing.T) {
 				if !bench && !strings.Contains(output, "source=original-session-source ") {
 					t.Errorf("receipt lost the stored source: %s", output)
 				}
-				if !strings.Contains(output, "stamp="+wantStamp+"\n") {
-					t.Errorf("receipt does not report the stored stamp %s: %s", wantStamp, output)
-				}
+				assert.Contains(t, output, "stamp="+wantStamp+"\n", "receipt does not report the stored stamp %s: %s", wantStamp, output)
 			}
-			if !strings.Contains(retry, "duplicate=true") {
-				t.Errorf("retry: %s", retry)
-			}
+			assert.Contains(t, retry, "duplicate=true", "retry: %s", retry)
 			after, err := os.ReadFile(path)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if string(after) != string(before) {
-				t.Fatal("retry changed the stored entry")
-			}
+			require.NoError(t, err)
+			require.Equal(t, string(before), string(after), "retry changed the stored entry")
 			// Corrupt persisted time cannot be replaced by this invocation's clock.
 			broken := strings.Replace(string(after), wantStamp, "2026-99-28T01:02:03Z", 1)
-			if broken == string(after) {
-				t.Fatal("fixture did not replace the stored stamp")
-			}
-			if err := os.WriteFile(path, []byte(broken), 0600); err != nil {
-				t.Fatal(err)
-			}
+			require.NotEqual(t, string(after), broken, "fixture did not replace the stored stamp")
+			require.NoError(t, os.WriteFile(path, []byte(broken), 0600))
 			code, out, errOut := runCode("", append(append([]string{}, args...), "2026-09-30T04:05:06Z")...)
 			if code != 2 || out != "" || !strings.Contains(errOut, "invalid stamp") {
 				t.Fatalf("corrupt stored stamp: code=%d out=%q err=%q", code, out, errOut)
 			}
 			kept, err := os.ReadFile(path)
-			if err != nil || string(kept) != broken {
-				t.Fatalf("refusal changed stored entry: %v", err)
-			}
+			require.NoError(t, err, "refusal changed stored entry: %v", err)
+			require.Equal(t, broken, string(kept), "refusal changed stored entry: %v", err)
 		})
 	}
 }

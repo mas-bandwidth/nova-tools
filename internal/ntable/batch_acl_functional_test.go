@@ -8,13 +8,14 @@ package ntable_test
 
 import (
 	"context"
-	"reflect"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // batchReads are the read-only hash commands a batch reads a member with.
@@ -42,9 +43,7 @@ func TestBatchWithAReadDeniedIsAnErrorNeverAnAcceptedBatch(t *testing.T) {
 	}
 	addr, admin := live(t, extra...)
 	ctx := context.Background()
-	if err := ntable.Create(ctx, admin, demo(), now); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, ntable.Create(ctx, admin, demo(), now))
 	for _, row := range []string{"build", "test"} {
 		if _, err := ntable.RowAdd(ctx, admin, "demo", row, ntable.RowSpec{}); err != nil {
 			t.Fatal(err)
@@ -52,9 +51,7 @@ func TestBatchWithAReadDeniedIsAnErrorNeverAnAcceptedBatch(t *testing.T) {
 	}
 	seedTwo(t, ctx, admin)
 	// a field one byte over the bound a batch may touch
-	if err := admin.HSet(ctx, ntable.MemberKey("a"), "big", strings.Repeat("v", ntable.LimitBatchValueBytes+1)).Err(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, admin.HSet(ctx, ntable.MemberKey("a"), "big", strings.Repeat("v", ntable.LimitBatchValueBytes+1)).Err())
 	as := func(user string) *redis.Client {
 		c := redis.NewClient(&redis.Options{Addr: addr, Username: user, Password: "pw"})
 		t.Cleanup(func() { _ = c.Close() })
@@ -105,9 +102,7 @@ func TestBatchWithAReadDeniedIsAnErrorNeverAnAcceptedBatch(t *testing.T) {
 			}
 		}
 	}
-	if after := storeImage(t, admin); !reflect.DeepEqual(before, after) {
-		t.Errorf("a batch with a read denied changed the store")
-	}
+	assert.Equal(t, before, storeImage(t, admin), "a batch with a read denied changed the store")
 	if ans, err := rawApply(ctx, as("ns-all"), batch("all-small", "gone")); err != nil || ans[0] != "OK" {
 		t.Errorf("the small batch with every read granted: %.200v %v", ans, err)
 	}

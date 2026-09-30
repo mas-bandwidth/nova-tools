@@ -6,9 +6,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestAppendOpenRemedyRoundTripsThroughShell(t *testing.T) {
@@ -22,34 +23,25 @@ func TestAppendOpenRemedyRoundTripsThroughShell(t *testing.T) {
 			root := t.TempDir()
 			store := filepath.Join(root, tc.store)
 			code, _, errOut := runCode("", "append", "--store", store, "--session", tc.session, "--entry", "e", "--text", "note", "--publish", "never")
-			if code != 2 || strings.Count(errOut, "\n") != 1 {
-				t.Fatalf("append=%d %q", code, errOut)
-			}
+			require.Equal(t, 2, code, "append=%d %q", code, errOut)
+			require.Equal(t, 1, strings.Count(errOut, "\n"), "append=%d %q", code, errOut)
 			_, remedy, ok := strings.Cut(errOut, "open first: ")
-			if !ok || !strings.HasSuffix(remedy, "; run: nova-cairn help\n") {
-				t.Fatalf("no remedy: %q", errOut)
-			}
+			require.True(t, ok, "no remedy: %q", errOut)
+			require.True(t, strings.HasSuffix(remedy, "; run: nova-cairn help\n"), "no remedy: %q", errOut)
 			remedy = strings.TrimSuffix(remedy, "; run: nova-cairn help\n")
 			stub := filepath.Join(root, "nova-cairn")
-			if err := os.WriteFile(stub, []byte("#!/bin/sh\nprintf '%s\\000' \"$@\"\n"), 0700); err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, os.WriteFile(stub, []byte("#!/bin/sh\nprintf '%s\\000' \"$@\"\n"), 0700))
 			cmd := exec.Command("/bin/sh", "-c", remedy)
 			cmd.Dir = root
 			cmd.Env = []string{"PATH=" + root}
 			raw, err := cmd.CombinedOutput()
-			if err != nil {
-				t.Fatalf("shell: %v: %s", err, raw)
-			}
+			require.NoError(t, err, "shell: %v: %s", err, raw)
 			args := strings.Split(strings.TrimSuffix(string(raw), "\x00"), "\x00")
 			want := []string{"open", "--store", store, "--session", tc.session, "--publish", "never"}
-			if !reflect.DeepEqual(args, want) {
-				t.Fatalf("argv=%q want=%q", args, want)
-			}
+			require.Equal(t, want, args, "argv=%q want=%q", args, want)
 			runOK(t, "", args...)
-			if _, err := os.Stat(filepath.Join(store, "sessions", tc.session+".md")); err != nil {
-				t.Fatalf("session not opened: %v", err)
-			}
+			_, err = os.Stat(filepath.Join(store, "sessions", tc.session+".md"))
+			require.NoError(t, err, "session not opened")
 		})
 	}
 }

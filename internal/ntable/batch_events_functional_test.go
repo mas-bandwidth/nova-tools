@@ -17,6 +17,8 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // eventShape returns the fields of every change event of the demo table, with the
@@ -69,25 +71,19 @@ func TestBatchEventsMatchOrdinaryVerbsForTheSameChange(t *testing.T) {
 		}
 	}
 	ea, eb := eventShape(t, a), eventShape(t, b)
-	if len(ea) != len(eb) {
-		t.Fatalf("%d ordinary events, %d batch events", len(ea), len(eb))
-	}
+	require.Len(t, ea, len(eb), "%d ordinary events, %d batch events", len(ea), len(eb))
 	for i := range ea {
 		for f, v := range ea[i] {
-			if eb[i][f] != v {
-				t.Errorf("event %d field %s: ordinary %q, batch %q", i, f, v, eb[i][f])
-			}
+			assert.Equal(t, v, eb[i][f], "event %d field %s: ordinary %q, batch %q", i, f, v, eb[i][f])
 		}
 		for f := range eb[i] {
-			if _, ok := ea[i][f]; !ok {
-				t.Errorf("event %d: field %s only in the batch's event", i, f)
-			}
+			_, ok := ea[i][f]
+			assert.True(t, ok, "event %d: field %s only in the batch's event", i, f)
 		}
 		// the receipt checker reads members as strings to strings
 		var members []map[string]string
-		if err := json.Unmarshal([]byte(eb[i]["members"]), &members); err != nil {
-			t.Errorf("event %d members do not decode as string maps: %v", i, err)
-		}
+		err := json.Unmarshal([]byte(eb[i]["members"]), &members)
+		assert.NoError(t, err, "event %d members do not decode as string maps: %v", i, err)
 	}
 }
 
@@ -103,53 +99,34 @@ func TestBatchScoresAreTheExactDecimalStringsTheStoreHolds(t *testing.T) {
 		inputByID[id] = sc
 	}
 	r, err := ntable.ApplyBatch(ctx, c, mustManifest(t, manifestWith(probeRev(ctx, c), "exact", strings.Join(members, ","))))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if r.BatchDelta == nil {
-		t.Fatal("receipt has no batch delta")
-	}
-	if len(r.BatchDelta.Members) != len(scores) {
-		t.Fatalf("receipt has %d members, want %d: %+v", len(r.BatchDelta.Members), len(scores), r.BatchDelta)
-	}
+	require.NoError(t, err)
+	require.NotNil(t, r.BatchDelta, "receipt has no batch delta")
+	require.Len(t, r.BatchDelta.Members, len(scores), "receipt has %d members, want %d: %+v", len(r.BatchDelta.Members), len(scores), r.BatchDelta)
 	set, err := ntable.ReadSetMembers(ctx, c, "demo", []string{"s0", "s1", "s2", "s3", "s4", "s5"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	// a script sees the reply of the store's own protocol-2 formatting
 	resp2 := redis.NewClient(&redis.Options{Addr: c.Options().Addr, Protocol: 2})
 	defer resp2.Close()
 	seen := map[string]string{}
 	events := eventShape(t, c)
 	var eventMembers []map[string]string
-	if err := json.Unmarshal([]byte(events[len(events)-1]["members"]), &eventMembers); err != nil {
-		t.Fatal(err)
-	}
-	if len(eventMembers) != len(scores) {
-		t.Fatalf("event has %d members, want %d", len(eventMembers), len(scores))
-	}
+	require.NoError(t, json.Unmarshal([]byte(events[len(events)-1]["members"]), &eventMembers))
+	require.Len(t, eventMembers, len(scores), "event has %d members, want %d", len(eventMembers), len(scores))
 	byID := map[string]string{}
 	for _, m := range eventMembers {
 		byID[m["id"]] = m["score"]
 	}
-	if len(byID) != len(scores) {
-		t.Fatalf("event has repeated member IDs: %v", eventMembers)
-	}
+	require.Len(t, byID, len(scores), "event has repeated member IDs: %v", eventMembers)
 	seenIDs := map[string]bool{}
 	for _, m := range r.BatchDelta.Members {
 		input, expected := inputByID[m.ID]
-		if !expected || seenIDs[m.ID] {
-			t.Fatalf("unexpected or repeated receipt member %q", m.ID)
-		}
+		require.True(t, expected, "unexpected or repeated receipt member %q", m.ID)
+		require.False(t, seenIDs[m.ID], "unexpected or repeated receipt member %q", m.ID)
 		seenIDs[m.ID] = true
 		text, err := resp2.Do(ctx, "ZSCORE", ntable.CellKey("demo", "build", "ready"), m.ID).Text()
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		wantFloat, err := strconv.ParseFloat(input, 64)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		gotFloat, err := strconv.ParseFloat(text, 64)
 		if err != nil || math.Float64bits(gotFloat) != math.Float64bits(wantFloat) {
 			t.Errorf("%s: store score %q does not round-trip input %q: %v", m.ID, text, input, err)
@@ -157,28 +134,19 @@ func TestBatchScoresAreTheExactDecimalStringsTheStoreHolds(t *testing.T) {
 		if m.AfterScoreText == nil || *m.AfterScoreText != text {
 			t.Errorf("%s: the receipt says %v, the store holds %q", m.ID, m.AfterScoreText, text)
 		}
-		if byID[m.ID] != text {
-			t.Errorf("%s: the event says %q, the store holds %q", m.ID, byID[m.ID], text)
-		}
+		assert.Equal(t, text, byID[m.ID], "%s: the event says %q, the store holds %q", m.ID, byID[m.ID], text)
 		sm, _ := set.Member(m.ID)
-		if sm.ScoreText != text {
-			t.Errorf("%s: read set says %q, the store holds %q", m.ID, sm.ScoreText, text)
-		}
-		if other, dup := seen[text]; dup {
-			t.Errorf("scores %s and %s both render as %q", input, other, text)
-		}
+		assert.Equal(t, text, sm.ScoreText, "%s: read set says %q, the store holds %q", m.ID, sm.ScoreText, text)
+		other, dup := seen[text]
+		assert.False(t, dup, "scores %s and %s both render as %q", input, other, text)
 		seen[text] = input
 	}
-	if len(seenIDs) != len(inputByID) {
-		t.Fatalf("receipt omitted members: got %v, want %v", seenIDs, inputByID)
-	}
+	require.Len(t, seenIDs, len(inputByID), "receipt omitted members: got %v, want %v", seenIDs, inputByID)
 }
 
 func mustManifest(t *testing.T, raw string) ntable.BatchManifest {
 	t.Helper()
 	m, err := ntable.ValidateBatchManifestRaw([]byte(raw))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return *m
 }

@@ -18,6 +18,8 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The original property harness deliberately stays transplantable to the old
@@ -675,13 +677,9 @@ func (h *epochProperty) verify() {
 func TestTableEpochActionsAndReceiptReplay(t *testing.T) {
 	t.Parallel()
 	model, err := os.ReadFile("../../tla/EpochMemberTable.tla")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	for verb, action := range epochActionNames {
-		if !strings.Contains(string(model), "\n"+action+"(") {
-			t.Fatalf("%s maps to missing model action %s", verb, action)
-		}
+		require.Contains(t, string(model), "\n"+action+"(", "%s maps to missing model action %s", verb, action)
 	}
 	// One owned source/replay pair per test, reset between reproducible seeds.
 	_, source := live(t)
@@ -697,20 +695,12 @@ func TestTableEpochActionsAndReceiptReplay(t *testing.T) {
 				state: map[string]*epochTableState{}, template: map[string]bool{}, revision: map[string]uint64{}, coverage: coverage,
 				frozen: [2]map[string]string{{}, {}}}
 			for _, c := range h.stores {
-				if err := c.FlushAll(h.ctx).Err(); err != nil {
-					t.Fatal(err)
-				}
-				if err := c.HSet(h.ctx, "fixture:unrelated", "n", "unchanged").Err(); err != nil {
-					t.Fatal(err)
-				}
-				if err := c.HSet(h.ctx, epochPropertyKey, "n", 1).Err(); err != nil {
-					t.Fatal(err)
-				}
+				require.NoError(t, c.FlushAll(h.ctx).Err())
+				require.NoError(t, c.HSet(h.ctx, "fixture:unrelated", "n", "unchanged").Err())
+				require.NoError(t, c.HSet(h.ctx, epochPropertyKey, "n", 1).Err())
 				for epoch := uint64(1); epoch <= 3; epoch++ {
 					for n := 1; n <= 3; n++ {
-						if err := c.HSet(h.ctx, ntable.MemberKey(epochMember(epoch, n)), "epoch", epoch).Err(); err != nil {
-							t.Fatal(err)
-						}
+						require.NoError(t, c.HSet(h.ctx, ntable.MemberKey(epochMember(epoch, n)), "epoch", epoch).Err())
 					}
 				}
 			}
@@ -770,9 +760,7 @@ func TestTableEpochActionsAndReceiptReplay(t *testing.T) {
 	}
 	for _, verb := range verbs {
 		for _, outcome := range []string{"ok", "stale"} {
-			if coverage[verb+":"+outcome] == 0 {
-				t.Errorf("generator missed %s:%s", verb, outcome)
-			}
+			assert.NotEqual(t, 0, coverage[verb+":"+outcome], "generator missed %s:%s", verb, outcome)
 		}
 	}
 	if coverage["cell_add:member-epoch"] == 0 || coverage["advance"] != 16 {

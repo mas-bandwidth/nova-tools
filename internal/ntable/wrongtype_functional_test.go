@@ -10,12 +10,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func plant(t *testing.T, ctx context.Context, c *redis.Client, key, kind string) {
@@ -31,9 +32,7 @@ func plant(t *testing.T, ctx context.Context, c *redis.Client, key, kind string)
 	case "zset":
 		err = c.ZAdd(ctx, key, redis.Z{Score: 1, Member: "x"}).Err()
 	}
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 }
 
 func requireWrongType(t *testing.T, what string, err error, key, kind string) {
@@ -47,9 +46,7 @@ func requireWrongType(t *testing.T, what string, err error, key, kind string) {
 		return
 	}
 	want := fmt.Sprintf("key %s is %s, expected hash", key, kind)
-	if !strings.Contains(err.Error(), want) {
-		t.Errorf("%s: refusal does not say %q: %v", what, want, err)
-	}
+	assert.ErrorContains(t, err, want, "%s: refusal does not say %q: %v", what, want, err)
 	if strings.Contains(err.Error(), "ERR ") || strings.Contains(err.Error(), "user_function") {
 		t.Errorf("%s: a raw script error: %v", what, err)
 	}
@@ -88,13 +85,10 @@ func TestWrongTypeAtAMemberKeyIsANamedRefusal(t *testing.T) {
 				t.Errorf("apply refusal does not say changed=no: %v", err)
 			}
 
-			if !reflect.DeepEqual(before, storeImage(t, c)) {
-				t.Errorf("a refusal changed the store")
-			}
+			assert.Equal(t, before, storeImage(t, c), "a refusal changed the store")
 			// the members that are not at fault are still served
-			if _, err := ntable.ReadSetMembers(ctx, c, "demo", []string{"a"}); err != nil {
-				t.Errorf("read set of a sound member: %v", err)
-			}
+			_, err = ntable.ReadSetMembers(ctx, c, "demo", []string{"a"})
+			assert.NoError(t, err, "read set of a sound member")
 		})
 	}
 }
@@ -115,9 +109,7 @@ func TestWrongTypeAtARowKeyIsANamedRefusal(t *testing.T) {
 	requireWrongType(t, "row del", err, key, "string")
 	_, err = ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{})
 	requireWrongType(t, "row add", err, key, "string")
-	if !reflect.DeepEqual(before, storeImage(t, c)) {
-		t.Errorf("a refusal changed the store")
-	}
+	assert.Equal(t, before, storeImage(t, c), "a refusal changed the store")
 }
 
 // The owned cell is a sorted set; anything else there is named the same way.
@@ -140,7 +132,5 @@ func TestWrongTypeAtACellKeyIsANamedRefusal(t *testing.T) {
 			t.Errorf("%s: %v; want a WRONGTYPE refusal saying %q", what, e, want)
 		}
 	}
-	if !reflect.DeepEqual(before, storeImage(t, c)) {
-		t.Errorf("a refusal changed the store")
-	}
+	assert.Equal(t, before, storeImage(t, c), "a refusal changed the store")
 }

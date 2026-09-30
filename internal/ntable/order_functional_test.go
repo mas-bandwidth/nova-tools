@@ -11,6 +11,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/require"
 )
 
 // The order verbs against a real store (tla/TableOrder.tla is the model):
@@ -21,35 +22,24 @@ func orderTable(t *testing.T, c *redis.Client) {
 	t.Helper()
 	ctx := context.Background()
 	cols, err := ntable.ParseColumns("a,b,note:text:none,p:pct(a):pooled")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := ntable.Create(ctx, c, ntable.Table{Name: "t", Columns: cols}, now); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ntable.RowsAdd(ctx, c, "t", []string{"m", "z", "c", "k"}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ntable.CellsAdd(ctx, c, "t", "z", "a", 1, []string{"x1", "x2"}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ntable.CellAdd(ctx, c, "t", "c", "b", "x3", 1); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ntable.RowSet(ctx, c, "t", "k", map[string]string{"note": "Beta"}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ntable.RowSet(ctx, c, "t", "m", map[string]string{"note": "alpha"}); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	require.NoError(t, ntable.Create(ctx, c, ntable.Table{Name: "t", Columns: cols}, now))
+	_, err = ntable.RowsAdd(ctx, c, "t", []string{"m", "z", "c", "k"})
+	require.NoError(t, err)
+	_, err = ntable.CellsAdd(ctx, c, "t", "z", "a", 1, []string{"x1", "x2"})
+	require.NoError(t, err)
+	_, err = ntable.CellAdd(ctx, c, "t", "c", "b", "x3", 1)
+	require.NoError(t, err)
+	_, err = ntable.RowSet(ctx, c, "t", "k", map[string]string{"note": "Beta"})
+	require.NoError(t, err)
+	_, err = ntable.RowSet(ctx, c, "t", "m", map[string]string{"note": "alpha"})
+	require.NoError(t, err)
 }
 
 func orderOf(t *testing.T, c *redis.Client, name string) (rows, cols []string) {
 	t.Helper()
 	tab, err := ntable.Read(context.Background(), c, name)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	for _, r := range tab.Rows {
 		rows = append(rows, r.Key)
 	}
@@ -64,9 +54,7 @@ func orderOf(t *testing.T, c *redis.Client, name string) (rows, cols []string) {
 func held(t *testing.T, c *redis.Client, name string) map[string]string {
 	t.Helper()
 	tab, err := ntable.Read(context.Background(), c, name)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	out := map[string]string{}
 	for _, r := range tab.Rows {
 		for _, col := range tab.Columns {
@@ -77,9 +65,7 @@ func held(t *testing.T, c *redis.Client, name string) map[string]string {
 				continue
 			}
 			members, err := ntable.CellMembers(context.Background(), c, name, r.Key, col.Name)
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
 			for _, m := range members {
 				out["member:"+m.Member] = r.Key + ":" + col.Name
 			}
@@ -92,9 +78,7 @@ func storeImage(t *testing.T, c *redis.Client) map[string]string {
 	t.Helper()
 	ctx := context.Background()
 	keys, err := c.Keys(ctx, "*").Result()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	out := map[string]string{}
 	for _, key := range keys {
 		out[key], _ = imageOf(ctx, c, key)
@@ -130,23 +114,17 @@ func TestOrderMovesArePermutations(t *testing.T) {
 	orderTable(t, c)
 	before := held(t, c, "t")
 	for _, s := range steps {
-		if _, err := ntable.Set(ctx, c, "t", s.change); err != nil {
-			t.Fatalf("%s: %v", s.name, err)
-		}
+		_, err := ntable.Set(ctx, c, "t", s.change)
+		require.NoError(t, err, "%s: %v", s.name, err)
 		rows, cols := orderOf(t, c, "t")
-		if got := strings.Join(rows, ","); got != s.rows {
-			t.Fatalf("%s: rows %s, want %s", s.name, got, s.rows)
-		}
-		if got := strings.Join(cols, ","); got != s.cols {
-			t.Fatalf("%s: columns %s, want %s", s.name, got, s.cols)
-		}
-		if after := held(t, c, "t"); !reflect.DeepEqual(before, after) {
-			t.Fatalf("%s: a move changed what the table holds: %v, was %v", s.name, after, before)
-		}
+		got := strings.Join(rows, ",")
+		require.Equal(t, s.rows, got, "%s: rows %s, want %s", s.name, got, s.rows)
+		got = strings.Join(cols, ",")
+		require.Equal(t, s.cols, got, "%s: columns %s, want %s", s.name, got, s.cols)
+		after := held(t, c, "t")
+		require.Equal(t, before, after, "%s: a move changed what the table holds: %v, was %v", s.name, after, before)
 	}
-	if len(before) != 5 {
-		t.Fatalf("the fixture holds 3 members and 2 texts, read %v", before)
-	}
+	require.Len(t, before, 5, "the fixture holds 3 members and 2 texts, read %v", before)
 }
 
 func TestOrderNoopLeavesANoopReceipt(t *testing.T) {
@@ -155,12 +133,10 @@ func TestOrderNoopLeavesANoopReceipt(t *testing.T) {
 	_, c := live(t)
 	orderTable(t, c)
 	var r ntable.Receipt
-	if _, err := ntable.Set(ctx, c, "t", ntable.SetOpts{RowMove: &ntable.Reorder{Item: "m", Place: at("first", "")}}, ntable.WriteOptions{Receipt: &r}); err != nil {
-		t.Fatal(err)
-	}
-	if r.Outcome != "noop" || r.After != r.Before+1 {
-		t.Fatalf("a move to where the row is: outcome %q, revision %d -> %d", r.Outcome, r.Before, r.After)
-	}
+	_, err := ntable.Set(ctx, c, "t", ntable.SetOpts{RowMove: &ntable.Reorder{Item: "m", Place: at("first", "")}}, ntable.WriteOptions{Receipt: &r})
+	require.NoError(t, err)
+	require.Equal(t, "noop", r.Outcome, "a move to where the row is: outcome %q, revision %d -> %d", r.Outcome, r.Before, r.After)
+	require.Equal(t, r.Before+1, r.After, "a move to where the row is: outcome %q, revision %d -> %d", r.Outcome, r.Before, r.After)
 }
 
 func TestStandingSortPlacesLaterRows(t *testing.T) {
@@ -179,35 +155,25 @@ func TestStandingSortPlacesLaterRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	rows, _ := orderOf(t, c, "t")
-	if got := strings.Join(rows, ","); got != "a,q,c,d,k,m,z" {
-		t.Fatalf("standing sort by label: %s", got)
-	}
+	got := strings.Join(rows, ",")
+	require.Equal(t, "a,q,c,d,k,m,z", got, "standing sort by label: %s", got)
 	tab, err := ntable.Read(ctx, c, "t")
-	if err != nil || tab.Sort != "label" {
-		t.Fatalf("the definition names the standing sort: %q %v", tab.Sort, err)
-	}
+	require.NoError(t, err, "the definition names the standing sort: %q %v", tab.Sort, err)
+	require.Equal(t, "label", tab.Sort, "the definition names the standing sort: %q %v", tab.Sort, err)
 	// by hand is refused while the sort stands, and writes nothing
 	image := storeImage(t, c)
 	_, err = ntable.Set(ctx, c, "t", ntable.SetOpts{RowMove: &ntable.Reorder{Item: "z", Place: at("first", "")}})
-	if err == nil || !strings.Contains(err.Error(), "row sort 't' --manual") {
-		t.Fatalf("a move under a standing sort: %v", err)
-	}
-	if !reflect.DeepEqual(image, storeImage(t, c)) {
-		t.Fatal("the refused move wrote")
-	}
-	if _, err := ntable.Set(ctx, c, "t", ntable.SetOpts{RowSort: &ntable.Sort{Manual: true}}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ntable.Set(ctx, c, "t", ntable.SetOpts{RowMove: &ntable.Reorder{Item: "z", Place: at("first", "")}}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ntable.RowsAdd(ctx, c, "t", []string{"b"}); err != nil {
-		t.Fatal(err)
-	}
+	require.ErrorContains(t, err, "row sort 't' --manual", "a move under a standing sort")
+	require.Equal(t, storeImage(t, c), image, "the refused move wrote")
+	_, err = ntable.Set(ctx, c, "t", ntable.SetOpts{RowSort: &ntable.Sort{Manual: true}})
+	require.NoError(t, err)
+	_, err = ntable.Set(ctx, c, "t", ntable.SetOpts{RowMove: &ntable.Reorder{Item: "z", Place: at("first", "")}})
+	require.NoError(t, err)
+	_, err = ntable.RowsAdd(ctx, c, "t", []string{"b"})
+	require.NoError(t, err)
 	rows, _ = orderOf(t, c, "t")
-	if got := strings.Join(rows, ","); got != "z,a,q,c,d,k,m,b" {
-		t.Fatalf("by hand again, a new row goes last: %s", got)
-	}
+	got = strings.Join(rows, ",")
+	require.Equal(t, "z,a,q,c,d,k,m,b", got, "by hand again, a new row goes last: %s", got)
 }
 
 func TestOneColumnAddedOrRemoved(t *testing.T) {
@@ -217,32 +183,23 @@ func TestOneColumnAddedOrRemoved(t *testing.T) {
 	orderTable(t, c)
 	before := held(t, c, "t")
 	col, err := ntable.ParseColumn("q:members:union")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	at := at("before", "b")
-	if _, err := ntable.Set(ctx, c, "t", ntable.SetOpts{ColAdd: &col, ColAt: &at}); err != nil {
-		t.Fatal(err)
-	}
-	if _, cols := orderOf(t, c, "t"); strings.Join(cols, ",") != "a,q,b,note,p" {
-		t.Fatalf("col add --before b: %v", cols)
-	}
-	if _, err := ntable.Set(ctx, c, "t", ntable.SetOpts{Hide: []string{"q"}}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ntable.Set(ctx, c, "t", ntable.SetOpts{ColDel: "q"}); err != nil {
-		t.Fatal(err)
-	}
+	_, err = ntable.Set(ctx, c, "t", ntable.SetOpts{ColAdd: &col, ColAt: &at})
+	require.NoError(t, err)
+	_, cols := orderOf(t, c, "t")
+	require.Equal(t, "a,q,b,note,p", strings.Join(cols, ","), "col add --before b: %v", cols)
+	_, err = ntable.Set(ctx, c, "t", ntable.SetOpts{Hide: []string{"q"}})
+	require.NoError(t, err)
+	_, err = ntable.Set(ctx, c, "t", ntable.SetOpts{ColDel: "q"})
+	require.NoError(t, err)
 	tab, err := ntable.Read(ctx, c, "t")
-	if err != nil || len(tab.Hidden) != 0 {
-		t.Fatalf("a removed column leaves the hidden list: %v %v", tab.Hidden, err)
-	}
-	if _, cols := orderOf(t, c, "t"); strings.Join(cols, ",") != "a,b,note,p" {
-		t.Fatalf("col del: %v", cols)
-	}
-	if after := held(t, c, "t"); !reflect.DeepEqual(before, after) {
-		t.Fatalf("adding and removing an empty column changed what the table holds: %v", after)
-	}
+	require.NoError(t, err, "a removed column leaves the hidden list: %v %v", tab.Hidden, err)
+	require.Empty(t, tab.Hidden, "a removed column leaves the hidden list: %v %v", tab.Hidden, err)
+	_, cols = orderOf(t, c, "t")
+	require.Equal(t, "a,b,note,p", strings.Join(cols, ","), "col del: %v", cols)
+	after := held(t, c, "t")
+	require.Equal(t, before, after, "adding and removing an empty column changed what the table holds: %v", after)
 }
 
 func TestOrderRefusalsWriteNothing(t *testing.T) {
@@ -286,9 +243,7 @@ func TestOrderRefusalsWriteNothing(t *testing.T) {
 			orderTable(t, c)
 			image := storeImage(t, c)
 			_, err := ntable.Set(ctx, c, "t", tc.change)
-			if err == nil || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("refusal %v, want it to say %q", err, tc.want)
-			}
+			require.ErrorContains(t, err, tc.want, "refusal %v, want it to say %q", err, tc.want)
 			after := storeImage(t, c)
 			if !reflect.DeepEqual(image, after) {
 				var changed []string
@@ -310,19 +265,12 @@ func TestOrderLateWrongTypeWritesNothing(t *testing.T) {
 	ctx := context.Background()
 	_, c := live(t)
 	orderTable(t, c)
-	if err := c.Del(ctx, ntable.RowKey("t", "z")).Err(); err != nil {
-		t.Fatal(err)
-	}
-	if err := c.Set(ctx, ntable.RowKey("t", "z"), "bad", 0).Err(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, c.Del(ctx, ntable.RowKey("t", "z")).Err())
+	require.NoError(t, c.Set(ctx, ntable.RowKey("t", "z"), "bad", 0).Err())
 	image := storeImage(t, c)
-	if _, err := ntable.Set(ctx, c, "t", ntable.SetOpts{RowSort: &ntable.Sort{By: "label", Desc: true}}); err == nil {
-		t.Fatal("a sort over a row of the wrong type was accepted")
-	}
-	if !reflect.DeepEqual(image, storeImage(t, c)) {
-		t.Fatal("the failed sort wrote")
-	}
+	_, err := ntable.Set(ctx, c, "t", ntable.SetOpts{RowSort: &ntable.Sort{By: "label", Desc: true}})
+	require.Error(t, err, "a sort over a row of the wrong type was accepted")
+	require.Equal(t, storeImage(t, c), image, "the failed sort wrote")
 }
 
 func ptr(s string) *string { return &s }

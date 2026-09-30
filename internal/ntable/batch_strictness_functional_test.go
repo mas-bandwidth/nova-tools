@@ -13,6 +13,8 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const (
@@ -193,9 +195,8 @@ func TestBatchMalformedManifestsRefusedByServerAndValidator(t *testing.T) {
 	// The positive controls: the base manifests are accepted on both paths.
 	for i, m := range []string{baseCreate, baseMove, baseSet} {
 		raw := manifestWith(probeRev(ctx, c), fmt.Sprintf("control-%d", i), m)
-		if _, err := ntable.ValidateBatchManifestRaw([]byte(raw)); err != nil {
-			t.Fatalf("control %d: the validator refuses a valid manifest: %v", i, err)
-		}
+		_, err := ntable.ValidateBatchManifestRaw([]byte(raw))
+		require.NoError(t, err, "control %d: the validator refuses a valid manifest: %v", i, err)
 		if ans, err := rawApply(ctx, c, raw); err != nil || ans[0] != "OK" {
 			t.Fatalf("control %d: the server refuses a valid manifest: %v %v", i, trunc(ans), err)
 		}
@@ -211,12 +212,8 @@ func TestBatchMalformedManifestsRefusedByServerAndValidator(t *testing.T) {
 		} else if len(ans) < 2 || ans[0] != "REFUSED" {
 			t.Errorf("%s: the server accepts: %v", tc.name, trunc(ans))
 		}
-		if verr == nil {
-			t.Errorf("%s: the Go validator accepts", tc.name)
-		}
-		if !reflect.DeepEqual(before, storeImage(t, c)) {
-			t.Errorf("%s: the store changed", tc.name)
-		}
+		assert.Error(t, verr, "%s: the Go validator accepts", tc.name)
+		assert.Equal(t, before, storeImage(t, c), "%s: the store changed", tc.name)
 	}
 }
 
@@ -264,9 +261,7 @@ func TestBatchInvalidUTF8IsRefusedByName(t *testing.T) {
 	if err != nil || len(ans) < 3 || ans[0] != "REFUSED" || ans[1] != "MANIFEST" || !strings.Contains(fmt.Sprint(ans[2]), "UTF-8") {
 		t.Fatalf("%v %v; want REFUSED MANIFEST naming UTF-8", trunc(ans), err)
 	}
-	if !reflect.DeepEqual(before, storeImage(t, c)) {
-		t.Errorf("the store changed")
-	}
+	assert.Equal(t, before, storeImage(t, c), "the store changed")
 }
 
 // Every score on either path is a finite JSON number; a string never is, even
@@ -281,9 +276,7 @@ func TestBatchScoresAreFiniteJSONNumbers(t *testing.T) {
 		if err != nil || len(ans) < 2 || ans[0] != "REFUSED" {
 			t.Errorf("create score %s: %v %v", v, trunc(ans), err)
 		}
-		if !reflect.DeepEqual(before, storeImage(t, c)) {
-			t.Errorf("create score %s wrote", v)
-		}
+		assert.Equal(t, before, storeImage(t, c), "create score %s wrote", v)
 	}
 	// a string score names what it found
 	ans, err := rawApply(ctx, c, manifestWith(probeRev(ctx, c), "sc-str", createWithScore(`"0x10"`)))
@@ -322,15 +315,12 @@ func TestReadSetRefusesRequestsOutsideItsShapes(t *testing.T) {
 		} else if len(rs) < 2 || rs[0] != "REFUSED" || rs[1] != "ARGS" {
 			t.Errorf("scope %q: %v; want REFUSED ARGS", scope, trunc(rs))
 		}
-		if !reflect.DeepEqual(before, storeImage(t, c)) {
-			t.Errorf("scope %q: the store changed", scope)
-		}
+		assert.Equal(t, before, storeImage(t, c), "scope %q: the store changed", scope)
 	}
 	// the library refuses an empty request the same way
 	for name, scope := range map[string]ntable.ReadSetScope{"no scope": {}, "empty members": {Members: []string{}}, "empty selection": {Selection: []ntable.CellSelection{}}} {
-		if _, err := ntable.ReadSet(ctx, c, "demo", scope); err == nil || !strings.Contains(err.Error(), "changed=no") {
-			t.Errorf("%s: %v; want a refusal ending changed=no", name, err)
-		}
+		_, err := ntable.ReadSet(ctx, c, "demo", scope)
+		assert.ErrorContains(t, err, "changed=no", "%s: %v; want a refusal ending changed=no", name, err)
 	}
 	// the defined shapes are answered
 	accepted := map[string]int{
@@ -346,9 +336,8 @@ func TestReadSetRefusesRequestsOutsideItsShapes(t *testing.T) {
 			t.Errorf("scope %q: %v %v", scope, trunc(rs), err)
 			continue
 		}
-		if got := len(rs[4].([]any)); got != want {
-			t.Errorf("scope %q: %d members, want %d", scope, got, want)
-		}
+		got := len(rs[4].([]any))
+		assert.Equal(t, want, got, "scope %q: %d members, want %d", scope, got, want)
 	}
 }
 
@@ -364,9 +353,8 @@ func TestBatchWithoutMembersIsRefusedAndAdvancesNothing(t *testing.T) {
 	if err != nil || len(ans) < 3 || ans[0] != "REFUSED" || ans[1] != "MANIFEST" || !strings.Contains(fmt.Sprint(ans[2]), "at least one member") {
 		t.Errorf("the server: %v %v", trunc(ans), err)
 	}
-	if _, err := ntable.ValidateBatchManifestRaw([]byte(raw)); err == nil || !strings.Contains(err.Error(), "at least one member") {
-		t.Errorf("the validator: %v", err)
-	}
+	_, err = ntable.ValidateBatchManifestRaw([]byte(raw))
+	assert.ErrorContains(t, err, "at least one member", "the validator")
 	_, err = ntable.ApplyBatch(ctx, c, ntable.BatchManifest{Schema: 1, Table: "demo", Epoch: "0", ExpectedTableRevision: rev, OperationID: "empty"})
 	if err == nil || !strings.Contains(err.Error(), "at least one member") || !strings.Contains(err.Error(), "changed=no") {
 		t.Errorf("ApplyBatch: %v", err)

@@ -10,6 +10,9 @@ import (
 	"encoding/json"
 	"reflect"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // asReplay returns a raw replay reply without its marker, and says whether it had one.
@@ -29,12 +32,8 @@ func TestBatchReplayPrecedesTheStaticChecks(t *testing.T) {
 	result := `["OK",["RECEIPT","1-0","0","3","4","changed","{}"]]`
 	record, err := json.Marshal(map[string]string{"operation_id": "old", "digest": "x", "request": recorded, "stream_id": "1-0",
 		"epoch": "0", "rev_before": "3", "rev_after": "4", "outcome": "changed", "result": result})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := c.HSet(ctx, "table:demo:ops", "0:old", string(record)).Err(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	require.NoError(t, c.HSet(ctx, "table:demo:ops", "0:old", string(record)).Err())
 
 	// the recorded bytes replay
 	want := []any{"OK", []any{"RECEIPT", "1-0", "0", "3", "4", "changed", "{}"}}
@@ -44,9 +43,7 @@ func TestBatchReplayPrecedesTheStaticChecks(t *testing.T) {
 	if err != nil || !marked || !reflect.DeepEqual(ans, want) {
 		t.Errorf("replay of a recorded request that a newer rule refuses: %v %v; want the original result", trunc(ans), err)
 	}
-	if !reflect.DeepEqual(before, storeImage(t, c)) {
-		t.Errorf("a replay wrote")
-	}
+	assert.Equal(t, before, storeImage(t, c), "a replay wrote")
 
 	// other bytes under the recorded id conflict, even when they are also invalid
 	other := manifestWith(probeRev(ctx, c), "old", `{"id":"h","expect":{"absent":true},"create":{"row":"build","col":"ready","score":"nan"}}`)
@@ -68,9 +65,8 @@ func TestBatchReplayPrecedesTheStaticChecks(t *testing.T) {
 	if err != nil || first[0] != "OK" {
 		t.Fatalf("%v %v", trunc(first), err)
 	}
-	if _, err := rawApply(ctx, c, manifestWith(probeRev(ctx, c), "move-on", `{"id":"h3","expect":{"absent":true},"create":{"row":"build","col":"ready","score":4}}`)); err != nil {
-		t.Fatal(err)
-	}
+	_, err = rawApply(ctx, c, manifestWith(probeRev(ctx, c), "move-on", `{"id":"h3","expect":{"absent":true},"create":{"row":"build","col":"ready","score":4}}`))
+	require.NoError(t, err)
 	again, err := rawApply(ctx, c, valid)
 	again, marked = asReplay(again)
 	if err != nil || !marked || !reflect.DeepEqual(first, again) {

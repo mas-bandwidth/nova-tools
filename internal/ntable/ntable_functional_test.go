@@ -13,6 +13,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/require"
 )
 
 // live is a throwaway redis-server with the nova_sprint library loaded
@@ -22,9 +23,7 @@ func live(t *testing.T, extra ...string) (string, *redis.Client) {
 	addr := testutil.Start(t, extra...)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	t.Cleanup(func() { _ = c.Close() })
-	if err := fn.Load(context.Background(), c); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, fn.Load(context.Background(), c))
 	return addr, c
 }
 
@@ -37,9 +36,7 @@ func TestMoveAndClearAreOneCallEach(t *testing.T) {
 
 	_, c := live(t)
 	ctx := context.Background()
-	if err := ntable.Create(ctx, c, demo(), time.Now()); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, ntable.Create(ctx, c, demo(), time.Now()))
 	if _, err := ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{}); err != nil {
 		t.Fatal(err)
 	}
@@ -79,37 +76,30 @@ func TestMoveAndClearAreOneCallEach(t *testing.T) {
 	if err != nil || len(tb.Rows) != 0 || len(tb.Columns) != 4 {
 		t.Fatalf("read after clear: %+v %v", tb, err)
 	}
-	if _, err := ntable.Clear(ctx, c, "nope"); !errors.Is(err, ntable.ErrNoTable) {
-		t.Fatalf("clear of no table: %v, want ErrNoTable", err)
-	}
+	_, err = ntable.Clear(ctx, c, "nope")
+	require.ErrorIs(t, err, ntable.ErrNoTable, "clear of no table: %v, want ErrNoTable", err)
 	// a bound cell refuses the whole clear, naming the owner, and nothing
 	// is cleared
-	if _, err := ntable.RowAdd(ctx, c, "demo", "owned", ntable.RowSpec{}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ntable.CellAdd(ctx, c, "demo", "owned", "ready", "o1", 1); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ntable.RowAdd(ctx, c, "demo", "view", ntable.RowSpec{Binds: map[string]string{"ready": "ws:s:ready"}, Owner: "nova-sprint task move"}); err != nil {
-		t.Fatal(err)
-	}
+	_, err = ntable.RowAdd(ctx, c, "demo", "owned", ntable.RowSpec{})
+	require.NoError(t, err)
+	_, err = ntable.CellAdd(ctx, c, "demo", "owned", "ready", "o1", 1)
+	require.NoError(t, err)
+	_, err = ntable.RowAdd(ctx, c, "demo", "view", ntable.RowSpec{Binds: map[string]string{"ready": "ws:s:ready"}, Owner: "nova-sprint task move"})
+	require.NoError(t, err)
 	_, err = ntable.Clear(ctx, c, "demo")
 	var bound *ntable.BoundError
 	if !errors.As(err, &bound) || bound.Row != "view" || bound.Col != "ready" || bound.Key != "ws:s:ready" || bound.Owner != "nova-sprint task move" {
 		t.Fatalf("clear over a bound cell: %v", err)
 	}
-	if !strings.HasSuffix(err.Error(), "demo.view.ready is bound to ws:s:ready, owned elsewhere; run: nova-sprint task move") {
-		t.Fatalf("bound refusal reads %q", err)
-	}
+	require.True(t, strings.HasSuffix(err.Error(), "demo.view.ready is bound to ws:s:ready, owned elsewhere; run: nova-sprint task move"), "bound refusal reads %q", err)
 	if n, err := c.ZCard(ctx, ntable.CellKey("demo", "owned", "ready")).Result(); err != nil || n != 1 {
 		t.Fatalf("a refused clear cleared the owned cell: %d %v", n, err)
 	}
 	if n, err := c.ZCard(ctx, ntable.RowsKey("demo")).Result(); err != nil || n != 2 {
 		t.Fatalf("a refused clear removed rows: %d %v", n, err)
 	}
-	if _, err := ntable.CellMove(ctx, c, "demo", "view", "ready", "working", "x"); !errors.As(err, &bound) {
-		t.Fatalf("cell move out of a bound cell: %v, want BoundError", err)
-	}
+	_, err = ntable.CellMove(ctx, c, "demo", "view", "ready", "working", "x")
+	require.ErrorAs(t, err, &bound, "cell move out of a bound cell: %v, want BoundError", err)
 }
 
 // tableGrants are the ACL tokens a seat needs to write and read tables
@@ -152,9 +142,7 @@ func TestTableGrantsAreExactlyWhatTheWriterNeeds(t *testing.T) {
 		return c
 	}
 	w := as("ns-writer")
-	if err := ntable.Create(ctx, w, demo(), time.Now()); err != nil {
-		t.Fatalf("create as the writer: %v", err)
-	}
+	require.NoError(t, ntable.Create(ctx, w, demo(), time.Now()), "create as the writer")
 	if _, err := ntable.RowAdd(ctx, w, "demo", "build", ntable.RowSpec{Label: "the build"}); err != nil {
 		t.Fatalf("row add as the writer: %v", err)
 	}
@@ -171,51 +159,37 @@ func TestTableGrantsAreExactlyWhatTheWriterNeeds(t *testing.T) {
 		t.Fatalf("list as the writer: %v %v", names, err)
 	}
 	tb, err := ntable.Read(ctx, w, "demo")
-	if err != nil {
-		t.Fatalf("read as the writer: %v", err)
-	}
-	if got := ntable.Render(tb, ntable.RenderOpts{}); !strings.Contains(got, "the build |     0 |       1 |    0 | -\n") {
-		t.Fatalf("render as the writer:\n%s", got)
-	}
+	require.NoError(t, err, "read as the writer")
+	got := ntable.Render(tb, ntable.RenderOpts{})
+	require.Contains(t, got, "the build |     0 |       1 |    0 | -\n", "render as the writer:\n%s", got)
 	// a batch: create a member, then set and guard a field of it, as the writer
 	rev := func() string { return w.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val() }
-	if _, err := ntable.ApplyBatch(ctx, w, ntable.BatchManifest{Schema: 1, Table: "demo", Epoch: "0", ExpectedTableRevision: rev(), OperationID: "grants-1", Members: []ntable.BatchMemberEntry{
-		{ID: "bt", Expect: &ntable.MemberExpect{Absent: true}, Create: &ntable.MemberCreateOp{Row: "build", Col: "ready", Score: 2}, Set: map[string]string{"k": "v"}}}}); err != nil {
-		t.Fatalf("batch create as the writer: %v", err)
-	}
-	if _, err := ntable.ApplyBatch(ctx, w, ntable.BatchManifest{Schema: 1, Table: "demo", Epoch: "0", ExpectedTableRevision: rev(), OperationID: "grants-2", Members: []ntable.BatchMemberEntry{
-		{ID: "bt", Expect: &ntable.MemberExpect{Fields: map[string]ntable.FieldGuard{"k": {Equals: strPtr("v")}}}, Set: map[string]string{"k": "w"}, Unset: []string{"gone"}}}}); err != nil {
-		t.Fatalf("batch set as the writer: %v", err)
-	}
+	_, err = ntable.ApplyBatch(ctx, w, ntable.BatchManifest{Schema: 1, Table: "demo", Epoch: "0", ExpectedTableRevision: rev(), OperationID: "grants-1", Members: []ntable.BatchMemberEntry{
+		{ID: "bt", Expect: &ntable.MemberExpect{Absent: true}, Create: &ntable.MemberCreateOp{Row: "build", Col: "ready", Score: 2}, Set: map[string]string{"k": "v"}}}})
+	require.NoError(t, err, "batch create as the writer")
+	_, err = ntable.ApplyBatch(ctx, w, ntable.BatchManifest{Schema: 1, Table: "demo", Epoch: "0", ExpectedTableRevision: rev(), OperationID: "grants-2", Members: []ntable.BatchMemberEntry{
+		{ID: "bt", Expect: &ntable.MemberExpect{Fields: map[string]ntable.FieldGuard{"k": {Equals: strPtr("v")}}}, Set: map[string]string{"k": "w"}, Unset: []string{"gone"}}}})
+	require.NoError(t, err, "batch set as the writer")
 	bound := ntable.Table{Name: "views", Columns: tb.Columns[:2]}
 	r := ntable.NewRow(bound, "v")
 	r.Cells[0] = ntable.Cell{Key: "ws:elsewhere:ready", Bound: true}
 	bound.Rows = []ntable.Row{r}
-	if err := ntable.Bind(ctx, w, bound, time.Now()); err != nil {
-		t.Fatalf("bind as the writer: %v", err)
-	}
-	if _, err := ntable.RowDel(ctx, w, "demo", "build"); err != nil {
-		t.Fatalf("row del as the writer: %v", err)
-	}
-	if _, err := ntable.Clear(ctx, w, "demo"); err != nil {
-		t.Fatalf("clear as the writer: %v", err)
-	}
-	if _, err := ntable.Drop(ctx, w, "views"); err != nil {
-		t.Fatalf("drop as the writer: %v", err)
-	}
+	require.NoError(t, ntable.Bind(ctx, w, bound, time.Now()), "bind as the writer")
+	_, err = ntable.RowDel(ctx, w, "demo", "build")
+	require.NoError(t, err, "row del as the writer")
+	_, err = ntable.Clear(ctx, w, "demo")
+	require.NoError(t, err, "clear as the writer")
+	_, err = ntable.Drop(ctx, w, "views")
+	require.NoError(t, err, "drop as the writer")
 	// the same grants less the clear function: every other call works and
 	// the clear is refused NOPERM
 	n := as("ns-noclear")
-	if _, err := ntable.RowAdd(ctx, n, "demo", "build", ntable.RowSpec{}); err != nil {
-		t.Fatalf("row add without the clear grant: %v", err)
-	}
-	if _, err := ntable.CellAdd(ctx, n, "demo", "build", "ready", "b2", 1); err != nil {
-		t.Fatalf("cell add without the clear grant: %v", err)
-	}
-	if _, err := ntable.CellMove(ctx, n, "demo", "build", "ready", "done", "b2"); err != nil {
-		t.Fatalf("cell move without the clear grant: %v", err)
-	}
-	if _, err := ntable.Clear(ctx, n, "demo"); err == nil || !strings.Contains(err.Error(), "NOPERM") {
-		t.Fatalf("clear without its grant: %v, want NOPERM", err)
-	}
+	_, err = ntable.RowAdd(ctx, n, "demo", "build", ntable.RowSpec{})
+	require.NoError(t, err, "row add without the clear grant")
+	_, err = ntable.CellAdd(ctx, n, "demo", "build", "ready", "b2", 1)
+	require.NoError(t, err, "cell add without the clear grant")
+	_, err = ntable.CellMove(ctx, n, "demo", "build", "ready", "done", "b2")
+	require.NoError(t, err, "cell move without the clear grant")
+	_, err = ntable.Clear(ctx, n, "demo")
+	require.ErrorContains(t, err, "NOPERM", "clear without its grant: %v, want NOPERM", err)
 }

@@ -5,12 +5,13 @@ package ntable_test
 import (
 	"context"
 	"errors"
-	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // Refusals are checked against every key in this disposable store, so a
@@ -19,15 +20,11 @@ func memberStoreImage(t *testing.T, c *redis.Client) map[string]string {
 	t.Helper()
 	ctx := context.Background()
 	keys, err := c.Keys(ctx, "*").Result()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	out := make(map[string]string, len(keys))
 	for _, key := range keys {
 		v, err := c.Dump(ctx, key).Result()
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		out[key] = v
 	}
 	return out
@@ -38,22 +35,17 @@ func memberFixture(t *testing.T) (*redis.Client, ntable.Table) {
 	_, c := live(t)
 	ctx := context.Background()
 	cols, err := ntable.ParseColumns("ready,working")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	tb := ntable.Table{Name: "placement", Columns: cols}
-	if err := ntable.Create(ctx, c, tb, now); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, ntable.Create(ctx, c, tb, now))
 	for _, row := range []string{"build", "test"} {
 		if _, err := ntable.RowAdd(ctx, c, tb.Name, row, ntable.RowSpec{}); err != nil {
 			t.Fatal(err)
 		}
 		tb.Rows = append(tb.Rows, ntable.NewRow(tb, row))
 	}
-	if _, err := ntable.CellAdd(ctx, c, tb.Name, "build", "ready", "m1", 7); err != nil {
-		t.Fatal(err)
-	}
+	_, err = ntable.CellAdd(ctx, c, tb.Name, "build", "ready", "m1", 7)
+	require.NoError(t, err)
 	return c, tb
 }
 
@@ -115,15 +107,10 @@ func TestMemberContractRefusalsPreserveStore(t *testing.T) {
 			c, tb := memberFixture(t)
 			before := memberStoreImage(t, c)
 			err := tc.call(context.Background(), c, tb)
-			if err == nil {
-				t.Fatal("unsafe placement/shape accepted; wanted an unchanged-store refusal")
-			}
-			if strings.Contains(err.Error(), "ERR unknown") || strings.Contains(err.Error(), "NOPERM") {
-				t.Fatalf("unrelated failure is not a contract refusal: %v", err)
-			}
-			if after := memberStoreImage(t, c); !reflect.DeepEqual(before, after) {
-				t.Fatal("refused operation changed the store")
-			}
+			require.Error(t, err, "unsafe placement/shape accepted; wanted an unchanged-store refusal")
+			require.NotContains(t, err.Error(), "ERR unknown", "unrelated failure is not a contract refusal: %v", err)
+			require.NotContains(t, err.Error(), "NOPERM", "unrelated failure is not a contract refusal: %v", err)
+			require.Equal(t, before, memberStoreImage(t, c), "refused operation changed the store")
 		})
 	}
 }
@@ -142,54 +129,42 @@ func TestMemberRecordFollowsEveryDestructivePath(t *testing.T) {
 		if err == redis.Nil && want == "" {
 			return
 		}
-		if err != nil || got != want {
-			t.Fatalf("placement in %s = %q (%v), want %q", table, got, err, want)
-		}
+		require.NoError(t, err, "placement in %s = %q (%v), want %q", table, got, err, want)
+		require.Equal(t, want, got, "placement in %s = %q (%v), want %q", table, got, err, want)
 	}
 	other := tb
 	other.Name, other.Rows = "second", nil
-	if err := ntable.Create(ctx, c, other, now); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ntable.RowAdd(ctx, c, other.Name, "build", ntable.RowSpec{}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ntable.CellAdd(ctx, c, other.Name, "build", "ready", "m1", 11); err != nil {
-		t.Fatalf("cross-table placement is permitted: %v", err)
-	}
+	require.NoError(t, ntable.Create(ctx, c, other, now))
+	_, err := ntable.RowAdd(ctx, c, other.Name, "build", ntable.RowSpec{})
+	require.NoError(t, err)
+	_, err = ntable.CellAdd(ctx, c, other.Name, "build", "ready", "m1", 11)
+	require.NoError(t, err, "cross-table placement is permitted")
 	place(tb.Name, "build:ready")
 	place(other.Name, "build:ready")
-	if _, err := ntable.CellMove(ctx, c, tb.Name, "build", "ready", "working", "m1"); err != nil {
-		t.Fatal(err)
-	}
+	_, err = ntable.CellMove(ctx, c, tb.Name, "build", "ready", "working", "m1")
+	require.NoError(t, err)
 	place(tb.Name, "build:working")
 	if score, err := c.ZScore(ctx, ntable.CellKey(tb.Name, "build", "working"), "m1").Result(); err != nil || score != 7 {
 		t.Fatalf("move changed score: %v %v", score, err)
 	}
-	if _, err := ntable.CellRemove(ctx, c, other.Name, "build", "ready", "m1"); err != nil {
-		t.Fatal(err)
-	}
+	_, err = ntable.CellRemove(ctx, c, other.Name, "build", "ready", "m1")
+	require.NoError(t, err)
 	place(other.Name, "")
 	place(tb.Name, "build:working")
-	if _, err := ntable.CellAdd(ctx, c, other.Name, "build", "ready", "m1", 11); err != nil {
-		t.Fatalf("the same record may be placed again after removal: %v", err)
-	}
-	if _, err := ntable.RowDel(ctx, c, tb.Name, "build"); err != nil {
-		t.Fatal(err)
-	}
+	_, err = ntable.CellAdd(ctx, c, other.Name, "build", "ready", "m1", 11)
+	require.NoError(t, err, "the same record may be placed again after removal")
+	_, err = ntable.RowDel(ctx, c, tb.Name, "build")
+	require.NoError(t, err)
 	place(tb.Name, "")
 	place(other.Name, "build:ready")
-	if _, err := ntable.CellAdd(ctx, c, tb.Name, "test", "ready", "m1", 13); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ntable.Clear(ctx, c, tb.Name); err != nil {
-		t.Fatal(err)
-	}
+	_, err = ntable.CellAdd(ctx, c, tb.Name, "test", "ready", "m1", 13)
+	require.NoError(t, err)
+	_, err = ntable.Clear(ctx, c, tb.Name)
+	require.NoError(t, err)
 	place(tb.Name, "")
 	place(other.Name, "build:ready")
-	if _, err := ntable.Drop(ctx, c, other.Name); err != nil {
-		t.Fatal(err)
-	}
+	_, err = ntable.Drop(ctx, c, other.Name)
+	require.NoError(t, err)
 	place(other.Name, "")
 	if epoch, err := c.HGet(ctx, ntable.MemberKey("m1"), "epoch").Result(); err != nil || epoch != "0" {
 		t.Fatalf("destruction lost immutable identity: epoch=%q err=%v", epoch, err)
@@ -202,39 +177,27 @@ func TestMemberRecordFailureDoesNotPartiallyWrite(t *testing.T) {
 		t.Parallel()
 		c, tb := memberFixture(t)
 		ctx := context.Background()
-		if err := c.Set(ctx, ntable.MemberKey("m1"), "corrupt", 0).Err(); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, c.Set(ctx, ntable.MemberKey("m1"), "corrupt", 0).Err())
 		before := memberStoreImage(t, c)
-		if _, err := ntable.CellMove(ctx, c, tb.Name, "build", "ready", "working", "m1"); err == nil {
-			t.Fatal("move accepted a malformed member record")
-		}
-		if !reflect.DeepEqual(before, memberStoreImage(t, c)) {
-			t.Fatal("wrong record type caused a partial move")
-		}
+		_, err := ntable.CellMove(ctx, c, tb.Name, "build", "ready", "working", "m1")
+		require.Error(t, err, "move accepted a malformed member record")
+		require.Equal(t, before, memberStoreImage(t, c), "wrong record type caused a partial move")
 	})
 	t.Run("record-write-denied", func(t *testing.T) {
 		t.Parallel()
 		c, tb := memberFixture(t)
 		ctx := context.Background()
-		if err := c.ACLSetUser(ctx, "denyrecords", "on", ">table-test-password", "~*", "&*", "+@all", "-hset").Err(); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, c.ACLSetUser(ctx, "denyrecords", "on", ">table-test-password", "~*", "&*", "+@all", "-hset").Err())
 		opts := *c.Options()
 		opts.Username, opts.Password = "denyrecords", "table-test-password"
 		limited := redis.NewClient(&opts)
 		t.Cleanup(func() {
-			if err := limited.Close(); err != nil {
-				t.Error(err)
-			}
+			assert.NoError(t, limited.Close())
 		})
 		before := memberStoreImage(t, c)
-		if _, err := ntable.CellAdd(ctx, limited, tb.Name, "build", "working", "new-member", 3); err == nil || !strings.Contains(err.Error(), "NOPERM") {
-			t.Fatalf("record permission refusal = %v", err)
-		}
-		if !reflect.DeepEqual(before, memberStoreImage(t, c)) {
-			t.Fatal("denied record write left a member in a cell")
-		}
+		_, err := ntable.CellAdd(ctx, limited, tb.Name, "build", "working", "new-member", 3)
+		require.ErrorContains(t, err, "NOPERM", "record permission refusal =")
+		require.Equal(t, before, memberStoreImage(t, c), "denied record write left a member in a cell")
 	})
 }
 
@@ -244,43 +207,27 @@ func TestTableWriterACLUsesCallerPermissions(t *testing.T) {
 	t.Parallel()
 	c, tb := memberFixture(t)
 	ctx := context.Background()
-	if err := c.ACLSetUser(ctx, "writer", "on", ">test-password", "~*", "&*", "+@all", "-zadd").Err(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, c.ACLSetUser(ctx, "writer", "on", ">test-password", "~*", "&*", "+@all", "-zadd").Err())
 	opts := *c.Options()
 	opts.Username, opts.Password = "writer", "test-password"
 	writer := redis.NewClient(&opts)
 	t.Cleanup(func() {
-		if err := writer.Close(); err != nil {
-			t.Error(err)
-		}
+		assert.NoError(t, writer.Close())
 	})
 	key := ntable.CellKey(tb.Name, "build", "working")
 	before := memberStoreImage(t, c)
-	if err := writer.ZAdd(ctx, key, redis.Z{Score: 1, Member: "raw"}).Err(); err == nil || !strings.Contains(err.Error(), "NOPERM") {
-		t.Fatalf("raw write without ZADD grant = %v", err)
-	}
-	if _, err := ntable.CellAdd(ctx, writer, tb.Name, "build", "working", "through-function", 1); err == nil || !strings.Contains(err.Error(), "NOPERM") {
-		t.Fatalf("function write without ZADD grant = %v", err)
-	}
-	if !reflect.DeepEqual(before, memberStoreImage(t, c)) {
-		t.Fatal("denied write changed the store")
-	}
-	if err := c.ACLSetUser(ctx, "writer", "+zadd").Err(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ntable.CellAdd(ctx, writer, tb.Name, "build", "working", "through-function", 1); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ntable.Check(ctx, c, tb.Name); err != nil {
-		t.Fatal(err)
-	}
-	if err := writer.ZAdd(ctx, key, redis.Z{Score: 2, Member: "raw"}).Err(); err != nil {
-		t.Fatalf("same grant did not permit the raw command: %v", err)
-	}
-	if _, err := ntable.Check(ctx, c, tb.Name); !errors.Is(err, ntable.ErrDrift) {
-		t.Fatalf("raw write bypass was not detected: %v", err)
-	}
+	require.ErrorContains(t, writer.ZAdd(ctx, key, redis.Z{Score: 1, Member: "raw"}).Err(), "NOPERM", "raw write without ZADD grant =")
+	_, err := ntable.CellAdd(ctx, writer, tb.Name, "build", "working", "through-function", 1)
+	require.ErrorContains(t, err, "NOPERM", "function write without ZADD grant =")
+	require.Equal(t, before, memberStoreImage(t, c), "denied write changed the store")
+	require.NoError(t, c.ACLSetUser(ctx, "writer", "+zadd").Err())
+	_, err = ntable.CellAdd(ctx, writer, tb.Name, "build", "working", "through-function", 1)
+	require.NoError(t, err)
+	_, err = ntable.Check(ctx, c, tb.Name)
+	require.NoError(t, err)
+	require.NoError(t, writer.ZAdd(ctx, key, redis.Z{Score: 2, Member: "raw"}).Err(), "same grant did not permit the raw command")
+	_, err = ntable.Check(ctx, c, tb.Name)
+	require.ErrorIs(t, err, ntable.ErrDrift, "raw write bypass was not detected")
 }
 
 // A refusal must preserve the stored key byte-for-byte, even for a binding
@@ -294,9 +241,7 @@ func TestBoundRefusalPreservesStoredKey(t *testing.T) {
 		allBytes[i] = byte(i)
 	}
 	for _, key := range []string{"bench:batman:cards:ready", "external:" + string(allBytes)} {
-		if err := c.HSet(ctx, ntable.RowKey(tb.Name, "test"), "key:ready", key).Err(); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, c.HSet(ctx, ntable.RowKey(tb.Name, "test"), "key:ready", key).Err())
 		before := memberStoreImage(t, c)
 		for _, verb := range []string{"add", "remove", "move", "clear"} {
 			var err error
@@ -314,9 +259,7 @@ func TestBoundRefusalPreservesStoredKey(t *testing.T) {
 			if !errors.As(err, &bound) || bound.Key != key || !strings.Contains(err.Error(), key) {
 				t.Fatalf("%s lost bound key %q: %v", verb, key, err)
 			}
-			if !reflect.DeepEqual(before, memberStoreImage(t, c)) {
-				t.Fatalf("%s changed store on bound refusal", verb)
-			}
+			require.Equal(t, before, memberStoreImage(t, c), "%s changed store on bound refusal", verb)
 		}
 	}
 }
@@ -330,9 +273,7 @@ func TestHiddenOwnedCellRefusesShapeAndRemoval(t *testing.T) {
 			t.Parallel()
 			c, tb := memberFixture(t)
 			ctx := context.Background()
-			if err := c.HSet(ctx, ntable.RowKey(tb.Name, "build"), "key:ready", "external:ready").Err(); err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, c.HSet(ctx, ntable.RowKey(tb.Name, "build"), "key:ready", "external:ready").Err())
 			before := memberStoreImage(t, c)
 			var err error
 			switch verb {
@@ -346,12 +287,8 @@ func TestHiddenOwnedCellRefusesShapeAndRemoval(t *testing.T) {
 			case "drop":
 				_, err = ntable.Drop(ctx, c, tb.Name)
 			}
-			if !errors.Is(err, ntable.ErrOccupied) {
-				t.Fatalf("hidden-cell %s = %v", verb, err)
-			}
-			if !reflect.DeepEqual(before, memberStoreImage(t, c)) {
-				t.Fatal("hidden-cell refusal changed store")
-			}
+			require.ErrorIs(t, err, ntable.ErrOccupied, "hidden-cell %s = %v", verb, err)
+			require.Equal(t, before, memberStoreImage(t, c), "hidden-cell refusal changed store")
 		})
 	}
 }
@@ -374,9 +311,7 @@ func TestRuntimeCheckFindsBothDirectionsAndHiddenCells(t *testing.T) {
 			case "hidden-cell":
 				err = c.ZAdd(ctx, ntable.CellKey(tb.Name, "absent", "ready"), redis.Z{Score: 1, Member: "ghost"}).Err()
 			}
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
 			before := memberStoreImage(t, c)
 			report, err := ntable.Check(ctx, c, tb.Name)
 			if mode == "valid" {
@@ -386,9 +321,7 @@ func TestRuntimeCheckFindsBothDirectionsAndHiddenCells(t *testing.T) {
 			} else if !errors.Is(err, ntable.ErrDrift) {
 				t.Fatalf("%s = %v", mode, err)
 			}
-			if !reflect.DeepEqual(before, memberStoreImage(t, c)) {
-				t.Fatal("read-only check changed store")
-			}
+			require.Equal(t, before, memberStoreImage(t, c), "read-only check changed store")
 		})
 	}
 }
@@ -406,9 +339,8 @@ func TestRawDefinitionRefusesBeforeCreatingAnything(t *testing.T) {
 			if err != nil || len(reply) < 2 || reply[0] != "REFUSED" || reply[1] != "DEFINITION" {
 				t.Fatalf("bad definition = %v %v", reply, err)
 			}
-			if got := memberStoreImage(t, c); len(got) != 0 {
-				t.Fatalf("bad declaration created %v", got)
-			}
+			got := memberStoreImage(t, c)
+			require.Empty(t, got, "bad declaration created %v", got)
 		})
 	}
 }

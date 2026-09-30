@@ -10,6 +10,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func runOK(t *testing.T, stdin string, args ...string) (string, string) {
@@ -38,50 +40,34 @@ func TestOpenAppendIndexReceiptRoundTrip(t *testing.T) {
 
 	store := t.TempDir()
 	out, _ := runOK(t, "", "open", "--store", store, "--session", "s1", "--source", "bench/session-3", "--publish", "manual")
-	if !strings.Contains(out, "OPEN OK") || !strings.Contains(out, "session=s1") {
-		t.Fatalf("open printed %q", out)
-	}
+	require.Contains(t, out, "OPEN OK", "open printed %q", out)
+	require.Contains(t, out, "session=s1", "open printed %q", out)
 	prose := "the friend's chosen words — café, \"as above\" nowhere, byte-exact"
 	out, _ = runOK(t, "", "append", "--store", store, "--session", "s1", "--entry", "e1",
 		"--text", prose, "--source", "bench/session-3#L9", "--publish", "manual")
-	if !strings.Contains(out, "APPEND OK") || !strings.Contains(out, "persisted=true published=false") {
-		t.Fatalf("append printed %q", out)
-	}
+	require.Contains(t, out, "APPEND OK", "append printed %q", out)
+	require.Contains(t, out, "persisted=true published=false", "append printed %q", out)
 	// The duplicate request succeeds without a duplicate entry.
 	out, _ = runOK(t, "", "append", "--store", store, "--session", "s1", "--entry", "e1",
 		"--text", prose, "--publish", "manual")
-	if !strings.Contains(out, "duplicate=true") {
-		t.Fatalf("retry printed %q, want duplicate=true", out)
-	}
+	require.Contains(t, out, "duplicate=true", "retry printed %q, want duplicate=true", out)
 	// Same id, different prose: exit 1, never an overwrite.
-	if code, _, _ := runCode("", "append", "--store", store, "--session", "s1", "--entry", "e1",
-		"--text", "other words", "--publish", "manual"); code != 1 {
-		t.Fatalf("conflicting append exited %d, want 1", code)
-	}
+	code, _, _ := runCode("", "append", "--store", store, "--session", "s1", "--entry", "e1",
+		"--text", "other words", "--publish", "manual")
+	require.Equal(t, 1, code, "conflicting append exited %d, want 1", code)
 	out, _ = runOK(t, "", "receipt", "--store", store, "--session", "s1", "--entry", "e1")
-	if !strings.Contains(out, "RECEIPT OK") || !strings.Contains(out, "persisted=true published=false") {
-		t.Fatalf("receipt printed %q", out)
-	}
+	require.Contains(t, out, "RECEIPT OK", "receipt printed %q", out)
+	require.Contains(t, out, "persisted=true published=false", "receipt printed %q", out)
 	out, _ = runOK(t, "", "index", "--store", store)
-	if !strings.Contains(out, "INDEX ENTRY session=s1 entry=e1") {
-		t.Fatalf("index printed %q", out)
-	}
-	if !strings.Contains(out, "INDEX COVERAGE sessions=1 entries=1") {
-		t.Fatalf("coverage printed %q", out)
-	}
+	require.Contains(t, out, "INDEX ENTRY session=s1 entry=e1", "index printed %q", out)
+	require.Contains(t, out, "INDEX COVERAGE sessions=1 entries=1", "coverage printed %q", out)
 	raw, err := os.ReadFile(filepath.Join(store, "entries", "s1", "e1.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	var stored struct {
 		Text string `json:"text"`
 	}
-	if err := json.Unmarshal(raw, &stored); err != nil {
-		t.Fatal(err)
-	}
-	if stored.Text != prose {
-		t.Fatalf("stored entry holds %q, want the exact prose %q", stored.Text, prose)
-	}
+	require.NoError(t, json.Unmarshal(raw, &stored))
+	require.Equal(t, prose, stored.Text, "stored entry holds %q, want the exact prose %q", stored.Text, prose)
 }
 
 func TestOfflineAppendSucceedsWithPublicationPending(t *testing.T) {
@@ -91,9 +77,7 @@ func TestOfflineAppendSucceedsWithPublicationPending(t *testing.T) {
 	runOK(t, "", "open", "--store", store, "--session", "s", "--publish", "deferred")
 	out, _ := runOK(t, "", "append", "--store", store, "--session", "s", "--entry", "e",
 		"--text", "offline note", "--publish", "deferred")
-	if !strings.Contains(out, "persisted=true published=false") {
-		t.Fatalf("offline append printed %q", out)
-	}
+	require.Contains(t, out, "persisted=true published=false", "offline append printed %q", out)
 }
 
 func TestAppendViaFileAndStdinKeepsExactBytes(t *testing.T) {
@@ -103,30 +87,20 @@ func TestAppendViaFileAndStdinKeepsExactBytes(t *testing.T) {
 	runOK(t, "", "open", "--store", store, "--session", "s", "--publish", "never")
 	prose := "line one\nline two  with trailing spaces   \n\ttabbed\n"
 	f := filepath.Join(t.TempDir(), "note.txt")
-	if err := os.WriteFile(f, []byte(prose), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(f, []byte(prose), 0o644))
 	runOK(t, "", "append", "--store", store, "--session", "s", "--entry", "from-file", "--file", f, "--publish", "never")
 	runOK(t, prose, "append", "--store", store, "--session", "s", "--entry", "from-stdin", "--file", "-", "--publish", "never")
 	for _, id := range []string{"from-file", "from-stdin"} {
 		out, _ := runOK(t, "", "receipt", "--store", store, "--session", "s", "--entry", id)
-		if !strings.Contains(out, "RECEIPT OK") {
-			t.Fatalf("receipt %s printed %q", id, out)
-		}
+		require.Contains(t, out, "RECEIPT OK", "receipt %s printed %q", id, out)
 	}
 	raw, err := os.ReadFile(filepath.Join(store, "entries", "s", "from-stdin.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	var stored struct {
 		Text string `json:"text"`
 	}
-	if err := json.Unmarshal(raw, &stored); err != nil {
-		t.Fatal(err)
-	}
-	if stored.Text != prose {
-		t.Fatalf("stdin bytes not preserved: got %q want %q", stored.Text, prose)
-	}
+	require.NoError(t, json.Unmarshal(raw, &stored))
+	require.Equal(t, prose, stored.Text, "stdin bytes not preserved: got %q want %q", stored.Text, prose)
 }
 
 func TestInterruptedAppendRecoversAtCLI(t *testing.T) {
@@ -137,24 +111,15 @@ func TestInterruptedAppendRecoversAtCLI(t *testing.T) {
 	runOK(t, "", "append", "--store", store, "--session", "s", "--entry", "other",
 		"--text", "other writer's note", "--publish", "manual")
 	edir := filepath.Join(store, "entries", "s")
-	if err := os.MkdirAll(edir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(edir, "mine.json.tmp"), []byte("{partial"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(edir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(edir, "mine.json.tmp"), []byte("{partial"), 0o644))
 	out, _ := runOK(t, "", "append", "--store", store, "--session", "s", "--entry", "mine",
 		"--text", "my note after the crash", "--publish", "manual")
-	if !strings.Contains(out, "APPEND OK") {
-		t.Fatalf("recovery printed %q", out)
-	}
+	require.Contains(t, out, "APPEND OK", "recovery printed %q", out)
 	out, _ = runOK(t, "", "index", "--store", store)
-	if !strings.Contains(out, "entries=2") {
-		t.Fatalf("index after recovery printed %q", out)
-	}
-	if !strings.Contains(out, "INDEX ENTRY session=s entry=other") || !strings.Contains(out, "INDEX ENTRY session=s entry=mine") {
-		t.Fatalf("other writer lost or partial indexed: %q", out)
-	}
+	require.Contains(t, out, "entries=2", "index after recovery printed %q", out)
+	require.Contains(t, out, "INDEX ENTRY session=s entry=other", "other writer lost or partial indexed: %q", out)
+	require.Contains(t, out, "INDEX ENTRY session=s entry=mine", "other writer lost or partial indexed: %q", out)
 }
 
 func TestExistingDirtyWorkIsUntouched(t *testing.T) {
@@ -163,23 +128,16 @@ func TestExistingDirtyWorkIsUntouched(t *testing.T) {
 	store := t.TempDir()
 	dirty := filepath.Join(store, "my-unfinished-work.md")
 	before := []byte("half-written thought, do not touch\n")
-	if err := os.WriteFile(dirty, before, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(dirty, before, 0o644))
 	runOK(t, "", "open", "--store", store, "--session", "s", "--publish", "never")
 	runOK(t, "", "append", "--store", store, "--session", "s", "--entry", "e",
 		"--text", "a checkpoint alongside dirty work", "--publish", "never")
 	runOK(t, "", "index", "--store", store)
 	after, err := os.ReadFile(dirty)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(after) != string(before) {
-		t.Fatalf("dirty work changed to %q", after)
-	}
-	if _, err := os.Stat(filepath.Join(store, ".git")); !os.IsNotExist(err) {
-		t.Fatalf("tool must not init or touch version control in the store")
-	}
+	require.NoError(t, err)
+	require.Equal(t, string(before), string(after), "dirty work changed to %q", after)
+	_, err = os.Stat(filepath.Join(store, ".git"))
+	require.True(t, os.IsNotExist(err), "tool must not init or touch version control in the store")
 }
 
 func TestConcurrentRecordsAndAlternateHeaders(t *testing.T) {
@@ -193,22 +151,14 @@ func TestConcurrentRecordsAndAlternateHeaders(t *testing.T) {
 	}
 	sessFile := filepath.Join(store, "sessions", "alpha.md")
 	raw, err := os.ReadFile(sessFile)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	lines := strings.Split(string(raw), "\n")
 	lines[0] = "# Our team files records under its own headings"
-	if err := os.WriteFile(sessFile, []byte(strings.Join(lines, "\n")), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(sessFile, []byte(strings.Join(lines, "\n")), 0o644))
 	out, _ := runOK(t, "", "index", "--store", store)
-	if !strings.Contains(out, "INDEX COVERAGE sessions=2 entries=2") {
-		t.Fatalf("index printed %q", out)
-	}
+	require.Contains(t, out, "INDEX COVERAGE sessions=2 entries=2", "index printed %q", out)
 	out, _ = runOK(t, "", "index", "--store", store, "--session", "alpha")
-	if !strings.Contains(out, "INDEX ENTRY session=alpha entry=e") {
-		t.Fatalf("per-session index printed %q", out)
-	}
+	require.Contains(t, out, "INDEX ENTRY session=alpha entry=e", "per-session index printed %q", out)
 }
 
 func TestLifecycleVerbsStayRefused(t *testing.T) {
@@ -216,35 +166,30 @@ func TestLifecycleVerbsStayRefused(t *testing.T) {
 
 	store := t.TempDir()
 	for _, verb := range []string{"seal", "consume", "delete", "grade", "consolidate", "wake", "rollup", "retention"} {
-		if code, _, _ := runCode("", verb, "--store", store); code != 2 {
-			t.Fatalf("%s exited %d, want 2 (unknown subcommand)", verb, code)
-		}
+		code, _, _ := runCode("", verb, "--store", store)
+		require.Equal(t, 2, code, "%s exited %d, want 2 (unknown subcommand)", verb, code)
 	}
 }
 
 func TestMissingFlagsAreRefusedNeverGuessed(t *testing.T) {
 	t.Parallel()
 
-	if code, _, _ := runCode("", "open", "--session", "s"); code != 2 {
-		t.Fatalf("open without --store exited %d, want 2", code)
-	}
-	if code, _, _ := runCode("", "append", "--store", "x", "--session", "s", "--entry", "e",
-		"--publish", "never"); code != 2 {
-		t.Fatalf("append without words exited %d, want 2", code)
-	}
-	if code, _, _ := runCode("", "append", "--store", "x", "--session", "s"); code != 2 {
-		t.Fatalf("append without --entry/--publish exited %d, want 2", code)
-	}
+	code, _, _ := runCode("", "open", "--session", "s")
+	require.Equal(t, 2, code, "open without --store exited %d, want 2", code)
+	code, _, _ = runCode("", "append", "--store", "x", "--session", "s", "--entry", "e",
+		"--publish", "never")
+	require.Equal(t, 2, code, "append without words exited %d, want 2", code)
+	code, _, _ = runCode("", "append", "--store", "x", "--session", "s")
+	require.Equal(t, 2, code, "append without --entry/--publish exited %d, want 2", code)
 }
 
 func TestBadClockIsRefused(t *testing.T) {
 	t.Parallel()
 
 	store := t.TempDir()
-	if code, _, _ := runCode("", "open", "--store", store, "--session", "s",
-		"--publish", "never", "--now", "tomorrow-ish"); code != 2 {
-		t.Fatalf("open with bad --now exited %d, want 2", code)
-	}
+	code, _, _ := runCode("", "open", "--store", store, "--session", "s",
+		"--publish", "never", "--now", "tomorrow-ish")
+	require.Equal(t, 2, code, "open with bad --now exited %d, want 2", code)
 }
 
 // TestSourcePointerIsRecordedNeverOpened is SPEC-CAIRN line 18, and the
@@ -261,56 +206,37 @@ func TestSourcePointerIsRecordedNeverOpened(t *testing.T) {
 	ptr := filepath.Join(store, "no such transcript", "session.jsonl")
 	field := strings.ReplaceAll(ptr, " ", `\x20`)
 	out, _ := runOK(t, "", "open", "--store", store, "--session", "s1", "--source", ptr, "--publish", "manual")
-	if !strings.Contains(out, " source="+field+" ") {
-		t.Fatalf("open printed %q, want source=%s", out, field)
-	}
+	require.Contains(t, out, " source="+field+" ", "open printed %q, want source=%s", out, field)
 	out, _ = runOK(t, "", "append", "--store", store, "--session", "s1", "--entry", "inherits",
 		"--text", "words with no pointer of their own", "--publish", "manual")
-	if !strings.Contains(out, " source="+field+" ") {
-		t.Fatalf("append with no --source printed %q, want the session's source=%s", out, field)
-	}
+	require.Contains(t, out, " source="+field+" ", "append with no --source printed %q, want the session's source=%s", out, field)
 	out, _ = runOK(t, "", "append", "--store", store, "--session", "s1", "--entry", "own",
 		"--text", "words with a pointer", "--source", "bench-a/session-7#L3", "--publish", "manual")
-	if !strings.Contains(out, " source=bench-a/session-7#L3 ") {
-		t.Fatalf("append --source printed %q, want its own source", out)
-	}
+	require.Contains(t, out, " source=bench-a/session-7#L3 ", "append --source printed %q, want its own source", out)
 	out, _ = runOK(t, "", "index", "--store", store)
 	for _, want := range []string{"entry=inherits stamp=", "entry=own stamp="} {
-		if !strings.Contains(out, want) {
-			t.Fatalf("index printed %q, missing %q", out, want)
-		}
+		require.Contains(t, out, want, "index printed %q, missing %q", out, want)
 	}
 	for _, line := range strings.Split(out, "\n") {
 		switch {
 		case strings.Contains(line, "entry=inherits "):
-			if !strings.HasSuffix(line, " source="+field) {
-				t.Fatalf("index row %q, want the session's source", line)
-			}
+			require.True(t, strings.HasSuffix(line, " source="+field), "index row %q, want the session's source", line)
 		case strings.Contains(line, "entry=own "):
-			if !strings.HasSuffix(line, " source=bench-a/session-7#L3") {
-				t.Fatalf("index row %q, want the entry's own source", line)
-			}
+			require.True(t, strings.HasSuffix(line, " source=bench-a/session-7#L3"), "index row %q, want the entry's own source", line)
 		}
 	}
 	out, _ = runOK(t, "", "receipt", "--store", store, "--session", "s1", "--entry", "inherits")
-	if !strings.Contains(out, " source="+field+" ") {
-		t.Fatalf("receipt printed %q, want source=%s", out, field)
-	}
-	if _, err := os.Stat(ptr); !os.IsNotExist(err) {
-		t.Fatalf("the source pointer was created or opened: %v", err)
-	}
+	require.Contains(t, out, " source="+field+" ", "receipt printed %q, want source=%s", out, field)
+	_, err := os.Stat(ptr)
+	require.True(t, os.IsNotExist(err), "the source pointer was created or opened: %v", err)
 
 	// A session opened with no pointer: the entry has none, and says so.
 	runOK(t, "", "open", "--store", store, "--session", "s2", "--publish", "manual")
 	out, _ = runOK(t, "", "append", "--store", store, "--session", "s2", "--entry", "bare",
 		"--text", "words from nowhere named", "--publish", "manual")
-	if !strings.Contains(out, " source=- ") {
-		t.Fatalf("append with no pointer anywhere printed %q, want source=-", out)
-	}
+	require.Contains(t, out, " source=- ", "append with no pointer anywhere printed %q, want source=-", out)
 	out, _ = runOK(t, "", "receipt", "--store", store, "--session", "s2", "--entry", "bare")
-	if !strings.Contains(out, " source=- ") {
-		t.Fatalf("receipt with no pointer printed %q, want source=-", out)
-	}
+	require.Contains(t, out, " source=- ", "receipt with no pointer printed %q, want source=-", out)
 }
 
 // appendWroteNothing is the "nothing written" half of the two provenance
@@ -321,12 +247,8 @@ func appendWroteNothing(t *testing.T, store, session, entry string) {
 		t.Fatalf("a refused append left an entry file: %v", err)
 	}
 	raw, err := os.ReadFile(filepath.Join(store, "sessions", session+".md"))
-	if err != nil {
-		t.Fatalf("read the session file: %v", err)
-	}
-	if strings.Contains(string(raw), "ENTRY "+entry+" ") {
-		t.Fatalf("a refused append left a pointer line:\n%s", raw)
-	}
+	require.NoError(t, err, "read the session file")
+	require.NotContains(t, string(raw), "ENTRY "+entry+" ", "a refused append left a pointer line:\n%s", raw)
 }
 
 // TestAnUnreadableLogRefusesTheAppendAndWritesNothing is SPEC-CAIRN line 29:
@@ -346,9 +268,7 @@ func TestAnUnreadableLogRefusesTheAppendAndWritesNothing(t *testing.T) {
 	store := t.TempDir()
 	runOK(t, "", "open", "--store", store, "--session", "s1", "--source", "session:x", "--publish", "manual")
 	log := filepath.Join(store, "log.jsonl")
-	if err := os.Chmod(log, 0o200); err != nil {
-		t.Fatalf("chmod: %v", err)
-	}
+	require.NoError(t, os.Chmod(log, 0o200), "chmod")
 	t.Cleanup(func() { _ = os.Chmod(log, 0o644) })
 	// The fixture is only a fixture if the read really fails: some
 	// filesystems and privileged runs read a 0200 file anyway.
@@ -358,12 +278,9 @@ func TestAnUnreadableLogRefusesTheAppendAndWritesNothing(t *testing.T) {
 
 	code, out, errOut := runCode("", "append", "--store", store, "--session", "s1", "--entry", "e1",
 		"--text", "words that would inherit the pointer", "--publish", "manual")
-	if code != 2 {
-		t.Fatalf("append over an unreadable log exited %d, want 2: stdout=%q stderr=%q", code, out, errOut)
-	}
-	if strings.Contains(out, "APPEND OK") || !strings.Contains(errOut, log) {
-		t.Fatalf("want a refusal naming %s and no APPEND OK: stdout=%q stderr=%q", log, out, errOut)
-	}
+	require.Equal(t, 2, code, "append over an unreadable log exited %d, want 2: stdout=%q stderr=%q", code, out, errOut)
+	require.NotContains(t, out, "APPEND OK", "want a refusal naming %s and no APPEND OK: stdout=%q stderr=%q", log, out, errOut)
+	require.Contains(t, errOut, log, "want a refusal naming %s and no APPEND OK: stdout=%q stderr=%q", log, out, errOut)
 	appendWroteNothing(t, store, "s1", "e1")
 }
 
@@ -384,26 +301,21 @@ func TestAMalformedOpenRecordRefusesTheAppendAndWritesNothing(t *testing.T) {
 			store := t.TempDir()
 			runOK(t, "", "open", "--store", store, "--session", "s1", "--source", "session:x", "--publish", "manual")
 			log := filepath.Join(store, "log.jsonl")
-			if err := os.WriteFile(log, []byte(bad+"\n"), 0o644); err != nil {
-				t.Fatalf("write log: %v", err)
-			}
+			require.NoError(t, os.WriteFile(log, []byte(bad+"\n"), 0o644), "write log")
 			code, out, errOut := runCode("", "append", "--store", store, "--session", "s1", "--entry", "e1",
 				"--text", "words that would inherit the pointer", "--publish", "manual")
 			if code != 2 || strings.Contains(out, "APPEND OK") || !strings.Contains(errOut, log) {
 				t.Fatalf("want exit 2 naming %s: code=%d stdout=%q stderr=%q", log, code, out, errOut)
 			}
 			appendWroteNothing(t, store, "s1", "e1")
-			if raw, _ := os.ReadFile(log); string(raw) != bad+"\n" {
-				t.Fatalf("a refused append changed the log:\n%s", raw)
-			}
+			raw, _ := os.ReadFile(log)
+			require.Equal(t, bad+"\n", string(raw), "a refused append changed the log:\n%s", raw)
 
 			// A malformed line that names another session is not this one's.
 			runOK(t, "", "open", "--store", store, "--session", "s2", "--source", "session:y", "--publish", "manual")
 			out, _ = runOK(t, "", "append", "--store", store, "--session", "s2", "--entry", "e2",
 				"--text", "words of another session", "--publish", "manual")
-			if !strings.Contains(out, " source=session:y ") {
-				t.Fatalf("s2 append printed %q, want its own session's source", out)
-			}
+			require.Contains(t, out, " source=session:y ", "s2 append printed %q, want its own session's source", out)
 		})
 	}
 }

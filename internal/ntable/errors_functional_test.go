@@ -10,12 +10,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // Redis releases use different words for the same ACL denial. Require a
@@ -53,15 +54,11 @@ func TestKeyACLDenialOnCellKeysIsAnErrorNotAMalformedReply(t *testing.T) {
 		"~table:demo:identity", "~table:demo:changes", "~table:demo:ops", "~table::member:*", "~tables"}
 	addr, admin := live(t, perms...)
 	ctx := context.Background()
-	if err := ntable.Create(ctx, admin, demo(), now); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, ntable.Create(ctx, admin, demo(), now))
 	if _, err := ntable.RowAdd(ctx, admin, "demo", "build", ntable.RowSpec{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := ntable.MemberCreate(ctx, admin, "demo", "q"); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, ntable.MemberCreate(ctx, admin, "demo", "q"))
 	nc := redis.NewClient(&redis.Options{Addr: addr, Username: "nc", Password: "pw"})
 	defer nc.Close()
 	rev := admin.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
@@ -72,9 +69,7 @@ func TestKeyACLDenialOnCellKeysIsAnErrorNotAMalformedReply(t *testing.T) {
 		t.Fatalf("the cell key must be denied directly: %v", err)
 	}
 	body, err := json.Marshal(m)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	raw := nc.FCall(ctx, ntable.FnApply, []string{ntable.DefKey("demo")}, "demo", string(body)).Err()
 	_, err = ntable.ApplyBatch(ctx, nc, m)
 	assertACLPassThrough(t, "ApplyBatch", err, raw)
@@ -87,9 +82,7 @@ func TestKeyACLDenialOnCellKeysIsAnErrorNotAMalformedReply(t *testing.T) {
 	raw = nc.FCallRO(ctx, ntable.FnCheck, []string{ntable.DefKey("demo")}, "demo").Err()
 	_, err = ntable.Check(ctx, nc, "demo")
 	assertACLPassThrough(t, "Check", err, raw)
-	if after := storeImage(t, admin); !reflect.DeepEqual(before, after) {
-		t.Error("key-ACL denials wrote to the store")
-	}
+	assert.Equal(t, before, storeImage(t, admin), "key-ACL denials wrote to the store")
 }
 
 // The store's own errors (memory, a read-only replica, a missing permission)
@@ -105,9 +98,7 @@ func TestStoreErrorsPassThroughTheScriptUnchanged(t *testing.T) {
 	extra := append([]string{"--user", "default", "on", "nopass", "~*", "&*", "+@all", "--user", "nt", "on", ">pw", "resetkeys", "resetchannels", "-@all", "+ping"}, grants...)
 	addr, admin := live(t, extra...)
 	ctx := context.Background()
-	if err := ntable.Create(ctx, admin, demo(), now); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, ntable.Create(ctx, admin, demo(), now))
 	if _, err := ntable.RowAdd(ctx, admin, "demo", "r", ntable.RowSpec{}); err != nil {
 		t.Fatal(err)
 	}
@@ -117,20 +108,12 @@ func TestStoreErrorsPassThroughTheScriptUnchanged(t *testing.T) {
 	_, err := ntable.CellAdd(ctx, nt, "demo", "r", "ready", "x", 1)
 	raw := nt.FCall(ctx, ntable.FnCellAdd, []string{ntable.DefKey("demo")}, "demo", "r", "ready", "1", "x", `{"epoch":"0","actor":"","fence":"","idem":""}`).Err()
 	assertACLPassThrough(t, "missing +type", err, raw)
-	if after := storeImage(t, admin); !reflect.DeepEqual(before, after) {
-		t.Error("a denied +type write changed the store")
-	}
-	if err := admin.ConfigSet(ctx, "maxmemory-policy", "noeviction").Err(); err != nil {
-		t.Fatal(err)
-	}
-	if err := admin.ConfigSet(ctx, "maxmemory", "1").Err(); err != nil {
-		t.Fatal(err)
-	}
+	assert.Equal(t, before, storeImage(t, admin), "a denied +type write changed the store")
+	require.NoError(t, admin.ConfigSet(ctx, "maxmemory-policy", "noeviction").Err())
+	require.NoError(t, admin.ConfigSet(ctx, "maxmemory", "1").Err())
 	_, err = ntable.RowAdd(ctx, admin, "demo", "r9", ntable.RowSpec{})
 	if err == nil || !strings.Contains(err.Error(), "OOM command not allowed") || strings.Contains(err.Error(), "ERR ERR") {
 		t.Errorf("out of memory: %v", err)
 	}
-	if err := admin.ConfigSet(ctx, "maxmemory", "0").Err(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, admin.ConfigSet(ctx, "maxmemory", "0").Err())
 }

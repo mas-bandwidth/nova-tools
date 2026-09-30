@@ -12,6 +12,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/require"
 )
 
 // tripLog counts the round trips a client makes and the commands it sends.
@@ -80,12 +81,8 @@ func TestCreateRowAddCellAddReadRender(t *testing.T) {
 
 	c, _ := store(t)
 	ctx := context.Background()
-	if err := ntable.Create(ctx, c, demo(), now); err != nil {
-		t.Fatal(err)
-	}
-	if err := ntable.Create(ctx, c, demo(), now); err != nil {
-		t.Fatalf("second identical create: %v", err)
-	}
+	require.NoError(t, ntable.Create(ctx, c, demo(), now))
+	require.NoError(t, ntable.Create(ctx, c, demo(), now), "second identical create")
 	other := demo()
 	other.Columns = other.Columns[:2]
 	if err := ntable.Create(ctx, c, other, now); !errors.Is(err, ntable.ErrExists) {
@@ -114,26 +111,21 @@ func TestCreateRowAddCellAddReadRender(t *testing.T) {
 		} else {
 			_, err = ntable.CellAdd(ctx, c, "demo", add.row, add.col, add.member, add.score)
 		}
-		if err != nil {
-			t.Fatalf("cell add %+v: %v", add, err)
-		}
+		require.NoError(t, err, "cell add %+v: %v", add, err)
 	}
 	if n, err := ntable.CellRemove(ctx, c, "demo", "build", "ready", "b2"); err != nil || n != 1 {
 		t.Fatalf("cell remove: n=%d err=%v", n, err)
 	}
 	tb, err := ntable.Read(ctx, c, "demo")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	want := "row        | ready | working | done | who\n" +
 		"-----------+-------+---------+------+-------\n" +
 		"build      |     1 |       1 |    0 | ann\n" +
 		"test suite |     0 |       0 |    1 | bo,ann\n" +
 		"-----------+-------+---------+------+-------\n" +
 		"           |     1 |       1 |    1 | ann,bo\n"
-	if got := ntable.Render(tb, ntable.RenderOpts{}); got != want {
-		t.Fatalf("rendered:\n%s\nwant:\n%s", got, want)
-	}
+	got := ntable.Render(tb, ntable.RenderOpts{})
+	require.Equal(t, want, got, "rendered:\n%s\nwant:\n%s", got, want)
 	ms, err := ntable.CellMembers(ctx, c, "demo", "test", "who")
 	if err != nil || len(ms) != 2 || ms[0].Member != "bo" || ms[1].Member != "ann" || ms[1].Score != 2 {
 		t.Fatalf("CellMembers = %+v %v", ms, err)
@@ -144,9 +136,8 @@ func TestCreateRowAddCellAddReadRender(t *testing.T) {
 			t.Errorf("cell add %v accepted", bad)
 		}
 	}
-	if _, err := ntable.Read(ctx, c, "nope"); !errors.Is(err, ntable.ErrNoTable) {
-		t.Fatalf("read of no table: %v, want ErrNoTable", err)
-	}
+	_, err = ntable.Read(ctx, c, "nope")
+	require.ErrorIs(t, err, ntable.ErrNoTable, "read of no table: %v, want ErrNoTable", err)
 }
 
 // TestRowOrderIsStableAcrossReAdds: rows render in the order added, a
@@ -157,9 +148,7 @@ func TestRowOrderIsStableAcrossReAdds(t *testing.T) {
 
 	c, _ := store(t)
 	ctx := context.Background()
-	if err := ntable.Create(ctx, c, demo(), now); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, ntable.Create(ctx, c, demo(), now))
 	for _, key := range []string{"c", "a", "b"} {
 		if _, err := ntable.RowAdd(ctx, c, "demo", key, ntable.RowSpec{}); err != nil {
 			t.Fatal(err)
@@ -172,9 +161,7 @@ func TestRowOrderIsStableAcrossReAdds(t *testing.T) {
 		t.Fatal(err)
 	}
 	tb, err := ntable.Read(ctx, c, "demo")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	keys := []string{}
 	for _, r := range tb.Rows {
 		keys = append(keys, r.Key)
@@ -203,12 +190,10 @@ func TestRowOrderIsStableAcrossReAdds(t *testing.T) {
 			t.Fatalf("Drop left owned keys %v: %v", keys, err)
 		}
 	}
-	if _, err := ntable.Read(ctx, c, "demo"); !errors.Is(err, ntable.ErrNoTable) {
-		t.Fatalf("dropped presence: %v", err)
-	}
-	if !c.HExists(ctx, ntable.DefKey("demo"), "order").Val() || !c.HExists(ctx, ntable.MemberKey("m"), "epoch").Val() {
-		t.Fatal("drop lost definition or member identity")
-	}
+	_, err = ntable.Read(ctx, c, "demo")
+	require.ErrorIs(t, err, ntable.ErrNoTable, "dropped presence")
+	require.True(t, c.HExists(ctx, ntable.DefKey("demo"), "order").Val(), "drop lost definition or member identity")
+	require.True(t, c.HExists(ctx, ntable.MemberKey("m"), "epoch").Val(), "drop lost definition or member identity")
 }
 
 // TestReaderTakesOnePipelineInTheSteadyState also pins the cold and changed
@@ -218,9 +203,7 @@ func TestReaderTakesOnePipelineInTheSteadyState(t *testing.T) {
 
 	c, log := store(t)
 	ctx := context.Background()
-	if err := ntable.Create(ctx, c, demo(), now); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, ntable.Create(ctx, c, demo(), now))
 	for _, key := range []string{"a", "b"} {
 		if _, err := ntable.RowAdd(ctx, c, "demo", key, ntable.RowSpec{}); err != nil {
 			t.Fatal(err)
@@ -239,29 +222,21 @@ func TestReaderTakesOnePipelineInTheSteadyState(t *testing.T) {
 		t.Fatal(err)
 	}
 	trips, names := log.reset()
-	if trips != 1 {
-		t.Fatalf("steady read took %d round trips, want 1: %v", trips, names)
-	}
+	require.Equal(t, 1, trips, "steady read took %d round trips, want 1: %v", trips, names)
 	for _, n := range names {
-		if n == "KEYS" || n == "SCAN" {
-			t.Fatalf("the read sent %s", n)
-		}
+		require.NotEqual(t, "KEYS", n, "the read sent %s", n)
+		require.NotEqual(t, "SCAN", n, "the read sent %s", n)
 	}
 	if _, err := ntable.RowAdd(ctx, c, "demo", "c", ntable.RowSpec{Binds: map[string]string{"ready": "elsewhere:ready"}, Owner: "other-tool put"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := c.ZAdd(ctx, "elsewhere:ready", redis.Z{Score: 1, Member: "e1"}).Err(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, c.ZAdd(ctx, "elsewhere:ready", redis.Z{Score: 1, Member: "e1"}).Err())
 	log.reset()
 	tb, err := r.Read(ctx, c)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	// The changed shape and its bound values still arrive in one read.
-	if trips, _ := log.reset(); trips != 1 {
-		t.Fatalf("read after a bound row add took %d round trips, want 1", trips)
-	}
+	trips, _ = log.reset()
+	require.Equal(t, 1, trips, "read after a bound row add took %d round trips, want 1", trips)
 	if len(tb.Rows) != 3 || !tb.Rows[2].Cells[0].Bound || tb.Rows[2].Cells[0].Count != 1 || tb.Rows[2].Owner != "other-tool put" {
 		t.Fatalf("bound row read: %+v", tb.Rows[2])
 	}
@@ -271,12 +246,9 @@ func TestReaderTakesOnePipelineInTheSteadyState(t *testing.T) {
 	if !errors.As(err, &bound) || bound.Key != "elsewhere:ready" || bound.Owner != "other-tool put" {
 		t.Fatalf("cell add on a bound cell: %v", err)
 	}
-	if !strings.Contains(err.Error(), "demo.c.ready is bound to elsewhere:ready, owned elsewhere; run: other-tool put") {
-		t.Fatalf("bound refusal reads %q", err)
-	}
-	if _, err := ntable.CellRemove(ctx, c, "demo", "c", "ready", "e1"); !errors.As(err, &bound) {
-		t.Fatalf("cell remove on a bound cell: %v", err)
-	}
+	require.ErrorContains(t, err, "demo.c.ready is bound to elsewhere:ready, owned elsewhere; run: other-tool put", "bound refusal reads")
+	_, err = ntable.CellRemove(ctx, c, "demo", "c", "ready", "e1")
+	require.ErrorAs(t, err, &bound, "cell remove on a bound cell")
 	if n, err := c.ZCard(ctx, "elsewhere:ready").Result(); err != nil || n != 1 {
 		t.Fatalf("the bound set was written: %d %v", n, err)
 	}
@@ -285,9 +257,8 @@ func TestReaderTakesOnePipelineInTheSteadyState(t *testing.T) {
 		t.Fatalf("CellMembers of a bound cell = %+v %v", ms, err)
 	}
 	// a drop leaves the bound set where it is
-	if _, err := ntable.Drop(ctx, c, "demo"); err != nil {
-		t.Fatal(err)
-	}
+	_, err = ntable.Drop(ctx, c, "demo")
+	require.NoError(t, err)
 	if n, err := c.ZCard(ctx, "elsewhere:ready").Result(); err != nil || n != 1 {
 		t.Fatalf("drop touched the bound set: %d %v", n, err)
 	}
@@ -303,9 +274,7 @@ func TestBindMakesTheStoreTheCallersTable(t *testing.T) {
 	c, _ := store(t)
 	ctx := context.Background()
 	cols, err := ntable.ParseColumns("waiting,landed")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	tb := ntable.Table{Name: "streams", Columns: cols, FooterLabel: "total"}
 	bind := func(streams ...string) ntable.Table {
 		out := ntable.Table{Name: tb.Name, Columns: tb.Columns, FooterLabel: tb.FooterLabel}
@@ -321,38 +290,28 @@ func TestBindMakesTheStoreTheCallersTable(t *testing.T) {
 	for _, z := range []struct {
 		key, member string
 	}{{"ws:a:waiting", "a1"}, {"ws:a:waiting", "a:sentinel"}, {"ws:b:landed", "b1"}, {"ws:b:landed", "b2"}} {
-		if err := c.ZAdd(ctx, z.key, redis.Z{Score: 1, Member: z.member}).Err(); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, c.ZAdd(ctx, z.key, redis.Z{Score: 1, Member: z.member}).Err())
 	}
-	if err := ntable.Bind(ctx, c, bind("a", "b", "gone"), now); err != nil {
-		t.Fatal(err)
-	}
-	if err := ntable.Bind(ctx, c, bind("b", "a"), now); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, ntable.Bind(ctx, c, bind("a", "b", "gone"), now))
+	require.NoError(t, ntable.Bind(ctx, c, bind("b", "a"), now))
 	got, err := ntable.Read(ctx, c, "streams")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	want := "row   | waiting | landed\n" +
 		"------+---------+-------\n" +
 		"b     |       0 |      2\n" +
 		"a     |       1 |      0\n" +
 		"------+---------+-------\n" +
 		"total |       1 |      2\n"
-	if rendered := ntable.Render(got, ntable.RenderOpts{}); rendered != want {
-		t.Fatalf("bound render:\n%s\nwant:\n%s", rendered, want)
-	}
+	rendered := ntable.Render(got, ntable.RenderOpts{})
+	require.Equal(t, want, rendered, "bound render:\n%s\nwant:\n%s", rendered, want)
 	if n, err := c.Exists(ctx, ntable.RowKey("streams", "gone")).Result(); err != nil || n != 0 {
 		t.Fatalf("the row Bind no longer names is still there: %d %v", n, err)
 	}
 	if ms, err := ntable.CellMembers(ctx, c, "streams", "a", "waiting"); err != nil || len(ms) != 1 || ms[0].Member != "a1" {
 		t.Fatalf("members with the exclude left out = %+v %v", ms, err)
 	}
-	if !ntable.SameShape(got, bind("b", "a")) || ntable.SameShape(got, bind("a", "b")) {
-		t.Fatal("SameShape does not tell the bound order")
-	}
+	require.True(t, ntable.SameShape(got, bind("b", "a")), "SameShape does not tell the bound order")
+	require.False(t, ntable.SameShape(got, bind("a", "b")), "SameShape does not tell the bound order")
 }
 
 // TestQueueCellsFillsAnInMemoryTable: a caller holding the shape reads
@@ -364,34 +323,24 @@ func TestQueueCellsFillsAnInMemoryTable(t *testing.T) {
 	c, log := store(t)
 	ctx := context.Background()
 	cols, err := ntable.ParseColumns("n,who:members:union")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	tb := ntable.Table{Name: "mem", Columns: cols}
 	r := ntable.NewRow(tb, "x")
 	r.Cells[0] = ntable.Cell{Key: "set:n", Bound: true}
 	r.Cells[1] = ntable.Cell{Key: "set:who", Bound: true}
 	tb.Rows = []ntable.Row{r}
-	if err := c.ZAdd(ctx, "set:n", redis.Z{Score: 1, Member: "one"}, redis.Z{Score: 2, Member: "two"}).Err(); err != nil {
-		t.Fatal(err)
-	}
-	if err := c.Set(ctx, "set:who", "not a zset", 0).Err(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, c.ZAdd(ctx, "set:n", redis.Z{Score: 1, Member: "one"}, redis.Z{Score: 2, Member: "two"}).Err())
+	require.NoError(t, c.Set(ctx, "set:who", "not a zset", 0).Err())
 	log.reset()
 	pipe := c.Pipeline()
 	q := ntable.QueueCells(ctx, pipe, &tb)
 	_, _ = pipe.Exec(ctx) // WRONGTYPE on one command is that cell's error, not the pipeline's
 	q.Result()
-	if trips, _ := log.reset(); trips != 1 {
-		t.Fatalf("QueueCells took %d round trips, want 1", trips)
-	}
-	if tb.Rows[0].Cells[0].Count != 2 || tb.Rows[0].Cells[0].Unread {
-		t.Fatalf("count cell = %+v", tb.Rows[0].Cells[0])
-	}
-	if !tb.Rows[0].Cells[1].Unread {
-		t.Fatalf("a set of the wrong type read as %+v, want Unread", tb.Rows[0].Cells[1])
-	}
+	trips, _ := log.reset()
+	require.Equal(t, 1, trips, "QueueCells took %d round trips, want 1", trips)
+	require.Equal(t, int64(2), tb.Rows[0].Cells[0].Count, "count cell = %+v", tb.Rows[0].Cells[0])
+	require.False(t, tb.Rows[0].Cells[0].Unread, "count cell = %+v", tb.Rows[0].Cells[0])
+	require.True(t, tb.Rows[0].Cells[1].Unread, "a set of the wrong type read as %+v, want Unread", tb.Rows[0].Cells[1])
 	if got := ntable.Render(tb, ntable.RenderOpts{}); !strings.Contains(got, "x   | 2 | ?\n") || !strings.Contains(got, "    | 2 | ?\n") {
 		t.Fatalf("unread cell render:\n%s", got)
 	}
@@ -403,9 +352,7 @@ func TestBatchApplyMoveDestinationWrongTypePreservesSource(t *testing.T) {
 	ctx := context.Background()
 
 	tb := demo()
-	if err := ntable.Create(ctx, c, tb, now); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, ntable.Create(ctx, c, tb, now))
 	if _, err := ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{}); err != nil {
 		t.Fatal(err)
 	}
@@ -417,9 +364,7 @@ func TestBatchApplyMoveDestinationWrongTypePreservesSource(t *testing.T) {
 
 	// Set destination cell key to a string (wrong type)
 	dst := ntable.CellKey("demo", "build", "working")
-	if err := c.Set(ctx, dst, "foo", 0).Err(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, c.Set(ctx, dst, "foo", 0).Err())
 
 	// Attempt member move via ApplyBatch
 	rev := c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
@@ -445,20 +390,13 @@ func TestBatchApplyMoveDestinationWrongTypePreservesSource(t *testing.T) {
 	}
 
 	_, err := ntable.ApplyBatch(ctx, c, manifest)
-	if err == nil {
-		t.Fatal("expected ApplyBatch to fail on wrong destination type, got nil")
-	}
-	if !errors.Is(err, ntable.ErrWrongType) || !strings.Contains(err.Error(), "changed=no") {
-		t.Fatalf("expected ErrWrongType with changed=no, got: %v", err)
-	}
+	require.Error(t, err, "expected ApplyBatch to fail on wrong destination type, got nil")
+	require.ErrorIs(t, err, ntable.ErrWrongType, "expected ErrWrongType with changed=no, got: %v", err)
+	require.ErrorContains(t, err, "changed=no", "expected ErrWrongType with changed=no, got: %v", err)
 
 	// Assert member STILL EXISTS on source cell with score preserved (no partial mutation / ZREM)
 	srcKey := ntable.CellKey("demo", "build", "ready")
 	score, err := c.ZScore(ctx, srcKey, "m1").Result()
-	if err != nil {
-		t.Fatalf("expected member m1 to still exist in source cell after refusal, got error: %v", err)
-	}
-	if score != 42 {
-		t.Fatalf("expected member score to remain 42, got %v", score)
-	}
+	require.NoError(t, err, "expected member m1 to still exist in source cell after refusal, got error")
+	require.Equal(t, float64(42), score, "expected member score to remain 42, got %v", score)
 }

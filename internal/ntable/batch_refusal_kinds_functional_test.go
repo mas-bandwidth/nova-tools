@@ -8,13 +8,14 @@ package ntable_test
 
 import (
 	"errors"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestBatchRefusalHasACodeAndASentence(t *testing.T) {
@@ -47,13 +48,9 @@ func TestBatchRefusalHasACodeAndASentence(t *testing.T) {
 		if r.Code != tc.code || !errors.Is(err, tc.is) || errors.Is(err, ntable.ErrUnknownOutcome) {
 			t.Errorf("%s: code %q, %v; want %s wrapping %v", tc.name, r.Code, err, tc.code, tc.is)
 		}
-		if !strings.Contains(err.Error(), "; code="+tc.code+"; changed=no; run: nova-table") {
-			t.Errorf("%s: the text has no code field: %v", tc.name, err)
-		}
+		assert.ErrorContains(t, err, "; code="+tc.code+"; changed=no; run: nova-table", "%s: the text has no code field: %v", tc.name, err)
 		for _, leak := range []string{"NOTMEMBER:", "(TWICE)", "WRONGTYPE:"} {
-			if strings.Contains(err.Error(), leak) {
-				t.Errorf("%s: a tag leaks into the sentence: %v", tc.name, err)
-			}
+			assert.NotContains(t, err.Error(), leak, "%s: a tag leaks into the sentence: %v", tc.name, err)
 		}
 	}
 }
@@ -68,9 +65,7 @@ func TestBatchTransportFailureSaysWhatToDoAndIsNotARefusal(t *testing.T) {
 		t.Fatalf("a transport failure: %v", err)
 	}
 	for _, w := range []string{"changed=unknown", `same operation id "lost-1"`, "returns the original receipt if the batch was applied and applies it if it was not"} {
-		if !strings.Contains(err.Error(), w) {
-			t.Errorf("the message lacks %q: %v", w, err)
-		}
+		assert.ErrorContains(t, err, w, "the message lacks %q: %v", w, err)
 	}
 	// a manifest that cannot be read is neither
 	_, err = ntable.ApplyBatch(t.Context(), dead, ntable.BatchManifest{Table: "bad name", OperationID: "x"})
@@ -95,9 +90,8 @@ func TestBatchOperationConflictAndLimitsSayHowToProceed(t *testing.T) {
 	}
 	// the store's own LIMIT names the same way out
 	raw := manifestWith(probeRev(ctx, c), "narrow2", `{"id":"a","expect":{},"set":{`+strings.TrimSuffix(strings.Repeat(`"f0":"v",`, 1), ",")+`}}`)
-	if _, err := ntable.ValidateBatchManifestRaw([]byte(raw)); err != nil {
-		t.Fatal(err)
-	}
+	_, err = ntable.ValidateBatchManifestRaw([]byte(raw))
+	require.NoError(t, err)
 }
 
 func manyNames(n int) []string {
@@ -120,12 +114,8 @@ func TestBatchRefusalsNameTheMemberOfAWrongTypeAndTheStateOfADrift(t *testing.T)
 	t.Parallel()
 	c, ctx := probeTable(t)
 	seedTwo(t, ctx, c)
-	if err := c.Set(ctx, ntable.MemberKey("junk"), "s", 0).Err(); err != nil {
-		t.Fatal(err)
-	}
-	if err := c.ZAdd(ctx, ntable.CellKey("demo", "test", "done"), redis.Z{Score: 1, Member: "ghost"}).Err(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, c.Set(ctx, ntable.MemberKey("junk"), "s", 0).Err())
+	require.NoError(t, c.ZAdd(ctx, ntable.CellKey("demo", "test", "done"), redis.Z{Score: 1, Member: "ghost"}).Err())
 	g := &ntable.MemberExpect{}
 	_, err := ntable.ApplyBatch(ctx, c, refusalFixtureBatch(probeRev(ctx, c), "w1", ntable.BatchMemberEntry{ID: "junk", Expect: g}))
 	if !errors.Is(err, ntable.ErrWrongType) || !strings.Contains(err.Error(), `member "junk"`) || !strings.Contains(err.Error(), "key table::member:junk is string, expected hash") {
@@ -137,21 +127,13 @@ func TestBatchRefusalsNameTheMemberOfAWrongTypeAndTheStateOfADrift(t *testing.T)
 	}
 	// a placement in an owned set that no record holds: there is no record to quote
 	_, err = ntable.ApplyBatch(ctx, c, refusalFixtureBatch(probeRev(ctx, c), "d1", ntable.BatchMemberEntry{ID: "ghost", Expect: &ntable.MemberExpect{Absent: true}, Create: &ntable.MemberCreateOp{Row: "build", Col: "ready", Score: 1}}))
-	if !errors.Is(err, ntable.ErrDrift) {
-		t.Fatalf("a hidden placement: %v", err)
-	}
+	require.ErrorIs(t, err, ntable.ErrDrift, "a hidden placement")
 	for _, w := range []string{`member "ghost"`, `owned set at row "test" column "done" holds member "ghost", and no record places it there`, "nova-table has no repair verb", "; run: nova-table cell members 'demo' 'test' 'done'"} {
-		if !strings.Contains(err.Error(), w) {
-			t.Errorf("the drift refusal lacks %q: %v", w, err)
-		}
+		assert.ErrorContains(t, err, w, "the drift refusal lacks %q: %v", w, err)
 	}
-	if strings.Contains(err.Error(), "the record says") {
-		t.Errorf("the drift refusal quotes a record that does not exist: %v", err)
-	}
+	assert.NotContains(t, err.Error(), "the record says", "the drift refusal quotes a record that does not exist: %v", err)
 	// a record that names a place the set does not hold
-	if err := c.ZRem(ctx, ntable.CellKey("demo", "build", "ready"), "a").Err(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, c.ZRem(ctx, ntable.CellKey("demo", "build", "ready"), "a").Err())
 	_, err = ntable.ApplyBatch(ctx, c, refusalFixtureBatch(probeRev(ctx, c), "d2", ntable.BatchMemberEntry{ID: "a", Expect: g}))
 	if !errors.Is(err, ntable.ErrDrift) || !strings.Contains(err.Error(), `the record places member "a" at row "build" column "ready", and the owned set there does not hold it`) {
 		t.Errorf("a record with no set entry: %v", err)
@@ -163,9 +145,7 @@ func TestBatchRefusalsDoNotEchoALongValue(t *testing.T) {
 	c, ctx := probeTable(t)
 	seedTwo(t, ctx, c)
 	long := strings.Repeat("v", 50000)
-	if err := c.HSet(ctx, ntable.MemberKey("a"), "big", long).Err(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, c.HSet(ctx, ntable.MemberKey("a"), "big", long).Err())
 	guard := func(g ntable.FieldGuard) ntable.BatchMemberEntry {
 		return ntable.BatchMemberEntry{ID: "a", Expect: &ntable.MemberExpect{Fields: map[string]ntable.FieldGuard{"big": g}}}
 	}
@@ -187,23 +167,17 @@ func TestBatchRefusalsDoNotEchoALongValue(t *testing.T) {
 			t.Errorf("%s: the refusal is %d bytes: it echoes a long value", name, len(err.Error()))
 		}
 		if name == "equals" || name == "absent" {
-			if !strings.Contains(err.Error(), "(50000 bytes)") {
-				t.Errorf("%s: the refusal gives no length for the value: %.300s", name, err)
-			}
+			assert.ErrorContains(t, err, "(50000 bytes)", "%s: the refusal gives no length for the value: %.300s", name, err)
 		}
 	}
-	if !reflect.DeepEqual(storeImage(t, c), storeImage(t, c)) {
-		t.Fatal("unstable image")
-	}
+	require.Equal(t, storeImage(t, c), storeImage(t, c), "unstable image")
 }
 
 func TestBatchEpochWordingIsRequestedAndActiveEverywhere(t *testing.T) {
 	t.Parallel()
 	c, tb := epochFixture(t)
 	ctx := t.Context()
-	if err := c.HSet(ctx, tb.EpochKey, "n", 2).Err(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, c.HSet(ctx, tb.EpochKey, "n", 2).Err())
 	rev := c.HGet(ctx, ntable.DefKey(tb.Name)+":revision", "n").Val()
 	stale := ntable.BatchManifest{Schema: 1, Table: tb.Name, Epoch: "1", ExpectedTableRevision: rev, OperationID: "old-epoch", Members: []ntable.BatchMemberEntry{{ID: "a", Expect: &ntable.MemberExpect{}}}}
 	_, err := ntable.ApplyBatch(ctx, c, stale)
