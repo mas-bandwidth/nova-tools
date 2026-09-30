@@ -4,7 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"os"
+	"reflect"
 	"regexp"
+	"strings"
 
 	"github.com/redis/go-redis/v9"
 
@@ -12,34 +16,77 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/tset"
 )
 
-// Conn is the connection Redis sends on: a go-redis client the caller owns.
-// It must be a single-node client whose effective MaxRetries is zero
-// (construct it with MaxRetries: -1), so that no transport retry can resend a
-// write after a lost reply (L1 1.5).
-type Conn = redis.UniversalClient
-
 // Redis is the Client of a store: one FCALL ns_sprint_step per step, one
-// FCALL_RO ns_sprint_read per read or page, on its own connection. It does
+// FCALL_RO ns_sprint_read per read or page, on a connection it owns. It does
 // not wrap tset.RedisStore, whose reads stay at ns_tset_read (errata E3).
-// Construction neither contacts the store nor loads a library.
+// Construction neither contacts the store nor loads a library. Its owner
+// closes it.
 type Redis struct {
-	conn   Conn
+	conn   redis.UniversalClient
 	prefix string
+	close  func() error
 }
 
-// NewRedis is the Client of the store conn reaches, for one deployment's
-// prefix (8.0).
-func NewRedis(conn Conn, names sprint.Names) *Redis {
+// NewRedis is the Client of the store at address, for one deployment's
+// prefix (8.0), built as Layer 1's client is (tset.NewRedis, L1 1.5): it
+// creates and owns a standalone go-redis client, with no hook and transport
+// retries off (effective MaxRetries zero), so nothing can resend a write
+// after a lost reply. The password is read from the environment variable
+// passwordEnvVar names, so the caller never passes or keeps the secret; an
+// empty name is a server without a password, and a name that is not set is
+// an error. No caller-supplied client, option, hook or router is accepted.
+// The returned Redis must be closed by its owner.
+func NewRedis(address, user, passwordEnvVar string, names sprint.Names) (*Redis, error) {
+	client, err := newOwnedClient(address, user, passwordEnvVar, os.LookupEnv)
+	if err != nil {
+		return nil, err
+	}
+	return &Redis{conn: client, prefix: names.Prefix, close: client.Close}, nil
+}
+
+// newOwnedClient is the one client NewRedis builds: Layer 1's rule, with the
+// environment's lookup as a seam for tests.
+func newOwnedClient(address, user, passwordEnvVar string, lookup func(string) (string, bool)) (*redis.Client, error) {
+	if strings.TrimSpace(address) == "" {
+		return nil, errors.New("sprintfn: the Redis address is required")
+	}
+	password := ""
+	if passwordEnvVar != "" {
+		value, ok := lookup(passwordEnvVar)
+		if !ok {
+			return nil, fmt.Errorf("sprintfn: the password environment variable %q is not set", passwordEnvVar)
+		}
+		password = value
+	}
+	// go-redis reads MaxRetries -1 as an effective zero; zero would select
+	// its default of three retries.
+	return redis.NewClient(&redis.Options{Addr: address, Username: user, Password: password, MaxRetries: -1}), nil
+}
+
+// newRedisWithClient is the tests' seam: a Redis over a client the package's
+// own tests build. Production callers cannot hand in a client whose hooks or
+// retries the sprint cannot control; preflight still guards this seam.
+func newRedisWithClient(conn redis.UniversalClient, names sprint.Names) *Redis {
 	return &Redis{conn: conn, prefix: names.Prefix}
+}
+
+// Close releases the client NewRedis owns. A Redis built on the tests' seam
+// owns none, and Close is a no-op there.
+func (r *Redis) Close() error {
+	if r == nil || r.close == nil {
+		return nil
+	}
+	return r.close()
 }
 
 // preflight refuses a connection that could resend or route a call, before
 // anything is sent. It is the check Layer 1's client makes
-// (tset.RedisStore.preflight): no client, a Cluster or Ring router, or an
-// effective MaxRetries other than zero, or options that cannot be read, is
-// UNSUPPORTEDSTORE.
+// (tset.RedisStore.preflight): no client (a typed nil too), a Cluster or Ring
+// router, or an effective MaxRetries other than zero, or options that cannot
+// be read, is UNSUPPORTEDSTORE. NewRedis builds none of these; the check
+// guards the tests' seam.
 func (r *Redis) preflight() error {
-	if r == nil || r.conn == nil {
+	if r == nil || nilClient(r.conn) {
 		return &tset.ClientError{Code: "UNSUPPORTEDSTORE", Cause: errors.New("no Redis client")}
 	}
 	switch r.conn.(type) {
@@ -51,6 +98,46 @@ func (r *Redis) preflight() error {
 		return &tset.ClientError{Code: "UNSUPPORTEDSTORE", Cause: errors.New("the sprint's client needs effective MaxRetries=0")}
 	}
 	return nil
+}
+
+// nilClient says a client interface holds nothing callable: nil, or a typed
+// nil such as a nil *redis.Client.
+func nilClient(c redis.UniversalClient) bool {
+	if c == nil {
+		return true
+	}
+	v := reflect.ValueOf(c)
+	switch v.Kind() {
+	case reflect.Pointer, reflect.Interface, reflect.Map, reflect.Slice, reflect.Func, reflect.Chan:
+		return v.IsNil()
+	}
+	return false
+}
+
+// settledCmd is one FCALL whose reply, once read, stays its own (Layer 1's
+// settledRedisCmd, tset/redis.go). After a transport error part way through
+// a pipeline's replies, go-redis v9.22 sets that error on every command whose
+// error is still nil, the ones whose replies it has already read included, so
+// a step that applied would read as an unknown outcome. A command is settled
+// when its reply is read: a value, a nil reply, or a server's error reply;
+// an error set after that is ignored. Before it, a transport error is kept.
+type settledCmd struct {
+	*redis.Cmd
+	settled bool
+}
+
+var _ redis.Cmder = (*settledCmd)(nil)
+
+// SetErr keeps the first read reply's outcome and ignores what follows it.
+func (c *settledCmd) SetErr(err error) {
+	if c.settled {
+		return
+	}
+	var server redis.Error
+	if err == nil || errors.Is(err, redis.Nil) || errors.As(err, &server) {
+		c.settled = true
+	}
+	c.Cmd.SetErr(err)
 }
 
 // wireItem is one item encoded, before the pipeline opens.
@@ -86,23 +173,28 @@ func (r *Redis) Pipeline(ctx context.Context, items []Item) ([]Result, error) {
 		return nil, err
 	}
 	pipe := r.conn.Pipeline()
-	cmds := make([]*redis.Cmd, len(wire))
+	cmds := make([]*settledCmd, len(wire))
 	for i, w := range wire {
+		var cmd *redis.Cmd
 		if w.step != nil {
-			cmds[i] = pipe.FCall(ctx, fnStep, nil, Version, string(w.step.raw), string(w.step.sprint))
+			cmd = redis.NewCmd(ctx, "fcall", fnStep, 0, Version, string(w.step.raw), string(w.step.sprint))
 		} else {
-			cmds[i] = pipe.FCallRO(ctx, fnRead, nil, Version, string(w.read))
+			cmd = redis.NewCmd(ctx, "fcall_ro", fnRead, 0, Version, string(w.read))
+		}
+		cmds[i] = &settledCmd{Cmd: cmd}
+		if err := pipe.Process(ctx, cmds[i]); err != nil {
+			// Process only queues; an error here is before the flush, and
+			// nothing was sent.
+			return nil, err
 		}
 	}
 	// One flush. Its aggregate error does not stand for the replies: each
-	// command keeps its own.
-	_, execErr := pipe.Exec(ctx)
+	// command keeps its own, and a command no reply reached holds the
+	// transport's error.
+	_, _ = pipe.Exec(ctx)
 	results := make([]Result, len(wire))
 	for i, cmd := range cmds {
 		text, err := cmd.Text()
-		if err != nil && execErr != nil && errors.Is(err, redis.Nil) {
-			err = execErr
-		}
 		switch {
 		case wire[i].step != nil:
 			results[i] = stepResult(wire[i].step, text, err)

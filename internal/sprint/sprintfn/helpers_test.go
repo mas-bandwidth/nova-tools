@@ -2,13 +2,16 @@ package sprintfn
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/testredis"
 	"github.com/mas-bandwidth/nova-tools/internal/tset"
 )
 
@@ -112,6 +115,93 @@ func image(t *testing.T, tw *Twin, m *tset.Mem, log *LogStub) []byte {
 		t.Fatal(err)
 	}
 	return b
+}
+
+// storeImage is the twin's whole exported state in the shape of item E6's
+// image of a store (testredis.Image): one entry per key, with a type and a
+// SHA256 content sum, so that testredis.Diff names each key a step changed.
+// The sprint's keys are under their own names; the Mem's state is under keys
+// named for what they hold (the active epoch, the engine, the definitions,
+// each table's rows, each cell, each record, each receipt, each seeded sorted
+// set); the log is one stream of lines a epoch and one list a history. The
+// sum of an entry is of its content encoded as JSON, whose maps are in key
+// order, so two entries are equal exactly when their contents are.
+func storeImage(t *testing.T, tw *Twin, m *tset.Mem, log *LogStub) map[string]testredis.Entry {
+	t.Helper()
+	out := map[string]testredis.Entry{}
+	put := func(key, kind string, content any) {
+		b, err := json.Marshal(content)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, dup := out[key]; dup {
+			t.Fatalf("storeImage: two entries named %s", key)
+		}
+		out[key] = testredis.Entry{Type: kind, Sum: sha256.Sum256(b)}
+	}
+	snap, err := m.Snapshot(testPrefix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	put("mem:active", "string", snap.ActiveEpoch)
+	put("mem:engine", "string", snap.Engine)
+	put("mem:definitions", "hash", snap.Definitions)
+	for epoch, e := range snap.Epochs {
+		for table, ts := range e.Tables {
+			at := "mem:" + table + "@" + string(epoch)
+			put(at+":rows", "zset", ts.Rows)
+			for row, cols := range ts.Cells {
+				for col, members := range cols {
+					put(at+":cell:"+row+":"+col, "zset", members)
+				}
+			}
+			for id, r := range ts.Records {
+				put(at+":record:"+id, "hash", r)
+			}
+		}
+	}
+	for epoch, byOp := range snap.Receipts {
+		for op, r := range byOp {
+			put("mem:done@"+string(epoch)+":"+op, "hash", r)
+		}
+	}
+	for key, members := range snap.ZSets {
+		put("mem:zset:"+key, "zset", members)
+	}
+	for key, v := range tw.SprintKeys() {
+		put(key, v.Kind, v)
+	}
+	log.mu.Lock()
+	defer log.mu.Unlock()
+	for lk, lg := range log.logs {
+		at := "log:" + strings.ReplaceAll(lk, "\x00", "@") // prefix@epoch
+		put(at+":lines", "stream", lg.lines)
+		for about, seqs := range lg.history {
+			put(at+":history:"+about, "list", seqs)
+		}
+	}
+	return out
+}
+
+// twinState is everything the twin holds, twice: as bytes, and as an image in
+// E6's shape.
+type twinState struct {
+	bytes []byte
+	image map[string]testredis.Entry
+}
+
+func capture(t *testing.T, tw *Twin, m *tset.Mem, log *LogStub) twinState {
+	t.Helper()
+	return twinState{bytes: image(t, tw, m, log), image: storeImage(t, tw, m, log)}
+}
+
+// unchanged fails the test when anything the twin holds differs from before,
+// naming the keys that changed.
+func unchanged(t *testing.T, what string, before, after twinState) {
+	t.Helper()
+	if diff := testredis.Diff(before.image, after.image); len(diff) != 0 || string(before.bytes) != string(after.bytes) {
+		t.Fatalf("%s changed the twin: %v", what, diff)
+	}
 }
 
 // tracer records the phases the twin enters and the hooks it calls, in order.

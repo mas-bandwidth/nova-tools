@@ -1,6 +1,7 @@
 package sprintfn
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,7 +9,10 @@ import (
 	"io"
 	"net"
 	"os"
+	"strconv"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/redis/go-redis/v9"
@@ -17,9 +21,15 @@ import (
 )
 
 // The fake connection: a go-redis UniversalClient that answers FCALL and
-// FCALL_RO from a script of replies and records every call. Nothing dials:
-// only the methods Redis uses are implemented, and the embedded interface is
-// nil, so any other call panics.
+// FCALL_RO from a script of replies and records every call, built on the
+// tests' seam (newRedisWithClient). Nothing dials: only the methods Redis uses
+// are implemented, and the embedded interface is nil, so any other call
+// panics. It hands replies to the commands as go-redis v9.22 does: a reply
+// read is set and its error set to nil (or to the server's error); a command
+// no reply reached keeps no error until Exec; and when the flush fails, Exec
+// sets the transport's error on every command whose error is still nil, the
+// ones whose replies were read included (go-redis's setCmdsErr), which is
+// what Redis's settled commands must not let through.
 
 type fakeReply struct {
 	val string
@@ -27,9 +37,10 @@ type fakeReply struct {
 }
 
 type fakeCall struct {
-	fn   string
-	ro   bool
-	args []any
+	fn      string
+	ro      bool
+	numkeys any
+	args    []any
 }
 
 type fakeConn struct {
@@ -59,36 +70,41 @@ type fakePipe struct {
 	cmds []redis.Cmder
 }
 
-func (p *fakePipe) FCall(ctx context.Context, fn string, keys []string, args ...any) *redis.Cmd {
-	return p.add(ctx, fn, false, args)
-}
+// valueSetter is the part of a command a reply is set on.
+type valueSetter interface{ SetVal(any) }
 
-func (p *fakePipe) FCallRO(ctx context.Context, fn string, keys []string, args ...any) *redis.Cmd {
-	return p.add(ctx, fn, true, args)
-}
-
-func (p *fakePipe) add(ctx context.Context, fn string, ro bool, args []any) *redis.Cmd {
+func (p *fakePipe) Process(ctx context.Context, cmd redis.Cmder) error {
 	p.conn.mu.Lock()
 	defer p.conn.mu.Unlock()
+	args := cmd.Args()
+	name, _ := args[0].(string)
+	fn, _ := args[1].(string)
 	i := len(p.conn.calls)
-	p.conn.calls = append(p.conn.calls, fakeCall{fn: fn, ro: ro, args: args})
-	cmd := redis.NewCmd(ctx)
+	p.conn.calls = append(p.conn.calls, fakeCall{fn: fn, ro: name == "fcall_ro", numkeys: args[2], args: args[3:]})
 	switch {
 	case i >= len(p.conn.replies):
-		cmd.SetErr(redis.Nil) // no reply came for it
+		// no reply reaches it
 	case p.conn.replies[i].err != nil:
 		cmd.SetErr(p.conn.replies[i].err)
 	default:
-		cmd.SetVal(p.conn.replies[i].val)
+		cmd.(valueSetter).SetVal(p.conn.replies[i].val)
+		cmd.SetErr(nil)
 	}
 	p.cmds = append(p.cmds, cmd)
-	return cmd
+	return nil
 }
 
 func (p *fakePipe) Exec(context.Context) ([]redis.Cmder, error) {
 	p.conn.mu.Lock()
 	defer p.conn.mu.Unlock()
 	p.conn.execs++
+	if p.conn.execErr != nil {
+		for _, cmd := range p.cmds {
+			if cmd.Err() == nil {
+				cmd.SetErr(p.conn.execErr)
+			}
+		}
+	}
 	return p.cmds, p.conn.execErr
 }
 
@@ -121,7 +137,7 @@ var relatedQuery = SprintQuery{Kind: "related", Query: json.RawMessage(`{"kind":
 func TestRedisSendsOneFCALLPerStep(t *testing.T) {
 	t.Parallel()
 	fake := &fakeConn{replies: []fakeReply{{val: okEnvelope("1", "2", 2, `{"lease":{"held":"self"}}`)}, {val: readReply}}}
-	r := NewRedis(fake, testNames)
+	r := newRedisWithClient(fake, testNames)
 	req := seedRequest()
 	req.Lease = &LeasePart{Owner: "tok", HoldMS: 5000}
 	read := &ReadRequest{Epoch: "0", Tset: []tset.ReadQuery{{Kind: "count", Table: "work", Cells: []string{"s1:waiting"}}},
@@ -138,7 +154,7 @@ func TestRedisSendsOneFCALLPerStep(t *testing.T) {
 		t.Fatal(ref)
 	}
 	step := fake.calls[0]
-	if step.fn != fnStep || step.ro || len(step.args) != 3 || step.args[0] != Version ||
+	if step.fn != fnStep || step.ro || fmt.Sprint(step.numkeys) != "0" || len(step.args) != 3 || step.args[0] != Version ||
 		step.args[1] != string(enc.raw) || step.args[2] != string(enc.sprint) {
 		t.Fatalf("step call %s ro=%v args %v", step.fn, step.ro, step.args)
 	}
@@ -152,7 +168,7 @@ func TestRedisSendsOneFCALLPerStep(t *testing.T) {
 		Mode    string            `json:"mode"`
 		Queries []json.RawMessage `json:"queries"`
 	}
-	if rd.fn != fnRead || !rd.ro || len(rd.args) != 2 || json.Unmarshal([]byte(rd.args[1].(string)), &plan) != nil ||
+	if rd.fn != fnRead || !rd.ro || fmt.Sprint(rd.numkeys) != "0" || len(rd.args) != 2 || json.Unmarshal([]byte(rd.args[1].(string)), &plan) != nil ||
 		plan.Mode != "atomic" || len(plan.Queries) != 2 || string(plan.Queries[1]) != string(relatedQuery.Query) {
 		t.Fatalf("read call %s ro=%v args %v", rd.fn, rd.ro, rd.args)
 	}
@@ -170,7 +186,7 @@ func TestRedisSendsOneFCALLPerStep(t *testing.T) {
 func TestRedisMalformedItemSendsNothing(t *testing.T) {
 	t.Parallel()
 	fake := &fakeConn{replies: []fakeReply{{val: okEnvelope("0", "0", 0, `{}`)}}}
-	r := NewRedis(fake, testNames)
+	r := newRedisWithClient(fake, testNames)
 	fence := &Request{Epoch: "0", Fence: true, Body: Body{Op: &Op{ID: "op/p1", Intent: "x"}}, Lease: &LeasePart{Owner: "tok"}}
 	for _, items := range [][]Item{
 		{{Step: seedRequest()}, {Step: fence}},
@@ -217,7 +233,7 @@ func TestClientNeverRetries(t *testing.T) {
 	t.Run("a lost reply", func(t *testing.T) {
 		t.Parallel()
 		fake := &fakeConn{replies: []fakeReply{{err: io.ErrUnexpectedEOF}}, execErr: io.ErrUnexpectedEOF}
-		cc := &countingClient{c: NewRedis(fake, testNames)}
+		cc := &countingClient{c: newRedisWithClient(fake, testNames)}
 		res, err := Step(context.Background(), cc, req)
 		if err != nil {
 			t.Fatal(err)
@@ -235,7 +251,7 @@ func TestClientNeverRetries(t *testing.T) {
 	t.Run("a reply lost after another came", func(t *testing.T) {
 		t.Parallel()
 		fake := &fakeConn{replies: []fakeReply{{val: okEnvelope("1", "2", 2, `{}`)}}, execErr: io.ErrUnexpectedEOF}
-		results, err := Steps(context.Background(), NewRedis(fake, testNames), []*Request{req, moveRequest("waiting", "ready")})
+		results, err := Steps(context.Background(), newRedisWithClient(fake, testNames), []*Request{req, moveRequest("waiting", "ready")})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -247,7 +263,7 @@ func TestClientNeverRetries(t *testing.T) {
 	t.Run("an unreadable reply", func(t *testing.T) {
 		t.Parallel()
 		fake := &fakeConn{replies: []fakeReply{{val: "not json"}}}
-		res, err := Step(context.Background(), NewRedis(fake, testNames), req)
+		res, err := Step(context.Background(), newRedisWithClient(fake, testNames), req)
 		if err != nil || !errors.Is(res.Err, tset.ErrOutcomeUnknown) || len(fake.calls) != 1 {
 			t.Fatalf("result %+v, err %v, calls %d", res, err, len(fake.calls))
 		}
@@ -256,7 +272,7 @@ func TestClientNeverRetries(t *testing.T) {
 	t.Run("a refusal and a server error before the function ran", func(t *testing.T) {
 		t.Parallel()
 		fake := &fakeConn{replies: []fakeReply{{val: refusedPlace}, {err: serverError("ERR Function not found")}}}
-		results, err := Steps(context.Background(), NewRedis(fake, testNames), []*Request{req, req})
+		results, err := Steps(context.Background(), newRedisWithClient(fake, testNames), []*Request{req, req})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -271,10 +287,11 @@ func TestClientNeverRetries(t *testing.T) {
 		t.Parallel()
 		retrying := &fakeConn{maxRetries: 3, replies: []fakeReply{{val: okEnvelope("0", "0", 0, `{}`)}}}
 		for name, c := range map[string]*Redis{
-			"retries on": NewRedis(retrying, testNames),
-			"no client":  NewRedis(nil, testNames),
-			"cluster":    NewRedis(&redis.ClusterClient{}, testNames),
-			"ring":       NewRedis(&redis.Ring{}, testNames),
+			"retries on":   newRedisWithClient(retrying, testNames),
+			"no client":    newRedisWithClient(nil, testNames),
+			"a nil client": newRedisWithClient((*redis.Client)(nil), testNames),
+			"cluster":      newRedisWithClient(&redis.ClusterClient{}, testNames),
+			"ring":         newRedisWithClient(&redis.Ring{}, testNames),
 		} {
 			_, err := Step(context.Background(), c, req)
 			var client *tset.ClientError
@@ -375,7 +392,7 @@ func TestServerErrorClassification(t *testing.T) {
 			t.Parallel()
 			for kind, item := range map[string]Item{"step": {Step: req}, "read": {Read: read}, "page": {Page: pagePlan()}} {
 				fake := &fakeConn{replies: []fakeReply{{err: c.err}}}
-				results, err := NewRedis(fake, testNames).Pipeline(context.Background(), []Item{item})
+				results, err := newRedisWithClient(fake, testNames).Pipeline(context.Background(), []Item{item})
 				if err != nil || len(results) != 1 {
 					t.Fatalf("%s: %v, %d results", kind, err, len(results))
 				}
@@ -390,7 +407,7 @@ func TestServerErrorClassification(t *testing.T) {
 		t.Run("unknown/"+c.name, func(t *testing.T) {
 			t.Parallel()
 			fake := &fakeConn{replies: []fakeReply{{err: c.err}}}
-			res, err := Step(context.Background(), NewRedis(fake, testNames), req)
+			res, err := Step(context.Background(), newRedisWithClient(fake, testNames), req)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -404,7 +421,7 @@ func TestServerErrorClassification(t *testing.T) {
 			}
 			for kind, item := range map[string]Item{"read": {Read: read}, "page": {Page: pagePlan()}} {
 				fake := &fakeConn{replies: []fakeReply{{err: c.err}}}
-				results, err := NewRedis(fake, testNames).Pipeline(context.Background(), []Item{item})
+				results, err := newRedisWithClient(fake, testNames).Pipeline(context.Background(), []Item{item})
 				if err != nil || len(results) != 1 {
 					t.Fatalf("%s: %v, %d results", kind, err, len(results))
 				}
@@ -414,5 +431,206 @@ func TestServerErrorClassification(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestNewRedisOwnsItsClient: NewRedis builds the client as Layer 1's NewRedis
+// does (L1 1.5), and no caller hands it one. The client is a standalone
+// go-redis client with effective MaxRetries zero, the address and user given,
+// and the password read from the environment variable named: an empty name is
+// no password, a name that is not set is an error that names the variable and
+// carries no value, and a set one is the password. An empty address is an
+// error. Construction dials nothing, the preflight passes, and Close closes the
+// client it owns (a later call fails as closed, and nothing is dialed); a Redis
+// on the tests' seam owns nothing to close.
+func TestNewRedisOwnsItsClient(t *testing.T) {
+	t.Parallel()
+	if _, err := NewRedis(" ", "", "", testNames); err == nil {
+		t.Fatal("an empty address was accepted")
+	}
+	env := map[string]string{"SPRINTFN_TEST_PASSWORD": "test-value"}
+	lookup := func(name string) (string, bool) { v, ok := env[name]; return v, ok }
+	for _, c := range []struct {
+		name, variable, password string
+		fails                    bool
+	}{
+		{"no variable", "", "", false},
+		{"a variable that is set", "SPRINTFN_TEST_PASSWORD", "test-value", false},
+		{"a variable that is not set", "SPRINTFN_TEST_UNSET", "", true},
+	} {
+		client, err := newOwnedClient("sprintfn-unit-test", "sprint", c.variable, lookup)
+		if c.fails {
+			if err == nil || !strings.Contains(err.Error(), c.variable) || strings.Contains(err.Error(), "test-value") {
+				t.Fatalf("%s: %v; want an error naming the variable and no value", c.name, err)
+			}
+			continue
+		}
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		o := client.Options()
+		if o.Addr != "sprintfn-unit-test" || o.Username != "sprint" || o.Password != c.password || o.MaxRetries != 0 {
+			t.Fatalf("%s: options addr %q user %q password set %v retries %d", c.name, o.Addr, o.Username, o.Password != "", o.MaxRetries)
+		}
+		_ = client.Close()
+	}
+
+	r, err := NewRedis("sprintfn-unit-test", "sprint", "", testNames)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := r.conn.(*redis.Client); !ok || r.preflight() != nil || r.prefix != testPrefix {
+		t.Fatalf("NewRedis built %T (preflight %v, prefix %q); want a standalone client that passes", r.conn, r.preflight(), r.prefix)
+	}
+	dials := &dialCounter{}
+	r.conn.AddHook(dials)
+	if err := r.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.conn.Ping(context.Background()).Err(); !errors.Is(err, redis.ErrClosed) || dials.n.Load() != 0 {
+		t.Fatalf("a call after Close: %v, dials %d; want the client closed and nothing dialed", err, dials.n.Load())
+	}
+	if err := newRedisWithClient(&fakeConn{}, testNames).Close(); err != nil {
+		t.Fatalf("Close on the tests' seam: %v", err)
+	}
+}
+
+// dialCounter counts dials and refuses them, and passes every call on.
+type dialCounter struct{ n atomic.Int32 }
+
+func (d *dialCounter) DialHook(redis.DialHook) redis.DialHook {
+	return func(context.Context, string, string) (net.Conn, error) {
+		d.n.Add(1)
+		return nil, errors.New("a unit test has no store to dial")
+	}
+}
+func (d *dialCounter) ProcessHook(next redis.ProcessHook) redis.ProcessHook { return next }
+func (d *dialCounter) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return next
+}
+
+// pipeStore is a store's side of an in-memory connection (net.Pipe: no
+// socket), for go-redis itself to read replies from. It reads the commands of
+// one flush, the want FCALLs, then answers the first of them with the replies
+// given, in order, and closes the connection, so the replies after those are
+// lost as a dropped connection loses them.
+type pipeStore struct {
+	mu      sync.Mutex
+	dials   int
+	fcalls  [][]string
+	replies []string
+	want    int
+}
+
+func (p *pipeStore) dial(context.Context, string, string) (net.Conn, error) {
+	p.mu.Lock()
+	p.dials++
+	p.mu.Unlock()
+	client, store := net.Pipe()
+	go p.serve(store)
+	return client, nil
+}
+
+func (p *pipeStore) serve(conn net.Conn) {
+	defer conn.Close()
+	in := bufio.NewReader(conn)
+	for {
+		p.mu.Lock()
+		done := len(p.fcalls) == p.want
+		p.mu.Unlock()
+		if done {
+			break
+		}
+		args, err := readCommand(in)
+		if err != nil {
+			return
+		}
+		switch strings.ToUpper(args[0]) {
+		case "FCALL", "FCALL_RO":
+		case "HELLO":
+			// As a server without HELLO answers it: go-redis goes on in RESP2.
+			fmt.Fprint(conn, "-ERR unknown command 'HELLO'\r\n")
+			continue
+		default:
+			fmt.Fprint(conn, "+OK\r\n") // any other part of the handshake
+			continue
+		}
+		p.mu.Lock()
+		p.fcalls = append(p.fcalls, args)
+		p.mu.Unlock()
+	}
+	for _, reply := range p.replies {
+		if _, err := fmt.Fprintf(conn, "$%d\r\n%s\r\n", len(reply), reply); err != nil {
+			return
+		}
+	}
+}
+
+// readCommand reads one RESP array of bulk strings.
+func readCommand(in *bufio.Reader) ([]string, error) {
+	line, err := in.ReadString('\n')
+	if err != nil || len(line) < 3 || line[0] != '*' {
+		return nil, fmt.Errorf("not an array: %q (%v)", line, err)
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(line[1:]))
+	if err != nil {
+		return nil, err
+	}
+	args := make([]string, n)
+	for i := range args {
+		line, err = in.ReadString('\n')
+		if err != nil || len(line) < 3 || line[0] != '$' {
+			return nil, fmt.Errorf("not a bulk string: %q (%v)", line, err)
+		}
+		size, err := strconv.Atoi(strings.TrimSpace(line[1:]))
+		if err != nil {
+			return nil, err
+		}
+		b := make([]byte, size+2)
+		if _, err := io.ReadFull(in, b); err != nil {
+			return nil, err
+		}
+		args[i] = string(b[:size])
+	}
+	return args, nil
+}
+
+// TestRedisKeepsRepliesThatCame: on go-redis itself (v9.22, over an in-memory
+// connection), a flush of two steps whose second reply is lost: the first
+// step's reply stays known and the second is OUTCOMEUNKNOWN with the bytes it
+// sent. go-redis sets the transport's error on every command whose error is
+// still nil when the connection drops, the first included; Redis's settled
+// commands keep the reply that was read. One dial, one flush, and the store
+// read exactly the two FCALLs.
+func TestRedisKeepsRepliesThatCame(t *testing.T) {
+	t.Parallel()
+	store := &pipeStore{replies: []string{okEnvelope("1", "2", 2, `{}`)}, want: 2}
+	client := redis.NewClient(&redis.Options{Addr: "pipe", Protocol: 2, DisableIdentity: true, MaxRetries: -1, Dialer: store.dial})
+	t.Cleanup(func() { _ = client.Close() })
+	second := moveRequest("waiting", "ready")
+	results, err := Steps(context.Background(), newRedisWithClient(client, testNames), []*Request{seedRequest(), second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var unknown *OutcomeUnknownError
+	if results[0].Step == nil || results[0].Step.Reply.LastSeq != "2" {
+		t.Fatalf("the step whose reply came: %+v; want its reply", results[0])
+	}
+	enc, ref := encodeStep(testPrefix, second)
+	if ref != nil {
+		t.Fatal(ref)
+	}
+	if !errors.As(results[1].Err, &unknown) || string(unknown.Step) != string(enc.raw) || string(unknown.Sprint) != string(enc.sprint) {
+		t.Fatalf("the step whose reply was lost: %+v; want OUTCOMEUNKNOWN with its bytes", results[1])
+	}
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if store.dials != 1 || len(store.fcalls) != 2 {
+		t.Fatalf("dials %d, FCALLs read %d; want 1 and 2", store.dials, len(store.fcalls))
+	}
+	for _, args := range store.fcalls {
+		if len(args) != 6 || !strings.EqualFold(args[0], "FCALL") || args[1] != fnStep || args[2] != "0" || args[3] != Version {
+			t.Fatalf("the store read %q", args[:min(4, len(args))])
+		}
 	}
 }

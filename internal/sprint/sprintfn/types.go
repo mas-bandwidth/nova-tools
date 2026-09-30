@@ -234,7 +234,10 @@ type TablePlan struct {
 	Entries []PlannedEntry
 	// Before is every record Layer 1 observed, guard-only ids included: table,
 	// then stored id.
-	Before          map[string]map[string]tset.MemberRecord
+	Before map[string]map[string]tset.MemberRecord
+	// Changed, Guarded and ChangedPerEntry are table_plan's counts. On the
+	// twin they are counted from Layer 1's Mem plan, which does not carry
+	// them, and equal the committed reply's.
 	Changed         int
 	Guarded         int
 	ChangedPerEntry []int
