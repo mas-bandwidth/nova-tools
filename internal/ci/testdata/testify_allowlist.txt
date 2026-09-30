@@ -48,7 +48,7 @@ internal/cairn:assert 79 bare assertions to convert to testify
 internal/cardhdr:assert 46 bare assertions to convert to testify
 internal/check:assert 452 bare assertions to convert to testify
 internal/check:env 1 t.Setenv and Chdir sites to inject through config
-internal/ci:assert 1303 bare assertions to convert to testify
+internal/ci:assert 1302 bare assertions to convert to testify
 internal/ci/allowlist:assert 38 bare assertions to convert to testify
 internal/ci/functional:assert 9 bare assertions to convert to testify
 internal/ci/slowtests:assert 37 bare assertions to convert to testify
@@ -71,8 +71,8 @@ internal/log:assert 43 bare assertions to convert to testify
 internal/member:assert 111 bare assertions to convert to testify
 internal/memindex:assert 98 bare assertions to convert to testify
 internal/nogh:assert 8 bare assertions to convert to testify
-internal/nsprint/fn:assert 411 bare assertions to convert to testify
-internal/nsprint/store:assert 88 bare assertions to convert to testify
+internal/nsprint/fn:assert 152 bare assertions to convert to testify
+internal/nsprint/store:assert 75 bare assertions to convert to testify
 internal/nsprint/store:env 9 t.Setenv and Chdir sites to inject through config
 internal/nsprint/testutil:assert 18 bare assertions to convert to testify
 internal/nsprint/testutil/pg:assert 10 bare assertions to convert to testify
@@ -97,8 +97,6 @@ internal/selftalk:assert 48 bare assertions to convert to testify
 internal/sprint:assert 2353 bare assertions to convert to testify
 internal/sprint/driver:assert 89 bare assertions to convert to testify
 internal/sprint/refmodel:assert 115 bare assertions to convert to testify
-internal/sprint/sprintfn:assert 1320 bare assertions to convert to testify
-internal/sprint/stepbuild:assert 375 bare assertions to convert to testify
 internal/sprint/store:assert 1237 bare assertions to convert to testify
 internal/subproc:assert 30 bare assertions to convert to testify
 internal/swarm:assert 1311 bare assertions to convert to testify
@@ -112,7 +110,6 @@ internal/textbody:assert 5 bare assertions to convert to testify
 internal/tlc:assert 222 bare assertions to convert to testify
 internal/tokens:assert 707 bare assertions to convert to testify
 internal/tool:assert 16 bare assertions to convert to testify
-internal/tset:assert 2116 bare assertions to convert to testify
 internal/tty:assert 6 bare assertions to convert to testify
 internal/typedrec:assert 39 bare assertions to convert to testify
 internal/update:assert 471 bare assertions to convert to testify
