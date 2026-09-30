@@ -378,3 +378,27 @@ func TestSummaryLineIsTheStateAloneWhileThereIsOne(t *testing.T) {
 		}
 	}
 }
+
+// TestRenderTablesHidesZeroRowsOnlyInTheNamedTables: a view's HideZero names
+// the tables that hide a row whose counts are all zero; a row with a card in
+// any column stays, and the other tables keep every row. A named table with no
+// visible row prints nothing and leaves no gap.
+func TestRenderTablesHidesZeroRowsOnlyInTheNamedTables(t *testing.T) {
+	t.Parallel()
+	work := counts([]string{"waiting", "landed"}, map[string][]int64{"a": {0, 0}, "b": {0, 1}}, []string{"a", "b"})
+	work.Name = "work"
+	readers := counts([]string{"asked"}, map[string][]int64{"r": {0}}, []string{"r"})
+	readers.Name = "readers"
+	got := ntable.RenderTables("", []ntable.Table{work, readers}, ntable.RenderOpts{}, []string{"work"})
+	if strings.Contains(got, "\na ") || !strings.Contains(got, "\nb ") || !strings.Contains(got, "\nr ") {
+		t.Fatalf("b (a card in the last column) and the reader show, a does not:\n%s", got)
+	}
+	work.Rows = work.Rows[:1]
+	got = ntable.RenderTables("", []ntable.Table{work, readers}, ntable.RenderOpts{}, []string{"work"})
+	if strings.Contains(got, "work") || !strings.HasPrefix(got, "readers ") {
+		t.Fatalf("work has no visible row: it prints nothing and readers opens the frame:\n%s", got)
+	}
+	if got := ntable.RenderTables("", []ntable.Table{work}, ntable.RenderOpts{}, nil); !strings.Contains(got, "\na ") {
+		t.Fatalf("without HideZero the zero row shows:\n%s", got)
+	}
+}

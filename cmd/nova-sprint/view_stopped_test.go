@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
@@ -64,5 +65,20 @@ func TestTheViewsSummaryLineIsStoppedAloneWhileTheMachineIsStopped(t *testing.T)
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	if got := ta.viewLine(); got != "0/0 0.0% -> ETA" {
 		t.Fatalf("init on a running sprint: %q", got)
+	}
+}
+
+// The view init stores hides a stream with no cards in the work and merge
+// tables only (docs/SPEC-SPRINT.md, the view): readers and fleet keep every row.
+func TestTheStoredViewHidesZeroRowsOfWorkAndMergeOnly(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a --members m1")
+	v, ok := ta.m.View("sprint")
+	if !ok {
+		t.Fatal("no sprint view")
+	}
+	if got := strings.Join(v.HideZero, ","); got != "work,merge" {
+		t.Fatalf("hide_zero %q, want work,merge", got)
 	}
 }

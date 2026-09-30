@@ -51,7 +51,7 @@ func init() {
 		{"show", "<table> [--at-epoch <n>]", "show demo", (*application).cmdShow},
 		{"render", "<table> | --view <name> [--at-epoch <n>] [--hide-zero-rows] [--width <col=n,...>] [--label-width <n>]", "render --view work", (*application).cmdRender},
 		{"watch", "<table>[,<table>...] | --view <name> [--every <duration>] [--out <file>] [--title <text>] [--hide-zero-rows] [--width <col=n,...>] [--label-width <n>] [--check] [--once]", "watch --view work --once", (*application).cmdWatch},
-		{"view set", "<name> --tables <a,b,...> [--title <text>] [--summary <count-column>]", "view set work --tables demo --title Work --summary done", func(app *application, a []string, o, e io.Writer) int {
+		{"view set", "<name> --tables <a,b,...> [--title <text>] [--summary <count-column>] [--hide-zero <tables>]", "view set work --tables demo --title Work --summary done", func(app *application, a []string, o, e io.Writer) int {
 			return app.cmdView(append([]string{"set"}, a...), o, e)
 		}},
 		{"view state", "<name> (<text> | --clear)", "view state work STOPPED", func(app *application, a []string, o, e io.Writer) int {
