@@ -50,6 +50,12 @@ func (h *harness) work(member string) {
 	}
 }
 
+// heldBy is the work cards a member holds against its width: ready and
+// working.
+func heldBy(s *sprint.Snapshot, m string) int {
+	return s.Fleet.Count(m, sprint.Ready) + s.Fleet.Count(m, sprint.Working)
+}
+
 // readAll plays the readers: every read card asked of them is reported ok.
 func (h *harness) readAll() {
 	h.t.Helper()
@@ -220,15 +226,21 @@ func TestAnIdleTickReadsLittleAndChangesNothing(t *testing.T) {
 	}
 }
 
+// At width 2 the deal is today's short queues: two cards a member, the oldest
+// first, the rest left in ready.
 func TestTheDealingKeepsEveryReadyQueueShortInScoreOrder(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
+	const width = 2
+	for _, m := range []string{"m1", "m2"} {
+		h.must(FleetStep(sprint.FleetReq{Op: "up", Member: m, Width: width}))
+	}
 	h.setup(7)
 	h.startMachine()
 	h.machine()
 	s := h.snap()
 	for _, m := range []string{"m1", "m2"} {
-		if n := s.Fleet.Count(m, sprint.Ready); n != sprint.MaxReadyPerMember {
+		if n := s.Fleet.Count(m, sprint.Ready); n != width || s.Width(m) != width {
 			t.Fatalf("%s holds %d ready", m, n)
 		}
 	}

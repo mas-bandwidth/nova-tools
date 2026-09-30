@@ -230,7 +230,7 @@ func TestCRAllMembersDownThenOneUp(t *testing.T) {
 	up := h.must(FleetStep(sprint.FleetReq{Op: "release", Member: "m2"}))
 	h.crTicks(2, "one up")
 	s = h.snap()
-	if n := s.Fleet.Count("m2", sprint.Ready); n != sprint.MaxReadyPerMember {
+	if n := s.Fleet.Count("m2", sprint.Ready); n != 6 {
 		t.Fatalf("m2 ready %d; the up: %+v; m2 %v; ready %d", n, up.Moved, s.MemberCtl("m2").Fields, len(s.Work.Column(sprint.Ready)))
 	}
 	if len(h.openOf(sprint.NNoMember)) != 0 {
@@ -261,7 +261,7 @@ func TestCRThousandReadyThreeMembers(t *testing.T) {
 		res := h.machine()
 		ticks++
 		for _, p := range res.Parts {
-			if p.Name == "deal" && len(p.Moved) > 3*sprint.MaxReadyPerMember {
+			if p.Name == "deal" && len(p.Moved) > 3*sprint.DefaultWidth {
 				t.Fatalf("tick %d dealt %d", ticks, len(p.Moved))
 			}
 			for _, m := range p.Moved {
@@ -272,12 +272,12 @@ func TestCRThousandReadyThreeMembers(t *testing.T) {
 		}
 		s := h.snap()
 		for _, m := range []string{"m1", "m2", "m3"} {
-			if n := s.Fleet.Count(m, sprint.Ready); n > sprint.MaxReadyPerMember {
-				t.Fatalf("tick %d: %s ready %d", ticks, m, n)
+			if n := heldBy(s, m); n > s.Width(m) {
+				t.Fatalf("tick %d: %s holds %d, its width %d", ticks, m, n, s.Width(m))
 			}
 		}
 		for _, m := range []string{"m1", "m2", "m3"} {
-			h.run(TakeStep(sprint.TakeReq{As: m, Sel: sprint.Sel{Limit: 100}, Who: m}))
+			h.work(m)
 		}
 		h.tick(time.Second)
 	}
@@ -308,8 +308,8 @@ func TestCROneReaderThenTwo(t *testing.T) {
 	h.machine()
 	h.work("m1")
 	h.crTicks(3, "no readers")
-	if got := len(h.openOf(sprint.NCannotAsk)); got != 2 {
-		t.Fatalf("cannot ask open %d, want 2", got)
+	if got := len(h.openOf(sprint.NCannotAsk)); got != 3 {
+		t.Fatalf("cannot ask open %d, want 3 (the three dealt in one tick, at m1's width)", got)
 	}
 	w := h.written(sprint.NCannotAsk)
 	if err := h.m.RowsAdd(h.ctx, "t-readers", []string{"reader-a"}); err != nil {

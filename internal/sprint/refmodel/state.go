@@ -98,9 +98,10 @@ const (
 	KindSentinel = "sentinel"
 )
 
-// MaxReadyPerMember is the longest ready queue the tick deals a member (spec
-// section 5).
-const MaxReadyPerMember = 2
+// Width is every member's width, the engine's default (sprint.DefaultWidth,
+// errata 3 amendment 9): the most work cards, ready and working together, the
+// tick deals a member.
+const Width = 64
 
 // MaxRedeals is the spec's redeal bound (section 2): an attempt's work card
 // is dealt again at most this many times after its member went down.
@@ -386,6 +387,17 @@ func (s State) Up() []string {
 	return out
 }
 
+// Held is the member's work cards held against its width: ready and working.
+func (s State) Held(m string) int {
+	n := 0
+	for _, w := range s.Work {
+		if w.Member == m && (w.Place == FReady || w.Place == FWorking) {
+			n++
+		}
+	}
+	return n
+}
+
 // RL is SprintTables.tla RL(m): the member's ready queue length.
 func (s State) RL(m string) int {
 	n := 0
@@ -427,13 +439,14 @@ func (s State) NextMember(set []string) string {
 // PlaceOn is the member a card placed on the fleet goes to (errata 3
 // amendment 5: every placement, first attempts and redeals and levelling
 // alike, goes round the fleet and moves the index; the engine's round.next):
-// the next member round the fleet among set with fewer than MaxReadyPerMember
-// ready cards, avoid only when no other has room; with none having room, the
-// next of set, avoid only when it is the only one. "" when set is empty.
+// the next member round the fleet among set holding fewer work cards, ready
+// and working, than its Width (errata 3 amendment 9), avoid only when no
+// other has room; with none having room, the next of set, avoid only when it
+// is the only one. "" when set is empty.
 func (s State) PlaceOn(set []string, avoid string) string {
 	var room []string
 	for _, m := range set {
-		if s.RL(m) < MaxReadyPerMember {
+		if s.Held(m) < Width {
 			room = append(room, m)
 		}
 	}

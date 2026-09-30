@@ -136,14 +136,14 @@ func TestTheReworkAvoidsTheMemberThatFailedItWhileAnotherHasRoom(t *testing.T) {
 	t.Parallel()
 	for _, rework := range []reworkIt{stepRework, ruleReworkOf} {
 		w := newWorld(t, "reader-a")
-		for _, m := range []string{"m1", "m2"} {
-			w.must(FleetStep(w.s, FleetReq{Op: "up", Member: m}))
+		for _, m := range []string{"m1", "m2"} { // each at width 2 (width.go)
+			w.must(FleetStep(w.s, FleetReq{Op: "up", Member: m, Width: 2}))
 		}
 		w.must(Add(w.s, AddReq{Stream: "s1", Count: 3}))
 		w.must(Deal(w.s, DealReq{Sel: Sel{IDs: []string{"s1-1"}}})) // m1
 		w.must(Take(w.s, TakeReq{As: "m1", Sel: Sel{IDs: []string{"s1-1.w1"}}, Gens: gensOf(w.s, "s1-1.w1")}))
 		w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{"s1-1.w1"}}, Gens: gensOf(w.s, "s1-1.w1"), Failed: true, Report: "red"}))
-		// m2 full: two ready cards, dealt past the index
+		// m2 at its width: two ready cards, dealt past the index
 		w.s.Fleet.SetProps(map[string]string{PropDealIndex: "m1"})
 		w.must(Deal(w.s, DealReq{Sel: Sel{IDs: []string{"s1-2"}}}))
 		w.s.Fleet.SetProps(map[string]string{PropDealIndex: "m1"})

@@ -59,9 +59,15 @@ type fleetT struct {
 // ready primaries in stream s1.
 func newFleetT(t *testing.T, primaries int, members ...string) *fleetT {
 	t.Helper()
+	return newFleetW(t, primaries, 0, members...)
+}
+
+// newFleetW is newFleetT with every member at the width (0: the default).
+func newFleetW(t *testing.T, primaries, width int, members ...string) *fleetT {
+	t.Helper()
 	w := newWorld(t, "reader-a")
 	for _, m := range members {
-		w.must(FleetStep(w.s, FleetReq{Op: "up", Member: m}))
+		w.must(FleetStep(w.s, FleetReq{Op: "up", Member: m, Width: width}))
 	}
 	if primaries > 0 {
 		w.must(Add(w.s, AddReq{Stream: "s1", Count: primaries}))
@@ -853,7 +859,7 @@ func TestDownSkipsDroppingKeepsKey(t *testing.T) {
 // and to the avoided member only when no other has.
 func TestDealAvoidsMemberWhenOtherHasRoom(t *testing.T) {
 	t.Parallel()
-	f := newFleetT(t, 1, "m1", "m2")
+	f := newFleetW(t, 1, 2, "m1", "m2")
 	f.edit(f.snap().Work, "s1-1", map[string]string{"avoid": "m1", "attempt": "1", "fix": "the finding"})
 	f.place(f.snap().Work, "s1-1", "s1", Ready)
 	// both have room: the card goes to m2, though m1 comes first
@@ -864,7 +870,7 @@ func TestDealAvoidsMemberWhenOtherHasRoom(t *testing.T) {
 	}
 
 	// m2 full: the avoided member takes it
-	g := newFleetT(t, 3, "m1", "m2")
+	g := newFleetW(t, 3, 2, "m1", "m2")
 	g.edit(g.snap().Work, "s1-3", map[string]string{"avoid": "m1", "attempt": "1"})
 	g.place(g.snap().Work, "s1-3", "s1", Ready)
 	// m2 holds two ready cards, m1 none
@@ -984,7 +990,7 @@ func TestDealNoMemberOnce(t *testing.T) {
 // back when that was all it found, kept when it dealt other cards too.
 func TestDealSkipsDroppingKeepsKey(t *testing.T) {
 	t.Parallel()
-	f := newFleetT(t, 2, "m1", "m2")
+	f := newFleetW(t, 2, 2, "m1", "m2") // at width 2 the last deal uses the room
 	f.w.must(Add(f.snap(), AddReq{Stream: "s2", Count: 2}))
 	f.facts.Dropping["s1"] = true
 	rp := f.plan(ruleDeal, "deal")
@@ -1082,16 +1088,18 @@ func TestDealRefusesACardWhoseWorkCardExists(t *testing.T) {
 	}
 }
 
-// The deal is limited by the room: 2 less each ready count, and never past it.
+// The deal is limited by the room: each member's width less its ready and
+// working counts, and never past it.
 func TestDealNeverPastTheRoom(t *testing.T) {
 	t.Parallel()
-	f := newFleetT(t, 9, "m1", "m2")
+	const width = 2
+	f := newFleetW(t, 9, width, "m1", "m2")
 	rp := f.run(ruleDeal, "deal")
-	if len(rp.Plan.Units) != 2*RuleReadyCap {
-		t.Fatalf("dealt %d, the room is %d", len(rp.Plan.Units), 2*RuleReadyCap)
+	if len(rp.Plan.Units) != 2*width {
+		t.Fatalf("dealt %d, the room is %d", len(rp.Plan.Units), 2*width)
 	}
 	for _, m := range []string{"m1", "m2"} {
-		if n := f.snap().Fleet.Count(m, Ready); n != RuleReadyCap {
+		if n := f.snap().Fleet.Count(m, Ready); n != width {
 			t.Fatalf("%s holds %d", m, n)
 		}
 	}
@@ -1258,9 +1266,10 @@ func TestFleetRulesTwiceSecondEmpty(t *testing.T) {
 		t.Parallel()
 		f := newFleetT(t, 2, "m1", "m2")
 		rp := f.run(ruleDeal, "deal")
-		// room 4, two cards: nothing more is dealable, and the next plan finds it so
-		if keyTexts(rp.Requeue) != "deal" {
-			t.Fatalf("the key of a deal that left room: done %s requeue %s", keyTexts(rp.Done), keyTexts(rp.Requeue))
+		// room 126, two cards, and a read that was not cut: nothing more is
+		// dealable, the key goes, and the next plan finds it so
+		if keyTexts(rp.Done) != "deal" || len(rp.Requeue) != 0 {
+			t.Fatalf("the key of a deal that left room and read everything: done %s requeue %s", keyTexts(rp.Done), keyTexts(rp.Requeue))
 		}
 		quiet(t, "deal with room", f.plan(ruleDeal, "deal"), "deal")
 	})
@@ -1504,7 +1513,8 @@ func TestDealReadHalvings(t *testing.T) {
 	}
 }
 
-// R7 reads the members and at most two cards of each member's ready cell.
+// R7 reads the members and at most levelHeadLimit cards of each member's ready
+// cell.
 func TestLevelReadTwoEach(t *testing.T) {
 	t.Parallel()
 	rp := levelReadFor(fleetShape{Members: []string{"m1", "m2", "m3"}})
@@ -1513,7 +1523,7 @@ func TestLevelReadTwoEach(t *testing.T) {
 	}
 	for i, q := range rp.Sprint[1:] {
 		want := "m" + itoa(i+1) + ":ready"
-		if q.Kind != QueryRelated || q.Source.Kind != SourceHead || q.Source.Key != want || q.Source.Limit != RuleReadyCap {
+		if q.Kind != QueryRelated || q.Source.Kind != SourceHead || q.Source.Key != want || q.Source.Limit != levelHeadLimit {
 			t.Fatalf("query %d: %+v", i+1, q)
 		}
 	}

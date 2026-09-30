@@ -75,7 +75,7 @@ func ringMachineTick(h *harness) ringTick {
 	out.dealAt, _ = s.Fleet.Prop(sprint.PropDealIndex)
 	out.askAt, _ = s.Readers.Prop(sprint.PropAskIndex)
 	for _, m := range s.UpMembers() {
-		if s.Fleet.Count(m, sprint.Ready) < sprint.MaxReadyPerMember || slices.Contains(out.deals, m) {
+		if heldBy(s, m) < s.Width(m) || slices.Contains(out.deals, m) {
 			out.eligible = append(out.eligible, m)
 		}
 	}

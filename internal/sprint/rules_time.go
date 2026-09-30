@@ -126,7 +126,7 @@ var (
 	// workPrimaryFields are a work card's primary: nothing follows from it.
 	workPrimaryFields = []string{"stream", "attempt"}
 	streamCtlFields   = []string{"state", fieldDueMergeIdle, fieldDueIdle}
-	memberCtlFields   = []string{"status"}
+	memberCtlFields   = []string{"status", FieldWidth} // up, and the width a replacement's receiver is below (width.go)
 	readerCtlFields   = []string{"status"}
 	followReadCards   = []string{FollowRCards}
 
@@ -889,6 +889,7 @@ type lateRun struct {
 	// queues; moves is the member each replacement moved it past, by unit key.
 	deal      *round
 	queues    map[string]int
+	widths    map[string]int
 	moves     roundMoves
 	primaries map[string]*primaryRun
 	order     []*primaryRun
@@ -998,12 +999,13 @@ func (w *lateRun) readerPool() *pool {
 }
 
 // receiver is the next member round the fleet other than present (round.go,
-// errata 3 amendment 5: from the deal's rolling index, the first up with room,
-// else the first up), counted as receiving a card and the index moved past it
+// errata 3 amendment 5: from the deal's rolling index, the first up below its
+// width, width.go, errata 3 amendment 9, else the first up), counted as receiving a card and the index moved past it
 // for key; "" when no other member is up.
 func (w *lateRun) receiver(present, key string) string {
 	if w.deal == nil {
-		w.deal, w.queues, w.moves = dealRound(w.s), readyQueues(w.s, w.s.UpMembers()), roundMoves{}
+		up := w.s.UpMembers()
+		w.deal, w.queues, w.widths, w.moves = dealRound(w.s), memberLoads(w.s, up), memberWidths(w.s, up), roundMoves{}
 	}
 	var others []string
 	for _, m := range w.s.UpMembers() {
@@ -1011,7 +1013,7 @@ func (w *lateRun) receiver(present, key string) string {
 			others = append(others, m)
 		}
 	}
-	to := w.deal.next(others, w.queues, RuleReadyCap, "", true)
+	to := w.deal.next(others, w.queues, w.widths, "", true)
 	if to != "" {
 		w.deal.moved(to)
 		w.queues[to]++

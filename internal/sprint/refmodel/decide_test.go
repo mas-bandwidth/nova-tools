@@ -215,18 +215,23 @@ func TestDealDealsTheOldestReadyToTheMembersWithRoom(t *testing.T) {
 	w := sprintOf(t, "m1", "m2")
 	w.add(t, "s1", 6)
 	got := refmodel.DealMoves(w.snapshot(w.fresh()), later(0))
-	// two members, room for two each: the four oldest, round the fleet
-	// (errata 3, amendment 5), the fleet table's deal_index past m2
+	// two members, each at the default width of 64: all six in one deal,
+	// round the fleet (errata 3, amendments 5 and 9), the fleet table's
+	// deal_index past m2
 	expect(t, got,
 		"move work s1-1 s1:ready>s1:working",
 		"move work s1-2 s1:ready>s1:working",
 		"move work s1-3 s1:ready>s1:working",
 		"move work s1-4 s1:ready>s1:working",
+		"move work s1-5 s1:ready>s1:working",
+		"move work s1-6 s1:ready>s1:working",
 		"prop fleet deal_index=m2",
 		"create fleet s1-1.w1 >m1:ready",
 		"create fleet s1-2.w1 >m2:ready",
 		"create fleet s1-3.w1 >m1:ready",
-		"create fleet s1-4.w1 >m2:ready")
+		"create fleet s1-4.w1 >m2:ready",
+		"create fleet s1-5.w1 >m1:ready",
+		"create fleet s1-6.w1 >m2:ready")
 }
 
 func TestDealTellsOnceWhenNoMemberIsUp(t *testing.T) {

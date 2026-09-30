@@ -229,16 +229,18 @@ func TestResumeWaitsForANeedOnlyAfterACross(t *testing.T) {
 // The reference model's redeal bound is the engine's.
 func TestTheModelsRedealBoundIsTheEngines(t *testing.T) {
 	t.Parallel()
-	if refmodel.MaxRedeals != sprint.MaxRedeals || refmodel.MaxReadyPerMember != sprint.MaxReadyPerMember {
-		t.Fatalf("the model's bounds (%d, %d) are not the engine's (%d, %d)", refmodel.MaxRedeals, refmodel.MaxReadyPerMember, sprint.MaxRedeals, sprint.MaxReadyPerMember)
+	if refmodel.MaxRedeals != sprint.MaxRedeals || refmodel.Width != sprint.DefaultWidth {
+		t.Fatalf("the model's bounds (%d, %d) are not the engine's (%d, %d)", refmodel.MaxRedeals, refmodel.Width, sprint.MaxRedeals, sprint.DefaultWidth)
 	}
 }
 
 // The deal takes one card from each stream's front in turn (2.3 R6, the
 // model's tickDeal and tla/SprintEvents.tla's TurnSorted): with two streams of
-// four ready cards, two members and room for four, the engine deals two of
-// each stream and the model agrees with the same choice; the order of the whole
-// table would deal one stream's four.
+// four ready cards and two members at the default width, the engine deals all
+// eight in one tick (errata 3 amendment 9), in turns a1 b1 a2 b2 ..., round the
+// fleet m1 m2 m1 m2 ..., so every card of s1 goes to m1 and every card of s2 to
+// m2, and the model agrees with the same choice; the order of the whole table
+// would give each member two of each stream.
 func TestTheDealTakesEachStreamsFrontInTurnAsTheModelDoes(t *testing.T) {
 	t.Parallel()
 	h := newDHarness(t)
@@ -261,12 +263,12 @@ func TestTheDealTakesEachStreamsFrontInTurnAsTheModelDoes(t *testing.T) {
 	var dealt []string
 	for id, p := range s.Primaries {
 		if p.State == refmodel.Working {
-			dealt = append(dealt, id)
+			dealt = append(dealt, id+">"+s.Work[refmodel.WC(id, p.Attempt)].Member)
 		}
 	}
 	slices.Sort(dealt)
-	if want := []string{"a1", "a2", "b1", "b2"}; !slices.Equal(dealt, want) {
-		t.Fatalf("the tick dealt %v, want %v: two from each stream's front", dealt, want)
+	if want := []string{"a1>m1", "a2>m1", "a3>m1", "a4>m1", "b1>m2", "b2>m2", "b3>m2", "b4>m2"}; !slices.Equal(dealt, want) {
+		t.Fatalf("the tick dealt %v, want %v: each stream's front in turn, round the fleet", dealt, want)
 	}
 }
 
