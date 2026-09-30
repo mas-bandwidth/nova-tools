@@ -98,7 +98,7 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	if *reader {
 		kind = "reader"
 	}
-	fmt.Fprintf(stdout, "MEMBER %s as=%s width=%d every=%s sprint=%s harness=%s model=%s\n", kind, *as, *width, every.d, *sprintBin, *harness, *model)
+	fmt.Fprintf(stdout, "MEMBER %s as=%s width=%d every=%s sprint=%s harness=%s model=%s\n", oneline.Field(kind), oneline.Field(*as), *width, oneline.Field(every.d.String()), oneline.Field(*sprintBin), oneline.Field(*harness), oneline.Field(*model))
 	n := 0
 	for {
 		n++
@@ -107,14 +107,14 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stderr, "nova-swarm member: tick %d: %s\n", n, oneline.Escape(err.Error()))
 		}
 		if acted > 0 || err != nil {
-			fmt.Fprintf(stdout, "tick %d acted=%d running=%d %s\n", n, acted, m.Running(), time.Now().Format("15:04:05"))
+			fmt.Fprintf(stdout, "tick %d acted=%d running=%d %s\n", n, acted, m.Running(), oneline.Field(time.Now().Format("15:04:05")))
 		}
 		if *once || (*ticks > 0 && n >= *ticks) {
 			break
 		}
 		time.Sleep(every.d)
 	}
-	fmt.Fprintf(stdout, "MEMBER OK as=%s ticks=%d running=%d\n", *as, n, m.Running())
+	fmt.Fprintf(stdout, "MEMBER OK as=%s ticks=%d running=%d\n", oneline.Field(*as), n, m.Running())
 	return 0
 }
 
@@ -272,7 +272,7 @@ func readResult(path string) (head, report string) {
 	sc := bufio.NewScanner(f)
 	sc.Buffer(make([]byte, 1<<20), 1<<20)
 	inOne := false
-	var first strings.Builder
+	first := "" // the first prose line, the report when there is no One line
 	for sc.Scan() {
 		l := strings.TrimSpace(sc.Text())
 		if strings.HasPrefix(l, "rev:") && head == "" {
@@ -285,12 +285,12 @@ func readResult(path string) (head, report string) {
 		if inOne && l != "" && report == "" {
 			report = l
 		}
-		if !strings.HasPrefix(l, "#") && l != "" && !strings.Contains(l, ":") && first.Len() == 0 {
-			first.WriteString(l)
+		if !strings.HasPrefix(l, "#") && l != "" && !strings.Contains(l, ":") && first == "" {
+			first = l
 		}
 	}
 	if report == "" {
-		report = first.String()
+		report = first
 	}
 	if strings.ContainsAny(head, " \t") || len(head) > 64 {
 		head = ""
