@@ -191,7 +191,7 @@ func TestParseColumnsAndWidths(t *testing.T) {
 			t.Errorf("column %d = %+v, want %+v", i, cols[i], want[i])
 		}
 	}
-	for _, bad := range []string{"", "a b", "a:rows", "a:count:union", "a:text:sum", "a:members:sum", "a,a", "-a"} {
+	for _, bad := range []string{"", "a b", "a:rows", "a:count:union", "a:text:avg", "a:members:sum", "a,a", "-a"} {
 		if _, err := ntable.ParseColumns(bad); err == nil {
 			t.Errorf("ParseColumns(%q) accepted", bad)
 		}
@@ -400,5 +400,36 @@ func TestRenderTablesHidesZeroRowsOnlyInTheNamedTables(t *testing.T) {
 	}
 	if got := ntable.RenderTables("", []ntable.Table{work}, ntable.RenderOpts{}, nil); !strings.Contains(got, "\na ") {
 		t.Fatalf("without HideZero the zero row shows:\n%s", got)
+	}
+}
+
+// TestATextColumnOfWholeNumbersFoldsSumAndMax: a text column with a sum or
+// max fold prints right-aligned and totals its cells in the footer; a blank
+// cell is 0 and a cell that is no whole number makes the fold "?".
+func TestATextColumnOfWholeNumbersFoldsSumAndMax(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ fold, want string }{{ntable.Sum, "72"}, {ntable.Max, "64"}} {
+		cols, err := ntable.ParseColumns("n:count,w:text:" + tc.fold)
+		if err != nil {
+			t.Fatal(err)
+		}
+		tab := ntable.Table{Name: "t", Columns: cols}
+		for k, v := range map[string]string{"a": "64", "b": "8", "c": ""} {
+			r := ntable.NewRow(tab, k)
+			r.Texts = map[string]string{"w": v}
+			tab.Rows = append(tab.Rows, r)
+		}
+		out := ntable.Render(tab, ntable.RenderOpts{})
+		lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
+		if last := lines[len(lines)-1]; !strings.HasSuffix(last, "| "+tc.want) {
+			t.Errorf("fold %s: footer %q wants %s", tc.fold, last, tc.want)
+		}
+		if !strings.Contains(out, "| 64\n") || !strings.Contains(out, "|  8\n") {
+			t.Errorf("fold %s: cells are not right-aligned:\n%s", tc.fold, out)
+		}
+		tab.Rows[0].Texts["w"] = "many"
+		if out := ntable.Render(tab, ntable.RenderOpts{}); !strings.Contains(out, "?") {
+			t.Errorf("fold %s: a cell that is no number leaves the fold known:\n%s", tc.fold, out)
+		}
 	}
 }

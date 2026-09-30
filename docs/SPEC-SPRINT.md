@@ -15,7 +15,7 @@ SPRINT TABLE
 work  | waiting | ready | working | review | merging | landed
 readers | asked | reading | ok | broken
 merge | queued | merged | stuck | ci | state
-fleet | ready | working | done | ok% | status | load
+fleet | ready | working | width | done | ok% | status | load
 ```
 
 | table | rows | members | bookkeeping for |
@@ -169,7 +169,8 @@ and it is the coordinator's decision, receipted.
 - A member is a fleet machine with a width: the most work cards it holds at
   once, ready and working together (its child cap; `init --members m1:64` or
   `fleet up m1 --width 64`; default 64). The fleet table shows it in the width
-  column beside working.
+  column beside working; the footer row sums the widths, the fleet's total
+  width (eight machines of 64 total 512).
 - The machine's tick deals every ready primary the fleet has room for in one
   step, in stream turns (each stream's oldest first by score), one card at a
   time to the next up member round the fleet (the rolling index `deal_index`)

@@ -398,12 +398,13 @@ do
       local valid = {count=true,members=true,first=true,last=true,text=true}
       local f = T.formula(proj)
       local formula = f ~= nil
-      -- a sum(...) column folds as a count does; a pct(...) column pools
+      -- a sum(...) column folds as a count does; a pct(...) column pools; a text
+      -- column of whole numbers folds sum or max (the fleet's width, ntable.numericText)
       local counts = proj == 'count' or (f ~= nil and f.sum)
       local w = tonumber(width)
       if not T.name(col) or not (valid[proj or ''] or formula) or seen[col] or not T.uint(width) or #width > 19 or
         (#width == 19 and width > '9223372036854775807') or not w or w < 0 or w ~= math.floor(w) or
-        not (repair or fold == 'none' or ((fold == 'sum' or fold == 'max') and counts) or
+        not (repair or fold == 'none' or ((fold == 'sum' or fold == 'max') and (counts or proj == 'text')) or
           (fold == 'avg' and counts) or (fold == 'pooled' and formula and not f.sum) or
           (fold == 'union' and proj ~= 'count' and proj ~= 'text' and not formula)) then
         return nil, T.refuse('DEFINITION', col)

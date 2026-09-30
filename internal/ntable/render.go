@@ -128,7 +128,7 @@ func Render(t Table, opts RenderOpts) string {
 	}
 	right := make([]bool, n)
 	for j, c := range cols {
-		right[j] = c.Projection == Count || IsSum(c.Projection)
+		right[j] = c.Projection == Count || IsSum(c.Projection) || numericText(c)
 	}
 	var b, l strings.Builder
 	line := func(cells []string, footerRow bool) {
@@ -325,10 +325,29 @@ func namedCount(cols []Column, r Row, name string) (int64, bool) {
 	return 0, false
 }
 
+// numericText says c is a text column that folds sum or max: its cells are
+// whole numbers, printed right-aligned like counts.
+func numericText(c Column) bool {
+	return c.Projection == Text && (c.Fold == Sum || c.Fold == Max)
+}
+
+// textNumber is a numeric text cell's value: a blank cell is 0; ok is false
+// for text that is no whole number.
+func textNumber(v string) (int64, bool) {
+	if v == "" {
+		return 0, true
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	return n, err == nil
+}
+
 // countValue is a count cell's value, or a sum(<a>+<b>) cell's (the named
 // counts added); ok is false when a count it reads did not come back.
 func countValue(cols []Column, r Row, j int) (int64, bool) {
 	c := cols[j]
+	if numericText(c) {
+		return textNumber(r.Texts[c.Name])
+	}
 	if !IsSum(c.Projection) {
 		if j >= len(r.Cells) || r.Cells[j].Unread {
 			return 0, false

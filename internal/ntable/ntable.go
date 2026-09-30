@@ -431,8 +431,11 @@ func validateColumn(c Column, cols []Column) error {
 	switch c.Fold {
 	case None:
 	case Sum, Max:
-		if !counts {
-			return fmt.Errorf("column %s folds %s, which wants the count projection or sum(...), not %s", c.Name, c.Fold, c.Projection)
+		// a text column holding whole numbers folds sum or max too (the fleet's
+		// width column): a blank cell is 0, a cell that is no whole number
+		// makes the fold "?"
+		if !counts && c.Projection != Text {
+			return fmt.Errorf("column %s folds %s, which wants the count projection or sum(...) (or text of whole numbers), not %s", c.Name, c.Fold, c.Projection)
 		}
 	case Avg:
 		if IsPct(c.Projection) {
