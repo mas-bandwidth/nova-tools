@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -40,11 +41,45 @@ func runVerify(args []string, stdout, stderr io.Writer, q workgh.Query) int {
 		bad = append(bad, "--max-bytes must be positive")
 	}
 	if len(bad) > 0 {
+		if c.json {
+			env := verifyEnvelope{
+				Result: jsonResult{
+					Verb:   "verify",
+					Status: "refused",
+					Exit:   2,
+					Why:    bad,
+					Remedy: "nova-work verify -h",
+				},
+				Facts: map[string]any{},
+				Items: []verifyItem{},
+			}
+			b, _ := json.Marshal(env)
+			fmt.Fprintln(stdout, string(b))
+			return 2
+		}
 		return refuse(stderr, "verify", bad)
 	}
 	start := now()
 	fail := func(format string, a ...any) int {
-		fmt.Fprintf(stderr, "VERIFY FAIL tree=%s reason=%s\n", oneline.Field(*treePath), oneline.Field(fmt.Sprintf(format, a...)))
+		reason := fmt.Sprintf(format, a...)
+		if c.json {
+			env := verifyEnvelope{
+				Result: jsonResult{
+					Verb:   "verify",
+					Status: "refused",
+					Exit:   2,
+					Why:    []string{reason},
+				},
+				Facts: map[string]any{
+					"tree": *treePath,
+				},
+				Items: []verifyItem{},
+			}
+			b, _ := json.Marshal(env)
+			fmt.Fprintln(stdout, string(b))
+			return 2
+		}
+		fmt.Fprintf(stderr, "VERIFY FAIL tree=%s reason=%s\n", oneline.Field(*treePath), oneline.Field(reason))
 		return 2
 	}
 	fi, err := os.Stat(*treePath)
@@ -71,10 +106,46 @@ func runVerify(args []string, stdout, stderr io.Writer, q workgh.Query) int {
 		}
 	}
 	if len(bad) > 0 {
+		if c.json {
+			env := verifyEnvelope{
+				Result: jsonResult{
+					Verb:   "verify",
+					Status: "refused",
+					Exit:   2,
+					Why:    bad,
+					Remedy: "nova-work verify -h",
+				},
+				Facts: map[string]any{
+					"tree": *treePath,
+				},
+				Items: []verifyItem{},
+			}
+			b, _ := json.Marshal(env)
+			fmt.Fprintln(stdout, string(b))
+			return 2
+		}
 		return refuse(stderr, "verify", bad)
 	}
 	q, bad = c.check("verify", q, stdout)
 	if len(bad) > 0 {
+		if c.json {
+			env := verifyEnvelope{
+				Result: jsonResult{
+					Verb:   "verify",
+					Status: "refused",
+					Exit:   2,
+					Why:    bad,
+					Remedy: "nova-work verify -h",
+				},
+				Facts: map[string]any{
+					"tree": *treePath,
+				},
+				Items: []verifyItem{},
+			}
+			b, _ := json.Marshal(env)
+			fmt.Fprintln(stdout, string(b))
+			return 2
+		}
 		return refuse(stderr, "verify", bad)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
@@ -99,35 +170,98 @@ func runVerify(args []string, stdout, stderr io.Writer, q workgh.Query) int {
 		fresh.Repos = append(fresh.Repos, r)
 	}
 	diffs := workfile.Diff(tree, fresh, c.repos)
-	for i, d := range diffs {
-		if *maxLines > 0 && i >= *maxLines {
-			fmt.Fprintf(stdout, "VERIFY MORE kind=difference shown=%d total=%d nova-work verify --tree %s --max 0\n", *maxLines, len(diffs), oneline.Field(*treePath))
-			break
-		}
-		switch d.Kind {
-		case "MISSING":
-			fmt.Fprintf(stdout, "MISSING path=%s field=%s want=%s\n", oneline.Field(d.Path), d.Field, oneline.Field(d.Want))
-		case "EXTRA":
-			fmt.Fprintf(stdout, "EXTRA path=%s field=%s got=%s\n", oneline.Field(d.Path), d.Field, oneline.Field(d.Got))
-		default:
-			fmt.Fprintf(stdout, "DRIFT path=%s field=%s want=%s got=%s\n", oneline.Field(d.Path), d.Field, oneline.Field(d.Want), oneline.Field(d.Got))
+	if !c.json {
+		for i, d := range diffs {
+			if *maxLines > 0 && i >= *maxLines {
+				fmt.Fprintf(stdout, "VERIFY MORE kind=difference shown=%d total=%d run: nova-work verify --tree %s --max 0\n", *maxLines, len(diffs), oneline.Field(*treePath))
+				break
+			}
+			switch d.Kind {
+			case "MISSING":
+				fmt.Fprintf(stdout, "MISSING path=%s field=%s want=%s\n", oneline.Field(d.Path), d.Field, oneline.Field(d.Want))
+			case "EXTRA":
+				fmt.Fprintf(stdout, "EXTRA path=%s field=%s got=%s\n", oneline.Field(d.Path), d.Field, oneline.Field(d.Got))
+			default:
+				fmt.Fprintf(stdout, "DRIFT path=%s field=%s want=%s got=%s\n", oneline.Field(d.Path), d.Field, oneline.Field(d.Want), oneline.Field(d.Got))
+			}
 		}
 	}
 	cnt := fresh.Count()
+	missing, extra, drift := 0, 0, 0
+	for _, d := range diffs {
+		switch d.Kind {
+		case "MISSING":
+			missing++
+		case "EXTRA":
+			extra++
+		default:
+			drift++
+		}
+	}
+	if c.json {
+		st := "ok"
+		exitCode := 0
+		if len(diffs) > 0 {
+			st = "failed"
+			exitCode = 1
+		}
+		items := make([]verifyItem, 0, len(diffs))
+		for i, d := range diffs {
+			if *maxLines > 0 && i >= *maxLines {
+				break
+			}
+			items = append(items, verifyItem{
+				Kind:  d.Kind,
+				Path:  d.Path,
+				Field: d.Field,
+				Want:  d.Want,
+				Got:   d.Got,
+			})
+		}
+		facts := map[string]any{
+			"differences": len(diffs),
+			"tree":        *treePath,
+			"sha256":      sum(data),
+			"repos":       cnt.Repos,
+			"issues":      cnt.Issues,
+			"comments":    cnt.Comments,
+			"calls":       f.Calls,
+			"points":      f.Points,
+			"rest":        0,
+			"seconds":     now().Sub(start).Seconds(),
+		}
+		if len(c.repos) > 0 {
+			facts["repo"] = c.repos.String()
+		}
+		if len(diffs) > 0 {
+			facts["missing"] = missing
+			facts["extra"] = extra
+			facts["drift"] = drift
+		}
+		env := verifyEnvelope{
+			Result: jsonResult{
+				Verb:   "verify",
+				Status: st,
+				Exit:   exitCode,
+			},
+			Facts: facts,
+			Items: items,
+		}
+		if *maxLines > 0 && len(diffs) > *maxLines {
+			env.More = []jsonMore{{
+				Kind:   "difference",
+				Shown:  *maxLines,
+				Total:  len(diffs),
+				Remedy: fmt.Sprintf("run: nova-work verify --tree %s --max 0", *treePath),
+			}}
+		}
+		b, _ := json.Marshal(env)
+		fmt.Fprintln(stdout, string(b))
+		return exitCode
+	}
 	fields := fmt.Sprintf("tree=%s sha256=%s repos=%d issues=%d comments=%d calls=%d points=%d rest=0 seconds=%.1f",
 		oneline.Field(*treePath), sum(data), cnt.Repos, cnt.Issues, cnt.Comments, f.Calls, f.Points, now().Sub(start).Seconds())
 	if len(diffs) > 0 {
-		missing, extra, drift := 0, 0, 0
-		for _, d := range diffs {
-			switch d.Kind {
-			case "MISSING":
-				missing++
-			case "EXTRA":
-				extra++
-			default:
-				drift++
-			}
-		}
 		fmt.Fprintf(stderr, "VERIFY FAIL %s differences=%d missing=%d extra=%d drift=%d\n", fields, len(diffs), missing, extra, drift)
 		return 1
 	}

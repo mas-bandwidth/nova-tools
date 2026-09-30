@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -56,10 +57,40 @@ func runImport(args []string, stdout, stderr io.Writer, q workgh.Query) int {
 		}
 	}
 	if len(bad) > 0 {
+		if c.json {
+			env := importEnvelope{
+				Result: jsonResult{
+					Verb:   "import",
+					Status: "refused",
+					Exit:   2,
+					Why:    bad,
+					Remedy: "nova-work import -h",
+				},
+				Facts: map[string]any{},
+			}
+			b, _ := json.Marshal(env)
+			fmt.Fprintln(stdout, string(b))
+			return 2
+		}
 		return refuse(stderr, "import", bad)
 	}
 	q, bad = c.check("import", q, stdout)
 	if len(bad) > 0 {
+		if c.json {
+			env := importEnvelope{
+				Result: jsonResult{
+					Verb:   "import",
+					Status: "refused",
+					Exit:   2,
+					Why:    bad,
+					Remedy: "nova-work import -h",
+				},
+				Facts: map[string]any{},
+			}
+			b, _ := json.Marshal(env)
+			fmt.Fprintln(stdout, string(b))
+			return 2
+		}
 		return refuse(stderr, "import", bad)
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
@@ -67,8 +98,38 @@ func runImport(args []string, stdout, stderr io.Writer, q workgh.Query) int {
 	start := now()
 	f := &workgh.Fetcher{Q: q, PageSize: c.pageSize, MaxCalls: c.maxCalls, Log: stderr, Remaining: -1}
 	fail := func(code int, format string, a ...any) int {
+		reason := fmt.Sprintf(format, a...)
+		if c.json {
+			st := "failed"
+			if code == 2 {
+				st = "refused"
+			}
+			fFacts := map[string]any{
+				"org":    *org,
+				"calls":  f.Calls,
+				"points": f.Points,
+			}
+			if len(c.repos) > 0 {
+				fFacts["repo"] = c.repos.String()
+			}
+			if *out != "" {
+				fFacts["out"] = *out
+			}
+			env := importEnvelope{
+				Result: jsonResult{
+					Verb:   "import",
+					Status: st,
+					Exit:   code,
+					Why:    []string{reason},
+				},
+				Facts: fFacts,
+			}
+			b, _ := json.Marshal(env)
+			fmt.Fprintln(stdout, string(b))
+			return code
+		}
 		fmt.Fprintf(stderr, "IMPORT FAIL org=%s calls=%d points=%d reason=%s\n", oneline.Field(*org), f.Calls, f.Points,
-			oneline.Field(fmt.Sprintf(format, a...)))
+			oneline.Field(reason))
 		return code
 	}
 
@@ -81,8 +142,10 @@ func runImport(args []string, stdout, stderr io.Writer, q workgh.Query) int {
 		issues += m.Issues
 		est += pages(m.Issues, c.pageSize)
 	}
-	fmt.Fprintf(stdout, "PLAN OK org=%s repos=%d issues=%d est_calls=%d max_calls=%d page_size=%d\n",
-		oneline.Field(*org), len(metas), issues, est, c.maxCalls, c.pageSize)
+	if !c.json {
+		fmt.Fprintf(stdout, "PLAN OK org=%s repos=%d issues=%d est_calls=%d max_calls=%d page_size=%d\n",
+			oneline.Field(*org), len(metas), issues, est, c.maxCalls, c.pageSize)
+	}
 	if est > c.maxCalls {
 		return fail(2, "the plan needs about %d calls and --max-calls is %d; narrow it with --repo or raise --max-calls", est, c.maxCalls)
 	}
@@ -97,8 +160,10 @@ func runImport(args []string, stdout, stderr io.Writer, q workgh.Query) int {
 		tree.Repos = append(tree.Repos, r)
 		n := workfile.Tree{Repos: []workfile.Repo{r}}
 		cnt := n.Count()
-		fmt.Fprintf(stdout, "REPO OK repo=%s issues=%d comments=%d references=%d linked_prs=%d calls=%d\n",
-			oneline.Field(m.Name), cnt.Issues, cnt.Comments, cnt.References, cnt.LinkedPRs, f.Calls-before)
+		if !c.json {
+			fmt.Fprintf(stdout, "REPO OK repo=%s issues=%d comments=%d references=%d linked_prs=%d calls=%d\n",
+				oneline.Field(m.Name), cnt.Issues, cnt.Comments, cnt.References, cnt.LinkedPRs, f.Calls-before)
+		}
 	}
 
 	data, err := workfile.Encode(tree)
@@ -124,6 +189,42 @@ func runImport(args []string, stdout, stderr io.Writer, q workgh.Query) int {
 	outField := "-"
 	if !*dry {
 		outField = *out
+	}
+	repoVal := "-"
+	if len(c.repos) > 0 {
+		repoVal = c.repos.String()
+	} else if len(tree.Repos) == 1 {
+		repoVal = tree.Repos[0].Name
+	}
+	if c.json {
+		facts := map[string]any{
+			"org":        *org,
+			"repo":       repoVal,
+			"issues":     cnt.Issues,
+			"out":        outField,
+			"repos":      cnt.Repos,
+			"comments":   cnt.Comments,
+			"references": cnt.References,
+			"linked_prs": cnt.LinkedPRs,
+			"bytes":      len(data),
+			"sha256":     sum(data),
+			"calls":      f.Calls,
+			"points":     f.Points,
+			"rest":       0,
+			"seconds":    now().Sub(start).Seconds(),
+			"dry_run":    *dry,
+		}
+		env := importEnvelope{
+			Result: jsonResult{
+				Verb:   "import",
+				Status: "ok",
+				Exit:   0,
+			},
+			Facts: facts,
+		}
+		b, _ := json.Marshal(env)
+		fmt.Fprintln(stdout, string(b))
+		return 0
 	}
 	fmt.Fprintf(stdout, "IMPORT OK org=%s out=%s repos=%d issues=%d comments=%d references=%d linked_prs=%d bytes=%d sha256=%s calls=%d points=%d rest=0 seconds=%.1f dry_run=%t\n",
 		oneline.Field(*org), oneline.Field(outField), cnt.Repos, cnt.Issues, cnt.Comments, cnt.References, cnt.LinkedPRs,

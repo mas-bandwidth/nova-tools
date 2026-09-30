@@ -31,8 +31,8 @@ var version string
 const banner = `nova-work: every issue of every repository in one tree file, verified field for field (docs/SPEC-WORK-V1.md)
 
 usage:
-  nova-work import --org <org> (--out <tree.lisp> | --dry-run) [--repo <owner/name>]... [--max-calls <n>] [--page-size <n>] [--gh <path>] [--timeout <d>]
-  nova-work verify --tree <tree.lisp> [--repo <owner/name>]... [--max <n>] [--max-calls <n>] [--page-size <n>] [--gh <path>] [--timeout <d>] [--max-bytes <n>]
+  nova-work import --org <org> (--out <tree.lisp> | --dry-run) [--repo <owner/name>]... [--json] [--max-calls <n>] [--page-size <n>] [--gh <path>] [--timeout <d>]
+  nova-work verify --tree <tree.lisp> [--repo <owner/name>]... [--json] [--max <n>] [--max-calls <n>] [--page-size <n>] [--gh <path>] [--timeout <d>] [--max-bytes <n>]
   nova-work help [<verb>]
   nova-work version
 
@@ -46,8 +46,8 @@ exit: 0 done, or verify found no difference; 1 verify found differences, or
 import's own round trip through the file failed; 2 could not run.
 
 first run (a login gh can use, and a scratch directory):
-  nova-work import --org <org> --repo <org>/<repo> --out /tmp/tree.lisp
-  nova-work verify --tree /tmp/tree.lisp --repo <org>/<repo>
+  nova-work import --org <org> --repo <org>/<repo> --out ./scratch/tree.lisp
+  nova-work verify --tree ./scratch/tree.lisp --repo <org>/<repo>
 `
 
 const importHelp = `nova-work import --org <org> (--out <tree.lisp> | --dry-run) [flags]
@@ -69,6 +69,7 @@ flags:
   --out <file>         the tree file to write (created or replaced; its
                        directory must exist). Required unless --dry-run.
   --dry-run            fetch and check everything, write nothing.
+  --json               emit the result as structured JSON on stdout.
   --max-calls <n>      the GitHub call budget of the run (default 1500; 0 is
                        refused). The plan's estimate is checked against it
                        before the first issue is read.
@@ -110,6 +111,7 @@ that is the check working.
 flags:
   --tree <file>        the tree file. Required.
   --repo <owner/name>  compare only this repository; repeat for more.
+  --json               emit the result as structured JSON on stdout.
   --max <n>            difference lines shown (default 20; 0 shows all). The
                        total is always counted.
   --max-calls <n>      the GitHub call budget of the run (default 1500).
@@ -180,6 +182,7 @@ type common struct {
 	pageSize int
 	gh       string
 	timeout  time.Duration
+	json     bool
 }
 
 func (c *common) bind(fs *flag.FlagSet) {
@@ -188,6 +191,7 @@ func (c *common) bind(fs *flag.FlagSet) {
 	fs.IntVar(&c.pageSize, "page-size", 50, "")
 	fs.StringVar(&c.gh, "gh", "", "")
 	fs.DurationVar(&c.timeout, "timeout", 30*time.Minute, "")
+	fs.BoolVar(&c.json, "json", false, "")
 }
 
 // check validates the shared flags and resolves the GitHub seam, echoing
@@ -214,7 +218,9 @@ func (c *common) check(verb string, q workgh.Query, stdout io.Writer) (workgh.Qu
 	if err != nil {
 		return nil, []string{fmt.Sprintf("the GitHub CLI %q is not found (%v); install it or name it with --gh", prog, err)}
 	}
-	fmt.Fprintf(stdout, "GH OK path=%s\n", oneline.Field(found))
+	if !c.json {
+		fmt.Fprintf(stdout, "GH OK path=%s\n", oneline.Field(found))
+	}
 	return workgh.GhQuery(found), nil
 }
 
