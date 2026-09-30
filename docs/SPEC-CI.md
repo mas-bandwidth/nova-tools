@@ -32,6 +32,12 @@ caller in the Makefile or workflow decides when it runs.
 **The check.** `TestNoFixedWaitsOnTheCIPath` runs in `internal/ci`. It is a
 class test, not a `nova-ci` command: it audits fixed waits on the CI path.
 
+**Pinned class-test help line:**
+
+```
+waits   read every _test.go on the CI path; refuse a fixed wall-clock wait or bound
+```
+
 **What it reads and what it writes.** It reads, as text, every `_test.go` under
 `internal/` and `cmd/` that the two-minute CL path runs, and refuses three
 shapes with the file and the line: a `time.Sleep` whose constant is over 100 ms;
@@ -88,6 +94,12 @@ queue.
 
 **The check.** `TestNoCopiedTestBinariesOnTheCIPath` runs in `internal/ci`.
 It is the fixture-copy class test; `testbins` is not a `nova-ci` command.
+
+**Pinned class-test help line:**
+
+```
+testbins   read every _test.go on the CI path; refuse copying a built executable into a fixture
+```
 
 **What it reads and what it writes.** It reads, as text, every `_test.go` under
 `internal/` and `cmd/` that the two-minute CI path runs, and refuses one shape
@@ -148,6 +160,12 @@ through `internal/testbin.Place`, and the class test refuses a new copy.
 
 **The check.** `TestNoUnquotedPathsInTemplateLiterals` runs in `internal/ci`.
 It is the path-quoting class test; `templates` is not a `nova-ci` command.
+
+**Pinned class-test help line:**
+
+```
+templates   read every _test.go; refuse a filesystem path unquoted in a JSON or template literal
+```
 
 **What it reads and what it writes.** It reads, as text, every `_test.go` under
 `internal/` and `cmd/`, and refuses two shapes with the file and the line: a
@@ -389,6 +407,12 @@ It is the network-host class test, not a `nova-ci` command: unit tests mock
 endpoints, while the separately tagged soak, fuzz and nightly suites may
 exercise real hosts under their own rules.
 
+**Pinned class-test help line:**
+
+```
+net     read every _test.go on the CI path; refuse a real network host or host:port
+```
+
 **What it reads and what it writes.** It reads, as text, every `_test.go` under
 `internal/` and `cmd/` that the two-minute CL path runs, parses each as Go, and
 refuses a string literal that names a real network host: an `http://` or
@@ -444,6 +468,12 @@ secret leak look the same in the log.
 
 **The check.** `TestGoEnvClassRuleHoldsOverTheRepository` runs in `internal/ci`.
 It is the child-environment class test; `goenv` is not a `nova-ci` command.
+
+**Pinned class-test help line:**
+
+```
+goenv   read every .go under cmd/ and internal/; refuse a child `go` that inherits the caller's environment
+```
 
 **What it reads and what it writes.** It reads, as text, every `.go` file under
 `internal/` and `cmd/` — tests included, because a test helper that builds a
@@ -512,7 +542,10 @@ here that has one points at it.
 `.go` files, `.github/workflows/*.yml`, the `Makefile`, `docs/` — and refuses a
 SHAPE wherever it stands, rather than exercising one function. It is the fix for
 a whole class made mechanical, which is the only kind of fix that survives the
-next card: a rule lands with its sweep of the tree, or it does not land.
+next card: a rule lands with its sweep of the tree, or it does not land
+(pit-stop ledger item 20, in the `rowan-new` repository at
+`reports/pitstop-tests-2026-09-17.md`, a sibling checkout rather than a path
+in this repository; this citation is prose because it has no local link target).
 
 **The marker.** A class test is a `Test` function in `internal/ci` that is
 either declared in a `*_class_test.go` file or named with one of the quantifier

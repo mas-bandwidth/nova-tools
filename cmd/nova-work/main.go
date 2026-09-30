@@ -46,8 +46,7 @@ exit: 0 done, or verify found no difference; 1 verify found differences, or
 import's own round trip through the file failed; 2 could not run.
 
 example:
-  nova-work help import
-  nova-work version
+  nova-work help
 `
 
 const importHelp = `nova-work import --org <org> (--out <tree.lisp> | --dry-run) [flags]

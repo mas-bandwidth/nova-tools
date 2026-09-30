@@ -1169,7 +1169,7 @@ Linux. `--place wsb` takes the separate Windows Sandbox path, requires
 path conflicts with SPEC-SANDBOX rule 2, which excludes VM/Hyper-V requirements;
 it is not an approved exception or a verified native Windows worker configuration.
 
-### Egress and worktrees
+### Egress
 
 `egress plan` and `egress check` run on every platform. `plan` resolves
 the reviewed allowlist once, writes a ruleset to `--out`, and audits that
@@ -1180,6 +1180,8 @@ table, and refuse elsewhere. `plan` uses `--run`, `--policy`,
 selector (`--uid` or `--veth`). `apply` uses `--plan` and `--run`;
 `check` uses `--plan`; `drop` uses `--run`.
 
+### worktree
+
 `worktree` materialises one pull request head in a GUID scratch tree. It is
 not a wall and follows the ordinary 0/1/2 verb grammar. `--repo` and
 `--scratch` name existing absolute paths. Use either `--pr <id>`, with an
@@ -1187,17 +1189,21 @@ optional `--base <branch>`, or `--prune`; do not combine the modes. The
 current parser can silently ignore an unknown worktree flag, so the grammar
 above is the supported set until that CLI validation gap is repaired.
 
+A repeated request for the same clean head reuses its tree. `--prune` removes
+recorded scratch trees when the forge reports their pull request merged or closed.
+For an open pull request, removal requires a tree older than 24 hours and a
+successful check that no process uses it. The merged and closed cases do not
+perform that idle check.
+
+This executed fixture uses a fixed pull request head and scratch-directory ID:
+
 ```
 $ nova-sandbox worktree --repo /path/to/workdir --scratch /path/to/workdir/scratch --pr 123
 WORKTREE OK path=/path/to/workdir/scratch/1f450ab70c635e66f675ff8a4e395760 head=0123456789abcdef0123456789abcdef01234567
-```
 
-`--prune` removes recorded scratch trees when the forge reports their pull
-request merged or closed. For an open pull request, removal requires a tree
-older than 24 hours and a successful check that no process uses it. The merged
-and closed cases do not perform that idle check:
+$ nova-sandbox worktree --repo /path/to/workdir --scratch /path/to/workdir/scratch --pr 123
+WORKTREE OK path=/path/to/workdir/scratch/1f450ab70c635e66f675ff8a4e395760 head=0123456789abcdef0123456789abcdef01234567
 
-```
 $ nova-sandbox worktree --repo /path/to/workdir --scratch /path/to/workdir/scratch --prune
 WORKTREE OK removed=0 kept=1
 ```
@@ -2428,8 +2434,7 @@ nova-work help
 ```
 
 A bare `nova-work` invocation refuses on one line and points to that help.
-The banner ends with runnable, store-free `nova-work help import` and
-`nova-work version` examples. There is no credential-free `quickstart` for an
+The banner ends with a runnable, store-free `nova-work help` example. There is no credential-free `quickstart` for an
 issue import: a real read needs an organization and a `gh` login permitted to
 read the chosen repositories. After checking `nova-work import -h`, choose an
 organization and a repository you can access. `import --org <org> --repo

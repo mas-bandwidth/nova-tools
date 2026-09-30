@@ -15,6 +15,10 @@ import (
 // this run, so CompareTranscript receives no volatile-field exclusions.
 func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	t.Parallel()
+	const transcriptTool = "nova-sprint"
+	if prog != transcriptTool {
+		t.Fatalf("program name %q does not match transcript section %q", prog, transcriptTool)
+	}
 
 	examplesWant := []string{
 		"nova-sprint help",
@@ -26,7 +30,7 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	if code := a.run([]string{"help"}, &banner, &bannerErr); code != 0 || bannerErr.Len() != 0 {
 		t.Fatalf("help: exit %d, stderr %q", code, bannerErr.String())
 	}
-	examples, err := onboarding.ExampleLines(banner.String(), prog)
+	examples, err := onboarding.ExampleLines(banner.String(), transcriptTool)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,11 +42,11 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	lines, err := onboarding.FirstRun(string(raw), prog)
+	lines, err := onboarding.FirstRun(string(raw), transcriptTool)
 	if err != nil {
 		t.Fatal(err)
 	}
-	steps, err := onboarding.Steps(prog, lines)
+	steps, err := onboarding.Steps(transcriptTool, lines)
 	if err != nil {
 		t.Fatal(err)
 	}

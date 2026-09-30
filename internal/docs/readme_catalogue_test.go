@@ -18,7 +18,7 @@ func TestReadmeCatalogueContainsOnlyLivingTools(t *testing.T) {
 		t.Fatal(err)
 	}
 	page := string(raw)
-	living := strings.Fields("nova-bus nova-table nova-redis nova-config nova-swarm nova-secrets nova-tokens nova-memory nova-cairn nova-check nova-self-talk nova-fuse nova-sandbox nova-ci nova-version nova-update")
+	living := strings.Fields("nova-bus nova-table nova-redis nova-config nova-swarm nova-secrets nova-tokens nova-memory nova-cairn nova-check nova-self-talk nova-fuse nova-sandbox nova-ci nova-version nova-update nova-sprint nova-work")
 	expected := map[string]bool{}
 	for _, name := range living {
 		expected[name] = true

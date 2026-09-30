@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,16 +21,8 @@ func TestUsageBannerExamplesRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, example := range examples {
-		args := strings.Fields(example)[1:]
-		if len(args) == 0 || (args[0] != "help" && args[0] != "version") {
-			t.Fatalf("example %q could reach GitHub; use a store-free first run", example)
-		}
-		out.Reset()
-		errb.Reset()
-		if code := run(args, &out, &errb, nil); code != 0 || out.Len() == 0 || errb.Len() != 0 {
-			t.Fatalf("example %q: exit %d, stdout %q, stderr %q", example, code, out.String(), errb.String())
-		}
+	if len(examples) != 1 || examples[0] != "nova-work help" {
+		t.Fatalf("banner examples = %q, want [nova-work help]", examples)
 	}
 }
 
@@ -61,29 +52,27 @@ func TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(steps) == 0 {
-		t.Fatal("the nova-work first-run transcript executes no command")
+	var banner, bannerErr bytes.Buffer
+	if code := run([]string{"help"}, &banner, &bannerErr, nil); code != 0 || bannerErr.Len() != 0 {
+		t.Fatalf("help: exit %d, stderr %q", code, bannerErr.String())
 	}
-	helpSeen := false
+	examples, err := onboarding.ExampleLines(banner.String(), "nova-work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(steps) != 1 || len(examples) != 1 || examples[0] != "nova-work help" {
+		t.Fatalf("first run has %d steps and banner examples %q, want one nova-work help", len(steps), examples)
+	}
+	results := make([]onboarding.Result, 0, len(steps))
 	for _, step := range steps {
-		if len(step.Args) == 0 || (step.Args[0] != "help" && step.Args[0] != "version") {
-			t.Fatalf("first-run command %q could reach GitHub; provide a replay fixture before documenting it", step.Line)
-		}
-		if step.Args[0] == "help" {
-			helpSeen = true
-		}
-	}
-	if !helpSeen {
-		t.Fatal("the first-run transcript must show nova-work help")
-	}
-	for _, problem := range onboarding.Execute(steps, func(step onboarding.Step) (onboarding.Result, error) {
-		if step.Stdin != "" {
-			return onboarding.Result{}, fmt.Errorf("nova-work first-run command %q does not read stdin", step.Line)
+		if strings.TrimPrefix(step.Line, "$ ") != examples[0] || len(step.Args) != 1 || step.Args[0] != "help" || step.Stdin != "" {
+			t.Fatalf("first-run command %q with stdin %q differs from store-free banner example %q", step.Line, step.Stdin, examples[0])
 		}
 		var out, errb bytes.Buffer
 		code := run(step.Args, &out, &errb, nil)
-		return onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()}, nil
-	}) {
+		results = append(results, onboarding.Result{Code: code, Stdout: out.String(), Stderr: errb.String()})
+	}
+	for _, problem := range onboarding.CompareTranscript(steps, results, nil) {
 		t.Error(problem)
 	}
 }
