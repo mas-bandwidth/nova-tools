@@ -29,12 +29,11 @@ func TestNoModTimeDecidesAnythingInThisPackage(t *testing.T) {
 		//   whether a slot is finished.
 		//
 		//   lease.go (issue #1585) reads the job lease's mtime, which IS the heartbeat --
-		//   the reaper writes the same rule in scripts/bench-hygiene.sh. It is read for one
-		//   question only: a lease whose owner this kernel cannot be asked about (another
-		//   host, or a record that did not parse) is HELD until its heartbeat is older than
-		//   JobLeaseStale. Without it an unfinished record reads as a dead owner and a
-		//   second launcher takes a live job directory, which is the P1 Stella held the
-		//   first repair for.
+		//   the reaper reads the same rule. It is read for one question only: a lease whose
+		//   owner this kernel cannot be asked about (another host, or a record that did not
+		//   parse) is HELD until its heartbeat is older than JobLeaseStale. Without it an
+		//   unfinished record reads as a dead owner and a second launcher takes a live job
+		//   directory, which is the P1 Stella held the first repair for.
 		if name == "reap.go" || name == "lease.go" {
 			continue
 		}

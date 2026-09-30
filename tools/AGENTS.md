@@ -6,11 +6,15 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | --- | --- | --- | --- |
 | `agentsmap/` | AGENTS.md map generator CLI | `go test ./internal/docs` | `make map` |
 | `analyzers/` | vetlaw verb-law analyzers | `go test ./tools/analyzers/...` | `make vet-laws` |
-| `ci/` | the verbs CI and the Makefile call: package selection and the shard deal, the test-step checks, the ancestry fetch, gofmt, the redis, postgres and sbcl installs, the lisp tier, the job aggregates, revert-on-red and the run reports; one runner for every process | `go test ./tools/ci` | `go run ./tools/ci help` |
+| `benchstandard/` | the Linux bench's acceptance witness: one DRIFT line per finding against the standard, STANDARD OK or STANDARD DRIFT, and --apply kills stray runner listeners and nothing else | `go test ./tools/benchstandard` | `go run ./tools/benchstandard` |
+| `ci/` | CI helper and build scripts | `go test ./internal/ci` | `make test` |
 | `fardelay/` | a store at a distance as a process: a loopback proxy that holds each write of its clients back by a fixed delay | `go test ./tools/fardelay` | `go run ./tools/fardelay --target HOST:PORT --delay 64ms` |
 | `functionalrun/` | the functional tier inside one container per run, and the reaper of its overdue containers | `go test ./tools/functionalrun` | `make test-functional-container` |
+| `ghrelease/` | the GitHub release verbs: the stamped ldflags, the build of every shipped tool per platform, the checksums over the shipped set, the stamp assertion, the certified gate and the draft-only upload | `go test ./tools/ghrelease` | `go run ./tools/ghrelease help` |
 | `newrule/` | class rule scaffolding CLI | `go test ./tools/newrule` | `go test ./tools/newrule` |
 | `newverb/` | CLI verb scaffolding CLI | `go test ./tools/newverb` | `go test ./tools/newverb` |
+| `preflight/` | the standard check before a card or a pull request: gofmt, go vet and the unit tests through make test-full | `go test ./tools/preflight` | `make preflight` |
+| `sandboxcheck/` | the darwin profile check of nova-sandbox: fills the profile template for a scratch write set and runs the first second of a job inside the wall, each denial beside a control outside it | `go test ./tools/sandboxcheck` | `go run ./tools/sandboxcheck` |
 | `sessiontrace/` | bounded shell trace replay against TableSession | `go test ./tools/sessiontrace` | `go test ./tools/sessiontrace` |
 | `sprintsize/` | nova-sprint's size run: the sprint at 10x its largest real size on a local store, each operation timed against its limit | `go vet ./tools/sprintsize` | `go run ./tools/sprintsize --bin <nova-sprint>` |
 | `testmanifest/` | exact named Go test manifest checker | `go test ./tools/testmanifest` | `go test ./tools/testmanifest` |

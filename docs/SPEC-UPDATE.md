@@ -461,7 +461,7 @@ carries, and what `pull` deletes.
   refusals, and writes nothing.
   A version that could not survive `-X main.version=`, a printf format or the field law —
   whitespace, `%`, `=` — is refused here, the same refusal
-  `.github/scripts/release-ldflags.sh` makes for the same reasons.
+  `go run ./tools/ghrelease ldflags` makes for the same reasons.
 - **`build`** compiles every `cmd/nova-*` in `--source` for one platform (this host unless
   `--platform` says otherwise) with `-trimpath` and the one composed stamp, into
   `<out>/<version>/<goos>-<goarch>/`, and writes `SHA256SUMS` over the whole set LAST, in

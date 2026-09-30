@@ -46,7 +46,7 @@ import (
 //
 // ONE PLACE, PER GOOS. The list lives HERE and nowhere else, and each operating system's
 // entries are that OS's provisioning standard read back: the wall reads them to build its
-// argv, and the standard's own check names the same roots -- `tools/bench-standard.sh`'s
+// argv, and the standard's own check names the same roots -- `tools/benchstandard`'s
 // marked block for a linux bench, `internal/pulse`'s darwin check table for a Mac one --
 // held together by the class test in internal/ci, which fails IN BOTH DIRECTIONS PER OS when
 // the lists drift apart. A literal in two places is how the two contracts came to disagree

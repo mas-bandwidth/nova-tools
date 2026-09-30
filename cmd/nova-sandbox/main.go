@@ -645,7 +645,7 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 	// stays so that a mismatch still refuses; the environment copy stays as the guard's
 	// second factor — a third copy required to agree — and nothing else reads it
 	// (measured: no reader of NOVA_SANDBOX_PROBE_NONCE exists outside this guard;
-	// darwin-check.sh never mentions it and the step bodies take path and name from argv).
+	// tools/sandboxcheck never mentions it and the step bodies take path and name from argv).
 	// The child then asks the OS who its parent is and refuses unless that process is this
 	// same binary.
 	rawNonce, err := probeNonce()
@@ -999,8 +999,8 @@ func policyText(p *sandbox.Policy) (string, error) {
 
 // policyVerb prints the generated policy for a read/write pair and runs NOTHING. It is
 // how a reader checks the wall without trusting the document — and it is how
-// profiles/darwin-check.sh can be run against the profile THIS TOOL generates, so that
-// the script and the tool cannot drift apart (rule 15: generated, never hand-edited).
+// tools/sandboxcheck can be run against the profile THIS TOOL generates, so that
+// the check and the tool cannot drift apart (rule 15: generated, never hand-edited).
 func policyVerb(args []string, stdout, stderr io.Writer, env []string) int {
 	f := parseVerb("policy", args)
 	if len(f.bad) > 0 {

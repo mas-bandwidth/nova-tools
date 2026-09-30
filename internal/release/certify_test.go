@@ -74,7 +74,7 @@ func certifyPaths(t *testing.T) (registry, certs, standard string) {
 	t.Helper()
 	dir := t.TempDir()
 	certs = filepath.Join(dir, "certs.tsv")
-	standard = filepath.Join(dir, "bench-standard.sh")
+	standard = filepath.Join(dir, "standard.go")
 	if err := os.WriteFile(standard, []byte("echo STANDARD OK\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
