@@ -3,6 +3,7 @@ package ci
 import (
 	"bytes"
 	"fmt"
+	"go/ast"
 	"go/parser"
 	"go/token"
 	"os"
@@ -96,6 +97,32 @@ var ignoredCompoundWords = map[string]bool{
 
 var reWord = regexp.MustCompile(`[a-zA-Z0-9]+`)
 var reAccount = regexp.MustCompile(`(?i)mas-bandwidth`)
+
+// layerOnePackage is the import path of Layer 1 (the table set), whose types
+// name a deployment's key prefix with the field `Space` and the wire key
+// "space". A bench machine carries that word as its name, so the token list
+// has it, but in this sense it is a general concept and not a machine.
+const layerOnePackage = `"github.com/mas-bandwidth/nova-tools/internal/tset"`
+
+// reLayerOneSpace is Layer 1's field as it appears in a file that uses Layer
+// 1's types: the selector `x.Space`, the composite-literal key `Space:` and
+// the struct tag `json:"space"`. Errata 2 (item 12) decides that the guardrail
+// allow-lists this identifier in Layer 1's sense and no other: the exemption
+// holds only in a file that imports Layer 1's package, only for these three
+// forms, and never raises a count ceiling (an allowed count only shrinks). The
+// bare word `space` in such a file (a string, a comment, a variable name) still
+// counts, and so does every use in a file that does not import Layer 1.
+var reLayerOneSpace = regexp.MustCompile(`\.Space\b|\bSpace:|json:"space"`)
+
+// importsLayerOne says the parsed file imports Layer 1's package.
+func importsLayerOne(file *ast.File) bool {
+	for _, imp := range file.Imports {
+		if imp.Path != nil && imp.Path.Value == layerOnePackage {
+			return true
+		}
+	}
+	return false
+}
 
 // isMarkedDocExample reports whether a comment line is an explicit documentation example.
 func isMarkedDocExample(comment string) bool {
@@ -208,7 +235,17 @@ func cleanSourceForGenerality(rel string, src []byte) []byte {
 		}
 	}
 
-	// 2. Blank out real AST comments containing marked documentation examples
+	// 2. Blank Layer 1's deployment-prefix field (errata 2, item 12) in a file
+	// that imports Layer 1's package.
+	if importsLayerOne(file) {
+		for _, m := range reLayerOneSpace.FindAllIndex(clean, -1) {
+			for i := m[0]; i < m[1]; i++ {
+				clean[i] = ' '
+			}
+		}
+	}
+
+	// 3. Blank out real AST comments containing marked documentation examples
 	if hasDocExample {
 		for _, cg := range file.Comments {
 			for _, c := range cg.List {
@@ -744,6 +781,62 @@ func TestGeneralityOccurrenceWitness(t *testing.T) {
 			t.Logf("prefix=%q counts=%v", prefix, counts)
 			if counts["fixture.go:mas-bandwidth"] != 1 {
 				t.Errorf("Unicode prefix %q hid account token", prefix)
+			}
+		}
+	})
+}
+
+// TestGeneralityLayerOneSpace proves the exemption of errata 2 (item 12) and its
+// limits with a ceiling of zero, so nothing can be absorbed by an allowance:
+// Layer 1's field in a file that imports Layer 1 is not counted; the same
+// text in a file that does not import Layer 1 is; and the bare word in a file
+// that does import it (a string, a comment, a variable) still is.
+func TestGeneralityLayerOneSpace(t *testing.T) {
+	t.Parallel()
+
+	none, err := allowlist.Parse("fixture", "# ceiling: 0\n", allowlist.Options{Ceiling: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	const imports = "package fixture\nimport \"github.com/mas-bandwidth/nova-tools/internal/tset\"\nvar _ = tset.Version\n"
+	const field = "func f(p *tset.ReadPlan) tset.Step {\n" +
+		"\tq := tset.Step{Epoch: \"0\", Space: prefix}\n" +
+		"\tp.Space = prefix\n" +
+		"\treturn tset.Step{Space: p.Space}\n}\n" +
+		"type wire struct {\n\tPrefix string `json:\"space\"`\n}\n"
+
+	t.Run("the field of a file that imports Layer 1 is not counted", func(t *testing.T) {
+		t.Parallel()
+		src := []GeneralitySourceFile{{Rel: "fixture.go", Src: []byte(imports + field)}}
+		if v := checkGenerality(src, none); len(v) != 0 {
+			t.Fatalf("Layer 1's field was counted: %v", v)
+		}
+	})
+
+	t.Run("the same text without the import is counted", func(t *testing.T) {
+		t.Parallel()
+		src := []GeneralitySourceFile{{Rel: "fixture.go", Src: []byte("package fixture\n" + field)}}
+		counts, _, _ := measureGeneralityCounts(src)
+		if counts["fixture.go:space"] != 5 {
+			t.Fatalf("a file that does not import Layer 1 counted %d uses, want all 5: %v", counts["fixture.go:space"], counts)
+		}
+		if v := checkGenerality(src, none); len(v) == 0 {
+			t.Fatal("the field of a file that does not import Layer 1 was exempted")
+		}
+	})
+
+	t.Run("the bare word in a file that imports Layer 1 is counted", func(t *testing.T) {
+		t.Parallel()
+		for name, body := range map[string]string{
+			"a string":   "var host = \"space\"\n",
+			"a variable": "var space = 1\n",
+			"a comment":  "// deployed on space\nvar x = 1\n",
+			"a key":      "var m = map[string]string{\"Space\": \"x\", \"space\": \"y\"}\n",
+		} {
+			src := []GeneralitySourceFile{{Rel: "fixture.go", Src: []byte(imports + field + body)}}
+			counts, _, _ := measureGeneralityCounts(src)
+			if counts["fixture.go:space"] == 0 {
+				t.Errorf("%s: the bare word was exempted (counts %v)", name, counts)
 			}
 		}
 	})
