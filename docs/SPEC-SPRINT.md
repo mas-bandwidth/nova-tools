@@ -657,9 +657,11 @@ current epoch.
 (`--seed`) so a run repeats: workers taking and finishing work cards (`--fail`),
 readers reporting read cards (`--broken`), each stream's merge step with its
 facts (`--batch`, `--stuck`, `--cross`, `--red`), members going down and up
-(`--flap`: a member's machine falls silent, stops beating, and beats again
-later; `--hold` plays those as the coordinator's hold instead;
-`--silent <member>@<from>+<for>` silences one member for a while). The driver
+(`--down`: a member's machine that is up falls silent and stops beating;
+`--up`: one that is down beats again; `--flap` is `--down` and `--up` with the
+one chance; `--hold` plays the downs as the coordinator's hold instead;
+`--silent <member>@<from>+<for>` silences one member for a while). A machine
+that is down takes no work; when it comes back it takes work again. The driver
 beats every member it plays. The mechanical moves are the machine's (section 14): the driver
 plays only the outside actors, and refuses to play (exit 2) while no machine is
 running. Everything it does is a nova-sprint verb run
@@ -670,11 +672,32 @@ start, stop, tick or run. It keeps running while
 things wait for the coordinator, says what waits and for how long, tolerates
 the coordinator writing at the same time, and stops when every stream has
 landed (every primary on the table landed). It reads a stream's merge queue just before that stream's merge step,
-and the other streams' queues only when a fact needs them; `--flap` silences an
-up member's machine and brings a silent one back with the same chance; with
+and the other streams' queues only when a fact needs them; `--down` silences an
+up member's machine and `--up` brings a silent one back; with
 `--hold` the driver releases every hold it took before it stops. Its facts come through one interface (a worker's result, a reader's
 finding, a merge batch's outcome, which members are up); the seeded source is
 one implementation.
+
+`play --simulation` is the simulation that stresses the sprint, six locked
+chances: a reader finds the work broken, 10 percent (`--broken 0.10`); work
+comes back not ok from the fleet, 10 percent (`--fail 0.10`); a merge needs
+help from the coordinator within its stream, 10 percent (`--stuck 0.10`); a
+merge needs help across streams, 1 percent (`--cross 0.01`); a machine that is
+up goes down, 1 percent each second (`--down 0.01`); a machine that is down
+comes back, 10 percent each second (`--up 0.10`). `--simulation` sets all six,
+and a chance flag given beside it (before or after) sets that one chance and no
+other; `--red` is not one of the six and stays as it is. A chance is per report
+(`--broken`, `--fail`: drawn each time a card is reported, so a card reworked
+and reported again draws again), per merge batch (`--stuck`, `--cross`,
+`--red`) or per member and second (`--down`, `--up`, `--flap`): a tick of
+another `--every` than a second draws the chance of at least one such event in
+that time. The draws come from the seed; play prints the chances its seeded
+source draws with, once it may play and before its first tick (`chances:
+broken=0.1 ... red=0 seed=1 every=1s`; at another `--every`, `down` and `up`
+are the chance of one tick, not the flags' own). A play that is refused prints
+nothing on stdout. A chance outside 0 to 1 is refused. The state of which
+machines are down is the play process's: a play run again starts with every
+machine up.
 
 ## 13. Epochs and clear
 

@@ -96,7 +96,7 @@ func TestTheSeedPlaysTheSameFacts(t *testing.T) {
 	t.Parallel()
 	a, b := NewSeeded(42), NewSeeded(42)
 	for _, s := range []*Seeded{a, b} {
-		s.Fail, s.Broken, s.Stuck, s.Cross, s.Red, s.Flap = 0.3, 0.3, 0.2, 0.1, 0.1, 0.5
+		s.Fail, s.Broken, s.Stuck, s.Cross, s.Red, s.Down, s.Back = 0.3, 0.3, 0.2, 0.1, 0.1, 0.5, 0.5
 	}
 	for i := 0; i < 50; i++ {
 		id := fmt.Sprint("c", i)
@@ -117,12 +117,34 @@ func TestTheDriverRefusesToPlayWithNoMachineRunning(t *testing.T) {
 	t.Parallel()
 	w := &world{where: []string{strings.Replace(busy, "machine: running", "machine: STOPPED", 1)}}
 	var out bytes.Buffer
-	d := &Driver{Run: w.run, Facts: NewSeeded(1), Clock: &fakeClock{now: time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)}, Out: &out}
+	d := &Driver{Run: w.run, Facts: NewSeeded(1), Clock: &fakeClock{now: time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)}, Out: &out, Header: "chances: a header"}
 	if _, err := d.Loop(); err == nil || !strings.Contains(err.Error(), "no machine is running (machine: STOPPED)") {
 		t.Fatalf("a driver with the machine stopped: %v", err)
 	}
 	if len(w.ran) != 1 {
 		t.Fatalf("it ran more than the read: %v", w.ran)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("a driver that refuses to play printed %q", out.String())
+	}
+}
+
+// The header is printed once, when the loop may play, before its first tick.
+func TestTheLoopPrintsItsHeaderOnceBeforeTheFirstTick(t *testing.T) {
+	t.Parallel()
+	w := &world{where: []string{busy}, queue: map[string]string{
+		"m1":       `{"cards":[]}`,
+		"reader-a": `{"cards":[]}`,
+		"s1":       `{"cards":[]}`,
+	}, inbox: `{"groups":[]}`}
+	var out bytes.Buffer
+	d := &Driver{Run: w.run, Facts: NewSeeded(1), Clock: &fakeClock{now: time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)}, Out: &out,
+		Header: "chances: a header", Config: Config{Every: time.Second, Ticks: 3}}
+	if why, err := d.Loop(); err != nil || why != "ticks" {
+		t.Fatalf("%s %v", why, err)
+	}
+	if text := out.String(); !strings.HasPrefix(text, "chances: a header\ntick 1 ") || strings.Count(text, "chances: a header") != 1 {
+		t.Fatalf("the header, once, before tick 1:\n%s", text)
 	}
 }
 
@@ -232,7 +254,11 @@ func TestAMemberTakenDownIsBroughtUpBeforeTheDriverStops(t *testing.T) {
 func TestFlapIsTheSameChanceBothWays(t *testing.T) {
 	t.Parallel()
 	s := NewSeeded(9)
-	s.Flap = 0.2
+	c, err := Set(false, map[string]float64{"flap": 0.2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Use(c, time.Second)
 	downs, ups := 0, 0
 	for i := 0; i < 20000; i++ {
 		n := s.Up(i, []string{"a", "b"}, map[string]bool{"a": true})

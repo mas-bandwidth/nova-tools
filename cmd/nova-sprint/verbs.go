@@ -66,7 +66,7 @@ func init() {
 		{"check", "", "check", (*app).cmdCheck},
 		{"repair", "", "repair", (*app).cmdRepair},
 		{"where", "[--watch] [--every <duration>]", "where", (*app).cmdWhere},
-		{"play", "[--seed <n>] [--every <duration>] [--fail <p>] [--broken <p>] [--batch <n>] [--stuck <p>] [--cross <p>] [--red <p>] [--flap <p>] [--hold] [--silent <member>@<from>+<for>]... [--ticks <n>]", "play --seed 7 --every 1s", (*app).cmdPlay},
+		{"play", "[--simulation] [--seed <n>] [--every <duration>] [--broken <p>] [--fail <p>] [--stuck <p>] [--cross <p>] [--down <p>] [--up <p>] [--red <p>] [--flap <p>] [--batch <n>] [--hold] [--silent <member>@<from>+<for>]... [--ticks <n>]", "play --seed 7 --every 1s", (*app).cmdPlay},
 		{"clear", "--confirm <prefix>", "clear --confirm dev-", (*app).cmdClear},
 		{"teardown", "--confirm <prefix>", "teardown --confirm dev-", (*app).cmdTeardown},
 	}
