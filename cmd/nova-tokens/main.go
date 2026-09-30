@@ -39,6 +39,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/tokens"
+	"github.com/mas-bandwidth/nova-tools/internal/verbout"
 )
 
 const usage = `nova-tokens: token spend, folded per day, keyed by (day, model, repo) (see docs/SPEC-TOKENS.md)
@@ -548,6 +549,7 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 	all := fs.Bool("all", false, "")
 	allowShrink := fs.Bool("allow-shrink", false, "")
 	max := fs.Int("max", bounded.Default, "")
+	asJSON := verbflag.JSON(fs)
 	var sf sourceFlags
 	sf.declare(fs, true)
 	if err := verbflag.Parse(fs, args); err != nil {
@@ -595,21 +597,29 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 		}
 	}
 
-	fmt.Fprintf(stdout, "TOKENS FOLD at=%s build=%s out=%s sources=%d days=%s repos=%s\n",
-		oneline.Field(stamp(now)), oneline.Field(buildVersion()), oneline.Field(*out),
-		len(sources), oneline.Field(daysAsked(*day, *all)), oneline.Field(sf.repos))
+	outW, errW := stdout, stderr
+	if *asJSON {
+		outW = io.Discard
+		errW = io.Discard
+	}
 
-	srcList := bounded.Capped(stdout, *max, "TOKENS", "source", maxRemedy("fold"))
-	unreadable := bounded.Capped(stderr, *max, "TOKENS", "unreadable", maxRemedy("fold"))
-	unparsed := bounded.Capped(stderr, *max, "TOKENS", "unparsed", maxRemedy("fold"))
-	superseded := bounded.Capped(stdout, *max, "TOKENS", "superseded", maxRemedy("fold"))
-	conflicts := bounded.Capped(stderr, *max, "TOKENS", "conflict", maxRemedy("fold"))
-	touched := bounded.Capped(stdout, *max, "TOKENS", "touched", maxRemedy("fold"))
-	mixedList := bounded.Capped(stderr, *max, "TOKENS", "mixed", maxRemedy("fold"))
-	dayList := bounded.Capped(stdout, *max, "TOKENS", "day", maxRemedy("fold"))
-	shrankList := bounded.Capped(stderr, *max, "TOKENS", "shrank", maxRemedy("fold"))
-	partialList := bounded.Capped(stderr, *max, "TOKENS", "partial", maxRemedy("fold"))
-	quietList := bounded.Capped(stderr, *max, "TOKENS", "quiet", maxRemedy("fold"))
+	if !*asJSON {
+		fmt.Fprintf(stdout, "TOKENS FOLD at=%s build=%s out=%s sources=%d days=%s repos=%s\n",
+			oneline.Field(stamp(now)), oneline.Field(buildVersion()), oneline.Field(*out),
+			len(sources), oneline.Field(daysAsked(*day, *all)), oneline.Field(sf.repos))
+	}
+
+	srcList := bounded.Capped(outW, *max, "TOKENS", "source", maxRemedy("fold"))
+	unreadable := bounded.Capped(errW, *max, "TOKENS", "unreadable", maxRemedy("fold"))
+	unparsed := bounded.Capped(errW, *max, "TOKENS", "unparsed", maxRemedy("fold"))
+	superseded := bounded.Capped(outW, *max, "TOKENS", "superseded", maxRemedy("fold"))
+	conflicts := bounded.Capped(errW, *max, "TOKENS", "conflict", maxRemedy("fold"))
+	touched := bounded.Capped(outW, *max, "TOKENS", "touched", maxRemedy("fold"))
+	mixedList := bounded.Capped(errW, *max, "TOKENS", "mixed", maxRemedy("fold"))
+	dayList := bounded.Capped(outW, *max, "TOKENS", "day", maxRemedy("fold"))
+	shrankList := bounded.Capped(errW, *max, "TOKENS", "shrank", maxRemedy("fold"))
+	partialList := bounded.Capped(errW, *max, "TOKENS", "partial", maxRemedy("fold"))
+	quietList := bounded.Capped(errW, *max, "TOKENS", "quiet", maxRemedy("fold"))
 
 	conflictDays := map[string]bool{}
 	// The labels this run declared: exactly what lands in a row's sources column, and so
@@ -665,6 +675,7 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 		days = []string{*day}
 	}
 	daysWritten, rowsWritten, quiet := 0, 0, 0
+	var dayLines []string
 	mixedLabels := "-"
 	firstPartial := ""
 	for _, d := range days {
@@ -762,7 +773,9 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 					oneline.Field(sh.File), oneline.Field(sh.Now), written))
 			}
 		}
-		dayList.Line(dayLine(d, file, written))
+		dayLineStr := dayLine(d, file, written)
+		dayList.Line(dayLineStr)
+		dayLines = append(dayLines, dayLineStr)
 	}
 	unreadable.More()
 	mixedList.More()
@@ -781,20 +794,116 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 	dropped, of, allDropped := allMessagesDropped(sources)
 	bad := unreadable.Total() > 0 || unparsed.Total() > 0 || mixedList.Total() > 0 ||
 		conflicts.Total() > 0 || (shrankList.Total() > 0 && !*allowShrink) || partialList.Total() > 0 || allDropped
-	if allDropped {
-		fmt.Fprintf(stderr, "FOLD FAIL dropped=%d of %d: %s\n", dropped, of, allDroppedWhy)
+	if !*asJSON {
+		if allDropped {
+			fmt.Fprintf(stderr, "FOLD FAIL dropped=%d of %d: %s\n", dropped, of, allDroppedWhy)
+		}
+		if bad {
+			fmt.Fprintf(stderr, "TOKENS FAIL %s\n", counts)
+		} else {
+			fmt.Fprintf(stdout, "TOKENS OK %s\n", counts)
+		}
+		fmt.Fprintf(stdout, "TOKENS NOTE %s\n", oneline.Escape(remedy(sources, folder.Overlaps(), unreadable.Total(), unparsed.Total(),
+			mixedList.Total(), conflicts.Total(), shrankList.Total(), partialList.Total(), *allowShrink, *out, mixedLabels, firstPartial)))
+		if bad {
+			return 1
+		}
+		return 0
 	}
+	var v *verbout.Value
 	if bad {
-		fmt.Fprintf(stderr, "TOKENS FAIL %s\n", counts)
+		v = verbout.Failed("fold", 1)
 	} else {
-		fmt.Fprintf(stdout, "TOKENS OK %s\n", counts)
+		v = verbout.OK("fold")
 	}
-	fmt.Fprintf(stdout, "TOKENS NOTE %s\n", oneline.Escape(remedy(sources, folder.Overlaps(), unreadable.Total(), unparsed.Total(),
-		mixedList.Total(), conflicts.Total(), shrankList.Total(), partialList.Total(), *allowShrink, *out, mixedLabels, firstPartial)))
-	if bad {
-		return 1
+	v.Fact("at", stamp(now)).
+		Fact("build", buildVersion()).
+		Fact("out", *out).
+		FactInt("sources", len(sources)).
+		FactInt("days", daysWritten).
+		FactInt("rows", rowsWritten).
+		FactInt("unreadable", unreadable.Total()).
+		FactInt("unparsed", unparsed.Total()).
+		FactInt("mixed", mixedList.Total()).
+		FactInt("conflict", conflicts.Total()).
+		FactInt("shrank", shrankList.Total()).
+		FactInt("partial", partialList.Total()).
+		FactInt("quiet", quiet)
+	if allDropped {
+		v.Fact("dropped", fmt.Sprintf("%d of %d", dropped, of)).
+			Fact("all_dropped_why", allDroppedWhy)
 	}
-	return 0
+	for _, s := range sources {
+		v.Item("source", sourceLine("TOKENS", s))
+	}
+	for _, s := range sources {
+		for _, u := range s.Unreadables {
+			v.Item("unreadable", unreadableLine("TOKENS", u))
+		}
+	}
+	for _, s := range sources {
+		for _, u := range s.Unparseds {
+			v.Item("unparsed", unparsedLine("TOKENS", u))
+		}
+	}
+	for _, s := range sources {
+		for _, sp := range s.Supersededs {
+			v.Item("superseded", fmt.Sprintf("label=%s note=%s by=%s day=%s",
+				oneline.Field(sp.Label), oneline.Field(sp.Note), oneline.Field(sp.By), oneline.Field(sp.Day)))
+		}
+	}
+	for _, s := range sources {
+		for _, c := range s.Conflicts {
+			v.Item("conflict", fmt.Sprintf("label=%s day=%s notes=%s: competing reports; send a correction whose subject carries supersedes=%s",
+				oneline.Field(c.Label), oneline.Field(c.Day), oneline.Field(strings.Join(c.Notes, ",")),
+				oneline.Field(strings.Join(c.Notes, ","))))
+		}
+	}
+	for _, s := range sources {
+		for _, t := range s.Toucheds {
+			v.Item("touched", fmt.Sprintf("label=%s day=%s repos=%s",
+				oneline.Field(t.Label), oneline.Field(t.Day), oneline.Field(strings.Join(t.Repos, ","))))
+		}
+	}
+	for _, line := range dayLines {
+		v.Item("day", line)
+	}
+	if srcList.Total() > srcList.Shown() {
+		v.AddMore("source", srcList.Shown(), srcList.Total(), maxRemedy("fold"))
+	}
+	if unreadable.Total() > unreadable.Shown() {
+		v.AddMore("unreadable", unreadable.Shown(), unreadable.Total(), maxRemedy("fold"))
+	}
+	if unparsed.Total() > unparsed.Shown() {
+		v.AddMore("unparsed", unparsed.Shown(), unparsed.Total(), maxRemedy("fold"))
+	}
+	if superseded.Total() > superseded.Shown() {
+		v.AddMore("superseded", superseded.Shown(), superseded.Total(), maxRemedy("fold"))
+	}
+	if conflicts.Total() > conflicts.Shown() {
+		v.AddMore("conflict", conflicts.Shown(), conflicts.Total(), maxRemedy("fold"))
+	}
+	if touched.Total() > touched.Shown() {
+		v.AddMore("touched", touched.Shown(), touched.Total(), maxRemedy("fold"))
+	}
+	if mixedList.Total() > mixedList.Shown() {
+		v.AddMore("mixed", mixedList.Shown(), mixedList.Total(), maxRemedy("fold"))
+	}
+	if dayList.Total() > dayList.Shown() {
+		v.AddMore("day", dayList.Shown(), dayList.Total(), maxRemedy("fold"))
+	}
+	if shrankList.Total() > shrankList.Shown() {
+		v.AddMore("shrank", shrankList.Shown(), shrankList.Total(), maxRemedy("fold"))
+	}
+	if partialList.Total() > partialList.Shown() {
+		v.AddMore("partial", partialList.Shown(), partialList.Total(), maxRemedy("fold"))
+	}
+	if quietList.Total() > quietList.Shown() {
+		v.AddMore("quiet", quietList.Shown(), quietList.Total(), maxRemedy("fold"))
+	}
+	v.Note(remedy(sources, folder.Overlaps(), unreadable.Total(), unparsed.Total(),
+		mixedList.Total(), conflicts.Total(), shrankList.Total(), partialList.Total(), *allowShrink, *out, mixedLabels, firstPartial))
+	return v.Emit(stdout, stderr, true)
 }
 
 // checkDay enforces the one-of rule on --day and --all.
@@ -993,6 +1102,7 @@ func cmdSources(args []string, stdout, stderr io.Writer, now time.Time) int {
 	all := fs.Bool("all", false, "")
 	max := fs.Int("max", bounded.Default, "")
 	unattributed := fs.Bool("unattributed", false, "")
+	asJSON := verbflag.JSON(fs)
 	var sf sourceFlags
 	sf.declare(fs, true)
 	if err := verbflag.Parse(fs, args); err != nil {
@@ -1020,10 +1130,16 @@ func cmdSources(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	sources := sf.read(rules, now)
 
-	srcList := bounded.Capped(stdout, *max, "SOURCES", "source", maxRemedy("sources"))
-	unreadable := bounded.Capped(stderr, *max, "SOURCES", "unreadable", maxRemedy("sources"))
-	unparsed := bounded.Capped(stderr, *max, "SOURCES", "unparsed", maxRemedy("sources"))
-	stems := bounded.Capped(stdout, *max, "SOURCES", "unattributed", maxRemedy("sources"))
+	outW, errW := stdout, stderr
+	if *asJSON {
+		outW = io.Discard
+		errW = io.Discard
+	}
+
+	srcList := bounded.Capped(outW, *max, "SOURCES", "source", maxRemedy("sources"))
+	unreadable := bounded.Capped(errW, *max, "SOURCES", "unreadable", maxRemedy("sources"))
+	unparsed := bounded.Capped(errW, *max, "SOURCES", "unparsed", maxRemedy("sources"))
+	stems := bounded.Capped(outW, *max, "SOURCES", "unattributed", maxRemedy("sources"))
 	files, messages, rows := 0, 0, 0
 	for _, s := range sources {
 		srcList.Line(sourceLine("SOURCES", s))
@@ -1055,10 +1171,51 @@ func cmdSources(args []string, stdout, stderr io.Writer, now time.Time) int {
 		stems.More()
 		unattributedField = strconv.Itoa(rules.TotalUnattributed())
 	}
-	fmt.Fprintf(stdout, "SOURCES OK sources=%d files=%d messages=%d unreadable=%d unparsed=%d rows=%d unattributed=%s\n",
-		len(sources), files, messages, unreadable.Total(), unparsed.Total(), rows,
-		oneline.Field(unattributedField))
-	return 0
+	if !*asJSON {
+		fmt.Fprintf(stdout, "SOURCES OK sources=%d files=%d messages=%d unreadable=%d unparsed=%d rows=%d unattributed=%s\n",
+			len(sources), files, messages, unreadable.Total(), unparsed.Total(), rows,
+			oneline.Field(unattributedField))
+		return 0
+	}
+	v := verbout.OK("sources")
+	v.FactInt("sources", len(sources)).
+		FactInt("files", files).
+		FactInt("messages", messages).
+		FactInt("unreadable", unreadable.Total()).
+		FactInt("unparsed", unparsed.Total()).
+		FactInt("rows", rows).
+		Fact("unattributed", unattributedField)
+	for _, s := range sources {
+		v.Item("source", sourceLine("SOURCES", s))
+	}
+	for _, s := range sources {
+		for _, u := range s.Unreadables {
+			v.Item("unreadable", unreadableLine("SOURCES", u))
+		}
+	}
+	for _, s := range sources {
+		for _, u := range s.Unparseds {
+			v.Item("unparsed", unparsedLine("SOURCES", u))
+		}
+	}
+	if *unattributed {
+		for _, s := range rules.Unattributed() {
+			v.Item("unattributed", fmt.Sprintf("stem=%s tokens=%d", oneline.Field(s.Stem), s.Count))
+		}
+		if stems.Total() > stems.Shown() {
+			v.AddMore("unattributed", stems.Shown(), stems.Total(), maxRemedy("sources"))
+		}
+	}
+	if srcList.Total() > srcList.Shown() {
+		v.AddMore("source", srcList.Shown(), srcList.Total(), maxRemedy("sources"))
+	}
+	if unreadable.Total() > unreadable.Shown() {
+		v.AddMore("unreadable", unreadable.Shown(), unreadable.Total(), maxRemedy("sources"))
+	}
+	if unparsed.Total() > unparsed.Shown() {
+		v.AddMore("unparsed", unparsed.Shown(), unparsed.Total(), maxRemedy("sources"))
+	}
+	return v.Emit(stdout, stderr, true)
 }
 
 // ---------------------------------------------------------------------------- report
@@ -1086,6 +1243,7 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 	redisAddr := fs.String("redis", "", "")
 	redisUser := fs.String("user", "", "")
 	passwordEnv := fs.String("password-env", "", "")
+	asJSON := verbflag.JSON(fs)
 	var sf sourceFlags
 	sf.declare(fs, true)
 	if err := verbflag.Parse(fs, args); err != nil {
@@ -1098,10 +1256,10 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 		if *ledger != "" {
 			return (&refusals{token: "REPORT", list: []string{"--redis and --ledger are two sources for one report; name one"}}).print(stderr)
 		}
-		return cmdReportStore(*redisAddr, *redisUser, *passwordEnv, *monthFlag, *byFlag, *max, stdout, stderr)
+		return cmdReportStore(*redisAddr, *redisUser, *passwordEnv, *monthFlag, *byFlag, *max, stdout, stderr, *asJSON)
 	}
 	if *ledger != "" || *monthFlag != "" {
-		return cmdReportLedger(*ledger, *monthFlag, *byFlag, *max, stdout, stderr)
+		return cmdReportLedger(*ledger, *monthFlag, *byFlag, *max, stdout, stderr, *asJSON)
 	}
 	r := &refusals{token: "REPORT"}
 	r.required("who", *who, wantsWho)
@@ -1150,26 +1308,35 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 	unreadable, unparsed := 0, 0
 	for _, s := range sources {
 		for _, u := range s.Unreadables {
-			fmt.Fprintln(stderr, unreadableLine("TOKENS", u))
+			if !*asJSON {
+				fmt.Fprintln(stderr, unreadableLine("TOKENS", u))
+			}
 			unreadable++
 		}
 	}
 	for _, s := range sources {
 		for _, u := range s.Unparseds {
-			fmt.Fprintln(stderr, unparsedLine("TOKENS", u))
+			if !*asJSON {
+				fmt.Fprintln(stderr, unparsedLine("TOKENS", u))
+			}
 			unparsed++
 		}
 	}
 	// A message the fold could not count by id is not an unparsed line and is not a
 	// refusal; it is spend that was read and then dropped, and fold names it on its one
 	// remedy line. So does this verb.
-	if dropped := noidAndDup(sources); dropped != "" {
-		fmt.Fprintf(stderr, "TOKENS NOTE %s\n", oneline.Escape(dropped))
+	dropped := noidAndDup(sources)
+	if dropped != "" {
+		if !*asJSON {
+			fmt.Fprintf(stderr, "TOKENS NOTE %s\n", oneline.Escape(dropped))
+		}
 	}
 	rows, mixed := folder.DayRows(*day)
 	for _, m := range mixed {
-		fmt.Fprintf(stderr, "TOKENS MIXED date=%s model=%s repo=%s bases=%s: two day bases on one row; declare one export for that day\n",
-			oneline.Field(m.Day), oneline.Field(m.Model), oneline.Field(m.Repo), oneline.Field(strings.Join(m.Bases, ",")))
+		if !*asJSON {
+			fmt.Fprintf(stderr, "TOKENS MIXED date=%s model=%s repo=%s bases=%s: two day bases on one row; declare one export for that day\n",
+				oneline.Field(m.Day), oneline.Field(m.Model), oneline.Field(m.Repo), oneline.Field(strings.Join(m.Bases, ",")))
+		}
 	}
 	// A mixed key is not in `rows` at all (Folder.DayRows keeps them apart), so the body
 	// below is exactly "no line for that key" and every other key's lines.
@@ -1198,14 +1365,27 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 		// It goes to stdout only -- nothing is pasted and --note is not touched -- and
 		// rows= is what it could compute rather than a flat 0, which is a change to the
 		// grammar's REPORT FAIL line and is proposed in the PR body.
-		if lines > 0 {
+		if lines > 0 && !*asJSON {
 			fmt.Fprint(stdout, body)
 		}
-		fmt.Fprintf(stderr, "REPORT FAIL who=%s day=%s rows=%d unreadable=%d\n",
-			oneline.Field(*who), oneline.Field(*day), lines, unreadable)
-		return 1
+		if !*asJSON {
+			fmt.Fprintf(stderr, "REPORT FAIL who=%s day=%s rows=%d unreadable=%d\n",
+				oneline.Field(*who), oneline.Field(*day), lines, unreadable)
+			return 1
+		}
+		v := verbout.Failed("report", 1)
+		v.Fact("who", *who).
+			Fact("day", *day).
+			FactInt("rows", lines).
+			FactInt("unreadable", unreadable)
+		for _, line := range rendered {
+			v.Item("body", line)
+		}
+		return v.Emit(stdout, stderr, true)
 	}
-	fmt.Fprint(stdout, body)
+	if !*asJSON {
+		fmt.Fprint(stdout, body)
+	}
 	if *notePath != "" {
 		tmp := *notePath + ".tmp"
 		if err := os.WriteFile(tmp, []byte(body), 0o644); err != nil {
@@ -1257,7 +1437,11 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 		}
 		return sortedAvg[i].name < sortedAvg[j].name
 	})
-	avgList := bounded.Capped(stderr, *max, "TOKENS", "avg", maxRemedy("report"))
+	errW := stderr
+	if *asJSON {
+		errW = io.Discard
+	}
+	avgList := bounded.Capped(errW, *max, "TOKENS", "avg", maxRemedy("report"))
 	var allTokens, allUsd int64
 	for _, a := range sortedAvg {
 		allTokens += a.tokens
@@ -1266,24 +1450,58 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 			oneline.Field(*day), oneline.Field(a.name), a.tokens, oneline.Field(tokens.Usd(a.usd)), oneline.Field(tokens.UsdPerMtok(a.usd, a.tokens))))
 	}
 	avgList.More()
-	fmt.Fprintf(stderr, "TOKENS AVG-ALL day=%s tokens=%d usd=%s usd_per_mtok=%s\n",
-		oneline.Field(*day), allTokens, oneline.Field(tokens.Usd(allUsd)), oneline.Field(tokens.UsdPerMtok(allUsd, allTokens)))
-	// The OK line is the grammar's, field for field (SPEC-TOKENS' TOKENS SOURCE section):
-	// it carries no unreadable= and no unparsed=, so what says the day is short is the
-	// TOKENS UNREADABLE / TOKENS UNPARSED lines above it, the TOKENS NOTE, and exit 1.
-	// Giving this line those two counts is a grammar change, and the PR body proposes it.
-	fmt.Fprintf(stderr, "REPORT OK who=%s day=%s rows=%d at=%s build=%s subject=%s\n",
-		oneline.Field(*who), oneline.Field(*day), lines, oneline.Field(stamp(now)),
-		oneline.Field(buildVersion()),
-		oneline.Escape(tokens.Subject(*day, stamp(now), buildVersion(), sorted)))
-	// Rule 3, and the exit table: "a declared source with an unreadable file" is exit 1,
-	// and a line that did not parse is the same wall under fold (main.go's counts). The
-	// body still printed and --note still landed -- exit 1 still writes -- but a friend
-	// about to paste this onto the bus is told it does not cover what it claims.
-	if unreadable > 0 || unparsed > 0 {
-		return 1
+	if !*asJSON {
+		fmt.Fprintf(stderr, "TOKENS AVG-ALL day=%s tokens=%d usd=%s usd_per_mtok=%s\n",
+			oneline.Field(*day), allTokens, oneline.Field(tokens.Usd(allUsd)), oneline.Field(tokens.UsdPerMtok(allUsd, allTokens)))
+		// The OK line is the grammar's, field for field (SPEC-TOKENS' TOKENS SOURCE section):
+		// it carries no unreadable= and no unparsed=, so what says the day is short is the
+		// TOKENS UNREADABLE / TOKENS UNPARSED lines above it, the TOKENS NOTE, and exit 1.
+		// Giving this line those two counts is a grammar change, and the PR body proposes it.
+		fmt.Fprintf(stderr, "REPORT OK who=%s day=%s rows=%d at=%s build=%s subject=%s\n",
+			oneline.Field(*who), oneline.Field(*day), lines, oneline.Field(stamp(now)),
+			oneline.Field(buildVersion()),
+			oneline.Escape(tokens.Subject(*day, stamp(now), buildVersion(), sorted)))
+		// Rule 3, and the exit table: "a declared source with an unreadable file" is exit 1,
+		// and a line that did not parse is the same wall under fold (main.go's counts). The
+		// body still printed and --note still landed -- exit 1 still writes -- but a friend
+		// about to paste this onto the bus is told it does not cover what it claims.
+		if unreadable > 0 || unparsed > 0 {
+			return 1
+		}
+		return 0
 	}
-	return 0
+	var v *verbout.Value
+	if unreadable > 0 || unparsed > 0 {
+		v = verbout.Failed("report", 1)
+	} else {
+		v = verbout.OK("report")
+	}
+	v.Fact("who", *who).
+		Fact("day", *day).
+		FactInt("rows", lines).
+		Fact("at", stamp(now)).
+		Fact("build", buildVersion()).
+		Fact("subject", tokens.Subject(*day, stamp(now), buildVersion(), sorted))
+	if unreadable > 0 {
+		v.FactInt("unreadable", unreadable)
+	}
+	if unparsed > 0 {
+		v.FactInt("unparsed", unparsed)
+	}
+	if dropped != "" {
+		v.Note(dropped)
+	}
+	for _, line := range rendered {
+		v.Item("body", line)
+	}
+	for _, a := range sortedAvg {
+		v.Item("avg", fmt.Sprintf("model=%s tokens=%d usd=%s usd_per_mtok=%s",
+			oneline.Field(a.name), a.tokens, oneline.Field(tokens.Usd(a.usd)), oneline.Field(tokens.UsdPerMtok(a.usd, a.tokens))))
+	}
+	if avgList.Total() > avgList.Shown() {
+		v.AddMore("avg", avgList.Shown(), avgList.Total(), maxRemedy("report"))
+	}
+	return v.Emit(stdout, stderr, true)
 }
 
 // ------------------------------------------------------------------------------- sum
@@ -1297,6 +1515,7 @@ func cmdSum(args []string, stdout, stderr io.Writer, now time.Time) int {
 	swarmRoot := fs.String("swarm-root", "", "")
 	day := fs.String("day", "", "")
 	max := fs.Int("max", bounded.Default, "")
+	asJSON := verbflag.JSON(fs)
 	if err := verbflag.Parse(fs, args); err != nil {
 		return refuse(stderr, " sum", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
@@ -1313,7 +1532,7 @@ func cmdSum(args []string, stdout, stderr io.Writer, now time.Time) int {
 			r.required("day", *day, wantsDay)
 		}
 		if len(r.list) == 0 {
-			return sumSwarmRoot(*swarmRoot, *day, *out, stdout, stderr, r)
+			return sumSwarmRoot(*swarmRoot, *day, *out, stdout, stderr, r, *asJSON)
 		}
 		return r.print(stderr)
 	}
@@ -1341,28 +1560,68 @@ func cmdSum(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if len(s.Days) > 0 {
 		first, last = s.Days[0], s.Days[len(s.Days)-1]
 	}
-	fmt.Fprintf(stdout, "SUM MONTH month=%s at=%s build=%s days=%d first=%s last=%s missing=%d rows=%d turns=%s\n",
-		oneline.Field(*month), oneline.Field(stamp(now)), oneline.Field(buildVersion()),
-		len(s.Days), oneline.Field(first), oneline.Field(last), len(s.Missing), s.Rows, oneline.Field(turns))
+
+	if !*asJSON {
+		fmt.Fprintf(stdout, "SUM MONTH month=%s at=%s build=%s days=%d first=%s last=%s missing=%d rows=%d turns=%s\n",
+			oneline.Field(*month), oneline.Field(stamp(now)), oneline.Field(buildVersion()),
+			len(s.Days), oneline.Field(first), oneline.Field(last), len(s.Missing), s.Rows, oneline.Field(turns))
+	}
 
 	widen := "nova-tokens sum --out " + *out + " --month " + *month + " --max 0"
-	pairs := bounded.Capped(stdout, *max, "SUM", "pair", widen)
+	outW := stdout
+	if *asJSON {
+		outW = io.Discard
+	}
+	pairs := bounded.Capped(outW, *max, "SUM", "pair", widen)
 	for _, p := range s.Pairs {
 		pairs.Line(fmt.Sprintf("SUM PAIR model=%s repo=%s %s days=%d",
 			oneline.Field(p.Model), oneline.Field(p.Repo), aggFields(p.Agg), p.Agg.Days()))
 	}
 	pairs.More()
-	models := bounded.Capped(stdout, *max, "SUM", "model", widen)
+	models := bounded.Capped(outW, *max, "SUM", "model", widen)
 	for _, m := range s.Models {
 		models.Line(fmt.Sprintf("SUM MODEL model=%s %s repos=%d",
 			oneline.Field(m.Model), aggFields(m.Agg), m.Agg.Keys()))
 	}
 	models.More()
-	fmt.Fprintf(stdout, "SUM TOTAL %s turns=%s pairs=%d models=%d\n",
-		aggFields(s.Total), oneline.Field(turns), len(s.Pairs), len(s.Models))
-	fmt.Fprintf(stdout, "SUM OK month=%s days=%d missing=%d pairs=%d models=%d nonutc=%d\n",
-		oneline.Field(*month), len(s.Days), len(s.Missing), len(s.Pairs), len(s.Models), s.Total.NonUTC)
-	return 0
+
+	if !*asJSON {
+		fmt.Fprintf(stdout, "SUM TOTAL %s turns=%s pairs=%d models=%d\n",
+			aggFields(s.Total), oneline.Field(turns), len(s.Pairs), len(s.Models))
+		fmt.Fprintf(stdout, "SUM OK month=%s days=%d missing=%d pairs=%d models=%d nonutc=%d\n",
+			oneline.Field(*month), len(s.Days), len(s.Missing), len(s.Pairs), len(s.Models), s.Total.NonUTC)
+		return 0
+	}
+	v := verbout.OK("sum")
+	v.Fact("month", *month).
+		Fact("at", stamp(now)).
+		Fact("build", buildVersion()).
+		FactInt("days", len(s.Days)).
+		Fact("first", first).
+		Fact("last", last).
+		FactInt("missing", len(s.Missing)).
+		FactInt("rows", s.Rows).
+		Fact("turns", turns).
+		FactInt("pairs", len(s.Pairs)).
+		FactInt("models", len(s.Models)).
+		FactInt("nonutc", s.Total.NonUTC)
+	for _, p := range s.Pairs {
+		v.Item("pair", fmt.Sprintf("model=%s repo=%s %s days=%d",
+			oneline.Field(p.Model), oneline.Field(p.Repo), aggFields(p.Agg), p.Agg.Days()))
+	}
+	for _, m := range s.Models {
+		v.Item("model", fmt.Sprintf("model=%s %s repos=%d",
+			oneline.Field(m.Model), aggFields(m.Agg), m.Agg.Keys()))
+	}
+	v.Item("total", fmt.Sprintf("%s turns=%s pairs=%d models=%d",
+		aggFields(s.Total), oneline.Field(turns), len(s.Pairs), len(s.Models)))
+	if pairs.Total() > pairs.Shown() {
+		v.AddMore("pair", pairs.Shown(), pairs.Total(), widen)
+	}
+	if models.Total() > models.Shown() {
+		v.AddMore("model", models.Shown(), models.Total(), widen)
+	}
+	return v.Emit(stdout, stderr, true)
 }
 
 // aggFields is the five totals, the rough count, the per-column dash counts and the
@@ -1408,6 +1667,7 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	strict := fs.Bool("strict", false, "")
 	noSpend := fs.String("no-spend", "", "")
 	through := fs.String("through", "", "")
+	asJSON := verbflag.JSON(fs)
 	if err := verbflag.Parse(fs, args); err != nil {
 		return refuse(stderr, " check", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
@@ -1443,10 +1703,14 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return r.print(stderr)
 	}
 	remedyLine := "nova-tokens check --out " + *out + " --max 0"
-	files := bounded.Capped(stderr, *max, "CHECK", "file", remedyLine)
-	rowsList := bounded.Capped(stderr, *max, "CHECK", "row", remedyLine)
-	missing := bounded.Capped(stderr, *max, "CHECK", "missing", remedyLine)
-	strays := bounded.Capped(stderr, *max, "CHECK", "stray", remedyLine)
+	errW := stderr
+	if *asJSON {
+		errW = io.Discard
+	}
+	files := bounded.Capped(errW, *max, "CHECK", "file", remedyLine)
+	rowsList := bounded.Capped(errW, *max, "CHECK", "row", remedyLine)
+	missing := bounded.Capped(errW, *max, "CHECK", "missing", remedyLine)
+	strays := bounded.Capped(errW, *max, "CHECK", "stray", remedyLine)
 	for _, f := range res.Findings {
 		line := fmt.Sprintf("CHECK FAIL %s: %s", oneline.Escape(f.Path), oneline.Escape(oneline.Cap(f.Reason, oneline.TailBytes)))
 		if f.Line > 0 {
@@ -1473,20 +1737,71 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if res.First != "" {
 		first, last = res.First, res.Last
 	}
-	if res.Stale {
-		fmt.Fprintf(stderr, "CHECK FAIL stale last=%s through=%s\n", oneline.Field(last), oneline.Field(*through))
-	}
 	bad := files.Total() + rowsList.Total()
-	if bad > 0 || len(res.Missing) > 0 || len(res.Strays) > 0 || res.Stale {
-		fmt.Fprintf(stderr, "CHECK FAIL files=%d rows=%d first=%s last=%s bad=%d missing=%d stray=%d gap=%d notes=%d\n",
-			res.Files, res.Rows, oneline.Field(first), oneline.Field(last), bad,
-			len(res.Missing), len(res.Strays), len(res.Gaps), len(res.Notes))
-		return 1
+	if !*asJSON {
+		if res.Stale {
+			fmt.Fprintf(stderr, "CHECK FAIL stale last=%s through=%s\n", oneline.Field(last), oneline.Field(*through))
+		}
+		if bad > 0 || len(res.Missing) > 0 || len(res.Strays) > 0 || res.Stale {
+			fmt.Fprintf(stderr, "CHECK FAIL files=%d rows=%d first=%s last=%s bad=%d missing=%d stray=%d gap=%d notes=%d\n",
+				res.Files, res.Rows, oneline.Field(first), oneline.Field(last), bad,
+				len(res.Missing), len(res.Strays), len(res.Gaps), len(res.Notes))
+			return 1
+		}
+		// gap= and notes= are on the OK line too, and that is the whole point: what the gate
+		// stopped naming it still counts, so nothing was hidden to make the line green.
+		fmt.Fprintf(stdout, "CHECK OK at=%s build=%s files=%d rows=%d first=%s last=%s missing=0 stray=0 gap=%d notes=%d\n",
+			oneline.Field(stamp(now)), oneline.Field(buildVersion()), res.Files, res.Rows,
+			oneline.Field(first), oneline.Field(last), len(res.Gaps), len(res.Notes))
+		return 0
 	}
-	// gap= and notes= are on the OK line too, and that is the whole point: what the gate
-	// stopped naming it still counts, so nothing was hidden to make the line green.
-	fmt.Fprintf(stdout, "CHECK OK at=%s build=%s files=%d rows=%d first=%s last=%s missing=0 stray=0 gap=%d notes=%d\n",
-		oneline.Field(stamp(now)), oneline.Field(buildVersion()), res.Files, res.Rows,
-		oneline.Field(first), oneline.Field(last), len(res.Gaps), len(res.Notes))
-	return 0
+	var v *verbout.Value
+	failed := bad > 0 || len(res.Missing) > 0 || len(res.Strays) > 0 || res.Stale
+	if failed {
+		v = verbout.Failed("check", 1)
+	} else {
+		v = verbout.OK("check")
+	}
+	if !failed {
+		v.Fact("at", stamp(now)).
+			Fact("build", buildVersion())
+	}
+	v.FactInt("files", res.Files).
+		FactInt("rows", res.Rows).
+		Fact("first", first).
+		Fact("last", last).
+		FactInt("bad", bad).
+		FactInt("missing", len(res.Missing)).
+		FactInt("stray", len(res.Strays)).
+		FactInt("gap", len(res.Gaps)).
+		FactInt("notes", len(res.Notes))
+	if res.Stale {
+		v.Fact("stale", "true")
+	}
+	for _, f := range res.Findings {
+		line := fmt.Sprintf("%s: %s", oneline.Escape(f.Path), oneline.Escape(oneline.Cap(f.Reason, oneline.TailBytes)))
+		if f.Line > 0 {
+			line = fmt.Sprintf("%s:%d: %s", oneline.Escape(f.Path), f.Line, oneline.Escape(oneline.Cap(f.Reason, oneline.TailBytes)))
+		}
+		v.Item("fail", line)
+	}
+	for _, d := range res.Missing {
+		v.Item("missing", "date="+oneline.Field(d))
+	}
+	for _, p := range res.Strays {
+		v.Item("stray", oneline.Escape(p))
+	}
+	if files.Total() > files.Shown() {
+		v.AddMore("file", files.Shown(), files.Total(), remedyLine)
+	}
+	if rowsList.Total() > rowsList.Shown() {
+		v.AddMore("row", rowsList.Shown(), rowsList.Total(), remedyLine)
+	}
+	if missing.Total() > missing.Shown() {
+		v.AddMore("missing", missing.Shown(), missing.Total(), remedyLine)
+	}
+	if strays.Total() > strays.Shown() {
+		v.AddMore("stray", strays.Shown(), strays.Total(), remedyLine)
+	}
+	return v.Emit(stdout, stderr, true)
 }

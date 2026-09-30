@@ -12,6 +12,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/verbout"
 )
 
 // SWARM PROFILES MEASUREMENT (the overshoot ledger from every job's usage.tsv).
@@ -64,7 +65,7 @@ func parseCardBudget(promptPath string) (int64, bool) {
 // profileSwarmRoot is the `profiles` verb: it walks the card usage files under a root and
 // prints one line per model, then the total. The budget is read from each card's own prompt,
 // so an overshoot is one card's own ceiling, not a guess from the fold.
-func profileSwarmRoot(root string, stdout, stderr io.Writer, r *refusals) int {
+func profileSwarmRoot(root string, stdout, stderr io.Writer, r *refusals, asJSON bool) int {
 	if root == "" {
 		r.add("--swarm-root is required; it wants the directory the swarm batches live under; refusing to guess")
 		return r.print(stderr)
@@ -113,16 +114,33 @@ func profileSwarmRoot(root string, stdout, stderr io.Writer, r *refusals) int {
 	sort.Strings(names)
 
 	totalCards, totalOver := 0, 0
+	if !asJSON {
+		for _, name := range names {
+			m := models[name]
+			totalCards += m.cards
+			totalOver += m.overshoot
+			fmt.Fprintf(stdout, "PROFILES MODEL model=%s cards=%d median_out=%s overshoot=%d\n",
+				oneline.Field(name), m.cards, oneline.Field(medianOut(m.outs)), m.overshoot)
+		}
+		fmt.Fprintf(stdout, "PROFILES OK models=%d cards=%d overshoot=%d\n",
+			len(names), totalCards, totalOver)
+		return 0
+	}
 	for _, name := range names {
 		m := models[name]
 		totalCards += m.cards
 		totalOver += m.overshoot
-		fmt.Fprintf(stdout, "PROFILES MODEL model=%s cards=%d median_out=%s overshoot=%d\n",
-			oneline.Field(name), m.cards, oneline.Field(medianOut(m.outs)), m.overshoot)
 	}
-	fmt.Fprintf(stdout, "PROFILES OK models=%d cards=%d overshoot=%d\n",
-		len(names), totalCards, totalOver)
-	return 0
+	v := verbout.OK("profiles")
+	v.FactInt("models", len(names)).
+		FactInt("cards", totalCards).
+		FactInt("overshoot", totalOver)
+	for _, name := range names {
+		m := models[name]
+		v.Item("model", fmt.Sprintf("model=%s cards=%d median_out=%s overshoot=%d",
+			oneline.Field(name), m.cards, oneline.Field(medianOut(m.outs)), m.overshoot))
+	}
+	return v.Emit(stdout, stderr, true)
 }
 
 // medianOut is the median of the known output-token counts, or `-` when none reported one.
@@ -144,6 +162,7 @@ func medianOut(outs []int64) string {
 func cmdProfiles(args []string, stdout, stderr io.Writer, now time.Time) int {
 	fs := newFlagSet("profiles")
 	swarmRoot := fs.String("swarm-root", "", "")
+	asJSON := verbflag.JSON(fs)
 	if err := verbflag.Parse(fs, args); err != nil {
 		return refuse(stderr, " profiles", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
@@ -151,5 +170,5 @@ func cmdProfiles(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return code
 	}
 	r := &refusals{token: "PROFILES"}
-	return profileSwarmRoot(*swarmRoot, stdout, stderr, r)
+	return profileSwarmRoot(*swarmRoot, stdout, stderr, r, *asJSON)
 }

@@ -11,6 +11,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/tokens"
+	"github.com/mas-bandwidth/nova-tools/internal/verbout"
 )
 
 // SWARM-ROOT SUM (the daily ledger from every job's usage.tsv).
@@ -194,7 +195,7 @@ func readCardFile(path string) (started, model, repo, tool, rc string, in, out i
 
 // sumSwarmRoot is the --swarm-root mode of `sum`: it walks the card usage files, folds the
 // day's cards per (model, repo), and lands one row per pair in the ledger, idempotently.
-func sumSwarmRoot(root, day, out string, stdout, stderr io.Writer, r *refusals) int {
+func sumSwarmRoot(root, day, out string, stdout, stderr io.Writer, r *refusals, asJSON bool) int {
 	switch {
 	case root == "":
 		r.add("--swarm-root is required; it wants the directory the swarm batches live under; refusing to guess")
@@ -270,8 +271,36 @@ func sumSwarmRoot(root, day, out string, stdout, stderr io.Writer, r *refusals) 
 		return r.print(stderr)
 	}
 
-	fmt.Fprintf(stdout, "SUM OK day=%s models=%d cards=%d in=%d out=%d usd=%.4f\n",
-		oneline.Field(day), len(names), totalCards, totalIn, totalOut, totalUsd)
+	if !asJSON {
+		fmt.Fprintf(stdout, "SUM OK day=%s models=%d cards=%d in=%d out=%d usd=%.4f\n",
+			oneline.Field(day), len(names), totalCards, totalIn, totalOut, totalUsd)
+		if len(tools) > 0 {
+			toolNames := make([]string, 0, len(tools))
+			for name := range tools {
+				toolNames = append(toolNames, name)
+			}
+			sort.Strings(toolNames)
+			parts := make([]string, 0, len(toolNames))
+			for _, name := range toolNames {
+				parts = append(parts, oneline.Field(name)+":"+strconv.Itoa(tools[name]))
+			}
+			fmt.Fprintf(stdout, "TOOLS %s\n", oneline.Field(strings.Join(parts, ",")))
+		}
+		return 0
+	}
+	v := verbout.OK("sum")
+	v.Fact("day", day).
+		FactInt("models", len(names)).
+		FactInt("cards", totalCards).
+		FactInt64("in", totalIn).
+		FactInt64("out", totalOut).
+		Fact("usd", fmt.Sprintf("%.4f", totalUsd))
+	for _, name := range names {
+		m := models[name]
+		model, repo, _ := strings.Cut(name, "\t")
+		v.Item("model", fmt.Sprintf("model=%s repo=%s in=%d out=%d usd=%.4f cards=%d completed=%d",
+			oneline.Field(model), oneline.Field(repo), m.in, m.out, m.usd, m.cards, m.completed))
+	}
 	if len(tools) > 0 {
 		toolNames := make([]string, 0, len(tools))
 		for name := range tools {
@@ -282,9 +311,9 @@ func sumSwarmRoot(root, day, out string, stdout, stderr io.Writer, r *refusals) 
 		for _, name := range toolNames {
 			parts = append(parts, oneline.Field(name)+":"+strconv.Itoa(tools[name]))
 		}
-		fmt.Fprintf(stdout, "TOOLS %s\n", oneline.Field(strings.Join(parts, ",")))
+		v.Fact("tools", strings.Join(parts, ","))
 	}
-	return 0
+	return v.Emit(stdout, stderr, true)
 }
 
 // writeLedger lands one row per (model, repo) pair in the ledger, replacing any rows this

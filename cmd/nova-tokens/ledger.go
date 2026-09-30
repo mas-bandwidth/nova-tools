@@ -15,6 +15,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/record"
 	"github.com/mas-bandwidth/nova-tools/internal/tokens"
+	"github.com/mas-bandwidth/nova-tools/internal/verbout"
 )
 
 // The token ledger (docs/SPEC-STATE.md test 17, #2201; recut of #3243 on Redis under
@@ -101,6 +102,7 @@ func cmdLedger(args []string, stdout, stderr io.Writer) int {
 	addr := fs.String("redis", "", "")
 	user := fs.String("user", "", "")
 	passwordEnv := fs.String("password-env", "", "")
+	asJSON := verbflag.JSON(fs)
 	if err := verbflag.Parse(fs, args); err != nil {
 		return refuse(stderr, " ledger", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
@@ -141,6 +143,11 @@ func cmdLedger(args []string, stdout, stderr io.Writer) int {
 	}
 	ls, err := openLedger(*addr, *user, *passwordEnv)
 	if err != nil {
+		if *asJSON {
+			v := verbout.Failed("ledger", 1)
+			v.Fact("store", "redis").Fact("err", oneline.Err(err))
+			return v.Emit(stdout, stderr, true)
+		}
 		fmt.Fprintf(stderr, "LEDGER FAILED store=redis err=%s\n", oneline.Err(err))
 		return 1
 	}
@@ -180,6 +187,16 @@ func cmdLedger(args []string, stdout, stderr io.Writer) int {
 	}
 	if len(batch) > 0 {
 		if err := ls.ReplaceLedgerDays(ctx, batch); err != nil {
+			if *asJSON {
+				v := verbout.Failed("ledger", 1)
+				if *day != "" {
+					v.Fact("day", *day)
+				} else {
+					v.Fact("store", "redis")
+				}
+				v.Fact("err", oneline.Err(err))
+				return v.Emit(stdout, stderr, true)
+			}
 			if *day != "" {
 				fmt.Fprintf(stderr, "LEDGER FAILED day=%s err=%s\n", oneline.Field(*day), oneline.Err(err))
 			} else {
@@ -187,6 +204,30 @@ func cmdLedger(args []string, stdout, stderr io.Writer) int {
 			}
 			return 1
 		}
+	}
+	if *asJSON {
+		var v *verbout.Value
+		if bad > 0 || days == 0 {
+			v = verbout.Failed("ledger", 1)
+		} else {
+			v = verbout.OK("ledger")
+		}
+		if *day != "" {
+			v.Fact("day", *day)
+		} else {
+			v.Fact("month", *month)
+		}
+		v.FactInt("days", days).
+			FactInt("rows", rows).
+			FactInt("bad", bad)
+		for _, res := range results {
+			if res.bad {
+				v.Item("bad", fmt.Sprintf("day=%s why=%s", oneline.Field(res.day), oneline.Escape(res.why)))
+			} else {
+				v.Item("day", fmt.Sprintf("day=%s rows=%d", oneline.Field(res.day), res.rows))
+			}
+		}
+		return v.Emit(stdout, stderr, true)
 	}
 	for _, res := range results {
 		if res.bad {
@@ -210,7 +251,7 @@ func cmdLedger(args []string, stdout, stderr io.Writer) int {
 // cmdReportStore is `report --redis`: the month's ledger grouped by model, repo,
 // day, or the (day, model, repo) tuple, every one of the five types apart and a dash where
 // no row reported a type.
-func cmdReportStore(addr, user, passwordEnv, month, by string, max int, stdout, stderr io.Writer) int {
+func cmdReportStore(addr, user, passwordEnv, month, by string, max int, stdout, stderr io.Writer, asJSON bool) int {
 	r := &refusals{token: "REPORT"}
 	switch {
 	case month == "":
@@ -227,21 +268,85 @@ func cmdReportStore(addr, user, passwordEnv, month, by string, max int, stdout, 
 	}
 	ls, err := openLedger(addr, user, passwordEnv)
 	if err != nil {
+		if asJSON {
+			v := verbout.Failed("report", 1)
+			v.Fact("store", "redis").
+				Fact("err", oneline.Err(err))
+			return v.Emit(stdout, stderr, true)
+		}
 		fmt.Fprintf(stderr, "REPORT FAILED store=redis err=%s\n", oneline.Err(err))
 		return 1
 	}
 	defer ls.Close()
 	totals, indexed, missing, err := ls.LedgerReport(context.Background(), month, by)
 	if err != nil {
+		if asJSON {
+			v := verbout.Failed("report", 1)
+			v.Fact("store", "redis").
+				Fact("err", oneline.Err(err))
+			return v.Emit(stdout, stderr, true)
+		}
 		fmt.Fprintf(stderr, "REPORT FAILED store=redis err=%s\n", oneline.Err(err))
 		return 1
 	}
 	rows := 0
-	for i, t := range totals {
+	for _, t := range totals {
 		rows += t.Rows
-		if max != 0 && i >= max {
-			continue
+	}
+	if !asJSON {
+		for i, t := range totals {
+			if max != 0 && i >= max {
+				continue
+			}
+			var keys []string
+			for _, c := range record.LedgerGroupings[by] {
+				switch c {
+				case "day":
+					keys = append(keys, "day="+oneline.Field(t.Day))
+				case "model":
+					keys = append(keys, "model="+oneline.Field(t.Model))
+				case "repo":
+					keys = append(keys, "repo="+oneline.Field(t.Repo))
+				}
+			}
+			line := "REPORT " + strings.Join(keys, " ") + fmt.Sprintf(" rows=%d", t.Rows)
+			for j, name := range record.LedgerTypes {
+				cell := tokens.Dash
+				if t.Known[j] {
+					cell = strconv.FormatInt(t.Tokens[j], 10)
+				}
+				line += " " + name + "=" + cell
+			}
+			fmt.Fprintln(stdout, line)
 		}
+		if max != 0 && len(totals) > max {
+			fmt.Fprintf(stdout, "REPORT MORE shown=%d of=%d; raise --max (0 = all)\n", max, len(totals))
+		}
+		if indexed == 0 {
+			fmt.Fprintf(stdout, "REPORT NO month=%s source=redis indexed=0\n", oneline.Field(month))
+			return 1
+		}
+		fmt.Fprintf(stdout, "REPORT OK month=%s source=redis groups=%d rows=%d indexed=%d missing=%d\n", oneline.Field(month), len(totals), rows, indexed, missing)
+		return 0
+	}
+	var v *verbout.Value
+	if indexed == 0 {
+		v = verbout.Failed("report", 1)
+	} else {
+		v = verbout.OK("report")
+	}
+	v.Fact("month", month).
+		Fact("source", "redis").
+		FactInt("groups", len(totals)).
+		FactInt("rows", rows).
+		FactInt("indexed", indexed).
+		FactInt("missing", missing)
+	shown := len(totals)
+	if max != 0 && shown > max {
+		shown = max
+	}
+	for i := 0; i < shown; i++ {
+		t := totals[i]
 		var keys []string
 		for _, c := range record.LedgerGroupings[by] {
 			switch c {
@@ -253,23 +358,18 @@ func cmdReportStore(addr, user, passwordEnv, month, by string, max int, stdout, 
 				keys = append(keys, "repo="+oneline.Field(t.Repo))
 			}
 		}
-		line := "REPORT " + strings.Join(keys, " ") + fmt.Sprintf(" rows=%d", t.Rows)
-		for i, name := range record.LedgerTypes {
+		line := strings.Join(keys, " ") + fmt.Sprintf(" rows=%d", t.Rows)
+		for j, name := range record.LedgerTypes {
 			cell := tokens.Dash
-			if t.Known[i] {
-				cell = strconv.FormatInt(t.Tokens[i], 10)
+			if t.Known[j] {
+				cell = strconv.FormatInt(t.Tokens[j], 10)
 			}
 			line += " " + name + "=" + cell
 		}
-		fmt.Fprintln(stdout, line)
+		v.Item("group", line)
 	}
 	if max != 0 && len(totals) > max {
-		fmt.Fprintf(stdout, "REPORT MORE shown=%d of=%d; raise --max (0 = all)\n", max, len(totals))
+		v.AddMore("group", max, len(totals), "raise --max (0 = all)")
 	}
-	if indexed == 0 {
-		fmt.Fprintf(stdout, "REPORT NO month=%s source=redis indexed=0\n", oneline.Field(month))
-		return 1
-	}
-	fmt.Fprintf(stdout, "REPORT OK month=%s source=redis groups=%d rows=%d indexed=%d missing=%d\n", oneline.Field(month), len(totals), rows, indexed, missing)
-	return 0
+	return v.Emit(stdout, stderr, true)
 }

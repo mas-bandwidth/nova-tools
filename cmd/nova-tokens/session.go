@@ -20,6 +20,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/tokens"
+	"github.com/mas-bandwidth/nova-tools/internal/verbout"
 )
 
 func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
@@ -27,6 +28,7 @@ func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
 	session := fs.String("claude-session", "", "")
 	out := fs.String("out", "", "")
 	day := fs.String("day", "", "")
+	asJSON := verbflag.JSON(fs)
 	if err := verbflag.Parse(fs, args); err != nil {
 		return refuse(stderr, " session", err.Error())
 	}
@@ -46,14 +48,30 @@ func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
 	if err != nil {
 		return refuse(stderr, " session", fmt.Sprintf("cannot read %s: %s", oneline.Field(*session), oneline.Err(err)))
 	}
-	// Every field of the SESSION line is a %d over an integer, so the escape is a no-op --
-	// and it is here anyway, because the tripwire that keeps this binary's output one line
-	// per event does not take a promise about a value, only the call that enforces it.
-	fmt.Fprintln(stdout, oneline.Escape(sum.Line()))
-	if sum.Unstamped > 0 {
-		fmt.Fprintf(stdout, "TOKENS NOTE unstamped=%d turns are in the totals and in no day; they are not dated by a guess\n", sum.Unstamped)
+	if !*asJSON {
+		// Every field of the SESSION line is a %d over an integer, so the escape is a no-op --
+		// and it is here anyway, because the tripwire that keeps this binary's output one line
+		// per event does not take a promise about a value, only the call that enforces it.
+		fmt.Fprintln(stdout, oneline.Escape(sum.Line()))
+		if sum.Unstamped > 0 {
+			fmt.Fprintf(stdout, "TOKENS NOTE unstamped=%d turns are in the totals and in no day; they are not dated by a guess\n", sum.Unstamped)
+		}
 	}
 	if *out == "" {
+		if *asJSON {
+			v := verbout.OK("session")
+			v.FactInt("turns", sum.Turns).
+				FactInt64("input", sum.Input).
+				FactInt64("cache_write", sum.CacheWrite).
+				FactInt64("cache_read", sum.CacheRead).
+				FactInt64("output", sum.Output).
+				FactInt64("weighted", sum.Weighted()).
+				FactInt64("avg_context", sum.AvgContext())
+			if sum.Unstamped > 0 {
+				v.Note(fmt.Sprintf("unstamped=%d turns are in the totals and in no day; they are not dated by a guess", sum.Unstamped))
+			}
+			return v.Emit(stdout, stderr, true)
+		}
 		return 0
 	}
 
@@ -80,10 +98,25 @@ func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
 		days = []string{*day}
 	}
 	if len(days) == 0 {
+		if *asJSON {
+			v := verbout.Failed("session", 1)
+			v.FactInt("turns", sum.Turns).
+				FactInt64("input", sum.Input).
+				FactInt64("cache_write", sum.CacheWrite).
+				FactInt64("cache_read", sum.CacheRead).
+				FactInt64("output", sum.Output).
+				FactInt64("weighted", sum.Weighted()).
+				FactInt64("avg_context", sum.AvgContext()).
+				Fact("day", "-").
+				Fact("written", "false").
+				FactInt("rows", 0)
+			return v.Emit(stdout, stderr, true)
+		}
 		fmt.Fprintln(stdout, "TOKENS DAY day=- written=false rows=0 (no turn in this session carries a day)")
 		return 1
 	}
 	exit := 0
+	var sessionDays []string
 	for _, d := range days {
 		// A --day the session has no turn on is a row of zeros, not a nil: the claim "this
 		// window spent nothing that day" is a measurement, and the row carries it.
@@ -95,8 +128,10 @@ func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
 		var old []tokens.DayRow
 		if f, findings, err := tokens.ReadDayFile(tokens.Path(*out, d)); err == nil {
 			if len(findings) > 0 {
-				fmt.Fprintf(stderr, "TOKENS REFUSED: the day file %s has %d findings; the repair is nova-tokens check --out %s\n",
-					oneline.Field(tokens.Path(*out, d)), len(findings), oneline.Field(*out))
+				if !*asJSON {
+					fmt.Fprintf(stderr, "TOKENS REFUSED: the day file %s has %d findings; the repair is nova-tokens check --out %s\n",
+						oneline.Field(tokens.Path(*out, d)), len(findings), oneline.Field(*out))
+				}
 				exit = 1
 				continue
 			}
@@ -104,8 +139,10 @@ func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
 		}
 		rows, retained, partials := tokens.MergeDay(old, fresh, []string{tokens.SessionLabel})
 		if len(partials) > 0 {
-			fmt.Fprintf(stderr, "TOKENS PARTIAL day=%s rows=%d: a row already summed over this source and another cannot be taken apart; nothing written (fold that day whole)\n",
-				oneline.Field(d), len(partials))
+			if !*asJSON {
+				fmt.Fprintf(stderr, "TOKENS PARTIAL day=%s rows=%d: a row already summed over this source and another cannot be taken apart; nothing written (fold that day whole)\n",
+					oneline.Field(d), len(partials))
+			}
 			exit = 1
 			continue
 		}
@@ -115,7 +152,9 @@ func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
 			Sources: tokens.SourcesOf(rows), Rows: rows,
 		}
 		if err := f.Save(*out); err != nil {
-			fmt.Fprintf(stderr, "TOKENS REFUSED: cannot write %s: %s\n", oneline.Field(tokens.Path(*out, d)), oneline.Err(err))
+			if !*asJSON {
+				fmt.Fprintf(stderr, "TOKENS REFUSED: cannot write %s: %s\n", oneline.Field(tokens.Path(*out, d)), oneline.Err(err))
+			}
 			exit = 1
 			continue
 		}
@@ -123,8 +162,34 @@ func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
 		for _, r := range fresh {
 			booked = append(booked, r.Model)
 		}
-		fmt.Fprintf(stdout, "TOKENS DAY day=%s written=true rows=%d retained=%d model=%s weighted=%d\n",
-			oneline.Field(d), len(rows), retained, oneline.Field(strings.Join(booked, ",")), part.Weighted())
+		if !*asJSON {
+			fmt.Fprintf(stdout, "TOKENS DAY day=%s written=true rows=%d retained=%d model=%s weighted=%d\n",
+				oneline.Field(d), len(rows), retained, oneline.Field(strings.Join(booked, ",")), part.Weighted())
+		} else {
+			sessionDays = append(sessionDays, fmt.Sprintf("TOKENS DAY day=%s written=true rows=%d retained=%d model=%s weighted=%d",
+				oneline.Field(d), len(rows), retained, oneline.Field(strings.Join(booked, ",")), part.Weighted()))
+		}
+	}
+	if *asJSON {
+		v := verbout.OK("session")
+		if exit != 0 {
+			v = verbout.Failed("session", exit)
+		}
+		v.FactInt("turns", sum.Turns).
+			FactInt64("input", sum.Input).
+			FactInt64("cache_write", sum.CacheWrite).
+			FactInt64("cache_read", sum.CacheRead).
+			FactInt64("output", sum.Output).
+			FactInt64("weighted", sum.Weighted()).
+			FactInt64("avg_context", sum.AvgContext()).
+			Fact("out", *out)
+		if sum.Unstamped > 0 {
+			v.Note(fmt.Sprintf("unstamped=%d turns are in the totals and in no day; they are not dated by a guess", sum.Unstamped))
+		}
+		for _, line := range sessionDays {
+			v.Item("day", line)
+		}
+		return v.Emit(stdout, stderr, true)
 	}
 	return exit
 }

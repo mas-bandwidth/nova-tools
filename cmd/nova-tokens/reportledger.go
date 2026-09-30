@@ -7,10 +7,11 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/tokens"
+	"github.com/mas-bandwidth/nova-tools/internal/verbout"
 )
 
 // cmdReportLedger sums the fold-pool ledger's rows of one month by group.
-func cmdReportLedger(ledger, month, by string, max int, stdout, stderr io.Writer) int {
+func cmdReportLedger(ledger, month, by string, max int, stdout, stderr io.Writer, asJSON bool) int {
 	r := &refusals{token: "REPORT"}
 	r.required("ledger", ledger, "the ledger file, <ledger>.tsv, whose header is "+wantsPoolLedger)
 	switch {
@@ -64,23 +65,50 @@ func cmdReportLedger(ledger, month, by string, max int, stdout, stderr io.Writer
 			totalUsd += g.UsdMicro
 		}
 	}
+	total := tokens.GroupUsd(totalUsd, totalUnknown)
+	if !asJSON {
+		for _, g := range capped {
+			switch by {
+			case "repo":
+				fmt.Fprintf(stdout, "REPORT repo=%s tasks=%d in=%d out=%d cache_read=%d usd=%s\n",
+					oneline.Field(g.Name), g.Tasks, g.In, g.Out, g.Cr, oneline.Field(tokens.GroupUsd(g.UsdMicro, g.UsdUnknown)))
+			case "day":
+				fmt.Fprintf(stdout, "REPORT day=%s tasks=%d in=%d out=%d cache_read=%d usd=%s\n",
+					oneline.Field(g.Name), g.Tasks, g.In, g.Out, g.Cr, oneline.Field(tokens.GroupUsd(g.UsdMicro, g.UsdUnknown)))
+			default:
+				fmt.Fprintf(stdout, "REPORT model=%s tasks=%d in=%d out=%d cache_read=%d usd=%s\n",
+					oneline.Field(g.Name), g.Tasks, g.In, g.Out, g.Cr, oneline.Field(tokens.GroupUsd(g.UsdMicro, g.UsdUnknown)))
+			}
+		}
+		fmt.Fprintf(stdout, "REPORT OK month=%s groups=%d rows=%d usd=%s\n",
+			oneline.Field(month), len(groups), monthRows, oneline.Field(total))
+		return 0
+	}
+	v := verbout.OK("report")
+	v.Fact("month", month).
+		Fact("source", "ledger").
+		FactInt("groups", len(groups)).
+		FactInt("rows", monthRows).
+		Fact("usd", total)
 	for _, g := range capped {
+		var itemText string
 		switch by {
 		case "repo":
-			fmt.Fprintf(stdout, "REPORT repo=%s tasks=%d in=%d out=%d cache_read=%d usd=%s\n",
+			itemText = fmt.Sprintf("repo=%s tasks=%d in=%d out=%d cache_read=%d usd=%s",
 				oneline.Field(g.Name), g.Tasks, g.In, g.Out, g.Cr, oneline.Field(tokens.GroupUsd(g.UsdMicro, g.UsdUnknown)))
 		case "day":
-			fmt.Fprintf(stdout, "REPORT day=%s tasks=%d in=%d out=%d cache_read=%d usd=%s\n",
+			itemText = fmt.Sprintf("day=%s tasks=%d in=%d out=%d cache_read=%d usd=%s",
 				oneline.Field(g.Name), g.Tasks, g.In, g.Out, g.Cr, oneline.Field(tokens.GroupUsd(g.UsdMicro, g.UsdUnknown)))
 		default:
-			fmt.Fprintf(stdout, "REPORT model=%s tasks=%d in=%d out=%d cache_read=%d usd=%s\n",
+			itemText = fmt.Sprintf("model=%s tasks=%d in=%d out=%d cache_read=%d usd=%s",
 				oneline.Field(g.Name), g.Tasks, g.In, g.Out, g.Cr, oneline.Field(tokens.GroupUsd(g.UsdMicro, g.UsdUnknown)))
 		}
+		v.Item("group", itemText)
 	}
-	total := tokens.GroupUsd(totalUsd, totalUnknown)
-	fmt.Fprintf(stdout, "REPORT OK month=%s groups=%d rows=%d usd=%s\n",
-		oneline.Field(month), len(groups), monthRows, oneline.Field(total))
-	return 0
+	if max != 0 && len(groups) > max {
+		v.AddMore("group", max, len(groups), "raise --max (0 = all)")
+	}
+	return v.Emit(stdout, stderr, true)
 }
 
 const wantsPoolLedger = "day, provider, model, repo, tasks, tokens_in, tokens_out, cache_write, cache_read, reasoning, usd, source"

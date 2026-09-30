@@ -10,6 +10,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/tokens"
+	"github.com/mas-bandwidth/nova-tools/internal/verbout"
 )
 
 // cmdFoldPool folds a pool's usage/*.tsv into the monthly ledger, one row per
@@ -20,6 +21,7 @@ func cmdFoldPool(args []string, stdout, stderr io.Writer, now time.Time) int {
 	pool := fs.String("pool", "", "")
 	ledger := fs.String("ledger", "", "")
 	since := fs.String("since", "", "")
+	asJSON := verbflag.JSON(fs)
 	if err := verbflag.Parse(fs, args); err != nil {
 		return refuse(stderr, " fold-pool", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
@@ -55,7 +57,15 @@ func cmdFoldPool(args []string, stdout, stderr io.Writer, now time.Time) int {
 		r.add("--ledger " + *ledger + ": " + err.Error())
 		return r.print(stderr)
 	}
-	fmt.Fprintf(stdout, "FOLD OK rows=%d tasks=%d days=%d ledger=%s\n",
-		len(groups), tasks, tokens.PoolDays(groups), oneline.Field(*ledger))
-	return 0
+	if !*asJSON {
+		fmt.Fprintf(stdout, "FOLD OK rows=%d tasks=%d days=%d ledger=%s\n",
+			len(groups), tasks, tokens.PoolDays(groups), oneline.Field(*ledger))
+		return 0
+	}
+	v := verbout.OK("fold-pool")
+	v.FactInt("rows", len(groups)).
+		FactInt("tasks", tasks).
+		FactInt("days", tokens.PoolDays(groups)).
+		Fact("ledger", *ledger)
+	return v.Emit(stdout, stderr, true)
 }
