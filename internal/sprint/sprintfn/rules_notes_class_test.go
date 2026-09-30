@@ -55,7 +55,6 @@ func TestRuleNotesJAccepts(t *testing.T) {
 
 	pinned := map[string]bool{}
 	seen := map[string]bool{}
-	refusedSeen := map[string]bool{}
 	sites, static, state := 0, 0, 0
 	for _, af := range parsed {
 		for _, d := range af.Decls {
@@ -91,16 +90,6 @@ func TestRuleNotesJAccepts(t *testing.T) {
 					if typ, ok := ev.eval(e); ok {
 						req.Type = typ
 					}
-				}
-				// a type J's tables do not have is a finding of its own (see
-				// typeRefused): the cause is swept under a type J takes, and the
-				// type is held to the refusal it is known for.
-				if why, ok := typeRefused[req.Type]; ok {
-					refusedSeen[req.Type] = true
-					if ref := jCheck(0, req); ref == nil {
-						t.Errorf("%s: J takes the type %q now (%s); remove it from typeRefused", where, req.Type, why)
-					}
-					req.Type = standIn(op)
 				}
 				isState := jIsStateOp(op)
 				if isState {
@@ -142,11 +131,6 @@ func TestRuleNotesJAccepts(t *testing.T) {
 			})
 		}
 	}
-	for typ := range typeRefused {
-		if !refusedSeen[typ] {
-			t.Errorf("typeRefused names %q, which no rule writes; remove it", typ)
-		}
-	}
 	for key := range dynamicCauses {
 		if !seen[key] {
 			t.Errorf("dynamicCauses pins %q, which no rule writes; remove it", key)
@@ -161,18 +145,6 @@ func TestRuleNotesJAccepts(t *testing.T) {
 	if ref := jCheck(0, NoteReq{Op: "close", Type: sprint.NCross, Subjects: []string{"x"}}); ref == nil || ref.Code != CodeRequest {
 		t.Fatalf("J takes a close with no cause (%v): the sweep proves nothing", ref)
 	}
-}
-
-// typeRefused are the types a rule writes that J's tables (sprint.Judgments,
-// sprint.Notices) do not have, so that J refuses the request whatever its
-// cause: the sweep found them while it swept the causes, and they are a matter
-// for the rules' owners (the type or the table changes, and the entry goes).
-// The test holds each to its refusal, and fails when J takes it or no rule
-// writes it.
-var typeRefused = map[string]string{
-	sprint.NCannotAsk:                  "R8's judgment is \"cannot ask\" in 2.2 and the note's type is the longer text of the tick's note",
-	"cards made ready":                 "R3's notice is \"k cards of s made ready\" in 2.5",
-	"ready cards went back to waiting": "R19's notice is \"k ready cards of s went back to waiting behind G\" in 2.5",
 }
 
 // dynamicCauses are the note sites whose cause is a value the rule reads, by

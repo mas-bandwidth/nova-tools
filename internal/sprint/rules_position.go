@@ -160,12 +160,12 @@ const (
 	posSetGuard = "setguard"
 )
 
-// The types of the two notices of 2.5 that no constant names yet: the count and
-// the stream are in the note's text, and IT06's notice table will own the
-// words.
+// The types of the two notices of 2.5 that no constant names yet: the words of
+// the notice table's rows (sprint.Notices), which J takes as they stand. The
+// count, the stream and the sentinel are in the note's text, not in its type.
 const (
-	posNoticeMadeReady  = "cards made ready"                 // 2.5: k cards of s made ready
-	posNoticePulledBack = "ready cards went back to waiting" // 2.5: k ready cards of s went back to waiting behind G
+	posNoticeMadeReady  = "k cards of s made ready"
+	posNoticePulledBack = "k ready cards of s went back to waiting behind G"
 )
 
 // posCrossNeedField is the field of a stopped stream's control card that names

@@ -307,7 +307,7 @@ func TestAskTellsOnceWhenFewerThanTwoReadersAreFree(t *testing.T) {
 	w.take(t, "s1-1")
 	w.finish(t, "s1-1", false)
 	got := refmodel.AskMoves(w.snapshot(w.fresh()), later(0))
-	expect(t, got, "open cannot ask: fewer than two different readers are free [s1-1]")
+	expect(t, got, "open cannot ask [s1-1]")
 }
 
 func TestCheckRaisesAJudgmentForABrokenRule(t *testing.T) {
