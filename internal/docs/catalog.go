@@ -43,6 +43,7 @@ var DefaultCatalog = []Entry{
 	E("cmd/nova-tokens", "token consumption metering and budgeting CLI", "go test ./cmd/nova-tokens", "go test ./cmd/nova-tokens"),
 	E("cmd/nova-update", "binary release update CLI", "go test ./cmd/nova-update", "go test ./cmd/nova-update"),
 	E("cmd/nova-version", "build identity and version CLI", "go test ./cmd/nova-version", "go test ./cmd/nova-version"),
+	E("cmd/nova-work", "every issue of every repository of an organization in one tree file, imported read-only and verified field for field", "go test ./cmd/nova-work", "go test ./cmd/nova-work"),
 
 	// internal/
 	E("internal/atomicfile", "atomic file write: standard-library rename beside the target", "go test ./internal/atomicfile", "go test ./internal/atomicfile"),
@@ -120,6 +121,8 @@ var DefaultCatalog = []Entry{
 	E("internal/typedrec", "typed RESULT record contract, parser and legacy adapter", "go test ./internal/typedrec", "go test ./internal/typedrec"),
 	E("internal/update", "binary updater and checksum verifier", "go test ./internal/update", "go test ./internal/update"),
 	E("internal/wake", "slot leases and heartbeat monitors", "go test ./internal/wake", "go test ./internal/wake"),
+	E("internal/workfile", "nova-work tree file: the model, its canonical writer, strict reader and field-for-field diff", "go test ./internal/workfile", "go test ./internal/workfile"),
+	E("internal/workgh", "nova-work read-only GitHub issue capture over GraphQL, every call counted", "go test ./internal/workgh", "go test ./internal/workgh"),
 	E("internal/worklang", "worklang s-expression evaluator", "go test ./internal/worklang", "go test ./internal/worklang"),
 	E("internal/yield", "CI over work: a copy or local test run steps itself to nice 15 before it execs (nova-tools#4293)", "go test ./internal/yield", "go test ./internal/yield"),
 

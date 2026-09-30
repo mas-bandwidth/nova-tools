@@ -170,6 +170,18 @@ type Note struct {
 	Hint string `json:"hint,omitempty"`
 }
 
+// NTickEnd is the tick's end note (errata 3 amendment 8): written once at the
+// end of a tick that addressed the coordinator something, "judgments=N";
+// inbox --wait wakes on it, and the inbox does not list it.
+const NTickEnd = "tick end"
+
+// TickEndCounts says a note is an item for the coordinator that a tick-end
+// counts: a judgment, or a happened note addressed to someone (the sprint is
+// done). The tick-end note itself is not.
+func TickEndCounts(n Note) bool {
+	return n.Type != NTickEnd && (n.Kind == Judgment || (n.Kind == Happened && n.To != ""))
+}
+
 // Due is when the judgment is overdue: its review time when one is set, else
 // its time plus the deadline. The sprint is done has no due time (zero).
 func (n Note) Due(deadline time.Duration) time.Time {

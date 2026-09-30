@@ -9,6 +9,9 @@ type Shape struct {
 	Members []string          `json:"members"`
 	Status  map[string]string `json:"status"` // member -> up or down
 	Held    []string          `json:"held,omitempty"`
+	// HeldBy is who made a member's hold when it was not the coordinator
+	// (held_by, fleet_sync.go).
+	HeldBy map[string]string `json:"held_by,omitempty"`
 	// Width is each member's width its control card names (width.go); a
 	// member with the default is not in it.
 	Width map[string]string `json:"width,omitempty"`
@@ -30,6 +33,12 @@ func ShapeOf(s *Snapshot) Shape {
 		sh.Status[m] = st
 		if s.MemberCtl(m).F("held") != "" {
 			sh.Held = append(sh.Held, m)
+			if by := s.MemberCtl(m).F(FieldHeldBy); by != "" {
+				if sh.HeldBy == nil {
+					sh.HeldBy = map[string]string{}
+				}
+				sh.HeldBy[m] = by
+			}
 		}
 		if w := s.MemberCtl(m).F(FieldWidth); w != "" {
 			if sh.Width == nil {
@@ -61,6 +70,9 @@ func RestoreShape(s *Snapshot, sh Shape) Plan {
 		fields := map[string]string{"kind": "member", "status": sh.Status[m], "since": now}
 		if contains(sh.Held, m) {
 			fields["held"] = now
+			if by := sh.HeldBy[m]; by != "" {
+				fields[FieldHeldBy] = by
+			}
 		}
 		if w := sh.Width[m]; w != "" {
 			fields[FieldWidth] = w

@@ -27,7 +27,15 @@ member up levels the ready queues). fleet down holds a member down whatever
 it beats (status held); fleet up releases the hold, adding a member the
 sprint does not know. The load cell is the machine's CPU busy percent of all
 its cores (the one-minute load average over the cores where that cannot be
-measured), the highest of the last `+sprint.LoadWindow.String()+`.`) + "\n"
+measured), the highest of the last `+sprint.LoadWindow.String()+`.
+
+fleet sync makes the fleet match nova-config's machine rows in one step (--pg,
+else NOVA_PG_DSN, as nova-config takes it): a member the table lacks is added
+at its width (its slots less its friends'), a width that differs is set, a row
+the inventory no longer names is held and its cards are dealt to the members
+that stay; nothing else changes, and a second sync writes nothing. --check
+prints the drift and writes nothing: exit 0 none, 2 some, 3 the config cannot
+be read.`) + "\n"
 }
 
 // fleetStep is the coordinator's fleet verb as a step: up releases a hold
