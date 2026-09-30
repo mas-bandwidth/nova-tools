@@ -1667,11 +1667,17 @@ do
 
   -- A read that returns nothing and no refusal is a bug of this file, which
   -- Layer 1 turns into CONFIG; a refusal keeps its own code.
-  for _, name in ipairs({'related', 'front', 'waiters', 'streams', 'fleet', 'readers', 'needchain', 'jnote'}) do
+  -- These loops run while the library loads, where ipairs is not a global
+  -- (fact F12): numeric loops over the lists.
+  local composite = {'related', 'front', 'waiters', 'streams', 'fleet', 'readers', 'needchain', 'jnote'}
+  for i = 1, #composite do
+    local name = composite[i]
     local reader = name == 'fleet' and Q.listing or (name == 'readers' and Q.listing or Q[name])
     SP.query(name, {validate = Q.validator(Q.check), read = reader, cost = Q.cost})
   end
-  for _, name in ipairs({'clock', 'lease', 'tick', 'heartbeat', 'dropping', 'parked', 'missing', 'jopen', 'duecount'}) do
+  local keyed = {'clock', 'lease', 'tick', 'heartbeat', 'dropping', 'parked', 'missing', 'jopen', 'duecount'}
+  for i = 1, #keyed do
+    local name = keyed[i]
     SP.query(name, {validate = Q.validator(Q.check_key), read = Q.read_key, cost = Q.key_cost})
   end
 end

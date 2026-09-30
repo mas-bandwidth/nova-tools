@@ -553,8 +553,13 @@ func TestSprintLuaRefusesBeforeAnyWrite(t *testing.T) {
 // library loads, so a library with a doubled or a stray part, phase or query
 // never serves a call. A second writer of a name, a name 1.0 does not have
 // (heartbeat and tickend are fields, not parts), a lower layer's query kind and
-// a malformed spec are each an error at registration, and the registry keeps
-// what it held before: the first registration of a name, or nothing.
+// a spec without its functions are each refused at registration: recorded in
+// NS.SP.refused, and in Redis the load stops on the global
+// sprint_registration_refused (TestSprintLoadSandboxIsFaithful). The registry
+// keeps what it held before: the first registration of a name, or nothing. A
+// spec whose functions are not functions, which the load cannot see without
+// type (fact F12), is found by NS.SP.sealed on the first call, as is any
+// refused registration; a clean registry seals.
 func TestSprintLuaRegistriesRefuseAtLoad(t *testing.T) {
 	t.Parallel()
 	h := newLuaSprint(t)
@@ -564,16 +569,37 @@ OTHER = {pre = function() end, cmds = function() end}
 QOK = {validate = function() end, read = function() end}
 QOTHER = {validate = function() end, read = function() end}
 function TRY(f, ...) local ok, err = pcall(f, ...); if ok then return '' end; return tostring(err) end
+function REFUSED() return #NS.SP.refused end
 `)
 	// eval evaluates an expression and returns its text.
 	eval := func(src string) string {
 		h.do("R = tostring(" + src + ")")
 		return h.L.GetGlobal("R").String()
 	}
+	if got := eval("NS.SP.sealed()"); got != "nil" {
+		t.Fatalf("the empty registry does not seal: %s", got)
+	}
+	h.do("NS.SP.seal_ok = nil")
+	// refused: the registration is recorded as refused, naming a sprint
+	// registration, or (a spec that is not a table) raises.
 	refused := func(what, call string) {
 		t.Helper()
-		if got := eval(call); !strings.Contains(got, "sprint ") {
-			t.Errorf("%s: registration returned %q, want an error", what, got)
+		before := eval("REFUSED()")
+		raised := eval(call)
+		if raised == "" && eval("REFUSED()") == before {
+			t.Errorf("%s: registration was not refused", what)
+			return
+		}
+		if raised == "" && !strings.Contains(eval("NS.SP.refused[REFUSED()]"), "sprint ") {
+			t.Errorf("%s: refused as %q, want a sprint registration named", what, eval("NS.SP.refused[REFUSED()]"))
+		}
+	}
+	// sealedOut: the registration went in, and the seal refuses it by name.
+	sealedOut := func(what, prefix string) {
+		t.Helper()
+		h.do("NS.SP.refused = {}; NS.SP.seal_ok = nil")
+		if got := eval("NS.SP.sealed()"); !strings.HasPrefix(got, prefix) || !strings.Contains(got, "malformed") {
+			t.Errorf("%s: the seal says %q, want %q ... malformed", what, got, prefix)
 		}
 	}
 
@@ -587,6 +613,9 @@ function TRY(f, ...) local ok, err = pcall(f, ...); if ok then return '' end; re
 			t.Errorf("a second %s part replaced the first", name)
 		}
 	}
+	if got := eval("NS.SP.sealed()"); !strings.HasPrefix(got, "sprint part ") {
+		t.Errorf("a registry with refused registrations seals: %s", got)
+	}
 	for _, name := range []string{"heartbeat", "tickend", "nosuch", ""} {
 		refused("part "+name, "TRY(NS.SP.part, '"+name+"', OK)")
 		if eval("NS.SP.parts['"+name+"']") != "nil" {
@@ -594,18 +623,28 @@ function TRY(f, ...) local ok, err = pcall(f, ...); if ok then return '' end; re
 		}
 	}
 	h.do("NS.SP.parts.lease = nil")
-	for _, spec := range []string{"{pre = 1, cmds = function() end}", "{pre = function() end}", "{cmds = function() end}", "7", "nil"} {
+	for _, spec := range []string{"{pre = function() end}", "{cmds = function() end}", "7", "nil"} {
 		refused("part spec "+spec, "TRY(NS.SP.part, 'lease', "+spec+")")
 		if eval("NS.SP.parts.lease") != "nil" {
 			t.Errorf("a malformed part spec %s was registered", spec)
 		}
 	}
+	if got := eval("TRY(NS.SP.part, 'lease', {pre = 1, cmds = function() end})"); got != "" {
+		t.Fatalf("part lease with a pre that is not a function: %s", got)
+	}
+	sealedOut("a part whose pre is not a function", "sprint part lease")
+	h.do("NS.SP.parts.lease = OK")
 
 	for _, name := range []string{"before", "x_pre", "x_cmds", "derive", "j_decide", "j_cmds"} {
-		refused("phase "+name+" that is not a function", "TRY(NS.SP.phase, '"+name+"', 'not a function')")
+		refused("phase "+name+" with no function", "TRY(NS.SP.phase, '"+name+"', nil)")
 		if eval("NS.SP.phases."+name) != "nil" {
-			t.Errorf("a phase %s that is not a function was registered", name)
+			t.Errorf("a phase %s with no function was registered", name)
 		}
+		if got := eval("TRY(NS.SP.phase, '" + name + "', 'not a function')"); got != "" {
+			t.Fatalf("phase %s that is not a function: %s", name, got)
+		}
+		sealedOut("a phase "+name+" that is not a function", "sprint phase "+name)
+		h.do("NS.SP.phases." + name + " = nil")
 		h.do("FIRST_" + name + " = function() end")
 		if got := eval("TRY(NS.SP.phase, '" + name + "', FIRST_" + name + ")"); got != "" {
 			t.Fatalf("phase %s: %s", name, got)
@@ -635,11 +674,20 @@ function TRY(f, ...) local ok, err = pcall(f, ...); if ok then return '' end; re
 			t.Errorf("query %q, a lower layer's kind, was registered", kind)
 		}
 	}
+	refused("a query named by a number", "TRY(NS.SP.query, 7, QOK)")
 	for _, spec := range []string{"{validate = function() end}", "{read = function() end}", "7"} {
 		refused("query spec "+spec, "TRY(NS.SP.query, 'front', "+spec+")")
 		if eval("NS.SP.queries.front") != "nil" {
 			t.Errorf("a malformed query spec %s was registered", spec)
 		}
+	}
+	if got := eval("TRY(NS.SP.query, 'front', {validate = 1, read = function() end})"); got != "" {
+		t.Fatalf("query front with a validate that is not a function: %s", got)
+	}
+	sealedOut("a query whose validate is not a function", "sprint query front")
+	h.do("NS.SP.queries.front = nil; NS.SP.refused = {}; NS.SP.seal_ok = nil")
+	if got := eval("NS.SP.sealed()"); got != "nil" {
+		t.Errorf("a clean registry does not seal: %s", got)
 	}
 }
 
