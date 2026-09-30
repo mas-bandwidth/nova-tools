@@ -15,11 +15,12 @@ package main
 // The verb makes no call of its own: what fetched the listing is the
 // caller's business, and everything on stdin is DATA from a host. A complete
 // listing is required; a partial or count-mismatched listing is refused (exit 2)
-// before any dial. A write the store will not take is one line on stderr at
-// exit 1. If an XADD write succeeds but closing the connection subsequently
-// fails, the COST line with its event id is printed on stdout, the close
-// failure is reported on stderr, and the verb exits 1 without instructing the
-// caller to rerun the write (preventing duplicate entries).
+// before any dial. An open failure is known to have written nothing. An XADD
+// error cannot prove whether the entry committed, so exit 1 reports it as
+// unconfirmed and asks for inspection before any retry. If XADD succeeds but
+// closing the connection fails, the COST line with its event id is printed on
+// stdout, the close failure is reported on stderr, and the verb exits 1
+// without instructing the caller to rerun the write.
 
 import (
 	"context"
@@ -64,8 +65,8 @@ func openCostStore(ctx context.Context, addr string) (cicost.Writer, func() erro
 	return st.Client(), st.Close, nil
 }
 
-// cmdCost is the verb. Exit 0 with the COST line on stdout; 1 when the store
-// would not take the entry or closing it failed (on close failure after a
+// cmdCost is the verb. Exit 0 with the COST line on stdout; 1 when opening or
+// writing the store failed or closing it failed (on close failure after a
 // successful write, stdout retains the line with its event id, stderr reports
 // the close error, and no rerun is recommended); 2 for a refusal before any
 // dial: a flag the receipt refuses, a partial or count-mismatched listing, or a
@@ -133,7 +134,7 @@ func cmdCost(args []string, stdin io.Reader, stdout, stderr io.Writer, open cost
 		ev, err = cicost.Write(ctx, w, &r, cost)
 		closeErr = closeStore()
 		if err != nil {
-			return costUnwritten(stderr, oneline.Err(err))
+			return costUnconfirmed(stderr, oneline.Err(err))
 		}
 	}
 	fmt.Fprintln(stdout, cost.Line(r, ev))
@@ -144,11 +145,16 @@ func cmdCost(args []string, stdin io.Reader, stdout, stderr io.Writer, open cost
 	return 0
 }
 
-// costUnwritten is the one line a store that would not take the entry gets:
-// the cause, then the state and the next action. Exit 1, the receipt's code
-// for the same failure, so ci-ok reddens rather than logging a line that
-// pretends the entry landed.
+// costUnwritten applies only before XADD was attempted, so the state is known.
 func costUnwritten(stderr io.Writer, cause string) int {
 	fmt.Fprintf(stderr, "nova-ci cost: %s; the COST entry was not written: fix the store or the bench seat and rerun ci-ok\n", oneline.Escape(cause))
+	return 1
+}
+
+// costUnconfirmed follows the receipt's uncertain-write convention: an XADD
+// error can follow a committed entry whose reply was lost. Do not recommend a
+// blind rerun that could append the same run's cost twice.
+func costUnconfirmed(stderr io.Writer, cause string) int {
+	fmt.Fprintf(stderr, "nova-ci cost: %s; COST entry write could not be confirmed; next: inspect ci:cost for repo/sha/run_id before any retry\n", oneline.Escape(cause))
 	return 1
 }

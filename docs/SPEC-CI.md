@@ -363,13 +363,17 @@ the run tested`), an empty stdin (`it wants the run's job listing`), bytes that
 are not the forge's JSON, a listing holding no jobs, a partial or
 count-mismatched listing (`listing is partial (<n> jobs read, <m> expected); page
 through the forge's listing, or pass every page`), a positional argument.
-Exit 1, the receipt's code for the same failure, when the store would not take
-the entry: one line naming the cause and ending `the COST entry was not
-written: fix the store or the bench seat and rerun ci-ok`, never a line that
-pretends the entry landed. If an XADD write succeeds but closing the connection
-subsequently fails, stdout retains the COST line with its write event ID, stderr
-reports the close failure (`nova-ci cost: close: <err>`), and the command exits 1
-without instructing the caller to rerun the write (preventing duplicate writes).
+Exit 1 when opening the store fails before XADD: one line naming the cause
+and ending `the COST entry was not written: fix the store or the bench seat and
+rerun ci-ok`, because no write was attempted. An XADD error is also exit 1 with
+empty stdout, but does not prove whether the entry committed: the one-line
+stderr diagnosis says `COST entry write could not be confirmed; next:
+inspect ci:cost for repo/sha/run_id before any retry`. A lost reply must not be called an
+unwritten entry or invite a blind rerun that could duplicate it. If an XADD
+write succeeds but closing the connection subsequently fails, stdout retains
+the COST line with its write event ID, stderr reports the close failure
+(`nova-ci cost: close: <err>`), and the command exits 1 without instructing the
+caller to rerun the write.
 
 **The mistake it prevents.** A CI bill is read as a total, and a total hides
 the part that bought nothing: the red job's minutes, the rerun's, the attempt a

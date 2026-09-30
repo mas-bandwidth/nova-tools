@@ -46,20 +46,29 @@ func costReceiptArgs(extra ...string) []string {
 // fakeCostStore is the seam's fake: it records the address opened and the
 // entry written, and answers with a fixed id.
 type fakeCostStore struct {
-	addr    string
-	stream  string
-	values  []string
-	closed  bool
-	openErr error
-	addErr  error
+	addr      string
+	stream    string
+	values    []string
+	closed    bool
+	openErr   error
+	addErr    error
+	adds      int
+	committed bool
+	lostReply bool
 }
 
 func (f *fakeCostStore) XAdd(_ context.Context, a *redis.XAddArgs) *redis.StringCmd {
+	f.adds++
 	f.stream = a.Stream
 	f.values, _ = a.Values.([]string)
+	if f.lostReply {
+		f.committed = true
+		return redis.NewStringResult("", errors.New("lost reply"))
+	}
 	if f.addErr != nil {
 		return redis.NewStringResult("", f.addErr)
 	}
+	f.committed = true
 	return redis.NewStringResult("1700000000000-0", nil)
 }
 
@@ -255,32 +264,49 @@ func TestCostPaginationAndCloseFailureControls(t *testing.T) {
 	})
 }
 
-// A store that will not take the entry is exit 1 with one line naming the
-// cause, the state and the next action, never a line that pretends it was
-// written; the same code the receipt gives the same failure.
+// An open failure precedes XADD, so it is known that no entry was written.
 func TestCostUnwrittenEntryIsExitOne(t *testing.T) {
 	t.Parallel()
 
-	listing := costListing(t)
-	cases := []struct {
-		name string
-		f    *fakeCostStore
-		want string
-	}{
-		{"open fails", &fakeCostStore{openErr: errors.New("NOAUTH")}, "open " + testverbhelp.RefusedAddr + ": NOAUTH"},
-		{"xadd fails", &fakeCostStore{addErr: errors.New("NOPERM")}, "XADD ci:cost: NOPERM"},
+	f := &fakeCostStore{openErr: errors.New("NOAUTH")}
+	code, stdout, stderr := runCost(t, f, costListing(t), costReceiptArgs("--redis", testverbhelp.RefusedAddr)...)
+	if code != 1 || stdout != "" || f.adds != 0 {
+		t.Errorf("open failure: exit=%d stdout=%q XADD attempts=%d; want 1, empty, 0", code, stdout, f.adds)
 	}
-	for _, tc := range cases {
-		code, stdout, stderr := runCost(t, tc.f, listing, costReceiptArgs("--redis", testverbhelp.RefusedAddr)...)
-		if code != 1 {
-			t.Errorf("%s: exit = %d, want 1; stderr: %s", tc.name, code, stderr)
-		}
-		if stdout != "" {
-			t.Errorf("%s: stdout = %q, want empty", tc.name, stdout)
-		}
-		if !strings.Contains(stderr, tc.want) || !strings.HasSuffix(stderr, "the COST entry was not written: fix the store or the bench seat and rerun ci-ok\n") || strings.Count(stderr, "\n") != 1 {
-			t.Errorf("%s: stderr = %q, want one line holding %q and the next action", tc.name, stderr, tc.want)
-		}
+	if !strings.Contains(stderr, "open "+testverbhelp.RefusedAddr+": NOAUTH") ||
+		!strings.HasSuffix(stderr, "the COST entry was not written: fix the store or the bench seat and rerun ci-ok\n") ||
+		strings.Count(stderr, "\n") != 1 {
+		t.Errorf("open failure stderr = %q, want known-unwritten diagnostic", stderr)
+	}
+}
+
+// A committed XADD whose reply was lost is indistinguishable from other XADD
+// errors at this seam. Neither may claim no entry exists or urge a blind rerun.
+func TestCostXAddErrorIsUnconfirmed(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name      string
+		f         *fakeCostStore
+		wantCause string
+		committed bool
+	}{
+		{"store error", &fakeCostStore{addErr: errors.New("NOPERM")}, "XADD ci:cost: NOPERM", false},
+		{"committed lost reply", &fakeCostStore{lostReply: true}, "XADD ci:cost: lost reply", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			code, stdout, stderr := runCost(t, tc.f, costListing(t), costReceiptArgs("--redis", testverbhelp.RefusedAddr)...)
+			if code != 1 || stdout != "" || tc.f.adds != 1 || !tc.f.closed || tc.f.committed != tc.committed {
+				t.Errorf("exit=%d stdout=%q XADD attempts=%d closed=%v committed=%v; want 1, empty, 1, true, %v", code, stdout, tc.f.adds, tc.f.closed, tc.f.committed, tc.committed)
+			}
+			if !strings.Contains(stderr, tc.wantCause) ||
+				!strings.Contains(stderr, "COST entry write could not be confirmed; next: inspect ci:cost for repo/sha/run_id before any retry") ||
+				strings.Contains(stderr, "was not written") || strings.Contains(stderr, "rerun ci-ok") ||
+				strings.Count(stderr, "\n") != 1 {
+				t.Errorf("stderr = %q, want one unconfirmed-write line with inspection remedy", stderr)
+			}
+		})
 	}
 }
 

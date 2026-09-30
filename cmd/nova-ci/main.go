@@ -99,19 +99,19 @@ usage:
                       the failed, cancelled and rerun jobs); the flags are the
                       run receipt's. --redis appends the same entry to the
                       ci:cost stream first and the line ends in its id. Exit 0
-                      with the line; 1 when the store would not take the entry
-                      or closing it failed (on close failure after a successful
-                      write, stdout retains the line and event id, stderr
-                      reports the close error, with no rerun); 2 a refusal before
-                      any dial (a flag the receipt refuses, a partial or
-                      count-mismatched listing, a listing that is not the
-                      forge's).
+                      with the line; 1 when opening the store failed before a
+                      write, an XADD reply did not confirm the write (inspect
+                      ci:cost before retry), or closing failed (after a
+                      successful write, stdout retains the line and event id);
+                      2 a refusal before any dial (a flag the receipt refuses,
+                      a partial or count-mismatched listing, a listing that is
+                      not the forge's).
 
 exit codes: 0 inside budget or measured, 2 a CI-SLEEPS line, a CI-SLOW
             line under --enforce, or the invocation could not run (bad flag,
             unreadable stdin, partial listing); local adds 1 for a red test or
             a package that did not build, and github receipt and cost add 1 for
-            a write the store refused or a close failure.
+            a store open, write, or close failure (a write may be unconfirmed).
 
 example:
   nova-ci help

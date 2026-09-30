@@ -1710,15 +1710,18 @@ entry per run: the receipt's fields, the totals, one `job:<name>:<attempt>`
 field per job; a reader joins it to the run's `ev:github` row by `repo`, `sha`
 and `run_id`) and the line ends in the entry's id; without it the line ends in
 `ev=-`. The store is dialled as the environment's seat, the receipt's way. Exit
-0 with the line; 1 when the store would not take the entry, one line on stderr
-ending `the COST entry was not written: fix the store or the bench seat and
-rerun ci-ok`. If an XADD write succeeds but closing the connection subsequently
+0 with the line. If opening the store fails before XADD, exit 1 says the entry
+was not written and names the store or bench seat to fix. If XADD returns an
+error, exit 1 has empty stdout and says `COST entry write could not be confirmed;
+next: inspect ci:cost for repo/sha/run_id before any retry`. The generic XADD
+error does not establish whether the entry committed; do not blindly rerun and
+risk a duplicate. If XADD succeeds but closing the connection subsequently
 fails, the COST line with its event id is printed on stdout, the close failure
 is reported on stderr (`nova-ci cost: close: <err>`), and the command exits 1
-without instructing the caller to rerun the write (preventing duplicate entries);
-2 a refusal before any dial, for a flag the receipt refuses, an empty stdin, a
-listing that is not the forge's JSON, a listing holding no jobs, or a partial or
-count-mismatched listing.
+without instructing the caller to rerun the write. Exit 2 is a refusal before
+any dial, for a flag the receipt refuses, an empty stdin, a listing that is not
+the forge's JSON, a listing holding no jobs, or a partial or count-mismatched
+listing.
 
 ```
 $ nova-ci cost --repo mas-bandwidth/nova-tools --sha 0123456789abcdef0123456789abcdef01234567 --run-id 777 --workflow ci --conclusion failure --pr 4328 < internal/cicost/testdata/jobs.json
