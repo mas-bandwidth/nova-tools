@@ -112,6 +112,12 @@ type RulePlan struct {
 	// they stay in the agenda, and the loop does not plan them again until a
 	// dropping mark clears or a new line queues them.
 	HeldBack []AgendaKey
+	// Sprint are the writes to the sprint's own keys that a rule plans beside
+	// its tables: R14's move of its due entry and claim on the goal record,
+	// R18's re-arm, R17's clock fields and the park of 1.3.5 (TimeWrites, in
+	// rules_time.go, IT10). The step that carries the plan carries them, and a
+	// step that dropped them would remove the key and lose the work.
+	Sprint TimeWrites
 }
 
 // ReadBounds are the limits one read of a tick is planned within (1.0, 1.4.2):
@@ -261,6 +267,9 @@ type Answer struct {
 	// Keys are the sprint keys the query was asked to read (SprintQ.Keys), one
 	// answer for each, in order.
 	Keys []KeyAnswer
+	// Time is the answer of the sprint-key reads of the time rules (jnote,
+	// goal, cut, tick and dropping; TimeAnswer, in rules_time.go, IT10).
+	Time *TimeAnswer
 }
 
 // ReadAnswer is the answer of one atomic read (the errata to version 2.1, E3),

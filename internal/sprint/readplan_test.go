@@ -422,7 +422,11 @@ func TestSplitNeverCutsAQueryThatWalksFromAllItsIDs(t *testing.T) {
 func TestQueryCostIsOneRowAKind(t *testing.T) {
 	t.Parallel()
 	kinds := []string{QueryRelated, QueryFront, QueryWaiters, QueryStreams, QueryFleet, QueryReaders, QueryNeedchain, QueryJnote}
-	if len(queryCosts) != len(kinds) {
+	// The eight composite queries of 1.0 have a row each. They are not the whole
+	// registry (the errata's addendum): the files of the rules that read more
+	// register the rows of their kinds through registerQueryCosts, which refuses
+	// a kind that has one.
+	if len(queryCosts) < len(kinds) {
 		t.Fatalf("%d rows for the %d composite queries of 1.0", len(queryCosts), len(kinds))
 	}
 	for _, k := range kinds {
