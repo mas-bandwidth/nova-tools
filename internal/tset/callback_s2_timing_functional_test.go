@@ -325,6 +325,7 @@ func getRedisCPUUsage(ctx context.Context, client *redis.Client) (userSec float6
 // across batch sizes N = 100, 500, 1000, 2000 items.
 // Every single iteration across all 50 samples is asserted for semantic validity.
 func TestS2LargeRequestTimingProfile(t *testing.T) {
+	t.Parallel()
 	fx := newS2TimingFixture(t, false)
 
 	sizes := []int{100, 500, 1000, 2000}
@@ -419,6 +420,7 @@ func TestS2LargeRequestTimingProfile(t *testing.T) {
 // TestS2BaselineComparisonFullWalkReversal empirically compares PR #4816 against
 // the baseline reversal where every helper access performs a full request walk.
 func TestS2BaselineComparisonFullWalkReversal(t *testing.T) {
+	t.Parallel()
 	t.Log("====================================================================================================================")
 	t.Log("S2 BASELINE COMPARISON: PR #4816 vs FULL-WALK REVERSAL (Quadratic vs Linear)")
 	t.Log("====================================================================================================================")
@@ -467,6 +469,7 @@ func TestS2BaselineComparisonFullWalkReversal(t *testing.T) {
 // forcing Functions VM garbage collection before and after to verify zero retained Lua heap leak,
 // and asserting whole-store image invariance via commitProbeImage.
 func TestS2MaxBudgetStepOverhead(t *testing.T) {
+	t.Parallel()
 	fx := newS2TimingFixture(t, false)
 	ctx := context.Background()
 
@@ -570,6 +573,7 @@ func s2BuildLargePayloadRequest(space string, targetBytes int) string {
 // 19,990 cells, matched SLOWLOG duration under 5s, flat comparison visits, and whole-store image
 // equality before and after.
 func TestS2LargePayload2_9MBTiming(t *testing.T) {
+	t.Parallel()
 	fx := newS2TimingFixture(t, false)
 	raw := s2BuildLargePayloadRequest(fx.Space, 2940000)
 
