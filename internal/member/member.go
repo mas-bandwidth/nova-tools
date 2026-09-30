@@ -292,36 +292,47 @@ func oneLine(s string) string {
 	return ""
 }
 
-// CardText is the card file a child is given: the packet as a person would
-// write it to a child, with the command that reports it.
+// CardText is the card file a child is given: the brief VERBATIM first (a
+// card's brief is a whole child brief in the card grammar `nova-swarm lint
+// --card` checks, whose line 1 is the contract line), then, appended, the
+// mechanics the sprint adds: the attempt, the branch and base when a base
+// names a repository, the fix of this attempt, the notes, and the exact
+// command that reports it. Nothing is put in front of the brief.
 func CardText(p Packet, sprintBin string) string {
 	var b strings.Builder
+	brief := strings.TrimRight(p.Brief, "\n")
+	if brief != "" {
+		b.WriteString(brief)
+		b.WriteString("\n\n")
+	}
+	b.WriteString("## From the sprint\n\n")
 	if p.Kind == "read" {
-		fmt.Fprintf(&b, "# Read %s: attempt %d of %s by %s\n\n", p.Card, p.Attempt, p.Primary, p.Worker)
-		fmt.Fprintf(&b, "Read the work at head %s on branch %s (base %s).\n\n", p.Head, p.WorkBranch, p.WorkBase)
-		if p.Report != "" {
-			fmt.Fprintf(&b, "The worker's report:\n\n%s\n\n", p.Report)
+		fmt.Fprintf(&b, "This is read %s: attempt %d of %s, worked by %s, at head %s on branch %s", p.Card, p.Attempt, p.Primary, p.Worker, p.Head, p.WorkBranch)
+		if p.WorkBase != "" {
+			fmt.Fprintf(&b, " (base %s)", p.WorkBase)
+		}
+		b.WriteString(".\n\n")
+		if strings.TrimSpace(p.Report) != "" {
+			fmt.Fprintf(&b, "The worker's report:\n\n%s\n\n", strings.TrimSpace(p.Report))
 		}
 	} else {
-		fmt.Fprintf(&b, "# %s: attempt %d of %s (stream %s)\n\n", p.Card, p.Attempt, p.Primary, p.Stream)
-		fmt.Fprintf(&b, "Work on branch %s", p.Branch)
+		fmt.Fprintf(&b, "This is %s: attempt %d of %s (stream %s).", p.Card, p.Attempt, p.Primary, p.Stream)
 		if p.Base != "" {
-			fmt.Fprintf(&b, " from %s", p.Base)
+			fmt.Fprintf(&b, " The work is branch %s from %s; commit there and put the head you finished at in RESULT.md's Head as `rev: <sha>`.", p.Branch, p.Base)
+		} else {
+			b.WriteString(" Work in the directory you start in and nowhere else.")
 		}
-		b.WriteString(". Commit and push there; put the head you finished at in your result's Head as `rev: <sha>`.\n\n")
-	}
-	if strings.TrimSpace(p.Brief) != "" {
-		fmt.Fprintf(&b, "## Brief\n\n%s\n\n", strings.TrimSpace(p.Brief))
+		b.WriteString("\n\n")
 	}
 	if strings.TrimSpace(p.Fix) != "" {
-		fmt.Fprintf(&b, "## Fix, this attempt\n\n%s\n\n", strings.TrimSpace(p.Fix))
+		fmt.Fprintf(&b, "Fix, this attempt:\n\n%s\n\n", strings.TrimSpace(p.Fix))
 	}
 	for _, n := range p.Notes {
 		if strings.TrimSpace(n) != "" {
-			fmt.Fprintf(&b, "## Note\n\n%s\n\n", strings.TrimSpace(n))
+			fmt.Fprintf(&b, "Note:\n\n%s\n\n", strings.TrimSpace(n))
 		}
 	}
-	b.WriteString("## When done\n\nWrite your result (the RESULT template); its One line is what the sprint records as your report. The member reports it for you:\n\n")
+	b.WriteString("Your RESULT.md's One line is what the sprint records as your report; the member reports it for you as:\n\n")
 	if p.Kind == "read" {
 		fmt.Fprintf(&b, "    %s read --as %s (--ok | --broken) %s --epoch %d --finding '<one line>'\n", sprintBin, p.As, p.Card, p.Epoch)
 	} else {
