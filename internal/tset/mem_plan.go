@@ -961,7 +961,10 @@ func memPlanProp(preEpoch, workEpoch *memEpoch, entry Entry, index int, counts m
 		n, seen := counts[entry.Table]
 		if !seen {
 			n = len(pre.props)
-			b.cellProbes++ // the store's HLEN of the property hash
+			// HLEN is one cell-kind read with a decimal integer reply.
+			if err := b.rowsetRead(index, entry.Table, len(strconv.Itoa(n))); err != nil {
+				return prior, false, err
+			}
 		}
 		n++
 		counts[entry.Table] = n

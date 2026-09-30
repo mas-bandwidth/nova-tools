@@ -469,7 +469,7 @@ func TestAL5RetainedDefinitionCannotUseLivePrefix(t *testing.T) {
 		statsBefore := readExtensionCommandStats(t, fx.Client)
 		reply := al5DefinitionSealCall(t, fx, "0", mode)
 		statsAfter := readExtensionCommandStats(t, fx.Client)
-		if mode == "returned_def" || mode == "forged_definition_key" || mode == "forged_placement_keys" {
+		if mode == "returned_def" {
 			var answer struct {
 				Value string `json:"value"`
 				Score string `json:"score"`

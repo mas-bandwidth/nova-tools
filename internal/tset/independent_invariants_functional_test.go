@@ -307,8 +307,9 @@ func independentReceipt(value, epoch string, markers map[string]bool) bool {
 		Changed     int    `json:"changed"`
 		Result      string `json:"result"`
 	}
+	// 2000 member candidates + 64 table properties (2064 total to decouple oracle from production constants).
 	if json.Unmarshal([]byte(value), &r) != nil || r.EpochBefore != epoch || !markers[r.EpochAfter] ||
-		(r.Status != "ok" && r.Status != "fenced") || r.Changed < 0 || r.Changed > MaxMemberCandidates+MaxPropEntries ||
+		(r.Status != "ok" && r.Status != "fenced") || r.Changed < 0 || r.Changed > 2064 ||
 		!independentUint(r.FirstSeq, false) || !independentUint(r.LastSeq, false) ||
 		len(r.Result) > 4096 || len(r.Digest) != 40 {
 		return false
