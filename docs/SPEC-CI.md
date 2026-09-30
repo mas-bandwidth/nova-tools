@@ -935,9 +935,8 @@ never lost, and whose classifier's default case PRINTS, relays the progress line
 as a bus line, counts it as a change in the world, and ends a poll before the
 mail arrives.
 **The test.** `TestEveryNovaBusConsumerDropsProgressLines`
-(`internal/ci/busprogress_class_test.go`); the two halves it indexes are
-`TestProgressNeverEntersTheProtocolStream` in `cmd/nova-bus` and
-`TestProgressIsNeverRelayedAsABusLine` in `internal/wake`.
+(`internal/ci/busprogress_class_test.go`); the producer half it indexes is
+`TestProgressNeverEntersTheProtocolStream` in `cmd/nova-bus`, and the consumer half is this test itself.
 **Its allowlist.** None. The registry is `internal/bus/protocol.go` and a
 consumer either reaches it or discards both streams; a start that reads nothing
 back is not a consumer and is not held to this.
@@ -1923,7 +1922,7 @@ value (the real clock handed to a seam), or a `context.WithTimeout` /
 refused unless internal/ci/sleeps-skips_allowlist.txt names the package
 directory and the top-level function it is written in. A wait through an
 injected clock seam is not a wall-clock wait and is not found: the seams the
-tree has are internal/wake.Clock, internal/bus's lockClock, internal/swarm's
+tree has are internal/bus's lockClock, internal/swarm's
 batchClock and pullClock, internal/log.Clock and
 the injected `Sleep func(time.Duration)` and `now func() time.Time` fields of
 internal/swarm.
@@ -1949,7 +1948,7 @@ wall-clock waits the tree still carries, grandfathered or SLEEPS-skipped.
 **Its allowlist.** `internal/ci/sleeps-skips_allowlist.txt`,
 `pkg<TAB>Func<TAB>where`, read through `slowtests.ParseSleeps`, the reader
 `make test`'s CI-SLEEPS check uses. It only shrinks.
-**Its remedy line.** `inject a clock (internal/wake.Clock, an injected Sleep
+**Its remedy line.** `inject a clock (an injected Sleep
 func) or tag the file //go:build functional (the ledger only shrinks)`.
 **Its narrowings.** It reads the test files only: a wall-clock wait inside the
 code under test (a production retry that sleeps) is invisible to it, and the

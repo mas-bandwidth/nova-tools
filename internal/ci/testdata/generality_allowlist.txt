@@ -332,14 +332,6 @@ internal/typedrec/template.go:emma 4
 internal/typedrec/template.go:mas-bandwidth 6
 internal/update/snapshot.go:space 1
 internal/update/snapverb.go:studio 1
-internal/wake/advance.go:emma 1
-internal/wake/bus.go:emma 1
-internal/wake/daemon.go:johnny 3
-internal/wake/entry.go:mas-bandwidth 3
-internal/wake/forge.go:mas-bandwidth 3
-internal/wake/line.go:johnny 1
-internal/wake/probe.go:glenn 1
-internal/wake/report.go:freddy 1
 internal/worklang/units.go:emma 1
 internal/worklang/units.go:stella 1
 internal/worklang/worklang.go:space 5

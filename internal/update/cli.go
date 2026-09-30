@@ -19,7 +19,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/release"
-	"github.com/mas-bandwidth/nova-tools/internal/wake"
 )
 
 // Environment supplies deterministic clock/network seams. Nil values use the
@@ -462,7 +461,7 @@ func verdict(r entryRead) (string, string) {
 		return "UNKNOWN", ""
 	}
 	if r.Entry.Kind == "pin" {
-		if wake.AcceptBus(r.Installed.Version, r.Latest.Version) {
+		if r.Installed.Version != "" && r.Latest.Version == r.Installed.Version {
 			return "EQUAL", ""
 		}
 		return "DIFFERENT", ""

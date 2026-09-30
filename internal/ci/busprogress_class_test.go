@@ -13,13 +13,13 @@ import (
 // against it: nova-bus's own test refuses a progress prefix on stdout
 // (cmd/nova-bus, TestProgressNeverEntersTheProtocolStream), and every consumer
 // that reads nova-bus's output drops a progress line before it classifies
-// anything (internal/wake, TestProgressIsNeverRelayedAsABusLine).
+// anything (TestEveryNovaBusConsumerDropsProgressLines, below).
 const progressRegistryFile = "internal/bus/protocol.go"
 
 // registryReaders are the ways a package may satisfy the rule. Either it asks
 // the registry itself, or it hands the bytes to the ONE classifier that asks it
-// -- internal/wake's Bus.Classify, which both nova-wake verbs run, because the
-// 2026-09-10 hurt was two readers of the same stream and one of them wrong.
+// -- a package's one classifier, because the 2026-09-10 hurt was two readers of
+// the same stream and one of them wrong.
 var registryReaders = []string{"bus.IsProgress(", "Classify("}
 
 // TestEveryNovaBusConsumerDropsProgressLines is the class rule, kept where a
@@ -45,6 +45,21 @@ var registryReaders = []string{"bus.IsProgress(", "Classify("}
 func TestEveryNovaBusConsumerDropsProgressLines(t *testing.T) {
 	t.Parallel()
 
+	// The walk, proved on source text, because the tree holds no consumer to
+	// prove it on.
+	for _, c := range []struct {
+		name, src       string
+		reads, discards bool
+	}{
+		{"a read", "out, err := exec.Command(\"nova-bus\", \"inbox\").CombinedOutput()\n", true, false},
+		{"a discard", "c := exec.Command(\"nova-bus\", \"send\")\nc.Stdout = io.Discard\nc.Stderr = io.Discard\n", false, true},
+		{"prose only", "// nova-bus is started elsewhere\n", false, false},
+	} {
+		if reads, discards := novaBusStarts(c.src); reads != c.reads || discards != c.discards {
+			t.Errorf("%s: reads=%v discards=%v, want %v %v", c.name, reads, discards, c.reads, c.discards)
+		}
+	}
+
 	tree := repoTree(t)
 	if _, err := os.Stat(filepath.Join(tree.Root, filepath.FromSlash(progressRegistryFile))); err != nil {
 		t.Fatalf("%s is the one registry both halves of the rule read: %v", progressRegistryFile, err)
@@ -68,8 +83,8 @@ func TestEveryNovaBusConsumerDropsProgressLines(t *testing.T) {
 			}
 			readers = append(readers, f.Rel)
 			// The file that STARTS nova-bus need not be the file that
-			// classifies its lines -- nova-wake starts it in serve.go and
-			// main.go and classifies in internal/wake -- so the check is per
+			// classifies its lines -- a consumer may start it in one file and
+			// classify in another -- so the check is per
 			// PACKAGE: somewhere in this package, the registry is reached.
 			if !packageReachesTheRegistry(tree, path.Dir(f.Rel)) {
 				missing = append(missing, f.Rel)
@@ -77,10 +92,11 @@ func TestEveryNovaBusConsumerDropsProgressLines(t *testing.T) {
 		}
 	}
 
-	// A walk that found nothing would pass in silence, and the rule would be
-	// unheld from the day somebody moved the code.
+	// No program in the tree reads nova-bus's output today, so the rule holds
+	// nothing until one does; the first consumer added is held from its first
+	// commit. The walk is proved against fixtures at the top of this test.
 	if len(readers) == 0 {
-		t.Fatal("no file in this tree was found reading nova-bus's output; this test is then holding nothing, and the pattern it looks for has moved")
+		t.Log("no file in this tree reads nova-bus's output; the rule holds the next consumer")
 	}
 	// No discarder is required: the frozen nova-pulse manager was the one file that
 	// started nova-bus and discarded its output, and it went with the frozen verbs.

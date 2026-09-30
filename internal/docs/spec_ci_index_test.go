@@ -64,7 +64,7 @@ const parkedSection = "## Parked class tests"
 
 // classTestDir is the one package whose class tests the index must cover. The
 // existence half reads a wider tree, because an entry may name the two halves of
-// a rule where they live (cmd/nova-bus, internal/wake).
+// a rule where they live (cmd/nova-bus).
 const classTestDir = "internal/ci"
 
 // classTestPrefixes is the marker, decided from what the package already does:

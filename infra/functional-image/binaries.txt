@@ -35,7 +35,6 @@ lsof	apt	lsof
 make	apt	make
 mkdir	base	coreutils
 nc	absent	only the darwin sandbox socket test dials with it and that test skips on Linux
-nova-bus	tree	built from the checkout by the tests, or stubbed by them; never expected on the PATH
 nova-check	tree	built from the checkout by the tests, or stubbed by them; never expected on the PATH
 nova-secrets	tree	built from the checkout by the tests, or stubbed by them; never expected on the PATH
 nova-swarm	tree	built from the checkout by the tests, or stubbed by them; never expected on the PATH

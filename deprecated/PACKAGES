@@ -26,10 +26,3 @@ internal/decide
 keep internal/decide
 # internal/decide
 keep internal/decide/questions
-
-# nova-wake (the tool was deleted on 2026-09-30; the tick-end wake of
-# nova-sprint replaces its serve loop). internal/wake stays and stays tested
-# until it is lifted out: internal/update's cli.go calls wake.AcceptBus
-# (nova-update, nova-version).
-internal/wake
-keep internal/wake
