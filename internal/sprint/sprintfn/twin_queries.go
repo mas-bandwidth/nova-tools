@@ -1305,6 +1305,8 @@ func KeyProbes(q KeyQ) int {
 		return len(q.IDs)
 	case KeyJOpen:
 		return len(q.Subjects) * (1 + len(q.Names))
+	case KeyNext:
+		return len(q.Names)
 	}
 	return queryMaxProbes
 }

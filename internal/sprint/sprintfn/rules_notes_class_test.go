@@ -166,6 +166,9 @@ var dynamicCauses = map[string]func() []string{
 	"planHold nf.Cause": func() []string { return []string{"-", "readers", "exhausted"} },
 	// R7's close of a missing need: the need's id.
 	"planNeed nv.Need": func() []string { return []string{"p1"} },
+	// add's close of a missing need its part made (IT19, the model's madeclose):
+	// the need's id.
+	"AddMadeCloses n.ID": func() []string { return []string{"p1"} },
 }
 
 // latenessKinds are the due kinds that have a lateness judgment (sprint.DueKinds).

@@ -129,6 +129,14 @@ do
   function Q.valid_text(s)
     return type(s) == 'string' and #s >= 1 and #s <= Q.MAX_NAME and not s:find('[%z\r\n]')
   end
+  -- A field of {p}next@e (1.3.1; sprintfn.NextField): score, streams, id:<s>
+  -- or gate:<s>, s a stream's name as sprint.ValidID has it.
+  function Q.next_field(f)
+    if f == 'score' or f == 'streams' then return true end
+    if type(f) ~= 'string' then return false end
+    local s = f:match('^id:(.*)$') or f:match('^gate:(.*)$')
+    return s ~= nil and #s <= 128 and s:match('^[%w_][%w_%-]*$') ~= nil
+  end
   -- only: the object has no key outside the set given.
   function Q.only(o, allowed)
     for k in pairs(o) do if not allowed[k] then return false end end
@@ -382,6 +390,7 @@ do
     if kind == 'parked' then return 1 + #q.keys end
     if kind == 'missing' then return #q.ids end
     if kind == 'jopen' then return #q.subjects * (1 + #q.names) end
+    if kind == 'next' then return #q.names end
     return Q.MAX_PROBES
   end
   -- The cost a query declares, from its arguments alone: the records and range
@@ -503,7 +512,7 @@ do
   function Q.check_key(q)
     if not Q.is_object(q) or type(q.kind) ~= 'string' then return 'REQUEST' end
     local allowed = {kind = true, fields = true}
-    local extra = {dropping = {'streams'}, parked = {'keys'}, missing = {'ids'}, jopen = {'subjects', 'names'}}
+    local extra = {dropping = {'streams'}, parked = {'keys'}, missing = {'ids'}, jopen = {'subjects', 'names'}, next = {'names'}}
     for _, name in ipairs(extra[q.kind] or {}) do allowed[name] = true end
     if not Q.only(q, allowed) then return 'REQUEST' end
     if not Q.is_array(q.fields) or #q.fields ~= 0 then return 'REQUEST' end
@@ -516,6 +525,8 @@ do
       if not Q.distinct(q.ids, Q.valid_name, most) then return 'REQUEST' end
     elseif q.kind == 'jopen' then
       if not Q.distinct(q.subjects, Q.valid_name, most) or not Q.distinct(q.names, Q.valid_text, most) then return 'REQUEST' end
+    elseif q.kind == 'next' then
+      if not Q.distinct(q.names, Q.next_field, most) then return 'REQUEST' end
     end
     return nil
   end
@@ -1652,6 +1663,17 @@ do
         items[#items + 1] = {id = s, count = n, fields = found}
       end
       return {kind = kind, items = Q.array(items)}, nil
+    elseif kind == 'next' then
+      -- {p}next@e (1.3.1): the fields named that the hash holds (IT19).
+      local found = {}
+      if #q.names > 0 then
+        local vals, err = Q.hmget(ctx, Q.key(ctx, 'next'), q.names, index)
+        if err then return nil, err end
+        for i, name in ipairs(q.names) do
+          if vals[i] then found[name] = vals[i] end
+        end
+      end
+      return {kind = kind, fields = found}, nil
     elseif kind == 'duecount' then
       local _, r, err = Q.clock_at(ctx, index)
       if err then return nil, err end
@@ -1671,7 +1693,7 @@ do
     local reader = name == 'fleet' and Q.listing or (name == 'readers' and Q.listing or Q[name])
     SP.query(name, {validate = Q.validator(Q.check), read = reader, cost = Q.cost})
   end
-  for _, name in ipairs({'clock', 'lease', 'tick', 'heartbeat', 'dropping', 'parked', 'missing', 'jopen', 'duecount'}) do
+  for _, name in ipairs({'clock', 'lease', 'tick', 'heartbeat', 'dropping', 'parked', 'missing', 'jopen', 'duecount', 'next'}) do
     SP.query(name, {validate = Q.validator(Q.check_key), read = Q.read_key, cost = Q.key_cost})
   end
 end

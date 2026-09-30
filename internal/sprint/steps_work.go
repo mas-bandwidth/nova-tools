@@ -37,6 +37,10 @@ type AddReq struct {
 	Last  bool
 	Only  []string
 	Who   string
+	// Op is the verb's --op on the event-driven path (IT19, 1.5.4): part k of
+	// the add is <Op>/p<k>; "" makes one. With Count, Stream may name several
+	// streams, s[,s...] as the flag writes them (AddStreams).
+	Op string
 }
 
 // gatePrefix is the prefix of the sentinels add --sentinel-every names.

@@ -225,6 +225,9 @@ type ReleaseReq struct {
 	Coordinator string
 	Answers     []string
 	Who         string
+	// Op is the verb's --op on the event-driven path (IT19): a repeat with the
+	// same op and arguments returns the recorded result.
+	Op string
 }
 
 // Release lands reached sentinels (waiting -> landed, the only step that may)

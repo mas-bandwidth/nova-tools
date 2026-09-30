@@ -600,6 +600,8 @@ func DecodeResult(kind string, raw json.RawMessage) (QueryResult, error) {
 		out = &JOpenResult{}
 	case KeyDueCount:
 		out = &DueCountResult{}
+	case KeyNext:
+		out = &NextResult{}
 	default:
 		return nil, fmt.Errorf("sprintfn: %q is not a sprint query kind", kind)
 	}
@@ -647,6 +649,8 @@ func deref(r QueryResult) QueryResult {
 	case *JOpenResult:
 		return *v
 	case *DueCountResult:
+		return *v
+	case *NextResult:
 		return *v
 	}
 	return r
