@@ -40,6 +40,17 @@ import (
 //	it (2.1, the last row): the held rule (R16) judges primaries, and the row
 //	does not say when a work, read or merge card is open; only the lines of
 //	the work table are read for it.
+//	a stall or an invariant of a stream, closed (2.2): the row says the
+//	subject is the card, and a stream is not one; the row queues nothing for a
+//	stream's subject.
+//
+// A closing line that names no subject, or whose list of them was cut, queues
+// the key of its rule by line (rule@seq), and the rule reads the subjects
+// itself: the design does not yet say that a close line names the subjects it
+// closes. The ack step's plan holds a decided note that names none (the store
+// replaces it with one that names the subjects it closes), and the Redis store
+// cuts the list of a note to MaxListed (Note.Bound), keeping the total in its
+// count.
 
 // The rule of a key is the name before its first ':' or '@': ask:p17 and
 // ask@48213 are keys of the rule ask.
@@ -197,18 +208,28 @@ func ofPrimaries(rule string) keyFunc {
 }
 
 // ofSubjects is the key of a rule for the subjects of a note line, as
-// ofPrimaries is for the cards of a move line.
+// ofPrimaries is for the cards of a move line: the subject when the line names
+// one and lists every one it is on, the line (rule@seq) when it names more.
+// A line that names no subject, or whose list of them was cut (Count is more
+// than the subjects listed), gets the key of the line too, never none: the
+// rule reads the subjects itself. The subject of a stream or of the sprint is
+// no card, and the rows that use this key are of cards: they queue nothing for
+// it.
 func ofSubjects(rule string) keyFunc {
 	return func(e Event) (string, bool) {
-		switch len(e.Subjects) {
-		case 0:
+		switch {
+		case len(e.Subjects) == 1 && !isCard(e.Subjects[0]):
 			return "", false
-		case 1:
+		case len(e.Subjects) == 1 && e.Count <= 1:
 			return rule + ":" + e.Subjects[0], true
 		}
 		return ofLine(rule, e.Seq), true
 	}
 }
+
+// isCard says a subject is a card: the subject of a stream or of the sprint
+// has a colon, and no primary or stream id has one.
+func isCard(subject string) bool { return !strings.Contains(subject, ":") }
 
 // ofLine is the key that names a line: the rule, '@' and the seq.
 func ofLine(rule string, seq uint64) string { return rule + "@" + strconv.FormatUint(seq, 10) }

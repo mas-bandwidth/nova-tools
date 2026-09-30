@@ -6,8 +6,10 @@ import (
 	"math/rand/v2"
 	"reflect"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 // These tests hold ingest to the design's two tables (the upper design,
@@ -17,8 +19,8 @@ import (
 // a line names, and ingest is deterministic and does not depend on the order,
 // the pages or the repeats of the events it is given.
 
-// ingestAt is the keys of one line at seq 100, the line taken through its
-// JSON and ParseEvent as the tick reads it.
+// ingestAt is the keys of one line of the present Line type at seq 100, the
+// line mapped by EventOf.
 func ingestAt(t *testing.T, l Line) []string {
 	t.Helper()
 	return ingestAll(t, map[uint64]Line{100: l})
@@ -34,13 +36,20 @@ func ingestAll(t *testing.T, lines map[uint64]Line) []string {
 	slices.Sort(seqs)
 	var events []Event
 	for _, s := range seqs {
-		e, err := ParseEvent(streamID(s), lineJSON(t, lines[s]))
-		if err != nil {
-			t.Fatal(err)
-		}
-		events = append(events, e)
+		events = append(events, EventOf(s, lines[s]))
 	}
 	return keyNames(Ingest(events))
+}
+
+// ingestContractAt is the keys of one line of Layer 2's contract at seq 100,
+// the line read by ParseEvent.
+func ingestContractAt(t *testing.T, line string) []string {
+	t.Helper()
+	e, err := ParseEvent(streamID(100), []byte(line))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return keyNames(Ingest([]Event{e}))
 }
 
 func keyNames(in Ingested) []string {
@@ -119,6 +128,72 @@ func TestIngestLinesOfTheWorkTable(t *testing.T) {
 	}
 }
 
+// createdLines are the lines of the cards a plan creates in the work table, as
+// the store writes a create (store's moveLine): the place after, the score and
+// every field the step set in Set, the words in Text, the card its own primary.
+func createdLines(p Plan) []Line {
+	var out []Line
+	for _, u := range p.Units {
+		for _, c := range u.Changes {
+			e := c.Entry
+			if c.Table != Work || e.Create == nil {
+				continue
+			}
+			l := Line{Kind: LineMove, Card: e.ID, Table: c.Table, Primary: e.ID, Stream: e.Set["stream"],
+				To: e.Create.Row + ":" + e.Create.Col, Set: map[string]string{"score": strconv.FormatFloat(e.Create.Score, 'f', -1, 64)}}
+			for f, v := range e.Set {
+				if slices.Contains(TextFields, f) {
+					if l.Text == nil {
+						l.Text = map[string]string{}
+					}
+					l.Text[f] = v
+					continue
+				}
+				l.Set[f] = v
+			}
+			out = append(out, l)
+		}
+	}
+	return out
+}
+
+// The lines of a create, as the add step writes them: every card of an add
+// says its kind, primary or sentinel, so a line that sets a kind is not thereby
+// a sentinel's, and only the create of a sentinel queues deal on that account.
+func TestIngestCreatesAsTheAddStepWritesThem(t *testing.T) {
+	t.Parallel()
+	w := setup(t, 1)
+	tests := []struct {
+		name string
+		req  AddReq
+		kind string
+		deal bool
+	}{
+		{"a primary admitted ready", AddReq{Stream: "s1", Count: 1, Brief: "do it"}, "primary", true},
+		{"a primary admitted waiting on a need", AddReq{Stream: "s1", Count: 1, Needs: []string{"s1-1"}}, "primary", false},
+		{"a sentinel", AddReq{Stream: "s1", IDs: []string{"s1-g1"}, Sentinel: true}, "sentinel", true},
+	}
+	for _, tt := range tests {
+		p := Add(w.s, tt.req)
+		if len(p.Refused) != 0 {
+			t.Fatalf("%s: refused: %v", tt.name, p.Refused)
+		}
+		lines := createdLines(p)
+		if len(lines) != 1 {
+			t.Fatalf("%s: the add created %d cards in the work table", tt.name, len(lines))
+		}
+		l := lines[0]
+		if l.Set["kind"] != tt.kind || l.From != "" || l.Stream != "s1" {
+			t.Fatalf("%s: the add wrote %+v", tt.name, l)
+		}
+		want := []string{"held:" + l.Card, "resolve:s1"}
+		if tt.deal {
+			want = append([]string{"deal"}, want...)
+		}
+		sameKeys(t, tt.name, ingestAt(t, l), want)
+	}
+}
+
 func TestIngestLinesOfTheOtherTables(t *testing.T) {
 	t.Parallel()
 	read := func(card, primary, from, to string) Line {
@@ -170,9 +245,111 @@ func TestIngestLinesOfTheOtherTables(t *testing.T) {
 		// the merge table has no row of 2.1: its work lines carry the change
 		{"a merge card moves", Line{Kind: LineMove, Table: Merge, Card: "p1", Primary: "p1", Stream: "s1", From: "s1:queued", To: "s1:merged"}, nil},
 		{"a stream's control card changes", Line{Kind: LineMove, Table: Merge, Card: "ctl-s1", From: "s1:ctl", To: "s1:ctl", Set: map[string]string{"state": "stopped"}}, nil},
+		// A member's control card is one of the fleet table's: the present
+		// writer sets only state, since, dropped and kind on a stream's, so no
+		// line of it says status or held, and the row's own table is what keeps
+		// a control card of another table that did from waking deal or down.
+		{"a merge table control card that says status up wakes nothing",
+			Line{Kind: LineMove, Table: Merge, Card: "ctl-s1", From: "s1:ctl", To: "s1:ctl", Set: map[string]string{"status": "up"}}, nil},
+		{"a merge table control card that says status down wakes nothing",
+			Line{Kind: LineMove, Table: Merge, Card: "ctl-s1", From: "s1:ctl", To: "s1:ctl", Set: map[string]string{"status": "down"}}, nil},
+		{"a merge table control card that says held wakes nothing",
+			Line{Kind: LineMove, Table: Merge, Card: "ctl-s1", From: "s1:ctl", To: "s1:ctl", Set: map[string]string{"held": "t"}}, nil},
 	}
 	for _, tt := range tests {
 		sameKeys(t, tt.name, ingestAt(t, tt.line), tt.want)
+	}
+}
+
+// The same change in the two shapes of a line, the contract's (read by
+// ParseEvent) and the present Line's (mapped by EventOf), queues the same keys.
+// The contract's line names its cards in ids and its notes' subjects in about;
+// a line that read as naming none would queue no card key, and here a set of
+// two, and a set of 2,000, queue one key for the line.
+func TestIngestReadsTheContractsLines(t *testing.T) {
+	t.Parallel()
+	list := func(n int) string {
+		b, err := json.Marshal(cardIDs(n))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return string(b)
+	}
+	ok := map[string]string{"result": "ok"}
+	tests := []struct {
+		name     string
+		contract string
+		present  Line
+		want     []string
+	}{
+		{"one card into review with result ok",
+			`{"k":"m","ms":"1","tbl":"work","from":"s1:working","to":"s1:review","ids":["p1"],"about":["p1"],"shared":{"result":"ok","head":"h"},"meta":{"verb":"finish","stream":"s1"}}`,
+			workLine("p1", "s1:working", "s1:review", ok), []string{"ask:p1", "held:p1", "resolve:s1"}},
+		{"two cards into review with result ok",
+			`{"k":"m","tbl":"work","from":"s1:working","to":"s1:review","ids":["c00000","c00001"],"about":["c00000","c00001"],"shared":{"result":"ok"},"meta":{"stream":"s1"}}`,
+			setOf(Work, "s1:working", "s1:review", ok, cardIDs(2)...), []string{"ask@100", "held@100", "resolve:s1"}},
+		{"2,000 cards into review with result ok, the result on each id's own set",
+			`{"kind":"move","table":"work","from":"s1:working","to":"s1:review","ids":` + list(2000) + `,"about":` + list(2000) + `,"meta":{"stream":"s1"},"set":[` +
+				strings.TrimSuffix(strings.Repeat(`{"result":"ok"},`, 2000), ",") + `]}`,
+			setOf(Work, "s1:working", "s1:review", ok, cardIDs(2000)...), []string{"ask@100", "held@100", "resolve:s1"}},
+		{"cards into review with result failed",
+			`{"k":"m","tbl":"work","from":"s1:working","to":"s1:review","ids":["c00000","c00001"],"about":["c00000","c00001"],"shared":{"result":"failed"},"meta":{"stream":"s1"}}`,
+			setOf(Work, "s1:working", "s1:review", map[string]string{"result": "failed"}, cardIDs(2)...), []string{"held@100", "resolve:s1", "rework@100"}},
+		{"a primary created waiting, as the add writes it",
+			`{"k":"c","tbl":"work","to":"s1:waiting","ids":["p1"],"about":["p1"],"shared":{"kind":"primary","stream":"s1","attempt":"0"},"meta":{"verb":"add","stream":"s1"}}`,
+			workLine("p1", "", "s1:waiting", map[string]string{"kind": "primary", "stream": "s1", "attempt": "0"}), []string{"held:p1", "resolve:s1"}},
+		{"a sentinel created",
+			`{"k":"c","tbl":"work","to":"s1:waiting","ids":["g1"],"about":["g1"],"shared":{"kind":"sentinel","stream":"s1"},"meta":{"verb":"add","stream":"s1"}}`,
+			workLine("g1", "", "s1:waiting", map[string]string{"kind": "sentinel", "stream": "s1"}), []string{"deal", "held:g1", "resolve:s1"}},
+		{"a card lands",
+			`{"k":"m","tbl":"work","from":"s1:merging","to":"s1:landed","ids":["p1"],"about":["p1"]}`,
+			workLine("p1", "s1:merging", "s1:landed", nil), []string{"cross", "done", "needs:p1", "resolve:s1"}},
+		{"a card removed",
+			`{"k":"x","tbl":"work","from":"s1:ready","ids":["p1"],"about":["p1"]}`,
+			Line{Kind: LineMove, Table: Work, Card: "p1", From: "s1:ready", Removed: true}, []string{"deal", "done", "needs:p1", "resolve:s1"}},
+		{"a card rescored where it is",
+			`{"k":"m","tbl":"work","from":"s1:ready","ids":["p1"],"about":["p1"],"score":[["1","5"]]}`,
+			workLine("p1", "s1:ready", "s1:ready", map[string]string{"score": "5"}), []string{"held:p1", "resolve:s1"}},
+		{"a read card into ok",
+			`{"k":"m","tbl":"readers","from":"a:reading","to":"a:ok","ids":["p1.r1.a"],"about":["p1"]}`,
+			Line{Kind: LineMove, Table: Readers, Card: "p1.r1.a", Primary: "p1", From: "a:reading", To: "a:ok"}, []string{"accept:p1"}},
+		{"two read cards into broken",
+			`{"k":"m","tbl":"readers","from":"a:reading","to":"a:broken","ids":["p1.r1.a","p2.r1.a"],"about":["p1","p2"]}`,
+			setOf(Readers, "a:reading", "a:broken", nil, "p1.r1.a", "p2.r1.a"), []string{"rework@100"}},
+		{"a work card finishes in a member's cell",
+			`{"k":"m","tbl":"fleet","from":"m1:working","to":"m1:ok","ids":["p1.w1"],"about":["p1"]}`,
+			Line{Kind: LineMove, Table: Fleet, Card: "p1.w1", Primary: "p1", From: "m1:working", To: "m1:ok"}, []string{"deal"}},
+		{"a control card goes down",
+			`{"k":"m","tbl":"fleet","from":"m1:ctl","ids":["ctl-m1"],"about":["ctl-m1"],"shared":{"status":"down","since":"t"}}`,
+			Line{Kind: LineMove, Table: Fleet, Card: "ctl-m1", From: "m1:ctl", To: "m1:ctl", Set: map[string]string{"status": "down", "since": "t"}}, []string{"down:m1"}},
+		{"a control card created up",
+			`{"k":"c","tbl":"fleet","to":"m1:ctl","ids":["ctl-m1"],"about":["ctl-m1"],"shared":{"kind":"member","status":"up"}}`,
+			Line{Kind: LineMove, Table: Fleet, Card: "ctl-m1", To: "m1:ctl", Set: map[string]string{"kind": "member", "status": "up"}}, []string{"deal", "level"}},
+		{"a decided note closes a judgment on one card",
+			`{"k":"n","about":["p1"],"meta":{"kind":"decided","type":` + fmt.Sprintf("%q", NBlocked) + `,"stream":"s1"}}`,
+			NoteLine(Note{ID: "n1", Kind: Decided, Type: NBlocked, Stream: "s1", Primaries: []string{"p1"}, Count: 1}, "op"), []string{"held:p1"}},
+		{"a decided note closes a judgment on 2,000",
+			`{"k":"n","about":` + list(2000) + `,"meta":{"kind":"decided","type":` + fmt.Sprintf("%q", NBlocked) + `,"stream":"s1"}}`,
+			loggedNote(Note{ID: "n1", Kind: Decided, Type: NBlocked, Stream: "s1", Primaries: cardIDs(2000), Count: 2000}), []string{"held@100"}},
+		{"an acknowledged note closes the stall of a stream, which no row queues",
+			`{"k":"n","about":["stream:s1"],"meta":{"kind":"acknowledged","type":` + fmt.Sprintf("%q", NStalled) + `,"stream":"s1"}}`,
+			NoteLine(Note{ID: "n1", Kind: Acknowledged, Type: NStalled, Stream: "s1", StreamLevel: true}, "op"), nil},
+		{"the sprint is done, acknowledged",
+			`{"k":"n","about":["sprint:done"],"meta":{"kind":"acknowledged","type":` + fmt.Sprintf("%q", NSprintDone) + `}}`,
+			NoteLine(Note{ID: "n1", Kind: Acknowledged, Type: NSprintDone, SprintLevel: true}, "op"), []string{"done"}},
+		{"the machine started",
+			`{"k":"n","meta":{"kind":"happened","type":` + fmt.Sprintf("%q", NMachineStarted) + `}}`,
+			NoteLine(Note{ID: "n1", Kind: Happened, Type: NMachineStarted}, "op"), []string{"askwait", "deal", "done", "level"}},
+		{"a rows line",
+			`{"k":"w","tbl":"readers","add":[{"row":"r2","rank":"2"}]}`,
+			Line{Kind: "rows", Table: Readers}, nil},
+		{"an advance",
+			`{"k":"a","from":"3","to":"4"}`,
+			Line{Kind: "advance"}, nil},
+	}
+	for _, tt := range tests {
+		sameKeys(t, tt.name+" (contract)", ingestContractAt(t, tt.contract), tt.want)
+		sameKeys(t, tt.name+" (present)", ingestAt(t, tt.present), tt.want)
 	}
 }
 
@@ -248,6 +425,128 @@ func TestIngestCloseOfAJudgmentQueuesItsOwnerKey(t *testing.T) {
 			n := tt.note
 			n.ID, n.Kind, n.Count = "n1", kind, len(n.Primaries)
 			sameKeys(t, tt.name+" ("+kind+")", ingestAt(t, NoteLine(n, "op")), nil)
+		}
+	}
+}
+
+// subjectRows are the rows of 2.2 whose owner key is of the subjects the line
+// names: the types, and the rule of the key.
+var subjectRows = []struct{ typ, rule string }{
+	{NBlocked, ruleHeld}, {NMissingNeed, ruleHeld}, {NCannotAsk, ruleAsk}, {NBound, ruleHeld},
+	{typeCouldNotMove, ruleHeld}, {NInvariant, ruleHeld}, {NStalled, ruleHeld}, {NStranded, ruleHeld}, {NReadsExhausted, ruleHeld},
+}
+
+// loggedNote is the line the Redis store writes for a note: the note cut to the
+// primaries a note lists (Note.Bound), the total kept in its count.
+func loggedNote(n Note) Line { return NoteLine(n.Bound(), "op") }
+
+// ackPlanNotes are the notes the plan of an ack of an open judgment of the type
+// holds, as the ack step writes them.
+func ackPlanNotes(t *testing.T, typ string) []Note {
+	t.Helper()
+	w := setup(t, 1)
+	n := Note{ID: "n-x.1", Kind: Judgment, Type: typ, Stream: "s1", Primaries: []string{"s1-1"}, Count: 1, Decisions: Decisions[typ], At: w.s.Now}
+	w.s.Open = append(w.s.Open, Open{Key: OpenKey(n.ID, "s1-1"), Note: n})
+	p := Ack(w.s, AckReq{Notes: []string{n.ID}, Reason: "seen"})
+	if len(p.Refused) != 0 {
+		t.Fatalf("the ack of %s was refused: %v", typ, p.Refused)
+	}
+	var out []Note
+	for _, u := range p.Units {
+		out = append(out, u.Notes...)
+	}
+	return out
+}
+
+// A line that closes a judgment and names no subject queues the key of its
+// rule by line, never none: the rule reads the subjects itself. The ack step's
+// plan holds such a note (decided() names none); the store replaces it with a
+// decided note that names the subjects it closes (see the test of the lines the
+// store writes), so this is the shape of the plan's note, and of any writer that
+// keeps it.
+func TestIngestAClosingLineThatNamesNoSubjectQueuesTheRuleByLine(t *testing.T) {
+	t.Parallel()
+	for _, typ := range []string{NBlocked, NMissingNeed} {
+		notes := ackPlanNotes(t, typ)
+		if len(notes) != 1 || notes[0].Kind != Decided || len(notes[0].Subjects()) != 0 {
+			t.Fatalf("the plan of an ack of %s holds %+v", typ, notes)
+		}
+		sameKeys(t, "the ack of "+typ, ingestAt(t, loggedNote(notes[0])), []string{"held@100"})
+	}
+	for _, r := range subjectRows {
+		open := Open{Key: OpenKey("n1", "p1"), Note: Note{ID: "n1", Kind: Judgment, Type: r.typ, Stream: "s1", Primaries: []string{"p1"}, Count: 1}}
+		none := decided(open, "ack: seen", "u1", time.Time{})
+		if len(none.Subjects()) != 0 {
+			t.Fatalf("%s: decided() names %v", r.typ, none.Subjects())
+		}
+		sameKeys(t, r.typ+" (no subject)", ingestAt(t, loggedNote(none)), []string{r.rule + "@100"})
+		sameKeys(t, r.typ+" (one subject)", ingestAt(t, loggedNote(decided(open, "seen", "u1", time.Time{}, "p1"))), []string{r.rule + ":p1"})
+	}
+}
+
+// A line whose list of subjects was cut (the Redis store lists MaxListed of
+// them and keeps the total in Count) queues the key of its rule by line, since
+// a key that names one subject would leave the others out. The lines are those
+// of decided() and acknowledged(), the writers of a close, as the Redis store
+// writes them.
+func TestIngestAClosingLineWhoseListOfSubjectsWasCutQueuesTheRuleByLine(t *testing.T) {
+	t.Parallel()
+	now := time.Time{}
+	for _, r := range subjectRows {
+		note := Note{ID: "n1", Kind: Judgment, Type: r.typ, Stream: "s1"}
+		for _, n := range []int{MaxListed, MaxListed + 1, 2000, 20000} {
+			ids := cardIDs(n)
+			var entries []Open
+			for _, id := range ids {
+				entries = append(entries, Open{Key: OpenKey("n1", id), Note: note})
+			}
+			for _, w := range []struct {
+				name    string
+				written Note
+			}{
+				{"decided", decided(entries[0], "resolved", "u1", now, ids...)},
+				{"acknowledged", acknowledged(note, entries, "u1", now)},
+			} {
+				l := loggedNote(w.written)
+				if e := EventOf(100, l); e.Count != n || len(e.Subjects) != min(n, MaxListed) {
+					t.Fatalf("%s %s of %d: %d subjects listed, count %d", r.typ, w.name, n, len(e.Subjects), e.Count)
+				}
+				sameKeys(t, fmt.Sprintf("%s %s of %d subjects", r.typ, w.name, n), ingestAt(t, l), []string{r.rule + "@100"})
+			}
+		}
+		// A list cut down to one subject of several is not that subject's key,
+		// and one listed whole is.
+		open := Open{Key: OpenKey("n1", "p1"), Note: note}
+		cut := decided(open, "resolved", "u1", now, "p1")
+		cut.Count = 5
+		sameKeys(t, r.typ+" (one of five listed)", ingestAt(t, NoteLine(cut, "op")), []string{r.rule + "@100"})
+		sameKeys(t, r.typ+" (one of one listed)", ingestAt(t, loggedNote(decided(open, "resolved", "u1", now, "p1"))), []string{r.rule + ":p1"})
+	}
+}
+
+// A stall or an invariant of a stream, closed, queues nothing: the row says the
+// subject is the card and a stream is not one (an open question of the design).
+// The two lines written for such a close are the ack's acknowledged line, which
+// carries the stream-level flag, and the decided line the store writes for a
+// closed judgment, which names the subject stream:<s>; an invariant with no card
+// is the stream "".
+func TestIngestLeavesOutAStreamsStallAndInvariantClosed(t *testing.T) {
+	t.Parallel()
+	now := time.Time{}
+	for _, tt := range []struct{ typ, stream string }{{NStalled, "s1"}, {NInvariant, ""}} {
+		note := Note{ID: "n1", Kind: Judgment, Type: tt.typ, Stream: tt.stream, StreamLevel: true, Marked: true}
+		subject := StreamSubject(tt.stream)
+		for _, w := range []struct {
+			name string
+			line Line
+		}{
+			{"acknowledged", loggedNote(acknowledged(note, []Open{{Key: OpenKey(note.ID, subject), Note: note}}, "u1", now))},
+			{"decided", loggedNote(Note{ID: "n1.d1", Kind: Decided, Type: tt.typ, Stream: tt.stream, Answers: note.ID, Primaries: []string{subject}, Count: 1})},
+		} {
+			if e := EventOf(100, w.line); !e.Closes || !reflect.DeepEqual(e.Subjects, []string{subject}) {
+				t.Fatalf("%s %s: %+v", tt.typ, w.name, e)
+			}
+			sameKeys(t, fmt.Sprintf("%s of stream %q, %s", tt.typ, tt.stream, w.name), ingestAt(t, w.line), nil)
 		}
 	}
 }
@@ -339,10 +638,16 @@ func bulkShapes() []bulkShape {
 			return l
 		}
 	}
-	note := func(typ string, kind string) func(int) Line {
+	// A note line as the Redis store writes it lists at most MaxListed primaries
+	// and keeps the total in Count (whole: the line of a writer that lists them
+	// all, as the in-memory twin does and the design's lines do up to a chunk).
+	note := func(typ string, kind string, whole bool) func(int) Line {
 		return func(n int) Line {
-			ids := cardIDs(n)
-			return NoteLine(Note{ID: "n1", Kind: kind, Type: typ, Stream: "s1", Primaries: ids, Count: n}, "op")
+			nn := Note{ID: "n1", Kind: kind, Type: typ, Stream: "s1", Primaries: cardIDs(n), Count: n}
+			if !whole {
+				nn = nn.Bound()
+			}
+			return NoteLine(nn, "op")
 		}
 	}
 	var out []bulkShape
@@ -362,8 +667,10 @@ func bulkShapes() []bulkShape {
 		bulkShape{"fleet: leave", set(Fleet, "m1:ready", "m1:working", nil)},
 	)
 	for _, typ := range []string{NBlocked, NCannotAsk, NBound, NStalled, NStranded, NInvariant, NReadsExhausted, typeCouldNotMove} {
-		out = append(out, bulkShape{"close " + typ, note(typ, Decided)}, bulkShape{"acknowledge " + typ, note(typ, Acknowledged)})
+		out = append(out, bulkShape{"close " + typ, note(typ, Decided, false)}, bulkShape{"acknowledge " + typ, note(typ, Acknowledged, false)})
 	}
+	out = append(out, bulkShape{"close, list whole, " + NBlocked, note(NBlocked, Decided, true)},
+		bulkShape{"acknowledge, list whole, " + NStalled, note(NStalled, Acknowledged, true)})
 	return out
 }
 
@@ -496,6 +803,11 @@ func randomEvent(r *rand.Rand, seq uint64) Event {
 		e.Subjects = append(e.Subjects, pick("p1", "p2", "p3", "stream:s1", SprintSubject))
 	}
 	e.Cards = append([]string(nil), e.Subjects...)
+	// A note's count is the subjects it lists, or more when the list was cut.
+	e.Count = len(e.Subjects)
+	if r.IntN(4) == 0 {
+		e.Count += r.IntN(100)
+	}
 	e.Opens, e.Closes = e.Kind == Judgment, e.Kind == Decided || e.Kind == Acknowledged
 	return e
 }
@@ -616,22 +928,26 @@ func TestIngestProperties(t *testing.T) {
 }
 
 func FuzzParseEventAndIngest(f *testing.F) {
-	for _, l := range []Line{
-		workLine("p1", "s1:working", "s1:review", map[string]string{"result": "ok"}),
-		setOf(Work, "s1:merging", "s1:landed", nil, "p1", "p2"),
-		{Kind: LineMove, Table: Fleet, Card: "ctl-m1", From: "m1:ctl", To: "m1:ctl", Set: map[string]string{"status": "down"}},
-		NoteLine(Note{ID: "n1", Kind: Decided, Type: NBlocked, Stream: "s1", Primaries: []string{"p1", "p2"}, Count: 2}, "op"),
-		NoteLine(Note{ID: "n2", Kind: Happened, Type: NMachineStarted}, "op"),
+	for _, line := range []string{
+		`{"k":"m","ms":"1","tbl":"work","from":"s1:working","to":"s1:review","ids":["p1"],"about":["p1"],"shared":{"result":"ok"},"meta":{"verb":"finish","stream":"s1"}}`,
+		`{"kind":"move","at_ms":"1","table":"work","from":"s1:merging","to":"s1:landed","ids":["p1","p2"],"about":["p1","p2"],"set":[{},{}]}`,
+		`{"k":"m","tbl":"fleet","from":"m1:ctl","ids":["ctl-m1"],"about":["ctl-m1"],"shared":{"status":"down"}}`,
+		`{"k":"c","tbl":"work","to":"s1:waiting","ids":["g1","g2"],"about":["g1","g2"],"shared":{"kind":"sentinel"},"set":[{"needs":"p1"},{}]}`,
+		`{"k":"n","about":["p1","p2"],"meta":{"kind":"decided","type":` + fmt.Sprintf("%q", NBlocked) + `,"stream":"s1"}}`,
+		`{"k":"n","meta":{"kind":"happened","type":` + fmt.Sprintf("%q", NMachineStarted) + `}}`,
+		`{"k":"x","tbl":"work","from":"s1:ready","ids":["p1"]}`,
 	} {
-		b, _ := json.Marshal(l)
-		f.Add("7-0", b)
+		f.Add("7-0", []byte(line))
 	}
-	f.Add("1-0", []byte(`{"kind":"move","table":"work","card":"p1","from":"s1:ready","removed":true}`))
 	f.Add("x", []byte(`{`))
 	f.Fuzz(func(t *testing.T, id string, data []byte) {
 		e, err := ParseEvent(id, data)
 		if err != nil {
 			return
+		}
+		// A line of a card's change that read has the cards it names.
+		if e.Kind == LineMove && len(e.Cards) == 0 {
+			t.Fatalf("a card's change read as naming no cards: %+v", e)
 		}
 		again, err := ParseEvent(id, data)
 		if err != nil || !reflect.DeepEqual(again, e) {
