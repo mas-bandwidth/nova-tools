@@ -624,3 +624,67 @@ func TestDealOnNewPath(t *testing.T) {
 		}
 	}
 }
+
+// bugOnce refuses the first step it is armed for with a bug code, as a store
+// that refuses a verb's step CONFIG would, and passes every other item on.
+type bugOnce struct {
+	c     sprintfn.Client
+	mu    sync.Mutex
+	armed bool
+}
+
+func (b *bugOnce) Pipeline(ctx context.Context, items []sprintfn.Item) ([]sprintfn.Result, error) {
+	b.mu.Lock()
+	armed := b.armed && len(items) == 1 && items[0].Step != nil
+	if armed {
+		b.armed = false
+	}
+	b.mu.Unlock()
+	if armed {
+		return []sprintfn.Result{{Refusal: &sprintfn.Refusal{Code: "CONFIG", Message: "CONFIG: the store's definition disagrees; nothing was changed",
+			Detail: sprintfn.RefusalDetail{RefusalDetail: tset.RefusalDetail{Budget: "entries"}}}}}, nil
+	}
+	return b.c.Pipeline(ctx, items)
+}
+
+// TestExitThreeWritesTheJudgment: a verb whose step the store refuses with a
+// bug code exits 3 and writes "the machine's step was refused" (1.3.5: "a
+// verb that receives such a refusal prints it as an error (exit 3) and writes
+// the same judgment, so the coordinator sees it whoever ran the verb"; the
+// grammar decisions, 31): one step of notes only, open on the verb, its cause
+// the code, its text naming the verb, the code and the bound. A refusal the
+// verb makes itself (exit 2) writes none.
+func TestExitThreeWritesTheJudgment(t *testing.T) {
+	t.Parallel()
+	na := newNPApp(t)
+	bug := &bugOnce{c: na.rec}
+	na.a.sprintClient = func(context.Context, string, sprint.Names) (sprintfn.Client, func() error, error) {
+		return bug, nil, nil
+	}
+	na.ok("init")
+	bug.mu.Lock()
+	bug.armed = true
+	bug.mu.Unlock()
+	code, out, errs := na.do("reader add r1")
+	if code != exitBug || !strings.Contains(errs, `judgment "the machine's step was refused" open on reader add, cause CONFIG`) {
+		t.Fatalf("reader add refused CONFIG: exit %d\n%s%s", code, out, errs)
+	}
+	judged := func() int {
+		n := 0
+		for _, l := range strings.Split(na.ok("log"), "\n") {
+			if strings.Contains(l, `"type":"the machine's step was refused"`) && strings.Contains(l, `"cause":"CONFIG"`) {
+				n++
+			}
+		}
+		return n
+	}
+	if n := judged(); n != 1 {
+		t.Fatalf("%d judgments in the log after the bug:\n%s", n, na.ok("log"))
+	}
+	if text := na.ok("inbox"); !strings.Contains(text, "verb reader add, code CONFIG, bound entries") {
+		t.Fatalf("the inbox does not name the verb, the code and the bound:\n%s", text)
+	}
+	if code, out, errs := na.do("start --op op-x --epoch 9"); code != exitRefused || judged() != 1 {
+		t.Fatalf("a refusal of the verb's own: exit %d, %d judgments\n%s%s", code, judged(), out, errs)
+	}
+}

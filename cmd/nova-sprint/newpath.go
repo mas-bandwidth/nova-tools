@@ -292,7 +292,27 @@ func (a *app) dispatch(v newVerb, args []string, stdout, stderr io.Writer) int {
 	if code == exitDone && !p.c.json && v.writes {
 		writeSprintLine(ctx, e, res, stdout)
 	}
+	if code == exitBug {
+		judgeBug(ctx, e, err, stderr)
+	}
 	return code
+}
+
+// judgeBug writes the judgment of a verb's step the store refused with a bug
+// code (1.3.5: the verb "prints it as an error (exit 3) and writes the same
+// judgment, so the coordinator sees it whoever ran the verb"; the grammar
+// decisions, 31), and says so, or says why it could not. An unconfirmed write
+// (spverbs.Unknown) exits 3 with no refusal to name, and writes none.
+func judgeBug(ctx context.Context, e *spverbs.Env, err error, stderr io.Writer) {
+	var rf *spverbs.Refused
+	if !errors.As(err, &rf) || rf.Local {
+		return
+	}
+	if _, jerr := spverbs.StepRefused(ctx, e, rf); jerr != nil {
+		fmt.Fprintf(stderr, "%s %s: the judgment \"the machine's step was refused\" was not written: %s\n", prog, rf.Verb, oneline.Escape(jerr.Error()))
+		return
+	}
+	fmt.Fprintf(stderr, "%s %s: judgment \"the machine's step was refused\" open on %s, cause %s\n", prog, rf.Verb, rf.Verb, rf.Code())
 }
 
 // newOut is a verb's report for a program: the present report's fields
