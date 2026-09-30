@@ -1,15 +1,14 @@
 # revert-on-red.yml: the mechanical revert of the push that turned main red.
 #
-# No person in the loop. When `ci` concludes FAILURE on a push to main whose
-# parent ci run on main was green, this workflow re-runs the failed jobs once
-# (flake guard) and waits for that rerun. Only if the rerun is red too does it
-# revert that push -- `git revert -m 1` for a merge commit, a plain revert
-# otherwise -- push the revert to main, and post ONE comment on the merged
-# pull request naming the revert. If the repository ruleset refuses the direct
-# push by the github-actions app, it opens a `revert/<sha>` pull request with
-# opened and LEFT OPEN instead, with a notice naming it; the comment is posted
-# either way. This workflow enables no auto-merge and lands nothing itself
-# (Glenn, 2026-09-18: nothing reaches the dev merge queue but a batch).
+# When `ci` concludes FAILURE on a push to main whose parent ci run on main was green, this
+# workflow re-runs the failed jobs once (flake guard) and waits for that rerun. Only if the
+# rerun is red too does it revert that push -- `git revert -m 1` for a merge commit, a plain
+# revert otherwise -- and open a `revert/<sha>` pull request against main, LEFT OPEN, with
+# one issue naming it, and post ONE comment on the merged pull request naming
+# the revert. It pushes nothing to main: the verb's `--push-revert` (the direct push) is NOT
+# set here, and turns on only after this pull request form has fired correctly once on a
+# real red push. This workflow enables no auto-merge and lands nothing itself (Glenn,
+# 2026-09-18: nothing reaches the dev merge queue but a batch); a person merges the revert.
 #
 # The guards that keep it from ever fighting itself, all a skip with a notice
 # and exit 0 rather than a failure:
@@ -25,7 +24,7 @@
 #
 # Everything else is the plain "stop the red" path. The repository ruleset is
 # the one manual step this may need: it must let the github-actions app push
-# to main or open a revert/<sha> pull request (see docs/CONTRIBUTING.md).
+# to open a revert/<sha> pull request and an issue (see docs/CONTRIBUTING.md).
 #
 # Actions are pinned by sha, and the logic is one Go verb (tools/ci,
 # revert-on-red) so the workflow stays a list of steps rather than a program.

@@ -11,7 +11,7 @@ func init() {
 	register(verb{
 		name:    "revert-on-red",
 		summary: "the mechanical revert of the push that turned main red",
-		help: `usage: go run ./tools/ci revert-on-red --run-attempt N
+		help: `usage: go run ./tools/ci revert-on-red --run-attempt N [--push-revert]
 
 Run by revert-on-red.yml on the checked-out head_sha of a failed ci workflow_run
 on main. On the first attempt of the run it re-runs the run's failed jobs once (a
@@ -27,11 +27,16 @@ not ask):
                                                  (no ci push run for it is the
                                                  same: no green baseline)
 Then it reverts the push (git revert -m 1 for a merge commit, a plain revert
-otherwise), pushes the revert to main, and, if the ruleset refuses the push,
-opens a revert/<sha> pull request and LEAVES IT OPEN with a notice. It enables no
-auto-merge and lands nothing on its own: CI lands nothing by itself, a person or
-a batch does. Either way it posts ONE comment on the merged pull request, naming
-the revert.
+otherwise) and, BY DEFAULT, opens a revert/<sha> pull request against main, LEAVES
+IT OPEN, and files ONE needs-glenn issue naming it. It pushes nothing to main, enables
+no auto-merge and lands nothing on its own: CI lands nothing by itself, a person
+or a batch does. It posts ONE comment on the merged pull request, naming the
+revert.
+
+--push-revert is the direct path, off unless it is given: the verb pushes the
+revert commit straight to main, and only when the ruleset refuses that push falls
+back to the pull request above. revert-on-red.yml does not set it; it turns on
+only after the pull request form has fired correctly once on a real red push.
 
 A GitHub API call that fails (the parent's run lookup, the failed run's job
 list, the merged pull request lookup, the comment, the rerun) is never a skip:
@@ -43,7 +48,8 @@ Environment: GITHUB_REPOSITORY, GITHUB_TOKEN, HEAD_SHA, RUN_ID (all required).
 git and gh run in the working directory, which is the checkout of HEAD_SHA.
 
 exit 0  reverted, or skipped by a guard, or rerun once
-exit 1  a git or gh step failed (a gh failure also files the needs-glenn issue)
+exit 1  a git or gh step failed (a gh failure also files the needs-glenn issue),
+        or the needs-glenn issue for an open revert PR could not be filed
 exit 2  usage, or a required variable is unset
 `,
 		do: func(e env, args []string) int { return revertOnRed(e, osCmdRunner{}, args) },
@@ -62,14 +68,18 @@ func shortSHA(s string) string {
 
 // revertOnRed is the verb over a runner.
 func revertOnRed(e env, r cmdRunner, args []string) int {
-	attempt := ""
+	attempt, pushRevert := "", false
 	for i := 0; i < len(args); i++ {
 		if args[i] == "--run-attempt" && i+1 < len(args) {
 			attempt = args[i+1]
 			i++
 			continue
 		}
-		fmt.Fprintf(e.stderr, "revert-on-red: unknown argument %q; usage: go run ./tools/ci revert-on-red --run-attempt N\n", args[i])
+		if args[i] == "--push-revert" {
+			pushRevert = true
+			continue
+		}
+		fmt.Fprintf(e.stderr, "revert-on-red: unknown argument %q; usage: go run ./tools/ci revert-on-red --run-attempt N [--push-revert]\n", args[i])
 		return 2
 	}
 	vars := map[string]string{}
@@ -81,7 +91,7 @@ func revertOnRed(e env, r cmdRunner, args []string) int {
 	}
 	rv := &reverter{
 		e: e, r: r,
-		repo: vars["GITHUB_REPOSITORY"], head: vars["HEAD_SHA"], runID: vars["RUN_ID"],
+		repo: vars["GITHUB_REPOSITORY"], head: vars["HEAD_SHA"], runID: vars["RUN_ID"], pushRevert: pushRevert,
 		ghEnv: []string{"GH_TOKEN=" + vars["GITHUB_TOKEN"]},
 	}
 	if attempt == "1" {
@@ -100,6 +110,10 @@ type reverter struct {
 	head  string
 	runID string
 	ghEnv []string
+	// pushRevert: push the revert commit straight to main (falling back to the
+	// pull request when the ruleset refuses). False, the default, opens the pull
+	// request and pushes nothing to main.
+	pushRevert bool
 }
 
 func (v *reverter) notice(format string, a ...any) {
@@ -140,15 +154,23 @@ func (v *reverter) fail(format string, a ...any) int {
 func (v *reverter) undecided(what string) int {
 	fmt.Fprintf(v.e.stderr, "revert-on-red: %s; not deciding for a person, exiting red and filing a needs-glenn issue\n", what)
 	title := fmt.Sprintf("needs-glenn: revert-on-red could not decide on %s", shortSHA(v.head))
-	body := fmt.Sprintf("revert-on-red ran for ci run %s at %s on main and could not ask GitHub something it had to know:\n\n%s\n\nIt did not skip and it pushed no revert for this failure. Decide by hand whether main at %s is to be reverted.", v.runID, v.head, what, shortSHA(v.head))
+	body := fmt.Sprintf("revert-on-red ran for ci run %s at %s on main and could not ask GitHub something it had to know:\n\n%s\n\nIt did not skip and it opened no revert for this failure. Decide by hand whether main at %s is to be reverted.", v.runID, v.head, what, shortSHA(v.head))
+	v.fileIssue(title, body)
+	return 1
+}
+
+// fileIssue files one issue on the repository (the way nightly-report does) and
+// says whether it could. A failure to file is said on stderr and is never silent.
+func (v *reverter) fileIssue(title, body string) bool {
 	out, code := v.gh("issue", "create", "--repo", v.repo, "--title", title, "--body", body)
 	if out != "" {
 		fmt.Fprintln(v.e.stdout, out)
 	}
 	if code != 0 {
 		fmt.Fprintf(v.e.stderr, "revert-on-red: gh issue create exited %d; no needs-glenn issue was filed\n", code)
+		return false
 	}
-	return 1
+	return true
 }
 
 // rerunOnce is the flake guard: the first red of a run is only a trigger to run
@@ -274,24 +296,30 @@ func (v *reverter) revert() int {
 	return 0
 }
 
-// land pushes the revert to main. A direct push the ruleset refuses opens a
-// revert/<sha> pull request instead, which is LEFT OPEN, deliberately: auto-merge
-// is not an enqueue at all but a standing instruction the forge executes later
-// with nobody in the room. CI lands nothing by itself; a person or a batch lands
-// this, and the notice says so loudly enough to act on.
+// land puts the revert where a person can land it. By default that is a
+// revert/<sha> pull request against main, LEFT OPEN, deliberately (auto-merge is
+// not an enqueue at all but a standing instruction the forge executes later with
+// nobody in the room), and one needs-glenn issue naming it: CI lands nothing by
+// itself, and the issue is what makes a red main something a person sees. Only
+// with pushRevert does it first push the revert commit to main; a direct push the
+// ruleset refuses falls back to the pull request.
 func (v *reverter) land(msg, newSHA string) int {
 	short, newShort := shortSHA(v.head), shortSHA(newSHA)
-	var log strings.Builder
-	code, err := v.r.Run(cmdSpec{Name: "git", Args: []string{"push", "origin", "HEAD:main"}, Dir: v.e.dir, Stdout: &log, Stderr: &log})
-	if err == nil && code == 0 {
-		fmt.Fprintf(v.e.stdout, "pushed revert %s to main\n", newShort)
-		return 0
+	if v.pushRevert {
+		var log strings.Builder
+		code, err := v.r.Run(cmdSpec{Name: "git", Args: []string{"push", "origin", "HEAD:main"}, Dir: v.e.dir, Stdout: &log, Stderr: &log})
+		if err == nil && code == 0 {
+			fmt.Fprintf(v.e.stdout, "pushed revert %s to main\n", newShort)
+			return 0
+		}
+		if err != nil {
+			return v.fail("git push: %v", err)
+		}
+		io.WriteString(v.e.stdout, log.String())
+		fmt.Fprintln(v.e.stdout, "direct push refused by the ruleset; opening a revert PR for somebody to land")
+	} else {
+		fmt.Fprintln(v.e.stdout, "opening a revert PR for somebody to land (--push-revert is not set: nothing is pushed to main)")
 	}
-	if err != nil {
-		return v.fail("git push: %v", err)
-	}
-	io.WriteString(v.e.stdout, log.String())
-	fmt.Fprintln(v.e.stdout, "direct push refused by the ruleset; opening a revert PR for somebody to land")
 	branch := "revert/" + short
 	if _, code := v.git("branch", "-f", branch, "HEAD"); code != 0 {
 		return v.fail("git branch -f %s exited %d", branch, code)
@@ -301,7 +329,7 @@ func (v *reverter) land(msg, newSHA string) int {
 			return v.fail("git push of %s exited %d", branch, code)
 		}
 	}
-	prBody := fmt.Sprintf("Mechanical revert-on-red. ci failed on main at %s; reverted as %s. Fix forward on a branch.", short, newShort)
+	prBody := fmt.Sprintf("Mechanical revert-on-red. ci failed on main at %s (run %s); reverted as %s. This pull request lands nothing by itself: main is red until somebody merges it. Fix forward on a branch.", short, v.runID, newShort)
 	if _, code := v.gh("pr", "create", "--base", "main", "--head", branch, "--title", msg, "--body", prBody); code != 0 {
 		fmt.Fprintf(v.e.stdout, "PR already exists for %s; reusing it.\n", branch)
 	}
@@ -311,6 +339,11 @@ func (v *reverter) land(msg, newSHA string) int {
 	}
 	fmt.Fprintf(v.e.stdout, "revert PR #%s open on %s\n", num, branch)
 	v.notice("revert PR #%s is OPEN on %s and lands nothing by itself: main is red until somebody lands it -- merge it by hand.", num, branch)
+	title := fmt.Sprintf("needs-glenn: main is red at %s; revert PR #%s awaits landing", short, num)
+	body := fmt.Sprintf("revert-on-red reverted the push that turned main red (ci run %s at %s) and opened pull request #%s on %s. It pushed nothing to main and merges nothing: merge the pull request to land the revert, or close it and fix forward.", v.runID, v.head, num, branch)
+	if !v.fileIssue(title, body) {
+		return 1
+	}
 	return 0
 }
 

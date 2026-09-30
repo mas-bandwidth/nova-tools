@@ -2,10 +2,12 @@ package main
 
 import (
 	"bytes"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const (
@@ -116,7 +118,7 @@ func runRevert(t *testing.T, w revertWorld, args ...string) (int, string, string
 
 func TestRevertOnRedRevertsAMergeCommitAndPushesToMain(t *testing.T) {
 	t.Parallel()
-	code, out, errb, r := runRevert(t, defaultWorld(), "--run-attempt", "2")
+	code, out, errb, r := runRevert(t, defaultWorld(), "--run-attempt", "2", "--push-revert")
 	if code != 0 {
 		t.Fatalf("exit %d, stderr %q\n%s", code, errb, out)
 	}
@@ -256,7 +258,7 @@ func TestRevertOnRedLeavesARefusedPushAsAnOpenPullRequest(t *testing.T) {
 	t.Parallel()
 	w := defaultWorld()
 	w.pushMainCode = 1
-	code, out, _, r := runRevert(t, w, "--run-attempt", "2")
+	code, out, _, r := runRevert(t, w, "--run-attempt", "2", "--push-revert")
 	if code != 0 {
 		t.Fatalf("exit %d\n%s", code, out)
 	}
@@ -286,7 +288,7 @@ func TestRevertOnRedNeverMergesAndNeverEnablesAutoMerge(t *testing.T) {
 	t.Parallel()
 	w := defaultWorld()
 	w.pushMainCode = 1
-	_, _, _, r := runRevert(t, w, "--run-attempt", "2")
+	_, _, _, r := runRevert(t, w, "--run-attempt", "2", "--push-revert")
 	for _, l := range r.lines() {
 		f := strings.Fields(l)
 		if len(f) >= 3 && f[0] == "gh" && f[1] == "pr" && f[2] == "merge" {
@@ -306,7 +308,7 @@ func TestRevertOnRedForcesTheBranchOnlyAfterAPlainPushFailsAndFailsIfThatFailsTo
 	w.pushMainCode = 1
 	w.pushBranchRC = 1
 	w.prCreateCode = 1
-	code, out, _, r := runRevert(t, w, "--run-attempt", "2")
+	code, out, _, r := runRevert(t, w, "--run-attempt", "2", "--push-revert")
 	if code != 1 {
 		// both the plain and the forced push are scripted to fail
 		t.Fatalf("exit %d, want 1 when even the forced push fails\n%s", code, out)
@@ -403,7 +405,7 @@ func TestRevertOnRedReusesAPullRequestThatAlreadyExists(t *testing.T) {
 	w := defaultWorld()
 	w.pushMainCode = 1
 	w.prCreateCode = 1
-	code, out, _, _ := runRevert(t, w, "--run-attempt", "2")
+	code, out, _, _ := runRevert(t, w, "--run-attempt", "2", "--push-revert")
 	if code != 0 || !strings.Contains(out, "PR already exists for revert/aaaaaaaaaaaa; reusing it.") || !strings.Contains(out, "revert PR #9 open on revert/aaaaaaaaaaaa") {
 		t.Fatalf("exit %d\n%s", code, out)
 	}
@@ -481,7 +483,7 @@ func TestRevertOnRedAFailedCommentIsRedAndFilesTheIssue(t *testing.T) {
 	t.Parallel()
 	w := defaultWorld()
 	w.failCmd = "gh api repos/o/r/issues/5/comments"
-	code, out, errb, r := runRevert(t, w, "--run-attempt", "2")
+	code, out, errb, r := runRevert(t, w, "--run-attempt", "2", "--push-revert")
 	assert.Equal(t, 1, code, "stdout %q", out)
 	assert.Contains(t, errb, "commenting on #5 exited 1; the revert is already landed")
 	assert.Equal(t, 1, countPrefix(r, "gh issue create"))
@@ -496,4 +498,71 @@ func TestRevertOnRedIsStillRedWhenTheIssueCannotBeFiledEither(t *testing.T) {
 	assert.Equal(t, 1, code)
 	assert.Contains(t, errb, "gh issue create exited 1; no needs-glenn issue was filed")
 	assert.False(t, r.ran("git revert"))
+}
+
+// The safe form, and the default: a still-red run opens a revert pull request and
+// files the issue, and nothing is pushed to main.
+func TestRevertOnRedByDefaultOpensAPullRequestAndPushesNothingToMain(t *testing.T) {
+	t.Parallel()
+	code, out, errb, r := runRevert(t, defaultWorld(), "--run-attempt", "2")
+	require.Equal(t, 0, code, "stderr %q\n%s", errb, out)
+	assert.False(t, r.ran("git push origin HEAD:main"), "pushed a revert to main without --push-revert: %q", r.lines())
+	for _, l := range r.lines() {
+		assert.False(t, strings.HasPrefix(l, "git push") && strings.Contains(l, "main") && !strings.Contains(l, "revert/"), "a push that names main: %s", l)
+	}
+	assert.True(t, r.ran("git branch -f revert/aaaaaaaaaaaa HEAD"))
+	assert.True(t, r.ran("git push origin revert/aaaaaaaaaaaa"))
+	assert.True(t, r.ran("gh pr create --base main --head revert/aaaaaaaaaaaa"), "%q", r.lines())
+	assert.Equal(t, 1, countPrefix(r, "gh issue create"), "one needs-glenn issue for the open revert PR: %q", r.lines())
+	assert.Contains(t, out, "revert PR #9 open on revert/aaaaaaaaaaaa")
+	assert.Contains(t, out, "commented on #5 naming revert cccccccccccc")
+	for _, c := range r.calls {
+		if c.Name == "gh" && len(c.Args) > 1 && c.Args[0] == "issue" {
+			line := strings.Join(c.Args, " ")
+			assert.Contains(t, line, "needs-glenn: main is red at aaaaaaaaaaaa; revert PR #9 awaits landing")
+			assert.Contains(t, line, "--repo o/r")
+		}
+		if c.Name == "gh" && len(c.Args) > 1 && c.Args[0] == "pr" && c.Args[1] == "create" {
+			line := strings.Join(c.Args, " ")
+			assert.Contains(t, line, "--title revert aaaaaaaaaaaa: main red on test (2), e2e (mechanical revert-on-red; fix forward on a branch)")
+			assert.Contains(t, line, "ci failed on main at aaaaaaaaaaaa (run 77); reverted as cccccccccccc")
+		}
+	}
+}
+
+// The mutation of the default: with --push-revert the same run pushes to main,
+// and opens no pull request and files no issue.
+func TestRevertOnRedWithPushRevertPushesToMain(t *testing.T) {
+	t.Parallel()
+	code, out, errb, r := runRevert(t, defaultWorld(), "--run-attempt", "2", "--push-revert")
+	require.Equal(t, 0, code, "stderr %q\n%s", errb, out)
+	assert.True(t, r.ran("git push origin HEAD:main"), "%q", r.lines())
+	assert.False(t, r.ran("gh pr create"))
+	assert.False(t, r.ran("gh issue create"))
+}
+
+// A needs-glenn issue that cannot be filed for the open revert PR is red: the
+// open pull request with nobody told is exactly the silence the issue prevents.
+func TestRevertOnRedIsRedWhenTheIssueForTheRevertPRCannotBeFiled(t *testing.T) {
+	t.Parallel()
+	w := defaultWorld()
+	w.issueCode = 1
+	code, _, errb, r := runRevert(t, w, "--run-attempt", "2")
+	assert.Equal(t, 1, code)
+	assert.Contains(t, errb, "no needs-glenn issue was filed")
+	assert.True(t, r.ran("gh pr create"))
+}
+
+// revert-on-red.yml never sets --push-revert: the direct path stays off until the
+// pull request form has fired correctly once on a real red push.
+func TestRevertOnRedWorkflowDoesNotSetPushRevert(t *testing.T) {
+	t.Parallel()
+	b, err := os.ReadFile("../../.github/workflows/revert-on-red.yml")
+	require.NoError(t, err)
+	for _, l := range strings.Split(string(b), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(l), "#") {
+			continue
+		}
+		assert.NotContains(t, l, "push-revert", "revert-on-red.yml sets the direct-push flag")
+	}
 }
