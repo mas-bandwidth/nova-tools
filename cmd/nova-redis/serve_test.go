@@ -13,6 +13,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -366,4 +368,39 @@ func TestPersistenceIsAOFWithNoEviction(t *testing.T) {
 	if code != 2 || len(h.launches) != 0 || !strings.Contains(errb, "--dir is required") {
 		t.Errorf("no --dir: exit %d launches %d stderr %q; want 2, 0 and a refusal naming --dir (a store never lands in a guessed dir)", code, len(h.launches), errb)
 	}
+}
+
+func TestServeFailuresHaveRemedies(t *testing.T) {
+	t.Parallel()
+
+	t.Run("missing executable", func(t *testing.T) {
+		t.Parallel()
+		h := newServeHarness(t, "fixture-secret-only")
+		h.d.lookPath = func(string) (string, error) { return "", errors.New("not found") }
+		code, out, errb := h.run("serve", "--bind", "127.0.0.1", "--port", "6380", "--dir", h.dir)
+		const want = "SERVE FAIL err=redis-server not found on PATH: not found remedy=\"install redis-server or make its executable available on PATH for this process\"\n"
+		if code != 1 || out != "" || errb != want || len(h.launches) != 0 {
+			t.Fatalf("missing executable: exit %d stdout %q stderr %q launches %d", code, out, errb, len(h.launches))
+		}
+	})
+
+	t.Run("child failure", func(t *testing.T) {
+		t.Parallel()
+		h := newServeHarness(t, "fixture-secret-only")
+		storeRoot := t.TempDir()
+		h.dir = filepath.Join(storeRoot, "store's space")
+		h.onLaunch = func(launchSpec) error { return errors.New("exit status 1") }
+		code, out, errb := h.run("serve", "--bind", "127.0.0.1", "--port", "6380", "--dir", h.dir)
+		remedy := "run: ls -ld -- '" + strings.ReplaceAll(storeRoot, "'", "'\\''") + string(os.PathSeparator) + "store'\\''s space'; compare directory access and the explicit --bind/--port with the launch error and any redis-server output"
+		want := fmt.Sprintf("SERVE FAIL err=exit status 1 remedy=%q\n", remedy)
+		if code != 1 || errb != want || len(h.launches) != 1 {
+			t.Fatalf("child failure: exit %d stderr %q launches %d", code, errb, len(h.launches))
+		}
+		if h.launches[0].Dir != h.dir {
+			t.Errorf("launch directory %q differs from diagnostic directory %q", h.launches[0].Dir, h.dir)
+		}
+		if !strings.HasPrefix(out, "SERVE START bind=127.0.0.1 port=6380 ") || strings.Count(out, "\n") != 1 || strings.Contains(out, "SERVE STOP") || strings.Contains(out, "fixture-secret-only") {
+			t.Errorf("failed launch must report only START, without a success STOP or password: %q", out)
+		}
+	})
 }

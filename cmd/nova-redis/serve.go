@@ -118,7 +118,7 @@ func cmdServe(args []string, stdout, stderr io.Writer, d deps) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err := d.launch(ctx, spec, stdout, stderr); err != nil {
-		fmt.Fprintf(stderr, "SERVE FAIL err=%s remedy=%q\n", oneline.Err(err), "read the launch error and any redis-server output above; check the explicit --bind and --port and access to --dir against that cause")
+		fmt.Fprintf(stderr, "SERVE FAIL err=%s remedy=%q\n", oneline.Err(err), "run: ls -ld -- "+shellWord(dir)+"; compare directory access and the explicit --bind/--port with the launch error and any redis-server output")
 		return 1
 	}
 	fmt.Fprintf(stdout, "SERVE STOP bind=%s port=%d\n", oneline.Field(strings.Join(binds, ",")), port)
