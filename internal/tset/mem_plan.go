@@ -125,6 +125,12 @@ func (b *memWorkBudget) observeMember(record *memRecord, entry Entry, memberInde
 	if len(selected) > 128 {
 		return memRefusal("LIMIT", RefusalDetail{Budget: "field_projection"})
 	}
+	// Presence is observed for every selected field, including when the record
+	// hash is absent. Only returned field names/values contribute fetched bytes.
+	b.fieldObservations += len(selected)
+	if b.fieldObservations > 768000 {
+		return memRefusal("LIMIT", RefusalDetail{Budget: "field_observations"})
+	}
 	if record == nil {
 		return nil
 	}
@@ -133,14 +139,10 @@ func (b *memWorkBudget) observeMember(record *memRecord, entry Entry, memberInde
 		b.fetchedBytes += len(record.place.row) + len(record.place.col)
 	}
 	for name := range selected {
-		b.fieldObservations++
 		b.fetchedBytes += len(name) // HKEY/HMGET and field-name accounting
 		if value, ok := record.fields[name]; ok {
 			b.fetchedBytes += len(value)
 		}
-	}
-	if b.fieldObservations > 768000 {
-		return memRefusal("LIMIT", RefusalDetail{Budget: "field_observations"})
 	}
 	if b.fetchedBytes > 8<<20 {
 		return memRefusal("LIMIT", RefusalDetail{Budget: "raw_fetched_bytes"})
