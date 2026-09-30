@@ -5,6 +5,7 @@ package tset
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strconv"
@@ -16,17 +17,27 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// tsetFixture owns one throwaway Redis process. Direct setup commands are
-// confined to the explicit initialization interval before Activate. The
-// installed runtime library has no fixture mutation callback.
+// tsetFixture owns one throwaway Redis process. Definitions and epoch markers
+// are initialized directly; AddRow queues public rows steps. Other functional
+// fixtures still seed raw member/cell or deliberately corrupt row keys.
 type tsetFixture struct {
-	Client  *redis.Client
-	Space   string
-	Epoch   string
-	profile fn.TSetProfile
-	active  bool
-	t       *testing.T
-	tables  []string
+	Client         *redis.Client
+	Space          string
+	Epoch          string
+	profile        fn.TSetProfile
+	loaded         bool
+	active         bool
+	t              *testing.T
+	tables         []string
+	seededEpoch    string
+	pendingRows    []fixturePendingRow
+	paddingRows    int64
+	nextPaddingRow int64
+}
+
+type fixturePendingRow struct {
+	table, row, epoch string
+	rank              int64
 }
 
 func newTSetFixture(t *testing.T) *tsetFixture {
@@ -49,8 +60,31 @@ func newTSetFixtureProfile(t *testing.T, profile fn.TSetProfile) *tsetFixture {
 	return fx
 }
 
+// newFixtureRedis owns a separate public tset connection to the same private
+// server. The raw client remains available for setup and key-level assertions.
+func newFixtureRedis(t *testing.T, client *redis.Client) *RedisStore {
+	t.Helper()
+	store, err := NewRedis(client.Options().Addr, "", "")
+	if err != nil {
+		t.Fatalf("create fixture tset store: %v", err)
+	}
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("close fixture tset store: %v", err)
+		}
+	})
+	return store
+}
+
 func (fx *tsetFixture) seedEpoch(t *testing.T) {
 	t.Helper()
+	// A read fixture can construct snapshots for successive epochs before its
+	// final Activate call. Commit queued rows in the old epoch before its raw
+	// marker transition; the row mutations themselves remain public steps.
+	if fx.seededEpoch != "" && fx.seededEpoch != fx.Epoch && len(fx.pendingRows) != 0 {
+		fx.loadTSet(t)
+		fx.flushPendingRows(t)
+	}
 	ctx := context.Background()
 	pipe := fx.Client.Pipeline()
 	catalog, err := json.Marshal(fx.tables)
@@ -63,6 +97,7 @@ func (fx *tsetFixture) seedEpoch(t *testing.T) {
 	if _, err := pipe.Exec(ctx); err != nil {
 		t.Fatalf("seed tset epoch: %v", err)
 	}
+	fx.seededEpoch = fx.Epoch
 }
 
 // Define installs both the current definition and the epoch-zero snapshot.
@@ -70,6 +105,9 @@ func (fx *tsetFixture) seedEpoch(t *testing.T) {
 func (fx *tsetFixture) Define(t *testing.T, table string, columns ...string) {
 	t.Helper()
 	fx.mustInitialize(t)
+	if fx.loaded {
+		t.Fatal("fixture definition after tset library load")
+	}
 	if table == "" || len(columns) == 0 {
 		t.Fatal("fixture definition needs a table and columns")
 	}
@@ -122,10 +160,10 @@ func (fx *tsetFixture) AddRow(t *testing.T, table, row string, rank int64) {
 	if !defined {
 		t.Fatalf("fixture row %q/%q has no definition", table, row)
 	}
-	if err := fx.Client.ZAdd(context.Background(), fixtureRowsKey(fx.Space, table, fx.Epoch),
-		redis.Z{Score: float64(rank), Member: row}).Err(); err != nil {
-		t.Fatalf("seed tset row %q/%q: %v", table, row, err)
+	if fx.Epoch != fx.seededEpoch {
+		t.Fatalf("fixture row %q/%q added before seeding epoch %q", table, row, fx.Epoch)
 	}
+	fx.pendingRows = append(fx.pendingRows, fixturePendingRow{table: table, row: row, epoch: fx.Epoch, rank: rank})
 }
 
 func (fx *tsetFixture) mustInitialize(t *testing.T) {
@@ -140,10 +178,159 @@ func (fx *tsetFixture) Activate(t *testing.T) {
 	if fx.active {
 		return
 	}
+	fx.loadTSet(t)
+	fx.flushPendingRows(t)
+	fx.active = true
+}
+
+func (fx *tsetFixture) loadTSet(t *testing.T) {
+	t.Helper()
+	if fx.loaded {
+		return
+	}
 	if err := fn.LoadTSet(context.Background(), fx.Client, fx.profile); err != nil {
 		t.Fatal(err)
 	}
-	fx.active = true
+	fx.loaded = true
+}
+
+// flushPendingRows commits queued initial rows through exact encoded public
+// rows steps. Public add assigns only max-rank+1; temporary rows bridge small
+// requested rank gaps and are subsequently removed by public steps. In a
+// composed profile these temporary mutations are real log/history events.
+func (fx *tsetFixture) flushPendingRows(t *testing.T) {
+	t.Helper()
+	if len(fx.pendingRows) == 0 {
+		return
+	}
+	if !fx.loaded {
+		t.Fatal("fixture row flush before tset library load")
+	}
+	const maxPaddingRows int64 = 1024
+	const rowsPerStep = 100
+	ctx := context.Background()
+	used := make(map[string]map[string]bool)
+	for _, item := range fx.pendingRows {
+		if item.epoch != fx.seededEpoch {
+			t.Fatalf("fixture row %q/%q belongs to epoch %q, active setup epoch %q", item.table, item.row, item.epoch, fx.seededEpoch)
+		}
+		if used[item.table] == nil {
+			used[item.table] = make(map[string]bool)
+		}
+		if used[item.table][item.row] {
+			t.Fatalf("duplicate fixture row %q/%q", item.table, item.row)
+		}
+		used[item.table][item.row] = true
+	}
+	for table := range used {
+		key := fixtureRowsKey(fx.Space, table, fx.seededEpoch)
+		count, err := fx.Client.ZCard(ctx, key).Result()
+		if err != nil || count != 0 {
+			t.Fatalf("fixture public rows require empty %q before setup: count=%d err=%v", key, count, err)
+		}
+	}
+	type plannedRow struct {
+		fixturePendingRow
+		padding []string
+	}
+	planned := make([]plannedRow, 0, len(fx.pendingRows))
+	nextRank := make(map[string]int64)
+	paddingCount := fx.paddingRows
+	paddingName := fx.nextPaddingRow
+	for _, item := range fx.pendingRows {
+		want := nextRank[item.table]
+		if item.rank < want {
+			t.Fatalf("fixture row %q/%q rank %d is below next public rank %d", item.table, item.row, item.rank, want)
+		}
+		gap := item.rank - want
+		if gap > maxPaddingRows-paddingCount {
+			t.Fatalf("fixture row %q/%q rank gap %d exceeds public padding cap %d", item.table, item.row, gap, maxPaddingRows)
+		}
+		entry := plannedRow{fixturePendingRow: item}
+		for i := int64(0); i < gap; i++ {
+			for {
+				candidate := fmt.Sprintf("__tset_fixture_pad_%04d", paddingName)
+				paddingName++
+				if !used[item.table][candidate] {
+					used[item.table][candidate] = true
+					entry.padding = append(entry.padding, candidate)
+					break
+				}
+			}
+		}
+		paddingCount += gap
+		nextRank[item.table] = item.rank + 1
+		planned = append(planned, entry)
+	}
+	store := newFixtureRedis(t, fx.Client)
+	addPadding := make(map[string][]string)
+	for _, item := range planned {
+		addPadding[item.table] = append(addPadding[item.table], item.padding...)
+		add := append(append([]string{}, item.padding...), item.row)
+		for len(add) != 0 {
+			count := len(add)
+			if count > rowsPerStep {
+				count = rowsPerStep
+			}
+			fx.publicRowsStep(t, store, item.epoch, item.table, add[:count], nil)
+			add = add[count:]
+		}
+	}
+	for _, table := range fx.tables {
+		padding := addPadding[table]
+		for len(padding) != 0 {
+			count := len(padding)
+			if count > rowsPerStep {
+				count = rowsPerStep
+			}
+			fx.publicRowsStep(t, store, fx.seededEpoch, table, nil, padding[:count])
+			padding = padding[count:]
+		}
+	}
+	for _, item := range fx.pendingRows {
+		key := fixtureRowsKey(fx.Space, item.table, item.epoch)
+		score, err := fx.Client.ZScore(ctx, key, item.row).Result()
+		if err != nil || score != float64(item.rank) {
+			t.Fatalf("fixture row %q/%q rank=%g err=%v, want %d", item.table, item.row, score, err, item.rank)
+		}
+	}
+	for table, names := range addPadding {
+		key := fixtureRowsKey(fx.Space, table, fx.seededEpoch)
+		for _, name := range names {
+			if score, err := fx.Client.ZScore(ctx, key, name).Result(); !errors.Is(err, redis.Nil) {
+				t.Fatalf("temporary fixture row %q/%q survived cleanup: score=%g err=%v", table, name, score, err)
+			}
+		}
+	}
+	fx.paddingRows = paddingCount
+	fx.nextPaddingRow = paddingName
+	fx.pendingRows = nil
+}
+
+func (fx *tsetFixture) publicRowsStep(t *testing.T, store *RedisStore, epoch, table string, add, del []string) {
+	t.Helper()
+	ctx := context.Background()
+	var before int64
+	if fx.profile == fn.TSetComposed {
+		var err error
+		before, err = fx.Client.XLen(ctx, fixtureLogKey(fx.Space, epoch)).Result()
+		if err != nil {
+			t.Fatalf("fixture row log before %q: %v", table, err)
+		}
+	}
+	reply, err := store.Step(ctx, Step{Epoch: Decimal(epoch), Space: fx.Space,
+		Entries: []Entry{{Kind: "rows", Table: table, Add: add, Del: del}}})
+	if err != nil || reply.Status != "ok" || reply.Replay {
+		t.Fatalf("fixture public rows %q add=%v del=%v: reply=%+v err=%v", table, add, del, reply, err)
+	}
+	if fx.profile == fn.TSetComposed {
+		after, err := fx.Client.XLen(ctx, fixtureLogKey(fx.Space, epoch)).Result()
+		if err != nil || reply.Lines != 1 || reply.FirstSeq == "0" || reply.FirstSeq != reply.LastSeq || after != before+1 {
+			t.Fatalf("fixture composed rows %q lacks one replayable row line: reply=%+v log=%d..%d err=%v", table, reply, before, after, err)
+		}
+	} else if reply.Lines != 0 {
+		t.Fatalf("fixture standalone rows %q unexpectedly emitted %d lines", table, reply.Lines)
+	}
 }
 
 // ActivateWithLua appends one test-owned callback to the isolated library.
@@ -151,12 +338,17 @@ func (fx *tsetFixture) Activate(t *testing.T) {
 func (fx *tsetFixture) ActivateWithLua(t *testing.T, extraSource string) {
 	t.Helper()
 	fx.mustInitialize(t)
+	if fx.loaded {
+		t.Fatal("fixture test callback must be loaded before any public row step")
+	}
 	name := tsetTestProbeName(t, extraSource)
 	source := tsetTestSourceWithProbe(t, fx.profile, extraSource, name)
 	if err := fx.Client.FunctionLoad(context.Background(), source).Err(); err != nil {
 		t.Fatalf("load tset with test callback: %v", err)
 	}
 	tsetRequireProbeLoaded(t, fx.Client, name)
+	fx.loaded = true
+	fx.flushPendingRows(t)
 	fx.active = true
 }
 
@@ -226,8 +418,13 @@ func (fx *tsetFixture) Reset(t *testing.T) {
 		t.Fatalf("reset tset data: %v", err)
 	}
 	fx.active = false
+	fx.loaded = false
 	fx.Epoch = "0"
 	fx.tables = []string{}
+	fx.seededEpoch = ""
+	fx.pendingRows = nil
+	fx.paddingRows = 0
+	fx.nextPaddingRow = 0
 	fx.seedEpoch(t)
 }
 

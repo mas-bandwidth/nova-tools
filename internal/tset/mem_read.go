@@ -16,6 +16,7 @@ import (
 // an eventual refusal. Nothing accumulated by the caller escapes on refusal.
 type readBudget struct {
 	fetched, probes, fields, records, rangeIDs int64
+	encoded                                    int64
 	epoch                                      Decimal
 	seenRecords                                map[string]bool
 	seenRows                                   map[string]bool
@@ -178,7 +179,7 @@ func (m *Mem) Read(ctx context.Context, plan ReadPlan) (ReadReply, error) {
 		return ReadReply{}, memRefusal("OVERFLOW", RefusalDetail{})
 	}
 	reply := ReadReply{Status: "read", Epoch: plan.Epoch, ActiveEpoch: active, TimeMS: Decimal(strconv.FormatInt(now, 10)), Answers: make([]ReadAnswer, 0, len(plan.Queries)), Complete: true}
-	b := &readBudget{epoch: plan.Epoch, seenRecords: make(map[string]bool), seenRows: make(map[string]bool), seenFields: make(map[string]map[string]bool)}
+	b := &readBudget{epoch: plan.Epoch, encoded: 512, seenRecords: make(map[string]bool), seenRows: make(map[string]bool), seenFields: make(map[string]map[string]bool)}
 	// Engine and epoch are structural probes. TIME is read once but does not
 	// consume the cell/key-probe budget. Active definitions use HLEN and
 	// HGETALL per named table; retained definitions use one HGETALL plus two
@@ -226,17 +227,110 @@ func (m *Mem) Read(ctx context.Context, plan ReadPlan) (ReadReply, error) {
 			return ReadReply{}, readAtQuery(err, i, active)
 		}
 		reply.Answers = append(reply.Answers, answer)
+		if err := b.accountEncodedAnswer(answer); err != nil {
+			return ReadReply{}, readAtQuery(err, i, active)
+		}
 		reply.Counters = b.counters()
-		wire, err := json.Marshal(reply)
+		encodedBytes, err := readCJSONLength(reply)
 		if err != nil {
 			return ReadReply{}, readAtQuery(memRefusal("DRIFT", RefusalDetail{}), i, active)
 		}
-		if len(wire) > readReplyLimit {
-			return ReadReply{}, readAtQuery(readBudgetError("encoded_reply", readReplyLimit, int64(len(wire))), i, active)
+		if encodedBytes > readReplyLimit {
+			return ReadReply{}, readAtQuery(readBudgetError("encoded_reply", readReplyLimit, encodedBytes), i, active)
 		}
 	}
 	reply.Counters = b.counters()
 	return reply, nil
+}
+
+// The Lua reader reserves 512 envelope bytes and accounts each emitted answer
+// item. Keep that ledger for the rows count preflight, which must happen before
+// materializing an unbounded row list. The final serialized reply is still
+// checked exactly by Read.
+func (b *readBudget) emitReadItem(value any) error {
+	bytes, err := readCJSONLength(value)
+	if err != nil {
+		return memRefusal("DRIFT", RefusalDetail{})
+	}
+	b.encoded += bytes + 1
+	if b.encoded > readReplyLimit {
+		return readBudgetError("encoded_reply", readReplyLimit, b.encoded)
+	}
+	return nil
+}
+
+func (b *readBudget) accountEncodedAnswer(answer ReadAnswer) error {
+	switch answer.Kind {
+	case "count", "rcount":
+		return b.emitReadItem(answer)
+	case "done":
+		for _, slot := range answer.Done {
+			if err := b.emitReadItem(slot); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// Lua's bundled CJSON leaves HTML characters and U+2028/U+2029 as UTF-8,
+// but escapes slash and DEL. Go's JSON encoder does the opposite for those
+// strings. Parse only the bounded encoded string tokens to reproduce CJSON's
+// byte count; non-string JSON syntax has the same length in both encoders.
+func readCJSONLength(value any) (int64, error) {
+	wire, err := json.Marshal(value)
+	if err != nil {
+		return 0, err
+	}
+	var total int64
+	for i := 0; i < len(wire); {
+		if wire[i] != '"' {
+			total++
+			i++
+			continue
+		}
+		start := i
+		i++
+		for i < len(wire) {
+			if wire[i] == '\\' {
+				i += 2
+				continue
+			}
+			if wire[i] == '"' {
+				i++
+				break
+			}
+			i++
+		}
+		if i > len(wire) || wire[i-1] != '"' {
+			return 0, errors.New("unterminated JSON string")
+		}
+		unquoted, err := strconv.Unquote(string(wire[start:i]))
+		if err != nil {
+			return 0, err
+		}
+		total += readCJSONStringLength(unquoted)
+	}
+	return total, nil
+}
+
+func readCJSONStringLength(value string) int64 {
+	length := int64(2) // surrounding quotes
+	for i := 0; i < len(value); i++ {
+		switch value[i] {
+		case '\b', '\t', '\n', '\f', '\r', '"', '/', '\\':
+			length += 2
+		case 0x7f:
+			length += 6
+		default:
+			if value[i] < 0x20 {
+				length += 6
+			} else {
+				length++
+			}
+		}
+	}
+	return length
 }
 
 // Static shape checks precede all store and epoch observations. Dynamic table,
@@ -485,9 +579,6 @@ func readRange(spaceName string, space *memSpace, epoch *memEpoch, q ReadQuery, 
 	}
 	if q.Records {
 		answer.Records = []MemberRecord{}
-		if err := b.chargeRecord(int64(len(selected))); err != nil {
-			return ReadAnswer{}, err
-		}
 	}
 	for _, pair := range selected {
 		if len(pair.id) == 0 || len(pair.id) > 256 || !utf8.ValidString(pair.id) {
@@ -498,7 +589,26 @@ func readRange(spaceName string, space *memSpace, epoch *memEpoch, q ReadQuery, 
 		}
 		answer.IDs = append(answer.IDs, pair.id)
 		answer.Scores = append(answer.Scores, pair.score)
-		if q.Records {
+	}
+	if answer.HasMore {
+		probe := pairs[q.Limit]
+		if len(probe.id) == 0 || len(probe.id) > 256 || !utf8.ValidString(probe.id) {
+			return ReadAnswer{}, memRefusal("DRIFT", RefusalDetail{IDs: []string{probe.id}})
+		}
+		if err := b.chargeRaw(int64(len(probe.id) + len(probe.score))); err != nil {
+			return ReadAnswer{}, err
+		}
+	}
+	// Lua emits the range head before projecting any returned record.
+	base := ReadAnswer{Kind: "range", IDs: answer.IDs, Scores: answer.Scores, HasMore: answer.HasMore}
+	if err := b.emitReadItem(base); err != nil {
+		return ReadAnswer{}, err
+	}
+	if q.Records {
+		for _, pair := range selected {
+			if err := b.chargeRecord(1); err != nil {
+				return ReadAnswer{}, err
+			}
 			record, err := projectReadRecord(q.Table, table, pair.id, q.Fields, b)
 			if err != nil {
 				return ReadAnswer{}, err
@@ -510,16 +620,10 @@ func readRange(spaceName string, space *memSpace, epoch *memEpoch, q ReadQuery, 
 			if record.Place.Row != row || record.Place.Col != col {
 				return ReadAnswer{}, memRefusal("DRIFT", RefusalDetail{IDs: []string{pair.id}})
 			}
+			if err := b.emitReadItem(record); err != nil {
+				return ReadAnswer{}, err
+			}
 			answer.Records = append(answer.Records, record)
-		}
-	}
-	if answer.HasMore {
-		probe := pairs[q.Limit]
-		if len(probe.id) == 0 || len(probe.id) > 256 || !utf8.ValidString(probe.id) {
-			return ReadAnswer{}, memRefusal("DRIFT", RefusalDetail{IDs: []string{probe.id}})
-		}
-		if err := b.chargeRaw(int64(len(probe.id) + len(probe.score))); err != nil {
-			return ReadAnswer{}, err
 		}
 	}
 	return answer, nil
@@ -586,11 +690,8 @@ func readCounts(space *memSpace, epoch *memEpoch, q ReadQuery, b *readBudget) (R
 }
 
 func readIDs(space *memSpace, epoch *memEpoch, q ReadQuery, b *readBudget) (ReadAnswer, error) {
-	_, table, err := readTable(space, epoch, q.Table)
+	_, requestedTable, err := readTable(space, epoch, q.Table)
 	if err != nil {
-		return ReadAnswer{}, err
-	}
-	if err := b.chargeRecord(int64(len(q.IDs))); err != nil {
 		return ReadAnswer{}, err
 	}
 	answer := ReadAnswer{Kind: "ids", Records: make([]MemberRecord, 0, len(q.IDs))}
@@ -598,8 +699,23 @@ func readIDs(space *memSpace, epoch *memEpoch, q ReadQuery, b *readBudget) (Read
 		if len(id) == 0 || len(id) > 256 {
 			return ReadAnswer{}, memRefusal("REQUEST", RefusalDetail{IDs: []string{id}})
 		}
+		if err := b.chargeRecord(1); err != nil {
+			return ReadAnswer{}, err
+		}
+		// A member hash is keyed by table and stored ID, without an epoch
+		// suffix. Its own epoch selects the row and cell used to validate a
+		// placed record, even when the read requested another retained epoch.
+		table := requestedTable
+		if owner, _, found := space.recordTable(q.Table, id); found {
+			table = owner
+		} else if _, indexed := space.recordEpoch[q.Table][id]; indexed {
+			return ReadAnswer{}, memRefusal("DRIFT", RefusalDetail{Table: q.Table, IDs: []string{id}})
+		}
 		record, err := projectReadRecord(q.Table, table, id, q.Fields, b)
 		if err != nil {
+			return ReadAnswer{}, err
+		}
+		if err := b.emitReadItem(record); err != nil {
 			return ReadAnswer{}, err
 		}
 		answer.Records = append(answer.Records, record)
@@ -837,6 +953,25 @@ func readRows(space *memSpace, epoch *memEpoch, q ReadQuery, b *readBudget) (Rea
 	if err != nil {
 		return ReadAnswer{}, err
 	}
+	// Redis reads ZCARD before making bounded ZRANGE pages. Preflight the
+	// total worst-case payload and emitted row objects while the count is
+	// cheap, so an oversized row set never becomes an in-memory answer.
+	if err := b.reserveRaw(32); err != nil {
+		return ReadAnswer{}, err
+	}
+	if err := b.chargeProbe(1); err != nil {
+		return ReadAnswer{}, err
+	}
+	count := int64(len(table.rows))
+	if err := b.chargeRaw(int64(len(strconv.FormatInt(count, 10)))); err != nil {
+		return ReadAnswer{}, err
+	}
+	if count > (readFetchedLimit-b.fetched)/280 {
+		return ReadAnswer{}, readBudgetError("fetched_bytes", readFetchedLimit, b.fetched+count*280)
+	}
+	if count > (readReplyLimit-b.encoded)/280 {
+		return ReadAnswer{}, readBudgetError("encoded_reply", readReplyLimit, b.encoded+count*280)
+	}
 	answer := ReadAnswer{Kind: "rows", Rows: make([]RowRank, 0, len(table.rows))}
 	for row, rank := range table.rows {
 		if !memValidDecimal(rank) || memCompareDecimal(rank, "9007199254740991") > 0 {
@@ -851,24 +986,25 @@ func readRows(space *memSpace, epoch *memEpoch, q ReadQuery, b *readBudget) (Rea
 		}
 		return a.Row < c.Row
 	})
-	for offset := 0; ; {
-		if err := b.reserveRaw(256 * 280); err != nil {
+	for offset := 0; offset < len(answer.Rows); {
+		pageCount := len(answer.Rows) - offset
+		if pageCount > 256 {
+			pageCount = 256
+		}
+		if err := b.reserveRaw(int64(pageCount * 280)); err != nil {
 			return ReadAnswer{}, err
 		}
 		if err := b.chargeProbe(1); err != nil {
 			return ReadAnswer{}, err
 		}
-		end := offset + 256
-		if end > len(answer.Rows) {
-			end = len(answer.Rows)
-		}
+		end := offset + pageCount
 		for _, item := range answer.Rows[offset:end] {
 			if err := b.chargeRaw(int64(len(item.Row) + len(item.Rank))); err != nil {
 				return ReadAnswer{}, err
 			}
-		}
-		if end-offset < 256 {
-			break
+			if err := b.emitReadItem(item); err != nil {
+				return ReadAnswer{}, err
+			}
 		}
 		offset = end
 	}

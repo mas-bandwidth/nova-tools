@@ -192,7 +192,27 @@ func TestRowsetGuardsRequestEpochAcrossAdvance(t *testing.T) {
 	t.Run("writer uses bounded point row reads", func(t *testing.T) {
 		fx := observationFixture(t, 4, 0, false, "c")
 		step := rowsetAdvance(fx.Space, rowsetRanks(4), nil)
-		trace := observationCall(t, fx, step.Entries)
+		// An advance must retain its named replay identity in the raw probe
+		// request. observationCall builds an anonymous entries-only step.
+		raw, err := EncodeStep(step)
+		if err != nil {
+			t.Fatalf("encode named rowset observation: %v", err)
+		}
+		value, err := fx.Client.FCall(context.Background(), "ns_tset_observation_probe", []string{}, Version, string(raw)).Result()
+		if err != nil {
+			t.Fatalf("named rowset observation FCALL: %v", err)
+		}
+		encoded, ok := value.(string)
+		if !ok {
+			t.Fatalf("named rowset observation reply type %T", value)
+		}
+		var trace observationTrace
+		if err := json.Unmarshal([]byte(encoded), &trace); err != nil {
+			t.Fatalf("decode named rowset observation %q: %v", encoded, err)
+		}
+		if trace.Status != "trace" {
+			t.Fatalf("named rowset observation status=%q code=%q: %s", trace.Status, trace.Code, encoded)
+		}
 		rowsKey := fixtureRowsKey(fx.Space, "work", "0")
 		zcard, zmscore := false, false
 		for _, argv := range trace.Trace {

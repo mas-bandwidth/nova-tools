@@ -12,8 +12,9 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// This private L1 callback exercises only open and plan. It derives notes
-// from an actual member observation, but never prepares or commits a step.
+// This private L1 callback derives notes from an actual member observation.
+// The ordinary acceptance mode runs the complete L1 path through prepare and
+// commit with an empty log plan; it does not claim a real L2 note line.
 const preplanNoteIdentityProbeLua = `
 redis.register_function('ns_tset_note_identity_probe', function(keys,args)
   local S=NS.tset
@@ -47,7 +48,7 @@ redis.register_function('ns_tset_note_identity_probe', function(keys,args)
     ctx.notes[#ctx.notes+1]={line={kind='note',
       meta={observed=observed.p.fields.state.value,ordinal=i,blob=blob}},about=about}
   end
-  if mode=='valid' or mode=='invalid_shape' then
+  if mode=='valid' or mode=='invalid_shape' or mode=='commit_opless' then
     append_note(1,1,'')
     if mode=='invalid_shape' then ctx.notes[1].line.kind='invalid' end
   elseif mode=='notes_100' or mode=='notes_101' then
@@ -87,6 +88,17 @@ redis.register_function('ns_tset_note_identity_probe', function(keys,args)
     original_bytes=#ctx.raw_request,effective_bytes=effective,
     plan_reads=reads,plan_charged=ctx.budget.store_commands-before,
     planned_commands=plan and #plan.commands or -1}
+  if mode=='commit_opless' and not problem then
+    local log_plan={commands={},first_seq='0',last_seq='0',line_count=0,about_appends=0}
+    local prepared;prepared,problem=S.prepare(ctx,plan,log_plan,{})
+    if problem then
+      response.status=problem.status
+      response.code=problem.code
+      return S.json.encode(response)
+    end
+    response.committed=S.json.decode(S.commit(prepared))
+    response.status='committed'
+  end
   return S.json.encode(response)
 end)
 `
@@ -106,6 +118,7 @@ type preplanNoteIdentityReply struct {
 	PlanReads       int    `json:"plan_reads"`
 	PlanCharged     int    `json:"plan_charged"`
 	PlannedCommands int    `json:"planned_commands"`
+	Committed       *Reply `json:"committed"`
 }
 
 func newPreplanNoteIdentityFixture(t *testing.T) *tsetFixture {
@@ -239,4 +252,40 @@ func TestPreplanNoteIdentityScope(t *testing.T) {
 			t.Fatal("rejected fence note changed the Redis key image")
 		}
 	})
+}
+
+func TestPreplanNotesOpLessStepAllowed(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name     string
+		implicit bool
+	}{
+		{name: "implicit original notes", implicit: true},
+		{name: "explicit empty original notes"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			fx := newPreplanNoteIdentityFixture(t)
+			raw := fmt.Sprintf(`{"epoch":"0","space":%q,"entries":[]}`, fx.Space)
+			if !tc.implicit {
+				raw = fmt.Sprintf(`{"epoch":"0","space":%q,"entries":[],"notes":[]}`, fx.Space)
+			}
+			beforeState := fx.SemanticSnapshot(t)
+			beforeImage := commitProbeImage(t, fx.Client)
+			reply := preplanNoteIdentityCall(t, fx, raw, "commit_opless")
+			if reply.Status != "committed" || reply.Code != "" || reply.OriginalCount != 0 ||
+				reply.Implicit != tc.implicit || !reply.Alias || reply.NoteCount != 1 ||
+				reply.PlannedCommands != 0 || reply.Committed == nil || reply.Committed.Status != "ok" ||
+				reply.Committed.Replay || reply.Committed.Changed != 0 || reply.Committed.Guarded != 0 ||
+				reply.Committed.Lines != 0 || reply.Committed.FirstSeq != "0" || reply.Committed.LastSeq != "0" {
+				t.Fatalf("op-less derived note did not pass complete L1 path: %+v", reply)
+			}
+			if after := fx.SemanticSnapshot(t); !reflect.DeepEqual(beforeState, after) {
+				t.Fatalf("op-less no-op commit changed table state: before=%#v after=%#v", beforeState, after)
+			}
+			if after := commitProbeImage(t, fx.Client); !reflect.DeepEqual(beforeImage, after) {
+				t.Fatal("op-less note-only L1 commit changed the Redis key image")
+			}
+			commitProbeNoKeys(t, fx.Client, []string{fixtureDoneKey(fx.Space, "0")})
+		})
+	}
 }

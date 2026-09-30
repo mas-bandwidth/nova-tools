@@ -565,6 +565,46 @@ func cloneMemPlanRecord(record MemberRecord) MemberRecord {
 	return out
 }
 
+// cloneMemPlan detaches the public observation returned by Plan from the
+// prepared candidate. A caller may annotate or edit its maps and slices for
+// composition without changing what Commit will publish or return.
+func cloneMemPlan(plan *MemPlan) *MemPlan {
+	if plan == nil {
+		return nil
+	}
+	out := &MemPlan{Replay: plan.Replay, Entries: make([]MemPlanEntry, len(plan.Entries)),
+		Before: make(map[string]map[string]MemberRecord, len(plan.Before))}
+	for table, records := range plan.Before {
+		out.Before[table] = make(map[string]MemberRecord, len(records))
+		for id, record := range records {
+			out.Before[table][id] = cloneMemPlanRecord(record)
+		}
+	}
+	for i, entry := range plan.Entries {
+		copyEntry := &out.Entries[i]
+		copyEntry.Index = entry.Index
+		copyEntry.Entry = cloneMemPlanInput(entry.Entry)
+		copyEntry.Before = make([]MemberRecord, len(entry.Before))
+		for j, record := range entry.Before {
+			copyEntry.Before[j] = cloneMemPlanRecord(record)
+		}
+		copyEntry.After = make([]MemberRecord, len(entry.After))
+		for j, record := range entry.After {
+			copyEntry.After[j] = cloneMemPlanRecord(record)
+		}
+		copyEntry.FieldChanges = make([]MemFieldChange, len(entry.FieldChanges))
+		for j, change := range entry.FieldChanges {
+			copyEntry.FieldChanges[j] = MemFieldChange{Unset: append([]string(nil), change.Unset...)}
+			if change.Set != nil {
+				copyEntry.FieldChanges[j].Set = cloneFields(change.Set)
+			}
+		}
+		copyEntry.Added = append([]RowRank(nil), entry.Added...)
+		copyEntry.Deleted = append([]string(nil), entry.Deleted...)
+	}
+	return out
+}
+
 func memPlanFieldChange(before, after MemberRecord, fields []string) MemFieldChange {
 	out := MemFieldChange{Set: make(map[string]string)}
 	for _, name := range fields {
@@ -955,10 +995,8 @@ func memPlanMember(pre, next *memSpace, preEpoch, workEpoch *memEpoch, rowOps ma
 		return false, memRefusal("DRIFT", RefusalDetail{EntryIndex: memIndex(index), Table: entry.Table, IDs: []string{id}})
 	}
 	if entry.Kind == "create" {
-		for _, e := range pre.epochs {
-			if e.tables[entry.Table] != nil && e.tables[entry.Table].records[id] != nil {
-				return false, memRefusal("EXISTS", RefusalDetail{EntryIndex: memIndex(index), Table: entry.Table, IDs: []string{id}})
-			}
+		if _, _, exists := pre.recordTable(entry.Table, id); exists {
+			return false, memRefusal("EXISTS", RefusalDetail{EntryIndex: memIndex(index), Table: entry.Table, IDs: []string{id}})
 		}
 		if len(entry.Scores) != len(entry.IDs) {
 			return false, memRefusal("REQUEST", RefusalDetail{EntryIndex: memIndex(index), Table: entry.Table, IDs: []string{id}})
@@ -969,6 +1007,9 @@ func memPlanMember(pre, next *memSpace, preEpoch, workEpoch *memEpoch, rowOps ma
 		}
 		if err := memDestination(work, rowOps[entry.Table], entry.Table, to, index); err != nil {
 			return false, err
+		}
+		if _, occupied := before.cells[to.row][to.col][id]; occupied {
+			return false, memRefusal("DRIFT", RefusalDetail{EntryIndex: memIndex(index), Table: entry.Table, IDs: []string{id}})
 		}
 		f, err := parseMemScore(entry.Scores[memberIndex])
 		if err != nil {
@@ -986,15 +1027,17 @@ func memPlanMember(pre, next *memSpace, preEpoch, workEpoch *memEpoch, rowOps ma
 		}
 		score := memScoreText(f)
 		work.records[id] = &memRecord{epoch: entryEpoch(pre, next), revision: "1", place: &to, score: score, fields: fields}
+		if next.recordEpoch[entry.Table] == nil {
+			next.recordEpoch[entry.Table] = make(map[string]Decimal)
+		}
+		next.recordEpoch[entry.Table][id] = entryEpoch(pre, next)
 		ensureMemCell(work, to.row, to.col)[id] = score
 		return true, nil
 	}
 	r := before.records[id]
 	if r == nil {
-		for epoch, e := range pre.epochs {
-			if epoch != entryEpoch(pre, next) && e.tables[entry.Table] != nil && e.tables[entry.Table].records[id] != nil {
-				return false, memRefusal("MEMBEREPOCH", RefusalDetail{EntryIndex: memIndex(index), Table: entry.Table, IDs: []string{id}})
-			}
+		if _, epoch, exists := pre.recordTable(entry.Table, id); exists && epoch != entryEpoch(pre, next) {
+			return false, memRefusal("MEMBEREPOCH", RefusalDetail{EntryIndex: memIndex(index), Table: entry.Table, IDs: []string{id}})
 		}
 		return false, memRefusal("MISSING", RefusalDetail{EntryIndex: memIndex(index), Table: entry.Table, IDs: []string{id}})
 	}
@@ -1042,6 +1085,9 @@ func memPlanMember(pre, next *memSpace, preEpoch, workEpoch *memEpoch, rowOps ma
 			if err := memDestination(work, rowOps[entry.Table], entry.Table, to, index); err != nil {
 				return false, err
 			}
+			if _, occupied := before.cells[to.row][to.col][id]; occupied {
+				return false, memRefusal("DRIFT", RefusalDetail{EntryIndex: memIndex(index), Table: entry.Table, IDs: []string{id}})
+			}
 		}
 	}
 	newScore := stored
@@ -1088,6 +1134,14 @@ func memPlanMember(pre, next *memSpace, preEpoch, workEpoch *memEpoch, rowOps ma
 	scoreChange := entry.Kind != "remove" && newScore != stored
 	if !placementChange && !scoreChange && !fieldChange {
 		return false, nil
+	}
+	// A changed stay rewrites its placement and therefore requires the row to
+	// survive the step. An unchanged stay emits no destination write; final row
+	// occupancy instead decides whether its deletion can proceed.
+	if entry.Kind == "move" && to == from {
+		if err := memDestination(work, rowOps[entry.Table], entry.Table, to, index); err != nil {
+			return false, err
+		}
 	}
 	rev, ok := memNextDecimal(wr.revision)
 	if !ok {

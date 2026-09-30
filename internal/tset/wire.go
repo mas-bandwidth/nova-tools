@@ -270,6 +270,11 @@ func validateStep(s Step, requireNotesOp bool) error {
 			}
 		}
 		if e.Kind == "advance" {
+			// An advance must have a stable replay identity even when it has
+			// no rowset guards, restored rows, or other entries.
+			if s.Op == nil {
+				return NewRefusal("REQUEST", RefusalDetail{EntryIndex: ptrInt(i)})
+			}
 			if advance || i != len(rowsetTables) {
 				return NewRefusal("REQUEST", RefusalDetail{EntryIndex: ptrInt(i)})
 			}

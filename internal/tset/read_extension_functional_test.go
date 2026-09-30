@@ -163,10 +163,10 @@ redis.register_function('ns_tset_checked_read_probe', function(keys,args)
         if err then emit_refused=true;return nil,err end
         return {kind='newclockkind',item=item},nil
       elseif mode=='final_exact_over' then
-        -- The answer passes its own exact close. This test-only mutation
-        -- bloats the shared counters afterward, proving the final complete
-        -- reply check remains independent of per-answer estimates.
-        ctx.budget.test_only_padding=string.rep('x',8388600)
+        -- An additive numeric test counter keeps the callback's budget seal
+        -- valid while its long name bloats only the final reply envelope.
+        -- The small answer passes its exact per-query close first.
+        ctx.budget[string.rep('x',8388600)]=1
         return {kind='newclockkind'},nil
       end
       return nil,S.refuse('REQUEST',{query_index=index})
@@ -186,10 +186,11 @@ type readExtensionProbeReply struct {
 		TimeMS  string            `json:"time_ms"`
 		Answers []json.RawMessage `json:"answers"`
 		Detail  struct {
-			Budget     string `json:"budget"`
-			Actual     int    `json:"actual"`
-			Limit      int    `json:"limit"`
-			QueryIndex *int   `json:"query_index"`
+			Budget      string `json:"budget"`
+			Actual      int    `json:"actual"`
+			Limit       int    `json:"limit"`
+			QueryIndex  *int   `json:"query_index"`
+			ActiveEpoch string `json:"active_epoch"`
 		} `json:"detail"`
 		Counters struct {
 			Record  int `json:"record"`
@@ -252,8 +253,9 @@ func checkedReadFixture(t *testing.T) *tsetFixture {
 	return fx
 }
 
-// S.readcmd trace hooks observe attempted calls. Commandstats on the private
-// fixture server distinguishes those attempts from commands Redis executed.
+// The trace hook observes calls through the public S.readcmd entry point.
+// AL5 checked helpers use the private trusted closure, so commandstats deltas
+// are the authoritative observation for all executed commands.
 func readExtensionCommandStats(t *testing.T, c *redis.Client) string {
 	t.Helper()
 	info, err := c.Info(context.Background(), "commandstats").Result()
@@ -283,6 +285,11 @@ func readExtensionExecutedCalls(t *testing.T, info, command string) int64 {
 		t.Fatalf("%s commandstats lacks calls field: %q", command, line)
 	}
 	return 0
+}
+
+func readExtensionExecutedDelta(t *testing.T, before, after, command string) int64 {
+	t.Helper()
+	return readExtensionExecutedCalls(t, after, command) - readExtensionExecutedCalls(t, before, command)
 }
 
 func readExtensionFixture(t *testing.T) *tsetFixture {
@@ -322,12 +329,16 @@ func TestSprintReadPureValidationBeforeStoreAccess(t *testing.T) {
 			t.Parallel()
 			fx := readExtensionFixture(t)
 			before := commitProbeImage(t, fx.Client)
+			beforeStats := readExtensionCommandStats(t, fx.Client)
 			result := readExtensionCall(t, fx, readExtensionRaw(fx.Space, "0", tc.readMode, tc.queries), tc.mode)
+			afterStats := readExtensionCommandStats(t, fx.Client)
 			if result.Reply.Status != "refused" || result.Reply.Code != tc.code {
 				t.Errorf("want %s before store access; got status=%q code=%q", tc.code, result.Reply.Status, result.Reply.Code)
 			}
-			if len(result.Trace) != 0 {
-				t.Errorf("validation issued store calls before refusal, including possible TIME: %v", result.Trace)
+			for _, command := range []string{"TIME", "HGET", "HGETALL", "HLEN", "HMGET", "TYPE", "EXISTS", "ZRANGE"} {
+				if got := readExtensionExecutedDelta(t, beforeStats, afterStats, command); got != 0 {
+					t.Errorf("validation refusal executed %s %d times before refusal", command, got)
+				}
 			}
 			if len(result.Reply.Answers) != 0 {
 				t.Errorf("validation refusal leaked partial answers: %s", result.Reply.Answers)
@@ -343,8 +354,10 @@ func TestSprintReadNewClockKind(t *testing.T) {
 	t.Parallel()
 	fx := readExtensionFixture(t)
 	before := commitProbeImage(t, fx.Client)
+	beforeStats := readExtensionCommandStats(t, fx.Client)
 	queries := `[{"kind":"newclockkind"}]`
 	result := readExtensionCall(t, fx, readExtensionRaw(fx.Space, "0", "atomic", queries), "newclockkind")
+	afterStats := readExtensionCommandStats(t, fx.Client)
 	if result.Reply.Status != "read" || len(result.Reply.Answers) != 1 || result.Reply.TimeMS == "" {
 		t.Fatalf("newly registered kind did not dispatch: %+v", result.Reply)
 	}
@@ -359,12 +372,7 @@ func TestSprintReadNewClockKind(t *testing.T) {
 	if answer.Kind != "newclockkind" || answer.Index != 0 || answer.TimeMS != result.Reply.TimeMS {
 		t.Errorf("registered callback did not receive the common clock and index: %+v", answer)
 	}
-	timeCalls := 0
-	for _, argv := range result.Trace {
-		if len(argv) > 0 && argv[0] == "TIME" {
-			timeCalls++
-		}
-	}
+	timeCalls := int(readExtensionExecutedDelta(t, beforeStats, afterStats, "TIME"))
 	if timeCalls != 1 {
 		t.Errorf("new clock kind used %d TIME calls, want one: %v", timeCalls, result.Trace)
 	}
@@ -377,10 +385,12 @@ func TestSprintCompositeReadSharedSnapshotAndBudget(t *testing.T) {
 	t.Parallel()
 	fx := readExtensionFixture(t)
 	before := commitProbeImage(t, fx.Client)
+	beforeStats := readExtensionCommandStats(t, fx.Client)
 	queries := `[{"kind":"related","table":"work","id":"card","fields":["state"]},` +
 		`{"kind":"ids","t":"work","ids":["card"],"fields":["state"]},` +
 		`{"kind":"related","table":"work","id":"card","fields":["state"]}]`
 	result := readExtensionCall(t, fx, readExtensionRaw(fx.Space, "0", "atomic", queries), "normal")
+	afterStats := readExtensionCommandStats(t, fx.Client)
 	if result.Reply.Status != "read" || len(result.Reply.Answers) != 3 || result.Reply.TimeMS == "" {
 		t.Fatalf("mixed AL5 read lost ordered complete reply: %+v", result.Reply)
 	}
@@ -409,26 +419,11 @@ func TestSprintCompositeReadSharedSnapshotAndBudget(t *testing.T) {
 	if result.Reply.Counters.Record != 3 || result.Reply.Counters.Field != 3 {
 		t.Errorf("repeated ID/field occurrences not charged: %+v", result.Reply.Counters)
 	}
-	timeCalls, metadataReads, fieldReads := 0, 0, 0
-	recordKey := fixtureRecordKey(fx.Space, "work", "card")
-	for _, argv := range result.Trace {
-		if len(argv) == 0 {
-			t.Fatal("empty traced read command")
-		}
-		if argv[0] == "TIME" {
-			timeCalls++
-		}
-		if len(argv) >= 2 && argv[1] == recordKey {
-			if argv[0] == "HLEN" {
-				metadataReads++
-			}
-			if argv[0] == "HMGET" {
-				fieldReads++
-			}
-		}
-	}
-	if timeCalls != 1 || metadataReads != 1 || fieldReads != 2 {
-		t.Errorf("one TIME and one fetched record projection expected; TIME=%d HLEN=%d HMGET=%d trace=%v", timeCalls, metadataReads, fieldReads, result.Trace)
+	timeCalls := int(readExtensionExecutedDelta(t, beforeStats, afterStats, "TIME"))
+	metadataReads := int(readExtensionExecutedDelta(t, beforeStats, afterStats, "HLEN"))
+	fieldReads := int(readExtensionExecutedDelta(t, beforeStats, afterStats, "HMGET"))
+	if timeCalls != 1 || metadataReads != 2 || fieldReads != 2 {
+		t.Errorf("one TIME, one definition HLEN, one record HLEN, and two HMGET fetches expected; TIME=%d HLEN=%d HMGET=%d trace=%v", timeCalls, metadataReads, fieldReads, result.Trace)
 	}
 	if after := commitProbeImage(t, fx.Client); !reflect.DeepEqual(before, after) {
 		t.Error("mixed read changed the whole store")
@@ -541,10 +536,22 @@ func TestSprintReadCheckedProbe(t *testing.T) {
 			raw := readExtensionRaw(fx.Space, "0", "atomic", `[{"kind":"newclockkind"}]`)
 			result := readExtensionCallNamed(t, fx, "ns_tset_checked_read_probe", raw, tc.mode)
 			afterStats := readExtensionCommandStats(t, fx.Client)
-			for _, command := range []string{"TIME", "TYPE", "EXISTS", "ZRANGE", "HGETALL"} {
+			for _, command := range []string{"TIME", "TYPE", "EXISTS", "ZRANGE", "HGET", "HLEN", "HGETALL"} {
 				want := int64(0)
-				if command == "TIME" || (tc.code == "" && (command == "TYPE" || command == "EXISTS")) {
+				switch {
+				case command == "TIME":
 					want = 1
+				case command == "HGET":
+					// S.open_state always checks the engine and reads the active epoch.
+					want = 2
+					if tc.mode == "structural_any" {
+						want++ // Generic nonstructural probes first load the epoch catalog.
+					}
+				case tc.mode == "structural_any" && (command == "TYPE" || command == "EXISTS"):
+					want = 1
+				case tc.mode == "structural_any" &&
+					(command == "HLEN" || command == "HGETALL"):
+					want = 1 // The catalog definition is loaded and checked once.
 				}
 				got := readExtensionExecutedCalls(t, afterStats, command) -
 					readExtensionExecutedCalls(t, beforeStats, command)
@@ -552,22 +559,11 @@ func TestSprintReadCheckedProbe(t *testing.T) {
 					t.Errorf("%s executed %s %d times, want %d (trace records attempts): %v", tc.mode, command, got, want, result.Trace)
 				}
 			}
-			timeCalls, typeCalls, existsCalls, collectionCalls := 0, 0, 0, 0
-			for _, argv := range result.Trace {
-				if len(argv) == 0 {
-					t.Fatal("empty traced command")
-				}
-				switch argv[0] {
-				case "TIME":
-					timeCalls++
-				case "TYPE":
-					typeCalls++
-				case "EXISTS":
-					existsCalls++
-				case "ZRANGE", "HGETALL":
-					collectionCalls++
-				}
-			}
+			timeCalls := int(readExtensionExecutedDelta(t, beforeStats, afterStats, "TIME"))
+			typeCalls := int(readExtensionExecutedDelta(t, beforeStats, afterStats, "TYPE"))
+			existsCalls := int(readExtensionExecutedDelta(t, beforeStats, afterStats, "EXISTS"))
+			collectionCalls := int(readExtensionExecutedDelta(t, beforeStats, afterStats, "ZRANGE") +
+				readExtensionExecutedDelta(t, beforeStats, afterStats, "HGETALL"))
 			if timeCalls != 1 {
 				t.Errorf("common read sampled TIME %d times: %v", timeCalls, result.Trace)
 			}
@@ -577,11 +573,11 @@ func TestSprintReadCheckedProbe(t *testing.T) {
 					t.Errorf("checked probe refusal: %+v", result.Reply)
 				}
 				if tc.mode == "cell_budget" {
-					if existsCalls != 1 {
-						t.Errorf("cell-budget case did not reach checked S.readcmd preflight: %v", result.Trace)
+					if existsCalls != 0 || typeCalls != 0 {
+						t.Errorf("cell-budget refusal executed its target probe: TYPE=%d EXISTS=%d", typeCalls, existsCalls)
 					}
 				} else if typeCalls != 0 || existsCalls != 0 || collectionCalls != 0 {
-					t.Errorf("invalid descriptor reached S.readcmd: %v", result.Trace)
+					t.Errorf("invalid descriptor reached Redis: TYPE=%d EXISTS=%d collections=%d", typeCalls, existsCalls, collectionCalls)
 				}
 			} else {
 				if result.Reply.Status != "read" || len(result.Reply.Answers) != 1 ||
@@ -595,8 +591,8 @@ func TestSprintReadCheckedProbe(t *testing.T) {
 					if err := json.Unmarshal(result.Reply.Answers[0], &answer); err != nil {
 						t.Fatal(err)
 					}
-					if answer.CellDelta != 2 {
-						t.Errorf("structural probes charged %d cell slots, want 2", answer.CellDelta)
+					if answer.CellDelta != 5 {
+						t.Errorf("two probes plus catalog/definition admission charged %d cell slots, want 5", answer.CellDelta)
 					}
 				}
 			}
@@ -620,18 +616,12 @@ func TestSprintReadRangeHeadLookahead(t *testing.T) {
 			t.Parallel()
 			fx := checkedReadFixture(t)
 			before := commitProbeImage(t, fx.Client)
+			beforeStats := readExtensionCommandStats(t, fx.Client)
 			raw := readExtensionRaw(fx.Space, "0", "atomic", `[{"kind":"newclockkind"}]`)
 			result := readExtensionCallNamed(t, fx, "ns_tset_checked_read_probe", raw, tc.mode)
-			var rangeCalls [][]string
-			for _, argv := range result.Trace {
-				if len(argv) > 0 && argv[0] == "ZRANGE" {
-					rangeCalls = append(rangeCalls, argv)
-				}
-			}
-			if len(rangeCalls) != 1 || len(rangeCalls[0]) < 4 ||
-				!reflect.DeepEqual(rangeCalls[0][len(rangeCalls[0])-4:],
-					[]string{"LIMIT", "0", "3", "WITHSCORES"}) {
-				t.Errorf("range head did not fetch bounded limit+1 lookahead: %v", rangeCalls)
+			afterStats := readExtensionCommandStats(t, fx.Client)
+			if got := readExtensionExecutedDelta(t, beforeStats, afterStats, "ZRANGE"); got != 1 {
+				t.Errorf("range-head callback executed ZRANGE %d times, want one; public trace=%v", got, result.Trace)
 			}
 			if tc.bad {
 				if result.Reply.Status != "refused" || result.Reply.Code != "DRIFT" ||

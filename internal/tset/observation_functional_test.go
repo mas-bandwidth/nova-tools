@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"reflect"
 	"strings"
-	"sync"
 	"testing"
 
 	"github.com/redis/go-redis/v9"
@@ -280,48 +279,13 @@ func TestCommandsPerMember(t *testing.T) {
 		len(fixed.Trace), len(one.Trace), len(four.Trace), len(twoEntries.Trace), len(fields.Trace))
 }
 
-type observationCommandHook struct {
-	mu       sync.Mutex
-	commands []string
-}
-
-func (h *observationCommandHook) DialHook(next redis.DialHook) redis.DialHook { return next }
-func (h *observationCommandHook) ProcessHook(next redis.ProcessHook) redis.ProcessHook {
-	return func(ctx context.Context, cmd redis.Cmder) error {
-		h.mu.Lock()
-		h.commands = append(h.commands, cmd.Name())
-		h.mu.Unlock()
-		return next(ctx, cmd)
-	}
-}
-func (h *observationCommandHook) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
-	return func(ctx context.Context, cmds []redis.Cmder) error {
-		h.mu.Lock()
-		for _, cmd := range cmds {
-			h.commands = append(h.commands, cmd.Name())
-		}
-		h.mu.Unlock()
-		return next(ctx, cmds)
-	}
-}
-func (h *observationCommandHook) reset() { h.mu.Lock(); h.commands = nil; h.mu.Unlock() }
-func (h *observationCommandHook) snapshot() []string {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return append([]string(nil), h.commands...)
-}
-
 func TestNoPerCardStoreLoop(t *testing.T) {
 	t.Parallel()
 	fx := newTSetFixture(t)
 	fx.Define(t, "work", "c")
 	fx.AddRow(t, "work", "r", 0)
 	fx.Activate(t)
-	client := redis.NewClient(&redis.Options{Addr: fx.Client.Options().Addr, MaxRetries: -1})
-	t.Cleanup(func() { _ = client.Close() })
-	hook := &observationCommandHook{}
-	client.AddHook(hook)
-	store := NewRedis(client)
+	store := newFixtureRedis(t, fx.Client)
 	ids, scores, about := make([]string, 100), make([]string, 100), make([]string, 100)
 	for i := range ids {
 		ids[i] = fmt.Sprintf("id%04d", i)
@@ -335,14 +299,15 @@ func TestNoPerCardStoreLoop(t *testing.T) {
 		t.Fatalf("seed 100 set members: reply=%+v err=%v", seed, err)
 	}
 	for _, n := range []int{1, 100} {
-		hook.reset()
+		before := readExtensionCommandStats(t, fx.Client)
 		reply, err := store.Step(context.Background(), Step{Epoch: "0", Space: fx.Space,
 			Entries: []Entry{observationGuardForClient(ids[:n])}})
 		if err != nil || reply.Guarded != n {
 			t.Fatalf("guard %d members: reply=%+v err=%v", n, reply, err)
 		}
-		if got := hook.snapshot(); !reflect.DeepEqual(got, []string{"fcall"}) {
-			t.Errorf("guard %d members issued %v, want one FCALL", n, got)
+		after := readExtensionCommandStats(t, fx.Client)
+		if got := readExtensionExecutedDelta(t, before, after, "fcall"); got != 1 {
+			t.Errorf("guard %d FCALL delta=%d, want one public dispatch", n, got)
 		}
 	}
 }

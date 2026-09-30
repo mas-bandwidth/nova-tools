@@ -5,6 +5,7 @@ package tset
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"reflect"
 	"sort"
@@ -17,19 +18,42 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// These are the ten traces from L1 contract section 1.6. Each refusal is sent
-// through the registered function, after a successful composed-profile seed.
-// The snapshot includes the entire throwaway server, rather than a selection
-// of keys the writer is expected to touch.
+// The nine Layer 1 traces run against both writer profiles. The history-key
+// trace is composed-only. Each refusal goes through the registered function
+// after a successful four-table seed, with a whole-server TYPE/DUMP snapshot.
 var commitProbeTables = []string{"work", "merge", "fleet", "reader"}
 
 type commitProbeKey struct {
 	Type string
 	Dump string
+	PTTL time.Duration
+}
+
+// INFO keyspace reports all logical databases, including those a function
+// could have selected independently of this client's DB 0 connection.
+func commitProbeOnlyDBZero(c *redis.Client) error {
+	info, err := c.Info(context.Background(), "keyspace").Result()
+	if err != nil {
+		return err
+	}
+	for _, line := range strings.Split(info, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(line, "db") {
+			continue
+		}
+		db, _, ok := strings.Cut(line, ":")
+		if !ok || db != "db0" {
+			return fmt.Errorf("unexpected INFO keyspace database line %q", line)
+		}
+	}
+	return nil
 }
 
 func commitProbeImage(t *testing.T, c *redis.Client) map[string]commitProbeKey {
 	t.Helper()
+	if err := commitProbeOnlyDBZero(c); err != nil {
+		t.Fatalf("whole-store image cannot be confined to DB 0: %v", err)
+	}
 	ctx := context.Background()
 	keys, err := c.Keys(ctx, "*").Result()
 	if err != nil {
@@ -46,9 +70,46 @@ func commitProbeImage(t *testing.T, c *redis.Client) map[string]commitProbeKey {
 		if err != nil {
 			t.Fatalf("DUMP %q: %v", key, err)
 		}
-		image[key] = commitProbeKey{Type: kind, Dump: value}
+		ttl, err := c.PTTL(ctx, key).Result()
+		if err != nil {
+			t.Fatalf("PTTL %q: %v", key, err)
+		}
+		image[key] = commitProbeKey{Type: kind, Dump: value, PTTL: ttl}
 	}
 	return image
+}
+
+func TestCommitProbeImageDetectsTTLAndOtherDatabase(t *testing.T) {
+	t.Parallel()
+	fx := newTSetFixture(t)
+	fx.Define(t, "work", "c")
+	fx.AddRow(t, "work", "r", 0)
+	fx.Activate(t)
+	if err := commitProbeOnlyDBZero(fx.Client); err != nil {
+		t.Fatalf("fresh fixture unexpectedly uses another DB: %v", err)
+	}
+	before := commitProbeImage(t, fx.Client)
+
+	// Deliberate post-activation fault injection: a supported writer never
+	// attaches a TTL to its own keys. The image must see this mutation.
+	rowKey := fixtureRowsKey(fx.Space, "work", "0")
+	if ok, err := fx.Client.PExpire(context.Background(), rowKey, time.Minute).Result(); err != nil || !ok {
+		t.Fatalf("inject TTL on row key: applied=%t err=%v", ok, err)
+	}
+	if after := commitProbeImage(t, fx.Client); reflect.DeepEqual(before, after) || after[rowKey].PTTL <= 0 {
+		t.Fatalf("whole-store image missed injected TTL on %q", rowKey)
+	}
+
+	// A separate DB 1 client models a function that selected another logical
+	// database. INFO keyspace must reveal its key despite this client's DB 0.
+	db1 := redis.NewClient(&redis.Options{Addr: fx.Client.Options().Addr, DB: 1, MaxRetries: -1})
+	t.Cleanup(func() { _ = db1.Close() })
+	if err := db1.Set(context.Background(), "escaped-db1", "value", 0).Err(); err != nil {
+		t.Fatalf("inject DB 1 key: %v", err)
+	}
+	if err := commitProbeOnlyDBZero(fx.Client); err == nil {
+		t.Fatal("INFO keyspace guard missed a DB 1 key")
+	}
 }
 
 func commitProbeNoKeys(t *testing.T, c *redis.Client, keys []string) {
@@ -73,10 +134,13 @@ func commitProbeNoKeys(t *testing.T, c *redis.Client, keys []string) {
 	}
 }
 
-func commitProbeRawCall(t *testing.T, c *redis.Client, raw string) struct {
-	Status string `json:"status"`
-	Code   string `json:"code"`
-} {
+type commitProbeReply struct {
+	Status string        `json:"status"`
+	Code   string        `json:"code"`
+	Detail RefusalDetail `json:"detail"`
+}
+
+func commitProbeRawCall(t *testing.T, c *redis.Client, raw string) commitProbeReply {
 	t.Helper()
 	value, err := c.FCall(context.Background(), "ns_tset_step", []string{}, "tset/1", raw).Result()
 	if err != nil {
@@ -91,10 +155,7 @@ func commitProbeRawCall(t *testing.T, c *redis.Client, raw string) struct {
 	default:
 		t.Fatalf("raw FCALL returned %T, want JSON bulk string", value)
 	}
-	var reply struct {
-		Status string `json:"status"`
-		Code   string `json:"code"`
-	}
+	var reply commitProbeReply
 	if err := json.Unmarshal(encoded, &reply); err != nil {
 		t.Fatalf("raw FCALL reply %q is not JSON: %v", encoded, err)
 	}
@@ -116,52 +177,86 @@ func commitProbeRequest(t *testing.T, space, op string, entries []map[string]any
 	return string(raw)
 }
 
-func commitProbeSetup(t *testing.T, space string, c *redis.Client,
-	define func(*testing.T, string, ...string), addRow func(*testing.T, string, string, int64),
-	activate func(*testing.T)) {
+func commitProbeSetup(t *testing.T, fx *tsetFixture, composed bool) *Mem {
 	t.Helper()
-	for _, table := range commitProbeTables {
-		define(t, table, "ready", "done")
-		addRow(t, table, "r", 0)
+	space, c := fx.Space, fx.Client
+	var model *Mem
+	if !composed {
+		model = NewMem()
 	}
-	activate(t)
+	for _, table := range commitProbeTables {
+		fx.Define(t, table, "ready", "done")
+		fx.AddRow(t, table, "r", 0)
+		if model != nil {
+			if err := model.DefineTable(space, table, TableDefinition{
+				Columns: []string{"ready", "done"}, MemberPrefix: space + "member:" + table + ":",
+				EpochKey: space + "sprint:epoch", EpochField: "n",
+			}); err != nil {
+				t.Fatalf("model definition %s: %v", table, err)
+			}
+			if err := model.SeedRow(space, table, "0", "r", "0"); err != nil {
+				t.Fatalf("model row %s: %v", table, err)
+			}
+		}
+	}
+	fx.Activate(t)
 	entries := make([]map[string]any, 0, len(commitProbeTables))
 	for _, table := range commitProbeTables {
-		entries = append(entries, map[string]any{
+		entry := map[string]any{
 			"kind": "create", "t": table, "to": "r:ready",
 			"ids": []string{"base-" + table}, "scores": []string{"1"},
-			"about": []string{"seed-" + table},
-			"set":   map[string]string{"seed": "present"},
-		})
+			"set": map[string]string{"seed": "present"},
+		}
+		if composed {
+			entry["about"] = []string{"seed-" + table}
+		}
+		entries = append(entries, entry)
 	}
-	reply := commitProbeRawCall(t, c, commitProbeRequest(t, space, "", entries))
+	raw := commitProbeRequest(t, space, "", entries)
+	reply := commitProbeRawCall(t, c, raw)
 	if reply.Status != "ok" {
 		t.Fatalf("valid four-table seed refused: status=%q code=%q", reply.Status, reply.Code)
 	}
-	for _, table := range commitProbeTables {
-		key := fixtureHistoryKey(space, "0", "seed-"+table)
-		if n, err := c.Exists(context.Background(), key).Result(); err != nil || n != 1 {
-			t.Fatalf("seed history %q absent (exists=%d, err=%v)", key, n, err)
+	if model != nil {
+		var step Step
+		if err := json.Unmarshal([]byte(raw), &step); err != nil {
+			t.Fatalf("model seed decode: %v", err)
+		}
+		modelReply, err := model.Step(context.Background(), step)
+		if err != nil || modelReply.Status != "ok" {
+			t.Fatalf("valid model seed: reply=%+v err=%v", modelReply, err)
 		}
 	}
-	if key := fixtureLogKey(space, "0"); c.Exists(context.Background(), key).Val() != 1 {
-		t.Fatalf("seed log %q absent", key)
+	if composed {
+		for _, table := range commitProbeTables {
+			key := fixtureHistoryKey(space, "0", "seed-"+table)
+			if n, err := c.Exists(context.Background(), key).Result(); err != nil || n != 1 {
+				t.Fatalf("seed history %q absent (exists=%d, err=%v)", key, n, err)
+			}
+		}
+		if key := fixtureLogKey(space, "0"); c.Exists(context.Background(), key).Val() != 1 {
+			t.Fatalf("seed log %q absent", key)
+		}
 	}
+	return model
 }
 
-func commitProbeMove(table string, rev string) map[string]any {
-	return map[string]any{
+func commitProbeMove(table string, rev string, composed bool) map[string]any {
+	entry := map[string]any{
 		"kind": "move", "t": table, "from": "r:ready", "to": "r:done",
 		"ids": []string{"base-" + table}, "revs": []string{rev},
-		"about": []string{"change-" + table},
-		"set":   map[string]string{"probe": "changed"},
+		"set": map[string]string{"probe": "changed"},
 	}
+	if composed {
+		entry["about"] = []string{"change-" + table}
+	}
+	return entry
 }
 
-func commitProbeMoves() []map[string]any {
+func commitProbeMoves(composed bool) []map[string]any {
 	entries := make([]map[string]any, 0, len(commitProbeTables))
 	for _, table := range commitProbeTables {
-		entries = append(entries, commitProbeMove(table, "1"))
+		entries = append(entries, commitProbeMove(table, "1", composed))
 	}
 	return entries
 }
@@ -190,14 +285,39 @@ func commitProbeNewKeys(space string, entries []map[string]any) []string {
 	return keys
 }
 
-func commitProbeRefusal(t *testing.T, c *redis.Client, space, code string, entries []map[string]any, newKeys []string) {
+func commitProbeRefusal(t *testing.T, c *redis.Client, model *Mem, space, code string, entries []map[string]any, newKeys []string) commitProbeReply {
 	t.Helper()
 	if newKeys == nil {
 		newKeys = commitProbeNewKeys(space, entries)
 	}
 	commitProbeNoKeys(t, c, newKeys)
 	before := commitProbeImage(t, c)
-	reply := commitProbeRawCall(t, c, commitProbeRequest(t, space, "refused-operation", entries))
+	raw := commitProbeRequest(t, space, "refused-operation", entries)
+	var modelBefore MemSnapshot
+	if model != nil {
+		var err error
+		modelBefore, err = model.Snapshot(space)
+		if err != nil {
+			t.Fatalf("model snapshot before %s: %v", code, err)
+		}
+		var step Step
+		if err := json.Unmarshal([]byte(raw), &step); err != nil {
+			t.Fatalf("model request decode: %v", err)
+		}
+		_, modelErr := model.Step(context.Background(), step)
+		var modelRef *Refusal
+		if !errors.As(modelErr, &modelRef) || modelRef.Code != code {
+			t.Errorf("model want %s: %v", code, modelErr)
+		}
+		modelAfter, err := model.Snapshot(space)
+		if err != nil {
+			t.Fatalf("model snapshot after %s: %v", code, err)
+		}
+		if !reflect.DeepEqual(modelBefore, modelAfter) {
+			t.Errorf("%s refusal changed full model state", code)
+		}
+	}
+	reply := commitProbeRawCall(t, c, raw)
 	if reply.Status != "refused" || reply.Code != code {
 		t.Errorf("want refused %s; got status=%q code=%q", code, reply.Status, reply.Code)
 	}
@@ -215,137 +335,220 @@ func commitProbeRefusal(t *testing.T, c *redis.Client, space, code string, entri
 		}
 	}
 	commitProbeNoKeys(t, c, newKeys)
+	return reply
+}
+
+func commitProbeProfiles(t *testing.T, run func(*testing.T, *tsetFixture, *Mem, bool)) {
+	t.Helper()
+	for _, tc := range []struct {
+		name     string
+		composed bool
+	}{
+		{name: "standalone"},
+		{name: "composed", composed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			var fx *tsetFixture
+			if tc.composed {
+				fx = newComposedTSetFixture(t)
+			} else {
+				fx = newTSetFixture(t)
+			}
+			model := commitProbeSetup(t, fx, tc.composed)
+			run(t, fx, model, tc.composed)
+		})
+	}
 }
 
 func TestCommitProbeRevisionSecondTable(t *testing.T) {
 	t.Parallel()
-	fx := newComposedTSetFixture(t)
-	commitProbeSetup(t, fx.Space, fx.Client, fx.Define, fx.AddRow, fx.Activate)
-	entries := commitProbeMoves()
-	entries[1]["revs"] = []string{"0"}
-	commitProbeRefusal(t, fx.Client, fx.Space, "REVISION", entries, nil)
+	commitProbeProfiles(t, func(t *testing.T, fx *tsetFixture, model *Mem, composed bool) {
+		entries := commitProbeMoves(composed)
+		entries[1]["revs"] = []string{"0"}
+		reply := commitProbeRefusal(t, fx.Client, model, fx.Space, "REVISION", entries, nil)
+		if reply.Detail.EntryIndex == nil || *reply.Detail.EntryIndex != 1 ||
+			reply.Detail.Table != "merge" || !reflect.DeepEqual(reply.Detail.IDs, []string{"base-merge"}) {
+			t.Errorf("revision was not attributed to the second table: %+v", reply.Detail)
+		}
+	})
 }
 
 func TestCommitProbeRecordWrongType(t *testing.T) {
 	t.Parallel()
-	fx := newComposedTSetFixture(t)
-	commitProbeSetup(t, fx.Space, fx.Client, fx.Define, fx.AddRow, fx.Activate)
-	key := fixtureRecordKey(fx.Space, "reader", "base-reader")
-	if err := fx.Client.Del(context.Background(), key).Err(); err != nil {
-		t.Fatal(err)
-	}
-	if err := fx.Client.Set(context.Background(), key, "wrong type", 0).Err(); err != nil {
-		t.Fatal(err)
-	}
-	commitProbeRefusal(t, fx.Client, fx.Space, "WRONGTYPE", commitProbeMoves(), nil)
+	commitProbeProfiles(t, func(t *testing.T, fx *tsetFixture, _ *Mem, composed bool) {
+		// The sole post-activation store mutation is the deliberate wrong type.
+		key := fixtureRecordKey(fx.Space, "reader", "base-reader")
+		if err := fx.Client.Del(context.Background(), key).Err(); err != nil {
+			t.Fatal(err)
+		}
+		if err := fx.Client.Set(context.Background(), key, "wrong type", 0).Err(); err != nil {
+			t.Fatal(err)
+		}
+		commitProbeRefusal(t, fx.Client, nil, fx.Space, "WRONGTYPE", commitProbeMoves(composed), nil)
+	})
 }
 
 func TestCommitProbeDestinationWrongType(t *testing.T) {
 	t.Parallel()
-	fx := newComposedTSetFixture(t)
-	commitProbeSetup(t, fx.Space, fx.Client, fx.Define, fx.AddRow, fx.Activate)
-	key := fixtureCellKey(fx.Space, "reader", "0", "r", "done")
-	if err := fx.Client.Set(context.Background(), key, "wrong type", 0).Err(); err != nil {
-		t.Fatal(err)
-	}
-	newKeys := []string{fixtureDoneKey(fx.Space, "0")}
-	for _, table := range commitProbeTables[:3] {
-		newKeys = append(newKeys, fixtureCellKey(fx.Space, table, "0", "r", "done"), fixtureHistoryKey(fx.Space, "0", "change-"+table))
-	}
-	newKeys = append(newKeys, fixtureHistoryKey(fx.Space, "0", "change-reader"))
-	commitProbeRefusal(t, fx.Client, fx.Space, "WRONGTYPE", commitProbeMoves(), newKeys)
+	commitProbeProfiles(t, func(t *testing.T, fx *tsetFixture, _ *Mem, composed bool) {
+		// A destination key of the wrong type is the one intended fault.
+		key := fixtureCellKey(fx.Space, "reader", "0", "r", "done")
+		if err := fx.Client.Set(context.Background(), key, "wrong type", 0).Err(); err != nil {
+			t.Fatal(err)
+		}
+		newKeys := []string{fixtureDoneKey(fx.Space, "0")}
+		for _, table := range commitProbeTables[:3] {
+			newKeys = append(newKeys, fixtureCellKey(fx.Space, table, "0", "r", "done"))
+		}
+		if composed {
+			for _, table := range commitProbeTables {
+				newKeys = append(newKeys, fixtureHistoryKey(fx.Space, "0", "change-"+table))
+			}
+		}
+		commitProbeRefusal(t, fx.Client, nil, fx.Space, "WRONGTYPE", commitProbeMoves(composed), newKeys)
+	})
 }
 
 func TestCommitProbeHistoryWrongType(t *testing.T) {
 	t.Parallel()
 	fx := newComposedTSetFixture(t)
-	commitProbeSetup(t, fx.Space, fx.Client, fx.Define, fx.AddRow, fx.Activate)
+	commitProbeSetup(t, fx, true)
+	// Deliberate post-activation single-fault corruption of the future cl key.
 	key := fixtureHistoryKey(fx.Space, "0", "change-reader")
 	if err := fx.Client.Set(context.Background(), key, "wrong type", 0).Err(); err != nil {
 		t.Fatal(err)
 	}
-	entries := commitProbeMoves()
+	entries := commitProbeMoves(true)
 	newKeys := []string{fixtureDoneKey(fx.Space, "0")}
 	for _, table := range commitProbeTables[:3] {
 		newKeys = append(newKeys, fixtureCellKey(fx.Space, table, "0", "r", "done"), fixtureHistoryKey(fx.Space, "0", "change-"+table))
 	}
 	newKeys = append(newKeys, fixtureCellKey(fx.Space, "reader", "0", "r", "done"))
-	commitProbeRefusal(t, fx.Client, fx.Space, "WRONGTYPE", entries, newKeys)
+	commitProbeRefusal(t, fx.Client, nil, fx.Space, "WRONGTYPE", entries, newKeys)
 }
 
 func TestCommitProbeCandidateOverflow(t *testing.T) {
 	t.Parallel()
-	fx := newComposedTSetFixture(t)
-	commitProbeSetup(t, fx.Space, fx.Client, fx.Define, fx.AddRow, fx.Activate)
-	entries := make([]map[string]any, 0, 4)
-	newKeys := []string{fixtureDoneKey(fx.Space, "0")}
-	for i, table := range commitProbeTables {
-		count := 1000
-		if i == 3 {
-			count = 1001
+	commitProbeProfiles(t, func(t *testing.T, fx *tsetFixture, model *Mem, composed bool) {
+		entries := make([]map[string]any, 0, 4)
+		newKeys := []string{fixtureDoneKey(fx.Space, "0")}
+		for i, table := range commitProbeTables {
+			count := 1000
+			if i == 3 {
+				count = 1001
+			}
+			ids, scores, about := make([]string, count), make([]string, count), make([]string, count)
+			for j := range ids {
+				ids[j] = fmt.Sprintf("candidate-%s-%04d", table, j)
+				scores[j] = "1"
+				about[j] = "bulk-" + table
+				newKeys = append(newKeys, fixtureRecordKey(fx.Space, table, ids[j]))
+			}
+			entry := map[string]any{"kind": "create", "t": table, "to": "r:done", "ids": ids, "scores": scores}
+			if composed && i < 3 {
+				// Keep the separate about cap below 4,000 while preserving
+				// composed history work for the first three entries.
+				entry["about"] = about
+				newKeys = append(newKeys, fixtureHistoryKey(fx.Space, "0", "bulk-"+table))
+			}
+			entries = append(entries, entry)
+			newKeys = append(newKeys, fixtureCellKey(fx.Space, table, "0", "r", "done"))
 		}
-		ids, scores, about := make([]string, count), make([]string, count), make([]string, count)
-		for j := range ids {
-			ids[j] = fmt.Sprintf("candidate-%s-%04d", table, j)
-			scores[j] = "1"
-			about[j] = "bulk-" + table
-			newKeys = append(newKeys, fixtureRecordKey(fx.Space, table, ids[j]))
+		if len(entries) != 4 || len(entries[3]["ids"].([]string)) != 1001 ||
+			len(entries) > MaxTables || 4001 <= MaxMemberCandidates || 1001 > MaxIDsPerEntry ||
+			3000 > MaxAboutBeforeDedup {
+			t.Fatal("candidate fixture no longer isolates the shared 2,000-candidate cap")
 		}
-		newKeys = append(newKeys, fixtureHistoryKey(fx.Space, "0", "bulk-"+table))
-		entries = append(entries, map[string]any{"kind": "create", "t": table, "to": "r:done", "ids": ids, "scores": scores, "about": about})
-		newKeys = append(newKeys, fixtureCellKey(fx.Space, table, "0", "r", "done"))
-	}
-	commitProbeRefusal(t, fx.Client, fx.Space, "LIMIT", entries, newKeys)
+		// The historical 4,001-candidate verifier shape now meets the
+		// revision-4 global 2,000-candidate limit first.
+		commitProbeRefusal(t, fx.Client, model, fx.Space, "LIMIT", entries, newKeys)
+	})
 }
 
 func TestCommitProbeUnset8000(t *testing.T) {
 	t.Parallel()
-	fx := newComposedTSetFixture(t)
-	commitProbeSetup(t, fx.Space, fx.Client, fx.Define, fx.AddRow, fx.Activate)
-	entries := commitProbeMoves()
-	unset := make([]string, 8000)
-	for i := range unset {
-		unset[i] = fmt.Sprintf("field-%04d", i)
-	}
-	entries[3]["unset"] = unset
-	commitProbeRefusal(t, fx.Client, fx.Space, "LIMIT", entries, nil)
+	commitProbeProfiles(t, func(t *testing.T, fx *tsetFixture, model *Mem, composed bool) {
+		entries := commitProbeMoves(composed)
+		unset := make([]string, 8000)
+		for i := range unset {
+			unset[i] = fmt.Sprintf("field-%04d", i)
+		}
+		entries[3]["unset"] = unset
+		if len(unset) <= MaxFieldsPerMember || len(entries) != 4 {
+			t.Fatal("8,000-name fixture no longer isolates the per-entry 128-unset cap")
+		}
+		commitProbeRefusal(t, fx.Client, model, fx.Space, "LIMIT", entries, nil)
+	})
 }
 
 func TestCommitProbeRowsAcrossEntries(t *testing.T) {
 	t.Parallel()
-	fx := newComposedTSetFixture(t)
-	commitProbeSetup(t, fx.Space, fx.Client, fx.Define, fx.AddRow, fx.Activate)
-	entries := []map[string]any{commitProbeMove("reader", "1")}
-	for batch := 0; batch < 40; batch++ {
-		rows := make([]string, 100)
-		for i := range rows {
-			rows[i] = fmt.Sprintf("fleet-%02d-%02d", batch, i)
+	commitProbeProfiles(t, func(t *testing.T, fx *tsetFixture, model *Mem, composed bool) {
+		// The verifier's P3c shape starts with one reader row, then forty
+		// separate 100-row fleet entries. No member mutation is involved.
+		entries := []map[string]any{{"kind": "rows", "t": "reader", "add": []string{"reader-new"}}}
+		for batch := 0; batch < 40; batch++ {
+			rows := make([]string, 100)
+			for i := range rows {
+				rows[i] = fmt.Sprintf("fleet-%02d-%02d", batch, i)
+			}
+			entries = append(entries, map[string]any{"kind": "rows", "t": "fleet", "add": rows})
 		}
-		entries = append(entries, map[string]any{"kind": "rows", "t": "fleet", "add": rows})
-	}
-	newKeys := []string{fixtureDoneKey(fx.Space, "0"), fixtureCellKey(fx.Space, "reader", "0", "r", "done"), fixtureHistoryKey(fx.Space, "0", "change-reader")}
-	commitProbeRefusal(t, fx.Client, fx.Space, "LIMIT", entries, newKeys)
-	for batch := 0; batch < 40; batch++ {
-		for i := 0; i < 100; i++ {
-			row := fmt.Sprintf("fleet-%02d-%02d", batch, i)
-			if score, err := fx.Client.ZScore(context.Background(), fixtureRowsKey(fx.Space, "fleet", "0"), row).Result(); err != redis.Nil {
-				t.Errorf("row %s unexpectedly added: score=%v err=%v", row, score, err)
+		if len(entries) != 41 || 4001 <= MaxRowsPerStep {
+			t.Fatal("row fixture no longer isolates the shared 100-row cap")
+		}
+		commitProbeRefusal(t, fx.Client, model, fx.Space, "LIMIT", entries, nil)
+		if score, err := fx.Client.ZScore(context.Background(), fixtureRowsKey(fx.Space, "reader", "0"), "reader-new").Result(); err != redis.Nil {
+			t.Errorf("reader row unexpectedly added: score=%v err=%v", score, err)
+		}
+		for batch := 0; batch < 40; batch++ {
+			for i := 0; i < 100; i++ {
+				row := fmt.Sprintf("fleet-%02d-%02d", batch, i)
+				if score, err := fx.Client.ZScore(context.Background(), fixtureRowsKey(fx.Space, "fleet", "0"), row).Result(); err != redis.Nil {
+					t.Errorf("row %s unexpectedly added: score=%v err=%v", row, score, err)
+				}
 			}
 		}
-	}
+		// The smallest cross-table overflow also requires the shared count:
+		// 1 reader row plus 100 fleet rows is 101, while each entry is valid.
+		fleetRows := make([]string, 100)
+		for i := range fleetRows {
+			fleetRows[i] = fmt.Sprintf("edge-%03d", i)
+		}
+		edge := []map[string]any{
+			{"kind": "rows", "t": "reader", "add": []string{"reader-edge"}},
+			{"kind": "rows", "t": "fleet", "add": fleetRows},
+		}
+		if len(edge) != 2 || 1+len(fleetRows) != MaxRowsPerStep+1 {
+			t.Fatal("cross-table row edge no longer exceeds the shared cap by one")
+		}
+		commitProbeRefusal(t, fx.Client, model, fx.Space, "LIMIT", edge, nil)
+		if score, err := fx.Client.ZScore(context.Background(), fixtureRowsKey(fx.Space, "reader", "0"), "reader-edge").Result(); err != redis.Nil {
+			t.Errorf("edge reader row unexpectedly added: score=%v err=%v", score, err)
+		}
+		for _, row := range fleetRows {
+			if score, err := fx.Client.ZScore(context.Background(), fixtureRowsKey(fx.Space, "fleet", "0"), row).Result(); err != redis.Nil {
+				t.Errorf("edge fleet row %s unexpectedly added: score=%v err=%v", row, score, err)
+			}
+		}
+	})
 }
 
 func commitProbeBadScore(t *testing.T, score string) {
 	t.Helper()
-	fx := newComposedTSetFixture(t)
-	commitProbeSetup(t, fx.Space, fx.Client, fx.Define, fx.AddRow, fx.Activate)
-	entries := commitProbeMoves()[:3]
-	entries = append(entries, map[string]any{
-		"kind": "create", "t": "reader", "to": "r:done",
-		"ids": []string{"bad-score-reader"}, "scores": []string{score},
-		"about": []string{"bad-score-about"},
+	commitProbeProfiles(t, func(t *testing.T, fx *tsetFixture, model *Mem, composed bool) {
+		entries := commitProbeMoves(composed)[:3]
+		last := map[string]any{
+			"kind": "create", "t": "reader", "to": "r:done",
+			"ids": []string{"bad-score-reader"}, "scores": []string{score},
+		}
+		if composed {
+			last["about"] = []string{"bad-score-about"}
+		}
+		entries = append(entries, last)
+		commitProbeRefusal(t, fx.Client, model, fx.Space, "REQUEST", entries, nil)
 	})
-	commitProbeRefusal(t, fx.Client, fx.Space, "REQUEST", entries, nil)
 }
 
 func TestCommitProbeScoreLeadingSpace(t *testing.T) {

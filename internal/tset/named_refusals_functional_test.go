@@ -138,10 +138,12 @@ func namedMove(id, cell string) Entry {
 
 func namedAdvance(t *testing.T, fx *tsetFixture, mem *Mem) {
 	t.Helper()
+	op, intent := "named-refusal-advance", "named refusal fixture successor setup"
 	step := namedStep(fx.Space, Entry{Kind: "advance", AdvanceFrom: "0"},
 		Entry{Kind: "rows", Table: "work", Add: []string{"r"}})
+	step.Op, step.Intent = &op, &intent
 	model, modelErr := mem.Step(context.Background(), step)
-	lua, luaErr := NewRedis(fx.Client).Step(context.Background(), step)
+	lua, luaErr := newFixtureRedis(t, fx.Client).Step(context.Background(), step)
 	if modelErr != nil || luaErr != nil || model.EpochAfter != "1" || lua.EpochAfter != "1" {
 		t.Fatalf("advance refusal fixture: Mem=%+v/%v Lua=%+v/%v", model, modelErr, lua, luaErr)
 	}
@@ -153,7 +155,7 @@ func namedReceipt(t *testing.T, fx *tsetFixture, mem *Mem) {
 	step := namedStep(fx.Space)
 	step.Op, step.Intent = &op, &intent
 	model, modelErr := mem.Step(context.Background(), step)
-	lua, luaErr := NewRedis(fx.Client).Step(context.Background(), step)
+	lua, luaErr := newFixtureRedis(t, fx.Client).Step(context.Background(), step)
 	if modelErr != nil || luaErr != nil || model.Status != "ok" || lua.Status != "ok" {
 		t.Fatalf("receipt refusal fixture: Mem=%+v/%v Lua=%+v/%v", model, modelErr, lua, luaErr)
 	}
@@ -211,9 +213,23 @@ func TestRefuseLIMIT(t *testing.T) {
 
 func TestRefuseREQUEST(t *testing.T) {
 	t.Parallel()
-	runNamedRefusal(t, namedRefusalCase{code: "REQUEST", step: func(space string) Step {
-		return namedStep(space, namedCreate("work", "new", "r:c", "not-a-score"))
-	}})
+	t.Run("invalid score", func(t *testing.T) {
+		t.Parallel()
+		runNamedRefusal(t, namedRefusalCase{code: "REQUEST", step: func(space string) Step {
+			return namedStep(space, namedCreate("work", "new", "r:c", "not-a-score"))
+		}})
+	})
+	t.Run("caller notes require operation identity", func(t *testing.T) {
+		t.Parallel()
+		runNamedRefusal(t, namedRefusalCase{code: "REQUEST", step: func(space string) Step {
+			step := namedStep(space)
+			step.Notes = []Note{{
+				Line:  NoteLine{Kind: "note", Meta: json.RawMessage(`{}`)},
+				About: []string{"primary"},
+			}}
+			return step
+		}})
+	})
 }
 
 func TestRefuseFIELDNAME(t *testing.T) {
@@ -270,7 +286,10 @@ func TestRefuseEPOCHAHEAD(t *testing.T) {
 func TestRefuseADVANCE(t *testing.T) {
 	t.Parallel()
 	runNamedRefusal(t, namedRefusalCase{code: "ADVANCE", step: func(space string) Step {
-		return namedStep(space, Entry{Kind: "advance", AdvanceFrom: "1"})
+		step := namedStep(space, Entry{Kind: "advance", AdvanceFrom: "1"})
+		op, intent := "refuse-advance-from", "request epoch zero with mismatched advance from one"
+		step.Op, step.Intent = &op, &intent
+		return step
 	}})
 }
 

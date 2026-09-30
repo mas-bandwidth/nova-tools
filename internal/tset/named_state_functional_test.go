@@ -51,7 +51,7 @@ func (h *namedStateHarness) apply(t *testing.T, step Step) Reply {
 	t.Helper()
 	h.snapshot(t)
 	model, modelErr := h.mem.Step(context.Background(), step)
-	lua, luaErr := NewRedis(h.fx.Client).Step(context.Background(), step)
+	lua, luaErr := newFixtureRedis(t, h.fx.Client).Step(context.Background(), step)
 	if modelErr != nil || luaErr != nil {
 		t.Fatalf("step refused unexpectedly: Mem=%v Lua=%v step=%+v", modelErr, luaErr, step)
 	}
@@ -89,7 +89,7 @@ func (h *namedStateHarness) refuse(t *testing.T, step Step, code string) {
 	before := h.snapshot(t)
 	image := commitProbeImage(t, h.fx.Client)
 	_, modelErr := h.mem.Step(context.Background(), step)
-	_, luaErr := NewRedis(h.fx.Client).Step(context.Background(), step)
+	_, luaErr := newFixtureRedis(t, h.fx.Client).Step(context.Background(), step)
 	model := requireRefusal(t, modelErr, code)
 	lua := requireRefusal(t, luaErr, code)
 	if !reflect.DeepEqual(comparableDetail(model.Detail), comparableDetail(lua.Detail)) {
@@ -101,6 +101,40 @@ func (h *namedStateHarness) refuse(t *testing.T, step Step, code string) {
 	if after := commitProbeImage(t, h.fx.Client); !reflect.DeepEqual(image, after) {
 		t.Fatalf("%s refusal changed Redis key image", code)
 	}
+}
+
+// doneSlot models the resume caller's required done-first lookup. It checks
+// both twins independently because a successful later write replay must be
+// preceded by the same persisted receipt observation in each implementation.
+func (h *namedStateHarness) doneSlot(t *testing.T, readEpoch, receiptEpoch Decimal, op, intent, wantStatus string) DoneSlot {
+	t.Helper()
+	plan := ReadPlan{Epoch: readEpoch, Space: h.fx.Space, Mode: "atomic", Queries: []ReadQuery{{
+		Kind: "done", Ops: []DoneIdentity{{Epoch: receiptEpoch, Op: op, IntentDigest: intentDigest(intent)}},
+	}}}
+	readers := []struct {
+		name string
+		read func(context.Context, ReadPlan) (ReadReply, error)
+	}{
+		{name: "Mem", read: h.mem.Read},
+		{name: "Lua", read: newFixtureRedis(t, h.fx.Client).Read},
+	}
+	var saved *DoneSlot
+	for _, reader := range readers {
+		reply, err := reader.read(context.Background(), plan)
+		if err != nil || reply.Status != "read" || len(reply.Answers) != 1 || len(reply.Answers[0].Done) != 1 {
+			t.Fatalf("%s done lookup: reply=%+v err=%v", reader.name, reply, err)
+		}
+		slot := reply.Answers[0].Done[0]
+		if slot.Status != wantStatus {
+			t.Fatalf("%s done lookup status=%q, want %q: %+v", reader.name, slot.Status, wantStatus, slot)
+		}
+		if saved != nil && !reflect.DeepEqual(*saved, slot) {
+			t.Fatalf("done slot differs: %s=%+v other=%+v", reader.name, slot, *saved)
+		}
+		copy := slot
+		saved = &copy
+	}
+	return *saved
 }
 
 func stateStep(space string, epoch Decimal, entries ...Entry) Step {
@@ -251,31 +285,58 @@ func TestReplannedIntentReplayAcrossAdvance(t *testing.T) {
 	t.Parallel()
 	h := newNamedStateHarness(t)
 	space := h.fx.Space
-	h.apply(t, stateStep(space, "0", Entry{Kind: "rows", Table: "work", Add: []string{"r"}}))
+	h.apply(t, stateStep(space, "0",
+		Entry{Kind: "rows", Table: "work", Add: []string{"r"}},
+		Entry{Kind: "create", Table: "work", To: "r:c", IDs: []string{"first"}, Scores: []string{"1"}}))
 	original := stateNamed(space, "0", "part-7", "stable semantic arguments", "recorded result",
-		Entry{Kind: "create", Table: "work", To: "r:c", IDs: []string{"first"}, Scores: []string{"1"}})
+		Entry{Kind: "remove", Table: "work", From: "r:c", IDs: []string{"first"}, Revs: []Decimal{"1"}})
 	initial := h.apply(t, original)
 	if initial.Replay || initial.Result != "recorded result" || initial.Changed != 1 {
-		t.Fatalf("fresh named reply=%+v", initial)
+		t.Fatalf("fresh named remove reply=%+v", initial)
 	}
+	old := stateWork(t, h.snapshot(t), "0")
+	stillInCell := false
+	if row := old.Cells["r"]; row != nil {
+		_, stillInCell = row["c"]["first"]
+	}
+	if stillInCell || old.Records["first"].Row != "" {
+		t.Fatalf("original remove did not vacate source member: %+v", old)
+	}
+	// The resend is dynamically impossible: its remove source was vacated by
+	// the original step and its extra guard names a member that never existed.
+	// Receipt lookup must return before either dynamic guard is evaluated.
 	replanned := stateNamed(space, "0", "part-7", "stable semantic arguments", "new estimate",
-		Entry{Kind: "create", Table: "work", To: "r:d", IDs: []string{"should-not-exist"}, Scores: []string{"5"}})
+		Entry{Kind: "remove", Table: "work", From: "r:c", IDs: []string{"first"}, Revs: []Decimal{"1"}},
+		Entry{Kind: "guard", Table: "work", From: "r:c", IDs: []string{"never-present"}, Revs: []Decimal{"1"}})
+	matched := h.doneSlot(t, "0", "0", "part-7", "stable semantic arguments", "match")
+	if matched.Receipt == nil || matched.Receipt.Result != "recorded result" || matched.Receipt.Status != "ok" {
+		t.Fatalf("done before same-epoch replan = %+v, want recorded ok receipt", matched)
+	}
 	firstReplay := h.unchanged(t, replanned)
 	if !firstReplay.Replay || firstReplay.Result != "recorded result" || firstReplay.Changed != 1 {
-		t.Fatalf("same-epoch replan did not replay original result: %+v", firstReplay)
+		t.Fatalf("same-epoch remove replan did not replay original result: %+v", firstReplay)
 	}
 	h.apply(t, stateNamed(space, "0", "clear-0", "clear intent", "",
 		Entry{Kind: "advance", AdvanceFrom: "0"}, Entry{Kind: "rows", Table: "work", Add: []string{"r"}}))
+	matched = h.doneSlot(t, "1", "0", "part-7", "stable semantic arguments", "match")
+	if matched.Receipt == nil || matched.Receipt.EpochBefore != "0" || matched.Receipt.EpochAfter != "0" ||
+		matched.Receipt.Result != "recorded result" {
+		t.Fatalf("done before post-advance replan = %+v, want original receipt", matched)
+	}
 	staleReplay := h.unchanged(t, replanned)
 	if !staleReplay.Replay || staleReplay.Result != "recorded result" || staleReplay.EpochBefore != "0" {
-		t.Fatalf("replan after advance did not replay original result: %+v", staleReplay)
+		t.Fatalf("remove replan after advance did not replay original result: %+v", staleReplay)
 	}
-	if _, exists := stateWork(t, h.snapshot(t), "0").Records["should-not-exist"]; exists {
-		t.Fatal("replanned member was committed during replay")
+	if got := stateWork(t, h.snapshot(t), "1"); got.Records["first"].Row != "" {
+		t.Fatalf("replayed remove repopulated successor state: %+v", got.Records["first"])
 	}
 	changedIntent := replanned
 	other := "changed semantic arguments"
 	changedIntent.Intent = &other
+	conflict := h.doneSlot(t, "1", "0", "part-7", other, "conflict")
+	if conflict.IntentDigest != intentDigest("stable semantic arguments") || conflict.Receipt != nil {
+		t.Fatalf("done must preserve immutable recorded intent: %+v", conflict)
+	}
 	h.refuse(t, changedIntent, "OPCONFLICT")
 }
 

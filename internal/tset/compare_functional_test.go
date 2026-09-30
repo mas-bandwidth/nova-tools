@@ -146,7 +146,7 @@ func TestL1OnlyMemLuaTenThousandRandomSteps(t *testing.T) {
 func newCompareHarness(t *testing.T) *compareHarness {
 	t.Helper()
 	fx := newTSetFixture(t)
-	h := &compareHarness{t: t, fx: fx, rdb: NewRedis(fx.Client)}
+	h := &compareHarness{t: t, fx: fx, rdb: newFixtureRedis(t, fx.Client)}
 	h.configure()
 	return h
 }
@@ -290,8 +290,9 @@ func nextCompareAction(r *rand.Rand, snapshot MemSnapshot, space string, seed in
 	}
 	if index == stepsPerSeed/2 {
 		base.Entries = []Entry{{Kind: "advance", AdvanceFrom: epoch}, {Kind: "rows", Table: compareTable, Add: []string{"r0", "r1"}}}
-		name := fmt.Sprintf("advance-%d-%d", seed, index)
-		base.Op, base.Intent = &name, &name
+		name := fmt.Sprintf("advance-%d-%d-e%s", seed, index, epoch)
+		intent := fmt.Sprintf("advance-and-restore/%d/%d/from=%s/rows=r0,r1", seed, index, epoch)
+		base.Op, base.Intent = &name, &intent
 		return compareAction{Step: base, Label: "advance and restore rows"}
 	}
 	if replay != nil && r.Intn(29) == 0 {

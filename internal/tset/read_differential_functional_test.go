@@ -128,7 +128,7 @@ func TestReadDifferentialMixedProjectionAndBounds(t *testing.T) {
 		{Kind: "range", Key: fx.Space + "index:work", Min: "-inf", Max: "+inf", Limit: 2},
 	}}
 	model, me := m.Read(context.Background(), plan)
-	server, se := NewRedis(fx.Client).Read(context.Background(), plan)
+	server, se := newFixtureRedis(t, fx.Client).Read(context.Background(), plan)
 	if me != nil || se != nil {
 		t.Fatalf("mixed read: Mem=%v Lua=%v", me, se)
 	}
@@ -165,7 +165,7 @@ func TestReadDifferentialExactEmptyScoreBounds(t *testing.T) {
 		{Kind: "rcount", Table: "work", Cells: []string{"r:c"}, Min: "-inf", Max: "("},
 	}}
 	model, me := m.Read(ctx, plan)
-	server, se := NewRedis(fx.Client).Read(ctx, plan)
+	server, se := newFixtureRedis(t, fx.Client).Read(ctx, plan)
 	if me != nil || se != nil {
 		t.Fatalf("exact empty score bounds: Mem=%v Lua=%v", me, se)
 	}
@@ -186,7 +186,7 @@ func TestReadDifferentialRepeatedCellProbeBoundary(t *testing.T) {
 	}
 	plan := ReadPlan{Epoch: "0", Space: fx.Space, Queries: []ReadQuery{{Kind: "count", Table: "work", Cells: cells}}}
 	model, me := m.Read(context.Background(), plan)
-	server, se := NewRedis(fx.Client).Read(context.Background(), plan)
+	server, se := newFixtureRedis(t, fx.Client).Read(context.Background(), plan)
 	if me != nil || se != nil {
 		t.Fatalf("10k repeated-cell count: Mem=%v Lua=%v", me, se)
 	}
@@ -200,7 +200,7 @@ func TestReadDifferentialRepeatedCellProbeBoundary(t *testing.T) {
 	}
 	plan.Queries[0].Cells = cells
 	_, me = m.Read(context.Background(), plan)
-	_, se = NewRedis(fx.Client).Read(context.Background(), plan)
+	_, se = newFixtureRedis(t, fx.Client).Read(context.Background(), plan)
 	var mr, sr *Refusal
 	if !errors.As(me, &mr) || !errors.As(se, &sr) || mr.Code != "BUDGET" || sr.Code != "BUDGET" || mr.Detail.Budget != "cell" || sr.Detail.Budget != "cell" {
 		t.Fatalf("20k count cap differs: Mem=%v Lua=%v", me, se)
@@ -221,7 +221,7 @@ func TestReadDifferentialMissingRowProbeAtCellBudget(t *testing.T) {
 		cells[tc.existing] = "missing:c"
 		plan := ReadPlan{Epoch: "0", Space: fx.Space, Queries: []ReadQuery{{Kind: "count", Table: "work", Cells: cells}}}
 		model, me := m.Read(context.Background(), plan)
-		server, se := NewRedis(fx.Client).Read(context.Background(), plan)
+		server, se := newFixtureRedis(t, fx.Client).Read(context.Background(), plan)
 		var mr, sr *Refusal
 		if !errors.As(me, &mr) || !errors.As(se, &sr) || mr.Code != tc.code || sr.Code != tc.code {
 			t.Fatalf("%d existing cells: Mem=%v Lua=%v", tc.existing, me, se)
@@ -255,7 +255,7 @@ func TestReadDifferentialMissingPlacedRowDriftBeforeCellProbe(t *testing.T) {
 		{Kind: "ids", Table: "work", IDs: []string{"c"}, Fields: []string{}},
 	}}
 	model, me := m.Read(ctx, plan)
-	server, se := NewRedis(fx.Client).Read(ctx, plan)
+	server, se := newFixtureRedis(t, fx.Client).Read(ctx, plan)
 	var mr, sr *Refusal
 	if !errors.As(me, &mr) || !errors.As(se, &sr) || mr.Code != "DRIFT" || sr.Code != "DRIFT" ||
 		mr.Detail.QueryIndex == nil || *mr.Detail.QueryIndex != 1 || sr.Detail.QueryIndex == nil || *sr.Detail.QueryIndex != 1 {
@@ -282,7 +282,7 @@ func TestReadDifferentialRawRangeLongIDRefuses(t *testing.T) {
 		{Kind: "range", Key: key, Min: "-inf", Max: "+inf", Limit: 1},
 	}}
 	model, me := m.Read(context.Background(), plan)
-	server, se := NewRedis(fx.Client).Read(context.Background(), plan)
+	server, se := newFixtureRedis(t, fx.Client).Read(context.Background(), plan)
 	var mr, sr *Refusal
 	if !errors.As(me, &mr) || !errors.As(se, &sr) || mr.Code != "DRIFT" || sr.Code != "DRIFT" {
 		t.Fatalf("257-byte raw ID: Mem reply=%+v err=%v, Lua reply=%+v err=%v", model, me, server, se)
@@ -327,7 +327,7 @@ func TestReadDifferentialTenThousandProjectedRecords(t *testing.T) {
 	fx.Activate(t)
 	plan := ReadPlan{Epoch: "0", Space: fx.Space, Queries: []ReadQuery{{Kind: "ids", Table: "work", IDs: ids, Fields: []string{"a", "b", "c", "d", "e"}}}}
 	model, me := m.Read(ctx, plan)
-	server, se := NewRedis(fx.Client).Read(ctx, plan)
+	server, se := newFixtureRedis(t, fx.Client).Read(ctx, plan)
 	if me != nil || se != nil {
 		t.Fatalf("10k projected-record read: Mem=%v Lua=%v", me, se)
 	}

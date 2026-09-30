@@ -7,6 +7,7 @@ import (
 )
 
 func TestMemAbsentRecordSelectedFieldsCountAsObservations(t *testing.T) {
+	t.Parallel()
 	const space = "absent-fields:"
 	m := NewMem()
 	if err := m.DefineTable(space, "work", TableDefinition{

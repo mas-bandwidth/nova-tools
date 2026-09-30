@@ -1384,9 +1384,14 @@ func tsetBootstrap(ctx context.Context, direct *redis.Client, store tset.Store, 
 // remains NOT MEASURED if its prerequisites or measurement fail. The caller
 // supplies the profile loader and Store constructor; Emma's proxy is only an
 // explicit address and is not recreated here.
+type tsetOwnedStore interface {
+	tset.Store
+	Close() error
+}
+
 func tsetRunL1(ctx context.Context, cfg tsetSizeConfig,
 	load func(context.Context, *redis.Client) error,
-	newStore func(*redis.Client) tset.Store, out io.Writer) error {
+	newStore func(string, string) (tsetOwnedStore, error), out io.Writer) error {
 	if err := cfg.validate(); err != nil {
 		return err
 	}
@@ -1411,57 +1416,65 @@ func tsetRunL1(ctx context.Context, cfg tsetSizeConfig,
 		for _, route := range routes {
 			space := cfg.space + strconv.Itoa(cards) + ":" + route.name + ":"
 			clientName := fmt.Sprintf("tset-size-%d-%s", cards, route.name)
-			client := redis.NewClient(&redis.Options{Addr: route.addr, ClientName: clientName, MaxRetries: -1})
-			store := newStore(client)
-			if err := tsetBootstrap(ctx, direct, store, space, 100); err != nil {
-				client.Close()
-				return err
-			}
-			beforeMemory, beforeMemoryErr := direct.Info(ctx, "memory").Result()
-			result := tsetFill(ctx, tsetSizeSampler{store: store, observer: direct, clientName: clientName}, space, cards)
-			result.scenario = route.name
-			measured := []tsetSizeResult{result}
-			if result.verdict() == "INSIDE" || result.verdict() == "OVER" {
-				if beforeMemoryErr == nil {
-					measured = append(measured, tsetMemoryCase(ctx, direct, space, cards, route.name, beforeMemory))
-				} else {
-					measured = append(measured, tsetSizeResult{row: "L1-21", cards: cards, scenario: route.name,
-						why: fmt.Sprintf("INFO memory before fill: %v", beforeMemoryErr)})
+			if err := func() (routeErr error) {
+				store, err := newStore(route.addr, clientName)
+				if err != nil {
+					return fmt.Errorf("L1 %s store: %w", route.name, err)
 				}
-				measurer := tsetSizeSampler{store: store, observer: direct, clientName: clientName}
-				simple := tsetSimpleCases(ctx, measurer, space, cards, route.name)
-				measured = append(measured, simple...)
-				if len(simple) == 6 && simple[len(simple)-1].correct && simple[len(simple)-1].complete {
-					deal := tsetDealCase(ctx, measurer, space, cards, route.name)
-					measured = append(measured, deal)
-					if deal.correct && deal.complete {
-						measured = append(measured, tsetRefusalCase(ctx, measurer, space, cards, route.name))
-						byteCase := tsetByteCase(ctx, measurer, space, cards, route.name)
-						measured = append(measured, byteCase)
-						measured = append(measured, tsetReplayCase(ctx, measurer, space, cards, route.name))
-						if byteCase.complete && byteCase.correct {
-							measured = append(measured, tsetReadCases(ctx, measurer, space, cards, route.name)...)
+				defer func() {
+					if closeErr := store.Close(); routeErr == nil {
+						routeErr = closeErr
+					}
+				}()
+				if err := tsetBootstrap(ctx, direct, store, space, 100); err != nil {
+					return err
+				}
+				beforeMemory, beforeMemoryErr := direct.Info(ctx, "memory").Result()
+				result := tsetFill(ctx, tsetSizeSampler{store: store, observer: direct, clientName: clientName}, space, cards)
+				result.scenario = route.name
+				measured := []tsetSizeResult{result}
+				if result.verdict() == "INSIDE" || result.verdict() == "OVER" {
+					if beforeMemoryErr == nil {
+						measured = append(measured, tsetMemoryCase(ctx, direct, space, cards, route.name, beforeMemory))
+					} else {
+						measured = append(measured, tsetSizeResult{row: "L1-21", cards: cards, scenario: route.name,
+							why: fmt.Sprintf("INFO memory before fill: %v", beforeMemoryErr)})
+					}
+					measurer := tsetSizeSampler{store: store, observer: direct, clientName: clientName}
+					simple := tsetSimpleCases(ctx, measurer, space, cards, route.name)
+					measured = append(measured, simple...)
+					if len(simple) == 6 && simple[len(simple)-1].correct && simple[len(simple)-1].complete {
+						deal := tsetDealCase(ctx, measurer, space, cards, route.name)
+						measured = append(measured, deal)
+						if deal.correct && deal.complete {
+							measured = append(measured, tsetRefusalCase(ctx, measurer, space, cards, route.name))
+							byteCase := tsetByteCase(ctx, measurer, space, cards, route.name)
+							measured = append(measured, byteCase)
+							measured = append(measured, tsetReplayCase(ctx, measurer, space, cards, route.name))
+							if byteCase.complete && byteCase.correct {
+								measured = append(measured, tsetReadCases(ctx, measurer, space, cards, route.name)...)
+							}
+							measured = append(measured, tsetWideRowsCase(ctx, measurer, space, cards, route.name))
+							measured = append(measured, tsetRowScaleCase(ctx, measurer, direct, space, cards, route.name))
+							measured = append(measured, tsetBeatCase(ctx, measurer, space, cards, route.name))
+							measured = append(measured, tsetTopologyCases(ctx, measurer, space, cards, route.name)...)
+							measured = append(measured, tsetAdvanceCase(ctx, measurer, space, cards, route.name))
 						}
-						measured = append(measured, tsetWideRowsCase(ctx, measurer, space, cards, route.name))
-						measured = append(measured, tsetRowScaleCase(ctx, measurer, direct, space, cards, route.name))
-						measured = append(measured, tsetBeatCase(ctx, measurer, space, cards, route.name))
-						measured = append(measured, tsetTopologyCases(ctx, measurer, space, cards, route.name)...)
-						measured = append(measured, tsetAdvanceCase(ctx, measurer, space, cards, route.name))
 					}
 				}
-			}
-			for _, measuredRow := range measured {
-				for i := range results {
-					if results[i].row == measuredRow.row && results[i].cards == cards && results[i].scenario == route.name {
-						results[i] = measuredRow
-						break
+				for _, measuredRow := range measured {
+					for i := range results {
+						if results[i].row == measuredRow.row && results[i].cards == cards && results[i].scenario == route.name {
+							results[i] = measuredRow
+							break
+						}
+					}
+					if measuredRow.verdict() != "INSIDE" {
+						failed = true
 					}
 				}
-				if measuredRow.verdict() != "INSIDE" {
-					failed = true
-				}
-			}
-			if err := client.Close(); err != nil {
+				return nil
+			}(); err != nil {
 				return err
 			}
 		}
@@ -1483,7 +1496,9 @@ func tsetSizeCLI(ctx context.Context, cfg tsetSizeConfig, out io.Writer) error {
 			}
 			return fn.LoadTSet(ctx, client, fn.TSetComposed)
 		},
-		func(client *redis.Client) tset.Store { return tset.NewRedis(client) }, out)
+		func(addr, clientName string) (tsetOwnedStore, error) {
+			return tset.NewRedis(addr, "", "", tset.WithClientName(clientName))
+		}, out)
 }
 
 func tsetInfoField(info, name string) string {
@@ -1764,7 +1779,11 @@ func tsetMemoryCLI(ctx context.Context, cfg tsetSizeConfig, cards int, out io.Wr
 		return fmt.Errorf("capture post-GC baseline: %w", err)
 	}
 	space := cfg.space + "memory:" + strconv.Itoa(cards) + ":"
-	store := tset.NewRedis(client)
+	store, err := tset.NewRedis(cfg.redisAddr, "", "")
+	if err != nil {
+		return fmt.Errorf("L1 memory store: %w", err)
+	}
+	defer store.Close()
 	if err := tsetBootstrap(ctx, client, store, space, 100); err != nil {
 		return err
 	}

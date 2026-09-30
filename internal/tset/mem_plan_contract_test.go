@@ -31,6 +31,7 @@ func memPlanStep(t *testing.T, m *Mem, step Step) Reply {
 }
 
 func TestMemPlanProjectsActualMemberEffectsAndCopies(t *testing.T) {
+	t.Parallel()
 	const space = "mem-plan:"
 	m := memPlanFixture(t)
 	create := Step{Epoch: "0", Space: space, Entries: []Entry{
@@ -134,6 +135,7 @@ func TestMemPlanProjectsActualMemberEffectsAndCopies(t *testing.T) {
 }
 
 func TestMemPlanAdvanceReplayFenceAndRefusal(t *testing.T) {
+	t.Parallel()
 	const space = "mem-plan:"
 	m := memPlanFixture(t)
 	op, intent := "advance-op", "advance-intent"
@@ -182,6 +184,7 @@ func TestMemPlanAdvanceReplayFenceAndRefusal(t *testing.T) {
 }
 
 func TestMemPlanFiltersAlignedArraysAndTopologyNoops(t *testing.T) {
+	t.Parallel()
 	const space = "mem-plan:"
 	m := memPlanFixture(t)
 	memPlanStep(t, m, Step{Epoch: "0", Space: space, Entries: []Entry{{Kind: "create", Table: "work",

@@ -25,7 +25,7 @@ func TestReceiptEncodingBudgetParity(t *testing.T) {
 	}
 	fx.Activate(t)
 	ctx := context.Background()
-	store := NewRedis(fx.Client)
+	store := newFixtureRedis(t, fx.Client)
 	op, intent := "encoding-proof", "stable encoding intent"
 	result := "<>&/\u2028\u2029\x7f\x01é日"
 	step := Step{Epoch: "0", Space: fx.Space, Op: &op, Intent: &intent,

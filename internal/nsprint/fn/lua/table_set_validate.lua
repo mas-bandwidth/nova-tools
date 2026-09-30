@@ -196,8 +196,9 @@ function S.next(s)
 end
 
 -- Parse a decimal lexeme before numeric conversion. Lua tonumber alone accepts
--- whitespace/hex and silently maps nonzero underflow to zero. Redis 8.10.2's
--- string2d rejects the latter; its finite score subset is the tset contract.
+-- whitespace/hex and silently maps nonzero underflow to zero. Redis 8.10.2
+-- accepts some nonzero underflows and stores zero; tset deliberately excludes
+-- every nonzero-to-zero spelling as well as nondecimal/inf spellings.
 local function decimal(s)
     if type(s) ~= 'string' or s == '' or s:find('%z') then return false end
     local body = s
@@ -678,6 +679,9 @@ local function validate_step(req, allow_derived_notes)
         elseif x.kind == 'advance' then
             nonrowset_seen = true
             advances = advances + 1
+            -- An advance always needs a stable receipt identity, including a
+            -- generic advance with no rowset/restoration entries.
+            if req.op == nil then return failure('REQUEST', {entry_index=i-1}) end
             if i ~= rowset_prefix + 1 or advances > 1 then return failure('REQUEST', {entry_index=i-1}) end
         elseif x.kind == 'rows' then
             nonrowset_seen = true

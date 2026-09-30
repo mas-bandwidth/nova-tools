@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"reflect"
 	"testing"
 	"time"
@@ -75,6 +76,27 @@ func (p *fakeRedisPipeline) FCall(ctx context.Context, function string, keys []s
 	return cmd
 }
 
+func (p *fakeRedisPipeline) Process(_ context.Context, cmd redis.Cmder) error {
+	idx := len(p.commands)
+	p.client.capturedArgs = append(p.client.capturedArgs, append([]interface{}(nil), cmd.Args()...))
+	p.commands = append(p.commands, cmd)
+	if idx >= len(p.client.replies) {
+		cmd.SetErr(errors.New("fake: no reply configured"))
+		return nil
+	}
+	reply := p.client.replies[idx]
+	if reply.err != nil {
+		cmd.SetErr(reply.err)
+		return nil
+	}
+	setter, ok := cmd.(interface{ SetVal(interface{}) })
+	if !ok {
+		return errors.New("fake: command does not support SetVal")
+	}
+	setter.SetVal(reply.value)
+	return nil
+}
+
 func (p *fakeRedisPipeline) Exec(context.Context) ([]redis.Cmder, error) {
 	p.client.flushCalls++
 	return p.commands, nil
@@ -99,7 +121,7 @@ func TestStepsMixedRefusalAndSuccess(t *testing.T) {
 		{value: refusedWireReply("REVISION")},
 		{value: okWireReply("third")},
 	}}
-	store := NewRedis(fake)
+	store := newRedisWithClient(fake)
 	results, err := store.Steps(context.Background(), []Step{emptyStep(), emptyStep(), emptyStep()})
 	if err != nil {
 		t.Fatalf("Steps returned batch error: %v", err)
@@ -129,7 +151,7 @@ func TestOneRoundTripForSets(t *testing.T) {
 		{value: okWireReply("first-input")},
 	}}
 	steps := []Step{setStep("first"), setStep("second")}
-	results, err := NewRedis(fake).Steps(context.Background(), steps)
+	results, err := newRedisWithClient(fake).Steps(context.Background(), steps)
 	if err != nil {
 		t.Fatalf("Steps: %v", err)
 	}
@@ -151,7 +173,7 @@ func TestAPIAlwaysSets(t *testing.T) {
 	t.Parallel()
 	fake := &fakeRedisClient{replies: []fakeRedisReply{{value: okWireReply("created")}}}
 	step := setStep("ready")
-	if _, err := NewRedis(fake).Step(context.Background(), step); err != nil {
+	if _, err := newRedisWithClient(fake).Step(context.Background(), step); err != nil {
 		t.Fatalf("Step: %v", err)
 	}
 	if len(fake.capturedArgs) != 1 {
@@ -181,7 +203,7 @@ func TestStepsEncodingFailureDispatchesNothing(t *testing.T) {
 	fake := &fakeRedisClient{replies: []fakeRedisReply{{value: okWireReply("unused")}}}
 	bad := emptyStep()
 	bad.Epoch = "00"
-	results, err := NewRedis(fake).Steps(context.Background(), []Step{emptyStep(), bad})
+	results, err := newRedisWithClient(fake).Steps(context.Background(), []Step{emptyStep(), bad})
 	if err == nil || results != nil {
 		t.Fatalf("Steps encoding failure = (%v, %v), want nil results and error", results, err)
 	}
@@ -203,7 +225,7 @@ func TestLostReplyRetainsBytes(t *testing.T) {
 	known.Op, known.Intent = &knownOp, &knownIntent
 	uncertain.Op, uncertain.Intent = &uncertainOp, &uncertainIntent
 	steps := []Step{known, uncertain}
-	results, err := NewRedis(fake).Steps(context.Background(), steps)
+	results, err := newRedisWithClient(fake).Steps(context.Background(), steps)
 	if err != nil {
 		t.Fatalf("dispatched Steps returned global error: %v", err)
 	}
@@ -252,7 +274,7 @@ func TestStepPreExecutionRedisFailuresMapExactlyAndDoNotRetry(t *testing.T) {
 			op := "stable-op"
 			intent := `{"part":"fixed-1","verb":"move"}`
 			step.Op, step.Intent = &op, &intent
-			_, err := NewRedis(fake).Step(context.Background(), step)
+			_, err := newRedisWithClient(fake).Step(context.Background(), step)
 			var mapped *ClientError
 			if !errors.As(err, &mapped) || mapped.Code != tc.want {
 				t.Fatalf("Step error = %v, want exact %s pre-execution mapping", err, tc.want)
@@ -276,7 +298,7 @@ func TestStepUnknownReplyIsNotRetriedOrRenamed(t *testing.T) {
 	op := "stable-op"
 	intent := "stable semantic bytes"
 	step.Op, step.Intent = &op, &intent
-	_, err := NewRedis(fake).Step(context.Background(), step)
+	_, err := newRedisWithClient(fake).Step(context.Background(), step)
 	if !errors.Is(err, ErrOutcomeUnknown) || !errors.Is(err, transport) {
 		t.Fatalf("Step error = %v, want OUTCOMEUNKNOWN with transport cause", err)
 	}
@@ -313,7 +335,7 @@ func TestStepDoesNotTreatRuntimeTextAsPreexecutionProof(t *testing.T) {
 			t.Parallel()
 			fake := &fakeRedisClient{replies: []fakeRedisReply{{err: tc.err}}}
 			step := emptyStep()
-			_, err := NewRedis(fake).Step(context.Background(), step)
+			_, err := newRedisWithClient(fake).Step(context.Background(), step)
 			var unknown *OutcomeUnknownError
 			if !errors.As(err, &unknown) || !errors.Is(err, ErrOutcomeUnknown) {
 				t.Fatalf("Step error = %v; text alone is not proof of pre-execution refusal", err)
@@ -332,7 +354,7 @@ func TestStepDoesNotTreatRuntimeTextAsPreexecutionProof(t *testing.T) {
 func TestNoRetryClientDispatchesOnce(t *testing.T) {
 	t.Parallel()
 	fake := &fakeRedisClient{replies: []fakeRedisReply{{value: okWireReply("done")}}}
-	reply, err := NewRedis(fake).Step(context.Background(), emptyStep())
+	reply, err := newRedisWithClient(fake).Step(context.Background(), emptyStep())
 	if err != nil || reply.Result != "done" {
 		t.Fatalf("Step with effective MaxRetries=0 returned (%+v, %v)", reply, err)
 	}
@@ -344,7 +366,7 @@ func TestNoRetryClientDispatchesOnce(t *testing.T) {
 func TestRetryEnabledClientRefusesBeforeDispatch(t *testing.T) {
 	t.Parallel()
 	fake := &fakeRedisClient{maxRetries: 3, replies: []fakeRedisReply{{value: okWireReply("must not dispatch")}}}
-	store := NewRedis(fake)
+	store := newRedisWithClient(fake)
 	_, stepErr := store.Step(context.Background(), emptyStep())
 	_, batchErr := store.Steps(context.Background(), []Step{emptyStep(), emptyStep()})
 	for name, err := range map[string]error{"Step": stepErr, "Steps": batchErr} {
@@ -356,6 +378,114 @@ func TestRetryEnabledClientRefusesBeforeDispatch(t *testing.T) {
 	if fake.fcallCalls != 0 || fake.pipelineCalls != 0 || fake.flushCalls != 0 || len(fake.capturedArgs) != 0 {
 		t.Fatalf("retry-enabled client dispatched before refusing: direct=%d pipelines=%d flushes=%d calls=%d", fake.fcallCalls, fake.pipelineCalls, fake.flushCalls, len(fake.capturedArgs))
 	}
+}
+
+func TestTypedNilRedisClientRefusesBeforeMethodCall(t *testing.T) {
+	t.Parallel()
+	var nilClient *redis.Client
+	store := newRedisWithClient(nilClient)
+	for name, call := range map[string]func() error{
+		"Step": func() error {
+			_, err := store.Step(context.Background(), emptyStep())
+			return err
+		},
+		"Steps": func() error {
+			_, err := store.Steps(context.Background(), []Step{emptyStep()})
+			return err
+		},
+	} {
+		err := call()
+		var clientErr *ClientError
+		if !errors.As(err, &clientErr) || clientErr.Code != "UNSUPPORTEDSTORE" {
+			t.Errorf("%s with typed-nil client returned %v, want UNSUPPORTEDSTORE without panic", name, err)
+		}
+	}
+}
+
+func TestOwnedRedisClientDisablesRetriesAndAppliesSupportedOptions(t *testing.T) {
+	t.Parallel()
+	store, err := NewRedis("127.0.0.1:6379", "fixture-user", "", WithClientName("tset-contract-test"))
+	if err != nil {
+		t.Fatalf("NewRedis: %v", err)
+	}
+	defer store.Close()
+	client, ok := store.client.(*redis.Client)
+	if !ok {
+		t.Fatalf("owned client type is %T, want *redis.Client", store.client)
+	}
+	options := client.Options()
+	if options.Addr != "127.0.0.1:6379" || options.Username != "fixture-user" || options.Password != "" || options.ClientName != "tset-contract-test" {
+		t.Fatalf("owned client options mismatch: addr=%q username=%q password-configured=%t client-name=%q", options.Addr, options.Username, options.Password != "", options.ClientName)
+	}
+	if options.MaxRetries != 0 {
+		t.Fatalf("go-redis normalized MaxRetries to %d, want effective zero retries", options.MaxRetries)
+	}
+}
+
+func TestOwnedRedisStoreCloseClosesOwnedClient(t *testing.T) {
+	t.Parallel()
+	store, err := NewRedis("127.0.0.1:6379", "", "")
+	if err != nil {
+		t.Fatalf("NewRedis: %v", err)
+	}
+	defer func() { _ = store.Close() }()
+	client := store.client.(*redis.Client)
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+	if err := client.Ping(context.Background()).Err(); !errors.Is(err, redis.ErrClosed) {
+		t.Fatalf("Ping after Close returned %v, want redis.ErrClosed without dialing", err)
+	}
+	if err := newRedisWithClient(&fakeRedisClient{}).Close(); err != nil {
+		t.Fatalf("Close of package-local test seam = %v, want no-op", err)
+	}
+}
+
+func TestRedisPasswordEnvironmentLookupMapping(t *testing.T) {
+	t.Parallel()
+	calls := 0
+	lookup := func(name string) (string, bool) {
+		calls++
+		if name != "TSET_TEST_SECRET" {
+			t.Fatalf("lookup called with environment name %q", name)
+		}
+		return "fixture-secret", true
+	}
+	if password, err := redisPasswordFromEnv("", lookup); err != nil || password != "" || calls != 0 {
+		t.Fatalf("empty env name mapped to password=%q err=%v lookup calls=%d, want no lookup and no password", password, err, calls)
+	}
+	if password, err := redisPasswordFromEnv("TSET_TEST_SECRET", lookup); err != nil || password != "fixture-secret" || calls != 1 {
+		t.Fatalf("named env lookup mapped to password=%q err=%v calls=%d", password, err, calls)
+	}
+	if password, err := redisPasswordFromEnv("TSET_MISSING_SECRET", func(string) (string, bool) { return "", false }); err == nil || password != "" {
+		t.Fatalf("missing env lookup returned password=%q err=%v, want error", password, err)
+	}
+}
+
+func TestOwnedRedisClientRequiresUnsetNamedPasswordEnvironmentVariable(t *testing.T) {
+	t.Parallel()
+	envName := uniqueMissingRedisPasswordEnv(t)
+	if store, err := NewRedis("127.0.0.1:6379", "", envName); err == nil || store != nil {
+		if store != nil {
+			_ = store.Close()
+		}
+		t.Fatalf("NewRedis with unset password env name returned (%v, %v), want constructor error", store, err)
+	}
+	if _, err := NewRedis(" ", "", ""); err == nil {
+		t.Fatal("NewRedis accepted an empty address")
+	}
+}
+
+func uniqueMissingRedisPasswordEnv(t *testing.T) string {
+	t.Helper()
+	for i := 0; i < 1000; i++ {
+		name := fmt.Sprintf("TSET_UNSET_PASSWORD_%d_%d", os.Getpid(), i)
+		if _, ok := os.LookupEnv(name); !ok {
+			return name
+		}
+	}
+	t.Fatal("could not choose a unique unset password environment variable name")
+	return ""
 }
 
 func TestGoRedisDefaultRetriesAndUnsupportedRoutersRefuseBeforeDial(t *testing.T) {
@@ -390,7 +520,7 @@ func TestGoRedisDefaultRetriesAndUnsupportedRoutersRefuseBeforeDial(t *testing.T
 
 func assertUnsupportedBeforeDial(t *testing.T, name string, client redis.UniversalClient, dials *int) {
 	t.Helper()
-	_, err := NewRedis(client).Step(context.Background(), emptyStep())
+	_, err := newRedisWithClient(client).Step(context.Background(), emptyStep())
 	var clientErr *ClientError
 	if !errors.As(err, &clientErr) || clientErr.Code != "UNSUPPORTEDSTORE" {
 		t.Fatalf("%s Step returned %v; want UNSUPPORTEDSTORE", name, err)
@@ -419,7 +549,7 @@ func TestStepsPreservesInputRequestIdentity(t *testing.T) {
 	intentA, intentB := `{"part":"0"}`, `{"part":"1"}`
 	first.Op, first.Intent = &opA, &intentA
 	second.Op, second.Intent = &opB, &intentB
-	results, err := NewRedis(fake).Steps(context.Background(), []Step{first, second})
+	results, err := newRedisWithClient(fake).Steps(context.Background(), []Step{first, second})
 	if err != nil || len(results) != 2 {
 		t.Fatalf("Steps = (%d slots, %v)", len(results), err)
 	}

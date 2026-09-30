@@ -98,8 +98,10 @@ type Reply struct {
 // MemPlan is the in-memory twin's normalized observation of a successful
 // ordinary step. It is not persisted in receipts or encoded on the Redis wire.
 type MemPlan struct {
-	Entries []MemPlanEntry
-	Before  map[string]map[string]MemberRecord // observed table, then ID; includes guards and no-ops
+	Entries  []MemPlanEntry
+	Before   map[string]map[string]MemberRecord // observed table, then ID; includes guards and no-ops
+	Replay   bool                               // observation only; Commit uses its private captured reply
+	prepared *memPrepared                       // twin-only Plan/Commit handle; never serialized
 }
 
 type MemPlanEntry struct {

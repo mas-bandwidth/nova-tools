@@ -4,6 +4,12 @@ if NS.tset_profile then
 NS.tset = {}
 do
   local S = NS.tset
+  local current_ctx,current_seal
+  local read_cleanup
+  local scope_active=false
+  local callback_depth=0
+  local active_callback_ctx
+  local original_unchanged
   S.profile = NS.tset_profile
   S.limits = {request_bytes=4194304,read_request_bytes=4194304,entries=256,queries=1024,
     ids_per_entry=2000,member_candidates=2000,guard_members=4000,rows=100,advance_rows=1024,
@@ -34,7 +40,23 @@ do
     return n
   end
   S.payload_bytes = payload
+  local function budget_monotone(ctx,remember)
+    local saved=ctx==current_ctx and current_seal or nil
+    local window=saved and saved.callback
+    if callback_depth>0 and (ctx~=active_callback_ctx or not original_unchanged(ctx)) then return nil,S.refuse('CONFIG') end
+    if not window then return true,nil end
+    if ctx.budget~=window.budget then return nil,S.refuse('CONFIG') end
+    for key,value in pairs(ctx.budget) do
+      if type(value)~='number' or value<0 or value~=math.floor(value) then return nil,S.refuse('CONFIG') end
+    end
+    for key,floor in pairs(window.floors) do
+      if type(ctx.budget[key])~='number' or ctx.budget[key]<floor then return nil,S.refuse('CONFIG') end
+    end
+    if remember then for key,value in pairs(ctx.budget) do window.floors[key]=value end end
+    return true,nil
+  end
   function S.charge(ctx, unit, count)
+    local monotone,problem=budget_monotone(ctx,false);if problem then return nil,problem end
     if type(count) ~= 'number' or count < 0 or count ~= math.floor(count) then
       return nil,S.refuse('REQUEST')
     end
@@ -44,9 +66,87 @@ do
     local n = (ctx.budget[unit] or 0) + count
     if n > cap then return nil,limit(ctx,unit,n,cap) end
     ctx.budget[unit] = n
+    return budget_monotone(ctx,true)
+  end
+  -- Redis invokes Functions serially. Keep one private context slot, cleared
+  -- on replacement and by the protected public entry wrappers on all exits.
+  -- Enclosing callers can explicitly release their last context as well.
+  local function copy_value(value)
+    if type(value)~='table' then return value end
+    local out=S.is_array(value) and S.array() or {}
+    for key,item in pairs(value) do out[key]=copy_value(item) end
+    return out
+  end
+  local function equal_value(a,b,depth)
+    if type(a)~=type(b) then return false end
+    if type(a)~='table' then return a==b end
+    depth=(depth or 0)+1
+    if depth>16 or S.is_array(a)~=S.is_array(b) then return false end
+    for key,value in pairs(a) do if not equal_value(value,b[key],depth) then return false end end
+    for key in pairs(b) do if a[key]==nil then return false end end
+    return true
+  end
+  local sealed_fields={'operation','profile','version','space','op','intent','intent_digest','result',
+    'request_epoch','write_epoch','epoch_key','epoch_field','original_fence','notes_implicit',
+    'original_note_count','original_advance','original_advance_index','original_advance_from'}
+  local request_identity={'space','epoch','op','intent','result','fence'}
+  local function remember_context(ctx)
+    local saved={request=copy_value(ctx.request),fields={},rowsets=copy_value(ctx.original_rowsets),
+      notes=ctx.notes,read_request=ctx.operation=='read' and ctx.request or nil}
+    for _,field in ipairs(sealed_fields) do saved.fields[field]=ctx[field] end
+    saved.fields.write_epoch=ctx.original_advance and S.next(ctx.request_epoch) or ctx.request_epoch
+    saved.fields.intent_digest=ctx.intent and redis.sha1hex(ctx.intent) or nil
+    current_ctx=ctx;current_seal=saved
+  end
+  local function prefix_equal(current,original)
+    if type(current)~='table' or type(original)~='table' or #current<#original then return false end
+    if S.is_array(current)~=S.is_array(original) then return false end
+    for i=1,#original do if not equal_value(current[i],original[i]) then return false end end
+    return true
+  end
+  original_unchanged=function(ctx)
+    local saved=ctx==current_ctx and current_seal or nil
+    if not saved or type(ctx.request)~='table' then return false end
+    for _,field in ipairs(sealed_fields) do if ctx[field]~=saved.fields[field] then return false end end
+    for _,field in ipairs(request_identity) do if ctx.request[field]~=saved.request[field] then return false end end
+    if not equal_value(ctx.original_rowsets,saved.rowsets) then return false end
+    if ctx.operation=='step' then
+      local notes=saved.notes
+      if not notes or ctx.notes~=notes or ctx.notes_array~=notes or ctx.request.notes~=notes then return false end
+      if not prefix_equal(ctx.request.entries,saved.request.entries) or not prefix_equal(ctx.notes,saved.request.notes) then return false end
+    elseif ctx.operation=='read' then
+      -- A read has no append-only planning phase. Keep the exact validated
+      -- request and its identity so replacing ctx.request cannot hide edits
+      -- to the original array that the reader is still iterating.
+      if ctx.request~=saved.read_request or not equal_value(ctx.request,saved.request) then return false end
+    end
+    if saved.opened and (ctx.raw_request~=saved.raw_request or ctx.request_hash~=saved.request_hash or
+        ctx.active_epoch~=saved.active_epoch or ctx.now_ms~=saved.now_ms) then return false end
+    return true
+  end
+  local function clear_context()
+    current_ctx=nil;current_seal=nil
+    if read_cleanup then read_cleanup() end
+  end
+  function S.release_context(ctx)
+    if callback_depth>0 then return nil,S.refuse('CONFIG') end
+    if ctx~=current_ctx then return nil,S.refuse('REQUEST') end
+    clear_context()
     return true,nil
   end
+  function S.run_context(fn,...)
+    if scope_active or callback_depth>0 then return S.json.encode(S.refuse('CONFIG')) end
+    clear_context()
+    scope_active=true
+    local ok,result=pcall(fn,...)
+    clear_context()
+    scope_active=false
+    if not ok then error(result,0) end
+    return result
+  end
   function S.context(request, operation)
+    if callback_depth>0 then return nil,S.refuse('CONFIG') end
+    clear_context()
     local space = request.space
     local original_note_count = request.notes and #request.notes or 0
     local notes_implicit = operation == 'step' and request.notes == nil
@@ -84,6 +184,8 @@ do
     ctx.log_key = function(e) return space .. 'sprint:log@' .. e end
     ctx.history_key = function(e,about) return space .. 'sprint:cl:' .. about .. '@' .. e end
     ctx.done_key = function(e) return space .. 'sprint:done@' .. e end
+    ctx.intent_digest=request.intent and redis.sha1hex(request.intent) or nil
+    remember_context(ctx)
     return ctx,nil
   end
   local read_kinds = {HGET='hash',HMGET='hash',HLEN='hash',HKEYS='hash',HSTRLEN='hash',HEXISTS='hash',
@@ -130,7 +232,8 @@ do
     end
     return false
   end
-  function S.readcmd(ctx, descriptor, reserve_bytes, probe_kind)
+  local function readcmd(ctx, descriptor, reserve_bytes, probe_kind)
+    local monotone,problem=budget_monotone(ctx,false);if problem then return nil,problem end
     local _,err = scalar_argv(descriptor.argv); if err then return nil,err end
     local argv = descriptor.argv
     local command = argv[1]
@@ -151,8 +254,11 @@ do
     if command~='TIME' and probe_kind~='field' and probe_kind~='record' then _,err=S.charge(ctx,'cell',1);if err then return nil,err end end
     local category=(probe_kind or 'metadata')..'_commands'
     ctx.budget[category]=(ctx.budget[category] or 0)+1
-    _,err=acl(ctx,argv); if err then return nil,err end
+    _,err=acl(ctx,argv)
+    local _,floor_error=budget_monotone(ctx,true);if floor_error then return nil,floor_error end
+    if err then return nil,err end
     ctx.budget.store_commands = ctx.budget.store_commands + 1
+    budget_monotone(ctx,true)
     local value = redis.pcall(unpack(argv))
     if type(value) == 'table' and value.err then
       if string.find(value.err,'WRONGTYPE',1,true) then return nil,S.refuse(successor_key(ctx,key) and 'DRIFT' or 'WRONGTYPE') end
@@ -166,7 +272,36 @@ do
     local bytes = payload(value)
     if bytes > reserve_bytes then return nil,S.refuse('DRIFT',{budget='read_reservation',actual=bytes,limit=reserve_bytes}) end
     ctx.budget.fetched_bytes = ctx.budget.fetched_bytes + bytes
+    local monotone,problem=budget_monotone(ctx,true);if problem then return nil,problem end
     return value,nil
+  end
+  function S.readcmd(ctx,descriptor,reserve_bytes,probe_kind)
+    if callback_depth>0 then return nil,S.refuse('CONFIG') end
+    return readcmd(ctx,descriptor,reserve_bytes,probe_kind)
+  end
+  -- Installed once by the read fragment. Only its lexical helpers receive
+  -- the private read closure; extensions cannot recover it from their ctx.
+  function S.bind_read_helpers(factory)
+    S.bind_read_helpers=nil
+    read_cleanup=factory(function(ctx,descriptor,reserve_bytes,probe_kind)
+      if callback_depth>0 then return readcmd(ctx,descriptor,reserve_bytes,probe_kind) end
+      return S.readcmd(ctx,descriptor,reserve_bytes,probe_kind)
+    end)
+  end
+  function S.read_callback(ctx,fn,q,index)
+    local saved=ctx==current_ctx and current_seal or nil
+    if callback_depth>0 or not saved or saved.callback or not original_unchanged(ctx) then return nil,S.refuse('CONFIG') end
+    local floors={};for key,value in pairs(ctx.budget) do floors[key]=value end
+    saved.callback={floors=floors,budget=ctx.budget}
+    callback_depth=callback_depth+1
+    active_callback_ctx=ctx
+    local ok,value,problem=pcall(fn,ctx,q,index)
+    callback_depth=callback_depth-1
+    active_callback_ctx=nil
+    local monotone,budget_error=budget_monotone(ctx,false)
+    saved.callback=nil
+    if not ok or budget_error or not original_unchanged(ctx) then return nil,budget_error or S.refuse('CONFIG') end
+    return value,problem
   end
   function S.writecmd(ctx, argv, access)
     local bytes,err=scalar_argv(argv); if err then return nil,err end
@@ -184,9 +319,14 @@ do
   end
   local function rd(ctx,argv,kind,reserve,probe)
     local key=argv[1]=='XINFO' and argv[3] or argv[2]
+    local descriptor={argv=argv,access={{key=key,kind=kind,mode='read'}}}
+    if callback_depth>0 then return readcmd(ctx,descriptor,reserve,probe) end
+    return S.readcmd(ctx,descriptor,reserve,probe)
+  end
+  S.rd=function(ctx,argv,kind,reserve,probe)
+    local key=argv[1]=='XINFO' and argv[3] or argv[2]
     return S.readcmd(ctx,{argv=argv,access={{key=key,kind=kind,mode='read'}}},reserve,probe)
   end
-  S.rd=rd
   local function stage(ctx,plan,command,key,kind,args)
     local d,err=S.command(ctx,command,key,kind,args); if err then return nil,err end
     plan.commands[#plan.commands+1]=d; return true,nil
@@ -194,7 +334,7 @@ do
   S.stage=stage
   function S.open(version,raw)
     local request,err=S.validate(version,raw,'step'); if err then return nil,err end
-    local ctx=S.context(request,'step')
+    local ctx;ctx,err=S.context(request,'step');if err then return nil,err end
     ctx.raw_request=raw; ctx.request_hash=redis.sha1hex(raw)
     ctx.intent_digest=request.intent and redis.sha1hex(request.intent) or nil
     local ok; ok,err=S.open_state(ctx); if err then return nil,err end
@@ -202,12 +342,16 @@ do
       local now; now,err=S.readcmd(ctx,{argv={'TIME'},access={}},64,'metadata'); if err then return nil,err end
       ctx.now_ms=now[1] .. string.format('%03d',math.floor(tonumber(now[2])/1000))
     end
+    local saved=current_seal
+    saved.opened=true;saved.raw_request=raw;saved.request_hash=ctx.request_hash
+    saved.active_epoch=ctx.active_epoch;saved.now_ms=ctx.now_ms
     return ctx,nil
   end
 
   -- Point projections are cached for the entire invocation, including S.before
   -- used by enclosing preplanners. Only newly requested fields cause reads.
-  function S.before(ctx,t,ids,fields)
+  local function before(ctx,t,ids,fields,preload,record_charged)
+    local _,problem=budget_monotone(ctx,false);if problem then return nil,problem end
     if type(ids)~='table' or #ids>10000 or type(fields or {})~='table' or #(fields or {})>384 then return nil,S.refuse('LIMIT') end
     for _,id in ipairs(ids) do if not S.name(id) then return nil,S.refuse('REQUEST') end end
     for _,field in ipairs(fields or {}) do if not S.name(field) then return nil,S.refuse('REQUEST') end end
@@ -217,6 +361,11 @@ do
       local ok,err=S.load_defs(ctx,t);if err then return nil,err end
     end
     local def=ctx.defs[t]; if not def then return nil,S.refuse('NOTABLE',{table=t}) end
+    if ctx.operation=='read' then
+      local ok,err
+      if not record_charged then ok,err=S.charge(ctx,'record',#ids);if err then return nil,err end end
+      ok,err=S.charge(ctx,'field',#ids*#(fields or {}));if err then return nil,err end
+    end
     local cache=ctx.before[t]; if not cache then cache={};ctx.before[t]=cache end
     local answer={}
     for _,id in ipairs(ids) do
@@ -230,10 +379,11 @@ do
           local charged,cerr=S.charge(ctx,'record',1);if cerr then return nil,cerr end
         end
         ctx.budget.record_metadata_fields=(ctx.budget.record_metadata_fields or 0)+3
-        local vals; vals,err=rd(ctx,{'HMGET',key,'epoch','revision','place:'..t},'hash',600,'record')
-        if err then return nil,err end
-        local size; size,err=rd(ctx,{'HLEN',key},'hash',32,'record'); if err then return nil,err end
-        rec={exists=size>0,epoch=cjson.null,revision=cjson.null,place=cjson.null,score=cjson.null,fields={},field_count=0}
+        local vals=preload and preload.vals
+        if not vals then vals,err=rd(ctx,{'HMGET',key,'epoch','revision','place:'..t},'hash',600,'record');if err then return nil,err end end
+        local size=preload and preload.size
+        if not size then size,err=rd(ctx,{'HLEN',key},'hash',32,'record');if err then return nil,err end end
+        rec={exists=size>0,epoch=cjson.null,revision=cjson.null,place=cjson.null,score=cjson.null,fields={},field_count=0,hash_size=size}
         if rec.exists then
           if not S.uint(vals[1]) or not S.uint(vals[2]) or vals[2]=='0' then return nil,S.refuse('DRIFT',{table=t,ids={id}}) end
           rec.epoch=vals[1];rec.revision=vals[2]
@@ -261,10 +411,15 @@ do
         end
         cache[id]=rec
       end
+      if preload and preload.fields then
+        for field,value in pairs(preload.fields) do rec.fields[field]={present=true,value=value} end
+      end
       local missing={}
       for _,field in ipairs(fields or {}) do if not rec.fields[field] then missing[#missing+1]=field end end
       if #missing>0 then
-        local ok;ok,err=S.charge(ctx,'field',#missing);if err then return nil,err end
+        if ctx.operation~='read' then
+          local ok;ok,err=S.charge(ctx,'field',#missing);if err then return nil,err end
+        end
         local argv={'HMGET',key}
         local reserve=#missing*S.limits.field_value
         if reserve>S.limits.fetched_bytes-ctx.budget.fetched_bytes then
@@ -285,6 +440,55 @@ do
       answer[id]=rec
     end
     return answer,nil
+  end
+  function S.before(ctx,t,ids,fields)
+    return before(ctx,t,ids,fields)
+  end
+  -- Whole-record reads share metadata/placement validation and the projection
+  -- cache. The preload is lexical, so extensions cannot fabricate facts.
+  function S.before_whole(ctx,t,id)
+    local _,err=budget_monotone(ctx,false);if err then return nil,nil,err end
+    if ctx.operation~='read' or not S.name(id) then return nil,nil,S.refuse('REQUEST') end
+    local def;def,err=S.ensure_read_table(ctx,t,ctx.query_index);if err then return nil,nil,err end
+    local cached=ctx.before[t] and ctx.before[t][id]
+    if cached and cached.whole_names then
+      local found;found,err=before(ctx,t,{id},cached.whole_names)
+      if err then return nil,nil,err end
+      return found[id],cached.whole_names,nil
+    end
+    local ok;ok,err=S.charge(ctx,'record',1);if err then return nil,nil,err end
+    local key=ctx.record_key(t,id)
+    local size=cached and cached.hash_size
+    if not size then size,err=rd(ctx,{'HLEN',key},'hash',32,'record');if err then return nil,nil,err end end
+    if size>131 then return nil,nil,S.refuse('DRIFT',{table=t,ids={id}}) end
+    local preload={size=size}
+    local names={}
+    local reserve=size*(256+S.limits.field_value)
+    -- The n-2 bound also reserves field occurrences before fetching payload.
+    -- Near that ceiling HKEYS discovers the exact projection first.
+    if reserve<=S.limits.fetched_bytes-ctx.budget.fetched_bytes and
+        math.max(0,size-2)<=S.limits.read_fields-ctx.budget.field then
+      local values;values,err=rd(ctx,{'HGETALL',key},'hash',reserve,'record');if err then return nil,nil,err end
+      local raw={}
+      for i=1,#values,2 do raw[values[i]]=values[i+1];names[#names+1]=values[i] end
+      preload.vals={raw.epoch or false,raw.revision or false,raw['place:'..t] or false}
+      preload.fields=raw
+    else
+      names,err=rd(ctx,{'HKEYS',key},'hash',size*256,'record');if err then return nil,nil,err end
+    end
+    local fields={}
+    for _,name in ipairs(names) do
+      if name~='epoch' and name~='revision' and string.sub(name,1,6)~='place:' then
+        if not S.name(name) or (preload.fields and #preload.fields[name]>S.limits.field_value) then return nil,nil,S.refuse('DRIFT',{table=t,ids={id}}) end
+        fields[#fields+1]=name
+      elseif preload.fields then preload.fields[name]=nil end
+    end
+    if #fields>128 then return nil,nil,S.refuse('DRIFT',{table=t,ids={id}}) end
+    table.sort(fields)
+    local found;found,err=before(ctx,t,{id},fields,preload,true)
+    if err then return nil,nil,err end
+    found[id].whole_names=fields
+    return found[id],fields,nil
   end
   local function sameplace(a,row,col) return type(a)=='table' and a.row==row and a.col==col end
   local function sorted_fields(set)
@@ -321,6 +525,7 @@ do
     return ctx.request.fence==(ctx.original_fence and true or nil)
   end
   function S.plan(ctx)
+    if not original_unchanged(ctx) then return nil,S.refuse('REQUEST') end
     if not fence_unchanged(ctx) or ctx.original_fence then return nil,S.refuse('REQUEST') end
     -- Preplanners may append notes, but replacing either shared array loses
     -- the aligned order that the log planner uses for note_seqs.
@@ -405,7 +610,7 @@ do
           local ok;ok,err=S.rows_require(ctx,topo,e.t,sr,'source',ix-1);if err then return nil,err end end
         local dest=e.to or (e.kind~='remove' and e.from or nil)
         if dest then dr,dc=S.cell(dest);if not def.column_set[dc] then detail.cells={dest};return nil,S.refuse('NOCOL',detail) end
-          if e.kind~='guard' then local ok;ok,err=S.rows_require(ctx,topo,e.t,dr,'destination',ix-1);if err then return nil,err end end end
+          if e.kind~='guard' and (dr~=sr or dc~=sc) then local ok;ok,err=S.rows_require(ctx,topo,e.t,dr,'destination',ix-1);if err then return nil,err end end end
         result.from=e.from;result.to=dest
         seen[e.t]=seen[e.t] or {}
         for i,id in ipairs(e.ids) do
@@ -421,7 +626,7 @@ do
             err.detail.entry_index=ix-1;return nil,err end
           local b=before[id]
           if e.kind=='create' then
-            if b.exists then return nil,S.refuse(ctx.write_epoch~=ctx.request_epoch and 'DRIFT' or 'EXISTS',detail) end
+            if b.exists then return nil,S.refuse('EXISTS',detail) end
           else
             if not b.exists then return nil,S.refuse('MISSING',detail) end
             if b.epoch~=ctx.write_epoch then return nil,S.refuse('MEMBEREPOCH',detail) end
@@ -451,6 +656,9 @@ do
             local after=e.kind=='remove' and cjson.null or (e.scores and e.scores[i] or b.score)
             local changed=e.kind=='create' or e.kind=='remove' or newkey~=oldkey or tonumber(after)~=tonumber(b.score) or next(sets)~=nil or #unsets>0
             if changed then
+              if newkey and newkey==oldkey then
+                local ok;ok,err=S.rows_require(ctx,topo,e.t,dr,'destination',ix-1);if err then return nil,err end
+              end
               local revision=e.kind=='create' and '1' or S.next(b.revision)
               if not revision then return nil,S.refuse('OVERFLOW',detail) end
               local record=ctx.record_key(e.t,id)
@@ -522,7 +730,10 @@ do
     for _,e in ipairs(entries or {}) do if e.t and not seen[e.t] then seen[e.t]=true;names[#names+1]=e.t end end
     if ctx.original_advance then
       if not ctx.catalog then
-        local encoded,err=rd(ctx,{'HGET',ctx.epoch_key,'tables'},'hash',2048,'metadata')
+        local length,err=rd(ctx,{'HSTRLEN',ctx.epoch_key,'tables'},'hash',32,'metadata')
+        if err then return nil,err end
+        if length>2048 then return nil,S.refuse('CONFIG') end
+        local encoded;encoded,err=rd(ctx,{'HGET',ctx.epoch_key,'tables'},'hash',2048,'metadata')
         if err then return nil,err end
         if not encoded then return nil,S.refuse('CONFIG') end
         local valid,catalog=pcall(S.json.decode,encoded)
@@ -551,7 +762,7 @@ do
           if ctx.operation=='read' then detail.query_index=i-1 else detail.entry_index=i-1 end
           break
         end end
-        return nil,S.refuse('NOTABLE',detail)
+        return nil,S.refuse(ctx.original_advance and ctx.catalog_set[name] and 'CONFIG' or 'NOTABLE',detail)
       end
       if n>48 then return nil,S.refuse('CONFIG',{table=name}) end
       local flat;flat,err=rd(ctx,{'HGETALL',key},'hash',49152,'metadata');if err then return nil,err end
@@ -621,6 +832,7 @@ do
     return true,nil
   end
   function S.prepare(ctx,table_plan,log_plan,other_plans)
+    if not original_unchanged(ctx) then return nil,S.refuse('REQUEST') end
     if not fence_unchanged(ctx) then return nil,S.refuse('REQUEST') end
     local commands={}
     local function append(plan)
@@ -691,6 +903,7 @@ do
   -- Enclosing callers must take this path immediately after open/replay, before
   -- invoking any preplanner. The prepared plan has only the done receipt write.
   function S.fence_prepare(ctx)
+    if not original_unchanged(ctx) then return nil,S.refuse('REQUEST') end
     if ctx.operation~='step' or not ctx.original_fence or ctx.replay or
         not fence_unchanged(ctx) or ctx.request.space~=ctx.space or
         ctx.request.epoch~=ctx.request_epoch or ctx.request.op~=ctx.op or
@@ -706,7 +919,7 @@ do
     for i=1,#plan.commands do redis.call(unpack(plan.commands[i])) end
     return plan.reply
   end
-  redis.register_function('ns_tset_step',function(keys,args)
+  local function step(keys,args)
     if #keys~=0 or #args~=2 then return S.json.encode(S.refuse('ARGS')) end
     local ctx,err=S.open(args[1],args[2]);if err then return S.json.encode(err) end
     if ctx.replay then return S.json.encode(ctx.replay) end
@@ -721,9 +934,11 @@ do
     end
     local commit;commit,err=S.prepare(ctx,table_plan,log_plan,{});if err then return S.json.encode(err) end
     return S.commit(commit)
-  end)
+  end
+  redis.register_function('ns_tset_step',function(keys,args) return S.run_context(step,keys,args) end)
+  local function bad_args() return S.json.encode(S.refuse('ARGS')) end
   redis.register_function({function_name='ns_tset_read',flags={'no-writes'},callback=function(keys,args)
-    if #keys~=0 or #args~=2 then return S.json.encode(S.refuse('ARGS')) end
+    if #keys~=0 or #args~=2 then return S.run_context(bad_args) end
     return S.read(args[1],args[2],NS.tlog and NS.tlog.read or nil)
   end})
 end

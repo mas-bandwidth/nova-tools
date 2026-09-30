@@ -70,6 +70,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `textbody/` | shared line-oriented message body filtering | `go test ./internal/textbody` | `go test ./internal/textbody` |
 | `tlc/` | TLC runner: the jar, the run, its results read, the case plan and the run records | `go test ./internal/tlc` | `go test ./internal/tlc` |
 | `tokens/` | token counter and budget tracker | `go test ./internal/tokens` | `go test ./internal/tokens` |
+| `tset/` | atomic table-set wire, Redis client and in-memory twin | `go test ./internal/tset` | `go test ./internal/tset` |
 | `typedrec/` | typed RESULT record contract, parser and legacy adapter | `go test ./internal/typedrec` | `go test ./internal/typedrec` |
 | `update/` | binary updater and checksum verifier | `go test ./internal/update` | `go test ./internal/update` |
 | `wake/` | slot leases and heartbeat monitors | `go test ./internal/wake` | `go test ./internal/wake` |

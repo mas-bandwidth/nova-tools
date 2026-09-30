@@ -51,7 +51,7 @@ func TestRowsetWireRoundTripsRequiredDenseRows(t *testing.T) {
 
 func TestRowsetWireRawShapeAndCanonicalRanks(t *testing.T) {
 	t.Parallel()
-	valid := []byte(`{"epoch":"0","space":"s","entries":[{"kind":"rowset","t":"cards","rows":[{"row":"r","rank":"0"},{"row":"s","rank":"9007199254740991"}]},{"kind":"advance","from":"0"}]}`)
+	valid := []byte(`{"epoch":"0","space":"s","op":"rowset-wire-valid","intent":"canonical rows","entries":[{"kind":"rowset","t":"cards","rows":[{"row":"r","rank":"0"},{"row":"s","rank":"9007199254740991"}]},{"kind":"advance","from":"0"}]}`)
 	if _, err := DecodeStep(valid); err != nil {
 		t.Fatalf("DecodeStep canonical rank endpoints: %v", err)
 	}
@@ -153,7 +153,15 @@ func TestRowsetWireChargesDistinctTableRowsAcrossGuardsAndRestoration(t *testing
 }
 
 func rowsetStep(entries ...Entry) Step {
-	return Step{Epoch: "0", Space: "s", Entries: entries}
+	step := Step{Epoch: "0", Space: "s", Entries: entries}
+	for _, entry := range entries {
+		if entry.Kind == "advance" {
+			op, intent := "rowset-wire-advance", "rowset wire contract"
+			step.Op, step.Intent = &op, &intent
+			break
+		}
+	}
+	return step
 }
 
 func rowsetRows(count int) []RowRank {
@@ -173,7 +181,7 @@ func rowsetWireNames(rows []RowRank) []string {
 }
 
 func rowsetRaw(entries ...string) []byte {
-	return []byte(`{"epoch":"0","space":"s","entries":[` + strings.Join(entries, ",") + `]}`)
+	return []byte(`{"epoch":"0","space":"s","op":"rowset-wire-raw","intent":"raw rowset shape","entries":[` + strings.Join(entries, ",") + `]}`)
 }
 
 func rowsetRefusal(err error, code string) bool {

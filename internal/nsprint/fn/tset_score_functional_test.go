@@ -76,9 +76,20 @@ func TestScoreParserMatchesTargetZADD(t *testing.T) {
 		"1.7976931348623158e308", "1.7976931348623159e308",
 		"1.79769313486231590e308", "1.79769313486231595e308", "1.797693134862316e308",
 		"-1.7976931348623159e308", "-1.797693134862316e308",
-		"1e-400", "-1e-400", "1e309", "0e400",
-		" 1", "1 ", "\t1", "1e", "1e+", "nan", "1\x00junk", "",
+		"1e-324", "2e-324", "1e-330", "1e-340", "1e-342", "2.4703282292062327e-324",
+		"1e-343", "2e-343", "9e-344", "1e-350", "1e-400", "-1e-400", "1e309", "0e400",
+		"0x10", "0X1p3", " 1", "1 ", "\t1", "1e", "1e+", "nan", "1\x00junk", "",
 	}
+	longUnderflow := "0." + strings.Repeat("0", 330) + "1"
+	cases = append(cases, longUnderflow)
+	// Redis 8.10.2 accepts these nonzero decimals but stores a zero score.
+	// The tset contract excludes every nonzero-to-zero score spelling.
+	narrowedUnderflows := map[string]bool{
+		"1e-324": true, "2e-324": true, "1e-330": true,
+		"1e-340": true, "1e-342": true, "2.4703282292062327e-324": true,
+		longUnderflow: true,
+	}
+	narrowedHex := map[string]float64{"0x10": 16, "0X1p3": 8}
 	power := new(big.Int).Lsh(big.NewInt(1), 1024)
 	cases = append(cases, new(big.Int).Sub(new(big.Int).Set(power), big.NewInt(1)).String(),
 		power.String(), new(big.Int).Add(new(big.Int).Set(power), big.NewInt(1)).String())
@@ -94,6 +105,18 @@ func TestScoreParserMatchesTargetZADD(t *testing.T) {
 				t.Fatalf("accepted ZADD %q has unreadable ZSCORE: %v", lexeme, scoreErr)
 			}
 			finite = finiteStoredScore(t, stored)
+		}
+		if narrowedUnderflows[lexeme] {
+			if targetErr != nil || !finite || storedScoreNumber(t, stored) != 0 || got {
+				t.Errorf("contract-narrowed underflow %q: Lua accepted=%v, Redis ZADD error=%v, stored=(%T)%v finite=%v; want Redis zero and Lua refusal", lexeme, got, targetErr, stored, stored, finite)
+			}
+			continue
+		}
+		if expected, narrow := narrowedHex[lexeme]; narrow {
+			if targetErr != nil || !finite || storedScoreNumber(t, stored) != expected || got {
+				t.Errorf("contract-narrowed hex %q: Lua accepted=%v, Redis ZADD error=%v, stored=(%T)%v finite=%v; want Redis score %v and Lua refusal", lexeme, got, targetErr, stored, stored, finite, expected)
+			}
+			continue
 		}
 		if strings.Contains(lexeme, "315") || len(lexeme) > 300 {
 			t.Logf("edge score lexeme=%q Lua=%v RedisErr=%v ZSCORE=(%T)%v finite=%v", lexeme, got, targetErr, stored, stored, finite)
@@ -111,6 +134,12 @@ func TestScoreParserMatchesTargetZADD(t *testing.T) {
 }
 
 func finiteStoredScore(t *testing.T, value any) bool {
+	t.Helper()
+	number := storedScoreNumber(t, value)
+	return !math.IsInf(number, 0) && !math.IsNaN(number)
+}
+
+func storedScoreNumber(t *testing.T, value any) float64 {
 	t.Helper()
 	var number float64
 	switch v := value.(type) {
@@ -133,7 +162,7 @@ func finiteStoredScore(t *testing.T, value any) bool {
 	default:
 		t.Fatalf("ZSCORE returned unexpected type %T (%v)", value, value)
 	}
-	return !math.IsInf(number, 0) && !math.IsNaN(number)
+	return number
 }
 
 func TestTSetExactDecimalWireHelpers(t *testing.T) {

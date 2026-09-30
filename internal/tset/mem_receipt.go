@@ -207,7 +207,7 @@ func (m *Mem) readDoneQuery(space *memSpace, q ReadQuery, budget *readBudget) (R
 			return ReadAnswer{}, memRefusal("EPOCHAHEAD", RefusalDetail{ActiveEpoch: space.active})
 		}
 		if space.epochs[identity.Epoch] == nil {
-			return ReadAnswer{}, memRefusal("EPOCHGONE", RefusalDetail{})
+			return ReadAnswer{}, memRefusal("EPOCHGONE", RefusalDetail{ActiveEpoch: space.active})
 		}
 		if identity.Epoch != space.active && !checkedEpochs[identity.Epoch] {
 			if err := budget.chargeProbe(2); err != nil {
