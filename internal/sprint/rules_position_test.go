@@ -1856,7 +1856,9 @@ func TestMadeFrozenWaiterInTheHeadHoldsTheNeedAtItsOffset(t *testing.T) {
 // count of the waiters closed. Before, the offset was a count: with a closed
 // waiter gone from wait:n the next head began one waiter late, n left missing
 // with that waiter still blocked on it (the second cold read of #4752). n leaves
-// missing only when the cursor has passed every waiter, whichever waiters left.
+// missing only when the cursor has passed every waiter, whichever waiters left:
+// when every waiter beyond the cursor has left, the head after it is empty, and
+// the run that finds it still plans the made intent (the last case).
 func TestMadeWaiterLeavingBetweenTwoHeadsSkipsNobody(t *testing.T) {
 	t.Parallel()
 	const waiters, halvings = 50, 6
@@ -1875,6 +1877,13 @@ func TestMadeWaiterLeavingBetweenTwoHeadsSkipsNobody(t *testing.T) {
 		}},
 		{"one not yet served", func(head int) []int { return []int{head + 3} }},
 		{"one closed and one not yet served", func(head int) []int { return []int{0, head + 3} }},
+		{"every waiter after the cursor", func(head int) []int {
+			var out []int
+			for i := head; i < waiters; i++ {
+				out = append(out, i)
+			}
+			return out
+		}},
 	}
 	for _, c := range cases {
 		for _, start := range []string{"made:n", "made@31"} {
@@ -1903,6 +1912,7 @@ func TestMadeWaiterLeavingBetweenTwoHeadsSkipsNobody(t *testing.T) {
 					delete(tw.wait["n"], id)
 					delete(tw.judged, posJKey(NMissingNeed, "n", id))
 				}
+				seen := []AgendaKey{k, p.Requeue[0]}
 				for run := 2; ; run++ {
 					if run > waiters || len(tw.agenda) != 1 {
 						t.Fatalf("run %d: agenda %v", run, tw.agenda)
@@ -1916,12 +1926,17 @@ func TestMadeWaiterLeavingBetweenTwoHeadsSkipsNobody(t *testing.T) {
 						t.Fatalf("run %d: %+v", run, out)
 					}
 					if len(p.Requeue) == 0 {
-						// the last head: the cursor has passed every waiter
+						// the last head, which may be empty: the cursor has passed every
+						// waiter, and the run that finds it plans the made intent
+						if len(p.Intents) != 1 || p.Intents[0].Kind != posMade || p.Intents[0].Need != "n" {
+							t.Fatalf("run %d is the last: intents %+v", run, p.Intents)
+						}
 						if tw.missing["n"] || len(tw.agenda) != 0 {
 							t.Fatalf("run %d is the last: missing %v agenda %v", run, tw.missing, tw.agenda)
 						}
 						break
 					}
+					seen = append(seen, p.Requeue...)
 					if !tw.missing["n"] {
 						t.Fatalf("run %d left missing with more waiters beyond its head: %v", run, p.Requeue)
 					}
@@ -1934,6 +1949,85 @@ func TestMadeWaiterLeavingBetweenTwoHeadsSkipsNobody(t *testing.T) {
 				if n := tw.openMissing(); n != 0 {
 					t.Fatalf("%d judgments still open", n)
 				}
+				posAgainQuiet(t, tw, halvings, seen)
+			})
+		}
+	}
+}
+
+// posAgainQuiet runs every key given again on a twin that has been drained,
+// each alone and then all in one plan, and requires that none writes anything
+// and that every plan is quiet (E7: a key delivered a second time).
+func posAgainQuiet(t *testing.T, tw *posTwin, halvings int, keys []AgendaKey) {
+	t.Helper()
+	for _, k := range keys {
+		if q := tw.plan(t, ruleNeeds, halvings, k); !posQuiet(q) {
+			t.Fatalf("%s again, alone: a plan that is not quiet: %+v", k.Key, q)
+		}
+		if _, out := tw.run(t, ruleNeeds, halvings, k); out.refused != "" || out.wrote {
+			t.Fatalf("%s again, alone: %+v", k.Key, out)
+		}
+	}
+	if q := tw.plan(t, ruleNeeds, halvings, keys...); !posQuiet(q) {
+		t.Fatalf("every key again, together: a plan that is not quiet: %+v", q)
+	}
+	if _, out := tw.run(t, ruleNeeds, halvings, keys...); out.refused != "" || out.wrote {
+		t.Fatalf("every key again, together: %+v", out)
+	}
+	if len(tw.agenda) != 0 {
+		t.Fatalf("the keys run again left the agenda %v", tw.agenda)
+	}
+}
+
+// A made need with no waiter beyond its cursor is still made: the head after the
+// cursor is empty, and the run that reads it plans the made intent (for no
+// waiter) and takes n out of missing, with no note, no key carried and nothing
+// held back. That is the need whose waiters all left before its first head, or
+// that never had one; the carried-key half (every waiter after the cursor left
+// between two heads) is a case of TestMadeWaiterLeavingBetweenTwoHeadsSkipsNobody.
+// Without the intent n would stay in missing with no waiter to close it.
+func TestMadeNeedWithNoWaiterLeftTakesNOutOfMissing(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name  string
+		twin  func() *posTwin
+		leave bool // every waiter of the twin leaves wait:n before the first head
+	}{
+		{"it never had a waiter", func() *posTwin { return posMadeTwin(0) }, false},
+		{"every waiter left before the first head", func() *posTwin { return posMadeTwin(5) }, true},
+	}
+	for _, c := range cases {
+		for _, start := range []string{"made:n", "made@31"} {
+			t.Run(c.name+"/"+start, func(t *testing.T) {
+				t.Parallel()
+				tw := c.twin()
+				tw.card("x", "s2", Waiting, 1)
+				tw.lines[31] = []string{"x", "n"}
+				if c.leave {
+					for id := range tw.wait["n"] {
+						delete(tw.wait["n"], id)
+						delete(tw.judged, posJKey(NMissingNeed, "n", id))
+					}
+				}
+				if len(tw.wait["n"]) != 0 || tw.openMissing() != 0 || !tw.missing["n"] {
+					t.Fatalf("the state is not the one asked: wait %v, %d open, missing %v", tw.wait["n"], tw.openMissing(), tw.missing)
+				}
+				k := AgendaKey{Key: start, Seq: 31}
+				tw.agenda[k.Key] = k.Seq
+				p, out := tw.run(t, ruleNeeds, 0, k)
+				if out.refused != "" || !out.wrote {
+					t.Fatalf("the run: %+v", out)
+				}
+				if len(p.Intents) != 1 || p.Intents[0].Kind != posMade || p.Intents[0].Need != "n" || len(p.Intents[0].Waiters) != 0 {
+					t.Fatalf("intents %+v, want one made intent for n with no waiter", p.Intents)
+				}
+				if len(p.Notes) != 0 || len(p.Requeue) != 0 || len(p.HeldBack) != 0 || !posHas(p.Done, start) || len(p.Done) != 1 {
+					t.Fatalf("notes %+v requeue %v held %v done %v", p.Notes, p.Requeue, p.HeldBack, p.Done)
+				}
+				if tw.missing["n"] || len(tw.agenda) != 0 {
+					t.Fatalf("n left in missing: missing %v agenda %v", tw.missing, tw.agenda)
+				}
+				posAgainQuiet(t, tw, 0, []AgendaKey{k})
 			})
 		}
 	}
