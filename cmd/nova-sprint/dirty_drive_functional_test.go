@@ -372,7 +372,9 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 		t.Errorf("a stream was %d cards ahead of another at tick %d, over 10%% of the total (%d)", maxSpread, at, limit)
 	}
 
-	// every machine's work is within 5% of the mean
+	// every machine's work is within 5% of the mean of the machines that were
+	// never down during the run; a machine that lapsed is reported, with the
+	// seconds it was down, and not asserted
 	shape, err := st.B.Shapes(ctx, []string{st.Names.Table(sprint.Fleet)})
 	if err != nil || len(shape) == 0 {
 		t.Fatalf("the fleet table: %v", err)
@@ -387,14 +389,59 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 		}
 	}
 	mean := float64(sum) / float64(len(members))
-	var doneLine []string
+	allNotes, _, err := st.B.NotesSince(ctx, "", 1000000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	end := time.Now()
+	downs, downFor := map[string]int{}, map[string]time.Duration{}
+	since := map[string]time.Time{}
+	for _, n := range allNotes {
+		if n.Type != sprint.NMemberDown && n.Type != sprint.NMemberUp {
+			continue
+		}
+		w := strings.Fields(n.What)
+		if len(w) == 0 {
+			continue
+		}
+		m := w[0]
+		switch n.Type {
+		case sprint.NMemberDown:
+			downs[m]++
+			since[m] = n.At
+		case sprint.NMemberUp:
+			if at, ok := since[m]; ok {
+				downFor[m] += n.At.Sub(at)
+				delete(since, m)
+			}
+		}
+	}
+	for m, at := range since {
+		downFor[m] += end.Sub(at)
+	}
+	steady, steadySum := []string{}, 0
 	for _, m := range members {
+		if downs[m] == 0 {
+			steady = append(steady, m)
+			steadySum += done[m]
+		}
+	}
+	var doneLine []string
+	var table strings.Builder
+	for _, m := range members {
+		note := "never down"
+		if downs[m] > 0 {
+			note = fmt.Sprintf("down %d times, %.1f s down: reported, not asserted", downs[m], downFor[m].Seconds())
+		}
 		doneLine = append(doneLine, fmt.Sprintf("%s=%d", m, done[m]))
-		if d := float64(done[m]) - mean; d > mean*0.05 || -d > mean*0.05 {
-			mu.Lock()
-			downs := notesSeen["happened: fleet member down"]
-			mu.Unlock()
-			t.Errorf("%s did %d cards, the mean is %.1f: over 5%% off (%d member-down events in the run: a machine that lapses has its cards dealt to the others)", m, done[m], mean, downs)
+		fmt.Fprintf(&table, "    %-4s done %4d  %s\n", m, done[m], note)
+	}
+	if len(steady) > 0 {
+		steadyMean := float64(steadySum) / float64(len(steady))
+		for _, m := range steady {
+			if d := float64(done[m]) - steadyMean; d > steadyMean*0.05 || -d > steadyMean*0.05 {
+				t.Errorf("%s did %d cards, the mean of the machines never down is %.1f: over 5%% off", m, done[m], steadyMean)
+			}
 		}
 	}
 	if sum == 0 {
@@ -432,12 +479,8 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 			t.Errorf("tick %d left %d entries in the work queue and tick %d began on %q, not the log", tk.n, tk.queued, tk.n+1, ticks[i+1].why)
 		}
 	}
-	notes, _, err := st.B.NotesSince(ctx, "", 1000000)
-	if err != nil {
-		t.Fatal(err)
-	}
 	tickEnds := 0
-	for _, n := range notes {
+	for _, n := range allNotes {
 		if n.Type == sprint.NTickEnd {
 			tickEnds++
 		}
@@ -460,11 +503,11 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 	report := fmt.Sprintf("DIRTY-TICK DRIVE: %d cards in %d streams on %d machines of width %d: all landed in %s over %d ticks (%.1f ticks/s)\n"+
 		"  the loop's ticks began on: %v; %d idle, %d did something, %d needed more than the four first updates (most updates in one tick: %d); the slowest tick took %s\n"+
 		"  tick-end notes: %d (one for each of the %d ticks that addressed the coordinator), the coordinator read the inbox %d times (accepted %d groups, %d refused as already accepted by the machine): %s\n"+
-		"  the streams' widest gap over %d samples: %d cards (tick %d) of a limit of %d; done by machine: %s (mean %.1f)",
+		"  the streams' widest gap over %d samples: %d cards (tick %d) of a limit of %d; done by machine: %s (mean %.1f)\n  per machine (never-down machines asserted within 5%% of their own mean):\n%s",
 		total, driveStreams, driveMembers, driveWidth, wall.Round(time.Millisecond), len(ticks), float64(len(ticks))/wall.Seconds(),
 		whyCount, idle, didSomething, settle, maxOrder, slowest.Round(time.Millisecond),
 		tickEnds, wroteNote, reads, accepted, refused, strings.Join(seen, ", "),
-		len(samples), maxSpread, at, total/10, strings.Join(doneLine, " "), mean)
+		len(samples), maxSpread, at, total/10, strings.Join(doneLine, " "), mean, strings.TrimRight(table.String(), "\n"))
 	fmt.Fprintln(os.Stderr, report)
 	t.Log("\n" + report)
 }

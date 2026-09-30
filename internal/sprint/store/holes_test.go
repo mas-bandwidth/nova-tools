@@ -526,28 +526,27 @@ func TestG2NoMachineIsOverItsWidthAtAnyStepOfATick(t *testing.T) {
 }
 
 // G2. A machine that falls silent with work on it, while the others are at
-// their width: the pump never deals to a machine at or over its width, in the
-// tick after the lapse or any other (a deal creates at most the room the fleet
-// table showed the pump, per machine). The cards of a down member go to the
-// others past their width, as the fleet's down rule has always placed them
-// (every_row_test.go), so a machine may hold more than its width after a
-// lapse until its work finishes; that is the down rule's, and this test pins
-// that the pump adds nothing to it.
-func TestG2TheDealNeverGivesAMachineMoreThanItsRoomAfterALapse(t *testing.T) {
+// their width: the fleet takes it down and its cards go to the members with
+// room and are withdrawn (their primaries ready again) for the rest; no member
+// is over its width at any step of any tick, and the pump never deals a
+// machine more than its room.
+func TestG2ALapseNeverTakesAMachineOverItsWidth(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	holesUp(h, 8)
 	x := newHoleTick(h)
 	held := map[string]int{}
 	x.onPlan = func(part string, s *sprint.Snapshot) {
-		if part != "work/deal" {
-			return
+		if why := heldOK(s); why != "" {
+			t.Fatalf("before %s: %s", part, why)
 		}
-		for _, m := range s.UpMembers() {
-			held[m] = heldBy(s, m)
+		if part == "work/deal" {
+			for _, m := range s.UpMembers() {
+				held[m] = heldBy(s, m)
+			}
 		}
 	}
-	over, dealt := 0, 0
+	dealt, withdrawn := 0, 0
 	holesRun(x, 8, true, func(round int, res TickResult, ws []holeWrite) {
 		made := map[string]int{}
 		for _, w := range ws {
@@ -563,15 +562,16 @@ func TestG2TheDealNeverGivesAMachineMoreThanItsRoomAfterALapse(t *testing.T) {
 				t.Fatalf("round %d: the deal gave %s %d cards, its room was %d (it held %d of width 2)", round, m, n, room, held[m])
 			}
 		}
-		for _, m := range []string{"m1", "m2"} {
-			over = max(over, heldBy(h.table(), m)-2)
-		}
 		clear(held)
+		if why := heldOK(h.table()); why != "" {
+			t.Fatalf("round %d after the tick: %s", round, why)
+		}
+		withdrawn = max(withdrawn, len(h.table().Fleet.Column(sprint.Withdrawn)))
 	})
 	if dealt < 24 {
 		t.Fatalf("the watch saw %d cards dealt", dealt)
 	}
-	t.Logf("the most a machine held over its width after a tick with a lapse: %d (the down rule's)", over)
+	t.Logf("the most cards withdrawn at the end of a tick: %d", withdrawn)
 }
 
 // ---- G3 ----------------------------------------------------------------------
