@@ -46,8 +46,8 @@ exit: 0 done, or verify found no difference; 1 verify found differences, or
 import's own round trip through the file failed; 2 could not run.
 
 first run (a login gh can use, and a scratch directory):
-  nova-work import --org <org> --repo <org>/<repo> --out /tmp/tree.lisp
-  nova-work verify --tree /tmp/tree.lisp --repo <org>/<repo>
+  nova-work import --org <org> --repo <org>/<repo> --out ./scratch/tree.lisp
+  nova-work verify --tree ./scratch/tree.lisp --repo <org>/<repo>
 `
 
 const importHelp = `nova-work import --org <org> (--out <tree.lisp> | --dry-run) [flags]
