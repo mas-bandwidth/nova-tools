@@ -318,3 +318,62 @@ func TestPropComposedWritesNoLogLine(t *testing.T) {
 		t.Fatalf("log length = %d, %v", n, err)
 	}
 }
+
+// TestPropSuccessorEmptinessPreflight verifies that R2 checks HLEN on the first
+// touched successor properties hash before any prestate observation, refusing
+// nonempty state with DRIFT for equal props, equal propguards, absent propguards,
+// and different props, leaving the whole-store image completely unchanged.
+func TestPropSuccessorEmptinessPreflight(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name  string
+		entry Entry
+	}{
+		{name: "equal prop", entry: cardsProp("stale", "val")},
+		{name: "equal propguard", entry: cardsPropGuard("stale", &[]string{"val"}[0])},
+		{name: "absent propguard", entry: cardsPropGuard("other", nil)},
+		{name: "different prop", entry: cardsProp("other", "new")},
+	} {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := newCompareHarness(t)
+			store := newFixtureRedis(t, h.fx.Client)
+			// Seed successor props hash for epoch 1
+			key := fmt.Sprintf("%stable:%s:1:props", h.fx.Space, compareTable)
+			if err := h.fx.Client.HSet(context.Background(), key, "stale", "val").Err(); err != nil {
+				t.Fatal(err)
+			}
+			beforeImage := commitProbeImage(t, h.fx.Client)
+
+			step := cardsStep(h, Entry{Kind: "advance", AdvanceFrom: "0"}, tc.entry)
+			op, intent := "adv-"+tc.name, "advance test "+tc.name
+			step.Op, step.Intent = &op, &intent
+			_, err := store.Step(context.Background(), step)
+			refusal, ok := err.(*Refusal)
+			if !ok || refusal.Code != "DRIFT" || refusal.Detail.Table != compareTable {
+				t.Fatalf("want DRIFT refusal with table=%s, got %v", compareTable, err)
+			}
+			afterImage := commitProbeImage(t, h.fx.Client)
+			if !reflect.DeepEqual(beforeImage, afterImage) {
+				t.Fatal("refused advance step mutated store")
+			}
+		})
+	}
+
+	t.Run("clean successor controls", func(t *testing.T) {
+		t.Parallel()
+		h := newCompareHarness(t)
+		// Clean advance with absent propguard and prop
+		step := cardsStep(h, Entry{Kind: "advance", AdvanceFrom: "0"}, cardsPropGuard("absent", nil), cardsProp("new", "val"))
+		op, intent := "adv-clean", "clean advance"
+		step.Op, step.Intent = &op, &intent
+		reply, ref := propBoth(t, h, step)
+		if ref != nil || reply.Status != "ok" || reply.EpochAfter != "1" {
+			t.Fatalf("clean advance failed: %+v %+v", reply, ref)
+		}
+		if got := propRead(t, h, "1", nil); !reflect.DeepEqual(got, map[string]string{"new": "val"}) {
+			t.Fatalf("new epoch props = %v", got)
+		}
+	})
+}

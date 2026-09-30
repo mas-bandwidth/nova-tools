@@ -307,8 +307,9 @@ func independentReceipt(value, epoch string, markers map[string]bool) bool {
 		Changed     int    `json:"changed"`
 		Result      string `json:"result"`
 	}
+	// Effective properties contribute to changed independently of members (2000 + 64 = 2064).
 	if json.Unmarshal([]byte(value), &r) != nil || r.EpochBefore != epoch || !markers[r.EpochAfter] ||
-		(r.Status != "ok" && r.Status != "fenced") || r.Changed < 0 || r.Changed > 2000 ||
+		(r.Status != "ok" && r.Status != "fenced") || r.Changed < 0 || r.Changed > 2064 ||
 		!independentUint(r.FirstSeq, false) || !independentUint(r.LastSeq, false) ||
 		len(r.Result) > 4096 || len(r.Digest) != 40 {
 		return false
