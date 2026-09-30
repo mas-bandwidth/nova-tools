@@ -301,6 +301,16 @@ func TestPreplanAppendedEntriesAndNotes(t *testing.T) {
 		fx.AddRow(t, "work", "r", 0)
 		fx.ActivateWithLua(t, preplanProbeLua)
 		seedPreplanMember(t, fx)
+		ctx := context.Background()
+		baseline, err := fx.Client.XRange(ctx, fixtureLogKey(fx.Space, "0"), "-", "+").Result()
+		if err != nil {
+			t.Fatal(err)
+		}
+		baselineCount := len(baseline)
+		baselineHead := ""
+		if baselineCount != 0 {
+			baselineHead = baseline[baselineCount-1].ID
+		}
 		raw := fmt.Sprintf(`{"epoch":"0","space":%q,"op":"preplan-op","intent":"append-note","entries":[]}`, fx.Space)
 		reply := preplanProbeCallRaw(t, fx, "append", raw)
 		if reply.Status != "probe" || reply.Reply.Status != "ok" {
@@ -317,7 +327,6 @@ func TestPreplanAppendedEntriesAndNotes(t *testing.T) {
 			reply.Rows[0].Added[0].Row != "fresh" || reply.Rows[0].Added[0].Rank != "0" {
 			t.Errorf("normalized row event = %+v", reply.Rows)
 		}
-		ctx := context.Background()
 		if score, err := fx.Client.ZScore(ctx, fixtureRowsKey(fx.Space, "aux", "0"), "fresh").Result(); err != nil || score != 0 {
 			t.Errorf("appended row rank = %v, err=%v", score, err)
 		}
@@ -331,11 +340,18 @@ func TestPreplanAppendedEntriesAndNotes(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if len(lines) != 5 { // one seed create, then four preplan events
-			t.Errorf("log lines = %d, want seed plus four preplan events", len(lines))
+		if len(lines) != baselineCount+reply.Reply.Lines {
+			t.Fatalf("log lines = %d, want baseline %d plus action delta %d", len(lines), baselineCount, reply.Reply.Lines)
+		}
+		if baselineHead != "" && lines[baselineCount-1].ID != baselineHead {
+			t.Fatalf("preplan action rewrote baseline log head: got %q, want %q", lines[baselineCount-1].ID, baselineHead)
+		}
+		actionLines := lines[baselineCount:]
+		if len(actionLines) != 4 {
+			t.Fatalf("preplan action log delta = %d, want four row/member/note lines", len(actionLines))
 		}
 		var noteSeen, rowSeen bool
-		for i, line := range lines {
+		for i, line := range actionLines {
 			encoded, ok := line.Values["d"].(string)
 			if !ok {
 				t.Fatalf("log line %d has no JSON body: %+v", i, line.Values)
@@ -355,14 +371,14 @@ func TestPreplanAppendedEntriesAndNotes(t *testing.T) {
 			}
 			if body.Kind == "n" {
 				noteSeen = true
-				if i != len(lines)-1 || !reflect.DeepEqual(body.About, []string{"primary-old"}) ||
+				if i != len(actionLines)-1 || !reflect.DeepEqual(body.About, []string{"primary-old"}) ||
 					body.Meta["reason"] != "preplan" {
 					t.Errorf("appended note out of order or incomplete: index=%d body=%+v", i, body)
 				}
 			}
 			if body.Kind == "w" {
 				rowSeen = true
-				if i != 1 || body.Table != "aux" || len(body.Add) != 1 ||
+				if i != 0 || body.Table != "aux" || len(body.Add) != 1 ||
 					body.Add[0].Row != "fresh" || body.Add[0].Rank != "0" {
 					t.Errorf("appended row event out of order or incomplete: index=%d body=%+v", i, body)
 				}
@@ -572,7 +588,8 @@ func TestPreplanCannotIntroduceAdvance(t *testing.T) {
 			if mutation != "append" {
 				entries = `[{"kind":"advance","from":"0"}]`
 			}
-			raw := fmt.Sprintf(`{"epoch":"0","space":%q,"entries":%s}`, fx.Space, entries)
+			raw := fmt.Sprintf(`{"epoch":"0","space":%q,"op":%q,"intent":%q,"entries":%s}`,
+				fx.Space, "preplan-advance-"+mutation, "preplan advance mutation "+mutation, entries)
 			reply := preplanProbeCallRaw(t, fx, "advance_"+mutation, raw)
 			if reply.Status != "refused" || reply.Code != "REQUEST" || reply.Phase != "plan" ||
 				!reply.First.Exists || reply.First.Fields["state"].Value != "old" || reply.LoadedDefs != 1 {
