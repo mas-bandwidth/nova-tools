@@ -143,17 +143,51 @@ func help(name string, w io.Writer) {
 	note += "Cross-process delivery recovery needs --snapshot; without it, each send is a new intention. Do not prepare again while pending; retry the saved artifact. A snapshot uses a sibling .lock file for a kernel lock; its presence never means a process is running."
 	fmt.Fprintln(w, note)
 	fmt.Fprintf(w, "\nLocals: latest=local:<path> runs that binary (or argv) on this host to read the version; e.g., local:/usr/local/bin/nova-update or local:go version. The installed column can be a version string (v1.2.3), a single command name found on PATH, or a full argv.\n")
-	applyDry := ""
-	if name == "nova-update" {
-		applyDry = " (or an apply --dry-run that printed its plan)"
-	}
-	fmt.Fprintf(w, "\nexit codes: 0 every entry current, an apply that left the box on the target"+applyDry+", a report whose every entry answered; 1 the tool said NO (anything STALE, NEWER, DIFFERENT or UNKNOWN, an apply whose after is not the target, a report with an UNKNOWN or a send that was refused or unconfirmed); 2 could not run (a refusal naming the remedy).\n\nFrom a nova-tools checkout:\nexample:\n  %s report --file cmd/%s/testdata/example.tsv\n", name, name)
+	fmt.Fprint(w, oneBinary(name))
+	fmt.Fprint(w, manifestHelp(name))
+	fmt.Fprintf(w, "\n%s\n\nFrom a nova-tools checkout:\nexample:\n  %s report --file cmd/%s/testdata/example.tsv\n", exitCodes(name), name, name)
 	if name == "nova-update" {
 		fmt.Fprintf(w, "  %s status --file cmd/%s/testdata/example.tsv\n  %s apply --file cmd/%s/testdata/dry-run.tsv go --dry-run\n", name, name, name, name)
 	} else {
 		fmt.Fprintf(w, "  %s snapshot --file cmd/%s/testdata/example.tsv\n", name, name)
 	}
 	fmt.Fprintf(w, "  %s version\n", name)
+}
+
+// oneBinary says, in each name's own banner, that nova-update and nova-version are one
+// binary and what each name's verbs are for, so a reader who finds both on a PATH knows
+// which to reach for. The two are one build (update.Main, given its name), so the manifest
+// reader and report are the same under either.
+func oneBinary(name string) string {
+	const same = "nova-update and nova-version are ONE binary under two names: the same build, the same manifest reader and the same report (report prints the same thing under either name); only the verbs each name offers differ. "
+	if name == "nova-version" {
+		return "\n" + same + "Use nova-version to RECORD and COMPARE what is installed: snapshot (inventory a bin directory, or count how many of the manifest's tools answer), diff (two snapshots), moved (the note of what two revisions' binaries changed) and report or send (what this box runs, as a report or a bus note). It never asks what is latest and never installs; nova-update's check, apply, watch, adoption and release are the other name's.\n"
+	}
+	return "\n" + same + "Use nova-update to ASK whether what you depend on is current and to CHANGE it: check and status (installed against latest, one line per finding; status shows the current ones too), apply (install the one entry you name, or print the plan with --dry-run), watch and adoption (the coordinator's adoption pass and its count) and release (cut, build, install and adopt a nova-tools release). nova-version's snapshot, diff, moved and send are the other name's; report is here too, and it reads only what is installed.\n"
+}
+
+// manifestHelp is the manifest format in six lines, under the `report` example line so
+// `report -h` quotes it (verbflag.Excerpt reads a verb's lines with the lines indented
+// beneath them): the rule-2 file --file names, the same for both names.
+func manifestHelp(name string) string {
+	return "\nTHE MANIFEST is the file --file names, written by hand, the same for both names:\n" +
+		"  " + name + " report --file versions.tsv     the six lines that say what versions.tsv holds:\n" +
+		"      1. line 1 is the header, byte for byte: " + strings.ReplaceAll(Header, "\t", "<TAB>") + "; every other line is six fields, one tab between, none empty; a line starting # is a comment\n" +
+		"      2. kind is harness, engine, model, tool or pin; name is unique in the file; owner is who answers for it\n" +
+		"      3. installed is a version (v1.2.3), a command name on PATH, or an argv whose first line of output carries the version (single spaces, no quotes)\n" +
+		"      4. latest is github:<owner>/<repo>, npm:<package>, brew:<formula>, ollama:<model>:<tag> (kind model), local:<argv> (a pin takes this only), or - for not known yet\n" +
+		"      5. apply is the argv that updates it, or none; a run prints EVERY problem of the file at once, each with its line, never the first alone\n" +
+		"      6. example: go<TAB>tool<TAB>go version<TAB>local:go version<TAB>none<TAB>me\n"
+}
+
+// exitCodes is the exit-code paragraph of each name: nova-update's are the verbs it has
+// (check, apply, report), nova-version's the verbs it has (report, snapshot, diff, moved),
+// and neither names a verb of the other.
+func exitCodes(name string) string {
+	if name == "nova-version" {
+		return "exit codes: 0 the verb ran and passed: a report whose every entry answered (under send, whose note nova-bus took), a snapshot whose tools all answer, a diff, a moved note written; 1 the tool said NO (a report or a snapshot with an UNKNOWN tool, a send that was refused or unconfirmed); 2 could not run (a refusal naming the remedy)."
+	}
+	return "exit codes: 0 every entry current, an apply that left the box on the target (or an apply --dry-run that printed its plan), a report whose every entry answered; 1 the tool said NO (anything STALE, NEWER, DIFFERENT or UNKNOWN, an apply whose after is not the target, a report with an UNKNOWN or a send that was refused or unconfirmed); 2 could not run (a refusal naming the remedy)."
 }
 func interspersed(f *flag.FlagSet, args []string) []string {
 	var flags, positionals []string

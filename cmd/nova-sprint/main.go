@@ -275,9 +275,11 @@ const noPrefix = "there is no prefix: the tables are always work, merge, readers
 var errNoPrefix = errors.New(noPrefix)
 
 // argErr is what a verb refuses its arguments with: the words, then the error;
-// a --prefix flag is the one line errNoPrefix, alone.
+// a --prefix flag is the one line errNoPrefix, alone, and a flag refusal (flagError)
+// is its own line.
 func argErr(words string, err error) string {
-	if errors.Is(err, errNoPrefix) {
+	var fe *flagError
+	if errors.Is(err, errNoPrefix) || errors.As(err, &fe) {
 		return err.Error()
 	}
 	return fmt.Sprint(words, err)

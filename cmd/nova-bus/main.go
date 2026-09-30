@@ -74,6 +74,12 @@ usage:
         [--to <names>] [--cc <names>] [--subject <text>] [--max-body-bytes <n>]
   nova-bus prepare --bus <dir> --as <name> (--file <path>|--stdin) [--slug <s>]
   nova-bus send --bus <dir> (--file <path>|--stdin) [--as <name>] --remote <name> --branch <name> [--attempts <n>] [--slug <s>] [--no-push] [--dry-run] [--git-timeout <seconds>]
+        the bus is a git repository, and the roster is <bus>/participants.json:
+        {"participants":[{"name":"Ada","lane":"from-ada","git_name":"Ada","git_email":"ada@example.com"},{"name":"Bo"}]}
+        a sender is a participant with a "lane" (from-<slug>, lower case: the directory <bus>/<lane>/ its notes
+        land in, which send creates) and a git_name and git_email (the commit identity); Bo has no lane, so
+        Bo can be written to and never sends ("has no lane on this bus" means this line has none). --no-push
+        commits without pushing; the help's ROSTER AND LANES paragraph goes from nothing to a first send
   nova-bus send --bus <dir> (--prepared <path>|--prepared-stdin) --as <name> --remote <name> --branch <name> [--attempts <n>] [--git-timeout <seconds>]
   nova-bus reply --bus <dir> --as <name> --re <id> --file <draft> --remote <name> --branch <name> [--advance] [--dry-run] [--attempts <n>] [--git-timeout <seconds>]
   nova-bus inbox --bus <dir> --as <name> --receipt-max-words <n> [--bodies [--max-notes <n>] [--max-bytes <n>] [--after <token>]] [--full] [--open [--open-max <n>]] [--open-warn <n>] [--max-commits <n>]
@@ -101,9 +107,11 @@ refused, a bus that failed check, a push that could not be landed, a cursor
 that is no longer on this history, another run holding this checkout; 2 could
 not run: missing flag, unreadable bus, bad invocation.
 
-Every path comes from a flag. There is no default bus, no default remote, no
-default branch and no default receipt word count; a missing one is a refusal:
-refusing to guess. --attempts DOES have one, 25, because it is not a fact about
+Every path comes from a flag. There is no default bus, no default remote and no
+default branch; a missing one is a refusal: refusing to guess. The receipt word count
+has no built-in default either, and three sources supply it, in this order:
+--receipt-max-words <n>, a receipt-max-words=<n> line in <bus>/.nova-bus/defaults, then
+the NOVA_BUS_RECEIPT_MAX_WORDS environment variable; none of them is a refusal. --attempts DOES have one, 25, because it is not a fact about
 your bus but a budget measured against it: five lines sending at once consumed
 nine attempts at the peak, and a caller who has to name a number will name one
 too small and lose a note. The roster is always <bus>/participants.json,
@@ -244,6 +252,32 @@ has read it. The harness keeps no clock and runs no loop of its own: every call
 ends by itself, at the note or at the deadline, and the WAIT DONE ...
 next=<command> line is the command to issue again.
 
+ROSTER AND LANES. A bus is a git repository whose root holds participants.json and one
+lane directory per sender. The roster is one JSON object:
+
+  {"participants":[
+    {"name":"Ada","lane":"from-ada","git_name":"Ada","git_email":"ada@example.com","aliases":["A"]},
+    {"name":"Bo"}],
+   "groups":[{"name":"all","members":["Ada","Bo"]}]}
+
+A participant is a name that can be written to. It SENDS only with a "lane": from-<slug>, a
+slug of lower-case letters, digits and hyphens, one lane to one participant, which is the
+directory <bus>/<lane>/ that holds that sender's notes, one Markdown file each, beside the
+sender's own CURSOR, OPEN and RECEIPTS bookkeeping. send creates the directory on a first note.
+git_name and git_email are required beside a lane: they are the commit identity, passed with
+git -c. "aliases" are other names that resolve to the participant; a group
+is a name that stands for several participants and is never a sender. The roster is strict: an
+unknown key, a duplicate name and a lane shared by two participants are each refused by name.
+From nothing to a first send, in a scratch directory, with git's user.name and user.email set
+(the first commit needs them) and the draft kept OUTSIDE the checkout (an untracked file in it
+is "changes that are not this note", and send refuses):
+
+  git init -b main bus && cd bus      (save the roster above as participants.json here)
+  git add participants.json && git commit -m roster
+  nova-bus draft --bus . --as Ada --to Bo --subject hello > ../d.md     (replace the placeholder body)
+  nova-bus send --bus . --file ../d.md --as Ada --remote origin --branch main --no-push
+  nova-bus inbox --bus . --as Ada --receipt-max-words 20
+
 A FIRST SEND, end to end. draft prints a skeleton and NOTHING else, so its
 standard output is a file:
 
@@ -359,6 +393,11 @@ func (s *stringList) Set(v string) error {
 type flags struct {
 	verb string
 	fs   *flag.FlagSet
+	// alsoRefuse, when set, is asked after the flags are parsed and the required ones
+	// checked: a line it returns is printed beside the missing-flag lines and refuses the
+	// invocation with them, so a first run names every problem it has and not the first
+	// (the receipt word count, whose sources beyond the flag are a file and a variable).
+	alsoRefuse func() string
 }
 
 func newFlags(verb string) *flags {
@@ -395,7 +434,14 @@ func (f *flags) parse(args []string, stderr io.Writer, required map[string]*stri
 	for _, name := range missing {
 		fmt.Fprintf(stderr, "nova-bus %s: --%s is required; refusing to guess; run: nova-bus help\n", f.verb, name)
 	}
-	return len(missing) == 0
+	more := false
+	if f.alsoRefuse != nil {
+		if line := f.alsoRefuse(); line != "" {
+			fmt.Fprintln(stderr, oneline.Escape(line))
+			more = true
+		}
+	}
+	return len(missing) == 0 && !more
 }
 
 // gitArgs checks the two flags that become git's own argv. A --remote or --branch
@@ -452,6 +498,17 @@ func (f *flags) set(name string) bool {
 // NOVA_BUS_RECEIPT_MAX_WORDS environment variable. It refuses only when none of the three
 // yields a positive number, and the refusal names the two default sources as the remedy.
 func (f *flags) receiptMaxWords(flagValue int, flagWasSet bool, busDir string, stderr io.Writer) (int, bool) {
+	v, ok := resolveReceiptMaxWords(flagValue, flagWasSet, busDir)
+	if !ok {
+		fmt.Fprintln(stderr, oneline.Escape(receiptMaxWordsRefusal(f.verb, flagValue)))
+		return 0, false
+	}
+	return v, true
+}
+
+// resolveReceiptMaxWords is the count the three sources give: the flag, then the file line,
+// then the variable; false when none yields a positive number.
+func resolveReceiptMaxWords(flagValue int, flagWasSet bool, busDir string) (int, bool) {
 	if !flagWasSet {
 		if v, ok := receiptMaxWordsFromDefaults(busDir); ok {
 			flagValue = v
@@ -459,11 +516,13 @@ func (f *flags) receiptMaxWords(flagValue int, flagWasSet bool, busDir string, s
 			flagValue = v
 		}
 	}
-	if flagValue < 1 {
-		fmt.Fprintf(stderr, "nova-bus %s: --receipt-max-words must be given and at least 1, got %d; refusing to guess; give it as a `receipt-max-words=<n>` line in <bus>/.nova-bus/defaults or the NOVA_BUS_RECEIPT_MAX_WORDS env var; run: nova-bus help\n", f.verb, flagValue)
-		return 0, false
-	}
-	return flagValue, true
+	return flagValue, flagValue >= 1
+}
+
+// receiptMaxWordsRefusal is the one line for a missing receipt word count, which names
+// the three places it can be given.
+func receiptMaxWordsRefusal(verb string, got int) string {
+	return fmt.Sprintf("nova-bus %s: --receipt-max-words must be given and at least 1, got %d; refusing to guess; give the flag, or a `receipt-max-words=<n>` line in <bus>/.nova-bus/defaults (a plain text file, one key=value per line, that you create), or set the NOVA_BUS_RECEIPT_MAX_WORDS environment variable; run: nova-bus help", oneline.Field(verb), got)
 }
 
 // receiptMaxWordsFromDefaults reads the `receipt-max-words=<n>` line out of
@@ -1310,6 +1369,12 @@ func cmdInbox(args []string, stdout, stderr io.Writer, now time.Time) int {
 	legacyNow := f.fs.Bool("legacy-now", false, "draw the switch-day line at THIS run's UTC instant: exactly --legacy-before <now>, so everything already on the bus is history and everything after this moment is news")
 	carryHistory := f.fs.Bool("carry-history", false, "on your FIRST --advance, carry every old note on your open list instead of drawing a switch-day line; does nothing otherwise")
 	diagnostics := f.fs.Bool("diagnostics", false, "name every unreadable file with its reason, even ones already shown; the default collapses unchanged ones to one count line")
+	f.alsoRefuse = func() string {
+		if _, ok := resolveReceiptMaxWords(*maxWords, f.set("receipt-max-words"), *busDir); !ok {
+			return receiptMaxWordsRefusal(f.verb, *maxWords)
+		}
+		return ""
+	}
 	if !f.parse(args, stderr, map[string]*string{"bus": busDir, "as": as}) {
 		return 2
 	}
@@ -2591,6 +2656,12 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 	// FETCHES: that is the difference between waiting and sleeping. A wait that read only
 	// what its checkout already held would wait out its whole timeout beside a bus full of
 	// notes, and this tool does not guess a remote.
+	f.alsoRefuse = func() string {
+		if _, ok := resolveReceiptMaxWords(*maxWords, f.set("receipt-max-words"), *busDir); !ok {
+			return receiptMaxWordsRefusal(f.verb, *maxWords)
+		}
+		return ""
+	}
 	if !f.parse(args, stderr, map[string]*string{"bus": busDir, "as": as, "remote": remote, "branch": branch}) {
 		return 2
 	}

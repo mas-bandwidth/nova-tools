@@ -287,7 +287,11 @@ type flags struct {
 	bad                         []sandbox.Refusal
 }
 
-func parse(args []string) flags {
+func parse(args []string) flags { return parseVerb("", args) }
+
+// parseVerb is parse for the named verb: an argument it does not know is refused with that
+// verb's help to run (unknownArg).
+func parseVerb(verb string, args []string) flags {
 	f := flags{max: 20}
 	want := func(i int, flag string) (string, int) {
 		if i+1 >= len(args) {
@@ -353,8 +357,9 @@ func parse(args []string) flags {
 			}
 			f.max, f.maxSet = n, true
 		default:
-			f.bad = append(f.bad, sandbox.Refusal{Reason: "no_command",
-				Text: oneline.Escape(a) + " is not a flag this tool has; run: nova-sandbox help"})
+			text, took := unknownArg(args, i, verb)
+			f.bad = append(f.bad, sandbox.Refusal{Reason: "no_command", Text: text})
+			i += took
 		}
 	}
 	return f
@@ -495,12 +500,10 @@ func checkVerb(args []string, stdout, stderr io.Writer) int {
 			return 0
 		}
 	}
-	for _, a := range args {
-		if strings.HasPrefix(a, "-") {
-			fmt.Fprintf(stderr, "CHECK REFUSED reason=bad_flag: flag %q; run: nova-sandbox check -h\n", a)
-			return sandbox.ExitCannotRun
-		}
-		fmt.Fprintf(stderr, "CHECK REFUSED reason=bad_flag: unexpected argument %q; run: nova-sandbox check -h\n", a)
+	for i := range args {
+		// the first argument is the refusal: an unknown flag, or a word where none goes
+		text, _ := unknownArg(args, i, "check")
+		fmt.Fprintf(stderr, "CHECK REFUSED reason=bad_flag: %s\n", text)
 		return sandbox.ExitCannotRun
 	}
 	backend, ok := sandbox.Available()
@@ -522,7 +525,7 @@ func checkVerb(args []string, stdout, stderr io.Writer) int {
 // a key delivered by nova-secrets exec has no file). A wall that denies the work too is
 // broken, and a two-check probe would call it a pass.
 func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
-	f := parse(args)
+	f := parseVerb("probe", args)
 	// EVERY independent problem in ONE run. Emma, dogfooding v0.12.0 (nova-tools #104):
 	// a bare `probe` named the missing --secret, and named the missing --write only on
 	// the NEXT run, once --secret had been supplied -- a first run sequenced into as many
@@ -531,6 +534,15 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 	// together, and the probe runs only when none of them spoke.
 	var bad []sandbox.Refusal
 	bad = append(bad, f.bad...)
+	// A flag this verb does not have is refused alone, at the first refusal: the flags that
+	// were meant may be the ones misspelled, so a list of what else is "missing" beside it
+	// is a list of consequences (`probe --wrte x` also said --write was missing).
+	if len(f.bad) > 0 {
+		for _, r := range f.bad {
+			fmt.Fprintf(stderr, "PROBE REFUSED reason=check: %s\n", oneline.Escape(r.Text))
+		}
+		return sandbox.ExitCannotRun
+	}
 	// Rule 10: the probe re-executes THIS binary under the policy it just generates, with
 	// an internal verb, never a shell. os.Executable() is the resolved command of that
 	// wrapped run, so its directory is the root "the directory of the resolved command"
@@ -978,7 +990,7 @@ func policyText(p *sandbox.Policy) (string, error) {
 // profiles/darwin-check.sh can be run against the profile THIS TOOL generates, so that
 // the script and the tool cannot drift apart (rule 15: generated, never hand-edited).
 func policyVerb(args []string, stdout, stderr io.Writer, env []string) int {
-	f := parse(args)
+	f := parseVerb("policy", args)
 	if len(f.bad) > 0 {
 		for _, r := range f.bad {
 			fmt.Fprintf(stderr, "POLICY REFUSED reason=%s: %s\n", oneline.Field(r.Reason), oneline.Escape(r.Text))
