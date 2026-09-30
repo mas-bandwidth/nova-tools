@@ -94,7 +94,9 @@ do
   end
   local sealed_fields={'operation','profile','version','space','op','intent','intent_digest','result',
     'request_epoch','write_epoch','epoch_key','epoch_field','original_fence','notes_implicit',
-    'original_note_count','original_advance','original_advance_index','original_advance_from'}
+    'original_note_count','original_advance','original_advance_index','original_advance_from',
+    'record_key','table_key','table_prefix','rows_key','props_key','cell_key','definition_key',
+    'log_key','history_key','done_key'}
   local request_identity={'space','epoch','op','intent','result','fence'}
   local function remember_context(ctx)
     local saved={request=copy_value(ctx.request),fields={},rowsets=copy_value(ctx.original_rowsets),
