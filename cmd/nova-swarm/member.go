@@ -73,6 +73,21 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	if *as != "" && !safepath.NameOK(*as) {
 		f.add(fmt.Sprintf("--as %q is not a name (letters, digits, - _ .)", *as))
 	}
+	var onceGiven, ticksGiven bool
+	fs.Visit(func(fl *flag.Flag) {
+		switch fl.Name {
+		case "once":
+			onceGiven = true
+		case "ticks":
+			ticksGiven = true
+		}
+	})
+	if onceGiven && ticksGiven {
+		f.add("--once and --ticks are exclusive: member runs either once, for a number of ticks, or until stopped")
+	}
+	if ticksGiven && *ticks <= 0 {
+		f.add(fmt.Sprintf("--ticks is at least 1, got %d; member runs either once, for a number of ticks, or until stopped", *ticks))
+	}
 	if f.refused(stderr) {
 		return 2
 	}
@@ -113,7 +128,7 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 		if acted > 0 || err != nil {
 			fmt.Fprintf(stdout, "tick %d acted=%d running=%d %s\n", n, acted, m.Running(), oneline.Field(time.Now().Format("15:04:05")))
 		}
-		if *once || (*ticks > 0 && n >= *ticks) {
+		if *once || (ticksGiven && n >= *ticks) {
 			break
 		}
 		time.Sleep(every.d)

@@ -169,10 +169,11 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 	}
 	m.epoch = q.Epoch
 	held := []string{"--epoch", strconv.FormatUint(q.Epoch, 10)}
-	// 1. Report every child that ended, one verb per card (each report is its
-	// own words). A card in the queue as working (reading) with no child of
-	// ours is a card from before this process started: it is run again from
-	// its packet, at the same generation, so a member restart loses nothing.
+	wasOurs := map[string]bool{}
+	for id := range m.running {
+		wasOurs[id] = true
+	}
+	claimMoved := map[string]bool{}
 	ids := make([]string, 0, len(q.Cards))
 	byID := map[string]queueCard{}
 	for _, c := range q.Cards {
@@ -187,7 +188,10 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 			continue
 		}
 		l, ours := m.running[id]
-		if ours && c.Packet != nil && (l.epoch != c.Packet.Epoch || (!m.cfg.Reader && l.gen != c.Packet.Gen) || (m.cfg.Reader && l.attempt != c.Packet.Attempt)) {
+		if !ours {
+			continue
+		}
+		if c.Packet != nil && (l.epoch != c.Packet.Epoch || (!m.cfg.Reader && l.gen != c.Packet.Gen) || (m.cfg.Reader && l.attempt != c.Packet.Attempt)) {
 			// the claim moved under the child (a clear, a redeal): its result
 			// is nobody's; it is reaped when it ends and the new claim is run
 			if !l.child.Done() {
@@ -195,15 +199,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 			}
 			fmt.Fprintf(m.out, "reap %s: the claim moved (epoch %d gen %d attempt %d, now epoch %d gen %d attempt %d)\n", id, l.epoch, l.gen, l.attempt, c.Packet.Epoch, c.Packet.Gen, c.Packet.Attempt)
 			delete(m.running, id)
-			ours = false
-		}
-		if !ours {
-			if c.Packet == nil {
-				continue
-			}
-			if m.start(*c.Packet) {
-				acted++
-			}
+			claimMoved[id] = true
 			continue
 		}
 		if l.spent || !l.child.Done() {
@@ -256,7 +252,15 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 			fmt.Fprintf(m.out, "drop %s: no longer in the queue\n", id)
 		}
 	}
-	// 2. Take (begin) up to the width, in one verb, and start each.
+	// 2. Recover in-flight (working/reading) cards that have no child of ours,
+	// clamped to width. A card in the queue as working (reading) with no child
+	// of ours is a card from before this process started (or one whose moved
+	// claim just reaped): it is run again from its packet, at the same
+	// generation, so a member restart loses nothing. Clamped to width so
+	// recovery never overflows capacity; excess cards remain in the queue for
+	// subsequent passes.
+	acted += m.recoverWorking(ids, byID, wasOurs, claimMoved)
+	// 3. Take (begin) up to the width, in one verb, and start each.
 	room := m.cfg.Width - m.Running()
 	if room <= 0 {
 		return acted, nil
@@ -314,10 +318,43 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 	return acted, nil
 }
 
-// start runs a packet as a child, unless one is already running for it.
+// recoverWorking starts children for in-flight (working/reading) cards that
+// have no child of ours, up to member width.
+func (m *Member) recoverWorking(ids []string, byID map[string]queueCard, wasOurs, claimMoved map[string]bool) int {
+	acted := 0
+	for _, id := range ids {
+		if m.Running() >= m.cfg.Width {
+			break
+		}
+		c := byID[id]
+		inFlight := c.Col == "working" || c.Col == "reading"
+		if !inFlight {
+			continue
+		}
+		if _, ours := m.running[id]; ours {
+			continue
+		}
+		if wasOurs[id] && !claimMoved[id] {
+			continue
+		}
+		if c.Packet == nil {
+			continue
+		}
+		if m.start(*c.Packet) {
+			acted++
+		}
+	}
+	return acted
+}
+
+// start runs a packet as a child, unless one is already running for it or width is full.
 func (m *Member) start(p Packet) bool {
 	if _, ok := m.running[p.Card]; ok {
 		fmt.Fprintf(m.out, "start %s: already running\n", p.Card)
+		return false
+	}
+	if m.Running() >= m.cfg.Width {
+		fmt.Fprintf(m.out, "start %s: width %d full\n", p.Card, m.cfg.Width)
 		return false
 	}
 	ch, err := m.runner.Start(p)
