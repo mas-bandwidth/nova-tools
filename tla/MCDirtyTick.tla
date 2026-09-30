@@ -20,6 +20,7 @@ MCMOrder == <<"m1", "m2">>
 MCROrder == <<"r1", "r2">>
 MCSOrder == <<"s1", "s2">>
 MCWidth == [m \in {"m1", "m2"} |-> 1]
+MCWidth2 == [m \in {"m1", "m2"} |-> 2]
 MCHost == [r \in {"r1", "r2"} |-> IF r = "r1" THEN "m1" ELSE "m2"]
 
 InOrder == SelectSeq(MCCardOrder, LAMBDA c : c \in Cards)
@@ -57,6 +58,10 @@ ScnFin == [Base EXCEPT !.col = [c \in Cards |-> "working"],
 ScnLapse == [Base EXCEPT !.live = {}, !.col = [c \in Cards |-> "review"], !.rd = [c \in Cards |-> "r1"],
                          !.mr = [m \in Machines |-> IF m = "m1" THEN {"c1"} ELSE {}],
                          !.q = Queues(<<>>, <<>>, <<>>, <<E("lapse", "-", "m1")>>)]
+\* c1 working on m1, m1 lapses and is subsequently restored in a later tick.
+ScnRestore == [Base EXCEPT !.live = {"m2"}, !.col = [c \in Cards |-> IF c = "c1" THEN "working" ELSE "none"],
+                           !.mc = [m \in Machines |-> IF m = "m1" THEN {"c1"} ELSE {}],
+                           !.q = Queues(Adds, <<>>, <<>>, <<E("lapse", "-", "m1")>>)]
 
 \* Reachability probes, expected to fail: every card lands; a card reaches
 \* its bound; a tick drains a queue after the first pass.

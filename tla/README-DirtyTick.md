@@ -10,7 +10,7 @@
 - Only the pump writes the work table, and it runs once per tick, first. Readers, merge and fleet write their own tables and queue the work table's changes (a finish, a read done, a broken read, a landing, a card returned, room freed); the next tick's pump applies the whole queue, lands sentinels, releases, and deals from ready. Nothing moves from waiting to ready to working but in that pump.
 - A placement on a machine, a reader or a stream starts at a uint64 counter modulo the full ordered name count and advances past every skipped name plus the selected name; the counters persist across ticks.
 - A machine has a width; a read takes room on its reader's host.
-- The coordinator is woken once, at the tick's end, with the count of what the tick addressed to it (a sentinel landed, a card at its bound, no fleet member up, a machine lost with work on it), and not at all when the count is 0.
+- The coordinator is woken once, at the tick's end, with the count of what the tick addressed to it (a sentinel landed, entering merging, a card at its bound, no fleet member up, a machine lost with work on it), and not at all when the count is 0.
 
 ## What is modelled
 
@@ -96,11 +96,12 @@ Each witness turns on one broken rule (`Broken`); its control is the unbroken co
 | W13 | readers and fleet queue an entry to each other on every run | `TickBounded` | 118 |
 | W14 | a note at every tick end | `NoWakeIfNothing` | 16 |
 | W15 | the deal ignores width | `WidthRespected` | 128 |
+| W16 | the old increment-by-one counter advance without full-ring skipping | `PlacementsRound` | 5 |
 | G1, G1Live | the shape without `seefleet` | `TickBounded`, `Terminates` | 115, 140 |
 | G2 | the shape without `pendingroom` | `WidthRespected` | 8 |
 | G3 | R10 as v2.1 writes it | `WorkChangesOnlyInPump` | 4 |
 
-The controls: `MCDirtyTick` (two cards in two streams, two machines, two readers, one beat or lapse, the whole life with rework to the bound: 368,708 states), `MCDirtyTickThree` (three cards, no beat or lapse: 1,608,320), and nine small scenarios (sentinels, turns, a blind reader, width, a cold fleet, a landing, a rework, a finish, a lapse), the six smallest with the liveness properties. The probes, expected to fail, show the base reaches what the properties speak of: every card landed (`ProbeLanded`), a card at its bound (`ProbeBound`), a queue drained after the first pass (`ProbeLateDrain`).
+The controls: `MCDirtyTick` (two cards in two streams, two machines, two readers, one beat or lapse, the whole life with rework to the bound: 368,708 states), `MCDirtyTickThree` (three cards, no beat or lapse: 1,608,320), and ten small scenarios (sentinels, turns, a blind reader, width, a cold fleet, a landing, a rework, a finish, a lapse, a restore), the six smallest with the liveness properties. The probes, expected to fail, show the base reaches what the properties speak of: every card landed (`ProbeLanded`), a card at its bound (`ProbeBound`), a queue drained after the first pass (`ProbeLateDrain`).
 
 The bench run, outside the plan: `dirtytick-bench/MCDirtyTickFull.cfg` (three cards, two machines, two readers, one beat or lapse), every invariant and action property: 9,884,260 states, no error, 49 s at 32 workers. The same instance with `MaxSub` lowered: 10 fails `TickBounded`, 11 holds over every state.
 

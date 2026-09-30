@@ -262,6 +262,7 @@ MCDirtyTickLand.cfg	MCDirtyTick.tla	pass	-	ignore-terminal	dirtytick-small	requi
 MCDirtyTickRework.cfg	MCDirtyTick.tla	pass	-	ignore-terminal	dirtytick-small	required	-
 MCDirtyTickFin.cfg	MCDirtyTick.tla	pass	-	ignore-terminal	dirtytick-small	required	-
 MCDirtyTickLapse.cfg	MCDirtyTick.tla	pass	-	ignore-terminal	dirtytick-small	required	-
+MCDirtyTickRestore.cfg	MCDirtyTick.tla	pass	-	ignore-terminal	dirtytick-small	required	-
 MCDirtyTickProbeLanded.cfg	MCDirtyTick.tla	invariant	ProbeNotAllLanded	ignore-terminal	dirtytick	required	-
 MCDirtyTickProbeBound.cfg	MCDirtyTick.tla	invariant	ProbeNoBound	ignore-terminal	dirtytick	required	-
 MCDirtyTickProbeLateDrain.cfg	MCDirtyTick.tla	invariant	ProbeNoLateDrain	ignore-terminal	dirtytick	required	-
@@ -281,6 +282,7 @@ MCDirtyTickW12.cfg	MCDirtyTick.tla	temporal	WorkNotStranded	ignore-terminal	dirt
 MCDirtyTickW13.cfg	MCDirtyTick.tla	invariant	TickBounded	ignore-terminal	dirtytick-witnesses	required	-
 MCDirtyTickW14.cfg	MCDirtyTick.tla	action	NoWakeIfNothing	ignore-terminal	dirtytick-witnesses	required	-
 MCDirtyTickW15.cfg	MCDirtyTick.tla	invariant	WidthRespected	ignore-terminal	dirtytick-witnesses	required	-
+MCDirtyTickW16.cfg	MCDirtyTick.tla	action	PlacementsRound	ignore-terminal	dirtytick-witnesses	required	-
 MCDirtyTickG1.cfg	MCDirtyTick.tla	invariant	TickBounded	ignore-terminal	dirtytick-goals	required	-
 MCDirtyTickG1Live.cfg	MCDirtyTick.tla	temporal	Terminates	ignore-terminal	dirtytick-goals	required	-
 MCDirtyTickG2.cfg	MCDirtyTick.tla	invariant	WidthRespected	ignore-terminal	dirtytick-goals	required	-

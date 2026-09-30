@@ -108,6 +108,7 @@ PastCtr(ord, ctr, x) == ((Idx(ord, x) - 1 - (ctr % Len(ord)) + Len(ord)) % Len(o
 \* the first by name instead.
 Pick(ord, S, ctr) ==
   IF Broken = "name" THEN CHOOSE x \in S : Rank(ord, S, x) = 0
+  ELSE IF Broken = "inc1" THEN CHOOSE x \in S : Rank(ord, S, x) = ctr % Cardinality(S)
   ELSE CHOOSE x \in S : \A y \in S : PastCtr(ord, ctr, x) <= PastCtr(ord, ctr, y)
 
 Before(c, d) == StreamOf[c] = StreamOf[d] /\ Pos[d] < Pos[c]
@@ -152,7 +153,7 @@ ApplyW(S, e) ==
          ELSE S
     [] e.k = "readok" ->
          IF S.col[c] = "review"
-         THEN Put([S EXCEPT !.col[c] = "merging"], "merge", E("queue", c, "-"))
+         THEN Address(Put([S EXCEPT !.col[c] = "merging"], "merge", E("queue", c, "-")))
          ELSE S
     [] e.k = "broken" ->
          IF S.col[c] # "review" THEN S
@@ -201,8 +202,10 @@ DealOne(S, cand) ==
       ms == UpRoom(S)
       m == Pick(MOrder, ms, S.mctr)
   IN Put([S EXCEPT !.col[c] = "working",
-                   !.sctr = (@ + PastCtr(SOrder, S.sctr, st)) % CtrMod,
-                   !.mctr = (@ + PastCtr(MOrder, S.mctr, m)) % CtrMod,
+                   !.sctr = IF Broken = "inc1" THEN (@ + 1) % CtrMod
+                            ELSE (@ + PastCtr(SOrder, S.sctr, st)) % CtrMod,
+                   !.mctr = IF Broken = "inc1" THEN (@ + 1) % CtrMod
+                            ELSE (@ + PastCtr(MOrder, S.mctr, m)) % CtrMod,
                    !.dealt[st] = Min(@ + 1, 3),
                    !.plc = @ \o <<[k |-> "s", ctr |-> S.sctr, el |-> ss, pick |-> st],
                                   [k |-> "m", ctr |-> S.mctr, el |-> ms, pick |-> m]>>],
@@ -248,7 +251,8 @@ PlaceReads(S) ==
            rs == AbleReaders(S)
            r == Pick(ROrder, rs, S.rctr)
        IN PlaceReads(Put([S EXCEPT !.askw[c] = FALSE, !.rd[c] = r,
-                                   !.rctr = (@ + PastCtr(ROrder, S.rctr, r)) % CtrMod,
+                                   !.rctr = IF Broken = "inc1" THEN (@ + 1) % CtrMod
+                                            ELSE (@ + PastCtr(ROrder, S.rctr, r)) % CtrMod,
                                    !.plc = Append(@, [k |-> "r", ctr |-> S.rctr, el |-> rs, pick |-> r])],
                          "fleet", E("readon", c, Host[r])))
 
