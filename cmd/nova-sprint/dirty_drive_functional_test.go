@@ -71,10 +71,11 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 	}
 	env := map[string]string{"NOVA_SPRINT_REDIS": addr, "NOVA_SPRINT_ACTOR": "coordinator"}
 	getenv := func(k string) string { return env[k] }
-	world, coord, loop := newApp(getenv), newApp(getenv), newApp(getenv)
+	world, coord, loop, machines := newApp(getenv), newApp(getenv), newApp(getenv), newApp(getenv)
 	defer world.close()
 	defer coord.close()
 	defer loop.close()
+	defer machines.close()
 	do := func(a *app, args ...string) string {
 		t.Helper()
 		var out, errb bytes.Buffer
@@ -256,6 +257,24 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 		}
 	}()
 	<-first
+
+	// the machines' own beat loops: a real machine beats from its own process,
+	// whatever its work loop is waiting for (the world's play beats each tick
+	// too, and waits on the fence like every verb)
+	go func() {
+		poll := time.NewTicker(time.Second)
+		defer poll.Stop()
+		for {
+			select {
+			case <-lctx.Done():
+				return
+			case <-poll.C:
+			}
+			for _, m := range members {
+				machines.run([]string{"fleet", "beat", m}, &bytes.Buffer{}, &bytes.Buffer{})
+			}
+		}
+	}()
 
 	// a stall watchdog: the landed count not moving for a minute of polls ends
 	// the drive with the tables, the inbox and the check printed
