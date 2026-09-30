@@ -83,7 +83,7 @@ func TestFenceWireDoesNotInferFenceFromOrdinaryEmptyStep(t *testing.T) {
 		t.Fatalf("ordinary empty step unexpectedly acquired a fence marker: %s", raw)
 	}
 	fake := &fakeRedisClient{replies: []fakeRedisReply{{value: okWireReply("ordinary")}}}
-	reply, err := NewRedis(fake).Step(context.Background(), step)
+	reply, err := newRedisWithClient(fake).Step(context.Background(), step)
 	if err != nil || reply.Status != "ok" || reply.Replay {
 		t.Fatalf("ordinary empty named step = (%+v, %v); want ordinary ok", reply, err)
 	}
@@ -99,7 +99,7 @@ func TestFenceRepliesDecodeThroughStepAndSteps(t *testing.T) {
 	compactOK := `{"status":"ok","epoch_before":"0","epoch_after":"0","changed":1,"first_seq":"1","last_seq":"1","result":"applied","replay":true}`
 
 	freshClient := &fakeRedisClient{replies: []fakeRedisReply{{value: fullFenced}}}
-	fresh, err := NewRedis(freshClient).Step(context.Background(), fenceWireStep("fresh-fence", "intent-fresh"))
+	fresh, err := newRedisWithClient(freshClient).Step(context.Background(), fenceWireStep("fresh-fence", "intent-fresh"))
 	if err != nil || fresh.Status != "fenced" || fresh.Replay || fresh.Changed != 0 || fresh.Guarded != 0 || fresh.Lines != 0 || fresh.FirstSeq != "0" || fresh.LastSeq != "0" {
 		t.Fatalf("Step fresh fenced reply = (%+v, %v)", fresh, err)
 	}
@@ -112,7 +112,7 @@ func TestFenceRepliesDecodeThroughStepAndSteps(t *testing.T) {
 		{value: compactFenced},
 		{value: compactOK},
 	}}
-	results, err := NewRedis(batchClient).Steps(context.Background(), []Step{fencedRequest, fencedRequest, ordinaryRequest})
+	results, err := newRedisWithClient(batchClient).Steps(context.Background(), []Step{fencedRequest, fencedRequest, ordinaryRequest})
 	if err != nil || len(results) != 3 {
 		t.Fatalf("Steps fenced/replay replies = (%+v, %v)", results, err)
 	}
