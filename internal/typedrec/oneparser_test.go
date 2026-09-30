@@ -61,7 +61,7 @@ var specAllowlist = []allowlistEntry{
 	// Issue-body card keys
 
 	// Other records
-	{file: "internal/secrets/seal.go", fn: "carry", record: "git-HEAD"},
+	{file: "internal/secrets/seal.go", fn: "preflight", record: "git-HEAD"},
 	{file: "internal/swarm/wall.go", fn: "WallCommits", record: "git-HEAD"},
 	{file: "internal/swarm/wall.go", fn: "repoCommits", record: "git-HEAD"},
 

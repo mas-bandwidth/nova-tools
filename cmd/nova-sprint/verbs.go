@@ -42,11 +42,11 @@ func init() {
 		{"goal set", "<name> [--file <path>] [--to file:<path>]", "goal set friend-a --file goal-a.txt --to file:/tmp/reminder-a.txt", (*app).cmdGoalSet},
 		{"goal show", "[<name>]", "goal show friend-a", (*app).cmdGoalShow},
 		{"goal drop", "<name>", "goal drop friend-a", (*app).cmdGoalDrop},
-		{"take", "--as <member> [<card>@<gen>...] [--limit <n>]", "take --as m1 s1-1.w1@1", (*app).cmdTake},
-		{"finish", "--as <member> <card>@<gen>... [--failed] [--head <h>] [--report <text>]", "finish --as m1 s1-1.w1@1", (*app).cmdFinish},
+		{"take", "--as <member> [<card>@<gen>...] [--limit <n>]", "take --as m1 s1-1.w1@1 --epoch 0", (*app).cmdTake},
+		{"finish", "--as <member> <card>@<gen>... [--failed] [--head <h>] [--report <text>]", "finish --as m1 s1-1.w1@1 --epoch 0 --report 'tests green'", (*app).cmdFinish},
 		{"ask", "[<id>... | --group <id> [--expect <n>]] [--stream <s>] [--limit <n>] [--another] [--answers <note>]", "ask", (*app).cmdAsk},
 		{"queue", "--as <reader|member> | --stream <s>", "queue --as reader-a", (*app).cmdQueue},
-		{"read", "--as <reader> (--begin | --ok | --broken) [<card>...] [--limit <n>] [--finding <text>]", "read --as reader-a --ok --limit 5", (*app).cmdRead},
+		{"read", "--as <reader> (--begin | --ok | --broken) [<card>...] [--limit <n>] [--finding <text>]", "read --as reader-a --ok --limit 5 --epoch 0", (*app).cmdRead},
 		{"accept", "(<id>... | --stream <s> | --read-ok | --group <id> [--expect <n>]) [--answers <note>]", "accept --read-ok", (*app).cmdAccept},
 		{"rework", "(<id>... | --group <id> [--expect <n>]) [--fix <text>] [--answers <note>]", "rework s1-4 --fix 'handle the empty case'", (*app).cmdRework},
 		{"return", "(<id>... | --group <id> [--expect <n>]) [--reason <text>] [--answers <note>]", "return s1-7 --reason 'suspect of the red batch'", (*app).cmdReturn},
@@ -60,7 +60,7 @@ func init() {
 		{"fleet sync", "[--check] [--pg <dsn>]", "fleet sync --check", (*app).cmdFleetSync},
 		{"fleet level", "", "fleet level", func(a *app, args []string, o, e io.Writer) int { return a.cmdFleet("level", args, o, e) }},
 		{"reader add", "<reader>...", "reader add reader-d", (*app).cmdReaderAdd},
-		{"ci", "<id>... (--red | --green) [--head <h>] [--run <id>] [--source <s>] [--note <text>]", "ci s1-3 --red --run 812 --source ci", (*app).cmdCI},
+		{"ci", "<id>... (--red | --green) [--head <h>] [--run <id>] [--source <s>] [--note <text>]", "ci s1-3 --red --run 812 --source ci --epoch 0", (*app).cmdCI},
 		{"wait", "<note> (--for <duration> | --until <RFC3339>)", "wait tick-ask-x-1.2 --for 30m", (*app).cmdWait},
 		{"ack", "<note>... --reason <text>", "ack ci-x-1.1 --reason 'a flaky runner; the rerun is green'", (*app).cmdAck},
 		{"inbox", "[--open <group>] [--read] [--wait [--timeout <duration>]] [--deadline <duration>] [--stale <duration>]", "inbox --wait", (*app).cmdInbox},
@@ -128,10 +128,27 @@ and prints each one's generation.
 ` + machineWords() + `
 ` + fleetWords() + `
 ` + goalWords() + `
+` + twinWords() + `
 exit codes: 0 done, 1 refused, 2 usage or a store that did not answer (fleet sync --check: there is drift), 3 fleet sync could not read the config
 
+the coordinator's day, in six lines (NOVA_SPRINT_REDIS and NOVA_SPRINT_ACTOR set; brief.txt is a card that passes the lint, from nova-swarm template --name card):
+
+example:
 `)
+	for _, l := range dayLines {
+		b.WriteString("  " + l + "\n")
+	}
 	return b.String()
+}
+
+// dayLines is the coordinator's day in six lines, the banner's example: block.
+var dayLines = []string{
+	"nova-sprint init --readers reader-a,reader-b --members m1:8",
+	"nova-sprint add --stream s1 --count 3 --brief-file brief.txt",
+	"nova-sprint start",
+	"nova-sprint inbox --wait",
+	"nova-sprint accept --read-ok",
+	"nova-sprint merge --stream s1 --batch 3",
 }
 
 // inboxExample is the worked example of reading the inbox and answering it,
@@ -193,6 +210,17 @@ one answer to each judgment (every one prints its own, filled in):
   stalled                     card <primary> (HELD says what holds it), then the decision it prints, or ack <note> --reason '<why>'
 `
 
+// verbExample is the lines a verb's -h shows above its flags: its example,
+// one runnable line from the verb table, for verbflag.RecoverWith.
+func verbExample(name string) string {
+	for _, v := range verbs {
+		if v.name == name && v.example != "" {
+			return "example:\n  " + prog + " " + v.example + "\n"
+		}
+	}
+	return ""
+}
+
 func versionLine() string { return buildinfo.Line(prog, version) }
 
 func helpCommand(path []string, stdout, stderr io.Writer) int {
@@ -219,7 +247,7 @@ func helpCommand(path []string, stdout, stderr io.Writer) int {
 	for _, v := range verbs {
 		if v.name == name {
 			code := func() (code int) {
-				defer verbflag.Recover(stdout, prog, banner(), &code)
+				defer verbflag.RecoverWith(stdout, prog, banner(), &code, verbExample)
 				return v.run(newApp(func(string) string { return "" }), []string{"--help"}, stdout, stderr)
 			}()
 			if name == "inbox" && code == 0 {
