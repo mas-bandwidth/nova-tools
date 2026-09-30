@@ -91,7 +91,7 @@ func routeTestUnit(id string) decide.Unit {
 // burning either, so a test that still needs a provider call has a subject
 // that is allowed to make one. The spent mind lives in routeCallRegistry.
 func routeTestUnitAllowedToAsk(id string) decide.Unit {
-	return AfterGateFailure(routeTestUnit(id), "spent", "the spent sibling missed it")
+	return afterGateFailure(routeTestUnit(id), "spent", "the spent sibling missed it")
 }
 
 // jevFake is the provider, strict the way the real endpoint is: a POST with a
@@ -196,10 +196,10 @@ func TestRouteCardOnAMechanicalKindMakesNoCallUntilAConfirmedFailure(t *testing.
 	}
 
 	// The other half: a confirmed failure restores the offer, and the provider
-	// is asked once. AfterGateFailure burns the bottom card rung; the call is
+	// is asked once. afterGateFailure burns the bottom card rung; the call is
 	// the fact under test, not which remaining rung the fake names.
 	calls = 0
-	failed := AfterGateFailure(routeTestUnit("card-mech-failed"), "low", "the card rung missed it")
+	failed := afterGateFailure(routeTestUnit("card-mech-failed"), "low", "the card rung missed it")
 	in.Decide = func(ctx context.Context, state string, qs map[string]decide.Question) (map[string]decide.Answer, decide.Usage, error) {
 		calls++
 		q, ok := qs[decide.RungQuestion]
@@ -384,12 +384,12 @@ func TestRouteCardAfterGateFailureNeverReturnsTheSameRung(t *testing.T) {
 	if first.Rung != "low" {
 		t.Fatalf("the first answer is %q; a mechanical unit starts at the bottom rung", first.Rung)
 	}
-	next := AfterGateFailure(unit, first.Rung, "the gate went red")
+	next := afterGateFailure(unit, first.Rung, "the gate went red")
 	if len(next.Attempts) != 1 || next.Attempts[0].Outcome != decide.OutcomeFailed || !next.Attempts[0].Failed() {
 		t.Fatalf("the re-entry carries %v; a gate failure is a CONFIRMED failure the ladder may step past", next.Attempts)
 	}
 	if len(unit.Attempts) != 0 {
-		t.Fatal("AfterGateFailure mutated the unit it was given; the re-entry is a new unit, not an edit of the old one")
+		t.Fatal("afterGateFailure mutated the unit it was given; the re-entry is a new unit, not an edit of the old one")
 	}
 	firstMind, _ := reg.ByName(first.Rung)
 	// Whatever the provider answers among the rungs it is OFFERED, the rung
@@ -536,7 +536,7 @@ func TestRouteCardsOnTheFillPathOverridesTheTSVModel(t *testing.T) {
 	// KIND: rebase is mechanical; a confirmed failure on the spent sibling
 	// restores the two-rung offer so this path can still prove the TSV is
 	// the fallback and the ladder's answer is the model (#1513).
-	cards[0].unit = AfterGateFailure(cards[0].unit, "spent", "the spent sibling missed it")
+	cards[0].unit = afterGateFailure(cards[0].unit, "spent", "the spent sibling missed it")
 	var stderr strings.Builder
 	in := BatchInput{
 		Stderr: &stderr,
@@ -579,67 +579,15 @@ func TestRouteCardsOnTheFillPathOverridesTheTSVModel(t *testing.T) {
 	}
 }
 
-// THE POOL DISPATCHER ASKS THE LADDER (#1486). `nova-swarm run` claimed every
-// pending task and launched it on the pool's one mechanical model without ever
-// asking which mind does the unit -- so a card the ladder marks ask-child or
-// ask-bus ran on a mechanical model anyway, and the receipt
-// why=rung-is-asked-not-run was evidence for a log rather than a stop. A card
-// the ladder answers with a rung no model can be dispatched to is NOT
-// launched: it is parked in routed-out/ with its ROUTE line, and the
-// coordinator (or a friend, over the bus) takes it from there.
-func TestRunParksACardTheLadderAsksInsteadOfRunning(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	p, w := recoveryPool(t, dir)
-	// A judgment card: the kind starts on the child rung, which the registry
-	// gives no model id, because a child is ASKED, not run.
-	body := "RESULT: CARD-7 nova-tools #1486 parked, not run\nKIND: fix-with-red-test\nFILES: 4\nPACKAGES: 1\nSTEP 1. do the thing\n"
-	id := NewID(time.Now().UTC(), "asked-not-run")
-	if err := p.Add([]byte(body), Sidecar{ID: id, Label: "asked-card", Files: 4, Tokens: 1000, RC: -1}); err != nil {
-		t.Fatal(err)
-	}
-	routeDir := t.TempDir()
-	var out, errb strings.Builder
-	code := Run(RunInput{Pool: p, Worker: w, Workers: 1, Hours: 1, Stdout: &out, Stderr: &errb,
-		NoSandbox: true, Now: func() time.Time { return time.Now().UTC() },
-		Route: &RouteInput{Registry: routeTestReg(t), Floor: 0.9, Now: routeTestNow,
-			Log:   filepath.Join(routeDir, "decide.jsonl"),
-			Usage: filepath.Join(routeDir, "usage.tsv"),
-			Decide: func(ctx context.Context, state string, qs map[string]decide.Question) (map[string]decide.Answer, decide.Usage, error) {
-				return nil, decide.Usage{}, fmt.Errorf("no provider should be asked when one rung is eligible")
-			}}})
-	if code != 0 {
-		t.Fatalf("parking a judgment card is not a failure: exit %d, not 0:\n%s%s", code, out.String(), errb.String())
-	}
-	if strings.Contains(out.String(), "RUN START") {
-		t.Fatalf("the card the ladder asked for was launched on a mechanical model anyway:\n%s", out.String())
-	}
-	if _, err := os.Stat(p.taskFile(Running, id)); err == nil {
-		t.Fatal("the asked card is still in running/ with no supervisor and nothing watching it")
-	}
-	for _, state := range []string{Done, Failed, Pending} {
-		if _, err := os.Stat(p.taskFile(state, id)); err == nil {
-			t.Fatalf("the asked card is in %s/; a card the ladder marks ask-child or ask-bus is parked in routed-out/, never run", state)
-		}
-	}
-	if _, err := p.ReadSidecar(RoutedOut, id); err != nil {
-		t.Fatalf("the asked card belongs in routed-out/ with its ROUTE line: %v", err)
-	}
-	raw, err := os.ReadFile(p.Path(RoutedOut, id+".route"))
-	if err != nil {
-		t.Fatalf("routed-out/ holds the card WITH its ROUTE line: %v", err)
-	}
-	if !strings.Contains(string(raw), "why="+RouteFallbackNoModel) {
-		t.Fatalf("the parked card's ROUTE line wants why=%s, got %q", RouteFallbackNoModel, raw)
-	}
-	if !strings.Contains(string(raw), "rung=child") {
-		t.Fatalf("the parked card's ROUTE line must still name the rung the ladder answered, got %q", raw)
-	}
-	if !strings.Contains(out.String(), "RUN ROUTED-OUT id="+id) {
-		t.Fatalf("the run says what it did with the card once:\n%s", out.String())
-	}
-	if !strings.Contains(errb.String(), "ROUTE asked-card ") {
-		t.Fatalf("every claimed card says its route line once; stderr is:\n%s", errb.String())
-	}
+// afterGateFailure is the unit a failed gate re-enters the decision as: the same
+// unit carrying that failure as CONFIRMED evidence. The reason travels in the
+// unit and never to a provider.
+func afterGateFailure(u decide.Unit, rung, reason string) decide.Unit {
+	next := u
+	next.Attempts = append(append([]decide.Attempt(nil), u.Attempts...), decide.Attempt{
+		Rung:    rung,
+		Outcome: decide.OutcomeFailed,
+		Reason:  reason,
+	})
+	return next
 }

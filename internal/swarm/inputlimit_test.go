@@ -8,7 +8,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
 )
 
 // ISSUE #103, THE DOGFOOD IT CAME FROM: the Freddy swarm at n=64 on Mercury 2.5 (OpenCode)
@@ -522,70 +521,6 @@ func TestTheTableMeetsItsOwnFloor(t *testing.T) {
 		if reason, ok := TooShortForAPhrase(phrase); !ok {
 			t.Errorf("the table carries %q, which a description could not: %s", phrase, reason)
 		}
-	}
-}
-
-// END TO END ON THE RECOVERY PATH: a job whose supervisor recorded `rc=1 end=failed` with
-// the provider's refusal in its harness log is named `input-limit`, lands in failed/, and is
-// NOT re-queued. This is the shape of the two dead jobs, and it needs no provider.
-func TestARecoveredJobThatDiedOnTheInputLimitIsNamed(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	p, w := recoveryPool(t, dir)
-	id := NewID(time.Now().UTC(), "inputlimit")
-	jobDir := w.JobDir(1, id)
-	if err := os.MkdirAll(jobDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	sc := Sidecar{ID: id, Files: 3, Tokens: 100000, RC: -1, Job: jobDir, Slot: 1, Started: Stamp(time.Now().UTC())}
-	if err := p.Add([]byte("read two whole specs, one lens"), sc); err != nil {
-		t.Fatal(err)
-	}
-	if err := p.Claim(id, Pending, Running); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(jobDir, "harness.log"), inputLimitFixture(t), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	nonce := "0123456789ab"
-	if err := WriteJSON(ExitPath(jobDir), &ExitRecord{RC: 1, End: EndFailed, Nonce: nonce, Attest: fixtureAttest}); err != nil {
-		t.Fatal(err)
-	}
-	if err := writeSlot(p.slotPath(1), SlotFile{
-		Job: id, JobDir: jobDir, State: SlotLaunched, Pid: 0, Pgid: 0, JobPgid: 0,
-		PidStarted: "-", RunnerPid: 0, Nonce: nonce, ExitAttest: ExitAttestHash(fixtureAttest),
-		LaunchedAt: Stamp(time.Now().UTC()),
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	var out, errb bytes.Buffer
-	Run(RunInput{Pool: p, Worker: w, Workers: 1, Hours: 0.0001, Stdout: &out, Stderr: &errb,
-		NoSandbox: true, Now: func() time.Time { return time.Now().UTC() }})
-	if !strings.Contains(out.String(), "end="+EndInputLimit) {
-		t.Errorf("the RUN line names the class a reader triages by:\n%s%s", out.String(), errb.String())
-	}
-	moved, err := p.ReadSidecar(Failed, id)
-	if err != nil {
-		t.Fatalf("an input-limited job lands in failed/: %v", err)
-	}
-	if moved.End != EndInputLimit {
-		t.Errorf("the sidecar wants end=%s, got %q", EndInputLimit, moved.End)
-	}
-	if !strings.Contains(moved.Limit, "input token limit exceeded") {
-		t.Errorf("the sidecar carries the provider's own words so triage never opens a log, got %q", moved.Limit)
-	}
-	pending, _ := p.List(Pending)
-	if len(pending) != 0 {
-		t.Errorf("a task too big for the model is not re-queued; %d pending", len(pending))
-	}
-	row, err := os.ReadFile(p.UsagePath(id))
-	if err != nil {
-		t.Fatalf("the usage row outlives the job: %v", err)
-	}
-	if !strings.Contains(string(row), "\t"+EndInputLimit+"\t") {
-		t.Errorf("the `end` column is what the token ledger reads:\n%s", row)
 	}
 }
 

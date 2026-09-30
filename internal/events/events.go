@@ -1,26 +1,17 @@
-// Package events is the card event stream of nova-tools #2563 and the SQLite fold that is
-// its record: every card transition XADDs one entry to `cards:done`, and one consumer folds
-// the stream into a SQLite file whose views answer "how many, how much, per model, per
-// route, per bench, per day".
+// Package events is the card event stream of nova-tools #2563: every card transition XADDs
+// one entry to `cards:done`.
 //
 // THERE IS ONE STREAM (Rowan's ruling on the bus 2026-09-22, accepted by Johnny 17:16Z).
 // `cards:done` is the stream internal/record and internal/ci already read; this package does
 // not mint a second one beside it, it adds the event fields to the entries of that stream.
-// The SQLite file is a fold of `cards:done` and nothing else: a view that `fold --rebuild`
-// can recompute from the stream at any moment, never a second source of truth. An entry
-// written before the fields were added carries no `event` field; the fold counts it as
-// skipped rather than guessing it into `ok` or `fail`.
+// An entry written before the fields were added carries no `event` field.
 //
 // The division of labour is Johnny's (reports/redis-for-nova-tools-2026-09-21.md section 8,
 // adopted): Redis holds ids, counts and event ids and NOTHING else -- never a diff, a test,
-// a prompt, a transcript or a disposition -- and every query lives in the fold, over core
-// Redis types only, so Valkey stays a drop-in and the hot store never becomes the database.
-// Validate enforces that literally: a field over maxFieldBytes or carrying a control
-// character is refused at the door rather than trusted to the caller's good manners.
-//
-// Streams deliver at least once, so the event id is the primary key of every fold table and
-// a redelivery is a no-op. That is what makes Johnny's bar 3 -- a hundred DONEs, kill the
-// fold, restart, the count is a hundred -- a property of the schema rather than of luck.
+// a prompt, a transcript or a disposition -- over core Redis types only, so Valkey stays a
+// drop-in and the hot store never becomes the database. Validate enforces that literally: a
+// field over maxFieldBytes or carrying a control character is refused at the door rather
+// than trusted to the caller's good manners.
 package events
 
 import (
@@ -31,8 +22,8 @@ import (
 	"time"
 )
 
-// Stream is the one stream every card transition writes to, Group the consumer group the
-// fold reads under, and MaxLen the approximate cap XADD trims to (MAXLEN ~ 1e6): a stream
+// Stream is the one stream every card transition writes to, Group the consumer group a
+// reader reads under, and MaxLen the approximate cap XADD trims to (MAXLEN ~ 1e6): a stream
 // that grows without a bound is a store that fills a disk no one is watching.
 const (
 	Stream = "cards:done"
@@ -49,9 +40,7 @@ const maxFieldBytes = 200
 type Kind string
 
 // The kinds, in the order a card walks them. `read` is a friend's read of a pull request,
-// `landed` the lander's merge, `jev` a Jev decision; the rest are the card's own life.
-// `decide` (decide.go) is a routing decision carrying the decide_log fields: the record
-// that was the decide_log table until #2623.
+// `landed` the lander's merge; the rest are the card's own life.
 const (
 	Queued    Kind = "queued"
 	Leased    Kind = "leased"
@@ -64,11 +53,10 @@ const (
 	PullReq   Kind = "pr"
 	Read      Kind = "read"
 	Landed    Kind = "landed"
-	Jev       Kind = "jev"
 )
 
 // Kinds is every kind the stream accepts, in banner order.
-var Kinds = []Kind{Queued, Leased, Started, Turn, OK, Fail, Asked, Harvested, PullReq, Read, Landed, Jev, Decide}
+var Kinds = []Kind{Queued, Leased, Started, Turn, OK, Fail, Asked, Harvested, PullReq, Read, Landed}
 
 // KindList is the kinds as the refusal and the usage banner spell them.
 func KindList() string {
@@ -108,9 +96,6 @@ type Event struct {
 	PR        string
 	Head      string
 	At        time.Time
-
-	// Decision is the decide_log row a `decide` entry carries, and nil on every other kind.
-	Decision *Decision
 }
 
 // Int64 and Float64 are the one-line way to fill a reported number: Event{USD: Float64(0.11)}.
@@ -158,14 +143,6 @@ func (e Event) Validate() error {
 	if e.USD != nil && (math.IsNaN(*e.USD) || math.IsInf(*e.USD, 0) || *e.USD < 0) {
 		return fmt.Errorf("usd is a price in dollars, got %v", *e.USD)
 	}
-	switch {
-	case e.Kind == Decide && e.Decision == nil:
-		return fmt.Errorf("a decide event carries the decision's fields; nova-decide route --store writes it, not a hand")
-	case e.Kind != Decide && e.Decision != nil:
-		return fmt.Errorf("only a decide event carries a decision, and this one is %q", string(e.Kind))
-	case e.Decision != nil:
-		return e.Decision.validate()
-	}
 	return nil
 }
 
@@ -197,12 +174,10 @@ func (e Event) Stamp(now time.Time) Event {
 // reported is left out, so the entry has no such field rather than a zero.
 func (e Event) Values() []any {
 	f := e.Fields()
-	out := make([]any, 0, 2*(len(fieldNames)+len(decisionFieldNames)))
-	for _, names := range [][]string{fieldNames, decisionFieldNames} {
-		for _, name := range names {
-			if v, ok := f[name]; ok {
-				out = append(out, name, v)
-			}
+	out := make([]any, 0, 2*len(fieldNames))
+	for _, name := range fieldNames {
+		if v, ok := f[name]; ok {
+			out = append(out, name, v)
 		}
 	}
 	return out
@@ -234,9 +209,6 @@ func (e Event) Fields() map[string]string {
 	}
 	if e.USD != nil {
 		f["usd"] = strconv.FormatFloat(*e.USD, 'f', -1, 64)
-	}
-	if e.Decision != nil {
-		e.Decision.fields(f)
 	}
 	return f
 }
@@ -277,11 +249,6 @@ func FromFields(f map[string]string) (Event, error) {
 			return Event{}, fmt.Errorf("at %q is not an RFC3339 stamp", raw)
 		}
 		e.At = when.UTC()
-	}
-	if e.Kind == Decide {
-		if e.Decision, err = decisionFromFields(f); err != nil {
-			return Event{}, err
-		}
 	}
 	if err := e.Validate(); err != nil {
 		return Event{}, err

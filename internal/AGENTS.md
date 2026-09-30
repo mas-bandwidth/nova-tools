@@ -16,20 +16,18 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `cireceipt/` | ci-ok's run receipt: one ev:github row of the workflow_run shape | `go test ./internal/cireceipt` | `go test -tags functional ./internal/cireceipt` |
 | `config/` | nova-config library: kind descriptors, the Postgres store and history, apply into Redis | `go test ./internal/config` | `go test ./internal/config` |
 | `converge/` | convergence state and progress math | `go test ./internal/converge` | `go test ./internal/converge` |
-| `decide/` | criteria evaluation and decisions | `go test ./internal/decide` | `go test ./internal/decide` |
+| `decide/` | the routing ladder: which mind does a unit of work | `go test ./internal/decide` | `go test ./internal/decide` |
 | `delayproxy/` | a TCP proxy that holds each write of its clients back by a fixed delay: a store at a distance, made on the loopback, for testredis.Far and tools/fardelay | `go test ./internal/delayproxy` | `go test ./internal/delayproxy` |
 | `docs/` | documentation guards and map generator | `go test ./internal/docs` | `go test ./internal/docs` |
 | `dogfood/` | dogfood self-test gates | `go test ./internal/dogfood` | `go test ./internal/dogfood` |
-| `events/` | card event stream and SQLite fold | `go test ./internal/events` | `go test ./internal/events` |
+| `events/` | card event stream writer | `go test ./internal/events` | `go test ./internal/events` |
 | `fleet/` | runner fleet discovery and status | `go test ./internal/fleet` | `go test ./internal/fleet` |
 | `fuse/` | workspace isolation boundaries | `go test ./internal/fuse` | `go test ./internal/fuse` |
 | [ghevent/](ghevent/AGENTS.md) | GitHub webhook to Redis stream | `go test ./internal/ghevent` | `go test ./internal/ghevent` |
 | `goenv/` | Go environment scrubber for child processes | `go test ./internal/goenv` | `go test ./internal/goenv` |
 | `hostload/` | a machine's load: CPU busy percent of all its cores, else the load average over them | `go test ./internal/hostload` | `go test ./internal/hostload` |
 | `hygiene/` | clean checkout and leak assertions | `go test ./internal/hygiene` | `go test ./internal/hygiene` |
-| `jobs/` | the job graph and admission kernel internal/worklang imports | `go test ./internal/jobs` | `go test ./internal/jobs` |
 | `keyshape/` | cryptographic key format verification | `go test ./internal/keyshape` | `go test ./internal/keyshape` |
-| `lanes/` | lane cursor and dispatch isolation | `go test ./internal/lanes` | `go test ./internal/lanes` |
 | `log/` | structured logging helpers | `go test ./internal/log` | `go test ./internal/log` |
 | `member/` | a sprint fleet member's loop: beat, queue, finish, take to width, each card a child | `go test ./internal/member` | `go test ./internal/member` |
 | `memindex/` | memory vector and text index | `go test ./internal/memindex` | `go test ./internal/memindex` |
@@ -38,7 +36,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `ntable/` | a general Redis-backed table: ordered sets per cell, projections, folds, the render | `go test ./internal/ntable` | `go test ./internal/ntable` |
 | `onboarding/` | onboarding banner and doc verifier | `go test ./internal/onboarding` | `go test ./internal/onboarding` |
 | `oneline/` | single-line log and output grammar | `go test ./internal/oneline` | `go test ./internal/oneline` |
-| `play/` | sandboxed code experiment runner | `go test ./internal/play` | `go test ./internal/play` |
+| `play/` | read-only Markdown timeline view behind nova-memory view | `go test ./internal/play` | `go test ./internal/play` |
 | `record/` | decision and execution records | `go test ./internal/record` | `go test ./internal/record` |
 | `records/` | database models and record formats | `go test ./internal/records` | `go test ./internal/records` |
 | `redisconn/` | the one way a nova tool opens its Redis connection: options from the environment, one bounded dial, trips counted, errors classified, no secret shown | `go test ./internal/redisconn` | `go test ./internal/redisconn` |
@@ -64,7 +62,6 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `tty/` | whether a file is a terminal and how large its screen is | `go test ./internal/tty` | `go test ./internal/tty` |
 | `typedrec/` | typed RESULT record contract, parser and legacy adapter | `go test ./internal/typedrec` | `go test ./internal/typedrec` |
 | `update/` | binary updater and checksum verifier | `go test ./internal/update` | `go test ./internal/update` |
-| `wake/` | slot leases and heartbeat monitors | `go test ./internal/wake` | `go test ./internal/wake` |
 | `workfile/` | nova-work tree file: the model, its canonical writer, strict reader and field-for-field diff | `go test ./internal/workfile` | `go test ./internal/workfile` |
 | `workgh/` | nova-work read-only GitHub issue capture over GraphQL, every call counted | `go test ./internal/workgh` | `go test ./internal/workgh` |
 | `worklang/` | worklang s-expression evaluator | `go test ./internal/worklang` | `go test ./internal/worklang` |

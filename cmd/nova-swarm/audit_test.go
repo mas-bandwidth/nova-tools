@@ -170,10 +170,6 @@ var swarmAudit = audit.Config{
 		// package's stream, and the one value this binary takes from it -- the
 		// chosen id -- is put through oneline.Field before it is printed.
 		`"github.com/mas-bandwidth/nova-tools/internal/decide"`,
-		// lanes (pull, SPEC-JOBS section 5) reads queue/lanes/ and writes the
-		// card files it places; it never writes to a stream, and every id it
-		// returns is put through oneline.Field before this package prints it.
-		`"github.com/mas-bandwidth/nova-tools/internal/lanes"`,
 		// events (nova-tools #2563) writes the card-end entry to the cards:done stream, and
 		// it IS a writer of this package's stream: `native` hands events.Writer the run's
 		// own stderr so a card that could not be measured says so. It cannot write past

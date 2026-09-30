@@ -584,7 +584,7 @@ jobs:
           # pull_request a touched package gets a macOS leg only when it, or a
           # package it (or its tests) imports from this module, compiles a
           # different file set under GOOS=darwin (today cmd/nova-sandbox,
-          # internal/bus, internal/sandbox, internal/swarm, internal/wake and the
+          # internal/bus, internal/sandbox, internal/swarm and the
           # 15 packages that import them); every other package runs on Linux
           # only, the shape the merge_group run below has used since 2026-09-16.
           # The whole tree still runs on macOS on every push to dev (8 darwin-x64
@@ -2085,8 +2085,8 @@ jobs:
       # a tailscale funnel kept off by design, so this job, on our own runner
       # as the bench seat, reports the run itself at the end of every run: one
       # ev:github row of the workflow_run shape, sender runner, from the run's
-      # own context, no GitHub call. Its reader is `nova-wake watch --store`,
-      # which blocks on ev:github for the PRs it names. always(): a red run is
+      # own context, no GitHub call. Its reader is ghevent.Reader,
+      # which blocks on ev:github. always(): a red run is
       # reported as red. A write that fails is loud here and reddens ci-ok: a
       # receipt that silently did not happen must never read as one that did.
       # The password never touches a flag or a file: nova-secrets exec under

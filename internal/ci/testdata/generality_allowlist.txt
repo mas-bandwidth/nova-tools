@@ -16,7 +16,7 @@
 # - Adding a second occurrence to an already-allowed file exceeds the ceiling and fails.
 # - A count lower than the allowed count requires shrinking the allowlist entry.
 #
-# ceiling: 330
+# ceiling: 294
 cmd/nova-bus/main.go:freddy 3
 cmd/nova-bus/main.go:glenn 2
 cmd/nova-bus/main.go:johnny 3
@@ -109,23 +109,11 @@ internal/converge/sources.go:hulk 1
 internal/converge/streams.go:glenn 1
 internal/decide/answers.go:glenn 1
 internal/decide/decide.go:glenn 1
-internal/decide/decide.go:stella 1
-internal/decide/decisions.go:stella 2
 internal/decide/friends.go:glenn 3
-internal/decide/friends.go:stella 1
-internal/decide/harvestclass.go:johnny 1
-internal/decide/harvestclass.go:space 1
-internal/decide/help.go:glenn 11
 internal/decide/ladder.go:glenn 1
 internal/decide/ladder.go:johnny 4
 internal/decide/ladder.go:rowan 1
 internal/decide/ladder.go:stella 4
-internal/decide/ledgerstream.go:emma 1
-internal/decide/logsink.go:johnny 1
-internal/decide/logsink.go:rowan 3
-internal/decide/questionfile.go:stella 1
-internal/decide/questions/questions.go:space 2
-internal/decide/readers.go:stella 1
 internal/decide/registry.go:glenn 3
 internal/decide/registry.go:johnny 3
 internal/decide/registry.go:rowan 2
@@ -133,22 +121,14 @@ internal/decide/registry.go:stella 1
 internal/decide/routelog.go:glenn 1
 internal/decide/routelog.go:rowan 4
 internal/decide/routelog.go:stella 1
-internal/decide/tune.go:stella 2
-internal/decide/whoreads.go:stella 2
-internal/decide/worktype.go:glenn 1
-internal/decide/worktype.go:rowan 1
 internal/docs/agentsmap.go:glenn 2
 internal/dogfood/authors.go:rowan 1
 internal/dogfood/authors.go:stella 1
 internal/dogfood/cli.go:glenn 1
 internal/dogfood/cli.go:space 1
 internal/dogfood/ledger.go:glenn 1
-internal/events/decide.go:johnny 1
-internal/events/decide.go:rowan 9
-internal/events/decide_fold.go:rowan 2
-internal/events/events.go:johnny 3
+internal/events/events.go:johnny 2
 internal/events/events.go:rowan 1
-internal/events/fold.go:johnny 1
 internal/events/stream.go:johnny 1
 internal/fleet/certify.go:glenn 3
 internal/fleet/certify.go:hulk 6
@@ -163,8 +143,6 @@ internal/fleet/registry.go:vision 1
 internal/fuse/fuse.go:space 4
 internal/hygiene/glob.go:emma 1
 internal/hygiene/hygiene.go:space 1
-internal/jobs/admission.go:stella 1
-internal/jobs/admission.go:studio 1
 internal/log/slog.go:space 1
 internal/memindex/memindex.go:space 5
 internal/memindex/verify.go:space 1
@@ -180,7 +158,6 @@ internal/onboarding/transcript.go:space 1
 internal/onboarding/transcript.go:stella 1
 internal/oneline/audit/audit.go:mas-bandwidth 1
 internal/oneline/oneline.go:space 4
-internal/play/play.go:space 2
 internal/records/doc.go:stella 1
 internal/redisconn/options.go:space 1
 internal/redisfn/redisfn.go:space 1
@@ -267,12 +244,8 @@ internal/swarm/resultlint.go:hulk 1
 internal/swarm/resultlint.go:rowan 1
 internal/swarm/resultlint.go:space 2
 internal/swarm/resultlint.go:vision 2
-internal/swarm/routeladder.go:glenn 3
+internal/swarm/routeladder.go:glenn 2
 internal/swarm/routeladder.go:stella 1
-internal/swarm/run.go:freddy 1
-internal/swarm/run.go:glenn 2
-internal/swarm/run.go:rowan 1
-internal/swarm/run.go:stella 2
 internal/swarm/sandbox.go:rowan 1
 internal/swarm/share.go:hulk 1
 internal/swarm/share.go:vision 1
@@ -290,7 +263,6 @@ internal/swarm/taxonomy.go:space 3
 internal/swarm/timeline.go:glenn 1
 internal/swarm/toolchain.go:hulk 2
 internal/swarm/toolchain.go:johnny 2
-internal/swarm/triage.go:freddy 1
 internal/swarm/wall.go:glenn 3
 internal/swarm/wall.go:hulk 1
 internal/swarm/wall.go:johnny 1
@@ -332,14 +304,6 @@ internal/typedrec/template.go:emma 4
 internal/typedrec/template.go:mas-bandwidth 6
 internal/update/snapshot.go:space 1
 internal/update/snapverb.go:studio 1
-internal/wake/advance.go:emma 1
-internal/wake/bus.go:emma 1
-internal/wake/daemon.go:johnny 3
-internal/wake/entry.go:mas-bandwidth 3
-internal/wake/forge.go:mas-bandwidth 3
-internal/wake/line.go:johnny 1
-internal/wake/probe.go:glenn 1
-internal/wake/report.go:freddy 1
 internal/worklang/units.go:emma 1
 internal/worklang/units.go:stella 1
 internal/worklang/worklang.go:space 5
