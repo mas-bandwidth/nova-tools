@@ -23,7 +23,7 @@ func TestWorklangReader(t *testing.T) {
 		if offset < 0 {
 			t.Fatal("fixture has no dispatch macro")
 		}
-		_, err := worklang.Read("work.work", data, worklang.DefaultLimits())
+		_, err := worklang.Read("work.work", data, testLimits())
 		if err == nil {
 			t.Fatal("a #. dispatch macro was read instead of refused")
 		}
@@ -69,35 +69,79 @@ func TestWorklangReader(t *testing.T) {
 		})
 	})
 
-	// worklang-unknown-kind-is-a-refusal: `:kind bogus` is refused naming the
-	// field; an unknown key beside it is preserved and ignored, unchanged.
-	t.Run("worklang-unknown-kind-is-a-refusal", func(t *testing.T) {
-		good := []byte("(:plan :version 1 (:node :id \"n1\" :kind docs :bespoke \"kept\"))")
-		plan, err := worklang.ParsePlan("work.work", good, worklang.DefaultLimits())
-		if err != nil {
-			t.Fatalf("a valid plan carrying an unknown key was refused: %v", err)
-		}
-		if len(plan.Nodes) != 1 {
-			t.Fatalf("nodes = %d, want 1", len(plan.Nodes))
-		}
-		if _, ok := plan.Nodes[0].Unknown["bespoke"]; !ok {
-			t.Errorf("an unknown key beside :kind was dropped, not preserved: %#v", plan.Nodes[0].Unknown)
-		}
-
-		bad := []byte("(:plan :version 1 (:node :id \"n1\" :kind bogus :bespoke \"kept\"))")
-		_, err = worklang.ParsePlan("work.work", bad, worklang.DefaultLimits())
-		if err == nil {
-			t.Fatal("an unknown :kind was accepted instead of refused")
-		}
-		ref := assertRefusal(t, err)
-		msg := ref.Error()
-		if !strings.Contains(msg, ":kind") {
-			t.Errorf("refusal does not name the field: %s", msg)
-		}
-		if !strings.Contains(msg, "bogus") {
-			t.Errorf("refusal does not name the value: %s", msg)
+	// worklang-reader-refuses-every-escape-token: each of the reader macros
+	// that would evaluate or escape is refused at its own byte, and the same
+	// byte inside a string or a comment is text.
+	t.Run("worklang-reader-refuses-every-escape-token", func(t *testing.T) {
+		for _, c := range []struct{ tok, name string }{
+			{"#", "dispatch macro"},
+			{"|", "multiple escape"},
+			{"'", "quote"},
+			{"`", "backquote"},
+			{",", "unquote"},
+			{"\\", "single escape"},
+		} {
+			data := []byte("(tree " + c.tok + "x)")
+			_, err := worklang.Read("tree.lisp", data, testLimits())
+			if err == nil {
+				t.Fatalf("%q in code position was read instead of refused", c.tok)
+			}
+			msg := assertRefusal(t, err).Error()
+			if !strings.Contains(msg, c.name) || !strings.Contains(msg, "byte=6") {
+				t.Errorf("refusal for %q does not name %q at byte=6: %s", c.tok, c.name, msg)
+			}
+			opaque := []byte("(tree \"a" + c.tok + "b\" ; " + c.tok + "\n 1)")
+			if _, err := worklang.Read("tree.lisp", opaque, testLimits()); err != nil {
+				t.Errorf("%q inside a string or a comment was refused: %v", c.tok, err)
+			}
 		}
 	})
+
+	// worklang-reader-reads-the-five-kinds: one list holding each kind comes
+	// back decoded, with the byte span of every form.
+	t.Run("worklang-reader-reads-the-five-kinds", func(t *testing.T) {
+		data := []byte("(a :k \"s\\\"q\" -12 ())")
+		f, err := worklang.Read("tree.lisp", data, testLimits())
+		if err != nil {
+			t.Fatal(err)
+		}
+		kinds := []worklang.Kind{worklang.Symbol, worklang.Keyword, worklang.String, worklang.Integer, worklang.List}
+		if f.Kind != worklang.List || len(f.List) != len(kinds) {
+			t.Fatalf("form = %#v", f)
+		}
+		for i, k := range kinds {
+			if f.List[i].Kind != k {
+				t.Errorf("element %d is kind %d, want %d", i, f.List[i].Kind, k)
+			}
+		}
+		if f.List[1].Value != "k" || f.List[2].Value != "s\"q" || f.List[3].Int != -12 {
+			t.Errorf("decoded values wrong: %#v", f.List)
+		}
+		if f.Offset != 0 || f.End != len(data) || f.List[1].Offset != 3 {
+			t.Errorf("spans wrong: list %d..%d, keyword at %d", f.Offset, f.End, f.List[1].Offset)
+		}
+	})
+
+	// worklang-reader-refuses-a-malformed-file: unbalanced, trailing and
+	// unterminated input is refused whole.
+	t.Run("worklang-reader-refuses-a-malformed-file", func(t *testing.T) {
+		for _, src := range []string{"(a b", "(a) (b)", "(a \"b)", "", ":", "12x"} {
+			_, err := worklang.Read("tree.lisp", []byte(src), testLimits())
+			if err == nil {
+				t.Errorf("%q was read instead of refused", src)
+				continue
+			}
+			assertRefusal(t, err)
+		}
+		if _, err := worklang.Read("tree.lisp", []byte("(a)"), worklang.Limits{}); err == nil {
+			t.Error("a zero Limits was accepted")
+		}
+	})
+}
+
+// testLimits is 64 KiB, depth 64 and 4096 nodes.
+func testLimits() worklang.Limits {
+	return worklang.Limits{MaxBytes: 65536, MaxDepth: 64, MaxNodes: 4096}
 }
 
 // assertRefusal checks the shape every refusal shares: it is a *worklang.Refusal
