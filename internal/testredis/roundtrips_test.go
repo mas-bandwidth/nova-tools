@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/redis/go-redis/v9"
@@ -105,17 +106,20 @@ func TestTheHookPassesTheAnswerThroughAndCountsAFailedCommand(t *testing.T) {
 	trips, hook := RoundTrips(t)
 	trips.Expect(t, 2, func() {
 		if err := hook.ProcessHook(func(context.Context, redis.Cmder) error { return refused })(ctx, redis.NewCmd(ctx, "get", "k")); !errors.Is(err, refused) {
-			t.Fatalf("the command was answerCommand %v; want what the client answerCommand", err)
+			t.Fatalf("the command was answered %v; want what the client answered", err)
 		}
 		if err := hook.ProcessPipelineHook(func(context.Context, []redis.Cmder) error { return refused })(ctx, getBatch(ctx, loopCommands)); !errors.Is(err, refused) {
-			t.Fatalf("the pipeline was answerCommand %v; want what the client answerCommand", err)
+			t.Fatalf("the pipeline was answered %v; want what the client answered", err)
 		}
 	})
+	// A dial is not a round trip, and it is counted as none only if it happens
+	// while Expect is counting.
 	dial := func(context.Context, string, string) (net.Conn, error) { return nil, refused }
-	if _, err := hook.DialHook(dial)(ctx, "tcp", "in-process"); !errors.Is(err, refused) {
-		t.Fatalf("the dial was answerCommand %v; want what the client answerCommand", err)
-	}
-	trips.Expect(t, 0, func() {})
+	trips.Expect(t, 0, func() {
+		if _, err := hook.DialHook(dial)(ctx, "tcp", "in-process"); !errors.Is(err, refused) {
+			t.Fatalf("the dial was answered %v; want what the client answered", err)
+		}
+	})
 }
 
 func TestExpectFailsWhenTheCountDiffersAndSaysBothNumbers(t *testing.T) {
@@ -266,8 +270,17 @@ func TestRoundTripsRefusesToRunOutsideATestBinary(t *testing.T) {
 // servePipedStore is the fake store: it reads commands the way a server does and
 // answers them. HELLO is refused, so the client speaks RESP2; a command inside
 // MULTI is QUEUED and EXEC answers one OK for each; the rest is OK, and a PING
-// is PONG.
-func servePipedStore(c net.Conn) {
+// is PONG. A SET outside a transaction first calls gate, when there is one, so
+// a test can hold every connection's command until it chooses.
+//
+// The fixture has a size limit: net.Pipe has no buffer, so the store blocks
+// writing a reply while the client is still writing its pipeline, and a
+// pipeline larger than the store's 4 KB read buffer can deadlock (measured: a
+// pipeline of 150 small SETs is answered and one of 300 times out writing).
+// The pipelines here hold a few commands. Do not reuse it to count a large
+// pipeline: the hook's size-independence is shown with a fake processor, which
+// has no pipe.
+func servePipedStore(c net.Conn, gate func()) {
 	defer c.Close()
 	r := bufio.NewReader(c)
 	queued, inTransaction := 0, false
@@ -290,6 +303,8 @@ func servePipedStore(c net.Conn) {
 			reply = "+QUEUED\r\n"
 		case name == "PING":
 			reply = "+PONG\r\n"
+		case name == "SET" && gate != nil:
+			gate()
 		}
 		if _, err := io.WriteString(c, reply); err != nil {
 			return
@@ -297,15 +312,25 @@ func servePipedStore(c net.Conn) {
 	}
 }
 
-// pipedClient is a go-redis client with the hooks given. It is not connected
-// until its first command.
-func pipedClient(t testing.TB, hooks ...redis.Hook) *redis.Client {
+// pipedStore is a fake store a real client reaches over net.Pipes, with the
+// number of connections opened to it.
+type pipedStore struct {
+	dials atomic.Int64
+	gate  func() // called before a SET outside a transaction is answered; nil for none
+	pool  int    // the client's pool size; 0 is go-redis's own
+}
+
+// client is a go-redis client with the hooks given. It is not connected until
+// its first command, and every connection it opens is counted in dials.
+func (s *pipedStore) client(t testing.TB, hooks ...redis.Hook) *redis.Client {
 	t.Helper()
 	c := redis.NewClient(&redis.Options{
-		Addr: "in-process",
+		Addr:     "in-process",
+		PoolSize: s.pool,
 		Dialer: func(context.Context, string, string) (net.Conn, error) {
+			s.dials.Add(1)
 			near, far := net.Pipe()
-			go servePipedStore(far)
+			go servePipedStore(far, s.gate)
 			return near, nil
 		},
 	})
@@ -316,6 +341,13 @@ func pipedClient(t testing.TB, hooks ...redis.Hook) *redis.Client {
 	return c
 }
 
+// pipedClient is a go-redis client on a fake store of its own, with the hooks
+// given. It is not connected until its first command.
+func pipedClient(t testing.TB, hooks ...redis.Hook) *redis.Client {
+	t.Helper()
+	return (&pipedStore{}).client(t, hooks...)
+}
+
 // connectClient opens the client's connection, so what is counted after it is the
 // caller's own.
 func connectClient(t testing.TB, c *redis.Client) {
@@ -323,6 +355,35 @@ func connectClient(t testing.TB, c *redis.Client) {
 	if err := c.Ping(context.Background()).Err(); err != nil {
 		t.Fatalf("ping: %v", err)
 	}
+}
+
+// meeting holds each goroutine that arrives until all of them have, or until
+// the test ends, so that every one of them is at the store at the same time.
+type meeting struct {
+	mu   sync.Mutex
+	need int
+	here int
+	open chan struct{}
+	once sync.Once
+}
+
+func newMeeting(t testing.TB, need int) *meeting {
+	m := &meeting{need: need, open: make(chan struct{})}
+	t.Cleanup(m.release)
+	return m
+}
+
+func (m *meeting) release() { m.once.Do(func() { close(m.open) }) }
+
+// arrive waits for the rest.
+func (m *meeting) arrive() {
+	m.mu.Lock()
+	m.here++
+	if m.here == m.need {
+		m.release()
+	}
+	m.mu.Unlock()
+	<-m.open
 }
 
 func TestAPipelineAndATransactionOfARealClientAreOneRoundTripEach(t *testing.T) {
@@ -369,17 +430,105 @@ func TestAPipelineAndATransactionOfARealClientAreOneRoundTripEach(t *testing.T) 
 	}
 }
 
-func TestTheHandshakeOfAClientThatHasNotConnectedIsCounted(t *testing.T) {
+// A connection's setup is not a round trip the caller made. go-redis runs it
+// through the hooks inside the caller's first command, so the hook tells it
+// from the caller's commands by who sent it, never by name.
+
+func TestAColdClientsFirstCommandIsOneRoundTrip(t *testing.T) {
 	t.Parallel()
 
+	ctx := context.Background()
+	store := &pipedStore{}
+	trips, hook := RoundTrips(t)
+	c := store.client(t, hook)
+	trips.Expect(t, 1, func() { connectClient(t, c) })
+	// The count did cover the dial and the handshake: they happened inside it.
+	if dialed := store.dials.Load(); dialed != 1 {
+		t.Fatalf("the first PING of a client that had not connected opened %d connections; want 1, so that the setup ran while it was counted", dialed)
+	}
+	// Connected, the same PING is one round trip as well.
+	trips.Expect(t, 1, func() { connectClient(t, c) })
+
+	// A cold client's first work may be a pipeline: one round trip as well.
+	cold := store.client(t, hook)
+	trips.Expect(t, 1, func() {
+		if _, err := cold.Pipelined(ctx, func(p redis.Pipeliner) error {
+			for range loopCommands {
+				p.Set(ctx, "k", "v", 0)
+			}
+			return nil
+		}); err != nil {
+			t.Fatal(err)
+		}
+	})
+	if dialed := store.dials.Load(); dialed != 2 {
+		t.Fatalf("a second cold client brought the connections to %d; want 2", dialed)
+	}
+}
+
+func TestTheCallersOwnHelloAndClientAreRoundTripsWhateverTheirNames(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
 	trips, hook := RoundTrips(t)
 	c := pipedClient(t, hook)
-	r := provoke(t, func(tb testing.TB) { trips.Expect(tb, 1, func() { connectClient(tb, c) }) })
-	if want := "hello; pipeline(client, client); ping"; !strings.HasSuffix(r.fatal, want) {
-		t.Fatalf("the first PING of a client that had not connected failed with %q; want it to end with the handshake and the PING: %q", r.fatal, want)
+	// On a cold client the handshake sends a HELLO and a CLIENT of its own, and
+	// the caller's command of the same name is the one counted.
+	said := provoke(t, func(tb testing.TB) {
+		trips.Expect(tb, 0, func() { _ = c.Do(ctx, "hello", "2").Err() })
+	})
+	if want := "testredis: expected 0 round trips, counted 1 round trip: hello"; said.fatal != want {
+		t.Fatalf("the caller's own HELLO on a cold client:\n got %q\nwant %q", said.fatal, want)
 	}
-	// Connected, the same PING is one round trip.
-	trips.Expect(t, 1, func() { connectClient(t, c) })
+	trips.Expect(t, 1, func() { _ = c.Do(ctx, "hello", "2").Err() })
+	said = provoke(t, func(tb testing.TB) {
+		trips.Expect(tb, 0, func() {
+			if err := c.Do(ctx, "client", "setname", "a-name").Err(); err != nil {
+				tb.Fatal(err)
+			}
+		})
+	})
+	if want := "testredis: expected 0 round trips, counted 1 round trip: client"; said.fatal != want {
+		t.Fatalf("the caller's own CLIENT SETNAME:\n got %q\nwant %q", said.fatal, want)
+	}
+	trips.Expect(t, 1, func() {
+		if err := c.Do(ctx, "client", "setname", "a-name").Err(); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+// A crowd on one client, every member at the store at once: the pool must open
+// a connection for each, each connection shakes hands, and the count is the
+// crowd's own commands and nothing else. The meeting makes the handshakes
+// certain; left to the scheduler they came in any number.
+func TestACrowdOnOneClientIsCountedExactlyWhateverTheHandshakes(t *testing.T) {
+	t.Parallel()
+
+	ctx := context.Background()
+	const crowd = 100
+	meet := newMeeting(t, crowd)
+	store := &pipedStore{gate: meet.arrive, pool: crowd}
+	trips, hook := RoundTrips(t)
+	c := store.client(t, hook)
+	connectClient(t, c)
+	before := store.dials.Load()
+	trips.Expect(t, crowd, func() {
+		var wg sync.WaitGroup
+		for range crowd {
+			wg.Go(func() {
+				if err := c.Set(ctx, "k", "v", 0).Err(); err != nil {
+					t.Error(err)
+				}
+			})
+		}
+		wg.Wait()
+	})
+	// Every member was at the store at once, so all but the one connection the
+	// client had dialed a connection of their own, inside the count.
+	if opened := store.dials.Load() - before; opened < crowd-1 {
+		t.Fatalf("the crowd opened %d connections; want at least %d, so that their handshakes were sent while they were counted", opened, crowd-1)
+	}
 }
 
 // go-redis runs the hook added first outermost, so the hook added last counts

@@ -18,6 +18,10 @@ import (
 // back to RESP2, PING is PONG and anything else is OK. A test calls a
 // package's Open or Dial against the address and asserts the count is still
 // zero: the caller's first batch, not the open, is the first command.
+//
+// It answers "how many commands reached a listener". To ask "did my verb batch"
+// (how many round trips, however many commands they carried, a connection's
+// handshake not counted), use RoundTrips.
 func CommandCounter(t testing.TB) (addr string, count func() int64) {
 	t.Helper()
 	return real.counter(t, net.Listen)
