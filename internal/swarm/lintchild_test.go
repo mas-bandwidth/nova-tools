@@ -43,8 +43,8 @@ func TestChildRulesTableIsWellFormed(t *testing.T) {
 			t.Errorf("rule name %q is not a unique kebab-case token", r.Name)
 		}
 		seen[r.Name] = true
-		if r.Sentence != strings.TrimSpace(r.Sentence) || !strings.ContainsAny(r.Sentence[len(r.Sentence)-1:], ".)`\"") || len(r.Sentence) < 12 {
-			t.Errorf("rule %s: sentence %q is not one whole sentence", r.Name, r.Sentence)
+		if r.Sentence != strings.TrimSpace(r.Sentence) || len(r.Sentence) < 12 {
+			t.Errorf("rule %s: sentence %q is not a whole rule", r.Name, r.Sentence)
 		}
 		if strings.TrimSpace(r.Source) == "" {
 			t.Errorf("rule %s names no source", r.Name)

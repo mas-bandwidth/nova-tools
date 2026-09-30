@@ -100,7 +100,7 @@ row per rule; `nova-swarm lint --rules` prints every token with its remedy.
 | `rule-commit-trailer` | Commit messages end with `Co-Authored-By: Claude <your model> <noreply@anthropic.com>`. | SAFETY.md |
 | `rule-pr-line` | PR bodies end with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`. | SAFETY.md |
 | `rule-never-merge` | Open PRs against the base this card names; never merge. | SAFETY.md, DIRTY-TICK-SLICES.md |
-| `rule-exit-codes` | A verb exits 0 when done, 2 when refused, and 3 when a write is unconfirmed (the store did not answer). | IT23-DECISIONS.md (26) |
+| `rule-exit-codes` | exit codes: 0 done, 1 refused, 2 usage or a store that did not answer | the nova-sprint banner (cmd/nova-sprint usage text; a test holds the two equal) |
 | `rule-pr-diffstat` | The PR body states the diff stat and what was deleted. | the owner's list of 2026-09-30 |
 | `rule-pr-tests` | The PR body lists the tests, each with what it pins, and every local helper added. | VERBS-COMMON.md |
 | `rule-report-shape` | Report under 80 lines: PR number and sha, every test package line, what you could not do and why. | SAFETY.md, DIRTY-TICK-SLICES.md |

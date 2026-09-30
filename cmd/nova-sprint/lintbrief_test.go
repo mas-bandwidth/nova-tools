@@ -90,3 +90,28 @@ func TestAddBriefLintLinesAreBounded(t *testing.T) {
 		t.Fatalf("--max 0 prints every finding: %d, want %d (every rule missing)", got, len(swarm.CardChildRules))
 	}
 }
+
+// The exit-codes rule the card lint requires is nova-sprint's own banner line, read from
+// the usage text, so the rule and the tool cannot drift: a change to the codes the banner
+// prints is red here until the row of swarm.CardChildRules says the same.
+func TestExitCodesRuleIsTheBannersLine(t *testing.T) {
+	t.Parallel()
+	var line string
+	for _, l := range strings.Split(banner(), "\n") {
+		if strings.HasPrefix(l, "exit codes: ") {
+			line = l
+		}
+	}
+	if line == "" {
+		t.Fatal("the usage text has no `exit codes:` line")
+	}
+	var row *swarm.ChildRule
+	for i := range swarm.CardChildRules {
+		if swarm.CardChildRules[i].Name == "exit-codes" {
+			row = &swarm.CardChildRules[i]
+		}
+	}
+	if row == nil || row.Sentence != line {
+		t.Fatalf("the exit-codes rule is %+v; the banner prints %q", row, line)
+	}
+}
