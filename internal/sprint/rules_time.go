@@ -167,8 +167,10 @@ const (
 
 // The sprint-key read kinds beyond the eight composite kinds of 1.0 (the errata's
 // addendum: the registry includes the eight, it is not closed at them): each
-// reads bounded keys of the sprint through `S.read_probe`. IT05's table of query costs
-// (QueryCost) has no row for them: timeQueryCost is their cost until it has.
+// reads bounded keys of the sprint through `S.read_probe`. IT05's table of query
+// costs (queryCosts) has no row for them, so init registers theirs
+// (timeQueryCosts), the same seam the rules are registered through: from then on
+// QueryCost, ReadPlan.Cost and ReadPlan.Split charge them what they cost.
 const (
 	queryGoal     = "goal"
 	queryTick     = "tick"
@@ -187,19 +189,33 @@ const (
 	droppingReadRecords = MaxStreams
 )
 
-// timeQueryCost is what a query may cost the store: QueryCost for the
-// composite queries of 1.0, and the time rules' own rows for the sprint-key
-// reads that QueryCost does not know.
+// timeQueryCosts are the rows of the sprint-key reads for the table of query
+// costs, one row a kind like QueryCost's: what a query of the kind may cost,
+// from its arguments alone.
+var timeQueryCosts = map[string]func(q SprintQ) Cost{
+	// 2 a goal: its record, and the score of its due entry.
+	queryGoal: func(q SprintQ) Cost {
+		n, ranged := q.Source.size()
+		return recordsCost(n*goalReadRecords, ranged, q.Fields)
+	},
+	// the tick hash, the agenda's size, the due count and the `behind` entry.
+	queryTick: func(q SprintQ) Cost { return recordsCost(tickReadRecords, 0, q.Fields) },
+	// 1 a cut op: its entry's score and verb.
+	queryCut: func(q SprintQ) Cost {
+		n, ranged := q.Source.size()
+		return recordsCost(n*cutReadRecords, ranged, q.Fields)
+	},
+	// one mark at most for each stream.
+	queryDropping: func(q SprintQ) Cost { return recordsCost(droppingReadRecords, 0, q.Fields) },
+}
+
+// timeQueryCost is what a query may cost the store, the same as QueryCost. It
+// is for the package variables of this file (lateRows), which are costed before
+// init has put the rows of timeQueryCosts into queryCosts; a test holds it to
+// QueryCost.
 func timeQueryCost(q SprintQ) Cost {
-	switch q.Kind {
-	case queryGoal:
-		return recordsCost(len(q.Source.IDs)*goalReadRecords, 0, q.Fields)
-	case queryTick:
-		return recordsCost(tickReadRecords, 0, q.Fields)
-	case queryCut:
-		return recordsCost(len(q.Source.IDs)*cutReadRecords, 0, q.Fields)
-	case queryDropping:
-		return recordsCost(droppingReadRecords, 0, q.Fields)
+	if row, ok := timeQueryCosts[q.Kind]; ok {
+		return row(q)
 	}
 	return QueryCost(q)
 }
@@ -496,7 +512,20 @@ var timeRules = []timeRule{
 	{Name: "behind", Read: readBehind, Plan: planBehind},
 }
 
+// registerQueryCosts puts rows into a table of query costs, and panics on a
+// kind the table already has: a collision is found at once, as a rule's is.
+func registerQueryCosts(table, rows map[string]func(q SprintQ) Cost) {
+	for kind, row := range rows {
+		if _, taken := table[kind]; taken {
+			panic("sprint: the query kind " + kind + " already has a row in the table of query costs")
+		}
+		table[kind] = row
+	}
+}
+
 func init() {
+	// The sprint-key read kinds go into IT05's table of query costs.
+	registerQueryCosts(queryCosts, timeQueryCosts)
 	for _, tr := range timeRules {
 		p, ok := PriorityOf(tr.Name)
 		if !ok {
@@ -845,6 +874,10 @@ type lateRun struct {
 	members, readers *pool
 	primaries        map[string]*primaryRun
 	order            []*primaryRun
+	// planned are the keys the run has planned, by kind and id, and whether each
+	// was held back: idle:<stream> and late:idle:<stream> are two texts of one
+	// key, and planned once.
+	planned map[lateKey]bool
 }
 
 // planLate is R11.
@@ -860,7 +893,7 @@ type lateRun struct {
 // readers a replacement chooses among, then O(log f) or O(15 + log r) a key.
 // Without it: every timed card read every tick.
 func planLate(s *Snapshot, keys []AgendaKey, now Now) RulePlan {
-	w := &lateRun{s: s, f: timeFactsOf(s), now: now, b: newTimeBuilder(), primaries: map[string]*primaryRun{}}
+	w := &lateRun{s: s, f: timeFactsOf(s), now: now, b: newTimeBuilder(), primaries: map[string]*primaryRun{}, planned: map[lateKey]bool{}}
 	for _, k := range uniqueKeys(keys) {
 		if w.key(k) {
 			w.b.rp.HeldBack = append(w.b.rp.HeldBack, k)
@@ -890,12 +923,25 @@ func (w *lateRun) finish() {
 
 // key plans one key, and says whether it is held back for a stream being
 // dropped. A key that names no kind R11 reads, a card that moved on, and a
-// card not yet due plan nothing, and the key goes.
+// card not yet due plan nothing, and the key goes. A key with the kind and id
+// of one the run has planned (the two texts of an idle key) plans nothing
+// again, and goes or is held back as the first did.
 func (w *lateRun) key(k AgendaKey) (heldBack bool) {
 	lk, ok := parseLateKey(keyText(k))
 	if !ok {
 		return false
 	}
+	if held, dup := w.planned[lk]; dup {
+		return held
+	}
+	held := w.plan(lk)
+	w.planned[lk] = held
+	return held
+}
+
+// plan plans one key of R11 by its kind and id, and says whether it is held
+// back for a stream being dropped.
+func (w *lateRun) plan(lk lateKey) (heldBack bool) {
 	row := lateRowOf(lk.kind)
 	if row == nil {
 		return false

@@ -1439,6 +1439,9 @@ func TestTimeRulesTwiceSecondEmpty(t *testing.T) {
 			w.readCard("p1.r1.r1", "r1", Asked, map[string]string{due("unbegun"): msText(timeR0)})
 			w.readCard("p1.r1.r2", "r2", Asked, map[string]string{due("unbegun"): msText(timeR0)})
 		}, true},
+		{"idle in both key forms", "late", []string{"idle:s1", "late:idle:s1"}, func(w *timeWorld) {
+			w.put(w.s.Merge, "ctl-s1", "s1", Ctl, map[string]string{"state": StreamMerging, due("idle"): msText(timeR0)})
+		}, true},
 		{"two late reads of one primary, one reader for both", "late", []string{"late:unbegun:p1.r1.r1", "late:unbegun:p1.r1.r2"}, func(w *timeWorld) {
 			w.primary("p1", Review, map[string]string{"rcards": "p1.r1.r1,p1.r1.r2", "head": "abc"})
 			w.readCard("p1.r1.r1", "r1", Asked, map[string]string{due("unbegun"): msText(timeR0)})
@@ -1647,24 +1650,6 @@ func TestMergeIdleJudgedOnlyWhenMergingOrQueued(t *testing.T) {
 	}
 }
 
-// timeReadCost is what the read plan may cost the store: QueryCost of its
-// composite queries and the time rules' own rows for the sprint-key reads that
-// QueryCost does not know.
-func timeReadCost(rp ReadPlan) Cost {
-	known := rp
-	known.Sprint = nil
-	var own Cost
-	for _, q := range rp.Sprint {
-		switch q.Kind {
-		case queryGoal, queryTick, queryCut, queryDropping:
-			own = own.Add(timeQueryCost(q))
-		default:
-			known.Sprint = append(known.Sprint, q)
-		}
-	}
-	return known.Cost().Add(own)
-}
-
 func mkKeys(n int, f func(i int) string) []AgendaKey {
 	var ks []AgendaKey
 	for i := 0; i < n; i++ {
@@ -1711,7 +1696,7 @@ func TestTimeReadsWithinBoundsAndHalve(t *testing.T) {
 	// R11's read counts the fleet and the dropping marks once: a work card key
 	// is 2 records (its card, and its primary, which follows nothing).
 	untaken := mkKeys(3, func(i int) string { return fmt.Sprintf("late:untaken:p%d.w1", i) })
-	once := timeQueryCost(SprintQ{Kind: QueryFleet, Fields: memberCtlFields}).Records + timeQueryCost(SprintQ{Kind: queryDropping, Fields: droppingFields}).Records
+	once := QueryCost(SprintQ{Kind: QueryFleet, Fields: memberCtlFields}).Records + QueryCost(SprintQ{Kind: queryDropping, Fields: droppingFields}).Records
 	if c := lateRowOf("untaken").Cost; c.Records != 2 {
 		t.Fatalf("a work card key costs %d records, want 2", c.Records)
 	}
@@ -1779,9 +1764,11 @@ func TestTimeReadsWithinBoundsAndHalve(t *testing.T) {
 }
 
 // No read of the time rules is over layer 1's bounds, at any number of keys and
-// at any halving: a read refused BUDGET is a bug (1.4.2). The cost is that of
-// the plan's own queries, counted by QueryCost (and the time rules' rows for
-// the sprint-key reads), so a query left out of a key's cost shows here.
+// at any halving: a read refused BUDGET is a bug (1.4.2). The cost is IT05's own
+// (ReadPlan.Cost, which counts each query by QueryCost), and the plan is left
+// whole by IT05's Split, the two functions a tick sizes a read with: so a query
+// left out of a key's cost, and a kind of read the table of query costs does not
+// know, show here.
 func TestNoTimeReadIsOverTheBounds(t *testing.T) {
 	t.Parallel()
 	b := L1ReadBounds()
@@ -1806,10 +1793,14 @@ func TestNoTimeReadIsOverTheBounds(t *testing.T) {
 		{"unfinished", readLate, lateKinds("unfinished")},
 		{"unbegun", readLate, lateKinds("unbegun")},
 		{"unreported", readLate, lateKinds("unreported")},
+		{"mergeidle", readLate, lateKinds("mergeidle")},
+		{"idle", readLate, lateKinds("idle")},
+		{"cut", readLate, lateKinds("cut")},
 		{"a mix of every kind", readLate, lateKinds("untaken", "unfinished", "unbegun", "unreported", "mergeidle", "idle", "cut")},
 		{"overdue", readOverdue, func(i int) string { return fmt.Sprintf("overdue:n%d", i) }},
 		{"hold", readHold, func(i int) string { return fmt.Sprintf("hold:n%d", i) }},
 		{"remind", readRemind, func(i int) string { return fmt.Sprintf("remind:person-%d", i) }},
+		{"behind", readBehind, func(int) string { return "behind" }},
 	} {
 		keys := mkKeys(3000, c.key)
 		for h := 0; h <= 4; h++ {
@@ -1822,9 +1813,15 @@ func TestNoTimeReadIsOverTheBounds(t *testing.T) {
 				if err := rp.Validate(); err != nil {
 					t.Fatalf("%s at %d halvings: %v", c.name, h, err)
 				}
-				cost := timeReadCost(rp)
+				cost := rp.Cost()
 				if cost.Records > b.Records || cost.RangeIDs > b.RangeIDs || cost.Bytes > b.Bytes || rp.Queries() > b.Queries {
 					t.Fatalf("%s at %d halvings, %d keys left: the read may return %+v in %d queries, over %+v", c.name, h, len(rest), cost, rp.Queries(), b)
+				}
+				// A read inside the bounds is one read: a tick that splits it with
+				// IT05's Split leaves its queries together, so the plan is loaded
+				// whole (the dropping marks with the cards it judges).
+				if parts := rp.Split(b); len(parts) != 1 || !reflect.DeepEqual(parts[0], rp) {
+					t.Fatalf("%s at %d halvings, %d keys left: Split cuts the read into %d reads", c.name, h, len(rest), len(parts))
 				}
 				rest = next
 			}
@@ -1835,6 +1832,93 @@ func TestNoTimeReadIsOverTheBounds(t *testing.T) {
 	rp, rest := readLate(mkKeys(3000, lateKinds("untaken")), b, 0)
 	if kept := 3000 - len(rest); kept < 1000 {
 		t.Fatalf("a read of work cards keeps %d keys: %+v", kept, rp.Cost())
+	}
+}
+
+// The sprint-key read kinds are in IT05's table of query costs: QueryCost, and
+// so ReadPlan.Cost and Split, charge each what it reads and not a whole read
+// (the read kind "unknown" is charged a whole one, and the store refuses it).
+// The rows the time rules cost their keys with when the package's variables are
+// set, before init registers them, are the rows QueryCost answers.
+func TestTimeReadKindsAreInTheQueryCosts(t *testing.T) {
+	t.Parallel()
+	whole := Cost{Records: MaxReadRecords, RangeIDs: MaxReadRangeIDs, Bytes: MaxReadBytes}
+	three := []string{"a", "b", "c"}
+	for _, c := range []struct {
+		q       SprintQ
+		records int
+	}{
+		{idsQ(queryGoal, three, goalFields), 3 * goalReadRecords},
+		{SprintQ{Kind: queryTick, Fields: tickFields}, tickReadRecords},
+		{idsQ(queryCut, three, cutFields), 3 * cutReadRecords},
+		{SprintQ{Kind: queryDropping, Fields: droppingFields}, MaxStreams},
+	} {
+		if _, ok := queryCosts[c.q.Kind]; !ok {
+			t.Errorf("%s has no row in the table of query costs", c.q.Kind)
+		}
+		got := QueryCost(c.q)
+		if got == whole || got.Records != c.records || got.RangeIDs != 0 || got.Bytes != c.records*recordBytes(c.q.Fields) {
+			t.Errorf("%s costs %+v, want %d records", c.q.Kind, got, c.records)
+		}
+		if got != timeQueryCost(c.q) {
+			t.Errorf("%s: QueryCost %+v, the cost the rules' own variables are set with %+v", c.q.Kind, got, timeQueryCost(c.q))
+		}
+	}
+	if got := QueryCost(SprintQ{Kind: "unknown"}); got != whole {
+		t.Errorf("a kind the table does not know costs %+v, want a whole read", got)
+	}
+	// The row of a cut key was set before init registered it, and is QueryCost's.
+	if got, want := lateRowOf(kindCut).Cost, QueryCost(idsQ(queryCut, oneKeyID, cutFields)); got != want {
+		t.Errorf("a cut key costs %+v in lateRows, %+v by QueryCost", got, want)
+	}
+
+	// A read of one key of each kind is inside the bounds by IT05's Cost, and
+	// Split leaves it one read: the dropping marks stay with the cards they judge.
+	b := L1ReadBounds()
+	for _, key := range []string{"late:untaken:p1.w1", "late:unfinished:p1.w1", "late:unbegun:p1.r1.r1", "late:unreported:p1.r1.r1",
+		"late:mergeidle:s1", "late:idle:s1", "late:cut:op-1"} {
+		rp, rest := readLate([]AgendaKey{keyOf(key, 1)}, b, 0)
+		if len(rest) != 0 {
+			t.Fatalf("%s: left %v", key, keyTexts(rest))
+		}
+		if cost := rp.Cost(); cost.Records > b.Records || cost.Bytes > b.Bytes {
+			t.Errorf("%s: the read costs %+v by IT05's Cost, over %+v", key, cost, b)
+		}
+		if parts := rp.Split(b); len(parts) != 1 || !reflect.DeepEqual(parts[0], rp) {
+			t.Errorf("%s: Split cuts the read into %d reads", key, len(parts))
+		}
+	}
+	for name, rp := range map[string]ReadPlan{
+		"remind": mustRead(readRemind, "remind:person-a"), "behind": mustRead(readBehind, "behind"),
+	} {
+		if cost := rp.Cost(); cost.Records > b.Records || cost.Bytes > b.Bytes {
+			t.Errorf("%s: the read costs %+v by IT05's Cost, over %+v", name, cost, b)
+		}
+		if parts := rp.Split(b); len(parts) != 1 {
+			t.Errorf("%s: Split cuts the read into %d reads", name, len(parts))
+		}
+	}
+}
+
+// mustRead is the read a rule plans for one key within layer 1's bounds.
+func mustRead(read func([]AgendaKey, ReadBounds, int) (ReadPlan, []AgendaKey), key string) ReadPlan {
+	rp, _ := read([]AgendaKey{keyOf(key, 1)}, L1ReadBounds(), 0)
+	return rp
+}
+
+// A kind that already has a row in a table of query costs is a collision, and
+// refused at registration; a kind without one is added.
+func TestQueryCostRowsAreRegisteredOnce(t *testing.T) {
+	t.Parallel()
+	row := func(SprintQ) Cost { return Cost{Records: 1} }
+	table := map[string]func(q SprintQ) Cost{QueryFleet: row}
+	registerQueryCosts(table, map[string]func(q SprintQ) Cost{"new": row})
+	if _, ok := table["new"]; !ok || len(table) != 2 {
+		t.Fatalf("the row is not registered: %d rows", len(table))
+	}
+	got := mustPanic(t, func() { registerQueryCosts(table, map[string]func(q SprintQ) Cost{QueryFleet: row}) })
+	if !strings.Contains(got, QueryFleet) {
+		t.Fatalf("the refusal does not name the kind: %s", got)
 	}
 }
 
@@ -1890,18 +1974,90 @@ func TestTimeRulesNeverReadAClock(t *testing.T) {
 	}
 }
 
-// TestTimeRulesPlanTheSameFromAnyClock plans the same keys over snapshots whose
-// own time differs, and finds the same plan: nothing reads it.
+// TestTimeRulesPlanTheSameFromAnyClock plans one state of every rule (and of
+// every kind of R11) over snapshots whose own time differs, and finds the same
+// plan: nothing reads it. The wall stamps a late read writes are the wall of
+// Now, and the syntax-tree test sees only a call, so this is what holds a rule
+// that took a stamp from the snapshot's time (Snapshot.Now, the read's TimeMS).
 func TestTimeRulesPlanTheSameFromAnyClock(t *testing.T) {
 	t.Parallel()
-	w := newTimeWorld(t)
-	w.primary("p1", Working, nil)
-	w.workCard("p1.w1", "m1", Ready, map[string]string{fieldDueUntaken: msText(timeR0)})
-	first := w.plan("late", "late:untaken:p1.w1")
-	w.timeMS = "1999999999999"
-	second := w.plan("late", "late:untaken:p1.w1")
-	if !reflect.DeepEqual(first, second) {
-		t.Fatalf("the plan follows the snapshot's own time:\n%+v\n%+v", first, second)
+	for _, c := range []struct {
+		name  string
+		rule  string
+		keys  []string
+		setup func(w *timeWorld)
+	}{
+		{"untaken", "late", []string{"late:untaken:p1.w1"}, func(w *timeWorld) {
+			w.primary("p1", Working, nil)
+			w.workCard("p1.w1", "m1", Ready, map[string]string{fieldDueUntaken: msText(timeR0)})
+		}},
+		{"unfinished", "late", []string{"late:unfinished:p1.w1"}, func(w *timeWorld) {
+			w.primary("p1", Working, nil)
+			w.workCard("p1.w1", "m1", Working, map[string]string{fieldDueUnfinished: msText(timeR0)})
+		}},
+		{"unbegun", "late", []string{"late:unbegun:p1.r1.r1"}, func(w *timeWorld) {
+			w.primary("p1", Review, map[string]string{"rcards": "p1.r1.r1", "head": "abc"})
+			w.readCard("p1.r1.r1", "r1", Asked, map[string]string{fieldDueUnbegun: msText(timeR0)})
+		}},
+		{"unreported", "late", []string{"late:unreported:p1.r1.r1"}, func(w *timeWorld) {
+			w.primary("p1", Review, map[string]string{"rcards": "p1.r1.r1", "head": "abc"})
+			w.readCard("p1.r1.r1", "r1", Reading, map[string]string{fieldDueUnreported: msText(timeR0)})
+		}},
+		{"mergeidle", "late", []string{"late:mergeidle:s1"}, func(w *timeWorld) {
+			w.put(w.s.Merge, "ctl-s1", "s1", Ctl, map[string]string{"state": StreamMerging, fieldDueMergeIdle: msText(timeR0)})
+		}},
+		{"idle", "late", []string{"late:idle:s1"}, func(w *timeWorld) {
+			w.put(w.s.Merge, "ctl-s1", "s1", Ctl, map[string]string{"state": StreamMerging, fieldDueIdle: msText(timeR0)})
+		}},
+		{"cut", "late", []string{"late:cut:op-1"}, func(w *timeWorld) {
+			w.f.Cuts["op-1"] = CutFact{Entry: true, At: timeWall0 - 1, Verb: "drop"}
+		}},
+		{"overdue", "overdue", []string{"overdue:n1"}, func(w *timeWorld) {
+			w.f.Notes["n1"] = NoteFact{Type: NBound, Cause: "held", Open: []string{"p1"}}
+		}},
+		{"hold", "hold", []string{"hold:n1"}, func(w *timeWorld) {
+			w.f.Notes["n1"] = NoteFact{Type: NBound, Cause: "held", Holds: []string{"p1"}}
+			w.j["p1|"+NBound+"|held"] = "hn1"
+		}},
+		{"remind", "remind", []string{"remind:person-a"}, func(w *timeWorld) {
+			w.f.Goals["person-a"] = GoalFact{Exists: true}
+		}},
+		{"behind", "behind", []string{"behind"}, func(w *timeWorld) {
+			w.f.Tick = TickFact{Backlog: 800, Agenda: 30, DueNow: 5, BehindN: 500}
+		}},
+		{"a mixed run of late kinds", "late", []string{"late:untaken:p1.w1", "late:unbegun:p2.r1.r1", "late:idle:s1"}, func(w *timeWorld) {
+			w.primary("p1", Working, nil)
+			w.workCard("p1.w1", "m1", Ready, map[string]string{fieldDueUntaken: msText(timeR0)})
+			w.primary("p2", Review, map[string]string{"rcards": "p2.r1.r1", "head": "abc"})
+			w.readCard("p2.r1.r1", "r1", Asked, map[string]string{fieldDueUnbegun: msText(timeR0)})
+			w.put(w.s.Merge, "ctl-s1", "s1", Ctl, map[string]string{"state": StreamMerging, fieldDueIdle: msText(timeR0)})
+		}},
+	} {
+		var first RulePlan
+		for i, ms := range []Decimal{"1790000000123", "1999999999999", "1600000000000"} {
+			w := newTimeWorld(t)
+			c.setup(w)
+			w.timeMS = ms
+			p := w.plan(c.rule, c.keys...)
+			if silent(p) {
+				t.Fatalf("%s: planned nothing, so the comparison holds nothing", c.name)
+			}
+			// A stamp the plan writes is the wall of Now.
+			for _, ch := range moved(p) {
+				for _, f := range []string{"retired", "asked"} {
+					if v, ok := ch.Entry.Set[f]; ok && v != wallStamp(w.now) {
+						t.Fatalf("%s at time %s: %s is %s, the wall of Now is %s", c.name, ms, f, v, wallStamp(w.now))
+					}
+				}
+			}
+			if i == 0 {
+				first = p
+				continue
+			}
+			if !reflect.DeepEqual(first, p) {
+				t.Fatalf("%s: the plan follows the snapshot's own time (%s):\n%+v\n%+v", c.name, ms, first, p)
+			}
+		}
 	}
 }
 
@@ -2050,6 +2206,34 @@ func TestDuplicateKeysArePlannedOnce(t *testing.T) {
 	if p := w2.plan("behind", "behind", "behind"); len(p.Done) != 1 {
 		t.Fatalf("behind twice: %+v", p)
 	}
+
+	// The two texts of an idle key (the pop's late:idle:<stream> and the
+	// idle:<stream> ServingRule sends to R11) are one key: one unset, one
+	// notice naming the stream once, and both texts removed.
+	idle := func() *timeWorld {
+		w := newTimeWorld(t)
+		w.put(w.s.Merge, "ctl-s1", "s1", Ctl, map[string]string{"state": StreamMerging, fieldDueIdle: msText(timeR0)})
+		return w
+	}
+	w3 := idle()
+	p = w3.plan("late", "idle:s1", "late:idle:s1")
+	if len(moved(p)) != 1 || len(p.Notes) != 1 || !reflect.DeepEqual(p.Notes[0].Subjects, []string{"stream:s1"}) {
+		t.Fatalf("idle in both forms is planned twice: %+v", p)
+	}
+	want(t, "both texts removed", keyTexts(p.Done), []string{"idle:s1", "late:idle:s1"})
+	// Either order, and with another key between them.
+	p = idle().plan("late", "late:idle:s1", "late:untaken:gone.w1", "idle:s1")
+	if len(moved(p)) != 1 || len(p.Notes) != 1 || len(p.Done) != 3 {
+		t.Fatalf("idle in both forms, apart: %+v", p)
+	}
+	// Held back for a stream being dropped, both texts are held back.
+	w4 := idle()
+	w4.f.Dropping["s1"] = "op-1"
+	p = w4.plan("late", "idle:s1", "late:idle:s1")
+	if len(p.Done) != 0 || len(p.Plan.Units) != 0 || len(p.Notes) != 0 {
+		t.Fatalf("a dropping stream's idle key was planned: %+v", p)
+	}
+	want(t, "both texts held back", keyTexts(p.HeldBack), []string{"idle:s1", "late:idle:s1"})
 }
 
 // R17's look counts the cards the dry plans' intents change as well as those
@@ -2213,6 +2397,70 @@ func TestLateReadIsGuardedWhereItIsRead(t *testing.T) {
 	w.s.Work.Put(pr)
 	if eff := w.apply(p); !strings.HasPrefix(eff.Refused, "REVISION") || w.card(Readers, "p1.r1.r3") != nil || w.card(Readers, "p1.r1.r1").Placed() == false {
 		t.Fatalf("a change to the primary was overwritten: %+v", eff)
+	}
+}
+
+// A read card judged late is held at its place and revision (2.3 R11, guard),
+// whether the judgment is for the reread bound or for want of a reader: a reader
+// that began or reported it between read and apply has moved the card, and a
+// judgment that it is past its deadline must not open for a card that is not
+// late any more. The work cards' and the merge control card's guards are checked
+// where those are judged (TestUntakenReplacedOnceThenJudged, the mergeidle
+// test).
+func TestLateReadJudgmentHoldsTheCardWhereItIsRead(t *testing.T) {
+	t.Parallel()
+	for _, k := range []struct {
+		kind, col, due, movesTo string
+	}{
+		{"unbegun", Asked, fieldDueUnbegun, Reading},
+		{"unreported", Reading, fieldDueUnreported, OK},
+	} {
+		for _, why := range []struct{ name, rcards, rereads string }{
+			{"at the reread bound", "p1.r1.r1", "3"},
+			{"with no reader left", "p1.r1.r1,p1.r1.r2,p1.r1.r3", "0"},
+		} {
+			name := k.kind + " " + why.name
+			setup := func() (*timeWorld, RulePlan) {
+				w := newTimeWorld(t)
+				w.primary("p1", Review, map[string]string{"rcards": why.rcards, "rereads": why.rereads, "head": "abc"})
+				w.readCard("p1.r1.r1", "r1", k.col, map[string]string{k.due: msText(timeR0)})
+				return w, w.plan("late", "late:"+k.kind+":p1.r1.r1")
+			}
+			w, p := setup()
+			if noteReq(p, requestOpen, NReadLate) == nil || len(moved(p)) != 0 || len(p.Plan.Units) != 1 {
+				t.Fatalf("%s: not judged by one unit that changes no card: %+v", name, p)
+			}
+			u := p.Plan.Units[0]
+			if u.Key != "p1.r1.r1" || u.Stream != "s1" || len(u.Changes) != 1 || u.Changes[0].Table != Readers || u.Changes[0].Entry.ID != "p1.r1.r1" {
+				t.Fatalf("%s: the unit does not hold the read card: %+v", name, u)
+			}
+			x := u.Changes[0].Entry.Expect
+			if x == nil || x.Revision != "1" || x.Place == nil || x.Place.Row != "r1" || x.Place.Col != k.col {
+				t.Fatalf("%s: the read card is not held at its place and revision: %+v", name, x)
+			}
+			// Nothing moved it: the judgment opens.
+			if eff := w.apply(p); eff != (timeEffect{Opened: 1}) {
+				t.Fatalf("%s: effect %+v", name, eff)
+			}
+
+			// The reader moved it on between read and apply (the place it was not
+			// read at): refused, and no judgment opens.
+			w, p = setup()
+			c := w.card(Readers, "p1.r1.r1")
+			c.Col = k.movesTo
+			w.s.Readers.Put(c)
+			if eff := w.apply(p); !strings.HasPrefix(eff.Refused, "PLACE") || len(w.j) != 0 {
+				t.Fatalf("%s: a read that moved on was judged late: %+v %v", name, eff, w.j)
+			}
+			// Or the card changed where it stands (a revision it was not read at).
+			w, p = setup()
+			c = w.card(Readers, "p1.r1.r1")
+			c.Rev++
+			w.s.Readers.Put(c)
+			if eff := w.apply(p); !strings.HasPrefix(eff.Refused, "REVISION") || len(w.j) != 0 {
+				t.Fatalf("%s: a read that changed was judged late: %+v %v", name, eff, w.j)
+			}
+		}
 	}
 }
 
