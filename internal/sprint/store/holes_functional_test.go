@@ -17,11 +17,11 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
-// G2 and G3 on a store, over a whole sprint with a machine lapsing: no machine
-// is over its width before any step of any tick or after it, only the pump's
-// parts write the work table (the changes of the others are the log's queue,
-// drained by the next pump), and the deal writes the fleet in its own step.
-func TestG2AndG3OnAStoreOverASprintWithALapse(t *testing.T) {
+// G2 on a store, over a whole sprint: no machine is over its width before any
+// step of any tick or after it, and the fleet holds exactly the work cards the
+// working primaries hold at every step after the pump: the deal's fleet write
+// is in the pump's step.
+func TestG2OnAStoreNoMachineIsOverItsWidthAtAnyStep(t *testing.T) {
 	t.Parallel()
 	h, _ := liveHarness(t)
 	holesUp(h, 4)
@@ -43,7 +43,36 @@ func TestG2AndG3OnAStoreOverASprintWithALapse(t *testing.T) {
 			t.Fatalf("before %s the fleet holds %d work cards and %d primaries are working", part, held, working)
 		}
 	}
-	planned := 0
+	holesRun(x, 4, false, func(round int, res TickResult, ws []holeWrite) {
+		if why := heldOK(h.table()); why != "" {
+			t.Fatalf("round %d after the tick: %s", round, why)
+		}
+	})
+	if steps < 20 {
+		t.Fatalf("%d steps checked", steps)
+	}
+	h.clean("landed")
+}
+
+// G2 and G3 on a store, over a whole sprint with a machine lapsing: the deal
+// gives a machine no more than its room, only the pump's parts write the work
+// table (the changes of the others are the log's queue, drained by the next
+// pump), no step but the deal creates a work card on a machine, and every tick
+// ends within the model's bound.
+func TestG2AndG3OnAStoreOverASprintWithALapse(t *testing.T) {
+	t.Parallel()
+	h, _ := liveHarness(t)
+	holesUp(h, 4)
+	x := newHoleTick(h)
+	held := map[string]int{}
+	x.onPlan = func(part string, s *sprint.Snapshot) {
+		if part == "work/deal" {
+			for _, m := range s.UpMembers() {
+				held[m] = heldBy(s, m)
+			}
+		}
+	}
+	planned, dealt := 0, 0
 	holesRun(x, 4, true, func(round int, res TickResult, ws []holeWrite) {
 		if len(res.Order) > 12 {
 			t.Fatalf("round %d: the tick took %d updates: %v", round, len(res.Order), res.Order)
@@ -53,24 +82,32 @@ func TestG2AndG3OnAStoreOverASprintWithALapse(t *testing.T) {
 				t.Fatalf("round %d: %s wrote %d entries of the work table: only the pump does", round, part, n)
 			}
 		}
+		made := map[string]int{}
 		for _, w := range ws {
 			for _, e := range w.Members {
-				if w.Table == sprint.Fleet && e.Create != nil && w.Part != "work/deal" {
-					t.Fatalf("round %d: %s created work card %s on a member", round, w.Part, e.ID)
+				if w.Table == sprint.Fleet && e.Create != nil {
+					if w.Part != "work/deal" {
+						t.Fatalf("round %d: %s created work card %s on a member", round, w.Part, e.ID)
+					}
+					made[e.Create.Row]++
 				}
 			}
 		}
+		for m, n := range made {
+			dealt += n
+			if room := max(0, 2-held[m]); n > room {
+				t.Fatalf("round %d: the deal gave %s %d cards, its room was %d", round, m, n, room)
+			}
+		}
+		clear(held)
 		for _, st := range x.seen {
 			if !slices.Contains(pumpParts, st.Part) {
 				planned += st.WorkChanges
 			}
 		}
-		if why := heldOK(h.table()); why != "" {
-			t.Fatalf("round %d after the tick: %s", round, why)
-		}
 	})
-	if steps < 20 || planned == 0 {
-		t.Fatalf("the watch saw %d steps and %d queued changes of the work table", steps, planned)
+	if dealt < 12 || planned == 0 {
+		t.Fatalf("the watch saw %d cards dealt and %d queued changes of the work table", dealt, planned)
 	}
 	h.clean("landed")
 }
