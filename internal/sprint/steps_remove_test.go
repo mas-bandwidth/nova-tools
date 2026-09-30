@@ -145,25 +145,43 @@ func TestRemoveNamesEveryCardOfTheStreamsAndNothingOfTheThird(t *testing.T) {
 		t.Errorf("rows deleted: %v", rows)
 	}
 	// A primary and every card it had are in one part.
-	part := map[string]int{}
-	for i, u := range p.Units {
-		for _, c := range u.Changes {
-			pr := c.Entry.ID
-			if p, _, ok := ParseWorkCard(pr); ok {
-				pr = p
-			} else if i := strings.Index(pr, ".r"); i > 0 {
-				pr = pr[:i]
-			}
-			if j, ok := part[pr]; ok && j != i {
-				t.Errorf("%s is split over parts %d and %d", pr, j, i)
-			}
-			part[pr] = i
-		}
-	}
+	primaryParts(t, p)
 	// It is a planner: nothing of the snapshot changed.
 	if w.s.Work.Card("s1-1") == nil || len(w.s.Work.Rows()) != 3 || len(w.s.Merge.Rows()) != 3 {
 		t.Errorf("the plan changed the snapshot")
 	}
+}
+
+// primaryOfEntry is the primary a removed card belongs to: a work card, a read
+// card, or the primary's own card (a merge card has its id).
+func primaryOfEntry(id string) string {
+	if pr, _, ok := ParseWorkCard(id); ok {
+		return pr
+	}
+	if i := strings.Index(id, ".r"); i > 0 {
+		return id[:i]
+	}
+	return id
+}
+
+// primaryParts maps each primary of the plan to the parts (1-based) that hold
+// its cards; ctl cards of a stream are left out.
+func primaryParts(t *testing.T, p Plan) map[string]map[int]bool {
+	t.Helper()
+	out := map[string]map[int]bool{}
+	for i, u := range p.Units {
+		for _, c := range u.Changes {
+			pr := primaryOfEntry(c.Entry.ID)
+			if strings.HasPrefix(pr, "ctl-") {
+				continue
+			}
+			if out[pr] == nil {
+				out[pr] = map[int]bool{}
+			}
+			out[pr][i+1] = true
+		}
+	}
+	return out
 }
 
 func TestRemoveRefusesWhatItCannotPlanAndPlansNothing(t *testing.T) {
@@ -236,6 +254,164 @@ func TestRemoveCutsPartsOfAtMostTwoThousandEntries(t *testing.T) {
 	}
 	if total != want || len(p.Units) < 2 {
 		t.Errorf("%d entries in %d parts, want %d entries in several", total, len(p.Units), want)
+	}
+	// Where the cuts fall, no primary spans two parts.
+	for pr, parts := range primaryParts(t, p) {
+		if len(parts) != 1 {
+			t.Errorf("%s spans parts %v", pr, parts)
+		}
+	}
+}
+
+// bigPrimary puts a primary of the stream in the work table with k fleet work
+// cards (k+1 entries in all), scored so.
+func bigPrimary(s *Snapshot, st, pr string, score float64, k int) {
+	s.Work.Put(&Card{ID: pr, Row: st, Col: Working, Score: score, Rev: 1, Fields: map[string]string{"kind": "primary"}})
+	for i := 1; i <= k; i++ {
+		s.Fleet.Put(&Card{ID: WorkCardID(pr, i), Row: "m1", Col: Working, Score: float64(i), Rev: 1,
+			Fields: map[string]string{"kind": "work", "primary": pr, "stream": st}})
+	}
+}
+
+func bareRemoveSnapshot(streams ...string) *Snapshot {
+	s := &Snapshot{Now: t0, Work: NewTable(Work), Readers: NewTable(Readers), Merge: NewTable(Merge), Fleet: NewTable(Fleet)}
+	s.Fleet.SetRows([]string{"m1"})
+	s.Work.SetRows(append([]string(nil), streams...))
+	s.Merge.SetRows(append([]string(nil), streams...))
+	return s
+}
+
+func partSizes(p Plan) []int {
+	var out []int
+	for _, u := range p.Units {
+		out = append(out, len(u.Changes))
+	}
+	return out
+}
+
+// A primary of 1,990 entries followed by one of 21 does not squeeze in: the
+// parts are 1990 and 21, and no primary is split.
+func TestRemoveKeepsAPrimaryWholeWhenTheNextOneDoesNotFit(t *testing.T) {
+	t.Parallel()
+	s := bareRemoveSnapshot("a")
+	bigPrimary(s, "a", "a-1", 1, 1989)
+	bigPrimary(s, "a", "a-2", 2, 20)
+	p, err := Remove(s, []string{"a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fmt.Sprint(partSizes(p)); got != "[1990 21]" {
+		t.Fatalf("parts %s, want [1990 21]", got)
+	}
+	for pr, parts := range primaryParts(t, p) {
+		if len(parts) != 1 {
+			t.Errorf("%s spans parts %v", pr, parts)
+		}
+	}
+}
+
+// A primary of 2,001 entries is split, not refused: 2,000 and 1, the
+// primary's own work card last, so an abort between the parts leaves a
+// primary without children and never children without a primary.
+func TestRemoveSplitsAPrimaryOfMoreThanAPartAndItsOwnCardIsLast(t *testing.T) {
+	t.Parallel()
+	s := bareRemoveSnapshot("a")
+	bigPrimary(s, "a", "a-1", 1, 2000)
+	p, err := Remove(s, []string{"a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(p.Refused) != 0 {
+		t.Fatalf("refused: %+v", p.Refused)
+	}
+	if got := fmt.Sprint(partSizes(p)); got != "[2000 1]" {
+		t.Fatalf("parts %s, want [2000 1]", got)
+	}
+	if c := p.Units[1].Changes[0]; c.Table != Work || c.Entry.ID != "a-1" {
+		t.Errorf("the last part holds %s %s, want the primary's own work card", c.Table, c.Entry.ID)
+	}
+	if got := planned(t, p); len(got[Fleet]) != 2000 || len(got[Work]) != 1 {
+		t.Errorf("planned %d fleet and %d work cards", len(got[Fleet]), len(got[Work]))
+	}
+}
+
+// A card goes by its primary when it carries no stream field, and when its
+// stream names a stream outside the batch but its primary is inside (B1:
+// every card of each primary).
+func TestRemoveTakesACardByItsPrimaryWhateverItsStreamField(t *testing.T) {
+	t.Parallel()
+	w := newRemoveWorld([]string{"s1", "s2", "s3"}, 3)
+	w.s.Fleet.Put(&Card{ID: WorkCardID("s1-1", 9), Row: "m2", Col: DoneOK, Rev: 1, Fields: map[string]string{"kind": "work", "primary": "s1-1"}})
+	w.s.Fleet.Put(&Card{ID: WorkCardID("s1-2", 9), Row: "m2", Col: DoneOK, Rev: 1, Fields: map[string]string{"kind": "work", "primary": "s1-2", "stream": "s3"}})
+	// A card of the third stream's own primary is not touched.
+	w.s.Fleet.Put(&Card{ID: WorkCardID("s3-1", 9), Row: "m2", Col: DoneOK, Rev: 1, Fields: map[string]string{"kind": "work", "primary": "s3-1"}})
+	p, err := Remove(w.s, []string{"s1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := strings.Join(planned(t, p)[Fleet], " ")
+	for _, id := range []string{WorkCardID("s1-1", 9), WorkCardID("s1-2", 9)} {
+		if !strings.Contains(got, id) {
+			t.Errorf("%s is not removed: %s", id, got)
+		}
+	}
+	if strings.Contains(got, WorkCardID("s3-1", 9)) {
+		t.Errorf("a card of the third stream is removed: %s", got)
+	}
+}
+
+func openOn(w *removeWorld, id, subject string, streamLevel bool, stream string) Open {
+	n := Note{ID: id, Kind: Judgment, Type: NStranded, Stream: stream, StreamLevel: streamLevel, At: t0}
+	o := Open{Key: OpenKey(id, subject), Note: n}
+	w.s.Open = append(w.s.Open, o)
+	return o
+}
+
+// A remove closes the judgments of what it removes, as drop does: a per-card
+// judgment on a removed card on the unit that removes it, a stream-level one
+// of a removed stream on the stream's last part; the third stream's stay open.
+func TestRemoveClosesTheJudgmentsOfWhatItRemoves(t *testing.T) {
+	t.Parallel()
+	w := newRemoveWorld([]string{"s1", "s2", "s3"}, 4)
+	card := openOn(w, "n-card", "s1-2", false, "s1")
+	stream := openOn(w, "n-stream", StreamSubject("s2"), true, "s2")
+	openOn(w, "n-third-card", "s3-2", false, "s3")
+	openOn(w, "n-third-stream", StreamSubject("s3"), true, "s3")
+	p, err := Remove(w.s, []string{"s1", "s2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	closes := map[string]string{} // note id -> unit key
+	for _, u := range p.Units {
+		for _, o := range u.Closes {
+			if _, dup := closes[o.Note.ID]; dup {
+				t.Errorf("%s closed twice", o.Note.ID)
+			}
+			closes[o.Note.ID] = u.Key
+		}
+	}
+	if len(closes) != 2 {
+		t.Errorf("closes %v, want the card's and the stream's judgments only", closes)
+	}
+	// The card's judgment is on the unit that removes s1-2.
+	for _, u := range p.Units {
+		removes := false
+		for _, c := range u.Changes {
+			removes = removes || c.Table == Work && c.Entry.ID == "s1-2"
+		}
+		if removes != (closes[card.Note.ID] == u.Key) {
+			t.Errorf("unit %s removes s1-2: %v, but holds its judgment: %v", u.Key, removes, closes[card.Note.ID] == u.Key)
+		}
+	}
+	// The stream's is on the last part of s2.
+	last := ""
+	for _, u := range p.Units {
+		if u.Stream == "s2" {
+			last = u.Key
+		}
+	}
+	if closes[stream.Note.ID] != last || last == "" {
+		t.Errorf("the stream judgment closes on %q, want the last part of s2, %q", closes[stream.Note.ID], last)
 	}
 }
 

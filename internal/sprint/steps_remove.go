@@ -27,7 +27,10 @@ type RowDel struct{ Table, Row string }
 // work cards of the fleet's table, the read cards and the merge cards carry
 // both, so that a finished work card of a primary dropped earlier, whose
 // primary has no place any more, goes with its stream. A primary goes with
-// every card it ever had in the same part.
+// every card it ever had in the same part (B1: every card of each primary).
+// A card that names a stream outside the batch, but whose primary is placed in
+// a stream of the batch, is removed too: the primary decides, as B1 says, and
+// a card with no stream field at all goes by its primary alone.
 //
 // The plan is one for the whole batch, in parts: each Unit is one part, of at
 // most RemoveChunk entries, holding one stream's cards (streams in the order
@@ -36,6 +39,15 @@ type RowDel struct{ Table, Row string }
 // last part. A primary with more cards than a part holds is split over parts.
 // The last unit of the plan carries, in its RowDels, every
 // stream's rows in work and merge, as the design's last part removes them.
+//
+// The judgments go as Drop's do (design v2.1, `drop`, and `remove` as drop with
+// landed cards included): the unit that removes a card closes every open
+// per-card judgment on it, and, a removed stream having nowhere left for them,
+// the stream-level judgments of each removed stream close in the stream's last
+// part. Those of the third stream stay open.
+//
+// The model does not cover remove: tla/SprintEvents.tla keeps clear, epochs
+// and remove out, so no model action is cited here.
 //
 // A stream that does not exist, an empty list, or a snapshot loaded from a
 // read plan (not whole tables) is refused: the plan is empty and the error
@@ -172,6 +184,40 @@ func Remove(s *Snapshot, streams []string) (Plan, error) {
 		flush()
 	}
 
+	// The judgments: per removed card on the unit that removes it (a key once,
+	// the merge card of a primary having its id), stream-level ones of a removed
+	// stream on the stream's last part.
+	closed := map[string]bool{}
+	for i := range p.Units {
+		u := &p.Units[i]
+		for _, c := range u.Changes {
+			for _, o := range closesFor(s.Open, nil, c.Entry.ID) {
+				if !closed[o.Key] {
+					closed[o.Key] = true
+					u.Closes = append(u.Closes, o)
+				}
+			}
+		}
+	}
+	if len(p.Units) == 0 {
+		p.Units = append(p.Units, Unit{Key: "remove " + strings.Join(names, ","), Stream: names[0],
+			Moved: "removed no cards of " + strings.Join(names, ", ")})
+	}
+	for _, st := range names {
+		at := len(p.Units) - 1
+		for i := range p.Units {
+			if p.Units[i].Stream == st {
+				at = i
+			}
+		}
+		for _, o := range s.Open {
+			if o.Note.StreamLevel && o.Note.Stream == st && !closed[o.Key] {
+				closed[o.Key] = true
+				p.Units[at].Closes = append(p.Units[at].Closes, o)
+			}
+		}
+	}
+
 	rows := func() (r []RowDel) {
 		for _, st := range names {
 			if s.Work.HasRow(st) {
@@ -183,10 +229,6 @@ func Remove(s *Snapshot, streams []string) (Plan, error) {
 		}
 		return r
 	}()
-	if len(p.Units) == 0 {
-		p.Units = append(p.Units, Unit{Key: "remove " + strings.Join(names, ","), Stream: names[0],
-			Moved: "removed no cards of " + strings.Join(names, ", ")})
-	}
 	last := &p.Units[len(p.Units)-1]
 	last.RowDels = rows
 	return Lawful(p), nil
