@@ -439,7 +439,10 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 		if groups == nil {
 			groups = []sprint.Group{}
 		}
-		out := map[string]any{"groups": groups, "last": v.Last, "cursor": v.Cursor, "at": a.now(), "machine": st.MachineLine(ctx)}
+		machine := st.MachineLine(ctx)
+		judgments, happened := inboxActs(groups, a.now())
+		out := map[string]any{"groups": groups, "judgments": judgments, "happened": happened, "done": machine == "machine: "+store.DoneState,
+			"last": v.Last, "cursor": v.Cursor, "at": a.now(), "machine": machine}
 		if opened != nil {
 			out["open"] = nonNil(opened.Members)
 			if len(opened.Needs) > 0 {
@@ -483,6 +486,72 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stdout, line)
 	}
 	return 0
+}
+
+// inboxJudgment is one open judgment as a program acts on it: what it is,
+// the cards it is about, and each decision open to the coordinator as the
+// exact command lines that make it (the ones inbox prints), in order.
+type inboxJudgment struct {
+	ID        string        `json:"id"` // what --group takes
+	Kind      string        `json:"kind"`
+	Type      string        `json:"type"`
+	What      string        `json:"what"`
+	Stream    string        `json:"stream"`
+	Size      int           `json:"size"` // what --expect takes
+	Cards     []string      `json:"cards"`
+	Notes     []string      `json:"notes"` // what --answers takes
+	Marked    bool          `json:"marked"`
+	Overdue   bool          `json:"overdue"`
+	Waited    string        `json:"waited"`
+	Due       *time.Time    `json:"due,omitempty"`
+	Answers   []inboxAnswer `json:"answers"`
+	Decisions []string      `json:"decisions"`
+}
+
+// inboxAnswer is one decision and the command lines that make it.
+type inboxAnswer struct {
+	Decision string   `json:"decision"`
+	Commands []string `json:"commands"`
+}
+
+// inboxHappened is one group of what happened since the cursor.
+type inboxHappened struct {
+	ID     string   `json:"id"`
+	Kind   string   `json:"kind"`
+	Type   string   `json:"type"`
+	What   string   `json:"what"`
+	Stream string   `json:"stream"`
+	Size   int      `json:"size"`
+	Count  int      `json:"count"`
+	Cards  []string `json:"cards"`
+	Notes  []string `json:"notes"`
+	To     string   `json:"to,omitempty"`
+	Hint   string   `json:"hint,omitempty"`
+}
+
+// inboxActs splits the inbox's groups into the open judgments and what
+// happened, each with its cards whole, for inbox --json.
+func inboxActs(groups []sprint.Group, now time.Time) ([]inboxJudgment, []inboxHappened) {
+	judgments, happened := []inboxJudgment{}, []inboxHappened{}
+	for _, g := range groups {
+		cards := nonNil(g.Members)
+		if g.Kind != sprint.Judgment {
+			happened = append(happened, inboxHappened{ID: g.ID, Kind: g.Kind, Type: g.Type, What: g.What, Stream: g.Stream, Size: g.Size, Count: g.Count,
+				Cards: cards, Notes: nonNil(g.Notes), To: g.To, Hint: g.Hint})
+			continue
+		}
+		j := inboxJudgment{ID: g.ID, Kind: g.Kind, Type: g.Type, What: g.What, Stream: g.Stream, Size: g.Size, Cards: cards, Notes: nonNil(g.Notes),
+			Marked: g.Marked, Overdue: g.Overdue, Waited: now.Sub(g.Oldest).Round(time.Second).String(), Answers: []inboxAnswer{}, Decisions: nonNil(g.Decisions)}
+		if !g.Due.IsZero() {
+			due := g.Due
+			j.Due = &due
+		}
+		for _, c := range g.Commands {
+			j.Answers = append(j.Answers, inboxAnswer{Decision: c.Decision, Commands: nonNil(c.Lines)})
+		}
+		judgments = append(judgments, j)
+	}
+	return judgments, happened
 }
 
 func dashed(s string) string {
