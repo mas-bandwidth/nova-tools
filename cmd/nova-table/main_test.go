@@ -114,3 +114,21 @@ func TestSeatWordsNameTheSeat(t *testing.T) {
 		t.Fatalf("reworded: %v", err)
 	}
 }
+
+// TestOneRemedyALine: a lost store explained by the connection's hook inside
+// a verb's error that names this tool's own step keeps only that step; a
+// text with one step, or none, is as it was.
+func TestOneRemedyALine(t *testing.T) {
+	t.Parallel()
+	for _, c := range []struct{ in, want string }{
+		{`table "jobs" row "a": ns_table_row_add: redis at 127.0.0.1:1 as the default user, no password: reply lost after the command was sent: EOF; next: the write may have committed, so read it back before retrying; run: nova-table show 'jobs'`,
+			`table "jobs" row "a": ns_table_row_add: redis at 127.0.0.1:1 as the default user, no password: reply lost after the command was sent: EOF; run: nova-table show 'jobs'`},
+		{`ns_table_row_add: EOF; run: nova-table show 'jobs'`, `ns_table_row_add: EOF; run: nova-table show 'jobs'`},
+		{`redis at 127.0.0.1:1: unreachable: dial tcp: connection refused; next: start the store`, `redis at 127.0.0.1:1: unreachable: dial tcp: connection refused; next: start the store`},
+		{`no such row`, `no such row`},
+	} {
+		if got := oneRemedy(c.in); got != c.want {
+			t.Errorf("oneRemedy(%q)\n = %q\nwant %q", c.in, got, c.want)
+		}
+	}
+}

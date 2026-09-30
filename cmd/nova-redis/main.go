@@ -92,7 +92,9 @@ and a user whose password variable is empty are refused (exit 2) before
 anything is dialled. A store that cannot be reached, or a login it refuses,
 is one FAIL line on stderr with the next step (exit 2). A spill whose reply
 is lost after the store took it is SPILL UNCONFIRMED (exit 1): the write may
-have committed, so read it back with recall before spilling again.
+have committed, so read it back with recall before spilling again. A recall
+whose reply is lost is one FAIL line with class=unconfirmed (exit 1): a read
+changes nothing, so read again.
 fn load puts the nova_sprint function library this binary embeds on the store
 unless the store holds exactly its code (LOADED, UNCHANGED or REPLACED, with
 its digest). fn check changes nothing: OK (exit 0), STALE or MISSING (exit 1)
@@ -243,10 +245,10 @@ func cmdSpill(args []string, stdout, stderr io.Writer, d deps) int {
 	key, err := s.spill(ctx, *owner, *name, *value, ttl)
 	if err != nil {
 		err = conn.Explain(err)
-		if redisconn.Classify(err) == redisconn.Unreachable {
-			// Open succeeded, so the transaction was handed to a store that was
-			// up: a connection that dropped or a reply that never came after
-			// that is not "could not run". The EXEC may have committed.
+		if redisconn.Classify(err) == redisconn.Unconfirmed {
+			// The transaction was written to a store that was up and its reply
+			// was lost: that is not "could not run". The EXEC may have
+			// committed.
 			return unconfirmed(stderr, conn, store, *owner, *name, err)
 		}
 		return failed(stderr, "SPILL", *owner+":"+*name, err, store, d)
@@ -294,8 +296,8 @@ func cmdRecall(args []string, stdout, stderr io.Writer, d deps) int {
 		return 1
 	case err != nil:
 		// A read has no side effect, so a reply that never came leaves the
-		// store as it was: unreachable exits 2 here, honestly, where spill's
-		// lost reply exits 1 (unconfirmed).
+		// store as it was: recall's lost reply is one FAIL line with
+		// class=unconfirmed, exit 1, and reading again is safe.
 		return failed(stderr, "RECALL", key, conn.Explain(err), store, d)
 	}
 	fmt.Fprintf(stdout, "RECALL OK key=%s bytes=%d value=%s\n", oneline.Field(key), len(v), oneline.Field(v))
@@ -445,10 +447,11 @@ func connect(ctx context.Context, store login, d deps) (*redisconn.Conn, error) 
 // failed prints a verb's one FAIL line for err, which is redisconn's (an
 // Open failure, or a command's error through Conn.Explain), so it names the
 // store, the login, what came back and the next step. A store that could not
-// be reached and a login it refused exit 2: the fix is the caller's. The
-// store may still have taken the write: redisconn classes a connection that
-// dropped, or a reply that never came, as unreachable too, and by then a
-// spill's EXEC may have landed. Anything else the store answered exits 1.
+// be reached (class=unreachable: the command never reached it) and a login it
+// refused (class=auth-refused) exit 2: the fix is the caller's. A command
+// written whose reply was lost (class=unconfirmed) exits 1: it ran and its
+// outcome is unknown; spill turns that class into SPILL UNCONFIRMED before
+// failed is reached. Anything else the store answered exits 1.
 //
 // A refused login with the password's variable unset gets one more field,
 // the variable this verb read: redisconn's next step names no variable when

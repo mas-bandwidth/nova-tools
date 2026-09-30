@@ -101,7 +101,7 @@ func TestExec(t *testing.T) {
 	pipe = conn.Client().Pipeline()
 	pipe.Get(ctx, "drop")
 	pipe.Get(ctx, "key")
-	if err := Exec(ctx, pipe); !errors.Is(err, io.EOF) || Classify(err) != Unreachable {
+	if err := Exec(ctx, pipe); !errors.Is(err, io.EOF) || Classify(err) != Unconfirmed {
 		t.Errorf("a pipeline the store dropped: %v; want the end of the stream", err)
 	}
 	if err := Exec(ctx, conn.Client().Pipeline()); err != nil {

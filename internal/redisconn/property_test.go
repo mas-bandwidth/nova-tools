@@ -210,6 +210,33 @@ func everythingShown(t *testing.T, password string) []showing {
 		out = append(out, s)
 	}
 
+	// The password handed over from memory (Secret): the options, the
+	// secret, the refusal of the login, and a command's error that the
+	// connection's own hook explained.
+	seat := &Secret{From: "the seat bench-3", Read: func() string { return password }}
+	seated := Options{Addr: storeAddr, User: "bench", Password: seat}
+	out = append(out, verbs("a secret", seat)...)
+	out = append(out, verbs("the options with a secret", seated)...)
+	resolved, err := Resolve(seated, nil)
+	out = append(out, failed("Resolve with a secret", err)...)
+	out = append(out, verbs("the options with a secret, resolved", resolved)...)
+	store = newFakeStore(t, refusing("-WRONGPASS invalid username-password pair or user is disabled.\r\n"))
+	_, err = open(ctx, seated, nil, store.dial)
+	out = append(out, failed("Open with a secret, the login refused", err)...)
+	store = newFakeStore(t, func(conn int, cmd []string) string {
+		if cmd[0] == "incr" {
+			return hangUp
+		}
+		return accepting(conn, cmd)
+	})
+	conn, err = open(ctx, seated, nil, store.dial)
+	if err != nil {
+		t.Fatalf("Open with a secret %q: %v", password, err)
+	}
+	out = append(out, showing{what: "the connection with a secret: String()", of: "the connection with a secret", text: conn.String()})
+	out = append(out, failed("a reply lost, explained by the hook", conn.Client().Incr(ctx, "n").Err())...)
+	_ = conn.Close()
+
 	// The password put where the name of its variable belongs.
 	if !envName(password) {
 		misplaced := environment(map[string]string{GeneralEnv.Addr: storeAddr, GeneralEnv.User: "bench", GeneralEnv.PasswordEnv: password})

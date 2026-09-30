@@ -5,6 +5,7 @@ import (
 	"net"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -30,13 +31,40 @@ type Env struct {
 	PasswordEnv string
 }
 
+// Secret is a password handed over from memory, for a caller that holds it
+// (a seat's, read through the secrets library) and must not put it in the
+// environment. It holds the function that reads the password, never the
+// password, so printing a Secret, by any verb, prints nothing that must be
+// kept.
+type Secret struct {
+	// From is the words every message names the password by, such as "the
+	// seat bench-3"; empty is "the caller's secret". No message shows the
+	// password, and words that hold it are not shown either.
+	From string
+	// Read returns the password. Resolve calls it once and Open once, when
+	// each runs.
+	Read func() string
+}
+
+// secretShown is all any formatting verb shows of a Secret.
+const secretShown = "redisconn.Secret(redacted)"
+
+// String is a fixed redaction, redisconn.Secret(redacted), whatever the
+// Secret holds: its From may be words that hold the password, so neither
+// From nor Read is shown. %v, %+v and %s print it.
+func (Secret) String() string { return secretShown }
+
+// GoString is String, so %#v shows no more than %v.
+func (Secret) GoString() string { return secretShown }
+
 // GeneralEnv is the general set of names, for a tool that has none of its
 // own: NOVA_REDIS_ADDR, NOVA_REDIS_USER and NOVA_REDIS_PASSWORD_ENV.
 var GeneralEnv = Env{Addr: "NOVA_REDIS_ADDR", User: "NOVA_REDIS_USER", PasswordEnv: "NOVA_REDIS_PASSWORD_ENV"}
 
 // Options says where the store is and who logs in. It holds no secret and
-// cannot: the password is named by the variable that holds it, so printing an
-// Options, by any verb, prints nothing that must be kept.
+// cannot: the password is named by the variable that holds it, or handed over
+// by a function (Password), so printing an Options, by any verb, prints
+// nothing that must be kept.
 type Options struct {
 	// Addr is host:port (a name or an IP, a port from 1 to 65535) or the
 	// absolute path of a Unix socket.
@@ -46,6 +74,24 @@ type Options struct {
 	// PasswordEnv is the NAME of the environment variable that holds the
 	// password; empty is a login with no password.
 	PasswordEnv string
+	// PasswordOptional says that the variable PasswordEnv names may be empty
+	// or unset, and that then the login is the default user with no
+	// password: for a tool whose contract is that an empty password variable
+	// is no password. It never applies to a named user, whose login is made
+	// with a password or not at all (an empty password would be the default
+	// user's login in its place). The default, false, refuses an empty one.
+	PasswordOptional bool
+	// Password hands the password over from memory (Secret). It is used
+	// when PasswordEnv is not given, and then in place of Env.PasswordEnv.
+	Password *Secret
+	// PoolSize is the most connections the client holds at once; zero or
+	// less is go-redis's default. One is a client whose every command waits
+	// for the one before it.
+	PoolSize int
+	// DialTimeout bounds each dial of the connection, Open's and every later
+	// one. Zero or less, or more than the package's DialTimeout, is the
+	// package's DialTimeout: it can shorten the bound, never lengthen it.
+	DialTimeout time.Duration
 	// Env names the variables Resolve reads for whichever of the three above
 	// is empty. The zero Env reads nothing.
 	Env Env
@@ -79,7 +125,8 @@ func (o Options) String() string {
 //     underscores (AuthRefused). The name is not shown, in case the password
 //     was put where its variable's name belongs.
 //   - a password variable that is named and empty (AuthRefused), whoever the
-//     user is.
+//     user is, unless PasswordOptional is set and no user is named: then
+//     the login is the default user with no password.
 //
 // No user and no password variable is the default user with no password, so
 // a throwaway store needs nothing but its address.
@@ -97,6 +144,12 @@ func Resolve(explicit Options, getenv func(string) string) (Options, error) {
 type login struct {
 	Options
 	addrFrom, userFrom, envFrom string
+	// secret is the words that name a password handed over by
+	// Options.Password, "" when it came from a variable or there is none.
+	secret string
+	// empty is an optional password that was empty: the login is the
+	// default user with no password (Options.PasswordOptional).
+	empty bool
 }
 
 // resolve is Resolve, and the password beside it for Open. The password is
@@ -105,11 +158,12 @@ func resolve(explicit Options, getenv func(string) string) (login, string, error
 	if getenv == nil {
 		getenv = func(string) string { return "" }
 	}
-	var l login
-	l.Env = explicit.Env
+	l := login{Options: explicit}
 	l.Addr, l.addrFrom = pick(explicit.Addr, getenv, l.Env.Addr)
 	l.User, l.userFrom = pick(explicit.User, getenv, l.Env.User)
-	l.PasswordEnv, l.envFrom = pick(explicit.PasswordEnv, getenv, l.Env.PasswordEnv)
+	if explicit.Password == nil || explicit.Password.Read == nil {
+		l.PasswordEnv, l.envFrom = pick(explicit.PasswordEnv, getenv, l.Env.PasswordEnv)
+	}
 
 	const shape = "host:port (a port from 1 to 65535) or the absolute path of a Unix socket"
 	switch {
@@ -128,6 +182,9 @@ func resolve(explicit Options, getenv func(string) string) (login, string, error
 			next:  "give " + shape}
 	}
 
+	if l.PasswordEnv == "" && l.Password != nil && l.Password.Read != nil {
+		return l.handed()
+	}
 	if l.PasswordEnv == "" {
 		if l.User == "" {
 			return l, "", nil
@@ -147,11 +204,55 @@ func resolve(explicit Options, getenv func(string) string) (login, string, error
 	}
 	password := getenv(l.PasswordEnv)
 	if password == "" {
+		if l.PasswordOptional && l.User == "" {
+			l.empty = true
+			return l, "", nil
+		}
 		return login{}, "", &failure{class: AuthRefused, tried: l.tried(),
 			cause: errors.New(l.PasswordEnv + " is empty"),
 			next:  "export " + l.PasswordEnv + ", holding the password, in the environment of this process"}
 	}
 	return l, password, nil
+}
+
+// handed is the last step of resolve for a password handed over by
+// Options.Password.
+func (l login) handed() (login, string, error) {
+	password := l.Password.Read()
+	l.secret = l.Password.From
+	if l.secret == "" {
+		l.secret = "the caller's secret"
+	}
+	if hide := hider(password); hide(l.secret) != l.secret {
+		l.secret = "a secret whose name is not shown"
+	}
+	if password == "" {
+		if l.PasswordOptional && l.User == "" {
+			l.empty = true
+			return l, "", nil
+		}
+		return login{}, "", &failure{class: AuthRefused, tried: l.tried(),
+			cause: errors.New(l.secret + " holds no password"),
+			next:  "put the password of " + l.whose() + " in " + l.secret}
+	}
+	return l, password, nil
+}
+
+// whose names, in words, the user whose password it is.
+func (l login) whose() string {
+	if l.User == "" {
+		return "the default user"
+	}
+	return l.User
+}
+
+// source is the words that name where the password comes from: its
+// variable, or the words of a password handed over; "" for none.
+func (l login) source() string {
+	if l.secret != "" {
+		return l.secret
+	}
+	return l.PasswordEnv
 }
 
 // pick is the given value, else the value of the named variable when a name
@@ -212,8 +313,11 @@ func (l login) who() string {
 // tried is who and where the password comes from: the words every message
 // about a connection opens with.
 func (l login) tried() string {
-	if l.PasswordEnv != "" {
-		return l.who() + " (password from " + l.PasswordEnv + ")"
+	if l.empty {
+		return l.who() + ", no password (" + l.source() + " is empty)"
+	}
+	if l.source() != "" {
+		return l.who() + " (password from " + l.source() + ")"
 	}
 	return l.who() + ", no password"
 }

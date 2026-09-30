@@ -20,7 +20,7 @@ import (
 // flattened to their text.
 func TestClassify(t *testing.T) {
 	t.Parallel()
-	conn, _ := opened(t, func(_ int, cmd []string) string {
+	conn, store := opened(t, func(_ int, cmd []string) string {
 		switch cmd[0] {
 		case "hello":
 			return helloAccepted
@@ -30,9 +30,13 @@ func TestClassify(t *testing.T) {
 		// The store answers each command with the line the test sent it.
 		return "-" + cmd[1] + "\r\n"
 	})
+	// plain is a go-redis client of the same store without this package's
+	// hook, so what it returns is go-redis's own error.
+	plain := redis.NewClient(&redis.Options{Addr: storeAddr, Dialer: store.dial, Protocol: 3, DisableIdentity: true, MaxRetries: -1})
+	t.Cleanup(func() { _ = plain.Close() })
 	// answered is the error go-redis returns for a line the store wrote.
 	answered := func(line string) error {
-		err := conn.Client().Do(context.Background(), "ECHO-AS-ERROR", line).Err()
+		err := plain.Do(context.Background(), "ECHO-AS-ERROR", line).Err()
 		var re redis.Error
 		if !errors.As(err, &re) || err.Error() != line {
 			t.Fatalf("the store's %q came back as %T %v", line, err, err)
@@ -62,13 +66,18 @@ func TestClassify(t *testing.T) {
 		{"the store: an absent value", redis.Nil, Other},
 
 		{"a dial that was refused", refused, Unreachable},
-		{"a read that timed out", timeout, Unreachable},
+		{"a dial that timed out", &net.OpError{Op: "dial", Net: "tcp", Err: os.ErrDeadlineExceeded}, Unreachable},
 		{"a name that does not resolve", &net.DNSError{Err: "no such host", Name: "store.test", IsNotFound: true}, Unreachable},
-		{"the deadline of a context", context.DeadlineExceeded, Unreachable},
-		{"a connection that dropped", io.EOF, Unreachable},
-		{"a connection that dropped inside a reply", io.ErrUnexpectedEOF, Unreachable},
-		{"a closed socket", &net.OpError{Op: "write", Net: "tcp", Err: net.ErrClosed}, Unreachable},
 		{"no free connection in time", redis.ErrPoolTimeout, Unreachable},
+
+		// Rule (l): a failure that can come after the command was written
+		// is never said to be unreachable.
+		{"a read that timed out", timeout, Unconfirmed},
+		{"the deadline of a context", context.DeadlineExceeded, Unconfirmed},
+		{"a connection that dropped", io.EOF, Unconfirmed},
+		{"a connection that dropped inside a reply", io.ErrUnexpectedEOF, Unconfirmed},
+		{"a closed socket", &net.OpError{Op: "write", Net: "tcp", Err: net.ErrClosed}, Unconfirmed},
+		{"a reset", &net.OpError{Op: "read", Net: "tcp", Err: os.NewSyscallError("read", syscall.ECONNRESET)}, Unconfirmed},
 
 		{"a cancelled context", context.Canceled, Other},
 		{"a closed client", redis.ErrClosed, Other},
@@ -100,11 +109,13 @@ func TestClassify(t *testing.T) {
 		"failed to authenticate: ERR AUTH":                                         AuthRefused,
 		"dial tcp 127.0.0.1:1: connect: connection refused":                        Unreachable,
 		"dial tcp: lookup store.test: no such host":                                Unreachable,
-		"read tcp 127.0.0.1:50000->127.0.0.1:6379: i/o timeout":                    Unreachable,
+		"read tcp 127.0.0.1:50000->127.0.0.1:6379: i/o timeout":                    Unconfirmed,
+		"dial tcp 127.0.0.1:6379: i/o timeout":                                     Unreachable,
+		"redis: connection pool timeout":                                           Unreachable,
 		"dial tcp 127.0.0.1:6379: connect: network is unreachable":                 Unreachable,
 		"dial tcp 127.0.0.1:6379: connect: no route to host":                       Unreachable,
-		"read tcp 127.0.0.1:50000->127.0.0.1:6379: read: connection reset by peer": Unreachable,
-		"write tcp 127.0.0.1:50000->127.0.0.1:6379: write: broken pipe":            Unreachable,
+		"read tcp 127.0.0.1:50000->127.0.0.1:6379: read: connection reset by peer": Unconfirmed,
+		"write tcp 127.0.0.1:50000->127.0.0.1:6379: write: broken pipe":            Unconfirmed,
 		"NOAUTHORITY over this row":                                                Other,
 		"WRONGTYPE Operation against a key holding the wrong kind of value":        Other,
 		"": Other,
@@ -116,11 +127,11 @@ func TestClassify(t *testing.T) {
 	}
 }
 
-// TestClassNames: the three words, and the one for a value that is none of
-// the three.
+// TestClassNames: the four words, and the one for a value that is none of
+// the four.
 func TestClassNames(t *testing.T) {
 	t.Parallel()
-	for class, want := range map[Class]string{Other: "other", Unreachable: "unreachable", AuthRefused: "auth-refused", Class(7): "other", Class(-1): "other"} {
+	for class, want := range map[Class]string{Other: "other", Unreachable: "unreachable", AuthRefused: "auth-refused", Unconfirmed: "unconfirmed", Class(7): "other", Class(-1): "other"} {
 		if got := class.String(); got != want {
 			t.Errorf("Class(%d) reads %q; want %q", int(class), got, want)
 		}
@@ -132,7 +143,7 @@ func TestClassNames(t *testing.T) {
 	if zero != Other {
 		t.Errorf("the zero class is %v; want %v", zero, Other)
 	}
-	for class, want := range map[Class]string{Other: "failed", Unreachable: "unreachable", AuthRefused: "login refused", Class(7): "failed"} {
+	for class, want := range map[Class]string{Other: "failed", Unreachable: "unreachable", AuthRefused: "login refused", Unconfirmed: "reply lost after the command was sent", Class(7): "failed"} {
 		if got := class.phrase(); got != want {
 			t.Errorf("Class(%d) is said %q; want %q", int(class), got, want)
 		}
@@ -148,7 +159,7 @@ func TestAFailureIsOneLine(t *testing.T) {
 	const bs = "\\"
 	separator, override := string(rune(0x2028)), string(rune(0x202e))
 	l := login{Options: Options{Addr: "/var/run/a" + separator + "b.sock", User: "bench\r\nREFUSED", PasswordEnv: "PW"}}
-	f := explain(l, hider("s3cret"), errors.New("first\nsecond\x00"+override), false)
+	f := explain(l, hider("s3cret"), errors.New("first\nsecond\x00"+override), Other, false)
 	want := "redis at /var/run/a" + bs + "u2028b.sock as user bench" + bs + "x0d" + bs + "x0aREFUSED (password from PW): failed: first" + bs + "x0asecond" + bs + "x00" + bs + "u202e; next: the store answered, so the connection stands: read the refusal as the command's own"
 	if got := f.Error(); got != want {
 		t.Errorf("\n got %s\nwant %s", got, want)
