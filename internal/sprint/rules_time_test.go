@@ -285,7 +285,7 @@ func (w *timeWorld) plan(rule string, keys ...string) RulePlan {
 	ks := agendaKeys(keys)
 	rp, rest := r.Read(ks, unboundedReads, 0)
 	if len(rest) != 0 {
-		w.t.Fatalf("the read of %s left %v of %v", rule, keyTexts(rest), keys)
+		w.t.Fatalf("the read of %s left %v of %v", rule, timeKeyTexts(rest), keys)
 	}
 	return r.Plan(w.load(rp), ks, w.now)
 }
@@ -590,7 +590,7 @@ func noteReq(p RulePlan, op, typ string) *NoteReq {
 	return nil
 }
 
-func keyTexts(ks []AgendaKey) []string {
+func timeKeyTexts(ks []AgendaKey) []string {
 	var out []string
 	for _, k := range ks {
 		out = append(out, keyText(k))
@@ -656,7 +656,7 @@ func TestUntakenReplacedOnceThenJudged(t *testing.T) {
 	if !hasGuard(p, XGuard{Kind: guardMemberUp, Member: "m2"}) {
 		t.Fatalf("the receiver's memberup is not guarded: %+v", p.Guards)
 	}
-	want(t, "keys removed", keyTexts(p.Done), []string{key})
+	want(t, "keys removed", timeKeyTexts(p.Done), []string{key})
 	if !p.Sprint.Empty() {
 		t.Fatalf("writes to sprint keys: %+v", p.Sprint)
 	}
@@ -927,7 +927,7 @@ func TestCutJudgedWhileStopped(t *testing.T) {
 	if !hasGuard(p, noEntryAbove("cut:op-1", timeWall0)) {
 		t.Fatalf("the cut entry is not guarded: %+v", p.Guards)
 	}
-	want(t, "keys removed", keyTexts(p.Done), []string{key})
+	want(t, "keys removed", timeKeyTexts(p.Done), []string{key})
 	if eff := w.apply(p); eff != (timeEffect{Opened: 1}) {
 		t.Fatalf("effect %+v", eff)
 	}
@@ -970,7 +970,7 @@ func TestHoldExpiryWritesUnheldLine(t *testing.T) {
 	if !hasGuard(p, XGuard{Kind: guardHold, Key: "hn7"}) {
 		t.Fatalf("the hold is not guarded: %+v", p.Guards)
 	}
-	want(t, "keys removed", keyTexts(p.Done), []string{key})
+	want(t, "keys removed", timeKeyTexts(p.Done), []string{key})
 	if len(p.Plan.Units) != 0 || !p.Sprint.Empty() {
 		t.Fatalf("the expiry touches more than the line: %+v %+v", p.Plan.Units, p.Sprint)
 	}
@@ -1007,7 +1007,7 @@ func TestOverdueMarksOnce(t *testing.T) {
 	if !hasGuard(p, XGuard{Kind: guardHold, Key: "overdue:n3"}) {
 		t.Fatalf("the mark is not guarded: %+v", p.Guards)
 	}
-	want(t, "keys removed", keyTexts(p.Done), []string{"overdue:n3", "overdue:n4", "overdue:n5"})
+	want(t, "keys removed", timeKeyTexts(p.Done), []string{"overdue:n3", "overdue:n4", "overdue:n5"})
 	if eff := w.apply(p); eff != (timeEffect{Know: 1}) {
 		t.Fatalf("effect %+v", eff)
 	}
@@ -1028,7 +1028,7 @@ func TestRemindOnePushPerPeriod(t *testing.T) {
 	if !hasGuard(p, noEntryAbove("remind:person-a", w.now.R)) {
 		t.Fatalf("the entry is not guarded: %+v", p.Guards)
 	}
-	want(t, "keys removed", keyTexts(p.Done), []string{key})
+	want(t, "keys removed", timeKeyTexts(p.Done), []string{key})
 	if len(p.Plan.Units) != 0 || len(p.Notes) != 0 {
 		t.Fatalf("phase 1 writes more than its claim: %+v", p)
 	}
@@ -1076,7 +1076,7 @@ func TestBehindArmsAndJudges(t *testing.T) {
 	if !hasGuard(p, noEntryAbove("behind", w.now.R)) {
 		t.Fatalf("the entry is not guarded: %+v", p.Guards)
 	}
-	want(t, "keys removed", keyTexts(p.Done), []string{"behind"})
+	want(t, "keys removed", timeKeyTexts(p.Done), []string{"behind"})
 
 	// A backlog at least as large as when it was armed is judged, once.
 	w = worldWith(TickFact{Backlog: 800, Agenda: 30, DueNow: 5, BehindN: 500})
@@ -1297,7 +1297,7 @@ func TestLimitHalvesThenParks(t *testing.T) {
 			}
 			if chunkAfter(h) > 1 {
 				// Planned again at half the size: the key stays, nothing parks.
-				if next != h+1 || len(p.Done) != 0 || !reflect.DeepEqual(keyTexts(p.Requeue), []string{"ask@48213"}) || !p.Sprint.Empty() ||
+				if next != h+1 || len(p.Done) != 0 || !reflect.DeepEqual(timeKeyTexts(p.Requeue), []string{"ask@48213"}) || !p.Sprint.Empty() ||
 					!strings.Contains(n.Text, "half its size") {
 					t.Fatalf("%s at %d halvings: next %d, done %v, requeue %v, writes %+v", code, h, next, p.Done, p.Requeue, p.Sprint)
 				}
@@ -1305,7 +1305,7 @@ func TestLimitHalvesThenParks(t *testing.T) {
 				continue
 			}
 			// At a chunk of one card: parked, out of the agenda, its park written.
-			if next != 0 || !reflect.DeepEqual(keyTexts(p.Done), []string{"ask@48213"}) || len(p.Requeue) != 0 ||
+			if next != 0 || !reflect.DeepEqual(timeKeyTexts(p.Done), []string{"ask@48213"}) || len(p.Requeue) != 0 ||
 				!reflect.DeepEqual(p.Sprint.Park, []ParkKey{{Key: "ask@48213"}}) || !strings.Contains(n.Text, "parked") {
 				t.Fatalf("%s at a chunk of one: next %d, done %v, writes %+v", code, next, p.Done, p.Sprint)
 			}
@@ -1330,7 +1330,7 @@ func TestOtherBugParksAtOnce(t *testing.T) {
 			key := keyOf("deal", 9)
 			p, next := OnBug("deal", key, code, "1 entry", h)
 			n := noteReq(p, requestOpen, NStepRefused)
-			if next != 0 || n == nil || !reflect.DeepEqual(keyTexts(p.Done), []string{"deal"}) || len(p.Requeue) != 0 ||
+			if next != 0 || n == nil || !reflect.DeepEqual(timeKeyTexts(p.Done), []string{"deal"}) || len(p.Requeue) != 0 ||
 				!reflect.DeepEqual(p.Sprint.Park, []ParkKey{{Key: "deal"}}) || !strings.Contains(n.Text, "code "+code) || !strings.Contains(n.Text, "parked") {
 				t.Fatalf("%s at %d halvings: next %d, %+v", code, h, next, p)
 			}
@@ -1453,7 +1453,7 @@ func TestTimeRulesTwiceSecondEmpty(t *testing.T) {
 		c.setup(w)
 		p := w.plan(c.rule, c.keys...)
 		if len(p.Done) != len(c.keys) {
-			t.Fatalf("%s: the first run removes %v of %v", c.name, keyTexts(p.Done), c.keys)
+			t.Fatalf("%s: the first run removes %v of %v", c.name, timeKeyTexts(p.Done), c.keys)
 		}
 		if eff := w.apply(p); eff.zero() || eff.Refused != "" {
 			t.Fatalf("%s: the first run changed nothing (or was refused): %+v", c.name, eff)
@@ -1563,7 +1563,7 @@ func TestLateQuietWhenNotDueOrMovedOn(t *testing.T) {
 	if !silent(p) {
 		t.Fatalf("planned for keys that are not late: %+v", p)
 	}
-	want(t, "every key removed", keyTexts(p.Done), keys)
+	want(t, "every key removed", timeKeyTexts(p.Done), keys)
 }
 
 func TestLateHeldBackForADroppingStream(t *testing.T) {
@@ -1577,8 +1577,8 @@ func TestLateHeldBackForADroppingStream(t *testing.T) {
 	p := w.plan("late", "late:untaken:p1.w1", "late:idle:s1", "late:cut:op-1")
 	// The cards of a stream being dropped are refused DROPPING: their keys stay,
 	// held back until the mark clears. A cut clock is the op's, and is judged.
-	want(t, "held back", keyTexts(p.HeldBack), []string{"late:untaken:p1.w1", "late:idle:s1"})
-	want(t, "removed", keyTexts(p.Done), []string{"late:cut:op-1"})
+	want(t, "held back", timeKeyTexts(p.HeldBack), []string{"late:untaken:p1.w1", "late:idle:s1"})
+	want(t, "removed", timeKeyTexts(p.Done), []string{"late:cut:op-1"})
 	if len(moved(p)) != 0 || noteReq(p, requestOpen, NCutStopped) == nil || !p.Sprint.Empty() {
 		t.Fatalf("planned work in a dropping stream: %+v", p)
 	}
@@ -1673,7 +1673,7 @@ func TestTimeReadsWithinBoundsAndHalve(t *testing.T) {
 	if c := QueryCost(rp.Sprint[0]); c.Records != kept*(1+MaxAboutIDs) || c.Records > b.Records {
 		t.Fatalf("the read may return %d records, the bound is %d", c.Records, b.Records)
 	}
-	want(t, "the keys left", keyTexts(rest), keyTexts(notes[kept:]))
+	want(t, "the keys left", timeKeyTexts(rest), timeKeyTexts(notes[kept:]))
 
 	// Each halving halves the keys, down to one, and the rest wait.
 	eight := mkKeys(8, func(i int) string { return fmt.Sprintf("hold:n%d", i) })
@@ -1682,7 +1682,7 @@ func TestTimeReadsWithinBoundsAndHalve(t *testing.T) {
 		_, left := readHold(eight, ReadBounds{Records: 8 * (1 + MaxAboutIDs), Bytes: MaxReadBytes}, h)
 		counts = append(counts, len(eight)-len(left))
 		if len(left) > 0 {
-			want(t, "the keys left keep their order", keyTexts(left), keyTexts(eight[len(eight)-len(left):]))
+			want(t, "the keys left keep their order", timeKeyTexts(left), timeKeyTexts(eight[len(eight)-len(left):]))
 		}
 	}
 	want(t, "keys kept a halving", counts, []int{8, 4, 2, 1, 1, 1})
@@ -1720,7 +1720,7 @@ func TestTimeReadsWithinBoundsAndHalve(t *testing.T) {
 	}
 	rp, rest = readLate(keys, b, 0)
 	if len(rest) != 0 {
-		t.Fatalf("left %v", keyTexts(rest))
+		t.Fatalf("left %v", timeKeyTexts(rest))
 	}
 	got := map[string][]string{}
 	for _, q := range rp.Sprint {
@@ -1879,7 +1879,7 @@ func TestTimeReadKindsAreInTheQueryCosts(t *testing.T) {
 		"late:mergeidle:s1", "late:idle:s1", "late:cut:op-1"} {
 		rp, rest := readLate([]AgendaKey{keyOf(key, 1)}, b, 0)
 		if len(rest) != 0 {
-			t.Fatalf("%s: left %v", key, keyTexts(rest))
+			t.Fatalf("%s: left %v", key, timeKeyTexts(rest))
 		}
 		if cost := rp.Cost(); cost.Records > b.Records || cost.Bytes > b.Bytes {
 			t.Errorf("%s: the read costs %+v by IT05's Cost, over %+v", key, cost, b)
@@ -2187,7 +2187,7 @@ func TestDuplicateKeysArePlannedOnce(t *testing.T) {
 	if creates != 1 || len(moved(p)) != 4 {
 		t.Fatalf("%d creates and %d changes, want one read card created and 4 changes (retire, create, primary, redeal): %+v", creates, len(moved(p)), moved(p))
 	}
-	want(t, "keys removed once", keyTexts(p.Done), []string{"late:unbegun:p1.r1.r1", "late:untaken:p2.w1"})
+	want(t, "keys removed once", timeKeyTexts(p.Done), []string{"late:unbegun:p1.r1.r1", "late:untaken:p2.w1"})
 
 	w2 := newTimeWorld(t)
 	w2.f.Notes["n1"] = NoteFact{Type: NBound, Cause: "held", Open: []string{"p1"}, Holds: []string{"p1"}}
@@ -2220,7 +2220,7 @@ func TestDuplicateKeysArePlannedOnce(t *testing.T) {
 	if len(moved(p)) != 1 || len(p.Notes) != 1 || !reflect.DeepEqual(p.Notes[0].Subjects, []string{"stream:s1"}) {
 		t.Fatalf("idle in both forms is planned twice: %+v", p)
 	}
-	want(t, "both texts removed", keyTexts(p.Done), []string{"idle:s1", "late:idle:s1"})
+	want(t, "both texts removed", timeKeyTexts(p.Done), []string{"idle:s1", "late:idle:s1"})
 	// Either order, and with another key between them.
 	p = idle().plan("late", "late:idle:s1", "late:untaken:gone.w1", "idle:s1")
 	if len(moved(p)) != 1 || len(p.Notes) != 1 || len(p.Done) != 3 {
@@ -2233,7 +2233,7 @@ func TestDuplicateKeysArePlannedOnce(t *testing.T) {
 	if len(p.Done) != 0 || len(p.Plan.Units) != 0 || len(p.Notes) != 0 {
 		t.Fatalf("a dropping stream's idle key was planned: %+v", p)
 	}
-	want(t, "both texts held back", keyTexts(p.HeldBack), []string{"idle:s1", "late:idle:s1"})
+	want(t, "both texts held back", timeKeyTexts(p.HeldBack), []string{"idle:s1", "late:idle:s1"})
 }
 
 // R17's look counts the cards the dry plans' intents change as well as those
@@ -2743,9 +2743,9 @@ func TestPoolPicksTheLeastLoadedFirstInRowOrder(t *testing.T) {
 	}
 }
 
-// benchPlan is one read of a tick planned on: the rule, the snapshot its read
+// timeBenchPlan is one read of a tick planned on: the rule, the snapshot its read
 // loaded and the keys it kept.
-type benchPlan struct {
+type timeBenchPlan struct {
 	rule Rule
 	s    *Snapshot
 	keys []AgendaKey
@@ -2754,7 +2754,7 @@ type benchPlan struct {
 // timeBenchPlans reads each rule's keys the way the tick does, in as many reads
 // as layer 1's bounds make of them, and loads a snapshot for each; the loading
 // is IT05's, and is not what the benchmark times.
-func timeBenchPlans(b *testing.B, w *timeWorld, batches map[string][]string) (plans []benchPlan, keys int) {
+func timeBenchPlans(b *testing.B, w *timeWorld, batches map[string][]string) (plans []timeBenchPlan, keys int) {
 	names := make([]string, 0, len(batches))
 	for name := range batches {
 		names = append(names, name)
@@ -2769,7 +2769,7 @@ func timeBenchPlans(b *testing.B, w *timeWorld, batches map[string][]string) (pl
 			if len(rest) >= len(ks) {
 				b.Fatalf("%s: a read that keeps no key", name)
 			}
-			plans = append(plans, benchPlan{r, w.load(rp), ks[:len(ks)-len(rest)]})
+			plans = append(plans, timeBenchPlan{r, w.load(rp), ks[:len(ks)-len(rest)]})
 			ks = rest
 		}
 	}
@@ -2778,7 +2778,7 @@ func timeBenchPlans(b *testing.B, w *timeWorld, batches map[string][]string) (pl
 
 // timeBenchRun times the plans, and fails when a key costs more than the limit
 // of 8.1 IT10: 20 microseconds of Go time.
-func timeBenchRun(b *testing.B, w *timeWorld, plans []benchPlan, keys int) {
+func timeBenchRun(b *testing.B, w *timeWorld, plans []timeBenchPlan, keys int) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for _, bp := range plans {
