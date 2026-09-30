@@ -218,7 +218,7 @@ doing) and a route. While the machine is RUNNING the tick delivers each
 person's goal down its route once when the machine starts and then every 5
 minutes of running time (time STOPPED does not count); nothing is delivered
 while it is STOPPED. The route file:<absolute path> gets the text, after one
-header line REMINDER <n> to <name> at <time>, sprint <prefix>, epoch <e>, in
+header line REMINDER <n> to <name> at <time>, sprint <name>, epoch <e>, in
 place of what the file held, so a watcher of the file sees one current
 reminder. The text is at most 8 KiB and is set from a file, and can be
 different for each person. A route that fails is one judgment on the inbox

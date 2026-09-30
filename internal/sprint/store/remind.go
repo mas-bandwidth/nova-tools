@@ -123,7 +123,7 @@ type Reminder struct {
 	N      int
 	To     string
 	At     time.Time
-	Sprint string // the sprint's prefix
+	Sprint string // the sprint's name: its view, sprint or <prefix>sprint
 	Epoch  uint64
 	Text   string
 }
@@ -233,7 +233,7 @@ func (st *Store) remind(ctx context.Context, m Machine, res *TickResult) error {
 				return err
 			}
 		}
-		r := Reminder{N: p.Count + 1, To: p.Name, At: now, Sprint: st.Names.Prefix, Epoch: epoch, Text: p.Text}
+		r := Reminder{N: p.Count + 1, To: p.Name, At: now, Sprint: st.Names.View(), Epoch: epoch, Text: p.Text}
 		d, derr := NewDeliverer(p.Route)
 		if derr == nil {
 			derr = d.Deliver(r)

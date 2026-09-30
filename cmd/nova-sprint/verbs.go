@@ -542,9 +542,8 @@ func listed(w io.Writer, kind string, lines []string, max int, verbName string) 
 }
 
 // sprintLine is the summary line: landed / all primaries, percent, ETA. A
-// STOPPED machine has no ETA, so its line is STOPPED, and with cards on the
-// table STOPPED then landed / all and the percent; it agrees with the header
-// of where.
+// STOPPED machine has no ETA, so its line is the STOPPED text the header of
+// where shows, then, with cards on the table, landed / all and the percent.
 func sprintLine(ctx context.Context, st *store.Store) string {
 	if st == nil {
 		return ""

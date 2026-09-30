@@ -179,7 +179,7 @@ func TestEveryVerbAfterAClearLeavesTheOldEpochAlone(t *testing.T) {
 	// the clear last: it reads the epoch it leaves (1), never epoch 0
 	slices.SortStableFunc(lines, func(a, b string) int {
 		switch {
-		case strings.HasPrefix(a, "clear --confirm t-sprint") == strings.HasPrefix(b, "clear --confirm t-"):
+		case strings.HasPrefix(a, "clear --confirm t-sprint") == strings.HasPrefix(b, "clear --confirm t-sprint"):
 			return 0
 		case strings.HasPrefix(a, "clear --confirm t-sprint"):
 			return 1

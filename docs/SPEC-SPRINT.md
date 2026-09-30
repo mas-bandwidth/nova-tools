@@ -774,8 +774,8 @@ RUNNING and nothing has ticked for 15 s (MachineSilence). The sprint line of eve
 verb says the same of a running machine after the progress
 (`3/10 30.0% -> ETA  machine: running`); a STOPPED machine has no ETA, so its
 line is `STOPPED` (or `STOPPED (no tick for Ns)`), followed with cards on the
-table by the progress alone (`STOPPED  3/10 30.0%`), as the header of `where`
-is; a failed tick keeps
+table by the progress alone (`STOPPED  3/10 30.0%`); the STOPPED text is the
+one the header of `where` shows, which carries no progress; a failed tick keeps
 its error on the heartbeat, with the count of failed ticks in a row, and the
 line shows it. A tick that did nothing writes the heartbeat at most once every
 5 s (HeartbeatIdleEvery); a STOPPED machine's tick only records that it
@@ -852,7 +852,7 @@ RUNNING the tick pushes each person's goal down its route once every five
 minutes of running time (RemindEvery), and at once when the goal or its route
 is set or the machine starts; nothing is pushed while it is STOPPED. The file
 route replaces one file with a header line (`REMINDER <n> to <name> at <time>,
-sprint <prefix>, epoch <n>`; the prefix is empty with none) and the text, whole, so a watcher of the file sees
+sprint <name>, epoch <n>`, where `<name>` is the sprint's view, `sprint` or `<prefix>sprint`) and the text, whole, so a watcher of the file sees
 one current reminder. A route that fails is one judgment, "a reminder could not
 be delivered", closed when a later delivery arrives. `goal show` shows each
 person's last push (`where --json` carries it). The people and their goals are the sprint's, not the
