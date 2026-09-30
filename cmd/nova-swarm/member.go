@@ -180,7 +180,7 @@ func (r *nativeRunner) Start(p member.Packet) (member.Child, error) {
 	}
 	for _, repo := range strings.Split(r.repos, ",") {
 		if repo = strings.TrimSpace(repo); repo != "" {
-			args = append(args, "--repos", repo)
+			args = append(args, "--repo", repo)
 		}
 	}
 	cmd := exec.Command(r.self, args...)
