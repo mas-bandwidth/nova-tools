@@ -684,8 +684,8 @@ func TestCrossStuckReadBounded(t *testing.T) {
 	for i := range rows {
 		rows[i] = "s" + strconv.Itoa(i)
 	}
-	tw := newPosTwin(append(rows, "needed")...)
-	tw.card("x", "needed", Landed, 1)
+	tw := newPosTwin(rows...) // a sprint has at most MaxStreams streams: every one stopped, the needed card in the first
+	tw.card("x", rows[0], Landed, 1)
 	for _, r := range rows {
 		tw.ctl(r, "state", StreamStopped, "cause", "cross", "other", "x")
 		for j := 0; j < 81; j++ { // one more than the read's ids a stream
