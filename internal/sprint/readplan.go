@@ -241,11 +241,36 @@ type IDSource struct {
 	// Seq is the line of SourceLine; About says its `about` and not its ids.
 	Seq   uint64
 	About bool
+	// Offset and Limit are the part of a line that SourceLine reads: the ids
+	// after the first Offset of them (the `+offset` of a key cut across ticks),
+	// at most Limit of them; a Limit of 0 or less is every id the line may hold
+	// from Offset. A query over a line is costed by the ids it reads, so a rule
+	// cuts it by lowering Limit (Split, IDSource.Halved) and reads the rest
+	// from a later Offset.
+	Offset int
+}
+
+// lineWindow is the ids of a line that a SourceLine reads: from Offset, at most
+// Limit of them (every one a line may hold when Limit is not above 0), and no
+// more than a line holds (MaxLineIDs, or MaxAboutIDs for its `about`): the
+// line's ids from offset to offset + n. The most a line holds is what the
+// design bounds one generated line by, so a line with fewer ids answers fewer.
+func (src IDSource) lineWindow() (offset, n int) {
+	most := MaxLineIDs
+	if src.About {
+		most = MaxAboutIDs
+	}
+	offset = max(src.Offset, 0)
+	n = max(most-offset, 0)
+	if src.Limit > 0 && src.Limit < n {
+		n = src.Limit
+	}
+	return offset, n
 }
 
 // size is how many ids the source may name, and how many range ids it reads to
 // find them: the ids of a list cost no range read, a head reads its limit, and
-// a line names at most what one line holds.
+// a line names at most the ids of its window (lineWindow).
 func (src IDSource) size() (ids, rangeIDs int) {
 	switch src.Kind {
 	case SourceIDs:
@@ -253,12 +278,31 @@ func (src IDSource) size() (ids, rangeIDs int) {
 	case SourceHead:
 		return src.Limit, src.Limit
 	case SourceLine:
-		if src.About {
-			return MaxAboutIDs, 0
-		}
-		return MaxLineIDs, 0
+		_, n := src.lineWindow()
+		return n, 0
 	}
 	return 0, 0
+}
+
+// Halved is the source after halvings halvings of what it reads (1.4.2, 1.3.5:
+// a rule's read after a BUDGET or a LIMIT): a head's Limit, and a line's window
+// (from what the line may hold from Offset when its Limit is not above 0),
+// each halved by Halved and never below one id. A list of ids is the caller's
+// to part (1.5.4) and is as it was, and so is a source when halvings is 0 or
+// less, or when a line has nothing to read from its Offset.
+func (src IDSource) Halved(halvings int) IDSource {
+	if halvings <= 0 {
+		return src
+	}
+	switch src.Kind {
+	case SourceHead:
+		src.Limit = Halved(src.Limit, halvings)
+	case SourceLine:
+		if _, n := src.lineWindow(); n > 0 {
+			src.Limit = Halved(n, halvings)
+		}
+	}
+	return src
 }
 
 // HeadQ is one head `front(s)` reads: an index of s, how many of its first
@@ -505,15 +549,22 @@ func (rp ReadPlan) empty() bool { return rp.Queries() == 0 }
 
 // splittable says the query may be cut into queries over parts of its ids,
 // each independent of the others: the ones whose cost is a sum over an id list
-// (`related`, `waiters`, `jnote`). `needchain` walks from all its ids together
-// and its cost is one `max`, and the rest name no ids.
+// (`related`, `waiters`, `jnote`), whether the ids are named in a list or are
+// the window of a line (a line is cut by Offset and Limit). `needchain` walks
+// from all its ids together and its cost is one `max`, a head is the first ids
+// of an index and has no place to cut it at, and the rest name no ids.
 func splittable(q SprintQ) bool {
-	if q.Source.Kind != SourceIDs || len(q.Source.IDs) == 0 {
-		return false
-	}
 	switch q.Kind {
 	case QueryRelated, QueryWaiters, QueryJnote:
-		return true
+	default:
+		return false
+	}
+	switch q.Source.Kind {
+	case SourceIDs:
+		return len(q.Source.IDs) > 0
+	case SourceLine:
+		_, n := q.Source.lineWindow()
+		return n > 0
 	}
 	return false
 }
@@ -521,14 +572,17 @@ func splittable(q SprintQ) bool {
 // Split cuts the plan into plans that each fit the bounds (1.4.2): what does
 // not fit one read of a tick is cut before it is sent, never refused. It keeps
 // every query whole except a list of ids (one table's ids, or the ids of a
-// splittable composite query), which it cuts where a bound falls; the plans
-// together ask what the plan asked, in the order it asked it, and the pieces
-// of one query are in consecutive plans. A plan that fits is returned alone,
-// and an empty plan gives none. A piece that alone is over a bound (one query
-// that cannot be cut, or one id of a query over a bound by itself) is placed
-// alone in a plan of its own, over the bound: it is the caller's to halve
-// (1.3.5). A bound of 0 or less is no bound. The plans are separate reads, so
-// they are separate snapshots: a caller that must see one state does not split.
+// splittable composite query) and a composite query over a line, which it cuts
+// where a bound falls: a list into lists, and a line into pieces with a lower
+// Limit, each from its own Offset, that together read the ids the line query
+// read. The plans together ask what the plan asked, in the order it asked it,
+// and the pieces of one query are in consecutive plans. A plan that fits is
+// returned alone, and an empty plan gives none. A piece that alone is over a
+// bound (one query that cannot be cut, or one id of a query over a bound by
+// itself) is placed alone in a plan of its own, over the bound: it is the
+// caller's to halve (1.3.5). A bound of 0 or less is no bound. The plans are
+// separate reads, so they are separate snapshots: a caller that must see one
+// state does not split.
 func (rp ReadPlan) Split(b ReadBounds) []ReadPlan {
 	if rp.empty() {
 		return nil
@@ -579,6 +633,16 @@ func (rp ReadPlan) Split(b ReadBounds) []ReadPlan {
 			continue
 		}
 		one := q
+		if q.Source.Kind == SourceLine {
+			offset, n := q.Source.lineWindow()
+			one.Source.Offset, one.Source.Limit = offset, 1
+			sp.listed(n, QueryCost(one), func(cur *ReadPlan, from, to int) {
+				piece := q
+				piece.Source.Offset, piece.Source.Limit = offset+from, to-from
+				cur.Sprint = append(cur.Sprint, piece)
+			})
+			continue
+		}
 		one.Source.IDs = q.Source.IDs[:1]
 		ids := q.Source.IDs
 		sp.listed(len(ids), QueryCost(one), func(cur *ReadPlan, from, to int) {

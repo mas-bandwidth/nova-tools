@@ -104,6 +104,236 @@ func TestQueryCostTable(t *testing.T) {
 	}
 }
 
+// The follows of the rules whose keys carry a line (2.3): R8's read cards, R9's
+// with the merge and control cards and the judgments, R10's with the work card,
+// and R16's index, due entries, judgments and needs.
+var lineFollows = []struct {
+	rule   string
+	follow []string
+	perID  int // records an id: 1 + the follows
+}{
+	{"R8", []string{FollowRCards}, 1 + 15},
+	{"R9", []string{FollowRCards, FollowMerge, FollowControl, FollowJOpen}, 1 + 15 + 1 + 1 + 1},
+	{"R10", []string{FollowRCards, FollowWork}, 1 + 15 + 1},
+	{"R16", []string{FollowIndex, FollowDue, FollowJOpen, FollowNeeds}, 1 + 1 + 1 + 1 + 64},
+}
+
+func TestQueryCostOfALineIsTheIDsItWillRead(t *testing.T) {
+	t.Parallel()
+	line := func(offset, limit int, about bool) IDSource {
+		return IDSource{Kind: SourceLine, Seq: 9, Offset: offset, Limit: limit, About: about}
+	}
+	// The ids a line query reads: its Limit, cut short by what a line holds
+	// from its Offset (2,000 ids, 4,000 of its about), and every one of them
+	// when there is no Limit.
+	for _, tt := range []struct {
+		name string
+		src  IDSource
+		want int
+	}{
+		{"no limit is the whole line", line(0, 0, false), 2000},
+		{"no limit, about", line(0, 0, true), 4000},
+		{"a negative limit is no limit", line(0, -7, false), 2000},
+		{"a limit", line(0, 100, false), 100},
+		{"a limit, about", line(0, 100, true), 100},
+		{"a limit over the line is capped at the line", line(0, 5000, false), 2000},
+		{"a limit over the about is capped at the about", line(0, 5000, true), 4000},
+		{"an offset leaves the rest of the line", line(1500, 0, false), 500},
+		{"an offset and a limit over the rest", line(1500, 1000, false), 500},
+		{"an offset and a limit under the rest", line(100, 100, false), 100},
+		{"an offset of the about", line(3900, 0, true), 100},
+		{"an offset past the line reads nothing", line(2000, 0, false), 0},
+		{"an offset far past the line", line(9000, 50, false), 0},
+		{"a negative offset is none", line(-5, 0, false), 2000},
+	} {
+		q := SprintQ{Kind: QueryRelated, Source: tt.src}
+		if got := QueryCost(q); got.Records != tt.want || got.RangeIDs != 0 {
+			t.Errorf("%s: %+v, want %d records and no range ids", tt.name, got, tt.want)
+		}
+		if ids, ranged := tt.src.size(); ids != tt.want || ranged != 0 {
+			t.Errorf("%s: size %d, %d", tt.name, ids, ranged)
+		}
+	}
+
+	// The follows of the rules that carry a line: with no Limit the read is
+	// what the reader found, far over the 10,000 records of a read, and with a
+	// Limit it is the ids read times the follows.
+	for _, r := range lineFollows {
+		q := SprintQ{Kind: QueryRelated, Source: line(0, 0, false), Follow: r.follow}
+		if got, want := QueryCost(q).Records, 2000*r.perID; got != want {
+			t.Errorf("%s over a whole line: %d records, want %d", r.rule, got, want)
+		}
+		if QueryCost(q).Records <= MaxReadRecords {
+			t.Errorf("%s over a whole line fits a read", r.rule)
+		}
+		fit := MaxReadRecords / r.perID
+		q.Source.Limit = fit
+		if got := QueryCost(q).Records; got != fit*r.perID || got > MaxReadRecords {
+			t.Errorf("%s at a limit of %d: %d records", r.rule, fit, got)
+		}
+		q.Source.Limit = fit + 1
+		if got := QueryCost(q).Records; got <= MaxReadRecords {
+			t.Errorf("%s at a limit of %d fits (%d records): the limit that fits is %d", r.rule, fit+1, got, fit)
+		}
+	}
+
+	// The other queries over a line, by the same window.
+	if got := QueryCost(SprintQ{Kind: QueryWaiters, Source: line(0, 30, false), Limit: 10}); got.Records != 30*11 || got.RangeIDs != 30*10 {
+		t.Errorf("waiters over 30 ids of a line: %+v", got)
+	}
+	if got := QueryCost(SprintQ{Kind: QueryJnote, Source: line(0, 30, false), Subjects: 4}); got.Records != 30*5 || got.RangeIDs != 0 {
+		t.Errorf("jnote over 30 ids of a line: %+v", got)
+	}
+	// A needchain costs its max whatever its source reads.
+	if a, b := QueryCost(SprintQ{Kind: QueryNeedchain, Source: line(0, 0, false), Limit: 300}), QueryCost(SprintQ{Kind: QueryNeedchain, Source: line(0, 5, false), Limit: 300}); a != b || a.Records != 300 {
+		t.Errorf("needchain over a line: %+v and %+v", a, b)
+	}
+	// Bytes follow the records read.
+	c := QueryCost(SprintQ{Kind: QueryRelated, Source: line(0, 10, false), Fields: fieldsOf(3)})
+	if want := 10 * (RecordEnvelopeBytes + 3*FieldBytes); c.Bytes != want {
+		t.Errorf("bytes of 10 ids of a line: %d, want %d", c.Bytes, want)
+	}
+}
+
+func TestSplitCutsALineQueryByItsLimit(t *testing.T) {
+	t.Parallel()
+	bounds := ReadBounds{Queries: MaxReadQueries, Records: MaxReadRecords, RangeIDs: MaxReadRangeIDs, Bytes: MaxReadBytes}
+	for _, r := range lineFollows {
+		// A rule's line, whole: the read the reader found over the bound is cut
+		// into reads that each fit, by a lower Limit each from its own Offset.
+		q := SprintQ{Kind: QueryRelated, Stream: r.rule, Source: IDSource{Kind: SourceLine, Seq: 9}, Follow: r.follow}
+		rp := ReadPlan{Sprint: []SprintQ{q}}
+		plans := rp.Split(bounds)
+		// Records bind, and so do the bytes of a whole record (976 each, 8 MiB a
+		// read): the ids a read holds are the fewer.
+		perRead := min(10000/r.perID, (8<<20)/(976*r.perID))
+		if want := (2000 + perRead - 1) / perRead; len(plans) != want {
+			t.Fatalf("%s: %d reads, want %d of at most %d ids", r.rule, len(plans), want, perRead)
+		}
+		next, total := 0, 0
+		for i, p := range plans {
+			if len(p.Sprint) != 1 {
+				t.Fatalf("%s read %d: %d queries", r.rule, i, len(p.Sprint))
+			}
+			piece := p.Sprint[0]
+			if piece.Source.Offset != next || piece.Source.Limit < 1 || piece.Source.Limit > perRead {
+				t.Fatalf("%s read %d: offset %d limit %d, want offset %d and a limit of 1 to %d", r.rule, i, piece.Source.Offset, piece.Source.Limit, next, perRead)
+			}
+			if !within(p.Queries(), p.Cost(), bounds) {
+				t.Errorf("%s read %d costs %+v", r.rule, i, p.Cost())
+			}
+			if piece.Kind != q.Kind || piece.Source.Kind != SourceLine || piece.Source.Seq != 9 || !reflect.DeepEqual(piece.Follow, q.Follow) {
+				t.Errorf("%s read %d is not the same query: %+v", r.rule, i, piece)
+			}
+			next += piece.Source.Limit
+			total += piece.Source.Limit
+		}
+		if total != 2000 || next != 2000 {
+			t.Errorf("%s: the reads cover %d ids, want 2000", r.rule, total)
+		}
+		checkConserved(t, rp, plans)
+	}
+
+	// A line from an offset, with a limit, and an about: the window is cut, not
+	// the line.
+	q := SprintQ{Kind: QueryRelated, Source: IDSource{Kind: SourceLine, Seq: 4, About: true, Offset: 500, Limit: 1000}, Follow: []string{FollowRCards}}
+	rp := ReadPlan{Sprint: []SprintQ{q}}
+	plans := rp.Split(bounds)
+	if len(plans) != 2 {
+		t.Fatalf("%d reads of 1,000 ids of 16 records", len(plans))
+	}
+	// 16 records an id: 625 ids fit 10,000 records, and 537 fit the 8 MiB of a read.
+	if a, b := plans[0].Sprint[0].Source, plans[1].Sprint[0].Source; a.Offset != 500 || a.Limit != 537 || b.Offset != 1037 || b.Limit != 463 || !a.About || !b.About {
+		t.Errorf("the reads: %+v and %+v", a, b)
+	}
+	checkConserved(t, rp, plans)
+
+	// Beside other queries, the pieces are in consecutive plans, in the plan's order.
+	mixed := ReadPlan{
+		Ranges: []RangeQ{{Table: Work, Cell: "s:ready", Limit: 10}},
+		Sprint: []SprintQ{{Kind: QueryFleet, Units: 3}, {Kind: QueryWaiters, Stream: "w", Source: IDSource{Kind: SourceLine, Seq: 2}, Limit: 4}, {Kind: QueryFleet, Units: 5}},
+	}
+	plans = mixed.Split(bounds)
+	if len(plans) < 2 {
+		t.Fatalf("%d reads", len(plans))
+	}
+	checkConserved(t, mixed, plans)
+	for i, p := range plans {
+		if !within(p.Queries(), p.Cost(), bounds) {
+			t.Errorf("read %d costs %+v", i, p.Cost())
+		}
+	}
+
+	// A read that fits is sent as it is: no Limit is put on it.
+	fits := ReadPlan{Sprint: []SprintQ{{Kind: QueryRelated, Source: IDSource{Kind: SourceLine, Seq: 9, Limit: 100}}}}
+	if got := fits.Split(bounds); len(got) != 1 || !reflect.DeepEqual(got[0], fits) {
+		t.Errorf("a line query that fits: %+v", got)
+	}
+	whole := ReadPlan{Sprint: []SprintQ{{Kind: QueryRelated, Source: IDSource{Kind: SourceLine, Seq: 9}}}}
+	if got := whole.Split(bounds); len(got) != 1 || !reflect.DeepEqual(got[0], whole) {
+		t.Errorf("a whole line that fits: %+v", got)
+	}
+
+	// One id over a bound goes alone, over it; a line with nothing to read is
+	// kept whole beside the rest.
+	heavy := ReadPlan{Sprint: []SprintQ{{Kind: QueryRelated, Source: IDSource{Kind: SourceLine, Seq: 9, Limit: 3}, Follow: []string{FollowNeeds}}}}
+	plans = heavy.Split(ReadBounds{Records: 10})
+	if len(plans) != 3 {
+		t.Fatalf("%d reads of three ids of 65 records", len(plans))
+	}
+	for i, p := range plans {
+		if src := p.Sprint[0].Source; src.Limit != 1 || src.Offset != i {
+			t.Errorf("read %d: %+v", i, src)
+		}
+	}
+	past := ReadPlan{Sprint: []SprintQ{
+		{Kind: QueryRelated, Source: IDSource{Kind: SourceLine, Seq: 1, Offset: 2500}},
+		{Kind: QueryFleet, Units: 200},
+		{Kind: QueryFleet, Units: 200},
+	}}
+	if got := past.Split(ReadBounds{Records: 300}); len(got) != 2 || len(got[0].Sprint) != 2 || got[0].Sprint[0].Source.Offset != 2500 {
+		t.Errorf("a line past its end: %+v", got)
+	}
+}
+
+func TestSplitNeverCutsAQueryThatWalksFromAllItsIDs(t *testing.T) {
+	t.Parallel()
+	// A needchain reads the needs reachable from all its ids together, at a cost
+	// of its max: cut across reads it would not read what it reads whole.
+	ids := IDSource{Kind: SourceIDs, IDs: fieldsOf(50)}
+	line := IDSource{Kind: SourceLine, Seq: 3}
+	head := IDSource{Kind: SourceHead, Key: "elig:s", Limit: 40}
+	for name, src := range map[string]IDSource{"ids": ids, "line": line, "head": head} {
+		q := SprintQ{Kind: QueryNeedchain, Source: src, Limit: 300}
+		rp := ReadPlan{Sprint: []SprintQ{q, {Kind: QueryFleet, Units: 100}}}
+		plans := rp.Split(ReadBounds{Records: 100})
+		if len(plans) != 2 || !reflect.DeepEqual(plans[0].Sprint, []SprintQ{q}) {
+			t.Errorf("needchain over %s: %d reads, the first %+v", name, len(plans), plans[0].Sprint)
+		}
+	}
+	// A head is the first ids of an index and is not cut either.
+	for _, kind := range []string{QueryRelated, QueryWaiters, QueryJnote} {
+		q := SprintQ{Kind: kind, Source: head, Limit: 2, Subjects: 2}
+		plans := (ReadPlan{Sprint: []SprintQ{q}}).Split(ReadBounds{Records: 10})
+		if len(plans) != 1 || !reflect.DeepEqual(plans[0].Sprint, []SprintQ{q}) {
+			t.Errorf("%s over a head: %+v", kind, plans)
+		}
+	}
+	// And only the kinds the design lists are cut.
+	for _, kind := range []string{QueryFront, QueryStreams, QueryFleet, QueryReaders, QueryNeedchain} {
+		q := SprintQ{Kind: kind, Stream: "s", Source: ids, Limit: 5, Units: 5}
+		if got := (ReadPlan{Sprint: []SprintQ{q}}).Split(ReadBounds{Records: 1}); len(got) != 1 || len(got[0].Sprint[0].Source.IDs) != 50 {
+			t.Errorf("%s was cut: %+v", kind, got)
+		}
+	}
+	for kind := range cutKinds {
+		q := SprintQ{Kind: kind, Source: ids, Limit: 5, Subjects: 5}
+		if got := (ReadPlan{Sprint: []SprintQ{q}}).Split(ReadBounds{Records: 30}); len(got) < 2 {
+			t.Errorf("%s over 50 ids was not cut to 30 records: %d reads", kind, len(got))
+		}
+	}
+}
+
 func TestQueryCostIsOneRowAKind(t *testing.T) {
 	t.Parallel()
 	kinds := []string{QueryRelated, QueryFront, QueryWaiters, QueryStreams, QueryFleet, QueryReaders, QueryNeedchain, QueryJnote}
@@ -251,10 +481,54 @@ func TestReadPlanSplitWithinBounds(t *testing.T) {
 	}
 }
 
+// cutKinds are the composite queries the design lets Split cut across reads
+// (1.0's table: their cost is a sum over the ids of a list or a line). The tests
+// have their own list, so that a query made cuttable by mistake is found.
+var cutKinds = map[string]bool{QueryRelated: true, QueryWaiters: true, QueryJnote: true}
+
+// lineWindowOf is the ids of a line a query reads, worked from the design's
+// numbers and not from the code under test: from Offset, at most Limit (all of a
+// line when it is not above 0), and at most 2,000 ids of a line (4,000 of its
+// `about`).
+func lineWindowOf(src IDSource) (offset, n int) {
+	most := 2000
+	if src.About {
+		most = 4000
+	}
+	offset = src.Offset
+	if offset < 0 {
+		offset = 0
+	}
+	n = most - offset
+	if n < 0 {
+		n = 0
+	}
+	if src.Limit > 0 && src.Limit < n {
+		n = src.Limit
+	}
+	return offset, n
+}
+
+// cuttable says a composite query is one Split may cut: of a cutKinds kind, over
+// a list of ids or over a line with ids to read.
+func cuttable(q SprintQ) bool {
+	if !cutKinds[q.Kind] {
+		return false
+	}
+	switch q.Source.Kind {
+	case SourceIDs:
+		return len(q.Source.IDs) > 0
+	case SourceLine:
+		_, n := lineWindowOf(q.Source)
+		return n > 0
+	}
+	return false
+}
+
 // atoms flattens plans into the queries' parts, grouped by what they are (the
 // ids of a table, or a kind of query) and in the plans' order: an id of a table,
-// an id of a splittable composite query (named by its stream label), or a whole
-// query.
+// an id of a cuttable composite query (named by its stream label, and for a line
+// by the line and the place of the id in it), or a whole query.
 func atoms(plans ...ReadPlan) map[string][]string {
 	out := map[string][]string{}
 	for _, p := range plans {
@@ -274,13 +548,19 @@ func atoms(plans ...ReadPlan) map[string][]string {
 			out["lines"] = append(out["lines"], fmt.Sprintf("%+v", q))
 		}
 		for _, q := range p.Sprint {
-			if splittable(q) {
-				for _, id := range q.Source.IDs {
-					out["sprint"] = append(out["sprint"], q.Stream+" "+id)
+			switch {
+			case cuttable(q) && q.Source.Kind == SourceLine:
+				offset, n := lineWindowOf(q.Source)
+				for i := 0; i < n; i++ {
+					out["sprint"] = append(out["sprint"], fmt.Sprintf("%s %s line %d about %v place %d", q.Stream, q.Kind, q.Source.Seq, q.Source.About, offset+i))
 				}
-				continue
+			case cuttable(q):
+				for _, id := range q.Source.IDs {
+					out["sprint"] = append(out["sprint"], q.Stream+" "+q.Kind+" "+id)
+				}
+			default:
+				out["sprint"] = append(out["sprint"], fmt.Sprintf("%+v", q))
 			}
-			out["sprint"] = append(out["sprint"], fmt.Sprintf("%+v", q))
 		}
 	}
 	for k, v := range out {
@@ -362,8 +642,11 @@ func TestSplitConservesEveryQueryAndFitsOrIsAlone(t *testing.T) {
 		for i := rng.IntN(8); i > 0; i-- {
 			q := SprintQ{Kind: kinds[rng.IntN(len(kinds))], Stream: fmt.Sprintf("q%d", i), Limit: rng.IntN(20), Units: rng.IntN(20), Subjects: 1 + rng.IntN(5)}
 			q.Source = IDSource{Kind: SourceIDs, IDs: fieldsOf(rng.IntN(200))}
-			if rng.IntN(5) == 0 {
+			switch rng.IntN(5) {
+			case 0:
 				q.Source = IDSource{Kind: SourceHead, Key: "elig:s", Limit: 1 + rng.IntN(300)}
+			case 1:
+				q.Source = IDSource{Kind: SourceLine, Seq: uint64(i), About: rng.IntN(2) == 0, Offset: rng.IntN(2500) - 100, Limit: rng.IntN(1500) - 100}
 			}
 			if rng.IntN(2) == 0 {
 				q.Follow = []string{Follows[rng.IntN(len(Follows))]}
@@ -394,7 +677,13 @@ func TestSplitConservesEveryQueryAndFitsOrIsAlone(t *testing.T) {
 				}
 			}
 			for _, q := range p.Sprint {
-				if splittable(q) && len(q.Source.IDs) != 1 {
+				if !cuttable(q) {
+					continue
+				}
+				if _, n := lineWindowOf(q.Source); q.Source.Kind == SourceLine && n != 1 {
+					t.Fatalf("round %d: plan %d is over a bound with %d ids of a line query that could be cut", round, i, n)
+				}
+				if q.Source.Kind == SourceIDs && len(q.Source.IDs) != 1 {
 					t.Fatalf("round %d: plan %d is over a bound with %d ids of a query that could be cut", round, i, len(q.Source.IDs))
 				}
 			}
@@ -537,6 +826,55 @@ func TestReadHalvings(t *testing.T) {
 			t.Errorf("after %d halvings the read costs %d records, not fewer than %d", h, records, prev)
 		}
 		prev = records
+	}
+
+	// The source of a query halves too: a head's limit, and a line's window
+	// (from what the line may hold, when it has no limit), down to one id, and
+	// the cost of what it reads falls at each halving.
+	for _, tt := range []struct {
+		name string
+		src  IDSource
+		want []int // the ids read after 0, 1, 2 ... halvings
+	}{
+		{"a whole line", IDSource{Kind: SourceLine, Seq: 1}, []int{2000, 1000, 500, 250, 125, 63, 32, 16, 8, 4, 2, 1, 1}},
+		{"a line's about", IDSource{Kind: SourceLine, Seq: 1, About: true}, []int{4000, 2000, 1000, 500, 250, 125, 63}},
+		{"a limit", IDSource{Kind: SourceLine, Seq: 1, Limit: 100}, []int{100, 50, 25, 13, 7, 4, 2, 1, 1}},
+		{"an offset", IDSource{Kind: SourceLine, Seq: 1, Offset: 1500}, []int{500, 250, 125, 63, 32}},
+		{"an offset and a limit over the rest", IDSource{Kind: SourceLine, Seq: 1, Offset: 1500, Limit: 900}, []int{500, 250, 125}},
+		{"a head", IDSource{Kind: SourceHead, Key: "elig:s", Limit: 40}, []int{40, 20, 10, 5, 3, 2, 1, 1}},
+	} {
+		prev := 1 << 30
+		for h, want := range tt.want {
+			src := tt.src.Halved(h)
+			got, _ := src.size()
+			if got != want {
+				t.Errorf("%s after %d halvings reads %d ids, want %d", tt.name, h, got, want)
+			}
+			if got > prev {
+				t.Errorf("%s after %d halvings reads more (%d) than before (%d)", tt.name, h, got, prev)
+			}
+			prev = got
+			if src.Kind != tt.src.Kind || src.Seq != tt.src.Seq || src.Offset != tt.src.Offset || src.About != tt.src.About || src.Key != tt.src.Key {
+				t.Errorf("%s after %d halvings is not the same source: %+v", tt.name, h, src)
+			}
+			// The cost of the query falls with what it reads.
+			if c := QueryCost(SprintQ{Kind: QueryRelated, Source: src, Follow: []string{FollowRCards}}); c.Records != want*16 {
+				t.Errorf("%s after %d halvings costs %d records, want %d", tt.name, h, c.Records, want*16)
+			}
+		}
+	}
+	if got := (IDSource{Kind: SourceLine, Seq: 1}).Halved(0); got.Limit != 0 {
+		t.Errorf("no halving put a limit on a line: %+v", got)
+	}
+	if got := (IDSource{Kind: SourceLine, Seq: 1}).Halved(-2); got.Limit != 0 {
+		t.Errorf("a negative halving put a limit on a line: %+v", got)
+	}
+	if got := (IDSource{Kind: SourceLine, Seq: 1, Offset: 2500}).Halved(3); got.Limit != 0 {
+		t.Errorf("a line with nothing to read got a limit, which would read all of it: %+v", got)
+	}
+	list := IDSource{Kind: SourceIDs, IDs: fieldsOf(9)}
+	if got := list.Halved(2); !reflect.DeepEqual(got, list) {
+		t.Errorf("a list of ids is the caller's to part: %+v", got)
 	}
 
 	// A rule's keys are cut to the read that fits, then halved.
