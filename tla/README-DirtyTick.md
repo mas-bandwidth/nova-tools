@@ -8,7 +8,7 @@
 - Every table has a queue; the dirty bit is the number of entries in it. A step that changes a table appends an entry to that table's queue. An update drains its whole queue in one plan over every row that needs it.
 - A queue that is not empty is drained at once, at any point after the pump; the tick ends only when the queues of readers, merge and fleet are empty.
 - Only the pump writes the work table, and it runs once per tick, first. Readers, merge and fleet write their own tables and queue the work table's changes (a finish, a read done, a broken read, a landing, a card returned, room freed); the next tick's pump applies the whole queue, lands sentinels, releases, and deals from ready. Nothing moves from waiting to ready to working but in that pump.
-- A placement on a machine, a reader or a stream takes a uint64 counter modulo the count of the candidates, in their order; the counters persist across ticks.
+- A placement on a machine, a reader or a stream starts at a uint64 counter modulo the full ordered name count and advances past every skipped name plus the selected name; the counters persist across ticks.
 - A machine has a width; a read takes room on its reader's host.
 - The coordinator is woken once, at the tick's end, with the count of what the tick addressed to it (a sentinel landed, a card at its bound, no fleet member up, a machine lost with work on it), and not at all when the count is 0.
 
@@ -49,7 +49,7 @@ The updates: readers take `ask` (from the pump), `rep` (a reader's report) and `
 | `NothingLost` | invariant | yes: every card's token is in exactly one place (a table row or one entry on its way) for working, for its read, for its merge and for its read's host; the attempts equal the broken reports applied |
 | `EveryRowWithWorkMoves` | action | yes: after the pump, no card it could land, release or deal is left; at the tick's end, no card waits for a reader that could take it |
 | `OneWakePerTick`, `NoWakeIfNothing` | invariant, action | yes, and the note carries the tick's count |
-| `PlacementsRound` | action | yes: each placement is the candidate at the counter modulo the count (stated with `SelectSeq`, apart from the plan's `Rank`); each placement moves its counter by one; nothing else moves a counter |
+| `PlacementsRound` | action | yes: each placement starts at the counter modulo the full count and takes the first eligible candidate in ring order; each placement advances its counter past skipped candidates plus the selected candidate; nothing else moves a counter |
 | `WidthRespected` | invariant | yes, only with `pendingroom` (G2) |
 | `StreamFairness` | action | yes: two streams with a dealable card left after every pump so far are dealt within one of each other |
 | `TickBounded` | invariant | yes (at most 12 steps a tick), only with `seefleet` (G1); the longest tick in the full instance is 11 steps |
@@ -100,9 +100,9 @@ Each witness turns on one broken rule (`Broken`); its control is the unbroken co
 | G2 | the shape without `pendingroom` | `WidthRespected` | 8 |
 | G3 | R10 as v2.1 writes it | `WorkChangesOnlyInPump` | 4 |
 
-The controls: `MCDirtyTick` (two cards in two streams, two machines, two readers, one beat or lapse, the whole life with rework to the bound: 173,228 states), `MCDirtyTickThree` (three cards, no beat or lapse: 490,973), and nine small scenarios (sentinels, turns, a blind reader, width, a cold fleet, a landing, a rework, a finish, a lapse), the six smallest with the liveness properties. The probes, expected to fail, show the base reaches what the properties speak of: every card landed (`ProbeLanded`), a card at its bound (`ProbeBound`), a queue drained after the first pass (`ProbeLateDrain`).
+The controls: `MCDirtyTick` (two cards in two streams, two machines, two readers, one beat or lapse, the whole life with rework to the bound: 368,708 states), `MCDirtyTickThree` (three cards, no beat or lapse: 1,608,320), and nine small scenarios (sentinels, turns, a blind reader, width, a cold fleet, a landing, a rework, a finish, a lapse), the six smallest with the liveness properties. The probes, expected to fail, show the base reaches what the properties speak of: every card landed (`ProbeLanded`), a card at its bound (`ProbeBound`), a queue drained after the first pass (`ProbeLateDrain`).
 
-The bench run, outside the plan: `dirtytick-bench/MCDirtyTickFull.cfg` (three cards, two machines, two readers, one beat or lapse), every invariant and action property: 4,084,923 states, no error, 99 s at 2 workers. The same instance with `MaxSub` lowered: 10 fails `TickBounded`, 11 holds over every state.
+The bench run, outside the plan: `dirtytick-bench/MCDirtyTickFull.cfg` (three cards, two machines, two readers, one beat or lapse), every invariant and action property: 9,884,260 states, no error, 49 s at 32 workers. The same instance with `MaxSub` lowered: 10 fails `TickBounded`, 11 holds over every state.
 
 ## What is not modelled
 
