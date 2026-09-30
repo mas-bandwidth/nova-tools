@@ -151,7 +151,8 @@ func TestFleetSyncSetsAChangedWidthAndNothingElse(t *testing.T) {
 	ta.ok("fleet sync")
 	ta.ok("add --stream s1 --count 6")
 	ta.ok("start")
-	ta.ok("tick")
+	ta.ok("tick") // the fleet update, last in the tick, brings the members up
+	ta.ok("tick") // the pump deals to them
 	before, index := ta.fleetRows(), ta.dealIndex()
 	inv.set("m1", 6)
 	out := ta.ok("fleet sync")
@@ -186,7 +187,8 @@ func TestFleetSyncHoldsAMemberTheInventoryDropsAndRedealsItsCards(t *testing.T) 
 	ta.ok("fleet sync")
 	ta.ok("add --stream s1 --count 8")
 	ta.ok("start")
-	ta.ok("tick")
+	ta.ok("tick") // the fleet update, last in the tick, brings the members up
+	ta.ok("tick") // the pump deals to them
 	rows := ta.fleetRows()
 	if rows["m2"]["ready"] == "0" && rows["m2"]["working"] == "0" {
 		t.Fatalf("the test wants cards on m2: %v", rows)
