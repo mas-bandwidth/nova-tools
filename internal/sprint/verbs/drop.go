@@ -443,17 +443,17 @@ func DropAbort(ctx context.Context, e *Env, req DropAbortReq) (Result, error) {
 			}
 			return vr.readAt(e.Names, epoch, &failed)
 		},
-		Plan: func(rd *sprintfn.ReadReply) (*sprintfn.Request, error) {
+		Plan: func(rd *sprintfn.ReadReply) (Part, error) {
 			if failed != nil {
-				return nil, failed
+				return Part{}, failed
 			}
 			vr, err := readOf(rd.Epoch)
 			if err != nil {
-				return nil, err
+				return Part{}, err
 			}
 			va, err := vr.load(rd)
 			if err != nil {
-				return nil, err
+				return Part{}, err
 			}
 			if d := va.extra[0].Done; len(d) == 1 {
 				switch d[0].Status {
@@ -462,14 +462,14 @@ func DropAbort(ctx context.Context, e *Env, req DropAbortReq) (Result, error) {
 					if d[0].Receipt != nil {
 						recorded = d[0].Receipt.Result
 					}
-					return nil, nil
+					return Part{}, nil
 				case "conflict":
-					return nil, refuseLocal(verb, "OPCONFLICT", "op %s was aborted with other arguments", req.Op)
+					return Part{}, refuseLocal(verb, "OPCONFLICT", "op %s was aborted with other arguments", req.Op)
 				}
 			}
 			dr, ok := va.keys[1].(sprintfn.DroppingResult)
 			if !ok {
-				return nil, fmt.Errorf("verbs: the dropping answer is of another kind")
+				return Part{}, fmt.Errorf("verbs: the dropping answer is of another kind")
 			}
 			var mine, others []string
 			for _, s := range streams {
@@ -482,14 +482,14 @@ func DropAbort(ctx context.Context, e *Env, req DropAbortReq) (Result, error) {
 				}
 			}
 			if named && len(others) != 0 {
-				return nil, refuseLocal(verb, sprintfn.CodeDropping, "not frozen by op %s: %s", req.Op, strings.Join(others, ", "))
+				return Part{}, refuseLocal(verb, sprintfn.CodeDropping, "not frozen by op %s: %s", req.Op, strings.Join(others, ", "))
 			}
 			if len(mine) == 0 {
 				where := "any stream of the sprint"
 				if named {
 					where = strings.Join(streams, ", ")
 				}
-				return nil, refuseLocal(verb, sprintfn.CodeRequest, "op %s freezes none of %s: there is nothing to abort", req.Op, where)
+				return Part{}, refuseLocal(verb, sprintfn.CodeRequest, "op %s freezes none of %s: there is nothing to abort", req.Op, where)
 			}
 			counts := countsOf(va, 0)
 			var left []string
@@ -516,12 +516,12 @@ func DropAbort(ctx context.Context, e *Env, req DropAbortReq) (Result, error) {
 			}
 			intent, err := epochOf(rd.Epoch)
 			if err != nil {
-				return nil, err
+				return Part{}, err
 			}
-			return &sprintfn.Request{Meta: sprintfn.Meta{Verb: "drop"},
+			return Part{Req: &sprintfn.Request{Meta: sprintfn.Meta{Verb: "drop"},
 				Sprint: &sprintfn.SprintPart{Undrop: marks(mine, req.Op)},
 				Body: sprintfn.Body{Notes: []sprintfn.NoteReq{unfrozen(mine, req.Op)},
-					Op: &sprintfn.Op{ID: req.Op + "/abort", Intent: intent, Result: said}}}, nil
+					Op: &sprintfn.Op{ID: req.Op + "/abort", Intent: intent, Result: said}}}}, nil
 		}})
 	res.Op = req.Op
 	res.Trips += listed

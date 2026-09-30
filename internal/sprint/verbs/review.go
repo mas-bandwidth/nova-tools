@@ -750,15 +750,19 @@ func Ask(ctx context.Context, e *Env, req AskReq) (Result, error) {
 	var failed error
 	return e.Do(ctx, Planned{Verb: verb, Op: req.Op, Args: map[string]any{"ids": idsArgs(ids), "another": req.Another},
 		Read: func(epoch tset.Decimal) *sprintfn.ReadRequest { return vr.readAt(e.Names, epoch, &failed) },
-		Plan: func(rd *sprintfn.ReadReply) (*sprintfn.Request, error) {
+		Plan: func(rd *sprintfn.ReadReply) (Part, error) {
 			if failed != nil {
-				return nil, failed
+				return Part{}, failed
 			}
 			va, err := vr.load(rd)
 			if err != nil {
-				return nil, err
+				return Part{}, err
 			}
-			return planAsk(verb, va, ids, req.Another)
+			req, err := planAsk(verb, va, ids, req.Another)
+			if err != nil {
+				return Part{}, err
+			}
+			return Part{Req: req}, nil
 		}})
 }
 
@@ -1450,13 +1454,13 @@ func Return(ctx context.Context, e *Env, req ReturnReq) (Result, error) {
 	var failed error
 	return e.Do(ctx, Planned{Verb: verb, Op: req.Op, Args: map[string]any{"ids": idsArgs(ids)},
 		Read: func(epoch tset.Decimal) *sprintfn.ReadRequest { return vr.readAt(e.Names, epoch, &failed) },
-		Plan: func(rd *sprintfn.ReadReply) (*sprintfn.Request, error) {
+		Plan: func(rd *sprintfn.ReadReply) (Part, error) {
 			if failed != nil {
-				return nil, failed
+				return Part{}, failed
 			}
 			va, err := vr.load(rd)
 			if err != nil {
-				return nil, err
+				return Part{}, err
 			}
 			var b stepOps
 			var refused []sprint.Refusal
@@ -1466,19 +1470,19 @@ func Return(ctx context.Context, e *Env, req ReturnReq) (Result, error) {
 				}
 			}
 			if len(refused) != 0 {
-				return nil, refusedIDs(verb, refused)
+				return Part{}, refusedIDs(verb, refused)
 			}
 			b.unsetRefused(va.snap)
 			entries, err := b.entries()
 			if err != nil {
-				return nil, err
+				return Part{}, err
 			}
 			var k closer
 			couldNotMove(&k, ids)
-			return &sprintfn.Request{Meta: sprintfn.Meta{Verb: verb}, Body: sprintfn.Body{Entries: entries,
+			return Part{Req: &sprintfn.Request{Meta: sprintfn.Meta{Verb: verb}, Body: sprintfn.Body{Entries: entries,
 				Notes: append([]sprintfn.NoteReq{note(sprintfn.JOpOpen, typeReturned, causeReturn,
 					"returned to review from merging: the coordinator decides it again", ids, decisionsOf(typeReturned)...)},
-					k.notes("returned by the coordinator")...)}}, nil
+					k.notes("returned by the coordinator")...)}}}, nil
 		}})
 }
 
@@ -1530,13 +1534,13 @@ func CI(ctx context.Context, e *Env, req CIReq) (Result, error) {
 	var failed error
 	return e.Do(ctx, Planned{Verb: verb, Op: req.Op, Args: map[string]any{"ids": idsArgs(ids), "result": result, "head": req.Head},
 		Read: func(epoch tset.Decimal) *sprintfn.ReadRequest { return vr.readAt(e.Names, epoch, &failed) },
-		Plan: func(rd *sprintfn.ReadReply) (*sprintfn.Request, error) {
+		Plan: func(rd *sprintfn.ReadReply) (Part, error) {
 			if failed != nil {
-				return nil, failed
+				return Part{}, failed
 			}
 			va, err := vr.load(rd)
 			if err != nil {
-				return nil, err
+				return Part{}, err
 			}
 			var b stepOps
 			var refused []sprint.Refusal
@@ -1570,11 +1574,11 @@ func CI(ctx context.Context, e *Env, req CIReq) (Result, error) {
 				}
 			}
 			if len(refused) != 0 {
-				return nil, refusedIDs(verb, refused)
+				return Part{}, refusedIDs(verb, refused)
 			}
 			entries, err := b.entries()
 			if err != nil {
-				return nil, err
+				return Part{}, err
 			}
 			r := &sprintfn.Request{Meta: sprintfn.Meta{Verb: verb}, Body: sprintfn.Body{Entries: entries}}
 			if req.Red {
@@ -1585,6 +1589,6 @@ func CI(ctx context.Context, e *Env, req CIReq) (Result, error) {
 					r.Body.Notes = append(r.Body.Notes, note(sprintfn.JOpClose, typeCIRed, causeCI, "CI green at the same head", closing))
 				}
 			}
-			return r, nil
+			return Part{Req: r}, nil
 		}})
 }

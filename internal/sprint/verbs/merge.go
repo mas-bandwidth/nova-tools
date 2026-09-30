@@ -130,15 +130,19 @@ func Merge(ctx context.Context, e *Env, req MergeReq) (Result, error) {
 		"suspects": append([]string{}, req.Suspects...), "rejected": req.Rejected, "note": req.Note}
 	return e.Do(ctx, Planned{Verb: verb, Op: req.Op, Args: args,
 		Read: func(epoch tset.Decimal) *sprintfn.ReadRequest { return vr.readAt(e.Names, epoch, &failed) },
-		Plan: func(rd *sprintfn.ReadReply) (*sprintfn.Request, error) {
+		Plan: func(rd *sprintfn.ReadReply) (Part, error) {
 			if failed != nil {
-				return nil, failed
+				return Part{}, failed
 			}
 			va, err := vr.load(rd)
 			if err != nil {
-				return nil, err
+				return Part{}, err
 			}
-			return planMerge(verb, va, req, other)
+			req, err := planMerge(verb, va, req, other)
+			if err != nil {
+				return Part{}, err
+			}
+			return Part{Req: req}, nil
 		}})
 }
 
@@ -390,13 +394,13 @@ func Resume(ctx context.Context, e *Env, req ResumeReq) (Result, error) {
 	var failed error
 	return e.Do(ctx, Planned{Verb: verb, Op: req.Op, Args: map[string]any{"streams": streams, "did": req.Did},
 		Read: func(epoch tset.Decimal) *sprintfn.ReadRequest { return vr.readAt(e.Names, epoch, &failed) },
-		Plan: func(rd *sprintfn.ReadReply) (*sprintfn.Request, error) {
+		Plan: func(rd *sprintfn.ReadReply) (Part, error) {
 			if failed != nil {
-				return nil, failed
+				return Part{}, failed
 			}
 			va, err := vr.load(rd)
 			if err != nil {
-				return nil, err
+				return Part{}, err
 			}
 			snap, now := va.snap, va.now
 			counts := countsOf(va, 0)
@@ -452,12 +456,12 @@ func Resume(ctx context.Context, e *Env, req ResumeReq) (Result, error) {
 				}
 			}
 			if len(refused) != 0 {
-				return nil, refusedIDs(verb, refused)
+				return Part{}, refusedIDs(verb, refused)
 			}
 			entries, err := b.entries()
 			if err != nil {
-				return nil, err
+				return Part{}, err
 			}
-			return &sprintfn.Request{Meta: sprintfn.Meta{Verb: verb}, Body: sprintfn.Body{Entries: entries, Notes: notes}}, nil
+			return Part{Req: &sprintfn.Request{Meta: sprintfn.Meta{Verb: verb}, Body: sprintfn.Body{Entries: entries, Notes: notes}}}, nil
 		}})
 }

@@ -38,7 +38,7 @@ var rvColumns = map[string][]string{
 type rv struct {
 	t   *testing.T
 	tw  *sprintfn.Twin
-	log *sprintfn.LogStub
+	log *sprintfn.MemLog
 	cc  *Counting
 	env *Env
 	mu  sync.Mutex
@@ -54,7 +54,7 @@ func newRV(t *testing.T) *rv {
 			t.Fatalf("define %s: %v", table, err)
 		}
 	}
-	w := &rv{t: t, log: sprintfn.NewLogStub(), now: time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)}
+	w := &rv{t: t, log: sprintfn.NewMemLog(), now: time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)}
 	w.tw = sprintfn.NewTwin(m, w.log, rvNames)
 	w.tw.UseQueries()
 	w.tw.UseIntents()
@@ -366,8 +366,8 @@ func TestAcceptNamedInParts(t *testing.T) {
 	if rf.Part != 3 || rf.Op != "acc1" || len(rf.Refusal.Detail.IDs) != 1 || rf.Refusal.Detail.IDs[0] != "p3" {
 		t.Fatalf("part 3 is refused naming p3: %v", rf)
 	}
-	if res.Parts != 2 || n() != 1+1+2 {
-		t.Fatalf("parts 1 and 2 applied (%d), in %d round trips: the resume's done, then n + 1 for the two parts and the refused third's read, want 4", res.Parts, n())
+	if res.Parts != 2 || n() != 1+2 {
+		t.Fatalf("parts 1 and 2 applied (%d), in %d round trips: atomic resume read, then n parts and the refused third's read, want 3", res.Parts, n())
 	}
 	for _, p := range []string{"p1", "p2"} {
 		if got := w.at(sprint.Work, p); got != "s1:merging" {

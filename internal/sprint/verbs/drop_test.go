@@ -97,7 +97,7 @@ func freezeFirst(t *testing.T) {
 	w.stream("s1", sprint.StreamWaiting)
 	w.card(sprint.Work, "s1:ready", "c2", 2, "kind", "work", "attempt", "0")
 	h := &rvHook{before: func(n int) {
-		if n == 3 { // part 1's step, after its read
+		if n == 2 { // part 1's step, after its read
 			w.card(sprint.Work, "s1:waiting", "c1", 1, "kind", "work", "attempt", "0", "open", "0")
 		}
 	}}
@@ -146,7 +146,7 @@ func TestDropLastPartWritesRequestLine(t *testing.T) {
 	if res.Parts != 6 {
 		t.Fatalf("%d parts, want 6", res.Parts)
 	}
-	wantTrips(t, res, n, 1+res.Parts+1) // the done of the op the verb made, then n + 1
+	wantTrips(t, res, n, res.Parts+1) // atomic resume and part 1 read, then n parts
 	lines := w.noteLines(typeUnfrozen)
 	if len(lines) != 1 {
 		t.Fatalf("%d request lines, want 1", len(lines))
@@ -250,7 +250,7 @@ func TestDropStreamDoneGuarded(t *testing.T) {
 		w.card(sprint.Work, "s1:ready", "c2", 2, "kind", "work", "attempt", "0")
 		w.card(sprint.Work, "s2:ready", "d1", 1, "kind", "work", "attempt", "0")
 		h := &rvHook{before: func(n int) {
-			if n == 3 { // part 1's step, after its read
+			if n == 2 { // part 1's step, after its read
 				w.card(sprint.Work, cell, "c7", 7, "kind", "work", "attempt", "0")
 			}
 		}}
