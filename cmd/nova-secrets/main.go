@@ -23,11 +23,11 @@ usage:
   nova-secrets check  --store <dir> --as <name> --key <path> --sops <path> [--max <n>]
   nova-secrets gate   --store <dir> --base <git ref> --head <git ref> [--machines <registry>]
   nova-secrets keygen --as <name> --key <path> --age-keygen <path> [--store <dir>]
-  nova-secrets place  --store <dir> --as <name> --key <path> --sops <path> --machine <name> --secret <name> [--path <remote path>] [--machines <file>] [--receipts <dir>] [--ssh <path>]
+  nova-secrets place  --store <dir> --as <name> --key <path> --sops <path> --machine <name> --secret <name> [--path <remote path>] [--machines <file>] [--receipts <dir>] [--ssh <path>] [--dry-run]
   nova-secrets placed --machine <name> [--receipts <dir>]
-  nova-secrets seal   --store <dir> --as <seat> --key <path> --sops <path> --name NAME [--stdin] [--no-pr] [--gh <path>] [--git <path>]
+  nova-secrets seal   --store <dir> --as <seat> --key <path> --sops <path> --name NAME [--stdin] [--no-pr] [--dry-run] [--gh <path>] [--git <path>]
   nova-secrets seat add --store <dir> --as <seat> --pub <age1…> --from <source seat> --only <NAME,...> --key <path> --sops <path>
-  nova-secrets seat inject --store <dir> --as <seat> --from <source seat> --only <NAME,...> --key <path> --sops <path> [--no-pr] [--gh <path>] [--git <path>]
+  nova-secrets seat inject --store <dir> --as <seat> --from <source seat> --only <NAME,...> --key <path> --sops <path> [--no-pr] [--dry-run] [--gh <path>] [--git <path>]
   nova-secrets help
 
 flags:
@@ -54,6 +54,10 @@ flags:
   --from <seat>        a seat this machine can open, whose values are re-sealed (seat add, seat inject)
   --stdin              read the value from stdin instead of the terminal (seal only)
   --no-pr              stop after the commit; make no gh call; return the store to its starting branch (seal, seat inject)
+  --dry-run            prints the plan and writes nothing (place, seal, seat inject): the file, the
+                       recipients, the machine and remote path, the branch and the pull request the
+                       real run would take, as PLAN lines ending in DRY-RUN OK, exit 0; no ssh, no
+                       git write or push, no gh call, no sops encrypt, no value read or shown
   --gh <path>          path to the gh executable (seal, seat inject; default: gh)
   --git <path>         path to the git executable (seal, seat inject; default: git)
 
@@ -68,9 +72,12 @@ example:
   nova-secrets check  --store ./secrets --as rowan --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops
   nova-secrets exec   --store ./secrets --as rowan --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops --only GH_TOKEN --require GH_TOKEN -- gh api user
   nova-secrets place  --store ./secrets --as rowan --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops --machine mini --secret DEEPSEEK_API_KEY --machines ./fleet.tsv
+  nova-secrets place  --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops /opt/homebrew/bin/sops --machine bench --secret API_KEY --machines ./fleet.tsv --dry-run
   nova-secrets placed --machine mini
+  nova-secrets seal   --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops /opt/homebrew/bin/sops --name API_KEY --dry-run
   nova-secrets seat add --store ./secrets --as air --pub age1… --from rowan --only GH_TOKEN,DEEPSEEK_API_KEY --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops
   nova-secrets seat inject --store ./secrets --as air --from rowan --only NOVA_REDIS_BENCH_PASSWORD --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops --no-pr
+  nova-secrets seat inject --store ./secrets --as worker --from lead --only API_KEY --key ~/.config/nova-secrets/lead.key --sops /opt/homebrew/bin/sops --dry-run
 `
 
 // storeUpstreamHelp is the store prerequisite check and exec enforce (SPEC-SECRETS
@@ -115,6 +122,9 @@ exit: the command's own code; 125 when exec itself fails (one SECRETS EXEC FAIL 
 naming the remedy) and the command never runs
 
 ` + storeUpstreamHelp
+
+// dryRunHelp is the one sentence --dry-run carries on every verb that takes it.
+const dryRunHelp = "prints the plan and writes nothing"
 
 // isHelpArg is the spelling of a verb's own help request.
 func isHelpArg(a string) bool { return a == "--help" || a == "-h" || a == "help" }
@@ -612,6 +622,7 @@ func runSeatInjectCLI(args []string) {
 	ghFlag := fs.String("gh", "gh", "gh path")
 	gitFlag := fs.String("git", "git", "git path")
 	noPRFlag := fs.Bool("no-pr", false, "stop after commit; return the store to its starting branch")
+	dryRunFlag := fs.Bool("dry-run", false, dryRunHelp)
 
 	if len(args) > 0 && args[0] == "help" {
 		panic(verbflag.Help{FS: fs})
@@ -635,6 +646,7 @@ func runSeatInjectCLI(args []string) {
 		GHPath:   *ghFlag,
 		GitPath:  *gitFlag,
 		NoPR:     *noPRFlag,
+		DryRun:   *dryRunFlag,
 		Progress: os.Stderr,
 	})
 	if err != nil {
@@ -704,6 +716,7 @@ func runPlaceCLI(args []string) {
 	machinesFlag := fs.String("machines", "", "fleet registry file")
 	receiptsFlag := fs.String("receipts", "", "receipts dir")
 	sshFlag := fs.String("ssh", "ssh", "ssh executable")
+	dryRunFlag := fs.Bool("dry-run", false, dryRunHelp)
 
 	if err := verbflag.Parse(fs, args); err != nil {
 		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-secrets place -h"))
@@ -725,6 +738,7 @@ func runPlaceCLI(args []string) {
 		Machines:   *machinesFlag,
 		Receipts:   *receiptsFlag,
 		SSH:        *sshFlag,
+		DryRun:     *dryRunFlag,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-secrets place -h"))
@@ -778,6 +792,7 @@ func runSealCLI(args []string) {
 	gitFlag := fs.String("git", "git", "git path")
 	stdinFlag := fs.Bool("stdin", false, "read value from stdin")
 	noPRFlag := fs.Bool("no-pr", false, "stop after commit; return the store to its starting branch")
+	dryRunFlag := fs.Bool("dry-run", false, dryRunHelp)
 
 	if err := verbflag.Parse(fs, args); err != nil {
 		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-secrets seal -h"))
@@ -800,6 +815,7 @@ func runSealCLI(args []string) {
 		GHPath:          *ghFlag,
 		GitPath:         *gitFlag,
 		NoPR:            *noPRFlag,
+		DryRun:          *dryRunFlag,
 		UseStdin:        *stdinFlag,
 		Stdin:           os.Stdin,
 		StdinIsTerminal: stdinIsTerminal,

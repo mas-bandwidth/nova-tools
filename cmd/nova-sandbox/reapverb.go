@@ -102,15 +102,16 @@ type reapFlags struct {
 
 func parseReap(args []string) reapFlags {
 	var f reapFlags
-	for _, a := range args {
-		switch a {
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
 		case "--dry-run":
 			f.dryRun = true
 		case "help", "--help", "-h":
 			f.help = true
 		default:
-			f.bad = append(f.bad, sandbox.Refusal{Reason: "no_command",
-				Text: oneline.Escape(a) + " is not a flag of the reap verb; run: nova-sandbox reap --help"})
+			text, took := unknownArg(args, i, "reap")
+			f.bad = append(f.bad, sandbox.Refusal{Reason: "no_command", Text: text})
+			i += took
 		}
 	}
 	return f

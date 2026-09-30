@@ -14,6 +14,7 @@ import (
 	"io"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
@@ -56,6 +57,12 @@ func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return 0
 	}
 
+	// THE ROW IS BOOKED UNDER THE MODEL THE TRANSCRIPT NAMES. A transcript that names none has
+	// no honest row, and the refusal says so before anything is created or written.
+	if why := sum.UnbookableReason(); why != "" {
+		return refuse(stderr, " session", why)
+	}
+
 	// The fold. One day file per day the session's turns fell on, merged by source the way
 	// every other fold merges: this run recomputes the rows its own source wrote and keeps
 	// every other row exactly as it is.
@@ -84,7 +91,7 @@ func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
 		if part == nil {
 			part = &tokens.SessionSum{}
 		}
-		fresh := []tokens.DayRow{sum.Row(d)}
+		fresh := sum.Rows(d)
 		var old []tokens.DayRow
 		if f, findings, err := tokens.ReadDayFile(tokens.Path(*out, d)); err == nil {
 			if len(findings) > 0 {
@@ -112,8 +119,12 @@ func cmdSession(args []string, stdout, stderr io.Writer, now time.Time) int {
 			exit = 1
 			continue
 		}
+		booked := make([]string, 0, len(fresh))
+		for _, r := range fresh {
+			booked = append(booked, r.Model)
+		}
 		fmt.Fprintf(stdout, "TOKENS DAY day=%s written=true rows=%d retained=%d model=%s weighted=%d\n",
-			oneline.Field(d), len(rows), retained, oneline.Field(tokens.CoordinatorModel), part.Weighted())
+			oneline.Field(d), len(rows), retained, oneline.Field(strings.Join(booked, ",")), part.Weighted())
 	}
 	return exit
 }

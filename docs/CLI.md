@@ -30,7 +30,7 @@ nova-check spelling (--dir <dir> | --file <path> | --path <pattern>) [--ignore <
 
 ```
 $ nova-check quickstart --dir ./self
-QUICKSTART OK dir=./self checks=2: links, then nocode
+QUICKSTART RUN dir=./self checks=2: links, then nocode
 LINKS OK files=4 links=3 excluded=0
 NOCODE OK files=5 clean deny-list=floor-list
 QUICKSTART OK done=2 worst-exit=0 next=kernel,attest,floors,corpus (each wants a budget, a manifest or a ledger of yours: nova-check help)
@@ -937,7 +937,7 @@ Invalid flags or unexpected arguments refuse with exit 2 naming the flag as type
 
 ```
 $ nova-sandbox check --bogus
-CHECK REFUSED reason=bad_flag: flag "--bogus"; run: nova-sandbox check -h
+CHECK REFUSED reason=bad_flag: unknown flag --bogus; run: nova-sandbox help check
 ```
 
 Unknown verbs refuse explicitly with exit 2 rather than falling into the bare wrap:
@@ -1219,16 +1219,6 @@ What a first run gets wrong, and what each one wants:
 - **Pointing `--claude` at a directory with a scratch tree under it.** `--claude` walks every `*.jsonl` and `*.output` under the directory **recursively**, and prunes nothing: a session scratchpad, a git clone or a build tree under it is walked too. Measured: a window-only fold of 1,278 files and 739 MB took **10.4s**; adding a directory of 33 session scratchpads under `/private/tmp` took **531.7s**, 331s of it in the kernel, to find 2,612 transcripts. Nothing is skipped silently, because a silent prune is a number nobody can account for — so name the transcript directory itself, and expect the walk to cost what the tree costs.
 - **`--scratch` without `--opencode`, or the other way round.** The OpenCode database is copied into `--scratch` and read there with `sqlite3 -readonly`, which is this tool's one subprocess; a scratch directory with nothing to put in it is a flag that does nothing, and both mistakes are refused with the sentence saying so.
 
-**What one PIECE OF WORK cost: `fold --units <set.lisp>` and `sum --by unit`.** The `repo` column answers "what did this month cost on nova-tools"; the obligation is the other question, and the repo column cannot answer it. A **work set** already names the pieces of work — `(unit "certify:verb" :pr 1369 :lane "pulse" …)` — so `--units` reads the coordinator's own taxonomy rather than inventing one, writes the unit into the day file's twelfth column, and prints one `TOKENS UNITS set=<id> units=<n> file=<file>` line saying what it loaded:
-
-```
-nova-tokens fold --out ./days --day 2026-09-18 --repos ./repos.tsv \
-  --claude glenn=~/.claude/projects --units work/pitstop-2026-09-18-units.lisp
-nova-tokens sum --out ./days --month 2026-09 --by unit
-```
-
-A unit is attributed **per transcript**, not per message: a child is spawned for one unit and works on it until it stops, and attributing per message would put a child's `gh pr view` of a sibling's PR onto the sibling's unit. Inside one transcript the first tool input that names a unit decides the file, by the unit's `:pr` number (`#1369`, `/pull/1369`), its `:branch`, or its `:lane`'s clone directory (`lane-<name>`, as `tmp/lane-three/` or `~/lane-three`). Each is matched at a boundary, so `#141` is not found inside `#1412`. A transcript that names none is `-`, and so is every row from a billing export, a swarm usage file or a bus self-report, which carry no tool inputs to read a unit from. `sum --by unit` prints the `-` group with the rest: the share of a month nobody attributed is the number that says whether the work set is good enough. A fold with no `--units` writes `-` on every row, which is the file it wrote before with one more column on it, and the day-file reader takes either width.
-
 There is **no `quickstart` verb**, and that is deliberate. Every verb here needs a path this tool must not invent — an output directory, a rules file, at least one source — so a one-word first run would have to write state nobody asked for, in a directory nobody named. `nova-tokens help` carries seven example lines a stranger can paste instead — six under its first `example:` and one under the `session` example, and `sources` is the one verb that only looks.
 
 ### Worker-pool usage
@@ -1292,6 +1282,16 @@ models are listed for the owner to evaluate and pull themselves. No timer is ins
 For recovery across process death, name `--snapshot`; retries retain the prepared
 note. Version statuses should go to your chosen integrator, with optional Cc;
 participation and updates remain voluntary.
+
+`status` is `check` with every entry's line shown, the current ones too, exit 0 when
+every entry is equal and 1 when any differs; it writes nothing. `apply --dry-run`
+prints the plan and writes nothing: the entry's line against the target, `would
+install <name> <version> from <source>` and the command the real run would start.
+
+```sh
+nova-update status --file cmd/nova-update/testdata/example.tsv
+nova-update apply --file cmd/nova-update/testdata/dry-run.tsv go --dry-run
+```
 
 First-run refusals name what is needed: `--file` wants the six-column TSV header
 and explicit argv; paths or arguments containing spaces belong in a wrapper script.
@@ -1535,6 +1535,11 @@ the `seal/...` branch and the OK line names it. A leftover seal branch has no
 upstream, and `exec` would refuse every later card on that store. A dirty store
 (staged or unstaged tracked changes) is refused before any branch switch, so
 local edits are not discarded.
+
+`--dry-run` prints the plan and writes nothing: the file and whether the name is
+added or replaced, the recipients, the branch, the commit and the pull request title,
+as `SECRETS SEAL PLAN` lines ending in `DRY-RUN OK` at exit 0. It reads no value,
+encrypts nothing and runs no push or `gh` call. `place` and `seat inject` take it too.
 
 Without `--no-pr`, the command pushes its branch, opens a PR and waits up to two
 minutes for the gate's approval, reporting progress while it waits. Once approved,

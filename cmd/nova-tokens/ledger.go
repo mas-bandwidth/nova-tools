@@ -38,9 +38,9 @@ func openLedger(addr, user, passwordEnv string) (record.LedgerStore, error) {
 
 const wantsRedis = "the fleet Redis host:port whose tokens:ledger:<day> hashes this reads or writes"
 
-// ledgerEntries turns one day file into its ledger rows: the card is the row's unit
-// (`-` when none), the provider is the source kinds, and two rows under one key are summed
-// with the fold's per-type rule.
+// ledgerEntries turns one day file into its ledger rows: the card is `-` (a day file names
+// no unit, and the store's key keeps the slot), the provider is the source kinds, and two
+// rows under one key are summed with the fold's per-type rule.
 func ledgerEntries(d tokens.DayFile) []record.LedgerEntry {
 	type acc struct {
 		e       record.LedgerEntry
@@ -50,10 +50,7 @@ func ledgerEntries(d tokens.DayFile) []record.LedgerEntry {
 	byKey := map[[3]string]*acc{}
 	var order [][3]string
 	for _, r := range d.Rows {
-		card := strings.TrimSpace(r.Unit)
-		if card == "" {
-			card = tokens.Dash
-		}
+		card := tokens.Dash
 		k := [3]string{card, r.Model, r.Repo}
 		a := byKey[k]
 		if a == nil {

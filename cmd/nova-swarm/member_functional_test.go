@@ -194,15 +194,19 @@ var memberCard = "RESULT: <label> sha=<sha12>\n" +
 	"STEP 1. Enter your worktree and read this card.\n" +
 	"STEP 2. Write RESULT.md: line 1 is line 1 of this card; under it the head and the report, in under 80 lines."
 
-// TestMemberDrivesASprintFromReadyToLandedOnAStore is the member loop against
+// TestMemberFunctionalDriveWithFakeHarness is the member loop against
 // the real sprint: one member of width 2, two readers, three cards; every
 // process is the built binary and the store is a real redis-server in the
 // container. The member takes the work (never more than 2 working at once),
 // finishes it with the head and report the child's RESULT.md holds; the two
 // readers read every card; the coordinator accepts the reads and the merge
 // lands all three.
-func TestMemberDrivesASprintFromReadyToLandedOnAStore(t *testing.T) {
+func TestMemberFunctionalDriveWithFakeHarness(t *testing.T) {
 	t.Parallel()
+	testMemberFunctionalDrive(t)
+}
+
+func testMemberFunctionalDrive(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	addr := testutil.Start(t)

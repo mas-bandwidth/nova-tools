@@ -45,8 +45,8 @@ func TestLintCardMissingKindDrawsKindDeclared(t *testing.T) {
 		"SOURCE: mas-bandwidth/nova-tools#1651",
 	))
 	exit, stdout, stderr := runSwarm(t, "lint", "--card", card)
-	if exit != 2 {
-		t.Fatalf("a drifting card exits 2, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	if exit != 1 {
+		t.Fatalf("a drifting card exits 1, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
 	}
 	if !strings.Contains(stdout, "LINT DRIFT card=nokind.card kind-declared:") {
 		t.Fatalf("the drift names the card and the token:\n%s", stdout)
@@ -68,8 +68,8 @@ func TestLintCardDrawsTestNamedAndPathsDeclared(t *testing.T) {
 		"SOURCE: mas-bandwidth/nova-tools#1651",
 	))
 	exit, stdout, _ := runSwarm(t, "lint", "--card", card, "--max", "0")
-	if exit != 2 {
-		t.Fatalf("a drifting card exits 2, got %d\n%s", exit, stdout)
+	if exit != 1 {
+		t.Fatalf("a drifting card exits 1, got %d\n%s", exit, stdout)
 	}
 	for _, want := range []string{"test-named:", "paths-declared:"} {
 		if !strings.Contains(stdout, want) {
@@ -117,7 +117,7 @@ func TestLintCardAcceptsKindReportAndRefusesANonsenseKind(t *testing.T) {
 		"SOURCE: mas-bandwidth/nova-tools#1651",
 	))
 	exit, stdout, stderr = runSwarm(t, "lint", "--card", bad)
-	if exit != 2 || !strings.Contains(stdout, "kind-declared") || !strings.Contains(stdout, "not-a-real-kind") {
+	if exit != 1 || !strings.Contains(stdout, "kind-declared") || !strings.Contains(stdout, "not-a-real-kind") {
 		t.Fatalf("a nonsense KIND is refused: exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
 	}
 }
@@ -158,7 +158,7 @@ func TestLintCardPausedKindNamesTheTrialRemedy(t *testing.T) {
 		"SOURCE: mas-bandwidth/nova-tools#1651",
 	))
 	exit, stdout, _ := runSwarm(t, "lint", "--card", card, "--trust", trust)
-	if exit != 2 {
+	if exit != 1 {
 		t.Fatalf("a paused kind is a drift, exit %d:\n%s", exit, stdout)
 	}
 	if !strings.Contains(stdout, "paused:") || !strings.Contains(stdout, "kind=fix-red") {
@@ -202,7 +202,7 @@ func TestLintCardTypedRequiresTheHeader(t *testing.T) {
 
 	card := writeLintCard(t, "old.card", lintGoodCard())
 	exit, stdout, _ := runSwarm(t, "lint", "--card", card, "--typed", "--max", "0")
-	if exit != 2 {
+	if exit != 1 {
 		t.Fatalf("--typed on a card with no header is a drift, exit %d:\n%s", exit, stdout)
 	}
 	for _, want := range []string{"kind-declared:", "paths-declared:", "test-named:", "depends-on:"} {
@@ -292,7 +292,7 @@ func TestLintCloneStepStillDraftsAStepThatEntersNothing(t *testing.T) {
 	}, "\n")
 	card := writeLintCard(t, "nostep.card", body)
 	exit, stdout, _ := runSwarm(t, "lint", "--card", card, "--max", "0")
-	if exit != 2 || !strings.Contains(stdout, "clone-step") {
+	if exit != 1 || !strings.Contains(stdout, "clone-step") {
 		t.Fatalf("a STEP 1 that enters no repository is a drift: exit %d\n%s", exit, stdout)
 	}
 	line := ""

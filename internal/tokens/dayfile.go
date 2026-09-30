@@ -12,7 +12,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-// The day file: one file per day, twelve columns, every one written on every row.
+// The day file: one file per day, eleven columns, every one written on every row.
 //
 // It is WRITTEN WHOLE every time and never appended to, never edited in place: the write
 // goes through internal/atomicfile to a unique temporary sibling in the same directory
@@ -34,35 +34,31 @@ const TempSuffix = ".tsv.tmp"
 // FileSuffix is a day file's extension.
 const FileSuffix = ".tsv"
 
-// Columns are the twelve, in order, and the file's second line is exactly these.
+// Columns are the eleven, in order, and the file's second line is exactly these.
 //
-// `units` is the TWELFTH and is APPENDED: the eleven before it mean exactly what they
-// meant, and a file written before this column existed is read at its own width with
-// every row's unit `-`. A fold writes twelve from now on -- the table is fixed, so every
-// row writes every field -- and the day after a fold the file is twelve wide.
-var Columns = []string{"date", "model", "repo", "input", "output", "cache_write", "cache_read", "reasoning", "rough", "day_basis", "sources", "units"}
+// A day file written while a twelfth column, `units`, existed carries that column in its
+// header and on every row. The reader takes that file and ignores the column (LegacyColumns);
+// the writer never writes it, so the day after a fold the file is eleven wide. The version
+// line is unchanged, `nova-tokens v1`: the eleven columns mean exactly what they always did.
+var Columns = []string{"date", "model", "repo", "input", "output", "cache_write", "cache_read", "reasoning", "rough", "day_basis", "sources"}
 
-// ColumnsV1 is the eleven-column header of every day file written before the units column.
-// The reader takes either width; nothing else in this tool does.
-var ColumnsV1 = Columns[:len(Columns)-1]
+// LegacyColumns is the twelve-column header of a day file written while the `units` column
+// existed. Only the reader knows it.
+var LegacyColumns = append(append([]string(nil), Columns...), "units")
 
-// HeaderLineV1 is that file's second line.
-var HeaderLineV1 = strings.Join(ColumnsV1, "\t")
+// LegacyHeaderLine is that file's second line.
+var LegacyHeaderLine = strings.Join(LegacyColumns, "\t")
 
-// HeaderLine is the second line of every day file.
+// HeaderLine is the second line of every day file this tool writes.
 var HeaderLine = strings.Join(Columns, "\t")
 
 // DayRow is one written row.
 type DayRow struct {
 	Date, Model, Repo string
-	// Unit is the work-set unit this row's spend is attributed to, or `-`. It is the
-	// `units` column: a fold run without --units writes `-` on every row, which is the
-	// file this tool wrote before the column existed with one more cell on it.
-	Unit    string
-	Counts  Counts
-	Rough   int
-	Basis   string
-	Sources []string
+	Counts            Counts
+	Rough             int
+	Basis             string
+	Sources           []string
 }
 
 // DayFile is a whole day file, parsed or about to be written.
@@ -92,7 +88,7 @@ func TempPath(out, day string) string { return filepath.Join(out, day+TempSuffix
 //
 // EVERY STORED CELL GOES THROUGH oneline.Field, and that is what makes eleven
 // tab-separated columns a promise rather than a hope: a model id or a repo name holding a
-// tab would otherwise write a twelve-column row, and one holding a newline would write two
+// tab would otherwise write a twelve-cell row, and one holding a newline would write two
 // rows, from a value this tool copied out of somebody's transcript. Field escapes
 // whitespace and "=", so an ordinary name is untouched and a hostile one is one token.
 func (d *DayFile) Render() string {
@@ -106,20 +102,10 @@ func (d *DayFile) Render() string {
 			cells = append(cells, r.Counts.Cell(t))
 		}
 		cells = append(cells, strconv.Itoa(r.Rough), oneline.Field(r.Basis),
-			oneline.Field(strings.Join(r.Sources, ",")), oneline.Field(orDashStr(r.Unit)))
+			oneline.Field(strings.Join(r.Sources, ",")))
 		rows = append(rows, strings.Join(cells, "\t"))
 	}
 	return strings.Join(rows, "\n") + "\n"
-}
-
-// orDashStr is the dash an absent value is written as, so no cell is ever empty. It is
-// here rather than at the caller because the file's rule is the file's: every column is
-// written on every row, and an absent one is `-`.
-func orDashStr(s string) string {
-	if strings.TrimSpace(s) == "" {
-		return Dash
-	}
-	return s
 }
 
 // Save writes the file whole atomically via internal/atomicfile (exclusive
@@ -247,7 +233,7 @@ type Partial struct {
 // PartialCollision: the day file's rows are unique by (model, repo, unit), and summing the two
 // would blend two runs' arithmetic into one cell no later fold could undo.
 //
-// The returned rows are sorted by (model, repo, unit), which is what ParseDayFile demands. When
+// The returned rows are sorted by (model, repo), which is what ParseDayFile demands. When
 // any Partial is returned the caller writes NOTHING: the rows are what the merge would have
 // been, and are not a file.
 func MergeDay(old, fresh []DayRow, declared []string) (rows []DayRow, retained int, partials []Partial) {
@@ -261,7 +247,7 @@ func MergeDay(old, fresh []DayRow, declared []string) (rows []DayRow, retained i
 	rows = append(rows, fresh...)
 	computed := map[string]bool{}
 	for _, r := range fresh {
-		computed[r.Model+"\t"+r.Repo+"\t"+orDashStr(r.Unit)] = true
+		computed[r.Model+"\t"+r.Repo] = true
 	}
 	for _, r := range old {
 		in, out := 0, 0
@@ -283,7 +269,7 @@ func MergeDay(old, fresh []DayRow, declared []string) (rows []DayRow, retained i
 			// totals, day-total comparison cannot see the per-source quiet shrink
 			// (preserved as follow-up).
 		default:
-			if computed[r.Model+"\t"+r.Repo+"\t"+orDashStr(r.Unit)] {
+			if computed[r.Model+"\t"+r.Repo] {
 				partials = append(partials, partialOf(r, folded, PartialCollision))
 				continue
 			}
@@ -292,8 +278,8 @@ func MergeDay(old, fresh []DayRow, declared []string) (rows []DayRow, retained i
 		}
 	}
 	sort.SliceStable(rows, func(i, j int) bool {
-		return keyLess(Key{Model: rows[i].Model, Repo: rows[i].Repo, Unit: rows[i].Unit},
-			Key{Model: rows[j].Model, Repo: rows[j].Repo, Unit: rows[j].Unit})
+		return keyLess(Key{Model: rows[i].Model, Repo: rows[i].Repo},
+			Key{Model: rows[j].Model, Repo: rows[j].Repo})
 	})
 	return rows, retained, partials
 }
@@ -368,15 +354,17 @@ func ParseDayFile(name, text string) (DayFile, []Finding) {
 	if d.Day != name {
 		f = append(f, Finding{Line: 1, Reason: "the version line says day=" + d.Day + " and the file is named " + name})
 	}
-	// EITHER WIDTH. A file whose header is the eleven names was written before the units
-	// column and is read with every row's unit `-`; a file whose header is the twelve is
-	// read as it is written. Anything else is the refusal it always was, and it names the
+	// EITHER WIDTH. A file whose header is the eleven names is read as it is written. A file
+	// whose header is the twelve (LegacyColumns) was written while the `units` column
+	// existed: its twelfth cell is ignored, and the rows that column alone kept apart, which
+	// sit next to each other because the file is sorted, are read as the one (model, repo)
+	// row they add up to. Anything else is the refusal it always was, and it names the
 	// header a fold writes today.
-	width := len(Columns)
-	if len(lines) >= 2 && lines[1] == HeaderLineV1 {
-		width = len(ColumnsV1)
+	width, legacy := len(Columns), false
+	if len(lines) >= 2 && lines[1] == LegacyHeaderLine {
+		width, legacy = len(LegacyColumns), true
 	} else if len(lines) < 2 || lines[1] != HeaderLine {
-		f = append(f, Finding{Line: 2, Reason: "the second line is neither the twelve column names nor the eleven a file written before the units column carries: " + HeaderLine})
+		f = append(f, Finding{Line: 2, Reason: "the second line is not the eleven column names: " + HeaderLine})
 		return d, f
 	}
 	var last string
@@ -390,18 +378,10 @@ func ParseDayFile(name, text string) (DayFile, []Finding) {
 		}
 		cells := strings.Split(line, "\t")
 		if len(cells) != width {
-			f = append(f, Finding{Line: n, Reason: fmt.Sprintf("%d columns, want %d (%s)", len(cells), width, strings.Join(Columns[:width], "\t"))})
+			f = append(f, Finding{Line: n, Reason: fmt.Sprintf("%d columns, want %d (%s)", len(cells), width, strings.Join(Columns, "\t"))})
 			continue
 		}
-		row := DayRow{Date: cells[0], Model: cells[1], Repo: cells[2], Unit: Dash}
-		unitEmpty := false
-		if width == len(Columns) {
-			row.Unit = cells[11]
-			if row.Unit == "" {
-				unitEmpty = true
-				row.Unit = Dash
-			}
-		}
+		row := DayRow{Date: cells[0], Model: cells[1], Repo: cells[2]}
 		bad := false
 		for t := Type(0); t < NTypes; t++ {
 			cell := cells[3+int(t)]
@@ -435,21 +415,25 @@ func ParseDayFile(name, text string) (DayFile, []Finding) {
 			f = append(f, Finding{Line: n, Reason: "the sources cell is empty; every number is traceable to the flags of the run that wrote it"})
 			bad = true
 		}
-		if unitEmpty {
-			f = append(f, Finding{Line: n, Reason: "the units cell is empty; a row attributed to no unit is `-`, never empty"})
-			bad = true
-		}
 		row.Sources = strings.Split(cells[10], ",")
 		if row.Date != name {
 			f = append(f, Finding{Line: n, Reason: "the date column is " + row.Date + " and the file is named " + name})
 			bad = true
 		}
-		key := row.Model + "\t" + row.Repo + "\t" + row.Unit
-		if seen[key] {
-			f = append(f, Finding{Line: n, Reason: "a second row for (" + row.Model + ", " + row.Repo + ", " + row.Unit + "); rows are unique by (model, repo, unit)"})
+		key := row.Model + "\t" + row.Repo
+		switch {
+		case legacy && !bad && seen[key] && key == last && len(d.Rows) > 0 && d.Rows[len(d.Rows)-1].Basis == row.Basis:
+			// One (model, repo) the units column had split: the row it adds up to.
+			prev := &d.Rows[len(d.Rows)-1]
+			prev.Counts.Add(row.Counts)
+			prev.Rough += row.Rough
+			prev.Sources = mergeSources(prev.Sources, row.Sources)
+			continue
+		case seen[key]:
+			f = append(f, Finding{Line: n, Reason: "a second row for (" + row.Model + ", " + row.Repo + "); rows are unique by (model, repo)"})
 			bad = true
-		} else if last != "" && key < last {
-			f = append(f, Finding{Line: n, Reason: "out of order; rows are sorted by (model, repo, unit)"})
+		case last != "" && key < last:
+			f = append(f, Finding{Line: n, Reason: "out of order; rows are sorted by (model, repo)"})
 			bad = true
 		}
 		seen[key] = true
@@ -528,4 +512,21 @@ func daysIn(y, m int) int {
 		return 29
 	}
 	return 28
+}
+
+// mergeSources is the sorted union of two source label lists.
+func mergeSources(a, b []string) []string {
+	set := map[string]bool{}
+	for _, l := range a {
+		set[l] = true
+	}
+	for _, l := range b {
+		set[l] = true
+	}
+	out := make([]string, 0, len(set))
+	for l := range set {
+		out = append(out, l)
+	}
+	sort.Strings(out)
+	return out
 }
