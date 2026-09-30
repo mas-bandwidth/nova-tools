@@ -221,7 +221,7 @@ func cardOfRecord(r tset.MemberRecord) *sprint.Card {
 
 // wallStamp is a wall time as the stamps for the reader are written (1.2:
 // wall stamps stay for the reader; no rule reads them).
-func wallStamp(now sprint.Now) string { return time.UnixMilli(now.Wall).UTC().Format(time.RFC3339) }
+func wallStamp(now sprint.Now) string { return stampOf(now.Wall) }
 
 // dueAt is a due field's value: running milliseconds, R plus the span (1.2).
 func dueAt(now sprint.Now, span time.Duration) string {

@@ -251,7 +251,7 @@ func flUpStep(ctx context.Context, e *Env, op string, members []string) (Result,
 					}
 					entries = append(entries, tset.Entry{Kind: "create", Table: sprint.Fleet, To: m + ":" + sprint.Ctl,
 						IDs: []string{id}, Scores: []string{"0"}, About: []string{id},
-						Set: map[string]string{wkfKind: "member", wkfStatus: status, wkfSince: wkWallStamp(wall)}})
+						Set: map[string]string{wkfKind: "member", wkfStatus: status, wkfSince: stampOf(wall)}})
 				default:
 					if ctl.Place.Row != m || ctl.Place.Col != sprint.Ctl {
 						bad.add(m, "%s: its control card is at %s, not %s:%s", m, placeText(ctl), m, sprint.Ctl)
@@ -263,7 +263,7 @@ func flUpStep(ctx context.Context, e *Env, op string, members []string) (Result,
 					}
 					entries = append(entries, tset.Entry{Kind: "move", Table: sprint.Fleet, From: m + ":" + sprint.Ctl, To: m + ":" + sprint.Ctl,
 						IDs: []string{id}, Revs: []tset.Decimal{ctl.Revision}, About: []string{id},
-						Set: map[string]string{wkfStatus: status, wkfSince: wkWallStamp(wall)}, Unset: []string{wkfHeld}})
+						Set: map[string]string{wkfStatus: status, wkfSince: stampOf(wall)}, Unset: []string{wkfHeld}})
 				}
 				if fresh {
 					came = append(came, m)
@@ -361,7 +361,7 @@ func FleetDown(ctx context.Context, e *Env, req FleetReq) (Result, error) {
 				}
 				entries = append(entries, tset.Entry{Kind: "move", Table: sprint.Fleet, From: m + ":" + sprint.Ctl, To: m + ":" + sprint.Ctl,
 					IDs: []string{ctl.ID}, Revs: []tset.Decimal{ctl.Revision}, About: []string{ctl.ID},
-					Set: map[string]string{wkfStatus: sprint.Held, wkfSince: wkWallStamp(wall)}})
+					Set: map[string]string{wkfStatus: sprint.Held, wkfSince: stampOf(wall)}})
 				held = append(held, m)
 			}
 			if err := bad.err(verb); err != nil {
