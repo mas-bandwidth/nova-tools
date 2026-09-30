@@ -431,6 +431,16 @@ func planOps(b *stepOps, p sprint.Plan) error {
 			}
 		}
 	}
+	for _, pw := range p.Props {
+		guard := tset.Entry{Kind: "propguard", Table: pw.Table, Name: pw.Name}
+		if !pw.WasAbsent {
+			was := pw.Was
+			guard.Value = &was
+		}
+		value := pw.Value
+		b.entry(guard)
+		b.entry(tset.Entry{Kind: "prop", Table: pw.Table, Name: pw.Name, Value: &value})
+	}
 	return nil
 }
 
@@ -1308,10 +1318,10 @@ var reworkFields = []string{sprint.PrimaryField, "attempt", "result", "asked", "
 var reworkFollow = []string{sprint.FollowRCards, sprint.FollowWork, sprint.FollowWithdrawn}
 
 // reworkBeside are the listings ReworkAt reads beside the primaries: the
-// fleet's rows, counts and members' status, which it deals the next attempt
+// fleet's rows, counts, members' status and deal_index, which it deals the next attempt
 // from, and the readers' rows, which the judgment of a primary it refuses
 // reads.
-var reworkBeside = []sprint.SprintQ{{Kind: sprint.QueryFleet, Fields: []string{"status"}}, {Kind: sprint.QueryReaders, Fields: []string{}}}
+var reworkBeside = []sprint.SprintQ{{Kind: sprint.QueryFleet, Fields: []string{"status"}, Props: []string{sprint.PropDealIndex}}, {Kind: sprint.QueryReaders, Fields: []string{}}}
 
 // reworkEach is the most members one primary's rework changes: the primary,
 // its read cards (at most 15), its withdrawn work card and the new one.
