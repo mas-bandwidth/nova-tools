@@ -31,6 +31,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/sprintfn"
@@ -263,6 +264,26 @@ func (e *errorStep) fitNotes(c errChunk) errChunk {
 		c.notes++
 	}
 	return c
+}
+
+// cutMark ends the text of a note that was cut to fit a step.
+const cutMark = "... (cut)"
+
+// cutText halves the text of the owed note i, keeping its head and ending it
+// with cutMark, and says whether it cut anything: a text already down to the
+// mark is left. Repeated, it brings any text under any byte limit above the
+// note's other fields, in log2 of its length cuts.
+func (e *errorStep) cutText(i int) bool {
+	t := strings.TrimSuffix(e.notes[i].Text, cutMark)
+	if len(t) == 0 {
+		return false
+	}
+	keep := len(t) / 2
+	for keep > 0 && !utf8.RuneStart(t[keep]) {
+		keep-- // never cut inside a rune
+	}
+	e.notes[i].Text = t[:keep] + cutMark
+	return true
 }
 
 // halve is a chunk of half as much, each part that had any keeping one.
@@ -619,10 +640,23 @@ func (l *Loop) errorRequest() (*sprintfn.Request, errChunk) {
 	for {
 		req := l.errorChunk(c)
 		n, ref := sprintfn.EncodedSize(l.cfg.Names.Prefix, req)
-		if (ref == nil && n <= l.budget.StepBytes) || c == c.halve() {
-			return req, c // one of each over the bytes goes as it is: the store names it
+		if ref == nil && n <= l.budget.StepBytes {
+			return req, c
 		}
-		c = l.owed.fitNotes(c.halve())
+		if c == c.halve() {
+			// One of each is over the bytes. A note alone over them is cut in
+			// its text (its error text is of any length) until it fits;
+			// anything else over goes as it is: the store names it.
+			if c.notes > 0 && l.owed.cutText(0) {
+				continue
+			}
+			return req, c
+		}
+		// The halved chunk keeps its notes at the halved count: fitNotes
+		// refills them to the count limits, which would undo the halving.
+		h := c.halve()
+		c = l.owed.fitNotes(h)
+		c.notes = min(c.notes, h.notes)
 	}
 }
 

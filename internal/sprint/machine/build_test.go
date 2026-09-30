@@ -129,12 +129,16 @@ func TestStepBuilderKeepsUnitsWhole(t *testing.T) {
 func TestStepBuilderRefusesWhatItDoesNotCarry(t *testing.T) {
 	t.Parallel()
 	build := StepBuilder(testNames.Prefix)
-	for name, rp := range map[string]sprint.RulePlan{
-		"time writes": {Sprint: sprint.TimeWrites{Due: []sprint.DueSet{{Key: "remind:ann", At: 1}}}},
-		"bumps":       {Plan: sprint.Plan{Units: []sprint.Unit{{Key: "p1", Bumps: []sprint.Bump{{Table: sprint.Work, ID: "p1", Field: "n", Delta: 1}}}}}},
+	for name, c := range map[string]struct {
+		rp   sprint.RulePlan
+		want string
+	}{
+		"time writes": {sprint.RulePlan{Sprint: sprint.TimeWrites{Due: []sprint.DueSet{{Key: "remind:ann", At: 1}}}}, "the time rules' writes to the sprint's own keys"},
+		"bumps":       {sprint.RulePlan{Plan: sprint.Plan{Units: []sprint.Unit{{Key: "p1", Bumps: []sprint.Bump{{Table: sprint.Work, ID: "p1", Field: "n", Delta: 1}}}}}}, "unit p1: bumps, notes or closes of a unit"},
 	} {
-		if _, err := build(rp, sprintfn.Meta{Rule: "x", Tick: true, Gen: 1}, stepbuild.Contract()); err == nil {
-			t.Fatalf("%s: built", name)
+		_, err := build(c.rp, sprintfn.Meta{Rule: "x", Tick: true, Gen: 1}, stepbuild.Contract())
+		if err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Fatalf("%s: refused with %v, want the reason %q", name, err, c.want)
 		}
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/sprintfn"
@@ -215,5 +216,145 @@ func TestTickStoppedCutClock(t *testing.T) {
 		if len(body.Entries) != 0 || strings.Join(body.Done, ",") != "late:cut:op1" || len(body.Notes) != 1 {
 			t.Fatalf("mixed %v: the step sent %+v", mixed, body)
 		}
+	}
+}
+
+// owe puts n notes of text bytes each into the loop's owed error step.
+func owe(l *Loop, n, text int) {
+	for i := 0; i < n; i++ {
+		l.owed.addNotes(sprint.NoteReq{Op: "open", Type: TypeStepRefused, Cause: fmt.Sprintf("C%d", i),
+			Subjects: []string{fmt.Sprintf("deal:k%d", i)}, Text: strings.Repeat("y", text)})
+	}
+}
+
+// TestErrorRequestNotesOverBytes: notes whose bytes alone pass the step's
+// bytes are cut to the notes that fit, and the rest ride later ticks; the
+// request comes back (the halving keeps its count, and a chunk of
+// one that is over the bytes is not retried for ever), and every owed note
+// leaves in a chunk that fits (1.3.5).
+func TestErrorRequestNotesOverBytes(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t)
+	b := DefaultBudget()
+	b.StepBytes = 4000
+	l := w.loop("a", []sprint.Rule{dealRule(64)}, b)
+	owe(l, 10, 1000)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		sent := 0
+		for !l.owed.empty() {
+			req, c := l.errorRequest()
+			if n, ref := sprintfn.EncodedSize(l.cfg.Names.Prefix, req); ref != nil || n > b.StepBytes {
+				t.Errorf("chunk %+v is %d bytes, over %d (%v)", c, n, b.StepBytes, ref)
+				return
+			}
+			if c.notes < 1 || c.notes > 3 || len(req.Body.Notes) != c.notes {
+				t.Errorf("chunk %+v carries %d notes", c, len(req.Body.Notes))
+				return
+			}
+			sent += c.notes
+			l.owed.settle(c)
+		}
+		if sent != 10 {
+			t.Errorf("%d notes went, want 10", sent)
+		}
+	}()
+	<-done // a loop that does not end is the package's test timeout
+}
+
+// TestErrorRequestOneNoteOverBytes: one note whose text alone passes the
+// step's bytes is cut in its text, its head kept and the cut said, and goes;
+// a text of any length is brought under the limit (1.3.5).
+func TestErrorRequestOneNoteOverBytes(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t)
+	b := DefaultBudget()
+	b.StepBytes = 4000
+	l := w.loop("a", []sprint.Rule{dealRule(64)}, b)
+	head := "the deliverer said: "
+	l.owed.addNotes(sprint.NoteReq{Op: "open", Type: TypeStepRefused, Cause: "C", Subjects: []string{"deal:k1"},
+		Text: head + strings.Repeat("é", 32<<10)}) // a two-byte rune: the cut never splits one
+	type ret struct {
+		req *sprintfn.Request
+		c   errChunk
+	}
+	done := make(chan ret, 1)
+	go func() { req, c := l.errorRequest(); done <- ret{req, c} }()
+	{
+		r := <-done // a loop that does not end is the package's test timeout
+		n, ref := sprintfn.EncodedSize(l.cfg.Names.Prefix, r.req)
+		text := r.req.Body.Notes[0].Text
+		if ref != nil || n > b.StepBytes || r.c.notes != 1 || !strings.HasPrefix(text, head) || !strings.HasSuffix(text, "... (cut)") || !utf8.ValidString(text) {
+			t.Fatalf("%d bytes (%v), chunk %+v, text of %d bytes %.40q", n, ref, r.c, len(text), text)
+		}
+		l.owed.settle(r.c)
+		if !l.owed.empty() {
+			t.Fatal("the note stays owed")
+		}
+	}
+}
+
+// errorStepSizes is the notes and about ids of each error step the loop sends
+// over the ticks.
+func errorStepSizes(t *testing.T, w *world, l *Loop, k *counting, ticks int) []string {
+	t.Helper()
+	var got []string
+	for i := 0; i < ticks; i++ {
+		w.clk.add(TickEvery)
+		rep := w.tick(l, k)
+		for _, it := range k.sent[len(k.sent)-rep.RoundTrips] {
+			if isErrorStep(it) {
+				a := 0
+				for _, nn := range it.Step.Body.Notes {
+					a += len(nn.Subjects)
+				}
+				got = append(got, fmt.Sprintf("%d/%d", len(it.Step.Body.Notes), a))
+			}
+		}
+		if rep.Err != nil {
+			t.Fatalf("tick %d: %v", i, rep.Err)
+		}
+	}
+	return got
+}
+
+// TestErrorStepNotesAt100: the owed notes are cut at Layer 1's 100 notes a
+// step: 101 go as 100 then 1, each applied (1.3.5; L1 6).
+func TestErrorStepNotesAt100(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t)
+	w.rows("s1")
+	k := &counting{c: w.tw}
+	l := w.loop("a", []sprint.Rule{dealRule(64)}, Budget{})
+	w.tick(l, k)
+	for i := 0; i < 101; i++ {
+		l.owed.addNotes(sprint.NoteReq{Op: "open", Type: TypeStepRefused, Cause: fmt.Sprintf("C%d", i), Subjects: []string{fmt.Sprintf("deal:k%d", i)}, Text: "x"})
+	}
+	if got := strings.Join(errorStepSizes(t, w, l, k, 2), ","); got != "100/100,1/1" || !l.owed.empty() {
+		t.Fatalf("error steps %s, owed %d", got, len(l.owed.notes))
+	}
+}
+
+// TestErrorStepAboutsAt4000: the abouts are cut at 4,000 ids a step: notes of
+// 2000, 2000 and 1 subjects go as two notes, then one (1.3.5; L1 6).
+func TestErrorStepAboutsAt4000(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t)
+	w.rows("s1")
+	k := &counting{c: w.tw}
+	l := w.loop("a", []sprint.Rule{dealRule(64)}, Budget{})
+	w.tick(l, k)
+	n := 0
+	for i, size := range []int{2000, 2000, 1} {
+		var subj []string
+		for j := 0; j < size; j++ {
+			n++
+			subj = append(subj, fmt.Sprintf("deal:k%d", n))
+		}
+		l.owed.addNotes(sprint.NoteReq{Op: "open", Type: TypeStepRefused, Cause: fmt.Sprintf("C%d", i), Subjects: subj, Text: "x"})
+	}
+	if got := strings.Join(errorStepSizes(t, w, l, k, 2), ","); got != "2/4000,1/1" || !l.owed.empty() {
+		t.Fatalf("error steps %s, owed %d", got, len(l.owed.notes))
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
@@ -176,4 +177,50 @@ func TestPushOutcomesBounded(t *testing.T) {
 	if out := p.take(); len(out) != OutcomesMax || p.lost != started+4*PushesInFlightMax-OutcomesMax {
 		t.Fatalf("kept %d outcomes, lost %d", len(out), p.lost)
 	}
+}
+
+// TestPushDeliverThatNeverReturnsIsAbandoned: a deliverer that never returns,
+// and a route lookup that never returns, are each abandoned at the push's
+// time limit: the slot is freed, the outcome is a time out, and phase 3's
+// note opens "a reminder could not be delivered" on the person (2.3, R14).
+func TestPushDeliverThatNeverReturnsIsAbandoned(t *testing.T) {
+	t.Parallel()
+	rs := &routes{slow: make(chan struct{}), entered: make(chan struct{}, 2)}
+	t.Cleanup(func() { close(rs.slow) })
+	lookup := make(chan struct{})
+	t.Cleanup(func() { close(lookup) })
+	p := newPusher(func(name string) (store.Deliverer, error) {
+		if name == "nolookup" {
+			<-lookup
+		}
+		return rs.deliver(name)
+	})
+	p.limit = 50 * time.Millisecond
+	claims := []Claim{
+		{Goal: Goal{Person: "ann", Route: "slow", ClaimedGen: 1, ClaimedR: 1}},
+		{Goal: Goal{Person: "bob", Route: "nolookup", ClaimedGen: 1, ClaimedR: 1}},
+	}
+	if started, skipped := p.start(context.Background(), claims); started != 2 || skipped != 0 {
+		t.Fatalf("started %d, skipped %d", started, skipped)
+	}
+	<-rs.entered // ann's deliverer is stuck in its route; bob's lookup is stuck before its own
+	p.wait()     // each push ends at its limit; one that does not is the package's test timeout
+	out := p.take()
+	if len(out) != 2 || p.running != 0 {
+		t.Fatalf("outcomes %+v, %d slots held", out, p.running)
+	}
+	for _, o := range out {
+		if !o.TimedOut || o.Delivered || o.Err == "" {
+			t.Fatalf("an abandoned push: %+v", o)
+		}
+		n := outcomeNote(o)
+		if n.Op != "open" || n.Type != sprint.NRemindFailed || len(n.Subjects) != 1 || n.Subjects[0] != o.Person {
+			t.Fatalf("the note of %+v: %+v", o, n)
+		}
+	}
+	// The slot is free: a claim of the next period pushes.
+	if started, _ := p.start(context.Background(), []Claim{{Goal: Goal{Person: "ann", Route: "ok", ClaimedGen: 1, ClaimedR: 2}}}); started != 1 {
+		t.Fatalf("the next period's claim started %d", started)
+	}
+	p.wait()
 }

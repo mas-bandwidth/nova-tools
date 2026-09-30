@@ -71,20 +71,29 @@ func Push(ctx context.Context, g Goal, packet Packet) Outcome {
 }
 
 func push(ctx context.Context, d Deliver, g Goal, packet Packet) Outcome {
+	return pushWithin(ctx, PushLimit, d, g, packet)
+}
+
+// pushWithin is push with the time limit given. The route's lookup and its
+// delivery both run inside the limit: a deliverer that never returns, or a
+// lookup that never returns, is abandoned when the limit ends (its goroutine
+// is left to finish alone; it holds no store call and no slot), and the
+// outcome is a time out, which phase 3 records as a note (2.3, R14).
+func pushWithin(ctx context.Context, limit time.Duration, d Deliver, g Goal, packet Packet) Outcome {
 	out := Outcome{Person: g.Person, ClaimedGen: g.ClaimedGen, ClaimedR: g.ClaimedR}
-	dv, err := d(g.Route)
-	if err != nil {
-		out.Err = err.Error()
-		return out
-	}
-	ctx, cancel := context.WithTimeout(ctx, PushLimit)
+	ctx, cancel := context.WithTimeout(ctx, limit)
 	defer cancel()
 	text := g.Text
 	if packet.Open > 0 {
 		text += fmt.Sprintf("\n%d open judgments wait in the inbox.", packet.Open)
 	}
-	done := make(chan error, 1)
+	done := make(chan error, 1) // buffered: an abandoned deliverer's return is not blocked
 	go func() {
+		dv, err := d(g.Route)
+		if err != nil {
+			done <- err
+			return
+		}
 		done <- dv.Deliver(store.Reminder{N: packet.N, To: g.Person, At: packet.At, Epoch: packet.Epoch, Text: text})
 	}()
 	select {
@@ -130,6 +139,7 @@ const (
 // fails is not retried by the loop: the next period's claim pushes again.
 type pusher struct {
 	deliver Deliver
+	limit   time.Duration // each push's time limit, PushLimit unless a test shortens it
 	mu      sync.Mutex
 	pushed  map[string]int64 // person -> the ClaimedR of the last claim pushed
 	gen     map[string]uint64
@@ -143,7 +153,7 @@ func newPusher(d Deliver) *pusher {
 	if d == nil {
 		d = deliverer
 	}
-	return &pusher{deliver: d, pushed: map[string]int64{}, gen: map[string]uint64{}}
+	return &pusher{deliver: d, limit: PushLimit, pushed: map[string]int64{}, gen: map[string]uint64{}}
 }
 
 // start starts the push of each claim not yet pushed and returns at once:
@@ -165,7 +175,7 @@ func (p *pusher) start(ctx context.Context, claims []Claim) (started, skipped in
 		p.wg.Add(1)
 		go func(c Claim) {
 			defer p.wg.Done()
-			out := push(ctx, p.deliver, c.Goal, c.Packet)
+			out := pushWithin(ctx, p.limit, p.deliver, c.Goal, c.Packet)
 			p.mu.Lock()
 			defer p.mu.Unlock()
 			p.running--

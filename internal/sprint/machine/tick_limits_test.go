@@ -51,6 +51,24 @@ func TestTickBudgetBoundary(t *testing.T) {
 	if got := dealt(spend{}, many); got != 32 {
 		t.Errorf("dealt %d steps of 33; want 32", got)
 	}
+	// The limit is the tick's, not one rule's: 33 rules of one step each deal
+	// 32, and 32 rules deal all 32 (1.4.2: at most 32 steps).
+	var rules []*planned
+	for i := 0; i < 33; i++ {
+		rules = append(rules, one(fmt.Sprintf("rule%d", i), stepCost{changes: 1}))
+	}
+	if got := dealt(spend{}, rules...); got != 32 {
+		t.Errorf("dealt %d steps of 33 rules; want 32", got)
+	}
+	for _, p := range rules {
+		p.dealt, p.blocked = 0, false
+	}
+	if got := dealt(spend{}, rules[:32]...); got != 32 {
+		t.Errorf("dealt %d steps of 32 rules; want 32", got)
+	}
+	if got := dealt(spend{steps: 1}, rules[:32]...); got != 31 {
+		t.Errorf("with the quarantine step's one counted, dealt %d of 32 rules; want 31", got)
+	}
 	if got := dealt(spend{}, one("resolve", stepCost{changes: 10000}), one(ruleHeld, stepCost{changes: 2000})); got != 2 {
 		t.Errorf("R16's 2,000 cards beside 10,000 changes: dealt %d, want 2", got)
 	}
