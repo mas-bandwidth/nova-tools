@@ -1,0 +1,478 @@
+//go:build functional
+
+package main
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+	"github.com/redis/go-redis/v9"
+)
+
+// The dirty-driven tick driven on a store (the owner's shape of 2026-09-30:
+// the work pump once a tick, readers, merge and fleet settled until their
+// queues are empty; tla/DirtyTick.tla): three streams of a thousand cards, no
+// gates and no needs, eight machines of width 64, the world played with no
+// chances at 10 ms, the loop ticking on the log, a coordinator reading the
+// inbox once for each tick that addressed them. Every card lands; the streams
+// land together over time; the machines do equal shares; a tick that addressed
+// the coordinator wrote one note and an idle tick none; the tick's own queue
+// always started the next tick. The wall time and the ticks are printed.
+const (
+	driveStreams   = 3
+	drivePerStream = 1000
+	driveMembers   = 8
+	driveWidth     = 64
+	driveSample    = 50 // ticks between two samples of the streams (every tick before the 50th)
+)
+
+// driveTick is one tick of the loop as it was told of: what started it, what
+// it did, and what it left in the work queue.
+type driveTick struct {
+	n      int
+	why    string
+	idle   bool
+	parts  int
+	order  int
+	end    int // the tick-end note's count, 0 when none was written
+	queued int // entries in the work queue when the tick ended
+	err    string
+	wall   time.Duration
+}
+
+// driveSampleAt is the landed count of each stream, every driveSample ticks.
+type driveSampleAt struct {
+	tick   int
+	landed [driveStreams]int
+}
+
+func TestTheDirtyTickDriveOnAStore(t *testing.T) {
+	t.Parallel()
+	addr := testutil.Start(t)
+	c := redis.NewClient(&redis.Options{Addr: addr})
+	defer c.Close()
+	ctx, stop := context.WithTimeout(context.Background(), 12*time.Minute)
+	defer stop()
+	if err := fn.Load(ctx, c); err != nil {
+		t.Fatal(err)
+	}
+	env := map[string]string{"NOVA_SPRINT_REDIS": addr, "NOVA_SPRINT_ACTOR": "coordinator"}
+	getenv := func(k string) string { return env[k] }
+	world, coord, loop, machines := newApp(getenv), newApp(getenv), newApp(getenv), newApp(getenv)
+	defer world.close()
+	defer coord.close()
+	defer loop.close()
+	defer machines.close()
+	do := func(a *app, args ...string) string {
+		t.Helper()
+		var out, errb bytes.Buffer
+		if code := a.run(args, &out, &errb); code != 0 {
+			t.Fatalf("%v: %d %s", args, code, errb.String())
+		}
+		return out.String()
+	}
+	var members, spec []string
+	for i := 1; i <= driveMembers; i++ {
+		members = append(members, "m"+strconv.Itoa(i))
+		spec = append(spec, members[i-1]+":"+strconv.Itoa(driveWidth))
+	}
+	streams := []string{"a", "b", "c"}
+	total := driveStreams * drivePerStream
+	do(world, "init", "--readers", "reader-a,reader-b,reader-c", "--members", strings.Join(spec, ","))
+	do(world, "add", "--stream", strings.Join(streams, ","), "--count", strconv.Itoa(drivePerStream))
+	for _, m := range members {
+		do(world, "fleet", "beat", m)
+	}
+	do(world, "start")
+
+	st, _, code := loop.machineVerb("run", nil, &bytes.Buffer{})
+	if st == nil {
+		t.Fatalf("run: %d", code)
+	}
+
+	// the coordinator: once for each tick that addressed them, the inbox is
+	// read and its cursor moved; a judgment is not expected, none is open to
+	// answer, and any that comes is recorded
+	var (
+		mu                     sync.Mutex
+		notesSeen              = map[string]int{}
+		judgments              []string
+		coordReads             int
+		accepts, acceptRefused int
+	)
+	wake := make(chan struct{}, 1)
+	coordDone := make(chan struct{})
+	go func() {
+		defer close(coordDone)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case _, ok := <-wake:
+				if !ok {
+					return
+				}
+			}
+			var out, errb bytes.Buffer
+			if code := coord.run([]string{"inbox", "--read", "--json"}, &out, &errb); code != 0 {
+				mu.Lock()
+				judgments = append(judgments, fmt.Sprintf("inbox: %d %s", code, errb.String()))
+				mu.Unlock()
+				continue
+			}
+			var v struct {
+				Groups []sprint.Group `json:"groups"`
+			}
+			if err := json.Unmarshal(out.Bytes(), &v); err != nil {
+				mu.Lock()
+				judgments = append(judgments, "inbox json: "+err.Error())
+				mu.Unlock()
+				continue
+			}
+			mu.Lock()
+			coordReads++
+			mu.Unlock()
+			for _, g := range v.Groups {
+				mu.Lock()
+				notesSeen[g.Kind+": "+g.Type] += g.Count
+				mu.Unlock()
+				if g.Kind != sprint.Judgment {
+					continue
+				}
+				switch g.Type {
+				case sprint.NNoMember:
+					// the first tick's pump deals before its fleet update brings the
+					// machines up: the judgment closes itself when they are
+				case sprint.NReadyToAccept:
+					// accepted mechanically, with the command the inbox gives
+					accepted := false
+					for _, cmd := range g.Commands {
+						if cmd.Decision != "accept" || len(cmd.Lines) == 0 {
+							continue
+						}
+						words := strings.Fields(cmd.Lines[0])
+						if len(words) < 2 {
+							continue
+						}
+						var o, e bytes.Buffer
+						code := coord.run(words[1:], &o, &e)
+						mu.Lock()
+						if code == 0 {
+							accepts++
+						} else {
+							acceptRefused++
+						}
+						mu.Unlock()
+						accepted = true
+						break
+					}
+					if !accepted {
+						mu.Lock()
+						judgments = append(judgments, fmt.Sprintf("%s (%s) offers no accept", g.Type, g.Stream))
+						mu.Unlock()
+					}
+				default:
+					mu.Lock()
+					judgments = append(judgments, fmt.Sprintf("%s (%s) on %v", g.Type, g.Stream, g.Primaries))
+					mu.Unlock()
+				}
+			}
+		}
+	}()
+
+	// the loop: run's own, with every tick's result kept
+	var ticks []driveTick
+	var samples []driveSampleAt
+	sampleNow := func(n int) {
+		shapes, err := st.B.Shapes(ctx, []string{st.Names.Table(sprint.Work)})
+		if err != nil || len(shapes) == 0 {
+			return
+		}
+		j := shapes[0].Column(sprint.Landed)
+		var s driveSampleAt
+		s.tick = n
+		for _, r := range shapes[0].Rows {
+			for i, name := range streams {
+				if r.Key == name && j >= 0 && j < len(r.Cells) {
+					s.landed[i] = int(r.Cells[j].Count)
+				}
+			}
+		}
+		samples = append(samples, s)
+		fmt.Fprintf(os.Stderr, "drive: tick %d landed %v at %s\n", n, s.landed, time.Now().Format("15:04:05.000"))
+	}
+	first := make(chan struct{})
+	loopDone := make(chan struct{})
+	lctx, cancel := context.WithCancel(ctx)
+	go func() {
+		defer close(loopDone)
+		cursor, _ := st.LogTail(lctx)
+		why := tickStart
+		for i := 1; lctx.Err() == nil; i++ {
+			began := time.Now()
+			res, err := st.Tick(lctx)
+			q, _ := st.B.QueueRead(lctx)
+			tk := driveTick{n: i, why: why, idle: res.Idle, parts: len(res.Parts), order: len(res.Order), end: res.TickEnd, queued: len(q), wall: time.Since(began)}
+			if err != nil && lctx.Err() == nil {
+				tk.err = err.Error()
+			}
+			ticks = append(ticks, tk)
+			// a sample every driveSample ticks, and at every tick while the loop
+			// has ticked fewer times than that: a tick that deals or lands
+			// hundreds of cards is one tick of the loop
+			if i%driveSample == 0 || i < driveSample {
+				sampleNow(i)
+			}
+			if i == 1 {
+				close(first)
+			}
+			if res.TickEnd > 0 {
+				select {
+				case wake <- struct{}{}:
+				default:
+				}
+			}
+			if err != nil {
+				loop.sleep(store.TickEvery)
+				why = tickRetry
+				continue
+			}
+			if res.Done != "" {
+				return
+			}
+			cursor, why = loop.pace(lctx, st, res.Epoch, cursor, began)
+		}
+	}()
+	<-first
+
+	// the machines' own beat loops: a real machine beats from its own process,
+	// whatever its work loop is waiting for (the world's play beats each tick
+	// too, and waits on the fence like every verb)
+	go func() {
+		poll := time.NewTicker(time.Second)
+		defer poll.Stop()
+		for {
+			select {
+			case <-lctx.Done():
+				return
+			case <-poll.C:
+			}
+			for _, m := range members {
+				machines.run([]string{"fleet", "beat", m}, &bytes.Buffer{}, &bytes.Buffer{})
+			}
+		}
+	}()
+
+	// a stall watchdog: the landed count not moving for a minute of polls ends
+	// the drive with the tables, the inbox and the check printed
+	stalled := make(chan string, 1)
+	go func() {
+		poll := time.NewTicker(time.Second)
+		defer poll.Stop()
+		last, still := -1, 0
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-poll.C:
+			}
+			n := 0
+			if snap, err := st.Load(ctx, store.All, nil); err == nil {
+				for _, s := range streams {
+					n += snap.Work.Count(s, sprint.Landed)
+				}
+			}
+			if n != last {
+				last, still = n, 0
+			}
+			if still++; n < total && still > 60 {
+				var b strings.Builder
+				for _, args := range [][]string{{"where"}, {"inbox"}, {"check"}} {
+					var out, errb bytes.Buffer
+					code := coord.run(args, &out, &errb)
+					fmt.Fprintf(&b, "%v: %d\n%s%s\n", args, code, tail(out.String(), 60), errb.String())
+				}
+				stalled <- fmt.Sprintf("%d of %d landed and nothing moved for a minute:\n%s", n, total, b.String())
+				return
+			}
+		}
+	}()
+
+	began := time.Now()
+	var pout, perr bytes.Buffer
+	played := make(chan int, 1)
+	go func() {
+		played <- world.run([]string{"play", "--every", "10ms", "--broken", "0", "--fail", "0", "--stuck", "0", "--cross", "0", "--down", "0", "--up", "0"}, &pout, &perr)
+	}()
+	select {
+	case code = <-played:
+	case why := <-stalled:
+		cancel()
+		t.Fatalf("the sprint stalled: %s", why)
+	case <-ctx.Done():
+		cancel()
+		t.Fatalf("the sprint did not land in 12 minutes")
+	}
+	wall := time.Since(began)
+	// let the loop's last tick say the sprint is done, then stop it
+	select {
+	case <-loopDone:
+	case <-time.After(30 * time.Second):
+	}
+	cancel()
+	<-loopDone
+	close(wake)
+	<-coordDone
+	if code != 0 {
+		t.Fatalf("play: %d\n%s\n%s", code, tail(pout.String(), 30), perr.String())
+	}
+
+	// ---- what the drive asserts -------------------------------------------------
+	snap, err := st.Load(ctx, store.All, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	landed := 0
+	for _, s := range streams {
+		landed += snap.Work.Count(s, sprint.Landed)
+	}
+	if landed != total {
+		t.Fatalf("%d of %d landed", landed, total)
+	}
+
+	// the streams land together: no stream ahead of another by more than 10% of
+	// the total at any sample, and the last sample's spread is printed
+	maxSpread, at := 0, 0
+	for _, s := range samples {
+		lo, hi := s.landed[0], s.landed[0]
+		for _, n := range s.landed[1:] {
+			lo, hi = min(lo, n), max(hi, n)
+		}
+		if hi-lo > maxSpread {
+			maxSpread, at = hi-lo, s.tick
+		}
+	}
+	if len(samples) == 0 {
+		t.Errorf("the loop took no sample of the streams")
+	}
+	if limit := total / 10; maxSpread > limit {
+		t.Errorf("a stream was %d cards ahead of another at tick %d, over 10%% of the total (%d)", maxSpread, at, limit)
+	}
+
+	// every machine's work is within 5% of the mean
+	shape, err := st.B.Shapes(ctx, []string{st.Names.Table(sprint.Fleet)})
+	if err != nil || len(shape) == 0 {
+		t.Fatalf("the fleet table: %v", err)
+	}
+	col := shape[0].Column(sprint.DoneOK)
+	done := map[string]int{}
+	sum := 0
+	for _, r := range shape[0].Rows {
+		if col >= 0 && col < len(r.Cells) {
+			done[r.Key] = int(r.Cells[col].Count)
+			sum += done[r.Key]
+		}
+	}
+	mean := float64(sum) / float64(len(members))
+	var doneLine []string
+	for _, m := range members {
+		doneLine = append(doneLine, fmt.Sprintf("%s=%d", m, done[m]))
+		if d := float64(done[m]) - mean; d > mean*0.05 || -d > mean*0.05 {
+			mu.Lock()
+			downs := notesSeen["happened: fleet member down"]
+			mu.Unlock()
+			t.Errorf("%s did %d cards, the mean is %.1f: over 5%% off (%d member-down events in the run: a machine that lapses has its cards dealt to the others)", m, done[m], mean, downs)
+		}
+	}
+	if sum == 0 {
+		t.Errorf("no machine's done count is on the fleet table")
+	}
+
+	// the tick-end notes: one for each tick that addressed the coordinator, none
+	// for an idle tick; every tick of the loop ended, none failed
+	wroteNote, idle, didSomething, settle, maxOrder := 0, 0, 0, 0, 0
+	whyCount := map[string]int{}
+	var slowest time.Duration
+	for i, tk := range ticks {
+		whyCount[tk.why]++
+		if tk.err != "" {
+			t.Errorf("tick %d failed: %s", tk.n, tk.err)
+		}
+		if tk.end > 0 {
+			wroteNote++
+			if tk.idle {
+				t.Errorf("tick %d was idle and wrote a tick-end note", tk.n)
+			}
+		}
+		if tk.idle {
+			idle++
+		} else {
+			didSomething++
+		}
+		if tk.order > 5 {
+			settle++
+		}
+		maxOrder = max(maxOrder, tk.order)
+		slowest = max(slowest, tk.wall)
+		// W12: the queue a tick leaves starts the next tick, never the clock
+		if tk.queued > 0 && i+1 < len(ticks) && ticks[i+1].why != tickLog {
+			t.Errorf("tick %d left %d entries in the work queue and tick %d began on %q, not the log", tk.n, tk.queued, tk.n+1, ticks[i+1].why)
+		}
+	}
+	notes, _, err := st.B.NotesSince(ctx, "", 1000000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tickEnds := 0
+	for _, n := range notes {
+		if n.Type == sprint.NTickEnd {
+			tickEnds++
+		}
+	}
+	if tickEnds != wroteNote {
+		t.Errorf("%d tick-end notes on the inbox and %d ticks that addressed the coordinator: want one each", tickEnds, wroteNote)
+	}
+	mu.Lock()
+	reads, judged, accepted, refused := coordReads, append([]string(nil), judgments...), accepts, acceptRefused
+	var seen []string
+	for k, n := range notesSeen {
+		seen = append(seen, fmt.Sprintf("%s x%d", k, n))
+	}
+	mu.Unlock()
+	sort.Strings(seen)
+	if len(judged) > 0 {
+		t.Errorf("the coordinator met %d judgments in a sprint with no gates, needs or chances: %v", len(judged), judged)
+	}
+
+	report := fmt.Sprintf("DIRTY-TICK DRIVE: %d cards in %d streams on %d machines of width %d: all landed in %s over %d ticks (%.1f ticks/s)\n"+
+		"  the loop's ticks began on: %v; %d idle, %d did something, %d needed more than the four first updates (most updates in one tick: %d); the slowest tick took %s\n"+
+		"  tick-end notes: %d (one for each of the %d ticks that addressed the coordinator), the coordinator read the inbox %d times (accepted %d groups, %d refused as already accepted by the machine): %s\n"+
+		"  the streams' widest gap over %d samples: %d cards (tick %d) of a limit of %d; done by machine: %s (mean %.1f)",
+		total, driveStreams, driveMembers, driveWidth, wall.Round(time.Millisecond), len(ticks), float64(len(ticks))/wall.Seconds(),
+		whyCount, idle, didSomething, settle, maxOrder, slowest.Round(time.Millisecond),
+		tickEnds, wroteNote, reads, accepted, refused, strings.Join(seen, ", "),
+		len(samples), maxSpread, at, total/10, strings.Join(doneLine, " "), mean)
+	fmt.Fprintln(os.Stderr, report)
+	t.Log("\n" + report)
+}
+
+func tail(s string, n int) string {
+	lines := strings.Split(strings.TrimRight(s, "\n"), "\n")
+	if len(lines) > n {
+		lines = lines[len(lines)-n:]
+	}
+	return strings.Join(lines, "\n")
+}

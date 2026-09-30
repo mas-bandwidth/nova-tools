@@ -593,8 +593,15 @@ func opCounts(op OpRecord) map[string]int {
 	tables := map[string]int{}
 	for _, m := range op.Manifests {
 		for _, t := range All {
-			if strings.HasSuffix(m.Table, t) && len(m.Members) > 0 {
-				tables[t] += len(m.Members)
+			if !strings.HasSuffix(m.Table, t) {
+				continue
+			}
+			// a table is written by the entries that change a row: one that
+			// only guards a card writes nothing (W13, tla/DirtyTick.tla)
+			for _, e := range m.Members {
+				if changesRow(e) {
+					tables[t]++
+				}
 			}
 		}
 	}

@@ -479,8 +479,65 @@ func TickPartStep(name string, fn sprint.TickPartFn, r sprint.TickReq, epoch *ui
 			if due != nil {
 				*due = d
 			}
-			return p
+			return unchangedNotWritten(s, p)
 		}}
+}
+
+// unchangedNotWritten is the plan of a part with the writes that change no
+// row taken out: an entry that only sets fields to the values the card holds
+// is no write (it keeps the guard of the card it names), and a unit that held
+// nothing else is passed over. A table's queue holds an entry only when a
+// write changed a row, so an update that finds nothing to change leaves every
+// queue as it was and the tick ends (tla/DirtyTick.tla, W13: an update that
+// queues an entry each time it runs, changed or not, never ends the tick). An
+// entry that changes a row in any field is written as the part planned it.
+func unchangedNotWritten(s *sprint.Snapshot, p sprint.Plan) sprint.Plan {
+	var units []sprint.Unit
+	for i, u := range p.Units {
+		var changes []sprint.Change
+		had, kept := false, false
+		for _, ch := range u.Changes {
+			e, c := ch.Entry, s.T(ch.Table).Card(ch.Entry.ID)
+			if c != nil && c.Placed() && e.Create == nil && e.Move == nil && !e.Remove && len(e.Unset) == 0 && len(e.Set) > 0 {
+				same := true
+				for k, v := range e.Set {
+					same = same && c.Has(k) && c.F(k) == v
+				}
+				if same {
+					if units == nil {
+						units = slices.Clone(p.Units)
+					}
+					had = true
+					e.Set = nil
+					ch.Entry = e
+				}
+			}
+			kept = kept || changesRow(ch.Entry)
+			changes = append(changes, ch)
+		}
+		if !had {
+			continue
+		}
+		u.Changes = changes
+		if !kept && len(u.Notes) == 0 && len(u.Closes) == 0 && len(u.Bumps) == 0 {
+			u.Changes, u.Moved = nil, ""
+		}
+		units[i] = u
+	}
+	if units == nil {
+		return p
+	}
+	p.Units = slices.DeleteFunc(units, func(u sprint.Unit) bool {
+		return u.Changes == nil && u.Moved == "" && len(u.Notes) == 0 && len(u.Closes) == 0 && len(u.Bumps) == 0
+	})
+	return p
+}
+
+// changesRow says a batch entry changes the row it names: it creates, moves
+// or removes the card, or sets or unsets a field. An entry that only guards
+// the card (its revision and place) changes none.
+func changesRow(e ntable.BatchMemberEntry) bool {
+	return e.Create != nil || e.Move != nil || e.Remove || len(e.Set) > 0 || len(e.Unset) > 0
 }
 
 // staleRefusal says a step holding epoch at was refused because the sprint
