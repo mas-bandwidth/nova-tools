@@ -239,7 +239,6 @@ func refuseRanWith(stdout, stderr io.Writer, asJSON bool, where, what string) in
 	return refuseRan(stderr, where, what)
 }
 
-
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
 }

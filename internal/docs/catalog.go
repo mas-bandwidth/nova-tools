@@ -106,6 +106,7 @@ var DefaultCatalog = []Entry{
 	E("internal/tty", "whether a file is a terminal and how large its screen is", "go test ./internal/tty", "go test ./internal/tty"),
 	E("internal/typedrec", "typed RESULT record contract, parser and legacy adapter", "go test ./internal/typedrec", "go test ./internal/typedrec"),
 	E("internal/update", "binary updater and checksum verifier", "go test ./internal/update", "go test ./internal/update"),
+	E("internal/verbout", "canonical CLI output envelope and encoder with text and JSON rendering", "go test ./internal/verbout", "go test ./internal/verbout"),
 	E("internal/workfile", "nova-work tree file: the model, its canonical writer, strict reader and field-for-field diff", "go test ./internal/workfile", "go test ./internal/workfile"),
 	E("internal/workgh", "nova-work read-only GitHub issue capture over GraphQL, every call counted", "go test ./internal/workgh", "go test ./internal/workgh"),
 	E("internal/worklang", "bounded reader for nova-work's restricted s-expression tree file", "go test ./internal/worklang", "go test ./internal/worklang"),
