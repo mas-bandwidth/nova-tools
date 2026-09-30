@@ -180,6 +180,20 @@ func (e *qeval) evalKey(q KeyQ) (QueryResult, *Refusal) {
 			return nil, ref
 		}
 		return DueCountResult{Kind: q.Kind, R: string(r), Due: n}, nil
+	case KeyNext:
+		out := NextResult{Kind: q.Kind, Fields: map[string]string{}}
+		if len(q.Names) > 0 {
+			f, ref := e.fieldsOf(e.key("next"), q.Names, hashFieldBytes)
+			if ref != nil {
+				return nil, ref
+			}
+			for name, v := range f {
+				if v != nil {
+					out.Fields[name] = *v
+				}
+			}
+		}
+		return out, nil
 	}
 	return nil, queryRequestRefusal()
 }
