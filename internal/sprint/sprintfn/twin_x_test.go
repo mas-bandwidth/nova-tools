@@ -915,7 +915,7 @@ func TestXStepChunkMeasured(t *testing.T) {
 // store, and the same step with nothing refusing applies (errata E6, E7.1).
 func TestXRefusalAfterPlanLeavesNothing(t *testing.T) {
 	t.Parallel()
-	refusedAt := func(t *testing.T, h *xh, req *Request, code string) {
+	refusedAt := func(t *testing.T, h *xh, req *Request, code string) *Refusal {
 		t.Helper()
 		before := h.img()
 		res, err := Step(context.Background(), h.tw, req)
@@ -928,6 +928,7 @@ func TestXRefusalAfterPlanLeavesNothing(t *testing.T) {
 		if _, ok := h.zset("agenda@0")["deal"]; !ok {
 			t.Fatal("the agenda's deal key was removed by a refused step")
 		}
+		return res.Refusal
 	}
 
 	t.Run("a sprint key of another type where X writes an index", func(t *testing.T) {
@@ -958,18 +959,55 @@ func TestXRefusalAfterPlanLeavesNothing(t *testing.T) {
 		h := newXHarness(t)
 		h.fixture()
 		h.write(xLease("1"), Command("ZADD", xp+"agenda@0", kindZSet, "5", "deal"))
-		// 9,000 quarantined ids of 250 bytes fit the request (under 4 MiB), and X's ZREMs of
-		// them from elig, fresh, again and askwait are 9 MB of argv with the marks': over 8 MiB
+		// A step quarantines at most QuarantineMax cards (IT16), and an id and a
+		// stream are at most tset.MaxIdentifierBytes (L1 6), so X's quarantine
+		// commands peak at 2,000 ids of 256 bytes over 2,000 streams of 256 bytes:
+		// three ZREMs of a stream's elig, fresh and again, each naming its stream
+		// and the id, and the ZREM of askwait, about 3.7 MB. That alone cannot pass
+		// 8 MiB, and no X command class can by itself: the request is at most
+		// 4 MiB. So the step fills the parts' share (partArgvShare, the most the
+		// parts of one step may write together) with the stand-in sprint part's
+		// commands, and X's own commands carry the total past the shared bound:
+		// the quarantine's ZREMs, and the agenda's ZREMs of finished keys (a class
+		// with no count cap) in the rest of the request.
 		q := xTick(1)
-		q.Sprint = &SprintPart{}
-		long := strings.Repeat("c", 244)
-		for i := 0; i < 9000; i++ {
-			q.Body.Quarantine = append(q.Body.Quarantine, Quarantined{ID: fmt.Sprintf("%s%06d", long, i), Stream: "s1", Code: "DRIFT", Rule: "resolve"})
+		for i := 0; i < QuarantineMax; i++ {
+			q.Body.Quarantine = append(q.Body.Quarantine, Quarantined{
+				ID:     fmt.Sprintf("%0*d", tset.MaxIdentifierBytes, i),
+				Stream: fmt.Sprintf("s%0*d", tset.MaxIdentifierBytes-1, i),
+				Code:   "DRIFT", Rule: "resolve"})
 		}
-		refusedAt(t, h, q, CodeLimit)
+		q.Sprint = &SprintPart{Quarantine: q.Body.Quarantine}
+		for i := 0; i < 2000; i++ {
+			q.Body.Done = append(q.Body.Done, fmt.Sprintf("resolve@%d+%0*d", i+1, 400, i))
+		}
+		var filler []Cmd
+		fill := 0
+		for i := 0; fill < partArgvShare-(1<<16); i++ {
+			c := Command("HSET", xp+"filler@0", kindHash, fmt.Sprintf("f%03d", i), strings.Repeat("v", 60000))
+			for _, a := range c.Argv {
+				fill += len(a)
+			}
+			filler = append(filler, c)
+		}
+		h.extra = filler
+		ref := refusedAt(t, h, q, CodeLimit)
 		if len(h.last) == 0 {
 			t.Fatal("X wrote no commands for the step: the refusal is not from X's own commands")
 		}
+		xArgv := 0
+		for _, c := range h.last {
+			for _, a := range c.Argv {
+				xArgv += len(a)
+			}
+		}
+		if ref.Detail.Budget != "argv_bytes" || ref.Detail.Actual == nil || *ref.Detail.Actual <= tset.MaxPlannedArgvBytes {
+			t.Fatalf("refusal %+v: want the shared bound of argv bytes passed", ref.Detail)
+		}
+		if rest := *ref.Detail.Actual - int64(xArgv); rest > tset.MaxPlannedArgvBytes {
+			t.Fatalf("the step's commands other than X's are %d bytes, over the bound alone: X's %d are not what passes it", rest, xArgv)
+		}
+		h.extra = nil
 		h.applies("a step that fits", xVerb("rank", xMoveWaitingReady("p1")))
 	})
 }
