@@ -511,3 +511,148 @@ func TestEveryMachineMovesItsCardsInOneBatchATick(t *testing.T) {
 		}
 	}
 }
+
+// E20: The world driver's turn is aligned to the machine's tick (the world
+// acts once per machine tick, every machine and reader in batches; today it
+// runs on its own clock). While the machine tick has not advanced, the world
+// waits without acting; when the machine tick advances, the world acts once.
+func TestWorldTurnAlignedToMachineTick(t *testing.T) {
+	t.Parallel()
+	tick1 := `{"ticks":1,"landed":0,"all":2,"summary":"0/2 0.0% -> ETA","machine":"machine: running","tables":{"fleet":{"m1":{"status":"up"}},"readers":{"reader-a":{}},` +
+		`"merge":{"s1":{"state":"merging","queued":"1"}},"work":{"s1":{"merging":"1","working":"1"}}},"streams":[{"Stream":"s1","State":"merging"}]}`
+	tick2 := `{"ticks":2,"landed":0,"all":2,"summary":"0/2 0.0% -> ETA","machine":"machine: running","tables":{"fleet":{"m1":{"status":"up"}},"readers":{"reader-a":{}},` +
+		`"merge":{"s1":{"state":"merging","queued":"1"}},"work":{"s1":{"merging":"1","working":"1"}}},"streams":[{"Stream":"s1","State":"merging"}]}`
+	landed3 := `{"ticks":3,"landed":2,"all":2,"summary":"2/2 100.0% -> ETA","machine":"machine: running","tables":{"fleet":{"m1":{"status":"up"}},"readers":{"reader-a":{}},` +
+		`"merge":{"s1":{"state":"landed"}},"work":{}},"streams":[{"Stream":"s1","State":"landed"}]}`
+
+	w := &world{
+		where: []string{
+			tick1, tick1, tick1, tick1, tick1,
+			tick2, tick2, tick2, tick2,
+			landed3,
+		},
+		queue: map[string]string{
+			"m1":       `{"cards":[{"id":"s1-1.w2","col":"working","gen":3},{"id":"s1-4.w1","col":"ready","gen":2}]}`,
+			"reader-a": `{"cards":[{"id":"s1-2.r1.reader-a","col":"asked"},{"id":"s1-5.r1.reader-a","col":"reading"}]}`,
+			"s1":       `{"cards":[{"id":"s1-3","col":"queued"}]}`,
+		},
+		inbox: `{"groups":[]}`,
+	}
+	var out bytes.Buffer
+	start := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
+	clk := &fakeClock{now: start}
+	d := &Driver{
+		Run:   w.run,
+		Facts: NewSeeded(7),
+		Clock: clk,
+		Out:   &out,
+		Config: Config{
+			Every: 100 * time.Millisecond,
+		},
+	}
+	why, err := d.Loop()
+	if err != nil || why != "landed" {
+		t.Fatalf("loop: %s %v\n%s", why, err, out.String())
+	}
+
+	takes, finishes, reads, merges := 0, 0, 0, 0
+	for _, a := range w.ran {
+		switch a[0] {
+		case "take":
+			takes++
+		case "finish":
+			finishes++
+		case "read":
+			reads++
+		case "merge":
+			merges++
+		}
+	}
+
+	// Exactly 2 world turns were taken (one for machine tick 1, one for machine tick 2).
+	// In each turn, operations run in batches:
+	// - 1 finish call
+	// - 1 take call
+	// - 2 read calls (1 report, 1 begin)
+	// - 1 merge call
+	if takes != 2 {
+		t.Errorf("takes: got %d, want 2 (one per machine tick)", takes)
+	}
+	if finishes != 2 {
+		t.Errorf("finishes: got %d, want 2 (one per machine tick)", finishes)
+	}
+	if merges != 2 {
+		t.Errorf("merges: got %d, want 2 (one per machine tick)", merges)
+	}
+	if reads != 4 {
+		t.Errorf("reads: got %d, want 4 (two per machine tick)", reads)
+	}
+
+	// Verify clock advanced during waits (step = 50ms min(c.Every, 50ms))
+	if !clk.now.After(start.Add(100 * time.Millisecond)) {
+		t.Errorf("clock only advanced to %v from %v, expected at least 150ms of sleep during waits", clk.now, start)
+	}
+
+	text := out.String()
+	if !strings.Contains(text, "tick 1 03:04:05") {
+		t.Errorf("missing tick 1 in output:\n%s", text)
+	}
+	if !strings.Contains(text, "tick 2 ") {
+		t.Errorf("missing tick 2 in output:\n%s", text)
+	}
+	if strings.Contains(text, "tick 3 ") {
+		t.Errorf("tick 3 should not have run as world turn because landed occurred at tick 3:\n%s", text)
+	}
+	if !strings.Contains(text, "every stream has landed: 2/2 100.0% -> ETA") {
+		t.Errorf("missing landed summary in output:\n%s", text)
+	}
+}
+
+// When the machine ticks during the world's turn (e.g. run woke on the log
+// lines written by finish/take), after.Ticks already shows the new tick, so
+// the next turn begins immediately without sleeping.
+func TestWorldTurnAlignedAdvancesImmediatelyWhenMachineAlreadyTicked(t *testing.T) {
+	t.Parallel()
+	tick1 := `{"ticks":1,"landed":0,"all":2,"summary":"0/2 0.0% -> ETA","machine":"machine: running","tables":{"fleet":{"m1":{"status":"up"}},"readers":{"reader-a":{}},` +
+		`"merge":{"s1":{"state":"merging","queued":"1"}},"work":{"s1":{"merging":"1","working":"1"}}},"streams":[{"Stream":"s1","State":"merging"}]}`
+	tick2 := `{"ticks":2,"landed":0,"all":2,"summary":"0/2 0.0% -> ETA","machine":"machine: running","tables":{"fleet":{"m1":{"status":"up"}},"readers":{"reader-a":{}},` +
+		`"merge":{"s1":{"state":"merging","queued":"1"}},"work":{"s1":{"merging":"1","working":"1"}}},"streams":[{"Stream":"s1","State":"merging"}]}`
+	landed3 := `{"ticks":3,"landed":2,"all":2,"summary":"2/2 100.0% -> ETA","machine":"machine: running","tables":{"fleet":{"m1":{"status":"up"}},"readers":{"reader-a":{}},` +
+		`"merge":{"s1":{"state":"landed"}},"work":{}},"streams":[{"Stream":"s1","State":"landed"}]}`
+
+	w := &world{
+		where: []string{
+			tick1,
+			tick1,
+			tick2,
+			tick2,
+			landed3,
+		},
+		queue: map[string]string{
+			"m1":       `{"cards":[{"id":"s1-1.w2","col":"working","gen":3}]}`,
+			"reader-a": `{"cards":[]}`,
+			"s1":       `{"cards":[]}`,
+		},
+		inbox: `{"groups":[]}`,
+	}
+	var out bytes.Buffer
+	start := time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
+	clk := &fakeClock{now: start}
+	d := &Driver{
+		Run:   w.run,
+		Facts: NewSeeded(1),
+		Clock: clk,
+		Out:   &out,
+		Config: Config{
+			Every: time.Second,
+		},
+	}
+	why, err := d.Loop()
+	if err != nil || why != "landed" {
+		t.Fatalf("loop: %s %v\n%s", why, err, out.String())
+	}
+	if !clk.now.Equal(start) {
+		t.Errorf("clock advanced to %v, expected no sleep (%v)", clk.now, start)
+	}
+}
+

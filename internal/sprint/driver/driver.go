@@ -207,6 +207,7 @@ func short(verb, text string, code int) string {
 // where is what the driver reads of the view.
 type where struct {
 	Epoch   uint64                                  `json:"epoch"`
+	Ticks   int64                                   `json:"ticks"`
 	Landed  int64                                   `json:"landed"`
 	All     int64                                   `json:"all"`
 	Summary string                                  `json:"summary"`
@@ -296,6 +297,7 @@ func (d *Driver) Loop() (string, error) {
 	if d.Header != "" {
 		fmt.Fprintln(d.Out, d.Header)
 	}
+	var actedTick int64
 	for tick := 1; c.Ticks == 0 || tick <= c.Ticks; tick++ {
 		var w where
 		if !d.read(&w, "where") {
@@ -303,8 +305,6 @@ func (d *Driver) Loop() (string, error) {
 		}
 		if w.Epoch != d.held {
 			d.cleared = true
-		}
-		if d.cleared {
 			return d.stopCleared(), nil
 		}
 		if landed(w) {
@@ -314,6 +314,7 @@ func (d *Driver) Loop() (string, error) {
 		}
 		fmt.Fprintf(d.Out, "tick %d %s\n", tick, d.Clock.Now().Format("15:04:05"))
 		d.tick(tick, c, w)
+		actedTick = w.Ticks
 		if d.cleared {
 			return d.stopCleared(), nil
 		}
@@ -327,7 +328,42 @@ func (d *Driver) Loop() (string, error) {
 				return "landed", nil
 			}
 		}
-		d.Clock.Sleep(c.Every)
+		if c.Ticks != 0 && tick == c.Ticks {
+			break
+		}
+		if actedTick > 0 {
+			if after.Ticks <= actedTick {
+				deadline := d.Clock.Now().Add(c.Every)
+				for d.Clock.Now().Before(deadline) {
+					step := min(deadline.Sub(d.Clock.Now()), 50*time.Millisecond)
+					if step <= 0 {
+						break
+					}
+					d.Clock.Sleep(step)
+					var next where
+					if !d.read(&next, "where") {
+						return "", fmt.Errorf("tick %d: the view could not be read: run: %s", tick+1, commandLine(append([]string{"where"}, d.Base...)))
+					}
+					if next.Epoch != d.held {
+						d.cleared = true
+						return d.stopCleared(), nil
+					}
+					if landed(next) {
+						fmt.Fprintf(d.Out, "every stream has landed: %s\n", next.Summary)
+						d.restore()
+						return "landed", nil
+					}
+					if next.Machine != "machine: running" && !strings.HasPrefix(next.Machine, "machine: running;") && !strings.HasPrefix(next.Machine, "machine: running (") {
+						return "", fmt.Errorf("the machine stopped (%s)", orDash(next.Machine))
+					}
+					if next.Ticks > actedTick {
+						break
+					}
+				}
+			}
+		} else {
+			d.Clock.Sleep(c.Every)
+		}
 	}
 	d.restore()
 	return "ticks", nil

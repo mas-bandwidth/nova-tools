@@ -204,6 +204,7 @@ func (a *app) readFailed(verbName string, err error, stderr io.Writer) int {
 // whereView is the view, for a program.
 type whereView struct {
 	At          time.Time                               `json:"at"`
+	Ticks       int64                                   `json:"ticks"`
 	Landed      int64                                   `json:"landed"`
 	All         int64                                   `json:"all"`
 	Summary     string                                  `json:"summary"`
@@ -333,6 +334,9 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 	v.Summary = summary(shapes[0])
 	if f.Pending != nil {
 		v.Pending = f.Pending.ID
+	}
+	if _, hb, err := st.Machine(ctx); err == nil {
+		v.Ticks = hb.Ticks
 	}
 	v.Machine = st.MachineLine(ctx)
 	var b strings.Builder
