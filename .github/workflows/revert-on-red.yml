@@ -58,9 +58,21 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 50
 
+      # THE TOOL IS NEVER BUILT FROM THE RED TREE. The push being reverted may be the one that
+      # broke tools/ci, and a revert that cannot build cannot revert it. The verb is built
+      # from dev's tip, the last green source of main (every push to main is a promotion
+      # from dev), checked out beside the red tree; it runs in the red tree, which it reverts.
+      # internal/ci: TestRevertOnRedRunsAToolBuiltFromDevNotFromTheRedTree.
+      - name: the revert tool, from dev's tip
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: dev
+          path: .revert-tool
+          fetch-depth: 1
+
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
-          go-version-file: go.mod
+          go-version-file: .revert-tool/go.mod
           cache: false
 
       - name: revert the push that turned main red
@@ -71,4 +83,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
           RUN_ID: ${{ github.event.workflow_run.id }}
-        run: go run ./tools/ci revert-on-red --run-attempt "${{ github.event.workflow_run.run_attempt }}"
+        run: |
+          go -C .revert-tool build -o "$RUNNER_TEMP/ci" ./tools/ci
+          "$RUNNER_TEMP/ci" revert-on-red --run-attempt "${{ github.event.workflow_run.run_attempt }}"

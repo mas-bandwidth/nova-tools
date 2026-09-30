@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -36,7 +37,7 @@ type installHost struct {
 
 // publish hands dir to the steps after this one (GITHUB_PATH).
 func (h installHost) publish(dir string) {
-	if err := appendPathFile(h.getenv, dir); err != nil {
+	if err := appendGitHubFile(h.getenv, "GITHUB_PATH", dir); err != nil && !errors.Is(err, errNoGitHubFile) {
 		fmt.Fprintf(h.stderr, "cannot publish %s to GITHUB_PATH: %v\n", dir, err)
 	}
 }

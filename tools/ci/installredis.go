@@ -58,7 +58,7 @@ func installRedisServer(h installHost) int {
 			fmt.Fprintln(h.stderr, "redis-server still not on PATH after install")
 			return 1
 		}
-		h.publish(dirOf(bin))
+		h.publish(filepath.Dir(bin))
 		fmt.Fprintf(h.stdout, "redis-server %s\n", bin)
 		return 0
 	}

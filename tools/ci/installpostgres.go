@@ -90,7 +90,7 @@ func installPostgres(h installHost) int {
 		var dir string
 		if onPath() {
 			p, _ := h.run.LookPath("pg_ctl")
-			dir = dirOf(p)
+			dir = filepath.Dir(p)
 		} else {
 			d, ok := findBin()
 			if !ok {
