@@ -1393,12 +1393,8 @@ do
   redis.register_function('ns_table_cell_move', T.write('cell_move', -6, function(d, args) return T.writecell(d, args, 'move') end))
   -- Views are presentation configuration, separate from a table's epoch and ledger.
   -- Validate every referenced table and every command before publishing the view.
-  -- The optional fifth argument names, comma-separated, the tables of the view
-  -- that hide a row whose count cells are all zero; each is one of the view's
-  -- tables. '' or absent clears it.
   redis.register_function('ns_view_set', function(keys, args)
-    if (#args ~= 4 and #args ~= 5) or not T.name(args[1]) then return T.refuse('ARGS', 'view_set') end
-    local hide = args[5] or ''
+    if #args ~= 4 or not T.name(args[1]) then return T.refuse('ARGS', 'view_set') end
     local names = {}
     for name in string.gmatch(args[2], '[^,]+') do
       local d, err = T.def(name)
@@ -1413,22 +1409,10 @@ do
       names[#names+1] = name
     end
     if #names == 0 or table.concat(names, ',') ~= args[2] then return T.refuse('ARGS', 'tables') end
-    local listed = {}
-    for _, name in ipairs(names) do listed[name] = true end
-    local hidden = {}
-    for name in string.gmatch(hide, '[^,]+') do
-      if not listed[name] or hidden[name] then return T.refuse('ARGS', 'hide_zero') end
-      hidden[name] = true
-    end
     local key = 'view:' .. args[1]
     T.hash(key)
     redis.call('SCARD', 'views')
     local commands = {{'HSET', key, 'tables', args[2], 'title', args[3], 'summary', args[4]}, {'SADD', 'views', args[1]}}
-    if hide ~= '' then
-      table.insert(commands, 2, {'HSET', key, 'hide_zero', hide})
-    else
-      table.insert(commands, 2, {'HDEL', key, 'hide_zero'})
-    end
     for _, cmd in ipairs(commands) do if not redis.acl_check_cmd(unpack(cmd)) then return T.refuse('NOPERM', cmd[1], cmd[2]) end end
     for _, cmd in ipairs(commands) do redis.call(unpack(cmd)) end
     return {'OK'}

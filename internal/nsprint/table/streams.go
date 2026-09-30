@@ -31,10 +31,10 @@ const StreamsTable = "streams"
 const StreamsOwner = "nova-sprint task move"
 
 // StreamsRenderOpts renders the block as the sprint table always has:
-// the label column headed "stream" and 25 wide, every all-zero row hidden
-// (the whole block when none is left); `nova-table render streams
-// --hide-zero-rows` prints the same block headed by the table's name.
-var StreamsRenderOpts = ntable.RenderOpts{HideZeroRows: true, Title: "stream", LabelWidth: nameWidth}
+// the label column headed "stream" and 25 wide, every row shown, all-zero or
+// not; `nova-table render streams` prints the same block headed by the
+// table's name.
+var StreamsRenderOpts = ntable.RenderOpts{Title: "stream", LabelWidth: nameWidth}
 
 // StreamsDefinition is the streams table with no rows: waiting, ready,
 // working, review, merging and landed as count:sum as wide as their

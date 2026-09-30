@@ -78,6 +78,7 @@ func TestStreamsTableFromRecords(t *testing.T) {
 		"stream                    | waiting | ready | working | review | merging | landed\n" + rule +
 		"nova-sprint + merge + bus |      56 |    12 |       3 |      4 |       2 |      1\n" +
 		"swarm: cards              |       4 |     0 |       7 |      2 |       0 |      5\n" +
+		"idle                      |       0 |     0 |       0 |      0 |       0 |      0\n" +
 		"only ready                |       0 |     9 |       0 |      0 |       0 |      0\n" +
 		"fleet, ci, secrets, jev   |       0 |     0 |       0 |      1 |       0 |      0\n" + rule +
 		"total                     |      60 |    21 |      10 |      7 |       2 |      6\n" +
