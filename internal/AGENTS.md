@@ -34,7 +34,6 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `onboarding/` | onboarding banner and doc verifier | `go test ./internal/onboarding` | `go test ./internal/onboarding` |
 | `oneline/` | single-line log and output grammar | `go test ./internal/oneline` | `go test ./internal/oneline` |
 | `record/` | decision and execution records | `go test ./internal/record` | `go test ./internal/record` |
-| `records/` | database models and record formats | `go test ./internal/records` | `go test ./internal/records` |
 | `redisconn/` | the one way a nova tool opens its Redis connection: options from the environment, one bounded dial, trips counted, errors classified, no secret shown | `go test ./internal/redisconn` | `go test ./internal/redisconn` |
 | `redisfn/` | build, load and check a Redis function library from embedded Lua source | `go test ./internal/redisfn` | `go test ./internal/redisfn` |
 | `release/` | release packaging and manifest gates | `go test ./internal/release` | `go test ./internal/release` |

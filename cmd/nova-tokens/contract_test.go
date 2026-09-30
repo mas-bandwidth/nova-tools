@@ -101,9 +101,6 @@ func TestNothingInThisToolRemovesAFile(t *testing.T) {
 		"internal/atomicfile/atomicfile.go": {"os.Remove"},
 		// The report `report` writes.
 		"cmd/nova-tokens/main.go": {"os.WriteFile("},
-		// In package staging, the publisher's own-run temporary marker batch.json.tmp
-		// unlinked via syscall.Unlink after successful atomic no-replace link to batch.json.
-		"internal/tokens/package.go": {"syscall.Unlink("},
 	}
 	used := map[string]bool{}
 	// Every package of the binary, walked from its imports and from the directories this

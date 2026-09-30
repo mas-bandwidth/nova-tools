@@ -8,7 +8,7 @@ import (
 // TestGrokUsageFileFoldsToLedgerRow is the red test issue #626 asks for: a fixture `grok
 // usage` export (the xAI/Grok JSON shape) folds through the xAI provider parser into one
 // day-file row carrying the turn's input, output and cost columns, and check accepts the
-// day it wrote. The fixture is the sanitized turn docs/MAPPING-TOKENS-GROK.md names.
+// day it wrote. The fixture is a synthetic, sanitized turn.
 func TestGrokUsageFileFoldsToLedgerRow(t *testing.T) {
 	t.Parallel()
 

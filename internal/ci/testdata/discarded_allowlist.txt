@@ -12,11 +12,10 @@
 # a `2>/dev/null`, a refusal with no remedy, an OK beside a failing exit) makes the
 # count too low and the run red, and fixing a site makes the count too high and the
 # run red until it is lowered (NOVA_CI_UPDATE=1 lowers it, and never raises one).
-# ceiling: 10
+# ceiling: 9
 cmd/nova-sprint/goal.go:app.goalsView:bare-return 1 a failed goals read leaves the view without its people and says nothing; the frame does not show them, but --json does
 cmd/nova-swarm/member.go:nativeRunner.Start:blank 1 the pid file is how a restart finds the running child; a failed write is found only when the restart cannot
 cmd/nova-swarm/native.go:writeNativeArgvLog:bare-return 1 the argv proof log is lost with no line; writeNativeArgvLog has no writer to say so
-internal/records/coverage.go:Coverage.Body:blank 6 a member the wire-form check refuses is left out of the body with no error; Body has no error return
 internal/sprint/store/presence.go:Store.strangers:blank 1 an unreadable strangers record is read as no strangers, with no error; the teardown then counts nobody from it as beating
 internal/sprint/store/teardown.go:Store.Teardown:blank 1 a view that cannot be deleted is left behind while the teardown reports success
 internal/swarm/slots.go:takeSlotLeases:blank 1 a dead worker's card that cannot be returned to queue/ is lost with no line; takeSlotLeases has no writer, and the slot is granted anyway
