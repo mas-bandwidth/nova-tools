@@ -30,25 +30,35 @@ func RunExec(storeDir, asName, keyPath, sopsPath, onlyArg string, required []str
 		return 125, fmt.Errorf("command not found: %s", cmdArgs[0])
 	}
 
-	var missing []string
+	var missingFlags []string
 	if storeDir == "" {
-		missing = append(missing, "--store <dir>")
+		missingFlags = append(missingFlags, "--store <dir>")
 	}
 	if asName == "" {
-		missing = append(missing, "--as <name>")
+		missingFlags = append(missingFlags, "--as <name>")
 	}
 	if keyPath == "" {
-		missing = append(missing, "--key <path>")
+		missingFlags = append(missingFlags, "--key <path>")
 	}
 	if sopsPath == "" {
-		missing = append(missing, "--sops <path>")
+		missingFlags = append(missingFlags, "--sops <path>")
 	}
 	if onlyArg == "" {
-		missing = append(missing, "--only <names|all>")
+		missingFlags = append(missingFlags, "--only <names|all>")
 	}
-	if len(missing) > 0 {
-		return 125, fmt.Errorf("missing required flags: %s; example: nova-secrets exec --store ./secrets --as rowan --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops --only GH_TOKEN -- gh api user",
-			strings.Join(missing, ", "))
+
+	var invalidFlags []string
+	if asName != "" && !IsValidAsName(asName) {
+		invalidFlags = append(invalidFlags, fmt.Sprintf("invalid seat name %q: must match [A-Za-z0-9_-]+", asName))
+	}
+
+	var storeIssues []string
+	if storeDir != "" {
+		storeIssues = CheckStorePreconditions(storeDir, true, false)
+	}
+
+	if err := FormatRefusal(missingFlags, invalidFlags, storeIssues, "nova-secrets exec --store ./secrets --as rowan --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops --only GH_TOKEN -- gh api user"); err != nil {
+		return 125, err
 	}
 	// 1-7. The store, the seat's file and its key, checked and decrypted by the
 	// one path every in-process reader of a seat also takes (seatfile.go).

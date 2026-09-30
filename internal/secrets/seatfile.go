@@ -26,32 +26,22 @@ type SeatFile struct {
 // (internal/seatcred, nova-tools#4052), so no shell wrapper stands between the
 // two and neither can check less than the other.
 func OpenSeatFile(storeDir, asName, keyPath, sopsPath string) (SeatFile, error) {
-	var missing []string
+	var missingFlags []string
 	for _, m := range []struct{ v, flag string }{{storeDir, "--store <dir>"}, {asName, "--as <name>"}, {keyPath, "--key <path>"}, {sopsPath, "--sops <path>"}} {
 		if m.v == "" {
-			missing = append(missing, m.flag)
+			missingFlags = append(missingFlags, m.flag)
 		}
 	}
-	if len(missing) > 0 {
-		return SeatFile{}, fmt.Errorf("missing: %s", strings.Join(missing, ", "))
+	var invalidFlags []string
+	if asName != "" && !IsValidAsName(asName) {
+		invalidFlags = append(invalidFlags, fmt.Sprintf("invalid seat name %q: must match [A-Za-z0-9_-]+", asName))
 	}
-	if !IsValidAsName(asName) {
-		return SeatFile{}, fmt.Errorf("invalid seat name %q: must match [A-Za-z0-9_-]+", asName)
+	var storeIssues []string
+	if storeDir != "" {
+		storeIssues = CheckStorePreconditions(storeDir, true, false)
 	}
-
-	// 1. Store filesystem checks
-	sFi, err := os.Stat(storeDir)
-	if err != nil || !sFi.IsDir() {
-		return SeatFile{}, fmt.Errorf("store %s is not a directory", storeDir)
-	}
-	gitDir := filepath.Join(storeDir, ".git")
-	gFi, err := os.Stat(gitDir)
-	if err != nil || !gFi.IsDir() {
-		return SeatFile{}, fmt.Errorf("store %s has no .git directory", storeDir)
-	}
-	sopsConfigPath := filepath.Join(storeDir, ".sops.yaml")
-	if _, err := os.Stat(sopsConfigPath); err != nil {
-		return SeatFile{}, fmt.Errorf("store %s carries no .sops.yaml", storeDir)
+	if err := FormatRefusal(missingFlags, invalidFlags, storeIssues, "nova-secrets exec --store ./secrets --as rowan --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops --only GH_TOKEN -- gh api user"); err != nil {
+		return SeatFile{}, err
 	}
 	targetFile := filepath.Join(storeDir, asName+".yaml")
 	if _, err := os.Stat(targetFile); err != nil {

@@ -85,17 +85,7 @@ func RunSeatInject(opts SeatInjectOptions) (string, error) {
 		return "", err
 	}
 
-	sFi, err := os.Stat(opts.StoreDir)
-	if err != nil || !sFi.IsDir() {
-		return "", fmt.Errorf("store %s is not a directory", opts.StoreDir)
-	}
-	gFi, err := os.Stat(filepath.Join(opts.StoreDir, ".git"))
-	if err != nil || !gFi.IsDir() {
-		return "", fmt.Errorf("store %s has no .git directory; clone it: git clone <url> %s", opts.StoreDir, opts.StoreDir)
-	}
-	if _, err := os.Stat(filepath.Join(opts.StoreDir, ".sops.yaml")); err != nil {
-		return "", fmt.Errorf("store %s carries no .sops.yaml", opts.StoreDir)
-	}
+
 	if err := CheckInvariant6(opts.KeyPath); err != nil {
 		return "", err
 	}
@@ -198,33 +188,69 @@ func RunSeatInject(opts SeatInjectOptions) (string, error) {
 // seatInjectValidate checks the invocation and answers the --only names, sorted and
 // de-duplicated so the branch name and the file do not depend on argument order.
 func seatInjectValidate(opts *SeatInjectOptions) ([]string, error) {
+	var missingFlags []string
 	if opts.StoreDir == "" {
-		return nil, fmt.Errorf("missing --store <dir>")
+		missingFlags = append(missingFlags, "--store <dir>")
 	}
 	if opts.AsName == "" {
-		return nil, fmt.Errorf("missing --as <seat>: the existing seat receiving the values")
-	}
-	if !IsValidAsName(opts.AsName) {
-		return nil, fmt.Errorf("invalid seat name %q for --as: must match [A-Za-z0-9_-]+", opts.AsName)
+		missingFlags = append(missingFlags, "--as <seat>")
 	}
 	if opts.From == "" {
-		return nil, fmt.Errorf("missing --from <source-seat>: a seat this machine can open")
-	}
-	if !IsValidAsName(opts.From) {
-		return nil, fmt.Errorf("invalid seat name %q for --from: must match [A-Za-z0-9_-]+", opts.From)
-	}
-	if opts.From == opts.AsName {
-		return nil, fmt.Errorf("--from names %s, the seat receiving the values; a seat that can open its own file uses seal, and the source is a DIFFERENT seat this machine can open", opts.AsName)
-	}
-	if opts.KeyPath == "" {
-		return nil, fmt.Errorf("missing --key <path>: this machine's key, the one that opens --from")
-	}
-	if opts.SopsPath == "" {
-		return nil, fmt.Errorf("missing --sops <path>")
+		missingFlags = append(missingFlags, "--from <source-seat>")
 	}
 	if strings.TrimSpace(opts.Only) == "" {
-		return nil, fmt.Errorf("missing --only <NAME,…>: seat inject delivers the values it is told to deliver and no others")
+		missingFlags = append(missingFlags, "--only <NAME,…>")
 	}
+	if opts.KeyPath == "" {
+		missingFlags = append(missingFlags, "--key <path>")
+	}
+	if opts.SopsPath == "" {
+		missingFlags = append(missingFlags, "--sops <path>")
+	}
+
+	var invalidFlags []string
+	if opts.AsName != "" && !IsValidAsName(opts.AsName) {
+		invalidFlags = append(invalidFlags, fmt.Sprintf("invalid seat name %q for --as: must match [A-Za-z0-9_-]+", opts.AsName))
+	}
+	if opts.From != "" && !IsValidAsName(opts.From) {
+		invalidFlags = append(invalidFlags, fmt.Sprintf("invalid seat name %q for --from: must match [A-Za-z0-9_-]+", opts.From))
+	}
+	if opts.From != "" && opts.AsName != "" && opts.From == opts.AsName {
+		invalidFlags = append(invalidFlags, fmt.Sprintf("--from names %s, the seat receiving the values; a seat that can open its own file uses seal, and the source is a DIFFERENT seat this machine can open", opts.AsName))
+	}
+
+	seen := map[string]bool{}
+	var names []string
+	if strings.TrimSpace(opts.Only) != "" {
+		for _, raw := range strings.Split(opts.Only, ",") {
+			n := strings.TrimSpace(raw)
+			if n == "" {
+				continue
+			}
+			if !IsValidEnvVar(n) {
+				invalidFlags = append(invalidFlags, fmt.Sprintf("--only names %q, which is not a key name: must match [A-Z][A-Z0-9_]*", n))
+				continue
+			}
+			if seen[n] {
+				continue
+			}
+			seen[n] = true
+			names = append(names, n)
+		}
+		if len(names) == 0 && len(invalidFlags) == 0 {
+			invalidFlags = append(invalidFlags, "--only <NAME,…> named no keys")
+		}
+	}
+
+	var storeIssues []string
+	if opts.StoreDir != "" {
+		storeIssues = CheckStorePreconditions(opts.StoreDir, false, true)
+	}
+
+	if err := FormatRefusal(missingFlags, invalidFlags, storeIssues, "nova-secrets seat inject --store ./secrets --as air --from rowan --only NOVA_REDIS_BENCH_PASSWORD --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops"); err != nil {
+		return nil, err
+	}
+
 	if opts.GHPath == "" {
 		opts.GHPath = "gh"
 	}
@@ -235,25 +261,6 @@ func seatInjectValidate(opts *SeatInjectOptions) ([]string, error) {
 		opts.Now = time.Now
 	}
 
-	seen := map[string]bool{}
-	var names []string
-	for _, raw := range strings.Split(opts.Only, ",") {
-		n := strings.TrimSpace(raw)
-		if n == "" {
-			continue
-		}
-		if !IsValidEnvVar(n) {
-			return nil, fmt.Errorf("--only names %q, which is not a key name: must match [A-Z][A-Z0-9_]*", n)
-		}
-		if seen[n] {
-			continue
-		}
-		seen[n] = true
-		names = append(names, n)
-	}
-	if len(names) == 0 {
-		return nil, fmt.Errorf("--only <NAME,…> named no keys")
-	}
 	sort.Strings(names)
 	return names, nil
 }

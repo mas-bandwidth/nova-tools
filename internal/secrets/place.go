@@ -106,30 +106,43 @@ func ReadFleetMachines(path string) (map[string]FleetMachine, error) {
 // RunPlace copies one secret to one machine and records a receipt. It returns the one OK
 // line, or an error whose text is safe to print (it never contains the value).
 func RunPlace(in PlaceInput) (string, error) {
+	var missingFlags []string
 	if in.Machine == "" {
-		return "", fmt.Errorf("missing --machine <name>")
+		missingFlags = append(missingFlags, "--machine <name>")
 	}
 	if in.Secret == "" {
-		return "", fmt.Errorf("missing --secret <name>")
-	}
-	if !IsValidEnvVar(in.Secret) {
-		return "", fmt.Errorf("invalid secret name %q: must match [A-Za-z_][A-Za-z0-9_]*", in.Secret)
+		missingFlags = append(missingFlags, "--secret <name>")
 	}
 	if in.StoreDir == "" {
-		return "", fmt.Errorf("missing --store <dir>; the local secrets store to copy from")
+		missingFlags = append(missingFlags, "--store <dir>")
 	}
 	if in.AsName == "" {
-		return "", fmt.Errorf("missing --as <name>")
-	}
-	if !IsValidAsName(in.AsName) {
-		return "", fmt.Errorf("invalid seat name %q: must match [A-Za-z0-9_-]+", in.AsName)
+		missingFlags = append(missingFlags, "--as <name>")
 	}
 	if in.KeyPath == "" {
-		return "", fmt.Errorf("missing --key <path>")
+		missingFlags = append(missingFlags, "--key <path>")
 	}
 	if in.SopsPath == "" {
-		return "", fmt.Errorf("missing --sops <path>")
+		missingFlags = append(missingFlags, "--sops <path>")
 	}
+
+	var invalidFlags []string
+	if in.Secret != "" && !IsValidEnvVar(in.Secret) {
+		invalidFlags = append(invalidFlags, fmt.Sprintf("invalid secret name %q: must match [A-Za-z_][A-Za-z0-9_]*", in.Secret))
+	}
+	if in.AsName != "" && !IsValidAsName(in.AsName) {
+		invalidFlags = append(invalidFlags, fmt.Sprintf("invalid seat name %q: must match [A-Za-z0-9_-]+", in.AsName))
+	}
+
+	var storeIssues []string
+	if in.StoreDir != "" {
+		storeIssues = CheckStorePreconditions(in.StoreDir, false, false)
+	}
+
+	if err := FormatRefusal(missingFlags, invalidFlags, storeIssues, "nova-secrets place --store ./secrets --as rowan --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops --machine mini --secret DEEPSEEK_API_KEY --machines ./fleet.tsv"); err != nil {
+		return "", err
+	}
+
 	if in.Machines == "" {
 		in.Machines = defaultFleetFile()
 	}
@@ -141,18 +154,6 @@ func RunPlace(in PlaceInput) (string, error) {
 	}
 	if in.SSH == "" {
 		in.SSH = "ssh"
-	}
-
-	// The local store, lightly: a directory that is a git working copy with a rule file.
-	sFi, err := os.Stat(in.StoreDir)
-	if err != nil || !sFi.IsDir() {
-		return "", fmt.Errorf("store %s is not a directory; run: nova-secrets place --store <dir>", in.StoreDir)
-	}
-	if gFi, err := os.Stat(filepath.Join(in.StoreDir, ".git")); err != nil || !gFi.IsDir() {
-		return "", fmt.Errorf("store %s has no .git directory", in.StoreDir)
-	}
-	if _, err := os.Stat(filepath.Join(in.StoreDir, ".sops.yaml")); err != nil {
-		return "", fmt.Errorf("store %s carries no .sops.yaml", in.StoreDir)
 	}
 	targetFile := filepath.Join(in.StoreDir, in.AsName+".yaml")
 	if _, err := os.Stat(targetFile); err != nil {

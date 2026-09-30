@@ -74,14 +74,6 @@ func RunSeatAdd(opts SeatAddOptions) ([]string, error) {
 		return nil, err
 	}
 
-	sFi, err := os.Stat(opts.StoreDir)
-	if err != nil || !sFi.IsDir() {
-		return nil, fmt.Errorf("store %s is not a directory", opts.StoreDir)
-	}
-	gFi, err := os.Stat(filepath.Join(opts.StoreDir, ".git"))
-	if err != nil || !gFi.IsDir() {
-		return nil, fmt.Errorf("store %s has no .git directory; clone it: git clone <url> %s", opts.StoreDir, opts.StoreDir)
-	}
 	configPath := filepath.Join(opts.StoreDir, ".sops.yaml")
 	original, err := os.ReadFile(configPath)
 	if err != nil {
@@ -167,62 +159,79 @@ func RunSeatAdd(opts SeatAddOptions) ([]string, error) {
 // seatAddValidate checks the invocation and answers the --only names, sorted and
 // de-duplicated so the file this verb writes does not depend on argument order.
 func seatAddValidate(opts *SeatAddOptions) ([]string, error) {
+	var missingFlags []string
 	if opts.StoreDir == "" {
-		return nil, fmt.Errorf("missing --store <dir>")
+		missingFlags = append(missingFlags, "--store <dir>")
 	}
 	if opts.AsName == "" {
-		return nil, fmt.Errorf("missing --as <seat>: the seat being added")
-	}
-	if !IsValidAsName(opts.AsName) {
-		return nil, fmt.Errorf("invalid seat name %q for --as: must match [A-Za-z0-9_-]+", opts.AsName)
-	}
-	if opts.From == "" {
-		return nil, fmt.Errorf("missing --from <source-seat>: a seat this machine can already open")
-	}
-	if !IsValidAsName(opts.From) {
-		return nil, fmt.Errorf("invalid seat name %q for --from: must match [A-Za-z0-9_-]+", opts.From)
-	}
-	if opts.From == opts.AsName {
-		return nil, fmt.Errorf("--from names %s, the seat being added; the source is a DIFFERENT seat, one this machine can already open", opts.AsName)
+		missingFlags = append(missingFlags, "--as <seat>")
 	}
 	if opts.Pub == "" {
-		return nil, fmt.Errorf("missing --pub <age1…>: the new seat's public key, from its own keygen receipt")
+		missingFlags = append(missingFlags, "--pub <age1…>")
 	}
-	if !IsValidAgePublicKey(opts.Pub) {
-		return nil, fmt.Errorf("--pub is not an age public key; expected age1… of 62 characters, got %d", len(opts.Pub))
-	}
-	if strings.HasPrefix(opts.Pub, "AGE-SECRET-KEY") {
-		return nil, fmt.Errorf("--pub was handed a PRIVATE key; a seat's private half never leaves the bench that made it")
-	}
-	if opts.KeyPath == "" {
-		return nil, fmt.Errorf("missing --key <path>: this machine's key, the one that opens --from")
-	}
-	if opts.SopsPath == "" {
-		return nil, fmt.Errorf("missing --sops <path>")
+	if opts.From == "" {
+		missingFlags = append(missingFlags, "--from <source-seat>")
 	}
 	if strings.TrimSpace(opts.Only) == "" {
-		return nil, fmt.Errorf("missing --only <NAME,…>: seat add carries the values it is told to carry and no others")
+		missingFlags = append(missingFlags, "--only <NAME,…>")
+	}
+	if opts.KeyPath == "" {
+		missingFlags = append(missingFlags, "--key <path>")
+	}
+	if opts.SopsPath == "" {
+		missingFlags = append(missingFlags, "--sops <path>")
+	}
+
+	var invalidFlags []string
+	if opts.AsName != "" && !IsValidAsName(opts.AsName) {
+		invalidFlags = append(invalidFlags, fmt.Sprintf("invalid seat name %q for --as: must match [A-Za-z0-9_-]+", opts.AsName))
+	}
+	if opts.From != "" && !IsValidAsName(opts.From) {
+		invalidFlags = append(invalidFlags, fmt.Sprintf("invalid seat name %q for --from: must match [A-Za-z0-9_-]+", opts.From))
+	}
+	if opts.From != "" && opts.AsName != "" && opts.From == opts.AsName {
+		invalidFlags = append(invalidFlags, fmt.Sprintf("--from names %s, the seat being added; the source is a DIFFERENT seat, one this machine can already open", opts.AsName))
+	}
+	if opts.Pub != "" {
+		if strings.HasPrefix(opts.Pub, "AGE-SECRET-KEY") {
+			invalidFlags = append(invalidFlags, "--pub was handed a PRIVATE key; a seat's private half never leaves the bench that made it")
+		} else if !IsValidAgePublicKey(opts.Pub) {
+			invalidFlags = append(invalidFlags, fmt.Sprintf("--pub is not an age public key; expected age1… of 62 characters, got %d", len(opts.Pub)))
+		}
 	}
 
 	seen := map[string]bool{}
 	var names []string
-	for _, raw := range strings.Split(opts.Only, ",") {
-		n := strings.TrimSpace(raw)
-		if n == "" {
-			continue
+	if strings.TrimSpace(opts.Only) != "" {
+		for _, raw := range strings.Split(opts.Only, ",") {
+			n := strings.TrimSpace(raw)
+			if n == "" {
+				continue
+			}
+			if !IsValidEnvVar(n) {
+				invalidFlags = append(invalidFlags, fmt.Sprintf("--only names %q, which is not a key name: must match [A-Z][A-Z0-9_]*", n))
+				continue
+			}
+			if seen[n] {
+				continue
+			}
+			seen[n] = true
+			names = append(names, n)
 		}
-		if !IsValidEnvVar(n) {
-			return nil, fmt.Errorf("--only names %q, which is not a key name: must match [A-Z][A-Z0-9_]*", n)
+		if len(names) == 0 && len(invalidFlags) == 0 {
+			invalidFlags = append(invalidFlags, "--only <NAME,…> named no keys")
 		}
-		if seen[n] {
-			continue
-		}
-		seen[n] = true
-		names = append(names, n)
 	}
-	if len(names) == 0 {
-		return nil, fmt.Errorf("--only <NAME,…> named no keys")
+
+	var storeIssues []string
+	if opts.StoreDir != "" {
+		storeIssues = CheckStorePreconditions(opts.StoreDir, false, false)
 	}
+
+	if err := FormatRefusal(missingFlags, invalidFlags, storeIssues, "nova-secrets seat add --store ./secrets --as air --pub <age1…> --from rowan --only GH_TOKEN,DEEPSEEK_API_KEY --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops"); err != nil {
+		return nil, err
+	}
+
 	sort.Strings(names)
 	return names, nil
 }

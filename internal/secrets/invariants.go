@@ -422,31 +422,32 @@ func RunCheck(storeDir, asName, keyPath, sopsPath string, maxShown int) (okLine 
 		return "", nil, nil, "", 2, fmt.Errorf("failed to set RLIMIT_CORE to 0: %w", err)
 	}
 
+	var missingFlags []string
+	if storeDir == "" {
+		missingFlags = append(missingFlags, "--store <dir>")
+	}
 	if asName == "" {
-		return "", nil, nil, "", 2, fmt.Errorf("missing --as <name>")
+		missingFlags = append(missingFlags, "--as <name>")
 	}
-	if !IsValidAsName(asName) {
-		return "", nil, nil, "", 2, fmt.Errorf("invalid seat name %q: must match [A-Za-z0-9_-]+", asName)
+	if keyPath == "" {
+		missingFlags = append(missingFlags, "--key <path>")
 	}
-
-	// 1. Refusal checks
-	storeFi, err := os.Stat(storeDir)
-	if err != nil || !storeFi.IsDir() {
-		return "", nil, nil, "", 2, fmt.Errorf("store %s is not a directory", storeDir)
+	if sopsPath == "" {
+		missingFlags = append(missingFlags, "--sops <path>")
 	}
 
-	gitDir := filepath.Join(storeDir, ".git")
-	gitFi, err := os.Stat(gitDir)
-	if err != nil {
-		return "", nil, nil, "", 2, fmt.Errorf("store %s has no .git directory; run: git clone <url> %s", storeDir, storeDir)
-	}
-	if !gitFi.IsDir() {
-		return "", nil, nil, "", 2, fmt.Errorf("store %s: .git is a file (a worktree or submodule); expected a directory working copy", storeDir)
+	var invalidFlags []string
+	if asName != "" && !IsValidAsName(asName) {
+		invalidFlags = append(invalidFlags, fmt.Sprintf("invalid seat name %q: must match [A-Za-z0-9_-]+", asName))
 	}
 
-	sopsConfigPath := filepath.Join(storeDir, ".sops.yaml")
-	if _, err := os.Stat(sopsConfigPath); err != nil {
-		return "", nil, nil, "", 2, fmt.Errorf("store %s carries no .sops.yaml", storeDir)
+	var storeIssues []string
+	if storeDir != "" {
+		storeIssues = CheckStorePreconditions(storeDir, true, false)
+	}
+
+	if err := FormatRefusal(missingFlags, invalidFlags, storeIssues, "nova-secrets check --store ./secrets --as rowan --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops"); err != nil {
+		return "", nil, nil, "", 2, err
 	}
 
 	targetFile := filepath.Join(storeDir, asName+".yaml")

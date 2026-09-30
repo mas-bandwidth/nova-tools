@@ -15,28 +15,26 @@ func RunNames(storeDir, asName string, maxShown int) (okLine string, nameLines [
 	if maxShown < 0 {
 		return "", nil, "", fmt.Errorf("--max %d is negative; expected non-negative integer", maxShown)
 	}
+	var missingFlags []string
 	if storeDir == "" {
-		return "", nil, "", fmt.Errorf("missing --store <dir>")
+		missingFlags = append(missingFlags, "--store <dir>")
 	}
 	if asName == "" {
-		return "", nil, "", fmt.Errorf("missing --as <name>")
-	}
-	if !IsValidAsName(asName) {
-		return "", nil, "", fmt.Errorf("invalid seat name %q: must match [A-Za-z0-9_-]+", asName)
+		missingFlags = append(missingFlags, "--as <name>")
 	}
 
-	sFi, err := os.Stat(storeDir)
-	if err != nil || !sFi.IsDir() {
-		return "", nil, "", fmt.Errorf("store %s is not a directory", storeDir)
+	var invalidFlags []string
+	if asName != "" && !IsValidAsName(asName) {
+		invalidFlags = append(invalidFlags, fmt.Sprintf("invalid seat name %q: must match [A-Za-z0-9_-]+", asName))
 	}
-	gitDir := filepath.Join(storeDir, ".git")
-	gFi, err := os.Stat(gitDir)
-	if err != nil || !gFi.IsDir() {
-		return "", nil, "", fmt.Errorf("store %s has no .git directory", storeDir)
+
+	var storeIssues []string
+	if storeDir != "" {
+		storeIssues = CheckStorePreconditions(storeDir, false, false)
 	}
-	sopsConfigPath := filepath.Join(storeDir, ".sops.yaml")
-	if _, err := os.Stat(sopsConfigPath); err != nil {
-		return "", nil, "", fmt.Errorf("store %s carries no .sops.yaml", storeDir)
+
+	if err := FormatRefusal(missingFlags, invalidFlags, storeIssues, "nova-secrets names --store ./secrets --as rowan"); err != nil {
+		return "", nil, "", err
 	}
 
 	targetFile := filepath.Join(storeDir, asName+".yaml")

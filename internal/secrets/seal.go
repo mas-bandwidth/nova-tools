@@ -90,27 +90,40 @@ var prNumberRegex = regexp.MustCompile(`/pull/(\d+)`)
 // RunSeal reads one value, folds it into the seat file under --name, and carries the
 // change through a branch, a commit and, unless --no-pr, a pull request to its merge.
 func RunSeal(opts SealOptions) (line string, err error) {
+	var missingFlags []string
 	if opts.StoreDir == "" {
-		return "", fmt.Errorf("missing --store <dir>")
+		missingFlags = append(missingFlags, "--store <dir>")
 	}
 	if opts.AsName == "" {
-		return "", fmt.Errorf("missing --as <name>")
-	}
-	if !IsValidAsName(opts.AsName) {
-		return "", fmt.Errorf("invalid seat name %q: must match [A-Za-z0-9_-]+", opts.AsName)
+		missingFlags = append(missingFlags, "--as <name>")
 	}
 	if opts.KeyPath == "" {
-		return "", fmt.Errorf("missing --key <path>")
+		missingFlags = append(missingFlags, "--key <path>")
 	}
 	if opts.SopsPath == "" {
-		return "", fmt.Errorf("missing --sops <path>")
+		missingFlags = append(missingFlags, "--sops <path>")
 	}
 	if opts.Name == "" {
-		return "", fmt.Errorf("missing --name <NAME>")
+		missingFlags = append(missingFlags, "--name <NAME>")
 	}
-	if !IsValidEnvVar(opts.Name) {
-		return "", fmt.Errorf("invalid key name %q: must match [A-Z][A-Z0-9_]*", opts.Name)
+
+	var invalidFlags []string
+	if opts.AsName != "" && !IsValidAsName(opts.AsName) {
+		invalidFlags = append(invalidFlags, fmt.Sprintf("invalid seat name %q: must match [A-Za-z0-9_-]+", opts.AsName))
 	}
+	if opts.Name != "" && !IsValidEnvVar(opts.Name) {
+		invalidFlags = append(invalidFlags, fmt.Sprintf("invalid key name %q: must match [A-Z][A-Z0-9_]*", opts.Name))
+	}
+
+	var storeIssues []string
+	if opts.StoreDir != "" {
+		storeIssues = CheckStorePreconditions(opts.StoreDir, false, true)
+	}
+
+	if err := FormatRefusal(missingFlags, invalidFlags, storeIssues, "nova-secrets seal --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops /opt/homebrew/bin/sops --name API_KEY"); err != nil {
+		return "", err
+	}
+
 	if opts.GHPath == "" {
 		opts.GHPath = "gh"
 	}
@@ -119,19 +132,6 @@ func RunSeal(opts SealOptions) (line string, err error) {
 	}
 	if opts.Now == nil {
 		opts.Now = time.Now
-	}
-
-	sFi, err := os.Stat(opts.StoreDir)
-	if err != nil || !sFi.IsDir() {
-		return "", fmt.Errorf("store %s is not a directory", opts.StoreDir)
-	}
-	gitDir := filepath.Join(opts.StoreDir, ".git")
-	gFi, err := os.Stat(gitDir)
-	if err != nil || !gFi.IsDir() {
-		return "", fmt.Errorf("store %s has no .git directory; clone it: git clone <url> %s", opts.StoreDir, opts.StoreDir)
-	}
-	if _, err := os.Stat(filepath.Join(opts.StoreDir, ".sops.yaml")); err != nil {
-		return "", fmt.Errorf("store %s carries no .sops.yaml", opts.StoreDir)
 	}
 	if err := CheckInvariant6(opts.KeyPath); err != nil {
 		return "", err
