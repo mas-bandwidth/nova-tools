@@ -266,11 +266,21 @@ const (
 
 func (r *Redis) ReadFence(ctx context.Context) (Fence, error) {
 	p := r.C.Pipeline()
-	mget := p.MGet(ctx, r.key(keyFence), r.key(keyGen), r.Names.Key(keyMachine))
-	llen := p.LLen(ctx, r.key(keyQueue))
+	mget, llen := r.queueFence(ctx, p)
 	if _, err := p.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
 		return Fence{}, err
 	}
+	return fenceOf(mget, llen)
+}
+
+// queueFence queues the fence's read on a pipeline: the fence, its
+// generation and the machine's state, and the queue's length.
+func (r *Redis) queueFence(ctx context.Context, p redis.Pipeliner) (*redis.SliceCmd, *redis.IntCmd) {
+	return p.MGet(ctx, r.key(keyFence), r.key(keyGen), r.Names.Key(keyMachine)), p.LLen(ctx, r.key(keyQueue))
+}
+
+// fenceOf is the fence a pipeline read.
+func fenceOf(mget *redis.SliceCmd, llen *redis.IntCmd) (Fence, error) {
 	vals, err := mget.Result()
 	if err != nil {
 		return Fence{}, err
@@ -340,19 +350,22 @@ func (r *Redis) Acquire(ctx context.Context, gen uint64, op OpRecord) (bool, err
 // the streams' progress, the caller's result, and the fence emptied.
 func (r *Redis) Release(ctx context.Context, op OpRecord, commit bool) error {
 	fence := r.key(keyFence)
-	var err error
+	// The fence holds this operation when its record begins with this
+	// operation's id (json.Marshal writes OpRecord's id first): read that
+	// much of it, not the whole record, which carries every manifest.
+	id, err := json.Marshal(op.ID)
+	if err != nil {
+		return err
+	}
+	prefix := `{"id":` + string(id) + `,`
 	for i := 0; i < 8; i++ {
 		err = r.C.Watch(ctx, func(tx *redis.Tx) error {
-			cur, err := tx.Get(ctx, fence).Result()
-			if errors.Is(err, redis.Nil) {
-				return nil
-			}
+			cur, err := tx.GetRange(ctx, fence, 0, int64(len(prefix)-1)).Result()
 			if err != nil {
 				return err
 			}
-			var held OpRecord
-			if json.Unmarshal([]byte(cur), &held) != nil || held.ID != op.ID {
-				return nil
+			if cur != prefix {
+				return nil // empty (released) or another operation's
 			}
 			_, err = tx.TxPipelined(ctx, func(p redis.Pipeliner) error {
 				if commit {
@@ -565,8 +578,17 @@ func (r *Redis) Progress(ctx context.Context) (map[string]time.Time, error) {
 
 func (r *Redis) OpenNotes(ctx context.Context) ([]sprint.Open, error) {
 	open, err := r.C.HGetAll(ctx, r.key(keyOpen)).Result()
-	if err != nil || len(open) == 0 {
+	if err != nil {
 		return nil, err
+	}
+	return r.openOf(ctx, open)
+}
+
+// openOf is the open judgments of the open index read: the notes it names,
+// read in one exchange.
+func (r *Redis) openOf(ctx context.Context, open map[string]string) ([]sprint.Open, error) {
+	if len(open) == 0 {
+		return nil, nil
 	}
 	var ids []string
 	seen := map[string]bool{}
@@ -810,3 +832,48 @@ func (r *Redis) RowsSet(ctx context.Context, table string, rows map[string]map[s
 }
 
 var _ RowsSetter = (*Redis)(nil)
+
+// ReadView reads, in one exchange, what a read of the twin reads first (the
+// fence, the tables' shapes, the open judgments' index and the coordinator),
+// then the notes the index names in a second: two round trips where one each
+// took five (twin.go).
+func (r *Redis) ReadView(ctx context.Context, tables []string) (View, error) {
+	if r.Old {
+		return View{}, errors.New("a read of an earlier epoch reads no view")
+	}
+	p := r.C.Pipeline()
+	mget, llen := r.queueFence(ctx, p)
+	shapes := make([]*ntable.ReadCmd, len(tables))
+	for i, t := range tables {
+		shapes[i] = ntable.NewReader(t).Queue(ctx, p)
+	}
+	open := p.HGetAll(ctx, r.key(keyOpen))
+	coord := p.Get(ctx, r.Names.Key(keyCoordinator))
+	if _, err := p.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) && !isReply(err) {
+		return View{}, err
+	}
+	var v View
+	var err error
+	if v.Fence, err = fenceOf(mget, llen); err != nil {
+		return View{}, err
+	}
+	v.Shapes = make([]ntable.Table, len(tables))
+	for i, cmd := range shapes {
+		if v.Shapes[i], _, err = cmd.Result(); err != nil {
+			return View{}, err
+		}
+	}
+	idx, err := open.Result()
+	if err != nil {
+		return View{}, err
+	}
+	if v.Coordinator, err = coord.Result(); err != nil && !errors.Is(err, redis.Nil) {
+		return View{}, err
+	}
+	if v.Open, err = r.openOf(ctx, idx); err != nil {
+		return View{}, err
+	}
+	return v, nil
+}
+
+var _ ViewReader = (*Redis)(nil)
