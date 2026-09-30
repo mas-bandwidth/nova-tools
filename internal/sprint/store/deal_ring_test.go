@@ -295,7 +295,8 @@ func dealRingWithFailures(t *testing.T, h *harness) {
 	for _, id := range failed {
 		// every member is idle: the next member round the fleet is the one past
 		// the index, and a rework whose failed attempt was on it skips it
-		past, _ := h.snap().Fleet.Prop(sprint.PropDealIndex)
+		at, _ := h.snap().Fleet.Prop(sprint.PropDealIndex)
+		past := indexPast(ringMembers, at)
 		next := ringMembers[(slices.Index(ringMembers, past)+1)%len(ringMembers)]
 		failedOn := h.snap().Fleet.Card(sprint.WorkCardID(id, 1)).Row
 		h.must(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{id}}, Fix: "make the test pass", Who: "tester"}))

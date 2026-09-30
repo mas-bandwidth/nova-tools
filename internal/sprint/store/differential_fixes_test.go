@@ -321,7 +321,7 @@ func TestTheDealAndTheAskGoRoundAsTheModelDoes(t *testing.T) {
 	if want := []string{"r1", "r3"}; !slices.Equal(readers, want) {
 		t.Fatalf("a2 was asked of %v, want %v: past r2, round the readers", readers, want)
 	}
-	if s.DealLast != "m2" || s.AskLast != "r1" {
+	if indexPast(s.Order, s.DealLast) != "m2" || indexPast(s.Readers, s.AskLast) != "r1" {
 		t.Fatalf("the store's indexes are past %q and %q, want m2 and r1", s.DealLast, s.AskLast)
 	}
 }
@@ -394,7 +394,7 @@ func TestTheRedealsAndTheLevelGoRoundAsTheModelDoes(t *testing.T) {
 			if w := s.Work[c.card]; w.Member != c.want {
 				t.Fatalf("%s is on %q, want %s: round the fleet from the index", c.card, w.Member, c.want)
 			}
-			if s.DealLast != c.want {
+			if indexPast(s.Order, s.DealLast) != c.want {
 				t.Fatalf("the store's deal index is past %q, want %s: the placement moves it", s.DealLast, c.want)
 			}
 		})

@@ -33,7 +33,7 @@ func dealOne(t *testing.T, f *fleetT) (string, string) {
 		t.Fatalf("a deal of one moved %v", got)
 	}
 	idx, _ := f.snap().Work.Prop(PropStreamIndex)
-	return got[0], idx
+	return got[0], indexPast(f.snap().Work.Rows(), idx)
 }
 
 func TestStreamTurnsStartPastTheIndexAndSkipAStreamWithNone(t *testing.T) {
@@ -116,7 +116,7 @@ func TestTheAskTakesTheStreamsInTurnFromItsOwnIndex(t *testing.T) {
 	if got, want := streamOfTaken(s, p), []string{"s1", "s2", "s3", "s1"}; !slices.Equal(got, want) {
 		t.Fatalf("the ask takes %v, want %v", got, want)
 	}
-	if idx, _ := f.snap().Work.Prop(PropAskStreamIndex); idx != "s1" {
+	if idx, _ := f.snap().Work.Prop(PropAskStreamIndex); indexPast(f.snap().Work.Rows(), idx) != "s1" {
 		t.Fatalf("the ask's index is %q, want s1", idx)
 	}
 	// the tick's ask asks every primary left, in turns past s1
@@ -126,7 +126,7 @@ func TestTheAskTakesTheStreamsInTurnFromItsOwnIndex(t *testing.T) {
 		t.Fatalf("the tick's ask past s1 takes %v (due %d), want %v", got, due, want)
 	}
 	f.w.must(tp)
-	if idx, _ := f.snap().Work.Prop(PropStreamIndex); idx != "s1" {
+	if idx, _ := f.snap().Work.Prop(PropStreamIndex); indexPast(f.snap().Work.Rows(), idx) != "s1" {
 		t.Fatalf("the deal's index is %q after the asks, want s1 where the deal left it", idx)
 	}
 	if st, _ := dealOne(t, f); st != "s2" {

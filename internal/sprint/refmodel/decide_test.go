@@ -82,7 +82,7 @@ func TestPresenceTakesAMemberDownAndDealsItsCards(t *testing.T) {
 	got := refmodel.PresenceMoves(w.snapshot(beats), later(0))
 	expect(t, got,
 		"set fleet ctl-m1 since=2030-01-02T03:04:05Z,status=down",
-		"prop fleet deal_index=m2", // every placement moves the deal's index (errata 3 amendment 5)
+		"prop fleet deal_index=4", // every placement moves the deal's counter, by two past the member down (errata 3 amendment 5)
 		"move fleet s1-1.w1 m1:working>m2:ready",
 		"move fleet s1-3.w1 m1:ready>m2:ready",
 		"notice fleet member down []")
@@ -109,7 +109,7 @@ func TestPresenceBringsAMemberUpWhenItBeatsAndLevelsTheQueues(t *testing.T) {
 	got := refmodel.PresenceMoves(w.snapshot(w.fresh()), later(0))
 	expect(t, got,
 		"set fleet ctl-m2 since=2030-01-02T03:04:05Z,status=up",
-		"prop fleet deal_index=m2", // the levelling moves the deal's index too
+		"prop fleet deal_index=2", // the levelling moves the deal's counter too
 		"move fleet s1-3.w1 m1:ready>m2:ready",
 		"notice fleet member up []")
 }
@@ -225,8 +225,8 @@ func TestDealDealsTheOldestReadyToTheMembersWithRoom(t *testing.T) {
 		"move work s1-4 s1:ready>s1:working",
 		"move work s1-5 s1:ready>s1:working",
 		"move work s1-6 s1:ready>s1:working",
-		"prop work stream_index=s1",
-		"prop fleet deal_index=m2",
+		"prop work stream_index=6",
+		"prop fleet deal_index=6",
 		"create fleet s1-1.w1 >m1:ready",
 		"create fleet s1-2.w1 >m2:ready",
 		"create fleet s1-3.w1 >m1:ready",
@@ -287,7 +287,7 @@ func TestLevelMovesTheNewestFromTheLongestRoundTheFleet(t *testing.T) {
 	ctl.Fields["status"] = sprint.Up // up without the step that would level the queues
 	w.s.Fleet.Put(ctl)
 	got := refmodel.LevelMoves(w.snapshot(w.fresh()), later(0))
-	expect(t, got, "prop fleet deal_index=m2", "move fleet s1-2.w1 m1:ready>m2:ready")
+	expect(t, got, "prop fleet deal_index=2", "move fleet s1-2.w1 m1:ready>m2:ready")
 	if !slices.Contains(got[1].Set, "gen=2") || !slices.Contains(got[1].Set, "member=m2") {
 		t.Errorf("a card dealt again is the next generation, of its new member: %v", got[1].Set)
 	}
@@ -306,8 +306,8 @@ func TestAskAsksTwoReadersOfAPrimaryInReview(t *testing.T) {
 	got := refmodel.AskMoves(w.snapshot(w.fresh()), later(0))
 	expect(t, got,
 		"set work s1-1 asked=reader-a,reader-b",
-		"prop work stream_index_ask=s1",
-		"prop readers ask_index=reader-b",
+		"prop work stream_index_ask=1",
+		"prop readers ask_index=2",
 		"create readers s1-1.r1.reader-a >reader-a:asked",
 		"create readers s1-1.r1.reader-b >reader-b:asked")
 }
