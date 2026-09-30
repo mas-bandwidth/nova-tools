@@ -1,7 +1,8 @@
 package sprint
 
 import (
-	"sort"
+	"cmp"
+	"slices"
 	"strconv"
 	"strings"
 )
@@ -98,26 +99,114 @@ type Ingested struct {
 	Touched []string
 }
 
+// IngestChunk is the standard chunk size for paging events during ingest:
+// matching StepChunk (2,000 members).
+const IngestChunk = 2000
+
+// MaxIngestBatch is the maximum batch size for backlog draining in one operation:
+// bounded to stay strictly within Layer 1 command and argv limits.
+const MaxIngestBatch = 10000
+
 // Ingest is the keys the events queue, by the tables of 2.1 and 2.2.
 func Ingest(events []Event) Ingested {
-	first := map[string]uint64{}
-	for _, e := range events {
-		for _, k := range keysOf(e) {
-			if s, ok := first[k]; !ok || e.Seq < s {
-				first[k] = e.Seq
-			}
-		}
+	if len(events) == 0 {
+		return Ingested{}
 	}
-	var in Ingested
+	capEst := min(len(events)*2, 65536)
+	first := make(map[string]uint64, capEst)
+	for _, e := range events {
+		recordEventKeys(e, first)
+	}
+	in := Ingested{
+		Keys: make([]AgendaKey, 0, len(first)),
+	}
 	for k, s := range first {
 		in.Keys = append(in.Keys, AgendaKey{Key: k, Seq: s})
 	}
-	sort.Slice(in.Keys, func(i, j int) bool {
-		a, b := in.Keys[i], in.Keys[j]
+	slices.SortFunc(in.Keys, func(a, b AgendaKey) int {
 		if a.Seq != b.Seq {
-			return a.Seq < b.Seq
+			return cmp.Compare(a.Seq, b.Seq)
 		}
-		return a.Key < b.Key
+		return strings.Compare(a.Key, b.Key)
+	})
+	for _, k := range in.Keys {
+		if RuleOf(k.Key) == ruleHeld {
+			in.Touched = append(in.Touched, k.Key)
+		}
+	}
+	return in
+}
+
+// recordEventKeys evaluates event rules directly into the first-seen map,
+// avoiding heap allocations of intermediate slices and closures.
+func recordEventKeys(e Event, first map[string]uint64) {
+	for _, r := range lineRows {
+		if r.when(e) {
+			for _, f := range r.keys {
+				if k, ok := f(e); ok {
+					if s, ok := first[k]; !ok || e.Seq < s {
+						first[k] = e.Seq
+					}
+				}
+			}
+		}
+	}
+	if e.Closes {
+		for _, r := range closeRows {
+			if r.has(e.NoteType) {
+				for _, f := range r.keys {
+					if k, ok := f(e); ok {
+						if s, ok := first[k]; !ok || e.Seq < s {
+							first[k] = e.Seq
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+// DrainBacklog partitions a large backlog of events into bounded batches of
+// at most batchSize (defaulting to MaxIngestBatch when batchSize <= 0, capped
+// at MaxIngestBatch). This enables pipelined backlog draining without exceeding
+// Layer 1 command or argv limits.
+func DrainBacklog(events []Event, batchSize int) []Ingested {
+	if len(events) == 0 {
+		return nil
+	}
+	if batchSize <= 0 || batchSize > MaxIngestBatch {
+		batchSize = MaxIngestBatch
+	}
+	batches := make([]Ingested, 0, (len(events)+batchSize-1)/batchSize)
+	for i := 0; i < len(events); i += batchSize {
+		end := min(i+batchSize, len(events))
+		batches = append(batches, Ingest(events[i:end]))
+	}
+	return batches
+}
+
+// MergeIngested merges multiple Ingested results into one, preserving the
+// earliest sequence order for duplicated keys and keeping touched keys unique.
+func MergeIngested(results ...Ingested) Ingested {
+	first := map[string]uint64{}
+	for _, res := range results {
+		for _, k := range res.Keys {
+			if s, ok := first[k.Key]; !ok || k.Seq < s {
+				first[k.Key] = k.Seq
+			}
+		}
+	}
+	in := Ingested{
+		Keys: make([]AgendaKey, 0, len(first)),
+	}
+	for k, s := range first {
+		in.Keys = append(in.Keys, AgendaKey{Key: k, Seq: s})
+	}
+	slices.SortFunc(in.Keys, func(a, b AgendaKey) int {
+		if a.Seq != b.Seq {
+			return cmp.Compare(a.Seq, b.Seq)
+		}
+		return strings.Compare(a.Key, b.Key)
 	})
 	for _, k := range in.Keys {
 		if RuleOf(k.Key) == ruleHeld {

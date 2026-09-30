@@ -184,6 +184,17 @@ func bound(p Plan) (Plan, int) {
 	return p, due
 }
 
+// TickIngest bounds event log ingestion for one tick: it ingests at most
+// MaxIngestBatch events (Layer 1's safe budget limit for command count and
+// argv bytes) and reports how many events remain due for subsequent ticks or
+// pipelined catchup batches.
+func TickIngest(events []Event) (Ingested, int) {
+	if len(events) <= MaxIngestBatch {
+		return Ingest(events), 0
+	}
+	return Ingest(events[:MaxIngestBatch]), len(events) - MaxIngestBatch
+}
+
 // T1. TickResolve scans every stream's waiting set in score order, from the
 // state, whenever the tick reads the whole sprint: a primary whose every need
 // has landed moves to ready; a dropped or missing need is a blocked judgment,

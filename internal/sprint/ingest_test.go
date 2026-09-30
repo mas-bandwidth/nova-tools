@@ -965,3 +965,160 @@ func FuzzParseEventAndIngest(f *testing.F) {
 		}
 	})
 }
+
+func TestTickIngest(t *testing.T) {
+	t.Parallel()
+	var small []Event
+	for i := uint64(1); i <= 100; i++ {
+		id := "p" + strconv.FormatUint(i, 10)
+		small = append(small, Event{
+			Seq: i, Kind: LineMove, Table: Work, Cards: []string{id}, Primary: id,
+			Stream: "s1", From: "s1:waiting", To: "s1:ready",
+		})
+	}
+	in, due := TickIngest(small)
+	if due != 0 {
+		t.Fatalf("expected 0 due for small batch, got %d", due)
+	}
+	if len(in.Keys) == 0 {
+		t.Fatalf("expected non-empty keys")
+	}
+
+	total := MaxIngestBatch + 500
+	var large []Event
+	for i := uint64(1); i <= uint64(total); i++ {
+		id := "p" + strconv.FormatUint(i, 10)
+		large = append(large, Event{
+			Seq: i, Kind: LineMove, Table: Work, Cards: []string{id}, Primary: id,
+			Stream: "s1", From: "s1:waiting", To: "s1:ready",
+		})
+	}
+	in2, due2 := TickIngest(large)
+	if due2 != 500 {
+		t.Fatalf("expected 500 due, got %d", due2)
+	}
+	expected := Ingest(large[:MaxIngestBatch])
+	if !reflect.DeepEqual(in2, expected) {
+		t.Fatalf("TickIngest result does not match Ingest[:MaxIngestBatch]")
+	}
+}
+
+func TestIngest100kDrain(t *testing.T) {
+	const n = 100000
+	events := make([]Event, n)
+	for i := 0; i < n; i++ {
+		seq := uint64(i + 1)
+		id := "p" + strconv.Itoa(i)
+		stream := "s" + strconv.Itoa(i%5)
+		events[i] = Event{
+			Seq:     seq,
+			Kind:    LineMove,
+			Table:   Work,
+			Cards:   []string{id},
+			Primary: id,
+			Stream:  stream,
+			From:    stream + ":waiting",
+			To:      stream + ":ready",
+		}
+	}
+
+	// 1. Drain with 1,000 chunk size (simulating legacy single-page 1,000 lines/tick)
+	legacyChunks := DrainBacklog(events, IngestChunk/2)
+	if len(legacyChunks) != 100 {
+		t.Fatalf("expected 100 chunks of 1000, got %d", len(legacyChunks))
+	}
+
+	// 2. Drain with MaxIngestBatch (10,000)
+	optimizedBatches := DrainBacklog(events, MaxIngestBatch)
+	if len(optimizedBatches) != 10 {
+		t.Fatalf("expected 10 batches of 10,000, got %d", len(optimizedBatches))
+	}
+
+	// 3. Verify purity: merging the 10 batches must equal the single full Ingest
+	full := Ingest(events)
+	merged := MergeIngested(optimizedBatches...)
+	if !reflect.DeepEqual(merged.Keys, full.Keys) {
+		t.Fatalf("merged keys length %d != full keys length %d", len(merged.Keys), len(full.Keys))
+	}
+	if !slices.Equal(merged.Touched, full.Touched) {
+		t.Fatalf("merged touched length %d != full touched length %d", len(merged.Touched), len(full.Touched))
+	}
+}
+
+func BenchmarkIngest100kBacklog(b *testing.B) {
+	const n = 100000
+	events := make([]Event, n)
+	for i := 0; i < n; i++ {
+		seq := uint64(i + 1)
+		id := "p" + strconv.Itoa(i)
+		events[i] = Event{
+			Seq:     seq,
+			Kind:    LineMove,
+			Table:   Work,
+			Cards:   []string{id},
+			Primary: id,
+			Stream:  "s1",
+			From:    "s1:waiting",
+			To:      "s1:ready",
+		}
+	}
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = Ingest(events)
+	}
+}
+
+func BenchmarkIngest100kDrainBatched10k(b *testing.B) {
+	const n = 100000
+	events := make([]Event, n)
+	for i := 0; i < n; i++ {
+		seq := uint64(i + 1)
+		id := "p" + strconv.Itoa(i)
+		events[i] = Event{
+			Seq:     seq,
+			Kind:    LineMove,
+			Table:   Work,
+			Cards:   []string{id},
+			Primary: id,
+			Stream:  "s1",
+			From:    "s1:waiting",
+			To:      "s1:ready",
+		}
+	}
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		batches := DrainBacklog(events, MaxIngestBatch)
+		if len(batches) != 10 {
+			b.Fatalf("expected 10 batches")
+		}
+	}
+}
+
+func BenchmarkIngest100kDrainLegacy1k(b *testing.B) {
+	const n = 100000
+	events := make([]Event, n)
+	for i := 0; i < n; i++ {
+		seq := uint64(i + 1)
+		id := "p" + strconv.Itoa(i)
+		events[i] = Event{
+			Seq:     seq,
+			Kind:    LineMove,
+			Table:   Work,
+			Cards:   []string{id},
+			Primary: id,
+			Stream:  "s1",
+			From:    "s1:waiting",
+			To:      "s1:ready",
+		}
+	}
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		chunks := DrainBacklog(events, IngestChunk/2)
+		if len(chunks) != 100 {
+			b.Fatalf("expected 100 chunks")
+		}
+	}
+}
