@@ -475,18 +475,18 @@ var holdFixtures = map[string]hfixture{
 	},
 	"working / its live work card at an up member, before its due": func(w *hworld) string {
 		p := w.primary("p1", "s1", Working, 1, "attempt", "1")
-		w.work(p, "m1", Working, fieldDueUnfinished, strconv.FormatInt(hR+1000, 10))
+		w.work(p, "m1", Working, heldDueUnfinished, strconv.FormatInt(hR+1000, 10))
 		return "p1"
 	},
 	"working / R2, its member is down or held with its card": func(w *hworld) string {
 		p := w.primary("p1", "s1", Working, 1, "attempt", "1")
-		w.work(p, "m2", Ready, fieldDueUntaken, strconv.FormatInt(hR+1000, 10))
+		w.work(p, "m2", Ready, heldDueUntaken, strconv.FormatInt(hR+1000, 10))
 		w.s.Fleet.Card(CtlID("m2")).Fields["status"] = Down
 		return "p1"
 	},
 	"working / R11, its due has passed": func(w *hworld) string {
 		p := w.primary("p1", "s1", Working, 1, "attempt", "1")
-		w.work(p, "m1", Working, fieldDueUnfinished, strconv.FormatInt(hR-1, 10))
+		w.work(p, "m1", Working, heldDueUnfinished, strconv.FormatInt(hR-1, 10))
 		return "p1"
 	},
 	"working / its lateness judgment, open or held": func(w *hworld) string {
@@ -497,12 +497,12 @@ var holdFixtures = map[string]hfixture{
 	},
 	"review / a read outstanding before its due": func(w *hworld) string {
 		p := w.primary("p1", "s1", Review, 1, "attempt", "1", "result", "ok", "head", "h1")
-		w.read(p, "r1", Asked, fieldDueUnbegun, strconv.FormatInt(hR+1000, 10))
+		w.read(p, "r1", Asked, heldDueUnbegun, strconv.FormatInt(hR+1000, 10))
 		return "p1"
 	},
 	"review / R11, a read's due has passed": func(w *hworld) string {
 		p := w.primary("p1", "s1", Review, 1, "attempt", "1", "result", "ok", "head", "h1")
-		w.read(p, "r1", Reading, fieldDueUnreported, strconv.FormatInt(hR-1, 10))
+		w.read(p, "r1", Reading, heldDueUnreported, strconv.FormatInt(hR-1, 10))
 		return "p1"
 	},
 	"review / R8, never asked at its attempt": func(w *hworld) string {
@@ -536,14 +536,14 @@ var holdFixtures = map[string]hfixture{
 		w.primary("p1", "s1", Merging, 1)
 		w.s.Merge.Put(&Card{ID: "p1", Row: "s1", Col: Queued, Rev: 1, Fields: hkv()})
 		w.ctl("s1").Fields["state"] = StreamMerging
-		w.ctl("s1").Fields[fieldDueMergeIdle] = strconv.FormatInt(hR+1000, 10)
+		w.ctl("s1").Fields[heldDueMergeIdle] = strconv.FormatInt(hR+1000, 10)
 		return "p1"
 	},
 	"merging / R11, its stream's merge-idle due has passed": func(w *hworld) string {
 		w.primary("p1", "s1", Merging, 1)
 		w.s.Merge.Put(&Card{ID: "p1", Row: "s1", Col: Queued, Rev: 1, Fields: hkv()})
 		w.ctl("s1").Fields["state"] = StreamMerging
-		w.ctl("s1").Fields[fieldDueMergeIdle] = strconv.FormatInt(hR-1, 10)
+		w.ctl("s1").Fields[heldDueMergeIdle] = strconv.FormatInt(hR-1, 10)
 		return "p1"
 	},
 	"merging / R5, its cross need landed": func(w *hworld) string {
@@ -837,6 +837,38 @@ func TestHeldNamesSeededSilent(t *testing.T) {
 		if len(rp.Plan.Units) != 6 || len(rp.Done) != 7 {
 			t.Fatalf("%s: guards %d, done %d", name, len(rp.Plan.Units), len(rp.Done))
 		}
+	}
+}
+
+func TestHeldRefusedCardInReviewIsNamedByItsRowAndOnceOnly(t *testing.T) {
+	t.Parallel()
+	// a primary in review that the machine refused to move, whose reads are also
+	// done without two oks, is named by the row that takes it first (refused), not
+	// by review's judgment: naming it "reads exhausted" would leave it stalled
+	// again once J had opened that, and the second run would name it a second time
+	w := newHWorld()
+	p := w.primary("p1", "s1", Review, 1, "attempt", "1", "result", "ok", "head", "h1", "refused", "R9: no")
+	w.read(p, "r1", OK, "head", "h1")
+	w.read(p, "r2", OK, "head", "h0")
+	first := w.viaRule(t, hkeys("p1")...)
+	if len(first.Notes) != 1 || first.Notes[0].Type != NStalled || first.Notes[0].Cause != "refused" {
+		t.Fatalf("the first run: %+v", first.Notes)
+	}
+	w.apply(first)
+	if second := w.viaRule(t, hkeys("p1")...); !writesNothing(second) {
+		t.Fatalf("the second run writes: %+v", second)
+	}
+	// the same for a card at its bound in review
+	w = newHWorld()
+	p = w.primary("p1", "s1", Review, 1, "attempt", "1", "result", "ok", "head", "h1", "bound", "attempts")
+	w.read(p, "r1", OK, "head", "h1")
+	first = w.viaRule(t, hkeys("p1")...)
+	if len(first.Notes) != 1 || first.Notes[0].Cause != "bound" {
+		t.Fatalf("at its bound: %+v", first.Notes)
+	}
+	w.apply(first)
+	if second := w.viaRule(t, hkeys("p1")...); !writesNothing(second) {
+		t.Fatalf("at its bound, the second run writes: %+v", second)
 	}
 }
 
@@ -1594,7 +1626,7 @@ func TestHeldReadsAreThoseOfTheAttempt(t *testing.T) {
 	// that has been reworked and not yet asked at its new attempt: R8 does
 	w := newHWorld()
 	p := w.primary("p1", "s1", Review, 1, "attempt", "1", "result", "ok", "head", "h1")
-	w.read(p, "r1", Asked, fieldDueUnbegun, strconv.FormatInt(hR+1000, 10))
+	w.read(p, "r1", Asked, heldDueUnbegun, strconv.FormatInt(hR+1000, 10))
 	p.Fields["attempt"], p.Fields["result"] = "2", "ok"
 	hd := w.holder("p1")
 	if hd.By != HeldByTick || !strings.HasPrefix(hd.Why, "R8, ") {
@@ -1728,7 +1760,7 @@ func TestHeldWorkAtAMemberThatIsHeldIsR2s(t *testing.T) {
 	for _, status := range []string{Down, Held} {
 		w := newHWorld()
 		p := w.primary("p1", "s1", Working, 1, "attempt", "1")
-		w.work(p, "m2", Working, fieldDueUnfinished, strconv.FormatInt(hR+1000, 10))
+		w.work(p, "m2", Working, heldDueUnfinished, strconv.FormatInt(hR+1000, 10))
 		w.s.Fleet.Card(CtlID("m2")).Fields["status"] = status
 		hd := w.holder("p1")
 		if hd.By != HeldByTick || !strings.HasPrefix(hd.Why, "R2, ") || !strings.Contains(hd.Why, "member m2 is "+status) {
@@ -1741,7 +1773,7 @@ func TestHeldWorkAtAMemberThatIsHeldIsR2s(t *testing.T) {
 	// at an up member, before its due, it is (a) and not R2
 	w := newHWorld()
 	p := w.primary("p1", "s1", Working, 1, "attempt", "1")
-	w.work(p, "m2", Working, fieldDueUnfinished, strconv.FormatInt(hR+1000, 10))
+	w.work(p, "m2", Working, heldDueUnfinished, strconv.FormatInt(hR+1000, 10))
 	if hd := w.holder("p1"); hd.By != HeldByActor {
 		t.Errorf("work at an up member: (%s) %s", hd.By, hd.Why)
 	}
@@ -1756,13 +1788,34 @@ func TestHeldMergeCardQueuedInAWaitingStreamIsHeld(t *testing.T) {
 		w.primary("p1", "s1", Merging, 1)
 		w.s.Merge.Put(&Card{ID: "p1", Row: "s1", Col: Queued, Rev: 1, Fields: hkv()})
 		w.ctl("s1").Fields["state"] = state
-		w.ctl("s1").Fields[fieldDueMergeIdle] = strconv.FormatInt(hR+1000, 10)
+		w.ctl("s1").Fields[heldDueMergeIdle] = strconv.FormatInt(hR+1000, 10)
 		hd := w.holder("p1")
 		if want != "" && (hd.By != want || !strings.HasPrefix(hd.Why, "queued in a stream merging or waiting")) {
 			t.Errorf("a merge card queued in a stream %s: (%s) %s", state, hd.By, hd.Why)
 		}
 		if want == "" && !hd.Stalled() {
 			t.Errorf("a merge card queued in a stream %s: (%s) %s", state, hd.By, hd.Why)
+		}
+	}
+}
+
+func TestHeldMergeIdleDeadlineIsR11sOnlyWhileTheStreamMergesOrWaits(t *testing.T) {
+	t.Parallel()
+	// R11 raises the merge-idle judgment for a stream merging, or waiting with
+	// queued cards; a stream stopped or with no deadline set is not its to name,
+	// and a card of it that nothing else holds is a stall
+	for state, want := range map[string]string{StreamMerging: HeldByTick, StreamWaiting: HeldByTick, StreamStopped: ""} {
+		w := newHWorld()
+		w.primary("p1", "s1", Merging, 1)
+		w.s.Merge.Put(&Card{ID: "p1", Row: "s1", Col: Queued, Rev: 1, Fields: hkv()})
+		w.ctl("s1").Fields["state"] = state
+		w.ctl("s1").Fields[heldDueMergeIdle] = strconv.FormatInt(hR-1, 10)
+		hd := w.holder("p1")
+		if want != "" && (hd.By != want || !strings.HasPrefix(hd.Why, "R11, its stream's merge-idle due has passed")) {
+			t.Errorf("a stream %s past its merge-idle deadline: (%s) %s", state, hd.By, hd.Why)
+		}
+		if want == "" && !hd.Stalled() {
+			t.Errorf("a stream %s past its merge-idle deadline: (%s) %s", state, hd.By, hd.Why)
 		}
 	}
 }
@@ -1780,25 +1833,25 @@ func TestHeldDeadlinesAreHeldByTheActorBeforeThemAndByR11AtThem(t *testing.T) {
 	for _, st := range []state{
 		{"work", func(w *hworld, due int64) {
 			p := w.primary("p1", "s1", Working, 1, "attempt", "1")
-			w.work(p, "m1", Working, fieldDueUnfinished, strconv.FormatInt(due, 10))
+			w.work(p, "m1", Working, heldDueUnfinished, strconv.FormatInt(due, 10))
 		}, "its live work card at an up member", "R11, its due has passed"},
 		{"work not taken", func(w *hworld, due int64) {
 			p := w.primary("p1", "s1", Working, 1, "attempt", "1")
-			w.work(p, "m1", Ready, fieldDueUntaken, strconv.FormatInt(due, 10))
+			w.work(p, "m1", Ready, heldDueUntaken, strconv.FormatInt(due, 10))
 		}, "its live work card at an up member", "R11, its due has passed"},
 		{"read asked", func(w *hworld, due int64) {
 			p := w.primary("p1", "s1", Review, 1, "attempt", "1", "result", "ok", "head", "h1")
-			w.read(p, "r1", Asked, fieldDueUnbegun, strconv.FormatInt(due, 10))
+			w.read(p, "r1", Asked, heldDueUnbegun, strconv.FormatInt(due, 10))
 		}, "a read outstanding before its due", "R11, a read's due has passed"},
 		{"read reading", func(w *hworld, due int64) {
 			p := w.primary("p1", "s1", Review, 1, "attempt", "1", "result", "ok", "head", "h1")
-			w.read(p, "r1", Reading, fieldDueUnreported, strconv.FormatInt(due, 10))
+			w.read(p, "r1", Reading, heldDueUnreported, strconv.FormatInt(due, 10))
 		}, "a read outstanding before its due", "R11, a read's due has passed"},
 		{"merge idle", func(w *hworld, due int64) {
 			w.primary("p1", "s1", Merging, 1)
 			w.s.Merge.Put(&Card{ID: "p1", Row: "s1", Col: Queued, Rev: 1, Fields: hkv()})
 			w.ctl("s1").Fields["state"] = StreamMerging
-			w.ctl("s1").Fields[fieldDueMergeIdle] = strconv.FormatInt(due, 10)
+			w.ctl("s1").Fields[heldDueMergeIdle] = strconv.FormatInt(due, 10)
 		}, "queued in a stream merging or waiting", "R11, its stream's merge-idle due has passed"},
 	} {
 		for _, c := range []struct {
@@ -1858,7 +1911,7 @@ func TestHeldADeadReadIsNamedByR11AndItsJudgment(t *testing.T) {
 	// a stream past its merge-idle deadline
 	w := newHWorld()
 	p := w.primary("p1", "s1", Review, 1, "attempt", "1", "result", "ok", "head", "h1")
-	r := w.read(p, "r1", Asked, fieldDueUnbegun, strconv.FormatInt(hR-1, 10))
+	r := w.read(p, "r1", Asked, heldDueUnbegun, strconv.FormatInt(hR-1, 10))
 	for _, when := range []string{"before R11", "after its judgment"} {
 		if when != "before R11" {
 			w.judge(r.ID, NReadLate)
@@ -1890,7 +1943,7 @@ func TestHeldADeadReadIsNamedByR11AndItsJudgment(t *testing.T) {
 	w.primary("p1", "s1", Merging, 1)
 	w.s.Merge.Put(&Card{ID: "p1", Row: "s1", Col: Queued, Rev: 1, Fields: hkv()})
 	w.ctl("s1").Fields["state"] = StreamMerging
-	w.ctl("s1").Fields[fieldDueMergeIdle] = strconv.FormatInt(hR-1, 10)
+	w.ctl("s1").Fields[heldDueMergeIdle] = strconv.FormatInt(hR-1, 10)
 	for _, when := range []string{"before R11", "after its judgment"} {
 		if when != "before R11" {
 			w.judge(StreamSubject("s1"), NMergeLate)
@@ -2142,7 +2195,7 @@ func randomHWorld(rng *rand.Rand) *hworld {
 		f := w.ctl(st).Fields
 		f["state"] = pick(StreamWaiting, StreamMerging, StreamStopped)
 		if rng.Intn(3) > 0 {
-			f[fieldDueMergeIdle] = strconv.FormatInt(hR+int64(rng.Intn(3)-1), 10)
+			f[heldDueMergeIdle] = strconv.FormatInt(hR+int64(rng.Intn(3)-1), 10)
 		}
 		f["cause"] = pick("cross", "conflict", "red")
 		f["need_card"] = "p" + strconv.Itoa(rng.Intn(40))
@@ -2191,9 +2244,9 @@ func randomHWorld(rng *rand.Rand) *hworld {
 			switch rng.Intn(4) {
 			case 0:
 			case 1:
-				w.work(p, pick("m1", "m2", "m3"), Ready, fieldDueUntaken, due())
+				w.work(p, pick("m1", "m2", "m3"), Ready, heldDueUntaken, due())
 			default:
-				w.work(p, pick("m1", "m2", "m3"), Working, fieldDueUnfinished, due())
+				w.work(p, pick("m1", "m2", "m3"), Working, heldDueUnfinished, due())
 			}
 		case Review:
 			p := w.primary(id, st, Review, next(), append(kv, "attempt", strconv.Itoa(1+rng.Intn(3)), "result", pick("ok", "ok", "failed", ""), "head", "h1")...)
@@ -2207,9 +2260,9 @@ func randomHWorld(rng *rand.Rand) *hworld {
 				switch rng.Intn(6) {
 				case 0:
 				case 1:
-					w.read(p, r, Asked, fieldDueUnbegun, due())
+					w.read(p, r, Asked, heldDueUnbegun, due())
 				case 2:
-					w.read(p, r, Reading, fieldDueUnreported, due())
+					w.read(p, r, Reading, heldDueUnreported, due())
 				case 3:
 					w.read(p, r, OK, "head", "h1")
 				case 4:
@@ -2365,6 +2418,33 @@ func TestHeldRegisteredRuleAgreesWithPlanHeldOnRandomSprints(t *testing.T) {
 	}
 }
 
+func TestHeldRegisteredRuleTwiceOnRandomSprintsSecondEmpty(t *testing.T) {
+	t.Parallel()
+	// (b) idempotence over 150 random sprints, through the registered rule read
+	// and answered as the tick reads it: the first run names what nothing holds,
+	// J opens what it asked, and the second run over the same keys and the state
+	// the first left writes nothing (it may still finish the keys)
+	named := 0
+	for seed := int64(1); seed <= 150; seed++ {
+		w := randomHWorld(rand.New(rand.NewSource(5000 + seed)))
+		var ids []string
+		for _, c := range w.s.Work.Cards {
+			ids = append(ids, c.ID)
+		}
+		sort.Strings(ids)
+		keys := hkeys(ids...)
+		first := w.viaRule(t, keys...)
+		named += len(first.Notes)
+		w.apply(first)
+		if second := w.viaRule(t, keys...); !writesNothing(second) {
+			t.Fatalf("seed %d: the second run writes: %+v (the first named %+v)", seed, second, first.Notes)
+		}
+	}
+	if named == 0 {
+		t.Fatal("no random sprint had a stall: the second run proves nothing")
+	}
+}
+
 // BenchmarkHeld2000 is 2,000 cards judged in one plan, the held rule's chunk (its
 // limit is 15 ms of store time for the read, measured by IT25; this is the Go
 // time of the plan over it, held to the same 15 ms): cards of every place, most
@@ -2395,7 +2475,7 @@ func benchHeld(b *testing.B, n int) {
 			w.primary(id, st, Ready, score, "attempt", "1")
 		case 3:
 			p := w.primary(id, st, Working, score, "attempt", "1")
-			w.work(p, "m1", Working, fieldDueUnfinished, strconv.FormatInt(hR+1000, 10))
+			w.work(p, "m1", Working, heldDueUnfinished, strconv.FormatInt(hR+1000, 10))
 		case 4:
 			p := w.primary(id, st, Review, score, "attempt", "1", "result", "ok", "head", "h1")
 			w.read(p, "r1", OK, "head", "h1")
@@ -2408,7 +2488,7 @@ func benchHeld(b *testing.B, n int) {
 	}
 	for _, st := range streams {
 		w.ctl(st).Fields["state"] = StreamMerging
-		w.ctl(st).Fields[fieldDueMergeIdle] = strconv.FormatInt(hR+1000, 10)
+		w.ctl(st).Fields[heldDueMergeIdle] = strconv.FormatInt(hR+1000, 10)
 	}
 	keys := hkeys(ids...)
 	b.ReportAllocs()

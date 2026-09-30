@@ -96,13 +96,15 @@ const (
 	heldMaxAttempts = 3
 )
 
-// The columns R16 reads off a card's fields, by the fields' names (1.3.1).
+// The columns R16 reads off a card's fields, by the fields' names (1.3.1): the
+// holder's own names for them, since the rules that write them (R11, IT10) name
+// them too, and each rule copies what it reads until they export it.
 const (
-	fieldDueUntaken    = "due_untaken"
-	fieldDueUnfinished = "due_unfinished"
-	fieldDueUnbegun    = "due_unbegun"
-	fieldDueUnreported = "due_unreported"
-	fieldDueMergeIdle  = "due_mergeidle"
+	heldDueUntaken    = "due_untaken"
+	heldDueUnfinished = "due_unfinished"
+	heldDueUnbegun    = "due_unbegun"
+	heldDueUnreported = "due_unreported"
+	heldDueMergeIdle  = "due_mergeidle"
 )
 
 // crossStop is the cause of a stream stopped on a card of another stream.
@@ -645,9 +647,9 @@ func (v *holdView) workCard(p *Card) *Card {
 // (1.2). false when the card has none.
 func workDue(wc *Card) (int64, bool) {
 	if wc.Col == Working {
-		return dueOf(wc, fieldDueUnfinished)
+		return dueOf(wc, heldDueUnfinished)
 	}
-	return dueOf(wc, fieldDueUntaken)
+	return dueOf(wc, heldDueUntaken)
 }
 
 // dueOf is a due field of a card, in running ms; false when it is not set.
@@ -910,11 +912,11 @@ func workJudged(v *holdView, c *Card) string {
 // and not reported (1.2), in running ms; false when it is in another cell, has
 // none, or does not agree with its own identity.
 func readDue(r *Card) (int64, bool) {
-	field := fieldDueUnbegun
+	field := heldDueUnbegun
 	switch r.Col {
 	case Asked:
 	case Reading:
-		field = fieldDueUnreported
+		field = heldDueUnreported
 	default:
 		return 0, false
 	}
@@ -1016,7 +1018,7 @@ func mergeQueued(v *holdView, c *Card) string {
 	if state != StreamMerging && state != StreamWaiting {
 		return ""
 	}
-	if due, ok := dueOf(ctl, fieldDueMergeIdle); ok && v.now.R < due {
+	if due, ok := dueOf(ctl, heldDueMergeIdle); ok && v.now.R < due {
 		return fmt.Sprintf("queued in stream %s (%s) until R %d", c.Row, state, due)
 	}
 	return ""
@@ -1033,7 +1035,7 @@ func mergeIdlePassed(v *holdView, c *Card) string {
 	if state != StreamMerging && state != StreamWaiting {
 		return ""
 	}
-	if due, ok := dueOf(ctl, fieldDueMergeIdle); ok && v.now.R >= due {
+	if due, ok := dueOf(ctl, heldDueMergeIdle); ok && v.now.R >= due {
 		return fmt.Sprintf("stream %s (%s) had no merge step by R %d", c.Row, state, due)
 	}
 	return ""

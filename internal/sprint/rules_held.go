@@ -61,7 +61,7 @@ const typeVerbStopped = "a verb in parts stopped before its end"
 var heldFields = []string{
 	"kind", "open", "refused", "bound", "attempt", "needs", "waived", "result", "head", "ci", "ci_head",
 	"work", "rcards", "primary", "reader", "gen", "state", "cause", "need_card", "other", "outcome",
-	fieldDueUntaken, fieldDueUnfinished, fieldDueUnbegun, fieldDueUnreported, fieldDueMergeIdle,
+	heldDueUntaken, heldDueUnfinished, heldDueUnbegun, heldDueUnreported, heldDueMergeIdle,
 }
 
 // heldFleetFields are the fields of the members' control cards R16 reads.
@@ -346,14 +346,16 @@ func planHeld(s *Snapshot, f HeldFacts, keys []AgendaKey, now Now) RulePlan {
 	return rp
 }
 
-// stallOf is the judgment a stalled card gets: for a card in review, the one
-// reviewJudgment says when it says one of the two it keeps; otherwise "stalled"
+// stallOf is the judgment a stalled card gets: for a card the review row found
+// nothing to hold, the one reviewJudgment says when it says one of the two it
+// keeps; otherwise (and for a card in review that an earlier row names: refused,
+// at its bound, quarantined, of a stream being dropped) "stalled"
 // with the words and decisions of the row that found nothing to hold it. The
 // second result is the member a working card's work card sits at, for the
 // decision the note offers about it.
 func stallOf(v *holdView, vd verdict) (*stallGroup, string) {
 	p := v.s.Work.Card(vd.ID)
-	if p.Col == Review {
+	if vd.row.Name == "review" { // a card refused, at its bound or quarantined in review is named by that row
 		if typ, ok := v.reviewStallType(p); ok {
 			if rs, ok := reviewStalls[typ]; ok {
 				decisions := slices.Clone(rs.Decisions)
