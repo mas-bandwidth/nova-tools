@@ -6,7 +6,6 @@ bases:
       - build
       - vet
       - test
-      - test-race-queue
       - vet-windows
     land_bar: 10
     readers: 0

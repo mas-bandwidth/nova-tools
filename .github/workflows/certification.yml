@@ -105,8 +105,8 @@ jobs:
   test:
     # THE WHOLE-TREE RACE RUN, on a clean GitHub-hosted image, linux/amd64 and darwin/arm64:
     # every live package under `go test -race`, full (no -short), and the one place either of
-    # those runs. ci.yml's CL tier runs the same tests without -race (test-race-queue races
-    # internal/redisq only), and its hosted legs run -short.
+    # those runs. ci.yml's CL tier runs the same tests without -race, and its hosted legs run
+    # -short.
     #
     # SHARDED BY PACKAGE (2026-09-27). Unsharded, this job ran `go build ./...`, `go vet ./...`
     # and `go test -race ./...` on one runner under the two-minute cap and was cancelled by the
@@ -123,11 +123,11 @@ jobs:
     #
     # THE HEAVY LIST is measured, not named: the per-package times this job's own legs report
     # (`ok <pkg> <seconds>`), the larger of ubuntu-latest and macos-latest, in the cold run
-    # 36375296705 at 3314df055 plus this change: internal/ci 49.3 s, internal/gh 47.3,
-    # cmd/nova-tokens 46.4, cmd/nova-sandbox 34.2, cmd/nova-self-talk 21.3, internal/update 19.1,
-    # cmd/nova-secrets 16.7, internal/bus 16.6, every other live package under 13 (cmd/nova-bus
-    # 1.2). Eight heavy packages, eight shards: each heavy package has a shard of its own and
-    # the rest are about twelve packages a shard.
+    # 36375296705 at 3314df055 plus this change: internal/ci 49.3 s, cmd/nova-tokens 46.4,
+    # cmd/nova-sandbox 34.2, cmd/nova-self-talk 21.3, internal/update 19.1, cmd/nova-secrets 16.7,
+    # internal/bus 16.6, every other live package under 13 (cmd/nova-bus 1.2). Seven heavy
+    # packages, eight shards: each heavy package has a shard of its own and the rest are about
+    # twelve packages a shard.
     #
     # BUILD AND VET ARE NOT HERE ANY MORE. They are ci.yml's: its lint job runs `make build` and
     # `make vet` on every event (Linux), and its test-hosted legs run `make build` and
@@ -224,7 +224,7 @@ jobs:
         # TestCertificationRaceShardsPartitionTheLiveTree (certRaceHeavy).
         shell: bash
         run: |
-          heavy="internal/ci internal/gh cmd/nova-tokens cmd/nova-sandbox cmd/nova-self-talk internal/update cmd/nova-secrets internal/bus"
+          heavy="internal/ci cmd/nova-tokens cmd/nova-sandbox cmd/nova-self-talk internal/update cmd/nova-secrets internal/bus"
           deal='
             BEGIN { h = split(heavy, hv, " ") }
             {

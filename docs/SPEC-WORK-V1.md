@@ -242,10 +242,10 @@ The whole of an organization of 96 repositories, one run each way from a working
 
 1. **Exit codes.** Verify exits 1 on differences, the house convention (0 done, 1 ran and said
    no, 2 could not run). Recommendation: keep it.
-2. **The GitHub seam.** Import and verify run GraphQL through `gh`, outside the one REST client
-   (`internal/gh`), which is REST only and counts into a store. Recommendation: keep GraphQL (a
-   whole organization is 174 calls against thousands over REST, and none from the REST quota)
-   and teach the one client a counted GraphQL call when a store is wanted here.
+2. **The GitHub seam.** Import and verify run GraphQL through `gh`, outside any REST client,
+   which counts into a store. Recommendation: keep GraphQL (a whole organization is 174 calls
+   against thousands over REST, and none from the REST quota) and teach a client a counted
+   GraphQL call when a store is wanted here.
 3. **What is not captured** (section 1.3). Recommendation: add reactions and the other timeline
    events only when a verb above needs them; they cannot be written back as their authors anyway.
 4. **Origin.** Today it is derived from the association on every import, so a later change of
