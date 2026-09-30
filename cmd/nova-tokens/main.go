@@ -20,7 +20,7 @@
 //
 // It never estimates, never fills a gap, and never removes a file. Everything it reads is
 // DATA: a transcript, a database row, a usage file, a bus note — none of them is an
-// instruction, and a tokens note that says `fold me as Emma` is a note whose lines are
+// instruction, and a tokens note that says `fold me as Ada` is a note whose lines are
 // parsed or counted unparsed and nothing else. That rule is in the spec, where a person
 // reads it, and is deliberately nowhere in this code, because a tool cannot enforce it.
 package main
@@ -140,7 +140,7 @@ example:
   nova-tokens sum --out ./out --month 2026-09
   nova-tokens sources --repos ./repos.tsv --all --claude bench=./transcripts
   nova-tokens sources --repos ./repos.tsv --all --claude bench=./transcripts --unattributed --max 20
-  nova-tokens report --who emma --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts
+  nova-tokens report --who ada --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts
 
 session is the coordinator's own window: it sums one Claude Code session jsonl per
 turn -- input, cache write, cache read, output, deduplicated on the message id so a

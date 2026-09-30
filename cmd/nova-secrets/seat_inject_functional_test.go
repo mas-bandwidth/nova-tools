@@ -140,12 +140,12 @@ func TestSeatInjectRefusesASeatWithNoFile(t *testing.T) {
 	td := t.TempDir()
 	s := newInjectStore(t, td, sopsPath)
 	_, errOut, code := runNovaSecrets(bin, "seat", "inject",
-		"--store", s.storeDir, "--as", "mini", "--from", "ada", "--only", "NOVA_REDIS_BENCH_PASSWORD",
+		"--store", s.storeDir, "--as", "bench-a", "--from", "ada", "--only", "NOVA_REDIS_BENCH_PASSWORD",
 		"--key", s.ada.privPath, "--sops", sopsPath, "--no-pr")
 	if code != 2 {
 		t.Fatalf("seat inject exited %d, want 2: %s", code, errOut)
 	}
-	if !strings.HasPrefix(errOut, "SECRETS SEAT INJECT FAIL ") || !strings.Contains(errOut, "mini.yaml") || !strings.Contains(errOut, "nova-secrets seat add") {
+	if !strings.HasPrefix(errOut, "SECRETS SEAT INJECT FAIL ") || !strings.Contains(errOut, "bench-a.yaml") || !strings.Contains(errOut, "nova-secrets seat add") {
 		t.Errorf("the refusal does not name the file and the seat add remedy: %s", errOut)
 	}
 	if st := strings.TrimSpace(runCmd(t, s.storeDir, "git", "status", "--porcelain")); st != "" {

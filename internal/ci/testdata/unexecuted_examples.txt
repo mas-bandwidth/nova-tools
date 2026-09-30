@@ -73,7 +73,6 @@ example: nova-memory search --root ./corpus --channels bm25 --k 3 lantern glazin
 example: nova-sandbox run --name card1 --size 8g --timeout 30m --go --out ./handoff \
 example: nova-tokens check --out ./out
 example: nova-tokens fold --out ./out --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts --bus ./bus
-example: nova-tokens report --who emma --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts
 example: nova-tokens sources --repos ./repos.tsv --all --claude bench=./transcripts
 example: nova-tokens sources --repos ./repos.tsv --all --claude bench=./transcripts --unattributed --max 20
 example: nova-tokens sum --out ./out --month 2026-09

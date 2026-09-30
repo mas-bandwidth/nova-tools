@@ -17,7 +17,6 @@
 # - A count lower than the allowed count requires shrinking the allowlist entry.
 #
 # ceiling: 294
-cmd/nova-bus/main.go:freddy 3
 cmd/nova-bus/main.go:glenn 2
 cmd/nova-bus/main.go:johnny 3
 cmd/nova-bus/main.go:space 10
@@ -53,7 +52,6 @@ cmd/nova-secrets/main.go:rowan 1
 cmd/nova-table/main.go:space 1
 cmd/nova-table/order.go:glenn 1
 cmd/nova-table/watch.go:glenn 3
-cmd/nova-tokens/main.go:emma 2
 cmd/nova-tokens/version.go:space 1
 internal/bus/address.go:space 2
 internal/bus/bus.go:space 1

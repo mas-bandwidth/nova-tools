@@ -69,3 +69,4 @@ cmd/nova-secrets/examples_test.go:TestTheHelpExamplesAreWhatTheSeatsVerbsPrint e
 cmd/nova-secrets/examples_test.go:TestTheHelpExamplesAreWhatTheSeatsVerbsPrint example: nova-secrets place --store ./secrets --as ada --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops --machine bench-a --secret DEEPSEEK_API_KEY --machines ./fleet.tsv
 cmd/nova-secrets/examples_test.go:TestTheHelpExamplesAreWhatTheSeatsVerbsPrint example: nova-secrets placed --machine bench-a
 cmd/nova-secrets/examples_test.go:TestTheHelpExamplesAreWhatTheSeatsVerbsPrint example: nova-secrets seat add --store ./secrets --as bo --pub $BO_PUB --from ada --only GH_TOKEN,DEEPSEEK_API_KEY --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops
+cmd/nova-tokens/report_example_test.go:TestTheHelpReportExampleIsWhatItPrints example: nova-tokens report --who ada --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts
