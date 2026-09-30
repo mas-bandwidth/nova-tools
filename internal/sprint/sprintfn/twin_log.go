@@ -49,6 +49,16 @@ func (l *MemLog) Read(prefix string, plan tset.ReadPlan) (tset.ReadReply, *Refus
 	return rep, nil
 }
 
+// LineAt is L.read_line_at: the stored line at exactly seq, a canonical
+// decimal string; REQUEST for any other seq, LOGID for a seq with no line.
+func (l *MemLog) LineAt(prefix string, epoch tset.Decimal, seq string) (tset.LogLine, *Refusal) {
+	line, ref := l.m.LineAt(prefix, epoch, seq)
+	if ref != nil {
+		return tset.LogLine{}, fromTset(PhaseOpen, ref)
+	}
+	return line, nil
+}
+
 // Stored is a copy of an epoch's stored lines.
 func (l *MemLog) Stored(prefix string, epoch tset.Decimal) []tset.LogLine {
 	return l.m.Stored(prefix, epoch)

@@ -257,7 +257,9 @@ type CardCursor struct {
 // ReadQuery covers the L1 table queries and the L2 log queries. Fields nil
 // means omitted; an allocated empty slice means an explicit empty projection.
 // Names is the props query's optional property list with the same rule
-// (L1 contract amendment 2026-09-30, property, section 3).
+// (L1 contract amendment 2026-09-30, property, section 3). BytesLimit is a
+// lines query's optional bound on its answer's encoded bytes, envelope
+// included, at most the 8 MiB reply (L1 7; decision 6); 0 means omitted.
 type ReadQuery struct {
 	Kind        string
 	Table       string
@@ -275,6 +277,7 @@ type ReadQuery struct {
 	AfterSeq    Decimal
 	ThroughSeq  *Decimal
 	IDsLimit    int
+	BytesLimit  int
 	Abouts      []string
 	Cursor      *CardCursor
 	IncludeMeta bool

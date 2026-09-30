@@ -56,20 +56,80 @@ type LogLinesInput struct {
 	Notes        []Note
 }
 
+// CheckLogStep is the composed profile's static rules on a step, as
+// table_set_log.lua's L.check_step, which Layer 1's validator runs on the
+// original request and on the combined staged request, so they refuse
+// REQUEST before any guard (L1 8's fixed precedence): every member-changing
+// entry carries about (L2 1.2), and no meta, an entry's or a note's, holds a
+// JSON number, since a body d holds none (L2 1.1). A composing caller runs it
+// before Mem.Plan.
+func CheckLogStep(entries []Entry, notes []Note) *Refusal {
+	for ix, e := range entries {
+		switch e.Kind {
+		case "create", "move", "remove":
+			if e.About == nil || metaHasNumber(e.Meta) {
+				return NewRefusal("REQUEST", RefusalDetail{EntryIndex: memIndex(ix), Table: e.Table})
+			}
+		}
+	}
+	for _, n := range notes {
+		if metaHasNumber(n.Line.Meta) {
+			return NewRefusal("REQUEST", RefusalDetail{})
+		}
+	}
+	return nil
+}
+
+// metaHasNumber says a meta value holds a JSON number anywhere; meta that
+// does not decode is Layer 1's REQUEST, not this rule's.
+func metaHasNumber(raw json.RawMessage) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var v any
+	if dec.Decode(&v) != nil {
+		return false
+	}
+	var walk func(any) bool
+	walk = func(v any) bool {
+		switch x := v.(type) {
+		case json.Number:
+			return true
+		case []any:
+			for _, item := range x {
+				if walk(item) {
+					return true
+				}
+			}
+		case map[string]any:
+			for _, item := range x {
+				if walk(item) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	return walk(v)
+}
+
 // LogLines builds a step's lines as table_set_log.lua's L.plan does, before
 // any seq is known: one per emitting entry in entry order (a create, move or
 // remove with an effective id, a rows entry that added or deleted a row, an
 // advance), then one per note. Guards, counts, rowsets and no-ops emit none.
-// A member entry without about is REQUEST, a line over 2,000 ids or 1 MiB is
-// LIMIT, and nothing is split or dropped (L2 1.2).
+// A line over 2,000 ids or 1 MiB is LIMIT, and nothing is split or dropped
+// (L2 1.2). CheckLogStep's rules are the caller's, before the guards; LogLines
+// holds them again so no line is built from a request they refuse.
 func LogLines(in LogLinesInput) ([]PlannedLine, *Refusal) {
+	if ref := CheckLogStep(in.Request, in.Notes); ref != nil {
+		return nil, ref
+	}
 	var lines []PlannedLine
 	for ix, e := range in.Entries {
 		switch e.Entry.Kind {
 		case "create", "move", "remove":
-			if ix >= len(in.Request) || len(in.Request[ix].About) == 0 {
-				return nil, NewRefusal("REQUEST", RefusalDetail{EntryIndex: memIndex(ix), Table: e.Entry.Table})
-			}
 			if len(e.Entry.IDs) == 0 {
 				continue
 			}
@@ -380,9 +440,9 @@ func cjsonObject(m map[string]string) string {
 }
 
 // encodeMeta is caller meta as the log stores it: decoded, then written back
-// with object keys in byte order, arrays in order, and numbers in cjson's
-// fourteen-digit form (the meta exemption, L2 1.1). ok is false when the meta
-// is absent, null or empty, which the line omits.
+// with object keys in byte order and arrays in order; it holds no number
+// (L2 1.1). ok is false when the meta is absent, null or empty, which the
+// line omits.
 func encodeMeta(raw json.RawMessage) (string, bool, error) {
 	if len(bytes.TrimSpace(raw)) == 0 {
 		return "", false, nil
@@ -421,11 +481,8 @@ func encodeMetaValue(v any) (string, error) {
 	case string:
 		return cjsonString(x), nil
 	case json.Number:
-		f, err := strconv.ParseFloat(string(x), 64)
-		if err != nil {
-			return "", err
-		}
-		return cjsonNumber(f), nil
+		// A body d holds no JSON number (L2 1.1); CheckLogStep refuses one.
+		return "", fmt.Errorf("a number in meta: %s", x)
 	case []any:
 		out := make([]string, len(x))
 		for i, e := range x {
@@ -453,9 +510,4 @@ func encodeMetaValue(v any) (string, error) {
 		return "{" + strings.Join(out, ",") + "}", nil
 	}
 	return "", fmt.Errorf("meta value of type %T", v)
-}
-
-// cjsonNumber is a number in cjson's %.14g form.
-func cjsonNumber(f float64) string {
-	return strconv.FormatFloat(f, 'g', 14, 64)
 }

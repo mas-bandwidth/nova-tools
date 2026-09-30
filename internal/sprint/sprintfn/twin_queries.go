@@ -31,6 +31,7 @@ import (
 const (
 	codeBudget      = "BUDGET"      // a read past a bound of L1 6 or 7: no answer, never a partial one
 	codeDrift       = "DRIFT"       // a record, a cell or a key that does not agree with what names it
+	codeLogID       = "LOGID"       // a seq that names no line of the log (L2 decision 12)
 	codeMissing     = "MISSING"     // an id taken from an index has no record
 	codeMemberEpoch = "MEMBEREPOCH" // an id taken from an index has a record of another epoch
 )
@@ -460,25 +461,16 @@ type lineBody struct {
 }
 
 // lineAt is L.read_line_at: the line at exactly seq, from the log twin. A seq
-// the log does not have is DRIFT, since a key names a line that was ingested.
+// the log does not have, past its tail, is LOGID with the budget log_line, as
+// the store answers (table_set_log.lua's fetch_line; decision 12: LOGID when
+// a history seq has no line).
 func (e *qeval) lineAt(seq uint64) (lineBody, *Refusal) {
 	e.c.Lines++
-	s := tset.Decimal(strconv.FormatUint(seq, 10))
-	q := tset.ReadQuery{Kind: "lines", AfterSeq: tset.Decimal(strconv.FormatUint(seq-1, 10)), ThroughSeq: &s, Limit: 1}
-	rep, ref := e.t.log.Read(e.t.prefix, newTSetReadPlan(e.t.prefix, e.epoch, "atomic", []tset.ReadQuery{q}))
-	if ref != nil && ref.Code == "CURSOR" {
-		// Past the log's tail: the line is not there.
-		return lineBody{}, e.fail(codeDrift, tset.RefusalDetail{})
-	}
+	item, ref := e.t.log.LineAt(e.t.prefix, e.epoch, strconv.FormatUint(seq, 10))
 	if ref != nil {
-		return lineBody{}, ref
-	}
-	if len(rep.Answers) != 1 || len(rep.Answers[0].Lines) != 1 {
-		return lineBody{}, e.fail(codeDrift, tset.RefusalDetail{})
-	}
-	var item tset.LogLine
-	if json.Unmarshal(rep.Answers[0].Lines[0], &item) != nil || item.Seq != s {
-		return lineBody{}, e.fail(codeDrift, tset.RefusalDetail{})
+		d := ref.Detail.RefusalDetail
+		d.QueryIndex = nil // the query's own index is set where it is answered
+		return lineBody{}, e.fail(ref.Code, d)
 	}
 	body, err := tset.ParseLogBody(item.D)
 	if err != nil {
