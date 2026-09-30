@@ -898,6 +898,44 @@ do
   end
   local function list_ok(t) return t == nil or type(t) == 'table' end
 
+  -- The time rules' writes (sprintfn checkTime): at most SPRINT_KEYS_MAX due
+  -- entries, each named once, a stored name, at an exact time; at most
+  -- MEMBERS_MAX claims, a person each once, at an exact R, and a step with a
+  -- lease generation; a clock write that sets something, each field "" or an
+  -- exact time. A due entry named behind beside a tick end is REQUEST.
+  local function check_time(tm, tick_end, gen)
+    if tm == nil then return nil end
+    if type(tm) ~= 'table' or not list_ok(tm.due) or not list_ok(tm.goals) or
+        (tm.clock ~= nil and type(tm.clock) ~= 'table') then return request_refusal() end
+    local due, goals = tm.due or {}, tm.goals or {}
+    if #due > SPRINT_KEYS_MAX or #goals > MEMBERS_MAX or (#due + #goals == 0 and tm.clock == nil) then
+      return request_refusal()
+    end
+    local seen = {}
+    for _, d in ipairs(due) do
+      if type(d) ~= 'table' or not valid_text(d.key) or seen[d.key] or canonical_int(d.at) == nil or
+          (tick_end and d.key == 'behind') then
+        return request_refusal()
+      end
+      seen[d.key] = true
+    end
+    local people = {}
+    for _, g in ipairs(goals) do
+      if type(g) ~= 'table' or not valid_id(g.person) or people[g.person] or canonical_int(g.r) == nil or gen == 0 then
+        return request_refusal()
+      end
+      people[g.person] = true
+    end
+    local c = tm.clock
+    if c ~= nil then
+      if c.due_since_ms == nil and c.stopraised_ms == nil then return request_refusal() end
+      for _, v in ipairs({c.due_since_ms or '', c.stopraised_ms or ''}) do
+        if v ~= '' and canonical_int(v) == nil then return request_refusal() end
+      end
+    end
+    return nil
+  end
+
   SP.part('sprint', {
     -- pre decides every write of the part on the state the pre stage read, and
     -- builds the commands: the counter guarded by the values the plan read
@@ -915,7 +953,7 @@ do
       local p = sp.sprint
       if type(p) ~= 'table' or not map_ok(p.goals) or not map_ok(p.dropping) or not map_ok(p.undrop) or
           not list_ok(p.park) or not list_ok(p.unpark) or not list_ok(p.quarantine) or
-          (p.tickend ~= nil and type(p.tickend) ~= 'table') then
+          (p.tickend ~= nil and type(p.tickend) ~= 'table') or (p.time ~= nil and type(p.time) ~= 'table') then
         return nil, request_refusal()
       end
       if not empty(p.goals) or (p.sweep ~= nil and p.sweep ~= '') then return nil, request_refusal() end
@@ -941,6 +979,17 @@ do
       if coordinator == '' then coordinator = nil end
       local te = p.tickend
       if te ~= nil and not S.uint(te.backlog) then return nil, request_refusal() end
+      local tm = p.time
+      local gen = canonical_int((sp.meta and sp.meta.gen) or '0') or 0
+      err = check_time(tm, te ~= nil, gen)
+      if err then return nil, err end
+      local tm_due, tm_goals = {}, {}
+      if tm ~= nil then
+        for _, d in ipairs(tm.due or {}) do tm_due[#tm_due + 1] = d end
+        table.sort(tm_due, function(x, y) return x.key < y.key end)
+        for _, g in ipairs(tm.goals or {}) do tm_goals[#tm_goals + 1] = g end
+        table.sort(tm_goals, function(x, y) return x.person < y.person end)
+      end
 
       local next_key, dropping_key, parked_key, agenda = ekey(ctx, 'next'), ekey(ctx, 'dropping'), ekey(ctx, 'parked'), ekey(ctx, 'agenda')
       local quarantine_key, coordinator_key = ekey(ctx, 'quarantine'), skey(ctx, 'coordinator')
@@ -960,6 +1009,11 @@ do
       if te ~= nil then
         guards[#guards + 1] = {tick, 'hash'}
         guards[#guards + 1] = {due, 'zset'}
+      end
+      if tm ~= nil then
+        if #tm_due ~= 0 then guards[#guards + 1] = {due, 'zset'} end
+        for _, g in ipairs(tm_goals) do guards[#guards + 1] = {skey(ctx, 'goal:' .. g.person), 'hash'} end
+        if tm.clock ~= nil then guards[#guards + 1] = {skey(ctx, 'clock'), 'hash'} end
       end
       err = guard(ctx, guards)
       if err then return nil, err end
@@ -1102,6 +1156,50 @@ do
         if cur ~= coordinator then -- the same coordinator is not written again
           plan.coordinator = coordinator
           err = emit(ctx, out, 'SET', coordinator_key, 'string', {coordinator})
+          if err then return nil, err end
+        end
+      end
+
+      if tm ~= nil then
+        -- the time rules' writes (2.3 R14, R17, R18): each due entry moved to
+        -- its time unless it is there already, each claim written, the clock's
+        -- fields that differ; the owed work (the due entries) first
+        if #tm_due ~= 0 then
+          local names = {}
+          for i, d in ipairs(tm_due) do names[i] = d.key end
+          local cur
+          cur, err = zmscore(ctx, due, names)
+          if err then return nil, err end
+          local put, moved = {}, {}
+          for _, d in ipairs(tm_due) do
+            if cur[d.key] == nil or tonumber(cur[d.key]) ~= tonumber(d.at) then
+              put[#put + 1] = d.at; put[#put + 1] = d.key
+              moved[#moved + 1] = d.key
+            end
+          end
+          if #moved ~= 0 then plan.due = moved end
+          err = zadd(ctx, out, due, put)
+          if err then return nil, err end
+        end
+        local claimed = {}
+        for _, g in ipairs(tm_goals) do
+          err = hset(ctx, out, skey(ctx, 'goal:' .. g.person), {'claimed_gen', dec(gen), 'claimed_r', g.r})
+          if err then return nil, err end
+          claimed[#claimed + 1] = g.person
+        end
+        if #claimed ~= 0 then plan.claimed = claimed end
+        local c = tm.clock
+        if c ~= nil then
+          local rec
+          rec, err = read_clock(ctx)
+          if err then return nil, err end
+          local function blank(n) if n == 0 then return '' end return dec(n) end
+          local set = {}
+          for _, f in ipairs({{'due_since_ms', c.due_since_ms}, {'stopraised_ms', c.stopraised_ms}}) do
+            if f[2] ~= nil and f[2] ~= blank(rec[f[1]]) then set[#set + 1] = f[1]; set[#set + 1] = f[2] end
+          end
+          if #set ~= 0 then plan.clock = true end
+          err = hset(ctx, out, skey(ctx, 'clock'), set)
           if err then return nil, err end
         end
       end
