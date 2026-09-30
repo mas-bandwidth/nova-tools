@@ -23,9 +23,9 @@ A worker is attributed as a task worker; its coordinator or parent friend is a
 separate relationship, not a fabricated friend identity. A direct provider one-shot adapter
 is an acceptance case for the generic one-shot path, not a provider-specific
 exception. A local worker launched through a swarm follows both rows without creating
-two spend events. `nova-local` may remain an engine/configuration tool: it must
-emit the billing classification and usage-source configuration needed by the actual
-runner, rather than inventing inference tokens for `status` or `worker` commands.
+two spend events. An engine/configuration tool must emit the billing
+classification and usage-source configuration needed by the actual runner,
+rather than inventing inference tokens for configuration or status commands.
 
 New integrations use the reviewed retained-observation schema and mapping API.
 Do not invent another TSV, discard native event identity into a day total, or
