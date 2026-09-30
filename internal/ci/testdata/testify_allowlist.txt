@@ -24,7 +24,7 @@ cmd/nova-fuse:env 3 t.Setenv and Chdir sites to inject through config
 cmd/nova-memory:assert 249 bare assertions to convert to testify
 cmd/nova-memory:env 2 t.Setenv and Chdir sites to inject through config
 cmd/nova-redis:assert 144 bare assertions to convert to testify
-cmd/nova-sandbox:assert 771 bare assertions to convert to testify
+cmd/nova-sandbox:assert 773 bare assertions to convert to testify
 cmd/nova-secrets:assert 411 bare assertions to convert to testify
 cmd/nova-self-talk:assert 143 bare assertions to convert to testify
 cmd/nova-self-talk:env 1 t.Setenv and Chdir sites to inject through config
@@ -42,13 +42,13 @@ cmd/nova-work:assert 32 bare assertions to convert to testify
 internal/atomicfile:assert 164 bare assertions to convert to testify
 internal/bounded:assert 41 bare assertions to convert to testify
 internal/buildinfo:assert 41 bare assertions to convert to testify
-internal/bus:assert 1195 bare assertions to convert to testify
+internal/bus:assert 1197 bare assertions to convert to testify
 internal/bus:env 1 t.Setenv and Chdir sites to inject through config
 internal/cairn:assert 79 bare assertions to convert to testify
 internal/cardhdr:assert 46 bare assertions to convert to testify
 internal/check:assert 452 bare assertions to convert to testify
 internal/check:env 1 t.Setenv and Chdir sites to inject through config
-internal/ci:assert 1299 bare assertions to convert to testify
+internal/ci:assert 1303 bare assertions to convert to testify
 internal/ci/allowlist:assert 38 bare assertions to convert to testify
 internal/ci/functional:assert 9 bare assertions to convert to testify
 internal/ci/slowtests:assert 37 bare assertions to convert to testify
@@ -62,6 +62,7 @@ internal/dogfood:assert 223 bare assertions to convert to testify
 internal/fleet:assert 163 bare assertions to convert to testify
 internal/fuse:assert 103 bare assertions to convert to testify
 internal/ghevent:assert 45 bare assertions to convert to testify
+internal/gitrun:assert 16 bare assertions to convert to testify
 internal/goenv:assert 7 bare assertions to convert to testify
 internal/hostload:assert 25 bare assertions to convert to testify
 internal/hygiene:assert 90 bare assertions to convert to testify
@@ -76,7 +77,7 @@ internal/nsprint/store:env 9 t.Setenv and Chdir sites to inject through config
 internal/nsprint/testutil:assert 18 bare assertions to convert to testify
 internal/nsprint/testutil/pg:assert 10 bare assertions to convert to testify
 internal/nsprint/verbflag:assert 30 bare assertions to convert to testify
-internal/ntable:assert 357 bare assertions to convert to testify
+internal/ntable:assert 358 bare assertions to convert to testify
 internal/onboarding:assert 160 bare assertions to convert to testify
 internal/oneline:assert 24 bare assertions to convert to testify
 internal/oneline/audit:assert 1 bare assertions to convert to testify
@@ -90,7 +91,7 @@ internal/safepath:assert 65 bare assertions to convert to testify
 internal/sandbox:assert 220 bare assertions to convert to testify
 internal/scaffold:assert 23 bare assertions to convert to testify
 internal/seatcred:assert 47 bare assertions to convert to testify
-internal/secrets:assert 389 bare assertions to convert to testify
+internal/secrets:assert 401 bare assertions to convert to testify
 internal/secrets:env 2 t.Setenv and Chdir sites to inject through config
 internal/selftalk:assert 48 bare assertions to convert to testify
 internal/sprint:assert 2353 bare assertions to convert to testify
@@ -99,6 +100,7 @@ internal/sprint/refmodel:assert 115 bare assertions to convert to testify
 internal/sprint/sprintfn:assert 1320 bare assertions to convert to testify
 internal/sprint/stepbuild:assert 375 bare assertions to convert to testify
 internal/sprint/store:assert 1237 bare assertions to convert to testify
+internal/subproc:assert 30 bare assertions to convert to testify
 internal/swarm:assert 1311 bare assertions to convert to testify
 internal/swarm:env 9 t.Setenv and Chdir sites to inject through config
 internal/tablemodel:assert 106 bare assertions to convert to testify
