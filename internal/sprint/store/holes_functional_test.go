@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
@@ -29,9 +31,8 @@ func TestG2OnAStoreNoMachineIsOverItsWidthAtAnyStep(t *testing.T) {
 	steps := 0
 	x.onPlan = func(part string, s *sprint.Snapshot) {
 		steps++
-		if why := heldOK(s); why != "" {
-			t.Fatalf("before %s: %s", part, why)
-		}
+		why := heldOK(s)
+		require.Empty(t, why, "before %s: %s", part, why)
 		if strings.HasPrefix(part, "work/") {
 			return
 		}
@@ -39,18 +40,14 @@ func TestG2OnAStoreNoMachineIsOverItsWidthAtAnyStep(t *testing.T) {
 		for _, m := range s.Fleet.Rows() {
 			held += heldBy(s, m)
 		}
-		if working := len(s.Work.Column(sprint.Working)); held != working {
-			t.Fatalf("before %s the fleet holds %d work cards and %d primaries are working", part, held, working)
-		}
+		working := len(s.Work.Column(sprint.Working))
+		require.Equal(t, working, held, "before %s the fleet holds %d work cards and %d primaries are working", part, held, working)
 	}
 	holesRun(x, 4, false, func(round int, res TickResult, ws []holeWrite) {
-		if why := heldOK(h.table()); why != "" {
-			t.Fatalf("round %d after the tick: %s", round, why)
-		}
+		why := heldOK(h.table())
+		require.Empty(t, why, "round %d after the tick: %s", round, why)
 	})
-	if steps < 20 {
-		t.Fatalf("%d steps checked", steps)
-	}
+	require.GreaterOrEqual(t, steps, 20, "%d steps checked", steps)
 	h.clean("landed")
 }
 
@@ -74,30 +71,23 @@ func TestG2AndG3OnAStoreOverASprintWithALapse(t *testing.T) {
 	}
 	planned, dealt := 0, 0
 	holesRun(x, 4, true, func(round int, res TickResult, ws []holeWrite) {
-		if len(res.Order) > 12 {
-			t.Fatalf("round %d: the tick took %d updates: %v", round, len(res.Order), res.Order)
-		}
+		require.LessOrEqual(t, len(res.Order), 12, "round %d: the tick took %d updates: %v", round, len(res.Order), res.Order)
 		for part, n := range workWrites(ws) {
-			if !slices.Contains(pumpParts, part) {
-				t.Fatalf("round %d: %s wrote %d entries of the work table: only the pump does", round, part, n)
-			}
+			require.True(t, slices.Contains(pumpParts, part), "round %d: %s wrote %d entries of the work table: only the pump does", round, part, n)
 		}
 		made := map[string]int{}
 		for _, w := range ws {
 			for _, e := range w.Members {
 				if w.Table == sprint.Fleet && e.Create != nil {
-					if w.Part != "work/deal" {
-						t.Fatalf("round %d: %s created work card %s on a member", round, w.Part, e.ID)
-					}
+					require.Equal(t, "work/deal", w.Part, "round %d: %s created work card %s on a member", round, w.Part, e.ID)
 					made[e.Create.Row]++
 				}
 			}
 		}
 		for m, n := range made {
 			dealt += n
-			if room := max(0, 2-held[m]); n > room {
-				t.Fatalf("round %d: the deal gave %s %d cards, its room was %d", round, m, n, room)
-			}
+			room := max(0, 2-held[m])
+			require.LessOrEqual(t, n, room, "round %d: the deal gave %s %d cards, its room was %d", round, m, n, room)
 		}
 		clear(held)
 		for _, st := range x.seen {
@@ -106,9 +96,8 @@ func TestG2AndG3OnAStoreOverASprintWithALapse(t *testing.T) {
 			}
 		}
 	})
-	if dealt < 12 || planned == 0 {
-		t.Fatalf("the watch saw %d cards dealt and %d queued changes of the work table", dealt, planned)
-	}
+	require.GreaterOrEqual(t, dealt, 12, "the watch saw %d cards dealt and %d queued changes of the work table", dealt, planned)
+	require.NotZero(t, planned, "the watch saw %d cards dealt and %d queued changes of the work table", dealt, planned)
 	h.clean("landed")
 }
 
@@ -127,21 +116,21 @@ func TestW12AndW13OnAStore(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		h.tick(time.Second)
 		res := x.tick()
-		if want := []string{sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet, "end"}; !slices.Equal(res.Order, want) {
-			t.Fatalf("idle tick %d updated %v", i+1, res.Order)
-		}
-		if ws := x.rec.take(); !res.Idle || res.TickEnd != 0 || len(ws) > 0 || h.queueLen() != 0 {
-			t.Fatalf("idle tick %d: idle %v, tick-end %d, %d batches, queue %d", i+1, res.Idle, res.TickEnd, len(ws), h.queueLen())
-		}
+		want := []string{sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet, "end"}
+		require.Equal(t, want, res.Order, "idle tick %d updated %v", i+1, res.Order)
+		ws := x.rec.take()
+		require.True(t, res.Idle, "idle tick %d: idle %v, tick-end %d, %d batches, queue %d", i+1, res.Idle, res.TickEnd, len(ws), h.queueLen())
+		require.Zero(t, res.TickEnd, "idle tick %d: idle %v, tick-end %d, %d batches, queue %d", i+1, res.Idle, res.TickEnd, len(ws), h.queueLen())
+		require.Empty(t, ws, "idle tick %d: idle %v, tick-end %d, %d batches, queue %d", i+1, res.Idle, res.TickEnd, len(ws), h.queueLen())
+		require.Zero(t, h.queueLen(), "idle tick %d: idle %v, tick-end %d, %d batches, queue %d", i+1, res.Idle, res.TickEnd, len(ws), h.queueLen())
 	}
 	h.work("m1")
 	h.work("m2")
 	x.tick()
 	h.readAll()
 	x.tick() // accepted: merging, queued to merge
-	if st := h.table().StateOf("s1-1"); st != sprint.Merging {
-		t.Fatalf("s1-1 is %s, want merging", st)
-	}
+	st := h.table().StateOf("s1-1")
+	require.Equal(t, sprint.Merging, st, "s1-1 is %s, want merging", st)
 	fired := false
 	inner := h.st.Updates[2].Parts
 	h.st.Updates[2].Parts = append([]sprint.TickPartDef{{Name: "land", Fn: func(s *sprint.Snapshot, r sprint.TickReq) (sprint.Plan, int) {
@@ -152,20 +141,17 @@ func TestW12AndW13OnAStore(t *testing.T) {
 		return sprint.Plan{}, 0
 	}}}, inner...)
 	before, err := h.st.LogTail(h.ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	x.tick()
-	if !fired || h.queueLen() == 0 {
-		t.Fatalf("the landing was not recorded in the tick: fired %v, queue %d", fired, h.queueLen())
-	}
-	if _, woke, err := h.st.WaitLog(h.ctx, 0, before, time.Millisecond); err != nil || !woke {
-		t.Fatalf("the wait from before the tick did not wake on the store's log (woke %v, %v)", woke, err)
-	}
+	require.True(t, fired, "the landing was not recorded in the tick: fired %v, queue %d", fired, h.queueLen())
+	require.NotZero(t, h.queueLen(), "the landing was not recorded in the tick: fired %v, queue %d", fired, h.queueLen())
+	_, woke, err := h.st.WaitLog(h.ctx, 0, before, time.Millisecond)
+	require.NoError(t, err, "the wait from before the tick did not wake on the store's log (woke %v, %v)", woke, err)
+	require.True(t, woke, "the wait from before the tick did not wake on the store's log (woke %v, %v)", woke, err)
 	h.st.Updates[2].Parts = inner
 	x.tick()
-	if n := h.table().Work.Count("s1", sprint.Landed); n != 2 || h.queueLen() != 0 {
-		t.Fatalf("%d landed and %d queued after the next tick, want 2 and 0", n, h.queueLen())
-	}
+	n := h.table().Work.Count("s1", sprint.Landed)
+	require.EqualValues(t, 2, n, "%d landed and %d queued after the next tick, want 2 and 0", n, h.queueLen())
+	require.Zero(t, h.queueLen(), "%d landed and %d queued after the next tick, want 2 and 0", n, h.queueLen())
 	h.clean("landed")
 }

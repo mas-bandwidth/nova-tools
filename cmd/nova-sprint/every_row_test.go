@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // Every row of every table moves every tick, never a row at a time (the
@@ -143,8 +145,6 @@ func everyRowMoves(t *testing.T, width int) {
 			t.Errorf("the %s table never had work in the ticks: %v", tb, seen)
 		}
 	}
-	if workMoved < 3 {
-		t.Errorf("the work table moved in %d ticks, fewer than 3: the pump did not advance it from what the other tables queued", workMoved)
-	}
+	assert.GreaterOrEqual(t, workMoved, 3, "the work table moved in %d ticks, fewer than 3: the pump did not advance it from what the other tables queued", workMoved)
 	t.Logf("ticks with work by table: %v; the work table moved in %d", seen, workMoved)
 }

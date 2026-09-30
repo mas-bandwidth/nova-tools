@@ -13,11 +13,13 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
-	"github.com/redis/go-redis/v9"
 )
 
 // lockedBuffer is a buffer the loop writes to while the test runs.
@@ -179,8 +181,8 @@ func TestTheWholeFleetMovesInOneTickOnTheStore(t *testing.T) {
 
 	// the loop's twin never disagreed with the store's own counts
 	for _, l := range strings.Split(out.String(), "\n") {
-		if strings.HasPrefix(l, "TIMES ") && !strings.Contains(l, " mismatch=0:") {
-			t.Errorf("the loop's twin did not add up to the store's counts: %s", l)
+		if strings.HasPrefix(l, "TIMES ") {
+			assert.Contains(t, l, " mismatch=0:", "the loop's twin did not add up to the store's counts: %s", l)
 		}
 	}
 	ticks := loopDeals(out.String())

@@ -15,11 +15,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
-	"github.com/redis/go-redis/v9"
 )
 
 // The dirty-driven tick driven on a store (the owner's shape of 2026-09-30:
@@ -86,9 +89,8 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 	defer c.Close()
 	ctx, stop := context.WithTimeout(context.Background(), 12*time.Minute)
 	defer stop()
-	if err := fn.Load(ctx, c); err != nil {
-		t.Fatal(err)
-	}
+	err := fn.Load(ctx, c)
+	require.NoError(t, err)
 	env := map[string]string{"NOVA_SPRINT_REDIS": addr, "NOVA_SPRINT_ACTOR": "coordinator"}
 	getenv := func(k string) string { return env[k] }
 	world, coord, loop, machines := newApp(getenv), newApp(getenv), newApp(getenv), newApp(getenv)
@@ -99,9 +101,8 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 	do := func(a *app, args ...string) string {
 		t.Helper()
 		var out, errb bytes.Buffer
-		if code := a.run(args, &out, &errb); code != 0 {
-			t.Fatalf("%v: %d %s", args, code, errb.String())
-		}
+		code := a.run(args, &out, &errb)
+		require.Zero(t, code, "%v: %d %s", args, code, errb.String())
 		return out.String()
 	}
 	var members, spec []string
@@ -119,9 +120,7 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 	do(world, "start")
 
 	st, _, code := loop.machineVerb("run", nil, &bytes.Buffer{})
-	if st == nil {
-		t.Fatalf("run: %d", code)
-	}
+	require.NotNil(t, st, "run: %d", code)
 
 	// the coordinator: once for each tick that addressed them, the inbox is
 	// read and its cursor moved; a judgment is not expected, none is open to
@@ -363,22 +362,16 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 	<-loopDone
 	close(wake)
 	<-coordDone
-	if code != 0 {
-		t.Fatalf("play: %d\n%s\n%s", code, tail(pout.String(), 30), perr.String())
-	}
+	require.Zero(t, code, "play: %d\n%s\n%s", code, tail(pout.String(), 30), perr.String())
 
 	// ---- what the drive asserts -------------------------------------------------
 	snap, err := st.Load(ctx, store.All, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	landed := 0
 	for _, s := range streams {
 		landed += snap.Work.Count(s, sprint.Landed)
 	}
-	if landed != total {
-		t.Fatalf("%d of %d landed", landed, total)
-	}
+	require.Equal(t, total, landed, "%d of %d landed", landed, total)
 
 	// the streams land together: no stream ahead of another by more than 10% of
 	// the total at any sample, and the last sample's spread is printed
@@ -392,20 +385,16 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 			maxSpread, at = hi-lo, s.tick
 		}
 	}
-	if len(samples) == 0 {
-		t.Errorf("the loop took no sample of the streams")
-	}
-	if limit := total / 10; maxSpread > limit {
-		t.Errorf("a stream was %d cards ahead of another at tick %d, over 10%% of the total (%d)", maxSpread, at, limit)
-	}
+	assert.NotEmpty(t, samples, "the loop took no sample of the streams")
+	limit := total / 10
+	assert.LessOrEqual(t, maxSpread, limit, "a stream was %d cards ahead of another at tick %d, over 10%% of the total (%d)", maxSpread, at, limit)
 
 	// every machine's work is within 5% of the mean of the machines that were
 	// never down during the run; a machine that lapsed is reported, with the
 	// seconds it was down, and not asserted
 	shape, err := st.B.Shapes(ctx, []string{st.Names.Table(sprint.Fleet)})
-	if err != nil || len(shape) == 0 {
-		t.Fatalf("the fleet table: %v", err)
-	}
+	require.NoError(t, err, "the fleet table: %v", err)
+	require.NotEmpty(t, shape, "the fleet table: %v", err)
 	col := shape[0].Column(sprint.DoneOK)
 	done := map[string]int{}
 	sum := 0
@@ -417,9 +406,7 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 	}
 	mean := float64(sum) / float64(len(members))
 	allNotes, _, err := st.B.NotesSince(ctx, "", 1000000)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	end := time.Now()
 	downs, downFor := map[string]int{}, map[string]time.Duration{}
 	since := map[string]time.Time{}
@@ -466,14 +453,12 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 	if len(steady) > 0 {
 		steadyMean := float64(steadySum) / float64(len(steady))
 		for _, m := range steady {
-			if d := float64(done[m]) - steadyMean; d > steadyMean*0.05 || -d > steadyMean*0.05 {
-				t.Errorf("%s did %d cards, the mean of the machines never down is %.1f: over 5%% off", m, done[m], steadyMean)
-			}
+			d := float64(done[m]) - steadyMean
+			assert.LessOrEqual(t, d, steadyMean*0.05, "%s did %d cards, the mean of the machines never down is %.1f: over 5%% off", m, done[m], steadyMean)
+			assert.LessOrEqual(t, -d, steadyMean*0.05, "%s did %d cards, the mean of the machines never down is %.1f: over 5%% off", m, done[m], steadyMean)
 		}
 	}
-	if sum == 0 {
-		t.Errorf("no machine's done count is on the fleet table")
-	}
+	assert.NotZero(t, sum, "no machine's done count is on the fleet table")
 
 	// the tick-end notes: one for each tick that addressed the coordinator, none
 	// for an idle tick; every tick of the loop ended, none failed
@@ -482,14 +467,10 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 	var slowest time.Duration
 	for i, tk := range ticks {
 		whyCount[tk.why]++
-		if tk.err != "" {
-			t.Errorf("tick %d failed: %s", tk.n, tk.err)
-		}
+		assert.Empty(t, tk.err, "tick %d failed: %s", tk.n, tk.err)
 		if tk.end > 0 {
 			wroteNote++
-			if tk.idle {
-				t.Errorf("tick %d was idle and wrote a tick-end note", tk.n)
-			}
+			assert.False(t, tk.idle, "tick %d was idle and wrote a tick-end note", tk.n)
 		}
 		if tk.idle {
 			idle++
@@ -502,8 +483,8 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 		maxOrder = max(maxOrder, tk.order)
 		slowest = max(slowest, tk.wall)
 		// W12: the queue a tick leaves starts the next tick, never the clock
-		if tk.queued > 0 && i+1 < len(ticks) && ticks[i+1].why != tickLog {
-			t.Errorf("tick %d left %d entries in the work queue and tick %d began on %q, not the log", tk.n, tk.queued, tk.n+1, ticks[i+1].why)
+		if tk.queued > 0 && i+1 < len(ticks) {
+			assert.Equal(t, tickLog, ticks[i+1].why, "tick %d left %d entries in the work queue and tick %d began on %q, not the log", tk.n, tk.queued, tk.n+1, ticks[i+1].why)
 		}
 	}
 	tickEnds := 0
@@ -512,9 +493,7 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 			tickEnds++
 		}
 	}
-	if tickEnds != wroteNote {
-		t.Errorf("%d tick-end notes on the inbox and %d ticks that addressed the coordinator: want one each", tickEnds, wroteNote)
-	}
+	assert.Equal(t, wroteNote, tickEnds, "%d tick-end notes on the inbox and %d ticks that addressed the coordinator: want one each", tickEnds, wroteNote)
 	mu.Lock()
 	reads, judged, accepted, refused := coordReads, append([]string(nil), judgments...), accepts, acceptRefused
 	var seen []string
@@ -523,9 +502,7 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 	}
 	mu.Unlock()
 	sort.Strings(seen)
-	if len(judged) > 0 {
-		t.Errorf("the coordinator met %d judgments in a sprint with no gates, needs or chances: %v", len(judged), judged)
-	}
+	assert.Empty(t, judged, "the coordinator met %d judgments in a sprint with no gates, needs or chances: %v", len(judged), judged)
 
 	// THE GATE: every tick under MaxTickWall; after the first tick the loop
 	// reads no table whole (its twin catches up from the change streams), and
@@ -561,14 +538,12 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 	fmt.Fprintln(os.Stderr, gate)
 	for _, o := range over {
 		if os.Getenv(GateStoreEnv) == "1" {
-			t.Errorf("over the gate of %s: %s", MaxTickWall, o)
+			assert.Fail(t, fmt.Sprintf("over the gate of %s: %s", MaxTickWall, o))
 		} else {
 			fmt.Fprintf(os.Stderr, "NOTE over the gate of %s (asserted only against a bench's store, %s=1): %s\n", MaxTickWall, GateStoreEnv, o)
 		}
 	}
-	if whole > 0 {
-		t.Errorf("the loop read %d tables whole after its first tick: its twin did not catch up; it said: %s", whole, strings.Join(why, "; "))
-	}
+	assert.Zero(t, whole, "the loop read %d tables whole after its first tick: its twin did not catch up; it said: %s", whole, strings.Join(why, "; "))
 	for _, w := range why {
 		fmt.Fprintln(os.Stderr, "NOTE "+w)
 	}

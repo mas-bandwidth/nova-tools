@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
@@ -86,20 +88,17 @@ func TestAMissingGrantIsSaidOnce(t *testing.T) {
 	world := &Store{B: h.m, Names: h.st.Names, Actor: "m1", Now: h.st.Now, NewID: h.st.NewID, Sleep: h.st.Sleep}
 	said := 0
 	for i := 0; i < 3; i++ {
-		if _, err := world.Run(h.ctx, TakeStep(sprint.TakeReq{As: "m1", Sel: sprint.Sel{Limit: 100}, Who: "m1"})); err != nil {
-			t.Fatal(err)
-		}
+		_, err := world.Run(h.ctx, TakeStep(sprint.TakeReq{As: "m1", Sel: sprint.Sel{Limit: 100}, Who: "m1"}))
+		require.NoError(t, err)
 		res := h.machine()
 		for _, n := range res.Said {
 			if strings.Contains(n, "grant +xrevrange") {
 				said++
 			}
 		}
-		if i == 0 && res.Cost().Reads == 0 {
-			t.Fatalf("tick %d: a table that could not be caught up was not read whole: %s", i+1, res.TimesLine())
+		if i == 0 {
+			require.NotZero(t, res.Cost().Reads, "tick %d: a table that could not be caught up was not read whole: %s", i+1, res.TimesLine())
 		}
 	}
-	if said != 1 {
-		t.Fatalf("the missing grant was said %d times over three ticks, want once", said)
-	}
+	require.EqualValues(t, 1, said, "the missing grant was said %d times over three ticks, want once", said)
 }

@@ -7,6 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/refmodel"
 )
@@ -325,13 +328,9 @@ func TestAcceptMovesAPrimaryWithTwoOkReadsToMergingAndTellsTheCoordinatorOnce(t 
 	w.report(t, "s1-1", "ok")
 	w.report(t, "s1-2", "broken") // a broken read is not two ok reads
 	got := refmodel.AcceptMoves(w.snapshot(w.fresh()), later(0))
-	if len(got) == 0 {
-		t.Fatal("a primary in review with two ok reads is accepted by the tick")
-	}
+	require.NotEmpty(t, got, "a primary in review with two ok reads is accepted by the tick")
 	for _, m := range got {
-		if m.Card == "s1-2" {
-			t.Errorf("a primary with a broken read is accepted:%s", show(got))
-		}
+		assert.NotEqual(t, "s1-2", m.Card, "a primary with a broken read is accepted:%s", show(got))
 	}
 	notices := 0
 	for _, m := range got {
@@ -339,9 +338,7 @@ func TestAcceptMovesAPrimaryWithTwoOkReadsToMergingAndTellsTheCoordinatorOnce(t 
 			notices++
 		}
 	}
-	if notices != 1 {
-		t.Errorf("the coordinator is told %d times that a stream is ready to merge, want once:%s", notices, show(got))
-	}
+	assert.Equal(t, 1, notices, "the coordinator is told %d times that a stream is ready to merge, want once:%s", notices, show(got))
 }
 
 func TestAskTellsOnceWhenFewerThanTwoReadersAreFree(t *testing.T) {

@@ -8,10 +8,11 @@ package store
 // IMMEDIATELY"; "the tick doesn't end until all dirty bits are cleared".
 
 import (
-	"slices"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -25,9 +26,8 @@ func TestTheTickUpdatesTheTablesInTheOwnersOrder(t *testing.T) {
 	h.startMachine()
 	for i := 0; i < 3; i++ {
 		res := h.machine()
-		if got, want := res.Order, []string{sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet, "end"}; !slices.Equal(got, want) {
-			t.Fatalf("tick %d updated %v, want %v", i+1, got, want)
-		}
+		got, want := res.Order, []string{sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet, "end"}
+		require.Equal(t, want, got, "tick %d updated %v, want %v", i+1, got, want)
 		t.Logf("tick %d: %s", i+1, strings.Join(res.Order, " -> "))
 		h.work("m1")
 		h.work("m2")
@@ -50,40 +50,32 @@ func TestOnlyThePumpWritesTheWorkTable(t *testing.T) {
 		t.Helper()
 		before := rev()
 		verb()
-		if after := rev(); after != before {
-			t.Fatalf("%s wrote the work table (revision %d -> %d): only the pump writes it while the machine runs", what, before, after)
-		}
+		after := rev()
+		require.Equal(t, before, after, "%s wrote the work table (revision %d -> %d): only the pump writes it while the machine runs", what, before, after)
 	}
 	still("take and finish", func() { h.work("m1"); h.work("m2") })
-	if st := h.table().StateOf("s1-1"); st != sprint.Working {
-		t.Fatalf("the stored s1-1 is %s before the tick, want working", st)
-	}
+	st := h.table().StateOf("s1-1")
+	require.Equal(t, sprint.Working, st, "the stored s1-1 is %s before the tick, want working", st)
 	before := rev()
 	h.machine() // the pump moves both to review; the readers are asked
-	if rev() == before || h.table().StateOf("s1-1") != sprint.Review {
-		t.Fatalf("the pump did not apply the queue: s1-1 is %s", h.table().StateOf("s1-1"))
-	}
+	require.NotEqual(t, before, rev(), "the pump did not apply the queue: s1-1 is %s", h.table().StateOf("s1-1"))
+	require.Equal(t, sprint.Review, h.table().StateOf("s1-1"), "the pump did not apply the queue: s1-1 is %s", h.table().StateOf("s1-1"))
 	still("the reads", h.readAll)
 	h.machine() // the pump accepts both (two ok reads): merging
-	if st := h.table().StateOf("s1-1"); st != sprint.Merging {
-		t.Fatalf("s1-1 is %s after the pump, want merging", st)
-	}
+	st = h.table().StateOf("s1-1")
+	require.Equal(t, sprint.Merging, st, "s1-1 is %s after the pump, want merging", st)
 	merge := MergeStep(sprint.MergeReq{Stream: "s1", Batch: 1})
 	still("the merge", func() { h.must(merge) })
-	if st := h.table().StateOf("s1-1"); st != sprint.Merging {
-		t.Fatalf("the stored s1-1 is %s before the tick, want merging: the merge landed it itself", st)
-	}
+	st = h.table().StateOf("s1-1")
+	require.Equal(t, sprint.Merging, st, "the stored s1-1 is %s before the tick, want merging: the merge landed it itself", st)
 	// the mutation: a merge let write the work table directly is caught
 	merge.Pump = true
 	before = rev()
 	h.must(merge)
-	if rev() == before {
-		t.Fatalf("the mutation (the merge as the pump) did not write the work table: the check above would not catch it")
-	}
+	require.NotEqual(t, before, rev(), "the mutation (the merge as the pump) did not write the work table: the check above would not catch it")
 	h.machine()
-	if h.table().StateOf("s1-1") != sprint.Landed || h.table().StateOf("s1-2") != sprint.Landed {
-		t.Fatalf("after the tick: %s %s", h.table().StateOf("s1-1"), h.table().StateOf("s1-2"))
-	}
+	require.Equal(t, sprint.Landed, h.table().StateOf("s1-1"), "after the tick: %s %s", h.table().StateOf("s1-1"), h.table().StateOf("s1-2"))
+	require.Equal(t, sprint.Landed, h.table().StateOf("s1-2"), "after the tick: %s %s", h.table().StateOf("s1-1"), h.table().StateOf("s1-2"))
 	h.clean("landed")
 }
 
@@ -112,9 +104,7 @@ func TestTheQueueIsDrainedExactlyOnce(t *testing.T) {
 	h.must(finish("m1"))
 	q, _ := h.m.QueueRead(h.ctx)
 	first := len(q)
-	if first == 0 {
-		t.Fatal("the finish queued nothing")
-	}
+	require.NotZero(t, first, "the finish queued nothing")
 	// m2's finish runs inside the tick, as the readers' update: after the pump
 	fired := false
 	h.st.Updates = []sprint.TableUpdate{sprint.TickTables[0], {Table: sprint.Readers, Parts: []sprint.TickPartDef{{Name: "ask", Fn: func(s *sprint.Snapshot, r sprint.TickReq) (sprint.Plan, int) {
@@ -132,19 +122,14 @@ func TestTheQueueIsDrainedExactlyOnce(t *testing.T) {
 			mid++
 		}
 	}
-	if mid == 0 {
-		t.Fatalf("the finish during the tick is not in the queue after it: %d entries", len(q))
-	}
+	require.NotZero(t, mid, "the finish during the tick is not in the queue after it: %d entries", len(q))
 	h.st.Updates = nil
 	h.machine()
 	h.machine()
-	if q, _ := h.m.QueueRead(h.ctx); len(q) != 0 {
-		t.Fatalf("the queue holds %d after two more ticks", len(q))
-	}
+	q, _ = h.m.QueueRead(h.ctx)
+	require.Empty(t, q, "the queue holds %d after two more ticks", len(q))
 	lines, err := h.st.Log(h.ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	queued, drained := map[string]int{}, map[string]int{}
 	for _, l := range lines {
 		if l.Table != sprint.Work || l.Verb == "add" {
@@ -158,12 +143,10 @@ func TestTheQueueIsDrainedExactlyOnce(t *testing.T) {
 		}
 	}
 	for _, id := range []string{"s1-1", "s1-2", "s1-3", "s1-4"} {
-		if queued[id] != 1 || drained[id] != 1 {
-			t.Fatalf("%s: queued %d times, drained %d times: want once each (queued %v, drained %v)", id, queued[id], drained[id], queued, drained)
-		}
-		if st := h.table().StateOf(id); st != sprint.Review {
-			t.Fatalf("%s is %s", id, st)
-		}
+		require.EqualValues(t, 1, queued[id], "%s: queued %d times, drained %d times: want once each (queued %v, drained %v)", id, queued[id], drained[id], queued, drained)
+		require.EqualValues(t, 1, drained[id], "%s: queued %d times, drained %d times: want once each (queued %v, drained %v)", id, queued[id], drained[id], queued, drained)
+		st := h.table().StateOf(id)
+		require.Equal(t, sprint.Review, st, "%s is %s", id, st)
 	}
 	h.clean("drained")
 }
@@ -203,14 +186,11 @@ func TestAMutuallyDirtyingTickSettles(t *testing.T) {
 	}
 	res := h.machine()
 	want := []string{sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet, sprint.Merge, sprint.Fleet, sprint.Merge, sprint.Fleet, sprint.Merge, "end"}
-	if !slices.Equal(res.Order, want) {
-		t.Fatalf("the tick updated %v, want %v", res.Order, want)
-	}
+	require.Equal(t, want, res.Order, "the tick updated %v, want %v", res.Order, want)
 	t.Logf("settled: %s", strings.Join(res.Order, " -> "))
 	// the tick after writes nothing more: its first pass only
-	if res := h.machine(); !slices.Equal(res.Order, []string{sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet, "end"}) {
-		t.Fatalf("the next tick updated %v", res.Order)
-	}
+	res = h.machine()
+	require.Equal(t, []string{sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet, "end"}, res.Order, "the next tick updated %v", res.Order)
 
 	g := newHarness(t)
 	g.setup(1)
@@ -220,13 +200,12 @@ func TestAMutuallyDirtyingTickSettles(t *testing.T) {
 		{Table: sprint.Fleet, Parts: []sprint.TickPartDef{{Name: "to-merge", Fn: ping(sprint.Merge, 1<<30)}}},
 	}
 	_, err := g.st.Tick(g.ctx)
-	if err == nil || !strings.Contains(err.Error(), "did not settle") || !strings.Contains(err.Error(), sprint.Merge) {
-		t.Fatalf("a tick that never settles: %v", err)
-	}
+	require.Error(t, err, "a tick that never settles: %v", err)
+	require.Contains(t, err.Error(), "did not settle", "a tick that never settles: %v", err)
+	require.Contains(t, err.Error(), sprint.Merge, "a tick that never settles: %v", err)
 	s := g.snap()
-	if n := s.MemberCtl("m1").Int("ping") + s.StreamCtl("s1").Int("ping"); n != 2+MaxSettle {
-		t.Fatalf("%d updates wrote, want the first pass's 2 and the bound's %d", n, MaxSettle)
-	}
+	n := s.MemberCtl("m1").Int("ping") + s.StreamCtl("s1").Int("ping")
+	require.Equal(t, 2+MaxSettle, n, "%d updates wrote, want the first pass's 2 and the bound's %d", n, MaxSettle)
 	t.Logf("unsettled: %v", err)
 }
 
@@ -239,21 +218,16 @@ func TestOneTickEndNoteOnlyWhenTheTickAddressedTheCoordinator(t *testing.T) {
 	h.startMachine()
 	ends := func() int { return h.written(sprint.NTickEnd) }
 	h.machine() // deals: nothing for the coordinator
-	if ends() != 0 {
-		t.Fatalf("a tick that addressed nothing wrote %d tick-end notes", ends())
-	}
+	require.Zero(t, ends(), "a tick that addressed nothing wrote %d tick-end notes", ends())
 	h.work("m1")
 	h.work("m2")
 	h.machine() // to review, asked
 	h.readAll()
 	res := h.machine() // accepted: ready to merge, once for the stream, and the reads' notes
-	if ends() != 1 || res.TickEnd < 1 {
-		t.Fatalf("the accepting tick: %d tick-end notes, count %d, want one note counting at least the ready to merge", ends(), res.TickEnd)
-	}
+	require.EqualValues(t, 1, ends(), "the accepting tick: %d tick-end notes, count %d, want one note counting at least the ready to merge", ends(), res.TickEnd)
+	require.GreaterOrEqual(t, res.TickEnd, 1, "the accepting tick: %d tick-end notes, count %d, want one note counting at least the ready to merge", ends(), res.TickEnd)
 	h.machine()
-	if ends() != 1 {
-		t.Fatalf("a quiet tick wrote a tick-end note: %d", ends())
-	}
+	require.EqualValues(t, 1, ends(), "a quiet tick wrote a tick-end note: %d", ends())
 }
 
 // A drain a step makes before it plans is said, never silent: a pump part
@@ -283,24 +257,17 @@ func TestEveryDrainIsNamed(t *testing.T) {
 	for _, p := range res.Parts {
 		named = named || p.Name == sprint.PartDrain && len(p.Moved) > 0
 	}
-	if !named {
-		t.Fatalf("the drain before a pump part is not among the tick's parts: %+v", res.Parts)
-	}
+	require.True(t, named, "the drain before a pump part is not among the tick's parts: %+v", res.Parts)
 	h.st.Updates = nil
 	h.work("m2") // queued: the machine is running
-	if q, _ := h.m.QueueRead(h.ctx); len(q) == 0 {
-		t.Fatal("nothing queued before the stop")
-	}
+	q, _ := h.m.QueueRead(h.ctx)
+	require.NotEmpty(t, q, "nothing queued before the stop")
 	_, _, r, err := h.st.SetMachine(h.ctx, false) // STOPPED: its own step drains first
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(r.Drained) == 0 || len(r.Drained[0].Moved) == 0 {
-		t.Fatalf("the stop drained the queue silently: %+v", r)
-	}
-	if q, _ := h.m.QueueRead(h.ctx); len(q) != 0 {
-		t.Fatalf("a STOPPED machine keeps a queue of %d", len(q))
-	}
+	require.NoError(t, err)
+	require.NotEmpty(t, r.Drained, "the stop drained the queue silently: %+v", r)
+	require.NotEmpty(t, r.Drained[0].Moved, "the stop drained the queue silently: %+v", r)
+	q, _ = h.m.QueueRead(h.ctx)
+	require.Empty(t, q, "a STOPPED machine keeps a queue of %d", len(q))
 }
 
 // "accept is mechanical": on a RUNNING machine the reads that make a primary
@@ -317,14 +284,12 @@ func TestAReadOnARunningMachineOpensNoReadyToAccept(t *testing.T) {
 	h.work("m2")
 	h.machine() // review, asked
 	h.readAll()
-	if n := len(h.openOf(sprint.NReadyToAccept)); n != 0 {
-		t.Fatalf("the reads on a running machine opened %d ready-to-accept judgments", n)
-	}
+	n := len(h.openOf(sprint.NReadyToAccept))
+	require.Zero(t, n, "the reads on a running machine opened %d ready-to-accept judgments", n)
 	h.machine() // the pump accepts
 	for _, id := range []string{"s1-1", "s1-2"} {
-		if st := h.table().StateOf(id); st != sprint.Merging {
-			t.Fatalf("%s is %s after the pump, want merging", id, st)
-		}
+		st := h.table().StateOf(id)
+		require.Equal(t, sprint.Merging, st, "%s is %s after the pump, want merging", id, st)
 	}
 	h.clean("accepted by the pump")
 
@@ -335,9 +300,8 @@ func TestAReadOnARunningMachineOpensNoReadyToAccept(t *testing.T) {
 	g.work("m2")
 	g.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}}))
 	g.readAll()
-	if n := len(g.openOf(sprint.NReadyToAccept)); n != 1 {
-		t.Fatalf("the reads on a stopped machine opened %d ready-to-accept judgments, want 1", n)
-	}
+	n = len(g.openOf(sprint.NReadyToAccept))
+	require.EqualValues(t, 1, n, "the reads on a stopped machine opened %d ready-to-accept judgments, want 1", n)
 }
 
 // "changes queued after the pump's drain wait for the next tick": a world
@@ -369,26 +333,20 @@ func TestChangesQueuedDuringThePumpWaitForTheNextTick(t *testing.T) {
 	work.Parts = parts
 	h.st.Updates = []sprint.TableUpdate{work, sprint.TickTables[1], sprint.TickTables[2], sprint.TickTables[3]}
 	res := h.machine()
-	if ranks < MaxDrains+1 {
-		t.Fatalf("the world queued %d times during the pump, want more than %d", ranks, MaxDrains)
-	}
-	if st := h.table().StateOf("s1-1"); st != sprint.Ready {
-		t.Fatalf("s1-1, dropped during the pump, is %s on the table: the pump moved a card a queued change names", st)
-	}
+	require.GreaterOrEqual(t, ranks, MaxDrains+1, "the world queued %d times during the pump, want more than %d", ranks, MaxDrains)
+	st := h.table().StateOf("s1-1")
+	require.Equal(t, sprint.Ready, st, "s1-1, dropped during the pump, is %s on the table: the pump moved a card a queued change names", st)
 	left := false
 	for _, p := range res.Parts {
 		for _, r := range p.Refused {
 			left = left || r.Key == "s1-1" && strings.Contains(r.Why, "waits for the next tick")
 		}
 	}
-	if !left {
-		t.Fatalf("the deal left s1-1 silently: %+v", res.Parts)
-	}
+	require.True(t, left, "the deal left s1-1 silently: %+v", res.Parts)
 	h.st.Updates = nil
 	h.machine()
-	if c := h.table().Work.Card("s1-1"); c.Placed() {
-		t.Fatalf("the next tick's drain did not apply the drop: s1-1 at %s", c.Col)
-	}
+	c := h.table().Work.Card("s1-1")
+	require.False(t, c.Placed(), "the next tick's drain did not apply the drop: s1-1 is still placed")
 	h.clean("the drop applied a tick later")
 }
 
@@ -409,19 +367,14 @@ func TestThePumpsSecondDrainIsInTheReport(t *testing.T) {
 			drains++
 		}
 	}
-	if drains != 2 {
-		t.Fatalf("the tick names %d drains, want the drain and its second: %+v", drains, res.Parts)
-	}
+	require.EqualValues(t, 2, drains, "the tick names %d drains, want the drain and its second: %+v", drains, res.Parts)
 	timed := false
 	for _, pt := range res.Times {
 		timed = timed || pt.Name == sprint.PartDrain
 	}
-	if !timed {
-		t.Fatalf("the drains' time is not in the report: %+v", res.Times)
-	}
-	if c := h.table().Work.Card("brief"); c.Placed() {
-		t.Fatalf("brief is on the table after the tick: %s", c.Col)
-	}
+	require.True(t, timed, "the drains' time is not in the report: %+v", res.Times)
+	c := h.table().Work.Card("brief")
+	require.False(t, c.Placed(), "brief is on the table after the tick")
 }
 
 // The rolling indexes are up by one a placement MADE and one a name passed
@@ -474,23 +427,20 @@ func TestADealHeldBackByTheQueueMovesNoIndex(t *testing.T) {
 		h.machine()
 		s := h.table()
 		for i, id := range tc.kept {
-			if c := s.Work.Card(id); c.Col != sprint.Working || s.Fleet.Card(c.F("work")).Row != tc.dealtTo[i] {
-				t.Fatalf("held %s: %s is %s on %s, want working on %s", tc.held, id, c.Col, s.Fleet.Card(c.F("work")).Row, tc.dealtTo[i])
-			}
+			c := s.Work.Card(id)
+			require.Equal(t, sprint.Working, c.Col, "held %s: %s is %s on %s, want working on %s", tc.held, id, c.Col, s.Fleet.Card(c.F("work")).Row, tc.dealtTo[i])
+			require.Equal(t, tc.dealtTo[i], s.Fleet.Card(c.F("work")).Row, "held %s: %s is %s on %s, want working on %s", tc.held, id, c.Col, s.Fleet.Card(c.F("work")).Row, tc.dealtTo[i])
 		}
-		if st := s.StateOf(tc.held); st != sprint.Ready {
-			t.Fatalf("held %s: it is %s, want ready: the queued rank holds it back", tc.held, st)
-		}
+		st := s.StateOf(tc.held)
+		require.Equal(t, sprint.Ready, st, "held %s: it is %s, want ready: the queued rank holds it back", tc.held, st)
 		di, _ := s.Fleet.Prop(sprint.PropDealIndex)
 		si, _ := s.Work.Prop(sprint.PropStreamIndex)
-		if di != tc.dealIndex || si != tc.streamIndex {
-			t.Fatalf("held %s: deal_index %s, stream_index %s; want %s and %s: up by the kept placements and the names they pass over only", tc.held, di, si, tc.dealIndex, tc.streamIndex)
-		}
+		require.Equal(t, tc.dealIndex, di, "held %s: deal_index %s, stream_index %s; want %s and %s: up by the kept placements and the names they pass over only", tc.held, di, si, tc.dealIndex, tc.streamIndex)
+		require.Equal(t, tc.streamIndex, si, "held %s: deal_index %s, stream_index %s; want %s and %s: up by the kept placements and the names they pass over only", tc.held, di, si, tc.dealIndex, tc.streamIndex)
 		h.st.Updates = nil
 		h.machine()
-		if st := h.table().StateOf(tc.held); st != sprint.Working {
-			t.Fatalf("held %s: the next tick left it %s", tc.held, st)
-		}
+		st = h.table().StateOf(tc.held)
+		require.Equal(t, sprint.Working, st, "held %s: the next tick left it %s", tc.held, st)
 		t.Logf("held %s: deal_index %s, stream_index %s after the tick; dealt the next tick", tc.held, di, si)
 	}
 }
@@ -511,17 +461,15 @@ func TestAMergeBeforeThePumpSeesTheQueuedAccept(t *testing.T) {
 	h.readAll()
 	h.startMachine()
 	h.must(AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{IDs: []string{"s1-1", "s1-2"}}}))
-	if st := h.table().StateOf("s1-1"); st != sprint.Review {
-		t.Fatalf("the accept's work change is not queued: s1-1 is %s on the table", st)
-	}
+	st := h.table().StateOf("s1-1")
+	require.Equal(t, sprint.Review, st, "the accept's work change is not queued: s1-1 is %s on the table", st)
 	h.clean("accepted, before the pump")
 	h.must(MergeStep(sprint.MergeReq{Stream: "s1", Batch: 10}))
 	h.clean("merged, before the pump")
 	h.machine()
 	for _, id := range []string{"s1-1", "s1-2"} {
-		if st := h.table().StateOf(id); st != sprint.Landed {
-			t.Fatalf("%s is %s after the pump", id, st)
-		}
+		st := h.table().StateOf(id)
+		require.Equal(t, sprint.Landed, st, "%s is %s after the pump", id, st)
 	}
 	h.clean("landed")
 }

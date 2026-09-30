@@ -8,8 +8,9 @@ package store
 import (
 	"errors"
 	"fmt"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
@@ -28,9 +29,7 @@ func TestATickReadsTheSprintOnce(t *testing.T) {
 	for i := 0; i < 8; i++ {
 		res := h.machine()
 		if res.State != Running || res.Done != "" {
-			if i < 3 {
-				t.Fatalf("the sprint stopped at tick %d: too small to show the reads", i+1)
-			}
+			require.GreaterOrEqual(t, i, 3, "the sprint stopped at tick %d: too small to show the reads", i+1)
 			break
 		}
 		c := res.Cost()
@@ -38,27 +37,20 @@ func TestATickReadsTheSprintOnce(t *testing.T) {
 		if i == 0 {
 			want = int64(len(All))
 		}
-		if c.Mismatch != 0 {
-			t.Fatalf("tick %d: the twin's records did not add up to the store's counts %d times: %s", i+1, c.Mismatch, res.TimesLine())
-		}
-		if c.Reads != want {
-			t.Fatalf("tick %d: %d tables read whole, want %d: %s", i+1, c.Reads, want, res.TimesLine())
-		}
+		require.Zero(t, c.Mismatch, "tick %d: the twin's records did not add up to the store's counts %d times: %s", i+1, c.Mismatch, res.TimesLine())
+		require.Equal(t, want, c.Reads, "tick %d: %d tables read whole, want %d: %s", i+1, c.Reads, want, res.TimesLine())
 		caught += c.Stale
-		if i == 0 && len(res.Parts) == 0 {
-			t.Fatal("the first tick did nothing: the sprint is not busy")
+		if i == 0 {
+			require.NotEmpty(t, res.Parts, "the first tick did nothing: the sprint is not busy")
 		}
 		h.work("m1")
 		h.work("m2")
 		h.readAll()
 		h.landAll("s1")
 	}
-	if caught == 0 {
-		t.Fatal("no tick caught a table up from its change stream: the world's writes were not read")
-	}
-	if st := h.stats().twin.Load(); st == 0 {
-		t.Fatal("no part planned on the twin")
-	}
+	require.NotZero(t, caught, "no tick caught a table up from its change stream: the world's writes were not read")
+	st := h.stats().twin.Load()
+	require.NotZero(t, st, "no part planned on the twin")
 }
 
 // stats is the harness store's counters.
@@ -84,9 +76,7 @@ func TestAWriteDuringTheTickIsReadAgain(t *testing.T) {
 		primaries = append(primaries, c.F(sprint.PrimaryField))
 		gens[c.ID] = c.Int("gen")
 	}
-	if len(ids) == 0 {
-		t.Fatal("m1 took nothing")
-	}
+	require.NotEmpty(t, ids, "m1 took nothing")
 	// the world is another process: a store of its own, with no twin of the
 	// tick's
 	world := &Store{B: h.m, Names: h.st.Names, Actor: "m1", Now: h.st.Now, NewID: h.st.NewID, Sleep: h.st.Sleep}
@@ -95,23 +85,21 @@ func TestAWriteDuringTheTickIsReadAgain(t *testing.T) {
 		if !fired {
 			fired = true
 			res, err := world.Run(h.ctx, FinishStep(sprint.FinishReq{As: "m1", Sel: sprint.Sel{IDs: ids}, Gens: gens, Who: "m1"}))
-			if err != nil || len(res.Refused) > 0 {
-				t.Fatalf("the world's finish: %v %v", err, res.Refused)
-			}
+			require.NoError(t, err, "the world's finish: %v %v", err, res.Refused)
+			require.Empty(t, res.Refused, "the world's finish: %v %v", err, res.Refused)
 		}
 		return sprint.TickAsk(s, r)
 	}}}}, sprint.TickTables[2], sprint.TickTables[3]}
 	res := h.machine()
 	c := res.Cost()
-	if c.Stale == 0 || c.Reads != 0 || c.Rows > int64(4*len(ids)+8) {
-		t.Fatalf("a finish during the tick: %d tables read whole, %d caught up, %d records read; want none whole, one or more caught up, a few records: %s", c.Reads, c.Stale, c.Rows, res.TimesLine())
-	}
+	require.NotZero(t, c.Stale, "a finish during the tick: %d tables read whole, %d caught up, %d records read; want none whole, one or more caught up, a few records: %s", c.Reads, c.Stale, c.Rows, res.TimesLine())
+	require.Zero(t, c.Reads, "a finish during the tick: %d tables read whole, %d caught up, %d records read; want none whole, one or more caught up, a few records: %s", c.Reads, c.Stale, c.Rows, res.TimesLine())
+	require.LessOrEqual(t, c.Rows, int64(4*len(ids)+8), "a finish during the tick: %d tables read whole, %d caught up, %d records read; want none whole, one or more caught up, a few records: %s", c.Reads, c.Stale, c.Rows, res.TimesLine())
 	h.st.Updates = nil
 	h.machine()
 	for _, id := range primaries {
-		if st := h.table().StateOf(id); st != sprint.Review {
-			t.Fatalf("%s is %s after the tick after the finish, want review", id, st)
-		}
+		st := h.table().StateOf(id)
+		require.Equal(t, sprint.Review, st, "%s is %s after the tick after the finish, want review", id, st)
 	}
 }
 
@@ -135,9 +123,8 @@ func TestATwinThatDriftsIsCaught(t *testing.T) {
 		{Table: sprint.Readers, Parts: []sprint.TickPartDef{{Name: "ask", Fn: sprint.TickAsk}}},
 	}
 	_, err := h.st.Tick(h.ctx)
-	if err == nil || !strings.Contains(err.Error(), "twin differs from a fresh read") {
-		t.Fatalf("a scribbled twin was not caught: %v", err)
-	}
+	require.Error(t, err, "a scribbled twin was not caught: %v", err)
+	require.Contains(t, err.Error(), "twin differs from a fresh read", "a scribbled twin was not caught: %v", err)
 	t.Logf("caught: %v", err)
 }
 
@@ -162,24 +149,18 @@ func TestATwinReadCutShortLeavesNoTableHalfRead(t *testing.T) {
 		return nil
 	}
 	tw := NewTwin()
-	if _, _, err := h.st.twinRead(h.ctx, tw, All, tickExtras, nil); err == nil || !failed {
-		t.Fatalf("the cut read: %v (failed %v)", err, failed)
-	}
+	_, _, err := h.st.twinRead(h.ctx, tw, All, tickExtras, nil)
+	require.Error(t, err, "the cut read: %v (failed %v)", err, failed)
+	require.True(t, failed, "the cut read: %v (failed %v)", err, failed)
 	h.m.Fail = nil
 	snap, gen, err := h.st.twinRead(h.ctx, tw, All, tickExtras, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	fresh, at, err := h.st.Fenced(h.ctx, All, tickExtras, nil)
-	if err != nil || at != gen.Gen {
-		t.Fatalf("fresh read: %v at %d, twin at %d", err, at, gen.Gen)
-	}
-	if d := TwinDiff(snap, fresh); d != "" {
-		t.Fatalf("the twin after a cut read: %s", d)
-	}
-	if len(snap.Merge.LoadedCards()) == 0 {
-		t.Fatal("the merge table is empty: the check shows nothing")
-	}
+	require.NoError(t, err, "fresh read: %v at %d, twin at %d", err, at, gen.Gen)
+	require.Equal(t, gen.Gen, at, "fresh read: %v at %d, twin at %d", err, at, gen.Gen)
+	d := TwinDiff(snap, fresh)
+	require.Empty(t, d, "the twin after a cut read: %s", d)
+	require.NotEmpty(t, snap.Merge.LoadedCards(), "the merge table is empty: the check shows nothing")
 }
 
 // The exchanges of one writing part of the tick, by kind, after another
@@ -206,16 +187,15 @@ func TestAWritingPartsExchangesArePinned(t *testing.T) {
 	}
 	h.must(part("deal", sprint.TickDeal)) // the twin's first read: whole
 	world := &Store{B: h.m, Names: h.st.Names, Actor: "m1", Now: h.st.Now, NewID: h.st.NewID, Sleep: h.st.Sleep}
-	if res, err := world.Run(h.ctx, TakeStep(sprint.TakeReq{As: "m1", Sel: sprint.Sel{Limit: 100}, Who: "m1"})); err != nil || len(res.Moved) == 0 {
-		t.Fatalf("the world's take: %v %+v", err, res)
-	}
+	res, err := world.Run(h.ctx, TakeStep(sprint.TakeReq{As: "m1", Sel: sprint.Sel{Limit: 100}, Who: "m1"}))
+	require.NoError(t, err, "the world's take: %v %+v", err, res)
+	require.NotEmpty(t, res.Moved, "the world's take: %v %+v", err, res)
 	before := map[string]int{}
 	for k, v := range h.m.Calls {
 		before[k] = v
 	}
-	if res := h.must(part("ping", ping(sprint.Fleet, 1))); len(res.Moved) == 0 {
-		t.Fatalf("the part wrote nothing: %+v", res)
-	}
+	res = h.must(part("ping", ping(sprint.Fleet, 1)))
+	require.NotEmpty(t, res.Moved, "the part wrote nothing: %+v", res)
 	got := map[string]int{}
 	for k, v := range h.m.Calls {
 		if d := v - before[k]; d != 0 {
@@ -223,9 +203,7 @@ func TestAWritingPartsExchangesArePinned(t *testing.T) {
 		}
 	}
 	want := map[string]int{"fence": 2, "shapes": 1, "open": 1, "coord": 1, "changes": 1, "readset": 1, "queue": 1, "acquire": 1, "apply": 1, "release": 1}
-	if fmt.Sprint(got) != fmt.Sprint(want) {
-		t.Fatalf("a writing part's exchanges: %v, want %v", got, want)
-	}
+	require.Equal(t, fmt.Sprint(want), fmt.Sprint(got), "a writing part's exchanges: %v, want %v", got, want)
 }
 
 // A tick's parts read the machine's state and the stuck record with their
@@ -254,7 +232,5 @@ func TestATicksPartsTripsArePinned(t *testing.T) {
 	// its acquire, one apply for each table it writes, its release; the ask
 	// also catches the readers table up from its change stream
 	want := map[string]int64{"work/drain": 8, "readers/ask": 9}
-	if fmt.Sprint(got) != fmt.Sprint(want) {
-		t.Fatalf("the busy tick's parts made %v round trips, want %v: %s", got, want, busy.TimesLine())
-	}
+	require.Equal(t, fmt.Sprint(want), fmt.Sprint(got), "the busy tick's parts made %v round trips, want %v: %s", got, want, busy.TimesLine())
 }

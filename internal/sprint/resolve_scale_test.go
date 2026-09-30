@@ -3,6 +3,8 @@ package sprint
 import (
 	"fmt"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // resolveWorld is a sprint of n primaries in each of three streams: s1's
@@ -31,24 +33,24 @@ func resolveWorld(t testing.TB, n, open int) *Snapshot {
 func TestTheTicksResolveOverAManyCardSprint(t *testing.T) {
 	t.Parallel()
 	s := resolveWorld(t, 300, 300)
-	if p, _ := TickResolve(s, TickReq{}); len(p.Units) != 0 {
-		t.Fatalf("resolve moved %d: every waiting primary waits on s1-300", len(p.Units))
-	}
+	p, _ := TickResolve(s, TickReq{})
+	require.Empty(t, p.Units, "resolve moved %d: every waiting primary waits on s1-300", len(p.Units))
 	line, stops := s.Work.lineStops("s2")
-	if len(line) != 300 || stops[len(stops)-1] != -1 {
-		t.Fatalf("s2's line: %d cards, last stop %d; want 300 and none", len(line), stops[len(stops)-1])
-	}
+	require.Len(t, line, 300, "s2's line: %d cards, last stop %d; want 300 and none", len(line), stops[len(stops)-1])
+	require.EqualValues(t, -1, stops[len(stops)-1], "s2's line: %d cards, last stop %d; want 300 and none", len(line), stops[len(stops)-1])
 	gate := &Card{ID: "s2-gate", Row: "s2", Col: string(Waiting), Score: (line[99].Score + line[100].Score) / 2, Fields: map[string]string{"kind": Sentinel}}
 	s.Work.Put(gate)
 	for i, c := range []*Card{line[99], line[100], line[299]} {
 		st := StopBefore(s, "s2", c.Score, nil)
-		if want := i > 0; (st != nil) != want || want && st.ID != gate.ID {
-			t.Fatalf("%s: stop %v, want the gate %v", c.ID, st, want)
+		if i > 0 {
+			require.NotNil(t, st, "%s: stop %v, want the gate %v", c.ID, st, true)
+			require.Equal(t, gate.ID, st.ID, "%s: stop %v, want the gate %v", c.ID, st, true)
+		} else {
+			require.Nil(t, st, "%s: stop %v, want the gate %v", c.ID, st, false)
 		}
 	}
-	if st := StopBefore(s, "s2", line[299].Score, map[string]bool{gate.ID: true}); st != nil {
-		t.Fatalf("a gate being landed is no stop: %v", st)
-	}
+	st := StopBefore(s, "s2", line[299].Score, map[string]bool{gate.ID: true})
+	require.Nil(t, st, "a gate being landed is no stop: %v", st)
 }
 
 // BenchmarkTickResolve is the tick's resolve at two sizes: go test -bench

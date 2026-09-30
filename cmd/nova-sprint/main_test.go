@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
@@ -433,9 +435,8 @@ func TestVerbLineOnAStoppedMachineHasNoETA(t *testing.T) {
 		t.Fatalf("add on a running machine: last line %q in %s", last, out)
 	}
 	out = ta.ok("tick")
-	if last := lastLine(out); !strings.HasPrefix(last, "0/4 0.0% -> ETA") {
-		t.Fatalf("the tick after an add on a running machine: last line %q in %s", last, out)
-	}
+	last := lastLine(out)
+	require.True(t, strings.HasPrefix(last, "0/4 0.0% -> ETA"), "the tick after an add on a running machine: last line %q in %s", last, out)
 }
 
 func lastLine(out string) string {

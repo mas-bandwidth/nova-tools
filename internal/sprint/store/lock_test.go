@@ -2,9 +2,10 @@ package store
 
 import (
 	"context"
-	"slices"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
@@ -53,21 +54,17 @@ func TestAPartThatLostATryLocksAndWrites(t *testing.T) {
 	st := &Store{B: loseFirstAcquire{Mem: h.m, h: h, acquired: &acquired}, Names: h.st.Names, Actor: sprint.MachineActor, Now: h.st.Now, NewID: h.st.NewID, Sleep: h.st.Sleep, LockAfterLoss: true}
 	relocks := h.m.Calls["relock"]
 	res, err := st.Run(h.ctx, step)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := []string{"tick deal", "tick deal lock"}; !slices.Equal(acquired, want) {
-		t.Fatalf("the part's acquires: %v, want %v (one lost try, then the lock)", acquired, want)
-	}
-	if res.Attempts != 2 || h.m.Calls["relock"]-relocks != 1 || len(res.Moved) == 0 || res.Lost {
-		t.Fatalf("the part after its lost try: %d attempts, %d relocks, %d moved, lost %v", res.Attempts, h.m.Calls["relock"]-relocks, len(res.Moved), res.Lost)
-	}
-	if f, _ := h.m.ReadFence(h.ctx); f.Pending != nil {
-		t.Fatalf("the fence still holds %s", f.Pending.ID)
-	}
-	if st := h.table().StateOf("s1-1"); st != sprint.Working {
-		t.Fatalf("s1-1 is %s after the deal under the lock, want working", st)
-	}
+	require.NoError(t, err)
+	want := []string{"tick deal", "tick deal lock"}
+	require.Equal(t, want, acquired, "the part's acquires: %v, want %v (one lost try, then the lock)", acquired, want)
+	require.EqualValues(t, 2, res.Attempts, "the part after its lost try: %d attempts, %d relocks, %d moved, lost %v", res.Attempts, h.m.Calls["relock"]-relocks, len(res.Moved), res.Lost)
+	require.EqualValues(t, 1, h.m.Calls["relock"]-relocks, "the part after its lost try: %d attempts, %d relocks, %d moved, lost %v", res.Attempts, h.m.Calls["relock"]-relocks, len(res.Moved), res.Lost)
+	require.NotEmpty(t, res.Moved, "the part after its lost try: %d attempts, %d relocks, %d moved, lost %v", res.Attempts, h.m.Calls["relock"]-relocks, len(res.Moved), res.Lost)
+	require.False(t, res.Lost, "the part after its lost try: %d attempts, %d relocks, %d moved, lost %v", res.Attempts, h.m.Calls["relock"]-relocks, len(res.Moved), res.Lost)
+	f, _ := h.m.ReadFence(h.ctx)
+	require.Nil(t, f.Pending, "the fence still holds a pending entry")
+	state := h.table().StateOf("s1-1")
+	require.Equal(t, sprint.Working, state, "s1-1 is %s after the deal under the lock, want working", state)
 	h.clean("locked")
 }
 
@@ -95,19 +92,14 @@ func TestALostTryThatEndsWithoutWritingKeepsTheTwin(t *testing.T) {
 	}
 	step := TickPartStep("once", once, sprint.TickReq{Who: sprint.MachineActor}, &epoch, nil, nil)
 	step.Twin, step.Halts = tw, true
-	if _, err := st.Run(h.ctx, step); err != nil {
-		t.Fatal(err)
-	}
-	if len(acquired) != 1 {
-		t.Fatalf("the part's acquires: %v, want the one lost", acquired)
-	}
+	_, err := st.Run(h.ctx, step)
+	require.NoError(t, err)
+	require.Len(t, acquired, 1, "the part's acquires: %v, want the one lost", acquired)
 	next := TickPartStep("deal", sprint.TickDeal, sprint.TickReq{Who: sprint.MachineActor}, &epoch, nil, nil)
 	next.Twin, next.Halts, next.Pump = tw, true, true
 	before := st.stats().reads.Load()
-	if _, err := st.Run(h.ctx, next); err != nil {
-		t.Fatal(err)
-	}
-	if n := st.stats().reads.Load() - before; n != 0 {
-		t.Fatalf("the next part read %d tables whole: the twin was thrown away after a try that wrote nothing", n)
-	}
+	_, err = st.Run(h.ctx, next)
+	require.NoError(t, err)
+	n := st.stats().reads.Load() - before
+	require.Zero(t, n, "the next part read %d tables whole: the twin was thrown away after a try that wrote nothing", n)
 }

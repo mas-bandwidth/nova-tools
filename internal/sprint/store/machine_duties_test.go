@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
@@ -149,9 +151,8 @@ func TestCRReadyToAcceptIsNeverAJudgment(t *testing.T) {
 	h.machine()
 	h.readAll()
 	h.crTicks(2, "accepted") // the pump applies the reads, then accepts
-	if got := h.state("s1-1"); got != sprint.Merging {
-		t.Fatalf("two oks: s1-1 is %s, not accepted to merging", got)
-	}
+	got := h.state("s1-1")
+	require.Equal(t, sprint.Merging, got, "two oks: s1-1 is %s, not accepted to merging", got)
 	h.tick(48 * time.Hour)
 	h.crTicks(3, "two oks")
 	open, _ := h.m.OpenNotes(h.ctx)
