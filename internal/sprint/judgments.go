@@ -283,22 +283,22 @@ var judgmentRows = []JudgmentType{
 	{Type: "an invariant is broken", Subject: subjCard, OwnerKey: keyOf("held:"), TickKept: true,
 		RaisedBy: []string{"a lower-layer refusal naming the card", "the sweep"},
 		Decisions: []Decision{decide("card"), decide("clear", "--confirm", "<prefix>"),
-			decideWhen(unread("the quarantine record"), "drop"), decide("wait")}},
+			decideWhen(judgmentUnread("the quarantine record"), "drop"), decide("wait")}},
 	{Type: "the machine's step was refused", Subject: subjRuleKey, OwnerKey: keySelf, RaisedBy: []string{"the tick"}, Ack: true, TickKept: true,
-		Decisions: []Decision{decide("log", "--since"), decide("ack"), decideWhen(unread("the machine's clock"), "stop"), decide("wait")}},
+		Decisions: []Decision{decide("log", "--since"), decide("ack"), decideWhen(judgmentUnread("the machine's clock"), "stop"), decide("wait")}},
 	{Type: "the sprint is done", Subject: subjSprint, OwnerKey: keyFixed("done"), RaisedBy: []string{"R15"},
 		Decisions: []Decision{decide("clear"), decide("add")}},
 	{Type: "a reminder could not be delivered", Subject: subjPerson, OwnerKey: keyOf("remind:"), RaisedBy: []string{"R14"}, Ack: true, TickKept: true,
 		Decisions: []Decision{decide("goal set"), decide("goal drop"), decide("ack")}},
 	{Type: "the machine is falling behind", Subject: subjSprint, OwnerKey: keyFixed("behind"), RaisedBy: []string{"R18"}, TickKept: true,
-		Decisions: []Decision{decide("wait"), decideWhen(unread("the machine's clock"), "stop"), decide("where")}},
+		Decisions: []Decision{decide("wait"), decideWhen(judgmentUnread("the machine's clock"), "stop"), decide("where")}},
 	{Type: "the machine is STOPPED and moves are due", Subject: subjSprint, OwnerKey: keyNone, RaisedBy: []string{"R17"}, TickKept: true,
 		Decisions: []Decision{decide("start"), decide("wait", "--for", "d", "--reason")}},
 	{Type: "a verb in parts stopped before its end", Subject: subjOp, OwnerKey: keyOf("late:cut:"), RaisedBy: []string{"R11"}, Ack: true, TickKept: true,
-		Decisions: []Decision{decideWhen(unread("the op's verb"), verbSameCommand, "with", "--op", "<op>"),
-			decideWhen(unread("the op's verb"), "drop", "--abort", "--op", "<op>"),
-			decideWhen(unread("the op's verb"), "remove", "--abort", "--op", "<op>"),
-			decideWhen(unread("the op's verb"), "ack"), decide("wait")}},
+		Decisions: []Decision{decideWhen(judgmentUnread("the op's verb"), verbSameCommand, "with", "--op", "<op>"),
+			decideWhen(judgmentUnread("the op's verb"), "drop", "--abort", "--op", "<op>"),
+			decideWhen(judgmentUnread("the op's verb"), "remove", "--abort", "--op", "<op>"),
+			decideWhen(judgmentUnread("the op's verb"), "ack"), decide("wait")}},
 }
 
 // noticeRows is section 2.5, row by row and in its order.
@@ -765,9 +765,9 @@ func neededCardOpen(s *Snapshot, o Open) (bool, string) {
 	return true, ""
 }
 
-// unread is the condition of a decision whose row depends on state a Snapshot
-// does not hold: it never holds, and says what would have to be read.
-func unread(what string) func(*Snapshot, string) (bool, string) {
+// judgmentUnread is the condition of a decision whose row depends on state a
+// Snapshot does not hold: it never holds, and says what would have to be read.
+func judgmentUnread(what string) func(*Snapshot, string) (bool, string) {
 	return func(*Snapshot, string) (bool, string) {
 		return false, what + " is not in a snapshot: the decision is not printed"
 	}
