@@ -127,9 +127,8 @@ func TestTheMonthlyTokenReportFromTheRedisLedgerEqualsTheFoldedTsv(t *testing.T)
 	for _, day := range []string{"2026-09-11", "2026-09-12"} {
 		wantExit(t, invoke(t, "fold", "--out", out, "--day", day, "--repos", repos, "--claude", "bench="+tr), 0)
 	}
-	// A third day carries two cards on one (day, model, repo), with reasoning measured on
-	// one and a dash on the other: the store is keyed (day, card, model, repo), the report
-	// sums the cards, and a dash is not a zero.
+	// A third day carries two repos on one (day, model), with reasoning measured on one and
+	// a dash on the other: the report sums the model's rows, and a dash is not a zero.
 	var c1, c2 tokens.Counts
 	c1.Set(tokens.Input, 10)
 	c1.Set(tokens.Output, 20)
@@ -139,8 +138,8 @@ func TestTheMonthlyTokenReportFromTheRedisLedgerEqualsTheFoldedTsv(t *testing.T)
 	c2.Set(tokens.CacheWrite, 4)
 	third := tokens.DayFile{Day: "2026-09-13", At: "2026-09-14T00:00:00Z", Build: "test", Turns: "2",
 		Sources: []string{"openai:o"}, Rows: []tokens.DayRow{
-			{Date: "2026-09-13", Model: "gpt", Repo: "schema", Unit: "card-a", Counts: c1, Basis: "utc", Sources: []string{"openai:o"}},
-			{Date: "2026-09-13", Model: "gpt", Repo: "schema", Unit: "card-b", Counts: c2, Basis: "utc", Sources: []string{"openai:o"}},
+			{Date: "2026-09-13", Model: "gpt", Repo: "schema", Counts: c1, Basis: "utc", Sources: []string{"openai:o"}},
+			{Date: "2026-09-13", Model: "gpt", Repo: "serialize", Counts: c2, Basis: "utc", Sources: []string{"openai:o"}},
 		}}
 	if err := third.Save(out); err != nil {
 		t.Fatal(err)
@@ -162,11 +161,12 @@ func TestTheMonthlyTokenReportFromTheRedisLedgerEqualsTheFoldedTsv(t *testing.T)
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("the store report is not the folded TSV to the token\nstore:\n%s\nfolded:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
-	if len(want) != 4 {
-		t.Fatalf("want 4 (day, model, repo) tuples from the fixture, the folded side has %d:\n%s", len(want), strings.Join(want, "\n"))
+	if len(want) != 5 {
+		t.Fatalf("want 5 (day, model, repo) tuples from the fixture, the folded side has %d:\n%s", len(want), strings.Join(want, "\n"))
 	}
-	wantContains(t, rep.stdout, "REPORT day=2026-09-13 model=gpt repo=schema rows=2 input=11 output=22 cache_write=4 cache_read=- reasoning=3")
-	wantContains(t, rep.stdout, "REPORT OK month=2026-09 source=redis groups=4 rows=5 indexed=3 missing=27")
+	wantContains(t, rep.stdout, "REPORT day=2026-09-13 model=gpt repo=schema rows=1 input=10 output=20 cache_write=- cache_read=- reasoning=3")
+	wantContains(t, rep.stdout, "REPORT day=2026-09-13 model=gpt repo=serialize rows=1 input=1 output=2 cache_write=4 cache_read=- reasoning=-")
+	wantContains(t, rep.stdout, "REPORT OK month=2026-09 source=redis groups=5 rows=5 indexed=3 missing=27")
 
 	// Re-indexing a day replaces it: the table is the day files' index, not an append log.
 	wantExit(t, invoke(t, "ledger", "--out", out, "--day", "2026-09-13", "--redis", dsn), 0)
@@ -286,7 +286,7 @@ func TestLedgerAndReportDialAsTheAclUser(t *testing.T) {
 	c.Set(tokens.Output, 20)
 	day := tokens.DayFile{Day: "2026-09-11", At: "2026-09-12T00:00:00Z", Build: "test", Turns: "1",
 		Sources: []string{"openai:o"}, Rows: []tokens.DayRow{
-			{Date: "2026-09-11", Model: "gpt", Repo: "schema", Unit: "card-a", Counts: c, Basis: "utc", Sources: []string{"openai:o"}},
+			{Date: "2026-09-11", Model: "gpt", Repo: "schema", Counts: c, Basis: "utc", Sources: []string{"openai:o"}},
 		}}
 	if err := day.Save(out); err != nil {
 		t.Fatal(err)
@@ -345,7 +345,7 @@ func TestLedgerMonthPipelinesWritesAndDropsSuperfluousPing(t *testing.T) {
 			Day: dayStr, At: "2026-09-12T00:00:00Z", Build: "test", Turns: "1",
 			Sources: []string{"openai:o"},
 			Rows: []tokens.DayRow{
-				{Date: dayStr, Model: "gpt", Repo: "schema", Unit: "card-a", Counts: c, Basis: "utc", Sources: []string{"openai:o"}},
+				{Date: dayStr, Model: "gpt", Repo: "schema", Counts: c, Basis: "utc", Sources: []string{"openai:o"}},
 			},
 		}
 		if err := day.Save(out); err != nil {

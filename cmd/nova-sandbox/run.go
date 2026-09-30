@@ -327,7 +327,9 @@ func parseRun(args []string) runFlags {
 		case "help", "--help", "-h":
 			f.help = true
 		default:
-			add("no_command", oneline.Escape(a)+" is not a flag of the run verb; run: nova-sandbox help")
+			text, took := unknownArg(args, i, "run")
+			add("no_command", text)
+			i += took
 		}
 	}
 	return f

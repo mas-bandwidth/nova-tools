@@ -238,6 +238,12 @@ func (a *app) cmdWhere(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "where", argErr("takes no words ", err))
 	}
 	ctx := context.Background()
+	if *watch && isTwin(c.redis) {
+		// before the watch draws anything: a twin has no machine to watch
+		if _, err := a.backend(ctx, c.redis, sprint.Names{}); err == nil && a.twinOpen(c.redis) {
+			return refuse(stderr, "where", twinMachine)
+		}
+	}
 	if *watch {
 		if *every <= 0 {
 			return refuse(stderr, "where", "--every wants a duration above 0, got "+every.String())
@@ -417,6 +423,9 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 	}
 	if isNumber(*open) {
 		return refuse(stderr, "inbox", "group numbers are not accepted: --open wants a group's id, as inbox prints it")
+	}
+	if *wait && a.twinOpen(c.redis) {
+		return refuse(stderr, "inbox", twinMachine)
 	}
 	if *wait {
 		// the coordinator's one wake a tick (errata 3 amendment 8): the next
