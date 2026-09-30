@@ -316,14 +316,13 @@ func TestTickPageLimitFromBytes(t *testing.T) {
 		k := &counting{c: w.tw}
 		l := w.loop("a", nil, b)
 		w.tick(l, k)
-		lines := w.log.Lines(testNames.Prefix, "0")
 		want := min(5000, pageBytes/assumedLineBytes) // before any page: the assumed bytes a line
 		sawOne := false
 		for i := 0; i < 3; i++ {
 			before := seqOf(l.cur)
 			w.clk.add(TickEvery)
 			rep := w.tick(l, k)
-			if rep.PageLimit != want || k.sent[len(k.sent)-rep.RoundTrips][1].Page.Queries[0].Limit != want {
+			if rep.PageLimit != want || pageOf(k.sent[len(k.sent)-rep.RoundTrips]).Limit != want {
 				t.Fatalf("page bytes %d, tick %d: the page's limit is %d; want %d", pageBytes, i, rep.PageLimit, want)
 			}
 			sawOne = sawOne || want == 1
@@ -332,6 +331,7 @@ func TestTickPageLimitFromBytes(t *testing.T) {
 				break
 			}
 			total := 0
+			lines := w.log.Lines(testNames.Prefix, "0") // the tick's own steps log lines too
 			for _, line := range lines[before:after] {
 				total += len(line)
 			}
@@ -545,7 +545,7 @@ func TestTickCurFromAtomicRead(t *testing.T) {
 	if !rep.Held || rep.Refused[sprintfn.CodeIngestAt] != 0 {
 		t.Fatalf("b's tick: %+v", rep)
 	}
-	page := k.sent[len(k.sent)-rep.RoundTrips][1].Page.Queries[0]
+	page := pageOf(k.sent[len(k.sent)-rep.RoundTrips])
 	ingest := k.sent[len(k.sent)-rep.RoundTrips+1][0].Step.Ingest
 	last := len(w.log.Lines(testNames.Prefix, "0"))
 	if page.AfterSeq != stale || ingest.From != real || rep.Lines != last-int(seqOf(real)) || b.cur != decimal(uint64(last)) {

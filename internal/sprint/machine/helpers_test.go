@@ -415,3 +415,15 @@ func keysOf(ks []sprint.AgendaKey) []string {
 	sort.Strings(out)
 	return out
 }
+
+// pageOf is the page's query in RT1's items: after the lease step, and after
+// the error step when one is owed. A round trip with no page gives the zero
+// query.
+func pageOf(items []sprintfn.Item) tset.ReadQuery {
+	for _, it := range items {
+		if it.Page != nil {
+			return it.Page.Queries[0]
+		}
+	}
+	return tset.ReadQuery{}
+}
