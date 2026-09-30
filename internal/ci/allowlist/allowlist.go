@@ -288,7 +288,7 @@ func CheckMode(r Reporter, l *List, measured map[string]bool, update bool) Resul
 	if out == l.Text() {
 		return res
 	}
-	if err := writeAtomic(l.Path, out); err != nil {
+	if err := WriteAtomic(l.Path, out); err != nil {
 		r.Errorf("%s: the update could not write the list: %v", l.Path, err)
 		return res
 	}
@@ -363,7 +363,7 @@ func CheckCountedMode(r Reporter, l *List, measured map[string]int, update bool)
 	if out == l.Text() {
 		return res
 	}
-	if err := writeAtomic(l.Path, out); err != nil {
+	if err := WriteAtomic(l.Path, out); err != nil {
 		r.Errorf("%s: the update could not write the list: %v", l.Path, err)
 		return res
 	}
@@ -418,8 +418,8 @@ func (l *List) render(drop map[int]bool, lower map[int]int, grow []string, kept 
 	return strings.Join(out, "\n") + "\n"
 }
 
-// writeAtomic replaces path through a temp file in its own directory, so a reader
+// WriteAtomic replaces path through a temp file in its own directory, so a reader
 // never sees half a list.
-func writeAtomic(path, text string) error {
+func WriteAtomic(path, text string) error {
 	return atomicfile.Write(filepath.Clean(path), []byte(text), 0o644, atomicfile.ExactMode())
 }

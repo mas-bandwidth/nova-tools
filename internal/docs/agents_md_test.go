@@ -43,8 +43,12 @@ const standardPath = "../../docs/STANDARD.md"
 // agentsLineCap is the ceiling. Every harness pays this at session start. It
 // is 150 because the page embeds the one standard (docs/STANDARD.md, one line
 // per paragraph), which carries the ten rules, the five onboarding points and
-// the class rules by name; MaxRootBytes is the cap on what the page costs.
-const agentsLineCap = 150
+// the class rules by name; MaxRootBytes is the cap on what the page costs. It rose
+// from 150 to 170 with the section "Doing it right the first time" (eight
+// paragraphs) and MaxRootBytes's rise to 32 KiB: everything somebody should need
+// to know while building or working on nova-tools goes into AGENTS.md. The page is
+// 161 lines.
+const agentsLineCap = 170
 
 // harnessFiles are the per-harness files a harness would load INSTEAD of
 // AGENTS.md. None of them may stand in this tree. CLAUDE.md is the only one
