@@ -193,7 +193,9 @@ NS = {tset_profile = 'sprint'}
 cjson = {null = NULL}
 local S = {}
 NS.tset = S
-function S.array() return {} end
+-- an array marked as Redis's cjson marks one, so a test can hold the phase's
+-- lists to arrays (Layer 1's json_tree reads an unmarked table as an object)
+function S.array() return setmetatable({}, {__is_array = true}) end
 function S.refuse(code, detail, message)
   detail = detail or {}
   if not detail.ids or next(detail.ids) == nil then detail.ids = S.array() end
@@ -395,6 +397,26 @@ func (g *luaRig) runTaking(sc diffScenario, take bool) outcome {
 		return outcome{Refusal: refusalForm(r["code"].(string), detail["ids"], r["message"].(string), detail["budget"], detail["limit"], detail["actual"])}
 	}
 	g.ctx = ctx
+	// every list of an entry is an array (the 4806 read, B3's store half: an
+	// unmarked table is refused REQUEST by Layer 1's json_tree on a store)
+	if es, ok := res[0].(*lua.LTable); ok {
+		es.ForEach(func(_, ev lua.LValue) {
+			e, ok := ev.(*lua.LTable)
+			if !ok {
+				return
+			}
+			for _, k := range []string{"ids", "revs", "each", "about", "before_fields"} {
+				v, ok := e.RawGetString(k).(*lua.LTable)
+				if !ok {
+					continue
+				}
+				mt, _ := g.L.GetMetatable(v).(*lua.LTable)
+				if mt == nil || mt.RawGetString("__is_array") != lua.LTrue {
+					g.t.Errorf("the derive phase's entry has %s as a table, not an array", k)
+				}
+			}
+		})
+	}
 	var cmds lua.LValue = lua.LNil
 	if take {
 		cmds = g.call(g.sp.RawGetString("intent_commands"), 1, ctx)[0]

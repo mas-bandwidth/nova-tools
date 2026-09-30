@@ -175,6 +175,9 @@ do
     x_cmds, err = needed(S, 'x_cmds')
     if err then return S.json.encode(err) end
     local others = {x_cmds(ctx, tp, lp)}
+    -- X.plan could not derive its commands: refused before prepare, saying why
+    -- (nothing has been written)
+    if ctx.x_poisoned then return S.json.encode(S.refuse('REQUEST', {}, 'X.plan: ' .. ctx.x_poisoned)) end
     -- Commands the derive phase staged for x_cmds to append (SP.intent_commands)
     -- that it left behind are refused, never dropped: open would be lowered with
     -- the card still in wait:<n> (I2). Nothing has been written yet (IT14).

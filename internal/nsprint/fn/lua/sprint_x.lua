@@ -985,8 +985,15 @@ do
     local s = S()
     local plan = {commands = {}}
     local poison = {commands = {{}}}
+    -- why X.plan could not derive, for the core's refusal to say (the core
+    -- refuses the step REQUEST before prepare, naming it; the poisoned plan is
+    -- refused REQUEST by S.prepare were it ever sent)
+    local function poisoned(why)
+      ctx.x_poisoned = why
+      return poison
+    end
     local x = ctx.x
-    if x == nil or x.sp == nil then return poison end
+    if x == nil or x.sp == nil then return poisoned('X.pre did not run before X.plan') end
     local sp = x.sp
     local e = ctx.write_epoch
     local function stage(command, key, kind, args)
@@ -1003,10 +1010,10 @@ do
           local before
           if rec and rec.exists then
             local missing = unobserved(rec)
-            if #missing > 0 then return poison end
+            if #missing > 0 then return poisoned('the fields ' .. table.concat(missing, ',') .. ' of ' .. pe.table .. ' card ' .. id .. ' were not observed') end
             local cerr
             before, cerr = card_of(pe.table, id, rec, fields_of(rec))
-            if cerr then return poison end
+            if cerr then return poisoned('the card ' .. id .. ' of ' .. pe.table .. ' cannot be read: ' .. tostring(cerr) .. '') end
           end
           local fc = pe.field_changes[j] or {}
           local fields = {}
@@ -1016,9 +1023,9 @@ do
           local after = {table = pe.table, id = id, row = '', col = '', score = 0, fields = fields}
           if pe.kind ~= 'remove' and not is_null(pe.to) then
             local row, col = s.cell(pe.to)
-            if not row then return poison end
+            if not row then return poisoned('an entry places ' .. id .. ' in no cell') end
             local score = tonumber(pe.after_scores[j])
-            if score == nil then return poison end
+            if score == nil then return poisoned('an entry gives ' .. id .. ' no score') end
             after.row, after.col, after.score = row, col, score
           end
           local ch = {before = before, after = after}
@@ -1027,19 +1034,19 @@ do
       end
     end
     local ops, err = fold(changes)
-    if err then return poison end
+    if err then return poisoned('the index changes cannot be folded: ' .. tostring(err) .. '') end
     -- A quarantined card is given no membership but sent, and leaves every index its
     -- change ends it in (1.3.2; I1, D1): folded once, not a card at a time.
     local qops, qerr = fold(quarantined, true)
-    if qerr then return poison end
+    if qerr then return poisoned('the index changes of the quarantine cannot be folded: ' .. tostring(qerr) .. '') end
     for _, o in ipairs(qops) do ops[#ops + 1] = o end
     for _, o in ipairs(ops) do
       local key = ctx.space .. 'sprint:' .. key_name(o.index, o.arg) .. '@' .. e
-      if #o.rem > 0 and not stage('ZREM', key, 'zset', o.rem) then return poison end
+      if #o.rem > 0 and not stage('ZREM', key, 'zset', o.rem) then return poisoned('an index removal cannot be staged') end
       if #o.add > 0 then
         local args = {}
         for _, a in ipairs(o.add) do args[#args + 1] = score_text(a.score); args[#args + 1] = a.member end
-        if not stage('ZADD', key, 'zset', args) then return poison end
+        if not stage('ZADD', key, 'zset', args) then return poisoned('an index addition cannot be staged') end
       end
     end
 
@@ -1068,10 +1075,10 @@ do
       for _, stream in ipairs(streams) do
         local ids = sorted_unique(by_stream[stream])
         for _, index in ipairs({'elig', 'fresh', 'again'}) do
-          if not zrem_pieces(ctx.space .. 'sprint:' .. index .. ':' .. stream .. '@' .. e, ids) then return poison end
+          if not zrem_pieces(ctx.space .. 'sprint:' .. index .. ':' .. stream .. '@' .. e, ids) then return poisoned('the index removals of the quarantine cannot be staged') end
         end
       end
-      if not zrem_pieces(ekey(ctx, KEY_ASKWAIT, e), sorted_unique(all)) then return poison end
+      if not zrem_pieces(ekey(ctx, KEY_ASKWAIT, e), sorted_unique(all)) then return poisoned('the askwait removals of the quarantine cannot be staged') end
     end
 
     -- The agenda: a requeued key is added before the key it continues is removed
@@ -1084,7 +1091,7 @@ do
       for i = 1, #keys, PIECE do
         local args = {}
         for j = i, math.min(i + PIECE - 1, #keys) do args[#args + 1] = score_text(x.requeue[keys[j]]); args[#args + 1] = keys[j] end
-        if not stage('ZADD', ekey(ctx, queue, e), 'zset', args) then return poison end
+        if not stage('ZADD', ekey(ctx, queue, e), 'zset', args) then return poisoned('an agenda key cannot be requeued') end
       end
     end
     local parked = {}
@@ -1094,7 +1101,7 @@ do
       if parked[k] == nil then table.insert(by_queue[queue_of(k)], k) end
     end
     for _, queue in ipairs({KEY_AGENDA, KEY_HELDQ}) do
-      if not zrem_pieces(ekey(ctx, queue, e), by_queue[queue]) then return poison end
+      if not zrem_pieces(ekey(ctx, queue, e), by_queue[queue]) then return poisoned('an agenda key cannot be removed') end
     end
     -- each table a card of which the plan changes, one version on (errata 3 H17):
     -- x_pre read the version of every table the step could change
@@ -1112,8 +1119,8 @@ do
         nchanged = nchanged - 1
       end
     end
-    if nchanged ~= 0 then return poison end
-    if #args > 0 and not stage('HSET', ekey(ctx, KEY_VERSION, e), 'hash', args) then return poison end
+    if nchanged ~= 0 then return poisoned('the tables the plan changes are not the tables X.pre read the versions of') end
+    if #args > 0 and not stage('HSET', ekey(ctx, KEY_VERSION, e), 'hash', args) then return poisoned('the versions cannot be staged') end
     -- the derive phase's commands on wait:<n> and missing (SP.intent_commands,
     -- sprint_intents.lua), last, as the twin's UseIntents ends XCmds with them:
     -- a step with a need (add --needs, a waitfor) stages them, and the core
