@@ -28,7 +28,10 @@ import (
 // Each read-only snapshot holds the shape and cells; the screen holds the table and nothing
 // else (Glenn: "it should only contain that table data, no bullshit around
 // it") -- no clock, no tick time, no key names; a store that did not answer
-// leaves the last good text standing with ONE line, stale: <n>s, under it.
+// leaves the last good text standing with ONE line, store unreachable since
+// <time>, under it, and only while the read fails: no counter ticks while the
+// store answers (owner's finding on the stale counter: "I don't want to see
+// this please. It is not helpful to me.").
 
 // clearScreen is the ANSI home-and-clear sequence.
 const clearScreen = "\033[H\033[2J"
@@ -267,11 +270,13 @@ func renderAll(title string, tables []ntable.Table, opts ntable.RenderOpts) stri
 // watchLoop draws once per tick until ctx ends (a signal: exit 0): in
 // place on w (clearScreen then the text) when out is "", else to out by
 // atomic rename. A tick whose read fails draws the last good text with one
-// stale: line under it, and says why on stderr once, and once more on
-// recovery. The ticks and the clock are handed in so a test injects both.
+// `store unreachable since <time>` line under it (the time of the first
+// failed read, so the line is the same on every failing tick), and says why
+// on stderr once, and once more on recovery. A tick whose read succeeds draws
+// the table and nothing else. The ticks and the clock are handed in so a test injects both.
 func watchLoop(ctx context.Context, w, stderr io.Writer, read func(context.Context) (string, error), ticks <-chan time.Time, now func() time.Time, out string) int {
 	var last string
-	var lastGood time.Time
+	var failedSince time.Time
 	failing := false
 	for {
 		text, err := read(ctx)
@@ -279,21 +284,18 @@ func watchLoop(ctx context.Context, w, stderr io.Writer, read func(context.Conte
 			return 0
 		}
 		if err == nil {
-			last, lastGood = text, now()
+			last = text
 			if failing {
 				fmt.Fprintln(stderr, "nova-table watch: Redis answers again")
 				failing = false
 			}
 		} else {
 			if !failing {
+				failedSince = now()
 				fmt.Fprintf(stderr, "nova-table watch: %s; the last good table stands until it answers\n", oneline.Escape(err.Error()))
 				failing = true
 			}
-			if lastGood.IsZero() {
-				text = "stale: never read\n"
-			} else {
-				text = last + fmt.Sprintf("stale: %ds\n", int64(now().Sub(lastGood).Seconds()))
-			}
+			text = last + "store unreachable since " + failedSince.Format("15:04:05") + "\n"
 		}
 		if out == "" {
 			if _, err := io.WriteString(w, clearScreen+text); err != nil {

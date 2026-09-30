@@ -541,7 +541,8 @@ publishes each tick by writing a temp file beside it and renaming it over,
 so a reader sees one whole table. `--once` renders
 once and exits, with no clear. With explicit table names, every tick is exactly one Redis pipeline of read-only snapshots, including cold and changed shapes. A stored view adds one exchange to reload its configuration. An explicit table watch holds the tables; a stored view also has its timestamp,
 title and optional summary. In either mode, a tick whose read fails leaves the last good text standing with one
-`stale: <n>s` line under it, and stderr says why once. A signal ends it,
+`store unreachable since <time>` line under it, and stderr says why once. While
+the store answers the frame is the table and nothing else: no age, no counter. A signal ends it,
 exit 0.
 
 ## Module integration and deployment

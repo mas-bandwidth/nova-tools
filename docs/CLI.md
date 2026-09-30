@@ -2220,4 +2220,4 @@ for an isolated store and the function-library loading command.
 
 Exit codes: 0 done (including requested help), 1 refused by the store, 2 usage or
 connection failure. A refusal gives the commands needed to proceed. In watch, a failed read leaves
-the last good frame and one stale-age line until recovery; Ctrl-C exits 0.
+the last good frame and one `store unreachable since <time>` line until recovery (a frame that reads fine carries no age line); Ctrl-C exits 0.
