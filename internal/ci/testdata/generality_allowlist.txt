@@ -16,14 +16,13 @@
 # - Adding a second occurrence to an already-allowed file exceeds the ceiling and fails.
 # - A count lower than the allowed count requires shrinking the allowlist entry.
 #
-# ceiling: 294
+# ceiling: 247
 cmd/nova-bus/main.go:freddy 3
 cmd/nova-bus/main.go:glenn 2
 cmd/nova-bus/main.go:johnny 3
 cmd/nova-bus/main.go:space 10
 cmd/nova-bus/main.go:stella 1
 cmd/nova-bus/version.go:space 1
-cmd/nova-cairn/main.go:space 1
 cmd/nova-check/convergence.go:glenn 1
 cmd/nova-check/convergence.go:mas-bandwidth 1
 cmd/nova-check/convergence.go:rowan 1
@@ -107,29 +106,12 @@ internal/converge/converge.go:glenn 1
 internal/converge/converge.go:rowan 1
 internal/converge/sources.go:hulk 1
 internal/converge/streams.go:glenn 1
-internal/decide/answers.go:glenn 1
-internal/decide/decide.go:glenn 1
-internal/decide/friends.go:glenn 3
-internal/decide/ladder.go:glenn 1
-internal/decide/ladder.go:johnny 4
-internal/decide/ladder.go:rowan 1
-internal/decide/ladder.go:stella 4
-internal/decide/registry.go:glenn 3
-internal/decide/registry.go:johnny 3
-internal/decide/registry.go:rowan 2
-internal/decide/registry.go:stella 1
-internal/decide/routelog.go:glenn 1
-internal/decide/routelog.go:rowan 4
-internal/decide/routelog.go:stella 1
 internal/docs/agentsmap.go:glenn 2
 internal/dogfood/authors.go:rowan 1
 internal/dogfood/authors.go:stella 1
 internal/dogfood/cli.go:glenn 1
 internal/dogfood/cli.go:space 1
 internal/dogfood/ledger.go:glenn 1
-internal/events/events.go:johnny 2
-internal/events/events.go:rowan 1
-internal/events/stream.go:johnny 1
 internal/fleet/certify.go:glenn 3
 internal/fleet/certify.go:hulk 6
 internal/fleet/certify.go:space 3
@@ -203,16 +185,9 @@ internal/secrets/seal.go:stella 1
 internal/secrets/seatinject.go:glenn 1
 internal/secrets/seatinject.go:hetzner 1
 internal/selftalk/installation.go:space 2
-internal/swarm/batch.go:glenn 2
-internal/swarm/batch.go:studio 2
 internal/swarm/cardbudget.go:stella 1
-internal/swarm/cost.go:glenn 1
 internal/swarm/fence.go:rowan 1
 internal/swarm/fileretry.go:stella 1
-internal/swarm/gatebench.go:hulk 1
-internal/swarm/inflight.go:hulk 2
-internal/swarm/inflight.go:space 2
-internal/swarm/inflight.go:vision 1
 internal/swarm/inputlimit.go:freddy 1
 internal/swarm/inputlimit.go:space 1
 internal/swarm/lease.go:stella 2
@@ -240,15 +215,6 @@ internal/swarm/providerread.go:stella 1
 internal/swarm/reap.go:hulk 1
 internal/swarm/reap.go:vision 1
 internal/swarm/result.go:space 4
-internal/swarm/resultlint.go:hulk 1
-internal/swarm/resultlint.go:rowan 1
-internal/swarm/resultlint.go:space 2
-internal/swarm/resultlint.go:vision 2
-internal/swarm/routeladder.go:glenn 2
-internal/swarm/routeladder.go:stella 1
-internal/swarm/sandbox.go:rowan 1
-internal/swarm/share.go:hulk 1
-internal/swarm/share.go:vision 1
 internal/swarm/signature.go:glenn 1
 internal/swarm/signature.go:space 1
 internal/swarm/slots.go:johnny 1
@@ -258,8 +224,6 @@ internal/swarm/stage.go:hulk 1
 internal/swarm/stage.go:mas-bandwidth 1
 internal/swarm/stage.go:rowan 6
 internal/swarm/staging.go:rowan 2
-internal/swarm/supervise.go:freddy 1
-internal/swarm/taxonomy.go:space 3
 internal/swarm/timeline.go:glenn 1
 internal/swarm/toolchain.go:hulk 2
 internal/swarm/toolchain.go:johnny 2
@@ -269,8 +233,6 @@ internal/swarm/wall.go:johnny 1
 internal/swarm/wall.go:stella 3
 internal/swarm/wallread.go:hulk 2
 internal/swarm/wallread.go:studio 1
-internal/swarm/wallterms.go:johnny 1
-internal/swarm/wallterms.go:rowan 3
 internal/swarm/worker.go:rowan 3
 internal/swarm/worker.go:space 1
 internal/swarm/worker.go:stella 1
@@ -294,12 +256,8 @@ internal/tokens/repo.go:rowan 3
 internal/typedrec/contract.go:space 4
 internal/typedrec/disposition.go:johnny 2
 internal/typedrec/disposition.go:space 4
-internal/typedrec/pathsrefusal.go:space 1
-internal/typedrec/result.go:space 12
+internal/typedrec/result.go:space 6
 internal/typedrec/result.go:stella 1
-internal/typedrec/synth.go:glenn 1
-internal/typedrec/template.go:emma 4
-internal/typedrec/template.go:mas-bandwidth 6
 internal/update/snapshot.go:space 1
 internal/update/snapverb.go:studio 1
 internal/worklang/worklang.go:space 5

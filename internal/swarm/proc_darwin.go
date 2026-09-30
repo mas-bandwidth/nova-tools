@@ -17,8 +17,3 @@ package swarm
 // rests on the pid alone, which is the weaker claim, and it is weaker HERE rather than
 // everywhere.
 func StartStamp(pid int) string { return "-" }
-
-// GroupMembers cannot enumerate a process group here for the same reason. The callers fall
-// back to GroupAlive over the job's own process group, which the supervisor is not a
-// member of, so "is anything left in it" is answerable without enumeration.
-func GroupMembers(pgid, self int) (int, bool) { return 0, false }

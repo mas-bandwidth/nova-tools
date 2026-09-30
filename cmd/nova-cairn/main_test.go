@@ -66,7 +66,7 @@ func TestOpenAppendIndexReceiptRoundTrip(t *testing.T) {
 	if !strings.Contains(out, "INDEX ENTRY session=s1 entry=e1") {
 		t.Fatalf("index printed %q", out)
 	}
-	if !strings.Contains(out, "INDEX COVERAGE sessions=1 entries=1") {
+	if !strings.Contains(out, "INDEX OK sessions=1 entries=1") {
 		t.Fatalf("coverage printed %q", out)
 	}
 	raw, err := os.ReadFile(filepath.Join(store, "entries", "s1", "e1.json"))
@@ -202,7 +202,7 @@ func TestConcurrentRecordsAndAlternateHeaders(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, _ := runOK(t, "", "index", "--store", store)
-	if !strings.Contains(out, "INDEX COVERAGE sessions=2 entries=2") {
+	if !strings.Contains(out, "INDEX OK sessions=2 entries=2") {
 		t.Fatalf("index printed %q", out)
 	}
 	out, _ = runOK(t, "", "index", "--store", store, "--session", "alpha")
@@ -405,5 +405,56 @@ func TestAMalformedOpenRecordRefusesTheAppendAndWritesNothing(t *testing.T) {
 				t.Fatalf("s2 append printed %q, want its own session's source", out)
 			}
 		})
+	}
+}
+
+// Every problem of one invocation is named in one run, one line each: the
+// missing flags, a --now that is not a clock, and a stray argument together.
+func TestEveryProblemIsNamedAtOnce(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		args []string
+		want []string
+	}{
+		{"open", []string{"open", "--store", "./c", "--now", "yesterday", "stray"},
+			[]string{"--session is required", "--publish is required", "--now must parse", `takes no positional arguments, got "stray"`}},
+		{"append", []string{"append", "--text", "a", "--file", "b"},
+			[]string{"--store is required", "--session is required", "--entry is required", "--publish is required", "--text and --file both"}},
+		{"two bad things", []string{"receipt", "--store", "s", "--session", "x", "stray"},
+			[]string{"--entry is required", `takes no positional arguments, got "stray"`}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			args := append([]string(nil), tc.args...)
+			for i, a := range args {
+				if a == "./c" {
+					args[i] = dir + "/c"
+				}
+			}
+			code, out, errOut := runCode("", args...)
+			lines := strings.Split(strings.TrimSuffix(errOut, "\n"), "\n")
+			if code != 2 || out != "" || len(lines) != len(tc.want) {
+				t.Fatalf("exit %d, stdout %q, %d lines, want 2, none and %d:\n%s", code, out, len(lines), len(tc.want), errOut)
+			}
+			for i, w := range tc.want {
+				if !strings.Contains(lines[i], w) || !strings.HasSuffix(lines[i], "; run: nova-cairn help") {
+					t.Errorf("line %d is %q, want %q ending at the door", i, lines[i], w)
+				}
+			}
+			if entries, _ := os.ReadDir(dir); len(entries) != 0 {
+				t.Errorf("a refused invocation wrote %v", entries)
+			}
+		})
+	}
+}
+
+// nova-cairn's definition meets the standard its banner and help cannot hold
+// by construction: every verb's effect, and a how text of five short lines.
+func TestCairnToolMeetsTheStandard(t *testing.T) {
+	t.Parallel()
+	for _, p := range cairnTool().Problems() {
+		t.Error(p)
 	}
 }

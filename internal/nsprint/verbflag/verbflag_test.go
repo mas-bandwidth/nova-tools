@@ -334,6 +334,29 @@ func TestExitCodesAreTheToolsOwn(t *testing.T) {
 	}
 }
 
+func TestBoolAskedReadsTheFlagBeforeTheParse(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{"double dash", []string{"x", "--json"}, true},
+		{"single dash", []string{"-json"}, true},
+		{"explicit true", []string{"--json=true"}, true},
+		{"explicit false", []string{"--json=false"}, false},
+		{"after the terminator", []string{"--", "--json"}, false},
+		{"absent", []string{"--jsonx"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := BoolAsked(tc.args, "json"); got != tc.want {
+				t.Errorf("BoolAsked(%q) = %v, want %v", tc.args, got, tc.want)
+			}
+		})
+	}
+}
+
 // RecoverWith prints the lines the tool gives for the verb above its flags, and
 // Insert falls back to the exit codes, then the end, when a help has no flags.
 func TestRecoverWithShowsTheToolsLinesAboveTheFlags(t *testing.T) {

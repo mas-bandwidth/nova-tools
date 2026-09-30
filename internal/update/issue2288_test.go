@@ -227,7 +227,7 @@ func TestIssue2288(t *testing.T) {
 	}
 	// The verb is dispatched and the help banner names it.
 	var banner bytes.Buffer
-	help("nova-version", &banner)
+	banner.WriteString(VersionTool("", Environment{}).Banner())
 	if !strings.Contains(banner.String(), "nova-version moved --from <sha> --to <sha> --repo <dir> --out <path>") {
 		t.Errorf("nova-version help omits the moved verb:\n%s", banner.String())
 	}

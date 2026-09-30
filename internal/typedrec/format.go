@@ -37,6 +37,10 @@ func ResultFormat(kind string) string {
 	return b.String()
 }
 
+// WrapperOwned are the typed fields the wrapper writes. A model-written line
+// for one of them is dropped: the wrapper's value is the record.
+var WrapperOwned = []string{"SCHEMA", "KIND", "ATTEMPT", "CHECK", "REPO", "BRANCH", "PATHS", "RED", "GREEN"}
+
 // JudgementFields are what a DONE record of kind needs that the wrapper cannot
 // know: the Contract fields the kind requires that are not WrapperOwned, and
 // its required sections other than Gates and Left owed.
