@@ -1,6 +1,6 @@
 # AGENTS.md — generated map of docs/
 
-Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). Rules: [CONTRIBUTING.md](CONTRIBUTING.md).
+Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). Rules: [STANDARD.md](STANDARD.md).
 
 | dir | purpose | guard | command |
 | --- | --- | --- | --- |

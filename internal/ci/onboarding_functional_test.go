@@ -62,7 +62,7 @@ func TestEveryCommandMeetsTheOnboardingStandard(t *testing.T) {
 
 			// (c) The transcript section in docs/TESTS.md that a test executes.
 			if firstRunErr != nil {
-				t.Errorf("%v\n(docs/ONBOARDING.md point 5(c): every tool's docs/TESTS.md section opens with `%s`)", firstRunErr, onboarding.FirstRunHeading)
+				t.Errorf("%v\n(docs/STANDARD.md, onboarding point 5(c): every tool's docs/TESTS.md section opens with `%s`)", firstRunErr, onboarding.FirstRunHeading)
 			}
 
 			// (a), first half: the bare command REFUSES in one line and names the
@@ -126,7 +126,7 @@ func TestEveryCommandMeetsTheOnboardingStandard(t *testing.T) {
 
 			examples, err := onboarding.ExampleLines(banner, tool)
 			if err != nil {
-				t.Fatalf("%v\n(docs/ONBOARDING.md point 1)\n\nwhat it printed:\n%s", err, banner)
+				t.Fatalf("%v\n(docs/STANDARD.md, onboarding point 1)\n\nwhat it printed:\n%s", err, banner)
 			}
 			for _, ex := range examples {
 				if strings.Contains(ex, "<") || strings.Contains(ex, ">") {

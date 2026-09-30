@@ -16,7 +16,7 @@
 # - Adding a second occurrence to an already-allowed file exceeds the ceiling and fails.
 # - A count lower than the allowed count requires shrinking the allowlist entry.
 #
-# ceiling: 247
+# ceiling: 240
 cmd/nova-bus/main.go:glenn 2
 cmd/nova-bus/main.go:johnny 3
 cmd/nova-bus/main.go:space 10
@@ -100,7 +100,7 @@ internal/converge/converge.go:glenn 1
 internal/converge/converge.go:rowan 1
 internal/converge/sources.go:hulk 1
 internal/converge/streams.go:glenn 1
-internal/docs/agentsmap.go:glenn 2
+internal/docs/agentsmap.go:glenn 1
 internal/dogfood/authors.go:rowan 1
 internal/dogfood/authors.go:stella 1
 internal/dogfood/cli.go:glenn 1
