@@ -171,8 +171,8 @@ func cards(s *sprint.Snapshot) string {
 	var lines []string
 	for _, tb := range []*sprint.Table{s.Work, s.Readers, s.Merge, s.Fleet} {
 		lines = append(lines, fmt.Sprintf("%s rows %q", tb.Name, tb.Rows()))
-		for id, c := range tb.Cards {
-			lines = append(lines, fmt.Sprintf("%s %s %s:%s %v %v", tb.Name, id, c.Row, c.Col, c.Score, c.Fields))
+		for _, c := range tb.Cards() {
+			lines = append(lines, fmt.Sprintf("%s %s %s:%s %v %v", tb.Name, c.ID, c.Row, c.Col, c.Score, c.Fields))
 		}
 	}
 	slices.Sort(lines)

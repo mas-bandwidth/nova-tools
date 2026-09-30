@@ -883,7 +883,7 @@ func Rank(s *Snapshot, r RankReq) Plan {
 	} else if r.First {
 		low := 0.0
 		first := true
-		for _, c := range s.Work.Cards {
+		for _, c := range s.Work.Cards() {
 			if c.Placed() && (first || c.Score < low) {
 				low, first = c.Score, false
 			}

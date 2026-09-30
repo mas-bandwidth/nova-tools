@@ -113,13 +113,18 @@ func (c *Card) Int(name string) int {
 }
 
 // Table is one table as observed: its revision, its rows in order, its text
-// cells, and its cards (placed, and any unplaced records the step asked for).
+// cells, and its cards (placed, and any unplaced records the step asked for),
+// which are read by Card, Cards and LoadedCards.
 type Table struct {
 	Name     string // logical name
 	Epoch    uint64
 	Revision uint64
 	Texts    map[string]map[string]string // row -> text column -> value
-	Cards    map[string]*Card
+
+	// cards are the table's cards by id, read by Card, Placed, Cards and
+	// LoadedCards and set by Put: on a table loaded from a read plan the cards are
+	// only some of the table's, and a field could not say so.
+	cards map[string]*Card
 
 	// rows are the table's rows in order, read by Rows and set by SetRows: on a
 	// table loaded from a read plan the rows are read only when the plan asked
@@ -232,7 +237,7 @@ func (t *Table) Put(c *Card) {
 	if c.Fields == nil {
 		c.Fields = map[string]string{}
 	}
-	t.Cards[c.ID] = c
+	t.cards[c.ID] = c
 	t.cells, t.byPrimary = nil, nil
 }
 
@@ -241,7 +246,7 @@ func (t *Table) index() {
 		return
 	}
 	t.cells, t.byPrimary, t.lines = map[[2]string][]*Card{}, map[string][]*Card{}, nil
-	for _, c := range t.Cards {
+	for _, c := range t.cards {
 		if !c.Placed() {
 			continue
 		}
@@ -266,7 +271,7 @@ func (t *Table) index() {
 
 // NewTable is an empty observed table.
 func NewTable(name string) *Table {
-	return &Table{Name: name, Texts: map[string]map[string]string{}, Cards: map[string]*Card{}}
+	return &Table{Name: name, Texts: map[string]map[string]string{}, cards: map[string]*Card{}}
 }
 
 // Rows are the table's rows in order, not to be changed. On a table loaded from
@@ -315,7 +320,68 @@ func (t *Table) Card(id string) *Card {
 	if t == nil {
 		return nil
 	}
-	return t.Cards[id]
+	return t.cards[id]
+}
+
+// Cards is every card the table holds, placed or kept, in id order: a copy of
+// the list, of the same cards. It is a scan of the whole table, so on a table
+// loaded from a read plan it is answered only when the plan loaded the table
+// whole: the work table, whose rows a stream query listed and every one of
+// whose cells (a row's cell in each state) was read whole. Any other partial
+// table is refused (see Loaded), and the result is empty, never the cards that
+// happen to be known (a table's other columns are not named here, and the
+// readers, merge and fleet tables hold hidden ones). A record kept with no
+// place is held only when a query named its id, so even a whole table may hold
+// fewer of those than the store does: no query lists them. A rule that means
+// exactly the records the read loaded asks for them by name (LoadedCards).
+func (t *Table) Cards() []*Card {
+	if t == nil || !t.needAll() {
+		return nil
+	}
+	return t.loadedCards()
+}
+
+// LoadedCards is the cards the table holds, in id order, whatever the read that
+// loaded them read of the rest: a scan of the records that came, for a rule that
+// asks for exactly that. It is never refused, and on a table loaded from a read
+// plan it is not every card of the table; Cards is.
+func (t *Table) LoadedCards() []*Card {
+	if t == nil {
+		return nil
+	}
+	return t.loadedCards()
+}
+
+func (t *Table) loadedCards() []*Card {
+	out := make([]*Card, 0, len(t.cards))
+	for _, c := range t.cards {
+		out = append(out, c)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
+// needAll is the guard of a scan of every card of the table: true when the
+// table was built whole, or is the work table loaded whole (its rows read and
+// every cell of every row read whole); otherwise the scan is put in the
+// snapshot's log.
+func (t *Table) needAll() bool {
+	if t.part == nil {
+		return true
+	}
+	if t.part.rows && t.Name == Work {
+		whole := true
+		for _, row := range t.rows {
+			for _, st := range States {
+				whole = whole && t.part.whole[[2]string{row, string(st)}]
+			}
+		}
+		if whole {
+			return true
+		}
+	}
+	t.part.log.note(unloadedMessage + ": " + t.Name + " cards")
+	return false
 }
 
 // Placed is the card with the id if it has a place.

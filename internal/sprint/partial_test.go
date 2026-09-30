@@ -803,7 +803,7 @@ func TestLoadPartialMergesWhatSeveralQueriesReadOfOneRecord(t *testing.T) {
 		t.Fatal(err)
 	}
 	c := s.Work.Card("p1")
-	if c == nil || c.F("attempt") != "2" || c.F("open") != "0" || c.F("kind") != "primary" || len(s.Work.Cards) != 1 {
+	if c == nil || c.F("attempt") != "2" || c.F("open") != "0" || c.F("kind") != "primary" || len(s.Work.LoadedCards()) != 1 {
 		t.Fatalf("p1 read by three queries: %+v", c)
 	}
 	if got := ids(s.Work.Cell("s1", "ready")); !reflect.DeepEqual(got, []string{"p1"}) {
@@ -983,8 +983,8 @@ func TestLoadPartialTenThousandRecords(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(s.Work.Cards) != MaxReadRecords || s.Work.Card("p4999") == nil || s.Work.Card("q249.19") == nil {
-		t.Fatalf("%d cards", len(s.Work.Cards))
+	if len(s.Work.LoadedCards()) != MaxReadRecords || s.Work.Card("p4999") == nil || s.Work.Card("q249.19") == nil {
+		t.Fatalf("%d cards", len(s.Work.LoadedCards()))
 	}
 	if !s.Work.Loaded("t7", "ready") || len(s.Work.Cell("t7", "ready")) != 20 || s.Work.Loaded("t7", "review") {
 		t.Fatal("the cells of the ranges are not loaded whole")

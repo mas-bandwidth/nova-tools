@@ -74,7 +74,7 @@ func TestClearStopsTheSprintAndClearsAllWork(t *testing.T) {
 		if !slices.Equal(pair[0].Rows(), pair[1].Rows()) {
 			t.Fatalf("%s rows %v, were %v", pair[1].Name, pair[1].Rows(), pair[0].Rows())
 		}
-		for _, c := range pair[1].Cards {
+		for _, c := range pair[1].Cards() {
 			if c.Placed() && c.Col != sprint.Ctl {
 				t.Fatalf("%s still holds %s at %s", pair[1].Name, c.ID, c.Col)
 			}

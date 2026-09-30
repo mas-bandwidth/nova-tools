@@ -147,12 +147,12 @@ func TestClearInTheMiddleOfAStep(t *testing.T) {
 			if s.Epoch != 1 {
 				t.Fatalf("epoch %d", s.Epoch)
 			}
-			for _, c := range s.Work.Cards {
+			for _, c := range s.Work.Cards() {
 				if c.Placed() {
 					t.Errorf("new epoch holds %s at %s", c.ID, c.Col)
 				}
 			}
-			for _, c := range s.Fleet.Cards {
+			for _, c := range s.Fleet.Cards() {
 				if c.Placed() && c.Col != sprint.Ctl {
 					t.Errorf("new epoch fleet holds %s at %s", c.ID, c.Col)
 				}
@@ -163,7 +163,7 @@ func TestClearInTheMiddleOfAStep(t *testing.T) {
 			if err != nil {
 				t.Fatalf("old epoch: %v", err)
 			}
-			t.Logf("old epoch: s1-1 %s, s1-2 %s, fleet cards %d", old.StateOf("s1-1"), old.StateOf("s1-2"), len(old.Fleet.Cards))
+			t.Logf("old epoch: s1-1 %s, s1-2 %s, fleet cards %d", old.StateOf("s1-1"), old.StateOf("s1-2"), len(old.Fleet.Cards()))
 			if p := h.m.AtEpoch(0, true).(*Mem).Pending(); p != nil {
 				t.Logf("old epoch's fence still holds %s", p.ID)
 			}
@@ -216,7 +216,7 @@ func TestEmptyClearsThenTeardown(t *testing.T) {
 		if err != nil {
 			t.Fatalf("epoch %d unreadable: %v", e, err)
 		}
-		if len(s.Work.Rows())+len(s.Fleet.Rows())+len(s.Work.Cards) != 0 {
+		if len(s.Work.Rows())+len(s.Fleet.Rows())+len(s.Work.Cards()) != 0 {
 			t.Fatalf("epoch %d is not empty", e)
 		}
 	}
@@ -243,7 +243,7 @@ func TestOldEpochUnchangedByReuse(t *testing.T) {
 		}
 		var lines []string
 		for _, tb := range []*sprint.Table{s.Work, s.Readers, s.Merge, s.Fleet} {
-			for _, c := range tb.Cards {
+			for _, c := range tb.Cards() {
 				lines = append(lines, tb.Name+" "+c.ID+" "+c.Row+":"+c.Col+" rev "+fmtU(c.Rev))
 			}
 		}

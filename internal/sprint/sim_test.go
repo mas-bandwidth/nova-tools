@@ -107,7 +107,7 @@ func (w *world) entry(ch Change) {
 		for k, v := range e.Set {
 			c.Fields[k] = v
 		}
-		tb.Cards[c.ID] = c
+		tb.Put(c)
 		return
 	}
 	if c == nil {

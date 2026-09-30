@@ -80,8 +80,8 @@ func loadSample(tb testing.TB, s sample) *loaded {
 			l.must(l.m.RowsAdd(l.ctx, stored, tab.Rows()))
 		}
 		var placed, kept, removed []ntable.BatchMemberEntry
-		for _, id := range slices.Sorted(maps.Keys(tab.Cards)) {
-			c := tab.Cards[id]
+		for _, c := range tab.Cards() {
+			id := c.ID
 			e := ntable.BatchMemberEntry{ID: id, Expect: &ntable.MemberExpect{Absent: true}, Set: maps.Clone(c.Fields)}
 			if c.Placed() {
 				e.Create = &ntable.MemberCreateOp{Row: c.Row, Col: c.Col, Score: c.Score}
@@ -263,7 +263,7 @@ func (l *loaded) differs(s sample, moves []refmodel.Move, res store.Result, due 
 		return "the moves do not apply: " + err.Error()
 	}
 	for _, name := range store.All {
-		for _, c := range want.T(name).Cards {
+		for _, c := range want.T(name).Cards() {
 			if !c.Placed() {
 				c.Score = 0 // a card with no place has no score to read back from the store
 			}
@@ -330,8 +330,8 @@ func (l *loaded) tables(want *sprint.Snapshot) *sprint.Snapshot {
 			tab.SetRows(append(tab.Rows(), r.Key))
 		}
 		ids := map[string]bool{}
-		for id := range want.T(name).Cards {
-			ids[id] = true
+		for _, c := range want.T(name).Cards() {
+			ids[c.ID] = true
 		}
 		for _, id := range placed[names[i]] {
 			ids[id] = true

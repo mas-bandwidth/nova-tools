@@ -57,7 +57,8 @@ func AddIDs(s *Snapshot, r AddReq) []string {
 	}
 	high, gates := 0, 0
 	prefix, gp := r.Stream+"-", gatePrefix(r.Stream)
-	for id := range s.Work.Cards {
+	for _, c := range s.Work.Cards() {
+		id := c.ID
 		if n, err := strconv.Atoi(strings.TrimPrefix(id, prefix)); err == nil && strings.HasPrefix(id, prefix) && n > high {
 			high = n
 		}

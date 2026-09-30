@@ -94,7 +94,7 @@ func cloneTable(t *sprint.Table) *sprint.Table {
 	for row, texts := range t.Texts {
 		c.Texts[row] = maps.Clone(texts)
 	}
-	for _, card := range t.Cards {
+	for _, card := range t.Cards() {
 		c.Put(&sprint.Card{ID: card.ID, Row: card.Row, Col: card.Col, Score: card.Score, Rev: card.Rev, Fields: maps.Clone(card.Fields)})
 	}
 	return c

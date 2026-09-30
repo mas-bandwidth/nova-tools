@@ -51,8 +51,7 @@ func dump(s refmodel.Snapshot) string {
 		for _, row := range slices.Sorted(maps.Keys(tb.Texts)) {
 			fmt.Fprintf(&b, "  text %s %v\n", row, tb.Texts[row])
 		}
-		for _, id := range slices.Sorted(maps.Keys(tb.Cards)) {
-			c := tb.Cards[id]
+		for _, c := range tb.Cards() {
 			fmt.Fprintf(&b, "  card %s %s:%s score=%v rev=%d %v\n", c.ID, c.Row, c.Col, c.Score, c.Rev, c.Fields)
 		}
 	}
@@ -86,7 +85,7 @@ func TestDumpSeesEveryPartOfASnapshot(t *testing.T) {
 		"text":        func(s *refmodel.Snapshot) { s.Tables.Fleet.Texts["zed"] = map[string]string{"a": "b"} },
 		"card":        func(s *refmodel.Snapshot) { s.Tables.Work.Put(&sprint.Card{ID: "zed", Row: "s1", Col: "ready"}) },
 		"field": func(s *refmodel.Snapshot) {
-			for _, c := range s.Tables.Work.Cards {
+			for _, c := range s.Tables.Work.Cards() {
 				c.Fields["zed"] = "1"
 				return
 			}
@@ -112,7 +111,7 @@ func TestACloneSharesNothingWithItsSnapshot(t *testing.T) {
 		c := s.snap.Clone()
 		for _, tb := range []*sprint.Table{c.Tables.Work, c.Tables.Readers, c.Tables.Merge, c.Tables.Fleet} {
 			tb.SetRows(append(tb.Rows(), "zed"))
-			for _, card := range tb.Cards {
+			for _, card := range tb.Cards() {
 				card.Fields["zed"], card.Score = "1", card.Score+1
 			}
 			for row := range tb.Texts {

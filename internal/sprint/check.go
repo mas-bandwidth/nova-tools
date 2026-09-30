@@ -235,10 +235,5 @@ func Check(s *Snapshot, pending *Pending) []Violation {
 }
 
 func sortedCards(t *Table) []*Card {
-	out := make([]*Card, 0, len(t.Cards))
-	for _, c := range t.Cards {
-		out = append(out, c)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
-	return out
+	return t.Cards()
 }

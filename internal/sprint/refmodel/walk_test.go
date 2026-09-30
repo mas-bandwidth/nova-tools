@@ -175,8 +175,8 @@ func (k *walk) add() bool {
 	k.next++
 	var needs []string
 	var all []string
-	for id := range k.s.Work.Cards {
-		all = append(all, id)
+	for _, c := range k.s.Work.Cards() {
+		all = append(all, c.ID)
 	}
 	slices.Sort(all)
 	for range k.pick(walkMaxNeeds + 1) {

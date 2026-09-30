@@ -75,6 +75,7 @@ func guardedReads() []guardedRead {
 		{"UpMembers", func(s *Snapshot) any { return s.UpMembers() }, []string{"m1"}, []string(nil), "fleet rows"},
 		{"HasRow", func(s *Snapshot) any { return s.Work.HasRow("s1") }, true, false, "work rows"},
 		{"Rows", func(s *Snapshot) any { return s.Work.Rows() }, []string{"s1"}, []string(nil), "work rows"},
+		{"Cards", func(s *Snapshot) any { return ids(s.Work.Cards()) }, []string{"g1", "p1", "p3"}, []string{}, "work cards"},
 	}
 }
 
@@ -136,9 +137,9 @@ func TestEveryGuardedReadOnATableBuiltWholeIsAsItWas(t *testing.T) {
 	}
 }
 
-// guardedPlan reads all that the guarded reads need: the five open cells of s1
-// whole, the rows of the three tables, the fleet's control card, and the read
-// cards of p3.
+// guardedPlan reads all that the guarded reads need: the six cells of s1 whole
+// (the five open ones and landed), the rows of the three tables, the fleet's
+// control card, and the read cards of p3.
 func guardedPlan() (ReadPlan, ReadAnswer) {
 	rp := ReadPlan{
 		IDs: map[string][]string{Fleet: {"ctl-m1"}},
@@ -147,8 +148,8 @@ func guardedPlan() (ReadPlan, ReadAnswer) {
 			{Kind: QueryRelated, Table: Work, Source: IDSource{Kind: SourceIDs, IDs: []string{"p3"}}, Follow: []string{FollowRCards}},
 		},
 	}
-	for _, cell := range OpenCells("s1") {
-		rp.Ranges = append(rp.Ranges, RangeQ{Table: Work, Cell: cell, Limit: MaxRangeLimit, Records: true})
+	for _, st := range States {
+		rp.Ranges = append(rp.Ranges, RangeQ{Table: Work, Cell: "s1:" + string(st), Limit: MaxRangeLimit, Records: true})
 	}
 	ans := wholeStore{guardWorld()}.Answer(rp)
 	ans.Sprint[3] = Answer{Kind: QueryRelated, Records: []TableCard{{Readers, pcard("p3@1", "r1", Asked, 1, "primary", "p3")}}}
@@ -474,5 +475,171 @@ func TestTheIndexOfPrimariesReadsThroughTheCardsOwnGuard(t *testing.T) {
 	}
 	if err := fs.UnloadedErr(); err != nil {
 		t.Fatalf("a control card that holds no primary was refused: %v", err)
+	}
+}
+
+// A scan of every card of a table is a read of all of it: Cards is answered on a
+// table built whole, and on the work table of a plan that read its rows and every
+// cell of every row whole, and is refused on any other partial table. The cards
+// the read did load, whatever it left out, are LoadedCards.
+func TestCardsIsAScanOfTheWholeTable(t *testing.T) {
+	t.Parallel()
+	world := guardWorld()
+	world.Work.Put(pcard("p0", "", "", 0, "outcome", "dropped")) // a kept record with no place
+	if got := ids(world.Work.Cards()); !reflect.DeepEqual(got, []string{"g1", "p0", "p1", "p3"}) {
+		t.Fatalf("Cards of a table built whole, placed and kept, in id order: %v", got)
+	}
+	if got := ids(world.Work.LoadedCards()); !reflect.DeepEqual(got, []string{"g1", "p0", "p1", "p3"}) {
+		t.Fatalf("LoadedCards of a table built whole: %v", got)
+	}
+	var none *Table
+	if none.Cards() != nil || none.LoadedCards() != nil {
+		t.Fatal("no table has cards")
+	}
+	// The list is a copy: what a caller does to it is not done to the table.
+	list := world.Work.Cards()
+	list[0] = nil
+	if got := ids(world.Work.Cards()); len(got) != 4 {
+		t.Fatalf("Cards handed out the table's own list: %v", got)
+	}
+
+	// Every cell of every row read whole, and the rows read: the table's cards
+	// (and the kept record an ids query named) are all there.
+	rp, ans := guardedPlan()
+	rp.IDs = map[string][]string{Work: {"p0"}, Fleet: {"ctl-m1"}}
+	full := wholeStore{world}.Answer(rp)
+	full.Sprint = ans.Sprint
+	s, err := loadPartial(rp, full, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ids(s.Work.Cards()); !reflect.DeepEqual(got, []string{"g1", "p0", "p1", "p3"}) {
+		t.Fatalf("Cards of the work table read whole: %v", got)
+	}
+	if err := s.UnloadedErr(); err != nil {
+		t.Fatalf("a scan of a table loaded whole was refused: %v", err)
+	}
+	// Another partial table has no scan, whatever its rows and cells: its columns
+	// are not named, and the merge, fleet and readers tables hold hidden ones.
+	for _, name := range []string{Readers, Merge, Fleet} {
+		msg := mustPanic(t, func() { s.T(name).Cards() })
+		if !strings.Contains(msg, unloadedMessage+": "+name+" cards") {
+			t.Errorf("Cards of the %s table: %q", name, msg)
+		}
+		s.T(name).LoadedCards() // never refused
+	}
+	if err := s.UnloadedErr(); err != nil { // a strict snapshot panics at a refused read and keeps none
+		t.Fatalf("LoadedCards was refused: %v", err)
+	}
+	if got := ids(s.Fleet.LoadedCards()); !reflect.DeepEqual(got, []string{"ctl-m1"}) {
+		t.Errorf("LoadedCards of the fleet table: %v", got)
+	}
+
+	// One cell not read whole, or the rows not read: refused, in each mode.
+	for name, drop := range map[string]func(rp *ReadPlan, ans *ReadAnswer){
+		"a cell not read whole": func(rp *ReadPlan, ans *ReadAnswer) {
+			for i, sl := range rp.TsetSlots() { // the landed cell answered with more members than it returned
+				if sl.Kind == AnswerRange && rp.Ranges[sl.Index].Cell == "s1:landed" {
+					ans.Tset[i].HasMore = true
+				}
+			}
+		},
+		"the rows not read": func(rp *ReadPlan, ans *ReadAnswer) { rp.Sprint = rp.Sprint[1:]; ans.Sprint = ans.Sprint[1:] },
+	} {
+		for _, strict := range []bool{true, false} {
+			rp2, ans2 := guardedPlan()
+			drop(&rp2, &ans2)
+			s2, err := loadPartial(rp2, ans2, strict)
+			if err != nil {
+				t.Fatal(name, err)
+			}
+			if strict {
+				if msg := mustPanic(t, func() { s2.Work.Cards() }); !strings.Contains(msg, unloadedMessage+": work cards") {
+					t.Errorf("%s: %q", name, msg)
+				}
+				continue
+			}
+			if got := s2.Work.Cards(); got != nil {
+				t.Errorf("%s: a refused scan gave %v", name, ids(got))
+			}
+			if reads := s2.Unloaded(); len(reads) != 1 || reads[0] != unloadedMessage+": work cards" {
+				t.Errorf("%s: refused %q", name, reads)
+			}
+			if got := ids(s2.Work.LoadedCards()); len(got) == 0 {
+				t.Errorf("%s: LoadedCards gave none of what was loaded", name)
+			}
+		}
+	}
+}
+
+// The scans of today's steps (add --count, add with no score, rank --first)
+// compute a highest or a lowest over the cards, so a plan that read only some of
+// them gets none of them (the cold read of the fixes to #4748: a read of s1-2
+// alone got AddIDs = s1-3, s1-4 against s1-8, s1-9 whole).
+func TestTheScansOfTodaysStepsAreRefusedOnAPartialSnapshot(t *testing.T) {
+	t.Parallel()
+	world := wholeSnapshot([]string{"s1"}, nil,
+		pcard("s1-1", "s1", Landed, 1),
+		pcard("s1-2", "s1", Ready, 2),
+		pcard("g1", "s1", Waiting, 3, "kind", Sentinel),
+		pcard("s1-7", "s1", Waiting, 7),
+	)
+	add := AddReq{Stream: "s1", Count: 2}
+	rank := RankReq{IDs: []string{"s1-2"}, First: true}
+	scans := []struct {
+		name  string
+		run   func(s *Snapshot) any
+		whole any
+	}{
+		{"AddIDs", func(s *Snapshot) any { return AddIDs(s, add) }, []string{"s1-8", "s1-9"}},
+		{"addScores", func(s *Snapshot) any { sc, _ := addScores(s, AddReq{Stream: "s1"}, 1); return sc }, []float64{8}},
+		{"Rank --first", func(s *Snapshot) any {
+			p := Rank(s, rank)
+			return p.Units[0].Moved
+		}, "s1-2 score 2 -> 0 (0 copies)"},
+	}
+	for _, sc := range scans {
+		// Built whole: as it was.
+		if got := sc.run(world); !reflect.DeepEqual(got, sc.whole) {
+			t.Errorf("%s on the whole: %#v, want %#v", sc.name, got, sc.whole)
+		}
+		// A plan that read only s1-2: the scan is refused, in a test build and a
+		// release build.
+		rp := ReadPlan{IDs: map[string][]string{Work: {"s1-2"}}}
+		ans := wholeStore{world}.Answer(rp)
+		strict, err := loadPartial(rp, ans, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if msg := mustPanic(t, func() { sc.run(strict) }); !strings.Contains(msg, unloadedMessage+": work cards") {
+			t.Errorf("%s: panicked with %q", sc.name, msg)
+		}
+		rel, err := loadPartial(rp, ans, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		func() {
+			defer func() { _ = recover() }() // a step may go on from nothing; the plan is refused below
+			sc.run(rel)
+		}()
+		if err := rel.UnloadedErr(); !errors.Is(err, ErrUnloaded) || !strings.Contains(err.Error(), "work cards") {
+			t.Errorf("%s: a release build did not refuse the plan: %v", sc.name, err)
+		}
+	}
+}
+
+// No field of a table gives its cards or its rows: a read of either goes through
+// the methods that are guarded (Cards, Rows).
+func TestNoExportedFieldOfATableGivesItsCardsOrRows(t *testing.T) {
+	t.Parallel()
+	typ := reflect.TypeOf(Table{})
+	var exported []string
+	for i := 0; i < typ.NumField(); i++ {
+		if f := typ.Field(i); f.IsExported() {
+			exported = append(exported, f.Name)
+		}
+	}
+	if want := []string{"Name", "Epoch", "Revision", "Texts"}; !reflect.DeepEqual(exported, want) {
+		t.Fatalf("the exported fields of a table are %v, want %v: a card or a row would be read past the guards", exported, want)
 	}
 }

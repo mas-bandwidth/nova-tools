@@ -187,7 +187,7 @@ func (d Decimal) Uint64() (uint64, error) {
 // projection, gains this one's fields (both are of one snapshot, so a field
 // they share has one value) and takes its place, score and revision.
 func put(t *Table, c *Card, ld *cardLoad) {
-	if old := t.Cards[c.ID]; old != nil {
+	if old := t.cards[c.ID]; old != nil {
 		old.Row, old.Col, old.Score, old.Rev = c.Row, c.Col, c.Score, c.Rev
 		for k, v := range c.Fields {
 			old.Fields[k] = v
