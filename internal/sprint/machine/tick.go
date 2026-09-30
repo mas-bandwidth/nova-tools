@@ -125,15 +125,150 @@ type Loop struct {
 }
 
 // errorStep is what the next RT1 writes in a step of notes and sprint keys
-// only (1.3.5): the parked keys, the judgments of the refused steps, and the
-// quarantine of the cards refused steps named.
+// only (1.3.5): the parked keys, the judgments of the refused steps, the
+// quarantine of the cards refused steps named, and R14's phase 3 (2.3). Each
+// key is owed once, each card once, and each (type, cause, subject) of a note
+// once, the latest note winning: J refuses a step that names one twice
+// (REQUEST), and the sprint part a key named twice. A key owed to the park is
+// not planned again while it is owed (SprintEvents.tla ParkOnBug: the key
+// leaves the agenda in the step that names the bug).
 type errorStep struct {
 	park       []sprintfn.ParkedKey
 	notes      []sprint.NoteReq
 	quarantine []sprint.Quarantined
+	keys, ids  map[string]bool
 }
 
-func (e errorStep) empty() bool { return len(e.park)+len(e.notes)+len(e.quarantine) == 0 }
+func (e *errorStep) empty() bool { return len(e.park)+len(e.notes)+len(e.quarantine) == 0 }
+
+// owes says the key is owed to the park.
+func (e *errorStep) owes(key string) bool { return e.keys[key] }
+
+// addPark owes a key to the park, once; it says whether the key is new.
+func (e *errorStep) addPark(k sprintfn.ParkedKey) bool {
+	if e.keys == nil {
+		e.keys = map[string]bool{}
+	}
+	if e.keys[k.Key] {
+		return false
+	}
+	e.keys[k.Key] = true
+	e.park = append(e.park, k)
+	return true
+}
+
+// addQuarantine owes a card's quarantine, once: the first record of a card
+// stands (as the sprint part keeps it).
+func (e *errorStep) addQuarantine(q sprint.Quarantined) bool {
+	if e.ids == nil {
+		e.ids = map[string]bool{}
+	}
+	if e.ids[q.ID] {
+		return false
+	}
+	e.ids[q.ID] = true
+	e.quarantine = append(e.quarantine, q)
+	return true
+}
+
+// addNotes owes notes: a subject a note names takes it out of every owed note
+// of the same type and cause, and a note left with no subject goes, so no
+// (type, cause, subject) is named twice in one step (J's REQUEST).
+func (e *errorStep) addNotes(ns ...sprint.NoteReq) {
+	for _, n := range splitNotes(ns) {
+		if len(n.Subjects) == 0 {
+			continue
+		}
+		named := map[string]bool{}
+		for _, s := range n.Subjects {
+			named[s] = true
+		}
+		kept := e.notes[:0]
+		for _, o := range e.notes {
+			if o.Type == n.Type && o.Cause == n.Cause {
+				var left []string
+				for _, s := range o.Subjects {
+					if !named[s] {
+						left = append(left, s)
+					}
+				}
+				if len(left) == 0 {
+					continue
+				}
+				o.Subjects = left
+			}
+			kept = append(kept, o)
+		}
+		n.Subjects = append([]string(nil), n.Subjects...)
+		e.notes = append(kept, n)
+	}
+}
+
+// splitNotes cuts a note of more than 2,000 subjects into notes of 2,000, the
+// most one note names (L2 1.2; J refuses more with LIMIT).
+func splitNotes(ns []sprint.NoteReq) []sprint.NoteReq {
+	var out []sprint.NoteReq
+	for _, n := range ns {
+		for len(n.Subjects) > tset.MaxIDsPerLine {
+			piece := n
+			piece.Subjects = n.Subjects[:tset.MaxIDsPerLine:tset.MaxIDsPerLine]
+			out = append(out, piece)
+			n.Subjects = n.Subjects[tset.MaxIDsPerLine:]
+		}
+		out = append(out, n)
+	}
+	return out
+}
+
+// errChunk is how much of the owed error step one request carries: the
+// store's limits cut it (1.3.5), and what is left rides the next tick's RT1.
+type errChunk struct{ park, quarantine, notes int }
+
+// chunk is the most of the owed step one request carries: SprintKeysMax
+// parked keys (1,000), QuarantineMax cards (2,000), and the notes that fit
+// Layer 1's 100 notes and 4,000 about ids (L1 6), with the invariant notes of
+// the quarantine counted in.
+func (e *errorStep) chunk() errChunk {
+	c := errChunk{park: min(len(e.park), sprintfn.SprintKeysMax), quarantine: min(len(e.quarantine), sprintfn.QuarantineMax)}
+	return e.fitNotes(c)
+}
+
+// fitNotes sets the notes of a chunk: in order, while they fit beside the
+// quarantine's own notes.
+func (e *errorStep) fitNotes(c errChunk) errChunk {
+	inv := invariantNotes(e.quarantine[:c.quarantine])
+	notes, about := len(inv), c.quarantine
+	c.notes = 0
+	for _, n := range e.notes {
+		if notes+1 > tset.MaxNotes || about+len(n.Subjects) > tset.MaxAboutBeforeDedup {
+			break
+		}
+		notes, about = notes+1, about+len(n.Subjects)
+		c.notes++
+	}
+	return c
+}
+
+// halve is a chunk of half as much, each part that had any keeping one.
+func (c errChunk) halve() errChunk {
+	h := func(n int) int {
+		if n == 0 {
+			return 0
+		}
+		return max(1, n/2)
+	}
+	return errChunk{park: h(c.park), quarantine: h(c.quarantine), notes: h(c.notes)}
+}
+
+// settle takes an applied chunk off what is owed.
+func (e *errorStep) settle(c errChunk) {
+	for _, k := range e.park[:c.park] {
+		delete(e.keys, k.Key)
+	}
+	e.park = e.park[c.park:]
+	e.quarantine = e.quarantine[c.quarantine:]
+	e.notes = e.notes[c.notes:]
+}
 
 // NewLoop is a loop over a config: the design's spans and budget where the
 // config leaves them zero. A config with no builder, no owner or no name is
@@ -330,6 +465,7 @@ func Tick(ctx context.Context, c sprintfn.Client, l *Loop) (Report, error) {
 type rt1 struct {
 	items                     []sprintfn.Item
 	lease, errStep, page, get int
+	errChunk                  errChunk // what the error step carries of what is owed
 	pageLimit                 int
 	parkedAsked               []string // the parked keys the read names
 }
@@ -359,7 +495,9 @@ func (l *Loop) rt1() rt1 {
 	r.items = append(r.items, sprintfn.Item{Step: lease})
 	if !l.owed.empty() && l.gen != 0 {
 		r.errStep = len(r.items)
-		r.items = append(r.items, sprintfn.Item{Step: l.errorRequest()})
+		req, c := l.errorRequest()
+		r.errChunk = c
+		r.items = append(r.items, sprintfn.Item{Step: req})
 	}
 	if l.curKnown {
 		r.pageLimit = l.pageLimit()
@@ -412,15 +550,32 @@ func (l *Loop) heartbeat() map[string]string {
 // errorRequest is the error step (1.3.5): notes and sprint keys only, carrying
 // the lease generation like every tick step, so a stale loop's is refused
 // STALEGEN and writes nothing (errata 3, amendment 2). It parks the keys of
-// the refused steps, opens their judgments, and quarantines the cards the
-// refused steps named (the quarantine rides "the RT1 step of the next tick";
-// it rides this step and not the lease step, whose other parts X does not hold
-// to the generation).
-func (l *Loop) errorRequest() *sprintfn.Request {
+// the refused steps, opens their judgments, quarantines the cards the refused
+// steps named (the quarantine rides "the RT1 step of the next tick"; it rides
+// this step and not the lease step, whose other parts X does not hold to the
+// generation), and records R14's outcomes (2.3, phase 3). What is owed is cut
+// at the store's limits (errorStep.chunk) and at the tick's step bytes, and
+// one chunk rides each RT1: the rest waits, its keys not planned.
+func (l *Loop) errorRequest() (*sprintfn.Request, errChunk) {
+	c := l.owed.chunk()
+	for {
+		req := l.errorChunk(c)
+		n, ref := sprintfn.EncodedSize(l.cfg.Names.Prefix, req)
+		if (ref == nil && n <= l.budget.StepBytes) || c == c.halve() {
+			return req, c // one of each over the bytes goes as it is: the store names it
+		}
+		c = l.owed.fitNotes(c.halve())
+	}
+}
+
+// errorChunk is the error step of a chunk of what is owed.
+func (l *Loop) errorChunk(c errChunk) *sprintfn.Request {
+	qs := l.owed.quarantine[:c.quarantine]
+	notes := append(invariantNotes(qs), l.owed.notes[:c.notes]...)
 	req := &sprintfn.Request{Epoch: l.epoch, Meta: sprintfn.Meta{Rule: "tick", Tick: true, Gen: l.gen},
-		Body: sprintfn.Body{Notes: append([]sprint.NoteReq(nil), l.owed.notes...), Quarantine: l.owed.quarantine}}
-	if len(l.owed.park) != 0 || len(l.owed.quarantine) != 0 {
-		req.Sprint = &sprintfn.SprintPart{Park: l.owed.park, Quarantine: l.owed.quarantine}
+		Body: sprintfn.Body{Notes: notes, Quarantine: qs}}
+	if c.park != 0 || c.quarantine != 0 {
+		req.Sprint = &sprintfn.SprintPart{Park: l.owed.park[:c.park], Quarantine: qs}
 	}
 	return req
 }
@@ -473,7 +628,9 @@ func (l *Loop) tick(ctx context.Context, c sprintfn.Client, rep *Report) error {
 	l.gen = gen
 	rep.Held, rep.Gen = true, gen
 	if r1.errStep >= 0 {
-		l.settleErrorStep(res[r1.errStep], rep)
+		if err := l.settleErrorStep(res[r1.errStep], r1.errChunk, rep); err != nil {
+			return err
+		}
 	}
 	rep.Running = !rd.clock.Stopped
 	l.stopped = rd.clock.Stopped
@@ -486,6 +643,9 @@ func (l *Loop) tick(ctx context.Context, c sprintfn.Client, rep *Report) error {
 	}
 	for k := range l.parked {
 		rd.parked[k] = "" // parked by this tick's error step, after the read was asked
+	}
+	for _, k := range l.owed.park {
+		rd.parked[k.Key] = "" // owed to the park: not planned while it is owed (ParkOnBug)
 	}
 
 	// The page: the lines after the real cursor (1.1, "Where the loop learns
@@ -598,10 +758,26 @@ func (l *Loop) tick(ctx context.Context, c sprintfn.Client, rep *Report) error {
 			return err
 		}
 	}
+	// The keys of the page the ingest found parked: a key another loop parked
+	// is not planned (1.3.5), and the ingest reply names it, so the loop needs
+	// no read of its own for it (the model owes the same filter: RT2 plans
+	// agenda ∪ x.lk).
+	pageParked := map[string]bool{}
 	if ingest >= 0 {
 		switch ir := res[ingest]; {
 		case ir.Step != nil:
 			l.cur = pageTo
+			var reply struct {
+				ParkedKeys []string `json:"parked_keys"`
+			}
+			if raw := ir.Step.Parts[sprintfn.PartIngest]; len(raw) != 0 {
+				if err := json.Unmarshal(raw, &reply); err != nil {
+					return fmt.Errorf("machine: the ingest part's reply: %w", err)
+				}
+			}
+			for _, k := range reply.ParkedKeys {
+				pageParked[k] = true
+			}
 		case ir.Refusal != nil && ir.Refusal.Code == sprintfn.CodeIngestAt:
 			l.cur = ir.Refusal.Detail.Cur // another loop ingested (1.1)
 			rep.Refused[ir.Refusal.Code]++
@@ -636,23 +812,39 @@ func (l *Loop) tick(ctx context.Context, c sprintfn.Client, rep *Report) error {
 		}
 		rule := l.byName[s.batch.Rule]
 		now := nowOf(rd, r.Read.TimeMS)
-		rp := rule.Plan(snap, s.batch.Keys, now)
+		bt := s.batch
+		if len(pageParked) != 0 {
+			bt.Keys = withoutKeys(bt.Keys, pageParked)
+			if len(bt.Keys) == 0 {
+				continue // every key of it is parked: nothing to plan
+			}
+		}
+		rp := rule.Plan(snap, bt.Keys, now)
 		if snap.UnloadedErr() != nil {
 			continue // a plan on a short read decides nothing: its keys stay, and it reads again
 		}
 		if !now.Running {
 			dry = append(dry, rp)
-			if !cutClockOnly(s.batch.Keys) || !notesAndKeysOnly(rp) {
+			// R11's cut clock is judged while STOPPED (1.4.5; D4), key by key
+			// (SprintEvents.tla PlanOrLook: {k ∈ ag : k[1] = "late:cut"}, each
+			// planned alone): the cut keys whose plans are notes and sprint
+			// keys only are sent at a look, whatever other keys share their
+			// rule's batch.
+			cut := cutClockKeys(rule, snap, bt.Keys, now)
+			if len(cut) == 0 {
 				continue
 			}
-			// R11's cut clock is judged while STOPPED (1.4.5; D4): its keys'
-			// steps of notes and sprint keys are sent at a look.
+			bt = Batch{Rule: bt.Rule, Keys: cut, Halvings: bt.Halvings, Plan: bt.Plan}
+			rp = rule.Plan(snap, cut, now)
+			if snap.UnloadedErr() != nil || !notesAndKeysOnly(rp) {
+				continue
+			}
 		}
 		quarantine = append(quarantine, rp.Quarantine...)
 		for _, k := range rp.HeldBack {
 			l.heldBack[k.Key] = rd.marks
 		}
-		p, err := l.cut(rule, s.batch, rp, rep)
+		p, err := l.cut(rule, bt, rp, rep)
 		if err != nil {
 			return err
 		}
@@ -718,8 +910,10 @@ func (l *Loop) tick(ctx context.Context, c sprintfn.Client, rep *Report) error {
 	if qAt >= 0 {
 		if q := res[qAt]; q.Step == nil {
 			// Not written: owed to the next RT1's error step.
-			l.owed.quarantine = append(l.owed.quarantine, quarantine...)
-			l.owed.notes = append(l.owed.notes, notes...)
+			for _, q := range dedupQuarantine(quarantine) {
+				l.owed.addQuarantine(q)
+			}
+			l.owed.addNotes(notes...)
 			if q.Refusal != nil {
 				rep.Refused[q.Refusal.Code]++
 			}
@@ -767,20 +961,31 @@ func (l *Loop) newEpoch(e tset.Decimal) {
 	l.owed = errorStep{}
 }
 
-// settleErrorStep takes the error step's result: applied, what it owed is
-// written; refused STALEGEN (a take since it was built), it is owed again at
-// the new generation; any other refusal is kept owed and counted.
-func (l *Loop) settleErrorStep(r sprintfn.Result, rep *Report) {
+// settleErrorStep takes the error step's result (1.3.5): applied, the chunk
+// it carried is written and the rest stays owed; refused STALEGEN (a take
+// since it was built), it is owed again at the new generation; an unknown
+// outcome is owed again (the step is idempotent: a key parked or a card
+// quarantined twice is written once). Any other refusal fails the tick: the
+// error step is how a bug is named, and a refusal of it is never silent. The
+// tick's failures count, the heartbeat's error names it, and "the tick keeps
+// failing" shows (1.4.1), while what is owed stays owed and its keys stay
+// out of every plan.
+func (l *Loop) settleErrorStep(r sprintfn.Result, c errChunk, rep *Report) error {
 	switch {
 	case r.Step != nil:
-		for _, p := range l.owed.park {
+		for _, p := range l.owed.park[:c.park] {
 			l.parked[p.Key] = true
 		}
-		l.owed = errorStep{}
+		l.owed.settle(c)
 		rep.Applied++
 	case r.Refusal != nil:
 		rep.Refused[r.Refusal.Code]++
+		if r.Refusal.Code != sprintfn.CodeStaleGen {
+			return fmt.Errorf("machine: the error step was refused (%d keys to park, %d cards to quarantine, %d notes): %w",
+				c.park, c.quarantine, c.notes, r.Refusal)
+		}
 	}
+	return nil
 }
 
 // cut builds a rule's plan into requests (1.3.6): cut at the tick's step
@@ -824,7 +1029,7 @@ func (l *Loop) cut(rule sprint.Rule, bt Batch, rp sprint.RulePlan, rep *Report) 
 func (l *Loop) quarantineRequest(qs []sprint.Quarantined, notes []sprint.NoteReq) *sprintfn.Request {
 	qs = dedupQuarantine(qs)
 	req := &sprintfn.Request{Epoch: l.epoch, Meta: sprintfn.Meta{Rule: "tick", Tick: true, Gen: l.gen},
-		Body: sprintfn.Body{Quarantine: qs, Notes: append(invariantNotes(qs), notes...)}}
+		Body: sprintfn.Body{Quarantine: qs, Notes: append(invariantNotes(qs), splitNotes(notes)...)}}
 	if len(qs) != 0 {
 		req.Sprint = &sprintfn.SprintPart{Quarantine: qs}
 	}
@@ -954,14 +1159,16 @@ func (l *Loop) onStepRefused(p *planned, ref *sprintfn.Refusal, rep *Report) {
 		if len(ref.Detail.Rows) == 1 {
 			stream = ref.Detail.Rows[0]
 		}
+		// The invariant notes are made from the owed quarantine when the error
+		// step is cut (errorChunk), one for each code and rule.
 		for _, id := range ref.Detail.IDs {
 			q := sprint.Quarantined{ID: id, Stream: stream, Code: ref.Code, Rule: p.batch.Rule, Cells: ref.Detail.Cells}
-			l.owed.quarantine = append(l.owed.quarantine, q)
-			rep.Quarantined = append(rep.Quarantined, id)
+			if l.owed.addQuarantine(q) {
+				rep.Quarantined = append(rep.Quarantined, id)
+			}
 		}
-		l.owed.notes = append(l.owed.notes, invariantNotes(l.owed.quarantine[len(l.owed.quarantine)-len(ref.Detail.IDs):])...)
 	case ref.Code == sprintfn.CodeLimit:
-		l.owed.notes = append(l.owed.notes, l.halve(p.batch, ref.Code, ref.Detail.Budget, "its step", rep)...)
+		l.owed.addNotes(l.halve(p.batch, ref.Code, ref.Detail.Budget, "its step", rep)...)
 	default:
 		l.onBug(p.batch, ref.Code, ref.Detail.Budget, "its step was refused", rep)
 	}
@@ -987,17 +1194,27 @@ func (l *Loop) halve(bt Batch, code, budget, what string, rep *Report) []sprint.
 // error step of the next RT1 moves each key out of the agenda into
 // {p}parked@e, the park written first, and it is not planned until the
 // judgment closes.
+//
+// A batch is parked once: each key is owed once however many of its plan's
+// requests are refused, and a batch whose keys are all owed already adds no
+// judgment (J names each key once a step).
 func (l *Loop) onBug(bt Batch, code, budget, why string, rep *Report) {
 	keys := bt.Keys
 	if len(keys) == 0 {
 		keys = bt.Rest
 	}
+	added := false
 	for _, k := range keys {
-		l.owed.park = append(l.owed.park, sprintfn.ParkedKey{Key: k.Key, Rule: bt.Rule, Code: code, Budget: budget})
+		if !l.owed.addPark(sprintfn.ParkedKey{Key: k.Key, Rule: bt.Rule, Code: code, Budget: budget}) {
+			continue
+		}
+		added = true
 		rep.Parked = append(rep.Parked, k.Key)
 		delete(l.halvings, k.Key)
 	}
-	l.owed.notes = append(l.owed.notes, stepRefusedNote(bt, code, budget, why))
+	if added {
+		l.owed.addNotes(stepRefusedNote(bt, code, budget, why))
+	}
 }
 
 // stepRefusedNote is "the machine's step was refused" on a batch's keys,
@@ -1020,16 +1237,32 @@ func stepRefusedNote(bt Batch, code, budget, why string) sprint.NoteReq {
 	return sprint.NoteReq{Op: "open", Type: TypeStepRefused, Cause: code, Subjects: subjects, Text: text}
 }
 
-// cutClockOnly says every key is a cut clock's, late:cut:<op> (1.2), the one
-// kind of rule key whose step is sent while STOPPED besides R17's
-// (SprintEvents.tla PlanOrLook: the late:cut keys and StopK).
-func cutClockOnly(keys []sprint.AgendaKey) bool {
+// cutClockKeys are the cut clocks' keys of a batch, late:cut:<op> (1.2), the
+// one kind of rule key whose step is sent while STOPPED besides R17's
+// (SprintEvents.tla PlanOrLook: the late:cut keys and StopK), each planned
+// alone and kept when its plan is notes and sprint keys only (T2).
+func cutClockKeys(rule sprint.Rule, snap *sprint.Snapshot, keys []sprint.AgendaKey, now sprint.Now) []sprint.AgendaKey {
+	var out []sprint.AgendaKey
 	for _, k := range keys {
 		if !strings.HasPrefix(k.Key, "late:cut:") {
-			return false
+			continue
+		}
+		if rp := rule.Plan(snap, []sprint.AgendaKey{k}, now); snap.UnloadedErr() == nil && notesAndKeysOnly(rp) {
+			out = append(out, k)
 		}
 	}
-	return len(keys) != 0
+	return out
+}
+
+// withoutKeys is the keys less those named.
+func withoutKeys(keys []sprint.AgendaKey, drop map[string]bool) []sprint.AgendaKey {
+	out := make([]sprint.AgendaKey, 0, len(keys))
+	for _, k := range keys {
+		if !drop[k.Key] {
+			out = append(out, k)
+		}
+	}
+	return out
 }
 
 // nowOf is the clocks a rule plans against at its read's time: R moves with

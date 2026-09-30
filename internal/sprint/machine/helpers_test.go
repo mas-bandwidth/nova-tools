@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -426,4 +427,89 @@ func pageOf(items []sprintfn.Item) tset.ReadQuery {
 		}
 	}
 	return tset.ReadQuery{}
+}
+
+// intercept forwards to a client, but answers the items a test names itself:
+// answer gives the result of an item (nil forwards it), and agenda, when set,
+// replaces RT1's agenda head with its keys. The error steps' results are kept,
+// in order (an error step is RT1's second item, a tick step of no lease).
+type intercept struct {
+	c      sprintfn.Client
+	mu     sync.Mutex
+	answer func(it sprintfn.Item) *sprintfn.Result
+	agenda []sprint.AgendaKey
+	errRes []sprintfn.Result
+}
+
+// refuseRule answers every step of a rule with a refusal of a code.
+func refuseRule(rule, code string) func(it sprintfn.Item) *sprintfn.Result {
+	return func(it sprintfn.Item) *sprintfn.Result {
+		if it.Step != nil && it.Step.Meta.Rule == rule {
+			return &sprintfn.Result{Refusal: &sprintfn.Refusal{Code: code}}
+		}
+		return nil
+	}
+}
+
+// isErrorStep says an item is RT1's error step.
+func isErrorStep(it sprintfn.Item) bool {
+	return it.Step != nil && it.Step.Meta.Rule == "tick" && it.Step.Lease == nil
+}
+
+func (r *intercept) Pipeline(ctx context.Context, items []sprintfn.Item) ([]sprintfn.Result, error) {
+	var fwd []sprintfn.Item
+	var idx []int
+	out := make([]sprintfn.Result, len(items))
+	for i, it := range items {
+		if r.answer != nil {
+			if res := r.answer(it); res != nil {
+				out[i] = *res
+				continue
+			}
+		}
+		fwd = append(fwd, it)
+		idx = append(idx, i)
+	}
+	res, err := r.c.Pipeline(ctx, fwd)
+	if err != nil {
+		return nil, err
+	}
+	for j, i := range idx {
+		out[i] = res[j]
+		it := items[i]
+		if it.Read != nil && len(it.Read.Tset) >= 3 && it.Read.Tset[0].Kind == "range" && strings.Contains(it.Read.Tset[0].Key, "agenda") && r.agenda != nil && res[j].Read != nil {
+			a := res[j].Read.Tset[0]
+			a.IDs, a.Scores, a.HasMore = nil, nil, false
+			for _, k := range r.agenda {
+				a.IDs = append(a.IDs, k.Key)
+				a.Scores = append(a.Scores, strconv.FormatUint(k.Seq, 10))
+			}
+			res[j].Read.Tset[0] = a
+			out[i] = res[j]
+		}
+	}
+	r.mu.Lock()
+	for i, it := range items {
+		if isErrorStep(it) {
+			r.errRes = append(r.errRes, out[i])
+		}
+	}
+	r.mu.Unlock()
+	return out, nil
+}
+
+// codes are the results' codes, "applied" for a step that applied.
+func codes(rs []sprintfn.Result) []string {
+	var out []string
+	for _, r := range rs {
+		switch {
+		case r.Step != nil:
+			out = append(out, "applied")
+		case r.Refusal != nil:
+			out = append(out, r.Refusal.Code)
+		default:
+			out = append(out, "unknown")
+		}
+	}
+	return out
 }
