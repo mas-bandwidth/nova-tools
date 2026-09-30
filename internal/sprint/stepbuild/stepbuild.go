@@ -95,7 +95,11 @@
 // fullness check: the unit tier's package budget is 2 s. The slow tier (go test
 // -tags slow, make test-slow) cuts more inputs, the unit tier's seeds among them,
 // with the full accounting and the fullness check on every one, and cuts the
-// worst case of every kind of entry at the contract's own 8 MiB.
+// worst case of every kind of entry at the contract's own 8 MiB. The cases of
+// cjson's spelling (a slash is two bytes, DEL six) are the same in both: at a
+// sixty-fourth of the contract's request, line and argv bounds in the unit tier,
+// with one small exact-width test for each class of byte, and at the contract's
+// own in the slow tier.
 //
 // The cut is linear in the input: each member's strings are read once, to
 // validate and size them, and each member is placed by constant-time checks

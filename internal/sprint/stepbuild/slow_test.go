@@ -196,14 +196,45 @@ func TestSlowRowsAndMembersAtEveryCutPoint(t *testing.T) {
 	rowsAndMembersAtEveryCutPoint(t, cutPointInputs)
 }
 
-// The second read's scenario at its own size: 300 notes of one meta value each
-// of 45,000 bytes, every step counted in full (cjson_test.go).
+// The second read's scenario at its own size: notes of one meta value each of
+// 45,000 bytes cut by the contract's 4 MiB, one step counted in full (the unit
+// tier runs it at a sixty-fourth of the sizes, cjson_test.go).
+func TestSlowARequestAtTheContractsBoundIsInsideLayerOnesReEncoding(t *testing.T) {
+	t.Parallel()
+	for i, f := range fills[1:4] { // paths, slashes, DEL: the fills that were over the bound
+		t.Run(f.name, func(t *testing.T) {
+			t.Parallel()
+			counted := 0
+			if i == 0 {
+				counted = 1
+			}
+			checkNotesAtTheRequestBound(t, Contract(), f.fill, 0, 45000, counted)
+		})
+	}
+}
+
+// The same at the reader's 300 notes, every step counted in full, for every fill.
 func TestThreeHundredNotesAtTheRequestBoundAreInsideLayerOnesReEncoding(t *testing.T) {
 	t.Parallel()
 	for _, f := range fills {
 		t.Run(f.name, func(t *testing.T) {
 			t.Parallel()
-			checkNotesAtTheRequestBound(t, f.fill, 300, 45000, 1<<30)
+			checkNotesAtTheRequestBound(t, Contract(), f.fill, 300, 45000, 1<<30)
 		})
 	}
+}
+
+// A note whose line is exactly 1 MiB by cjson, made of 100,000 DEL and 100,000
+// slashes and a padding (the unit tier: 16 KiB, cjson_test.go).
+func TestSlowALineAtTheContractsBoundIsCountedAtCJSONWidth(t *testing.T) {
+	t.Parallel()
+	checkALineAtTheBound(t, Contract(), 100000)
+}
+
+// Members with values of 20,000 bytes of paths, slashes and DEL, cut by the
+// contract's request, line and planned argv bounds at cjson width (the unit
+// tier: values of 312 bytes at a sixty-fourth of the bounds, cjson_test.go).
+func TestSlowMembersOfSlashesAndDELAreCutAtCJSONWidth(t *testing.T) {
+	t.Parallel()
+	checkMembersAtCJSONWidth(t, Contract(), 20000, []int{160, 110, 40})
 }

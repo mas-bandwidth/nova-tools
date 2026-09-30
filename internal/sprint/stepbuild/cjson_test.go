@@ -276,6 +276,49 @@ func widthOf(b byte) int {
 	return 1
 }
 
+// escapeClass is a class of bytes that cjson spells alike: the bytes of one
+// member of it, and the bytes cjson writes for all of them (zero: a mixed class,
+// with no one width).
+type escapeClass struct {
+	name  string
+	bytes string
+	width int
+}
+
+// escapeClasses are the classes of the 256 bytes by what cjson writes for them,
+// the widths typed here by hand and not read from any table.
+var escapeClasses = func() []escapeClass {
+	var all, backwards, ascii []byte
+	for b := 0; b < 256; b++ {
+		all = append(all, byte(b))
+		backwards = append([]byte{byte(b)}, backwards...)
+		if b < 0x80 {
+			ascii = append(ascii, byte(b))
+		}
+	}
+	var others strings.Builder // the controls with no short form
+	for b := 0; b < 0x20; b++ {
+		if !strings.ContainsRune("\b\t\n\f\r", rune(b)) {
+			others.WriteByte(byte(b))
+		}
+	}
+	return []escapeClass{
+		{"quote", `"`, 2},
+		{"backslash", `\`, 2},
+		{"slash", "/", 2},
+		{"DEL", "\x7f", 6},
+		{"backspace, tab, line feed, form feed, carriage return", "\b\t\n\f\r", 10},
+		{"the other 27 controls", others.String(), 27 * 6},
+		{"HTML characters", "<>&", 3},
+		{"U+2028 and U+2029", "\u2028\u2029", 6},
+		{"a C1 control", "\u0085", 2},
+		{"multi-byte runes", "é世😀", 2 + 3 + 4},
+		{"every ASCII byte", string(ascii), 0},
+		{"every byte, up", string(all), 0},
+		{"every byte, down", string(backwards), 0},
+	}
+}()
+
 // The size the builder works to is cjson's, byte by byte and string by string.
 func TestTheModelIsCJSONsEscapeTableByteForByte(t *testing.T) {
 	t.Parallel()
@@ -292,36 +335,7 @@ func TestTheModelIsCJSONsEscapeTableByteForByte(t *testing.T) {
 		}
 	}
 
-	var all, backwards []byte
-	for b := 0; b < 256; b++ {
-		all = append(all, byte(b))
-		backwards = append([]byte{byte(b)}, backwards...)
-	}
-	var others strings.Builder // the controls with no short form
-	for b := 0; b < 0x20; b++ {
-		if !strings.ContainsRune("\b\t\n\f\r", rune(b)) {
-			others.WriteByte(byte(b))
-		}
-	}
-	classes := []struct {
-		name  string
-		bytes string
-		width int // the bytes cjson writes for the whole of it
-	}{
-		{"quote", `"`, 2},
-		{"backslash", `\`, 2},
-		{"slash", "/", 2},
-		{"DEL", "\x7f", 6},
-		{"backspace, tab, line feed, form feed, carriage return", "\b\t\n\f\r", 10},
-		{"the other 27 controls", others.String(), 27 * 6},
-		{"HTML characters", "<>&", 3},
-		{"U+2028 and U+2029", "  ", 6},
-		{"a C1 control", "\u0085", 2},
-		{"multi-byte runes", "é世😀", 2 + 3 + 4},
-		{"every byte, up", string(all), 0},
-		{"every byte, down", string(backwards), 0},
-	}
-	for _, c := range classes {
+	for _, c := range escapeClasses {
 		for _, n := range []int{1, 2, 7, 1000} {
 			s := strings.Repeat(c.bytes, n)
 			want := len(cjsonString(s))
@@ -433,13 +447,34 @@ var fills = []struct {
 	}},
 }
 
+// The unit tier holds the builder to cjson's width at a sixty-fourth of the
+// contract's byte bounds (a request of 64 KiB, a line of 16 KiB, planned argv
+// bytes of 128 KiB, the values a sixty-fourth of theirs), and the slow tier at
+// the contract's own (slow_test.go). The code is the same and the cases have the
+// same shape; the cost differs by the factor.
+func cjsonScale() Bounds {
+	bd := Contract()
+	bd.RequestBytes >>= 6
+	bd.LineBytes >>= 6
+	bd.PlannedArgvBytes >>= 6
+	return bd
+}
+
+// cfgAt is the plain config cut to bd.
+func cfgAt(bd Bounds) Config {
+	c := cfg()
+	c.Bounds = bd
+	return c
+}
+
 // The second read's scenario: notes of one meta value each of 45,000 bytes are
 // cut by the request bound. Each step is held to the size Layer 1 measures (its
 // request decoded and encoded again by cjson): inside 4 MiB, the size the
 // builder counted, and as full as the bound lets it be. By the encoding/json
 // model a step of paths was 4,190,633 bytes and re-encoded to 4,609,133, over
-// the bound; a step of slashes to twice the bound. The slow tier cuts the
-// reader's 300 notes and counts every step in full.
+// the bound; a step of slashes to twice the bound. Here it is at a sixty-fourth
+// of the sizes (values of 700 bytes, a bound of 64 KiB); the slow tier runs the
+// reader's own, and cuts the reader's 300 notes counting every step in full.
 func TestARequestAtTheBoundIsInsideLayerOnesReEncoding(t *testing.T) {
 	t.Parallel()
 	for i, f := range fills[1:4] { // paths, slashes, DEL: the fills that were over the bound
@@ -449,29 +484,29 @@ func TestARequestAtTheBoundIsInsideLayerOnesReEncoding(t *testing.T) {
 			if i == 0 {
 				counted = 1
 			}
-			checkNotesAtTheRequestBound(t, f.fill, 0, 45000, counted)
+			checkNotesAtTheRequestBound(t, cjsonScale(), f.fill, 0, 700, counted)
 		})
 	}
 }
 
 // checkNotesAtTheRequestBound cuts n notes of one meta value of valueBytes
 // bytes made by fill (n of zero is one more than a request holds), and holds
-// every step to the bound as Layer 1 measures it; the first countSteps steps are
-// counted in full by the independent measure.
-func checkNotesAtTheRequestBound(t *testing.T, fill func(int) string, n, valueBytes, countSteps int) {
+// every step to the request bound of bd as Layer 1 measures it; the first
+// countSteps steps are counted in full by the independent measure.
+func checkNotesAtTheRequestBound(t *testing.T, bd Bounds, fill func(int) string, n, valueBytes, countSteps int) {
 	t.Helper()
 	val := fill(valueBytes)
 	if n == 0 {
 		one := map[string]any{"line": map[string]any{"kind": "note", "meta": map[string]string{"k": val}}, "about": []string{"p00"}}
 		var sb strings.Builder
 		cjsonWrite(&sb, one)
-		n = LimitRequestBytes/(sb.Len()+1) + 2
+		n = bd.RequestBytes/(sb.Len()+1) + 2
 	}
 	in := make([]Note, n)
 	for j := range in {
 		in[j] = Note{Meta: map[string]string{"k": val}, About: []string{fmt.Sprintf("p%02d", j)}}
 	}
-	steps := must(t, cfg(), []Entry{{Kind: KindNote, Notes: in}})
+	steps := must(t, cfgAt(bd), []Entry{{Kind: KindNote, Notes: in}})
 	if len(steps) < 2 {
 		t.Fatalf("%d steps: the notes are %d bytes, over the request bound", len(steps), n*valueBytes)
 	}
@@ -482,13 +517,13 @@ func checkNotesAtTheRequestBound(t *testing.T, fill func(int) string, n, valueBy
 			t.Fatalf("step %d: Bytes %d, encoded %d", k+1, s.Bytes, len(raw))
 		}
 		re := cjsonTree(t, raw)
-		if re > LimitRequestBytes {
-			t.Errorf("step %d: %d bytes as sent, %d when cjson encodes it again: over the 4 MiB Layer 1 refuses with LIMIT request_bytes (%.1f percent)", k+1, len(raw), re, 100*float64(re)/LimitRequestBytes)
+		if re > bd.RequestBytes {
+			t.Errorf("step %d: %d bytes as sent, %d when cjson encodes it again: over the %d Layer 1 refuses with LIMIT request_bytes (%.1f percent)", k+1, len(raw), re, bd.RequestBytes, 100*float64(re)/float64(bd.RequestBytes))
 		}
 		if re != s.Bytes {
 			t.Errorf("step %d: the builder counted %d bytes, cjson encodes the request again as %d", k+1, s.Bytes, re)
 		}
-		if len(s.Notes) > LimitNotes {
+		if len(s.Notes) > bd.Notes {
 			t.Errorf("step %d holds %d notes", k+1, len(s.Notes))
 		}
 		done += len(s.Notes)
@@ -498,14 +533,14 @@ func checkNotesAtTheRequestBound(t *testing.T, fill func(int) string, n, valueBy
 			next := map[string]any{"line": map[string]any{"kind": "note", "meta": in[done].Meta}, "about": in[done].About}
 			var sb strings.Builder
 			cjsonWrite(&sb, next)
-			if room := LimitRequestBytes - re; room >= sb.Len()+1 {
+			if room := bd.RequestBytes - re; room >= sb.Len()+1 {
 				t.Errorf("step %d has %d bytes of room and the next note is %d: it is cut short", k+1, room, sb.Len()+1)
 			}
 		}
 		// Every bound, counted from the request by the independent measure (the
 		// line by cjson, the planned argv bytes two ways).
 		if k < countSteps {
-			if w := measure(t, raw).within(Contract()); len(w) != 0 {
+			if w := measure(t, raw).within(bd); len(w) != 0 {
 				t.Errorf("step %d: %v", k+1, w)
 			}
 		}
@@ -516,32 +551,38 @@ func checkNotesAtTheRequestBound(t *testing.T, fill func(int) string, n, valueBy
 }
 
 // A note is never cut, and its line is the biggest thing a note can be: the
-// line bound is 1 MiB of the line as cjson writes it. A value of DEL and
-// slashes is a fraction of that in raw bytes: 100,000 of each and a padding
-// that tunes the line to the bound by the independent measure (which counts the
-// line by cjson) is one note and one step; one byte more is refused.
+// line bound is the line as cjson writes it. A value of DEL and slashes is a
+// fraction of that in raw bytes: a run of each and a padding that tunes the line
+// to the bound by the independent measure (which counts the line by cjson) is one
+// note and one step; one byte more is refused. Here at a line of 16 KiB with
+// 1,500 of each; the slow tier at 1 MiB with 100,000 of each.
 func TestALineAtTheBoundIsCountedAtCJSONWidth(t *testing.T) {
 	t.Parallel()
+	checkALineAtTheBound(t, cjsonScale(), 1500)
+}
+
+func checkALineAtTheBound(t *testing.T, bd Bounds, each int) {
+	t.Helper()
 	build := func(pad int) []Entry {
-		val := strings.Repeat("\x7f", 100000) + strings.Repeat("/", 100000) + strings.Repeat("p", pad)
+		val := strings.Repeat("\x7f", each) + strings.Repeat("/", each) + strings.Repeat("p", pad)
 		return []Entry{{Kind: KindNote, Notes: []Note{{Meta: map[string]string{"m": val}, About: []string{"p"}}}}}
 	}
-	base := must(t, cfg(), build(0))
+	base := must(t, cfgAt(bd), build(0))
 	line0 := measure(t, base[0].Encode()).maxLine
-	if line0 < 700000 {
-		t.Fatalf("the probe's line is %d bytes: not near the bound", line0)
+	if line0 < bd.LineBytes*2/3 {
+		t.Fatalf("the probe's line is %d bytes: not near the bound of %d", line0, bd.LineBytes)
 	}
-	pad := LimitLineBytes - line0
+	pad := bd.LineBytes - line0
 	if pad < 0 {
 		t.Fatalf("the probe's line is over the bound already: %d", line0)
 	}
-	steps := must(t, cfg(), build(pad))
-	if m := measure(t, steps[0].Encode()); len(steps) != 1 || m.maxLine != LimitLineBytes || len(m.within(Contract())) != 0 {
-		t.Fatalf("a note whose line is exactly 1 MiB by cjson: %d steps, line %d, %v", len(steps), m.maxLine, m.within(Contract()))
+	steps := must(t, cfgAt(bd), build(pad))
+	if m := measure(t, steps[0].Encode()); len(steps) != 1 || m.maxLine != bd.LineBytes || len(m.within(bd)) != 0 {
+		t.Fatalf("a note whose line is exactly %d by cjson: %d steps, line %d, %v", bd.LineBytes, len(steps), m.maxLine, m.within(bd))
 	}
-	le := refused(t, cfg(), build(pad+1))
-	if le.Bound != boundLineBytes.name || le.Limit != LimitLineBytes || le.Actual != LimitLineBytes+1 || le.Field != "notes" {
-		t.Fatalf("a note whose line is 1 MiB + 1 by cjson: %+v", le)
+	le := refused(t, cfgAt(bd), build(pad+1))
+	if le.Bound != boundLineBytes.name || le.Limit != bd.LineBytes || le.Actual != bd.LineBytes+1 || le.Field != "notes" {
+		t.Fatalf("a note whose line is %d + 1 by cjson: %+v", bd.LineBytes, le)
 	}
 }
 
@@ -549,14 +590,22 @@ func TestALineAtTheBoundIsCountedAtCJSONWidth(t *testing.T) {
 // request bound, the line bound (wire entries of a step are cut by it) and the
 // planned argv bytes are all counted at cjson's width, and every step is inside
 // all of them counted from its request by the independent measure. The members
-// are enough for a little more than two steps of each fill.
+// are enough for a little more than two steps of each fill. Here at a
+// sixty-fourth of the sizes (values of 312 bytes, the bounds of cjsonScale); the
+// slow tier at the contract's own (values of 20,000 bytes).
 func TestMembersOfSlashesAndDELAreCutAtCJSONWidth(t *testing.T) {
 	t.Parallel()
+	checkMembersAtCJSONWidth(t, cjsonScale(), 312, []int{160, 110, 40})
+}
+
+// checkMembersAtCJSONWidth cuts members of valueBytes of each fill, as many as
+// members[i] of fills[1+i], and holds every step to bd.
+func checkMembersAtCJSONWidth(t *testing.T, bd Bounds, valueBytes int, members []int) {
+	t.Helper()
 	for i, f := range fills[1:4] { // paths, slashes, DEL
-		members := []int{160, 110, 40}[i]
+		members := members[i]
 		t.Run(f.name, func(t *testing.T) {
 			t.Parallel()
-			const valueBytes = 20000
 			e := mv("work", names("m", members))
 			e.About = make([]string, members)
 			e.Each = make([]map[string]string, members)
@@ -565,7 +614,7 @@ func TestMembersOfSlashesAndDELAreCutAtCJSONWidth(t *testing.T) {
 				e.Each[i] = map[string]string{"f": val}
 				e.About[i] = fmt.Sprintf("p%d", i%7)
 			}
-			steps := must(t, cfg(), []Entry{e})
+			steps := must(t, cfgAt(bd), []Entry{e})
 			if len(steps) < 2 {
 				t.Fatalf("%d steps", len(steps))
 			}
@@ -573,19 +622,108 @@ func TestMembersOfSlashesAndDELAreCutAtCJSONWidth(t *testing.T) {
 			for k, s := range steps {
 				raw := s.Encode()
 				re := cjsonTree(t, raw)
-				if re != s.Bytes || len(raw) != s.Bytes || re > LimitRequestBytes {
-					t.Errorf("step %d: Bytes %d, sent %d, encoded again by cjson %d (bound %d)", k+1, s.Bytes, len(raw), re, LimitRequestBytes)
+				if re != s.Bytes || len(raw) != s.Bytes || re > bd.RequestBytes {
+					t.Errorf("step %d: Bytes %d, sent %d, encoded again by cjson %d (bound %d)", k+1, s.Bytes, len(raw), re, bd.RequestBytes)
 				}
 				done += countMembers([]Step{s})
 				if k > 0 { // the first step is counted in full; the rest by their sizes above
 					continue
 				}
-				if w := measure(t, raw).within(Contract()); len(w) != 0 {
+				if w := measure(t, raw).within(bd); len(w) != 0 {
 					t.Errorf("step %d: %v", k+1, w)
 				}
 			}
 			if done != members {
 				t.Fatalf("the steps hold %d members of %d", done, members)
+			}
+		})
+	}
+}
+
+// One small test per escape class, at a small bound: three notes whose meta
+// values are made of that class alone and a fourth padded until the request is
+// exactly the bound as cjson writes it (a request of 4,096 bytes), and then a
+// note whose line is exactly the line bound as cjson writes it (a line of 2,048
+// bytes). Exactly at the bound is one step and one byte more is cut (a request)
+// or refused (a line), each counted by the strict counter written apart from the
+// builder. The classes are the ones escapeClasses lists, less those that are not
+// UTF-8 (a meta value is).
+func TestEachEscapeClassIsCutAtItsCJSONWidthAtASmallBound(t *testing.T) {
+	t.Parallel()
+	const requestBound, lineBound = 4096, 2048
+	for _, c := range escapeClasses {
+		if !utf8.ValidString(c.bytes) {
+			continue
+		}
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			width := len(cjsonString(c.bytes)) - 2 // what cjson writes for one of the class
+			val := strings.Repeat(c.bytes, max(1, 900/width))
+
+			// The request.
+			bd := Contract()
+			bd.RequestBytes = requestBound
+			notes := func(pad int) []Entry {
+				in := make([]Note, 0, 4)
+				for i := 0; i < 3; i++ {
+					in = append(in, Note{Meta: map[string]string{"k": val}, About: []string{fmt.Sprintf("p%d", i)}})
+				}
+				in = append(in, Note{Meta: map[string]string{"k": strings.Repeat("p", pad)}, About: []string{"p3"}})
+				return []Entry{{Kind: KindNote, Notes: in}}
+			}
+			pad := requestBound - must(t, cfgAt(Contract()), notes(0))[0].Bytes
+			if pad < 1 {
+				t.Fatalf("the three notes are %d bytes as cjson writes them: no room for a fourth in %d", requestBound-pad, requestBound)
+			}
+			for _, tc := range []struct{ pad, want int }{{pad - 1, requestBound - 1}, {pad, requestBound}} {
+				steps := must(t, cfgAt(bd), notes(tc.pad))
+				if len(steps) != 1 {
+					t.Fatalf("a request of exactly %d bytes as cjson writes it: %d steps", tc.want, len(steps))
+				}
+				raw := steps[0].Encode()
+				if got := []int{steps[0].Bytes, len(raw), cjsonTree(t, raw), cjsonReEncode(t, raw)}; got[0] != tc.want || got[1] != tc.want || got[2] != tc.want || got[3] != tc.want {
+					t.Errorf("a request of %d bytes as cjson writes it: the builder counted %d, %d were written, cjson's tree counts %d and its scan %d", tc.want, got[0], got[1], got[2], got[3])
+				}
+				if w := measure(t, raw).within(bd); len(w) != 0 {
+					t.Errorf("a request of %d bytes: %v", tc.want, w)
+				}
+				// The size alone can agree by chance (450 backslashes written raw are
+				// 225 read back, and cjson writes those in 450): the bytes written are
+				// the value of the class, read back whole.
+				for i, n := range decode(t, raw).Notes[:3] {
+					if got := n.Line.Meta["k"]; got != val {
+						t.Errorf("a request of %d bytes: note %d reads back as %d bytes of the class, made of %d", tc.want, i, len(got), len(val))
+					}
+				}
+			}
+			over := must(t, cfgAt(bd), notes(pad+1))
+			if len(over) != 2 || len(over[0].Notes) != 3 || len(over[1].Notes) != 1 {
+				t.Fatalf("a request of %d + 1 bytes as cjson writes it: %d steps", requestBound, len(over))
+			}
+			for _, s := range over {
+				if raw := s.Encode(); len(raw) != s.Bytes || cjsonTree(t, raw) != s.Bytes || s.Bytes > requestBound {
+					t.Errorf("step %d: Bytes %d, %d written, %d by cjson (bound %d)", s.Part, s.Bytes, len(raw), cjsonTree(t, raw), requestBound)
+				}
+			}
+
+			// The line.
+			lbd := Contract()
+			lbd.LineBytes = lineBound
+			line := func(pad int) []Entry {
+				meta := map[string]string{"m": val + strings.Repeat("p", pad)}
+				return []Entry{{Kind: KindNote, Notes: []Note{{Meta: meta, About: []string{"p"}}}}}
+			}
+			lpad := lineBound - measure(t, must(t, cfgAt(lbd), line(0))[0].Encode()).maxLine
+			if lpad < 0 {
+				t.Fatalf("a note of the class is a line of %d bytes: over %d", lineBound-lpad, lineBound)
+			}
+			steps := must(t, cfgAt(lbd), line(lpad))
+			if m := measure(t, steps[0].Encode()); len(steps) != 1 || m.maxLine != lineBound || len(m.within(lbd)) != 0 {
+				t.Errorf("a note whose line is exactly %d bytes as cjson writes it: %d steps, line %d, %v", lineBound, len(steps), m.maxLine, m.within(lbd))
+			}
+			le := refused(t, cfgAt(lbd), line(lpad+1))
+			if le.Bound != boundLineBytes.name || le.Limit != lineBound || le.Actual != lineBound+1 || le.Field != "notes" {
+				t.Errorf("a note whose line is %d + 1 bytes as cjson writes it: %+v", lineBound, le)
 			}
 		})
 	}
