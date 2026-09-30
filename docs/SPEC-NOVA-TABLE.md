@@ -54,7 +54,9 @@ backed by Redis data structures.
   Folds: a count or `sum(...)` column folds `sum` (the default), `max` or `avg`;
   a percentage folds `pooled` (the default): the numerators summed over the rows
   divided by the denominators summed over the rows, never a mean of the rows'
-  percentages. Hidden rows count in every fold.
+  percentages. A `text` column holding whole numbers folds `sum` or `max` too
+  (`width:text:sum`): its cells print right-aligned, a blank cell is 0, and a
+  cell that is no whole number makes the fold `?`. Hidden rows count in every fold.
 - **Row**: A declared horizontal entity identified by a row key. Holds an optional
   display label, an optional member exclusion (`--exclude`), an optional owner
   verb (`--owner`), an array of cells matching the table's declared columns, and
