@@ -229,7 +229,7 @@ type jvVector struct {
 // the before-state, and the refusal and array constructors.
 const jStubs = `
 local S = {json = {encode = json_encode}}
-function S.array() return {} end
+function S.array() return setmetatable({}, {__is_cjson_array = true}) end
 function S.refuse(code, detail) return {status = 'refused', code = code, detail = detail} end
 function S.uint(s) return type(s) == 'string' and string.match(s, '^[0-9]+$') ~= nil end
 function S.writecmd(ctx, argv, access)
@@ -451,6 +451,7 @@ func runJLua(t *testing.T, v jvVector) jvExpect {
 	}
 	notes := res.RawGetString("notes").(*lua.LTable)
 	for i := 1; i <= notes.Len(); i++ {
+		requireMarkedArrays(t, v.Name, notes.RawGetInt(i))
 		el := goValue(notes.RawGetInt(i)).(map[string]any)
 		b, err := json.Marshal(map[string]any{"about": el["about"], "meta": el["line"].(map[string]any)["meta"]})
 		if err != nil {
@@ -475,6 +476,25 @@ func runJLua(t *testing.T, v jvVector) jvExpect {
 		out.Commands = append(out.Commands, a)
 	}
 	return out
+}
+
+// requireMarkedArrays fails on a list in a note that is not a marked cjson
+// array (what Layer 1's S.array makes): the store's json_tree reads an
+// unmarked table as an object and refuses its numeric keys REQUEST, so a note
+// that carries one is refused where no stub says so.
+func requireMarkedArrays(t *testing.T, name string, v lua.LValue) {
+	t.Helper()
+	tab, ok := v.(*lua.LTable)
+	if !ok {
+		return
+	}
+	if tab.Len() > 0 {
+		mt, _ := tab.Metatable.(*lua.LTable)
+		if mt == nil || mt.RawGetString("__is_cjson_array") != lua.LTrue {
+			t.Errorf("%s: a note carries a list that is not a marked array", name)
+		}
+	}
+	tab.ForEach(func(_, e lua.LValue) { requireMarkedArrays(t, name, e) })
 }
 
 func jToAny(ss []string) []any {

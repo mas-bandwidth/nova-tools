@@ -353,6 +353,7 @@ func copyChecked(root *os.File, vr volumeReader, s handoffSource, to string, bud
 		err = closeErr
 	}
 	if err != nil {
+		// ignored: a best-effort cleanup of the partial copy; the copy error is the one returned
 		_ = os.Remove(to)
 		return 0, err
 	}

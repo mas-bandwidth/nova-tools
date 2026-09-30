@@ -466,6 +466,7 @@ func (b sumBuilder) number(n uint64) {
 // text adds a string as its length and then its bytes.
 func (b sumBuilder) text(s string) {
 	b.number(uint64(len(s)))
+	// ignored: a hash.Hash write never returns an error
 	_, _ = io.WriteString(b.h, s)
 }
 

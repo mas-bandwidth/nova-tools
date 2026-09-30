@@ -14,7 +14,15 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/secrets"
 )
 
-const usage = `nova-secrets: credentials for seats, pools and services (see docs/SPEC-SECRETS.md)
+const usage = `nova-secrets: encrypted secrets in a git repository, handed to one command at a time
+
+how it works: the store is a git working copy with a .sops.yaml and one
+sops-encrypted <seat>.yaml per seat; a seat is a named identity whose age key
+file (mode 0600) opens that file. exec decrypts only the names in --only into
+one command's environment; names lists the names without decrypting; no value
+is ever printed. check and exec want the store on a branch with an upstream.
+first run: keygen makes a key (it needs age-keygen); the other lines need a store
+made with git init and a .sops.yaml naming your key, and sops on PATH.
 
 usage:
   nova-secrets version  print this build identity (--version also accepted)
@@ -67,16 +75,16 @@ the command's own status, and 125 when exec itself refused and the command never
 ran.
 
 example:
-  nova-secrets keygen --as rowan --key ~/.config/nova-secrets/rowan.key --age-keygen /opt/homebrew/bin/age-keygen
-  nova-secrets names  --store ./secrets --as rowan
-  nova-secrets check  --store ./secrets --as rowan --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops
-  nova-secrets exec   --store ./secrets --as rowan --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops --only GH_TOKEN --require GH_TOKEN -- gh api user
-  nova-secrets place  --store ./secrets --as rowan --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops --machine mini --secret DEEPSEEK_API_KEY --machines ./fleet.tsv
+  nova-secrets keygen --as ada --key ~/.config/nova-secrets/ada.key --age-keygen /opt/homebrew/bin/age-keygen
+  nova-secrets names  --store ./secrets --as ada
+  nova-secrets check  --store ./secrets --as ada --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops
+  nova-secrets exec   --store ./secrets --as ada --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops --only GH_TOKEN --require GH_TOKEN -- gh api user
+  nova-secrets place  --store ./secrets --as ada --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops --machine bench-a --secret DEEPSEEK_API_KEY --machines ./fleet.tsv
   nova-secrets place  --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops /opt/homebrew/bin/sops --machine bench --secret API_KEY --machines ./fleet.tsv --dry-run
-  nova-secrets placed --machine mini
+  nova-secrets placed --machine bench-a
   nova-secrets seal   --store ./secrets --as worker --key ~/.config/nova-secrets/worker.key --sops /opt/homebrew/bin/sops --name API_KEY --dry-run
-  nova-secrets seat add --store ./secrets --as air --pub age1… --from rowan --only GH_TOKEN,DEEPSEEK_API_KEY --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops
-  nova-secrets seat inject --store ./secrets --as air --from rowan --only NOVA_REDIS_BENCH_PASSWORD --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops --no-pr
+  nova-secrets seat add --store ./secrets --as bo --pub $BO_PUB --from ada --only GH_TOKEN,DEEPSEEK_API_KEY --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops
+  nova-secrets seat inject --store ./secrets --as bo --from ada --only NOVA_REDIS_BENCH_PASSWORD --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops --no-pr
   nova-secrets seat inject --store ./secrets --as worker --from lead --only API_KEY --key ~/.config/nova-secrets/lead.key --sops /opt/homebrew/bin/sops --dry-run
 `
 
@@ -253,7 +261,7 @@ func secretsMain(osArgs []string) {
 
 	// Check refusal table first
 	if msg, refused := disallowedVerbs[verb]; refused {
-		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", msg)
+		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.WithRemedy(msg, "nova-secrets help"))
 		os.Exit(2)
 	}
 
@@ -304,7 +312,7 @@ func secretsMain(osArgs []string) {
 func cmdVersion(args []string, stdout, stderr io.Writer) int {
 	verbflag.HelpIfAsked(args, "version")
 	if len(args) != 0 {
-		fmt.Fprintf(stderr, "nova-secrets version: takes no flags and no arguments, got %d\n", len(args))
+		fmt.Fprintf(stderr, "nova-secrets version: takes no flags and no arguments, got %d; run: nova-secrets version -h\n", len(args))
 		return 2
 	}
 	fmt.Fprintln(stdout, buildinfo.Line("nova-secrets", version))
@@ -329,7 +337,7 @@ func runExecCLI(args []string) {
 	}
 
 	if delimiterIdx == -1 {
-		fmt.Fprintf(os.Stderr, "SECRETS EXEC FAIL invocation: missing '--' delimiter before command\n")
+		fmt.Fprintf(os.Stderr, "SECRETS EXEC FAIL invocation: missing '--' delimiter before command; run: nova-secrets exec -h\n")
 		os.Exit(125)
 	}
 
@@ -337,7 +345,7 @@ func runExecCLI(args []string) {
 	cmdArgs := args[delimiterIdx+1:]
 
 	if len(cmdArgs) == 0 {
-		fmt.Fprintf(os.Stderr, "SECRETS EXEC FAIL invocation: no command specified after '--'\n")
+		fmt.Fprintf(os.Stderr, "SECRETS EXEC FAIL invocation: no command specified after '--'; run: nova-secrets exec -h\n")
 		os.Exit(125)
 	}
 
@@ -361,12 +369,12 @@ func runExecCLI(args []string) {
 	fs.Var(&requireFlags, "require", "required key")
 
 	if err := verbflag.Parse(fs, flagArgs); err != nil {
-		fmt.Fprintf(os.Stderr, "SECRETS EXEC FAIL flags: %s\n", oneline.Err(err))
+		fmt.Fprintf(os.Stderr, "SECRETS EXEC FAIL flags: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-secrets exec -h"))
 		os.Exit(125)
 	}
 
 	if len(fs.Args()) > 0 {
-		fmt.Fprintf(os.Stderr, "SECRETS EXEC FAIL flags: unexpected argument %q before '--'\n", oneline.Field(fs.Args()[0]))
+		fmt.Fprintf(os.Stderr, "SECRETS EXEC FAIL flags: unexpected argument %q before '--'; run: nova-secrets exec -h\n", oneline.Field(fs.Args()[0]))
 		os.Exit(125)
 	}
 
@@ -387,6 +395,7 @@ func runExecCLI(args []string) {
 	// (SPEC-SECRETS test 2). The sops child's environment is built, not edited, inside
 	// the package.
 	for _, name := range sopsIdentityEnv {
+		// ignored: os.Unsetenv fails only on a name the platform cannot hold, and these names are fixed constants
 		_ = os.Unsetenv(name)
 	}
 
@@ -406,18 +415,18 @@ func runNamesCLI(args []string) {
 	maxFlag := fs.Int("max", 20, "max items")
 
 	if err := verbflag.Parse(fs, args); err != nil {
-		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.Err(err))
+		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-secrets names -h"))
 		os.Exit(2)
 	}
 
 	if len(fs.Args()) > 0 {
-		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: unexpected argument %q\n", oneline.Field(fs.Args()[0]))
+		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: unexpected argument %q; run: nova-secrets names -h\n", oneline.Field(fs.Args()[0]))
 		os.Exit(2)
 	}
 
 	okLine, names, more, err := secrets.RunNames(*storeFlag, *asFlag, *maxFlag)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.Err(err))
+		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-secrets names -h"))
 		os.Exit(2)
 	}
 
@@ -447,18 +456,18 @@ func runCheckCLI(args []string) {
 	maxFlag := fs.Int("max", 20, "max items")
 
 	if err := verbflag.Parse(fs, args); err != nil {
-		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.Err(err))
+		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-secrets check -h"))
 		os.Exit(2)
 	}
 
 	if len(fs.Args()) > 0 {
-		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: unexpected argument %q\n", oneline.Field(fs.Args()[0]))
+		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: unexpected argument %q; run: nova-secrets check -h\n", oneline.Field(fs.Args()[0]))
 		os.Exit(2)
 	}
 
 	okLine, failLines, moreLines, summaryLine, code, err := secrets.RunCheck(*storeFlag, *asFlag, *keyFlag, *sopsFlag, *maxFlag)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.Err(err))
+		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-secrets check -h"))
 		os.Exit(code)
 	}
 
@@ -493,15 +502,15 @@ func runGateCLI(args []string) {
 	repeated := ""
 	if err := parseOnce(fs, args, &repeated); err != nil {
 		if repeated != "" {
-			fmt.Fprintf(os.Stderr, "SECRETS REFUSED: --%s is given more than once; every gate flag takes one value\n", oneline.Field(repeated))
+			fmt.Fprintf(os.Stderr, "SECRETS REFUSED: --%s is given more than once; every gate flag takes one value; run: nova-secrets gate -h\n", oneline.Field(repeated))
 			os.Exit(2)
 		}
-		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.Err(err))
+		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-secrets gate -h"))
 		os.Exit(2)
 	}
 
 	if len(fs.Args()) > 0 {
-		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: unexpected argument %q\n", oneline.Field(fs.Args()[0]))
+		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: unexpected argument %q; run: nova-secrets gate -h\n", oneline.Field(fs.Args()[0]))
 		os.Exit(2)
 	}
 
@@ -561,12 +570,12 @@ func runKeygenCLI(args []string) {
 	storeFlag := fs.String("store", "", "store dir")
 
 	if err := verbflag.Parse(fs, args); err != nil {
-		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.Err(err))
+		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-secrets keygen -h"))
 		os.Exit(2)
 	}
 
 	if len(fs.Args()) > 0 {
-		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: unexpected argument %q\n", oneline.Field(fs.Args()[0]))
+		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: unexpected argument %q; run: nova-secrets keygen -h\n", oneline.Field(fs.Args()[0]))
 		os.Exit(2)
 	}
 
@@ -575,7 +584,7 @@ func runKeygenCLI(args []string) {
 	// verdict was at the top and the homework at the bottom (nova-tools#1393).
 	lines, err := secrets.RunKeygen(*asFlag, *keyFlag, *ageKeygenFlag, *storeFlag)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.Err(err))
+		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-secrets keygen -h"))
 		os.Exit(2)
 	}
 
@@ -602,7 +611,7 @@ func runSeatCLI(args []string) {
 		fmt.Print(usage)
 		os.Exit(0)
 	default:
-		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: unknown seat subverb %q; the subverbs are 'add' and 'inject'\n", oneline.Field(args[0]))
+		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: unknown seat subverb %q; the subverbs are 'add' and 'inject'; run: nova-secrets seat -h\n", oneline.Field(args[0]))
 		os.Exit(2)
 	}
 }
@@ -627,11 +636,11 @@ func runSeatInjectCLI(args []string) {
 		panic(verbflag.Help{FS: fs})
 	}
 	if err := verbflag.Parse(fs, args); err != nil {
-		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.Err(err))
+		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-secrets seat inject -h"))
 		os.Exit(2)
 	}
 	if len(fs.Args()) > 0 {
-		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: unexpected argument %q\n", oneline.Field(fs.Args()[0]))
+		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: unexpected argument %q; run: nova-secrets seat inject -h\n", oneline.Field(fs.Args()[0]))
 		os.Exit(2)
 	}
 
@@ -649,7 +658,7 @@ func runSeatInjectCLI(args []string) {
 		Progress: os.Stderr,
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "SECRETS SEAT INJECT FAIL %s\n", oneline.Err(err))
+		fmt.Fprintf(os.Stderr, "SECRETS SEAT INJECT FAIL %s\n", oneline.WithRemedy(oneline.Err(err), "nova-secrets seat inject -h"))
 		os.Exit(2)
 	}
 	fmt.Println(line)
@@ -673,11 +682,11 @@ func runSeatAddCLI(args []string) {
 		panic(verbflag.Help{FS: fs})
 	}
 	if err := verbflag.Parse(fs, args); err != nil {
-		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.Err(err))
+		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-secrets seat add -h"))
 		os.Exit(2)
 	}
 	if len(fs.Args()) > 0 {
-		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: unexpected argument %q\n", oneline.Field(fs.Args()[0]))
+		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: unexpected argument %q; run: nova-secrets seat add -h\n", oneline.Field(fs.Args()[0]))
 		os.Exit(2)
 	}
 
@@ -692,7 +701,7 @@ func runSeatAddCLI(args []string) {
 		Progress: os.Stderr,
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "SECRETS SEAT ADD FAIL %s\n", oneline.Err(err))
+		fmt.Fprintf(os.Stderr, "SECRETS SEAT ADD FAIL %s\n", oneline.WithRemedy(oneline.Err(err), "nova-secrets seat add -h"))
 		os.Exit(2)
 	}
 	for _, l := range lines {
@@ -718,11 +727,11 @@ func runPlaceCLI(args []string) {
 	dryRunFlag := fs.Bool("dry-run", false, dryRunHelp)
 
 	if err := verbflag.Parse(fs, args); err != nil {
-		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.Err(err))
+		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-secrets place -h"))
 		os.Exit(2)
 	}
 	if len(fs.Args()) > 0 {
-		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: unexpected argument %q\n", oneline.Field(fs.Args()[0]))
+		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: unexpected argument %q; run: nova-secrets place -h\n", oneline.Field(fs.Args()[0]))
 		os.Exit(2)
 	}
 
@@ -740,7 +749,7 @@ func runPlaceCLI(args []string) {
 		DryRun:     *dryRunFlag,
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.Err(err))
+		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-secrets place -h"))
 		os.Exit(2)
 	}
 	fmt.Println(okLine)
@@ -755,11 +764,11 @@ func runPlacedCLI(args []string) {
 	receiptsFlag := fs.String("receipts", "", "receipts dir")
 
 	if err := verbflag.Parse(fs, args); err != nil {
-		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.Err(err))
+		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-secrets placed -h"))
 		os.Exit(2)
 	}
 	if len(fs.Args()) > 0 {
-		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: unexpected argument %q\n", oneline.Field(fs.Args()[0]))
+		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: unexpected argument %q; run: nova-secrets placed -h\n", oneline.Field(fs.Args()[0]))
 		os.Exit(2)
 	}
 
@@ -768,7 +777,7 @@ func runPlacedCLI(args []string) {
 		Receipts: *receiptsFlag,
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.Err(err))
+		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-secrets placed -h"))
 		os.Exit(2)
 	}
 	fmt.Println(okLine)
@@ -794,11 +803,11 @@ func runSealCLI(args []string) {
 	dryRunFlag := fs.Bool("dry-run", false, dryRunHelp)
 
 	if err := verbflag.Parse(fs, args); err != nil {
-		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.Err(err))
+		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-secrets seal -h"))
 		os.Exit(2)
 	}
 	if len(fs.Args()) > 0 {
-		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: unexpected argument %q\n", oneline.Field(fs.Args()[0]))
+		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: unexpected argument %q; run: nova-secrets seal -h\n", oneline.Field(fs.Args()[0]))
 		os.Exit(2)
 	}
 
@@ -821,7 +830,7 @@ func runSealCLI(args []string) {
 		Progress:        os.Stderr,
 	})
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "SECRETS SEAL FAIL %s\n", oneline.Err(err))
+		fmt.Fprintf(os.Stderr, "SECRETS SEAL FAIL %s\n", oneline.WithRemedy(oneline.Err(err), "nova-secrets seal -h"))
 		os.Exit(2)
 	}
 

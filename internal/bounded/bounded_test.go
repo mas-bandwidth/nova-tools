@@ -253,3 +253,36 @@ type brokenWriter struct{}
 func (brokenWriter) Write(p []byte) (int, error) { return 0, errWrite }
 
 var errWrite = errors.New("the reader has gone")
+
+// TestTallyCountsLikeTheListing: a Tally keeps the same items per kind that a
+// Grouped listing prints, and counts the rest.
+func TestTallyCountsLikeTheListing(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name         string
+		max          int
+		kinds        string
+		listed       string
+		shownA, allA int
+	}{
+		{"a ceiling per kind", 2, "aabaab", "+++--+", 2, 4},
+		{"zero lists all", 0, "aaab", "++++", 3, 3},
+		{"under the ceiling", 5, "ab", "++", 1, 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			tl := NewTally(tc.max)
+			got := ""
+			for _, k := range tc.kinds {
+				if tl.Add(string(k)) {
+					got += "+"
+				} else {
+					got += "-"
+				}
+			}
+			if got != tc.listed || tl.Shown("a") != tc.shownA || tl.Total("a") != tc.allA || tl.Kinds()[0] != "a" {
+				t.Errorf("listed %s shown %d total %d kinds %v; want %s %d %d", got, tl.Shown("a"), tl.Total("a"), tl.Kinds(), tc.listed, tc.shownA, tc.allA)
+			}
+		})
+	}
+}

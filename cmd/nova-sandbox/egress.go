@@ -133,7 +133,9 @@ func parseEgress(args []string) egressFlags {
 		case "--plan":
 			f.plan = want("--plan")
 		default:
-			add("no_command", oneline.Escape(a)+" is not a flag of the egress verbs; run: nova-sandbox help")
+			text, took := unknownArg(args, i, "egress")
+			add("no_command", text)
+			i += took
 		}
 	}
 	return f
@@ -176,7 +178,7 @@ func egressRefuse(stderr io.Writer, bad []sandbox.Refusal) int {
 // It costs 1, and a caller tells the two apart by the number as well as by the line.
 func egressSaidNo(stderr io.Writer, bad []sandbox.Refusal) int {
 	for _, r := range bad {
-		fmt.Fprintf(stderr, "EGRESS REFUSED reason=%s: %s\n", oneline.Field(r.Reason), oneline.Escape(r.Text))
+		fmt.Fprintf(stderr, "EGRESS REFUSED reason=%s: %s\n", oneline.Field(r.Reason), oneline.WithRemedy(oneline.Escape(r.Text), "nova-sandbox egress -h"))
 	}
 	return sandbox.ExitProbeFailed
 }
@@ -373,7 +375,7 @@ func egressRun(stderr io.Writer, verb, run, table string, args ...string) int {
 // a message from a program they did not call.
 func needNft(stderr io.Writer) int {
 	if _, err := egressPriv.Look("nft"); err != nil {
-		fmt.Fprintf(stderr, "EGRESS REFUSED reason=no_nft: nft is not on this bench (%s), and this wall is nftables; nothing was applied and nothing was dropped\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "EGRESS REFUSED reason=no_nft: nft is not on this bench (%s), and this wall is nftables; nothing was applied and nothing was dropped; run: nova-sandbox egress -h\n", oneline.Err(err))
 		fmt.Fprintln(stderr, nftRemedy)
 		return sandbox.ExitCannotRun
 	}

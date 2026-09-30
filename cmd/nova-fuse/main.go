@@ -34,7 +34,15 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-const usage = `nova-fuse: the ingestion fuse -- lockdown and quarantine (see docs/SPEC.md)
+const usage = `nova-fuse: a recorded decision to stop reading an untrusted source, checked before every read
+
+how it works: the box is one JSON file you name with --box. It holds at most one
+lockdown (every untrusted read stops) and one quarantine per surface, a surface
+being any name you give a source; each carries its time and reason. check reads
+the box and exits 0 only when nothing blocks the surface; no box, or a broken
+one, reads as blown. The tool enforces nothing: your harness runs check first.
+first run: init --box ./fuse-box.json makes the box once; then run the lines
+under example: in order.
 
 usage:
   nova-fuse version    print this build identity (--version also accepted)

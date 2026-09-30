@@ -2,8 +2,8 @@
 
 **A newcomer's first stumble is the spec for the onboarding points.**
 
-The five points every command meets are in [STANDARD.md](STANDARD.md), under
-**Help and refusal: the five onboarding points**, numbered as code cites them
+The six points every command meets are in [STANDARD.md](STANDARD.md), under
+**Help and refusal: the six onboarding points**, numbered as code cites them
 ("ONBOARDING point N"). A newcomer starts with `<tool> help`, pastes a line of
 its `example:` block, and reads the tool's `### First run` in
 [CLI.md](CLI.md).

@@ -4,36 +4,47 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"os"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 )
 
 // THE CHILD RULES: EVERY RULE THE COORDINATOR GIVES A CHILD IS A RULE OF THE CARD LINT.
 //
 // A card is the whole of what a child is handed. The rules the coordinator gives every
-// child -- a private GOCACHE, no redis-server, no force-push, `-timeout 600s` on every
-// `go test`, the class tests before a push, the commit trailer, never merge, what the
-// report says -- are carried by the card itself: a child that never read a rule breaks it.
-// A card that would not stand alone in front of a stranger is not ready, so the rules are
-// the lint's, and a card is refused before any spend when it does not carry them.
+// child -- stay in the job directory, never force-push, never kill what it did not start,
+// report what was not done, and whatever else one project adds -- are carried by the card
+// itself: a child that never read a rule breaks it. A card that would not stand alone in
+// front of a stranger is not ready, so the rules are the lint's, and a card is refused
+// before any spend when it does not carry them.
 //
-// TWO KINDS OF CHECK, BOTH OVER THE CARD'S TEXT AND NOTHING ELSE.
+// THE RULE SET IS THE COORDINATOR'S, AND THE TOOL IS GENERAL. The required sentences are
+// not one repository's: they come from a rules file the coordinator names (`nova-sprint add
+// --rules <file>`, or the path `nova-sprint init --rules <file>` recorded; `nova-swarm lint
+// --child-rules-file <file>`), one sentence per line (ParseChildRules). With no file the
+// set is DefaultChildRules, the rules that hold for any project.
 //
-//  1. PRESENCE. Each rule is one row of CardChildRules: a name, the sentence the card
-//     quotes verbatim (whitespace folded, so a wrapped line still matches), and the file
-//     the rule came from. A card without the sentence draws `rule-<name>`, whose remedy
-//     quotes the sentence, so the writer never has to find the brief it came from.
+// THREE KINDS OF CHECK, ALL OVER THE CARD'S TEXT AND NOTHING ELSE.
+//
+//  1. PRESENCE. Each rule is one ChildRule: a name, the sentence the card quotes verbatim
+//     (whitespace folded, so a wrapped line still matches), and where the rule came from. A
+//     card without the sentence draws `rule-<name>`, whose remedy quotes the sentence, so
+//     the writer never has to find the brief it came from.
 //  2. SCAN. Where a violation can be read off the text, the text is scanned: a line that
-//     runs `redis-server`, `go clean`, `kill`, `rm -rf` outside the job, `git push
-//     --force`, `git rebase`, `git stash` or `gh pr merge`, or a `go test` with no
-//     `-timeout` of a positive duration, draws `step-<what>`. A clause (the text back to the
-//     last `;`, `,`, `&&`, `||` or `. `) that says `never`, `not`, `no` or `without` before the
+//     runs `redis-server`, `kill`, `rm -rf` outside the job, `git push --force`, `git
+//     rebase`, `git stash` or `gh pr merge` draws `step-<what>`; with a rule named
+//     `no-go-clean` or `go-test-timeout` in the set, a line that runs `go clean`, or a `go
+//     test` with no `-timeout` of a positive duration, draws one too (a Go project's rules,
+//     scanned only where the set carries them). A clause (the text back to the last `;`,
+//     `,`, `&&`, `||` or `. `) that says `never`, `not`, `no` or `without` before the
 //     command is prose about the rule, and is not read as a command. The RULES paragraph,
 //     which is where a card quotes what it forbids, runs from its `RULES` line to the first
 //     blank line and is not scanned; every other line of the card is.
 //
-//  3. LIBRARIES CONSIDERED. A card that builds code carries a `Libraries considered:` line
+//  3. LIBRARIES CONSIDERED, where the rule set carries a rule named `libraries-considered`
+//     (a rules file's switch, as `go-test-timeout` is for the Go scan). A card that builds code carries a `Libraries considered:` line
 //     saying what the standard library and the adopted modules offered for the work and why
 //     each was used or not (docs/STANDARD.md, section 7, library first). A card builds code
 //     when a line outside the RULES paragraph runs `go build`, `go test`, `go run` or
@@ -47,54 +58,40 @@ import (
 // not start` and then `kill $!` is read as the child's own process; whether the child
 // kills what it did not start is a run's fact, not a card's. The lint checks the card.
 //
-// ONE ROW PER RULE. Adding a rule is one row of CardChildRules; its remedy, its place in
-// `nova-swarm lint --rules` and the template that quotes it (ChildRulesParagraph) follow
-// from the row, and the class tests in lintchild_test.go fail until they do.
+// ONE ROW PER RULE. Adding a general rule is one row of DefaultChildRules; its remedy, its
+// place in `nova-swarm lint --rules` and the template that quotes it (ChildRulesParagraph)
+// follow from the row, and the class tests in lintchild_test.go fail until they do.
 
 // ChildRule is one rule of the child brief: Name is the token (`rule-<Name>` is the lint
-// check), Sentence is what the card quotes verbatim, Source is the file it came from.
+// check), Sentence is what the card quotes verbatim, Source is where the rule came from.
 type ChildRule struct {
 	Name     string
 	Sentence string
 	Source   string
 }
 
-// CardChildRules is every rule the coordinator gives every child, in the order the RULES
-// paragraph of the template prints them. SAFETY.md, VERBS-COMMON.md, READ-COMMON.md,
-// DIRTY-TICK-SLICES.md and INTEGRATION.md are the coordinator's brief files; a rule
-// that holds for one kind of card only (a reader's verdict, a verb item's snapshot, the
-// integration order) is stated by that kind's own brief and is not a row here.
-var CardChildRules = []ChildRule{
-	{"worktree", "Work only in the NEW worktree this card names.", "SAFETY.md"},
-	{"own-branch", "Touch only your own branch.", "SAFETY.md"},
-	{"gocache", "Export a private GOCACHE (the path this card names) and GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 before any go command.", "SAFETY.md"},
-	{"no-go-clean", "Never `go clean`, and never clean a shared cache.", "SAFETY.md"},
-	{"no-redis-server", "NEVER start a redis-server on this machine.", "SAFETY.md"},
-	{"no-kill", "Never kill a process you did not start.", "SAFETY.md"},
-	{"go-test-timeout", "Every `go test` gets `-timeout 600s`.", "SAFETY.md, DIRTY-TICK-SLICES.md"},
-	{"no-rm-rf", "No `rm -rf` outside the job directory.", "SAFETY.md"},
-	{"no-force-push", "Never force-push.", "SAFETY.md, DIRTY-TICK-SLICES.md"},
-	{"no-rebase", "Never rebase.", "DIRTY-TICK-SLICES.md"},
-	{"no-stash", "Do not use git stash (the stash list is shared by every worktree).", "DIRTY-TICK-SLICES.md"},
-	{"functional-in-container", "Functional tests (any test that needs Redis) run ONLY inside the container through `tools/functionalrun` (`--fresh-gocache --deadline 15m`), never against any other store.", "SAFETY.md"},
-	{"parallel", "Every new test opens with `t.Parallel()`.", "SAFETY.md, DIRTY-TICK-SLICES.md"},
-	{"class-tests", "Run `go test -count=1 -timeout 600s ./internal/ci/` before each push.", "SAFETY.md, DIRTY-TICK-SLICES.md"},
-	{"no-names", "No names of people, machines or friends in code, comments or docs.", "SAFETY.md"},
-	{"present-tense", "Docs and comments in the present tense.", "SAFETY.md"},
-	{"cite", "Cite the model or the design section from every function that implements a rule.", "SAFETY.md, VERBS-COMMON.md"},
-	{"only-named-files", "Touch only the files this card names; a fix that needs another file goes into your report as a proposed diff, not a commit.", "DIRTY-TICK-SLICES.md"},
-	{"minimal-diff", "Keep the diff minimal: every added line traceable to one sentence of this card.", "DIRTY-TICK-SLICES.md"},
-	{"commit-trailer", "Commit messages end with `Co-Authored-By: Claude <your model> <noreply@anthropic.com>`.", "SAFETY.md"},
-	{"pr-line", "PR bodies end with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.", "SAFETY.md"},
-	{"never-merge", "Open PRs against the base this card names; never merge.", "SAFETY.md, DIRTY-TICK-SLICES.md"},
-	{"pr-diffstat", "The PR body states the diff stat and what was deleted.", "the owner's list"},
-	{"pr-tests", "The PR body lists the tests, each with what it pins, and every local helper added.", "VERBS-COMMON.md"},
-	{"report-shape", "Report under 80 lines: PR number and sha, every test package line, what you could not do and why.", "SAFETY.md, DIRTY-TICK-SLICES.md"},
-	{"report-not-done", "\"Not done\" is a welcome report; a green claim you did not run is not.", "SAFETY.md"},
+// DefaultChildRules is the set that holds for any project, used when the coordinator names
+// no rules file, in the order the RULES paragraph of the template prints them. A rule that
+// holds for one project only (its build caches, its test flags, its commit trailer, its
+// CI) belongs in that project's rules file.
+var DefaultChildRules = []ChildRule{
+	{"worktree", "Work only in the job directory this card names.", DefaultRulesSource},
+	{"no-force-push", "Never force-push or rebase a shared branch.", DefaultRulesSource},
+	{"no-kill", "Never kill a process you did not start.", DefaultRulesSource},
+	{"no-server", "Never start a server on this machine.", DefaultRulesSource},
+	{"no-rm-rf", "No `rm -rf` outside the job directory.", DefaultRulesSource},
+	{"report-not-done", "Report what was not done.", DefaultRulesSource},
 }
 
+// LibrariesConsideredName is the name of the rule that switches the lint's libraries check
+// on, in a rules file (fleet/child-rules.txt carries it): the check belongs to the project
+// whose standard is library first, as the Go scans belong to a Go project's rules. Its
+// sentence is what the child reads; the lint does not require the sentence verbatim, it
+// requires the filled `Libraries considered:` line of a card that builds code.
+const LibrariesConsideredName = "libraries-considered"
+
 // LibrariesConsideredRule is the token of the line a card that builds code carries.
-const LibrariesConsideredRule = "rule-libraries-considered"
+const LibrariesConsideredRule = "rule-" + LibrariesConsideredName
 
 // LibrariesConsideredRemedy is what that token wants, in the remedies' table shape.
 const LibrariesConsideredRemedy = "a card that builds code carries one line `Libraries considered: <what the standard library and the adopted modules offered, and why each was used or not>` (docs/STANDARD.md section 7), filled: a line that is empty after the colon or still carries an angle-bracket placeholder does not count; search before any helper of more than about thirty lines is written, and name what was found; `nova-swarm template --name card` prints the line"
@@ -126,11 +123,15 @@ func childLibrariesFilled(rest string) bool {
 	return strings.TrimSpace(rest) != "" && !childPlaceholder.MatchString(rest)
 }
 
-// childScan is one direct check: the check name, the command it looks for, what to do
-// instead, and the rule it enforces (a name in CardChildRules).
+// DefaultRulesSource is where the default rules come from, as a rule's remedy names it.
+const DefaultRulesSource = "the built-in default rules"
+
+// childScan is one direct check: the check name, the command it looks for, and what to do
+// instead. A scan with Needs set runs only where the rule set carries a rule of that name
+// (a Go project's `go clean` and `go test` scans); every other scan runs over every card.
 type childScan struct {
 	Check  string
-	Rule   string
+	Needs  string
 	RE     *regexp.Regexp
 	Remedy string
 	// Allow, when set, says the command starting at byte `at` of the line is nevertheless
@@ -149,33 +150,33 @@ func childCmd(body string) *regexp.Regexp {
 const gitCmd = `git(?:[ \t]+-[cC][ \t]+\S+)*[ \t]+`
 
 var childScans = []childScan{
-	{Check: "step-redis-server", Rule: "no-redis-server",
+	{Check: "step-redis-server",
 		RE:     childCmd(`redis-server\b`),
-		Remedy: "no line starts a redis-server: a test that needs Redis is a functional test and runs only in the container through `tools/functionalrun`; a unit test opens no store (the machine's Redis belongs to whoever runs it)"},
-	{Check: "step-go-clean", Rule: "no-go-clean",
+		Remedy: "no line starts a redis-server: a server a child starts belongs to nobody who will stop it, and the machine's own servers belong to whoever runs them; a test that needs one runs where the card says, never by starting it here"},
+	{Check: "step-go-clean", Needs: "no-go-clean",
 		RE:     childCmd(`go[ \t]+clean\b`),
 		Remedy: "no line runs `go clean`: a cache clean breaks every build that shares the cache; give the child a private GOCACHE (a path of its own) and let it be"},
-	{Check: "step-kill", Rule: "no-kill",
+	{Check: "step-kill",
 		RE:     childCmd(`(?:kill|pkill|killall)(?:[ \t]|$)`),
 		Remedy: "no line kills a process: a child stops only a process it started itself, and says so as `kill $!` or `kill %<n>`; `pkill` and `killall` name processes by pattern and reach another child's",
 		Allow:  func(line string, at int) bool { return childKillOwn.MatchString(line[at:]) }},
-	{Check: "step-rm-rf", Rule: "no-rm-rf",
+	{Check: "step-rm-rf",
 		RE:     childCmd(`rm[ \t]+(?:-[A-Za-z]+[ \t]+)*(?:-[A-Za-z]*[rR][A-Za-z]*|--recursive)\b`),
 		Remedy: "a recursive `rm` names a path inside the job: a relative path without `..`, or one under `$PWD` or `<job>`; never `/`, `~`, `$HOME`, `.`, `*` or a path above the job, and never a variable the card cannot show the value of",
 		Allow:  childRmInsideJob},
-	{Check: "step-force-push", Rule: "no-force-push",
+	{Check: "step-force-push",
 		RE:     childCmd(gitCmd + `push\b[^\n;&|]*?(?:[ \t]--force[A-Za-z-]*|[ \t]-[A-Za-z]*f[A-Za-z]*|[ \t]\+\S)`),
 		Remedy: "no line force-pushes (`--force`, `--force-with-lease`, `-f`, a `+` refspec): a child pushes its own branch with a plain `git push`, and a rewrite of a shared branch is the coordinator's act alone"},
-	{Check: "step-rebase", Rule: "no-rebase",
+	{Check: "step-rebase",
 		RE:     childCmd(gitCmd + `rebase\b`),
 		Remedy: "no line rebases: merge the base forward with `git merge --no-edit`; a rebase rewrites the history another worktree shares"},
-	{Check: "step-stash", Rule: "no-stash",
+	{Check: "step-stash",
 		RE:     childCmd(gitCmd + `stash\b`),
 		Remedy: "no line stashes: the stash list is shared by every worktree of the repository, so a stash taken here is popped there; commit to the child's own branch instead"},
-	{Check: "step-merge", Rule: "never-merge",
+	{Check: "step-merge",
 		RE:     childCmd(`gh[ \t]+pr[ \t]+merge\b`),
 		Remedy: "no line merges a pull request: the child opens it against the base the card names and stops; the coordinator lands it"},
-	{Check: "step-go-test-timeout", Rule: "go-test-timeout",
+	{Check: "step-go-test-timeout", Needs: "go-test-timeout",
 		RE:     childCmd(`go[ \t]+test\b`),
 		Remedy: "every `go test` carries `-timeout 600s` on the same command, so a hung test ends at ten minutes and not at the card's deadline",
 		Allow:  childHasTimeout},
@@ -245,35 +246,62 @@ func childInsideJob(p string) bool {
 // childRulesHeadRE opens the RULES paragraph, where a card quotes what it forbids.
 var childRulesHeadRE = regexp.MustCompile(`^(?:#{1,6}[ \t]+)?RULES\b`)
 
-// CardChildRemedies is what each child-rule token wants, in the table shape of
-// CardHeaderRemedies, so `nova-swarm lint --rules` prints them beside the rest. It is
-// built from CardChildRules and childScans: one row each, never a second list.
+// CardChildRemedies is what each child-rule token of the default set wants, in the table
+// shape of CardHeaderRemedies, so `nova-swarm lint --rules` prints them beside the rest. It
+// is built from DefaultChildRules and childScans: one row each, never a second list. A rule
+// of a rules file is not in it; ChildRemedy answers for those.
 var CardChildRemedies = map[string]string{}
 
 func init() {
 	seen := map[string]bool{}
-	for _, r := range CardChildRules {
+	for _, r := range DefaultChildRules {
 		if seen[r.Name] {
 			panic("nova-swarm lint: two child rules named " + r.Name)
 		}
 		seen[r.Name] = true
-		CardChildRemedies["rule-"+r.Name] = "the card quotes this rule verbatim, in its RULES paragraph: " + r.Sentence + " (from " + r.Source + "); `nova-swarm template --name card` prints the paragraph with every rule in place"
+		CardChildRemedies["rule-"+r.Name] = ruleRemedy(r)
 	}
 	for _, s := range childScans {
-		if !seen[s.Rule] {
-			panic("nova-swarm lint: the scan " + s.Check + " enforces " + s.Rule + ", which is no child rule")
-		}
 		CardChildRemedies[s.Check] = s.Remedy
 	}
 	CardChildRemedies[LibrariesConsideredRule] = LibrariesConsideredRemedy
 }
 
-// ChildRulesParagraph is the RULES paragraph with every rule sentence, one per line: what
-// `template --name card` prints and what a card quotes.
-func ChildRulesParagraph() string {
+// ruleRemedy is what a missing rule wants: its sentence, verbatim, and where it came from.
+func ruleRemedy(r ChildRule) string {
+	if r.Name == LibrariesConsideredName {
+		return "the rule is " + r.Sentence + " (from " + r.Source + "); " + LibrariesConsideredRemedy
+	}
+	return "the card quotes this rule verbatim, in its RULES paragraph: " + r.Sentence + " (from " + r.Source + "); `nova-swarm template --name card` prints the paragraph of the default rules, and a rules file's own sentences are the ones the lint reads"
+}
+
+// ChildRemedy is what one child-rule check wants under the given rule set: the scan's remedy
+// for a `step-` token, the rule's sentence for a `rule-` token of the set, and "" for a
+// token that is neither.
+func ChildRemedy(rules []ChildRule, check string) string {
+	if r, ok := CardChildRemedies[check]; ok && strings.HasPrefix(check, "step-") {
+		return r
+	}
+	for _, r := range rules {
+		if "rule-"+r.Name == check {
+			return ruleRemedy(r)
+		}
+	}
+	if check == LibrariesConsideredRule {
+		return LibrariesConsideredRemedy
+	}
+	return ""
+}
+
+// ChildRulesParagraph is the RULES paragraph of the default rules, one sentence per line:
+// what `template --name card` prints and what a card quotes.
+func ChildRulesParagraph() string { return RulesParagraph(DefaultChildRules) }
+
+// RulesParagraph is the RULES paragraph of a rule set, one sentence per line.
+func RulesParagraph(rules []ChildRule) string {
 	var b strings.Builder
 	b.WriteString("RULES.\n")
-	for _, r := range CardChildRules {
+	for _, r := range rules {
 		b.WriteString(r.Sentence)
 		b.WriteString("\n")
 	}
@@ -284,15 +312,97 @@ func ChildRulesParagraph() string {
 // is still the rule.
 func foldBlanks(s string) string { return strings.Join(strings.Fields(s), " ") }
 
-// LintCardChild returns the child-rule findings for one card: a `rule-<name>` for every
-// required sentence the card does not quote, then a `step-<what>` for every line that
-// runs a forbidden command, each with its line and text. Line 1 carries the missing
-// sentences: the card lacks them everywhere.
-func LintCardChild(raw []byte) []CardHeaderFinding {
+// childRuleName is a rule's name in a rules file: kebab case, the way a `rule-<name>` token
+// is written.
+var childRuleName = regexp.MustCompile(`^[a-z][a-z0-9]*(-[a-z0-9]+)*$`)
+
+// ParseChildRules reads a rules file: one required sentence per line. A blank line and a
+// line starting with `#` are skipped. A line may open with `[name]`, the token its
+// finding carries (`rule-<name>`); a line with none is named `line<n>` by its line number.
+// Two rules of one name, two of one sentence, a name that is not kebab case and a file
+// with no rule at all are refused, each problem named with its line, and every problem of
+// the file is reported together, never the first alone. source names the file in each
+// rule's remedy.
+func ParseChildRules(text, source string) ([]ChildRule, error) {
+	var rules []ChildRule
+	var problems []string
+	names, sentences := map[string]int{}, map[string]int{}
+	n := 0
+	for _, line := range strings.Split(text, "\n") {
+		n++
+		line = strings.TrimSpace(strings.TrimRight(line, "\r"))
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		name := "line" + strconv.Itoa(n)
+		if strings.HasPrefix(line, "[") {
+			end := strings.Index(line, "]")
+			if end < 0 {
+				problems = append(problems, fmt.Sprintf("line %d opens a [name] and never closes it", n))
+				continue
+			}
+			name = line[1:end]
+			line = strings.TrimSpace(line[end+1:])
+			if !childRuleName.MatchString(name) {
+				problems = append(problems, fmt.Sprintf("line %d: the name [%s] is not kebab case (letters, digits and single -)", n, name))
+				continue
+			}
+		}
+		if line == "" {
+			problems = append(problems, fmt.Sprintf("line %d: the rule [%s] has no sentence", n, name))
+			continue
+		}
+		sentence := foldBlanks(line)
+		if prev, dup := names[name]; dup {
+			problems = append(problems, fmt.Sprintf("line %d: the name [%s] is already line %d's", n, name, prev))
+			continue
+		}
+		if prev, dup := sentences[sentence]; dup {
+			problems = append(problems, fmt.Sprintf("line %d: the sentence repeats line %d's", n, prev))
+			continue
+		}
+		names[name], sentences[sentence] = n, n
+		rules = append(rules, ChildRule{Name: name, Sentence: sentence, Source: source + ":" + strconv.Itoa(n)})
+	}
+	if len(rules) == 0 && len(problems) == 0 {
+		problems = append(problems, "it holds no rule: one required sentence per line (a line of `#` words is a comment; `[name] sentence` names the token the lint prints)")
+	}
+	if len(problems) > 0 {
+		return nil, fmt.Errorf("%s", strings.Join(problems, "; "))
+	}
+	return rules, nil
+}
+
+// ReadChildRules reads and parses the rules file at path.
+func ReadChildRules(path string) ([]ChildRule, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	rules, err := ParseChildRules(string(raw), path)
+	if err != nil {
+		return nil, fmt.Errorf("%s: %w", path, err)
+	}
+	return rules, nil
+}
+
+// LintCardChild returns the child-rule findings for one card under the default rules.
+func LintCardChild(raw []byte) []CardHeaderFinding { return LintCardChildWith(raw, DefaultChildRules) }
+
+// LintCardChildWith returns the child-rule findings for one card under a rule set: a
+// `rule-<name>` for every required sentence the card does not quote, then a `step-<what>`
+// for every line that runs a forbidden command, each with its line and text. Line 1
+// carries the missing sentences: the card lacks them everywhere.
+func LintCardChildWith(raw []byte, rules []ChildRule) []CardHeaderFinding {
 	var out []CardHeaderFinding
 	text := foldBlanks(string(raw))
-	for _, r := range CardChildRules {
-		if !strings.Contains(text, r.Sentence) {
+	have := map[string]bool{}
+	for _, r := range rules {
+		have[r.Name] = true
+		if r.Name == LibrariesConsideredName {
+			continue // read as the filled line of a card that builds code, below
+		}
+		if !strings.Contains(text, foldBlanks(r.Sentence)) {
 			out = append(out, CardHeaderFinding{Check: "rule-" + r.Name, Line: 1, Excerpt: "missing: " + r.Sentence})
 		}
 	}
@@ -307,6 +417,9 @@ func LintCardChild(raw []byte) []CardHeaderFinding {
 			}
 		}
 		for _, sc := range childScans {
+			if sc.Needs != "" && !have[sc.Needs] {
+				continue
+			}
 			for _, m := range sc.RE.FindAllStringSubmatchIndex(line, -1) {
 				at := m[2] // the command itself, group 1
 				if childNegation.MatchString(childClause(line[:at])) {
@@ -320,7 +433,7 @@ func LintCardChild(raw []byte) []CardHeaderFinding {
 			}
 		}
 	})
-	if builds && !filled {
+	if have[LibrariesConsideredName] && builds && !filled {
 		if unfilled != "" {
 			out = append(out, CardHeaderFinding{Check: LibrariesConsideredRule, Line: unfilledAt, Excerpt: "unfilled: " + strings.TrimSpace(unfilled)})
 		} else {

@@ -335,3 +335,32 @@ func TestNoCardTemplateCarriesAnOSSpecificCommand(t *testing.T) {
 	}
 	t.Logf("%s", res.OKLine())
 }
+
+// attachedOrFallback reads the text right after a command to its end: a
+// command that ends the text, on a character that might open a longer token,
+// has no fallback, and the scan never reads past the text.
+func TestAttachedOrFallbackReadsTheTextToItsEnd(t *testing.T) {
+	t.Parallel()
+
+	for _, c := range []struct {
+		rest string
+		want bool
+	}{
+		{" || true", true},
+		{"", false},
+		{" |", false},
+		{" &", false},
+		{" $", false},
+		{" \"", false},
+		{" \"$", false},
+		{" 2>&1", false},
+		{" 2>&1 || true", true},
+		{" ; true || true", false},
+	} {
+		t.Run(c.rest, func(t *testing.T) {
+			if got := attachedOrFallback(c.rest); got != c.want {
+				t.Errorf("attachedOrFallback(%q) = %v, want %v", c.rest, got, c.want)
+			}
+		})
+	}
+}

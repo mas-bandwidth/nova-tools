@@ -18,7 +18,6 @@ internal/pulse/cardheader.go the typed-header grammar that lands with #1721; lin
 internal/pulse/kinds.go SPEC-TOOLWORK §5's kinds-table file; the six kinds live in cutkind.go until the accept gate's table is one file of its own
 internal/tokens/message.go SPEC-TOKENS' plan: the message record
 internal/testkit docs/STANDARD.md's plan: the shared test rigs, fakes and harnesses; lands with the testkit PR
-internal/tool docs/STANDARD.md's plan: the shared tool skeleton; lands with the tool-skeleton PR
 tools/templates SPEC-CI cardtemplates: one of CardTemplateDirs, skipped until a template is written there
 
 # --- 2. An invented example: a name chosen to show the SHAPE of a path. ---
@@ -37,22 +36,17 @@ docs/nova-lessons.md the lessons file lives in the self repository; internal/pul
 scripts/coordination/ a prefix in SPEC-RELEASE.md's sensitive-path list, kept in the list though the directory is retired
 docs/SPEC-PULSE.md deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
 internal/pulse/fleetstandard.go deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
-internal/pulse/queue.go deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
-internal/pulse/queue_test.go deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
 cmd/nova-pulse/testdata deleted by #3801 (card cut in nova-sprint, #3789); the line naming it is history
 
 # internal/pulse (nova-pulse's package, frozen 2026-09-23 #3439) was deleted on 2026-09-25 (#3969, Glenn: "Yes it's dead. remove."); the specs cite its files at named commits as history.
 internal/pulse internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
 internal/pulse/cardheader.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
 internal/pulse/cut.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
-internal/pulse/cut_test.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
 internal/pulse/cutkind.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
 internal/pulse/fleetstandard.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
 internal/pulse/harvest.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
 internal/pulse/harvest_working.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
 internal/pulse/kinds.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
 internal/pulse/manager.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
-internal/pulse/queue.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
-internal/pulse/queue_test.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
 internal/pulse/statushtmlrows.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
 cmd/nova-swarm/testdata/templates SPEC-CI cardtemplates: one of CardTemplateDirs, skipped until a template is written there

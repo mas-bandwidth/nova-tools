@@ -443,6 +443,7 @@ func RecoverWaitFastForward(dir, remote, branch string, owned []string, now time
 	rec.Scanned, rec.Scan = rep.Scanned, rep.Scan
 	if errors.Is(err, ErrIndexLockChanged) {
 		rec.LockChanged = true
+		// ignored: a lock that changed under the scan is recorded as rec.LockChanged on the line above, which the caller reports
 		err = nil
 	}
 	if err != nil {

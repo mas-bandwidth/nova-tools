@@ -8,4 +8,3 @@
 # this tree that does call the guard. The guard is where the child is started,
 # once, rather than at every frame above it.
 internal/release/edges.go:ExecSSH.sshArgs  # builds the option list and starts nothing; Run, Send and Fetch each guard the child they start
-internal/swarm/benchpull.go:sshError.Error  # an error type's message, named for the ssh exit code it carries; no child process

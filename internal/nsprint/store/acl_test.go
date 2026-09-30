@@ -93,11 +93,11 @@ func TestACLEachActorCallsOnlyItsFunctions(t *testing.T) {
 			t.Errorf("expected NOPERM, got %v", err)
 		}
 
-		// Allowed FCALL_RO ns_snapshot
-		_, err = c.FCallRo(ctx, "ns_snapshot", []string{"s:test"}).Result()
-		// It might fail because s:test is empty or missing, but it shouldn't fail with NOPERM
+		// Allowed FCALL_RO ns_table_list
+		_, err = c.FCallRo(ctx, "ns_table_list", []string{}).Result()
+		// It might fail on its arguments, but it shouldn't fail with NOPERM
 		if err != nil && strings.Contains(err.Error(), "NOPERM") {
-			t.Errorf("ns-table should be allowed FCALL_RO ns_snapshot, got NOPERM")
+			t.Errorf("ns-table should be allowed FCALL_RO ns_table_list, got NOPERM")
 		}
 
 		// Refused direct write

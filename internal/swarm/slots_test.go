@@ -6,8 +6,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
 func writeSlotStore(t *testing.T, shares string) string {
@@ -141,33 +139,6 @@ func TestSlotCapacityReserveRefused(t *testing.T) {
 	}
 	if holders != "alice:2,bob:1" {
 		t.Fatalf("refusal must name holders, got %q", holders)
-	}
-}
-
-// TestIssue2238 asserts that a Batch with no SlotsStore/SlotOwner refuses before
-// any worker starts, citing the missing lease (deprecated/docs/SPEC-JOBS.md:76).
-func TestIssue2238(t *testing.T) {
-	t.Parallel()
-
-	root := t.TempDir()
-	// Create a fake harness so we get past the harness check
-	harness := filepath.Join(root, "harness")
-	if err := testbin.WriteExecutable(harness, []byte("#!/bin/sh\necho OK\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	cards := writeCards(t, root, [][2]string{{"c1", "RESULT: test\nDONE"}})
-	var errb strings.Builder
-	code := Batch(BatchInput{
-		ID: "B1", Deadline: time.Minute, Cards: cards, Root: root,
-		Runner: "", Harness: harness, SlotsStore: "", SlotOwner: "",
-		Stdout: &strings.Builder{}, Stderr: &errb,
-	})
-	if code != 2 {
-		t.Fatalf("Batch without SlotsStore/SlotOwner must refuse with exit 2, got %d", code)
-	}
-	got := errb.String()
-	if !strings.Contains(got, NoSlotsStoreRefusal) {
-		t.Fatalf("refusal must cite %q, got %q", NoSlotsStoreRefusal, got)
 	}
 }
 

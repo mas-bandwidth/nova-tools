@@ -229,6 +229,7 @@ func worktreeOne(f worktreeFlags, stdout, stderr io.Writer, env []string) int {
 				return 0
 			}
 		}
+		// ignored: a removal that failed shows as the add below failing on the same path, which is refused
 		_ = removeWorktree(f.repo, f.scratch, path)
 	}
 	if guid == "" {
@@ -291,6 +292,7 @@ func treeClean(path string) bool {
 }
 
 func addWorktree(repo, path, head string) error {
+	// ignored: a fetch that failed shows as the worktree add below failing on an unknown head, which is returned
 	_, _ = worktreeGit(repo, "fetch", "origin", head)
 	_, err := worktreeGit(repo, "worktree", "add", "--detach", path, head)
 	return err
@@ -300,6 +302,7 @@ func addWorktree(repo, path, head string) error {
 // and the directory only through safepath so a computed path can never reach
 // outside the scratch root the caller named.
 func removeWorktree(repo, scratch, path string) error {
+	// ignored: a stale git record is pruned by the next worktree prune; the directory removal below is the one returned
 	_, _ = worktreeGit(repo, "worktree", "remove", "--force", path)
 	return safepath.RemoveUnder(scratch, path)
 }

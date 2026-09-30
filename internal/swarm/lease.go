@@ -105,6 +105,7 @@ func touchProviderBeat(jobDir string, now time.Time) error {
 	if err != nil {
 		return err
 	}
+	// ignored: the file was only created to exist; Chtimes below reports any failure on it
 	_ = f.Close()
 	return os.Chtimes(p, now, now)
 }
@@ -334,6 +335,7 @@ func startJobLeaseTicking(jobDir, label string, ticks <-chan time.Time, stopTick
 				// nothing, which is how a live job lost its protection in #1585. Publish
 				// the same lease again: if somebody else now holds the path, this is
 				// refused and their lease is left exactly alone.
+				// ignored: a heartbeat repair retried every tick; a refusal means another owner holds the path, which is left alone by design
 				_ = publishJobLease(path, body, hooks)
 			}
 		}
@@ -369,6 +371,7 @@ func publishJobLease(path, body string, hooks jobLeaseHooks) error {
 		// atomic claim, and what it puts there is a record that was already whole and
 		// already on the platform -- so no reader ever sees a partial lease (rule 1).
 		linkErr := os.Link(tmp, path)
+		// ignored: the temp name is removed whether the link landed or not; the link error below is the one returned
 		_ = os.Remove(tmp)
 		if linkErr == nil {
 			return nil
@@ -409,16 +412,21 @@ func writeJobLeaseTemp(dir, body string) (string, error) {
 		return "", fmt.Errorf("the job lease could not be written under %s: %w", dir, err)
 	}
 	if _, err := f.WriteString(body); err != nil {
+		// ignored: a close on the failure path; the write error is the one returned
 		_ = f.Close()
+		// ignored: a best-effort cleanup of the temp file; the write error is the one returned
 		_ = os.Remove(tmp)
 		return "", fmt.Errorf("the job lease could not be written under %s: %w", dir, err)
 	}
 	if err := syncFile(f); err != nil {
+		// ignored: a close on the failure path; the sync error is the one returned
 		_ = f.Close()
+		// ignored: a best-effort cleanup of the temp file; the sync error is the one returned
 		_ = os.Remove(tmp)
 		return "", fmt.Errorf("the job lease could not be flushed under %s: %w", dir, err)
 	}
 	if err := f.Close(); err != nil {
+		// ignored: a best-effort cleanup of the temp file; the close error is the one returned
 		_ = os.Remove(tmp)
 		return "", fmt.Errorf("the job lease could not be closed under %s: %w", dir, err)
 	}
@@ -504,6 +512,7 @@ func takeJobLeaseRecord(path string, judged JobLease, mode jobLeaseRemoval, hook
 	}
 	keep := putBack
 	if !keep {
+		// ignored: the tomb is this take's own rename target; a leftover tomb holds no claim on the path
 		_ = os.Remove(tomb)
 		return true
 	}
@@ -511,9 +520,11 @@ func takeJobLeaseRecord(path string, judged JobLease, mode jobLeaseRemoval, hook
 	if err := os.Link(tomb, path); err != nil && !errors.Is(err, os.ErrExist) {
 		// The restore could not land and nobody has published: the owner's heartbeat
 		// republishes (rule 5). Nothing here may pretend the path is free.
+		// ignored: the tomb is this take's own rename target; a leftover tomb holds no claim on the path
 		_ = os.Remove(tomb)
 		return false
 	}
+	// ignored: the tomb is this take's own rename target; a leftover tomb holds no claim on the path
 	_ = os.Remove(tomb)
 	return false
 }
