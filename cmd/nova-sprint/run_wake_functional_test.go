@@ -58,6 +58,7 @@ func TestTheLoopWakesOnTheLogOnTheStore(t *testing.T) {
 	}
 	env := map[string]string{"NOVA_SPRINT_REDIS": addr, "NOVA_SPRINT_ACTOR": "coordinator"}
 	world := newApp(func(k string) string { return env[k] })
+	world.newPath = false
 	defer world.close()
 	do := func(args ...string) string {
 		t.Helper()
@@ -94,6 +95,7 @@ func TestTheLoopWakesOnTheLogOnTheStore(t *testing.T) {
 	}
 
 	loop := newApp(func(k string) string { return env[k] })
+	loop.newPath = false
 	defer loop.close()
 	st, _, code := loop.machineVerb("run", nil, &bytes.Buffer{})
 	if st == nil {

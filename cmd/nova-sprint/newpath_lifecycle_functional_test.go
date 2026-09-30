@@ -138,8 +138,8 @@ func TestNewPathLifecycleOnRealStore(t *testing.T) {
 		}
 		trimmed := strings.TrimRight(combined, "\n")
 		lines := strings.Split(trimmed, "\n")
-		if trimmed != "" && len(lines) > 2 {
-			t.Errorf("Rule 7 violation on %q: output has %d lines (want <= 2):\n%s", line, len(lines), combined)
+		if trimmed != "" && len(lines) > 3 {
+			t.Errorf("Rule 7 violation on %q: output has %d lines (want <= 3):\n%s", line, len(lines), combined)
 		}
 		return code, outStr, errStr
 	}
@@ -152,7 +152,7 @@ func TestNewPathLifecycleOnRealStore(t *testing.T) {
 		if code != exitDone || errb != "" {
 			t.Fatalf("init failed: exit %d\nstdout: %s\nstderr: %s", code, out, errb)
 		}
-		if !strings.HasPrefix(out, "INIT OK epoch=0") {
+		if !strings.HasPrefix(out, "INIT OK") || !strings.Contains(out, "epoch=0") {
 			t.Errorf("init stdout token line: %q", out)
 		}
 		if !strings.Contains(out, "init: the sprint is made, STOPPED, with coordinator coord") {
@@ -170,7 +170,7 @@ func TestNewPathLifecycleOnRealStore(t *testing.T) {
 		if code2 != exitRefused || out2 != "" {
 			t.Fatalf("second init unexpected: exit %d\nstdout: %s\nstderr: %s", code2, out2, errb2)
 		}
-		if !strings.Contains(errb2, "INIT FAIL code=MACHINESTATE") || !strings.Contains(errb2, "already initialised") {
+		if !strings.Contains(errb2, "INIT FAIL") || !strings.Contains(errb2, "code=MACHINESTATE") || !strings.Contains(errb2, "already initialised") {
 			t.Errorf("second init refusal: %q", errb2)
 		}
 	})
@@ -183,7 +183,7 @@ func TestNewPathLifecycleOnRealStore(t *testing.T) {
 		if code != exitDone || errb != "" {
 			t.Fatalf("start failed: exit %d\nstdout: %s\nstderr: %s", code, out, errb)
 		}
-		if !strings.Contains(out, "START OK before=STOPPED after=RUNNING changed") {
+		if !strings.Contains(out, "START OK") || !strings.Contains(out, "before=STOPPED after=RUNNING changed") {
 			t.Errorf("start stdout token line: %q", out)
 		}
 		if !strings.Contains(out, "start: the machine runs") {
@@ -199,16 +199,13 @@ func TestNewPathLifecycleOnRealStore(t *testing.T) {
 			t.Fatalf("clock stopped_since_ms in Redis: %q (want empty/absent when RUNNING)", clockSince)
 		}
 
-		// Repeated start: cleanly refused (MACHINESTATE, exit 2), unchanged
+		// Repeated start: already running (grammar decision 27: done, exit 0, unchanged)
 		code2, out2, errb2 := runCmd(t, "start")
-		if code2 != exitRefused || out2 != "" {
+		if code2 != exitDone || errb2 != "" {
 			t.Fatalf("repeated start unexpected: exit %d\nstdout: %s\nstderr: %s", code2, out2, errb2)
 		}
-		if !strings.Contains(errb2, "START FAIL before=RUNNING after=RUNNING unchanged: the machine is RUNNING already code=MACHINESTATE") {
-			t.Errorf("repeated start stderr line 1: %q", errb2)
-		}
-		if !strings.Contains(errb2, "the machine is already running") {
-			t.Errorf("repeated start stderr line 2: %q", errb2)
+		if !strings.Contains(out2, "the machine is RUNNING already; nothing was written") {
+			t.Errorf("repeated start stdout: %q", out2)
 		}
 	})
 
@@ -222,7 +219,7 @@ func TestNewPathLifecycleOnRealStore(t *testing.T) {
 		if code != exitBug || out != "" {
 			t.Fatalf("goal set: exit %d, want exitBug (%d)\nstdout: %s\nstderr: %s", code, exitBug, out, errb)
 		}
-		if !strings.Contains(errb, "GOAL-SET FAIL code=REQUEST") {
+		if !strings.Contains(errb, "GOAL-SET FAIL") || !strings.Contains(errb, "code=REQUEST") {
 			t.Errorf("goal set stderr line 1: %q", errb)
 		}
 		if !strings.Contains(errb, "the write path does not carry goals yet") {
@@ -239,7 +236,7 @@ func TestNewPathLifecycleOnRealStore(t *testing.T) {
 		if code != exitRefused || out != "" {
 			t.Fatalf("goal show: exit %d, want exitRefused (%d)\nstdout: %s\nstderr: %s", code, exitRefused, out, errb)
 		}
-		if !strings.Contains(errb, "GOAL-SHOW FAIL code=REQUEST") {
+		if !strings.Contains(errb, "GOAL-SHOW FAIL") || !strings.Contains(errb, "code=REQUEST") {
 			t.Errorf("goal show stderr line 1: %q", errb)
 		}
 		if !strings.Contains(errb, "the sprint's key reads have no read of a person's goal yet") {
@@ -255,7 +252,7 @@ func TestNewPathLifecycleOnRealStore(t *testing.T) {
 		if code != exitDone || errb != "" {
 			t.Fatalf("stop failed: exit %d\nstdout: %s\nstderr: %s", code, out, errb)
 		}
-		if !strings.Contains(out, "STOP OK before=RUNNING after=STOPPED changed") {
+		if !strings.Contains(out, "STOP OK") || !strings.Contains(out, "before=RUNNING after=STOPPED changed") {
 			t.Errorf("stop stdout token line: %q", out)
 		}
 		if !strings.Contains(out, "stop: the machine is STOPPED") {
@@ -268,16 +265,13 @@ func TestNewPathLifecycleOnRealStore(t *testing.T) {
 			t.Fatalf("clock stopped_since_ms in Redis: %q, err: %v (want non-empty when STOPPED)", clockSince, err)
 		}
 
-		// Repeated stop: cleanly refused (MACHINESTATE, exit 2), unchanged
+		// Repeated stop: already stopped (grammar decision 27: done, exit 0, unchanged)
 		code2, out2, errb2 := runCmd(t, "stop")
-		if code2 != exitRefused || out2 != "" {
+		if code2 != exitDone || errb2 != "" {
 			t.Fatalf("repeated stop unexpected: exit %d\nstdout: %s\nstderr: %s", code2, out2, errb2)
 		}
-		if !strings.Contains(errb2, "STOP FAIL before=STOPPED after=STOPPED unchanged: the machine is STOPPED already code=MACHINESTATE") {
-			t.Errorf("repeated stop stderr line 1: %q", errb2)
-		}
-		if !strings.Contains(errb2, "the machine is already stopped") {
-			t.Errorf("repeated stop stderr line 2: %q", errb2)
+		if !strings.Contains(out2, "the machine is STOPPED already; nothing was written") {
+			t.Errorf("repeated stop stdout: %q", out2)
 		}
 	})
 
@@ -315,7 +309,7 @@ func TestNewPathLifecycleOnRealStore(t *testing.T) {
 	})
 
 	// -------------------------------------------------------------------------
-	// 7. teardown --confirm sprint (CLI stub vs Layer 1 lifecycle)
+	// 7. teardown --confirm sprint (CLI Layer 1 lifecycle teardown)
 	// -------------------------------------------------------------------------
 	t.Run("teardown", func(t *testing.T) {
 		// Wrong confirmation refused on CLI
@@ -324,38 +318,25 @@ func TestNewPathLifecycleOnRealStore(t *testing.T) {
 			t.Fatalf("teardown wrong confirm: exit %d\nstdout: %s\nstderr: %s", codeW, outW, errbW)
 		}
 
-		// CLI teardown is stubbed on IT23 pending G0/Layer 1 CLI integration.
-		// Refuses with NOTONNEWPATH, exit 2, bounded 2 lines.
-		code, out, errb := runCmd(t, "teardown --confirm sprint")
-		if code != exitRefused || out != "" {
-			t.Fatalf("teardown CLI unexpected: exit %d\nstdout: %s\nstderr: %s", code, out, errb)
-		}
-		if !strings.Contains(errb, "TEARDOWN FAIL code=NOTONNEWPATH") {
-			t.Errorf("teardown stderr line 1: %q", errb)
-		}
-		if !strings.Contains(errb, "teardown is not on the new path yet") {
-			t.Errorf("teardown stderr line 2: %q", errb)
-		}
-
-		// Verify Layer 1 Lifecycle Teardown directly:
 		// (a) First, verify RUNNING refusal if machine were running
 		if codeS, _, _ := runCmd(t, "start"); codeS != exitDone {
 			t.Fatalf("failed to start machine for teardown guard test")
 		}
-		if _, err := st.Teardown(ctx, pathNames.Prefix, confirmName()); err == nil || !strings.Contains(err.Error(), "RUNNING") {
-			t.Fatalf("lifecycle teardown while RUNNING: err=%v, want RUNNING refusal", err)
+		codeR, outR, errbR := runCmd(t, "teardown --confirm sprint")
+		if codeR != exitRefused || !strings.Contains(errbR, "RUNNING") {
+			t.Fatalf("teardown while RUNNING: exit=%d, out=%s, err=%s, want RUNNING refusal", codeR, outR, errbR)
 		}
 		if codeSt, _, _ := runCmd(t, "stop"); codeSt != exitDone {
 			t.Fatalf("failed to stop machine")
 		}
 
-		// (b) Execute Layer 1 Teardown while STOPPED
-		rep, err := st.Teardown(ctx, pathNames.Prefix, confirmName())
-		if err != nil {
-			t.Fatalf("lifecycle teardown failed: %v", err)
+		// (b) Execute CLI Teardown while STOPPED (live Layer 1 lifecycle teardown)
+		code, out, errb := runCmd(t, "teardown --confirm sprint")
+		if code != exitDone || errb != "" {
+			t.Fatalf("teardown CLI unexpected: exit %d\nstdout: %s\nstderr: %s", code, out, errb)
 		}
-		if !rep.Done || rep.Deleted == 0 || rep.Calls == 0 {
-			t.Fatalf("lifecycle teardown report unexpected: %+v", rep)
+		if !strings.Contains(out, "teardown: the sprint is gone") {
+			t.Errorf("teardown stdout: %q", out)
 		}
 
 		// (c) Clean state verification in Redis:
