@@ -720,6 +720,7 @@ usage:
   nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|read|fix|text|replay|drift|tone|models.tsv
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
   nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--events-store <host:port>]
+  nova-swarm member    --as <name> --width <n> --harness <path> --model <provider/model> --root <dir> --deadline <duration> --tokens <n>|unmetered [--sprint <nova-sprint>] [--reader] [--every <duration>] [--once | --ticks <n>]
   nova-swarm route     --card <file> --routes <routes.tsv> [--floor 0.9] [--default <worker json>] [--key-env <name>] [--base-url <url>]
   nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
   nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>] [--kind <kind>]
@@ -885,6 +886,27 @@ When the check itself is the problem, the refusal's own next action is the way o
 named binary's `version` by hand to see what it does, then rebuild it or remove it.
 Removing the copy under `~/.local/bin` is tolerated: with no local copy there is nothing to
 shadow with, and the check passes on the PATH binary alone. No flag skips the check.
+
+### Run a sprint member
+
+`nova-swarm member` runs cards from one named member's queue in an existing
+[`nova-sprint`](#nova-sprint) fleet. It beats with its load, reads the queue,
+reports children that have ended, takes up to its free width, and starts each
+taken packet as one `native` child. `--reader` instead begins asked reads and
+reports them through `read --ok` or `read --broken`.
+
+The command needs the sprint executable and its inherited store configuration,
+an existing member or reader, and a configured harness. It does not create the
+fleet. Supply the member name and width, the harness and model, a work root,
+and each child's deadline and token budget. `--auth`, `--config` and `--worker`
+carry the corresponding native inputs. The root holds `slots/` and `results/`
+unless explicit `--slots` and `--results-root` paths are supplied.
+
+`--every` sets the loop interval (default 3s). `--once` and `--ticks` bound loop
+passes, not child completion: a pass can launch a child that is still running
+when the member invocation returns. Use `nova-swarm member --help` for all
+flags and [the quickstart](nova-swarm-quickstart.md#join-a-configured-sprint-fleet)
+for setup and a repeating member example.
 
 ## nova-sandbox
 
@@ -1791,6 +1813,73 @@ Ansible hides a failing inventory script: when the wrapper exits non-zero (`nova
 **Reading it.** Every write prints `CONFIG ADD|SET|REMOVE kind=<k> name=<n> rev=<id>`, the id of its history row. `list` prints `<KIND> name=<n> <field>=<v> ...` per row and a `CONFIG LIST` count; `history` prints `HISTORY id=<n> ... op=<add|set|remove> actor=<a> at=<t>` with each changed field as `<field>=<before>><after>`. `apply` prints `APPLY ADD|SET|REMOVE kind=<k> name=<n>` per row it writes and one `CONFIG APPLY kind=<k> add=<n> set=<n> remove=<n> rev=<r> ms=<n>` per kind; `--check` prints the same plan as `CHECK` lines and `CONFIG CHECK`. `status` exits 1 with the next step when the schema is missing (`run: nova-config migrate`) or Redis is behind (`run: nova-config apply`).
 
 **Refusals.** Exit 1 is the store or Redis saying no, one stderr line naming the next step: `machine studio exists; run: nova-config machine set studio ...`, `--store space names no machine row`, `machine studio is the --coordinator of the fleet`, `friend rowan is the --coordinator of the sprint`, `CONFLICT friend: Redis holds rev 9 and this Postgres is at rev 4`, `CEILING studio: friend stella makes the sum 65 over the machine ceiling 64`, `friend emma has no beat naming a machine and the fleet names no coordinator machine to charge her slots to`. Exit 2 is an invocation that could not run (a name on a singleton is one).
+
+## nova-sprint
+
+### First run
+
+Start with the command reference, which opens no store and changes no work:
+
+```sh
+nova-sprint help
+nova-sprint help add
+nova-sprint help inbox
+```
+
+There is no store-free sprint to create automatically. Choose a separate Redis
+store for a trial, deploy this build's function library through
+[`nova-redis fn check` and `fn load`](#nova-redis), and name the store with
+`--redis <host:port>` or `NOVA_SPRINT_REDIS`. A coordinator write names its
+actor with `--actor` or `NOVA_SPRINT_ACTOR`; `init` records the coordinator.
+The first run needs declared members and readers before work can pass through
+them. [SPEC-SPRINT.md](SPEC-SPRINT.md) defines the tables and lifecycle.
+
+### Work and decisions
+
+The sprint keeps four Redis tables: work, readers, merge and fleet. `init`
+creates them; `add` admits primaries to a stream. `start` marks the machine
+running and `run` drives its ticks. `where` shows the tables, `queue` shows
+handed work, and `inbox` shows the coordinator the decisions to make.
+
+- `add --stream <s> (<id>... | --count <n>) --brief-file <path>` reads a
+  complete child brief from a file, removing one trailing newline. Give
+  `--brief` or `--brief-file`, not both. Queue and take JSON packets carry
+  the brief whole.
+- `inbox --wait [--timeout <duration>]` waits for a tick-end notice after
+  the notes present when the call starts, then shows the inbox. The default
+  timeout is 5m; on timeout it reports that no tick end arrived and still
+  shows the inbox. Reading does not advance the coordinator's cursor;
+  `inbox --read` is the separate coordinator-only cursor move.
+- `inbox --json` separates `judgments`, `happened` notifications and `done`,
+  and retains the grouped view in `groups`. Each judgment supplies the
+  commands that answer it.
+- `accept --read-ok` selects review work with ok reads from two different
+  readers and moves eligible primaries into the merge queue. Work without
+  those reads stays in review.
+- `merge --stream <s> --batch <n>` reports a stream's merge step. The
+  coordinator may omit `--epoch`; a different merger reporting on handed
+  work names its epoch. Workers and readers likewise report the epoch they
+  received, so clearing a sprint cannot make an old report apply to a new
+  card with the same name.
+
+### Fleet configuration
+
+`fleet sync --check` compares the sprint fleet with nova-config's machine
+inventory without writing. `fleet sync` applies the membership and width
+changes; `--pg <dsn>` and the config environment select PostgreSQL using
+nova-config's address and password rules. The coordinator runs sync.
+
+Width is machine slots less the friend slots charged there. New members are
+down until they beat. A changed width is updated; a machine absent from the
+inventory or without room is held and its unfinished cards are redealt.
+A later sync releases a sync-created hold when room returns, while preserving
+a coordinator's own hold. Repeating an unchanged sync writes nothing.
+`--check` exits 0 for no drift, 2 for drift, and 3 when the required stores
+cannot be read or the config has no machine row.
+
+Use `nova-sprint help fleet sync` for its current flags. The member runner is
+[`nova-swarm member`](#nova-swarm); declaring a member in the table does not
+start that process.
 
 ## nova-redis
 

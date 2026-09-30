@@ -80,6 +80,34 @@ explicitly when no live accounting is available; the deadline still bounds the
 run. See [the native command reference](CLI.md#nova-swarm) for output, usage
 accounting, and containment details.
 
+## Join a configured sprint fleet
+
+`member` runs cards from an existing sprint queue, one `native` child per
+card. First configure the sprint store and declare the member or reader.
+Have the matching `nova-sprint` executable on PATH and set its store
+configuration in the member's environment. Choose the member name and width
+from your fleet setup; this command does not provision a fleet.
+
+```bash
+nova-swarm member \
+  --as m1 --width 2 \
+  --harness /path/to/harness/opencode \
+  --model opencode/deepseek-v4-flash \
+  --root /path/to/member-root \
+  --deadline 120s --tokens unmetered
+```
+
+Replace the name, width, model and paths with your setup. The loop reports
+children that finish and takes more work up to its available width. Add
+`--reader` for a declared reader to begin and report read cards. Credentials
+and optional native configuration must be supplied as they are for your
+standalone harness run.
+
+The default loop interval is 3s (`--every`). `--once` and `--ticks` limit
+passes, not completion of the children those passes start. They can return
+while a child is still running. `nova-swarm member --help` prints all flags
+without connecting to the store or starting a child.
+
 ## Use your runner in a batch
 
 The TSV has four columns:
