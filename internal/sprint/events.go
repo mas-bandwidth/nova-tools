@@ -223,10 +223,12 @@ func eventOfContract(seq uint64, c contractLine) (Event, error) {
 		// opens nor closes a judgment.
 		if k := meta["kind"]; k != "" {
 			switch k {
-			case Judgment, Happened, Decided, Acknowledged:
+			case Judgment, Happened, Decided, Acknowledged, TickEnd:
+				// TickEnd is the tick's end note (errata 3 amendment 8): the
+				// ingest reads it and makes no key of it (keysOf).
 				e.Kind = k
 			default:
-				return Event{}, fmt.Errorf("its meta says the note is a %q, not a judgment, happened, decided or acknowledged", k)
+				return Event{}, fmt.Errorf("its meta says the note is a %q, not a judgment, happened, decided, acknowledged or tick-end", k)
 			}
 		}
 		e.NoteType = meta["type"]

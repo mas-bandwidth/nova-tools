@@ -138,6 +138,9 @@ func RuleOf(key string) string {
 // keysOf is the keys one event queues: those of every row of both tables that
 // holds for it. A key two rows queue is there twice; Ingest counts it once.
 func keysOf(e Event) []string {
+	if e.Kind == TickEnd {
+		return nil // the tick's end note is not an event (errata 3 amendment 8)
+	}
 	var keys []string
 	add := func(fs []keyFunc) {
 		for _, f := range fs {

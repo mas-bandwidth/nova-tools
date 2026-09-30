@@ -17,15 +17,29 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/tset"
 )
 
-// inbox --wait: the coordinator blocks on the sprint's notification stream
-// until a judgment is raised (the owner's ask, 2026-09-30; section 3's inbox).
+// inbox --wait: the coordinator is woken ONCE a tick, at the tick's end, with
+// every item of the tick ready to read, and not at all by a tick that
+// addressed it nothing (the owner's rule, 2026-09-30, 11:58 ET: "the
+// coordinator is woken at the end of the tick, ONCE, vs. woken on every event
+// in the inbox"; "one wake, end of turn, with all inbox ready to read and act
+// on"; "batch always"; "and no wake, if nothing in the inbox"; errata 3
+// amendment 8). The tick's last step writes one tick-end note, judgments=N,
+// when it addressed the coordinator N items (machine/tickend.go); the wait
+// blocks on the notes stream for the next tick-end note after the
+// coordinator's cursor and returns on it, never on a judgment alone.
+//
+// The coordinator's loop is: wait, read all, act on all, wait.
+//
+//	v := inbox --wait, from the cursor c        (blocks; one wake a tick)
+//	inbox, from v.Cursor                        (every item of the batch)
+//	act on every item
+//	c = the later of v.Last and the inbox's Last; wait again
+//
 // The stream is the log, {p}sprint:log@<epoch> (L2 1.1): every note is a line
 // of it, entry id <seq>-0, fields n and d, d the stored body whose `k` is "n"
 // for a note and whose meta names the note's kind. The wait reads it with
-// Redis XREAD BLOCK from the coordinator's cursor, the last seq it has seen,
-// and returns the first JUDGMENT line after it: a line that needs the
-// coordinator (sprint.Judgment), never the machine's DECIDED or HAPPENED
-// lines, which it reads past.
+// Redis XREAD BLOCK from the cursor and reads past every line that is not a
+// tick-end note.
 
 // NoteStream is a blocking read of streams: Redis XREAD COUNT BLOCK.
 type NoteStream interface {
@@ -111,23 +125,30 @@ type storedNote struct {
 	Meta  map[string]json.RawMessage `json:"meta"`
 }
 
-// judgmentOf reads a log entry: its line when it is a note that needs the
-// coordinator (a JUDGMENT line: its meta's kind is sprint.Judgment), false
-// for any other line.
-func judgmentOf(en StreamEntry) (noteLine, bool, error) {
+// tickEndOf reads a log entry: its line and N when it is the tick-end note
+// (its meta's kind is sprint.TickEnd, its text judgments=N), false for any
+// other line.
+func tickEndOf(en StreamEntry) (noteLine, int, bool, error) {
 	d, ok := en.Fields["d"]
 	if !ok {
-		return noteLine{}, false, fmt.Errorf("inbox --wait: the log's entry %s of %s has no body", en.ID, en.Key)
+		return noteLine{}, 0, false, fmt.Errorf("inbox --wait: the log's entry %s of %s has no body", en.ID, en.Key)
 	}
 	var s storedNote
 	if err := json.Unmarshal([]byte(d), &s); err != nil {
-		return noteLine{}, false, fmt.Errorf("inbox --wait: the log's entry %s of %s: %w", en.ID, en.Key, err)
+		return noteLine{}, 0, false, fmt.Errorf("inbox --wait: the log's entry %s of %s: %w", en.ID, en.Key, err)
 	}
 	if s.K != "n" {
-		return noteLine{}, false, nil
+		return noteLine{}, 0, false, nil
 	}
 	l := noteLine{Kind: "note", AtMS: s.MS, About: s.About, Meta: s.Meta}
-	return l, l.meta("kind") == sprint.Judgment, nil
+	if l.meta("kind") != sprint.TickEnd {
+		return noteLine{}, 0, false, nil
+	}
+	n, ok := sprint.TickEndCount(l.meta("text"))
+	if !ok {
+		return noteLine{}, 0, false, fmt.Errorf("inbox --wait: the tick-end note %s of %s says %q, not judgments=N", en.ID, en.Key, l.meta("text"))
+	}
+	return l, n, true, nil
 }
 
 // noteIDAt is a note's id at an epoch: n and its seq, with the epoch suffix
@@ -140,31 +161,36 @@ func noteIDAt(seq, epoch uint64) string {
 	return id
 }
 
-// waited is what a wait found: the judgment's line and id, or none; and the
-// epoch and seq the cursor stands at after it.
+// waited is what a wait found: the tick-end note's id, line and N, or none;
+// the epoch it is of, and the seq of the tick-end (the cursor as given when it
+// found none: a timeout consumes nothing).
 type waited struct {
-	ID    string
-	Line  noteLine
-	Found bool
-	Epoch uint64
-	Last  uint64
+	ID        string
+	Line      noteLine
+	Judgments int
+	Found     bool
+	Epoch     uint64
+	Last      uint64
 }
 
-// waitJudgment blocks on the log from the cursor until the first JUDGMENT line
-// after it, or until the deadline. It reads the epoch's log after the cursor
-// and the next epoch's from its start, so a clear during the wait moves it to
-// the new epoch's log and nothing raised there is missed. Every line read, of
-// any kind, moves the cursor; a read whose connection is lost is made again
-// from the cursor, at most waitLost times in a row.
-func waitJudgment(ctx context.Context, notes NoteStream, prefix string, epoch, after uint64, deadline time.Time, now func() time.Time) (waited, error) {
+// waitTickEnd blocks on the log from the cursor until the first tick-end note
+// after it, or until the deadline (errata 3 amendment 8). It reads the epoch's
+// log after the cursor and the next epoch's from its start, so a clear during
+// the wait moves it to the new epoch's log and nothing written there is
+// missed. Every line read moves the read's own place on; a read whose
+// connection is lost is made again from that place, at most waitLost times in
+// a row. The judgments and notices it reads past are the batch the tick-end
+// covers, which the following inbox reads.
+func waitTickEnd(ctx context.Context, notes NoteStream, prefix string, epoch, after uint64, deadline time.Time, now func() time.Time) (waited, error) {
 	cur := StreamAt{Key: logKey(prefix, epoch), After: strconv.FormatUint(after, 10) + "-0"}
 	next := StreamAt{Key: logKey(prefix, epoch+1), After: "0-0"}
-	last := after
+	start, startEpoch := after, epoch
+	none := func() waited { return waited{Epoch: startEpoch, Last: start} }
 	lost := 0
 	for {
 		left := deadline.Sub(now())
 		if left <= 0 {
-			return waited{Epoch: epoch, Last: last}, nil
+			return none(), nil
 		}
 		block := min(left, waitSlice)
 		if block < time.Millisecond {
@@ -175,9 +201,9 @@ func waitJudgment(ctx context.Context, notes NoteStream, prefix string, epoch, a
 			var sl *StreamLost
 			if errors.As(err, &sl) && ctx.Err() == nil && lost < waitLost {
 				lost++
-				continue // a new connection, from the same cursor
+				continue // a new connection, from the read's place
 			}
-			return waited{Epoch: epoch, Last: last}, err
+			return none(), err
 		}
 		lost = 0
 		for _, en := range es {
@@ -189,39 +215,42 @@ func waitJudgment(ctx context.Context, notes NoteStream, prefix string, epoch, a
 				epoch++
 				cur, next = next, StreamAt{Key: logKey(prefix, epoch+1), After: "0-0"}
 			default:
-				return waited{Epoch: epoch, Last: last}, fmt.Errorf("inbox --wait: a read of %s and %s returned an entry of %s", cur.Key, next.Key, en.Key)
+				return none(), fmt.Errorf("inbox --wait: a read of %s and %s returned an entry of %s", cur.Key, next.Key, en.Key)
 			}
 			seq, ok := streamSeq(en.ID)
 			if !ok {
-				return waited{Epoch: epoch, Last: last}, fmt.Errorf("inbox --wait: the log's entry id %s of %s is not <seq>-0", en.ID, en.Key)
+				return none(), fmt.Errorf("inbox --wait: the log's entry id %s of %s is not <seq>-0", en.ID, en.Key)
 			}
-			cur.After, last = en.ID, seq
-			l, ok, err := judgmentOf(en)
+			cur.After = en.ID
+			l, n, ok, err := tickEndOf(en)
 			if err != nil {
-				return waited{Epoch: epoch, Last: last}, err
+				return none(), err
 			}
 			if ok {
-				return waited{ID: noteIDAt(seq, epoch), Line: l, Found: true, Epoch: epoch, Last: seq}, nil
+				return waited{ID: noteIDAt(seq, epoch), Line: l, Judgments: n, Found: true, Epoch: epoch, Last: seq}, nil
 			}
 		}
 	}
 }
 
-// inboxWait is Inbox with --wait (the owner's ask, 2026-09-30; section 3's
-// inbox): one read through the one read path finds the active epoch and the
-// log's last seq, and then the wait blocks on the log from the cursor
-// (InboxReq.After, the last seq the coordinator has seen) until the first
-// JUDGMENT line after it, or --timeout. A judgment raised before the wait
-// began, after the cursor, is returned at once. The view is the inbox's shape
-// with the one judgment as its one group, Last its seq; at the timeout it has
-// no group and Last is the last seq read, which the next wait takes as its
-// cursor.
+// inboxWait is Inbox with --wait (errata 3 amendment 8; section 3's inbox):
+// one read through the one read path finds the active epoch and the log's last
+// seq, and then the wait blocks on the log from the cursor (InboxReq.After, the
+// last seq the coordinator has read) until the next tick-end note after it, or
+// --timeout. A tick-end written before the wait began, after the cursor, is
+// returned at once. The view places the cursors for the loop "wait, read all,
+// act on all, wait": Cursor is where the following inbox reads the batch from
+// (the cursor as given, or 0 when a clear moved the epoch during the wait),
+// Last the tick-end's seq, from which the next wait waits; Judgments is the
+// tick's N, and Groups is empty (the inbox reads the batch). At the timeout
+// nothing is consumed: Last is the cursor as given.
 //
 // The read is one round trip (Result.Trips). The blocked reads are not: a
 // blocked XREAD is no round trip in the tick's budget (1.4.2), and the store
-// answers it the moment a step appends a line (Redis wakes a blocked XREAD
-// on the XADD), so a judgment reaches the waiting coordinator as its step
-// commits, with no poll.
+// answers it the moment a step appends a line (Redis wakes a blocked XREAD on
+// the XADD); the wait reads past every line that is not a tick-end, blocking
+// again after each read, so the coordinator wakes once, as the tick's last
+// step commits.
 func inboxWait(ctx context.Context, e *Env, req InboxReq) (Result, error) {
 	const verb = "inbox"
 	w := req.Wait
@@ -257,18 +286,23 @@ func inboxWait(ctx context.Context, e *Env, req InboxReq) (Result, error) {
 		return res, refuseLocal(verb, sprintfn.CodeRequest,
 			"the cursor %d is past the log's last line %d at epoch %d (a cursor of another epoch?): run inbox for the cursor", req.After, last, epoch)
 	}
-	got, err := waitJudgment(ctx, w.Notes, e.Names.Prefix, epoch, req.After, now().Add(timeout), now)
+	got, err := waitTickEnd(ctx, w.Notes, e.Names.Prefix, epoch, req.After, now().Add(timeout), now)
 	if err != nil {
 		return res, err
 	}
 	res.Epoch = got.Epoch
-	v := InboxView{Groups: []sprint.Group{}, Cursor: strconv.FormatUint(req.After, 10), Last: strconv.FormatUint(got.Last, 10),
-		At: now().UTC()}
+	cursor := req.After
+	if got.Epoch != epoch {
+		cursor = 0 // the batch is the new epoch's, from its start
+	}
+	v := InboxView{Groups: []sprint.Group{}, Cursor: strconv.FormatUint(cursor, 10), Last: strconv.FormatUint(got.Last, 10),
+		At: now().UTC(), Woke: got.Found, Judgments: got.Judgments}
 	if got.Found {
-		v.Groups = append(v.Groups, groupOfLine(got.ID, got.Line))
-		res.Said = groupText(v.Groups[0]) + fmt.Sprintf("INBOX WAIT judgment=%s last=%s\n", got.ID, v.Last)
+		res.Said = fmt.Sprintf("INBOX WAIT tick-end=%s judgments=%d cursor=%s last=%s\n"+
+			"  the tick's batch is ready: inbox after %s reads it; the next wait is after %s\n",
+			got.ID, got.Judgments, v.Cursor, v.Last, v.Cursor, v.Last)
 	} else {
-		res.Said = fmt.Sprintf("INBOX WAIT nothing: no judgment after %s in %s; last=%s\n", v.Cursor, timeout, v.Last)
+		res.Said = fmt.Sprintf("INBOX WAIT nothing: no tick-end after %s in %s; last=%s\n", v.Cursor, timeout, v.Last)
 	}
 	if req.Out != nil {
 		*req.Out = v

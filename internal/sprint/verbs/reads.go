@@ -68,8 +68,8 @@ const inboxNoticeLines = 1000
 // InboxReq is inbox's request: the cursor after which notices are listed, and
 // the page of open notes (0 is InboxPage). Read is --read, which moves the
 // cursor: refused until the write path carries it. Wait is --wait, which
-// blocks on the notification stream for the first judgment after the cursor
-// (inboxWait).
+// blocks on the notification stream for the next tick-end note after the
+// cursor, one wake a tick (inboxWait; errata 3 amendment 8).
 type InboxReq struct {
 	After uint64
 	Limit int
@@ -93,6 +93,11 @@ type InboxView struct {
 	Machine     string         `json:"machine"`
 	More        bool           `json:"more,omitempty"`
 	NoticesMore bool           `json:"notices_more,omitempty"`
+	// Woke and Judgments are inbox --wait's: it woke on a tick-end note,
+	// whose count of items for the coordinator is Judgments (errata 3
+	// amendment 8).
+	Woke      bool `json:"woke,omitempty"`
+	Judgments int  `json:"judgments,omitempty"`
 }
 
 // semanticLine is an item of a lines or cardlines page as the verbs read and
@@ -285,11 +290,6 @@ func judgmentGroups(ids []string, rd *sprintfn.ReadReply) ([]sprint.Group, error
 		}
 	}
 	return groupLines(ids, lines), nil
-}
-
-// groupOfLine is one judgment note as a group of its own (inbox --wait).
-func groupOfLine(id string, l noteLine) sprint.Group {
-	return groupLines([]string{id}, []noteLine{l})[0]
 }
 
 // groupLines groups judgment notes' lines by type and cause (judgmentGroups).

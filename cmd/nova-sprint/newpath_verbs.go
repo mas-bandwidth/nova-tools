@@ -512,7 +512,7 @@ func init() {
 		{name: "inbox", syntax: "[--open <group>] [--read] [--wait [--timeout <duration>]] [--deadline <duration>] [--stale <duration>] [--at-epoch <n>]", item: "IT22",
 			flags: []flagDef{{name: "open", usage: "list every member and notification of the group of this id"},
 				{name: "read", kind: kBool, usage: "move the cursor past what is shown"},
-				{name: "wait", kind: kBool, usage: "block until the first judgment after the cursor, then show the inbox"},
+				{name: "wait", kind: kBool, usage: "block until the end of the next tick that addressed the coordinator (one wake a tick), then say where its batch is"},
 				{name: "timeout", kind: kDuration, usage: "with --wait: at most this long (default a judgment's deadline)"},
 				{name: "deadline", kind: kDuration, def: defaultDeadline.String(), usage: "a judgment open longer is overdue"}, fStale, fAtEpoch},
 			notYet: map[string]string{"open": "the new inbox lists groups, not their members", "deadline": "the new inbox's deadlines are the design's",

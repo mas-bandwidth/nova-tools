@@ -41,6 +41,7 @@ const jrCoord = "coord"
 type jrWorld struct {
 	t   *testing.T
 	tw  *sprintfn.Twin
+	log *sprintfn.MemLog // the twin's log (the tick-end wake tests mirror it)
 	cc  *Counting
 	env *Env
 	mu  sync.Mutex
@@ -60,7 +61,8 @@ func newJRWorld(t *testing.T) *jrWorld {
 		}
 	}
 	w := &jrWorld{t: t, now: time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)}
-	w.tw = sprintfn.NewTwin(m, sprintfn.NewMemLog(), jrNames)
+	w.log = sprintfn.NewMemLog()
+	w.tw = sprintfn.NewTwin(m, w.log, jrNames)
 	w.tw.UseQueries()
 	w.tw.UseIntents()
 	w.tw.SetClock(func() time.Time {

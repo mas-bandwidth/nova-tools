@@ -91,6 +91,11 @@ func TestRuleNotesJAccepts(t *testing.T) {
 						req.Type = typ
 					}
 				}
+				if op == JOpTickEnd {
+					// The tick-end note's one constructor (sprint.TickEndNote) names
+					// the coordinator and a count, from values: their stand-ins.
+					req.Subjects, req.Text = []string{sprint.TickEndTo}, "judgments=1"
+				}
 				isState := jIsStateOp(op)
 				if isState {
 					state++

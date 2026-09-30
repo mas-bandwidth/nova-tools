@@ -137,6 +137,10 @@ type Loop struct {
 	heldSeq  map[string]uint64 // a held back key -> its order in the agenda
 	parked   map[string]bool   // keys this loop parked, until a read shows them gone
 	owed     errorStep         // the error step of the next RT1
+	// unwoken is the lines addressed to the coordinator that ingests have
+	// moved the cursor past and no tick-end line has covered, waiting for a
+	// page that reaches Layer 2's last (tickend.go).
+	unwoken int
 
 	hb       map[string]string // the heartbeat fields of the last tick (A3)
 	ticks    uint64
@@ -159,9 +163,15 @@ type errorStep struct {
 	notes      []sprint.NoteReq
 	quarantine []sprint.Quarantined
 	keys, ids  map[string]bool
+	// wake is a tick-end note an earlier tick owes, of that count (errata 3
+	// amendment 8; tickend.go): it rides the error step's first chunk, after
+	// its other notes, and counts the addressed ones among them too.
+	wake int
 }
 
-func (e *errorStep) empty() bool { return len(e.park)+len(e.notes)+len(e.quarantine) == 0 }
+func (e *errorStep) empty() bool {
+	return len(e.park)+len(e.notes)+len(e.quarantine) == 0 && e.wake == 0
+}
 
 // owes says the key is owed to the park.
 func (e *errorStep) owes(key string) bool { return e.keys[key] }
@@ -260,6 +270,9 @@ func (e *errorStep) chunk() errChunk {
 func (e *errorStep) fitNotes(c errChunk) errChunk {
 	inv := invariantNotes(e.quarantine[:c.quarantine])
 	notes, about := len(inv), c.quarantine
+	if e.wake > 0 {
+		notes, about = notes+1, about+1 // the tick-end note owed
+	}
 	c.notes = 0
 	for _, n := range e.notes {
 		if notes+1 > tset.MaxNotes || about+len(n.Subjects) > tset.MaxAboutBeforeDedup {
@@ -310,6 +323,7 @@ func (e *errorStep) settle(c errChunk) {
 	e.park = e.park[c.park:]
 	e.quarantine = e.quarantine[c.quarantine:]
 	e.notes = e.notes[c.notes:]
+	e.wake = 0 // every chunk carries the tick-end owed
 }
 
 // NewLoop is a loop over a config: the design's spans, budget and step
@@ -430,6 +444,11 @@ type Report struct {
 	// parked and named in "the machine's step was refused", and the tick fails
 	// naming it (Tick's error) once its other steps are sent (1.3.5).
 	Short []string
+	// Wake is the count of the tick-end note this tick wrote (errata 3
+	// amendment 8): the items it addressed to the coordinator, 0 when it wrote
+	// none. WakeLate is that of a tick-end an earlier tick owed, which this
+	// tick's error step wrote.
+	Wake, WakeLate int
 	// Outcomes are the pushes of R14's phase 2 that finished since the last
 	// tick, which this tick's error step records (phase 3); Pushes the pushes
 	// this tick started, off the tick, and PushesSkipped the claims past
@@ -521,6 +540,7 @@ type rt1 struct {
 	items                     []sprintfn.Item
 	lease, errStep, page, get int
 	errChunk                  errChunk // what the error step carries of what is owed
+	errWake                   int      // the owed tick-end's count the error step carries, 0 none
 	bands                     int      // the agenda head's ranges (agendaRanges)
 	pageLimit                 int
 	parkedAsked               []string // the parked keys the read names
@@ -562,6 +582,7 @@ func (l *Loop) rt1() rt1 {
 		r.errStep = len(r.items)
 		req, c := l.errorRequest()
 		r.errChunk = c
+		r.errWake = tickEndOf(req)
 		r.items = append(r.items, sprintfn.Item{Step: req})
 	}
 	if l.curKnown {
@@ -682,6 +703,10 @@ func (l *Loop) errorRequest() (*sprintfn.Request, errChunk) {
 func (l *Loop) errorChunk(c errChunk) *sprintfn.Request {
 	qs := l.owed.quarantine[:c.quarantine]
 	notes := append(invariantNotes(qs), l.owed.notes[:c.notes]...)
+	if l.owed.wake > 0 {
+		// The owed tick-end, last: it covers the addressed notes before it.
+		notes = append(notes, sprint.TickEndNote(l.owed.wake+addressed(&sprintfn.Request{Body: sprintfn.Body{Notes: notes}})))
+	}
 	req := &sprintfn.Request{Epoch: l.epoch, Meta: sprintfn.Meta{Rule: "tick", Tick: true, Gen: l.gen},
 		Body: sprintfn.Body{Notes: notes, Quarantine: qs}}
 	if c.park != 0 || c.quarantine != 0 {
@@ -745,6 +770,9 @@ func (l *Loop) tick(ctx context.Context, c sprintfn.Client, rep *Report) error {
 	l.gen = gen
 	rep.Held, rep.Gen = true, gen
 	if r1.errStep >= 0 {
+		if res[r1.errStep].Step != nil {
+			rep.WakeLate = r1.errWake
+		}
 		if err := l.settleErrorStep(res[r1.errStep], r1.errChunk, rep); err != nil {
 			return err
 		}
@@ -784,6 +812,11 @@ func (l *Loop) tick(ctx context.Context, c sprintfn.Client, rep *Report) error {
 	}
 	in := sprint.Ingest(events)
 	rep.Lines, rep.Keys = len(events), len(in.Keys)
+	// The page's lines addressed to the coordinator that no tick-end line
+	// covers (tickend.go): the tick's N counts them once the ingest moves
+	// the cursor past them and the page reaches Layer 2's last.
+	unwoken := pageWake(l.unwoken, events)
+	complete := seqOf(pageTo) >= rd.last
 	backlog := rd.last - min(rd.last, seqOf(pageTo))
 	rep.Backlog = backlog
 	l.hb["backlog"] = strconv.FormatUint(backlog, 10)
@@ -864,6 +897,14 @@ func (l *Loop) tick(ctx context.Context, c sprintfn.Client, rep *Report) error {
 		reads = append(reads, sent{bt, len(items)})
 		items = append(items, sprintfn.Item{Read: rr})
 	}
+	// RT3 is sure to be empty (nothing read, no note, no look): the ingest step
+	// is the tick's last and carries its tick-end (errata 3 amendment 8).
+	var ingestWake int
+	if ingest >= 0 && len(reads) == 0 && !look && len(notes) == 0 && complete && unwoken > 0 {
+		ingestWake = unwoken
+		st := items[ingest].Step
+		st.Body.Notes = append(st.Body.Notes, sprint.TickEndNote(ingestWake))
+	}
 	if len(items) == 0 && !look && len(notes) == 0 {
 		// Idle: no new line and no key to plan (the held back and the parked
 		// are not), so the tick was its lease renewal alone (1.4.2, T5).
@@ -885,6 +926,10 @@ func (l *Loop) tick(ctx context.Context, c sprintfn.Client, rep *Report) error {
 		switch ir := res[ingest]; {
 		case ir.Step != nil:
 			l.cur = pageTo
+			l.unwoken = unwoken
+			if ingestWake > 0 {
+				l.unwoken, rep.Wake = 0, ingestWake // written: the ingest step was the tick's last
+			}
 			var reply struct {
 				ParkedKeys []string `json:"parked_keys"`
 			}
@@ -1009,6 +1054,24 @@ func (l *Loop) tick(ctx context.Context, c sprintfn.Client, rep *Report) error {
 			rep.Quarantined = append(rep.Quarantined, q.ID)
 		}
 	}
+	// The tick-end (errata 3 amendment 8; tickend.go): the lines ingested and
+	// not covered, once the page reached Layer 2's last, and the addressed
+	// notes of the steps RT3 sends. Its step is reserved before the deal
+	// whenever the tick may write it.
+	wake := 0
+	if complete {
+		wake, l.unwoken = l.unwoken, 0
+	}
+	if qAt >= 0 {
+		wake += addressed(out[qAt])
+	}
+	if wake > 0 || plansAddress(plans) {
+		cost, ref := l.tickEndReserve()
+		if ref != nil {
+			return fmt.Errorf("machine: the tick-end step: %w", ref)
+		}
+		reserve = reserve.add(cost, false)
+	}
 	order, index, spent := deal(plans, l.budget, reserve)
 	rep.Changes, rep.HeldChanges, rep.EntriesNotes, rep.RequestBytes = spent.changes, spent.heldChanges, spent.entriesNotes, spent.bytes
 	for i, p := range order {
@@ -1017,6 +1080,19 @@ func (l *Loop) tick(ctx context.Context, c sprintfn.Client, rep *Report) error {
 		st := rep.stat(p.batch.Rule)
 		st.Steps++
 		st.Changes += p.costs[index[i]].changes
+		wake += addressed(p.reqs[index[i]])
+	}
+	endAt := -1
+	if wake > 0 {
+		if len(out) == 0 {
+			// Nothing to carry it this tick: the next RT1's error step writes it.
+			l.owed.wake += wake
+			return nil
+		}
+		endAt = len(out)
+		out = append(out, l.tickEndStep(wake))
+		cost, _ := costOf(l.cfg.Names.Prefix, out[endAt]) // reserved above: it fits
+		rep.EntriesNotes, rep.RequestBytes = rep.EntriesNotes+cost.entriesNotes, rep.RequestBytes+cost.bytes
 	}
 	if len(out) == 0 {
 		return nil
@@ -1043,6 +1119,19 @@ func (l *Loop) tick(ctx context.Context, c sprintfn.Client, rep *Report) error {
 		} else {
 			rep.Applied++
 		}
+	}
+	if endAt >= 0 {
+		if res[endAt].Step != nil {
+			rep.Wake = wake // Applied counts the rules' and the quarantine's steps
+		} else {
+			// Not written (refused STALEGEN, or an unknown outcome): owed to the
+			// next RT1's error step, which writes it with the tick's count.
+			l.owed.wake += wake
+			if r := res[endAt].Refusal; r != nil {
+				rep.Refused[r.Code]++
+			}
+		}
+		res, out = res[:endAt], out[:endAt]
 	}
 	var claims []Claim
 	base := len(out) - len(order)
@@ -1082,6 +1171,7 @@ func (l *Loop) newEpoch(e tset.Decimal) {
 	l.cur, l.curKnown = "", false
 	l.halvings, l.heldBack, l.heldSeq, l.parked = map[string]int{}, map[string]int{}, map[string]uint64{}, map[string]bool{}
 	l.owed = errorStep{}
+	l.unwoken = 0
 }
 
 // settleErrorStep takes the error step's result (1.3.5): applied, the chunk

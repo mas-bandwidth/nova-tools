@@ -363,7 +363,10 @@ func TestTickDriftReadQuarantines(t *testing.T) {
 	if rep.Refused["DRIFT"] != 1 || strings.Join(rep.Quarantined, ",") != "p2" || rep.RoundTrips != 3 {
 		t.Fatalf("the refused read: %+v", rep)
 	}
-	rt3 := k.last()
+	rt3, wake := splitTickEnd(t, k.last())
+	if wake != 1 || rep.Wake != 1 {
+		t.Fatalf("the tick opened the invariant judgment on p2 and wrote the tick-end of %d (report %d), want 1", wake, rep.Wake)
+	}
 	if len(rt3) != 1 || rt3[0].Step.Sprint == nil || len(rt3[0].Step.Sprint.Quarantine) != 1 || rt3[0].Step.Sprint.Quarantine[0].Stream != "s1" {
 		t.Fatalf("RT3 is not the quarantine of p2 in s1: %+v", rt3)
 	}
@@ -425,7 +428,7 @@ func TestTickBudgetReadHalvesThenParks(t *testing.T) {
 		if rep.Refused["BUDGET"] != 1 || rep.Halved["deal"] != 1 || len(rep.Parked) != 0 {
 			t.Fatalf("the refused read: %+v", rep)
 		}
-		if rt3 := k.last(); len(rt3) != 1 || len(rt3[0].Step.Body.Notes) != 1 || rt3[0].Step.Body.Notes[0].Type != TypeStepRefused {
+		if rt3, wake := splitTickEnd(t, k.last()); wake != 1 || len(rt3) != 1 || len(rt3[0].Step.Body.Notes) != 1 || rt3[0].Step.Body.Notes[0].Type != TypeStepRefused {
 			t.Fatalf("the refusal is not named in RT3: %+v", rt3)
 		}
 		if len(w.hash("jopen:deal@0")) == 0 {

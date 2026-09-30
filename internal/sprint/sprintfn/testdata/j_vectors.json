@@ -15980,5 +15980,111 @@
    "notes": null,
    "commands": null
   }
+ },
+ {
+  "name": "tickend_writes_its_line_to_the_coordinator",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [
+   {
+    "op": "tickend",
+    "type": "tick-end",
+    "cause": "",
+    "subjects": [
+     "coordinator"
+    ],
+    "text": "judgments=3"
+   }
+  ],
+  "note_seqs": [
+   "9"
+  ],
+  "expect": {
+   "refusal": "",
+   "notes": [
+    {
+     "about": [
+      "coordinator"
+     ],
+     "meta": {
+      "kind": "tick-end",
+      "op": "tickend",
+      "text": "judgments=3",
+      "to": "coordinator",
+      "type": "tick-end"
+     }
+    }
+   ],
+   "commands": [
+    [
+     "RPUSH",
+     "t:sprint:notes@0",
+     "9"
+    ]
+   ]
+  }
+ },
+ {
+  "name": "refuse_tickend_of_another_type",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [
+   {
+    "op": "tickend",
+    "type": "ci green",
+    "cause": "",
+    "subjects": [
+     "coordinator"
+    ],
+    "text": "judgments=3"
+   }
+  ],
+  "expect": {
+   "refusal": "REQUEST",
+   "notes": null,
+   "commands": null
+  }
+ },
+ {
+  "name": "refuse_tickend_not_to_the_coordinator",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [
+   {
+    "op": "tickend",
+    "type": "tick-end",
+    "cause": "",
+    "subjects": [
+     "p1"
+    ],
+    "text": "judgments=3"
+   }
+  ],
+  "expect": {
+   "refusal": "REQUEST",
+   "notes": null,
+   "commands": null
+  }
+ },
+ {
+  "name": "refuse_tickend_with_no_count",
+  "epoch": "0",
+  "now_ms": "1790769600000",
+  "requests": [
+   {
+    "op": "tickend",
+    "type": "tick-end",
+    "cause": "",
+    "subjects": [
+     "coordinator"
+    ],
+    "text": "judgments=03"
+   }
+  ],
+  "expect": {
+   "refusal": "REQUEST",
+   "notes": null,
+   "commands": null
+  }
  }
 ]

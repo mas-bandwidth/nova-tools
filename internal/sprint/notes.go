@@ -286,3 +286,72 @@ func (n Note) Bound() Note {
 	}
 	return n
 }
+
+// The tick-end note (errata 3 amendment 8; SprintEvents.tla, TickEnd): the
+// coordinator is woken once, at the end of a tick, with every item the tick
+// addressed to it ready to read, and not at all when it addressed nothing.
+// The tick's last step appends one note of the kind TickEnd, about the
+// coordinator, whose text is "judgments=N": N the items the tick addressed to
+// the coordinator (TickEndCounts). The ingest reads the line without making a
+// key of it: it is not an event.
+const (
+	// TickEnd is the note's kind (the line's meta kind) and its type.
+	TickEnd = "tick-end"
+	// TickEndTo is who the note is addressed to, and its one subject.
+	TickEndTo = "coordinator"
+	// NoteOpTickEnd is J's op that writes the note (sprintfn.JOpTickEnd).
+	NoteOpTickEnd = "tickend"
+	// tickEndPrefix begins the note's text; the count follows it.
+	tickEndPrefix = "judgments="
+)
+
+// TickEndNote is the request for the tick-end note of a tick that addressed n
+// items to the coordinator.
+func TickEndNote(n int) NoteReq {
+	return NoteReq{Op: NoteOpTickEnd, Type: TickEnd, Subjects: []string{TickEndTo}, Text: tickEndPrefix + strconv.Itoa(n)}
+}
+
+// TickEndCount is N of a tick-end note's text "judgments=N", false for any
+// other text.
+func TickEndCount(text string) (int, bool) {
+	s, ok := strings.CutPrefix(text, tickEndPrefix)
+	if !ok {
+		return 0, false
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 0 || strconv.Itoa(n) != s {
+		return 0, false
+	}
+	return n, true
+}
+
+// AddressedNotices are the HAPPENED types that are for the coordinator (errata
+// 3 amendment 6: "the sprint is done" is a notice addressed to it on the
+// present build's path).
+var AddressedNotices = map[string]bool{NSprintDone: true}
+
+// TickEndCounts says a note request of a tick is an item addressed to the
+// coordinator, which the tick's tick-end note counts: a judgment opened, or a
+// HAPPENED for the coordinator (AddressedNotices). A close, a hold, an update
+// and every other notice are not.
+func TickEndCounts(r NoteReq) bool {
+	switch r.Op {
+	case "open":
+		return true
+	case "know":
+		return AddressedNotices[r.Type]
+	}
+	return false
+}
+
+// TickEndCountsLine is TickEndCounts for a line of the log: a line that opens
+// a judgment, or a HAPPENED for the coordinator. The tick-end line is not.
+func TickEndCountsLine(e Event) bool {
+	switch e.Kind {
+	case Judgment:
+		return e.Opens
+	case Happened:
+		return AddressedNotices[e.NoteType]
+	}
+	return false
+}

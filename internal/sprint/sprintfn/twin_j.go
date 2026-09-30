@@ -80,6 +80,9 @@ import (
 //	         unheld line is written.
 //	know     a notice (Notices[type]): its line, and nothing else.
 //	request  a request line, and nothing else.
+//	tickend  the tick's end note (errata 3 amendment 8): its line, of the kind
+//	         tick-end, to the coordinator, its text "judgments=N", and
+//	         nothing else.
 //
 // One note for a cause (1.3.4, "a note names every subject of its step with the
 // same type and cause"): requests of one op, type, cause, text, decisions and
@@ -153,6 +156,9 @@ const (
 	JOpUnhold  = "unhold"  // R13: a hold ran out
 	JOpKnow    = "know"    // a notice (2.5)
 	JOpRequest = "request" // a request line
+	// JOpTickEnd is the tick's end note (errata 3 amendment 8): its line, of
+	// the kind sprint.TickEnd, addressed to the coordinator, and nothing else.
+	JOpTickEnd = sprint.NoteOpTickEnd
 )
 
 // jOpReview is the op a JNote carries for a wait on a judgment the tick does
@@ -395,7 +401,7 @@ func jDedup(in []string) []string {
 // the type against the tables. A request that fails is the caller's fault.
 func jCheck(i int, r NoteReq) *Refusal {
 	switch r.Op {
-	case JOpOpen, JOpClose, JOpUpdate, JOpHold, JOpUnhold, JOpKnow, JOpRequest:
+	case JOpOpen, JOpClose, JOpUpdate, JOpHold, JOpUnhold, JOpKnow, JOpRequest, JOpTickEnd:
 	default:
 		return jRefuse(i, CodeRequest, "has an op J does not take")
 	}
@@ -431,6 +437,10 @@ func jCheck(i int, r NoteReq) *Refusal {
 			return jRefuse(i, CodeRequest, "is a notice of a type 2.5 does not have")
 		}
 	case JOpRequest:
+	case JOpTickEnd:
+		if _, ok := sprint.TickEndCount(r.Text); r.Type != sprint.TickEnd || !ok || len(r.Subjects) != 1 || r.Subjects[0] != sprint.TickEndTo {
+			return jRefuse(i, CodeRequest, "is a tick-end note that is not of its type, to the coordinator, with judgments=N")
+		}
 	default:
 		if _, ok := jJudgment(r.Type); !ok {
 			return jRefuse(i, CodeRequest, "is on a judgment type 2.2 does not have")
@@ -865,6 +875,9 @@ func jMetaOf(g jGroup) json.RawMessage {
 		m["kind"] = sprint.Decided
 	case JOpKnow:
 		m["kind"] = sprint.Happened
+	case JOpTickEnd:
+		m["kind"] = sprint.TickEnd
+		m["to"] = sprint.TickEndTo
 	}
 	if r.Op == JOpHold || r.Op == jOpReview {
 		m["until"] = strconv.FormatInt(r.Until, 10)
