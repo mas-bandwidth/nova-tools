@@ -71,7 +71,7 @@ const usage = `nova-redis: run a local Redis store, and keep short-lived named v
 how it works: serve runs redis-server on loopback or tailnet addresses only,
 with its data in --dir. spill writes a value under <owner>:<name> with a
 required expiry, and recall reads it back (exit 1 once it has expired). fn load
-and fn check install and verify the function library nova-table and nova-sprint call.
+and fn check install and verify the functions nova-table and nova-sprint call.
 Passwords come from an environment variable, never from an argument.
 first run: needs a Redis you may write to; the lines under example: expect one
 at 127.0.0.1:6379 (redis-server --port 6379 in another terminal is enough).

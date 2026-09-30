@@ -707,7 +707,15 @@ MIT, see [LICENSE](../LICENSE).
 ## nova-swarm
 
 ```
-nova-swarm: a pool of one-task workers, with the ways a swarm fails taken out (see docs/SPEC-SWARM.md)
+nova-swarm: one-task AI workers, each run in the sandbox with a deadline and a token budget
+
+how it works: a card is one task, a markdown file with a header and its RULES;
+a worker description (JSON) names the harness, the model, the key file and the
+directories it may read. native runs one card as one child inside nova-sandbox;
+batch runs many under a pool of slots (leases in a --slots-store directory);
+each result lands in the job directory under --root. Nothing has a default.
+first run: template and lint need nothing: print a card with template, save it,
+and lint it; running one needs a harness, a model's key file and nova-sandbox.
 
 usage:
   nova-swarm version    print this build identity (--version also accepted)
