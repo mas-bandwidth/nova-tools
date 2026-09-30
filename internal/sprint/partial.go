@@ -39,6 +39,7 @@ var rowsOf = map[string][]string{
 var countsOf = map[string]string{
 	QueryFleet:   Fleet,
 	QueryReaders: Readers,
+	QueryStreams: Work, // the cells of every stream, when SprintQ.Counts asks (R15)
 }
 
 // Partial is what a snapshot loaded from a read plan was loaded from: the plan
@@ -56,6 +57,8 @@ type Partial struct {
 
 	before map[beforeKey]int
 	log    *unloadedLog
+	// pos is what the position rules' queries answered (rules_position_read.go).
+	pos *posLoaded
 }
 
 // beforeKey names an rcount over a stream's open cells below a bound.
@@ -453,6 +456,9 @@ func (p *Partial) loadSprint(s *Snapshot, rp ReadPlan, ans ReadAnswer) error {
 			if err := p.followed(s, i, q, a); err != nil {
 				return err
 			}
+		}
+		if err := p.loadPosition(s, i, q, a); err != nil {
+			return err
 		}
 	}
 	return nil

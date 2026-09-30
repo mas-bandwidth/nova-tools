@@ -245,6 +245,20 @@ type Answer struct {
 	Counts []CellCount
 	// Front is the answer of `front`.
 	Front *FrontAnswer
+	// Heads are the heads of a `front` query, one for each of the query's
+	// Heads in its order; their records are in Records (rules_position_read.go).
+	Heads []HeadAnswer
+	// Needs are the needs of a `waiters` query, one for each id its source
+	// named, in order; the waiters' records are in Records. MoreIDs says a
+	// source that is a line has ids beyond the window read.
+	Needs   []NeedAnswer
+	MoreIDs bool
+	// Stuck are the first ids of the stuck cell of each stream a `streams` query
+	// found stopped on a cross need, in the streams' order.
+	Stuck []StuckAnswer
+	// Keys are the sprint keys the query was asked to read (SprintQ.Keys), one
+	// answer for each, in order.
+	Keys []KeyAnswer
 }
 
 // ReadAnswer is the answer of one atomic read (the errata to version 2.1, E3),
