@@ -937,7 +937,7 @@ Invalid flags or unexpected arguments refuse with exit 2 naming the flag as type
 
 ```
 $ nova-sandbox check --bogus
-CHECK REFUSED reason=bad_flag: flag "--bogus"; run: nova-sandbox check -h
+CHECK REFUSED reason=bad_flag: unknown flag --bogus; run: nova-sandbox help check
 ```
 
 Unknown verbs refuse explicitly with exit 2 rather than falling into the bare wrap:
