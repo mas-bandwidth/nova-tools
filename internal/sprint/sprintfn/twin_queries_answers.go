@@ -252,6 +252,9 @@ type ListingResult struct {
 	HasMore bool          `json:"has_more"`
 	LeftOut []string      `json:"left_out"`
 	Items   []ListingItem `json:"items"`
+	// Props are the table properties the query named that the table holds
+	// (L1 contract amendment, table properties).
+	Props map[string]string `json:"props,omitempty"`
 }
 
 // ChainItem is one card `needchain` read: its record, the needs it names, and
@@ -505,7 +508,7 @@ func (r ListingResult) Project(q sprint.SprintQ) sprint.Answer {
 	if r.Kind == sprint.QueryReaders {
 		table = sprint.Readers
 	}
-	a := sprint.Answer{Kind: r.Kind, Rows: append([]string(nil), r.Rows...), HasMore: r.HasMore}
+	a := sprint.Answer{Kind: r.Kind, Rows: append([]string(nil), r.Rows...), HasMore: r.HasMore, Props: r.Props}
 	for _, it := range r.Items {
 		for _, c := range it.Counts {
 			a.Counts = append(a.Counts, sprint.CellCount{Row: it.Row, Col: c.Col, N: c.N})

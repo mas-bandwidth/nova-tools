@@ -1,9 +1,6 @@
 package sprint
 
-import (
-	"slices"
-	"strconv"
-)
+import "slices"
 
 // The deal goes round the fleet and the ask goes round the readers (errata 3,
 // amendment 5): each keeps a rolling index into its names, in name order,
@@ -19,32 +16,25 @@ import (
 // by name, which this replaces, gives every card of an idle fleet to the first
 // members in name order and the tail of the fleet none.
 //
-// The index is kept in the store, in the step that deals (asks), so that it is
-// atomic with the deal and survives a stop and a start of the machine and a new
-// loop: the sprint's own keys have no wire in a rule's step (TimeWrites), and
-// members and readers are not all on control cards a step writes after its
-// first manifest, so it is on the streams' control cards (the merge table,
-// which a step writes after the fleet and the readers, ApplyOrder: a deal whose
-// first manifest never applies is abandoned whole, the index with it). A step
-// that moves the index writes, on the control card of the stream of its last
-// card that moved it, the name the index is past (deal_last, ask_last) and a
-// sequence one above the highest the read found (deal_seq, ask_seq); the index
-// is the last name of the control card with the highest sequence. The model is
+// The index is a property of the fleet table (the deal's, deal_index) and of
+// the readers table (the ask's, ask_index), the owner's ruling ("a property
+// of the reader table and the fleet table respectively; not a property of the
+// work stream"): the name the index is past, read with the table and written
+// by the step that deals (asks) in the same atomic batch as its cards, guarded
+// on the value the step read (Plan.Props; the table layer's properties, L1
+// contract amendment of 2026-09-30). So it is atomic with the deal and
+// survives a stop and a start of the machine and a new loop, and a clear
+// starts the next epoch at the first name. The model is
 // tla/SprintEvents.tla: dcur and acur, moved by the deal's and the ask's
 // effects, and PlanDeal's and PlanAsk's choice from them (RoundAssign,
 // RoundTwo).
 const (
-	FieldDealSeq  = "deal_seq"
-	FieldDealLast = "deal_last"
-	FieldAskSeq   = "ask_seq"
-	FieldAskLast  = "ask_last"
-)
-
-// dealRoundFields and askRoundFields are what a read names of the streams'
-// control cards for the deal's and the ask's index.
-var (
-	dealRoundFields = []string{FieldDealSeq, FieldDealLast}
-	askRoundFields  = []string{FieldAskSeq, FieldAskLast}
+	// PropDealIndex is the fleet table's property: the member the last card
+	// was dealt to.
+	PropDealIndex = "deal_index"
+	// PropAskIndex is the readers table's property: the reader the last read
+	// was asked of round the readers.
+	PropAskIndex = "ask_index"
 )
 
 // round is a rolling index into names, in name order: the next name is the
@@ -52,16 +42,19 @@ var (
 type round struct {
 	order []string
 	at    int    // the index: the place in order the next scan starts at
-	seq   int    // the highest sequence the read found
+	table string // the table whose property holds it
+	name  string // the property
+	read  string // the value the step read
+	had   bool   // whether the table had the property
 	last  string // the name the index moved past in this plan, "" when none
 }
 
 // newRound is the index over the names just past last (the first name above
-// it in name order, so a name since removed still places it), at seq.
-func newRound(names []string, last string, seq int) *round {
+// it in name order, so a name since removed still places it).
+func newRound(names []string, last string) *round {
 	order := append([]string(nil), names...)
 	slices.Sort(order)
-	r := &round{order: order, seq: seq}
+	r := &round{order: order}
 	if last != "" {
 		i, found := slices.BinarySearch(order, last)
 		if found {
@@ -129,61 +122,37 @@ func (r *round) member(up []string, q map[string]int, most int, avoid string) st
 	return m
 }
 
-// roundAt is the index a snapshot holds: the last name and the sequence of the
-// streams' control card with the highest sequence (the first stream in name
-// order on a tie).
-func roundAt(s *Snapshot, seqField, lastField string) (last string, seq int) {
-	seq = -1
-	streams := append([]string(nil), s.Streams()...)
-	slices.Sort(streams)
-	for _, st := range streams {
-		ctl := s.StreamCtl(st)
-		if ctl == nil || ctl.F(seqField) == "" {
-			continue
-		}
-		if n := ctl.Int(seqField); n > seq {
-			seq, last = n, ctl.F(lastField)
-		}
-	}
-	return last, max(seq, 0)
+// tableRound is the rolling index a table's property holds over names.
+func tableRound(t *Table, name string, names []string) *round {
+	last, had := t.Prop(name)
+	r := newRound(names, last)
+	r.table, r.name, r.read, r.had = t.Name, name, last, had
+	return r
 }
 
 // dealRound is the deal's rolling index over the fleet's members.
-func dealRound(s *Snapshot) *round {
-	last, seq := roundAt(s, FieldDealSeq, FieldDealLast)
-	return newRound(s.Fleet.Rows(), last, seq)
-}
+func dealRound(s *Snapshot) *round { return tableRound(s.Fleet, PropDealIndex, s.Fleet.Rows()) }
 
 // askRound is the ask's rolling index over the readers.
-func askRound(s *Snapshot) *round {
-	last, seq := roundAt(s, FieldAskSeq, FieldAskLast)
-	return newRound(s.Readers.Rows(), last, seq)
-}
+func askRound(s *Snapshot) *round { return tableRound(s.Readers, PropAskIndex, s.Readers.Rows()) }
 
-// roundMove is what a unit moved an index by: the stream whose control card
-// carries it and the name the index moved past ("" when the unit did not move
-// it: an ask of the readers the primary names).
-type roundMove struct{ stream, last string }
+// roundMoves are the names the units of a plan moved an index past, by unit
+// key ("" when the unit did not move it: an ask of the readers the primary
+// names).
+type roundMoves map[string]string
 
-// roundWrites writes where a plan's kept units left an index: on the control
-// card of the stream of the last kept unit that moved it, the name that unit
-// moved it past and the sequence one above the read's, so that one step writes
-// one control card, with the deals (asks) that apply.
-func roundWrites(p *Plan, s *Snapshot, seqField, lastField string, r *round, moves map[string]roundMove) {
-	at := -1
-	var mv roundMove
-	for i, u := range p.Units {
-		if m, ok := moves[u.Key]; ok && m.last != "" {
-			at, mv = i, m
+// roundWrites writes where a plan's kept units left an index: the table's
+// property set to the name the last kept unit that moved it moved it past,
+// guarded on the value the step read, in the step's batch of that table.
+func roundWrites(p *Plan, r *round, moves roundMoves) {
+	last := ""
+	for _, u := range p.Units {
+		if m := moves[u.Key]; m != "" {
+			last = m
 		}
 	}
-	if at < 0 {
+	if last == "" {
 		return
 	}
-	ctl := s.StreamCtl(mv.stream)
-	if ctl == nil {
-		return
-	}
-	p.Units[at].Changes = append(p.Units[at].Changes, change(Merge, setEntry(ctl, map[string]string{
-		seqField: strconv.Itoa(r.seq + 1), lastField: mv.last})))
+	p.Props = append(p.Props, PropWrite{Table: r.table, Name: r.name, Value: last, Was: r.read, WasAbsent: !r.had})
 }

@@ -47,9 +47,10 @@
 \*   dropping, cut       stream -> op; op -> its cut entry (wall time)
 \*   receipts, next      part receipts with their continuations; the score counter
 \*   dcur, acur          the deal's and the ask's rolling index (errata 3,
-\*                       amendment 5): the place in MemSeq (ReaderSeq) the next
-\*                       scan starts at, past the member (reader) the last card
-\*                       (read) went to
+\*                       amendment 5), the fleet table's and the readers
+\*                       table's property: the place in MemSeq (ReaderSeq) the
+\*                       next scan starts at, past the member (reader) the
+\*                       last card (read) went to
 \*   lease, tk, vk       the lease; tick processes; verb processes
 \*
 \* TIME is relative, in units of one deadline: every timer holds what remains

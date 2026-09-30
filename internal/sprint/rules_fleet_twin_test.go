@@ -133,6 +133,7 @@ func (tw fleetTwin) query(q SprintQ) Answer {
 				a.Counts = append(a.Counts, CellCount{Row: m, Col: col, N: w.Fleet.Count(m, col)})
 			}
 		}
+		a.Props = propsAnswer(w.Fleet, q.Props)
 	case QueryStreams:
 		rows := w.Work.Rows()
 		if q.Units > 0 && q.Units < len(rows) {

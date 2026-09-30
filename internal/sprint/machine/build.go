@@ -151,8 +151,8 @@ func (sb *stepBodies) fit(group []builtUnit) error {
 	return sb.fit(group[len(group)/2:])
 }
 
-// extras puts the plan's notes, guards, intents and requeued keys on its first
-// body. The count guards become one Layer 1 count entry over their cells (1.3.6:
+// extras puts the plan's notes, guards, intents, table properties and
+// requeued keys on its first body. The count guards become one Layer 1 count entry over their cells (1.3.6:
 // "a count guard names many cells in one entry"; rules_fleet.go, guardCount:
 // the cell of a fleet member's ready queue and the most it held); every other
 // guard goes to X as it is.
@@ -175,6 +175,18 @@ func (sb *stepBodies) extras(body sprintfn.Body, first bool) sprintfn.Body {
 	}
 	if count != nil {
 		body.Entries = append([]tset.Entry{*count}, body.Entries...)
+	}
+	// The plan's table properties (the deal's and the ask's rolling index,
+	// round.go): each a propguard on the value the plan read and a prop, on
+	// the first body with its cards (L1 contract amendment, table properties).
+	for _, pw := range sb.rp.Plan.Props {
+		guard := tset.Entry{Kind: "propguard", Table: pw.Table, Name: pw.Name}
+		if !pw.WasAbsent {
+			was := pw.Was
+			guard.Value = &was
+		}
+		value := pw.Value
+		body.Entries = append(body.Entries, guard, tset.Entry{Kind: "prop", Table: pw.Table, Name: pw.Name, Value: &value})
 	}
 	body.Notes, body.Guards, body.Intents = sb.rp.Notes, guards, sb.rp.Intents
 	for _, k := range sb.rp.Requeue {
@@ -203,8 +215,6 @@ func carried(rp sprint.RulePlan) error {
 		return errors.New("the plan's legacy notes, closes or updates (a rule's notes are RulePlan.Notes)")
 	case !reflect.DeepEqual(rp.Sprint, sprint.TimeWrites{}):
 		return errors.New("the time rules' writes to the sprint's own keys have no wire in the sprint part yet")
-	case len(p.Props) != 0:
-		return errors.New("the plan's table properties (tset/1 prop entries) have no wire in the sprint part yet")
 	}
 	for _, u := range p.Units {
 		if len(u.Bumps)+len(u.Notes)+len(u.Closes) != 0 {

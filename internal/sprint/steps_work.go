@@ -629,21 +629,21 @@ type DealReq struct {
 // card is dealt to the next member round the fleet (round.go, errata 3
 // amendment 5): the first from the rolling index, wrapping, that is up with
 // fewer than MaxReadyPerMember ready cards, or, when none has room, the first
-// up; the index moves past the member dealt to, written with the deal on a
-// stream's control card. A card withdrawn because no member was up is the
+// up; the index (the fleet table's deal_index) moves past the member dealt
+// to, written with the deal. A card withdrawn because no member was up is the
 // same card dealt again at a new generation, its attempt unchanged; otherwise
 // the next attempt's card is cut.
 func Deal(s *Snapshot, r DealReq) Plan {
 	rr := dealRound(s)
 	p, moves := dealPlan(s, r, rr)
 	p = Lawful(p)
-	roundWrites(&p, s, FieldDealSeq, FieldDealLast, rr, moves)
+	roundWrites(&p, rr, moves)
 	return p
 }
 
-func dealPlan(s *Snapshot, r DealReq, rr *round) (Plan, map[string]roundMove) {
+func dealPlan(s *Snapshot, r DealReq, rr *round) (Plan, roundMoves) {
 	var p Plan
-	moves := map[string]roundMove{}
+	moves := roundMoves{}
 	chosen := pick(&p, r.Sel, s.Work.Column(Ready), rowOf, func(c *Card) string { return inState(c, Ready) }, s.primaryCard)
 	up := s.UpMembers()
 	if len(up) == 0 {
@@ -668,7 +668,7 @@ func dealPlan(s *Snapshot, r DealReq, rr *round) (Plan, map[string]roundMove) {
 			}
 			m := next()
 			rr.moved(m)
-			moves[c.ID] = roundMove{c.Row, m}
+			moves[c.ID] = m
 			p.Units = append(p.Units, redeal(s, c, wc, m, q))
 			continue
 		}
@@ -679,7 +679,7 @@ func dealPlan(s *Snapshot, r DealReq, rr *round) (Plan, map[string]roundMove) {
 			continue
 		}
 		rr.moved(m)
-		moves[c.ID] = roundMove{c.Row, m}
+		moves[c.ID] = m
 		p.Units = append(p.Units, u)
 	}
 	return p, moves

@@ -169,7 +169,7 @@ var reviewRules = []reviewRule{
 		name: ruleAsk, section: "2.3 R8",
 		fields: []string{PrimaryField, "attempt", "result", "asked", "refused", "rcards", "head"},
 		follow: []string{FollowRCards, FollowJOpen},
-		fixed:  []SprintQ{{Kind: QueryStreams, Fields: askRoundFields}, {Kind: QueryReaders, Fields: reviewNoFields}},
+		fixed:  []SprintQ{{Kind: QueryReaders, Fields: reviewNoFields, Props: []string{PropAskIndex}}},
 		plan:   planAsk,
 	},
 	{
@@ -738,8 +738,8 @@ func reviewRefused(rp *RulePlan, s *Snapshot, rule string) {
 // refused, whose work did not fail and that has no read card at its attempt
 // is asked of two different readers, the readers it names first and then the
 // next readers round the readers (askChoose: the rolling index of round.go,
-// errata 3 amendment 5, moved past each reader it gives and written with the
-// ask on a stream's control card, which the read lists); a reader that has a card at this
+// errata 3 amendment 5, moved past each reader it gives: the readers table's
+// ask_index, read with the readers and written with the ask); a reader that has a card at this
 // attempt, retired too, is not asked again, so a read that replaces another
 // goes to a reader not yet asked. Each new id is appended to rcards. With
 // fewer than two readers able, "cannot ask" is opened on the primary, which J
@@ -757,7 +757,7 @@ func planAsk(s *Snapshot, keys []AgendaKey, now Now) RulePlan {
 	}
 	x := newReviewCtx(s)
 	var rr *round // built when a primary is due, so a read of none reads no readers
-	moves := map[string]roundMove{}
+	moves := roundMoves{}
 	var asked, cannot, closing []string
 	for _, c := range reviewPrimaries(s) {
 		if !x.askDue(c) {
@@ -786,7 +786,7 @@ func planAsk(s *Snapshot, keys []AgendaKey, now Now) RulePlan {
 		u := Unit{Key: c.ID, Stream: c.Row}
 		for _, rd := range rotated {
 			rr.moved(rd)
-			moves[c.ID] = roundMove{c.Row, rd}
+			moves[c.ID] = rd
 		}
 		for i, rd := range chosen {
 			u.Changes = append(u.Changes, change(Readers, createEntry(ids[i], rd, Asked, c.Score, map[string]string{
@@ -801,7 +801,7 @@ func planAsk(s *Snapshot, keys []AgendaKey, now Now) RulePlan {
 			closing = append(closing, c.ID)
 		}
 	}
-	roundWrites(&p, s, FieldAskSeq, FieldAskLast, rr, moves)
+	roundWrites(&p, rr, moves)
 	rp.Plan = p
 	reviewRefused(&rp, s, ruleAsk)
 	if len(cannot) > 0 {

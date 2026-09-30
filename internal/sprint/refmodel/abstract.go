@@ -42,7 +42,8 @@ func Abstract(o Observed) State {
 			a.Members[m] = Up
 		}
 	}
-	a.DealLast, a.AskLast = roundLast(s, sprint.FieldDealSeq, sprint.FieldDealLast), roundLast(s, sprint.FieldAskSeq, sprint.FieldAskLast)
+	a.DealLast, _ = s.Fleet.Prop(sprint.PropDealIndex)
+	a.AskLast, _ = s.Readers.Prop(sprint.PropAskIndex)
 	for _, st := range s.Work.Rows() {
 		x := Stream{State: SWaiting}
 		if ctl := s.StreamCtl(st); ctl != nil {
@@ -191,23 +192,6 @@ func JudgmentType(t string) string {
 		return m
 	}
 	return "other:" + t
-}
-
-// roundLast is where a rolling index stands (errata 3, amendment 5): the last
-// name on the streams' control card with the highest sequence, the first
-// stream in name order on a tie; "" when none has one.
-func roundLast(s *sprint.Snapshot, seqField, lastField string) string {
-	last, seq := "", -1
-	for _, st := range sorted(s.Work.Rows()) {
-		ctl := s.StreamCtl(st)
-		if ctl == nil || ctl.F(seqField) == "" {
-			continue
-		}
-		if n := ctl.Int(seqField); n > seq {
-			last, seq = ctl.F(lastField), n
-		}
-	}
-	return last
 }
 
 func sorted(xs []string) []string {

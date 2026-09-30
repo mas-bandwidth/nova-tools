@@ -441,6 +441,18 @@ func (p *Partial) loadSprint(s *Snapshot, rp ReadPlan, ans ReadAnswer) error {
 				t.part.counts[[2]string{c.Row, c.Col}] = c.N
 			}
 		}
+		if len(q.Props) > 0 || len(a.Props) > 0 {
+			name, ok := countsOf[q.Kind]
+			if !ok || q.Kind == QueryStreams {
+				return misaligned("composite query %d (%s) reads table properties, and no such query does", i, q.Kind)
+			}
+			for p := range a.Props {
+				if !slices.Contains(q.Props, p) {
+					return misaligned("composite query %d gives the property %q it did not name", i, p)
+				}
+			}
+			s.T(name).setPropsRead(q.Props, a.Props)
+		}
 		if lists && len(a.Rows) == 0 {
 			for _, name := range rowsOf[q.Kind] {
 				s.T(name).part.rows = true // a sprint with no rows has none

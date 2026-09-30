@@ -12,6 +12,21 @@ import (
 // shortest queue, whose ties by name give every card of an idle fleet to the
 // first members.
 
+// propsAnswer is what a twin answers of the table properties a query names: the
+// ones the table holds.
+func propsAnswer(t *Table, names []string) map[string]string {
+	var out map[string]string
+	for _, n := range names {
+		if v, ok := t.Prop(n); ok {
+			if out == nil {
+				out = map[string]string{}
+			}
+			out[n] = v
+		}
+	}
+	return out
+}
+
 // eightIdle is a world of 8 up members of room 2 and 30 ready primaries.
 func eightIdle(t *testing.T, readers ...string) *world {
 	t.Helper()
@@ -50,7 +65,7 @@ func workIt(w *world, wc *Card) {
 // 8 idle members of room 2, 30 cards dealt one deal at a time (T3's deal): the
 // deals go m1, m2, ..., m8, m1, ...; after each deal every member's count is
 // within one of the others, and after each full round all are equal. The
-// index is in the store, on the stream's control card.
+// index is in the store: the fleet table's deal_index.
 func TestTheDealGoesRoundTheFleet(t *testing.T) {
 	t.Parallel()
 	w := eightIdle(t, "reader-a")
@@ -71,8 +86,8 @@ func TestTheDealGoesRoundTheFleet(t *testing.T) {
 			t.Fatalf("deal %d went to %s, want %s: the deals %v", i+1, m, want, order)
 		}
 	}
-	if last, seq := roundAt(w.s, FieldDealSeq, FieldDealLast); last != "m6" || seq != 30 {
-		t.Fatalf("the index in the store is past %q at sequence %d, want past m6 at 30", last, seq)
+	if last, ok := w.s.Fleet.Prop(PropDealIndex); !ok || last != "m6" {
+		t.Fatalf("the fleet table's deal_index is %q (%v), want m6", last, ok)
 	}
 	// every member's done is within one of the others
 	done := map[string]int{}
@@ -189,8 +204,8 @@ func TestTheAskGoesRoundTheReaders(t *testing.T) {
 		}
 		evenly(t, fmt.Sprintf("after ask %d", i), asked, readers, (2*i)%len(readers) == 0)
 	}
-	if last, seq := roundAt(w.s, FieldAskSeq, FieldAskLast); last != "reader-d" || seq != 20 {
-		t.Fatalf("the index in the store is past %q at sequence %d, want past reader-d at 20", last, seq)
+	if last, ok := w.s.Readers.Prop(PropAskIndex); !ok || last != "reader-d" {
+		t.Fatalf("the readers table's ask_index is %q (%v), want reader-d", last, ok)
 	}
 }
 

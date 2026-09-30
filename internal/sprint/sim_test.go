@@ -53,6 +53,20 @@ func (w *world) do(p Plan) Plan {
 	}
 	w.closeAll(p.Closes)
 	w.note(p.Notes...)
+	// the table properties, each guarded on the value its plan read, as the
+	// table layer applies them (L1 contract amendment, table properties)
+	for _, pw := range p.Props {
+		tb := w.s.T(pw.Table)
+		cur, ok := tb.props[pw.Name]
+		if ok == pw.WasAbsent || (ok && cur != pw.Was) {
+			w.t.Fatalf("PROPGUARD: %s.%s is %q (%v), the plan read %q (absent %v)", pw.Table, pw.Name, cur, ok, pw.Was, pw.WasAbsent)
+		}
+		if tb.props == nil {
+			tb.props = map[string]string{}
+		}
+		tb.props[pw.Name] = pw.Value
+		tb.propsRead = true
+	}
 	for _, tb := range []*Table{w.s.Work, w.s.Readers, w.s.Merge, w.s.Fleet} {
 		tb.cells, tb.byPrimary = nil, nil
 	}

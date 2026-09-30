@@ -1,7 +1,6 @@
 package sprint
 
 import (
-	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -1406,14 +1405,13 @@ func TestDownReadFirst2000(t *testing.T) {
 
 // R6's limit L is the design's, min(room, 64, 10,000 / 3s), taken against the
 // records the answer may hold, so it always fits: the design's own formula
-// overshoots 10,000 records where the fleet's members, every stream's σ record
-// and the listing of the streams (their deals counts, the deal's rolling index)
-// are counted (101 streams and 149 members: L = 33 answers 10,451).
+// overshoots 10,000 records where the fleet's members and every stream's σ
+// record are counted (101 streams and 149 members: L = 33 answers 10,249).
 func TestDealLimitFitsTheRead(t *testing.T) {
 	t.Parallel()
 	const records = 10_000
-	if got := dealLimit(0, 250, 0, records); got != 12 {
-		t.Fatalf("250 streams: L = %d, want 12", got)
+	if got := dealLimit(0, 250, 0, records); got != 13 {
+		t.Fatalf("250 streams: L = %d, want 13", got)
 	}
 	if got := dealLimit(0, 1, 0, records); got != dealMaxL {
 		t.Fatalf("one stream: L = %d, want %d", got, dealMaxL)
@@ -1433,7 +1431,7 @@ func TestDealLimitFitsTheRead(t *testing.T) {
 			}
 		}
 	}
-	if n := dealRecords(101, 149, 33); n != 10_451 || n <= records {
+	if n := dealRecords(101, 149, 33); n != 10_249 || n <= records {
 		t.Fatalf("the design's L at 101 streams and 149 members is %d records", n)
 	}
 	if dealLimit(0, 101, 149, records) >= 33 {
@@ -1467,12 +1465,12 @@ func TestDealReadHalvings(t *testing.T) {
 	}
 	// members and streams together are at most 250 (F1-20): 249 streams, one member
 	sh := fleetShape{Streams: names250("s", MaxStreams-1), Members: names250("m", 1)}
-	for halvings, want := range map[int]int{0: 12, 1: 6, 2: 3, 3: 2, 4: 1, 9: 1} {
+	for halvings, want := range map[int]int{0: 13, 1: 7, 2: 4, 3: 2, 4: 1, 9: 1} {
 		rp := dealReadFor(sh, fleetBounds(), halvings)
 		if got := limit(rp); got != want {
 			t.Fatalf("halvings %d: L = %d, want %d", halvings, got, want)
 		}
-		if n := rp.Cost().Records; n != 1+(MaxStreams-1)*(1+dealListRecords+3*want) {
+		if n := rp.Cost().Records; n != 1+(MaxStreams-1)*(1+3*want) {
 			t.Fatalf("halvings %d: the read costs %d records", halvings, n)
 		}
 	}
@@ -1497,21 +1495,12 @@ func TestDealReadHalvings(t *testing.T) {
 	if rp, left := readDeal(agendaOf("level"), fleetBounds(), 0); rp.Queries() != 0 || len(left) != 1 {
 		t.Fatalf("no deal key: %+v %v", rp, left)
 	}
-	// a read that names its streams names their fronts and lists them, as many
-	// as it names, with the rolling index on their control cards (errata 3,
-	// amendment 5)
+	// a read that names its streams names their fronts and does not list them
 	named := dealReadFor(fleetShape{Streams: []string{"s1"}}, fleetBounds(), 0)
-	lists := 0
 	for _, q := range named.Sprint {
 		if q.Kind == QueryStreams {
-			lists++
-			if q.Units != 1 || !slices.Equal(q.Fields, dealRoundFields) {
-				t.Fatalf("the streams listed: %+v", q)
-			}
+			t.Fatalf("a read that names its streams lists them too: %+v", named)
 		}
-	}
-	if lists != 1 {
-		t.Fatalf("a read that names its streams lists them %d times: %+v", lists, named)
 	}
 }
 

@@ -32,8 +32,8 @@ func readsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 // in work order, the readers it names first and then the next readers round
 // the readers (round.go, errata 3 amendment 5: from the rolling index,
 // wrapping, each the first that has no read card at the attempt, the index
-// moved past it, written with the ask on the stream's control card); a primary reworked after a read is asked
-// of the same readers again. With Another, a primary already asked is dealt to
+// moved past it: the readers table's ask_index, written with the ask); a
+// primary reworked after a read is asked of the same readers again. With Another, a primary already asked is dealt to
 // one more reader, the next round the readers.
 func Ask(s *Snapshot, r AskReq) Plan {
 	var p Plan
@@ -54,7 +54,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		return ""
 	}, s.primaryCard)
 	rr := askRound(s)
-	moves := map[string]roundMove{}
+	moves := roundMoves{}
 	for _, c := range chosen {
 		attempt := c.Int("attempt")
 		have := map[string]bool{}
@@ -91,7 +91,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		u := Unit{Key: c.ID, Stream: c.Row}
 		for _, rd := range rotated {
 			rr.moved(rd)
-			moves[c.ID] = roundMove{c.Row, rd}
+			moves[c.ID] = rd
 		}
 		for _, rd := range chosenReaders {
 			u.Changes = append(u.Changes, change(Readers, createEntry(ReadCardID(c.ID, attempt, rd), rd, Asked, c.Score,
@@ -118,7 +118,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		}
 		p.Units = append(p.Units, u)
 	}
-	roundWrites(&p, s, FieldAskSeq, FieldAskLast, rr, moves)
+	roundWrites(&p, rr, moves)
 	answered(&p, s, r.Answers, r.Who)
 	return p
 }
