@@ -172,3 +172,20 @@ func TestPreview(t *testing.T) {
 		t.Fatalf("many: %q, want %q", got, want)
 	}
 }
+
+// A card the deal leaves waiting says how many ready cards are ahead of it in
+// the deal's order (2.3 R6; held.go's dealTurn): after one deal of three
+// streams of 30 to 8 members of room 2, the first stream's next card has none
+// ahead, the second's first ready card one, the third's two.
+func TestAHeldReadyCardCountsWhatIsAheadInTheDealsOrder(t *testing.T) {
+	t.Parallel()
+	f := streamsOf30(t)
+	f.run(ruleDeal, "deal")
+	h := HeldState{Snap: f.snap(), Running: true}
+	for id, ahead := range map[string]int{"s1-7": 0, "s2-6": 1, "s3-6": 2, "s1-8": 3, "s2-7": 4} {
+		hd := Holder(h, h.Snap.Now, id)
+		if want := fmt.Sprintf("0 free, %d ready ahead of it", ahead); !strings.Contains(hd.String(), want) {
+			t.Errorf("%s: %s, want %q", id, hd, want)
+		}
+	}
+}

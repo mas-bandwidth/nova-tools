@@ -95,6 +95,7 @@ The same list stands at the top of `SprintEvents.tla` and in the pull request's 
 | `HeldSticky` | action | a member held by fleet down stays held until fleet up |
 | `StoppedJudgmentTrue` | invariant | the STOPPED judgment open only when a dry plan would change a card; raised at most once per span. It fails with every repair (H7: a verb empties the dry plans between two looks); `StoppedOnce` is its second half (once per span, and per wait with `spanreset`, per close with `stoprearm`), and `StoppedStaleCloses` and `StoppedRaiseFresh` below say what the repairs give |
 | `StepWithinBounds` | invariant | every request fits the step bound |
+| `DealTakesTurns` | invariant | errata 3, amendment 4 (R6): the plan the deal would make takes each stream's front in turn: within a stream its lowest by work order, and no stream is taken from more than once past a stream with a dealable card left (once, only if it is before it in the streams' order); stated from the counts of the plan, not from `TurnSorted`, which the plan uses |
 | `LeaseSafe` | action | E4, T1: every tick write carries the current lease generation, the error steps of a LIMIT and of a bug refusal included |
 | `ReplayNoop`, `QuietStaysQuiet` | action | a rule run again at once writes nothing |
 | `ChunkProgress` | action | a requeue lowers the key's variant |
@@ -146,8 +147,9 @@ Each `MCSprintEventsW<n>.cfg` turns on one broken rule (`Broken = "W<n>"`) on a 
 | W25 | R14's phase 1 without its guard on the entry's score | nothing: passes, defence in depth (Findings) | |
 | W26 | release reads waiting instead of `elig` | `NeedsHold` | 5 |
 | W27 | the first request of a cut plan removes the keys (the second refused STOPPED) | `NoLostWork` | 11 |
+| W28 | the deal takes the room lowest over the whole table (the design's body for R6), not each stream's front in turn (amendment 4) | `DealTakesTurns` | 1 (the instance's first state: p1 and p3 of s1 taken, p2 of s2 left) |
 
-So 29 witness configurations: 27 fail with the property their row names, and W1 and W25 pass, because the design holds there with a second guard (the lease generation for both). Section 5's table claims W6 fails `OnePlace` "or a card dealt twice": it fails `LeaseSafe`, the rule itself, and `OnePlace` holds for the same second guards (place, revision and absence on every rule step); W7's row is two changes, split here, and W7b's claim of `Progress` cannot fail under bounded outside actions (its property is `RedealsCounted`).
+So 30 witness configurations: 28 fail with the property their row names, and W1 and W25 pass, because the design holds there with a second guard (the lease generation for both). Section 5's table claims W6 fails `OnePlace` "or a card dealt twice": it fails `LeaseSafe`, the rule itself, and `OnePlace` holds for the same second guards (place, revision and absence on every rule step); W7's row is two changes, split here, and W7b's claim of `Progress` cannot fail under bounded outside actions (its property is `RedealsCounted`).
 
 The liveness witnesses and their controls use `Steady` members, so that a failure of `Progress` there comes from the broken rule and not from H12.
 
@@ -205,6 +207,12 @@ done
 `-deadlock` turns TLC's deadlock check off, as for the other models here (the gated cases declare `ignore-terminal`); the safety and liveness properties are what these runs check.
 
 A note on the model's form: TLC keeps no LET value and no operator argument while it evaluates ENABLED for fairness, so a value used more than once is bound once with `CHOOSE r \in {e(v) : v \in {heavy}} : TRUE` or `\E v \in {heavy}`, and each tick action tests its UNCHANGED part first. Without that, the liveness cases did not finish.
+
+## Amendment 4: the deal's order (owed on the bench)
+
+The deal takes one card from each stream's front in turn (`TurnSorted`, used by `PlanDeal` and by `HeadActionable`'s deal head), not the room lowest over the whole table: errata 3, amendment 4, the owner's ruling of 2026-09-30, and the engine's `dealTurns` (`internal/sprint/rules_fleet.go`). `DealTakesTurns` is the new invariant; `MCSprintEventsW28.cfg` breaks the order back to the whole table's and fails it in its first state, and `MCSprintEventsC28.cfg` is the same instance on the design with every safety property, `Progress` and `DealTakesTurns`. The model orders the streams by the `Ord` of each one's first card (the engine's is by name; the order of the streams is not what any property here depends on, and in the instances the two are the same).
+
+**Not run.** TLC runs only on a bench and none was used for this change. The records in `RUNS.tsv` hash `SprintEvents.tla` and `MCSprintEvents.tla`, so every `sprintevents*` record is stale until the fourteen groups above are run again on the bench (the two new cases are in `sprintevents-controls-b` and `sprintevents-witnesses-b`). The change was checked by hand against the module only: the small instance's plan takes p1 and p2 by `TurnSorted` (the whole table's order takes p1 and p3, which `DealTakesTurns` refuses).
 
 ## Results
 

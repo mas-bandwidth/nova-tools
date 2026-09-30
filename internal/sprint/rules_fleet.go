@@ -1092,7 +1092,12 @@ func dealFate(progress, skipped, roomLeft int) int {
 // cards go in work order (SortCards). A card of a stream not in streams takes
 // its turn after them, its streams in name order. So every stream with a
 // ready card is worked in parallel: a deal of k cards over n streams gives
-// each stream k/n, give or take one, never one stream's backlog first.
+// each stream k/n, give or take one, never one stream's backlog first. The
+// model is tla/SprintEvents.tla: TurnSorted is this order (one card from each
+// stream's front in turn, a stream with none skipped, within a stream by work
+// order), PlanDeal takes the room from it, and DealTakesTurns states it from
+// the counts of a plan; the witness W28 (MCSprintEventsW28.cfg) is the order of
+// the whole table. Errata 3, amendment 4.
 func dealTurns(cards []*Card, streams []string) []*Card {
 	by := map[string][]*Card{}
 	order := append([]string(nil), streams...)

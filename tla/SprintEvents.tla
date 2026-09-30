@@ -87,7 +87,8 @@
 \*   decisions are not decided; the model prints `drop` only, and the
 \*   judgment is neither held nor acked.
 \*
-\* Broken names a reversed witness (section 5's table, W1 to W27; W5Reach
+\* Broken names a reversed witness (section 5's table, W1 to W27, and W28 of
+\* errata 3's amendment 4, the deal's order; W5Reach
 \* is W5's reach half, breaking reach and unreach and not the verb; W7 is
 \* split into W7a and W7b) that changes exactly one rule; "none" is the
 \* design.
@@ -230,6 +231,23 @@ Drop(q, n) == IF Len(q) <= n THEN <<>> ELSE SubSeq(q, n + 1, Len(q))
 Before(a, b) == score[a] < score[b] \/ (score[a] = score[b] /\ Ord[a] < Ord[b])
 Sorted(X0) == CHOOSE r \in {[i \in 1..Cardinality(X) |-> CHOOSE c \in X : Cardinality({d \in X : Before(d, c)}) = i - 1] :
                             X \in {X0}} : TRUE
+
+\* The deal's order: stream turns (errata 3, amendment 4; the engine's
+\* dealTurns). One card from each stream's front in turn, streams in a fixed
+\* order, a stream with no card in X skipped, and within a stream the cards by
+\* work order. A card's place is the pair (how many cards of X of its stream
+\* come before it, its stream's place among the streams), compared in that
+\* order. The engine's order of streams is by name; the model takes the order
+\* of the streams' first cards by Ord (a total order of the streams that have
+\* a card, fixed by the constants: no property below depends on which one it
+\* is, and in the instances it is the names' order).
+StreamOrd(s) == CHOOSE o \in {Ord[c] : c \in {d \in Cards : S(d) = s}} : \A c \in Cards : S(c) = s => o <= Ord[c]
+TurnBefore(X, a, b) ==
+  LET ra == Cardinality({d \in X : S(d) = S(a) /\ Before(d, a)})
+      rb == Cardinality({d \in X : S(d) = S(b) /\ Before(d, b)})
+  IN ra < rb \/ (ra = rb /\ StreamOrd(S(a)) < StreamOrd(S(b)))
+TurnSorted(X0) == CHOOSE r \in {[i \in 1..Cardinality(X) |-> CHOOSE c \in X : Cardinality({d \in X : TurnBefore(X, d, c)}) = i - 1] :
+                               X \in {X0}} : TRUE
 
 \* Places of a work card: a member's ready or working cell, or withdrawn.
 Withdrawn == <<None, "withdrawn">>
@@ -643,8 +661,9 @@ PlanPull(k, ch) ==
                             q \in {Take(Sorted(above), ch)}} :
                            g \in {Sigma(s)}, above \in {IF Sigma(s) = None THEN {} ELSE {c \in Fresh(s) : score[c] > score[Sigma(s)]}}} : TRUE
 
-\* R6 deal: the room lowest of fresh below sigma and again, over the streams
-\* not dropping; no member up and a card dealable: "no fleet member is up".
+\* R6 deal: the room of fresh below sigma and again, over the streams not
+\* dropping, taken in stream turns (TurnSorted: one card from each stream's
+\* front in turn, within a stream by score; errata 3, amendment 4); no member up and a card dealable: "no fleet member is up".
 \* With stablesince, only stable members receive, and the 30 s entry: armed
 \* while work is dealable, restarted by a deal; fired, it opens "work is
 \* ready and no member is stable" (Starved) and is armed again, or is
@@ -664,8 +683,11 @@ DealPlan(k, D, asg) ==
              \o StabUnits(D),
    more |-> DealRoom > Len(asg) /\ Cardinality(D) > Len(asg),
    skip |-> \E s \in Streams : dropping[s] # None /\ FreshBelow(s) \cup Again(s) # {}]
+\* W28: the deal takes the room lowest over the whole table, as the design's
+\* body words R6, not one card from each stream's front in turn.
+DealOrder(D) == IF Broken = "W28" THEN Sorted(D) ELSE TurnSorted(D)
 PlanDeal(k, ch) ==
-  CHOOSE r \in UNION {{DealPlan(k, D, asg) : asg \in {Assign(Take(Sorted(D), Min(DealRoom, ch)), Counts, DealUp)}} :
+  CHOOSE r \in UNION {{DealPlan(k, D, asg) : asg \in {Assign(Take(DealOrder(D), Min(DealRoom, ch)), Counts, DealUp)}} :
                       D \in {Dealable}} : TRUE
 
 \* R2 down:m: m's cards as sets, redealt or withdrawn; a held member stays held.
@@ -1634,7 +1656,7 @@ HeadActionable ==
   /\ \A s \in Streams :
        LET E == {c \in Elig(s) : BelowSigma(s, score[c])} IN
        (E # {} /\ running /\ dropping[s] = None) => UnitChanges(PlanResolve(ResolveK(s), Chunk), Sorted(E)[1])
-  /\ (Dealable # {} /\ running /\ DealRoom > 0) => UnitChanges(PlanDeal(DealK, Chunk), Sorted(Dealable)[1])
+  /\ (Dealable # {} /\ running /\ DealRoom > 0) => UnitChanges(PlanDeal(DealK, Chunk), TurnSorted(Dealable)[1])
   /\ \A n \in Cards :
        LET W == {w \in waitn[n] : ~Frozen(w)} IN
        (col[n] \in {"landed", "removed"} /\ W # {} /\ running) => UnitChanges(PlanNeeds(<<"needs", n>>, Chunk), Sorted(W)[1])
@@ -1796,6 +1818,24 @@ UnplacedNamed == \A p \in Prims : (IsOpen(p) /\ fld[p].tries >= MaxPlaceTries) =
 \* T6: every step sent fits the model's step bound.
 StepWithinBounds == \A t \in Ticks : \A k \in DOMAIN tk[t].plans :
                       \A i \in 1..NReq(tk[t].plans[k]) : Len(Req(tk[t].plans[k], i)) <= StepBound
+
+\* Errata 3, amendment 4 (R6): the cards a deal takes are each stream's front
+\* in turn (the owner's ruling of 2026-09-30, "the whole point is that multiple
+\* work streams are worked on in parallel"). Stated of the plan the deal would
+\* make, from the counts and not from TurnSorted: within a stream the cards
+\* taken are its lowest by work order, and a stream with a dealable card left
+\* over is taken from at most once for each card of any other stream that came
+\* in a full turn (a stream taken n_t times while a stream u has a card left
+\* has at most n_t + 1 taken if it is before u in the streams' order, else at
+\* most n_t).
+DealTaken(P) == {u.c : u \in {P.units[i] : i \in DOMAIN P.units}} \cap Dealable
+DealTakesTurns ==
+  (Dealable # {} /\ DealRoom > 0) =>
+    LET T == DealTaken(PlanDeal(DealK, Chunk))
+        n(x) == Cardinality({c \in T : S(c) = x})
+    IN /\ \A c \in T, d \in Dealable \ T : S(c) = S(d) => Before(c, d)
+       /\ \A d \in Dealable \ T : \A x \in Streams :
+             n(x) <= n(S(d)) + (IF n(x) > 0 /\ x # S(d) /\ StreamOrd(x) < StreamOrd(S(d)) THEN 1 ELSE 0)
 
 -----------------------------------------------------------------------------
 \* Action properties (section 5). Lifecycle and DropComplete speak of steps,

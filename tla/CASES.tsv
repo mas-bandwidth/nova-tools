@@ -179,6 +179,7 @@ MCSprintEventsC24.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprintevents-con
 MCSprintEventsC25.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprintevents-controls-b	required	-
 MCSprintEventsC26.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprintevents-controls-b	required	-
 MCSprintEventsC27.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprintevents-controls-b	required	-
+MCSprintEventsC28.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprintevents-controls-b	required	-
 MCSprintEventsW2.cfg	MCSprintEvents.tla	invariant	NoLostWork	ignore-terminal	sprintevents-witnesses-a	required	-
 MCSprintEventsW3.cfg	MCSprintEvents.tla	invariant	DueAgrees	ignore-terminal	sprintevents-witnesses-a	required	-
 MCSprintEventsW4.cfg	MCSprintEvents.tla	invariant	PositionHolds	ignore-terminal	sprintevents-witnesses-a	required	-
@@ -204,6 +205,7 @@ MCSprintEventsW24.cfg	MCSprintEvents.tla	invariant	NoLostWork	ignore-terminal	sp
 MCSprintEventsW25.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprintevents-witnesses-b	required	-
 MCSprintEventsW26.cfg	MCSprintEvents.tla	invariant	NeedsHold	ignore-terminal	sprintevents-witnesses-b	required	-
 MCSprintEventsW27.cfg	MCSprintEvents.tla	invariant	NoLostWork	ignore-terminal	sprintevents-witnesses-b	required	-
+MCSprintEventsW28.cfg	MCSprintEvents.tla	invariant	DealTakesTurns	ignore-terminal	sprintevents-witnesses-b	required	-
 MCSprintEventsGoalNamed.cfg	MCSprintEvents.tla	temporal	ProgressLiteral	ignore-terminal	sprintevents-goals	required	-
 MCSprintEventsGoalStopped.cfg	MCSprintEvents.tla	temporal	Progress	ignore-terminal	sprintevents-goals	required	-
 MCSprintEventsGoalSpan.cfg	MCSprintEvents.tla	temporal	Progress	ignore-terminal	sprintevents-goals	required	-

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -79,4 +80,46 @@ func TestTheCardSaysWhatHoldsIt(t *testing.T) {
 	if out := ta.ok("card b --json"); !strings.Contains(out, `"held":{"id":"b","by":"d"`) {
 		t.Fatalf("card b --json: %s", out)
 	}
+}
+
+// inbox --open lists the whole needs of a blocked judgment, one per line, as
+// card --fields does; the judgment's own line previews them.
+func TestInboxOpenListsEveryDroppedNeed(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	ta.ok("add --stream s1 --count 12")
+	var ids []string
+	for i := 1; i <= 12; i++ {
+		ids = append(ids, "s1-"+strconv.Itoa(i))
+	}
+	ta.ok("add --stream s2 b --needs " + strings.Join(ids, ","))
+	ta.ok("drop " + strings.Join(ids, " ") + " --reason obsolete")
+	g := ta.group(sprint.NBlocked, "s2")
+	list := ta.ok("inbox --open " + g.ID)
+	for _, id := range ids {
+		if !strings.Contains(list, "\n  NEEDS "+id+"\n") {
+			t.Errorf("inbox --open %s does not list the need %s:\n%s", g.ID, id, list)
+		}
+	}
+	if !strings.Contains(list, "... and 4 more") {
+		t.Errorf("the judgment's line no longer previews the needs:\n%s", list)
+	}
+	if plain := ta.ok("inbox"); strings.Contains(plain, "NEEDS ") {
+		t.Errorf("inbox without --open lists needs:\n%s", plain)
+	}
+	var open struct {
+		Needs []string `json:"needs"`
+	}
+	ta.json("inbox --open "+g.ID, &open)
+	if len(open.Needs) != 12 {
+		t.Errorf("inbox --open --json needs: %v", open.Needs)
+	}
+	card := ta.ok("card --fields b")
+	for _, id := range ids {
+		if !strings.Contains(card, "NEEDS "+id+" ") {
+			t.Errorf("card --fields b lacks %s", id)
+		}
+	}
+	ta.clean()
 }
