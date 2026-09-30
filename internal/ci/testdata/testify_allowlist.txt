@@ -90,7 +90,7 @@ internal/safepath:assert 65 bare assertions to convert to testify
 internal/sandbox:assert 220 bare assertions to convert to testify
 internal/scaffold:assert 23 bare assertions to convert to testify
 internal/seatcred:assert 47 bare assertions to convert to testify
-internal/secrets:assert 401 bare assertions to convert to testify
+internal/secrets:assert 378 bare assertions to convert to testify
 internal/secrets:env 2 t.Setenv and Chdir sites to inject through config
 internal/selftalk:assert 48 bare assertions to convert to testify
 internal/sprint:assert 2353 bare assertions to convert to testify
