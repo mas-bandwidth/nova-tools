@@ -311,6 +311,12 @@ func TestAckWaivesMissingOnlyWhileMissing(t *testing.T) {
 		if !errors.As(err, &rf) || rf.Code() != sprintfn.CodeXGuard || !strings.Contains(rf.Error(), "ghost exists now") {
 			t.Fatalf("ack of a missing need that has a record: %v, want XGUARD naming ghost", err)
 		}
+		// XGUARD is a race to the driver (IT18's IsRace), so the ack is planned
+		// again on a fresh read until its retries run out, though the need will
+		// not stop having a record: pinned here for the integrator.
+		if rf.Retries != Retries {
+			t.Fatalf("the ack was refused after %d retries, want the driver's %d", rf.Retries, Retries)
+		}
 		if got := w.own("w", typeBlockedMissing, "ghost"); got != note {
 			t.Fatalf("the judgment changed: %q, want %q", got, note)
 		}
@@ -585,5 +591,24 @@ func TestWaitReviewLeavesOpen(t *testing.T) {
 	}
 	if got := w.dueScore("overdue:" + note); got != r+60*60*1000 {
 		t.Fatalf("overdue:%s is at %d, want R + 1 h = %d", note, got, r+60*60*1000)
+	}
+}
+
+// TestAckOfClosedNoteWritesNothing: a note closed since it was printed is left
+// as it is: the ack reads it and sends no step (one round trip), and says so.
+func TestAckOfClosedNoteWritesNothing(t *testing.T) {
+	t.Parallel()
+	w := newJRWorld(t)
+	note := w.open(typeStepRefused, "LIMIT", "deal")
+	if _, err := Ack(context.Background(), w.env, AckReq{Notes: []string{note}, Reason: "first"}); err != nil {
+		t.Fatal(err)
+	}
+	w.cc.Reset()
+	res, err := Ack(context.Background(), w.env, AckReq{Notes: []string{note}, Reason: "again"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Step != nil || w.cc.Steps() != 0 || w.cc.Trips() != 1 || !strings.Contains(res.Said, "nothing was written") {
+		t.Fatalf("a second ack sent %d steps in %d round trips: %q", w.cc.Steps(), w.cc.Trips(), res.Said)
 	}
 }

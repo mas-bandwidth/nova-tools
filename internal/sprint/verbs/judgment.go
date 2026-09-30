@@ -291,6 +291,9 @@ func Ack(ctx context.Context, e *Env, req AckReq) (Result, error) {
 	}
 	if err == nil && !res.Replay && res.Said == "" {
 		res.Said = fmt.Sprintf("ack: %d notes answered", len(notes))
+		if res.Step == nil {
+			res.Said = "ack: nothing to answer: every note was closed or held since it was printed; nothing was written"
+		}
 	}
 	return res, err
 }
@@ -457,6 +460,9 @@ func Wait(ctx context.Context, e *Env, req WaitReq) (Result, error) {
 		}})
 	if err == nil && !res.Replay && res.Said == "" {
 		res.Said = fmt.Sprintf("wait: %d notes wait %s", len(notes), req.For)
+		if res.Step == nil {
+			res.Said = "wait: nothing to wait on: every note was closed or held since it was printed; nothing was written"
+		}
 	}
 	return res, err
 }
