@@ -157,7 +157,7 @@ as groups come and go; a group number is refused. size is what --expect
 takes: when the group has another size now the verb is refused, names what
 was added or is gone, and changes nothing. Each decision is its commands, one
 per line, in order: copy them, filling in a '<...>' first. inbox --open <id>
-lists every member of a group; card <id> is everything about one primary.
+lists every member of a group, and every need a blocked group names; card <id> is everything about one primary.
 
 one answer to each judgment (every one prints its own, filled in):
   ready to accept             accept --group <id> --expect <n> --answers <notes>

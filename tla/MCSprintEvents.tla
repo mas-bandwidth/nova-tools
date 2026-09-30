@@ -71,6 +71,10 @@ ScnReachRace == [Base EXCEPT !.col = Cols4("none", "none", "ready", "waiting"), 
 ScnReady1 == [Base EXCEPT !.col = Cols4("ready", "none", "none", "none"), !.score = Cols4(2, 0, 0, 0), !.status = UpDown, !.next = 4]
 \* p1 and p3 ready and never dealt (s1, 2 and 4).
 ScnReady2 == [Base EXCEPT !.col = Cols4("ready", "none", "ready", "none"), !.score = Cols4(2, 0, 4, 0), !.next = 6]
+\* s1: p1 and p3 ready (2, 4); s2: p2 ready (6): both members up with room for
+\* two, so the deal takes two of the three. The whole table's order (2, 4, 6)
+\* takes both of s1's; the stream turns take p1 and p2 (W28).
+ScnTurns == [Base EXCEPT !.col = Cols4("ready", "ready", "ready", "none"), !.score = Cols4(2, 6, 4, 0), !.next = 8]
 \* The same, m2 down.
 ScnReady2One == [ScnReady2 EXCEPT !.status = UpDown]
 \* p1 in review, its work ok, never asked (s1, 2).

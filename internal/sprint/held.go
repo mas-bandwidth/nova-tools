@@ -478,9 +478,9 @@ func (c *held) waits(pr *Card) (why, root string, ok bool) {
 		if len(up) == 0 {
 			return "no fleet member is up, and no judgment says so", "", false
 		}
-		// The ready queues' free places go to the ready primaries in work
-		// order: one with as many ahead of it as there are places waits for
-		// the workers to take from the queues.
+		// The ready queues' free places go to the ready primaries in the
+		// deal's order: one with as many ahead of it as there are places waits
+		// for the workers to take from the queues.
 		room := 0
 		for _, m := range up {
 			room += max(0, MaxReadyPerMember-s.Fleet.Count(m, Ready))

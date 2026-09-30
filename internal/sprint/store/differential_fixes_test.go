@@ -5,6 +5,7 @@ package store
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -228,5 +229,41 @@ func TestTheModelsRedealBoundIsTheEngines(t *testing.T) {
 	t.Parallel()
 	if refmodel.MaxRedeals != sprint.MaxRedeals || refmodel.MaxReadyPerMember != sprint.MaxReadyPerMember {
 		t.Fatalf("the model's bounds (%d, %d) are not the engine's (%d, %d)", refmodel.MaxRedeals, refmodel.MaxReadyPerMember, sprint.MaxRedeals, sprint.MaxReadyPerMember)
+	}
+}
+
+// The deal takes one card from each stream's front in turn (2.3 R6, the
+// model's tickDeal and tla/SprintEvents.tla's TurnSorted): with two streams of
+// four ready cards, two members and room for four, the engine deals two of
+// each stream and the model agrees with the same choice; the order of the whole
+// table would deal one stream's four.
+func TestTheDealTakesEachStreamsFrontInTurnAsTheModelDoes(t *testing.T) {
+	t.Parallel()
+	h := newDHarness(t)
+	for _, a := range []dAction{
+		{Kind: "fleet", Op: "up", Member: "m1"},
+		{Kind: "fleet", Op: "up", Member: "m2"},
+		{Kind: "start"},
+		{Kind: "add", Stream: "s1", IDs: []string{"a1", "a2", "a3", "a4"}},
+		{Kind: "add", Stream: "s2", IDs: []string{"b1", "b2", "b3", "b4"}},
+		{Kind: "tick"},
+	} {
+		h.do(a)
+	}
+	for _, f := range h.findings {
+		if _, known := dClassify(f); !known {
+			t.Fatalf("a difference between the engine and the model on the deal:\n%s", f)
+		}
+	}
+	s := h.observe()
+	var dealt []string
+	for id, p := range s.Primaries {
+		if p.State == refmodel.Working {
+			dealt = append(dealt, id)
+		}
+	}
+	slices.Sort(dealt)
+	if want := []string{"a1", "a2", "b1", "b2"}; !slices.Equal(dealt, want) {
+		t.Fatalf("the tick dealt %v, want %v: two from each stream's front", dealt, want)
 	}
 }

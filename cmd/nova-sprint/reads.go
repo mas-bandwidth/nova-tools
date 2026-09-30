@@ -388,7 +388,7 @@ func whereHeader(summary, machine string) string {
 
 func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("inbox")
-	open := fs.String("open", "", "list every member and notification of the group of this id")
+	open := fs.String("open", "", "list every member, need and notification of the group of this id")
 	read := fs.Bool("read", false, "move the cursor past what is shown: happened notifications before it are not shown again (open judgments always are)")
 	deadline := fs.Duration("deadline", defaultDeadline, "a judgment open longer is overdue")
 	stale := fs.Duration("stale", defaultStale, "a stream with no progress for longer is shown stalled")
@@ -449,6 +449,9 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 		out := map[string]any{"groups": groups, "last": v.Last, "cursor": v.Cursor, "at": a.now(), "machine": st.MachineLine(ctx)}
 		if opened != nil {
 			out["open"] = nonNil(opened.Members)
+			if len(opened.Needs) > 0 {
+				out["needs"] = opened.Needs
+			}
 		}
 		b, _ := json.Marshal(out)
 		fmt.Fprintln(stdout, string(b))
@@ -472,6 +475,9 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 		if opened != nil && g.ID == opened.ID {
 			for _, m := range g.Members {
 				fmt.Fprintf(stdout, "  %s\n", oneline.Escape(m))
+			}
+			for _, n := range g.Needs {
+				fmt.Fprintf(stdout, "  NEEDS %s\n", oneline.Escape(n))
 			}
 			fmt.Fprintf(stdout, "  notes: %s\n", oneline.Escape(strings.Join(g.Notes, " ")))
 		}

@@ -108,6 +108,10 @@ type Group struct {
 	// subjects of its judgments (a stopped stream's: the cards it stopped
 	// on), or the primaries of its notifications; sorted, unbounded.
 	Members []string `json:"-"`
+	// Needs is every need the group's blocked and missing-need judgments
+	// name, in the order the notes name them, unbounded: what What
+	// previews, listed whole by inbox --open.
+	Needs []string `json:"-"`
 }
 
 // StaleGroupID is the id of a stalled stream's group.
@@ -178,6 +182,11 @@ func Inbox(r InboxReq) []Group {
 		}
 		if !contains(g.Notes, n.ID) {
 			g.Notes = append(g.Notes, n.ID)
+		}
+		for _, x := range n.Needs {
+			if !contains(g.Needs, x) {
+				g.Needs = append(g.Needs, x)
+			}
 		}
 		for _, x := range n.Suspects {
 			if !contains(g.Suspects, x) {
