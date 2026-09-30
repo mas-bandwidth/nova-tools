@@ -308,13 +308,13 @@ func tickExtras(s *sprint.Snapshot) map[string][]string {
 		for _, c := range s.Work.Column(sprint.Review) {
 			attempt := c.Int("attempt")
 			placed := false
-			for _, rd := range s.Readers.Rows {
+			for _, rd := range s.Readers.Rows() {
 				placed = placed || s.Readers.Placed(sprint.ReadCardID(c.ID, attempt, rd)) != nil
 			}
 			if placed {
 				continue
 			}
-			for _, rd := range s.Readers.Rows {
+			for _, rd := range s.Readers.Rows() {
 				reads = append(reads, sprint.ReadCardID(c.ID, attempt, rd))
 			}
 		}

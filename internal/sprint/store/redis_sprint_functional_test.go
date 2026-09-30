@@ -670,12 +670,12 @@ func TestRedisAClearInTheMiddleOfAStep(t *testing.T) {
 	if s.Epoch != 1 {
 		t.Fatalf("epoch %d", s.Epoch)
 	}
-	for _, c := range s.Work.Cards {
+	for _, c := range s.Work.Cards() {
 		if c.Placed() {
 			t.Errorf("the new epoch holds %s at %s", c.ID, c.Col)
 		}
 	}
-	for _, c := range s.Fleet.Cards {
+	for _, c := range s.Fleet.Cards() {
 		if c.Placed() && c.Col != sprint.Ctl {
 			t.Errorf("the new epoch's fleet holds %s at %s", c.ID, c.Col)
 		}
@@ -685,7 +685,7 @@ func TestRedisAClearInTheMiddleOfAStep(t *testing.T) {
 	if err != nil {
 		t.Fatalf("old epoch: %v", err)
 	}
-	t.Logf("old epoch: s1-1 %s, s1-2 %s, fleet cards %d", old.StateOf("s1-1"), old.StateOf("s1-2"), len(old.Fleet.Cards))
+	t.Logf("old epoch: s1-1 %s, s1-2 %s, fleet cards %d", old.StateOf("s1-1"), old.StateOf("s1-2"), len(old.Fleet.Cards()))
 	if _, err := h.st.Repair(h.ctx); err != nil {
 		t.Fatalf("repair: %v", err)
 	}

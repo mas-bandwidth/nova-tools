@@ -19,7 +19,7 @@ type AskReq struct {
 // readsAt is the primary's placed read cards at an attempt, in reader row order.
 func readsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 	var out []*Card
-	for _, r := range s.Readers.Rows {
+	for _, r := range s.Readers.Rows() {
 		c := s.Readers.Placed(ReadCardID(pr.ID, attempt, r))
 		if c != nil {
 			out = append(out, c)
@@ -51,7 +51,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		return ""
 	}, s.primaryCard)
 	q := map[string]int{}
-	for _, rd := range s.Readers.Rows {
+	for _, rd := range s.Readers.Rows() {
 		q[rd] = s.Readers.Count(rd, Asked)
 	}
 	for _, c := range chosen {
@@ -63,7 +63,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			all = append(all, rc.F("reader"))
 		}
 		var free []string
-		for _, rd := range s.Readers.Rows {
+		for _, rd := range s.Readers.Rows() {
 			// a reader with a card at this attempt, even retired, has read it
 			if !have[rd] && s.Readers.Card(ReadCardID(c.ID, attempt, rd)) == nil {
 				free = append(free, rd)
@@ -283,7 +283,7 @@ func reviewJudgment(s *Snapshot, pr *Card, st reviewStep) (Note, bool) {
 	attempt := pr.Int("attempt")
 	oks := map[string]bool{}
 	outstanding, reads := false, 0
-	for _, r := range s.Readers.Rows {
+	for _, r := range s.Readers.Rows() {
 		id := ReadCardID(pr.ID, attempt, r)
 		c := s.Readers.Placed(id)
 		col, moved := st.moved[id]
@@ -590,7 +590,7 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		// reader of ask --another is for its attempt only
 		askedField := c.F("asked")
 		if askedField == "" && len(asked) > 0 {
-			askedField = strings.Join(orderLike(s.Readers.Rows, asked, ""), ",")
+			askedField = strings.Join(orderLike(s.Readers.Rows(), asked, ""), ",")
 		}
 		set := map[string]string{"fix": fix, "reworks": itoa(c.Int("reworks") + 1), "broken_reads": itoa(c.Int("broken_reads") + broken)}
 		if askedField != "" {
@@ -883,7 +883,7 @@ func Rank(s *Snapshot, r RankReq) Plan {
 	} else if r.First {
 		low := 0.0
 		first := true
-		for _, c := range s.Work.Cards {
+		for _, c := range s.Work.Cards() {
 			if c.Placed() && (first || c.Score < low) {
 				low, first = c.Score, false
 			}

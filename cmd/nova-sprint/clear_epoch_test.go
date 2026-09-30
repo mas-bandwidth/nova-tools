@@ -124,8 +124,8 @@ func (ta *testApp) epochImage(e uint64) string {
 	}
 	var lines []string
 	for _, tb := range []*sprint.Table{s.Work, s.Readers, s.Merge, s.Fleet} {
-		lines = append(lines, fmt.Sprintf("%s rows %v", tb.Name, tb.Rows))
-		for _, c := range tb.Cards {
+		lines = append(lines, fmt.Sprintf("%s rows %v", tb.Name, tb.Rows()))
+		for _, c := range tb.Cards() {
 			lines = append(lines, fmt.Sprintf("%s %s %s:%s rev %d %v", tb.Name, c.ID, c.Row, c.Col, c.Rev, c.Fields))
 		}
 	}

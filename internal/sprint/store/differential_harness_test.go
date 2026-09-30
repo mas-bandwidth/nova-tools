@@ -316,8 +316,8 @@ func (h *dHarness) observe() refmodel.State {
 		h.t.Fatalf("load: %v", err)
 	}
 	for _, name := range All {
-		for id := range s.T(name).Cards {
-			add(name, id)
+		for _, c := range s.T(name).Cards() {
+			add(name, c.ID)
 		}
 	}
 	h.epoch = s.Epoch

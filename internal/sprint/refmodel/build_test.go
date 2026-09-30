@@ -130,7 +130,7 @@ func (w *world) snapshot(beats map[string]time.Duration) refmodel.Snapshot {
 // fresh is every member of the fleet beating now.
 func (w *world) fresh() map[string]time.Duration {
 	out := map[string]time.Duration{}
-	for _, m := range w.s.Fleet.Rows {
+	for _, m := range w.s.Fleet.Rows() {
 		out[m] = 0
 	}
 	return out

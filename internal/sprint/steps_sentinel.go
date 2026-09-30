@@ -74,7 +74,7 @@ func addScores(s *Snapshot, r AddReq, n int) ([]float64, string) {
 	}
 	if r.Before == "" && r.After == "" {
 		score := 1.0
-		for _, c := range s.Work.Cards {
+		for _, c := range s.Work.Cards() {
 			if c.Score >= score {
 				score = c.Score + 1
 			}

@@ -9,8 +9,24 @@ import "sort"
 // written on any card: a card's stored needs are only what it names.
 
 // openLine is the row's cards that have not landed, in score order: the
-// stream's line as it stands.
+// stream's line as it stands. On a table loaded from a read plan the line is
+// known only when the plan loaded the row's five open cells whole; otherwise
+// the read is refused (see Loaded) and the line is empty, never the cards that
+// happen to be known. Everything below reads the line through here: StopBefore,
+// PositionWaits, Behind, WaitsFor and NeedsCycle.
 func (t *Table) openLine(row string) []*Card {
+	if t.part != nil {
+		whole := true
+		for _, st := range States {
+			if st != Landed && !t.Loaded(row, string(st)) {
+				whole = false
+			}
+		}
+		if !whole {
+			t.part.log.note(unloadedMessage + ": " + t.Name + " " + row + " line")
+			return nil
+		}
+	}
 	t.index()
 	if t.lines == nil {
 		t.lines = map[string][]*Card{}

@@ -206,7 +206,7 @@ func TickResolve(s *Snapshot, r TickReq) (Plan, int) {
 func TickResume(s *Snapshot, r TickReq) (Plan, int) {
 	var p Plan
 	due := 0
-	for _, st := range s.Merge.Rows {
+	for _, st := range s.Merge.Rows() {
 		ctl := s.StreamCtl(st)
 		if ctl.F("state") != StreamStopped || ctl.F("cause") != "cross" {
 			continue
@@ -412,7 +412,7 @@ func TickDeadlines(s *Snapshot, r TickReq) (Plan, int) {
 		}
 	}
 	// N6: a stream merging, or waiting with queued cards, with no merge step.
-	for _, st := range s.Merge.Rows {
+	for _, st := range s.Merge.Rows() {
 		ctl := s.StreamCtl(st)
 		state := ctl.F("state")
 		if state != StreamMerging && !(state == StreamWaiting && s.Merge.Count(st, Queued) > 0) {
