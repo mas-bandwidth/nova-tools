@@ -7,11 +7,13 @@ import (
 )
 
 // The planned argv bytes (section 6: 8 MiB across every command of the table
-// plan, the log plan and the receipt). The builder counts an upper bound, per
-// changed member and per step (cost.go); the tests count it by two accountings
+// plan, the log plan and the receipt). The builder counts an upper bound over
+// Layer 1's own layout, per changed member and per step (layout.go), and cuts to
+// it with a margin of 25 percent on top; the tests count it by two accountings
 // written apart from it, in helpers_test.go: the model, which the bound tests
-// hold the builder to the byte, and the strict count, built from real
-// commands and real keys, which no step may exceed.
+// hold the builder to the byte (with the margin), and the strict count, built
+// from real commands and real keys as Layer 1 lays them out, which no step may
+// exceed.
 
 // argvCase is an input to count.
 type argvCase struct {

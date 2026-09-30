@@ -29,8 +29,9 @@ func TestAHundredThousandMembersOfOneKiBAreCutIntoFiftySteps(t *testing.T) {
 	const n = 100000
 	steps := must(t, cfg(), []Entry{kibMembers(n)})
 	// 2,000 candidates a step is the bound that holds: a step's 2,000 members
-	// are 2.1 MB of request, three generated lines of under 1 MiB and 5.3 MB
-	// of planned argv bytes (5.2 by the strict count).
+	// are 2.1 MB of request, three generated lines of under 1 MiB and 5.7 MB
+	// of planned argv bytes (the same by Layer 1's own layout, 7.1 MB with the
+	// margin the builder cuts to, under the 8 MiB).
 	if len(steps) != n/LimitCandidates {
 		t.Fatalf("%d steps, want %d", len(steps), n/LimitCandidates)
 	}
