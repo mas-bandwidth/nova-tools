@@ -807,7 +807,7 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 		return last, err
 	}
 	read := st.meter()
-	snap, _, err := pinned.Fenced(withBudget(ctx), All, tickExtras, nil)
+	snap, gen, err := pinned.Fenced(withBudget(ctx), All, tickExtras, nil)
 	res.Times = append(res.Times, read.part("", "first read"))
 	unfinished := seen
 	unfinished.Full = time.Time{}
@@ -821,7 +821,11 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	at := snap.Epoch
 	res.Tables = newTables()
 	req := sprint.TickReq{Who: sprint.MachineActor, Stopped: m.StoppedBetween, Beats: beats, Started: m.FirstStart(snap.Cleared)}
-	t := &tickRun{st: st, ctx: ctx, res: res, req: req, at: at, snap: snap, queues: map[string]int{}}
+	// the tick's one read of the sprint: every part plans on its twin
+	// (twin.go), and reads the store again only when another writer wrote
+	twin := NewTwin()
+	twin.seed(snap, gen)
+	t := &tickRun{st: st, ctx: ctx, res: res, req: req, at: at, snap: snap, queues: map[string]int{}, twin: twin}
 	updates := st.Updates
 	if updates == nil {
 		updates = sprint.TickTables
@@ -907,6 +911,7 @@ type tickRun struct {
 	req     sprint.TickReq
 	at      uint64
 	snap    *sprint.Snapshot // the tick's first read
+	twin    *Twin            // the tick's twin: every part's read
 	ran     bool             // a part ran: every later part plans on a fresh read
 	queues  map[string]int
 	dirtied []string
@@ -966,7 +971,7 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 			return p, d
 		}
 		step := TickPartStep(part.Name, fn, t.req, &t.at, nil, &due)
-		step.Pump, step.Drain = table == sprint.Work, drain
+		step.Pump, step.Drain, step.Twin = table == sprint.Work, drain, t.twin
 		r, err := t.st.Run(t.ctx, step)
 		for _, d := range r.Drained {
 			// a drain the part's step made before it planned is the tick's

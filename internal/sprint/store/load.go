@@ -57,7 +57,9 @@ func (st *Store) loadOnce(ctx context.Context, tables []string, extras func(*spr
 	if err != nil {
 		return nil, err
 	}
-	st.stats().reads.Add(int64(len(tables)))
+	if len(tables) > 0 {
+		st.stats().reads.Add(1)
+	}
 	ids, err := st.B.CellIDs(ctx, shapes)
 	if err != nil {
 		return nil, err

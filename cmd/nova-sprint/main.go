@@ -69,6 +69,9 @@ type app struct {
 	// profiled, when set, is told of each tick run finished, by its count:
 	// run --cpuprofile ends its profile at the last tick it covers.
 	profiled func(n int)
+	// checkTwin, when set (a test), is every store's CheckTwin: each part a
+	// tick plans on its twin is checked against a fresh read (store/twin.go).
+	checkTwin func(twin, fresh *sprint.Snapshot) error
 }
 
 func newApp(getenv func(string) string) *app {
@@ -205,7 +208,7 @@ func (a *app) storeCtx(ctx context.Context, c common) (*store.Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	st := &store.Store{B: b, Names: names, Actor: c.actor, Now: a.now, NewID: store.NewID, Sleep: a.sleep}
+	st := &store.Store{B: b, Names: names, Actor: c.actor, Now: a.now, NewID: store.NewID, Sleep: a.sleep, CheckTwin: a.checkTwin}
 	if st, err = st.Pinned(ctx); err != nil {
 		return nil, err
 	}

@@ -265,6 +265,35 @@ func (t *Table) Put(c *Card) {
 	t.cells, t.byPrimary = nil, nil
 }
 
+// Drop takes a card out of the table's cards: a record the table no longer
+// holds as a read would find it (store's twin, twin.go).
+func (t *Table) Drop(id string) {
+	if _, ok := t.cards[id]; !ok {
+		return
+	}
+	delete(t.cards, id)
+	t.cells, t.byPrimary = nil, nil
+}
+
+// SetProp sets one of the table's properties as a write left it (a batch's
+// receipt): the rest are kept.
+func (t *Table) SetProp(name, value string) {
+	if t.props == nil {
+		t.props = map[string]string{}
+	}
+	t.props[name] = value
+	t.propsRead = true
+}
+
+// Props is the table's properties: a copy.
+func (t *Table) Props() map[string]string {
+	out := make(map[string]string, len(t.props))
+	for k, v := range t.props {
+		out[k] = v
+	}
+	return out
+}
+
 func (t *Table) index() {
 	if t.cells != nil {
 		return

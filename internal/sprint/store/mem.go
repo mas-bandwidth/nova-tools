@@ -580,6 +580,11 @@ func (t *memTable) commit(active uint64, e ntable.BatchMemberEntry) (ntable.Batc
 		mm.rev++
 	}
 	d.AfterPlace, d.AfterRev = place(mm), strconv.FormatUint(mm.rev, 10)
+	if mm.placed {
+		// the score as the store's receipt gives it: parsed, and its text
+		score, text := mm.score, strconv.FormatFloat(mm.score, 'f', -1, 64)
+		d.AfterScore, d.AfterScoreText = &score, &text
+	}
 	return d, changed
 }
 

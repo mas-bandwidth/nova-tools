@@ -62,7 +62,7 @@ func TestTickProfile(t *testing.T) {
 			for _, p := range res.Times {
 				parts = append(parts, fmt.Sprintf("%s/%s=%s", p.Table, p.Name, p.Took.Round(time.Millisecond)))
 			}
-			line = fmt.Sprintf("moved=%d %s", len(res.Moved()), strings.Join(parts, " "))
+			line = fmt.Sprintf("moved=%d %s\n%s", len(res.Moved()), strings.Join(parts, " "), res.TimesLine())
 		})
 		took := time.Since(began)
 		total += took
