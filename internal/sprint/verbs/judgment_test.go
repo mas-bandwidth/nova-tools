@@ -454,7 +454,11 @@ func TestAckNotCoordinator(t *testing.T) {
 // TestAckClearsRefused: ack of "the machine could not move a card" closes it
 // and unsets refused on the card (1.3.5), so the machine tries it again. The
 // card is named only by the note's line, so its record is read after the
-// note: three round trips.
+// note: three round trips. (`related` over the note's line in the first read
+// would make it two, but a line source is named and refuses MISSING for any
+// subject with no record, and the first read cannot tell a note of cards from
+// one of rule keys, "the machine's step was refused": an IT30 row, a line
+// source that leaves absent ids out as an id list does.)
 func TestAckClearsRefused(t *testing.T) {
 	t.Parallel()
 	w := newJRWorld(t)
@@ -477,20 +481,112 @@ func TestAckClearsRefused(t *testing.T) {
 }
 
 // TestAckOnFrozenCardRefusedDropping: an ack that waives or clears a card of a
-// stream being dropped changes the card, and X refuses it DROPPING (errata 3,
-// H8); nothing changes.
+// stream being dropped changes the card, and is refused DROPPING (errata 3,
+// H8; the model's VGuard for ack: ~Frozen(w)) by the verb itself, before
+// anything is sent: the read that finds a drop in progress reads the marks of
+// the work table's streams and the changed cards' records, so the driver never
+// plans again a step X would refuse the same way (IT18's Do retries DROPPING
+// as a race). Nothing changes, no step is sent, no retry is made. A drop of
+// another stream refuses nothing.
 func TestAckOnFrozenCardRefusedDropping(t *testing.T) {
 	t.Parallel()
-	w := newJRWorld(t)
-	w.admit(jrCard{id: "w", col: "waiting", needs: "ghost"})
-	note := w.own("w", typeBlockedMissing, "ghost")
-	w.step(&sprintfn.Request{Meta: sprintfn.Meta{Verb: "drop"}, Sprint: &sprintfn.SprintPart{Dropping: map[string]string{"s1": "op-drop"}}})
-	_, err := Ack(context.Background(), w.env, AckReq{Notes: []string{note}, Reason: "ghost is not coming"})
-	if refusedCode(err) != sprintfn.CodeDropping {
-		t.Fatalf("ack on a frozen card: %v, want DROPPING", err)
+	drop := func(w *jrWorld, stream string) {
+		w.step(&sprintfn.Request{Meta: sprintfn.Meta{Verb: "drop"}, Sprint: &sprintfn.SprintPart{Dropping: map[string]string{stream: "op-drop"}}})
 	}
-	if w.own("w", typeBlockedMissing, "ghost") != note || field(w.record("w", "open"), "open") != "1" {
-		t.Fatalf("the refused ack changed the card or its judgment")
+	frozen := func(t *testing.T, w *jrWorld, note, card string) {
+		t.Helper()
+		w.cc.Reset()
+		res, err := Ack(context.Background(), w.env, AckReq{Notes: []string{note}, Reason: "not coming"})
+		var rf *Refused
+		if !errors.As(err, &rf) || rf.Code() != sprintfn.CodeDropping || !rf.Local || res.Retries != 0 {
+			t.Fatalf("ack on a frozen card: %v (retries %d), want a local DROPPING with no retry", err, res.Retries)
+		}
+		for _, want := range []string{note, card, "s1", "op-drop"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Fatalf("the refusal %q does not name %q", err, want)
+			}
+		}
+		if w.cc.Steps() != 0 || w.cc.Trips() != 2 || res.Trips != 2 {
+			t.Fatalf("the refused ack sent %d steps in %d round trips (said %d), want none in 2", w.cc.Steps(), w.cc.Trips(), res.Trips)
+		}
+	}
+	t.Run("waive missing", func(t *testing.T) {
+		t.Parallel()
+		w := newJRWorld(t)
+		w.admit(jrCard{id: "w", col: "waiting", needs: "ghost"})
+		note := w.own("w", typeBlockedMissing, "ghost")
+		drop(w, "s1")
+		frozen(t, w, note, "w")
+		if w.own("w", typeBlockedMissing, "ghost") != note || field(w.record("w", "open"), "open") != "1" {
+			t.Fatalf("the refused ack changed the card or its judgment")
+		}
+	})
+	t.Run("waive dropped", func(t *testing.T) {
+		t.Parallel()
+		w := newJRWorld(t)
+		w.admit(jrCard{id: "w", col: "waiting", needs: "ghost"})
+		note := w.open(typeBlockedDropped, "ghost", "w")
+		drop(w, "s1")
+		frozen(t, w, note, "w")
+		if w.own("w", typeBlockedDropped, "ghost") != note {
+			t.Fatalf("the refused ack changed the judgment")
+		}
+	})
+	t.Run("clear refused", func(t *testing.T) {
+		t.Parallel()
+		w := newJRWorld(t)
+		w.admit(jrCard{id: "p1", col: "ready", fields: map[string]string{"refused": "deal: no member"}})
+		note := w.open(typeCouldNotMove, "refused", "p1")
+		drop(w, "s1")
+		frozen(t, w, note, "p1")
+		if field(w.record("p1", "refused"), "refused") == "" || w.own("p1", typeCouldNotMove, "refused") != note {
+			t.Fatalf("the refused ack changed the card or its judgment")
+		}
+	})
+	t.Run("another stream", func(t *testing.T) {
+		t.Parallel()
+		w := newJRWorld(t)
+		w.admit(jrCard{id: "w", col: "waiting", needs: "ghost"})
+		note := w.own("w", typeBlockedMissing, "ghost")
+		drop(w, "s2")
+		w.cc.Reset()
+		res, err := Ack(context.Background(), w.env, AckReq{Notes: []string{note}, Reason: "not coming"})
+		if err != nil || res.Step == nil || res.Trips != 3 {
+			t.Fatalf("ack beside a drop of another stream: %v, step %v, %d round trips, want the step in 3", err, res.Step != nil, res.Trips)
+		}
+	})
+}
+
+// TestAckAndWaitOfHeldNoteWriteNothing: a note held since it was printed (its
+// subjects' field is "h" and its id, 1.3.4) is not open on them: ack and wait
+// read it, send no step, change nothing and say so (the reader of PR 4793's
+// P16: a held subject counted as open survived every test).
+func TestAckAndWaitOfHeldNoteWriteNothing(t *testing.T) {
+	t.Parallel()
+	w := newJRWorld(t)
+	note := w.open(typeStepRefused, "LIMIT", "deal")
+	if _, err := Wait(context.Background(), w.env, WaitReq{Notes: []string{note}, For: time.Hour, Reason: "later"}); err != nil {
+		t.Fatal(err)
+	}
+	if got := w.own("deal", typeStepRefused, "LIMIT"); got != "h"+note {
+		t.Fatalf("the wait did not hold the note: %q", got)
+	}
+	r, _ := strconv.ParseInt(w.clockNow().R, 10, 64)
+	hold := w.dueScore("hold:" + note)
+	w.cc.Reset()
+	res, err := Ack(context.Background(), w.env, AckReq{Notes: []string{note}, Reason: "now"})
+	if err != nil || res.Step != nil || w.cc.Steps() != 0 || !strings.Contains(res.Said, "nothing was written") {
+		t.Fatalf("ack of a held note: %v, step %v, %d steps, %q", err, res.Step != nil, w.cc.Steps(), res.Said)
+	}
+	res, err = Wait(context.Background(), w.env, WaitReq{Notes: []string{note}, For: 2 * time.Hour, Reason: "again"})
+	if err != nil || res.Step != nil || w.cc.Steps() != 0 || !strings.Contains(res.Said, "nothing was written") {
+		t.Fatalf("wait of a held note: %v, step %v, %d steps, %q", err, res.Step != nil, w.cc.Steps(), res.Said)
+	}
+	if got := w.own("deal", typeStepRefused, "LIMIT"); got != "h"+note {
+		t.Fatalf("the held note changed: %q", got)
+	}
+	if got := w.dueScore("hold:" + note); got != hold || hold < r {
+		t.Fatalf("hold:%s moved from %d to %d", note, hold, got)
 	}
 }
 

@@ -226,38 +226,104 @@ func notesRead(notes []string, keys ...sprintfn.KeyQ) func(tset.Decimal) *sprint
 	}
 }
 
-// needCards is the plan's ask for the records of cards whose refused field an
-// ack clears: the cards a "could not move" note names are known only from its
-// line, so their records are read in a second read (Ack).
-type needCards struct{ ids []string }
+// ackRead is ack's read at an epoch: each note by jnote, the dropping marks'
+// count and the marks of the streams named (1.3.1), the rows of the work table
+// (a card's stream is its row there, as X reads it: twin_x.go,
+// xStreamsTouched), and the records of the cards named, with their refused
+// field. The first read names no stream and no card.
+func ackRead(notes []string, need ackNeed) func(tset.Decimal) *sprintfn.ReadRequest {
+	return func(epoch tset.Decimal) *sprintfn.ReadRequest {
+		rr := &sprintfn.ReadRequest{Epoch: epoch, Sprint: jnoteQueries(notesAt(notes, epoch)),
+			Tset: []tset.ReadQuery{{Kind: "rows", Table: sprint.Work}}}
+		if len(need.cards) > 0 {
+			rr.Tset = append(rr.Tset, tset.ReadQuery{Kind: "ids", Table: sprint.Work, IDs: append([]string{}, need.cards...), Fields: []string{fieldRefused}})
+		}
+		rr.Sprint = append(rr.Sprint, keyQuery(sprintfn.KeyQ{Kind: sprintfn.KeyDropping, Streams: append([]string{}, need.streams...)}))
+		return rr
+	}
+}
 
-func (n *needCards) Error() string {
-	return fmt.Sprintf("the ack reads the records of %d cards first", len(n.ids))
+// ackNeed is what an ack's read carries beyond its notes: the cards whose
+// records it reads, and the streams whose dropping marks it reads.
+type ackNeed struct{ cards, streams []string }
+
+// needMore is the plan's ask for a read that carries more (ackNeed): the
+// records of the cards a "could not move" note names, which only its line
+// names; and, while some stream is being dropped, the records of every card
+// the ack changes and the marks of the work table's streams, so that a
+// frozen card is refused here and not by X (H8).
+type needMore struct{ need ackNeed }
+
+func (n *needMore) Error() string {
+	return fmt.Sprintf("the ack reads %d cards' records and %d streams' dropping marks first", len(n.need.cards), len(n.need.streams))
+}
+
+// ackAnswers are the answers of ackRead: the notes, the work table's rows, the
+// cards' records by id, and the dropping marks.
+type ackAnswers struct {
+	items    map[string]sprintfn.NoteItem
+	rows     []string
+	records  map[string]tset.MemberRecord
+	dropping sprintfn.DroppingResult
+}
+
+func ackAnswersOf(notes []string, rd *sprintfn.ReadReply, need ackNeed) (ackAnswers, error) {
+	nq := len(jnoteQueries(notesAt(notes, rd.Epoch)))
+	items, err := noteItems(rd, 0, nq)
+	if err != nil {
+		return ackAnswers{}, err
+	}
+	want := 1
+	if len(need.cards) > 0 {
+		want = 2
+	}
+	if len(rd.Tset) != want {
+		return ackAnswers{}, errors.New("ack: the read answered the wrong number of table queries")
+	}
+	out := ackAnswers{items: items, rows: rowNames(rd.Tset[0]), records: map[string]tset.MemberRecord{}}
+	if want == 2 {
+		for _, r := range rd.Tset[1].Records {
+			out.records[r.ID] = r
+		}
+	}
+	if out.dropping, err = sprintAnswer[sprintfn.DroppingResult](rd, nq, sprintfn.KeyDropping); err != nil {
+		return ackAnswers{}, err
+	}
+	return out, nil
 }
 
 // Ack answers judgments whose row of 2.2 lists ack (section 3, ack; 1.3.4;
-// 1.3.5; errata 3 H8). For each note, on the subjects it is open on now:
+// 1.3.5; errata 3 H8). It is the model's AckEff (tla/SprintEvents.tla), under
+// VGuard's ack row. For each note, on the subjects it is open on now:
 //
 //   - blocked on something dropped, or missing: a waive intent for each
 //     waiter and the need the note names (its cause), which the derive phase
 //     turns into the waiver and the close (1.3.3, IT14); a missing need is
 //     waived only while it has no record, and with one the derive refuses
-//     XGUARD naming it;
+//     XGUARD naming it (VGuard: col[n] = "none");
 //   - the machine could not move a card: the close, and `refused` unset on the
-//     card, so the machine tries it again (1.3.5);
+//     card, so the machine tries it again (1.3.5; AckEff's "refused" row);
 //   - the machine's step was refused: the close, and the rule keys it names
-//     unparked from {p}parked@e by the sprint part, whose decided line
-//     queues each key again (F1-22; 2.1; Q5);
+//     unparked from {p}parked@e by the sprint part. AckEff adds the key to the
+//     queue (`lk`); here the queueing is the decided line's, which ingest turns
+//     into the key again (F1-22; Q5). Layer 3's ingest (IT01, closeRows) has no
+//     row for that line yet, so until it lands the unparked key waits for
+//     another trigger (TestAckUnparksThroughLine's skipped half);
 //   - any other row that lists ack: the close.
 //
 // Every close records "ack: <reason>" on its decided line. A judgment whose
 // row does not list ack is refused before anything is sent, naming its
 // decisions (and wait, for a condition the tick keeps: an ack would close
 // what the tick raises again). An ack that waives or clears a card of a
-// stream being dropped is refused DROPPING by X (H8): it changes the card. A
-// note closed or held since it was printed is left as it is. One step, two
-// round trips; an ack of "the machine could not move a card" reads the
-// cards' records after the note names them, one round trip more.
+// stream being dropped is refused DROPPING before anything is sent (H8;
+// VGuard: ~Frozen(w)): the plan reads the marks of the streams it touches, so
+// the driver never plans again a step X would refuse the same way. A note
+// closed or held since it was printed is left as it is.
+//
+// One step, two round trips. Two cases read once more before the step: an ack
+// of "the machine could not move a card", whose cards only the note's line
+// names (their records, for the clear's revision); and, while some stream is
+// being dropped, an ack that changes a card (its record and the marks).
 func Ack(ctx context.Context, e *Env, req AckReq) (Result, error) {
 	const verb = "ack"
 	notes, err := noteSet(verb, req.Notes, req.Reason)
@@ -265,30 +331,28 @@ func Ack(ctx context.Context, e *Env, req AckReq) (Result, error) {
 		return Result{Verb: verb}, err
 	}
 	args := map[string]any{"notes": notes, "reason": req.Reason}
-	res, err := e.Do(ctx, Planned{Verb: verb, Op: req.Op, Args: args, Read: notesRead(notes),
-		Plan: func(rd *sprintfn.ReadReply) (*sprintfn.Request, error) { return ackPlan(notes, req.Reason, rd, nil) }})
-	var nc *needCards
-	if errors.As(err, &nc) {
-		first := res.Trips
-		ids := nc.ids
-		res, err = e.Do(ctx, Planned{Verb: verb, Op: req.Op, Args: args,
-			Read: func(epoch tset.Decimal) *sprintfn.ReadRequest {
-				rr := notesRead(notes)(epoch)
-				rr.Tset = []tset.ReadQuery{{Kind: "ids", Table: sprint.Work, IDs: ids, Fields: []string{fieldRefused}}}
-				return rr
-			},
-			Plan: func(rd *sprintfn.ReadReply) (*sprintfn.Request, error) {
-				if len(rd.Tset) != 1 {
-					return nil, errors.New("ack: the read has no answer for the cards")
-				}
-				recs := map[string]tset.MemberRecord{}
-				for _, r := range rd.Tset[0].Records {
-					recs[r.ID] = r
-				}
-				return ackPlan(notes, req.Reason, rd, recs)
-			}})
-		res.Trips += first
+	var need ackNeed
+	var res Result
+	trips, retries := 0, 0
+	for round := 0; ; round++ {
+		n := need
+		res, err = e.Do(ctx, Planned{Verb: verb, Op: req.Op, Args: args, Read: ackRead(notes, n),
+			Plan: func(rd *sprintfn.ReadReply) (*sprintfn.Request, error) { return ackPlan(notes, req.Reason, rd, n) }})
+		trips += res.Trips
+		retries += res.Retries
+		var nm *needMore
+		if !errors.As(err, &nm) {
+			break
+		}
+		if round >= Retries {
+			err = &Refused{Verb: verb, Retries: round, Op: req.Op, Refusal: &sprintfn.Refusal{Code: sprintfn.CodeStale,
+				Message: "the cards and streams the ack changes kept moving between its reads"}}
+			break
+		}
+		need = ackNeed{cards: dedup(append(append([]string{}, need.cards...), nm.need.cards...)),
+			streams: dedup(append(append([]string{}, need.streams...), nm.need.streams...))}
 	}
+	res.Trips, res.Retries = trips, retries
 	if err == nil && !res.Replay && res.Said == "" {
 		res.Said = fmt.Sprintf("ack: %d notes answered", len(notes))
 		if res.Step == nil {
@@ -298,15 +362,15 @@ func Ack(ctx context.Context, e *Env, req AckReq) (Result, error) {
 	return res, err
 }
 
-// ackPlan is ack's step from its read. cards are the records of the cards
-// whose refused field it clears, nil before they were read.
-func ackPlan(notes []string, reason string, rd *sprintfn.ReadReply, cards map[string]tset.MemberRecord) (*sprintfn.Request, error) {
+// ackPlan is ack's step from its read; need is what the read carries beyond
+// the notes.
+func ackPlan(notes []string, reason string, rd *sprintfn.ReadReply, need ackNeed) (*sprintfn.Request, error) {
 	const verb = "ack"
-	items, err := noteItems(rd, 0, len(jnoteQueries(notesAt(notes, rd.Epoch))))
+	ans, err := ackAnswersOf(notes, rd, need)
 	if err != nil {
 		return nil, err
 	}
-	js, err := judged(verb, notes, rd, items)
+	js, err := judged(verb, notes, rd, ans.items)
 	if err != nil {
 		return nil, err
 	}
@@ -327,6 +391,7 @@ func ackPlan(notes []string, reason string, rd *sprintfn.ReadReply, cards map[st
 	req := &sprintfn.Request{}
 	waives := map[string][]string{} // waiter -> needs
 	var waiters, clear, unpark []string
+	changes := map[string]string{} // card -> the note whose ack changes it
 	for _, j := range js {
 		if len(j.open) == 0 {
 			continue // closed or held since it was printed: nothing to answer
@@ -340,39 +405,44 @@ func ackPlan(notes []string, reason string, rd *sprintfn.ReadReply, cards map[st
 					waiters = append(waiters, w)
 				}
 				waives[w] = append(waives[w], j.item.Cause)
+				changes[w] = j.id
 			}
 			continue
 		case typeCouldNotMove:
 			clear = append(clear, j.open...)
+			for _, c := range j.open {
+				changes[c] = j.id
+			}
 		case typeStepRefused:
 			unpark = append(unpark, j.open...)
 		}
 		req.Body.Notes = append(req.Body.Notes, sprintfn.NoteReq{Op: sprintfn.JOpClose, Type: j.item.Type, Cause: j.item.Cause,
 			Subjects: append([]string(nil), j.open...), Text: text})
 	}
+	clear = dedup(clear)
+	if more, ok := ackMore(clear, changes, ans, need); ok {
+		return nil, &needMore{need: more}
+	}
+	if err := ackFrozen(verb, changes, ans); err != nil {
+		return nil, err
+	}
 	for _, w := range waiters {
 		req.Body.Intents = append(req.Body.Intents, sprintfn.Intent{Kind: "waive", Card: w, Needs: dedup(waives[w])})
 	}
-	clear = dedup(clear)
-	if len(clear) > 0 {
-		if cards == nil {
-			return nil, &needCards{ids: clear}
+	for _, id := range clear {
+		if _, ok := waives[id]; ok {
+			return nil, refuseLocal(verb, sprintfn.CodeRequest, "card %s is both waived and cleared by this ack: ack its notes in two steps", id)
 		}
-		for _, id := range clear {
-			if _, ok := waives[id]; ok {
-				return nil, refuseLocal(verb, sprintfn.CodeRequest, "card %s is both waived and cleared by this ack: ack its notes in two steps", id)
-			}
-			rec, ok := cards[id]
-			if !ok || !rec.Exists || rec.Place == nil {
-				continue // the card left the table since: its refused went with it
-			}
-			if v, ok := rec.Fields[fieldRefused]; !ok || !v.Present {
-				continue // cleared since
-			}
-			req.Body.Entries = append(req.Body.Entries, tset.Entry{Kind: "move", Table: sprint.Work,
-				From: rec.Place.Row + ":" + rec.Place.Col, IDs: []string{id}, Revs: []tset.Decimal{rec.Revision},
-				Unset: []string{fieldRefused}, About: []string{id}, BeforeFields: sprint.IndexFields()})
+		rec, ok := ans.records[id]
+		if !ok || !rec.Exists || rec.Place == nil {
+			continue // the card left the table since: its refused went with it
 		}
+		if v, ok := rec.Fields[fieldRefused]; !ok || !v.Present {
+			continue // cleared since
+		}
+		req.Body.Entries = append(req.Body.Entries, tset.Entry{Kind: "move", Table: sprint.Work,
+			From: rec.Place.Row + ":" + rec.Place.Col, IDs: []string{id}, Revs: []tset.Decimal{rec.Revision},
+			Unset: []string{fieldRefused}, About: []string{id}, BeforeFields: sprint.IndexFields()})
 	}
 	if len(unpark) > 0 {
 		req.Sprint = &sprintfn.SprintPart{Unpark: dedup(unpark)}
@@ -381,6 +451,64 @@ func ackPlan(notes []string, reason string, rd *sprintfn.ReadReply, cards map[st
 		return nil, nil // every note was closed or held since it was printed
 	}
 	return req, nil
+}
+
+// ackMore is what the plan must read before it can plan: the records of the
+// cards it clears; and while some stream is being dropped, the records of
+// every card it changes and the marks of every stream of the work table.
+// False when the read carries all of it.
+func ackMore(clear []string, changes map[string]string, ans ackAnswers, need ackNeed) (ackNeed, bool) {
+	cards := append([]string{}, clear...)
+	var streams []string
+	if ans.dropping.Count > 0 && len(changes) > 0 {
+		for c := range changes {
+			cards = append(cards, c)
+		}
+		streams = ans.rows
+	}
+	var more ackNeed
+	for _, c := range dedup(cards) {
+		if !contains(need.cards, c) {
+			more.cards = append(more.cards, c)
+		}
+	}
+	for _, s := range streams {
+		if !contains(need.streams, s) {
+			more.streams = append(more.streams, s)
+		}
+	}
+	sort.Strings(more.cards)
+	return more, len(more.cards)+len(more.streams) > 0
+}
+
+// ackFrozen refuses an ack that changes a card of a stream being dropped,
+// DROPPING, before anything is sent (errata 3 H8; the model's VGuard for ack:
+// a waive or a clear needs ~Frozen(w), Frozen(c) == dropping[S(c)] # None).
+// A card's stream is the row of its place in the work table, as X reads it.
+// The read carries the records and marks ackMore asked for.
+func ackFrozen(verb string, changes map[string]string, ans ackAnswers) error {
+	if ans.dropping.Count == 0 {
+		return nil
+	}
+	cards := make([]string, 0, len(changes))
+	for c := range changes {
+		cards = append(cards, c)
+	}
+	sort.Strings(cards)
+	var bad []string
+	for _, c := range cards {
+		rec, ok := ans.records[c]
+		if !ok || !rec.Exists || rec.Place == nil {
+			continue
+		}
+		if op, ok := ans.dropping.Marks[rec.Place.Row]; ok {
+			bad = append(bad, fmt.Sprintf("note %s changes card %s of stream %s, which op %s is dropping", changes[c], c, rec.Place.Row, op))
+		}
+	}
+	if len(bad) > 0 {
+		return refuseLocal(verb, sprintfn.CodeDropping, "%s: a drop freezes its stream's cards; ack the notes once the drop ends", strings.Join(bad, "; "))
+	}
+	return nil
 }
 
 // dedup keeps the first of equal strings, in order.
@@ -402,7 +530,11 @@ func dedup(in []string) []string {
 // judgment with a hold line and holds it until R + d (hold:<note>); on the
 // STOPPED judgment the hold is wall time, stophold_ms = wall + d (1.3.4); on
 // any other judgment J moves its overdue entry to the review time R + d and
-// leaves it open. --reason is required. One step, two round trips.
+// leaves it open. These are 1.3.4's three hold forms (the hold, the wall hold,
+// the review), and the model's VEff for "wait" and "waitstop"
+// (tla/SprintEvents.tla: the judgment held, its line queueing nothing, W16)
+// under VGuard's IsOpenJ. A note held already ("h" and its id) is not open,
+// and is left as it is. --reason is required. One step, two round trips.
 func Wait(ctx context.Context, e *Env, req WaitReq) (Result, error) {
 	const verb = "wait"
 	notes, err := noteSet(verb, req.Notes, req.Reason)
