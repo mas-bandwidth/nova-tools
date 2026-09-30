@@ -68,9 +68,9 @@ func writeKey(ctx context.Context, pipe redis.Pipeliner, kind, key, num string) 
 // seedKeys writes n keys under prefix, cycling through keyKinds, and returns
 // every key with its type and expiry. The key names its kind and its number,
 // and every fourth key expires, at an absolute time an hour ahead that the test
-// knows, so the expected sum does not have to ask the server for it. Every
-// other hash has an expiry on its field "one" as well, and one in four of those
-// has an expiry of its own too.
+// knows, so the expected sum does not have to ask the server for it. The
+// hashes are of three kinds: half have an expiry on their field "one" and none
+// of their own, a quarter have both, and a quarter have the key's own only.
 func seedKeys(ctx context.Context, t *testing.T, c *redis.Client, prefix string, n int) map[string]seeded {
 	t.Helper()
 	expiryBase := time.Now().Add(time.Hour).UnixMilli()
