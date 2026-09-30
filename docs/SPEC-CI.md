@@ -1421,8 +1421,8 @@ fixture's whole job is to be an invented tree. A token that does not BEGIN a
 word is out, which is what keeps import paths, URLs and paths on a bench out. A
 glob, a template or a printf verb on either side takes the token out, so
 `docs/SPEC-*.md` and `internal/%s/doc.go` are patterns, not names. A
-package-qualified Go symbol (`internal/merge.Enqueuer.Enqueue`) and a bare
-exported name under a package directory (`internal/lockfile/TestLockRule1`) are
+package-qualified Go symbol (`internal/bus.IsProgress`) and a bare
+exported name under a package directory (`internal/bus/IsProgress`) are
 read as symbols, not files, by Go's own upper-case signal. And a `testdata/…`
 name is looked for under EVERY package, because a fixture path is always written
 relative to the package that owns it.
@@ -1431,8 +1431,8 @@ relative to the package that owns it.
 
 **The rule.** Nothing reaches the dev merge queue but a batch. `gh pr merge` in any spelling, and any `--auto` flag to it, is refused in
 every non-test Go file under `cmd/` and `internal/` and in every file under
-`.github/`. Admission to a merge queue is `internal/merge.Enqueuer.Enqueue`, the
-`enqueuePullRequest` mutation, and nothing else.
+`.github/`. Queue admission remains a batch operation; these tests reject
+direct merge and auto-merge spellings in the live tree.
 **The mistake it prevents.** A pull request carrying GitHub's auto-merge,
 switched on by a `gh pr merge` call made while it was red, is enqueued by the
 forge itself as its checks go green, and lands on dev with nobody having
@@ -1447,9 +1447,8 @@ that mentions the spelling is one literal, not an argument list.
 per line, checked in both directions so it only shrinks: the mutation guard
 that names `--auto` to refuse it, the audit's `--disable-auto`, which takes an
 auto-merge OFF, and the secrets store's own pull request.
-**Its remedy line.** `<path>:<line>: gh pr merge (or --auto) is refused; enqueue
-through internal/merge.Enqueuer.Enqueue, or take the auto-merge off with the
-audit's --disable-auto`.
+**Its remedy line.** A direct `gh pr merge` or `--auto` call must be removed;
+the audit's `--disable-auto` can take an existing auto-merge off.
 **Its narrowings.** Test files are not read; a comment may still say auto-merge
 — the rule is about what runs. A spelling assembled at run time from separate
 words is not seen.
@@ -2085,7 +2084,7 @@ Every class test reads this repository's own text — `.go` files, `.github/work
 24. `TestNoToolIsWrittenTwiceInTheTranscripts` — no two `## ` headings in `docs/TESTS.md` carry the same tool name.
 25. `TestEveryToolPrintsTheOneVersionLine` — every `cmd/nova-*` binary answers `version` with one line in the `internal/buildinfo` grammar.
 26. `TestTheVersionGrammarIsSpelledOutOnceInTheSpec` — `docs/SPEC.md` states that grammar once.
-28. `TestNoGhPrMergeSpellingInTheToolsGo` / `TestNoGhPrMergeSpellingUnderDotGithub` — no `gh pr merge` (or `--auto`) spelling reaches the dev queue but a batch; enqueue is `internal/merge.Enqueuer.Enqueue`.
+28. `TestNoGhPrMergeSpellingInTheToolsGo` / `TestNoGhPrMergeSpellingUnderDotGithub` — direct `gh pr merge` and `--auto` spellings are refused in the live Go and `.github/` trees; queue admission remains a batch operation.
 29. `TestEveryTestBuildTagIsRunBySomeScheduledJob` — every opt-in build tag a `_test.go` carries is named by a scheduled workflow's `go test -tags`.
 30. `TestTheNetworkExemptTagsHaveAHomeInTheSchedule` — the net checker's `nightly`/`soak` exempt tags have a scheduled leg.
 31. `TestSomeScheduledJobRunsTheRaceDetector` — some scheduled job actually passes `-race`.
@@ -2268,9 +2267,9 @@ two shapes by their syntax: `_, _ = f()` (a discarded multi-value), `_ =
 f.Close()`, an `err` assigned and never read, and an `if err != nil { return
 nil }` are not read (`go vet`, errcheck and the reviewer's eye are theirs), and
 neither is a Lua function that returns `nil` where a `REFUSED <why>` belongs.
-The go-redis pipeline shape has its own remedy rather than a rule:
-`internal/nsprint/pipeerr.Exec` walks every command of a pipeline whose fields
-may be absent and returns the first error that is not `redis.Nil`.
+The go-redis pipeline shape is outside this literal-shape rule: this test
+checks `_ = err` and `|| true` in its listed live packages, not per-command
+pipeline errors.
 
 ### `classtests` — no merge deletes a test file or a list undeclared
 
