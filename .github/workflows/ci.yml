@@ -483,18 +483,10 @@ jobs:
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             base="${{ github.event.pull_request.base.sha }}"
             SPACE_SHARDS=4
-            # FOUR since 2026-09-25 (the two-minute cap, every job): at two darwin
-            # shards, shard 2/2 of PR run 36206229467 held cmd/nova-sprint,
-            # cmd/nova-wake and cmd/nova-review together and crossed the cap on
-            # the Studio; at eight, sixteen darwin jobs of one queue run shared
-            # eight runners and the merge legs crossed it. Glenn: "we cannot run
-            # CI as parallel as we are used to, and still get reliable < 2m";
-            # "reduce the number of runners". The Studio carries four runners
-            # (fleet/runners.tsv), one wave per PR. The 2026-09-24 note below is history.
-            STUDIO_SHARDS=4 # 14:55Z 2026-09-24: 16/16 Studio ARM64 runners busy, 12 runs queued, six PR runs at 4 studio shards each (24 jobs for 16 runners) held dev's push runs 10+ min; a shard's tests run 0.7-4.0 min since #3492 (run 36003142070); was 4
+            STUDIO_SHARDS=8
           elif [ "${{ github.event_name }}" = "merge_group" ]; then
             base="${{ github.event.merge_group.base_sha }}"
-            STUDIO_SHARDS=4
+            STUDIO_SHARDS=8
           fi
           # A GO LIST FAILURE NEVER YIELDS `test (nothing)`. Measured 2026-09-26
           # ~1:00 PM ET: on PR #4370's final head the shards reported `test
@@ -526,19 +518,21 @@ jobs:
             [ "${#all[@]}" -gt 0 ] || { echo "no packages: the fan-out would be empty and green"; exit 1; }
           fi
 
-          # THE TWO HEAVIEST PACKAGES NEVER SHARE A SHARD. Dealt round-robin from the
-          # sorted list, cmd/nova-bus and cmd/nova-merge sat eight apart and so shared
-          # 2/8 studio on every push: dev run 36012558540 (studio-nova-15, Studio load
-          # 51) ran nova-bus for 773 s beside nova-merge, which hit the 18m go test
-          # timeout with 287 PASS and 0 FAIL. Dealt first, they take shards 1 and 2
-          # (and space shards 1 and 2); every package is still covered once per OS.
-          # cmd/nova-merge has since moved to deprecated/, so cmd/nova-bus is dealt
-          # first alone.
-          heavy=" ./cmd/nova-bus "
+          # THE HEAVIEST PACKAGES NEVER SHARE A SHARD. Dealt round-robin from the
+          # sorted list, cmd/nova-bus and cmd/nova-swarm must not share a shard;
+          # internal/sprint/sprintfn and internal/ci are the next heaviest and take
+          # their own shards. Dealt first, they take the first shards; every package
+          # is still covered once per OS.
+          heavy=" ./cmd/nova-bus ./cmd/nova-swarm ./internal/sprint/sprintfn ./internal/ci ./internal/bus ./cmd/nova-sprint "
           front=()
           rest=()
+          for h in $heavy; do
+            for pkg in ${all[@]+"${all[@]}"}; do
+              [ "$pkg" = "$h" ] && front+=("$pkg")
+            done
+          done
           for pkg in ${all[@]+"${all[@]}"}; do
-            case "$heavy" in *" $pkg "*) front+=("$pkg") ;; *) rest+=("$pkg") ;; esac
+            case "$heavy" in *" $pkg "*) ;; *) rest+=("$pkg") ;; esac
           done
           all=(${front[@]+"${front[@]}"} ${rest[@]+"${rest[@]}"})
 
