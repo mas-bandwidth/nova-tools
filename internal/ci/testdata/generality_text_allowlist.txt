@@ -21,7 +21,7 @@
 # fixture; changing the path changes the record's id, so the fixture is regenerated as a
 # piece, not edited.
 #
-# ceiling: 369
+# ceiling: 358
 .github/scripts/assert-version-stamp.sh:stella 1
 .github/scripts/live-packages.sh:glenn 1
 .github/scripts/plan-merge-shards.sh:rowan 1
@@ -113,7 +113,7 @@ docs/SPEC-CI.md:hulk 1
 docs/SPEC-CI.md:mas-bandwidth 1
 docs/SPEC-CI.md:mini 1
 docs/SPEC-CI.md:rowan 2
-docs/SPEC-CI.md:space 13
+docs/SPEC-CI.md:space 9
 docs/SPEC-CI.md:studio 2
 docs/SPEC-CI.md:superman 1
 docs/SPEC-CI.md:vision 1
@@ -137,7 +137,6 @@ docs/SPEC-SECRETS.md:space 9
 docs/SPEC-SECRETS.md:stella 1
 docs/SPEC-SECRETS.md:studio 4
 docs/SPEC-SWARM.md:space 4
-docs/SPEC-TABLE-SET.md:space 10
 docs/SPEC-TOKENS.md:emma 13
 docs/SPEC-TOKENS.md:freddy 2
 docs/SPEC-TOKENS.md:glenn 2
@@ -234,17 +233,7 @@ internal/ghevent/testdata/issue_comment_disposition.json:stella 2
 internal/ghevent/testdata/pull_request.json:johnny 1
 internal/hygiene/stray.txt:space 1
 internal/nsprint/fn/lua/capacity.lua:glenn 1
-internal/nsprint/fn/lua/sprint_intents.lua:space 2
-internal/nsprint/fn/lua/sprint_j.lua:space 2
-internal/nsprint/fn/lua/sprint_parts.lua:space 2
-internal/nsprint/fn/lua/sprint_queries.lua:space 2
-internal/nsprint/fn/lua/sprint_x.lua:space 5
 internal/nsprint/fn/lua/table.lua:glenn 1
-internal/nsprint/fn/lua/table_set.lua:space 32
-internal/nsprint/fn/lua/table_set_lifecycle.lua:space 34
-internal/nsprint/fn/lua/table_set_read.lua:space 16
-internal/nsprint/fn/lua/table_set_receipt.lua:space 1
-internal/nsprint/fn/lua/table_set_validate.lua:space 9
 internal/records/testdata/refused/absent_reason_missing.json:rowan 1
 internal/records/testdata/refused/absent_reason_missing.json:studio 1
 internal/records/testdata/refused/absent_value_not_null.json:rowan 1

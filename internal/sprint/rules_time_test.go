@@ -538,7 +538,7 @@ func (w *timeWorld) entry(key string) (int64, bool) {
 	return 0, false
 }
 
-// tickEnd is the loop's tick end on the world (sprintfn.TickEnd, 1.4.2): a
+// tickEnd is the loop's tick end on the world (1.4.2): a
 // backlog of zero disarms; one not zero, behind_n unset, arms the entry at R +
 // 5 min (unless it stands) and behind_n at the backlog; armed, it is held.
 func (w *timeWorld) tickEnd(backlog int) {
@@ -3078,8 +3078,7 @@ func timeBenchWorld(b *testing.B, perKind int) (*timeWorld, map[string][]string)
 
 // TestTimeRuleTypesAreTheTables: every type the time rules raise through their
 // helpers (know, judge, note), whose type the class test of the rules' notes
-// cannot read at the site (sprintfn TestRuleNotesJAccepts stands a type in for
-// a helper's), is a row of 2.2's judgments or of 2.5's notices in the tables'
+// cannot read at the site, is a row of 2.2's judgments or of 2.5's notices in the tables'
 // own words, so J takes it (a know of a type 2.5 does not have is REQUEST).
 func TestTimeRuleTypesAreTheTables(t *testing.T) {
 	t.Parallel()
