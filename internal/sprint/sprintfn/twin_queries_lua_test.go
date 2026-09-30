@@ -529,12 +529,21 @@ func (h *luaHarness) ensureReadTable(L *lua.LState) int {
 	return 2
 }
 
+// readLineAt is L.read_line_at as the fragment answers it: seq is a
+// canonical decimal string in 1..2^53-1, and anything else, a Lua number
+// included, is REQUEST; a seq with no line is LOGID with the budget log_line
+// (table_set_log.lua; decision 12).
 func (h *luaHarness) readLineAt(L *lua.LState) int {
-	seq := int(L.CheckNumber(2))
-	h.charge.Lines++
-	if seq < 1 || seq > len(h.lines) {
-		return h.refusal(L, "DRIFT", nil)
+	arg, ok := L.Get(2).(lua.LString)
+	n, err := strconv.ParseUint(string(arg), 10, 64)
+	if !ok || err != nil || string(arg) != strconv.FormatUint(n, 10) || n == 0 || n > 9007199254740991 {
+		return h.refusal(L, "REQUEST", nil)
 	}
+	h.charge.Lines++
+	if n > uint64(len(h.lines)) {
+		return h.refusal(L, "LOGID", map[string]any{"budget": "log_line"})
+	}
+	seq := int(n)
 	var v any
 	if err := json.Unmarshal(h.lines[seq-1], &v); err != nil {
 		h.t.Fatal(err)
@@ -542,6 +551,45 @@ func (h *luaHarness) readLineAt(L *lua.LState) int {
 	L.Push(h.luaValue(v))
 	L.Push(lua.LNil)
 	return 2
+}
+
+// TestLuaStubReadLineAtAsTheFragment: the stub of L.read_line_at answers as
+// table_set_log.lua does (read 4812, S1 and S2): a canonical decimal string
+// reads the line, a Lua number is REQUEST even for a line that is there, a
+// non-canonical string is REQUEST, and a seq past the tail is LOGID with the
+// budget log_line.
+func TestLuaStubReadLineAtAsTheFragment(t *testing.T) {
+	t.Parallel()
+	h := newLuaHarness(t, newQWorld(t))
+	h.lines = []json.RawMessage{json.RawMessage(`{"seq":"1","kind":"note","ids":[],"about":["p"]}`)}
+	readAt := h.L.GetGlobal("NS").(*lua.LTable).RawGetString("tlog").(*lua.LTable).RawGetString("read_line_at")
+	at := func(seq lua.LValue) (lua.LValue, lua.LValue) {
+		if err := h.L.CallByParam(lua.P{Fn: readAt, NRet: 2, Protect: true}, lua.LNil, seq, lua.LNumber(0)); err != nil {
+			t.Fatalf("lua: %v", err)
+		}
+		line, ref := h.L.Get(-2), h.L.Get(-1)
+		h.L.Pop(2)
+		return line, ref
+	}
+	code := func(ref lua.LValue) string {
+		tbl, ok := ref.(*lua.LTable)
+		if !ok {
+			return ""
+		}
+		return tbl.RawGetString("code").String()
+	}
+	if line, ref := at(lua.LString("1")); ref != lua.LNil || line == lua.LNil {
+		t.Fatalf(`"1": %v %v`, line, ref)
+	}
+	for _, seq := range []lua.LValue{lua.LNumber(1), lua.LNumber(9), lua.LString("01"), lua.LString("0"), lua.LString("1.0")} {
+		if _, ref := at(seq); code(ref) != "REQUEST" {
+			t.Errorf("%s %v: %q, want REQUEST", seq.Type(), seq, code(ref))
+		}
+	}
+	_, ref := at(lua.LString("9"))
+	if code(ref) != "LOGID" || ref.(*lua.LTable).RawGetString("detail").(*lua.LTable).RawGetString("budget").String() != "log_line" {
+		t.Fatalf(`"9": %q`, code(ref))
+	}
 }
 
 // spec is the registered spec of a kind.

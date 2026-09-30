@@ -36,10 +36,14 @@ func newLogTwin(t *testing.T, tables ...string) *logTwin {
 }
 
 // try runs one composed step and returns its log plan or its refusal; a
-// refusal writes nothing to either.
+// refusal writes nothing to either. The composed profile's static rules run
+// first, before Mem's guards (L1 8), as the store's validator runs them.
 func (w *logTwin) try(step Step) (LogPlan, *Refusal) {
 	w.t.Helper()
 	step.Space = w.space
+	if ref := CheckLogStep(step.Entries, step.Notes); ref != nil {
+		return LogPlan{}, ref
+	}
 	mp, ref := w.m.Plan(step)
 	if ref != nil {
 		return LogPlan{}, ref
@@ -468,4 +472,65 @@ func TestRefuseLOGIDAcrossComposition(t *testing.T) {
 			IDs: []string{"p"}, About: []string{"p"}}}}
 		refused(t, w, touch, "DRIFT", "")
 	})
+}
+
+// TestLogTwinStaticRulesBeforeGuards (read 4812 choices 5 and 6; L1 8; L2
+// 1.1, 1.2): on the twin, as on the store, a member entry with no about and a
+// number in an entry's or a note's meta are REQUEST before a guard's PLACE,
+// and nothing is written.
+func TestLogTwinStaticRulesBeforeGuards(t *testing.T) {
+	t.Parallel()
+	w := newLogTwin(t, "work")
+	w.step(Step{Epoch: "0", Entries: []Entry{{Kind: "rows", Table: "work", Add: []string{"r", "s"}}}})
+	w.step(Step{Epoch: "0", Entries: []Entry{{Kind: "create", Table: "work", To: "r:a", IDs: []string{"x"},
+		Scores: []string{"1"}, About: []string{"p"}}}})
+	move := func(from string, about []string, meta string) Step {
+		return Step{Epoch: "0", Entries: []Entry{{Kind: "move", Table: "work", From: from, To: "s:a", IDs: []string{"x"},
+			About: about, Meta: json.RawMessage(meta)}}}
+	}
+	before := w.image()
+	for name, c := range map[string]struct {
+		step Step
+		code string
+	}{
+		"a wrong from alone":           {move("s:a", []string{"p"}, `{"n":"1"}`), "PLACE"},
+		"no about beside a wrong from": {move("s:a", nil, ``), "REQUEST"},
+		"a big integer in meta":        {move("r:a", []string{"p"}, `{"n":12345678901234567}`), "REQUEST"},
+		"1e300 beside a wrong from":    {move("s:a", []string{"p"}, `{"a":[1e300]}`), "REQUEST"},
+		"a number in a note's meta": {twinNamed(Step{Epoch: "0", Entries: []Entry{},
+			Notes: []Note{twinNote(`{"v":0}`, "p")}}, "meta-note"), "REQUEST"},
+	} {
+		if _, ref := w.try(c.step); ref == nil || ref.Code != c.code {
+			t.Errorf("%s: %+v, want %s", name, ref, c.code)
+		}
+	}
+	if w.image() != before {
+		t.Fatal("a refused step wrote")
+	}
+	if ref := CheckLogStep(move("r:a", nil, ``).Entries, nil); ref == nil || ref.Detail.EntryIndex == nil ||
+		*ref.Detail.EntryIndex != 0 || ref.Detail.Table != "work" {
+		t.Fatalf("the refusal's detail: %+v", ref)
+	}
+}
+
+// TestLogTwinLineAt (read 4812 S1 and S2; decision 12): the twin's
+// L.read_line_at reads a line by a canonical decimal string, refuses any
+// other seq REQUEST, and a seq with no line LOGID with the budget log_line.
+func TestLogTwinLineAt(t *testing.T) {
+	t.Parallel()
+	w := newLogTwin(t, "work")
+	w.step(Step{Epoch: "0", Entries: []Entry{{Kind: "rows", Table: "work", Add: []string{"r"}}}})
+	if line, ref := w.l.LineAt(w.space, "0", "1"); ref != nil || line.Seq != "1" {
+		t.Fatalf("line 1: %+v %+v", line, ref)
+	}
+	for _, seq := range []string{"0", "01", "1.0", "", "-1", "9007199254740992", " 1"} {
+		if _, ref := w.l.LineAt(w.space, "0", seq); ref == nil || ref.Code != "REQUEST" {
+			t.Errorf("seq %q: %+v, want REQUEST", seq, ref)
+		}
+	}
+	for _, at := range []struct{ epoch, seq string }{{"0", "2"}, {"0", "9007199254740991"}, {"1", "1"}} {
+		if _, ref := w.l.LineAt(w.space, Decimal(at.epoch), at.seq); ref == nil || ref.Code != "LOGID" || ref.Detail.Budget != "log_line" {
+			t.Errorf("epoch %s seq %s: %+v, want LOGID log_line", at.epoch, at.seq, ref)
+		}
+	}
 }

@@ -949,7 +949,8 @@ redis.register_function('ns_tset_lineat_probe', function(keys,args)
   if #keys~=0 or #args~=2 then return S.json.encode(S.refuse('ARGS')) end
   local extension={kinds={'lineat'},
     validate=function(q,index)
-      if type(q.seq)~='string' then return nil,S.refuse('REQUEST',{query_index=index}) end
+      -- A number passes through, so the fragment's own refusal of one is seen.
+      if type(q.seq)~='string' and type(q.seq)~='number' then return nil,S.refuse('REQUEST',{query_index=index}) end
       return true,nil
     end,
     read=function(ctx,q,index)
@@ -1012,9 +1013,16 @@ func TestLogReadLineAt(t *testing.T) {
 	if answers[2].LineKind != "note" || !reflect.DeepEqual(answers[2].About, []string{"p"}) || answers[2].LogID != a.LogID+3 {
 		t.Fatalf("decoded note line 3=%+v", answers[2])
 	}
-	for seq, code := range map[string]string{"0": "REQUEST", "01": "REQUEST", "4": "LOGID"} {
+	for seq, code := range map[string]string{"0": "REQUEST", "01": "REQUEST", "4": "LOGID", "9": "LOGID"} {
 		if got := logDraftCode(t, call(fmt.Sprintf(`{"kind":"lineat","seq":%q}`, seq))); got != code {
 			t.Errorf("line at %q gave %q, want %s", seq, got, code)
+		}
+	}
+	// A seq is a canonical decimal string: a Lua number, even of a line that
+	// is there, is REQUEST (the sprint's callers pass strings; read 4812 S2).
+	for _, seq := range []string{"2", "9"} {
+		if got := logDraftCode(t, call(`{"kind":"lineat","seq":`+seq+`}`)); got != "REQUEST" {
+			t.Errorf("line at the number %s gave %q, want REQUEST", seq, got)
 		}
 	}
 }
@@ -1045,4 +1053,201 @@ func TestSeqExactMetadataCeiling(t *testing.T) {
 		fx, store := setup(t, "9007199254740992")
 		logRefused(t, fx, store, logRows(fx.Space, "0", "work", "s"), "LOGID")
 	})
+}
+
+// logRawStep sends one raw tset/1 step to the store and returns its decoded
+// reply, so a request the Go encoder would change reaches the Lua as written.
+func logRawStep(t *testing.T, fx *tsetFixture, body string) map[string]json.RawMessage {
+	t.Helper()
+	wire, err := fx.Client.FCall(context.Background(), "ns_tset_step", []string{}, Version, body).Result()
+	if err != nil {
+		t.Fatalf("Lua step returned Redis error: %v", err)
+	}
+	var out map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(wire.(string)), &out); err != nil {
+		t.Fatalf("step reply %q: %v", wire, err)
+	}
+	return out
+}
+
+// logRawRefused sends a raw step, wants the refusal code and entry index,
+// and wants the store's TYPE/DUMP image unchanged.
+func logRawRefused(t *testing.T, fx *tsetFixture, body, code string, entry int) {
+	t.Helper()
+	before := commitProbeImage(t, fx.Client)
+	reply := logRawStep(t, fx, body)
+	var status, got string
+	var detail struct {
+		EntryIndex *int `json:"entry_index"`
+	}
+	_ = json.Unmarshal(reply["status"], &status)
+	_ = json.Unmarshal(reply["code"], &got)
+	_ = json.Unmarshal(reply["detail"], &detail)
+	if status != "refused" || got != code || (entry >= 0 && (detail.EntryIndex == nil || *detail.EntryIndex != entry)) {
+		t.Fatalf("step %s: reply %v, want %s at entry %d", body, reply, code, entry)
+	}
+	if after := commitProbeImage(t, fx.Client); !reflect.DeepEqual(before, after) {
+		t.Fatalf("a %s refusal changed the Redis TYPE/DUMP image", code)
+	}
+}
+
+// TestLogLastOverAutoIDHead (read 4812 M1; the model's WShape: the XINFO
+// equality, not the <n>-0 shape): a raw XADD * leaves entries-added and
+// length agreeing but the last id not <entries-added>-0, and last refuses
+// LOGID with the budget last_generated_id. With the equality disabled it
+// would answer last_seq "2".
+func TestLogLastOverAutoIDHead(t *testing.T) {
+	t.Parallel()
+	fx, store := logDraftFixture(t)
+	composedWrite(t, store, logRows(fx.Space, "0", "work", "r"))
+	if err := fx.Client.XAdd(context.Background(), &redis.XAddArgs{Stream: fixtureLogKey(fx.Space, "0"),
+		Values: []any{"n", "0", "d", `{"k":"n","ms":"1"}`}}).Err(); err != nil {
+		t.Fatal(err)
+	}
+	raw := logDraftRaw(t, fx, fmt.Sprintf(`{"epoch":"0","space":%q,"queries":[{"kind":"last"}]}`, fx.Space))
+	var detail struct {
+		Budget string `json:"budget"`
+	}
+	_ = json.Unmarshal(raw["detail"], &detail)
+	if code := logDraftCode(t, raw); code != "LOGID" || detail.Budget != "last_generated_id" {
+		t.Fatalf("last over an auto-id head: %q %q, want LOGID last_generated_id", code, detail.Budget)
+	}
+}
+
+// TestLogMetaHoldsNoNumber (read 4812 choice 5; L2 1.1: a body d holds no
+// JSON number): a number anywhere in an entry's or a note's meta is REQUEST,
+// before any guard (L1 8: REQUEST's static phase precedes PLACE) and before
+// any write, so no value is stored rounded (12345678901234567 would be
+// 1.2345678901235e+16). A string of digits is kept.
+func TestLogMetaHoldsNoNumber(t *testing.T) {
+	t.Parallel()
+	fx, store := logDraftFixture(t)
+	composedWrite(t, store, logRows(fx.Space, "0", "work", "r", "s"))
+	composedWrite(t, store, Step{Epoch: "0", Space: fx.Space, Entries: []Entry{{Kind: "create",
+		Table: "work", To: "r:a", IDs: []string{"x"}, Scores: []string{"1"}, About: []string{"p"}}}})
+	move := func(from, meta string) string {
+		return fmt.Sprintf(`{"epoch":"0","space":%q,"entries":[{"kind":"move","t":"work","from":%q,"to":"s:a","ids":["x"],"about":["p"],"meta":%s}]}`,
+			fx.Space, from, meta)
+	}
+	for _, meta := range []string{`{"n":12345678901234567}`, `{"n":1e300}`, `{"a":{"b":[true,null,"s",0]}}`, `{"z":-1}`} {
+		logRawRefused(t, fx, move("r:a", meta), "REQUEST", 0)
+	}
+	// The single fault alone is PLACE; with a number in meta beside it,
+	// REQUEST comes first.
+	logRawRefused(t, fx, move("s:a", `{"n":"1"}`), "PLACE", 0)
+	logRawRefused(t, fx, move("s:a", `{"n":12345678901234567}`), "REQUEST", 0)
+	note := func(meta string) string {
+		return fmt.Sprintf(`{"epoch":"0","space":%q,"op":"meta-note","intent":"i","entries":[],"notes":[{"line":{"kind":"note","meta":%s},"about":["p"]}]}`,
+			fx.Space, meta)
+	}
+	logRawRefused(t, fx, note(`{"v":1e300}`), "REQUEST", -1)
+	if got := logRawStep(t, fx, note(`{"v":"12345678901234567"}`)); string(got["status"]) != `"ok"` {
+		t.Fatalf("a note with digits in a string: %v", got)
+	}
+	lines := logDraftStream(t, fx.Client, fx.Space, "0")
+	if last := lines[len(lines)-1]; string(last.Body.Meta) != `{"v":"12345678901234567"}` {
+		t.Fatalf("the stored meta %s", last.Body.Meta)
+	}
+}
+
+// TestLogAboutBeforeGuards (read 4812 choice 6; L1 8's fixed precedence): a
+// member-changing entry with no about is REQUEST in the static phase, so a
+// wrong from beside it does not turn it into PLACE.
+func TestLogAboutBeforeGuards(t *testing.T) {
+	t.Parallel()
+	fx, store := logDraftFixture(t)
+	composedWrite(t, store, logRows(fx.Space, "0", "work", "r", "s"))
+	composedWrite(t, store, Step{Epoch: "0", Space: fx.Space, Entries: []Entry{{Kind: "create",
+		Table: "work", To: "r:a", IDs: []string{"x"}, Scores: []string{"1"}, About: []string{"p"}}}})
+	logRefused(t, fx, store, Step{Epoch: "0", Space: fx.Space, Entries: []Entry{{Kind: "move",
+		Table: "work", From: "s:a", To: "r:b", IDs: []string{"x"}, About: []string{"p"}}}}, "PLACE")
+	ref := logRefused(t, fx, store, Step{Epoch: "0", Space: fx.Space, Entries: []Entry{
+		{Kind: "rows", Table: "work", Add: []string{"t"}},
+		{Kind: "move", Table: "work", From: "s:a", To: "r:b", IDs: []string{"x"}}}}, "REQUEST")
+	if ref.Detail.EntryIndex == nil || *ref.Detail.EntryIndex != 1 || ref.Detail.Table != "work" {
+		t.Fatalf("the refusal's detail %+v, want entry 1 of work", ref.Detail)
+	}
+}
+
+// TestLogLinesBytesLimit (read 4812 choice 9; decision 6: lines takes an
+// optional bytes_limit, bounded by the 8 MiB reply, the envelope reserved
+// first): a bytes_limit stops an atomic answer at a whole line, the store
+// and the twin return the same prefix, and a bytes_limit past 8 MiB is LIMIT,
+// 0 is REQUEST, and one too small for a line is BUDGET.
+func TestLogLinesBytesLimit(t *testing.T) {
+	t.Parallel()
+	fx, store := logDraftFixture(t)
+	twin := NewMemLog()
+	mem := NewMem()
+	for _, table := range []string{"work", "aux"} {
+		cols := map[string][]string{"work": {"a", "b"}, "aux": {"c"}}[table]
+		if err := mem.DefineTable(fx.Space, table, TableDefinition{Columns: cols,
+			MemberPrefix: fx.Space + "member:" + table + ":", EpochKey: fx.Space + "sprint:epoch", EpochField: "n"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	w := &logWorld{t: t, fx: fx, store: store, mem: mem, log: twin}
+	w.apply(logRows(fx.Space, "0", "work", "r"))
+	for i := 0; i < 6; i++ {
+		id := fmt.Sprintf("m%d", i)
+		w.apply(Step{Epoch: "0", Entries: []Entry{{Kind: "create", Table: "work", To: "r:a", IDs: []string{id},
+			Scores: []string{"1"}, About: []string{"p"}, Set: map[string]string{"v": strings.Repeat("x", 400)}}}})
+	}
+	both := func(q ReadQuery) (ReadReply, ReadReply, string, string) {
+		plan := ReadPlan{Epoch: "0", Space: fx.Space, Queries: []ReadQuery{q}}
+		got, err := store.Read(context.Background(), plan)
+		want, ref := twin.Read(fx.Space, plan)
+		var refusal *Refusal
+		storeCode, twinCode := "", ""
+		if errors.As(err, &refusal) {
+			storeCode = refusal.Code
+		} else if err != nil {
+			t.Fatal(err)
+		}
+		if ref != nil {
+			twinCode = ref.Code
+		}
+		return got, want, storeCode, twinCode
+	}
+	got, want, sc, tc := both(ReadQuery{Kind: "lines", AfterSeq: "0", Limit: 50, BytesLimit: 4096 + 1200})
+	if sc != "" || tc != "" || len(got.Answers) != 1 || len(want.Answers) != 1 {
+		t.Fatalf("bytes_limit: store %q twin %q", sc, tc)
+	}
+	if n := len(got.Answers[0].Lines); n < 1 || n >= 7 {
+		t.Fatalf("a 1,200-byte room returned %d of 7 lines", n)
+	}
+	if !reflect.DeepEqual(logSemantic(t, got.Answers[0]), logSemantic(t, want.Answers[0])) {
+		t.Fatalf("store %s\ntwin %s", logSemantic(t, got.Answers[0]), logSemantic(t, want.Answers[0]))
+	}
+	// A room of the envelope alone fits no line: BUDGET on both.
+	if _, _, sc, tc := both(ReadQuery{Kind: "lines", AfterSeq: "0", Limit: 50, BytesLimit: 4096}); sc != "BUDGET" || tc != "BUDGET" {
+		t.Errorf("bytes_limit 4096: store %q twin %q, want BUDGET", sc, tc)
+	}
+	// The Go encoder and the Lua validator bound it alike.
+	if _, _, sc, _ := both(ReadQuery{Kind: "lines", AfterSeq: "0", Limit: 50, BytesLimit: 8388609}); sc != "LIMIT" {
+		t.Errorf("bytes_limit 8388609 through the Go encoder: %q, want LIMIT", sc)
+	}
+	for limit, code := range map[string]string{"8388609": "LIMIT", "0": "REQUEST", "-1": "REQUEST", "1.5": "REQUEST", `"9"`: "REQUEST"} {
+		raw := logDraftRaw(t, fx, fmt.Sprintf(`{"epoch":"0","space":%q,"queries":[{"kind":"lines","after_seq":"0","limit":5,"bytes_limit":%s}]}`, fx.Space, limit))
+		if got := logDraftCode(t, raw); got != code {
+			t.Errorf("raw bytes_limit %s: %q, want %s", limit, got, code)
+		}
+	}
+}
+
+// logSemantic is a value as decoded JSON, for comparing answers whose object
+// keys the store and the twin order differently.
+func logSemantic(t *testing.T, v any) any {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dec := json.NewDecoder(strings.NewReader(string(b)))
+	dec.UseNumber()
+	var out any
+	if err := dec.Decode(&out); err != nil {
+		t.Fatal(err)
+	}
+	return out
 }
