@@ -91,6 +91,10 @@ if NS.tset_profile then
     return table_prefix(t, epoch) .. ':cell:' .. row .. ':' .. col
   end
 
+  local function props_key(t, epoch)
+    return table_prefix(t, epoch) .. ':props'
+  end
+
   local function ledger(ctx)
     if ctx ~= private_ctx then return nil end
     return encoded_ledger
@@ -640,7 +644,7 @@ if NS.tset_profile then
   local function props(ctx, q, index)
     local _, err = table_def(ctx, q.t, index)
     if err then return nil, err end
-    local key = ctx.props_key(q.t, ctx.request_epoch)
+    local key = props_key(q.t, private_request_epoch)
     local out = {}
     local ok
     if q.names == nil then

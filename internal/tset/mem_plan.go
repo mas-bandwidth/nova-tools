@@ -362,6 +362,7 @@ func (m *Mem) planStep(ctx context.Context, pre, next *memNamespace, step Step) 
 		plan.Entries[i] = MemPlanEntry{Index: i, Entry: normalized}
 	}
 	seenID := make(map[string]bool)
+	propTables := make(map[string]bool)
 	propCounts, propObserved := make(map[string]int), make(map[string]bool)
 	candidates, guarded, changed := 0, 0, 0
 	for i, entry := range step.Entries {
@@ -390,7 +391,7 @@ func (m *Mem) planStep(ctx context.Context, pre, next *memNamespace, step Step) 
 			}
 			continue
 		case "prop", "propguard":
-			prior, didChange, err := memPlanProp(preEpoch, workEpoch, entry, i, propCounts, propObserved, &budget)
+			prior, didChange, err := memPlanProp(preEpoch, workEpoch, entry, i, advance, propTables, propCounts, propObserved, &budget)
 			if err != nil {
 				return Reply{}, err
 			}
@@ -924,10 +925,26 @@ func memPropsKey(space, table string, epoch Decimal) string {
 // 2026-09-30, property, section 2). Both compare with the write epoch's
 // pre-state, so a guard beside a write on the same pair reads the value from
 // before the step. It returns that pre-state and whether the entry changes it.
-func memPlanProp(preEpoch, workEpoch *memEpoch, entry Entry, index int, counts map[string]int, observed map[string]bool, b *memWorkBudget) (FieldValue, bool, error) {
+func memPlanProp(preEpoch, workEpoch *memEpoch, entry Entry, index int, advance bool, tables map[string]bool, counts map[string]int, observed map[string]bool, b *memWorkBudget) (FieldValue, bool, error) {
 	pre, work := preEpoch.tables[entry.Table], workEpoch.tables[entry.Table]
 	if pre == nil || work == nil {
 		return FieldValue{}, false, memRefusal("DRIFT", RefusalDetail{EntryIndex: memIndex(index), Table: entry.Table})
+	}
+	if !tables[entry.Table] {
+		tables[entry.Table] = true
+		if advance {
+			n := len(pre.props)
+			// A touched successor hash must be empty even for a no-op or guard,
+			// which may never put this key into the final command preflight.
+			if err := b.rowsetRead(index, entry.Table, len(strconv.Itoa(n))); err != nil {
+				return FieldValue{}, false, err
+			}
+			if n != 0 {
+				return FieldValue{}, false, memRefusal("DRIFT", RefusalDetail{Table: entry.Table})
+			}
+			// Reuse this observation for new-name capacity in this plan.
+			counts[entry.Table] = 0
+		}
 	}
 	before, present := pre.props[entry.Name]
 	if key := entry.Table + "\x00" + entry.Name; !observed[key] {
@@ -961,7 +978,10 @@ func memPlanProp(preEpoch, workEpoch *memEpoch, entry Entry, index int, counts m
 		n, seen := counts[entry.Table]
 		if !seen {
 			n = len(pre.props)
-			b.cellProbes++ // the store's HLEN of the property hash
+			// HLEN is one cell-kind read with a decimal integer reply.
+			if err := b.rowsetRead(index, entry.Table, len(strconv.Itoa(n))); err != nil {
+				return prior, false, err
+			}
 		}
 		n++
 		counts[entry.Table] = n
