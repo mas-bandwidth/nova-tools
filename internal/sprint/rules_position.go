@@ -125,7 +125,7 @@ const (
 	// posMergeIdleSpan is the span a stream with cards to merge may go without a
 	// merge step: R5 gives a resumed stream its due time (1.2: last merge step or
 	// state change + 30 min).
-	posMergeIdleSpan = 30 * time.Minute
+	posMergeIdleSpan = MergeIdleSpan
 	// needsLineWindow is the ids of a line R4 reads from a key's offset in one
 	// read, and needsMinWaiters the fewest waiters it reads a need for once the
 	// ids of a read are counted. The design gives neither (2.3 says "for each n

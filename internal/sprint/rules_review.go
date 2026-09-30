@@ -94,9 +94,9 @@ const (
 	// reviewDeadlineUnbegun, reviewDeadlineUntaken and reviewDeadlineMergeIdle
 	// are the spans of the due times these rules stamp (1.2: an asked read card
 	// 30 minutes, a dealt work card 15, a merging stream with no merge step 30).
-	reviewDeadlineUnbegun   = 30 * time.Minute
+	reviewDeadlineUnbegun   = UnbegunSpan
 	reviewDeadlineUntaken   = 15 * time.Minute
-	reviewDeadlineMergeIdle = 30 * time.Minute
+	reviewDeadlineMergeIdle = MergeIdleSpan
 )
 
 // The types of the notices these rules raise (2.5). A judgment they raise is
