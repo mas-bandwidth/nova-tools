@@ -67,12 +67,16 @@ const DefaultRouteFloor = 0.9
 // vocabulary: the Jev endpoint is TypeSafe's.
 const routeUsageProvider = "typesafe"
 
+// decideFunc is the provider call the ladder asks through: one state, the
+// questions, the answers and the usage of the call.
+type decideFunc func(ctx context.Context, state string, qs map[string]decide.Question) (map[string]decide.Answer, decide.Usage, error)
+
 // RouteInput is one dispatch route's seam: the ladder, the decider, the floor
 // and where the two records go.
 //
-// Decide is the same decideFunc the triage route uses -- a *decide.Client's
-// Decide method in production, an httptest fake or an in-process function in a
-// test -- so nothing here ever dials a provider on its own. A nil Decide is the
+// Decide is a *decide.Client's Decide method in production, an httptest fake or
+// an in-process function in a test, so nothing here ever dials a provider on
+// its own. A nil Decide is the
 // key being absent: the rules answer, no call is made, and today's model
 // stands.
 type RouteInput struct {
@@ -236,26 +240,6 @@ func routeReceipt(r CardRoute) string {
 	}
 	return fmt.Sprintf("ROUTE jev=%s conf=%.2f rung=%s model=%s why=%s",
 		oneline.Field(token), r.Confidence, oneline.Field(rung), oneline.Field(r.Model), oneline.Field(why))
-}
-
-// AfterGateFailure is the escalation rule (Glenn, 2026-09-18: "if we fail then
-// we automatically promote up the intelligence ladder"). A card that failed its
-// gate re-enters the SAME decision carrying that failure as CONFIRMED
-// evidence, and the ladder does the rest: the rung that failed is out of the
-// eligible set and so is its lineage at that height, so the answer is another
-// lineage on the same rung where there is one -- sideways before up -- and the
-// rung above where there is not. It is never a retry on the rung that failed.
-//
-// The reason travels in the unit and never to a provider: the public
-// projection carries an attempt COUNT and nothing else.
-func AfterGateFailure(u decide.Unit, rung, reason string) decide.Unit {
-	next := u
-	next.Attempts = append(append([]decide.Attempt(nil), u.Attempts...), decide.Attempt{
-		Rung:    rung,
-		Outcome: decide.OutcomeFailed,
-		Reason:  reason,
-	})
-	return next
 }
 
 // deciderFunc adapts the decideFunc seam to the decide.Decider interface the

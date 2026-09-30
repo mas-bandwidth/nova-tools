@@ -15,7 +15,7 @@ import (
 //	                                           :needs ("u0") :deadline "2026-09-19T12:00Z"
 //	                                           :title "...") ...))
 //
-// `(:plan ...)` is the expander's form -- nodes with kinds, expanded into cards.
+// `(:plan ...)` is the plan form -- nodes with kinds.
 // `(work-set ...)` is the coordinator's: units with owners, lanes, needs and
 // deadlines, pulled by a friend or a bench. ParsePlan reads only the first, so
 // `plan check` was blind to every real work set on the bench. ParseWorkSet reads

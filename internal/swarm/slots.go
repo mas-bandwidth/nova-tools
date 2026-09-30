@@ -640,3 +640,26 @@ const SlotStoreWait = 10 * time.Second
 func takeSlotStoreLock(store string) (func(), error) {
 	return takeFileLock(filepath.Join(store, SlotStoreLockName), SlotStoreWait)
 }
+
+// returnCardForLease puts the card an expired lease names back in queue/. The
+// taken file is <store>/taken/<owner>-<label>; the rename is what makes the card
+// queueable again. A lease with no label names no card, and a card already back
+// in queue/ is left alone. It returns the card name when it moved one.
+func returnCardForLease(store string, l SlotLease) string {
+	label := strings.TrimSpace(l.Label)
+	if label == "" || strings.ContainsAny(label, `/\`) {
+		return ""
+	}
+	taken := filepath.Join(store, TakenName, l.Owner+"-"+label)
+	if _, err := os.Stat(taken); err != nil {
+		return ""
+	}
+	queueDir := filepath.Join(store, QueueName)
+	if err := os.MkdirAll(queueDir, 0o755); err != nil {
+		return ""
+	}
+	if err := os.Rename(taken, filepath.Join(queueDir, label)); err != nil {
+		return ""
+	}
+	return label
+}

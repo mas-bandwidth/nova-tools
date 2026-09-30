@@ -118,3 +118,15 @@ func TestRefusalsNameTheFlag(t *testing.T) {
 		}
 	}
 }
+
+// Both spellings of the build identity print the one line at exit 0, like
+// every other tool's version verb and its --version alias.
+func TestVersionAndItsAliasPrintTheBuildIdentity(t *testing.T) {
+	t.Parallel()
+	for _, arg := range []string{"version", "--version"} {
+		code, out, errb := do(t, nil, arg)
+		if code != 0 || !strings.HasPrefix(out, "nova-work ") || errb != "" {
+			t.Errorf("%s: exit %d, stdout %q, stderr %q; want the identity line at exit 0", arg, code, out, errb)
+		}
+	}
+}

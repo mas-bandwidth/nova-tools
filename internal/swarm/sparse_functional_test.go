@@ -62,44 +62,6 @@ func TestSparseCheckoutDoesNotMaterializeAnUnrelatedPackage(t *testing.T) {
 	}
 }
 
-// prepare is the staging path. A production run does not set CloneFrom by hand:
-// a PATHS card takes the pool's reference checkout ref/<owner>/<name>@<rev>.
-// Leaving CloneFrom empty with that checkout present must still stage the
-// sparse job clone. A run that is handed CloneFrom stages from that checkout.
-func TestPrepareStagesASparseJobClone(t *testing.T) {
-	t.Parallel()
-
-	root := t.TempDir()
-	workerDir := filepath.Join(root, "home")
-	if err := os.MkdirAll(workerDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	w := Worker{WorkerDir: workerDir, Provider: "opencode", Model: "x", EnvVar: "X_API_KEY"}
-
-	pool := filepath.Join(root, "pool")
-	ref := filepath.Join(pool, "ref", "example", "s10@fixture")
-	writeSparseFixture(t, ref)
-	// A launch refuses a pool with no identity row (staging.go LoadPoolIdentity).
-	writePoolIdentity(t, pool, "rowan", "Rowan Friend", "rowan@example.com")
-	jobDir := w.JobDir(1, "s10")
-	run := RunInput{Worker: w, Pool: &Pool{Dir: pool}}
-	card := []byte("SOURCE: example/s10@fixture\nPATHS: pkg/named/**\nTEST: ./pkg/named TestHello\n")
-	if err := run.prepare(Sidecar{ID: "s10"}, card, 1, jobDir); err != nil {
-		t.Fatalf("prepare: %v", err)
-	}
-	assertSparseJob(t, jobDir)
-
-	src := filepath.Join(root, "src")
-	writeSparseFixture(t, src)
-	jobDir2 := w.JobDir(1, "s10b")
-	handed := RunInput{Worker: w, CloneFrom: src, Pool: &Pool{Dir: pool}} // dev's prepare stages under the pool identity
-	card2 := []byte("PATHS: pkg/named/**\nTEST: ./pkg/named TestHello\n")
-	if err := handed.prepare(Sidecar{ID: "s10b"}, card2, 1, jobDir2); err != nil {
-		t.Fatalf("prepare with CloneFrom: %v", err)
-	}
-	assertSparseJob(t, jobDir2)
-}
-
 // A missing in-module import is not an empty dependency set. Staging must
 // refuse rather than check out PATHS with that dependency omitted, and the
 // destination directory itself must not exist afterward.

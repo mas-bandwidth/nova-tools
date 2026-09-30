@@ -19,7 +19,6 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/release"
-	"github.com/mas-bandwidth/nova-tools/internal/wake"
 )
 
 // Environment supplies deterministic clock/network seams. Nil values use the
@@ -117,7 +116,7 @@ func help(name string, w io.Writer) {
 	note += "Cross-process delivery recovery needs --snapshot; without it, each send is a new intention. Do not prepare again while pending; retry the saved artifact. A snapshot uses a sibling .lock file for a kernel lock; its presence never means a process is running."
 	fmt.Fprintln(w, note)
 	fmt.Fprintf(w, "\nLocals: latest=local:<path> runs that binary (or argv) on this host to read the version; e.g., local:/usr/local/bin/nova-update or local:go version. The installed column can be a version string (v1.2.3), a single command name found on PATH, or a full argv.\n")
-	fmt.Fprintf(w, "\nFrom a nova-tools checkout:\nexample:\n  %s report --file cmd/%s/testdata/example.tsv\n  %s version\n", name, name, name)
+	fmt.Fprintf(w, "\nexit codes: 0 every entry current, an apply that left the box on the target, a report whose every entry answered; 1 the tool said NO (anything STALE, NEWER, DIFFERENT or UNKNOWN, an apply whose after is not the target, a report with an UNKNOWN or a send that was refused or unconfirmed); 2 could not run (a refusal naming the remedy).\n\nFrom a nova-tools checkout:\nexample:\n  %s report --file cmd/%s/testdata/example.tsv\n  %s version\n", name, name, name)
 }
 func interspersed(f *flag.FlagSet, args []string) []string {
 	var flags, positionals []string
@@ -462,7 +461,7 @@ func verdict(r entryRead) (string, string) {
 		return "UNKNOWN", ""
 	}
 	if r.Entry.Kind == "pin" {
-		if wake.AcceptBus(r.Installed.Version, r.Latest.Version) {
+		if r.Installed.Version != "" && r.Latest.Version == r.Installed.Version {
 			return "EQUAL", ""
 		}
 		return "DIFFERENT", ""

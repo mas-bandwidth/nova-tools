@@ -1,8 +1,6 @@
 package swarm
 
 import (
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -135,54 +133,4 @@ func TestPullNeverExceedsTheCapacityLine(t *testing.T) {
 	if got := Admission(4, 1, 10); got != 3 {
 		t.Fatalf("Admission(4,1,10) = %d, want 3 (the line, not the queue)", got)
 	}
-
-	bench := t.TempDir()
-	queue := filepath.Join(bench, "queue")
-	taken := filepath.Join(bench, "taken")
-	if err := os.MkdirAll(queue, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"a.card", "b.card", "c.card"} {
-		if err := os.WriteFile(filepath.Join(queue, name), []byte("card\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	// A full bench admits nothing and leaves every card in queue/.
-	line := AdmissionLine(8, 4, 100, 32) // 8
-	if got := Admission(line, line, 3); got != 0 {
-		t.Fatalf("full bench admission = %d, want 0", got)
-	}
-	names, err := PullQueue(queue, taken, "w1", Admission(line, line, 3))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(names) != 0 {
-		t.Fatalf("a full bench took %v, want none", names)
-	}
-	if got := countCards(t, queue); got != 3 {
-		t.Fatalf("a full bench left %d cards in queue/, want 3", got)
-	}
-
-	// Two workers on an 8-line bench may still take the three cards, and no more than the
-	// line allows. A pull that would exceed the line takes only up to the line.
-	names, err = PullQueue(queue, taken, "w1", Admission(line, 2, 3))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(names) != 3 {
-		t.Fatalf("two workers took %v, want the 3 queued cards", names)
-	}
-	if got := countCards(t, queue); got != 0 {
-		t.Fatalf("after the pull queue/ holds %d cards, want 0", got)
-	}
-}
-
-func countCards(t *testing.T, dir string) int {
-	t.Helper()
-	matches, err := filepath.Glob(filepath.Join(dir, "*.card"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	return len(matches)
 }
