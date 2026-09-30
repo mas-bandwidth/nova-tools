@@ -530,7 +530,13 @@ func (h *luaHarness) ensureReadTable(L *lua.LState) int {
 }
 
 func (h *luaHarness) readLineAt(L *lua.LState) int {
-	seq := int(L.CheckNumber(2))
+	// Layer 2 takes the seq as a canonical decimal string and refuses REQUEST
+	// for anything else, a number included (table_set_log.lua's read_line_at).
+	str, ok := L.Get(2).(lua.LString)
+	seq, err := strconv.Atoi(string(str))
+	if !ok || err != nil || strconv.Itoa(seq) != string(str) {
+		return h.refusal(L, "REQUEST", nil)
+	}
 	h.charge.Lines++
 	if seq < 1 || seq > len(h.lines) {
 		return h.refusal(L, "DRIFT", nil)
