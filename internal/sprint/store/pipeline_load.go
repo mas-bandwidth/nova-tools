@@ -233,6 +233,7 @@ func (st *Store) pipelinedLoadOnceWithFence(ctx context.Context, tables []string
 	}
 
 	// Extras (if any)
+	after := len(openMap) > 0 // the open notes were read after the trailing fence
 	if extras != nil {
 		for table, want := range extras(s) {
 			t := s.T(table)
@@ -243,12 +244,25 @@ func (st *Store) pipelinedLoadOnceWithFence(ctx context.Context, tables []string
 				}
 			}
 			if len(missing) > 0 {
+				after = true
 				if err := st.readInto(ctx, t, st.sids(missing), false); err != nil {
 					return nil, f2, err
 				}
 			}
 		}
 	}
-
+	if after {
+		// What was read after the trailing fence (the open notes, the extras)
+		// is of the same state only if the fence is still where it was: the
+		// fence read last is the one the read answers with, so a generation
+		// that moved makes the caller read again, as a fresh read does.
+		f3, err := st.B.ReadFence(ctx)
+		if err != nil {
+			return nil, f2, err
+		}
+		if f3.Gen != f2.Gen || f3.Pending != nil {
+			return s, f3, nil
+		}
+	}
 	return s, f2, nil
 }
