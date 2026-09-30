@@ -273,20 +273,20 @@ func TestComposePartsRunInFixedOrder(t *testing.T) {
 // on a writing twin, the request it sends, and the code and phase it expects.
 type noWriteCase struct {
 	name, phase, code string
-	set               func(tw *Twin, log *LogStub)
+	set               func(tw *Twin, log *MemLog)
 	req               func() *Request
 }
 
 // xCmds sets X's commands.
-func xCmds(cmds ...Cmd) func(tw *Twin, log *LogStub) {
-	return func(tw *Twin, _ *LogStub) {
+func xCmds(cmds ...Cmd) func(tw *Twin, log *MemLog) {
+	return func(tw *Twin, _ *MemLog) {
 		tw.phases.XCmds = func(*State, TablePlan, LogPlan) []Cmd { return cmds }
 	}
 }
 
 // beatPart registers a beat part with the functions given.
-func beatPart(pre func(*State, *Request, *Before) (any, *Refusal), cmds func(*State, any, LogPlan) ([]Cmd, *Refusal)) func(tw *Twin, log *LogStub) {
-	return func(tw *Twin, _ *LogStub) {
+func beatPart(pre func(*State, *Request, *Before) (any, *Refusal), cmds func(*State, any, LogPlan) ([]Cmd, *Refusal)) func(tw *Twin, log *MemLog) {
+	return func(tw *Twin, _ *MemLog) {
 		if err := tw.parts.Register(PartBeat, PartFuncs{PreFunc: pre, CmdsFunc: cmds}); err != nil {
 			panic(err)
 		}
@@ -305,7 +305,7 @@ func writersWith(edit func(*Request)) func() *Request {
 }
 
 func noWriteCases() []noWriteCase {
-	none := func(*Twin, *LogStub) {}
+	none := func(*Twin, *MemLog) {}
 	passPre := func(*State, *Request, *Before) (any, *Refusal) { return "plan", nil }
 	noCmds := func(*State, any, LogPlan) ([]Cmd, *Refusal) { return nil, nil }
 	withBeat := writersWith(func(r *Request) { r.Beat = &BeatPart{Members: []BeatMember{{Member: "m1"}}} })
@@ -327,22 +327,22 @@ func noWriteCases() []noWriteCase {
 		{"a member entry without about", PhaseOpen, CodeRequest, none, writersWith(func(r *Request) { r.Body.Entries[0].About = nil })},
 		{"an epoch ahead", PhaseOpen, CodeEpochAhead, none, writersWith(func(r *Request) { r.Epoch = "1" })},
 		// the pre stage
-		{"too many records to read", PhaseBefore, CodeLimit, func(tw *Twin, _ *LogStub) {
+		{"too many records to read", PhaseBefore, CodeLimit, func(tw *Twin, _ *MemLog) {
 			ids := make([]string, beforeRecordsMax+1)
 			for i := range ids {
 				ids[i] = "q" + strconv.Itoa(i)
 			}
 			tw.phases.Before = func(*State, *Request) []BeforeAsk { return []BeforeAsk{{Table: sprint.Work, IDs: ids}} }
 		}, writersWith(nil)},
-		{"X.pre", PhaseXPre, CodeXGuard, func(tw *Twin, _ *LogStub) {
+		{"X.pre", PhaseXPre, CodeXGuard, func(tw *Twin, _ *MemLog) {
 			tw.phases.XPre = func(*State, *Request, *Before) *Refusal { return refuse("", CodeXGuard, RefusalDetail{}) }
 		}, writersWith(nil)},
-		{"derive", PhaseDerive, CodeCounter, func(tw *Twin, _ *LogStub) {
+		{"derive", PhaseDerive, CodeCounter, func(tw *Twin, _ *MemLog) {
 			tw.phases.Derive = func(*State, []Intent, *Before) ([]tset.Entry, []NoteReq, *Refusal) {
 				return nil, nil, refuse("", CodeCounter, RefusalDetail{})
 			}
 		}, writersWith(nil)},
-		{"J", PhaseJ, CodeDropping, func(tw *Twin, _ *LogStub) {
+		{"J", PhaseJ, CodeDropping, func(tw *Twin, _ *MemLog) {
 			tw.phases.JDecide = func(*State, []NoteReq, *Before) ([]tset.Note, JPlan, *Refusal) {
 				return nil, JPlan{}, refuse("", CodeDropping, RefusalDetail{})
 			}
@@ -359,12 +359,12 @@ func noWriteCases() []noWriteCase {
 		{"Layer 1: a guard at a past revision", PhasePlan, "REVISION", none, writersWith(func(r *Request) {
 			r.Body.Entries[0] = tset.Entry{Kind: "guard", Table: sprint.Work, From: "s1:waiting", IDs: []string{"p1"}, Revs: []tset.Decimal{"7"}}
 		})},
-		{"a derived entry without about", PhasePlan, CodeRequest, func(tw *Twin, _ *LogStub) {
+		{"a derived entry without about", PhasePlan, CodeRequest, func(tw *Twin, _ *MemLog) {
 			tw.phases.Derive = func(*State, []Intent, *Before) ([]tset.Entry, []NoteReq, *Refusal) {
 				return []tset.Entry{{Kind: "move", Table: sprint.Work, From: "s1:waiting", To: "s1:ready", IDs: []string{"p2"}}}, nil, nil
 			}
 		}, writersWith(nil)},
-		{"too many notes", PhasePlan, CodeLimit, func(tw *Twin, _ *LogStub) {
+		{"too many notes", PhasePlan, CodeLimit, func(tw *Twin, _ *MemLog) {
 			tw.phases.JDecide = func(*State, []NoteReq, *Before) ([]tset.Note, JPlan, *Refusal) {
 				notes := make([]tset.Note, tset.MaxNotes+1)
 				for i := range notes {
@@ -373,21 +373,21 @@ func noWriteCases() []noWriteCase {
 				return notes, JPlan{}, nil
 			}
 		}, writersWith(nil)},
-		{"a note that is not a note line", PhasePlan, CodeRequest, func(tw *Twin, _ *LogStub) {
+		{"a note that is not a note line", PhasePlan, CodeRequest, func(tw *Twin, _ *MemLog) {
 			tw.phases.JDecide = func(*State, []NoteReq, *Before) ([]tset.Note, JPlan, *Refusal) {
 				return []tset.Note{{Line: tset.NoteLine{Kind: "move", Meta: json.RawMessage(`{}`)}, About: []string{"p1"}}}, JPlan{}, nil
 			}
 		}, writersWith(nil)},
 		// log
-		{"the log's LIMIT", PhaseLog, CodeLimit, func(tw *Twin, log *LogStub) {
-			tw.log = &refusingLog{LogStub: log, ref: refuse(PhaseLog, CodeLimit, RefusalDetail{})}
+		{"the log's LIMIT", PhaseLog, CodeLimit, func(tw *Twin, log *MemLog) {
+			tw.log = &refusingLog{MemLog: log, ref: refuse(PhaseLog, CodeLimit, RefusalDetail{})}
 		}, writersWith(nil)},
-		{"the log's OVERFLOW", PhaseLog, "OVERFLOW", func(tw *Twin, log *LogStub) {
-			tw.log = &refusingLog{LogStub: log, ref: refuse(PhaseLog, "OVERFLOW", RefusalDetail{})}
+		{"the log's OVERFLOW", PhaseLog, "OVERFLOW", func(tw *Twin, log *MemLog) {
+			tw.log = &refusingLog{MemLog: log, ref: refuse(PhaseLog, "OVERFLOW", RefusalDetail{})}
 		}, writersWith(nil)},
 		// X.plan
-		{"no X commands", PhaseXPlan, CodeConfig, func(tw *Twin, _ *LogStub) { tw.phases.XCmds = nil }, writersWith(nil)},
-		{"no J commands", PhaseXPlan, CodeConfig, func(tw *Twin, _ *LogStub) { tw.phases.JCmds = nil }, writersWith(nil)},
+		{"no X commands", PhaseXPlan, CodeConfig, func(tw *Twin, _ *MemLog) { tw.phases.XCmds = nil }, writersWith(nil)},
+		{"no J commands", PhaseXPlan, CodeConfig, func(tw *Twin, _ *MemLog) { tw.phases.JCmds = nil }, writersWith(nil)},
 		{"a part's commands", PhaseXPlan, CodeLimit, beatPart(passPre, func(*State, any, LogPlan) ([]Cmd, *Refusal) {
 			return nil, refuse("", CodeLimit, RefusalDetail{})
 		}), withBeat},
@@ -450,7 +450,7 @@ func TestComposeNoWriteBeforeCommit(t *testing.T) {
 		if err := m.SetActiveEpoch(testPrefix, "1"); err != nil {
 			t.Fatal(err)
 		}
-		log := NewLogStub()
+		log := NewMemLog()
 		tw := NewTwin(m, log, testNames)
 		tw.parts, tw.phases = NewPartRegistry(), passX()
 		before := capture(t, tw, m, log)

@@ -29,7 +29,7 @@ type qworld struct {
 	t       *testing.T
 	tw      *Twin
 	m       *tset.Mem
-	log     *LogStub
+	log     *MemLog
 	derived map[string]bool // the index keys the stand-in X has written
 	epoch   string
 }

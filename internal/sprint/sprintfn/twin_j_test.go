@@ -22,7 +22,7 @@ type jRig struct {
 	t    *testing.T
 	tw   *Twin
 	m    *tset.Mem
-	log  *LogStub
+	log  *MemLog
 	now  time.Time
 	seed []Cmd
 }
@@ -1568,7 +1568,7 @@ func TestJLuaEqualsTwinOnAStore(t *testing.T) {
 func TestJDefaultPhasesRunOnTheTwin(t *testing.T) {
 	t.Parallel()
 	m := newTestMem(t)
-	log := NewLogStub()
+	log := NewMemLog()
 	tw := NewTwin(m, log, testNames)
 	tw.parts = NewPartRegistry()
 	tw.SetClock(func() time.Time { return testTime })

@@ -712,10 +712,14 @@ do
     return def, nil
   end
 
-  -- A line by seq (L.read_line_at): its kind, ids, about and meta.
+  -- A line by seq (L.read_line_at): its kind, ids, about and meta. Layer 2
+  -- takes the seq as a canonical decimal string and refuses REQUEST for a
+  -- number; the callers hold it as a whole number (Q.note_seq, a source's
+  -- seq), which is written here as its decimal.
   function Q.line(ctx, seq, index)
     local _, L = layers()
     if not L or not L.read_line_at then return nil, Q.fail(ctx, 'CONFIG', index) end
+    if type(seq) == 'number' then seq = string.format('%d', seq) end
     local line, err = L.read_line_at(ctx, seq, index)
     if err then return nil, Q.indexed(err, index) end
     if type(line) ~= 'table' then return nil, Q.fail(ctx, 'DRIFT', index) end
