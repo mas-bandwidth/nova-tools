@@ -509,7 +509,7 @@ func TestMadeCarriedKeyReadsLine(t *testing.T) {
 		t.Fatalf("the carried key reads %+v", rp.Sprint[0])
 	}
 	p, _ = tw.run(t, "needs", 0, next)
-	posSameStrings(t, "second window requeue", keyTexts(p.Requeue), []string{"made@9+200"})
+	posSameStrings(t, "second window requeue", posKeyTexts(p.Requeue), []string{"made@9+200"})
 	// the hit is in the last window, which ends the line
 	p, out = tw.run(t, "needs", 0, AgendaKey{Key: "made@9+200", Seq: 9})
 	if out.refused != "" || len(p.Intents) != 1 || p.Intents[0].Need != "m230" || !posHas(p.Done, "made@9+200") || len(p.Requeue) != 0 {
@@ -520,7 +520,7 @@ func TestMadeCarriedKeyReadsLine(t *testing.T) {
 	}
 }
 
-func keyTexts(keys []AgendaKey) []string {
+func posKeyTexts(keys []AgendaKey) []string {
 	var out []string
 	for _, k := range keys {
 		out = append(out, k.Key)
@@ -1666,9 +1666,9 @@ func TestNeedsLineMovesPastANeedWithOnlyFrozenWaiters(t *testing.T) {
 	if out.refused != "" || len(p.Intents) != 0 {
 		t.Fatalf("first window: %+v %+v", out, p.Intents)
 	}
-	posSameStrings(t, "done", keyTexts(p.Done), []string{"needs@21"})
-	posSameStrings(t, "requeue", keyTexts(p.Requeue), []string{"needs:n0", "needs@21+100"})
-	posSameStrings(t, "held back", keyTexts(p.HeldBack), []string{"needs:n0"})
+	posSameStrings(t, "done", posKeyTexts(p.Done), []string{"needs@21"})
+	posSameStrings(t, "requeue", posKeyTexts(p.Requeue), []string{"needs:n0", "needs@21+100"})
+	posSameStrings(t, "held back", posKeyTexts(p.HeldBack), []string{"needs:n0"})
 	for _, key := range p.Requeue {
 		if key.Seq != 21 {
 			t.Fatalf("%s lost the order of the key it carries: %d", key.Key, key.Seq)
@@ -1764,8 +1764,8 @@ func TestMadeWithMoreWaitersThanTheHeadServesThemAll(t *testing.T) {
 	if !tw.missing["n"] || tw.openMissing() != 51 {
 		t.Fatalf("after the first head: missing %v, %d judgments open", tw.missing, tw.openMissing())
 	}
-	posSameStrings(t, "done", keyTexts(p.Done), []string{"made@31"})
-	posSameStrings(t, "requeue", keyTexts(p.Requeue), []string{"made:n+" + posWaiterID(98)})
+	posSameStrings(t, "done", posKeyTexts(p.Done), []string{"made@31"})
+	posSameStrings(t, "requeue", posKeyTexts(p.Requeue), []string{"made:n+" + posWaiterID(98)})
 	if p.Requeue[0].Seq != 31 || len(p.HeldBack) != 0 {
 		t.Fatalf("the key carried: %+v held %v", p.Requeue, p.HeldBack)
 	}
@@ -1798,7 +1798,7 @@ func TestMadeHeadOfOneClosesOneWaiterARun(t *testing.T) {
 	k := posKeyOf("made:n")
 	tw.agenda[k.Key] = k.Seq
 	for run := 1; run <= 5; run++ {
-		keys := keyTexts([]AgendaKey{})
+		keys := posKeyTexts([]AgendaKey{})
 		for key := range tw.agenda {
 			keys = append(keys, key)
 		}
