@@ -780,7 +780,10 @@ func TestUnfinishedRedealCounts(t *testing.T) {
 func TestLateReadGoesToNewReader(t *testing.T) {
 	t.Parallel()
 	w := newTimeWorld(t)
-	w.primary("p1", Review, map[string]string{"rcards": "p1.r1.r1,p1.r1.r2", "rereads": "0", "head": "abc"})
+	// The primary sits at a score its read cards (5) do not: every copy of a card
+	// sits at the card's score, so the replacement is created at its primary's.
+	const primaryScore = 7
+	w.primary("p1", Review, map[string]string{"rcards": "p1.r1.r1,p1.r1.r2", "rereads": "0", "head": "abc"}).Score = primaryScore
 	w.readCard("p1.r1.r1", "r1", Asked, map[string]string{fieldAskedR: msText(timeR0), fieldDueUnbegun: msText(timeR0 + 30*timeMin)})
 	w.readCard("p1.r1.r2", "r2", Asked, map[string]string{fieldAskedR: msText(timeR0), fieldDueUnbegun: msText(timeR0 + 30*timeMin)})
 	w.now.R = timeR0 + 30*timeMin
@@ -796,6 +799,10 @@ func TestLateReadGoesToNewReader(t *testing.T) {
 	created := ch[1].Entry
 	if created.Create == nil || created.ID != "p1.r1.r3" || created.Create.Row != "r3" || created.Create.Col != Asked {
 		t.Fatalf("not asked of the reader that has not read it: %+v", created)
+	}
+	if created.Create.Score != primaryScore {
+		t.Fatalf("the replacement is created at score %v, want its primary's %v (its retired card's is %v): %+v",
+			created.Create.Score, float64(primaryScore), w.card(Readers, "p1.r1.r2").Score, created.Create)
 	}
 	if created.Set[fieldAskedR] != msText(w.now.R) || created.Set[fieldDueUnbegun] != msText(w.now.R+30*timeMin) || created.Set["primary"] != "p1" {
 		t.Fatalf("the new read card: %+v", created.Set)
@@ -1835,6 +1842,52 @@ func TestNoTimeReadIsOverTheBounds(t *testing.T) {
 	}
 }
 
+// R14's read costs each remind key what reading its goal costs: the goal record
+// and the score of its due entry (goalReadRecords, 2). A bound the keys reach
+// cuts the read at the keys that fit, and the read that is kept costs that
+// many goals by IT05's Cost. A key costed at nothing keeps them all, and
+// TestNoTimeReadIsOverTheBounds, whose 3,000 goals fit layer 1's bounds, does
+// not see it.
+func TestRemindReadCostsEachKeyItsGoalRecords(t *testing.T) {
+	t.Parallel()
+	keys := mkKeys(10, func(i int) string { return fmt.Sprintf("remind:person-%d", i) })
+	perKey := QueryCost(idsQ(queryGoal, oneKeyID, goalFields))
+	if perKey.Records != goalReadRecords {
+		t.Fatalf("one goal costs %d records, want %d", perKey.Records, goalReadRecords)
+	}
+	for _, c := range []struct {
+		name string
+		b    ReadBounds
+		kept int
+	}{
+		{"records", ReadBounds{Records: 4 * goalReadRecords}, 4},
+		{"records, one over", ReadBounds{Records: 4*goalReadRecords + 1}, 4},
+		{"records, one short", ReadBounds{Records: 4*goalReadRecords - 1}, 3},
+		{"bytes", ReadBounds{Bytes: 3 * perKey.Bytes}, 3},
+		{"bytes, one short", ReadBounds{Bytes: 3*perKey.Bytes - 1}, 2},
+	} {
+		rp, rest := readRemind(keys, c.b, 0)
+		kept := len(keys) - len(rest)
+		if kept != c.kept {
+			t.Fatalf("%s: %d of %d keys kept, want %d", c.name, kept, len(keys), c.kept)
+		}
+		want(t, c.name+": the keys left keep their order", timeKeyTexts(rest), timeKeyTexts(keys[kept:]))
+		if len(rp.Sprint) != 1 || len(rp.Sprint[0].Source.IDs) != kept {
+			t.Fatalf("%s: the goals read are %+v, want %d", c.name, rp.Sprint, kept)
+		}
+		if cost := rp.Cost(); cost.Records != kept*goalReadRecords || cost.Bytes != kept*perKey.Bytes {
+			t.Fatalf("%s: the read of %d goals costs %+v, want %d records and %d bytes", c.name, kept, cost, kept*goalReadRecords, kept*perKey.Bytes)
+		}
+	}
+	// Each halving halves the keys kept, down to one.
+	var counts []int
+	for h := 0; h <= 4; h++ {
+		_, left := readRemind(keys, ReadBounds{Records: 8 * goalReadRecords}, h)
+		counts = append(counts, len(keys)-len(left))
+	}
+	want(t, "keys kept a halving", counts, []int{8, 4, 2, 1, 1})
+}
+
 // The sprint-key read kinds are in IT05's table of query costs: QueryCost, and
 // so ReadPlan.Cost and Split, charge each what it reads and not a whole read
 // (the read kind "unknown" is charged a whole one, and the store refuses it).
@@ -2234,6 +2287,52 @@ func TestDuplicateKeysArePlannedOnce(t *testing.T) {
 		t.Fatalf("a dropping stream's idle key was planned: %+v", p)
 	}
 	want(t, "both texts held back", timeKeyTexts(p.HeldBack), []string{"idle:s1", "late:idle:s1"})
+}
+
+// R11 plans a key once by its kind and its id, not by its id alone: the same id
+// with two kinds is two keys. A stream whose mergeidle key and idle key are in
+// one run is judged late (mergeidle) and told it is idle (idle), each once, in
+// either order and with either text of the idle key. A memo keyed by the id
+// alone plans the second key of the pair never: its unset and its notice are
+// lost, and the stream is not told.
+func TestOneIdWithTwoKindsOfKeyIsPlannedForBoth(t *testing.T) {
+	t.Parallel()
+	for _, keys := range [][]string{
+		{"late:mergeidle:s1", "late:idle:s1"},
+		{"late:idle:s1", "late:mergeidle:s1"},
+		{"late:mergeidle:s1", "idle:s1"},
+		{"idle:s1", "late:mergeidle:s1"},
+	} {
+		label := strings.Join(keys, " + ")
+		w := newTimeWorld(t)
+		w.put(w.s.Merge, "ctl-s1", "s1", Ctl, map[string]string{"state": StreamMerging, fieldDueMergeIdle: msText(timeR0), fieldDueIdle: msText(timeR0)})
+		p := w.plan("late", keys...)
+		if why := planRefusal(p); why != "" {
+			t.Fatalf("%s: the store would refuse the plan: %s", label, why)
+		}
+		if len(p.Notes) != 2 {
+			t.Fatalf("%s: %d notes, want the judgment and the notice: %+v", label, len(p.Notes), p.Notes)
+		}
+		n := noteReq(p, requestOpen, NMergeLate)
+		if n == nil || n.Cause != "mergeidle" || !reflect.DeepEqual(n.Subjects, []string{StreamSubject("s1")}) {
+			t.Fatalf("%s: mergeidle is not judged: %+v", label, p.Notes)
+		}
+		ch := moved(p)
+		if len(ch) != 1 || ch[0].Table != Merge || ch[0].Entry.ID != "ctl-s1" || !reflect.DeepEqual(ch[0].Entry.Unset, []string{fieldDueIdle}) {
+			t.Fatalf("%s: idle's due_idle is not unset: %+v", label, ch)
+		}
+		k := noteReq(p, requestKnow, NIdle)
+		if k == nil || !reflect.DeepEqual(k.Subjects, []string{StreamSubject("s1")}) {
+			t.Fatalf("%s: idle is not said: %+v", label, p.Notes)
+		}
+		want(t, label+": both keys removed", timeKeyTexts(p.Done), keys)
+		if eff := w.apply(p); eff != (timeEffect{Moves: 1, Know: 1, Opened: 1}) {
+			t.Fatalf("%s: effect %+v, want one move, one notice and one judgment", label, eff)
+		}
+		if _, ok := w.card(Merge, "ctl-s1").Fields[fieldDueIdle]; ok {
+			t.Fatalf("%s: due_idle is still set after the plan", label)
+		}
+	}
 }
 
 // R17's look counts the cards the dry plans' intents change as well as those
