@@ -1,5 +1,0 @@
-{
-  "field": "body.raw_usage[2]",
-  "rule": "field_not_allowlisted",
-  "verdict": "refused"
-}
