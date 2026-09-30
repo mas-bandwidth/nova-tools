@@ -52,6 +52,12 @@ type memState struct {
 	MaxWrite int
 	// Calls counts store exchanges by kind.
 	Calls map[string]int
+	// LogWait, when set, is how WaitLog waits when the log holds no line
+	// after its cursor: it is handed the time the wait may take and returns
+	// when it has passed (a test's clock steps by it, or appends a line). Nil
+	// waits on the wall clock for a line or the time, whichever comes first.
+	LogWait func(d time.Duration)
+	logged  chan struct{} // closed, and replaced, by every commit that appends to a log
 }
 
 // memLog is one epoch's sprint keys.
@@ -798,6 +804,7 @@ func (m *Mem) Release(_ context.Context, op OpRecord, commit bool) error {
 		for _, k := range op.Closes {
 			delete(l.open, k)
 		}
+		m.wakeLog()
 		if op.Stuck != "" {
 			delete(m.kv, keyStuck)
 		}
