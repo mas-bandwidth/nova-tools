@@ -3,6 +3,7 @@
 package swarm
 
 import (
+	"context"
 	"errors"
 	"os"
 	"os/exec"
@@ -233,6 +234,73 @@ func execCmd(t *testing.T, dir, name string, args ...string) string {
 		t.Fatalf("%s %s in %s: %v\n%s", name, strings.Join(args, " "), dir, err, string(out))
 	}
 	return string(out)
+}
+
+// TestStageCardRefusesWhenOriginCannotBeRepointed holds the never-silent refusal at the
+// set-url step: a checkout cloned from the mirror whose origin could not be pointed back at
+// the card's repository still names the mirror, and a push from it goes to the mirror. The
+// stage is refused with git's own words and the command that failed, never handed to the
+// card. The step is made to fail for real: the staging seam names a remote the clone does
+// not have, so git answers `No such remote`.
+func TestStageCardRefusesWhenOriginCannotBeRepointed(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	mirror := filepath.Join(root, "home", "nova-bench", "mirror", "repo.git")
+	target := filepath.Join(root, "jobs", "card-1", "repo")
+	jobDir := filepath.Join(root, "jobs", "card-1")
+	for _, d := range []string{src, filepath.Dir(mirror), jobDir} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	execCmd(t, src, "git", "init", "-q")
+	execCmd(t, src, "git", "config", "user.name", "test")
+	execCmd(t, src, "git", "config", "user.email", "test@example.com")
+	if err := os.WriteFile(filepath.Join(src, "file.txt"), []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	execCmd(t, src, "git", "add", "file.txt")
+	execCmd(t, src, "git", "commit", "-q", "-m", "commit 1")
+	sha1 := strings.TrimSpace(execCmd(t, src, "git", "rev-parse", "HEAD"))
+	execCmd(t, root, "git", "clone", "--mirror", "-q", src, mirror)
+
+	repointed := false
+	card := []byte("base-repo: https://example.com/owner/repo.git\nbase-sha: " + sha1 + "\n")
+	res, err := StageCard(StageOptions{
+		Card:      card,
+		TargetDir: target,
+		JobDir:    jobDir,
+		BenchHome: filepath.Join(root, "home"),
+		BenchName: "testhost",
+		Timeout:   30 * time.Second,
+		git: func(ctx context.Context, args ...string) *exec.Cmd {
+			for i, a := range args {
+				if a == "set-url" {
+					repointed = true
+					args = append([]string(nil), args...)
+					args[i+1] = "no-such-remote"
+				}
+			}
+			return stageGit(ctx, args...)
+		},
+	})
+	if !repointed {
+		t.Fatal("the set-url step never ran; the test did not reach the refusal")
+	}
+	if err == nil {
+		t.Fatalf("a checkout whose origin still names the mirror was staged: %+v", res)
+	}
+	if res.Staged {
+		t.Fatalf("Staged=true beside the refusal: %+v", res)
+	}
+	if !strings.Contains(err.Error(), "git remote set-url origin https://example.com/owner/repo.git failed in "+target) {
+		t.Fatalf("the refusal does not name the failed command and the checkout: %v", err)
+	}
+	if !strings.Contains(err.Error(), "No such remote") {
+		t.Fatalf("the refusal does not carry git's own words: %v", err)
+	}
 }
 
 // testWait is the allowed poll bound: NOVA_TEST_WAIT when set, thirty seconds

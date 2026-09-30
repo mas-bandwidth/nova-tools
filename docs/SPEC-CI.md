@@ -655,9 +655,12 @@ the function assign `WaitDelay`, not that it be the very command.
 
 **The rule.** A git call under `internal/swarm` and `cmd/nova-swarm` puts every
 operand that is not a literal behind `--`, or behind `--end-of-options` for a rev
-that `--` would turn into a path (staging switches to the card's sha with
-`git switch -C`, which honours it on every git the benches carry; `git checkout` 2.43
-does not). A card is untrusted input: its `base-repo:`,
+that `--` would turn into a path. Git 2.43, the oldest the benches carry, honours
+`--end-of-options` in `rev-parse --verify`, `cat-file`, `show`, `ls-tree`, `rev-list` and
+`switch`; it does not in `git checkout` (the rev is read as a path) or `git grep` (the
+tree-ish is read as a revision), so staging switches to the card's sha with
+`git switch -C`, and the one `git grep` takes a tree-ish only in the 40 hex digits
+`rev-parse` printed. A card is untrusted input: its `base-repo:`,
 `base-sha:`, `BASE:` ref and `PR-HEAD:` reach git, and a value that starts with `-`
 is read as an option when nothing separates it. Staging also refuses such a value
 by name before any git runs.
@@ -672,11 +675,13 @@ call is a swarm git helper (`stageGit`, `baseGit`, `gitOut`, `gitOutput`), a `gi
 runner found by import path, `exec.Command` or `exec.CommandContext` of the literal
 `"git"`, or an argv built apart from its call (a `[]string` literal that starts with a
 git subcommand, and `append` onto it). An argument is fine when it is a literal, the
-value of an option that takes one (`-C`, `-B`, `-e`, `--reference`), after the
+value of an option that takes one (`-C`, `-B`, `--reference`, and `-e` after `grep`
+only: `cat-file -e` takes no value), after the
 separator, or a concatenation that begins with a literal that does not start with
 `-`.
-**Its allowlist.** `gitOperandAllowed` in the test, a `file:Func` and a reason each;
-empty.
+**Its allowlist.** `gitOperandAllowed` in the test, a `file:Func` and a reason each:
+`testDefinedAt` (the `git grep` above, which refuses any tree that is not a full hex
+sha before it runs).
 **Its remedy lines.** The message names the file and the line and the separator to
 add.
 **Its narrowings.** It reads the syntax: a final `args...` spread is read where the

@@ -43,7 +43,7 @@ var gitOperandDirs = []string{"internal/swarm", "cmd/nova-swarm"}
 
 // gitOperandHelpers are the swarm helpers that run a git, with the count of leading
 // parameters before the argv.
-var gitOperandHelpers = map[string]int{"stageGit": 1, "baseGit": 1, "gitOut": 1, "gitOutput": 1}
+var gitOperandHelpers = map[string]int{"stageGit": 1, "stageCmd": 1, "baseGit": 1, "gitOut": 1, "gitOutput": 1}
 
 // gitOperandGitrun are the gitrun runners: a context and Options, then the argv.
 var gitOperandGitrun = map[string]bool{"Run": true, "Output": true, "Combined": true, "Command": true, "Prepare": true}
@@ -59,13 +59,47 @@ var gitOperandSubcommands = map[string]bool{
 // gitOperandValueOptions take the next argument as their value, so that argument is the
 // option's, never an operand.
 var gitOperandValueOptions = map[string]bool{
-	"-C": true, "-B": true, "-b": true, "-c": true, "-e": true, "-m": true,
+	"-C": true, "-B": true, "-b": true, "-c": true, "-m": true,
 	"--reference": true, "--format": true, "--depth": true, "--branch": true,
 }
 
+// gitOperandSubcommandValueOptions are value-taking options of one subcommand only: grep's
+// -e takes a pattern, cat-file's -e takes nothing and the operand after it is an object.
+var gitOperandSubcommandValueOptions = map[string]map[string]bool{
+	"grep": {"-e": true},
+}
+
 // gitOperandAllowed names the sites allowed an operand with no separator, as "file:Func"
-// with the reason. It is empty: every card-derived operand in these packages follows one.
-var gitOperandAllowed = map[string]string{}
+// with the reason: a site whose operand is held to a shape git printed, where no separator works.
+var gitOperandAllowed = map[string]string{
+	"internal/swarm/lintbase.go:testDefinedAt": "git grep 2.43 reads --end-of-options before a tree-ish as a revision; the function refuses any tree that is not the 40 hex digits of rev-parse",
+}
+
+// gitSubcommandOf is the first literal of an argv that is neither an option nor the value
+// of one: the git subcommand ("" when there is none to read).
+func gitSubcommandOf(args []ast.Expr) string {
+	valueNext := false
+	for _, a := range args {
+		bl, ok := a.(*ast.BasicLit)
+		if !ok || bl.Kind != token.STRING {
+			valueNext = false
+			continue
+		}
+		s, err := strconv.Unquote(bl.Value)
+		if err != nil {
+			return ""
+		}
+		switch {
+		case valueNext:
+			valueNext = false
+		case gitOperandValueOptions[s]:
+			valueNext = true
+		case !strings.HasPrefix(s, "-"):
+			return s
+		}
+	}
+	return ""
+}
 
 func gitOperandFindings(rel string, src []byte) []string {
 	fset := token.NewFileSet()
@@ -115,6 +149,7 @@ func gitOperandFindings(rel string, src []byte) []string {
 	// read checks one argv: args is its elements, spread says the last is an `x...`.
 	read := func(args []ast.Expr, spread bool, fn string) {
 		afterSep, valueNext := false, false
+		sub := gitSubcommandOf(args)
 		for i, a := range args {
 			if spread && i == len(args)-1 {
 				continue
@@ -123,7 +158,7 @@ func gitOperandFindings(rel string, src []byte) []string {
 				if s == "--" || s == "--end-of-options" {
 					afterSep = true
 				}
-				valueNext = gitOperandValueOptions[s]
+				valueNext = gitOperandValueOptions[s] || gitOperandSubcommandValueOptions[sub][s]
 				continue
 			}
 			if afterSep || valueNext || prefixSafe(a) {
@@ -265,6 +300,10 @@ func TestGitOperandClassTestRefusesItsProbes(t *testing.T) {
 		{"an append onto a clone argv", head + "func f(m string) []string {\n\targs := []string{\"clone\", \"-q\"}\n\treturn append(args, \"--reference\", m, \"--dissociate\", m)\n}", 1},
 		{"an append onto a clone argv behind --", head + "func f(m string) []string {\n\targs := []string{\"clone\", \"-q\"}\n\treturn append(args, \"--reference\", m, \"--dissociate\", \"--\", m)\n}", 0},
 		{"an append onto some other slice", head + "func f(m string) []string {\n\targs := []string{\"a\", \"b\"}\n\treturn append(args, m)\n}", 0},
+		{"cat-file -e takes no value: the operand after it is read", head + "func f(ctx context.Context, sha string) { stageGit(ctx, \"cat-file\", \"-e\", sha+\"^{commit}\") }", 1},
+		{"cat-file -e behind --end-of-options", head + "func f(ctx context.Context, sha string) { stageGit(ctx, \"cat-file\", \"-e\", \"--end-of-options\", sha+\"^{commit}\") }", 0},
+		{"git -C dir then grep -e: the pattern is the value", head + "func f(ctx context.Context, pat string) { stageGit(ctx, \"-C\", \"d\", \"grep\", \"-e\", pat) }", 0},
+		{"a grep tree-ish with no separator", head + "func f(pat, sha string) []string { return []string{\"grep\", \"-q\", \"-e\", pat, sha, \"--\"} }", 1},
 		{"a grep pattern is the value of -e", head + "func f(pat, sha string) []string { return []string{\"grep\", \"-q\", \"-e\", pat, \"--end-of-options\", sha, \"--\"} }", 0},
 		{"a separator in a comment is not one", head + "func f(sha string) {\n\t// -- before sha\n\tbaseGit(\"r\", \"show\", sha)\n}", 1},
 	}
@@ -280,6 +319,16 @@ func TestGitOperandClassTestRefusesItsProbes(t *testing.T) {
 	stripped := strings.Replace(string(f.Src), "\"remote\", \"set-url\", \"origin\", \"--\", baseRepo", "\"remote\", \"set-url\", \"origin\", baseRepo", 1)
 	require.NotEqual(t, string(f.Src), stripped, "the set-url call moved; re-aim this probe")
 	assert.Len(t, gitOperandFindings(f.Rel, []byte(stripped)), 1, "stage.go without its `--` before the card's base-repo is red")
+}
+
+func TestGitOperandClassTestSeesTheCatFileSeparatorInStage(t *testing.T) {
+	t.Parallel()
+
+	f := stageFile(t)
+	require.NotNil(t, f, "internal/swarm/stage.go is not in the tree")
+	stripped := strings.Replace(string(f.Src), "\"cat-file\", \"-e\", \"--end-of-options\", baseSha", "\"cat-file\", \"-e\", baseSha", 1)
+	require.NotEqual(t, string(f.Src), stripped, "the cat-file call moved; re-aim this probe")
+	assert.Len(t, gitOperandFindings(f.Rel, []byte(stripped)), 1, "stage.go without its separator before the card's base-sha in cat-file is red")
 }
 
 func stageFile(t *testing.T) *treeFile {

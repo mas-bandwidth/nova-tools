@@ -336,6 +336,13 @@ func doneWhenTests(v string) ([]doneTest, string) {
 // `fn name(` in a Rust file. `git grep` exits 1 on no match, which is an answer
 // (absent), not an error.
 func testDefinedAt(repo, sha string, tn doneTest) (bool, error) {
+	// `git grep` has no separator that keeps a tree-ish an operand on every git the benches
+	// carry (2.43 reads `--end-of-options` there as a revision), so the tree-ish is held to
+	// the shape git itself printed, never a value a card wrote: the 40 hex digits of
+	// rev-parse, which cannot start with `-`. The class test allows this one site for that.
+	if !fullHexSHA(sha) {
+		return false, fmt.Errorf("the tree %q is not a full commit sha", sha)
+	}
 	var pat string
 	var specs []string
 	switch tn.runner {
@@ -346,7 +353,7 @@ func testDefinedAt(repo, sha string, tn doneTest) (bool, error) {
 	default:
 		pat, specs = `fn[ \t]+`+tn.name+`[ \t]*[(<]`, []string{"*.rs"}
 	}
-	args := append([]string{"grep", "-q", "-E", "-e", pat, "--end-of-options", sha, "--"}, specs...)
+	args := append([]string{"grep", "-q", "-E", "-e", pat, sha, "--"}, specs...)
 	res, err := gitrun.Run(context.Background(), gitrun.Options{C: repo}, args...)
 	if err == nil {
 		return true, nil
