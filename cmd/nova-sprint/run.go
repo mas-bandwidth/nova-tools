@@ -193,6 +193,9 @@ func (a *app) printTick(res store.TickResult, err error, max int, stdout, stderr
 	if res.Due > 0 {
 		fmt.Fprintf(stdout, "DUE %d moves past the tick's bounds: the next ticks catch up\n", res.Due)
 	}
+	for _, n := range res.Said {
+		fmt.Fprintf(stdout, "NOTE %s\n", oneline.Escape(n))
+	}
 	if res.Done != "" {
 		// the sprint is done: the machine stopped itself (errata 3 amendment 6)
 		fmt.Fprintf(stdout, "HAPPENED %s: %s; the machine is STOPPED; %s\n", sprint.NSprintDone, oneline.Escape(res.Done), oneline.Escape(res.Hint))

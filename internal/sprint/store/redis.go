@@ -756,9 +756,9 @@ func (r *Redis) TableChanges(ctx context.Context, table string, from, to uint64)
 	for page := 0; page < 64; page++ {
 		evs, err := r.C.XRevRangeN(ctx, key, end, "-", changePage).Result()
 		if err != nil && strings.Contains(err.Error(), "NOPERM") {
-			// a user not granted the stream's read: the twin reads the
-			// tables whole
-			return nil, false, nil
+			// a user not granted the stream's read: said, and the twin reads
+			// the table whole
+			return nil, false, &GrantError{Command: "XREVRANGE", Key: key, Cause: err}
 		}
 		if err != nil {
 			return nil, false, err

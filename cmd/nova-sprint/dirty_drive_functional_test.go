@@ -37,6 +37,10 @@ const (
 	driveMembers   = 8
 	driveWidth     = 64
 	driveSample    = 50 // ticks between two samples of the streams (every tick before the 50th)
+	// MaxTickWall is the gate every tick of the drive is held to, the owner's
+	// law of 2026-09-30: "the whole intent is sub-second ticks. This is a
+	// requirement." A tick over it fails the drive, named with its parts.
+	MaxTickWall = time.Second
 )
 
 // driveTick is one tick of the loop as it was told of: what started it, what
@@ -51,7 +55,10 @@ type driveTick struct {
 	queued int // entries in the work queue when the tick ended
 	err    string
 	wall   time.Duration
+	took   time.Duration    // the tick's own wall time (TickResult.Took): the gate's
 	times  []store.PartTime // what the tick spent its time on, part by part
+	cost   store.PartTime   // the tick's cost summed: its trips, whole-table reads, records, mismatches
+	load   string           // the machine's load averages as the tick ended
 }
 
 // driveSampleAt is the landed count of each stream, every driveSample ticks.
@@ -226,7 +233,7 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 			began := time.Now()
 			res, err := st.Tick(lctx)
 			q, _ := st.B.QueueRead(lctx)
-			tk := driveTick{n: i, why: why, idle: res.Idle, parts: len(res.Parts), order: len(res.Order), end: res.TickEnd, queued: len(q), wall: time.Since(began), times: res.Times}
+			tk := driveTick{n: i, why: why, idle: res.Idle, parts: len(res.Parts), order: len(res.Order), end: res.TickEnd, queued: len(q), wall: time.Since(began), took: res.Took, times: res.Times, cost: res.Cost(), load: machineLoad()}
 			if err != nil && lctx.Err() == nil {
 				tk.err = err.Error()
 			}
@@ -505,6 +512,42 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 		t.Errorf("the coordinator met %d judgments in a sprint with no gates, needs or chances: %v", len(judged), judged)
 	}
 
+	// THE GATE: every tick under MaxTickWall; after the first tick the loop
+	// reads no table whole (its twin catches up from the change streams), and
+	// its twin never disagrees with the store's counts
+	var over []string
+	var sumTook, maxTook time.Duration
+	whole := int64(0)
+	var loads []string
+	for i, tk := range ticks {
+		sumTook += tk.took
+		maxTook = max(maxTook, tk.took)
+		if i > 0 {
+			whole += tk.cost.Reads
+		}
+		if tk.took > MaxTickWall && tk.err == "" {
+			var parts []string
+			for _, pt := range tk.times {
+				if pt.Took >= 50*time.Millisecond {
+					parts = append(parts, fmt.Sprintf("%s/%s %s %dt", pt.Table, pt.Name, pt.Took.Round(time.Millisecond), pt.Trips))
+				}
+			}
+			over = append(over, fmt.Sprintf("tick %d took %s (load %s): %s", tk.n, tk.took.Round(time.Millisecond), tk.load, strings.Join(parts, ", ")))
+		}
+		if i%10 == 0 {
+			loads = append(loads, tk.load)
+		}
+	}
+	gate := fmt.Sprintf("THE GATE: %d ticks, mean %s, max %s, %d over %s; whole-table reads after the first tick %d; machine load %s",
+		len(ticks), (sumTook / time.Duration(max(len(ticks), 1))).Round(time.Millisecond), maxTook.Round(time.Millisecond), len(over), MaxTickWall, whole, strings.Join(loads, " | "))
+	fmt.Fprintln(os.Stderr, gate)
+	for _, o := range over {
+		t.Errorf("over the gate of %s: %s", MaxTickWall, o)
+	}
+	if whole > 0 {
+		t.Errorf("the loop read %d tables whole after its first tick: its twin did not catch up", whole)
+	}
+
 	report := fmt.Sprintf("DIRTY-TICK DRIVE: %d cards in %d streams on %d machines of width %d: all landed in %s over %d ticks (%.1f ticks/s)\n"+
 		"  the loop's ticks began on: %v; %d idle, %d did something, %d needed more than the four first updates (most updates in one tick: %d); the slowest tick took %s\n"+
 		"  tick-end notes: %d (one for each of the %d ticks that addressed the coordinator), the coordinator read the inbox %d times (accepted %d groups, %d refused as already accepted by the machine): %s\n"+
@@ -528,7 +571,19 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 		}
 	}
 	fmt.Fprintln(os.Stderr, report)
-	t.Log("\n" + report)
+	t.Log("\n" + report + "\n  " + gate)
+}
+
+// machineLoad is the machine's load averages, as the kernel says them in
+// /proc/loadavg ("" where there is none): the gate is read beside them.
+func machineLoad() string {
+	if b, err := os.ReadFile("/proc/loadavg"); err == nil {
+		f := strings.Fields(string(b))
+		if len(f) >= 3 {
+			return strings.Join(f[:3], " ")
+		}
+	}
+	return "" // the container's kernel says it in /proc; no other is asked
 }
 
 func tail(s string, n int) string {

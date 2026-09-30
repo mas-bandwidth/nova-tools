@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -32,6 +33,34 @@ type Stats struct {
 	// mismatch is the tables whose records, caught up, did not add up to the
 	// store's counts of the same revision: each read whole (twin.go)
 	mismatch atomic.Int64
+	// notes is what the store's reads met that the tick says once (a grant
+	// missing): each said by the next tick, and not again.
+	mu    sync.Mutex
+	notes []string
+	said  map[string]bool
+}
+
+// note records a thing to say once.
+func (s *Stats) note(text string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.said[text] {
+		return
+	}
+	if s.said == nil {
+		s.said = map[string]bool{}
+	}
+	s.said[text] = true
+	s.notes = append(s.notes, text)
+}
+
+// takeNotes is the notes not yet said.
+func (s *Stats) takeNotes() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := s.notes
+	s.notes = nil
+	return out
 }
 
 // stats is the store's counters, made on first use.

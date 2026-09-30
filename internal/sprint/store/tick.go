@@ -395,6 +395,9 @@ type TickResult struct {
 	// Took is the tick's wall time, from its first read of the machine's
 	// state to its heartbeat.
 	Took time.Duration `json:"took_ns"`
+	// Said is what the tick's reads met that it says once: a grant the
+	// store's user lacks (its read then reads the table whole).
+	Said []string `json:"said,omitempty"`
 }
 
 // PartTime is one part of a tick and the time its step took.
@@ -591,6 +594,7 @@ func staleRefusal(refused []sprint.Refusal, at uint64) bool {
 // new epoch.
 func (st *Store) Tick(ctx context.Context) (res TickResult, err error) {
 	began := time.Now()
+	defer func() { res.Said = append(res.Said, st.stats().takeNotes()...) }()
 	st.stats()
 	st.twin() // made on the store the run loop keeps: its ticks share it
 	defer func() { res.Took = time.Since(began) }()

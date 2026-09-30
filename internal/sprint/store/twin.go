@@ -46,6 +46,17 @@ import (
 // records of every table, and the next read reads them whole. A test build
 // checks every read of the twin against a fresh read (Store.CheckTwin).
 
+// GrantError is a read the store refused to this user for want of a grant:
+// the twin reads the table whole instead, and the tick says so (a NOTE).
+type GrantError struct {
+	Command, Key string
+	Cause        error
+}
+
+func (e *GrantError) Error() string {
+	return fmt.Sprintf("the store refused %s on %s to this user (%v): grant +%s to its seat; the tick reads the table whole until then", e.Command, e.Key, e.Cause, strings.ToLower(e.Command))
+}
+
 // TableChanger is a store that says which records a table's writes changed
 // between two of its revisions: the table layer's change stream. ok is false
 // when the stream does not account for every revision between (a gap,
@@ -328,7 +339,13 @@ func (st *Store) catchUp(ctx context.Context, tw *Twin, name string, shape ntabl
 	var ids []string
 	if ok {
 		var err error
-		if ids, ok, err = tc.TableChanges(ctx, shape.Name, t.Revision, shape.Revision); err != nil {
+		ids, ok, err = tc.TableChanges(ctx, shape.Name, t.Revision, shape.Revision)
+		var grant *GrantError
+		if errors.As(err, &grant) {
+			st.stats().note(grant.Error())
+			ok, err = false, nil
+		}
+		if err != nil {
 			return err
 		}
 	}
