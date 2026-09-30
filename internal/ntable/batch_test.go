@@ -7,9 +7,9 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
-
-func strPtr(s string) *string { return &s }
 
 func TestBatchManifestSerialization(t *testing.T) {
 	t.Parallel()
@@ -27,7 +27,7 @@ func TestBatchManifestSerialization(t *testing.T) {
 					Revision: "2",
 					Place:    &ntable.PlaceExpect{Row: "build", Col: "ready"},
 					Fields: map[string]ntable.FieldGuard{
-						"definition": {Equals: strPtr("definition-id")},
+						"definition": {Equals: new("definition-id")},
 					},
 				},
 				Move: &ntable.MemberMoveOp{Row: "build", Col: "working"},
@@ -50,9 +50,7 @@ func TestBatchManifestSerialization(t *testing.T) {
 	}
 
 	data, err := json.Marshal(manifest)
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
-	}
+	require.NoError(t, err, "Marshal")
 	s := string(data)
 	for _, expected := range []string{
 		`"schema":1`,
@@ -65,9 +63,7 @@ func TestBatchManifestSerialization(t *testing.T) {
 		`"definition":{"equals":"definition-id"}`,
 		`"absent":true`,
 	} {
-		if !strings.Contains(s, expected) {
-			t.Errorf("manifest json missing %s in: %s", expected, s)
-		}
+		assert.Contains(t, s, expected, "manifest json missing %s in: %s", expected, s)
 	}
 }
 
@@ -103,16 +99,12 @@ func TestBatchDeltaRobustUnmarshal(t *testing.T) {
 	}`
 
 	var delta ntable.BatchDelta
-	if err := json.Unmarshal([]byte(rawJSON), &delta); err != nil {
-		t.Fatalf("Unmarshal: %v", err)
-	}
+	require.NoError(t, json.Unmarshal([]byte(rawJSON), &delta), "Unmarshal")
 
 	if delta.OperationID != "op-test" || delta.Digest != "abcdef123456" || delta.Actor != "worker" {
 		t.Fatalf("unexpected delta header: %+v", delta)
 	}
-	if len(delta.Members) != 2 {
-		t.Fatalf("expected 2 members, got %d", len(delta.Members))
-	}
+	require.Len(t, delta.Members, 2, "expected 2 members, got %d", len(delta.Members))
 	m1 := delta.Members[0]
 	if m1.ID != "m1" || len(m1.FieldsSet) != 0 || len(m1.FieldsUnset) != 0 {
 		t.Fatalf("unexpected m1: %+v", m1)
@@ -128,14 +120,10 @@ func TestBatchInvalidTableName(t *testing.T) {
 	_, err := ntable.ApplyBatch(context.Background(), nil, ntable.BatchManifest{
 		Table: "invalid table name!",
 	})
-	if err == nil || !strings.Contains(err.Error(), "invalid name") {
-		t.Fatalf("expected invalid name error, got: %v", err)
-	}
+	require.ErrorContains(t, err, "invalid name", "expected invalid name error, got")
 
 	_, err = ntable.ReadSet(context.Background(), nil, "invalid table name!", ntable.ReadSetScope{})
-	if err == nil || !strings.Contains(err.Error(), "invalid name") {
-		t.Fatalf("expected invalid name error, got: %v", err)
-	}
+	require.ErrorContains(t, err, "invalid name", "expected invalid name error, got")
 }
 
 // A refusal the library makes before it sends says so: this call changed nothing,
@@ -162,9 +150,7 @@ func TestBatchRefusalBeforeSendingIsAboutThisCallOnly(t *testing.T) {
 			continue
 		}
 		for _, want := range []string{"changed=no", "this call changed nothing", "earlier call with the same operation id"} {
-			if !strings.Contains(err.Error(), want) {
-				t.Errorf("%s: %q lacks %q", name, err, want)
-			}
+			assert.ErrorContains(t, err, want, "%s: %q lacks %q", name, err, want)
 		}
 	}
 }

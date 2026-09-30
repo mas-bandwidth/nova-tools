@@ -13,6 +13,8 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const maxCounter = "18446744073709551615"
@@ -21,9 +23,7 @@ func TestBatchMemberRevisionAtItsMaximumRefusesEveryChange(t *testing.T) {
 	t.Parallel()
 	c, ctx := probeTable(t)
 	seedTwo(t, ctx, c)
-	if err := c.HSet(ctx, ntable.MemberKey("a"), "revision", maxCounter).Err(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, c.HSet(ctx, ntable.MemberKey("a"), "revision", maxCounter).Err())
 	cases := map[string]ntable.BatchMemberEntry{
 		"field set": {ID: "a", Expect: &ntable.MemberExpect{}, Set: map[string]string{"k": "v"}},
 		"unset":     {ID: "a", Expect: &ntable.MemberExpect{}, Unset: []string{"role"}},
@@ -36,9 +36,7 @@ func TestBatchMemberRevisionAtItsMaximumRefusesEveryChange(t *testing.T) {
 		if !errors.Is(err, ntable.ErrCounterOverflow) || !strings.Contains(err.Error(), `member "a"`) || !strings.Contains(err.Error(), "changed=no") {
 			t.Errorf("%s: %v; want OVERFLOW naming member a with changed=no", name, err)
 		}
-		if !reflect.DeepEqual(before, storeImage(t, c)) {
-			t.Errorf("%s: the store changed", name)
-		}
+		assert.Equal(t, before, storeImage(t, c), "%s: the store changed", name)
 	}
 	// a late entry at the maximum refuses the whole batch, and an entry that changes nothing does not step it
 	before := storeImage(t, c)
@@ -58,9 +56,7 @@ func TestBatchTableRevisionAtItsMaximumRefusesTheBatch(t *testing.T) {
 	t.Parallel()
 	c, ctx := probeTable(t)
 	seedTwo(t, ctx, c)
-	if err := c.HSet(ctx, ntable.RevisionKey("demo"), "n", maxCounter).Err(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, c.HSet(ctx, ntable.RevisionKey("demo"), "n", maxCounter).Err())
 	before := storeImage(t, c)
 	for name, entry := range map[string]ntable.BatchMemberEntry{
 		"change": {ID: "a", Expect: &ntable.MemberExpect{}, Set: map[string]string{"k": "v"}},
@@ -70,8 +66,6 @@ func TestBatchTableRevisionAtItsMaximumRefusesTheBatch(t *testing.T) {
 		if !errors.Is(err, ntable.ErrCounterOverflow) || !strings.Contains(err.Error(), "table revision") || !strings.Contains(err.Error(), "changed=no") {
 			t.Errorf("%s: %v; want an overflow of the table revision with changed=no", name, err)
 		}
-		if !reflect.DeepEqual(before, storeImage(t, c)) {
-			t.Errorf("%s: the store changed", name)
-		}
+		assert.Equal(t, before, storeImage(t, c), "%s: the store changed", name)
 	}
 }

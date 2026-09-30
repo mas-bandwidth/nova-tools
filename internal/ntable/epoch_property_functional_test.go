@@ -18,6 +18,8 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The original property harness deliberately stays transplantable to the old
@@ -369,7 +371,7 @@ func (h *epochProperty) step(a epochAction) {
 			h.fail("invalid model Advance precondition")
 		}
 		for i, c := range h.stores {
-			image := memberStoreImage(h.t, c)
+			image := storeImage(h.t, c)
 			for key, value := range image {
 				if strings.HasPrefix(key, "table::member:"+fmt.Sprintf("e%d-", h.active)) || strings.Contains(key, fmt.Sprintf(":%d:", h.active)) {
 					h.frozen[i][key] = value
@@ -379,7 +381,7 @@ func (h *epochProperty) step(a epochAction) {
 				h.fail("advance: %v", err)
 			}
 			delete(image, epochPropertyKey)
-			after := memberStoreImage(h.t, c)
+			after := storeImage(h.t, c)
 			delete(after, epochPropertyKey)
 			if !reflect.DeepEqual(image, after) {
 				h.fail("Advance changed more than the epoch register")
@@ -399,7 +401,7 @@ func (h *epochProperty) step(a epochAction) {
 	opts := ntable.WriteOptions{Epoch: h.seen[a.actor], Actor: fmt.Sprintf("w%d", a.actor+1), Fence: "fixture", Idem: strconv.Itoa(len(h.trace)), Receipt: &receipt}
 	var sourceEvent redis.XMessage
 	for i, c := range h.stores {
-		image := memberStoreImage(h.t, c)
+		image := storeImage(h.t, c)
 		var err error
 		if i == 0 || want != "ok" {
 			err = a.call(h.ctx, c, opts)
@@ -428,12 +430,12 @@ func (h *epochProperty) step(a epochAction) {
 			h.fail("store%d action=%s result=%s (%v), model=%s", i, a.verb, got, err, want)
 		}
 		if want != "ok" {
-			if !reflect.DeepEqual(image, memberStoreImage(h.t, c)) || receipt.ID != "" {
+			if !reflect.DeepEqual(image, storeImage(h.t, c)) || receipt.ID != "" {
 				h.fail("refusal wrote state or returned a receipt")
 			}
 		} else {
 			allowed := h.writeKeys(a, before, after)
-			afterStore := memberStoreImage(h.t, c)
+			afterStore := storeImage(h.t, c)
 			if image["tables"] != afterStore["tables"] {
 				if h.template[a.table] || (a.verb != "create" && a.verb != "bind") {
 					h.fail("store%d action %s unexpectedly modified tables registry", i, a.verb)
@@ -563,7 +565,7 @@ func unexpectedEpochWrites(before, after map[string]string, allowed map[string]b
 func (h *epochProperty) verify() {
 	h.t.Helper()
 	for i, c := range h.stores {
-		image := memberStoreImage(h.t, c)
+		image := storeImage(h.t, c)
 		var wantCatalog []string
 		for _, table := range propTables {
 			if h.template[table] {
@@ -666,7 +668,7 @@ func (h *epochProperty) verify() {
 				}
 			}
 		}
-		if !reflect.DeepEqual(image, memberStoreImage(h.t, c)) {
+		if !reflect.DeepEqual(image, storeImage(h.t, c)) {
 			h.fail("verification read mutated store%d", i)
 		}
 	}
@@ -675,13 +677,9 @@ func (h *epochProperty) verify() {
 func TestTableEpochActionsAndReceiptReplay(t *testing.T) {
 	t.Parallel()
 	model, err := os.ReadFile("../../tla/EpochMemberTable.tla")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	for verb, action := range epochActionNames {
-		if !strings.Contains(string(model), "\n"+action+"(") {
-			t.Fatalf("%s maps to missing model action %s", verb, action)
-		}
+		require.Contains(t, string(model), "\n"+action+"(", "%s maps to missing model action %s", verb, action)
 	}
 	// One owned source/replay pair per test, reset between reproducible seeds.
 	_, source := live(t)
@@ -697,20 +695,12 @@ func TestTableEpochActionsAndReceiptReplay(t *testing.T) {
 				state: map[string]*epochTableState{}, template: map[string]bool{}, revision: map[string]uint64{}, coverage: coverage,
 				frozen: [2]map[string]string{{}, {}}}
 			for _, c := range h.stores {
-				if err := c.FlushAll(h.ctx).Err(); err != nil {
-					t.Fatal(err)
-				}
-				if err := c.HSet(h.ctx, "fixture:unrelated", "n", "unchanged").Err(); err != nil {
-					t.Fatal(err)
-				}
-				if err := c.HSet(h.ctx, epochPropertyKey, "n", 1).Err(); err != nil {
-					t.Fatal(err)
-				}
+				require.NoError(t, c.FlushAll(h.ctx).Err())
+				require.NoError(t, c.HSet(h.ctx, "fixture:unrelated", "n", "unchanged").Err())
+				require.NoError(t, c.HSet(h.ctx, epochPropertyKey, "n", 1).Err())
 				for epoch := uint64(1); epoch <= 3; epoch++ {
 					for n := 1; n <= 3; n++ {
-						if err := c.HSet(h.ctx, ntable.MemberKey(epochMember(epoch, n)), "epoch", epoch).Err(); err != nil {
-							t.Fatal(err)
-						}
+						require.NoError(t, c.HSet(h.ctx, ntable.MemberKey(epochMember(epoch, n)), "epoch", epoch).Err())
 					}
 				}
 			}
@@ -770,9 +760,7 @@ func TestTableEpochActionsAndReceiptReplay(t *testing.T) {
 	}
 	for _, verb := range verbs {
 		for _, outcome := range []string{"ok", "stale"} {
-			if coverage[verb+":"+outcome] == 0 {
-				t.Errorf("generator missed %s:%s", verb, outcome)
-			}
+			assert.NotEqual(t, 0, coverage[verb+":"+outcome], "generator missed %s:%s", verb, outcome)
 		}
 	}
 	if coverage["cell_add:member-epoch"] == 0 || coverage["advance"] != 16 {
