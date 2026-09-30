@@ -135,6 +135,7 @@ const (
 	guardCtl      = "ctl"      // rules_time.go guardCtl: a member's control card's revision (R17)
 	guardBeat     = "beat"     // rules_time.go guardBeat: beat:<m>'s score in the due set (R17)
 	guardRevs     = "revs"     // rules_time.go guardRevs: the fold of a table's cards' revisions (R17)
+	guardVersion  = "version"  // rules_time.go guardVersion: a table's version in {p}tver@e as read (R17)
 	guardDue      = "due"      // rules_time.go entryAsRead: a due (or cut) entry at Score as read, or absent (R11, R14, R18)
 	guardClock    = "clock"    // rules_time.go guardClock: a clock field as read, 0 for an empty one (R17)
 )
@@ -162,15 +163,21 @@ const (
 //   - ctl (R17): a Layer 1 guard entry on the member's control card at its
 //     cell and revision; beat (R17): X's due guard on beat:<m>, absent when
 //     read as 0;
+//   - revs (R17's fold of the revisions of the cards of a table it read,
+//     errata 3 H17's one guard a table) and version (that table's version in
+//     {p}tver@e as read): the fold names no card, so neither Layer 1 nor X can
+//     compute it, and Layer 1 has no guard of a table's version; the version
+//     is X's version guard (sprintfn.XGuardVersion), and it carries the fold:
+//     X moves the version on every step that changes a card of the table, so
+//     it holds only where the fold does. A fold with no version guard of its
+//     table is not carried;
 //   - every other kind goes to X as it is.
-//
-// revs (R17's fold of the revisions of a table's cards) is refused: the fold
-// names no card, so neither Layer 1 nor X can check it (errata 3 H17 chose one
-// guard a table; its carrier is owed).
 func convertGuards(rp sprint.RulePlan) ([]tset.Entry, []sprint.XGuard, error) {
 	var guards []sprint.XGuard
 	var entries []tset.Entry
 	var count *tset.Entry
+	var folds []string
+	versioned := map[string]bool{}
 	sets, err := sprint.SetGuardsOf(rp)
 	if err != nil {
 		return nil, nil, err
@@ -235,9 +242,17 @@ func convertGuards(rp sprint.RulePlan) ([]tset.Entry, []sprint.XGuard, error) {
 			}
 			guards = append(guards, sprint.XGuard{Kind: sprintfn.XGuardDue, Key: g.Key, Score: score})
 		case guardRevs:
-			return nil, nil, notCarried("the fold of the revisions of the %s cards read (R17's stopinputs), which neither Layer 1 nor X checks", g.Key)
+			folds = append(folds, g.Key)
+		case guardVersion:
+			versioned[g.Key] = true
+			guards = append(guards, sprint.XGuard{Kind: sprintfn.XGuardVersion, Key: g.Key, Score: g.Score})
 		default:
 			guards = append(guards, g)
+		}
+	}
+	for _, t := range folds {
+		if !versioned[t] {
+			return nil, nil, notCarried("the fold of the revisions of the %s cards read (R17's stopinputs) with no version guard of the table", t)
 		}
 	}
 	if count != nil {

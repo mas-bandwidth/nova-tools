@@ -314,29 +314,96 @@ func stoppedWorld(t *testing.T) (*world, sprint.Clock) {
 	return w, sprint.Clock{StoppedSinceMs: w.clk.now().UnixMilli()}
 }
 
-// TestRealRuleStoppedLookApplies (R17, 2.3; errata 3 H7, H16): a look that
-// finds a move due sets due_since_ms; ten minutes later it raises "the machine
-// is STOPPED and moves are due" and sets stopraised_ms; a look with no move due
-// closes it and clears both. Each step is guarded on the clock fields as read
-// and on the counters (X's clock and counter guards) and writes the clock
-// through the sprint part's Time (gap c).
+// stopInputs are R17's inputs as the store holds them now: the cards of the
+// work table given, the fleet's members' control cards, each member's beat (0
+// for none), the counters and each read table's version ({p}tver@e): what a
+// look's read gives (sprint.ReadStopInputs), read here directly.
+func (w *world) stopInputs(cards []string, members []string) sprint.StopInputs {
+	w.t.Helper()
+	next := w.tw.SprintKeys()[testNames.Key("next@0")].Hash
+	score, _ := strconv.ParseUint(next["score"], 10, 64)
+	streams, _ := strconv.ParseUint(next["streams"], 10, 64)
+	in := sprint.StopInputs{Next: score, Streams: streams, Cards: map[sprint.CardRef]uint64{}, Members: map[string]uint64{},
+		Beats: map[string]int64{}, Versions: map[string]uint64{}}
+	for _, id := range cards {
+		in.Cards[sprint.CardRef{Table: sprint.Work, ID: id}] = w.rev(sprint.Work, id)
+	}
+	for _, m := range members {
+		in.Members[m] = w.rev(sprint.Fleet, sprint.CtlID(m))
+		in.Beats[m] = int64(w.zset("due@0")["beat:"+m])
+	}
+	for table, v := range w.hash("tver@0") {
+		n, _ := strconv.ParseUint(v, 10, 64)
+		in.Versions[table] = n
+	}
+	return in
+}
+
+// rev is a card's revision on the world, 0 for none.
+func (w *world) rev(table, id string) uint64 {
+	w.t.Helper()
+	res, err := sprintfn.Read(context.Background(), w.tw, &sprintfn.ReadRequest{Epoch: "0",
+		Tset: []tset.ReadQuery{{Kind: "ids", Table: table, IDs: []string{id}}}})
+	if err != nil || res.Read == nil {
+		w.t.Fatalf("read %s: %v %+v", id, err, res.Refusal)
+	}
+	n, _ := strconv.ParseUint(string(res.Read.Tset[0].Records[0].Revision), 10, 64)
+	return n
+}
+
+// stoppedCards is a STOPPED world with a work card p1 waiting in s1 and a
+// member m1 up, with no beat, and a loop that holds its lease.
+func stoppedCards(t *testing.T) (*world, sprint.Clock, *Loop) {
+	t.Helper()
+	w, c := stoppedWorld(t)
+	w.rows("s1")
+	w.verb(create("s1:waiting", waiting(), "p1"),
+		tset.Entry{Kind: "rows", Table: sprint.Fleet, Add: []string{"m1"}})
+	w.verb(tset.Entry{Kind: "create", Table: sprint.Fleet, To: "m1:ctl", IDs: []string{sprint.CtlID("m1")}, Scores: []string{"0"},
+		Set: map[string]string{"status": sprint.Up}, About: []string{sprint.CtlID("m1")}})
+	return w, c, w.leased()
+}
+
+// dueMove is a dry plan with a move due: p1 to ready.
+var dueMove = sprint.RulePlan{Plan: sprint.Plan{Units: []sprint.Unit{{Key: "p1", Changes: []sprint.Change{{Table: sprint.Work,
+	Entry: ntable.BatchMemberEntry{ID: "p1", Move: &ntable.MemberMoveOp{Row: "s1", Col: "ready"}}}}}}}}
+
+// TestRealRuleStoppedLookApplies (R17, 2.3; errata 3 H7, H16, H17): a look
+// that finds a move due sets due_since_ms; ten minutes later it raises "the
+// machine is STOPPED and moves are due" and sets stopraised_ms; a look with no
+// move due closes it and clears both. Its inputs name a work card, a member's
+// control card and its beat (none), so each step carries every kind of R17's
+// guard as the store checks it: the clock fields and the counters (X), the
+// work table's fold carried by its version (X's version guard), the control
+// card (a Layer 1 guard entry at its revision) and the beat absent (X's due
+// guard, XGuardAbsent). Each writes the clock through the sprint part's Time
+// (gap c).
 func TestRealRuleStoppedLookApplies(t *testing.T) {
 	t.Parallel()
-	w, c := stoppedWorld(t)
-	l := w.leased()
-	due := sprint.RulePlan{Plan: sprint.Plan{Units: []sprint.Unit{{Key: "p1", Changes: []sprint.Change{{Table: sprint.Work,
-		Entry: ntable.BatchMemberEntry{ID: "p1", Move: &ntable.MemberMoveOp{Row: "s1", Col: "ready"}}}}}}}}
-	inputs := sprint.StopInputs{Next: 100000000, Streams: 1}
+	w, c, l := stoppedCards(t)
 	look := func(dry []sprint.RulePlan, c sprint.Clock, open bool) sprint.RulePlan {
-		return sprint.StoppedLook(dry, sprint.StopRead{Clock: c, Wall: w.clk.now().UnixMilli(), Open: open, Inputs: inputs})
+		return sprint.StoppedLook(dry, sprint.StopRead{Clock: c, Wall: w.clk.now().UnixMilli(), Open: open,
+			Inputs: w.stopInputs([]string{"p1"}, []string{"m1"})})
 	}
-	rp := look([]sprint.RulePlan{due}, c, false)
+	rp := look([]sprint.RulePlan{dueMove}, c, false)
 	if rp.Sprint.Clock == nil || rp.Sprint.Clock.DueSince == nil {
 		t.Fatalf("the first look: %+v", rp.Sprint)
 	}
 	reqs := w.applyReal(l, "stopped", rp)
-	if reqs[0].Sprint == nil || reqs[0].Sprint.Time == nil || !hasGuardKind(reqs[0].Body.Guards, sprintfn.XGuardCounter) {
-		t.Fatalf("R17's step: %+v %+v", reqs[0].Sprint, reqs[0].Body.Guards)
+	b := reqs[0].Body
+	version := w.stopInputs(nil, nil).Versions[sprint.Work]
+	switch {
+	case reqs[0].Sprint == nil || reqs[0].Sprint.Time == nil || !hasGuardKind(b.Guards, sprintfn.XGuardCounter):
+		t.Fatalf("R17's step: %+v %+v", reqs[0].Sprint, b.Guards)
+	case version == 0 || !slices.Contains(b.Guards, sprint.XGuard{Kind: sprintfn.XGuardVersion, Key: sprint.Work, Score: int64(version)}):
+		t.Fatalf("the work table's version %d is not guarded: %+v", version, b.Guards)
+	case !slices.Contains(b.Guards, sprint.XGuard{Kind: sprintfn.XGuardDue, Key: "beat:m1", Score: sprintfn.XGuardAbsent}):
+		t.Fatalf("m1's beat is not guarded absent: %+v", b.Guards)
+	case !slices.ContainsFunc(b.Entries, func(e tset.Entry) bool {
+		return e.Kind == "guard" && e.Table == sprint.Fleet && e.From == "m1:ctl" && slices.Equal(e.IDs, []string{sprint.CtlID("m1")}) &&
+			len(e.Revs) == 1 && string(e.Revs[0]) == strconv.FormatUint(w.rev(sprint.Fleet, sprint.CtlID("m1")), 10)
+	}):
+		t.Fatalf("m1's control card is not guarded at its revision: %+v", b.Entries)
 	}
 	since := w.clk.now().UnixMilli()
 	if got := w.hash("clock")["due_since_ms"]; got != strconv.FormatInt(since, 10) {
@@ -344,7 +411,7 @@ func TestRealRuleStoppedLookApplies(t *testing.T) {
 	}
 	c.DueSinceMs = since
 	w.clk.add(11 * time.Minute)
-	rp = look([]sprint.RulePlan{due}, c, false)
+	rp = look([]sprint.RulePlan{dueMove}, c, false)
 	if noteOf(rp, "open", sprint.NStoppedWithDue) == nil || rp.Sprint.Clock == nil || rp.Sprint.Clock.StopRaised == nil {
 		t.Fatalf("the raise: %+v %+v", rp.Notes, rp.Sprint)
 	}
@@ -360,6 +427,49 @@ func TestRealRuleStoppedLookApplies(t *testing.T) {
 	w.applyReal(l, "stopped", rp)
 	if h := w.hash("clock"); h["due_since_ms"] != "" || h["stopraised_ms"] != "" {
 		t.Fatalf("the clock after the close: %v", h)
+	}
+}
+
+// TestRealRuleStoppedLookGuardsItsInputs (R17; errata 3 H14, H17): a look's
+// step planned on inputs that have moved since is refused, nothing written,
+// for each input the store checks: a write of a card of the table read (its
+// version), the member's control card written (its revision, Layer 1), and a
+// first beat of the member (its due entry, absent as read).
+func TestRealRuleStoppedLookGuardsItsInputs(t *testing.T) {
+	t.Parallel()
+	for name, tc := range map[string]struct {
+		move       func(w *world)
+		code, says string
+	}{
+		"a work card written": {func(w *world) { w.verb(create("s1:waiting", waiting(), "p9")) },
+			sprintfn.CodeXGuard, "the version of table work is 2 now, read as 1"},
+		"the control card written": {func(w *world) {
+			w.verb(tset.Entry{Kind: "move", Table: sprint.Fleet, From: "m1:ctl", IDs: []string{sprint.CtlID("m1")},
+				Set: map[string]string{"stable_since": "1"}, About: []string{sprint.CtlID("m1")}})
+		}, "REVISION", "REVISION"},
+		"a first beat": {func(w *world) {
+			w.step(&sprintfn.Request{Epoch: "0", Meta: sprintfn.Meta{Verb: "seed", Actor: "coordinator"},
+				Sprint: &sprintfn.SprintPart{Time: &sprintfn.SprintTime{Due: []sprintfn.DueAt{{Key: "beat:m1", At: "1"}}}}})
+		}, sprintfn.CodeXGuard, "the entry beat:m1 was absent when read"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			w, c, l := stoppedCards(t)
+			rp := sprint.StoppedLook([]sprint.RulePlan{dueMove}, sprint.StopRead{Clock: c, Wall: w.clk.now().UnixMilli(),
+				Inputs: w.stopInputs([]string{"p1"}, []string{"m1"})})
+			p, rep := w.cutReal(l, "stopped", rp)
+			if p == nil || len(p.reqs) != 1 {
+				t.Fatalf("the look's step: %+v %v", p, rep.Parked)
+			}
+			tc.move(w)
+			res, err := sprintfn.Step(context.Background(), w.tw, p.reqs[0])
+			if err != nil || res.Refusal == nil || res.Refusal.Code != tc.code || !strings.Contains(res.Refusal.Message, tc.says) {
+				t.Fatalf("a step on moved inputs: %v %+v, want %s saying %q", err, res.Refusal, tc.code, tc.says)
+			}
+			if _, set := w.hash("clock")["due_since_ms"]; set && w.hash("clock")["due_since_ms"] != "" {
+				t.Fatalf("a refused step wrote the clock: %v", w.hash("clock"))
+			}
+		})
 	}
 }
 

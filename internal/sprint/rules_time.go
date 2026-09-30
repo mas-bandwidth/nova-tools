@@ -1559,6 +1559,13 @@ type StopRead struct {
 // status or stable_since moves; a beat by the score of beat:<m> as read (0
 // when there was none).
 //
+// The store cannot fold the cards a step does not name, so each table's fold
+// rides beside the table's version as read (Versions, {p}tver@e), which X moves
+// on every step that changes a card of the table: the version holds only where
+// the fold does, and it also refuses a write of a card of the table that the
+// plans did not read (a stronger guard: such a step is refused where the model
+// would apply it, and the next look plans afresh).
+//
 // The counts a dry plan reads (a cell's count, rcount `before`) are not
 // inputs here: a count moved by a card the read did not load moves no input
 // (a rework reopening a card before a sentinel). The model's DryIn is every
@@ -1578,6 +1585,11 @@ type StopInputs struct {
 	Members map[string]uint64
 	// Beats is the score of beat:<m> in the due set, by member.
 	Beats map[string]int64
+	// Versions is the version of each table in {p}tver@e as read before its
+	// cards (StopFacts.Versions), 0 for none: X moves it on every step that
+	// changes a card of the table, so it is the store's check of the fold of
+	// that table's cards (errata 3 H17).
+	Versions map[string]uint64
 }
 
 // CardRef names a card: its table and its id.
@@ -1621,6 +1633,11 @@ type StopFacts struct {
 	// Absent are the cards the dry plans asked for by id that the read found
 	// absent: each is recorded at revision 0, so its creation moves the fold.
 	Absent []CardRef
+	// Versions is the version of each table ({p}tver@e) as read before the
+	// cards: a read after them could miss a write between the two, and one
+	// before refuses only a step that could have held. No query of a snapshot
+	// answers it, so the look's caller gives it.
+	Versions map[string]uint64
 }
 
 // ReadStopInputs is the inputs of R17's dry plans as the look read them: every
@@ -1634,7 +1651,7 @@ type StopFacts struct {
 //
 // Follows stopinputs in tla/SprintEvents.tla (errata 3, H14 and H17).
 func ReadStopInputs(s *Snapshot, f StopFacts) StopInputs {
-	in := StopInputs{Next: f.Next}
+	in := StopInputs{Next: f.Next, Versions: f.Versions}
 	in.Read(s)
 	for _, ref := range f.Absent {
 		if in.Cards == nil {
@@ -1715,11 +1732,16 @@ const (
 	guardCounter = "counter" // a counter of {p}next@e, Key next or next.streams
 	guardCtl     = "ctl"     // a member's control card's revision, Member
 	guardBeat    = "beat"    // a member's beat entry's score, Member, Key beat:<m>
+	guardVersion = "version" // a table's version in {p}tver@e as read, Key <table> (StopInputs.Versions)
 )
 
 // guards are the guards of the inputs, in a fixed order: the fold of the cards
-// of each table read, the two counters, each member's control card, each beat.
-// At most one for each table, however many cards were read.
+// of each table read and that table's version, the two counters, each member's
+// control card, each beat. At most two for each table, however many cards were
+// read. The fold is the model's guard; the store cannot compute it (the step
+// names no card), and the version is how it checks it: every write of a card
+// of the table moves the version, so a version as read holds only where the
+// fold does (the step builder carries the fold by it).
 //
 // Follows stopinputs in tla/SprintEvents.tla (errata 3, H14 and H17).
 func (in StopInputs) guards() []XGuard {
@@ -1729,7 +1751,8 @@ func (in StopInputs) guards() []XGuard {
 		tables[ref.Table] = true
 	}
 	for _, t := range membersOf(tables) {
-		out = append(out, XGuard{Kind: guardRevs, Key: t, Score: revFold(in.Cards, t)})
+		out = append(out, XGuard{Kind: guardRevs, Key: t, Score: revFold(in.Cards, t)},
+			XGuard{Kind: guardVersion, Key: t, Score: int64(in.Versions[t])})
 	}
 	out = append(out, XGuard{Kind: guardCounter, Key: "next", Score: int64(in.Next)},
 		XGuard{Kind: guardCounter, Key: KeyNextStreams, Score: int64(in.Streams)})
@@ -1847,6 +1870,8 @@ func StoppedApplies(p RulePlan, c Clock, now StopInputs) string {
 			at = clock[g.Key]
 		case guardRevs:
 			at = revFold(now.Cards, g.Key)
+		case guardVersion:
+			at = int64(now.Versions[g.Key])
 		case guardCounter:
 			at = int64(now.Next)
 			if g.Key == KeyNextStreams {

@@ -88,8 +88,8 @@ func TestXPiecesAtTheBound(t *testing.T) {
 
 	h.applies("1,500 creates into one cell", xVerb("add", xBulkCreate("s1:waiting", cards, map[string]string{"kind": "primary", "open": "0"})))
 	xSameSize(t, "1,500 creates", h.last, "ZADD", xp+"elig:s1@0", 1500)
-	if len(h.last) != 2 {
-		t.Fatalf("1,500 creates wrote %d commands, want the two pieces of elig: %v", len(h.last), h.last)
+	if idx := xIndexCommands(t, h.last, "work"); len(idx) != 2 {
+		t.Fatalf("1,500 creates wrote %d index commands, want the two pieces of elig: %v", len(idx), idx)
 	}
 	marks, pieces := 0, 0
 	for _, r := range h.mirror.reads {
@@ -110,8 +110,8 @@ func TestXPiecesAtTheBound(t *testing.T) {
 		Set: map[string]string{"attempt": "0"}, About: cards}))
 	xSameSize(t, "1,500 moves", h.last, "ZREM", xp+"elig:s1@0", 1500)
 	xSameSize(t, "1,500 moves", h.last, "ZADD", xp+"fresh:s1@0", 1500)
-	if len(h.last) != 4 {
-		t.Fatalf("1,500 moves wrote %d commands, want four: %v", len(h.last), h.last)
+	if idx := xIndexCommands(t, h.last, "work"); len(idx) != 4 {
+		t.Fatalf("1,500 moves wrote %d index commands, want four: %v", len(idx), idx)
 	}
 
 	h.applies("1,200 quarantined ids", func() *Request {
@@ -190,14 +190,14 @@ func TestXQuarantinedChangesAreFoldedNotPerCard(t *testing.T) {
 	}
 	h.applies("1,500 quarantined sentinels re-scored", xVerb("rank", tset.Entry{Kind: "move", Table: sprint.Work, From: "s1:waiting", IDs: ids, Scores: scores, About: ids}))
 	xSameSize(t, "re-scored", h.last, "ZADD", xp+"sent:s1@0", 1500)
-	if len(h.last) != 2 {
-		t.Fatalf("1,500 quarantined sentinels re-scored wrote %d commands, want the two pieces of sent, not one a card", len(h.last))
+	if idx := xIndexCommands(t, h.last, "work"); len(idx) != 2 {
+		t.Fatalf("1,500 quarantined sentinels re-scored wrote %d index commands, want the two pieces of sent, not one a card", len(idx))
 	}
 
 	h.applies("1,500 quarantined sentinels removed", xVerb("drop", tset.Entry{Kind: "remove", Table: sprint.Work, From: "s1:waiting", IDs: ids, About: ids}))
 	xSameSize(t, "removed", h.last, "ZREM", xp+"sent:s1@0", 1500)
-	if len(h.last) != 2 {
-		t.Fatalf("1,500 quarantined sentinels removed wrote %d commands, want two", len(h.last))
+	if idx := xIndexCommands(t, h.last, "work"); len(idx) != 2 {
+		t.Fatalf("1,500 quarantined sentinels removed wrote %d index commands, want two", len(idx))
 	}
 	if got := h.zset("sent:s1@0"); len(got) != 1 || got["g1"] == 0 {
 		t.Fatalf("sent:s1 holds %v; want the fixture's g1 alone", got)
@@ -671,4 +671,19 @@ func TestXDroppingRefusesAnAckOnAFrozenCard(t *testing.T) {
 		r.Body.Notes = []NoteReq{{Op: "close", Type: "stalled", Cause: "slow", Subjects: []string{"p1"}}}
 	})
 	h.wantRefusal(again, CodeNotCoord)
+}
+
+// xIndexCommands are X's commands but its last, the version of the one table
+// the step changed (errata 3 H17), which it checks is there: one HSET of
+// {p}tver@0, the table moved on by one.
+func xIndexCommands(t *testing.T, cmds []Cmd, table string) []Cmd {
+	t.Helper()
+	if len(cmds) == 0 {
+		t.Fatalf("no commands")
+	}
+	v := cmds[len(cmds)-1]
+	if len(v.Argv) != 4 || v.Argv[0] != "HSET" || v.Argv[1] != xp+"tver@0" || v.Argv[2] != table {
+		t.Fatalf("the last command is not the version of %s: %v", table, v.Argv)
+	}
+	return cmds[:len(cmds)-1]
 }

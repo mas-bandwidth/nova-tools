@@ -132,7 +132,8 @@ func TestStepBuilderRefusesWhatItDoesNotCarry(t *testing.T) {
 		rp   sprint.RulePlan
 		want string
 	}{
-		"a revs fold": {sprint.RulePlan{Guards: []sprint.XGuard{{Kind: guardRevs, Key: sprint.Work, Score: 7}}}, "the fold of the revisions of the work cards read"},
+		"a revs fold with no version": {sprint.RulePlan{Guards: []sprint.XGuard{{Kind: guardRevs, Key: sprint.Work, Score: 7},
+			{Kind: guardVersion, Key: sprint.Merge, Score: 2}}}, "the fold of the revisions of the work cards read (R17's stopinputs) with no version guard of the table"},
 		"a zguard X has no kind for": {sprint.RulePlan{Guards: []sprint.XGuard{sprint.SetGuard{Kind: sprint.GuardZGuard, Key: "sent:s1", Min: "-inf", Max: "5"}.XGuard()}},
 			"a set guard of kind zguard"},
 		"bumps": {sprint.RulePlan{Plan: sprint.Plan{Units: []sprint.Unit{{Key: "p1", Bumps: []sprint.Bump{{Table: sprint.Work, ID: "p1", Field: "n", Delta: 1}}}}}}, "unit p1: bumps, notes or closes of a unit"},

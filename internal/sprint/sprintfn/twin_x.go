@@ -53,6 +53,7 @@ const (
 	xKeyHeldQ       = "heldq"       // {p}heldq@e, ZSET held key -> order (1.1)
 	xKeyAskwait     = "askwait"     // {p}askwait@e, ZSET id -> R (1.3.1)
 	xKeyJopen       = "jopen:"      // {p}jopen:<subject>@e, HASH <type>|<cause> -> note id or h<note> (1.3.1)
+	xKeyVersion     = "tver"        // {p}tver@e, HASH table -> version: X's count of the steps that changed a card of it (errata 3 H17)
 )
 
 // The fields of those keys X reads.
@@ -108,6 +109,10 @@ var xClockFields = []string{xClockStopped, xClockSince, xClockStopHold, xClockDu
 //	            or below max: S.zguard(sent:<stream>, rcount, -inf, max,
 //	            atmost 0) over {p}sprint:sent:<stream>@e (2.3, R3's release
 //	            and R6's deal).
+//	version     Key: a table. Score: its version in {p}tver@e as read, 0 for
+//	            none (errata 3 H17: R17's guard on the cards of each table its
+//	            dry plans read; X moves the version on every step that changes
+//	            a card of the table, so it holds when no card of it changed).
 //	counter     Key: a field of {p}next@e, score or streams. Score: its value
 //	            as read, 0 for a field absent (2.3, R15's COUNTER on
 //	            next.streams; R17's stopinputs, errata 3 H14). The sprint
@@ -123,6 +128,7 @@ const (
 	XGuardStranger    = "stranger"
 	XGuardSent        = "sent"
 	XGuardCounter     = "counter"
+	XGuardVersion     = "version"
 )
 
 // xSentBound is the score grammar of a sent guard's max: a decimal, with an
@@ -220,7 +226,13 @@ type xCarry struct {
 	writeEpoch  tset.Decimal
 	probes      int             // the store reads X.pre made, for the coster's check
 	readKeys    map[string]bool // the keys X.pre read, typed: prepare does not type-read them again
+	// versions are the tables whose cards the step may change, with the version
+	// each is moved to (xVersions).
+	versions []xVersion
 }
+
+// xVersion is a table's version after the step: {p}tver@e's field of the table.
+type xVersion struct{ table, to string }
 
 // xStashT holds the carries by call, oldest first, at most max of them.
 type xStashT struct {
@@ -898,9 +910,75 @@ func xPre(st *State, req *Request, obs *Before) (*xCarry, *Refusal) {
 	if ref := xPrepareDerivation(r, st, req, obs, carry); ref != nil {
 		return nil, ref
 	}
+	versions, ref := xVersions(r, req)
+	if ref != nil {
+		return nil, ref
+	}
+	carry.versions = versions
 	carry.probes = r.probes
 	carry.readKeys = r.read
 	return carry, nil
+}
+
+// xVersions reads the version of each table whose cards the step may change
+// (a caller entry that creates, moves or removes one of its cards, or an intent,
+// which becomes an entry of the work table), in one probe, and gives each one
+// more: X.plan writes them to {p}tver@<write epoch> (errata 3 H17: the version
+// R17's step is guarded on for the cards of a table it read). A step that
+// changes no card moves no version; an entry Layer 1 finds changes nothing
+// still moves its table's, which only refuses a guard that could have held. A
+// version that is not a whole number below 2^53 is CONFIG.
+func xVersions(r *xRead, req *Request) ([]xVersion, *Refusal) {
+	seen := map[string]bool{}
+	var tables []string
+	add := func(t string) {
+		if !seen[t] {
+			seen[t] = true
+			tables = append(tables, t)
+		}
+	}
+	for _, e := range req.Body.Entries {
+		if xChanged(e) {
+			add(e.Table)
+		}
+	}
+	if len(req.Body.Intents) != 0 {
+		add(sprint.Work)
+	}
+	if len(tables) == 0 {
+		return nil, nil
+	}
+	sort.Strings(tables)
+	stored, ref := r.hmget(r.at(xKeyVersion), tables)
+	if ref != nil {
+		return nil, ref
+	}
+	out := make([]xVersion, 0, len(tables))
+	for _, t := range tables {
+		n, ref := xVersionValue(t, stored[t])
+		if ref != nil {
+			return nil, ref
+		}
+		out = append(out, xVersion{table: t, to: strconv.FormatUint(n+1, 10)})
+	}
+	return out, nil
+}
+
+// xVersionMax is the most a table's version may hold: the Lua half counts in
+// doubles, exact below 2^53.
+const xVersionMax = 1<<53 - 2
+
+// xVersionValue is a stored version: 0 for none, CONFIG for one that is not a
+// canonical whole number at most xVersionMax.
+func xVersionValue(table, v string) (uint64, *Refusal) {
+	if v == "" {
+		return 0, nil
+	}
+	n, err := strconv.ParseUint(v, 10, 64)
+	if err != nil || strconv.FormatUint(n, 10) != v || n > xVersionMax {
+		return 0, xRefuse(CodeConfig, RefusalDetail{}, "the version of table %s holds %q, not a whole number", table, v)
+	}
+	return n, nil
 }
 
 // xCheckShape holds the parts of a request X reads to their shapes, REQUEST for
@@ -939,6 +1017,10 @@ func xCheckShape(req *Request) *Refusal {
 		case XGuardSent:
 			if _, _, ok := xSentKey(g.Key); !ok {
 				return bad("a sent guard's key %q is not sent:<stream> <max>", g.Key)
+			}
+		case XGuardVersion:
+			if g.Key == "" || strings.ContainsAny(g.Key, " \t\n\v\f\r@") || g.Score < 0 || g.Score > xVersionMax {
+				return bad("a version guard names %q, which is not a table, or a version that is not a whole number", g.Key)
 			}
 		case XGuardCounter:
 			if (g.Key != xFieldNextScore && g.Key != xFieldNextStream) || g.Score < 0 {
@@ -1076,6 +1158,18 @@ func xGuard(r *xRead, st *State, g XGuard, obs *Before, clock xClockState) *Refu
 		}
 		if n > 0 {
 			return fail("a sentinel of %s is placed at or below %s since the read", stream, max)
+		}
+	case XGuardVersion:
+		stored, ref := r.hmget(r.at(xKeyVersion), []string{g.Key})
+		if ref != nil {
+			return ref
+		}
+		n, ref := xVersionValue(g.Key, stored[g.Key])
+		if ref != nil {
+			return ref
+		}
+		if n != uint64(g.Score) {
+			return fail("the version of table %s is %d now, read as %d", g.Key, n, g.Score)
 		}
 	case XGuardCounter:
 		got, ok, ref := r.hget(r.at(xKeyNext), g.Key)

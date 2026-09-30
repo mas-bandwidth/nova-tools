@@ -536,6 +536,27 @@ func xCommands(prefix string, carry *xCarry, tp TablePlan) ([]Cmd, error) {
 	}
 	cmds = append(cmds, xQuarantineCmds(prefix, carry)...)
 	cmds = append(cmds, xAgendaCmds(prefix, carry)...)
+	// each table a card of which the plan changes, one version on (errata 3
+	// H17): X.pre read the version of every table the step could change
+	var args []string
+	changed := map[string]bool{}
+	for _, pe := range tp.Entries {
+		if xChanged(pe.Entry) {
+			changed[pe.Entry.Table] = true
+		}
+	}
+	for _, v := range carry.versions {
+		if changed[v.table] {
+			args = append(args, v.table, v.to)
+			delete(changed, v.table)
+		}
+	}
+	if len(changed) != 0 {
+		return nil, fmt.Errorf("the plan changes cards of a table whose version X.pre did not read: %v", changed)
+	}
+	if len(args) != 0 {
+		cmds = append(cmds, Command("HSET", prefix+"sprint:"+xKeyVersion+"@"+string(carry.writeEpoch), kindHash, args...))
+	}
 	return cmds, nil
 }
 
