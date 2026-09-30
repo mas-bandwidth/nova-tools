@@ -197,13 +197,22 @@ do
       validate = function(q, index) return SP.queries[q.kind].validate(q, index) end,
       read = function(ctx, q, index) return SP.queries[q.kind].read(ctx, q, index) end}
   end
+  -- Layer 1's frozen lifecycle: a write entry wraps its whole body once in
+  -- S.run_context, which clears the call's context on the way in and out; a
+  -- read entry calls S.read directly, which wraps itself, so a read wrapped
+  -- again would be refused CONFIG. A wrong argument count on the read is
+  -- refused inside a context of its own, as Layer 1's own read does.
+  local function bad_args(S) return S.json.encode(S.refuse('ARGS')) end
   local function read(keys, args)
     local S, L = layers()
-    if #keys ~= 0 or #args ~= 2 then return S.json.encode(S.refuse('ARGS')) end
+    if #keys ~= 0 or #args ~= 2 then return S.run_context(bad_args, S) end
     return S.read(args[1], args[2], L and L.read or nil, extension())
   end
 
-  redis.register_function('ns_sprint_step', step)
+  redis.register_function('ns_sprint_step', function(keys, args)
+    local S = layers()
+    return S.run_context(step, keys, args)
+  end)
   redis.register_function{function_name = 'ns_sprint_read', callback = read, flags = {'no-writes'}}
 end
 end

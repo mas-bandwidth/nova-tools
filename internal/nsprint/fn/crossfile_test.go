@@ -86,6 +86,22 @@ func nsFieldAvailable(name, field string, exported map[string]string) bool {
 			}
 		}
 	}
+	// The sprint's files (profile_sprint.go) are tset fragments of the sprint
+	// profile: each opens with the same guard, which the legacy prelude leaves
+	// nil (errata 2 to the upper design, item 8).
+	if field == "tset_profile" {
+		for _, fragment := range sprintFragments {
+			if name == fragment {
+				return true
+			}
+		}
+	}
+	// ns_sprint_step and ns_sprint_read resolve Layer 1's NS.tset and Layer 2's
+	// NS.tlog when a call runs, inside the registered functions (errata 2,
+	// item 8): the sprint profile loads them after the composed fragments.
+	if name == "lua/sprint_zz_fn.lua" && (field == "tset" || field == "tlog") {
+		return true
+	}
 	// The core resolves this dependency inside registered callbacks, after
 	// the composed assembler must have loaded the required Layer 2 provider.
 	// TestTSetComposedSourceIsExplicit still refuses an absent provider. This
@@ -177,6 +193,16 @@ func TestCrossFileGuardAllowsOnlyProfileSeams(t *testing.T) {
 		{"lua/table_set.lua", "tset_profiel", false},
 		{"lua/table_set.lua", "unknown", false},
 		{"lua/task.lua", "known", true},
+		{"lua/sprint_00_core.lua", "tset_profile", true},
+		{"lua/sprint_zz_fn.lua", "tset_profile", true},
+		{"lua/sprint_zz_fn.lua", "tset", true},
+		{"lua/sprint_zz_fn.lua", "tlog", true},
+		{"lua/sprint_00_core.lua", "tset", false},
+		{"lua/sprint_00_core.lua", "tlog", false},
+		{"lua/sprint_unknown.lua", "tset_profile", false},
+		{"lua/sprint_zz_fn.lua", "tset_typo", false},
+		{"lua/sprint_zz_fn.lua", "unknown", false},
+		{"lua/task.lua", "tset", false},
 	} {
 		if got := nsFieldAvailable(tc.name, tc.field, map[string]string{"known": "lua/earlier.lua"}); got != tc.want {
 			t.Errorf("%s NS.%s available=%v, want %v", tc.name, tc.field, got, tc.want)

@@ -102,6 +102,31 @@ function NS.tlog.plan(ctx, tp) trace('log'); return {seq = 1}, nil end
 function S.prepare(ctx, tp, lp, others) trace('prepare'); T.prepared = others; return 'commit-list', nil end
 function S.commit(commit) trace('commit'); return '{"status":"ok"}' end
 function S.fence_prepare(ctx) trace('fence_prepare'); return 'fence-commit', nil end
+-- Layer 1's lifecycle, as table_set.lua has it: S.run_context opens the one
+-- context of a call and refuses CONFIG inside another; S.read wraps itself.
+-- scope() records each context's enter and exit, and a stub or phase called
+-- outside any context is recorded by outside().
+local depth = 0
+function S.run_context(fn, ...)
+  if depth > 0 then return S.json.encode(S.refuse('CONFIG')) end
+  depth = depth + 1; scope('enter')
+  local ok, result = pcall(fn, ...)
+  depth = depth - 1; scope('exit')
+  if not ok then error(result, 0) end
+  return result
+end
+function S.read(version, raw, log_reader, extension)
+  return S.run_context(function()
+    trace('read')
+    T.read = {version = version, raw = raw, log_reader = log_reader, kinds = extension and extension.kinds}
+    return '{"status":"read"}'
+  end)
+end
+local traced = trace
+function trace(name)
+  if depth == 0 then outside(name) end
+  traced(name)
+end
 `
 
 // luaPhases registers every phase through the real registry, each recording
@@ -132,6 +157,9 @@ type luaSprint struct {
 	t     *testing.T
 	L     *lua.LState
 	trace []string
+	// scopes are the enter and exit of each S.run_context of the last call,
+	// and outside the stub calls it made with no context open.
+	scopes, outside []string
 }
 
 // newLuaSprint loads the stubs and the sprint's two files, in load order.
@@ -142,6 +170,14 @@ func newLuaSprint(t *testing.T) *luaSprint {
 	h := &luaSprint{t: t, L: L}
 	L.SetGlobal("trace", L.NewFunction(func(L *lua.LState) int {
 		h.trace = append(h.trace, L.CheckString(1))
+		return 0
+	}))
+	L.SetGlobal("scope", L.NewFunction(func(L *lua.LState) int {
+		h.scopes = append(h.scopes, L.CheckString(1))
+		return 0
+	}))
+	L.SetGlobal("outside", L.NewFunction(func(L *lua.LState) int {
+		h.outside = append(h.outside, L.CheckString(1))
 		return 0
 	}))
 	L.SetGlobal("json_decode", L.NewFunction(func(L *lua.LState) int {
@@ -199,7 +235,7 @@ func (h *luaSprint) setup(skip []string, parts ...string) {
 // its reply; the trace holds only this call's stub calls.
 func (h *luaSprint) call(fn string, keys []string, args ...string) string {
 	h.t.Helper()
-	h.trace = nil
+	h.trace, h.scopes, h.outside = nil, nil, nil
 	reg := h.L.GetGlobal("redis").(*lua.LTable).RawGetString("registered").(*lua.LTable)
 	f := reg.RawGetString(fn)
 	if f == lua.LNil {
@@ -600,4 +636,87 @@ function TRY(f, ...) local ok, err = pcall(f, ...); if ok then return '' end; re
 			t.Errorf("a malformed query spec %s was registered", spec)
 		}
 	}
+}
+
+// TestSprintLuaLifecycle: Layer 1's frozen lifecycle. ns_sprint_step wraps its
+// whole body once in S.run_context: every call it makes, from the argument
+// check through commit, runs inside exactly one context, whatever way the step
+// ends. ns_sprint_read calls S.read directly and does not open a context of its
+// own: S.read wraps itself, and a second context inside it is refused CONFIG
+// (so a read wrapped twice gives CONFIG, not the read's reply). A read with
+// the wrong argument count is refused ARGS inside one context, as Layer 1's own
+// read refuses it.
+func TestSprintLuaLifecycle(t *testing.T) {
+	t.Parallel()
+	once := []string{"enter", "exit"}
+	steps := []struct {
+		name, ctx, sprint string
+		args              []string
+		code              string // the refusal expected, "" for a reply
+	}{
+		{"a step", "", `{"meta":{},"lease":{"owner":"tok"}}`, nil, ""},
+		{"a fence", "{request = {entries = {}}, notes = {}, original_fence = true}", `{"meta":{}}`, nil, ""},
+		{"a replay", "{request = {entries = {}}, notes = {}, replay = {status = 'ok', replay = true}}", `{"meta":{}}`, nil, ""},
+		{"a fence with an effect", "{request = {entries = {}}, notes = {}, original_fence = true}", `{"meta":{},"lease":{"owner":"t"}}`, nil, "REQUEST"},
+		{"a bad sprint half", "", `[]`, nil, "REQUEST"},
+		{"the wrong arguments", "", "", []string{"tset/1", "{}"}, "ARGS"},
+	}
+	for _, c := range steps {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			h := newLuaSprint(t)
+			h.setup(nil, sprintfn.PartOrder...)
+			if c.ctx != "" {
+				h.do("T.ctx = function() return " + c.ctx + " end")
+			}
+			var reply string
+			if c.args != nil {
+				reply = h.call("ns_sprint_step", nil, c.args...)
+			} else {
+				reply = h.step(c.sprint)
+			}
+			if refusalCode(reply) != c.code {
+				t.Fatalf("reply %s, want refusal %q", reply, c.code)
+			}
+			if !reflect.DeepEqual(h.scopes, once) || len(h.outside) != 0 {
+				t.Fatalf("contexts %v, calls outside any context %v; want one context around the whole step", h.scopes, h.outside)
+			}
+		})
+	}
+
+	t.Run("a read calls S.read directly", func(t *testing.T) {
+		t.Parallel()
+		h := newLuaSprint(t)
+		h.setup(nil)
+		h.do(`NS.SP.query('related', {validate = function() return true end, read = function() return {} end})
+NS.SP.query('front', {validate = function() return true end, read = function() return {} end})
+NS.tlog.read = function() end`)
+		reply := h.call("ns_sprint_read", nil, "tset/1", `{"plan":true}`)
+		if reply != `{"status":"read"}` || !reflect.DeepEqual(h.trace, []string{"read"}) {
+			t.Fatalf("read: reply %s, ran %v; want S.read's reply", reply, h.trace)
+		}
+		if !reflect.DeepEqual(h.scopes, once) || len(h.outside) != 0 {
+			t.Fatalf("contexts %v, calls outside %v; want S.read's own context and no other", h.scopes, h.outside)
+		}
+		h.do("R = T.read.version .. '|' .. T.read.raw .. '|' .. tostring(T.read.log_reader == NS.tlog.read) .. '|' .. table.concat(T.read.kinds, ',')")
+		if got := h.L.GetGlobal("R").String(); got != `tset/1|{"plan":true}|true|front,related` {
+			t.Fatalf("S.read was given %s; want the version, the plan, Layer 2's reader and the sprint's kinds in sorted order", got)
+		}
+	})
+
+	t.Run("a read with the wrong arguments", func(t *testing.T) {
+		t.Parallel()
+		h := newLuaSprint(t)
+		h.setup(nil)
+		for _, args := range [][]string{{"tset/1"}, {"tset/1", "{}", "x"}} {
+			reply := h.call("ns_sprint_read", nil, args...)
+			if refusalCode(reply) != "ARGS" || len(h.trace) != 0 || !reflect.DeepEqual(h.scopes, once) {
+				t.Fatalf("args %v: reply %s, ran %v, contexts %v; want ARGS in one context", args, reply, h.trace, h.scopes)
+			}
+		}
+		reply := h.call("ns_sprint_read", []string{"k"}, "tset/1", "{}")
+		if refusalCode(reply) != "ARGS" || !reflect.DeepEqual(h.scopes, once) {
+			t.Fatalf("a key: reply %s, contexts %v; want ARGS in one context", reply, h.scopes)
+		}
+	})
 }
