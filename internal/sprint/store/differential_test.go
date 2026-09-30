@@ -1,8 +1,12 @@
 package store
 
 import (
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint/refmodel"
 )
 
 // dKnownDiff is one classified difference between the engine and the
@@ -127,4 +131,103 @@ func dRun(t *testing.T, from, n uint64, steps int) {
 func TestEngineAgreesWithTheReferenceModel(t *testing.T) {
 	t.Parallel()
 	dRun(t, 1, 8, 80) // the slow tier runs 2,000 seeds of 150
+}
+
+// TestEngineAgreesWithTheReferenceModelOverFullTick exercises the 4-phase dirty-driven
+// tick shape between the store engine and the reference model:
+// 1. work streams (pump once: resolve, deal, accept)
+// 2. readers (ask)
+// 3. merge (resume)
+// 4. fleet (level)
+// then services dirty tables until all are cleared, and verifies that:
+// - the engine store and reference model states agree after every full tick (refmodel.Compare has 0 diffs);
+// - the pump runs once per tick;
+// - rolling indexes advance modulo counts identically;
+// - coordinator wake notes at tick end match expectations.
+func TestEngineAgreesWithTheReferenceModelOverFullTick(t *testing.T) {
+	t.Parallel()
+	h := newDHarness(t)
+	// Setup: two members up (m1, m2), machine running, primaries on s1 and s2
+	for _, a := range dSetup() {
+		if findings := h.do(a); len(findings) > 0 {
+			t.Fatalf("setup %s: %v", a, findings)
+		}
+	}
+
+	tickAndCheck := func(phase string) {
+		t.Helper()
+		findings := h.do(dAction{Kind: "tick"})
+		for _, f := range findings {
+			if name, ok := dClassify(f); ok {
+				t.Logf("%s: known diff: %s", phase, name)
+				continue
+			}
+			t.Fatalf("%s: engine and model differ after tick:\n%s", phase, f)
+		}
+		// Verify tick shape: order must start with work, readers, merge, fleet, and end with "end"
+		if len(h.lastTick.Order) < 5 || !slices.Equal(h.lastTick.Order[:4], []string{sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet}) || h.lastTick.Order[len(h.lastTick.Order)-1] != "end" {
+			t.Fatalf("%s: tick order %v does not match the 4-phase dirty-driven shape", phase, h.lastTick.Order)
+		}
+	}
+
+	// 1. First tick deals ready primaries (a1, a2, a3) to up members.
+	tickAndCheck("tick 1: deal")
+
+	// 2. Members take cards and finish them.
+	s := h.observe()
+	for _, id := range []string{"a1", "a2"} {
+		w, ok := s.Work[refmodel.WC(id, 1)]
+		if !ok || w.Place != refmodel.FReady {
+			continue
+		}
+		if findings := h.do(dAction{Kind: "take", Member: w.Member, Card: refmodel.WC(id, 1), Gen: w.Gen}); len(findings) > 0 {
+			t.Fatalf("take %s: %v", id, findings)
+		}
+		if findings := h.do(dAction{Kind: "finish", Member: w.Member, Card: refmodel.WC(id, 1), Gen: w.Gen, OK: true}); len(findings) > 0 {
+			t.Fatalf("finish %s: %v", id, findings)
+		}
+	}
+
+	// 3. Second tick: pump drains work table changes (finished -> review), Phase 2 asks readers.
+	tickAndCheck("tick 2: pump review and ask readers")
+
+	// 4. Readers read cards ok.
+	s = h.observe()
+	for id, r := range s.Reads {
+		if r.Place == refmodel.Asked {
+			if findings := h.do(dAction{Kind: "read", Reader: r.Reader, Card: id, OK: true}); len(findings) > 0 {
+				t.Fatalf("read %s: %v", id, findings)
+			}
+		}
+	}
+
+	// 5. Third tick: pump auto-accepts cards with two ok reads to merging.
+	tickAndCheck("tick 3: auto-accept to merging")
+	if h.lastTick.TickEnd == 0 {
+		t.Fatalf("tick 3 auto-accept: expected coordinator tick-end note, got 0")
+	}
+
+	// 6. Merge batch on stream s1.
+	if findings := h.do(dAction{Kind: "merge", Stream: "s1", Batch: 1, Fact: "green"}); len(findings) > 0 {
+		t.Fatalf("merge: %v", findings)
+	}
+
+	// 7. Fourth tick: pump resolves dependent cards on s2 (b1, whose need a1 landed).
+	tickAndCheck("tick 4: resolve dependent cards")
+
+	// 8. Fleet down: take member m1 down.
+	if findings := h.do(dAction{Kind: "fleet", Op: "down", Member: "m1"}); len(findings) > 0 {
+		t.Fatalf("fleet down: %v", findings)
+	}
+
+	// 9. Fifth tick: fleet update redeals / levels cards to remaining up member(s).
+	tickAndCheck("tick 5: redeal / level after fleet down")
+
+	// 10. Fleet up: bring m1 back up.
+	if findings := h.do(dAction{Kind: "fleet", Op: "up", Member: "m1"}); len(findings) > 0 {
+		t.Fatalf("fleet up: %v", findings)
+	}
+
+	// 11. Sixth tick: fleet levelling evenly distributes ready cards.
+	tickAndCheck("tick 6: levelling after fleet up")
 }

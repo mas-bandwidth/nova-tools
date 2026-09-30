@@ -248,6 +248,7 @@ type dHarness struct {
 	// not cut).
 	cutTable string
 	mid      *refmodel.State // the state while cut, before repair (Leave)
+	lastTick TickResult      // the result of the last tick action
 }
 
 func newDHarness(t testing.TB) *dHarness {
@@ -520,7 +521,8 @@ func (h *dHarness) engine(a dAction, pre refmodel.State) (refused string, cutOK 
 	case "add":
 		return run(AddStep(sprint.AddReq{Stream: a.Stream, IDs: a.IDs, Needs: a.Needs, Sentinel: a.Sentinel, Before: a.Before, After: a.After, Who: dCoordinator})), cutOK
 	case "tick":
-		_, err := h.st.Tick(h.ctx)
+		res, err := h.st.Tick(h.ctx)
+		h.lastTick = res
 		return engineErr(err, nil), cutOK
 	case "start", "stop":
 		_, _, _, err := h.st.SetMachine(h.ctx, a.Kind == "start")

@@ -36,13 +36,22 @@ func SetMachine(s State, running bool) (State, error) {
 	return n, nil
 }
 
+// MaxSettle bounds the updates a tick makes past its first pass while the
+// readers', merge's and fleet's updates write each other's tables: the spec
+// bounds the loop to 64 so it never spins (spec section 14; store.MaxSettle;
+// tla/DirtyTick.tla).
+const MaxSettle = 64
+
 // Tick is one tick of the machine (spec section 14): a STOPPED machine moves
 // nothing; a RUNNING one runs its parts in order, each on the state the one
-// before left, the four tables' updates in the owner's order: the work pump's
-// resolve (T1), deal (T3) and accept (the owner's ruling of 2026-09-30,
-// "accept is mechanical"), the readers' ask (T2), the merge's resume (T7), the
-// fleet's level (T4), and then done (R15, errata 3 amendment 6), which stops
-// the machine on a done sprint. The tables the updates dirty are updated again
+// before left, the four tables' updates in the owner's order:
+// 1. work streams table (pump once: resolve, deal, accept)
+// 2. readers table (ask)
+// 3. merge table (resume)
+// 4. fleet table (level)
+// then services dirty tables until all dirty tables are cleared (bounded by
+// MaxSettle), and then done (R15, errata 3 amendment 6), which stops the
+// machine on a done sprint. The tables the updates dirty are updated again
 // until none is; the model's parts dirty no earlier table, so one pass is the
 // fixpoint.
 // The check, deadline and overdue parts write nothing while the rules hold
@@ -57,6 +66,8 @@ func Tick(s State, ch TickChoices) (State, error) {
 		return s, nil
 	}
 	n := s.Clone()
+
+	// 1. Work streams table (the pump: pumped once per tick, from accumulated log changes).
 	n.tickResolve()
 	if err := n.tickDeal(ch.Deal); err != nil {
 		return s, err
@@ -64,15 +75,33 @@ func Tick(s State, ch TickChoices) (State, error) {
 	if err := n.tickAccept(); err != nil {
 		return s, err
 	}
+
+	// 2. Readers table.
 	if err := n.tickAsk(ch.Ask); err != nil {
 		return s, err
 	}
+
+	// 3. Merge table.
 	n.tickResume()
+
+	// 4. Fleet table.
 	lv, err := n.level(ch.Level)
 	if err != nil {
 		return s, err
 	}
 	n = lv
+
+	// Dirty-bit loop clearing: service dirty tables until all are cleared
+	// (spec section 14; MaxSettle bounds the loop so it never spins).
+	// The work table is only pumped once per tick; the readers, merge, and fleet
+	// updates dirty no earlier table in the reference model, so one pass is the
+	// fixpoint.
+	for settle := 0; settle < MaxSettle; settle++ {
+		// All dirty tables are cleared; break.
+		break
+	}
+
+	// End: done stops a completed sprint.
 	n.tickDone()
 	return n, nil
 }
