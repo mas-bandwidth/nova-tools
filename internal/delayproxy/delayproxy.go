@@ -11,9 +11,9 @@
 // sees what a read of the client's connection returns. A client's write of up
 // to ChunkBytes (16 KiB) is one read on the loopback, so it is held once: a
 // pipeline the client writes in one go pays the delay once however many
-// commands it holds, and three commands sent one after the other, each waiting
-// for its reply, pay it three times. A write larger than ChunkBytes is several
-// reads.
+// commands it holds, up to the window below, and three commands sent one after
+// the other, each waiting for its reply, pay it three times. A write larger
+// than ChunkBytes is several reads.
 //
 // A LINE, NOT A QUEUE. Every read is stamped with the time it arrived and is
 // forwarded when arrival + delay is reached, never a delay after the read
@@ -21,12 +21,22 @@
 // pays the delay once, the way a long wire delays every bit by the same time
 // and not each bit by the time of the one ahead of it. Order is kept.
 //
+// A WINDOW, LIKE A LINK. A connection queues at most 256 reads between the
+// client and the target, WindowBytes (4 MiB) of full reads, and has two more in
+// hand: the one the forwarding half waits to send and the one the reading half
+// cannot yet queue. A pipeline of up to the window pays the delay once. A client
+// that writes more is held back by TCP until the reads ahead of it have gone,
+// and what it writes then is stamped when it is read: each further window pays
+// the delay once more, so a pipeline of 100,000 commands of 45 bytes (4.3 MiB)
+// pays it twice, and one of 11.5 MiB three times, as it would across a long link
+// with a window of that size.
+//
 // BOUNDED. The proxy runs one goroutine to accept, and GoroutinesPerConn
 // (three) for each open connection: the replies back, the client's reads, the
 // delay. At most Options.MaxConns connections are open; a client past the
 // bound waits in the listener's backlog until one ends, and is never served
-// out of turn. A connection holds at most 256 reads of 16 KiB in flight, and a
-// client that writes faster than the delay lets through is held back by TCP.
+// out of turn. If the listener itself fails, the proxy closes it, so a client
+// is refused and not left waiting in a backlog nothing reads.
 //
 // IT ENDS WHEN ASKED. Stop closes the listener and every connection and
 // returns when every goroutine the proxy started has returned: nothing it
@@ -67,9 +77,14 @@ const (
 	// replies back, one to read the client and one to hold and forward.
 	GoroutinesPerConn = 3
 
-	// inFlight is how many reads one connection holds at most between the
-	// client and the target.
+	// inFlight is how many reads one connection queues at most between the
+	// client and the target, beside the two it has in hand.
 	inFlight = 256
+
+	// WindowBytes is what the queue of a connection holds when its reads are
+	// full, inFlight reads of ChunkBytes: a pipeline of up to this pays the delay
+	// once, and each further WindowBytes pays it once more.
+	WindowBytes = inFlight * ChunkBytes
 
 	// dialBound is how long one connection to the target may take.
 	dialBound = 10 * time.Second
@@ -122,6 +137,11 @@ type Options struct {
 	MaxConns int
 	// Clock is the time the proxy uses. The zero Clock is the real one.
 	Clock Clock
+	// Dial connects one client to the target: network is "tcp" and address is
+	// the target Serve was given, and ctx ends when the connection has not
+	// been made in time or the proxy stops. Nil dials TCP. A test puts its own
+	// in, so that no port is dialled.
+	Dial func(ctx context.Context, network, address string) (net.Conn, error)
 	// Logf is told what the proxy cannot tell a client: a target that did
 	// not answer, a listener that failed. It may be called from any of the
 	// proxy's goroutines and never after Stop returns. Nil says nothing.
@@ -134,6 +154,7 @@ type Proxy struct {
 	target string
 	delay  time.Duration
 	clock  Clock
+	dial   func(ctx context.Context, network, address string) (net.Conn, error)
 	logf   func(format string, args ...any)
 
 	slots  chan struct{} // one token per open connection; its capacity is the bound
@@ -192,10 +213,14 @@ func Serve(ln net.Listener, target string, delay time.Duration, opts Options) (*
 		target: target,
 		delay:  delay,
 		clock:  opts.Clock,
+		dial:   opts.Dial,
 		logf:   opts.Logf,
 		slots:  make(chan struct{}, bound),
 		stop:   make(chan struct{}),
 		ends:   map[uint64]func(){},
+	}
+	if p.dial == nil {
+		p.dial = (&net.Dialer{}).DialContext
 	}
 	if p.logf == nil {
 		p.logf = func(string, ...any) {}
@@ -323,7 +348,11 @@ func (p *Proxy) accept() {
 			select {
 			case <-p.stop:
 			default:
-				p.logf("delayproxy: no longer accepting on %s: %v", p.Addr(), err)
+				// Nothing will be accepted again. The listener is closed, so a
+				// client is refused at once and not left in a backlog nobody
+				// reads; the connections already open go on until they end.
+				p.logf("delayproxy: no longer accepting on %s: %v; closing the listener", p.Addr(), err)
+				_ = p.ln.Close()
 			}
 			return
 		}
@@ -361,8 +390,9 @@ type held struct {
 func (p *Proxy) serve(client net.Conn) {
 	defer func() { <-p.slots }()
 	defer client.Close()
-	dial := net.Dialer{Timeout: dialBound}
-	up, err := dial.DialContext(p.ctx, "tcp", p.target)
+	dialCtx, cancelDial := context.WithTimeout(p.ctx, dialBound)
+	up, err := p.dial(dialCtx, "tcp", p.target)
+	cancelDial()
 	if err != nil {
 		select {
 		case <-p.stop:
