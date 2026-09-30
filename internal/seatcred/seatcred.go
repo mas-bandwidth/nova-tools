@@ -167,9 +167,6 @@ func Addr() string { return process.Addr() }
 // Selected is the seat Select recorded, "" when none.
 func Selected() string { return process.Selected() }
 
-// Active is this process's seat's login; see Selection.Active.
-func Active() (Cred, bool, error) { return process.Active() }
-
 // FromArgs selects this process's seat from args; see Selection.FromArgs.
 func FromArgs(args []string, getenv func(string) string) ([]string, error) {
 	return process.FromArgs(args, getenv)

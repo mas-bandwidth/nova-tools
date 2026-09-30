@@ -308,3 +308,19 @@ func HelpIfAsked(args []string, name string, flags ...string) {
 	}
 	panic(Help{FS: fs})
 }
+
+// BoolAsked reports whether args set the boolean flag name (-name, --name,
+// or =true) before any --: the question a dispatcher asks of a flag it must
+// honour before a flag set has parsed, such as --json on a refusal.
+func BoolAsked(args []string, name string) bool {
+	for _, a := range args {
+		if a == "--" {
+			return false
+		}
+		switch a {
+		case "-" + name, "--" + name, "-" + name + "=true", "--" + name + "=true":
+			return true
+		}
+	}
+	return false
+}

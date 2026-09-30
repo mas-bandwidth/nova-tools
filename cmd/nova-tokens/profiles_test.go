@@ -6,6 +6,19 @@ import (
 	"testing"
 )
 
+// cardUsageHeader is the thirteen columns of one card's usage.tsv, transcribed from the
+// contract named in internal/swarm/usagecard.go (job, attempt, started, ended, rc, provider,
+// model, and the five token types plus usd) and written here from that text, never from a
+// constant, so the fixture can disagree with the reader it is meant to check.
+const cardUsageHeader = "job\tattempt\tstarted\tended\trc\tprovider\tmodel\ttokens_in\ttokens_out\tcache_write\tcache_read\treasoning\tusd"
+
+// cardUsageFile writes one card's usage.tsv: the header and one row.
+func cardUsageFile(t *testing.T, path, provider, model, started, in, out, usd string) string {
+	t.Helper()
+	row := strings.Join([]string{"c", "1", started, started, "0", provider, model, in, out, "-", "-", "-", usd}, "\t")
+	return write(t, path, cardUsageHeader+"\n"+row+"\n")
+}
+
 // cardPrompt writes the card's PROMPT.md beside its usage.tsv, holding the one budget line
 // this measurement reads: "YOUR TOKEN BUDGET IS <n>." A card whose budget is not a number
 // (here, "unmetered") keeps no readable budget line, the same way a fallback usage.tsv has

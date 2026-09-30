@@ -315,7 +315,7 @@ func TestHelpNamesStatusAndDryRun(t *testing.T) {
 			t.Errorf("nova-update help is missing %q:\n%s", want, up)
 		}
 	}
-	if v := helpText("nova-version"); strings.Contains(v, "status") || strings.Contains(v, "--dry-run") {
+	if v := VersionTool("", Environment{}).Banner(); strings.Contains(v, "status") || strings.Contains(v, "--dry-run") {
 		t.Errorf("nova-version's help names a verb it does not have:\n%s", v)
 	}
 }

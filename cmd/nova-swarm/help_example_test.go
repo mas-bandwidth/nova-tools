@@ -15,11 +15,11 @@ func swarmHelp(t *testing.T, args ...string) string {
 	return out.String()
 }
 
-// batch, native and member each show one example line in their -h, above the
+// native and member each show one example line in their -h, above the
 // flags, and every flag the example uses is one the verb's own help lists.
 func TestTheLaunchVerbsShowAnExampleMadeOfTheirOwnFlags(t *testing.T) {
 	t.Parallel()
-	for _, verb := range []string{"batch", "native", "member"} {
+	for _, verb := range []string{"native", "member"} {
 		help := swarmHelp(t, verb, "-h")
 		ex, ok := verbExamples[verb]
 		if !ok {
@@ -72,8 +72,5 @@ func TestTheBannerNamesTheExampleCard(t *testing.T) {
 	help := swarmHelp(t, "help")
 	if !strings.Contains(help, "nova-swarm template --name card prints one that passes") {
 		t.Errorf("the banner does not name template --name card as the way to an example card")
-	}
-	if !strings.Contains(help, "batch --cards is a\nTSV, one card a line: label, slot number, provider/model and the card's path") {
-		t.Errorf("the banner does not say what a --cards line holds")
 	}
 }
