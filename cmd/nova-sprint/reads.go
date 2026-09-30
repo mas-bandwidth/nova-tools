@@ -151,6 +151,7 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 		if cards == nil {
 			cards = []queueCard{}
 		}
+		// ignored: json.Marshal of queue view map cannot fail
 		b, _ := json.Marshal(map[string]any{"as": *as, "stream": *stream, "epoch": epoch, "cards": cards})
 		fmt.Fprintln(stdout, string(b))
 		return 0
@@ -194,7 +195,11 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 }
 
 func (a *app) readFailed(verbName string, err error, stderr io.Writer) int {
-	fmt.Fprintf(stderr, "%s %s: %s\n", prog, verbName, oneline.Escape(err.Error()))
+	msg := oneline.Escape(err.Error())
+	if !strings.Contains(msg, "; run:") {
+		msg += "; run: " + prog + " help " + verbName
+	}
+	fmt.Fprintf(stderr, "%s %s: %s\n", prog, verbName, msg)
 	if ntable.IsRefusal(err) {
 		return 1
 	}
@@ -285,6 +290,7 @@ func (a *app) whereLoop(ctx context.Context, r whereRun, stdout, stderr io.Write
 		}
 		switch {
 		case r.c.json:
+			// ignored: json.Marshal of whereView cannot fail
 			b, _ := json.Marshal(v)
 			fmt.Fprintln(stdout, string(b))
 		case w != nil:
@@ -468,6 +474,7 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 		if groups == nil {
 			groups = []sprint.Group{}
 		}
+		// ignored: machine status fetch failure falls back to zero-value machine
 		mach, _, _ := st.Machine(ctx)
 		machine := st.MachineLine(ctx)
 		judgments, happened := inboxActs(groups, a.now())
@@ -479,6 +486,7 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 				out["needs"] = opened.Needs
 			}
 		}
+		// ignored: json.Marshal of inbox view cannot fail
 		b, _ := json.Marshal(out)
 		fmt.Fprintln(stdout, string(b))
 		return 0
@@ -712,6 +720,7 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 		if texts == nil {
 			texts = []storyText{}
 		}
+		// ignored: json.Marshal of cardView cannot fail
 		b, _ := json.Marshal(cardView{Primary: v.Primary, Work: v.Work, Reads: v.Reads, Merge: v.Merge, Open: v.Open, Needs: v.Needs, NeededBy: v.NeededBy, Held: held,
 			Timeline: events, Texts: texts})
 		fmt.Fprintln(stdout, string(b))
@@ -810,6 +819,7 @@ func (a *app) cmdCheck(args []string, stdout, stderr io.Writer) int {
 		if rep.Violations == nil {
 			rep.Violations = []sprint.Violation{}
 		}
+		// ignored: json.Marshal of check report cannot fail
 		b, _ := json.Marshal(rep)
 		fmt.Fprintln(stdout, string(b))
 		return code

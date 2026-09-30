@@ -282,7 +282,7 @@ func (f *flags) parse(args []string, stderr io.Writer) bool {
 		return false
 	}
 	if n := f.fs.NArg(); n > 0 {
-		fmt.Fprintf(stderr, "nova-swarm %s: takes no positional arguments, got %d (flags come before arguments)\n", f.verb, n)
+		fmt.Fprintf(stderr, "nova-swarm %s: takes no positional arguments, got %d (flags come before arguments); run: nova-swarm help %s\n", f.verb, n, f.verb)
 		return false
 	}
 	return true
@@ -309,6 +309,9 @@ func (f *flags) add(problem string) { f.problems = append(f.problems, problem) }
 // were any. Three independent flags cost one run, not three.
 func (f *flags) refused(stderr io.Writer) bool {
 	for _, p := range f.problems {
+		if !strings.Contains(p, "; run:") {
+			p += "; run: nova-swarm help " + f.verb
+		}
 		fmt.Fprintf(stderr, "nova-swarm %s: %s\n", f.verb, oneline.Escape(p))
 	}
 	return len(f.problems) > 0
@@ -1059,6 +1062,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	// still push the work. Printed only when the wall stopped a card with no result, which is
 	// the one shape nativeRun sets res.wall for.
 	if (res.wallRefusal != swarm.WallRefusal{}) {
+		// ignored: git commit count discovery failure falls back to default branch
 		branch, commits, _ := swarm.WallCommits(filepath.Join(res.job, "repo"))
 		fmt.Fprintln(stdout, swarm.WallLine(cfg.label, res.wallRefusal, branch, commits))
 	}

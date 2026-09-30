@@ -120,6 +120,7 @@ func seatEventLogin(opt events.WriterOptions) events.WriterOptions {
 	opt.Lookup = func(name string) string {
 		if name == pwName {
 			v := ""
+			// ignored: in-memory password retriever returns nil error
 			_ = c.Password.Use(func(pw string) error { v = pw; return nil })
 			return v
 		}

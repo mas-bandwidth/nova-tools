@@ -175,6 +175,7 @@ func cardSteps(lines []string) []cardStep {
 	var steps []cardStep
 	for i, l := range lines {
 		if m := cardStepRE.FindStringSubmatch(l); m != nil {
+			// ignored: regex matched digits, strconv.Atoi cannot fail
 			n, _ := strconv.Atoi(m[1])
 			steps = append(steps, cardStep{line: i + 1, num: n, text: l})
 		}

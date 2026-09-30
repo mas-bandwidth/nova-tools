@@ -213,11 +213,13 @@ func (r *nativeRunner) Start(p member.Packet) (member.Child, error) {
 		logf.Close()
 		return nil, err
 	}
+	// ignored: best-effort pid recording for external monitors
 	_ = os.WriteFile(pidPath, []byte(strconv.Itoa(cmd.Process.Pid)+"\n"), 0o644)
 	c := &nativeChild{card: p.Card, logPath: logPath, results: results, done: make(chan struct{})}
 	go func() {
 		c.err = cmd.Wait()
 		logf.Close()
+		// ignored: best-effort cleanup of pidfile on exit
 		_ = safepath.RemoveUnder(r.slots, pidPath)
 		close(c.done)
 	}()

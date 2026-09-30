@@ -123,6 +123,7 @@ func (a *app) cmdGoalSet(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, name, err.Error())
 	}
 	if c.json {
+		// ignored: json.Marshal of goal struct cannot fail
 		b, _ := json.Marshal(struct {
 			goalView
 			New bool `json:"new"`
@@ -166,6 +167,7 @@ func (a *app) cmdGoalShow(args []string, stdout, stderr io.Writer) int {
 		if views == nil {
 			views = []goalView{}
 		}
+		// ignored: json.Marshal of goal views cannot fail
 		b, _ := json.Marshal(views)
 		fmt.Fprintln(stdout, string(b))
 		return 0
@@ -198,6 +200,7 @@ func (a *app) cmdGoalDrop(args []string, stdout, stderr io.Writer) int {
 		return a.readFailed(name, err, stderr)
 	}
 	if c.json {
+		// ignored: json.Marshal of goal map cannot fail
 		b, _ := json.Marshal(map[string]any{"name": pos[0], "dropped": found})
 		fmt.Fprintln(stdout, string(b))
 		return 0

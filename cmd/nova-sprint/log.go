@@ -54,6 +54,7 @@ func (a *app) cmdLog(args []string, stdout, stderr io.Writer) int {
 		if out == nil {
 			out = []sprint.Line{}
 		}
+		// ignored: json.Marshal of static log struct cannot fail
 		b, _ := json.Marshal(struct {
 			Lines []sprint.Line `json:"lines"`
 		}{out})

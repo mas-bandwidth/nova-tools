@@ -64,6 +64,7 @@ func (a *app) setMachine(name string, running bool, args []string, stdout, stder
 		if err != nil {
 			o.Error = err.Error()
 		}
+		// ignored: json.Marshal of machineOut cannot fail
 		b, _ := json.Marshal(o)
 		fmt.Fprintln(stdout, string(b))
 		if err != nil {
@@ -132,6 +133,7 @@ func (a *app) cmdTick(args []string, stdout, stderr io.Writer) int {
 		if err != nil {
 			o.Error = err.Error()
 		}
+		// ignored: json.Marshal of machineOut cannot fail
 		b, _ := json.Marshal(o)
 		fmt.Fprintln(stdout, string(b))
 		if err != nil {
@@ -244,6 +246,7 @@ func (a *app) runLoop(ctx context.Context, st *store.Store, max, n int, stdout, 
 	failures := 0
 	was := ""
 	// every line before the loop is seen: the first tick reads the state whole
+	// ignored: empty cursor fallback when log tail is empty or unreadable
 	cursor, _ := st.LogTail(ctx)
 	why := tickStart
 	for i := 0; (n == 0 || i < n) && ctx.Err() == nil; i++ {

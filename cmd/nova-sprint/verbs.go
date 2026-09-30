@@ -536,6 +536,7 @@ func (a *app) report(ctx context.Context, verbName string, c common, st *store.S
 		if err != nil {
 			o.Error = err.Error()
 		}
+		// ignored: json.Marshal of output struct cannot fail
 		b, _ := json.Marshal(o)
 		fmt.Fprintln(stdout, string(b))
 		return code
@@ -850,6 +851,7 @@ func (a *app) withGroup(verbName string, fs flagSet, c *common, st *store.Store,
 	if s.expect > 0 && len(g.Members) != s.expect {
 		added, gone := groupChange(v, g, ans)
 		if c.json {
+			// ignored: json.Marshal of error map cannot fail
 			b, _ := json.Marshal(map[string]any{"error": "the group changed", "group": g.ID, "size": len(g.Members), "expected": s.expect,
 				"added": nonNil(added), "gone": nonNil(gone), "members": nonNil(g.Members), "moved": []string{}})
 			fmt.Fprintln(stdout, string(b))
@@ -976,6 +978,7 @@ func (a *app) cmdTake(args []string, stdout, stderr io.Writer) int {
 				}
 			}
 		}
+		// ignored: packet prefetch failure is non-fatal for step report
 		ps, _ := st.Packets(ctx, mine)
 		return ps
 	}
@@ -1354,6 +1357,7 @@ func (a *app) cmdRepair(args []string, stdout, stderr io.Writer) int {
 		if rr == nil {
 			rr = []store.RepairResult{}
 		}
+		// ignored: json.Marshal of repair results map cannot fail
 		b, _ := json.Marshal(map[string]any{"repaired": rr})
 		fmt.Fprintln(stdout, string(b))
 		return 0

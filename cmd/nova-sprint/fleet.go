@@ -98,6 +98,7 @@ func (a *app) cmdFleetBeat(args []string, stdout, stderr io.Writer) int {
 		last = b.Samples[n-1].Pct
 	}
 	if c.json {
+		// ignored: json.Marshal of beatReport cannot fail
 		out, _ := json.Marshal(beatReport{Member: pos[0], At: b.At, Load: b.Load, Last: last, How: b.How})
 		fmt.Fprintln(stdout, string(out))
 		return 0

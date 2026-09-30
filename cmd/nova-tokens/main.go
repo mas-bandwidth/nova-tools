@@ -1243,21 +1243,19 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 	avgList.More()
 	fmt.Fprintf(stderr, "TOKENS AVG-ALL day=%s tokens=%d usd=%s usd_per_mtok=%s\n",
 		oneline.Field(*day), allTokens, oneline.Field(tokens.Usd(allUsd)), oneline.Field(tokens.UsdPerMtok(allUsd, allTokens)))
-	// The OK line is the grammar's, field for field (SPEC-TOKENS' TOKENS SOURCE section):
-	// it carries no unreadable= and no unparsed=, so what says the day is short is the
-	// TOKENS UNREADABLE / TOKENS UNPARSED lines above it, the TOKENS NOTE, and exit 1.
-	// Giving this line those two counts is a grammar change, and the PR body proposes it.
-	fmt.Fprintf(stderr, "REPORT OK who=%s day=%s rows=%d at=%s build=%s subject=%s\n",
-		oneline.Field(*who), oneline.Field(*day), lines, oneline.Field(stamp(now)),
-		oneline.Field(buildVersion()),
-		oneline.Escape(tokens.Subject(*day, stamp(now), buildVersion(), sorted)))
 	// Rule 3, and the exit table: "a declared source with an unreadable file" is exit 1,
 	// and a line that did not parse is the same wall under fold (main.go's counts). The
 	// body still printed and --note still landed -- exit 1 still writes -- but a friend
 	// about to paste this onto the bus is told it does not cover what it claims.
 	if unreadable > 0 || unparsed > 0 {
+		fmt.Fprintf(stderr, "REPORT FAIL who=%s day=%s rows=%d unreadable=%d unparsed=%d; run: nova-tokens fold --day %s\n",
+			oneline.Field(*who), oneline.Field(*day), lines, unreadable, unparsed, oneline.Field(*day))
 		return 1
 	}
+	fmt.Fprintf(stderr, "REPORT OK who=%s day=%s rows=%d at=%s build=%s subject=%s\n",
+		oneline.Field(*who), oneline.Field(*day), lines, oneline.Field(stamp(now)),
+		oneline.Field(buildVersion()),
+		oneline.Escape(tokens.Subject(*day, stamp(now), buildVersion(), sorted)))
 	return 0
 }
 

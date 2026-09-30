@@ -163,6 +163,7 @@ func (a *app) cmdFleetSync(args []string, stdout, stderr io.Writer) int {
 			for _, p := range problems {
 				rep.Refused = append(rep.Refused, p.Key+": "+p.Why)
 			}
+			// ignored: json.Marshal of syncReport cannot fail
 			b, _ := json.Marshal(rep)
 			fmt.Fprintln(stdout, string(b))
 			return 1
@@ -224,6 +225,7 @@ func (a *app) syncCheck(asJSON bool, rep syncReport, drift []sprint.Drift, stdou
 		code = exitDrift
 	}
 	if asJSON {
+		// ignored: json.Marshal of syncReport cannot fail
 		b, _ := json.Marshal(rep)
 		fmt.Fprintln(stdout, string(b))
 		return code
@@ -265,6 +267,7 @@ func (a *app) syncWriteJSON(ctx context.Context, c *common, st *store.Store, ste
 			code = 1
 		}
 	}
+	// ignored: json.Marshal of syncReport cannot fail
 	b, _ := json.Marshal(rep)
 	fmt.Fprintln(stdout, string(b))
 	return code
@@ -273,6 +276,7 @@ func (a *app) syncWriteJSON(ctx context.Context, c *common, st *store.Store, ste
 // syncNothing says a sync had nothing to write.
 func (a *app) syncNothing(asJSON bool, rep syncReport, stdout io.Writer) int {
 	if asJSON {
+		// ignored: json.Marshal of syncReport cannot fail
 		b, _ := json.Marshal(rep)
 		fmt.Fprintln(stdout, string(b))
 		return 0

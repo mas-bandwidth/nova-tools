@@ -52,9 +52,11 @@ func newWatchWriter(w io.Writer, size func() (rows, cols int)) *watchWriter {
 }
 
 // hideCursor hides the cursor, in a write of its own.
+// ignored: terminal cursor escape write failure is non-fatal
 func (d *watchWriter) hideCursor() { _, _ = io.WriteString(d.w, cursorHide) }
 
 // showCursor restores the cursor, in a write of its own.
+// ignored: terminal cursor escape write failure is non-fatal
 func (d *watchWriter) showCursor() { _, _ = io.WriteString(d.w, cursorShow) }
 
 // frame draws text, the lines of one frame, in place: one write, whatever its

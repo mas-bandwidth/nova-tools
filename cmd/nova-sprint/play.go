@@ -84,6 +84,7 @@ func (a *app) cmdPlay(args []string, stdout, stderr io.Writer) int {
 
 // simulationWords is the locked simulation's chances, as the flags that set them.
 func simulationWords() string {
+	// ignored: driver.Set with static valid arguments cannot fail
 	c, _ := driver.Set(true, nil)
 	return c.String()
 }

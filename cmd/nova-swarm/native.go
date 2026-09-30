@@ -585,6 +585,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	configSHA, reason, proxy := writeJobConfig(cfg, provider, dataHome, jobDir, reads, errOut)
 	if reason != "" {
 		if proxy != nil {
+			// ignored: best-effort shutdown of provider proxy
 			_ = proxy.Close()
 		}
 		refuseNative(errOut, reason)
@@ -605,6 +606,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 
 	// The two hashes are recorded from the same bytes the run is about to use, so a
 	// caller can prove later that neither the card nor the binary changed under it.
+	// ignored: binary sha256 is advisory, empty string on failure
 	binaryHash, _ := fileSHA256(bin)
 	cardHash := sha256.Sum256(cfg.card)
 	// (4e) STAGING FROM BENCH MIRROR (issue #2882).
@@ -1873,6 +1875,7 @@ func writeNativeUsage(cfg nativeRunConfig, dataHome, provider, model string, sta
 			fmt.Fprintf(errOut, "NATIVE NOTE: the usage.tsv could not be written: %s\n", oneline.Escape(err.Error()))
 		}
 	}
+	// ignored: telemetry recording failure does not abort worker completion
 	_ = swarm.AppendCardUsage(filepath.Join(cfg.slotDir, "usage.tsv"), row)
 	if note != "" {
 		fmt.Fprintf(errOut, "NATIVE NOTE: %s\n", oneline.Escape(note))
@@ -2094,6 +2097,7 @@ func copyAuth(src, provider, dataHome string) string {
 	if v, ok := entries[provider]; ok {
 		one[provider] = v
 	}
+	// ignored: json.Marshal of simple struct cannot fail
 	body, _ := json.Marshal(one)
 	dst := filepath.Join(dataHome, "auth.json")
 	if err := os.WriteFile(dst, body, 0o600); err != nil {
@@ -2104,6 +2108,7 @@ func copyAuth(src, provider, dataHome string) string {
 	}
 	ocDir := filepath.Join(dataHome, "opencode")
 	if err := os.MkdirAll(ocDir, 0o755); err == nil {
+		// ignored: best-effort writing of opencode auth credentials
 		_ = os.WriteFile(filepath.Join(ocDir, "auth.json"), body, 0o600)
 	}
 	return ""
@@ -2207,6 +2212,7 @@ func writeJobConfig(cfg nativeRunConfig, provider, dataHome, jobDir string, read
 			}
 			pointed, ok := swarm.PointProviderAtProxy(body, provider, opened.HarnessURL())
 			if !ok {
+				// ignored: best-effort close of connectivity test socket
 				_ = opened.Close()
 				return "", fmt.Sprintf("the provider %s could not be pointed at the read-deadline proxy", oneline.Field(provider)), nil
 			}
@@ -2221,12 +2227,14 @@ func writeJobConfig(cfg nativeRunConfig, provider, dataHome, jobDir string, read
 	dst := filepath.Join(dataHome, ".config", "opencode", "opencode.json")
 	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
 		if proxy != nil {
+			// ignored: best-effort proxy close on pre-flight error
 			_ = proxy.Close()
 		}
 		return "", fmt.Sprintf("the config directory %s could not be made: %s", oneline.Field(filepath.Dir(dst)), oneline.Escape(err.Error())), nil
 	}
 	if err := os.WriteFile(dst, body, 0o600); err != nil {
 		if proxy != nil {
+			// ignored: best-effort proxy close on pre-flight error
 			_ = proxy.Close()
 		}
 		return "", fmt.Sprintf("the config copy %s could not be written: %s", oneline.Field(dst), oneline.Escape(err.Error())), nil
