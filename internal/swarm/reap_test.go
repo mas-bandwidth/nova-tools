@@ -24,31 +24,6 @@ func cacheEnvValue(t *testing.T, env []string, name string) string {
 	return ""
 }
 
-// The child env of two fake jobs on one root carries the same GOMODCACHE.
-func TestTwoJobsOnOneRootShareTheGoModuleCache(t *testing.T) {
-	t.Parallel()
-
-	root := t.TempDir()
-	w := Worker{WorkerDir: filepath.Join(root, "worker")}
-	a := childEnv(w, 1, "job-a", "", root)
-	b := childEnv(w, 2, "job-b", "", root)
-	for _, name := range []string{"GOMODCACHE", "GOCACHE", "NPM_CONFIG_CACHE"} {
-		got, want := cacheEnvValue(t, a, name), cacheEnvValue(t, b, name)
-		if got != want {
-			t.Errorf("%s differs between two jobs on one root: %q vs %q", name, got, want)
-		}
-	}
-	if got, want := cacheEnvValue(t, a, "GOMODCACHE"), GoModCacheDir(root); got != want {
-		t.Errorf("GOMODCACHE=%q, want %q", got, want)
-	}
-	if got, want := cacheEnvValue(t, a, "GOCACHE"), GoBuildCacheDir(root); got != want {
-		t.Errorf("GOCACHE=%q, want %q", got, want)
-	}
-	if gotA, gotB := cacheEnvValue(t, a, "ASDF_OUTPUT_TRANSLATIONS"), cacheEnvValue(t, b, "ASDF_OUTPUT_TRANSLATIONS"); gotA == gotB {
-		t.Errorf("two jobs share one writable ASDF output translation: %q", gotA)
-	}
-}
-
 func makeSlotFile(t *testing.T, path string, n int) {
 	t.Helper()
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

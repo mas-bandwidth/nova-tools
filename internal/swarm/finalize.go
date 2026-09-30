@@ -62,41 +62,6 @@ type Finalized struct {
 // ReportsDir is <pool>/reports/<job>/, the retained record of one job.
 func (p *Pool) ReportsDir(id string) string { return p.Path(Reports, id) }
 
-// Finalize writes the usage file and the report copy, in that order, before anything moves.
-func (p *Pool) Finalize(e Ending) (Finalized, error) {
-	var out Finalized
-	attempt := 1
-	if e.Sidecar.Requeued > 0 {
-		attempt = e.Sidecar.Requeued + 1
-	}
-	row := UsageRow{
-		"job": e.Sidecar.ID, "attempt": strconv.Itoa(attempt), "from": dashOr(e.Sidecar.From),
-		"started": stampOr(e.Started), "ended": stampOr(e.Ended), "end": e.End,
-		"rc": rcColumn(e.End, e.RC), "provider": dashOr(e.Provider), "model": dashOr(e.Model),
-		"repo": dashOr(e.Repo),
-	}
-	for _, c := range append(append([]string{}, TokenColumns...), "usd") {
-		row[c] = dashOr(strings.TrimSpace(e.Usage.Values[c]))
-	}
-	// A finalize by hand knows no worker description; what the source itself reported stands
-	// in for what the caller did not know, and never over it.
-	if row["provider"] == Dash {
-		row["provider"] = dashOr(strings.TrimSpace(e.Usage.Values["provider"]))
-	}
-	if row["repo"] == Dash {
-		row["repo"] = dashOr(strings.TrimSpace(e.Usage.Values["repo"]))
-	}
-	if row["model"] == Dash {
-		row["model"] = dashOr(strings.TrimSpace(e.Usage.Values["model"]))
-	}
-	path, existed, err := p.WriteUsage(e.Sidecar.ID, row)
-	out.UsagePath, out.UsageExisted = path, existed
-	if err != nil {
-		return out, err
-	}
-	return p.copyReport(e, out)
-}
-
 // copyReport is step 2: the published report, or the marker that says why there is none.
 func (p *Pool) copyReport(e Ending, out Finalized) (Finalized, error) {
 	dir := p.ReportsDir(e.Sidecar.ID)
@@ -258,13 +223,6 @@ func dashOr(s string) string {
 		return Dash
 	}
 	return s
-}
-
-func stampOr(t time.Time) string {
-	if t.IsZero() {
-		return Dash
-	}
-	return Stamp(t)
 }
 
 // rcColumn is the worker's exit code, and a dash for the two ends that have none: an

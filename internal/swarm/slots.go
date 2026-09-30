@@ -641,6 +641,13 @@ func takeSlotStoreLock(store string) (func(), error) {
 	return takeFileLock(filepath.Join(store, SlotStoreLockName), SlotStoreWait)
 }
 
+// The slot store's card directories: queue/ holds a card waiting for a lease,
+// taken/ the card a lease holds, one <owner>-<label> each.
+const (
+	QueueName = "queue"
+	TakenName = "taken"
+)
+
 // returnCardForLease puts the card an expired lease names back in queue/. The
 // taken file is <store>/taken/<owner>-<label>; the rename is what makes the card
 // queueable again. A lease with no label names no card, and a card already back

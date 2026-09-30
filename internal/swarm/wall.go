@@ -242,12 +242,6 @@ func wallPathToken(line string) string {
 	return ""
 }
 
-// wallTail is the bounded field the batch's ABSTAIN line carries after log=<n>: the path the
-// wall refused and the step the card reached. The full report line is WallLine, on the notes.
-func wallTail(w WallRefusal) string {
-	return "path=" + dashOr(w.Path) + " step=" + dashOr(w.Step)
-}
-
 // WallLine is the ONE line a wall death is reported on, to the coordinator and to the
 // harvester. It names the task, the refused path and the last step the card reached, and --
 // when the clone holds commits past its base -- the count and the branch, so work a dead card

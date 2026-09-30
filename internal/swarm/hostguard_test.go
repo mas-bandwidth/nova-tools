@@ -2,7 +2,6 @@ package swarm
 
 import (
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -60,31 +59,4 @@ func mustPanicHost(t *testing.T, wantProg string, fn func()) {
 		}
 	}()
 	fn()
-}
-
-func TestSSHRunPanicsUnderTheGuard(t *testing.T) {
-	armHostGuard(t)
-	mustPanicHost(t, "ssh", func() { _ = sshRun("bench.invalid", "uptime") })
-}
-
-func TestSSHOutputPanicsUnderTheGuard(t *testing.T) {
-	armHostGuard(t)
-	mustPanicHost(t, "ssh", func() { _, _ = sshOutput("bench.invalid", "uptime") })
-}
-
-func TestSCPFilePanicsUnderTheGuard(t *testing.T) {
-	armHostGuard(t)
-	local := filepath.Join(t.TempDir(), "out")
-	mustPanicHost(t, "scp", func() { _ = scpFile("bench.invalid", "/remote", local) })
-}
-
-func TestCopyCardToBenchPanicsUnderTheGuard(t *testing.T) {
-	armHostGuard(t)
-	local := filepath.Join(t.TempDir(), "card.md")
-	if err := os.WriteFile(local, []byte("card\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	mustPanicHost(t, "rsync", func() {
-		_ = copyCardToBench(local, Bench{Host: "bench.invalid"}, "/dest")
-	})
 }

@@ -435,8 +435,8 @@ MEMORY NOTE a hit in a dated log class is evidence the event was recorded, not t
 
 Fixture: owned directories under `t.TempDir()` and fake harnesses. The transcript
 comparators invoke the dispatcher with fixture paths and compare its output with
-the examples below. The [quickstart guide](nova-swarm-quickstart.md) includes a
-complete local batch fixture using a synthetic runner.
+the examples below. The [quickstart guide](nova-swarm-quickstart.md) shows a
+`native` run and a sprint member.
 
 ### The budget word on the native route
 

@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // A LAUNCH THAT DIES FAST ON A PROVIDER 5XX IS RETRIED (issue #900). These tests hold the
@@ -187,24 +186,6 @@ func TestNativeLostResponseStaysUnknownAndLaunchesOnce(t *testing.T) {
 	}
 }
 
-func TestPersistUnknownFallsBackWhenTheMarkerCannotBeWritten(t *testing.T) {
-	t.Parallel()
-
-	job := t.TempDir()
-	if err := os.Mkdir(filepath.Join(job, "provider-acceptance"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Mkdir(filepath.Join(job, "harness-output.log"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := persistUnknown(job); err != nil {
-		t.Fatal(err)
-	}
-	if !swarm.AcceptanceUnknown(job) {
-		t.Fatal("the fallback log was not held")
-	}
-}
-
 func TestUnrecordedUnknownIsStillAHarvestHold(t *testing.T) {
 	windowsIsNotABench(t)
 	prev := persistUnknownFn
@@ -233,6 +214,25 @@ func TestUnrecordedUnknownIsStillAHarvestHold(t *testing.T) {
 
 	// The nova-pulse harvest hold that followed here left with internal/pulse (deleted 2026-09-25, #3969);
 	// the native refusal above is the property that remains.
+}
+
+func TestPersistUnknownFallsBackWhenTheMarkerCannotBeWritten(t *testing.T) {
+	t.Parallel()
+
+	job := t.TempDir()
+	if err := os.Mkdir(filepath.Join(job, "provider-acceptance"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(job, "harness-output.log"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := persistUnknown(job); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(filepath.Join(job, "harness.log"))
+	if err != nil || !strings.Contains(string(raw), "why=unknown-acceptance") {
+		t.Fatalf("the fallback log does not hold the unknown: %q, %v", raw, err)
+	}
 }
 
 func TestPersistUnknownFailsWhenNothingCanBeWritten(t *testing.T) {

@@ -74,12 +74,8 @@ var specAllowlist = []allowlistEntry{
 // than RESULT, sits outside part A's PATHS, and carries the commit that added
 // it and the reason it stays. A new hit on dev lands here only with both.
 var driftAllowlist = []allowlistEntry{
-	{file: "cmd/nova-swarm/nativeevent.go", fn: "failWord", record: "verdict", since: "7644669f",
-		reason: "first word of a nova-swarm native verdict line (BLOCKED, RED), an event record, not RESULT line 2"},
-	{file: "internal/swarm/sparse.go", fn: "cardPATHS", record: "SPEC-CARD", since: "dd08d6e3",
-		reason: "the card's PATHS header for the sparse checkout, read before any RESULT exists"},
 	{file: "internal/swarm/stage.go", fn: "ReadCardBase", record: "SPEC-CARD", since: "5778de35",
-		reason: "the card's REPO: header for staging (#3711), read before any RESULT exists, like sparse.go cardPATHS"},
+		reason: "the card's REPO: header for staging (#3711), read before any RESULT exists"},
 }
 
 var allowlist = append(append([]allowlistEntry{}, specAllowlist...), driftAllowlist...)

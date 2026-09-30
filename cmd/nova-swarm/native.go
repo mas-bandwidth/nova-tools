@@ -1367,25 +1367,23 @@ func fenceRejected(jobDir string) string {
 // A SILENT HARNESS IS NOT A QUIET MODEL. The run this closes was a local model whose tool
 // calls the harness never parsed: the child emitted them as raw text, no tool ran, nothing
 // was written, and the process exited 0, so the one line a coordinator reads said OK and the
-// batch behind it scored `no-result` -- the token for a model that chose to publish nothing.
+// card scored `no-result` -- the token for a model that chose to publish nothing.
 // The two are different faults with different remedies (a harness that cannot drive this
 // model; a model that had nothing to say), and the line now tells them apart. A harness that
 // SPOKE and published nothing is `ok` and scores `no-result`: there is evidence to read.
 //
 // THE FILE IS THE RUN'S OWN CAPTURE, `<job>/harness-output.log` (issue #608) -- never
-// `harness.log`, which the legacy supervisor and a `batch`'s runner pin already own. Reading
-// the capture rather than a file this process does not write is what keeps the token honest
-// on a bench, where the batch's own runner pin may not exist at all.
+// `harness.log`, which a runner pin may own. Reading the capture rather than a file this
+// process does not write is what keeps the token honest on a bench.
 //
 // THE WALL'S OWN LINES ARE NOT THE HARNESS SPEAKING. The wall prints `SANDBOX ...` on the
 // child's stderr, which this capture also holds, and counting those bytes would make a WALLED
 // run -- the very run that wrote issue #591 -- impossible to call silent. They are skipped
-// here exactly as the gather's own `log=<n>` count skips them (internal/swarm/batch.go).
+// here.
 //
-// THE RESULT IS LOOKED FOR WHERE THE GATHER LOOKS FOR IT, by the gather's own lookup
-// (swarm.FindCardResult): the job root, then `repo/` and one directory below it (issue #594).
-// A card's STEP 1 makes `repo/` the model's cwd, so a working run publishes there and the
-// batch copies it up; a shallower lookup here would print `harness=silent` about a run that
+// THE RESULT IS LOOKED FOR by the one lookup (swarm.FindCardResult): the job root, then
+// `repo/` and one directory below it (issue #594). A card's STEP 1 makes `repo/` the model's
+// cwd, so a working run publishes there; a shallower lookup here would print `harness=silent` about a run that
 // worked, which is the same class of fault this token exists to end.
 func harnessState(jobDir string) string {
 	if harnessSpoke(filepath.Join(jobDir, "harness-output.log")) {
