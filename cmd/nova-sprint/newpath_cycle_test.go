@@ -30,7 +30,8 @@ func TestNewPathAddRefusesALoopThroughTheGates(t *testing.T) {
 	gatedStreams(na)
 	before := na.image()
 	code, out, errs := na.do("add --stream c c-dep-1 --needs a-dep-1 --after c-5")
-	if code != exitRefused || !strings.Contains(out+errs, "a-dep-1 needs c-25") || !strings.Contains(out+errs, "c-gate-") {
+	if code != exitRefused || !strings.Contains(out+errs, "code=CYCLE") || strings.Count(out+errs, "nothing was changed") > 1 ||
+		!strings.Contains(out+errs, "a-dep-1 needs c-25") || !strings.Contains(out+errs, "c-gate-") {
 		t.Fatalf("the add that closes a loop through the gates: exit %d\n%s%s", code, out, errs)
 	}
 	if na.image() != before {
@@ -56,5 +57,26 @@ func TestNewPathCheckReportsACycle(t *testing.T) {
 	if code != exitRefused || !strings.Contains(out+errs, "code=CYCLE") || !strings.Contains(out+errs, "a cycle through a-dep-1 needs c-25") ||
 		!strings.Contains(out+errs, "cards can never be reached") {
 		t.Fatalf("check on a table with a cycle: exit %d\n%s%s", code, out, errs)
+	}
+}
+
+// TestNewPathAddNeedsAcrossManyGates (the cold read at cacfd32cc, 2): a long
+// gated stream, 33 runs of 30 cards with a gate after each, and a need on its
+// tail from another stream: no loop, and the needs walk stays linear (a gate
+// waits for the cards back to the gate before it, a card for the nearest gate
+// before it), so the add is admitted. Before, each gate's place read went
+// back to the head of the stream, the cost grew with the square of the gates,
+// and the walk ran out its bound.
+func TestNewPathAddNeedsAcrossManyGates(t *testing.T) {
+	t.Parallel()
+	na := newNPApp(t)
+	na.ok("init")
+	for k := 1; k <= 33; k++ {
+		na.ok("add --stream a --count 30")
+		na.ok("add --stream a --sentinel a-gate-" + strconv.Itoa(k))
+	}
+	na.ok("add --stream b --count 3")
+	if code, out, errs := na.do("add --stream b b-dep-1 --needs a-900"); code != 0 {
+		t.Fatalf("a need on the tail of a long gated stream: exit %d\n%s%s", code, out, errs)
 	}
 }

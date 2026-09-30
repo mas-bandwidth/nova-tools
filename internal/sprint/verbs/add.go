@@ -626,8 +626,13 @@ func addReserve(e *Env, r sprint.AddReq, anchor anchorRead, rd *sprintfn.ReadRep
 		if ep == 0 {
 			makes = func(stored string) bool { return res.Makes(r, stored) }
 		}
-		if why := sprint.AddCycle(cards, chain.Cut, sprint.StoredID(r.Needs[0], ep), makes); why != "" {
-			return res, nil, refuseLocal(verb, "XGUARD", "%s", why)
+		// a cycle is CYCLE, as check says it; a walk cut at its bound is LIMIT
+		head := sprint.StoredID(r.Needs[0], ep)
+		if why := sprint.AddCycle(cards, false, head, makes); why != "" {
+			return res, nil, refuseLocal(verb, CheckCycleCode, "%s", why)
+		}
+		if why := sprint.AddCycle(nil, chain.Cut, head, makes); why != "" {
+			return res, nil, refuseLocal(verb, sprintfn.CodeLimit, "%s", why)
 		}
 	}
 
@@ -653,7 +658,7 @@ func addReserve(e *Env, r sprint.AddReq, anchor anchorRead, rd *sprintfn.ReadRep
 				placed = []string{fmt.Sprintf("the %d cards of this add", res.Total)}
 			}
 			if why := sprint.AddPlaceCycle(cards, placed, anchor.Stream, res.Lo, r.Sentinel); why != "" {
-				return res, nil, refuseLocal(verb, "XGUARD", "%s", why)
+				return res, nil, refuseLocal(verb, CheckCycleCode, "%s", why)
 			}
 		}
 	}

@@ -669,11 +669,9 @@ func (e *qeval) listing(q sprint.SprintQ) (ListingResult, *Refusal) {
 // A card is expanded when it exists and waits (is in the work table's waiting
 // cell). What it waits for (errata 3 amendment 7) is the ids of its `needs`
 // field and its place in line: a sentinel waits for the waiting cards of its
-// stream before it, and any other card for the stream's open sentinels before
-// it (sent:<s>, below its score). Those are the edges of cycle.go's graph, the
-// rank interval taken whole back to the stream's head: a card before the
-// sentinel before it is needed through that sentinel, so the cards reached are
-// the same. The place reads take at most the query's limit of ids in all.
+// stream back to the sentinel before it, and any card for the nearest open
+// sentinel before it (placeNeeds): the edges of cycle.go's graph, each read
+// linear. The place reads take at most the query's limit of ids in all.
 // Cut says cards remained to read when the limit was reached, or a place read
 // was cut. Quarantined ids are left out.
 func (e *qeval) needchain(q sprint.SprintQ) (NeedchainResult, *Refusal) {
@@ -756,10 +754,14 @@ func (e *qeval) needchain(q sprint.SprintQ) (NeedchainResult, *Refusal) {
 }
 
 // placeNeeds is what a waiting card waits for by its place in line (errata 3
-// amendment 7): for a sentinel, the waiting cards of its stream below its
-// score; for another card, the stream's open sentinels below its score (the
-// sentinel index sent:<s>). One range read of at most left ids, a probe and
-// the ids it returns; cut when the range held more, or nothing is left.
+// amendment 7): every card waits for the nearest open sentinel of its stream
+// before it (sent:<s>, the highest score below its own: one read of one id),
+// and a sentinel also for the waiting cards back to that sentinel, itself
+// included (the stream's waiting cell from its score up to the sentinel's). A
+// card before the sentinel before is needed through it, so the reach is the
+// graph of cycle.go's, and the reads are linear: each card of a line is in one
+// sentinel's interval. The ids come to at most left; cut when a read held more,
+// or nothing is left.
 func (e *qeval) placeNeeds(r Record, left int) (ids []string, cut bool, ref *Refusal) {
 	if r.Score == "" {
 		return nil, false, nil
@@ -768,19 +770,26 @@ func (e *qeval) placeNeeds(r Record, left int) (ids []string, cut bool, ref *Ref
 		return nil, true, nil
 	}
 	below := "(" + r.Score
-	if recordField(r, fieldKind) == kindSentinel {
-		if ref = e.probe(); ref != nil {
-			return nil, false, ref
-		}
-		ans, ref := e.memRead([]tset.ReadQuery{{Kind: "range", Table: sprint.Work, Cell: r.Place.Row + ":" + sprint.Waiting, Min: "-inf", Max: below, Limit: left}})
-		if ref != nil {
-			return nil, false, ref
-		}
-		ids = nonNilStrings(ans[0].IDs)
-		return ids, ans[0].HasMore, e.rangeIDs(len(ids))
+	prev, prevScores, _, ref := e.rangeHeadDesc(e.key("sent:"+r.Place.Row), "-inf", below, 1)
+	if ref != nil {
+		return nil, false, ref
 	}
-	ids, _, more, ref := e.rangeHead(e.key("sent:"+r.Place.Row), "-inf", below, left)
-	return ids, more, ref
+	if recordField(r, fieldKind) != kindSentinel {
+		return prev, false, nil
+	}
+	from := "-inf"
+	if len(prev) == 1 {
+		from = prevScores[0]
+	}
+	if ref = e.probe(); ref != nil {
+		return nil, false, ref
+	}
+	ans, ref := e.memRead([]tset.ReadQuery{{Kind: "range", Table: sprint.Work, Cell: r.Place.Row + ":" + sprint.Waiting, Min: from, Max: below, Limit: left}})
+	if ref != nil {
+		return nil, false, ref
+	}
+	ids = nonNilStrings(ans[0].IDs)
+	return ids, ans[0].HasMore, e.rangeIDs(len(ids))
 }
 
 // noteSeq is the seq of a note's id, n<seq> with the epoch suffix ~<epoch> of a

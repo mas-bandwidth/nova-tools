@@ -432,7 +432,7 @@ func TestAddCycleRefusedBeforePart1(t *testing.T) {
 	before := w.counter()["score"]
 	w.cc.Reset()
 	_, err := Add(context.Background(), w.env, sprint.AddReq{Stream: "s1", IDs: []string{"x"}, Needs: []string{"c2"}})
-	rf := refusedAs(t, err, "XGUARD", "cycle", "c1 needs x")
+	rf := refusedAs(t, err, CheckCycleCode, "cycle", "c1 needs x")
 	if !rf.Local || w.cc.Trips() != 1 || w.cc.Steps() != 0 {
 		t.Fatalf("refused after %d round trips and %d steps (local %v), want part 1's read alone", w.cc.Trips(), w.cc.Steps(), rf.Local)
 	}
@@ -444,7 +444,7 @@ func TestAddCycleRefusedBeforePart1(t *testing.T) {
 	// a generated id: c3 waits for s9-2, which --count 2 of s9 would create
 	w.add(sprint.AddReq{Stream: "s1", IDs: []string{"c3"}, Needs: []string{"s9-2"}})
 	_, err = Add(context.Background(), w.env, sprint.AddReq{Stream: "s9", Count: 2, Needs: []string{"c3"}})
-	refusedAs(t, err, "XGUARD", "cycle", "c3 needs s9-2")
+	refusedAs(t, err, CheckCycleCode, "cycle", "c3 needs s9-2")
 	w.add(sprint.AddReq{Stream: "s9", Count: 1, Needs: []string{"c3"}}) // s9-1 only: no cycle
 }
 
@@ -467,7 +467,7 @@ func TestAddCycleWalkBound(t *testing.T) {
 	}
 	w.cc.Reset()
 	_, err := Add(context.Background(), w.env, sprint.AddReq{Stream: "s1", IDs: []string{"z"}, Needs: []string{"a-top", "b-top"}})
-	refusedAs(t, err, "XGUARD", "2000", "a-top", "bound")
+	refusedAs(t, err, sprintfn.CodeLimit, "2000", "a-top", "bound")
 	if w.cc.Steps() != 0 {
 		t.Fatalf("%d steps sent, want none", w.cc.Steps())
 	}

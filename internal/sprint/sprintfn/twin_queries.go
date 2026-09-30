@@ -375,6 +375,30 @@ func (e *qeval) zcount(key, min, max string) (int, *Refusal) {
 // rangeHead is S.read_range_head: the first limit members of a sorted set in
 // [min, max] by score (then by member), with the lookahead that says whether
 // there were more. One probe; the ids returned are charged as range ids.
+// rangeHeadDesc is rangeHead from the highest score down (ZRANGE BYSCORE REV):
+// the head nearest max.
+func (e *qeval) rangeHeadDesc(key, min, max string, limit int) (ids, scores []string, more bool, ref *Refusal) {
+	if ref = e.probe(); ref != nil {
+		return nil, nil, false, ref
+	}
+	if ref = e.typed(key, kindZSet); ref != nil {
+		return nil, nil, false, ref
+	}
+	ps := e.t.keys.zpairs(key)
+	for k := len(ps) - 1; k >= 0; k-- {
+		p := ps[k]
+		if !inBounds(p.score, min, max) {
+			continue
+		}
+		if len(ids) == limit {
+			more = true
+			break
+		}
+		ids, scores = append(ids, p.member), append(scores, formatScore(p.score))
+	}
+	return nonNilStrings(ids), nonNilStrings(scores), more, e.rangeIDs(len(ids))
+}
+
 func (e *qeval) rangeHead(key, min, max string, limit int) (ids, scores []string, more bool, ref *Refusal) {
 	if ref = e.probe(); ref != nil {
 		return nil, nil, false, ref
@@ -1282,9 +1306,10 @@ func queryProbes(q sprint.SprintQ) int {
 		return 1 + unitsOf(q) + unitsOf(q)*maxTableColumns + len(q.Props)
 	case sprint.QueryNeedchain:
 		// the quarantine of the source's ids, and of every need of every card
-		// read; for each card read its place read, and the quarantine of the ids
-		// the place reads return (at most the limit in all)
-		return found + n + q.Limit*followMaxNeeds + 2*q.Limit
+		// read; for each card read its two place reads (the sentinel before it,
+		// and a sentinel's interval), and the quarantine of the ids they return
+		// (at most twice the limit in all)
+		return found + n + q.Limit*followMaxNeeds + 4*q.Limit
 	case sprint.QueryJnote:
 		// for each note the quarantine of its subjects, and for each an HLEN and an
 		// HMGET of its own field

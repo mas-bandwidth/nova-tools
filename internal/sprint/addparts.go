@@ -605,12 +605,12 @@ func AddCycle(chain []ChainCard, cut bool, head string, makes func(stored string
 	for _, c := range chain {
 		for _, n := range c.Needs {
 			if makes(n) {
-				return fmt.Sprintf("the needs would make a cycle: %s needs %s, which this add creates with those needs; nothing was changed", CardID(c.ID), CardID(n))
+				return fmt.Sprintf("the needs would make a cycle: %s needs %s, which this add creates with those needs", CardID(c.ID), CardID(n))
 			}
 		}
 	}
 	if cut {
-		return fmt.Sprintf("the needs walk reached its bound of %d records from %s, the chain's head, before it ended (1.3.3); nothing was changed", AddWalkMax, CardID(head))
+		return fmt.Sprintf("the needs walk reached its bound of %d records from %s, the chain's head, before it ended (1.3.3)", AddWalkMax, CardID(head))
 	}
 	return ""
 }

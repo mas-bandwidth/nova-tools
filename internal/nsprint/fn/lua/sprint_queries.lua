@@ -273,7 +273,7 @@ do
     elseif kind == 'needchain' then
       -- the place reads return at most the limit's ids in all (amendment 7)
       local _, ranged = Q.source_size(q.src)
-      return q.limit, ranged + q.limit
+      return q.limit, ranged + 2 * q.limit
     elseif kind == 'jnote' then
       local n, ranged = Q.source_size(q.src)
       local subjects = q.subjects or 0
@@ -375,7 +375,7 @@ do
     elseif kind == 'waiters' then
       return found + 2 * n + n * (1 + q.limit)
     elseif kind == 'needchain' then
-      return found + n + q.limit * Q.MAX_NEEDS + 2 * q.limit
+      return found + n + q.limit * Q.MAX_NEEDS + 4 * q.limit
     elseif kind == 'jnote' then
       local subjects = q.subjects or 0
       if subjects == 0 then subjects = Q.MAX_ABOUT end
@@ -1561,23 +1561,27 @@ do
   end
 
   -- What a waiting card waits for by its place in line (errata 3 amendment 7;
-  -- sprintfn placeNeeds): for a sentinel, the waiting cards of its stream below
-  -- its score; for another card, the stream's open sentinels below its score
-  -- (sent:<s>). One range read of at most left ids; cut when it held more, or
-  -- when nothing is left.
+  -- sprintfn placeNeeds): every card the nearest open sentinel of its stream
+  -- before it (sent:<s>, one id from the highest score below its own), and a
+  -- sentinel also the waiting cards back to that sentinel, itself included.
+  -- Each read linear; cut when one held more, or when nothing is left.
   function Q.place_needs(ctx, r, left, index)
     if type(r.score) ~= 'string' or r.score == '' then return {}, false, nil end
     if left <= 0 then return {}, true, nil end
     local below = '(' .. r.score
-    local key
-    if Q.field(r, Q.F_KIND) == 'sentinel' then
-      key = ctx.cell_key(Q.WORK, ctx.request_epoch, r.place.row, Q.WAITING)
-    else
-      key = Q.key(ctx, 'sent:' .. r.place.row)
-    end
-    local head, err = Q.head_of(ctx, key, '-inf', below, left, index)
+    local prev, err = Q.S().read_range_head(ctx, Q.key(ctx, 'sent:' .. r.place.row),
+      {min = '-inf', max = below, desc = true}, 1)
     if err then return nil, nil, err end
     local ids = {}
+    if Q.field(r, Q.F_KIND) ~= 'sentinel' then
+      for i = 1, #prev.ids do ids[i] = prev.ids[i] end
+      return ids, false, nil
+    end
+    local from = '-inf'
+    if #prev.ids == 1 then from = prev.scores[1] end
+    local head
+    head, err = Q.head_of(ctx, ctx.cell_key(Q.WORK, ctx.request_epoch, r.place.row, Q.WAITING), from, below, left, index)
+    if err then return nil, nil, err end
     for i = 1, #head.ids do ids[i] = head.ids[i] end
     return ids, head.has_more == true, nil
   end

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math/rand"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -490,6 +491,9 @@ func (h *luaHarness) readRangeHead(L *lua.LState) int {
 		}
 		return ps[i].m < ps[j].m
 	})
+	if bounds.RawGetString("desc") == lua.LTrue { // ZRANGE BYSCORE REV: from the highest
+		slices.Reverse(ps)
+	}
 	more := len(ps) > limit
 	if more {
 		ps = ps[:limit]
