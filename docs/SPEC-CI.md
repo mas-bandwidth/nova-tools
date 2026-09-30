@@ -651,6 +651,38 @@ reason each; empty, because every long-lived child derives its context.
 through `os.StartProcess` or an `exec.Cmd` literal is not seen, and it asks that
 the function assign `WaitDelay`, not that it be the very command.
 
+### `gitoperand` — a card-derived git operand follows `--`
+
+**The rule.** A git call under `internal/swarm` and `cmd/nova-swarm` puts every
+operand that is not a literal behind `--`, or behind `--end-of-options` for a rev
+that `--` would turn into a path. A card is untrusted input: its `base-repo:`,
+`base-sha:`, `BASE:` ref and `PR-HEAD:` reach git, and a value that starts with `-`
+is read as an option when nothing separates it. Staging also refuses such a value
+by name before any git runs.
+**The mistake it prevents.** `git remote set-url origin <base-repo>` read a
+`base-repo: --bogus` as a flag, and the regression test for the set-url step relied
+on exactly that (ideas#829).
+**The test.** `TestCardDerivedGitOperandsFollowTheSeparator`
+(`internal/ci/gitoperand_class_test.go`), with
+`TestGitOperandClassTestRefusesItsProbes`, which pins each shape it refuses and its
+neighbour that is fine, and reads the real `stage.go` with its `--` removed. A git
+call is a swarm git helper (`stageGit`, `baseGit`, `gitOut`, `gitOutput`), a `gitrun`
+runner found by import path, `exec.Command` or `exec.CommandContext` of the literal
+`"git"`, or an argv built apart from its call (a `[]string` literal that starts with a
+git subcommand, and `append` onto it). An argument is fine when it is a literal, the
+value of an option that takes one (`-C`, `-B`, `-e`, `--reference`), after the
+separator, or a concatenation that begins with a literal that does not start with
+`-`.
+**Its allowlist.** `gitOperandAllowed` in the test, a `file:Func` and a reason each;
+empty.
+**Its remedy lines.** The message names the file and the line and the separator to
+add.
+**Its narrowings.** It reads the syntax: a final `args...` spread is read where the
+argv is built, not at the call, and an argv assembled through a path it cannot see (a
+function that returns a slice built elsewhere) is not followed. It does not know which
+values a card supplies, so every non-literal operand in these two packages is held to
+the rule.
+
 ### `slowtests` — no package over the per-package time budget
 
 **The rule.** A package whose summed `go test -json` package elapsed time is over
