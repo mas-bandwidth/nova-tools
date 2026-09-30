@@ -43,8 +43,13 @@ func TestToolsCIIsBuiltOnceAndNeverRun(t *testing.T) {
 		require.NoError(t, err)
 		var wf struct {
 			Jobs map[string]struct {
-				RunsOn any `yaml:"runs-on"`
-				Steps  []struct {
+				RunsOn   any `yaml:"runs-on"`
+				Strategy struct {
+					Matrix struct {
+						OS any `yaml:"os"`
+					} `yaml:"matrix"`
+				} `yaml:"strategy"`
+				Steps    []struct {
 					Name string         `yaml:"name"`
 					Uses string         `yaml:"uses"`
 					Run  string         `yaml:"run"`
@@ -57,7 +62,8 @@ func TestToolsCIIsBuiltOnceAndNeverRun(t *testing.T) {
 			where := filepath.Base(f) + " job " + name
 			builds, firstCall := 0, -1
 			// A job whose runner can be Windows names the binary with ciExe.
-			mayBeWindows := strings.Contains(asText(job.RunsOn), "windows") || strings.Contains(asText(job.RunsOn), "matrix.os")
+			mayBeWindows := strings.Contains(asText(job.RunsOn), "windows") ||
+				(strings.Contains(asText(job.RunsOn), "matrix.os") && strings.Contains(asText(job.Strategy.Matrix.OS), "windows"))
 			cacheRestore, cacheSave := false, false
 			for i, s := range job.Steps {
 				assert.NotContains(t, s.Run, "go run ./tools/ci", "%s step %q runs tools/ci with go run; call the binary built once", where, s.Name)
