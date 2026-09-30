@@ -2420,15 +2420,24 @@ nova-work version
 
 ### First run
 
-The safe first command prints the complete usage without opening GitHub or writing a file:
+`nova-work help` is the safe first command. It prints the complete usage
+without opening GitHub or writing a file:
 
 ```sh
 nova-work help
 ```
 
-<!-- S27 integration: insert the actual captured help output and an executed `docs/TESTS.md` transcript before publication. This source-only draft asserts no runtime output. -->
-
-There is no credential-free `quickstart`: a real read needs an organization and a `gh` login permitted to read the chosen repositories. After checking `nova-work import -h`, choose an organization and one repository you can access. `import --org <org> --repo <org>/<repo> --dry-run` fetches and checks that scope without writing a file. To keep it, replace `--dry-run` with `--out <private-tree-path>`; `verify --tree <private-tree-path> --repo <org>/<repo>` fetches again and reports any difference. The angle-bracket values here are inputs to replace, not transcript commands.
+A bare `nova-work` invocation refuses on one line and points to that help.
+The banner ends with runnable, store-free `nova-work help import` and
+`nova-work version` examples. There is no credential-free `quickstart` for an
+issue import: a real read needs an organization and a `gh` login permitted to
+read the chosen repositories. After checking `nova-work import -h`, choose an
+organization and a repository you can access. `import --org <org> --repo
+<org>/<repo> --dry-run` fetches and checks that scope without writing a file.
+To keep it, replace `--dry-run` with `--out <private-tree-path>`; `verify
+--tree <private-tree-path> --repo <org>/<repo>` fetches again and reports any
+difference. The angle-bracket values here are inputs to replace, not transcript
+commands.
 
 ### Import
 

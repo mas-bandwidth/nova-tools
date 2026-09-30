@@ -6,10 +6,9 @@ The installed command census is 18: `nova-bus`, `nova-cairn`, `nova-check`,
 `nova-ci`, `nova-config`, `nova-fuse`, `nova-memory`, `nova-redis`,
 `nova-sandbox`, `nova-secrets`, `nova-self-talk`, `nova-sprint`, `nova-swarm`,
 `nova-table`, `nova-tokens`, `nova-update`, `nova-version`, and `nova-work`.
-Sixteen sections below carry a `### First run` transcript. The Sprint and Work
-sections record coverage still owed; they contain no transcript and make no
-first-run test or passing-run claim. Their existing command tests do not replace
-the fixture and transcript checks required by [docs/ONBOARDING.md](ONBOARDING.md).
+Each section below carries a `### First run` transcript. Sprint and Work use
+store-free help commands with full-output comparators; those transcripts do not
+exercise a live sprint or a GitHub import.
 
 ## Reading a block
 
@@ -835,34 +834,325 @@ build |     1 |       1 |    0
 
 ## nova-sprint
 
-First-run transcript owed. `cmd/nova-sprint/main_test.go` exercises command
-lines through `app.run` with an in-memory sprint store and controlled clock;
-`cmd/nova-sprint/inbox_test.go` checks that help shows an inbox worked example.
-The `where` frame golden files cover display shape. None of these tests reads a
-Sprint transcript from this file, and the current `cmd/nova-sprint/testdata/`
-contains only those frame goldens. No output is recorded here as an executed
-first run.
+### First run
 
-The missing fixture should run the public first commands from a fresh sprint,
-with explicit store/library and actor setup for any stateful steps, capture
-stdout and stderr separately, and compare the documented transcript shape.
-The help example also needs runnable fresh-state commands to meet the existing
-onboarding standard; the current inbox illustration uses already-existing
-judgment IDs and is not a fresh-state first run.
+These help commands open no store, use no credentials and write no records.
+The complete output was captured from the tool. Its command-local
+`firstrun_test.go` executes these commands and compares the whole transcript.
+
+```text
+$ nova-sprint help
+nova-sprint: the sprint table: four tables on nova-table, the moves between them, and the coordinator's inbox
+
+usage:
+  nova-sprint init [--readers <a,b,...>] [--members <m1[:<width>],m2,...>] [--coordinator <name>]
+  nova-sprint add --stream <s> (<id>... | --count <n> | --sentinel <id>) [--needs <a,b>] [--before <id> | --after <id> | --score <n>] [--brief <text> | --brief-file <path>]
+  nova-sprint release <sentinel>... --reason <text> [--answers <note>]
+  nova-sprint resolve [<id>...] [--stream <s>] [--limit <n>]
+  nova-sprint start
+  nova-sprint stop
+  nova-sprint run
+  nova-sprint tick
+  nova-sprint goal set <name> [--file <path>] [--to file:<path>]
+  nova-sprint goal show [<name>]
+  nova-sprint goal drop <name>
+  nova-sprint take --as <member> [<card>@<gen>...] [--limit <n>]
+  nova-sprint finish --as <member> <card>@<gen>... [--failed] [--head <h>] [--report <text>]
+  nova-sprint ask [<id>... | --group <id> [--expect <n>]] [--stream <s>] [--limit <n>] [--another] [--answers <note>]
+  nova-sprint queue --as <reader|member> | --stream <s>
+  nova-sprint read --as <reader> (--begin | --ok | --broken) [<card>...] [--limit <n>] [--finding <text>]
+  nova-sprint accept (<id>... | --stream <s> | --read-ok | --group <id> [--expect <n>]) [--answers <note>]
+  nova-sprint rework (<id>... | --group <id> [--expect <n>]) [--fix <text>] [--answers <note>]
+  nova-sprint return (<id>... | --group <id> [--expect <n>]) [--reason <text>] [--answers <note>]
+  nova-sprint drop (<id>... | --stream <s> --col <state> | --group <id> [--expect <n>]) --reason <text> [--answers <note>]
+  nova-sprint rank <id>... (--score <n> | --first) [--answers <note>]
+  nova-sprint merge --stream <s> [--batch <n>] [--conflict <id> | --cross <id>=<other> | --red [--suspect <id>...] | --rejected] [--note <text>]
+  nova-sprint resume --stream <s> [--did <text>] [--answers <note>]
+  nova-sprint fleet beat <member> [--load <percent>]
+  nova-sprint fleet up <member> [--width <n>]
+  nova-sprint fleet down <member>
+  nova-sprint fleet sync [--check] [--pg <dsn>]
+  nova-sprint fleet level
+  nova-sprint reader add <reader>...
+  nova-sprint ci <id>... (--red | --green) [--head <h>] [--run <id>] [--source <s>] [--note <text>]
+  nova-sprint wait <note> (--for <duration> | --until <RFC3339>)
+  nova-sprint ack <note>... --reason <text>
+  nova-sprint inbox [--open <group>] [--read] [--wait [--timeout <duration>]] [--deadline <duration>] [--stale <duration>]
+  nova-sprint card <id>
+  nova-sprint log [--card <id>] [--stream <s>] [--member <m>] [--since <10m|RFC3339>] [--at-epoch <n>]
+  nova-sprint check
+  nova-sprint repair
+  nova-sprint where [--watch] [--every <duration>]
+  nova-sprint play [--simulation] [--seed <n>] [--every <duration>] [--broken <p>] [--fail <p>] [--stuck <p>] [--cross <p>] [--down <p>] [--up <p>] [--red <p>] [--flap <p>] [--batch <n>] [--hold] [--silent <member>@<from>+<for>]... [--ticks <n>]
+  nova-sprint clear --confirm sprint
+  nova-sprint teardown --confirm sprint
+
+Every store verb takes --redis <addr> (else NOVA_SPRINT_REDIS, then
+NOVA_REDIS_ADDR), --actor <name> (else NOVA_SPRINT_ACTOR; no
+default: a verb that writes wants one), --op <id> (the same id again returns
+the recorded result), --json and --max <n> (listed items; 0 is all). The
+coordinator's verbs are the coordinator's alone (the first init names it:
+--coordinator, else the actor); take, finish, read and fleet beat are the
+workers', whose actor is the member or reader named; merge and ci are
+reports; tick and run are the machine's; the reads need no actor (inbox
+--read, which moves the coordinator's cursor, is the coordinator's). A set is
+ids, a stream, a column, --limit n, or an inbox group: --group <id>, the id
+inbox prints, which does not move, with --expect <n>, the size it printed,
+which refuses a group that has changed. Each verb prints what moved (MOVED),
+what did not and why (REFUSED, on stderr), its summary line, and the sprint's
+line: landed/all percent -> ETA (a stopped machine has no ETA: STOPPED, then
+landed/all and the percent when there are cards; every card landed, no ETA:
+done in <time from the first start> while it runs, and STOPPED ... done once
+the machine has stopped itself).
+
+The tables are work, merge, readers and fleet, and the view is sprint; a store
+holds one sprint (a second sprint is a second store). clear and teardown want
+--confirm sprint, the name of the view, and refuse anything else.
+
+A work card is named with its generation, <card>@<gen>: the generation the
+worker holds, from queue --as <member> (--json: "gen"). take by id and finish
+name it for every card; a card named without one is refused, naming the live
+generation, and a generation that is not the live one is refused as stale.
+take with no card takes the member's oldest ready cards (--limit n, default 1)
+and prints each one's generation.
+
+reading the inbox and answering a judgment:
+
+  $ nova-sprint inbox
+  JUDGMENT finish-0314a1b2-1.1   work came back failed  stream=s1  size=2  waited=4m0s  due=10:14:00  (s1-3,s1-7)  the tests went red
+    rework with a fix:
+      nova-sprint rework --group finish-0314a1b2-1.1 --expect 2 --answers finish-0314a1b2-1.1
+    drop:
+      nova-sprint drop --group finish-0314a1b2-1.1 --expect 2 --reason '<why>' --answers finish-0314a1b2-1.1
+  JUDGMENT merge-0315c3d4-1.1   stream stopped: stream branch red  stream=s2  size=10  waited=1m0s  due=10:25:00  (s2-1,s2-2,s2-3,s2-4,s2-5,s2-6,s2-7,s2-8,... all: nova-sprint inbox --open merge-0315c3d4-1.1)  suspects: s2-4 (of the batch of 10)
+    take the suspect off and resume:
+      nova-sprint return s2-4 --reason 'suspect of the red batch' --answers merge-0315c3d4-1.1
+      nova-sprint resume --stream s2 --did 'returned s2-4' --answers merge-0315c3d4-1.1
+    rework the suspect:
+      nova-sprint return s2-4 --reason 'suspect of the red batch' --answers merge-0315c3d4-1.1
+      nova-sprint rework s2-4 --fix '<fix>'
+      nova-sprint resume --stream s2 --did 'returned s2-4 for rework' --answers merge-0315c3d4-1.1
+    resume with what you did:
+      nova-sprint resume --stream s2 --did '<what you did>' --answers merge-0315c3d4-1.1
+  HAPPENED finish-0316e5f6-1.1   work came back ok  stream=s1  size=5  (s1-1,s1-2,s1-4,s1-5,s1-6)
+  INBOX OK judgments=2 happened=1 cursor=-
+
+A group is named by its id (its oldest notification's), which does not move
+as groups come and go; a group number is refused. size is what --expect
+takes: when the group has another size now the verb is refused, names what
+was added or is gone, and changes nothing. Each decision is its commands, one
+per line, in order: copy them, filling in a '<...>' first. inbox --open <id>
+lists every member of a group, and every need a blocked group names; card <id> is everything about one primary.
+
+The sprint done is no judgment: the tick that finds nothing open says it, one
+HAPPENED line addressed to the coordinator and shown first, and stops the
+machine (DONE):
+  HAPPENED tick-done-0317a1b2-1.1   the sprint is done  x1  for=coordinator  9 landed, 0 dropped, took 1h2m0s from the first start
+    to continue: add work, then nova-sprint start
+
+one answer to each judgment (every one prints its own, filled in):
+  ready to accept             accept --group <id> --expect <n> --answers <notes>
+  work came back failed       rework --group <id> --expect <n> --answers <notes>  (each fix is the work's report; --fix for all)
+  a reader found it broken    rework --group <id> --expect <n> --answers <notes>  (each fix is the reader's finding)
+  conflict on a card          resume --stream <s> --did 'rebased <card>' --answers <note>
+  stream branch red           return <suspect> --answers <note>, then resume --stream <s> --did 'returned <suspect>' --answers <note>
+  needs another stream first  rank <other> --first, then resume --stream <s> once <other> has landed
+  merge queue rejected        resume --stream <s> --did '<what you did>' --answers <note>
+  ci red                      rework --group <id> --expect <n> --fix '<fix>' --answers <notes>
+  blocked on a dropped card   drop --group <id> --expect <n> --reason '<why>' --answers <notes>
+  blocked on a missing card   drop <ids> --reason '<why>' or ack <notes> --reason '<why the named missing needs can be waived>'
+  reads exhausted             ask --group <id> --expect <n> --another --answers <notes>
+  repair skipped changes      card <primary>, then rework, return or drop --group <id> --expect <n> --answers <notes>
+  an operation was stuck      check, then ack <note> --reason '<what you found>'
+  a repeat: stop and look     card <primary>
+  overdue: act                a decision above, or wait <note> --for 30m
+  a stream not moving: look   where, then queue --stream <s>
+  sentinel reached            release <sentinel> --reason '<what you found>' --answers <note>
+  returned to review          rework, accept (its reads standing) or drop --group <id> --expect <n> --answers <notes>
+  stranded in review          rework or drop (or ask, if never asked) --group <id> --expect <n> --answers <notes>
+  stalled                     card <primary> (HELD says what holds it), then the decision it prints, or ack <note> --reason '<why>'
+
+The machine: nova-sprint start sets it RUNNING, nova-sprint stop sets it
+STOPPED; nova-sprint run ticks as soon as a line comes on the log (a verb's
+step: a finish, a merge, a start), at most every 100ms, and once a second
+while the log is quiet; nova-sprint tick is one tick by hand. Each tick deals
+ready primaries, asks readers, resolves waiting primaries whose needs landed,
+and writes the judgments that need the coordinator; a judgment open past its
+due time is marked overdue, once. A stop halts the tick before its next part.
+When nothing is left open (every card landed or dropped) the tick says "the
+sprint is done" to the coordinator and stops the machine itself: DONE, in
+where and the view; work added after leaves it STOPPED until nova-sprint
+start. Every verb works in both states.
+
+The fleet: each member says it is there with nova-sprint fleet beat <member>,
+run on the machine every few seconds; a beat writes the time and the
+machine's load. A member is up while its last beat is under 15s old and
+down past that or when it has never beaten; the tick applies each change
+(a member down has its unfinished work cards dealt to the members up; a
+member up levels the ready queues). fleet down holds a member down whatever
+it beats (status held); fleet up releases the hold, adding a member the
+sprint does not know. The load cell is the machine's CPU busy percent of all
+its cores (the one-minute load average over the cores where that cannot be
+measured), the highest of the last 10s.
+
+fleet sync makes the fleet match nova-config's machine rows in one step (--pg,
+else NOVA_PG_DSN, as nova-config takes it): a member the table lacks is added
+at its width (its slots less its friends'), a width that differs is set, a row
+the inventory no longer names is held and its cards are dealt to the members
+that stay; nothing else changes, and a second sync writes nothing. --check
+prints the drift and writes nothing: exit 0 none, 2 some, 3 the config cannot
+be read.
+
+goal: the people who work on the sprint, each with a goal (what to keep
+doing) and a route. While the machine is RUNNING the tick delivers each
+person's goal down its route once when the machine starts and then every 5
+minutes of running time (time STOPPED does not count); nothing is delivered
+while it is STOPPED. The route file:<absolute path> gets the text, after one
+header line REMINDER <n> to <name> at <time>, epoch <e>, in
+place of what the file held, so a watcher of the file sees one current
+reminder. The text is at most 8 KiB and is set from a file, and can be
+different for each person. A route that fails is one judgment on the inbox
+(goal set <name> --to <route> changes it, goal drop <name> removes the
+person), closed when a delivery arrives. nova-sprint goal show says each
+person's last push and whether it failed (where --json carries them). A clear
+keeps the people and their goals.
+
+exit codes: 0 done, 1 refused, 2 usage or a store that did not answer (fleet sync --check: there is drift), 3 fleet sync could not read the config
+
+example:
+  nova-sprint help
+  nova-sprint help add
+  nova-sprint help inbox
+
+$ nova-sprint help add
+usage: nova-sprint add [flags]
+from `nova-sprint help`:
+  nova-sprint add --stream <s> (<id>... | --count <n> | --sentinel <id>) [--needs <a,b>] [--before <id> | --after <id> | --score <n>] [--brief <text> | --brief-file <path>]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --after <string>  place the cards in line after this primary of the stream
+  --before <string>  place the cards in line in front of this primary of the stream
+  --brief <string>  the brief: a child's whole brief, held to the card lint (every rule the coordinator gives a child; nova-swarm template --name card prints a card that passes, nova-swarm lint --rules lists them) and refused, exit 2, nothing written, when it fails; a card with no brief is not linted
+  --brief-file <string>  the brief, read from this file: its bytes as they are, its one trailing newline cut (a brief of many paragraphs), then held to the card lint like --brief; not with --brief
+  --count <int>  admit n primaries with generated ids <stream>-<n>
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --needs <string>  primaries that must land first, comma separated; each is a primary on the table
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR)
+  --score <string>  the first primary's score; the rest follow it (default: after every primary)
+  --sentinel <string>  admit a sentinel with this id: a stop the coordinator releases; what sorts after it waits for it
+  --sentinel-every <int>  with --count: a sentinel <stream>-gate-<n> after every k cards (a stop by its place in line)
+  --sentinel-last  with --sentinel-every: a sentinel after the last card too
+  --stream <string>  the stream the primaries belong to, for life; with --count, several streams comma separated, one step
+exit codes: 0 done, 1 refused, 2 usage or a store that did not answer (fleet sync --check: there is drift), 3 fleet sync could not read the config
+
+$ nova-sprint help inbox
+usage: nova-sprint inbox [flags]
+from `nova-sprint help`:
+  nova-sprint inbox [--open <group>] [--read] [--wait [--timeout <duration>]] [--deadline <duration>] [--stale <duration>]
+flags:
+  --actor <string>  who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)
+  --at-epoch <int>  the inbox as it was at an earlier epoch (before a clear)
+  --deadline <duration>  a judgment open longer is overdue
+  --epoch <int>  the sprint epoch the caller holds (a worker's cards, from queue); a sprint cleared since refuses the step, naming the clear; the coordinator's verbs need none
+  --json  print one JSON object for a program instead of the lines
+  --max <int>  listed items of each kind; 0 is all
+  --op <string>  the caller's operation id: the same id again returns the recorded result and changes nothing
+  --open <string>  list every member, need and notification of the group of this id
+  --read  move the cursor past what is shown: happened notifications before it are not shown again (open judgments always are)
+  --redis <string>  the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR)
+  --stale <duration>  a stream with no progress for longer is shown stalled
+  --timeout <duration>  with --wait, the longest wait; the inbox is shown when it passes
+  --wait  block until the next tick-end note (the tick addressed the coordinator something), then show the inbox
+exit codes: 0 done, 1 refused, 2 usage or a store that did not answer (fleet sync --check: there is drift), 3 fleet sync could not read the config
+
+reading the inbox and answering a judgment:
+
+  $ nova-sprint inbox
+  JUDGMENT finish-0314a1b2-1.1   work came back failed  stream=s1  size=2  waited=4m0s  due=10:14:00  (s1-3,s1-7)  the tests went red
+    rework with a fix:
+      nova-sprint rework --group finish-0314a1b2-1.1 --expect 2 --answers finish-0314a1b2-1.1
+    drop:
+      nova-sprint drop --group finish-0314a1b2-1.1 --expect 2 --reason '<why>' --answers finish-0314a1b2-1.1
+  JUDGMENT merge-0315c3d4-1.1   stream stopped: stream branch red  stream=s2  size=10  waited=1m0s  due=10:25:00  (s2-1,s2-2,s2-3,s2-4,s2-5,s2-6,s2-7,s2-8,... all: nova-sprint inbox --open merge-0315c3d4-1.1)  suspects: s2-4 (of the batch of 10)
+    take the suspect off and resume:
+      nova-sprint return s2-4 --reason 'suspect of the red batch' --answers merge-0315c3d4-1.1
+      nova-sprint resume --stream s2 --did 'returned s2-4' --answers merge-0315c3d4-1.1
+    rework the suspect:
+      nova-sprint return s2-4 --reason 'suspect of the red batch' --answers merge-0315c3d4-1.1
+      nova-sprint rework s2-4 --fix '<fix>'
+      nova-sprint resume --stream s2 --did 'returned s2-4 for rework' --answers merge-0315c3d4-1.1
+    resume with what you did:
+      nova-sprint resume --stream s2 --did '<what you did>' --answers merge-0315c3d4-1.1
+  HAPPENED finish-0316e5f6-1.1   work came back ok  stream=s1  size=5  (s1-1,s1-2,s1-4,s1-5,s1-6)
+  INBOX OK judgments=2 happened=1 cursor=-
+
+A group is named by its id (its oldest notification's), which does not move
+as groups come and go; a group number is refused. size is what --expect
+takes: when the group has another size now the verb is refused, names what
+was added or is gone, and changes nothing. Each decision is its commands, one
+per line, in order: copy them, filling in a '<...>' first. inbox --open <id>
+lists every member of a group, and every need a blocked group names; card <id> is everything about one primary.
+
+The sprint done is no judgment: the tick that finds nothing open says it, one
+HAPPENED line addressed to the coordinator and shown first, and stops the
+machine (DONE):
+  HAPPENED tick-done-0317a1b2-1.1   the sprint is done  x1  for=coordinator  9 landed, 0 dropped, took 1h2m0s from the first start
+    to continue: add work, then nova-sprint start
+
+one answer to each judgment (every one prints its own, filled in):
+  ready to accept             accept --group <id> --expect <n> --answers <notes>
+  work came back failed       rework --group <id> --expect <n> --answers <notes>  (each fix is the work's report; --fix for all)
+  a reader found it broken    rework --group <id> --expect <n> --answers <notes>  (each fix is the reader's finding)
+  conflict on a card          resume --stream <s> --did 'rebased <card>' --answers <note>
+  stream branch red           return <suspect> --answers <note>, then resume --stream <s> --did 'returned <suspect>' --answers <note>
+  needs another stream first  rank <other> --first, then resume --stream <s> once <other> has landed
+  merge queue rejected        resume --stream <s> --did '<what you did>' --answers <note>
+  ci red                      rework --group <id> --expect <n> --fix '<fix>' --answers <notes>
+  blocked on a dropped card   drop --group <id> --expect <n> --reason '<why>' --answers <notes>
+  blocked on a missing card   drop <ids> --reason '<why>' or ack <notes> --reason '<why the named missing needs can be waived>'
+  reads exhausted             ask --group <id> --expect <n> --another --answers <notes>
+  repair skipped changes      card <primary>, then rework, return or drop --group <id> --expect <n> --answers <notes>
+  an operation was stuck      check, then ack <note> --reason '<what you found>'
+  a repeat: stop and look     card <primary>
+  overdue: act                a decision above, or wait <note> --for 30m
+  a stream not moving: look   where, then queue --stream <s>
+  sentinel reached            release <sentinel> --reason '<what you found>' --answers <note>
+  returned to review          rework, accept (its reads standing) or drop --group <id> --expect <n> --answers <notes>
+  stranded in review          rework or drop (or ask, if never asked) --group <id> --expect <n> --answers <notes>
+  stalled                     card <primary> (HELD says what holds it), then the decision it prints, or ack <note> --reason '<why>'
+```
 
 ## nova-work
 
-First-run transcript owed. `cmd/nova-work/main_test.go` exercises `import` and
-`verify` against the recorded `internal/workgh/testdata/reliable` GitHub-query
-replay, including a zero-difference verify, a changed-field drift, dry run,
-budget refusal, and help/refusal checks. It checks selected output fragments;
-it does not read or compare a Work transcript from this file. There is no
-`cmd/nova-work/firstrun_test.go` or command-local first-run fixture.
+### First run
 
-A first-run fixture can use that recorded query replay to run the documented
-commands without a live GitHub login, capture both streams, and compare their
-actual transcript shape here. A real invocation of `import` or `verify` still
-requires access to the selected GitHub repositories. The current help banner's
-`<org>` and `<org>/<repo>` lines are placeholders, so a runnable `example:`
-block and its executed fixture remain owed under the existing onboarding
-standard. No placeholder output is presented as a run.
+These help commands open no store, use no credentials and write no records.
+The complete output was captured from the tool. Its command-local
+`firstrun_test.go` executes these commands and compares the whole transcript.
+
+```text
+$ nova-work help
+nova-work: every issue of every repository in one tree file, verified field for field (docs/SPEC-WORK-V1.md)
+
+usage:
+  nova-work import --org <org> (--out <tree.lisp> | --dry-run) [--repo <owner/name>]... [--max-calls <n>] [--page-size <n>] [--gh <path>] [--timeout <d>]
+  nova-work verify --tree <tree.lisp> [--repo <owner/name>]... [--max <n>] [--max-calls <n>] [--page-size <n>] [--gh <path>] [--timeout <d>] [--max-bytes <n>]
+  nova-work help [<verb>]
+  nova-work version
+
+import reads every issue of every repository of --org (or of each --repo)
+from GitHub, read-only, with its full contents, and writes the tree to --out.
+verify reads the same repositories again and prints one line for every
+difference from the tree: MISSING (on GitHub, not in the tree), EXTRA (in the
+tree, not on GitHub), DRIFT (a field that differs). Zero lines is the proof.
+
+exit: 0 done, or verify found no difference; 1 verify found differences, or
+import's own round trip through the file failed; 2 could not run.
+
+example:
+  nova-work help import
+  nova-work version
+```

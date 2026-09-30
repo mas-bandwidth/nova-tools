@@ -130,6 +130,7 @@ and prints each one's generation.
 exit codes: 0 done, 1 refused, 2 usage or a store that did not answer (fleet sync --check: there is drift), 3 fleet sync could not read the config
 
 `)
+	b.WriteString("example:\n  nova-sprint help\n  nova-sprint help add\n  nova-sprint help inbox\n")
 	return b.String()
 }
 

@@ -45,9 +45,9 @@ tree, not on GitHub), DRIFT (a field that differs). Zero lines is the proof.
 exit: 0 done, or verify found no difference; 1 verify found differences, or
 import's own round trip through the file failed; 2 could not run.
 
-first run (a login gh can use, and a scratch directory):
-  nova-work import --org <org> --repo <org>/<repo> --out /tmp/tree.lisp
-  nova-work verify --tree /tmp/tree.lisp --repo <org>/<repo>
+example:
+  nova-work help import
+  nova-work version
 `
 
 const importHelp = `nova-work import --org <org> (--out <tree.lisp> | --dry-run) [flags]
@@ -131,7 +131,7 @@ func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, nil)) }
 // run is the command; q, when not nil, replaces the GitHub seam (tests).
 func run(args []string, stdout, stderr io.Writer, q workgh.Query) int {
 	if len(args) == 0 {
-		fmt.Fprint(stderr, banner)
+		fmt.Fprintln(stderr, "nova-work: usage: name a verb (import or verify); run: nova-work help")
 		return 2
 	}
 	switch args[0] {
