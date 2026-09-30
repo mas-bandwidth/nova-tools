@@ -130,6 +130,8 @@ var driftAllowlist = []allowlistEntry{
 		reason: "renders the card's KIND/PATHS header lines from its Redis hash in read brief --pr (#4335), a card writer like card/cut.go RenderCut, not a RESULT parse"},
 	{file: "internal/nsprint/fleetbuild/play.go", fn: "cloneSha", record: "git-HEAD", since: "5c9588e0",
 		reason: "the HEAD revision in the argv of git rev-parse for fleet play's receipt sha (#4356 C), like secrets/seal.go RunSeal, not a RESULT field"},
+	{file: "internal/swarm/lintchild.go", fn: "CardChildRules", record: "card-rules", since: "06418a6fd",
+		reason: "the card lint's table of the child rule sentences (#4852): the text of the rules a card must carry, which names PR and PATHS as words of prose, not a RESULT parse"},
 }
 
 var allowlist = append(append([]allowlistEntry{}, specAllowlist...), driftAllowlist...)
