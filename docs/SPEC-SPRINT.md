@@ -1,9 +1,9 @@
 # nova-sprint: the sprint table
 
 Four tables on nova-table, the mechanical moves between them, the machine that
-makes them once a second, the notifications that bring the coordinator its
-decisions, and the verbs. The coordinator decides; the system moves cards
-without mistakes and tells the coordinator what needs it.
+makes them as soon as a line comes on the log, the notifications that bring
+the coordinator its decisions, and the verbs. The coordinator decides; the
+system moves cards without mistakes and tells the coordinator what needs it.
 
 ## 1. The tables
 
@@ -658,7 +658,7 @@ command that loads it.
 | release | lands reached sentinels, the coordinator's alone, with `--reason` |
 | resolve | waiting -> ready where needs have landed (the tick does it; by hand for a stuck case) |
 | start, stop | set the machine RUNNING or STOPPED (section 14) |
-| run | ticks once a second while the machine is RUNNING |
+| run | ticks on every line of the log (at most every 100 ms) and once a second while the log is quiet |
 | tick | one tick by hand |
 | take | a worker moves work cards fleet ready -> working; `--as <member>`, `<card>@<gen>` |
 | finish | work cards done ok or failed; primaries to review; `--as <member>`, `<card>@<gen>` |
@@ -791,8 +791,13 @@ The machine has two states, RUNNING and STOPPED, held in one record in the
 store; a new sprint is STOPPED. `start` sets RUNNING, `stop` sets STOPPED;
 setting the state it has changes nothing and says so; each change is a
 happened notification (who, when), and the store keeps every STOPPED span and
-their total. `run` is the process that ticks once a second (TickEvery) while
-RUNNING and does nothing while STOPPED; `tick` is one tick by hand. The state
+their total. `run` is the process that ticks: it blocks on the epoch's log
+(XREAD BLOCK from the last line it has seen, pipelined with a read of the
+log's last id: one round trip a wait), and a line wakes it, so a step that
+frees room or makes cards ready (a finish, a merge, a drop, a release, fleet
+up, start) is ticked on at most TickFloor (100 ms) after the tick before
+began; a quiet log ticks it TickEvery (1 s) after the tick before began. It
+moves nothing while STOPPED; `tick` is one tick by hand. The state
 is read at the start of each tick and before each of its parts: after `stop`
 returns STOPPED no part begins, and the part in flight finishes. Every verb works in both states; only the tick's duties
 wait. `inbox` says `machine: running`,

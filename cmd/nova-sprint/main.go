@@ -58,6 +58,10 @@ type app struct {
 	// screen is the rows and columns of the screen a writer draws on, each 0
 	// when not known (the writer is not a terminal).
 	screen func(w io.Writer) (rows, cols int)
+	// ticked, when set, is told of each tick run begins: its count, when it
+	// began, and why (the loop's start, a line on the log, the clock of a
+	// quiet log, a retry).
+	ticked func(n int, began time.Time, why string)
 }
 
 func newApp(getenv func(string) string) *app {
