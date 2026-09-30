@@ -1216,14 +1216,14 @@ its shard is the macOS and Linux compile of the race build.
 ### `release-legs` — the release and its dry run build one leg per platform and sum the whole set on one machine
 
 **The rule.** release.yml's `build` and certification.yml's `release-build` are a
-matrix of one leg per line of `.github/scripts/release-targets`, the same list in
-all three places. Each leg's only compile is `.github/scripts/release-build.sh
+matrix of one leg per line of `tools/ghrelease/release-targets`, the same list in
+all three places. Each leg's only compile is `go run ./tools/ghrelease build
 <stamp> <goos> <goarch> dist` (every `cmd/*/` tool, `-trimpath`, `CGO_ENABLED=0`,
-the ldflags `release-ldflags.sh` composes, named `<tool>_<stamp>_<goos>_<goarch>[.exe]`),
+the ldflags `ghrelease ldflags` composes, named `<tool>_<stamp>_<goos>_<goarch>[.exe]`),
 and each uploads the artifact `release-<goos>-<goarch>`. release.yml's `release`
 and certification.yml's `release-dry-run` need those legs, download every
-`release-*` artifact into one directory, run `assert-version-stamp.sh` over the
-linux/amd64 binaries, and then run `.github/scripts/release-sums.sh`, which
+`release-*` artifact into one directory, run `ghrelease stamp` over the
+linux/amd64 binaries, and then run `ghrelease sums`, which
 refuses a directory that is not exactly the shipped set and writes and verifies
 `SHA256SUMS` over the whole of it. In release.yml that runs in the step that
 attaches the set to the release. release.yml restores the certification build
@@ -1233,21 +1233,28 @@ does not fit the two-minute cap: the cap cancels it inside that build, and
 release.yml's build is the same loop. Two copies of
 a target list drift, and a dry run that builds differently from the release proves
 nothing about the release.
-**The test.** `TestReleaseMatricesAreTheTargetsFile` and
-`TestReleaseSumsAreOneMachineOverTheWholeSet`
+**The test.** `TestReleaseMatricesAreTheTargetsFile`,
+`TestReleaseSumsAreOneMachineOverTheWholeSet`,
+`TestEveryJobThatRunsGhreleaseSetsUpGoFirst` (a job that runs `go run ./tools/ghrelease`
+carries the pinned `actions/setup-go` with `go-version-file: go.mod` before its first
+call) and `TestNoWorkflowStepRunsAReleaseScript` (no release or certification step runs a
+release shell script; the verbs are `tools/ghrelease`)
 (`internal/ci/release_matrix_class_test.go`): both matrices equal the targets
-file; no `go build` in a build leg, one `release-build.sh` call over the matrix
+file; no `go build` in a build leg, one `ghrelease build` call over the matrix
 target, one `release-<goos>-<goarch>` upload; no cache save in release.yml; the
 final job needs the legs and downloads every `release-*` artifact, asserts the
-stamp, then runs `release-sums.sh`, in release.yml in the attaching step.
-**Its allowlist.** None. The targets file is the list.
-**Its remedy line.** A platform is added or dropped in `release-targets` and in
-both matrices in one change; a compile change goes into `release-build.sh`.
+stamp, then runs `ghrelease sums`, in release.yml in the attaching step
+(`ghrelease attach`).
+**Its allowlist.** None. The targets file is the list, embedded in `tools/ghrelease`.
+**Its remedy line.** A platform is added or dropped in `tools/ghrelease/release-targets`
+and in both matrices in one change; a compile change goes into `tools/ghrelease/build.go`.
 **Its narrowings.** The tests read the workflow text; whether a leg fits the cap is
-measured by a certification run. The negative controls of the release scripts
-(stamp refusals, tag alphabet, certified gate, upload boundary) run in
-certification.yml's `release-checks`, which builds its fixtures on the
-linux-amd64 leg's cache; they are fixtures and are never summed or shipped.
+measured by a certification run. The negative controls of the release verbs that
+need no binary (stamp refusals, tag alphabet, certified gate, upload boundary) are
+unit tests of `tools/ghrelease`; the ones that need this tree's real binaries (an
+unstamped build, a tool that loses its stamp) are `ghrelease controls`, run in
+certification.yml's `release-checks`, which builds them on the linux-amd64 leg's
+cache; they are fixtures and are never summed or shipped.
 
 ### `onboarding` — every command meets the onboarding standard
 
