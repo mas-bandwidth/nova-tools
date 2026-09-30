@@ -55,6 +55,7 @@ func TestReadmeCatalogueContainsOnlyLivingTools(t *testing.T) {
 
 	// Read directory names only; do not build or test archived code. Including
 	// non-catalogue cmd entries also catches a tool awaiting its physical move.
+	// A retained historical copy does not retire a currently supported tool.
 	forbidden := map[string]bool{"nova-pulse": true}
 	for _, dir := range []string{"cmd", "deprecated/cmd"} {
 		entries, err := os.ReadDir(filepath.Join(root, dir))
@@ -63,7 +64,7 @@ func TestReadmeCatalogueContainsOnlyLivingTools(t *testing.T) {
 		}
 		for _, entry := range entries {
 			name := entry.Name()
-			if entry.IsDir() && strings.HasPrefix(name, "nova-") && (dir == "deprecated/cmd" || !expected[name]) {
+			if entry.IsDir() && strings.HasPrefix(name, "nova-") && !expected[name] {
 				forbidden[name] = true
 			}
 		}
