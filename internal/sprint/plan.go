@@ -66,6 +66,9 @@ type Plan struct {
 	// Props are the table properties the step writes, each with the guard on
 	// the value its plan read.
 	Props []PropWrite
+	// Requeue is the queued changes a drain leaves for the next one (Drain):
+	// its commit puts them back at the queue's tail.
+	Requeue []QueuedChange
 	// pre is the pre-state the plan was built on, set only by the steps of
 	// this package that may admit or move a primary into ready (on): the
 	// lifecycle judges a primary's needs against it, and a plan without one

@@ -96,6 +96,7 @@ func Drain(s *Snapshot, q []QueuedChange, who string) Plan {
 		row, col string
 		moved    []string
 		why      string
+		later    bool // a change the table cannot take in the same entry: it and the rest wait for the next drain
 	}
 	by := map[string]*acc{}
 	var order []string
@@ -138,6 +139,15 @@ func Drain(s *Snapshot, q []QueuedChange, who string) Plan {
 		}
 		a.moved = append(a.moved, words+")")
 		if a.why != "" {
+			continue
+		}
+		if a.later || a.n > 0 && a.e.Create != nil && e.Remove {
+			// a card created and taken off the table in one drain: the table
+			// takes no entry that does both, so the removal waits for the
+			// next drain, in its place in the queue
+			a.later = true
+			p.Requeue = append(p.Requeue, x)
+			a.moved = a.moved[:len(a.moved)-1]
 			continue
 		}
 		switch {
@@ -329,5 +339,8 @@ func WithQueue(s *Snapshot, q []QueuedChange) *Snapshot {
 	n := *s
 	n.Work = w
 	n.Queue, n.QueueLen = nil, 0
+	if len(p.Requeue) > 0 {
+		return WithQueue(&n, p.Requeue)
+	}
 	return &n
 }

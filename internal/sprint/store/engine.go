@@ -314,6 +314,7 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		family = strings.ReplaceAll(step.Verb, " ", "-") + "-" + st.newID()
 	}
 	rowsAdded := false
+	drains := 0
 	plans := st.retry(ctx)
 	for res.Attempts < st.attempts() {
 		res.Attempts++
@@ -349,6 +350,10 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		if !step.Pump && !fence.Running && fence.Queued > 0 {
 			// A STOPPED machine has no next tick: the queue it left is drained
 			// before any step, which then writes the work table itself.
+			drains++
+			if drains > MaxDrains {
+				return res, fmt.Errorf("the work table's queue holds %d changes that %d drains did not take; run: nova-sprint check", fence.Queued, MaxDrains)
+			}
 			if _, err := st.Run(ctx, DrainStep()); err != nil {
 				return res, fmt.Errorf("draining the work table's queue: %w", err)
 			}
@@ -416,6 +421,7 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		op.Log = append(op.Log, queuedLines(queued, snap, op.ID)...)
 		if step.Drain {
 			op.Drain = len(snap.Queue)
+			op.Queue = plan.Requeue
 		}
 		if why := unwritable(plan, op); why != "" {
 			return refuseWhole(res, plan, why)
@@ -512,6 +518,11 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 	}
 	return res, nil
 }
+
+// MaxDrains bounds the drains a step makes of a STOPPED machine's queue
+// before it runs: a drain leaves at most a card's removal after its creation
+// for the next, so two take any queue.
+const MaxDrains = 4
 
 // DrainStep is the pump's drain: the work table's whole queue applied in one
 // update (sprint.Drain), and taken off the queue by its commit.
