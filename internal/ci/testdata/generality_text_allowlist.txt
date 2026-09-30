@@ -25,7 +25,6 @@
 .github/scripts/assert-version-stamp.sh:stella 1
 .github/scripts/live-packages.sh:glenn 1
 .github/scripts/plan-merge-shards.sh:rowan 1
-.github/scripts/revert-on-red.sh:glenn 1
 .github/scripts/select-packages.sh:glenn 1
 .github/scripts/select-packages.sh:space 1
 .github/workflows/certification.yml:glenn 1
@@ -34,13 +33,13 @@
 .github/workflows/certification.yml:studio 4
 .github/workflows/ci.yml:batman 22
 .github/workflows/ci.yml:glenn 23
-.github/workflows/ci.yml:hulk 24
+.github/workflows/ci.yml:hulk 23
 .github/workflows/ci.yml:mini 1
-.github/workflows/ci.yml:rowan 2
+.github/workflows/ci.yml:rowan 1
 .github/workflows/ci.yml:space 61
 .github/workflows/ci.yml:studio 74
 .github/workflows/ci.yml:superman 19
-.github/workflows/ci.yml:vision 10
+.github/workflows/ci.yml:vision 9
 .github/workflows/nightly-slow.yml:glenn 1
 .github/workflows/revert-on-red.yml:glenn 1
 AGENTS.md:glenn 1
@@ -462,7 +461,4 @@ tools/bench-standard_test.sh:space 2
 tools/bench-wsl2.ps1:glenn 1
 tools/bench-wsl2.ps1:mas-bandwidth 1
 tools/bench-wsl2.ps1:rowan 2
-tools/ci/lisp-test.sh:glenn 1
-tools/ci/lisp-test.sh:space 1
-tools/ci/lisp-test.sh:studio 1
 tools/preflight.sh:glenn 1

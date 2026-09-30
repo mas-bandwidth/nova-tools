@@ -22,8 +22,8 @@
 # the one manual step this may need: it must let the github-actions app push
 # to main or open a revert/<sha> pull request (see docs/CONTRIBUTING.md).
 #
-# Actions are pinned by sha, and the script is one file so the workflow stays
-# a list of steps rather than a program.
+# Actions are pinned by sha, and the logic is one Go verb (tools/ci,
+# revert-on-red) so the workflow stays a list of steps rather than a program.
 
 name: revert-on-red
 
@@ -58,22 +58,17 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 50
 
-      - name: re-run the failed jobs once on the first red (flake guard)
-        shell: bash
-        env:
-          RUN_ID: ${{ github.event.workflow_run.id }}
-          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
-        run: |
-          if [ "$RUN_ATTEMPT" = "1" ]; then
-            gh run rerun "$RUN_ID" --failed
-            echo "::notice::run $RUN_ID failed on attempt 1; re-ran its failed jobs once (flake guard). The rerun's own workflow_run completion re-enters this workflow with run_attempt 2, and only a rerun that is red too is reverted."
-            exit 0
-          fi
-          echo "run $RUN_ID is red on attempt $RUN_ATTEMPT; the rerun is red too, proceeding to the revert."
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false
 
       - name: revert the push that turned main red
+        # On the first attempt of the run it re-runs the failed jobs once and stops (the flake
+        # guard); on the rerun's own completion (run_attempt 2) it reverts.
         shell: bash
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
           RUN_ID: ${{ github.event.workflow_run.id }}
-        run: .github/scripts/revert-on-red.sh
+        run: go run ./tools/ci revert-on-red --run-attempt "${{ github.event.workflow_run.run_attempt }}"

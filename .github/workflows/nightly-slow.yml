@@ -87,13 +87,13 @@ jobs:
 
       - name: install redis-server
         if: matrix.tag == 'functional'
-        run: bash .github/scripts/install-redis-server.sh
+        run: go run ./tools/ci install-redis-server
 
       - name: install postgres
         if: matrix.tag == 'functional'
         # nova-config's functional tests spawn a throwaway Postgres
         # (internal/nsprint/testutil/pg); a missing binary fails them.
-        run: bash .github/scripts/install-postgres.sh
+        run: go run ./tools/ci install-postgres
 
       - name: tagged suite
         env:
@@ -111,23 +111,20 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 2
     permissions:
+      # contents: read, because a job-level permissions block replaces the workflow's and
+      # the checkout below needs it; issues: write for the one issue.
+      contents: read
       issues: write
     steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
       - name: open or update one "nightly tagged suite red" issue
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          title="nightly tagged suite red $(date -u +%Y-%m-%d)"
-          run_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
-          numbers=$(gh issue list --state open --limit 200 --json number,title \
-            | jq -r --arg t "$title" '.[] | select(.title == $t) | .number')
-          if [ -n "$numbers" ]; then
-            n=$(printf '%s\n' "$numbers" | head -n 1)
-            echo "issue #$n already open for today; adding a comment"
-            gh issue comment "$n" --body "A nightly tagged suite is still red: $run_url"
-          else
-            gh issue create --title "$title" \
-              --body "A leg of the nightly tagged suites failed.\n\nRun: $run_url"
-          fi
+        run: go run ./tools/ci nightly-report

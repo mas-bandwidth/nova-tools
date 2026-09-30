@@ -17,6 +17,13 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
+// redisInstallCall is the workflow line that installs redis-server, and
+// redisInstallerSource is the Go that line runs.
+const (
+	redisInstallCall     = "tools/ci install-redis-server"
+	redisInstallerSource = "tools/ci/installredis.go"
+)
+
 // TestRedisBackedTestsDoNotSkipUnderCI is #3113. With NOVA_CI=1 and
 // redis-server on PATH, a redis-backed control runs (in the functional tier,
 // nova-tools#4328). A missing redis-server
@@ -82,11 +89,11 @@ func TestRedisBackedTestsDoNotSkipUnderCI(t *testing.T) {
 		if body == "" {
 			t.Fatalf("ci.yml has no job %s", job)
 		}
-		if !strings.Contains(body, "install-redis-server.sh") {
+		if !strings.Contains(body, redisInstallCall) {
 			t.Errorf("ci.yml job %s does not install redis-server", job)
 		}
 	}
-	if strings.Contains(jobBody(ci, "test"), "install-redis-server.sh") {
+	if strings.Contains(jobBody(ci, "test"), redisInstallCall) {
 		t.Error("ci.yml job test (the unit tier) installs redis-server; the unit tier refuses one")
 	}
 	cert := readFile(t, filepath.Join(root, ".github", "workflows", "certification.yml"))
@@ -95,15 +102,18 @@ func TestRedisBackedTestsDoNotSkipUnderCI(t *testing.T) {
 	}
 	for _, job := range []string{"test", "perf"} {
 		body := jobBody(cert, job)
-		if body == "" || !strings.Contains(body, "install-redis-server.sh") {
+		if body == "" || !strings.Contains(body, redisInstallCall) {
 			t.Errorf("certification.yml job %s does not install redis-server", job)
 		}
 	}
-	script := readFile(t, filepath.Join(root, ".github", "scripts", "install-redis-server.sh"))
-	if !strings.Contains(script, "apt-get install -y -qq redis-server") {
+	// The installer is the tools/ci install-redis-server verb; its own tests run the apt
+	// branch (apt-get install -y -qq redis-server) and the Homebrew branch, and this reads
+	// that the two are there.
+	installer := readFile(t, filepath.Join(root, redisInstallerSource))
+	if !strings.Contains(installer, `h.aptInstall("redis-server")`) {
 		t.Fatal("the installer does not apt-get install redis-server for the hosted Linux row")
 	}
-	if !strings.Contains(script, "brew install redis") {
+	if !strings.Contains(installer, `"brew", "install", "redis"`) {
 		t.Fatal("the installer does not brew install redis for the Studio")
 	}
 }

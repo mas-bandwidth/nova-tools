@@ -89,7 +89,7 @@ func Binaries() (string, error) {
 			return dir, nil
 		}
 	}
-	return "", fmt.Errorf("pg_ctl (with initdb and postgres) is not on PATH, not in %s, and not under %s; install postgresql (.github/scripts/install-postgres.sh)", BinEnv, strings.Join(wellKnown, ", "))
+	return "", fmt.Errorf("pg_ctl (with initdb and postgres) is not on PATH, not in %s, and not under %s; install postgresql (go run ./tools/ci install-postgres)", BinEnv, strings.Join(wellKnown, ", "))
 }
 
 // Server is one running throwaway Postgres.

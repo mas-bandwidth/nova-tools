@@ -102,7 +102,7 @@ help:
 	@echo "make test-race   go test -race ./... (the certification tier)"
 	@echo "make test-e2e    go test -count=1 -run TestFriendSequence ./cmd/..."
 	@echo "make test-prewarm-done run the exact #2498 S3 test manifest"
-	@echo "make test-lisp   sh tools/ci/lisp-test.sh (nothing to test while the live tree has no Lisp system)"
+	@echo "make test-lisp   go run ./tools/ci lisp-test (nothing to test while the live tree has no Lisp system)"
 	@echo "make compile-lisp nothing to compile while lisp/ holds no system; refuses if one appears"
 	@echo "make check       build, lint, test, test-e2e and test-lisp (CI's gates; the stream lander's batch test)"
 	@echo "make clean       remove ./bin and ./scratch"
@@ -288,11 +288,12 @@ test:
 # `nova-ci functional` picks, among PKGS, the packages holding such files and a
 # -run pattern naming exactly their tests, so the unit tests of those packages
 # are not run a second time; PKGS with no functional file run nothing,
-# and say so on one `CI FUNCTIONAL OK packages=0 reason=<why>` line.
+# and say so on one `CI FUNCTIONAL OK packages=0 reason=<why>` line. The
+# selection and the `go test` that follows it are `tools/ci functional-run`.
 FUNCTIONAL_TIMEOUT ?= 100s
 test-functional: PKGS = $(CL_PKGS)
 test-functional:
-	@bash -o pipefail -c 'sel=$$($(GO) run ./cmd/nova-ci functional $(PKGS)) || exit 2; case "$$sel" in "CI FUNCTIONAL OK "*) echo "functional: $$sel"; exit 0;; "") echo "functional: nova-ci functional printed nothing; refusing to run nothing in silence" >&2; exit 2;; esac; pkgs=$$(printf "%s\n" "$$sel" | sed -n 1p); run=$$(printf "%s\n" "$$sel" | sed -n 2p); echo "functional: $$pkgs"; $(GO) test -tags functional -p $(GOTEST_P) -count=1 -timeout $(FUNCTIONAL_TIMEOUT) -run "$$run" $$pkgs'
+	@$(GO) run ./tools/ci functional-run --go $(GO) --p $(GOTEST_P) --timeout $(FUNCTIONAL_TIMEOUT) $(PKGS)
 
 # THE FUNCTIONAL TIER IN A CONTAINER. test-functional-container runs the target
 # above inside one container per run (tools/functionalrun, TESTING.md): the
@@ -362,11 +363,11 @@ test-prewarm-done:
 # The Lisp tier. nova-work, the one Lisp system, is PARKED under
 # deprecated/lisp/nova-work (Glenn 2026-09-27: deprecated code is not tested, not
 # built and never blocks CI), so lisp/ holds no system: test-lisp runs CI's
-# script, which prints "nothing to test" and exits 0, and compile-lisp (the
-# swarm prewarm's lisp phase) prints "nothing to compile". verify-roadmap and
-# measure-roadmap ran cmd/nova-work's verification verb and went with it.
+# verb (tools/ci lisp-test), which prints "nothing to test" and exits 0, and
+# compile-lisp (the swarm prewarm's lisp phase) prints "nothing to compile".
+# verify-roadmap and measure-roadmap ran cmd/nova-work's verification verb and went with it.
 test-lisp:
-	sh tools/ci/lisp-test.sh
+	$(GO) run ./tools/ci lisp-test
 
 compile-lisp:
 	@if [ -e lisp ]; then echo "compile-lisp: lisp/ exists and no compile step names it; write one" >&2; exit 1; fi
