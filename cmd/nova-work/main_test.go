@@ -130,3 +130,32 @@ func TestVersionAndItsAliasPrintTheBuildIdentity(t *testing.T) {
 		}
 	}
 }
+
+// TestVerifyMoreLineHasRunKeyword proves that when diffs exceed --max, the
+// MORE line complies with the bounded output standard by naming run: <cmd>.
+func TestVerifyMoreLineHasRunKeyword(t *testing.T) {
+	t.Parallel()
+	tree := filepath.Join(t.TempDir(), "tree.lisp")
+	repo := []string{"--repo", "mas-bandwidth/reliable", "--page-size", "15"}
+	code, out, errs := do(t, replay(t), append([]string{"import", "--org", "mas-bandwidth", "--out", tree}, repo...)...)
+	if code != 0 {
+		t.Fatalf("import exit %d\n%s%s", code, out, errs)
+	}
+	data, err := os.ReadFile(tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Change every title so we have multiple differences.
+	changed := strings.ReplaceAll(string(data), `:title "`, `:title "changed `)
+	if err := os.WriteFile(tree, []byte(changed), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	code, out, errs = do(t, replay(t), append([]string{"verify", "--tree", tree, "--max", "1"}, repo...)...)
+	if code != 1 {
+		t.Fatalf("verify exit %d, want 1\n%s%s", code, out, errs)
+	}
+	wantMore := "VERIFY MORE kind=difference shown=1 total=20 run: nova-work verify --tree " + tree + " --max 0\n"
+	if !strings.Contains(out, wantMore) {
+		t.Fatalf("stdout lacking expected MORE line with run: keyword.\nwant:\n%s\ngot:\n%s", wantMore, out)
+	}
+}
