@@ -34,11 +34,17 @@ A resource limit keeps its unit or scope in its name; these spellings stand: nov
 **(d) Exits.** 0 passed or done. 1 ran and said NO. 2 could not run. A wrapper may pass through its program's code; no tool invents another. The protocol exceptions:
 - nova-fuse's write verbs (SPEC.md's table).
 - nova-bus wait `--idle-exit <n>`, a caller-selected code for an idle timeout.
+- `nova-config machine self` uses 3 when the machine cannot be identified or
+  `--check` cannot read its configuration; under `--check`, 2 means its name is
+  not a machine row. `nova-sprint fleet sync --check` uses 0 for no drift, 2 for
+  drift, and 3 when the inventory or store cannot be read. Sync without
+  `--check` also uses 3 for an unreadable inventory. These are the existing
+  self/sync read-boundary exits, not a general third refusal code.
 
 **(e) Output: events and payloads.**
 - EVENT output is one line per event, `<TOKEN> OK|FAIL key=value ...`; OK to stdout, FAIL and REFUSED to stderr. One exception, per SPEC.md: nova-self-talk's `SELFTALK FAIL files=...` summary count line goes to stdout beside its advisory note.
 - Item OK events may precede a later failure; the closing status is then FAIL, exit not 0.
-- PAYLOAD output: a verb documented to emit a payload names its format in help and emits exactly that payload on stdout and nothing else; its events go to stderr. The documented cases: nova-bus prepare (a JSON artifact), nova-bus draft (a drafted note) and nova-fuse path (a bare value). A payload is never capped like a listing.
+- PAYLOAD output: a verb documented to emit a payload names its format in help and emits exactly that payload on stdout and nothing else; its events go to stderr. Cases include nova-bus prepare (a JSON artifact), nova-bus draft (a drafted note), nova-fuse path (a bare value), `nova-sprint inbox --json` and `fleet sync --json`, and `nova-config machine width --json`. A payload is never capped like a listing.
 - A remedy is a command, printed shell-quoted so it pastes.
 
 **(e2) Token and escaping grammar.** SPEC.md's oneline escaping, whitespace-safe `key=value` fields and the `VERB STATUS` token shape govern. The caller knows which tool it ran, so the token does not repeat it, and a field needs no quoted-string parser.

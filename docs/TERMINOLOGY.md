@@ -8,13 +8,17 @@ source.
   asks you to adopt everything at once. `nova-update adoption` prints each
   friend's own choice, and a tool with no row is absent, never adopted.
   ([USAGE.md](USAGE.md#usage-and-adoption-guide) · [SPEC-UPDATE.md](SPEC-UPDATE.md))
-- **beat** — a machine's heartbeat in Redis, `bench:<name>:beat`, carrying its
-  measured facts. `nova-config machine list` prints them live beside the declared
+- **beat** — a machine's build heartbeat in Redis, `bench:<name>:beat`, carrying
+  its measured facts. `nova-config machine list` prints them beside the declared
   fields, and `nova-update report --store` reads each bench's build from it.
-  ([SPEC-CONFIG.md](SPEC-CONFIG.md) · [SPEC-UPDATE.md](SPEC-UPDATE.md))
-- **bench** — a machine of the fleet that runs work or CI, named by its tailnet
-  host; its declared facts are a `nova-config` machine row and its measured facts
-  come from its beat. ([SPEC-CONFIG.md](SPEC-CONFIG.md))
+  This is distinct from a Sprint member's `nova-sprint fleet beat`, which reports
+  presence and load to the sprint. ([SPEC-CONFIG.md](SPEC-CONFIG.md) ·
+  [SPEC-SPRINT.md](SPEC-SPRINT.md) · [SPEC-UPDATE.md](SPEC-UPDATE.md))
+- **bench** — a machine of the fleet that runs work or CI. Its declared facts
+  are a `nova-config` machine row, and its measured facts come from its beat.
+  `nova-config machine self` identifies it from `NOVA_MACHINE`, then the tailnet
+  host when available, then the hostname; a tailnet name is not required.
+  ([SPEC-CONFIG.md](SPEC-CONFIG.md))
 - **class test** — a test that reads this repository's own text and refuses a
   shape wherever it stands, so a lesson is a rule and not a story; each is
   indexed with its rule, its allowlist, its remedy line and its narrowings.
@@ -38,9 +42,11 @@ source.
 - **REFUSED** — the verdict a tool prints when it could not run or says NO:
   `<TOKEN> REFUSED: <reason> (<remedy>)`, on stderr, exit 2 (exit 1 where the
   state is a NO). ([SPEC.md, Conventions](SPEC.md#conventions))
-- **slot** — the unit of parallelism: a machine's `slots` is how many cards it
-  may run at once, its ceiling, and a friend's `slots` is how wide she wants to
-  run under that ceiling. ([SPEC-CONFIG.md](SPEC-CONFIG.md))
+- **slot** — a unit of parallelism: a machine's configured `slots` is its total
+  capacity, and a friend's `slots` is the share charged to a machine. A Sprint
+  member's configured width is machine slots minus those friend charges; CI-leg
+  leases further limit what can start at runtime. ([SPEC-CONFIG.md](SPEC-CONFIG.md)
+  · [SPEC-SPRINT.md](SPEC-SPRINT.md))
 - **STALE** — `nova-update check`'s verdict for an installed version older than
   the latest its source publishes; a version ahead of the latest is NEWER, and a
   pair with no order between them is DIFFERENT, never STALE.

@@ -46,7 +46,8 @@ near the end, and the sections below say how each is met.
    verb reads no environment and touches no network.
 2. **Sources are declared by flag, and every row names its sources.** A source
    is one of `--claude <label>=<dir>`, `--opencode <label>=<file>`,
-   `--swarm <label>=<dir>` or `--bus <dir>`, each repeatable. The `sources`
+   `--swarm <label>=<dir>`, `--provider <kind>:<label>=<file>` or `--bus <dir>`;
+   the labelled flags are repeatable. The `sources`
    column of every row is the comma-joined, sorted list of the source labels
    that contributed to it, so every number in a day file is traceable to the
    flags of the run that wrote it. A fold with no source flag is exit 2.
@@ -358,9 +359,12 @@ near the end, and the sections below say how each is met.
     summed over every model.
 
 21. **A harness that shows nothing is counted from the provider's side, and
-    never apportioned.** Emma's harness (Antigravity, Gemini) and Johnny's
-    (Grok) record no token counts anywhere a tool can read. For them the source is `--provider
-    <label>=<file>`: a billing export the account holder downloads (Google
+    never apportioned.** A provider export is an aggregate source for a
+    harness whose directly retained observations are not yet connected to
+    this binary's fold/report source flags. Internal retained decoders for
+    Antigravity, Codex and Grok exist; their presence alone does not establish
+    collection, normalized spend or historical coverage. The aggregate source
+    is `--provider <kind>:<label>=<file>`: an export the account holder supplies (Google
     Cloud, xAI), one row per (day, model, type, count) after the tool's
     parser for that provider's shape, with the parser's name in the
     `sources` column. Its repo is the fixed word `unattributed`: the tool
@@ -376,15 +380,15 @@ near the end, and the sections below say how each is met.
     numbers to them, and a tokens note whose body is only that line and
     blanks is a valid note with zero rows. A `report` on such a harness
     prints `TOKENS UNREADABLE` per source and exits 1 (rule 20), and that
-    line plus the daily `# repos:` note is the friend's whole duty. Stella's
-    harness (Codex) is the third of these: it exposes no token usage, this
-    spec has no Codex adapter, and her spend is counted provider-side from
-    the account holder's OpenAI export under the same rule.
+    line plus the daily `# repos:` note is the friend's whole duty for this
+    aggregate route. Codex has a retained per-response decoder in
+    `internal/tokens/codex.go`, but no `nova-tokens fold` source flag for it;
+    `--provider openai:<label>=<file>` remains a distinct aggregate route.
 
 ## The verbs
 
 ```
-nova-tokens fold    --out <dir> (--day <YYYY-MM-DD> | --all) --repos <file>
+nova-tokens fold    --out <dir> (--day <YYYY-MM-DD> | --all) --repos <file> [--units <set.lisp>]
                     [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--swarm <label>=<pool>]... [--bus <dir>]
                     [--provider <kind>:<label>=<file>]... [--scratch <dir>] [--timeout <seconds>] [--allow-shrink] [--max <n>]
 nova-tokens report  --who <name> --day <YYYY-MM-DD> --repos <file>
@@ -395,13 +399,13 @@ nova-tokens report  --redis <host:port> --month <YYYY-MM> [--by model|repo|day|t
                     [--user <name>] [--password-env <NAME>]
 nova-tokens ledger  --out <dir> (--day <YYYY-MM-DD> | --month <YYYY-MM>) --redis <host:port>
                     [--user <name>] [--password-env <NAME>]
-nova-tokens sum     --out <dir> --month <YYYY-MM> [--max <n>]
+nova-tokens sum     --out <dir> --month <YYYY-MM> [--by pair|unit] [--max <n>]
 nova-tokens sum     --swarm-root <dir> --day <YYYY-MM-DD> --out <ledger.tsv>
 nova-tokens check   --out <dir> [--strict | --no-spend <file>] [--through <YYYY-MM-DD>] [--max <n>]
 nova-tokens sources --repos <file> (--day <YYYY-MM-DD> | --all)
                     [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--swarm <label>=<dir>]... [--bus <dir>]
-                    [--provider <label>=<file>]...
-                    [--scratch <dir>] [--timeout <seconds>] [--max <n>]
+                    [--provider <kind>:<label>=<file>]...
+                    [--scratch <dir>] [--timeout <seconds>] [--unattributed] [--max <n>]
 nova-tokens profiles --swarm-root <dir>
 nova-tokens session --claude-session <jsonl> [--out <dir>] [--day <YYYY-MM-DD>]
 nova-tokens fold-pool --pool <dir> --ledger <file> [--since <stamp>]
@@ -839,11 +843,11 @@ those directories is opened for anything else, so the answer does not
 depend on what the job directories still hold. A file whose header is not the sixteen names in
 order is `TOKENS UNPARSED` naming the file and the first wrong column.
 
-### `--provider <label>=<file>`: a billing export
+### `--provider <kind>:<label>=<file>`: a billing export
 
-For a harness that records nothing (rule 21). The file is the provider's own
-export, unmodified; the label names the provider and the parser (`google`,
-`openai`, `xai`); an export whose shape the parser does not know is `TOKENS UNREADABLE`
+For the aggregate route in rule 21. The file is the provider's own
+export, unmodified; `kind` selects the parser (`google`, `openai`, `xai`)
+and `label` names the source; an export whose shape the parser does not know is `TOKENS UNREADABLE`
 with the first unparsed line quoted, never a guess. Rows land with repo
 `unattributed` and the model as the export names it; a type the export has
 no column for is `-`, and `reports=` on the source line names the columns it
@@ -1355,11 +1359,11 @@ seen red before it is trusted.
     and a note built from it folds as the successor of `<id>` (two
     sequential `report`s, the second superseding the first, fold to the
     second's rows and one `SUPERSEDED` line);
-    `report --who emma --day D --provider g=<export>` over the fixture
+    `report --who emma --day D --provider google:emma=<export>` over the fixture
     export of per-day totals declaring `America/Los_Angeles` prints lines
     of seven fields, each ending `day_basis=America/Los_Angeles`, and a
     note built from that subject and that `--note` file, folded by
-    `fold --bus`, writes the same rows as `fold --provider g=<export>`
+    `fold --bus`, writes the same rows as `fold --provider google:emma=<export>`
     over the export directly, `day_basis=America/Los_Angeles` on each,
     `TOKENS DAY nonutc=` equal between the two folds, `TOKENS SOURCE
     day_basis=America/Los_Angeles` on the bus source line; the Claude

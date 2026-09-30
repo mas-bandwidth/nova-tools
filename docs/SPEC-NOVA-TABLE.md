@@ -141,12 +141,13 @@ nova-table cell move     <table> <row> <from-col> <to-col> <member>...
 nova-table cell members  <table> <row> <col>
 nova-table member create <table> <id>
 nova-table member find   <table> <id>
-nova-table member read   <table> <id>... | <table> --cell <row:col>
-nova-table batch  (<manifest-file> | - | '<json>') [--redis <addr> | --seat <name>] [--epoch <n>] [--actor <name>] [--receipt=true|false]
+nova-table member read   <table> (<id>... | --cell <row:col>...) [--at-epoch <n>] [--json]
+nova-table batch  (<manifest-file> | - | '<json>') [--redis <addr> | --seat <name>] [--epoch <n>] [--actor <name>] [--receipt=true|false] [--json]
 nova-table check  <table>
 nova-table clear  <table>
 nova-table show   <table> [--at-epoch <n>]
-nova-table render <table> | --view <name> [--at-epoch <n>] [--width <col=n,...>] [--label-width <n>]
+nova-table render <table> [--at-epoch <n>] [--width <col=n,...>] [--label-width <n>]
+nova-table render --view <name> [--width <col=n,...>] [--label-width <n>]
 nova-table watch  <table>[,<table>...] | --view <name> [--every <duration>] [--out <file>] [--title <text>] [--width <col=n,...>] [--label-width <n>] [--check] [--once]
 nova-table view set  <name> --tables <a,b,...> [--title <text>] [--summary <count-column>]
 nova-table view state <name> (<text> | --clear)
@@ -158,11 +159,13 @@ nova-table version
 nova-table help   [<verb> [<subverb>]]
 ```
 
-Table write verbs accept `--epoch <observed epoch>` (default 0), `--actor`,
+Ordinary table write verbs accept `--epoch <observed epoch>` (default 0), `--actor`,
 `--fence`, `--idem`, and `--receipt`. `create` also accepts `--epoch-key <key>`,
 `--epoch-field <field>` (default `n`), and `--member-prefix <prefix>` (default
-`table::member:`). Column visibility is managed via `set --hide/--show`; there
-are no separate `col hide/show` subverbs and `create` does not take `--hidden`.
+`table::member:`). Column visibility is managed via `set --hide/--show`;
+`create` defines a visible table.
+`batch` has its own flag set shown above; its manifest carries the operation
+identity and preconditions.
 
 ---
 
@@ -673,7 +676,7 @@ A revision is always labelled for what it counts: `table_revision` is the table'
 
 #### Reading members
 
-`nova-table member read <table> <id>... | <table> --cell <row:col>... [--at-epoch <n>] [--json]` is the read set as a verb: one exchange, one consistent snapshot. It prints a summary line (`TABLE READ` with the table, epoch, `table_revision`, and the counts of members found and missing), one `MEMBER` line per member found with its place, score, `member_revision` and fields, and one `MISSING` line per id that does not exist; `place=-` and `score=-` are an unplaced member. `--cell` reads every member of a cell (repeatable). `--json` prints one object with `table`, `epoch`, `table_revision`, `members` (`id`, `place`, `score`, `member_revision`, `fields`), `missing` and `trips`. The next command a refusal suggests for a member's state is this verb. `nova-table member find <table> <id>` reports only where a member is, with the table's revision as `table_revision`.
+`nova-table member read <table> (<id>... | --cell <row:col>...) [--at-epoch <n>] [--json]` is the read set as a verb: one exchange, one consistent snapshot. It prints a summary line (`TABLE READ` with the table, epoch, `table_revision`, and the counts of members found and missing), one `MEMBER` line per member found with its place, score, `member_revision` and fields, and one `MISSING` line per id that does not exist; `place=-` and `score=-` are an unplaced member. `--cell` reads every member of a cell (repeatable). `--json` prints one object with `table`, `epoch`, `table_revision`, `members` (`id`, `place`, `score`, `member_revision`, `fields`), `missing` and `trips`. The next command a refusal suggests for a member's state is this verb. `nova-table member find <table> <id>` reports only where a member is, with the table's revision as `table_revision`.
 
 `nova-table show` prints a cell that did not come back as `?`, never as a false 0, and says which: a warning line on stderr names the row, the column, the key and the type found, and `show` exits 1 (`render` and `watch` keep drawing the `?` and exit 0).
 

@@ -1,7 +1,8 @@
 # nova-redis — specification
 
-`nova-redis` owns the local Redis instance and its scratch verbs. Redis is the
-fleet's low-latency store — a place for signals, slots, locks, counters and
+`nova-redis` owns the local Redis instance, its scratch verbs and deployment
+checks for the embedded function library. Redis is the fleet's low-latency store
+— a place for signals, slots, locks, counters and
 scratch — and never the record. **Git stays the record; nothing in Redis is the
 only copy of anything.**
 

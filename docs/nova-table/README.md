@@ -1,6 +1,6 @@
 # nova-table: work tables and live views over Redis
 
-## The design, in Glenn's words (2026-09-27)
+## The design, in Glenn's words
 
 "at an even simpler level, I think there should be a concept of ordered
 sets." / "The work stream table is really just a series of ordered sets,
@@ -188,8 +188,8 @@ actor, fence, idem, affected cells (`row:column`), member transitions
 (`id`, `from`, `to`, score), and outcome (`changed` or `noop`). Empty endpoints
 are empty strings; empty change lists are JSON arrays.
 
-Writes accept `--actor`, `--fence`, `--idem` and `--receipt`. The last prints the
-committed event ID and revision without a second store call. Go callers pass
+Ordinary table writes accept `--actor`, `--fence`, `--idem` and `--receipt`.
+The last prints the committed event ID and revision without a second store call. Go callers pass
 `WriteOptions{Epoch, Actor, Fence, Idem, Receipt: &receipt}`. Actor, fence and
 idem are recorded metadata here: authorization, lease fencing and retry
 deduplication belong to the coordinator layer. The primitive makes no claim
@@ -272,7 +272,8 @@ nova-table cell move <table> <row> <from-col> <to-col> <member>...
 nova-table cell members <table> <row> <col>
 nova-table member create <table> <id>
 nova-table member find <table> <id>
-nova-table member read <table> <id>... | <table> --cell <row:col>
+nova-table member read <table> (<id>... | --cell <row:col>...) [--at-epoch <n>] [--json]
+nova-table batch (<manifest-file> | - | '<json>') [--epoch <n>] [--actor <name>] [--receipt=true|false] [--json]
 nova-table check <table>
 nova-table clear <table>
 nova-table show <table> [--at-epoch <n>]
@@ -283,15 +284,20 @@ nova-table view state <name> (<text> | --clear)
 nova-table view show <name>
 nova-table view list
 nova-table view del <name>
-nova-table watch <table>[,<table>...] | --view <name> [--every <duration>] [--out <file>] [--title <text>] [--width <col=n,...>] [--label-width <n>] [--once]
+nova-table watch <table>[,<table>...] | --view <name> [--every <duration>] [--out <file>] [--title <text>] [--width <col=n,...>] [--label-width <n>] [--check] [--once]
+nova-table version
+nova-table help [<verb> [<subverb>]]
 ```
 
 | verb | prints |
 | --- | --- |
 | `create` | `TABLE CREATE table=<t> columns=<n>`; an existing table with the same definition is left; another definition is refused |
+| `set` | `TABLE SET table=<t> ...`; edits the definition, visibility or name while retaining allowed data |
 | `drop` | `TABLE DROP table=<t> rows=<n>`; active rows and owned cells go; the saved column definition stays unless `--definition`; earlier epoch snapshots and external bound sets stay |
 | `list` | `TABLE LIST tables=<n>`, then `TABLE table=<t> columns=<n> rows=<n>` per table |
-| `row add` | `TABLE ROW ADD table=<t> row=<r> cols=<n> bound=<n>`; a row already there keeps its place and its cells; a binding wants `--owner` |
+| `row add` | One row prints `TABLE ROW ADD table=<t> row=<r> cols=<n> bound=<n>`; multiple rows print `TABLE ROWS ADD table=<t> rows=<n>`; an existing row keeps its place and cells, and a binding wants `--owner` |
+| `row set` | `TABLE ROW SET table=<t> row=<r> cols=<n>`; writes text column values, with `col=` clearing one |
+| `row hide`, `row show` | Changes row visibility; hidden rows still contribute to counts and formulas |
 | `row del` | `TABLE ROW DEL table=<t> row=<r> existed=<0\|1>`; its owned cells go with it; a missing row succeeds with `existed=0` and a no-op receipt |
 | `row move` | `TABLE ROW MOVE table=<t> row=<r> place=<first\|last\|before\|after> [of=<row>]`; the other rows keep their order |
 | `row order` | `TABLE ROW ORDER table=<t> first=<r,r,...>`; the named rows first, in the order named; the rest follow in theirs |
@@ -300,12 +306,19 @@ nova-table watch <table>[,<table>...] | --view <name> [--every <duration>] [--ou
 | `col del` | `TABLE COL DEL table=<t> col=<c>`; refused while the column holds a member or a text value, or a formula reads it |
 | `col move` | `TABLE COL MOVE table=<t> col=<c> place=<...>`; the other columns keep their order |
 | `cell add`, `cell remove` | `TABLE CELL table=<t> row=<r> col=<c> n=<count after>`; `--score` is the member's place (the unix ms when omitted) |
-| `cell move` | `TABLE MOVE table=<t> row=<r> member=<m> from=<c> to=<c> n=<count of to>`; one call, the score kept; `NOTMEMBER` refused |
+| `cell move` | `TABLE MOVE table=<t> row=<r> member=<m> ...` for one member or `members=<n>` for several; one call, scores kept; `NOTMEMBER` refused |
 | `cell members` | `TABLE CELL ... n=<n>`, then `TABLE MEMBER table=<t> row=<r> col=<c> member=<m> score=<s>` per member |
+| `member create` | `TABLE MEMBER CREATE table=<t> member=<id>`; creates an unplaced member identity |
+| `member find`, `member read` | Finds one member's location or reads IDs or complete cells with member fields and revisions |
+| `batch` | Applies one manifest of member mutations and preconditions in a single call; accepts a file, stdin (`-`) or inline JSON |
+| `check` | Audits record/set links in both directions, including hidden cells |
 | `clear` | `TABLE CLEAR table=<t> rows=<n> ms=<n>`; one call; the definition stays |
-| `show` | `TABLE table=<t> columns=<n> rows=<n> trips=1 epoch=<n> revision=<n>`, then `TABLE ROW table=<t> row=<r> <col>=<projected-value> ...` per row, including hidden rows/columns, text, members and percentages |
-| `render` | table text, empty when the table is empty; `--view` prints one stored-view frame with timestamp, title and summary |
+| `show` | `TABLE table=<t> columns=<n> rows=<n> trips=1 epoch=<n> revision=<n>`, then `TABLE ROW table=<t> row=<r> <col>=<projected-value> ...` per row, including hidden rows/columns, and `TABLE PROP` lines for table properties |
+| `render` | table text, including the header and footer when there are no rows; `--view` prints one stored-view frame with timestamp, title and summary |
 | `watch` | the text, once per tick, in place or to `--out` |
+| `view set`, `view state`, `view show`, `view list`, `view del` | Manages stored view configuration and its displayed state |
+| `shell` | Reads commands on one resident connection; each line retains its normal verb behavior |
+| `version`, `help` | Prints the build version or command syntax without opening a store |
 
 Empty values and values holding spaces or quotes are quoted, `note=""`,
 `row="swarm: cards"`. Counts stay numeric; percentages have one decimal and `%`.
@@ -323,6 +336,12 @@ refuses with the two epochs. Use `check` for a full audit of all record/set link
 fields, the members that do not exist, and the table's revision and epoch (see
 `docs/CLI.md`, Reading members).
 A custom member prefix needs read access to that namespace.
+
+`batch` takes a validated manifest with an operation ID, expected table
+revision, member guards and mutations. It checks one pre-state and commits one
+receipt, or refuses the complete change. `--epoch` and `--actor`, when supplied,
+must agree with the manifest; `--json` prints the result as one JSON object.
+See [the batch manifest and replay contract](../SPEC-NOVA-TABLE.md#batched-member-read-and-conditional-write).
 
 `view list` lists stored view names in lexical order. `view show` prints the
 configuration, including its summary column; `render --view <name>` renders it
@@ -536,10 +555,15 @@ on the terminal: the ANSI home-and-clear sequence, then the text, so a
 console tab shows the live table with no shell loop. `--out <file>`
 publishes each tick by writing a temp file beside it and renaming it over,
 so a reader sees one whole table. `--once` renders
-once and exits, with no clear. With explicit table names, every tick is exactly one Redis pipeline of read-only snapshots, including cold and changed shapes. A stored view adds one exchange to reload its configuration. An explicit table watch holds the tables; a stored view also has its timestamp,
-title and optional summary. In either mode, a tick whose read fails leaves the last good text standing with one
+once and exits, with no clear. With explicit table names, each tick reads
+the snapshots in one Redis pipeline, including cold and changed shapes. A
+stored view adds one exchange to reload its configuration. `--check` also
+checks each table's record/set links every tick, adding one read-only exchange
+per table and showing a stall row on invariant failure. An explicit table watch
+holds the tables; a stored view also has its timestamp, title and optional
+summary. In either mode, a tick whose read fails leaves the last good text standing with one
 `store unreachable since <time>` line under it, and stderr says why once. While
-the store answers the frame is the table and nothing else: no age, no counter. A signal ends it,
+the store answers, a normal frame is the table and nothing else: no age, no counter. A signal ends it,
 exit 0.
 
 ## Module integration and deployment

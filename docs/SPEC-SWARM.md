@@ -4,6 +4,12 @@ A pool of one-task workers — any provider, any model, through one
 harness — each with its own working directory, its own data home, its own job directory
 and its own deadline held by the machinery rather than by the worker.
 
+`native` runs one card and `batch` runs a caller-supplied card list. `member` is the
+machine-side loop over an already configured `nova-sprint` fleet: it starts `native`
+children for work assigned to that member. It does not create the fleet or provision
+machines. The first local card run remains the small tracer; fleet membership is a
+separate layer over the existing sprint table.
+
 Every rule it keeps is a failure from the record:
 
 | the failure, from the record | the rule that closes it |
@@ -31,27 +37,35 @@ its data home are the only writable paths; the slot directory and whatever
 the `gh` configuration are in neither list and the kernel denies them.
 A command that runs outside the wall and dies inside it is missing a `read_roots` entry.
 
+This is the containment contract, not a claim that every current launch path meets it.
+`batch --runner` launches the supplied runner directly, and `native --no-wall` skips the
+wall. Neither path satisfies the contract above; they remain unresolved implementation
+exceptions and must not be described as contained.
+
 The wall grants the platform toolchain roots where a reader looks for them:
 - Darwin: `~/sdk`, `~/go/pkg/mod`, `/opt/homebrew/Cellar/go`, `/opt/homebrew/Cellar/sbcl`, `/opt/homebrew/opt/openjdk`, `/Library/Java/JavaVirtualMachines`, `/usr/local/share/dotnet`.
 - Linux: `~/sdk`, `~/go/pkg/mod`.
 
 ## The living verbs
 
-The tool exposes eleven living verbs, dispatched directly from `cmd/nova-swarm/main.go`:
+The current source exposes eleven living verbs, dispatched from `cmd/nova-swarm/main.go`.
+The `member` entry below is conditional on its pending implementation being merged and
+rechecked against the final source; it is not a current verb in this checkout:
 
 ```
 usage:
   nova-swarm version    print this build identity (--version also accepted)
   nova-swarm doctor    [--path <file>] [--local <file>]   refuse a launch under a shadowed nova-swarm (PATH vs ~/.local/bin build stamp)
-  nova-swarm batch     --id <id> --cards <file> --deadline <seconds> --root <dir> --tokens <n>|unmetered (--runner <cmd> | --harness <path> --slots-store <dir> --owner <name>) [--idle <seconds>] [--slots <lo>-<hi>] [--then <command>] [--benches <file> --bench <name>[,<name>...]]
+  nova-swarm batch     --id <id> --cards <file> --deadline <seconds> --root <dir> --tokens <n>|unmetered (--runner <cmd> | --harness <path>) [--idle <seconds>] [--max-inflight <n>] [--stall-after <seconds>] [--slots <lo>-<hi>] [--slots-store <dir> --owner <name>] [--then <command>] [--benches <file> --bench <name>[,<name>...]] [--no-route --reason <text>] [--route] [--route-registry <file>] [--route-floor <n>] [--route-log <file>] [--route-usage <file>] [--route-key-env <name>] [--route-base-url <url>] [--auth <file>] [--worker <file>]
                        (without --runner, batch requires --slots-store <dir> --owner <name> and runs each card through nova-swarm native)
   nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
-  nova-swarm lint      --card <file> [--typed] [--trust <file>] [--lineup <file>] [--max <n>] | --fleet <file> [--max <n>] | --rules
+  nova-swarm lint      --card <file> [--typed] [--trust <file>] [--lineup <file>] [--base-check [--repo <dir>] [--legs <file>] [--p95 <file>]] [--max <n>] | --fleet <file> [--max <n>] | --rules
                        (--fleet lints a launcher script against the coordinator's /bin/bash 3.2: shebang, bash-4 builtins, unquoted expansions)
   nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|read|fix|text|replay|drift|tone|models.tsv
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
-  nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--events-store <host:port>]
-  nova-swarm route     --card <file> --routes <routes.tsv> [--floor 0.9] [--default <worker json>] [--key-env <name>] [--base-url <url>]
+  nova-swarm native    --harness <path> (--model <provider/model> | --worker <file>) --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--sandbox <path> | --no-wall] [--no-shared-caches] [--results-root <dir>] [--sweep-now] [--usage-interval <duration>] [--events-store <host:port>] [--bench <name>] [--stage-timeout <duration>] [--repo <name>...] [--recipient <name>...]
+  nova-swarm member    --as <name> --width <n> --harness <path> --model <provider/model> --root <dir> --deadline <duration> --tokens <n>|unmetered [--sprint <nova-sprint>] [--reader] [--every <duration>] [--once | --ticks <positive-n>] [--auth <file>] [--config <file>] [--worker <file>] [--no-wall]
+  nova-swarm route     --card <file> --routes <routes.tsv> [--floor <0..1>] [--default <worker json>] [--key-env <name>] [--base-url <url>]
   nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
   nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>] [--kind <kind>]
   nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all) [--force]
@@ -64,46 +78,74 @@ usage:
 
 ### Verb behaviours
 
-1. **`version`**: Prints build identity: `nova-swarm <identity> <os>/<arch> <go-version>`. Accepts `--version`.
-2. **`doctor`**: Compares `PATH` binary stamp against local build stamp (`~/.local/bin/nova-swarm`). Refuses launch if shadowed or if a compared binary cannot be read; see "The doctor".
-3. **`batch`** (`--id --cards ...`): executes a batch of cards across slots, enforcing token budgets and deadlines. Without `--runner`, batch requires `--slots-store` and `--owner` and starts `native` itself; these are compatibility inputs to `native`, not capacity leases.
-4. **`verify`**: Mechanically verifies `RESULT.md` line 1 against the contract line, checks against failure signatures, and writes a `.receipt` file.
-5. **`lint`**: Validates card mechanical structure before any spend, validates fleet scripts against bash 3.2, or displays linting rules.
-6. **`template`**: Prints standard templates (`read-pr`, `probe-row`, `fix-card`, `worker`, etc.) verbatim without escaping.
-7. **`profile`**: Aggregates per-turn timeline TSV files into execution phase durations.
-8. **`native`**: Executes a single card through the harness under sandbox containment with external deadline, idle timer, and token tracking. Takes job and slot directory leases (`.lease`, `.slot-lease`).
-9. **`route`**: Classifies card complexity and kind against a routes table to select an appropriate worker description.
-10. **`slots`**: Bench slot lease broker (`init`, `take`, `release`, `list`) managing shared bench capacity.
-11. **`worker`**: Validates worker description JSON structure, environment variables, and readable roots.
+1. **`version`**: Prints the build identity: `nova-swarm <identity> <os>/<arch> <go-version>`. Accepts `--version`.
+2. **`doctor`**: Compares the `PATH` binary stamp with the local build stamp (`~/.local/bin/nova-swarm`). Refuses a launch if shadowed or if a compared binary cannot be read; the launch preflight applies to `batch` and `native`.
+3. **`batch`** (`--id --cards ...`): Executes a card list, waits under the batch deadline and idle rules, and gathers each result. Routing is on by default; `--no-route` requires `--reason`. A supplied `--runner` receives label, slot, model, card path, root, and the token-budget word as six arguments. A runner that uses `native` must pass the budget word through; the batch does not meter an arbitrary runner's provider tokens. Without `--runner`, it starts `native`; `--slots-store` and `--owner` are compatibility inputs to that path, not capacity leases.
+4. **`verify`**: Checks `RESULT.md` line 1 against the contract, applies the result checks, and writes a `.receipt` file.
+5. **`lint`**: Checks a card, checks a launcher script with `--fleet`, or prints the card rules with `--rules`. Card checks can include typed-header and base-evidence checks.
+6. **`template`**: Prints a named built-in template verbatim.
+7. **`profile`**: Reads native job timeline TSV files and aggregates time by execution phase; it launches no worker.
+8. **`native`**: Runs one card through the harness, with the deadline, idle bound, and token accounting described below. It takes job/slot-directory leases. `--no-wall` is an accepted explicit bypass and does not satisfy the containment contract above.
+9. **`member` (conditional)**: If merged as proposed, runs this machine as one member of an existing sprint fleet. Each tick beats the member's load, reads its queue, reports ended children, takes up to the available width, and starts one `native` child for each packet. `--reader` instead begins asked reader packets and reports completed reads. The member uses the `nova-sprint` executable (default `nova-sprint`) and inherits its store configuration; it does not provision the fleet. `--once` runs one pass; a positive `--ticks` stops after that many passes. Neither waits for children started during the final pass.
+10. **`route`**: Classifies a card against a routes table. A below-floor answer selects the configured default and returns exit 3; it is a suggestion rather than launch authorization.
+11. **`slots`**: Bench slot-lease broker (`init`, `take`, `release`, `list`) for shared bench capacity.
+12. **`worker`**: Validates a worker description and launch-related environment, including whether its harness can run and any named secret is present.
+
+**Unresolved implementation differences.** The containment rule above conflicts with the
+supported `batch --runner` and `native --no-wall` paths. The key rule below also conflicts
+with legacy `native --auth`, which copies the key into the job data home as a mode-0600
+file and removes the copy when the run ends. The worker-description secret path instead
+keeps the key in the environment. `batch --runner` receives a token-budget word but the
+batch cannot enforce provider usage if a custom runner ignores it. `slots list` prints all
+lease rows and has no `--max`, despite the listing rule below. In the proposed member source,
+tick failures are printed but do not change the final exit status or prevent the unconditional
+`MEMBER OK` line; bounded `--once`/`--ticks` also do not wait for children started on the last
+pass. The member launch is not included in the doctor preflight's `batch`/`native` verb set.
+These behaviors remain unresolved against the contract rather than being recast as exceptions.
 
 ## Exit codes
 
 | code | meaning |
 |---|---|
-| 0 | the verb ran and passed: a batch completed, a card executed, a receipt written |
-| 1 | the verb ran and said **NO**: a `verify` whose contract line mismatched or whose run carries a failure signature, a `native` whose card was ended by its token budget or by a budget it could no longer verify |
-| 2 | could not run: missing flag (`--tokens` on `native` and on `batch --cards`), a numeric `--tokens` on a `native` whose usage source is `none` or whose bench has no `sqlite3` on `PATH`, unreadable worker description, a key file that is absent or empty, bad invocation |
+| 0 | the verb returned success; for `member`, this does not prove every tick succeeded or every child finished |
+| 1 | a completed operation reported a negative result, including result verification, a native failure, or a batch with holds/abstentions |
+| 2 | invocation or operation refusal, including missing flags, unreadable inputs, worker drift, unavailable admission, a `lint --fleet` finding, or a held slot |
+| 3 | a route is below its confidence floor, or a batch `--then` command is skipped because the cards did not all finish cleanly |
 
 ## Output grammar
+
+The `MEMBER` lines are conditional on the proposed command being merged and rechecked.
 
 ```
 BATCH REFUSED: <reason>
 BATCH <id> n=<n> done=<n> abstain=<n> in=<n> out=<n> usd=<sum> idle=<n> stalled=<n> [partial=<n>] [benches=<n>] [uniform-abstain=<reason>]
 BATCH THEN rc=<n>
-BATCH THEN SKIPPED done=<d> n=<n> abstain=<a> stalled=<s> stopped=<b>
+BATCH THEN SKIPPED done=<d> n=<n> abstain=<a> stalled=<s>
 BATCH NOTE slot=<n> stale-lock id=<id> taken
 BATCH NOTE <label> RESULT.md copied up from <path>
 NATIVE OK label=<id> job=<id> tmp=<path> rc=<n> wall=<n>s sandbox=<path|-> card_sha256=<sha> binary_sha256=<sha> config=<sha8|-> harness=<ok|silent> budget=<spent|n+|->/<n>|unmetered [fence=rejected path=<p>] [usage=none reason=<r> path=<p>] [reason=terminated] [stopped=<tokens|max_turns|max_cache_read|unverifiable>]
-NATIVE INCOMPLETE label=<id> job=<id> tmp=<path> rc=<n> wall=<n>s sandbox=<path|-> card_sha256=<sha> binary_sha256=<sha> config=<sha8|-> harness=<ok|silent> budget=<spent|n+|->/<n>|unmetered [fence=rejected path=<p>] [usage=none reason=<r> path=<p>] [reason=terminated] [stopped=<tokens|max_turns|max_cache_read|unverifiable>] why=<harness-silent|no-result|rc>
+NATIVE INCOMPLETE label=<id> job=<id> tmp=<path> rc=<n> wall=<n>s sandbox=<path|-> card_sha256=<sha> binary_sha256=<sha> config=<sha8|-> harness=<ok|silent> budget=<spent|n+|->/<n>|unmetered [fence=rejected path=<p>] [usage=none reason=<r> path=<p>] [reason=terminated] [stopped=<tokens|max_turns|max_cache_read|unverifiable>] why=<harness-silent|no-result|rc|unknown-acceptance>
 NATIVE REFUSED: <reason>
-ROUTE OK card=<path> model=<model> ...
-ROUTE REFUSED: <reason>
-SLOTS OK store=<dir> capacity=<n> share=<n>
-SLOTS GRANTED store=<dir> owner=<owner> n=<n> ...
-SLOTS REFUSED store=<dir> owner=<owner> ...
+RESULT OK <label> line2=<disposition>
+RESULT REFUSED <label> <reason>
+ABSTAIN <label> reason=signature sig=<signature> class=<class>
+LINT OK card=<name> checks=<n> bytes=<n> cap=<n>
+LINT DRIFT card=<name> <check>: <line>: <excerpt> remedy=<text>
+LINT MORE card=<name> findings=<n> remedy=<command>
+LINT SIZE card=<name> bytes=<n> cap=<n> advisory=true
+LINT NOT-A-CARD card=<name> template=<name> remedy=<text>
+LINT OK script=<name> checks=<n> bytes=<n>
+LINT DRIFT script=<name> <check>: <line>: <excerpt> remedy=<text>
+LINT MORE script=<name> findings=<n> remedy=<command>
+LINT RULE <name> remedy=<text>
+ROUTE card=<path> kind=<kind> conf=<n> complexity=<n> needs_strong=<n> private=<n> worker=<name> floor=<n> below=<names>
+ROUTE REFUSED reason=<reason> <detail>
+SLOTS INIT OK store=<dir> owner=<owner> capacity=<n> reserve=<n> share=<n>
+SLOTS OK owner=<owner> granted=<n> held=<n> share=<n> free=<n>
+SLOTS REFUSED owner=<owner> want=<n> held=<n> share=<n> free=<n> holders=<names>
 SLOTS RELEASED store=<dir> owner=<owner> ...
 SLOTS KEPT store=<dir> owner=<owner> live=<n>
-SLOTS LEASE store=<dir> slot=<n> owner=<owner> ...
+SLOT <id> owner=<owner> pid=<pid> label=<label> until=<time> state=<live|DRIFT|expired> [kind=<kind>] [weight=<n>] [stranded=1]
 DOCTOR OK stamp=<stamp>
 DOCTOR OK nothing to compare: no nova-swarm on PATH and none under the local directory
 DOCTOR DRIFT path=<binary> stamp=<stamp>
@@ -111,10 +153,16 @@ DOCTOR DRIFT local=<binary> stamp=<stamp>
 DOCTOR REFUSED <path binary> shadows <local binary>; copy the ~/.local/bin binary over the PATH one, or fix PATH so ~/.local/bin comes first
 DOCTOR UNREADABLE reading the version of <path|local>=<binary>: <cause>; <the other binary>; run `<binary> version` by hand and rebuild or remove the binary that does not answer, then launch again
 PROFILE job=<path> ...
+WORKER OK <name> model=<model> provider=<provider> class=<class>
+WORKER DRIFT <field>: <reason>
+MEMBER <member|reader> as=<name> width=<n> every=<duration> sprint=<binary> harness=<path> model=<provider/model>
+tick <n> acted=<n> running=<n> <time>
+MEMBER OK as=<name> ticks=<n> running=<n>
 ```
 
-Every listing is a cap and a count: `--max`, default 20, `0` for all, one MORE line
+Every capped listing takes `--max`, default 20, `0` for all, and prints one MORE line
 naming the remedy. The counts describe the complete result set, never just the printed rows.
+`slots list` is currently uncapped; that does not satisfy the listing rule above.
 
 ## The key, read as data
 

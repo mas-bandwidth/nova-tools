@@ -1,6 +1,6 @@
 # Antigravity retained-token mapping — proposed source contract
 
-Based on unmetered empirical inspection of native local storage; Emma has confirmed the on-disk storage layout on macOS ARM64 (`studio-arm64`). Real numeric telemetry and session history remain in private coordination records; the public test fixtures in `testdata/tokens/antigravity/` are synthetic and privacy-preserving. The recorded producer is **Antigravity 2.12.2** (running under Google Antigravity). This is a source-shape proposal and review packet, not a deployed adapter. Sealed manifest ID: `sha256:173b9ff62dcda4fdd2187298d1fdbc66d1b01fe14bd9b7899bf9fc11444386b1`.
+Based on unmetered empirical inspection of native local storage; Emma has confirmed the on-disk storage layout on macOS ARM64 (`studio-arm64`). Real numeric telemetry and session history remain in private coordination records; the public test fixtures in `testdata/tokens/antigravity/` are synthetic and privacy-preserving. The recorded producer is **Antigravity 2.12.2** (running under Google Antigravity). `internal/tokens/antigravity.go` implements a retained step decoder for this source shape, but `nova-tokens` has no Antigravity collection flag or normalized-spend route. This mapping is not evidence of deployed collection or historical coverage. Sealed manifest ID: `sha256:173b9ff62dcda4fdd2187298d1fdbc66d1b01fe14bd9b7899bf9fc11444386b1`.
 
 ## 1. Source Structure & Grain
 

@@ -1,9 +1,9 @@
 # nova-update — specification
 
-nova-update checks every dependency this estate names for a newer version, on a person's
-word, and installs only what a person names.
-
-One tool, three verbs.
+`nova-update` checks declared dependencies and installs only the item a person
+names. Its `check`, `apply`, and `report` verbs handle the versions manifest;
+`watch` runs coordinator adoption checks, `adoption` reads friends' choices,
+and `release` has the five separately bounded verbs specified below.
 
 - `nova-update check --file <path>` reads one versions file kept in git and asks of every
   dependency it names what is INSTALLED on this box and what is the LATEST its own source
@@ -26,7 +26,17 @@ reads the counts in the morning; the tool has no clock of its own — no daemon,
 no `--watch`, no state file of its own (rule 25's snapshot is the caller's, named by flag)
 — nothing reacts to its exit code, no verdict starts an `apply`.
 
-`nova-version snapshot --file <manifest>` counts how many of the ADOPTED tools the rule-2 manifest names answer: it reads the manifest and reports `known=<n>` on the single `SNAPSHOT <OK|FAIL> checked=<n> known=<n> unknown=<n> file=<path>` line, exit 1 when any adopted tool is unknown — the adopted 16, never how many `nova-*` executables sit on a bin dir or PATH. A recorded installed version is known without starting a process; an installed argv is probed the way report probes it (rule 4). The verb writes nothing: the manifest is adopted, not discovered, so a draft for a person to fill in is a hand-written file, not a scan. `nova-version snapshot --bin <dir> --out <file.tsv>` instead inventories a directory of `nova-*` executables as a four-column TSV, and `nova-version diff --from <a.tsv> --to <b.tsv>` compares two such inventories.
+`nova-version snapshot --file <manifest>` counts how many tools the caller's
+rule-2 manifest names answer: it reports `known=<n>` on the single `SNAPSHOT
+<OK|FAIL> checked=<n> known=<n> unknown=<n> file=<path>` line, exit 1 when
+any named tool is unknown. It counts manifest entries, never executables in a
+bin directory or on PATH. A recorded installed version is known without
+starting a process; an installed argv is probed the way report probes it
+(rule 4). The verb writes nothing: the manifest is adopted, not discovered,
+so a draft for a person to fill in is hand-written, not scanned.
+`nova-version snapshot --bin <dir> --out <file.tsv>` instead inventories a
+directory of `nova-*` executables as a four-column TSV, and
+`nova-version diff --from <a.tsv> --to <b.tsv>` compares two such inventories.
 
 ## The rules, numbered
 
@@ -85,7 +95,9 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
     argv runs like any other — rule 4's exit, timeout and PATH clauses hold — its stdout
     read as the `ollama list` table: the ID column of the row whose first token equals the
     entry's `name`, tag and all; no such row is UNKNOWN, remedy *this weight is not on this
-    box: the owner pulls it, `ollama pull <name>`; `nova-local status --list` shows it*.
+    box: the owner obtains it through the configured model runtime and checks
+    that runtime's status or list command (for Ollama, `ollama pull <name>`
+    followed by `ollama list`)*.
     It never asks `:11434`. **Latest** is one GET of
     `https://registry.ollama.ai/v2/library/<model>/manifests/<tag>`, no token, the digest
     being the SHA-256 of the body; a body not JSON, or without `schemaVersion` or `layers`,
@@ -97,8 +109,8 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
     so a model is never STALE. Listed, never pulled (rules 9, 11).
 4b. **A `tool` row that names only its executable is asked the verb a tool answers.**
     An `installed` column of ONE token is a name, not a sentence: nothing in it says how
-    the binary is to be asked. Such a row — what `nova-version snapshot` writes and what
-    every hand-written manifest holds, `nova-bus  tool  ~/.local/bin/nova-bus` — is run
+    the binary is to be asked. Such a row in a hand-written versions manifest,
+    for example `nova-bus  tool  ~/.local/bin/nova-bus`, is run
     `<exe> version`, then `<exe> --version`, then BARE, and the first invocation whose
     output carries an identity under rule 4 is the reading. Bare stays last, for a foreign
     tool that prints its version with no argument at all. The whole ladder shares ONE
@@ -157,11 +169,11 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
     `--stale`, no glob, no `-y`; no verdict of `check` — STALE, NEWER, DIFFERENT — is a
     name: the three verbs share a file and nothing else. One run installs one thing.
 11. **`apply` refuses a model, by name, with the path.** `kind=model` is refused with the
-    remedy naming the owner's own step: a weight arrives by the owner's own `ollama pull
-    <name>`, after whatever evaluation the owner chose, never through this tool — SPEC-LOCAL
-    cut `quarantine` and `eval` (*if we want to eval, it is another tool*), so no remedy
-    here names them; `nova-local status --list` shows the weight landed. The refusal names
-    the model, so a transcript says which one.
+    remedy naming the owner's own step: obtain the weight through the configured
+    model runtime after whatever evaluation the owner chose, then use that
+    runtime's status or list command to check it. For Ollama, those commands
+    are `ollama pull <name>` and `ollama list`. This tool never pulls a model.
+    The refusal names the model, so a transcript says which one.
 12. **`apply` refuses a name the file does not carry.** Not a near match, not a
     prefix, not a case-insensitive match — the exact name or a refusal, exit 2, naming
     the file it read and its entry count.
@@ -399,17 +411,18 @@ nova-update release pull --version <v> --out <dir> --changelog <path> [--machine
 nova-update help
 ```
 
-Those eleven usage lines are the string `nova-update help` prints, byte for byte: one string
+Those twelve usage lines are the string `nova-update help` prints, byte for byte: one string
 in the binary, so the spec and the help cannot drift apart; the five `release` lines are
 `release.Verbs`, spliced into that one string rather than copied beside it. `report --store <host:port>` is the fleet's view: it reads every registered bench's
 beat (`bench:<b>:beat`, field `build`, the version line the bench stamps each
 beat) in two pipelined round trips and prints one `REPORT DRIFT` line per beating bench not on
 the newest build, then one receipt; no ssh, no bus note, exit 1 on drift. `--kind <k>` is rule 19. No
 `--only-stale` (the output is only findings), no `--quiet` (the count line is the point).
-`nova-version snapshot …` reads the adopted manifest and reports its count on one line,
+`nova-version snapshot --file …` reads the caller's manifest and reports its
+count on one line,
 `nova-version report …` and `nova-version send …` are the `report` line's flags under that
 name, `send` implying `--send` (rule 20), and `nova-version snapshot --file <manifest>`
-counts the adopted tools the manifest names (the opening paragraph), while snapshot's
+counts the tools the manifest names (the opening paragraph), while snapshot's
 `--bin/--out` shape inventories a directory and `diff` compares two inventories: its
 `help` prints those lines the same way, snapshot's `--file` reading the adopted manifest
 where report's `--snapshot <path>` option is the recovery state file.
@@ -418,11 +431,11 @@ the ready-to-send draft is `nova-version report --draft …`, the flag typed.
 
 ## The release verb
 
-`check`, `report` and `adoption` all ask the same question from one end: what is installed
-here, and is it what it should be. `release` is that question from the other end — it is
-what MAKES the thing they read. Build, copy, install and verify are separate verbs with
-separate receipts, never one nested `ssh` quoting, so when a bench runs an old tool while
-the coordinator believes it is current, the receipts say which step did not happen.
+`check` and `report` read installed identities; `adoption` records friends'
+choices. `release` makes the binaries they may read. Its `cut`, `build`,
+`install`, `adopt`, and `pull` stages have separate receipts, never one nested
+`ssh` command, so when a bench runs an old tool while the coordinator believes
+it is current, the receipts show which stage did not happen.
 
 Five verbs, and each one can refuse. Three of the refusals are gates rather than steps, and
 [SPEC-RELEASE.md](SPEC-RELEASE.md) is where they are written out for a person who is not
@@ -737,9 +750,8 @@ install` or `npm install`.
 10. `TestApplyNeedsANameFromAPerson`: no name is exit 2 saying a name is required;
     `--all`, `--stale` and `-y` are unknown flags; two names is exit 2.
 11. `TestApplyRefusesAModelByName`: `apply` of every `kind=model` entry is exit 2, carries
-    the model's name, names `ollama pull` with that name and `nova-local status --list`,
-    names no verb SPEC-LOCAL cut — `quarantine`, `eval` nowhere in the output, the mutation
-    that matters — and starts no process.
+    the model's name, directs the owner to the configured runtime's own fetch
+    and status/list commands, and starts no process.
 12. `TestApplyRefusesAnUnnamedThing`: `g`, `GH`, `gh ` and `gh-cli` against a file
     carrying `gh` are each exit 2 naming the file and the entry count.
 13. `TestApplyInterpolatesOnlyTheVersion`: an argv with `{version}` twice, a `$HOME`, a
@@ -866,7 +878,8 @@ arrive either way and the two disagree by days. Default: the file names the sour
 that installed the copy on this box; a mismatch is a one-line fix to the file, not a
 second source per entry.
 4. **Prepared delivery is a required implementation dependency.** The bounded protocol
-in SPEC-BUS-DELIVERY.md replaces waiting for an unrelated future push. Until that bus
-mode is implemented and its real-Git recovery witnesses pass, the reporter's sending
-path is not ready for adoption. Local inventory, draft and update-choice implementation
-can proceed independently. No timer or reporter-owned Git is added.
+in SPEC-BUS-DELIVERY.md replaces waiting for an unrelated future push. The reporter's
+current sending path calls `nova-bus prepare` and `send --prepared-stdin`; its
+real-Git recovery witnesses remain acceptance evidence, not an implicit pass from
+this spec. Local inventory, draft and update-choice behavior does not depend on
+delivery. No timer or reporter-owned Git is added.

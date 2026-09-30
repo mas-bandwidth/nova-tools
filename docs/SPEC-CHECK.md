@@ -1,9 +1,8 @@
 # nova-check convergence — specification
 
 **Convergence is the health metric**: the contraction ratio per stream, every
-tick. Answered by hand, *are we converging?* is six windows read out of six
-different places, an hour of it, and a paragraph nobody can diff against the next
-one. This verb is that hour, mechanised.
+tick. This verb reads the seven measures together and prints a result that can
+be compared with the next tick.
 
 `docs/SPEC.md`'s **Conventions** govern — exit codes, the one-line grammar, the field
 law, no guessed paths — and [SPEC.md's `## nova-check`](SPEC.md) holds the record-layer
@@ -12,6 +11,13 @@ verbs this file does not restate. `help` prints this line, byte for byte:
 ```
 nova-check convergence --repo <owner/name> --ledger <md> --receipts <dir> --retired <file> --since <RFC3339|24h>
 ```
+
+Optional flags name the remaining sources and the reading's execution:
+`--bin`, `--repo-dir`, `--batch-logs`, `--versions`, `--certs`, `--state`,
+repeatable `--by`, `--json`, `--now <RFC3339>`, `--gh <executable>`,
+`--git <executable>` and `--timeout <seconds>`. The executable flags select
+the child programs used for forge and repository reads; `--now` fixes the
+reading's clock for an exact replay.
 
 ## What a stream is
 

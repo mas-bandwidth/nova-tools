@@ -1,23 +1,36 @@
-# SPEC-CI — the class tests that read this repository's own CI path
+# SPEC-CI — the CI helpers and class tests that read this repository
 
-This specification holds the class tests that guard the CI path by reading the
-repository's own test files as text. It stands beside [SPEC.md](SPEC.md), whose
+This specification holds `nova-ci`'s checks and the class tests that guard the
+CI path by reading the repository's own files. It stands beside
+[SPEC.md](SPEC.md), whose
 **Conventions** section — exit codes, no guessed paths, the one-line output
 grammar, the cap-and-count rule, `internal/oneline` and `internal/bounded` —
 applies here unchanged and is not restated. Related: the budget law
 `TestNoTestAssertsAWallClockBoundUnderTenSeconds`.
 
+## The `nova-ci` command surface
+
+`cmd/nova-ci/main.go` dispatches these verbs. The banner (`nova-ci help`) gives
+their flags and runnable examples; `nova-ci help <verb>` opens a verb's help.
+
+| Command | Present behavior | Source |
+| --- | --- | --- |
+| `help`, `version` | Print the usage banner or the one-line build identity. | `cmd/nova-ci/main.go`, `version.go` |
+| `slowtests` | Judge newline-delimited `go test -json` on stdin, print `CI-SLOW` and `CI-LOAD`, and enforce a `CI-SLEEPS` finding on every leg. `--enforce` also makes a `CI-SLOW` finding fatal. | `main.go`, `internal/ci/slowtests` |
+| `local` | Select packages from the committed diff against `--base` (default `origin/dev`), then run the Makefile's test target at nice 15 with two cores and an uncached test run; `--functional` adds the functional build tag. It reports uncommitted Go files because selection does not include them. | `local.go`, `.github/scripts/select-packages.sh` |
+| `functional` | From package directories, print only the packages containing functional-tagged tests and a `-run` pattern for those tests; print an explicit zero-package line when none qualify. The Makefile consumes this selection. | `main.go`, `internal/ci/functional`, `Makefile` |
+| `new-rule`, `new-verb` | Scaffold a class-rule or CLI-verb skeleton under a chosen checkout (`--root`, default `.`); `new-verb` prints the dispatch case to add and does not edit the switch. | `newrule.go`, `newverb.go`, `internal/scaffold` |
+| `github receipt` | Write the runner's one `ev:github` receipt and print one `CI RECEIPT` line. `github` has no other subverb. | `receipt.go`, `internal/cireceipt` |
+| `cost` | Read a complete forge jobs listing on stdin, print one `COST` line, and optionally append that entry to `ci:cost`. | `cost.go`, `internal/cicost` |
+
+The detailed budget, cost and receipt rules below remain the contracts for those
+verbs. A helper's presence in this table does not add it to a CI gate: its
+caller in the Makefile or workflow decides when it runs.
+
 ## The CI class test against fixed waits on the CI path
 
-**The help line.** The class test is entered in the CI check roster and in help
-as the verb `waits`:
-
-```
-waits   read every _test.go on the CI path; refuse a fixed wall-clock wait or bound
-```
-
-It runs as `go test ./internal/ci -run TestNoFixedWaitsOnTheCIPath`, and it is
-the bench's fixed-wait audit made an official verb: the check a PR runs.
+**The check.** `TestNoFixedWaitsOnTheCIPath` runs in `internal/ci`. It is a
+class test, not a `nova-ci` command: it audits fixed waits on the CI path.
 
 **What it reads and what it writes.** It reads, as text, every `_test.go` under
 `internal/` and `cmd/` that the two-minute CL path runs, and refuses three
@@ -73,16 +86,8 @@ queue.
 
 ## The CI class test against copied built binaries
 
-**The help line.** The class test is entered in the CI check roster and in help
-as the verb `testbins`:
-
-```
-testbins   read every _test.go on the CI path; refuse copying a built executable into a fixture
-```
-
-It runs as `go test ./internal/ci -run TestNoCopiedTestBinariesOnTheCIPath`, and
-it is the fixture-copy audit made an official verb: the shared helper a
-fixture places a built program with is the check a PR runs.
+**The check.** `TestNoCopiedTestBinariesOnTheCIPath` runs in `internal/ci`.
+It is the fixture-copy class test; `testbins` is not a `nova-ci` command.
 
 **What it reads and what it writes.** It reads, as text, every `_test.go` under
 `internal/` and `cmd/` that the two-minute CI path runs, and refuses one shape
@@ -141,15 +146,8 @@ through `internal/testbin.Place`, and the class test refuses a new copy.
 
 ## The CI class test against unquoted paths in JSON and template literals
 
-**The help line.** The class test is entered in the CI check roster and in help
-as the verb `templates`:
-
-```
-templates   read every _test.go; refuse a filesystem path unquoted in a JSON or template literal
-```
-
-It runs as `go test ./internal/ci -run TestNoUnquotedPathsInTemplateLiterals`,
-and it is the Windows-path audit made an official verb: the check a PR runs.
+**The check.** `TestNoUnquotedPathsInTemplateLiterals` runs in `internal/ci`.
+It is the path-quoting class test; `templates` is not a `nova-ci` command.
 
 **What it reads and what it writes.** It reads, as text, every `_test.go` under
 `internal/` and `cmd/`, and refuses two shapes with the file and the line: a
@@ -203,30 +201,30 @@ the parse fails on Windows where Linux and darwin never see it.
 
 ## The per-package test time budget
 
-**The verb.** The budget check is `cmd/nova-ci`'s first verb, `slowtests`:
+**The verb.** The budget check is `nova-ci slowtests`:
 
 ```
-slowtests  read newline-delimited go test -json TestEvents on stdin; refuse any
-           package whose summed elapsed time is over --budget (default 60s)
+slowtests  read newline-delimited go test -json TestEvents on stdin; report
+           package and test times over their budgets; --enforce makes CI-SLOW fatal
 ```
 
-It runs as `go test -json -count=1 <packages> | tee "$RUNNER_TEMP/test.json"; go
-run ./cmd/nova-ci slowtests --budget 60 < "$RUNNER_TEMP/test.json"` in the
-self-hosted `test` step of `.github/workflows/ci.yml`, so the slow package
-surfaces to the coordinator the moment it happens.
+The Makefile's `test` target pipes `go test -json` to the runner's `test.json` and
+then invokes `nova-ci slowtests` over that stream. The workflow's `test` legs
+call this target; its flags select the unit or whole-tree budget.
 
 **The invariant.** A package's total is the sum of its package-level
 `Elapsed` — the `pass`, `fail` or `skip` event whose `Test` is empty — and a
-package whose total is over `--budget` is a refusal. The engine is the
-`internal/ci/slowtests` subpackage's `Parse` and `Sum`: the events come from the
-caller, the budget comes from the caller, and nothing reads a file, the clock or
-the network. The test-level `Elapsed` rows are kept, sorted worst first, only so
-a finding can name where the time went; they never decide the verdict.
+package whose total is over `--budget` or `--package-budget` produces a
+`CI-SLOW` finding. With `--test-budget`, a top-level test's elapsed time can
+also produce its own `CI-SLOW` finding. The engine is the
+`internal/ci/slowtests` subpackage's `Parse` and `Judge`: the events and
+budgets come from the caller, and it does not read the clock or network.
+Test-level rows also identify a package finding's slowest tests.
 
 **Its one-line output.** On a clean stream it prints one line, `CI-SLOW OK
 packages=<n> slowest=<pkg>:<seconds>`, where `packages=` is the packages seen
 and `slowest=` the single slowest package overall (or `slowest=none` when the
-stream is empty). On a refusal it prints one line per offending package, `CI-SLOW
+stream is empty). On a finding it prints one line per offending package, `CI-SLOW
 package=<pkg> seconds=<seconds> budget=<b> slowest=<TestA:3.2s,TestB:2.9s>`, the
 slowest tests in that package, comma-separated, worst first and capped at three,
 and exits 2 under `--enforce`, 0 without it; the lines go to stdout, so one `CI-SLOW` grep reads the whole run.
@@ -386,17 +384,10 @@ docs/CLI.md line for line through `onboarding.CompareTranscript`.
 
 ## The CI class test against a real network host on the CI path
 
-**The help line.** The class test is entered in the CI check roster and in help
-as the verb `net`:
-
-```
-net     read every _test.go on the CI path; refuse a real network host or host:port
-```
-
-It runs as `go test ./internal/ci -run TestNoRealNetworkHostsOnTheCIPath`, and
-it is the hard rule — *unit tests test LOGIC, not the network* — made an
-official verb: every endpoint is mocked locally, and only the soak,
-fuzz and nightly suites may reach the real network.
+**The check.** `TestNoRealNetworkHostsOnTheCIPath` runs in `internal/ci`.
+It is the network-host class test, not a `nova-ci` command: unit tests mock
+endpoints, while the separately tagged soak, fuzz and nightly suites may
+exercise real hosts under their own rules.
 
 **What it reads and what it writes.** It reads, as text, every `_test.go` under
 `internal/` and `cmd/` that the two-minute CL path runs, parses each as Go, and
@@ -451,14 +442,8 @@ secret leak look the same in the log.
 
 ## The CI class test against a child `go` that inherits the environment
 
-**The help line.** The class test is entered in the CI check roster and in help
-as the verb `goenv`:
-
-```
-goenv   read every .go under cmd/ and internal/; refuse a child `go` that inherits the caller's environment
-```
-
-It runs as `go test ./internal/ci -run TestGoEnvClassRuleHoldsOverTheRepository`.
+**The check.** `TestGoEnvClassRuleHoldsOverTheRepository` runs in `internal/ci`.
+It is the child-environment class test; `goenv` is not a `nova-ci` command.
 
 **What it reads and what it writes.** It reads, as text, every `.go` file under
 `internal/` and `cmd/` — tests included, because a test helper that builds a
@@ -527,10 +512,7 @@ here that has one points at it.
 `.go` files, `.github/workflows/*.yml`, the `Makefile`, `docs/` — and refuses a
 SHAPE wherever it stands, rather than exercising one function. It is the fix for
 a whole class made mechanical, which is the only kind of fix that survives the
-next card: a rule lands with its sweep of the tree, or it does not land
-(pit-stop ledger item 20, which lives in the `rowan-new`
-repository at `reports/pitstop-tests-2026-09-17.md` — a sibling checkout, not
-this one, so the citation is deliberately prose and not a link).
+next card: a rule lands with its sweep of the tree, or it does not land.
 
 **The marker.** A class test is a `Test` function in `internal/ci` that is
 either declared in a `*_class_test.go` file or named with one of the quantifier
@@ -2115,12 +2097,9 @@ Makefile recipe, expanded, and refuses one at or over the cap (test-short, the
 hosted legs' target, carried a literal `12m` no check read), so a run ends with a
 Go stack before the job cap kills it without one.
 
-**The reach.** These tests police the tree they run in. A scheduled run executes
-the default branch's copy of the workflow: the ci nightly of 2026-09-27 (run
-36292578789) ran `main`'s ci.yml of 2026-09-18, whose test-hosted still carried
-`timeout-minutes: 15` and a windows-latest leg, and its four windows legs ran
-178-195 s to success uncancelled. The cap reaches a schedule when these files
-reach the default branch.
+**The reach.** These tests police the tree they run in. A scheduled run uses
+the default branch's workflow, so a newly tightened cap reaches the schedule
+when that workflow reaches the default branch.
 
 **The remedy line.** Split the job (shards by measured package size, or one job
 per functional program), move a process-in-the-loop test behind the `slow` tag

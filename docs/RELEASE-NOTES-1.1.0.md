@@ -1,6 +1,6 @@
 # Nova Tools 1.1.0
 
-Nova Tools 1.1.0 makes a sprint easier to run across several machines and adds the first read-only `nova-work` import. Choose the tools that fit your work; each keeps its own command-line entry point. Start with `nova-sprint help` or `nova-work help` to see the verbs and flags.
+Nova Tools 1.1.0 contains eighteen command-line tools. This release makes a sprint easier to run across several machines and adds the first read-only `nova-work` import. Choose the tools that fit your work; each keeps its own command-line entry point. Start with `nova-sprint help` or `nova-work help` to see the verbs and flags.
 
 ## Sprint handoffs
 
@@ -8,7 +8,7 @@ Fleet placement continues its rolling turn across plans and ticks. A member goin
 
 The coordinator can wait for a tick-end notice with `nova-sprint inbox --wait`; `inbox --json` separates judgments, happened notices and the done state for programs reading the inbox. `accept --read-ok` accepts review work with okay reads from two different readers, and a completed sprint stops its machine. A coordinator can pass a multi-paragraph brief with `add --brief-file <path>` and run its own `merge` without an epoch flag. A worker reporting on a card it was handed still names that card's epoch, so a clear cannot turn an old report into a report on new work.
 
-The dirty-driven tick pumps queued work once at the start of a tick, then brings readers, merge and fleet queues to rest before the tick ends. Work those later steps queue is left for the next pump. The tick-end notice is one coordinator wake for the tick's addressed work.
+The dirty-driven tick pumps queued work once at the start of a tick, then settles changes to readers, merge and fleet before the tick ends. If those updates do not settle within the bounded turn, the tick reports a failure. Work those later steps queue is left for the next pump. The tick-end notice is one coordinator wake for the tick's addressed work.
 
 ## Members and fleet configuration
 
@@ -18,7 +18,7 @@ The dirty-driven tick pumps queued work once at the start of a tick, then brings
 
 ## First read-only `nova-work` layer
 
-`nova-work import` reads the specified GitHub organization or repositories into a local tree file; `--dry-run` performs the read without writing the file. `nova-work verify --tree <tree.lisp>` fetches again and reports differences in the captured issue records. The tree covers the fields listed in [the tree specification](SPEC-WORK-V1.md), including bodies, comments, cross-references and linked pull requests. Reactions, edit history, other timeline events, projects, issue types, sub-issues and pins are outside this first layer. Import and verify do not edit GitHub; destructive and export modes are not in this release.
+`nova-work import` reads the specified GitHub organization or repositories into a local tree file; `--dry-run` performs the read without writing the file. `nova-work verify --tree <tree.lisp>` fetches again and reports differences in the captured issue records. The tree covers the fields listed in [the tree specification](SPEC-WORK-V1.md), including bodies, comments, cross-references and linked pull requests. Reactions, edit history, other timeline events, projects, issue types, sub-issues and pins are outside this first layer. Import and verify do not edit GitHub.
 
 ```sh
 nova-work help

@@ -18,12 +18,17 @@ nova-ci local --base origin/sprint/foundation
 make test PKGS=./internal/testredis/
 ```
 
-`nova-ci local` selects the packages from your committed diff, prints one `PKG`
-line for each, and sums the run up:
+`nova-ci local` selects packages from your committed diff against the merge
+base of the selected base and `HEAD`, prints a base/merge-base/package header and
+one `PKG` line per package, then finishes with an exit line. For example:
 
+```text
+nova-ci local: base=origin/sprint/foundation merge-base=<sha> packages=<n> <packages>
+PKG <package> <seconds>
+nova-ci local: exit=0
 ```
-nova-ci local: packages=2 seconds=7.8s red=0 make-exit=0
-```
+
+A failing test also prints a `RED` line with its output.
 
 `make test` runs the packages you name and then the time budget. Its output is
 `go test -json`; the lines that carry the verdict are the `CI-` ones:

@@ -1,12 +1,12 @@
 # Grok retained-token mapping — proposed source contract
 
-Based on owner-supplied export structure and invariant checks; Stella has not read Johnny's private session. Real numeric observations remain in the private coordination records; the public fixture below is synthetic. Producer reported earlier: `grok usage` v1.0.30. This is a review packet, not a deployed adapter.
+Based on owner-supplied export structure and invariant checks; Stella has not read Johnny's private session. Real numeric observations remain in the private coordination records; the public fixture below is synthetic. The recorded producer is `grok usage` v1.0.30. `internal/tokens/grok.go` implements a retained turn decoder, but `nova-tokens` has no Grok retained-observation collection flag; `--provider xai` is a separate aggregate export route. This mapping does not establish deployed collection or historical coverage.
 
 **Source and grain.** Top-level keys are sessionId, updatedAt, session and turns. Each turn has turnNumber and endedAt; its usage is already an aggregate of model calls (`modelCalls`). Preserve each turn at that available grain. Do not invent per-call usage or a start time, and do not count the session totals in addition to its turn rows.
 
 **Identity and revision.** Candidate spend key: `[source.namespace, [original_session_id, turn_number_as_string]]`, using the original native sessionId and exact decimal turn string. The event key is an array, never concatenated text. Copying the export to another bench does not change it. The export's updatedAt is collection/update evidence, not a new event key and not the turn's event time. Identical repeated turns count once. Changed numeric content for the same turn needs source revision/finality evidence or explicit supersession; newest filename/Git commit is not enough. Partial turns without endedAt are retained with partial coverage and are not assigned the export's date.
 
-**Time.** Parse endedAt including its offset and retain it; the report's daily basis is turn completion in UTC. A long turn can contain calls from an earlier day. Completion-day attribution is a labelled accounting convention, not measured call-day allocation. A report requiring exact per-call dates must identify this gap. Best-effort September collection may still use these source turn records with that stated basis.
+**Time.** Parse endedAt including its offset and retain it; the report's daily basis is turn completion in UTC. A long turn can contain calls from an earlier day. Completion-day attribution is a labelled accounting convention, not measured call-day allocation. A report requiring exact per-call dates must identify this gap. A bounded collection may use these source turn records with that stated basis.
 
 **Raw fields.** Preserve inputTokens, outputTokens, cachedReadTokens, cacheCreationTokens, reasoningTokens, totalTokens, modelCalls, costUsdTicks and turnCount, with original names and observed presence. Keep primaryModelId and the source's modelUsage detail without collapsing it. modelUsage is a map from model ID to the eight numeric usage/call/cost fields, without turnCount. The observed one-key case matches primaryModelId and turn totals; a mixed-model case is not yet verified. Unknown extra fields are not automatically copied into the shared ledger.
 
@@ -186,4 +186,4 @@ collector run or collection bench cannot authorize choosing a winner.
 Acceptance requires independent decoder and privacy-sentinel tests plus a real
 collector/publisher/view join. Preserve raw evidence even where normalization remains
 unknown, and report the specific unsupported shape or unresolved identity/semantic gap.
-Neither this document nor a successful fixture implies production September coverage.
+Neither this document nor a successful fixture implies production historical coverage.

@@ -1,6 +1,6 @@
 # Codex retained-token mapping — proposed source contract
 
-The current task's metadata-only source check found a better source than repeated token_count snapshots: **top-level `token_usage_record` entries**, each with `response_id`, thread/session/turn IDs, `usage`, `turn_token_usage` and `thread_token_usage`. The recorded producer is **Codex Desktop 0.154.0-alpha.6.2**, independently of the installed CLI 0.153.4. This is a source-shape observation, not a September coverage claim.
+A metadata-only source check identified a better source than repeated token_count snapshots: **top-level `token_usage_record` entries**, each with `response_id`, thread/session/turn IDs, `usage`, `turn_token_usage` and `thread_token_usage`. The recorded producer is **Codex Desktop 0.154.0-alpha.6.2**, independently of the CLI 0.153.4 observed during that check. `internal/tokens/codex.go` implements a retained response decoder; `nova-tokens` has no Codex collection flag. This source mapping does not establish historical coverage.
 
 Matched public producer tag `rust-v0.154.0-alpha.6.2` resolves to commit `b5bffd3ec4db487e7e3dec59663875b0ef7b72ca`. The [TokenUsageRecord definition](https://github.com/openai/codex/blob/b5bffd3ec4db487e7e3dec59663875b0ef7b72ca/codex-rs/protocol/src/protocol.rs#L2237) describes one completed response. The [producer regression fixture](https://github.com/openai/codex/blob/b5bffd3ec4db487e7e3dec59663875b0ef7b72ca/codex-rs/core/tests/suite/token_usage_rollout.rs#L29) checks records across a resume: response usage 120, 80, 30 produces thread totals 120, 200, 230, not 550 spend. A response with no usage does not manufacture a record.
 
@@ -17,7 +17,7 @@ Older source shapes need a separate versioned fallback mapping. The [context-fil
 
 Independent fixtures needed for the adapter: copied response IDs across paths/benches, conflicting duplicates, usage versus turn/thread totals, defaulted-zero details, configured-model changes, a context-fill token_count beside real response records, missing usage/timestamp, and an older snapshot-only session. The producer's existing 120/80/30 fixture is source evidence, not a substitute for an independent test of our own adapter.
 
-No private prompts or raw transcript files were sent. This is source and mapping evidence for review, not an implemented adapter or a completed backfill.
+No private prompts or raw transcript files were sent. This is source and mapping evidence for review, with an internal decoder but no public collection route or completed backfill.
 
 ## Wire literals under the mapping decisions
 
@@ -120,7 +120,7 @@ its final day.
 The cumulative `token_count` snapshot shape is a separate mapping and adapter coverage task,
 tracked as owed. It is an explicit coverage limit, not an open literal blocking this response
 adapter: the response mapping can be built without it. A report must name unhandled
-`token_count` coverage — especially during September backfill — and cannot claim complete
+`token_count` coverage — especially during historical backfill — and cannot claim complete
 Codex history while that shape is unsupported. The manifest names the owed task in
 `overlap_rule.owed_coverage_tasks`, and the fixture keeps a `token_count` line beside the
 response records so the unmapped shape stays visible.
@@ -155,7 +155,7 @@ collector run or collection bench cannot authorize choosing a winner.
 Acceptance requires independent decoder and privacy-sentinel tests plus a real
 collector/publisher/view join. Preserve raw evidence even where normalization remains
 unknown, and report the specific unsupported shape or unresolved identity/semantic gap.
-Neither this document nor a successful fixture implies production September coverage.
+Neither this document nor a successful fixture implies production historical coverage.
 
 The separately proposed [raw snapshot contract](PROPOSAL-TOKENS-CODEX-SNAPSHOTS.md) supplies
 physical-identity decisions and synthetic acceptance fixtures for #154. It remains under

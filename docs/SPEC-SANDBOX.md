@@ -395,11 +395,12 @@ The test requirements are listed under **Tests this spec demands**.
 ## The verbs
 
 ```
-nova-sandbox --read <dir>... [--read-noexec <dir>...] --write <dir>... [--net-deny] [--net-listen] [--net-allow <host:port>]... [--cwd <dir>] [--tmp <dir>] [--name <container>] [--acl tool|caller] -- <command> <args...>
-nova-sandbox probe   --write <dir>... [--read <dir>...] [--secret <path>] [--net-deny] [--max <n>]
-nova-sandbox policy  --read <dir>... --write <dir>... [--net-deny] [--net-allow <host:port>]... [--cwd <dir>] [-- <command> <args...>]
+nova-sandbox --read <dir>... [--read-noexec <dir>...] --write <dir>... [--net-deny] [--net-listen] [--net-allow <host:port>]... [--cwd <dir>] [--tmp <dir>] [--name <container>] [--acl tool|caller] [--gpu none|metal] -- <command> <args...>
+nova-sandbox probe   --write <dir>... [--read <dir>...] [--read-noexec <dir>...] [--secret <path>] [--net-deny] [--net-listen] [--gpu none|metal] [--max <n>]
+nova-sandbox policy  --read <dir>... [--read-noexec <dir>...] --write <dir>... [--net-deny] [--net-listen] [--net-allow <host:port>]... [--cwd <dir>] [--tmp <dir>] [--name <container>] [--gpu none|metal] [-- <command> <args...>]
 nova-sandbox check   [--max <n>]
-nova-sandbox run     --name <n> --size <8g> [--timeout <30m>] [--go] [--read <dir>]... [--container <disk>] -- <command> <args...>
+nova-sandbox run     --name <n> --size <8g> [--timeout <30m>] [--go] [--read <dir>]... [--container <disk>] [--out <dir> [--artifact <relpath>]... [--out-max-bytes <64m>]] -- <command> <args...>  (darwin)
+nova-sandbox run     --name <n> --scratch <dir> [--place job|wsb] [--timeout <30m>] [--memory <4g>] [--cpu <50>] [--go] [--read <dir>]... -- <command> <args...>  (windows)
 nova-sandbox reap    [--dry-run]
 nova-sandbox worktree --repo <dir> --scratch <dir> --pr <id> [--base <branch>]
 nova-sandbox worktree --repo <dir> --scratch <dir> --prune
@@ -430,9 +431,14 @@ or not a sandbox is available, because it is a question, not an attempt. The
 the token is always `none` and is printed only to keep the check line's shape
 across platforms.
 
+`help` prints the top-level usage. `help <verb>` dispatches only to a named
+public verb; each public verb also accepts its direct help spelling before it
+validates run flags. `probe-step` is deliberately absent from both forms: it is
+the probe's guarded child, not a caller command.
+
 The binary is `nova-sandbox`.
 
-## The run verb — a disposable place, on darwin
+## The run verb — a disposable place
 
 ```
 nova-sandbox run --name <n> --size <8g> [--timeout <30m>] [--go] [--read <dir>]... [--container <disk>]
@@ -782,6 +788,31 @@ quantity is `reason=bad_out_max`. `--out` on **windows** is `reason=no_out`: the
 windows half keeps its per-run scratch under `--scratch` and there is nothing to
 copy off. A typo found after the card has run is worth nothing.
 
+### Windows — the disposable place
+
+On Windows, `run` takes the same command, timeout, receipt and leak contract as
+the darwin form. Its place is `<scratch>\\nova-<name>` plus a Job Object, made
+and removed as one unit. `--scratch` is an existing absolute directory and is
+required; the tool does not select a user profile or temporary directory for
+it. The scratch is the run's sole write root, with `work`, `home` and the child
+temporary directory below it. `--read` roots pass through as read roots.
+
+`--size` is refused on Windows (`reason=size_unenforceable`): this command does
+not claim to enforce a per-directory NTFS quota. `--container` is darwin-only
+and `--out` is refused because the Windows form has no APFS handoff. `--memory`
+and `--cpu` validate on every platform so one caller can use one argv; on
+Windows they set the Job Object caps when that body can run, and elsewhere they
+are accepted and have no resource-limit effect.
+
+`--place job` is the default. It needs both the Job Object and the AppContainer
+wall; a missing wall is `SANDBOX REFUSED reason=no_sandbox` before the tool
+looks up or creates the scratch. The current Windows build has no AppContainer
+backend, so this is its present result rather than a claim that a deleted
+directory supplies containment. `--place wsb` uses Windows Sandbox as the
+boundary, requires `--timeout`, and is limited to one instance on a machine.
+It is available only where the Windows Sandbox feature is available. The run
+path never uses WSL as a wall, place or fallback.
+
 ### `run --help`
 
 `nova-sandbox run --help`, `-h` or `help` prints the verb's own usage on stdout
@@ -1014,7 +1045,7 @@ range. This departure from the conventions preserves the child's exit status.
 | 0–124 | the wrapped command's own exit status, passed through unchanged |
 | 3 | `run` only: the disposable volume could not be deleted — `SANDBOX LEAK`, naming the disk and the one command that removes it. It overrides the command's own status, because "nothing survives" is the whole contract and a caller that read `0` would believe the machine was clean |
 | 124 | `run` only: `--timeout` passed, the whole process group was killed and the volume was deleted anyway — `timeout(1)`'s status |
-| 125 | `nova-sandbox` itself said **NO** before the command ran: `SANDBOX REFUSED` — no backend (`reason=no_sandbox`), the policy could not be applied (`reason=sandbox_failed`), an enforced network denial that is not available (`reason=net_unenforceable`), a Landlock ABI below the first row of this tool's table (`reason=landlock_abi_unknown`; an ABI *above* the table is clamped, not refused), `--net-deny` and `--net-listen` together (`reason=bad_net`), no `--write` (`reason=bad_write`), a relative or missing path (`reason=bad_read` or `reason=bad_write`, whichever flag carried it), a path in both lists (`reason=bad_read`, naming both flags: the `--read` is the one that adds nothing, because a `--write` already carries read), a `--cwd` outside the write set, a `HOME` outside every `--write` (`reason=home_outside`), a command that is not executable (`reason=not_executable`), a missing `--` or nothing after it (`reason=no_command`); and on the `run` verb a `--name` that is not a volume name (`reason=no_name`), a `--size` that is not a quota (`reason=bad_size`), a `--timeout` that is not a positive duration (`reason=bad_timeout`), an APFS container that could not be read or named (`reason=no_container`), a volume of that name already on the machine (`reason=volume_exists`), a volume that could not be made, or that was made and not mounted (`reason=volume_failed`), and the handoff's own — `--artifact` or `--out-max-bytes` with no `--out`, or `--out` on windows (`reason=no_out`), an artifact path that is absolute, empty, `.` or carries `..` (`reason=bad_artifact`), a `--out-max-bytes` that is not a positive quantity (`reason=bad_out_max`), and a handoff that could not be completed after a command that exited 0 (`reason=out_failed`) |
+| 125 | `nova-sandbox` itself said **NO** before the command ran: `SANDBOX REFUSED` — no backend (`reason=no_sandbox`), the policy could not be applied (`reason=sandbox_failed`), an enforced network denial that is not available (`reason=net_unenforceable`), a Landlock ABI below the first row of this tool's table (`reason=landlock_abi_unknown`; an ABI *above* the table is clamped, not refused), `--net-deny` and `--net-listen` together (`reason=bad_net`), no `--write` (`reason=bad_write`), a relative or missing path (`reason=bad_read` or `reason=bad_write`, whichever flag carried it), a path in both lists (`reason=bad_read`, naming both flags: the `--read` is the one that adds nothing, because a `--write` already carries read), a `--cwd` outside the write set, a `HOME` outside every `--write` (`reason=home_outside`), a command that is not executable (`reason=not_executable`), a missing `--` or nothing after it (`reason=no_command`); and on `run`, a malformed name (`reason=no_name`), timeout (`reason=bad_timeout`) or darwin size (`reason=bad_size`), an unreadable APFS container (`reason=no_container`), an existing or unusable volume (`reason=volume_exists` or `reason=volume_failed`), or on Windows an invalid scratch, memory, CPU or place (`reason=bad_scratch`, `bad_memory`, `bad_cpu` or `bad_place`), an unenforceable `--size` (`reason=size_unenforceable`) or unavailable Windows Sandbox (`reason=no_wsb` or `wsb_busy`). The handoff also refuses `--artifact` or `--out-max-bytes` without `--out`, `--out` on Windows (`reason=no_out`), an absolute, empty, `.` or `..` artifact (`reason=bad_artifact`), a non-positive `--out-max-bytes` (`reason=bad_out_max`), and a handoff that cannot complete after a zero command exit (`reason=out_failed`). |
 | 126 | the command could not be executed **and the tool was still there to say so**: on `linux` the child could not be started inside the wall. On `darwin` the backend's own exec failure is 71 and the tool cannot see it — below |
 | 127 | the command could not be resolved on the caller's `PATH`: `SANDBOX REFUSED reason=not_found`, printed like every other refusal of the tool's own |
 | 128+N | the wrapped command was killed by signal `N` |

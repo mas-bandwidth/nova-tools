@@ -82,8 +82,10 @@ accounting, and containment details.
 
 ## Join a configured sprint fleet
 
-`member` runs cards from an existing sprint queue, one `native` child per
-card. First configure the sprint store and declare the member or reader.
+This section is conditional on the pending `member` command being merged and its
+final source matching these flags. When available, `member` runs cards from an
+existing sprint queue, one `native` child per card. First configure the sprint store
+and declare the member or reader.
 Have the matching `nova-sprint` executable on PATH and set its store
 configuration in the member's environment. Choose the member name and width
 from your fleet setup; this command does not provision a fleet.
@@ -103,9 +105,9 @@ children that finish and takes more work up to its available width. Add
 and optional native configuration must be supplied as they are for your
 standalone harness run.
 
-The default loop interval is 3s (`--every`). `--once` and `--ticks` limit
-passes, not completion of the children those passes start. They can return
-while a child is still running. `nova-swarm member --help` prints all flags
+The default loop interval is 3s (`--every`). `--once` and a positive
+`--ticks <n>` limit passes, not completion of the children those passes start. They
+can return while a child is still running. `nova-swarm member --help` prints all flags
 without connecting to the store or starting a child.
 
 ## Use your runner in a batch

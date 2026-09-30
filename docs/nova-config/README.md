@@ -21,7 +21,7 @@ Three things, each a flag or a variable, none a password on a line:
 | `--pg <dsn>` | `NOVA_PG_DSN` | `postgres://nova_config@space:5432/nova`, no password in it |
 | | `NOVA_PG_PASSWORD_ENV` | the NAME of the variable holding the password (`NOVA_PG_PASSWORD` when unset) |
 | `--redis <addr>` | `NOVA_SPRINT_REDIS`, then `NOVA_REDIS_ADDR`, then the seat | the store apply writes |
-| `--as <friend>` | `NOVA_FRIEND` | who is making the change; every write records it |
+| `--as <friend>` | `NOVA_FRIEND` | actor for row writes and non-check apply; row writes record history |
 
 The password is sealed the way the Redis one is: `nova-secrets exec --only
 NOVA_PG_PASSWORD -- nova-config ...` leaves it in the environment, where a
@@ -44,6 +44,25 @@ nova-config migrate --print
 `add` requires; `migrate --print` lists the migrations this binary carries.
 The executable transcript is in [TESTS.md](../TESTS.md#nova-config).
 
+## Verb reference
+
+| scope | verbs |
+| --- | --- |
+| tool | `help [<verb> ...]`, `version` (`--version`), `kinds`, `migrate`, `status`, `apply`, `inventory` |
+| machine | `add`, `set`, `remove`, `list`, `show`, `history`, `self`, `width` |
+| friend | `add`, `set`, `remove`, `list`, `show`, `history` |
+| fleet and sprint | `set`, `show`, `history`, without a row name |
+
+`nova-config help machine width` and `nova-config machine width -h` print
+help without connecting. `version` prints the shared version line.
+`machine list` takes no name; `machine show <name>` does. Both can add
+`--redis` for measured facts; `history` does not accept that flag. A removed
+row retains its history, while a name never added is refused at exit 1.
+An unchanged `set` still records a history row; its `changed=` names the
+submitted fields, while a history line shows only actual value differences.
+
+Example output uses `<time>` for an RFC 3339 timestamp.
+
 ## The schema
 
 ```
@@ -54,19 +73,21 @@ CONFIG MIGRATE pg=nova_config@space:5432/nova from=0 to=5 applied=5
 `migrate` creates or upgrades schema `config` from the numbered migrations in
 the binary, each in its own transaction, each recorded in
 `config.schema_migrations`, and applies nothing twice: run it again and it
-prints `applied=0`. Run it as the `nova_config` role, which owns the schema;
+prints `applied=0`. Migration needs no `--as`. Run it as the `nova_config` role, which owns the schema;
 the `nova_read` role, when it exists, is granted read on every table.
 
 `status` is where things stand:
 
 ```
 nova-config status
-CONFIG STATUS pg=nova_config@space:5432/nova schema=5 machine=9 machine_rev=9 friend=4 friend_rev=13 redis=space:6380 machine_applied=9 friend_applied=13
+CONFIG STATUS pg=nova_config@space:5432/nova schema=5 machine=9 machine_rev=9 fleet_rev=10 friend=4 friend_rev=13 sprint_rev=14 redis=space:6380 machine_applied=9 fleet_applied=10 friend_applied=13 sprint_applied=14
 ```
 
 It exits 1 with the next step on stderr when the schema is not there yet
-(`run: nova-config migrate`) or when Redis is behind Postgres for any kind
-(`run: nova-config apply`).
+(`run: nova-config migrate`) or when Redis's applied revision differs from
+Postgres for any kind (`run: nova-config apply`). With no Redis address from
+the flag, environment or selected seat, status reports `redis=-` and checks
+Postgres alone.
 
 ## The kinds
 
@@ -76,8 +97,8 @@ fleet's one row holds what has one value for the whole fleet, a friend's row
 holds what someone decides for her, and the sprint's one row holds who
 coordinates. Anything else is invented and is not a field.
 
-Every kind has the same six verbs, generated from its descriptor, so what is
-true of one is true of all:
+The non-singleton kinds, `machine` and `friend`, share six row verbs
+generated from their descriptors:
 
 ```
 nova-config <kind> add <name> --<field> <value> ... --as <friend>
@@ -89,7 +110,8 @@ nova-config <kind> history <name>
 nova-config <kind> <verb> -h
 ```
 
-A name is lower-case letters, digits and dashes. `add` needs every required
+A name starts with a lower-case letter or digit and contains only lower-case
+letters, digits and dashes. Row verbs accept `--pg`; writes also accept `--as`. `add` needs every required
 field and refuses a value outside its type, naming every problem in one line.
 `set` changes the fields named and no other; `--roles ""` clears a list.
 `-h` on any verb prints its flags with one help line each. A singleton kind
@@ -127,20 +149,21 @@ beat does not carry yet and `beat=none` for a machine that has never beaten:
 
 ```
 nova-config machine list --redis space:6380
-MACHINE name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0 os=- arch=- cores=64 memory_gb=- beat=2026-09-27T03:00:00Z
+MACHINE name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0 os=- arch=- cores=64 memory_gb=- beat=<time>
 MACHINE name=studio user=glenn seat=studio slots=64 runners=1 beat=none
 CONFIG LIST kind=machine rows=2
 ```
 
 **Width and its own name.** One ceiling per machine is shared by the friends
 and the sprint, so a machine's room for the sprint's member is its `slots`
-less the slots of the friends charged to it (her beat's machine, else the
+less the slots of the friends charged to it, floored at zero (her beat's machine, else the
 fleet row's coordinator machine; with no friend beats on the store, every
 friend is charged to the coordinator machine). `machine width` prints it; a
 machine with a width of 1 or more is a member of the sprint's fleet. The friends' machines come from their beats, so a
 Redis is named (`--redis`, `NOVA_SPRINT_REDIS`, `NOVA_REDIS_ADDR`) whenever a
-friend row carries slots; with none, the width is the ceiling and no Redis is
-opened:
+friend row carries positive slots. With none, the width is the ceiling and
+Redis may be omitted. An explicitly named Redis is still opened. These reads
+do not use the selected seat as an address fallback:
 
 ```
 nova-config machine width m1 --redis r:6379
@@ -151,9 +174,12 @@ nova-config machine width m1 --redis r:6379 --json
 
 `machine self` prints this machine's own name, so a process learns it and types
 none: `NOVA_MACHINE`, else the tailnet's name for the host when a tailnet is
-running, else the first label of the hostname, lower-case. It opens no store.
+running, else the first label of the hostname, lower-case. The tailnet probe
+waits at most five seconds and falls back on an unavailable or invalid response.
+An invalid nonempty `NOVA_MACHINE` is refused. Without `--check`, it opens no store.
 `--check` reads the machine rows and exits 2 when the name is none of them, 3
-when the name or the rows cannot be read:
+when the name or the rows cannot be read. Usage errors also exit 2; a failed
+check prints no name:
 
 ```
 nova-config machine self
@@ -173,7 +199,7 @@ rows; a machine the fleet names cannot be removed.
 nova-config fleet set --store hulk --coordinator studio --as rowan
 CONFIG SET kind=fleet name=fleet rev=3 changed=coordinator,store
 nova-config fleet show
-FLEET name=fleet store=hulk coordinator=studio created=2026-09-27T02:00:00Z updated=2026-09-27T02:10:00Z
+FLEET name=fleet store=hulk coordinator=studio created=<time> updated=<time>
 ```
 
 ### friend
@@ -192,16 +218,16 @@ nova-config friend list
 FRIEND name=rowan slots=32 tiers=frontier,pro roles=builder,reader
 CONFIG LIST kind=friend rows=1
 nova-config friend history rowan
-HISTORY id=4 kind=friend name=rowan op=add actor=rowan at=2026-09-27T02:10:00Z roles=builder slots=64 tiers=frontier,pro
-HISTORY id=5 kind=friend name=rowan op=set actor=rowan at=2026-09-27T02:11:00Z roles=builder>builder,reader slots=64>32
+HISTORY id=4 kind=friend name=rowan op=add actor=rowan at=<time> roles=builder slots=64 tiers=frontier,pro
+HISTORY id=5 kind=friend name=rowan op=set actor=rowan at=<time> roles=builder>builder,reader slots=64>32
 CONFIG HISTORY kind=friend name=rowan changes=2
 ```
 
 `--slots` is her desired slots; the friends' slots on a machine fit under
-its ceiling together, and are charged to it only while each friend is awake
-(the bench's share on that machine is the remainder, live); she is charged
-to the machine her beat reports (or the fleet's coordinator machine when
-she has no beat);
+its ceiling together. Width subtracts their declared desired slots, without
+an awake/freshness test; it is a static share, not current free capacity.
+A friend is charged to the machine her beat reports (or the fleet's coordinator
+machine when she has no beat);
 `--tiers` is a comma list of flash, frontier, pro, which she can do (the
 deal's tier filter); `--roles` is a comma list of builder, may-hold, reader.
 
@@ -214,7 +240,7 @@ it is the handover; a friend the sprint names cannot be removed.
 nova-config sprint set --coordinator rowan --as rowan
 CONFIG SET kind=sprint name=sprint rev=6 changed=coordinator
 nova-config sprint show
-SPRINT name=sprint coordinator=rowan created=2026-09-27T02:00:00Z updated=2026-09-27T02:12:00Z
+SPRINT name=sprint coordinator=rowan created=<time> updated=<time>
 ```
 
 ### Refusals
@@ -232,7 +258,9 @@ nova-config fleet set: fleet takes no name: it is one row; want fleet set --<fie
 
 Exit 1 is the store saying no; exit 2 is an invocation that could not run
 (a missing flag, a bad value, a store that did not answer), and its line
-ends `run: nova-config help`.
+ends `run: nova-config help`. `machine self` uses the separate 0/2/3
+mapping described above; `machine width` retains 0/1/2, with exit 1 for an
+unknown machine and exit 2 when its inputs or stores cannot be read.
 
 ## Apply: Redis as a copy
 
@@ -271,8 +299,11 @@ role in Redis on top of her row's roles, so a handover (`sprint set
 --coordinator stella`, then `apply`) is two `SET ... changed=roles`, hers
 first. It never touches her logins or wake path: they are her presence's.
 For the sprint row, `sprint:coordinator`. A name in Redis that Postgres has
-not is removed. `--check` prints the plan and writes nothing. `--kind friend`
-applies one kind.
+not is removed subject to the removal rules in the contract. `--check` prints
+the plan and writes nothing, requires no `--as`, and installs no function
+library. `--kind friend` applies one kind. A failed operation stops the run;
+earlier successful operations are not rolled back, and the failed kind's
+revision is not stamped.
 
 Every apply is compare-and-set on a revision: `config:decl` in Redis holds
 `rev:<kind>`, the Postgres revision last applied, and `apply` refuses
@@ -370,6 +401,4 @@ would just know (her machine, harness, logins, wake path: her presence's),
 measured facts (a machine's os, arch, cores, memory: its beat's), history
 other than the configuration's own (scores, receipts, ledgers, `cap:log`),
 secrets (the store holds the name of a variable, never a password), and the
-sprint plan. What is still to come (more fleet and sprint fields, loops,
-routes, and the wake path "later, when we know what we are doing") is listed
-in [SPEC-CONFIG.md](../SPEC-CONFIG.md) as planned, not built.
+sprint plan.

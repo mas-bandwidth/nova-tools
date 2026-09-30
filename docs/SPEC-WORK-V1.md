@@ -1,25 +1,23 @@
 # nova-work v1, layer 1: the tree (SPEC-WORK-V1)
 
-`nova-work` holds every issue of every repository of an organization in **one tree file**: a
-restricted s-expression that `internal/worklang` reads and never evaluates
-([SPEC-WORKLANG.md](SPEC-WORKLANG.md) section 1). The tree is the working store the verbs above
-query and change; GitHub is the source it is imported from and, while it exists, a mirror. This
-page is section 1, the lowest layer: the tree's shape, the import that fills it, and the verify
-that proves it holds exactly what the source holds. The verbs that query and change the tree, and
-its index, are specified on their own page and stand on this one.
+`nova-work import` reads GitHub issues into **one local tree file**: a restricted
+s-expression that `internal/worklang` reads and never evaluates
+([SPEC-WORKLANG.md](SPEC-WORKLANG.md) section 1). `nova-work verify` reads GitHub
+again and compares the tree with the source. These commands read GitHub; import
+is the only command here that writes a tree file. This page specifies the tree's
+shape and the two commands.
 
 ## 1.1 The layer
 
 | part | what it is | where |
 | --- | --- | --- |
 | structure | the tree file: root, repositories, issues with their full contents | section 1.2, `internal/workfile` |
-| guarantee | every issue of every repository of the organization, every field of section 1.3, and nothing else | sections 1.3 and 1.6 |
+| guarantee | every issue in the requested repository scope, every field of section 1.3, and nothing else | sections 1.3 and 1.6 |
 | check | `nova-work verify`: a fresh read of the source compared with the tree field for field; zero differences | section 1.6 |
-| model | the states of an issue under import and of a repository's sync | `tla/WorkImport.tla`, section 1.8 |
 
-The layer is secured when the import of the whole organization verifies with zero differences,
-the model's cases hold on a bench (the design passes, each reversed witness fails with its
-invariant), and the unit tests below are green.
+Without `--repo`, the requested scope is every repository in the organization.
+With one or more `--repo` flags, the tree contains only those repositories.
+The tree may contain private issues; keep its output file in a private location.
 
 ## 1.2 The tree's shape
 
@@ -106,8 +104,7 @@ the sources of references and as linked pull requests.
 
 An issue filed by the organization's owner, a member or a collaborator (`authorAssociation`
 `OWNER`, `MEMBER`, `COLLABORATOR`) is **internal**; every other issue is **external**
-(`workfile.OriginOf`). The destructive mode closes internal issues only; an external issue stays
-open on GitHub, where its filer sees it, until its fix closes it (decision 4).
+(`workfile.OriginOf`). Import records this derived value in the tree.
 
 ## 1.5 Paths and URLs, both directions
 
@@ -125,7 +122,7 @@ nova-work import --org <org> (--out <tree.lisp> | --dry-run) [--repo <owner/name
 nova-work verify --tree <tree.lisp> [--repo <owner/name>]... [--max <n>] [--max-calls <n>] [--page-size <n>] [--gh <path>] [--timeout <d>] [--max-bytes <n>]
 ```
 
-**import** is non-destructive: it only reads. It lists the organization's repositories (or reads
+**import** reads GitHub without writing to it. It lists the organization's repositories (or reads
 each `--repo`), prints `PLAN OK` with the calls the run needs, refuses at exit 2 when that passes
 `--max-calls`, reads every issue of every repository in scope, and prints `REPO OK` per
 repository. Before anything is written it encodes the tree, reads the bytes back through the
@@ -154,9 +151,9 @@ is GitHub's value, got the tree's; a value over 80 bytes or of more than one lin
 length and the head of its SHA-256, so a line never carries a body. With no `--repo` the scope is
 the tree's organization, both ways: every repository GitHub lists and every repository the tree
 holds. `--max` bounds the lines shown (default 20, 0 all) and never the count. Zero differences
-prints `VERIFY OK ... differences=0` with the tree's SHA-256: that line is the receipt the
-destructive mode requires. An issue edited on GitHub after the import is DRIFT on `updated` and
-the fields that changed; that is the check working, and the remedy is to import again.
+prints `VERIFY OK ... differences=0` with the tree's SHA-256. An issue edited on
+GitHub after the import is DRIFT on `updated` and the fields that changed; that
+is the check working, and the remedy is to import again.
 
 **Exits**, as every nova tool's: 0 done, or no difference; 1 verify found differences, or
 import's own round trip did; 2 could not run (a missing flag, an unreadable or refused tree, a
@@ -170,33 +167,7 @@ against `--max-calls` (default 1500). A page GitHub fails to answer is asked aga
 size, down to 5 issues. GraphQL is used because one call returns up to 100 issues with their
 first 100 comments, references and linked pull requests; the REST quota is not touched.
 
-## 1.7 The modes above layer 1 (specified, not built)
-
-- **dry-run** is `import --dry-run`.
-- **non-destructive** is `import`.
-- **destructive** closes, after the import, every internal issue that is open on GitHub. It
-  refuses without a verify receipt over the repository, and each close is conditional on the
-  issue being unchanged since that receipt (its `updated` time is the receipt's); an issue edited
-  since is left open and reported. External issues are never closed. GitHub cannot delete an
-  issue, so close is the strongest act.
-- **export** pushes the tree back: it re-opens every issue the destructive mode closed. The round
-  trip, import then destructive then export then verify against a fresh fetch, with zero
-  differences other than the `updated` and `closed` times the close and re-open themselves write,
-  is the proof that the import loses nothing; it runs on a test repository first.
-
-## 1.8 The model
-
-`tla/WorkImport.tla` holds an issue's import states (absent, fetched, in the tree, mirrored,
-closed by the destructive mode, re-opened by export) and a repository's sync (idle, importing,
-imported, verified, closing, exporting), with an outside edit possible at any time. Contents are a
-version number; equal versions stand for verify's field-for-field equality. Its invariants:
-`TreeIsWhole` (a tree is written only with every issue in it), `DestructiveOnlyWithReceipt`,
-`Lossless` (an issue the import closed is held by the tree exactly as GitHub held it when it was
-closed), `ExternalStaysOpen`, `ExportRestores` (the round trip) and `ReceiptIsTheTree`; the
-liveness `ImportEnds`. Five reversed witnesses, one guard removed each, fail with the invariant
-their case names in `tla/CASES.tsv` (group `workimport`).
-
-## 1.9 Measured
+## 1.7 Measured
 
 The whole of an organization of 96 repositories, one run each way from a working machine:
 
@@ -209,7 +180,7 @@ The whole of an organization of 96 repositories, one run each way from a working
 | seconds | 353 | 325 |
 | result | written after its round trip | zero differences |
 
-## 1.10 Tests
+## 1.8 Tests
 
 1. `TestEncodeDecodeIsTheIdentity` (`internal/workfile`): the recorded fixture's tree, encoded and
    read back, equals itself field for field, and encoding it again gives the same bytes.
@@ -237,25 +208,3 @@ The whole of an organization of 96 repositories, one run each way from a working
     listing, before any issue is read.
 14. `TestRefusalsNameTheFlag`: missing flags, a bad page size and a zero budget exit 2 naming
     each; `help` and `<verb> -h` exit 0.
-
-## 1.11 Open decisions
-
-1. **Exit codes.** Verify exits 1 on differences, the house convention (0 done, 1 ran and said
-   no, 2 could not run). Recommendation: keep it.
-2. **The GitHub seam.** Import and verify run GraphQL through `gh`, outside the one REST client
-   (`internal/gh`), which is REST only and counts into a store. Recommendation: keep GraphQL (a
-   whole organization is 174 calls against thousands over REST, and none from the REST quota)
-   and teach the one client a counted GraphQL call when a store is wanted here.
-3. **What is not captured** (section 1.3). Recommendation: add reactions and the other timeline
-   events only when a verb above needs them; they cannot be written back as their authors anyway.
-4. **Origin.** Today it is derived from the association on every import, so a later change of
-   association shows as DRIFT. Recommendation: owner, member and collaborator are internal, as
-   section 1.4, and an issue keeps the origin of its first import once imports merge into an
-   existing tree (a verb above this layer).
-5. **One file or one per repository.** One file today (24.9 MB for 96 repositories). Recommendation:
-   keep one file, as ruled, and let the index keep reads from parsing it per call.
-6. **Where the file lives.** The tree is saved to a private data repository the adopter names;
-   pushing it there is a verb above this layer. Recommendation: `import --out` into a checkout of
-   that repository, committed by the caller, until a save verb exists.
-7. **Private repositories.** The tree holds private repositories' issues. Recommendation: the data
-   repository is private, and a tree is never attached to anything public.

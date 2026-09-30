@@ -1,26 +1,31 @@
-# The note wake and the verdict receipt — Johnny's rows on #1142
+# Bus note wake, verdict receipt, send, and reply
 
 Nova-bus carries messages over Git and uses only the Go standard library and
 its general bus, build-info and one-line modules. It does not classify notes
 or contact an AI provider.
 
-Status: specified, not implemented; no code. Every path comes from a flag, every
-verb prints one line of output, a refusal is exit 2 with one remedy line, output is
-bounded, and tests use fakes.
+`wait --on-note`, ordinary `send` preflight, and `reply` have command paths in
+`nova-bus`. The `receipt --verdict` form remains a specified extension; the
+current `receipt` command takes `--note`. The contracts below retain their
+requirements where an implementation is incomplete. Every path comes from a
+flag, output is bounded, and a refused invocation names its remedy.
 
 ## `wait --on-note` and `receipt --verdict`
 
-**The verb lines, as help prints them.**
+**The contract forms.** Current help exposes `wait --on-note`; the verdict
+receipt form below is the required extension to the ordinary `receipt --note`
+command.
 
 ```
-nova-bus wait --bus <dir> --as <name> --on-note --timeout <duration> --remote <name> --branch <name> [--interval <duration>] [--advance] [--max-notes <n>] [--max-bytes <n>] [--after <token>] [--git-timeout <seconds>]
+nova-bus wait --bus <dir> --as <name> --receipt-max-words <n> --on-note --timeout <duration> --remote <name> --branch <name> [--interval <duration>] [--advance] [--max-notes <n>] [--max-bytes <n>] [--after <token>] [--git-timeout <seconds>]
 nova-bus receipt --bus <dir> --as <name> --verdict APPROVE|HOLD|ADOPTED --re <id-or-path> [--text <text>] --remote <name> --branch <name> [--attempts <n>] [--no-push] [--git-timeout <seconds>]
 ```
 
 **What each reads and writes.** `wait --on-note` reads the bus from `--bus`, fetches
 `--remote`/`--branch` on `--interval`, and reads the notes addressed to the caller
-by To: only, by To: or Cc: once `--cc` opts in, the wake being To: only (addr=to is
-the default; --cc opts in to Cc: notes, which are data, not a wake); it writes nothing
+by To: only. The contract also requires a `--cc` option for including Cc: notes
+as data while the wake remains To: only; current command flags do not expose it.
+The wait writes nothing
 unless `--advance` is given, when it moves and pushes the caller's cursor as `inbox
 --advance` does. `receipt --verdict` reads the bus and roster, resolves `--re` against
 the open list, and writes one receipt note into the caller's lane — `Verdict:
@@ -40,19 +45,11 @@ INBOX BODY END id=<id>
 ```
 
 Every field is named: the id, the sender, the repository-relative path, the body's
-byte count, and the existing frame fields. The verb runs as a systemd or launchd
-unit outside a TUI, so the unit restarts it after a harness cap; the exit is the
-wake, and a parent wakes on a note without ingesting the open list. A service restart
-alone does not wake a harness parent — nothing in the unit's lifetime reaches the
-parent — so this slice waits in the foreground only: a FIFO is not durable, a file
-can overwrite pending notes, and `--advance` does not itself name the batch it
-acknowledges. `wait --on-note` wakes a parent that is waiting inside its own turn.
-Background delivery is deferred to a later section, which must pin a real
-notification adapter and an acknowledgement-token protocol before it makes any claim.
-
-The verb also runs as a systemd or launchd unit outside a TUI, so the unit restarts
-it after a harness cap; the exit is the wake, and a parent wakes on a note without
-ingesting the open list.
+byte count, and the existing frame fields. The command waits in the foreground;
+its exit wakes a parent that is waiting inside its own turn, without making that
+parent ingest the open list. A service restart alone cannot wake a harness parent.
+Background delivery requires a notification adapter and an acknowledgement-token
+protocol before it can make the same claim.
 
 **The body and batch bounds, the continuation, and the cursor.** One note's body is
 bounded to `--max-bytes` bytes, default 65536 and hard ceiling 1048576; one wake
@@ -100,7 +97,7 @@ rebase; every other dirty path is still the refusal it always was, on one `SEND 
 line, and `SEND OK` still names its fields. `send` sets its own process name,
 distinct from the wait's, so `pkill -f` on the wait never kills a send.
 
-**Red tests, written first.** Each uses a fake where the real thing is the network, a bench or a clock.
+**Contract tests.** Each uses a fake where the real thing is the network, a bench or a clock.
 1. `TestWaitOnNotePrintsOnlyTheNote`: a fake remote lands one To: note; stdout is the `WAIT OK` line and its `INBOX NOTE`/body and no `INBOX OPEN` or carrying count.
 2. `TestWaitOnNoteNeverWakesOnAnEmptyTick`: a fake clock and empty fake remote; the process prints one `WAIT TIMEOUT` and no frame, and no parent is woken.
 3. `TestWaitOnNoteRearmsAfterAHarnessCap`: a fake service manager kills the unit at the cap and restarts it; the restarted wait resumes with the note's arrival not lost.
@@ -116,11 +113,11 @@ distinct from the wait's, so `pkill -f` on the wait never kills a send.
 
 ## `send --file` preflight and `reply`
 
-**The verb lines, as help prints them.**
+**The command forms.**
 
 ```
-nova-bus send --bus <dir> (--file <path>|--stdin) [--as <name>] --remote <name> --branch <name> [--attempts <n>] [--slug <s>] [--no-push] [--dry-run] [--git-timeout <seconds>]
-nova-bus reply --bus <dir> --as <name> --re <id> --file <draft> --remote <name> --branch <name> [--advance] [--dry-run] [--attempts <n>] [--git-timeout <seconds>]
+nova-bus send --bus <dir> (--file <path>|--stdin) [--as <name>] --remote <name> --branch <name> [--host <name>] [--attempts <n>] [--slug <s>] [--no-push] [--dry-run] [--git-timeout <seconds>]
+nova-bus reply --bus <dir> --as <name> --re <id> --file <draft> --remote <name> --branch <name> [--host <name>] [--advance] [--dry-run] [--attempts <n>] [--git-timeout <seconds>]
 ```
 
 **What `send --file` reads and preflights.** `send` reads the draft from `--file` (or
@@ -165,7 +162,7 @@ REPLY OK id=<id> re=<id> path=<path> to=<name> subject=<text> commit=<commit> pu
 drafts, comma-separated ids in `Re:`, a date warning on every send, and the hand-shaped
 reply header.
 
-**Red tests, written first.** Each uses a fake where the real thing is the network, a bench or a clock.
+**Contract tests.** Each uses a fake where the real thing is the network, a bench or a clock.
 1. `TestSendRefusesAHandWrittenId`: a fake checkout and a draft with an `Id:` header; exit 2, one remedy line, and no new commit.
 2. `TestSendRefusesTwoIdsInRe`: a fake checkout and a `Re:` line naming two comma-separated ids; exit 2 and one remedy line.
 3. `TestSendWarnsOnceOnADateItReplaces`: a fake clock and a draft with a `Date:` header; one `SEND NOTE` line and the committed note carries the fake clock's date.
@@ -178,11 +175,10 @@ reply header.
 
 ## Tests this spec demands
 
-Every test runs against a fake remote, a fake checkout, a fake clock and a fake
-service/process probe; nothing reaches a network or a real secret, and each new
-test is proven able to fail before it is trusted. The verb groups are
-`wait --on-note` / `receipt --verdict` (absent) and `send --file` preflight /
-`reply` (already implemented).
+The tests below cover `wait --on-note`, the specified `receipt --verdict`
+extension, `send --file` preflight, and `reply`. Disposable local remotes and
+injected clocks keep the relevant failures reproducible; no test needs a live
+service or a real secret.
 
 1. `TestWaitOnNotePrintsOnlyTheNote` — a To: note wakes exactly one `WAIT OK` status line and its `INBOX NOTE`/body, and no `INBOX OPEN` frame or carrying count ever prints.
 2. `TestWaitOnNoteWakesOnToOnly` — the wake is To: only (addr=to the default); a Cc: note is data, not a wake.

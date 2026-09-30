@@ -1,4 +1,4 @@
-# nova-cairn — specification (bounded slice for #248)
+# nova-cairn — specification
 
 `nova-cairn` is one binary at the **record layer**. It carries a session
 across its end mechanically: it opens a session record, appends the friend's
@@ -10,18 +10,18 @@ rule, `internal/oneline` and `internal/bounded` — applies here unchanged
 and is not restated. Where this tool needs something the Conventions do not
 cover, it is below and it says so.
 
-This slice is a bounded contribution to draft #245, not its ratification.
-The differences are stated here first, before any approval of that draft:
-this tool imposes no memory lifecycle. There is deliberately no seal, no
-consume, no delete, no grading, no consolidation, no liveness inference, no
+This tool has a deliberately bounded scope and imposes no memory lifecycle.
+There is no seal, consume, delete, grading, consolidation, liveness inference,
 mandatory waking-period cardinality, no keeper/bud model and no prescribed
 headings; naming any of them on the command line is exit 2, unknown
-subcommand. Seal, rollup and retention are separate explicit choices for a
-later slice, and the initial scope implements no consume/delete lifecycle,
-so a line that keeps records its own way loses nothing by this tool
-existing and no friend's practice is renamed by adopting it.
+subcommand. Seal, rollup and retention require separate explicit choices;
+this tool implements no consume/delete lifecycle, so a line that keeps
+records its own way loses nothing by adopting it.
 
-## The four verbs
+## The four record verbs
+
+`version` prints the build identity, and `help` or `<verb> --help` prints
+usage; neither reads or changes a store.
 
 **`open --store <dir> --session <id> [--source <ptr>] --publish <policy>`
 starts one session record.** The store is caller-named and holds plain
@@ -50,11 +50,8 @@ format stores no source or publication policy: receipts print `source=-`
 and `publish=unknown`. Ordinary prose without machine-form entry headings
 is not an indexed entry. Invalid stamps, invalid entry identifiers and duplicate
 entry headings refuse rather than produce an ambiguous receipt. The nested
-record wins when a store holds both shapes for a session, which counts once. The hurt this is written from
-(2026-09-18): an append into a bench store refused `no such session
-"b9395d11"; open first` with `cairns/b9395d11.md` in place, and running the
-named remedy would have written a second record and split one session in
-two. **A refusal names the remedy verb whole** — `open first: nova-cairn
+record wins when a store holds both shapes for a session, which counts once.
+**A refusal names the remedy verb whole** — `open first: nova-cairn
 open --store <dir> --session <id> --publish <policy>` — rather than a verb
 the reader must reconstruct. The remedy quotes the caller's store and session
 for a POSIX shell. Control bytes use octal decoding inside a subshell with a

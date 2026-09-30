@@ -1,8 +1,8 @@
 # Usage and adoption guide
 
 If you are deciding whether Nova Tools fits your work, start here. This guide
-explains why the tools help, what each one does, how to try one cheaply, and which
-one to try first. The
+explains why the tools help, how to try one cheaply, and which one to try first.
+The complete tool list is in the [README](../README.md#what-do-you-want-to-do). The
 [command reference](CLI.md) has every flag and all the output; this page is about
 choosing.
 
@@ -96,8 +96,8 @@ go install github.com/mas-bandwidth/nova-tools/cmd/nova-bus@v1.0.0
 nova-bus version
 ```
 
-Replace `nova-bus` with the tool you chose from the [README](../README.md).
-Install only what you need.
+For a tool present in 1.0.0, replace `nova-bus` with the tool you chose from the
+[README](../README.md). Install only what you need.
 
 The `go install` line **reaches the network**: it downloads and builds the
 module and writes the binary into Go's bin directory, and Go may also populate
@@ -124,8 +124,17 @@ go run ./cmd/nova-check quickstart --dir ./cmd/nova-check/testdata/example-self
 go run ./cmd/nova-memory quickstart --root ./cmd/nova-memory/testdata/corpus
 ```
 
+Those install and clone commands deliberately name the published 1.0.0 release.
+The `nova-sprint`, `nova-swarm` and `nova-work` commands below describe a newer
+source checkout; they are not in the 1.0.0 binaries. From a checkout that
+contains them, `go run ./cmd/nova-sprint help`, `go run ./cmd/nova-swarm help`
+and `go run ./cmd/nova-work help` show their inputs without contacting a store
+or GitHub. Use the release's own tag only after that release exists.
+
 ## Choosing a tool
 
+These entries help with common choices rather than enumerating every binary;
+the [README table](../README.md#what-do-you-want-to-do) is the full tool list.
 Each entry below is a decision, not a reference. Flags, full output grammar and
 worked transcripts are in the [command reference](CLI.md). **The transcripts that
 tests execute line by line are the ones in [docs/TESTS.md](TESTS.md)**, so those
@@ -136,6 +145,49 @@ Two tools have a `quickstart` verb — `nova-memory` and `nova-check` — and
 **both still require paths or choices you supply**. `nova-bus`, `nova-tokens`,
 `nova-sandbox`, `nova-self-talk` and `nova-fuse` have none. Each entry below
 names what its own first trial needs.
+
+### nova-sprint — coordinate work across a fleet
+
+**Try it when** work moves between workers, readers, merge and fleet members,
+and the coordinator needs one place to see what is ready and what needs a
+decision.
+
+**What it does.** Keeps the sprint's work and inbox in its Redis store. Its
+coordinator can add work, review judgments and advance the sprint; members
+take and finish cards under their own identities. A tick advances the machine.
+
+**You need** an owned Redis store, a sprint configured for it, and the acting
+identity for a write. Do not use a shared sprint as a first trial.
+
+**First trial.** `nova-sprint help` is read-only and names the verbs and setup.
+See the [Sprint contract](SPEC-SPRINT.md) before starting a real sprint.
+
+**Limits and side effects.** Most working verbs write to Redis. A worker's
+report on a handed card names its epoch, so a clear cannot make the old report
+apply to a new card. The help command changes nothing.
+
+### nova-work — a local tree of captured GitHub issues
+
+**Try it when** you need a local issue tree for an organization and a fresh
+comparison with the GitHub fields that tree records.
+
+**What it does.** `import` reads selected GitHub repositories into one local
+tree file; `--dry-run` does the read without writing the file. `verify` fetches
+again and reports differences it finds in the captured records. Neither verb
+edits GitHub.
+
+**You need** `gh` access to the chosen organization or repositories and a
+private local path for the tree when using `--out`: it may contain private
+issues. The [Work v1 contract](SPEC-WORK-V1.md) lists the captured fields and
+those outside this first layer.
+
+**First trial.** `nova-work help` is read-only and shows the import and verify
+forms. A real import contacts GitHub; keep its tree file in a directory you
+control.
+
+**Limits and side effects.** Import writes only the chosen local file unless
+`--dry-run` is used. Verification is limited to the represented fields; it is
+not a claim that every kind of GitHub data is in the tree.
 
 ### nova-bus — a lasting conversation
 
@@ -240,9 +292,8 @@ each result and the evidence behind it.
 **Limits and side effects.** It runs other programs, writes job directories, and
 spends real tokens once workers start. A worker exiting `0` means the process
 succeeded, **not** that the requested work is complete — read the evidence. A
-free worker helps only if its capabilities fit the task. The development branch
-adds `nova-sandbox run` on macOS; it is not in `v0.15.2`, and its Linux form
-refuses. On macOS, starting it from inside an existing sandbox may fail while
+free worker helps only if its capabilities fit the task. On macOS, starting
+`nova-sandbox run` from inside an existing sandbox may fail while
 creating its APFS volume because the outer wall does not permit the mount. Start
 the disposable volume from outside the existing wall; retrying the same nested
 command does not grant the missing mount access.
@@ -346,7 +397,7 @@ out of arguments, logs and task text.
 of Markdown, and that pile keeps growing.
 
 **What it does.** Searches local Markdown records and points at the sources that
-matter.
+matter. `view` also renders explicitly named records as a read-only timeline.
 
 **You need** a directory of Markdown to index. It is local: nothing is sent
 anywhere, which matters if the record is your own.
