@@ -1,6 +1,11 @@
 package sprint
 
-import "sort"
+import (
+	"errors"
+	"fmt"
+	"slices"
+	"sort"
+)
 
 // Read plans, the second part of IT05 (the upper design, version 2.1, sections
 // 1.0, 1.4.2, 1.5.1 and 8.1): what a rule or a verb asks the store to read in
@@ -87,9 +92,11 @@ const (
 	CountBytes = 24
 )
 
-// recordBytes is the bytes of one record read with the projection.
+// recordBytes is the bytes of one record read with the projection: a nil list
+// is the whole record, and a list with no field (not nil) is the summary, which
+// is the envelope alone.
 func recordBytes(fields []string) int {
-	if len(fields) == 0 {
+	if fields == nil {
 		return WholeRecordBytes
 	}
 	return RecordEnvelopeBytes + FieldBytes*len(fields)
@@ -134,14 +141,32 @@ var followCosts = map[string]int{
 
 // followTables are the tables whose cards of a primary a follow reads: the read
 // cards are in the readers' table, the merge card in the merge table, and the
-// live and the withdrawn work card in the fleet's (a member's cells). A follow
-// not here reaches no card that Table.Of answers for.
+// work card in the fleet's (a member's cells), which 1.0 gives as two follows:
+// `work`, the live work card, and `withdrawn`, the same card when it is
+// withdrawn. They are disjoint states of one card, so the fleet's cards of a
+// primary are all read only when both were followed (followsInto, Table.Of): a
+// withdrawn follow alone does not read the live card, and a work follow alone
+// does not read the withdrawn one. A follow not here reaches no card that
+// Table.Of answers for.
 var followTables = map[string]string{
 	FollowRCards:    Readers,
 	FollowMerge:     Merge,
 	FollowWork:      Fleet,
 	FollowWithdrawn: Fleet,
 }
+
+// followsInto are the follows that read a table's cards of a primary, by table
+// (followTables turned around, in the order of Follows): Table.Of answers for a
+// primary when every one of them was read of it.
+var followsInto = func() map[string][]string {
+	out := map[string][]string{}
+	for _, f := range Follows {
+		if t, ok := followTables[f]; ok {
+			out[t] = append(out[t], f)
+		}
+	}
+	return out
+}()
 
 // followCostDefault is what a follow not in followCosts adds (1.0: 1 a follow).
 const followCostDefault = 1
@@ -201,7 +226,8 @@ type RangeQ struct {
 	// Limit is the most ids returned (at most MaxRangeLimit).
 	Limit int
 	// Desc reads from the highest score; Records asks for the records of a
-	// cell's members, with Fields their projection (empty: whole records).
+	// cell's members, with Fields their projection (nil: whole records; a list
+	// that is not nil and has no field: the summary, no field of a record).
 	Desc, Records bool
 	Fields        []string
 }
@@ -326,7 +352,8 @@ type SprintQ struct {
 	Source IDSource
 	// Stream is the stream of `front`.
 	Stream string
-	// Fields is the projection of the records returned (empty: whole records).
+	// Fields is the projection of the records returned (nil: whole records; a
+	// list that is not nil and has no field: the summary, no field of a record).
 	Fields []string
 	// Follow is what `related` follows from each id's record.
 	Follow []string
@@ -353,6 +380,34 @@ type ReadPlan struct {
 	RCounts []RCountQ
 	Lines   []LinesQ
 	Sprint  []SprintQ
+}
+
+// ErrBadPlan is the refusal of a read plan that cannot be read into a partial
+// snapshot with its guards whole: a plan is refused when a rule builds it
+// (Validate) and again when its answer is loaded (LoadPartial), and nothing is
+// read for it.
+var ErrBadPlan = errors.New("the read plan cannot be loaded as a partial snapshot")
+
+// Validate refuses a plan whose answer could not be read back without a read
+// going silent. A `related` query with a follow that reaches the cards Table.Of
+// finds by their primary field (followTables) must read that field: its fields
+// are nil (the whole record) or name PrimaryField. Left out, a store that
+// honours the projection returns the follow's cards without it, and Of would
+// find none of them and say nothing. The error is ErrBadPlan, and names the
+// query, its follow and the field.
+func (rp ReadPlan) Validate() error {
+	for i, q := range rp.Sprint {
+		if q.Kind != QueryRelated || q.Fields == nil || slices.Contains(q.Fields, PrimaryField) {
+			continue
+		}
+		for _, f := range q.Follow {
+			if _, opens := followTables[f]; opens {
+				return fmt.Errorf("%w: composite query %d (%s) follows %s, which Table.Of finds by the field %s, and its fields %q leave that field out",
+					ErrBadPlan, i, q.Kind, f, PrimaryField, q.Fields)
+			}
+		}
+	}
+	return nil
 }
 
 // queryCosts are the composite queries' costs (1.0's table), one row a kind:

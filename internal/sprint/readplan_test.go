@@ -151,6 +151,44 @@ func TestQueryCostTable(t *testing.T) {
 	}
 }
 
+// A projection is nil (the whole record) or a list of fields (Layer 1, the
+// errata to version 2.1, E6): a list that is not nil and has no field is the
+// summary, which is the record's envelope alone, and never the whole record.
+func TestAProjectionOfNoFieldIsTheSummaryAndCostsTheEnvelope(t *testing.T) {
+	t.Parallel()
+	if got := recordBytes(nil); got != WholeRecordBytes {
+		t.Errorf("no list of fields: %d bytes a record, the whole record is %d", got, WholeRecordBytes)
+	}
+	if got := recordBytes([]string{}); got != RecordEnvelopeBytes {
+		t.Errorf("a list with no field: %d bytes a record, the summary is the envelope, %d", got, RecordEnvelopeBytes)
+	}
+	if got, want := recordBytes(fieldsOf(2)), RecordEnvelopeBytes+2*FieldBytes; got != want {
+		t.Errorf("two fields: %d bytes, want %d", got, want)
+	}
+	rng := func(fields []string) RangeQ {
+		return RangeQ{Table: Work, Cell: "s:ready", Limit: 10, Records: true, Fields: fields}
+	}
+	rel := func(fields []string) SprintQ {
+		return SprintQ{Kind: QueryRelated, Source: IDSource{Kind: SourceIDs, IDs: []string{"a", "b"}}, Fields: fields}
+	}
+	for _, tt := range []struct {
+		name string
+		got  Cost
+		want int
+	}{
+		{"a range read whole", rangeCost(rng(nil)), 10*RangeIDBytes + 10*WholeRecordBytes},
+		{"a range read as the summary", rangeCost(rng([]string{})), 10*RangeIDBytes + 10*RecordEnvelopeBytes},
+		{"related read whole", QueryCost(rel(nil)), 2 * WholeRecordBytes},
+		{"related read as the summary", QueryCost(rel([]string{})), 2 * RecordEnvelopeBytes},
+		{"a fleet read whole", QueryCost(SprintQ{Kind: QueryFleet, Units: 3}), 3 * WholeRecordBytes},
+		{"a fleet read as the summary", QueryCost(SprintQ{Kind: QueryFleet, Units: 3, Fields: []string{}}), 3 * RecordEnvelopeBytes},
+	} {
+		if tt.got.Bytes != tt.want {
+			t.Errorf("%s: %d bytes, want %d", tt.name, tt.got.Bytes, tt.want)
+		}
+	}
+}
+
 // The follows of the rules whose keys carry a line (2.3): R8's read cards, R9's
 // with the merge and control cards and the judgments, R10's with the work card,
 // and R16's index, due entries, judgments and needs.

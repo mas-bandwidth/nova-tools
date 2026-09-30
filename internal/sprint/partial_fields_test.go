@@ -98,6 +98,7 @@ func TestWhatSeveralQueriesNamedOfARecordIsWhatItHolds(t *testing.T) {
 	t.Parallel()
 	log := &unloadedLog{}
 	c := func(fields ...string) *cardLoad { return newCardLoad(fields, log) }
+	summary := func() *cardLoad { return newCardLoad([]string{}, log) } // a list with no field, not nil
 	for _, tt := range []struct {
 		name         string
 		a, b         *cardLoad
@@ -109,6 +110,9 @@ func TestWhatSeveralQueriesNamedOfARecordIsWhatItHolds(t *testing.T) {
 		{"two projections", c("a"), c("b"), []string{"a", "b"}, []string{"c"}, false, true},
 		{"the same projection", c("a"), c("a"), []string{"a"}, []string{"b"}, false, true},
 		{"a projection and a whole record", c("a"), c(), []string{"a", "z"}, nil, true, true},
+		{"a summary and a projection", summary(), c("a"), []string{"a"}, []string{"b"}, false, true},
+		{"two summaries", summary(), summary(), nil, []string{"a"}, false, true},
+		{"a summary and a whole record", summary(), c(), []string{"a", "z"}, nil, true, true},
 	} {
 		got := tt.a.with(tt.b)
 		if tt.wantBothWays {
@@ -129,6 +133,85 @@ func TestWhatSeveralQueriesNamedOfARecordIsWhatItHolds(t *testing.T) {
 				t.Errorf("%s: %s is held", tt.name, f)
 			}
 		}
+	}
+}
+
+// Layer 1 draws the line (the errata to version 2.1, E6; tset.Mem's
+// projectReadRecord): a nil list of fields is the whole record, and a list that
+// is not nil but has no field is the summary, a record with its id, place, score
+// and revision and no field of it. A field of a summary is refused, never read
+// as absent.
+func TestASummaryIsNoFieldAndNotTheWholeRecord(t *testing.T) {
+	t.Parallel()
+	log := &unloadedLog{}
+	if l := newCardLoad(nil, log); !l.whole {
+		t.Error("no list of fields is the whole record")
+	}
+	if l := newCardLoad([]string{}, log); l.whole || len(l.fields) != 0 {
+		t.Errorf("a list with no field is the summary: %+v", l)
+	}
+
+	// The answer holds the field (a store may return more than was asked for);
+	// the summary's query named none, so a planner may read none of them.
+	rp := ReadPlan{
+		Ranges: []RangeQ{{Table: Work, Cell: "s1:ready", Limit: 10, Records: true, Fields: []string{}}},
+		Sprint: []SprintQ{{Kind: QueryFleet, Units: 1, Fields: []string{}}},
+	}
+	ans := ReadAnswer{
+		Tset: answers(rp, nil, []TsetAnswer{{IDs: []string{"p1"}, Scores: []float64{4}, Records: []*Card{pcard("p1", "s1", "ready", 4, "attempt", "2")}}}, nil, nil, nil),
+		Sprint: []Answer{{Kind: QueryFleet, Rows: []string{"m1"},
+			Records: []TableCard{{Fleet, pcard("ctl-m1", "m1", Ctl, 0, "status", "up")}}}},
+	}
+	strict, err := loadPartial(rp, ans, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c := strict.Work.Card("p1")
+	if c.ID != "p1" || c.Row != "s1" || c.Col != "ready" || c.Score != 4 || c.Rev != 1 || !c.Placed() {
+		t.Fatalf("a summary keeps the record's id, place, score and revision: %+v", c)
+	}
+	if got := ids(strict.Work.Cell("s1", "ready")); !reflect.DeepEqual(got, []string{"p1"}) {
+		t.Fatalf("a cell read as summaries can be read: %v", got)
+	}
+	for name, read := range map[string]func(){
+		"F":          func() { c.F("attempt") },
+		"Int":        func() { c.Int("attempt") },
+		"IsSentinel": func() { IsSentinel(c) },
+		"UpMembers":  func() { strict.UpMembers() },
+	} {
+		if msg := mustPanic(t, read); !strings.Contains(msg, unloadedFieldMessage) {
+			t.Errorf("%s of a summary: panicked with %q", name, msg)
+		}
+	}
+
+	rel, err := loadPartial(rp, ans, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := rel.Work.Card("p1").F("attempt"); got != "" {
+		t.Fatalf("a field of a summary gave %q", got)
+	}
+	if got := rel.UpMembers(); len(got) != 0 {
+		t.Fatalf("UpMembers over a summary of the control cards gave %v, not the members whose status was not read", got)
+	}
+	if err := rel.UnloadedErr(); !errors.Is(err, ErrUnloaded) {
+		t.Fatalf("a release build refuses a read of a field of a summary: %v", err)
+	}
+
+	// An ids query names no fields and reads the record whole, whatever the
+	// other queries of the read named.
+	whole, err := loadPartial(ReadPlan{
+		IDs:    map[string][]string{Work: {"p1"}},
+		Ranges: []RangeQ{{Table: Work, Cell: "s1:ready", Limit: 10, Records: true, Fields: []string{}}},
+	}, ReadAnswer{Tset: []TsetAnswer{
+		{Records: []*Card{pcard("p1", "s1", "ready", 4, "attempt", "2")}},
+		{IDs: []string{"p1"}, Scores: []float64{4}, Records: []*Card{pcard("p1", "s1", "ready", 4, "attempt", "2")}},
+	}}, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if whole.Work.Card("p1").F("attempt") != "2" {
+		t.Error("a record read whole by its id and as a summary by a range is whole")
 	}
 }
 

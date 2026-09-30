@@ -30,10 +30,13 @@ type cardLoad struct {
 	log    *unloadedLog
 }
 
-// newCardLoad is what a query that named these fields (none: every field)
-// loads of the records it returns.
+// newCardLoad is what a query that named these fields loads of the records it
+// returns. Layer 1 draws the line between no list and an empty one (the errata
+// to version 2.1, E6; tset.Mem's projectReadRecord): a nil list is every field
+// (the whole record), and a list that is not nil but has no field is the summary
+// of a record, its id, place, score and revision and no field of it.
 func newCardLoad(fields []string, log *unloadedLog) *cardLoad {
-	l := &cardLoad{whole: len(fields) == 0, log: log}
+	l := &cardLoad{whole: fields == nil, log: log}
 	if !l.whole {
 		l.fields = make(map[string]bool, len(fields))
 		for _, f := range fields {
@@ -69,6 +72,23 @@ func (l *cardLoad) with(o *cardLoad) *cardLoad {
 // Placed says the card has a place in its table.
 func (c *Card) Placed() bool { return c != nil && c.Col != "" }
 
+// PrimaryField is the field of a card that names its primary: the read cards,
+// the merge card and the work cards of the fleet's table carry it, and Table.Of
+// finds them by it.
+const PrimaryField = "primary"
+
+// field is the field's value and whether the card holds the field: true for a
+// card built whole, for a card loaded from a read plan by a query that named no
+// projection, and for a field that a query which read the card named. It is
+// the one read of a field; F and the table's index of primaries both go through
+// it, so that a field the plan did not load is never read as absent.
+func (c *Card) field(name string) (value string, held bool) {
+	if c.load != nil && !c.load.whole && !c.load.fields[name] {
+		return "", false
+	}
+	return c.Fields[name], true
+}
+
 // F is a field, "" when absent. On a card loaded from a read plan, a field
 // that no query that read the card named is refused (1.0: every rule read names
 // its fields): the read panics in a test build, and in a release build is
@@ -78,11 +98,12 @@ func (c *Card) F(name string) string {
 	if c == nil {
 		return ""
 	}
-	if c.load != nil && !c.load.whole && !c.load.fields[name] {
+	v, held := c.field(name)
+	if !held {
 		c.load.log.note(unloadedFieldMessage + ": " + c.ID + " " + name)
 		return ""
 	}
-	return c.Fields[name]
+	return v
 }
 
 // Int is a counter field, 0 when absent or unreadable.
@@ -137,10 +158,11 @@ type loadedCells struct {
 	// rows says the table's rows were read (a stream, member or reader
 	// query), so that a read of a column knows which cells it means.
 	rows bool
-	// followed are the primaries whose cards in this table a `related` query
-	// read with a follow that reaches them (readers' read cards, the merge
-	// card, the fleet's work cards): Of answers for these and no others.
-	followed map[string]bool
+	// followed are the follows of a primary that a `related` query read into
+	// this table, as {primary, follow} (followTables): Of answers for a primary
+	// when every follow that reads one of its cards here was read, and for no
+	// other.
+	followed map[[2]string]bool
 	// log is where a read of anything else is put; the snapshot's tables share
 	// one.
 	log *unloadedLog
@@ -225,7 +247,12 @@ func (t *Table) index() {
 		}
 		k := [2]string{c.Row, c.Col}
 		t.cells[k] = append(t.cells[k], c)
-		if p := c.Fields["primary"]; p != "" { // the table's own index, not a planner's read
+		// The index finds a card by its primary through the card's own read of the
+		// field. A card that does not hold primary (a control card, read by a
+		// listing with a projection that leaves it out) is no primary's, and is not
+		// indexed; the cards a follow reads are checked to hold it (ReadPlan.Validate),
+		// so that Of never answers from records that came without it.
+		if p, held := c.field(PrimaryField); held && p != "" {
 			t.byPrimary[p] = append(t.byPrimary[p], c)
 		}
 	}
@@ -359,18 +386,36 @@ func (t *Table) Count(row, col string) int {
 
 // Of is the placed cards whose primary field names p, in score order. On a
 // table loaded from a read plan it answers only for a primary whose cards in
-// this table a `related` query read with a follow that reaches them (rcards for
-// the readers' read cards, merge for the merge card, work and withdrawn for the
-// fleet's work cards), and gives the cards that follow loaded; for any other
-// primary it is refused (see Loaded), and the result is empty, never the cards
-// that happen to be known.
+// this table a `related` query read with every follow that reaches them: rcards
+// for the readers' read cards, merge for the merge card, and for the fleet's
+// work cards both work (the live card) and withdrawn (the same card, when it is
+// withdrawn), which 1.0 gives as separate follows of one card in disjoint
+// states. It gives the cards those follows loaded; for any other primary, or
+// one of which only some of the follows were read, it is refused (see Loaded),
+// and the result is empty, never the cards that happen to be known.
 func (t *Table) Of(p string) []*Card {
-	if t.part != nil && !t.part.followed[p] {
+	if t.part != nil && !t.part.followedAll(t.Name, p) {
 		t.part.log.note(unloadedMessage + ": " + t.Name + " cards of " + p)
 		return nil
 	}
 	t.index()
 	return t.byPrimary[p]
+}
+
+// followedAll says every follow that reads a card of primary p in the table was
+// read, and that some follow reads them at all (no follow reads the work
+// table's cards of a primary: Of is refused there).
+func (l *loadedCells) followedAll(table, p string) bool {
+	need := followsInto[table]
+	if len(need) == 0 {
+		return false
+	}
+	for _, f := range need {
+		if !l.followed[[2]string{p, f}] {
+			return false
+		}
+	}
+	return true
 }
 
 // SortCards orders cards by score, then by id: work order.

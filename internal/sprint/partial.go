@@ -91,6 +91,9 @@ func LoadPartial(rp ReadPlan, ans ReadAnswer) (*Snapshot, error) {
 }
 
 func loadPartial(rp ReadPlan, ans ReadAnswer, strict bool) (*Snapshot, error) {
+	if err := rp.Validate(); err != nil {
+		return nil, err
+	}
 	log := &unloadedLog{strict: strict}
 	epoch, err := ans.Epoch.Uint64()
 	if err != nil {
@@ -111,7 +114,7 @@ func loadPartial(rp ReadPlan, ans ReadAnswer, strict bool) (*Snapshot, error) {
 	for _, name := range ViewOrder {
 		t := NewTable(name)
 		t.Epoch = epoch
-		t.part = &loadedCells{whole: map[[2]string]bool{}, counts: map[[2]string]int{}, followed: map[string]bool{}, log: log}
+		t.part = &loadedCells{whole: map[[2]string]bool{}, counts: map[[2]string]int{}, followed: map[[2]string]bool{}, log: log}
 		switch name {
 		case Work:
 			s.Work = t
@@ -438,10 +441,11 @@ func (p *Partial) loadSprint(s *Snapshot, rp ReadPlan, ans ReadAnswer) error {
 	return nil
 }
 
-// followed records the primaries whose cards `related` read with a follow that
-// reaches a table's cards of a primary (followTables), so that Table.Of answers
-// for them. The ids are the ones the query's source lists, or, for a head or a
-// line, the ones the answer says the source named.
+// followed records, for each id `related` read, the follows that reach a
+// table's cards of a primary (followTables), so that Table.Of answers for the
+// primaries every such follow was read of. The ids are the ones the query's
+// source lists, or, for a head or a line, the ones the answer says the source
+// named.
 func (p *Partial) followed(s *Snapshot, i int, q SprintQ, a Answer) error {
 	ids := q.Source.IDs
 	if q.Source.Kind == SourceIDs {
@@ -462,7 +466,7 @@ func (p *Partial) followed(s *Snapshot, i int, q SprintQ, a Answer) error {
 		}
 		t := s.T(name)
 		for _, id := range ids {
-			t.part.followed[id] = true
+			t.part.followed[[2]string{id, f}] = true
 		}
 	}
 	return nil

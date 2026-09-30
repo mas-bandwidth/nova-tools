@@ -181,36 +181,81 @@ func TestGuardedReadsAnswerWhatWasLoaded(t *testing.T) {
 
 func TestOfAnswersForTheFollowsThatWereRead(t *testing.T) {
 	t.Parallel()
-	// Each follow that reaches a card of a primary makes Of answer, in the
-	// table the card is in, for the primaries the query named.
+	// The follows that reach the cards of a primary in a table make Of answer,
+	// in the table the cards are in, for the primaries the query named: every
+	// follow that reads a card of it there. The fleet's work card is read by two
+	// follows of 1.0, `work` (the live card) and `withdrawn` (the same card, when
+	// it is withdrawn), which are disjoint states of one card: one alone does not
+	// read it.
 	for _, tt := range []struct {
-		follow, table string
-		asks          func(s *Snapshot) *Table
+		name    string
+		follows []string
+		table   string
+		asks    func(s *Snapshot) *Table
+		answers bool
 	}{
-		{FollowRCards, Readers, func(s *Snapshot) *Table { return s.Readers }},
-		{FollowMerge, Merge, func(s *Snapshot) *Table { return s.Merge }},
-		{FollowWork, Fleet, func(s *Snapshot) *Table { return s.Fleet }},
-		{FollowWithdrawn, Fleet, func(s *Snapshot) *Table { return s.Fleet }},
+		{"rcards", []string{FollowRCards}, Readers, func(s *Snapshot) *Table { return s.Readers }, true},
+		{"merge", []string{FollowMerge}, Merge, func(s *Snapshot) *Table { return s.Merge }, true},
+		{"work and withdrawn", []string{FollowWork, FollowWithdrawn}, Fleet, func(s *Snapshot) *Table { return s.Fleet }, true},
+		{"withdrawn and work", []string{FollowWithdrawn, FollowWork}, Fleet, func(s *Snapshot) *Table { return s.Fleet }, true},
+		{"work alone", []string{FollowWork}, Fleet, func(s *Snapshot) *Table { return s.Fleet }, false},
+		{"withdrawn alone", []string{FollowWithdrawn}, Fleet, func(s *Snapshot) *Table { return s.Fleet }, false},
 	} {
-		rp := ReadPlan{Sprint: []SprintQ{{Kind: QueryRelated, Table: Work, Source: IDSource{Kind: SourceIDs, IDs: []string{"a", "b"}}, Follow: []string{FollowJOpen, tt.follow}}}}
+		rp := ReadPlan{Sprint: []SprintQ{{Kind: QueryRelated, Table: Work, Source: IDSource{Kind: SourceIDs, IDs: []string{"a", "b"}}, Follow: append([]string{FollowJOpen}, tt.follows...)}}}
 		ans := ReadAnswer{Sprint: []Answer{{Kind: QueryRelated, Records: []TableCard{{tt.table, pcard("a@1", "x", "y", 1, "primary", "a")}}}}}
 		s, err := loadPartial(rp, ans, false)
 		if err != nil {
 			t.Fatal(err)
 		}
 		tab := tt.asks(s)
+		if !tt.answers {
+			// Some of the follows that read the fleet's work card were not read: what the
+			// read did load of it would be read as all of it.
+			if got := tab.Of("a"); got != nil {
+				t.Errorf("%s: Of(a) in %s = %v, want it refused", tt.name, tt.table, ids(got))
+			}
+			if got := tab.Of("b"); got != nil {
+				t.Errorf("%s: Of(b) in %s = %v, want it refused", tt.name, tt.table, ids(got))
+			}
+			if len(s.Unloaded()) != 2 {
+				t.Errorf("%s: refused %v, want the two reads", tt.name, s.Unloaded())
+			}
+			continue
+		}
 		if got := ids(tab.Of("a")); !reflect.DeepEqual(got, []string{"a@1"}) {
-			t.Errorf("follow %s: Of(a) in %s = %v", tt.follow, tt.table, got)
+			t.Errorf("%s: Of(a) in %s = %v", tt.name, tt.table, got)
 		}
 		if got := tab.Of("b"); len(got) != 0 {
-			t.Errorf("follow %s: Of(b), a primary with no card, gave %v", tt.follow, ids(got))
+			t.Errorf("%s: Of(b), a primary with no card, gave %v", tt.name, ids(got))
 		}
 		if len(s.Unloaded()) != 0 {
-			t.Errorf("follow %s: refused %v", tt.follow, s.Unloaded())
+			t.Errorf("%s: refused %v", tt.name, s.Unloaded())
 		}
 		if got := s.Work.Of("a"); got != nil || len(s.Unloaded()) != 1 {
-			t.Errorf("follow %s: the work table's Of(a) is answered by no follow: %v, %v", tt.follow, ids(got), s.Unloaded())
+			t.Errorf("%s: the work table's Of(a) is answered by no follow: %v, %v", tt.name, ids(got), s.Unloaded())
 		}
+	}
+
+	// The follows are read of each id: work of one primary and withdrawn of
+	// another do not answer for either.
+	split := ReadPlan{Sprint: []SprintQ{
+		{Kind: QueryRelated, Table: Work, Source: IDSource{Kind: SourceIDs, IDs: []string{"a", "b"}}, Follow: []string{FollowWork}},
+		{Kind: QueryRelated, Table: Work, Source: IDSource{Kind: SourceIDs, IDs: []string{"b", "c"}}, Follow: []string{FollowWithdrawn}},
+	}}
+	sp, err := loadPartial(split, ReadAnswer{Sprint: []Answer{{Kind: QueryRelated}, {Kind: QueryRelated}}}, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"a", "c"} {
+		if got := sp.Fleet.Of(id); got != nil {
+			t.Errorf("Of(%s): only one of the two follows read it, gave %v", id, ids(got))
+		}
+	}
+	if len(sp.Unloaded()) != 2 {
+		t.Errorf("Of(a) and Of(c) each read a card that one follow of two loaded: refused %v", sp.Unloaded())
+	}
+	if got := sp.Fleet.Of("b"); len(got) != 0 || len(sp.Unloaded()) != 2 {
+		t.Errorf("Of(b), both follows read in two queries, and no card of it: %v, refused %v", ids(got), sp.Unloaded())
 	}
 
 	// A follow that reaches no card of a primary makes Of answer for nothing.
@@ -265,5 +310,169 @@ func TestOfAnswersForTheFollowsThatWereRead(t *testing.T) {
 	same := ReadPlan{Sprint: []SprintQ{{Kind: QueryRelated, Source: IDSource{Kind: SourceIDs, IDs: []string{"a"}}, Follow: []string{FollowRCards}}}}
 	if _, err := loadPartial(same, ReadAnswer{Sprint: []Answer{{Kind: QueryRelated, IDs: []string{"a"}}}}, false); err != nil {
 		t.Errorf("the same ids: %v", err)
+	}
+}
+
+// A follow that opens Of (the read cards, the merge card, the fleet's work
+// cards) finds the cards of a primary by their primary field, so the query that
+// reads them must read that field: a projection that leaves it out would return
+// cards Of could not find, and Of would give none and say nothing (the cold read
+// of the fixes to #4748). Such a plan is refused when it is built (Validate) and
+// when its answer is loaded (LoadPartial), naming the query and the field.
+func TestAFollowThatOpensOfMustReadThePrimaryField(t *testing.T) {
+	t.Parallel()
+	related := func(fields []string, follow ...string) SprintQ {
+		return SprintQ{Kind: QueryRelated, Table: Work, Source: IDSource{Kind: SourceIDs, IDs: []string{"s1-7"}}, Fields: fields, Follow: follow}
+	}
+	good := SprintQ{Kind: QueryRelated, Table: Work, Source: IDSource{Kind: SourceIDs, IDs: []string{"p9"}}, Follow: []string{FollowRCards}}
+	answerOf := func(rp ReadPlan) ReadAnswer {
+		ans := ReadAnswer{}
+		for _, q := range rp.Sprint {
+			ans.Sprint = append(ans.Sprint, Answer{Kind: q.Kind})
+		}
+		return ans
+	}
+
+	// The projection that leaves out primary is refused for every follow that opens Of.
+	for _, f := range []string{FollowRCards, FollowMerge, FollowWork, FollowWithdrawn} {
+		for name, fields := range map[string][]string{"a projection": {"status"}, "the summary": {}} {
+			rp := ReadPlan{Sprint: []SprintQ{good, related(fields, FollowJOpen, f)}}
+			err := rp.Validate()
+			if !errors.Is(err, ErrBadPlan) {
+				t.Errorf("%s, follow %s: Validate: %v", name, f, err)
+				continue
+			}
+			for _, want := range []string{"composite query 1", string(QueryRelated), "follows " + f, "field " + PrimaryField} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("%s, follow %s: the error does not say %q: %v", name, f, want, err)
+				}
+			}
+			for _, strict := range []bool{true, false} {
+				if s, err := loadPartial(rp, answerOf(rp), strict); s != nil || !errors.Is(err, ErrBadPlan) {
+					t.Errorf("%s, follow %s, strict %v: LoadPartial: %v, %v", name, f, strict, s, err)
+				}
+			}
+		}
+	}
+	if s, err := LoadPartial(ReadPlan{Sprint: []SprintQ{related([]string{"status"}, FollowRCards)}}, ReadAnswer{Sprint: []Answer{{Kind: QueryRelated}}}); s != nil || !errors.Is(err, ErrBadPlan) {
+		t.Errorf("LoadPartial: %v, %v", s, err)
+	}
+
+	// The plans that read primary, or that open no Of, are not refused.
+	for name, q := range map[string]SprintQ{
+		"the whole record":               related(nil, FollowRCards),
+		"primary named":                  related([]string{"status", PrimaryField}, FollowRCards),
+		"primary alone":                  related([]string{PrimaryField}, FollowMerge, FollowWork, FollowWithdrawn),
+		"a summary, and no follow":       related([]string{}),
+		"a projection, and no follow":    related([]string{"status"}),
+		"follows that open no Of":        related([]string{"status"}, FollowControl, FollowNeeds, FollowMember, FollowJOpen, FollowDue, FollowIndex),
+		"a follow no table has":          related([]string{"status"}, "nothing"),
+		"the summary and a plain follow": related([]string{}, FollowJOpen),
+	} {
+		rp := ReadPlan{Sprint: []SprintQ{q}}
+		if err := rp.Validate(); err != nil {
+			t.Errorf("%s: Validate: %v", name, err)
+		}
+		if _, err := loadPartial(rp, answerOf(rp), true); err != nil {
+			t.Errorf("%s: LoadPartial: %v", name, err)
+		}
+	}
+	// A query of another kind names no follow to open Of, whatever its fields.
+	if err := (ReadPlan{Sprint: []SprintQ{{Kind: QueryFleet, Fields: []string{"status"}}, {Kind: QueryFront, Stream: "s1", Fields: []string{}}}}).Validate(); err != nil {
+		t.Errorf("listings and front: %v", err)
+	}
+	if err := (ReadPlan{}).Validate(); err != nil {
+		t.Errorf("an empty plan: %v", err)
+	}
+
+	// The plan of the cold read: related over s1-7, following the read cards, with
+	// only status named, was answered with a read card that had no primary, and Of
+	// found none of it. With primary named the card is found, in a test build too.
+	rp := ReadPlan{Sprint: []SprintQ{related([]string{"status", PrimaryField}, FollowRCards)}}
+	ans := ReadAnswer{Sprint: []Answer{{Kind: QueryRelated, Records: []TableCard{
+		{Readers, pcard("s1-7@r1", "r1", Asked, 1, "status", "asked", "primary", "s1-7")},
+	}}}}
+	s, err := loadPartial(rp, ans, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ids(s.Readers.Of("s1-7")); !reflect.DeepEqual(got, []string{"s1-7@r1"}) {
+		t.Fatalf("Of(s1-7) with primary read: %v", got)
+	}
+	if len(s.Unloaded()) != 0 {
+		t.Fatalf("refused %v", s.Unloaded())
+	}
+}
+
+// The table finds a card by its primary through the card's own read of the
+// field (Card.field), the read that F is: a card that holds the field is
+// found, and a card that does not is no primary's. A control card, read by a
+// listing that names its status only, has no primary, and is not a refusal.
+func TestTheIndexOfPrimariesReadsThroughTheCardsOwnGuard(t *testing.T) {
+	t.Parallel()
+	whole, thin, summary := newCardLoad(nil, &unloadedLog{}), newCardLoad([]string{"status"}, &unloadedLog{}), newCardLoad([]string{}, &unloadedLog{})
+	for name, tt := range map[string]struct {
+		load     *cardLoad
+		name     string
+		wantHeld bool
+	}{
+		"built whole":        {nil, "status", true},
+		"built whole, other": {nil, "anything", true},
+		"read whole":         {whole, "anything", true},
+		"a field named":      {thin, "status", true},
+		"a field not named":  {thin, PrimaryField, false},
+		"the summary":        {summary, "status", false},
+	} {
+		c := &Card{ID: "c", Fields: map[string]string{"status": "up", "anything": "x", PrimaryField: "p1"}, load: tt.load}
+		v, held := c.field(tt.name)
+		if held != tt.wantHeld || held && v != c.Fields[tt.name] || !held && v != "" {
+			t.Errorf("%s: field(%q) = %q, %v", name, tt.name, v, held)
+		}
+	}
+
+	// A record of the readers' table that a query read without primary is not
+	// found by the primary the answer happens to hold, though the follow read
+	// nothing else of p3: the field it did not name is not there to be read.
+	rp := ReadPlan{
+		Ranges: []RangeQ{{Table: Readers, Cell: "r1:asked", Limit: 10, Records: true, Fields: []string{"status"}}},
+		Sprint: []SprintQ{{Kind: QueryRelated, Table: Work, Source: IDSource{Kind: SourceIDs, IDs: []string{"p3"}}, Follow: []string{FollowRCards}}},
+	}
+	ans := ReadAnswer{
+		Tset: []TsetAnswer{{IDs: []string{"p3@1"}, Scores: []float64{1}, Records: []*Card{pcard("p3@1", "r1", Asked, 1, "status", "asked", "primary", "p3")}}},
+		Sprint: []Answer{{Kind: QueryRelated, Records: []TableCard{
+			{Readers, pcard("p3@2", "r1", Asked, 2, "status", "asked", "primary", "p3")},
+		}}},
+	}
+	s, err := loadPartial(rp, ans, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ids(s.Readers.Of("p3")); !reflect.DeepEqual(got, []string{"p3@2"}) {
+		t.Fatalf("Of(p3) is the card that holds primary: %v", got)
+	}
+
+	// The fleet's control card, read by a listing that names status, has no
+	// primary and is nobody's work card; Of over the work cards a follow read
+	// neither refuses it nor finds it.
+	fleet := ReadPlan{Sprint: []SprintQ{
+		{Kind: QueryFleet, Units: 1, Fields: []string{"status"}},
+		{Kind: QueryRelated, Table: Work, Source: IDSource{Kind: SourceIDs, IDs: []string{"p1"}}, Follow: []string{FollowWork, FollowWithdrawn}},
+	}}
+	fans := ReadAnswer{Sprint: []Answer{
+		{Kind: QueryFleet, Rows: []string{"m1"}, Records: []TableCard{{Fleet, pcard("ctl-m1", "m1", Ctl, 0, "status", "up")}}},
+		{Kind: QueryRelated, Records: []TableCard{{Fleet, pcard("p1@1", "m1", Ready, 1, "primary", "p1")}}},
+	}}
+	fs, err := loadPartial(fleet, fans, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ids(fs.Fleet.Of("p1")); !reflect.DeepEqual(got, []string{"p1@1"}) {
+		t.Fatalf("Of(p1) in the fleet: %v", got)
+	}
+	if got := fs.UpMembers(); !reflect.DeepEqual(got, []string{"m1"}) {
+		t.Fatalf("UpMembers: %v", got)
+	}
+	if err := fs.UnloadedErr(); err != nil {
+		t.Fatalf("a control card that holds no primary was refused: %v", err)
 	}
 }
