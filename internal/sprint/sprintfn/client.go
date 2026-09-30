@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"sync"
 
 	"github.com/mas-bandwidth/nova-tools/internal/tset"
@@ -167,7 +168,10 @@ var (
 )
 
 // Register adds a part. A name not in PartOrder, a name already registered,
-// and a nil part are refused, so no registry holds two writers of one part.
+// and a nil part are refused, so no registry holds two writers of one part. A
+// nil part is a nil interface, an interface holding a nil pointer, map, slice
+// or function, and a PartFuncs (or a pointer to one) with a nil function: each
+// would panic inside a step, past the point where the twin has written.
 func (r *PartRegistry) Register(name string, p Part) error {
 	known := false
 	for _, n := range PartOrder {
@@ -178,7 +182,7 @@ func (r *PartRegistry) Register(name string, p Part) error {
 	if !known {
 		return fmt.Errorf("%w: %q", ErrPartUnknown, name)
 	}
-	if p == nil {
+	if partIsNil(p) {
 		return fmt.Errorf("%w: %q", ErrPartNil, name)
 	}
 	r.mu.Lock()
@@ -188,6 +192,25 @@ func (r *PartRegistry) Register(name string, p Part) error {
 	}
 	r.parts[name] = p
 	return nil
+}
+
+// partIsNil says a part cannot be called: nil, a typed nil, or a PartFuncs
+// missing one of its two functions.
+func partIsNil(p Part) bool {
+	switch v := p.(type) {
+	case nil:
+		return true
+	case PartFuncs:
+		return v.PreFunc == nil || v.CmdsFunc == nil
+	case *PartFuncs:
+		return v == nil || v.PreFunc == nil || v.CmdsFunc == nil
+	}
+	rv := reflect.ValueOf(p)
+	switch rv.Kind() {
+	case reflect.Pointer, reflect.Map, reflect.Slice, reflect.Func, reflect.Chan, reflect.Interface:
+		return rv.IsNil()
+	}
+	return false
 }
 
 // Lookup is the part of a name, and false when none is registered.

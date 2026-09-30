@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
+	"os"
 	"sync"
 	"testing"
 
@@ -297,4 +299,120 @@ func TestClientNeverRetries(t *testing.T) {
 			t.Fatalf("two steps gave the twin %d pipelines", cc.n)
 		}
 	})
+}
+
+// TestServerErrorClassification: the outcome of a step whose reply is an error
+// is known not to have applied only when the error proves the function never
+// ran; every other error, whichever words it carries, is OUTCOMEUNKNOWN with
+// the bytes sent. The unsafe direction is the one tested hardest: an error
+// taken as known when a write began would let a caller replan under a new op
+// and apply the work twice. Each text below is a whole reply as the server
+// gives it, typed as go-redis types a server error, and the same replies to a
+// read or a page are checked too (a read writes nothing, so its unknown is
+// only an error).
+func TestServerErrorClassification(t *testing.T) {
+	t.Parallel()
+	req := seedRequest()
+	enc, ref := encodeStep(testPrefix, req)
+	if ref != nil {
+		t.Fatal(ref)
+	}
+	read := &ReadRequest{Epoch: "0", Tset: []tset.ReadQuery{{Kind: "count", Table: "work", Cells: []string{"s1:waiting"}}}}
+
+	known := []struct {
+		name string
+		err  error
+		code string
+	}{
+		{"no such function", serverError("ERR Function not found"), "FUNCTIONMISSING"},
+		{"no matching function", serverError("NOSUCHFUNCTION No matching function"), "FUNCTIONMISSING"},
+		{"no matching script", serverError("NOSCRIPT No matching script. Please use EVAL."), "FUNCTIONMISSING"},
+		{"out of memory at the start", serverError("OOM command not allowed when used memory > 'maxmemory'"), "OOMSTART"},
+		{"out of memory at the start, with a stop", serverError("OOM command not allowed when used memory > 'maxmemory'."), "OOMSTART"},
+		{"arity of fcall", serverError("ERR wrong number of arguments for 'fcall' command"), "ARITY"},
+		{"arity of fcall_ro", serverError("ERR wrong number of arguments for 'fcall_ro' command"), "ARITY"},
+		{"an ACL refusal of fcall", serverError("NOPERM User sprint has no permissions to run the 'fcall' command"), "NOPERM"},
+		{"an ACL refusal of fcall_ro", serverError("NOPERM User sprint has no permissions to run the 'fcall_ro' command"), "NOPERM"},
+		{"a known error, wrapped", fmt.Errorf("pipeline: %w", serverError("ERR Function not found")), "FUNCTIONMISSING"},
+	}
+	unknown := []struct {
+		name string
+		err  error
+	}{
+		// Server errors that follow a write that began, or that do not prove the
+		// function never ran.
+		{"a script error", serverError("ERR user_function:120: attempt to index a nil value script: ns_sprint_step, on @user_function:120.")},
+		{"a script error from a command", serverError("ERR Error running script (call to f_1): @user_script:9: ERR value is not an integer or out of range")},
+		{"a WRONGTYPE from inside the function", serverError("WRONGTYPE Operation against a key holding the wrong kind of value script: ns_sprint_step, on @user_function:212.")},
+		{"a WRONGTYPE", serverError("WRONGTYPE Operation against a key holding the wrong kind of value")},
+		{"an ACL refusal of a command inside the function", serverError("ERR ACL failure in script: User sprint has no permissions to run the 'hset' command script: ns_sprint_step")},
+		{"an ACL refusal naming another command", serverError("NOPERM User sprint has no permissions to run the 'hset' command")},
+		{"an ACL refusal of fcall with words after", serverError("NOPERM User sprint has no permissions to run the 'fcall' command script: ns_sprint_step, on @user_function:88.")},
+		{"a script killed", serverError("ERR Script killed by user with SCRIPT KILL... script: ns_sprint_step, on @user_function:1.")},
+		{"busy", serverError("BUSY Redis is busy running a script. You can only call SCRIPT KILL or SHUTDOWN NOSAVE.")},
+		{"loading", serverError("LOADING Redis is loading the dataset in memory")},
+		{"a read only replica", serverError("READONLY You can't write against a read only replica.")},
+		{"out of memory inside the function", serverError("OOM command not allowed when used memory > 'maxmemory'. script: ns_sprint_step, on @user_function:88.")},
+		{"the known words after a write", serverError("ERR user_function:40: ERR Function not found script: ns_sprint_step, on @user_function:40.")},
+		{"a longer no-function reply", serverError("ERR Function not found: ns_sprint_step")},
+		{"a longer arity reply", serverError("ERR wrong number of arguments for 'fcall' command script: x")},
+		{"arity of another command", serverError("ERR wrong number of arguments for 'hset' command")},
+		{"an unrelated error", serverError("ERR something else")},
+		// Transport errors: never a server's proof, whatever they quote.
+		{"end of file", io.EOF},
+		{"an unexpected end of file", io.ErrUnexpectedEOF},
+		{"a deadline", context.DeadlineExceeded},
+		{"a cancelled context", context.Canceled},
+		{"a timeout", &net.OpError{Op: "read", Net: "tcp", Err: os.ErrDeadlineExceeded}},
+		{"a closed connection", net.ErrClosed},
+		{"a transport error quoting a known reply", errors.New("ERR Function not found")},
+		{"a transport error quoting an ACL reply", errors.New("NOPERM User sprint has no permissions to run the 'fcall' command")},
+		{"a wrapped transport error", fmt.Errorf("read: %w", io.ErrUnexpectedEOF)},
+	}
+
+	for _, c := range known {
+		t.Run("known/"+c.name, func(t *testing.T) {
+			t.Parallel()
+			for kind, item := range map[string]Item{"step": {Step: req}, "read": {Read: read}, "page": {Page: pagePlan()}} {
+				fake := &fakeConn{replies: []fakeReply{{err: c.err}}}
+				results, err := NewRedis(fake, testNames).Pipeline(context.Background(), []Item{item})
+				if err != nil || len(results) != 1 {
+					t.Fatalf("%s: %v, %d results", kind, err, len(results))
+				}
+				var client *tset.ClientError
+				if !errors.As(results[0].Err, &client) || client.Code != c.code || errors.Is(results[0].Err, tset.ErrOutcomeUnknown) {
+					t.Fatalf("%s: %q gave %v, want a known %s and not an unknown outcome", kind, c.err, results[0].Err, c.code)
+				}
+			}
+		})
+	}
+	for _, c := range unknown {
+		t.Run("unknown/"+c.name, func(t *testing.T) {
+			t.Parallel()
+			fake := &fakeConn{replies: []fakeReply{{err: c.err}}}
+			res, err := Step(context.Background(), NewRedis(fake, testNames), req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var lost *OutcomeUnknownError
+			var client *tset.ClientError
+			if !errors.As(res.Err, &lost) || !errors.Is(res.Err, tset.ErrOutcomeUnknown) || errors.As(res.Err, &client) {
+				t.Fatalf("a step's %q gave %v, want OUTCOMEUNKNOWN and no known code", c.err, res.Err)
+			}
+			if string(lost.Step) != string(enc.raw) || string(lost.Sprint) != string(enc.sprint) || !errors.Is(res.Err, c.err) {
+				t.Fatalf("OUTCOMEUNKNOWN lost the bytes sent or its cause: %+v", lost)
+			}
+			for kind, item := range map[string]Item{"read": {Read: read}, "page": {Page: pagePlan()}} {
+				fake := &fakeConn{replies: []fakeReply{{err: c.err}}}
+				results, err := NewRedis(fake, testNames).Pipeline(context.Background(), []Item{item})
+				if err != nil || len(results) != 1 {
+					t.Fatalf("%s: %v, %d results", kind, err, len(results))
+				}
+				got := results[0].Err
+				if got == nil || errors.As(got, &client) || errors.Is(got, tset.ErrOutcomeUnknown) || !errors.Is(got, c.err) {
+					t.Fatalf("a %s's %q gave %v, want the error itself: a read writes nothing, so it has no known code and no unknown outcome", kind, c.err, got)
+				}
+			}
+		})
+	}
 }

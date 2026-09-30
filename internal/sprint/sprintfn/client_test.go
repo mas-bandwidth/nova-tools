@@ -122,3 +122,73 @@ func TestPartsRegistryRefusesDuplicate(t *testing.T) {
 	}()
 	mustRegister(r, PartLease, p)
 }
+
+// nilPointerPart, nilMapPart and nilFuncPart are parts whose methods a nil
+// receiver cannot serve.
+type nilPointerPart struct{ p PartFuncs }
+
+func (n *nilPointerPart) Pre(st *State, req *Request, obs *Before) (any, *Refusal) {
+	return n.p.Pre(st, req, obs)
+}
+
+func (n *nilPointerPart) Cmds(st *State, plan any, lp LogPlan) ([]Cmd, *Refusal) {
+	return n.p.Cmds(st, plan, lp)
+}
+
+type nilMapPart map[string]bool
+
+func (nilMapPart) Pre(*State, *Request, *Before) (any, *Refusal) { return nil, nil }
+func (nilMapPart) Cmds(*State, any, LogPlan) ([]Cmd, *Refusal)   { return nil, nil }
+
+type nilFuncPart func()
+
+func (nilFuncPart) Pre(*State, *Request, *Before) (any, *Refusal) { return nil, nil }
+func (nilFuncPart) Cmds(*State, any, LogPlan) ([]Cmd, *Refusal)   { return nil, nil }
+
+// TestPartsRegistryRefusesTypedNil: a part that cannot be called is refused,
+// not only the nil interface: an interface holding a nil pointer, map or
+// function, a nil *PartFuncs, and a PartFuncs missing either function. Each
+// would panic inside a step, after the twin's Mem had written. The refusal is
+// ErrPartNil, nothing is registered, and a real part still registers after.
+func TestPartsRegistryRefusesTypedNil(t *testing.T) {
+	t.Parallel()
+	whole := PartFuncs{PreFunc: func(*State, *Request, *Before) (any, *Refusal) { return nil, nil },
+		CmdsFunc: func(*State, any, LogPlan) ([]Cmd, *Refusal) { return nil, nil }}
+	cases := map[string]Part{
+		"a nil interface":          nil,
+		"a typed nil pointer":      (*nilPointerPart)(nil),
+		"a nil *PartFuncs":         (*PartFuncs)(nil),
+		"a nil map":                nilMapPart(nil),
+		"a nil function":           nilFuncPart(nil),
+		"a PartFuncs without Pre":  PartFuncs{CmdsFunc: whole.CmdsFunc},
+		"a PartFuncs without Cmds": PartFuncs{PreFunc: whole.PreFunc},
+		"an empty PartFuncs":       PartFuncs{},
+		"a *PartFuncs without Pre": &PartFuncs{CmdsFunc: whole.CmdsFunc},
+	}
+	for name, p := range cases {
+		r := NewPartRegistry()
+		if err := r.Register(PartLease, p); !errors.Is(err, ErrPartNil) {
+			t.Errorf("%s: Register returned %v, want ErrPartNil", name, err)
+		}
+		if _, ok := r.Lookup(PartLease); ok {
+			t.Errorf("%s: the refused part was kept", name)
+		}
+		func() {
+			defer func() {
+				if recover() == nil {
+					t.Errorf("%s: RegisterPart did not panic", name)
+				}
+			}()
+			mustRegister(r, PartLease, p)
+		}()
+	}
+	// A non-nil map or function is a part: only nil is refused.
+	r := NewPartRegistry()
+	for name, p := range map[string]Part{"a real PartFuncs": whole, "a pointer to a real PartFuncs": &whole,
+		"an empty map that is not nil": nilMapPart{}, "a real pointer part": &nilPointerPart{p: whole}} {
+		r = NewPartRegistry()
+		if err := r.Register(PartLease, p); err != nil {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+}

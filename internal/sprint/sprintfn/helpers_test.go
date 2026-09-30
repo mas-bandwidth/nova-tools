@@ -126,6 +126,12 @@ func (tr *tracer) add(s string) {
 	tr.got = append(tr.got, s)
 }
 
+func (tr *tracer) reset() {
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+	tr.got = nil
+}
+
 func (tr *tracer) list() []string {
 	tr.mu.Lock()
 	defer tr.mu.Unlock()

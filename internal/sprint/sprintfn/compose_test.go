@@ -191,11 +191,81 @@ func TestFenceBypassesSprintPhases(t *testing.T) {
 	}
 }
 
+// orderPart is a part that records its pre and its commands in the tracer and
+// appends its name to the list key t:sprint:order, so the order the commands
+// were committed in shows in the list.
+func orderPart(tr *tracer, name string) Part {
+	return PartFuncs{
+		PreFunc: func(*State, *Request, *Before) (any, *Refusal) {
+			tr.add("pre:" + name)
+			return map[string]string{"part": name}, nil
+		},
+		CmdsFunc: func(st *State, plan any, lp LogPlan) ([]Cmd, *Refusal) {
+			tr.add("cmds:" + name)
+			return []Cmd{Command("RPUSH", st.Prefix+"sprint:order", kindList, name)}, nil
+		},
+	}
+}
+
+// TestComposePartsRunInFixedOrder: parts in one step run in 1.0's order
+// (lease, pop, ingest, beat, clock, sprint), whatever order they were
+// registered in: their pre calls in that order, then their commands, and the
+// committed list is X's, then J's, then each part's (A1 across parts), in that
+// order.
+func TestComposePartsRunInFixedOrder(t *testing.T) {
+	t.Parallel()
+	tr := &tracer{}
+	phases := Phases{
+		XPre:    func(*State, *Request, *Before) *Refusal { return nil },
+		JDecide: func(*State, []NoteReq, *Before) ([]tset.Note, JPlan, *Refusal) { return nil, JPlan{}, nil },
+		XCmds: func(st *State, tp TablePlan, lp LogPlan) []Cmd {
+			tr.add("cmds:X")
+			return []Cmd{Command("RPUSH", st.Prefix+"sprint:order", kindList, "X")}
+		},
+		JCmds: func(st *State, jp JPlan, lp LogPlan) []Cmd {
+			tr.add("cmds:J")
+			return []Cmd{Command("RPUSH", st.Prefix+"sprint:order", kindList, "J")}
+		},
+	}
+	tw, _, _ := newTestTwin(t, phases)
+	// Registered in the reverse of 1.0's order, so a twin that ran the parts in
+	// the order it found them would be caught.
+	for i := len(PartOrder) - 1; i >= 0; i-- {
+		if err := tw.parts.Register(PartOrder[i], orderPart(tr, PartOrder[i])); err != nil {
+			t.Fatal(err)
+		}
+	}
+	req := seedRequest()
+	req.Body.Notes = []NoteReq{{Op: "open", Type: "blocked", Cause: "c", Subjects: []string{"p1"}}}
+	req.Sprint = &SprintPart{Coordinator: "c1"}
+	req.Clock = &ClockPart{Verb: ClockInit}
+	req.Beat = &BeatPart{Members: []BeatMember{{Member: "m1"}}}
+	req.Ingest = &IngestPart{From: "0", To: "0"}
+	req.Pop = &PopPart{Limit: 10}
+	req.Lease = &LeasePart{Owner: "tok", HoldMS: 5000}
+	reply := mustStep(t, tw, req)
+
+	want := []string{"pre:lease", "pre:pop", "pre:ingest", "pre:beat", "pre:clock", "pre:sprint",
+		"cmds:X", "cmds:J", "cmds:lease", "cmds:pop", "cmds:ingest", "cmds:beat", "cmds:clock", "cmds:sprint"}
+	if got := tr.list(); !sameStrings(got, want) {
+		t.Fatalf("calls\n got %v\nwant %v", got, want)
+	}
+	order := tw.SprintKeys()[testPrefix+"sprint:order"].List
+	if !sameStrings(order, []string{"X", "J", "lease", "pop", "ingest", "beat", "clock", "sprint"}) {
+		t.Fatalf("committed order %v; want X, J, then the parts in 1.0's order", order)
+	}
+	for _, name := range PartOrder {
+		if string(reply.Parts[name]) != `{"part":"`+name+`"}` {
+			t.Fatalf("part %s's reply is %s", name, reply.Parts[name])
+		}
+	}
+}
+
 // TestComposeNoWriteBeforeCommit: every refusal code from every phase leaves
 // the whole-store image equal (item E6's DUMP comparison). It needs the store.
 func TestComposeNoWriteBeforeCommit(t *testing.T) {
 	t.Parallel()
-	t.Skip("G0: needs the store (Layer 1 revision 4 pinned, Layer 2 accepted again) and item E6's whole-store image")
+	t.Skip("G0: needs the store (Layer 1 revision 4 pinned, Layer 2 accepted again) and item E6's whole-store image; the twin's half is TestTwinRefusalAfterPlanLeavesNothing, which waits on S15 (Mem.Plan/Commit)")
 }
 
 // TestComposeFCALLOnly: the suite writes only through FCALL ns_sprint_step,

@@ -399,9 +399,14 @@ type ClockPart struct {
 }
 
 // SprintPart writes the sprint's own keys that no other part owns (1.0): the
-// counter, the dropping marks, goals, the sweep's position, parked keys, the
-// quarantine and the coordinator. IT16 owns what each does; each field is a
-// set of changes the part guards and writes.
+// counter, the dropping marks, goals, the sweep's position, parked keys and
+// the coordinator, and the quarantine. IT16 owns what each does; each field is
+// a set of changes the part guards and writes.
+//
+// The quarantine is the sprint part's (errata 2, item 6) and the cursor is the
+// ingest part's (IngestPart.From and To). The quarantine's records ride in
+// Body.Quarantine, which the step builder fills and the sprint part's Pre and
+// Cmds read from the request; SprintPart carries no copy of them.
 type SprintPart struct {
 	// Counter is {p}next@e as the plan read it (Read) and as it is to be (Set):
 	// score, id and streams (U2; COUNTER when it moved).
