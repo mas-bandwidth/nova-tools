@@ -104,15 +104,61 @@ var reAccount = regexp.MustCompile(`(?i)mas-bandwidth`)
 // has it, but in this sense it is a general concept and not a machine.
 const layerOnePackage = `"github.com/mas-bandwidth/nova-tools/internal/tset"`
 
-// reLayerOneSpace is Layer 1's field as it appears in a file that uses Layer
-// 1's types: the selector `x.Space`, the composite-literal key `Space:` and
-// the struct tag `json:"space"`. Errata 2 (item 12) decides that the guardrail
+// layerOneSpaceTag is Layer 1's wire key for the field, as a struct tag holds it.
+const layerOneSpaceTag = `json:"space"`
+
+// layerOneSpaceSpans are the spans of Layer 1's field in a file that uses
+// Layer 1's types, found in the file's syntax tree and nowhere else: the
+// selector `x.Space`, the key `Space` of a composite literal, and `json:"space"`
+// inside a struct field's tag. Errata 2 (item 12) decides that the guardrail
 // allow-lists this identifier in Layer 1's sense and no other: the exemption
 // holds only in a file that imports Layer 1's package, only for these three
-// forms, and never raises a count ceiling (an allowed count only shrinks). The
-// bare word `space` in such a file (a string, a comment, a variable name) still
-// counts, and so does every use in a file that does not import Layer 1.
-var reLayerOneSpace = regexp.MustCompile(`\.Space\b|\bSpace:|json:"space"`)
+// syntactic forms, and never raises a count ceiling (an allowed count only
+// shrinks). A comment and a string literal are not syntax of the field, so
+// the word there still counts, whatever it looks like (`// Space: ...`,
+// "bench.Space"); so do the bare word as a variable or a map key, and every
+// use in a file that does not import Layer 1. A file that does not parse whole
+// gets no exemption. The spans are offsets into src.
+func layerOneSpaceSpans(rel string, src []byte, offsetShift int) [][2]int {
+	fset := token.NewFileSet()
+	parseSrc := src
+	if offsetShift != 0 {
+		parseSrc = append([]byte("package fixture\n"), src...)
+	}
+	file, err := parser.ParseFile(fset, rel, parseSrc, parser.SkipObjectResolution)
+	if err != nil || !importsLayerOne(file) {
+		return nil
+	}
+	var spans [][2]int
+	at := func(pos token.Pos, n int) {
+		start := fset.Position(pos).Offset - offsetShift
+		spans = append(spans, [2]int{start, start + n})
+	}
+	ast.Inspect(file, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.SelectorExpr:
+			if x.Sel.Name == "Space" {
+				at(x.Sel.Pos(), len("Space"))
+			}
+		case *ast.CompositeLit:
+			for _, elt := range x.Elts {
+				if kv, ok := elt.(*ast.KeyValueExpr); ok {
+					if key, ok := kv.Key.(*ast.Ident); ok && key.Name == "Space" {
+						at(key.Pos(), len("Space"))
+					}
+				}
+			}
+		case *ast.Field:
+			if x.Tag != nil {
+				if i := strings.Index(x.Tag.Value, layerOneSpaceTag); i >= 0 {
+					at(x.Tag.Pos()+token.Pos(i), len(layerOneSpaceTag))
+				}
+			}
+		}
+		return true
+	})
+	return spans
+}
 
 // importsLayerOne says the parsed file imports Layer 1's package.
 func importsLayerOne(file *ast.File) bool {
@@ -236,10 +282,10 @@ func cleanSourceForGenerality(rel string, src []byte) []byte {
 	}
 
 	// 2. Blank Layer 1's deployment-prefix field (errata 2, item 12) in a file
-	// that imports Layer 1's package.
+	// that imports Layer 1's package, where its syntax tree has it.
 	if importsLayerOne(file) {
-		for _, m := range reLayerOneSpace.FindAllIndex(clean, -1) {
-			for i := m[0]; i < m[1]; i++ {
+		for _, span := range layerOneSpaceSpans(rel, src, offsetShift) {
+			for i := max(span[0], 0); i < min(span[1], len(clean)); i++ {
 				clean[i] = ' '
 			}
 		}
@@ -828,10 +874,13 @@ func TestGeneralityLayerOneSpace(t *testing.T) {
 	t.Run("the bare word in a file that imports Layer 1 is counted", func(t *testing.T) {
 		t.Parallel()
 		for name, body := range map[string]string{
-			"a string":   "var host = \"space\"\n",
-			"a variable": "var space = 1\n",
-			"a comment":  "// deployed on space\nvar x = 1\n",
-			"a key":      "var m = map[string]string{\"Space\": \"x\", \"space\": \"y\"}\n",
+			"a string":                      "var host = \"space\"\n",
+			"a variable":                    "var space = 1\n",
+			"a comment":                     "// deployed on space\nvar x = 1\n",
+			"a key":                         "var m = map[string]string{\"Space\": \"x\", \"space\": \"y\"}\n",
+			"a comment shaped as the key":   "// Space: the bench it runs on\nvar y = 1\n",
+			"a string shaped as a selector": "var z = \"deployed to bench.Space\"\n",
+			"a string shaped as the tag":    "var w = `json:\"space\"`\n",
 		} {
 			src := []GeneralitySourceFile{{Rel: "fixture.go", Src: []byte(imports + field + body)}}
 			counts, _, _ := measureGeneralityCounts(src)
