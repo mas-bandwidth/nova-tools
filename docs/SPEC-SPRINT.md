@@ -47,7 +47,8 @@ tables, and nothing else: no pending operation, no stalled stream, no line about
 the people and no coordinator (`where --json` carries them; `check`, `inbox` and
 `goal show` say the same in their own words). The merge table has no `since`
 column. A table with no rows is not shown, and a stream with no cards in any
-column is not shown in the work and merge tables; each shows again when it has
+column is not shown in the work and merge tables (the stored view names them in
+its `hide_zero`; readers and fleet show every row); each shows again when it has
 a row. A row's first cell is its identity. `where --watch` redraws the frame in
 place once a second (`--every`, any duration above 0): the cursor is hidden
 while it watches and restored when it ends or is interrupted (SIGINT or

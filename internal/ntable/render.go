@@ -2,6 +2,7 @@ package ntable
 
 import (
 	"fmt"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -493,4 +494,28 @@ func countSummary(t Table, column string) string {
 		pct = strconv.FormatFloat(100*float64(part)/float64(total), 'f', 1, 64) + "%"
 	}
 	return fmt.Sprintf("%d/%d %s -> ETA", part, total, pct)
+}
+
+// RenderTables is the title line, then every table's render, one blank line
+// between two that print; a table kept and read but not drawn (HiddenTable),
+// an empty table and a table with no visible row print nothing and leave no
+// gap. The tables named in hideZero also hide a row whose count cells are all
+// zero: a stored view's own setting (View.HideZero), over opts.
+func RenderTables(title string, tables []Table, opts RenderOpts, hideZero []string) string {
+	var parts []string
+	if title != "" {
+		parts = append(parts, oneline.Escape(title)+"\n")
+	}
+	for _, t := range tables {
+		if t.HiddenTable {
+			continue // set --hidden: kept and read, not drawn, and drawn again by set --visible with no restart
+		}
+		o := opts
+		o.HideZeroRows = o.HideZeroRows || slices.Contains(hideZero, t.Name)
+		o.Title = t.Name // every block says which table it is
+		if text := Render(t, o); text != "" {
+			parts = append(parts, text)
+		}
+	}
+	return strings.Join(parts, "\n")
 }

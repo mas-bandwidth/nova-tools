@@ -278,7 +278,7 @@ nova-table clear <table>
 nova-table show <table> [--at-epoch <n>]
 nova-table render <table> [--at-epoch <n>] [--hide-zero-rows] [--width <col=n,...>] [--label-width <n>]
 nova-table render --view <name> [--hide-zero-rows] [--width <col=n,...>] [--label-width <n>]
-nova-table view set <name> --tables <a,b,...> [--title <text>] [--summary <count-column>]
+nova-table view set <name> --tables <a,b,...> [--title <text>] [--summary <count-column>] [--hide-zero <tables>]
 nova-table view state <name> (<text> | --clear)
 nova-table view show <name>
 nova-table view list
@@ -331,6 +331,12 @@ stored views read active epochs. `view del` deletes only that configuration and 
 and their receipts remain. Dropping or renaming a table does not rewrite a view;
 edit or delete the reference explicitly. A view summary names a **count** column
 in its first table, such as `done`, not a `pct(done)` formula.
+
+`--hide-zero <tables>` names tables of the view, each one of its `--tables`,
+that hide a row whose count cells are all zero whenever the view is drawn
+(`render --view`, `watch --view`), as `--hide-zero-rows` does for one render.
+`view set` replaces title, summary and hide-zero together, so one left out is
+cleared; `view show` prints hide-zero as `hide_zero=<tables>` when there is one.
 
 `view state <name> <text>` gives a view a state: while it has one, the summary
 line is that text alone, in place of the counts, the percent and the ETA, and
