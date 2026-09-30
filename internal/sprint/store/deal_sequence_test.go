@@ -270,7 +270,7 @@ func streamsRun(t *testing.T, h *harness, ticks int) seqRun {
 			"deal":          prop(t, after, sprint.Fleet, sprint.PropDealIndex),
 			"ask":           prop(t, after, sprint.Readers, sprint.PropAskIndex),
 			"stream deal":   prop(t, after, sprint.Work, sprint.PropStreamIndex),
-			"stream ask":    prop(t, after, sprint.Work, sprint.PropAskStreamIndex),
+			"stream ask":    prop(t, after, sprint.Readers, sprint.PropAskStreamIndex), // the ask is the readers' update: its index is the readers table's
 			"stream accept": prop(t, after, sprint.Work, sprint.PropAcceptStreamIndex),
 		})
 		t.Logf("tick %d: deal streams %v; ask streams %v readers %v; accept streams %v; indexes %v",

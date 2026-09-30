@@ -847,7 +847,14 @@ func (r *propRun) check(i int, a pAct) *propFail {
 				break
 			}
 		}
-		if v := sprint.PlaceViolations(s, r.replay); len(v) > 0 {
+		// The log's moves are the pump's: the replay holds of the tables as
+		// stored, not of the work table with its queue applied (the check's
+		// second value).
+		stored := r.snap()
+		if stored == nil {
+			return fail("error", "load: %v", r.errs[len(r.errs)-1])
+		}
+		if v := sprint.PlaceViolations(stored, r.replay); len(v) > 0 {
 			return fail("invariant", "%s", v[0])
 		}
 		inbox, ids, err := r.st.B.NotesSince(r.ctx, r.inboxAfter, 1<<30)
@@ -911,9 +918,20 @@ func (r *propRun) check(i int, a pAct) *propFail {
 		if err != nil {
 			return fail("error", "read: %v", err)
 		}
+		// The parts plan on the sprint as the next pump leaves its work table:
+		// every step but the pump's plans on the tables with the work table's
+		// queue applied (engine.Run), as the deadlines part of the tick did.
+		q, err := r.st.B.QueueRead(r.ctx)
+		if err != nil {
+			return fail("error", "queue: %v", err)
+		}
+		fs = sprint.WithQueue(fs, q)
 		req := sprint.TickReq{Who: sprint.MachineActor, Stopped: m.StoppedBetween}
 		for _, part := range sprint.TickParts {
-			if p, due := part.Fn(fs, req); !p.Empty() || due > 0 {
+			p, due := part.Fn(fs, req)
+			// what the store applies of the plan: a judgment of a cause already
+			// open is not written again (sprint.Applied), as the tick's step sees it
+			if p = sprint.Applied(fs, p); !p.Empty() || due > 0 {
 				var what []string
 				for _, u := range p.Units {
 					what = append(what, u.Moved)
@@ -945,15 +963,31 @@ func (r *propRun) check(i int, a pAct) *propFail {
 			return fail("unraised", "after a tick no stall judgment holds %s: %s", f.Subject, f)
 		}
 	}
-	before := r.image()
-	res2, err := r.st.Tick(r.ctx)
-	if err != nil {
-		return fail("error", "the second tick: %v", err)
+	// A tick right after changes nothing once the work table's queue is empty:
+	// what the first tick's steps queued is the next pump's to apply (the owner's
+	// tick, errata 3 amendment 12), so a tick that finds a queue may change the
+	// sprint, and the ticks after it reach a tick that finds none and changes
+	// nothing, within a few.
+	for n := 0; ; n++ {
+		q, err := r.st.B.QueueRead(r.ctx)
+		if err != nil {
+			return fail("error", "queue: %v", err)
+		}
+		before := r.image()
+		res2, err := r.st.Tick(r.ctx)
+		if err != nil {
+			return fail("error", "the second tick: %v", err)
+		}
+		if len(q) == 0 {
+			if after := r.image(); after != before {
+				return fail("second-tick", "a second tick changed the sprint: moved %v, %d notes", res2.Moved(), res2.Notes())
+			}
+			return nil
+		}
+		if n == 3 {
+			return fail("second-tick", "the work table's queue still held %d changes at the fourth tick after the action: moved %v", len(q), res2.Moved())
+		}
 	}
-	if after := r.image(); after != before {
-		return fail("second-tick", "a second tick changed the sprint: moved %v, %d notes", res2.Moved(), res2.Notes())
-	}
-	return nil
 }
 
 // image is the tables' revisions, the notifications and the open set.

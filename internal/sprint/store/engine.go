@@ -344,9 +344,13 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 				return r, err
 			}
 		}
-		if !step.Pump && !fence.Running && fence.Queued > 0 {
+		if fence.Queued > 0 && !step.Drain && (step.Pump || !fence.Running) {
 			// A STOPPED machine has no next tick: the queue it left is drained
-			// before any step, which then writes the work table itself.
+			// before any step, which then writes the work table itself. A pump
+			// part other than the drain does the same when a step queued a change
+			// after the tick's first read: it never writes a card a queued change
+			// still expects elsewhere (a drop queued on a ready card, the deal
+			// moving the card to working first, is refused at the drain and lost).
 			drains++
 			if drains > MaxDrains {
 				return res, fmt.Errorf("the work table's queue holds %d changes that %d drains did not take; run: nova-sprint check", fence.Queued, MaxDrains)
@@ -551,6 +555,21 @@ func queuedLines(q []sprint.QueuedChange, snap *sprint.Snapshot, op string) []sp
 			l.Removed = true
 		default:
 			l.To = l.From
+		}
+		// the words and fields the change sets are the line's, as a move
+		// line carries them (moveLine): a queued rework says its attempt.
+		for f, v := range x.Entry.Set {
+			if slices.Contains(sprint.TextFields, f) {
+				if l.Text == nil {
+					l.Text = map[string]string{}
+				}
+				l.Text[f] = v
+				continue
+			}
+			if l.Set == nil {
+				l.Set = map[string]string{}
+			}
+			l.Set[f] = v
 		}
 		if len(l.Cause) > sprint.MaxCause {
 			l.Cause = l.Cause[:sprint.MaxCause-3] + "..."
