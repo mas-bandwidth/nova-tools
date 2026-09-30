@@ -106,6 +106,23 @@ func (c *Card) F(name string) string {
 	return v
 }
 
+// Has says the card has the field, set to any value, an empty one too. It is
+// read as F is: on a card loaded from a read plan, a field that no query that
+// read the card named is refused (the read panics in a test build, and in a
+// release build is recorded in Snapshot.Unloaded and says no), so that a field
+// the plan did not load is never taken for one the card lacks.
+func (c *Card) Has(name string) bool {
+	if c == nil {
+		return false
+	}
+	if _, held := c.field(name); !held {
+		c.load.log.note(unloadedFieldMessage + ": " + c.ID + " " + name)
+		return false
+	}
+	_, ok := c.Fields[name]
+	return ok
+}
+
 // Int is a counter field, 0 when absent or unreadable.
 func (c *Card) Int(name string) int {
 	n, _ := strconv.Atoi(c.F(name))
