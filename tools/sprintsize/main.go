@@ -16,6 +16,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"flag"
 	"fmt"
 	"os"
@@ -63,7 +64,36 @@ func main() {
 	redis := flag.String("redis", "127.0.0.1:6401", "the store, host:port (a local one: the limits are for a local store)")
 	prefix := flag.String("prefix", "dev-", "the sprint's prefix; only one starting with dev- is accepted")
 	keep := flag.Bool("keep", false, "leave the sprint on the store for a look")
+	tsetOwned := flag.Bool("tset-owned-container", false, "opt in to the L1 size run on a disposable Redis container you own")
+	tsetRedis := flag.String("tset-redis", "", "explicit direct Redis host:port for the L1 size run; no default")
+	tsetProxy := flag.String("tset-proxy-redis", "", "optional 128ms-each-way proxy host:port for the same owned Redis container")
+	tsetSpace := flag.String("tset-space", "", "fresh dev- namespace ending in ':' for the L1 size run")
+	tsetMemoryOnly := flag.Bool("tset-memory-only", false, "separate L1 memory diagnostic; loads a test-only GC function, never times gates")
+	tsetMemoryCards := flag.Int("tset-memory-cards", 0, "required with --tset-memory-only: exactly 100000 or 1000000 cards on a fresh owned container")
 	flag.Parse()
+	if *tsetOwned || *tsetRedis != "" || *tsetProxy != "" || *tsetSpace != "" || *tsetMemoryOnly || *tsetMemoryCards != 0 {
+		cfg := tsetSizeConfig{redisAddr: *tsetRedis, proxyAddr: *tsetProxy, space: *tsetSpace, owned: *tsetOwned}
+		if err := cfg.validate(); err != nil {
+			fmt.Fprintln(os.Stderr, "sprintsize:", err)
+			os.Exit(2)
+		}
+		if *tsetMemoryOnly {
+			if err := tsetMemoryCLI(context.Background(), cfg, *tsetMemoryCards, os.Stdout); err != nil {
+				fmt.Fprintln(os.Stderr, "sprintsize:", err)
+				os.Exit(1)
+			}
+			return
+		}
+		if *tsetMemoryCards != 0 {
+			fmt.Fprintln(os.Stderr, "sprintsize: --tset-memory-cards requires --tset-memory-only")
+			os.Exit(2)
+		}
+		if err := tsetSizeCLI(context.Background(), cfg, os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, "sprintsize:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	if *bin == "" || !strings.HasPrefix(*prefix, "dev-") {
 		fmt.Fprintln(os.Stderr, "sprintsize: wants --bin <nova-sprint> and a --prefix that starts with dev-")
 		os.Exit(2)
