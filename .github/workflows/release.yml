@@ -19,11 +19,11 @@
 # and the Windows leg outgrew its cap; the certified job below says why it stopped.
 #
 # ONE LEG PER PLATFORM BUILDS, AND ONE MACHINE SUMS THE WHOLE SET. The `build` matrix runs
-# .github/scripts/release-build.sh once per shipped platform (.github/scripts/release-targets),
+# `go run ./tools/ghrelease build` once per shipped platform (tools/ghrelease/release-targets),
 # in parallel, each leg under the two-minute cap, and uploads that platform's binaries as an
 # artifact. The `release` job downloads every artifact into one directory, asserts the stamp,
 # and in the step that attaches the set to the release checks it is exactly the shipped set and
-# computes SHA256SUMS over the whole of it (.github/scripts/release-sums.sh). So the checksum
+# computes SHA256SUMS over the whole of it (`ghrelease sums`). So the checksum
 # file is computed on the one machine that holds every artifact, over the bytes it attaches,
 # never assembled from per-platform pieces. One runner cross-building all five platforms does
 # not fit the cap: certification's dry run of it was cancelled inside the build.
@@ -78,20 +78,24 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false
       - name: certification.yml vouches for this commit
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           SHA: ${{ github.sha }}
           REF: ${{ github.ref_name }}
         shell: bash
-        # The whole ask lives in the script, so certification.yml's release dry-run can drive
-        # it with a fake `gh` (nova-tools#253) and so the release job below can ask it again.
-        run: .github/scripts/release-certified.sh
+        # The whole ask lives in `ghrelease certified`, so its unit tests drive it with a fake
+        # gh and so the release job below can ask it again.
+        run: go run ./tools/ghrelease certified
   build:
     # One leg per shipped platform, the matrix of certification.yml's release-build: the list
-    # in .github/scripts/release-targets, written out because a matrix cannot read a file
+    # in tools/ghrelease/release-targets, written out because a matrix cannot read a file
     # (internal/ci's TestReleaseMatricesAreTheTargetsFile holds the three equal). The only
-    # compile in this workflow is release-build.sh, the script the dry run runs.
+    # compile in this workflow is `ghrelease build`, the verb the dry run runs.
     #
     # THE BUILD CACHE IS RESTORED, NEVER SAVED, here: the entry is the one certification's
     # release-build saved for this platform (the standard library and module packages; the
@@ -124,14 +128,6 @@ jobs:
           go-version-file: go.mod
           cache: false
 
-      - name: the tag has the shape the version stamp assumes
-        shell: bash
-        run: |
-          case "$TAG" in
-            v*) ;;
-            *) echo "refusing: $TAG is not a v-prefixed tag"; exit 1 ;;
-          esac
-
       - name: restore the release build cache
         uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
@@ -143,11 +139,11 @@ jobs:
             release-${{ matrix.goos }}-${{ matrix.goarch }}-
 
       - name: every shipped tool for ${{ matrix.goos }}/${{ matrix.goarch }}
-        # release-build.sh composes the ldflags through release-ldflags.sh, which refuses an
-        # empty or malformed stamp before anything compiles (#118), and names every artifact
-        # <tool>_<tag>_<goos>_<goarch>[.exe].
+        # `ghrelease build` refuses a tag that is not v-prefixed and composes the ldflags, which
+        # refuse an empty or malformed stamp before anything compiles (#118), and names every
+        # artifact <tool>_<tag>_<goos>_<goarch>[.exe].
         shell: bash
-        run: .github/scripts/release-build.sh "$TAG" "${{ matrix.goos }}" "${{ matrix.goarch }}" dist
+        run: go run ./tools/ghrelease build --require-v-tag "$TAG" "${{ matrix.goos }}" "${{ matrix.goarch }}" dist
 
       - name: upload this platform's binaries
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -178,6 +174,10 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false
       - name: certification.yml still vouches for this commit
         # ASKED AGAIN HERE, after the certified job, the build and the queue waits between
         # them: one snapshot cannot see a run created after it was taken, and a red that starts
@@ -188,15 +188,7 @@ jobs:
           SHA: ${{ github.sha }}
           REF: ${{ github.ref_name }}
         shell: bash
-        run: .github/scripts/release-certified.sh
-
-      - name: the tag has the shape the version stamp assumes
-        shell: bash
-        run: |
-          case "$TAG" in
-            v*) ;;
-            *) echo "refusing: $TAG is not a v-prefixed tag"; exit 1 ;;
-          esac
+        run: go run ./tools/ghrelease certified
 
       - name: download every platform's binaries into one directory
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -206,114 +198,21 @@ jobs:
           path: dist
 
       - name: every shipped binary reports the tag it was built from
+        # This runner is linux/amd64, so one artifact per tool is directly runnable here. The
+        # stamp is the whole check on the -X flag, which the linker ignores in silence when the
+        # symbol is missing or renamed; `ghrelease stamp` requires the tag from every tool the
+        # build legs shipped, and certification.yml's release-checks shows it red on a binary
+        # that lacks the stamp (`ghrelease controls`).
         shell: bash
         run: |
-          set -euo pipefail
-          # This runner is linux/amd64, so one artifact per tool is directly runnable here.
-          # This is the whole check on the -X stamp: the flag is silently ignored when the
-          # symbol is missing or renamed, so a release could otherwise carry binaries that
-          # answer `devel` while the release page says v1.2.3 -- and the one question this
-          # verb exists to answer is which build somebody is running.
-          #
-          # EVERY tool the build legs shipped, not the two this step used to name. A stamp
-          # read by two binaries says nothing about the other nine, and since #107 it is
-          # nova-wake's stamp that decides which nova-bus it accepts: an unstamped nova-wake
-          # in a release refuses every nova-bus in that same release (#118).
-          #
-          # The script walks cmd/*/ the way the build loop does and REQUIRES the tag from
-          # every tool it finds. The only exceptions are the six legacy tools named in the
-          # script itself, which have no version verb until #121 lands; they print a NOTE
-          # naming themselves and #121 rather than being passed over in silence, and each
-          # name comes off that list the day its verb lands. Nothing about a tool's source
-          # decides whether it is required -- a renamed or deleted `version` symbol is the
-          # failure this step exists to catch, so it cannot also be what excuses a tool
-          # from the check. It is exercised by ci.yml's release-dry-run, which proves both
-          # outcomes and the rename on every pull request.
           # An artifact does not keep the executable bit.
           chmod +x dist/*_"${TAG}"_linux_amd64
-          .github/scripts/assert-version-stamp.sh "$TAG" "dist/%s_${TAG}_linux_amd64"
+          go run ./tools/ghrelease stamp "$TAG" "dist/%s_${TAG}_linux_amd64"
 
       - name: SHA256SUMS over the whole shipped set, attached to the release draft, never to a published release
+        # The tag checks (the notes file, the tag exists, the tag is this tree's), the sums over
+        # the bytes on this disk and the draft/published boundary are `ghrelease attach`.
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: bash
-        run: |
-          set -euo pipefail
-          # ONE ASKER, AND IT READS THE STATUS RATHER THAN THE EXIT CODE. `gh api` exits
-          # 1 on a 404 and exits 1 exactly the same way on a dropped connection, an
-          # expired token or a secondary rate limit, so its exit code cannot tell an
-          # answer of "no" from no answer at all -- and a step that reads a transient
-          # failure as absence is a step that walks down the create path knowing nothing
-          # about what is on the release page. `gh api -i` prints the status line first.
-          # 200 and 404 are answers; anything else is not, and this stops the job with
-          # the whole response pasted rather than choosing a branch on a guess.
-          ask() {
-            local out rc
-            set +e
-            out=$(gh api -i "$1" 2>&1); rc=$?
-            set -e
-            case "$(printf '%s\n' "$out" | head -n 1)" in
-              HTTP/*" 200 "*) CODE=200 ;;
-              HTTP/*" 404 "*) CODE=404 ;;
-              *)
-                echo "asking GitHub about $1 answered neither 200 nor 404 (gh exit $rc):"
-                printf '%s\n' "$out"
-                exit 1
-                ;;
-            esac
-          }
-
-          # THE RELEASE NOTES FILE MUST EXIST in this tree, before any API call.
-          NOTES_FILE="docs/RELEASE-NOTES-${TAG#v}.md"
-          if [ ! -s "$NOTES_FILE" ]; then
-            echo "refusing: $NOTES_FILE does not exist in the tagged tree; write it, land it, and tag the commit that carries it"
-            exit 1
-          fi
-
-          # THE TAG IS VERIFIED ON BOTH PATHS, not only the create one. `--verify-tag`, now
-          # inside release-upload.sh, is gh refusing to invent a tag that does not exist, and the upload path
-          # takes no such flag -- so the guarantee has to come from somewhere else. It
-          # cannot come from the trigger: this file also has `workflow_dispatch`, which
-          # runs against whatever ref the person picked and may be a branch, and the shape
-          # check above only asks that the ref begin with v. So the tag's existence is
-          # established here, once, for both paths.
-          ask "repos/${GITHUB_REPOSITORY}/git/ref/tags/${TAG}"
-          if [ "$CODE" = 404 ]; then
-            echo "refusing: $TAG is not a tag in this repository"
-            exit 1
-          fi
-
-          # AND IT IS THIS TREE'S TAG. Existence is not enough, and this is the check that
-          # actually carries --verify-tag's guarantee onto the upload path. Under
-          # `push: tags: v*` the ref that triggered the run IS the tag, so the two are the
-          # same fact; under workflow_dispatch they are not, and a tag can be force-moved
-          # after its release was published. A dispatch on a BRANCH named like a tag passes
-          # the shape check above, and if a real tag of that name exists the upload path
-          # would then --clobber a published release's binaries AND its SHA256SUMS with a
-          # build from an unrelated tree -- assets whose checksum file agrees with itself
-          # and with nothing anybody tagged. Before this step learned to upload, the
-          # duplicate-name refusal stopped that by accident; it is stopped on purpose here.
-          # The tag is fetched rather than assumed present: checkout is shallow and carries
-          # no tags, and a stale local tag is overwritten by the leading +.
-          git fetch --depth=1 origin "+refs/tags/${TAG}:refs/tags/${TAG}"
-          tagged=$(git rev-parse "refs/tags/${TAG}^{commit}")
-          if [ "$tagged" != "$GITHUB_SHA" ]; then
-            echo "refusing: $TAG is the tag for $tagged, but this run built $GITHUB_SHA"
-            echo "attaching here would replace $TAG's published artifacts with a build from another tree"
-            exit 1
-          fi
-
-          # THE RELEASE LOOKUP AND THE UPLOAD/CREATE DECISION LIVE IN release-upload.sh,
-          # not here, so the draft/published boundary is exercised by certification.yml's
-          # release dry-run through a fake `gh` (nova-tools#199). The tag checks above have
-          # already established that $TAG is this tree's tag; the script's only question is
-          # whether to upload to an existing draft, create a draft, or refuse a published
-          # release in one line.
-          #
-          # THE SUMS ARE COMPUTED HERE, in the step that attaches them, over the bytes on this
-          # disk: release-sums.sh refuses a dist/ that is not exactly the shipped set (every
-          # cmd/*/ tool for every platform in release-targets, nothing else), writes
-          # SHA256SUMS outside dist/ and moves it in so it cannot list itself, and verifies it
-          # at once. What release-upload.sh attaches is that directory and nothing else.
-          .github/scripts/release-sums.sh "$TAG" dist
-          .github/scripts/release-upload.sh
+        run: go run ./tools/ghrelease attach
