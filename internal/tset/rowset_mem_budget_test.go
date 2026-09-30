@@ -9,6 +9,7 @@ import (
 )
 
 func TestMemRowsetReadWorkCarriesIntoPlan(t *testing.T) {
+	t.Parallel()
 	const space = "rowset-budget:"
 	m := NewMem()
 	if err := m.DefineTable(space, "work", TableDefinition{
@@ -27,7 +28,8 @@ func TestMemRowsetReadWorkCarriesIntoPlan(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	reply, err := m.Step(context.Background(), Step{Epoch: "0", Space: space, Entries: []Entry{
+	op, intent := "rowset-budget-advance", "check the seeded rows before advancing"
+	reply, err := m.Step(context.Background(), Step{Epoch: "0", Space: space, Op: &op, Intent: &intent, Entries: []Entry{
 		{Kind: "rowset", Table: "work", Rows: rows},
 		{Kind: "advance", AdvanceFrom: "0"},
 		{Kind: "rows", Table: "work", Add: []string{"fresh"}},

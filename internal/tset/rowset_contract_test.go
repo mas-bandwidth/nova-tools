@@ -32,7 +32,8 @@ func rowsetAdvance(space string, expected []RowRank, restore []string) Step {
 	if restore != nil {
 		entries = append(entries, Entry{Kind: "rows", Table: "work", Add: append([]string{}, restore...)})
 	}
-	return Step{Epoch: "0", Space: space, Entries: entries}
+	op, intent := fmt.Sprintf("rowset-clear-%d", len(expected)), "clear rows after checking the expected topology"
+	return Step{Epoch: "0", Space: space, Op: &op, Intent: &intent, Entries: entries}
 }
 
 func newRowsetMem(t *testing.T, space string, actual []RowRank) *Mem {

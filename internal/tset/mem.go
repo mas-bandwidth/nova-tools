@@ -70,6 +70,7 @@ type MemTableSnapshot struct {
 }
 
 type memSpace struct {
+	version         uint64 // changes on every supported mutation or successful publication
 	active          Decimal
 	engine          string
 	epochKey        string
@@ -77,6 +78,7 @@ type memSpace struct {
 	defs            map[string]*memTableDef
 	definitionOrder []string
 	epochs          map[Decimal]*memEpoch
+	recordEpoch     map[string]map[string]Decimal // table, ID -> retained owner epoch
 	receipts        map[Decimal]map[string]memReceipt
 	zsets           map[string]map[string]string
 }
@@ -137,6 +139,7 @@ func (m *Mem) SetEngine(space, engine string) error {
 		return memRefusal("CONFIG", RefusalDetail{})
 	}
 	s.engine = engine
+	s.version++
 	return nil
 }
 
@@ -148,9 +151,10 @@ func (m *Mem) space(name string) *memSpace {
 	if s == nil {
 		s = &memSpace{
 			active: "0", engine: Version, defs: make(map[string]*memTableDef), definitionOrder: make([]string, 0),
-			epochs:   map[Decimal]*memEpoch{"0": {tables: make(map[string]*memTableEpoch)}},
-			receipts: make(map[Decimal]map[string]memReceipt),
-			zsets:    make(map[string]map[string]string),
+			epochs:      map[Decimal]*memEpoch{"0": {tables: make(map[string]*memTableEpoch)}},
+			recordEpoch: make(map[string]map[string]Decimal),
+			receipts:    make(map[Decimal]map[string]memReceipt),
+			zsets:       make(map[string]map[string]string),
 		}
 		m.spaces[name] = s
 	}
@@ -247,6 +251,7 @@ func (m *Mem) DefineTable(space, table string, def TableDefinition) error {
 	}
 	s.defs[table] = &memTableDef{name: table, memberPrefix: def.MemberPrefix, epochKey: def.EpochKey,
 		epochField: def.EpochField, columns: cols, columnOrder: append([]string(nil), def.Columns...)}
+	s.recordEpoch[table] = make(map[string]Decimal)
 	if len(s.definitionOrder) == 0 {
 		s.epochKey, s.epochField = def.EpochKey, def.EpochField
 	}
@@ -254,6 +259,7 @@ func (m *Mem) DefineTable(space, table string, def TableDefinition) error {
 	for _, epoch := range s.epochs {
 		epoch.tables[table] = newMemTableEpoch()
 	}
+	s.version++
 	return nil
 }
 
@@ -290,6 +296,7 @@ func (m *Mem) SetActiveEpoch(space string, epoch Decimal) error {
 		}
 		s.epochs[epoch] = e
 	}
+	s.version++
 	return nil
 }
 
@@ -308,6 +315,7 @@ func (m *Mem) SeedRow(space, table string, epoch Decimal, row string, rank Decim
 		return memRefusal("CONFIG", RefusalDetail{Table: table})
 	}
 	e.tables[table].rows[row] = rank
+	s.version++
 	return nil
 }
 
@@ -326,10 +334,8 @@ func (m *Mem) SeedMember(space, table string, epoch Decimal, id string, record M
 	if e == nil || s.defs[table] == nil || e.tables[table] == nil {
 		return memRefusal("CONFIG", RefusalDetail{Table: table})
 	}
-	for _, oldEpoch := range s.epochs {
-		if oldEpoch.tables[table] != nil && oldEpoch.tables[table].records[id] != nil {
-			return memRefusal("EXISTS", RefusalDetail{Table: table, IDs: []string{id}})
-		}
+	if _, _, exists := s.recordTable(table, id); exists {
+		return memRefusal("EXISTS", RefusalDetail{Table: table, IDs: []string{id}})
 	}
 	r := &memRecord{epoch: epoch, revision: record.Revision, score: record.Score, fields: cloneFields(record.Fields)}
 	if record.Row != "" {
@@ -345,7 +351,23 @@ func (m *Mem) SeedMember(space, table string, epoch Decimal, id string, record M
 		ensureMemCell(e.tables[table], record.Row, record.Column)[id] = r.score
 	}
 	e.tables[table].records[id] = r
+	s.recordEpoch[table][id] = epoch
+	s.version++
 	return nil
+}
+
+// recordTable resolves the single member namespace to its retained table
+// snapshot. Callers hold m.mu; the index is published with the cloned space.
+func (s *memSpace) recordTable(table, id string) (*memTableEpoch, Decimal, bool) {
+	epoch, ok := s.recordEpoch[table][id]
+	if !ok {
+		return nil, "", false
+	}
+	e := s.epochs[epoch]
+	if e == nil || e.tables[table] == nil || e.tables[table].records[id] == nil {
+		return nil, "", false
+	}
+	return e.tables[table], epoch, true
 }
 
 func (m *Mem) SeedZSet(space, key string, members map[string]string) error {
@@ -362,7 +384,9 @@ func (m *Mem) SeedZSet(space, key string, members map[string]string) error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.space(space).zsets[key] = copyMembers
+	s := m.space(space)
+	s.zsets[key] = copyMembers
+	s.version++
 	return nil
 }
 
@@ -381,6 +405,7 @@ func (m *Mem) CorruptCell(space, table string, epoch Decimal, row, col, id, scor
 		return memRefusal("CONFIG", RefusalDetail{Table: table})
 	}
 	s.epochs[epoch].tables[table].cells[row][col][id] = memScoreText(f)
+	s.version++
 	return nil
 }
 
@@ -461,9 +486,31 @@ func cloneMemCells(cells map[string]map[string]map[string]string) map[string]map
 }
 
 func cloneMemSpace(s *memSpace) *memSpace {
-	out := &memSpace{active: s.active, engine: s.engine, epochKey: s.epochKey, epochField: s.epochField,
-		defs: s.defs, definitionOrder: append([]string(nil), s.definitionOrder...), epochs: make(map[Decimal]*memEpoch, len(s.epochs)),
-		receipts: make(map[Decimal]map[string]memReceipt, len(s.receipts)), zsets: s.zsets}
+	out := &memSpace{version: s.version, active: s.active, engine: s.engine, epochKey: s.epochKey, epochField: s.epochField,
+		defs: make(map[string]*memTableDef, len(s.defs)), definitionOrder: append([]string(nil), s.definitionOrder...), epochs: make(map[Decimal]*memEpoch, len(s.epochs)),
+		recordEpoch: make(map[string]map[string]Decimal, len(s.recordEpoch)),
+		receipts:    make(map[Decimal]map[string]memReceipt, len(s.receipts)), zsets: make(map[string]map[string]string, len(s.zsets))}
+	for name, def := range s.defs {
+		copyDef := *def
+		copyDef.columnOrder = append([]string(nil), def.columnOrder...)
+		copyDef.columns = make(map[string]bool, len(def.columns))
+		for column, enabled := range def.columns {
+			copyDef.columns[column] = enabled
+		}
+		out.defs[name] = &copyDef
+	}
+	for key, members := range s.zsets {
+		out.zsets[key] = make(map[string]string, len(members))
+		for id, score := range members {
+			out.zsets[key][id] = score
+		}
+	}
+	for table, ids := range s.recordEpoch {
+		out.recordEpoch[table] = make(map[string]Decimal, len(ids))
+		for id, epoch := range ids {
+			out.recordEpoch[table][id] = epoch
+		}
+	}
 	for epoch, e := range s.epochs {
 		ne := &memEpoch{tables: make(map[string]*memTableEpoch, len(e.tables))}
 		for table, t := range e.tables {
@@ -575,10 +622,21 @@ func memNextDecimal(d Decimal) (Decimal, bool) {
 	return Decimal("1" + string(b)), true
 }
 
-func (m *Mem) Step(ctx context.Context, step Step) (Reply, error) {
-	if err := ctx.Err(); err != nil {
-		return Reply{}, err
-	}
+// memPrepared owns the candidate state and reply privately. Public MemPlan
+// fields are observations, never instructions to Commit. A replay only carries
+// its captured reply; publishing a clone would move state for no write.
+type memPrepared struct {
+	owner       *Mem
+	space       string
+	base        *memSpace
+	baseVersion uint64
+	next        *memSpace
+	reply       Reply
+	publish     bool
+	used        bool
+}
+
+func (m *Mem) validateStepInput(step Step) error {
 	if _, err := EncodeStep(step); err != nil {
 		if refusal, ok := err.(*Refusal); ok && refusal.Code == "ADVANCE" {
 			m.mu.Lock()
@@ -587,32 +645,40 @@ func (m *Mem) Step(ctx context.Context, step Step) (Reply, error) {
 			}
 			m.mu.Unlock()
 		}
-		return Reply{}, err
+		return err
 	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	return nil
+}
+
+// prepareLocked performs exactly the same admission, receipt lookup, planning,
+// and receipt-size check as Step. The caller holds m.mu throughout.
+func (m *Mem) prepareLocked(ctx context.Context, step Step) (*memPrepared, error) {
 	s := m.spaces[step.Space]
 	if s == nil {
-		return Reply{}, memRefusal("CONFIG", RefusalDetail{})
+		return nil, memRefusal("CONFIG", RefusalDetail{})
 	}
 	if s.engine != Version {
-		return Reply{}, memRefusal("ENGINE", RefusalDetail{})
+		return nil, memRefusal("ENGINE", RefusalDetail{})
 	}
 	if err := validateMemConfig(step.Space, s); err != nil {
-		return Reply{}, err
+		return nil, err
 	}
 	for i, entry := range step.Entries {
 		if entry.Kind != "advance" && s.defs[entry.Table] == nil {
-			return Reply{}, memRefusal("NOTABLE", RefusalDetail{EntryIndex: memIndex(i), Table: entry.Table})
+			return nil, memRefusal("NOTABLE", RefusalDetail{EntryIndex: memIndex(i), Table: entry.Table})
 		}
 	}
 	if reply, found, err := m.checkReceipt(s, step); found || err != nil {
-		return reply, err
+		if err != nil {
+			return nil, err
+		}
+		return &memPrepared{owner: m, space: step.Space, base: s,
+			baseVersion: s.version, reply: reply}, nil
 	}
 	if c := memCompareDecimal(step.Epoch, s.active); c < 0 {
-		return Reply{}, memEpochRefusal("STALE", s.active)
+		return nil, memEpochRefusal("STALE", s.active)
 	} else if c > 0 {
-		return Reply{}, memEpochRefusal("EPOCHAHEAD", s.active)
+		return nil, memEpochRefusal("EPOCHAHEAD", s.active)
 	}
 	next := cloneMemSpace(s)
 	var reply Reply
@@ -623,23 +689,112 @@ func (m *Mem) Step(ctx context.Context, step Step) (Reply, error) {
 		reply, err = m.planStep(ctx, s, next, step)
 	}
 	if err != nil {
-		return Reply{}, err
+		return nil, err
 	}
 	if err := m.saveReceipt(next, step, reply); err != nil {
+		return nil, err
+	}
+	return &memPrepared{owner: m, space: step.Space, base: s,
+		baseVersion: s.version, next: next, reply: reply, publish: true}, nil
+}
+
+func memAsRefusal(err error) *Refusal {
+	if refusal, ok := err.(*Refusal); ok {
+		return refusal
+	}
+	return NewRefusal("DRIFT", RefusalDetail{})
+}
+
+// Plan is the twin's nonwriting first phase. It returns a caller-editable
+// observation detached from the private candidate state and captured reply.
+func (m *Mem) Plan(step Step) (*MemPlan, *Refusal) {
+	if err := m.validateStepInput(step); err != nil {
+		return nil, memAsRefusal(err)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	prepared, err := m.prepareLocked(context.Background(), step)
+	if err != nil {
+		return nil, memAsRefusal(err)
+	}
+	plan := cloneMemPlan(prepared.reply.MemPlan)
+	if plan == nil {
+		plan = &MemPlan{}
+	}
+	plan.Replay = prepared.reply.Replay
+	plan.prepared = prepared
+	return plan, nil
+}
+
+// Commit publishes the exact candidate captured by Plan. Stale plans cannot
+// overwrite an intervening fixture mutation or another committed step.
+func (m *Mem) Commit(plan *MemPlan) (Reply, *Refusal) {
+	if plan == nil || plan.prepared == nil || plan.prepared.owner != m {
+		return Reply{}, NewRefusal("REQUEST", RefusalDetail{})
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.commitLocked(plan.prepared)
+}
+
+func (m *Mem) commitLocked(prepared *memPrepared) (Reply, *Refusal) {
+	if prepared.used {
+		return Reply{}, NewRefusal("REQUEST", RefusalDetail{})
+	}
+	current := m.spaces[prepared.space]
+	if current != prepared.base || current == nil || current.version != prepared.baseVersion {
+		prepared.used = true
+		detail := RefusalDetail{}
+		if current != nil {
+			detail.ActiveEpoch = current.active
+		}
+		return Reply{}, NewRefusal("REVISION", detail)
+	}
+	prepared.used = true
+	if prepared.publish {
+		prepared.next.version = prepared.baseVersion + 1
+		m.spaces[prepared.space] = prepared.next
+	}
+	return prepared.reply, nil
+}
+
+func (m *Mem) Step(ctx context.Context, step Step) (Reply, error) {
+	if err := ctx.Err(); err != nil {
 		return Reply{}, err
 	}
-	m.spaces[step.Space] = next
+	if err := m.validateStepInput(step); err != nil {
+		return Reply{}, err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	prepared, err := m.prepareLocked(ctx, step)
+	if err != nil {
+		return Reply{}, err
+	}
+	reply, refusal := m.commitLocked(prepared)
+	if refusal != nil {
+		return Reply{}, refusal
+	}
 	return reply, nil
 }
 
 func (m *Mem) Steps(ctx context.Context, steps []Step) ([]StepResult, error) {
 	// Match the transport boundary: malformed encoding aborts before any step.
-	for _, step := range steps {
-		if _, err := EncodeStep(step); err != nil {
-			return nil, err
+	raw := make([][]byte, len(steps))
+	for i, step := range steps {
+		encoded, err := EncodeStep(step)
+		if err != nil {
+			return nil, fmt.Errorf("step %d: %w", i, err)
 		}
+		raw[i] = encoded
+	}
+	if err := ctx.Err(); err != nil && len(steps) != 0 {
+		return nil, err
 	}
 	out := make([]StepResult, len(steps))
+	for i := range out {
+		out[i].RawRequest = append([]byte(nil), raw[i]...)
+	}
 	for i, step := range steps {
 		if err := ctx.Err(); err != nil {
 			for j := i; j < len(out); j++ {

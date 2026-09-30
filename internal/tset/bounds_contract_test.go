@@ -516,6 +516,8 @@ func TestS7MaximumLegalResultFitsReceipt(t *testing.T) {
 func boundsRowsStep(entries, rows int, advance bool) Step {
 	step := Step{Epoch: "0", Space: "bounds:", Entries: make([]Entry, 0, entries+1)}
 	if advance {
+		op, intent := "bounds-row-count-advance", "exercise row-count boundary with an advance"
+		step.Op, step.Intent = &op, &intent
 		step.Entries = append(step.Entries, Entry{Kind: "advance", AdvanceFrom: "0"})
 	}
 	for i := 0; i < entries; i++ {

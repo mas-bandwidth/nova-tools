@@ -24,6 +24,7 @@ func fenceMemFixture(t *testing.T) *Mem {
 }
 
 func TestMemFenceWinsReceiptAndBlocksLateOriginal(t *testing.T) {
+	t.Parallel()
 	const space = "fence-mem:"
 	m := fenceMemFixture(t)
 	op, intent := "part-1", "stable logical part"
@@ -84,6 +85,7 @@ func TestMemFenceWinsReceiptAndBlocksLateOriginal(t *testing.T) {
 }
 
 func TestMemOriginalWinsThenFenceReplaysOK(t *testing.T) {
+	t.Parallel()
 	const space = "fence-mem:"
 	m := fenceMemFixture(t)
 	op, intent := "part-2", "stable logical part"
@@ -109,6 +111,7 @@ func TestMemOriginalWinsThenFenceReplaysOK(t *testing.T) {
 }
 
 func TestMemNamedEmptyStepIsNotFence(t *testing.T) {
+	t.Parallel()
 	const space = "fence-mem:"
 	m := fenceMemFixture(t)
 	op, intent := "empty-part", "empty but ordinary"
