@@ -450,8 +450,7 @@ func parseBound(s string) (v float64, open, ok bool) {
 // ---- the sources of ids
 
 // lineBody is a line of the log as a query reads it: the ids and `about` of
-// its entry, and its meta. The stub log's line is this plain object; Layer 2's
-// own compact line decodes to the same (its exact wire is Layer 2's revision 2).
+// its entry, and its meta, decoded from the stored body (L2 1.1).
 type lineBody struct {
 	Seq   string          `json:"seq"`
 	Kind  string          `json:"kind"`
@@ -467,17 +466,25 @@ func (e *qeval) lineAt(seq uint64) (lineBody, *Refusal) {
 	s := tset.Decimal(strconv.FormatUint(seq, 10))
 	q := tset.ReadQuery{Kind: "lines", AfterSeq: tset.Decimal(strconv.FormatUint(seq-1, 10)), ThroughSeq: &s, Limit: 1}
 	rep, ref := e.t.log.Read(e.t.prefix, newTSetReadPlan(e.t.prefix, e.epoch, "atomic", []tset.ReadQuery{q}))
+	if ref != nil && ref.Code == "CURSOR" {
+		// Past the log's tail: the line is not there.
+		return lineBody{}, e.fail(codeDrift, tset.RefusalDetail{})
+	}
 	if ref != nil {
 		return lineBody{}, ref
 	}
 	if len(rep.Answers) != 1 || len(rep.Answers[0].Lines) != 1 {
 		return lineBody{}, e.fail(codeDrift, tset.RefusalDetail{})
 	}
-	var l lineBody
-	if json.Unmarshal(rep.Answers[0].Lines[0], &l) != nil || l.Seq != string(s) {
+	var item tset.LogLine
+	if json.Unmarshal(rep.Answers[0].Lines[0], &item) != nil || item.Seq != s {
 		return lineBody{}, e.fail(codeDrift, tset.RefusalDetail{})
 	}
-	return l, nil
+	body, err := tset.ParseLogBody(item.D)
+	if err != nil {
+		return lineBody{}, e.fail(codeDrift, tset.RefusalDetail{})
+	}
+	return lineBody{Seq: string(item.Seq), Kind: tset.LogWords[body.K], IDs: body.IDs, About: body.About, Meta: body.Meta}, nil
 }
 
 // sourceIDs are the ids a source names: a list as it is, the first ids of an

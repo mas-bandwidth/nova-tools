@@ -19,7 +19,7 @@ import (
 // (which wrote X's and the lease's keys once), so a refused step that still
 // applied any writer's commands changes the image. The tracer records what the
 // next steps run.
-func writingTwin(t *testing.T) (*Twin, *tset.Mem, *LogStub, *tracer) {
+func writingTwin(t *testing.T) (*Twin, *tset.Mem, *MemLog, *tracer) {
 	t.Helper()
 	tr := &tracer{}
 	tw, m, log := newTestTwin(t, tracedPhases(tr))
@@ -213,7 +213,7 @@ func TestTwinRefusesLikeLayerOne(t *testing.T) {
 // refusingLog is a log twin that refuses every plan, for a refusal of the log
 // phase, and serves everything else as the stub does.
 type refusingLog struct {
-	*LogStub
+	*MemLog
 	ref *Refusal
 }
 
@@ -240,15 +240,15 @@ func TestTwinRefusalAfterPlanLeavesNothing(t *testing.T) {
 		name  string
 		phase string
 		code  string
-		set   func(tw *Twin, log *LogStub)
+		set   func(tw *Twin, log *MemLog)
 	}{
-		{"the log's LIMIT", PhaseLog, CodeLimit, func(tw *Twin, log *LogStub) {
-			tw.log = &refusingLog{LogStub: log, ref: refuse(PhaseLog, CodeLimit, RefusalDetail{RefusalDetail: tset.RefusalDetail{Budget: "line_bytes"}})}
+		{"the log's LIMIT", PhaseLog, CodeLimit, func(tw *Twin, log *MemLog) {
+			tw.log = &refusingLog{MemLog: log, ref: refuse(PhaseLog, CodeLimit, RefusalDetail{RefusalDetail: tset.RefusalDetail{Budget: "line_bytes"}})}
 		}},
-		{"the log's OVERFLOW", PhaseLog, "OVERFLOW", func(tw *Twin, log *LogStub) {
-			tw.log = &refusingLog{LogStub: log, ref: refuse(PhaseLog, "OVERFLOW", RefusalDetail{})}
+		{"the log's OVERFLOW", PhaseLog, "OVERFLOW", func(tw *Twin, log *MemLog) {
+			tw.log = &refusingLog{MemLog: log, ref: refuse(PhaseLog, "OVERFLOW", RefusalDetail{})}
 		}},
-		{"a part's Cmds", PhaseXPlan, CodeLimit, func(tw *Twin, log *LogStub) {
+		{"a part's Cmds", PhaseXPlan, CodeLimit, func(tw *Twin, log *MemLog) {
 			refusing := PartFuncs{
 				PreFunc:  func(*State, *Request, *Before) (any, *Refusal) { return "plan", nil },
 				CmdsFunc: func(*State, any, LogPlan) ([]Cmd, *Refusal) { return nil, refuse("", CodeLimit, RefusalDetail{}) },
@@ -257,18 +257,18 @@ func TestTwinRefusalAfterPlanLeavesNothing(t *testing.T) {
 				panic(err)
 			}
 		}},
-		{"prepare's foreign key", PhasePrepare, CodeRequest, func(tw *Twin, log *LogStub) {
+		{"prepare's foreign key", PhasePrepare, CodeRequest, func(tw *Twin, log *MemLog) {
 			tw.phases.XCmds = func(*State, TablePlan, LogPlan) []Cmd {
 				return []Cmd{Command("HSET", testPrefix+"sprint:log@0", kindHash, "f", "v")}
 			}
 		}},
-		{"prepare's WRONGTYPE", PhasePrepare, CodeWrongType, func(tw *Twin, log *LogStub) {
+		{"prepare's WRONGTYPE", PhasePrepare, CodeWrongType, func(tw *Twin, log *MemLog) {
 			tw.phases.XCmds = func(*State, TablePlan, LogPlan) []Cmd {
 				return []Cmd{Command("HSET", testPrefix+"sprint:lease", kindHash, "f", "v"),
 					Command("ZADD", testPrefix+"sprint:lease", kindZSet, "1", "m")}
 			}
 		}},
-		{"prepare's shared bounds", PhasePrepare, CodeLimit, func(tw *Twin, log *LogStub) {
+		{"prepare's shared bounds", PhasePrepare, CodeLimit, func(tw *Twin, log *MemLog) {
 			tw.phases.XCmds = func(*State, TablePlan, LogPlan) []Cmd { return many(testPrefix+"sprint:k", tset.MaxPlannedCommands+1) }
 		}},
 	}
@@ -299,9 +299,9 @@ func TestTwinRefusalAfterPlanLeavesNothing(t *testing.T) {
 }
 
 // restoreWriters undoes what a case of TestTwinRefusalAfterPlanLeavesNothing
-// set: the log stub back, X's commands back to the traced ones, and the
+// set: the log twin back, X's commands back to the traced ones, and the
 // refusing beat part out of the registry.
-func restoreWriters(tw *Twin, log *LogStub) {
+func restoreWriters(tw *Twin, log *MemLog) {
 	tw.log = log
 	tw.phases.XCmds = tracedPhases(&tracer{}).XCmds
 	tw.parts.mu.Lock()
@@ -461,8 +461,8 @@ func TestTwinReadRefusesAtTheFirstIndex(t *testing.T) {
 	mustStep(t, tw, seedRequest())
 	badL1 := tset.ReadQuery{Kind: "count", Table: "nosuch", Cells: []string{"s1:waiting"}}
 	okL1 := tset.ReadQuery{Kind: "count", Table: sprint.Work, Cells: []string{"s1:waiting"}}
-	// The log stub serves last and lines and refuses cardlines.
-	badL2 := tset.ReadQuery{Kind: "cardlines", Abouts: []string{"p1"}, Limit: 5}
+	// A lines query whose after_seq is past the log's tail is CURSOR.
+	badL2 := tset.ReadQuery{Kind: "lines", AfterSeq: "999", Limit: 5}
 	okL2 := tset.ReadQuery{Kind: "last"}
 	for _, c := range []struct {
 		name string

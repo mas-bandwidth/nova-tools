@@ -18,8 +18,7 @@ import (
 )
 
 // LogTwin is the smallest surface of Layer 2's Go log twin that the composed
-// twin needs (errata E3, E7.2). Layer 2 names and builds the real one (item
-// J9); LogStub stands in until then.
+// twin needs (errata E3, E7.2): MemLog (item J9) is it.
 type LogTwin interface {
 	// Plan plans one step's lines, writing nothing: one line per emitting
 	// entry of the table plan, in its order, then one per note, with seqs
@@ -34,9 +33,14 @@ type LogTwin interface {
 type LogInput struct {
 	Prefix string
 	Epoch  tset.Decimal // the write epoch: the successor on an advance (L2 0)
-	NowMS  tset.Decimal // the call's one TIME, every line's at_ms (L2 5)
-	Table  TablePlan
-	Notes  []tset.Note // the step's notes, in order; NoteSeqs aligns with them
+	// RequestEpoch is the step's own epoch, an advance line's from; empty
+	// means Epoch. Request is the combined request's entries, whose about the
+	// composed profile requires on every member-changing entry.
+	RequestEpoch tset.Decimal
+	Request      []tset.Entry
+	NowMS        tset.Decimal // the call's one TIME, every line's at_ms (L2 5)
+	Table        TablePlan
+	Notes        []tset.Note // the step's notes, in order; NoteSeqs aligns with them
 }
 
 // LogApply appends what one Plan planned. The twin calls it only at commit,
@@ -374,7 +378,8 @@ func (t *Twin) step(ctx context.Context, req *Request, enc encodedStep) Result {
 	// Nothing is written before commit: a refusal from here on leaves the Mem,
 	// the log and the sprint's keys as they were.
 	t.enter(PhaseLog)
-	lp, appendLog, ref := t.log.Plan(LogInput{Prefix: t.prefix, Epoch: writeEpoch, NowMS: nowMS, Table: tp, Notes: notes})
+	lp, appendLog, ref := t.log.Plan(LogInput{Prefix: t.prefix, Epoch: writeEpoch, RequestEpoch: combined.Epoch,
+		Request: combined.Entries, NowMS: nowMS, Table: tp, Notes: notes})
 	if ref != nil {
 		return Result{Refusal: withPhase(ref, PhaseLog)}
 	}

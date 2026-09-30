@@ -331,9 +331,9 @@ func TestTickPageLimitFromBytes(t *testing.T) {
 				break
 			}
 			total := 0
-			lines := w.log.Lines(testNames.Prefix, "0") // the tick's own steps log lines too
+			lines := w.log.Stored(testNames.Prefix, "0") // the tick's own steps log lines too
 			for _, line := range lines[before:after] {
-				total += len(line)
+				total += len(line.Item())
 			}
 			want = max(1, min(5000, pageBytes/(total/int(after-before))))
 		}

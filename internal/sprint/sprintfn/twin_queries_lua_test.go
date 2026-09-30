@@ -22,7 +22,7 @@ import (
 // stubs of Layer 1's checked helpers (S.read_record, S.read_probe,
 // S.read_range_head, S.ensure_read_table, S.emit_read_item) and of Layer 2's
 // L.read_line_at, which read the very state a twin holds: the Mem's tables,
-// the sprint's keys and the log stub's lines. This checks the Lua's own
+// the sprint's keys and the log twin's lines. This checks the Lua's own
 // logic (its validation, its ids, its order of reads, its answers) against
 // the twin's, key for key and charge for charge. It does not check Layer 1's
 // helpers, which the stubs stand in for, nor a store: that is

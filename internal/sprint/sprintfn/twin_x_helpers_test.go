@@ -29,7 +29,7 @@ type xh struct {
 	t     *testing.T
 	tw    *Twin
 	mem   *tset.Mem
-	log   *LogStub
+	log   *MemLog
 	extra []Cmd // sprint keys the next step's stand-in part writes, then cleared
 	last  []Cmd // the commands X.plan returned for the last step that reached it
 

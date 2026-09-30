@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 )
 
@@ -237,8 +238,9 @@ func (l *MemLog) Read(space string, plan ReadPlan) (ReadReply, *Refusal) {
 
 func quoted(s string) json.RawMessage { return json.RawMessage(strconv.Quote(s)) }
 
-// lineItem is a lines item {seq, n, d} with d verbatim, as cjson writes it.
-func lineItem(line LogLine) json.RawMessage {
+// Item is the line as a lines query returns it, {seq, n, d} with d verbatim,
+// in cjson's escaping (L1 7).
+func (line LogLine) Item() json.RawMessage {
 	return json.RawMessage(`{"seq":` + cjsonString(string(line.Seq)) + `,"n":` + cjsonString(line.N) +
 		`,"d":` + cjsonString(line.D) + `}`)
 }
@@ -290,7 +292,7 @@ func (l *MemLog) lines(lg *memLogEpoch, plan ReadPlan, q ReadQuery, page bool,
 			stop = "log_id"
 			break
 		}
-		item := lineItem(line)
+		item := line.Item()
 		if bytes+len(item)+1 > room {
 			stop = "encoded_reply"
 			break
@@ -594,4 +596,26 @@ func (l *MemLog) SetHead(space string, epoch Decimal, n uint64) {
 	defer l.mu.Unlock()
 	lg := l.epoch(space, epoch, true)
 	lg.exists, lg.added, lg.length = true, n, n
+}
+
+// MemLogEpoch is one epoch's log as the twin holds it.
+type MemLogEpoch struct {
+	Lines   []LogLine
+	History map[string][]Decimal
+}
+
+// Dump is every epoch's log, keyed by the store prefix, "@" and the epoch, for images of the twin.
+func (l *MemLog) Dump() map[string]MemLogEpoch {
+	l.mu.Lock()
+	keys := make([]string, 0, len(l.logs))
+	for k := range l.logs {
+		keys = append(keys, k)
+	}
+	l.mu.Unlock()
+	out := map[string]MemLogEpoch{}
+	for _, k := range keys {
+		space, epoch, _ := strings.Cut(k, "\x00")
+		out[space+"@"+epoch] = MemLogEpoch{Lines: l.Stored(space, Decimal(epoch)), History: l.Histories(space, Decimal(epoch))}
+	}
+	return out
 }
