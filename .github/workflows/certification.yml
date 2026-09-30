@@ -388,7 +388,7 @@ jobs:
             windows-latest) target=windows_amd64 ;;
             *) echo "no shipped target mapped for ${{ matrix.os }}"; exit 1 ;;
           esac
-          # The release name, <tool>_<stamp>_<goos>_<goarch>[.exe] (release-build.sh).
+          # The release name, <tool>_<stamp>_<goos>_<goarch>[.exe] (`ghrelease build`).
           src="dist/nova-check_v0.0.0-dry-run_$target"
           [ "$target" = "windows_amd64" ] && src="$src.exe"
           [ -f "$src" ] || { echo "$src is not in the artifact: ls -R dist"; ls -R dist; exit 1; }
@@ -610,10 +610,10 @@ jobs:
     # before a release, not after a tag.
     #
     # THE SAME BUILD AS release.yml's `build` job, step for step: one leg per shipped
-    # platform, each running .github/scripts/release-build.sh (every cmd/*/ tool, -trimpath,
-    # CGO_ENABLED=0, the ldflags release-ldflags.sh composes) and uploading its binaries as
+    # platform, each running `go run ./tools/ghrelease build` (every cmd/*/ tool, -trimpath,
+    # CGO_ENABLED=0, the ldflags `ghrelease ldflags` composes) and uploading its binaries as
     # the artifact `release-<goos>-<goarch>`. The matrix is the list in
-    # .github/scripts/release-targets, written out because a matrix cannot read a file;
+    # tools/ghrelease/release-targets, written out because a matrix cannot read a file;
     # internal/ci's TestReleaseMatricesAreTheTargetsFile holds this matrix, release.yml's
     # and the file equal. The one difference from the release is the stamp, v0.0.0-dry-run.
     #
@@ -665,7 +665,7 @@ jobs:
 
       - name: every shipped tool compiles for ${{ matrix.goos }}/${{ matrix.goarch }}
         shell: bash
-        run: .github/scripts/release-build.sh v0.0.0-dry-run "${{ matrix.goos }}" "${{ matrix.goarch }}" dist
+        run: go run ./tools/ghrelease build --require-v-tag v0.0.0-dry-run "${{ matrix.goos }}" "${{ matrix.goarch }}" dist
 
       - name: save the release build cache
         # On a miss or a restore-keys fallback only: an exact hit is already the entry.
@@ -690,12 +690,12 @@ jobs:
   release-dry-run:
     # release.yml's final job over the dry-run set, on one machine: every platform's
     # artifact downloaded into one directory, every linux/amd64 binary asked for the stamp it
-    # was built from (.github/scripts/assert-version-stamp.sh, the runner is linux/amd64),
-    # then .github/scripts/release-sums.sh, which refuses a directory that is not exactly the
-    # shipped set (every cmd/*/ tool for every platform in release-targets, nothing else) and
-    # writes and verifies SHA256SUMS over the whole of it. The release runs the same two
-    # scripts in the same order before it attaches the set. No toolchain: nothing is built
-    # here, so nothing here can paper over a leg that did not build.
+    # was built from (`ghrelease stamp`, the runner is linux/amd64), then `ghrelease sums`,
+    # which refuses a directory that is not exactly the shipped set (every cmd/*/ tool for
+    # every platform in release-targets, nothing else) and writes and verifies SHA256SUMS over
+    # the whole of it. The release runs the same two verbs in the same order before it
+    # attaches the set. Nothing is built here, so nothing here can paper over a leg that did
+    # not build; the Go toolchain only runs the two verbs.
     needs: release-build
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -703,6 +703,10 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false
 
       - name: download every platform's binaries into one directory
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -714,25 +718,31 @@ jobs:
       - name: every shipped binary reports the tag it was built from
         shell: bash
         run: |
-          set -euo pipefail
           # An artifact does not keep the executable bit.
           chmod +x dist/*_v0.0.0-dry-run_linux_amd64
-          .github/scripts/assert-version-stamp.sh v0.0.0-dry-run "dist/%s_v0.0.0-dry-run_linux_amd64"
+          go run ./tools/ghrelease stamp v0.0.0-dry-run "dist/%s_v0.0.0-dry-run_linux_amd64"
 
       - name: SHA256SUMS over the whole shipped set
         shell: bash
-        run: .github/scripts/release-sums.sh v0.0.0-dry-run dist
+        run: go run ./tools/ghrelease sums v0.0.0-dry-run dist
 
   release-checks:
-    # THE NEGATIVE CONTROLS OF THE RELEASE SCRIPTS: the stamp refusals, a tool that loses its
-    # stamp, the tag alphabet, the certified gate and the draft/publication boundary. A tag
-    # is the one thing here that cannot be quietly amended, so each refusal release.yml
-    # relies on is seen to fire here, on every certification, rather than first on a tag.
+    # THE NEGATIVE CONTROLS OF THE STAMP ASSERTION, on this tree's real binaries: binaries
+    # built with no stamp fail it by name, the same tree stamped the way release.yml stamps
+    # passes, and one required tool that loses its stamp (the version symbol renamed, then
+    # removed) fails by name while the others are still asserted. A tag is the one thing here
+    # that cannot be quietly amended, and an assertion nothing has seen fail is a belief, so
+    # both outcomes are shown on every certification rather than first on a tag.
     #
-    # The fixtures build the tools for this runner, linux/amd64, with the release's
-    # -trimpath and CGO_ENABLED=0, so the compiles are the ones release-build's linux-amd64
-    # leg saved to its cache; it needs that leg for the entry, and each fixture build here is
-    # a link. The binaries built here are fixtures and are never shipped or summed.
+    # What needs no binary is a unit test of tools/ghrelease and runs on every commit: the
+    # stamp refusals and the tag alphabet (`%`, `=`, white space), the usage errors, the stale
+    # exemption, the certified gate (newer failure after older success, a run in flight, one
+    # green) and the draft/publication boundary of the upload, each through a fake gh.
+    #
+    # The controls build the tools for this runner, linux/amd64, with the release's -trimpath
+    # and CGO_ENABLED=0, so the compiles are the ones release-build's linux-amd64 leg saved to
+    # its cache; it needs that leg for the entry, and each build here is a link. The binaries
+    # built here are fixtures and are never shipped or summed.
     needs: release-build
     runs-on: ubuntu-latest
     timeout-minutes: 2
@@ -757,727 +767,10 @@ jobs:
           key: release-linux-amd64-${{ hashFiles('go.mod', 'go.sum') }}
           restore-keys: |
             release-linux-amd64-
-      - name: the release stamp refuses a missing ldflag, and the assertion catches it
+
+      - name: the stamp assertion is red on an unstamped or mutated tool and green on the release's stamp
         shell: bash
-        run: |
-          set -euo pipefail
-          # THIS IS THE TEST OF THE ASSERTION, which is the half of #118 that is easy to
-          # leave out: a release job that asserts the stamp is worth nothing if the
-          # assertion itself has never been seen to fail. A tag is the one thing here that
-          # cannot be quietly amended, so both outcomes are proved here rather than on the
-          # tag itself.
-          #
-          # It runs the same two scripts release.yml runs, over the same cmd/*/ tree, so a
-          # tool added tomorrow is in this check too.
-          stamp=v0.0.0-dry-run
-
-          # ONE: the ldflags helper refuses an empty stamp instead of composing
-          # `-X main.version=` and letting the build stamp the empty string.
-          if .github/scripts/release-ldflags.sh "" >/dev/null 2>&1; then
-            echo "release-ldflags.sh accepted an empty stamp: a release could ship binaries that answer devel"
-            exit 1
-          fi
-          echo "ok: an empty stamp is refused"
-          ldflags=$(.github/scripts/release-ldflags.sh "$stamp")
-          case "$ldflags" in
-            *"-X main.version=$stamp"*) echo "ok: $ldflags" ;;
-            *) echo "release-ldflags.sh composed something else: $ldflags"; exit 1 ;;
-          esac
-
-          # TWO: binaries built with NO stamp fail the assertion, by name. This is the
-          # release that #118 describes -- every tool answering its vcs pseudo-version or
-          # devel while the release page names a tag -- and it must be red.
-          rm -rf "${RUNNER_TEMP}/unstamped" "${RUNNER_TEMP}/stamped"
-          go build -o "${RUNNER_TEMP}/unstamped/" ./cmd/...
-          set +e
-          out=$(.github/scripts/assert-version-stamp.sh "$stamp" "${RUNNER_TEMP}/unstamped/%s" 2>&1)
-          rc=$?
-          set -e
-          printf '%s\n' "$out"
-          if [ "$rc" -eq 0 ]; then
-            echo "the assertion PASSED a set of binaries nothing stamped; it would pass a broken release"
-            exit 1
-          fi
-          case "$out" in
-            *"does not report the tag it was built from"*) echo "ok: unstamped binaries are refused by name" ;;
-            *) echo "the assertion failed, but not for the missing stamp; that is a different defect"; exit 1 ;;
-          esac
-
-          # THREE: the same binaries, stamped the way release.yml stamps them, pass -- so
-          # the red above is the stamp and not the harness.
-          go build -ldflags "$ldflags" -o "${RUNNER_TEMP}/stamped/" ./cmd/...
-          .github/scripts/assert-version-stamp.sh "$stamp" "${RUNNER_TEMP}/stamped/%s"
-
-      - name: a required tool that loses its stamp fails the assertion, and the rest still pass
-        shell: bash
-        run: |
-          set -euo pipefail
-          # STELLA'S NEGATIVE CONTROL (#125 review). The step above builds the whole tree
-          # unstamped, which is red at the FIRST tool and therefore says nothing about the
-          # tool-by-tool rule: one binary losing its stamp while the other ten keep theirs
-          # is the failure mode #118 names -- a rename or a removal the linker ignores in
-          # silence -- and until this job it was the case nothing exercised. Under the
-          # declaration-based eligibility this file carried until #125 it was worse than
-          # unexercised: renaming `version` made the tool exempt from the check, so the
-          # broken binary passed AS A NOTE and the job went green. The required set is the
-          # shipped set now, so both mutations must be red, and red BY NAME.
-          stamp=v0.0.0-dry-run
-          ldflags=$(.github/scripts/release-ldflags.sh "$stamp")
-          cp cmd/nova-tokens/version.go "${RUNNER_TEMP}/nova-tokens-version.go.orig"
-          restore() { cp "${RUNNER_TEMP}/nova-tokens-version.go.orig" cmd/nova-tokens/version.go; }
-          trap restore EXIT
-
-          # The mutation is asserted to have LANDED before the binaries are built. A sed
-          # that matched nothing would rebuild the unmutated tree, the assertion would go
-          # red for no reason at all, and this step would be green while proving nothing.
-          mutate() {
-            restore
-            case "$1" in
-            rename)
-              sed -i 's/^var version string$/var Version string/; s/resolveVersion(version, info, ok)/resolveVersion(Version, info, ok)/' cmd/nova-tokens/version.go
-              if ! grep -q '^var Version string$' cmd/nova-tokens/version.go; then
-                echo "the rename fixture did not apply; this step would prove nothing"; exit 1
-              fi
-              ;;
-            remove)
-              sed -i '/^var version string$/d; s/resolveVersion(version, info, ok)/resolveVersion("", info, ok)/' cmd/nova-tokens/version.go
-              if grep -q '^var version string$' cmd/nova-tokens/version.go; then
-                echo "the removal fixture did not apply; this step would prove nothing"; exit 1
-              fi
-              ;;
-            esac
-            rm -rf "${RUNNER_TEMP}/mutated"
-            go build -ldflags "$ldflags" -o "${RUNNER_TEMP}/mutated/" ./cmd/...
-          }
-
-          for how in rename remove; do
-            mutate "$how"
-            set +e
-            out=$(.github/scripts/assert-version-stamp.sh "$stamp" "${RUNNER_TEMP}/mutated/%s" 2>&1)
-            rc=$?
-            set -e
-            printf '%s\n' "$out"
-            if [ "$rc" -eq 0 ]; then
-              echo "the assertion PASSED a release whose nova-tokens answers a pseudo-version ($how)"
-              exit 1
-            fi
-            case "$out" in
-              *"FAIL: nova-tokens does not report the tag it was built from"*) ;;
-              *) echo "the assertion failed, but not for nova-tokens' missing stamp ($how); that is a different defect"; exit 1 ;;
-            esac
-            case "$out" in
-              *"NOTE: nova-tokens"*) echo "nova-tokens was demoted to a NOTE ($how); a required tool cannot become exempt by losing a symbol"; exit 1 ;;
-            esac
-            # The other tools are untouched, so the red above is this tool and not the harness.
-            case "$out" in
-              *"ok: nova-bus $stamp"*) ;;
-              *) echo "nova-bus stopped reporting the tag while only nova-tokens was mutated ($how)"; exit 1 ;;
-            esac
-            echo "ok: a $how of the stamp is refused by name, with nova-bus still asserted"
-          done
-          restore
-
-          # AND A STALE EXEMPTION IS ITSELF RED. The six names were a debt against #121;
-          # #121's version verb has landed on all six, so the shipped list is EMPTY and the
-          # fixture has to bring its own name: the stale check is injected into a COPY of
-          # the script rather than shipped in it, because the shipped list must stay a line
-          # a person edits and nothing else can write. A list that has drifted from the
-          # tree has stopped saying what it claims to say, and this is the check that says
-          # so.
-          rm -rf "${RUNNER_TEMP}/one-tool"
-          mkdir -p "${RUNNER_TEMP}/one-tool/cmd/nova-bus"
-          stale="${RUNNER_TEMP}/assert-with-a-stale-exemption.sh"
-          cp .github/scripts/assert-version-stamp.sh "$stale"
-          sed -i 's/^LEGACY_NO_VERSION_VERB=.*/LEGACY_NO_VERSION_VERB="nova-departed"/' "$stale"
-          grep -q '^LEGACY_NO_VERSION_VERB="nova-departed"$' "$stale" || {
-            echo "the stale-exemption fixture did not apply; this step would prove nothing"; exit 1; }
-          set +e
-          out=$("$stale" "$stamp" "${RUNNER_TEMP}/mutated/%s" "${RUNNER_TEMP}/one-tool/cmd" 2>&1)
-          rc=$?
-          set -e
-          printf '%s\n' "$out"
-          [ "$rc" -ne 0 ] || { echo "an exemption naming a tool that does not exist was accepted"; exit 1; }
-          case "$out" in
-            *"is exempted from the stamp assertion but"*) echo "ok: a stale exemption is refused by name" ;;
-            *) echo "the run failed, but not for the stale exemption; that is a different defect"; exit 1 ;;
-          esac
-
-      - name: a tag the release could not check is refused before anything is built
-        shell: bash
-        run: |
-          set -euo pipefail
-          # THE TAG ALPHABET -- the half of this job that was left owed. From the fourth
-          # read of #125, the last open low of #118: "ci.yml's release-dry-run exercises
-          # the empty-stamp refusal only; the `%` and `=` (and whitespace) refusals in
-          # release-ldflags.sh and in the assertion have no negative control."
-          #
-          # WHAT A TAG CAN ACTUALLY CARRY, measured rather than assumed:
-          # `git check-ref-format refs/tags/'v1.0%s-rc1'` and `…/'v1.0=rc1'` are ACCEPTED,
-          # so `%` and `=` are tags a person can really push; `…/'v0.13.0 rc1'` is REFUSED,
-          # so whitespace is not a legal refname, and release.yml:83 takes `TAG` from
-          # `github.ref_name`, which no trigger can hand in with a space. The whitespace
-          # cases below therefore prove the scripts' own refusal fires -- defence in depth
-          # for a stamp arriving by some other path, a future input or a future caller --
-          # and not a tag anyone can push today. Said plainly because a comment that calls
-          # whitespace a legal refname is a comment a reader would have to check.
-          #
-          # These refusals exist because the failure each one replaces is LATE and
-          # unreadable. A `%` tag travels into the assertion's printf FORMAT -- release.yml
-          # hands it "dist/%s_${TAG}_linux_amd64" -- so printf reads a directive nobody
-          # supplied, the script dies under `set -e` before printing a line, and the
-          # release is red with no FAIL naming a cause. An `=` tag is read by the whole-
-          # token match as a separator, so every stamped tool fails in turn AFTER the whole
-          # matrix has been built. An assertion nothing exercises is a belief; and one that
-          # fired on a legal tag would stop the next release for nothing, so both
-          # directions are proved here -- each refusal by its own reason, and legal tags
-          # through both scripts to the assertion's `ok:` lines.
-          #
-          # THE COUNT, read off the two scripts. Twelve refusals fire before any binary is
-          # run: release-ldflags.sh six -- its usage (:19), the empty stamp (:29),
-          # whitespace (:38), `%` (:53), `=` (:69), and a belt-and-braces check on the
-          # composed string (:81) that cannot fire while the empty-stamp refusal stands;
-          # assert-version-stamp.sh six -- its usage (:42), an empty expected tag (:51), a
-          # template with no `%s` (:57), a `%` beyond the single `%s` (:74), whitespace in
-          # the tag (:86), `=` in the tag (:91). This step exercises ten of them and the
-          # step above exercises the eleventh (the empty stamp); the twelfth is the
-          # composed-string check, which no argument can reach, and it is named here rather
-          # than pretended about. The FAIL class further down the assertion -- a missing
-          # binary, a verb that exited, a tool not reporting the tag, a stale exemption --
-          # is what the two steps above exercise.
-          stamp=v0.0.0-dry-run
-
-          # The usage refusals first, because they are the cheapest thing in either script
-          # to break: an argument added to one of these calls and not to the other end
-          # would otherwise be a release that skipped its own check.
-          refuse_usage() {
-            local what=$1 out rc
-            shift
-            set +e
-            out=$("$@" 2>&1)
-            rc=$?
-            set -e
-            printf '%s\n' "$out"
-            [ "$rc" -eq 2 ] || { echo "$what did not refuse $(($# - 1)) argument(s) as a usage error: rc=$rc"; exit 1; }
-            case "$out" in
-              *"usage:"*) echo "ok: $what refuses $(($# - 1)) argument(s) with its usage" ;;
-              *) echo "$what exited 2 without printing its usage; a caller has nothing to read"; exit 1 ;;
-            esac
-          }
-          refuse_usage release-ldflags.sh .github/scripts/release-ldflags.sh
-          refuse_usage release-ldflags.sh .github/scripts/release-ldflags.sh "$stamp" extra
-          refuse_usage assert-version-stamp.sh .github/scripts/assert-version-stamp.sh "$stamp"
-          refuse_usage assert-version-stamp.sh .github/scripts/assert-version-stamp.sh "$stamp" 'dist/%s' cmd extra
-
-          # ONE: the ldflags helper, called the way release.yml calls it -- a command
-          # substitution under `set -euo pipefail`. The proof is that the line after it
-          # never runs: in a release that is the difference between zero artifacts and 55.
-          refuse_ldflags() {
-            local tag=$1 phrase=$2 late=$3 out rc
-            set +e
-            out=$(TAG="$tag" bash -c 'set -euo pipefail; LDFLAGS=$(.github/scripts/release-ldflags.sh "$TAG"); echo "BUILT ldflags=$LDFLAGS"' 2>&1)
-            rc=$?
-            set -e
-            printf '%s\n' "$out"
-            [ "$rc" -ne 0 ] || { echo "release-ldflags.sh ACCEPTED the tag <$tag>: $late"; exit 1; }
-            case "$out" in
-              *"$phrase"*) ;;
-              *) echo "<$tag> was refused, but not for $phrase; that is a different defect"; exit 1 ;;
-            esac
-            case "$out" in
-              *BUILT*) echo "the release ran on past a refused stamp <$tag>; 55 artifacts would have been built"; exit 1 ;;
-            esac
-            echo "ok: <$tag> is refused with the build never starting"
-          }
-          refuse_ldflags 'v1.0%s-rc1' 'contains %' 'the assertion would die inside printf with no FAIL line naming a cause'
-          refuse_ldflags 'v1.0=rc1' 'contains =' 'every stamped tool would fail the assertion after the matrix was built'
-          refuse_ldflags 'v0.13.0 rc1' 'carries whitespace' 'the linker flag would split and the binaries would be stamped with the first word'
-
-          # And a legal tag is not refused by any of the three: a check that says no to
-          # everything is not a check. These are the shapes this repository actually tags.
-          for legal in v0.13.0 v0.13.0-rc1 "$stamp"; do
-            ldflags=$(.github/scripts/release-ldflags.sh "$legal")
-            case "$ldflags" in
-              *"-X main.version=$legal") echo "ok: <$legal> composes $ldflags" ;;
-              *) echo "release-ldflags.sh composed something else for the legal tag <$legal>: $ldflags"; exit 1 ;;
-            esac
-          done
-
-          # TWO: the same three at the OTHER end of the workflow, where the tag arrives
-          # inside the path template. The fixture is named the way release.yml names its
-          # artifacts (`<tool>_<tag>_linux_amd64`, accurate on this ubuntu runner) and the
-          # template is composed the same way, so what is exercised is the real call shape
-          # of release.yml's assertion step and not a shape invented here.
-          dist="${RUNNER_TEMP}/alphabet"
-          rm -rf "$dist"
-          go build -ldflags "$(.github/scripts/release-ldflags.sh "$stamp")" -o "$dist/" ./cmd/...
-          for bin in "$dist"/*; do
-            mv "$bin" "${bin}_${stamp}_linux_amd64"
-          done
-          # The positive control first: a legal tag inside the template asserts every
-          # shipped tool, so the refusals below are the tag alphabet and not this fixture.
-          .github/scripts/assert-version-stamp.sh "$stamp" "$dist/%s_${stamp}_linux_amd64"
-
-          # refuse_assertion_args is the same three assertions with the arguments handed in
-          # raw, for the refusals whose fixture is not a tag inside release.yml's template.
-          refuse_assertion_args() {
-            local phrase=$1 out rc
-            shift
-            set +e
-            out=$(.github/scripts/assert-version-stamp.sh "$@" 2>&1)
-            rc=$?
-            set -e
-            printf '%s\n' "$out"
-            [ "$rc" -eq 2 ] || { echo "the assertion did not refuse <$*> as a usage error: rc=$rc"; exit 1; }
-            case "$out" in
-              *"$phrase"*) ;;
-              *) echo "<$*> was refused by the assertion, but not for $phrase; that is a different defect"; exit 1 ;;
-            esac
-            case "$out" in
-              *"ok: "* | *"FAIL: "*) echo "the assertion ran the tools before refusing <$*>; this refusal is meant to precede them"; exit 1 ;;
-            esac
-            echo "ok: the assertion refuses a call it cannot check ($phrase) before it runs a binary"
-          }
-
-          refuse_assertion() {
-            local tag=$1 phrase=$2 out rc
-            set +e
-            out=$(.github/scripts/assert-version-stamp.sh "$tag" "$dist/%s_${tag}_linux_amd64" 2>&1)
-            rc=$?
-            set -e
-            printf '%s\n' "$out"
-            [ "$rc" -eq 2 ] || { echo "the assertion did not refuse the tag <$tag> as a usage error: rc=$rc"; exit 1; }
-            case "$out" in
-              *"$phrase"*) ;;
-              *) echo "<$tag> was refused by the assertion, but not for $phrase; that is a different defect"; exit 1 ;;
-            esac
-            # And it refuses BY NAMING ITSELF, before a single binary is run -- the whole
-            # point of holding the refusal at this end too, rather than reporting a tag the
-            # check can never match as eleven failing tools.
-            case "$out" in
-              *"ok: "* | *"FAIL: "*) echo "the assertion ran the tools before refusing <$tag>; this refusal is meant to precede them"; exit 1 ;;
-            esac
-            echo "ok: the assertion refuses <$tag> before it runs a binary"
-          }
-          refuse_assertion 'v1.0%s-rc1' 'beyond its single %s'
-          refuse_assertion 'v1.0=rc1' 'contains ='
-          refuse_assertion 'v0.13.0 rc1' 'carries whitespace'
-
-          # And the two refusals that are not about the tag's alphabet at all: an empty
-          # expected tag, and a template that names one path for every tool. Neither can
-          # come from a release.yml that is written correctly, which is exactly why they
-          # are worth a control -- they are the refusals that catch this workflow being
-          # edited, and both say in the script that they exist because the alternative is a
-          # check that asserts nothing and passes.
-          refuse_assertion_args 'no expected tag given' "" "$dist/%s_${stamp}_linux_amd64"
-          refuse_assertion_args 'holds no %s' "$stamp" "$dist/nova-bus_${stamp}_linux_amd64"
-
-      - name: the certified gate refuses newer-failure-after-older-success and in-flight, and passes one green
-        shell: bash
-        run: |
-          set -euo pipefail
-          # THE CERTIFIED GATE'S NEGATIVE CONTROLS (#253). release-certified.sh is now the
-          # whole `certified` job of release.yml, but until this step nothing in CI proved
-          # the script can say NO -- a break in its shell would refuse nothing, and the
-          # first sign of it would be a release built on a commit no green certification
-          # vouched for. So the gate is driven here, the same way the two steps above drive
-          # the ldflags helper and the assertion: through a fake `gh` on PATH, against the
-          # three outcomes the script has to decide. A newer FAILURE after an older SUCCESS
-          # must refuse (that is the fixture that fails a naive gate counting any green --
-          # "a run succeeded somewhere" is not a voucher), a run still in flight must refuse
-          # (an unfinished run vouches for nothing and its result is unknowable), and one
-          # green must PASS, or no release is ever possible.
-          #
-          # The fixtures live in .github/testdata/release-certified/ rather than in this
-          # heredoc because they are whole API bodies: the script reads total_count and a
-          # workflow_runs list, and a list hand-typed in the run block is a list that
-          # drifts from the shape the API actually returns.
-
-          # A fake `gh` on PATH. release-certified.sh calls `gh api -i` once and reads the
-          # STATUS LINE rather than the exit code (gh exits 1 on both a non-200 and an
-          # empty answer alike), so the fake reproduces exactly what -i promises: one
-          # HTTP status line, then the body after a blank line. The body is whatever
-          # fixture RELEASE_CERT_RESPONSE names.
-          mkdir -p "${RUNNER_TEMP}/fake-gh"
-          cat > "${RUNNER_TEMP}/fake-gh/gh" <<'GH'
-          #!/usr/bin/env bash
-          set -euo pipefail
-          printf 'HTTP/2 200 OK\r\n'
-          printf 'date: a-fake-gh-does-not-have-dates\r\n\r\n'
-          cat "$RELEASE_CERT_RESPONSE"
-          GH
-          chmod +x "${RUNNER_TEMP}/fake-gh/gh"
-
-          # The script's input guard demands the whole environment release.yml provides,
-          # so gate_env exports it before each run.
-          gate_env() {
-            export GITHUB_REPOSITORY=mas-bandwidth/nova-tools
-            export SHA=dr-y-run-sha
-            export REF=v9.9.9-dry-run
-            export GITHUB_RUN_ID=0000000000
-            export GH_TOKEN=fake-gh-needs-a-token-to-be-set
-            export PATH="${RUNNER_TEMP}/fake-gh:$PATH"
-          }
-
-          # ONE: newer failure after older success must refuse, BY NAMING the red. This is
-          # the fixture a gate that "counts any green" would pass, so its refusal is the
-          # proof the refusal is not merely "something went wrong".
-          gate_env
-          set +e
-          out=$(RELEASE_CERT_RESPONSE=".github/testdata/release-certified/old-green-new-red.json" \
-            .github/scripts/release-certified.sh 2>&1)
-          rc=$?
-          set -e
-          printf '%s\n' "$out"
-          [ "$rc" -ne 0 ] || { echo "the certified gate VOUCHED for a commit whose latest evidence is a failure"; exit 1; }
-          case "$out" in
-            *"not uniformly green"*) echo "ok: a newer failure after an older success is refused, by naming the red" ;;
-            *) echo "the gate refused the old-green/new-red fixture, but not for the red; that is a different defect"; exit 1 ;;
-          esac
-
-          # TWO: a run in flight must refuse with the wait line, whatever a completed green
-          # beside it would say -- one snapshot sees the unfinished run and refuses before
-          # any conclusion is read.
-          gate_env
-          set +e
-          out=$(RELEASE_CERT_RESPONSE=".github/testdata/release-certified/in-flight.json" \
-            .github/scripts/release-certified.sh 2>&1)
-          rc=$?
-          set -e
-          printf '%s\n' "$out"
-          [ "$rc" -ne 0 ] || { echo "the certified gate VOUCHED while a certification run was still in flight"; exit 1; }
-          case "$out" in
-            *"not yet completed"*) echo "ok: a run in flight is refused, and the remedy says wait" ;;
-            *) echo "the gate refused the in-flight fixture, but not for the unfinished run; that is a different defect"; exit 1 ;;
-          esac
-
-          # THREE: one green must PASS, and print a receipt -- the negative controls above
-          # are worth nothing if the gate says no to everything, which is as much a
-          # blocked release as saying yes to everything.
-          gate_env
-          set +e
-          out=$(RELEASE_CERT_RESPONSE=".github/testdata/release-certified/single-green.json" \
-            .github/scripts/release-certified.sh 2>&1)
-          rc=$?
-          set -e
-          printf '%s\n' "$out"
-          [ "$rc" -eq 0 ] || { echo "the certified gate REFUSED a commit one green certification vouches for; no release would be possible"; exit 1; }
-          case "$out" in
-            *"receipt run 3001"*) echo "ok: one green vouches, and the receipt names the run" ;;
-            *) echo "the certified gate did not print a receipt for the one green run; a release would have nothing to show"; exit 1 ;;
-          esac
-
-      - name: the upload respects the draft/publication boundary and refuses a published release
-        shell: bash
-        run: |
-          set -euo pipefail
-          # THE DRAFT/PUBLICATION BOUNDARY'S CONTROLS (#199). release-upload.sh is the tail
-          # of the `release` job, but until this step nothing in CI proved it cannot touch a
-          # published release -- the first sign of the draft/public mix-up would be a
-          # published release silently extended with a second set of artifacts. So the script
-          # is driven here, the way the certified gate above is driven, through a fake `gh`,
-          # against the answers the release lookup can give: published 200, 404 with drafts
-          # listed, 404 with no drafts, 404 with published
-          # match in listing, 404 with ambiguous drafts, 404 with invalid/non-array listing,
-          # absent release notes, and non-answers (403).
-          #
-          # A fake `gh` on PATH. The script asks `gh api -i releases/tags/<tag>` once and
-          # reads the STATUS LINE and the `draft` field rather than the exit code. If 404,
-          # it lists drafts from repos/<repo>/releases via `gh api --paginate`. The fake
-          # reproduces `-i` for tag lookups and JSON array responses for release listings.
-          # A `release create` or `release upload` is ECHOED the way gh would print it, so
-          # the test can assert which command the script chose -- and never actually uploads anything.
-          mkdir -p "${RUNNER_TEMP}/fake-gh-release"
-          cat > "${RUNNER_TEMP}/fake-gh-release/gh" <<'GH'
-          #!/usr/bin/env bash
-          set -euo pipefail
-          DIR="$(cd "$(dirname "$0")" && pwd)"
-          case "${1:-}" in
-            api)
-              echo "api $*" >> "$DIR/api-calls.log"
-              case "$*" in
-                *"releases/tags/"*)
-                  case "${RELEASE_UPLOAD_STATUS:-200}" in
-                    404) printf 'HTTP/2 404 Not Found\r\n\r\n' ;;
-                    403) printf 'HTTP/2 403 Forbidden\r\n\r\n'; exit 1 ;;
-                    *) printf 'HTTP/2 200 OK\r\ndate: fake\r\n\r\n'; cat "${RELEASE_UPLOAD_RESPONSE:?}" ;;
-                  esac
-                  ;;
-                *)
-                  # repos/${GITHUB_REPOSITORY}/releases list
-                  if [ -n "${RELEASE_UPLOAD_LIST_RESPONSE:-}" ] && [ -f "${RELEASE_UPLOAD_LIST_RESPONSE}" ]; then
-                    cat "${RELEASE_UPLOAD_LIST_RESPONSE}"
-                  elif [ -n "${RELEASE_UPLOAD_LIST_RESPONSE:-}" ]; then
-                    printf '%s\n' "${RELEASE_UPLOAD_LIST_RESPONSE}"
-                  else
-                    printf '[]\n'
-                  fi
-                  ;;
-              esac
-              ;;
-            release)
-              echo "release $*" >> "$DIR/release-calls.log"
-              echo "gh $*"
-              ;;
-            *) echo "unexpected fake gh invocation: $*" >&2; exit 1 ;;
-          esac
-          GH
-          chmod +x "${RUNNER_TEMP}/fake-gh-release/gh"
-
-          upload_env() {
-            export GITHUB_REPOSITORY=mas-bandwidth/nova-tools
-            export TAG=v0.14.0
-            export GH_TOKEN=fake-gh-needs-a-token-to-be-set
-            export PATH="${RUNNER_TEMP}/fake-gh-release:$PATH"
-          }
-          mkdir -p dist && : > dist/nova-bus_v0.14.0_linux_amd64
-          mkdir -p docs
-          echo "# 0.14.0 release notes" > "docs/RELEASE-NOTES-0.14.0.md"
-          cleanup_upload_test() {
-            rm -f "docs/RELEASE-NOTES-0.14.0.md"
-            rm -rf dist
-            rm -rf "${RUNNER_TEMP}/fake-gh-release"
-          }
-          trap cleanup_upload_test EXIT
-
-          # ONE: tag 404 + draft in list -> upload with --clobber
-          upload_env
-          echo "# 0.14.0 release notes" > "docs/RELEASE-NOTES-0.14.0.md"
-          set +e
-          out=$(RELEASE_UPLOAD_STATUS=404 \
-            RELEASE_UPLOAD_LIST_RESPONSE=.github/testdata/release-upload/single-draft-list.json \
-            .github/scripts/release-upload.sh 2>&1)
-          rc=$?
-          set -e
-          printf '%s\n' "$out"
-          [ "$rc" -eq 0 ] || { echo "the upload REFUSED an existing draft in the release list"; exit 1; }
-          case "$out" in
-            *"gh release upload"*"--clobber"*) echo "ok: tag 404 with draft in list uploads with --clobber" ;;
-            *) echo "the script did not upload to the draft: $out"; exit 1 ;;
-          esac
-
-          # TWO: tag 404 + no draft in list -> create with --notes-file naming the canonical path
-          upload_env
-          echo "# 0.14.0 release notes" > "docs/RELEASE-NOTES-0.14.0.md"
-          set +e
-          out=$(RELEASE_UPLOAD_STATUS=404 \
-            RELEASE_UPLOAD_LIST_RESPONSE=.github/testdata/release-upload/empty-list.json \
-            .github/scripts/release-upload.sh 2>&1)
-          rc=$?
-          set -e
-          printf '%s\n' "$out"
-          [ "$rc" -eq 0 ] || { echo "the upload REFUSED to create the missing release draft"; exit 1; }
-          case "$out" in
-            *"gh release create"*"--draft"*"--notes-file"*"docs/RELEASE-NOTES-0.14.0.md"*) echo "ok: missing release is created as draft with canonical --notes-file" ;;
-            *) echo "the script did not create a draft with canonical --notes-file: $out"; exit 1 ;;
-          esac
-          case "$out" in
-            *"--generate-notes"*) echo "the script used --generate-notes instead of --notes-file"; exit 1 ;;
-          esac
-
-          # THREE: published release on tag lookup (200) -> refuse
-          upload_env
-          echo "# 0.14.0 release notes" > "docs/RELEASE-NOTES-0.14.0.md"
-          set +e
-          out=$(RELEASE_UPLOAD_STATUS=200 RELEASE_UPLOAD_RESPONSE=.github/testdata/release-upload/published.json \
-            .github/scripts/release-upload.sh 2>&1)
-          rc=$?
-          set -e
-          printf '%s\n' "$out"
-          [ "$rc" -ne 0 ] || { echo "the upload PUBLISHED into a release that is already published"; exit 1; }
-          case "$out" in
-            *"already has a published release"*) echo "ok: a published release is refused in one line" ;;
-            *) echo "the script refused the published release, but not for the publication boundary: $out"; exit 1 ;;
-          esac
-          case "$out" in
-            *"gh release"*) echo "the script reached a gh release command after refusing a published release"; exit 1 ;;
-          esac
-
-          # FOUR: published release in release listing (404 on tag, but list has published match) -> refuse
-          upload_env
-          echo "# 0.14.0 release notes" > "docs/RELEASE-NOTES-0.14.0.md"
-          set +e
-          out=$(RELEASE_UPLOAD_STATUS=404 \
-            RELEASE_UPLOAD_LIST_RESPONSE=.github/testdata/release-upload/published-list.json \
-            .github/scripts/release-upload.sh 2>&1)
-          rc=$?
-          set -e
-          printf '%s\n' "$out"
-          [ "$rc" -ne 0 ] || { echo "the upload PROCEEDED when release list has a published match"; exit 1; }
-          case "$out" in
-            *"v0.14.0 already has a published release 387734569; upload to its draft, never a published release"*) echo "ok: published release in listing refused in one line" ;;
-            *) echo "the script did not refuse matching published release in listing: $out"; exit 1 ;;
-          esac
-          case "$out" in
-            *"gh release"*) echo "the script reached a gh release command after matching published release in list"; exit 1 ;;
-          esac
-
-          # FIVE (a): invalid / non-array listing response -> refuse fail-closed
-          upload_env
-          echo "# 0.14.0 release notes" > "docs/RELEASE-NOTES-0.14.0.md"
-          set +e
-          out=$(RELEASE_UPLOAD_STATUS=404 \
-            RELEASE_UPLOAD_LIST_RESPONSE=.github/testdata/release-upload/not-an-array.json \
-            .github/scripts/release-upload.sh 2>&1)
-          rc=$?
-          set -e
-          printf '%s\n' "$out"
-          [ "$rc" -ne 0 ] || { echo "the upload ACCEPTED a non-array releases listing"; exit 1; }
-          case "$out" in
-            *"is invalid or non-array"*) echo "ok: non-array listing refused fail-closed" ;;
-            *) echo "the script did not fail-closed on non-array listing: $out"; exit 1 ;;
-          esac
-          case "$out" in
-            *"gh release"*) echo "the script reached a gh release command on invalid listing"; exit 1 ;;
-          esac
-
-          # FIVE (b): invalid metadata (string draft) -> refuse fail-closed
-          upload_env
-          echo "# 0.14.0 release notes" > "docs/RELEASE-NOTES-0.14.0.md"
-          set +e
-          out=$(RELEASE_UPLOAD_STATUS=404 \
-            RELEASE_UPLOAD_LIST_RESPONSE=.github/testdata/release-upload/string-draft.json \
-            .github/scripts/release-upload.sh 2>&1)
-          rc=$?
-          set -e
-          printf '%s\n' "$out"
-          [ "$rc" -ne 0 ] || { echo "the upload ACCEPTED a listing with string draft"; exit 1; }
-          case "$out" in
-            *"is invalid or non-array"*) echo "ok: string draft listing refused fail-closed" ;;
-            *) echo "the script did not fail-closed on string draft listing: $out"; exit 1 ;;
-          esac
-          case "$out" in
-            *"gh release"*) echo "the script reached a gh release command on invalid listing"; exit 1 ;;
-          esac
-
-          # FIVE (c): invalid metadata (null draft) -> refuse fail-closed
-          upload_env
-          echo "# 0.14.0 release notes" > "docs/RELEASE-NOTES-0.14.0.md"
-          set +e
-          out=$(RELEASE_UPLOAD_STATUS=404 \
-            RELEASE_UPLOAD_LIST_RESPONSE=.github/testdata/release-upload/null-draft.json \
-            .github/scripts/release-upload.sh 2>&1)
-          rc=$?
-          set -e
-          printf '%s\n' "$out"
-          [ "$rc" -ne 0 ] || { echo "the upload ACCEPTED a listing with null draft"; exit 1; }
-          case "$out" in
-            *"is invalid or non-array"*) echo "ok: null draft listing refused fail-closed" ;;
-            *) echo "the script did not fail-closed on null draft listing: $out"; exit 1 ;;
-          esac
-          case "$out" in
-            *"gh release"*) echo "the script reached a gh release command on invalid listing"; exit 1 ;;
-          esac
-
-          # FIVE (d): invalid metadata (null id) -> refuse fail-closed
-          upload_env
-          echo "# 0.14.0 release notes" > "docs/RELEASE-NOTES-0.14.0.md"
-          set +e
-          out=$(RELEASE_UPLOAD_STATUS=404 \
-            RELEASE_UPLOAD_LIST_RESPONSE=.github/testdata/release-upload/null-id.json \
-            .github/scripts/release-upload.sh 2>&1)
-          rc=$?
-          set -e
-          printf '%s\n' "$out"
-          [ "$rc" -ne 0 ] || { echo "the upload ACCEPTED a listing with null id"; exit 1; }
-          case "$out" in
-            *"is invalid or non-array"*) echo "ok: null id listing refused fail-closed" ;;
-            *) echo "the script did not fail-closed on null id listing: $out"; exit 1 ;;
-          esac
-          case "$out" in
-            *"gh release"*) echo "the script reached a gh release command on invalid listing"; exit 1 ;;
-          esac
-
-          # FIVE (e): invalid metadata (string id) -> refuse fail-closed
-          upload_env
-          echo "# 0.14.0 release notes" > "docs/RELEASE-NOTES-0.14.0.md"
-          set +e
-          out=$(RELEASE_UPLOAD_STATUS=404 \
-            RELEASE_UPLOAD_LIST_RESPONSE=.github/testdata/release-upload/string-id.json \
-            .github/scripts/release-upload.sh 2>&1)
-          rc=$?
-          set -e
-          printf '%s\n' "$out"
-          [ "$rc" -ne 0 ] || { echo "the upload ACCEPTED a listing with string id"; exit 1; }
-          case "$out" in
-            *"is invalid or non-array"*) echo "ok: string id listing refused fail-closed" ;;
-            *) echo "the script did not fail-closed on string id listing: $out"; exit 1 ;;
-          esac
-          case "$out" in
-            *"gh release"*) echo "the script reached a gh release command on invalid listing"; exit 1 ;;
-          esac
-
-          # FIVE (f): invalid metadata (null tag_name) -> refuse fail-closed
-          upload_env
-          echo "# 0.14.0 release notes" > "docs/RELEASE-NOTES-0.14.0.md"
-          set +e
-          out=$(RELEASE_UPLOAD_STATUS=404 \
-            RELEASE_UPLOAD_LIST_RESPONSE=.github/testdata/release-upload/null-tag.json \
-            .github/scripts/release-upload.sh 2>&1)
-          rc=$?
-          set -e
-          printf '%s\n' "$out"
-          [ "$rc" -ne 0 ] || { echo "the upload ACCEPTED a listing with null tag_name"; exit 1; }
-          case "$out" in
-            *"is invalid or non-array"*) echo "ok: null tag_name listing refused fail-closed" ;;
-            *) echo "the script did not fail-closed on null tag_name listing: $out"; exit 1 ;;
-          esac
-          case "$out" in
-            *"gh release"*) echo "the script reached a gh release command on invalid listing"; exit 1 ;;
-          esac
-
-          # SIX: two drafts -> refuse as ambiguous
-          upload_env
-          echo "# 0.14.0 release notes" > "docs/RELEASE-NOTES-0.14.0.md"
-          set +e
-          out=$(RELEASE_UPLOAD_STATUS=404 \
-            RELEASE_UPLOAD_LIST_RESPONSE=.github/testdata/release-upload/two-drafts-list.json \
-            .github/scripts/release-upload.sh 2>&1)
-          rc=$?
-          set -e
-          printf '%s\n' "$out"
-          [ "$rc" -ne 0 ] || { echo "the upload ACCEPTED ambiguous drafts"; exit 1; }
-          case "$out" in
-            *"refusing: v0.14.0 has 2 drafts, so there is no one draft to upload to; delete all but one draft for v0.14.0, then re-run this workflow"*) echo "ok: two drafts refused as ambiguous" ;;
-            *) echo "the script did not refuse ambiguous drafts: $out"; exit 1 ;;
-          esac
-          case "$out" in
-            *"gh release"*) echo "the script reached a gh release command on ambiguous drafts"; exit 1 ;;
-          esac
-
-          # SEVEN: notes file absent -> refuse before any API call, naming the missing notes file
-          upload_env
-          rm -f "docs/RELEASE-NOTES-0.14.0.md"
-          rm -f "${RUNNER_TEMP}/fake-gh-release/api-calls.log"
-          set +e
-          out=$(RELEASE_UPLOAD_STATUS=404 .github/scripts/release-upload.sh 2>&1)
-          rc=$?
-          set -e
-          printf '%s\n' "$out"
-          [ "$rc" -ne 0 ] || { echo "the upload PROCEEDED with missing release notes"; exit 1; }
-          case "$out" in
-            *"refusing: docs/RELEASE-NOTES-0.14.0.md does not exist in the tagged tree; write it, land it, and tag the commit that carries it"*) echo "ok: absent notes file refused naming expected path" ;;
-            *) echo "the refusal did not name expected notes file path: $out"; exit 1 ;;
-          esac
-          if [ -f "${RUNNER_TEMP}/fake-gh-release/api-calls.log" ] && [ -s "${RUNNER_TEMP}/fake-gh-release/api-calls.log" ]; then
-            echo "an API call was made when notes file was absent: $(cat "${RUNNER_TEMP}/fake-gh-release/api-calls.log")"
-            exit 1
-          fi
-          echo "ok: no API call was made when notes file was absent"
-
-          # EIGHT: a non-answer (403, permissions) is refused rather than read as absence --
-          # the same ask-guard release.yaml relied on, reproduced over the script.
-          echo "# 0.14.0 release notes" > "docs/RELEASE-NOTES-0.14.0.md"
-          upload_env
-          set +e
-          out=$(RELEASE_UPLOAD_STATUS=403 .github/scripts/release-upload.sh 2>&1)
-          rc=$?
-          set -e
-          printf '%s\n' "$out"
-          [ "$rc" -ne 0 ] || { echo "the upload READ a 403 as 'no release' and walked down the create path"; exit 1; }
-          case "$out" in
-            *"neither 200 nor 404"*) echo "ok: a non-answer is refused, not read as absence" ;;
-            *) echo "the 403 was treated as a decision rather than a refusal: $out"; exit 1 ;;
-          esac
+        run: go run ./tools/ghrelease controls
 
   perf:
     # THE WALL CLOCK, nightly, because a wall clock is not a per-commit test.

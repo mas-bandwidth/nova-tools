@@ -154,8 +154,7 @@ The ten rules above name their class tests; the rest, by name: `tlc`, `cap` (eve
 | `fleet/` | fleet loop units and bench templates | none | none |
 | `infra/` | runner images and scripts | none | none |
 | [internal/](internal/AGENTS.md) | packages and libraries | `nova-ci local` | `make test` |
-| `profiles/` | the darwin sandbox profile template internal/sandbox embeds, and its check script | `go test ./internal/sandbox` | `go test ./internal/sandbox` |
-| `scripts/` | maintenance and operational scripts | none | none |
+| `profiles/` | the darwin sandbox profile template internal/sandbox embeds, and the check that measures it (tools/sandboxcheck) | `go test ./internal/sandbox` | `go test ./internal/sandbox` |
 | `testdata/` | shared test fixtures and data | `go test ./internal/ci` | `make test` |
 | `tla/` | the TLA+ models of the state machines and their runners | `go test ./internal/tlc` | `make tlc-test` |
 | [tools/](tools/AGENTS.md) | developer and bench tools | `nova-ci local` | `make map` |

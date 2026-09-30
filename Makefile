@@ -204,13 +204,15 @@ vet-windows:
 lint: fmt vet vet-functional vet-laws
 
 # preflight is the standard check for swarm cards and developers (#2498 S4):
-# gofmt + go vet + go test -count=1
+# gofmt + go vet + go test -count=1, run by tools/preflight. The tool is built into
+# this checkout's bin/ and exec'd, so make's own signal and the tool's exit code are
+# the ones the caller sees.
 # No `preflight: PKGS ?= ...` line: under GNU make 3.81 (macOS /usr/bin/make) a
 # target-specific `?=` on PKGS made `test: PKGS :=` beat the command line, so
 # every studio shard of dev push run 35999520176 ran the whole tree instead of
 # its PKGS; with PKGS ?= ./... above, that line was a no-op everywhere else.
 preflight:
-	./tools/preflight.sh $(if $(RUN),-run "$(RUN)",) $(PKGS)
+	$(GO) build -o bin/preflight ./tools/preflight && exec ./bin/preflight $(if $(RUN),-run "$(RUN)",) $(PKGS)
 
 # The fast tier. The package set is CL_PKGS, the living tree exactly as
 # ci.yml's test-packages job selects it with --all; a caller that wants a shard
