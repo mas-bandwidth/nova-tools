@@ -30,7 +30,7 @@ var verbs []verb
 func init() {
 	verbs = []verb{
 		{"init", "[--readers <a,b,...>] [--members <m1[:<width>],m2,...>] [--coordinator <name>]", "init --readers reader-a,reader-b,reader-c --members m1:64,m2:64", (*app).cmdInit},
-		{"add", "--stream <s> (<id>... | --count <n> | --sentinel <id>) [--needs <a,b>] [--before <id> | --after <id> | --score <n>] [--brief <text>]", "add --stream s1 --count 100", (*app).cmdAdd},
+		{"add", "--stream <s> (<id>... | --count <n> | --sentinel <id>) [--needs <a,b>] [--before <id> | --after <id> | --score <n>] [--brief <text> | --brief-file <path>]", "add --stream s1 --count 100", (*app).cmdAdd},
 		{"release", "<sentinel>... --reason <text> [--answers <note>]", "release s1-stop --reason 'the layer is green and read'", (*app).cmdRelease},
 		{"resolve", "[<id>...] [--stream <s>] [--limit <n>]", "resolve", (*app).cmdResolve},
 		{"start", "", "start", (*app).cmdMachineStart},
@@ -389,23 +389,45 @@ const (
 	defaultStale    = 30 * time.Minute
 )
 
+// epochVerbs are the verbs that act on cards handed to an actor outside the
+// sprint: a worker's take by id and finish, a reader's read, a merger's merge
+// and a CI observation. Each names the epoch it was handed its cards at
+// (--epoch, from queue), so a worker, reader or merger from before a clear
+// never reports on the new epoch's card of the same name: a clear moves the
+// epoch, and a card of the same name in the new epoch is another card.
+// Every other verb is the coordinator's, which acts on the cards it reads in
+// the step's own fenced read of the epoch: with no --epoch the step runs at
+// the epoch it finds (a clear between the read and the write is read again),
+// so the coordinator needs no epoch to name.
+var epochVerbs = map[string]bool{"finish": true, "read": true, "merge": true, "ci": true, "take by id": true}
+
+// needsEpoch is whether the verb must be given --epoch: the verbs of
+// epochVerbs, except a merge run by the sprint's coordinator, which merges
+// the cards of its own read of the merge queue and names no handed card.
+func needsEpoch(verbName string, coordinator bool) bool {
+	return epochVerbs[verbName] && !(verbName == "merge" && coordinator)
+}
+
 // runStep runs a step and reports it: exit 0 when everything named moved, 1
 // when a card was refused or the step was cut, 2 when the store did not
 // confirm.
-// reportVerbs are the outside actors' reports: each names the epoch it was
-// handed its cards at (--epoch, from queue), so a worker, reader or merger
-// from before a clear never reports on the new epoch's card of the same name.
-var reportVerbs = map[string]bool{"finish": true, "read": true, "merge": true, "ci": true, "take by id": true}
-
 func (a *app) runStep(verbName string, c common, st *store.Store, step store.Step, stdout, stderr io.Writer) int {
 	ctx := context.Background()
-	if reportVerbs[verbName] && c.epoch < 0 {
-		now := "the sprint's epoch"
-		if es, err := st.EpochNow(ctx); err == nil {
-			now = fmt.Sprintf("the sprint's epoch is %d", es.N)
+	if epochVerbs[verbName] && c.epoch < 0 {
+		coordinator := false
+		if verbName == "merge" {
+			if name, err := st.B.Coordinator(ctx); err == nil {
+				coordinator = name != "" && name == c.actor
+			}
 		}
-		name := strings.TrimSuffix(verbName, " by id")
-		return refuse(stderr, name, fmt.Sprintf("a report names the epoch its cards were handed at: --epoch <n> (queue and card print it); %s; nothing was changed", now))
+		if needsEpoch(verbName, coordinator) {
+			now := "the sprint's epoch"
+			if es, err := st.EpochNow(ctx); err == nil {
+				now = fmt.Sprintf("the sprint's epoch is %d", es.N)
+			}
+			name := strings.TrimSuffix(verbName, " by id")
+			return refuse(stderr, name, fmt.Sprintf("a report names the epoch its cards were handed at: --epoch <n> (queue and card print it); %s; nothing was changed", now))
+		}
 	}
 	step.CallerOp = c.op
 	if c.epoch >= 0 {
@@ -652,6 +674,7 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	count := fs.Int("count", 0, "admit n primaries with generated ids <stream>-<n>")
 	needs := fs.String("needs", "", "primaries that must land first, comma separated; each is a primary on the table")
 	brief := fs.String("brief", "", "the brief")
+	briefFile := fs.String("brief-file", "", "the brief, read from this file: its bytes as they are, its one trailing newline cut (a brief of many paragraphs); not with --brief")
 	score := fs.String("score", "", "the first primary's score; the rest follow it (default: after every primary)")
 	sentinel := fs.String("sentinel", "", "admit a sentinel with this id: a stop the coordinator releases; what sorts after it waits for it")
 	before := fs.String("before", "", "place the cards in line in front of this primary of the stream")
@@ -661,6 +684,16 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 	ids, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "add", err.Error())
+	}
+	if *briefFile != "" {
+		if *brief != "" {
+			return refuse(stderr, "add", "--brief and --brief-file are two ways to give the brief: give one")
+		}
+		text, err := readGoalText(*briefFile)
+		if err != nil {
+			return refuse(stderr, "add", "--brief-file: "+err.Error())
+		}
+		*brief = strings.TrimSuffix(text, "\n")
 	}
 	if *sentinel != "" {
 		if len(ids) > 0 || *count != 0 {
