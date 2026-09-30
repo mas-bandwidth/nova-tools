@@ -44,14 +44,15 @@ func tableRows(res TickResult, table string) []string {
 func TestEveryMemberWhoseBeatLapsedGoesDownInOneTick(t *testing.T) {
 	t.Parallel()
 	h, ms := fleetOf(t, 4, 8)
-	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 32}))
+	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 28}))
 	h.startMachine()
 	h.machine()
-	if d := h.dealtTo(); d["m1"] != 8 || d["m2"] != 8 || d["m3"] != 8 || d["m4"] != 8 {
-		t.Fatalf("dealt %v, want eight each", d)
+	if d := h.dealtTo(); d["m1"] != 7 || d["m2"] != 7 || d["m3"] != 7 || d["m4"] != 7 {
+		t.Fatalf("dealt %v, want seven each", d)
 	}
-	// m1 and m2 fall silent together; m3 and m4 have room for none of their
-	// cards but take them all, past their width, as a down's cards go
+	// m1 and m2 fall silent together; m3 and m4 have room for one card each:
+	// those two cards go to them, the other twelve are withdrawn for the next
+	// deal, and no member is past its width (the owner's rule is width)
 	h.setLive("m3", "m4")
 	h.tick(sprint.BeatDeadline + time.Second)
 	res := h.machine()
@@ -64,8 +65,15 @@ func TestEveryMemberWhoseBeatLapsedGoesDownInOneTick(t *testing.T) {
 			t.Fatalf("%s's down notes: %q", m, n)
 		}
 	}
-	if d := h.dealtTo(); d["m1"] != 0 || d["m2"] != 0 || d["m3"]+d["m4"] != 32 || d["m3"]-d["m4"] > 1 || d["m4"]-d["m3"] > 1 {
-		t.Fatalf("after one tick: dealt %v, want every card of m1 and m2 on m3 and m4, evenly", d)
+	d := h.dealtTo()
+	if d["m1"] != 0 || d["m2"] != 0 || d["m3"] != 8 || d["m4"] != 8 {
+		t.Fatalf("after one tick: dealt %v, want m3 and m4 at their width of 8 and nothing on m1 and m2", d)
+	}
+	if n := len(s.Fleet.Column(sprint.Withdrawn)); n != 12 {
+		t.Fatalf("%d cards withdrawn, want 12", n)
+	}
+	if n := len(s.Work.Column(sprint.Ready)); n != 12 {
+		t.Fatalf("%d primaries ready again, want the 12 withdrawn cards' primaries", n)
 	}
 	if got := tableRows(res, sprint.Fleet); !slices.Equal(got, ms) {
 		t.Fatalf("the tick names the fleet rows %v, want every member's", got)
