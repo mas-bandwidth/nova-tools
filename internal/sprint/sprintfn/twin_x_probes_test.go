@@ -19,8 +19,8 @@ import (
 // of the request before any phase runs, as the store refuses them in S.open;
 // REVISION is refused by the plan, after X.pre has passed. The probes that need a
 // key of the wrong type (P2a to P2c) exist only in a store: Mem has no such state to
-// be refused, and X's own keys of the wrong type are refused after the plan, which
-// the twin cannot do without Layer 1's two-phase plan (S15).
+// be refused. X's own keys of the wrong type are refused after the plan, leaving the
+// image equal, in TestXRefusalAfterPlanLeavesNothing (S15).
 func TestXProbesOnEveryPart(t *testing.T) {
 	t.Parallel()
 	// writing is a step X writes for, added to each probe's own entries: a card

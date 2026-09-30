@@ -2,6 +2,7 @@ package sprintfn
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 	"testing"
@@ -906,9 +907,69 @@ func TestXStepChunkMeasured(t *testing.T) {
 }
 
 // TestXRefusalAfterPlanLeavesNothing: a refusal of X's own commands in prepare (a
-// sprint key of another type where X writes an index, the commands past a bound)
-// leaves the whole image equal. On the twin it needs Layer 1's two-phase plan.
+// sprint key of another type where X writes an index, the commands past the shared
+// bound of argv bytes) leaves the whole image equal, the Mem's state, the sprint's
+// keys and the log, as the store's plan-then-commit leaves it: X's commands are
+// checked by prepare after Layer 1 has planned and before it writes (Mem.Plan, then
+// Mem.Commit, S15), the agenda's key is still there, the twin still stands for the
+// store, and the same step with nothing refusing applies (errata E6, E7.1).
 func TestXRefusalAfterPlanLeavesNothing(t *testing.T) {
 	t.Parallel()
-	skipUntilS15(t)
+	refusedAt := func(t *testing.T, h *xh, req *Request, code string) {
+		t.Helper()
+		before := h.img()
+		res, err := Step(context.Background(), h.tw, req)
+		if err != nil || res.Err != nil || res.Refusal == nil || res.Refusal.Code != code || res.Refusal.Phase != PhasePrepare {
+			t.Fatalf("result %+v, err %v; want %s from %s", res, err, code, PhasePrepare)
+		}
+		if h.img() != before {
+			t.Fatalf("a %s refusal of prepare changed the twin", code)
+		}
+		if _, ok := h.zset("agenda@0")["deal"]; !ok {
+			t.Fatal("the agenda's deal key was removed by a refused step")
+		}
+	}
+
+	t.Run("a sprint key of another type where X writes an index", func(t *testing.T) {
+		t.Parallel()
+		h := newXHarness(t)
+		h.fixture()
+		h.write(xLease("1"), Command("ZADD", xp+"agenda@0", kindZSet, "5", "deal"), Command("SET", xp+"again:s1@0", kindString, "x"))
+		// p3 is dealt before: it leaves fresh and enters again, which is a string
+		again := xVerb("take", xMove(sprint.Work, "s1:ready", "s1:ready", "p3", map[string]string{"attempt": "1"}))
+		again.Body.Entries[0].To = ""
+		again.Body.Done = []string{"deal"}
+		refusedAt(t, h, again, CodeWrongType)
+		if len(h.last) == 0 {
+			t.Fatal("X wrote no commands for the step: the refusal is not from X's own commands")
+		}
+		h.applies("a move that touches no key of another type", func() *Request {
+			r := xVerb("rank", xMoveWaitingReady("p1"))
+			r.Body.Done = []string{"deal"}
+			return r
+		}())
+		if _, ok := h.zset("fresh:s1@0")["p1"]; !ok {
+			t.Fatalf("the step after the refusal did not apply: %v", h.zset("fresh:s1@0"))
+		}
+	})
+
+	t.Run("commands past the shared bound of argv bytes", func(t *testing.T) {
+		t.Parallel()
+		h := newXHarness(t)
+		h.fixture()
+		h.write(xLease("1"), Command("ZADD", xp+"agenda@0", kindZSet, "5", "deal"))
+		// 9,000 quarantined ids of 250 bytes fit the request (under 4 MiB), and X's ZREMs of
+		// them from elig, fresh, again and askwait are 9 MB of argv with the marks': over 8 MiB
+		q := xTick(1)
+		q.Sprint = &SprintPart{}
+		long := strings.Repeat("c", 244)
+		for i := 0; i < 9000; i++ {
+			q.Body.Quarantine = append(q.Body.Quarantine, Quarantined{ID: fmt.Sprintf("%s%06d", long, i), Stream: "s1", Code: "DRIFT", Rule: "resolve"})
+		}
+		refusedAt(t, h, q, CodeLimit)
+		if len(h.last) == 0 {
+			t.Fatal("X wrote no commands for the step: the refusal is not from X's own commands")
+		}
+		h.applies("a step that fits", xVerb("rank", xMoveWaitingReady("p1")))
+	})
 }
