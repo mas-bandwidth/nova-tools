@@ -357,18 +357,32 @@ func cmdQuickstart(args []string, stdout, stderr io.Writer) int {
 	// uncapped it answered with 1,400 lines for two lines of verdict. A first run should
 	// cost about forty.
 	max := fmt.Sprintf("%d", *failMax)
-	fmt.Fprintf(stdout, "QUICKSTART OK dir=%s checks=2: links, then nocode\n", oneline.Field(*dir))
+	fmt.Fprintf(stdout, "QUICKSTART RUN dir=%s checks=2: links, then nocode\n", oneline.Field(*dir))
 	linksCode := cmdLinks(append([]string{"--dir", *dir, "--fail-max", max}, excludeFlags(exclude)...), stdout, stderr)
 	nocodeCode := cmdNoCode([]string{"--dir", *dir, "--fail-max", max}, stdout, stderr)
 	worst := 0
-	for _, code := range []int{linksCode, nocodeCode} {
-		if code > worst {
-			worst = code
+	var failed []string
+	for _, c := range []struct {
+		name string
+		code int
+	}{{"links", linksCode}, {"nocode", nocodeCode}} {
+		if c.code > worst {
+			worst = c.code
+		}
+		if c.code != 0 {
+			failed = append(failed, c.name)
 		}
 	}
 	// The closing line is printed on every outcome, because the verb a first
-	// run needs NEXT does not depend on whether this one was green.
-	fmt.Fprintf(stdout, "QUICKSTART OK done=2 worst-exit=%d next=kernel,attest,floors,corpus (each wants a budget, a manifest or a ledger of yours: nova-check help)\n", worst)
+	// run needs NEXT does not depend on whether this one was green. THE OK WORD
+	// IS A CLAIM THAT BOTH CHECKS PASSED, so it is printed only then: a run with
+	// a failed check closes with FAIL and the names of the checks that failed
+	// (a cold rating of the tools, 2026-09-30: `QUICKSTART OK` over two failures).
+	if len(failed) == 0 {
+		fmt.Fprintf(stdout, "QUICKSTART OK done=2 worst-exit=%d next=kernel,attest,floors,corpus (each wants a budget, a manifest or a ledger of yours: nova-check help)\n", worst)
+	} else {
+		fmt.Fprintf(stdout, "QUICKSTART FAIL checks=2 failed=%s worst-exit=%d next=kernel,attest,floors,corpus (each wants a budget, a manifest or a ledger of yours: nova-check help)\n", oneline.Field(strings.Join(failed, ",")), worst)
+	}
 	return worst
 }
 

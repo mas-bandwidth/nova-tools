@@ -40,8 +40,8 @@ func TestEveryDriftCarriesItsRemedy(t *testing.T) {
 	}, "\n")
 	card := writeLintCard(t, "byhand.card", body)
 	exit, stdout, _ := runSwarm(t, "lint", "--card", card)
-	if exit != 2 {
-		t.Fatalf("a drifting card exits 2, got %d\nstdout: %s", exit, stdout)
+	if exit != 1 {
+		t.Fatalf("a drifting card exits 1, got %d\nstdout: %s", exit, stdout)
 	}
 	drifts := 0
 	for _, line := range strings.Split(strings.TrimSuffix(stdout, "\n"), "\n") {

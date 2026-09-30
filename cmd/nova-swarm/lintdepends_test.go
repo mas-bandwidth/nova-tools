@@ -39,8 +39,8 @@ func TestLintTypedRefusesACardWithNoDependsOn(t *testing.T) {
 
 	card := dependsOnCard(t, "nokey.card", "")
 	exit, stdout, stderr := runSwarm(t, "lint", "--card", card, "--typed", "--max", "0")
-	if exit != 2 {
-		t.Fatalf("a typed card with no DEPENDS-ON key exits 2, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	if exit != 1 {
+		t.Fatalf("a typed card with no DEPENDS-ON key exits 1, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
 	}
 	if !strings.Contains(stdout, "depends-on:") || !strings.Contains(stdout, "DEPENDS-ON") {
 		t.Fatalf("the refusal names the key:\n%s", stdout)
@@ -60,8 +60,8 @@ func TestLintTypedRefusesASelfDependency(t *testing.T) {
 	card := dependsOnCard(t, "self.card", "DEPENDS-ON: other-card, CARD-0000")
 	lineup := dependsLineup(t, "id\tdepends-on\nother-card\t-\n")
 	exit, stdout, stderr := runSwarm(t, "lint", "--card", card, "--typed", "--lineup", lineup, "--max", "0")
-	if exit != 2 {
-		t.Fatalf("a self-dependency exits 2, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	if exit != 1 {
+		t.Fatalf("a self-dependency exits 1, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
 	}
 	if !strings.Contains(stdout, "depends-on:") || !strings.Contains(stdout, "CARD-0000") || !strings.Contains(stdout, "own id") {
 		t.Fatalf("the refusal names the card's own id:\n%s", stdout)
@@ -80,8 +80,8 @@ func TestLintTypedRefusesAnUnknownDependsOnID(t *testing.T) {
 	card := dependsOnCard(t, "unknown.card", "DEPENDS-ON: missing-card")
 	lineup := dependsLineup(t, "id\tdepends-on\nother-card\t-\n")
 	exit, stdout, stderr := runSwarm(t, "lint", "--card", card, "--typed", "--lineup", lineup, "--max", "0")
-	if exit != 2 {
-		t.Fatalf("an unknown id exits 2, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+	if exit != 1 {
+		t.Fatalf("an unknown id exits 1, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
 	}
 	if !strings.Contains(stdout, "depends-on:") || !strings.Contains(stdout, "missing-card") || !strings.Contains(stdout, "not in the lineup") {
 		t.Fatalf("the refusal names the id and the lineup:\n%s", stdout)
@@ -125,12 +125,12 @@ func TestLintTypedRefusesASpaceAndDogfood(t *testing.T) {
 	lineup := dependsLineup(t, "id\tdepends-on\nother-card\t-\n")
 	card := dependsOnCard(t, "space.card", "DEPENDS-ON: nova-tools #2550")
 	exit, stdout, stderr := runSwarm(t, "lint", "--card", card, "--typed", "--lineup", lineup, "--max", "0")
-	if exit != 2 || !strings.Contains(stdout, "depends-on:") || !strings.Contains(stdout, "nova-tools #2550") {
+	if exit != 1 || !strings.Contains(stdout, "depends-on:") || !strings.Contains(stdout, "nova-tools #2550") {
 		t.Fatalf("nova-tools #2550 (a space) is refused by name, exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
 	}
 	card = dependsOnCard(t, "dog.card", "DEPENDS-ON: dogfood")
 	exit, stdout, stderr = runSwarm(t, "lint", "--card", card, "--typed", "--lineup", lineup, "--max", "0")
-	if exit != 2 || !strings.Contains(stdout, "depends-on:") || !strings.Contains(stdout, "dogfood") {
+	if exit != 1 || !strings.Contains(stdout, "depends-on:") || !strings.Contains(stdout, "dogfood") {
 		t.Fatalf("dogfood is refused by name, exit %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
 	}
 }

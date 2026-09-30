@@ -36,7 +36,7 @@ type options struct {
 	max                                                                     int
 	timeout, budget                                                         time.Duration
 	kinds                                                                   kindFlags
-	draft, send                                                             bool
+	draft, send, dryRun                                                     bool
 }
 type kindFlags []string
 
@@ -68,7 +68,8 @@ func refusal(w io.Writer, token string, err error) int {
 // VERSION's own block, byte for byte, which the spec carried before the verb
 // existed (#2288).
 const updateVerbs = `nova-update check --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
-nova-update apply --file <path> <name> [--version <v>] [--timeout <d>]
+nova-update status --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
+nova-update apply --file <path> <name> [--version <v>] [--dry-run] [--timeout <d>]
 nova-update report --file <path> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to <who,who> | --send --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
 nova-update report --store <host:port> [--timeout <d>]
 nova-update watch --adopt <checks.tsv> [--bus <path> --remote <r> --branch <b> --as <friend> --to <who,who>] [--host <label>] [--timeout <d>] [--budget <d>]
@@ -137,12 +138,20 @@ func help(name string, w io.Writer) {
 	fmt.Fprintf(w, "%s version (or --version)\nDefaults: --max 20 (0 = all), --timeout 5s, --budget 60s; snapshot's --timeout is 30s, because the first run of a newly installed binary is assessed by the platform and that cost is charged to the deadline. Repeat --kind to select kinds.\n", name)
 	note := "Report needs no bus or network. "
 	if name != "nova-version" {
-		note += "Updates require an explicit apply name. "
+		note += "Updates require an explicit apply name. status is check with every entry shown, current ones too. apply --dry-run prints the plan and writes nothing. "
 	}
 	note += "Cross-process delivery recovery needs --snapshot; without it, each send is a new intention. Do not prepare again while pending; retry the saved artifact. A snapshot uses a sibling .lock file for a kernel lock; its presence never means a process is running."
 	fmt.Fprintln(w, note)
 	fmt.Fprintf(w, "\nLocals: latest=local:<path> runs that binary (or argv) on this host to read the version; e.g., local:/usr/local/bin/nova-update or local:go version. The installed column can be a version string (v1.2.3), a single command name found on PATH, or a full argv.\n")
-	fmt.Fprintf(w, "\nexit codes: 0 every entry current, an apply that left the box on the target, a report whose every entry answered; 1 the tool said NO (anything STALE, NEWER, DIFFERENT or UNKNOWN, an apply whose after is not the target, a report with an UNKNOWN or a send that was refused or unconfirmed); 2 could not run (a refusal naming the remedy).\n\nFrom a nova-tools checkout:\nexample:\n  %s report --file cmd/%s/testdata/example.tsv\n  %s version\n", name, name, name)
+	applyDry := ""
+	if name == "nova-update" {
+		applyDry = " (or an apply --dry-run that printed its plan)"
+	}
+	fmt.Fprintf(w, "\nexit codes: 0 every entry current, an apply that left the box on the target"+applyDry+", a report whose every entry answered; 1 the tool said NO (anything STALE, NEWER, DIFFERENT or UNKNOWN, an apply whose after is not the target, a report with an UNKNOWN or a send that was refused or unconfirmed); 2 could not run (a refusal naming the remedy).\n\nFrom a nova-tools checkout:\nexample:\n  %s report --file cmd/%s/testdata/example.tsv\n", name, name)
+	if name == "nova-update" {
+		fmt.Fprintf(w, "  %s status --file cmd/%s/testdata/example.tsv\n  %s apply --file cmd/%s/testdata/dry-run.tsv go --dry-run\n", name, name, name, name)
+	}
+	fmt.Fprintf(w, "  %s version\n", name)
 }
 func interspersed(f *flag.FlagSet, args []string) []string {
 	var flags, positionals []string
@@ -259,7 +268,7 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 		}
 		return adoptionVerb(name, args, stamp, out, errs)
 	}
-	if (name == "nova-version" && verb != "report") || (verb != "report" && verb != "check" && verb != "apply" && verb != "watch") {
+	if (name == "nova-version" && verb != "report") || (verb != "report" && verb != "check" && verb != "status" && verb != "apply" && verb != "watch") {
 		return refusal(errs, tool, fmt.Errorf("unknown verb (run %s help)", name))
 	}
 	if verb == "watch" {
@@ -269,6 +278,13 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 	if verb == "check" {
 		token = "UPDATE"
 	}
+	// status is check's read with every entry's line shown, current ones included
+	// (SPEC-UPDATE rule 9): the same reads, the same exit, its own first token so a
+	// caller scanning for UPDATE never mistakes one for the other.
+	pfx := "UPDATE"
+	if verb == "status" {
+		pfx = "STATUS"
+	}
 	o := options{max: 20, timeout: 5 * time.Second, budget: 60 * time.Second}
 	f := flag.NewFlagSet(asked, flag.ContinueOnError)
 	f.SetOutput(io.Discard)
@@ -276,6 +292,7 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 	f.DurationVar(&o.timeout, "timeout", o.timeout, "one read deadline")
 	if verb == "apply" {
 		f.StringVar(&o.target, "version", "", "target")
+		f.BoolVar(&o.dryRun, "dry-run", false, "prints the plan and writes nothing")
 	} else {
 		f.DurationVar(&o.budget, "budget", o.budget, "whole run deadline")
 		f.IntVar(&o.max, "max", 20, "per-kind output cap")
@@ -392,18 +409,18 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 	if verb == "report" {
 		return report(ctx, entries, selected, o, strings.Join(kinds, ","), started, out, errs, env)
 	}
-	fmt.Fprintf(out, "UPDATE at=%s file=%s entries=%d kinds=%s timeout=%s budget=%s max=%d\n", field(started.UTC().Format(time.RFC3339)), field(o.file), len(entries), field(strings.Join(kinds, ",")), o.timeout, o.budget, o.max)
+	fmt.Fprintf(out, pfx+" at=%s file=%s entries=%d kinds=%s timeout=%s budget=%s max=%d\n", field(started.UTC().Format(time.RFC3339)), field(o.file), len(entries), field(strings.Join(kinds, ",")), o.timeout, o.budget, o.max)
 	results := readEntries(ctx, selected, o, env, false)
 	counts := map[string]int{}
 	pins := 0
-	group := bounded.Grouped(out, o.max, "UPDATE", "use --max 0 to show all")
+	group := bounded.Grouped(out, o.max, pfx, "use --max 0 to show all")
 	for _, r := range results {
 		status, ahead := verdict(r)
 		counts[status]++
 		if r.Entry.Kind == "pin" && status == "DIFFERENT" {
 			pins++
 		}
-		if status == "EQUAL" {
+		if status == "EQUAL" && verb != "status" {
 			continue
 		}
 		if status == "UNKNOWN" {
@@ -411,11 +428,11 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 			if x.Known() {
 				x = r.Latest
 			}
-			group.Line("unknown", fmt.Sprintf("UPDATE UNKNOWN name=%s kind=%s installed=%s path=%s source=%s: %s (%s)", field(r.Entry.Name), field(r.Entry.Kind), field(r.Installed.Version), field(r.Installed.Path), field(r.Latest.Source), oneline.Escape(x.Reason), oneline.Escape(x.Remedy)))
+			group.Line("unknown", fmt.Sprintf(pfx+" UNKNOWN name=%s kind=%s installed=%s path=%s source=%s: %s (%s)", field(r.Entry.Name), field(r.Entry.Kind), field(r.Installed.Version), field(r.Installed.Path), field(r.Latest.Source), oneline.Escape(x.Reason), oneline.Escape(x.Remedy)))
 		} else if status == "AHEAD" {
-			group.Line("ahead", fmt.Sprintf("UPDATE AHEAD name=%s kind=%s installed=%s latest=%s ahead=%s path=%s source=%s owner=%s", field(r.Entry.Name), field(r.Entry.Kind), field(r.Installed.Version), field(r.Latest.Version), field(ahead), field(r.Installed.Path), field(r.Latest.Source), field(r.Entry.Owner)))
+			group.Line("ahead", fmt.Sprintf(pfx+" AHEAD name=%s kind=%s installed=%s latest=%s ahead=%s path=%s source=%s owner=%s", field(r.Entry.Name), field(r.Entry.Kind), field(r.Installed.Version), field(r.Latest.Version), field(ahead), field(r.Installed.Path), field(r.Latest.Source), field(r.Entry.Owner)))
 		} else {
-			group.Line(strings.ToLower(status), fmt.Sprintf("UPDATE %s name=%s kind=%s installed=%s latest=%s path=%s source=%s owner=%s", status, field(r.Entry.Name), field(r.Entry.Kind), field(r.Installed.Version), field(r.Latest.Version), field(r.Installed.Path), field(r.Latest.Source), field(r.Entry.Owner)))
+			group.Line(strings.ToLower(status), fmt.Sprintf(pfx+" %s name=%s kind=%s installed=%s latest=%s path=%s source=%s owner=%s", status, field(r.Entry.Name), field(r.Entry.Kind), field(r.Installed.Version), field(r.Latest.Version), field(r.Installed.Path), field(r.Latest.Source), field(r.Entry.Owner)))
 		}
 	}
 	group.More()
@@ -427,7 +444,7 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 		result = "FAIL"
 		w = errs
 	}
-	fmt.Fprintf(w, "UPDATE %s checked=%d current=%d stale=%d newer=%d ahead=%d differ=%d unknown=%d pins=%d took=%s file=%s\n", result, len(selected), counts["EQUAL"], counts["STALE"], counts["NEWER"], counts["AHEAD"], counts["DIFFERENT"], counts["UNKNOWN"], pins, time.Since(started).Round(time.Millisecond), field(o.file))
+	fmt.Fprintf(w, pfx+" %s checked=%d current=%d stale=%d newer=%d ahead=%d differ=%d unknown=%d pins=%d took=%s file=%s\n", result, len(selected), counts["EQUAL"], counts["STALE"], counts["NEWER"], counts["AHEAD"], counts["DIFFERENT"], counts["UNKNOWN"], pins, time.Since(started).Round(time.Millisecond), field(o.file))
 	return code
 }
 func contains(xs []string, s string) bool {
@@ -543,11 +560,17 @@ func apply(entries []Entry, name string, o options, out, errs io.Writer, env Env
 		}
 	}
 	before := Installed(context.Background(), *e, o.timeout, false)
-	fmt.Fprintf(out, "APPLY BEFORE name=%s kind=%s installed=%s path=%s latest=%s source=%s\n", field(name), field(e.Kind), field(before.Version), field(before.Path), field(target), field(e.Latest))
 	args := append([]string(nil), e.Apply...)
 	for i := range args {
 		args[i] = strings.ReplaceAll(args[i], "{version}", target)
 	}
+	// --dry-run is the plan this function is about to take, printed and not taken
+	// (SPEC-UPDATE rule 13): every refusal above has passed, the target and the argv
+	// are the ones below, and no process starts.
+	if o.dryRun {
+		return applyDryRun(*e, before, target, args, out)
+	}
+	fmt.Fprintf(out, "APPLY BEFORE name=%s kind=%s installed=%s path=%s latest=%s source=%s\n", field(name), field(e.Kind), field(before.Version), field(before.Path), field(target), field(e.Latest))
 	fmt.Fprintf(out, "APPLY RUN name=%s argv=%d version=%s: %s\n", field(name), len(args), field(target), oneline.Escape(strings.Join(args, " ")))
 	ctx, cancel := context.WithTimeout(context.Background(), o.timeout)
 	p := process(ctx, args, nil, ChildCap)
@@ -566,6 +589,25 @@ func apply(entries []Entry, name string, o options, out, errs io.Writer, env Env
 		return 1
 	}
 	fmt.Fprintf(out, "APPLY OK name=%s from=%s to=%s took=%s\n", field(name), field(before.Version), field(after.Version), time.Since(started).Round(time.Millisecond))
+	return 0
+}
+
+// applyDryRun prints what `apply` would do to one entry and does none of it: the
+// entry's line as `status` prints it (installed against the target the real run would
+// install), what would be installed and from where, and the argv the real run's APPLY
+// RUN line carries. No process starts and nothing is written; it exits 0, the plan
+// having been made (SPEC-UPDATE rule 13, `--dry-run`).
+func applyDryRun(e Entry, before Read, target string, argv []string, out io.Writer) int {
+	r := entryRead{Entry: e, Installed: before, Latest: Read{Version: target, Source: e.Latest}}
+	state, _ := verdict(r)
+	if before.Known() {
+		fmt.Fprintf(out, "STATUS %s name=%s kind=%s installed=%s latest=%s path=%s source=%s owner=%s\n", state, field(e.Name), field(e.Kind), field(before.Version), field(target), field(before.Path), field(e.Latest), field(e.Owner))
+	} else {
+		fmt.Fprintf(out, "STATUS UNKNOWN name=%s kind=%s installed=- path=%s source=%s: %s (%s)\n", field(e.Name), field(e.Kind), field(before.Path), field(e.Latest), oneline.Escape(before.Reason), oneline.Escape(before.Remedy))
+	}
+	fmt.Fprintf(out, "APPLY DRY-RUN would install %s %s from %s\n", field(e.Name), field(target), field(e.Latest))
+	fmt.Fprintf(out, "APPLY DRY-RUN would run argv=%d version=%s: %s\n", len(argv), field(target), oneline.Escape(strings.Join(argv, " ")))
+	fmt.Fprintf(out, "APPLY DRY-RUN OK name=%s nothing installed, nothing written\n", field(e.Name))
 	return 0
 }
 
