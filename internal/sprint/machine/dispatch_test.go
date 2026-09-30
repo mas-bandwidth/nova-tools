@@ -27,7 +27,7 @@ func TestDispatchByRulePriorityAndOrder(t *testing.T) {
 	keys := []sprint.AgendaKey{{Key: "deal", Seq: 9}, {Key: "resolve:s2", Seq: 3}, {Key: "resolve:s1", Seq: 3},
 		{Key: "resolve:s3", Seq: 1}, {Key: "seen:m1", Seq: 20}, {Key: "resolve:s4", Seq: 2}, {Key: "ask:p1", Seq: 1},
 		{Key: "resolve:s9", Seq: 4}, {Key: "deal", Seq: 9}}
-	got := dispatch(rules, keys, map[string]bool{"resolve:s4": true}, map[string]int{"resolve:s9": 1}, DefaultBudget())
+	got := dispatch(rules, keys, map[string]bool{"resolve:s4": true}, map[string]int{"resolve:s9": 1}, DefaultBudget(), sprint.TickShape{})
 	var lines []string
 	for _, b := range got {
 		lines = append(lines, b.Rule+"/"+strings.Join(keysOf(b.Keys), ",")+"/"+strings.Join(keysOf(b.Rest), ",")+"/"+string(rune('0'+b.Halvings)))

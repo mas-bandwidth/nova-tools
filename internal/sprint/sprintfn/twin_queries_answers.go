@@ -596,10 +596,14 @@ func DecodeResult(kind string, raw json.RawMessage) (QueryResult, error) {
 		out = &ParkedResult{}
 	case KeyMissing:
 		out = &MissingResult{}
+	case KeyBeat:
+		out = &BeatResult{}
 	case KeyJOpen:
 		out = &JOpenResult{}
 	case KeyDueCount:
 		out = &DueCountResult{}
+	case KeyNext:
+		out = &NextResult{}
 	default:
 		return nil, fmt.Errorf("sprintfn: %q is not a sprint query kind", kind)
 	}
@@ -642,11 +646,15 @@ func deref(r QueryResult) QueryResult {
 		return *v
 	case *ParkedResult:
 		return *v
+	case *BeatResult:
+		return *v
 	case *MissingResult:
 		return *v
 	case *JOpenResult:
 		return *v
 	case *DueCountResult:
+		return *v
+	case *NextResult:
 		return *v
 	}
 	return r
@@ -722,6 +730,17 @@ type MissingResult struct {
 	Scores []*string `json:"scores"`
 }
 
+// BeatResult is the score of beat:<m> in {p}due@e of each member asked, aligned
+// with the members (nil for a member with no entry): the member's beat is fresh
+// while its score lies above R (1.4.4).
+type BeatResult struct {
+	Kind   string    `json:"kind"`
+	Scores []*string `json:"scores"`
+}
+
+// beatDuePrefix begins a member's beat entry in the due set (1.2, beat:<member>).
+const beatDuePrefix = "beat:"
+
 // JOpenItem is one subject's jopen: the number of fields the hash holds and
 // the value of each name asked (nil for one it does not hold).
 type JOpenItem struct {
@@ -766,6 +785,9 @@ func (r ParkedResult) ResultKind() string { return r.Kind }
 func (r MissingResult) ResultKind() string { return r.Kind }
 
 // ResultKind is the kind of the query that returned the answer.
+func (r BeatResult) ResultKind() string { return r.Kind }
+
+// ResultKind is the kind of the query that returned the answer.
 func (r JOpenResult) ResultKind() string { return r.Kind }
 
 // ResultKind is the kind of the query that returned the answer.
@@ -798,6 +820,9 @@ func (r ParkedResult) Project(sprint.SprintQ) sprint.Answer { return sprint.Answ
 // Project is the empty answer of the kind: a sprint-key read has no field in
 // sprint.Answer.
 func (r MissingResult) Project(sprint.SprintQ) sprint.Answer { return sprint.Answer{Kind: r.Kind} }
+
+// Project is the empty answer of the kind: a sprint-key read loads no record.
+func (r BeatResult) Project(sprint.SprintQ) sprint.Answer { return sprint.Answer{Kind: r.Kind} }
 
 // Project is the empty answer of the kind: a sprint-key read has no field in
 // sprint.Answer.

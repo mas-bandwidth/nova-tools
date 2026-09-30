@@ -80,6 +80,36 @@ func Coordinator(ctx context.Context, rows ConfigRows) (string, error) {
 type InitReq struct {
 	Op     string
 	Config ConfigRows
+	// Coordinator is the name the command gives (init --coordinator <name>,
+	// else its actor). With Config nil it is the coordinator; with Config
+	// set, nova-config's is, and a name that is not it is refused.
+	Coordinator string
+}
+
+// coordinatorOf is the coordinator an init names: nova-config's when the
+// request carries it (and the given name, when there is one, must be it),
+// else the given name.
+func coordinatorOf(ctx context.Context, verb string, req InitReq) (string, error) {
+	if req.Config == nil {
+		if req.Coordinator == "" {
+			return "", refuseLocal(verb, sprintfn.CodeRequest, "names no coordinator: give --coordinator <name>, or nova-config's store (--pg)")
+		}
+		if !sprint.ValidID(req.Coordinator) {
+			return "", refuseLocal(verb, sprintfn.CodeRequest, "--coordinator %q is not a name (letters, digits, _ and -)", req.Coordinator)
+		}
+		return req.Coordinator, nil
+	}
+	who, err := Coordinator(ctx, req.Config)
+	if err != nil {
+		return "", refuseLocal(verb, sprintfn.CodeRequest, "%v", err)
+	}
+	if who == "" {
+		return "", refuseLocal(verb, sprintfn.CodeRequest, "nova-config's sprint row names no coordinator: set it first (nova-config sprint set --coordinator <friend>)")
+	}
+	if req.Coordinator != "" && req.Coordinator != who {
+		return "", refuseLocal(verb, sprintfn.CodeRequest, "nova-config names %s as the coordinator, and --coordinator names %s", who, req.Coordinator)
+	}
+	return who, nil
 }
 
 // clockRead is a read of the clock alone (1.2).
@@ -96,12 +126,9 @@ func clockRead(epoch tset.Decimal) *sprintfn.ReadRequest {
 // the coordinator.
 func Init(ctx context.Context, e *Env, req InitReq) (Result, error) {
 	const verb = "init"
-	who, err := Coordinator(ctx, req.Config)
+	who, err := coordinatorOf(ctx, verb, req)
 	if err != nil {
-		return Result{Verb: verb}, refuseLocal(verb, sprintfn.CodeRequest, "%v", err)
-	}
-	if who == "" {
-		return Result{Verb: verb}, refuseLocal(verb, sprintfn.CodeRequest, "nova-config's sprint row names no coordinator: set it first (nova-config sprint set --coordinator <friend>)")
+		return Result{Verb: verb}, err
 	}
 	res, err := e.Do(ctx, Planned{Verb: verb, Op: req.Op, Args: map[string]any{"coordinator": who},
 		Read: clockRead,
@@ -128,12 +155,9 @@ func Init(ctx context.Context, e *Env, req InitReq) (Result, error) {
 // store's copy on every coordinator's verb after it (NOTCOORD, 1.5.3).
 func InitCoordinator(ctx context.Context, e *Env, req InitReq) (Result, error) {
 	const verb = "init --coordinator"
-	who, err := Coordinator(ctx, req.Config)
+	who, err := coordinatorOf(ctx, verb, req)
 	if err != nil {
-		return Result{Verb: verb}, refuseLocal(verb, sprintfn.CodeRequest, "%v", err)
-	}
-	if who == "" {
-		return Result{Verb: verb}, refuseLocal(verb, sprintfn.CodeRequest, "nova-config's sprint row names no coordinator")
+		return Result{Verb: verb}, err
 	}
 	if e.Actor != who {
 		return Result{Verb: verb}, refuseLocal(verb, sprintfn.CodeNotCoord, "nova-config names %s as the coordinator, and %q is not %s", who, e.Actor, who)

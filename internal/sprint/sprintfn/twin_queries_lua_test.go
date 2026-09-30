@@ -895,12 +895,30 @@ func TestLuaQueriesOnStubbedHelpers(t *testing.T) {
 				{Kind: KeyDropping, Streams: []string{"s1", "s2"}}, {Kind: KeyDropping, Streams: []string{}},
 				{Kind: KeyParked, Keys: []string{"agenda-key-1", "x"}}, {Kind: KeyParked, Keys: []string{}},
 				{Kind: KeyMissing, IDs: []string{"ghost", "p1", "x"}}, {Kind: KeyMissing, IDs: []string{}},
+				{Kind: KeyBeat, IDs: []string{"m1", "ghost"}}, {Kind: KeyBeat, IDs: []string{}},
 				{Kind: KeyJOpen, Subjects: []string{"p1", "p2", "zzz"}, Names: []string{"blocked|c1", "stalled|c2"}},
 				{Kind: KeyJOpen, Subjects: []string{"p1"}, Names: []string{}}}
 			for i, q := range keys {
 				h.agree(fmt.Sprintf("%s key #%d %s", name, i, q.Kind), mustEncodeKey(t, q))
 			}
 		})
+	}
+}
+
+// TestLuaBeatReadsPresentEntries: the beat read (fleet up's, 1.4.4) answers a
+// member's beat:<m> score from the due set, null for a member with none, in the
+// Lua as in the twin, on entries that are present (a whole and a fractional
+// score), where TestLuaQueriesOnStubbedHelpers reads only absent ones.
+func TestLuaBeatReadsPresentEntries(t *testing.T) {
+	t.Parallel()
+	w := standard(t)
+	w.seed(w.zadd("due", "4242", "beat:m1", "5000.5", "beat:m3"))
+	h := newLuaHarness(t, w)
+	q := mustEncodeKey(t, KeyQ{Kind: KeyBeat, IDs: []string{"m1", "ghost", "m3"}})
+	h.agree("beat present", q)
+	got, ref := h.read(q)
+	if ref != nil || !strings.Contains(string(got), `"4242",null,"5000.5"`) {
+		t.Fatalf("the Lua's beat answer %s (refusal %v), want 4242, null, 5000.5", got, ref)
 	}
 }
 
@@ -1046,6 +1064,10 @@ func TestLuaValidateEqualsTwin(t *testing.T) {
 		{KeyParked, `{"kind":"parked","fields":[],"keys":["a\nb"]}`},
 		{KeyMissing, `{"kind":"missing","fields":[],"ids":["a"]}`},
 		{KeyMissing, `{"kind":"missing","fields":[]}`},
+		{KeyBeat, `{"kind":"beat","fields":[],"ids":["m1"]}`},
+		{KeyBeat, `{"kind":"beat","fields":[]}`},
+		{KeyBeat, `{"kind":"beat","fields":[],"ids":["m1","m1"]}`},
+		{KeyBeat, `{"kind":"beat","fields":[],"streams":["s1"]}`},
 		{KeyJOpen, `{"kind":"jopen","fields":[],"subjects":["a"]}`},
 		{KeyJOpen, `{"kind":"jopen","fields":[],"subjects":["a"],"names":["t|c"]}`},
 		{KeyClock, `{"kind":"clock","fields":[]}`},
@@ -1111,6 +1133,7 @@ func TestLuaDeclaresTheCostsTheGoDoes(t *testing.T) {
 		{Kind: KeyDropping, Streams: []string{}}, {Kind: KeyDropping, Streams: []string{"a", "b"}},
 		{Kind: KeyParked, Keys: []string{}}, {Kind: KeyParked, Keys: []string{"a"}},
 		{Kind: KeyMissing, IDs: []string{}}, {Kind: KeyMissing, IDs: []string{"a", "b", "c"}},
+		{Kind: KeyBeat, IDs: []string{}}, {Kind: KeyBeat, IDs: []string{"a", "b"}},
 		{Kind: KeyJOpen, Subjects: []string{"a", "b"}, Names: []string{}}, {Kind: KeyJOpen, Subjects: []string{"a", "b"}, Names: []string{"t|c"}}}
 	for _, q := range keys {
 		records, ranged, probes := h.declared(mustEncodeKey(t, q))
@@ -1207,7 +1230,7 @@ func TestLuaValidateEqualsTwinMutated(t *testing.T) {
 		bases = append(bases, rq.Enc)
 	}
 	for _, q := range []KeyQ{{Kind: KeyClock}, {Kind: KeyDropping, Streams: []string{"s1"}}, {Kind: KeyParked, Keys: []string{"a", "b"}},
-		{Kind: KeyMissing, IDs: []string{"a"}}, {Kind: KeyJOpen, Subjects: []string{"a"}, Names: []string{"t|c"}}, {Kind: KeyDueCount}} {
+		{Kind: KeyMissing, IDs: []string{"a"}}, {Kind: KeyBeat, IDs: []string{"a"}}, {Kind: KeyJOpen, Subjects: []string{"a"}, Names: []string{"t|c"}}, {Kind: KeyDueCount}} {
 		bases = append(bases, mustEncodeKey(t, q))
 	}
 	key := map[string]bool{}

@@ -475,6 +475,31 @@ do
     return stream, max
   end
 
+  -- set_guard_of is a set guard's own shape (sprintfn xSetGuardOf; IT19): the JSON
+  -- of a sprint.SetGuard of kind zguard over a stream's sent, elig, fresh or again,
+  -- its bounds in the store's grammar and at least one count bound, each at most
+  -- 2^53 - 1, and no other field. nil otherwise.
+  local function set_guard_of(key)
+    local ok, g = pcall(cjson.decode, key)
+    if not ok or type(g) ~= 'table' or g.kind ~= 'zguard' or type(g.key) ~= 'string' then return nil end
+    local idx, stream = string.match(g.key, '^(%a+):(.+)$')
+    if not (idx == 'sent' or idx == 'elig' or idx == 'fresh' or idx == 'again') then return nil end
+    if #stream > 128 or not string.match(stream, '^[%w_][%w_%-]*$') then return nil end
+    if type(g.min) ~= 'string' or type(g.max) ~= 'string' or not S().bound(g.min) or not S().bound(g.max) then return nil end
+    for k in pairs(g) do
+      if k ~= 'kind' and k ~= 'key' and k ~= 'min' and k ~= 'max' and k ~= 'atleast' and k ~= 'atmost' then return nil end
+    end
+    local lo, hi = g.atleast, g.atmost
+    if lo == cjson.null then lo = nil end
+    if hi == cjson.null then hi = nil end
+    if lo == nil and hi == nil then return nil end
+    for _, v in ipairs({lo or 0, hi or 0}) do
+      if type(v) ~= 'number' or v < 0 or v ~= math.floor(v) or v > 9007199254740991 then return nil end
+    end
+    if lo ~= nil and hi ~= nil and lo > hi then return nil end
+    return {key = g.key, min = g.min, max = g.max, atleast = lo, atmost = hi}
+  end
+
   local function check_shape(sp)
     local function bad(fmt, ...) return refuse('REQUEST', {}, fmt, ...) end
     for _, g in ipairs(tbl(sp.guards)) do
@@ -500,6 +525,8 @@ do
         if key == '' or string.find(key, '[%s@]') or score < 0 or score > VERSION_MAX then
           return bad('a version guard names %q, which is not a table, or a version that is not a whole number', key)
         end
+      elseif k == 'setguard' then
+        if set_guard_of(key) == nil then return bad('a set guard is not a zguard over a sprint index with bounds and a count: %q', key) end
       elseif k ~= 'coordinator' then
         return bad('%q is not a kind of guard', tostring(k))
       end
@@ -690,6 +717,11 @@ do
       if err then return err end
       local want = tonumber(g.score or 0) or 0
       if n ~= want then return fail('the version of table %s is %d now, read as %d', g.key, n, want) end
+    elseif k == 'setguard' then
+      -- Layer 1's S.zguard over the index (1.5.4, 2.3 R3): RANGECOUNT when the count moved.
+      local sg = set_guard_of(g.key)
+      local _, err = S().zguard(ctx, ekey(ctx, sg.key, e), {kind = 'rcount', min = sg.min, max = sg.max, atleast = sg.atleast, atmost = sg.atmost})
+      if err then return err end
     end
     return nil
   end
