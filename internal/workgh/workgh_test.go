@@ -185,3 +185,34 @@ func TestRefuseMutation(t *testing.T) {
 		t.Fatalf("GhQuery ran a mutation document: %v", err)
 	}
 }
+
+// TestANullSourceIsKeptAsNoSource: a cross-reference whose source GitHub
+// does not show this login is kept as a reference with no source (kind "",
+// number 0), and the tree file writes and reads it back.
+func TestANullSourceIsKeptAsNoSource(t *testing.T) {
+	t.Parallel()
+	page := strings.Replace(issuePage(1, 1, false, 1), `"timelineItems":`+emptyConn,
+		`"timelineItems":{"totalCount":1,"pageInfo":{"hasNextPage":false,"endCursor":"T1"},"nodes":[{"createdAt":"t","willCloseTarget":false,"actor":null,"source":null}]}`, 1)
+	fk := &fake{issues: page}
+	f := &Fetcher{Q: fk.q, PageSize: 50, MaxCalls: 10}
+	r, err := f.Issues(context.Background(), RepoMeta{Name: "o/r", URL: workfile.Web + "o/r"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	refs := r.Issues[0].References
+	if len(refs) != 1 || refs[0].Kind != "" || refs[0].Number != 0 || refs[0].At != "t" {
+		t.Fatalf("references %+v, want one with no source", refs)
+	}
+	tree := &workfile.Tree{Source: "github", Org: "o", Repos: []workfile.Repo{r}}
+	data, err := workfile.Encode(tree)
+	if err != nil {
+		t.Fatal(err)
+	}
+	back, err := workfile.Decode("t", data, workfile.Limits(len(data)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d := workfile.Diff(back, tree, nil); len(d) != 0 {
+		t.Fatalf("differences after the round trip: %+v", d)
+	}
+}

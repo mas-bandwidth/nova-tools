@@ -116,8 +116,13 @@ func encodeIssue(b *bytes.Buffer, repo string, is Issue) error {
 		p("milestone", "(:number "+strconv.Itoa(is.Milestone.Number)+" :title "+quote(is.Milestone.Title)+")")
 	}
 	p("body", quote(is.Body))
+	seen := map[string]bool{}
 	b.WriteString("\n      :comments (")
 	for i, c := range is.Comments {
+		if seen[c.ID] {
+			return fmt.Errorf("workfile: %s/comments/%s: the comment id is repeated", at, c.ID)
+		}
+		seen[c.ID] = true
 		a, err := kw("comment "+c.ID+" author-association", c.AuthorAssociation)
 		if err != nil {
 			return err
@@ -132,6 +137,9 @@ func encodeIssue(b *bytes.Buffer, repo string, is Issue) error {
 	b.WriteString(")")
 	b.WriteString("\n      :references (")
 	for i, r := range is.References {
+		if (r.Kind == "") != (r.Number == 0) || r.Number < 0 || r.Kind == "" && (r.Repo != "" || r.URL != "") {
+			return fmt.Errorf("workfile: %s/references: a reference has a source (a kind and a positive number) or none (no kind, number 0, no repo or url); got kind %q number %d", at, r.Kind, r.Number)
+		}
 		if i > 0 {
 			b.WriteString("\n        ")
 		}

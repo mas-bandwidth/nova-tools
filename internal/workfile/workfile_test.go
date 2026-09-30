@@ -23,7 +23,7 @@ func hard() *workfile.Tree {
 				Locked: true, LockReason: "TOO_HEATED", Labels: []string{"a b", "z\"q"}, Assignees: []string{"p"},
 				Milestone: &workfile.Milestone{Number: 3, Title: "m\\"}, Body: body,
 				Comments:   []workfile.Comment{{ID: "IC_1", URL: "u", Author: "p", AuthorAssociation: "MEMBER", Created: "c", Updated: "u", Body: body}, {ID: "IC_0", Body: ""}},
-				References: []workfile.Reference{{Kind: "PullRequest", Repo: "o/a", Number: 9, URL: "u", Actor: "p", At: "t", WillClose: true}, {Kind: "", Repo: "", Number: 0 + 1, URL: "", At: "t"}},
+				References: []workfile.Reference{{Kind: "PullRequest", Repo: "o/a", Number: 9, URL: "u", Actor: "p", At: "t", WillClose: true}, {At: "t"}},
 				LinkedPRs:  []workfile.LinkedPR{{Repo: "o/a", Number: 9, URL: "u", State: "MERGED"}}},
 			{Number: 4, URL: workfile.Web + "o/b/issues/4", Title: "", State: "OPEN", Origin: "internal", AuthorAssociation: "OWNER"},
 		}},
@@ -84,20 +84,23 @@ func TestTheReaderRefusesWhatTheWriterWouldNotWrite(t *testing.T) {
 	}
 	s := string(data)
 	for name, c := range map[string]struct{ from, to, want string }{
-		"unknown key":   {`:node-id "I_1"`, `:node-id "I_1" :colour "red"`, "unknown key :colour"},
-		"repeated key":  {`:node-id "I_1"`, `:node-id "I_1" :node-id "I_2"`, ":node-id twice"},
-		"missing key":   {`:node-id "I_1"`, ``, "has no :node-id"},
-		"url not path":  {"\"" + workfile.Web + "o/b/issues/1\"", "\"" + workfile.Web + "o/b/issues/2\"", "is not the URL its path gives"},
-		"out of order":  {"(issue 4\n      :url \"" + workfile.Web + "o/b/issues/4\"", "(issue 1\n      :url \"" + workfile.Web + "o/b/issues/1\"", "out of order or repeated"},
-		"evaluating":    {`:locked true`, `:locked #.true`, "byte="},
-		"bad enum":      {`:state :open`, `:state :Open`, "outside [a-z-]"},
-		"wrong kind":    {`:author ""`, `:author 5`, ":author wants a string"},
-		"format":        {`(work-tree "v1"`, `(work-tree "v2"`, `format "v2"`},
-		"repos order":   {`(repo "o/a"`, `(repo "o/c"`, "out of order or repeated"},
-		"origin":        {`:origin :internal`, `:origin :elsewhere`, ":origin wants"},
-		"boolean":       {`:archived true`, `:archived yes`, ":archived wants true or false"},
-		"milestone key": {`(:number 3 :title`, `(:number 3 :name`, "unknown key :name"},
-		"unsorted":      {`("a b" "z\"q")`, `("z\"q" "a b")`, "must be sorted"},
+		"unknown key":      {`:node-id "I_1"`, `:node-id "I_1" :colour "red"`, "unknown key :colour"},
+		"repeated key":     {`:node-id "I_1"`, `:node-id "I_1" :node-id "I_2"`, ":node-id twice"},
+		"missing key":      {`:node-id "I_1"`, ``, "has no :node-id"},
+		"url not path":     {"\"" + workfile.Web + "o/b/issues/1\"", "\"" + workfile.Web + "o/b/issues/2\"", "is not the URL its path gives"},
+		"out of order":     {"(issue 4\n      :url \"" + workfile.Web + "o/b/issues/4\"", "(issue 1\n      :url \"" + workfile.Web + "o/b/issues/1\"", "out of order or repeated"},
+		"evaluating":       {`:locked true`, `:locked #.true`, "byte="},
+		"bad enum":         {`:state :open`, `:state :Open`, "outside [a-z-]"},
+		"wrong kind":       {`:author ""`, `:author 5`, ":author wants a string"},
+		"format":           {`(work-tree "v1"`, `(work-tree "v2"`, `format "v2"`},
+		"repos order":      {`(repo "o/a"`, `(repo "o/c"`, "out of order or repeated"},
+		"origin":           {`:origin :internal`, `:origin :elsewhere`, ":origin wants"},
+		"boolean":          {`:archived true`, `:archived yes`, ":archived wants true or false"},
+		"milestone key":    {`(:number 3 :title`, `(:number 3 :name`, "unknown key :name"},
+		"repeated comment": {`(comment "IC_0"`, `(comment "IC_1"`, "the comment id is repeated"},
+		"ref number 0":     {`:kind "PullRequest" :repo "o/a" :number 9`, `:kind "PullRequest" :repo "o/a" :number 0`, ":number wants a positive integer"},
+		"no-source number": {`:kind "" :repo "" :number 0`, `:kind "" :repo "" :number 3`, "a reference with no source wants :number 0"},
+		"unsorted":         {`("a b" "z\"q")`, `("z\"q" "a b")`, "must be sorted"},
 	} {
 		if !strings.Contains(s, c.from) {
 			t.Fatalf("%s: the fixture lacks %q", name, c.from)
@@ -107,6 +110,10 @@ func TestTheReaderRefusesWhatTheWriterWouldNotWrite(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), c.want) {
 			t.Fatalf("%s: err=%v, want it to say %q", name, err, c.want)
 		}
+	}
+	evil := strings.Replace(s, `:locked true`, `:locked #.true`, 1)
+	if _, err := workfile.Decode("t.lisp", []byte(evil), workfile.Limits(len(evil))); err == nil || strings.Contains(err.Error(), "plan") || !strings.Contains(err.Error(), "tree file=t.lisp") || !strings.Contains(err.Error(), "a tree is data") {
+		t.Fatalf("a refused tree is described as %v", err)
 	}
 	if _, err := workfile.Decode("t.lisp", data, workfile.Limits(len(data)-1)); err == nil || !strings.Contains(err.Error(), "--max-bytes") {
 		t.Fatalf("a file past the byte bound was read: %v", err)
@@ -126,6 +133,12 @@ func TestEncodeRefusesALossyValue(t *testing.T) {
 		"repo order":  func(t *workfile.Tree) { t.Repos[0].Name = "o/c" },
 		"repo name":   func(t *workfile.Tree) { t.Repos[0].Name = "a" },
 		"number":      func(t *workfile.Tree) { t.Repos[1].Issues[0].Number = 0 },
+		"repeated comment id": func(t *workfile.Tree) {
+			t.Repos[1].Issues[0].Comments = append(t.Repos[1].Issues[0].Comments, workfile.Comment{ID: "IC_1"})
+		},
+		"ref kind with no number": func(t *workfile.Tree) { t.Repos[1].Issues[0].References[0].Number = 0 },
+		"ref number with no kind": func(t *workfile.Tree) { t.Repos[1].Issues[0].References[1].Number = 5 },
+		"ref no kind but a url":   func(t *workfile.Tree) { t.Repos[1].Issues[0].References[1].URL = "u" },
 	} {
 		tr := hard()
 		mut(tr)
@@ -177,6 +190,59 @@ func TestDiffNamesEveryKind(t *testing.T) {
 	}
 	if s := workfile.Show(strings.Repeat("x", 81)); !strings.HasPrefix(s, "bytes:81:sha256:") {
 		t.Fatalf("a long value shows as %q", s)
+	}
+}
+
+// TestDiffSeesRepeatsAndOrder: a comment injected under an existing id, a
+// swapped pair of references or linked pull requests, and a label list that
+// joins to the same text are each found; nothing is folded into a set.
+func TestDiffSeesRepeatsAndOrder(t *testing.T) {
+	t.Parallel()
+	want := hard()
+	lines := func(got *workfile.Tree) map[string]bool {
+		m := map[string]bool{}
+		for _, d := range workfile.Diff(got, want, nil) {
+			m[d.Kind+" "+d.Path+" "+d.Field] = true
+		}
+		return m
+	}
+	for name, c := range map[string]struct {
+		mut  func(*workfile.Issue)
+		want []string
+	}{
+		"injected same-id comment": {func(is *workfile.Issue) {
+			is.Comments = append(is.Comments, workfile.Comment{ID: "IC_1", Body: "injected"})
+		}, []string{"EXTRA repos/o/b/issues/1/comments/IC_1 comment", "DRIFT repos/o/b/issues/1 comments-order"}},
+		"duplicated comment": {func(is *workfile.Issue) {
+			is.Comments = append(is.Comments, is.Comments[0])
+		}, []string{"EXTRA repos/o/b/issues/1/comments/IC_1 comment", "DRIFT repos/o/b/issues/1 comments-order"}},
+		"swapped comments": {func(is *workfile.Issue) {
+			is.Comments[0], is.Comments[1] = is.Comments[1], is.Comments[0]
+		}, []string{"DRIFT repos/o/b/issues/1 comments-order"}},
+		"swapped references": {func(is *workfile.Issue) {
+			is.References[0], is.References[1] = is.References[1], is.References[0]
+		}, []string{"DRIFT repos/o/b/issues/1 references-order"}},
+		"swapped linked prs": {func(is *workfile.Issue) {
+			is.LinkedPRs = append(is.LinkedPRs, workfile.LinkedPR{Repo: "o/a", Number: 10, URL: "v", State: "OPEN"})
+			want.Repos[1].Issues[0].LinkedPRs = []workfile.LinkedPR{is.LinkedPRs[1], is.LinkedPRs[0]}
+		}, []string{"DRIFT repos/o/b/issues/1 linked-prs-order"}},
+		"labels joined alike": {func(is *workfile.Issue) {
+			is.Labels = []string{"a b,z\"q"}
+			want.Repos[1].Issues[0].Labels = []string{"a b", "z\"q"}
+		}, []string{"DRIFT repos/o/b/issues/1 labels"}},
+	} {
+		want = hard()
+		got := hard()
+		c.mut(&got.Repos[1].Issues[0])
+		m := lines(got)
+		for _, w := range c.want {
+			if !m[w] {
+				t.Errorf("%s: no %q among %v", name, w, m)
+			}
+		}
+		if len(m) != len(c.want) {
+			t.Errorf("%s: lines %v, want exactly %v", name, m, c.want)
+		}
 	}
 }
 

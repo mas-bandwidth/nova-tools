@@ -69,8 +69,8 @@ the tree.
 - GitHub's null is `()` for an enumeration or a milestone and `""` for a string (a deleted
   author, an open issue's closed time). A boolean is the symbol `true` or `false`.
 - The reader (`workfile.Decode`) refuses a missing, repeated or unknown key, a value of the wrong
-  kind, records out of order, and an issue whose `:url` is not the one its path gives. A refused
-  file is refused whole.
+  kind, records out of order, a comment id repeated within an issue, and an issue whose `:url`
+  is not the one its path gives. A refused file is refused whole.
 - `workfile.Limits(maxBytes)` bounds a read: the byte bound binds (depth 16, at most one atom per
   byte). `verify --max-bytes` sets it.
 
@@ -88,7 +88,7 @@ the tree.
 | `:labels`, `:assignees` | `labels.name`, `assignees.login` | sets, written sorted |
 | `:milestone` | `milestone.number`, `milestone.title` | |
 | `:comments` | every `IssueComment`: `id`, `url`, `author`, `authorAssociation`, `createdAt`, `updatedAt`, `body` | all of them |
-| `:references` | every `CrossReferencedEvent` to the issue: the source's kind, repository, number and URL, the actor, the time, `willCloseTarget` | the edges into the issue |
+| `:references` | every `CrossReferencedEvent` to the issue: the source's kind, repository, number and URL, the actor, the time, `willCloseTarget` | the edges into the issue; a source this login cannot see is kept as `:kind "" :repo "" :number 0 :url ""` |
 | `:linked-prs` | every `closedByPullRequestsReferences` (closed ones included): repository, number, URL, state | the pull requests that close it |
 
 **Nothing is cut at a bound.** A connection longer than one page (comments, references, linked
@@ -145,7 +145,11 @@ DRIFT path=<path> field=<field> want=<value> got=<value>
 ```
 
 MISSING is on GitHub and not in the tree (a repository, an issue, a comment, a reference, a linked
-pull request); EXTRA is in the tree and not on GitHub; DRIFT is a field whose value differs. Want
+pull request); EXTRA is in the tree and not on GitHub; DRIFT is a field whose value differs.
+Lists are compared in order: comments by id, occurrence by occurrence (a repeated id is its own
+EXTRA or MISSING), references and linked pull requests record by record, and a list whose order
+differs is DRIFT on `comments-order`, `references-order` or `linked-prs-order`; labels and
+assignees are compared as the sequences the file holds. Want
 is GitHub's value, got the tree's; a value over 80 bytes or of more than one line is shown as its
 length and the head of its SHA-256, so a line never carries a body. With no `--repo` the scope is
 the tree's organization, both ways: every repository GitHub lists and every repository the tree
@@ -214,19 +218,24 @@ The whole of an organization of 96 repositories, one run each way from a working
 3. `TestEncodeRefusesALossyValue`: an enumeration outside `[A-Z_]` is refused.
 4. `TestDiffNamesEveryKind`: a removed issue is MISSING, an added one EXTRA, a changed body,
    label, comment and reference each DRIFT or MISSING/EXTRA at its path.
-5. `TestPathAndURLAreOneLookupEachWay`.
-6. `TestFetchReadsTheRecordedRepository` (`internal/workgh`): the recorded public-repository
+5. `TestDiffSeesRepeatsAndOrder`: a comment injected under an existing id, a duplicated comment,
+   swapped comments, references and linked pull requests, and labels that join to the same text
+   are each found.
+6. `TestPathAndURLAreOneLookupEachWay`.
+7. `TestFetchReadsTheRecordedRepository` (`internal/workgh`): the recorded public-repository
    fixture (two pages) reads into 20 issues with every connection whole, in three calls.
-7. `TestFetchFollowsALongConnection`: a comment list longer than a page is read to its end.
-8. `TestFetchRefusesACountThatDisagrees`, `TestTheBudgetRefusesTheCallPastIt` and
+8. `TestFetchFollowsALongConnection`: a comment list longer than a page is read to its end.
+9. `TestFetchRefusesACountThatDisagrees`, `TestTheBudgetRefusesTheCallPastIt` and
    `TestAFailedPageIsAskedAgainSmaller`.
-9. `TestRefuseMutation`: a mutation or subscription document is refused before anything runs.
-10. `TestImportThenVerifyIsZeroDifferences` (`cmd/nova-work`): import writes the tree from the
+10. `TestANullSourceIsKeptAsNoSource`: a cross-reference with a source this login cannot see is
+    kept as a reference with no source and survives the file.
+11. `TestRefuseMutation`: a mutation or subscription document is refused before anything runs.
+12. `TestImportThenVerifyIsZeroDifferences` (`cmd/nova-work`): import writes the tree from the
     fixture and verify against the same fixture prints `VERIFY OK ... differences=0`; after one
     changed field verify prints its DRIFT line and exits 1.
-11. `TestTheBudgetIsCheckedBeforeTheIssuesAreRead`: a plan past `--max-calls` exits 2 after the
+13. `TestTheBudgetIsCheckedBeforeTheIssuesAreRead`: a plan past `--max-calls` exits 2 after the
     listing, before any issue is read.
-12. `TestRefusalsNameTheFlag`: missing flags, a bad page size and a zero budget exit 2 naming
+14. `TestRefusalsNameTheFlag`: missing flags, a bad page size and a zero budget exit 2 naming
     each; `help` and `<verb> -h` exit 0.
 
 ## 1.11 Open decisions

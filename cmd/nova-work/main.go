@@ -83,6 +83,10 @@ output (stdout): PLAN OK, then REPO OK per repository, then
   sha256= calls= points= rest=0 seconds= dry_run=
 calls are GraphQL calls; points are what GitHub charged for them; rest is REST
 calls, always 0. Failures go to stderr as IMPORT FAIL <reason>.
+
+exit: 0 the tree is written (or, with --dry-run, fetched and checked); 1 the
+encoded tree did not read back equal to what was fetched, nothing written;
+2 could not run (a flag, the budget, GitHub, the --out directory).
 `
 
 const verifyHelp = `nova-work verify --tree <tree.lisp> [flags]
@@ -116,7 +120,10 @@ flags:
 
 output: VERIFY OK tree= sha256= repos= issues= comments= calls= points= rest=0
 seconds= on stdout when there is no difference; VERIFY FAIL ... differences=
-on stderr when there is, exit 1.
+on stderr when there is.
+
+exit: 0 no difference; 1 one or more differences; 2 could not run (a flag,
+an unreadable or refused tree, the budget, GitHub).
 `
 
 func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, nil)) }

@@ -103,7 +103,7 @@ type LinkedPR struct {
 	State  string
 }
 
-// Web is the source.s web root every repository and issue URL starts with.
+// Web is the source's web root every repository and issue URL starts with.
 const Web = "https://github.com/"
 
 // IssueURL is the URL of issue n of repo (owner/name).

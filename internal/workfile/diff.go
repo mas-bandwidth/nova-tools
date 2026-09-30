@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -76,7 +77,13 @@ func Diff(got, want *Tree, scope []string) []Difference {
 		if out[i].Path != out[j].Path {
 			return out[i].Path < out[j].Path
 		}
-		return out[i].Field < out[j].Field
+		if out[i].Field != out[j].Field {
+			return out[i].Field < out[j].Field
+		}
+		if out[i].Kind != out[j].Kind {
+			return out[i].Kind < out[j].Kind
+		}
+		return out[i].Want+"\x00"+out[i].Got < out[j].Want+"\x00"+out[j].Got
 	})
 	return out
 }
@@ -130,28 +137,35 @@ func DiffIssue(repo string, g, w *Issue) []Difference {
 	drift("closed", w.Closed, g.Closed)
 	drift("locked", strconv.FormatBool(w.Locked), strconv.FormatBool(g.Locked))
 	drift("lock-reason", w.LockReason, g.LockReason)
-	drift("labels", strings.Join(w.Labels, ","), strings.Join(g.Labels, ","))
-	drift("assignees", strings.Join(w.Assignees, ","), strings.Join(g.Assignees, ","))
+	if !slices.Equal(w.Labels, g.Labels) {
+		out = append(out, Difference{Kind: "DRIFT", Path: at, Field: "labels", Want: Show(fmt.Sprintf("%q", w.Labels)), Got: Show(fmt.Sprintf("%q", g.Labels))})
+	}
+	if !slices.Equal(w.Assignees, g.Assignees) {
+		out = append(out, Difference{Kind: "DRIFT", Path: at, Field: "assignees", Want: Show(fmt.Sprintf("%q", w.Assignees)), Got: Show(fmt.Sprintf("%q", g.Assignees))})
+	}
 	drift("milestone", milestone(w.Milestone), milestone(g.Milestone))
 	drift("body", w.Body, g.Body)
 
-	gc := map[string]*Comment{}
-	var gOrder, wOrder []string
+	// Comments by id, in order. A repeated id in either list is never folded
+	// into its first: the order line names it and each repeat is its own
+	// EXTRA or MISSING (a comment injected under an existing id is found).
+	gOrder, wOrder := commentIDs(g.Comments), commentIDs(w.Comments)
+	occ := map[string][]*Comment{} // each id's occurrences in the tree, in order
 	for i := range g.Comments {
-		gc[g.Comments[i].ID] = &g.Comments[i]
-		gOrder = append(gOrder, g.Comments[i].ID)
+		occ[g.Comments[i].ID] = append(occ[g.Comments[i].ID], &g.Comments[i])
 	}
-	wc := map[string]bool{}
+	wCount := count(wOrder)
+	gCount := count(gOrder)
+	wSeen := map[string]int{}
 	for i := range w.Comments {
 		c := &w.Comments[i]
-		wc[c.ID] = true
-		wOrder = append(wOrder, c.ID)
+		wSeen[c.ID]++
 		cat := at + "/comments/" + c.ID
-		gcm, ok := gc[c.ID]
-		if !ok {
+		if wSeen[c.ID] > gCount[c.ID] {
 			out = append(out, Difference{Kind: "MISSING", Path: cat, Field: "comment", Want: Show(c.Body)})
 			continue
 		}
+		gcm := occ[c.ID][wSeen[c.ID]-1]
 		for _, f := range []struct{ name, w, g string }{
 			{"url", c.URL, gcm.URL}, {"author", c.Author, gcm.Author},
 			{"author-association", c.AuthorAssociation, gcm.AuthorAssociation},
@@ -162,17 +176,20 @@ func DiffIssue(repo string, g, w *Issue) []Difference {
 			}
 		}
 	}
-	for _, id := range gOrder {
-		if !wc[id] {
-			out = append(out, Difference{Kind: "EXTRA", Path: at + "/comments/" + id, Field: "comment", Got: Show(gc[id].Body)})
+	gSeen := map[string]int{}
+	for i := range g.Comments {
+		c := &g.Comments[i]
+		gSeen[c.ID]++
+		if gSeen[c.ID] > wCount[c.ID] {
+			out = append(out, Difference{Kind: "EXTRA", Path: at + "/comments/" + c.ID, Field: "comment", Got: Show(c.Body)})
 		}
 	}
-	if len(gOrder) == len(wOrder) && strings.Join(gOrder, ",") != strings.Join(wOrder, ",") {
+	if !slices.Equal(gOrder, wOrder) {
 		out = append(out, Difference{Kind: "DRIFT", Path: at, Field: "comments-order", Want: Show(strings.Join(wOrder, ",")), Got: Show(strings.Join(gOrder, ","))})
 	}
 
-	out = append(out, diffSet(at+"/references", "reference", refLines(w.References), refLines(g.References))...)
-	out = append(out, diffSet(at+"/linked-prs", "linked-pr", prLines(w.LinkedPRs), prLines(g.LinkedPRs))...)
+	out = append(out, diffList(at, "references", "reference", refLines(w.References), refLines(g.References))...)
+	out = append(out, diffList(at, "linked-prs", "linked-pr", prLines(w.LinkedPRs), prLines(g.LinkedPRs))...)
 	return out
 }
 
@@ -195,6 +212,34 @@ func prLines(ps []LinkedPR) []string {
 	out := make([]string, len(ps))
 	for i, p := range ps {
 		out[i] = fmt.Sprintf("%s#%d %s %s", p.Repo, p.Number, p.URL, p.State)
+	}
+	return out
+}
+
+func count(ids []string) map[string]int {
+	m := map[string]int{}
+	for _, id := range ids {
+		m[id]++
+	}
+	return m
+}
+
+func commentIDs(cs []Comment) []string {
+	out := make([]string, len(cs))
+	for i, c := range cs {
+		out[i] = c.ID
+	}
+	return out
+}
+
+// diffList compares two lists of records in order (SPEC-WORK-V1 section 1.2:
+// references in timeline order, linked pull requests in GitHub's): each
+// record on one side and not the other is MISSING or EXTRA, and a list whose
+// order differs is DRIFT on <key>-order.
+func diffList(at, key, field string, want, got []string) []Difference {
+	out := diffSet(at+"/"+key, field, want, got)
+	if !slices.Equal(want, got) {
+		out = append(out, Difference{Kind: "DRIFT", Path: at, Field: key + "-order", Want: Show(strings.Join(want, "; ")), Got: Show(strings.Join(got, "; "))})
 	}
 	return out
 }

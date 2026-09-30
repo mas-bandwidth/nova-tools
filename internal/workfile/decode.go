@@ -1,8 +1,10 @@
 package workfile
 
 import (
+	"errors"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/worklang"
 )
@@ -21,6 +23,11 @@ func Limits(maxBytes int) worklang.Limits {
 func Decode(file string, data []byte, lim worklang.Limits) (*Tree, error) {
 	top, err := worklang.Read(file, data, lim)
 	if err != nil {
+		// The reader speaks of plans; the refusal here is of a tree.
+		var r *worklang.Refusal
+		if errors.As(err, &r) {
+			return nil, fmt.Errorf("workfile: tree file=%s: %s", file, strings.ReplaceAll(r.Reason, "a plan is data", "a tree is data"))
+		}
 		return nil, err
 	}
 	d := decoder{file: file}
@@ -280,6 +287,7 @@ func (d decoder) issue(repo string, f worklang.Form) (Issue, error) {
 	if err != nil {
 		return is, err
 	}
+	seen := map[string]bool{}
 	for _, cf := range cs {
 		cid, cm, err := d.record(at+"/comments", cf, "comment", true, []string{"url", "author", "author-association", "created", "updated", "body"})
 		if err != nil {
@@ -289,6 +297,10 @@ func (d decoder) issue(repo string, f worklang.Form) (Issue, error) {
 		if c.ID, err = d.str(at+"/comments", "id", cid); err != nil {
 			return is, err
 		}
+		if seen[c.ID] {
+			return is, d.errf(at+"/comments/"+c.ID, "the comment id is repeated")
+		}
+		seen[c.ID] = true
 		cat := at + "/comments/" + c.ID
 		for _, s := range []struct {
 			key string
@@ -322,7 +334,7 @@ func (d decoder) issue(repo string, f worklang.Form) (Issue, error) {
 				return is, err
 			}
 		}
-		if r.Number, err = d.num(rat, "number", rm["number"]); err != nil {
+		if r.Number, err = d.refNumber(rat, r.Kind, rm["number"]); err != nil {
 			return is, err
 		}
 		if r.WillClose, err = d.boolean(rat, "will-close", rm["will-close"]); err != nil {
@@ -356,4 +368,18 @@ func (d decoder) issue(repo string, f worklang.Form) (Issue, error) {
 		is.LinkedPRs = append(is.LinkedPRs, l)
 	}
 	return is, nil
+}
+
+// refNumber reads a reference's :number: positive for a reference with a
+// source, 0 for one whose source GitHub does not show this login (a
+// private repository's issue), which carries :kind "" (SPEC-WORK-V1
+// section 1.3).
+func (d decoder) refNumber(at, kind string, f worklang.Form) (int, error) {
+	if kind == "" {
+		if f.Kind != worklang.Integer || f.Int != 0 {
+			return 0, d.errf(at, "a reference with no source wants :number 0")
+		}
+		return 0, nil
+	}
+	return d.num(at, "number", f)
 }
