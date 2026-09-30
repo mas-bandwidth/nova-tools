@@ -120,8 +120,7 @@ type Loop struct {
 	failures int
 	lastErr  string
 
-	pusher   *pusher
-	outcomes []Outcome // R14 phase 3, owed to the goal part
+	pusher *pusher
 }
 
 // errorStep is what the next RT1 writes in a step of notes and sprint keys
@@ -380,8 +379,12 @@ type Report struct {
 	// the keys held back for a drop.
 	Quarantined, Parked, HeldBack []string
 	Halved                        map[string]int
-	// Outcomes are R14 phase 2's pushes.
-	Outcomes []Outcome
+	// Outcomes are the pushes of R14's phase 2 that finished since the last
+	// tick, which this tick's error step records (phase 3); Pushes the pushes
+	// this tick started, off the tick, and PushesSkipped the claims past
+	// PushesInFlightMax.
+	Outcomes              []Outcome
+	Pushes, PushesSkipped int
 	// Rules is each rule's part of the tick, which the heartbeat's rules field
 	// carries (1.4.1).
 	Rules map[string]*RuleStat
@@ -582,6 +585,13 @@ func (l *Loop) errorChunk(c errChunk) *sprintfn.Request {
 
 // tick is one tick's work; its error fails the tick.
 func (l *Loop) tick(ctx context.Context, c sprintfn.Client, rep *Report) error {
+	// R14's phase 3: the outcomes of the pushes that finished ride this RT1's
+	// error step (2.3).
+	rep.Outcomes = l.pusher.take()
+	for _, o := range rep.Outcomes {
+		l.owed.addNotes(outcomeNote(o))
+	}
+
 	// RT1 (SprintEvents.tla RT1, ReadEvents).
 	r1 := l.rt1()
 	rep.PageLimit = r1.pageLimit
@@ -945,9 +955,9 @@ func (l *Loop) tick(ctx context.Context, c sprintfn.Client, rep *Report) error {
 		// the tick never resends a step (1.0).
 	}
 	if len(claims) != 0 {
-		// R14 phase 2, after RT3 and outside every round trip (2.3).
-		rep.Outcomes = l.pusher.run(ctx, claims)
-		l.outcomes = append(l.outcomes, rep.Outcomes...)
+		// R14 phase 2, after RT3, off the tick and outside every round trip
+		// (2.3): the tick does not wait for a route.
+		rep.Pushes, rep.PushesSkipped = l.pusher.start(ctx, claims)
 	}
 	return nil
 }

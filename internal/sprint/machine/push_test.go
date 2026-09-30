@@ -3,6 +3,7 @@ package machine
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 
@@ -86,17 +87,24 @@ func TestPushOnePerPeriod(t *testing.T) {
 }
 
 // TestPushAfterRT3OncePerClaim: the loop pushes phase 1's claims of the steps
-// that applied, after RT3, and a claim the next tick sees again is not pushed
-// again (2.3, R14: at most one push a period).
+// that applied, after RT3 and off the tick: a tick whose push hangs returns
+// without waiting for it; a claim the next tick sees again is not pushed
+// again (2.3, R14: at most one push a period). Phase 3 records each outcome
+// in the next RT1's error step: a failed push opens "a reminder could not be
+// delivered" on the person, once, and a delivered one closes it.
 func TestPushAfterRT3OncePerClaim(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t)
 	w.rows("s1")
-	rs := &routes{}
+	rs := &routes{slow: make(chan struct{}), entered: make(chan struct{}, 1)}
+	var mu sync.Mutex
+	route, r := "slow", int64(7)
 	cfg := Config{Names: testNames, Owner: "token-a", Name: "a", Rules: []sprint.Rule{dealRule(64)}, Build: testBuild(builderOpts{}),
 		Deliver: rs.deliver,
 		Claims: func(rule string, s *sprint.Snapshot, rp sprint.RulePlan) []Claim {
-			return []Claim{{Goal: Goal{Person: "ann", Route: "ok", Text: "keep going", ClaimedGen: 1, ClaimedR: 7}}}
+			mu.Lock()
+			defer mu.Unlock()
+			return []Claim{{Goal: Goal{Person: "ann", Route: route, Text: "keep going", ClaimedGen: 1, ClaimedR: r}}}
 		}}
 	l, err := NewLoop(cfg)
 	if err != nil {
@@ -104,12 +112,68 @@ func TestPushAfterRT3OncePerClaim(t *testing.T) {
 	}
 	k := &counting{c: w.tw}
 	w.tick(l, k)
-	for i := 0; i < 3; i++ {
-		w.verb(create("s1:ready", fresh(), "p"+string(rune('1'+i))))
+	n := 0
+	busy := func() Report {
+		n++
+		w.verb(create("s1:ready", fresh(), fmt.Sprintf("p%d", n)))
 		w.clk.add(TickEvery)
-		w.tick(l, k)
+		return w.tick(l, k)
 	}
-	if len(rs.got) != 1 || len(l.outcomes) != 1 || !l.outcomes[0].Delivered {
-		t.Fatalf("pushed %d times, outcomes %+v", len(rs.got), l.outcomes)
+	if rep := busy(); rep.Pushes != 1 {
+		t.Fatalf("the first claim: %+v", rep)
+	}
+	<-rs.entered // the push hangs on its route, and the tick has returned
+	if rep := busy(); rep.Pushes != 0 || len(rep.Outcomes) != 0 {
+		t.Fatalf("a claim seen again: %+v", rep)
+	}
+	close(rs.slow)
+	l.pusher.wait()
+	if rep := busy(); len(rep.Outcomes) != 1 || !rep.Outcomes[0].Delivered || rs.calls != 1 {
+		t.Fatalf("phase 3 of the first push: %+v, %d calls", rep.Outcomes, rs.calls)
+	}
+	mu.Lock()
+	route, r = "bad", r+5*60*1000
+	mu.Unlock()
+	busy()
+	l.pusher.wait()
+	if rep := busy(); len(rep.Outcomes) != 1 || rep.Outcomes[0].Delivered || len(w.hash("jopen:ann@0")) != 1 {
+		t.Fatalf("phase 3 of a failed push: %+v, jopen %v", rep.Outcomes, w.hash("jopen:ann@0"))
+	}
+	mu.Lock()
+	route, r = "ok", r+5*60*1000
+	mu.Unlock()
+	busy()
+	l.pusher.wait()
+	if rep := busy(); len(rep.Outcomes) != 1 || !rep.Outcomes[0].Delivered || len(w.hash("jopen:ann@0")) != 0 || l.failures != 0 {
+		t.Fatalf("phase 3 of the next period's push: %+v, jopen %v, failures %d", rep.Outcomes, w.hash("jopen:ann@0"), l.failures)
+	}
+}
+
+// TestPushOutcomesBounded: at most PushesInFlightMax pushes run at once, a
+// claim past them is counted and not pushed, and the outcomes kept for phase 3
+// are at most OutcomesMax, the oldest dropped (2.3, R14).
+func TestPushOutcomesBounded(t *testing.T) {
+	t.Parallel()
+	rs := &routes{}
+	p := newPusher(rs.deliver)
+	var claims []Claim
+	for i := 0; i < PushesInFlightMax+1; i++ {
+		claims = append(claims, Claim{Goal: Goal{Person: fmt.Sprintf("p%d", i), Route: "ok", ClaimedGen: 1, ClaimedR: 1}})
+	}
+	started, skipped := p.start(context.Background(), claims)
+	if started+skipped != len(claims) || started > PushesInFlightMax {
+		t.Fatalf("started %d, skipped %d", started, skipped)
+	}
+	p.wait()
+	for round := 0; round < 4; round++ {
+		var more []Claim
+		for i := 0; i < PushesInFlightMax; i++ {
+			more = append(more, Claim{Goal: Goal{Person: fmt.Sprintf("q%d-%d", round, i), Route: "ok", ClaimedGen: 1, ClaimedR: 1}})
+		}
+		p.start(context.Background(), more)
+		p.wait()
+	}
+	if out := p.take(); len(out) != OutcomesMax || p.lost != started+4*PushesInFlightMax-OutcomesMax {
+		t.Fatalf("kept %d outcomes, lost %d", len(out), p.lost)
 	}
 }
