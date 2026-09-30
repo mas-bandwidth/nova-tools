@@ -3,6 +3,7 @@ package verbs
 import (
 	"fmt"
 
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/sprintfn"
 	"github.com/mas-bandwidth/nova-tools/internal/tset"
 )
@@ -49,6 +50,17 @@ func placeText(r sprintfn.Record) string {
 		return "off the table"
 	}
 	return r.Place.Row + ":" + r.Place.Col
+}
+
+// cardPlace is where a card is, in words.
+func cardPlace(c *sprint.Card) string {
+	switch {
+	case c == nil:
+		return "no such card"
+	case !c.Placed():
+		return "off the table"
+	}
+	return c.Col
 }
 
 // epochOf is a wire epoch as a number, an error when it is not one.
