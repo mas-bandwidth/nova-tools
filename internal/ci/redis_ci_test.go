@@ -20,7 +20,7 @@ import (
 // redisInstallCall is the workflow line that installs redis-server, and
 // redisInstallerSource is the Go that line runs.
 const (
-	redisInstallCall     = "tools/ci install-redis-server"
+	redisInstallCall     = `"$RUNNER_TEMP/ci" install-redis-server`
 	redisInstallerSource = "tools/ci/installredis.go"
 )
 

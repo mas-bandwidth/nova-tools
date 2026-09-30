@@ -185,8 +185,8 @@ pull request, naming the revert. Three guards stop it with a skip (never a
 red): a head commit that is itself a revert (no revert loops), a parent run
 that was not green (the red predates this push), or a `main` that has already
 moved on (the newer run decides). A GitHub API call that fails is never a
-skip: the verb exits red and files one `needs-glenn` issue naming the call,
-before anything is pushed, so a person decides. The logic is one Go verb,
+skip: the verb exits red and files one issue naming the call, before
+anything is pushed, so a person decides. The logic is one Go verb,
 `tools/ci revert-on-red`, built from dev's tip.
 
 **The rule:** the repository ruleset lets the github-actions app push to

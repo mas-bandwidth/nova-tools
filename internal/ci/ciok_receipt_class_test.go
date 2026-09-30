@@ -27,7 +27,7 @@ import (
 // carry inline (the card.env names, the nova-secrets wrapper, this tree's
 // writer), and tools/ci's own tests run the verb.
 
-const runnerReceiptVerb = "tools/ci report-run"
+const runnerReceiptVerb = `"$RUNNER_TEMP/ci" report-run`
 
 // reportRunSource is the verb the step calls.
 const reportRunSource = "tools/ci/reportrun.go"
@@ -49,7 +49,7 @@ const receiptStepIf = `always() && (github.event_name != 'pull_request' || githu
 
 // receiptRun is the step's whole run block, exactly: one call into the verb with
 // the run's own context, and nothing before it or after it.
-const receiptRun = `go run ./tools/ci report-run \
+const receiptRun = `"$RUNNER_TEMP/ci" report-run \
   --repo "${{ github.repository }}" \
   --sha "${{ github.event.pull_request.head.sha || github.sha }}" \
   --run-id "${{ github.run_id }}" \
@@ -119,7 +119,7 @@ func TestCIOKReportsEveryRunToRedisFromTheRunner(t *testing.T) {
 
 	// The whole run block, exactly, with each line's indentation taken off.
 	if got, want := strings.Join(runLines(run), "\n"), strings.Join(runLines(receiptRun), "\n"); got != want {
-		t.Errorf("the receipt step's run block is not one call into tools/ci report-run with the run's own context:\n got:\n%s\nwant:\n%s", got, want)
+		t.Errorf("the receipt step's run block is not one call into the built tools/ci report-run with the run's own context:\n got:\n%s\nwant:\n%s", got, want)
 	}
 	if strings.Count(run, "--job") != 0 || strings.Contains(run, "--event") || strings.Contains(run, "-branch") {
 		t.Errorf("the receipt step passes a flag the row does not carry (--job, --event, --head-branch, --base-branch):\n%s", run)

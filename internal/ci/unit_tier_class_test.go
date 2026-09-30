@@ -112,7 +112,7 @@ func TestUnitTierRefusesRedisServer(t *testing.T) {
 		if strings.Contains(s.Run, unitGoStepMarker) {
 			goSetup = i
 		}
-		if strings.Contains(s.Run, "tools/ci install-redis-server") {
+		if strings.Contains(s.Run, redisInstallCall) {
 			t.Errorf("ci.yml job test step %q installs redis-server; the unit tier refuses one", s.Name)
 		}
 	}

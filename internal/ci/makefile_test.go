@@ -46,6 +46,9 @@ var commandAllowlist = []string{
 	"command -v go",
 	"GOMAXPROCS",
 	"go build ./cmd/nova-sandbox",
+	// the one build of CI's own verbs, once per job, before the steps that call the binary
+	// (TestToolsCIIsBuiltOnceAndNeverRun holds the shape)
+	`go build -o "$RUNNER_TEMP/ci" ./tools/ci`,
 	"go build ./... && go test -count=1 ./internal/oneline/",
 }
 
