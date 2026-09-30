@@ -469,7 +469,7 @@ func TestNewPathExitCodes(t *testing.T) {
 // is never opened; and the new path's files import no Redis client, no
 // present-path store and no table function library, and build their client
 // only with sprintfn.NewRedis. The store's half is
-// TestCommandFCALLOnlyOnTheStore.
+// TestCommandFCALLOnlyOnTheStore (newpath_store_functional_test.go).
 func TestCommandFCALLOnly(t *testing.T) {
 	t.Parallel()
 	na := newNPApp(t)
@@ -543,16 +543,6 @@ func TestCommandFCALLOnly(t *testing.T) {
 			t.Errorf("%s: %d calls of NewRedis; the new path's one client is sprintfn.NewRedis, once", name, n)
 		}
 	}
-}
-
-// TestCommandFCALLOnlyOnTheStore: the same suite on the store's client, with
-// testredis.OnlyFCALL on it. sprintfn builds its client itself and takes no
-// hook from a caller (redis.go: newRedisWithClient is its own tests' seam),
-// so the command's half on the store waits for G0 and the store in the
-// container, with sprintfn's TestComposeFCALLOnlyOnTheStore.
-func TestCommandFCALLOnlyOnTheStore(t *testing.T) {
-	t.Parallel()
-	t.Skip("G0: needs the store (Layer 1 revision 4 pinned, Layer 2 accepted again) and the sprint profile loaded in a container; sprintfn takes no hook from a caller")
 }
 
 // TestPlaySimulationOnNewPath (IT23): R8's driver, run by play --simulation
