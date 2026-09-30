@@ -2,10 +2,13 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"os"
 	"os/exec"
+
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // command is one program run: where, with which added variables, what.
@@ -30,13 +33,34 @@ type runner interface {
 
 type osRunner struct{}
 
-func (osRunner) cmd(c command) *exec.Cmd {
-	cmd := exec.Command(c.name, c.args...)
-	cmd.Dir = c.dir
+// cmd prepares c through the one door every child of this repository goes
+// through (internal/subproc): the budget of its kind (git, gh, go, any other
+// tool) and a bounded wait for its pipes once it ends.
+func (osRunner) cmd(c command) subproc.Bounded {
+	b := subproc.Prepare(context.Background(), subproc.BudgetOf(c.name, c.args), c.name, c.args...)
+	b.Cmd.Dir = c.dir
 	if len(c.env) > 0 {
-		cmd.Env = append(os.Environ(), c.env...)
+		b.Cmd.Env = append(os.Environ(), c.env...)
 	}
-	return cmd
+	return b
+}
+
+// finish is a run's exit code, and what to say when it had none: a program
+// that could not start is 127 with the reason, a child its budget ended is 124.
+func finish(b subproc.Bounded, err error) (int, string) {
+	err = b.Wrap(b.Cmd.Path, err)
+	b.Cancel()
+	if err == nil {
+		return 0, ""
+	}
+	var te *subproc.TimeoutError
+	if errors.As(err, &te) {
+		return 124, err.Error()
+	}
+	if rc := exitCode(err); rc != 127 {
+		return rc, ""
+	}
+	return 127, err.Error()
 }
 
 func exitCode(err error) int {
@@ -51,25 +75,20 @@ func exitCode(err error) int {
 }
 
 func (r osRunner) Output(c command) (string, int) {
-	cmd := r.cmd(c)
-	var b bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &b, &b
-	err := cmd.Run()
-	if rc := exitCode(err); rc == 127 {
-		b.WriteString(err.Error())
-		return b.String(), rc
-	} else {
-		return b.String(), rc
-	}
+	b := r.cmd(c)
+	var out bytes.Buffer
+	b.Cmd.Stdout, b.Cmd.Stderr = &out, &out
+	rc, why := finish(b, b.Cmd.Run())
+	out.WriteString(why)
+	return out.String(), rc
 }
 
 func (r osRunner) Stream(c command, stdout, stderr io.Writer) int {
-	cmd := r.cmd(c)
-	cmd.Stdout, cmd.Stderr = stdout, stderr
-	err := cmd.Run()
-	rc := exitCode(err)
-	if rc == 127 {
-		io.WriteString(stderr, err.Error()+"\n")
+	b := r.cmd(c)
+	b.Cmd.Stdout, b.Cmd.Stderr = stdout, stderr
+	rc, why := finish(b, b.Cmd.Run())
+	if why != "" {
+		io.WriteString(stderr, why+"\n")
 	}
 	return rc
 }

@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 )
 
@@ -202,16 +204,12 @@ func TestEveryJobThatRunsGhreleaseSetsUpGoFirst(t *testing.T) {
 				}
 				if strings.Contains(s.Run, "go run ./tools/ghrelease") {
 					calls++
-					if setup < 0 || setup > i {
-						t.Errorf("%s %s step %q runs ghrelease with no actions/setup-go (go-version-file: go.mod) before it", file, name, s.Name)
-					}
+					assert.Falsef(t, setup < 0 || setup > i, "%s %s step %q runs ghrelease with no actions/setup-go (go-version-file: go.mod) before it", file, name, s.Name)
 				}
 			}
 		}
 	}
-	if calls == 0 {
-		t.Fatal("no workflow step runs ghrelease; the release has lost its tool")
-	}
+	require.NotZero(t, calls, "no workflow step runs ghrelease; the release has lost its tool")
 }
 
 // TestNoWorkflowStepRunsAReleaseScript: the release's logic is tools/ghrelease,
@@ -223,9 +221,8 @@ func TestNoWorkflowStepRunsAReleaseScript(t *testing.T) {
 	for _, file := range []string{"release.yml", "certification.yml"} {
 		for name, job := range releaseWorkflowJobs(t, file) {
 			for _, s := range job.Steps {
-				if strings.Contains(s.Run, ".github/scripts/release-") || strings.Contains(s.Run, ".github/scripts/assert-version-stamp") {
-					t.Errorf("%s %s step %q runs a release shell script; the release verbs are tools/ghrelease", file, name, s.Name)
-				}
+				assert.Falsef(t, strings.Contains(s.Run, ".github/scripts/release-") || strings.Contains(s.Run, ".github/scripts/assert-version-stamp"),
+					"%s %s step %q runs a release shell script; the release verbs are tools/ghrelease", file, name, s.Name)
 			}
 		}
 	}
