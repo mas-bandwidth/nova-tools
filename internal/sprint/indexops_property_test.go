@@ -314,7 +314,7 @@ func simWorkMove(s *indexSim) (b, a *IndexCard, none, ok bool) {
 		a = ixWith(a, "result", s.some("ok", "failed"))
 	case "fleet down":
 		if s.chance(30) {
-			a = ixWith(a, "bound", "5")
+			a = ixWith(a, "bound", "redeals")
 		}
 	case "rework":
 		if m.To == Working {
@@ -373,13 +373,13 @@ func simWorkFlip(s *indexSim) (b, a *IndexCard, none, ok bool) {
 		a = ixWith(c, "open", s.some("", "0", "1", "2"))
 	case 2:
 		if c.Fields["refused"] == "" {
-			a = ixWith(c, "refused", "resolve: "+s.some("no", "why"))
+			a = ixWith(c, "refused", s.some("resolve: no", "resolve: why", "0")) // "0" is set, as any value is
 		} else {
 			a = ixWith(c, "refused", "")
 		}
 	case 3:
 		if c.Fields["bound"] == "" {
-			a = ixWith(c, "bound", s.some("3", "5"))
+			a = ixWith(c, "bound", s.some("redeals", "attempts", "0")) // "0" is set, as any value is
 		} else {
 			a = ixWith(c, "bound", "")
 		}
@@ -789,8 +789,8 @@ func randomCard(rng *rand.Rand, table, id string, ownRow bool) *IndexCard {
 		set("kind", some("primary", "sentinel", ""))
 		set("open", some("", "0", "1", "2"))
 		set("attempt", some("", "0", "1", "2", "3"))
-		set("refused", some("", "", "", "x: y"))
-		set("bound", some("", "", "", "5"))
+		set("refused", some("", "", "", "", "x: y", "0"))
+		set("bound", some("", "", "", "", "", "redeals", "attempts", "0"))
 		set("needs", some("", "p1", "p1,p2", "p2, p3,p1", ",p4,"))
 	case Fleet:
 		c.Row, c.Col = some("m1", "m2"), some("", Ready, Working, Withdrawn, DoneOK, DoneFailed, Ctl)

@@ -13,15 +13,15 @@ func TestIndexDefinitionOfAPopulationBuiltByHand(t *testing.T) {
 	t.Parallel()
 	cards := []*IndexCard{
 		// Stream s1.
-		iw("p1", "s1", Waiting, 10, "kind", "primary"),                                // free to go
-		iw("p2", "s1", Waiting, 20, "kind", "primary", "needs", "p1", "open", "1"),    // counts p1, which is open
-		iw("p3", "s1", Waiting, 25, "kind", "primary", "needs", "p8"),                 // p8 has landed: not counted
-		iw("p12", "s1", Waiting, 27, "kind", "primary", "needs", "gone", "open", "1"), // a need with no record
-		iw("p14", "s1", Waiting, 28, "kind", "primary", "refused", "resolve: x"),      // free, and refused
-		iw("g1", "s1", Waiting, 50, "kind", "sentinel", "needs", "p4", "open", "1"),   // a sentinel counting p4, which is ready
-		iw("p4", "s1", Ready, 30, "kind", "primary", "attempt", "0"),                  // never dealt
-		iw("p5", "s1", Ready, 40, "kind", "primary", "attempt", "1"),                  // dealt before
-		iw("p6", "s1", Ready, 45, "kind", "primary", "attempt", "3", "bound", "3"),    // at its bound
+		iw("p1", "s1", Waiting, 10, "kind", "primary"),                                    // free to go
+		iw("p2", "s1", Waiting, 20, "kind", "primary", "needs", "p1", "open", "1"),        // counts p1, which is open
+		iw("p3", "s1", Waiting, 25, "kind", "primary", "needs", "p8"),                     // p8 has landed: not counted
+		iw("p12", "s1", Waiting, 27, "kind", "primary", "needs", "gone", "open", "1"),     // a need with no record
+		iw("p14", "s1", Waiting, 28, "kind", "primary", "refused", "resolve: x"),          // free, and refused
+		iw("g1", "s1", Waiting, 50, "kind", "sentinel", "needs", "p4", "open", "1"),       // a sentinel counting p4, which is ready
+		iw("p4", "s1", Ready, 30, "kind", "primary", "attempt", "0"),                      // never dealt
+		iw("p5", "s1", Ready, 40, "kind", "primary", "attempt", "1"),                      // dealt before
+		iw("p6", "s1", Ready, 45, "kind", "primary", "attempt", "3", "bound", "attempts"), // at its bound
 		iw("p7", "s1", Ready, 46, "kind", "primary", "attempt", "0", "refused", "deal: no room"),
 		iw("p13", "s1", Ready, 47, "kind", "primary", "attempt", "2", "refused", "deal: no room"),
 		iw("p8", "s1", Landed, 5, "kind", "primary", "attempt", "1"),

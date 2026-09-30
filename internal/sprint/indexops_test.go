@@ -350,7 +350,7 @@ func TestAnIndexedFieldThatChangesNoMembershipReturnsNoOperation(t *testing.T) {
 		{"open counts down and is still above 0", iw("p2", "s1", Waiting, 20, "kind", "primary", "open", "2"), iw("p2", "s1", Waiting, 20, "kind", "primary", "open", "1")},
 		{"a sentinel's open changes (it is in sent, and elig reads no sentinel)", iw("g1", "s1", Waiting, 50, "kind", "sentinel", "open", "1"), iw("g1", "s1", Waiting, 50, "kind", "sentinel", "open", "0")},
 		{"attempt rises on a card already dealt before", iw("p4", "s1", Ready, 40, "kind", "primary", "attempt", "1"), iw("p4", "s1", Ready, 40, "kind", "primary", "attempt", "2")},
-		{"bound is set on a card that is waiting", iw("p2", "s1", Waiting, 20, "kind", "primary", "open", "1"), iw("p2", "s1", Waiting, 20, "kind", "primary", "open", "1", "bound", "3")},
+		{"bound is set on a card that is waiting", iw("p2", "s1", Waiting, 20, "kind", "primary", "open", "1"), iw("p2", "s1", Waiting, 20, "kind", "primary", "open", "1", "bound", "attempts")},
 		{"refused is set on a card that is in review", iw("p6", "s1", Review, 60, "kind", "primary"), iw("p6", "s1", Review, 60, "kind", "primary", "refused", "deal: no room")},
 		{"refused is set on a sentinel: it stays in sent", iw("g1", "s1", Waiting, 50, "kind", "sentinel"), iw("g1", "s1", Waiting, 50, "kind", "sentinel", "refused", "resolve: why")},
 		{"a card is rescored while it is in review", iw("p6", "s1", Review, 60, "kind", "primary"), iw("p6", "s1", Review, 61, "kind", "primary")},
@@ -392,8 +392,46 @@ func TestARefusedCardIsOutOfEligFreshAndAgainAndStaysInSent(t *testing.T) {
 func TestABoundCardIsOutOfAgain(t *testing.T) {
 	t.Parallel()
 	before := iw("p1", "s1", Working, 10, "kind", "primary", "attempt", "3")
-	wantLines(t, "withdrawn at its bound", opLines(t, before, ixAt(ixWith(before, "bound", "5"), Ready)))
-	wantLines(t, "bound is unset by a rework with a fix", opLines(t, ixAt(ixWith(before, "bound", "3"), Ready), ixAt(before, Ready)), "again:s1 +p1@10")
+	wantLines(t, "withdrawn at its bound", opLines(t, before, ixAt(ixWith(before, "bound", "redeals"), Ready)))
+	wantLines(t, "bound is unset by a rework with a fix", opLines(t, ixAt(ixWith(before, "bound", "redeals"), Ready), ixAt(before, Ready)), "again:s1 +p1@10")
+}
+
+// A field is set when it holds anything, a stored "0" included: refused and bound
+// are unset only when absent or empty (a bound holds the name of the bound,
+// "redeals" or "attempts", and no design row gives "0" a meaning of its own).
+func TestAStoredZeroInAConditionFieldIsSetNotUnset(t *testing.T) {
+	t.Parallel()
+	waiting := iw("p1", "s1", Waiting, 10, "kind", "primary")
+	fresh := iw("p1", "s1", Ready, 10, "kind", "primary", "attempt", "0")
+	again := iw("p1", "s1", Ready, 10, "kind", "primary", "attempt", "1")
+	sentinel := iw("g1", "s1", Waiting, 50, "kind", "sentinel")
+	wantLines(t, "refused 0 takes a waiting card out of elig", opLines(t, waiting, ixWith(waiting, "refused", "0")), "elig:s1 -p1")
+	wantLines(t, "refused 0 takes a fresh card out of fresh", opLines(t, fresh, ixWith(fresh, "refused", "0")), "fresh:s1 -p1")
+	wantLines(t, "refused 0 takes a card dealt before out of again", opLines(t, again, ixWith(again, "refused", "0")), "again:s1 -p1")
+	wantLines(t, "refused 0 cleared puts a waiting card back in elig", opLines(t, ixWith(waiting, "refused", "0"), waiting), "elig:s1 +p1@10")
+	wantLines(t, "bound 0 takes a card dealt before out of again", opLines(t, again, ixWith(again, "bound", "0")), "again:s1 -p1")
+	wantLines(t, "bound 0 cleared puts it back in again", opLines(t, ixWith(again, "bound", "0"), again), "again:s1 +p1@10")
+	wantLines(t, "refused 0 on a sentinel leaves it in sent", opLines(t, sentinel, ixWith(sentinel, "refused", "0")))
+	wantLines(t, "a card created with refused 0 is in no index", opLines(t, nil, ixWith(waiting, "refused", "0")))
+	wantLines(t, "a card created with bound 0 is not in again", opLines(t, nil, ixWith(again, "bound", "0")))
+	for _, field := range []string{"refused", "bound"} {
+		unset := IndexCond{field, FieldUnset, ""}
+		for _, row := range []struct {
+			what  string
+			c     *IndexCard
+			unset bool
+		}{
+			{"absent", waiting, true},
+			{"empty", &IndexCard{Table: Work, ID: "p1", Fields: map[string]string{field: ""}}, true},
+			{"0", ixWith(waiting, field, "0"), false},
+			{"a name", ixWith(waiting, field, "redeals"), false},
+		} {
+			got, err := unset.holds(row.c)
+			if err != nil || got != row.unset {
+				t.Errorf("%s %s: unset is %v (%v), want %v", field, row.what, got, err, row.unset)
+			}
+		}
+	}
 }
 
 func TestASentinelIsNeverInEligOrFresh(t *testing.T) {
