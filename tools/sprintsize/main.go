@@ -6,12 +6,12 @@
 // to how the sprint reads and writes is judged by its table.
 //
 // It runs the nova-sprint binary it is given, as a person does, against the
-// store and prefix given; it refuses any prefix that does not start with
-// dev-, and it tears the sprint down at the end unless --keep.
+// store given, which is the sprint's alone: it tears the sprint down first and
+// at the end unless --keep, so it refuses a store that is not local.
 //
 //	example:
 //	  go build -o /tmp/nova-sprint ./cmd/nova-sprint
-//	  go run ./tools/sprintsize --bin /tmp/nova-sprint --redis 127.0.0.1:6401 --prefix dev-
+//	  go run ./tools/sprintsize --bin /tmp/nova-sprint --redis 127.0.0.1:6401
 package main
 
 import (
@@ -19,6 +19,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"strings"
@@ -36,7 +37,7 @@ type step struct {
 // run is the size run: its steps in order.
 func run() []step {
 	s := []step{
-		{"teardown", "-", 0, []string{"teardown", "--confirm", "PREFIXsprint"}, []int{0, 1, 2}},
+		{"teardown", "-", 0, []string{"teardown", "--confirm", "sprint"}, []int{0, 1, 2}},
 		{"init", "-", time.Second, []string{"init", "--readers", "reader-a,reader-b,reader-c,reader-d", "--members", "m1,m2,m3,m4,m5,m6,m7,m8"}, nil},
 		{"add 3 streams --sentinel-every 1000", "3 x 30,000", 3 * time.Second, []string{"add", "--stream", "a,b,c", "--count", "30000", "--sentinel-every", "1000"}, nil},
 		{"add --count", "10,000 onto 90,000", time.Second, []string{"add", "--stream", "d", "--count", "10000"}, nil},
@@ -59,10 +60,15 @@ func run() []step {
 	)
 }
 
+// localStore says the address is on this machine.
+func localStore(addr string) bool {
+	host, _, err := net.SplitHostPort(addr)
+	return err == nil && (host == "127.0.0.1" || host == "localhost" || host == "::1")
+}
+
 func main() {
 	bin := flag.String("bin", "", "the nova-sprint binary to measure")
 	redis := flag.String("redis", "127.0.0.1:6401", "the store, host:port (a local one: the limits are for a local store)")
-	prefix := flag.String("prefix", "dev-", "the sprint's prefix; only one starting with dev- is accepted")
 	keep := flag.Bool("keep", false, "leave the sprint on the store for a look")
 	tsetOwned := flag.Bool("tset-owned-container", false, "opt in to the L1 size run on a disposable Redis container you own")
 	tsetRedis := flag.String("tset-redis", "", "explicit direct Redis host:port for the L1 size run; no default")
@@ -94,24 +100,20 @@ func main() {
 		}
 		return
 	}
-	if *bin == "" || !strings.HasPrefix(*prefix, "dev-") {
-		fmt.Fprintln(os.Stderr, "sprintsize: wants --bin <nova-sprint> and a --prefix that starts with dev-")
+	if *bin == "" || !localStore(*redis) {
+		fmt.Fprintln(os.Stderr, "sprintsize: wants --bin <nova-sprint> and a local --redis (127.0.0.1, localhost or [::1]): the run tears the sprint on it down")
 		os.Exit(2)
 	}
-	env := append(os.Environ(), "NOVA_SPRINT_REDIS="+*redis, "NOVA_SPRINT_PREFIX="+*prefix, "NOVA_SPRINT_ACTOR=sizerun")
+	env := append(os.Environ(), "NOVA_SPRINT_REDIS="+*redis, "NOVA_SPRINT_ACTOR=sizerun")
 	steps := run()
 	if !*keep {
-		steps = append(steps, step{"teardown", "110,000", 0, []string{"teardown", "--confirm", "PREFIXsprint"}, nil})
+		steps = append(steps, step{"teardown", "110,000", 0, []string{"teardown", "--confirm", "sprint"}, nil})
 	}
 	var out bytes.Buffer
 	failed := false
 	fmt.Fprintf(&out, "| operation | size | time | limit | result |\n|---|---|---|---|---|\n")
 	for _, st := range steps {
-		args := make([]string, len(st.args))
-		for i, a := range st.args {
-			args[i] = strings.ReplaceAll(a, "PREFIX", *prefix)
-		}
-		cmd := exec.Command(*bin, args...)
+		cmd := exec.Command(*bin, st.args...)
 		cmd.Env = env
 		var o, e bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &o, &e

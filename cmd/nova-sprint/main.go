@@ -76,7 +76,7 @@ func (a *app) close() {
 // address, then NOVA_SPRINT_REDIS_USER and the variable
 // NOVA_SPRINT_REDIS_PASSWORD_ENV names.
 func (a *app) redisBackend(ctx context.Context, addr string, names sprint.Names) (store.Backend, error) {
-	key := addr + "\x00" + names.Prefix
+	key := addr
 	if b, ok := a.cached[key]; ok {
 		return b, nil
 	}
@@ -130,13 +130,13 @@ func libraryMatches(ctx context.Context, c *redis.Client, addr string) error {
 
 // common is the flags every store verb takes.
 type common struct {
-	verb                     string // the verb's name: its class (coordinator.go)
-	coordinator              string // init --coordinator: the coordinator it names
-	redis, prefix, actor, op string
-	json                     bool
-	max                      int
-	epoch                    int64       // the epoch the caller holds; -1 is none
-	group                    groupReport // set by --group, for the verb's report
+	verb             string // the verb's name: its class (coordinator.go)
+	coordinator      string // init --coordinator: the coordinator it names
+	redis, actor, op string
+	json             bool
+	max              int
+	epoch            int64       // the epoch the caller holds; -1 is none
+	group            groupReport // set by --group, for the verb's report
 	// packets, when set, is what the step hands its actor (take: each
 	// card's packet), read after the step and printed with its report.
 	packets func(ctx context.Context, st *store.Store, res store.Result) []sprint.Packet
@@ -145,7 +145,6 @@ type common struct {
 
 func (c *common) register(fs flagSet, getenv func(string) string) {
 	fs.StringVar(&c.redis, "redis", firstEnv(getenv, "NOVA_SPRINT_REDIS", "NOVA_REDIS_ADDR"), "the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR)")
-	fs.StringVar(&c.prefix, "prefix", getenv("NOVA_SPRINT_PREFIX"), "the prefix of every table, view and key of this sprint (else NOVA_SPRINT_PREFIX; empty is none)")
 	fs.StringVar(&c.actor, "actor", getenv("NOVA_SPRINT_ACTOR"), "who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)")
 	fs.StringVar(&c.op, "op", "", "the caller's operation id: the same id again returns the recorded result and changes nothing")
 	fs.BoolVar(&c.json, "json", false, "print one JSON object for a program instead of the lines")
@@ -178,7 +177,7 @@ func (a *app) storeCtx(ctx context.Context, c common) (*store.Store, error) {
 	if why := needsActor(c); why != "" {
 		return nil, errors.New(why)
 	}
-	names := sprint.Names{Prefix: c.prefix}
+	names := sprint.Names{}
 	b, err := a.backend(ctx, c.redis, names)
 	if err != nil {
 		return nil, err

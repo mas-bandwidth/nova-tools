@@ -282,7 +282,7 @@ var judgmentRows = []JudgmentType{
 		Decisions: []Decision{decide("ack"), decide("drop"), decide("card"), decide("wait")}},
 	{Type: "an invariant is broken", Subject: subjCard, OwnerKey: keyOf("held:"), TickKept: true,
 		RaisedBy: []string{"a lower-layer refusal naming the card", "the sweep"},
-		Decisions: []Decision{decide("card"), decide("clear", "--confirm", "<sprint>"),
+		Decisions: []Decision{decide("card"), decide("clear", "--confirm", "sprint"),
 			decideWhen(judgmentUnread("the quarantine record"), "drop"), decide("wait")}},
 	{Type: "the machine's step was refused", Subject: subjRuleKey, OwnerKey: keySelf, RaisedBy: []string{"the tick"}, Ack: true, TickKept: true,
 		Decisions: []Decision{decide("log", "--since"), decide("ack"), decideWhen(judgmentUnread("the machine's clock"), "stop"), decide("wait")}},

@@ -54,7 +54,7 @@ func TestLogPrintsTheEpochsLinesFiltered(t *testing.T) {
 	if len(j.Lines) == 0 || j.Lines[0].Kind != "move" || len(j.Lines[0].Cards) != 2 || j.Lines[0].Cards[1] != "s1-2" {
 		t.Errorf("log --json: %+v", j)
 	}
-	ta.ok("clear --confirm t-sprint")
+	ta.ok("clear --confirm sprint")
 	if out := ta.ok("log --at-epoch 0 --card s1-1"); !strings.Contains(out, "m1 finished attempt 1: FAILED") {
 		t.Errorf("the old epoch's log after a clear:\n%s", out)
 	}
@@ -128,8 +128,8 @@ func TestTakeAndQueueHandTheirPackets(t *testing.T) {
 	ta.ok("add --stream s1 --count 1 --brief 'handle the empty case'")
 	ta.deal(1)
 	out := ta.ok("take --as m1 s1-1.w1@1")
-	for _, want := range []string{"PACKET s1-1.w1 attempt=1 gen=1 epoch=0", "  branch: sprint/t-s1-1.w1", "  brief:\n    handle the empty case", "  notes: none",
-		"  report it: nova-sprint finish --as m1 s1-1.w1@1 --epoch 0 --branch sprint/t-s1-1.w1"} {
+	for _, want := range []string{"PACKET s1-1.w1 attempt=1 gen=1 epoch=0", "  branch: sprint/s1-1.w1", "  brief:\n    handle the empty case", "  notes: none",
+		"  report it: nova-sprint finish --as m1 s1-1.w1@1 --epoch 0 --branch sprint/s1-1.w1"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("take has no %q:\n%s", want, out)
 		}

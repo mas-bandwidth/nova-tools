@@ -52,10 +52,9 @@ nothing.
 
 Each table keeps its member records under a prefix of its own, so a primary's
 record in work and its record in merge are separate. The tables are named
-plainly: `work`, `merge`, `readers` and `fleet`, and the view is `sprint`; there
-is no prefix. `--prefix <p>` (else `NOVA_SPRINT_PREFIX`) is an option for
-running two sprints on one store: it puts `<p>` before every table, view and
-key of a sprint (`<p>work`, `<p>sprint`), so the two do not touch each other.
+plainly: `work`, `merge`, `readers` and `fleet`, and the view is `sprint`; the
+names carry no prefix and there is no flag or variable for one. A store holds
+one sprint; a second sprint is a second store.
 
 Beside the columns shown, the merge table has two hidden columns: `returned`,
 where a primary sent back from merging waits (the table layer never places a
@@ -595,7 +594,7 @@ number otherwise the verb is refused, changes nothing, and names the size now
 and the members added or gone; a verb given `--group` prints how many it acted
 on. Each prints what moved, what did not and why,
 and the summary line. Every judgment verb takes `--answers <notification>`.
-Every store verb takes `--redis`, `--actor`, `--prefix` (the option above),
+Every store verb takes `--redis`, `--actor`,
 `--op <id>` (the same id again, for the same verb with the same arguments, returns the recorded
 result; recorded for another verb or other arguments it is a conflict and is
 refused), `--json` and `--max`. `--actor` has no default: it is `--actor`, else
@@ -651,14 +650,14 @@ command that loads it.
 | ack | closes a judgment the coordinator looked at, with the reason |
 | inbox | every open judgment and the notifications since the cursor, grouped, judgment first; `--open <id>`, `--read` |
 | card | one primary's story, told from the log: for a card in flight, first what holds it now (each open judgment with the commands that answer it, or the actor and its deadline); its place in its stream's line; its brief, and the fix its attempt was given; its timeline in local time, an attempt at a time ("attempt 2, because attempt 1 failed"), one line per event a person would name (two readers asked, a merge and its batch, a step and its answer are one line each), a finish and a read with the first line of their words; the reports, findings and fixes whole as paragraphs; a card that has ended says so in one line; `--fields` prints every field of the primary and its cards instead; `--json` carries both, the timeline's events with the log lines each tells |
-| queue --as, take | a member's or a reader's cards, each with its packet: what it is handed so that it needs no other read to learn its task (the card, its epoch and generation, the brief, this attempt's fix, the notes on it, and for a work card the branch to work on, `sprint/<card>`, or `sprint/<prefix><card>` under a prefix, and the one to start from, the attempt before's branch for a rework; for a read card the work it reads: the worker, its head, branch and base, and the worker's report), and the command that reports it; take prints the packets of the cards it took, `--json` as `packets`; finish takes `--branch` and `--base`, which the work card keeps and the reader's packet and card show |
+| queue --as, take | a member's or a reader's cards, each with its packet: what it is handed so that it needs no other read to learn its task (the card, its epoch and generation, the brief, this attempt's fix, the notes on it, and for a work card the branch to work on, `sprint/<card>`, and the one to start from, the attempt before's branch for a rework; for a read card the work it reads: the worker, its head, branch and base, and the worker's report), and the command that reports it; take prints the packets of the cards it took, `--json` as `packets`; finish takes `--branch` and `--base`, which the work card keeps and the reader's packet and card show |
 | log | the epoch's log, every line in order: --card (a primary with its work, read and merge cards), --stream, --member, --since, --at-epoch, --json (section 17) |
 | check, repair | section 9 and section 10 |
 | where | the view, once or `--watch` (redrawn in place, section 1); `--json` also carries the pending operation, the stalled streams, the people and the coordinator |
 | play | plays the world outside the table through these verbs, seeded (section 12); refused while no machine is running |
 | goal | `set`, `show`, `drop`: each person's goal and route, pushed by the tick (section 15) |
-| clear | stops the sprint and clears all work in it: a new epoch (section 13); `--confirm <sprint>` |
-| teardown | drops the tables, the view and every key of the sprint, of every epoch; `--confirm <sprint>` |
+| clear | stops the sprint and clears all work in it: a new epoch (section 13); `--confirm sprint` |
+| teardown | drops the tables, the view and every key of the sprint, of every epoch; `--confirm sprint` |
 
 The read verbs (queue, where, inbox, card, check) have `--json`, one object for a
 program; `queue --stream <s> --col waiting` lists a stream's waiting cards;
@@ -852,7 +851,7 @@ RUNNING the tick pushes each person's goal down its route once every five
 minutes of running time (RemindEvery), and at once when the goal or its route
 is set or the machine starts; nothing is pushed while it is STOPPED. The file
 route replaces one file with a header line (`REMINDER <n> to <name> at <time>,
-sprint <name>, epoch <n>`, where `<name>` is the sprint's view, `sprint` or `<prefix>sprint`) and the text, whole, so a watcher of the file sees
+sprint <name>, epoch <n>`, where `<name>` is the sprint's view, `sprint`) and the text, whole, so a watcher of the file sees
 one current reminder. A route that fails is one judgment, "a reminder could not
 be delivered", closed when a later delivery arrives. `goal show` shows each
 person's last push (`where --json` carries it). The people and their goals are the sprint's, not the

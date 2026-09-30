@@ -61,7 +61,7 @@ func (a *app) cmdPlay(args []string, stdout, stderr io.Writer) int {
 	}
 	var base []string
 	fs.Visit(func(f *flag.Flag) {
-		if f.Name == "redis" || f.Name == "prefix" {
+		if f.Name == "redis" {
 			base = append(base, "--"+f.Name, f.Value.String())
 		}
 	})

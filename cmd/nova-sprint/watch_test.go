@@ -104,7 +104,7 @@ func whereFixture(t *testing.T) *testApp {
 
 // whereRun is the run of a where on the test app's store.
 func (ta *testApp) whereRun(watch bool) whereRun {
-	return whereRun{c: common{verb: "where", redis: "mem:0", prefix: "t-", epoch: -1}, watch: watch, every: time.Second, stale: defaultStale, atEpoch: -1}
+	return whereRun{c: common{verb: "where", redis: "mem:0", epoch: -1}, watch: watch, every: time.Second, stale: defaultStale, atEpoch: -1}
 }
 
 // tableOf is the table of the frame titled name: its lines up to the next

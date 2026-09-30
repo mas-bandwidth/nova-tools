@@ -19,23 +19,19 @@ var t0 = time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
 
 // testApp is the command over an in-memory store, its clock stepped by hand.
 type testApp struct {
-	t      *testing.T
-	a      *app
-	m      *store.Mem
-	mu     sync.Mutex
-	now    time.Time
-	prefix string
+	t   *testing.T
+	a   *app
+	m   *store.Mem
+	mu  sync.Mutex
+	now time.Time
 	// live is the fleet members that beat before every command line and
 	// after every step of the clock: the machines alive.
 	live []string
 }
 
-func newTestApp(t *testing.T) *testApp { return newTestAppPrefix(t, "t-") }
-
-// newTestAppPrefix is newTestApp under the given table prefix ("" is none).
-func newTestAppPrefix(t *testing.T, prefix string) *testApp {
-	ta := &testApp{t: t, m: store.NewMem(), now: t0, live: []string{"m1", "m2"}, prefix: prefix}
-	env := map[string]string{"NOVA_SPRINT_REDIS": "mem:0", "NOVA_SPRINT_PREFIX": prefix, "NOVA_SPRINT_ACTOR": "coordinator"}
+func newTestApp(t *testing.T) *testApp {
+	ta := &testApp{t: t, m: store.NewMem(), now: t0, live: []string{"m1", "m2"}}
+	env := map[string]string{"NOVA_SPRINT_REDIS": "mem:0", "NOVA_SPRINT_ACTOR": "coordinator"}
 	ta.a = newApp(func(k string) string { return env[k] })
 	ta.a.now = func() time.Time { ta.mu.Lock(); defer ta.mu.Unlock(); return ta.now }
 	ta.a.sleep = func(d time.Duration) { ta.mu.Lock(); ta.now = ta.now.Add(d); ta.mu.Unlock(); ta.beat() }
@@ -49,7 +45,7 @@ func (ta *testApp) beat() {
 	ta.mu.Lock()
 	live := append([]string(nil), ta.live...)
 	ta.mu.Unlock()
-	st := &store.Store{B: ta.m, Names: sprint.Names{Prefix: ta.prefix}, Now: ta.a.now}
+	st := &store.Store{B: ta.m, Names: sprint.Names{}, Now: ta.a.now}
 	zero := 0.0
 	for _, m := range live {
 		if _, err := st.Beat(context.Background(), m, &zero, hostload.Source{}); err != nil {
@@ -82,7 +78,7 @@ func (ta *testApp) withEpoch(args []string) []string {
 			return args
 		}
 	}
-	st, err := ta.a.store(common{redis: "mem:0", prefix: "t-", actor: "tester"})
+	st, err := ta.a.store(common{redis: "mem:0", actor: "tester"})
 	if err != nil {
 		return args
 	}
@@ -140,7 +136,7 @@ func (ta *testApp) json(line string, v any) {
 // the rest of the tick: a test that needs exact queues deals by hand.
 func (ta *testApp) deal(n int) {
 	ta.t.Helper()
-	st, err := ta.a.store(common{redis: "mem:0", prefix: "t-", actor: "tester"})
+	st, err := ta.a.store(common{redis: "mem:0", actor: "tester"})
 	if err != nil {
 		ta.t.Fatal(err)
 	}
@@ -161,7 +157,7 @@ func TestTheCommandDrivesAStreamToLanded(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	out := ta.ok("init --readers reader-a,reader-b,reader-c --members m1,m2")
-	if !strings.Contains(out, "INIT OK tables=t-work,t-readers,t-merge,t-fleet view=t-sprint") {
+	if !strings.Contains(out, "INIT OK tables=work,readers,merge,fleet view=sprint") {
 		t.Fatalf("init: %s", out)
 	}
 	out = ta.ok("add --stream s1 --count 4")
@@ -340,18 +336,18 @@ func TestEveryVerbHasHelpAndRefusesBadUse(t *testing.T) {
 	}
 }
 
-// With no prefix (the default) the tables are the plain names, and clear and
+// The tables are the plain names, and clear and
 // teardown want the view's name, sprint.
-func TestNoPrefixIsTheDefault(t *testing.T) {
+func TestTablesAreNamedPlainlyAndConfirmIsTheViewName(t *testing.T) {
 	t.Parallel()
-	ta := newTestAppPrefix(t, "")
+	ta := newTestApp(t)
 	ta.ok("init --readers reader-a,reader-b --members m1")
 	ta.ok("add --stream s1 --count 2")
 	if out := ta.ok("where"); !strings.Contains(out, "work | waiting") || !strings.Contains(out, "readers ") || !strings.Contains(out, "fleet |") {
 		t.Fatalf("where with no prefix: %s", out)
 	}
 	for _, verb := range []string{"clear", "teardown"} {
-		for _, wrong := range []string{"none", "", "t-sprint", "work"} {
+		for _, wrong := range []string{"none", "", "t-sprint", "work", "prefix"} {
 			code, _, errs := ta.do(verb + " --confirm '" + wrong + "'")
 			if code != 2 || !strings.Contains(errs, "wants --confirm sprint") {
 				t.Fatalf("%s --confirm %q: %d %s", verb, wrong, code, errs)
@@ -361,16 +357,14 @@ func TestNoPrefixIsTheDefault(t *testing.T) {
 	if out := ta.ok("clear --confirm sprint"); !strings.Contains(out, "CLEAR OK epoch=0->1") {
 		t.Fatalf("clear: %s", out)
 	}
-	if out := ta.ok("teardown --confirm sprint"); !strings.Contains(out, "TEARDOWN OK sprint=sprint prefix= keys=") {
+	if out := ta.ok("teardown --confirm sprint"); !strings.Contains(out, "TEARDOWN OK sprint=sprint keys=") {
 		t.Fatalf("teardown: %s", out)
 	}
 	if code, _, _ := ta.do("where"); code == 0 {
 		t.Fatalf("the tables are still there")
 	}
-	prefixed := newTestApp(t)
-	prefixed.ok("init --readers reader-a,reader-b --members m1")
-	if code, _, errs := prefixed.do("clear --confirm sprint"); code != 2 || !strings.Contains(errs, "wants --confirm t-sprint") {
-		t.Fatalf("a prefixed sprint takes its own view name: %d %s", code, errs)
+	if code, _, errs := ta.do("where --prefix x"); code != 2 || !strings.Contains(errs, "prefix") {
+		t.Fatalf("a prefix flag is refused: %d %s", code, errs)
 	}
 }
 
@@ -406,7 +400,7 @@ func TestTeardownWantsTheSamePrefix(t *testing.T) {
 	if code, _, _ := ta.do("teardown --confirm other"); code != 2 {
 		t.Fatalf("teardown with another prefix: %d", code)
 	}
-	ta.ok("teardown --confirm t-sprint")
+	ta.ok("teardown --confirm sprint")
 	if code, _, _ := ta.do("where"); code == 0 {
 		t.Fatalf("the tables are still there")
 	}
@@ -424,7 +418,7 @@ func TestClearByTheCommand(t *testing.T) {
 	if code, _, _ := ta.do("clear --confirm other"); code != 2 {
 		t.Fatalf("clear with another prefix: %d", code)
 	}
-	out := ta.ok("clear --confirm t-sprint")
+	out := ta.ok("clear --confirm sprint")
 	if !strings.Contains(out, "CLEAR OK epoch=0->1") || !strings.Contains(out, "primaries=2") || !strings.HasSuffix(strings.TrimSpace(out), "\nSTOPPED") || strings.Contains(out, "-> ETA") {
 		t.Fatalf("clear: %s", out)
 	}
@@ -455,6 +449,6 @@ func TestClearByTheCommand(t *testing.T) {
 		t.Fatalf("the same ids in the new epoch: %+v", q)
 	}
 	ta.ok("take --as m1 --epoch 1 s1-1.w1@1")
-	ta.ok("clear --confirm t-sprint")
+	ta.ok("clear --confirm sprint")
 	ta.clean()
 }

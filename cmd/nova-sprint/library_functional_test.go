@@ -18,7 +18,7 @@ import (
 func TestAStoreWithoutThisBuildsLibraryIsRefused(t *testing.T) {
 	t.Parallel()
 	addr := testutil.Start(t)
-	env := map[string]string{"NOVA_SPRINT_REDIS": addr, "NOVA_SPRINT_PREFIX": "f-", "NOVA_SPRINT_ACTOR": "coordinator"}
+	env := map[string]string{"NOVA_SPRINT_REDIS": addr, "NOVA_SPRINT_ACTOR": "coordinator"}
 	var out, errb bytes.Buffer
 	a := newApp(func(k string) string { return env[k] })
 	defer a.close()
