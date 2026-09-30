@@ -1,7 +1,9 @@
 package sprint
 
 import (
+	"encoding/binary"
 	"fmt"
+	"hash/fnv"
 	"sort"
 	"strconv"
 	"strings"
@@ -1527,13 +1529,27 @@ type StopRead struct {
 //
 // The model's form (stopinputs in tla/SprintEvents.tla) is the record of every
 // card over every stream as read. The store keeps no one version of that set,
-// so this is the set itself, as small as it can be: a card the plans read by
-// its revision (layer 1 moves it on every write of the card, a move and a
-// removal included); a card created since the read, which no read saw, by the
-// counters (every add and rank moves the score and id counter, and a stream
-// created moves the stream-set counter); a member's control card by its
-// revision, which every write of its status or stable_since moves; a beat by
-// the score of beat:<m> as read (0 when there was none).
+// so this is the set itself, as small as it can be: the cards the plans read,
+// each by its revision (layer 1 moves it on every write of the card, a move
+// and a removal included), folded into one version for each table (revFold), so
+// the step carries at most one guard for each table and never one for each
+// card: the read holds up to MaxReadRecords cards, and a guard for each would
+// not fit a step. A card created since the read, which no read saw, is caught
+// by the counters (every add and rank moves the score and id counter, and a
+// stream created moves the stream-set counter), and a card asked for and read
+// as absent is in the fold at revision 0, so its creation moves the fold. A
+// member's control card is guarded by its revision, which every write of its
+// status or stable_since moves; a beat by the score of beat:<m> as read (0
+// when there was none).
+//
+// The counts a dry plan reads (a cell's count, rcount `before`) are not
+// inputs here: a count moved by a card the read did not load moves no input
+// (a rework reopening a card before a sentinel). The model's DryIn is every
+// card's record, so this is narrower; H14 words it as the cards read. A
+// judgment raised on such a read lives at most one look (stopclose).
+//
+// ReadStopInputs is the producer of a look's inputs; a hand-built StopInputs is
+// for a test.
 type StopInputs struct {
 	// Cards is the revision of each card the dry plans read, by its table and
 	// id: 0 for a card read as absent.
@@ -1580,33 +1596,123 @@ func (in *StopInputs) Read(s *Snapshot) {
 	}
 }
 
+// StopFacts are what R17's look read beside the cards of its snapshot.
+type StopFacts struct {
+	// Next is {p}next@e's score and id counter as read: no query of a snapshot
+	// answers it, so the look's caller gives it.
+	Next uint64
+	// Absent are the cards the dry plans asked for by id that the read found
+	// absent: each is recorded at revision 0, so its creation moves the fold.
+	Absent []CardRef
+}
+
+// ReadStopInputs is the inputs of R17's dry plans as the look read them: every
+// card the snapshot loaded and every member's control card (Read), the ids the
+// plans asked for and the read found absent (f.Absent) at revision 0, the
+// stream-set counter the read answered, the score and id counter (f.Next), and
+// the beat of every member: the score of beat:<m> the read's range over the due
+// set gave, 0 for a member with none. A read that did not ask for the stream-set
+// counter, or for the beats, or whose beats were cut, is refused as any plan's
+// read is (Snapshot.Unloaded), and the inputs it gives are not to be used.
+//
+// Follows stopinputs in tla/SprintEvents.tla (errata 3, H14 and H17).
+func ReadStopInputs(s *Snapshot, f StopFacts) StopInputs {
+	in := StopInputs{Next: f.Next}
+	in.Read(s)
+	for _, ref := range f.Absent {
+		if in.Cards == nil {
+			in.Cards = map[CardRef]uint64{}
+		}
+		if _, ok := in.Cards[ref]; !ok {
+			in.Cards[ref] = 0
+		}
+	}
+	if n, ok := posNextStreams(s); ok {
+		in.Streams = n
+	}
+	in.Beats = stopBeats(s)
+	for m := range in.Members {
+		if _, ok := in.Beats[m]; !ok {
+			if in.Beats == nil {
+				in.Beats = map[string]int64{}
+			}
+			in.Beats[m] = 0
+		}
+	}
+	return in
+}
+
+// stopBeats is the beat entries of the due set as the snapshot's read gave them,
+// by member: nothing for a snapshot built whole. A read that did not ask for the
+// range, or whose answer was cut, or has a beat with no score, is noted unread.
+func stopBeats(s *Snapshot) map[string]int64 {
+	if s == nil || s.Partial == nil {
+		return nil
+	}
+	a, ok := sprintKeyRange(s.Partial, factBeats)
+	switch {
+	case !ok:
+		unread(s, unloadedKeyMessage+": "+factBeats)
+		return nil
+	case a.HasMore:
+		unread(s, unloadedKeyMessage+": "+factBeats+" holds more than the read did")
+		return nil
+	case len(a.Scores) != len(a.IDs):
+		unread(s, unloadedKeyMessage+": "+factBeats+" without its scores")
+		return nil
+	}
+	out := map[string]int64{}
+	for i, id := range a.IDs {
+		if m, isBeat := strings.CutPrefix(id, beatKeyPrefix); isBeat {
+			out[m] = int64(a.Scores[i])
+		}
+	}
+	return out
+}
+
+// revFold is the version of the cards of a table as the plans read them: the
+// sum, over its cards, of a hash of the card's id and revision. The sum is
+// order-free, and no two moves cancel: a card written and another removed
+// change it by two hashes, not by two revisions. It is a non-negative int64,
+// as a guard's score is.
+func revFold(cards map[CardRef]uint64, table string) int64 {
+	var sum uint64
+	for ref, rev := range cards {
+		if ref.Table != table {
+			continue
+		}
+		h := fnv.New64a()
+		h.Write([]byte(ref.ID))
+		var b [9]byte
+		binary.BigEndian.PutUint64(b[1:], rev) // b[0] = 0 separates the id from the revision
+		h.Write(b[:])
+		sum += h.Sum64()
+	}
+	return int64(sum >> 1)
+}
+
 // The kinds of guard R17's step carries besides the clock fields: one for
 // each input of its dry plans as read (StopInputs).
 const (
-	guardRev     = "rev"     // a card's revision, Key <table>/<id>
+	guardRevs    = "revs"    // the fold of a table's cards' revisions, Key <table> (revFold)
 	guardCounter = "counter" // a counter of {p}next@e, Key next or next.streams
 	guardCtl     = "ctl"     // a member's control card's revision, Member
 	guardBeat    = "beat"    // a member's beat entry's score, Member, Key beat:<m>
 )
 
-// guards are the guards of the inputs, in a fixed order: each card, the two
-// counters, each member's control card, each beat.
+// guards are the guards of the inputs, in a fixed order: the fold of the cards
+// of each table read, the two counters, each member's control card, each beat.
+// At most one for each table, however many cards were read.
 //
 // Follows stopinputs in tla/SprintEvents.tla (errata 3, H14 and H17).
 func (in StopInputs) guards() []XGuard {
 	var out []XGuard
-	refs := make([]CardRef, 0, len(in.Cards))
+	tables := map[string]bool{}
 	for ref := range in.Cards {
-		refs = append(refs, ref)
+		tables[ref.Table] = true
 	}
-	sort.Slice(refs, func(i, j int) bool {
-		if refs[i].Table != refs[j].Table {
-			return refs[i].Table < refs[j].Table
-		}
-		return refs[i].ID < refs[j].ID
-	})
-	for _, ref := range refs {
-		out = append(out, XGuard{Kind: guardRev, Key: ref.Table + "/" + ref.ID, Score: int64(in.Cards[ref])})
+	for _, t := range membersOf(tables) {
+		out = append(out, XGuard{Kind: guardRevs, Key: t, Score: revFold(in.Cards, t)})
 	}
 	out = append(out, XGuard{Kind: guardCounter, Key: "next", Score: int64(in.Next)},
 		XGuard{Kind: guardCounter, Key: KeyNextStreams, Score: int64(in.Streams)})
@@ -1722,9 +1828,8 @@ func StoppedApplies(p RulePlan, c Clock, now StopInputs) string {
 		switch g.Kind {
 		case guardClock:
 			at = clock[g.Key]
-		case guardRev:
-			table, id, _ := strings.Cut(g.Key, "/")
-			at = int64(now.Cards[CardRef{Table: table, ID: id}])
+		case guardRevs:
+			at = revFold(now.Cards, g.Key)
 		case guardCounter:
 			at = int64(now.Next)
 			if g.Key == KeyNextStreams {

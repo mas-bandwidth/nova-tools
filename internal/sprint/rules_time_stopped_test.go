@@ -1,6 +1,9 @@
 package sprint
 
 import (
+	"reflect"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -285,5 +288,224 @@ func TestStoppedJudgmentSaysAsOfTheLook(t *testing.T) {
 	asOf := "as of " + time.UnixMilli(timeWall0+span).UTC().Format(time.RFC3339)
 	if n == nil || !strings.Contains(n.Text, asOf) {
 		t.Fatalf("the judgment does not say %q: %+v", asOf, p.Notes)
+	}
+}
+
+// stopReadSpec is the store as R17's look reads it: the cards of the work
+// table by revision, the members' control cards by revision, the beat entries
+// of the due set, and the two counters of {p}next@e. snapshot is the look's
+// read of it, loaded as a plan's read is: cards as records, the beats as the
+// range over the due set, the stream-set counter as a sprint key.
+type stopReadSpec struct {
+	next, streams uint64
+	beats         map[string]int64
+	cards         map[string]uint64
+	members       map[string]uint64
+	noBeats       bool // the read did not ask for the beats
+	noStreams     bool // the read did not ask for the stream-set counter
+}
+
+func (sp stopReadSpec) clone() stopReadSpec {
+	sp.beats, sp.cards, sp.members = clone(sp.beats), clone(sp.cards), clone(sp.members)
+	return sp
+}
+
+func (sp stopReadSpec) snapshot(t testing.TB) *Snapshot {
+	t.Helper()
+	rp := ReadPlan{Sprint: []SprintQ{{Kind: QueryStreams, Limit: 1}}}
+	ans := ReadAnswer{Epoch: "1", ActiveEpoch: "1", TimeMS: "1790000000123", Sprint: []Answer{{Kind: QueryStreams}}}
+	if !sp.noStreams {
+		rp.Sprint[0].Keys = []string{KeyNextStreams}
+		ans.Sprint[0].Keys = []KeyAnswer{{Key: KeyNextStreams, N: sp.streams}}
+	}
+	if !sp.noBeats {
+		rp.Ranges = []RangeQ{{Key: factBeats, Limit: MaxMembers}}
+		a := TsetAnswer{Kind: AnswerRange}
+		for _, m := range membersOf(sp.beats) {
+			a.IDs = append(a.IDs, beatKeyPrefix+m)
+			a.Scores = append(a.Scores, float64(sp.beats[m]))
+		}
+		ans.Tset = []TsetAnswer{a}
+	}
+	for _, id := range membersOf(sp.cards) {
+		ans.Sprint[0].Records = append(ans.Sprint[0].Records, TableCard{Work, &Card{ID: id, Row: "s1", Col: Waiting, Rev: sp.cards[id]}})
+	}
+	for _, m := range membersOf(sp.members) {
+		ans.Sprint[0].Records = append(ans.Sprint[0].Records, TableCard{Fleet, &Card{ID: CtlID(m), Row: m, Col: Ctl, Rev: sp.members[m]}})
+	}
+	s, err := loadPartial(rp, ans, false)
+	if err != nil {
+		t.Fatalf("the look's read: %v", err)
+	}
+	return s
+}
+
+func stopReadBase() stopReadSpec {
+	return stopReadSpec{
+		next: 40, streams: 2,
+		beats:   map[string]int64{"m1": timeWall0 + 15*timeSec},
+		cards:   map[string]uint64{"a": 3, "b": 1},
+		members: map[string]uint64{"m1": 5, "m2": 9},
+	}
+}
+
+// ReadStopInputs records what the read gave: the cards and the members' control
+// cards, the stream-set counter, the beat of every member (0 for one with no
+// beat entry), the score and id counter the caller gives, and the ids asked for
+// and read as absent at revision 0.
+func TestReadStopInputsRecordsTheRead(t *testing.T) {
+	t.Parallel()
+	sp := stopReadBase()
+	s := sp.snapshot(t)
+	in := ReadStopInputs(s, StopFacts{Next: 41, Absent: []CardRef{{Table: Work, ID: "later"}, {Table: Work, ID: "a"}}})
+	if got := s.Unloaded(); len(got) != 0 {
+		t.Fatalf("the read is refused: %v", got)
+	}
+	wantCards := map[CardRef]uint64{{Table: Work, ID: "a"}: 3, {Table: Work, ID: "b"}: 1, {Table: Work, ID: "later"}: 0}
+	if !reflect.DeepEqual(in.Cards, wantCards) {
+		t.Errorf("cards %v, want %v (a is read at 3 and asked absent: the read wins)", in.Cards, wantCards)
+	}
+	if in.Next != 41 || in.Streams != 2 {
+		t.Errorf("counters next %d streams %d, want 41 and 2", in.Next, in.Streams)
+	}
+	if want := map[string]uint64{"m1": 5, "m2": 9}; !reflect.DeepEqual(in.Members, want) {
+		t.Errorf("members %v, want %v", in.Members, want)
+	}
+	if want := map[string]int64{"m1": timeWall0 + 15*timeSec, "m2": 0}; !reflect.DeepEqual(in.Beats, want) {
+		t.Errorf("beats %v, want %v (m2 has none: 0)", in.Beats, want)
+	}
+}
+
+// Read then apply, through the producer, for each kind of guard R17's step
+// carries: the look's inputs are read from the store as it is, the step is
+// guarded on them, and the same read taken again at apply is refused XGUARD
+// when the one input moved, and lets the step through when nothing moved.
+func TestStoppedApplyOnAReadRefusesEachKindOfGuard(t *testing.T) {
+	t.Parallel()
+	span := StoppedDueSpan.Milliseconds()
+	facts := StopFacts{Next: 40, Absent: []CardRef{{Table: Work, ID: "later"}}}
+	for _, tc := range []struct {
+		name  string
+		kind  string // the kind of guard that names the move
+		move  func(sp *stopReadSpec, f *StopFacts)
+		moved bool
+	}{
+		{"nothing moved", "", func(*stopReadSpec, *StopFacts) {}, false},
+		{"a card's revision", guardRevs, func(sp *stopReadSpec, _ *StopFacts) { sp.cards["a"]++ }, true},
+		{"a card removed", guardRevs, func(sp *stopReadSpec, _ *StopFacts) { delete(sp.cards, "b") }, true},
+		{"a card asked for and absent, created", guardRevs, func(sp *stopReadSpec, _ *StopFacts) { sp.cards["later"] = 1 }, true},
+		{"the score and id counter", guardCounter + " next ", func(_ *stopReadSpec, f *StopFacts) { f.Next++ }, true},
+		{"the stream-set counter", guardCounter + " " + KeyNextStreams, func(sp *stopReadSpec, _ *StopFacts) { sp.streams++ }, true},
+		{"a member's control card", guardCtl, func(sp *stopReadSpec, _ *StopFacts) { sp.members["m2"]++ }, true},
+		{"a beat", guardBeat, func(sp *stopReadSpec, _ *StopFacts) { sp.beats["m1"] += 15 * timeSec }, true},
+		{"a first beat", guardBeat, func(sp *stopReadSpec, _ *StopFacts) { sp.beats["m2"] = timeWall0 }, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			sp := stopReadBase()
+			sw := newStoppedWorld(t)
+			sw.inputs = ReadStopInputs(sp.snapshot(t), facts)
+			due := []RulePlan{dryPlan("a")}
+			sw.step(due, timeWall0)
+			p := sw.look(due, timeWall0+span)
+			if noteReq(p, requestOpen, NStoppedWithDue) == nil {
+				t.Fatalf("the look does not raise: %+v", p.Notes)
+			}
+			for _, kind := range []string{guardRevs, guardCounter, guardCtl, guardBeat} {
+				if !slices.ContainsFunc(p.Guards, func(g XGuard) bool { return g.Kind == kind }) {
+					t.Fatalf("the step carries no %s guard: %+v", kind, p.Guards)
+				}
+			}
+			after, f := sp.clone(), facts
+			tc.move(&after, &f)
+			s := after.snapshot(t)
+			now := ReadStopInputs(s, f)
+			if got := s.Unloaded(); len(got) != 0 {
+				t.Fatalf("the read at apply is refused: %v", got)
+			}
+			why := StoppedApplies(p, sw.w.clock, now)
+			switch {
+			case !tc.moved && why != "":
+				t.Fatalf("nothing moved, and the step is refused: %s", why)
+			case tc.moved && !strings.HasPrefix(why, "XGUARD: "+tc.kind):
+				t.Fatalf("the move is refused %q, want XGUARD naming %q", why, tc.kind)
+			}
+		})
+	}
+}
+
+// A read that did not ask for the stream-set counter or the beats is refused as
+// a plan's read is: the inputs it gives compare 0 with 0 and never fire, so the
+// caller does not use them.
+func TestReadStopInputsRefusesAReadThatDidNotAsk(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		edit func(*stopReadSpec)
+		want string
+	}{
+		{"the stream-set counter", func(sp *stopReadSpec) { sp.noStreams = true }, KeyNextStreams},
+		{"the beats", func(sp *stopReadSpec) { sp.noBeats = true }, factBeats},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			sp := stopReadBase()
+			tc.edit(&sp)
+			s := sp.snapshot(t)
+			ReadStopInputs(s, StopFacts{})
+			got := s.Unloaded()
+			if len(got) != 1 || !strings.Contains(got[0], tc.want) {
+				t.Fatalf("refused %v, want one refusal naming %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// The revisions of a table's cards are one version, and no two moves of them
+// cancel: two cards that swap revisions, and one card written while another is
+// removed, each move the fold. Each table has its own.
+func TestRevFoldMovesOnEveryMove(t *testing.T) {
+	t.Parallel()
+	ref := func(table, id string) CardRef { return CardRef{Table: table, ID: id} }
+	base := map[CardRef]uint64{ref(Work, "a"): 1, ref(Work, "b"): 2, ref(Work, "c"): 1, ref(Merge, "a"): 4}
+	fold := revFold(base, Work)
+	if fold < 0 {
+		t.Fatalf("a fold is a non-negative score: %d", fold)
+	}
+	for name, moved := range map[string]map[CardRef]uint64{
+		"two cards swap revisions":         {ref(Work, "a"): 2, ref(Work, "b"): 1, ref(Work, "c"): 1},
+		"one written, one removed":         {ref(Work, "a"): 1, ref(Work, "b"): 3},
+		"a card gone":                      {ref(Work, "a"): 1, ref(Work, "b"): 2},
+		"a card appears at revision 0":     {ref(Work, "a"): 1, ref(Work, "b"): 2, ref(Work, "c"): 1, ref(Work, "d"): 0},
+		"a card of the same id renamed":    {ref(Work, "a"): 1, ref(Work, "b"): 2, ref(Work, "c2"): 1},
+		"a revision one higher":            {ref(Work, "a"): 1, ref(Work, "b"): 2, ref(Work, "c"): 2},
+		"a revision carried into the next": {ref(Work, "a"): 1, ref(Work, "b"): 2, ref(Work, "c"): 1 + 256},
+	} {
+		if revFold(moved, Work) == fold {
+			t.Errorf("%s: the fold did not move", name)
+		}
+	}
+	other := clone(base)
+	other[ref(Merge, "a")]++
+	if revFold(other, Work) != fold || revFold(other, Merge) == revFold(base, Merge) {
+		t.Errorf("a card of the merge table moved the fold of the work table, or not its own")
+	}
+	if revFold(map[CardRef]uint64{ref(Work, "b"): 2, ref(Work, "a"): 1, ref(Work, "c"): 1}, Work) != fold {
+		t.Errorf("the fold depends on the order of the cards")
+	}
+	// however many cards are read, the step carries one guard for each table
+	many := StopInputs{Cards: map[CardRef]uint64{}}
+	for i := 0; i < 3000; i++ {
+		many.Cards[ref(Work, "w"+strconv.Itoa(i))] = uint64(i)
+	}
+	many.Cards[ref(Merge, "m")] = 1
+	revs := 0
+	for _, g := range many.guards() {
+		if g.Kind == guardRevs {
+			revs++
+		}
+	}
+	if revs != 2 {
+		t.Errorf("%d fold guards for the cards of two tables, want 2", revs)
 	}
 }
