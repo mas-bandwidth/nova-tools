@@ -14,7 +14,7 @@ import (
 func TestSpecDecideNamesTwelveRules(t *testing.T) {
 	t.Parallel()
 
-	raw, err := os.ReadFile(filepath.Join("..", "..", "deprecated", "docs", "SPEC-DECIDE.md"))
+	raw, err := os.ReadFile(filepath.Join("testdata", "SPEC-DECIDE.md"))
 	if err != nil {
 		t.Fatalf("the typed-decision route's spec is missing: %s", err)
 	}
@@ -48,7 +48,7 @@ func TestSpecDecideNamesTwelveRules(t *testing.T) {
 func TestSpecDecideNamesTheLadder(t *testing.T) {
 	t.Parallel()
 
-	raw, err := os.ReadFile(filepath.Join("..", "..", "deprecated", "docs", "SPEC-DECIDE.md"))
+	raw, err := os.ReadFile(filepath.Join("testdata", "SPEC-DECIDE.md"))
 	if err != nil {
 		t.Fatalf("the typed-decision route's spec is missing: %s", err)
 	}

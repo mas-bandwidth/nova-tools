@@ -16,7 +16,7 @@
 # - Adding a second occurrence to an already-allowed file exceeds the ceiling and fails.
 # - A count lower than the allowed count requires shrinking the allowlist entry.
 #
-# ceiling: 294
+# ceiling: 288
 cmd/nova-bus/main.go:freddy 3
 cmd/nova-bus/main.go:glenn 2
 cmd/nova-bus/main.go:johnny 3

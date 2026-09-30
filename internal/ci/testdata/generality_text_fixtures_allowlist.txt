@@ -21,3 +21,5 @@ internal/tlc/testdata/temporal-old.log captured TLC model checker output
 internal/workgh/testdata/reliable/call-01.json recorded GitHub GraphQL reply for a public repository
 internal/workgh/testdata/reliable/call-02.json recorded GitHub GraphQL reply for a public repository
 internal/workgh/testdata/reliable/call-03.json recorded GitHub GraphQL reply for a public repository
+internal/decide/testdata/SPEC-DECIDE.md recorded typed-decision spec containing historical references
+internal/decide/testdata/questions/questions-escalate.json recorded question fixture for decision routing

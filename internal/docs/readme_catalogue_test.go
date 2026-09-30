@@ -59,6 +59,9 @@ func TestReadmeCatalogueContainsOnlyLivingTools(t *testing.T) {
 	for _, dir := range []string{"cmd", "deprecated/cmd"} {
 		entries, err := os.ReadDir(filepath.Join(root, dir))
 		if err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
 			t.Fatal(err)
 		}
 		for _, entry := range entries {

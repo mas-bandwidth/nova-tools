@@ -1,6 +1,7 @@
 package docs
 
 import (
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -23,6 +24,9 @@ func parkedDocumentationReferences(tree fs.FS) ([]string, error) {
 	for _, dir := range []string{"deprecated/cmd", "cmd"} {
 		entries, err := fs.ReadDir(tree, dir)
 		if err != nil {
+			if errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
 			return nil, err
 		}
 		for _, entry := range entries {
