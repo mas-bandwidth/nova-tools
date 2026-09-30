@@ -499,7 +499,7 @@ func checkVerb(args []string, stdout, stderr io.Writer) int {
 	for i := range args {
 		// the first argument is the refusal: an unknown flag, or a word where none goes
 		text, _ := unknownArg(args, i, "check")
-		fmt.Fprintf(stderr, "CHECK REFUSED reason=bad_flag: %s\n", text)
+		fmt.Fprintf(stderr, "CHECK REFUSED reason=bad_flag: %s\n", oneline.WithRemedy(text, "nova-sandbox help check"))
 		return sandbox.ExitCannotRun
 	}
 	backend, ok := sandbox.Available()
@@ -535,7 +535,7 @@ func probeVerb(args []string, stdout, stderr io.Writer, env []string) int {
 	// is a list of consequences (`probe --wrte x` also said --write was missing).
 	if len(f.bad) > 0 {
 		for _, r := range f.bad {
-			fmt.Fprintf(stderr, "PROBE REFUSED reason=check: %s\n", oneline.Escape(r.Text))
+			fmt.Fprintf(stderr, "PROBE REFUSED reason=check: %s\n", oneline.WithRemedy(r.Text, "nova-sandbox help probe"))
 		}
 		return sandbox.ExitCannotRun
 	}

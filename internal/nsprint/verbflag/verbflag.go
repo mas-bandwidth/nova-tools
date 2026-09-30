@@ -111,8 +111,11 @@ func RecoverWith(out io.Writer, prog, banner string, code *int, extra func(verb 
 	}
 	var b strings.Builder
 	Print(&b, prog, banner, h.FS)
-	_, _ = io.WriteString(out, Insert(b.String(), extra(Verb(prog, h.FS))))
 	*code = 0
+	if _, err := io.WriteString(out, Insert(b.String(), extra(Verb(prog, h.FS)))); err != nil {
+		// the help did not reach its reader (a closed stdout): the exit code says so
+		*code = 1
+	}
 }
 
 // Insert puts lines into a printed verb help above its flags (above its

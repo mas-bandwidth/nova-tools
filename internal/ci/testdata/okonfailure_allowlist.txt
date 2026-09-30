@@ -5,5 +5,4 @@
 # comes back. This list only shrinks: the class test fails on a row whose pair
 # has left as well as on a pair that is not listed, and NOVA_CI_UPDATE=1 drops a
 # stale row and never adds one.
-# ceiling: 1
-cmd/nova-check/main.go:cmdQuickstart:ok-carried QUICKSTART OK is printed over failed checks; being fixed in a sibling change of 2026-09-30, and this row goes when that lands
+# ceiling: 0
