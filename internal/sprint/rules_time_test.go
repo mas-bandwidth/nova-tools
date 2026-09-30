@@ -2985,3 +2985,20 @@ func timeBenchWorld(b *testing.B, perKind int) (*timeWorld, map[string][]string)
 	w.f.Tick = TickFact{Backlog: 400, BehindN: 500}
 	return w, batches
 }
+
+// TestTimeRuleTypesAreTheTables: every type the time rules raise through their
+// helpers (know, judge, note), whose type the class test of the rules' notes
+// cannot read at the site (sprintfn TestRuleNotesJAccepts stands a type in for
+// a helper's), is a row of 2.2's judgments or of 2.5's notices in the tables'
+// own words, so J takes it (a know of a type 2.5 does not have is REQUEST).
+func TestTimeRuleTypesAreTheTables(t *testing.T) {
+	t.Parallel()
+	for _, typ := range []string{NReplacedUntaken, NReplacedLateWork, NReplacedLateRead, NIdle, NPastDue, NCutStopped, NStepRefused,
+		NWorkLate, NReadLate, NMergeLate, NStoppedWithDue} {
+		_, judgment := Judgments[typ]
+		_, notice := Notices[typ]
+		if !judgment && !notice {
+			t.Errorf("%q is in neither table", typ)
+		}
+	}
+}

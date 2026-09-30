@@ -1982,7 +1982,7 @@ const (
 	NReplacedUntaken  = "replaced a work card not taken"
 	NReplacedLateWork = "replaced a late work card"
 	NReplacedLateRead = "replaced a late read"
-	NIdle             = "stream has landed nothing for IdleSpan"
+	NIdle             = "stream s has landed nothing for IdleSpan"
 	NPastDue          = "a judgment has waited past its due time"
 	NCutStopped       = "a verb in parts stopped before its end"
 	NStepRefused      = "the machine's step was refused"
