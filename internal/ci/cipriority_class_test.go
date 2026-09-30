@@ -162,6 +162,23 @@ func goSlotLines(fset *token.FileSet, f *ast.File) map[int]bool {
 // off: the Go field or variable ci/CI, or the Lua TM.ci_legs.
 var namesCILegs = regexp.MustCompile(`\bci\b|\bCI\b|TM\.ci_legs\(`)
 
+// staticShareExempt are the slot computations that are not free slots and so
+// need not take the CI legs off, each with its reason. A line is exempt only
+// by its file and its exact code; every other line is judged by the rule.
+//
+// internal/config/width.go: the sprint's width is the static share nova-config
+// declares, the machine's slots less the slots of the friends charged to it.
+// It is the same on every read of the same rows, so `nova-sprint fleet sync`
+// can write it and read it back unchanged; a width that followed the CI legs
+// would drift with every CI run. The legs are taken off at take time, by the
+// lease a member holds in the machine's one slot store (`nova-swarm slots
+// take`, cmd/nova-swarm/slots.go cmdSlotsTake over internal/swarm
+// TakeSlotLeases; H2's lease-before-take: the member takes min(width - held,
+// free leases)), so no slot is oversubscribed.
+var staticShareExempt = map[string]string{
+	"internal/config/width.go": "w.Width = w.Slots - w.Charged",
+}
+
 func TestSlotsShrinkByCILegs(t *testing.T) {
 	t.Parallel()
 	root := repoRoot(t)
@@ -220,6 +237,9 @@ func TestSlotsShrinkByCILegs(t *testing.T) {
 				continue
 			}
 			checked++
+			if staticShareExempt[f.Rel] == code {
+				continue
+			}
 			if !namesCILegs.MatchString(code) {
 				t.Errorf("%s:%d: %q computes free slots without the CI legs running on the bench (nova-tools#4293)", f.Rel, i+1, code)
 			}

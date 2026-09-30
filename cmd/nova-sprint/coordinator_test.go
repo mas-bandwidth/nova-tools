@@ -93,6 +93,7 @@ func TestEveryCoordinatorVerbIsTheCoordinators(t *testing.T) {
 		"fleet up":    "fleet up m3",
 		"fleet down":  "fleet down m1",
 		"fleet level": "fleet level",
+		"fleet sync":  "fleet sync",
 		"reader add":  "reader add reader-d",
 		"wait":        "wait x --for 1m",
 		"ack":         "ack x --reason r",
