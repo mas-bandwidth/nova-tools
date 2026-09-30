@@ -639,6 +639,12 @@ func (fx *tsetFixture) SemanticSnapshot(t *testing.T) MemSnapshot {
 		}
 		out.Epochs[epoch] = es
 	}
+	type recordRead struct {
+		table, id, key string
+		command        *redis.MapStringStringCmd
+	}
+	var recordReads []recordRead
+	pipe := fx.Client.Pipeline()
 	for table, def := range out.Definitions {
 		for _, key := range keys {
 			if !strings.HasPrefix(key, def.MemberPrefix) {
@@ -646,34 +652,46 @@ func (fx *tsetFixture) SemanticSnapshot(t *testing.T) MemSnapshot {
 			}
 			known[key] = true
 			id := strings.TrimPrefix(key, def.MemberPrefix)
-			h, err := fx.Client.HGetAll(ctx, key).Result()
-			if err != nil {
-				t.Fatalf("record %q: %v", key, err)
-			}
-			epoch := Decimal(h["epoch"])
-			es, ok := out.Epochs[epoch]
-			if !ok {
-				t.Fatalf("record %q has unknown epoch %q", key, epoch)
-			}
-			ts := es.Tables[table]
-			record := MemRecord{Epoch: epoch, Revision: Decimal(h["revision"]), Fields: make(map[string]string)}
-			if place := h["place:"+table]; place != "" {
-				sep := strings.LastIndex(place, ":")
-				if sep < 0 {
-					t.Fatalf("record %q has malformed place %q", key, place)
-				}
-				record.Row, record.Column = place[:sep], place[sep+1:]
-				record.Score = ts.Cells[record.Row][record.Column][id]
-			}
-			for field, value := range h {
-				if field != "epoch" && field != "revision" && field != "place:"+table {
-					record.Fields[field] = value
-				}
-			}
-			ts.Records[id] = record
-			es.Tables[table] = ts
-			out.Epochs[epoch] = es
+			command := pipe.HGetAll(ctx, key)
+			recordReads = append(recordReads, recordRead{table: table, id: id, key: key, command: command})
 		}
+	}
+	var pipelineErr error
+	if len(recordReads) > 0 {
+		_, pipelineErr = pipe.Exec(ctx)
+	}
+	for _, read := range recordReads {
+		table, id, key := read.table, read.id, read.key
+		h, err := read.command.Result()
+		if err != nil {
+			t.Fatalf("record %q: %v", key, err)
+		}
+		epoch := Decimal(h["epoch"])
+		es, ok := out.Epochs[epoch]
+		if !ok {
+			t.Fatalf("record %q has unknown epoch %q", key, epoch)
+		}
+		ts := es.Tables[table]
+		record := MemRecord{Epoch: epoch, Revision: Decimal(h["revision"]), Fields: make(map[string]string)}
+		if place := h["place:"+table]; place != "" {
+			sep := strings.LastIndex(place, ":")
+			if sep < 0 {
+				t.Fatalf("record %q has malformed place %q", key, place)
+			}
+			record.Row, record.Column = place[:sep], place[sep+1:]
+			record.Score = ts.Cells[record.Row][record.Column][id]
+		}
+		for field, value := range h {
+			if field != "epoch" && field != "revision" && field != "place:"+table {
+				record.Fields[field] = value
+			}
+		}
+		ts.Records[id] = record
+		es.Tables[table] = ts
+		out.Epochs[epoch] = es
+	}
+	if pipelineErr != nil {
+		t.Fatalf("record pipeline: %v", pipelineErr)
 	}
 	for epoch := range out.Epochs {
 		key := fixtureDoneKey(fx.Space, string(epoch))
