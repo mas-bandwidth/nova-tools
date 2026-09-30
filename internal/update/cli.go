@@ -697,6 +697,7 @@ func movedVerb(c *tool.Call, env Environment) *tool.Out {
 		}
 		// The worktree is git's own tree, so git takes it down; anything it
 		// leaves behind stays behind rather than being removed by hand.
+		// ignored: git takes its own worktree down (see the comment above); anything left stays in the scratch root
 		defer func() { _ = runChild([]string{"git", "-C", repo, "worktree", "remove", "--force", work}) }()
 		// The build directory is named for the revision, so the two builds
 		// cannot collide and the set each revision produced sits in one

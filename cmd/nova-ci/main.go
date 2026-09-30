@@ -188,6 +188,7 @@ func cmdSlowtests(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 			return refuse(stderr, " slowtests", fmt.Sprintf("--allowlist: %s", oneline.Err(err)))
 		}
 		rows, err := slowtests.ParseAllowlist(f)
+		// ignored: a close after the parse read the whole file; the parse error is judged on the next line
 		_ = f.Close()
 		if err != nil {
 			return refuse(stderr, " slowtests", fmt.Sprintf("--allowlist %s: %s", *allowlist, oneline.Err(err)))
@@ -200,6 +201,7 @@ func cmdSlowtests(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 			return refuse(stderr, " slowtests", fmt.Sprintf("--sleeps: %s", oneline.Err(err)))
 		}
 		rows, err := slowtests.ParseSleeps(f)
+		// ignored: a close after the parse read the whole file; the parse error is judged on the next line
 		_ = f.Close()
 		if err != nil {
 			return refuse(stderr, " slowtests", fmt.Sprintf("--sleeps %s: %s", *sleeps, oneline.Err(err)))

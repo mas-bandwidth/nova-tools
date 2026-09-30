@@ -178,6 +178,7 @@ func runContainer(ctx context.Context, eng engine, clk clock, args []string, nam
 	select {
 	case <-done:
 	case <-clk.After(15 * time.Second):
+		// ignored: the container outlived its grace; the wait on done is the proof it ended
 		_ = p.Kill()
 		<-done
 	}
@@ -221,6 +222,7 @@ func leftovers(eng engine, clk clock, runID string, budget time.Duration) int {
 		clk.Sleep(250 * time.Millisecond)
 	}
 	for _, id := range ids {
+		// ignored: a removal of leftover containers; the next run's leftover pass lists and removes them again
 		_, _ = eng.Output(ctx, removeArgs(id)...)
 	}
 	n, _ = count()
@@ -289,6 +291,7 @@ func waitOrKill(ctx context.Context, p process) (int, string) {
 	case code := <-done:
 		return code, ""
 	case <-ctx.Done():
+		// ignored: the run was interrupted; the wait on done is the proof it ended, and the word interrupted is returned
 		_ = p.Kill()
 		return <-done, "interrupted"
 	}

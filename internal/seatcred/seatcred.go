@@ -314,6 +314,7 @@ func ChildEnv(environ []string, c Cred) []string {
 		}
 		out = append(out, kv)
 	}
+	// ignored: Use fails only when its function is nil or fails, and this one does neither
 	_ = c.Password.Use(func(pw string) error {
 		out = append(out, "REDISCLI_AUTH="+pw)
 		return nil

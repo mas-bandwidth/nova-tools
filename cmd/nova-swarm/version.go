@@ -32,7 +32,7 @@ var version string
 func cmdVersion(args []string, stdout, stderr io.Writer) int {
 	verbflag.HelpIfAsked(args, "version")
 	if len(args) > 0 {
-		fmt.Fprintf(stderr, "nova-swarm version: takes no flags and no arguments, got %d\n", len(args))
+		fmt.Fprintf(stderr, "nova-swarm version: takes no flags and no arguments, got %d; run: nova-swarm version -h\n", len(args))
 		return 2
 	}
 	fmt.Fprintln(stdout, buildinfo.Line("nova-swarm", version))

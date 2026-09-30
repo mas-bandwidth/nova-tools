@@ -42,9 +42,11 @@ func (l launch) counter(t testing.TB, listen func(network, address string) (net.
 	// closes its own client still ends. The accept loop has ended by then, so
 	// the list of clients is whole.
 	t.Cleanup(func() {
+		// ignored: a test fixture's cleanup; the test's own assertions are the report
 		_ = ln.Close()
 		<-accepting
 		for _, c := range conns {
+			// ignored: a test fixture's cleanup; the test's own assertions are the report
 			_ = c.Close()
 		}
 		serving.Wait()
@@ -53,6 +55,7 @@ func (l launch) counter(t testing.TB, listen func(network, address string) (net.
 		defer close(accepting)
 		for {
 			c, err := ln.Accept()
+			// ignored: a test fixture's accept loop ends when the cleanup closes the listener
 			if err != nil {
 				return
 			}
@@ -73,6 +76,7 @@ func serveCounted(c net.Conn, n *atomic.Int64) {
 	r := bufio.NewReader(c)
 	for {
 		args, err := readArray(r)
+		// ignored: a test fixture's connection ends when the client hangs up; the test's own assertions are the report
 		if err != nil {
 			return
 		}
@@ -84,6 +88,7 @@ func serveCounted(c net.Conn, n *atomic.Int64) {
 		case "PING":
 			reply = "+PONG\r\n"
 		}
+		// ignored: a test fixture's connection ends when the client hangs up; the test's own assertions are the report
 		if _, err := io.WriteString(c, reply); err != nil {
 			return
 		}

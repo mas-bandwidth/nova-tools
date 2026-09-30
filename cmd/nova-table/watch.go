@@ -343,20 +343,26 @@ func writeAtomic(path, body string) error {
 		return fmt.Errorf("--out: %w", err)
 	}
 	if _, err := io.WriteString(f, body); err != nil {
+		// ignored: a close on the failure path; the write error is the one returned
 		_ = f.Close()
+		// ignored: a best-effort cleanup of the temp file; the write error is the one returned
 		_ = os.Remove(tmp)
 		return fmt.Errorf("--out: %w", err)
 	}
 	if err := f.Sync(); err != nil {
+		// ignored: a close on the failure path; the sync error is the one returned
 		_ = f.Close()
+		// ignored: a best-effort cleanup of the temp file; the sync error is the one returned
 		_ = os.Remove(tmp)
 		return fmt.Errorf("--out: %w", err)
 	}
 	if err := f.Close(); err != nil {
+		// ignored: a best-effort cleanup of the temp file; the close error is the one returned
 		_ = os.Remove(tmp)
 		return fmt.Errorf("--out: %w", err)
 	}
 	if err := os.Rename(tmp, path); err != nil {
+		// ignored: a best-effort cleanup of the temp file; the rename error is the one returned
 		_ = os.Remove(tmp)
 		return fmt.Errorf("--out: %w", err)
 	}

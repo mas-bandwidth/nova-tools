@@ -73,5 +73,6 @@ func (v *LongVerb) Event(label, msg string) {
 	l.Verb = v.Verb
 	l.Event = label
 	l.Msg = msg
+	// ignored: a log line; a log writer that cannot be written has no other reader
 	_ = l.Write(v.W)
 }

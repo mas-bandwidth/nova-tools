@@ -288,7 +288,10 @@ func (t *Tool) emit(v *Verb, o *Out, asJSON bool, stdout, stderr io.Writer) int 
 	}
 	var b bytes.Buffer
 	o.Render(&b, asJSON)
-	_, _ = w.Write(b.Bytes())
+	if _, err := w.Write(b.Bytes()); err != nil && o.Exit == 0 {
+		// the result did not reach its reader (a closed pipe): the exit says so
+		return 1
+	}
 	return o.Exit
 }
 

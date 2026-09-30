@@ -22,6 +22,7 @@ func tryLockFile(f *os.File) (bool, bool, error) {
 }
 
 func unlockFile(f *os.File) {
+	// ignored: unlock has no caller to report to; the lock is released when the descriptor closes
 	_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 }
 
