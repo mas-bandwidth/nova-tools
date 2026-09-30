@@ -705,33 +705,37 @@ do
     return nil
   end
   -- T.place_index(d, ids): which of the ids each owned cell of the table
-  -- holds, read in one pass over the cells (one ZMSCORE of every id per cell),
-  -- for T.index_drift to answer T.check_placement and T.unindexed from. A read
-  -- set or a batch checks each of its members against every cell of the
-  -- table: one pass for all of them, not one per member (the owner's rule of
-  -- 2026-09-30, "there is NO REASON to ever do a row at a time"). The cells,
-  -- the order they are looked at and the refusals are the ones the per-member
-  -- checks give: a cell of the wrong type is named when a member's check
-  -- reaches it, as T.check_placement names it.
+  -- holds, read in one pass over the cells, for T.index_drift to answer
+  -- T.check_placement and T.unindexed from. A read set or a batch checks each
+  -- of its members against every cell of the table: one pass for all of them,
+  -- not one per member (the owner's rule of 2026-09-30, "there is NO REASON
+  -- to ever do a row at a time"). A cell is read whole (ZRANGE) when it holds
+  -- few members beside the ids, else probed for each id (ZSCORE): the reads
+  -- the table's grants hold. The cells, the order they are looked at and the
+  -- refusals are the ones the per-member checks give: a cell of the wrong
+  -- type is named when a member's check reaches it, as T.check_placement
+  -- names it.
   function T.place_index(d, ids)
     local idx = {cells = {}, d = d, hashed = {}}
+    local wanted = {}
+    for _, id in ipairs(ids) do wanted[id] = true end
     local rows = redis.call('ZRANGE', T.rowskey(d), 0, -1)
     for _, row in ipairs(rows) do
       for _, col in ipairs(d.cols) do
         local key = T.cellkey(d, row, col.name)
         local cell = {row = row, col = col.name, place = T.place(row, col.name), key = key, has = {}}
-        for start = 1, #ids, 1000 do
-          local argv = {'ZMSCORE', key}
-          for i = start, math.min(start + 999, #ids) do argv[#argv + 1] = ids[i] end
-          local res = redis.pcall(unpack(argv))
-          if type(res) == 'table' and res.err then
-            if not string.find(res.err, 'WRONGTYPE') then T.rethrow(res) end
-            local t = redis.call('TYPE', key)
-            cell.wrongtype = (type(t) == 'table' and t.ok) and t.ok or t
-            break
+        local n = redis.pcall('ZCARD', key)
+        if type(n) == 'table' and n.err then
+          if not string.find(n.err, 'WRONGTYPE') then T.rethrow(n) end
+          local t = redis.call('TYPE', key)
+          cell.wrongtype = (type(t) == 'table' and t.ok) and t.ok or t
+        elseif n > 0 and n <= 4 * #ids then
+          for _, m in ipairs(redis.call('ZRANGE', key, 0, -1)) do
+            if wanted[m] then cell.has[m] = true end
           end
-          for i, score in ipairs(res) do
-            if score then cell.has[argv[i + 2]] = true end
+        elseif n > 0 then
+          for _, id in ipairs(ids) do
+            if redis.call('ZSCORE', key, id) then cell.has[id] = true end
           end
         end
         idx.cells[#idx.cells + 1] = cell
