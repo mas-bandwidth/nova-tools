@@ -12,6 +12,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/sprintfn"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint/stepbuild"
 	"github.com/mas-bandwidth/nova-tools/internal/tset"
 )
 
@@ -723,5 +724,37 @@ func TestNotCarriedIsParkedNeverHalved(t *testing.T) {
 	if len(l.owed.notes) != 1 || l.owed.notes[0].Cause != CodeNotCarried ||
 		!strings.Contains(l.owed.notes[0].Text, `not carried: a counter guard on "id"`) {
 		t.Fatalf("the judgment owed: %+v", l.owed.notes)
+	}
+}
+
+// TestAStopPlanIsNeverCut (the cold read at cacfd32cc, 3): a plan that stops
+// the machine is one request, the stop with its note and guards; a builder
+// that cut it into two would stop the machine with the rest unapplied, so
+// cut() parks it NOTCARRIED and sends nothing, and the loop does not run
+// STOPPED on it. R15's plan has no unit, so its builder makes one body.
+func TestAStopPlanIsNeverCut(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t)
+	l := w.leased()
+	l.cfg.Build = func(sprint.RulePlan, sprintfn.Meta, stepbuild.Bounds) ([]sprintfn.Body, error) {
+		return []sprintfn.Body{{Entries: []tset.Entry{}}, {Entries: []tset.Entry{}}}, nil
+	}
+	rp := sprint.RulePlan{Stop: true, Done: []sprint.AgendaKey{keyOf("done")}}
+	p, rep := w.cutReal(l, "done", rp)
+	if p != nil || !slices.Equal(rep.Parked, []string{"done"}) || l.stopped {
+		t.Fatalf("cut: %+v, parked %v, stopped %v", p, rep.Parked, l.stopped)
+	}
+	if len(l.owed.notes) != 1 || !strings.Contains(l.owed.notes[0].Text, "stops the machine and was cut into 2 requests") {
+		t.Fatalf("the judgment owed: %+v", l.owed.notes)
+	}
+	// R15's own plan, built by the real builder: one request, carrying the stop
+	l2 := newWorld(t)
+	l2.rows("s1")
+	l2.verb(create("s1:landed", map[string]string{"kind": "primary"}, "d1"))
+	ll := l2.leased()
+	rp2 := l2.planReal(realRule(t, "done"), keyOf("done"))
+	p2, _ := l2.cutReal(ll, "done", rp2)
+	if p2 == nil || len(p2.reqs) != 1 || p2.reqs[0].Clock == nil || p2.reqs[0].Clock.Verb != sprintfn.ClockStop {
+		t.Fatalf("R15's plan: %+v", p2)
 	}
 }

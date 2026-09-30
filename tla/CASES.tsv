@@ -139,6 +139,7 @@ MCSprintEventsReview.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprintevents	
 MCSprintEventsMulti.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprintevents	required	-
 MCSprintEventsMultiReach.cfg	MCSprintEvents.tla	action	ProbeTwoMoves	ignore-terminal	sprintevents	required	-
 MCSprintEventsLand.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprintevents-land	required	-
+MCSprintEventsDone.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprintevents-land	required	-
 MCSprintEventsFaults.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprintevents-faults	required	-
 MCSprintEventsFleet.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprintevents-fleet	required	-
 MCSprintEventsLease.cfg	MCSprintEvents.tla	pass	-	ignore-terminal	sprintevents-lease	required	-
@@ -209,6 +210,7 @@ MCSprintEventsW27.cfg	MCSprintEvents.tla	invariant	NoLostWork	ignore-terminal	sp
 MCSprintEventsW28.cfg	MCSprintEvents.tla	invariant	DealTakesTurns	ignore-terminal	sprintevents-witnesses-b	required	-
 MCSprintEventsW29.cfg	MCSprintEvents.tla	invariant	DealGoesRound	ignore-terminal	sprintevents-witnesses-b	required	-
 MCSprintEventsW30.cfg	MCSprintEvents.tla	invariant	TickEndOnce	ignore-terminal	sprintevents-witnesses-b	required	-
+MCSprintEventsW31.cfg	MCSprintEvents.tla	invariant	DoneStops	ignore-terminal	sprintevents-witnesses-b	required	-
 MCSprintEventsGoalNamed.cfg	MCSprintEvents.tla	temporal	ProgressLiteral	ignore-terminal	sprintevents-goals	required	-
 MCSprintEventsGoalStopped.cfg	MCSprintEvents.tla	temporal	Progress	ignore-terminal	sprintevents-goals	required	-
 MCSprintEventsGoalSpan.cfg	MCSprintEvents.tla	temporal	Progress	ignore-terminal	sprintevents-goals	required	-

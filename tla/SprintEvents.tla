@@ -61,8 +61,9 @@
 \*
 \* NOT MODELLED (the same list as tla/README-SprintEvents.md, "What is not
 \* modelled", where each is argued):
-\* - R5 (cross), R7 (level), R12 (overdue), R15 (done), R16 (held) and R18
-\*   (behind). R16's table is the invariant `NothingSilent` instead (with a
+\* - R5 (cross), R7 (level), R12 (overdue), R16 (held) and R18 (behind).
+\*   R15 (done) is modelled with donestop only (errata 3 amendment 6): its
+\*   notice and the tick-end count of it are not; its stop is. R16's table is the invariant `NothingSilent` instead (with a
 \*   row for R6's 30 s entry under `stablesince`); the held queue with its
 \*   cap, and `HeldDrop`, are not kept.
 \* - Quarantine: a refusal naming a card is a layer-1 bug, and layer 1's
@@ -94,8 +95,8 @@
 \*
 \* Broken names a reversed witness (section 5's table, W1 to W27, W28 of
 \* errata 3's amendment 4, the deal's order, W29 of amendment 5, the deal's
-\* member choice by the rolling index, and W30 of amendment 8, no tick-end
-\* note; W5Reach
+\* member choice by the rolling index, W30 of amendment 8, no tick-end note,
+\* and W31 of amendment 6, R15 not stopping the machine; W5Reach
 \* is W5's reach half, breaking reach and unreach and not the verb; W7 is
 \* split into W7a and W7b) that changes exactly one rule; "none" is the
 \* design.
@@ -135,6 +136,11 @@
 \*               that the cells before its head hold no card of the
 \*               stream; a part refused so returns the verb to its
 \*               continue state, to read again (at most PartRereads) (H11)
+\*   donestop    R15 (errata 3 amendment 6, the owner's ruling, not a hole):
+\*               a card landing or removed, and start, queue done; with no
+\*               card open and one ended, done's step stops the machine in
+\*               the same call, under the guard that no card is open and it
+\*               runs (DoneStops; W31: the step does not stop)
 \*   stablesince R6 deals only to a member up for two beat periods; and
 \*               with work ready and no deal for 30 s, the judgment
 \*               "work is ready and no member is stable"            (H12)
@@ -283,6 +289,9 @@ BeatFresh(m) == beat[m] > 0              \* a beat is fresh while beat:m lies ab
 \* H12's repair (stablesince): R6 deals only to a member up for two beat
 \* periods (stable_since); the other rules place cards on any up member.
 StableOn == "stablesince" \in Fixes
+\* R15 (donestop): the sprint is done when no card is open and one ended.
+DoneOn == "donestop" \in Fixes
+SprintDone == (\A c \in Cards : col[c] \notin OpenCols) /\ (\E c \in Cards : col[c] \in {"landed", "removed"})
 \* H15's repair (unplaced): a card's untaken withdrawals since its last take
 \* (fld.tries) are counted, and "this card cannot be placed" opens at
 \* MaxPlaceTries. The count is kept with unplaced, and with stablesince as
@@ -331,6 +340,7 @@ Starved == StableOn /\ Dealable # {} /\ Up # {} /\ (DealUp = {} \/ DealRoom > 0)
 DealK == <<"deal", "sprint">>
 RemindK == <<"remind", "g">>
 StopK == <<"stopped", "sprint">>          \* R17's step: planned at a look, no agenda key
+DoneK == <<"done", "sprint">>             \* R15, with donestop
 ResolveK(s) == <<"resolve", s>>
 PullK(s) == <<"pullback", s>>
 SentLineKeys(s) == {ResolveK(s), DealK, PullK(s)}
@@ -401,6 +411,7 @@ CardKeys(c, T) ==
    \cup (IF c1 = "review" /\ c0 # "review" THEN (IF f1.result = "failed" THEN {<<"rework", c>>} ELSE {<<"ask", c>>}) ELSE {})
    \cup (IF c1 \in {"landed", "removed"} /\ c0 # c1 THEN {<<"needs", c>>} ELSE {})
    \cup (IF c1 = "removed" /\ c0 # c1 THEN {DealK} ELSE {})
+   \cup (IF DoneOn /\ c1 \in {"landed", "removed"} /\ c0 # c1 THEN {DoneK} ELSE {})
    \cup (IF c \in Prims /\ \E x \in wk[c].pl \ {Withdrawn} : x \notin T.wk[c].pl THEN {DealK} ELSE {})
    \cup (IF c \in Prims /\ \E r \in Readers : T.rd[c][r].st = "ok" /\ rd[c][r].st # "ok" THEN {<<"accept", c>>} ELSE {})
    \cup (IF c \in Prims /\ \E r \in Readers : T.rd[c][r].st = "broken" /\ rd[c][r].st # "broken" THEN {<<"rework", c>>} ELSE {})
@@ -513,6 +524,7 @@ UGuard(u) ==
     [] u.op = "unhold"    -> \E j \in J : Tri(j) = u.x /\ j.held             \* XGUARD: the field holds the hold
     [] u.op = "remind1"   -> remind = u.x \/ Broken = "W25"                  \* XGUARD on the entry's score
     [] u.op = "pullback"  -> col[u.c] = "ready" /\ col[u.x] = "waiting"
+    [] u.op = "done"      -> running /\ \A c \in Cards : col[c] \notin OpenCols   \* MACHINESTATE; the rcount atmost 0
     [] OTHER              -> TRUE      \* nomember, needmet, needgone, made: J and the intents decide
 
 \* J opens one note naming many subjects: one record per subject.
@@ -833,6 +845,9 @@ PlanLate(k) ==
 PlanHold(k) ==
   IF \E j \in J : Tri(j) = k[2] /\ j.held /\ j.hent <= 0
   THEN PlanU(k, <<U("unhold", "sprint", None, k[2])>>, FALSE) ELSE Plan0(k)
+\* R15 (donestop): with the sprint done, one unit: the notice and the stop.
+PlanDone(k) == IF SprintDone THEN PlanU(k, <<U("done", "sprint", None, None)>>, FALSE) ELSE Plan0(k)
+
 PlanRemind(k) ==
   IF Scn.goal /\ remind <= 0 THEN PlanU(k, <<U("remind1", "sprint", None, remind)>>, FALSE) ELSE Plan0(k)
 
@@ -850,6 +865,7 @@ PlanOf(k, h) ==
     [] k[1] = "rework"   -> PlanRework(k)
     [] k[1] = "hold"     -> PlanHold(k)
     [] k[1] = "remind"   -> PlanRemind(k)
+    [] k[1] = "done"     -> PlanDone(k)
     [] OTHER             -> PlanLate(k)
 
 \* What a plan would do if applied now.
@@ -859,7 +875,7 @@ CardChange(P) == \E i \in DOMAIN P.units : P.units[i].op \in CardOps /\ Changes(
 
 \* The keys.
 StaticKeys ==
-  {DealK, RemindK} \cup {ResolveK(s) : s \in Streams} \cup {PullK(s) : s \in Streams}
+  {DealK, RemindK} \cup (IF DoneOn THEN {DoneK} ELSE {}) \cup {ResolveK(s) : s \in Streams} \cup {PullK(s) : s \in Streams}
   \cup {<<"needs", c>> : c \in Cards} \cup {<<"made", c>> : c \in Cards}
   \cup {<<r, p>> : r \in {"ask", "accept", "rework", "late:untaken", "late:unfinished"}, p \in Prims}
   \cup {<<"late:unread", x>> : x \in Prims \X Readers}
@@ -1064,7 +1080,7 @@ ReadEvents(t) ==
 Prio(k) == CASE k[1] = "seen" -> 1 [] k[1] = "down" -> 2 [] k[1] \in {"needs", "made"} -> 3
              [] k[1] = "resolve" -> 4 [] k[1] = "deal" -> 6 [] k[1] = "ask" -> 8 [] k[1] = "accept" -> 9
              [] k[1] = "rework" -> 10 [] k[1] = "hold" -> 13 [] k[1] = "remind" -> 14
-             [] k[1] = "pullback" -> 19 [] OTHER -> 11
+             [] k[1] = "pullback" -> 19 [] k[1] = "done" -> 16 [] OTHER -> 11
 RECURSIVE KeySeq(_)
 KeySeq(K0) == CHOOSE r \in {IF K = {} THEN <<>>
                              ELSE CHOOSE r2 \in {<<k>> \o KeySeq(K \ {k}) : k \in {CHOOSE x \in K : \A y \in K : Prio(x) <= Prio(y)}} : TRUE :
@@ -1178,7 +1194,7 @@ Applies(t) ==
   IN Len(rq) <= L1Bound /\ GenOK(t) /\ (running \/ ~CardReq(rq)) /\ ReqGuard(rq)
 Apply(t) ==
   /\ tk[t].pc = "apply" /\ tk[t].pend # <<>>
-  /\ UNCHANGED <<beat, seen, cur, running, dropping, cut, receipts, lease, vk, bounds, seenKeys, applied>>
+  /\ UNCHANGED <<beat, seen, cur, dropping, cut, receipts, lease, vk, bounds, seenKeys, applied>>
   /\ \E x \in {tk[t]} : \E P \in {tk[t].plans[Head(tk[t].pend)[1]]} :
      \E rq \in {Req(P, Head(tk[t].pend)[2])} : \E T \in {FoldU(Cur, rq)} :
      LET k == Head(x.pend)[1]
@@ -1201,18 +1217,25 @@ Apply(t) ==
                      /\ tk' = [tk EXCEPT ![t] = [TickEnd(t, x, pend2, Opens(J')) EXCEPT !.half = @ \cup {k}]]
              /\ probe' = NoProbe
              /\ UNCHANGED <<col, score, fld, wk, rd, mi, status, stab, sw, waitn, missing, remind, pushes, next, dcur, acur,
-                            ahead, early, waivedRec, log, clk, raises>>
+                            ahead, early, waivedRec, log, clk, raises, running>>
         ELSE IF ~Applies(t)
         THEN /\ tk' = [tk EXCEPT ![t] = TickEnd(t, x, pend2, 0)]
              /\ probe' = NoProbe
-             /\ UNCHANGED <<commitv, agenda, parked, clk, raises>>
+             /\ UNCHANGED <<commitv, agenda, parked, clk, raises, running>>
         ELSE /\ Commit(T, FALSE)
-             \* R17's step writes its clock fields and counts its raise (a close
-             \* with stoprearm starts the count again, H16).
-             /\ clk' = IF k[1] = "stopped" THEN rq[1].x.nclk ELSE clk
-             /\ raises' = CASE k[1] = "stopped" /\ rq[1].x.raise -> raises + 1
-                            [] k[1] = "stopped" /\ rq[1].x.close /\ "stoprearm" \in Fixes -> 0
-                            [] OTHER -> raises
+             \* R15's step stops the machine in the same call, as the stop verb
+             \* does (donestop; W31: it writes its notice and does not stop).
+             /\ \E stops \in {k[1] = "done" /\ Broken # "W31" /\ Len(rq) > 0} :
+                /\ running' = IF stops THEN FALSE ELSE running
+                \* R17's step writes its clock fields and counts its raise (a
+                \* close with stoprearm starts the count again, H16).
+                /\ clk' = CASE stops -> [since |-> -1, hold |-> 0, raised |-> FALSE]
+                            [] k[1] = "stopped" -> rq[1].x.nclk
+                            [] OTHER -> clk
+                /\ raises' = CASE stops -> 0
+                               [] k[1] = "stopped" /\ rq[1].x.raise -> raises + 1
+                               [] k[1] = "stopped" /\ rq[1].x.close /\ "stoprearm" \in Fixes -> 0
+                               [] OTHER -> raises
              /\ agenda' = IF remove THEN agenda \ {k} ELSE agenda
              /\ tk' = [tk EXCEPT ![t] = [TickEnd(t, x, pend2, Opens(J')) EXCEPT !.half = IF single THEN @ \ {k} ELSE @]]
              /\ probe' = IF Probes /\ single /\ (remove \/ T = Cur) /\ planv = x.seen0
@@ -1435,7 +1458,8 @@ VEff(v, a, sn) ==
                                     !.J = IF BeatFresh(a) THEN JClose(@, "nomember", SprintS, "-") ELSE @]
     [] v = "start" -> [Cur EXCEPT !.J = JClose(@, "stopped", SprintS, "-"),
                                   !.remind = IF Scn.goal THEN 0 ELSE @,
-                                  !.lk = {DealK} \cup {<<"ask", j.subj[2]>> : j \in {j2 \in J : j2.ty = "cannotask"}}]
+                                  !.lk = {DealK} \cup {<<"ask", j.subj[2]>> : j \in {j2 \in J : j2.ty = "cannotask"}}
+                                         \cup (IF DoneOn THEN {DoneK} ELSE {})]
     [] OTHER -> Cur
 
 vothers == <<beat, seen, agenda, cur, lease, tk, crashes, errs, bugs, seenKeys>>
@@ -1817,6 +1841,11 @@ JudgmentOnce == \A j1, j2 \in J : (~j1.held /\ ~j2.held /\ Tri(j1) = Tri(j2)) =>
 \* The coordinator's one wake a tick (errata 3 amendment 8): a tick that
 \* opened a judgment ends with exactly one tick-end note, written or owed to
 \* the loop's next RT1; a tick that opened none, with none (W30).
+\* R15 (donestop): a machine left running with the sprint done is one whose
+\* done key is still owed (queued, on a line not ingested, or parked and
+\* named), never one every loop has passed at rest (W31).
+DoneStops == DoneOn => ((running /\ SprintDone /\ \A t \in Ticks : tk[t].pc = "idle")
+                        => (DoneK \in agenda \/ DoneK \in PendingKeys \/ DoneK \in parked))
 TickEndOnce == \A t \in Ticks : tk[t].pc = "idle" => tk[t].ends + tk[t].due = IF tk[t].n > 0 THEN 1 ELSE 0
 WaitHolds == ~\E j1, j2 \in J : Tri(j1) = Tri(j2) /\ j1.held /\ j1.hent > 0 /\ ~j2.held
 

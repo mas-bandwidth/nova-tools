@@ -1142,8 +1142,10 @@ func (l *Loop) tick(ctx context.Context, c sprintfn.Client, rep *Report) error {
 			rep.Applied++
 			rep.stat(p.batch.Rule).Applied++
 			if p.plan.Stop {
-				// R15 stopped the machine (errata 3 amendment 6): the loop runs
-				// STOPPED from here, and its next lease step writes looked_at
+				// R15 stopped the machine (errata 3 amendment 6): its one request
+				// (cut refuses a Stop plan of more) carried the clock's stop, so
+				// the loop runs STOPPED from here, and its next lease step writes
+				// looked_at
 				l.stopped = true
 			}
 			if p.whole {
@@ -1230,6 +1232,15 @@ func (l *Loop) cut(rule sprint.Rule, bt Batch, rp sprint.RulePlan, rep *Report) 
 	if len(bodies) == 0 {
 		return nil, nil
 	}
+	if rp.Stop && len(bodies) != 1 {
+		// A plan that stops the machine is one request: R15's has no unit (its
+		// guards and its note ride the one extras-only body, stepBodies.extras),
+		// so the builder never cuts it, and the stop, the note and the guards
+		// apply in one call. A stop cut across requests would stop the machine
+		// with the rest unapplied: a bug of the plan, parked, never sent.
+		l.onBug(bt, CodeNotCarried, "", fmt.Sprintf("its plan stops the machine and was cut into %d requests", len(bodies)), rep)
+		return nil, nil
+	}
 	p := &planned{rule: rule, batch: bt, plan: rp, whole: len(bodies) == 1}
 	for i, body := range bodies {
 		if !p.whole {
@@ -1239,9 +1250,10 @@ func (l *Loop) cut(rule sprint.Rule, bt Batch, rp sprint.RulePlan, rep *Report) 
 		if i == 0 {
 			req.Sprint = TimePart(rp.Sprint) // the writes to the sprint's own keys ride the first request (IT16's sprint part)
 		}
-		if rp.Stop && i == len(bodies)-1 {
+		if rp.Stop {
 			// R15 at done stops the machine with its note, in one call (errata 3
-			// amendment 6): the clock part's stop, as the stop verb's
+			// amendment 6; SprintEvents.tla donestop, DoneStops): the clock
+			// part's stop, as the stop verb's, on the plan's one request
 			req.Clock = &sprintfn.ClockPart{Verb: sprintfn.ClockStop}
 		}
 		c, ref := costOf(l.cfg.Names.Prefix, req)

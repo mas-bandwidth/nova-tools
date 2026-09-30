@@ -47,6 +47,10 @@ Base == [col |-> Cols4("none", "none", "none", "none"), score |-> Cols4(0, 0, 0,
          next |-> 10, dcur |-> 1, goal |-> FALSE, log |-> <<>>, owe |-> {}, oweall |-> TRUE]
 UpDown == [m \in MCMembers |-> IF m = "m1" THEN "up" ELSE "down"]
 
+\* R15 (donestop): p1 merging alone in s1 (2), the last open card: its landing
+\* makes the sprint done.
+ScnDone == [Base EXCEPT !.col = Cols4("merging", "none", "none", "none"), !.score = Cols4(2, 0, 0, 0), !.next = 4]
+
 \* The instance of the task: p1 ready (s1, 2), g1 waiting (s1, 4), p2
 \* waiting on p1 (s2, 2).
 ScnMain == [Base EXCEPT !.col = Cols4("ready", "waiting", "none", "waiting"), !.score = Cols4(2, 2, 0, 4), !.next = 6]

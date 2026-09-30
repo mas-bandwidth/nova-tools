@@ -54,7 +54,7 @@ The indexes that are functions of the fields (`sent`, `elig`, `fresh`, `again`) 
 
 The same list stands at the top of `SprintEvents.tla` and in the pull request's description.
 
-- R5 (cross), R7 (level), R12 (overdue), R15 (done), R16 (held) and R18 (behind). R16's table is the invariant `NothingSilent` instead (with a row for R6's 30 s entry under `stablesince`); the held queue with its cap, and `HeldDrop`, are not kept.
+- R5 (cross), R7 (level), R12 (overdue), R16 (held) and R18 (behind). R15 (done) is modelled with `donestop` only (Amendment 6, below): its stop is, its notice and the tick-end count of it are not. R16's table is the invariant `NothingSilent` instead (with a row for R6's 30 s entry under `stablesince`); the held queue with its cap, and `HeldDrop`, are not kept.
 - Quarantine: a refusal naming a card is a layer-1 bug, and layer 1's model shows it does not happen.
 - Clear, epochs and remove, so `EpochSafe` is not checked; CI, return, merge stops and resume; reader add; add in parts and insertion's anchors (an insertion is an add at an odd score); `ask --another`; the coordinator's `accept` verb (R9, the machine's accept, is modelled).
 - R11's `idle:s` kind (a notice, no judgment), and R1's strangers (a beat from a member with no fleet row).
@@ -151,9 +151,10 @@ Each `MCSprintEventsW<n>.cfg` turns on one broken rule (`Broken = "W<n>"`) on a 
 | W27 | the first request of a cut plan removes the keys (the second refused STOPPED) | `NoLostWork` | 11 |
 | W28 | the deal takes the room lowest over the whole table (the design's body for R6), not each stream's front in turn (amendment 4) | `DealTakesTurns` | 1 (the instance's first state: p1 and p3 of s1 taken, p2 of s2 left) |
 | W29 | the deal scans the members from the first every time (the old rule), not from the rolling index (amendment 5) | `DealGoesRound` | 1 (the instance's first state: the index is past m1, p1 goes to m1) |
-| W30 | no tick-end note is written (the design before amendment 8) | `TickEndOnce` | owed: the bench run of amendment 8 |
+| W30 | no tick-end note is written (the design before amendment 8) | `TickEndOnce` | 5 generated, 5 distinct |
+| W31 | R15 writes its notice and does not stop the machine (the design before amendment 6) | `DoneStops` | 106 generated, 67 distinct (a landing, R15 applies, the machine left RUNNING at rest) |
 
-So 32 witness configurations (W30's verdict owed to the bench): 29 fail with the property their row names, and W1 and W25 pass, because the design holds there with a second guard (the lease generation for both). Section 5's table claims W6 fails `OnePlace` "or a card dealt twice": it fails `LeaseSafe`, the rule itself, and `OnePlace` holds for the same second guards (place, revision and absence on every rule step); W7's row is two changes, split here, and W7b's claim of `Progress` cannot fail under bounded outside actions (its property is `RedealsCounted`).
+So 33 witness configurations: 31 fail with the property their row names, and W1 and W25 pass, because the design holds there with a second guard (the lease generation for both). Section 5's table claims W6 fails `OnePlace` "or a card dealt twice": it fails `LeaseSafe`, the rule itself, and `OnePlace` holds for the same second guards (place, revision and absence on every rule step); W7's row is two changes, split here, and W7b's claim of `Progress` cannot fail under bounded outside actions (its property is `RedealsCounted`).
 
 The liveness witnesses and their controls use `Steady` members, so that a failure of `Progress` there comes from the broken rule and not from H12.
 
@@ -227,6 +228,10 @@ The deal chooses each card's member by a rolling index, `dcur` (and the ask its 
 ## Amendment 8: the tick-end note and the coordinator's one wake
 
 The coordinator is woken once a tick, at the tick's end, with every item of the tick ready to read, and not at all by a tick that addressed it nothing (the owner's rule, errata 3 amendment 8). A tick counts in `tk[t].n` the judgments its requests open (J's new records, not held, `Opens`); `TickEnd`, which every settle of a request goes through, writes one tick-end note after the tick's last request when `n` is above zero (`tk[t].ends`), or, when the lease generation is stale at that point, owes it to the loop's next RT1 (`tk[t].due`), whose error step writes it. `TickEndOnce` is the invariant: an idle tick has `ends + due` one when it opened a judgment and zero when it opened none. `MCSprintEventsW30.cfg` writes no tick-end (the design before the amendment) on C23's instance, where the LIMIT branch opens "the machine's step was refused", and is expected to fail `TickEndOnce`; `TickEndOnce` is added to `MCSprintEvents`, `MCSprintEventsLimit`, `MCSprintEventsFaults` and `MCSprintEventsC23`. Not modelled: the judgments of other writers (a verb's) that a tick ingests and counts, since this model's log holds the keys a line queues and not its note. SANY parses the model; TLC has not been run on it (it runs only on a bench): the `sprintevents*` records are stale by hash, and the run is owed.
+
+## Amendment 6: the sprint done stops the machine
+
+R15 (done) is modelled with the repair `donestop` (errata 3 amendment 6, the owner's ruling). A card landing or removed, and the start verb, queue `DoneK`; with no card open and one ended, `PlanDone` plans one unit `done` whose guard is that the machine runs and no card is open (the clock part's MACHINESTATE and the rcount at most 0 of the code), and whose apply stops the machine in the same step (`running' = FALSE`, the clock's fields reset as the stop verb resets them). `DoneStops` is the invariant: a machine left RUNNING with the sprint done, every loop idle, still owes its done key (queued, on a line not ingested, or parked and named). `MCSprintEventsDone.cfg` (p1 merging alone: it lands, the sprint is done, the machine stops; a start after it says it again and stops) passes every safety property of `MCSprintEventsLand` with `DoneStops`, and its temporal properties; `MCSprintEventsW31.cfg` applies R15 without the stop and fails `DoneStops`. Not modelled: the notice itself and the tick-end's count of it (this model's J holds judgments, and the notice is none). In the code (`internal/sprint/machine/tick.go`, `cut`), a plan that stops the machine is one request: R15's plan has no unit, so the builder makes it one body, and a Stop plan cut into more is parked NOTCARRIED and never sent.
 
 ## Results
 
