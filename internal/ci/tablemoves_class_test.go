@@ -48,7 +48,7 @@ var (
 	// a table set is named by a literal ('ws:' .., 'bench:' .. ':cards:'), by
 	// the epoch-keyed helpers of 02_card_move.lua (NS.card.ckey|wskey, a
 	// file's CARD alias, cm_ckey|cm_wskey), by W.key, DF.key, TM.key, or by
-	// the lander script's own wskey (nova-tools#4238)
+	// a file's own wskey (nova-tools#4238)
 	tmLuaHelper = `(NS\.card\.|CARD\.|cm_|DF\.)(ckey|wskey|skey)\(|(W|DF|TM)\.key\(|wskey\(`
 	tmLuaTable  = regexp.MustCompile(`^('ws:'\s*\.\.|` + tmLuaHelper + `|'(bench|friend):'\s*\.\..*':cards:)`)
 	tmLuaLedger = regexp.MustCompile(`^'(bench|friend):'\s*\.\..*':(living|starting)'`)

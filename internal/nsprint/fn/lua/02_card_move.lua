@@ -3944,7 +3944,7 @@ end
 -- from `pr record --ci` and the lander's fold of GitHub's check runs), read
 -- only while its ci_sha is empty or names this head, and its pending only
 -- at this head (an empty ci_sha with pending is the record's creation
--- default, prrecord.go, not a word). (1) to (3) are read under both
+-- default, not a word). (1) to (3) are read under both
 -- spellings of the repo (bare and owner/name); a red under either wins. A
 -- head no source names is '' (pending): a repo whose CI is GitHub Actions
 -- only (quack: hosted runners send no `ci github --from-runner`, and its PR

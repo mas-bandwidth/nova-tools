@@ -95,7 +95,7 @@ func TestFnVerbsOnARedisServer(t *testing.T) {
 func TestFnVerbsLogInAsTheACLUser(t *testing.T) {
 	t.Parallel()
 	const pw = "pw-from-nova-secrets"
-	// The coordinator seat's rules (internal/nsprint/acl/testdata/acl-rows.tsv),
+	// The coordinator seat's rules (internal/nsprint/store/acl.go),
 	// and the same with FUNCTION taken away.
 	addr := testredis.Start(t,
 		"--user", "default", "off",
