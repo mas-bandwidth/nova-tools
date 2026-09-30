@@ -179,7 +179,7 @@ func entrySlice(e Entry, from, to int) Entry {
 }
 
 func entryUpperBounds(e Entry) (lineBytes, argvBytes int) {
-	if e.Kind == "guard" || e.Kind == "count" || e.Kind == "rcount" {
+	if e.Kind == "guard" || e.Kind == "count" || e.Kind == "rcount" || e.Kind == "propguard" {
 		return 0, 0 // pre-state checks have no command or log line to prepare
 	}
 	raw, err := json.Marshal(e)

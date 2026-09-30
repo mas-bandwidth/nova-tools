@@ -1180,7 +1180,9 @@ var (
 	raceCodes = map[string]bool{"PLACE": true, "REVISION": true, "CELLFULL": true, "RANGECOUNT": true,
 		sprintfn.CodeStaleGen: true, sprintfn.CodeIngestAt: true, sprintfn.CodeCounter: true, sprintfn.CodeDropping: true,
 		sprintfn.CodeStopped: true, sprintfn.CodeXGuard: true, sprintfn.CodeStale: true, sprintfn.CodeEpochAhead: true,
-		"EXISTS": true, "NOROW": true}
+		"EXISTS": true, "NOROW": true,
+		// PROPGUARD: a guard on a table property as read (L1 amendment 2026-09-30).
+		"PROPGUARD": true}
 	// cardCodes name a card: it is quarantined.
 	cardCodes = map[string]bool{"DRIFT": true, "MISSING": true, "MEMBEREPOCH": true}
 )
