@@ -258,8 +258,9 @@ func TestLeaseHeldWritesOnlyIdleFields(t *testing.T) {
 	req := leaseReq("token-b", "run-b", 5000, map[string]string{"ticks": "77", "error": "boom"})
 	req.Pop = &PopPart{Limit: 10}
 	req.Ingest = &IngestPart{From: "0", To: "3", Keys: []sprint.AgendaKey{{Key: "deal", Seq: 3}}}
-	req.Sprint = &SprintPart{Coordinator: "someone"}
-	req.Body.Quarantine = []Quarantined{{ID: "p1", Stream: "s1", Code: "DRIFT", Rule: "deal", Cells: []string{"s1:ready"}}}
+	req.Sprint = &SprintPart{Coordinator: "someone",
+		Quarantine: []Quarantined{{ID: "p1", Stream: "s1", Code: "DRIFT", Rule: "deal", Cells: []string{"s1:ready"}}}}
+	req.Body.Quarantine = req.Sprint.Quarantine // X acts on the same card
 	reply := mustStep(t, tw, req)
 
 	if got := partReply(t, reply, PartLease); got["held"] != false || got["owner"] != "token-a" || got["name"] != "run-a" || got["gen"] != "1" {
@@ -734,7 +735,7 @@ func TestPartsPerEpochKeys(t *testing.T) {
 		t.Fatalf("beat at epoch 2 entered %v in seen: m1 is up at its stored id ctl-m1~2", got["seen"])
 	}
 	mustStep(t, tw, at(sprintReq(&SprintPart{Counter: &CounterChange{Read: map[string]string{"score": ""}, Set: map[string]string{"score": "9"}},
-		Dropping: map[string]string{"s1": "op"}, Park: map[string]string{"deal": "n1"}, Coordinator: "boss"},
+		Dropping: map[string]string{"s1": "op"}, Park: []ParkedKey{{Key: "deal", Code: "LIMIT"}}, Coordinator: "boss"},
 		Quarantined{ID: "p1~2", Code: "DRIFT"})))
 	got := tw.SprintKeys()
 	for _, name := range []string{"agenda", "heldq", "tick", "due", "cut", "next", "dropping", "parked", "quarantine"} {

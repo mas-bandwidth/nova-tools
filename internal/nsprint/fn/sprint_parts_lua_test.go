@@ -101,3 +101,43 @@ func TestSprintPartsLuaTouchesOnlyWhatIsAllowed(t *testing.T) {
 		t.Errorf("%s assigns globals %v", f.Name, writes)
 	}
 }
+
+// TestSprintStaticPhaseRefusesALostQuarantine: the core's static phase, which
+// runs before TIME or any store access, refuses REQUEST a body that quarantines
+// a card the sprint part does not carry: a part runs only when its field is
+// set, so the records would be lost while X acted on the card. A body whose
+// cards the part carries, and a step with no quarantine, go on to open.
+func TestSprintStaticPhaseRefusesALostQuarantine(t *testing.T) {
+	t.Parallel()
+	h := newLuaSprint(t)
+	parts, err := SprintPartsFragment()
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.do(parts.Source)
+	h.setup(nil) // the phases, and no part of the test's: the real parts are loaded
+	// The test is of the static phase, not of the sprint part, which sprintfn's
+	// differential runs: the loaded part is replaced by one that does nothing.
+	h.do(`NS.SP.parts.sprint = {pre = function() return {part = 'sprint'}, nil end, cmds = function() return {}, nil end}`)
+	for _, c := range []struct {
+		name, sprint string
+		refused      bool
+	}{
+		{"none", `{"meta":{}}`, false},
+		{"the body alone", `{"meta":{},"quarantine":[{"id":"p1","code":"DRIFT"}]}`, true},
+		{"the body and an empty part", `{"meta":{},"quarantine":[{"id":"p1","code":"DRIFT"}],"sprint":{}}`, true},
+		{"another card in the part", `{"meta":{},"quarantine":[{"id":"p1","code":"DRIFT"}],"sprint":{"quarantine":[{"id":"p2","code":"DRIFT"}]}}`, true},
+		{"the same card in the part", `{"meta":{},"quarantine":[{"id":"p1","code":"DRIFT"}],"sprint":{"quarantine":[{"id":"p1","code":"DRIFT"}]}}`, false},
+	} {
+		reply := h.step(c.sprint)
+		if got := refusalCode(reply) == "REQUEST"; got != c.refused {
+			t.Errorf("%s: refused %v, want %v (reply %s)", c.name, got, c.refused, reply)
+		}
+		if c.refused && contains(h.trace, "open") {
+			t.Errorf("%s: the refusal came after open; the static phase runs before any store access", c.name)
+		}
+		if !c.refused && !contains(h.trace, "open") {
+			t.Errorf("%s: the step did not reach open (trace %v)", c.name, h.trace)
+		}
+	}
+}

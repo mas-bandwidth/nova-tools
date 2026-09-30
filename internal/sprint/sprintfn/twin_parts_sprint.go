@@ -11,6 +11,14 @@ import (
 // The clock part (1.2) and the sprint part (1.0, 1.3.1, 1.3.5, R18) on the
 // twin. Both are steps of sprint keys that apply while the machine is RUNNING
 // or STOPPED.
+//
+// The sprint part's data is its own (types.go, SprintPart): the counter, the
+// dropping marks and their undoing, the error step's parked keys with the
+// refusal's detail, the quarantine's records, the coordinator and the tick end.
+// Every list and map it takes is bounded, and every read it makes of the store
+// is one batched call for the whole list (T4: nothing one key at a time), so
+// its cost grows with the list divided by one command's pieces and never with
+// the list.
 
 // BehindSpanMS is the running time a backlog may stand before R18 looks at it:
 // behind is due at R + 5 min (1.2, R18).
@@ -120,20 +128,18 @@ func (p *sprintPlan) commands() []Cmd { return p.cmds }
 
 // What the tick end did (sprintPlan.TickEnd).
 const (
-	tickEndArmed    = "armed"    // behind entered at R + 5 min, behind_n recorded
+	tickEndArmed    = "armed"    // behind_n recorded, and behind entered at R + 5 min when it was not there
 	tickEndDisarmed = "disarmed" // behind removed, behind_n removed
 	tickEndHeld     = "held"     // armed and not zero: nothing moves
 	tickEndQuiet    = "quiet"    // zero and not armed: nothing to do
 )
 
 // sprintPart is the sprint part: the counter, the dropping marks, parked keys,
-// the quarantine, the coordinator and the tick end. tickEnd is the seam of the
-// tick end (TickEnd). Goals and the sweep's position, which IT12's SprintPart
-// also carries, are not written by this part (errata 2, item 3 and 8.1 do not
-// list them): a request that names either is refused REQUEST, never ignored.
-type sprintPart struct {
-	tickEnd func(*Request) *TickEnd
-}
+// the quarantine, the coordinator and the tick end. Goals and the sweep's
+// position, which IT12's SprintPart also carries, are not written by this part
+// (errata 2, item 3 and 8.1 do not list them): a request that names either is
+// refused REQUEST, never ignored.
+type sprintPart struct{}
 
 // counterField says a field name is one of {p}next@e's (1.3.1): score,
 // streams, id:<s> or gate:<s>.
@@ -158,10 +164,11 @@ func decimalOrZero(s string) (tset.Decimal, bool) {
 }
 
 // checkCounter holds a counter change to its shape: every field written is
-// guarded by the value read, and no counter goes down (U2: a score below the
-// counter is placed, so the counter only rises).
+// guarded by the value read, no counter goes down (U2: a score below the
+// counter is placed, so the counter only rises), and the fields are at most
+// the counter has.
 func checkCounter(c *CounterChange) *Refusal {
-	if len(c.Set) == 0 {
+	if len(c.Set) == 0 || len(c.Read) > CounterFieldsMax || len(c.Set) > CounterFieldsMax {
 		return requestRefusal()
 	}
 	for f, v := range c.Read {
@@ -193,17 +200,20 @@ func sortedMapKeys[V any](m map[string]V) []string {
 }
 
 // quarantineValue is the record of a quarantined card in {p}quarantine@e
-// (1.3.1, 1.3.5): the code, the rule, the stream, the judgment's note, then the
-// refusal's cells, separated by tabs (validText keeps a tab out of every value,
-// so the same bytes come out of Go and Lua). The note is the judgment J opens
-// in the same step, whose id Layer 2 assigns after the part has decided and
-// which jopen already holds for the card, so it is left empty.
+// (1.3.1, 1.3.5): the code, the rule, the stream, then the refusal's cells,
+// separated by tabs (partText keeps a tab out of every value, so the same bytes
+// come out of Go and Lua). It holds no note: the judgment J opens in the same
+// step gets its seq from Layer 2 after the part has decided, and the record is
+// the refusal's own detail.
 func quarantineValue(q Quarantined) string {
-	return strings.Join(append([]string{q.Code, q.Rule, q.Stream, ""}, q.Cells...), "\t")
+	return strings.Join(append([]string{q.Code, q.Rule, q.Stream}, q.Cells...), "\t")
 }
 
 // checkQuarantine holds the quarantined cards of a step to their shape.
 func checkQuarantine(qs []Quarantined) *Refusal {
+	if len(qs) > QuarantineMax {
+		return requestRefusal()
+	}
 	for _, q := range qs {
 		if !partText(q.ID) || !partText(q.Code) || (q.Rule != "" && !partText(q.Rule)) || (q.Stream != "" && !partText(q.Stream)) {
 			return requestRefusal()
@@ -220,46 +230,125 @@ func checkQuarantine(qs []Quarantined) *Refusal {
 	return nil
 }
 
+// quarantineCarried says every card the body quarantines is also quarantined
+// by the sprint part, which owns the records: a body that names a quarantine no
+// part writes would have X act on a card whose record is lost, since a part
+// runs only when its field is set.
+func quarantineCarried(req *Request) bool {
+	if len(req.Body.Quarantine) == 0 {
+		return true
+	}
+	if req.Sprint == nil {
+		return false
+	}
+	carried := make(map[string]bool, len(req.Sprint.Quarantine))
+	for _, q := range req.Sprint.Quarantine {
+		carried[q.ID] = true
+	}
+	for _, q := range req.Body.Quarantine {
+		if !carried[q.ID] {
+			return false
+		}
+	}
+	return true
+}
+
+// parkedValue is the record of a parked key in {p}parked@e (1.1, 1.3.5): the
+// refusal's code, the rule, the bound and the step's size and limit, separated
+// by tabs. The judgment that names the key is found by the rule key, its
+// subject, so the record holds no note.
+func parkedValue(k ParkedKey) string {
+	return strings.Join([]string{k.Code, k.Rule, k.Budget, k.Actual, k.Limit}, "\t")
+}
+
+// checkParked holds the error step's keys to their shape: each key named once,
+// each field a name free of the delimiter (so a record is at most
+// ParkedValueBytesMax), and no key both parked and unparked.
+func checkParked(park []ParkedKey, unpark []string) *Refusal {
+	if len(park) > SprintKeysMax || len(unpark) > SprintKeysMax {
+		return requestRefusal()
+	}
+	named := make(map[string]bool, len(park)+len(unpark))
+	optional := func(s string) bool { return s == "" || partText(s) }
+	for _, k := range park {
+		if !partText(k.Key) || !partText(k.Code) || !optional(k.Rule) || !optional(k.Budget) || named[k.Key] {
+			return requestRefusal()
+		}
+		for _, d := range []string{k.Actual, k.Limit} {
+			if d != "" && !tset.ValidDecimal(tset.Decimal(d)) {
+				return requestRefusal()
+			}
+		}
+		named[k.Key] = true
+	}
+	unnamed := make(map[string]bool, len(unpark))
+	for _, k := range unpark {
+		if !partText(k) || named[k] || unnamed[k] {
+			return requestRefusal()
+		}
+		unnamed[k] = true
+	}
+	return nil
+}
+
+// checkDropping holds the marks and the unmarks to their shape: valid streams,
+// an op each, at most 250 streams in all (members and streams together are at
+// most 250), and no stream in both.
+func checkDropping(mark, unmark map[string]string) *Refusal {
+	if len(mark)+len(unmark) > SprintMembersMax {
+		return requestRefusal()
+	}
+	for s, op := range mark {
+		if !sprint.ValidID(s) || !partText(op) {
+			return requestRefusal()
+		}
+		if _, both := unmark[s]; both {
+			return requestRefusal()
+		}
+	}
+	for s, op := range unmark {
+		if !sprint.ValidID(s) || !partText(op) {
+			return requestRefusal()
+		}
+	}
+	return nil
+}
+
 // Pre decides every write of the part on the state the pre stage read, and
 // builds the commands. The counter is guarded by the values the plan read
 // (COUNTER when one moved), a stream is marked only when no other op holds it
-// (DROPPING), and a key is parked only when no other note holds it (XGUARD); a
-// card already quarantined keeps its first record. A parked key is moved out of
-// the agenda: the park is written first and the agenda's ZREM last (A1), so an
-// error between them leaves the key in both places and never in neither.
-func (p sprintPart) Pre(st *State, req *Request, obs *Before) (any, *Refusal) {
+// and unmarked only by the op that holds it (DROPPING); a parked key keeps its
+// first record, and a card already quarantined keeps its first record. A parked
+// key is moved out of the agenda: the park is written first and the agenda's
+// ZREM last (A1), so an error between them leaves the key in both places and
+// never in neither. Nothing is written that the key already holds, so a second
+// run of the same request writes nothing.
+func (sprintPart) Pre(st *State, req *Request, obs *Before) (any, *Refusal) {
 	sp := req.Sprint
 	if len(sp.Goals) != 0 || sp.Sweep != "" {
 		return nil, requestRefusal()
-	}
-	var te *TickEnd
-	if p.tickEnd != nil {
-		te = p.tickEnd(req)
 	}
 	if sp.Counter != nil {
 		if ref := checkCounter(sp.Counter); ref != nil {
 			return nil, ref
 		}
 	}
-	if len(sp.Dropping) > SprintMembersMax {
-		return nil, requestRefusal()
+	if ref := checkDropping(sp.Dropping, sp.Undrop); ref != nil {
+		return nil, ref
 	}
-	for s, op := range sp.Dropping {
-		if !sprint.ValidID(s) || (op != "" && !partText(op)) {
-			return nil, requestRefusal()
-		}
+	if ref := checkParked(sp.Park, sp.Unpark); ref != nil {
+		return nil, ref
 	}
-	for k, note := range sp.Park {
-		if !partText(k) || (note != "" && !partText(note)) {
-			return nil, requestRefusal()
-		}
+	if len(sp.Park) != 0 && (req.Pop != nil || req.Ingest != nil) {
+		return nil, requestRefusal() // the error step is a step of notes and sprint keys only: a pop or an ingest would queue the key it parks
 	}
-	if ref := checkQuarantine(req.Body.Quarantine); ref != nil {
+	if ref := checkQuarantine(sp.Quarantine); ref != nil {
 		return nil, ref
 	}
 	if sp.Coordinator != "" && !partText(sp.Coordinator) {
 		return nil, requestRefusal()
 	}
+	te := sp.TickEnd
 	if te != nil && !tset.ValidDecimal(te.Backlog) {
 		return nil, requestRefusal()
 	}
@@ -272,13 +361,15 @@ func (p sprintPart) Pre(st *State, req *Request, obs *Before) (any, *Refusal) {
 	if sp.Counter != nil {
 		guards = append(guards, typedKey{next, kindHash})
 	}
-	if len(sp.Dropping) != 0 {
+	if len(sp.Dropping)+len(sp.Undrop) != 0 {
 		guards = append(guards, typedKey{dropping, kindHash})
 	}
 	if len(sp.Park) != 0 {
 		guards = append(guards, typedKey{parked, kindHash}, typedKey{agenda, kindZSet})
+	} else if len(sp.Unpark) != 0 {
+		guards = append(guards, typedKey{parked, kindHash})
 	}
-	if len(req.Body.Quarantine) != 0 {
+	if len(sp.Quarantine) != 0 {
 		guards = append(guards, typedKey{quarantine, kindHash})
 	}
 	if sp.Coordinator != "" {
@@ -311,23 +402,20 @@ func (p sprintPart) Pre(st *State, req *Request, obs *Before) (any, *Refusal) {
 		}
 		var set flatPairs
 		for _, f := range sortedMapKeys(c.Set) {
-			set = append(set, f, c.Set[f])
+			if cur, _ := st.Keys.HGet(next, f); cur != c.Set[f] { // a field that holds the value is not written again
+				set = append(set, f, c.Set[f])
+			}
 		}
-		plan.Counter = true
+		plan.Counter = set.count() != 0
 		plan.cmds = append(plan.cmds, hsetCommands(next, set)...)
 	}
 
-	if len(sp.Dropping) != 0 {
+	if len(sp.Dropping)+len(sp.Undrop) != 0 {
 		var mark flatPairs
 		var unmark []string
 		for _, s := range sortedMapKeys(sp.Dropping) {
 			held, marked := st.Keys.HGet(dropping, s)
 			switch op := sp.Dropping[s]; {
-			case op == "":
-				if marked {
-					unmark = append(unmark, s)
-					plan.Unmarked = append(plan.Unmarked, s)
-				}
 			case marked && held != op:
 				return nil, partRefusal(CodeDropping, RefusalDetail{RefusalDetail: tset.RefusalDetail{IDs: []string{s}}},
 					"stream %s is frozen by another op", s)
@@ -336,39 +424,50 @@ func (p sprintPart) Pre(st *State, req *Request, obs *Before) (any, *Refusal) {
 				plan.Marked = append(plan.Marked, s)
 			}
 		}
+		for _, s := range sortedMapKeys(sp.Undrop) {
+			held, marked := st.Keys.HGet(dropping, s)
+			switch {
+			case !marked: // nothing to undo
+			case held != sp.Undrop[s]:
+				return nil, partRefusal(CodeDropping, RefusalDetail{RefusalDetail: tset.RefusalDetail{IDs: []string{s}}},
+					"stream %s is frozen by another op", s)
+			default:
+				unmark = append(unmark, s)
+				plan.Unmarked = append(plan.Unmarked, s)
+			}
+		}
 		plan.cmds = append(plan.cmds, hsetCommands(dropping, mark)...)
 		plan.cmds = append(plan.cmds, hdelCommands(dropping, unmark)...)
 	}
 
-	if len(sp.Park) != 0 {
-		var park flatPairs
+	if len(sp.Park)+len(sp.Unpark) != 0 {
+		var put flatPairs
 		var leave, unpark []string
-		for _, k := range sortedMapKeys(sp.Park) {
-			held, isParked := st.Keys.HGet(parked, k)
-			note := sp.Park[k]
-			switch {
-			case note == "":
-				if isParked {
-					unpark = append(unpark, k)
-					plan.Unparked = append(plan.Unparked, k)
-				}
-				continue
-			case isParked && held != note:
-				return nil, partRefusal(CodeXGuard, RefusalDetail{}, "the key is already parked by another note")
-			case !isParked:
-				park = append(park, k, note)
+		park := append([]ParkedKey(nil), sp.Park...)
+		sort.Slice(park, func(i, j int) bool { return park[i].Key < park[j].Key })
+		for _, k := range park {
+			if _, isParked := st.Keys.HGet(parked, k.Key); !isParked {
+				put = append(put, k.Key, parkedValue(k)) // an already parked key keeps its first record
 			}
-			plan.Parked = append(plan.Parked, k)
-			if _, queued := st.Keys.ZScore(agenda, k); queued {
-				leave = append(leave, k)
+			plan.Parked = append(plan.Parked, k.Key)
+			if _, queued := st.Keys.ZScore(agenda, k.Key); queued {
+				leave = append(leave, k.Key) // also finishes a move a fault left half done
 			}
 		}
-		plan.cmds = append(plan.cmds, hsetCommands(parked, park)...)  // the park first (A1)
+		unparkKeys := append([]string(nil), sp.Unpark...)
+		sort.Strings(unparkKeys)
+		for _, k := range unparkKeys {
+			if _, isParked := st.Keys.HGet(parked, k); isParked {
+				unpark = append(unpark, k)
+				plan.Unparked = append(plan.Unparked, k)
+			}
+		}
+		plan.cmds = append(plan.cmds, hsetCommands(parked, put)...)   // the park first (A1)
 		plan.cmds = append(plan.cmds, zremCommands(agenda, leave)...) // the key leaves the agenda last
 		plan.cmds = append(plan.cmds, hdelCommands(parked, unpark)...)
 	}
 
-	if qs := req.Body.Quarantine; len(qs) != 0 {
+	if qs := sp.Quarantine; len(qs) != 0 {
 		var put flatPairs
 		seen := map[string]bool{}
 		sorted := append([]Quarantined(nil), qs...)
@@ -388,8 +487,10 @@ func (p sprintPart) Pre(st *State, req *Request, obs *Before) (any, *Refusal) {
 	}
 
 	if sp.Coordinator != "" {
-		plan.Coordinator = sp.Coordinator
-		plan.cmds = append(plan.cmds, Command("SET", coordinator, kindString, sp.Coordinator))
+		if cur, there := st.Keys.Get(coordinator); !there || cur != sp.Coordinator { // the same coordinator is not written again
+			plan.Coordinator = sp.Coordinator
+			plan.cmds = append(plan.cmds, Command("SET", coordinator, kindString, sp.Coordinator))
+		}
 	}
 
 	if te != nil {
@@ -397,17 +498,28 @@ func (p sprintPart) Pre(st *State, req *Request, obs *Before) (any, *Refusal) {
 		if ref != nil {
 			return nil, ref
 		}
-		_, armed := st.Keys.ZScore(due, "behind")
+		behindN, isSet := st.Keys.HGet(tick, tickFieldBehind)
+		if isSet && behindN != "" && !tset.ValidDecimal(tset.Decimal(behindN)) {
+			return nil, storedRefusal()
+		}
+		isSet = isSet && behindN != ""
+		_, entry := st.Keys.ZScore(due, "behind")
 		switch {
-		case te.Backlog == "0" && armed:
+		case te.Backlog == "0" && (isSet || entry):
 			plan.TickEnd = tickEndDisarmed
-			plan.cmds = append(plan.cmds, zremCommands(due, []string{"behind"})...)
-			plan.cmds = append(plan.cmds, hdelCommands(tick, []string{tickFieldBehind})...)
+			if entry {
+				plan.cmds = append(plan.cmds, zremCommands(due, []string{"behind"})...)
+			}
+			if isSet {
+				plan.cmds = append(plan.cmds, hdelCommands(tick, []string{tickFieldBehind})...)
+			}
 		case te.Backlog == "0":
 			plan.TickEnd = tickEndQuiet
-		case !armed:
+		case !isSet:
 			plan.TickEnd = tickEndArmed
-			plan.cmds = append(plan.cmds, zaddCommands(due, flatPairs{decimalOf(r + BehindSpanMS), "behind"})...)
+			if !entry { // the entry is not moved while it stands
+				plan.cmds = append(plan.cmds, zaddCommands(due, flatPairs{decimalOf(r + BehindSpanMS), "behind"})...)
+			}
 			plan.cmds = append(plan.cmds, hsetCommands(tick, flatPairs{tickFieldBehind, string(te.Backlog)})...)
 		default:
 			plan.TickEnd = tickEndHeld

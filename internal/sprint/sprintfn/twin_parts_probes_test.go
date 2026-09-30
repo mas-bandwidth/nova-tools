@@ -133,7 +133,7 @@ type partCase struct {
 // takeLease makes token "probe" the lease's holder at generation 1.
 func takeLease(t *testing.T, tw *Twin, clk *stepClock) {
 	t.Helper()
-	mustStep(t, tw, leaseReq("probe", "probe", 6000000, nil))
+	mustStep(t, tw, leaseReq("probe", "probe", 600000, nil))
 }
 
 var partCases = []partCase{
@@ -179,8 +179,8 @@ var partCases = []partCase{
 		},
 		part: func(r *Request) {
 			r.Sprint = &SprintPart{Counter: &CounterChange{Read: map[string]string{"score": ""}, Set: map[string]string{"score": "5"}},
-				Dropping: map[string]string{"s1": "op-1"}, Park: map[string]string{"deal": "n1"}, Coordinator: "boss"}
-			r.Body.Quarantine = []Quarantined{{ID: "p1", Code: "DRIFT", Stream: "s1", Rule: "deal", Cells: []string{"s1:ready"}}}
+				Dropping: map[string]string{"s1": "op-1"}, Park: []ParkedKey{{Key: "deal", Rule: "deal", Code: "LIMIT"}}, Coordinator: "boss",
+				Quarantine: []Quarantined{{ID: "p1", Code: "DRIFT", Stream: "s1", Rule: "deal", Cells: []string{"s1:ready"}}}}
 		},
 		keys: func(sk, ek func(string) string) []typedKey {
 			return []typedKey{{ek("next"), kindHash}, {ek("dropping"), kindHash}, {ek("parked"), kindHash}, {ek("agenda"), kindZSet},

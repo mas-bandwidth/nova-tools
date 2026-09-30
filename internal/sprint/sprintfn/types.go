@@ -317,6 +317,14 @@ type State struct {
 	// Keys is the sprint's own keys as the pre stage reads them. Phases read;
 	// only commit writes.
 	Keys *Keys
+
+	// partCmds and partArgv are the commands and the argv bytes the parts have
+	// planned so far in this call: the parts share one budget, so each part's
+	// Pre adds its list to the running total (twin_parts.go, checkCommands). A
+	// test that calls one part's Pre sets shares to a smaller budget; nil is
+	// the real one.
+	partCmds, partArgv int
+	shares             *partShares
 }
 
 // Cmd is one write command descriptor (L1 1.4): a prepared scalar argv and
@@ -406,26 +414,69 @@ type ClockPart struct {
 // the coordinator, and the quarantine. IT16 owns what each does; each field is
 // a set of changes the part guards and writes.
 //
-// The quarantine is the sprint part's (errata 2, item 6) and the cursor is the
-// ingest part's (IngestPart.From and To). The quarantine's records ride in
-// Body.Quarantine, which the step builder fills and the sprint part's Pre and
-// Cmds read from the request; SprintPart carries no copy of them.
+// The quarantine and the parked keys are the sprint part's own data (errata 2,
+// item 6, and the coordinator's decision on the cold read of IT16, findings 4
+// and 5): the records ride in this request, so a request that quarantines or
+// parks is a request that carries the sprint part, and the part writes the
+// record from the refusal's detail and never from a note, whose seq Layer 2
+// assigns after the parts have decided. The cursor is the ingest part's
+// (IngestPart.From and To).
 type SprintPart struct {
 	// Counter is {p}next@e as the plan read it (Read) and as it is to be (Set):
 	// score, id and streams (U2; COUNTER when it moved).
 	Counter *CounterChange
-	// Dropping maps a stream to the op that freezes it, or to "" to unfreeze
-	// it (1.5.4).
+	// Dropping maps a stream to the op that freezes it (1.5.4). Undrop maps a
+	// stream to the op that holds its mark, and unfreezes it; a mark held by
+	// another op is DROPPING. A stream is in one map at most.
 	Dropping map[string]string
+	Undrop   map[string]string
 	// Goals maps a person to their goal, "" to drop it (1.4.1).
 	Goals map[string]string
 	// Sweep is the sweep's next position, "" when unchanged (1.6).
 	Sweep string
-	// Park maps an agenda key to the note of "the machine's step was refused",
-	// "" to unpark it (1.3.5).
-	Park map[string]string
+	// Park is the error step (1.3.5): the agenda keys of rules whose step was
+	// refused as a bug, each with the refusal's detail. The part moves each key
+	// out of the agenda into {p}parked@e, the park written first. Unpark
+	// removes keys from {p}parked@e (an acknowledged line queues them again). A
+	// step that parks carries no pop and no ingest part: the error step is a
+	// step of notes and sprint keys only (1.4.3, T2).
+	Park   []ParkedKey
+	Unpark []string
 	// Coordinator is the coordinator's actor, "" when unchanged (F2-13).
 	Coordinator string
+	// Quarantine are the cards a lower layer refused, which the part writes into
+	// {p}quarantine@e with no entry on the card (1.3.5). The first record of a
+	// card stands.
+	Quarantine []Quarantined
+	// TickEnd is R18's write on the last step of a tick (1.2, 1.4.2), nil when
+	// the step is not a tick's last.
+	TickEnd *TickEnd
+}
+
+// ParkedKey is one rule key the machine's step was refused for, with the
+// refusal's detail that names it: the rule, the code, the bound the step
+// crossed and the step's size (1.3.5: "naming the rule, the key, the code, the
+// bound and the step's size"). Actual and Limit are exact decimals, empty when
+// the refusal has none.
+type ParkedKey struct {
+	Key    string
+	Rule   string
+	Code   string
+	Budget string
+	Actual string
+	Limit  string
+}
+
+// TickEnd is R18's write on the last step of a tick (1.4.2, R18): Backlog is
+// the loop's backlog at the end of the tick, Layer 2's last less the cursor, as
+// an exact decimal. Not zero and not armed, the sprint part enters behind at R
+// + 5 min and records the backlog in tick@e as behind_n; zero, it disarms; an
+// armed backlog that is not zero is left alone, so the entry is not moved while
+// it shrinks and R18 judges the backlog it armed (1.2). Armed means behind_n is
+// set: the pop takes the entry when it fires, and behind_n stays until R18 has
+// judged.
+type TickEnd struct {
+	Backlog tset.Decimal
 }
 
 // CounterChange is a guarded change of {p}next@e (1.5.4, U2).

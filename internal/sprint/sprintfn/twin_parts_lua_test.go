@@ -22,13 +22,17 @@ import (
 )
 
 // The Lua half of the parts runs here, under gopher-lua, against stubs of
-// Layer 1's helpers (S.rd, S.command, S.before, S.refuse and the decimal
-// helpers) over a fake keyspace taken from the twin, and is compared with the
-// Go parts on the same state and the same requests: the same reply, the same
-// commands in the same order, the same refusal. No store is involved, and what
-// the stubs stand in for is Layer 1's to test at G0; this is the twin-equals-Lua
-// check of the parts that can run tonight, and it is what found the faults in
-// the Lua that parsing alone could not.
+// Layer 1's helpers (S.rd, S.charge, S.command, S.before, S.refuse and the
+// decimal helpers) over a fake keyspace taken from the twin, and is compared
+// with the Go parts on the same state and the same requests: the same reply,
+// the same commands in the same order, the same refusal. No store is involved,
+// and what the stubs stand in for is Layer 1's to test at G0. The stubs keep
+// Layer 1's own accounts, as table_set.lua's S.readcmd, S.charge and S.writecmd
+// do: a reply larger than its reservation is DRIFT, a cell, a range id or a
+// fetched byte past its limit is LIMIT, and every command counts against the
+// planned commands and argv bytes; so a cost a part understates fails here as it
+// would on the store, and the number of reads a part makes is counted (a test
+// holds it to a count that does not grow with the input).
 
 // luaValueOf converts what encoding/json decodes into a Lua value.
 func luaValueOf(L *lua.LState, v any) lua.LValue {
@@ -84,18 +88,59 @@ func goValueOf(v lua.LValue) any {
 	panic(fmt.Sprintf("no Go value for %T", v))
 }
 
-// luaStubEnv is Layer 1's S as the parts call it.
+// luaStubEnv is Layer 1's S as the parts call it. S.limits, S.payload, S.charge,
+// S.rd and S.command follow table_set.lua's S.limits, payload, S.charge,
+// S.readcmd and S.writecmd: the bounds, the accounts and the refusals.
 const luaStubEnv = `
 NS = {tset_profile = 'sprint'}
 local S = {}
 NS.tset = S
+S.limits = {request_bytes = 4194304, field_value = 65536, result = 4096, cell = 20000, range_id = 20000,
+  record = 10000, commands = 65536, argv_bytes = 8388608, fetched_bytes = 8388608}
 function S.refuse(code, detail, message)
   return {status = 'refused', code = code, detail = detail or {}, message = (message or code) .. '; nothing was changed'}
 end
 function S.array() return {__arr = true} end
 function S.utf8_valid(s) return type(s) == 'string' and go_utf8_valid(s) end
-function S.charge(ctx, unit, n) return true, nil end
-function S.rd(ctx, argv, kind, reserve, probe) return fake_rd(argv), nil end
+local function payload(v)
+  if type(v) == 'string' then return #v end
+  if type(v) == 'number' then return #tostring(v) end
+  local n = 0
+  if type(v) == 'table' then
+    for k, x in pairs(v) do
+      if type(k) == 'string' then n = n + #k end
+      n = n + payload(x)
+    end
+  end
+  return n
+end
+function S.charge(ctx, unit, count)
+  if type(count) ~= 'number' or count < 0 or count ~= math.floor(count) then return nil, S.refuse('REQUEST') end
+  local cap = S.limits[unit]
+  if not cap then return nil, S.refuse('REQUEST') end
+  local n = (ctx.budget[unit] or 0) + count
+  if n > cap then return nil, S.refuse('LIMIT', {budget = unit, actual = n, limit = cap}) end
+  ctx.budget[unit] = n
+  return true, nil
+end
+function S.rd(ctx, argv, kind, reserve, probe)
+  if type(reserve) ~= 'number' or reserve < 0 or reserve ~= math.floor(reserve) then return nil, S.refuse('REQUEST') end
+  if ctx.budget.fetched_bytes + reserve > S.limits.fetched_bytes then
+    return nil, S.refuse('LIMIT', {budget = 'fetched_bytes', actual = ctx.budget.fetched_bytes + reserve, limit = S.limits.fetched_bytes})
+  end
+  if probe ~= 'field' and probe ~= 'record' then
+    local _, err = S.charge(ctx, 'cell', 1)
+    if err then return nil, err end
+  end
+  ctx.reads[#ctx.reads + 1] = argv[1]
+  local value = fake_rd(argv)
+  local bytes = payload(value)
+  if bytes > reserve then
+    return nil, S.refuse('DRIFT', {budget = 'read_reservation', actual = bytes, limit = reserve})
+  end
+  ctx.budget.fetched_bytes = ctx.budget.fetched_bytes + bytes
+  return value, nil
+end
 function S.before(ctx, t, ids, fields) return fake_before(t, ids), nil end
 function S.command(ctx, command, key, kind, args)
   local argv = {command, key}
@@ -103,6 +148,14 @@ function S.command(ctx, command, key, kind, args)
     assert(type(v) == 'string', 'a non-scalar argv')
     argv[#argv + 1] = v
   end
+  if #argv > 2002 then return nil, S.refuse('LIMIT', {budget = 'argv', actual = #argv, limit = 2002}) end
+  local bytes = 0
+  for i = 1, #argv do bytes = bytes + #argv[i] end
+  local commands = ctx.budget.planned_commands + 1
+  local total = ctx.budget.planned_argv_bytes + bytes
+  if commands > S.limits.commands then return nil, S.refuse('LIMIT', {budget = 'commands', actual = commands, limit = S.limits.commands}) end
+  if total > S.limits.argv_bytes then return nil, S.refuse('LIMIT', {budget = 'argv_bytes', actual = total, limit = S.limits.argv_bytes}) end
+  ctx.budget.planned_commands, ctx.budget.planned_argv_bytes = commands, total
   return {argv = argv, access = {{key = key, kind = kind, mode = 'write'}}}, nil
 end
 local U64_MAX = '18446744073709551615'
@@ -211,10 +264,18 @@ func (h *luaParts) read(argv []string) lua.LValue {
 	}
 	switch argv[0] {
 	case "TYPE":
-		if v.Kind == "" {
-			return lua.LString("none")
+		kind := v.Kind
+		if kind == "" {
+			kind = "none"
 		}
-		return lua.LString(v.Kind)
+		status := h.L.NewTable() // the store's status reply
+		status.RawSetString("ok", lua.LString(kind))
+		return status
+	case "GET":
+		if v.Kind != kindString {
+			return lua.LFalse
+		}
+		return lua.LString(v.String)
 	case "HGET", "HMGET":
 		get := func(f string) lua.LValue {
 			if x, ok := v.Hash[f]; ok {
@@ -276,7 +337,7 @@ type luaResult struct {
 
 // run calls the Lua part of one name on a request's sprint half, the state of
 // the twin and the before-state the twin read.
-func (h *luaParts) run(name string, req *Request, tick *TickEnd, tw *Twin, clk *stepClock, obs *Before, ctx *lua.LTable) luaResult {
+func (h *luaParts) run(name string, req *Request, tw *Twin, clk *stepClock, obs *Before, ctx *lua.LTable) luaResult {
 	h.t.Helper()
 	h.keys, h.before = tw.SprintKeys(), obs.Records
 	raw, err := json.Marshal(sprintWireOf(req))
@@ -286,10 +347,6 @@ func (h *luaParts) run(name string, req *Request, tick *TickEnd, tw *Twin, clk *
 	var decoded map[string]any
 	if err := json.Unmarshal(raw, &decoded); err != nil {
 		h.t.Fatal(err)
-	}
-	if tick != nil && req.Sprint != nil {
-		sp, _ := decoded["sprint"].(map[string]any)
-		sp["tickend"] = map[string]any{"backlog": string(tick.Backlog)}
 	}
 	L := h.L
 	parts := L.GetGlobal("NS").(*lua.LTable).RawGetString("SP").(*lua.LTable).RawGetString("parts").(*lua.LTable)
@@ -338,19 +395,51 @@ func (h *luaParts) run(name string, req *Request, tick *TickEnd, tw *Twin, clk *
 	return res
 }
 
-// newCtx is the ctx of one step as the parts read it.
+// newCtx is the ctx of one step as the parts read it: the call's time and
+// epochs, and the accounts of Layer 1's S.context (budget) and the list of the
+// reads made (reads).
 func (h *luaParts) newCtx(tw *Twin, clk *stepClock, req *Request) *lua.LTable {
 	ctx := h.L.NewTable()
 	ctx.RawSetString("space", lua.LString(testPrefix))
 	ctx.RawSetString("now_ms", lua.LString(strconv.FormatInt(clk.ms(), 10)))
 	ctx.RawSetString("request_epoch", lua.LString(string(req.Epoch)))
 	ctx.RawSetString("write_epoch", lua.LString(string(partEpoch(req))))
+	budget := h.L.NewTable()
+	for _, f := range []string{"fetched_bytes", "planned_commands", "planned_argv_bytes"} {
+		budget.RawSetString(f, lua.LNumber(0))
+	}
+	ctx.RawSetString("budget", budget)
+	ctx.RawSetString("reads", h.L.NewTable())
 	return ctx
 }
 
-// goResult is the same for the Go part.
+// readsOf counts the reads a ctx recorded, by command.
+func readsOf(ctx *lua.LTable) map[string]int {
+	out := map[string]int{}
+	list, _ := ctx.RawGetString("reads").(*lua.LTable)
+	for i := 1; list != nil && i <= list.Len(); i++ {
+		out[list.RawGetInt(i).String()]++
+	}
+	return out
+}
+
+// withShares gives a Lua ctx a smaller budget for the parts together, as State's
+// shares do for the Go parts.
+func withShares(h *luaParts, ctx *lua.LTable, commands, argvBytes int) {
+	t := h.L.NewTable()
+	t.RawSetString("commands", lua.LNumber(commands))
+	t.RawSetString("bytes", lua.LNumber(argvBytes))
+	ctx.RawSetString("sp_shares", t)
+}
+
+// goResult is the same for the Go part, on a State of its own.
 func goResult(tw *Twin, clk *stepClock, name string, req *Request, obs *Before) luaResult {
-	st := tw.partState(clk, req.Epoch)
+	return goResultAt(tw, tw.partState(clk, req.Epoch), name, req, obs)
+}
+
+// goResultAt is the same on the State given, which the parts of one step share
+// (their running total of commands and argv bytes lies in it).
+func goResultAt(tw *Twin, st *State, name string, req *Request, obs *Before) luaResult {
 	p, _ := tw.parts.Lookup(name)
 	plan, ref := p.Pre(st, req, obs)
 	if ref != nil {
@@ -401,7 +490,7 @@ func sameResult(g, l luaResult) string {
 
 // randomPartsRequest builds a request carrying a random subset of the parts,
 // mostly valid and sometimes not.
-func randomPartsRequest(rng *rand.Rand, tw *Twin, clk *stepClock, tick **TickEnd, epoch tset.Decimal) *Request {
+func randomPartsRequest(rng *rand.Rand, tw *Twin, clk *stepClock, epoch tset.Decimal) *Request {
 	keys := tw.SprintKeys()
 	gen, _ := strconv.ParseUint(keys[sk("lease")].Hash["gen"], 10, 64)
 	cur := keys[ekAt("tick", epoch)].Hash["cur"]
@@ -409,7 +498,6 @@ func randomPartsRequest(rng *rand.Rand, tw *Twin, clk *stepClock, tick **TickEnd
 	req := &Request{Epoch: epoch, Meta: Meta{Verb: "random"}}
 	pick := func(p float64) bool { return rng.Float64() < p }
 	choose := func(xs ...string) string { return xs[rng.Intn(len(xs))] }
-	*tick = nil
 
 	if pick(0.35) {
 		hb := map[string]string{}
@@ -421,8 +509,11 @@ func randomPartsRequest(rng *rand.Rand, tw *Twin, clk *stepClock, tick **TickEnd
 		if pick(0.03) {
 			hb[choose("owner", "gen", "nonsense")] = "x"
 		}
-		req.Lease = &LeasePart{Owner: choose("tok-a", "tok-b"), Name: choose("", "loop-a", "loop-b"),
-			HoldMS: int64([]int{500, 4000, 60000}[rng.Intn(3)]), Heartbeat: hb, Stopped: pick(0.15)}
+		req.Lease = &LeasePart{Owner: choose("tok-a", "tok-b"), Name: choose("loop-a", "loop-b"),
+			HoldMS: int64([]int{500, 4000, 60000, int(LeaseHoldMaxMS)}[rng.Intn(4)]), Heartbeat: hb, Stopped: pick(0.15)}
+		if pick(0.02) {
+			req.Lease.Name = "" // the idle loop's name is never empty: REQUEST in both halves
+		}
 	}
 	if pick(0.35) {
 		req.Pop = &PopPart{Limit: []int{1, 3, 50, 1000}[rng.Intn(4)]}
@@ -487,10 +578,19 @@ func randomPartsRequest(rng *rand.Rand, tw *Twin, clk *stepClock, tick **TickEnd
 			sp.Counter = &CounterChange{Read: read, Set: set}
 		}
 		if pick(0.25) {
-			sp.Dropping = map[string]string{choose("s1", "s2"): choose("op-1", "op-2", "")}
+			sp.Dropping = map[string]string{choose("s1", "s2"): choose("op-1", "op-2")}
+		}
+		if pick(0.2) {
+			sp.Undrop = map[string]string{choose("s1", "s2", "s3"): choose("op-1", "op-2")}
 		}
 		if pick(0.25) {
-			sp.Park = map[string]string{choose("deal", "ask:p1", "resolve:s1"): choose("n1", "n2", "")}
+			for i := rng.Intn(2) + 1; i > 0; i-- {
+				sp.Park = append(sp.Park, ParkedKey{Key: choose("deal", "ask:p1", "resolve:s1", "overdue:n5"), Rule: choose("", "deal"),
+					Code: choose("LIMIT", "REQUEST"), Budget: choose("", "commands"), Actual: choose("", "70000"), Limit: choose("", "65536")})
+			}
+		}
+		if pick(0.15) {
+			sp.Unpark = []string{choose("deal", "ask:p1", "resolve:s1", "overdue:n5")}
 		}
 		if pick(0.2) {
 			sp.Coordinator = choose("boss", "other")
@@ -501,19 +601,22 @@ func randomPartsRequest(rng *rand.Rand, tw *Twin, clk *stepClock, tick **TickEnd
 		if pick(0.03) {
 			sp.Goals = map[string]string{"ann": "g"}
 		}
-		if pick(0.25) {
-			*tick = &TickEnd{Backlog: tset.Decimal(choose("0", "1", "7", "123456"))}
+		if pick(0.4) {
+			sp.TickEnd = &TickEnd{Backlog: tset.Decimal(choose("0", "0", "1", "7", "123456"))}
 		}
 		if pick(0.25) {
 			for i := rng.Intn(3) + 1; i > 0; i-- {
-				req.Body.Quarantine = append(req.Body.Quarantine, Quarantined{ID: choose("p1", "p2", "p3", "p4"),
+				sp.Quarantine = append(sp.Quarantine, Quarantined{ID: choose("p1", "p2", "p3", "p4"),
 					Code: choose("DRIFT", "MISSING"), Stream: choose("", "s1"), Rule: choose("", "deal"),
 					Cells: [][]string{nil, {"s1:ready"}, {"s1:ready", "s1:waiting"}}[rng.Intn(3)]})
+			}
+			if pick(0.5) {
+				req.Body.Quarantine = append([]Quarantined(nil), sp.Quarantine...) // X acts on the same cards
 			}
 		}
 		req.Sprint = sp
 	}
-	if req.Sprint == nil && len(req.Body.Quarantine) == 0 && req.Lease == nil && req.Pop == nil && req.Ingest == nil && req.Beat == nil && req.Clock == nil {
+	if req.Sprint == nil && req.Lease == nil && req.Pop == nil && req.Ingest == nil && req.Beat == nil && req.Clock == nil {
 		req.Pop = &PopPart{Limit: 10}
 	}
 	if req.Lease == nil || pick(0.5) {
@@ -543,24 +646,12 @@ func TestPartsLuaMatchesTwin(t *testing.T) {
 		t.Run("seed "+strconv.FormatInt(seedN, 10), func(t *testing.T) {
 			t.Parallel()
 			rng := rand.New(rand.NewSource(seedN))
-			var tick *TickEnd
 			tw, _, _, clk := partsTwinAt(t, epoch)
-			// The sprint part's tick end comes from the test, as IT12's SprintPart
-			// will carry it.
-			tw.parts = NewPartRegistry()
-			for _, name := range PartOrder {
-				p, _ := defaultParts.Lookup(name)
-				if name == PartSprint {
-					p = sprintPart{tickEnd: func(*Request) *TickEnd { return tick }}
-				}
-				if err := tw.parts.Register(name, p); err != nil {
-					t.Fatal(err)
-				}
-			}
 			fleetSeedAt(t, tw, epoch)
 			h := newLuaParts(t)
 			compared := map[string]int{}
 			refused := map[string]int{}
+			branches := map[string]int{}
 			for step := 0; step < 600; step++ {
 				if rng.Float64() < 0.3 {
 					now := clk.ms()
@@ -570,11 +661,18 @@ func TestPartsLuaMatchesTwin(t *testing.T) {
 					seed(tw, Command("ZADD", ekAt("cut", epoch), kindZSet, strconv.FormatInt(now-int64(rng.Intn(5000)), 10), "cut:op-"+strconv.Itoa(rng.Intn(5))))
 					seed(tw, Command("ZADD", ekAt("agenda", epoch), kindZSet, strconv.Itoa(rng.Intn(50)), []string{"deal", "ask:p1", "resolve:s1", "down:m1"}[rng.Intn(4)]))
 				}
+				if rng.Float64() < 0.3 {
+					for _, k := range []string{"deal", "ask:p1", "overdue:n5"} { // a key the error step parked earlier
+						if rng.Float64() < 0.4 {
+							seed(tw, Command("HSET", ekAt("parked", epoch), kindHash, k, "LIMIT\t\tcommands\t70000\t65536"))
+						}
+					}
+				}
 				if rng.Float64() < 0.1 && tw.SprintKeys()[sk("clock")].Kind == kindHash { // R17's bookkeeping of a span
 					seed(tw, Command("HSET", sk("clock"), kindHash, "due_since_ms", strconv.FormatInt(clk.ms()-int64(rng.Intn(9000)), 10),
 						"stophold_ms", strconv.FormatInt(clk.ms()+int64(rng.Intn(9000)), 10), "stopraised_ms", strconv.Itoa(rng.Intn(9))))
 				}
-				req := randomPartsRequest(rng, tw, clk, &tick, epoch)
+				req := randomPartsRequest(rng, tw, clk, epoch)
 				if _, ref := encodeStep(testPrefix, req); ref != nil {
 					continue // the client refuses it before any part runs
 				}
@@ -588,8 +686,8 @@ func TestPartsLuaMatchesTwin(t *testing.T) {
 					if !requestPart(req, name) {
 						continue
 					}
-					g := goResult(tw, clk, name, req, obs)
-					l := h.run(name, req, tick, tw, clk, obs, ctx)
+					g := goResultAt(tw, st, name, req, obs) // one State for the parts of the step, as the twin has it
+					l := h.run(name, req, tw, clk, obs, ctx)
 					if diff := sameResult(g, l); diff != "" {
 						b, _ := json.Marshal(sprintWireOf(req))
 						t.Fatalf("seed %d step %d part %s: %s\nrequest %s\nstate %s", seedN, step, name, diff, b, dumpKeys(tw.SprintKeys()))
@@ -597,6 +695,9 @@ func TestPartsLuaMatchesTwin(t *testing.T) {
 					compared[name]++
 					if g.refusal != nil {
 						refused[name+" "+g.refusal.Code]++
+					}
+					for _, c := range branchesOf(name, req, g) {
+						branches[c]++
 					}
 				}
 				tw.Pipeline(context.Background(), []Item{{Step: req}})
@@ -607,9 +708,76 @@ func TestPartsLuaMatchesTwin(t *testing.T) {
 					t.Errorf("part %s was compared only %d times", name, compared[name])
 				}
 			}
+			for _, b := range walkBranches {
+				if branches[b] < 1 {
+					t.Errorf("the walk never reached %q", b)
+				}
+			}
 			t.Logf("compared %v; refusals %v", compared, sortedCounts(refused))
 		})
 	}
+}
+
+// walkBranches are the branches of the parts the random walk must reach, each
+// named by branchesOf: a walk that stopped reaching one would compare nothing
+// there.
+var walkBranches = []string{
+	"lease held", "lease took", "lease idle", "pop popped", "pop parked key left", "ingest added", "ingest parked key left",
+	"ingest held queue", "beat seen", "beat stranger", "clock start", "clock stop", "sprint counter", "sprint marked",
+	"sprint unmarked", "sprint parked", "sprint unparked", "sprint quarantined", "sprint coordinator", "sprint coordinator again",
+	"sprint tickend armed", "sprint tickend held", "sprint tickend disarmed", "sprint tickend quiet", "sprint skipped",
+}
+
+// branchesOf names the branches an applied part's reply shows it took.
+func branchesOf(name string, req *Request, g luaResult) []string {
+	m, ok := g.plan.(map[string]any)
+	if !ok {
+		return nil
+	}
+	n := func(k string) float64 { v, _ := m[k].(float64); return v }
+	list := func(k string) bool { v, _ := m[k].([]any); return len(v) != 0 }
+	var out []string
+	add := func(cond bool, b string) {
+		if cond {
+			out = append(out, b)
+		}
+	}
+	switch name {
+	case PartLease:
+		add(m["held"] == true, "lease held")
+		add(m["took"] == true, "lease took")
+		add(m["held"] == false, "lease idle")
+	case PartPop:
+		add(n("popped") > 0, "pop popped")
+		add(n("parked") > 0, "pop parked key left")
+	case PartIngest:
+		add(n("added") > 0, "ingest added")
+		add(n("parked") > 0, "ingest parked key left")
+		for _, c := range g.cmds {
+			add(c[0] == "ZADD" && strings.Contains(c[1], "heldq"), "ingest held queue")
+		}
+	case PartBeat:
+		add(list("seen"), "beat seen")
+		add(list("strangers"), "beat stranger")
+	case PartClock:
+		add(m["verb"] == ClockStart, "clock start")
+		add(m["verb"] == ClockStop, "clock stop")
+	case PartSprint:
+		add(m["counter"] == true, "sprint counter")
+		add(list("marked"), "sprint marked")
+		add(list("unmarked"), "sprint unmarked")
+		add(list("parked"), "sprint parked")
+		add(list("unparked"), "sprint unparked")
+		add(list("quarantined"), "sprint quarantined")
+		add(m["coordinator"] != nil, "sprint coordinator")
+		add(m["coordinator"] == nil && m["skipped"] == false && req.Sprint.Coordinator != "", "sprint coordinator again")
+		add(m["tickend"] == "armed", "sprint tickend armed")
+		add(m["tickend"] == "held", "sprint tickend held")
+		add(m["tickend"] == "disarmed", "sprint tickend disarmed")
+		add(m["tickend"] == "quiet", "sprint tickend quiet")
+		add(m["skipped"] == true, "sprint skipped")
+	}
+	return out
 }
 
 func sortedCounts(m map[string]int) []string {

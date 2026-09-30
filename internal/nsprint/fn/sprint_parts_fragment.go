@@ -13,11 +13,13 @@ const sprintPartsFile = "lua/sprint_parts.lua"
 // SprintPartsFragment is the parts file: its name and its source.
 //
 // IT12's SprintFragments lists the core and the function file and its tests
-// count two; the parts file is not on that list, and IT12's files are not this
-// item's to change. This accessor is the adapter: the parts file is embedded
-// with every lua/ file and is held inert by its guard in the legacy library,
-// and the tests of this item read it here. When IT12's list takes the file
-// between the other two, this accessor and its test go.
+// count two; the parts file is not on that list, and the list is IT12's to
+// change. This accessor is the adapter: the parts file is embedded with every
+// lua/ file and is held inert by its guard in the legacy library, and the tests
+// of this item read it here. When IT12's list takes the file between the other
+// two, this accessor and its test go. The one line this item adds to IT12's
+// function file, which calls the parts file's static quarantine check, is
+// guarded and does nothing when the parts file is not loaded.
 func SprintPartsFragment() (SprintFragment, error) {
 	b, err := sources.ReadFile(sprintPartsFile)
 	if err != nil {

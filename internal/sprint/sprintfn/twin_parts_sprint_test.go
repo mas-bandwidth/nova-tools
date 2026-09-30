@@ -9,11 +9,13 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/tset"
 )
 
-// sprintReq is a request that carries only a sprint part.
+// sprintReq is a request that carries only a sprint part, with the quarantine
+// records given (the sprint part's own data).
 func sprintReq(sp *SprintPart, qs ...Quarantined) *Request {
-	r := &Request{Epoch: "0", Meta: Meta{Verb: "sprint"}, Sprint: sp}
-	r.Body.Quarantine = qs
-	return r
+	if len(qs) != 0 {
+		sp.Quarantine = qs
+	}
+	return &Request{Epoch: "0", Meta: Meta{Verb: "sprint"}, Sprint: sp}
 }
 
 // sprintCmds is the command list the sprint part builds for a request, as the
@@ -32,38 +34,18 @@ func sprintCmds(t *testing.T, tw *Twin, clk *stepClock, p sprintPart, req *Reque
 	return cmds
 }
 
-// tickEndTwin is a twin whose sprint part takes the tick end from tick, as
-// IT12's SprintPart will once it carries the field; the test sets *tick before
-// each step.
-func tickEndTwin(t *testing.T, tick **TickEnd) (*Twin, *stepClock) {
-	t.Helper()
-	tw, _, _, clk := partsTwin(t)
-	tw.parts = NewPartRegistry()
-	for _, name := range PartOrder {
-		p, _ := defaultParts.Lookup(name)
-		if name == PartSprint {
-			p = sprintPart{tickEnd: func(*Request) *TickEnd { return *tick }}
-		}
-		if err := tw.parts.Register(name, p); err != nil {
-			t.Fatal(err)
-		}
-	}
-	return tw, clk
-}
-
 // TestTickEndArmsBehind (1.2, R18): the tick end, on the last step of a tick,
 // arms behind at R + 5 min and records the backlog as behind_n when the
-// backlog is not zero and behind is not armed; an armed backlog that is not
-// zero moves nothing (not moved while it shrinks); zero disarms both. R is
-// running time: while STOPPED it stands still, so a backlog seen then is armed
-// at the R of the stop and not at wall time.
+// backlog is not zero and behind_n is not set; a backlog that is not zero while
+// behind_n is set moves nothing (not moved while it shrinks, and not re-armed
+// after the pop took the entry, since R18 has not yet judged the backlog it
+// armed); zero disarms both. R is running time: while STOPPED it stands still,
+// so a backlog seen then is armed at the R of the stop and not at wall time.
 func TestTickEndArmsBehind(t *testing.T) {
 	t.Parallel()
-	var tick *TickEnd
-	tw, clk := tickEndTwin(t, &tick)
+	tw, _, _, clk := partsTwin(t)
 	send := func(backlog string) map[string]any {
-		tick = &TickEnd{Backlog: tset.Decimal(backlog)}
-		return partReply(t, mustStep(t, tw, sprintReq(&SprintPart{})), PartSprint)
+		return partReply(t, mustStep(t, tw, sprintReq(&SprintPart{TickEnd: &TickEnd{Backlog: tset.Decimal(backlog)}})), PartSprint)
 	}
 
 	r0 := clk.ms()
@@ -100,9 +82,11 @@ func TestTickEndArmsBehind(t *testing.T) {
 	if k := tw.SprintKeys(); len(k[ek("due")].ZSet) != 0 || k[ek("tick")].Hash["behind_n"] != "" {
 		t.Fatalf("disarming left %v", k)
 	}
+	if got := send("0"); got["tickend"] != "quiet" {
+		t.Fatalf("a second zero backlog: %v", got)
+	}
 
-	// When behind fired, the pop removed it; the tick end arms it again with
-	// the new backlog.
+	// A backlog again arms it afresh, with the new backlog.
 	if got := send("4"); got["tickend"] != "armed" {
 		t.Fatalf("re-arming: %v", got)
 	}
@@ -124,25 +108,91 @@ func TestTickEndArmsBehind(t *testing.T) {
 
 	// The value is an exact decimal; a wrong one is the caller's fault.
 	for _, bad := range []string{"", "-1", "1.5", "007", "18446744073709551616"} {
-		tick = &TickEnd{Backlog: tset.Decimal(bad)}
-		if ref := refusedStep(t, tw, sprintReq(&SprintPart{})); ref.Code != CodeRequest {
+		if ref := refusedStep(t, tw, sprintReq(&SprintPart{TickEnd: &TickEnd{Backlog: tset.Decimal(bad)}})); ref.Code != CodeRequest {
 			t.Errorf("backlog %q: %v, want REQUEST", bad, ref)
 		}
 	}
-	// The real registry has no tick end to give yet (IT12's SprintPart has no
-	// field): a sprint part with nothing else to do writes nothing.
+	// A sprint part with no tick end has none to give.
 	plain, _, _, _ := partsTwin(t)
 	if got := partReply(t, mustStep(t, plain, sprintReq(&SprintPart{})), PartSprint); got["tickend"] != nil {
-		t.Fatalf("the registered sprint part invented a tick end: %v", got)
+		t.Fatalf("a sprint part with no tick end invented one: %v", got)
+	}
+}
+
+// TestTickEndAfterPop (1.2, R18; the read of IT16, finding 6): when behind
+// fires the pop takes the entry and queues its key, and behind_n stays until
+// R18 has judged; a tick end in between, with the backlog shrunk, must not arm
+// it again and overwrite the backlog R18 is about to judge. A zero backlog then
+// clears what is left (behind_n alone, the entry being gone).
+func TestTickEndAfterPop(t *testing.T) {
+	t.Parallel()
+	tw, _, _, clk := partsTwin(t)
+	mustStep(t, tw, leaseReq("tok", "run", 600000, nil))
+	tickEnd := func(backlog string) string {
+		req := sprintReq(&SprintPart{TickEnd: &TickEnd{Backlog: tset.Decimal(backlog)}})
+		req.Meta = Meta{Tick: true, Gen: 1}
+		return partReply(t, mustStep(t, tw, req), PartSprint)["tickend"].(string)
+	}
+	if got := tickEnd("100"); got != "armed" {
+		t.Fatalf("armed: %s", got)
+	}
+	clk.advance(6 * time.Minute)
+	mustStep(t, tw, popReq(1, 10)) // behind fires: its key is queued, the entry goes
+	k := tw.SprintKeys()
+	if _, queued := k[ek("agenda")].ZSet["behind"]; !queued || len(k[ek("due")].ZSet) != 0 || k[ek("tick")].Hash["behind_n"] != "100" {
+		t.Fatalf("after the pop: agenda %v, due %v, tick %v", k[ek("agenda")].ZSet, k[ek("due")].ZSet, k[ek("tick")].Hash)
+	}
+	before := tw.SprintKeys()
+	if got := tickEnd("40"); got != "held" {
+		t.Fatalf("a tick end after the pop re-armed: %s", got)
+	}
+	if len(changedKeys(before, tw.SprintKeys())) != 0 {
+		t.Fatalf("a held tick end wrote %v", changedKeys(before, tw.SprintKeys()))
+	}
+	if got := tickEnd("0"); got != "disarmed" {
+		t.Fatalf("a zero backlog after the pop: %s", got)
+	}
+	k = tw.SprintKeys()
+	if _, ok := k[ek("tick")].Hash["behind_n"]; ok {
+		t.Fatalf("behind_n left: %v", k[ek("tick")].Hash)
+	}
+	if _, queued := k[ek("agenda")].ZSet["behind"]; !queued {
+		t.Fatal("the disarm took R18's key out of the agenda")
+	}
+
+	// A fault between the arm's two writes (the entry, then behind_n) leaves
+	// the entry alone: the next tick end completes the pair and moves nothing.
+	seed(tw, Command("ZADD", ek("due"), kindZSet, "12345", "behind"))
+	if got := tickEnd("5"); got != "armed" {
+		t.Fatalf("completing a half armed pair: %s", got)
+	}
+	k = tw.SprintKeys()
+	if k[ek("due")].ZSet["behind"] != 12345 || k[ek("tick")].Hash["behind_n"] != "5" {
+		t.Fatalf("due %v, tick %v: want the entry where it was and behind_n set", k[ek("due")].ZSet, k[ek("tick")].Hash)
+	}
+	// A zero backlog with only the entry left removes the entry alone.
+	seed(tw, Command("HDEL", ek("tick"), kindHash, "behind_n"))
+	if got := tickEnd("0"); got != "disarmed" {
+		t.Fatalf("a zero backlog with only the entry: %s", got)
+	}
+	if len(tw.SprintKeys()[ek("due")].ZSet) != 0 {
+		t.Fatal("the entry stayed")
+	}
+	// A behind_n that is not a decimal is the store's fault.
+	seed(tw, Command("HSET", ek("tick"), kindHash, "behind_n", "soon"))
+	if ref := refusedStep(t, tw, sprintReq(&SprintPart{TickEnd: &TickEnd{Backlog: "1"}})); ref.Code != CodeConfig {
+		t.Fatalf("a stored behind_n that is not a decimal: %v, want CONFIG", ref)
 	}
 }
 
 // TestParkMovesKeyOutOfAgenda (1.3.5, A1): the error step parks a key in
-// {p}parked@e and takes it out of the agenda, and the park is written before
-// the ZREM, so a fault between them leaves the key in both places and the
-// retry finishes the move; the reversed witness, a ZREM first, leaves it in
-// neither. A key parked by another note is XGUARD; unparking removes the park
-// and puts nothing back in the agenda (its acknowledged line queues it again).
+// {p}parked@e with the refusal's detail and takes it out of the agenda, and the
+// park is written before the ZREM, so a fault between them leaves the key in
+// both places and the retry finishes the move; the reversed witness, a ZREM
+// first, leaves it in neither. A key parked twice keeps its first record (the
+// second run writes nothing, and says what is parked); unparking removes the
+// park and puts nothing back in the agenda (its acknowledged line queues it
+// again). The record is the refusal's own detail: no note rides in it.
 func TestParkMovesKeyOutOfAgenda(t *testing.T) {
 	t.Parallel()
 	setup := func() (*Twin, *stepClock) {
@@ -151,7 +201,9 @@ func TestParkMovesKeyOutOfAgenda(t *testing.T) {
 		return tw, clk
 	}
 	part := sprintPart{}
-	req := func() *Request { return sprintReq(&SprintPart{Park: map[string]string{"deal": "n7"}}) }
+	limit := ParkedKey{Key: "deal", Rule: "deal", Code: "LIMIT", Budget: "commands", Actual: "70000", Limit: "65536"}
+	req := func() *Request { return sprintReq(&SprintPart{Park: []ParkedKey{limit}}) }
+	record := "LIMIT\tdeal\tcommands\t70000\t65536"
 
 	tw, _ := setup()
 	reply := mustStep(t, tw, req())
@@ -159,8 +211,8 @@ func TestParkMovesKeyOutOfAgenda(t *testing.T) {
 		t.Fatalf("reply %v", got)
 	}
 	k := tw.SprintKeys()
-	if k[ek("parked")].Hash["deal"] != "n7" {
-		t.Fatalf("parked %v", k[ek("parked")])
+	if k[ek("parked")].Hash["deal"] != record {
+		t.Fatalf("parked %q, want the refusal's detail %q", k[ek("parked")].Hash["deal"], record)
 	}
 	if a := k[ek("agenda")].ZSet; len(a) != 1 || a["ask:p1"] != 5 {
 		t.Fatalf("agenda %v: the parked key is still in it, or another key left", a)
@@ -192,18 +244,25 @@ func TestParkMovesKeyOutOfAgenda(t *testing.T) {
 		t.Fatal("the witness did not lose the key")
 	}
 
-	// Another note holds it.
-	if ref := refusedStep(t, tw, sprintReq(&SprintPart{Park: map[string]string{"deal": "n9"}})); ref.Code != CodeXGuard {
-		t.Fatalf("parked by another note: %v, want XGUARD", ref)
+	// Another refusal of a key that is parked: the first record stands, the step
+	// applies (its judgment is opened by the step's notes) and writes nothing to
+	// the record.
+	second := ParkedKey{Key: "deal", Rule: "deal", Code: "REQUEST"}
+	reply = mustStep(t, tw, sprintReq(&SprintPart{Park: []ParkedKey{second}}))
+	if got := partReply(t, reply, PartSprint); !reflect.DeepEqual(got["parked"], []any{"deal"}) {
+		t.Fatalf("reply %v", got)
 	}
-	// The same note again is the same park, and writes nothing new.
+	if got := tw.SprintKeys()[ek("parked")].Hash["deal"]; got != record {
+		t.Fatalf("a second refusal replaced the first record: %q", got)
+	}
+	// Queued again meanwhile (a fault's leftover): the same park finishes the move.
 	seed(tw, Command("ZADD", ek("agenda"), kindZSet, "4", "deal"))
 	mustStep(t, tw, req())
 	if a := tw.SprintKeys()[ek("agenda")].ZSet; len(a) != 1 {
 		t.Fatalf("a repeated park left %v in the agenda", a)
 	}
 	// Unparking removes the park and adds nothing to the agenda.
-	reply = mustStep(t, tw, sprintReq(&SprintPart{Park: map[string]string{"deal": ""}}))
+	reply = mustStep(t, tw, sprintReq(&SprintPart{Unpark: []string{"deal", "never-parked"}}))
 	if got := partReply(t, reply, PartSprint); !reflect.DeepEqual(got["unparked"], []any{"deal"}) {
 		t.Fatalf("reply %v", got)
 	}
@@ -214,19 +273,33 @@ func TestParkMovesKeyOutOfAgenda(t *testing.T) {
 	if _, inAgenda := k[ek("agenda")].ZSet["deal"]; inAgenda {
 		t.Fatal("the unpark put the key back in the agenda")
 	}
-	for _, bad := range []map[string]string{{"": "n1"}, {"deal": "n\t1"}, {"de\nal": "n1"}} {
-		if ref := refusedStep(t, tw, sprintReq(&SprintPart{Park: bad})); ref.Code != CodeRequest {
-			t.Errorf("park %v: %v, want REQUEST", bad, ref)
+	bad := [][]ParkedKey{
+		{{Key: "", Code: "LIMIT"}}, {{Key: "deal", Code: ""}}, {{Key: "de\nal", Code: "LIMIT"}}, {{Key: "deal", Code: "LI\tMIT"}},
+		{{Key: "deal", Code: "LIMIT", Actual: "-1"}}, {{Key: "deal", Code: "LIMIT", Limit: "1.5"}},
+		{{Key: "deal", Code: "LIMIT"}, {Key: "deal", Code: "REQUEST"}}, // a key named twice
+	}
+	for _, b := range bad {
+		if ref := refusedStep(t, tw, sprintReq(&SprintPart{Park: b})); ref.Code != CodeRequest {
+			t.Errorf("park %v: %v, want REQUEST", b, ref)
+		}
+	}
+	for _, b := range []*SprintPart{
+		{Park: []ParkedKey{{Key: "deal", Code: "LIMIT"}}, Unpark: []string{"deal"}}, // parked and unparked at once
+		{Unpark: []string{"a", "a"}}, {Unpark: []string{""}},
+	} {
+		if ref := refusedStep(t, tw, sprintReq(b)); ref.Code != CodeRequest {
+			t.Errorf("%+v: %v, want REQUEST", b, ref)
 		}
 	}
 }
 
 // TestQuarantinePartWritesNoEntry (1.3.5): a card a lower layer refused is
 // quarantined by the sprint part alone: its record lands in {p}quarantine@e
-// with the code, the rule, the stream and the refusal's cells, and no table
-// entry, no log line and no record changes, so Layer 1 cannot refuse the
-// quarantine for the reason it refused the card. A card already quarantined
-// keeps its first record; a card named twice in a step keeps the first.
+// with the code, the rule, the stream and the refusal's cells (no note: the
+// record is the refusal's own detail), and no table entry, no log line and no
+// record changes, so Layer 1 cannot refuse the quarantine for the reason it
+// refused the card. A card already quarantined keeps its first record; a card
+// named twice in a step keeps the first.
 func TestQuarantinePartWritesNoEntry(t *testing.T) {
 	t.Parallel()
 	tw, m, log, _ := partsTwin(t)
@@ -243,7 +316,7 @@ func TestQuarantinePartWritesNoEntry(t *testing.T) {
 		t.Fatalf("reply %v", got)
 	}
 	h := tw.SprintKeys()[ek("quarantine")].Hash
-	if h["p1"] != "DRIFT\tdeal\ts1\t\ts1:ready\ts1:waiting" || h["p2"] != "MISSING\tresolve\t\t" {
+	if h["p1"] != "DRIFT\tdeal\ts1\ts1:ready\ts1:waiting" || h["p2"] != "MISSING\tresolve\t" {
 		t.Fatalf("quarantine %q", h)
 	}
 	after, _ := m.Snapshot(testPrefix)
@@ -259,7 +332,7 @@ func TestQuarantinePartWritesNoEntry(t *testing.T) {
 	if got := partReply(t, reply, PartSprint); !reflect.DeepEqual(got["quarantined"], []any{"p3"}) {
 		t.Fatalf("reply %v", got)
 	}
-	if h = tw.SprintKeys()[ek("quarantine")].Hash; h["p1"] != "DRIFT\tdeal\ts1\t\ts1:ready\ts1:waiting" || h["p3"] != "DRIFT\t\t\t" {
+	if h = tw.SprintKeys()[ek("quarantine")].Hash; h["p1"] != "DRIFT\tdeal\ts1\ts1:ready\ts1:waiting" || h["p3"] != "DRIFT\t\t" {
 		t.Fatalf("quarantine %q", h)
 	}
 	for _, bad := range []Quarantined{{ID: "", Code: "DRIFT"}, {ID: "p1", Code: ""}, {ID: "p1", Code: "DRIFT", Cells: []string{"a\tb"}},
@@ -267,6 +340,57 @@ func TestQuarantinePartWritesNoEntry(t *testing.T) {
 		if ref := refusedStep(t, tw, sprintReq(&SprintPart{}, bad)); ref.Code != CodeRequest {
 			t.Errorf("quarantine %+v: %v, want REQUEST", bad, ref)
 		}
+	}
+}
+
+// TestQuarantineIsTheSprintPartsAlone (the read of IT16, finding 5; decided): the
+// records of a quarantine ride in the sprint part's own request, so a request
+// that quarantines carries the part. A body that names a quarantine no sprint
+// part carries would have X act on a card whose record is lost, since a part
+// runs only when its field is set: it is refused REQUEST before anything runs,
+// on the twin and on the client of the store, and so is a body that names a
+// card the part does not.
+func TestQuarantineIsTheSprintPartsAlone(t *testing.T) {
+	t.Parallel()
+	tw, _, _, _ := partsTwin(t)
+	card := Quarantined{ID: "p1", Code: "DRIFT", Stream: "s1", Rule: "deal"}
+	before := tw.SprintKeys()
+
+	lost := &Request{Epoch: "0", Meta: Meta{Verb: "tick"}}
+	lost.Body.Quarantine = []Quarantined{card}
+	if ref := refusedStep(t, tw, lost); ref.Code != CodeRequest {
+		t.Fatalf("a body that quarantines with no sprint part: %v, want REQUEST", ref)
+	}
+	other := sprintReq(&SprintPart{Quarantine: []Quarantined{{ID: "p2", Code: "DRIFT"}}})
+	other.Body.Quarantine = []Quarantined{card}
+	if ref := refusedStep(t, tw, other); ref.Code != CodeRequest {
+		t.Fatalf("a body that quarantines a card the part does not: %v, want REQUEST", ref)
+	}
+	if len(changedKeys(before, tw.SprintKeys())) != 0 {
+		t.Fatal("a refused request wrote")
+	}
+	// The static check is the client's too: nothing is sent.
+	if _, ref := encodeStep(testPrefix, lost); ref == nil || ref.Code != CodeRequest {
+		t.Fatalf("encodeStep: %v", ref)
+	}
+
+	// Carried by the part, in the body as well: applied, and the record is the part's.
+	ok := sprintReq(&SprintPart{Quarantine: []Quarantined{card, {ID: "p2", Code: "DRIFT"}}})
+	ok.Body.Quarantine = []Quarantined{card}
+	mustStep(t, tw, ok)
+	if h := tw.SprintKeys()[ek("quarantine")].Hash; h["p1"] != "DRIFT\tdeal\ts1" || h["p2"] != "DRIFT\t\t" {
+		t.Fatalf("quarantine %q", h)
+	}
+	// Carried by the part alone: X has nothing to act on, the record is written.
+	alone := sprintReq(&SprintPart{Quarantine: []Quarantined{{ID: "p3", Code: "MISSING"}}})
+	mustStep(t, tw, alone)
+	if _, ok := tw.SprintKeys()[ek("quarantine")].Hash["p3"]; !ok {
+		t.Fatal("the part's own quarantine was not written")
+	}
+	// A fence carries no sprint field, the quarantine included.
+	fence := &Request{Epoch: "0", Fence: true, Body: Body{Op: &Op{ID: "f1", Intent: "x"}}, Sprint: &SprintPart{Quarantine: []Quarantined{card}}}
+	if ref := refusedStep(t, tw, fence); ref.Code != CodeRequest {
+		t.Fatalf("a fence with a quarantine: %v", ref)
 	}
 }
 
@@ -290,8 +414,11 @@ func TestPartSprintCounterGuard(t *testing.T) {
 	if ref := refusedStep(t, tw, sprintReq(&SprintPart{Counter: &CounterChange{Read: map[string]string{"gate:s1": "3"}, Set: map[string]string{"gate:s1": "4"}}})); ref.Code != CodeCounter {
 		t.Fatalf("a field read as present that is absent: %v, want COUNTER", ref)
 	}
+	// A field that already holds the value is not written again.
 	good := &CounterChange{Read: map[string]string{"score": "101"}, Set: map[string]string{"score": "101"}}
-	mustStep(t, tw, sprintReq(&SprintPart{Counter: good}))
+	if got := partReply(t, mustStep(t, tw, sprintReq(&SprintPart{Counter: good})), PartSprint); got["counter"] != false {
+		t.Fatalf("a counter change that changes nothing wrote: %v", got)
+	}
 	mustStep(t, tw, sprintReq(&SprintPart{Counter: &CounterChange{Read: map[string]string{"score": "101", "gate:s1": ""}, Set: map[string]string{"score": "201", "gate:s1": "1"}}}))
 	if h := tw.SprintKeys()[ek("next")].Hash; h["score"] != "201" || h["gate:s1"] != "1" || h["streams"] != "1" {
 		t.Fatalf("counter %v", h)
@@ -315,7 +442,10 @@ func TestPartSprintCounterGuard(t *testing.T) {
 
 // TestPartSprintDroppingMarks (1.5.4, V6): a stream is marked with the op that
 // freezes it, refused DROPPING when another op holds it; the same op marks it
-// again harmlessly; an empty op unmarks it.
+// again harmlessly. Undrop carries the op that holds the mark (the read of IT16,
+// finding 9): another op's mark is DROPPING and stays, the holder's is removed,
+// and a stream that is not marked has nothing to undo. An empty op is REQUEST,
+// and a stream in both maps is too.
 func TestPartSprintDroppingMarks(t *testing.T) {
 	t.Parallel()
 	tw, _, _, _ := partsTwin(t)
@@ -330,17 +460,38 @@ func TestPartSprintDroppingMarks(t *testing.T) {
 	if _, marked := tw.SprintKeys()[ek("dropping")].Hash["s3"]; marked {
 		t.Fatal("the refused step marked s3")
 	}
-	mustStep(t, tw, sprintReq(&SprintPart{Dropping: map[string]string{"s1": "op-1"}}))
-	reply := mustStep(t, tw, sprintReq(&SprintPart{Dropping: map[string]string{"s1": "", "s9": ""}}))
+	if got := partReply(t, mustStep(t, tw, sprintReq(&SprintPart{Dropping: map[string]string{"s1": "op-1"}})), PartSprint); !reflect.DeepEqual(got["marked"], []any{}) {
+		t.Fatalf("the same op marking again wrote: %v", got)
+	}
+	// Another op's unmark is refused and the mark stays (finding 9).
+	before := tw.SprintKeys()
+	ref = refusedStep(t, tw, sprintReq(&SprintPart{Undrop: map[string]string{"s1": "op-2"}}))
+	if ref.Code != CodeDropping || !reflect.DeepEqual(ref.Detail.IDs, []string{"s1"}) {
+		t.Fatalf("an unmark by another op: %v, want DROPPING naming s1", ref)
+	}
+	if len(changedKeys(before, tw.SprintKeys())) != 0 {
+		t.Fatal("a refused unmark wrote")
+	}
+	// The holder's unmark removes it; a stream that is not marked has nothing to undo.
+	reply := mustStep(t, tw, sprintReq(&SprintPart{Undrop: map[string]string{"s1": "op-1", "s9": "op-1"}}))
 	if got := partReply(t, reply, PartSprint); !reflect.DeepEqual(got["unmarked"], []any{"s1"}) {
 		t.Fatalf("reply %v; want only the mark that existed unmarked", got)
 	}
 	if h := tw.SprintKeys()[ek("dropping")].Hash; !reflect.DeepEqual(h, map[string]string{"s2": "op-1"}) {
 		t.Fatalf("marks %v", h)
 	}
-	for _, bad := range []map[string]string{{"bad stream": "op"}, {"s1": "o\np"}, {"a.b": "op"}} {
-		if ref := refusedStep(t, tw, sprintReq(&SprintPart{Dropping: bad})); ref.Code != CodeRequest {
-			t.Errorf("marks %v: %v, want REQUEST", bad, ref)
+	// One step may mark one stream and unmark another.
+	mustStep(t, tw, sprintReq(&SprintPart{Dropping: map[string]string{"s4": "op-3"}, Undrop: map[string]string{"s2": "op-1"}}))
+	if h := tw.SprintKeys()[ek("dropping")].Hash; !reflect.DeepEqual(h, map[string]string{"s4": "op-3"}) {
+		t.Fatalf("marks %v", h)
+	}
+	for _, bad := range []*SprintPart{
+		{Dropping: map[string]string{"bad stream": "op"}}, {Dropping: map[string]string{"s1": "o\np"}}, {Dropping: map[string]string{"a.b": "op"}},
+		{Dropping: map[string]string{"s1": ""}}, {Undrop: map[string]string{"s1": ""}}, {Undrop: map[string]string{"bad stream": "op"}},
+		{Dropping: map[string]string{"s1": "op"}, Undrop: map[string]string{"s1": "op"}},
+	} {
+		if ref := refusedStep(t, tw, sprintReq(bad)); ref.Code != CodeRequest {
+			t.Errorf("marks %+v: %v, want REQUEST", bad, ref)
 		}
 	}
 }
@@ -358,6 +509,9 @@ func TestPartSprintCoordinatorAndUnwritten(t *testing.T) {
 	mustStep(t, tw, sprintReq(&SprintPart{Coordinator: "other"}))
 	if v := tw.SprintKeys()[sk("coordinator")]; v.String != "other" {
 		t.Fatalf("coordinator %+v", v)
+	}
+	if got := partReply(t, mustStep(t, tw, sprintReq(&SprintPart{Coordinator: "other"})), PartSprint); got["coordinator"] != nil {
+		t.Fatalf("the same coordinator was written again: %v", got)
 	}
 	before := tw.SprintKeys()
 	for _, sp := range []*SprintPart{{Goals: map[string]string{"p": "g"}}, {Sweep: "s3"}, {Coordinator: "a\tb"}} {
@@ -480,7 +634,7 @@ func TestPartPopKeysBeforeDueEntries(t *testing.T) {
 func TestPartPopLimitNXAndStopped(t *testing.T) {
 	t.Parallel()
 	tw, _, _, clk := partsTwin(t)
-	mustStep(t, tw, leaseReq("token-a", "run", 6000000, nil))
+	mustStep(t, tw, leaseReq("token-a", "run", 3600000, nil))
 	now := clk.ms()
 	dueFixture(tw, now)
 	seed(tw, Command("ZADD", ek("agenda"), kindZSet, "3", "down:m1"))
@@ -562,7 +716,7 @@ func TestPartPopKeyNames(t *testing.T) {
 func TestPartClockStopStartKeepRunningTimeStill(t *testing.T) {
 	t.Parallel()
 	tw, _, _, clk := partsTwin(t)
-	mustStep(t, tw, leaseReq("token-a", "run", 6000000, nil))
+	mustStep(t, tw, leaseReq("token-a", "run", 3600000, nil))
 	clock := func(verb string) *Request {
 		return &Request{Epoch: "0", Meta: Meta{Verb: verb}, Clock: &ClockPart{Verb: verb}}
 	}

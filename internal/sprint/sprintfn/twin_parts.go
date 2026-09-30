@@ -57,6 +57,13 @@ const (
 	// gives none, so the narrower reading is 1.0's "one field value" bound.
 	HeartbeatValueBytesMax = tset.MaxFieldValueBytes
 
+	// LeaseHoldMaxMS is the longest span a take or a renewal holds the lease
+	// for: one hour. The design names until_ms and no span; a span that is not
+	// bounded lets now + span leave the exact range, where Go and Lua then
+	// disagree (Lua's numbers are doubles) and a lapsed lease could never be
+	// read again.
+	LeaseHoldMaxMS int64 = 60 * 60 * 1000
+
 	// maxExactMS and maxExactSeq keep a time or a seq exact as a sorted-set
 	// score (L2 2: 2^53 - 1).
 	maxExactMS  int64 = 1<<53 - 1
@@ -64,11 +71,51 @@ const (
 
 	// partCommandsShare and partArgvShare are the half of L1 6's shared bounds
 	// (65,536 planned commands, 8 MiB of argv, the table's, the log's, the
-	// receipt's and the sprint's together) that the parts of one step may use;
-	// the design fixes no share, so the narrower reading is the half.
+	// receipt's and the sprint's together) that the parts of one step may use
+	// together; the design fixes no share, so the narrower reading is the half.
+	// The running total of the parts is checked in each part's Pre (State).
 	partCommandsShare = tset.MaxPlannedCommands / 2
 	partArgvShare     = tset.MaxPlannedArgvBytes / 2
+
+	// SprintKeysMax is the most keys one request names in one list of the sprint
+	// part (Park, Unpark): one piece of a batched read (maxPieces, L1 1.4). The
+	// error step parks one key for each refused step of a tick, and a tick sends
+	// at most 32 steps (1.4.2), so the bound is far above any real request.
+	SprintKeysMax = maxPieces
+	// QuarantineMax is the most cards one request quarantines: the ids of one
+	// refusal, which L1 6 bounds at 2,000 an entry.
+	QuarantineMax = 2000
+	// CounterFieldsMax is the most fields of {p}next@e a counter change names:
+	// score, streams, and id:<s> and gate:<s> for each of 250 streams.
+	CounterFieldsMax = 2 + 2*SprintMembersMax
+	// ParkedValueBytesMax is the longest record of one parked key: a code, a
+	// rule and a bound of one name each, a size and a limit of twenty digits
+	// each, and four tabs. No field bound lets a record be longer, so the Lua
+	// reads reserve this many bytes for each record they read.
+	ParkedValueBytesMax = 3*tset.MaxIdentifierBytes + 2*20 + 4
+	// quarantineChunk is how many cards' records one batched read of the
+	// quarantine takes: each record is up to QuarantineValueBytesMax, so the
+	// Lua half reads 250 at once and its reservation stays near a megabyte. The
+	// Go twin reads in memory and names the piece so that the two are held equal.
+	quarantineChunk = 250
+	// RangeReserveBytes is what a read of a sorted set's range reserves for each
+	// member (Layer 1's S.readcmd refuses DRIFT when a reply is larger than its
+	// reserve): a key a part writes is at most one name long (L1 6), and the
+	// keys other parts write into the due and cut sets are shorter than that.
+	RangeReserveBytes = 300
 )
+
+// partShares is the shared budget the parts of one step use together.
+type partShares struct{ commands, argvBytes int }
+
+// partShare is the budget of this call: the real half of L1 6's bounds, or the
+// smaller one a test gave State.
+func (st *State) partShare() partShares {
+	if st.shares != nil {
+		return *st.shares
+	}
+	return partShares{commands: partCommandsShare, argvBytes: partArgvShare}
+}
 
 // The names of the sprint's keys the parts touch (1.1, 1.2, 1.3.1, 1.4.1). A
 // name without "@" is a sprint key with no epoch; the per-epoch keys are named
@@ -154,7 +201,7 @@ func RegisterTickParts(r *PartRegistry) error {
 		{PartIngest, ingestPart{}},
 		{PartBeat, beatPart{}},
 		{PartClock, clockPart{}},
-		{PartSprint, sprintPart{tickEnd: requestTickEnd}},
+		{PartSprint, sprintPart{}},
 	} {
 		if err := r.Register(p.name, p.part); err != nil {
 			return err
@@ -361,19 +408,25 @@ func hdelCommands(key string, fields []string) []Cmd {
 
 // checkCommands runs prepare's own validator over the part's commands, in the
 // pre stage: a command the twin's prepare would refuse is refused here, before
-// the table plan (A4), and the part's share of L1 6's shared bounds is held.
+// the table plan (A4). The commands and the argv bytes of every part of the step
+// are added to one running total on State, which is held to the parts' share of
+// L1 6's shared bounds, so that the parts together, and not each alone, stay
+// inside it.
 func checkCommands(st *State, cmds []Cmd) *Refusal {
 	cost, ref := st.Keys.ks.check(st.Prefix, cmds)
 	if ref != nil {
 		ref.Phase = PhaseParts
 		return ref
 	}
+	share := st.partShare()
 	switch {
-	case cost.commands > partCommandsShare:
+	case st.partCmds+cost.commands > share.commands:
 		return refuse(PhaseParts, CodeLimit, RefusalDetail{RefusalDetail: tset.RefusalDetail{Budget: "planned_commands"}})
-	case cost.argvBytes > partArgvShare:
+	case st.partArgv+cost.argvBytes > share.argvBytes:
 		return refuse(PhaseParts, CodeLimit, RefusalDetail{RefusalDetail: tset.RefusalDetail{Budget: "planned_argv_bytes"}})
 	}
+	st.partCmds += cost.commands
+	st.partArgv += cost.argvBytes
 	return nil
 }
 
@@ -404,10 +457,11 @@ type leaseDecision struct {
 	untilMS int64
 }
 
-// checkLeasePart holds a lease part to its shape: a token, a display name, a
-// positive span that stays exact, and heartbeat fields the loop may write.
+// checkLeasePart holds a lease part to its shape: a token, a display name (the
+// idle loop writes it into the heartbeat, so it is never empty), a positive
+// span of at most LeaseHoldMaxMS, and heartbeat fields the loop may write.
 func checkLeasePart(l *LeasePart) *Refusal {
-	if !partText(l.Owner) || (l.Name != "" && !partText(l.Name)) || l.HoldMS < 1 || l.HoldMS > maxExactMS {
+	if !partText(l.Owner) || !partText(l.Name) || l.HoldMS < 1 || l.HoldMS > LeaseHoldMaxMS {
 		return requestRefusal()
 	}
 	for f, v := range l.Heartbeat {
@@ -435,6 +489,9 @@ func decideLease(st *State, l *LeasePart) (leaseDecision, *Refusal) {
 	now, ref := partNow(st)
 	if ref != nil {
 		return leaseDecision{}, ref
+	}
+	if now > maxExactMS-l.HoldMS { // until_ms must stay exact: Lua's numbers are doubles
+		return leaseDecision{}, requestRefusal()
 	}
 	owner, _ := st.Keys.HGet(key, leaseFieldOwner)
 	name, _ := st.Keys.HGet(key, leaseFieldName)
@@ -562,7 +619,10 @@ type popPlan struct {
 	Popped  int          `json:"popped"`
 	Due     int          `json:"due"`
 	Cut     int          `json:"cut"`
-	cmds    []Cmd
+	// Parked counts the popped entries whose key is parked: the entry leaves
+	// the set and its key is not queued (E3: a parked key is named).
+	Parked int `json:"parked"`
+	cmds   []Cmd
 }
 
 func (p *popPlan) commands() []Cmd { return p.cmds }
@@ -599,7 +659,9 @@ type popPart struct{}
 // entries for more than a tick), and builds the commands in A1's order: every
 // key added to the agenda, scored by cur, then the due and cut entries removed.
 // Each key is added only when it is not there (ZADD NX, decided here, since
-// Layer 1's registry has no NX), so the earliest order stays.
+// Layer 1's registry has no NX), so the earliest order stays, and never when it
+// is parked: a parked key waits for its judgment and is not planned (1.1), so
+// the entry is removed and the key is left where it is.
 func (popPart) Pre(st *State, req *Request, obs *Before) (any, *Refusal) {
 	pop := req.Pop
 	if pop.Limit < 1 || pop.Limit > PopMax {
@@ -611,8 +673,9 @@ func (popPart) Pre(st *State, req *Request, obs *Before) (any, *Refusal) {
 	}
 	epoch := partEpoch(req)
 	agenda, due, cut, tick := epochKey(st, keyAgenda, epoch), epochKey(st, keyDue, epoch), epochKey(st, keyCut, epoch), epochKey(st, keyTick, epoch)
+	parked := epochKey(st, keyParked, epoch)
 	if ref := guardTypes(st, typedKey{agenda, kindZSet}, typedKey{due, kindZSet}, typedKey{cut, kindZSet},
-		typedKey{tick, kindHash}); ref != nil {
+		typedKey{tick, kindHash}, typedKey{parked, kindHash}); ref != nil {
 		return nil, ref
 	}
 	if !run {
@@ -637,6 +700,10 @@ func (popPart) Pre(st *State, req *Request, obs *Before) (any, *Refusal) {
 	enqueue := func(entries []ZMember, cutSet bool) {
 		for _, e := range entries {
 			k := popKey(e.Member, cutSet)
+			if _, there := st.Keys.HGet(parked, k); there {
+				plan.Parked++
+				continue
+			}
 			if _, there := st.Keys.ZScore(agenda, k); there || queued[k] {
 				continue
 			}
@@ -675,7 +742,9 @@ type ingestPlan struct {
 	Cur     tset.Decimal `json:"cur"`
 	Added   int          `json:"added"`
 	Dropped int          `json:"dropped"`
-	cmds    []Cmd
+	// Parked counts the keys of the page that are parked and so not queued.
+	Parked int `json:"parked"`
+	cmds   []Cmd
 }
 
 func (p *ingestPlan) commands() []Cmd { return p.cmds }
@@ -715,7 +784,9 @@ func checkIngest(in *IngestPart) (map[string]uint64, *Refusal) {
 // commands in A1's order: every key added to the agenda or the held queue, the
 // oldest held keys dropped past the queue's cap, and only then the cursor moved
 // to To, so an error between the writes leaves the keys owed twice and never
-// lost (E7). A key is added only when absent (ZADD NX decided here).
+// lost (E7). A key is added only when absent (ZADD NX decided here) and never
+// when it is parked: it waits for its judgment, and its acknowledged line
+// queues it again (1.1).
 func (ingestPart) Pre(st *State, req *Request, obs *Before) (any, *Refusal) {
 	in := req.Ingest
 	keys, ref := checkIngest(in)
@@ -727,8 +798,9 @@ func (ingestPart) Pre(st *State, req *Request, obs *Before) (any, *Refusal) {
 		return nil, ref
 	}
 	epoch := partEpoch(req)
-	agenda, heldq, tick := epochKey(st, keyAgenda, epoch), epochKey(st, keyHeldQ, epoch), epochKey(st, keyTick, epoch)
-	if ref := guardTypes(st, typedKey{agenda, kindZSet}, typedKey{heldq, kindZSet}, typedKey{tick, kindHash}); ref != nil {
+	agenda, heldq, tick, parked := epochKey(st, keyAgenda, epoch), epochKey(st, keyHeldQ, epoch), epochKey(st, keyTick, epoch), epochKey(st, keyParked, epoch)
+	if ref := guardTypes(st, typedKey{agenda, kindZSet}, typedKey{heldq, kindZSet}, typedKey{tick, kindHash},
+		typedKey{parked, kindHash}); ref != nil {
 		return nil, ref
 	}
 	cur, ref := hashDecimal(st, tick, tickFieldCur)
@@ -753,9 +825,13 @@ func (ingestPart) Pre(st *State, req *Request, obs *Before) (any, *Refusal) {
 		return names[i] < names[j]
 	})
 	var addAgenda, addHeld flatPairs
-	newHeld := 0
+	newHeld, parkedKeys := 0, 0
 	for _, k := range names {
 		score := strconv.FormatUint(keys[k], 10)
+		if _, there := st.Keys.HGet(parked, k); there {
+			parkedKeys++ // a parked key waits for its judgment; the line is consumed and the key is named (E3)
+			continue
+		}
 		if sprint.RuleOf(k) == heldRule {
 			if _, there := st.Keys.ZScore(heldq, k); !there {
 				addHeld = append(addHeld, score, k)
@@ -765,7 +841,7 @@ func (ingestPart) Pre(st *State, req *Request, obs *Before) (any, *Refusal) {
 			addAgenda = append(addAgenda, score, k)
 		}
 	}
-	plan := &ingestPlan{Cur: in.To, Added: addAgenda.count() + addHeld.count()}
+	plan := &ingestPlan{Cur: in.To, Added: addAgenda.count() + addHeld.count(), Parked: parkedKeys}
 	var drop []string
 	if over := st.Keys.ZCard(heldq) + newHeld - HeldQueueCap; over > 0 {
 		for _, m := range st.Keys.ZRangeByScore(heldq, math.Inf(-1), math.Inf(1), min(over, HeldDropMax)) {
