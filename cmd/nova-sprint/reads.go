@@ -157,7 +157,7 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 			l += " gen=" + strconv.Itoa(x.Gen) + " " + next + ": " + x.ID + "@" + strconv.Itoa(x.Gen) + " --epoch " + strconv.FormatUint(epoch, 10)
 		}
 		if len(x.WaitsFor) > 0 {
-			l += " waits for: " + strings.Join(x.WaitsFor, ",")
+			l += " waits for: " + sprint.Preview(x.WaitsFor, ",")
 		}
 		for _, st := range [][2]string{{"dealt", x.Dealt}, {"taken", x.Taken}, {"asked", x.Asked}, {"begun", x.Begun}} {
 			if st[1] != "" {

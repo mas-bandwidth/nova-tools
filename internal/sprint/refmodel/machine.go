@@ -101,7 +101,8 @@ func (n *State) tickResume() {
 	}
 }
 
-// tickDeal is T3: ready primaries, oldest first by score, each to the up
+// tickDeal is T3: ready primaries in stream turns (one from each stream in
+// turn, streams in name order, each stream's oldest first by score), each to the up
 // member with the shortest ready queue, no ready queue longer than
 // MaxReadyPerMember; with no member up and primaries to deal, the no-member
 // judgment once, closed when the condition clears (section 14).
@@ -117,7 +118,7 @@ func (n *State) tickDeal(choice map[string]string) error {
 			ready = append(ready, id)
 		}
 	}
-	n.sortByScore(ready)
+	ready = n.streamTurns(ready)
 	// the bound's judgment: once per primary at its bound, closed when it
 	// is no longer there (reworked, dropped)
 	for j := range n.Open {

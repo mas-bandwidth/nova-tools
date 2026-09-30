@@ -557,7 +557,7 @@ func resolvePlan(s *Snapshot, r ResolveReq) Plan {
 		if len(missing) > 0 {
 			if left := unblocked(s.Open, c.ID, missing, NMissingNeed); len(left) > 0 {
 				n := judgment(NMissingNeed, c.Row, s.Now, 0, c.ID)
-				n.What, n.Who, n.Needs = c.ID+" needs "+strings.Join(left, ",")+", not on the table", r.Who, left
+				n.What, n.Who, n.Needs = c.ID+" needs "+Preview(left, ",")+", not on the table", r.Who, left
 				p.Notes = append(p.Notes, n)
 			}
 			if len(r.IDs) > 0 {

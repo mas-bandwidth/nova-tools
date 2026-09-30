@@ -238,7 +238,8 @@ func TickResume(s *Snapshot, r TickReq) (Plan, int) {
 	return p, due
 }
 
-// T3. TickDeal deals ready primaries, oldest first by score, each to the up
+// T3. TickDeal deals ready primaries in stream turns (dealTurns: one from each
+// stream in turn, each stream's oldest first by score), each to the up
 // member with the shortest ready queue, keeping every ready queue no longer
 // than MaxReadyPerMember; a withdrawn card is dealt again at a new
 // generation. With no member up and primaries waiting to be dealt, the
@@ -258,6 +259,7 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 			ready = append(ready, c)
 		}
 	}
+	ready = dealTurns(ready, nil)
 	up := s.UpMembers()
 	if len(up) == 0 && len(ready) > 0 {
 		conds = append(conds, cond{typ: NNoMember, streamLevel: true,

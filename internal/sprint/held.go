@@ -182,6 +182,27 @@ type held struct {
 	judged map[string][]string
 	memo   map[string]Hold
 	on     map[string]bool
+	// turn is each ready primary's place in the deal's order (dealTurns),
+	// computed once on first use.
+	turn map[string]int
+}
+
+// dealTurn is the ready primary's place in the deal's order (dealTurns over the
+// ready primaries, sentinels aside): how many the deal takes before it.
+func (c *held) dealTurn(id string) int {
+	if c.turn == nil {
+		var ready []*Card
+		for _, x := range c.s.Work.Column(Ready) {
+			if !IsSentinel(x) {
+				ready = append(ready, x)
+			}
+		}
+		c.turn = map[string]int{}
+		for i, x := range dealTurns(ready, nil) {
+			c.turn[x.ID] = i
+		}
+	}
+	return c.turn[id]
 }
 
 // heldParts is the tick's parts the rule asks what the next tick does: every
@@ -419,7 +440,8 @@ func (c *held) waits(pr *Card) (why, root string, ok bool) {
 		}
 		c.on[pr.ID] = true
 		defer delete(c.on, pr.ID)
-		var held []string
+		var held, items []string
+		nNeeds := 0
 		for _, n := range w {
 			nc := s.Work.Card(n)
 			switch {
@@ -438,11 +460,17 @@ func (c *held) waits(pr *Card) (why, root string, ok bool) {
 				}
 				return "waits on " + n + ", which is stalled", r, false
 			}
-			kind := "needs"
+			kind, item := "needs", n+" ("+hd.By+")"
 			if IsSentinel(nc) {
-				kind = "waits behind sentinel"
+				kind, item = "waits behind sentinel", "sentinel "+item
+			} else {
+				nNeeds++
 			}
 			held = append(held, kind+" "+n+" ("+hd.By+")")
+			items = append(items, item)
+		}
+		if len(held) > PreviewLen {
+			return fmt.Sprintf("needs %d of %d still open: %s", nNeeds, len(Split(pr.F("needs"))), Preview(items, ", ")), "", true
 		}
 		return strings.Join(held, "; "), "", true
 	case Ready:
@@ -457,15 +485,9 @@ func (c *held) waits(pr *Card) (why, root string, ok bool) {
 		for _, m := range up {
 			room += max(0, MaxReadyPerMember-s.Fleet.Count(m, Ready))
 		}
-		ahead := 0
-		for _, x := range s.Work.Column(Ready) {
-			if x.ID == pr.ID {
-				break
-			}
-			if !IsSentinel(x) {
-				ahead++
-			}
-		}
+		// The deal's order is dealTurns (a stream at a time, in turn), so what
+		// is ahead is counted in that order.
+		ahead := c.dealTurn(pr.ID)
 		if ahead < room {
 			return "a member has room in its ready queue, and nothing deals it", "", false
 		}

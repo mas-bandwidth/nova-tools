@@ -170,7 +170,7 @@ func batchWords(b sprint.Line, card string) string {
 	}
 	s := ""
 	if len(others) > 0 {
-		s = fmt.Sprintf(" in a batch of %d (with %s)", len(others)+1, strings.Join(others, ", "))
+		s = fmt.Sprintf(" in a batch of %d (with %s)", len(others)+1, sprint.Preview(others, ", "))
 	}
 	if w := strings.TrimSpace(b.Note.What); w != "" {
 		s += ", " + w
@@ -375,20 +375,42 @@ func (a *app) nowLines(v store.CardInfo, held *sprint.Hold) []string {
 	if held != nil && held.By != sprint.HeldByJudgment {
 		out = append(out, held.Why)
 	}
-	for _, n := range v.Needs {
-		s := "needs " + n.ID + " (" + n.State + ")"
-		if n.Waived {
-			s += ", waived"
+	if len(v.Needs) > sprint.PreviewLen {
+		out = append(out, needsPreview(v.Needs))
+	} else {
+		for _, n := range v.Needs {
+			s := "needs " + n.ID + " (" + n.State + ")"
+			if n.Waived {
+				s += ", waived"
+			}
+			out = append(out, s)
 		}
-		out = append(out, s)
 	}
 	if len(v.NeededBy) > 0 {
-		out = append(out, "needed by "+strings.Join(v.NeededBy, ", "))
+		out = append(out, "needed by "+sprint.Preview(v.NeededBy, ", "))
 	}
 	if len(out) == 0 && held != nil {
 		out = append(out, held.String())
 	}
 	return out
+}
+
+// needsPreview is a long list of needs as one line: how many are still open
+// (neither landed nor waived) of how many, then the open ones first, cut to
+// sprint.PreviewLen with the rest counted.
+func needsPreview(needs []sprint.NeedState) string {
+	var open, done []string
+	for _, n := range needs {
+		switch {
+		case n.Waived:
+			done = append(done, n.ID+" ("+n.State+", waived)")
+		case n.State == string(sprint.Landed):
+			done = append(done, n.ID+" ("+n.State+")")
+		default:
+			open = append(open, n.ID+" ("+n.State+")")
+		}
+	}
+	return fmt.Sprintf("needs %d of %d still open: %s", len(open), len(needs), sprint.Preview(append(open, done...), ", "))
 }
 
 // paragraph prints words as they were given, indented, a line at a time;

@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -104,6 +105,22 @@ const RepeatDecision = "stop and look"
 
 // MaxListed bounds the primaries a notification lists; Count carries the total.
 const MaxListed = 50
+
+// PreviewLen is how many ids a rendered list of ids shows before it is cut:
+// the card, the inbox and the notices name the first eight and count the rest,
+// as the inbox's group line does, so a card with a thousand needs is one short
+// line and never every id.
+const PreviewLen = 8
+
+// Preview is a list of items as a person reads it, joined by sep: all of them
+// when there are PreviewLen or fewer, else the first PreviewLen and
+// "... and k more".
+func Preview(items []string, sep string) string {
+	if len(items) <= PreviewLen {
+		return strings.Join(items, sep)
+	}
+	return strings.Join(items[:PreviewLen], sep) + sep + "... and " + strconv.Itoa(len(items)-PreviewLen) + " more"
+}
 
 // Note is one notification.
 type Note struct {

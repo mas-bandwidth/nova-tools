@@ -917,7 +917,9 @@ func readDown(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []AgendaK
 // L = min(room, 64, ⌊10,000 / 3s⌋), with the heads' records and, for
 // again:s, their withdrawn work cards. The plan's candidates are those heads,
 // not a cell of the table.
-// Plan: the room lowest (score, id) of what was read, each dealt: a new work
+// Plan: the room first of what was read in stream turns (dealTurns: one card
+// from each stream's front in turn, in stream order, each stream's cards in
+// work order), each dealt: a new work
 // card to the shortest ready queue among the up members, the primary's avoid
 // member only when no other up member has room; or the withdrawn card dealt
 // again at generation + 1 (no change to redeals: its take, if any, was counted
@@ -942,8 +944,10 @@ func readDown(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []AgendaK
 // and removes the key); removed otherwise.
 // Raises: "no fleet member is up"; "the machine could not move a card".
 // Cost: O(f + i + k), i at most 2·s·L. A deal of 16 about 1 ms of store time
-// (2.3). Order is exact unless one stream holds more than L of the room
-// lowest: then each stream gives its first L a round, and the key stays.
+// (2.3). A stream gives at most L a round; one with more left keeps the key.
+// The turns are the owner's word on the design's per-stream fronts: streams
+// are worked in parallel, never one stream's backlog before another's first
+// card (the body's "room lowest (score, id)" over every stream is superseded).
 // Without it: deal scans ready in every stream.
 func planDeal(s *Snapshot, keys []AgendaKey, now Now) RulePlan {
 	return whenShort(s, ruleDeal, keys, planDealWith(s, keys, now, factsOf(s, ruleDeal)))
@@ -996,7 +1000,7 @@ func planDealWith(s *Snapshot, keys []AgendaKey, now Now, f fleetFacts) RulePlan
 			cands = append(cands, c)
 		}
 	}
-	SortCards(cands)
+	cands = dealTurns(cands, streams)
 
 	if len(up) == 0 {
 		if len(cands) > 0 {
@@ -1080,6 +1084,44 @@ func dealFate(progress, skipped, roomLeft int) int {
 		return fateRequeue
 	}
 	return fateDone
+}
+
+// dealTurns is the order R6 and T3 deal in (2.3 R6, front(s) per stream): one
+// card from each stream in turn, in the order of streams, until every stream's
+// cards are taken; a stream with none left is skipped, and within a stream the
+// cards go in work order (SortCards). A card of a stream not in streams takes
+// its turn after them, its streams in name order. So every stream with a
+// ready card is worked in parallel: a deal of k cards over n streams gives
+// each stream k/n, give or take one, never one stream's backlog first.
+func dealTurns(cards []*Card, streams []string) []*Card {
+	by := map[string][]*Card{}
+	order := append([]string(nil), streams...)
+	known := map[string]bool{}
+	for _, st := range streams {
+		known[st] = true
+	}
+	var extra []string
+	for _, c := range cards {
+		if !known[c.Row] {
+			known[c.Row] = true
+			extra = append(extra, c.Row)
+		}
+		by[c.Row] = append(by[c.Row], c)
+	}
+	slices.Sort(extra)
+	order = append(order, extra...)
+	for _, st := range order {
+		SortCards(by[st])
+	}
+	out := make([]*Card, 0, len(cards))
+	for turn := 0; len(out) < len(cards); turn++ {
+		for _, st := range order {
+			if turn < len(by[st]) {
+				out = append(out, by[st][turn])
+			}
+		}
+	}
+	return out
 }
 
 // dealable says a ready primary is in fresh below σ or in again (1.3.1): not a
