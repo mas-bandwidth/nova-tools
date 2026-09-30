@@ -4,7 +4,11 @@
 # The controls start a private server. They do not dial the fleet store. A runner
 # that already has the binary is unchanged. Linux uses apt, macOS uses Homebrew,
 # and a machine with neither (the Intel benches have no Homebrew) builds the
-# pinned source into ~/.local/bin, which persists on a self-hosted runner.
+# pinned source into ~/.local/bin, which persists on a self-hosted runner. The
+# pin is the repository's one Redis version (infra/functional-image/Containerfile
+# names it too; internal/ci TestRedisIsOneVersionEverywhere holds the two
+# together). The apt and Homebrew branches install what the distribution and
+# Homebrew carry; only the source build is pinned.
 # Several runners share one machine, so the install takes a lock: apt does not
 # survive a concurrent dpkg.
 set -euo pipefail
@@ -68,7 +72,7 @@ elif command -v brew >/dev/null 2>&1; then
 		echo "$brewbin" >> "$GITHUB_PATH"
 	fi
 else
-	ver=8.0.5
+	ver=8.10.2
 	dest="${HOME:?}/.local/bin"
 	mkdir -p "$dest"
 	work=$(mktemp -d)

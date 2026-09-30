@@ -23,12 +23,13 @@ data, no bullshit around it. don't let extra stuff creep in."
 and an example, use `nova-table help row set` or `nova-table row set --help`.
 Requested help exits 0 on stdout and needs no store.
 
-Install `nova-table` and Redis 7 or later. Every table verb calls the
-`nova_sprint` function library (`internal/nsprint/fn`), which `nova-table`
-carries. On first contact with a store that holds no library, `nova-table`
-loads its own: the first verb the store answers `Function not found` loads the
-library once per process, never replacing one the store holds, and runs
-again; that verb's `trips=` counts the load. An empty Redis is enough.
+Install `nova-table` and Redis 8.10.2, the version every test of this
+repository runs against. Every table verb calls the `nova_sprint` function
+library (`internal/nsprint/fn`), which `nova-table` carries. On first contact
+with a store that holds no library, `nova-table` loads its own: the first verb
+the store answers `Function not found` loads the library once per process,
+never replacing one the store holds, and runs again; that verb's `trips=`
+counts the load. An empty Redis is enough.
 `nova-redis fn load` is the explicit load and upgrade, for the one place that
 deploys, and `nova-redis fn check` says whether a store holds this build's
 library. From a source checkout, build the client:

@@ -1577,6 +1577,41 @@ carry the ones known to be needed. The rest is caught by a run of the tier in
 the image, where `NOVA_CI=1` makes a missing program a failure. It does not
 build the image.
 
+### `redis-version` — every place that names a Redis version names the same one
+
+**The rule.** `ARG REDIS_VERSION` in `infra/functional-image/Containerfile` is
+the repository's one Redis version, the one the whole functional tier runs on.
+Every other place that names a Redis version equals it: the CI installer's
+source build (`.github/scripts/install-redis-server.sh`), the image's README,
+`docs/nova-table/README.md`, and every phrase of the living tree that writes a
+three-part version right after the word Redis (`Redis <v>`, `redis-server <v>`,
+`redis-<v>.tar.gz`, `REDIS_VERSION=<v>`, `redis_version:<v>`, `redis:<v>`).
+**The mistake it prevents.** Two Redis versions in one tree: the functional
+tier is green on one while a document, an installer or a captured error text
+names the other, and a behaviour that differs between them is found by a user
+and never by a test.
+**The test.** `TestRedisIsOneVersionEverywhere` and
+`TestRedisVersionRuleSeesEachShape`
+(`internal/ci/redis_version_class_test.go`). The first reads the reference,
+requires each named place to name a version at least once, sweeps every text
+file of the living tree, and reports every version that differs with every place
+that names it. The second is the control: each shape is found, the versions of
+other programs (`go-redis v9.22.0`, `nova-redis 1.0.0`) and addresses
+(`redis=127.0.0.1:6379`) are not, and a split of three versions is reported once
+per differing version with all its places.
+**Its allowlist.** None. `redisVersionHistory` lists the paths the sweep does
+not read, each with its reason (release history, and the fixtures of a package
+deprecated in place that record servers of other versions), and the test is red
+when a row names a path the tree no longer holds.
+**Its remedy line.** ``Redis <v> is named at <file>:<line>, but the one version
+is <ref> (ARG REDIS_VERSION in infra/functional-image/Containerfile): make every
+place name <ref>, and take REDIS_SHA256 from the project's published hash for
+that release``.
+**Its narrowings.** One- and two-part mentions (`Redis 7`, `Redis 6.2`) name a
+feature generation and are not read. The rule cannot read what `apt` or
+Homebrew installs on a runner, and cannot check a sha256 against a version
+offline: the image build's `sha256sum -c` checks it against the tarball.
+
 ### `cardtemplates` — no card template carries a command only one platform has
 
 **The rule.** A card template is the text a worker is handed verbatim; nothing

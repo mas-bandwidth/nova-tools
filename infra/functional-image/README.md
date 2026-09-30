@@ -17,7 +17,7 @@ runs where it is.
 | base | `docker.io/library/ubuntu:24.04`, pinned by its index digest in the Containerfile |
 | packages | the distribution's, at a dated snapshot of the archive (`APT_SNAPSHOT`): `git`, `lsof`, `make`, `postgresql-16`, `procps`, `python3`, `sqlite3`, `ca-certificates` |
 | Go | the exact version `go.mod` pins, from go.dev, sha256 verified per architecture, `GOTOOLCHAIN=local` |
-| redis-server, redis-cli | Redis 8.0.5 built from the release source, sha256 verified |
+| redis-server, redis-cli | Redis 8.10.2 built from the release source, sha256 verified |
 | sops, age-keygen | the versions `docs/SPEC-SECRETS.md` pins as minimums, sha256 verified |
 | user | `bench`, uid 10001, `HOME=/home/bench` |
 
@@ -26,9 +26,11 @@ one. Postgres is 16: it is the first directory the fixtures search
 (`/usr/lib/postgresql/16/bin`, so no `NOVA_PG_BIN` is needed) and the version
 `.github/scripts/install-postgres.sh` installs. Redis is 8: the tests read Redis
 8's error wording (`internal/nsprint/deal` matches its ACL refusals, and the
-texts in `internal/redisfn`'s tests are Redis 8's), and 8.0.5 is the release
-`.github/scripts/install-redis-server.sh` builds where the distribution has
-none.
+texts in `internal/redisfn`'s tests are Redis 8's), and Redis 8.10.2 is the
+release `.github/scripts/install-redis-server.sh` builds where the distribution
+has none. It is the repository's one Redis version:
+`TestRedisIsOneVersionEverywhere` (`internal/ci`) reads every place that names
+one and is red when two differ.
 
 `binaries.txt` lists every program the functional tier runs by name and what
 carries it, or why the tier does without it. The class test
