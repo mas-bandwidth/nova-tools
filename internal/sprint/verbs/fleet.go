@@ -205,6 +205,11 @@ func flInRowSteps(ctx context.Context, verb, op string, names []string, run func
 // step, and the verb plans again and finds it fresh). KNOW "fleet member up"
 // names the members that came up, and "no fleet member is up" is closed with
 // them (the model: JClose nomember when fresh). Two round trips.
+//
+// Freshness is judged at plan time, from the beat as read (1.4.4); the step
+// guards the entry as read, and nothing guards that R passes it between the
+// read and the step. A member set up in that gap is stale by the due set and
+// R2 sets it down within a tick, as it does any member whose beat lapses.
 func FleetUp(ctx context.Context, e *Env, req FleetReq) (Result, error) {
 	const verb = "fleet up"
 	members, err := flNamedRows(verb, "member", req.Members)
@@ -247,7 +252,8 @@ func flUpStep(ctx context.Context, e *Env, op string, members []string) (Result,
 			if err != nil {
 				return nil, err
 			}
-			var newRows, bad []string
+			var newRows []string
+			var bad wkFaults
 			var entries []tset.Entry
 			var guards []sprintfn.XGuard
 			for i, m := range members {
@@ -260,7 +266,7 @@ func flUpStep(ctx context.Context, e *Env, op string, members []string) (Result,
 				}
 				switch {
 				case ctl.Exists && ctl.Place == nil:
-					bad = append(bad, fmt.Sprintf("%s: its control card was removed in this epoch, and an id is never used again within its epoch (clear restores it)", m))
+					bad.add(m, "%s: its control card was removed in this epoch, and an id is never used again within its epoch (clear restores it)", m)
 					continue
 				case !ctl.Exists:
 					if !rows.fleet[m] {
@@ -271,7 +277,7 @@ func flUpStep(ctx context.Context, e *Env, op string, members []string) (Result,
 						Set: map[string]string{wkfKind: "member", wkfStatus: status, wkfSince: wkWallStamp(wall)}})
 				default:
 					if ctl.Place.Row != m || ctl.Place.Col != sprint.Ctl {
-						bad = append(bad, fmt.Sprintf("%s: its control card is at %s, not %s:%s", m, wkPlaceOf(ctl), m, sprint.Ctl))
+						bad.add(m, "%s: its control card is at %s, not %s:%s", m, wkPlaceOf(ctl), m, sprint.Ctl)
 						continue
 					}
 					was := wkFieldStr(ctl, wkfStatus)
@@ -290,8 +296,8 @@ func flUpStep(ctx context.Context, e *Env, op string, members []string) (Result,
 					guards = append(guards, sprintfn.XGuard{Kind: sprintfn.XGuardBeatStale, Member: m})
 				}
 			}
-			if len(bad) > 0 {
-				return nil, wkWorkRefuse(verb, sprintfn.CodeRequest, "%s", strings.Join(bad, "; "))
+			if err := bad.err(verb); err != nil {
+				return nil, err
 			}
 			if len(entries) == 0 {
 				return nil, nil // every member named is up already, or down with no fresh beat
@@ -365,12 +371,12 @@ func FleetDown(ctx context.Context, e *Env, req FleetReq) (Result, error) {
 			if err != nil {
 				return nil, err
 			}
-			var bad []string
+			var bad wkFaults
 			var entries []tset.Entry
 			for i, m := range members {
 				ctl := ctls[i]
 				if !ctl.Exists || ctl.Place == nil || ctl.Place.Row != m || ctl.Place.Col != sprint.Ctl {
-					bad = append(bad, fmt.Sprintf("%s: no fleet member (its control card: %s)", m, wkPlaceOf(ctl)))
+					bad.add(m, "%s: no fleet member (its control card: %s)", m, wkPlaceOf(ctl))
 					continue
 				}
 				if wkFieldStr(ctl, wkfStatus) == sprint.Held {
@@ -381,8 +387,8 @@ func FleetDown(ctx context.Context, e *Env, req FleetReq) (Result, error) {
 					Set: map[string]string{wkfStatus: sprint.Held, wkfSince: wkWallStamp(wall)}})
 				held = append(held, m)
 			}
-			if len(bad) > 0 {
-				return nil, wkWorkRefuse(verb, sprintfn.CodeRequest, "%s", strings.Join(bad, "; "))
+			if err := bad.err(verb); err != nil {
+				return nil, err
 			}
 			if len(entries) == 0 {
 				return nil, nil

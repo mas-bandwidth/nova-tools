@@ -850,6 +850,23 @@ func TestLuaQueriesOnStubbedHelpers(t *testing.T) {
 	}
 }
 
+// TestLuaBeatReadsPresentEntries: the beat read (fleet up's, 1.4.4) answers a
+// member's beat:<m> score from the due set, null for a member with none, in the
+// Lua as in the twin, on entries that are present (a whole and a fractional
+// score), where TestLuaQueriesOnStubbedHelpers reads only absent ones.
+func TestLuaBeatReadsPresentEntries(t *testing.T) {
+	t.Parallel()
+	w := standard(t)
+	w.seed(w.zadd("due", "4242", "beat:m1", "5000.5", "beat:m3"))
+	h := newLuaHarness(t, w)
+	q := mustEncodeKey(t, KeyQ{Kind: KeyBeat, IDs: []string{"m1", "ghost", "m3"}})
+	h.agree("beat present", q)
+	got, ref := h.read(q)
+	if ref != nil || !strings.Contains(string(got), `"4242",null,"5000.5"`) {
+		t.Fatalf("the Lua's beat answer %s (refusal %v), want 4242, null, 5000.5", got, ref)
+	}
+}
+
 // TestLuaValidateEqualsTwin: the Lua's validate and the twin's checks refuse
 // the same queries with the same code: every encoded query is accepted by
 // both, and every malformed or over-cost object of the wire test is refused by

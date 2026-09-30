@@ -18,7 +18,8 @@ import (
 // IT20). take, finish and read name each card at its generation and take a set
 // (1.5.3, "every verb takes a set"): one read of every card named and of its
 // primary, then one step, two round trips whatever the size of the set up to
-// what one step holds. They write no receipt, even with an op: the generation
+// what one step holds; a larger set is k steps in k + 1 round trips (each step
+// pipelined with the next read, 1.5.3). They write no receipt, even with an op: the generation
 // is the idempotency key (1.5.5, Q2). A report already applied at that
 // generation, by that actor, with the same facts, writes nothing; the same
 // generation with other facts is refused, naming what was applied. queue reads
@@ -41,16 +42,23 @@ const (
 	RateMinReports = 10
 )
 
-// How many cards one step of a worker verb holds (1.0, "The chunk": 2,000
-// changed members a step). A take moves one fleet card a card, and a read one
-// read card, so 2,000; a finish moves the work card and its primary, two
-// members a card, so 1,000. A larger set goes in successive steps of these
-// sizes, each its own read and step: by generation, a set run again after a
-// refused step repeats nothing that applied.
+// How many cards one step of a worker verb holds. Two bounds meet (1.0, "The
+// chunk"; L1 6): 2,000 changed members a step, and 4,000 about ids over the
+// entries and the notes together (tset.MaxAboutBeforeDedup). A take moves one
+// fleet card a card, and a begin one read card, so 2,000; a finish moves the
+// work card and its primary, two members a card, so 1,000, and its ok notice
+// names a card too: three abouts a card, well under the cap. A report of read
+// cards names each card in its entry and again in its one summary note, two
+// abouts a card, and the broken-rate notice adds one: 2 x n + 1 at most 4,000,
+// so 1,999. A larger set goes in successive steps of these sizes, each step
+// pipelined with the next step's read (1.5.3, the parts rule: n steps cost
+// n + 1 round trips); by generation, a set run again after a refused step
+// repeats nothing that applied.
 const (
-	TakeMax   = StepChunk
-	ReadMax   = StepChunk
-	FinishMax = StepChunk / 2
+	TakeMax       = StepChunk
+	ReadBeginMax  = StepChunk
+	ReadReportMax = (tset.MaxAboutBeforeDedup - 1) / 2
+	FinishMax     = StepChunk / 2
 )
 
 // The spans of the due times the worker verbs stamp (1.2): a work card taken
@@ -138,9 +146,56 @@ func ParseCardGen(s string) (CardGen, error) {
 // wkWorkRefuse is a refusal a worker verb makes from its arguments or its read,
 // before anything is sent: nothing was written.
 func wkWorkRefuse(verb, code, format string, args ...any) *Refused {
+	return wkWorkRefuseIDs(verb, code, nil, format, args...)
+}
+
+// wkWorkRefuseIDs is wkWorkRefuse naming the cards (or members) it refuses in
+// Detail.IDs, as a refused step names its ids (1.5.3).
+func wkWorkRefuseIDs(verb, code string, ids []string, format string, args ...any) *Refused {
 	return &Refused{Verb: verb, Local: true, Refusal: &sprintfn.Refusal{Code: code,
 		Message: fmt.Sprintf(format, args...) + "; nothing was written",
-		Detail:  sprintfn.RefusalDetail{RefusalDetail: tset.RefusalDetail{IDs: []string{}, Cells: []string{}, Rows: []string{}}}}}
+		Detail:  sprintfn.RefusalDetail{RefusalDetail: tset.RefusalDetail{IDs: append([]string{}, ids...), Cells: []string{}, Rows: []string{}}}}}
+}
+
+// wkFaults collects what a plan refuses from a set: each card (or member) it
+// found wrong, with the reason. A card of another generation than the live
+// one, or finished or reported with other facts, is a conflict of state and
+// refuses OPCONFLICT; the rest of the faults refuse REQUEST, malformed or not
+// theirs to change. Detail.IDs names the cards, in the order found.
+type wkFaults struct {
+	bad, clash []string
+	ids        []string
+}
+
+func (f *wkFaults) add(id, format string, args ...any) {
+	f.bad = append(f.bad, fmt.Sprintf(format, args...))
+	f.ids = append(f.ids, id)
+}
+
+func (f *wkFaults) conflict(id, format string, args ...any) {
+	f.clash = append(f.clash, fmt.Sprintf(format, args...))
+	f.ids = append(f.ids, id)
+}
+
+// live records why a work card is not the member's live card (wkLiveCard): a
+// stale generation is a conflict, the rest are faults.
+func (f *wkFaults) live(id, why string, stale bool) {
+	if stale {
+		f.conflict(id, "%s", why)
+		return
+	}
+	f.add(id, "%s", why)
+}
+
+// err is the refusal of the faults found, nil when none.
+func (f *wkFaults) err(verb string) error {
+	switch {
+	case len(f.clash) > 0:
+		return wkWorkRefuseIDs(verb, "OPCONFLICT", f.ids, "%s", strings.Join(append(append([]string{}, f.clash...), f.bad...), "; "))
+	case len(f.bad) > 0:
+		return wkWorkRefuseIDs(verb, sprintfn.CodeRequest, f.ids, "%s", strings.Join(f.bad, "; "))
+	}
+	return nil
 }
 
 // wkFieldOf is a record's field, and whether it is present.
@@ -352,6 +407,185 @@ func wkInSteps(ctx context.Context, verb string, n, per int, run wkStepRun) (Res
 	return total, nil
 }
 
+// wkChunk is a worker verb's step over one chunk of its cards: the read and the
+// plan of one step (a Planned with no op), and done, which turns the step's
+// result into the chunk's own (its line, its replay) once the step applied or
+// planned nothing.
+type wkChunk struct {
+	Planned
+	done func(Result) Result
+}
+
+// wkPipedSteps runs a set of n cards in steps of at most per cards, in order,
+// each step pipelined with the next step's read in one flush (1.5.3, the parts
+// rule; SprintEvents.tla runs each step as its own atomic action): the first
+// read, then a flush a step, so k steps cost k + 1 round trips, and a set that
+// fits one step costs two. The next read runs after the step in the flush, so
+// it sees the counts the step left. A step that plans nothing sends no flush,
+// and the next step's read goes alone. The results add up as wkInSteps' do,
+// and a step refused after others applied names how to go on: by generation,
+// the same command repeats nothing that applied.
+func wkPipedSteps(ctx context.Context, e *Env, verb string, n, per int, chunkOf func(lo, hi int) wkChunk) (Result, error) {
+	var total Result
+	total.Verb = verb
+	var said []string
+	replay := true
+	var rd *sprintfn.ReadReply // the read of the chunk at lo, when the step before it brought it
+	var ahead *wkChunk         // the chunk at lo, made when the step before it was flushed
+	for lo := 0; lo < n; lo += per {
+		hi := min(lo+per, n)
+		var cur wkChunk
+		if ahead != nil {
+			cur, ahead = *ahead, nil
+		} else {
+			cur = chunkOf(lo, hi)
+		}
+		var nxt *wkChunk
+		if hi < n {
+			c := chunkOf(hi, min(hi+per, n))
+			nxt = &c
+		}
+		res, nextRd, err := e.wkChunkDo(ctx, cur, nxt, rd)
+		rd, ahead = nextRd, nxt
+		total.Trips += res.Trips
+		total.Retries += res.Retries
+		total.Epoch, total.EpochAfter = res.Epoch, res.EpochAfter
+		total.Read = res.Read
+		if err != nil {
+			var rf *Refused
+			if lo > 0 && errors.As(err, &rf) && rf.Hint == "" {
+				rf.Hint = fmt.Sprintf("the first %d cards are applied; fix the rest and run the same command again: by generation it repeats nothing", lo)
+			}
+			total.Said = strings.Join(said, "; ")
+			total.Replay = false
+			return total, err
+		}
+		if res.Step != nil {
+			total.Step = res.Step
+			replay = false
+		}
+		if res.Said != "" {
+			said = append(said, res.Said)
+		}
+	}
+	total.Replay = replay && total.Step == nil
+	total.Said = strings.Join(said, "; ")
+	return total, nil
+}
+
+// wkChunkDo runs one chunk as Env.Do runs a verb of one step (1.5.3): read (or
+// take the read the step before it brought), plan, build, send, and plan again
+// on a race at most Retries times, the epoch reloaded first after STALE or
+// EPOCHAHEAD, any other refusal returned at once. The step goes in one flush
+// with the next chunk's read when there is one, and the answer to that read is
+// returned for the next chunk to plan on; a refused or failed read there is
+// not an error here, the next chunk reads again alone and meets it.
+func (e *Env) wkChunkDo(ctx context.Context, cur wkChunk, nxt *wkChunk, rd *sprintfn.ReadReply) (Result, *sprintfn.ReadReply, error) {
+	verb := cur.Verb
+	res := Result{Verb: verb}
+	for {
+		epoch := dec(e.epoch())
+		res.Epoch = e.epoch()
+		if rd == nil {
+			rr := cur.Read(epoch)
+			rr.Epoch = epoch
+			r, err := sprintfn.Read(ctx, e.C, rr)
+			res.Trips++
+			if err != nil {
+				return res, nil, err
+			}
+			if r.Err != nil {
+				return res, nil, r.Err
+			}
+			if ref := r.Refusal; ref != nil {
+				if epochMoved(ref.Code) && res.Retries < Retries && e.reload(ref) {
+					res.Retries++
+					continue
+				}
+				return res, nil, &Refused{Verb: verb, Refusal: ref, Retries: res.Retries}
+			}
+			rd = r.Read
+		}
+		// AL2: the read names the active epoch; a verb plans at it.
+		if active, ok := undec(rd.ActiveEpoch); ok && active != e.epoch() {
+			if res.Retries >= Retries {
+				return res, nil, &Refused{Verb: verb, Retries: res.Retries,
+					Refusal: &sprintfn.Refusal{Code: sprintfn.CodeStale, Message: "the epoch kept moving under the verb"}}
+			}
+			res.Retries++
+			e.setEpoch(active)
+			rd = nil
+			continue
+		}
+		res.Read = rd
+		req, err := cur.Plan(rd)
+		if err != nil {
+			var rf *Refused
+			if errors.As(err, &rf) && rf.Verb == "" {
+				rf.Verb = verb
+			}
+			return res, nil, err
+		}
+		if req == nil {
+			return cur.done(res), nil, nil
+		}
+		e.fill(req, verb, epoch)
+		if rf := build(verb, req); rf != nil {
+			return res, nil, rf
+		}
+		items := []sprintfn.Item{{Step: req}}
+		if nxt != nil {
+			nr := nxt.Read(epoch)
+			nr.Epoch = epoch
+			items = append(items, sprintfn.Item{Read: nr})
+		}
+		out, err := e.C.Pipeline(ctx, items)
+		res.Trips++
+		if err != nil {
+			return res, nil, e.unknown(verb, "", 0, err)
+		}
+		if len(out) != len(items) {
+			return res, nil, &Unknown{Verb: verb, Err: fmt.Errorf("a pipeline of %d returned %d results", len(items), len(out))}
+		}
+		step := out[0]
+		if step.Err != nil {
+			return res, nil, e.unknown(verb, "", 0, step.Err)
+		}
+		if ref := step.Refusal; ref != nil {
+			if IsRace(ref.Code) && res.Retries < Retries {
+				res.Retries++
+				if epochMoved(ref.Code) {
+					e.reload(ref)
+				}
+				if err := e.wait(ctx, res.Retries); err != nil {
+					return res, nil, err
+				}
+				rd = nil // planned again on a fresh read
+				continue
+			}
+			rf := &Refused{Verb: verb, Refusal: ref, Retries: res.Retries}
+			if IsRace(ref.Code) {
+				rf.Hint = fmt.Sprintf("the sprint kept moving under the verb for %d retries; run it again", Retries)
+			}
+			return res, nil, rf
+		}
+		res.Step = step.Step
+		res.Replay = step.Step.Reply.Replay
+		res.Recorded = step.Step.Reply.Result
+		if after, ok := undec(step.Step.Reply.EpochAfter); ok {
+			res.EpochAfter = after
+			if after > e.epoch() {
+				e.setEpoch(after)
+			}
+		}
+		var nextRd *sprintfn.ReadReply
+		if nxt != nil && out[1].Err == nil && out[1].Refusal == nil {
+			nextRd = out[1].Read
+		}
+		return cur.done(res), nextRd, nil
+	}
+}
+
 // wkIdsRead is Layer 1's read of named records of one table with a projection.
 func wkIdsRead(table string, ids, fields []string) tset.ReadQuery {
 	return tset.ReadQuery{Kind: "ids", Table: table, IDs: ids, Fields: fields}
@@ -429,8 +663,8 @@ func Take(ctx context.Context, e *Env, req TakeReq) (Result, error) {
 			return Result{Verb: verb}, wkWorkRefuse(verb, sprintfn.CodeRequest, "%s is not a work card (<primary>.w<attempt>)", c.Card)
 		}
 	}
-	return wkInSteps(ctx, verb, len(cards), TakeMax, func(ctx context.Context, lo, hi int) (Result, error) {
-		return wkTakeStep(ctx, e, as, cards[lo:hi])
+	return wkPipedSteps(ctx, e, verb, len(cards), TakeMax, func(lo, hi int) wkChunk {
+		return wkTakeChunk(as, cards[lo:hi])
 	})
 }
 
@@ -454,10 +688,11 @@ func wkWorkAndPrimaries(cards []CardGen, extra ...sprintfn.SprintQuery) (ids, pr
 }
 
 // wkLiveCard is why a work card named at a generation is not the member's live
-// card at it, "" when it is: no record, another generation, another member.
-func wkLiveCard(c CardGen, rec tset.MemberRecord, as string) string {
+// card at it, "" when it is: no record, another generation (stale: the card was
+// dealt again or withdrawn), another member.
+func wkLiveCard(c CardGen, rec tset.MemberRecord, as string) (why string, stale bool) {
 	if !rec.Exists || rec.Place == nil {
-		return fmt.Sprintf("%s: no work card is placed (%s)", c.Card, wkPlaceOf(rec))
+		return fmt.Sprintf("%s: no work card is placed (%s)", c.Card, wkPlaceOf(rec)), false
 	}
 	gen, _ := strconv.Atoi(wkFieldStr(rec, wkfGen))
 	member := wkFieldStr(rec, wkfMember)
@@ -466,12 +701,12 @@ func wkLiveCard(c CardGen, rec tset.MemberRecord, as string) string {
 		if member != "" && rec.Place.Col != sprint.Withdrawn {
 			where = "dealt again to " + member
 		}
-		return fmt.Sprintf("%s: stale: generation %d is not the live one (%d): the card was %s", c.Card, c.Gen, gen, where)
+		return fmt.Sprintf("%s: stale: generation %d is not the live one (%d): the card was %s", c.Card, c.Gen, gen, where), true
 	}
 	if member != as || rec.Place.Row != as {
-		return fmt.Sprintf("%s@%d: dealt to %s (at %s), not %s", c.Card, c.Gen, member, wkPlaceOf(rec), as)
+		return fmt.Sprintf("%s@%d: dealt to %s (at %s), not %s", c.Card, c.Gen, member, wkPlaceOf(rec), as), false
 	}
-	return ""
+	return "", false
 }
 
 // wkWorkingOn says the primary's record is working on the card: placed in
@@ -480,11 +715,11 @@ func wkWorkingOn(pr tset.MemberRecord, card string) bool {
 	return wkColOf(pr) == string(sprint.Working) && sprint.CardID(wkFieldStr(pr, wkfWork)) == sprint.CardID(card)
 }
 
-func wkTakeStep(ctx context.Context, e *Env, as string, cards []CardGen) (Result, error) {
+func wkTakeChunk(as string, cards []CardGen) wkChunk {
 	const verb = "take"
 	ids, prims, read := wkWorkAndPrimaries(cards)
 	var already []string
-	res, err := e.Do(ctx, Planned{Verb: verb, Read: read,
+	pl := Planned{Verb: verb, Read: read,
 		Plan: func(rd *sprintfn.ReadReply) (*sprintfn.Request, error) {
 			already = already[:0]
 			works, err := wkRecordsAt(rd, 0, len(ids))
@@ -503,14 +738,14 @@ func wkTakeStep(ctx context.Context, e *Env, as string, cards []CardGen) (Result
 			if err != nil {
 				return nil, err
 			}
-			var bad []string
+			var bad wkFaults
 			en := tset.Entry{Kind: "move", Table: sprint.Fleet, From: as + ":" + string(sprint.Ready), To: as + ":" + string(sprint.Working),
 				Set:   map[string]string{wkfTaken: wkWallStamp(wall)},
 				Unset: []string{wkfUntakenR, wkfUntakenRepl, wkfDueUntaken, wkfUntakenSince, wkfRefused}}
 			for i, c := range cards {
 				rec := works[i]
-				if why := wkLiveCard(c, rec, as); why != "" {
-					bad = append(bad, why)
+				if why, stale := wkLiveCard(c, rec, as); why != "" {
+					bad.live(c.Card, why, stale)
 					continue
 				}
 				p, _ := wkPrimaryOfWork(c.Card)
@@ -520,11 +755,11 @@ func wkTakeStep(ctx context.Context, e *Env, as string, cards []CardGen) (Result
 					continue
 				case string(sprint.Ready):
 				default:
-					bad = append(bad, fmt.Sprintf("%s@%d: it is %s, not ready", c.Card, c.Gen, wkPlaceOf(rec)))
+					bad.add(c.Card, "%s@%d: it is %s, not ready", c.Card, c.Gen, wkPlaceOf(rec))
 					continue
 				}
 				if pr := byPrim[p]; !wkWorkingOn(pr, c.Card) {
-					bad = append(bad, fmt.Sprintf("%s@%d: its primary %s is not working on it (it is %s, work %q)", c.Card, c.Gen, p, wkPlaceOf(pr), wkFieldStr(pr, wkfWork)))
+					bad.add(c.Card, "%s@%d: its primary %s is not working on it (it is %s, work %q)", c.Card, c.Gen, p, wkPlaceOf(pr), wkFieldStr(pr, wkfWork))
 					continue
 				}
 				first, err := strconv.ParseInt(wkFieldStr(rec, wkfFirstTakenR), 10, 64)
@@ -539,27 +774,26 @@ func wkTakeStep(ctx context.Context, e *Env, as string, cards []CardGen) (Result
 				en.About = append(en.About, p)
 				en.Each = append(en.Each, each)
 			}
-			if len(bad) > 0 {
-				return nil, wkWorkRefuse(verb, sprintfn.CodeRequest, "%s", strings.Join(bad, "; "))
+			if err := bad.err(verb); err != nil {
+				return nil, err
 			}
 			if len(en.IDs) == 0 {
 				return nil, nil // every card was taken at its generation already (1.5.5)
 			}
 			return &sprintfn.Request{Meta: sprintfn.Meta{Verb: verb, Actor: as}, Body: sprintfn.Body{Entries: []tset.Entry{en}}}, nil
-		}})
-	if err != nil {
-		return res, err
-	}
-	taken := len(cards) - len(already)
-	if res.Step == nil {
-		taken = 0
-	}
-	res.Replay = res.Step == nil
-	res.Said = fmt.Sprintf("take: %s took %d", as, taken)
-	if len(already) > 0 {
-		res.Said += fmt.Sprintf("; %d already taken at their generation (%s), nothing written for them", len(already), wkNameList(already))
-	}
-	return res, nil
+		}}
+	return wkChunk{Planned: pl, done: func(res Result) Result {
+		taken := len(cards) - len(already)
+		if res.Step == nil {
+			taken = 0
+		}
+		res.Replay = res.Step == nil
+		res.Said = fmt.Sprintf("take: %s took %d", as, taken)
+		if len(already) > 0 {
+			res.Said += fmt.Sprintf("; %d already taken at their generation (%s), nothing written for them", len(already), wkNameList(already))
+		}
+		return res
+	}}
 }
 
 // ---- finish
@@ -624,8 +858,8 @@ func Finish(ctx context.Context, e *Env, req FinishReq) (Result, error) {
 			return Result{Verb: verb}, wkWorkRefuse(verb, sprintfn.CodeRequest, "the head of %s is over 256 bytes", c.Card)
 		}
 	}
-	return wkInSteps(ctx, verb, len(cards), FinishMax, func(ctx context.Context, lo, hi int) (Result, error) {
-		return wkFinishStep(ctx, e, as, cards[lo:hi], req)
+	return wkPipedSteps(ctx, e, verb, len(cards), FinishMax, func(lo, hi int) wkChunk {
+		return wkFinishChunk(as, cards[lo:hi], req)
 	})
 }
 
@@ -669,7 +903,7 @@ const (
 	wkNoticeReadSummary = "a read of p by r: its one-line summary"
 )
 
-func wkFinishStep(ctx context.Context, e *Env, as string, cards []CardGen, req FinishReq) (Result, error) {
+func wkFinishChunk(as string, cards []CardGen, req FinishReq) wkChunk {
 	const verb = "finish"
 	result, into := "ok", sprint.DoneOK
 	if req.Failed {
@@ -679,7 +913,7 @@ func wkFinishStep(ctx context.Context, e *Env, as string, cards []CardGen, req F
 	var already []string
 	var cameOK []string
 	crossed := false
-	res, err := e.Do(ctx, Planned{Verb: verb, Read: read,
+	pl := Planned{Verb: verb, Read: read,
 		Plan: func(rd *sprintfn.ReadReply) (*sprintfn.Request, error) {
 			already, cameOK, crossed = already[:0], cameOK[:0], false
 			works, err := wkRecordsAt(rd, 0, len(ids))
@@ -705,7 +939,7 @@ func wkFinishStep(ctx context.Context, e *Env, as string, cards []CardGen, req F
 			if !isRow {
 				return nil, wkWorkRefuse(verb, sprintfn.CodeRequest, "%s is no fleet member", as)
 			}
-			var bad, conflict []string
+			var bad wkFaults
 			set := map[string]string{wkfResult: result, wkfFinished: wkWallStamp(wall)}
 			for k, v := range map[string]string{wkfReport: req.Report, wkfBranch: req.Branch, wkfBase: req.Base} {
 				if v != "" {
@@ -720,8 +954,8 @@ func wkFinishStep(ctx context.Context, e *Env, as string, cards []CardGen, req F
 			pHead := map[string]string{}
 			for i, c := range cards {
 				rec := works[i]
-				if why := wkLiveCard(c, rec, as); why != "" {
-					bad = append(bad, why)
+				if why, stale := wkLiveCard(c, rec, as); why != "" {
+					bad.live(c.Card, why, stale)
 					continue
 				}
 				p, _ := wkPrimaryOfWork(c.Card)
@@ -732,17 +966,17 @@ func wkFinishStep(ctx context.Context, e *Env, as string, cards []CardGen, req F
 					if was == result && wasHead == head {
 						already = append(already, c.String())
 					} else {
-						conflict = append(conflict, fmt.Sprintf("%s: already finished at gen %d with head %s (%s)", c.Card, c.Gen, wasHead, was))
+						bad.conflict(c.Card, "%s: already finished at gen %d with head %s (%s)", c.Card, c.Gen, wasHead, was)
 					}
 					continue
 				case string(sprint.Working):
 				default:
-					bad = append(bad, fmt.Sprintf("%s@%d: it is %s, not working: take it first", c.Card, c.Gen, wkPlaceOf(rec)))
+					bad.add(c.Card, "%s@%d: it is %s, not working: take it first", c.Card, c.Gen, wkPlaceOf(rec))
 					continue
 				}
 				pr := byPrim[p]
 				if !wkWorkingOn(pr, c.Card) {
-					bad = append(bad, fmt.Sprintf("%s@%d: its primary %s is not working on it (it is %s, work %q)", c.Card, c.Gen, p, wkPlaceOf(pr), wkFieldStr(pr, wkfWork)))
+					bad.add(c.Card, "%s@%d: its primary %s is not working on it (it is %s, work %q)", c.Card, c.Gen, p, wkPlaceOf(pr), wkFieldStr(pr, wkfWork))
 					continue
 				}
 				fleet.IDs = append(fleet.IDs, c.Card)
@@ -752,11 +986,8 @@ func wkFinishStep(ctx context.Context, e *Env, as string, cards []CardGen, req F
 				moved = append(moved, p)
 				prow[p], pRev[p], pHead[p] = pr.Place.Row, pr.Revision, head
 			}
-			if len(conflict) > 0 {
-				return nil, wkWorkRefuse(verb, "OPCONFLICT", "%s", strings.Join(append(conflict, bad...), "; "))
-			}
-			if len(bad) > 0 {
-				return nil, wkWorkRefuse(verb, sprintfn.CodeRequest, "%s", strings.Join(bad, "; "))
+			if err := bad.err(verb); err != nil {
+				return nil, err
 			}
 			if len(moved) == 0 {
 				return nil, nil // every card finished at its generation with these facts already (1.5.5)
@@ -795,23 +1026,22 @@ func wkFinishStep(ctx context.Context, e *Env, as string, cards []CardGen, req F
 			}
 			return &sprintfn.Request{Meta: sprintfn.Meta{Verb: verb, Actor: as},
 				Body: sprintfn.Body{Entries: entries, Notes: notes}}, nil
-		}})
-	if err != nil {
-		return res, err
-	}
-	n := len(cards) - len(already)
-	if res.Step == nil {
-		n = 0
-	}
-	res.Replay = res.Step == nil
-	res.Said = fmt.Sprintf("finish: %s finished %d %s", as, n, result)
-	if len(already) > 0 {
-		res.Said += fmt.Sprintf("; %d already finished at their generation with these facts (%s), nothing written for them", len(already), wkNameList(already))
-	}
-	if crossed {
-		res.Said += fmt.Sprintf("; %s's ok rate fell below %d%%", as, OkRateFloor)
-	}
-	return res, nil
+		}}
+	return wkChunk{Planned: pl, done: func(res Result) Result {
+		n := len(cards) - len(already)
+		if res.Step == nil {
+			n = 0
+		}
+		res.Replay = res.Step == nil
+		res.Said = fmt.Sprintf("finish: %s finished %d %s", as, n, result)
+		if len(already) > 0 {
+			res.Said += fmt.Sprintf("; %d already finished at their generation with these facts (%s), nothing written for them", len(already), wkNameList(already))
+		}
+		if crossed {
+			res.Said += fmt.Sprintf("; %s's ok rate fell below %d%%", as, OkRateFloor)
+		}
+		return res
+	}}
 }
 
 // ---- read
@@ -830,7 +1060,7 @@ type ReadCardReq struct {
 }
 
 // ReadCard moves a reader's read cards (section 3, read; 1.5.5), a set in one
-// step: two round trips for up to ReadMax cards. --begin moves asked ->
+// step: two round trips for up to ReadBeginMax cards of a begin, ReadReportMax of a report. --begin moves asked ->
 // reading, stamping begun_r = R and due_unreported = R + 2 h (the unbegun entry
 // ends and the unreported one begins by derivation, 1.2). --ok and --broken
 // move asked or reading -> ok or broken with the verdict, the summary and the
@@ -876,8 +1106,12 @@ func ReadCard(ctx context.Context, e *Env, req ReadCardReq) (Result, error) {
 			return Result{Verb: verb}, wkWorkRefuse(verb, sprintfn.CodeRequest, "%s is not a read card (<primary>.r<attempt>.<reader>)", c.Card)
 		}
 	}
-	return wkInSteps(ctx, verb, len(cards), ReadMax, func(ctx context.Context, lo, hi int) (Result, error) {
-		return wkReadStep(ctx, e, as, cards[lo:hi], req)
+	per := ReadReportMax
+	if req.Begin {
+		per = ReadBeginMax
+	}
+	return wkPipedSteps(ctx, e, verb, len(cards), per, func(lo, hi int) wkChunk {
+		return wkReadChunk(as, cards[lo:hi], req)
 	})
 }
 
@@ -886,7 +1120,7 @@ func wkSameReport(rec tset.MemberRecord, req ReadCardReq) bool {
 	return wkColOf(rec) == req.Verdict && wkFieldStr(rec, wkfSummary) == req.Summary && wkFieldStr(rec, wkfFinding) == req.Finding
 }
 
-func wkReadStep(ctx context.Context, e *Env, as string, cards []CardGen, req ReadCardReq) (Result, error) {
+func wkReadChunk(as string, cards []CardGen, req ReadCardReq) wkChunk {
 	const verb = "read"
 	ids := make([]string, len(cards))
 	var ps []string
@@ -904,7 +1138,7 @@ func wkReadStep(ctx context.Context, e *Env, as string, cards []CardGen, req Rea
 	var already []string
 	var reported []string
 	crossed := false
-	res, err := e.Do(ctx, Planned{Verb: verb, Read: read,
+	pl := Planned{Verb: verb, Read: read,
 		Plan: func(rd *sprintfn.ReadReply) (*sprintfn.Request, error) {
 			already, reported, crossed = already[:0], reported[:0], false
 			recs, err := wkRecordsAt(rd, 0, len(ids))
@@ -930,7 +1164,7 @@ func wkReadStep(ctx context.Context, e *Env, as string, cards []CardGen, req Rea
 			if !isRow {
 				return nil, wkWorkRefuse(verb, sprintfn.CodeRequest, "%s is no reader", as)
 			}
-			var bad, conflict []string
+			var bad wkFaults
 			from := map[string]*tset.Entry{} // asked, reading -> the entry that moves them
 			var fromOrder []string
 			prow := map[string]string{}
@@ -938,7 +1172,7 @@ func wkReadStep(ctx context.Context, e *Env, as string, cards []CardGen, req Rea
 				rec := recs[i]
 				p, _, reader, _ := sprint.ParseReadCard(c.Card)
 				if !rec.Exists || rec.Place == nil {
-					bad = append(bad, fmt.Sprintf("%s: no read card is placed (%s): a retired read is read again on its primary's next attempt", c.Card, wkPlaceOf(rec)))
+					bad.add(c.Card, "%s: no read card is placed (%s): a retired read is read again on its primary's next attempt", c.Card, wkPlaceOf(rec))
 					continue
 				}
 				gen := 1
@@ -946,11 +1180,11 @@ func wkReadStep(ctx context.Context, e *Env, as string, cards []CardGen, req Rea
 					gen = g
 				}
 				if c.Gen != 0 && c.Gen != gen {
-					bad = append(bad, fmt.Sprintf("%s: stale: generation %d is not the live one (%d)", c.Card, c.Gen, gen))
+					bad.conflict(c.Card, "%s: stale: generation %d is not the live one (%d)", c.Card, c.Gen, gen)
 					continue
 				}
 				if reader != as || rec.Place.Row != as || wkFieldStr(rec, wkfReader) != as {
-					bad = append(bad, fmt.Sprintf("%s: not %s's to read (it is %s, reader %q)", c.Card, as, wkPlaceOf(rec), wkFieldStr(rec, wkfReader)))
+					bad.add(c.Card, "%s: not %s's to read (it is %s, reader %q)", c.Card, as, wkPlaceOf(rec), wkFieldStr(rec, wkfReader))
 					continue
 				}
 				col := rec.Place.Col
@@ -959,23 +1193,23 @@ func wkReadStep(ctx context.Context, e *Env, as string, cards []CardGen, req Rea
 					if col == sprint.Reading || col == sprint.OK || col == sprint.Broken {
 						already = append(already, c.Card)
 					} else {
-						bad = append(bad, fmt.Sprintf("%s: it is %s, not asked", c.Card, wkPlaceOf(rec)))
+						bad.add(c.Card, "%s: it is %s, not asked", c.Card, wkPlaceOf(rec))
 					}
 					continue
 				case !req.Begin && (col == sprint.OK || col == sprint.Broken):
 					if wkSameReport(rec, req) {
 						already = append(already, c.Card)
 					} else {
-						conflict = append(conflict, fmt.Sprintf("%s: already reported %s with summary %q", c.Card, col, wkFieldStr(rec, wkfSummary)))
+						bad.conflict(c.Card, "%s: already reported %s with summary %q", c.Card, col, wkFieldStr(rec, wkfSummary))
 					}
 					continue
 				case !req.Begin && col != sprint.Asked && col != sprint.Reading:
-					bad = append(bad, fmt.Sprintf("%s: it is %s, not asked or reading", c.Card, wkPlaceOf(rec)))
+					bad.add(c.Card, "%s: it is %s, not asked or reading", c.Card, wkPlaceOf(rec))
 					continue
 				}
 				pr := byPrim[p]
 				if wkColOf(pr) != string(sprint.Review) {
-					bad = append(bad, fmt.Sprintf("%s: its primary %s is not in review (it is %s)", c.Card, p, wkPlaceOf(pr)))
+					bad.add(c.Card, "%s: its primary %s is not in review (it is %s)", c.Card, p, wkPlaceOf(pr))
 					continue
 				}
 				en := from[col]
@@ -990,11 +1224,8 @@ func wkReadStep(ctx context.Context, e *Env, as string, cards []CardGen, req Rea
 				reported = append(reported, p)
 				prow[p] = pr.Place.Row
 			}
-			if len(conflict) > 0 {
-				return nil, wkWorkRefuse(verb, "OPCONFLICT", "%s", strings.Join(append(conflict, bad...), "; "))
-			}
-			if len(bad) > 0 {
-				return nil, wkWorkRefuse(verb, sprintfn.CodeRequest, "%s", strings.Join(bad, "; "))
+			if err := bad.err(verb); err != nil {
+				return nil, err
 			}
 			if len(fromOrder) == 0 {
 				return nil, nil // every card already begun, or reported with these facts (1.5.5)
@@ -1033,27 +1264,26 @@ func wkReadStep(ctx context.Context, e *Env, as string, cards []CardGen, req Rea
 				notes = append(notes, wkKnowNote(wkNoticeBrokenRate, fmt.Sprintf("%s's broken rate rose above %d%%: %d broken of %d read", as, BrokenRateCeiling, afterBroken, afterOK+afterBroken), []string{as}))
 			}
 			return &sprintfn.Request{Meta: sprintfn.Meta{Verb: verb, Actor: as}, Body: sprintfn.Body{Entries: entries, Notes: notes}}, nil
-		}})
-	if err != nil {
-		return res, err
-	}
-	n := len(reported)
-	if res.Step == nil {
-		n = 0
-	}
-	res.Replay = res.Step == nil
-	if req.Begin {
-		res.Said = fmt.Sprintf("read: %s began %d", as, n)
-	} else {
-		res.Said = fmt.Sprintf("read: %s reported %d %s", as, n, req.Verdict)
-	}
-	if len(already) > 0 {
-		res.Said += fmt.Sprintf("; %d already so (%s), nothing written for them", len(already), wkNameList(already))
-	}
-	if crossed {
-		res.Said += fmt.Sprintf("; %s's broken rate rose above %d%%", as, BrokenRateCeiling)
-	}
-	return res, nil
+		}}
+	return wkChunk{Planned: pl, done: func(res Result) Result {
+		n := len(reported)
+		if res.Step == nil {
+			n = 0
+		}
+		res.Replay = res.Step == nil
+		if req.Begin {
+			res.Said = fmt.Sprintf("read: %s began %d", as, n)
+		} else {
+			res.Said = fmt.Sprintf("read: %s reported %d %s", as, n, req.Verdict)
+		}
+		if len(already) > 0 {
+			res.Said += fmt.Sprintf("; %d already so (%s), nothing written for them", len(already), wkNameList(already))
+		}
+		if crossed {
+			res.Said += fmt.Sprintf("; %s's broken rate rose above %d%%", as, BrokenRateCeiling)
+		}
+		return res
+	}}
 }
 
 // wkReadEntry is the move of a reader's read cards out of one column: to reading

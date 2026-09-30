@@ -342,12 +342,18 @@ func TestTakeByGenerationIdempotent(t *testing.T) {
 	})
 	t.Run("a stale generation is refused, naming the live one", func(t *testing.T) {
 		_, err := Take(ctx, w.env, TakeReq{As: "m1", Cards: []CardGen{wfCg("p3.w1", 2)}})
-		wfRefusedWith(t, err, sprintfn.CodeRequest, "generation 2 is not the live one (1)")
+		rf := wfRefusedWith(t, err, "OPCONFLICT", "generation 2 is not the live one (1)")
+		if got := rf.Refusal.Detail.IDs; len(got) != 1 || got[0] != "p3.w1" {
+			t.Fatalf("Detail.IDs %v, want the refused card p3.w1", got)
+		}
 		w.at(sprint.Fleet, "p3.w1", "m1:ready")
 	})
 	t.Run("another member's card is refused, and nothing of the set moves", func(t *testing.T) {
 		_, err := Take(ctx, w.env, TakeReq{As: "m2", Cards: []CardGen{wfCg("p3.w1", 1)}})
-		wfRefusedWith(t, err, sprintfn.CodeRequest, "dealt to m1")
+		rf := wfRefusedWith(t, err, sprintfn.CodeRequest, "dealt to m1")
+		if got := rf.Refusal.Detail.IDs; len(got) != 1 || got[0] != "p3.w1" {
+			t.Fatalf("Detail.IDs %v, want the refused card p3.w1", got)
+		}
 		w.at(sprint.Fleet, "p3.w1", "m1:ready")
 	})
 	t.Run("a set of taken and untaken cards takes the untaken", func(t *testing.T) {
@@ -688,10 +694,12 @@ func TestReadBrokenRateNoticeOnCrossing(t *testing.T) {
 	}
 }
 
-// TestWorkerVerbsTakeSets: a worker verb over 2,000 cards is one step, two
-// round trips, one flush a trip (1.5.3: worker verbs take sets); a finish,
-// which changes two members a card, is one step of 1,000 and two of 2,000
-// (1.0's chunk), and a read of 2,000 is one step.
+// TestWorkerVerbsTakeSets: a take or a read begin over 2,000 cards is one step,
+// two round trips, one flush a trip (1.5.3: worker verbs take sets); a finish,
+// which changes two members a card, is one step of 1,000 and two steps of 2,000
+// (1.0's chunk) in three round trips (the parts rule: k steps, k + 1 trips); a
+// read report names each card twice (its entry and its summary), so 2,000 are
+// cut under the step's 4,000 abouts, two steps in three round trips.
 func TestWorkerVerbsTakeSets(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
@@ -737,34 +745,203 @@ func TestWorkerVerbsTakeSets(t *testing.T) {
 	}
 	w.at(sprint.Work, ps[1999], "s1:review")
 
-	t.Run("a finish of 2,000 fresh cards is two steps, four round trips", func(t *testing.T) {
+	t.Run("a finish of 2,000 fresh cards is two steps, three round trips", func(t *testing.T) {
 		t.Parallel()
 		w, cards := wfTakeAndFinishSetup(t, 2000)
-		if _, err := Finish(ctx, w.env, FinishReq{As: "m1", Cards: cards, Head: "h"}); err != nil {
+		res, err := Finish(ctx, w.env, FinishReq{As: "m1", Cards: cards, Head: "h"})
+		if err != nil {
 			t.Fatal(err)
 		}
-		if w.cc.Trips() != 4 || w.cc.Steps() != 2 {
-			t.Fatalf("%d round trips, %d steps; want 4 and 2", w.cc.Trips(), w.cc.Steps())
+		// The first read, then each step in one flush with the next step's read
+		// (1.5.3, the parts rule): k steps cost k + 1.
+		if w.cc.Trips() != 3 || w.cc.Steps() != 2 || res.Trips != 3 {
+			t.Fatalf("%d round trips (result %d), %d steps; want 3 and 2", w.cc.Trips(), res.Trips, w.cc.Steps())
 		}
+		w.at(sprint.Fleet, cards[1999].Card, "m1:ok")
+		w.at(sprint.Work, "p2000", "s1:review")
 	})
-	t.Run("a read of 2,000 is one step, two round trips", func(t *testing.T) {
+	t.Run("a begin of 2,000 read cards is one step, two round trips", func(t *testing.T) {
 		t.Parallel()
-		var ps []string
-		for i := 1; i <= 2000; i++ {
-			ps = append(ps, fmt.Sprintf("p%04d", i))
-		}
-		w := wfReadSetup(t, ps...)
-		var cards []CardGen
-		for _, p := range ps {
-			cards = append(cards, CardGen{Card: sprint.ReadCardID(p, 1, "r1")})
-		}
-		if _, err := ReadCard(ctx, w.env, ReadCardReq{As: "r1", Verdict: sprint.OK, Cards: cards}); err != nil {
+		w, cards := wfReadTwoThousand(t)
+		if _, err := ReadCard(ctx, w.env, ReadCardReq{As: "r1", Begin: true, Cards: cards}); err != nil {
 			t.Fatal(err)
 		}
 		if w.cc.Trips() != 2 || w.cc.Steps() != 1 {
 			t.Fatalf("%d round trips, %d steps; want 2 and 1", w.cc.Trips(), w.cc.Steps())
 		}
 	})
+	// A report names each read card in its entry and again in its summary
+	// note: two abouts a card against the step's 4,000, and the broken-rate
+	// notice one more. 2,000 cards do not fit a step, so the report is cut at
+	// ReadReportMax and the two steps are one flush apart.
+	t.Run("a report of 2,000 read cards is cut under the about cap: two steps, three round trips", func(t *testing.T) {
+		t.Parallel()
+		w, cards := wfReadTwoThousand(t)
+		res, err := ReadCard(ctx, w.env, ReadCardReq{As: "r1", Verdict: sprint.OK, Summary: "s", Cards: cards})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if w.cc.Trips() != 3 || w.cc.Steps() != 2 || res.Trips != 3 {
+			t.Fatalf("%d round trips (result %d), %d steps; want 3 and 2", w.cc.Trips(), res.Trips, w.cc.Steps())
+		}
+		if ns := w.notes(wkNoticeReadSummary); len(ns) != 2 || len(ns[0].About) != ReadReportMax || len(ns[1].About) != 2000-ReadReportMax {
+			t.Fatalf("summary notes %d, want two of %d and %d abouts", len(ns), ReadReportMax, 2000-ReadReportMax)
+		}
+		w.at(sprint.Readers, cards[1999].Card, "r1:ok")
+	})
+	t.Run("a broken report of 2,000 read cards that crosses the ceiling applies, the notice said once", func(t *testing.T) {
+		t.Parallel()
+		w, cards := wfReadTwoThousand(t)
+		res, err := ReadCard(ctx, w.env, ReadCardReq{As: "r1", Verdict: sprint.Broken, Summary: "x", Finding: "y", Cards: cards})
+		if err != nil {
+			t.Fatalf("a broken report of 2,000 was refused: %v", err)
+		}
+		if w.cc.Trips() != 3 || w.cc.Steps() != 2 || !strings.Contains(res.Said, "broken rate rose above") {
+			t.Fatalf("%d round trips, %d steps, said %q", w.cc.Trips(), w.cc.Steps(), res.Said)
+		}
+		if n := len(w.notes(wkNoticeBrokenRate)); n != 1 {
+			t.Fatalf("%d broken-rate notices, want the crossing said once", n)
+		}
+		w.at(sprint.Readers, cards[1999].Card, "r1:broken")
+	})
+}
+
+// wfReadTwoThousand is 2,000 primaries in review, each asked of r1, and r1's
+// read cards.
+func wfReadTwoThousand(t *testing.T) (*wf, []CardGen) {
+	t.Helper()
+	var ps []string
+	for i := 1; i <= 2000; i++ {
+		ps = append(ps, fmt.Sprintf("p%04d", i))
+	}
+	w := wfReadSetup(t, ps...)
+	var cards []CardGen
+	for _, p := range ps {
+		cards = append(cards, CardGen{Card: sprint.ReadCardID(p, 1, "r1")})
+	}
+	return w, cards
+}
+
+// wfHook is a client that runs hook just before the first step that passes
+// through it, as another actor's write landing between a verb's read and its
+// step (V2: the step's guards hold the read).
+type wfHook struct {
+	c    sprintfn.Client
+	hook func()
+	done bool
+}
+
+func (f *wfHook) Pipeline(ctx context.Context, items []sprintfn.Item) ([]sprintfn.Result, error) {
+	for _, it := range items {
+		if it.Step != nil && !f.done {
+			f.done = true
+			f.hook()
+		}
+	}
+	return f.c.Pipeline(ctx, items)
+}
+
+// hooked runs the verbs of w through a wfHook.
+func (w *wf) hooked(hook func()) {
+	w.env.C = &wfHook{c: w.tw, hook: hook}
+}
+
+// TestTakeRaceRedealtSamePlace: a card dealt again to the same member's ready
+// cell (at generation 2) between take's read and its step leaves the card in
+// the same place with a new revision: the step's revision guard refuses it, the
+// verb plans again, and take named @1 refuses generation 2 as stale and takes
+// nothing (V2; the model's take VGuard: the card's record as read).
+func TestTakeRaceRedealtSamePlace(t *testing.T) {
+	t.Parallel()
+	w := newWF(t)
+	w.member("m1", sprint.Up)
+	w.dealt("m1", "s1", 1, "p1")
+	rec := w.rec(sprint.Fleet, "p1.w1")
+	w.hooked(func() {
+		w.raw(tset.Entry{Kind: "move", Table: sprint.Fleet, From: "m1:ready", To: "m1:ready", IDs: []string{"p1.w1"},
+			Revs: []tset.Decimal{rec.Revision}, About: []string{"p1"}, Set: map[string]string{"gen": "2"}})
+	})
+	_, err := Take(context.Background(), w.env, TakeReq{As: "m1", Cards: []CardGen{wfCg("p1.w1", 1)}})
+	wfRefusedWith(t, err, "OPCONFLICT", "generation 1 is not the live one (2)")
+	w.at(sprint.Fleet, "p1.w1", "m1:ready")
+}
+
+// touch changes a record's field with no move, so its revision changes and its
+// place does not.
+func (w *wf) touch(table, cell, id string) {
+	w.t.Helper()
+	rec := w.rec(table, id)
+	w.raw(tset.Entry{Kind: "move", Table: table, From: cell, To: cell, IDs: []string{id}, Revs: []tset.Decimal{rec.Revision},
+		About: []string{strings.SplitN(id, ".", 2)[0]}, Set: map[string]string{"touched": "1"}})
+}
+
+// TestFinishRaceGuards: each guard of finish's step holds the read: a change to
+// the work card, to its primary or to the member's finished cells between the
+// read and the step refuses the step (REVISION or COUNT), the verb plans again
+// on a fresh read, and the finish still applies, once (V2; 2.5's count guard).
+func TestFinishRaceGuards(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	t.Run("the work card's revision", func(t *testing.T) {
+		t.Parallel()
+		w, cards := wfTakeAndFinishSetup(t, 1)
+		w.hooked(func() { w.touch(sprint.Fleet, "m1:working", "p1.w1") })
+		res, err := Finish(ctx, w.env, FinishReq{As: "m1", Cards: cards, Head: "h"})
+		if err != nil || res.Retries != 1 {
+			t.Fatalf("err %v retries %d; want the step refused once by the work card's revision guard, then applied", err, res.Retries)
+		}
+		w.at(sprint.Fleet, "p1.w1", "m1:ok")
+	})
+	t.Run("the primary's revision", func(t *testing.T) {
+		t.Parallel()
+		w, cards := wfTakeAndFinishSetup(t, 1)
+		w.hooked(func() { w.touch(sprint.Work, "s1:working", "p1") })
+		res, err := Finish(ctx, w.env, FinishReq{As: "m1", Cards: cards, Head: "h"})
+		if err != nil || res.Retries != 1 {
+			t.Fatalf("err %v retries %d; want the step refused once by the primary's revision guard, then applied", err, res.Retries)
+		}
+		w.at(sprint.Work, "p1", "s1:review")
+	})
+	t.Run("the member's finished counts", func(t *testing.T) {
+		t.Parallel()
+		w, cards := wfTakeAndFinishSetup(t, 3)
+		w.finished("m1", 5, 4) // 9 reports
+		env2 := &Env{C: w.tw, Names: wfNames, Actor: "coord"}
+		w.hooked(func() {
+			if _, err := Finish(ctx, env2, FinishReq{As: "m1", Cards: cards[0:1], Head: "h", Failed: true}); err != nil {
+				t.Errorf("the racing finish: %v", err)
+			}
+		})
+		// Planned from 5 ok and 4 failed, a failed finish makes 5 of 10: not
+		// below. The racer makes it 5 of 10 first, so ours is 5 of 11: below,
+		// a crossing that the count guard makes the verb see.
+		res, err := Finish(ctx, w.env, FinishReq{As: "m1", Cards: cards[1:2], Head: "h", Failed: true})
+		if err != nil || res.Retries != 1 {
+			t.Fatalf("err %v retries %d; want the step refused once by the count guard, then applied", err, res.Retries)
+		}
+		if n := len(w.notes(wkNoticeOkRate)); n != 1 {
+			t.Fatalf("%d ok-rate notices after 5 of 11, want 1", n)
+		}
+	})
+}
+
+// TestReadRaceReviewGuard: a primary that leaves review between read's read and
+// its step refuses the step (the guard entry holds the primary at review, the
+// model's VGuard), and the verb, planned again, refuses the card: nothing is
+// reported for a primary no longer in review.
+func TestReadRaceReviewGuard(t *testing.T) {
+	t.Parallel()
+	w := wfReadSetup(t, "p1")
+	c := sprint.ReadCardID("p1", 1, "r1")
+	w.hooked(func() {
+		w.raw(tset.Entry{Kind: "move", Table: sprint.Work, From: "s1:review", To: "s1:merging", IDs: []string{"p1"}, About: []string{"p1"}})
+	})
+	res, err := ReadCard(context.Background(), w.env, ReadCardReq{As: "r1", Verdict: sprint.OK, Summary: "s", Cards: []CardGen{{Card: c}}})
+	wfRefusedWith(t, err, sprintfn.CodeRequest, "its primary p1 is not in review")
+	if res.Retries != 1 {
+		t.Fatalf("retries %d; want the step refused once by the review guard", res.Retries)
+	}
+	w.at(sprint.Readers, c, "r1:asked")
 }
 
 // TestQueuePages: queue --as m is the member's ready then working cells, one

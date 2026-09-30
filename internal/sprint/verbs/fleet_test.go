@@ -189,6 +189,26 @@ func TestFleetUpFreshFromDueSet(t *testing.T) {
 	})
 }
 
+// TestFleetUpDueGuard: a member brought up on its beat as read is guarded by
+// the beat's entry as read (XGUARD): a beat that moves beat:<m> between the read
+// and the step refuses the step, and the verb plans again from the entry as it
+// is now and brings the member up, once (the model's fleetup VGuard).
+func TestFleetUpDueGuard(t *testing.T) {
+	t.Parallel()
+	w := newWF(t)
+	w.member("m1", sprint.Down)
+	w.beat("m1")
+	w.advance(time.Second)
+	w.hooked(func() {
+		w.advance(time.Second)
+		w.beat("m1") // beat:m1 moves to a later R + 15 s
+	})
+	res, err := FleetUp(context.Background(), w.env, FleetReq{Members: []string{"m1"}})
+	if err != nil || res.Retries != 1 || w.status("m1") != sprint.Up {
+		t.Fatalf("err %v retries %d status %s; want the step refused once by the due guard, then up", err, res.Retries, w.status("m1"))
+	}
+}
+
 // wfFaultyBeat runs a beat of one member just before the first step it passes,
 // as a machine's beat racing the verb.
 type wfFaultyBeat struct {
