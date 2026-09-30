@@ -344,3 +344,39 @@ func WithQueue(s *Snapshot, q []QueuedChange) *Snapshot {
 	}
 	return &n
 }
+
+// QueuedCards is the work cards the queue's changes name.
+func QueuedCards(q []QueuedChange) map[string]bool {
+	out := map[string]bool{}
+	for _, x := range q {
+		if x.Entry != nil {
+			out[x.Entry.ID] = true
+		}
+	}
+	return out
+}
+
+// LeaveQueued is a pump part's plan less every unit that changes a work card
+// a queued change names: the change was queued after the pump's drain, and
+// "nothing advances the work stream table EXCEPT on the next tick", so the
+// card waits for the next tick's pump, where the change finds it where it
+// expects it. Each unit left is said, never silent.
+func LeaveQueued(p Plan, held map[string]bool) Plan {
+	var keep []Unit
+	for _, u := range p.Units {
+		var named string
+		for _, c := range u.Changes {
+			if c.Table == Work && held[c.Entry.ID] {
+				named = c.Entry.ID
+				break
+			}
+		}
+		if named == "" {
+			keep = append(keep, u)
+			continue
+		}
+		p.refuse(u.Key, named+" has a change queued after this tick's drain: it waits for the next tick's pump")
+	}
+	p.Units = keep
+	return p
+}

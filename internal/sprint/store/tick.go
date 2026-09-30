@@ -956,10 +956,14 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 		}
 		for i := 1; drain && err == nil && i < MaxDrains && len(planned.Requeue) > 0; i++ {
 			// a card created and taken off the table in one queue: its
-			// removal was left for the next drain, which runs now, so the
-			// pump's resolve and deal never see it
+			// removal was left for the next drain, which runs now and takes
+			// only what the drain before it requeued (a change queued since
+			// waits for the next tick), so the pump's resolve and deal never
+			// see the card
+			again := step
+			again.DrainMax = len(planned.Requeue)
 			var more Result
-			if more, err = t.st.Run(t.ctx, step); err == nil && len(more.Moved) > 0 {
+			if more, err = t.st.Run(t.ctx, again); err == nil && len(more.Moved) > 0 {
 				t.res.Parts = append(t.res.Parts, PartResult{Name: part.Name, Result: more})
 				t.res.addRows(sprint.PlanRows(planned))
 			}
