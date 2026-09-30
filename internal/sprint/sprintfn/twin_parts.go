@@ -742,9 +742,13 @@ type ingestPlan struct {
 	Cur     tset.Decimal `json:"cur"`
 	Added   int          `json:"added"`
 	Dropped int          `json:"dropped"`
-	// Parked counts the keys of the page that are parked and so not queued.
-	Parked int `json:"parked"`
-	cmds   []Cmd
+	// Parked counts the keys of the page that are parked and so not queued, and
+	// ParkedKeys names them, in the page's order: a loop that did not park them
+	// (a new lease holder) leaves them out of its plans with no read of its own
+	// (1.3.5: a parked key is not planned until its judgment closes).
+	Parked     int      `json:"parked"`
+	ParkedKeys []string `json:"parked_keys"`
+	cmds       []Cmd
 }
 
 func (p *ingestPlan) commands() []Cmd { return p.cmds }
@@ -808,7 +812,7 @@ func (ingestPart) Pre(st *State, req *Request, obs *Before) (any, *Refusal) {
 		return nil, ref
 	}
 	if !run {
-		return &ingestPlan{Skipped: true, Cur: cur}, nil
+		return &ingestPlan{Skipped: true, Cur: cur, ParkedKeys: []string{}}, nil
 	}
 	if cur != in.From {
 		return nil, partRefusal(CodeIngestAt, RefusalDetail{Cur: cur},
@@ -825,11 +829,12 @@ func (ingestPart) Pre(st *State, req *Request, obs *Before) (any, *Refusal) {
 		return names[i] < names[j]
 	})
 	var addAgenda, addHeld flatPairs
-	newHeld, parkedKeys := 0, 0
+	newHeld := 0
+	parkedKeys := []string{}
 	for _, k := range names {
 		score := strconv.FormatUint(keys[k], 10)
 		if _, there := st.Keys.HGet(parked, k); there {
-			parkedKeys++ // a parked key waits for its judgment; the line is consumed and the key is named (E3)
+			parkedKeys = append(parkedKeys, k) // a parked key waits for its judgment; the line is consumed and the key is named (E3)
 			continue
 		}
 		if sprint.RuleOf(k) == heldRule {
@@ -841,7 +846,7 @@ func (ingestPart) Pre(st *State, req *Request, obs *Before) (any, *Refusal) {
 			addAgenda = append(addAgenda, score, k)
 		}
 	}
-	plan := &ingestPlan{Cur: in.To, Added: addAgenda.count() + addHeld.count(), Parked: parkedKeys}
+	plan := &ingestPlan{Cur: in.To, Added: addAgenda.count() + addHeld.count(), Parked: len(parkedKeys), ParkedKeys: parkedKeys}
 	var drop []string
 	if over := st.Keys.ZCard(heldq) + newHeld - HeldQueueCap; over > 0 {
 		for _, m := range st.Keys.ZRangeByScore(heldq, math.Inf(-1), math.Inf(1), min(over, HeldDropMax)) {

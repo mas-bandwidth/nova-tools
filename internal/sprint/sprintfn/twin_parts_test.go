@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"reflect"
 	"sort"
 	"strconv"
@@ -761,5 +762,27 @@ func TestPartsPerEpochKeys(t *testing.T) {
 	got = tw.SprintKeys()
 	if got[ekAt("next", "3")].Hash["score"] != "1" || got[ekAt("next", "2")].Hash["score"] != "9" {
 		t.Fatalf("after the advance: next@3 %v, next@2 %v", got[ekAt("next", "3")], got[ekAt("next", "2")])
+	}
+}
+
+// TestIngestNamesParkedKeys: the ingest reply names the page's keys that are
+// parked, in the page's order, and queues none of them, so a loop that did not
+// park them leaves them out of its plans with no read of its own (1.3.5); a
+// page with none names an empty list.
+func TestIngestNamesParkedKeys(t *testing.T) {
+	t.Parallel()
+	tw, _, _, _ := partsTwin(t)
+	mustStep(t, tw, leaseReq("token-a", "run", 60000, nil))
+	park := genReq(1)
+	park.Sprint = &SprintPart{Park: []ParkedKey{{Key: "deal", Rule: "deal", Code: "NOCOL"}, {Key: "resolve:s2", Rule: "resolve", Code: "NOCOL"}}}
+	mustStep(t, tw, park)
+	reply := mustStep(t, tw, ingestReq(1, "0", "4", sprint.AgendaKey{Key: "resolve:s2", Seq: 2}, sprint.AgendaKey{Key: "ask:p1", Seq: 3}, sprint.AgendaKey{Key: "deal", Seq: 4}))
+	got := partReply(t, reply, PartIngest)
+	if got["parked"] != float64(2) || fmt.Sprint(got["parked_keys"]) != "[resolve:s2 deal]" || got["added"] != float64(1) {
+		t.Fatalf("ingest reply %v", got)
+	}
+	reply = mustStep(t, tw, ingestReq(1, "4", "5", sprint.AgendaKey{Key: "ask:p2", Seq: 5}))
+	if got := partReply(t, reply, PartIngest); fmt.Sprint(got["parked_keys"]) != "[]" {
+		t.Fatalf("ingest reply %v", got)
 	}
 }
