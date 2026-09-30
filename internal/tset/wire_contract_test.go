@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -108,6 +109,98 @@ func TestWireNotesRequireStableOperationIdentity(t *testing.T) {
 	}
 	if _, err := DecodeStep([]byte(`{"epoch":"0","space":"s","entries":[],"notes":[{"line":{"kind":"note","meta":{"source":"test"}},"about":["primary"]}]}`)); !requestRefusalIs(err) {
 		t.Errorf("DecodeStep raw note without identity = %v; want REQUEST", err)
+	}
+}
+
+func TestWireEmptyScoreBoundsAreExplicit(t *testing.T) {
+	t.Parallel()
+	readPlans := []ReadPlan{
+		{Epoch: "0", Space: "s", Queries: []ReadQuery{{Kind: "range", Table: "cards", Cell: "r:c", Min: "", Max: "", Limit: 1}}},
+		{Epoch: "0", Space: "s", Queries: []ReadQuery{{Kind: "rcount", Table: "cards", Cells: []string{"r:c"}, Min: "", Max: ""}}},
+	}
+	for _, plan := range readPlans {
+		raw, err := EncodeReadPlan(plan)
+		if err != nil {
+			t.Fatalf("EncodeReadPlan %s with empty bounds: %v", plan.Queries[0].Kind, err)
+		}
+		if !bytes.Contains(raw, []byte(`"min":""`)) || !bytes.Contains(raw, []byte(`"max":""`)) {
+			t.Errorf("%s wire request omitted explicit empty bounds: %s", plan.Queries[0].Kind, raw)
+		}
+		if _, err := DecodeReadPlan(raw); err != nil {
+			t.Errorf("DecodeReadPlan %s with explicit empty bounds: %v", plan.Queries[0].Kind, err)
+		}
+	}
+	for _, raw := range []string{
+		`{"epoch":"0","space":"s","queries":[{"kind":"range","t":"cards","cell":"r:c","max":"","limit":1}]}`,
+		`{"epoch":"0","space":"s","queries":[{"kind":"range","t":"cards","cell":"r:c","min":"","limit":1}]}`,
+		`{"epoch":"0","space":"s","queries":[{"kind":"rcount","t":"cards","cells":["r:c"],"max":""}]}`,
+		`{"epoch":"0","space":"s","queries":[{"kind":"rcount","t":"cards","cells":["r:c"],"min":""}]}`,
+	} {
+		if _, err := DecodeReadPlan([]byte(raw)); !requestRefusalIs(err) {
+			t.Errorf("DecodeReadPlan accepted missing score bound in %s: %v", raw, err)
+		}
+	}
+
+	zero := uint64(0)
+	step := Step{Epoch: "0", Space: "s", Entries: []Entry{{
+		Kind: "rcount", Table: "cards", Cells: []string{"r:c"}, ScoreMin: "", ScoreMax: "", AtLeast: &zero,
+	}}}
+	stepRaw, err := EncodeStep(step)
+	if err != nil {
+		t.Fatalf("EncodeStep rcount with empty bounds: %v", err)
+	}
+	if !bytes.Contains(stepRaw, []byte(`"min":""`)) || !bytes.Contains(stepRaw, []byte(`"max":""`)) {
+		t.Errorf("rcount wire request omitted explicit empty bounds: %s", stepRaw)
+	}
+	if _, err := DecodeStep(stepRaw); err != nil {
+		t.Fatalf("DecodeStep rcount with explicit empty bounds: %v", err)
+	}
+	for _, raw := range []string{
+		`{"epoch":"0","space":"s","entries":[{"kind":"rcount","t":"cards","cells":["r:c"],"max":"","atleast":0}]}`,
+		`{"epoch":"0","space":"s","entries":[{"kind":"rcount","t":"cards","cells":["r:c"],"min":"","atleast":0}]}`,
+	} {
+		if _, err := DecodeStep([]byte(raw)); !requestRefusalIs(err) {
+			t.Errorf("DecodeStep accepted missing rcount score bound in %s: %v", raw, err)
+		}
+	}
+}
+
+func TestWireNoteAboutAliasesDeduplicateAfterTheStepWideLimit(t *testing.T) {
+	t.Parallel()
+	noteStep := func(about []string) Step {
+		op, intent := "notes-about-op", `{"verb":"note","part":"stable"}`
+		return Step{Epoch: "0", Space: "s", Entries: []Entry{}, Op: &op, Intent: &intent, Notes: []Note{{
+			Line: NoteLine{Kind: "note", Meta: json.RawMessage(`{}`)}, About: about,
+		}}}
+	}
+
+	aliases := make([]string, MaxIDsPerLine+1)
+	for i := range aliases {
+		aliases[i] = "same-primary"
+	}
+	raw, err := EncodeStep(noteStep(aliases))
+	if err != nil {
+		t.Fatalf("EncodeStep 2001 aliases of one note target: %v", err)
+	}
+	decoded, err := DecodeStep(raw)
+	if err != nil || len(decoded.Notes) != 1 || len(decoded.Notes[0].About) != MaxIDsPerLine+1 {
+		t.Fatalf("DecodeStep changed accepted note aliases: notes=%+v error=%v", decoded.Notes, err)
+	}
+
+	distinct := make([]string, MaxIDsPerLine+1)
+	for i := range distinct {
+		distinct[i] = "primary-" + strconv.Itoa(i)
+	}
+	if _, err := EncodeStep(noteStep(distinct)); !wireRefusalIs(err, "LIMIT") {
+		t.Errorf("EncodeStep accepted %d distinct note targets; want LIMIT (err=%v)", len(distinct), err)
+	}
+
+	tooManyRawAbouts := make([]string, MaxAboutBeforeDedup+1)
+	for i := range tooManyRawAbouts {
+		tooManyRawAbouts[i] = "same-primary"
+	}
+	if _, err := EncodeStep(noteStep(tooManyRawAbouts)); !wireRefusalIs(err, "LIMIT") {
+		t.Errorf("EncodeStep accepted %d pre-dedup step-wide note targets; want LIMIT (err=%v)", len(tooManyRawAbouts), err)
 	}
 }
 
@@ -302,6 +395,10 @@ func TestWireCellSplitsAtLastColon(t *testing.T) {
 }
 
 func requestRefusalIs(err error) bool {
+	return wireRefusalIs(err, "REQUEST")
+}
+
+func wireRefusalIs(err error, code string) bool {
 	var refusal *Refusal
-	return errors.As(err, &refusal) && refusal.Code == "REQUEST"
+	return errors.As(err, &refusal) && refusal.Code == code
 }

@@ -53,6 +53,68 @@ if NS.tset_profile then
     return cached, nil
   end
 
+  local function rowset_detail(ctx, t, index, row)
+    return {entry_index = index, table = t, active_epoch = ctx.active_epoch,
+      rows = row and {row} or S.array()}
+  end
+
+  -- A leading rowset prefix guards the epoch being closed, not the successor
+  -- epoch used by the following advance/restoration entries. Cardinality
+  -- proves there are no extra names once every expected name/rank matches.
+  function S.rowset_check(ctx)
+    for index, entry in ipairs(ctx.request.entries or {}) do
+      if entry.kind ~= 'rowset' then break end
+      local key = ctx.rows_key(entry.t, ctx.request_epoch)
+      local expected = entry.rows
+      local count, err = read(ctx, {'ZCARD', key}, key, 32)
+      if err then return nil, err end
+      if type(count) ~= 'number' or count < 0 or count ~= math.floor(count) then
+        return nil, S.refuse('DRIFT', rowset_detail(ctx, entry.t, index - 1))
+      end
+      if count ~= #expected then
+        return nil, S.refuse('ROWSET', rowset_detail(ctx, entry.t, index - 1))
+      end
+
+      -- S.before may already have observed an indicated placement in this
+      -- exact request-epoch row key. Only unresolved names need ZMSCORE.
+      local shared = ctx.row_scores[key]
+      if not shared then shared = {}; ctx.row_scores[key] = shared end
+      local missing = {}
+      for _, item in ipairs(expected) do
+        if shared[item.row] == nil then missing[#missing + 1] = item.row end
+      end
+      for first = 1, #missing, 1000 do
+        local argv, names = {'ZMSCORE', key}, {}
+        local last = math.min(first + 999, #missing)
+        for n = first, last do
+          local row = missing[n]
+          names[#names + 1] = row
+          argv[#argv + 1] = row
+        end
+        local scores
+        scores, err = read(ctx, argv, key, #names * 32)
+        if err then return nil, err end
+        if type(scores) ~= 'table' or #scores ~= #names then
+          return nil, S.refuse('DRIFT', rowset_detail(ctx, entry.t, index - 1))
+        end
+        for n, row in ipairs(names) do shared[row] = scores[n] end
+      end
+      for _, item in ipairs(expected) do
+        local score = shared[item.row]
+        if score == false or score == nil then
+          return nil, S.refuse('ROWSET', rowset_detail(ctx, entry.t, index - 1, item.row))
+        end
+        if not rank_valid(score) then
+          return nil, S.refuse('DRIFT', rowset_detail(ctx, entry.t, index - 1, item.row))
+        end
+        if score ~= item.rank then
+          return nil, S.refuse('ROWSET', rowset_detail(ctx, entry.t, index - 1, item.row))
+        end
+      end
+    end
+    return true, nil
+  end
+
   -- Collect every row name before any row or member command is planned. A
   -- repeated direction belongs to its first entry; opposite directions are
   -- forbidden even when the row's pre-state would make one a no-op.
@@ -60,8 +122,18 @@ if NS.tset_profile then
     local topo = {observed = {}, by_table = {}, order = {}, add_order = {},
       del_order = {}, count = 0}
     local entries = ctx.request.entries or {}
+    local counted = {}
+    local function count_pair(t, row)
+      local pair = t .. '\0' .. row
+      if not counted[pair] then
+        counted[pair] = true
+        topo.count = topo.count + 1
+      end
+    end
     for n, entry in ipairs(entries) do
-      if entry.kind == 'rows' then
+      if entry.kind == 'rowset' then
+        for _, item in ipairs(entry.rows) do count_pair(entry.t, item.row) end
+      elseif entry.kind == 'rows' then
         local t = entry.t
         local rows = topo.by_table[t]
         if not rows then rows = {}; topo.by_table[t] = rows end
@@ -69,11 +141,11 @@ if NS.tset_profile then
           for _, row in ipairs(entry[direction] or {}) do
             local item = rows[row]
             if not item then
-              topo.count = topo.count + 1
               item = {table = t, row = row}
               rows[row] = item
               topo.order[#topo.order + 1] = item
             end
+            count_pair(t, row)
             if item.other and item.other ~= direction then
               return nil, S.refuse('ROWCONFLICT', row_detail(t, row, n - 1))
             end

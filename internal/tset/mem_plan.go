@@ -83,6 +83,22 @@ type memWorkBudget struct {
 	plannedCommands   int
 }
 
+// rowsetRead accounts for one typed row-index observation. ZCARD contributes
+// the decimal count text; each ZMSCORE piece contributes the returned score
+// strings (absent names contribute no payload). Carry this work into the rest
+// of the step rather than starting a fresh budget after the guard.
+func (b *memWorkBudget) rowsetRead(index int, table string, payload int) error {
+	b.cellProbes++
+	if b.cellProbes > 20000 {
+		return memRefusal("LIMIT", RefusalDetail{EntryIndex: memIndex(index), Table: table, Budget: "cell_probes", Limit: memInt64(20000), Actual: memInt64(int64(b.cellProbes))})
+	}
+	b.fetchedBytes += payload
+	if b.fetchedBytes > 8<<20 {
+		return memRefusal("LIMIT", RefusalDetail{EntryIndex: memIndex(index), Table: table, Budget: "raw_fetched_bytes", Limit: memInt64(8 << 20), Actual: memInt64(int64(b.fetchedBytes))})
+	}
+	return nil
+}
+
 func (b *memWorkBudget) observeMember(record *memRecord, entry Entry, memberIndex int) error {
 	b.cellProbes++
 	if entry.Kind == "move" && entry.To != "" && entry.To != entry.From {
@@ -134,32 +150,86 @@ func (b *memWorkBudget) observeMember(record *memRecord, entry Entry, memberInde
 
 func (m *Mem) planStep(ctx context.Context, pre, next *memSpace, step Step) (Reply, error) {
 	writeEpoch := step.Epoch
+	rowsetPrefix := 0
+	for rowsetPrefix < len(step.Entries) && step.Entries[rowsetPrefix].Kind == "rowset" {
+		rowsetPrefix++
+	}
 	advance := false
-	if len(step.Entries) != 0 && step.Entries[0].Kind == "advance" {
+	if rowsetPrefix < len(step.Entries) && step.Entries[rowsetPrefix].Kind == "advance" {
 		advance = true
-		if step.Entries[0].AdvanceFrom != step.Epoch {
+		if step.Entries[rowsetPrefix].AdvanceFrom != step.Epoch {
 			return Reply{}, memEpochRefusal("ADVANCE", pre.active)
 		}
 		var ok bool
 		writeEpoch, ok = memNextDecimal(step.Epoch)
 		if !ok {
-			return Reply{}, memRefusal("OVERFLOW", RefusalDetail{EntryIndex: memIndex(0)})
+			return Reply{}, memRefusal("OVERFLOW", RefusalDetail{EntryIndex: memIndex(rowsetPrefix)})
 		}
 	}
 	for i, entry := range step.Entries {
-		if entry.Kind == "advance" && (!advance || i != 0) {
+		if entry.Kind == "advance" && (!advance || i != rowsetPrefix) {
 			return Reply{}, memRefusal("ADVANCE", RefusalDetail{EntryIndex: memIndex(i), ActiveEpoch: pre.active})
 		}
+		if entry.Kind == "rowset" && i >= rowsetPrefix {
+			return Reply{}, memRefusal("REQUEST", RefusalDetail{EntryIndex: memIndex(i), Table: entry.Table})
+		}
+	}
+	if rowsetPrefix != 0 && !advance {
+		return Reply{}, memRefusal("REQUEST", RefusalDetail{EntryIndex: memIndex(rowsetPrefix - 1)})
 	}
 	if pre.epochs[step.Epoch] == nil {
 		return Reply{}, memRefusal("DRIFT", RefusalDetail{})
 	}
+	budget := memWorkBudget{}
+	// H1 rowset observes the complete named table row index in the request
+	// epoch. Do this before constructing an advance successor or prospective
+	// row state. A count mismatch has no singled-out row; a named score
+	// mismatch identifies the first row in request order.
+	for i := 0; i < rowsetPrefix; i++ {
+		entry := step.Entries[i]
+		requestTable := pre.epochs[step.Epoch].tables[entry.Table]
+		if requestTable == nil {
+			return Reply{}, memRefusal("DRIFT", RefusalDetail{EntryIndex: memIndex(i), Table: entry.Table, ActiveEpoch: pre.active})
+		}
+		if err := budget.rowsetRead(i, entry.Table, len(strconv.Itoa(len(requestTable.rows)))); err != nil {
+			return Reply{}, err
+		}
+		if len(requestTable.rows) != len(entry.Rows) {
+			return Reply{}, memRefusal("ROWSET", RefusalDetail{EntryIndex: memIndex(i), Table: entry.Table, ActiveEpoch: pre.active})
+		}
+		// The model has no enclosing preplan cache. Every expected name is
+		// fetched in one of the same 1,000-name ZMSCORE pieces as the store.
+		for first := 0; first < len(entry.Rows); first += 1000 {
+			last := min(first+1000, len(entry.Rows))
+			payload := 0
+			for _, wanted := range entry.Rows[first:last] {
+				if rank, present := requestTable.rows[wanted.Row]; present {
+					payload += len(rank)
+				}
+			}
+			if err := budget.rowsetRead(i, entry.Table, payload); err != nil {
+				return Reply{}, err
+			}
+		}
+		for _, wanted := range entry.Rows {
+			rank, present := requestTable.rows[wanted.Row]
+			if !present {
+				return Reply{}, memRefusal("ROWSET", RefusalDetail{EntryIndex: memIndex(i), Table: entry.Table, Rows: []string{wanted.Row}, ActiveEpoch: pre.active})
+			}
+			if !memValidDecimal(rank) || memCompareDecimal(rank, "9007199254740991") > 0 {
+				return Reply{}, memRefusal("DRIFT", RefusalDetail{EntryIndex: memIndex(i), Table: entry.Table, Rows: []string{wanted.Row}, ActiveEpoch: pre.active})
+			}
+			if rank != wanted.Rank {
+				return Reply{}, memRefusal("ROWSET", RefusalDetail{EntryIndex: memIndex(i), Table: entry.Table, Rows: []string{wanted.Row}, ActiveEpoch: pre.active})
+			}
+		}
+	}
 	if advance {
 		if len(next.receipts[writeEpoch]) != 0 {
-			return Reply{}, memRefusal("DRIFT", RefusalDetail{EntryIndex: memIndex(0)})
+			return Reply{}, memRefusal("DRIFT", RefusalDetail{EntryIndex: memIndex(rowsetPrefix)})
 		}
 		if existing := next.epochs[writeEpoch]; existing != nil && !memEpochEmpty(existing) {
-			return Reply{}, memRefusal("DRIFT", RefusalDetail{EntryIndex: memIndex(0)})
+			return Reply{}, memRefusal("DRIFT", RefusalDetail{EntryIndex: memIndex(rowsetPrefix)})
 		}
 		e := &memEpoch{tables: make(map[string]*memTableEpoch, len(next.defs))}
 		for table := range next.defs {
@@ -234,6 +304,19 @@ func (m *Mem) planStep(ctx context.Context, pre, next *memSpace, step Step) (Rep
 	if len(rowOrder) > rowCap {
 		return Reply{}, memRefusal("LIMIT", RefusalDetail{Limit: memInt64(int64(rowCap)), Actual: memInt64(int64(len(rowOrder)))})
 	}
+	rowUnion := make(map[string]bool)
+	for i := 0; i < rowsetPrefix; i++ {
+		entry := step.Entries[i]
+		for _, row := range entry.Rows {
+			rowUnion[entry.Table+"\x00"+row.Row] = true
+		}
+	}
+	for _, key := range rowOrder {
+		rowUnion[key.table+"\x00"+key.row] = true
+	}
+	if len(rowUnion) > 1024 {
+		return Reply{}, memRefusal("LIMIT", RefusalDetail{Budget: "rows", Limit: memInt64(1024), Actual: memInt64(int64(len(rowUnion)))})
+	}
 	for _, key := range rowOrder {
 		op := rowOps[key.table][key.row]
 		if !op.add || workEpoch.tables[key.table].rows[key.row] != "" {
@@ -260,13 +343,12 @@ func (m *Mem) planStep(ctx context.Context, pre, next *memSpace, step Step) (Rep
 	changedPer := make([]int, len(step.Entries))
 	seenID := make(map[string]bool)
 	candidates, guarded, changed := 0, 0, 0
-	budget := memWorkBudget{}
 	for i, entry := range step.Entries {
 		if err := ctx.Err(); err != nil {
 			return Reply{}, err
 		}
 		switch entry.Kind {
-		case "advance", "rows":
+		case "advance", "rowset", "rows":
 			continue
 		case "count":
 			budget.cellProbes += memUniqueStrings(entry.Cells)
@@ -375,7 +457,7 @@ func (m *Mem) planStep(ctx context.Context, pre, next *memSpace, step Step) (Rep
 		FetchedBytes      int `json:"raw_fetched_bytes"`
 		PlannedBytes      int `json:"planned_argv_bytes"`
 		PlannedCommands   int `json:"planned_commands"`
-	}{candidates, guarded, changed, len(rowOrder), budget.fieldObservations, budget.cellProbes,
+	}{candidates, guarded, changed, len(rowUnion), budget.fieldObservations, budget.cellProbes,
 		budget.fetchedBytes, budget.plannedBytes, budget.plannedCommands})
 	reply.Counters = counters
 	return reply, nil

@@ -352,9 +352,18 @@ local function over_entry_names(e)
     local kind = e.kind
     if kind == 'advance' then return false end
     if kind ~= 'create' and kind ~= 'move' and kind ~= 'remove' and kind ~= 'guard'
-        and kind ~= 'rows' and kind ~= 'count' and kind ~= 'rcount' then return false end
+        and kind ~= 'rows' and kind ~= 'rowset' and kind ~= 'count' and kind ~= 'rcount' then return false end
     if over_identifier(e.t, symbolic_shape) then return true end
     if kind == 'rows' then return over_array_names(e.add, row_shape) or over_array_names(e.del, row_shape) end
+    if kind == 'rowset' then
+        if S.is_array(e.rows) then
+            for i = 1, #e.rows do
+                local item = e.rows[i]
+                if S.is_object(item) and over_identifier(item.row, row_shape) then return true end
+            end
+        end
+        return false
+    end
     if kind == 'count' or kind == 'rcount' then return over_array_cells(e.cells) end
     if over_array_names(e.ids, name_shape) or over_array_names(e.before_fields, name_shape) then return true end
     if kind == 'create' or kind == 'move' or kind == 'remove' then
@@ -511,6 +520,7 @@ local function entry(e, i)
         count={kind=true,t=true,cells=true,max=true},
         rcount={kind=true,t=true,cells=true,min=true,max=true,atleast=true,atmost=true},
         rows={kind=true,t=true,add=true,del=true},
+        rowset={kind=true,t=true,rows=true},
         advance={kind=true,from=true},
     }
     if not only(e, allowed[kind] or {}) then return failure('REQUEST', detail) end
@@ -520,6 +530,7 @@ local function entry(e, i)
         {'about', cap('ids_per_entry')}, {'unset', cap('field_names')},
         {'before_fields', cap('field_names')}, {'cells', 20000},
         {'max', 20000}, {'add', cap('advance_rows')}, {'del', cap('advance_rows')},
+        {'rows', cap('advance_rows')},
     }) do
         if over_array(e[spec[1]], spec[2]) then return failure('LIMIT', detail) end
     end
@@ -532,6 +543,18 @@ local function entry(e, i)
         return true
     end
     if not symbolic(e.t) then return failure('REQUEST', detail) end
+    if kind == 'rowset' then
+        if not dense(e.rows, cap('advance_rows')) then return failure('REQUEST', detail) end
+        local seen = {}
+        for j = 1, #e.rows do
+            local item = e.rows[j]
+            if not only(item, {row=true,rank=true}) or not row(item.row)
+                or not S.uint(item.rank) or S.cmp(item.rank, '9007199254740991') > 0
+                or seen[item.row] then return failure('REQUEST', detail) end
+            seen[item.row] = true
+        end
+        return true
+    end
     if kind == 'rows' then
         if e.add == nil and e.del == nil then return failure('REQUEST', detail) end
         if e.add ~= nil and not strings(e.add, cap('advance_rows'), row) then return failure('REQUEST', detail) end
@@ -636,24 +659,37 @@ local function validate_step(req)
         or (req.result ~= nil and (type(req.result) ~= 'string' or #req.result > cap('result')))
         or not dense(req.entries, cap('entries')) then return failure('REQUEST') end
     local advances, candidates, guards, abouts, row_names, tables = 0, 0, 0, 0, {}, {}
+    local rowset_tables, rowset_prefix, nonrowset_seen = {}, 0, false
     for i = 1, #req.entries do
         local e, err = entry(req.entries[i], i)
         if not e then return nil, err end
         local x = req.entries[i]
         if x.t then tables[x.t] = true end
-        if x.kind == 'advance' then
+        if x.kind == 'rowset' then
+            if nonrowset_seen or rowset_tables[x.t] then return failure('REQUEST', {entry_index=i-1}) end
+            rowset_tables[x.t], rowset_prefix = true, rowset_prefix + 1
+            for j = 1, #x.rows do row_names[x.t .. '\0' .. x.rows[j].row] = true end
+        elseif x.kind == 'advance' then
+            nonrowset_seen = true
             advances = advances + 1
-            if i ~= 1 or advances > 1 then return failure('REQUEST', {entry_index=i-1}) end
+            if i ~= rowset_prefix + 1 or advances > 1 then return failure('REQUEST', {entry_index=i-1}) end
         elseif x.kind == 'rows' then
+            nonrowset_seen = true
             for _, key in ipairs({'add','del'}) do
                 if x[key] then for j = 1, #x[key] do row_names[x.t .. '\0' .. x[key][j]] = true end end
             end
-        elseif x.kind == 'guard' then guards = guards + #x.ids
+        elseif x.kind == 'guard' then
+            nonrowset_seen = true
+            guards = guards + #x.ids
         elseif x.kind == 'create' or x.kind == 'move' or x.kind == 'remove' then
+            nonrowset_seen = true
             candidates = candidates + #x.ids
             if x.about then abouts = abouts + #x.about end
+        else
+            nonrowset_seen = true
         end
     end
+    if rowset_prefix > 0 and advances ~= 1 then return failure('REQUEST') end
     local table_count = 0
     for _ in pairs(tables) do table_count = table_count + 1 end
     if table_count > 4 or candidates > cap('member_candidates') or guards > cap('guard_members') or abouts > cap('about') then

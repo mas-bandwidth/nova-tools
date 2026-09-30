@@ -50,12 +50,23 @@ do
     local space = request.space
     local notes_implicit = operation == 'step' and request.notes == nil
     if notes_implicit then request.notes = S.array() end
+    local original_rowsets = {}
+    for _,entry in ipairs(request.entries or {}) do
+      if entry.kind ~= 'rowset' then break end
+      local rows = {}
+      for i,item in ipairs(entry.rows) do rows[i] = {row=item.row,rank=item.rank} end
+      original_rowsets[#original_rowsets + 1] = {t=entry.t,rows=rows}
+    end
+    local advance_index = #original_rowsets + 1
+    local advance = request.entries and request.entries[advance_index]
+    local original_advance = advance and advance.kind == 'advance' or false
     local ctx = {operation=operation,profile=S.profile,version='tset/1',request=request,
       space=space,op=request.op,intent=request.intent,result=request.result or '',
       notes=request.notes,notes_array=request.notes,notes_implicit=notes_implicit,
       request_epoch=request.epoch,write_epoch=request.epoch,limits=S.limits,
-      original_advance=request.entries and request.entries[1] and request.entries[1].kind=='advance' or false,
-      original_advance_from=request.entries and request.entries[1] and request.entries[1].kind=='advance' and request.entries[1].from or nil,
+      original_rowsets=original_rowsets,original_advance=original_advance,
+      original_advance_index=advance_index,
+      original_advance_from=original_advance and advance.from or nil,
       defs={},before={},types={},accesses={},row_scores={},stream_info={},cell_deltas={},cell_incoming={},
       budget={store_commands=0,planned_commands=0,planned_argv_bytes=0,fetched_bytes=0,
         field=0,cell=0,record=0,range_id=0,log_id=0,generated_log_bytes=0}}
@@ -318,10 +329,26 @@ do
     local encoded_ok,encoded=pcall(S.json.encode,size_request)
     if not encoded_ok then return nil,S.refuse('REQUEST') end
     if #encoded>S.limits.request_bytes then return nil,limit(ctx,'request_bytes',#encoded,S.limits.request_bytes) end
-    local advance=ctx.request.entries[1] and ctx.request.entries[1].kind=='advance' or false
-    if advance~=ctx.original_advance or (advance and ctx.request.entries[1].from~=ctx.original_advance_from) then return nil,S.refuse('REQUEST') end
+    local rowset_count=0
+    for _,entry in ipairs(ctx.request.entries) do
+      if entry.kind~='rowset' then break end
+      rowset_count=rowset_count+1
+    end
+    if rowset_count~=#ctx.original_rowsets then return nil,S.refuse('REQUEST') end
+    for i,saved in ipairs(ctx.original_rowsets) do
+      local entry=ctx.request.entries[i]
+      if entry.kind~='rowset' or entry.t~=saved.t or #entry.rows~=#saved.rows then return nil,S.refuse('REQUEST') end
+      for j,row in ipairs(saved.rows) do
+        if entry.rows[j].row~=row.row or entry.rows[j].rank~=row.rank then return nil,S.refuse('REQUEST') end
+      end
+    end
+    local advance=ctx.request.entries[ctx.original_advance_index]
+    local has_advance=advance and advance.kind=='advance' or false
+    if has_advance~=ctx.original_advance or
+        (has_advance and advance.from~=ctx.original_advance_from) then return nil,S.refuse('REQUEST') end
     input_counters(ctx)
     _,err=S.load_defs(ctx);if err then return nil,err end
+    local guarded;guarded,err=S.rowset_check(ctx);if err then return nil,err end
     local plan={commands={},entries=S.array(),before=ctx.before,rows=S.array(),advance=cjson.null,
       changed=0,guarded=0,changed_per_entry=S.array(),budget=ctx.budget}
     local topo;topo,err=S.rows_collect(ctx);if err then return nil,err end
@@ -331,7 +358,11 @@ do
       local result={kind=e.kind,table=e.t,entry_index=ix-1,changed_ids=S.array(),before_scores=S.array(),after_scores=S.array(),
         before_revs=S.array(),after_revs=S.array(),field_changes=S.array(),about=S.array(),meta=e.meta or {}}
       plan.entries[ix]=result;plan.changed_per_entry[ix]=0
-      if e.kind=='advance' then
+      if e.kind=='rowset' then
+        local rows=S.array()
+        for i,row in ipairs(e.rows) do rows[i]={row=row.row,rank=row.rank} end
+        result.rows=rows
+      elseif e.kind=='advance' then
         plan.advance={from=ctx.request_epoch,to=ctx.write_epoch}
         result.from=ctx.request_epoch;result.to=ctx.write_epoch
       elseif e.kind=='count' or e.kind=='rcount' then

@@ -37,6 +37,7 @@ type Step struct {
 // Entry is a typed union selected by Kind. From and To are cell references for
 // member operations. AdvanceFrom is the epoch argument of an advance entry.
 // CountMax and ScoreMax both encode as max, for count and rcount respectively.
+// Rows is the complete named rank set guarded by a rowset entry.
 type Entry struct {
 	Kind         string
 	Table        string
@@ -54,6 +55,7 @@ type Entry struct {
 	Meta         json.RawMessage
 	Add          []string
 	Del          []string
+	Rows         []RowRank
 	Cells        []string
 	CountMax     []uint64
 	ScoreMin     string

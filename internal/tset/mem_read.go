@@ -170,7 +170,7 @@ func (m *Mem) Read(ctx context.Context, plan ReadPlan) (ReadReply, error) {
 	}
 	epoch := space.epochs[plan.Epoch]
 	if epoch == nil {
-		return ReadReply{}, memRefusal("EPOCHGONE", RefusalDetail{})
+		return ReadReply{}, memRefusal("EPOCHGONE", RefusalDetail{ActiveEpoch: active})
 	}
 	clock := m.now()
 	now := clock.UnixMilli()
@@ -317,7 +317,7 @@ func readTable(space *memSpace, epoch *memEpoch, name string) (*memTableDef, *me
 	}
 	table := epoch.tables[name]
 	if table == nil {
-		return nil, nil, memRefusal("EPOCHGONE", RefusalDetail{Table: name})
+		return nil, nil, memRefusal("EPOCHGONE", RefusalDetail{Table: name, ActiveEpoch: space.active})
 	}
 	return def, table, nil
 }

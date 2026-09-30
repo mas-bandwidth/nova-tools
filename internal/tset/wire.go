@@ -247,9 +247,28 @@ func validateStep(s Step, requireNotesOp bool) error {
 	tables := make(map[string]bool)
 	seen := make(map[string]bool)
 	rows := make(map[string]bool)
+	rowsetTables := make(map[string]bool)
 	candidates, guards, abouts := 0, 0, 0
 	advance := false
+	sawNonRowset := false
 	for i, e := range s.Entries {
+		if e.Kind == "rowset" {
+			if sawNonRowset || rowsetTables[e.Table] {
+				return NewRefusal("REQUEST", RefusalDetail{EntryIndex: ptrInt(i), Table: e.Table})
+			}
+			rowsetTables[e.Table] = true
+		} else if !sawNonRowset {
+			sawNonRowset = true
+			if len(rowsetTables) != 0 && e.Kind != "advance" {
+				return NewRefusal("REQUEST", RefusalDetail{EntryIndex: ptrInt(i), Table: e.Table})
+			}
+		}
+		if e.Kind == "advance" {
+			if advance || i != len(rowsetTables) {
+				return NewRefusal("REQUEST", RefusalDetail{EntryIndex: ptrInt(i)})
+			}
+			advance = true
+		}
 		if e.Kind != "advance" {
 			if code := symbolicCode(e.Table); code != "" {
 				return bad(code)
@@ -281,9 +300,14 @@ func validateStep(s Step, requireNotesOp bool) error {
 			for _, row := range append(append([]string{}, e.Add...), e.Del...) {
 				rows[e.Table+"\x00"+row] = true
 			}
-		case "advance":
-			advance = true
+		case "rowset":
+			for _, row := range e.Rows {
+				rows[e.Table+"\x00"+row.Row] = true
+			}
 		}
+	}
+	if len(rowsetTables) != 0 && !advance {
+		return NewRefusal("REQUEST", RefusalDetail{EntryIndex: ptrInt(0)})
 	}
 	for _, n := range s.Notes {
 		if n.Line.Kind != "note" || n.About == nil || !validMeta(n.Line.Meta) {
@@ -323,7 +347,7 @@ func validateEntry(epoch Decimal, e Entry, index int) error {
 	if json.Unmarshal(encoded, &shape) != nil {
 		return ref("REQUEST")
 	}
-	if len(e.Scores) > MaxIDsPerEntry || len(e.Revs) > MaxIDsPerEntry || len(e.Each) > MaxIDsPerEntry || len(e.About) > MaxIDsPerEntry || len(e.Unset) > MaxFieldsPerMember || len(e.BeforeFields) > MaxFieldsPerMember || len(e.Add) > MaxRowsWithAdvance || len(e.Del) > MaxRowsWithAdvance {
+	if len(e.Scores) > MaxIDsPerEntry || len(e.Revs) > MaxIDsPerEntry || len(e.Each) > MaxIDsPerEntry || len(e.About) > MaxIDsPerEntry || len(e.Unset) > MaxFieldsPerMember || len(e.BeforeFields) > MaxFieldsPerMember || len(e.Add) > MaxRowsWithAdvance || len(e.Del) > MaxRowsWithAdvance || len(e.Rows) > MaxRowsWithAdvance {
 		return ref("LIMIT")
 	}
 	if e.Kind != "advance" && e.AdvanceFrom != "" || e.Kind != "count" && e.CountMax != nil || e.Kind != "rcount" && (e.ScoreMin != "" || e.ScoreMax != "" || e.AtLeast != nil || e.AtMost != nil) {
@@ -332,7 +356,7 @@ func validateEntry(epoch Decimal, e Entry, index int) error {
 	if e.Kind != "create" && e.Kind != "move" && e.Kind != "remove" && e.Kind != "guard" && (e.IDs != nil || e.Scores != nil || e.Revs != nil || e.Set != nil || e.Each != nil || e.Unset != nil || e.BeforeFields != nil || e.About != nil || len(e.Meta) > 0 || e.To != "") {
 		return ref("REQUEST")
 	}
-	if e.Kind != "rows" && (e.Add != nil || e.Del != nil) || e.Kind != "count" && e.Kind != "rcount" && e.Cells != nil {
+	if e.Kind != "rows" && (e.Add != nil || e.Del != nil) || e.Kind != "rowset" && e.Rows != nil || e.Kind != "count" && e.Kind != "rcount" && e.Cells != nil {
 		return ref("REQUEST")
 	}
 	if e.Kind != "move" && e.Kind != "remove" && e.Kind != "guard" && e.From != "" {
@@ -473,8 +497,26 @@ func validateEntry(epoch Decimal, e Entry, index int) error {
 				return ref(code)
 			}
 		}
+	case "rowset":
+		if e.Rows == nil {
+			return ref("REQUEST")
+		}
+		seenRows := make(map[string]bool, len(e.Rows))
+		for _, row := range e.Rows {
+			if code := rowCode(row.Row); code != "" {
+				return ref(code)
+			}
+			if seenRows[row.Row] || !ValidDecimal(row.Rank) {
+				return ref("REQUEST")
+			}
+			seenRows[row.Row] = true
+			rank, _ := strconv.ParseUint(string(row.Rank), 10, 64)
+			if rank > 9007199254740991 {
+				return ref("REQUEST")
+			}
+		}
 	case "advance":
-		if index != 0 || !ValidDecimal(e.AdvanceFrom) {
+		if !ValidDecimal(e.AdvanceFrom) {
 			return ref("REQUEST")
 		}
 		if _, err := NextDecimal(e.AdvanceFrom); err != nil {
@@ -933,6 +975,9 @@ func (e Entry) MarshalJSON() ([]byte, error) {
 	if e.Del != nil {
 		m["del"] = e.Del
 	}
+	if e.Kind == "rowset" {
+		m["rows"] = e.Rows
+	}
 	if e.Cells != nil {
 		m["cells"] = e.Cells
 	}
@@ -951,8 +996,21 @@ func (e Entry) MarshalJSON() ([]byte, error) {
 	return json.Marshal(m)
 }
 
+// RowRank appears both in row reads and in rowset guards. On the request
+// boundary each guard item must carry exactly these two string properties.
+func (r *RowRank) UnmarshalJSON(data []byte) error {
+	m, err := strictObject(data, "row", "rank")
+	if err != nil {
+		return err
+	}
+	if err := unmarshalRequired(m, "row", &r.Row); err != nil {
+		return err
+	}
+	return unmarshalRequired(m, "rank", &r.Rank)
+}
+
 func (e *Entry) UnmarshalJSON(data []byte) error {
-	m, err := strictObject(data, "kind", "t", "from", "to", "ids", "scores", "revs", "set", "each", "unset", "before_fields", "about", "meta", "add", "del", "cells", "min", "max", "atleast", "atmost")
+	m, err := strictObject(data, "kind", "t", "from", "to", "ids", "scores", "revs", "set", "each", "unset", "before_fields", "about", "meta", "add", "del", "rows", "cells", "min", "max", "atleast", "atmost")
 	if err != nil {
 		return err
 	}
@@ -965,6 +1023,7 @@ func (e *Entry) UnmarshalJSON(data []byte) error {
 		"remove":  "kind t from ids revs set each unset before_fields about meta",
 		"guard":   "kind t from ids revs before_fields",
 		"rows":    "kind t add del",
+		"rowset":  "kind t rows",
 		"advance": "kind from",
 		"count":   "kind t cells max",
 		"rcount":  "kind t cells min max atleast atmost",
@@ -987,6 +1046,12 @@ func (e *Entry) UnmarshalJSON(data []byte) error {
 		}
 		if _, ok := m["max"]; !ok {
 			return errors.New("missing max")
+		}
+	}
+	if e.Kind == "rowset" {
+		raw, ok := m["rows"]
+		if !ok || string(raw) == "null" || json.Unmarshal(raw, &e.Rows) != nil || e.Rows == nil {
+			return errors.New("rowset rows must be an array")
 		}
 	}
 	for name, out := range map[string]any{"t": &e.Table, "to": &e.To, "ids": &e.IDs, "scores": &e.Scores, "revs": &e.Revs, "unset": &e.Unset, "before_fields": &e.BeforeFields, "about": &e.About, "add": &e.Add, "del": &e.Del, "cells": &e.Cells} {
