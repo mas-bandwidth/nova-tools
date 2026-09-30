@@ -96,7 +96,20 @@ func (h *harness) clean(when string) {
 	}
 }
 
+// snap is the sprint as the next pump leaves its work table: the tables with
+// the work table's queue applied (sprint.WithQueue), the state every step but
+// the pump plans on. table is the tables as stored.
 func (h *harness) snap() *sprint.Snapshot {
+	h.t.Helper()
+	s := h.table()
+	q, err := h.st.B.QueueRead(h.ctx)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	return sprint.WithQueue(s, q)
+}
+
+func (h *harness) table() *sprint.Snapshot {
 	h.t.Helper()
 	s, err := h.st.Load(h.ctx, All, nil)
 	if err != nil {

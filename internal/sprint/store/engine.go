@@ -516,7 +516,7 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 // DrainStep is the pump's drain: the work table's whole queue applied in one
 // update (sprint.Drain), and taken off the queue by its commit.
 func DrainStep() Step {
-	return Step{Verb: "tick drain", Actor: sprint.MachineActor, Load: All, Pump: true, Drain: true,
+	return Step{Verb: sprint.DrainVerb, Actor: sprint.MachineActor, Load: All, Pump: true, Drain: true,
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Drain(s, s.Queue, sprint.MachineActor) }}
 }
 

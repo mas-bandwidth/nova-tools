@@ -19,6 +19,9 @@ import (
 // its dirty bit: "the dirty bit is just the number of entries in each table's
 // queue". The model is tla/DirtyTick.tla.
 
+// DrainVerb is the verb of the pump's drain step.
+const DrainVerb = "tick drain"
+
 // QueuedChange is one work-table change a step queued for the pump: the entry as
 // the step planned it (its id the card's, not the stored one), or a property
 // write of the work table; with the step's verb, actor and words, which the
@@ -84,7 +87,7 @@ func queuedChanges(e ntable.BatchMemberEntry) bool {
 // is refused, named, and consumed with the rest: nothing of the queue is
 // applied twice or kept for a later pump.
 func Drain(s *Snapshot, q []QueuedChange, who string) Plan {
-	p := Plan{pre: s}
+	p := Plan{pre: s, drained: true}
 	type acc struct {
 		e        ntable.BatchMemberEntry
 		n        int // changes composed into e

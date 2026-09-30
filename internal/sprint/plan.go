@@ -78,6 +78,11 @@ type Plan struct {
 	// removing says remove built the plan: the one step that takes a landed
 	// primary off the table.
 	removing bool
+	// drained says Drain built the plan: each of its changes composes changes
+	// the lifecycle already held when the steps that queued them were
+	// planned, so a composed move may pass over states (review to landed, by
+	// an accept and a merge queued in one tick) and is not judged again.
+	drained bool
 }
 
 // PropWrite is a table property a step writes (L1 contract amendment, table
