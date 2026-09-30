@@ -1,6 +1,8 @@
 package fn
 
 import (
+	"slices"
+	"sort"
 	"strings"
 	"testing"
 
@@ -11,12 +13,10 @@ import (
 // is `redis` (TestFactF12LoadTimeSandboxHasNoSetmetatable, the functional
 // probe of it: ipairs, pairs, type, error, tostring, math, string, table and
 // the rest are all "nonexistent global variable" there; a value's own string
-// methods, ("x"):rep(2), work, being the string metatable's). The twin tests
-// run the sprint's Lua under gopher-lua with every builtin present, so a
-// fragment that names one at its top level, or in a function it calls while it
-// loads (a registration), passes them and is refused by the store. This test
-// runs the whole assembled source of each profile in that load environment, so
-// the refusal shows at the unit tier.
+// methods, ("x"):rep(2), work, being the string metatable's). A file that
+// names one at its top level, or in a function it calls while it loads (a
+// registration), is refused by the store. This test runs the whole assembled
+// library in that load environment, so the refusal shows at the unit tier.
 
 // loadEnv is a Lua state standing for the load-time environment: no library
 // global, the `redis` global with the two calls and the constants a load has,
@@ -55,25 +55,31 @@ func loadEnv(t *testing.T) (*lua.LState, *[]string) {
 	return L, &registered
 }
 
-// TestEveryProfileLoadsInTheLoadTimeEnvironment: the source of every profile
-// runs to its end with only `redis` global, and registers functions.
-func TestEveryProfileLoadsInTheLoadTimeEnvironment(t *testing.T) {
+// TestLibraryLoadsInTheLoadTimeEnvironment: the assembled library runs to its
+// end with only `redis` global, and the functions it registers there are
+// exactly the ones redisfn reads out of its files (Spec().Functions()), which
+// nova-redis's TestFnVerbsOnARedisServer expects on the store after fn load.
+func TestLibraryLoadsInTheLoadTimeEnvironment(t *testing.T) {
 	t.Parallel()
-	for _, profile := range []TSetProfile{TSetStandalone, TSetComposed, TSetSprint} {
-		t.Run(string(profile), func(t *testing.T) {
-			t.Parallel()
-			src, err := TSetSource(profile)
-			if err != nil {
-				t.Skipf("the profile does not assemble: %v", err)
-			}
-			_, body, _ := strings.Cut(src, "\n") // the shebang line is the store's, not Lua's
-			L, registered := loadEnv(t)
-			if err := L.DoString(body); err != nil {
-				t.Fatalf("the %s profile does not load: %v", profile, err)
-			}
-			if len(*registered) == 0 {
-				t.Fatalf("the %s profile registered no function", profile)
-			}
-		})
+	src, err := Source()
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, body, _ := strings.Cut(src, "\n") // the shebang line is the store's, not Lua's
+	L, registered := loadEnv(t)
+	if err := L.DoString(body); err != nil {
+		t.Fatalf("the library does not load: %v", err)
+	}
+	if len(*registered) == 0 {
+		t.Fatal("the library registered no function")
+	}
+	want, err := Spec().Functions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := append([]string(nil), *registered...)
+	sort.Strings(got)
+	if !slices.Equal(got, want) {
+		t.Fatalf("the library registers %v at load; its files name %v", got, want)
 	}
 }

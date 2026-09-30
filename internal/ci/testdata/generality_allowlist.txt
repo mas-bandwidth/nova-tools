@@ -16,7 +16,7 @@
 # - Adding a second occurrence to an already-allowed file exceeds the ceiling and fails.
 # - A count lower than the allowed count requires shrinking the allowlist entry.
 #
-# ceiling: 240
+# ceiling: 238
 cmd/nova-bus/main.go:glenn 2
 cmd/nova-bus/main.go:johnny 3
 cmd/nova-bus/main.go:space 10
@@ -134,7 +134,6 @@ internal/onboarding/transcript.go:space 1
 internal/onboarding/transcript.go:stella 1
 internal/oneline/audit/audit.go:mas-bandwidth 1
 internal/oneline/oneline.go:space 4
-internal/records/doc.go:stella 1
 internal/redisconn/options.go:space 1
 internal/redisfn/redisfn.go:space 1
 internal/release/adopt.go:emma 1
@@ -239,7 +238,6 @@ internal/tokens/bus.go:emma 2
 internal/tokens/bus.go:space 1
 internal/tokens/claude_session.go:glenn 1
 internal/tokens/dayfile.go:freddy 1
-internal/tokens/grok.go:space 1
 internal/tokens/provider.go:emma 4
 internal/tokens/provider.go:johnny 1
 internal/tokens/provider.go:space 1
