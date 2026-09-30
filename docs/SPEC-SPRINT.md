@@ -686,14 +686,18 @@ merge needs help across streams, 1 percent (`--cross 0.01`); a machine that is
 up goes down, 1 percent each second (`--down 0.01`); a machine that is down
 comes back, 10 percent each second (`--up 0.10`). `--simulation` sets all six,
 and a chance flag given beside it (before or after) sets that one chance and no
-other; `--red` is not one of the six and stays as it is. A chance is per card
-(`--broken`, `--fail`), per merge batch (`--stuck`, `--cross`, `--red`) or per
-member and second (`--down`, `--up`, `--flap`): a tick of another length than a
-second draws the chance of at least one such event in its time. The draws come
-from the seed; play prints the chances it draws with (`chances: broken=0.1 ...
-red=0 seed=1 every=1s`) so the run can be repeated by hand. A chance outside 0
-to 1 is refused. The state of which machines are down is the play process's:
-a play run again starts with every machine up.
+other; `--red` is not one of the six and stays as it is. A chance is per report
+(`--broken`, `--fail`: drawn each time a card is reported, so a card reworked
+and reported again draws again), per merge batch (`--stuck`, `--cross`,
+`--red`) or per member and second (`--down`, `--up`, `--flap`): a tick of
+another `--every` than a second draws the chance of at least one such event in
+that time. The draws come from the seed; play prints the chances its seeded
+source draws with, once it may play and before its first tick (`chances:
+broken=0.1 ... red=0 seed=1 every=1s`; at another `--every`, `down` and `up`
+are the chance of one tick, not the flags' own). A play that is refused prints
+nothing on stdout. A chance outside 0 to 1 is refused. The state of which
+machines are down is the play process's: a play run again starts with every
+machine up.
 
 ## 13. Epochs and clear
 

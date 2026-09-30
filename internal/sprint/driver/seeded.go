@@ -6,9 +6,9 @@ import (
 )
 
 // Seeded is invented facts from a seed: the same seed, against the same
-// table, plays the same run. Each probability is per card (work, read), per
-// batch (stuck, cross, red) or per member and tick (Down, and Back, the
-// chance a member that is down comes up).
+// table, plays the same run. Each probability is per report (work, read: a
+// card reported again draws again), per batch (stuck, cross, red) or per
+// member and tick (Down, and Back, the chance a member that is down comes up).
 type Seeded struct {
 	rng                             *rand.Rand
 	Fail, Broken, Stuck, Cross, Red float64
@@ -34,12 +34,20 @@ func (s *Seeded) Read(card string) (bool, string) {
 	return true, ""
 }
 
-// Use sets the chances the source draws against: the per card and per batch
+// Use sets the chances the source draws against: the per report and per batch
 // chances as they are, and Down and Up, which are each second's, as the
-// chance of a tick of every.
+// chance of a tick of every (PerTick: the configured every, not the time that
+// passes between two draws).
 func (s *Seeded) Use(c Chances, every time.Duration) {
 	s.Fail, s.Broken, s.Stuck, s.Cross = c.Fail, c.Broken, c.Stuck, c.Cross
 	s.Down, s.Back = PerTick(c.Down, every), PerTick(c.Up, every)
+}
+
+// Drawn is the chances this source draws against, as it holds them: Down and
+// Up are the chance of one tick, which is the flags' own only at a tick of a
+// second. It is what a run prints as the chances it draws with.
+func (s *Seeded) Drawn() Chances {
+	return Chances{Broken: s.Broken, Fail: s.Fail, Stuck: s.Stuck, Cross: s.Cross, Down: s.Down, Up: s.Back}
 }
 
 // Merge draws a batch's fact; others is read only for a cross fact, and a

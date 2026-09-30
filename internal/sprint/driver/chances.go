@@ -8,11 +8,12 @@ import (
 )
 
 // Chances are the six chances the seeded facts draw against, each a
-// probability from 0 to 1. Broken and Fail are per card (a reader finds the
-// work broken; work comes back not ok from the fleet), Stuck and Cross are
-// per merge batch (a merge needs help from the coordinator within its
-// stream; across streams), Down and Up are per member and second (a machine
-// that is up goes down; one that is down comes back).
+// probability from 0 to 1. Broken and Fail are per report, drawn each time a
+// card is reported, so a card reworked and reported again draws again (a
+// reader finds the work broken; work comes back not ok from the fleet), Stuck
+// and Cross are per merge batch (a merge needs help from the coordinator
+// within its stream; across streams), Down and Up are per member and second
+// (a machine that is up goes down; one that is down comes back).
 type Chances struct {
 	Broken, Fail, Stuck, Cross, Down, Up float64
 }
@@ -93,19 +94,21 @@ func Valid(flag string, p float64) error {
 	return fmt.Errorf("--%s wants a chance from 0 to 1, found %v", flag, p)
 }
 
-// String is the chances as flags, in the order of the table: what a run
-// prints so that the run can be repeated by hand.
+// String is the chances as flags, in the order of the table, each to six
+// significant digits (a chance made from a second's chance by PerTick does not
+// print its last digits of rounding).
 func (c Chances) String() string {
 	var out []string
 	for _, r := range ChanceRows {
-		out = append(out, fmt.Sprintf("%s=%g", r.Flag, *r.At(&c)))
+		out = append(out, fmt.Sprintf("%s=%.6g", r.Flag, *r.At(&c)))
 	}
 	return strings.Join(out, " ")
 }
 
 // PerTick is the chance a tick of every draws against, given a chance p each
 // second: the chance of at least one such event in that much time, and p
-// itself at one second, and for a tick of no time.
+// itself at one second, and for a tick of no time. The length of a tick is the
+// configured every, not the time that passes between two draws.
 func PerTick(p float64, every time.Duration) float64 {
 	if every <= 0 || every == time.Second {
 		return p

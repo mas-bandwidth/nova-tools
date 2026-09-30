@@ -199,22 +199,73 @@ func TestEveryChanceIsWithinAPointOfItsSetting(t *testing.T) {
 	}
 }
 
-// The same holds for a chance set by a flag beside the simulation, and for
-// the chances a tick of another length draws.
+// distinct is the six chances each with a value of its own, no two within two
+// points of each other. The locked values repeat 0.10 three times, so a draw
+// made against another of those three chances' value passes the test of the
+// locked values; with these it is a rate that is not the chance's setting.
+var distinct = map[string]float64{"fail": 0.10, "broken": 0.20, "stuck": 0.30, "cross": 0.04, "down": 0.07, "up": 0.40}
+
+// The same holds for six chances given beside the simulation, each a different
+// value: every chance is drawn against its own value and no other's.
 func TestAChanceGivenBesideTheSimulationDrawsAsGiven(t *testing.T) {
 	t.Parallel()
 	const n = 100000
+	for a, p := range distinct {
+		for b, q := range distinct {
+			if a != b && math.Abs(p-q) < 0.02 {
+				t.Fatalf("--%s %v and --%s %v are too near for the test to tell them apart", a, p, b, q)
+			}
+		}
+	}
 	s := NewSeeded(5)
-	c, err := Set(true, map[string]float64{"broken": 0.5, "up": 0.5})
+	c, err := Set(true, distinct)
 	if err != nil {
 		t.Fatal(err)
 	}
 	s.Use(c, time.Second)
 	got := draws(s, n)
-	for flag, p := range map[string]float64{"broken": 0.5, "fail": 0.10, "stuck": 0.10, "cross": 0.01, "down": 0.01, "up": 0.5} {
+	for flag, p := range distinct {
 		if !near(got[flag], p, n) {
 			t.Errorf("%s: %.4f in %d draws, its setting is %v", flag, got[flag], n, p)
 		}
+	}
+}
+
+// A chance of 0 draws nothing from the seed: a plain run (no --down and no
+// --up, so both are 0) draws exactly the sequence it drew before those flags
+// existed, when nothing was drawn for a member at a chance of 0. The
+// reference is the same source that is never asked which members are up.
+func TestAPlainRunDrawsTheSequenceItDrewBeforeDownAndUpExisted(t *testing.T) {
+	t.Parallel()
+	plain, err := Set(false, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	played, before := NewSeeded(31), NewSeeded(31)
+	played.Use(plain, time.Second)
+	before.Use(plain, time.Second)
+	members := []string{"a", "b", "c"}
+	up := map[string]bool{"a": true, "b": false, "c": true}
+	others := func() []string { return []string{"o1", "o2"} }
+	batch := []string{"x", "y", "z"}
+	for i := 0; i < 2000; i++ {
+		wp, rp := played.Work("c")
+		wb, rb := before.Work("c")
+		fp, np := played.Read("c")
+		fb, nb := before.Read("c")
+		mp, mb := played.Merge("s1", batch, others), before.Merge("s1", batch, others)
+		next := played.Up(i, members, up)
+		if wp != wb || rp != rb || fp != fb || np != nb || fmt.Sprint(mp) != fmt.Sprint(mb) {
+			t.Fatalf("tick %d: the plain run drew another sequence than before", i)
+		}
+		for _, m := range members {
+			if next[m] != up[m] {
+				t.Fatalf("tick %d: %s changed with a chance of 0", i, m)
+			}
+		}
+	}
+	if a, b := played.rng.Float64(), before.rng.Float64(); a != b {
+		t.Fatalf("the plain run spent draws that the run before did not: %v against %v", a, b)
 	}
 }
 

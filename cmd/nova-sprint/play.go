@@ -69,8 +69,9 @@ func (a *app) cmdPlay(args []string, stdout, stderr io.Writer) int {
 	facts := driver.NewSeeded(*seed)
 	facts.Use(chances, *every)
 	facts.Red = *red
-	fmt.Fprintf(stdout, "chances: %s red=%g seed=%d every=%s\n", chances, *red, *seed, *every)
-	d := &driver.Driver{Run: a.run, Base: base, Facts: facts, Clock: appClock{a}, Out: stdout,
+	// the chances the source will draw with, printed once the loop may play
+	header := fmt.Sprintf("chances: %s red=%g seed=%d every=%s", facts.Drawn(), facts.Red, *seed, *every)
+	d := &driver.Driver{Run: a.run, Base: base, Facts: facts, Clock: appClock{a}, Out: stdout, Header: header,
 		Config: driver.Config{Every: *every, Batch: *batch, TakeLimit: *take, ReadLimit: *reads, Ticks: *ticks, Hold: *hold, Silent: silent}}
 	why, err := d.Loop()
 	if err != nil {

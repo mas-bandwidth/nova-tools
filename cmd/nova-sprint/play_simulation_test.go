@@ -33,7 +33,9 @@ func TestPlaySaysItsChances(t *testing.T) {
 	for _, c := range []struct{ args, want string }{
 		{"", "chances: broken=0.05 fail=0.1 stuck=0.1 cross=0.01 down=0 up=0 red=0 seed=1 every=1s"},
 		{"--simulation", "chances: broken=0.1 fail=0.1 stuck=0.1 cross=0.01 down=0.01 up=0.1 red=0 seed=1 every=1s"},
-		{"--simulation --seed 7 --every 2s", "chances: broken=0.1 fail=0.1 stuck=0.1 cross=0.01 down=0.01 up=0.1 red=0 seed=7 every=2s"},
+		// the chances its source draws with: down and up are the chance of one tick
+		{"--simulation --seed 7 --every 2s", "chances: broken=0.1 fail=0.1 stuck=0.1 cross=0.01 down=0.0199 up=0.19 red=0 seed=7 every=2s"},
+		{"--fail 0.3 --down 0.5 --up 0.2 --every 2s", "chances: broken=0.05 fail=0.3 stuck=0.1 cross=0.01 down=0.75 up=0.36 red=0 seed=1 every=2s"},
 		{"--simulation --broken 0.5", "chances: broken=0.5 fail=0.1 stuck=0.1 cross=0.01 down=0.01 up=0.1 red=0 seed=1 every=1s"},
 		{"--broken 0.5 --simulation", "chances: broken=0.5 fail=0.1 stuck=0.1 cross=0.01 down=0.01 up=0.1 red=0 seed=1 every=1s"},
 		{"--simulation --fail 0 --down 0.5 --up 1", "chances: broken=0.1 fail=0 stuck=0.1 cross=0.01 down=0.5 up=1 red=0 seed=1 every=1s"},
@@ -51,6 +53,67 @@ func TestPlaySaysItsChances(t *testing.T) {
 		if !strings.Contains(out, "PLAY OK stopped=ticks") {
 			t.Errorf("play %s:\n%s", c.args, out)
 		}
+	}
+}
+
+// The flags reach the source that draws: --every scales a chance each second
+// to the chance of a tick, and --red is the chance a merge batch turns red.
+// The line play prints is what the source draws with, and the draws show it.
+func TestTheFlagsReachTheSourceThatDraws(t *testing.T) {
+	t.Parallel()
+	// 0.001 each second is 97 percent in a tick of an hour, and 0.1 percent
+	// in a tick of a second: a machine falls silent in the first tick of the
+	// one and not in the other
+	for _, c := range []struct {
+		every  string
+		line   string
+		silent bool
+	}{
+		{"1h", "down=0.972725 ", true},
+		{"1s", "down=0.001 ", false},
+	} {
+		ta := playing(t)
+		out := ta.ok("play --ticks 1 --seed 1 --down 0.001 --every " + c.every)
+		if line := chancesLine(t, out); !strings.Contains(line, c.line) {
+			t.Errorf("--every %s: %s\nwant %q in it", c.every, line, c.line)
+		}
+		if got := strings.Contains(out, "falls silent"); got != c.silent {
+			t.Errorf("--every %s at 0.001 each second: a machine fell silent is %v, want %v\n%s", c.every, got, c.silent, out)
+		}
+	}
+	// --red 1 with nothing else drawn: the first merge batch is red
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1,m2")
+	ta.ok("add --stream s1 --count 6")
+	ta.ok("start")
+	for round := 1; round <= 60; round++ {
+		ta.ok("tick")
+		out := ta.ok(fmt.Sprintf("play --seed %d --ticks 3 --fail 0 --broken 0 --stuck 0 --cross 0 --red 1", round))
+		if line := chancesLine(t, out); !strings.Contains(line, "red=1 ") {
+			t.Fatalf("--red 1: %s", line)
+		}
+		if strings.Contains(out, " --red ") {
+			return
+		}
+		ta.coordinate()
+	}
+	t.Fatalf("--red 1: no merge batch turned red in 60 rounds")
+}
+
+// A play that is refused prints nothing on stdout; one that plays says its
+// chances first.
+func TestAPlayThatIsRefusedPrintsNothingOnStdout(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	ta.ok("add --stream s1 --count 3")
+	if code, out, errs := ta.do("play --simulation --seed 1 --ticks 1"); code != 2 || out != "" || !strings.Contains(errs, "no machine is running") {
+		t.Fatalf("play with the machine stopped: exit %d, stdout %q, stderr %q", code, out, errs)
+	}
+	ta.ok("start")
+	out := ta.ok("play --simulation --seed 1 --ticks 1")
+	if !strings.HasPrefix(out, "chances: ") || !strings.Contains(out, "\ntick 1 ") {
+		t.Fatalf("a play that plays says its chances before its first tick:\n%s", out)
 	}
 }
 
@@ -129,8 +192,11 @@ func TestPlaySimulationLandsEveryStream(t *testing.T) {
 	}
 }
 
-// The machines of a run go down and come back, and the sprint lands with them
-// (a down machine's work is dealt to the others by the machine's tick).
+// The machines of a run fall silent and beat again, and the sprint lands with
+// them. Each round of play starts with every machine up and lasts five
+// seconds, less than the fifteen of the beat deadline, so the fleet table
+// never shows a machine down: this does not show a down machine's work dealt
+// to the others, only that the sprint lands while machines fall silent.
 func TestPlaySimulationWithMachinesGoingDownAndComingBackLandsEveryStream(t *testing.T) {
 	t.Parallel()
 	seen := landsUnder(t, "--down 0.3 --up 0.3")
