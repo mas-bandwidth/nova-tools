@@ -77,7 +77,7 @@ func (a *app) setMachine(name string, running bool, args []string, stdout, stder
 		return 0
 	}
 	if err != nil {
-		fmt.Fprintf(stderr, "%s %s: %s\n", prog, name, oneline.Escape(err.Error()))
+		fmt.Fprintf(stderr, "%s %s: %s\n", prog, name, oneline.WithRemedy(err.Error(), prog+" "+name+" -h"))
 		return 2
 	}
 	what := "changed"
@@ -87,7 +87,11 @@ func (a *app) setMachine(name string, running bool, args []string, stdout, stder
 	fmt.Fprintf(stdout, "%s OK before=%s after=%s %s\n", token(name), before.StateWord(), after.StateWord(), what)
 	if running {
 		if _, hb, err := st.Machine(ctx); err == nil && a.now().Sub(hb.Alive()) > store.MachineSilence {
-			fmt.Fprintf(stdout, "nothing is ticking: run: nova-sprint run\n")
+			if a.twinOpen(c.redis) {
+				fmt.Fprintf(stdout, "nothing is ticking between commands in a twin: tick by hand: nova-sprint tick\n")
+			} else {
+				fmt.Fprintf(stdout, "nothing is ticking: run: nova-sprint run\n")
+			}
 		}
 	}
 	if line != "" {
@@ -223,6 +227,9 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 	})
 	if st == nil {
 		return code
+	}
+	if a.twinOpen(c.redis) {
+		return refuse(stderr, "run", twinMachine)
 	}
 	if profile != "" {
 		stop, err := startProfile(profile)

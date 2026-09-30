@@ -253,7 +253,7 @@ func TestEveryCaseOfTheRepositoryResolvesToItsOwnInputs(t *testing.T) {
 			}
 		}
 	}
-	if strings.Contains(strings.Join(reads["MCFileLock.cfg"], " "), "MemberTable") || strings.Contains(strings.Join(reads["MCMemberTable.cfg"], " "), "FileLock") {
+	if strings.Contains(strings.Join(reads["MCFirstConn.cfg"], " "), "MemberTable") || strings.Contains(strings.Join(reads["MCMemberTable.cfg"], " "), "FirstConn") {
 		t.Error("two models that share nothing read each other's files")
 	}
 }

@@ -316,6 +316,10 @@ jobs:
     # packages run on the darwin-x64 shards only. On pull_request and merge_group it
     # selects only the packages the change touches and their in-module
     # importers; the push to dev and the nightly run keep the whole tree.
+    # The darwin shards are dealt only when the target branch is dev or main
+    # (a pull_request's base, the merge queue's base_ref, a push's ref name), on
+    # schedule and on workflow_dispatch; for a working branch the matrix is Linux
+    # only (the `darwin_on` gate in the list step).
     # It runs on the nightly schedule too, for the `functional` job's list and
     # for the unit `test` job's nightly space shards (#4413).
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
@@ -526,6 +530,51 @@ jobs:
             [ "${#all[@]}" -gt 0 ] || { echo "no packages: the fan-out would be empty and green"; exit 1; }
           fi
 
+          # THE DARWIN SHARDS RUN WHERE THE TARGET BRANCH IS DEV OR MAIN (the
+          # owner, 2026-09-30: "Why are we even bothering to test on Darwin? It's
+          # all golang stuff mostly. You can speed up a lot if you just went linux
+          # only until we get into dev."). The Go is the same Go on both OSes and
+          # the Linux shards run every package the change selects; the darwin
+          # legs are the slowest, the scarcest and the ones the two-minute cap
+          # cancels whenever the host is loaded, so a change bound for a working
+          # branch (sprint/foundation) meets Linux only, and the darwin evidence
+          # is taken at dev and main: a pull_request whose base is dev or
+          # main, the merge queue for dev or main (its base_ref), a push to dev or
+          # main, and certification.yml (pushes to dev, nightly, dispatch), which
+          # is untouched. A change that touches only darwin-only packages gets no
+          # test run until it reaches dev. schedule and
+          # workflow_dispatch keep the shape they have. With the gate off, every
+          # package rides the Linux shards and the darwin-only packages
+          # (cmd/nova-sandbox, internal/sandbox) have no leg, exactly as on
+          # schedule. The branch names are the integration list of the
+          # concurrency group in short form: internal/ci's
+          # TestDarwinShardsRunOnlyForIntegrationBranches holds the two equal and
+          # holds the deal below to this gate. No darwin job is part of the
+          # merge gate on a working branch: ci-ok reads `test`, whose matrix
+          # simply has no darwin leg there.
+          DARWIN_BRANCHES="main dev"
+          case "${{ github.event_name }}" in
+            pull_request) darwin_target="${{ github.base_ref }}" ;;
+            merge_group) darwin_target="${{ github.event.merge_group.base_ref }}"; darwin_target="${darwin_target#refs/heads/}" ;;
+            push) darwin_target="${{ github.ref_name }}" ;;
+            *) darwin_target="" ;;
+          esac
+          darwin_on=false
+          case "${{ github.event_name }}" in
+            schedule|workflow_dispatch) darwin_on=true ;;
+            *) case " $DARWIN_BRANCHES " in *" $darwin_target "*) darwin_on=true ;; esac ;;
+          esac
+          echo "darwin shards: $darwin_on (${{ github.event_name }} -> ${darwin_target:-n/a}; on for $DARWIN_BRANCHES)"
+
+          if [ "$darwin_on" != true ]; then
+            kept=()
+            for pkg in ${all[@]+"${all[@]}"}; do
+              is_darwin_only "$pkg" || kept+=("$pkg")
+            done
+            all=(${kept[@]+"${kept[@]}"})
+            echo "darwin shards off: ${#all[@]} package(s) on the Linux shards: ${all[*]:-none}"
+          fi
+
           # THE TWO HEAVIEST PACKAGES NEVER SHARE A SHARD. Dealt round-robin from the
           # sorted list, cmd/nova-bus and cmd/nova-merge sat eight apart and so shared
           # 2/8 studio on every push: dev run 36012558540 (studio-nova-15, Studio load
@@ -584,7 +633,7 @@ jobs:
           # pull_request a touched package gets a macOS leg only when it, or a
           # package it (or its tests) imports from this module, compiles a
           # different file set under GOOS=darwin (today cmd/nova-sandbox,
-          # internal/bus, internal/sandbox, internal/swarm, internal/wake and the
+          # internal/bus, internal/sandbox, internal/swarm and the
           # 15 packages that import them); every other package runs on Linux
           # only, the shape the merge_group run below has used since 2026-09-16.
           # The whole tree still runs on macOS on every push to dev (8 darwin-x64
@@ -592,7 +641,7 @@ jobs:
           # macOS evidence; it leaves the PR feedback path. If `go list` fails,
           # every touched package keeps its macOS leg (the old shape).
           darwin_sensitive=" "
-          if [ "${{ github.event_name }}" = "pull_request" ] && [ "${#all[@]}" -gt 0 ]; then
+          if [ "${{ github.event_name }}" = "pull_request" ] && [ "$darwin_on" = true ] && [ "${#all[@]}" -gt 0 ]; then
             mod=$(go list -m)
             files='{{.ImportPath}} {{.GoFiles}} {{.CgoFiles}} {{.TestGoFiles}} {{.XTestGoFiles}}'
             if GOOS=linux go list -f "$files" ./cmd/... ./internal/... > "$RUNNER_TEMP/files-linux" &&
@@ -630,7 +679,8 @@ jobs:
               is_darwin_only "$pkg" && continue
               space_grp[$((s % SPACE_SHARDS))]+=" $pkg"; s=$((s + 1)); continue
             fi
-            if { [ "${{ github.event_name }}" = "merge_group" ] || { [ "${{ github.event_name }}" = "pull_request" ] && ! needs_darwin "$pkg"; }; } && ! is_darwin_only "$pkg"; then
+            # With the darwin gate off (see darwin_on above) every package rides the Linux shards.
+            if { [ "$darwin_on" != true ] || [ "${{ github.event_name }}" = "merge_group" ] || { [ "${{ github.event_name }}" = "pull_request" ] && ! needs_darwin "$pkg"; }; } && ! is_darwin_only "$pkg"; then
               space_grp[$((s % SPACE_SHARDS))]+=" $pkg"; s=$((s + 1)); continue
             fi
             studio_grp[$((st % STUDIO_SHARDS))]+=" $pkg"
@@ -671,7 +721,10 @@ jobs:
     # leg does not cancel its siblings. Each leg vets and tests only its own
     # shard. Measured green end to end in run 35021822106: sixteen legs from
     # 14 s to 251 s, whole run 5 m 57 s. The whole-tree `-race` run is the
-    # certification tier's `test` job. On pull_request and merge_group the legs
+    # certification tier's `test` job. The darwin legs exist only where the
+    # target branch is dev or main (test-packages deals them); a pull request
+    # to a working branch runs the Linux legs alone, and no darwin job stands in
+    # its merge gate. On pull_request and merge_group the legs
     # carry the packages the change touched, not the whole tree; a change that
     # touched no Go package gets one leg with an empty package list that prints
     # and exits 0.
@@ -828,6 +881,27 @@ jobs:
             git fetch --no-tags --filter=blob:none --unshallow origin +dev:refs/remotes/origin/dev
           else
             git fetch --no-tags --filter=blob:none origin +dev:refs/remotes/origin/dev
+          fi
+      - name: fetch sprint/foundation's ancestry for a promotion
+        # The classtests rule reads a promotion from git: on the promotion pull request
+        # (sprint/foundation into dev) dev's tip must be an ancestor of the head, and on a
+        # dev run at a merge commit (a merge-queue group, a push to dev) the second parent
+        # must be sprint/foundation's and its history excuses what it deleted. A shallow
+        # ancestry is a red run naming this fetch (internal/ci foundationHistoryFetch).
+        # A one-parent commit on a dev run has no promotion to read, so nothing is fetched.
+        if: (matrix.entry.packages != '') && (github.event_name == 'pull_request' && github.base_ref == 'dev' && github.head_ref == 'sprint/foundation' || github.event_name == 'merge_group' || github.event_name == 'push' && github.ref_name == 'dev')
+        shell: bash
+        # A complete workspace (a repeat run on a persistent runner) takes a
+        # plain fetch: --unshallow on a complete repository is fatal.
+        run: |
+          if [ "$GITHUB_EVENT_NAME" != pull_request ] && [ "$(git rev-list --parents -n 1 HEAD | wc -w)" -lt 3 ]; then
+            echo "a one-parent commit: no promotion to read"
+            exit 0
+          fi
+          if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
+            git fetch --no-tags --filter=blob:none --unshallow origin +sprint/foundation:refs/remotes/origin/sprint/foundation
+          else
+            git fetch --no-tags --filter=blob:none origin +sprint/foundation:refs/remotes/origin/sprint/foundation
           fi
 
       - name: use the installed Go toolchain
@@ -1218,6 +1292,27 @@ jobs:
             git fetch --no-tags --filter=blob:none --unshallow origin +dev:refs/remotes/origin/dev
           else
             git fetch --no-tags --filter=blob:none origin +dev:refs/remotes/origin/dev
+          fi
+      - name: fetch sprint/foundation's ancestry for a promotion
+        # The classtests rule reads a promotion from git: on the promotion pull request
+        # (sprint/foundation into dev) dev's tip must be an ancestor of the head, and on a
+        # dev run at a merge commit (a merge-queue group, a push to dev) the second parent
+        # must be sprint/foundation's and its history excuses what it deleted. A shallow
+        # ancestry is a red run naming this fetch (internal/ci foundationHistoryFetch).
+        # A one-parent commit on a dev run has no promotion to read, so nothing is fetched.
+        if: (github.event_name == 'pull_request' && github.base_ref == 'dev' && github.head_ref == 'sprint/foundation' || github.event_name == 'merge_group' || github.event_name == 'push' && github.ref_name == 'dev')
+        shell: bash
+        # A complete workspace (a repeat run on a persistent runner) takes a
+        # plain fetch: --unshallow on a complete repository is fatal.
+        run: |
+          if [ "$GITHUB_EVENT_NAME" != pull_request ] && [ "$(git rev-list --parents -n 1 HEAD | wc -w)" -lt 3 ]; then
+            echo "a one-parent commit: no promotion to read"
+            exit 0
+          fi
+          if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
+            git fetch --no-tags --filter=blob:none --unshallow origin +sprint/foundation:refs/remotes/origin/sprint/foundation
+          else
+            git fetch --no-tags --filter=blob:none origin +sprint/foundation:refs/remotes/origin/sprint/foundation
           fi
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
@@ -2085,8 +2180,8 @@ jobs:
       # a tailscale funnel kept off by design, so this job, on our own runner
       # as the bench seat, reports the run itself at the end of every run: one
       # ev:github row of the workflow_run shape, sender runner, from the run's
-      # own context, no GitHub call. Its reader is `nova-wake watch --store`,
-      # which blocks on ev:github for the PRs it names. always(): a red run is
+      # own context, no GitHub call. Its reader is ghevent.Reader,
+      # which blocks on ev:github. always(): a red run is
       # reported as red. A write that fails is loud here and reddens ci-ok: a
       # receipt that silently did not happen must never read as one that did.
       # The password never touches a flag or a file: nova-secrets exec under

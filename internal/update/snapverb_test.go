@@ -14,7 +14,7 @@ func TestHelpListsEveryVerbTheSwitchDispatches(t *testing.T) {
 	t.Parallel()
 
 	var o bytes.Buffer
-	help("nova-version", &o)
+	o.WriteString(VersionTool("", Environment{}).Banner())
 	for _, verb := range []string{"snapshot", "diff", "report", "send"} {
 		if !strings.Contains(o.String(), "nova-version "+verb+" ") {
 			t.Fatalf("help does not list %s:\n%s", verb, o.String())

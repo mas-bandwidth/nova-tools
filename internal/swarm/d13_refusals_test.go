@@ -32,7 +32,7 @@ func TestOnlyADeniedOperationIsARefusal(t *testing.T) {
 		"8659d36 nova-wake: a refused carried list is a failed poll, not a quiet one\n" +
 		"+func TestARefreshWhoseCarriedListWasRefusedIsAFailedPoll(t *testing.T) {\n" +
 		"+	const standing = \"bus:line:INBOX REFUSED a line that stands\"\n" +
-		"| the pass's own refused state write is pinned | green | internal/merge/pass.go:88 |\n" +
+		"| the pass's own refused state write is pinned | green | internal/swarm/bench.go:88 |\n" +
 		"the real `nova-bus inbox --advance` refused every advance and the watcher was blind\n" +
 		"a refusing bus is broken and not a change; WAKE REFUSED: --advance-cursor\n"
 	write(t, log, prose)

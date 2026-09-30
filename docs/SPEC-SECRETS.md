@@ -114,17 +114,29 @@ nova-secrets names  --store <dir> --as <name> [--max <n>]
 nova-secrets check  --store <dir> --as <name> --key <path> --sops <path> [--max <n>]
 nova-secrets gate   --store <dir> --base <git ref> --head <git ref> [--machines <registry>]
 nova-secrets keygen --as <name> --key <path> --age-keygen <path> [--store <dir>]
-nova-secrets place  --store <dir> --as <name> --key <path> --sops <path> --machine <name> --secret <name> [--path <remote path>] [--machines <file>] [--receipts <dir>] [--ssh <path>]
+nova-secrets place  --store <dir> --as <name> --key <path> --sops <path> --machine <name> --secret <name> [--path <remote path>] [--machines <file>] [--receipts <dir>] [--ssh <path>] [--dry-run]
 nova-secrets placed --machine <name> [--receipts <dir>]
-nova-secrets seal   --store <dir> --as <seat> --key <path> --sops <path> --name NAME [--stdin] [--no-pr] [--gh <path>] [--git <path>]
+nova-secrets seal   --store <dir> --as <seat> --key <path> --sops <path> --name NAME [--stdin] [--no-pr] [--dry-run] [--gh <path>] [--git <path>]
 nova-secrets seat add --store <dir> --as <seat> --pub <age1…> --from <source seat> --only <NAME,...> --key <path> --sops <path>
-nova-secrets seat inject --store <dir> --as <seat> --from <source seat> --only <NAME,...> --key <path> --sops <path> [--no-pr] [--gh <path>] [--git <path>]
+nova-secrets seat inject --store <dir> --as <seat> --from <source seat> --only <NAME,...> --key <path> --sops <path> [--no-pr] [--dry-run] [--gh <path>] [--git <path>]
 nova-secrets help
 ```
 
 `version` (or `--version`) prints this binary's shared four-field build identity and takes
 no flags or arguments. It opens no store or key and starts no sops, age or network program,
 so an installed-tool inventory can ask it on a bench with no credential setup.
+
+**`--dry-run` prints the plan and writes nothing.** On `place`, `seal` and `seat inject` it runs
+every refusal the real run has, then prints one `SECRETS <VERB> PLAN` line per step the real run
+would take and a last `SECRETS <VERB> DRY-RUN OK` line, at exit 0: the file written and whether
+the name is added or replaced, the recipients it is encrypted to, the machine, ssh target and
+remote path a placement writes, the `sha256` its receipt records, the branch, the commit message
+and the pull request title a store change carries. The plan and the real run are read off the same
+values, so the one is the other. A dry run starts no ssh child, no `git` write, push or `gh`
+call, and no `sops` encrypt, and writes no file and no receipt; the two reads it makes are the
+ones the real run makes first (a `sops -d` to learn that a name exists, and git's own branch and
+clean-tree reads). `seal --dry-run` takes no value, from stdin or a terminal. No value, fragment
+or length reaches a plan line; `place --dry-run` prints the `sha256` the real receipt prints.
 
 Three verbs write into the store: **`seal`**, which folds one pasted value into one seat file
 and carries that change through a branch and a review; **`seat add`**, which creates a
@@ -489,7 +501,7 @@ review would be a courtesy between two administrators and this page could not ca
 ```
 nova-secrets place  --store <dir> --as <name> --key <path> --sops <path> \
   --machine <name> --secret <name> [--path <remote path>] \
-  [--machines <file>] [--receipts <dir>] [--ssh <path>]
+  [--machines <file>] [--receipts <dir>] [--ssh <path>] [--dry-run]
 nova-secrets placed --machine <name> [--receipts <dir>]
 SECRETS PLACE  OK   machine=<name> secret=<name> path=<path> sha256=<hex> stamp=<stamp>
 SECRETS PLACED OK   machine=<name> count=<n>
@@ -721,12 +733,12 @@ holding a line's send credential is a worker that can post as that line.
 One call, at the start of a seat, from the line's launcher:
 
 ```
-git -C /Users/rowan/secrets pull --ff-only && \
-nova-secrets exec --store /Users/rowan/secrets --as rowan \
-  --key /Users/rowan/.config/nova-secrets/rowan.key \
+git -C <home>/secrets pull --ff-only && \
+nova-secrets exec --store <home>/secrets --as <seat> \
+  --key <home>/.config/nova-secrets/<seat>.key \
   --sops /opt/homebrew/bin/sops \
   --only GH_TOKEN,DEEPSEEK_API_KEY,SPACE_USER,SPACE_HOST --require GH_TOKEN -- \
-  nova-sandbox --read /opt/homebrew --write /Users/rowan --net-deny -- <harness> <args…>
+  nova-sandbox --read /opt/homebrew --write <home> --net-deny -- <harness> <args…>
 ```
 
 The pull is the launcher's, never the tool's (invariant 8). The `--only` names the four this
@@ -849,7 +861,13 @@ SECRETS SEAT INJECT OK seat=<seat> from=<seat> names=<n> pr=#<n> merged
 SECRETS SEAT INJECT OK seat=<seat> from=<seat> names=<n> pr=#<n> open (gate not yet approved)
 SECRETS SEAT INJECT OK seat=<seat> from=<seat> names=<n> committed branch=<seal/…>
 SECRETS SEAT INJECT FAIL <why>
+SECRETS <PLACE|SEAL|SEAT INJECT> PLAN <step, as key=value fields>
+SECRETS <PLACE|SEAL|SEAT INJECT> DRY-RUN OK <name fields> nothing written, ...
 ```
+
+`--dry-run` prints `PLAN` lines and then `DRY-RUN OK` on stdout, exit 0. Its verdict is
+`DRY-RUN OK`, never the verb's own `OK`, so a caller that looks for `SECRETS SEAL OK` or
+`SECRETS PLACE  OK` never reads a plan as a change that happened.
 
 **Where a verb prints more than one line, its machine-readable block ends on its verdict.**
 Every `SECRETS` line a verb prints comes before its `OK` line, and whatever the receipt leaves

@@ -684,46 +684,47 @@ func fleetNameByte(c byte) bool {
 
 func cmdLint(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("lint")
-	card := f.fs.String("card", "", "")
+	card := f.fs.String("card", "", "the card file to lint before any spend")
 	// `--fleet <file>` IS THE LAUNCHER'S OWN LINT (issue #2012). A card is checked for
 	// what it costs a bench to run; a fleet script is checked for what it costs the
 	// fleet to RUN AT ALL: the coordinator's /bin/bash is 3.2 and a script that leans
 	// on bash 4 or on zsh's word-splitting differences takes every launch down with it.
 	// The same verb, the same one-file contract, the same drift lines and remedies.
-	fleet := f.fs.String("fleet", "", "")
-	rules := f.fs.Bool("rules", false, "")
+	fleet := f.fs.String("fleet", "", "a launcher script to lint instead of a card")
+	rules := f.fs.Bool("rules", false, "print every rule token with what it wants, and lint nothing")
 	// THE TYPED HEADER IS CHECKED WHEN THE CARD HAS ONE, AND ON DEMAND WHEN IT DOES NOT.
 	// A card cut under SPEC-TOOLWORK §5 carries five typed lines; every card written before
 	// it carries none, and those are still linted by the twelve older rules. So the header
 	// tokens fire on any card that declares one of the five lines, and `--typed` says that
 	// this card is meant to have a header even though it has none.
-	typed := f.fs.Bool("typed", false, "")
+	typed := f.fs.Bool("typed", false, "require the typed header (KIND, PATHS, TEST, PAUSED and DEPENDS-ON lines) even on a card that has none")
 	// `--trust <file>` IS A FIXTURE UNTIL `nova-pulse trust` EXISTS. The per-kind state is
 	// T06a's other half and lives in the lane that owns internal/pulse; the file this flag
 	// reads is in the exact shape that verb's listing prints, so the day it ships, its own
 	// stdout is what is handed here. With no --trust there is no state, and `paused` is not
 	// checked rather than guessed at.
-	trustPath := f.fs.String("trust", "", "")
+	trustPath := f.fs.String("trust", "", "a file of TRUST kind=<kind> state=<trial|trusted|paused> lines, for the paused check")
 	// `--lineup <file>` IS THE SPRINT LINEUP, AND ONLY FOR `--typed` (#2636). The lint has
 	// no lineup of its own. The file is ORDER.tsv's shape — id in the first column, or the
 	// column named id/card/card-id/label, a header that names depends-on skipped — or one
 	// card id per line. With no file an id is not called unknown.
-	lineupPath := f.fs.String("lineup", "", "")
+	lineupPath := f.fs.String("lineup", "", "with --typed: the sprint lineup, one card id per line or a TSV with an id column, so an unknown depends-on id is named")
 	// `--base-check` IS THE ASK FOR THE FOUR BASE CHECKS OF A CODING CARD (#2636):
 	// PATHS resolve at base-sha in `--repo` (default the working directory), no STEP
 	// runs `git push` or `gh`, LEG is in the `--legs` fleet table, and DEADLINE is at
 	// or above the kind's p95 in the `--p95` table. Evidence not handed over is not a
 	// pass: its check draws a finding that says MISSING and names the flag.
-	baseCheck := f.fs.Bool("base-check", false, "")
+	baseCheck := f.fs.Bool("base-check", false, "also run the four base checks of a coding card: PATHS exist at the base sha in --repo, no STEP pushes or calls gh, the LEG is in --legs, the deadline meets --p95")
 	// `--child-rules` IS THE ASK FOR THE RULES THE COORDINATOR GIVES EVERY CHILD. A card
 	// written for a bench worker under the twelve shape rules carries none of them, and a
 	// card written for a child of the coordinator carries all of them: the flag says which
 	// card this is, the way `--typed` does. `nova-sprint add` holds every brief to them
 	// without being asked.
-	childRules := f.fs.Bool("child-rules", false, "")
-	repoDir := f.fs.String("repo", ".", "")
-	legsPath := f.fs.String("legs", "", "")
-	p95Path := f.fs.String("p95", "", "")
+	childRules := f.fs.Bool("child-rules", false, "also hold the card to the child rules: the built-in general rules, or the sentences of --child-rules-file")
+	childRulesFile := f.fs.String("child-rules-file", "", "the rules `file` to hold the card to instead of the built-in general rules (it implies --child-rules): one required sentence per line, [name] sentence to name the token")
+	repoDir := f.fs.String("repo", ".", "with --base-check: the git checkout the card's PATHS are resolved in at the base sha (default the working directory)")
+	legsPath := f.fs.String("legs", "", "with --base-check: the fleet leg table, one leg per line or a TSV whose first column is the leg")
+	p95Path := f.fs.String("p95", "", "with --base-check: a `file` of <kind> <seconds> rows, the p95 wall of each kind's finished cards (* answers for any kind)")
 	max := maxFlag(f.fs)
 	if !f.parse(args, stderr) {
 		return 2
@@ -783,7 +784,7 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stdout, "LINT MORE script=%s findings=%d remedy=nova-swarm lint --fleet %s --max 0\n",
 				oneline.Field(name), len(findings), oneline.Field(*fleet))
 		}
-		return 2
+		return 1
 	}
 	f.want(*card, "card", "the path to the card file whose shape is checked before any spend; give --fleet <file> instead to lint a launcher script, or --rules to print every rule and what it wants")
 	if f.refused(stderr) {
@@ -856,10 +857,36 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 			findings = append(findings, cardFinding{check: hf.Check, line: hf.Line, excerpt: hf.Excerpt})
 		}
 	}
+	// THE CHILD RULES ARE THE COORDINATOR'S: the general defaults, or the sentences of the
+	// rules file the flag names (internal/swarm/lintchild.go). A rule of a file has its own
+	// token, so its remedy is built here and read back where the drift prints.
+	var ruleRemedies map[string]string
+	if *childRulesFile != "" {
+		*childRules = true // a rules file is the ask for the child rules
+	}
 	if *childRules {
-		for _, hf := range swarm.LintCardChild(raw) {
+		rules := swarm.DefaultChildRules
+		if *childRulesFile != "" {
+			rs, err := swarm.ReadChildRules(*childRulesFile)
+			if err != nil {
+				fmt.Fprintf(stderr, "nova-swarm lint: --child-rules-file wants a readable file of one required sentence per line: %s\n", oneline.Err(err))
+				return 2
+			}
+			rules = rs
+		}
+		ruleRemedies = map[string]string{}
+		for _, r := range rules {
+			ruleRemedies["rule-"+r.Name] = swarm.ChildRemedy(rules, "rule-"+r.Name)
+		}
+		for _, hf := range swarm.LintCardChildWith(raw, rules) {
 			findings = append(findings, cardFinding{check: hf.Check, line: hf.Line, excerpt: hf.Excerpt})
 		}
+	}
+	remedy := func(check string) string {
+		if r, ok := ruleRemedies[check]; ok {
+			return r
+		}
+		return cardLintRemedy(check)
 	}
 	if *baseCheck {
 		for _, hf := range swarm.LintCardBase(raw, bc) {
@@ -867,7 +894,7 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	// ADVICE IS NOT A DEFECT, AND THE VERDICT SAYS WHICH (issues #1494, #1527). A drift is
-	// a defect and exits 2, which a caller refuses on; a note is advice and changes no
+	// a defect and exits 1 (the verb ran and said NO), which a caller refuses on; a note is advice and changes no
 	// verdict. The two are told apart here, once, so neither the writer nor the caller has
 	// to read the check's name to know what happened to the card.
 	var drifts, notes []cardFinding
@@ -882,7 +909,7 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "LINT NOTE card=%s %s: %d: %s remedy=%s\n",
 			oneline.Field(name), oneline.Field(fd.check), fd.line,
 			oneline.Escape(oneline.Cap(fd.excerpt, oneline.TailBytes)),
-			oneline.Escape(cardLintRemedy(fd.check)))
+			oneline.Escape(remedy(fd.check)))
 	}
 	// THE CEILING IS NEVER A SILENT BOUND. A card writer learned of the 12000-byte cap by
 	// hitting it: a card at 11k looked exactly like a card at 2k. Every lint says how big
@@ -906,7 +933,7 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stdout, "LINT DRIFT card=%s %s: %d: %s remedy=%s\n",
 			oneline.Field(name), oneline.Field(fd.check), fd.line,
 			oneline.Escape(oneline.Cap(fd.excerpt, oneline.TailBytes)),
-			oneline.Escape(cardLintRemedy(fd.check)))
+			oneline.Escape(remedy(fd.check)))
 	}
 	if more {
 		fmt.Fprintf(stdout, "LINT MORE card=%s findings=%d remedy=nova-swarm lint --card %s --max 0\n",
@@ -919,5 +946,5 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 	// exactly the writer who needs to know how close to the ceiling the card already is --
 	// and `advisory=true` is the answer to the question two managers asked on one day.
 	fmt.Fprintf(stdout, "LINT SIZE card=%s bytes=%d cap=%d advisory=true\n", oneline.Field(name), len(raw), cardMaxBytes)
-	return 2
+	return 1
 }

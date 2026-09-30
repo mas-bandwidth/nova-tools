@@ -44,7 +44,7 @@ func runVerify(args []string, stdout, stderr io.Writer, q workgh.Query) int {
 	}
 	start := now()
 	fail := func(format string, a ...any) int {
-		fmt.Fprintf(stderr, "VERIFY FAIL tree=%s reason=%s\n", oneline.Field(*treePath), oneline.Field(fmt.Sprintf(format, a...)))
+		fmt.Fprintf(stderr, "VERIFY FAIL tree=%s reason=%s remedy=\"nova-work verify -h\"\n", oneline.Field(*treePath), oneline.Field(fmt.Sprintf(format, a...)))
 		return 2
 	}
 	fi, err := os.Stat(*treePath)

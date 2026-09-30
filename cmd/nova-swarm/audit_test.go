@@ -25,16 +25,14 @@ var swarmAudit = audit.Config{
 	// One entry per site, keyed by file, function and source text; sites with the same
 	// text in the same function share an entry. Each is a claim a reader can check.
 	Exempt: map[string]string{
-		"main.go|parse|f.verb":                              "the verb's own name, a literal at every newFlags call site in this file",
-		"main.go|want|name":                                 "a required flag's name, a literal at every call site in this file",
-		"main.go|want|wants":                                "the guidance that flag wants, a literal at every call site in this file",
-		"main.go|wantCount|name":                            "a required count flag's name, a literal at every call site in this file",
-		"main.go|wantCount|wants":                           "the guidance that count flag wants, a literal at every call site in this file",
-		"main.go|refused|f.verb":                            "the verb's own name, the value newFlags stored from that literal",
-		"main.go|cmdTemplate|body":                          "the named verbatim site: a template is a DOCUMENT a person redirects into a file, not an event line, so escaping it would fold it into one unusable line. Every byte of it is an embedded constant in package swarm. TestTemplatesCarryTheirConditions is the behavioural test for this site.",
-		"native.go|nativeRun|line":                          "the line NewWallReader announces a refusal on: swarm.WallRefusedLine builds the whole line and puts the kind, the path, the task and the step through oneline.Field inside itself, so what arrives at this closure is already one safe token, and escaping it a second time would fold it into one unreadable form. TestNativeIdleZeroWatchesNothing asserts the line this site prints byte for byte.",
-		"main.go|cmdBatchGather|swarm.NoBatchTokensRefusal": "a compile-time constant in package swarm (internal/swarm/batch.go): the ONE line a batch of cards given no budget word prints (#3202), held in one place so the CLI and swarm.Batch say the same sentence. It holds no caller-supplied value -- there is nothing in it to escape. TestBatchCardsWithoutTokensPrintsTheBatchRefusal compares it verbatim.",
-		"route.go|cmdRoute|belowWord":                       "built in this function from oneline.Field-escaped answer names joined with a literal comma, so it is already one safe token; the ROUTE print site's other caller-supplied values go through oneline.Field or a numeric verb on the same line. TestRouteBelowFloorExits3 is the behavioural test for this site.",
+		"main.go|parse|f.verb":     "the verb's own name, a literal at every newFlags call site in this file",
+		"main.go|want|name":        "a required flag's name, a literal at every call site in this file",
+		"main.go|want|wants":       "the guidance that flag wants, a literal at every call site in this file",
+		"main.go|wantCount|name":   "a required count flag's name, a literal at every call site in this file",
+		"main.go|wantCount|wants":  "the guidance that count flag wants, a literal at every call site in this file",
+		"main.go|refused|f.verb":   "the verb's own name, the value newFlags stored from that literal",
+		"main.go|cmdTemplate|body": "the named verbatim site: a template is a DOCUMENT a person redirects into a file, not an event line, so escaping it would fold it into one unusable line. Every byte of it is an embedded constant in package swarm. TestTemplatesCarryTheirConditions is the behavioural test for this site.",
+		"native.go|nativeRun|line": "the line NewWallReader announces a refusal on: swarm.WallRefusedLine builds the whole line and puts the kind, the path, the task and the step through oneline.Field inside itself, so what arrives at this closure is already one safe token, and escaping it a second time would fold it into one unreadable form. TestNativeIdleZeroWatchesNothing asserts the line this site prints byte for byte.",
 	},
 	// buildinfo.Line is the `version` verb's whole line and the fifth escaper: it renders
 	// every one of its four fields through oneline.Field inside internal/buildinfo, where
@@ -165,21 +163,19 @@ var swarmAudit = audit.Config{
 		// of this binary: the one line it holds is the gh script's own stderr, written by
 		// that script in the card's shell, never by nova-swarm.
 		`"github.com/mas-bandwidth/nova-tools/internal/nogh"`,
-		// redisq (slice 1 of SPEC-STATE) reads the Redis Streams pull queue, the fenced
-		// slot lease and the in-flight cap. It holds no writer of its own: every call
-		// either returns a value this package prints through oneline.Field or an error
-		// this package renders through oneline.Err, and the Lua scripts run inside Redis
-		// and write only that instance's own keys.
-		`"github.com/mas-bandwidth/nova-tools/internal/redisq"`,
+		// atomicfile writes one FILE whole (a temporary beside it, fsync, rename): it takes a
+		// path and the bytes of the file and puts no byte on any stream of this binary. The
+		// audit's Write check lets atomicfile.Write by its package name for that reason.
+		`"github.com/mas-bandwidth/nova-tools/internal/atomicfile"`,
+		// subproc starts one child under a deadline (Command) or a cancellable context
+		// (Long) and returns the *exec.Cmd to this package, which wires the streams. It
+		// holds no writer of this package's stream and prints nothing itself.
+		`"github.com/mas-bandwidth/nova-tools/internal/subproc"`,
 		// decide (pull --decide, SPEC-JOBS section 5) makes one typed HTTP
 		// request and returns typed answers; it holds no writer of this
 		// package's stream, and the one value this binary takes from it -- the
 		// chosen id -- is put through oneline.Field before it is printed.
 		`"github.com/mas-bandwidth/nova-tools/internal/decide"`,
-		// lanes (pull, SPEC-JOBS section 5) reads queue/lanes/ and writes the
-		// card files it places; it never writes to a stream, and every id it
-		// returns is put through oneline.Field before this package prints it.
-		`"github.com/mas-bandwidth/nova-tools/internal/lanes"`,
 		// events (nova-tools #2563) writes the card-end entry to the cards:done stream, and
 		// it IS a writer of this package's stream: `native` hands events.Writer the run's
 		// own stderr so a card that could not be measured says so. It cannot write past

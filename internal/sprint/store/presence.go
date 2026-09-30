@@ -156,6 +156,7 @@ func (st *Store) Beat(ctx context.Context, member string, given *float64, src ho
 	}
 	if ok {
 		// An unreadable record is a first beat: the next write replaces it.
+		// ignored: an unreadable record is a first beat, which the next write replaces (see the comment above)
 		_ = json.Unmarshal([]byte(raw), &prev)
 	}
 	now := st.now()

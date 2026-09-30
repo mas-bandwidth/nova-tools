@@ -6,8 +6,7 @@
 // self-hosted on the tailnet and run as the bench seat, and the run reports
 // itself from inside, with no GitHub call.
 //
-// The row's reader is `nova-wake watch --store` (internal/wake.EvGithub),
-// which blocks on ev:github for the pull requests it names and reads repo,
+// The row's reader is ghevent.Reader (internal/ghevent), which blocks on ev:github for the pull requests it names and reads repo,
 // number, kind, action, head, sender and at. The fields are exactly the ones
 // `nova-sprint ci github --from-runner` wrote, so that reader is unchanged. The ci:<repo>:<sha>:gh fold and
 // the pr:<repo>:<n> claim that verb also wrote are not written here: their

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -637,4 +638,82 @@ func checkTwin(twin, fresh *sprint.Snapshot) error {
 		return errors.New(d)
 	}
 	return nil
+}
+
+// A decided note names the primaries it answers in order, whatever order the
+// step that answered them took them in.
+func TestADecidedNoteNamesItsPrimariesInOrder(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setup(3)
+	h.must(CIStep(sprint.CIReq{Sel: sprint.Sel{IDs: []string{"s1-3", "s1-1", "s1-2"}}, Red: true, Run: "r1"}))
+	open, _ := h.m.OpenNotes(h.ctx)
+	if len(open) != 3 || open[0].Note.ID != open[2].Note.ID {
+		t.Fatalf("the red run opened %+v, want one judgment on three primaries", open)
+	}
+	h.must(DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"s1-3", "s1-1", "s1-2"}}}))
+	notes, _, _ := h.m.NotesSince(h.ctx, "", 1000)
+	for _, n := range notes {
+		if n.Kind == sprint.Decided && n.Answers == open[0].Note.ID {
+			if want := []string{"s1-1", "s1-2", "s1-3"}; !slices.Equal(n.Primaries, want) || n.Count != 3 {
+				t.Fatalf("the decided note names %v (%d), want %v", n.Primaries, n.Count, want)
+			}
+			return
+		}
+	}
+	t.Fatal("no decided note")
+}
+
+// A step that moves a stream's cards sets the stream's progress clock to the
+// step's time, whatever notes it writes.
+func TestAStepSetsTheProgressClockOfTheStreamsItMoved(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setup(2)
+	h.tick(time.Minute)
+	h.must(DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: 2}}))
+	progress, err := h.m.Progress(h.ctx)
+	if at := progress["s1"]; err != nil || !at.Equal(h.now) {
+		t.Fatalf("the progress of s1 is %v (%v), want the deal's time %v: %v", at, err, h.now, progress)
+	}
+}
+
+// logReads is a store that counts the reads of its log.
+type logReads struct {
+	*Mem
+	n int
+}
+
+func (l *logReads) LogSince(ctx context.Context, after string, max int) ([]sprint.Line, []string, error) {
+	l.n++
+	return l.Mem.LogSince(ctx, after, max)
+}
+
+// Check holds the log's rules (13, 14) to the whole log, and a check that
+// leaves them to its caller reads none of it.
+func TestCheckReadsTheLogOnlyWhenItHoldsTheLogsRules(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setup(1)
+	l := &logReads{Mem: h.m}
+	st := *h.st
+	st.B = l
+	for _, c := range []struct {
+		name    string
+		streams bool
+		reads   bool
+	}{
+		{"the log's rules left to the caller", false, false},
+		{"the log's rules held", true, true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			l.n = 0
+			if _, _, err := st.check(h.ctx, 1, c.streams); err != nil {
+				t.Fatal(err)
+			}
+			if (l.n > 0) != c.reads {
+				t.Errorf("%s: the log was read %d times, want reads %v", c.name, l.n, c.reads)
+			}
+		})
+	}
 }

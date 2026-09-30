@@ -266,6 +266,7 @@ func (winPlace) CreateJob(limits winLimits) (winJob, error) {
 		ext.JobMemoryLimit = uintptr(limits.MemoryBytes)
 	}
 	if err := setJobInfo(job.h, jobObjectExtendedLimitInformation, unsafe.Pointer(&ext), unsafe.Sizeof(ext)); err != nil {
+		// ignored: a close on the failure path; the SetInformationJobObject error is the one returned
 		_ = syscall.CloseHandle(job.h)
 		return nil, fmt.Errorf("SetInformationJobObject(JobObjectExtendedLimitInformation): %w", err)
 	}
@@ -277,6 +278,7 @@ func (winPlace) CreateJob(limits winLimits) (winJob, error) {
 			CPURate: uint32(limits.CPUPercent) * 100,
 		}
 		if err := setJobInfo(job.h, jobObjectCPURateControlInformation, unsafe.Pointer(&rate), unsafe.Sizeof(rate)); err != nil {
+			// ignored: a close on the failure path; the SetInformationJobObject error is the one returned
 			_ = syscall.CloseHandle(job.h)
 			return nil, fmt.Errorf("SetInformationJobObject(JobObjectCpuRateControlInformation): %w", err)
 		}
@@ -383,24 +385,33 @@ func (winPlace) Start(j winJob, spec winStartSpec) (winStarted, error) {
 	// worth making -- ask before the first instruction, and there is no window in which the
 	// answer could have been arranged.
 	if err := assertInJob(pi.Process, job.h); err != nil {
+		// ignored: the process never ran an instruction; the job assertion error is the one returned
 		_ = syscall.TerminateProcess(pi.Process, 1)
+		// ignored: a close on the failure path; the job assertion error is the one returned
 		_ = syscall.CloseHandle(pi.Thread)
+		// ignored: a close on the failure path; the job assertion error is the one returned
 		_ = syscall.CloseHandle(pi.Process)
 		return winStarted{}, sandbox.Refusal{Reason: "sandbox_failed", Text: err.Error()}
 	}
 	if _, err := resumeThread(pi.Thread); err != nil {
+		// ignored: the process never ran an instruction; the ResumeThread error is the one returned
 		_ = syscall.TerminateProcess(pi.Process, 1)
+		// ignored: a close on the failure path; the ResumeThread error is the one returned
 		_ = syscall.CloseHandle(pi.Thread)
+		// ignored: a close on the failure path; the ResumeThread error is the one returned
 		_ = syscall.CloseHandle(pi.Process)
 		return winStarted{}, fmt.Errorf("ResumeThread: %w", err)
 	}
+	// ignored: the thread handle is not needed once it runs; the process handle is the one waited on
 	_ = syscall.CloseHandle(pi.Thread)
 
 	done := make(chan int, 1)
 	go func() {
 		defer syscall.CloseHandle(pi.Process)
+		// ignored: an INFINITE wait on a handle this process owns; GetExitCodeProcess below reports what went wrong
 		_, _ = syscall.WaitForSingleObject(pi.Process, syscall.INFINITE)
 		var code uint32
+		// ignored: the child's end is reported as ExitNotExecuted on the channel, which the caller prints
 		if err := syscall.GetExitCodeProcess(pi.Process, &code); err != nil {
 			done <- sandbox.ExitNotExecuted
 			return
@@ -617,7 +628,9 @@ func (winPlace) StartWSB(file, xml string) error {
 	if r == 0 {
 		return fmt.Errorf("CreateProcessW(%s): %w", exe, errno)
 	}
+	// ignored: the sandbox runs on its own; these handles are not needed after CreateProcessW
 	_ = syscall.CloseHandle(pi.Thread)
+	// ignored: the sandbox runs on its own; these handles are not needed after CreateProcessW
 	_ = syscall.CloseHandle(pi.Process)
 	return nil
 }
@@ -627,6 +640,7 @@ func (winPlace) StartWSB(file, xml string) error {
 // the documented one, and the first call is EXPECTED to fail with ERROR_INSUFFICIENT_BUFFER.
 func newAttributeList(n int) (*byte, func(), error) {
 	var size uintptr
+	// ignored: the sizing call is documented to fail with ERROR_INSUFFICIENT_BUFFER; size is checked on the next line
 	_, _, _ = procInitializeProcThreadAttrList.Call(0, uintptr(n), 0, uintptr(unsafe.Pointer(&size)))
 	if size == 0 {
 		return nil, nil, fmt.Errorf("InitializeProcThreadAttributeList named no size for %d attributes", n)
@@ -639,6 +653,7 @@ func newAttributeList(n int) (*byte, func(), error) {
 	}
 	list := &buf[0]
 	return list, func() {
+		// ignored: a release of the attribute list after CreateProcessW has read it; nothing is left to report to
 		_, _, _ = procDeleteProcThreadAttributeList.Call(uintptr(unsafe.Pointer(list)))
 		// The list holds pointers INTO this allocation until CreateProcessW has read it, and
 		// the only thing referring to the allocation by then is this closure. Without the
@@ -665,6 +680,7 @@ func stdioHandles(spec winStartSpec) (in, out, errh syscall.Handle, closeAll fun
 	var toClose []*os.File
 	closeAll = func() {
 		for _, f := range toClose {
+			// ignored: a close of the child's inherited copies after it started; the child holds its own
 			_ = f.Close()
 		}
 	}
@@ -712,6 +728,7 @@ func readerHandle(r io.Reader) (syscall.Handle, *os.File, error) {
 	}
 	go func() {
 		defer pw.Close()
+		// ignored: a pipe pump; the child sees EOF when it ends, and its exit code is the report
 		_, _ = io.Copy(pw, r)
 	}()
 	h := syscall.Handle(pr.Fd())
@@ -733,6 +750,7 @@ func writerHandle(w io.Writer) (syscall.Handle, *os.File, error) {
 	}
 	go func() {
 		defer pr.Close()
+		// ignored: a pipe pump; the child's exit code is the report
 		_, _ = io.Copy(w, pr)
 	}()
 	h := syscall.Handle(pw.Fd())

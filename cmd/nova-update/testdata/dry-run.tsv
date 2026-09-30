@@ -1,0 +1,3 @@
+name	kind	installed	latest	apply	owner
+# Runnable with --dry-run: the apply column is read, never run.
+go	tool	go version	local:go version	go install golang.org/dl/go{version}@latest	caller

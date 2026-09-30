@@ -134,6 +134,17 @@ BUS FAIL <path, path:line, or lane>: <reason>
 
 `OK` lines go to stdout; `FAIL` lines and refusals go to stderr (except `nova-self-talk`'s `SELFTALK FAIL files=…` summary count line, which goes to stdout alongside the advisory note).
 
+**One value, two renderings.** A tool built on `internal/tool` returns one result
+per verb and prints it as lines or, with `--json` (every verb takes it), as one
+JSON object on stdout holding the same value:
+`{"result":{"verb","status":"ok|failed|refused","exit","remedy","why"},"facts":{},"items":[{"kind","fields"}],"more":[{"kind","shown","total","remedy"}],"notes":[]}`.
+The lines are `<TOKEN> OK|FAIL|REFUSED k=v ...` first, then `<TOKEN> <KIND> k=v ...`
+per item, the MORE line per capped kind, and `<TOKEN> NOTE <text>`; a refusal names
+every problem of the invocation at once, one line each,
+`<TOKEN> REFUSED: <what>; run: <remedy>`. The status follows the exit: ok 0,
+failed 1 (it ran and said no), refused 2 (it could not run). `help <verb>` ends
+with the verb's effect: inspection, local write, or delivery.
+
 **An event is exactly one line, and nothing a caller supplies or a file holds
 can add a second.** This is one guarantee, stated once here and met by every
 binary the same way, through `internal/oneline`. Every path, file name, reason,
@@ -216,8 +227,9 @@ lines for two lines of verdict; and a 674-entry open list is more than a
   one line however many there are. So is a passing `eval` row: it is counted
   in `hits=` on the summary line, never listed.
 - **An unusable invocation costs ONE line.** A flag typo, an unknown verb or a
-  bare invocation prints `<tool>[ <verb>]: <what was wrong>; run: <tool> help`
-  and never the usage banner, which is 32 to 102 lines depending on the binary.
+  bare invocation prints `<TOKEN> REFUSED: <what was wrong>; run: <tool> help`
+  (`<tool>[ <verb>]: <what was wrong>; run: <tool> help` on a tool not yet built
+  on `internal/tool`), one line per problem, and never the usage banner, which is 32 to 102 lines depending on the binary.
   `<tool> help` prints it, on stdout, exit 0. Where this repo's guidance law
   requires a refusal to say what the input WANTS, the hint follows on one
   further line.
@@ -4619,8 +4631,8 @@ to the timeout line, only for the caller that asked.
 
 **A harness that cannot loop — OpenCode's, and every harness like it — runs this
 exact sequence and nothing else.** Once, to clear the backlog: `nova-bus inbox
---bus ~/bus --as Freddy --receipt-max-words 40 --advance --remote origin --branch
-main`. Then one wait per turn: `nova-bus wait --bus ~/bus --as Freddy
+--bus ~/bus --as Bo --receipt-max-words 40 --advance --remote origin --branch
+main`. Then one wait per turn: `nova-bus wait --bus ~/bus --as Bo
 --receipt-max-words 40 --timeout 25m --until 2026-09-18T18:00:00Z --idle-exit 3
 --advance --remote origin --branch main`.
 Exit 0 is a note: the listing is on stdout, answer it, then issue the same wait
@@ -5041,7 +5053,7 @@ is trusted.
 ## The efficiency card, nova-bus
 
 The card is a measurement, taken read-only against the live checkout
-`/Users/glenn/rowan-working/rowan-stella` as Rowan. That bus held **3,401
+`<bus-checkout>` as the keeper. That bus held **3,401
 notes** on disk, **65 MB** of `.git`, and one reader carrying `carrying=986`.
 This section is the part of the efficiency-card set that binds `nova-bus`.
 

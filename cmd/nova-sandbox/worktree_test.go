@@ -14,6 +14,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // fakeGit is the tool's `git` for one test: it materialises a linked worktree as
@@ -637,5 +639,24 @@ func TestWorktreeForgeRefusalsSayWhichFailureItWas(t *testing.T) {
 				t.Fatalf("stderr %q tells the reader to retry a bad origin", errb)
 			}
 		})
+	}
+}
+
+// A fetch that hit its deadline is reported by name; any other fetch failure is tolerated
+// (the head may already be here) and left to the add.
+func TestFetchHeadReportsATimeoutAndToleratesTheRest(t *testing.T) {
+	t.Parallel()
+
+	timedOut := func(string, ...string) (string, error) {
+		return "", &subproc.TimeoutError{What: "git fetch origin abc", Budget: 5 * time.Minute, Err: errors.New("signal: killed")}
+	}
+	err := fetchHead(timedOut, "/repo", "abc")
+	var te *subproc.TimeoutError
+	if err == nil || !errors.As(err, &te) || !strings.Contains(err.Error(), "fetching abc from origin") {
+		t.Fatalf("a timed-out fetch was reported as %v", err)
+	}
+	refused := func(string, ...string) (string, error) { return "", errors.New("fatal: couldn't find remote ref") }
+	if err := fetchHead(refused, "/repo", "abc"); err != nil {
+		t.Fatalf("an ordinary fetch failure was reported: %v", err)
 	}
 }

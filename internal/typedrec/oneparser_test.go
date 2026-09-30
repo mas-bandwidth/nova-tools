@@ -61,10 +61,7 @@ var specAllowlist = []allowlistEntry{
 	// Issue-body card keys
 
 	// Other records
-	{file: "internal/wake/bus.go", fn: "waitBookkeeping", record: "wake-bus"},
-	{file: "internal/secrets/seal.go", fn: "carry", record: "git-HEAD"},
-	{file: "internal/swarm/wall.go", fn: "WallCommits", record: "git-HEAD"},
-	{file: "internal/swarm/wall.go", fn: "repoCommits", record: "git-HEAD"},
+	{file: "internal/secrets/seal.go", fn: "preflight", record: "git-HEAD"},
 
 	// part=B (merge/verdict.go ParseDispositionLine, dispositionWholeLine)
 	// moved into typedrec.ParseDisposition; their two entries are gone.
@@ -75,12 +72,8 @@ var specAllowlist = []allowlistEntry{
 // than RESULT, sits outside part A's PATHS, and carries the commit that added
 // it and the reason it stays. A new hit on dev lands here only with both.
 var driftAllowlist = []allowlistEntry{
-	{file: "cmd/nova-swarm/nativeevent.go", fn: "failWord", record: "verdict", since: "7644669f",
-		reason: "first word of a nova-swarm native verdict line (BLOCKED, RED), an event record, not RESULT line 2"},
-	{file: "internal/swarm/sparse.go", fn: "cardPATHS", record: "SPEC-CARD", since: "dd08d6e3",
-		reason: "the card's PATHS header for the sparse checkout, read before any RESULT exists"},
 	{file: "internal/swarm/stage.go", fn: "ReadCardBase", record: "SPEC-CARD", since: "5778de35",
-		reason: "the card's REPO: header for staging (#3711), read before any RESULT exists, like sparse.go cardPATHS"},
+		reason: "the card's REPO: header for staging (#3711), read before any RESULT exists"},
 }
 
 var allowlist = append(append([]allowlistEntry{}, specAllowlist...), driftAllowlist...)
@@ -666,15 +659,15 @@ func TestOneTypedParser(t *testing.T) {
 			}
 		}
 
-		// The spec's list after part B and the deleted packages: 6 entries, none tagged part=B.
+		// The spec's list after part B and the deleted packages: 3 entries, none tagged part=B.
 		partB := 0
 		for _, a := range specAllowlist {
 			if a.partB {
 				partB++
 			}
 		}
-		if len(specAllowlist) != 6 || partB != 0 {
-			t.Errorf("spec allowlist: %d entries, %d part=B; want 6 and 0", len(specAllowlist), partB)
+		if len(specAllowlist) != 3 || partB != 0 {
+			t.Errorf("spec allowlist: %d entries, %d part=B; want 3 and 0", len(specAllowlist), partB)
 		}
 		// Every drift entry names the commit that added it and why it stays.
 		for _, a := range driftAllowlist {

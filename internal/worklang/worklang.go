@@ -1,8 +1,9 @@
 /*
-Package worklang is the bounded reader for a `.work` plan (docs/SPEC-WORKLANG.md).
+Package worklang is the bounded reader for a restricted-Lisp file (docs/SPEC-WORKLANG.md).
+Its one caller is internal/workfile, which reads nova-work's tree file through it.
 
-A plan is data the kernel reads, never a program it evaluates. The reader is the
-restricted-Lisp grammar the rest of this repo already uses for work files: a
+A file is data the reader returns, never a program it evaluates. The grammar is the
+restricted Lisp of nova-work's tree file (docs/SPEC-WORK-V1.md section 1): a
 sequence of s-expressions made only of lists, keywords, strings, integers and
 bare symbols, with every evaluation form refused at the boundary and three bounds enforced as
 the reader runs -- bytes, nesting depth and node count. Nothing read here is ever
@@ -10,7 +11,7 @@ evaluated: there is no eval, and a dispatch macro is a refusal with the byte
 offset that owes it, not a form the reader will run.
 
 Every refusal is a *Refusal carrying exit code 2, so the command that opens a
-plan can print one line and stop, never a partial parse.
+file can print one line and stop, never a partial parse.
 */
 package worklang
 
@@ -19,19 +20,13 @@ import (
 	"strings"
 )
 
-// Limits is the three bounds every plan read is held to. A zero value is not
-// usable; build one with DefaultLimits or set all three. The names are the flag
-// names the caller exposes: --max-bytes, --max-depth, --max-nodes.
+// Limits is the three bounds every read is held to. A zero value is not usable;
+// set all three. The names are the flag names a caller may expose: --max-bytes,
+// --max-depth, --max-nodes.
 type Limits struct {
 	MaxBytes int
 	MaxDepth int
 	MaxNodes int
-}
-
-// DefaultLimits is the shape the kernel's intake limits already carry
-// (lisp/nova-work/src/control.lisp): 64 KiB, depth 64, 4096 nodes.
-func DefaultLimits() Limits {
-	return Limits{MaxBytes: 65536, MaxDepth: 64, MaxNodes: 4096}
 }
 
 // Refusal is a plan this reader would not read. It is always exit 2: the tool
@@ -74,8 +69,7 @@ const (
 
 // Form is one restricted s-expression. Offset is the form's first byte and End
 // the byte just past its last, so a refusal can name where in the file it
-// happened -- and a WRITER can replace exactly the bytes one form occupies and
-// leave every other byte of the file alone.
+// happened.
 type Form struct {
 	Kind   Kind
 	Offset int
@@ -83,28 +77,6 @@ type Form struct {
 	List   []Form
 	Value  string // keyword name (no colon) or decoded string
 	Int    int64
-}
-
-// Bytes returns the form's own bytes out of the source it was read from. It is
-// the writer's half of Offset/End: the one place a caller turns a form back
-// into the text the author wrote, rather than re-rendering it and losing the
-// spacing, the order and the comments beside it.
-func (f Form) Bytes(data []byte) []byte {
-	if f.Offset < 0 || f.End > len(data) || f.Offset >= f.End {
-		return nil
-	}
-	return data[f.Offset:f.End]
-}
-
-// IsKeyword reports whether f is the keyword named name (without the colon).
-func (f Form) IsKeyword(name string) bool { return f.Kind == Keyword && f.Value == name }
-
-// Text returns the decoded string of a String form, or "".
-func (f Form) Text() string {
-	if f.Kind == String {
-		return f.Value
-	}
-	return ""
 }
 
 // reader walks the bytes of one plan under the three bounds.

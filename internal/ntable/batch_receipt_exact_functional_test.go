@@ -15,6 +15,8 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func manifestWithActor(rev, op, actor, members string) string {
@@ -39,16 +41,12 @@ func TestBatchReceiptSizeIsExactAtItsBound(t *testing.T) {
 	// have one length); find the pad that fills it
 	probe := manifestWithActor(probeRev(ctx, c), "op-p", strings.Repeat("a", 1000), body)
 	ans, err := rawApply(ctx, c, probe)
-	if err != nil || ans[0] != "OK" {
-		t.Fatalf("probe: %.200v %v", ans, err)
-	}
+	require.True(t, replyOpens(ans, err, "OK"), "probe: %.200v %v", ans, err)
 	pad := 1000 + ntable.LimitReceiptBytes - deltaLen(ans)
 	for i := 0; i < 128; i++ { // put the members back so the creates are fresh
 		c.Del(ctx, ntable.MemberKey(fmt.Sprintf("m%03d", i)), ntable.CellKey("demo", "build", "ready"))
 	}
-	if err := c.Del(ctx, ntable.DefKey("demo")+":ops").Err(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, c.Del(ctx, ntable.DefKey("demo")+":ops").Err())
 
 	before := storeImage(t, c)
 	over := manifestWithActor(probeRev(ctx, c), "op-o", strings.Repeat("a", pad+1), body)
@@ -56,17 +54,12 @@ func TestBatchReceiptSizeIsExactAtItsBound(t *testing.T) {
 	if err != nil || len(ans) < 5 || ans[0] != "REFUSED" || ans[1] != "LIMIT" || ans[2] != "receipt bytes" || fmt.Sprint(ans[4]) != fmt.Sprint(ntable.LimitReceiptBytes+1) {
 		t.Fatalf("one byte over: %.200v %v; want LIMIT receipt bytes, size %d", ans, err, ntable.LimitReceiptBytes+1)
 	}
-	if !reflect.DeepEqual(before, storeImage(t, c)) {
-		t.Errorf("a refusal changed the store")
-	}
+	assert.Equal(t, before, storeImage(t, c), "a refusal changed the store")
 	at := manifestWithActor(probeRev(ctx, c), "op-a", strings.Repeat("a", pad), body)
 	ans, err = rawApply(ctx, c, at)
-	if err != nil || ans[0] != "OK" {
-		t.Fatalf("at the bound: %.200v %v", ans, err)
-	}
-	if got := deltaLen(ans); got != ntable.LimitReceiptBytes {
-		t.Errorf("the largest accepted receipt is %d bytes, want exactly %d", got, ntable.LimitReceiptBytes)
-	}
+	require.True(t, replyOpens(ans, err, "OK"), "at the bound: %.200v %v", ans, err)
+	got := deltaLen(ans)
+	assert.Equal(t, int(ntable.LimitReceiptBytes), got, "the largest accepted receipt is %d bytes, want exactly %d", got, ntable.LimitReceiptBytes)
 }
 
 // A value of 64 bytes is kept in full and one of 65 is its length and SHA-1, by
@@ -81,39 +74,25 @@ func TestBatchDigestRuleIsExactInEveryRecordAndTheRequestIsKeptAsSent(t *testing
 	u64 := strings.Repeat("€", 21) + "x" // 64 bytes, 22 runes
 	u66 := strings.Repeat("é", 33)       // 66 bytes, 33 runes
 	n64, n65 := strings.Repeat("N", 64), strings.Repeat("M", 65)
-	if err := c.HSet(ctx, ntable.MemberKey("a"), "b64", b64, "b65", b65, "u64", u64, "u66", u66).Err(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, c.HSet(ctx, ntable.MemberKey("a"), "b64", b64, "b65", b65, "u64", u64, "u66", u66).Err())
 	raw := manifestWith(probeRev(ctx, c), "dg", `{"id":"a","expect":{},"unset":["b64","b65","u64","u66"],"set":{"n64":"`+n64+`","n65":"`+n65+`"}}`)
 	ans, err := rawApply(ctx, c, raw)
-	if err != nil || ans[0] != "OK" {
-		t.Fatalf("apply %.300v %v", ans, err)
-	}
+	require.True(t, replyOpens(ans, err, "OK"), "apply %.300v %v", ans, err)
 	event := fmt.Sprint(c.XRevRangeN(ctx, ntable.DefKey("demo")+":changes", "+", "-", 1).Val()[0].Values)
 	var record struct {
 		Request string `json:"request"`
 		Result  any    `json:"result"`
 	}
-	if err := json.Unmarshal([]byte(c.HGet(ctx, ntable.DefKey("demo")+":ops", "0:dg").Val()), &record); err != nil {
-		t.Fatal(err)
-	}
-	if record.Request != raw {
-		t.Errorf("the record's request is not the manifest as sent")
-	}
+	require.NoError(t, json.Unmarshal([]byte(c.HGet(ctx, ntable.DefKey("demo")+":ops", "0:dg").Val()), &record))
+	assert.Equal(t, raw, record.Request, "the record's request is not the manifest as sent")
 	for what, text := range map[string]string{"reply": fmt.Sprint(ans), "event": event, "record result": fmt.Sprint(record.Result)} {
 		for name, v := range map[string]string{"b64": b64, "u64": u64, "n64": n64} {
-			if !strings.Contains(text, v) {
-				t.Errorf("%s lacks the 64-byte %s in full", what, name)
-			}
+			assert.Contains(t, text, v, "%s lacks the 64-byte %s in full", what, name)
 		}
 		for name, v := range map[string]string{"b65": b65, "u66": u66, "n65": n65} {
-			if strings.Contains(text, v) {
-				t.Errorf("%s holds the %d-byte %s in full", what, len(v), name)
-			}
+			assert.NotContains(t, text, v, "%s holds the %d-byte %s in full", what, len(v), name)
 			sum := sha1.Sum([]byte(v))
-			if !strings.Contains(text, hex.EncodeToString(sum[:])) {
-				t.Errorf("%s lacks the SHA-1 of %s", what, name)
-			}
+			assert.Contains(t, text, hex.EncodeToString(sum[:]), "%s lacks the SHA-1 of %s", what, name)
 		}
 	}
 	again, err := rawApply(ctx, c, raw)

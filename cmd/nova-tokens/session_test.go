@@ -54,14 +54,14 @@ func TestSessionFoldsIntoTheDayFileAndKeepsTheOtherRows(t *testing.T) {
 	r := invoke(t, "session", "--claude-session", writeSession(t), "--out", out)
 	wantExit(t, r, 0)
 	wantContains(t, r.stdout, "TOKENS DAY day=2026-09-11 written=true rows=2 retained=1")
-	wantContains(t, r.stdout, "model=claude-fable-5-1/coordinator")
+	wantContains(t, r.stdout, "model=claude-opus-5/coordinator")
 
 	raw, err := os.ReadFile(filepath.Join(out, "2026-09-11.tsv"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	body := string(raw)
-	wantContains(t, body, "2026-09-11\tclaude-fable-5-1/coordinator\tcoordinator\t16\t420\t2500\t20000\t-\t0\tutc\tclaude-session")
+	wantContains(t, body, "2026-09-11\tclaude-opus-5/coordinator\tcoordinator\t16\t420\t2500\t20000\t-\t0\tutc\tclaude-session")
 	wantContains(t, body, "2026-09-11\tdeepseek-v4-flash\tnova-tools\t100\t10\t-\t-\t-\t0\tutc\temma")
 	wantContains(t, body, "turns=2")
 	if !strings.Contains(body, "sources=claude-session,emma") {
@@ -73,7 +73,7 @@ func TestSessionFoldsIntoTheDayFileAndKeepsTheOtherRows(t *testing.T) {
 	again := invoke(t, "session", "--claude-session", writeSession(t), "--out", out)
 	wantExit(t, again, 0)
 	raw2, _ := os.ReadFile(filepath.Join(out, "2026-09-11.tsv"))
-	if strings.Count(string(raw2), "claude-fable-5-1/coordinator") != 1 {
+	if strings.Count(string(raw2), "claude-opus-5/coordinator") != 1 {
 		t.Errorf("a second fold wrote a second coordinator row:\n%s", raw2)
 	}
 }
@@ -104,5 +104,55 @@ func TestHelpNamesTheSessionVerb(t *testing.T) {
 	r := invoke(t, "help")
 	wantExit(t, r, 0)
 	wantContains(t, r.stdout, "nova-tokens session --claude-session <jsonl>")
-	wantContains(t, r.stdout, "claude-fable-5-1/coordinator")
+	wantContains(t, r.stdout, "<model>/coordinator")
+}
+
+// TestSessionBooksTheModelTheTranscriptNames: a transcript of another model is booked as that
+// model's coordinator row, never under a fixed label (a cold rating of the tools, 2026-09-30:
+// `session --out` folded a transcript naming one model under another's coordinator label).
+func TestSessionBooksTheModelTheTranscriptNames(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	body := `{"timestamp":"2026-09-11T09:00:00Z","message":{"id":"a","model":"some-other-model-7","usage":{"input_tokens":5,"output_tokens":6}}}
+`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := t.TempDir()
+	r := invoke(t, "session", "--claude-session", path, "--out", out)
+	wantExit(t, r, 0)
+	wantContains(t, r.stdout, "model=some-other-model-7/coordinator")
+	raw, err := os.ReadFile(filepath.Join(out, "2026-09-11.tsv"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantContains(t, string(raw), "2026-09-11\tsome-other-model-7/coordinator\tcoordinator\t5\t6\t0\t0")
+	if strings.Contains(string(raw), "fable") {
+		t.Errorf("a fixed coordinator label was booked:\n%s", raw)
+	}
+}
+
+// TestSessionRefusesATranscriptThatNamesNoModel: with --out the verb refuses, names the
+// reason and writes nothing; without --out it still measures.
+func TestSessionRefusesATranscriptThatNamesNoModel(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	body := `{"timestamp":"2026-09-11T09:00:00Z","message":{"id":"a","usage":{"input_tokens":5,"output_tokens":6}}}
+`
+	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := filepath.Join(t.TempDir(), "out")
+	r := invoke(t, "session", "--claude-session", path, "--out", out)
+	wantExit(t, r, 2)
+	wantContains(t, r.stderr, "names no model")
+	if _, err := os.Stat(out); err == nil {
+		t.Errorf("a refused fold created %s", out)
+	}
+
+	r = invoke(t, "session", "--claude-session", path)
+	wantExit(t, r, 0)
+	wantContains(t, r.stdout, "SESSION turns=1")
 }
