@@ -95,6 +95,7 @@ The same list stands at the top of `SprintEvents.tla` and in the pull request's 
 | `HeldSticky` | action | a member held by fleet down stays held until fleet up |
 | `StoppedJudgmentTrue` | invariant | the STOPPED judgment open only when a dry plan would change a card; raised at most once per span. It fails with every repair (H7: a verb empties the dry plans between two looks); `StoppedOnce` is its second half (once per span, and per wait with `spanreset`, per close with `stoprearm`), and `StoppedStaleCloses` and `StoppedRaiseFresh` below say what the repairs give |
 | `StepWithinBounds` | invariant | every request fits the step bound |
+| `DealGoesRound` | invariant | errata 3, amendment 5 (R6): with every member up and idle, the i-th card the plan deals goes to the member i - 1 places past the rolling index `dcur` in the ring of the members (so consecutive deals go to distinct members in the fixed order until every member has one); stated from `dcur` and the ring, not from `RoundOne`, which the plan uses |
 | `DealTakesTurns` | invariant | errata 3, amendment 4 (R6): the plan the deal would make takes each stream's front in turn: within a stream its lowest by work order, and no stream is taken from more than once past a stream with a dealable card left (once, only if it is before it in the streams' order); stated from the counts of the plan, not from `TurnSorted`, which the plan uses |
 | `LeaseSafe` | action | E4, T1: every tick write carries the current lease generation, the error steps of a LIMIT and of a bug refusal included |
 | `ReplayNoop`, `QuietStaysQuiet` | action | a rule run again at once writes nothing |
@@ -148,8 +149,9 @@ Each `MCSprintEventsW<n>.cfg` turns on one broken rule (`Broken = "W<n>"`) on a 
 | W26 | release reads waiting instead of `elig` | `NeedsHold` | 5 |
 | W27 | the first request of a cut plan removes the keys (the second refused STOPPED) | `NoLostWork` | 11 |
 | W28 | the deal takes the room lowest over the whole table (the design's body for R6), not each stream's front in turn (amendment 4) | `DealTakesTurns` | 1 (the instance's first state: p1 and p3 of s1 taken, p2 of s2 left) |
+| W29 | the deal scans the members from the first every time (the old rule), not from the rolling index (amendment 5) | `DealGoesRound` | 1 (the instance's first state: the index is past m1, p1 goes to m1) |
 
-So 30 witness configurations: 28 fail with the property their row names, and W1 and W25 pass, because the design holds there with a second guard (the lease generation for both). Section 5's table claims W6 fails `OnePlace` "or a card dealt twice": it fails `LeaseSafe`, the rule itself, and `OnePlace` holds for the same second guards (place, revision and absence on every rule step); W7's row is two changes, split here, and W7b's claim of `Progress` cannot fail under bounded outside actions (its property is `RedealsCounted`).
+So 31 witness configurations: 29 fail with the property their row names, and W1 and W25 pass, because the design holds there with a second guard (the lease generation for both). Section 5's table claims W6 fails `OnePlace` "or a card dealt twice": it fails `LeaseSafe`, the rule itself, and `OnePlace` holds for the same second guards (place, revision and absence on every rule step); W7's row is two changes, split here, and W7b's claim of `Progress` cannot fail under bounded outside actions (its property is `RedealsCounted`).
 
 The liveness witnesses and their controls use `Steady` members, so that a failure of `Progress` there comes from the broken rule and not from H12.
 
@@ -214,6 +216,12 @@ The deal takes one card from each stream's front in turn (`TurnSorted`, used by 
 
 **Run.** On the bench (TLC 2.19, `tla2tools.jar` sha256 `936a2620...`, Java 21.0.12.1, 32 cores, 2026-09-30 UTC), the fourteen groups are recorded again in `RUNS.tsv`: every existing case keeps its verdict (a pass passes, each recorded counterexample fails with the property its row names). `MCSprintEventsW28` fails `DealTakesTurns` in its initial state (1 state generated): the whole table's order takes p1 and p3, both of s1, and none of s2's p2, so the plan takes two cards from the first stream in turn. `MCSprintEventsC28` passes with every safety property, `Progress` and `DealTakesTurns` (100 generated, 75 distinct states).
 
+## Amendment 5: the deal goes round the fleet
+
+The deal chooses each card's member by a rolling index, `dcur` (and the ask its readers by `acur`), the place in the fixed order of the members (of the readers) the next scan starts at: `RoundOne`, `RoundAssign` and `RoundTwo` in `SprintEvents.tla`, and `internal/sprint/round.go`. The index moves past the member a card was dealt to and does not move for a card refused. It replaces the shortest ready queue with its ties broken by the order, which gave every card of an idle fleet to the first members. `DealGoesRound` is the invariant: with every member up and idle, the i-th card of the plan goes to the member i - 1 places past `dcur` in the ring, so consecutive deals go to distinct members in order until every member has one. `ScnRound` (`MCSprintEventsC29`, `MCSprintEventsW29`) is its instance: p1 ready, both members up and idle, and the index past m1 (the last deal went to m1); `Scn.dcur` is the initial index of a scenario (1 in every other one). `MCSprintEventsW29.cfg` scans from the first member every time and fails `DealGoesRound` in its first state; `MCSprintEventsC29.cfg` is the same instance on the design with every safety property, `Progress`, `DealTakesTurns` and `DealGoesRound`.
+
+**Run.** On the bench (TLC 2.19, `tla2tools.jar` sha256 `936a2620...`, Java 21.0.12.1, 32 cores, 2026-09-30 UTC), the fourteen groups are recorded again in `RUNS.tsv` for the model with the rolling index: every existing case keeps its verdict. The counts of states changed where the index is a variable of the state. `MCSprintEventsW29` fails `DealGoesRound` in its initial state (1 state generated): the index is 2, the design gives p1 to m2 and the old order gives it to m1. `MCSprintEventsC29` passes with every safety property, `Progress`, `DealTakesTurns` and `DealGoesRound` (74 generated, 56 distinct states).
+
 ## Results
 
 All runs used TLC 2.19 (`tla2tools.jar` sha256 `936a2620...`) on Java 21.0.12.1, on a 32-core Linux bench shared with other work (load average 8 to 32 during the runs), on 2026-09-30 (UTC), on this module as committed.
@@ -222,138 +230,140 @@ All runs used TLC 2.19 (`tla2tools.jar` sha256 `936a2620...`) on Java 21.0.12.1,
 
 | group | cases | seconds |
 |---|---|---|
-| `sprintevents` | 8 | 30.2 |
-| `sprintevents-land` | 1 | 55.5 |
-| `sprintevents-faults` | 1 | 53.0 |
-| `sprintevents-fleet` | 1 | 43.5 |
-| `sprintevents-lease` | 4 | 40.0 |
-| `sprintevents-loops` | 2 | 53.9 |
-| `sprintevents-drop` | 8 | 43.5 |
-| `sprintevents-controls-a` | 11 | 18.8 |
-| `sprintevents-controls-b` | 14 | 20.9 |
-| `sprintevents-witnesses-a` | 12 | 12.6 |
-| `sprintevents-witnesses-b` | 14 | 13.5 |
+| `sprintevents` | 8 | 30.0 |
+| `sprintevents-land` | 1 | 53.4 |
+| `sprintevents-faults` | 1 | 53.4 |
+| `sprintevents-fleet` | 1 | 55.6 |
+| `sprintevents-lease` | 4 | 35.6 |
+| `sprintevents-loops` | 2 | 58.5 |
+| `sprintevents-drop` | 8 | 45.2 |
+| `sprintevents-controls-a` | 11 | 18.2 |
+| `sprintevents-controls-b` | 15 | 22.4 |
+| `sprintevents-witnesses-a` | 12 | 12.7 |
+| `sprintevents-witnesses-b` | 15 | 14.5 |
 | `sprintevents-goals` | 9 | 9.0 |
 | `sprintevents-goals-b` | 15 | 17.9 |
-| `sprintevents-repairs` | 13 | 30.3 |
+| `sprintevents-repairs` | 13 | 30.4 |
 
 **Every gated case** (`RUNS.tsv` has the rest of each record):
 
 | case | result | generated | distinct | seconds |
 |---|---|---|---|---|
-| `MCSprintEvents.cfg` | pass | 149163 | 82395 | 13.152 |
-| `MCSprintEventsCursor.cfg` | pass | 5661 | 3296 | 2.149 |
-| `MCSprintEventsProbe.cfg` | pass | 4953 | 2827 | 2.274 |
-| `MCSprintEventsStop.cfg` | pass | 4557 | 2665 | 2.241 |
-| `MCSprintEventsLimit.cfg` | pass | 276 | 217 | 1.598 |
-| `MCSprintEventsReview.cfg` | pass | 24619 | 12857 | 5.535 |
-| `MCSprintEventsMulti.cfg` | pass | 1461 | 978 | 2.290 |
-| `MCSprintEventsMultiReach.cfg` | fails ProbeTwoMoves | 5 | 5 | 0.926 |
-| `MCSprintEventsLand.cfg` | pass | 208266 | 88267 | 55.493 |
-| `MCSprintEventsFaults.cfg` | pass | 565021 | 327286 | 53.037 |
-| `MCSprintEventsFleet.cfg` | pass | 936787 | 363266 | 43.542 |
-| `MCSprintEventsLease.cfg` | pass | 370752 | 161728 | 34.278 |
-| `MCSprintEventsC6.cfg` | pass | 27242 | 12808 | 3.151 |
-| `MCSprintEventsW6.cfg` | fails LeaseSafe | 70 | 49 | 0.952 |
-| `MCSprintEventsLeaseErr.cfg` | pass | 1820 | 940 | 1.611 |
-| `MCSprintEventsC1.cfg` | pass | 759368 | 343590 | 39.811 |
-| `MCSprintEventsW1.cfg` | pass | 759368 | 343590 | 14.123 |
-| `MCSprintEventsDrop.cfg` | pass | 297254 | 145737 | 21.370 |
-| `MCSprintEventsDrop2.cfg` | pass | 120369 | 62575 | 11.627 |
-| `MCSprintEventsDrop2Reach.cfg` | fails ProbeTwoDrops | 302 | 195 | 1.059 |
-| `MCSprintEventsFreezeReach.cfg` | fails ProbeReread | 1762 | 1046 | 1.436 |
-| `MCSprintEventsC13.cfg` | pass | 6342 | 3730 | 2.244 |
-| `MCSprintEventsC14.cfg` | pass | 20531 | 11248 | 3.463 |
-| `MCSprintEventsW13.cfg` | fails DropComplete | 1275 | 734 | 1.335 |
-| `MCSprintEventsW14.cfg` | fails DropComplete | 27 | 16 | 0.923 |
-| `MCSprintEventsC2.cfg` | pass | 500 | 370 | 1.414 |
-| `MCSprintEventsC3.cfg` | pass | 232 | 161 | 1.198 |
-| `MCSprintEventsC4.cfg` | pass | 2822 | 1756 | 1.858 |
-| `MCSprintEventsC5.cfg` | pass | 22350 | 10963 | 3.328 |
-| `MCSprintEventsC7.cfg` | pass | 51 | 38 | 1.063 |
-| `MCSprintEventsC7b.cfg` | pass | 664 | 412 | 1.676 |
-| `MCSprintEventsC8.cfg` | pass | 4208 | 2361 | 2.288 |
-| `MCSprintEventsC9.cfg` | pass | 136 | 102 | 1.265 |
-| `MCSprintEventsC10.cfg` | pass | 371 | 249 | 1.583 |
-| `MCSprintEventsC11.cfg` | pass | 827 | 581 | 1.834 |
-| `MCSprintEventsC12.cfg` | pass | 72 | 51 | 1.263 |
-| `MCSprintEventsC15.cfg` | pass | 3208 | 1971 | 2.081 |
-| `MCSprintEventsC16.cfg` | pass | 371 | 249 | 1.108 |
-| `MCSprintEventsC17.cfg` | pass | 1664 | 1020 | 1.581 |
-| `MCSprintEventsC18.cfg` | pass | 1694 | 992 | 1.564 |
-| `MCSprintEventsC19.cfg` | pass | 80 | 67 | 1.040 |
-| `MCSprintEventsC20.cfg` | pass | 336 | 229 | 1.246 |
-| `MCSprintEventsC21.cfg` | pass | 2761 | 1365 | 1.702 |
-| `MCSprintEventsC22.cfg` | pass | 2948 | 1944 | 2.099 |
-| `MCSprintEventsC23.cfg` | pass | 100 | 75 | 1.523 |
-| `MCSprintEventsC24.cfg` | pass | 55 | 47 | 1.033 |
-| `MCSprintEventsC25.cfg` | pass | 439 | 294 | 1.491 |
-| `MCSprintEventsC26.cfg` | pass | 169 | 130 | 1.003 |
-| `MCSprintEventsC27.cfg` | pass | 2016 | 1383 | 1.897 |
-| `MCSprintEventsC28.cfg` | pass | 100 | 75 | 1.563 |
+| `MCSprintEvents.cfg` | pass | 149163 | 82395 | 12.883 |
+| `MCSprintEventsCursor.cfg` | pass | 5661 | 3296 | 2.560 |
+| `MCSprintEventsProbe.cfg` | pass | 4953 | 2827 | 2.144 |
+| `MCSprintEventsStop.cfg` | pass | 4557 | 2665 | 1.995 |
+| `MCSprintEventsLimit.cfg` | pass | 276 | 217 | 1.395 |
+| `MCSprintEventsReview.cfg` | pass | 24619 | 12857 | 5.791 |
+| `MCSprintEventsMulti.cfg` | pass | 1461 | 978 | 2.245 |
+| `MCSprintEventsMultiReach.cfg` | fails ProbeTwoMoves | 5 | 5 | 0.994 |
+| `MCSprintEventsLand.cfg` | pass | 208266 | 88267 | 53.416 |
+| `MCSprintEventsFaults.cfg` | pass | 569153 | 330157 | 53.419 |
+| `MCSprintEventsFleet.cfg` | pass | 1158626 | 448472 | 55.555 |
+| `MCSprintEventsLease.cfg` | pass | 370752 | 161728 | 29.815 |
+| `MCSprintEventsC6.cfg` | pass | 27242 | 12808 | 3.110 |
+| `MCSprintEventsW6.cfg` | fails LeaseSafe | 70 | 49 | 0.953 |
+| `MCSprintEventsLeaseErr.cfg` | pass | 1820 | 940 | 1.722 |
+| `MCSprintEventsC1.cfg` | pass | 759368 | 343590 | 44.345 |
+| `MCSprintEventsW1.cfg` | pass | 759368 | 343590 | 14.105 |
+| `MCSprintEventsDrop.cfg` | pass | 297254 | 145737 | 21.691 |
+| `MCSprintEventsDrop2.cfg` | pass | 120369 | 62575 | 12.125 |
+| `MCSprintEventsDrop2Reach.cfg` | fails ProbeTwoDrops | 302 | 195 | 1.042 |
+| `MCSprintEventsFreezeReach.cfg` | fails ProbeReread | 1762 | 1046 | 1.358 |
+| `MCSprintEventsC13.cfg` | pass | 6342 | 3730 | 2.385 |
+| `MCSprintEventsC14.cfg` | pass | 20531 | 11248 | 3.953 |
+| `MCSprintEventsW13.cfg` | fails DropComplete | 1275 | 734 | 1.557 |
+| `MCSprintEventsW14.cfg` | fails DropComplete | 27 | 16 | 1.139 |
+| `MCSprintEventsC2.cfg` | pass | 500 | 370 | 1.448 |
+| `MCSprintEventsC3.cfg` | pass | 232 | 161 | 1.188 |
+| `MCSprintEventsC4.cfg` | pass | 2822 | 1756 | 1.897 |
+| `MCSprintEventsC5.cfg` | pass | 22350 | 10963 | 3.324 |
+| `MCSprintEventsC7.cfg` | pass | 51 | 38 | 1.040 |
+| `MCSprintEventsC7b.cfg` | pass | 664 | 412 | 1.578 |
+| `MCSprintEventsC8.cfg` | pass | 4208 | 2361 | 2.083 |
+| `MCSprintEventsC9.cfg` | pass | 136 | 102 | 1.031 |
+| `MCSprintEventsC10.cfg` | pass | 371 | 249 | 1.486 |
+| `MCSprintEventsC11.cfg` | pass | 827 | 581 | 1.909 |
+| `MCSprintEventsC12.cfg` | pass | 72 | 51 | 1.243 |
+| `MCSprintEventsC15.cfg` | pass | 3208 | 1971 | 2.052 |
+| `MCSprintEventsC16.cfg` | pass | 371 | 249 | 1.338 |
+| `MCSprintEventsC17.cfg` | pass | 1664 | 1020 | 1.610 |
+| `MCSprintEventsC18.cfg` | pass | 1694 | 992 | 1.559 |
+| `MCSprintEventsC19.cfg` | pass | 80 | 67 | 1.047 |
+| `MCSprintEventsC20.cfg` | pass | 336 | 229 | 1.349 |
+| `MCSprintEventsC21.cfg` | pass | 3639 | 1798 | 1.772 |
+| `MCSprintEventsC22.cfg` | pass | 2948 | 1944 | 2.001 |
+| `MCSprintEventsC23.cfg` | pass | 100 | 75 | 1.479 |
+| `MCSprintEventsC24.cfg` | pass | 55 | 47 | 0.993 |
+| `MCSprintEventsC25.cfg` | pass | 439 | 294 | 1.421 |
+| `MCSprintEventsC26.cfg` | pass | 169 | 130 | 1.216 |
+| `MCSprintEventsC27.cfg` | pass | 2016 | 1383 | 1.865 |
+| `MCSprintEventsC28.cfg` | pass | 100 | 75 | 1.416 |
+| `MCSprintEventsC29.cfg` | pass | 74 | 56 | 1.241 |
 | `MCSprintEventsW2.cfg` | fails NoLostWork | 9 | 9 | 0.936 |
-| `MCSprintEventsW3.cfg` | fails DueAgrees | 22 | 17 | 0.937 |
-| `MCSprintEventsW4.cfg` | fails PositionHolds | 141 | 99 | 0.984 |
-| `MCSprintEventsW5.cfg` | fails PositionHolds | 19 | 16 | 0.917 |
-| `MCSprintEventsW5Reach.cfg` | fails Answerable | 134 | 91 | 0.971 |
-| `MCSprintEventsW7a.cfg` | fails Progress | 72 | 52 | 1.031 |
-| `MCSprintEventsW7b.cfg` | fails RedealsCounted | 121 | 81 | 0.968 |
-| `MCSprintEventsW8.cfg` | fails OpenExact | 422 | 251 | 1.072 |
-| `MCSprintEventsW9.cfg` | fails HeadActionable | 11 | 10 | 0.944 |
-| `MCSprintEventsW10.cfg` | fails Progress | 364 | 242 | 1.250 |
-| `MCSprintEventsW11.cfg` | fails Progress | 812 | 572 | 1.553 |
-| `MCSprintEventsW12.cfg` | fails HoldEnds | 38 | 28 | 1.011 |
-| `MCSprintEventsW15.cfg` | fails ChunkProgress | 149 | 100 | 1.011 |
-| `MCSprintEventsW16.cfg` | fails WaitHolds | 92 | 66 | 0.957 |
-| `MCSprintEventsW17.cfg` | fails UniqueScores|ScoresBelowCounter | 9 | 8 | 0.933 |
-| `MCSprintEventsW18.cfg` | fails PlaceOnlyUp | 138 | 94 | 0.988 |
-| `MCSprintEventsW19.cfg` | fails HeldSticky | 11 | 10 | 0.947 |
-| `MCSprintEventsW20.cfg` | fails StoppedJudgmentTrue | 227 | 158 | 0.970 |
-| `MCSprintEventsW21.cfg` | fails Answerable | 44 | 28 | 0.947 |
-| `MCSprintEventsW22.cfg` | fails NeedsHold | 72 | 48 | 0.954 |
-| `MCSprintEventsW23.cfg` | fails Progress | 6 | 5 | 0.966 |
-| `MCSprintEventsW24.cfg` | fails NoLostWork | 7 | 7 | 0.921 |
-| `MCSprintEventsW25.cfg` | pass | 439 | 294 | 1.062 |
-| `MCSprintEventsW26.cfg` | fails NeedsHold | 11 | 10 | 0.920 |
-| `MCSprintEventsW27.cfg` | fails NoLostWork | 196 | 141 | 1.053 |
-| `MCSprintEventsW28.cfg` | fails DealTakesTurns | 1 | 1 | 0.904 |
-| `MCSprintEventsGoalNamed.cfg` | fails ProgressLiteral | 40 | 31 | 1.028 |
-| `MCSprintEventsGoalStopped.cfg` | fails Progress | 5 | 4 | 0.931 |
+| `MCSprintEventsW3.cfg` | fails DueAgrees | 22 | 17 | 0.933 |
+| `MCSprintEventsW4.cfg` | fails PositionHolds | 141 | 99 | 0.975 |
+| `MCSprintEventsW5.cfg` | fails PositionHolds | 19 | 16 | 0.941 |
+| `MCSprintEventsW5Reach.cfg` | fails Answerable | 134 | 91 | 0.979 |
+| `MCSprintEventsW7a.cfg` | fails Progress | 72 | 52 | 1.027 |
+| `MCSprintEventsW7b.cfg` | fails RedealsCounted | 121 | 81 | 0.960 |
+| `MCSprintEventsW8.cfg` | fails OpenExact | 422 | 251 | 1.034 |
+| `MCSprintEventsW9.cfg` | fails HeadActionable | 11 | 10 | 0.946 |
+| `MCSprintEventsW10.cfg` | fails Progress | 364 | 242 | 1.210 |
+| `MCSprintEventsW11.cfg` | fails Progress | 812 | 572 | 1.719 |
+| `MCSprintEventsW12.cfg` | fails HoldEnds | 38 | 28 | 1.010 |
+| `MCSprintEventsW15.cfg` | fails ChunkProgress | 149 | 100 | 0.988 |
+| `MCSprintEventsW16.cfg` | fails WaitHolds | 92 | 66 | 0.988 |
+| `MCSprintEventsW17.cfg` | fails UniqueScores|ScoresBelowCounter | 9 | 8 | 0.930 |
+| `MCSprintEventsW18.cfg` | fails PlaceOnlyUp | 138 | 94 | 0.958 |
+| `MCSprintEventsW19.cfg` | fails HeldSticky | 11 | 10 | 0.941 |
+| `MCSprintEventsW20.cfg` | fails StoppedJudgmentTrue | 227 | 158 | 0.977 |
+| `MCSprintEventsW21.cfg` | fails Answerable | 44 | 28 | 0.941 |
+| `MCSprintEventsW22.cfg` | fails NeedsHold | 72 | 48 | 0.947 |
+| `MCSprintEventsW23.cfg` | fails Progress | 6 | 5 | 0.975 |
+| `MCSprintEventsW24.cfg` | fails NoLostWork | 7 | 7 | 0.924 |
+| `MCSprintEventsW25.cfg` | pass | 439 | 294 | 1.081 |
+| `MCSprintEventsW26.cfg` | fails NeedsHold | 11 | 10 | 0.936 |
+| `MCSprintEventsW27.cfg` | fails NoLostWork | 196 | 141 | 1.093 |
+| `MCSprintEventsW28.cfg` | fails DealTakesTurns | 1 | 1 | 0.927 |
+| `MCSprintEventsW29.cfg` | fails DealGoesRound | 1 | 1 | 0.927 |
+| `MCSprintEventsGoalNamed.cfg` | fails ProgressLiteral | 40 | 31 | 1.022 |
+| `MCSprintEventsGoalStopped.cfg` | fails Progress | 5 | 4 | 0.952 |
 | `MCSprintEventsGoalSpan.cfg` | fails Progress | 60 | 39 | 1.027 |
-| `MCSprintEventsGoalStale.cfg` | fails StoppedJudgmentTrue | 94 | 62 | 0.968 |
-| `MCSprintEventsGoalDrop.cfg` | fails Answerable | 264 | 157 | 1.001 |
-| `MCSprintEventsGoalMissing.cfg` | fails IndexAgreesLiteral | 9 | 8 | 0.909 |
-| `MCSprintEventsGoalCursor.cfg` | fails CursorSoundLiteral | 642 | 416 | 1.137 |
-| `MCSprintEventsGoalDue.cfg` | fails DueAgreesLiteral | 57 | 41 | 0.984 |
-| `MCSprintEventsGoalDownDeal.cfg` | fails NoLostWork | 46 | 39 | 0.988 |
-| `MCSprintEventsGoalRank.cfg` | fails Answerable | 126 | 87 | 0.985 |
-| `MCSprintEventsGoalTakeRoom.cfg` | fails NoLostWork | 224 | 145 | 1.042 |
-| `MCSprintEventsGoalSeen.cfg` | fails NoLostWork | 233 | 131 | 1.035 |
-| `MCSprintEventsGoalMade.cfg` | fails Answerable | 11 | 10 | 0.920 |
-| `MCSprintEventsGoalCut.cfg` | fails Answerable | 1132 | 648 | 1.304 |
-| `MCSprintEventsGoalFreeze.cfg` | fails DropComplete | 1424 | 832 | 1.384 |
-| `MCSprintEventsGoalDropAck.cfg` | fails Answerable | 27 | 16 | 0.941 |
-| `MCSprintEventsGoalInsert.cfg` | fails Answerable | 1101 | 684 | 1.239 |
-| `MCSprintEventsGoalStaleClose.cfg` | fails StoppedJudgmentTrue | 94 | 62 | 0.967 |
-| `MCSprintEventsGoalStaleRaise.cfg` | fails StoppedRaiseFresh | 95 | 62 | 0.962 |
-| `MCSprintEventsGoalDropAdd.cfg` | fails Answerable | 43 | 26 | 0.941 |
-| `MCSprintEventsGoalRankSelf.cfg` | fails Answerable | 129 | 89 | 0.979 |
-| `MCSprintEventsGoalRearm.cfg` | fails ProgressScoped | 1117 | 624 | 3.038 |
-| `MCSprintEventsGoalStaleFleet.cfg` | fails StoppedRaiseFresh | 176 | 111 | 0.995 |
-| `MCSprintEventsGoalPlace.cfg` | fails UnplacedNamed | 1263 | 718 | 1.156 |
-| `MCSprintEventsRepairDownDeal.cfg` | pass | 76 | 62 | 1.017 |
-| `MCSprintEventsRepairDrop.cfg` | pass | 14109 | 7985 | 2.683 |
-| `MCSprintEventsRepairRank.cfg` | pass | 1553 | 1057 | 1.844 |
-| `MCSprintEventsRepairTakeRoom.cfg` | pass | 1049 | 725 | 1.718 |
-| `MCSprintEventsRepairDropAck.cfg` | pass | 13018 | 7195 | 2.976 |
-| `MCSprintEventsRepairStopped.cfg` | pass | 465 | 304 | 2.100 |
-| `MCSprintEventsRepairStale.cfg` | pass | 129 | 85 | 1.148 |
-| `MCSprintEventsInsert.cfg` | pass | 21169 | 12488 | 3.738 |
-| `MCSprintEventsRepairDropAdd.cfg` | pass | 15684 | 8749 | 3.651 |
-| `MCSprintEventsRepairRankSelf.cfg` | pass | 1508 | 1019 | 1.781 |
-| `MCSprintEventsRepairRearm.cfg` | pass | 1031 | 565 | 2.782 |
-| `MCSprintEventsRepairStaleRaise.cfg` | pass | 129 | 85 | 1.200 |
-| `MCSprintEventsRepairPlace.cfg` | pass | 27379 | 13236 | 3.646 |
+| `MCSprintEventsGoalStale.cfg` | fails StoppedJudgmentTrue | 94 | 62 | 0.970 |
+| `MCSprintEventsGoalDrop.cfg` | fails Answerable | 264 | 157 | 1.003 |
+| `MCSprintEventsGoalMissing.cfg` | fails IndexAgreesLiteral | 9 | 8 | 0.926 |
+| `MCSprintEventsGoalCursor.cfg` | fails CursorSoundLiteral | 642 | 416 | 1.116 |
+| `MCSprintEventsGoalDue.cfg` | fails DueAgreesLiteral | 57 | 41 | 0.960 |
+| `MCSprintEventsGoalDownDeal.cfg` | fails NoLostWork | 46 | 39 | 0.991 |
+| `MCSprintEventsGoalRank.cfg` | fails Answerable | 126 | 87 | 0.969 |
+| `MCSprintEventsGoalTakeRoom.cfg` | fails NoLostWork | 224 | 145 | 1.056 |
+| `MCSprintEventsGoalSeen.cfg` | fails NoLostWork | 233 | 131 | 1.029 |
+| `MCSprintEventsGoalMade.cfg` | fails Answerable | 11 | 10 | 0.934 |
+| `MCSprintEventsGoalCut.cfg` | fails Answerable | 1132 | 648 | 1.234 |
+| `MCSprintEventsGoalFreeze.cfg` | fails DropComplete | 1424 | 832 | 1.311 |
+| `MCSprintEventsGoalDropAck.cfg` | fails Answerable | 27 | 16 | 0.936 |
+| `MCSprintEventsGoalInsert.cfg` | fails Answerable | 1101 | 684 | 1.186 |
+| `MCSprintEventsGoalStaleClose.cfg` | fails StoppedJudgmentTrue | 94 | 62 | 0.956 |
+| `MCSprintEventsGoalStaleRaise.cfg` | fails StoppedRaiseFresh | 95 | 62 | 0.964 |
+| `MCSprintEventsGoalDropAdd.cfg` | fails Answerable | 43 | 26 | 0.939 |
+| `MCSprintEventsGoalRankSelf.cfg` | fails Answerable | 129 | 89 | 0.982 |
+| `MCSprintEventsGoalRearm.cfg` | fails ProgressScoped | 1117 | 624 | 3.229 |
+| `MCSprintEventsGoalStaleFleet.cfg` | fails StoppedRaiseFresh | 176 | 111 | 0.999 |
+| `MCSprintEventsGoalPlace.cfg` | fails UnplacedNamed | 1263 | 718 | 1.132 |
+| `MCSprintEventsRepairDownDeal.cfg` | pass | 76 | 62 | 1.031 |
+| `MCSprintEventsRepairDrop.cfg` | pass | 14109 | 7985 | 2.975 |
+| `MCSprintEventsRepairRank.cfg` | pass | 1553 | 1057 | 1.699 |
+| `MCSprintEventsRepairTakeRoom.cfg` | pass | 1049 | 725 | 1.675 |
+| `MCSprintEventsRepairDropAck.cfg` | pass | 13018 | 7195 | 3.012 |
+| `MCSprintEventsRepairStopped.cfg` | pass | 465 | 304 | 1.757 |
+| `MCSprintEventsRepairStale.cfg` | pass | 129 | 85 | 1.256 |
+| `MCSprintEventsInsert.cfg` | pass | 21169 | 12488 | 3.886 |
+| `MCSprintEventsRepairDropAdd.cfg` | pass | 15684 | 8749 | 3.742 |
+| `MCSprintEventsRepairRankSelf.cfg` | pass | 1508 | 1019 | 1.642 |
+| `MCSprintEventsRepairRearm.cfg` | pass | 1031 | 565 | 2.993 |
+| `MCSprintEventsRepairStaleRaise.cfg` | pass | 129 | 85 | 1.221 |
+| `MCSprintEventsRepairPlace.cfg` | pass | 27379 | 13236 | 3.500 |
 
 
 **The bench runs** (`tla/sprintevents-bench/`; the seconds are TLC's own):

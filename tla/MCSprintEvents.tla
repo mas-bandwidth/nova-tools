@@ -44,7 +44,7 @@ AtM(m, cl) == {<<m, cl>>}
 Base == [col |-> Cols4("none", "none", "none", "none"), score |-> Cols4(0, 0, 0, 0),
          result |-> Cols4("ok", "ok", "ok", "ok"), wpl |-> NoCard,
          status |-> [m \in MCMembers |-> "up"], running |-> TRUE,
-         next |-> 10, goal |-> FALSE, log |-> <<>>, owe |-> {}, oweall |-> TRUE]
+         next |-> 10, dcur |-> 1, goal |-> FALSE, log |-> <<>>, owe |-> {}, oweall |-> TRUE]
 UpDown == [m \in MCMembers |-> IF m = "m1" THEN "up" ELSE "down"]
 
 \* The instance of the task: p1 ready (s1, 2), g1 waiting (s1, 4), p2
@@ -75,6 +75,10 @@ ScnReady2 == [Base EXCEPT !.col = Cols4("ready", "none", "ready", "none"), !.sco
 \* two, so the deal takes two of the three. The whole table's order (2, 4, 6)
 \* takes both of s1's; the stream turns take p1 and p2 (W28).
 ScnTurns == [Base EXCEPT !.col = Cols4("ready", "ready", "ready", "none"), !.score = Cols4(2, 6, 4, 0), !.next = 8]
+\* p1 ready (s1, 2), both members up and idle, the deal's index past m1 (the
+\* last deal went to m1): the rolling deal gives p1 to m2, the old name order to
+\* m1 (W29).
+ScnRound == [Base EXCEPT !.col = Cols4("ready", "none", "none", "none"), !.score = Cols4(2, 0, 0, 0), !.dcur = 2, !.next = 4]
 \* The same, m2 down.
 ScnReady2One == [ScnReady2 EXCEPT !.status = UpDown]
 \* p1 in review, its work ok, never asked (s1, 2).
