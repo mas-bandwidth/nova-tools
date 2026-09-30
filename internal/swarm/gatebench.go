@@ -28,8 +28,7 @@ package swarm
 //     before the harvest's is written, so a card-written gate line never survives as the
 //     harvest's.
 //   - The staging of the branch on the gate bench, the call from the harvest fold, and
-//     the `nova-merge simulate` refusal are the lane that owns `internal/pulse` and
-//     `internal/merge`. Until those cards land, nothing in this package calls RunLegGate:
+//     the `nova-merge simulate` refusal are the lane that owns `internal/pulse`. Until those cards land, nothing in this package calls RunLegGate:
 //     it is the seam they will call, the way `ReadTrustFixture` is the seam
 //     `nova-pulse trust` lands against (lintheader.go, "the verb does not exist yet").
 //

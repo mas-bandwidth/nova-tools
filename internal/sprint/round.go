@@ -409,6 +409,40 @@ func roundWrites(p *Plan, r *round, moves roundMoves) {
 	if r == nil || len(moves) == 0 {
 		return
 	}
+	p.rounds = append(p.rounds, roundRecord{r, moves})
+	roundWrite(p, r, moves)
+}
+
+// roundRecord is an index a plan moved and the names each of its units moved
+// it past.
+type roundRecord struct {
+	r     *round
+	moves roundMoves
+}
+
+// rewriteRounds makes a plan's index writes again from its units: after a
+// unit is dropped, each index is up by the placements the kept units make
+// and the names they pass over, never by the dropped one's (errata 3, the
+// form of the index: one a placement made).
+func rewriteRounds(p *Plan) {
+	var props []PropWrite
+	for _, pw := range p.Props {
+		mine := false
+		for _, rr := range p.rounds {
+			mine = mine || rr.r.table == pw.Table && rr.r.name == pw.Name
+		}
+		if !mine {
+			props = append(props, pw)
+		}
+	}
+	p.Props = props
+	for _, rr := range p.rounds {
+		roundWrite(p, rr.r, rr.moves)
+	}
+}
+
+// roundWrite is roundWrites' write, from the plan's units as they stand.
+func roundWrite(p *Plan, r *round, moves roundMoves) {
 	w := &round{order: r.order, count: roundCount(r.order, r.read)}
 	moved := false
 	for _, u := range p.Units {

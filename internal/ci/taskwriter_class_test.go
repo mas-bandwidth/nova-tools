@@ -16,9 +16,8 @@ import (
 // set, a friend-queue idx set, a task:<id> record or the retired sprint store
 // (s:<S>:task:<id>, s:<S>:open:<f>, s:<S>:ready; one task store, 2026-09-25
 // 09:35 ET) with a direct Redis call;
-// a verb FCALLs ns_tcard_* (internal/nsprint/taskcard) instead. Fixtures that
-// seed a throwaway store (a *fixture*.go file, internal/nsprint/ws/wstest)
-// are the only exceptions.
+// a verb FCALLs ns_tcard_* instead. Fixtures that seed a throwaway store (a
+// *fixture*.go file) are the only exceptions.
 func TestTaskCardsHaveOneWriter(t *testing.T) {
 	t.Parallel()
 	tree := repoTree(t)
@@ -27,13 +26,8 @@ func TestTaskCardsHaveOneWriter(t *testing.T) {
 	raw := regexp.MustCompile(`"(ZADD|ZREM|SADD|SREM|SMOVE|HSET|HDEL|DEL|RENAME|ZUNIONSTORE)", "(ws:|task:|friend:[^"]*:cards:|sprint:[^"]*:idx:)`)
 	key := regexp.MustCompile(`^("ws:"\s*\+|"task:"\s*\+|"friend:"\s*\+.*":cards:"|".*:idx:"|"s:"\s*\+.*":(task|open|ready)|` +
 		`(ws|taskcard|stream)\.(Key|WSKey|StreamKey|FriendKey)\(|(table\.)?(StreamKey|FriendKey|FriendCardsKey|WSKey)\()`)
-	// Inside the two packages that name the keys, a bare Key( is theirs.
-	bareKey := regexp.MustCompile(`^Key\(`)
-	owns := func(rel string) bool {
-		return strings.HasPrefix(rel, "internal/nsprint/ws/") || strings.HasPrefix(rel, "internal/nsprint/taskcard/")
-	}
 	exempt := func(rel string) bool {
-		return strings.HasPrefix(rel, "internal/nsprint/ws/wstest/") || strings.Contains(rel[strings.LastIndex(rel, "/")+1:], "fixture")
+		return strings.Contains(rel[strings.LastIndex(rel, "/")+1:], "fixture")
 	}
 	checked := 0
 	var bad []string
@@ -49,7 +43,7 @@ func TestTaskCardsHaveOneWriter(t *testing.T) {
 					if k == `"ws:names"` || k == `"ws:order"` || k == `"ws:checkpoint"` {
 						continue
 					}
-					if key.MatchString(k) || (owns(src.Rel) && bareKey.MatchString(k)) {
+					if key.MatchString(k) {
 						bad = append(bad, src.Rel+":"+strconv.Itoa(i+1)+": "+strings.TrimSpace(line))
 					}
 				}
@@ -63,6 +57,6 @@ func TestTaskCardsHaveOneWriter(t *testing.T) {
 		t.Fatal("read no Go source; the rule is reading the wrong tree")
 	}
 	for _, b := range bad {
-		t.Errorf("a second writer of the task card sets (the one writer is ns_tcard_move, internal/nsprint/taskcard): %s", b)
+		t.Errorf("a second writer of the task card sets (the one writer is ns_tcard_move): %s", b)
 	}
 }

@@ -423,3 +423,105 @@ func TestThePumpsSecondDrainIsInTheReport(t *testing.T) {
 		t.Fatalf("brief is on the table after the tick: %s", c.Col)
 	}
 }
+
+// The rolling indexes are up by one a placement MADE and one a name passed
+// over (errata 3, the form of the index): a deal unit a queued change holds
+// back (LeaveQueued) places nothing, so the fleet's deal_index and the work
+// table's stream_index move for the kept placements only, and the card held
+// back is dealt by the next tick's pump. Three streams of one card each, three
+// machines; the world ranks one card between the pump's drain and its deal.
+func TestADealHeldBackByTheQueueMovesNoIndex(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		held          string
+		dealIndex     string // three names: a held-back second is passed over, a held-back third is not reached
+		streamIndex   string
+		kept, dealtTo []string
+	}{
+		{held: "b", dealIndex: "3", streamIndex: "3", kept: []string{"a", "c"}, dealtTo: []string{"m1", "m3"}},
+		{held: "c", dealIndex: "2", streamIndex: "2", kept: []string{"a", "b"}, dealtTo: []string{"m1", "m2"}},
+	} {
+		h := newHarness(t)
+		h.mu.Lock()
+		h.live = append(h.live, "m3")
+		h.mu.Unlock()
+		h.beat()
+		for _, m := range []string{"m1", "m2", "m3"} {
+			h.must(FleetStep(sprint.FleetReq{Op: "up", Member: m}))
+		}
+		for i, id := range []string{"a", "b", "c"} {
+			h.must(AddStep(sprint.AddReq{Stream: "s" + strconv.Itoa(i+1), IDs: []string{id}}))
+		}
+		h.startMachine()
+		ranked := false
+		work := sprint.TickTables[0]
+		var parts []sprint.TickPartDef
+		for _, p := range work.Parts {
+			if p.Name == "deal" {
+				parts = append(parts, sprint.TickPartDef{Name: "world", Fn: func(s *sprint.Snapshot, _ sprint.TickReq) (sprint.Plan, int) {
+					if !ranked {
+						ranked = true
+						h.must(RankStep(sprint.RankReq{IDs: []string{tc.held}, First: true}))
+						return sprint.Plan{Notes: []sprint.Note{{Kind: sprint.Happened, Type: "world", At: s.Now}}}, 0
+					}
+					return sprint.Plan{}, 0
+				}})
+			}
+			parts = append(parts, p)
+		}
+		work.Parts = parts
+		h.st.Updates = []sprint.TableUpdate{work, sprint.TickTables[1], sprint.TickTables[2], sprint.TickTables[3]}
+		h.machine()
+		s := h.table()
+		for i, id := range tc.kept {
+			if c := s.Work.Card(id); c.Col != sprint.Working || s.Fleet.Card(c.F("work")).Row != tc.dealtTo[i] {
+				t.Fatalf("held %s: %s is %s on %s, want working on %s", tc.held, id, c.Col, s.Fleet.Card(c.F("work")).Row, tc.dealtTo[i])
+			}
+		}
+		if st := s.StateOf(tc.held); st != sprint.Ready {
+			t.Fatalf("held %s: it is %s, want ready: the queued rank holds it back", tc.held, st)
+		}
+		di, _ := s.Fleet.Prop(sprint.PropDealIndex)
+		si, _ := s.Work.Prop(sprint.PropStreamIndex)
+		if di != tc.dealIndex || si != tc.streamIndex {
+			t.Fatalf("held %s: deal_index %s, stream_index %s; want %s and %s: up by the kept placements and the names they pass over only", tc.held, di, si, tc.dealIndex, tc.streamIndex)
+		}
+		h.st.Updates = nil
+		h.machine()
+		if st := h.table().StateOf(tc.held); st != sprint.Working {
+			t.Fatalf("held %s: the next tick left it %s", tc.held, st)
+		}
+		t.Logf("held %s: deal_index %s, stream_index %s after the tick; dealt the next tick", tc.held, di, si)
+	}
+}
+
+// Every step but the pump judges the work table through the queued view: an
+// accept on a running machine (the coordinator's, its work change queued, its
+// merge card written at once) and a merge in the same tick, before the pump,
+// agree: MERGE lands it, and check is clean before and after the pump.
+func TestAMergeBeforeThePumpSeesTheQueuedAccept(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setup(2)
+	h.stopMachine()
+	h.must(DealStep(sprint.DealReq{Sel: sprint.Sel{IDs: []string{"s1-1", "s1-2"}}}))
+	h.work("m1")
+	h.work("m2")
+	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1", "s1-2"}}}))
+	h.readAll()
+	h.startMachine()
+	h.must(AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{IDs: []string{"s1-1", "s1-2"}}}))
+	if st := h.table().StateOf("s1-1"); st != sprint.Review {
+		t.Fatalf("the accept's work change is not queued: s1-1 is %s on the table", st)
+	}
+	h.clean("accepted, before the pump")
+	h.must(MergeStep(sprint.MergeReq{Stream: "s1", Batch: 10}))
+	h.clean("merged, before the pump")
+	h.machine()
+	for _, id := range []string{"s1-1", "s1-2"} {
+		if st := h.table().StateOf(id); st != sprint.Landed {
+			t.Fatalf("%s is %s after the pump", id, st)
+		}
+	}
+	h.clean("landed")
+}

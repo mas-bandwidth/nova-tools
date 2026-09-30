@@ -81,6 +81,10 @@ type Plan struct {
 	// removing says remove built the plan: the one step that takes a landed
 	// primary off the table.
 	removing bool
+	// rounds are the rolling indexes the plan moved and each unit's moves
+	// (roundWrites): a unit dropped after planning (LeaveQueued) moves no
+	// index, so the plan's index writes are made again from the units kept.
+	rounds []roundRecord
 	// drained says Drain built the plan: each of its changes composes changes
 	// the lifecycle already held when the steps that queued them were
 	// planned, so a composed move may pass over states (review to landed, by

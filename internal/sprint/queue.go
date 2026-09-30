@@ -377,6 +377,9 @@ func LeaveQueued(p Plan, held map[string]bool) Plan {
 		}
 		p.refuse(u.Key, named+" has a change queued after this tick's drain: it waits for the next tick's pump")
 	}
-	p.Units = keep
+	if len(keep) < len(p.Units) {
+		p.Units = keep
+		rewriteRounds(&p) // a unit dropped placed nothing: no index moves for it
+	}
 	return p
 }
