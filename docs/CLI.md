@@ -1293,6 +1293,16 @@ For recovery across process death, name `--snapshot`; retries retain the prepare
 note. Version statuses should go to your chosen integrator, with optional Cc;
 participation and updates remain voluntary.
 
+`status` is `check` with every entry's line shown, the current ones too, exit 0 when
+every entry is equal and 1 when any differs; it writes nothing. `apply --dry-run`
+prints the plan and writes nothing: the entry's line against the target, `would
+install <name> <version> from <source>` and the command the real run would start.
+
+```sh
+nova-update status --file cmd/nova-update/testdata/example.tsv
+nova-update apply --file cmd/nova-update/testdata/dry-run.tsv go --dry-run
+```
+
 First-run refusals name what is needed: `--file` wants the six-column TSV header
 and explicit argv; paths or arguments containing spaces belong in a wrapper script.
 `--draft` also needs `--as` and `--to`; `--send` additionally needs `--bus`,
@@ -1535,6 +1545,11 @@ the `seal/...` branch and the OK line names it. A leftover seal branch has no
 upstream, and `exec` would refuse every later card on that store. A dirty store
 (staged or unstaged tracked changes) is refused before any branch switch, so
 local edits are not discarded.
+
+`--dry-run` prints the plan and writes nothing: the file and whether the name is
+added or replaced, the recipients, the branch, the commit and the pull request title,
+as `SECRETS SEAL PLAN` lines ending in `DRY-RUN OK` at exit 0. It reads no value,
+encrypts nothing and runs no push or `gh` call. `place` and `seat inject` take it too.
 
 Without `--no-pr`, the command pushes its branch, opens a PR and waits up to two
 minutes for the gate's approval, reporting progress while it waits. Once approved,
