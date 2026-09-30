@@ -60,10 +60,7 @@ type KV interface {
 }
 
 // Span is one time the machine was STOPPED; To is zero while it still is.
-type Span struct {
-	From time.Time `json:"from"`
-	To   time.Time `json:"to,omitempty"`
-}
+type Span = sprint.Span
 
 // Machine is the state record: the state, when it last changed and by whom,
 // the total time STOPPED before the current span, and the STOPPED spans.
@@ -122,21 +119,7 @@ func (m Machine) StateWord() string {
 
 // StoppedBetween is the time the machine was STOPPED between from and to.
 func (m Machine) StoppedBetween(from, to time.Time) time.Duration {
-	var d time.Duration
-	for _, s := range m.Spans {
-		end := s.To
-		if end.IsZero() || end.After(to) {
-			end = to
-		}
-		start := s.From
-		if start.Before(from) {
-			start = from
-		}
-		if end.After(start) {
-			d += end.Sub(start)
-		}
-	}
-	return d
+	return sprint.StoppedBetween(m.Spans, from, to)
 }
 
 // StoppedTotal is the total time the machine has been STOPPED, until now.

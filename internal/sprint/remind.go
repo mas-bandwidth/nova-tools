@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"fmt"
+	"maps"
 	"sort"
 	"strings"
 	"time"
@@ -167,4 +168,24 @@ func RemindNotes(s *Snapshot, g Goals, who string) Plan {
 	var p Plan
 	notify(&p, s, conds, []string{NRemindFailed}, TickReq{Who: who})
 	return p
+}
+
+// DueAt is the people to be pushed to now, in the order the record keeps
+// them: those Due says so, since the machine last started and with the time
+// it was STOPPED not counted.
+func (g Goals) DueAt(now, since time.Time, stopped func(from, to time.Time) time.Duration) []Goal {
+	var out []Goal
+	for _, p := range g.People {
+		if p.Due(now, since, stopped) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// NotesStale says the judgments written for failing routes (Noted) are not the
+// ones the failing routes call for now, and gives the ones they call for.
+func (g Goals) NotesStale() (want map[string]string, stale bool) {
+	want = g.Failing()
+	return want, !maps.Equal(want, g.Noted)
 }

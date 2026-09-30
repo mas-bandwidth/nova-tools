@@ -16,6 +16,14 @@
 // The differential test in internal/sprint/store drives the engine and this
 // model with the same actions and compares Abstract(engine) with the model's
 // state after every step.
+//
+// The other half of the package is the reference for what today's scanning
+// tick decides, and it is written from the engine, not from the spec: Decide
+// (decide.go) is every move one tick makes on a whole snapshot of the four
+// tables, one function per duty, each calling the engine's own planners, and
+// Equal (moves.go) says two decisions are the same and names the first card
+// that is not. A machine that decides from events and indexes instead of
+// scanning compares its decisions with these at every quiet point.
 package refmodel
 
 import (

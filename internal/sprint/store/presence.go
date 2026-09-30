@@ -103,15 +103,7 @@ func (st *Store) tellStrangers(ctx context.Context) (Result, error) {
 	}
 	sort.Strings(names)
 	res, err = st.Run(ctx, Step{Verb: "tick strangers", Actor: sprint.MachineActor, Load: tables(sprint.Fleet), Plan: func(snap *sprint.Snapshot) sprint.Plan {
-		var p sprint.Plan
-		for _, m := range names {
-			if snap.Fleet.HasRow(m) {
-				continue
-			}
-			p.Notes = append(p.Notes, sprint.Note{Kind: sprint.Happened, Type: sprint.NUnknownMachine, Who: sprint.MachineActor, At: snap.Now,
-				What: "an unknown machine is beating: " + m + "; add it with nova-sprint fleet up " + m})
-		}
-		return p
+		return sprint.StrangerNotes(snap, names)
 	}})
 	if err != nil {
 		return res, err

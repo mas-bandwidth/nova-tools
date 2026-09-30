@@ -3,7 +3,6 @@ package store
 import (
 	"context"
 	"fmt"
-	"maps"
 	"os"
 	"path/filepath"
 	"time"
@@ -228,10 +227,7 @@ func (st *Store) remind(ctx context.Context, m Machine, res *TickResult) error {
 	}
 	var did []outcome
 	var epoch uint64
-	for _, p := range g.People {
-		if !p.Due(now, m.Since, m.StoppedBetween) {
-			continue
-		}
+	for _, p := range g.DueAt(now, m.Since, m.StoppedBetween) {
 		if len(did) == 0 {
 			if epoch, err = st.workEpoch(ctx); err != nil {
 				return err
@@ -276,7 +272,7 @@ func (st *Store) remind(ctx context.Context, m Machine, res *TickResult) error {
 	if g, err = st.Goals(ctx); err != nil {
 		return err
 	}
-	if want := g.Failing(); !maps.Equal(want, g.Noted) {
+	if want, stale := g.NotesStale(); stale {
 		r, err := st.Run(ctx, Step{Verb: "tick remind", Actor: sprint.MachineActor, Plan: func(s *sprint.Snapshot) sprint.Plan {
 			return sprint.RemindNotes(s, g, sprint.MachineActor)
 		}})
