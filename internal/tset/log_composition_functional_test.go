@@ -20,7 +20,7 @@ func composedHistoryFixture(t *testing.T) (*tsetFixture, *RedisStore) {
 	fx := newComposedTSetFixture(t)
 	fx.Define(t, "work", "c")
 	fx.Activate(t)
-	store := NewRedis(fx.Client)
+	store := newFixtureRedis(t, fx.Client)
 	// Epoch zero's initial row must be replayable from its own log.
 	composedWrite(t, store, Step{Epoch: "0", Space: fx.Space,
 		Entries: []Entry{{Kind: "rows", Table: "work", Add: []string{"r"}}}})
@@ -182,8 +182,9 @@ func TestComposedRefuseCURSOR(t *testing.T) {
 			composedCursorRefusal(t, fx, plan)
 		})
 	}
-	composedWrite(t, store, Step{Epoch: "0", Space: fx.Space,
-		Entries: []Entry{{Kind: "advance", AdvanceFrom: "0"}}})
+	advanceForCursor := composedNamedNotes(fx.Space, "0", "cursor-advance")
+	advanceForCursor.Entries = []Entry{{Kind: "advance", AdvanceFrom: "0"}}
+	composedWrite(t, store, advanceForCursor)
 	stale := ReadPlan{Epoch: "1", Space: fx.Space, Mode: "page", Queries: []ReadQuery{query}}
 	c := clone()
 	stale.Queries[0].Cursor = &c
