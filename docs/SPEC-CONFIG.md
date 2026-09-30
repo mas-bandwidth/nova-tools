@@ -132,6 +132,28 @@ beat does not carry it, and `beat=none` alone for a machine with no
 beat. Nothing is stored, nothing is typed; what the beat carries is the
 beat writer's, not this tool's.
 
+**The sprint's width.** One ceiling per machine, shared by the friends and the
+sprint: the machine's `slots` is the ceiling, each friend's `slots` is charged
+to the machine her own beat reports (else the fleet row's coordinator machine,
+the charge apply makes), and what remains is the sprint member's width:
+`width = slots - the friend slots charged to the machine`. A machine with a
+width of 1 or more is a member of the sprint's fleet; a machine with `slots` 0,
+or whose friends take the whole ceiling, is not. No field holds it: the width
+is derived on every read, so the inventory is the one place a machine's
+capacity is written. `nova-config machine width <name>` prints it and
+`machine list --json` carries it for every machine; both read the friends'
+beats from a Redis when a friend row carries slots (`Widths`,
+`internal/config/width.go`).
+
+**A machine's own name.** `nova-config machine self` prints the name this
+machine has in the inventory, so no name is typed on the machine it names:
+`NOVA_MACHINE` when set, else the first label of the host's DNS name on the
+tailnet when a tailnet is running (asked of `tailscale status --json`, only
+when the program is installed), else the first label of the hostname, always
+lower-case. It opens no store. `--check` reads the machine rows and exits 2
+when the name is none of them, 3 when the name or the rows cannot be read
+(`SelfName`, `internal/config/self.go`).
+
 **`fleet`** (`config.fleet`, singleton): the one row of fleet-wide facts.
 The coordinator machine is one machine; which friend drives it is the sprint
 row's.

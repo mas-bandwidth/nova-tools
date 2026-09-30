@@ -1,0 +1,65 @@
+package config
+
+import (
+	"context"
+	"errors"
+	"testing"
+)
+
+const tailnetRunning = `{"BackendState":"Running","Self":{"HostName":"Studio-1","DNSName":"m1.tail1234.ts.net.","Online":true}}`
+
+func selfSrc(env map[string]string, host string, ts func(context.Context) ([]byte, error)) SelfSource {
+	return SelfSource{
+		Getenv:    func(k string) string { return env[k] },
+		Hostname:  func() (string, error) { return host, nil },
+		Tailscale: ts,
+	}
+}
+
+func tsReturns(raw string) func(context.Context) ([]byte, error) {
+	return func(context.Context) ([]byte, error) { return []byte(raw), nil }
+}
+
+// TestSelfNameIsTheTailnetNameWhenThereIsATailnet: the first label of the
+// host's DNS name, lower-cased, beats the hostname; NOVA_MACHINE beats both;
+// with no tailnet the hostname's first label stands.
+func TestSelfNameIsTheTailnetNameWhenThereIsATailnet(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	for _, c := range []struct {
+		name      string
+		env       map[string]string
+		host      string
+		ts        func(context.Context) ([]byte, error)
+		want, how string
+	}{
+		{"tailnet", nil, "box.local", tsReturns(tailnetRunning), "m1", SelfTailnet},
+		{"env wins", map[string]string{EnvMachine: "m9"}, "box.local", tsReturns(tailnetRunning), "m9", SelfEnv},
+		{"empty env is unset", map[string]string{EnvMachine: ""}, "box.local", tsReturns(tailnetRunning), "m1", SelfTailnet},
+		{"no program", nil, "Box.Local", func(context.Context) ([]byte, error) { return nil, ErrNoTailnet }, "box", SelfHostname},
+		{"nil seam", nil, "m2.tail1234.ts.net", nil, "m2", SelfHostname},
+		{"stopped tailnet", nil, "box.local", tsReturns(`{"BackendState":"Stopped","Self":{"DNSName":"m1.x.ts.net."}}`), "box", SelfHostname},
+		{"not json", nil, "box.local", tsReturns(`nope`), "box", SelfHostname},
+		{"the program fails", nil, "box.local", func(context.Context) ([]byte, error) { return nil, errors.New("exit 1") }, "box", SelfHostname},
+		{"hostname label when no dns name", nil, "box.local", tsReturns(`{"BackendState":"Running","Self":{"HostName":"M5"}}`), "m5", SelfTailnet},
+	} {
+		got, how, err := SelfName(ctx, selfSrc(c.env, c.host, c.ts))
+		if err != nil || got != c.want || how != c.how {
+			t.Errorf("%s: %q %q %v, want %q %q", c.name, got, how, err, c.want, c.how)
+		}
+	}
+}
+
+// TestSelfNameRefusesWhenNothingNamesTheMachine: no env, no tailnet, no
+// hostname is an error, never an empty name.
+func TestSelfNameRefusesWhenNothingNamesTheMachine(t *testing.T) {
+	t.Parallel()
+	src := SelfSource{Getenv: func(string) string { return "" }, Hostname: func() (string, error) { return "", errors.New("no hostname") }}
+	if n, _, err := SelfName(context.Background(), src); err == nil || n != "" {
+		t.Fatalf("%q %v", n, err)
+	}
+	src.Hostname = func() (string, error) { return ".local", nil }
+	if n, _, err := SelfName(context.Background(), src); err == nil || n != "" {
+		t.Fatalf("an empty first label: %q %v", n, err)
+	}
+}

@@ -16,7 +16,9 @@
 //
 // Exit 0 done, 1 refused (the store or Redis said no: a duplicate, a missing
 // row, a ceiling, a conflict), 2 usage (could not run: a flag, a store that
-// did not answer). A refusal is one stderr line naming the next step.
+// did not answer), plus two for machine self: 2 when --check finds the name is
+// no machine row, and 3 when the name or the rows could not be read. A refusal
+// is one stderr line naming the next step.
 package main
 
 import (
@@ -25,14 +27,12 @@ import (
 	stdflag "flag"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/config"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
@@ -47,9 +47,9 @@ const tool = "nova-config"
 
 // The environment every verb reads (docs/nova-config/README.md, "Connecting").
 const (
-	envPG          = "NOVA_PG_DSN"
-	envPGPassEnv   = "NOVA_PG_PASSWORD_ENV"
-	defaultPassEnv = "NOVA_PG_PASSWORD"
+	envPG          = config.EnvPG
+	envPGPassEnv   = config.EnvPGPassEnv
+	defaultPassEnv = config.DefaultPassEnv
 	envSprintRedis = "NOVA_SPRINT_REDIS"
 	envRedisAddr   = "NOVA_REDIS_ADDR"
 	envActor       = "NOVA_FRIEND"
@@ -82,6 +82,9 @@ usage:
   nova-config <kind> history <name>
   nova-config <kind> <verb> -h        prints the verb's usage line and every flag it takes
   nova-config machine list|show <name> [--redis <addr>]   with Redis, each line ends in the machine's live measured facts (its beat)
+  nova-config machine list --json [--redis <addr>]         one JSON array: every machine's login, seat, slots, runners, the friend slots charged to it and its width
+  nova-config machine width <name> [--pg <dsn>] [--redis <addr>] [--json]   the room the sprint's member on the machine has: its slots less the slots of the friends charged to it; a machine with width above 0 is a member. The friends' machines come from their beats, so a Redis is needed when a friend row carries slots
+  nova-config machine self [--check] [--pg <dsn>]          prints this machine's own name as the config keys it (NOVA_MACHINE, else the tailnet's name for the host when a tailnet is running, else the hostname's first label) and opens no store; --check reads the machine rows and exits 2 when the name is none of them, 3 when the name or the rows cannot be read (exit codes of this verb: 0 printed, 2 not a row or usage, 3 unreadable)
   nova-config fleet set --<field> <value> ... --as <friend>    the one fleet row (store, coordinator machine): no name, no add, remove or list
   nova-config sprint set --coordinator <friend> --as <friend>  the one sprint row: who coordinates; set it to hand over
   nova-config fleet|sprint show
@@ -158,6 +161,7 @@ type pgStore interface {
 type redisSide interface {
 	config.Applier
 	config.BeatReader
+	config.HostReader
 	Close() error
 }
 
@@ -170,6 +174,9 @@ type deps struct {
 	openRedis func(ctx context.Context, addr string) (redisSide, error)
 	now       func() time.Time
 	hostname  func() (string, error)
+	// tailscale is `tailscale status --json --peers=false`, config.ErrNoTailnet
+	// when no tailnet is installed: machine self reads its name from it.
+	tailscale func(ctx context.Context) ([]byte, error)
 }
 
 type redisApplier struct {
@@ -192,8 +199,9 @@ func realDeps() deps {
 			}
 			return redisApplier{RedisApplier: &config.RedisApplier{Client: st.Client()}, st: st}, nil
 		},
-		now:      time.Now,
-		hostname: os.Hostname,
+		now:       time.Now,
+		hostname:  os.Hostname,
+		tailscale: config.TailscaleStatus,
 	}
 }
 
@@ -287,65 +295,10 @@ func connFlags(fs *stdflag.FlagSet, withRedis, withActor bool) (pg, redisAddr, a
 	return pg, redisAddr, actor
 }
 
-// pgDSN resolves the Postgres DSN: the flag, else NOVA_PG_DSN; a flag that
-// carries a password is refused (it would be on the command line, where a ps
-// reads it); a DSN without one takes it from the variable
-// NOVA_PG_PASSWORD_ENV names, NOVA_PG_PASSWORD when unset, and a named
-// variable that is empty is refused with its name (the shape
-// internal/nsprint/redisauth keeps for Redis).
+// pgDSN resolves the Postgres DSN by the rules every reader of nova-config
+// shares (config.ResolveDSN).
 func pgDSN(flagValue string, getenv func(string) string) (string, error) {
-	dsn := flagValue
-	if dsn == "" {
-		dsn = getenv(envPG)
-	}
-	if dsn == "" {
-		return "", fmt.Errorf("--pg is required: postgres://user@host:5432/nova (or %s)", envPG)
-	}
-	cfg, err := pgconn.ParseConfig(dsn)
-	if err != nil {
-		return "", fmt.Errorf("--pg: %v; want postgres://user@host:5432/nova", err)
-	}
-	if flagValue != "" && strings.Contains(flagValue, "://") {
-		if u, err := url.Parse(flagValue); err == nil {
-			if _, has := u.User.Password(); has {
-				return "", fmt.Errorf("--pg carries a password; leave it out and export it as the variable %s names (a ps reads the line)", envPGPassEnv)
-			}
-		}
-	}
-	if cfg.Password != "" {
-		return dsn, nil
-	}
-	name := getenv(envPGPassEnv)
-	named := name != ""
-	if !named {
-		name = defaultPassEnv
-	}
-	pw := getenv(name)
-	if pw == "" {
-		if named {
-			return "", fmt.Errorf("%s=%s but %s is empty; run under nova-secrets exec --only %s", envPGPassEnv, name, name, name)
-		}
-		return dsn, nil
-	}
-	return withPassword(dsn, cfg.User, pw)
-}
-
-// withPassword puts the password into the DSN in memory, in whichever of
-// the two spellings it is written.
-func withPassword(dsn, user, pw string) (string, error) {
-	if strings.Contains(dsn, "://") {
-		u, err := url.Parse(dsn)
-		if err != nil {
-			return "", fmt.Errorf("--pg: %v", err)
-		}
-		if user == "" {
-			user = u.User.Username()
-		}
-		u.User = url.UserPassword(user, pw)
-		return u.String(), nil
-	}
-	escaped := strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(pw)
-	return dsn + " password='" + escaped + "'", nil
+	return config.ResolveDSN(flagValue, getenv)
 }
 
 // redisAddress resolves --redis: the flag, else NOVA_SPRINT_REDIS, else
@@ -396,6 +349,14 @@ func runKind(ctx context.Context, k *config.Kind, args []string, stdout, stderr 
 		return refuse(stderr, k.Name, "want add, set, remove, list, show or history")
 	}
 	verb := k.Name + " " + args[0]
+	if k.Name == config.KindMachine {
+		switch args[0] {
+		case "self":
+			return runMachineSelf(ctx, args[1:], stdout, stderr, d)
+		case "width":
+			return runMachineWidth(ctx, args[1:], stdout, stderr, d)
+		}
+	}
 	if k.Singleton {
 		switch args[0] {
 		case "add", "remove", "list":
@@ -600,6 +561,10 @@ func runKindList(ctx context.Context, k *config.Kind, args []string, stdout, std
 	fs := verbflag.New(verb)
 	pg, _, _ := connFlags(fs, false, false)
 	redisFlag := liveFlag(fs, k)
+	asJSON := new(bool)
+	if live(k) {
+		asJSON = fs.Bool("json", false, "print one JSON array for a program: every machine's name, login, seat, slots, runners, the friend slots charged to it, and its width (slots less charged; a machine is a sprint member when its width is above 0); the friends' beats are read from --redis when a friend row carries slots")
+	}
 	if err := fs.Parse(args); err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
@@ -618,6 +583,9 @@ func runKindList(ctx context.Context, k *config.Kind, args []string, stdout, std
 	rows, err := st.List(ctx, k.Name)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
+	}
+	if *asJSON {
+		return printMachinesJSON(ctx, st, rows, *redisFlag, stdout, stderr, d)
 	}
 	var bs map[string]*config.Beat
 	if live(k) {

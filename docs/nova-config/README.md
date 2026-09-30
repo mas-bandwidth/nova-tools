@@ -132,6 +132,36 @@ MACHINE name=studio user=glenn seat=studio slots=64 runners=1 beat=none
 CONFIG LIST kind=machine rows=2
 ```
 
+**Width and its own name.** One ceiling per machine is shared by the friends
+and the sprint, so a machine's room for the sprint's member is its `slots`
+less the slots of the friends charged to it (her beat's machine, else the
+fleet row's coordinator machine). `machine width` prints it, and `machine list
+--json` carries it for every machine; a machine with a width of 1 or more is a
+member of the sprint's fleet. The friends' machines come from their beats, so a
+Redis is named (`--redis`, `NOVA_SPRINT_REDIS`, `NOVA_REDIS_ADDR`) whenever a
+friend row carries slots; with none, the width is the ceiling and no Redis is
+opened:
+
+```
+nova-config machine width m1 --redis r:6379
+CONFIG WIDTH machine=m1 width=5 slots=8 charged=3 member=true
+nova-config machine width m1 --redis r:6379 --json
+{"machine":"m1","slots":8,"charged":3,"width":5,"member":true}
+```
+
+`machine self` prints this machine's own name, so a process learns it and types
+none: `NOVA_MACHINE`, else the tailnet's name for the host when a tailnet is
+running, else the first label of the hostname, lower-case. It opens no store.
+`--check` reads the machine rows and exits 2 when the name is none of them, 3
+when the name or the rows cannot be read:
+
+```
+nova-config machine self
+m1
+nova-config machine self --check --pg postgres://nova_config@127.0.0.1:5432/nova
+m1
+```
+
 ### fleet
 
 The one row of fleet-wide facts: which machine is the store (Redis and
