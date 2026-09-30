@@ -104,7 +104,7 @@ func testMatrixVerb(e env, args []string, h selHost) int {
 
 	functional := pkgselect.MarshalLegs(pkgselect.Functional(all, groups))
 	fmt.Fprintf(e.stdout, "functional: %s\n", functional)
-	if err := selAppend(e, "GITHUB_OUTPUT", "functional="+functional); err != nil {
+	if err := appendGitHubFile(e.getenv, "GITHUB_OUTPUT", "functional="+functional); err != nil {
 		fmt.Fprintf(e.stderr, "test-matrix: %v\n", err)
 		return 1
 	}
@@ -113,7 +113,7 @@ func testMatrixVerb(e env, args []string, h selHost) int {
 		fmt.Fprintln(e.stdout, "nothing to test for this change")
 		packages := pkgselect.MarshalLegs([]pkgselect.Leg{pkgselect.NothingLeg(groups)})
 		fmt.Fprintln(e.stdout, packages)
-		if err := selAppend(e, "GITHUB_OUTPUT", "packages="+packages); err != nil {
+		if err := appendGitHubFile(e.getenv, "GITHUB_OUTPUT", "packages="+packages); err != nil {
 			fmt.Fprintf(e.stderr, "test-matrix: %v\n", err)
 			return 1
 		}
@@ -143,7 +143,7 @@ func testMatrixVerb(e env, args []string, h selHost) int {
 	}
 	packages := pkgselect.MarshalLegs(legs)
 	fmt.Fprintln(e.stdout, packages)
-	if err := selAppend(e, "GITHUB_OUTPUT", "packages="+packages); err != nil {
+	if err := appendGitHubFile(e.getenv, "GITHUB_OUTPUT", "packages="+packages); err != nil {
 		fmt.Fprintf(e.stderr, "test-matrix: %v\n", err)
 		return 1
 	}

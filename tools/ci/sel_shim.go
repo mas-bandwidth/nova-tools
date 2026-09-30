@@ -53,7 +53,7 @@ func unitTierShimVerb(e env, args []string) int {
 		return 1
 	}
 	dir := filepath.Dir(shim)
-	if err := selAppend(e, "GITHUB_PATH", dir); err != nil {
+	if err := appendGitHubFile(e.getenv, "GITHUB_PATH", dir); err != nil {
 		fmt.Fprintf(e.stderr, "unit-tier-shim: %v\n", err)
 		return 1
 	}

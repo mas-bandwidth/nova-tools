@@ -64,7 +64,7 @@ func dealVerb(e env, args []string, h selHost) int {
 		line.WriteString(p + " ")
 	}
 	fmt.Fprintln(e.stdout, line.String())
-	if err := selAppend(e, "GITHUB_ENV", "HOSTED_PKGS="+line.String()); err != nil {
+	if err := appendGitHubFile(e.getenv, "GITHUB_ENV", "HOSTED_PKGS="+line.String()); err != nil {
 		fmt.Fprintf(e.stderr, "deal: %v\n", err)
 		return 1
 	}

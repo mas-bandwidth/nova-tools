@@ -61,7 +61,7 @@ func provedVerb(e env, args []string, h selHost) int {
 	n := provedRuns(h.client, e.getenv("GH_TOKEN"), *repo, *sha)
 	proved := n > 0
 	fmt.Fprintf(e.stdout, "PROVED sha=%s merge_group_runs=%d proved=%t\n", *sha, n, proved)
-	if err := selAppend(e, "GITHUB_OUTPUT", fmt.Sprintf("proved=%t", proved)); err != nil {
+	if err := appendGitHubFile(e.getenv, "GITHUB_OUTPUT", fmt.Sprintf("proved=%t", proved)); err != nil {
 		fmt.Fprintf(e.stderr, "proved-by-merge-group: %v\n", err)
 		return 1
 	}

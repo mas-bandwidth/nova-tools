@@ -41,37 +41,34 @@ func newSelFake(replies map[string]selReply) *selFake {
 	return &selFake{replies: replies, envs: map[string][]string{}, cores: 16, paths: map[string]string{}}
 }
 
-func (f *selFake) stream(dir string, env []string, stdout, stderr io.Writer, argv ...string) (int, error) {
-	key := strings.Join(argv, " ")
-	for _, e := range env {
+// answer is the reply table as the answer of the one fake runner
+// (cmdrun_fake_test.go): the command line, with a GOOS= entry of its
+// environment in front, keys the reply.
+func (f *selFake) answer(c cmdSpec) (string, int, error) {
+	key := strings.Join(append([]string{c.Name}, c.Args...), " ")
+	for _, e := range c.Env {
 		if strings.HasPrefix(e, "GOOS=") {
 			key = e + " " + key
 		}
 	}
 	f.mu.Lock()
 	f.calls = append(f.calls, key)
-	f.envs[key] = env
+	f.envs[key] = c.Env
 	r, ok := f.replies[key]
 	f.mu.Unlock()
 	if !ok {
-		return -1, fmt.Errorf("selFake: no reply for %q", key)
+		return "", 0, fmt.Errorf("selFake: no reply for %q", key)
 	}
-	io.WriteString(stdout, r.out)
-	io.WriteString(stderr, r.err)
-	return r.code, nil
+	if c.Stderr != nil {
+		io.WriteString(c.Stderr, r.err)
+	}
+	return r.out, r.code, nil
 }
 
 func (f *selFake) host() selHost {
 	return selHost{
-		stream: f.stream,
-		run:    selCapture(f.stream),
+		r:      &fakeCmdRunner{answer: f.answer, onPath: f.paths},
 		cores:  func() int { return f.cores },
-		lookPath: func(n string) (string, error) {
-			if p, ok := f.paths[n]; ok {
-				return p, nil
-			}
-			return "", errors.New("not found")
-		},
 		client: f.client,
 	}
 }

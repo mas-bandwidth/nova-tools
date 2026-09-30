@@ -45,7 +45,7 @@ func runnerShareVerb(e env, args []string, h selHost) int {
 	cores := h.cores()
 	runners, share := pkgselect.RunnerShare(cores, e.getenv(pkgselect.RunnersEnv))
 	fmt.Fprintf(e.stdout, "%d cores on this machine, %d runners per machine (%s), this leg takes %d (at most %d)\n", cores, runners, pkgselect.RunnersEnv, share, pkgselect.ShareCeiling)
-	if err := selAppend(e, "GITHUB_ENV", fmt.Sprintf("GOMAXPROCS=%d", share)); err != nil {
+	if err := appendGitHubFile(e.getenv, "GITHUB_ENV", fmt.Sprintf("GOMAXPROCS=%d", share)); err != nil {
 		fmt.Fprintf(e.stderr, "runner-share: %v\n", err)
 		return 1
 	}

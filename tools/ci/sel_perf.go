@@ -66,7 +66,7 @@ func perfTestsVerb(e env, args []string, h selHost) int {
 		fmt.Fprintln(e.stdout, "no live package holds a perf-tagged test: this job would assert nothing")
 		return 1
 	}
-	if err := selAppend(e, "GITHUB_ENV", "PERF_PKGS="+pkgs.String()); err != nil {
+	if err := appendGitHubFile(e.getenv, "GITHUB_ENV", "PERF_PKGS="+pkgs.String()); err != nil {
 		fmt.Fprintf(e.stderr, "perf-tests: %v\n", err)
 		return 1
 	}

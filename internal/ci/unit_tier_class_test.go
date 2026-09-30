@@ -128,7 +128,7 @@ func TestUnitTierRefusesRedisServer(t *testing.T) {
 		t.Errorf("ci.yml job test's test step does not run `ci unit-test`, which checks that redis-server on PATH is the shim: %q", test.Steps[testStep].Run)
 	}
 	root := repoRoot(t)
-	if verb := readFile(t, filepath.Join(root, "tools", "ci", "sel_unittest.go")); !strings.Contains(verb, `h.lookPath("redis-server")`) || !strings.Contains(verb, "pkgselect.UnitShimDir") || !strings.Contains(verb, "not the refusing shim") {
+	if verb := readFile(t, filepath.Join(root, "tools", "ci", "sel_unittest.go")); !strings.Contains(verb, `h.r.LookPath("redis-server")`) || !strings.Contains(verb, "pkgselect.UnitShimDir") || !strings.Contains(verb, "not the refusing shim") {
 		t.Error("tools/ci/sel_unittest.go does not check that redis-server on PATH is the shim before it runs make test")
 	}
 
