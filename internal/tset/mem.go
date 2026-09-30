@@ -19,6 +19,11 @@ type Mem struct {
 	mu     sync.Mutex
 	spaces map[string]*memNamespace
 	now    func() time.Time
+	// The lifecycle's state outside a namespace (lifecycle.go): the pinned build,
+	// the clock stand-in and each namespace's receipt stream, which outlives it.
+	build     string
+	running   map[string]bool
+	lifecycle map[string][]LifecycleReceipt
 }
 
 type TableDefinition struct {
@@ -84,6 +89,7 @@ type memNamespace struct {
 	recordEpoch     map[string]map[string]Decimal // table, ID -> retained owner epoch
 	receipts        map[Decimal]map[string]memReceipt
 	zsets           map[string]map[string]string
+	view            string // the view's name, set by Define (lifecycle.go)
 }
 
 type memTableDef struct {
@@ -244,7 +250,12 @@ func (m *Mem) DefineTable(space, table string, def TableDefinition) error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	s := m.space(space)
+	return m.defineLocked(m.space(space), space, table, def)
+}
+
+// defineLocked installs one checked definition in s; the caller holds m.mu.
+// DefineTable and the lifecycle's Define share it.
+func (m *Mem) defineLocked(s *memNamespace, space, table string, def TableDefinition) error {
 	if len(s.defs) >= 4 || s.defs[table] != nil {
 		return memRefusal("CONFIG", RefusalDetail{Table: table})
 	}
@@ -252,6 +263,10 @@ func (m *Mem) DefineTable(space, table string, def TableDefinition) error {
 		if old.epochKey != def.EpochKey || old.epochField != def.EpochField || memPrefixesOverlap(old.memberPrefix, def.MemberPrefix) {
 			return memRefusal("CONFIG", RefusalDetail{Table: table})
 		}
+	}
+	cols := make(map[string]bool, len(def.Columns))
+	for _, col := range def.Columns {
+		cols[col] = true
 	}
 	s.defs[table] = &memTableDef{name: table, memberPrefix: def.MemberPrefix, epochKey: def.EpochKey,
 		epochField: def.EpochField, columns: cols, columnOrder: append([]string(nil), def.Columns...)}

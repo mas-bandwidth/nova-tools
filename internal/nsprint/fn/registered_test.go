@@ -77,7 +77,7 @@ func TestStandaloneTSetProfileRegistersWriterAndReader(t *testing.T) {
 		t.Fatal(err)
 	}
 	registered := luaFunctionRegistrations(source)
-	for _, name := range []string{"ns_tset_step", "ns_tset_read"} {
+	for _, name := range []string{"ns_tset_step", "ns_tset_read", "ns_tset_define", "ns_tset_teardown"} {
 		if !registered[name] {
 			t.Errorf("standalone tset profile does not declare %s", name)
 		}
