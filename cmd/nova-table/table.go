@@ -433,7 +433,7 @@ func (app *application) cmdView(args []string, stdout, stderr io.Writer) int {
 		fs.StringVar(&tables, "tables", "", "the tables, comma-separated, in order")
 		fs.StringVar(&title, "title", "", "the view's title line")
 		fs.StringVar(&summary, "summary", "", "a count column in the first table to count as done (x/y z% -> ETA)")
-		fs.StringVar(&hideZero, "hide-zero", "", "the tables, comma-separated, that hide a row whose count cells are all zero when the view is drawn")
+		fs.StringVar(&hideZero, "hide-zero", "", "the tables, comma-separated, that hide a row whose count cells are all zero when the view is drawn (view set replaces title, summary and hide-zero together: one left out is cleared)")
 	}
 	pos, err := parseInterleaved(fs, args[1:])
 	if err != nil {
