@@ -122,9 +122,11 @@ type sprintPlan struct {
 	Quarantined []string `json:"quarantined"`
 	Coordinator string   `json:"coordinator,omitempty"`
 	TickEnd     string   `json:"tickend,omitempty"`
-	// Due are the due entries the time writes moved, Claimed the people whose
-	// goal records they claimed, and Clock that they wrote the clock.
+	// Due are the due entries the time writes moved, Unarmed that they removed
+	// behind_n, Claimed the people whose goal records they claimed, and Clock
+	// that they wrote the clock.
 	Due     []string `json:"due,omitempty"`
+	Unarmed bool     `json:"unarmed,omitempty"`
 	Claimed []string `json:"claimed,omitempty"`
 	Clock   bool     `json:"clock,omitempty"`
 	cmds    []Cmd
@@ -397,6 +399,9 @@ func (sprintPart) Pre(st *State, req *Request, obs *Before) (any, *Refusal) {
 		if len(tm.Due) != 0 {
 			guards = append(guards, typedKey{due, kindZSet})
 		}
+		if tm.UnarmBehind {
+			guards = append(guards, typedKey{tick, kindHash})
+		}
 		for _, g := range sortedClaims(tm.Goals) {
 			guards = append(guards, typedKey{sprintKey(st, keyGoalPrefix+g.Person), kindHash})
 		}
@@ -532,6 +537,14 @@ func (sprintPart) Pre(st *State, req *Request, obs *Before) (any, *Refusal) {
 			}
 		}
 		plan.cmds = append(plan.cmds, zaddCommands(due, put)...)
+		if tm.UnarmBehind {
+			// R18's re-arm: behind_n removed, so the next tick end arms the
+			// entry and behind_n with the backlog it finds (2.3 R18).
+			if v, set := st.Keys.HGet(tick, tickFieldBehind); set && v != "" {
+				plan.cmds = append(plan.cmds, hdelCommands(tick, []string{tickFieldBehind})...)
+				plan.Unarmed = true
+			}
+		}
 		for _, g := range sortedClaims(tm.Goals) {
 			plan.cmds = append(plan.cmds, hsetCommands(sprintKey(st, keyGoalPrefix+g.Person),
 				flatPairs{goalFieldClaimedGen, strconv.FormatUint(req.Meta.Gen, 10), goalFieldClaimedR, string(g.R)})...)
@@ -611,13 +624,14 @@ const (
 // entries, each named once, a key a part may store, due at an exact time; at
 // most SprintMembersMax claims, a person each once, at an exact R, and a step
 // with a lease generation to claim with; a clock write that sets something,
-// each field "" or an exact time. A due entry named behind beside a tick end is
-// REQUEST: the tick end is behind's one writer in a step.
+// each field "" or an exact time. A due entry named behind, or R18's unarm,
+// beside a tick end is REQUEST: the tick end is behind's one writer in a step.
 func checkTime(tm *SprintTime, tickEnd bool, gen uint64) *Refusal {
 	if tm == nil {
 		return nil
 	}
-	if len(tm.Due) > SprintKeysMax || len(tm.Goals) > SprintMembersMax || len(tm.Due)+len(tm.Goals) == 0 && tm.Clock == nil {
+	if len(tm.Due) > SprintKeysMax || len(tm.Goals) > SprintMembersMax ||
+		len(tm.Due)+len(tm.Goals) == 0 && tm.Clock == nil && !tm.UnarmBehind || tm.UnarmBehind && tickEnd {
 		return requestRefusal()
 	}
 	exact := func(d tset.Decimal) bool {

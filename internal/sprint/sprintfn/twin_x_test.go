@@ -578,15 +578,17 @@ func TestXSentAndCounterGuardsAgree(t *testing.T) {
 	h.write(Command("HSET", xp+"next@0", kindHash, "streams", "03"))
 	h.wantRefusal(guard(XGuard{Kind: XGuardCounter, Key: "streams", Score: 3}), CodeConfig)
 
-	// dueatmost: the entry absent, or at or below the time (2.3: R11's cut
-	// clock, R14, R18; the time rules' noEntryAbove)
+	// due as the time rules read it (entryAsRead: 2.3 R11's cut clock, R14,
+	// R18): the entry at its score as read, or absent after the pop; one armed
+	// again since, or popped since, refuses
 	h.write(Command("ZADD", xp+"due@0", kindZSet, "5000", "remind:alice"), Command("ZADD", xp+"cut@0", kindZSet, "7000", "cut:op1"))
-	h.applies("at or below, or absent", guard(XGuard{Kind: XGuardDueAtMost, Key: "remind:alice", Score: 5000},
-		XGuard{Kind: XGuardDueAtMost, Key: "remind:bob", Score: 0}, XGuard{Kind: XGuardDueAtMost, Key: "cut:op1", Score: 9000}))
-	for _, moved := range []XGuard{{Kind: XGuardDueAtMost, Key: "remind:alice", Score: 4999}, {Kind: XGuardDueAtMost, Key: "cut:op1", Score: 6999}} {
+	h.applies("as read, or absent", guard(XGuard{Kind: XGuardDue, Key: "remind:alice", Score: 5000},
+		XGuard{Kind: XGuardDue, Key: "remind:bob", Score: XGuardAbsent}, XGuard{Kind: XGuardDue, Key: "cut:op1", Score: 7000}))
+	for _, moved := range []XGuard{{Kind: XGuardDue, Key: "remind:alice", Score: XGuardAbsent}, {Kind: XGuardDue, Key: "remind:alice", Score: 4999},
+		{Kind: XGuardDue, Key: "cut:op1", Score: 9000}, {Kind: XGuardDue, Key: "remind:bob", Score: 1}} {
 		h.wantRefusal(guard(moved), CodeXGuard)
 	}
-	for _, bad := range []XGuard{{Kind: XGuardDueAtMost, Score: 1}, {Kind: XGuardDueAtMost, Key: "a", Score: -1}} {
+	for _, bad := range []XGuard{{Kind: XGuardDue, Score: 1}, {Kind: XGuardDue, Key: "a", Score: -2}, {Kind: "dueatmost", Key: "a", Score: 1}} {
 		h.wantRefusal(guard(bad), CodeRequest)
 	}
 	if h.mirror.pre == 0 {

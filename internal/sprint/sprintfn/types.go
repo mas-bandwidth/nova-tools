@@ -466,13 +466,16 @@ type SprintPart struct {
 
 // SprintTime is the time rules' writes to the sprint's own keys that no table
 // entry carries (2.3; rules_time.go, TimeWrites; the machine's cut() attaches
-// them to the first request of the rule's step). behind_n is not among them:
-// the loop's tick end (TickEnd) is its one writer, and R18 moves its entry alone
-// (the decision on IT17's recheck: R18's Tick is dropped).
+// them to the first request of the rule's step). The loop's tick end
+// (TickEnd) is behind_n's one writer: R18's re-arm clears it (UnarmBehind),
+// and the next tick end arms the entry and behind_n with the backlog it finds.
 type SprintTime struct {
 	// Due sets each due entry to its running time, the score replaced (a ZADD
-	// of {p}due@e): R14's remind:<person> and R18's behind (1.2).
+	// of {p}due@e): R14's remind:<person> (1.2).
 	Due []DueAt
+	// UnarmBehind is R18's re-arm (2.3 R18: "armed again with the new
+	// backlog"): {p}tick@e's behind_n removed when it is set.
+	UnarmBehind bool
 	// Goals are R14's phase 1 claims on the goal records {p}goal:<person>:
 	// claimed_r is R and claimed_gen the step's lease generation (Meta.Gen),
 	// which the plan does not know (2.3 R14).

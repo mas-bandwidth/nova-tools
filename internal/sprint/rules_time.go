@@ -436,11 +436,14 @@ func (f *TimeFacts) DroppingOp(stream string) (string, bool) {
 // and that the tables' plan has no place for. The step that carries the plan
 // carries them, in the order A1 gives: what records owed work first.
 type TimeWrites struct {
-	// Due sets due entries to a running time: R14's move of `remind:<person>`
-	// and R18's re-arm of `behind`.
+	// Due sets due entries to a running time: R14's move of `remind:<person>`.
 	Due []DueSet
 	// Goal are R14's claims on goal records.
 	Goal []GoalClaim
+	// UnarmBehind is R18's re-arm: `{p}tick@e.behind_n` cleared, so the next
+	// tick end arms `behind` again, the entry at R + 5 min and behind_n the
+	// backlog it finds (the tick end is behind_n's one writer).
+	UnarmBehind bool
 	// Clock is the clock fields R17 writes.
 	Clock *ClockSet
 	// Park are the keys the step moves out of the agenda into
@@ -481,7 +484,7 @@ type ParkKey struct{ Key, Rule, Code string }
 
 // Empty says the plan writes nothing to the sprint's keys.
 func (w TimeWrites) Empty() bool {
-	return len(w.Due) == 0 && len(w.Goal) == 0 && w.Clock == nil && len(w.Park) == 0
+	return len(w.Due) == 0 && len(w.Goal) == 0 && !w.UnarmBehind && w.Clock == nil && len(w.Park) == 0
 }
 
 // LateDue says a card whose deadline is due (its `due_<kind>` field, in R) is
@@ -579,9 +582,20 @@ func (b *timeBuilder) unit(u Unit) int {
 	return len(b.rp.Plan.Units) - 1
 }
 
-// noEntryAbove is the guard that the due entry key has no score above at:
-// the entry a later part or a second run has moved on refuses XGUARD.
-func noEntryAbove(key string, at int64) XGuard {
+// DueAbsent is the score a due guard carries for an entry the read found
+// absent (sprintfn.XGuardAbsent): the pop takes an entry, so the rule the pop
+// delivered reads its own entry absent.
+const DueAbsent int64 = -1
+
+// entryAsRead is the guard that the due entry key is as the rule read it: at
+// the score read (present), or absent (DueAbsent). The entry a later part or a
+// second run has armed again refuses XGUARD. 2.3's R11 and R14: "the entry's
+// score as read"; tla/SprintEvents.tla, cutj (cut[c] = x) and remind1
+// (remind = x); R18 guards its entry the same way.
+func entryAsRead(key string, present bool, at int64) XGuard {
+	if !present {
+		at = DueAbsent
+	}
 	return XGuard{Kind: guardDue, Key: key, Score: at}
 }
 
@@ -1197,7 +1211,7 @@ func (w *lateRun) cut(lk lateKey, _ *Card) {
 	if cf.Entry && !CutDue(w.now, cf.At) {
 		return
 	}
-	w.b.guard(noEntryAbove(entryCut+lk.id, w.now.Wall))
+	w.b.guard(entryAsRead(entryCut+lk.id, cf.Entry, cf.At))
 	w.b.note(NoteReq{Op: requestOpen, Type: NCutStopped, Cause: kindCut, Subjects: []string{lk.id},
 		Text:      fmt.Sprintf("the verb of op %s stopped before its end: its parts ran out of time", lk.id),
 		Decisions: cutDecisions(lk.id, cf.Verb)})
@@ -1405,7 +1419,7 @@ func planRemind(s *Snapshot, keys []AgendaKey, now Now) RulePlan {
 		if !g.Exists || g.Entry && g.At > now.R {
 			continue
 		}
-		b.guard(noEntryAbove(entryRemind+person, now.R))
+		b.guard(entryAsRead(entryRemind+person, g.Entry, g.At))
 		b.rp.Sprint.Due = append(b.rp.Sprint.Due, DueSet{Key: entryRemind + person, At: now.R + spanMs(RuleRemindEvery)})
 		b.rp.Sprint.Goal = append(b.rp.Sprint.Goal, GoalClaim{Person: person, R: now.R})
 	}
@@ -1434,9 +1448,10 @@ func readRemind(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []Agend
 //
 // Trigger: the pop of behind, and its owner key. Guard: no `behind` entry
 // above R. Effect, when it fires: a backlog at least behind_n is judged,
-// "the machine is falling behind", once; a smaller one arms `behind` again at
-// R + 5 min, behind_n left as the tick end armed it (the design's "with the
-// new backlog" is the tick end's: the erratum is owed); a backlog of zero is disarmed (the
+// "the machine is falling behind", once; a smaller one arms `behind` again
+// "with the new backlog": the step clears behind_n (TimeWrites.UnarmBehind),
+// and the next tick end, behind_n's one writer, arms both, the entry at R + 5
+// min and behind_n the backlog it finds; a backlog of zero is disarmed (the
 // tick-end part does that when the backlog reaches zero) and closes the
 // judgment when it is open. Key: removed. Cost: O(1). Without it: nothing
 // names a machine that never catches up.
@@ -1453,7 +1468,7 @@ func planBehind(s *Snapshot, keys []AgendaKey, now Now) RulePlan {
 		// the entry the first run armed again: nothing to do
 	case t.Backlog == 0:
 		if t.Judged {
-			b.guard(noEntryAbove(entryBehind, now.R))
+			b.guard(entryAsRead(entryBehind, t.Entry, t.EntryAt))
 			b.note(NoteReq{Op: requestClose, Type: typeFallingBehind, Cause: entryBehind, Subjects: []string{subjectSprint},
 				Text: "the machine has caught up: the backlog is zero"})
 		}
@@ -1465,19 +1480,20 @@ func planBehind(s *Snapshot, keys []AgendaKey, now Now) RulePlan {
 			if now.Running {
 				decisions = []string{"wait", "stop", "where"}
 			}
-			b.guard(noEntryAbove(entryBehind, now.R))
+			b.guard(entryAsRead(entryBehind, t.Entry, t.EntryAt))
 			b.note(NoteReq{Op: requestOpen, Type: typeFallingBehind, Cause: entryBehind, Subjects: []string{subjectSprint},
 				Text: fmt.Sprintf("the machine is falling behind: %d lines, %d keys, %d due for %d minutes of running time",
 					t.Backlog, t.Agenda, t.DueNow, int(BehindSpan/time.Minute)),
 				Decisions: decisions})
 		}
 	default:
-		// Armed again at R + 5 min: the entry alone. behind_n has one writer,
-		// the loop's tick end (sprintfn.TickEnd), and stays the backlog the
-		// tick end armed until R18 judges it or the backlog reaches zero (the
-		// decision on IT17's recheck: R18's own write of behind_n is dropped).
-		b.guard(noEntryAbove(entryBehind, now.R))
-		b.rp.Sprint.Due = append(b.rp.Sprint.Due, DueSet{Key: entryBehind, At: now.R + spanMs(BehindSpan)})
+		// Armed again with the new backlog: behind_n cleared, and the next
+		// tick end (sprintfn.TickEnd), its one writer, arms the entry at R + 5
+		// min and behind_n at the backlog it finds. A behind_n left as it was
+		// would hold the first backlog for ever, and a backlog that shrank once
+		// and then stalled would never be judged.
+		b.guard(entryAsRead(entryBehind, t.Entry, t.EntryAt))
+		b.rp.Sprint.UnarmBehind = true
 	}
 	return b.result()
 }

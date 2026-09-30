@@ -351,7 +351,7 @@ func TestRealRuleStoppedLookApplies(t *testing.T) {
 // as it is (IT30 has no goal query yet: the answer is the read's words, given),
 // moves remind:<person> to R + 5 min and claims the goal record at R with the
 // step's lease generation, through the sprint part's Time, under X's
-// dueatmost guard on the popped entry (gap c).
+// due guard on the popped entry, absent as read (gap c).
 func TestRealRuleRemindApplies(t *testing.T) {
 	t.Parallel()
 	w := newWorld(t)
