@@ -5,6 +5,7 @@ package tset
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 )
@@ -211,5 +212,203 @@ func settlementUnchanged(t *testing.T, fx *tsetFixture, mem *Mem,
 	}
 	if after := settlementMemImage(t, mem, fx.Space); !reflect.DeepEqual(beforeMem, after) {
 		t.Fatal("read or replay changed the Mem snapshot")
+	}
+}
+
+// TestReceiptChangedBoundOver2000WithProperties verifies that a step creating
+// 2,000 members plus 1 or more table properties records changed > 2000 in its
+// receipt and allows both exact replay and done query without refusal or DRIFT
+// (addressing receipt poisoning when changed was bounded by member_candidates).
+func TestReceiptChangedBoundOver2000WithProperties(t *testing.T) {
+	t.Parallel()
+	fx, mem := settlementFixture(t)
+	ids := make([]string, MaxMemberCandidates)
+	scores := make([]string, MaxMemberCandidates)
+	for i := 0; i < MaxMemberCandidates; i++ {
+		ids[i] = fmt.Sprintf("card-%04d", i)
+		scores[i] = "1"
+	}
+	propVal := "active"
+	op, intent := "op-2000-members-prop", "step with 2000 members and table property"
+	step := Step{
+		Epoch:  "0",
+		Space:  fx.Space,
+		Op:     &op,
+		Intent: &intent,
+		Entries: []Entry{
+			{
+				Kind:   "create",
+				Table:  "work",
+				To:     "r:cards",
+				IDs:    ids,
+				Scores: scores,
+			},
+			{
+				Kind:  "prop",
+				Table: "work",
+				Name:  "status",
+				Value: &propVal,
+			},
+		},
+	}
+	fresh := settlementStep(t, fx, mem, step)
+	if fresh.Status != "ok" || fresh.Replay || fresh.Changed <= MaxMemberCandidates {
+		t.Fatalf("fresh reply = %+v, want status ok, replay false, changed > %d", fresh, MaxMemberCandidates)
+	}
+	if fresh.Changed != MaxMemberCandidates+1 {
+		t.Fatalf("fresh changed = %d, want %d", fresh.Changed, MaxMemberCandidates+1)
+	}
+
+	settlementDone(t, fx, mem, "0", op, intent, "ok", "")
+
+	// Direct query to verify the done slot receipt has the expected changed count.
+	plan := ReadPlan{Epoch: "0", Space: fx.Space, Mode: "atomic", Queries: []ReadQuery{{
+		Kind: "done", Ops: []DoneIdentity{{Epoch: "0", Op: op, IntentDigest: intentDigest(intent)}},
+	}}}
+	for name, read := range map[string]func() (ReadReply, error){
+		"Lua": func() (ReadReply, error) { return newFixtureRedis(t, fx.Client).Read(context.Background(), plan) },
+		"Mem": func() (ReadReply, error) { return mem.Read(context.Background(), plan) },
+	} {
+		reply, err := read()
+		if err != nil || len(reply.Answers) != 1 || len(reply.Answers[0].Done) != 1 {
+			t.Fatalf("%s done reply = %+v / %v", name, reply, err)
+		}
+		slot := reply.Answers[0].Done[0]
+		if slot.Receipt == nil || slot.Receipt.Changed != fresh.Changed {
+			t.Fatalf("%s done slot receipt changed = %v, want %d", name, slot.Receipt, fresh.Changed)
+		}
+	}
+
+	before := commitProbeImage(t, fx.Client)
+	beforeMem := settlementMemImage(t, mem, fx.Space)
+	replay := settlementStep(t, fx, mem, step)
+	if !replay.Replay || replay.Status != "ok" || replay.Changed != fresh.Changed {
+		t.Fatalf("replay = %+v, want replay true, status ok, changed %d", replay, fresh.Changed)
+	}
+	settlementUnchanged(t, fx, mem, before, beforeMem)
+
+	rawReceipt, err := fx.Client.HGet(context.Background(), fixtureDoneKey(fx.Space, "0"), op).Result()
+	if err != nil {
+		t.Fatalf("fetch stored Redis receipt: %v", err)
+	}
+	if !independentReceipt(rawReceipt, "0", map[string]bool{"0": true}) {
+		t.Fatalf("stored receipt failed independentReceipt invariant: %s", rawReceipt)
+	}
+}
+
+// TestReceiptChangedBound2064AcceptanceAnd2065Refusal verifies that a step
+// creating 2,000 members and 64 table properties records changed = 2064,
+// that replay and done queries succeed for changed = 2064, that independentReceipt
+// validates 2064, and that fabricated receipts with changed = 2065 are refused as DRIFT.
+func TestReceiptChangedBound2064AcceptanceAnd2065Refusal(t *testing.T) {
+	t.Parallel()
+	fx, mem := settlementFixture(t)
+	ids := make([]string, MaxMemberCandidates)
+	scores := make([]string, MaxMemberCandidates)
+	for i := 0; i < MaxMemberCandidates; i++ {
+		ids[i] = fmt.Sprintf("card-%04d", i)
+		scores[i] = "1"
+	}
+	entries := make([]Entry, 0, 1+MaxPropEntries)
+	entries = append(entries, Entry{
+		Kind:   "create",
+		Table:  "work",
+		To:     "r:cards",
+		IDs:    ids,
+		Scores: scores,
+	})
+	propVal := "active"
+	for j := 0; j < MaxPropEntries; j++ {
+		entries = append(entries, Entry{
+			Kind:  "prop",
+			Table: "work",
+			Name:  fmt.Sprintf("prop-%02d", j),
+			Value: &propVal,
+		})
+	}
+	op, intent := "op-2064-members-props", "step with 2000 members and 64 table properties"
+	step := Step{
+		Epoch:   "0",
+		Space:   fx.Space,
+		Op:      &op,
+		Intent:  &intent,
+		Entries: entries,
+	}
+	fresh := settlementStep(t, fx, mem, step)
+	if fresh.Status != "ok" || fresh.Replay || fresh.Changed != 2064 {
+		t.Fatalf("fresh reply = %+v, want status ok, replay false, changed 2064", fresh)
+	}
+
+	settlementDone(t, fx, mem, "0", op, intent, "ok", "")
+
+	// Direct query to verify the done slot receipt has the expected 2064 changed count.
+	plan := ReadPlan{Epoch: "0", Space: fx.Space, Mode: "atomic", Queries: []ReadQuery{{
+		Kind: "done", Ops: []DoneIdentity{{Epoch: "0", Op: op, IntentDigest: intentDigest(intent)}},
+	}}}
+	for name, read := range map[string]func() (ReadReply, error){
+		"Lua": func() (ReadReply, error) { return newFixtureRedis(t, fx.Client).Read(context.Background(), plan) },
+		"Mem": func() (ReadReply, error) { return mem.Read(context.Background(), plan) },
+	} {
+		reply, err := read()
+		if err != nil || len(reply.Answers) != 1 || len(reply.Answers[0].Done) != 1 {
+			t.Fatalf("%s done reply = %+v / %v", name, reply, err)
+		}
+		slot := reply.Answers[0].Done[0]
+		if slot.Receipt == nil || slot.Receipt.Changed != 2064 {
+			t.Fatalf("%s done slot receipt changed = %v, want 2064", name, slot.Receipt)
+		}
+	}
+
+	before := commitProbeImage(t, fx.Client)
+	beforeMem := settlementMemImage(t, mem, fx.Space)
+	replay := settlementStep(t, fx, mem, step)
+	if !replay.Replay || replay.Status != "ok" || replay.Changed != 2064 {
+		t.Fatalf("replay = %+v, want replay true, status ok, changed 2064", replay)
+	}
+	settlementUnchanged(t, fx, mem, before, beforeMem)
+
+	rawReceipt, err := fx.Client.HGet(context.Background(), fixtureDoneKey(fx.Space, "0"), op).Result()
+	if err != nil {
+		t.Fatalf("fetch stored Redis receipt: %v", err)
+	}
+	if !independentReceipt(rawReceipt, "0", map[string]bool{"0": true}) {
+		t.Fatalf("stored 2064 receipt failed independentReceipt invariant: %s", rawReceipt)
+	}
+
+	// 2065 rejection: fabricated receipt with changed = 2065
+	badReceipt := fmt.Sprintf(`{"intent_digest":%q,"status":"ok","epoch_before":"0","epoch_after":"0","first_seq":"%s","last_seq":"%s","changed":2065,"result":""}`, intentDigest(intent), fresh.FirstSeq, fresh.LastSeq)
+	if independentReceipt(badReceipt, "0", map[string]bool{"0": true}) {
+		t.Fatalf("independentReceipt accepted 2065 changed receipt: %s", badReceipt)
+	}
+
+	if err := fx.Client.HSet(context.Background(), fixtureDoneKey(fx.Space, "0"), op, badReceipt).Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Done query must refuse DRIFT on the 2065 receipt
+	_, err = newFixtureRedis(t, fx.Client).Read(context.Background(), plan)
+	refusal, ok := err.(*Refusal)
+	if !ok || refusal.Code != "DRIFT" {
+		t.Fatalf("done read of 2065 receipt want DRIFT, got %v", err)
+	}
+
+	// Replay must refuse DRIFT on the 2065 receipt
+	_, err = newFixtureRedis(t, fx.Client).Step(context.Background(), step)
+	refusal, ok = err.(*Refusal)
+	if !ok || refusal.Code != "DRIFT" {
+		t.Fatalf("replay of 2065 receipt want DRIFT, got %v", err)
+	}
+
+	// Restore good receipt with changed = 2064 and verify it passes again
+	goodReceipt := fmt.Sprintf(`{"intent_digest":%q,"status":"ok","epoch_before":"0","epoch_after":"0","first_seq":"%s","last_seq":"%s","changed":2064,"result":""}`, intentDigest(intent), fresh.FirstSeq, fresh.LastSeq)
+	if !independentReceipt(goodReceipt, "0", map[string]bool{"0": true}) {
+		t.Fatalf("independentReceipt rejected valid 2064 changed receipt: %s", goodReceipt)
+	}
+	if err := fx.Client.HSet(context.Background(), fixtureDoneKey(fx.Space, "0"), op, goodReceipt).Err(); err != nil {
+		t.Fatal(err)
+	}
+	reply, err := newFixtureRedis(t, fx.Client).Read(context.Background(), plan)
+	if err != nil || len(reply.Answers) != 1 || len(reply.Answers[0].Done) != 1 || reply.Answers[0].Done[0].Receipt == nil || reply.Answers[0].Done[0].Receipt.Changed != 2064 {
+		t.Fatalf("done read of restored 2064 receipt failed: %+v / %v", reply, err)
 	}
 }

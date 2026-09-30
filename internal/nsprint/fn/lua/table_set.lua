@@ -670,11 +670,22 @@ do
   -- HGET per distinct name, charged as a field observation), so a guard beside
   -- a write on the same pair reads the value from before the step. A changed
   -- prop is one HSET; no log line is planned for it.
-  local function prop_pre(ctx,t,name)
+  local function prop_pre(ctx,t,name,counts)
     local key=ctx.props_key(t,ctx.write_epoch)
     ctx.prop_pre=ctx.prop_pre or {}
     local cache=ctx.prop_pre[key]
-    if not cache then cache={};ctx.prop_pre[key]=cache end
+    if not cache then
+      if ctx.write_epoch~=ctx.request_epoch then
+        -- A touched successor hash must be empty even for a no-op or guard,
+        -- which may never put this key into the final command preflight.
+        local n,err=rd(ctx,{'HLEN',key},'hash',32,'cell')
+        if err then return nil,nil,err end
+        if n~=0 then return nil,nil,S.refuse('DRIFT',{table=t}) end
+        -- Reuse this observation for new-name capacity in this plan.
+        counts[t]=0
+      end
+      cache={};ctx.prop_pre[key]=cache
+    end
     if cache[name]==nil then
       local ok,err=S.charge(ctx,'field',1);if err then return nil,nil,err end
       local value;value,err=rd(ctx,{'HGET',key,name},'hash',S.limits.field_value,'field');if err then return nil,nil,err end
@@ -684,7 +695,7 @@ do
     return key,cache[name],nil
   end
   local function prop_entry(ctx,plan,e,ix,result,counts)
-    local key,before,err=prop_pre(ctx,e.t,e.name);if err then return nil,err end
+    local key,before,err=prop_pre(ctx,e.t,e.name,counts);if err then return nil,err end
     result.name=e.name;result.before=before or cjson.null
     if e.kind=='propguard' then
       if (e.value==nil and before) or (e.value~=nil and before~=e.value) then
