@@ -10,26 +10,24 @@ import (
 )
 
 // The encoder is the size: these tests hold the size the cut works to to the
-// bytes the encoder writes, and the bytes to JSON.
+// bytes the encoder writes, and the bytes to cjson's (cjson_test.go) and to JSON.
 
-// asciiAndMore is every ASCII byte and a few longer runes, less the two
-// control bytes encoding/json spells differently (\b and \f, six bytes here
-// and two there): the alphabet on which the sizes can be held to encoding/json.
+// asciiAndMore is every ASCII byte and a few longer runes: strings that decode
+// back to themselves, so the bytes written can be read as JSON as well as held
+// to the bytes cjson writes.
 func asciiAndMore() string {
 	var sb strings.Builder
 	for c := 0; c < 0x80; c++ {
-		if c != 0x08 && c != 0x0c {
-			sb.WriteByte(byte(c))
-		}
+		sb.WriteByte(byte(c))
 	}
-	sb.WriteString("é世界😀")
+	sb.WriteString("é世界😀<>&\u2028\u2029")
 	return sb.String()
 }
 
-func TestQuotedIsTheSizeOfAppendQuotedAndOfJSON(t *testing.T) {
+func TestQuotedIsTheSizeOfAppendQuotedAndOfCJSON(t *testing.T) {
 	t.Parallel()
 	all := asciiAndMore()
-	cases := []string{"", "plain", `quote " and \ backslash`, "line\nbreak\r\ttab", "\x00\x01\x1f", "\x7f", "é世界😀", all}
+	cases := []string{"", "plain", `quote " and \ backslash`, "line\nbreak\r\ttab", "\x00\x01\x1f", "\x7f", "a/b/c", "//", "é世界😀", "\b\f", "<>&\u2028\u2029", all}
 	for _, r := range all {
 		cases = append(cases, string(r))
 	}
@@ -42,15 +40,16 @@ func TestQuotedIsTheSizeOfAppendQuotedAndOfJSON(t *testing.T) {
 		if err := json.Unmarshal(got, &back); err != nil || back != s {
 			t.Errorf("%q does not round trip: %q %v", s, got, err)
 		}
-		if want := jsonLen(t, s); want != len(got) {
-			t.Errorf("%q: encoding/json writes %d, this writes %d", s, want, len(got))
+		if want := cjsonString(s); want != string(got) {
+			t.Errorf("%q: cjson writes %s, this writes %s", s, want, got)
 		}
 	}
-	// \b and \f are written as \u0008 and \u000c: valid, six bytes each.
-	var back string
-	got := appendQuoted(nil, "\b\f")
-	if err := json.Unmarshal(got, &back); err != nil || back != "\b\f" || len(got) != 14 || quoted("\b\f") != 14 {
-		t.Errorf("\\b and \\f: %q %v", got, err)
+	// \b and \f are the two-byte \b and \f, a slash is \/ and DEL is \u007f, as
+	// cjson writes them; encoding/json writes none of the four so.
+	for s, want := range map[string]string{"\b\f": `"\b\f"`, "/": `"\/"`, "\x7f": `"\u007f"`, "\x0b": `"\u000b"`} {
+		if got := appendQuoted(nil, s); string(got) != want || quoted(s) != len(want) {
+			t.Errorf("%q: written %s, want %s", s, got, want)
+		}
 	}
 }
 
@@ -58,17 +57,17 @@ func TestQuotedIsTheSizeOfAppendQuotedAndOfJSON(t *testing.T) {
 func rich() []Entry {
 	create := Entry{
 		Kind: KindCreate, Table: "work", To: "todo:a:b", IDs: []string{"c\"1", "c2", "c3"}, Scores: []string{"1", "2.5", "-3e2"},
-		Set: map[string]string{"b": "line\nbreak", "a": "é世"}, Each: []map[string]string{{"x": "1"}, nil, {"a": "override", "y": "\t"}},
-		BeforeFields: []string{"bf1", "bf2"}, About: []string{"p1", "p2", "p2"}, Meta: map[string]string{"why": "so", "and": "\\"},
+		Set: map[string]string{"b": "line\nbreak", "a": "é世", "path": "/a/b/c\x7f"}, Each: []map[string]string{{"x": "1"}, nil, {"a": "override", "y": "\t\b\f/"}},
+		BeforeFields: []string{"bf1", "bf2"}, About: []string{"p1", "p2", "p2"}, Meta: map[string]string{"why": "so/so", "and": "\\", "del\x7f": "\x7f"},
 		Guards: []Entry{{Kind: KindGuard, Table: "merge", From: "r:c", IDs: []string{"g1", "g2"}, Revs: []string{"7", "18446744073709551615"}, BeforeFields: []string{"f"}}},
-		Notes:  []Note{{Meta: map[string]string{"n": "1"}, About: []string{"p1", "p2"}}, {}},
+		Notes:  []Note{{Meta: map[string]string{"n": "1/2"}, About: []string{"p1/x", "p2"}}, {}},
 	}
 	move := Entry{
 		Kind: KindMove, Table: "work", From: "todo:a", To: "done:b", IDs: []string{"m1", "m2"}, Scores: []string{"1", "2"}, Revs: []string{"1", "2"},
 		Set: map[string]string{}, Unset: []string{"u1", "u2"}, Each: []map[string]string{nil, nil}, About: []string{"p", "q"},
 	}
 	remove := Entry{Kind: KindRemove, Table: "merge", From: "r:c", IDs: []string{"r1"}, Unset: []string{}, Set: map[string]string{"retired": "yes"}}
-	rows := Entry{Kind: KindRows, Table: "work", Add: []string{"new:row", "r\"2"}, Del: []string{"old"}}
+	rows := Entry{Kind: KindRows, Table: "work", Add: []string{"new:row", "r\"2", "a/b"}, Del: []string{"old"}}
 	return []Entry{create, move, remove, rows, gd("fleet", []string{"z"}), {Kind: KindNote, Notes: []Note{{About: []string{"x"}}}}}
 }
 
@@ -234,8 +233,9 @@ func TestObjectAndArrayBytesAreTheEncodersSizes(t *testing.T) {
 	}
 }
 
-// The line model is held to encoding/json's own count of the same event: the
-// builder's incremental line size against a marshalled line, per entry.
+// The line model is held to cjson's own count of the same event: the builder's
+// incremental line size against a marshalled line encoded as cjson writes it,
+// per entry.
 func TestTheLineModelIsTheSizeOfTheEventWrittenOut(t *testing.T) {
 	t.Parallel()
 	for i, e := range rich()[:3] {
@@ -269,7 +269,7 @@ func TestTheLineModelIsTheSizeOfTheEventWrittenOut(t *testing.T) {
 			}
 		}
 		if want := modelLine(t, w); got != want {
-			t.Errorf("entry %d (%s): the line is %d bytes by the builder, %d by encoding/json", i, e.Kind, got, want)
+			t.Errorf("entry %d (%s): the line is %d bytes by the builder, %d by cjson", i, e.Kind, got, want)
 		}
 	}
 }

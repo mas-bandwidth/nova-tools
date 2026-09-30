@@ -38,7 +38,10 @@ import (
 // itself. When the entries cannot be ordered so, the rows entries that both add
 // and delete are each split into an entry of the adds and an entry of the
 // deletes, which are then ordered like any two entries, and placed as the two
-// wire entries they are (a step may hold both, as the input's one entry did).
+// wire entries they are. A step holds both only when no member entry of the
+// step names the row the deletes empty (a delete of such a row starts a new step,
+// place.go), so at the contract's bounds the rename of a row is two steps: the
+// adds and the moves, then the deletes.
 // Entries that still cannot be ordered (each waits for the other) refuse the
 // build.
 

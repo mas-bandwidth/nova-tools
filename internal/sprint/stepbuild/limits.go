@@ -54,10 +54,10 @@ const (
 	// member prefix and the stored ID (section 1.2), and every command that
 	// writes a record carries that key. The prefixes are a definition's, not
 	// the contract's, and the contract sets no bound on one; the default is
-	// the longest that Layer 1 accepts for a definition (the tset-l1 branch,
-	// table_set.lua:443 refuses a longer prefix with CONFIG), so that a caller
-	// who names none is safe. A caller that knows the longest of its own
-	// passes it, and the cut is finer for it.
+	// the longest that Layer 1 accepts for a definition (the tset-l1 branch at
+	// 72b425b6d: table_set.lua:475 refuses a longer prefix with CONFIG), so
+	// that a caller who names none is safe. A caller that knows the longest of
+	// its own passes it, and the cut is finer for it.
 	DefaultMemberPrefixBytes = 512
 )
 

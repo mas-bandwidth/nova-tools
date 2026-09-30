@@ -12,12 +12,23 @@
 // bounds of a name, a value, an intent and a result. NOT modelled, and not
 // claimed: the planned commands (65,536 a step), the cell and key probes
 // (20,000), the raw payload a step fetches (8 MiB: it depends on the values
-// the store holds, which the request does not carry), and count, rcount and
-// advance entries (they carry cells or an epoch, not members). The generated
-// line and the planned argv bytes are counted as upper bounds over a layout
-// the contract does not fix (cost.go; layout.go). So a step this package
-// emits is inside every modelled bound; it is not claimed to be inside the
-// bounds that are not modelled.
+// the store holds, which the request does not carry), the stored fields of a
+// member (128 fields per member across updates: Layer 1 refuses a step with
+// LIMIT stored_fields at plan, table_set.lua:439 at 72b425b6d, when a member's
+// record, with the names the step adds and less the ones it unsets, would hold
+// more; that depends on the fields the record already holds, which the request
+// does not carry), and count, rcount and advance entries (they carry cells or an
+// epoch, not members). The generated line and the planned argv bytes are
+// counted as upper bounds over a layout the contract does not fix (cost.go;
+// layout.go). So a step this package emits is inside every modelled bound; it
+// is not claimed to be inside the bounds that are not modelled.
+//
+// Sizes are cjson's. Layer 1 decodes a request and encodes it again with cjson,
+// and refuses the step when that encoding is over 4 MiB (table_set.lua:328-331 at
+// 72b425b6d), and cjson spells a slash in two bytes and DEL in six. So every
+// string is sized, and the request written, in cjson's spelling (encode.go):
+// Step.Bytes is the size of the request as sent and as Layer 1 measures it, and
+// the generated lines are sized in the same spelling.
 //
 // An entry names a table, a kind (create, move, remove, guard, rows, or a
 // note-only entry), a set of members with the fields to set, and optional
@@ -34,7 +45,8 @@
 //  3. The encoded size of a step is exact, never estimated: the fixed parts of
 //     a request are counted by the code that writes them (encode.go), each
 //     member's items by the same string sizing, and Step.Bytes is held to
-//     len(Step.Encode()) on every step the tests build.
+//     len(Step.Encode()), and to the size of the request encoded again by
+//     cjson, on every step the tests build.
 //  4. A member whose own fields exceed a bound of an otherwise empty step
 //     cannot be cut: the build refuses, before any step is returned, naming
 //     the member and the bound (LimitError). So does a value over its own
@@ -70,12 +82,16 @@
 //
 // Rows and members: a rows entry that adds a row and deletes another is placed
 // as its adds, the members that move between them and its deletes when it
-// cannot be placed whole (the rename of a row), as two wire entries.
+// cannot be placed whole (the rename of a row), as two wire entries. A delete of
+// a row that a member entry of the step names starts a new step, so at the
+// contract's bounds a rename is two steps: the adds and the moves, then the
+// deletes.
 //
 // Tests. The unit tier holds a sample of the property test's inputs to every
 // bound, by the lite accounting, and one in sixteen of those to the full
-// accounting (the generated line by encoding/json, the planned argv bytes by
-// the model and by Layer 1's own layout counted from real commands) and to the
+// accounting (the request encoded again by cjson, the generated line by cjson,
+// the planned argv bytes by the model and by Layer 1's own layout counted from
+// real commands) and to the
 // fullness check: the unit tier's package budget is 2 s. The slow tier (go test
 // -tags slow, make test-slow) cuts more inputs, the unit tier's seeds among them,
 // with the full accounting and the fullness check on every one, and cuts the
@@ -211,7 +227,8 @@ type Step struct {
 	Entries []Placed
 	Notes   []PlacedNote
 
-	// Bytes is the exact size of Encode's output.
+	// Bytes is the exact size of Encode's output, which is also the size of
+	// the request as Layer 1 measures it (decoded and encoded again by cjson).
 	Bytes int
 }
 
@@ -263,8 +280,9 @@ func After(steps []Step, done Cursor) ([]Step, error) {
 // that leaves a member no room, before cfg.Ident is called). An empty input
 // is no steps. The steps are numbered from 1 and each is inside every modelled
 // bound of cfg.Bounds (the contract's, by default): not the planned commands,
-// the cell and key probes, the fetched payload, nor count, rcount and advance
-// entries, which the package does not model (see the package documentation).
+// the cell and key probes, the fetched payload, the stored fields of a member,
+// nor count, rcount and advance entries, which the package does not model (see
+// the package documentation).
 func Build(cfg Config, entries []Entry) ([]Step, error) {
 	b, err := newBuilder(cfg)
 	if err != nil {

@@ -9,7 +9,7 @@ import (
 // The planned argv bytes are an upper bound over Layer 1's own command layout
 // (layout.go): a step the builder emitted is never refused LIMIT at prepare
 // for its argv. These tests hold that against the layout as Layer 1 lays it
-// out (the tset-l1 branch at e269dd7aa, table_set.lua), by a counter written apart
+// out (the tset-l1 branch at 72b425b6d, table_set.lua), by a counter written apart
 // from the builder's (helpers_test.go: strictArgv, which builds every command
 // as real strings), at the worst case of every kind of entry.
 
@@ -51,13 +51,21 @@ func TestTheLayoutRowsAreTheContractsAndLayerOnesSpelling(t *testing.T) {
 		if !strings.Contains(got.section, "1.") && !strings.Contains(got.section, "3") && !strings.Contains(got.section, "5") {
 			t.Errorf("%s: no section of the contract beside it: %q", got.what, got.section)
 		}
+		// A line of Layer 1's Lua is a line of one commit, and the row names it: the
+		// commit the layout was read at, and every row of it.
+		if strings.Contains(got.section, "table_set") && strings.Count(got.section, "72b425b6d") != 1 {
+			t.Errorf("%s: cites Layer 1's Lua without the commit it was read at (72b425b6d): %q", got.what, got.section)
+		}
+		if strings.Contains(got.section, "e269dd7aa") {
+			t.Errorf("%s: cites the commit the layout is no longer read at: %q", got.what, got.section)
+		}
 	}
 	if int(slots) != 17 {
 		t.Errorf("the layout has %d rows: a row is a command or a key of Layer 1's plan, and each is checked above", slots)
 	}
 }
 
-// One member of each kind, counted from the argv table_set.lua:414-425 builds
+// One member of each kind, counted from the argv table_set.lua:445-456 at 72b425b6d builds
 // for it, spelled out here command by command. The strict count is held to it:
 // it is Layer 1's layout, and the model is held to the strict count.
 func TestTheStrictCountIsLayerOnesLayoutCommandByCommand(t *testing.T) {

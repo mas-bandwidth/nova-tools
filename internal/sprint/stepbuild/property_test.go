@@ -56,7 +56,10 @@ type gen struct{ r *rand.Rand }
 
 var (
 	genTables = []string{"work", "merge", "fleet", "readers", "extra"}
-	genAlpha  = []rune("abcXYZ019_-. :\"\\\n\té世")
+	// genAlpha holds every class cjson escapes differently from encoding/json
+	// or at a different width (the slash, DEL, \b and \f), so that the request
+	// and the lines are sized at cjson's width on every input.
+	genAlpha  = []rune("abcXYZ019_-. :\"\\\n\té世/\x7f\b\f/")
 	genScores = []string{"1", "2.5", "-3e2", "0", "1e-3", "0.000000000000000000000000000001", "123456789012345678901234567890"}
 )
 

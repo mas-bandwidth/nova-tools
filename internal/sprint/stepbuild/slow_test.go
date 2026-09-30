@@ -195,3 +195,15 @@ func TestSlowRowsAndMembersAtEveryCutPoint(t *testing.T) {
 	t.Parallel()
 	rowsAndMembersAtEveryCutPoint(t, cutPointInputs)
 }
+
+// The second read's scenario at its own size: 300 notes of one meta value each
+// of 45,000 bytes, every step counted in full (cjson_test.go).
+func TestThreeHundredNotesAtTheRequestBoundAreInsideLayerOnesReEncoding(t *testing.T) {
+	t.Parallel()
+	for _, f := range fills {
+		t.Run(f.name, func(t *testing.T) {
+			t.Parallel()
+			checkNotesAtTheRequestBound(t, f.fill, 300, 45000, 1<<30)
+		})
+	}
+}

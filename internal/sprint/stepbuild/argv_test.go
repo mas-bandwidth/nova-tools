@@ -219,7 +219,7 @@ func TestTheMemberPrefixIsCounted(t *testing.T) {
 }
 
 // The default member prefix is the longest Layer 1 accepts for a definition
-// (table_set.lua:443 refuses one over 512 bytes with CONFIG), typed here, so
+// (table_set.lua:475 at 72b425b6d refuses one over 512 bytes with CONFIG), typed here, so
 // that a caller who names none is safe: the planned argv bound holds for every
 // prefix Layer 1 takes.
 func TestTheDefaultMemberPrefixIsTheLongestLayerOneAccepts(t *testing.T) {

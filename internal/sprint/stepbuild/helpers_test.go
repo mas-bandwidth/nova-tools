@@ -12,6 +12,8 @@ import (
 // The tests measure a step from its encoded request, decoded by
 // encoding/json, and count every bound from what came back: an accounting
 // independent of the builder's own, sharing only the contract's definitions.
+// Every size of a request or of a generated line is counted as cjson writes it
+// (cjson_test.go), which is how Layer 1 measures a request.
 
 // wireEntry is one entry of a decoded request; an absent key decodes to nil,
 // a present empty one to an empty non-nil value.
@@ -66,18 +68,6 @@ func decode(t testing.TB, raw []byte) wireRequest {
 	return req
 }
 
-// jsonLen is the size encoding/json writes for v, HTML escaping off.
-func jsonLen(t testing.TB, v any) int {
-	t.Helper()
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-	if err := enc.Encode(v); err != nil {
-		t.Fatal(err)
-	}
-	return buf.Len() - 1
-}
-
 type lineChange struct {
 	Set   map[string]string `json:"set"`
 	Unset []string          `json:"unset"`
@@ -123,7 +113,7 @@ func modelLine(t testing.TB, e wireEntry) int {
 	for i := range e.IDs {
 		after := widestScore
 		if e.Scores != nil {
-			if n := jsonLen(t, e.Scores[i]) - 2; n > len(after) {
+			if n := cjsonLen(t, e.Scores[i]) - 2; n > len(after) {
 				after = strings.Repeat("x", n)
 			}
 		}
@@ -160,7 +150,7 @@ func modelLine(t testing.TB, e wireEntry) int {
 	if e.Meta != nil {
 		body.Meta = &e.Meta
 	}
-	return jsonLen(t, lineEnv{uint64Max, uint64Max, uint64Max, body})
+	return cjsonLen(t, lineEnv{uint64Max, uint64Max, uint64Max, body})
 }
 
 // modelNoteLine is the generated line of a note: its meta and the IDs it is
@@ -175,7 +165,7 @@ func modelNoteLine(t testing.TB, n wireNote) int {
 	if about == nil {
 		about = []string{}
 	}
-	return jsonLen(t, lineEnv{uint64Max, uint64Max, uint64Max, struct {
+	return cjsonLen(t, lineEnv{uint64Max, uint64Max, uint64Max, struct {
 		Kind  string            `json:"kind"`
 		Meta  map[string]string `json:"meta"`
 		About []string          `json:"about"`
@@ -185,6 +175,7 @@ func modelNoteLine(t testing.TB, n wireNote) int {
 // measured is a step counted from its decoded request.
 type measured struct {
 	bytes, entries, tables, candidates, guardOnly, rowPairs, rowNames int
+	cjsonBytes                                                        int // the request decoded and encoded again by cjson: what Layer 1's S.plan measures
 	notes, about, obs                                                 int
 	argv                                                              int // planned argv bytes by the model of the builder (modelArgv)
 	strict                                                            int // planned argv bytes by the strict count (strictArgv)
@@ -232,7 +223,7 @@ func measure(t testing.TB, raw []byte) measured { return measureKeys(t, raw, key
 func measureKeys(t testing.TB, raw []byte, kc keyCfg) measured {
 	t.Helper()
 	req := decode(t, raw)
-	m := measured{bytes: len(raw), entries: len(req.Entries), notes: len(req.Notes), depth: depthOf(raw)}
+	m := measured{bytes: len(raw), cjsonBytes: cjsonReEncode(t, raw), entries: len(req.Entries), notes: len(req.Notes), depth: depthOf(raw)}
 	ls := lineSizes{entries: make([]int, len(req.Entries)), notes: make([]int, len(req.Notes))}
 	tables := map[string]struct{}{}
 	seen := map[[2]string]struct{}{}
@@ -330,9 +321,9 @@ type lineSizes struct{ entries, notes []int }
 //
 // strictArgv is the safety check, and Layer 1's own layout. It uses none of
 // the builder's sizes for a key or a value: it builds every command as real
-// strings, the way the tset-l1 branch's table_set.lua builds them (lines 64-72 for
-// the keys, 414-425 for a member's commands, table_set_rows.lua and
-// table_set_receipt.lua for a rows entry's and the receipt's), and sums the
+// strings, the way the tset-l1 branch's table_set.lua builds them (at 72b425b6d,
+// lines 75-83 for the keys, 445-456 for a member's commands, table_set_rows.lua
+// and table_set_receipt.lua for a rows entry's and the receipt's), and sums the
 // length of every argument. Where the layout leaves room it takes the
 // strictest reading: no batching (every member is its own command of each
 // kind, the most commands any splitting could make), and each value the store
@@ -372,7 +363,7 @@ func strictArgv(t testing.TB, req wireRequest, kc keyCfg, ls lineSizes) int {
 			total += len(a)
 		}
 	}
-	// The keys of table_set.lua:64-72.
+	// The keys of table_set.lua:75-83 at 72b425b6d.
 	tablePrefix := func(table string) string {
 		if ep == "0" {
 			return ns + "table:" + table
@@ -390,7 +381,7 @@ func strictArgv(t testing.TB, req wireRequest, kc keyCfg, ls lineSizes) int {
 	for ei, e := range req.Entries {
 		switch e.Kind {
 		case "create", "move", "remove":
-			// table_set.lua:364: a member's destination is the entry's to, else its
+			// table_set.lua:395 at 72b425b6d: a member's destination is the entry's to, else its
 			// from (a member that stays), and none for a remove.
 			src, dest := e.From, e.To
 			if dest == "" && e.Kind != "remove" {
@@ -399,7 +390,7 @@ func strictArgv(t testing.TB, req wireRequest, kc keyCfg, ls lineSizes) int {
 			xadd(ls.entries[ei])
 			for i, id := range e.IDs {
 				rec := prefix + id
-				// table_set.lua:415-419
+				// table_set.lua:446-450 at 72b425b6d
 				hargs := []string{"revision", rev}
 				if e.Kind == "create" {
 					hargs = append(hargs, "epoch", ep)
@@ -420,7 +411,7 @@ func strictArgv(t testing.TB, req wireRequest, kc keyCfg, ls lineSizes) int {
 					hargs = append(hargs, k, v)
 				}
 				cmd(append([]string{"HSET", rec}, hargs...)...)
-				// table_set.lua:420-422
+				// table_set.lua:451-453 at 72b425b6d
 				dels := append([]string(nil), e.Unset...)
 				if e.Kind == "remove" {
 					dels = append(dels, "place:"+e.T)
@@ -433,10 +424,10 @@ func strictArgv(t testing.TB, req wireRequest, kc keyCfg, ls lineSizes) int {
 					score = e.Scores[i]
 				}
 				if src != "" {
-					cmd("ZREM", cellKey(e.T, src), id) // table_set.lua:424
+					cmd("ZREM", cellKey(e.T, src), id) // table_set.lua:455 at 72b425b6d
 				}
 				if dest != "" {
-					cmd("ZADD", cellKey(e.T, dest), score, id) // table_set.lua:425
+					cmd("ZADD", cellKey(e.T, dest), score, id) // table_set.lua:456 at 72b425b6d
 				}
 				if e.About != nil {
 					cmd("RPUSH", historyKey(e.About[i]), seq)
@@ -458,7 +449,7 @@ func strictArgv(t testing.TB, req wireRequest, kc keyCfg, ls lineSizes) int {
 				cmd("ZREM", rowsKey(e.T), r)
 				line.Deleted = append(line.Deleted, r)
 			}
-			xadd(jsonLen(t, lineEnv{uint64Max, uint64Max, uint64Max, line}))
+			xadd(cjsonLen(t, lineEnv{uint64Max, uint64Max, uint64Max, line}))
 		}
 	}
 	for ni, n := range req.Notes {
@@ -551,13 +542,13 @@ func modelArgv(t testing.TB, req wireRequest, kc keyCfg, ls lineSizes) int {
 				Added      []rowsAdded `json:"added"`
 				Deleted    []string    `json:"deleted"`
 			}{"rows", json.Number(strings.Repeat("9", wideUint)), e.T, []rowsAdded{}, []string{}}
-			total += xadd + jsonLen(t, lineEnv{uint64Max, uint64Max, uint64Max, head})
+			total += xadd + cjsonLen(t, lineEnv{uint64Max, uint64Max, uint64Max, head})
 			for _, r := range e.Add {
 				total += len("ZADD") + rowsKey(e.T) + wideRank + len(r)
-				total += jsonLen(t, rowsAdded{r, strings.Repeat("9", wideRank)}) + 1
+				total += cjsonLen(t, rowsAdded{r, strings.Repeat("9", wideRank)}) + 1
 			}
 			for _, r := range e.Del {
-				total += len("ZREM") + rowsKey(e.T) + len(r) + jsonLen(t, r) + 1
+				total += len("ZREM") + rowsKey(e.T) + len(r) + cjsonLen(t, r) + 1
 			}
 		}
 	}
@@ -602,6 +593,9 @@ func (m measured) within(bd Bounds) []string {
 		got, limit int
 	}{
 		{"request bytes", m.bytes, bd.RequestBytes},
+		{"request bytes encoded again by cjson", m.cjsonBytes, bd.RequestBytes},
+		{"request bytes over its cjson re-encoding", m.bytes, m.cjsonBytes},
+		{"cjson re-encoding over the request bytes", m.cjsonBytes, m.bytes},
 		{"entries", m.entries, bd.Entries},
 		{"tables", m.tables, bd.Tables},
 		{"candidates", m.candidates, bd.Candidates},
@@ -712,7 +706,7 @@ func countMembers(steps []Step) int {
 // generated line and the planned argv bytes. It is cheap, and checks what the
 // full measure checks of the rest.
 func measureLite(s Step, raw []byte) measured {
-	m := measured{bytes: len(raw), entries: len(s.Entries), notes: len(s.Notes)}
+	m := measured{bytes: len(raw), cjsonBytes: len(raw), entries: len(s.Entries), notes: len(s.Notes)}
 	tables := map[string]struct{}{}
 	seen := map[[2]string]struct{}{}
 	rows := map[[2]string]bool{}

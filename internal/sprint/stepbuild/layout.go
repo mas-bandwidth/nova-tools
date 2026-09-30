@@ -12,9 +12,11 @@ package stepbuild
 // The layout below is the one place this package spells a command or a key. It
 // has a row for each command and each key Layer 1 plans, and beside each row
 // the section of the contract that fixes it and, where Layer 1 has an
-// implementation, the place it lays the command out (the tset-l1 branch at
-// e269dd7aa: internal/nsprint/fn/lua, table_set.lua and table_set_rows.lua;
-// table_set_receipt.lua for the receipt). Layer 2's commands (the log's XADD
+// implementation, the place it lays the command out (the tset-l1 branch, read at
+// commit 72b425b6d, which each row names beside its lines: internal/nsprint/fn/lua,
+// table_set.lua and table_set_rows.lua; table_set_receipt.lua for the receipt;
+// the lines are those of that commit, not of the branch as it moves). Layer 2's
+// commands (the log's XADD
 // and the histories' RPUSH) are not on that branch: their rows are the
 // contract's (sections 1.2, 1.3, 1.4), and what the contract leaves to Layer 2
 // (the field an XADD carries its line in) is a width taken generously.
@@ -102,50 +104,50 @@ const (
 var layout = [slots]layoutRow{
 	cmdCreateHSET: {"HSET (create)", "<record> revision <rev> epoch <epoch> place:<table> <cell> {<name> <value>}...",
 		lits("HSET", fieldRevision, fieldEpoch, fieldPlace),
-		"1.4, 3 (create), 4; table_set.lua:415-419"},
+		"1.4, 3 (create), 4; table_set.lua:446-450 at 72b425b6d"},
 	cmdMoveHSET: {"HSET (move)", "<record> revision <rev> place:<table> <cell> {<name> <value>}...",
 		lits("HSET", fieldRevision, fieldPlace),
-		"1.4, 3 (move), 4; table_set.lua:415-419 (a member that stays keeps its cell in the field)"},
+		"1.4, 3 (move), 4; table_set.lua:446-450 at 72b425b6d (a member that stays keeps its cell in the field)"},
 	cmdRemoveHSET: {"HSET (remove)", "<record> revision <rev> {<name> <value>}...",
 		lits("HSET", fieldRevision),
-		"1.4, 3 (remove: no placement), 4; table_set.lua:415, 418-419"},
+		"1.4, 3 (remove: no placement), 4; table_set.lua:446, 449-450 at 72b425b6d"},
 	cmdHDEL: {"HDEL", "<record> {<unset name>}... [place:<table> for a remove]",
 		lits("HDEL"),
-		"1.4, 1.6, 3 (remove: place is removed, other fields retained); table_set.lua:420-422"},
+		"1.4, 1.6, 3 (remove: place is removed, other fields retained); table_set.lua:451-453 at 72b425b6d"},
 	cmdZREM: {"ZREM", "<cell key> <id>",
 		lits("ZREM"),
-		"1.4, 3 (a member's ZREM precedes its ZADD); table_set.lua:424 (a create has no source cell: none)"},
+		"1.4, 3 (a member's ZREM precedes its ZADD); table_set.lua:455 at 72b425b6d (a create has no source cell: none)"},
 	cmdZADD: {"ZADD", "<cell key> <score> <id>",
 		lits("ZADD"),
-		"1.4, 3, 4; table_set.lua:425 (a remove has no destination: none)"},
+		"1.4, 3, 4; table_set.lua:456 at 72b425b6d (a remove has no destination: none)"},
 	cmdRPUSH: {"RPUSH", "<history key> <seq>",
 		lits("RPUSH"),
 		"1.2 (history_key), 1.3 (one append per about of a line), 1.4; Layer 2"},
 	cmdXADD: {"XADD", "<log key> <seq>-0 <field> <line>",
 		lits("XADD") + streamIDBytes + streamFieldBytes,
-		"1.2 (log_key), 1.3 (one line per event and per note), 1.4; table_set.lua:541-545 (the stream ID); Layer 2"},
+		"1.2 (log_key), 1.3 (one line per event and per note), 1.4; table_set.lua:572-576 at 72b425b6d (the stream ID); Layer 2"},
 	cmdRowsZADD: {"ZADD (rows)", "<rows key> <rank> <row>",
 		lits("ZADD"),
-		"1.4, 3 (rows: add); table_set_rows.lua:234-247 (Layer 1 batches a table's rows to 1,000 a command; counted one each)"},
+		"1.4, 3 (rows: add); table_set_rows.lua:306-319 at 72b425b6d (Layer 1 batches a table's rows to 1,000 a command; counted one each)"},
 	cmdRowsZREM: {"ZREM (rows)", "<rows key> <row>",
 		lits("ZREM"),
-		"1.4, 3 (rows: delete); table_set_rows.lua:234-247"},
+		"1.4, 3 (rows: delete); table_set_rows.lua:306-319 at 72b425b6d"},
 	cmdDoneHSET: {"HSET (done)", "<done key> <op> <receipt>",
 		lits("HSET"),
-		"1.4 (appended last), 5, 6 (receipt 32 KiB); table_set_receipt.lua:66-80 (the receipt is counted whole)"},
+		"1.4 (appended last), 5, 6 (receipt 32 KiB); table_set_receipt.lua:66-80 at 72b425b6d (the receipt is counted whole)"},
 
 	keyRecord: {"record key", "<member prefix><id>", 0,
-		"1.2 (record_key); table_set.lua:64"},
+		"1.2 (record_key); table_set.lua:75 at 72b425b6d"},
 	keyCell: {"cell key", "<ns>table:<table>:<epoch>:cell:<row>:<col>", lits("table:", ":", ":cell:"),
-		"1.2 (cell_key), 3 (the cell reference is <row>:<col>); table_set.lua:66-68"},
+		"1.2 (cell_key), 3 (the cell reference is <row>:<col>); table_set.lua:77-79 at 72b425b6d"},
 	keyRows: {"rows key", "<ns>table:<table>:<epoch>:rows", lits("table:", ":", ":rows"),
-		"1.2 (rows_key); table_set.lua:66-67"},
+		"1.2 (rows_key); table_set.lua:77-78 at 72b425b6d"},
 	keyLog: {"log key", "<ns>sprint:log@<epoch>", lits("sprint:log@"),
-		"1.2 (log_key); table_set.lua:70"},
+		"1.2 (log_key); table_set.lua:81 at 72b425b6d"},
 	keyHistory: {"history key", "<ns>sprint:cl:<about>@<epoch>", lits("sprint:cl:", "@"),
-		"1.2 (history_key); table_set.lua:71"},
+		"1.2 (history_key); table_set.lua:82 at 72b425b6d"},
 	keyDone: {"done key", "<ns>sprint:done@<epoch>", lits("sprint:done@"),
-		"1.2 (done_key), 5; table_set.lua:72"},
+		"1.2 (done_key), 5; table_set.lua:83 at 72b425b6d"},
 }
 
 // argvMarginPercent is the margin a step's planned argv bytes are cut with, on
@@ -227,7 +229,7 @@ type memberCommands struct{ hset, hdel, zrem, zadd int }
 // fields (its revision, and on a create its epoch; on a create and a move the
 // placement: a field named for the table, holding the cell reference); a
 // remove instead deletes its placement with an HDEL, beside the names it
-// unsets (table_set.lua:415-422).
+// unsets (table_set.lua:446-453 at 72b425b6d).
 func (k keySizes) commands(kind Kind, table, src, dst string, unset bool) memberCommands {
 	var c memberCommands
 	switch kind {

@@ -432,7 +432,10 @@ func (es *entryState) sumObs() int {
 // stricter reading: the line is the semantic event of section 1.3 written
 // out in full as JSON (never the compact form), with every value the store
 // supplies at its widest, and every member's effective fields written per
-// member, shared fields repeated. A line is one wire entry's members.
+// member, shared fields repeated. A line is one wire entry's members. Its
+// strings are sized as cjson spells them (encode.go), the encoding a Layer 2 in
+// the same Lua function would use: a slash is two bytes and DEL six, so a line
+// of paths or of DEL is not the raw bytes of its values.
 const (
 	// lineEnvelope opens a line: the sequence, epoch and time Layer 2 adds,
 	// each at the widest a decimal uint64 goes; the event follows, and one

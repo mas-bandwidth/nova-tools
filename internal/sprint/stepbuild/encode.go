@@ -9,10 +9,21 @@ import "sort"
 // sizes below rather than re-counting a part on every member; the tests hold
 // the two to equality on every step they build.
 //
-// The text is JSON: strings escape the quote, the backslash and every control
-// byte, and pass everything else through as the UTF-8 the input already is.
-// Object keys are written in byte order, entry keys in the fixed order of
-// emitMember, so the same step always encodes to the same bytes.
+// The text is JSON, and its strings are spelled the way cjson spells them: the
+// quote, the backslash and the slash as a backslash and themselves, the
+// controls with a short form (backspace, tab, line feed, form feed, carriage
+// return) as \b \t \n \f \r, every other control and DEL as \u00XX, and every
+// other byte, the UTF-8 the input already is, as itself (escExtra). The
+// spelling is not a matter of taste. Layer 1's S.plan decodes a request and
+// encodes it again with cjson, and refuses LIMIT request_bytes when that
+// encoding is over 4 MiB (the tset-l1 branch at 72b425b6d, table_set.lua:
+// 328-331; table_set_validate.lua:5-20 has the codec), and cjson writes a slash
+// in two bytes and DEL in six. A request written in cjson's own spelling is
+// its own re-encoding, so one size, Step.Bytes, is the size of the request as
+// sent and as Layer 1 measures it; and the generated lines, which a Layer 2 in
+// the same function most likely encodes with cjson too, are sized by the same
+// spelling. Object keys are written in byte order, entry keys in the fixed order
+// of emitMember, so the same step always encodes to the same bytes.
 
 // sink is what the emitters write to.
 type sink interface {
@@ -32,17 +43,19 @@ type buffer struct{ b []byte }
 func (w *buffer) raw(s string) { w.b = append(w.b, s...) }
 func (w *buffer) str(s string) { w.b = appendQuoted(w.b, s) }
 
-// escExtra is the bytes past its own that a byte costs inside a JSON string:
-// one for the quote, the backslash and the three controls with a short form,
-// five for the other controls (the six bytes of \u00XX).
+// escExtra is the bytes past its own that a byte costs inside a string, the
+// char2escape table of the lua_cjson.c that Redis bundles: one for the quote, the
+// backslash, the slash and the five controls with a short form (\b \t \n \f \r),
+// five for every other control and for DEL (the six bytes of \u00XX).
 var escExtra = func() (t [256]uint8) {
 	for i := 0; i < 0x20; i++ {
 		t[i] = 5
 	}
-	for _, c := range []byte{'"', '\\', '\n', '\r', '\t'} {
+	t[0x7f] = 5
+	for _, c := range []byte{'"', '\\', '/', '\b', '\t', '\n', '\f', '\r'} {
 		t[c] = 1
 	}
-	return t
+	return
 }()
 
 // quoted is the encoded size of s as a JSON string, its quotes included.
@@ -54,7 +67,7 @@ func quoted(s string) int {
 	return n
 }
 
-// appendQuoted appends s as a JSON string.
+// appendQuoted appends s as a string, spelled as cjson spells it.
 func appendQuoted(dst []byte, s string) []byte {
 	const hex = "0123456789abcdef"
 	dst = append(dst, '"')
@@ -67,14 +80,18 @@ func appendQuoted(dst []byte, s string) []byte {
 		dst = append(dst, s[start:i]...)
 		start = i + 1
 		switch c {
-		case '"', '\\':
+		case '"', '\\', '/':
 			dst = append(dst, '\\', c)
-		case '\n':
-			dst = append(dst, '\\', 'n')
-		case '\r':
-			dst = append(dst, '\\', 'r')
+		case '\b':
+			dst = append(dst, '\\', 'b')
 		case '\t':
 			dst = append(dst, '\\', 't')
+		case '\n':
+			dst = append(dst, '\\', 'n')
+		case '\f':
+			dst = append(dst, '\\', 'f')
+		case '\r':
+			dst = append(dst, '\\', 'r')
 		default:
 			dst = append(dst, '\\', 'u', '0', '0', hex[c>>4], hex[c&15])
 		}

@@ -2,6 +2,7 @@ package stepbuild
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -293,6 +294,76 @@ func TestBoundNoteAboutIDsInTheLine(t *testing.T) {
 	fits.Meta["m"] += "p"
 	if le := refused(t, cfg(), []Entry{{Kind: KindNote, Notes: []Note{fits}}}); le.Bound != boundLineBytes.name || le.Actual != LimitLineBytes+1 {
 		t.Fatalf("a note whose line is 1 MiB + 1 with its IDs: %+v", le)
+	}
+}
+
+// The same count at odd limits, where an off-by-one in it cannot hide behind
+// the arithmetic of an even one: the line holds LineIDs IDs, its members and
+// their distinct about IDs, so with every member about an ID of its own k members
+// are 2k, and an odd limit of 2k+1 holds k of them and not one more. The last
+// distinct about ID is the one that counts: 1,000 members with 999 distinct
+// about IDs are 1,999 IDs, and the 1,000th distinct about ID makes 2,000.
+func TestBoundLineIDsAtOddLimitsAndTheLastDistinctAbout(t *testing.T) {
+	t.Parallel()
+	withAbout := func(n int, about func(i int) string) []Entry {
+		e := mv("work", names("m", n))
+		e.About = make([]string, n)
+		for i := range e.About {
+			e.About[i] = about(i)
+		}
+		return []Entry{e}
+	}
+	distinct := func(i int) string { return fmt.Sprintf("p%d", i) }
+	at := func(limit int) Config {
+		c := cfg()
+		c.Bounds = Contract()
+		c.Bounds.LineIDs = limit
+		return c
+	}
+	sizes := func(steps []Step) []int {
+		var out []int
+		for _, s := range steps {
+			for _, p := range s.Entries {
+				out = append(out, len(p.IDs))
+			}
+		}
+		return out
+	}
+	// A limit of 5: two members and two abouts are 4, three are 6; the limit is
+	// never reached by a whole member, so every wire entry holds two.
+	if got := sizes(must(t, at(5), withAbout(2, distinct))); !reflect.DeepEqual(got, []int{2}) {
+		t.Fatalf("2 members with 2 abouts in a line of 5: wire entries of %v", got)
+	}
+	if got := sizes(must(t, at(5), withAbout(3, distinct))); !reflect.DeepEqual(got, []int{2, 1}) {
+		t.Fatalf("3 members with 3 abouts in a line of 5: wire entries of %v", got)
+	}
+	// Three members and two distinct abouts are 5: one wire entry; the third
+	// distinct about ID is the sixth.
+	two := func(i int) string { return fmt.Sprintf("p%d", i%2) }
+	if got := sizes(must(t, at(5), withAbout(3, two))); !reflect.DeepEqual(got, []int{3}) {
+		t.Fatalf("3 members with 2 abouts in a line of 5: wire entries of %v", got)
+	}
+	abouts := []string{"p0", "p0", "p1", "p2"}
+	if got := sizes(must(t, at(5), withAbout(4, func(i int) string { return abouts[i] }))); !reflect.DeepEqual(got, []int{3, 1}) {
+		t.Fatalf("4 members, the fourth with a third distinct about, in a line of 5: wire entries of %v", got)
+	}
+	// The 1,000th distinct about ID at a limit of 1,999.
+	last := func(distinctAbouts int) func(int) string {
+		return func(i int) string { return fmt.Sprintf("p%d", min(i, distinctAbouts-1)) }
+	}
+	if got := sizes(must(t, at(1999), withAbout(1000, last(999)))); !reflect.DeepEqual(got, []int{1000}) {
+		t.Fatalf("1,000 members with 999 distinct abouts in a line of 1,999: wire entries of %v", got)
+	}
+	if got := sizes(must(t, at(1999), withAbout(1000, last(1000)))); !reflect.DeepEqual(got, []int{999, 1}) {
+		t.Fatalf("1,000 members with 1,000 distinct abouts in a line of 1,999: wire entries of %v", got)
+	}
+	// And at the contract's own 2,000: the 1,000th distinct about ID fits; the
+	// 1,001st does not.
+	if got := sizes(must(t, cfg(), withAbout(1000, distinct))); !reflect.DeepEqual(got, []int{1000}) {
+		t.Fatalf("1,000 members with 1,000 abouts in a line of 2,000: wire entries of %v", got)
+	}
+	if got := sizes(must(t, cfg(), withAbout(1001, distinct))); !reflect.DeepEqual(got, []int{1000, 1}) {
+		t.Fatalf("1,001 members with 1,001 abouts in a line of 2,000: wire entries of %v", got)
 	}
 }
 

@@ -499,7 +499,9 @@ func TestEntriesThatWaitOnEachOtherRefuseTheBuild(t *testing.T) {
 // and the members move between them. The whole is legal (n is added, r emptied
 // in the same step), so it is legal in every cut: the builder places the entry's
 // adds, then the moves, then the entry's deletes, as the two wire entries of the
-// adds and of the deletes.
+// adds and of the deletes. A delete of a row that a member entry of the step
+// names starts a new step, so at the contract's bounds the rename is two steps:
+// the adds and the moves, then the deletes.
 func TestARowRenameIsPlacedAsTheAddsTheMovesAndTheDeletes(t *testing.T) {
 	t.Parallel()
 	start := world{
@@ -564,6 +566,58 @@ func TestARowRenameIsPlacedAsTheAddsTheMovesAndTheDeletes(t *testing.T) {
 	steps = must(t, cfg(), []Entry{rowsEntry("t", []string{"n"}, []string{"q"})})
 	if len(steps) != 1 || len(steps[0].Entries) != 1 || steps[0].Entries[0].Add == nil || steps[0].Entries[0].Del == nil {
 		t.Fatalf("an entry that needs no split is split: %+v", steps)
+	}
+}
+
+// The notes of a rename stay with the deletes, the piece placed last: the
+// builder gives them to the deletes when it splits the entry and moves them to the
+// adds only when the order places the adds after the deletes. Checked where the
+// order is made (the entry's two pieces, in the order placed) and in the steps
+// (one entry a step: the adds, the move, the deletes, and both notes, whole and in
+// their order, in the step of the deletes and in no other).
+func TestTheNotesOfARenameStayWithItsDeletesWhenTheyArePlacedLast(t *testing.T) {
+	t.Parallel()
+	rename := rowsEntry("t", []string{"n"}, []string{"r"})
+	rename.Notes = []Note{{Meta: map[string]string{"n": "1"}, About: []string{"p"}}, {Meta: map[string]string{"n": "2"}}}
+	in := []Entry{rename, moveTo("t", "r:c", "n:c", "x")}
+
+	b, err := newBuilder(cfg())
+	if err != nil {
+		t.Fatal(err)
+	}
+	states, err := b.prepare(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(states) != 3 || states[0].idx != 0 || states[1].idx != 1 || states[2].idx != 0 {
+		t.Fatalf("the order placed is %d pieces, not the adds, the move and the deletes", len(states))
+	}
+	adds, dels := states[0], states[2]
+	if !reflect.DeepEqual(adds.e.Add, []string{"n"}) || adds.e.Del != nil || !reflect.DeepEqual(dels.e.Del, []string{"r"}) || dels.e.Add != nil {
+		t.Fatalf("the pieces: adds %+v, deletes %+v", adds.e, dels.e)
+	}
+	if len(adds.e.Notes) != 0 || len(adds.notes) != 0 {
+		t.Errorf("the adds hold %d notes (%d costed)", len(adds.e.Notes), len(adds.notes))
+	}
+	if len(dels.e.Notes) != 2 || len(dels.notes) != 2 {
+		t.Errorf("the deletes, placed last, hold %d notes (%d costed), want 2", len(dels.e.Notes), len(dels.notes))
+	}
+
+	steps := must(t, entriesBound(1), in)
+	if got := placed(steps); !reflect.DeepEqual(got, []int{0, 1, 0}) {
+		t.Fatalf("placed %v", got)
+	}
+	for k, s := range steps {
+		want := 0
+		if k == 2 {
+			want = 2
+		}
+		if len(s.Notes) != want {
+			t.Errorf("step %d holds %d notes, want %d", k+1, len(s.Notes), want)
+		}
+	}
+	if n := steps[2].Notes; len(n) == 2 && (n[0].Meta["n"] != "1" || n[1].Meta["n"] != "2" || n[0].Source != 0 || n[1].Source != 0) {
+		t.Errorf("the notes of the deletes' step: %+v", n)
 	}
 }
 
