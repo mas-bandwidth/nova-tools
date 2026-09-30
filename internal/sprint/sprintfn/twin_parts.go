@@ -199,7 +199,7 @@ func RegisterTickParts(r *PartRegistry) error {
 		{PartLease, leasePart{}},
 		{PartPop, popPart{}},
 		{PartIngest, ingestPart{}},
-		{PartBeat, beatPart{}},
+		{PartBeat, memberBeatPart{}},
 		{PartClock, clockPart{}},
 		{PartSprint, sprintPart{}},
 	} {
@@ -878,8 +878,9 @@ type beatPlan struct {
 
 func (p *beatPlan) commands() []Cmd { return p.cmds }
 
-// beatPart is the beat part (1.4.4).
-type beatPart struct{}
+// memberBeatPart is the beat part (1.4.4); its name is not beatPart, which a
+// test helper of the write path's own tests already takes.
+type memberBeatPart struct{}
 
 // memberStatus is the field of a member's control card that says whether the
 // member is up, down or held (1.3.1).
@@ -903,7 +904,7 @@ func storedControlID(epoch tset.Decimal, member string) (string, bool) {
 // the pre stage read, as ZADD NX and HSETNX would make them. The control cards
 // come from S.before: PartsBefore names them, and a step whose before hook did
 // not ask for them is refused CONFIG, never read as "no fleet row".
-func (beatPart) Pre(st *State, req *Request, obs *Before) (any, *Refusal) {
+func (memberBeatPart) Pre(st *State, req *Request, obs *Before) (any, *Refusal) {
 	b := req.Beat
 	if len(b.Members) == 0 || len(b.Members) > SprintMembersMax {
 		return nil, requestRefusal()
@@ -965,4 +966,4 @@ func (beatPart) Pre(st *State, req *Request, obs *Before) (any, *Refusal) {
 }
 
 // Cmds hands back the commands Pre built.
-func (beatPart) Cmds(st *State, plan any, lp LogPlan) ([]Cmd, *Refusal) { return cmdsOf(plan) }
+func (memberBeatPart) Cmds(st *State, plan any, lp LogPlan) ([]Cmd, *Refusal) { return cmdsOf(plan) }

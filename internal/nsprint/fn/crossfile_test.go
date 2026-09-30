@@ -96,6 +96,13 @@ func nsFieldAvailable(name, field string, exported map[string]string) bool {
 			}
 		}
 	}
+	// The parts file (sprint_parts.lua, item IT16) is a sprint file too, with the
+	// same two seams by its exact name: its guard line, and Layer 1's NS.tset
+	// resolved when a part runs. It is not in sprintFragments, IT12's list, whose
+	// harness registers stub parts by the names the real ones take.
+	if name == sprintPartsFile && (field == "tset_profile" || field == "tset") {
+		return true
+	}
 	// ns_sprint_step and ns_sprint_read resolve Layer 1's NS.tset and Layer 2's
 	// NS.tlog when a call runs, inside the registered functions (errata 2,
 	// item 8): the sprint profile loads them after the composed fragments.
@@ -199,6 +206,10 @@ func TestCrossFileGuardAllowsOnlyProfileSeams(t *testing.T) {
 		{"lua/sprint_zz_fn.lua", "tlog", true},
 		{"lua/sprint_00_core.lua", "tset", false},
 		{"lua/sprint_00_core.lua", "tlog", false},
+		{"lua/sprint_parts.lua", "tset_profile", true},
+		{"lua/sprint_parts.lua", "tset", true},
+		{"lua/sprint_parts.lua", "tlog", false},
+		{"lua/sprint_parts.lua", "tset_typo", false},
 		{"lua/sprint_unknown.lua", "tset_profile", false},
 		{"lua/sprint_zz_fn.lua", "tset_typo", false},
 		{"lua/sprint_zz_fn.lua", "unknown", false},
