@@ -24,8 +24,8 @@ import (
 // fragment, Layer 1 alone otherwise), fills the
 // requested number of cards through the table's own Step, and judges the rows
 // L1-1 to L1-21 against their limits, over the direct route and through a
-// 128 ms each-way proxy (testredis.Far at 128 ms: the delay holds what the
-// client sends, so a round trip is 256 ms). This test gives it the store the
+// ~128 ms per-trip proxy (testredis.Far at 128 ms: the delay holds what the
+// client sends, so one command and its reply cost the delay once: a round trip is ~128 ms). This test gives it the store the
 // rule demands: a fresh standalone Redis 8.10.2 of the image, started by the
 // test as its own child, with SLOWLOG at threshold zero, and gone with the
 // container. Nothing else is measured against and no store outside the
@@ -74,7 +74,6 @@ func TestSprintsizeL1SizeRun(t *testing.T) {
 	// and never changes the server's configuration.
 	addr := testredis.Start(t, "--slowlog-log-slower-than", "0", "--slowlog-max-len", "1024")
 	proxy := testredis.Far(t, addr, 128*time.Millisecond)
-	cfg := tsetSizeConfig{redisAddr: addr, proxyAddr: proxy, space: "dev-l1size:", owned: true}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 14*time.Minute)
 	defer cancel()
@@ -85,6 +84,7 @@ func TestSprintsizeL1SizeRun(t *testing.T) {
 	if _, err := fn.TSetSource(profile); err != nil {
 		profile = fn.TSetStandalone
 	}
+	cfg := tsetSizeConfig{redisAddr: addr, proxyAddr: proxy, space: "dev-l1size:", owned: true, profile: string(profile)}
 	var table bytes.Buffer
 	start := time.Now()
 	err := tsetRunL1Sizes(ctx, cfg, []int{cards},
