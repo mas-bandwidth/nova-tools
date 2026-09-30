@@ -71,6 +71,10 @@ var (
 	nsRead     = regexp.MustCompile(`\bNS\.([A-Za-z_][A-Za-z0-9_]*)`)
 )
 
+// sprintItemFiles are the sprint's Lua files that the items after the core add,
+// which the profile's assembly lists in sprintFragments once it is built (G0).
+var sprintItemFiles = []string{"lua/sprint_j.lua"}
+
 // nsFieldAvailable keeps profile inputs separate from exports made by earlier
 // fragments. These two exact seams do not waive any free-global/write check.
 func nsFieldAvailable(name, field string, exported map[string]string) bool {
@@ -101,6 +105,15 @@ func nsFieldAvailable(name, field string, exported map[string]string) bool {
 	// item 8): the sprint profile loads them after the composed fragments.
 	if name == "lua/sprint_zz_fn.lua" && (field == "tset" || field == "tlog") {
 		return true
+	}
+	// The files the items after the core add (IT15's sprint_j.lua) are
+	// fragments of the sprint profile too: the same guard, and Layer 1's S
+	// resolved when a call runs. They join sprintFragments when the profile's
+	// assembly does (G0); until then they are named here.
+	for _, file := range sprintItemFiles {
+		if name == file && (field == "tset_profile" || field == "tset") {
+			return true
+		}
 	}
 	// The core resolves this dependency inside registered callbacks, after
 	// the composed assembler must have loaded the required Layer 2 provider.
@@ -202,6 +215,10 @@ func TestCrossFileGuardAllowsOnlyProfileSeams(t *testing.T) {
 		{"lua/sprint_unknown.lua", "tset_profile", false},
 		{"lua/sprint_zz_fn.lua", "tset_typo", false},
 		{"lua/sprint_zz_fn.lua", "unknown", false},
+		{"lua/sprint_j.lua", "tset_profile", true},
+		{"lua/sprint_j.lua", "tset", true},
+		{"lua/sprint_j.lua", "tlog", false},
+		{"lua/sprint_j.lua", "unknown", false},
 		{"lua/task.lua", "tset", false},
 	} {
 		if got := nsFieldAvailable(tc.name, tc.field, map[string]string{"known": "lua/earlier.lua"}); got != tc.want {
