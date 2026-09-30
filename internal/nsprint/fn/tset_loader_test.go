@@ -39,6 +39,7 @@ var legacyRegistrations = []string{
 	"ns_view_get",
 	"ns_view_list",
 	"ns_view_set",
+	"ns_view_state",
 }
 
 var legacyStringRegistration = regexp.MustCompile(`redis\.register_function\(\s*'([^']+)'`)

@@ -207,6 +207,14 @@ func (c clearAtTick) SetKey(ctx context.Context, name, value string) error {
 	return c.kv.SetKey(ctx, name, value)
 }
 
+func (c clearAtTick) SetKeyShowing(ctx context.Context, name, value, view, state string) error {
+	return c.kv.SetKeyShowing(ctx, name, value, view, state)
+}
+
+func (c clearAtTick) ShowState(ctx context.Context, view, state string) error {
+	return c.kv.ShowState(ctx, view, state)
+}
+
 func (c clearAtTick) Acquire(ctx context.Context, gen uint64, op OpRecord) (bool, error) {
 	if !*c.done && strings.HasPrefix(op.Verb, "tick ") {
 		*c.done = true

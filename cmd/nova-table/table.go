@@ -406,16 +406,20 @@ func (app *application) cmdRender(args []string, stdout, stderr io.Writer) int {
 // cmdView manages presentation configuration independently of table receipts.
 func (app *application) cmdView(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		return refuse(stderr, "view", "wants set, show, list or del")
+		return refuse(stderr, "view", "wants set, state, show, list or del")
 	}
 	sub := args[0]
-	if sub != "set" && sub != "show" && sub != "list" && sub != "del" {
-		return refuse(stderr, "view", "unknown subverb "+sub+"; wants set, show, list or del")
+	if sub != "set" && sub != "state" && sub != "show" && sub != "list" && sub != "del" {
+		return refuse(stderr, "view", "unknown subverb "+sub+"; wants set, state, show, list or del")
 	}
 	verb := "view " + sub
 	fs := verbflag.New(verb)
 	addr := app.redisFlag(fs)
 	var tables, title, summary string
+	var clearState bool
+	if sub == "state" {
+		fs.BoolVar(&clearState, "clear", false, "clear the state: the summary line shows the counts again")
+	}
 	if sub == "set" {
 		fs.StringVar(&tables, "tables", "", "the tables, comma-separated, in order")
 		fs.StringVar(&title, "title", "", "the view's title line")
@@ -428,7 +432,14 @@ func (app *application) cmdView(args []string, stdout, stderr io.Writer) int {
 	if sub == "list" && len(pos) != 0 {
 		return refuse(stderr, verb, "takes no view name")
 	}
-	if sub != "list" && len(pos) != 1 {
+	switch {
+	case sub == "state" && clearState && len(pos) != 1:
+		return refuse(stderr, verb, "wants one view name with --clear: view state <name> (<text> | --clear)")
+	case sub == "state" && !clearState && len(pos) != 2:
+		return refuse(stderr, verb, "wants a view name and its state text: view state <name> (<text> | --clear)")
+	case sub == "state" && !clearState && (pos[1] == "" || !ntable.ValidViewState(pos[1])):
+		return refuse(stderr, verb, fmt.Sprintf("a state is one line of at most %d bytes; --clear removes it", ntable.MaxViewState))
+	case sub != "list" && sub != "state" && len(pos) != 1:
 		return refuse(stderr, verb, "wants one view name")
 	}
 	var list []string
@@ -455,12 +466,21 @@ func (app *application) cmdView(args []string, stdout, stderr io.Writer) int {
 			return st.refusal(stderr, verb, err)
 		}
 		fmt.Fprintf(stdout, "VIEW SET view=%s tables=%s title=%q summary=%s trips=%d\n", pos[0], strings.Join(list, ","), title, field(summary), trips.N())
+	case "state":
+		text := ""
+		if !clearState {
+			text = pos[1]
+		}
+		if err := ntable.ViewState(ctx, c, pos[0], text); err != nil {
+			return st.refusal(stderr, verb, err)
+		}
+		fmt.Fprintf(stdout, "VIEW STATE view=%s state=%q trips=%d\n", pos[0], text, trips.N())
 	case "show":
 		v, err := ntable.ViewGet(ctx, c, pos[0])
 		if err != nil {
 			return st.refusal(stderr, verb, err)
 		}
-		fmt.Fprintf(stdout, "VIEW view=%s tables=%s title=%q summary=%s trips=%d\n", v.Name, strings.Join(v.Tables, ","), v.Title, field(v.Summary), trips.N())
+		fmt.Fprintf(stdout, "VIEW view=%s tables=%s title=%q summary=%s state=%q trips=%d\n", v.Name, strings.Join(v.Tables, ","), v.Title, field(v.Summary), v.State, trips.N())
 	case "list":
 		names, err := ntable.ViewList(ctx, c)
 		if err != nil {
