@@ -44,4 +44,7 @@ cmd/nova-swarm/firstrun_test.go:TestUsageBannerExamplesRunThroughTheComparator e
 cmd/nova-sandbox/examples_functional_test.go:TestSandboxCLISetupAndCommandsMatchOutput $ mkdir -p /path/to/pool/jobs/j1/home
 cmd/nova-sandbox/examples_functional_test.go:TestSandboxCLISetupAndCommandsMatchOutput $ HOME=/path/to/pool/jobs/j1/home \
 cmd/nova-sandbox/examples_functional_test.go:TestHelpCheckExampleMatchesTranscript example: nova-sandbox check
+cmd/nova-sprint/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-sprint help
+cmd/nova-sprint/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-sprint help add
+cmd/nova-sprint/firstrun_test.go:TestTESTSFirstRunIsWhatTheToolPrints example: nova-sprint help inbox
 cmd/nova-work/firstrun_test.go:TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine example: nova-work help
