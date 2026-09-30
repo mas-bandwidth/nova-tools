@@ -822,6 +822,44 @@ end)`
 	}
 }
 
+// TestFactF12LoadTimeSandboxHasNoSetmetatable verifies that the environment a
+// library's body runs in at FUNCTION LOAD time has no setmetatable (nor type,
+// math, error, assert or pcall): a library that calls one at load is refused,
+// naming the missing global, and is not left in FUNCTION LIST.
+func TestFactF12LoadTimeSandboxHasNoSetmetatable(t *testing.T) {
+	t.Parallel()
+	addr := testredis.Start(t)
+	c := redis.NewClient(&redis.Options{Addr: addr})
+	defer c.Close()
+	logRedisVersion(t, c)
+
+	ctx := context.Background()
+
+	for _, tc := range []struct{ global, call string }{
+		{"setmetatable", "setmetatable({}, {})"},
+		{"type", "type(1)"},
+		{"math", "math.floor(1)"},
+		{"error", "error('x')"},
+		{"assert", "assert(true)"},
+		{"pcall", "pcall(function() end)"},
+	} {
+		code := "#!lua name=f12probe\n" + tc.call
+		err := c.FunctionLoadReplace(ctx, code).Err()
+		if err == nil || !strings.Contains(err.Error(), tc.global) {
+			t.Fatalf("expected FUNCTION LOAD of a library calling %s at load to be refused naming %q, got: %v", tc.call, tc.global, err)
+		}
+		t.Logf("%s at load: %v", tc.global, err)
+
+		libs, err := c.FunctionList(ctx, redis.FunctionListQuery{LibraryNamePattern: "f12probe"}).Result()
+		if err != nil {
+			t.Fatalf("function list: %v", err)
+		}
+		if len(libs) != 0 {
+			t.Fatalf("expected no f12probe library after the refused load of %s, got %+v", tc.call, libs)
+		}
+	}
+}
+
 func parseUsedMemory(info string) int64 {
 	scanner := bufio.NewScanner(strings.NewReader(info))
 	for scanner.Scan() {
