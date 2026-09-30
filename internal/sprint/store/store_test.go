@@ -37,6 +37,8 @@ func newHarness(t *testing.T) *harness {
 		Now:   func() time.Time { h.mu.Lock(); defer h.mu.Unlock(); return h.now },
 		NewID: func() string { h.mu.Lock(); defer h.mu.Unlock(); n++; return fmt.Sprint(n) },
 		Sleep: func(time.Duration) {}}
+	// every part a tick plans on its twin is checked against a fresh read
+	h.st.CheckTwin = checkTwin
 	if err := h.st.Init(h.ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -626,4 +628,13 @@ func TestAckWritesOneDecidedNote(t *testing.T) {
 	if len(decided) != 1 || decided[0].What != "ack: a flaky runner" || decided[0].Answers != open[0].Note.ID {
 		t.Fatalf("decided notes: %+v", decided)
 	}
+}
+
+// checkTwin is every harness's CheckTwin: the twin a part planned on is the
+// state a fresh read of the same generation gives.
+func checkTwin(twin, fresh *sprint.Snapshot) error {
+	if d := TwinDiff(twin, fresh); d != "" {
+		return errors.New(d)
+	}
+	return nil
 }

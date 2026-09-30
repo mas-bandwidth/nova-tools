@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -935,6 +936,73 @@ func RowSet(ctx context.Context, c redis.Cmdable, name, key string, texts map[st
 	return int(n), err
 }
 
+// RowSetMany sets the text cells of several rows of one table in one round
+// trip: one ns_table_row_set per row, all in one pipeline, each its own write
+// (its own revision and change event), as RowSet writes it. An error names
+// the first row the store refused, or the exchange that failed.
+func RowSetMany(ctx context.Context, c redis.Cmdable, name string, rows map[string]map[string]string, opts ...WriteOptions) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	if len(opts) > 1 {
+		return fmt.Errorf("table %q: one write-options value is allowed", name)
+	}
+	var wo WriteOptions
+	if len(opts) == 1 {
+		wo = opts[0]
+	}
+	options, err := payload(struct {
+		Epoch string `json:"epoch"`
+		Actor string `json:"actor"`
+		Fence string `json:"fence"`
+		Idem  string `json:"idem"`
+	}{strconv.FormatUint(wo.Epoch, 10), wo.Actor, wo.Fence, wo.Idem})
+	if err != nil {
+		return err
+	}
+	keys := make([]string, 0, len(rows))
+	for k := range rows {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	pipe := c.Pipeline()
+	cmds := make([]*redis.Cmd, len(keys))
+	for i, k := range keys {
+		if len(rows[k]) == 0 {
+			return fmt.Errorf("table %q: row set wants at least one text value", name)
+		}
+		body, err := payload(rows[k])
+		if err != nil {
+			return err
+		}
+		cmds[i] = pipe.FCall(ctx, FnRowSet, []string{DefKey(name)}, name, k, body, options)
+	}
+	if _, err := pipe.Exec(ctx); err != nil && !isRedisReply(err) {
+		return fmt.Errorf("table %q: row set of %d rows: %w", name, len(keys), err)
+	}
+	for i, cmd := range cmds {
+		o := operation{table: name, row: keys[i]}
+		reply, err := cmd.Slice()
+		if err != nil {
+			return fmt.Errorf("%s: %s: %w%s", o.location(), FnRowSet, err, runUnlessNamed(err, o.remedy()))
+		}
+		if err := o.refused(reply); err != nil {
+			return err
+		}
+		if len(reply) < 2 {
+			return fmt.Errorf("%s: missing committed receipt", o.location())
+		}
+	}
+	return nil
+}
+
+// isRedisReply says a pipeline's error is one command's reply, read with
+// that command, and not the exchange's.
+func isRedisReply(err error) bool {
+	var re redis.Error
+	return errors.As(err, &re)
+}
+
 // Drop removes the active epoch and its owned cells. The template and older
 // epochs survive; a later epoch starts with the same definition and no rows.
 func Drop(ctx context.Context, c redis.Cmdable, name string, opts ...WriteOptions) (int, error) {
@@ -1545,22 +1613,70 @@ func (b *BatchMemberDelta) UnmarshalJSON(data []byte) error {
 // ahead of it ErrEpochAhead. Operation records do not expire, but a drop of the
 // table ends them.
 func ApplyBatch(ctx context.Context, c redis.Cmdable, manifest BatchManifest) (Receipt, error) {
+	body, err := batchBody(&manifest)
+	if err != nil {
+		return Receipt{}, err
+	}
+	return batchReceipt(manifest, c.FCall(ctx, FnApply, []string{DefKey(manifest.Table)}, manifest.Table, body))
+}
+
+// ApplyBatches applies manifests of one table in one round trip, in one
+// MULTI/EXEC: each is its own batch, applied or refused as ApplyBatch
+// applies it, and none runs between them, so a refused one leaves every one
+// after it refused on the table revision it expected. The receipts and errors
+// are each manifest's; a manifest refused before sending (a rule or a bound
+// this process checks) is its error, and none after it is sent.
+func ApplyBatches(ctx context.Context, c redis.Cmdable, manifests []BatchManifest) ([]Receipt, []error) {
+	rcs, errs := make([]Receipt, len(manifests)), make([]error, len(manifests))
+	bodies := make([]string, 0, len(manifests))
+	for i := range manifests {
+		body, err := batchBody(&manifests[i])
+		if err != nil {
+			errs[i] = err
+			for k := i + 1; k < len(manifests); k++ {
+				errs[k] = fmt.Errorf("table %q batch %q: not sent: an earlier batch was refused before sending", manifests[k].Table, manifests[k].OperationID)
+			}
+			break
+		}
+		bodies = append(bodies, body)
+	}
+	if len(bodies) == 0 {
+		return rcs, errs
+	}
+	tx := c.TxPipeline()
+	cmds := make([]*redis.Cmd, len(bodies))
+	for i, body := range bodies {
+		cmds[i] = tx.FCall(ctx, FnApply, []string{DefKey(manifests[i].Table)}, manifests[i].Table, body)
+	}
+	_, _ = tx.Exec(ctx) // each command's reply, or the exchange's error, is read with it
+	for i, cmd := range cmds {
+		rcs[i], errs[i] = batchReceipt(manifests[i], cmd)
+	}
+	return rcs, errs
+}
+
+// batchBody is a manifest's request, checked before it is sent.
+func batchBody(manifest *BatchManifest) (string, error) {
 	if !ValidName(manifest.Table) {
-		return Receipt{}, &ManifestError{Msg: fmt.Sprintf("table %q: invalid name: a table name wants letters, digits, _ . and -; run: nova-table help", manifest.Table)}
+		return "", &ManifestError{Msg: fmt.Sprintf("table %q: invalid name: a table name wants letters, digits, _ . and -; run: nova-table help", manifest.Table)}
 	}
 	if manifest.Members == nil {
 		manifest.Members = []BatchMemberEntry{}
 	}
 	o := operation{table: manifest.Table, opID: manifest.OperationID, batch: true}
-	body, err := payload(manifest)
+	body, err := payload(*manifest)
 	if err != nil {
-		return Receipt{}, err
+		return "", err
 	}
 	if _, verr := ValidateBatchManifestRaw([]byte(body)); verr != nil {
-		return Receipt{}, o.beforeSending(verr)
+		return "", o.beforeSending(verr)
 	}
-	key := DefKey(manifest.Table)
-	cmd := c.FCall(ctx, FnApply, []string{key}, manifest.Table, body)
+	return body, nil
+}
+
+// batchReceipt is the receipt of a manifest's apply, or its error.
+func batchReceipt(manifest BatchManifest, cmd *redis.Cmd) (Receipt, error) {
+	o := operation{table: manifest.Table, opID: manifest.OperationID, batch: true}
 	reply, err := cmd.Slice()
 	if err != nil {
 		return Receipt{}, fmt.Errorf("%s: %w: %w (changed=unknown); send the same manifest again with the same operation id %q: it returns the original receipt if the batch was applied and applies it if it was not; run: %s",
@@ -1664,39 +1780,97 @@ func (r ReadSetResult) IsMissing(id string) bool {
 // instead of the active one, and an epoch ahead of the active one is refused
 // (ErrEpochAhead). Errors are refusals (IsRefusal) that wrote nothing, or a
 // transport error from the client.
-func ReadSet(ctx context.Context, c redis.Cmdable, table string, scope ReadSetScope, epoch ...uint64) (ReadSetResult, error) {
+// ReadSetCmd holds a queued ns_table_read_set command.
+type ReadSetCmd struct {
+	table string
+	cmd   *redis.Cmd
+}
+
+// QueueReadSet queues ns_table_read_set on c (a redis.Pipeliner or Cmdable).
+func QueueReadSet(ctx context.Context, c redis.Cmdable, table string, scope ReadSetScope, epoch ...uint64) (*ReadSetCmd, error) {
 	if !ValidName(table) {
-		return ReadSetResult{}, fmt.Errorf("table %q: invalid name; run: nova-table help", table)
+		return nil, fmt.Errorf("table %q: invalid name; run: nova-table help", table)
 	}
 	scopeBody, err := payload(scope)
 	if err != nil {
-		return ReadSetResult{}, err
+		return nil, err
 	}
 	args := []any{table, scopeBody}
 	if len(epoch) > 0 {
 		args = append(args, strconv.FormatUint(epoch[0], 10))
 	}
-	o := operation{table: table, readSet: true}
 	key := DefKey(table)
 	cmd := c.FCallRO(ctx, FnReadSet, []string{key}, args...)
-	reply, err := cmd.Slice()
+	return &ReadSetCmd{table: table, cmd: cmd}, nil
+}
+
+// QueueReadSetMembers queues ns_table_read_set for a list of member IDs.
+func QueueReadSetMembers(ctx context.Context, c redis.Cmdable, table string, members []string, epoch ...uint64) (*ReadSetCmd, error) {
+	return QueueReadSet(ctx, c, table, ReadSetScope{Members: members}, epoch...)
+}
+
+func fastString(v any) string {
+	switch s := v.(type) {
+	case string:
+		return s
+	case []byte:
+		return string(s)
+	case int64:
+		return strconv.FormatInt(s, 10)
+	default:
+		return fmt.Sprint(v)
+	}
+}
+
+func fastUint(v any) (uint64, error) {
+	switch n := v.(type) {
+	case int64:
+		return uint64(n), nil
+	case string:
+		return strconv.ParseUint(n, 10, 64)
+	default:
+		return strconv.ParseUint(fmt.Sprint(v), 10, 64)
+	}
+}
+
+func fastFloat(v any) (float64, string, error) {
+	switch s := v.(type) {
+	case string:
+		f, err := strconv.ParseFloat(s, 64)
+		return f, s, err
+	case float64:
+		return s, strconv.FormatFloat(s, 'f', -1, 64), nil
+	case int64:
+		return float64(s), strconv.FormatInt(s, 10), nil
+	default:
+		str := fmt.Sprint(v)
+		f, err := strconv.ParseFloat(str, 64)
+		return f, str, err
+	}
+}
+
+// Result decodes the result of a queued ReadSet.
+func (q *ReadSetCmd) Result() (ReadSetResult, error) {
+	reply, err := q.cmd.Slice()
 	if err != nil {
+		o := operation{table: q.table, readSet: true}
 		return ReadSetResult{}, fmt.Errorf("%s: %s: %w; run: %s", o.location(), FnReadSet, err, o.remedy())
 	}
+	o := operation{table: q.table, readSet: true}
 	if err := o.refused(reply); err != nil {
 		return ReadSetResult{}, err
 	}
-	if len(reply) != 6 || fmt.Sprint(reply[0]) != "SET" {
-		return ReadSetResult{}, fmt.Errorf("table %q: malformed read set reply", table)
+	if len(reply) != 6 || fastString(reply[0]) != "SET" {
+		return ReadSetResult{}, fmt.Errorf("table %q: malformed read set reply", q.table)
 	}
 	res := ReadSetResult{
-		Table: fmt.Sprint(reply[1]),
+		Table: fastString(reply[1]),
 	}
-	res.Epoch, err = strconv.ParseUint(fmt.Sprint(reply[2]), 10, 64)
+	res.Epoch, err = fastUint(reply[2])
 	if err != nil {
 		return ReadSetResult{}, err
 	}
-	res.Revision, err = strconv.ParseUint(fmt.Sprint(reply[3]), 10, 64)
+	res.Revision, err = fastUint(reply[3])
 	if err != nil {
 		return ReadSetResult{}, err
 	}
@@ -1705,32 +1879,32 @@ func ReadSet(ctx context.Context, c redis.Cmdable, table string, scope ReadSetSc
 		for _, rm := range rawMembers {
 			item, ok := rm.([]any)
 			if !ok || len(item) < 7 {
-				return ReadSetResult{}, fmt.Errorf("table %q: malformed member in read set", table)
+				return ReadSetResult{}, fmt.Errorf("table %q: malformed member in read set", q.table)
 			}
-			mRev, err := strconv.ParseUint(fmt.Sprint(item[1]), 10, 64)
+			mRev, err := fastUint(item[1])
 			if err != nil {
-				return ReadSetResult{}, fmt.Errorf("table %q: invalid member revision %v: %w", table, item[1], err)
+				return ReadSetResult{}, fmt.Errorf("table %q: invalid member revision %v: %w", q.table, item[1], err)
 			}
-			mScore, err := strconv.ParseFloat(fmt.Sprint(item[5]), 64)
+			mScore, scoreText, err := fastFloat(item[5])
 			if err != nil {
-				return ReadSetResult{}, fmt.Errorf("table %q: invalid member score %v: %w", table, item[5], err)
+				return ReadSetResult{}, fmt.Errorf("table %q: invalid member score %v: %w", q.table, item[5], err)
 			}
 			fieldsRaw, ok := item[6].([]any)
 			if !ok || len(fieldsRaw)%2 != 0 {
-				return ReadSetResult{}, fmt.Errorf("table %q: malformed member fields shape", table)
+				return ReadSetResult{}, fmt.Errorf("table %q: malformed member fields shape", q.table)
 			}
 			fields := make(map[string]string, len(fieldsRaw)/2)
 			for i := 0; i < len(fieldsRaw); i += 2 {
-				fields[fmt.Sprint(fieldsRaw[i])] = fmt.Sprint(fieldsRaw[i+1])
+				fields[fastString(fieldsRaw[i])] = fastString(fieldsRaw[i+1])
 			}
 			res.Members = append(res.Members, ReadSetMember{
-				ID:        fmt.Sprint(item[0]),
+				ID:        fastString(item[0]),
 				Revision:  mRev,
-				Placed:    fmt.Sprint(item[2]) == "1",
-				Row:       fmt.Sprint(item[3]),
-				Col:       fmt.Sprint(item[4]),
+				Placed:    fastString(item[2]) == "1",
+				Row:       fastString(item[3]),
+				Col:       fastString(item[4]),
 				Score:     mScore,
-				ScoreText: fmt.Sprint(item[5]),
+				ScoreText: scoreText,
 				Fields:    fields,
 			})
 		}
@@ -1738,10 +1912,18 @@ func ReadSet(ctx context.Context, c redis.Cmdable, table string, scope ReadSetSc
 	if rawMissing, ok := reply[5].([]any); ok {
 		res.Missing = make([]string, len(rawMissing))
 		for i, m := range rawMissing {
-			res.Missing[i] = fmt.Sprint(m)
+			res.Missing[i] = fastString(m)
 		}
 	}
 	return res, nil
+}
+
+func ReadSet(ctx context.Context, c redis.Cmdable, table string, scope ReadSetScope, epoch ...uint64) (ReadSetResult, error) {
+	cmd, err := QueueReadSet(ctx, c, table, scope, epoch...)
+	if err != nil {
+		return ReadSetResult{}, err
+	}
+	return cmd.Result()
 }
 
 // ReadSetMembers is ReadSet for member ids: one round trip, one snapshot. The

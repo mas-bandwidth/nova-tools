@@ -37,6 +37,21 @@ const (
 	driveMembers   = 8
 	driveWidth     = 64
 	driveSample    = 50 // ticks between two samples of the streams (every tick before the 50th)
+	// MaxTickWall is the gate every tick of the drive is held to, the owner's
+	// law of 2026-09-30: "the whole intent is sub-second ticks. This is a
+	// requirement." A tick over it fails the drive, named with its parts,
+	// where the drive runs against a bench's store (GateStoreEnv).
+	MaxTickWall = time.Second
+	// GateStoreEnv, set to 1, says the drive runs against a real store on a
+	// bench, and the wall-clock bound is asserted: the certification tier
+	// sets it (.github/workflows/certification.yml, tick-gate). Everywhere
+	// else the bound is printed, not asserted: the functional container is
+	// not the store, its two CPUs shared by the redis-server, the loop and the
+	// world driver playing every 10 ms, whose operations hold the fence the
+	// loop's parts wait behind. The invariants (every card landed, no table
+	// read whole after the first tick, the twin never off the store's counts)
+	// are asserted everywhere.
+	GateStoreEnv = "NOVA_SPRINT_GATE_STORE"
 )
 
 // driveTick is one tick of the loop as it was told of: what started it, what
@@ -51,7 +66,11 @@ type driveTick struct {
 	queued int // entries in the work queue when the tick ended
 	err    string
 	wall   time.Duration
+	took   time.Duration    // the tick's own wall time (TickResult.Took): the gate's
 	times  []store.PartTime // what the tick spent its time on, part by part
+	cost   store.PartTime   // the tick's cost summed: its trips, whole-table reads, records, mismatches
+	load   string           // the machine's load averages as the tick ended
+	said   []string         // what the tick said once (a NOTE): why a table was read whole
 }
 
 // driveSampleAt is the landed count of each stream, every driveSample ticks.
@@ -226,9 +245,13 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 			began := time.Now()
 			res, err := st.Tick(lctx)
 			q, _ := st.B.QueueRead(lctx)
-			tk := driveTick{n: i, why: why, idle: res.Idle, parts: len(res.Parts), order: len(res.Order), end: res.TickEnd, queued: len(q), wall: time.Since(began), times: res.Times}
+			tk := driveTick{n: i, why: why, idle: res.Idle, parts: len(res.Parts), order: len(res.Order), end: res.TickEnd, queued: len(q), wall: time.Since(began), took: res.Took, times: res.Times, cost: res.Cost(), load: machineLoad(), said: res.Said}
 			if err != nil && lctx.Err() == nil {
 				tk.err = err.Error()
+			}
+			if m := res.Cost().Mismatch; m > 0 && tk.err == "" {
+				// the loop's twin did not add up to the store's own counts
+				tk.err = fmt.Sprintf("the twin read %d tables whole on a count mismatch: %s", m, res.TimesLine())
 			}
 			ticks = append(ticks, tk)
 			// a sample every driveSample ticks, and at every tick while the loop
@@ -277,6 +300,9 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 		}
 	}()
 
+	// the watchdog reads through a store of its own: its whole reads are its
+	// own, not counted as the loop's (the gate counts the loop's)
+	watch := &store.Store{B: st.B, Names: st.Names, Actor: st.Actor, Now: st.Now, NewID: st.NewID, Sleep: st.Sleep}
 	// a stall watchdog: the landed count not moving for a minute of polls ends
 	// the drive with the tables, the inbox and the check printed
 	stalled := make(chan string, 1)
@@ -291,7 +317,7 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 			case <-poll.C:
 			}
 			n := 0
-			if snap, err := st.Load(ctx, store.All, nil); err == nil {
+			if snap, err := watch.Load(ctx, store.All, nil); err == nil {
 				for _, s := range streams {
 					n += snap.Work.Count(s, sprint.Landed)
 				}
@@ -501,6 +527,52 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 		t.Errorf("the coordinator met %d judgments in a sprint with no gates, needs or chances: %v", len(judged), judged)
 	}
 
+	// THE GATE: every tick under MaxTickWall; after the first tick the loop
+	// reads no table whole (its twin catches up from the change streams), and
+	// its twin never disagrees with the store's counts
+	var over []string
+	var sumTook, maxTook time.Duration
+	whole := int64(0)
+	var loads, why []string
+	for i, tk := range ticks {
+		sumTook += tk.took
+		maxTook = max(maxTook, tk.took)
+		if i > 0 {
+			whole += tk.cost.Reads
+		}
+		for _, n := range tk.said {
+			why = append(why, fmt.Sprintf("tick %d: %s", tk.n, n))
+		}
+		if tk.took > MaxTickWall && tk.err == "" {
+			var parts []string
+			for _, pt := range tk.times {
+				if pt.Took >= 50*time.Millisecond {
+					parts = append(parts, fmt.Sprintf("%s/%s %s %dt", pt.Table, pt.Name, pt.Took.Round(time.Millisecond), pt.Trips))
+				}
+			}
+			over = append(over, fmt.Sprintf("tick %d took %s (load %s): %s", tk.n, tk.took.Round(time.Millisecond), tk.load, strings.Join(parts, ", ")))
+		}
+		if i%10 == 0 {
+			loads = append(loads, tk.load)
+		}
+	}
+	gate := fmt.Sprintf("THE GATE: %d ticks, mean %s, max %s, %d over %s; whole-table reads after the first tick %d; machine load %s",
+		len(ticks), (sumTook / time.Duration(max(len(ticks), 1))).Round(time.Millisecond), maxTook.Round(time.Millisecond), len(over), MaxTickWall, whole, strings.Join(loads, " | "))
+	fmt.Fprintln(os.Stderr, gate)
+	for _, o := range over {
+		if os.Getenv(GateStoreEnv) == "1" {
+			t.Errorf("over the gate of %s: %s", MaxTickWall, o)
+		} else {
+			fmt.Fprintf(os.Stderr, "NOTE over the gate of %s (asserted only against a bench's store, %s=1): %s\n", MaxTickWall, GateStoreEnv, o)
+		}
+	}
+	if whole > 0 {
+		t.Errorf("the loop read %d tables whole after its first tick: its twin did not catch up; it said: %s", whole, strings.Join(why, "; "))
+	}
+	for _, w := range why {
+		fmt.Fprintln(os.Stderr, "NOTE "+w)
+	}
+
 	report := fmt.Sprintf("DIRTY-TICK DRIVE: %d cards in %d streams on %d machines of width %d: all landed in %s over %d ticks (%.1f ticks/s)\n"+
 		"  the loop's ticks began on: %v; %d idle, %d did something, %d needed more than the four first updates (most updates in one tick: %d); the slowest tick took %s\n"+
 		"  tick-end notes: %d (one for each of the %d ticks that addressed the coordinator), the coordinator read the inbox %d times (accepted %d groups, %d refused as already accepted by the machine): %s\n"+
@@ -524,7 +596,19 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 		}
 	}
 	fmt.Fprintln(os.Stderr, report)
-	t.Log("\n" + report)
+	t.Log("\n" + report + "\n  " + gate)
+}
+
+// machineLoad is the machine's load averages, as the kernel says them in
+// /proc/loadavg ("" where there is none): the gate is read beside them.
+func machineLoad() string {
+	if b, err := os.ReadFile("/proc/loadavg"); err == nil {
+		f := strings.Fields(string(b))
+		if len(f) >= 3 {
+			return strings.Join(f[:3], " ")
+		}
+	}
+	return "" // the container's kernel says it in /proc; no other is asked
 }
 
 func tail(s string, n int) string {

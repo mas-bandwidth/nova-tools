@@ -392,6 +392,12 @@ type TickResult struct {
 	// Times is how long each part the tick ran took, in order, its drains
 	// before it included: what a tick spends its time on.
 	Times []PartTime `json:"times,omitempty"`
+	// Took is the tick's wall time, from its first read of the machine's
+	// state to its heartbeat.
+	Took time.Duration `json:"took_ns"`
+	// Said is what the tick's reads met that it says once: a grant the
+	// store's user lacks (its read then reads the table whole).
+	Said []string `json:"said,omitempty"`
 }
 
 // PartTime is one part of a tick and the time its step took.
@@ -399,6 +405,17 @@ type PartTime struct {
 	Table string        `json:"table,omitempty"`
 	Name  string        `json:"name"`
 	Took  time.Duration `json:"took_ns"`
+	// Trips is the round trips the part made to the store, Reads the
+	// whole-table reads it took, Rows the records its reads brought back,
+	// and Stale the reads of the tick's twin it refused because another
+	// writer wrote since (stats.go).
+	Trips int64 `json:"trips"`
+	Reads int64 `json:"reads"`
+	Rows  int64 `json:"rows"`
+	Stale int64 `json:"stale,omitempty"`
+	// Mismatch is the tables the twin read whole because its records did
+	// not add up to the store's counts (twin.go): 0 in a correct twin.
+	Mismatch int64 `json:"mismatch,omitempty"`
 }
 
 // TableRows is one table of a tick and the rows its parts changed in it.
@@ -478,7 +495,7 @@ func tickExtras(s *sprint.Snapshot) map[string][]string {
 // set to what the last plan left due past the part's bounds.
 func TickPartStep(name string, fn sprint.TickPartFn, r sprint.TickReq, epoch *uint64, guard func(*sprint.Snapshot) string, due *int) Step {
 	return Step{Verb: "tick " + name, Actor: sprint.MachineActor, Load: All, Extras: tickExtras, Epoch: epoch,
-		Mirrors: name == "presence" || name == "deal" || name == "level" || name == "resume",
+		Mirrors: mirrors(name),
 		Plan: func(s *sprint.Snapshot) sprint.Plan {
 			if guard != nil {
 				if why := guard(s); why != "" {
@@ -491,6 +508,11 @@ func TickPartStep(name string, fn sprint.TickPartFn, r sprint.TickReq, epoch *ui
 			}
 			return unchangedNotWritten(s, p)
 		}}
+}
+
+// mirrors says the part's step brings the display cells up to date after it.
+func mirrors(name string) bool {
+	return name == "presence" || name == "deal" || name == "level" || name == "resume"
 }
 
 // unchangedNotWritten is the plan of a part with the writes that change no
@@ -570,8 +592,13 @@ func staleRefusal(refused []sprint.Refusal, at uint64) bool {
 // state: every step it runs carries that epoch, and a clear since (which sets
 // the machine STOPPED first) stops the tick without writing anything at the
 // new epoch.
-func (st *Store) Tick(ctx context.Context) (TickResult, error) {
-	st, err := st.repin(ctx)
+func (st *Store) Tick(ctx context.Context) (res TickResult, err error) {
+	began := time.Now()
+	defer func() { res.Said = append(res.Said, st.stats().takeNotes()...) }()
+	st.stats()
+	st.twin() // made on the store the run loop keeps: its ticks share it
+	defer func() { res.Took = time.Since(began) }()
+	st, err = st.repin(ctx)
 	if err != nil {
 		return TickResult{}, err
 	}
@@ -579,7 +606,7 @@ func (st *Store) Tick(ctx context.Context) (TickResult, error) {
 	if err != nil {
 		return TickResult{}, err
 	}
-	res := TickResult{State: m.StateWord(), Epoch: st.epoch}
+	res = TickResult{State: m.StateWord(), Epoch: st.epoch}
 	if !m.Running() {
 		// A STOPPED machine moves nothing; the tick shows the fleet as its
 		// beats say and says it looked, so start can tell a run loop is
@@ -601,6 +628,7 @@ func (st *Store) Tick(ctx context.Context) (TickResult, error) {
 	seen, err := st.tick(ctx, m, hb, &res)
 	if err == nil && res.Halted == "" && res.Done == "" {
 		// The reminder duty is a part too: it begins only while RUNNING.
+		mt := st.meter()
 		if halted, herr := st.halted(ctx, &res, "remind"); herr != nil {
 			err = herr
 		} else if !halted {
@@ -608,14 +636,16 @@ func (st *Store) Tick(ctx context.Context) (TickResult, error) {
 				err = fmt.Errorf("remind: %w", rerr)
 			}
 		}
+		res.Times = append(res.Times, mt.part("", "remind"))
 	}
 	if err == nil && res.Stale == "" {
 		// the coordinator's one wake of the tick, last (tickend.go); a tick the
 		// clear overtook writes nothing more
-		ended := time.Now()
+		mt := st.meter()
 		res.TickEnd, err = st.tickEnd(ctx)
-		res.Times = append(res.Times, PartTime{Name: "tick end", Took: time.Since(ended)})
+		res.Times = append(res.Times, mt.part("", "tick end"))
 	}
+	defer func(mt meter) { res.Times = append(res.Times, mt.part("", "heartbeat")) }(st.meter())
 	now := st.now()
 	if err == nil && res.Idle && res.Halted == "" && len(res.Parts) == 0 && hb.Error == "" && now.Sub(hb.At) < HeartbeatIdleEvery && !hb.At.Before(m.Since) &&
 		seen.Revisions == hb.Revisions && slices.Equal(seen.Fresh, hb.Fresh) {
@@ -694,6 +724,7 @@ func (st *Store) look(ctx context.Context) (Heartbeat, []ntable.Table, error) {
 // halt, or moves due past a bound) leaves a full read due (Full zero), so the
 // next tick reads the state and does the rest.
 func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickResult) (Heartbeat, error) {
+	looked := st.meter()
 	f, err := st.B.ReadFence(ctx)
 	if err != nil {
 		return last, err
@@ -757,6 +788,7 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	}
 	now := st.now()
 	seen.Fresh = freshOf(fleet, beats, now)
+	res.Times = append(res.Times, looked.part("", "look"))
 	// Every tick reads and plans every table, whatever changed since the last
 	// (errata 3 amendment 10: "each table should be updated per-tick at least
 	// once"): no tick is skipped because nothing changed, and no part waits for
@@ -764,9 +796,9 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	seen.Full = now
 	// Every fleet cell up to date before the parts, the control cards read:
 	// the revisions it leaves are what this tick saw.
-	synced := time.Now()
+	synced := st.meter()
 	wrote, err := st.SyncFleet(ctx)
-	res.Times = append(res.Times, PartTime{Name: "fleet display", Took: time.Since(synced)})
+	res.Times = append(res.Times, synced.part("", "fleet display"))
 	if err != nil && st.clearedUnder(ctx, res) {
 		return last, nil
 	}
@@ -787,9 +819,21 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	if err != nil {
 		return last, err
 	}
-	read := time.Now()
-	snap, _, err := pinned.Fenced(withBudget(ctx), All, tickExtras, nil)
-	res.Times = append(res.Times, PartTime{Name: "first read", Took: time.Since(read)})
+	// The tick's one read of the sprint: its twin brought up to date
+	// (twin.go), which every part then plans on; the run loop keeps it from
+	// one tick to the next.
+	twin := st.twin()
+	read := st.meter()
+	var snap *sprint.Snapshot
+	if twin.mu.TryLock() {
+		snap, _, err = pinned.twinRead(withBudget(ctx), twin, All, tickExtras, nil)
+		twin.mu.Unlock()
+	} else {
+		// another step of this process holds the twin: this read is the store's
+		st.stats().note("the tick's first read found its twin held by another step, and read the store whole")
+		snap, _, err = pinned.Fenced(withBudget(ctx), All, tickExtras, nil)
+	}
+	res.Times = append(res.Times, read.part("", "first read"))
 	unfinished := seen
 	unfinished.Full = time.Time{}
 	if errors.Is(err, errCleared) {
@@ -802,7 +846,11 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	at := snap.Epoch
 	res.Tables = newTables()
 	req := sprint.TickReq{Who: sprint.MachineActor, Stopped: m.StoppedBetween, Beats: beats, Started: m.FirstStart(snap.Cleared)}
-	t := &tickRun{st: st, ctx: ctx, res: res, req: req, at: at, snap: snap, queues: map[string]int{}}
+	// the first read as it was: the twin it came from moves on with every
+	// part's writes, and with any other writer in this process
+	first := *snap
+	first.Work, first.Readers, first.Merge, first.Fleet = snap.Work.Frozen(), snap.Readers.Frozen(), snap.Merge.Frozen(), snap.Fleet.Frozen()
+	t := &tickRun{st: st, ctx: ctx, res: res, req: req, at: at, snap: &first, queues: map[string]int{}, twin: twin}
 	updates := st.Updates
 	if updates == nil {
 		updates = sprint.TickTables
@@ -836,6 +884,17 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	t.res.Order = append(t.res.Order, "end")
 	if out := t.parts("", sprint.TickEnd); out != tickOn && out != tickDone {
 		return t.end(out, last, unfinished, seen)
+	}
+	if t.unshown {
+		shown := st.meter()
+		err := st.SyncMirrors(ctx)
+		res.Times = append(res.Times, shown.part("", "display"))
+		if err != nil {
+			if st.clearedUnder(ctx, res) {
+				return unfinished, nil
+			}
+			return last, err
+		}
 	}
 	// 5. The tick-end note, the coordinator's one wake, is Tick's last step
 	// (tickend.go).
@@ -888,11 +947,15 @@ type tickRun struct {
 	req     sprint.TickReq
 	at      uint64
 	snap    *sprint.Snapshot // the tick's first read
+	twin    *Twin            // the tick's twin: every part's read
 	ran     bool             // a part ran: every later part plans on a fresh read
 	queues  map[string]int
 	dirtied []string
 	lost    bool
 	err     error
+	// unshown says a part that brings the display cells up to date was
+	// passed over after a part ran: the tick's end brings them up to date.
+	unshown bool
 }
 
 // update is one table's update: its queue drained (the entries other updates
@@ -910,22 +973,28 @@ func (t *tickRun) update(u sprint.TableUpdate) tickOutcome {
 func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 	for _, part := range parts {
 		drain := part.Name == sprint.PartDrain && part.Fn == nil
-		if !t.ran {
-			if drain && t.snap.QueueLen == 0 {
+		// A part with nothing to do is passed over: on the tick's first read
+		// until a part has run, and after, on the twin as the tick's own
+		// writes left it (twin.go, peek), read from no store: what another
+		// writer did since is the next tick's.
+		view := t.snap
+		if t.ran {
+			view = t.st.peek(t.twin, table == sprint.Work)
+		}
+		if view != nil {
+			if drain && view.QueueLen == 0 {
 				continue
 			}
 			if !drain {
-				if p, due := part.Fn(t.snap, t.req); p.Empty() && due == 0 {
+				if p, due := part.Fn(view, t.req); p.Empty() && due == 0 {
+					// a part that brings the display cells up to date after
+					// it leaves them to the tick's end (tickRun.display)
+					t.unshown = t.unshown || t.ran && mirrors(part.Name)
 					continue
 				}
 			}
 		}
-		if halted, err := t.st.halted(t.ctx, t.res, part.Name); err != nil {
-			t.err = err
-			return tickFailed
-		} else if halted {
-			return tickHalted
-		}
+		began := t.st.meter()
 		due := 0
 		var done *sprint.Note
 		var planned sprint.Plan
@@ -946,9 +1015,16 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 			return p, d
 		}
 		step := TickPartStep(part.Name, fn, t.req, &t.at, nil, &due)
-		step.Pump, step.Drain = table == sprint.Work, drain
-		began := time.Now()
+		step.Pump, step.Drain, step.Twin = table == sprint.Work, drain, t.twin
+		// the machine's state is read with the step's fence: STOPPED halts the
+		// tick before the part begins
+		step.Halts = true
 		r, err := t.st.Run(t.ctx, step)
+		if err == nil && r.Halted {
+			t.res.State = Stopped
+			t.res.Halted = "the machine was stopped during the tick: the part " + part.Name + " did not begin"
+			return tickHalted
+		}
 		for _, d := range r.Drained {
 			// a drain the part's step made before it planned is the tick's
 			// move too: named in its report, never silent
@@ -968,7 +1044,7 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 				t.res.addRows(sprint.PlanRows(planned))
 			}
 		}
-		t.res.Times = append(t.res.Times, PartTime{Table: table, Name: part.Name, Took: time.Since(began)})
+		t.res.Times = append(t.res.Times, began.part(table, part.Name))
 		t.ran = true
 		var cleared *ClearedError
 		if errors.As(err, &cleared) {
@@ -1035,6 +1111,7 @@ func (t *tickRun) end(out tickOutcome, last, unfinished, seen Heartbeat) (Heartb
 func (m *Mem) GetKey(_ context.Context, name string) (string, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.count("kv")
 	if err := m.fail("kv"); err != nil {
 		return "", false, err
 	}
@@ -1046,6 +1123,7 @@ func (m *Mem) GetKey(_ context.Context, name string) (string, bool, error) {
 func (m *Mem) SetKeyShowing(_ context.Context, name, value, view, state string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.count("kv")
 	if err := m.fail("kv"); err != nil {
 		return err
 	}
@@ -1079,6 +1157,7 @@ func (m *Mem) showState(view, state string) {
 func (m *Mem) SetKey(_ context.Context, name, value string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.count("kv")
 	if err := m.fail("kv"); err != nil {
 		return err
 	}
@@ -1137,6 +1216,7 @@ func viewShown(err error) error {
 func (m *Mem) GetKeys(_ context.Context, names []string) ([]string, []bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.count("kv")
 	if err := m.fail("kv"); err != nil {
 		return nil, nil, err
 	}

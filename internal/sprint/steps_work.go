@@ -517,10 +517,17 @@ func resolvePlan(s *Snapshot, r ResolveReq) Plan {
 	var p Plan
 	p.on(s)
 	chosen := pick(&p, r.Sel, s.Work.Column(Waiting), rowOf, func(c *Card) string { return inState(c, Waiting) }, s.primaryCard)
+	// each card's open judgments, found by an index built once, not by a
+	// walk of every open judgment for each card (the owner's rule: never a
+	// row at a time); each list keeps the judgments' order
+	bySubject := map[string][]Open{}
+	for _, o := range s.Open {
+		bySubject[o.Subject()] = append(bySubject[o.Subject()], o)
+	}
 	for _, c := range chosen {
 		// A missing prerequisite that now exists is no longer a missing-need
 		// judgment; it still has to land before the primary can move.
-		for _, o := range s.Open {
+		for _, o := range bySubject[c.ID] {
 			if o.Note.Type == NMissingNeed && o.Subject() == c.ID && len(o.Note.Needs) > 0 && len(missingNeeds(s, o.Note.Needs)) == 0 {
 				p.Closes = append(p.Closes, o)
 			}
@@ -536,7 +543,7 @@ func resolvePlan(s *Snapshot, r ResolveReq) Plan {
 			}
 		}
 		if len(missing) > 0 {
-			if left := unblocked(s.Open, c.ID, missing, NMissingNeed); len(left) > 0 {
+			if left := unblocked(bySubject[c.ID], c.ID, missing, NMissingNeed); len(left) > 0 {
 				n := judgment(NMissingNeed, c.Row, s.Now, 0, c.ID)
 				n.What, n.Who, n.Needs = c.ID+" needs "+Preview(left, ",")+", not on the table", r.Who, left
 				p.Notes = append(p.Notes, n)
@@ -546,7 +553,7 @@ func resolvePlan(s *Snapshot, r ResolveReq) Plan {
 			}
 		}
 		if len(dropped) > 0 {
-			if left := unblocked(s.Open, c.ID, dropped, NBlocked); len(left) > 0 {
+			if left := unblocked(bySubject[c.ID], c.ID, dropped, NBlocked); len(left) > 0 {
 				p.Notes = append(p.Notes, blockedNote(s, c.Row, c.ID, r.Who, left))
 			}
 			if len(r.IDs) > 0 {

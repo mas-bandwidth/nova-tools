@@ -158,6 +158,7 @@ type Table struct {
 	cells     map[[2]string][]*Card // built on first use; Put resets it
 	byPrimary map[string][]*Card
 	lines     map[string][]*Card // each row's cards not landed, in score order; built with cells
+	stops     map[string][]int   // each line's last sentinel at or before each place (lineStops); built with lines
 
 	// part says which cells a table loaded from a read plan holds whole (the
 	// upper design, version 2.1, section 1.5.2). Nil on a table built whole,
@@ -265,11 +266,67 @@ func (t *Table) Put(c *Card) {
 	t.cells, t.byPrimary = nil, nil
 }
 
+// Frozen is a copy of the table as it is now that later changes to the
+// table leave as it was: its own map of the same cards (a card is replaced
+// whole, never changed in place, by the store's twin), rows, texts and
+// properties. The tick's first read keeps one while the twin it was read
+// from moves on.
+func (t *Table) Frozen() *Table {
+	if t == nil {
+		return nil
+	}
+	c := *t
+	c.cards = make(map[string]*Card, len(t.cards))
+	for id, card := range t.cards {
+		c.cards[id] = card
+	}
+	c.props = make(map[string]string, len(t.props))
+	for k, v := range t.props {
+		c.props[k] = v
+	}
+	c.Texts = make(map[string]map[string]string, len(t.Texts))
+	for k, v := range t.Texts {
+		c.Texts[k] = v
+	}
+	c.rows = append([]string(nil), t.rows...)
+	c.cells, c.byPrimary, c.lines, c.stops = nil, nil, nil, nil
+	return &c
+}
+
+// Drop takes a card out of the table's cards: a record the table no longer
+// holds as a read would find it (store's twin, twin.go).
+func (t *Table) Drop(id string) {
+	if _, ok := t.cards[id]; !ok {
+		return
+	}
+	delete(t.cards, id)
+	t.cells, t.byPrimary = nil, nil
+}
+
+// SetProp sets one of the table's properties as a write left it (a batch's
+// receipt): the rest are kept.
+func (t *Table) SetProp(name, value string) {
+	if t.props == nil {
+		t.props = map[string]string{}
+	}
+	t.props[name] = value
+	t.propsRead = true
+}
+
+// Props is the table's properties: a copy.
+func (t *Table) Props() map[string]string {
+	out := make(map[string]string, len(t.props))
+	for k, v := range t.props {
+		out[k] = v
+	}
+	return out
+}
+
 func (t *Table) index() {
 	if t.cells != nil {
 		return
 	}
-	t.cells, t.byPrimary, t.lines = map[[2]string][]*Card{}, map[string][]*Card{}, nil
+	t.cells, t.byPrimary, t.lines, t.stops = map[[2]string][]*Card{}, map[string][]*Card{}, nil, nil
 	for _, c := range t.cards {
 		if !c.Placed() {
 			continue
