@@ -81,6 +81,8 @@ do
   Q.MAX_RCARDS = 15             -- read cards a primary keeps (1.3.1)
   Q.MAX_SEQ = 9007199254740991  -- the live sequence ceiling (L2 2: 2^53 - 1)
   Q.MAX_COLUMNS = 32            -- columns of a table (L1 1.2)
+  Q.MAX_QUERY_PROPS = 64        -- properties a fleet or readers query names (sprintfn maxQueryProps)
+  Q.FIELD_VALUE_BYTES = 65536   -- the longest value of a field or a property (L1 1.2, field_value)
   Q.MAX_PROBES = 20000          -- cell and key probes of one read (L1 6)
   -- The bytes one HMGET of the quarantine may fetch for an id: a mark's code,
   -- rule, stream, cells and note (1.3.1). A longer mark is DRIFT.
@@ -359,7 +361,7 @@ do
       -- for each column of each row
       local units = q.units or 0
       if units == 0 then units = kind == 'fleet' and Q.MAX_MEMBERS or Q.MAX_READERS end
-      return 1 + units + units * Q.MAX_COLUMNS
+      return 1 + units + units * Q.MAX_COLUMNS + #(q.props or {})
     end
     local n = Q.source_size(q.src)
     local found = Q.source_probes(q.src)
@@ -433,8 +435,8 @@ do
       front = {kind = true, stream = true, heads = true, fields = true, keys = true},
       waiters = {kind = true, src = true, limit = true, fields = true, after = true, missing = true, keys = true},
       streams = {kind = true, limit = true, units = true, fields = true, counts = true, keys = true},
-      fleet = {kind = true, units = true, fields = true},
-      readers = {kind = true, units = true, fields = true},
+      fleet = {kind = true, units = true, fields = true, props = true},
+      readers = {kind = true, units = true, fields = true, props = true},
       needchain = {kind = true, src = true, limit = true, fields = true},
       jnote = {kind = true, src = true, subjects = true, fields = true},
     }
@@ -500,6 +502,11 @@ do
     end
     if q.counts ~= nil and not Q.distinct(q.counts, Q.valid_name, Q.MAX_COLUMNS) then return false end
     if q.missing ~= nil and type(q.missing) ~= 'boolean' then return false end
+    -- props: the table properties a fleet or readers query reads with its
+    -- listing (sprintfn.validExtensions; L1 contract amendment, table
+    -- properties), distinct names, at most a table's.
+    if q.props ~= nil and ((q.kind ~= 'fleet' and q.kind ~= 'readers') or
+        not Q.distinct(q.props, Q.valid_name, Q.MAX_QUERY_PROPS)) then return false end
     if q.after ~= nil then
       if type(q.after) ~= 'string' then return false end
       if q.after ~= '' and (q.src.kind ~= 'ids' or #q.src.ids ~= 1 or not Q.valid_name(q.after)) then return false end
@@ -1450,6 +1457,28 @@ do
       items[i] = it
     end
     res.items, res.left_out = Q.array(items), Q.array(left.list)
+    -- props: the table properties the query names, one HMGET of the table's
+    -- property hash at the read epoch (Layer 1's props read, L1 contract
+    -- amendment, table properties); an absent one is left out of the answer,
+    -- and an answer with none carries no props (sprintfn ListingResult).
+    local names = q.props or {}
+    if #names > 0 then
+      local key = ctx.props_key(t, ctx.request_epoch)
+      local argv = {'HMGET', key}
+      for i = 1, #names do argv[#argv + 1] = names[i] end
+      local values
+      values, err = S.read_probe(ctx, argv, key, 'hash', #names * Q.FIELD_VALUE_BYTES)
+      if err then return nil, err end
+      local props, any = {}, false
+      for i, name in ipairs(names) do
+        local v = values[i]
+        if type(v) == 'string' then
+          if #v > Q.FIELD_VALUE_BYTES then return nil, Q.fail(ctx, 'DRIFT', index, {table = t}) end
+          props[name], any = v, true
+        end
+      end
+      if any then res.props = props end
+    end
     return res, nil
   end
 

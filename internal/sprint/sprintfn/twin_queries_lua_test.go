@@ -59,6 +59,7 @@ function new_ctx(space, epoch, now_ms)
   local function tp(t, e) return space .. 'table:' .. t .. (e == '0' and '' or ':' .. e) end
   ctx.rows_key = function(t, e) return tp(t, e) .. ':rows' end
   ctx.cell_key = function(t, e, row, col) return tp(t, e) .. ':cell:' .. row .. ':' .. col end
+  ctx.props_key = function(t, e) return tp(t, e) .. ':props' end
   return ctx
 end
 `
@@ -235,6 +236,9 @@ func (h *luaHarness) prepare() {
 			rows[row] = num(string(rank))
 		}
 		h.zsets[tp+":rows"] = rows
+		if tbl.Props != nil {
+			h.hashes[tp+":props"] = tbl.Props
+		}
 		for row, cols := range tbl.Cells {
 			for col, members := range cols {
 				z := map[string]float64{}
@@ -807,8 +811,15 @@ func luaWorlds(t *testing.T) map[string]*qworld {
 	corrupt.seed(corrupt.zadd("elig:s9", "1", "phantom"), corrupt.zadd("sent:s7", "1", "nobody"))
 	needCard := standardWith(t, fields("state", "stopped", "cause", "cross", "need_card", "p2"))
 	both := standardWith(t, fields("state", "stopped", "cause", "cross", "other", "p2", "need_card", "p3"))
+	// props: the deal's and the ask's rolling index set, which a fleet or
+	// readers query names with its listing (round.go)
+	props := standard(t)
+	deal, ask := "m1", "r2"
+	props.step(&Request{Body: Body{Entries: []tset.Entry{
+		{Kind: "prop", Table: sprint.Fleet, Name: sprint.PropDealIndex, Value: &deal},
+		{Kind: "prop", Table: sprint.Readers, Name: sprint.PropAskIndex, Value: &ask}}}})
 	return map[string]*qworld{"plain": plain, "notes": notes, "quarantine": quarantine, "corrupt": corrupt,
-		"need_card": needCard, "both": both}
+		"need_card": needCard, "both": both, "props": props}
 }
 
 func lastNote(w *qworld) string { return "n" + strconv.Itoa(len(w.log.Lines(testPrefix, "0"))) }
@@ -875,6 +886,12 @@ func TestLuaQueriesOnStubbedHelpers(t *testing.T) {
 				sprint.SprintQ{Kind: sprint.QueryFleet, Fields: []string{"status"}},
 				sprint.SprintQ{Kind: sprint.QueryFleet, Fields: []string{}, Units: 1},
 				sprint.SprintQ{Kind: sprint.QueryReaders, Fields: []string{}},
+				// the rolling indexes read with the listings (B1 of the 4806 read):
+				// a property set, one absent, and both
+				sprint.SprintQ{Kind: sprint.QueryFleet, Fields: []string{"status"}, Props: []string{sprint.PropDealIndex}},
+				sprint.SprintQ{Kind: sprint.QueryFleet, Fields: []string{}, Units: 1, Props: []string{"nosuch", sprint.PropDealIndex}},
+				sprint.SprintQ{Kind: sprint.QueryReaders, Fields: []string{}, Props: []string{sprint.PropAskIndex}},
+				sprint.SprintQ{Kind: sprint.QueryReaders, Fields: []string{}, Props: []string{"nosuch"}},
 				sprint.SprintQ{Kind: sprint.QueryNeedchain, Source: ids("w1", "w2"), Limit: 5, Fields: []string{"open"}},
 				sprint.SprintQ{Kind: sprint.QueryNeedchain, Source: ids("w1"), Limit: 1, Fields: []string{}},
 				sprint.SprintQ{Kind: sprint.QueryNeedchain, Source: head("missing", 2), Limit: 3, Fields: []string{}},
@@ -889,6 +906,14 @@ func TestLuaQueriesOnStubbedHelpers(t *testing.T) {
 					continue // a query the twin refuses statically is compared with the Lua's validate below
 				}
 				h.agree(fmt.Sprintf("%s #%d %s", name, i, q.Kind), mustEncode(t, q))
+				if name == "props" && len(q.Props) > 0 && q.Props[len(q.Props)-1] != "nosuch" {
+					// the answer carries the property the world set, not only agreement
+					got, ref := h.read(mustEncode(t, q))
+					want := map[string]string{sprint.QueryFleet: `"deal_index":"m1"`, sprint.QueryReaders: `"ask_index":"r2"`}[q.Kind]
+					if ref != nil || !strings.Contains(string(got), want) {
+						t.Errorf("%s #%d: the Lua's answer %s (refusal %v) does not carry %s", name, i, got, ref, want)
+					}
+				}
 			}
 			defer func() { t.Logf("%s: answered %v refused %v", name, h.answered, h.refused) }()
 			keys := []KeyQ{{Kind: KeyClock}, {Kind: KeyLease}, {Kind: KeyTick}, {Kind: KeyHeartbeat}, {Kind: KeyDueCount},

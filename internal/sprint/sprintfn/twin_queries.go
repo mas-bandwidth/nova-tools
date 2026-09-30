@@ -1263,9 +1263,10 @@ func queryProbes(q sprint.SprintQ) int {
 		// a stuck cell's row and range and the quarantine of its ids, for each stream
 		return 1 + 2*unitsOf(q) + unitsOf(q)*(2+q.Limit)
 	case sprint.QueryFleet, sprint.QueryReaders:
-		// the rows' head, the quarantine of the control cards, and a cell's count
-		// for each column of each row
-		return 1 + unitsOf(q) + unitsOf(q)*maxTableColumns
+		// the rows' head, the quarantine of the control cards, a cell's count
+		// for each column of each row, and a cell for each property named (one
+		// HMGET of the table's property hash)
+		return 1 + unitsOf(q) + unitsOf(q)*maxTableColumns + len(q.Props)
 	case sprint.QueryNeedchain:
 		// the quarantine of the source's ids, and of every need of every card read
 		return found + n + q.Limit*followMaxNeeds

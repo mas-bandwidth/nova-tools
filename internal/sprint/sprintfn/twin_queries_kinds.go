@@ -649,7 +649,12 @@ func (e *qeval) listing(q sprint.SprintQ) (ListingResult, *Refusal) {
 	}
 	res.LeftOut = left.ids()
 	if len(q.Props) > 0 {
-		// the table properties the query names, read with the listing
+		// the table properties the query names, read with the listing: one
+		// HMGET of the table's property hash, a cell for each name (the Lua's
+		// S.read_probe)
+		if ref := e.probes(len(q.Props)); ref != nil {
+			return res, ref
+		}
 		ans, ref := e.memRead([]tset.ReadQuery{{Kind: "props", Table: table, Names: q.Props}})
 		if ref != nil {
 			return res, ref
