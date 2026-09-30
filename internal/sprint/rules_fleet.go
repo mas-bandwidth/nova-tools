@@ -103,6 +103,10 @@ const (
 	// L records: fresh:s below σ, again:s and again:s's withdrawn work cards.
 	dealSigmaRecords = 1
 	dealHeads        = 3
+	// dealListRecords is what the listing of the streams costs a stream: the
+	// streams query's two records (its row and its control card, with the
+	// deal's rolling index, round.go).
+	dealListRecords = 2
 )
 
 // followPrimary is the follow R2's read takes from a work card to its primary
@@ -501,30 +505,6 @@ func sentGuard(stream string, most float64) XGuard {
 	return XGuard{Kind: guardRCount, Key: "sent:" + stream + " " + fmtScore(most)}
 }
 
-// pickMember is the up member a new work card goes to: the shortest ready
-// queue among the members with room, the primary's avoid member only when no
-// other member has room. "" when none has room. The queues are counted as the
-// plan fills them (q).
-func pickMember(up []string, q map[string]int, avoid string) string {
-	best, bestAvoid := "", ""
-	for _, m := range up {
-		if q[m] >= RuleReadyCap {
-			continue
-		}
-		if m == avoid {
-			bestAvoid = m
-			continue
-		}
-		if best == "" || q[m] < q[best] {
-			best = m
-		}
-	}
-	if best != "" {
-		return best
-	}
-	return bestAvoid
-}
-
 // R1 seen.
 //
 // Trigger: the pop of seen:<m>, which the beat part enters when m's status is
@@ -920,9 +900,12 @@ func readDown(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []AgendaK
 // Plan: the room first of what was read in stream turns (dealTurns: one card
 // from each stream's front in turn, in stream order, each stream's cards in
 // work order), each dealt: a new work
-// card to the shortest ready queue among the up members, the primary's avoid
-// member only when no other up member has room; or the withdrawn card dealt
-// again at generation + 1 (no change to redeals: its take, if any, was counted
+// card to the next member round the fleet (round.go, errata 3 amendment 5:
+// the rolling index, scanned from in name order, wrapping, to the first
+// member up with room, and moved past it; written with the deal on a stream's
+// control card), the
+// primary's avoid member only when no other up member has room; or the
+// withdrawn card dealt again at generation + 1 (no change to redeals: its take, if any, was counted
 // when it was withdrawn). untaken_r = R on a first deal since the last take.
 // Guard: each primary at ready with its revision; each withdrawn card at
 // withdrawn with its revision; each new work card absent; a count entry over
@@ -1014,6 +997,8 @@ func planDealWith(s *Snapshot, keys []AgendaKey, now Now, f fleetFacts) RulePlan
 	used := map[string]bool{}
 	freshMost := map[string]float64{}
 	dealt, refused := 0, 0
+	rr := dealRound(s)
+	moves := map[string]roundMove{}
 	for _, c := range cands {
 		if dealt >= room {
 			break
@@ -1021,12 +1006,14 @@ func planDealWith(s *Snapshot, keys []AgendaKey, now Now, f fleetFacts) RulePlan
 		attempt := c.Int("attempt")
 		var u Unit
 		if wc := s.Fleet.Placed(WorkCardID(c.ID, attempt)); wc != nil && wc.Col == Withdrawn {
-			m := pickMember(up, q, "")
+			m := rr.member(up, q, RuleReadyCap, "")
 			if m == "" {
 				break
 			}
 			q[m]++
 			used[m] = true
+			rr.moved(m)
+			moves[c.ID] = roundMove{c.Row, m}
 			u = dealAgainUnit(c, wc, m, now, wall)
 		} else {
 			card := WorkCardID(c.ID, attempt+1)
@@ -1040,12 +1027,14 @@ func planDealWith(s *Snapshot, keys []AgendaKey, now Now, f fleetFacts) RulePlan
 				refused++
 				continue
 			}
-			m := pickMember(up, q, c.F("avoid"))
+			m := rr.member(up, q, RuleReadyCap, c.F("avoid"))
 			if m == "" {
 				break
 			}
 			q[m]++
 			used[m] = true
+			rr.moved(m)
+			moves[c.ID] = roundMove{c.Row, m}
 			u = dealNewUnit(c, card, m, now, wall)
 		}
 		if attempt == 0 {
@@ -1070,6 +1059,7 @@ func planDealWith(s *Snapshot, keys []AgendaKey, now Now, f fleetFacts) RulePlan
 	rp.settle(key, dealFate(dealt+refused, skipped, room-dealt))
 	rp.Plan.on(s)
 	rp.Plan = Lawful(rp.Plan)
+	roundWrites(&rp.Plan, s, FieldDealSeq, FieldDealLast, rr, moves)
 	return rp
 }
 
@@ -1191,7 +1181,7 @@ func dealLimit(room, streams, members, records int) int {
 		l = min(l, room)
 	}
 	if streams > 0 {
-		l = min(l, ((records-members)/streams-dealSigmaRecords)/dealHeads)
+		l = min(l, ((records-members)/streams-dealSigmaRecords-dealListRecords)/dealHeads)
 	}
 	return max(1, l)
 }
@@ -1199,7 +1189,7 @@ func dealLimit(room, streams, members, records int) int {
 // dealRecords is the most records R6's read may return for a limit: the
 // fleet's members and, for each stream, σ's record and three heads.
 func dealRecords(streams, members, limit int) int {
-	return members + streams*(dealSigmaRecords+dealHeads*limit)
+	return members + streams*(dealSigmaRecords+dealListRecords+dealHeads*limit)
 }
 
 // dealQueries are R6's queries for one stream at a limit L: front(s) with the
@@ -1229,11 +1219,11 @@ func dealReadFor(sh fleetShape, b ReadBounds, halvings int) ReadPlan {
 	for _, st := range sh.Streams {
 		rp.Sprint = append(rp.Sprint, dealQueries(st, lim)...)
 	}
-	if len(sh.Streams) == 0 {
-		// a read that names no stream lists them: the plan can then tell a sprint
-		// with none (nothing to deal) from a read that could not name them
-		rp.Sprint = append(rp.Sprint, SprintQ{Kind: QueryStreams, Fields: []string{}})
-	}
+	// the streams, listed with the deal's rolling index on their control cards
+	// (round.go); a read that names no stream's front can then
+	// tell a sprint with none (nothing to deal) from a read that could not name
+	// them
+	rp.Sprint = append(rp.Sprint, SprintQ{Kind: QueryStreams, Fields: dealRoundFields, Units: len(sh.Streams)})
 	return withFacts(rp, ruleDeal)
 }
 

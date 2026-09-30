@@ -188,7 +188,9 @@ func TestALargeSetIsOneOperationInChunks(t *testing.T) {
 	h.setup(300)
 	before := h.m.Calls["apply"]
 	res := h.must(DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: 1000}}))
-	if len(res.Moved) != 300 || h.m.Calls["apply"]-before != 6 || h.m.Calls["acquire"] == 0 {
+	// six manifests of the cards, and one of the merge table: the stream's
+	// deals count, the deal's rolling index (errata 3, amendment 5)
+	if len(res.Moved) != 300 || h.m.Calls["apply"]-before != 7 || h.m.Calls["acquire"] == 0 {
 		t.Fatalf("moved %d in %d manifests", len(res.Moved), h.m.Calls["apply"]-before)
 	}
 	s := h.snap()

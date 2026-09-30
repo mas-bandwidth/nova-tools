@@ -96,6 +96,9 @@ func fieldScenarios() []fieldScenario {
 				}
 				f.snap().Fleet.Put(&Card{ID: id + ".w1", Row: "m1", Col: Withdrawn, Score: float64(3 + i), Rev: 1, Fields: fields})
 			}
+			// the rolling index on the stream's control card starts the deal past the first
+			// member (errata 3, amendment 5)
+			f.edit(f.snap().Merge, CtlID("s1"), map[string]string{FieldDealSeq: "1", FieldDealLast: "m1"})
 			return f
 		}},
 		{"level", ruleLevel, []string{"level"}, func(t *testing.T) *fleetT {

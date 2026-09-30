@@ -211,12 +211,14 @@ func TestDealDealsTheOldestReadyToTheMembersWithRoom(t *testing.T) {
 	w := sprintOf(t, "m1", "m2")
 	w.add(t, "s1", 6)
 	got := refmodel.DealMoves(w.snapshot(w.fresh()), later(0))
-	// two members, room for two each: the four oldest, alternating to the shortest queue
+	// two members, room for two each: the four oldest, round the fleet
+	// (errata 3, amendment 5), the index past m2 on the stream's control card
 	expect(t, got,
 		"move work s1-1 s1:ready>s1:working",
 		"move work s1-2 s1:ready>s1:working",
 		"move work s1-3 s1:ready>s1:working",
 		"move work s1-4 s1:ready>s1:working",
+		"set merge ctl-s1 deal_last=m2,deal_seq=1",
 		"create fleet s1-1.w1 >m1:ready",
 		"create fleet s1-2.w1 >m2:ready",
 		"create fleet s1-3.w1 >m1:ready",
@@ -295,7 +297,8 @@ func TestAskAsksTwoReadersOfAPrimaryInReview(t *testing.T) {
 	expect(t, got,
 		"set work s1-1 asked=reader-a,reader-b",
 		"create readers s1-1.r1.reader-a >reader-a:asked",
-		"create readers s1-1.r1.reader-b >reader-b:asked")
+		"create readers s1-1.r1.reader-b >reader-b:asked",
+		"set merge ctl-s1 ask_last=reader-b,ask_seq=1")
 }
 
 func TestAskTellsOnceWhenFewerThanTwoReadersAreFree(t *testing.T) {
