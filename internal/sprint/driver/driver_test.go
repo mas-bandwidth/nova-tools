@@ -96,7 +96,7 @@ func TestTheSeedPlaysTheSameFacts(t *testing.T) {
 	t.Parallel()
 	a, b := NewSeeded(42), NewSeeded(42)
 	for _, s := range []*Seeded{a, b} {
-		s.Fail, s.Broken, s.Stuck, s.Cross, s.Red, s.Flap = 0.3, 0.3, 0.2, 0.1, 0.1, 0.5
+		s.Fail, s.Broken, s.Stuck, s.Cross, s.Red, s.Down, s.Back = 0.3, 0.3, 0.2, 0.1, 0.1, 0.5, 0.5
 	}
 	for i := 0; i < 50; i++ {
 		id := fmt.Sprint("c", i)
@@ -232,7 +232,11 @@ func TestAMemberTakenDownIsBroughtUpBeforeTheDriverStops(t *testing.T) {
 func TestFlapIsTheSameChanceBothWays(t *testing.T) {
 	t.Parallel()
 	s := NewSeeded(9)
-	s.Flap = 0.2
+	c, err := Set(false, map[string]float64{"flap": 0.2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Use(c, time.Second)
 	downs, ups := 0, 0
 	for i := 0; i < 20000; i++ {
 		n := s.Up(i, []string{"a", "b"}, map[string]bool{"a": true})

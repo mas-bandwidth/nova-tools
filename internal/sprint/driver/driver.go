@@ -36,7 +36,7 @@ type Facts interface {
 	// and it reads them then, after every merge step before this one.
 	Merge(stream string, batch []string, others func() []string) Outcome
 	// Up is which members are up this tick, given which are up now: a member
-	// up goes down, and a member down comes up, with the same chance.
+	// up may go down, and a member down may come up, each with its own chance.
 	Up(tick int, members []string, up map[string]bool) map[string]bool
 }
 
@@ -63,7 +63,8 @@ type Config struct {
 	Ticks     int           // stop after this many ticks; 0 is until every stream lands
 	// Hold plays the facts' downs as the coordinator's hold (fleet down and
 	// fleet up); without it a member the facts take down falls silent (its
-	// machine stops beating) and comes back by beating again.
+	// machine stops beating), takes no work while it is down, and comes back
+	// by beating again and taking work again.
 	Hold bool
 	// Silent is members silent for a while: each stops beating From after
 	// the driver starts, for For.

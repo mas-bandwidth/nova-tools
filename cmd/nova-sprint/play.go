@@ -22,14 +22,15 @@ func (a *app) cmdPlay(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("play")
 	seed := fs.Uint64("seed", 1, "the seed: the same seed plays the same run")
 	every := fs.Duration("every", time.Second, "between ticks")
-	fail := fs.Float64("fail", 0.1, "the chance a work card comes back failed")
-	broken := fs.Float64("broken", 0.05, "the chance a read finds it broken")
-	batch := fs.Int("batch", 100, "a merge step's batch")
-	stuck := fs.Float64("stuck", 0.10, "the chance a batch has a card that does not merge")
-	cross := fs.Float64("cross", 0.01, "the chance a batch has a card that needs a card of another stream first")
+	simulation := fs.Bool("simulation", false, "play the locked simulation: "+simulationWords()+"; a chance flag beside it sets that one chance")
+	chance := map[string]*float64{}
+	for _, r := range driver.ChanceRows {
+		chance[r.Flag] = fs.Float64(r.Flag, r.Plain, r.Usage)
+	}
+	chance["flap"] = fs.Float64("flap", 0, "the chance, per member and second, that a member's machine falls silent, and the same chance that a silent one beats again: --down and --up with the one chance")
 	red := fs.Float64("red", 0.0, "the chance a batch turns the stream branch red")
-	flap := fs.Float64("flap", 0, "the chance, per member and tick, that a member's machine falls silent (stops beating), and the same chance that a silent one beats again")
-	hold := fs.Bool("hold", false, "play --flap's downs as the coordinator's hold (fleet down, fleet up) instead of a machine falling silent; holds it took are released before it stops")
+	batch := fs.Int("batch", 100, "a merge step's batch")
+	hold := fs.Bool("hold", false, "play the downs as the coordinator's hold (fleet down, fleet up) instead of a machine falling silent; holds it took are released before it stops")
 	var silent silenceFlag
 	fs.Var(&silent, "silent", "<member>@<from>+<for>: the member's machine stops beating <from> after play starts, for <for> (e.g. m3@30s+20s); repeatable")
 	ticks := fs.Int("ticks", 0, "stop after n ticks; 0 is until every stream lands")
@@ -42,6 +43,19 @@ func (a *app) cmdPlay(args []string, stdout, stderr io.Writer) int {
 	if len(pos) > 0 {
 		return refuse(stderr, "play", "takes no words, found "+pos[0])
 	}
+	given := map[string]float64{} // the chances the person named, by flag
+	fs.Visit(func(f *flag.Flag) {
+		if p, ok := chance[f.Name]; ok {
+			given[f.Name] = *p
+		}
+	})
+	chances, err := driver.Set(*simulation, given)
+	if err == nil {
+		err = driver.Valid("red", *red)
+	}
+	if err != nil {
+		return refuse(stderr, "play", err.Error())
+	}
 	if _, err := a.store(*c); err != nil {
 		return refuse(stderr, "play", err.Error())
 	}
@@ -53,7 +67,9 @@ func (a *app) cmdPlay(args []string, stdout, stderr io.Writer) int {
 	})
 	base = append(base, "--actor", c.actor) // the driver plays the coordinator's part as this actor
 	facts := driver.NewSeeded(*seed)
-	facts.Fail, facts.Broken, facts.Stuck, facts.Cross, facts.Red, facts.Flap = *fail, *broken, *stuck, *cross, *red, *flap
+	facts.Use(chances, *every)
+	facts.Red = *red
+	fmt.Fprintf(stdout, "chances: %s red=%g seed=%d every=%s\n", chances, *red, *seed, *every)
 	d := &driver.Driver{Run: a.run, Base: base, Facts: facts, Clock: appClock{a}, Out: stdout,
 		Config: driver.Config{Every: *every, Batch: *batch, TakeLimit: *take, ReadLimit: *reads, Ticks: *ticks, Hold: *hold, Silent: silent}}
 	why, err := d.Loop()
@@ -63,6 +79,12 @@ func (a *app) cmdPlay(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "PLAY OK stopped=%s seed=%d\n", why, *seed)
 	return 0
+}
+
+// simulationWords is the locked simulation's chances, as the flags that set them.
+func simulationWords() string {
+	c, _ := driver.Set(true, nil)
+	return c.String()
 }
 
 // silenceFlag is --silent <member>@<from>+<for>, repeatable.

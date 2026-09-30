@@ -1,14 +1,18 @@
 package driver
 
-import "math/rand/v2"
+import (
+	"math/rand/v2"
+	"time"
+)
 
 // Seeded is invented facts from a seed: the same seed, against the same
 // table, plays the same run. Each probability is per card (work, read), per
-// batch (stuck, cross, red) or per member and tick (flap).
+// batch (stuck, cross, red) or per member and tick (Down, and Back, the
+// chance a member that is down comes up).
 type Seeded struct {
 	rng                             *rand.Rand
 	Fail, Broken, Stuck, Cross, Red float64
-	Flap                            float64
+	Down, Back                      float64
 }
 
 // NewSeeded is a seeded source.
@@ -30,6 +34,14 @@ func (s *Seeded) Read(card string) (bool, string) {
 	return true, ""
 }
 
+// Use sets the chances the source draws against: the per card and per batch
+// chances as they are, and Down and Up, which are each second's, as the
+// chance of a tick of every.
+func (s *Seeded) Use(c Chances, every time.Duration) {
+	s.Fail, s.Broken, s.Stuck, s.Cross = c.Fail, c.Broken, c.Stuck, c.Cross
+	s.Down, s.Back = PerTick(c.Down, every), PerTick(c.Up, every)
+}
+
 // Merge draws a batch's fact; others is read only for a cross fact, and a
 // cross drawn with no card queued in another stream is green.
 func (s *Seeded) Merge(stream string, batch []string, others func() []string) Outcome {
@@ -47,13 +59,17 @@ func (s *Seeded) Merge(stream string, batch []string, others func() []string) Ou
 	return Outcome{}
 }
 
-// Up flips each member with the chance Flap: an up member goes down, and a
-// down member comes up, with the same chance.
+// Up draws each member once: an up member goes down with the chance Down, and
+// a down member comes up with the chance Back. A chance of 0 draws nothing.
 func (s *Seeded) Up(tick int, members []string, up map[string]bool) map[string]bool {
 	next := map[string]bool{}
 	for _, m := range members {
 		next[m] = up[m]
-		if s.Flap > 0 && s.rng.Float64() < s.Flap {
+		p := s.Back
+		if up[m] {
+			p = s.Down
+		}
+		if p > 0 && s.rng.Float64() < p {
 			next[m] = !up[m]
 		}
 	}
