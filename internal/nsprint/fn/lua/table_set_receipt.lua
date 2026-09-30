@@ -28,7 +28,7 @@ if NS.tset_profile then
       type(r.epoch_after) ~= 'string' or type(r.first_seq) ~= 'string' or
       type(r.last_seq) ~= 'string' or type(r.changed) ~= 'number' or
       type(r.result) ~= 'string' or #r.result>S.limits.result or
-      r.changed < 0 or r.changed>S.limits.member_candidates or
+      r.changed < 0 or r.changed > (S.limits.member_candidates + (S.limits.prop_entries or S.limits.props or 64)) or
       r.changed ~= math.floor(r.changed) or not S.uint(r.epoch_before) or
       not S.uint(r.epoch_after) or not S.uint(r.first_seq) or
       not S.uint(r.last_seq) or
