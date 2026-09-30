@@ -586,7 +586,9 @@ func TestAFlappingMemberIsLateFromTheFirstDealAndTheFirstTake(t *testing.T) {
 		}
 		h2.live = []string{"m1"}
 		h2.tick(time.Second)
-		h2.machine()
+		h2.machine() // back: its presence is the fleet's update, after the pump
+		h2.tick(time.Second)
+		h2.machine() // the next pump redeals the card to it
 		h2.run(TakeStep(sprint.TakeReq{As: "m1", Sel: sprint.Sel{Limit: 1}, Who: "m1"}))
 		h2.tick(45 * time.Minute)
 		h2.machine()
@@ -733,7 +735,9 @@ func TestACardLateAtItsRedealDoesNotBlameTheNewMember(t *testing.T) {
 	}
 	h.live = []string{"m1"}
 	h.tick(time.Second)
-	h.machine() // m1 back: redealt to it
+	h.machine() // m1 back: its presence is the fleet's update, after the pump
+	h.tick(time.Second)
+	h.machine() // the next pump redeals the card to it
 	c := h.snap().Fleet.Card("s1-1.w1")
 	if c == nil || c.Col != sprint.Ready || c.Row != "m1" {
 		t.Fatalf("redealt: %+v", c)
