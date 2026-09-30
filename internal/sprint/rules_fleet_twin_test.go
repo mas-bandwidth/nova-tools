@@ -1,8 +1,10 @@
 package sprint
 
 import (
+	"cmp"
 	"math"
 	"reflect"
+	"slices"
 	"testing"
 )
 
@@ -11,9 +13,11 @@ import (
 // what the read named. The twin answers a ReadPlan from a snapshot built whole,
 // the way the store's composite queries would (1.0): every record cut to the
 // fields of its query, heads by score and cut at their limit, the counts of a
-// fleet's cells, the position front answers. It answers the queries the fleet
-// rules ask (related over ids or a cell head, fleet, front) and nothing else,
-// and it panics on any other, so that a rule that starts asking for more is
+// fleet's cells, the position front answers, and the ranges over the sprint's own
+// keys (the members present; a beat entry with its score) from the facts the test
+// holds as the store's state. It answers the queries the fleet rules ask (related
+// over ids or a cell head, fleet, streams, front, and those ranges) and nothing
+// else, and it panics on any other, so that a rule that starts asking for more is
 // found here.
 
 // cutTo is a record read with a projection: the fields the query named, and
@@ -34,15 +38,72 @@ type fleetTwin struct {
 	// extra are records the first composite query also returns, for a test that
 	// needs a record the read does not ask for by itself.
 	extra []TableCard
+	// facts are the sprint's own keys as the store holds them: the beat entries of
+	// the due set, {p}strangers as noticed, and the dropping marks.
+	facts fleetFacts
 }
 
-// Answer answers the plan: no Layer 1 query, and each composite query in the
-// plan's order. The times are the snapshot's epoch and a fixed time.
+// keyRange answers a range over a sprint key: its members present, in the order
+// of a sorted set (by score, then name; the beat entries have scores, the others
+// none), cut at the query's limit with HasMore when there are more.
+func (tw fleetTwin) keyRange(q RangeQ) TsetAnswer {
+	if q.Key == "" || q.Table != "" || q.Cell != "" || q.Records || q.Desc || q.Min != "" || q.Max != "" {
+		panic("the twin: a range that is not over a whole sprint key")
+	}
+	a := TsetAnswer{Kind: AnswerRange}
+	names := func(m map[string]bool) []string {
+		var out []string
+		for k, ok := range m {
+			if ok {
+				out = append(out, k)
+			}
+		}
+		slices.Sort(out)
+		return out
+	}
+	switch q.Key {
+	case factBeats:
+		var ms []string
+		for m := range tw.facts.BeatDue {
+			ms = append(ms, m)
+		}
+		slices.SortFunc(ms, func(x, y string) int {
+			if c := cmp.Compare(tw.facts.BeatDue[x], tw.facts.BeatDue[y]); c != 0 {
+				return c
+			}
+			return cmp.Compare(x, y)
+		})
+		for _, m := range ms {
+			a.IDs = append(a.IDs, beatKeyPrefix+m)
+			a.Scores = append(a.Scores, float64(tw.facts.BeatDue[m]))
+		}
+	case factStrangers:
+		a.IDs = names(tw.facts.Strangers)
+	case factDropping:
+		a.IDs = names(tw.facts.Dropping)
+	default:
+		panic("the twin: a range over the sprint key " + q.Key)
+	}
+	if q.Limit > 0 && len(a.IDs) > q.Limit {
+		a.IDs, a.HasMore = a.IDs[:q.Limit], true
+		if a.Scores != nil {
+			a.Scores = a.Scores[:q.Limit]
+		}
+	}
+	return a
+}
+
+// Answer answers the plan: the ranges over the sprint's own keys (the only Layer
+// 1 query the fleet rules ask), and each composite query in the plan's order. The
+// times are the snapshot's epoch and a fixed time.
 func (tw fleetTwin) Answer(rp ReadPlan) ReadAnswer {
-	if len(rp.IDs)+len(rp.Ranges)+len(rp.Counts)+len(rp.RCounts)+len(rp.Lines) != 0 {
-		panic("the fleet rules' twin answers composite queries only")
+	if len(rp.IDs)+len(rp.Counts)+len(rp.RCounts)+len(rp.Lines) != 0 {
+		panic("the fleet rules' twin answers composite queries and ranges over sprint keys only")
 	}
 	ans := ReadAnswer{Epoch: Decimal(itoa(int(tw.whole.Epoch))), ActiveEpoch: Decimal(itoa(int(tw.whole.Epoch))), TimeMS: "1790000000123"}
+	for _, sl := range rp.TsetSlots() {
+		ans.Tset = append(ans.Tset, tw.keyRange(rp.Ranges[sl.Index]))
+	}
 	for i, q := range rp.Sprint {
 		a := tw.query(q)
 		if i == 0 {
@@ -61,7 +122,7 @@ func (tw fleetTwin) query(q SprintQ) Answer {
 	case QueryFleet:
 		rows := w.Fleet.Rows()
 		if q.Units > 0 && q.Units < len(rows) {
-			rows = rows[:q.Units]
+			rows, a.HasMore = rows[:q.Units], true // a listing cut at its units says there are more
 		}
 		a.Rows = append([]string(nil), rows...)
 		for _, m := range rows {
@@ -70,6 +131,17 @@ func (tw fleetTwin) query(q SprintQ) Answer {
 			}
 			for _, col := range []string{Ready, Working, Withdrawn} {
 				a.Counts = append(a.Counts, CellCount{Row: m, Col: col, N: w.Fleet.Count(m, col)})
+			}
+		}
+	case QueryStreams:
+		rows := w.Work.Rows()
+		if q.Units > 0 && q.Units < len(rows) {
+			rows, a.HasMore = rows[:q.Units], true
+		}
+		a.Rows = append([]string(nil), rows...)
+		for _, st := range rows {
+			if ctl := w.StreamCtl(st); ctl != nil {
+				a.Records = append(a.Records, TableCard{Merge, cutTo(ctl, q.Fields)})
 			}
 		}
 	case QueryRelated:

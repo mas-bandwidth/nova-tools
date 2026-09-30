@@ -24,11 +24,14 @@ import (
 // two clocks are given.
 //
 // A plan is made on a snapshot loaded from its own read (LoadPartial): it
-// reads only the cells, counts, rows and fields the read named, and a plan
-// that reads more is refused in a release build and panics in a test. So each
-// read below asks for every field its plan reads or unsets, and every queue
+// reads only the cells, counts, rows, fields and sprint keys the read named, and
+// a plan that reads more is refused in a release build and panics in a test. So
+// each read below asks for every field its plan reads or unsets, every queue
 // length a plan takes is a count the read asked for (Table.Count), never the
-// length of the cards a head happened to return.
+// length of the cards a head happened to return, and every sprint key a plan
+// consults is a range its read asked for (factsOf). A plan that cannot see
+// whether it has work, because its read could not name what to read, says so
+// (unread) and keeps its key: it never removes a key it has not looked behind.
 //
 // Where the design gives a rule more than the shapes of 8.0 can carry, the
 // rule carries it the narrowest way and the open question is in the pull
@@ -47,11 +50,16 @@ import (
 //	the decisions of a judgment: the request names none; J takes them from
 //	IT06's table for the type.
 //	the sprint's own keys (the beat entries of the due set, {p}strangers, the
-//	dropping marks): ReadPlan has no query kind for them and Answer no field, so
-//	they reach a plan as fleetFacts and no read asks for them.
+//	dropping marks): ReadPlan has no query kind for a member of a hash or one
+//	entry's score, so each is read as a range over the key named (IT05's RangeQ
+//	in its Key form) that answers the members present (factBeats, factStrangers,
+//	factDropping); the store's side is IT30's (question 3).
 //	the names R6 and R7 read by (the streams, the members): Rule.Read is given
-//	neither, so the registered reads ask for the fleet only and dealReadFor and
-//	levelReadFor take a fleetShape.
+//	neither, so the registered reads cannot name a stream's front(s) or a
+//	member's ready head. They read what they can (the fleet, the dropping marks,
+//	for R6 the list of streams), and their plans refuse, loudly, what that does
+//	not show (unread); dealReadFor and levelReadFor take a fleetShape and are
+//	the reads the tick will make when it has the names (question 4).
 
 // The rules of the keys of this file. ruleDown, ruleDeal and ruleLevel are
 // ingest's words (ingest.go); R1's key is made by the beat part, not by ingest.
@@ -64,6 +72,21 @@ const ruleSeen = "seen"
 // which the scanning tick and the reference model still pin: the two meet at
 // the switch (IT23), and the pull request lists what differs.
 const RuleMaxRedeals = 5
+
+// The design's numbers that today's machine also has, each the rules' own
+// constant so that a change to today's machine changes nothing here until the
+// switch (IT23) makes it on purpose.
+const (
+	// RuleReadyCap is the most ready cards R6 deals a member and R7 leaves it (2.3
+	// R6: "the cap of two ready cards a member is a constant here").
+	RuleReadyCap = 2
+	// RuleUntakenDeadline is how long a work card dealt at R may wait to be taken:
+	// it is due, not taken, at R + 15 min (1.2).
+	RuleUntakenDeadline = 15 * time.Minute
+	// RuleBeatDeadline is how long of running time a member stays up after its last
+	// beat (1.4.4: its beat entry is at R + 15 s).
+	RuleBeatDeadline = 15 * time.Second
+)
 
 // The numbers of the fleet rules, each with the section that gives it.
 const (
@@ -180,18 +203,16 @@ var (
 // fleetShape is what R6's and R7's reads name and Rule.Read is not given (8.0's
 // Read has the keys, the bounds and the halvings, and no snapshot): the streams
 // R6 asks front(s) of, and the members R7 asks the ready head of. The registered
-// reads have none and ask for the fleet only (open question 4); the tick that
-// knows them reads with dealReadFor and levelReadFor.
+// reads have none: they read what they can without a name (the fleet, the
+// dropping marks and, for R6, the list of streams), and their plans refuse what
+// that leaves unseen (open question 4); the tick that knows the names reads with
+// dealReadFor and levelReadFor.
 type fleetShape struct{ Streams, Members []string }
 
-// units is the members the fleet query is over: the shape's, at least one, and
-// the design's most (MaxMembers) when the shape names none.
-func (sh fleetShape) units() int {
-	if len(sh.Streams)+len(sh.Members) == 0 {
-		return 0
-	}
-	return max(1, len(sh.Members))
-}
+// units is the members the fleet query is over: one for each member the shape
+// names, and 0, which is the design's most (MaxMembers), when it names none: a
+// read that does not name its members reads them all.
+func (sh fleetShape) units() int { return len(sh.Members) }
 
 // fleetFacts is what the fleet rules read of the sprint's own keys, beside the
 // four tables. A name that is not in a map was not read, or is not there.
@@ -205,13 +226,134 @@ type fleetFacts struct {
 	Dropping map[string]bool
 }
 
-// factsOf is the facts of a snapshot. A snapshot has no place for them yet
-// (Answer carries none of the sprint's own keys), so a plan made without facts
-// sees none: a beat entry not seen is a beat that is not fresh (and X's
-// beatstale guard refuses a plan that marks a live member down), a stranger
-// not seen as noticed is noticed once (X's stranger guard refuses a second),
-// and a stream not seen as dropping is not skipped (X refuses DROPPING).
-func factsOf(*Snapshot) fleetFacts { return fleetFacts{} }
+// The sprint's own keys the fleet rules read (1.3.1, 1.4.4). IT05's ReadPlan has
+// no query kind for one member of a hash or for one entry's score, and the errata
+// (E4) leave sprint-key reads to kinds the store registers: until it does, each
+// key is asked as a range over the key named (RangeQ in its Key form), and its
+// answer is the members present, with for a beat entry its score:
+//
+//	factBeats      the beat:<m> entries of the due set, each with its due time in
+//	               running ms (the tick pops what is due before it reads, so an
+//	               entry still there is above R)
+//	factStrangers  the machines {p}strangers holds as noticed
+//	factDropping   the streams {p}dropping@e holds (being dropped or removed)
+const (
+	factBeats     = "beat"
+	factStrangers = "strangers"
+	factDropping  = "dropping"
+)
+
+// factLimit is the most members a fact's range names: the most members (for the
+// beats and strangers) or streams of a sprint (0.1, F1-20). A range that says it
+// has more has not read them all, and the plan refuses (factsOf).
+var factLimit = map[string]int{factBeats: MaxMembers, factStrangers: MaxMembers, factDropping: MaxStreams}
+
+// ruleFacts are the sprint keys each rule's plan consults. The rule's read asks
+// for exactly these (withFacts), and its plan takes exactly these from its
+// snapshot (factsOf): the one table is both.
+var ruleFacts = map[string][]string{
+	ruleSeen:  {factStrangers},
+	ruleDown:  {factBeats, factDropping},
+	ruleDeal:  {factDropping},
+	ruleLevel: {factDropping},
+}
+
+// withFacts is the read plan with the ranges of the sprint keys the rule's plan
+// consults.
+func withFacts(rp ReadPlan, rule string) ReadPlan {
+	rp.Ranges = slices.Clone(rp.Ranges)
+	for _, k := range ruleFacts[rule] {
+		rp.Ranges = append(rp.Ranges, RangeQ{Key: k, Limit: factLimit[k]})
+	}
+	return rp
+}
+
+// unloadedKeyMessage is the refusal of a plan that consulted a sprint key its read
+// did not ask for, or asked for and could not hold.
+const unloadedKeyMessage = "the planner read a sprint key its plan did not load"
+
+// unread records in the snapshot's log a read the plan needed and its read did
+// not make: a panic in a test build, and in a release build a read the tick
+// refuses the plan for (Snapshot.UnloadedErr). A snapshot built whole has
+// nothing unread.
+func unread(s *Snapshot, what string) {
+	if s != nil && s.Partial != nil {
+		s.Partial.log.note(what)
+	}
+}
+
+// whenShort is the plan of a read that was short: a plan that read what its
+// read did not load (Snapshot.Unloaded) saw less than its state holds, so it
+// writes nothing and raises nothing, and every key of the rule stays. The tick
+// refuses such a plan (Snapshot.UnloadedErr) and reads again; what the plan
+// decided on a short read is never a key's end.
+func whenShort(s *Snapshot, rule string, keys []AgendaKey, rp RulePlan) RulePlan {
+	if len(s.Unloaded()) == 0 {
+		return rp
+	}
+	var out RulePlan
+	for _, k := range keys {
+		if keyRule(k) == rule {
+			out.Requeue = append(out.Requeue, k)
+		}
+	}
+	return out
+}
+
+// sprintKeyRange is the answer of the range the plan asked over the sprint key.
+func sprintKeyRange(p *Partial, key string) (TsetAnswer, bool) {
+	for i, q := range p.Plan.Ranges {
+		if q.Key != key {
+			continue
+		}
+		for j, sl := range p.Plan.TsetSlots() {
+			if sl.Kind == AnswerRange && sl.Index == i {
+				return p.Answer.Tset[j], true
+			}
+		}
+	}
+	return TsetAnswer{}, false
+}
+
+// factsOf is the facts the rule's plan consults, taken from the answers of the
+// ranges its read asked (ruleFacts): the plan takes them from the snapshot it
+// was given and from nothing else. A fact the read did not ask for, one whose
+// answer is cut (HasMore: the members beyond it were not read, so a member not in
+// it is not known to be absent), or a beat with no score, is unread. A snapshot
+// built whole holds no sprint key and gives none.
+func factsOf(s *Snapshot, rule string) fleetFacts {
+	f := fleetFacts{BeatDue: map[string]int64{}, Strangers: map[string]bool{}, Dropping: map[string]bool{}}
+	if s.Partial == nil {
+		return f
+	}
+	for _, kind := range ruleFacts[rule] {
+		a, ok := sprintKeyRange(s.Partial, kind)
+		switch {
+		case !ok:
+			unread(s, unloadedKeyMessage+": "+kind)
+			continue
+		case a.HasMore:
+			unread(s, unloadedKeyMessage+": "+kind+" holds more than the read did")
+			continue
+		case kind == factBeats && len(a.Scores) != len(a.IDs):
+			unread(s, unloadedKeyMessage+": "+kind+" without its scores")
+			continue
+		}
+		for i, id := range a.IDs {
+			switch kind {
+			case factBeats:
+				if m, isBeat := strings.CutPrefix(id, beatKeyPrefix); isBeat {
+					f.BeatDue[m] = int64(a.Scores[i])
+				}
+			case factStrangers:
+				f.Strangers[id] = true
+			case factDropping:
+				f.Dropping[id] = true
+			}
+		}
+	}
+	return f
+}
 
 // keyRule is the rule a key belongs to.
 func keyRule(k AgendaKey) string { return RuleOf(k.Key) }
@@ -326,7 +468,7 @@ func wallOf(now Now) time.Time { return time.UnixMilli(now.Wall).UTC() }
 func fleetMs(v int64) string { return strconv.FormatInt(v, 10) }
 
 // untakenDue is when a card dealt at R is due, not taken: R + 15 min (1.2).
-func untakenDue(r int64) int64 { return r + DeadlineUntaken.Milliseconds() }
+func untakenDue(r int64) int64 { return r + RuleUntakenDeadline.Milliseconds() }
 
 // listed is the subjects of a note as text, at most MaxListed of them.
 func listed(ids []string) string {
@@ -340,6 +482,12 @@ func listed(ids []string) string {
 func cellName(row, col string) string { return row + ":" + col }
 
 func memberUpGuard(member string) XGuard { return XGuard{Kind: guardMemberUp, Member: member} }
+
+// beatStaleGuard is X's check that beat:<m> is not in the due set above R, with
+// the score the plan read it at (0 when the entry was popped).
+func beatStaleGuard(member string, f fleetFacts) XGuard {
+	return XGuard{Kind: guardBeatStale, Member: member, Key: beatKeyPrefix + member, Score: f.BeatDue[member]}
+}
 
 // countGuard is a member's ready cell held at most as many cards as the read
 // saw (L1's count entry, one entry over all the cells the builder makes).
@@ -360,7 +508,7 @@ func sentGuard(stream string, most float64) XGuard {
 func pickMember(up []string, q map[string]int, avoid string) string {
 	best, bestAvoid := "", ""
 	for _, m := range up {
-		if q[m] >= MaxReadyPerMember {
+		if q[m] >= RuleReadyCap {
 			continue
 		}
 		if m == avoid {
@@ -396,7 +544,7 @@ func pickMember(up []string, q map[string]int, avoid string) string {
 // Cost: O(1) a member, about 100 µs of store time (2.3).
 // Without it: every member's beat read every tick, O(f) a tick while RUNNING.
 func planSeen(s *Snapshot, keys []AgendaKey, now Now) RulePlan {
-	return planSeenWith(s, keys, now, factsOf(s))
+	return whenShort(s, ruleSeen, keys, planSeenWith(s, keys, now, factsOf(s, ruleSeen)))
 }
 
 func planSeenWith(s *Snapshot, keys []AgendaKey, now Now, f fleetFacts) RulePlan {
@@ -434,9 +582,10 @@ func planSeenWith(s *Snapshot, keys []AgendaKey, now Now, f fleetFacts) RulePlan
 }
 
 // readSeen is R1's read (8.0): each member's control card, for as many keys as
-// one read holds. The design also lists the member's beat record and
+// one read holds, and the machines {p}strangers holds as noticed (a fact,
+// factStrangers). The design also lists the member's beat record and
 // jopen:sprint; the effect uses neither (J closes the judgment, or ends its
-// hold, from its own read of jopen), and {p}strangers[m] is a fact (fleetFacts).
+// hold, from its own read of jopen).
 func readSeen(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []AgendaKey) {
 	kept, left, _ := fleetShare(keys, 1, 0, func(int) int { return seenRecords }, b, halvings)
 	ks := fleetKeysOf(ruleSeen, kept)
@@ -447,9 +596,9 @@ func readSeen(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []AgendaK
 	for _, m := range ks.subjects {
 		ids = append(ids, CtlID(m))
 	}
-	return ReadPlan{Sprint: []SprintQ{
+	return withFacts(ReadPlan{Sprint: []SprintQ{
 		{Kind: QueryRelated, Table: Fleet, Source: IDSource{Kind: SourceIDs, IDs: ids}, Fields: memberReadFields},
-	}}, left
+	}}, ruleSeen), left
 }
 
 // R2 down.
@@ -490,7 +639,7 @@ func readSeen(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []AgendaK
 // Cost: O(f + k) a chunk; a member with 5 cards about 1 ms (2.3).
 // Without it: a down member's cards found by scanning the fleet table.
 func planDown(s *Snapshot, keys []AgendaKey, now Now) RulePlan {
-	return planDownWith(s, keys, now, factsOf(s))
+	return whenShort(s, ruleDown, keys, planDownWith(s, keys, now, factsOf(s, ruleDown)))
 }
 
 func planDownWith(s *Snapshot, keys []AgendaKey, now Now, f fleetFacts) RulePlan {
@@ -580,21 +729,31 @@ func planDownWith(s *Snapshot, keys []AgendaKey, now Now, f fleetFacts) RulePlan
 		// (a held member, or one an earlier chunk marked) carries a guard alone, so
 		// that a fleet up between the read and the apply refuses the step and no card
 		// of a member that is up again is dealt away.
+		//
+		// A member that is not held is one whose key came from the pop of its beat
+		// (a held member's key comes from the line of fleet down), and a step that
+		// moves the cards of such a member carries beatstale whether this step marks
+		// it down or an earlier chunk did: a beat that lands before the step applies
+		// moves beat:<m> to R + 15 s and refuses it, and the next plan finds the beat
+		// fresh (2.3 R2).
 		switch {
 		case marking[m]:
 			rp.Plan.Units = append(rp.Plan.Units, Unit{Key: ctl.ID,
 				Changes: []Change{change(Fleet, setEntry(ctl, map[string]string{"status": Down, "since": stamp(wall)}))},
-				Moved:   fmt.Sprintf("%s down: no beat for %s", m, BeatDeadline)})
-			rp.Guards = append(rp.Guards, XGuard{Kind: guardBeatStale, Member: m, Key: beatKeyPrefix + m, Score: f.BeatDue[m]})
+				Moved:   fmt.Sprintf("%s down: no beat for %s", m, RuleBeatDeadline)})
+			rp.Guards = append(rp.Guards, beatStaleGuard(m, f))
 		case len(units) > 0:
 			rp.Plan.Units = append(rp.Plan.Units, Unit{Key: ctl.ID,
 				Changes: []Change{change(Fleet, guardEntry(ctl))},
 				Moved:   m + " control card guarded: its cards are dealt away"})
+			if !isHeld(ctl) {
+				rp.Guards = append(rp.Guards, beatStaleGuard(m, f))
+			}
 		}
 		rp.Plan.Units = append(rp.Plan.Units, units...)
 		if marking[m] {
 			rp.Notes = append(rp.Notes, NoteReq{Op: "know", Type: NMemberDown, Subjects: []string{m},
-				Text: fmt.Sprintf("%s down: no beat for %s; %d redealt, %d withdrawn", m, BeatDeadline, redealt, withdrawn)})
+				Text: fmt.Sprintf("%s down: no beat for %s; %d redealt, %d withdrawn", m, RuleBeatDeadline, redealt, withdrawn)})
 		}
 		done := redealt + withdrawn
 		switch {
@@ -730,7 +889,8 @@ func recordsOf(qs ...SprintQ) int {
 // readDown is R2's read (8.0): for as many keys as one read holds, the fleet
 // (every member's control card, the rows and the counts of the cells: the
 // receivers and each member's own cells) and the heads of each member's ready
-// and working cells with their primaries. The beat entry is a fact.
+// and working cells with their primaries, and the beat entries and the dropping
+// marks (the facts factBeats and factDropping).
 func readDown(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []AgendaKey) {
 	fleet := fleetQuery(memberReadFields)
 	kept, left, lim := fleetShare(keys, fleetChunk, recordsOf(fleet),
@@ -743,7 +903,7 @@ func readDown(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []AgendaK
 	for _, m := range ks.subjects {
 		rp.Sprint = append(rp.Sprint, downQueries(m, lim)...)
 	}
-	return rp, left
+	return withFacts(rp, ruleDown), left
 }
 
 // R6 deal.
@@ -774,6 +934,9 @@ func readDown(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []AgendaK
 // (fresh:s below σ_s, or again:s not empty): "no fleet member is up", once
 // (J's one per cause; a hold on it keeps it closed).
 // A card of a stream being dropped is not dealt, and the key stays (1.3.5).
+// A stream the read listed and named no front of (the registered read names
+// none) is one the plan cannot look behind: where a card could be dealt it says
+// the front was not read (unread), and the key stays.
 // Key: requeued while it dealt or refused and room remains (the read may
 // have been cut at L, and the plan cannot see it: the next plan finds nothing
 // and removes the key); removed otherwise.
@@ -783,7 +946,7 @@ func readDown(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []AgendaK
 // lowest: then each stream gives its first L a round, and the key stays.
 // Without it: deal scans ready in every stream.
 func planDeal(s *Snapshot, keys []AgendaKey, now Now) RulePlan {
-	return planDealWith(s, keys, now, factsOf(s))
+	return whenShort(s, ruleDeal, keys, planDealWith(s, keys, now, factsOf(s, ruleDeal)))
 }
 
 func planDealWith(s *Snapshot, keys []AgendaKey, now Now, f fleetFacts) RulePlan {
@@ -799,13 +962,21 @@ func planDealWith(s *Snapshot, keys []AgendaKey, now Now, f fleetFacts) RulePlan
 	room := 0
 	for m, n := range q {
 		read[m] = n
-		room += max(0, MaxReadyPerMember-n)
+		room += max(0, RuleReadyCap-n)
 	}
 
 	// What can be dealt: the primaries of fresh below σ and of again, of the
 	// streams that are not dropping, in work order. They are the heads the read
-	// took of each stream's index (front(s)), not a cell of the table.
-	streams := dealStreams(s)
+	// took of each stream's index (front(s)), not a cell of the table. A stream
+	// the read listed and named no front of is one the plan cannot look behind:
+	// where a card could be dealt (a member has room, or none is up and a card
+	// would make the judgment) the plan says the front was not read.
+	streams, unseen := dealStreams(s)
+	if room > 0 || len(up) == 0 {
+		for _, st := range unseen {
+			unread(s, unloadedMessage+": front of "+st)
+		}
+	}
 	ready := headCells(s.Work, Ready)
 	var cands []*Card
 	skipped := 0
@@ -1011,13 +1182,20 @@ func dealReadFor(sh fleetShape, b ReadBounds, halvings int) ReadPlan {
 	for _, st := range sh.Streams {
 		rp.Sprint = append(rp.Sprint, dealQueries(st, lim)...)
 	}
-	return rp
+	if len(sh.Streams) == 0 {
+		// a read that names no stream lists them: the plan can then tell a sprint
+		// with none (nothing to deal) from a read that could not name them
+		rp.Sprint = append(rp.Sprint, SprintQ{Kind: QueryStreams, Fields: []string{}})
+	}
+	return withFacts(rp, ruleDeal)
 }
 
 // readDeal is R6's registered read (8.0). Rule.Read is given neither the streams
-// nor the room, so it can name no stream's front(s): it asks for the fleet, and a
-// plan made on it finds nothing to deal. The tick that knows the streams reads
-// with dealReadFor (open question 4).
+// nor the room, so it can name no stream's front(s): it asks for the fleet, the
+// list of streams and the dropping marks, and a plan made on it deals nothing it
+// cannot see. Where a card could be dealt it says the fronts were not read and
+// keeps its key; with no room, or no stream, there is nothing to deal and the key
+// goes. The tick that knows the streams reads with dealReadFor (open question 4).
 func readDeal(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []AgendaKey) {
 	if _, ok := sprintKey(ruleDeal, keys); !ok {
 		return ReadPlan{}, keys
@@ -1026,18 +1204,25 @@ func readDeal(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []AgendaK
 }
 
 // dealStreams are the streams a deal plans over, in name order: the ones whose
-// front(s) the read asked for, or on a snapshot built whole the sprint's.
-func dealStreams(s *Snapshot) []string {
-	var out []string
-	if s.Partial != nil {
-		for st := range s.Partial.Fronts {
-			out = append(out, st)
-		}
-	} else {
-		out = append(out, s.Work.Rows()...)
+// front(s) the read asked for, or on a snapshot built whole the sprint's. A read
+// that named no front lists the streams instead (dealReadFor), so that it knows
+// whether the sprint has any: they come back as unseen, each a stream whose front
+// was not read. A read that did neither is refused (Table.Rows).
+func dealStreams(s *Snapshot) (streams, unseen []string) {
+	if s.Partial == nil {
+		streams = append(streams, s.Work.Rows()...)
+		slices.Sort(streams)
+		return streams, nil
 	}
-	slices.Sort(out)
-	return out
+	for st := range s.Partial.Fronts {
+		streams = append(streams, st)
+	}
+	if len(streams) == 0 {
+		unseen = append(unseen, s.Work.Rows()...)
+	}
+	slices.Sort(streams)
+	slices.Sort(unseen)
+	return streams, unseen
 }
 
 // R7 level.
@@ -1055,13 +1240,16 @@ func dealStreams(s *Snapshot) []string {
 // DROPPING), and the key stays. R2 puts no cap on a receiver's queue, so a
 // queue can hold more than the two cards the read loads: the plan moves what it
 // loaded, and while queues still differ by more than one after that, the key
-// stays and the next plan reads the heads again (open question 11).
+// stays and the next plan reads the heads again (open question 11). A queue
+// whose count says it holds cards and of which the read loaded none (the
+// registered read names no head) is one the plan cannot move a card of: it says
+// the head was not read (unread), and the key stays.
 // Key: removed.
 // Raises: nothing (its line is the record).
 // Cost: O(f + moved).
 // Without it: levelling reads every member's cells whenever anything changes.
 func planLevel(s *Snapshot, keys []AgendaKey, now Now) RulePlan {
-	return planLevelWith(s, keys, now, factsOf(s))
+	return whenShort(s, ruleLevel, keys, planLevelWith(s, keys, now, factsOf(s, ruleLevel)))
 }
 
 func planLevelWith(s *Snapshot, keys []AgendaKey, now Now, f fleetFacts) RulePlan {
@@ -1080,9 +1268,10 @@ func planLevelWith(s *Snapshot, keys []AgendaKey, now Now, f fleetFacts) RulePla
 		read[m] = n
 	}
 	heads := headCells(s.Fleet, Ready)
-	cards := map[string][]*Card{}
+	cards, loaded := map[string][]*Card{}, map[string]int{}
 	for _, m := range up {
 		cards[m] = append([]*Card(nil), heads[[2]string{m, Ready}]...)
+		loaded[m] = len(cards[m])
 	}
 	moved, skipped, unreached := 0, 0, false
 	receivers, touched := map[string]bool{}, map[string]bool{}
@@ -1107,6 +1296,11 @@ func planLevelWith(s *Snapshot, keys []AgendaKey, now Now, f fleetFacts) RulePla
 			skipped++
 		}
 		if i < 0 {
+			if loaded[long] == 0 {
+				// the count says this queue holds cards and the read loaded none: it
+				// named no head of the cell, and the plan cannot tell level from not
+				unread(s, unloadedMessage+": "+cellName(long, Ready)+" head")
+			}
 			unreached = true // the queue is longer than the cards the read loaded of it
 			break
 		}
@@ -1133,9 +1327,10 @@ func planLevelWith(s *Snapshot, keys []AgendaKey, now Now, f fleetFacts) RulePla
 	switch {
 	case skipped > 0 && moved == 0:
 		rp.settle(key, fateHeld)
-	case skipped > 0, unreached && moved > 0:
+	case skipped > 0, unreached:
 		// work skipped for a drop is never forgotten, and queues that are still
-		// uneven after the cards the read loaded were moved are levelled next tick
+		// uneven after the cards the read loaded were moved (or when it loaded none)
+		// are not level: the key stays and the next plan reads again
 		rp.settle(key, fateRequeue)
 	default:
 		rp.settle(key, fateDone)
@@ -1145,21 +1340,24 @@ func planLevelWith(s *Snapshot, keys []AgendaKey, now Now, f fleetFacts) RulePla
 }
 
 // levelReadFor is R7's read of the shape's members (8.0): the fleet, and the
-// head of each member's ready cell, at most MaxReadyPerMember cards each.
+// head of each member's ready cell, at most RuleReadyCap cards each.
 func levelReadFor(sh fleetShape) ReadPlan {
 	rp := ReadPlan{Sprint: []SprintQ{fleetQuery(upReadFields)}}
 	rp.Sprint[0].Units = sh.units()
 	for _, m := range sh.Members {
 		rp.Sprint = append(rp.Sprint, SprintQ{Kind: QueryRelated, Table: Fleet,
-			Source: IDSource{Kind: SourceHead, Key: cellName(m, Ready), Limit: MaxReadyPerMember},
+			Source: IDSource{Kind: SourceHead, Key: cellName(m, Ready), Limit: RuleReadyCap},
 			Fields: levelReadFields})
 	}
-	return rp
+	return withFacts(rp, ruleLevel)
 }
 
 // readLevel is R7's registered read (8.0). Rule.Read is given no members, so it
-// asks for the fleet only, and a plan made on it moves nothing. The tick that
-// knows the members reads with levelReadFor (open question 4).
+// can name no member's ready head: it asks for the fleet, whose counts say whether
+// the queues are level, and the dropping marks. A plan made on it removes its key
+// when the queues are level, and when they are not says the heads were not read and
+// keeps it. The tick that knows the members reads with levelReadFor (open
+// question 4).
 func readLevel(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []AgendaKey) {
 	if _, ok := sprintKey(ruleLevel, keys); !ok {
 		return ReadPlan{}, keys

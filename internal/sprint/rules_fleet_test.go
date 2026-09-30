@@ -14,11 +14,17 @@ import (
 // the notes a plan asks for the way 1.3.4 says (one per cause; a hold keeps a
 // cause closed; a close closes what is open).
 //
-// Every plan is made on a snapshot loaded from the rule's own read plan by
-// LoadPartial, through the twin of rules_fleet_twin_test.go: a plan that reads a
-// cell, count, row or field its read did not name panics, and a plan that
-// leaves out a field its read did not carry (an unset it would have made) is not
-// the plan made on the whole sprint, which fleetT.plan compares it with.
+// Every plan is made by the registered rule's own Plan on a snapshot loaded from
+// its own read plan by LoadPartial, through the twin of rules_fleet_twin_test.go
+// (the twin also answers the ranges over the sprint's own keys from the facts the
+// test holds as the store's state, so a plan takes its facts from the snapshot as
+// it does in the tick): a plan that reads a cell, count, row, field or sprint key
+// its read did not name panics, and a plan that leaves out a field its read did
+// not carry (an unset it would have made) is not the plan made on the whole
+// sprint, which fleetT.plan compares it with. R1's and R2's reads are the
+// registered ones; R6's and R7's are the reads of the sprint's streams and
+// members (dealReadFor, levelReadFor), which the registered reads are with no name
+// to read by (TestRegisteredReadsOfDealAndLevelKeepTheirKeys).
 
 const fleetR0 int64 = 3_600_000 // R at the plans below, in ms
 
@@ -42,8 +48,11 @@ type fleetT struct {
 	// halvings are the halvings the reads are planned at (1.3.5).
 	halvings int
 	// mutate changes the read plan before it is answered: a test that asks
-	// whether a field or a follow of a read is needed takes it out.
+	// whether a field, a follow or a fact of a read is needed takes it out.
 	mutate func(rp *ReadPlan)
+	// byRegistered says R6 and R7 are read by their registered reads, which name no
+	// stream or member, and not by the reads of the sprint's streams and members.
+	byRegistered bool
 }
 
 // newFleetT is a sprint with the members up (rows and control cards) and n
@@ -61,9 +70,14 @@ func newFleetT(t *testing.T, primaries int, members ...string) *fleetT {
 }
 
 // newFleetOn is the harness over a world already built.
+// emptyFacts is the sprint's own keys with nothing in them.
+func emptyFacts() fleetFacts {
+	return fleetFacts{BeatDue: map[string]int64{}, Strangers: map[string]bool{}, Dropping: map[string]bool{}}
+}
+
 func newFleetOn(t *testing.T, w *world) *fleetT {
 	return &fleetT{t: t, w: w,
-		facts:  fleetFacts{BeatDue: map[string]int64{}, Strangers: map[string]bool{}, Dropping: map[string]bool{}},
+		facts:  emptyFacts(),
 		now:    Now{R: fleetR0, Wall: t0.UnixMilli(), Running: true},
 		jopen:  map[string]string{},
 		agenda: map[string]bool{},
@@ -98,20 +112,34 @@ func (f *fleetT) shape() fleetShape {
 	return fleetShape{Streams: append([]string(nil), f.snap().Work.Rows()...), Members: append([]string(nil), f.snap().Fleet.Rows()...)}
 }
 
+// registered is the rule the tick runs by the name: the one in the rule table.
+func registered(tb testing.TB, name string) Rule {
+	tb.Helper()
+	for _, r := range RuleTable() {
+		if r.Name == name {
+			return r
+		}
+	}
+	tb.Fatalf("no registered rule %s", name)
+	return Rule{}
+}
+
 // readPlan is the rule's read of the keys.
 func (f *fleetT) readPlan(rule string, ks []AgendaKey) ReadPlan {
 	f.t.Helper()
 	var rp ReadPlan
 	var left []AgendaKey
 	switch rule {
-	case ruleSeen:
-		rp, left = readSeen(ks, f.bounds, f.halvings)
-	case ruleDown:
-		rp, left = readDown(ks, f.bounds, f.halvings)
-	case ruleDeal:
-		rp = dealReadFor(f.shape(), f.bounds, f.halvings)
-	case ruleLevel:
-		rp = levelReadFor(f.shape())
+	case ruleSeen, ruleDown:
+		rp, left = registered(f.t, rule).Read(ks, f.bounds, f.halvings)
+	case ruleDeal, ruleLevel:
+		if f.byRegistered {
+			rp, left = registered(f.t, rule).Read(ks, f.bounds, f.halvings)
+		} else if rule == ruleDeal {
+			rp = dealReadFor(f.shape(), f.bounds, f.halvings)
+		} else {
+			rp = levelReadFor(f.shape())
+		}
 	default:
 		f.t.Fatalf("no rule %s", rule)
 	}
@@ -125,28 +153,47 @@ func (f *fleetT) readPlan(rule string, ks []AgendaKey) ReadPlan {
 	return rp
 }
 
-// planOn is the rule's plan on a snapshot.
+// planOn is the registered rule's plan on a snapshot: what the tick runs, with
+// the facts it takes from the snapshot's own read.
 func (f *fleetT) planOn(rule string, s *Snapshot, ks []AgendaKey) RulePlan {
+	f.t.Helper()
+	return registered(f.t, rule).Plan(s, ks, f.now)
+}
+
+// oracle is the plan on the whole sprint, the one the plan on what the read
+// loaded must equal. A snapshot built whole holds no sprint key, so the facts the
+// test holds as the store's state are given to it here, and only here: the plan
+// under test never has them given.
+func (f *fleetT) oracle(rule string, whole *Snapshot, ks []AgendaKey) RulePlan {
+	f.t.Helper()
 	switch rule {
 	case ruleSeen:
-		return planSeenWith(s, ks, f.now, f.facts)
+		return planSeenWith(whole, ks, f.now, f.facts)
 	case ruleDown:
-		return planDownWith(s, ks, f.now, f.facts)
+		return planDownWith(whole, ks, f.now, f.facts)
 	case ruleDeal:
-		return planDealWith(s, ks, f.now, f.facts)
+		return planDealWith(whole, ks, f.now, f.facts)
 	case ruleLevel:
-		return planLevelWith(s, ks, f.now, f.facts)
+		return planLevelWith(whole, ks, f.now, f.facts)
 	}
 	f.t.Fatalf("no rule %s", rule)
 	return RulePlan{}
 }
 
 // loaded is the snapshot the rule's read loads from the state: its read plan
-// answered by the twin, and loaded.
+// answered by the twin, and loaded as a test build loads it (a plan that reads
+// what the read did not load panics).
 func (f *fleetT) loaded(rule string, ks []AgendaKey) *Snapshot {
 	f.t.Helper()
+	return f.load(rule, ks, true)
+}
+
+// load is the same, strict or as a release build loads it: a plan that reads what
+// the read did not load is recorded (Snapshot.Unloaded) and the tick refuses it.
+func (f *fleetT) load(rule string, ks []AgendaKey, strict bool) *Snapshot {
+	f.t.Helper()
 	rp := f.readPlan(rule, ks)
-	s, err := LoadPartial(rp, fleetTwin{whole: f.snap(), extra: f.extra}.Answer(rp))
+	s, err := loadPartial(rp, fleetTwin{whole: f.snap(), extra: f.extra, facts: f.facts}.Answer(rp), strict)
 	if err != nil {
 		f.t.Fatalf("%s: the twin's answer does not load: %v", rule, err)
 	}
@@ -165,7 +212,7 @@ func (f *fleetT) plan(rule string, texts ...string) RulePlan {
 		f.t.Fatalf("%s: the plan read what its read did not load: %v", rule, err)
 	}
 	if !f.partialOnly {
-		samePlan(f.t, rule, rp, f.planOn(rule, f.snap(), ks))
+		samePlan(f.t, rule, rp, f.oracle(rule, f.snap(), ks))
 	}
 	return rp
 }
@@ -1040,11 +1087,11 @@ func TestDealNeverPastTheRoom(t *testing.T) {
 	t.Parallel()
 	f := newFleetT(t, 9, "m1", "m2")
 	rp := f.run(ruleDeal, "deal")
-	if len(rp.Plan.Units) != 2*MaxReadyPerMember {
-		t.Fatalf("dealt %d, the room is %d", len(rp.Plan.Units), 2*MaxReadyPerMember)
+	if len(rp.Plan.Units) != 2*RuleReadyCap {
+		t.Fatalf("dealt %d, the room is %d", len(rp.Plan.Units), 2*RuleReadyCap)
 	}
 	for _, m := range []string{"m1", "m2"} {
-		if n := f.snap().Fleet.Count(m, Ready); n != MaxReadyPerMember {
+		if n := f.snap().Fleet.Count(m, Ready); n != RuleReadyCap {
 			t.Fatalf("%s holds %d", m, n)
 		}
 	}
@@ -1437,13 +1484,23 @@ func TestDealReadHalvings(t *testing.T) {
 			t.Fatalf("%d streams: the read is %d reads", streams, len(plans))
 		}
 	}
-	// the registered read is given no streams: the fleet alone, and no key left
+	// the registered read is given no streams: it reads the fleet and lists the
+	// streams (so that its plan can tell a sprint with none from a read that could
+	// not name them), asks for the dropping marks, and leaves no key
 	rp, left := readDeal(agendaOf("deal"), fleetBounds(), 0)
-	if len(left) != 0 || len(rp.Sprint) != 1 || rp.Sprint[0].Kind != QueryFleet {
+	if len(left) != 0 || len(rp.Sprint) != 2 || rp.Sprint[0].Kind != QueryFleet || rp.Sprint[0].Units != 0 || rp.Sprint[1].Kind != QueryStreams ||
+		len(rp.Ranges) != 1 || rp.Ranges[0].Key != factDropping {
 		t.Fatalf("%+v %v", rp, left)
 	}
 	if rp, left := readDeal(agendaOf("level"), fleetBounds(), 0); rp.Queries() != 0 || len(left) != 1 {
 		t.Fatalf("no deal key: %+v %v", rp, left)
+	}
+	// a read that names its streams names their fronts and does not list them
+	named := dealReadFor(fleetShape{Streams: []string{"s1"}}, fleetBounds(), 0)
+	for _, q := range named.Sprint {
+		if q.Kind == QueryStreams {
+			t.Fatalf("a read that names its streams lists them too: %+v", named)
+		}
 	}
 }
 
@@ -1456,13 +1513,19 @@ func TestLevelReadTwoEach(t *testing.T) {
 	}
 	for i, q := range rp.Sprint[1:] {
 		want := "m" + itoa(i+1) + ":ready"
-		if q.Kind != QueryRelated || q.Source.Kind != SourceHead || q.Source.Key != want || q.Source.Limit != MaxReadyPerMember {
+		if q.Kind != QueryRelated || q.Source.Kind != SourceHead || q.Source.Key != want || q.Source.Limit != RuleReadyCap {
 			t.Fatalf("query %d: %+v", i+1, q)
 		}
 	}
+	// the registered read names no member: the fleet, whose counts say whether the
+	// queues are level, and the dropping marks
 	rp, left := readLevel(agendaOf("level"), fleetBounds(), 0)
-	if len(left) != 0 || len(rp.Sprint) != 1 || rp.Sprint[0].Kind != QueryFleet {
+	if len(left) != 0 || len(rp.Sprint) != 1 || rp.Sprint[0].Kind != QueryFleet || rp.Sprint[0].Units != 0 ||
+		len(rp.Ranges) != 1 || rp.Ranges[0].Key != factDropping {
 		t.Fatalf("the registered read: %+v %v", rp, left)
+	}
+	if rp, left := readLevel(agendaOf("deal"), fleetBounds(), 0); rp.Queries() != 0 || len(left) != 1 {
+		t.Fatalf("no level key: %+v %v", rp, left)
 	}
 }
 
@@ -1509,7 +1572,7 @@ func downSprintT(b testing.TB, ready, working int) *Snapshot {
 // twin.
 func loadOrFail(b testing.TB, whole *Snapshot, rp ReadPlan) *Snapshot {
 	b.Helper()
-	s, err := LoadPartial(rp, fleetTwin{whole: whole}.Answer(rp))
+	s, err := LoadPartial(rp, fleetTwin{whole: whole, facts: emptyFacts()}.Answer(rp))
 	if err != nil {
 		b.Fatalf("the twin's answer does not load: %v", err)
 	}
@@ -1521,13 +1584,14 @@ func loadOrFail(b testing.TB, whole *Snapshot, rp ReadPlan) *Snapshot {
 // of 25 ms is store time, measured by IT25's rows.
 func BenchmarkPlanDown2000(b *testing.B) {
 	ks := agendaOf("down:m1")
-	rp, _ := readDown(ks, fleetBounds(), 0)
+	rule := registered(b, ruleDown)
+	rp, _ := rule.Read(ks, fleetBounds(), 0)
 	s := loadOrFail(b, benchDownT(b, fleetChunk), rp)
 	now := Now{R: fleetR0, Wall: t0.UnixMilli(), Running: true}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if got := planDownWith(s, ks, now, fleetFacts{}); len(got.Plan.Units) != fleetChunk+1 {
+		if got := rule.Plan(s, ks, now); len(got.Plan.Units) != fleetChunk+1 {
 			b.Fatalf("units %d", len(got.Plan.Units))
 		}
 	}
@@ -1550,11 +1614,12 @@ func BenchmarkPlanDeal16(b *testing.B) {
 	rp := dealReadFor(fleetShape{Streams: []string{"s1"}, Members: whole.Fleet.Rows()}, fleetBounds(), 0)
 	s := loadOrFail(b, whole, rp)
 	ks := agendaOf("deal")
+	rule := registered(b, ruleDeal)
 	now := Now{R: fleetR0, Wall: t0.UnixMilli(), Running: true}
 	b.ReportAllocs()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if got := planDealWith(s, ks, now, fleetFacts{}); len(got.Plan.Units) != 16 {
+		if got := rule.Plan(s, ks, now); len(got.Plan.Units) != 16 {
 			b.Fatalf("units %d", len(got.Plan.Units))
 		}
 	}
