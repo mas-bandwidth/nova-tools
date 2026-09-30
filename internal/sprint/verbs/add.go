@@ -101,15 +101,6 @@ func addArgs(r sprint.AddReq) map[string]any {
 	return args
 }
 
-// epochOf is a read's epoch as a number (StoredID's).
-func epochOf(d tset.Decimal) (uint64, error) {
-	n, ok := undec(d)
-	if !ok {
-		return 0, fmt.Errorf("the read's epoch %q is not a number", d)
-	}
-	return n, nil
-}
-
 // storedAll is ids as the table holds them at an epoch.
 func storedAll(ids []string, epoch uint64) []string {
 	out := make([]string, len(ids))
@@ -181,22 +172,6 @@ func decodeRelated(raw json.RawMessage) (sprintfn.RelatedResult, error) {
 func scoreOf(r sprintfn.Record) float64 {
 	f, _ := strconv.ParseFloat(r.Score, 64)
 	return f
-}
-
-// fieldOf is a record's field, "" when it is absent.
-func fieldOf(r sprintfn.Record, name string) string {
-	if v, ok := r.Fields[name]; ok && v.Present {
-		return v.Value
-	}
-	return ""
-}
-
-// placeOf is a record's place: its row and column, "" when it has none.
-func placeOf(r sprintfn.Record) (row, col string) {
-	if r.Place == nil {
-		return "", ""
-	}
-	return r.Place.Row, r.Place.Col
 }
 
 // anchorOf reads the anchor of an insertion or a rank (one round trip): it must

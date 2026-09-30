@@ -151,6 +151,21 @@ func (e *qeval) evalKey(q KeyQ) (QueryResult, *Refusal) {
 			out.Scores = append(out.Scores, got...)
 		}
 		return out, nil
+	case KeyBeat:
+		out := BeatResult{Kind: q.Kind, Scores: []*string{}}
+		for from := 0; from < len(q.IDs); from += probeChunk {
+			chunk := q.IDs[from:min(from+probeChunk, len(q.IDs))]
+			members := make([]string, len(chunk))
+			for i, m := range chunk {
+				members[i] = beatDuePrefix + m
+			}
+			got, ref := e.zscores(e.key("due"), members)
+			if ref != nil {
+				return nil, ref
+			}
+			out.Scores = append(out.Scores, got...)
+		}
+		return out, nil
 	case KeyJOpen:
 		out := JOpenResult{Kind: q.Kind, Items: []JOpenItem{}}
 		for _, s := range q.Subjects {

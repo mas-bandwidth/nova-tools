@@ -148,8 +148,8 @@ const (
 	strangersKey  = "strangers"
 	beatKeyPrefix = "beat:"
 	// sprintSubject is the subject of a judgment about the sprint (jopen:sprint
-	// in R1's read).
-	sprintSubject = "sprint"
+	// in R1's read); the verbs name it as SubjectSprint.
+	sprintSubject = SubjectSprint
 	// boundRedeals is the value of a primary's bound field, and the cause of the
 	// judgment, when its work card has been dealt again as often as the design
 	// allows (1.3.1, 2.2).
@@ -157,7 +157,15 @@ const (
 	// causeCouldNot and causeNoMember are the causes the rules give J's one per
 	// cause (1.3.4): the rule that raises each.
 	causeCouldNot = ruleDeal
-	causeNoMember = ruleDeal
+	causeNoMember = CauseNoMember
+)
+
+// SubjectSprint is the subject of a judgment about the sprint, and
+// CauseNoMember the cause "no fleet member is up" is kept under: R6 raises it
+// with its rule's name, deal (2.2, 1.3.4); fleet up closes it.
+const (
+	SubjectSprint = "sprint"
+	CauseNoMember = ruleDeal
 )
 
 // The card fields the rules write beyond the ones the lifecycle's own steps

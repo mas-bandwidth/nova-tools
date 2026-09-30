@@ -105,6 +105,14 @@ func TestSprintKeyReads(t *testing.T) {
 			t.Fatalf("%+v %+v", r, c)
 		}
 	})
+	t.Run("beat entries in the due set by member", func(t *testing.T) {
+		w.seed(w.zadd("due", "4242", "beat:m1"))
+		res, c := w.key(KeyQ{Kind: KeyBeat, IDs: []string{"m1", "m2"}})
+		r := res.(BeatResult)
+		if len(r.Scores) != 2 || r.Scores[0] == nil || *r.Scores[0] != "4242" || r.Scores[1] != nil || c.Probes != 2 { // a probe for each member
+			t.Fatalf("%+v %+v", r, c)
+		}
+	})
 	t.Run("jopen by name", func(t *testing.T) {
 		w.note("blocked", "c1", "p1")
 		id := "n" + strconv.Itoa(len(w.log.Lines(testPrefix, "0")))
@@ -119,6 +127,7 @@ func TestSprintKeyReads(t *testing.T) {
 		for _, q := range []KeyQ{{Kind: KeyClock}, {Kind: KeyLease}, {Kind: KeyTick}, {Kind: KeyHeartbeat}, {Kind: KeyDueCount},
 			{Kind: KeyDropping, Streams: []string{"s1", "s2"}}, {Kind: KeyDropping, Streams: []string{}}, {Kind: KeyParked, Keys: []string{"a"}},
 			{Kind: KeyMissing, IDs: []string{"a", "b"}}, {Kind: KeyMissing, IDs: []string{}},
+			{Kind: KeyBeat, IDs: []string{"m1", "m2"}}, {Kind: KeyBeat, IDs: []string{}},
 			{Kind: KeyJOpen, Subjects: []string{"p1", "p2"}, Names: []string{"x|y"}}, {Kind: KeyJOpen, Subjects: []string{"p1"}, Names: []string{}}} {
 			_, c := w.key(q)
 			if c.Probes > KeyProbes(q) || c.Records != 0 || c.RangeIDs != 0 {

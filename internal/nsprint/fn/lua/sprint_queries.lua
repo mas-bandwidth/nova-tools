@@ -385,7 +385,7 @@ do
     if kind == 'duecount' then return #Q.CLOCK_FIELDS + 1 end
     if kind == 'dropping' then return 1 + #q.streams end
     if kind == 'parked' then return 1 + #q.keys end
-    if kind == 'missing' then return #q.ids end
+    if kind == 'missing' or kind == 'beat' then return #q.ids end
     if kind == 'jopen' then return #q.subjects * (1 + #q.names) end
     if kind == 'next' then return #q.names end
     return Q.MAX_PROBES
@@ -504,7 +504,7 @@ do
   function Q.check_key(q)
     if not Q.is_object(q) or type(q.kind) ~= 'string' then return 'REQUEST' end
     local allowed = {kind = true, fields = true}
-    local extra = {dropping = {'streams'}, parked = {'keys'}, missing = {'ids'}, jopen = {'subjects', 'names'}, next = {'names'}}
+    local extra = {dropping = {'streams'}, parked = {'keys'}, missing = {'ids'}, beat = {'ids'}, jopen = {'subjects', 'names'}, next = {'names'}}
     for _, name in ipairs(extra[q.kind] or {}) do allowed[name] = true end
     if not Q.only(q, allowed) then return 'REQUEST' end
     if not Q.is_array(q.fields) or #q.fields ~= 0 then return 'REQUEST' end
@@ -513,7 +513,7 @@ do
       if not Q.distinct(q.streams, Q.valid_name, most) then return 'REQUEST' end
     elseif q.kind == 'parked' then
       if not Q.distinct(q.keys, Q.valid_text, most) then return 'REQUEST' end
-    elseif q.kind == 'missing' then
+    elseif q.kind == 'missing' or q.kind == 'beat' then
       if not Q.distinct(q.ids, Q.valid_name, most) then return 'REQUEST' end
     elseif q.kind == 'jopen' then
       if not Q.distinct(q.subjects, Q.valid_name, most) or not Q.distinct(q.names, Q.valid_text, most) then return 'REQUEST' end
@@ -1616,6 +1616,20 @@ do
         i = i + Q.PROBE_CHUNK
       end
       return {kind = kind, scores = Q.array(scores)}, nil
+    elseif kind == 'beat' then
+      -- The score of beat:<m> in the due set for each member named (1.4.4): a
+      -- member's beat is fresh while it lies above R.
+      local scores = {}
+      local i = 1
+      while i <= #q.ids do
+        local chunk = {}
+        for k = i, math.min(i + Q.PROBE_CHUNK - 1, #q.ids) do chunk[#chunk + 1] = 'beat:' .. q.ids[k] end
+        local got, err = Q.zmscore(ctx, Q.key(ctx, 'due'), chunk, index)
+        if err then return nil, err end
+        for k = 1, #chunk do scores[#scores + 1] = Q.nullable(got[k]) end
+        i = i + Q.PROBE_CHUNK
+      end
+      return {kind = kind, scores = Q.array(scores)}, nil
     elseif kind == 'jopen' then
       local items = {}
       for _, s in ipairs(q.subjects) do
@@ -1662,7 +1676,7 @@ do
     local reader = name == 'fleet' and Q.listing or (name == 'readers' and Q.listing or Q[name])
     SP.query(name, {validate = Q.validator(Q.check), read = reader, cost = Q.cost})
   end
-  for _, name in ipairs({'clock', 'lease', 'tick', 'heartbeat', 'dropping', 'parked', 'missing', 'jopen', 'duecount', 'next'}) do
+  for _, name in ipairs({'clock', 'lease', 'tick', 'heartbeat', 'dropping', 'parked', 'missing', 'jopen', 'duecount', 'next', 'beat'}) do
     SP.query(name, {validate = Q.validator(Q.check_key), read = Q.read_key, cost = Q.key_cost})
   end
 end
