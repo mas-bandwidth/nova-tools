@@ -1178,6 +1178,38 @@ bounds; the class tests do not time a hosted leg, dev's push run does.
 The heavy list is named from one reader measurement, not from a hosted
 per-package timing.
 
+### `darwin-gate` — the darwin unit shards run only where the target branch is dev or main
+
+**The rule.** ci.yml's `test-packages` deals the unit matrix, and its `list` step
+deals the darwin shards only when `DARWIN_BRANCHES` (`main dev`, the integration
+list of the concurrency group in short form) holds the event's target branch: a
+pull_request's `github.base_ref`, the merge queue's `github.event.merge_group.base_ref`
+(its `refs/heads/` prefix cut), a push's `github.ref_name`. `schedule` and
+`workflow_dispatch` keep the shape they have. With the gate off every selected
+package rides the Linux shards, the darwin-only packages (`cmd/nova-sandbox`,
+`internal/sandbox`) have no leg, the darwin-sensitivity analysis does not run, and
+a change that selected only darwin-only packages gets the one leg that prints
+"nothing to test for this change". Linux shards are unchanged, `ci-ok` reads the
+`test` job whose matrix has no darwin entry on a working branch, and
+certification.yml (dev and main certify on darwin) is untouched. No ruleset
+applies to a working branch, so no darwin check is required there.
+**The mistake it prevents.** The Go is the same Go on both OSes and the darwin legs
+are the slowest and the scarcest: cancelled at the two-minute cap whenever their
+host is loaded, they turned a working-branch pull request red for a reason the
+change did not cause and held the queue behind them.
+**The test.** `TestDarwinShardsRunOnlyForIntegrationBranches`
+(`internal/ci/darwin_gate_class_test.go`) reads ci.yml's list step: the branch list
+equals the integration list, each event reads its own target branch, the deal loop
+sends every package to a Linux shard before it can append to the darwin group
+while the gate is off, the darwin-only-only change falls back to the empty leg, and
+no other job names a self-hosted macOS runner or runs macos-latest on a pull_request
+or merge_group.
+**Its allowlist.** None.
+**Its remedy line.** Put the darwin leg behind `darwin_on`, or add the branch to the
+integration list and to `DARWIN_BRANCHES` together.
+**Its narrowings.** It reads the workflow as text and does not run the step; the
+branch expressions are GitHub's.
+
 ### `cert-race-shards` — the whole-tree race run meets the cap by shards, its cache saved before the tests
 
 **The rule.** certification.yml's `test` job keeps `timeout-minutes: 2` and meets
