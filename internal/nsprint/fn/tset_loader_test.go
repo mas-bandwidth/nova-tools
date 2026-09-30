@@ -7,9 +7,8 @@ import (
 	"testing"
 )
 
-// Keep this inventory independent of the assembler. A new registration in the
-// unchanged legacy module needs an explicit boundary review, even if the Lua
-// shim would otherwise drop it.
+// Keep the old module's registration inventory independent of the tset
+// assembler. The old library continues to load table.lua unchanged.
 var legacyRegistrations = []string{
 	"ns_oset_move",
 	"ns_table_apply",
@@ -58,28 +57,7 @@ func TestTSetLegacyRegistrationBoundary(t *testing.T) {
 	}
 	sort.Strings(found)
 	if strings.Join(found, "\n") != strings.Join(legacyRegistrations, "\n") {
-		t.Fatalf("legacy registrations changed; review tset allowlist\nfound: %v\nwant: %v", found, legacyRegistrations)
-	}
-
-	allowed := make(map[string]bool, len(tsetLegacyReaders))
-	for _, name := range tsetLegacyReaders {
-		if allowed[name] {
-			t.Fatalf("duplicate allowed reader %s", name)
-		}
-		allowed[name] = true
-	}
-	for _, line := range strings.Split(string(body), "\n") {
-		matches := legacyTableRegistration.FindStringSubmatch(line)
-		if matches == nil || !allowed[matches[1]] {
-			continue
-		}
-		if !strings.Contains(line, "no-writes") {
-			t.Fatalf("allowed reader %s lost its no-writes registration flag", matches[1])
-		}
-		delete(allowed, matches[1])
-	}
-	if len(allowed) != 0 {
-		t.Fatalf("allowlist contains absent or unflagged readers: %v", allowed)
+		t.Fatalf("legacy registrations changed\nfound: %v\nwant: %v", found, legacyRegistrations)
 	}
 }
 
@@ -92,52 +70,54 @@ func TestTSetProfileSourceIsExplicit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	checkTSetProfileSource(t, standalone, "l1_only", false)
+}
+
+// The composed source has a separate gate: a missing real Layer 2 fragment
+// must not prevent the standalone source boundary from being checked.
+func TestTSetComposedSourceIsExplicit(t *testing.T) {
+	t.Parallel()
 	composed, err := TSetSource(TSetComposed)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, tc := range []struct {
-		name    string
-		source  string
-		profile string
-		log     bool
-	}{
-		{"standalone", standalone, "l1_only", false},
-		{"composed", composed, "composed", true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			if !strings.HasPrefix(tc.source, "#!lua name="+Library+"\nlocal NS = {tset_profile = '"+tc.profile+"'}\n") {
-				t.Fatal("server-selected tset profile is absent from prelude")
-			}
-			if !strings.Contains(tc.source, "local function runtime_redis() return redis end\nlocal native_redis = redis\nlocal redis = {\n") ||
-				!strings.Contains(tc.source, "name == 'ns_table_read'") {
-				t.Fatal("legacy registration filter is absent")
-			}
-			for _, method := range []string{"call", "pcall", "sha1hex", "acl_check_cmd"} {
-				if !strings.Contains(tc.source, method+" = function(...) return runtime_redis()."+method+"(...) end") {
-					t.Errorf("%s must resolve the FCALL-time Redis facade", method)
-				}
-			}
-			if strings.Contains(tc.source, "\n-- lua/table_set_log.lua\n") != tc.log {
-				t.Fatal("Layer 2 fragment does not match profile")
-			}
-			for _, name := range tsetFragments {
-				if name == "lua/table_set_log.lua" && !tc.log {
-					continue
-				}
-				if strings.Count(tc.source, "\n-- "+name+"\n") != 1 {
-					t.Fatalf("expected one %s fragment", name)
-				}
-			}
-			if strings.Count(tc.source, "\n-- lua/table.lua\n") != 1 {
-				t.Fatal("legacy reader module missing or repeated")
-			}
-			if strings.Contains(tc.source, "\n-- lua/sprint.lua\n") ||
-				strings.Contains(tc.source, "\n-- lua/ws.lua\n") {
-				t.Fatal("legacy writer module entered tset profile")
-			}
-		})
+	checkTSetProfileSource(t, composed, "composed", true)
+}
+
+func checkTSetProfileSource(t *testing.T, source, profile string, log bool) {
+	t.Helper()
+	if !strings.HasPrefix(source, "#!lua name="+Library+"\nlocal NS = {tset_profile = '"+profile+"'}\n") {
+		t.Fatal("server-selected tset profile is absent from prelude")
+	}
+	if !strings.Contains(source, "local function runtime_redis() return redis end\nlocal native_redis = redis\nlocal redis = {\n") ||
+		!strings.Contains(source, "if name == 'ns_tset_step' or name == 'ns_tset_read' then") {
+		t.Fatal("exact tset registration filter is absent")
+	}
+	for _, name := range legacyRegistrations {
+		if strings.Contains(source, "name == '"+name+"'") {
+			t.Errorf("legacy callback %s entered tset registration filter", name)
+		}
+	}
+	for _, method := range []string{"call", "pcall", "sha1hex", "acl_check_cmd"} {
+		if !strings.Contains(source, method+" = function(...) return runtime_redis()."+method+"(...) end") {
+			t.Errorf("%s must resolve the FCALL-time Redis facade", method)
+		}
+	}
+	if strings.Contains(source, "\n-- lua/table_set_log.lua\n") != log {
+		t.Fatal("Layer 2 fragment does not match profile")
+	}
+	for _, name := range tsetFragments {
+		if name == "lua/table_set_log.lua" && !log {
+			continue
+		}
+		if strings.Count(source, "\n-- "+name+"\n") != 1 {
+			t.Fatalf("expected one %s fragment", name)
+		}
+	}
+	for _, name := range []string{"lua/table.lua", "lua/sprint.lua", "lua/ws.lua"} {
+		if strings.Contains(source, "\n-- "+name+"\n") {
+			t.Errorf("legacy module %s entered tset profile", name)
+		}
 	}
 }
 
