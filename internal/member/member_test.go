@@ -961,3 +961,34 @@ func TestTakeAsksForTheRoom(t *testing.T) {
 		})
 	}
 }
+
+// TestASpentReadStaysSpentAcrossTicks pins that a read whose child gave no
+// verdict is not run again while its claim stands: three more ticks start
+// nothing and issue no read verb. Removing the spent record (member.go, the
+// `l.spent = true` line) fails it: the card would be restarted every tick.
+func TestASpentReadStaysSpentAcrossTicks(t *testing.T) {
+	t.Parallel()
+	g := newRig(Config{As: "r", Width: 2, Reader: true})
+	p := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7, Head: "h1"}
+	g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &p)))
+	if _, err := g.tick(t); err != nil {
+		t.Fatal(err)
+	}
+	g.r.child("r1").end(Result{Ran: true, Verdict: ""})
+	starts := len(g.r.started())
+	for i := 0; i < 3; i++ {
+		g.s.reset()
+		if _, err := g.tick(t); err != nil {
+			t.Fatal(err)
+		}
+		if got := g.s.lines("read"); len(got) != 0 {
+			t.Fatalf("tick %d issued %q, want no read verb for a spent read", i+2, got)
+		}
+	}
+	if len(g.r.started()) != starts {
+		t.Fatalf("a spent read was started again (%d starts, was %d)", len(g.r.started()), starts)
+	}
+	if g.m.Running() != 0 {
+		t.Fatalf("a spent read holds a place: running=%d", g.m.Running())
+	}
+}

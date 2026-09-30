@@ -139,10 +139,11 @@ func cellInt(w sprintWhere, table, row, col string) int {
 }
 
 // fakeHarness is the shell script a card runs under: it works for a second,
-// then writes a RESULT.md with a rev line and a One line section in its cwd.
+// then writes a RESULT.md with a rev line, a read's verdict line and a One
+// line section in its cwd.
 const fakeHarness = `#!/bin/sh
 sleep 1
-printf 'rev: 0123456789abcdef0123456789abcdef01234567\n\n## One line\n\nchecked by the fake harness\n' > RESULT.md
+printf 'rev: 0123456789abcdef0123456789abcdef01234567\nverdict: ok\n\n## One line\n\nchecked by the fake harness\n' > RESULT.md
 echo "fake harness: wrote RESULT.md in $(pwd)"
 `
 
