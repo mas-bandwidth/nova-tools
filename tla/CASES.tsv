@@ -71,11 +71,15 @@ MCSetTableLogDelKey.cfg	MCSetTableLog.tla	invariant	ReplayEqualsStore	check	sett
 MCSetTableLogError.cfg	MCSetTableLog.tla	invariant	ReplayEqualsStore	check	settablelog	required	-
 MCSetTableLogLimit.cfg	MCSetTableLog.tla	pass	-	check	settablelog	required	-
 MCSetTableLogNoOpNote.cfg	MCSetTableLog.tla	invariant	RetryWritesOnce	check	settablelog	required	-
+MCSetTableLogNotesOp.cfg	MCSetTableLog.tla	pass	-	check	settablelog	required	-
 MCSetTableLogRaw.cfg	MCSetTableLog.tla	pass	-	check	settablelog	required	-
 MCSetTableLogReplay.cfg	MCSetTableLog.tla	invariant	ReplayVerdictSound	check	settablelog	required	-
 MCSetTableLogReplayClosed.cfg	MCSetTableLog.tla	pass	-	check	settablelog	required	-
+MCSetTableLogReplayQuiet.cfg	MCSetTableLog.tla	pass	-	check	settablelog	required	-
+MCSetTableLogWAboutMask.cfg	MCSetTableLog.tla	action	AboutExact	check	settablelog	required	-
 MCSetTableLogWCounter.cfg	MCSetTableLog.tla	invariant	SeqGapless	check	settablelog	required	-
 MCSetTableLogWCursorLimit.cfg	MCSetTableLog.tla	invariant	CursorNeitherSkipsNorRepeats	check	settablelog	required	-
+MCSetTableLogWFencePlan.cfg	MCSetTableLog.tla	action	FenceBypassesLog	check	settablelog	required	-
 MCSetTableLogWFirstOnly.cfg	MCSetTableLog.tla	invariant	HistoryExact	check	settablelog	required	-
 MCSetTableLogWNoCap.cfg	MCSetTableLog.tla	invariant	LineBound	check	settablelog	required	-
 MCSetTableLogWNoCeiling.cfg	MCSetTableLog.tla	invariant	SeqCeiling	check	settablelog	required	-
@@ -83,8 +87,10 @@ MCSetTableLogWNoDedupe.cfg	MCSetTableLog.tla	invariant	HistoryExact	check	settab
 MCSetTableLogWNoDone.cfg	MCSetTableLog.tla	invariant	RetryWritesOnce	check	settablelog	required	-
 MCSetTableLogWNoScore.cfg	MCSetTableLog.tla	invariant	ReplayEqualsStore	check	settablelog	required	-
 MCSetTableLogWNoopIds.cfg	MCSetTableLog.tla	action	OneLinePerChange	check	settablelog	required	-
+MCSetTableLogWPairSkip.cfg	MCSetTableLog.tla	invariant	CursorNeitherSkipsNorRepeats	check	settablelog	required	-
 MCSetTableLogWPerLine.cfg	MCSetTableLog.tla	action	TimeFrozen	check	settablelog	required	-
 MCSetTableLogWRefusedLines.cfg	MCSetTableLog.tla	action	RefusedWritesNothing	check	settablelog	required	-
+MCSetTableLogWRowsetLine.cfg	MCSetTableLog.tla	action	OneLinePerChange	check	settablelog	required	-
 MCSetTableLogWShape.cfg	MCSetTableLog.tla	action	LogIdGuard	check	settablelog	required	-
 MCSetTableLogWSplit.cfg	MCSetTableLog.tla	invariant	ReplayEqualsStore	check	settablelog	required	-
 MCSetTableLogWTrim.cfg	MCSetTableLog.tla	action	LogAppendOnly	check	settablelog	required	-
