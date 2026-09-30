@@ -73,7 +73,7 @@ func reworksGoRound(t *testing.T, w *world, first map[string]string, rework rewo
 		firstN[m]++
 	}
 	evenly(t, "first attempts", firstN, members, false)
-	if last, _ := w.s.Fleet.Prop(PropDealIndex); last != "m6" || first["s1-7"] != "m7" {
+	if last, _ := w.s.Fleet.Prop(PropDealIndex); indexPast(members, last) != "m6" || first["s1-7"] != "m7" {
 		t.Fatalf("the index is past %q and s1-7 was on %s: want m6 and m7", last, first["s1-7"])
 	}
 	order := []string{"s1-7"}
@@ -93,7 +93,7 @@ func reworksGoRound(t *testing.T, w *world, first map[string]string, rework rewo
 		if wc.Row == first[id] {
 			t.Fatalf("rework %d: %s went back to %s, the member its first attempt was on", k+1, id, wc.Row)
 		}
-		if last, _ := w.s.Fleet.Prop(PropDealIndex); last != wc.Row {
+		if last, _ := w.s.Fleet.Prop(PropDealIndex); indexPast(members, last) != wc.Row {
 			t.Fatalf("rework %d: the index is past %q, want past %s, the member dealt to", k+1, last, wc.Row)
 		}
 		got = append(got, wc.Row)
@@ -174,7 +174,7 @@ func TestADownMembersCardsGoRoundTheFleet(t *testing.T) {
 		if !slices.Equal(got, want) {
 			t.Fatalf("%s: m1's cards went to %v, want %v: round the fleet from past m4", what, got, want)
 		}
-		if last, _ := s.Fleet.Prop(PropDealIndex); last != "m3" {
+		if last, _ := s.Fleet.Prop(PropDealIndex); indexPast(s.Fleet.Rows(), last) != "m3" {
 			t.Fatalf("%s: the index is past %q, want m3", what, last)
 		}
 	}
@@ -228,7 +228,7 @@ func TestTheLevelGoesRoundTheFleet(t *testing.T) {
 		if !mapsEqual(got, want) {
 			t.Fatalf("%s: the queues are %v, want %v: round the fleet from past m5", what, got, want)
 		}
-		if last, _ := s.Fleet.Prop(PropDealIndex); last != "m8" {
+		if last, _ := s.Fleet.Prop(PropDealIndex); indexPast(s.Fleet.Rows(), last) != "m8" {
 			t.Fatalf("%s: the index is past %q, want m8", what, last)
 		}
 	}

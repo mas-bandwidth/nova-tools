@@ -96,7 +96,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		u := Unit{Key: c.ID, Stream: c.Row}
 		for _, rd := range rotated {
 			rr.moved(rd)
-			moves[c.ID] = rd
+			moves[c.ID] = joinMoves(moves[c.ID], rd)
 		}
 		for _, rd := range chosenReaders {
 			u.Changes = append(u.Changes, change(Readers, createEntry(ReadCardID(c.ID, attempt, rd), rd, Asked, c.Score,
@@ -124,7 +124,13 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		p.Units = append(p.Units, u)
 	}
 	roundWrites(&p, rr, moves)
-	streamIndexWrite(&p, srr, s.Work.Placed)
+	if !r.Another {
+		// one more reader of a primary named is not a turn round the streams:
+		// the ask's stream index moves with the asks of the streams' cards
+		// (errata 3 amendment 10; the reference model's AskAnother moves no
+		// stream index)
+		streamIndexWrite(&p, srr, s.Work.Placed)
+	}
 	answered(&p, s, r.Answers, r.Who)
 	return p
 }

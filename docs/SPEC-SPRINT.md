@@ -176,6 +176,14 @@ and it is the coordinator's decision, receipted.
   that is below its width: 150 ready over eight machines of width 64 all go to
   working in one tick, 18 or 19 a machine. A machine at its width takes no
   more.
+- Every rolling index (the fleet's `deal_index`, the readers' `ask_index`, the
+  work table's `stream_index`, `stream_index_ask` and `stream_index_accept`) is
+  a counter: a uint64 from 0 that goes up by one with every placement and by
+  one for every name passed over (a member down or full), the next name the
+  counter modulo the count, in name order. It is written as a decimal with the
+  step that moves it and persists across plans, ticks, stops and loops; only a
+  clear resets it. Eight machines dealt 20 cards a tick: `m1..m8 m1..m8
+  m1..m4`, then `m5..m8 m1..m8 m1..m8`, the counter 20, then 40.
 - A member going down: its unfinished work cards are dealt to up members.
 - No member up: unfinished work cards are withdrawn (kept in `withdrawn`);
   primaries return to ready. The tick deals the same card again at a new

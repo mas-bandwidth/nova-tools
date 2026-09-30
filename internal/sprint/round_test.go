@@ -86,7 +86,7 @@ func TestTheDealGoesRoundTheFleet(t *testing.T) {
 			t.Fatalf("deal %d went to %s, want %s: the deals %v", i+1, m, want, order)
 		}
 	}
-	if last, ok := w.s.Fleet.Prop(PropDealIndex); !ok || last != "m6" {
+	if last, ok := w.s.Fleet.Prop(PropDealIndex); !ok || indexPast(w.s.Fleet.Rows(), last) != "m6" {
 		t.Fatalf("the fleet table's deal_index is %q (%v), want m6", last, ok)
 	}
 	// every member's done is within one of the others
@@ -206,7 +206,7 @@ func TestTheAskGoesRoundTheReaders(t *testing.T) {
 		}
 		evenly(t, fmt.Sprintf("after ask %d", i), asked, readers, (2*i)%len(readers) == 0)
 	}
-	if last, ok := w.s.Readers.Prop(PropAskIndex); !ok || last != "reader-d" {
+	if last, ok := w.s.Readers.Prop(PropAskIndex); !ok || indexPast(w.s.Readers.Rows(), last) != "reader-d" {
 		t.Fatalf("the readers table's ask_index is %q (%v), want reader-d", last, ok)
 	}
 }
@@ -322,4 +322,16 @@ func TestTheAskGoesRoundTheReadersAcrossStreams(t *testing.T) {
 		}
 		evenly(t, fmt.Sprintf("after ask %d", i+1), asked, readers, (2*(i+1))%len(readers) == 0)
 	}
+}
+
+// indexPast is the name a rolling index's counter is past (round.go, errata 3
+// amendment 5): the name before the one its next scan starts at; "" at 0.
+func indexPast(names []string, value string) string {
+	order := append([]string(nil), names...)
+	slices.Sort(order)
+	c := roundCount(order, value)
+	if c == 0 || len(order) == 0 {
+		return ""
+	}
+	return order[(c-1)%uint64(len(order))]
 }
