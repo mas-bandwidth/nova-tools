@@ -208,11 +208,11 @@ done
 
 A note on the model's form: TLC keeps no LET value and no operator argument while it evaluates ENABLED for fairness, so a value used more than once is bound once with `CHOOSE r \in {e(v) : v \in {heavy}} : TRUE` or `\E v \in {heavy}`, and each tick action tests its UNCHANGED part first. Without that, the liveness cases did not finish.
 
-## Amendment 4: the deal's order (owed on the bench)
+## Amendment 4: the deal's order
 
 The deal takes one card from each stream's front in turn (`TurnSorted`, used by `PlanDeal` and by `HeadActionable`'s deal head), not the room lowest over the whole table: errata 3, amendment 4, the owner's ruling of 2026-09-30, and the engine's `dealTurns` (`internal/sprint/rules_fleet.go`). `DealTakesTurns` is the new invariant; `MCSprintEventsW28.cfg` breaks the order back to the whole table's and fails it in its first state, and `MCSprintEventsC28.cfg` is the same instance on the design with every safety property, `Progress` and `DealTakesTurns`. The model orders the streams by the `Ord` of each one's first card (the engine's is by name; the order of the streams is not what any property here depends on, and in the instances the two are the same).
 
-**Not run.** TLC runs only on a bench and none was used for this change. The records in `RUNS.tsv` hash `SprintEvents.tla` and `MCSprintEvents.tla`, so every `sprintevents*` record is stale until the fourteen groups above are run again on the bench (the two new cases are in `sprintevents-controls-b` and `sprintevents-witnesses-b`). The change was checked by hand against the module only: the small instance's plan takes p1 and p2 by `TurnSorted` (the whole table's order takes p1 and p3, which `DealTakesTurns` refuses).
+**Run.** On the bench (TLC 2.19, `tla2tools.jar` sha256 `936a2620...`, Java 21.0.12.1, 32 cores, 2026-09-30 UTC), the fourteen groups are recorded again in `RUNS.tsv`: every existing case keeps its verdict (a pass passes, each recorded counterexample fails with the property its row names). `MCSprintEventsW28` fails `DealTakesTurns` in its initial state (1 state generated): the whole table's order takes p1 and p3, both of s1, and none of s2's p2, so the plan takes two cards from the first stream in turn. `MCSprintEventsC28` passes with every safety property, `Progress` and `DealTakesTurns` (100 generated, 75 distinct states).
 
 ## Results
 
