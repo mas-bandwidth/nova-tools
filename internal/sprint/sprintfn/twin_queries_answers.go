@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/tset"
@@ -196,6 +197,12 @@ type KeyResult struct {
 	Key     string   `json:"key"`
 	Streams []string `json:"streams"`
 	N       string   `json:"n"`
+	// Subject and State are a jopen key's: the subject whose jopen hash was
+	// read, and whether the rule's field holds an open judgment ("open"), a
+	// held one ("held"), or none (""). Both are empty when there was no
+	// subject to read (a `front` with no sentinel).
+	Subject string `json:"subject,omitempty"`
+	State   string `json:"state,omitempty"`
 }
 
 // StuckIDs are the first ids of a stopped stream's stuck cell.
@@ -428,6 +435,15 @@ func projectKeys(keys []KeyResult) []sprint.KeyAnswer {
 		ka := sprint.KeyAnswer{Key: k.Key, Streams: append([]string(nil), k.Streams...)}
 		if k.N != "" {
 			ka.N, _ = strconv.ParseUint(k.N, 10, 64)
+		}
+		if typ, _, ok := strings.Cut(jopenFields[k.Key], "|"); ok {
+			ka.Subject = k.Subject
+			switch k.State {
+			case jopenOpen:
+				ka.Open = []string{typ}
+			case jopenHeld:
+				ka.Held = []string{typ}
+			}
 		}
 		out = append(out, ka)
 	}
