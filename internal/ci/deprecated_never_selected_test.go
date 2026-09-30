@@ -86,7 +86,7 @@ func TestDeprecatedPackagesAreNeverSelected(t *testing.T) {
 		t.Errorf("internal/pkgselect/extras.go's live tree or perf finder lists packages without the deprecated filter")
 	}
 	ci := readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml"))
-	if !strings.Contains(ci, ciRunner + " deal --shards") {
+	if !strings.Contains(ci, ciRunner+" deal --shards") {
 		t.Errorf("ci.yml's hosted deal does not go through `ci deal`, which lists the live tree, so its shards would test deprecated packages")
 	}
 	if verb := readFile(t, filepath.Join(root, "tools", "ci", "sel_deal.go")); !strings.Contains(verb, "pkgselect.LiveTree(") {

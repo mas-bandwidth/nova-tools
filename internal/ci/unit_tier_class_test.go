@@ -121,10 +121,10 @@ func TestUnitTierRefusesRedisServer(t *testing.T) {
 	if !(goSetup >= 0 && goSetup < shim && shim < testStep) {
 		t.Errorf("ci.yml job test: the shim step is step %d, the Go step %d, the test step %d; want Go < shim < test", shim, goSetup, testStep)
 	}
-	if !strings.Contains(test.Steps[shim].Run, ciRunner + " unit-tier-shim") {
+	if !strings.Contains(test.Steps[shim].Run, ciRunner+" unit-tier-shim") {
 		t.Errorf("ci.yml job test's shim step does not write the shim through `ci unit-tier-shim`: %q", test.Steps[shim].Run)
 	}
-	if !strings.Contains(test.Steps[testStep].Run, ciRunner + " unit-test") {
+	if !strings.Contains(test.Steps[testStep].Run, ciRunner+" unit-test") {
 		t.Errorf("ci.yml job test's test step does not run `ci unit-test`, which checks that redis-server on PATH is the shim: %q", test.Steps[testStep].Run)
 	}
 	root := repoRoot(t)
@@ -173,7 +173,7 @@ func TestUnitLegTakesAtMostTwoCores(t *testing.T) {
 			t.Errorf("ci.yml job %s has no step %q", name, share)
 			continue
 		}
-		if got := strings.TrimSpace(job.Steps[i].Run); got != ciRunner + " runner-share" {
+		if got := strings.TrimSpace(job.Steps[i].Run); got != ciRunner+" runner-share" {
 			t.Errorf("ci.yml job %s step %q runs %q, want `%s runner-share`", name, share, got, ciRunner)
 		}
 		for _, s := range job.Steps {
@@ -496,7 +496,7 @@ func TestNightlySpaceLegIsTheOnlyEnforcingLeg(t *testing.T) {
 	}
 	// The nightly run deals the whole tree onto the Linux legs alone, where the
 	// budgets are enforced.
-	nightly := pkgselect.Fanout("schedule", []string{"./cmd/a", "./cmd/nova-sandbox", "./internal/b"}, pkgselect.DarwinSensitive{}, pkgselect.Groups{Linux: "linux-legs", Mac: "mac-legs"})
+	nightly := pkgselect.Fanout("schedule", []string{"./cmd/a", "./cmd/nova-sandbox", "./internal/b"}, pkgselect.DarwinSensitive{}, pkgselect.Groups{Linux: "linux-legs", Mac: "mac-legs"}, true)
 	if len(nightly) == 0 {
 		t.Error("the nightly fan-out is empty")
 	}

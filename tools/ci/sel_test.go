@@ -253,10 +253,10 @@ func TestTestMatrixPushDealsTheWholeTree(t *testing.T) {
 func TestTestMatrixPullRequestSelectsAgainstItsBase(t *testing.T) {
 	t.Parallel()
 	f, repo := matrixRepoFake(t, map[string]selReply{
-		"git cat-file -e basesha^{commit}":      {},
-		"git diff --name-only basesha HEAD":     {out: "cmd/a/a.go\n"},
-		selListDeps:                             {out: selMod + "/cmd/a fmt\n" + selMod + "/cmd/nova-bus fmt\n" + selMod + "/internal/ci fmt\n" + selMod + "/internal/docs fmt\n"},
-		"go list -m":                            {out: selMod + "\n"},
+		"git cat-file -e basesha^{commit}":  {},
+		"git diff --name-only basesha HEAD": {out: "cmd/a/a.go\n"},
+		selListDeps:                         {out: selMod + "/cmd/a fmt\n" + selMod + "/cmd/nova-bus fmt\n" + selMod + "/internal/ci fmt\n" + selMod + "/internal/docs fmt\n"},
+		"go list -m":                        {out: selMod + "\n"},
 		"GOOS=linux go list -f " + selFiles + " ./cmd/... ./internal/...":                            {out: selMod + "/cmd/a [a.go] [] [] []\n" + selMod + "/cmd/nova-bus [b.go] [] [] []\n"},
 		"GOOS=darwin go list -f " + selFiles + " ./cmd/... ./internal/...":                           {out: selMod + "/cmd/a [a.go a_darwin.go] [] [] []\n" + selMod + "/cmd/nova-bus [b.go] [] [] []\n"},
 		"GOOS=darwin go list -test -f {{.ImportPath}} {{join .Deps \" \"}} ./cmd/... ./internal/...": {out: selMod + "/cmd/a fmt\n" + selMod + "/cmd/nova-bus fmt\n"},
@@ -329,10 +329,10 @@ func TestTestMatrixDarwinOnlyChangeIsNothingUntilItReachesDev(t *testing.T) {
 func TestTestMatrixNothingToTestIsOneLegThatExitsZero(t *testing.T) {
 	t.Parallel()
 	f := newSelFake(map[string]selReply{
-		"git cat-file -e basesha^{commit}":      {},
-		"git diff --name-only basesha HEAD":     {out: "README.md\n"},
-		selListTree:                             {out: selImports("cmd/gone")},
-		selListDeps:                             {out: selMod + "/cmd/gone fmt\n"},
+		"git cat-file -e basesha^{commit}":  {},
+		"git diff --name-only basesha HEAD": {out: "README.md\n"},
+		selListTree:                         {out: selImports("cmd/gone")},
+		selListDeps:                         {out: selMod + "/cmd/gone fmt\n"},
 	})
 	gh := filepath.Join(t.TempDir(), "output")
 	code, out, errb := selRun(func(e env, a []string) int { return testMatrixVerb(e, a, f.host()) }, selRepo(t),
@@ -353,9 +353,9 @@ func TestTestMatrixSelectionFailureFailsTheStepOnAPullRequestOnly(t *testing.T) 
 	t.Parallel()
 	answers := func() map[string]selReply {
 		return map[string]selReply{
-			"git cat-file -e basesha^{commit}":      {},
-			"git diff --name-only basesha HEAD":     {out: "cmd/a/a.go\n"},
-			selListTree:                             {err: "open /c/go-build/x: no such file or directory\n", code: 1},
+			"git cat-file -e basesha^{commit}":  {},
+			"git diff --name-only basesha HEAD": {out: "cmd/a/a.go\n"},
+			selListTree:                         {err: "open /c/go-build/x: no such file or directory\n", code: 1},
 		}
 	}
 	code, out, errb := selRun(func(e env, a []string) int { return testMatrixVerb(e, a, newSelFake(answers()).host()) }, selRepo(t),

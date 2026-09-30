@@ -134,7 +134,7 @@ func TestShardGoTestTimeoutIsUnderTheJobCap(t *testing.T) {
 
 	jobCap := time.Duration(twoMinuteCap) * time.Minute
 	job := jobBody(readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml")), "test")
-	if !strings.Contains(job, ciRunner + " unit-test") {
+	if !strings.Contains(job, ciRunner+" unit-test") {
 		t.Fatal("the test job does not run its shard through `ci unit-test`, which passes make test the go test timeout")
 	}
 	// every run the verb makes (the default, the whole tree, the nightly leg)
@@ -301,7 +301,7 @@ func TestMacOSShardsRunOnTheStudioForNow(t *testing.T) {
 	if m[1] != "studio" {
 		t.Errorf("the macOS test shards select group %q, want studio (2026-09-25, until the Mac minis)", m[1])
 	}
-	legs := pkgselect.Fanout("push", []string{"./cmd/a"}, pkgselect.DarwinSensitive{}, pkgselect.Groups{Linux: "linux-group", Mac: m[1]})
+	legs := pkgselect.Fanout("push", []string{"./cmd/a"}, pkgselect.DarwinSensitive{}, pkgselect.Groups{Linux: "linux-group", Mac: m[1]}, true)
 	found := 0
 	for _, leg := range legs {
 		if leg.OS != "macOS" {
@@ -394,7 +394,7 @@ func TestFleetProbeRunsTheNetworkProbeInsideNovaSandbox(t *testing.T) {
 	if job == "" {
 		t.Fatal("no fleet-probe job in ci.yml; the bench would enter the loop with no probe at all")
 	}
-	if !strings.Contains(job, ciRunner + " sandbox-probe") {
+	if !strings.Contains(job, ciRunner+" sandbox-probe") {
 		t.Errorf("the fleet-probe job does not call `ci sandbox-probe`; a probe that does not run in the sandbox is the host probe #893 killed")
 	}
 	// The verb builds nova-sandbox from the checkout and runs curl inside it.
@@ -729,7 +729,7 @@ func TestMakefileHasNoTargetSpecificConditionalPKGS(t *testing.T) {
 func TestShardsUseTheGoTestCache(t *testing.T) {
 	t.Parallel()
 	ci := readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
-	if !strings.Contains(jobBody(ci, "test"), ciRunner + " unit-test") {
+	if !strings.Contains(jobBody(ci, "test"), ciRunner+" unit-test") {
 		t.Fatal("no shard step in ci.yml's test job runs `make test` through `ci unit-test`")
 	}
 	flag := func(args []string, name string) (string, bool) {
@@ -772,7 +772,7 @@ func TestPushOfAProvedShaSkipsTheShards(t *testing.T) {
 	for _, want := range []string{
 		"id: proved",
 		"github.event_name == 'push'",
-		ciRunner+` proved-by-merge-group --repo "${{ github.repository }}" --sha "${{ github.sha }}"`,
+		ciRunner + ` proved-by-merge-group --repo "${{ github.repository }}" --sha "${{ github.sha }}"`,
 		"- name: vet\n        if: matrix.entry.packages != '' && steps.proved.outputs.proved != 'true'",
 		"- name: test\n        if: matrix.entry.packages != '' && steps.proved.outputs.proved != 'true'",
 	} {

@@ -292,7 +292,7 @@ func TestRunnersPerMachineIsOneNumber(t *testing.T) {
 	if step == "" {
 		t.Fatal("no fair-share step in ci.yml (a step whose name says it takes this runner's share of the machine); GOMAXPROCS per leg is what row 9 of #828 got wrong")
 	}
-	if !strings.Contains(step, ciRunner + " runner-share") {
+	if !strings.Contains(step, ciRunner+" runner-share") {
 		t.Error("the fair-share step does not call `ci runner-share`, which holds the division")
 	}
 	// The divisor is the runner service's fact, and 8 is today's fleet as the

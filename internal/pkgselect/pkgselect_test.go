@@ -26,6 +26,9 @@ type fake struct {
 // newFake answers the base check as "the base commit is here" unless the
 // table says otherwise, so a test that is not about the fetch never meets one.
 func newFake(answers map[string]Result) *fake {
+	if answers == nil {
+		answers = map[string]Result{}
+	}
 	if _, ok := answers[catFileCmd]; !ok {
 		answers[catFileCmd] = Result{}
 	}
