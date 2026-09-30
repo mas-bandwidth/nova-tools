@@ -49,8 +49,9 @@ import (
 // The model is tla/DirtyTickRead.tla: the view, the catch-up, the whole
 // read, the fence read last, the commit at the generation read with its
 // receipt on the twin, the pass-over, the drop and the halt on a part's first
-// read; ViewIsSnapshot (a part plans on the store's records at one
-// generation), TwinIsTheStore, BeganRunning and TwinNotAhead, each with a
+// read, and the lock after a lost try; ViewIsSnapshot (a part plans on the
+// store's records at one generation), TwinIsTheStore, BeganRunning,
+// TwinNotAhead and LockedApplyNotLost, each with a
 // reversed witness that breaks it (tla/CASES.tsv, dirtytickread).
 
 // GrantError is a read the store refused to this user for want of a grant:
@@ -89,7 +90,7 @@ type ViewReader interface {
 
 // readView reads the view: in one exchange where the store can, else one
 // read each, in the order a fresh read takes them (the fence first).
-func (st *Store) readView(ctx context.Context, load []string) (View, error) {
+func (st *Store) readView(ctx context.Context, load []string, mine string) (View, error) {
 	stored := make([]string, len(load))
 	for i, t := range load {
 		stored[i] = st.Names.Table(t)
@@ -99,7 +100,7 @@ func (st *Store) readView(ctx context.Context, load []string) (View, error) {
 	}
 	var v View
 	var err error
-	if v.Fence, err = st.B.ReadFence(ctx); err != nil || v.Fence.Pending != nil {
+	if v.Fence, err = st.B.ReadFence(ctx); err != nil || v.Fence.Pending != nil && v.Fence.Pending.ID != mine {
 		return v, err
 	}
 	if v.Shapes, err = st.shapes(ctx, stored); err != nil {
@@ -172,14 +173,24 @@ func (st *Store) twin() *Twin {
 // from the twin brought up to date (see above): the snapshot and the fence it
 // was read at. A pending operation is finished first, as fencedRead finishes
 // it.
-func (st *Store) twinRead(ctx context.Context, tw *Twin, load []string, extras func(*sprint.Snapshot) map[string][]string, repaired *[]string) (*sprint.Snapshot, Fence, error) {
+//
+// mine, when not "", is the step's own lock (lock.go): the fence holding it is
+// the step's, not another writer's operation to wait for.
+func (st *Store) twinRead(ctx context.Context, tw *Twin, load []string, extras func(*sprint.Snapshot) map[string][]string, repaired *[]string, mine ...string) (*sprint.Snapshot, Fence, error) {
+	held := ""
+	if len(mine) > 0 {
+		held = mine[0]
+	}
 	r := st.retry(ctx)
 	for r.next(st.attempts()) {
-		v, err := st.readView(ctx, load)
+		v, err := st.readView(ctx, load, held)
 		if err != nil {
 			return nil, Fence{}, err
 		}
 		f := v.Fence
+		if f.Pending != nil && f.Pending.ID == held {
+			f.Pending = nil // the step's own lock
+		}
 		if f.Pending != nil {
 			res, err := st.finish(ctx, *f.Pending)
 			if err != nil {
@@ -210,6 +221,9 @@ func (st *Store) twinRead(ctx context.Context, tw *Twin, load []string, extras f
 		f2, err := st.B.ReadFence(ctx)
 		if err != nil {
 			return nil, Fence{}, err
+		}
+		if f2.Pending != nil && f2.Pending.ID == held {
+			f2.Pending = nil
 		}
 		if f2.Pending != nil || f2.Gen != f.Gen {
 			continue
@@ -649,11 +663,11 @@ func (tw *Twin) apply(table string, man ntable.BatchManifest, rc ntable.Receipt)
 
 // fencedStep is the step's read: from the twin when the step has one and
 // loads the four tables (twinRead), else fenced.
-func (st *Store) fencedStep(ctx context.Context, tw *Twin, step Step, repaired *[]string) (*sprint.Snapshot, Fence, error) {
+func (st *Store) fencedStep(ctx context.Context, tw *Twin, step Step, repaired *[]string, mine string) (*sprint.Snapshot, Fence, error) {
 	if tw == nil || len(step.Load) == 0 || !twinTables(step.Load) {
 		return st.fenced(ctx, step.Load, step.Extras, repaired)
 	}
-	return st.twinRead(ctx, tw, step.Load, step.Extras, repaired)
+	return st.twinRead(ctx, tw, step.Load, step.Extras, repaired, mine)
 }
 
 // twinTables says the tables are the sprint's, each once.

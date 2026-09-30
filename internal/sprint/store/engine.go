@@ -348,9 +348,29 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			tw.drop()
 		}
 	}()
+	// A part of the tick that lost a try to another writer takes the fence
+	// before its next read (lock.go): held across that read, its plan and its
+	// write, released on any other end.
+	var lock *OpRecord
+	wantLock, locked := false, false
+	defer func() {
+		if lock != nil {
+			_ = st.B.Release(context.WithoutCancel(ctx), *lock, false)
+		}
+	}()
 	for res.Attempts < st.attempts() {
 		res.Attempts++
-		snap, fence, err := st.fencedStep(ctx, tw, step, &res.Repaired)
+		if wantLock && lock == nil && !locked {
+			if lock, err = st.takeLock(ctx, step, family); err != nil {
+				return res, err
+			}
+			locked = lock != nil
+		}
+		mine := ""
+		if lock != nil {
+			mine = lock.ID
+		}
+		snap, fence, err := st.fencedStep(ctx, tw, step, &res.Repaired, mine)
 		gen := fence.Gen
 		if errors.Is(err, errCleared) && step.Epoch == nil {
 			// The sprint was cleared while this step read it: read the new
@@ -511,7 +531,19 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			return refuseWhole(res, plan, fmt.Sprintf("the step's record is %d bytes, over the bound of %d bytes one write to the store takes; nothing was changed; do it in parts (fewer cards at once)", n, MaxOpRecord))
 		}
 		twinKept = false
-		ok, err := st.B.Acquire(ctx, gen, op)
+		var ok bool
+		commitGen := gen + 1
+		if lock != nil {
+			// the fence is the step's since its lock: the operation takes it
+			// over, and the generation is the one the lock set
+			ok, err = st.B.(Relocker).Relock(ctx, lock.ID, op)
+			if ok {
+				lock = nil
+			}
+			commitGen = gen
+		} else {
+			ok, err = st.B.Acquire(ctx, gen, op)
+		}
 		if err != nil {
 			// A write the store did not take leaves the fence without this
 			// operation: nothing was changed, and the store's reason says why.
@@ -522,6 +554,12 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			return res, fmt.Errorf("%w: acquiring the fence for %s: %v; run: nova-sprint repair", ErrUnknown, op.ID, err)
 		}
 		if !ok {
+			// lost to another writer: a part of the tick with a twin takes
+			// the fence before its next read, once (tla/DirtyTickRead.tla, Lock)
+			if _, can := st.B.(Relocker); can && tw != nil && step.Halts {
+				wantLock = true
+				continue
+			}
 			if !plans.wait() {
 				break
 			}
@@ -559,7 +597,7 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		}
 		// the twin is the state this plan read with the operation applied, at
 		// the generation its Acquire set
-		st.twinCommitted(tw, op, receipts, gen+1)
+		st.twinCommitted(tw, op, receipts, commitGen)
 		twinKept = true
 		return st.after(ctx, step, res)
 	}

@@ -289,3 +289,4 @@ MCDirtyTickRead.cfg	MCDirtyTickRead.tla	pass	-	ignore-terminal	dirtytickread	req
 MCDirtyTickReadAcquire.cfg	MCDirtyTickRead.tla	invariant	TwinIsTheStore	ignore-terminal	dirtytickread-acquire	required	-
 MCDirtyTickReadHalt.cfg	MCDirtyTickRead.tla	invariant	BeganRunning	ignore-terminal	dirtytickread-halt	required	-
 MCDirtyTickReadCatchup.cfg	MCDirtyTickRead.tla	invariant	ViewIsSnapshot	ignore-terminal	dirtytickread-catchup	required	-
+MCDirtyTickReadLock.cfg	MCDirtyTickRead.tla	invariant	LockedApplyNotLost	ignore-terminal	dirtytickread-lock	required	-
