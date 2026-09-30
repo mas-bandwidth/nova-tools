@@ -50,13 +50,19 @@ redis.register_function('ns_tset_original_seal_probe',function(keys,args)
       mode=='mutate_derived_note_after_plan' then append_derived()
   elseif mode=='append_after_plan' or mode=='append_note_after_plan' or
       mode=='misaligned_changed_per_entry' or mode=='prepare_op_only' or
-      mode=='prepare_rebind' or mode=='baseline' then
-    -- These cases mutate only after S.plan has accepted the original request.
+      mode=='prepare_rebind' or mode=='baseline' or mode=='no_plan' then
+    -- These cases mutate after S.plan or deliberately omit S.plan.
   else return S.json.encode(S.refuse('REQUEST'))
   end
   local prepared
   if mode=='fence_rebind' then
     prepared,err=S.fence_prepare(ctx)
+  elseif mode=='no_plan' then
+    local changed=S.array()
+    for i=1,#ctx.request.entries do changed[i]=0 end
+    local plan={commands=S.array(),changed=0,guarded=0,changed_per_entry=changed}
+    local log={commands=S.array(),first_seq='0',last_seq='0',line_count=0,about_appends=0}
+    prepared,err=S.prepare(ctx,plan,log,{})
   else
     local plan;plan,err=S.plan(ctx);if err then return S.json.encode(err) end
     if mode=='prepare_rebind' then rebind() end
@@ -180,7 +186,7 @@ func TestPreplanCombinedPlanSeal(t *testing.T) {
 	t.Parallel()
 	fx := originalSealFixture(t)
 	raw := fmt.Sprintf(`{"space":%q,"epoch":"0","op":"original","intent":"stable","entries":[{"kind":"guard","t":"work","from":"r:c","ids":["existing"],"revs":["1"]}],"notes":[{"line":{"kind":"note","meta":{"source":"caller"}},"about":[]}]}`, fx.Space)
-	for _, mode := range []string{"append_after_plan", "append_note_after_plan", "mutate_derived_after_plan", "mutate_derived_note_after_plan", "misaligned_changed_per_entry"} {
+	for _, mode := range []string{"append_after_plan", "append_note_after_plan", "mutate_derived_after_plan", "mutate_derived_note_after_plan", "misaligned_changed_per_entry", "no_plan"} {
 		t.Run(mode, func(t *testing.T) {
 			before := commitProbeImage(t, fx.Client)
 			status, code := originalSealCall(t, fx, raw, mode)

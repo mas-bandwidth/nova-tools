@@ -19,10 +19,25 @@ import (
 const l1LineCapabilityProbeLua = `
 local S=NS.tset
 local authorize_line,read_line_raw
+local function expected_capability_refusal(err,index)
+  if err then return err end
+  return S.refuse('DRIFT',{query_index=index,capability_probe='accepted_invalid_authority'})
+end
 S.bind_log_helpers(256,function(authorize,raw)
   authorize_line,read_line_raw=authorize,raw
   return function() end
 end)
+local function denied_capability(ctx,seq,index,probe_index)
+  local _,err=authorize_line(ctx,seq,probe_index)
+  if type(err)~='table' or err.status~='refused' or err.code~='CONFIG' then
+    return expected_capability_refusal(nil,index)
+  end
+  _,err=read_line_raw(ctx,seq,probe_index)
+  if type(err)~='table' or err.status~='refused' or err.code~='CONFIG' then
+    return expected_capability_refusal(nil,index)
+  end
+  return err
+end
 local prior_ctx
 redis.register_function('ns_tset_l1_line_cap_probe',function(keys,args)
   if #keys~=0 or #args~=3 then return S.json.encode(S.refuse('ARGS')) end
@@ -40,9 +55,8 @@ redis.register_function('ns_tset_l1_line_cap_probe',function(keys,args)
   extension.read=function(ctx,q,index)
     local seq='7'
     if mode=='old_context' then
-      if not prior_ctx then return nil,S.refuse('CONFIG',{query_index=index}) end
-      local _,err=read_line_raw(prior_ctx,seq,index)
-      return nil,err
+      if not prior_ctx then return nil,expected_capability_refusal(nil,index) end
+      return nil,denied_capability(prior_ctx,seq,index,index)
     end
     if mode=='fake_context' or mode=='zero_budget_copy' then
       local fake={}
@@ -50,8 +64,7 @@ redis.register_function('ns_tset_l1_line_cap_probe',function(keys,args)
       if mode=='zero_budget_copy' then
         fake.budget={fetched_bytes=0,cell=0,store_commands=0}
       end
-      local _,err=read_line_raw(fake,seq,index)
-      return nil,err
+      return nil,denied_capability(fake,seq,index,index)
     end
     if mode=='bad_zero' then seq='0'
     elseif mode=='bad_leading' then seq='07'
@@ -59,11 +72,22 @@ redis.register_function('ns_tset_l1_line_cap_probe',function(keys,args)
     elseif mode=='bad_text' then seq='bad'
     elseif mode=='absent' then seq='8' end
     if mode=='wrong_index' then
-      local _,err=read_line_raw(ctx,seq,index+1)
+      return nil,denied_capability(ctx,seq,index,index+1)
+    end
+    if mode=='mutated_index' then
+      local original=ctx.query_index
+      ctx.query_index=index+1
+      local err=denied_capability(ctx,seq,index,index)
+      ctx.query_index=original
       return nil,err
     end
-    if mode=='mutated_index' then ctx.query_index=index+1 end
-    if mode=='mutated_request' then ctx.request.epoch='1' end
+    if mode=='mutated_request' then
+      local original=ctx.request.epoch
+      ctx.request.epoch='1'
+      local err=denied_capability(ctx,seq,index,index)
+      ctx.request.epoch=original
+      return nil,err
+    end
     if mode=='forged_key' then
       ctx.log_key=function() return 'outside:sprint:log@0' end
     end
@@ -71,6 +95,10 @@ redis.register_function('ns_tset_l1_line_cap_probe',function(keys,args)
       ctx.log_lines={['7']={{'7-0',{'d','forged'}}}}
     end
     if mode=='short_reservation' then
+      ctx.budget.fetched_bytes=S.limits.fetched_bytes-255
+    elseif mode=='exact_fit' or mode=='public_exact_fit' then
+      ctx.budget.fetched_bytes=S.limits.fetched_bytes-256
+    elseif mode=='public_limit' then
       ctx.budget.fetched_bytes=S.limits.fetched_bytes-255
     end
     if mode=='cell_exhausted' then
@@ -84,7 +112,7 @@ redis.register_function('ns_tset_l1_line_cap_probe',function(keys,args)
       local _,err,short=read_line_raw(ctx,seq,index)
       ctx.budget[unit]=prior
       if short then return {kind='linecap',short=true},nil end
-      return nil,err
+      return nil,expected_capability_refusal(err,index)
     end
     if mode=='direct_readcmd' or mode=='direct_rd' then
       local key=ctx.space..'sprint:log@'..ctx.request_epoch
@@ -95,7 +123,7 @@ redis.register_function('ns_tset_l1_line_cap_probe',function(keys,args)
       else
         _,err=S.rd(ctx,{'XRANGE',key,'7-0','7-0','COUNT','1'},'stream',256,'log')
       end
-      return nil,err
+      return nil,expected_capability_refusal(err,index)
     end
     if mode=='throw' then error('line-capability callback throw') end
     local nested_code=''
@@ -114,7 +142,13 @@ redis.register_function('ns_tset_l1_line_cap_probe',function(keys,args)
       return nil,S.refuse('CONFIG',{query_index=index})
     end
     local cells,stores,fetched=ctx.budget.cell,ctx.budget.store_commands,ctx.budget.fetched_bytes
+    local saved_limit
+    if mode=='public_limit' or mode=='public_exact_fit' then
+      saved_limit=S.limits.fetched_bytes
+      S.limits.fetched_bytes=saved_limit+512
+    end
     local batch,err,short=read_line_raw(ctx,seq,index,0,'ignored override')
+    if saved_limit then S.limits.fetched_bytes=saved_limit end
     if err then return nil,err end
     if mode=='remember' then prior_ctx=ctx end
     local entry=batch and batch[1]
@@ -207,6 +241,9 @@ func TestL1ExactLineCapabilityAuthorityAndAccounting(t *testing.T) {
 		{mode: "nonfinite_fetched", code: "CONFIG"},
 		{mode: "nonfinite_other", code: "CONFIG"},
 		{mode: "short_reservation", short: true},
+		{mode: "exact_fit", data: "inside", count: 1, xrange: 1},
+		{mode: "public_limit", short: true},
+		{mode: "public_exact_fit", data: "inside", count: 1, xrange: 1},
 		{mode: "direct_readcmd", code: "CONFIG"},
 		{mode: "direct_rd", code: "CONFIG"},
 		{mode: "nested_read", data: "inside", nested: "CONFIG", count: 1, xrange: 1},
@@ -239,6 +276,9 @@ func TestL1ExactLineCapabilityAuthorityAndAccounting(t *testing.T) {
 				(tc.count > 0 && (reply.Answers[0].FetchedDelta <= 0 ||
 					reply.Answers[0].FetchedDelta > 256))) {
 			t.Errorf("%s raw XRANGE cost = %+v", tc.mode, reply.Answers[0])
+		} else if tc.short && (reply.Answers[0].CellDelta != 0 ||
+			reply.Answers[0].StoreDelta != 0 || reply.Answers[0].FetchedDelta != 0) {
+			t.Errorf("%s short read performed work: %+v", tc.mode, reply.Answers[0])
 		}
 		if after := commitProbeImage(t, fx.Client); !reflect.DeepEqual(before, after) {
 			t.Fatalf("%s changed Redis image", tc.mode)
@@ -335,6 +375,54 @@ func TestL1ExactLineCapabilityWrongTypeRefusesAtomically(t *testing.T) {
 	}
 }
 
+func TestL1ExactLineCapabilityACLRefusesBeforeXRANGE(t *testing.T) {
+	t.Parallel()
+	fx := newTSetFixture(t)
+	fx.ActivateWithLua(t, l1LineCapabilityProbeLua)
+	ctx := context.Background()
+	key := fx.Space + "sprint:log@0"
+	seedL1LineCapabilityStream(t, fx.Client, key, "7-0", "inside")
+	const user = "tset_line_no_xrange"
+	if err := fx.Client.Do(ctx, "ACL", "SETUSER", user, "reset", "on", ">tset-test-pass",
+		"~*", "+@all", "-xrange").Err(); err != nil {
+		t.Fatalf("set line reader ACL: %v", err)
+	}
+	limited := redis.NewClient(&redis.Options{
+		Addr: fx.Client.Options().Addr, Username: user,
+		Password: "tset-test-pass", MaxRetries: -1,
+	})
+	t.Cleanup(func() { _ = limited.Close() })
+	if err := limited.Ping(ctx).Err(); err != nil {
+		t.Fatalf("line reader ACL cannot connect: %v", err)
+	}
+	if err := limited.XRange(ctx, key, "7-0", "7-0").Err(); err == nil ||
+		!strings.Contains(strings.ToUpper(err.Error()), "NOPERM") {
+		t.Fatalf("restricted XRANGE = %v, want Redis NOPERM", err)
+	}
+	before := commitProbeImage(t, fx.Client)
+	statsBefore := readExtensionCommandStats(t, fx.Client)
+	raw := readExtensionRaw(fx.Space, "0", "atomic", `[{"kind":"linecap"}]`)
+	wire, err := limited.FCall(ctx, "ns_tset_l1_line_cap_probe", nil, Version, raw, "source").Text()
+	if err != nil {
+		t.Fatalf("restricted line capability: %v", err)
+	}
+	statsAfter := readExtensionCommandStats(t, fx.Client)
+	var reply l1LineCapabilityReply
+	if err := json.Unmarshal([]byte(wire), &reply); err != nil {
+		t.Fatalf("decode restricted line capability: %v", err)
+	}
+	if reply.Status != "refused" || reply.Code != "NOPERM" || len(reply.Answers) != 0 ||
+		reply.Detail.QueryIndex == nil || *reply.Detail.QueryIndex != 0 {
+		t.Errorf("restricted exact line = %+v, want NOPERM with no answers", reply)
+	}
+	if got := readExtensionExecutedDelta(t, statsBefore, statsAfter, "XRANGE"); got != 0 {
+		t.Errorf("ACL-denied exact line executed %d XRANGE commands", got)
+	}
+	if after := commitProbeImage(t, fx.Client); !reflect.DeepEqual(before, after) {
+		t.Error("ACL-denied exact line changed Redis image")
+	}
+}
+
 const l1LateLineBindProbeLua = `
 local S=NS.tset
 local captured=S.bind_log_helpers
@@ -389,6 +477,10 @@ func TestL1LineCapabilityRejectsInvalidLoadTimeReservations(t *testing.T) {
 		{name: "numeric_string", binding: `S.bind_log_helpers("256",` + validFactory + ")", diagnostic: reservationGuard},
 		{name: "noncallable_factory", binding: "S.bind_log_helpers(256,1)", diagnostic: "attempt to call local 'factory' (a number value)"},
 		{name: "noncallable_cleanup", binding: "S.bind_log_helpers(256,function() return 1 end)", diagnostic: "attempt to call local 'cleanup' (a number value)"},
+		{name: "second_bind", binding: "local captured=S.bind_log_helpers\n" +
+			"captured(256," + validFactory + ")\n" +
+			"captured(256," + validFactory + ")",
+			diagnostic: "attempt to call local 'require_open_log_binding' (a boolean value)"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

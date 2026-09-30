@@ -133,6 +133,23 @@ do
         ctx.active_epoch~=saved.active_epoch or ctx.now_ms~=saved.now_ms) then return false end
     return true
   end
+  -- Trusted built-ins cannot mutate the validated request. Check its sealed
+  -- identity in fixed work; reserve the full tree walk for callback boundaries
+  -- and accesses made while an extension can change the public context.
+  local function read_identity_unchanged(ctx,saved)
+    if not saved or ctx~=current_ctx or saved~=current_seal or saved.fields.operation~='read' or
+        ctx.request~=saved.read_request then return false end
+    for _,field in ipairs(sealed_fields) do if ctx[field]~=saved.fields[field] then return false end end
+    for _,field in ipairs(request_identity) do if ctx.request[field]~=saved.request[field] then return false end end
+    if saved.read_active_epoch and ctx.active_epoch~=saved.read_active_epoch then return false end
+    if saved.opened and (ctx.raw_request~=saved.raw_request or ctx.request_hash~=saved.request_hash or
+        ctx.active_epoch~=saved.active_epoch or ctx.now_ms~=saved.now_ms) then return false end
+    return true
+  end
+  local function read_unchanged(ctx,saved)
+    if callback_depth>0 then return original_unchanged(ctx) end
+    return read_identity_unchanged(ctx,saved)
+  end
   local function clear_context()
     current_ctx=nil;current_seal=nil
     if read_cleanup then read_cleanup() end
@@ -294,7 +311,7 @@ do
   local function begin_query(ctx,index)
     local saved=ctx==current_ctx and current_seal or nil
     if callback_depth>0 or not saved or saved.fields.operation~='read' or
-        not original_unchanged(ctx) or type(index)~='number' or index~=math.floor(index) or
+        not read_unchanged(ctx,saved) or type(index)~='number' or index~=math.floor(index) or
         index<0 or index>=#saved.request.queries or index~=(saved.dispatch_index or -1)+1 then
       return nil,S.refuse('CONFIG')
     end
@@ -305,22 +322,8 @@ do
   end
   local function read_cache_state(ctx)
     local saved=ctx==current_ctx and current_seal or nil
-    if not saved or saved.fields.operation~='read' or
+    if not saved or saved.fields.operation~='read' or not read_unchanged(ctx,saved) or
         saved.dispatch_index==nil or ctx.query_index~=saved.dispatch_index then return nil,S.refuse('CONFIG') end
-    if callback_depth>0 then
-      if not original_unchanged(ctx) then return nil,S.refuse('CONFIG') end
-    else
-      -- Dispatch already sealed the full request. Between dispatch and a
-      -- trusted built-in's cache accesses no extension runs; avoid walking
-      -- the entire query array once per record/cell while retaining identity.
-      if ctx.request~=saved.read_request or ctx.active_epoch~=saved.read_active_epoch then return nil,S.refuse('CONFIG') end
-      for _,field in ipairs(sealed_fields) do
-        if ctx[field]~=saved.fields[field] then return nil,S.refuse('CONFIG') end
-      end
-      for _,field in ipairs(request_identity) do
-        if ctx.request[field]~=saved.request[field] then return nil,S.refuse('CONFIG') end
-      end
-    end
     local _,err=budget_monotone(ctx,false);if err then return nil,err end
     return saved,nil
   end
@@ -334,7 +337,7 @@ do
       return S.readcmd(ctx,descriptor,reserve_bytes,probe_kind)
     end,begin_query,function(ctx,t)
       local saved=ctx==current_ctx and current_seal or nil
-      if not saved or saved.fields.operation~='read' or not original_unchanged(ctx) or
+      if not saved or saved.fields.operation~='read' or not read_unchanged(ctx,saved) or
           saved.dispatch_index==nil or ctx.query_index~=saved.dispatch_index or
           saved.fields.request_epoch~=saved.read_active_epoch then return nil,S.refuse('CONFIG') end
       local _,err=budget_monotone(ctx,false);if err then return nil,err end
@@ -363,7 +366,7 @@ do
     require_valid_log_reservation()
     local function authorize_line(ctx,seq,index)
       local saved=ctx==current_ctx and current_seal or nil
-      if not saved or saved.fields.operation~='read' or not original_unchanged(ctx) or
+      if not saved or saved.fields.operation~='read' or not read_unchanged(ctx,saved) or
           saved.dispatch_index==nil or index~=saved.dispatch_index or ctx.query_index~=index or
           (callback_depth>0 and (ctx~=active_callback_ctx or not saved.callback or saved.callback.index~=index)) then
         return nil,S.refuse('CONFIG')
