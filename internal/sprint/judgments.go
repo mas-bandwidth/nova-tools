@@ -470,6 +470,16 @@ func stalledDecisions(s *Snapshot, subject string) []Decision {
 
 // The conditions of the rows. Each reads the cards its comment names: a
 // snapshot that answers Printed holds them.
+//
+// Some are read by id (Table.Card), which a snapshot loaded from a read plan
+// does not guard: an id the plan did not read answers nil, the same as a card
+// the store has no record of, and nothing records the missed read. They are the
+// needs' records (needMissing, creatableNeeds, needCreatable, guardAdd), the
+// read card of each reader at the attempt, a retired one included
+// (freeReaders, anotherReaderFree), and the merge card of each card a
+// stopped stream's note names (cardsReturnable). The read plan for the inbox
+// (IT22) has to load every one of them by id, or Table.Card has to guard reads
+// by id (state.go, IT05's). Their comments say "by id" where they read one.
 
 // placedPrimary is the primary the subject names, placed on the table.
 func placedPrimary(s *Snapshot, id string) *Card {
@@ -480,7 +490,9 @@ func placedPrimary(s *Snapshot, id string) *Card {
 }
 
 // needMissing: a need the waiter names has no record and was not waived (2.2,
-// "ack (waives n, while n has no record)"). Reads the waiter.
+// "ack (waives n, while n has no record)"). Reads the waiter and, by id, the
+// record of each need it names (an id the read did not load looks like no
+// record).
 func needMissing(s *Snapshot, subject string) (bool, string) {
 	w := placedPrimary(s, subject)
 	if w == nil {
@@ -496,7 +508,8 @@ func needMissing(s *Snapshot, subject string) (bool, string) {
 }
 
 // creatableNeeds are the needs the waiter names that have no record, were not
-// waived, and have a name a card can be created under.
+// waived, and have a name a card can be created under. Reads, by id, the
+// record of each need the waiter names (see needMissing).
 func creatableNeeds(s *Snapshot, w *Card) []string {
 	waived := Split(w.F("waived"))
 	var out []string
@@ -510,7 +523,7 @@ func creatableNeeds(s *Snapshot, w *Card) []string {
 
 // needCreatable: add <n> is accepted for a need that has no record, and not
 // for one that has (EXISTS), or whose name no card can have (2.2, 3). Reads
-// the waiter.
+// the waiter and, by id, the record of each need it names (see needMissing).
 func needCreatable(s *Snapshot, subject string) (bool, string) {
 	w := placedPrimary(s, subject)
 	switch {
@@ -590,7 +603,9 @@ func primaryOfCard(subject string) string {
 }
 
 // freeReaders are the readers that have not read the primary at its attempt,
-// not even a retired read (Ask's own choice).
+// not even a retired read (Ask's own choice). Reads the readers' rows and, by
+// id, the read card of each reader at the attempt, a retired one included (an
+// id the read did not load counts its reader as free).
 func freeReaders(s *Snapshot, pr *Card) []string {
 	attempt := pr.Int("attempt")
 	var out []string
@@ -605,8 +620,8 @@ func freeReaders(s *Snapshot, pr *Card) []string {
 // anotherReaderFree: ask --another is accepted for a primary in review whose
 // work did not fail, already asked at its attempt, with a reader that has not
 // read it and fewer than 15 read cards (2.2, 3). Reads the primary, the
-// readers' rows and its read cards; the subject is the primary or one of its
-// read cards.
+// readers' rows and its read cards, the retired ones by id (freeReaders); the
+// subject is the primary or one of its read cards.
 func anotherReaderFree(s *Snapshot, subject string) (bool, string) {
 	p := primaryOfCard(subject)
 	pr := placedPrimary(s, p)
@@ -694,7 +709,8 @@ func namedCards(s *Snapshot, o Open) []*Card {
 // orphan (in review with its merge card still queued or stuck): the stopped
 // stream stays stopped and its judgment open after a return, so a card
 // already returned is no card to return (rule 9). Reads the cards the note
-// names and their merge cards.
+// names and, by id, their merge cards (a merge card the read did not load
+// looks like none, and the card is then taken as having no merge card).
 func cardsReturnable(s *Snapshot, o Open) (bool, string) {
 	for _, c := range namedCards(s, o) {
 		var m *Card

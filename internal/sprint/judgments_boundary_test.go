@@ -448,8 +448,25 @@ func orphaned(id string) func(w *world) {
 func withoutMergeCard(id string) func(w *world) {
 	return func(w *world) {
 		w.t.Helper()
-		delete(w.s.Merge.Cards, id)
+		delete(w.s.Merge.cards, id)
 		w.s.Merge.cells, w.s.Merge.byPrimary = nil, nil
+	}
+}
+
+// mergeCardAt puts the merge card of a card in merging in the column: a card
+// in merging whose merge card is merged or returned, which return refuses
+// ("not queued or stuck in merge"). The present build does not make the state
+// (a merge card moves to merged only with its primary to landed, and to
+// returned only with its primary to review), so a hand seed pins the clause.
+func mergeCardAt(id, col string) func(w *world) {
+	return func(w *world) {
+		w.t.Helper()
+		m := w.s.Merge.Placed(id)
+		if m == nil {
+			w.t.Fatalf("%s has no merge card to move to %s", id, col)
+		}
+		m.Col = col
+		w.s.Merge.Put(m)
 	}
 }
 
@@ -568,6 +585,12 @@ func TestAStoppedStreamOffersWhatIsLeftAfterADecision(t *testing.T) {
 		{"rejected, a card of the batch an orphan, the other returned", rejected, stoppedForRejection, inOrder(orphaned("s1-1"), returnCards("s1-2")),
 			[]string{"resume --did", "return", "drop"}, nil, ""},
 		{"rejected, a card of the batch with no merge card, the other returned", rejected, stoppedForRejection, inOrder(withoutMergeCard("s1-1"), returnCards("s1-2")),
+			[]string{"resume --did", "return", "drop"}, nil, ""},
+		{"rejected, a card of the batch in merging with its merge card merged, the other returned", rejected, stoppedForRejection, inOrder(mergeCardAt("s1-1", Merged), returnCards("s1-2")),
+			[]string{"resume --did", "drop"}, offeredAnyway("return"), `offers "return": return refuses s1-1: not queued or stuck in merge (it is s1:merged)`},
+		{"rejected, a card of the batch in merging with its merge card returned, the other returned", rejected, stoppedForRejection, inOrder(mergeCardAt("s1-1", Returned), returnCards("s1-2")),
+			[]string{"resume --did", "drop"}, offeredAnyway("return"), `offers "return": return refuses s1-1: not queued or stuck in merge (it is s1:returned)`},
+		{"rejected, a card of the batch in merging with its merge card merged, the other one queued", rejected, stoppedForRejection, mergeCardAt("s1-1", Merged),
 			[]string{"resume --did", "return", "drop"}, nil, ""},
 		{"rejected, the batch dropped", rejected, stoppedForRejection, dropCards("s1-1", "s1-2"),
 			[]string{"resume --did"}, offeredAnyway("drop"), `offers "drop": drop refuses s1-1: not on the table`},
