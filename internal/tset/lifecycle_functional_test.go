@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"sort"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
@@ -38,10 +39,14 @@ func lifecycleStore(t *testing.T) (*tsetFixture, *RedisStore, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	fx := &tsetFixture{Client: client, Space: "l1:", Epoch: "0", profile: fn.TSetStandalone, t: t,
+	fx := &tsetFixture{Client: client, Space: lifecycleStoreSpace, Epoch: "0", profile: fn.TSetStandalone, t: t,
 		loaded: true, active: true, tables: []string{}, seededEpoch: "0"}
 	return fx, newFixtureRedis(t, client), build
 }
+
+// lifecycleStoreSpace is the lifecycle tests' space, of the space grammar
+// (ValidNamespace).
+const lifecycleStoreSpace = "{l1}:"
 
 func lifecycleStoreSpec(space, build string) DefineSpec {
 	return DefineSpec{Space: space, Build: build, View: "sprint", Tables: []TableSpec{
@@ -85,7 +90,7 @@ func lifecycleReceiptFns(t *testing.T, c *redis.Client, space string) []string {
 func TestDefineEqualsTheFixtureState(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
-	fixture := newTSetFixture(t)
+	fixture := newTSetFixtureSpace(t, fn.TSetStandalone, lifecycleStoreSpace)
 	fixture.Define(t, "work", "ready", "done")
 	fixture.Define(t, "readers", "asked")
 	fixture.Activate(t)
@@ -167,7 +172,7 @@ func TestDefineRefusalsWriteNothing(t *testing.T) {
 	})
 	t.Run("EXISTS over the fixture", func(t *testing.T) {
 		t.Parallel()
-		fixture := newTSetFixture(t)
+		fixture := newTSetFixtureSpace(t, fn.TSetStandalone, lifecycleStoreSpace)
 		fixture.Define(t, "work", "ready")
 		fixture.Activate(t)
 		build, err := fn.TSetBuild(fn.TSetStandalone)
@@ -217,9 +222,14 @@ func TestDefineRefusalsWriteNothing(t *testing.T) {
 		for _, tc := range []struct{ version, raw, code string }{
 			{"tset/0", `{}`, "VERSION"},
 			{Version, `[]`, "REQUEST"},
-			{Version, `{"space":"l1:","build":"` + build + `","view":"sprint","tables":[],"extra":"x"}`, "REQUEST"},
-			{Version, `{"space":"l1:","build":"` + build + `","view":"sprint","tables":[{"t":"work","columns":[{"name":"c","kind":"count:c"}]}]}`, "CONFIG"},
-			{Version, `{"space":"l1:","build":"` + build + `","view":"sprint","tables":[{"t":"a","columns":[{"name":"c","kind":"set"}]},{"t":"b","columns":[{"name":"c","kind":"set"}]},{"t":"c","columns":[{"name":"c","kind":"set"}]},{"t":"d","columns":[{"name":"c","kind":"set"}]},{"t":"e","columns":[{"name":"c","kind":"set"}]}]}`, "LIMIT"},
+			{Version, `{"space":"{l1}:","build":"` + build + `","view":"sprint","tables":[],"extra":"x"}`, "REQUEST"},
+			{Version, `{"build":"` + build + `","view":"sprint","tables":[{"t":"work","columns":[{"name":"c","kind":"set"}]}]}`, "REQUEST"},
+			{Version, `{"space":"cap:","build":"` + build + `","view":"sprint","tables":[{"t":"work","columns":[{"name":"c","kind":"set"}]}]}`, "CONFIG"},
+			{Version, `{"space":"s:","build":"` + build + `","view":"sprint","tables":[{"t":"work","columns":[{"name":"c","kind":"set"}]}]}`, "CONFIG"},
+			{Version, `{"space":"l1:","build":"` + build + `","view":"sprint","tables":[{"t":"work","columns":[{"name":"c","kind":"set"}]}]}`, "CONFIG"},
+			{Version, `{"space":"{l1}:dev:","build":"` + build + `","view":"sprint","tables":[{"t":"work","columns":[{"name":"c","kind":"set"}]}]}`, "CONFIG"},
+			{Version, `{"space":"{l1}:","build":"` + build + `","view":"sprint","tables":[{"t":"work","columns":[{"name":"c","kind":"count:c"}]}]}`, "CONFIG"},
+			{Version, `{"space":"{l1}:","build":"` + build + `","view":"sprint","tables":[{"t":"a","columns":[{"name":"c","kind":"set"}]},{"t":"b","columns":[{"name":"c","kind":"set"}]},{"t":"c","columns":[{"name":"c","kind":"set"}]},{"t":"d","columns":[{"name":"c","kind":"set"}]},{"t":"e","columns":[{"name":"c","kind":"set"}]}]}`, "LIMIT"},
 		} {
 			reply, err := fx.Client.FCall(ctx, "ns_tset_define", nil, tc.version, tc.raw).Text()
 			if err != nil {
@@ -332,7 +342,7 @@ func TestTeardownRefusalsWriteNothing(t *testing.T) {
 	}{
 		{"another name", "work", nil, "CONFIRM"},
 		{"running, never stopped", "sprint", map[string]any{"stopped_ms": "0"}, "RUNNING"},
-		{"running after a start", "sprint", map[string]any{"stopped_ms": "40", "stopped_since_ms": "0"}, "RUNNING"},
+		{"running after a start", "sprint", map[string]any{"stopped_ms": "40", "stopped_since_ms": ""}, "RUNNING"},
 	} {
 		if err := fx.Client.Del(ctx, clock).Err(); err != nil {
 			t.Fatal(err)
@@ -367,5 +377,263 @@ func TestTeardownRefusalsWriteNothing(t *testing.T) {
 	}
 	if keys, err := fx.Client.Keys(ctx, "*").Result(); err != nil || len(keys) != 1 {
 		t.Fatalf("after teardown %v (err %v)", keys, err)
+	}
+}
+
+// withoutPrefix is image without the keys under prefix.
+func withoutPrefix(image map[string]testredis.Entry, prefix string) map[string]testredis.Entry {
+	out := make(map[string]testredis.Entry, len(image))
+	for k, v := range image {
+		if !strings.HasPrefix(k, prefix) {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// seedLifecycleSpace defines space and gives it rows, members and an upper
+// layer's keys, count of them.
+func seedLifecycleSpace(t *testing.T, fx *tsetFixture, store *RedisStore, space, build string, count int) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := store.Define(ctx, lifecycleStoreSpec(space, build)); err != nil {
+		t.Fatalf("define %s: %v", space, err)
+	}
+	ids := make([]string, 0, count)
+	scores := make([]string, 0, count)
+	for i := 0; i < count; i++ {
+		ids = append(ids, "card-"+strconv.Itoa(i))
+		scores = append(scores, strconv.Itoa(i))
+	}
+	for _, step := range []Step{
+		{Epoch: "0", Space: space, Entries: []Entry{{Kind: "rows", Table: "work", Add: []string{"r"}}}},
+		{Epoch: "0", Space: space, Entries: []Entry{{Kind: "create", Table: "work", To: "r:ready", IDs: ids, Scores: scores}}},
+	} {
+		if r, err := store.Step(ctx, step); err != nil || r.Status != "ok" {
+			t.Fatalf("setup step on %s: %+v %v", space, r, err)
+		}
+	}
+	pipe := fx.Client.Pipeline()
+	for i := 0; i < count; i++ {
+		pipe.Set(ctx, space+"sprint:upper:"+strconv.Itoa(i), "x", 0)
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestSpacesAreConfined: the space grammar {<name>}: (the amendment, section
+// 1) keeps a teardown inside its own space. A legacy prefix is refused CONFIG
+// by define and teardown with the store byte-equal; {l1}: and {l1-dev}: stand
+// side by side, and tearing one down leaves the other, and every key outside
+// both, byte-equal.
+func TestSpacesAreConfined(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	fx, store, build := lifecycleStore(t)
+	const other = "{l1-dev}:"
+	seedLifecycleSpace(t, fx, store, lifecycleStoreSpace, build, 300)
+	seedLifecycleSpace(t, fx, store, other, build, 300)
+	pipe := fx.Client.Pipeline()
+	for _, k := range []string{"cap:legacy-data", "s:legacy", "l1:sprint:epoch", "l1:dev:sprint:view", "{l1}", "{l1}x"} {
+		pipe.Set(ctx, k, "legacy", 0)
+	}
+	if _, err := pipe.Exec(ctx); err != nil {
+		t.Fatal(err)
+	}
+	before := lifecycleImage(t, fx.Client, "")
+	for _, space := range []string{"cap:", "s:", "l1:", "l1:dev:", "{l1}", "{L1}:", "{1l}:", "{" + strings.Repeat("a", MaxNamespaceName+1) + "}:", ""} {
+		raw := fmt.Sprintf(`{"space":%q,"confirm":"sprint"}`, space)
+		reply, err := fx.Client.FCall(ctx, "ns_tset_teardown", nil, Version, raw).Text()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := DecodeReply([]byte(reply)); lifecycleRefusal(t, err) != "CONFIG" {
+			t.Errorf("teardown of %q: %s, want CONFIG", space, reply)
+		}
+		spec := lifecycleStoreSpec(space, build)
+		spec.Tables = spec.Tables[:1]
+		raw = fmt.Sprintf(`{"space":%q,"build":%q,"view":"sprint","tables":[{"t":"work","columns":[{"name":"c","kind":"set"}]}]}`, space, build)
+		reply, err = fx.Client.FCall(ctx, "ns_tset_define", nil, Version, raw).Text()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := DecodeReply([]byte(reply)); lifecycleRefusal(t, err) != "CONFIG" {
+			t.Errorf("define of %q: %s, want CONFIG", space, reply)
+		}
+		if _, err := store.Teardown(ctx, space, "sprint"); lifecycleRefusal(t, err) != "CONFIG" {
+			t.Errorf("client teardown of %q: %v, want CONFIG", space, err)
+		}
+		if _, err := store.Define(ctx, spec); lifecycleRefusal(t, err) != "CONFIG" {
+			t.Errorf("client define of %q: %v, want CONFIG", space, err)
+		}
+		if _, err := NewMem().Teardown(ctx, space, "sprint"); lifecycleRefusal(t, err) != "CONFIG" {
+			t.Errorf("twin teardown of %q: %v, want CONFIG", space, err)
+		}
+	}
+	if diff := testredis.Diff(before, lifecycleImage(t, fx.Client, "")); len(diff) != 0 {
+		t.Fatalf("refused lifecycle calls wrote: %v", diff)
+	}
+	reply, err := store.Teardown(ctx, lifecycleStoreSpace, "sprint")
+	if err != nil || !reply.Done {
+		t.Fatalf("teardown of %s: %+v %v", lifecycleStoreSpace, reply, err)
+	}
+	after := lifecycleImage(t, fx.Client, "")
+	if diff := testredis.Diff(withoutPrefix(before, lifecycleStoreSpace), withoutPrefix(after, lifecycleStoreSpace)); len(diff) != 0 {
+		t.Fatalf("teardown of %s changed keys outside it: %v", lifecycleStoreSpace, diff)
+	}
+	for k := range after {
+		if strings.HasPrefix(k, lifecycleStoreSpace) && k != lifecycleStoreSpace+"sprint:lifecycle" {
+			t.Fatalf("teardown of %s left %s", lifecycleStoreSpace, k)
+		}
+	}
+	// The twin agrees: the other space stands.
+	mem := NewMem()
+	for _, space := range []string{lifecycleStoreSpace, other} {
+		if _, err := mem.Define(ctx, lifecycleStoreSpec(space, build)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := mem.Teardown(ctx, lifecycleStoreSpace, "sprint"); err != nil {
+		t.Fatal(err)
+	}
+	if mem.View(other) != "sprint" || mem.View(lifecycleStoreSpace) != "" {
+		t.Fatalf("twin views after teardown: %q %q", mem.View(other), mem.View(lifecycleStoreSpace))
+	}
+}
+
+// TestDefineRefusesLeftovers: define refuses EXISTS over any key under the
+// space but its receipt stream (the amendment, section 2), found by bounded
+// SCAN passes, with the store byte-equal.
+func TestDefineRefusesLeftovers(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	for _, leftover := range []string{"sprint:done@0", "member:work:card-1", "sprint:upper:x"} {
+		t.Run(leftover, func(t *testing.T) {
+			t.Parallel()
+			fx, store, build := lifecycleStore(t)
+			if err := fx.Client.XAdd(ctx, &redis.XAddArgs{Stream: fx.Space + "sprint:lifecycle",
+				Values: []string{"fn", "teardown"}}).Err(); err != nil {
+				t.Fatal(err)
+			}
+			if err := fx.Client.Set(ctx, fx.Space+leftover, "stale", 0).Err(); err != nil {
+				t.Fatal(err)
+			}
+			before := lifecycleImage(t, fx.Client, "")
+			if _, err := store.Define(ctx, lifecycleStoreSpec(fx.Space, build)); lifecycleRefusal(t, err) != "EXISTS" {
+				t.Fatalf("define over %s: %v, want EXISTS", leftover, err)
+			}
+			if diff := testredis.Diff(before, lifecycleImage(t, fx.Client, "")); len(diff) != 0 {
+				t.Fatalf("a refused define wrote: %v", diff)
+			}
+			// The receipt stream alone is no leftover.
+			if err := fx.Client.Del(ctx, fx.Space+leftover).Err(); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.Define(ctx, lifecycleStoreSpec(fx.Space, build)); err != nil {
+				t.Fatalf("define over the receipt stream alone: %v", err)
+			}
+		})
+	}
+	t.Run("twin", func(t *testing.T) {
+		t.Parallel()
+		m := NewMem()
+		if err := m.SetActiveEpoch(lifecycleStoreSpace, "0"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := m.Define(ctx, lifecycleStoreSpec(lifecycleStoreSpace, "b")); lifecycleRefusal(t, err) != "EXISTS" {
+			t.Fatalf("twin define over a leftover epoch: %v", err)
+		}
+	})
+}
+
+// teardownCall is one raw ns_tset_teardown call's answer.
+func teardownCall(t *testing.T, c *redis.Client, space string) string {
+	t.Helper()
+	reply, err := c.FCall(context.Background(), "ns_tset_teardown", nil, Version,
+		fmt.Sprintf(`{"space":%q,"confirm":"sprint"}`, space)).Text()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return reply
+}
+
+// TestTeardownRefusesAStartBetweenCalls: the clock goes last, with the view
+// (the amendment, section 3), so a machine started between two calls of a
+// teardown is refused RUNNING by the next call, with the partial byte-equal;
+// stopped again, the teardown finishes.
+func TestTeardownRefusesAStartBetweenCalls(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	fx, store, build := lifecycleStore(t)
+	seedLifecycleSpace(t, fx, store, fx.Space, build, 1500)
+	clock := fx.Space + "sprint:clock"
+	if err := fx.Client.HSet(ctx, clock, "stopped_ms", "0", "stopped_since_ms", "5").Err(); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 2; i++ {
+		if reply := teardownCall(t, fx.Client, fx.Space); !strings.Contains(reply, `"done":false`) {
+			t.Fatalf("call %d: %s, want a partial", i+1, reply)
+		}
+	}
+	if n, err := fx.Client.Exists(ctx, clock).Result(); err != nil || n != 1 {
+		t.Fatalf("the clock is gone from the partial (exists %d, err %v)", n, err)
+	}
+	// A start: stopped_since_ms "" (v2.1 1.2).
+	if err := fx.Client.HSet(ctx, clock, "stopped_since_ms", "").Err(); err != nil {
+		t.Fatal(err)
+	}
+	before := lifecycleImage(t, fx.Client, "")
+	if _, err := store.Teardown(ctx, fx.Space, "sprint"); lifecycleRefusal(t, err) != "RUNNING" {
+		t.Fatalf("teardown after a start: %v, want RUNNING", err)
+	}
+	if diff := testredis.Diff(before, lifecycleImage(t, fx.Client, "")); len(diff) != 0 {
+		t.Fatalf("a RUNNING refusal on the partial wrote: %v", diff)
+	}
+	if err := fx.Client.HSet(ctx, clock, "stopped_since_ms", "9").Err(); err != nil {
+		t.Fatal(err)
+	}
+	if r, err := store.Teardown(ctx, fx.Space, "sprint"); err != nil || !r.Done {
+		t.Fatalf("teardown after the stop: %+v %v", r, err)
+	}
+	keys, err := fx.Client.Keys(ctx, "*").Result()
+	if err != nil || len(keys) != 1 || keys[0] != fx.Space+"sprint:lifecycle" {
+		t.Fatalf("after teardown the store holds %v (err %v)", keys, err)
+	}
+}
+
+// TestTeardownReadsTheClockByTheDesign: stopped_since_ms "" is RUNNING; "0"
+// and a time are STOPPED (v2.1 1.2; ClockRunning is the Go side's rule).
+func TestTeardownReadsTheClockByTheDesign(t *testing.T) {
+	t.Parallel()
+	ctx := context.Background()
+	for _, tc := range []struct {
+		since   string
+		running bool
+	}{{"", true}, {"0", false}, {"1759240000000", false}} {
+		t.Run("since="+tc.since, func(t *testing.T) {
+			t.Parallel()
+			fx, store, build := lifecycleStore(t)
+			if _, err := store.Define(ctx, lifecycleStoreSpec(fx.Space, build)); err != nil {
+				t.Fatal(err)
+			}
+			if err := fx.Client.HSet(ctx, fx.Space+"sprint:clock", "stopped_ms", "0", "stopped_since_ms", tc.since).Err(); err != nil {
+				t.Fatal(err)
+			}
+			since := tc.since
+			if ClockRunning(&since) != tc.running {
+				t.Fatalf("ClockRunning(%q) = %v", tc.since, !tc.running)
+			}
+			_, err := store.Teardown(ctx, fx.Space, "sprint")
+			if tc.running {
+				if lifecycleRefusal(t, err) != "RUNNING" {
+					t.Fatalf("teardown: %v, want RUNNING", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("teardown of a stopped machine: %v", err)
+			}
+		})
 	}
 }
