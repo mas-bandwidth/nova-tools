@@ -18,8 +18,7 @@ import (
 )
 
 // LogTwin is the smallest surface of Layer 2's Go log twin that the composed
-// twin needs (errata E3, E7.2). Layer 2 names and builds the real one (item
-// J9); LogStub stands in until then.
+// twin needs (errata E3, E7.2): MemLog (item J9) is it.
 type LogTwin interface {
 	// Plan plans one step's lines, writing nothing: one line per emitting
 	// entry of the table plan, in its order, then one per note, with seqs
@@ -28,15 +27,23 @@ type LogTwin interface {
 	// Read serves Layer 2's queries (last, lines, cardlines) of one plan: a
 	// page, or one atomic query.
 	Read(prefix string, plan tset.ReadPlan) (tset.ReadReply, *Refusal)
+	// LineAt is L.read_line_at: the stored line at exactly seq, a canonical
+	// decimal string (REQUEST otherwise), LOGID for a seq with no line.
+	LineAt(prefix string, epoch tset.Decimal, seq string) (tset.LogLine, *Refusal)
 }
 
 // LogInput is what the log plans a step from.
 type LogInput struct {
 	Prefix string
 	Epoch  tset.Decimal // the write epoch: the successor on an advance (L2 0)
-	NowMS  tset.Decimal // the call's one TIME, every line's at_ms (L2 5)
-	Table  TablePlan
-	Notes  []tset.Note // the step's notes, in order; NoteSeqs aligns with them
+	// RequestEpoch is the step's own epoch, an advance line's from; empty
+	// means Epoch. Request is the combined request's entries, whose about the
+	// composed profile requires on every member-changing entry.
+	RequestEpoch tset.Decimal
+	Request      []tset.Entry
+	NowMS        tset.Decimal // the call's one TIME, every line's at_ms (L2 5)
+	Table        TablePlan
+	Notes        []tset.Note // the step's notes, in order; NoteSeqs aligns with them
 }
 
 // LogApply appends what one Plan planned. The twin calls it only at commit,
@@ -256,6 +263,9 @@ func (t *Twin) step(ctx context.Context, req *Request, enc encodedStep) Result {
 	if ref := checkAbout(PhaseOpen, enc.step.Entries); ref != nil {
 		return Result{Refusal: ref}
 	}
+	if ref := tset.CheckLogStep(enc.step.Entries, enc.step.Notes); ref != nil {
+		return Result{Refusal: fromTset(PhaseOpen, ref)}
+	}
 	if req.Fence {
 		// E5: a fence returns at open. Layer 1 writes its receipt alone.
 		t.enter(PhasePrepare)
@@ -356,6 +366,11 @@ func (t *Twin) step(ctx context.Context, req *Request, enc encodedStep) Result {
 	if ref := checkNotes(combined.Entries, notes); ref != nil {
 		return Result{Refusal: ref}
 	}
+	// The composed profile's static rules on the combined staged request,
+	// before any guard (L1 8; table_set_log.lua's L.check_step).
+	if ref := tset.CheckLogStep(combined.Entries, notes); ref != nil {
+		return Result{Refusal: fromTset(PhasePlan, ref)}
+	}
 	mp, lref := t.tab.Plan(combined)
 	if lref != nil {
 		return Result{Refusal: fromTset(PhasePlan, lref)}
@@ -374,7 +389,8 @@ func (t *Twin) step(ctx context.Context, req *Request, enc encodedStep) Result {
 	// Nothing is written before commit: a refusal from here on leaves the Mem,
 	// the log and the sprint's keys as they were.
 	t.enter(PhaseLog)
-	lp, appendLog, ref := t.log.Plan(LogInput{Prefix: t.prefix, Epoch: writeEpoch, NowMS: nowMS, Table: tp, Notes: notes})
+	lp, appendLog, ref := t.log.Plan(LogInput{Prefix: t.prefix, Epoch: writeEpoch, RequestEpoch: combined.Epoch,
+		Request: combined.Entries, NowMS: nowMS, Table: tp, Notes: notes})
 	if ref != nil {
 		return Result{Refusal: withPhase(ref, PhaseLog)}
 	}

@@ -330,6 +330,8 @@ var raceCodes = map[string]bool{
 	sprintfn.CodeDropping: true, sprintfn.CodeStopped: true, sprintfn.CodeXGuard: true,
 	sprintfn.CodeStale: true, sprintfn.CodeEpochAhead: true, "EXISTS": true, "NOROW": true,
 	"ROWSET": true,
+	// PROPGUARD: a guard on a table property as read (L1 amendment 2026-09-30).
+	"PROPGUARD": true,
 }
 
 // IsRace says a refusal code is a race, which a verb plans again on a fresh
@@ -1623,9 +1625,10 @@ func clockOf(rd *sprintfn.ReadReply, slot int) (sprintfn.ClockResult, bool, erro
 	return c, has, nil
 }
 
-// running says the clock runs: no stopped_since_ms (1.2).
+// running says the clock runs: stopped_since_ms "" or absent (1.2), by
+// the one rule teardown's RUNNING reads (tset.ClockRunning).
 func running(c sprintfn.ClockResult) bool {
-	return c.Clock.StoppedSinceMS == nil || *c.Clock.StoppedSinceMS == ""
+	return tset.ClockRunning(c.Clock.StoppedSinceMS)
 }
 
 // ---- a counting client

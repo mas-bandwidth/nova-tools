@@ -22,7 +22,11 @@ import (
 
 // summary is the sprint's line: landed / all primaries on the table, percent,
 // ETA (the table layer's view line, which has no rate to give an ETA from).
+// Every primary landed, it has no ETA: it is done (errata 3 amendment 6).
 func summary(t ntable.Table) string {
+	if landed, all := counts(t); all > 0 && landed == all {
+		return progress(t) + " done"
+	}
 	return progress(t) + " -> ETA"
 }
 
@@ -376,12 +380,13 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 
 // whereHeader is the one line under the title of the where view: STOPPED when
 // the machine is stopped (with its silence, when a RUNNING machine has not
-// ticked), and the progress line, with no machine text, when it is running. A
-// failed last tick stays on the line.
+// ticked), DONE when it stopped because the sprint is done (the view's state
+// text, errata 3 amendment 6), and the progress line, with no machine text,
+// when it is running. A failed last tick stays on the line.
 func whereHeader(summary, machine string) string {
 	state := strings.TrimPrefix(machine, "machine: ")
-	if strings.HasPrefix(state, "STOPPED") {
-		return state
+	if strings.HasPrefix(state, "STOPPED") || state == store.DoneState {
+		return state // DONE, as the view says, when the sprint is done
 	}
 	return strings.TrimSpace(summary + strings.TrimPrefix(state, "running"))
 }
@@ -466,6 +471,9 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 			other++
 		}
 		fmt.Fprintln(stdout, groupLine(g, now))
+		if g.Hint != "" {
+			fmt.Fprintf(stdout, "  %s\n", oneline.Escape(g.Hint))
+		}
 		for _, cmd := range g.Commands {
 			fmt.Fprintf(stdout, "  %s:\n", oneline.Escape(cmd.Decision))
 			for _, l := range cmd.Lines {
@@ -525,6 +533,9 @@ func groupLine(g sprint.Group, now time.Time) string {
 		if g.Before > 0 {
 			l += "  before=" + strconv.Itoa(g.Before)
 		}
+	}
+	if g.To != "" {
+		l += "  for=" + g.To // addressed to the coordinator: shown first
 	}
 	if len(g.Primaries) > 0 {
 		ps := g.Primaries

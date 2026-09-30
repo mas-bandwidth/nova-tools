@@ -63,6 +63,7 @@ func TestDealClosesTheJudgmentForNoMemberWhenAMemberIsUp(t *testing.T) {
 	expect(t, got,
 		"move work s1-1 s1:ready>s1:working",
 		"move work s1-2 s1:ready>s1:working",
+		"prop fleet deal_index=m1",
 		"create fleet s1-1.w1 >m1:ready",
 		"create fleet s1-2.w1 >m1:ready",
 		"close no fleet member is up [stream:]")
@@ -89,6 +90,7 @@ func TestAskClosesTheJudgmentForTooFewReadersWhenAReaderIsAdded(t *testing.T) {
 	// asked, and the reference says what the tick does
 	expect(t, got,
 		"set work s1-1 asked=reader-a,reader-b",
+		"prop readers ask_index=reader-b",
 		"create readers s1-1.r1.reader-a >reader-a:asked",
 		"create readers s1-1.r1.reader-b >reader-b:asked",
 		"open stranded in review [s1-1]",

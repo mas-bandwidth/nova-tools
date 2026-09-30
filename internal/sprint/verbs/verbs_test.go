@@ -38,7 +38,7 @@ var testColumns = map[string][]string{
 type world struct {
 	t   *testing.T
 	tw  *sprintfn.Twin
-	log *sprintfn.LogStub
+	log *sprintfn.MemLog
 	cc  *Counting
 	env *Env
 	mu  sync.Mutex
@@ -68,7 +68,7 @@ func newWorldAt(t *testing.T, first uint64) *world {
 			t.Fatalf("first epoch %d: %v", first, err)
 		}
 	}
-	w := &world{t: t, log: sprintfn.NewLogStub(), now: time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)}
+	w := &world{t: t, log: sprintfn.NewMemLog(), now: time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)}
 	w.tw = sprintfn.NewTwin(m, w.log, testNames)
 	w.tw.UseQueries()
 	w.tw.UseIntents()

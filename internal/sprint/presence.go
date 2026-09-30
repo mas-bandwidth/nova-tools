@@ -95,16 +95,20 @@ func LoadText(b Beat, now time.Time) string {
 	return fmt.Sprintf("%.1f%%", b.Load)
 }
 
-// TickPresence applies one change of a member's derived status (T0): a
-// member that should be up and is not comes up and the ready queues are
-// levelled; else one that should be down and is up goes down and its
-// unfinished work cards are dealt to the members up (or withdrawn when none
-// is), each with its happened notification. One change a tick: the next tick
-// applies the next on a fresh read. The binding gives it the beats; with none
-// given it does nothing.
+// TickPresence applies the changes of the members' derived status (T0):
+// every member that should be up and is not comes up, up to TickMaxMoves of
+// them, in one plan that levels the ready queues once over all the members
+// up (the design's R1, v2.1 section 2.3: each member seen is its own seen:m,
+// none waits behind another's); else one that should be down and is up goes
+// down and its unfinished work cards are dealt to the members up (or
+// withdrawn when none is), each with its happened notification. A down is
+// one a tick: the next tick applies the next on a fresh read. So a fleet that
+// beats before start is up, whole, at the first tick, and the deal that
+// follows goes round all of it (round.go) rather than round the members up
+// so far, one more a tick. The binding gives it the beats; with none given
+// it does nothing.
 func TickPresence(s *Snapshot, r TickReq) (Plan, int) {
-	p, changes := presence(s, r)
-	return p, max(0, changes-1) // the rest are due: the next ticks apply them
+	return presence(s, r) // the rest are due: the next ticks apply them
 }
 
 func presence(s *Snapshot, r TickReq) (Plan, int) {
@@ -129,8 +133,18 @@ func presence(s *Snapshot, r TickReq) (Plan, int) {
 		}
 	}
 	if len(ups) > 0 {
-		m := ups[0]
-		return FleetStep(s, FleetReq{Op: "up", Member: m, Who: r.who(), Live: live, Why: "it beats"}), len(ups) + len(downs)
+		n := min(len(ups), TickMaxMoves)
+		// the first up levels the queues over every member up after the plan;
+		// the others are their control cards and notifications alone
+		all := append(append([]string(nil), live...), ups[:n]...)
+		p := fleetStepPlan(s, FleetReq{Op: "up", Member: ups[0], Who: r.who(), Live: all, Why: "it beats"})
+		for _, m := range ups[1:n] {
+			q := fleetStepPlan(s, FleetReq{Op: "up", Member: m, Who: r.who(), Live: []string{}, Why: "it beats"})
+			p.Rows = append(p.Rows, q.Rows...)
+			p.Units = append(p.Units, q.Units...)
+			p.Refused = append(p.Refused, q.Refused...)
+		}
+		return Lawful(p), len(ups) - n + len(downs)
 	}
 	if len(downs) > 0 {
 		m := downs[0]
@@ -141,7 +155,7 @@ func presence(s *Snapshot, r TickReq) (Plan, int) {
 		case !r.Beats[m].Beaten():
 			why = "it has never beaten"
 		}
-		return FleetStep(s, FleetReq{Op: "down", Member: m, Who: r.who(), Live: live, Why: why}), len(downs)
+		return FleetStep(s, FleetReq{Op: "down", Member: m, Who: r.who(), Live: live, Why: why}), len(downs) - 1
 	}
 	return Plan{}, 0
 }

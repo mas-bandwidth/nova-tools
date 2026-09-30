@@ -212,6 +212,13 @@ type State struct {
 	Pending   string // the verb of the pending operation (D1), "" when none
 	// Coordinator is the one actor who releases sentinels.
 	Coordinator string
+	// DealLast and AskLast are the rolling indexes of the deal and the ask
+	// (errata 3, amendment 5; tla/SprintEvents.tla dcur and acur): the member
+	// the last card was dealt to and the reader the last read was asked of
+	// round the readers, this epoch. The next member is the first up with
+	// room past DealLast in name order, wrapping; the next readers the first
+	// able past AskLast.
+	DealLast, AskLast string
 }
 
 // New is an empty sprint with its readers and members, every member down,
@@ -400,6 +407,60 @@ func (s State) ShortestIn(m string, set []string) bool {
 		}
 	}
 	return true
+}
+
+// roundFrom is where a rolling index past last starts in order (sorted): the
+// first name above last, 0 when last is "".
+func roundFrom(order []string, last string) int {
+	if last == "" {
+		return 0
+	}
+	i := sort.SearchStrings(order, last)
+	if i < len(order) && order[i] == last {
+		i++
+	}
+	return i
+}
+
+// NextMember is the deal's choice (errata 3, amendment 5; SprintEvents.tla
+// RoundAssign): the first of the members, in name order from just past
+// DealLast, wrapping, that is in set; "" when none is.
+func (s State) NextMember(set []string) string {
+	order := sorted(s.Order)
+	at := roundFrom(order, s.DealLast)
+	for i := range order {
+		if m := order[(at+i)%len(order)]; has(set, m) {
+			return m
+		}
+	}
+	return ""
+}
+
+// NextReaders is the ask's choice of k readers for p at its attempt (errata 3,
+// amendment 5; SprintEvents.tla RoundTwo): from just past AskLast, in name
+// order, wrapping, the first reader without a read card at the attempt, then
+// the first past it, and so on.
+func (s State) NextReaders(p string, k int) []string {
+	order := sorted(s.Readers)
+	attempt := s.Primaries[p].Attempt
+	at := roundFrom(order, s.AskLast)
+	var out []string
+	for len(out) < k && len(order) > 0 {
+		pick := -1
+		for i := range order {
+			j := (at + i) % len(order)
+			if _, made := s.Reads[RC(p, attempt, order[j])]; !made && !has(out, order[j]) {
+				pick = j
+				break
+			}
+		}
+		if pick < 0 {
+			break
+		}
+		out = append(out, order[pick])
+		at = pick + 1
+	}
+	return out
 }
 
 // AskedLen is SprintTables.tla AskedLen(r).

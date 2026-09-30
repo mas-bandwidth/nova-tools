@@ -111,6 +111,16 @@ func applyMoves(s *sprint.Snapshot, ms []refmodel.Move) error {
 	for _, m := range ms {
 		tb := s.T(m.Table)
 		switch m.Kind {
+		case refmodel.KindProp:
+			props := map[string]string{}
+			for _, n := range []string{sprint.PropDealIndex, sprint.PropAskIndex} {
+				if v, ok := tb.Prop(n); ok {
+					props[n] = v
+				}
+			}
+			_, v, _ := strings.Cut(m.Set[0], "=")
+			props[m.Card] = v
+			tb.SetProps(props)
 		case refmodel.KindRow:
 			if !tb.HasRow(m.Card) {
 				tb.SetRows(append(tb.Rows(), m.Card))

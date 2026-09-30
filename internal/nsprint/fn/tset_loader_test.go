@@ -102,11 +102,15 @@ func TestTSetComposedSourceIsExplicit(t *testing.T) {
 
 func checkTSetProfileSource(t *testing.T, source, profile string, log bool) {
 	t.Helper()
-	if !strings.HasPrefix(source, "#!lua name="+Library+"\nlocal NS = {tset_profile = '"+profile+"'}\n") {
-		t.Fatal("server-selected tset profile is absent from prelude")
+	build, err := TSetBuild(TSetProfile(profile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(build) != 64 || !strings.HasPrefix(source, "#!lua name="+Library+"\nlocal NS = {tset_profile = '"+profile+"', tset_build = '"+build+"'}\n") {
+		t.Fatal("server-selected tset profile or build is absent from prelude")
 	}
 	if !strings.Contains(source, "local function runtime_redis() return redis end\nlocal native_redis = redis\nlocal redis = {\n") ||
-		!strings.Contains(source, "if name == 'ns_tset_step' or name == 'ns_tset_read' then") {
+		!strings.Contains(source, "if name == 'ns_tset_step' or name == 'ns_tset_read' or name == 'ns_tset_define' or name == 'ns_tset_teardown' then") {
 		t.Fatal("exact tset registration filter is absent")
 	}
 	for _, name := range legacyRegistrations {

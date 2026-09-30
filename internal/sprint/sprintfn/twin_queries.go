@@ -31,6 +31,7 @@ import (
 const (
 	codeBudget      = "BUDGET"      // a read past a bound of L1 6 or 7: no answer, never a partial one
 	codeDrift       = "DRIFT"       // a record, a cell or a key that does not agree with what names it
+	codeLogID       = "LOGID"       // a seq that names no line of the log (L2 decision 12)
 	codeMissing     = "MISSING"     // an id taken from an index has no record
 	codeMemberEpoch = "MEMBEREPOCH" // an id taken from an index has a record of another epoch
 )
@@ -450,8 +451,7 @@ func parseBound(s string) (v float64, open, ok bool) {
 // ---- the sources of ids
 
 // lineBody is a line of the log as a query reads it: the ids and `about` of
-// its entry, and its meta. The stub log's line is this plain object; Layer 2's
-// own compact line decodes to the same (its exact wire is Layer 2's revision 2).
+// its entry, and its meta, decoded from the stored body (L2 1.1).
 type lineBody struct {
 	Seq   string          `json:"seq"`
 	Kind  string          `json:"kind"`
@@ -461,23 +461,22 @@ type lineBody struct {
 }
 
 // lineAt is L.read_line_at: the line at exactly seq, from the log twin. A seq
-// the log does not have is DRIFT, since a key names a line that was ingested.
+// the log does not have, past its tail, is LOGID with the budget log_line, as
+// the store answers (table_set_log.lua's fetch_line; decision 12: LOGID when
+// a history seq has no line).
 func (e *qeval) lineAt(seq uint64) (lineBody, *Refusal) {
 	e.c.Lines++
-	s := tset.Decimal(strconv.FormatUint(seq, 10))
-	q := tset.ReadQuery{Kind: "lines", AfterSeq: tset.Decimal(strconv.FormatUint(seq-1, 10)), ThroughSeq: &s, Limit: 1}
-	rep, ref := e.t.log.Read(e.t.prefix, newTSetReadPlan(e.t.prefix, e.epoch, "atomic", []tset.ReadQuery{q}))
+	item, ref := e.t.log.LineAt(e.t.prefix, e.epoch, strconv.FormatUint(seq, 10))
 	if ref != nil {
-		return lineBody{}, ref
+		d := ref.Detail.RefusalDetail
+		d.QueryIndex = nil // the query's own index is set where it is answered
+		return lineBody{}, e.fail(ref.Code, d)
 	}
-	if len(rep.Answers) != 1 || len(rep.Answers[0].Lines) != 1 {
+	body, err := tset.ParseLogBody(item.D)
+	if err != nil {
 		return lineBody{}, e.fail(codeDrift, tset.RefusalDetail{})
 	}
-	var l lineBody
-	if json.Unmarshal(rep.Answers[0].Lines[0], &l) != nil || l.Seq != string(s) {
-		return lineBody{}, e.fail(codeDrift, tset.RefusalDetail{})
-	}
-	return l, nil
+	return lineBody{Seq: string(item.Seq), Kind: tset.LogWords[body.K], IDs: body.IDs, About: body.About, Meta: body.Meta}, nil
 }
 
 // sourceIDs are the ids a source names: a list as it is, the first ids of an
@@ -1146,6 +1145,10 @@ func (t *Twin) queryPhase(st *State, q SprintQuery) (json.RawMessage, *Refusal) 
 // the cells a listing counts for each row.
 const maxTableColumns = 32
 
+// maxQueryProps is the most table properties a fleet or readers query names:
+// a table's (L1 contract amendment, table properties).
+const maxQueryProps = 64
+
 // sourceSize is how many ids a source names at most, and the probes that find
 // them: a list costs none, a head one range read, a line one line.
 func sourceSize(src sprint.IDSource) (n, probes int) {
@@ -1209,7 +1212,8 @@ func QueryProbes(q sprint.SprintQ) int {
 // extensionProbes are the probes of IT08's extensions of a query: a name for
 // each stream the dropping marks are read of (the most a query reaches: its
 // stream, the waiters it may return, or the streams it lists), one for
-// {p}next@e.streams, and a ZCARD for each cell a `streams` query counts.
+// {p}next@e.streams, one for each jopen key's field, and a ZCARD for each cell
+// a `streams` query counts.
 func extensionProbes(q sprint.SprintQ) int {
 	total := 0
 	for _, k := range q.Keys {
@@ -1224,7 +1228,7 @@ func extensionProbes(q sprint.SprintQ) int {
 			case sprint.QueryStreams:
 				total += unitsOf(q)
 			}
-		case sprint.KeyNextStreams:
+		case sprint.KeyNextStreams, sprint.KeyJOpenG, sprint.KeyJOpenSprint:
 			total++
 		}
 	}

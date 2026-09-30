@@ -362,6 +362,7 @@ func (m *Mem) planStep(ctx context.Context, pre, next *memNamespace, step Step) 
 		plan.Entries[i] = MemPlanEntry{Index: i, Entry: normalized}
 	}
 	seenID := make(map[string]bool)
+	propCounts, propObserved := make(map[string]int), make(map[string]bool)
 	candidates, guarded, changed := 0, 0, 0
 	for i, entry := range step.Entries {
 		if err := ctx.Err(); err != nil {
@@ -386,6 +387,17 @@ func (m *Mem) planStep(ctx context.Context, pre, next *memNamespace, step Step) 
 			}
 			if err := memPlanRCount(preEpoch.tables[entry.Table], next.defs[entry.Table], entry, i); err != nil {
 				return Reply{}, err
+			}
+			continue
+		case "prop", "propguard":
+			prior, didChange, err := memPlanProp(preEpoch, workEpoch, entry, i, propCounts, propObserved, &budget)
+			if err != nil {
+				return Reply{}, err
+			}
+			plan.Entries[i].Prop = &prior
+			if didChange {
+				changed++
+				changedPer[i]++
 			}
 			continue
 		case "create", "move", "remove", "guard":
@@ -604,6 +616,10 @@ func cloneMemPlan(plan *MemPlan) *MemPlan {
 		}
 		copyEntry.Added = append([]RowRank(nil), entry.Added...)
 		copyEntry.Deleted = append([]string(nil), entry.Deleted...)
+		if entry.Prop != nil {
+			prop := *entry.Prop
+			copyEntry.Prop = &prop
+		}
 	}
 	return out
 }
@@ -653,6 +669,10 @@ func cloneMemPlanInput(entry Entry) Entry {
 	if entry.AtMost != nil {
 		v := *entry.AtMost
 		out.AtMost = &v
+	}
+	if entry.Value != nil {
+		v := *entry.Value
+		out.Value = &v
 	}
 	return out
 }
@@ -718,7 +738,7 @@ func (b *memWorkBudget) counters(candidates, guarded, changed, rows int) json.Ra
 
 func memEpochEmpty(e *memEpoch) bool {
 	for _, t := range e.tables {
-		if len(t.rows) != 0 || len(t.records) != 0 {
+		if len(t.rows) != 0 || len(t.records) != 0 || len(t.props) != 0 {
 			return false
 		}
 		for _, columns := range t.cells {
@@ -796,6 +816,21 @@ func (b *memWorkBudget) planWrites(pre, next *memNamespace, step Step, epoch Dec
 				}
 				b.charge("ZADD", memCellKey(step.Space, entry.Table, epoch, *newRecord.place), score, id)
 			}
+		}
+	}
+	// A changed property is one HSET on its table's property hash at the
+	// write epoch (amendment 2026-09-30, property, section 2).
+	for _, entry := range step.Entries {
+		if entry.Kind != "prop" || entry.Value == nil {
+			continue
+		}
+		var old string
+		present := false
+		if e := pre.epochs[epoch]; e != nil && e.tables[entry.Table] != nil {
+			old, present = e.tables[entry.Table].props[entry.Name]
+		}
+		if !present || old != *entry.Value {
+			b.charge("HSET", memPropsKey(step.Space, entry.Table, epoch), entry.Name, *entry.Value)
 		}
 	}
 	// Row mutations are batched by table and direction, up to 1,000 rows per
@@ -877,6 +912,69 @@ func memTablePrefix(space, table string, epoch Decimal) string {
 		prefix += ":" + string(epoch)
 	}
 	return prefix
+}
+
+// memPropsKey is the table's property hash at one epoch, beside its rows key
+// (amendment 2026-09-30, property, section 1).
+func memPropsKey(space, table string, epoch Decimal) string {
+	return memTablePrefix(space, table, epoch) + ":props"
+}
+
+// memPlanProp plans one prop or propguard entry (L1 contract amendment
+// 2026-09-30, property, section 2). Both compare with the write epoch's
+// pre-state, so a guard beside a write on the same pair reads the value from
+// before the step. It returns that pre-state and whether the entry changes it.
+func memPlanProp(preEpoch, workEpoch *memEpoch, entry Entry, index int, counts map[string]int, observed map[string]bool, b *memWorkBudget) (FieldValue, bool, error) {
+	pre, work := preEpoch.tables[entry.Table], workEpoch.tables[entry.Table]
+	if pre == nil || work == nil {
+		return FieldValue{}, false, memRefusal("DRIFT", RefusalDetail{EntryIndex: memIndex(index), Table: entry.Table})
+	}
+	before, present := pre.props[entry.Name]
+	if key := entry.Table + "\x00" + entry.Name; !observed[key] {
+		// One field observation per distinct property, as the store's HGET.
+		observed[key] = true
+		b.fieldObservations++
+		if present {
+			b.fetchedBytes += len(before)
+		}
+		if b.fieldObservations > 768000 {
+			return FieldValue{}, false, memRefusal("LIMIT", RefusalDetail{Budget: "field_observations"})
+		}
+		if b.fetchedBytes > 8<<20 {
+			return FieldValue{}, false, memRefusal("LIMIT", RefusalDetail{Budget: "raw_fetched_bytes"})
+		}
+	}
+	prior := FieldValue{Present: present, Value: before}
+	if entry.Kind == "propguard" {
+		if entry.Value == nil && present || entry.Value != nil && (!present || before != *entry.Value) {
+			return prior, false, memRefusal("PROPGUARD", RefusalDetail{EntryIndex: memIndex(index), Table: entry.Table, Name: entry.Name})
+		}
+		return prior, false, nil
+	}
+	if entry.Value == nil {
+		return prior, false, memRefusal("REQUEST", RefusalDetail{EntryIndex: memIndex(index), Table: entry.Table})
+	}
+	if present && before == *entry.Value {
+		return prior, false, nil
+	}
+	if !present {
+		n, seen := counts[entry.Table]
+		if !seen {
+			n = len(pre.props)
+			b.cellProbes++ // the store's HLEN of the property hash
+		}
+		n++
+		counts[entry.Table] = n
+		if n > MaxPropsPerTable {
+			return prior, false, memRefusal("LIMIT", RefusalDetail{EntryIndex: memIndex(index), Table: entry.Table,
+				Budget: "properties", Limit: memInt64(MaxPropsPerTable), Actual: memInt64(int64(n))})
+		}
+	}
+	if work.props == nil {
+		work.props = make(map[string]string)
+	}
+	work.props[entry.Name] = *entry.Value
+	return prior, true, nil
 }
 
 func memCellKey(space, table string, epoch Decimal, place memPlace) string {

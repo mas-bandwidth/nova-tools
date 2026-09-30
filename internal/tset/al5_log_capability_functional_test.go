@@ -231,7 +231,7 @@ func TestL1ExactLineCapabilityAuthorityAndAccounting(t *testing.T) {
 		{mode: "old_context", code: "CONFIG"},
 		{mode: "fake_context", code: "CONFIG"},
 		{mode: "zero_budget_copy", code: "CONFIG"},
-		{mode: "forged_key", data: "inside", count: 1, xrange: 1},
+		{mode: "forged_key", code: "CONFIG"},
 		{mode: "injected_public_cache", data: "inside", count: 1, xrange: 1},
 		{mode: "wrong_index", code: "CONFIG"},
 		{mode: "mutated_index", code: "CONFIG"},

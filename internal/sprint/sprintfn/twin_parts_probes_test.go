@@ -200,7 +200,7 @@ func corruptKey(tw *Twin, k typedKey) {
 }
 
 // probeTwin is a twin with the four tables seeded and the part case set up.
-func probeTwin(t *testing.T, pc partCase) (*Twin, *tset.Mem, *LogStub, *stepClock) {
+func probeTwin(t *testing.T, pc partCase) (*Twin, *tset.Mem, *MemLog, *stepClock) {
 	t.Helper()
 	tw, m, log, clk := partsTwin(t)
 	probeSeed(t, tw)

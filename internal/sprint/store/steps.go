@@ -45,7 +45,7 @@ func ResolveStep(r sprint.ResolveReq) Step {
 
 // DealStep cuts and deals work cards.
 func DealStep(r sprint.DealReq) Step {
-	return Step{Args: ArgsOf(r), Verb: "deal", Load: tables(sprint.Work, sprint.Fleet), Mirrors: true,
+	return Step{Args: ArgsOf(r), Verb: "deal", Load: tables(sprint.Work, sprint.Fleet, sprint.Merge), Mirrors: true,
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Deal(s, r) }}
 }
 
@@ -64,7 +64,7 @@ func FinishStep(r sprint.FinishReq) Step {
 
 // AskStep deals primaries in review to readers.
 func AskStep(r sprint.AskReq) Step {
-	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "ask", Load: tables(sprint.Work, sprint.Readers),
+	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "ask", Load: tables(sprint.Work, sprint.Readers, sprint.Merge),
 		// Every read card id each reader could get at the primaries' attempts,
 		// placed or retired: a reader who already has one is not free.
 		Extras: func(s *sprint.Snapshot) map[string][]string {

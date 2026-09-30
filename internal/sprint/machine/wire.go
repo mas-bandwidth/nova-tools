@@ -118,7 +118,7 @@ func readAnswer(rp sprint.ReadPlan, rep *sprintfn.ReadReply) (sprint.ReadAnswer,
 			if err != nil {
 				return ans, fmt.Errorf("machine: query %d: %w", i, err)
 			}
-			out.Lines = append(out.Lines, sprint.LogLine{ID: id, Body: raw})
+			out.Lines = append(out.Lines, sprint.LogLine{ID: id, Body: lineBody(raw)})
 		}
 		ans.Tset = append(ans.Tset, out)
 	}
@@ -160,6 +160,19 @@ func lineID(raw json.RawMessage) (string, error) {
 		return "", err
 	}
 	return strconv.FormatUint(seq, 10) + "-0", nil
+}
+
+// lineBody is the body of a line as a lines query returns it: Layer 1's item
+// {seq, n, d} carries the stored body verbatim in d (L1 7), which is the
+// line ParseEvent reads; an item with no string d is the line itself.
+func lineBody(raw json.RawMessage) []byte {
+	var item struct {
+		D *string `json:"d"`
+	}
+	if json.Unmarshal(raw, &item) == nil && item.D != nil {
+		return []byte(*item.D)
+	}
+	return raw
 }
 
 // lineSeq is a line's seq, an exact decimal string or a JSON number.

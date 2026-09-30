@@ -19,6 +19,11 @@ type Mem struct {
 	mu     sync.Mutex
 	spaces map[string]*memNamespace
 	now    func() time.Time
+	// The lifecycle's state outside a namespace (lifecycle.go): the pinned build,
+	// the clock stand-in and each namespace's receipt stream, which outlives it.
+	build     string
+	running   map[string]bool
+	lifecycle map[string][]LifecycleReceipt
 }
 
 type TableDefinition struct {
@@ -63,10 +68,13 @@ type MemEpochSnapshot struct {
 	Tables map[string]MemTableSnapshot
 }
 
+// Props is nil for a table with no property at that epoch (amendment
+// 2026-09-30, property, section 1: a hash per table per epoch).
 type MemTableSnapshot struct {
 	Rows    map[string]Decimal
 	Cells   map[string]map[string]map[string]string
 	Records map[string]MemRecord
+	Props   map[string]string
 }
 
 type memNamespace struct {
@@ -81,6 +89,7 @@ type memNamespace struct {
 	recordEpoch     map[string]map[string]Decimal // table, ID -> retained owner epoch
 	receipts        map[Decimal]map[string]memReceipt
 	zsets           map[string]map[string]string
+	view            string // the view's name, set by Define (lifecycle.go)
 }
 
 type memTableDef struct {
@@ -100,6 +109,7 @@ type memTableEpoch struct {
 	rows    map[string]Decimal
 	cells   map[string]map[string]map[string]string // row, column, stored ID, score
 	records map[string]*memRecord
+	props   map[string]string // amendment 2026-09-30 (property): name -> value at this epoch
 }
 
 type memRecord struct {
@@ -162,7 +172,7 @@ func (m *Mem) space(name string) *memNamespace {
 }
 
 func newMemTableEpoch() *memTableEpoch {
-	return &memTableEpoch{rows: make(map[string]Decimal), cells: make(map[string]map[string]map[string]string), records: make(map[string]*memRecord)}
+	return &memTableEpoch{rows: make(map[string]Decimal), cells: make(map[string]map[string]map[string]string), records: make(map[string]*memRecord), props: make(map[string]string)}
 }
 
 func validMemName(s string) bool {
@@ -240,7 +250,12 @@ func (m *Mem) DefineTable(space, table string, def TableDefinition) error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	s := m.space(space)
+	return m.defineLocked(m.space(space), space, table, def)
+}
+
+// defineLocked installs one checked definition in s; the caller holds m.mu.
+// DefineTable and the lifecycle's Define share it.
+func (m *Mem) defineLocked(s *memNamespace, space, table string, def TableDefinition) error {
 	if len(s.defs) >= 4 || s.defs[table] != nil {
 		return memRefusal("CONFIG", RefusalDetail{Table: table})
 	}
@@ -248,6 +263,10 @@ func (m *Mem) DefineTable(space, table string, def TableDefinition) error {
 		if old.epochKey != def.EpochKey || old.epochField != def.EpochField || memPrefixesOverlap(old.memberPrefix, def.MemberPrefix) {
 			return memRefusal("CONFIG", RefusalDetail{Table: table})
 		}
+	}
+	cols := make(map[string]bool, len(def.Columns))
+	for _, col := range def.Columns {
+		cols[col] = true
 	}
 	s.defs[table] = &memTableDef{name: table, memberPrefix: def.MemberPrefix, epochKey: def.EpochKey,
 		epochField: def.EpochField, columns: cols, columnOrder: append([]string(nil), def.Columns...)}
@@ -456,6 +475,9 @@ func (m *Mem) Snapshot(space string) (MemSnapshot, error) {
 				}
 				ts.Records[id] = rr
 			}
+			if len(t.props) != 0 {
+				ts.Props = cloneFields(t.props)
+			}
 			es.Tables[name] = ts
 		}
 		out.Epochs[epoch] = es
@@ -514,7 +536,7 @@ func cloneMemNamespace(s *memNamespace) *memNamespace {
 	for epoch, e := range s.epochs {
 		ne := &memEpoch{tables: make(map[string]*memTableEpoch, len(e.tables))}
 		for table, t := range e.tables {
-			nt := &memTableEpoch{rows: make(map[string]Decimal, len(t.rows)), cells: cloneMemCells(t.cells), records: make(map[string]*memRecord, len(t.records))}
+			nt := &memTableEpoch{rows: make(map[string]Decimal, len(t.rows)), cells: cloneMemCells(t.cells), records: make(map[string]*memRecord, len(t.records)), props: cloneFields(t.props)}
 			for row, rank := range t.rows {
 				nt.rows[row] = rank
 			}

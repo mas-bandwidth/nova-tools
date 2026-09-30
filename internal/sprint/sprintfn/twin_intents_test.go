@@ -69,7 +69,7 @@ func (k *keyWriter) take() []Cmd {
 type intentRig struct {
 	tw   *Twin
 	m    *tset.Mem
-	log  *LogStub
+	log  *MemLog
 	j    *jRecorder
 	keys *keyWriter
 	next int // the next score of a seeded card

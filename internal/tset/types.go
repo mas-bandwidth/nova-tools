@@ -39,7 +39,11 @@ type Step struct {
 // Entry is a typed union selected by Kind. From and To are cell references for
 // member operations. AdvanceFrom is the epoch argument of an advance entry.
 // CountMax and ScoreMax both encode as max, for count and rcount respectively.
-// Rows is the complete named rank set guarded by a rowset entry.
+// Rows is the complete named rank set guarded by a rowset entry. Name and
+// Value belong to the prop and propguard kinds (L1 contract amendment
+// 2026-09-30, property, section 2): Value nil is an omitted value, which a
+// propguard reads as "the property is absent"; a non-nil empty string is the
+// empty value.
 type Entry struct {
 	Kind         string
 	Table        string
@@ -64,6 +68,8 @@ type Entry struct {
 	ScoreMax     string
 	AtLeast      *uint64
 	AtMost       *uint64
+	Name         string
+	Value        *string
 }
 
 type Note struct {
@@ -113,8 +119,9 @@ type MemPlanEntry struct {
 	Before       []MemberRecord // aligned with effective Entry.IDs
 	After        []MemberRecord // aligned with effective Entry.IDs
 	FieldChanges []MemFieldChange
-	Added        []RowRank // effective rows.add with assigned ranks
-	Deleted      []string  // effective rows.del
+	Added        []RowRank   // effective rows.add with assigned ranks
+	Deleted      []string    // effective rows.del
+	Prop         *FieldValue // prop and propguard: the property's pre-state (amendment 2026-09-30, section 2)
 }
 
 // MemFieldChange contains only actual application-field mutations for one
@@ -155,6 +162,7 @@ type RefusalDetail struct {
 	QueryIndex  *int     `json:"query_index,omitempty"`
 	ActiveEpoch Decimal  `json:"active_epoch,omitempty"`
 	Table       string   `json:"table,omitempty"`
+	Name        string   `json:"name,omitempty"` // PROPGUARD and a prop's TWICE: the property name, never its value
 	IDs         []string `json:"ids"`
 	Cells       []string `json:"cells"`
 	Rows        []string `json:"rows"`
@@ -228,10 +236,15 @@ type DoneIdentity struct {
 	IntentDigest string  `json:"intent_digest"`
 }
 
+// CardCursorPosition is one primary's place in a cardlines page chain: the
+// pair (list index, item index within that line). NextItem is present only
+// when a page ended inside a line (L1 10, item 4); its name is Layer 2's
+// revision-2 wire choice.
 type CardCursorPosition struct {
 	About        string `json:"about"`
 	NextIndex    int64  `json:"next_index"`
 	ThroughIndex int64  `json:"through_index"`
+	NextItem     int64  `json:"next_item,omitempty"`
 }
 
 type CardCursor struct {
@@ -243,6 +256,10 @@ type CardCursor struct {
 
 // ReadQuery covers the L1 table queries and the L2 log queries. Fields nil
 // means omitted; an allocated empty slice means an explicit empty projection.
+// Names is the props query's optional property list with the same rule
+// (L1 contract amendment 2026-09-30, property, section 3). BytesLimit is a
+// lines query's optional bound on its answer's encoded bytes, envelope
+// included, at most the 8 MiB reply (L1 7; decision 6); 0 means omitted.
 type ReadQuery struct {
 	Kind        string
 	Table       string
@@ -260,9 +277,11 @@ type ReadQuery struct {
 	AfterSeq    Decimal
 	ThroughSeq  *Decimal
 	IDsLimit    int
+	BytesLimit  int
 	Abouts      []string
 	Cursor      *CardCursor
 	IncludeMeta bool
+	Names       []string
 }
 
 // Query is retained as a short alias for code constructing a ReadPlan.
@@ -383,7 +402,13 @@ type ReadAnswer struct {
 	Done    []DoneSlot        `json:"slots,omitempty"`
 	LastSeq Decimal           `json:"last_seq,omitempty"`
 	Lines   []json.RawMessage `json:"lines,omitempty"`
-	Raw     json.RawMessage   `json:"-"`
+	Props   map[string]string `json:"props,omitempty"`
+	// Next and Through are an atomic lines answer's coverage: the first seq
+	// not returned and the last seq returned (L1 7). Raw keeps them as the
+	// store wrote them.
+	Next    json.RawMessage `json:"next,omitempty"`
+	Through json.RawMessage `json:"through,omitempty"`
+	Raw     json.RawMessage `json:"-"`
 }
 
 func (a ReadAnswer) MarshalJSON() ([]byte, error) {
@@ -431,6 +456,18 @@ func (a ReadAnswer) MarshalJSON() ([]byte, error) {
 			m["lines"] = []json.RawMessage{}
 		} else {
 			m["lines"] = a.Lines
+		}
+		if len(a.Next) != 0 {
+			m["next"] = a.Next
+		}
+		if len(a.Through) != 0 {
+			m["through"] = a.Through
+		}
+	case "props":
+		if a.Props == nil {
+			m["props"] = map[string]string{}
+		} else {
+			m["props"] = a.Props
 		}
 	}
 	return json.Marshal(m)

@@ -2,6 +2,8 @@ package fn
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"strings"
 
@@ -26,20 +28,63 @@ var tsetFragments = []string{
 	"lua/table_set_receipt.lua",
 	"lua/table_set_rows.lua",
 	"lua/table_set_validate.lua",
+	"lua/table_set_lifecycle.lua",
 }
 
-// TSetSource assembles an isolated nova_sprint library with the tset writer
-// and reader. The lexical shim registers only those two callbacks at library
-// load time; the unchanged legacy table.lua belongs to the old-tool profile.
+// TSetFunctions are the functions the tset library registers: the writer and
+// the reader (L1 9), and Layer 1's lifecycle, define and teardown (the L1
+// contract amendment, lifecycle, 2026-09-30). The registration filter admits
+// exactly these names; every other registration in a tset fragment is inert.
+var TSetFunctions = []string{"ns_tset_step", "ns_tset_read", "ns_tset_define", "ns_tset_teardown"}
+
+// TSetSource assembles an isolated nova_sprint library with the tset writer,
+// reader and lifecycle. The lexical shim registers only TSetFunctions at
+// library load time, and in the sprint profile SprintFunctions beside them;
+// the unchanged legacy table.lua belongs to the old-tool profile. The
+// standalone profile leaves Layer 2's log out; the composed and sprint
+// profiles load it. The prelude carries the profile and the build: a digest of the
+// profile and of everything after the prelude, which ns_tset_define compares
+// with the build its caller names (the lifecycle amendment, section 2). The
+// build is the library's declaration of its source, made here at assembly
+// from the body loaded beside it: the store compares it and never recomputes
+// it, so a library loaded by another hand declares whatever it says.
 func TSetSource(profile TSetProfile) (string, error) {
-	if profile != TSetStandalone && profile != TSetComposed {
+	body, err := tsetBody(profile)
+	if err != nil {
+		return "", err
+	}
+	return tsetPrelude(profile, tsetBuild(profile, body)) + body, nil
+}
+
+// TSetBuild is the build of the tset library of profile: the value its
+// prelude sets as NS.tset_build, and the one a caller of ns_tset_define names
+// so that a store holding another build's library refuses BUILD.
+func TSetBuild(profile TSetProfile) (string, error) {
+	body, err := tsetBody(profile)
+	if err != nil {
+		return "", err
+	}
+	return tsetBuild(profile, body), nil
+}
+
+func tsetPrelude(profile TSetProfile, build string) string {
+	return "#!lua name=" + Library + "\nlocal NS = {tset_profile = '" + string(profile) +
+		"', tset_build = '" + build + "'}\n"
+}
+
+// tsetBuild digests the profile and the body, so neither the prelude that
+// carries it nor any other build's library can have the same value.
+func tsetBuild(profile TSetProfile, body string) string {
+	h := sha256.Sum256([]byte("tset-build\n" + string(profile) + "\n" + body))
+	return hex.EncodeToString(h[:])
+}
+
+// tsetBody is the library after its prelude: the redis shim and the fragments.
+func tsetBody(profile TSetProfile) (string, error) {
+	if profile != TSetStandalone && profile != TSetComposed && profile != TSetSprint {
 		return "", fmt.Errorf("unknown tset profile %q", profile)
 	}
 	var b strings.Builder
-	b.WriteString("#!lua name=" + Library + "\n")
-	b.WriteString("local NS = {tset_profile = '")
-	b.WriteString(string(profile))
-	b.WriteString("'}\n")
 	// The lexical Redis shim is visible to every file block. Redis gives
 	// FUNCTION LOAD and FCALL different global redis facades: retain the former
 	// only for registration, and resolve the latter when a callback runs.
@@ -54,21 +99,49 @@ func TSetSource(profile TSetProfile) (string, error) {
 	b.WriteString("  acl_check_cmd = function(...) return runtime_redis().acl_check_cmd(...) end,\n")
 	b.WriteString("  register_function = function(spec, callback)\n")
 	b.WriteString("    local name = callback and spec or spec.function_name\n")
-	b.WriteString("    if name == 'ns_tset_step' or name == 'ns_tset_read' then\n")
+	b.WriteString("    if " + tsetFilter(profile) + " then\n")
 	b.WriteString("      if callback == nil then return native_redis.register_function(spec) end\n")
 	b.WriteString("      return native_redis.register_function(spec, callback)\n")
 	b.WriteString("    end\n")
 	b.WriteString("  end,\n}\n")
 
 	for _, name := range tsetFragments {
-		if name == "lua/table_set_log.lua" && profile != TSetComposed {
+		if name == "lua/table_set_log.lua" && profile == TSetStandalone {
 			continue
 		}
 		if err := appendTSetFragment(&b, name); err != nil {
 			return "", err
 		}
 	}
+	if profile == TSetSprint {
+		// The sprint profile is the composed profile's fragments followed by
+		// the sprint's own, in sorted order (profile_sprint.go).
+		names, err := sprintFragments(sources)
+		if err != nil {
+			return "", err
+		}
+		for _, name := range names {
+			if err := appendTSetFragment(&b, name); err != nil {
+				return "", err
+			}
+		}
+	}
 	return b.String(), nil
+}
+
+// tsetFilter is the registration filter's condition: the name is one of
+// TSetFunctions (the log registers none of its own), or, in the sprint
+// profile, one of SprintFunctions.
+func tsetFilter(profile TSetProfile) string {
+	names := append([]string(nil), TSetFunctions...)
+	if profile == TSetSprint {
+		names = append(names, SprintFunctions...)
+	}
+	parts := make([]string, len(names))
+	for i, name := range names {
+		parts[i] = "name == '" + name + "'"
+	}
+	return strings.Join(parts, " or ")
 }
 
 func appendTSetFragment(b *strings.Builder, name string) error {

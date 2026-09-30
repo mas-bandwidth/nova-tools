@@ -122,6 +122,8 @@ func Compare(e, m State) []Difference {
 	add("machine", "", "state", e.Machine, m.Machine)
 	add("epoch", "", "n", e.Epoch, m.Epoch)
 	add("pending", "", "verb", e.Pending, m.Pending)
+	add("round", "", "deal", e.DealLast, m.DealLast)
+	add("round", "", "ask", e.AskLast, m.AskLast)
 	return out
 }
 

@@ -633,11 +633,71 @@ if NS.tset_profile then
     return {kind = 'rows', rows = out}, nil
   end
 
+  -- props: L1 contract amendment 2026-09-30 (property), section 3. The
+  -- table's property hash at the read epoch, charged as field reads. Without
+  -- names, HLEN bounds the hash before one HGETALL; with names, one HMGET,
+  -- and an absent property is omitted from the answer.
+  local function props(ctx, q, index)
+    local _, err = table_def(ctx, q.t, index)
+    if err then return nil, err end
+    local key = ctx.props_key(q.t, ctx.request_epoch)
+    local out = {}
+    local ok
+    if q.names == nil then
+      local n
+      n, err = checked(ctx, {'HLEN', key}, key, 'hash', 32, 'cell')
+      if err then return nil, err end
+      if type(n) ~= 'number' or n < 0 or n > S.limits.props then
+        return nil, fail('DRIFT', index, q.t)
+      end
+      ok, err = charge(ctx, 'field', n)
+      if err then return nil, err end
+      if n > 0 then
+        local flat
+        flat, err = checked(ctx, {'HGETALL', key}, key, 'hash',
+          n * (256 + S.limits.field_value), 'field')
+        if err then return nil, err end
+        if #flat ~= 2 * n then return nil, fail('DRIFT', index, q.t) end
+        for i = 1, #flat, 2 do
+          local name, value = flat[i], flat[i + 1]
+          if not S.symbolic(name) or type(value) ~= 'string' or
+              #value > S.limits.field_value then
+            return nil, fail('DRIFT', index, q.t)
+          end
+          out[name] = value
+        end
+      end
+    else
+      ok, err = charge(ctx, 'field', #q.names)
+      if err then return nil, err end
+      if #q.names > 0 then
+        local argv = {'HMGET', key}
+        for i = 1, #q.names do argv[#argv + 1] = q.names[i] end
+        local values
+        values, err = checked(ctx, argv, key, 'hash',
+          #q.names * S.limits.field_value, 'field')
+        if err then return nil, err end
+        for i, name in ipairs(q.names) do
+          local value = values[i]
+          if value then
+            if #value > S.limits.field_value then return nil, fail('DRIFT', index, q.t) end
+            out[name] = value
+          end
+        end
+      end
+    end
+    local result = {kind = 'props', props = out}
+    ok, err = output(ctx, result, index)
+    if err then return nil, err end
+    return result, nil
+  end
+
   local function answer(ctx, q, index, log_reader, extension, extension_kinds)
     if q.kind == 'range' then return range(ctx, q, index) end
     if q.kind == 'count' or q.kind == 'rcount' then return counts(ctx, q, index) end
     if q.kind == 'ids' then return ids(ctx, q, index) end
     if q.kind == 'rows' then return rows(ctx, q, index) end
+    if q.kind == 'props' then return props(ctx, q, index) end
     if q.kind == 'done' then
       local slots, err = S.done_read(ctx, q.ops)
       if err then return nil, err end

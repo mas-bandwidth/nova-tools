@@ -73,6 +73,11 @@ const (
 	TypeInvariant   = "an invariant is broken"
 )
 
+// CodeNotCarried is the code a key is parked with when its rule's plan names
+// what no wire or store check carries (NotCarried): the loop's own, not a
+// store's refusal, and not a size, so the key is never halved (1.3.5).
+const CodeNotCarried = "NOTCARRIED"
+
 // Builder is the step builder of 8.0 (step.Build; 1.3.6): it turns one rule's
 // plan into bodies, each an atomic request inside b, every unit whole. A plan
 // it cuts removes no key: no body of a cut plan carries Done (the loop holds
@@ -1090,15 +1095,22 @@ func (l *Loop) settleErrorStep(r sprintfn.Result, c errChunk, rep *Report) error
 
 // cut builds a rule's plan into requests (1.3.6): cut at the tick's step
 // bytes and at the chunk halved for the keys' halvings; a cut plan carries no
-// Done. A builder that cannot cut the plan is a bug of the plan's size: its
-// keys are planned at half next tick, parked at a chunk of one (1.3.5).
+// Done. A builder that cannot cut the plan is a bug of the plan's size, parked
+// LIMIT (1.3.5). A plan that names what nothing carries (NotCarried) is not a
+// size: its keys are parked NOTCARRIED, "not carried: <what>", and never
+// halved.
 func (l *Loop) cut(rule sprint.Rule, bt Batch, rp sprint.RulePlan, rep *Report) (*planned, error) {
 	meta := sprintfn.Meta{Rule: bt.Rule, Tick: true, Gen: l.gen}
 	b := stepbuild.Contract()
 	b.RequestBytes = min(b.RequestBytes, l.budget.StepBytes)
 	b.Candidates = sprint.Halved(b.Candidates, bt.Halvings)
 	bodies, err := l.cfg.Build(rp, meta, b)
-	if err != nil {
+	var nc *NotCarried
+	switch {
+	case errors.As(err, &nc):
+		l.onBug(bt, CodeNotCarried, "", nc.Error(), rep)
+		return nil, nil
+	case err != nil:
 		l.onBug(bt, sprintfn.CodeLimit, "", fmt.Sprintf("its plan cannot be cut into steps: %v", err), rep)
 		return nil, nil
 	}
@@ -1106,11 +1118,14 @@ func (l *Loop) cut(rule sprint.Rule, bt Batch, rp sprint.RulePlan, rep *Report) 
 		return nil, nil
 	}
 	p := &planned{rule: rule, batch: bt, plan: rp, whole: len(bodies) == 1}
-	for _, body := range bodies {
+	for i, body := range bodies {
 		if !p.whole {
 			body.Done = nil // a cut plan leaves its keys queued (1.3.6)
 		}
 		req := &sprintfn.Request{Epoch: l.epoch, Body: body, Meta: meta}
+		if i == 0 {
+			req.Sprint = TimePart(rp.Sprint) // the writes to the sprint's own keys ride the first request (IT16's sprint part)
+		}
 		c, ref := costOf(l.cfg.Names.Prefix, req)
 		if ref != nil {
 			l.onBug(bt, ref.Code, "", "its step is refused before it is sent: "+ref.Message, rep)
@@ -1180,7 +1195,9 @@ var (
 	raceCodes = map[string]bool{"PLACE": true, "REVISION": true, "CELLFULL": true, "RANGECOUNT": true,
 		sprintfn.CodeStaleGen: true, sprintfn.CodeIngestAt: true, sprintfn.CodeCounter: true, sprintfn.CodeDropping: true,
 		sprintfn.CodeStopped: true, sprintfn.CodeXGuard: true, sprintfn.CodeStale: true, sprintfn.CodeEpochAhead: true,
-		"EXISTS": true, "NOROW": true}
+		"EXISTS": true, "NOROW": true,
+		// PROPGUARD: a guard on a table property as read (L1 amendment 2026-09-30).
+		"PROPGUARD": true}
 	// cardCodes name a card: it is quarantined.
 	cardCodes = map[string]bool{"DRIFT": true, "MISSING": true, "MEMBEREPOCH": true}
 )
@@ -1401,7 +1418,7 @@ func (l *Loop) readPage(p *tset.ReadReply, realCur tset.Decimal) ([]sprint.Event
 		if seq <= seqOf(realCur) {
 			continue // at or before the real cursor: another loop ingested it
 		}
-		e, err := sprint.ParseEvent(strconv.FormatUint(seq, 10)+"-0", raw)
+		e, err := sprint.ParseEvent(strconv.FormatUint(seq, 10)+"-0", lineBody(raw))
 		if err != nil {
 			return nil, realCur, fmt.Errorf("machine: the page: %w", err)
 		}

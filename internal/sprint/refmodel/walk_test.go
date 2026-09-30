@@ -332,8 +332,16 @@ func (k *walk) tick() bool {
 	if !k.running {
 		return false
 	}
-	part := sprint.TickParts[k.pick(len(sprint.TickParts))]
-	plan, _ := part.Fn(k.s, k.req())
+	// the done part is drawn by the whole tick only: it writes a note and
+	// no card, and the draw of one part keeps the walks the parts before it
+	// gave
+	var parts []sprint.TickPartFn
+	for _, p := range sprint.TickParts {
+		if p.Name != sprint.PartDone {
+			parts = append(parts, p.Fn)
+		}
+	}
+	plan, _ := parts[k.pick(len(parts))](k.s, k.req())
 	return k.try(plan)
 }
 

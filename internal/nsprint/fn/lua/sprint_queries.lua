@@ -93,11 +93,14 @@ do
   Q.HEAD_INDEXES = {elig = true, ['fresh-below'] = true, ['fresh-above'] = true, again = true}
   Q.INDEX_PREFIXES = {sent = true, elig = true, fresh = true, again = true, wait = true}
   -- The sprint keys a composite query may also read (IT08's `keys`), and the
-  -- kinds whose answer reaches streams, which alone may name them. The jopen
-  -- keys give the types of the judgments open on a subject, which only an
-  -- enumeration of its jopen hash finds, and S.read_probe admits none (no HKEYS
-  -- or HGETALL): a query naming one is REQUEST (sprintfn.queryKeys).
-  Q.QUERY_KEYS = {dropping = true, ['next.streams'] = true}
+  -- kinds whose answer reaches streams, which alone may name them; jopen:G
+  -- only `front`, whose first sentinel it is about (sprintfn.queryKeys).
+  Q.QUERY_KEYS = {dropping = true, ['next.streams'] = true, ['jopen:G'] = true, ['jopen:sprint'] = true}
+  -- The one field of a subject's jopen hash that the rule reading a jopen key
+  -- tests, <type>|<cause> (sprintfn.jopenFields; 2.3 R3 and R15), and the
+  -- sprint's subject (sprint.SprintSubject).
+  Q.JOPEN_FIELDS = {['jopen:G'] = 'sentinel reached|-', ['jopen:sprint'] = 'the sprint is done|-'}
+  Q.SPRINT_SUBJECT = 'sprint:done'
   Q.KEYS_KINDS = {front = true, waiters = true, streams = true}
 
   -- The sprint-key kinds (the addendum): the names are this item's choice.
@@ -304,8 +307,8 @@ do
     return Q.query_probes(q) + Q.extension_probes(q)
   end
   -- sprintfn.extensionProbes: a name for each stream the dropping marks are read
-  -- of (the most a query reaches), one for next.streams, and a ZCARD for each
-  -- cell a streams query counts.
+  -- of (the most a query reaches), one for next.streams, one for each jopen
+  -- key's field, and a ZCARD for each cell a streams query counts.
   function Q.extension_probes(q)
     local total = 0
     local units = q.units or 0
@@ -319,7 +322,7 @@ do
         elseif q.kind == 'streams' then
           total = total + units
         end
-      elseif k == 'next.streams' then
+      elseif k == 'next.streams' or Q.JOPEN_FIELDS[k] ~= nil then
         total = total + 1
       end
     end
@@ -481,6 +484,11 @@ do
   -- shape's (Q.check).
   function Q.valid_extensions(q)
     if q.keys ~= nil and not Q.distinct(q.keys, function(k) return Q.QUERY_KEYS[k] == true end) then return false end
+    if q.keys ~= nil and q.kind ~= 'front' then
+      for _, k in ipairs(q.keys) do
+        if k == 'jopen:G' then return false end
+      end
+    end
     if q.counts ~= nil and not Q.distinct(q.counts, Q.valid_name, Q.MAX_COLUMNS) then return false end
     if q.missing ~= nil and type(q.missing) ~= 'boolean' then return false end
     if q.after ~= nil then
@@ -704,10 +712,14 @@ do
     return def, nil
   end
 
-  -- A line by seq (L.read_line_at): its kind, ids, about and meta.
+  -- A line by seq (L.read_line_at): its kind, ids, about and meta. Layer 2
+  -- takes the seq as a canonical decimal string and refuses REQUEST for a
+  -- number; the callers hold it as a whole number (Q.note_seq, a source's
+  -- seq), which is written here as its decimal.
   function Q.line(ctx, seq, index)
     local _, L = layers()
     if not L or not L.read_line_at then return nil, Q.fail(ctx, 'CONFIG', index) end
+    if type(seq) == 'number' then seq = string.format('%d', seq) end
     local line, err = L.read_line_at(ctx, seq, index)
     if err then return nil, Q.indexed(err, index) end
     if type(line) ~= 'table' then return nil, Q.fail(ctx, 'DRIFT', index) end
@@ -1094,7 +1106,7 @@ do
     end
     res.heads, res.left_out = Q.array(heads), Q.array(left.list)
     local keys
-    keys, err = Q.sprint_keys(ctx, q, {q.stream}, index)
+    keys, err = Q.sprint_keys(ctx, q, {q.stream}, index, res.g)
     if err then return nil, err end
     res.keys = keys
     return res, nil
@@ -1103,9 +1115,12 @@ do
   -- sprint_keys reads the sprint keys a query names (IT08's `keys`), after
   -- everything else it read, in the order named: the dropping marks of the
   -- streams the query reached (reach, in order, each once), one HMGET and none
-  -- when it reached none, and {p}next@e.streams, one HMGET of one field. nil
-  -- when the query names none, so the answer has no `keys`.
-  function Q.sprint_keys(ctx, q, reach, index)
+  -- when it reached none; {p}next@e.streams, one HMGET of one field; and a jopen
+  -- key, one HMGET of the one field its rule tests (Q.JOPEN_FIELDS): jopen:G of
+  -- the first sentinel g of a `front` (none when there is none), jopen:sprint
+  -- of the sprint's subject. nil when the query names none, so the answer has
+  -- no `keys`.
+  function Q.sprint_keys(ctx, q, reach, index, g)
     if q.keys == nil or #q.keys == 0 then return nil, nil end
     local out = {}
     for _, k in ipairs(q.keys) do
@@ -1135,6 +1150,22 @@ do
             return nil, Q.fail(ctx, 'DRIFT', index)
           end
           kr.n = d
+        end
+      elseif Q.JOPEN_FIELDS[k] ~= nil then
+        local subject = g or ''
+        if k == 'jopen:sprint' then subject = Q.SPRINT_SUBJECT end
+        if subject ~= '' then
+          local v, err = Q.hmget(ctx, Q.key(ctx, 'jopen:' .. subject), {Q.JOPEN_FIELDS[k]}, index)
+          if err then return nil, err end
+          kr.subject = subject
+          -- as J writes the field (sprintfn.jopenState): h and a note id is
+          -- held, a note id is open, anything else is DRIFT
+          local f = v[1]
+          if f then
+            if f:sub(1, 2) == 'hn' and #f > 2 then kr.state = 'held'
+            elseif f:sub(1, 1) == 'n' and #f > 1 then kr.state = 'open'
+            else return nil, Q.fail(ctx, 'DRIFT', index) end
+          end
         end
       else
         return nil, Q.fail(ctx, 'REQUEST', index)

@@ -85,11 +85,12 @@ func TestWatchDrawsInPlaceTheTableAndNothingElse(t *testing.T) {
 	}
 }
 
-// TestWatchKeepsTheLastGoodTableWithOneStaleLine: a read that fails leaves
-// the last good text standing with one `stale: <n>s` line under it, says
-// so on stderr once, and says once more when the store answers again; a
-// failure before any read draws `stale: never read`.
-func TestWatchKeepsTheLastGoodTableWithOneStaleLine(t *testing.T) {
+// TestWatchKeepsTheLastGoodTableWithOneUnreachableLine: a read that fails
+// leaves the last good text standing with one `store unreachable since
+// <time>` line under it (the time of the first failed read, the same on every
+// failing tick), says so on stderr once, and says once more when the store
+// answers again; a successful tick draws the table and no counter.
+func TestWatchKeepsTheLastGoodTableWithOneUnreachableLine(t *testing.T) {
 	t.Parallel()
 
 	ticks := make(chan time.Time)
@@ -122,11 +123,14 @@ func TestWatchKeepsTheLastGoodTableWithOneStaleLine(t *testing.T) {
 	if code := <-done; code != 0 {
 		t.Fatalf("watch exited %d", code)
 	}
-	want := clearScreen + "stale: never read\n" +
+	want := clearScreen + "store unreachable since 03:00:00\n" +
 		clearScreen + table +
-		clearScreen + table + "stale: 7s\n" +
-		clearScreen + table + "stale: 14s\n" +
+		clearScreen + table + "store unreachable since 03:00:14\n" +
+		clearScreen + table + "store unreachable since 03:00:14\n" +
 		clearScreen + table
+	if strings.Contains(out.buf.String(), "stale") {
+		t.Fatalf("watched output holds a stale counter:\n%q", out.buf.String())
+	}
 	if got := out.buf.String(); got != want {
 		t.Fatalf("watched output:\n%q\nwant:\n%q", got, want)
 	}

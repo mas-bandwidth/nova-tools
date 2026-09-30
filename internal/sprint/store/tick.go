@@ -85,6 +85,29 @@ type Machine struct {
 	Who        string        `json:"who,omitempty"`
 	StoppedFor time.Duration `json:"stopped_ns"`
 	Spans      []Span        `json:"spans,omitempty"`
+	// Cause is why a STOPPED machine stopped when it stopped itself:
+	// sprint.DoneCause when the tick's done part found the sprint done
+	// (errata 3 amendment 6). A stop by hand, a clear, and a start leave it
+	// empty; an add of work to a done sprint empties it too, as the sprint is
+	// no longer done.
+	Cause string `json:"cause,omitempty"`
+}
+
+// Done says the machine is STOPPED because the sprint is done.
+func (m Machine) Done() bool { return !m.Running() && m.Cause == sprint.DoneCause }
+
+// FirstStart is the machine's first start after a clock reading (the sprint's
+// epoch began, zero for the first epoch): the end of the first STOPPED span
+// that ends after it. Every epoch begins STOPPED (init, clear), so the span
+// open at the epoch's start ends at its first start. Zero when it has not
+// started since.
+func (m Machine) FirstStart(after time.Time) time.Time {
+	for _, sp := range m.Spans {
+		if !sp.To.IsZero() && sp.To.After(after) {
+			return sp.To
+		}
+	}
+	return time.Time{}
 }
 
 // Heartbeat is the last tick: when, how many so far, and the error of the
@@ -148,13 +171,21 @@ func (m Machine) StoppedTotal(now time.Time) time.Duration {
 // ViewState is the state text the sprint's stored view shows as its summary
 // line for the machine (docs/SPEC-SPRINT.md section 1): STOPPED alone, with
 // no counts, percent or ETA, while the machine is STOPPED (no record is
-// STOPPED); none, so the counts show, while it is RUNNING.
+// STOPPED); DONE alone while it is STOPPED because the sprint is done (errata
+// 3 amendment 6); none, so the counts show, while it is RUNNING.
 func ViewState(m Machine) string {
-	if m.Running() {
+	switch {
+	case m.Running():
 		return ""
+	case m.Done():
+		return DoneState
 	}
 	return Stopped
 }
+
+// DoneState is the view's state text, and the machine line's state, of a
+// machine STOPPED because the sprint is done.
+const DoneState = "DONE"
 
 // putMachine writes the state record and the view's state text for it in one
 // atomic step (section 14): the view's summary line and the record never
@@ -176,6 +207,9 @@ func (st *Store) putMachine(ctx context.Context, m Machine) error {
 // or STOPPED because a RUNNING machine has not ticked for MachineSilence; a
 // last tick that failed is shown with its error.
 func MachineLine(now time.Time, m Machine, hb Heartbeat) string {
+	if m.Done() {
+		return "machine: " + DoneState
+	}
 	if !m.Running() {
 		return "machine: STOPPED"
 	}
@@ -266,6 +300,17 @@ func (st *Store) SetMachine(ctx context.Context, running bool) (before, after Ma
 	if before, _, err = st.Machine(ctx); err != nil {
 		return before, before, res, err
 	}
+	if before.Running() == running && before.Cause != "" {
+		// A stop of a machine STOPPED by itself (the sprint done) keeps it
+		// STOPPED and takes the cause off: it is a stop by hand now, and the
+		// view says STOPPED. No span opens and no note is written.
+		after = before
+		after.Cause = ""
+		if err := st.putMachine(ctx, after); err != nil {
+			return before, before, res, err
+		}
+		return before, after, res, nil
+	}
 	if before.Running() == running {
 		// The record is not written; the view's state is written again from
 		// it, so a view that lost its state (or was stored before it had
@@ -293,7 +338,7 @@ func (st *Store) SetMachine(ctx context.Context, running bool) (before, after Ma
 		}
 		after.State = Stopped
 	}
-	after.Since, after.Who = now, st.Actor
+	after.Since, after.Who, after.Cause = now, st.Actor, ""
 	if err := st.putMachine(ctx, after); err != nil {
 		return before, before, res, err
 	}
@@ -325,6 +370,11 @@ type TickResult struct {
 	Stale    string         `json:"stale,omitempty"`
 	Halted   string         `json:"halted,omitempty"`
 	Due      int            `json:"due,omitempty"`
+	// Done is the words of "the sprint is done" when this tick's done part
+	// found the sprint done and stopped the machine (errata 3 amendment 6),
+	// and Hint what to do next.
+	Done string `json:"done,omitempty"`
+	Hint string `json:"hint,omitempty"`
 }
 
 // Moved is every line the tick's parts moved.
@@ -441,7 +491,7 @@ func (st *Store) Tick(ctx context.Context) (TickResult, error) {
 		return res, st.putJSON(ctx, keyHeartbeat, hb)
 	}
 	seen, err := st.tick(ctx, m, hb, &res)
-	if err == nil && res.Halted == "" {
+	if err == nil && res.Halted == "" && res.Done == "" {
 		// The reminder duty is a part too: it begins only while RUNNING.
 		if halted, herr := st.halted(ctx, &res, "remind"); herr != nil {
 			err = herr
@@ -645,7 +695,7 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 		return last, err
 	}
 	at := snap.Epoch
-	req := sprint.TickReq{Who: sprint.MachineActor, Stopped: m.StoppedBetween, Beats: beats}
+	req := sprint.TickReq{Who: sprint.MachineActor, Stopped: m.StoppedBetween, Beats: beats, Started: m.FirstStart(snap.Cleared)}
 	dirty := false // something ran: every later part runs on a fresh read
 	for _, part := range sprint.TickParts {
 		if !dirty {
@@ -659,7 +709,21 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 			return unfinished, nil
 		}
 		due := 0
-		r, err := st.Run(ctx, TickPartStep(part.Name, part.Fn, req, &at, nil, &due))
+		fn := part.Fn
+		var done *sprint.Note
+		if part.Name == sprint.PartDone {
+			// the note of the plan the step applied: the last one planned
+			fn = func(s *sprint.Snapshot, r sprint.TickReq) (sprint.Plan, int) {
+				p, d := part.Fn(s, r)
+				done = nil
+				if len(p.Notes) > 0 {
+					n := p.Notes[0]
+					done = &n
+				}
+				return p, d
+			}
+		}
+		r, err := st.Run(ctx, TickPartStep(part.Name, fn, req, &at, nil, &due))
 		dirty = true
 		var cleared *ClearedError
 		if errors.As(err, &cleared) {
@@ -676,6 +740,14 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 		}
 		if err != nil {
 			return last, fmt.Errorf("tick %s: %w", part.Name, err)
+		}
+		if done != nil && r.Notes > 0 && !r.Lost {
+			// The sprint is done: the machine stops itself as the part's step
+			// commits, and the tick ends here (errata 3 amendment 6).
+			if err := st.stopDone(ctx, *done, res); err != nil {
+				return last, fmt.Errorf("tick %s: stopping the machine: %w", part.Name, err)
+			}
+			break // the last part: nothing runs after it
 		}
 		res.Due += due
 		if r.Lost {
@@ -844,4 +916,104 @@ func (st *Store) clearedUnder(ctx context.Context, res *TickResult) bool {
 	}
 	res.Stale = fmt.Sprintf("the sprint was cleared during the tick (epoch %d): the tick stops here", st.epoch)
 	return true
+}
+
+// stopDone stops the machine because the sprint is done, as the done part's
+// step commits (errata 3 amendment 6; sprint.TickDone): the record STOPPED
+// with the cause sprint.DoneCause and a STOPPED span opened, the view's state
+// DONE, in one write; then the coordinator's goal route, when the coordinator
+// has a goal, is pushed the note, once. The tick's result says it. A record
+// written by a stop or a clear since the tick read it is left as it is.
+func (st *Store) stopDone(ctx context.Context, n sprint.Note, res *TickResult) error {
+	m, _, err := st.Machine(ctx)
+	if err != nil {
+		return err
+	}
+	res.State, res.Done, res.Hint = Stopped, n.What, n.Hint
+	if !m.Running() {
+		return nil
+	}
+	now := st.now()
+	after := m
+	after.Spans = append(append([]Span(nil), m.Spans...), Span{From: now})
+	if len(after.Spans) > MaxStopSpans {
+		after.Spans = after.Spans[len(after.Spans)-MaxStopSpans:]
+	}
+	after.State, after.Since, after.Who, after.Cause = Stopped, now, sprint.MachineActor, sprint.DoneCause
+	if err := st.putMachine(ctx, after); err != nil {
+		return err
+	}
+	return st.pushDone(ctx, n, res)
+}
+
+// pushDone delivers "the sprint is done" down the route of the goal of the
+// one it is addressed to (the coordinator), when they have a goal: the text
+// the route carries is the note's, with the hint, and the goal's pushes are
+// not counted. A route that fails is refused on the tick's result, as a
+// reminder's is; the note stays in the inbox either way.
+func (st *Store) pushDone(ctx context.Context, n sprint.Note, res *TickResult) error {
+	if n.To == "" {
+		return nil
+	}
+	g, err := st.Goals(ctx)
+	if err != nil {
+		return err
+	}
+	i := g.Find(n.To)
+	if i < 0 {
+		return nil
+	}
+	p := g.People[i]
+	epoch, err := st.workEpoch(ctx)
+	if err != nil {
+		return err
+	}
+	r := Reminder{N: p.Count, To: p.Name, At: st.now(), Epoch: epoch,
+		Text: sprint.NSprintDone + ": " + n.What + "\n" + n.Hint + "\n"}
+	part := PartResult{Name: "remind", Result: Result{Verb: "tick remind"}}
+	d, err := NewDeliverer(p.Route)
+	if err == nil {
+		err = d.Deliver(r)
+	}
+	if err != nil {
+		part.Refused = append(part.Refused, sprint.Refusal{Key: p.Name, Why: "the sprint is done, pushed over " + p.Route + ", failed: " + err.Error()})
+	} else {
+		part.Moved = append(part.Moved, fmt.Sprintf("DONE to %s over %s", p.Name, p.Route))
+	}
+	res.Parts = append(res.Parts, part)
+	return nil
+}
+
+// SinceFirstStart is the wall time from the machine's first start of the
+// sprint's epoch to the clock's reading; false when it has not started in
+// this epoch, or the records are not read.
+func (st *Store) SinceFirstStart(ctx context.Context) (time.Duration, bool) {
+	m, _, err := st.Machine(ctx)
+	if err != nil {
+		return 0, false
+	}
+	es, err := st.EpochNow(ctx)
+	if err != nil {
+		return 0, false
+	}
+	first, now := m.FirstStart(es.Cleared), st.now()
+	if first.IsZero() || now.Before(first) {
+		return 0, false
+	}
+	return now.Sub(first), true
+}
+
+// undone takes the cause off a machine STOPPED because the sprint was done
+// once work is added to the sprint: it stays STOPPED, and the view says
+// STOPPED, until the coordinator starts it (errata 3 amendment 6).
+func (st *Store) undone(ctx context.Context) error {
+	if _, ok := st.B.(KV); !ok {
+		return nil
+	}
+	m, _, err := st.Machine(ctx)
+	if err != nil || !m.Done() {
+		return err
+	}
+	m.Cause = ""
+	return st.putMachine(ctx, m)
 }

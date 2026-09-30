@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -208,15 +209,45 @@ func Add(s *Snapshot, r AddReq) Plan {
 			modOf(mods, st).unreach = in[0].id // it waits for them by their place
 		}
 	}
+	// The cycle check walks what the cards would wait for with the add in
+	// place: the needs they name, and the needs of their places in line (a
+	// card behind a sentinel needs it; a sentinel needs every card of its
+	// stream before it). Only a cycle through a card the add places or
+	// changes is one it closes (errata 3 amendment 7; design section 3, add).
 	edges := map[string][]string{}
+	var placed []*Card
+	var roots []string
 	for _, a := range in {
 		edges[a.id] = a.needs
+		col := Ready
+		if a.behind != "" || a.gate || r.Sentinel {
+			col = Waiting
+		}
+		for _, n := range a.needs {
+			if s.StateOf(n) != Landed {
+				col = Waiting
+			}
+		}
+		fields := map[string]string{"kind": "primary"}
+		if a.gate || r.Sentinel {
+			fields["kind"] = "sentinel"
+		}
+		placed = append(placed, &Card{ID: a.id, Row: r.Stream, Col: col, Score: a.score, Fields: fields})
+		roots = append(roots, a.id)
 	}
+	var changed []string
 	for id, m := range mods {
 		edges[id] = m.needs
+		changed = append(changed, id)
 	}
-	if cycle := NeedsCycle(s, edges); cycle != nil {
-		return refuseAll("the needs would make a cycle: " + strings.Join(cycle, " needs ") + "; nothing is written")
+	sort.Strings(changed)
+	waits := map[string]bool{}
+	for _, id := range pulled {
+		waits[id] = true
+	}
+	g := newNeedGraph(s, edges, placed, waits)
+	if cycle := g.closes(append(roots, changed...)); cycle != nil {
+		return refuseAll("the needs would make a cycle: " + g.tellLoop(cycle) + "; nothing is written")
 	}
 	if len(pulled) > 0 {
 		p.inserting = true
@@ -350,55 +381,6 @@ func admits(p Plan) bool {
 		}
 	}
 	return false
-}
-
-// NeedsCycle is a cycle the needs would make with the edges given (a primary
-// -> its needs, in place of its own), as the path around it from its first
-// primary back to it; nil when there is none.
-func NeedsCycle(s *Snapshot, edges map[string][]string) []string {
-	needsOf := func(id string) []string {
-		if n, ok := edges[id]; ok {
-			return n
-		}
-		c := s.Work.Card(id)
-		return append(Split(c.F("needs")), PositionWaits(s, c, nil)...)
-	}
-	var path []string
-	on, done := map[string]bool{}, map[string]bool{}
-	var visit func(id string) []string
-	visit = func(id string) []string {
-		if on[id] {
-			for i, x := range path {
-				if x == id {
-					return append(append([]string{}, path[i:]...), id)
-				}
-			}
-		}
-		if done[id] {
-			return nil
-		}
-		on[id] = true
-		path = append(path, id)
-		for _, n := range needsOf(id) {
-			if c := visit(n); c != nil {
-				return c
-			}
-		}
-		on[id], done[id] = false, true
-		path = path[:len(path)-1]
-		return nil
-	}
-	ids := make([]string, 0, len(edges))
-	for id := range edges {
-		ids = append(ids, id)
-	}
-	sort.Strings(ids)
-	for _, id := range ids {
-		if c := visit(id); c != nil {
-			return c
-		}
-	}
-	return nil
 }
 
 // WaitsFor is what a primary still waits for: its needs that have not landed
@@ -625,39 +607,63 @@ type DealReq struct {
 }
 
 // Deal moves ready -> working: for each primary, in work order, its work
-// card is dealt to the up member with the shortest ready queue. A card
-// withdrawn because no member was up is the same card dealt again at a new
-// generation, its attempt unchanged; otherwise the next attempt's card is cut.
-func Deal(s *Snapshot, r DealReq) Plan { return Lawful(dealPlan(s, r)) }
+// card is dealt to the next member round the fleet (round.go, errata 3
+// amendment 5): the first from the rolling index, wrapping, that is up with
+// fewer than MaxReadyPerMember ready cards, or, when none has room, the first
+// up; the index (the fleet table's deal_index) moves past the member dealt
+// to, written with the deal. A card withdrawn because no member was up is the
+// same card dealt again at a new generation, its attempt unchanged; otherwise
+// the next attempt's card is cut.
+func Deal(s *Snapshot, r DealReq) Plan {
+	rr := dealRound(s)
+	p, moves := dealPlan(s, r, rr)
+	p = Lawful(p)
+	roundWrites(&p, rr, moves)
+	return p
+}
 
-func dealPlan(s *Snapshot, r DealReq) Plan {
+func dealPlan(s *Snapshot, r DealReq, rr *round) (Plan, roundMoves) {
 	var p Plan
+	moves := roundMoves{}
 	chosen := pick(&p, r.Sel, s.Work.Column(Ready), rowOf, func(c *Card) string { return inState(c, Ready) }, s.primaryCard)
 	up := s.UpMembers()
 	if len(up) == 0 {
 		for _, c := range chosen {
 			p.refuse(c.ID, "no fleet member is up: a member is up while its machine beats; start nova-sprint fleet beat <member> on a machine, or release a hold with nova-sprint fleet up <member>")
 		}
-		return p
+		return p, moves
 	}
 	q := readyQueues(s, up)
+	next := func() string {
+		m := rr.member(up, q, MaxReadyPerMember, "")
+		if m == "" {
+			m = rr.member(up, q, math.MaxInt, "")
+		}
+		return m
+	}
 	for _, c := range chosen {
 		if wc := s.Fleet.Placed(WorkCardID(c.ID, c.Int("attempt"))); wc != nil && wc.Col == Withdrawn {
 			if wc.Int("redeals") >= MaxRedeals {
 				p.refuse(c.ID, fmt.Sprintf("%s was redealt %d times, its bound: rework it with a fix, or drop it", wc.ID, wc.Int("redeals")))
 				continue
 			}
-			p.Units = append(p.Units, redeal(s, c, wc, up, q))
+			m := next()
+			rr.moved(m)
+			moves[c.ID] = m
+			p.Units = append(p.Units, redeal(s, c, wc, m, q))
 			continue
 		}
-		u, why := deal(s, c, c.F("fix"), up, q, nil)
+		m := next()
+		u, why := deal(s, c, c.F("fix"), m, q, nil)
 		if why != "" {
 			p.refuse(c.ID, why)
 			continue
 		}
+		rr.moved(m)
+		moves[c.ID] = m
 		p.Units = append(p.Units, u)
 	}
-	return p
+	return p, moves
 }
 
 // readyQueues is the up members' ready queue lengths.
@@ -670,15 +676,15 @@ func readyQueues(s *Snapshot, up []string) map[string]int {
 }
 
 // deal cuts the primary's next attempt's work card, carrying the fix and the
-// primary's score, into the ready queue of the up member with the shortest
-// queue, at generation 1, and moves the primary to working with set.
-func deal(s *Snapshot, c *Card, fix string, up []string, q map[string]int, set map[string]string, unset ...string) (Unit, string) {
+// primary's score, into the ready queue of the up member m (the deal's next
+// round the fleet, a rework's the shortest queue), at generation 1, and moves
+// the primary to working with set.
+func deal(s *Snapshot, c *Card, fix, m string, q map[string]int, set map[string]string, unset ...string) (Unit, string) {
 	attempt := c.Int("attempt") + 1
 	card := WorkCardID(c.ID, attempt)
 	if s.Fleet.Card(card) != nil {
 		return Unit{}, "work card " + card + " exists already"
 	}
-	m := shortest(up, q)
 	q[m]++
 	fields := map[string]string{"kind": "work", "primary": c.ID, "stream": c.Row, "attempt": itoa(attempt), "gen": "1", "member": m,
 		"dealt": stamp(s.Now), "first_dealt": stamp(s.Now), "untaken_since": stamp(s.Now)}
@@ -696,11 +702,10 @@ func deal(s *Snapshot, c *Card, fix string, up []string, q map[string]int, set m
 }
 
 // redeal deals a withdrawn work card again, into the ready queue of the up
-// member with the shortest queue, at a new generation bound to that member,
-// and moves its primary to working on it. The attempt, the fix and the score
-// are the card's own, unchanged.
-func redeal(s *Snapshot, c, wc *Card, up []string, q map[string]int) Unit {
-	m := shortest(up, q)
+// member m (the deal's next round the fleet), at a new generation bound to that
+// member, and moves its primary to working on it. The attempt, the fix and the
+// score are the card's own, unchanged.
+func redeal(s *Snapshot, c, wc *Card, m string, q map[string]int) Unit {
 	q[m]++
 	set := nextGen(wc, m, s.Now)
 	set["redeals"] = itoa(wc.Int("redeals") + 1)
