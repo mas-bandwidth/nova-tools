@@ -151,7 +151,7 @@ func Unheld(h HeldState, now time.Time) []Finding {
 		out = append(out, Finding{Subject: id, Stream: pr.Row, What: hd.Place, Why: hd.Why, Root: hd.Root, Decisions: c.decisions(pr)})
 	}
 	out = append(out, c.overdueUnmarked()...)
-	for _, st := range s.Merge.Rows {
+	for _, st := range s.Merge.Rows() {
 		ctl := s.StreamCtl(st)
 		if ctl.F("state") != StreamStopped || c.openOn(StreamSubject(st)) || c.tickStream[st] != "" {
 			continue

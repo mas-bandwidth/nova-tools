@@ -29,8 +29,26 @@ The view shows work, readers, merge, fleet in that order. The one line under
 the title is the word `STOPPED` when the machine is stopped, and the summary
 line (landed / all primaries, percent, ETA, with no machine text) when it is
 running; a RUNNING machine that has not ticked for 5 s shows
-`STOPPED (no tick for Ns)`. The coordinator is not printed in the view
-(`where --json` carries it). Every count cell is an ordered set.
+`STOPPED (no tick for Ns)`. Every count cell is an ordered set.
+
+A frame of the view holds the time, the words `SPRINT TABLE`, that line and the
+tables, and nothing else: no pending operation, no stalled stream, no line about
+the people and no coordinator (`where --json` carries them; `check`, `inbox` and
+`goal show` say the same in their own words). The merge table has no `since`
+column. A table with no rows is not shown, and a stream with no cards in any
+column is not shown in the work and merge tables; each shows again when it has
+a row. A row's first cell is its identity. `where --watch` redraws the frame in
+place once a second (`--every`, any duration above 0): the cursor is hidden
+while it watches and restored when it ends or is interrupted (SIGINT or
+SIGTERM: exit 0); each frame is built whole and written with one write, however
+large, from the top of the screen, every line cleared to its end and the screen
+below the frame cleared, so a shorter frame leaves nothing behind. Nothing
+scrolls, at any size of the screen: a frame taller than the screen is cut at the
+bottom, and nothing is added to say so; a line is cut to one column less than
+the screen is wide; and where the size of the screen cannot be read (the output
+is not a terminal) the frame is written whole. `where` without `--watch` prints
+one frame, whole; `where --json --watch` prints one object a second and draws
+nothing.
 
 Each table keeps its member records under a prefix of its own, so a primary's
 record in work and its record in merge are separate. One deployment's tables,
@@ -447,7 +465,7 @@ machine was STOPPED is not counted, so a sprint stopped for hours shows
 nothing overdue because of those hours. Each stream has `since` (the last change of its state) and `progress`
 (the last change of its state or of any of its counts); a stream that has not
 landed and whose progress is older than its deadline is shown as stalled by
-inbox and where. A stream with nothing on the table (every primary dropped,
+inbox (and by `where --json`). A stream with nothing on the table (every primary dropped,
 or restored empty by a clear) is waiting with no `since` and is never stale.
 This is pull visibility; nothing claims to detect a dead process.
 
@@ -562,7 +580,7 @@ epoch's record of results; teardown removes those records with the epoch. A
 writer whose operation another writer finished (the tick, another verb,
 repair) reports the recorded result, as a replay, and is never told it was
 cut. A step that loses every attempt to other writers says so and applied
-nothing. `check` and `where` show a pending operation. The model
+nothing. `check` shows a pending operation (`where --json` carries it). The model
 includes the cut between every two phases. A multi-table batch in the table
 layer retires this section.
 
@@ -634,7 +652,7 @@ command that loads it.
 | queue --as, take | a member's or a reader's cards, each with its packet: what it is handed so that it needs no other read to learn its task (the card, its epoch and generation, the brief, this attempt's fix, the notes on it, and for a work card the branch to work on, `sprint/<prefix><card>`, and the one to start from, the attempt before's branch for a rework; for a read card the work it reads: the worker, its head, branch and base, and the worker's report), and the command that reports it; take prints the packets of the cards it took, `--json` as `packets`; finish takes `--branch` and `--base`, which the work card keeps and the reader's packet and card show |
 | log | the epoch's log, every line in order: --card (a primary with its work, read and merge cards), --stream, --member, --since, --at-epoch, --json (section 17) |
 | check, repair | section 9 and section 10 |
-| where | the view, once or `--watch`, with a pending operation and stalled streams |
+| where | the view, once or `--watch` (redrawn in place, section 1); `--json` also carries the pending operation, the stalled streams, the people and the coordinator |
 | play | plays the world outside the table through these verbs, seeded (section 12); refused while no machine is running |
 | goal | `set`, `show`, `drop`: each person's goal and route, pushed by the tick (section 15) |
 | clear | stops the sprint and clears all work in it: a new epoch (section 13); `--confirm <prefix>` |
@@ -657,9 +675,11 @@ current epoch.
 (`--seed`) so a run repeats: workers taking and finishing work cards (`--fail`),
 readers reporting read cards (`--broken`), each stream's merge step with its
 facts (`--batch`, `--stuck`, `--cross`, `--red`), members going down and up
-(`--flap`: a member's machine falls silent, stops beating, and beats again
-later; `--hold` plays those as the coordinator's hold instead;
-`--silent <member>@<from>+<for>` silences one member for a while). The driver
+(`--down`: a member's machine that is up falls silent and stops beating;
+`--up`: one that is down beats again; `--flap` is `--down` and `--up` with the
+one chance; `--hold` plays the downs as the coordinator's hold instead;
+`--silent <member>@<from>+<for>` silences one member for a while). A machine
+that is down takes no work; when it comes back it takes work again. The driver
 beats every member it plays. The mechanical moves are the machine's (section 14): the driver
 plays only the outside actors, and refuses to play (exit 2) while no machine is
 running. Everything it does is a nova-sprint verb run
@@ -670,11 +690,32 @@ start, stop, tick or run. It keeps running while
 things wait for the coordinator, says what waits and for how long, tolerates
 the coordinator writing at the same time, and stops when every stream has
 landed (every primary on the table landed). It reads a stream's merge queue just before that stream's merge step,
-and the other streams' queues only when a fact needs them; `--flap` silences an
-up member's machine and brings a silent one back with the same chance; with
+and the other streams' queues only when a fact needs them; `--down` silences an
+up member's machine and `--up` brings a silent one back; with
 `--hold` the driver releases every hold it took before it stops. Its facts come through one interface (a worker's result, a reader's
 finding, a merge batch's outcome, which members are up); the seeded source is
 one implementation.
+
+`play --simulation` is the simulation that stresses the sprint, six locked
+chances: a reader finds the work broken, 10 percent (`--broken 0.10`); work
+comes back not ok from the fleet, 10 percent (`--fail 0.10`); a merge needs
+help from the coordinator within its stream, 10 percent (`--stuck 0.10`); a
+merge needs help across streams, 1 percent (`--cross 0.01`); a machine that is
+up goes down, 1 percent each second (`--down 0.01`); a machine that is down
+comes back, 10 percent each second (`--up 0.10`). `--simulation` sets all six,
+and a chance flag given beside it (before or after) sets that one chance and no
+other; `--red` is not one of the six and stays as it is. A chance is per report
+(`--broken`, `--fail`: drawn each time a card is reported, so a card reworked
+and reported again draws again), per merge batch (`--stuck`, `--cross`,
+`--red`) or per member and second (`--down`, `--up`, `--flap`): a tick of
+another `--every` than a second draws the chance of at least one such event in
+that time. The draws come from the seed; play prints the chances its seeded
+source draws with, once it may play and before its first tick (`chances:
+broken=0.1 ... red=0 seed=1 every=1s`; at another `--every`, `down` and `up`
+are the chance of one tick, not the flags' own). A play that is refused prints
+nothing on stdout. A chance outside 0 to 1 is refused. The state of which
+machines are down is the play process's: a play run again starts with every
+machine up.
 
 ## 13. Epochs and clear
 
@@ -806,8 +847,8 @@ is set or the machine starts; nothing is pushed while it is STOPPED. The file
 route replaces one file with a header line (`REMINDER <n> to <name> at <time>,
 sprint <prefix>, epoch <n>`) and the text, whole, so a watcher of the file sees
 one current reminder. A route that fails is one judgment, "a reminder could not
-be delivered", closed when a later delivery arrives. `where` shows each
-person's last push. The people and their goals are the sprint's, not the
+be delivered", closed when a later delivery arrives. `goal show` shows each
+person's last push (`where --json` carries it). The people and their goals are the sprint's, not the
 epoch's: a clear keeps them and resets their pushes.
 
 ## 16. Sentinel cards
@@ -843,7 +884,7 @@ the same reading. A sentinel is never dealt, read or merged. When what it
 waits for has landed, been dropped or been waived, the step that ended the
 last of it (or the tick, as the backstop) marks it reached and writes one
 judgment. Only `release <id> --reason <text>`, by the sprint's coordinator
-(`init --coordinator`, shown by `where`), lands it; the same step moves what
+(`init --coordinator`; `where --json` carries it), lands it; the same step moves what
 waited behind it, up to the next sentinel, to ready as one set, marks reached
 any sentinel now due, and always writes a notification that it landed. A need
 it names that is dropped blocks it like any waiting card; ack waives the need.

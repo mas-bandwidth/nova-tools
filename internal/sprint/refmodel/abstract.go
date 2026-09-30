@@ -32,17 +32,17 @@ type Observed struct {
 // clock's and are left out.
 func Abstract(o Observed) State {
 	s := o.Snap
-	a := New(s.Readers.Rows, s.Fleet.Rows, "")
+	a := New(s.Readers.Rows(), s.Fleet.Rows(), "")
 	a.Epoch = s.Epoch
 	a.Pending = o.Pending
 	a.Machine = o.Machine
-	for _, m := range s.Fleet.Rows {
+	for _, m := range s.Fleet.Rows() {
 		a.Members[m] = Down
 		if ctl := s.MemberCtl(m); ctl != nil && ctl.F("status") == sprint.Up {
 			a.Members[m] = Up
 		}
 	}
-	for _, st := range s.Work.Rows {
+	for _, st := range s.Work.Rows() {
 		x := Stream{State: SWaiting}
 		if ctl := s.StreamCtl(st); ctl != nil {
 			x.State = ctl.F("state")
@@ -52,7 +52,8 @@ func Abstract(o Observed) State {
 		}
 		a.Streams[st] = x
 	}
-	for id, c := range s.Work.Cards {
+	for _, c := range s.Work.Cards() {
+		id := c.ID
 		k := c.F("kind")
 		if k != KindPrimary && k != KindSentinel {
 			continue
@@ -89,7 +90,8 @@ func Abstract(o Observed) State {
 			a.Primaries[id] = p
 		}
 	}
-	for id, c := range s.Fleet.Cards {
+	for _, c := range s.Fleet.Cards() {
+		id := c.ID
 		if c.F("kind") != "work" {
 			continue
 		}
@@ -111,7 +113,8 @@ func Abstract(o Observed) State {
 		}
 		a.Work[id] = w
 	}
-	for id, c := range s.Readers.Cards {
+	for _, c := range s.Readers.Cards() {
+		id := c.ID
 		if c.F("kind") != "read" {
 			continue
 		}
@@ -121,7 +124,8 @@ func Abstract(o Observed) State {
 		}
 		a.Reads[id] = r
 	}
-	for id, c := range s.Merge.Cards {
+	for _, c := range s.Merge.Cards() {
+		id := c.ID
 		if c.F("kind") != "merge" {
 			continue
 		}

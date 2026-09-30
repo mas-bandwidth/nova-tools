@@ -94,7 +94,7 @@ func TestAStepIsSplitByBytes(t *testing.T) {
 		t.Fatalf("moved %d", len(res.Moved))
 	}
 	n := 0
-	for _, c := range h.snap().Work.Cards {
+	for _, c := range h.snap().Work.Cards() {
 		if strings.HasPrefix(c.ID, "s2-") {
 			n++
 		}

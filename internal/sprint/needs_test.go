@@ -95,7 +95,7 @@ func TestAddRefusesACycle(t *testing.T) {
 	w := setup(t, 0)
 	// b needs c needs x (a state no verb makes today; a sentinel admitted
 	// before a card can): an x admitted needing b closes a cycle of three.
-	w.s.Work.Rows = append(w.s.Work.Rows, "s9")
+	w.s.Work.SetRows(append(w.s.Work.Rows(), "s9"))
 	w.s.Work.Put(&Card{ID: "c", Row: "s9", Col: Waiting, Score: 1, Rev: 1, Fields: map[string]string{"needs": "x"}})
 	w.s.Work.Put(&Card{ID: "b", Row: "s9", Col: Waiting, Score: 2, Rev: 1, Fields: map[string]string{"needs": "c"}})
 	p := Add(w.s, AddReq{Stream: "s9", IDs: []string{"x"}, Needs: []string{"b"}})

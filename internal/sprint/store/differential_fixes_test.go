@@ -134,7 +134,7 @@ func TestARefusedAddWritesNothing(t *testing.T) {
 	}
 	s := h.snap()
 	if s.Work.HasRow("s2") || s.Merge.HasRow("s2") || h.m.Revision("t-work") != before {
-		t.Fatalf("the refused add declared s2: work %v merge %v", s.Work.Rows, s.Merge.Rows)
+		t.Fatalf("the refused add declared s2: work %v merge %v", s.Work.Rows(), s.Merge.Rows())
 	}
 }
 

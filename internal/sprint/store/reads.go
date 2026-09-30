@@ -37,7 +37,7 @@ func (st *Store) ReadCells(ctx context.Context, logical, row string, cols ...str
 	}
 	t := sprint.NewTable(logical)
 	t.Revision = shape.Revision
-	t.Rows = []string{row}
+	t.SetRows([]string{row})
 	if err := st.readInto(ctx, t, ids[name], false); err != nil {
 		return nil, err
 	}

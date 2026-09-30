@@ -57,7 +57,8 @@ func AddIDs(s *Snapshot, r AddReq) []string {
 	}
 	high, gates := 0, 0
 	prefix, gp := r.Stream+"-", gatePrefix(r.Stream)
-	for id := range s.Work.Cards {
+	for _, c := range s.Work.Cards() {
+		id := c.ID
 		if n, err := strconv.Atoi(strings.TrimPrefix(id, prefix)); err == nil && strings.HasPrefix(id, prefix) && n > high {
 			high = n
 		}
@@ -1025,7 +1026,7 @@ func fleetStepPlan(s *Snapshot, r FleetReq) Plan {
 			}
 		}
 		if comeUp {
-			level(s, &p, orderLike(s.Fleet.Rows, append(liveFor(s, r), r.Member), r.Member))
+			level(s, &p, orderLike(s.Fleet.Rows(), append(liveFor(s, r), r.Member), r.Member))
 		}
 		headOf(&p, r.Member, head, n, line)
 	case "down", "hold":

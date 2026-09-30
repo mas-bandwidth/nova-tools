@@ -150,11 +150,14 @@ func nonEmpty(m map[string]string) map[string]string {
 }
 
 // unsetPresent keeps the unset names the card has: unsetting an absent field
-// is a no-op the manifest need not carry.
+// is a no-op the manifest need not carry. The card is asked through Has, as
+// every read of a field is, so that on a card loaded from a read plan a field
+// the plan did not load is refused and never taken for an absent one (which
+// would drop the unset): a rule that unsets a field projects it.
 func unsetPresent(c *Card, names []string) []string {
 	var out []string
 	for _, n := range names {
-		if _, ok := c.Fields[n]; ok {
+		if c.Has(n) {
 			out = append(out, n)
 		}
 	}
@@ -331,6 +334,11 @@ func otherEpochAnswer(s *Snapshot, id string, e uint64) string {
 	}
 	return fmt.Sprintf("--answers %s names a judgment of epoch %d; the sprint was cleared at %s and its epoch is now %d; the whole step is refused and nothing was changed; run: nova-sprint inbox", id, e, when, s.Epoch)
 }
+
+// Applied is what the store applies of a step's plan: the plan held to the
+// lifecycle (Lawful) and to one judgment per cause (OnePerCause), on the
+// state the step read.
+func Applied(s *Snapshot, p Plan) Plan { return OnePerCause(s, Lawful(p)) }
 
 // OnePerCause keeps a judgment open once per card and cause: a note of a
 // plan that would open a judgment of a type already open on a subject (and

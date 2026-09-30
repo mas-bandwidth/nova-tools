@@ -14,6 +14,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/seatcred"
+	"github.com/mas-bandwidth/nova-tools/internal/tty"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -141,7 +142,7 @@ func (app *application) cmdShell(args []string, stdout, stderr io.Writer) int {
 	}
 	interactive := false
 	if f, ok := in.(*os.File); ok {
-		interactive = shellTerminal(f)
+		interactive = tty.IsTerminal(f)
 	}
 	keepGoing := fs.Bool("keep-going", interactive, "continue after errors; final exit still reports failure (default true on a terminal)")
 	pos, err := parseInterleaved(fs, args)

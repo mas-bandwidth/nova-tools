@@ -7,9 +7,9 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
-// H7: through the command: init names the coordinator, where shows it,
-// release is refused for another actor and without a reason, and card of a
-// sentinel lists what it needs and who needs it.
+// H7: through the command: init names the coordinator, where --json carries it
+// and the where frame does not, release is refused for another actor and
+// without a reason, and card of a sentinel lists what it needs and who needs it.
 func TestReleaseIsTheCoordinators(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)

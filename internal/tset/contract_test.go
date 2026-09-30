@@ -14,9 +14,14 @@ const missingTSetLogReason = "Layer 2's fragment not landed"
 // The source assembler wraps an embedded-FS PathError. An absent different
 // fragment, an empty fragment, and a load error must remain test failures.
 func missingTSetLogFragment(err error) bool {
-	var pathErr *fs.PathError
-	return errors.As(err, &pathErr) && pathErr.Path == "lua/table_set_log.lua" &&
-		errors.Is(pathErr.Err, fs.ErrNotExist)
+	// Follow only a single cause chain. A joined error can contain an
+	// unrelated failure and must never defer the test.
+	for ; err != nil; err = errors.Unwrap(err) {
+		if pathErr, ok := err.(*fs.PathError); ok {
+			return pathErr.Path == "lua/table_set_log.lua" && pathErr.Err == fs.ErrNotExist
+		}
+	}
+	return false
 }
 
 func requireTSetLogFragment(t *testing.T) {
@@ -42,6 +47,13 @@ func TestMissingTSetLogFragmentClassifier(t *testing.T) {
 		{"bare missing error without path", fs.ErrNotExist, false},
 		{"wrapped real log absence", fmt.Errorf("read lua/table_set_log.lua: %w",
 			&fs.PathError{Op: "open", Path: "lua/table_set_log.lua", Err: fs.ErrNotExist}), true},
+		{"missing log joined with unrelated failure", errors.Join(
+			&fs.PathError{Op: "open", Path: "lua/table_set_log.lua", Err: fs.ErrNotExist},
+			errors.New("unrelated failure")), false},
+		{"unrelated failure joined with missing log", errors.Join(errors.New("unrelated failure"),
+			&fs.PathError{Op: "open", Path: "lua/table_set_log.lua", Err: fs.ErrNotExist}), false},
+		{"log path with joined causes", &fs.PathError{Op: "open", Path: "lua/table_set_log.lua",
+			Err: errors.Join(fs.ErrNotExist, fs.ErrPermission)}, false},
 		{"another missing fragment", fmt.Errorf("read lua/table_set_read.lua: %w",
 			&fs.PathError{Op: "open", Path: "lua/table_set_read.lua", Err: fs.ErrNotExist}), false},
 		{"permission error", &fs.PathError{Op: "open", Path: "lua/table_set_log.lua", Err: fs.ErrPermission}, false},

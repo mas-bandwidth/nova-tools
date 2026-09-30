@@ -70,7 +70,7 @@ func AskStep(r sprint.AskReq) Step {
 		Extras: func(s *sprint.Snapshot) map[string][]string {
 			var ids []string
 			for _, c := range s.Work.Column(sprint.Review) {
-				for _, rd := range s.Readers.Rows {
+				for _, rd := range s.Readers.Rows() {
 					ids = append(ids, sprint.ReadCardID(c.ID, c.Int("attempt"), rd))
 				}
 			}

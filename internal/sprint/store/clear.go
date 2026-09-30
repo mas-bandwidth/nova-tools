@@ -116,7 +116,7 @@ func (st *Store) Clear(ctx context.Context) (ClearResult, error) {
 
 func placed(t *sprint.Table, except string) int {
 	n := 0
-	for _, c := range t.Cards {
+	for _, c := range t.Cards() {
 		if c.Placed() && c.Col != except {
 			n++
 		}

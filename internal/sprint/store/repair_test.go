@@ -48,9 +48,9 @@ func TestEverySubjectOfALargeJudgmentStaysOpen(t *testing.T) {
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 60}))
 	h.must(DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: 60}}))
 	var ids []string
-	for id, c := range h.snap().Work.Cards {
+	for _, c := range h.snap().Work.Cards() {
 		if c.Col == sprint.Working {
-			ids = append(ids, id)
+			ids = append(ids, c.ID)
 		}
 	}
 	if len(ids) != 60 {
