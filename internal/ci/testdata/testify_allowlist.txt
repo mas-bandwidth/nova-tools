@@ -48,7 +48,7 @@ internal/cairn:assert 79 bare assertions to convert to testify
 internal/cardhdr:assert 46 bare assertions to convert to testify
 internal/check:assert 419 bare assertions to convert to testify
 internal/check:env 1 t.Setenv and Chdir sites to inject through config
-internal/ci:assert 1301 bare assertions to convert to testify
+internal/ci:assert 1274 bare assertions to convert to testify
 internal/ci/allowlist:assert 38 bare assertions to convert to testify
 internal/ci/functional:assert 9 bare assertions to convert to testify
 internal/ci/slowtests:assert 37 bare assertions to convert to testify
