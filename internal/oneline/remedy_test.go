@@ -30,3 +30,34 @@ func TestWithRemedyEndsEveryLineWithANextStep(t *testing.T) {
 		}
 	}
 }
+
+// TestHasRemedyIsNotFooledByProse pins the loose words that used to count: "see",
+// "want", "retry" and "help" inside a sentence are prose, and a line holding only
+// them names no next step. The forms that do name one are still read.
+func TestHasRemedyIsNotFooledByProse(t *testing.T) {
+	t.Parallel()
+	for _, s := range []string{
+		"the card is not ready, see above",
+		"you may want to look at it",
+		"the store is busy, retry later",
+		"no help is available for the card",
+		"the lease is held; want it? see it",
+	} {
+		if HasRemedy(s) {
+			t.Errorf("HasRemedy(%q) = true; the line is prose", s)
+		}
+	}
+	for _, s := range []string{
+		"the card is not ready; run: nova-sprint cards",
+		"see nova-sprint help claim",
+		"nova-swarm help batch",
+		"retry with --force",
+		"see --help",
+		"the verb wants --sprint",
+		"see `nova-sprint cards`",
+	} {
+		if !HasRemedy(s) {
+			t.Errorf("HasRemedy(%q) = false; the line names its next step", s)
+		}
+	}
+}

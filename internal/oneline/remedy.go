@@ -13,15 +13,24 @@ import (
 // breadcrumbs how to fix anything going wrong". internal/ci's remedy rule reads
 // the source for the same forms, so the two agree on what a remedy is.
 var RemedyMarkers = []string{
-	"run:", "run `", "remedy:", "remedy=", "fix:", "wants ", "want ", "see `", "see ",
-	"rerun", "retry", "next:", " -h", "--help", " help",
+	"run:", "run `", "remedy:", "remedy=", "fix:", "wants ", "see `",
+	"rerun", "next:", " -h", "--help",
 	"run nova-", "the repair is", "requires --", "needs --", "or the other", "drop one", "run this again", "run '",
 }
+
+// remedyPointerRe is the pointer to a tool's help ("see nova-x help verb", "nova-x help
+// verb"): a tool name, then help. The bare words "see", "want", "retry" and "help" are
+// prose ("see above", "no help available", "retry later") and are not a remedy on their own.
+var remedyPointerRe = regexp.MustCompile(`\bnova-[a-z][a-z-]*( [a-z][a-z-]*)? help\b`)
 
 // remedyImperativeRe is the other house form: an imperative that names the
 // flag, the file or the value to use ("pass --overwrite to replace it", "name a
 // --draft-dir", "drop --open", "give 1 to 64").
 var remedyImperativeRe = regexp.MustCompile("(?i)\\b(pass|give|name|drop|use|set|add|raise|lower|install|start|create|edit|remove|delete|fix|choose|pick)\\s+((a|an|the|its|one|another)\\s+)?(--|-[a-z]|`|[0-9]|it\\b)")
+
+// remedyFlagRe is the other words that name a next step only when a flag or a command
+// in backticks follows them ("see --help", "retry with --force", "try `x -h`").
+var remedyFlagRe = regexp.MustCompile("(?i)\\b(see|retry|try|want|wants)\\s+(with\\s+|using\\s+)?(--[a-z]|-[a-z]\\b|`)")
 
 // HasRemedy reports whether a refusal's text carries a remedy in one of the
 // house forms.
@@ -31,7 +40,7 @@ func HasRemedy(s string) bool {
 			return true
 		}
 	}
-	return remedyImperativeRe.MatchString(s)
+	return remedyPointerRe.MatchString(s) || remedyImperativeRe.MatchString(s) || remedyFlagRe.MatchString(s)
 }
 
 // WithRemedy is what rendered through Escape, ended with "; run: <next>" when
