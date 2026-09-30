@@ -42,7 +42,7 @@ A test that needs a real `redis-server` lives in a `_test.go` whose first line i
 Name the packages:
 
 ```
-make test-functional-container PKGS="./internal/testredis/ ./tools/fardelay/"
+make test-functional-container PKGS="./internal/testredis/ ./tools/fardelay/" FUNCTIONAL_FLAGS=--fresh-gocache FUNCTIONAL_DEADLINE=15m
 ```
 
 The run prints the packages it selected, one line for each package that ran, and
@@ -86,7 +86,7 @@ what it refuses. A failure names the file and the remedy.
 
 ## The helpers
 
-All four are in `internal/testredis`, and all four panic outside a test binary.
+All four are in `internal/testredis`. `Image`, the FCALL-only hook and the round-trip counter panic outside a test binary; `Diff` is a plain function over two images.
 `testredis.Start(t)` runs a `redis-server` of the test's alone on a loopback port
 and returns its `host:port`; the test's cleanup kills it. A missing
 `redis-server` skips the test on a laptop and fails it under `NOVA_CI=1`. The
