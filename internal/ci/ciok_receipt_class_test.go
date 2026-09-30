@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"gopkg.in/yaml.v3"
 )
 
@@ -127,9 +128,7 @@ func TestCIOKReportsEveryRunToRedisFromTheRunner(t *testing.T) {
 	if strings.Contains(run, "curl") || strings.Contains(run, "gh api") || strings.Contains(run, "api.github.com") {
 		t.Errorf("the receipt step calls GitHub; the run's own context has every field:\n%s", run)
 	}
-	if strings.Contains(run, "secrets.NOVA_REDIS") || strings.Contains(run, "--password") {
-		t.Errorf("the receipt step carries the password some other way:\n%s", run)
-	}
+	assert.False(t, strings.Contains(run, "secrets.NOVA_REDIS") || strings.Contains(run, "--password"), "the receipt step carries the password some other way:\n%s", run)
 
 	// What the step used to carry inline is the verb's now. The writer is this
 	// tree's, never an installed build: no nova-sprint, no receipt writer under
@@ -144,20 +143,14 @@ func TestCIOKReportsEveryRunToRedisFromTheRunner(t *testing.T) {
 		`"NOVA_BENCH_SEAT", "NOVA_BENCH_SOPS", "NOVA_CARD_REDIS"`,
 		`card.env names no %s`,
 	} {
-		if !strings.Contains(verb, want) {
-			t.Errorf("%s lacks %s", reportRunSource, want)
-		}
+		assert.Contains(t, verb, want, reportRunSource)
 	}
 	code := verbCode(verb)
 	for _, never := range []string{"nova-sprint", ".local/bin/nova-ci", "~/.local/bin", "RECEIPT WRITER",
 		"flag provided but not defined", "probe", "command -v nova", "which nova", "--password", "api.github.com"} {
-		if strings.Contains(code, never) {
-			t.Errorf("%s names %q; the writer is this tree's nova-ci and nothing installed is probed", reportRunSource, never)
-		}
+		assert.NotContains(t, code, never, "%s names %q; the writer is this tree's nova-ci and nothing installed is probed", reportRunSource, never)
 	}
-	if strings.Count(code, `".local", "bin"`) != 1 {
-		t.Errorf("%s runs an installed binary other than the nova-secrets wrapper", reportRunSource)
-	}
+	assert.Equal(t, 1, strings.Count(code, `".local", "bin"`), "%s runs an installed binary other than the nova-secrets wrapper", reportRunSource)
 }
 
 // verbCode is a Go file's text with its comments and its verb help (the raw-string

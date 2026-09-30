@@ -13,8 +13,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/ci/slowtests"
+	"github.com/stretchr/testify/assert"
 	"gopkg.in/yaml.v3"
+
+	"github.com/mas-bandwidth/nova-tools/internal/ci/slowtests"
 )
 
 // unit_tier_class_test.go holds the two CI tiers of nova-tools#4328 to the
@@ -258,9 +260,7 @@ func TestFunctionalTierRunsOnlyAsStreamsMerge(t *testing.T) {
 	}
 	verb := readFile(t, filepath.Join(repoRoot(t), "tools", "ci", "functionalrun.go"))
 	for _, want := range []string{`"./cmd/nova-ci", "functional"`, `"-tags", "functional"`, `"-count=1"`} {
-		if !strings.Contains(verb, want) {
-			t.Errorf("tools/ci/functionalrun.go lacks %s: the functional tier's selection and go test flags live there", want)
-		}
+		assert.Contains(t, verb, want, "tools/ci/functionalrun.go lacks %s: the functional tier's selection and go test flags live there", want)
 	}
 }
 
