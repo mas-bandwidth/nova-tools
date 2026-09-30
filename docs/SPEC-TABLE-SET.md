@@ -4,15 +4,12 @@ This page introduces the `tset/1` table-set layer and its Layer 2 boundary for
 readers new to the design. It summarizes the normative interface; it is not an
 implementation report.
 
-**Contract status:** This is an explanatory guide to the published Layer 1
-revision-4 contract in the message bus (`design/L1-CONTRACT.md`) at SHA-256
-`e055d64d0f6fc6e4d9bc587bf3a6789c1cacb28cbd6d4fda62a760459907973e`,
-not the normative contract or a G0 acceptance. Revision 4 resolves rowset
-guarding, explicit fences, and the checked read-extension seam. Rowan confirmed
-this amended pin, and Johnny renewed its unchanged nine Layer 2 alignments.
-Layer 2 revision 2 and its remaining wire choices are pending. Source at
-`72177fe33` is a historical work-in-progress checkpoint; this page does not
-establish required tests, size gates, model checks, or composed behavior.
+**Contract status:** This is an explanatory guide to the Layer 1 revision-4
+contract (`design/L1-CONTRACT.md`, SHA-256
+`e055d64d0f6fc6e4d9bc587bf3a6789c1cacb28cbd6d4fda62a760459907973e`), not
+the normative contract. That contract defines rowset guarding, explicit
+fences, and the checked read-extension seam. This page does not establish
+required tests, size gates, model checks, or composed behavior.
 
 ## Purpose and ownership
 
@@ -353,36 +350,47 @@ are `OUTCOMEUNKNOWN`, not a refusal promising no change.
 
 ## Profiles and evidence
 
-The revision-4 contract keeps `table.lua` on **old** tables and requires the
-new tset profile to register only tset callbacks: no legacy read or write
-callback may address the new-engine store. The eventual Sprint profile adds
-its own registered functions after G0. At source `72177fe33`, the WIP
-`fn.TSetSource` filter still admits eight named legacy read callbacks from
-unchanged `table.lua` (`ns_table_check`, `ns_table_list`,
-`ns_table_member_find`, `ns_table_members`, `ns_table_read`,
-`ns_table_read_set`, `ns_view_get`, `ns_view_list`). Source inspection finds
-matching registrations in `table.lua`; the exact installed surface needs its
-own functional check and reconciliation with the revised contract. The
-loader also refers to `lua/table_set_log.lua`, which is absent at this source
-checkpoint, so its composed profile cannot yet assemble. The standalone
-Layer 1 fixture and `tset.NewRedis`/`tset.NewMem` APIs do not close that gap.
+The tset library is a separate Redis Function library from the legacy
+`table.lua` tools, and each is loaded on its own server. `fn.TSetSource`
+assembles the tset library for one of two profiles: `fn.TSetStandalone`
+(`l1_only`) and `fn.TSetComposed` (`composed`). The profile is written into the
+library source by the Go loader, so a request cannot choose a less
+restricted writer. `fn.LoadTSet` installs it only on a standalone Redis server
+and never replaces a different existing `nova_sprint` library.
 
-The published `e055d64d` revision-4 pin is not G0. Rowan confirmed the
-amendment at that exact hash; Johnny renewed the unchanged nine Layer 2
-alignments against it. Layer 2 revision 2, including its open wire choices,
-a real composed source, the revision-4 model/TLC evidence, and the required
-composed comparison and size gates remain separate work. Neither confirmation
-is a runtime, model, size, or Emma disposition pass. The saved
-`observation-boundaries-validation-sol.md` report records 97
-selected non-stub Layer 1 units passing, along with dependency graphs and
-functional compilation. Later `lua-read-field-boundary-validation-sol.md`
-and `lua-read-fetched-boundary-validation-sol.md` reports record passing
-graphs and functional compilation. Each full tset functional run on pinned
-Redis 8.10.2 remained red only for 17 diagnostics loading the absent
-`lua/table_set_log.lua`; non-verbose output did not provide individual PASS
-lines. The reports live in the Stella review dispatch's `l1-build-dispatch`
-directory and predate later source-`72177fe33` edits, so they do not certify
-those edits. The tracer's measurements on an earlier Redis version are not a
-Redis 8.10.2 performance pass. No 1,000,000-card composed memory or latency measurement,
-actual-table replay measurement, or revised model proof is established here.
-A Layer 1-only pass cannot stand in for a composed Layer 1/Layer 2 gate.
+The library registers exactly two functions: `ns_tset_step` and
+`ns_tset_read`. A lexical shim around `redis.register_function` drops every
+other registration, so no legacy read or write callback addresses the new-engine
+store. `TestTSetLegacyRegistrationBoundary` pins the legacy registrations in
+`table.lua`, and `TestLoadedWriterSurface` and `TestEngineIsolation` check the
+surface actually loaded on a private server.
+
+The standalone profile assembles the Layer 1 fragments and plans no log
+commands. The composed profile adds the Layer 2 fragment
+`lua/table_set_log.lua`, and its planner calls the log planner. The embedded
+`lua/table_set_log.lua` fragment is not present, so `fn.TSetSource` returns an
+error for the composed profile and the composed profile cannot be loaded.
+
+Every tset fragment begins with the outer guard `if NS.tset_profile then`.
+Only `TSetSource` sets `NS.tset_profile`. The legacy `fn.Source` loader globs
+every `lua/*.lua` file for the old tools, and there the guard is false, so the
+tset fragments are inert and register nothing.
+`TestTSetLegacySourceKeepsFragmentsInert` checks the guard on each fragment.
+
+Composed witnesses are the tests that need the Layer 2 fragment, such as the
+composed fixture and `TestTSetComposedSourceIsExplicit`. They skip only while
+the embedded `lua/table_set_log.lua` file is absent. A fragment that is present
+but empty, malformed or rejected fails them; none skips.
+`TestMissingTSetLogFragmentClassifier` pins that rule.
+
+Two aggregate gates are skipped by name as owed work, because the Layer 1
+witnesses do not cover their Layer 2 and upper-layer rows and an alias would
+misstate the contract: `TestEveryRefusalPreservesWholeState` and
+`TestAllBoundariesAndExpandedBytes`. Three gates skip only while the fragment
+is absent and fail as unimplemented once it is present:
+`TestHistoryCursorCoverage`, `TestRefuseCURSOR` and
+`TestRefuseLOGIDAcrossComposition`.
+
+A Layer 1-only pass does not stand in for a composed Layer 1/Layer 2 gate. No
+composed 1,000,000-card memory or latency measurement, actual-table replay
+measurement, or model proof is established by this page.
