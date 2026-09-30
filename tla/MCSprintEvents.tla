@@ -1,8 +1,8 @@
 --------------------------- MODULE MCSprintEvents ---------------------------
 \* The small instances of SprintEvents: 2 streams (s1, s2), 2 members (m1,
-\* m2), 1 reader (r1), 1 tick process (2 where two loops race), 1 verb
-\* process, and at most 3 or 4 of the cards p1 (s1), p2 (s2), p3 (s1) and the
-\* sentinel g1 (s1). Each configuration picks its cards, its initial state (a
+\* m2), 1 reader (r1; 2 in the review cases), 1 tick process (2 where two
+\* loops race), 1 verb process, 1 or 2 op names for drop --stream, and some of
+\* the cards p1 (s1), p2 (s2), p3 (s1) and the sentinel g1 (s1). Each configuration picks its cards, its initial state (a
 \* scenario below), the verbs its verb process may run (Menu), its bounds,
 \* the members that beat (Beaters may stop and beat again; Steady never
 \* stop), the repairs it runs with (Fixes, {} for the design as written),
@@ -19,13 +19,17 @@ MCTicks1 == {"t1"}
 MCTicks2 == {"t1", "t2"}
 MCVerbs == {"v1"}
 MCOps == {"o1"}
+MCOps2 == {"o1", "o2"}
 MCAll == {"p1", "p2", "p3", "g1"}
 MCStreamOf == [c \in MCAll |-> IF c = "p2" THEN "s2" ELSE "s1"]
 MCOrd == [c \in MCAll |-> CASE c = "p1" -> 1 [] c = "p2" -> 2 [] c = "p3" -> 3 [] OTHER -> 4]
 MCFromCounter == [c \in MCAll |-> -1]
+\* An insertion: p1 at 3 and the sentinel g1 at 5, odd scores below the counter.
+MCAddOdd == [c \in MCAll |-> CASE c = "p1" -> 3 [] c = "g1" -> 5 [] OTHER -> -1]
 MCNoNeeds == [c \in MCAll |-> {}]
 MCP2NeedsP1 == [c \in MCAll |-> IF c = "p2" THEN {"p1"} ELSE {}]
 MCP2NeedsP1P3 == [c \in MCAll |-> IF c = "p2" THEN {"p1", "p3"} ELSE {}]
+MCP3NeedsP2 == [c \in MCAll |-> IF c = "p3" THEN {"p2"} ELSE {}]
 MCNone == {}
 MCRank3 == {3}
 MCRank5 == {5}
@@ -103,5 +107,25 @@ ScnDownDeal == [ScnDealt EXCEPT !.col = Cols4("working", "none", "waiting", "non
 ScnFull == [Base EXCEPT !.col = Cols4("ready", "waiting", "waiting", "waiting"), !.score = Cols4(2, 2, 6, 4), !.next = 8]
 \* s1: p3 waiting (2), p1 in review (4), its work ok.
 ScnDropReview == [Base EXCEPT !.col = Cols4("review", "none", "waiting", "none"), !.score = Cols4(4, 0, 2, 0), !.next = 6]
+\* p1 dealt to m1 and p3 to m2, neither taken (s1, 2 and 4): every ready cell full.
+ScnDealtBoth == [Base EXCEPT !.col = Cols4("working", "none", "working", "none"), !.score = Cols4(2, 0, 4, 0),
+                             !.wpl = [NoCard EXCEPT !["p1"] = AtM("m1", "ready"), !["p3"] = AtM("m2", "ready")], !.next = 6]
+\* s1: p1 waiting and free to go (2), p3 waiting (4) on p2, which has no record:
+\* "a primary is blocked on something missing" on p3.
+ScnDropBlocked == [Base EXCEPT !.col = Cols4("waiting", "none", "waiting", "none"), !.score = Cols4(2, 0, 4, 0), !.next = 6]
+\* s1: p3 ready and never dealt (6); p1 and g1 not yet added (insertions at 3 and 5).
+ScnInsert == [Base EXCEPT !.col = Cols4("none", "none", "ready", "none"), !.score = Cols4(0, 0, 6, 0), !.next = 8]
+\* s1: p1 and p3 waiting and free to go (2, 4); s2: p2 waiting and free to go (2).
+ScnDropTwo == [ScnTwoWaiting EXCEPT !.col = Cols4("waiting", "waiting", "waiting", "none"), !.score = Cols4(2, 2, 4, 0)]
+\* s1: p1 and p3 waiting and free to go (2, 4), g1 waiting behind them (6).
+ScnMulti == [Base EXCEPT !.col = Cols4("waiting", "none", "waiting", "waiting"), !.score = Cols4(2, 0, 4, 6), !.next = 8]
+
+\* Reachability probes (expected to fail: each names a state a configuration
+\* must reach for its case to mean anything).
+\* Two drops in one behaviour, each to its last part (MCSprintEventsDrop2).
+ProbeTwoDrops == Cardinality({r \in receipts : r.k > 0 /\ r.final}) < 2
+\* One step that moves two cards: a request of two units applied (a release
+\* of two, a deal of two; no verb here moves two cards) (MCSprintEventsMulti).
+ProbeTwoMoves == [][~\E p, q \in Prims : p # q /\ col'[p] # col[p] /\ col'[q] # col[q]]_vars
 
 =============================================================================
