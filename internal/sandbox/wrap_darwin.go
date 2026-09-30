@@ -11,11 +11,14 @@
 package sandbox
 
 import (
+	"context"
 	"io"
 	"os"
 	"os/exec"
 	"os/signal"
 	"syscall"
+
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // Backend is what the SANDBOX OK line names on this platform.
@@ -92,7 +95,11 @@ func Run(p *Policy, env []string, stdin io.Reader, stdout, stderr io.Writer, okL
 	argv = append(argv, "--")
 	argv = append(argv, p.Argv...)
 
-	cmd := exec.Command(backend, argv...)
+	// A long-lived child: the wrapped command runs as long as it runs, under a cancellable
+	// context and no deadline; signals reach it through the forwarder below.
+	ctx, stop := context.WithCancel(context.Background())
+	defer stop()
+	cmd := subproc.Long(ctx, backend, argv...)
 	cmd.Dir = p.Cwd
 	cmd.Env = env
 	cmd.Stdin = stdin

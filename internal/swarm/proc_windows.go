@@ -3,11 +3,14 @@
 package swarm
 
 import (
+	"context"
 	"errors"
 	"os"
 	"os/exec"
 	"strconv"
 	"syscall"
+
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // The process layer on Windows.
@@ -95,7 +98,8 @@ func killPidSyscall(pid int) error {
 // Force=true invokes taskkill /PID <pid> /T /F (forceful tree kill).
 func killPidTaskkill(pid int, force bool) error {
 	args := TaskkillArgs(pid, force)
-	cmd := exec.Command("taskkill", args...)
+	cmd, cancel := subproc.Command(context.Background(), subproc.Tool, "taskkill", args...)
+	defer cancel()
 	return cmd.Run()
 }
 

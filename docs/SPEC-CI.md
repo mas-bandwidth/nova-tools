@@ -597,9 +597,11 @@ CI path*.
 
 ### `goenv` — a child `go` never inherits the caller's environment
 
-**The rule.** Every `exec.Command("go", …)` in `cmd/` and `internal/` sets
-`cmd.Env` from `goenv.Clean(...)`; a tool that reads the output of a `go` it
-started must not let the caller choose that output's shape.
+**The rule.** Every `exec.Command("go", …)` in `cmd/` and `internal/`, and
+every `subproc.Command`, `subproc.CommandFor`, `subproc.Context` and
+`subproc.Long` given the literal `"go"`, sets `cmd.Env` from `goenv.Clean(...)`;
+a tool that reads the output of a `go` it started must not let the caller choose
+that output's shape.
 **The mistake it prevents.** CI's `make test` exports `GOFLAGS=-json`; an
 inner `go test` that inherits it answers in JSON with no `--- PASS:` line, and a
 parser counting those lines reports a green unit as red.
@@ -617,6 +619,37 @@ a helper that sets `Env` one frame away is refused rather than trusted (a false
 positive it accepts), and a `go` spawned through a variable command name or a
 shell is not seen at all. Full section: *The CI class test against a child `go`
 that inherits the environment*.
+
+### `subproc` — every child process has a bound or a cancellable context
+
+**The rule.** Production code under `cmd/`, `internal/` and `tools/` starts a
+child through `internal/subproc` or `internal/gitrun` and never through a bare
+`exec.Command`. A one-shot child (git, gh, ssh, sops, tailscale, go tooling, ps)
+runs under `subproc.Command` or `gitrun`: the caller's own context deadline when
+it is sooner, else the named default of its kind (git 60 s, and 300 s for a git
+that goes to the network or moves a whole tree; gh 120 s; ssh 300 s; go tooling
+300 s; other tools 60 s), and `WaitDelay` of 5 s. A long-lived child (a harness
+run, a member's native child, a server) runs under `subproc.Long`: a cancellable
+context, no deadline. An `exec.CommandContext` outside those two packages stands
+only in a function that assigns a `WaitDelay`. `subproc.Context` and
+`subproc.Long` are never handed `context.Background()`, `context.TODO()` or
+`nil`, directly or through a local: the caller's context, or one derived with
+`context.WithCancel`, goes in.
+**The mistake it prevents.** A hung git, ssh or sops blocked its caller for as
+long as the child chose to live; and a killed child whose own child kept the
+pipe open still blocked `Output`, because the kill ends the process and not the
+pipe.
+**The test.** `TestEveryChildProcessGoesThroughTheSubprocDoor`
+(`internal/ci/subprocess_bound_class_test.go`), with
+`TestSubprocessClassTestRefusesItsProbes`, which pins each shape it refuses (a
+`Background`/`TODO`/`nil` context, a `WaitDelay` that is only a comment or a
+string or sits in another function, an aliased or dot-imported `os/exec`).
+**Its allowlist.** `subprocBackgroundAllowed` in the test, a `file:Func` and a
+reason each; empty, because every long-lived child derives its context.
+**Its remedy lines.** The message names the file, the line and the door to use.
+**Its narrowings.** It reads call sites by import path, so a child started
+through `os.StartProcess` or an `exec.Cmd` literal is not seen, and it asks that
+the function assign `WaitDelay`, not that it be the very command.
 
 ### `slowtests` — no package over the per-package time budget
 

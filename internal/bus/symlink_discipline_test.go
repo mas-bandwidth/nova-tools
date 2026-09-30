@@ -200,6 +200,12 @@ func TestAStrandedUniqueTempIsStillALaneStateTemp(t *testing.T) {
 	if !isLaneStateTemp(IndexName + ".ab12cd34ef56" + TempSuffix) {
 		t.Fatal("a unique temp name for a lane state file is not recognised as one")
 	}
+	if !isLaneStateTemp("." + IndexName + ".tmp-0a1b2c3d") {
+		t.Fatal("atomicfile's temporary for a lane state file is not recognised as one")
+	}
+	if isLaneStateTemp(".notes.tmp-0a1b2c3d") || isLaneStateTemp("."+IndexName+".tmp-xyz") || isLaneStateTemp("."+IndexName+".tmp-0a1b") {
+		t.Fatal("a stray dot-temporary became a lane state temp")
+	}
 	if isLaneStateTemp("notes"+TempSuffix) || isLaneStateTemp("notes.ab12"+TempSuffix) {
 		t.Fatal("a stray temporary became a lane state temp")
 	}

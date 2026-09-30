@@ -35,6 +35,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 )
 
 // UpdateEnv is the variable that turns Check into a rewrite. Only the value "1" does.
@@ -419,32 +421,5 @@ func (l *List) render(drop map[int]bool, lower map[int]int, grow []string, kept 
 // WriteAtomic replaces path through a temp file in its own directory, so a reader
 // never sees half a list.
 func WriteAtomic(path, text string) error {
-	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*")
-	if err != nil {
-		return err
-	}
-	tmp := f.Name()
-	if _, err := f.WriteString(text); err != nil {
-		// ignored: a close on the failure path; the write error is the one returned
-		_ = f.Close()
-		// ignored: a best-effort cleanup of the temp file; the write error is the one returned
-		_ = os.Remove(tmp)
-		return err
-	}
-	if err := f.Close(); err != nil {
-		// ignored: a best-effort cleanup of the temp file; the close error is the one returned
-		_ = os.Remove(tmp)
-		return err
-	}
-	if err := os.Chmod(tmp, 0o644); err != nil {
-		// ignored: a best-effort cleanup of the temp file; the chmod error is the one returned
-		_ = os.Remove(tmp)
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		// ignored: a best-effort cleanup of the temp file; the rename error is the one returned
-		_ = os.Remove(tmp)
-		return err
-	}
-	return nil
+	return atomicfile.Write(filepath.Clean(path), []byte(text), 0o644, atomicfile.ExactMode())
 }

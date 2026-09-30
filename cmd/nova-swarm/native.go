@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -19,8 +20,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
@@ -893,10 +896,15 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// previousLaunchEnd is the floor under the NEXT launch's usage window. The zero time is
 	// no floor, which is what the first launch has.
 	var previousLaunchEnd time.Time
+	// The harness is a long-lived child: it runs under this run's cancellable context and
+	// no deadline (the run's own deadline and idle rules end it), and the context ends
+	// with the run, so no launch outlives the function that started it.
+	runCtx, stopRun := context.WithCancel(context.Background())
+	defer stopRun()
 	for attempt := 1; ; attempt++ {
 		lastAttempt = attempt
 		before := fileSize(outLog)
-		cmd := exec.Command(runPath, runArgv...)
+		cmd := subproc.Long(runCtx, runPath, runArgv...)
 		ownChildGroup(cmd)
 		cmd.Env = childEnv
 		cmd.Dir = jobDir
@@ -1444,7 +1452,9 @@ func refuseNative(w io.Writer, reason string) {
 // that token -- is a wall that cannot express the rule, and the run refuses rather than run
 // the card unwalled (SPEC-SANDBOX rule 1 and rule 11).
 func sandboxHostRules(sandbox string) bool {
-	out, err := exec.Command(sandbox, "check").CombinedOutput()
+	cmd, cancel := subproc.Command(context.Background(), subproc.Tool, sandbox, "check")
+	defer cancel()
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return false
 	}
@@ -1998,11 +2008,7 @@ func copyRegularFile(from, to string) error {
 	if err != nil {
 		return err
 	}
-	tmp := to + ".tmp"
-	if err := os.WriteFile(tmp, raw, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, to)
+	return atomicfile.Write(filepath.Clean(to), raw, 0o644)
 }
 
 // sweepNativeJob removes the job directory after its results have been

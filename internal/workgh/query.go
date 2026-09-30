@@ -15,9 +15,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
@@ -45,7 +45,7 @@ func GhQuery(program string) Query {
 		}
 		args := []string{"api", "graphql", "--input", "-"}
 		testguard.RefuseHosts(program, args...)
-		cmd := exec.CommandContext(ctx, program, args...)
+		cmd := subproc.Context(ctx, program, args...)
 		cmd.Stdin = bytes.NewReader(body)
 		var stderr bytes.Buffer
 		cmd.Stderr = &stderr

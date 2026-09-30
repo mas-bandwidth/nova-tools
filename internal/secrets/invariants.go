@@ -262,16 +262,39 @@ func CheckInvariant4(storeDir, sopsPath, keyPath, seatPubKey string, files []str
 	return failures, mineCount, foreignCount
 }
 
+// resolveLoose is the absolute path of p with symlinks resolved, where p need not exist:
+// the deepest existing ancestor is resolved and the missing tail is appended to it.
+func resolveLoose(p string) (string, error) {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return "", err
+	}
+	tail := ""
+	for cur := abs; ; cur = filepath.Dir(cur) {
+		if real, err := filepath.EvalSymlinks(cur); err == nil {
+			return filepath.Join(real, tail), nil
+		}
+		if filepath.Dir(cur) == cur {
+			return abs, nil
+		}
+		tail = filepath.Join(filepath.Base(cur), tail)
+	}
+}
+
 // CheckInvariant5 verifies that no private key is stored under storeDir.
 func CheckInvariant5(storeDir, keyPath string) []CheckFailure {
 	var failures []CheckFailure
 
 	// Check if keyPath is inside storeDir
-	absStore, errStore := filepath.Abs(storeDir)
-	absKey, errKey := filepath.Abs(keyPath)
+	// Both paths are resolved through symlinks first: a key reached through a link, or a
+	// store named through one, is inside the store by where it lands, not by how it is spelled.
+	absStore, errStore := resolveLoose(storeDir)
+	absKey, errKey := resolveLoose(keyPath)
 	if errStore == nil && errKey == nil {
 		rel, err := filepath.Rel(absStore, absKey)
-		if err == nil && !strings.HasPrefix(rel, "..") && rel != "." {
+		// filepath.IsLocal, not a ".." prefix test: a key file under a
+		// directory named "..cache" is inside the store.
+		if err == nil && rel != "." && filepath.IsLocal(rel) {
 			failures = append(failures, CheckFailure{
 				Kind:   "store-private-key",
 				File:   keyPath,
