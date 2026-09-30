@@ -233,8 +233,13 @@ type Answer struct {
 	// Records are the records the query returned, each with its table.
 	Records []TableCard
 	// Rows are the rows of the tables a `streams`, `fleet` or `readers` query
-	// lists, in the tables' order.
+	// lists, in the tables' order: at most the query's Units (SprintQ.units).
 	Rows []string
+	// HasMore says the listing has more rows than it returned, cut at its Units.
+	// Such a listing is not the table's rows: they stay unread (Table.Rows,
+	// Snapshot.Streams and UpMembers refuse), and only a listing that says no
+	// more loads them. Only a listing has it, with at least one row.
+	HasMore bool
 	// Counts are the counts of the cells of the members (or readers) a `fleet`
 	// (`readers`) query lists, in the table the query is over.
 	Counts []CellCount

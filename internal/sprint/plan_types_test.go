@@ -75,7 +75,7 @@ func TestPlanTypesTheReadAnswer(t *testing.T) {
 			Records: []*Card{card}, Lines: []LogLine{{ID: "7-0", Body: []byte("{}")}},
 		}},
 		Sprint: []Answer{{
-			Kind: QueryFleet, IDs: []string{"a"}, Records: []TableCard{{Table: Work, Card: card}}, Rows: []string{"m"},
+			Kind: QueryFleet, IDs: []string{"a"}, Records: []TableCard{{Table: Work, Card: card}}, Rows: []string{"m"}, HasMore: true,
 			Counts: []CellCount{{Row: "m", Col: "ready", N: 5}},
 			Front:  &FrontAnswer{Stream: "s", G: "g", Sigma: 3, NBefore: 1, GQuarantined: true},
 		}},
@@ -85,7 +85,7 @@ func TestPlanTypesTheReadAnswer(t *testing.T) {
 		!a.HasMore || a.Counts[0] != 2 || a.Sum != 2 || a.Records[0] != card || a.Lines[0].ID != "7-0" || string(a.Lines[0].Body) != "{}" {
 		t.Fatalf("ReadAnswer: %+v", ans)
 	}
-	if b.Kind != "fleet" || b.IDs[0] != "a" || b.Records[0].Table != Work || b.Records[0].Card != card || b.Rows[0] != "m" ||
+	if b.Kind != "fleet" || b.IDs[0] != "a" || b.Records[0].Table != Work || b.Records[0].Card != card || b.Rows[0] != "m" || !b.HasMore ||
 		b.Counts[0] != (CellCount{Row: "m", Col: "ready", N: 5}) || b.Front.Stream != "s" || b.Front.G != "g" || b.Front.Sigma != 3 || b.Front.NBefore != 1 || !b.Front.GQuarantined {
 		t.Fatalf("Answer: %+v", b)
 	}

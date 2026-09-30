@@ -435,15 +435,15 @@ var queryCosts = map[string]func(q SprintQ) Cost{
 	// 2 a stream (its control card and the card it needs), plus stuck range
 	// ids a stream.
 	QueryStreams: func(q SprintQ) Cost {
-		s := unitsOr(q.Units, MaxStreams)
+		s := q.units()
 		return recordsCost(2*s, s*q.Limit, q.Fields)
 	},
 	// 1 a member, and 1 a reader.
 	QueryFleet: func(q SprintQ) Cost {
-		return recordsCost(unitsOr(q.Units, MaxMembers), 0, q.Fields)
+		return recordsCost(q.units(), 0, q.Fields)
 	},
 	QueryReaders: func(q SprintQ) Cost {
-		return recordsCost(unitsOr(q.Units, MaxReaders), 0, q.Fields)
+		return recordsCost(q.units(), 0, q.Fields)
 	},
 	// up to max records.
 	QueryNeedchain: func(q SprintQ) Cost {
@@ -464,6 +464,15 @@ func unitsOr(n, most int) int {
 	}
 	return most
 }
+
+// listingMost is the design's most of what a listing query is over (0.1, F1-20):
+// the streams of `streams`, the members of `fleet` and the readers of `readers`.
+var listingMost = map[string]int{QueryStreams: MaxStreams, QueryFleet: MaxMembers, QueryReaders: MaxReaders}
+
+// units is how many streams, members or readers a listing query is over, and so
+// the most rows it may return: its Units, or the design's most when it has none.
+// A query that is not a listing has none.
+func (q SprintQ) units() int { return unitsOr(q.Units, listingMost[q.Kind]) }
 
 // recordsCost is a query that returns that many records and reads that many
 // range ids.

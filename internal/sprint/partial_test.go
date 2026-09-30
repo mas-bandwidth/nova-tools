@@ -560,6 +560,116 @@ func TestAListingQueryThatReturnsNoRowsHasNoRows(t *testing.T) {
 	}
 }
 
+// A listing answers at most the rows it was read for (its Units, or the design's
+// most), and one that says it has more is not the table's rows: they are not
+// marked read, so Streams and UpMembers refuse (the cold read of the fixes to
+// #4748: a fleet query read for one member, answered with three, loaded whole).
+func TestAListingCutAtItsUnitsIsNotTheTablesRows(t *testing.T) {
+	t.Parallel()
+	rowsOfN := func(prefix string, n int) []string {
+		out := make([]string, n)
+		for i := range out {
+			out[i] = fmt.Sprintf("%s%d", prefix, i+1)
+		}
+		return out
+	}
+	for _, tt := range []struct {
+		kind   string
+		prefix string
+		tables []string
+		most   int
+		read   func(s *Snapshot) []string
+	}{
+		{QueryStreams, "s", []string{Work, Merge}, MaxStreams, func(s *Snapshot) []string { return s.Streams() }},
+		{QueryFleet, "m", []string{Fleet}, MaxMembers, func(s *Snapshot) []string { return s.Fleet.Rows() }},
+		{QueryReaders, "r", []string{Readers}, MaxReaders, func(s *Snapshot) []string { return s.Readers.Rows() }},
+	} {
+		load := func(units int, rows []string, more bool, strict bool) (*Snapshot, error) {
+			return loadPartial(ReadPlan{Sprint: []SprintQ{{Kind: tt.kind, Units: units}}}, ReadAnswer{Sprint: []Answer{{Kind: tt.kind, Rows: rows, HasMore: more}}}, strict)
+		}
+		if got := (SprintQ{Kind: tt.kind}).units(); got != tt.most {
+			t.Errorf("%s: a listing with no Units is over %d, the design's most is %d", tt.kind, got, tt.most)
+		}
+
+		// Exactly the rows it was read for, and none more: the rows are read.
+		for _, units := range []int{1, 3, 0} {
+			n := units
+			if units == 0 {
+				n = tt.most
+			}
+			s, err := load(units, rowsOfN(tt.prefix, n), false, true)
+			if err != nil {
+				t.Fatalf("%s: %d rows read for %d: %v", tt.kind, n, units, err)
+			}
+			if got := tt.read(s); len(got) != n || got[0] != tt.prefix+"1" {
+				t.Errorf("%s: %d rows read for %d gave %d rows", tt.kind, n, units, len(got))
+			}
+			if err := s.UnloadedErr(); err != nil {
+				t.Errorf("%s: %v", tt.kind, err)
+			}
+			// One row more than the bound is refused, and nothing is loaded.
+			if s, err := load(units, rowsOfN(tt.prefix, n+1), false, false); s != nil || !errors.Is(err, ErrMisaligned) {
+				t.Errorf("%s: %d rows for %d: %v, %v", tt.kind, n+1, units, s, err)
+			}
+		}
+
+		// A listing cut at its Units says so, and its rows are not the table's.
+		strict, err := load(3, rowsOfN(tt.prefix, 3), true, true)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mustPanic(t, func() { tt.read(strict) })
+		rel, err := load(3, rowsOfN(tt.prefix, 3), true, false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := tt.read(rel); got != nil {
+			t.Errorf("%s: the rows %v of a listing that has more", tt.kind, got)
+		}
+		for _, name := range tt.tables {
+			want := unloadedMessage + ": " + name + " rows"
+			if msg := mustPanic(t, func() { strict.T(name).Rows() }); !strings.Contains(msg, want) {
+				t.Errorf("%s: Rows of %s after a listing that has more: %q", tt.kind, name, msg)
+			}
+			mustPanic(t, func() { strict.T(name).HasRow(tt.prefix + "1") })
+			mustPanic(t, func() { strict.T(name).Column(Ready) })
+			if got := rel.T(name).Rows(); got != nil || rel.T(name).HasRow(tt.prefix+"1") || rel.T(name).Column(Ready) != nil {
+				t.Errorf("%s: %s has the rows %v of a listing that has more", tt.kind, name, got)
+			}
+			var refused int
+			for _, r := range rel.Unloaded() {
+				if r == want {
+					refused++
+				}
+			}
+			if refused < 3 {
+				t.Errorf("%s: %s: refused reads %q", tt.kind, name, rel.Unloaded())
+			}
+		}
+
+		// A listing that does not say it has more, read after or before one that does, is
+		// the table's rows: the one that has more leaves them as they were.
+		whole := SprintQ{Kind: tt.kind, Units: 2}
+		cut := SprintQ{Kind: tt.kind, Units: 3}
+		for name, order := range map[string][]Answer{
+			"whole first": {{Kind: tt.kind, Rows: rowsOfN(tt.prefix, 2)}, {Kind: tt.kind, Rows: rowsOfN("x", 3), HasMore: true}},
+			"cut first":   {{Kind: tt.kind, Rows: rowsOfN("x", 3), HasMore: true}, {Kind: tt.kind, Rows: rowsOfN(tt.prefix, 2)}},
+		} {
+			plan := ReadPlan{Sprint: []SprintQ{whole, cut}}
+			if name == "cut first" {
+				plan.Sprint = []SprintQ{cut, whole}
+			}
+			s, err := loadPartial(plan, ReadAnswer{Sprint: order}, true)
+			if err != nil {
+				t.Fatalf("%s %s: %v", tt.kind, name, err)
+			}
+			if got := tt.read(s); !reflect.DeepEqual(got, rowsOfN(tt.prefix, 2)) {
+				t.Errorf("%s %s: the rows are %v", tt.kind, name, got)
+			}
+		}
+	}
+}
+
 func TestPositionsOfASnapshotBuiltWhole(t *testing.T) {
 	t.Parallel()
 	s := wholeSnapshot([]string{"s1"}, nil,
@@ -642,6 +752,10 @@ func TestLoadPartialRefusesAnAnswerThatDoesNotAnswerThePlan(t *testing.T) {
 		{"a composite record of an unknown table", func(rp *ReadPlan, ans *ReadAnswer) { ans.Sprint[2].Records[0].Table = "nowhere" }},
 		{"a composite record that is no record", func(rp *ReadPlan, ans *ReadAnswer) { ans.Sprint[2].Records[0].Card = nil }},
 		{"rows from a query that lists none", func(rp *ReadPlan, ans *ReadAnswer) { ans.Sprint[2].Rows = []string{"s1"} }},
+		{"more streams than the listing was read for", func(rp *ReadPlan, ans *ReadAnswer) { ans.Sprint[0].Rows = []string{"s1", "s2", "s3"} }},
+		{"more members than the listing was read for", func(rp *ReadPlan, ans *ReadAnswer) { ans.Sprint[1].Rows = []string{"m1", "m2"} }},
+		{"a listing that has more and returns no rows", func(rp *ReadPlan, ans *ReadAnswer) { ans.Sprint[1].Rows, ans.Sprint[1].HasMore = nil, true }},
+		{"more rows from a query that lists none", func(rp *ReadPlan, ans *ReadAnswer) { ans.Sprint[2].HasMore = true }},
 		{"a front with no answer", func(rp *ReadPlan, ans *ReadAnswer) { ans.Sprint[2].Front = nil }},
 		{"a front of another stream", func(rp *ReadPlan, ans *ReadAnswer) { ans.Sprint[2].Front.Stream = "s2" }},
 		{"an epoch that is not a decimal", func(rp *ReadPlan, ans *ReadAnswer) { ans.Epoch = "3x" }},
