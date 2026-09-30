@@ -56,7 +56,7 @@ func (a *app) cmdPlay(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, "play", err.Error())
 	}
-	if _, err := a.store(*c); err != nil {
+	if err := a.reach(*c); err != nil {
 		return refuse(stderr, "play", err.Error())
 	}
 	var base []string
