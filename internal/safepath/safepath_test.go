@@ -132,3 +132,174 @@ func TestResolvedUnderRefusesSymlinkEscape(t *testing.T) {
 		t.Fatalf("ResolvedUnder accepted a path that resolves outside the root")
 	}
 }
+
+// createReadOnlyTree builds a tree under victim with various read-only files,
+// read-only subdirectories (0o555, 0o500), and restrictive directories (0o400, 0o000).
+func createReadOnlyTree(t *testing.T, victim string) {
+	t.Helper()
+
+	cDir := filepath.Join(victim, "sub", "inner", "unreadable")
+	mustMkdir(t, cDir)
+	mustWrite(t, filepath.Join(cDir, "deep.txt"), "deep-content")
+	mustWrite(t, filepath.Join(victim, "sub", "inner", "inner.txt"), "inner-content")
+	mustWrite(t, filepath.Join(victim, "sub", "ro_sub.txt"), "sub-content")
+	mustWrite(t, filepath.Join(victim, "ro_file.txt"), "root-content")
+
+	// Ensure cleanup restores permissions so t.TempDir removal never fails if a check fails.
+	t.Cleanup(func() {
+		_ = filepath.WalkDir(victim, func(p string, d os.DirEntry, err error) error {
+			_ = os.Chmod(p, 0o700)
+			return nil
+		})
+	})
+
+	// Apply restrictive permissions from leaves to root.
+	if err := os.Chmod(filepath.Join(cDir, "deep.txt"), 0o400); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(cDir, 0o000); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(victim, "sub", "inner", "inner.txt"), 0o400); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(victim, "sub", "inner"), 0o400); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(victim, "sub", "ro_sub.txt"), 0o444); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(victim, "sub"), 0o500); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(victim, "ro_file.txt"), 0o400); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(victim, 0o555); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// RemoveUnder cleanly removes a directory tree containing read-only and restrictive files/dirs.
+func TestRemoveUnderRemovesReadOnlyTree(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	victim := filepath.Join(root, "victim")
+	createReadOnlyTree(t, victim)
+
+	if err := RemoveUnder(root, victim); err != nil {
+		t.Fatalf("RemoveUnder(%q, %q) = %v, want nil", root, victim, err)
+	}
+	if exists(victim) {
+		t.Fatalf("RemoveUnder left %s behind", victim)
+	}
+	if !exists(root) {
+		t.Fatalf("RemoveUnder removed root %s", root)
+	}
+}
+
+// RemoveUnderRoots cleanly removes a directory tree containing read-only and restrictive files/dirs.
+func TestRemoveUnderRootsRemovesReadOnlyTree(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	victim := filepath.Join(root, "victim")
+	createReadOnlyTree(t, victim)
+
+	if err := RemoveUnderRoots(victim, root); err != nil {
+		t.Fatalf("RemoveUnderRoots(%q, %q) = %v, want nil", victim, root, err)
+	}
+	if exists(victim) {
+		t.Fatalf("RemoveUnderRoots left %s behind", victim)
+	}
+	if !exists(root) {
+		t.Fatalf("RemoveUnderRoots removed root %s", root)
+	}
+}
+
+// RemoveUnder removes a single read-only file directly under the root.
+func TestRemoveUnderRemovesSingleReadOnlyFile(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	victim := filepath.Join(root, "ro_file.txt")
+	mustWrite(t, victim, "ro")
+	if err := os.Chmod(victim, 0o400); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := RemoveUnder(root, victim); err != nil {
+		t.Fatalf("RemoveUnder(%q, %q) = %v, want nil", root, victim, err)
+	}
+	if exists(victim) {
+		t.Fatalf("RemoveUnder left %s behind", victim)
+	}
+	if !exists(root) {
+		t.Fatalf("RemoveUnder removed root %s", root)
+	}
+}
+
+// RemoveUnderRoots removes a single read-only file directly under the root.
+func TestRemoveUnderRootsRemovesSingleReadOnlyFile(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	victim := filepath.Join(root, "ro_file.txt")
+	mustWrite(t, victim, "ro")
+	if err := os.Chmod(victim, 0o400); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := RemoveUnderRoots(victim, root); err != nil {
+		t.Fatalf("RemoveUnderRoots(%q, %q) = %v, want nil", victim, root, err)
+	}
+	if exists(victim) {
+		t.Fatalf("RemoveUnderRoots left %s behind", victim)
+	}
+	if !exists(root) {
+		t.Fatalf("RemoveUnderRoots removed root %s", root)
+	}
+}
+
+// addUserWrite does not alter permissions of symlink targets outside the root.
+func TestRemoveUnderPreservesSymlinkTargetPermissions(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	outside := t.TempDir()
+	outsideFile := filepath.Join(outside, "outside_ro.txt")
+	mustWrite(t, outsideFile, "outside content")
+	if err := os.Chmod(outsideFile, 0o400); err != nil {
+		t.Fatal(err)
+	}
+
+	victim := filepath.Join(root, "victim")
+	mustMkdir(t, victim)
+	insideFile := filepath.Join(victim, "inside_ro.txt")
+	mustWrite(t, insideFile, "inside content")
+	if err := os.Chmod(insideFile, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	symlink := filepath.Join(victim, "outside_link.txt")
+	if err := os.Symlink(outsideFile, symlink); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := RemoveUnder(root, victim); err != nil {
+		t.Fatalf("RemoveUnder(%q, %q) = %v, want nil", root, victim, err)
+	}
+	if exists(victim) {
+		t.Fatalf("RemoveUnder left %s behind", victim)
+	}
+	if !exists(outsideFile) {
+		t.Fatalf("RemoveUnder removed symlink target %s", outsideFile)
+	}
+	info, err := os.Stat(outsideFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if perm := info.Mode().Perm(); perm != 0o400 {
+		t.Fatalf("outside file perm = %#o, want 0o400", perm)
+	}
+}

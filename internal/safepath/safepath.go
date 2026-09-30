@@ -119,6 +119,7 @@ func (p Policy) RemoveUnder(root, path string) error {
 	if !under {
 		return fmt.Errorf("%w: %q is not below %q", ErrUnsafe, path, root)
 	}
+	addUserWrite(pathAbs)
 	return os.RemoveAll(pathAbs)
 }
 
@@ -416,18 +417,47 @@ func (p Policy) RemoveUnderRoots(path string, roots ...string) error {
 // addUserWrite makes the tree writable, best effort, the way the old script's
 // `chmod -R u+w` ran before its `rm -rf`.
 func addUserWrite(root string) {
-	_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil
+	if fi, err := os.Lstat(root); err == nil && fi.Mode()&os.ModeSymlink == 0 {
+		if fi.IsDir() {
+			_ = os.Chmod(root, 0o700)
+		} else {
+			_ = os.Chmod(root, fi.Mode().Perm()|0o200)
 		}
-		if d.Type()&os.ModeSymlink != 0 {
+	}
+
+	for pass := 0; pass < 10; pass++ {
+		hadErr := false
+		_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+			if err != nil {
+				if d != nil {
+					if d.Type()&os.ModeSymlink == 0 && d.IsDir() {
+						_ = os.Chmod(p, 0o700)
+						hadErr = true
+					}
+				} else if fi, statErr := os.Lstat(p); statErr == nil {
+					if fi.Mode()&os.ModeSymlink == 0 && fi.IsDir() {
+						_ = os.Chmod(p, 0o700)
+						hadErr = true
+					}
+				}
+				return nil
+			}
+			if d.Type()&os.ModeSymlink != 0 {
+				return nil
+			}
+			if d.IsDir() {
+				_ = os.Chmod(p, 0o700)
+				return nil
+			}
+			if info, err := d.Info(); err == nil {
+				_ = os.Chmod(p, info.Mode().Perm()|0o200)
+			} else {
+				_ = os.Chmod(p, 0o600)
+			}
 			return nil
+		})
+		if !hadErr {
+			break
 		}
-		info, err := d.Info()
-		if err != nil {
-			return nil
-		}
-		_ = os.Chmod(p, info.Mode().Perm()|0o200)
-		return nil
-	})
+	}
 }
