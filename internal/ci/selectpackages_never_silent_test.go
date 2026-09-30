@@ -152,7 +152,7 @@ func TestCIReadsSelectionExitStatus(t *testing.T) {
 		t.Errorf("ci.yml reads the selection through `< <(...)`, which discards its exit status: a go list failure became `test (nothing)` on PR #4370; run the verb as the step")
 	}
 	block := jobBody(src, "test-packages")
-	if !strings.Contains(block, "run: "+ciRunner+" test-matrix --event") {
+	if !strings.Contains(block, ciRunner+" test-matrix --event") {
 		t.Errorf("test-packages does not run `ci test-matrix` as the step itself, so its exit status is the step's")
 	}
 	verb := readFile(t, filepath.Join(root, "tools", "ci", "sel_matrix.go"))

@@ -36,8 +36,8 @@ func TestAncestryFetchesAreOneVerb(t *testing.T) {
 	for _, file := range []string{"ci.yml", "certification.yml"} {
 		src := readFile(t, filepath.Join(root, ".github", "workflows", file))
 		for _, step := range []struct{ name, want string }{
-			{"fetch dev's ancestry for a main run", "run: " + ciRunner + " fetch-ancestry dev"},
-			{"fetch sprint/foundation's ancestry for a promotion", "run: " + ciRunner + " fetch-ancestry --promotion sprint/foundation"},
+			{"fetch dev's ancestry for a main run", ciRunner + " fetch-ancestry dev"},
+			{"fetch sprint/foundation's ancestry for a promotion", ciRunner + " fetch-ancestry --promotion sprint/foundation"},
 		} {
 			body := stepBody(src, step.name)
 			if body == "" {

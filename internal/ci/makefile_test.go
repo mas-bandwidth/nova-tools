@@ -45,6 +45,8 @@ var commandAllowlist = []string{
 	"command -v go",
 	"GOMAXPROCS",
 	"go build ./cmd/nova-sandbox",
+	// the one build of tools/ci in a job: every later step runs the binary
+	"go build -o " + ciRunner + " ./tools/ci",
 	"go build ./... && go test -count=1 ./internal/oneline/",
 }
 
