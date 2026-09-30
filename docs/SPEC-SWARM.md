@@ -37,7 +37,7 @@ The wall grants the platform toolchain roots where a reader looks for them:
 
 ## The living verbs
 
-The tool exposes eleven living verbs, dispatched directly from `cmd/nova-swarm/main.go`:
+The tool exposes twelve living verbs, dispatched directly from `cmd/nova-swarm/main.go`:
 
 ```
 usage:
@@ -52,6 +52,8 @@ usage:
   nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|card|read|fix|text|replay|drift|tone|models.tsv
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
   nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--events-store <host:port>]
+  nova-swarm member    --as <name> --width <n> --harness <path> --model <provider/model> --root <dir> --deadline <duration> --tokens <n>|unmetered [--sprint <nova-sprint>] [--reader] [--every <duration>] [--once | --ticks <n>] [--auth <file>] [--config <file>] [--worker <file>] [--no-wall]
+                       (this machine as one member of a sprint's fleet: beat, queue, finish what ended, take to --width, each card one native child; --reader runs the readers-table loop; the store is nova-sprint's, from NOVA_SPRINT_REDIS)
   nova-swarm route     --card <file> --routes <routes.tsv> [--floor 0.9] [--default <worker json>] [--key-env <name>] [--base-url <url>]
   nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
   nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>] [--kind <kind>]
@@ -76,6 +78,7 @@ usage:
 9. **`route`**: Classifies card complexity and kind against a routes table to select an appropriate worker description.
 10. **`slots`**: Bench slot lease broker (`init`, `take`, `release`, `list`) managing shared bench capacity.
 11. **`worker`**: Validates worker description JSON structure, environment variables, and readable roots.
+12. **`member`**: Runs this machine as one member (or reader) of a sprint's fleet: beats, checks the queue, finishes ended cards, and takes work up to `--width`, launching each card as a native child.
 
 ## Exit codes
 
@@ -524,7 +527,7 @@ rule. Two kinds of check read the card's text:
 | `rule-commit-trailer` | Commit messages end with `Co-Authored-By: Claude <your model> <noreply@anthropic.com>`. | SAFETY.md |
 | `rule-pr-line` | PR bodies end with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`. | SAFETY.md |
 | `rule-never-merge` | Open PRs against the base this card names; never merge. | SAFETY.md, DIRTY-TICK-SLICES.md |
-| `rule-exit-codes` | exit codes: 0 done, 1 refused, 2 usage or a store that did not answer | the nova-sprint banner (cmd/nova-sprint usage text; a test holds the two equal) |
+| `rule-exit-codes` | exit codes: 0 done, 1 refused, 2 usage or a store that did not answer (fleet sync --check: there is drift), 3 fleet sync could not read the config | the nova-sprint banner (cmd/nova-sprint usage text; a test holds the two equal) |
 | `rule-pr-diffstat` | The PR body states the diff stat and what was deleted. | the owner's list |
 | `rule-pr-tests` | The PR body lists the tests, each with what it pins, and every local helper added. | VERBS-COMMON.md |
 | `rule-report-shape` | Report under 80 lines: PR number and sha, every test package line, what you could not do and why. | SAFETY.md, DIRTY-TICK-SLICES.md |

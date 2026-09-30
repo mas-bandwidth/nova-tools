@@ -699,19 +699,19 @@ command that loads it.
 | ask | deals primaries in review to two different readers; `--another` |
 | queue | a reader's read cards or a member's work cards, oldest first (`--as`), or a stream's merge queue (`--stream`) |
 | read | a reader records ok or broken with the finding; `--as <reader>`, `--begin` |
-| accept | review -> merging and into merge queued; refused without two readers; named ids all or nothing, a selection moves the eligible |
+| accept | review -> merging and into merge queued; refused without two readers; named ids all or nothing, a selection moves the eligible (--stream, --col, --limit, --read-ok) |
 | rework | delegates the next attempt at once with a fix; ready when no member is up; a primary at its redeal bound (ready, its work card withdrawn) is reworked too, with `--fix`, its withdrawn card taken off; without `--fix` each primary's fix is the finding of its broken read, else the report of its failed work, and a primary with neither is refused by name |
 | return | merging -> review, off the merge queue |
 | drop | off the table with the reason |
 | rank | changes a score and every copy |
 | merge | one mechanical merge step for a stream: `--batch n`, given facts; `--red [--suspect <id>...]` |
 | resume | a stopped stream moves again, with what was done; refused while a cause is unresolved |
-| fleet | `up|down <member>`, `level` |
+| fleet | `up|down <member>`, `sync`, `level` |
 | reader add | declares readers |
 | ci | records a CI observation for primaries in any state |
 | wait | sets a judgment's next review time |
 | ack | closes a judgment the coordinator looked at, with the reason |
-| inbox | every open judgment and the notifications since the cursor, grouped, judgment first; `--open <id>`, `--read`; `--json` carries `judgments` (each with `id`, `kind`, `type`, `what`, `stream`, `size`, `cards` whole, `notes`, and `answers`: every decision with the exact command lines that make it, in order), `happened` (the notifications since the cursor, grouped), `done` (the machine has stopped because the sprint is done) and `groups`, every group in the order the text prints |
+| inbox | every open judgment and the notifications since the cursor, grouped, judgment first; `--open <id>`, `--read`; `--wait [--timeout <duration>]` blocks until a notification or judgment arrives, or until `--deadline` or `--stale` expires; `--json` carries `judgments` (each with `id`, `kind`, `type`, `what`, `stream`, `size`, `cards` whole, `notes`, and `answers`: every decision with the exact command lines that make it, in order), `happened` (the notifications since the cursor, grouped), `done` (the machine has stopped because the sprint is done) and `groups`, every group in the order the text prints |
 | card | one primary's story, told from the log: for a card in flight, first what holds it now (each open judgment with the commands that answer it, or the actor and its deadline); its place in its stream's line; its brief, and the fix its attempt was given; its timeline in local time, an attempt at a time ("attempt 2, because attempt 1 failed"), one line per event a person would name (two readers asked, a merge and its batch, a step and its answer are one line each), a finish and a read with the first line of their words; the reports, findings and fixes whole as paragraphs; a card that has ended says so in one line; `--fields` prints every field of the primary and its cards instead; `--json` carries both, the timeline's events with the log lines each tells |
 | queue --as, take | a member's or a reader's cards, each with its packet: what it is handed so that it needs no other read to learn its task (the card, its epoch and generation, the brief, this attempt's fix, the notes on it, and for a work card the branch to work on, `sprint/<card>`, and the one to start from, the attempt before's branch for a rework; for a read card the work it reads: the worker, its head, branch and base, and the worker's report), and the command that reports it; take prints the packets of the cards it took, `--json` as `packets`; finish takes `--branch` and `--base`, which the work card keeps and the reader's packet and card show |
 | log | the epoch's log, every line in order: --card (a primary with its work, read and merge cards), --stream, --member, --since, --at-epoch, --json (section 17) |
