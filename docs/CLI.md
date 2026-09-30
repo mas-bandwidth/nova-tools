@@ -1927,9 +1927,12 @@ handed work, and `inbox` shows the coordinator the decisions to make.
   the brief whole.
 - `inbox --wait [--timeout <duration>]` waits for a tick-end notice after
   the notes present when the call starts, then shows the inbox. The default
-  timeout is 5m; on timeout it reports that no tick end arrived and still
-  shows the inbox. Reading does not advance the coordinator's cursor;
-  `inbox --read` is the separate coordinator-only cursor move.
+  timeout is 5m; on timeout, text mode reports the timeout condition and
+  still shows the inbox, while `--json` mode returns the unpolluted JSON
+  inbox object directly without a text banner, preserving the strict JSON
+  contract and parser compatibility. Reading does not advance the
+  coordinator's cursor; `inbox --read` is the separate coordinator-only cursor
+  move.
 - `inbox --json` separates `judgments`, `happened` notifications and `done`,
   and retains the grouped view in `groups`. Each judgment supplies the
   commands that answer it.
