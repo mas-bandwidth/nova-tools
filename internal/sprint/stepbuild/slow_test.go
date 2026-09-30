@@ -12,11 +12,12 @@ import (
 // The longer tier of the property test (make test-slow): 10,000 random
 // inputs at the contract's own bounds, the scaled-down inputs of the unit
 // tier again (the same seeds) with the full accounting and the fullness check
-// on every one, where the unit tier applies them to one in sampleEvery, and the
-// worst case of every kind of entry against Layer 1's layout at the contract's
-// own 8 MiB of planned argv bytes. The inputs at the contract's numbers are
-// built to reach them: thousands of members, hundreds of entries, megabytes of
-// fields, a hundred notes, the row bound.
+// on every one, where the unit tier applies them to one in sampleEvery, the
+// rows and members property at 6,000 worlds where the unit tier cuts 2,400, and
+// the worst case of every kind of entry against Layer 1's layout at the
+// contract's own 8 MiB of planned argv bytes. The inputs at the contract's
+// numbers are built to reach them: thousands of members, hundreds of entries,
+// megabytes of fields, a hundred notes, the row bound.
 
 // bigFragments are the shapes of input that reach a bound of section 6; an
 // input is one to three of them, on ids that may overlap.
@@ -187,4 +188,10 @@ func TestSlowPlannedArgvIsInsideLayerOnesOwnCountAtTheContractsBound(t *testing.
 			checkArgvWorstCase(t, tc, n, bound)
 		})
 	}
+}
+
+// The rows and members property at the slow tier's number of worlds and inputs.
+func TestSlowRowsAndMembersAtEveryCutPoint(t *testing.T) {
+	t.Parallel()
+	rowsAndMembersAtEveryCutPoint(t, cutPointInputs)
 }

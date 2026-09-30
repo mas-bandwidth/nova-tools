@@ -806,7 +806,19 @@ func (g worldGen) input(w world) []Entry {
 // on, and a step of one candidate.
 func TestRowsAndMembersAtEveryCutPoint(t *testing.T) {
 	t.Parallel()
-	const inputs, shards = 6000, 4
+	rowsAndMembersAtEveryCutPoint(t, cutPointUnitInputs)
+}
+
+// cutPointUnitInputs is the worlds and inputs the unit tier cuts at every cut
+// point; the slow tier cuts cutPointInputs of them (slow_test.go).
+const (
+	cutPointUnitInputs = 2400
+	cutPointInputs     = 6000
+)
+
+func rowsAndMembersAtEveryCutPoint(t *testing.T, inputs uint64) {
+	t.Helper()
+	const shards = 4
 	var results [shards][4]int // per shard: inputs, moved, split rows entries, legal wholes
 	for shard := 0; shard < shards; shard++ {
 		t.Run(strconv.Itoa(shard), func(t *testing.T) {
@@ -876,7 +888,7 @@ func TestRowsAndMembersAtEveryCutPoint(t *testing.T) {
 		// The inputs must exercise what is proved: entries moved, legal wholes
 		// (the cuts of a legal whole must all be legal), and rows entries that
 		// add and delete split to be placed (the renames of a row).
-		if total[0] != inputs || total[1] < inputs/50 || total[3] < inputs/5 || total[2] == 0 {
+		if uint64(total[0]) != inputs || uint64(total[1]) < inputs/50 || uint64(total[3]) < inputs/5 || total[2] == 0 {
 			t.Errorf("%d inputs, %d placed out of order, %d with a rows entry split, %d legal wholes", total[0], total[1], total[2], total[3])
 		}
 	})

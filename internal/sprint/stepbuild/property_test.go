@@ -883,19 +883,20 @@ func cursorLess(a, b Cursor) bool {
 // propertyInputs, the same seeds and more of them, in the slow tier
 // (slow_test.go).
 const (
-	unitInputs     = 2500
+	unitInputs     = 1200
 	propertyInputs = 10000
 )
 
 // propertyShards split the run over parallel subtests. The unit tier cuts
-// unitInputs inputs and holds every step of every input to the bounds counted from its own encoded request, by
-// the lite accounting (every bound but the generated line and the planned argv
-// bytes), and one input in sampleEvery to the full accounting as well (the JSON
-// model of the line, and the planned argv bytes by the model and by Layer 1's
-// own layout) and to the fullness check and a second build: the unit tier's
-// package budget is 2 s. The slow tier (go test -tags slow, make test-slow) cuts
-// propertyInputs inputs, the unit tier's seeds among them, with the full
-// accounting and the fullness check on every one (slow_test.go).
+// unitInputs inputs and holds every step of every one to the bounds counted from
+// its own encoded request, by the lite accounting (every bound but the generated
+// line and the planned argv bytes), and one input in sampleEvery to the full
+// accounting as well (the JSON model of the line, and the planned argv bytes by
+// the model and by Layer 1's own layout), to the fullness check and to a second
+// build: the unit tier's package budget is 2 s. The slow tier (go test -tags
+// slow, make test-slow) cuts propertyInputs inputs, the unit tier's seeds among
+// them, with the full accounting and the fullness check on every one
+// (slow_test.go).
 const (
 	propertyShards = 8
 	sampleEvery    = 16
@@ -1032,5 +1033,5 @@ func TestRandomBoundsReachTheirLowEnds(t *testing.T) {
 
 func TestPropertyEveryBoundAtRandom(t *testing.T) {
 	t.Parallel()
-	propertyRandomBounds(t, 1000, 4, sampleEvery)
+	propertyRandomBounds(t, 500, 4, sampleEvery)
 }
