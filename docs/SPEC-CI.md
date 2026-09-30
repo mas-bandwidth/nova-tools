@@ -1585,7 +1585,10 @@ Every other place that names a Redis version equals it: the CI installer's
 source build (`.github/scripts/install-redis-server.sh`), the image's README,
 `docs/nova-table/README.md`, and every phrase of the living tree that writes a
 three-part version right after the word Redis (`Redis <v>`, `redis-server <v>`,
-`redis-<v>.tar.gz`, `REDIS_VERSION=<v>`, `redis_version:<v>`, `redis:<v>`).
+`redis-<v>.tar.gz`, `REDIS_VERSION=<v>`, `REDIS_VERSION="<v>"`,
+`redis_version:<v>`, `redis:<v>`, the apt pin `redis-server=6:<v>-1`, the
+output of `redis-server --version` (`v=<v>`), and a version or a name in
+backticks).
 **The mistake it prevents.** Two Redis versions in one tree: the functional
 tier is green on one while a document, an installer or a captured error text
 names the other, and a behaviour that differs between them is found by a user
@@ -1594,11 +1597,14 @@ and never by a test.
 `TestRedisVersionRuleSeesEachShape`
 (`internal/ci/redis_version_class_test.go`). The first reads the reference,
 requires each named place to name a version at least once, sweeps every text
-file of the living tree, and reports every version that differs with every place
-that names it. The second is the control: each shape is found, the versions of
-other programs (`go-redis v9.22.0`, `nova-redis 1.0.0`) and addresses
-(`redis=127.0.0.1:6379`) are not, and a split of three versions is reported once
-per differing version with all its places.
+file of the living tree (Go, Markdown, YAML, shell, JSON, Python, env, text and
+config files, and the files named `Containerfile`, `Dockerfile` or `Makefile`),
+and reports every version that differs with every place that names it. The
+second is the control: each shape is found, each kind of file is read and
+release history and captured data are not, the versions of other programs
+(`go-redis v9.22.0`, `nova-redis 1.0.0`), minimums (`Redis 7 or later`) and
+addresses (`redis=127.0.0.1:6379`) are not, and a split of three versions is
+reported once per differing version with all its places.
 **Its allowlist.** None. `redisVersionHistory` lists the paths the sweep does
 not read, each with its reason (release history, and the fixtures of a package
 deprecated in place that record servers of other versions), and the test is red
