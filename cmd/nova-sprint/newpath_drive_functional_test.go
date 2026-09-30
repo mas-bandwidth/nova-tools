@@ -144,9 +144,10 @@ type drive struct {
 	codeBy   map[string][]int // verb -> exit codes other than 0
 	lastErr  map[string]string
 	seq      uint64
-	first    map[string]int // member -> first attempts dealt
-	redeal   map[string]int // member -> later attempts dealt
-	reads    map[string]int // reader -> read cards asked
+	first    map[string]int      // member -> first attempts dealt
+	redeal   map[string]int      // member -> later attempts dealt
+	reads    map[string]int      // reader -> read cards asked
+	askedOf  map[string][]string // primary's attempt (<p>.r<n>) -> the readers asked of it
 	asked    map[string]map[string]bool
 	gates    map[string][]string // stream -> gates in the order they landed
 	released map[string][]string // stream -> gates in the order released
@@ -242,6 +243,11 @@ func (d *drive) line(l driveLine) {
 	case l.Kind == "create" && l.Table == sprint.Readers && strings.HasSuffix(l.To, ":asked"):
 		r := strings.TrimSuffix(l.To, ":asked")
 		d.reads[r] += len(l.IDs)
+		for _, id := range l.IDs {
+			if i := strings.LastIndex(id, "."); i > 0 {
+				d.askedOf[id[:i]] = append(d.askedOf[id[:i]], r)
+			}
+		}
 		if d.asked[r] == nil {
 			d.asked[r] = map[string]bool{}
 		}
@@ -542,7 +548,7 @@ func driveOn(t *testing.T, a *app, coord string, trips func() int64, keys func()
 	t.Helper()
 	start := time.Now()
 	d := &drive{t: t, a: a, trips: trips, rng: rand.New(rand.NewPCG(1, 2)), codes: map[int]int{}, codeBy: map[string][]int{}, lastErr: map[string]string{},
-		first: map[string]int{}, redeal: map[string]int{}, reads: map[string]int{}, asked: map[string]map[string]bool{},
+		first: map[string]int{}, redeal: map[string]int{}, reads: map[string]int{}, askedOf: map[string][]string{}, asked: map[string]map[string]bool{},
 		gates: map[string][]string{}, released: map[string][]string{}, judged: map[string]int{}, texts: map[string]int{}, happened: map[string]int{}, answers: map[string]int{}}
 
 	// The owner's init line: --readers and --members are refused naming the
@@ -695,15 +701,54 @@ func driveOn(t *testing.T, a *app, coord string, trips func() int64, keys func()
 	if d.judged[sprint.NSprintDone] > 0 {
 		t.Errorf("the sprint is done was raised as a judgment %d times; it is a notice (the grammar decisions, done)", d.judged[sprint.NSprintDone])
 	}
-	if lo, hi := driveSpread(d.first, driveMembers); hi-lo > 1 {
-		t.Errorf("first attempts by member spread %d..%d: %s", lo, hi, driveCounts(d.first, driveMembers))
+	// One rolling index for the fleet (errata 3 amendment 5, the owner's rule):
+	// every placement, a first attempt or a redeal, moves it, so the deal is
+	// round over both together and neither kind alone; an avoid skip (the
+	// member that failed an attempt) can leave a member one behind.
+	placed := map[string]int{}
+	reworked := 0
+	for _, m := range driveMembers {
+		placed[m] = d.first[m] + d.redeal[m]
+		reworked += d.redeal[m]
 	}
-	if lo, hi := driveSpread(d.redeal, driveMembers); hi-lo > 1 {
-		t.Errorf("redeals by member spread %d..%d: %s", lo, hi, driveCounts(d.redeal, driveMembers))
+	if lo, hi := driveSpread(placed, driveMembers); hi-lo > 2 {
+		t.Errorf("placements (first attempts and redeals) by member spread %d..%d: %s", lo, hi, driveCounts(placed, driveMembers))
 	}
-	if lo, hi := driveSpread(d.reads, driveReaders); hi-lo > 1 {
-		t.Errorf("reads by reader spread %d..%d: %s", lo, hi, driveCounts(d.reads, driveReaders))
+	// The ask goes round the readers two at a time, and R8 asks a reworked
+	// attempt of the readers already named on the primary (the same pair), so
+	// the readers of a pair read alike and the pairs differ by at most the
+	// reworked attempts.
+	pairOf := map[string]string{}
+	pairs := map[string]int{}
+	for _, rs := range d.askedOf {
+		p := strings.Join(slices.Sorted(slices.Values(rs)), "+")
+		for _, r := range rs {
+			if q, ok := pairOf[r]; ok && q != p {
+				t.Errorf("reader %s was asked in the pairs %s and %s", r, q, p)
+			}
+			pairOf[r] = p
+		}
+		pairs[p] += len(rs)
 	}
+	for p := range pairs {
+		rs := strings.Split(p, "+")
+		for _, r := range rs[1:] {
+			if d.reads[r] != d.reads[rs[0]] {
+				t.Errorf("the readers of the pair %s read %d and %d", p, d.reads[rs[0]], d.reads[r])
+			}
+		}
+	}
+	lo, hi := -1, 0
+	for _, n := range pairs {
+		if lo < 0 || n < lo {
+			lo = n
+		}
+		hi = max(hi, n)
+	}
+	if hi-lo > reworked {
+		t.Errorf("the pairs read %v: they differ by %d, past the %d reworked attempts", pairs, hi-lo, reworked)
+	}
+	t.Logf("placements by member: %s; read pairs %v; reworked attempts %d", driveCounts(placed, driveMembers), pairs, reworked)
 	for _, s := range driveStreams {
 		var wantGates []string
 		for k := 1; k <= 10; k++ {
