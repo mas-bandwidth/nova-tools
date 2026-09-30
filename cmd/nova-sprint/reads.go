@@ -432,7 +432,7 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 		if err != nil {
 			return a.readFailed("inbox", err, stderr)
 		}
-		if !woke {
+		if !woke && !c.json {
 			fmt.Fprintf(stdout, "inbox --wait: no tick end in %s\n", *timeout)
 		}
 	}
