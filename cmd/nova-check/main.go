@@ -191,12 +191,31 @@ func hintFor(name string) string {
 // shown says in the same breath how to see it.
 const failMaxRemedy = "--fail-max <n> raises the ceiling, --fail-max 0 prints every finding"
 
+func hasJSONFlag(args []string) bool {
+	for _, a := range args {
+		if a == "--json" || a == "-json" || a == "--json=true" || a == "-json=true" {
+			return true
+		}
+	}
+	return false
+}
+
 // refuse is what an unusable invocation costs: ONE line naming what was wrong, and the
 // door to the usage rather than the usage itself. It was the whole 38-line banner, on
 // every flag typo -- 2,411 bytes to say a dash was in the wrong place.
 func refuse(stderr io.Writer, where, what string) int {
 	fmt.Fprintf(stderr, "nova-check%s: %s; run: nova-check help\n", oneline.Escape(where), oneline.Escape(what))
 	return 2
+}
+
+func refuseWith(stdout, stderr io.Writer, asJSON bool, where, what string) int {
+	if asJSON {
+		verb := strings.TrimSpace(where)
+		out := verbout.Refuse(verb, what, "nova-check help")
+		_ = out.RenderJSON(stdout)
+		return 2
+	}
+	return refuse(stderr, where, what)
 }
 
 // refuseRan is what a check that RAN and answered NO costs: ONE line naming the
@@ -208,6 +227,18 @@ func refuseRan(stderr io.Writer, where, what string) int {
 	fmt.Fprintf(stderr, "nova-check%s: %s\n", oneline.Escape(where), oneline.Escape(what))
 	return 1
 }
+
+func refuseRanWith(stdout, stderr io.Writer, asJSON bool, where, what string) int {
+	if asJSON {
+		verb := strings.TrimSpace(where)
+		out := verbout.Failed(verb, 1)
+		out.Fact("reason", what)
+		_ = out.RenderJSON(stdout)
+		return 1
+	}
+	return refuseRan(stderr, where, what)
+}
+
 
 func main() {
 	os.Exit(run(os.Args[1:], os.Stdout, os.Stderr))
@@ -252,7 +283,7 @@ func run(args []string, stdout, stderr io.Writer) (code int) {
 		fmt.Fprint(stdout, usage)
 		return 0
 	default:
-		return refuse(stderr, "", fmt.Sprintf("unknown subcommand %q", args[0]))
+		return refuseWith(stdout, stderr, hasJSONFlag(args), "", fmt.Sprintf("unknown subcommand %q", args[0]))
 	}
 }
 
@@ -264,28 +295,30 @@ func run(args []string, stdout, stderr io.Writer) (code int) {
 // a newline authored a whole line of stderr before any code in this file ran.
 // The refusal is printed here instead, escaped. -h after a verb is not refused:
 // verbflag.Parse raises that verb's help, which run prints on stdout at exit 0.
-func parse(fs *flag.FlagSet, args []string, stderr io.Writer, required map[string]*string) bool {
-	if !parseFlags(fs, args, stderr) {
+func parse(fs *flag.FlagSet, args []string, stdout, stderr io.Writer, asJSON bool, required map[string]*string) bool {
+	jsonAsked := asJSON || hasJSONFlag(args)
+	if !parseFlags(fs, args, stdout, stderr, jsonAsked) {
 		return false
 	}
-	return requireFlags(fs, stderr, required)
+	return requireFlags(fs, stdout, stderr, jsonAsked, required)
 }
 
 // parseFlags is the half of parse that decides whether anything after it can be
 // trusted: once the flag set has failed to parse, the values and the positional
 // arguments are both meaningless, so no verb adds a second complaint on top.
-func parseFlags(fs *flag.FlagSet, args []string, stderr io.Writer) bool {
+func parseFlags(fs *flag.FlagSet, args []string, stdout, stderr io.Writer, asJSON bool) bool {
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
+	jsonAsked := asJSON || hasJSONFlag(args)
 	if err := verbflag.Parse(fs, args); err != nil {
-		refuse(stderr, " "+fs.Name(), oneline.Cap(err.Error(), oneline.TailBytes))
+		refuseWith(stdout, stderr, jsonAsked, " "+fs.Name(), oneline.Cap(err.Error(), oneline.TailBytes))
 		return false
 	}
 	if fs.NArg() > 0 {
 		// Through refuse like every other unusable invocation: this site printed its own
 		// line and dropped the `; run: nova-check help` door, so a stray word after a
 		// verb said what was wrong and nothing about where to look.
-		refuse(stderr, " "+fs.Name(), fmt.Sprintf("unexpected argument %q", fs.Arg(0)))
+		refuseWith(stdout, stderr, jsonAsked, " "+fs.Name(), fmt.Sprintf("unexpected argument %q", fs.Arg(0)))
 		return false
 	}
 	return true
@@ -295,7 +328,7 @@ func parseFlags(fs *flag.FlagSet, args []string, stderr io.Writer) bool {
 // independent of each other, so a caller who omitted two should learn about two
 // in one run rather than being sent back for a second refusal. Each one carries
 // the hint that says what the flag wants.
-func requireFlags(fs *flag.FlagSet, stderr io.Writer, required map[string]*string) bool {
+func requireFlags(fs *flag.FlagSet, stdout, stderr io.Writer, asJSON bool, required map[string]*string) bool {
 	names := make([]string, 0, len(required))
 	for name := range required {
 		names = append(names, name)
@@ -304,9 +337,14 @@ func requireFlags(fs *flag.FlagSet, stderr io.Writer, required map[string]*strin
 	ok := true
 	for _, name := range names {
 		if *required[name] == "" {
-			refuse(stderr, " "+fs.Name(), fmt.Sprintf("--%s is required; refusing to guess", name))
-			fmt.Fprint(stderr, hintFor(name))
+			refuseWith(stdout, stderr, asJSON, " "+fs.Name(), fmt.Sprintf("--%s is required; refusing to guess", name))
+			if !asJSON {
+				fmt.Fprint(stderr, hintFor(name))
+			}
 			ok = false
+			if asJSON {
+				return false
+			}
 		}
 	}
 	return ok
@@ -320,9 +358,9 @@ func addFailMax(fs *flag.FlagSet) *int {
 }
 
 // checkFailMax refuses a negative ceiling, naming the verb.
-func checkFailMax(fs *flag.FlagSet, max int, stderr io.Writer) bool {
+func checkFailMax(fs *flag.FlagSet, max int, stdout, stderr io.Writer, asJSON bool) bool {
 	if max < 0 {
-		refuse(stderr, " "+fs.Name(), fmt.Sprintf("--fail-max must be a line ceiling of zero or more (got %d); 0 means print them all", max))
+		refuseWith(stdout, stderr, asJSON, " "+fs.Name(), fmt.Sprintf("--fail-max must be a line ceiling of zero or more (got %d); 0 means print them all", max))
 		return false
 	}
 	return true
@@ -341,10 +379,10 @@ func cmdQuickstart(args []string, stdout, stderr io.Writer) int {
 	asJSON := verbflag.JSON(fs)
 	var exclude repeatable
 	fs.Var(&exclude, "exclude", "path prefix not scanned by links (repeatable; empty by default)")
-	if !parse(fs, args, stderr, map[string]*string{"dir": dir}) {
+	if !parse(fs, args, stdout, stderr, *asJSON, map[string]*string{"dir": dir}) {
 		return 2
 	}
-	if !checkFailMax(fs, *failMax, stderr) {
+	if !checkFailMax(fs, *failMax, stdout, stderr, *asJSON) {
 		return 2
 	}
 	// THE CAPS ARE INHERITED, and this is the verb that most needed them: quickstart is
@@ -413,24 +451,36 @@ func cmdAttest(args []string, stdout, stderr io.Writer) int {
 	home := fs.String("home", "", "memory-home directory (required)")
 	manifest := fs.String("manifest", "", "file listing the paths a full boot must read, relative to --home (required)")
 	failMax := addFailMax(fs)
-	if !parse(fs, args, stderr, map[string]*string{"home": home, "manifest": manifest}) {
+	asJSON := verbflag.JSON(fs)
+	if !parse(fs, args, stdout, stderr, *asJSON, map[string]*string{"home": home, "manifest": manifest}) {
 		return 2
 	}
-	if !checkFailMax(fs, *failMax, stderr) {
+	if !checkFailMax(fs, *failMax, stdout, stderr, *asJSON) {
 		return 2
 	}
 	att, failures, err := check.Attest(*home, *manifest)
 	if err != nil {
-		return refuse(stderr, " attest", oneline.Err(err))
+		return refuseWith(stdout, stderr, *asJSON, " attest", oneline.Err(err))
 	}
 	if len(failures) > 0 {
-		list := bounded.Capped(stderr, *failMax, "ATTEST", "entry", failMaxRemedy)
+		out := verbout.Failed("attest", 1)
+		out.StatusLast = true
+		b := out.Bounded(*failMax, "entry", failMaxRemedy)
 		for _, f := range failures {
-			list.Line(fmt.Sprintf("ATTEST FAIL %s: %s", oneline.Escape(f.Subject), oneline.Escape(oneline.Cap(f.Reason, oneline.TailBytes))))
+			b.Line("FAIL", fmt.Sprintf("%s: %s", oneline.Escape(f.Subject), oneline.Escape(oneline.Cap(f.Reason, oneline.TailBytes))))
 		}
-		list.More()
-		fmt.Fprintf(stderr, "ATTEST FAIL failed=%d shown=%d manifest=%s\n", list.Total(), list.Shown(), oneline.Field(*manifest))
-		return 1
+		b.Finish()
+		out.FactInt("failed", b.Total())
+		out.FactInt("shown", b.Shown())
+		out.Fact("manifest", *manifest)
+		return out.Emit(stdout, stderr, *asJSON)
+	}
+	out := verbout.OK("attest")
+	out.FactInt("files", att.Files)
+	out.FactInt64("bytes", att.Bytes)
+	out.Fact("sha256", att.SHA256)
+	if *asJSON {
+		return out.Emit(stdout, stderr, true)
 	}
 	fmt.Fprintf(stdout, "ATTEST OK files=%d bytes=%d sha256=%s\n", att.Files, att.Bytes, att.SHA256)
 	return 0
@@ -445,10 +495,10 @@ func cmdLinks(args []string, stdout, stderr io.Writer) int {
 	fs.Var(&exclude, "exclude", "path prefix not scanned, and links into it not checked (repeatable; empty by default)")
 	var files repeatable
 	fs.Var(&files, "file", "one markdown file to scan, narrowing the walk to just these (repeatable; --dir is still the resolution root)")
-	if !parse(fs, args, stderr, map[string]*string{"dir": dir}) {
+	if !parse(fs, args, stdout, stderr, *asJSON, map[string]*string{"dir": dir}) {
 		return 2
 	}
-	if !checkFailMax(fs, *failMax, stderr) {
+	if !checkFailMax(fs, *failMax, stdout, stderr, *asJSON) {
 		return 2
 	}
 	var (
@@ -461,7 +511,7 @@ func cmdLinks(args []string, stdout, stderr io.Writer) int {
 		res, err = check.LinksExcluding(*dir, exclude)
 	}
 	if err != nil {
-		return refuse(stderr, " links", oneline.Err(err))
+		return refuseWith(stdout, stderr, *asJSON, " links", oneline.Err(err))
 	}
 	if len(res.Broken) > 0 {
 		out := verbout.Failed("links", 1)
@@ -502,31 +552,41 @@ func cmdKernel(args []string, stdout, stderr io.Writer) int {
 	maxBytes := fs.Int64("max-bytes", 0, "size budget in bytes, must be positive (one of --max-bytes / --max-tokens)")
 	maxTokens := fs.Int64("max-tokens", 0, "size budget in tokens, must be positive (one of --max-bytes / --max-tokens)")
 	bytesPerToken := fs.Float64("bytes-per-token", 0, "measured bytes per token, required with --max-tokens; no default")
-	if !parseFlags(fs, args, stderr) {
+	asJSON := verbflag.JSON(fs)
+	if !parseFlags(fs, args, stdout, stderr, *asJSON) {
 		return 2
 	}
 	// The file and the budget are independent, so both are judged before
 	// either sends the caller away: `nova-check kernel` with nothing at all
 	// used to name --file and stop, and the second run then learned about the
 	// budget. One run, every problem it can find.
-	ok := requireFlags(fs, stderr, map[string]*string{"file": file})
+	ok := requireFlags(fs, stdout, stderr, *asJSON, map[string]*string{"file": file})
+	if !ok && *asJSON {
+		return 2
+	}
 	// Which budget was GIVEN, not which value survived: --max-bytes 0 is a
 	// stated (and refused) budget, not an absent one.
 	given := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { given[f.Name] = true })
 	switch {
 	case given["max-bytes"] && given["max-tokens"]:
-		refuse(stderr, " kernel", "give exactly one of --max-bytes or --max-tokens, not both; the line names the unit, the tool does not pick")
-		fmt.Fprintf(stderr, "  %s\n", budgetHint)
+		refuseWith(stdout, stderr, *asJSON, " kernel", "give exactly one of --max-bytes or --max-tokens, not both; the line names the unit, the tool does not pick")
+		if !*asJSON {
+			fmt.Fprintf(stderr, "  %s\n", budgetHint)
+		}
 		ok = false
 	case !given["max-bytes"] && !given["max-tokens"]:
-		refuse(stderr, " kernel", "--max-bytes or --max-tokens is required; refusing to guess")
-		fmt.Fprintf(stderr, "  %s\n", budgetHint)
+		refuseWith(stdout, stderr, *asJSON, " kernel", "--max-bytes or --max-tokens is required; refusing to guess")
+		if !*asJSON {
+			fmt.Fprintf(stderr, "  %s\n", budgetHint)
+		}
 		ok = false
 	}
 	if given["bytes-per-token"] && given["max-bytes"] {
-		refuse(stderr, " kernel", "--bytes-per-token applies only to --max-tokens; a divisor with a byte budget means one of the two is not what you meant")
-		fmt.Fprintf(stderr, "  %s\n", budgetHint)
+		refuseWith(stdout, stderr, *asJSON, " kernel", "--bytes-per-token applies only to --max-tokens; a divisor with a byte budget means one of the two is not what you meant")
+		if !*asJSON {
+			fmt.Fprintf(stderr, "  %s\n", budgetHint)
+		}
 		ok = false
 	}
 	if !ok {
@@ -538,17 +598,23 @@ func cmdKernel(args []string, stdout, stderr io.Writer) int {
 		// budget and forgot the divisor has two things wrong with it.
 		unit := true
 		if !given["bytes-per-token"] {
-			refuse(stderr, " kernel", "--max-tokens requires --bytes-per-token; the divisor is a measurement you make on your own writing, and there is no default; refusing to guess")
-			fmt.Fprintf(stderr, "  %s\n", budgetHint)
+			refuseWith(stdout, stderr, *asJSON, " kernel", "--max-tokens requires --bytes-per-token; the divisor is a measurement you make on your own writing, and there is no default; refusing to guess")
+			if !*asJSON {
+				fmt.Fprintf(stderr, "  %s\n", budgetHint)
+			}
 			unit = false
 		} else if *bytesPerToken <= 0 {
-			refuse(stderr, " kernel", fmt.Sprintf("--bytes-per-token must be a positive ratio (got %g); refusing to guess", *bytesPerToken))
-			fmt.Fprintf(stderr, "  %s\n", budgetHint)
+			refuseWith(stdout, stderr, *asJSON, " kernel", fmt.Sprintf("--bytes-per-token must be a positive ratio (got %g); refusing to guess", *bytesPerToken))
+			if !*asJSON {
+				fmt.Fprintf(stderr, "  %s\n", budgetHint)
+			}
 			unit = false
 		}
 		if *maxTokens <= 0 {
-			refuse(stderr, " kernel", fmt.Sprintf("--max-tokens must be a positive token budget (got %d); refusing to guess", *maxTokens))
-			fmt.Fprintf(stderr, "  %s\n", budgetHint)
+			refuseWith(stdout, stderr, *asJSON, " kernel", fmt.Sprintf("--max-tokens must be a positive token budget (got %d); refusing to guess", *maxTokens))
+			if !*asJSON {
+				fmt.Fprintf(stderr, "  %s\n", budgetHint)
+			}
 			unit = false
 		}
 		if !unit {
@@ -556,9 +622,16 @@ func cmdKernel(args []string, stdout, stderr io.Writer) int {
 		}
 		measured, tokens, failures, err := check.KernelTokens(*file, *maxTokens, *bytesPerToken)
 		if err != nil {
-			return refuse(stderr, " kernel", oneline.Err(err))
+			return refuseWith(stdout, stderr, *asJSON, " kernel", oneline.Err(err))
 		}
 		if len(failures) > 0 {
+			if *asJSON {
+				out := verbout.Failed("kernel", 1)
+				for _, f := range failures {
+					out.Item("FAIL", fmt.Sprintf("%s: %s", oneline.Escape(f.Subject), oneline.Escape(f.Reason)))
+				}
+				return out.Emit(stdout, stderr, true)
+			}
 			for _, f := range failures {
 				fmt.Fprintf(stderr, "KERNEL FAIL %s: %s\n", oneline.Escape(f.Subject), oneline.Escape(f.Reason))
 			}
@@ -567,22 +640,43 @@ func cmdKernel(args []string, stdout, stderr io.Writer) int {
 		// The OK line teaches the unit it enforced: tokens first, then the
 		// bytes and the divisor they were derived from, so the number can be
 		// re-derived by anyone reading the line.
+		out := verbout.OK("kernel")
+		out.FactInt64("tokens", tokens)
+		out.FactInt64("budget", *maxTokens)
+		out.FactInt64("bytes", measured)
+		out.Fact("divisor", fmt.Sprintf("%g", *bytesPerToken))
+		if *asJSON {
+			return out.Emit(stdout, stderr, true)
+		}
 		fmt.Fprintf(stdout, "KERNEL OK tokens=%d budget=%d bytes=%d divisor=%g\n", tokens, *maxTokens, measured, *bytesPerToken)
 		return 0
 	}
 
 	if *maxBytes <= 0 {
-		return refuse(stderr, " kernel", fmt.Sprintf("--max-bytes must be a positive byte budget (got %d); refusing to guess", *maxBytes))
+		return refuseWith(stdout, stderr, *asJSON, " kernel", fmt.Sprintf("--max-bytes must be a positive byte budget (got %d); refusing to guess", *maxBytes))
 	}
 	measured, failures, err := check.Kernel(*file, *maxBytes)
 	if err != nil {
-		return refuse(stderr, " kernel", oneline.Err(err))
+		return refuseWith(stdout, stderr, *asJSON, " kernel", oneline.Err(err))
 	}
 	if len(failures) > 0 {
+		if *asJSON {
+			out := verbout.Failed("kernel", 1)
+			for _, f := range failures {
+				out.Item("FAIL", fmt.Sprintf("%s: %s", oneline.Escape(f.Subject), oneline.Escape(f.Reason)))
+			}
+			return out.Emit(stdout, stderr, true)
+		}
 		for _, f := range failures {
 			fmt.Fprintf(stderr, "KERNEL FAIL %s: %s\n", oneline.Escape(f.Subject), oneline.Escape(f.Reason))
 		}
 		return 1
+	}
+	out := verbout.OK("kernel")
+	out.FactInt64("bytes", measured)
+	out.FactInt64("budget", *maxBytes)
+	if *asJSON {
+		return out.Emit(stdout, stderr, true)
 	}
 	fmt.Fprintf(stdout, "KERNEL OK bytes=%d budget=%d\n", measured, *maxBytes)
 	return 0
@@ -615,21 +709,23 @@ func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 	failMax := addFailMax(fs)
 	var allow repeatable
 	fs.Var(&allow, "allow", "path prefix where machinery may live (repeatable; empty by default)")
+	asJSON := verbflag.JSON(fs)
 
 	fs.SetOutput(io.Discard) // see parse: the flag package is not allowed to print
 	fs.Usage = func() {}
+	jsonAsked := *asJSON || hasJSONFlag(args)
 	if err := verbflag.Parse(fs, args); err != nil {
-		return refuse(stderr, " nocode", oneline.Cap(err.Error(), oneline.TailBytes))
+		return refuseWith(stdout, stderr, jsonAsked, " nocode", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if fs.NArg() > 0 {
 		// nocode parses its own flags rather than through parse(), so it carried the
 		// second copy of the door-less refusal; both go through refuse now.
-		return refuse(stderr, " nocode", fmt.Sprintf("unexpected argument %q", fs.Arg(0)))
+		return refuseWith(stdout, stderr, *asJSON, " nocode", fmt.Sprintf("unexpected argument %q", fs.Arg(0)))
 	}
 	if *denyExt != "" && *denyExtAdd != "" {
-		return refuse(stderr, " nocode", "--deny-ext and --deny-ext-add are mutually exclusive")
+		return refuseWith(stdout, stderr, *asJSON, " nocode", "--deny-ext and --deny-ext-add are mutually exclusive")
 	}
-	if !checkFailMax(fs, *failMax, stderr) {
+	if !checkFailMax(fs, *failMax, stdout, stderr, *asJSON) {
 		return 2
 	}
 
@@ -637,7 +733,7 @@ func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 	// a guard that cannot say what it forbids must refuse, not pass.
 	deny, source, err := effectiveDenyList(*denyExt, *denyExtAdd)
 	if err != nil {
-		return refuse(stderr, " nocode", oneline.Err(err))
+		return refuseWith(stdout, stderr, *asJSON, " nocode", oneline.Err(err))
 	}
 
 	if *printList {
@@ -647,7 +743,24 @@ func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 		// the deny-list is defended against being.
 		names, prefixes, nerr := check.FloorDenyNames()
 		if nerr != nil {
-			return refuse(stderr, " nocode", oneline.Err(nerr))
+			return refuseWith(stdout, stderr, *asJSON, " nocode", oneline.Err(nerr))
+		}
+		if *asJSON {
+			out := verbout.OK("nocode")
+			out.Fact("source", source)
+			out.FactInt("count", len(deny))
+			out.FactInt("names", len(names))
+			out.FactInt("paths", len(prefixes))
+			for _, e := range deny {
+				out.Item("DENY-EXT", e)
+			}
+			for _, n := range sortedNames(names) {
+				out.Item("NAME", n)
+			}
+			for _, pre := range prefixes {
+				out.Item("PATH", pre+"/")
+			}
+			return out.Emit(stdout, stderr, true)
 		}
 		fmt.Fprintf(stdout, "NOCODE DENY-LIST source=%s count=%d\n", oneline.Field(source), len(deny))
 		for _, e := range deny {
@@ -664,8 +777,10 @@ func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 	}
 
 	if *dir == "" {
-		refuse(stderr, " nocode", "--dir is required; refusing to guess")
-		fmt.Fprint(stderr, hintFor("dir"))
+		refuseWith(stdout, stderr, *asJSON, " nocode", "--dir is required; refusing to guess")
+		if !*asJSON {
+			fmt.Fprint(stderr, hintFor("dir"))
+		}
 		return 2
 	}
 
@@ -674,30 +789,42 @@ func cmdNoCode(args []string, stdout, stderr io.Writer) int {
 	// refusal the audit already makes, and it never sees a --dir it was
 	// willing to guess. The verb's own wiring is staged.go.
 	if *staged {
-		return stagedRun(*dir, allow, deny, source, *failMax, stdout, stderr)
+		return stagedRun(*dir, allow, deny, source, *failMax, stdout, stderr, *asJSON)
 	}
 
 	opts := check.NoCodeOptions{Dir: *dir, Allow: allow, DenyExt: deny, DenySource: source}
 
 	scanned, findings, err := check.NoCode(opts)
 	if err != nil {
-		return refuse(stderr, " nocode", oneline.Err(err))
+		return refuseWith(stdout, stderr, *asJSON, " nocode", oneline.Err(err))
 	}
 	if len(findings) > 0 {
-		list := bounded.Capped(stderr, *failMax, "NOCODE", "file", failMaxRemedy)
+		out := verbout.Failed("nocode", 1)
+		out.StatusLast = true
+		out.FactInt("files", scanned)
+		b := out.Bounded(*failMax, "file", failMaxRemedy)
 		for _, f := range findings {
-			list.Line(fmt.Sprintf("NOCODE FAIL %s: %s", oneline.Escape(f.Subject), oneline.Escape(oneline.Cap(f.Reason, oneline.TailBytes))))
+			b.Line("FAIL", fmt.Sprintf("%s: %s", oneline.Escape(f.Subject), oneline.Escape(oneline.Cap(f.Reason, oneline.TailBytes))))
 		}
-		list.More()
-		fmt.Fprintf(stderr, "NOCODE FAIL files=%d findings=%d shown=%d deny-list=%s\n", scanned, list.Total(), list.Shown(), oneline.Field(source))
-		return 1
+		b.Finish()
+		out.FactInt("findings", b.Total())
+		out.FactInt("shown", b.Shown())
+		out.Fact("deny-list", source)
+		return out.Emit(stdout, stderr, *asJSON)
 	}
 	// A run that classified nothing should not read as a run that found
 	// nothing: an empty tree and a wrong --dir are indistinguishable here.
-	if scanned == 0 {
+	if scanned == 0 && !*asJSON {
 		// The audit had no such warning, so a --dir that resolved to an empty
 		// or unreadable tree read as a clean repo with nothing to say.
 		fmt.Fprintf(stderr, "nova-check nocode: classified NOTHING under %s — an empty tree, everything allowed, or the wrong directory\n", oneline.Escape(*dir))
+	}
+	out := verbout.OK("nocode")
+	out.FactInt("files", scanned)
+	out.Fact("clean", "")
+	out.Fact("deny-list", source)
+	if *asJSON {
+		return out.Emit(stdout, stderr, true)
 	}
 	fmt.Fprintf(stdout, "NOCODE OK files=%d clean deny-list=%s\n", scanned, oneline.Field(source))
 	return 0
@@ -743,18 +870,31 @@ func cmdFloors(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("floors", flag.ContinueOnError)
 	core := fs.String("core", "", "the door: path to SEED-CORE.md (required)")
 	source := fs.String("source", "", "the source: path to SEED.md (required)")
-	if !parse(fs, args, stderr, map[string]*string{"core": core, "source": source}) {
+	asJSON := verbflag.JSON(fs)
+	if !parse(fs, args, stdout, stderr, *asJSON, map[string]*string{"core": core, "source": source}) {
 		return 2
 	}
 	floors, failures, err := check.Floors(*core, *source)
 	if err != nil {
-		return refuse(stderr, " floors", oneline.Err(err))
+		return refuseWith(stdout, stderr, *asJSON, " floors", oneline.Err(err))
 	}
 	if len(failures) > 0 {
+		if *asJSON {
+			out := verbout.Failed("floors", 1)
+			for _, f := range failures {
+				out.Item("FAIL", fmt.Sprintf("%s: %s", oneline.Escape(f.Subject), oneline.Escape(f.Reason)))
+			}
+			return out.Emit(stdout, stderr, true)
+		}
 		for _, f := range failures {
 			fmt.Fprintf(stderr, "FLOORS FAIL %s: %s\n", oneline.Escape(f.Subject), oneline.Escape(f.Reason))
 		}
 		return 1
+	}
+	out := verbout.OK("floors")
+	out.FactInt("floors", floors)
+	if *asJSON {
+		return out.Emit(stdout, stderr, true)
 	}
 	fmt.Fprintf(stdout, "FLOORS OK floors=%d\n", floors)
 	return 0
@@ -766,25 +906,33 @@ func cmdCorpus(args []string, stdout, stderr io.Writer) int {
 	root := fs.String("root", "", "the repo the ledger's home paths are relative to (required)")
 	minAnchors := fs.Int("min-anchors", 0, "the fewest rows the ledger may hold, must be positive (required); the ledger is inside what it protects, so its own shrinking must be red")
 	failMax := addFailMax(fs)
-	if !parseFlags(fs, args, stderr) {
+	asJSON := verbflag.JSON(fs)
+	if !parseFlags(fs, args, stdout, stderr, *asJSON) {
 		return 2
 	}
 	// All three are independent, so `nova-check corpus` with nothing names all
 	// three at once instead of sending a first run back twice.
-	ok := requireFlags(fs, stderr, map[string]*string{"ledger": ledger, "root": root})
+	ok := requireFlags(fs, stdout, stderr, *asJSON, map[string]*string{"ledger": ledger, "root": root})
+	if !ok && *asJSON {
+		return 2
+	}
 	given := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { given[f.Name] = true })
 	switch {
 	case !given["min-anchors"]:
-		refuse(stderr, " corpus", "--min-anchors is required; the ledger lives inside the tree it protects and can be shrunk by the same events its rows exist to catch, so the floor is a number you state; refusing to guess")
-		fmt.Fprintf(stderr, "  %s\n", anchorsHint)
+		refuseWith(stdout, stderr, *asJSON, " corpus", "--min-anchors is required; the ledger lives inside the tree it protects and can be shrunk by the same events its rows exist to catch, so the floor is a number you state; refusing to guess")
+		if !*asJSON {
+			fmt.Fprintf(stderr, "  %s\n", anchorsHint)
+		}
 		ok = false
 	case *minAnchors <= 0:
-		refuse(stderr, " corpus", fmt.Sprintf("--min-anchors must be a positive row floor (got %d); a floor of zero guards nothing, which is what an empty ledger already is; refusing to guess", *minAnchors))
-		fmt.Fprintf(stderr, "  %s\n", anchorsHint)
+		refuseWith(stdout, stderr, *asJSON, " corpus", fmt.Sprintf("--min-anchors must be a positive row floor (got %d); a floor of zero guards nothing, which is what an empty ledger already is; refusing to guess", *minAnchors))
+		if !*asJSON {
+			fmt.Fprintf(stderr, "  %s\n", anchorsHint)
+		}
 		ok = false
 	}
-	if !checkFailMax(fs, *failMax, stderr) {
+	if !checkFailMax(fs, *failMax, stdout, stderr, *asJSON) {
 		ok = false
 	}
 	if !ok {
@@ -793,13 +941,13 @@ func cmdCorpus(args []string, stdout, stderr io.Writer) int {
 	// --root is validated BEFORE any finding is printed: a FAIL line from a
 	// run that then exits 2 reports findings from a run that did not happen.
 	if _, _, rootErr := check.ResolveRoot(*root); rootErr != nil {
-		return refuse(stderr, " corpus", oneline.Err(rootErr))
+		return refuseWith(stdout, stderr, *asJSON, " corpus", oneline.Err(rootErr))
 	}
 	raw, err := os.ReadFile(*ledger)
 	if err != nil {
 		// Nothing was checked, so this is a refusal rather than a pass —
 		// the one outcome a protection check must never confuse.
-		return refuse(stderr, " corpus", fmt.Sprintf("the ledger %s cannot be read (%s); NOTHING was checked, which is not a pass", oneline.Escape(*ledger), oneline.Err(err)))
+		return refuseWith(stdout, stderr, *asJSON, " corpus", fmt.Sprintf("the ledger %s cannot be read (%s); NOTHING was checked, which is not a pass", oneline.Escape(*ledger), oneline.Err(err)))
 	}
 	anchors, malformed, parseErr := check.ParseLedger(raw)
 	// Malformed rows print whether or not any good row survived: a ledger
@@ -807,26 +955,58 @@ func cmdCorpus(args []string, stdout, stderr io.Writer) int {
 	// author it is empty while withholding the reason is the worst of both.
 	// They are their own KIND under the cap, so a ledger with a thousand bad
 	// rows cannot hide the anchors that also went missing.
-	rows := bounded.Capped(stderr, *failMax, "CORPUS", "malformed-row", failMaxRemedy)
-	for _, f := range malformed {
-		rows.Line(fmt.Sprintf("CORPUS FAIL %s: %s", oneline.Escape(f.Subject), oneline.Escape(oneline.Cap(f.Reason, oneline.TailBytes))))
-	}
-	rows.More()
 	if parseErr != nil {
 		if len(malformed) > 0 {
+			if *asJSON {
+				out := verbout.Failed("corpus", 1)
+				out.StatusLast = true
+				out.FactInt("malformed", len(malformed))
+				out.FactInt("anchors", 0)
+				out.Fact("ledger", *ledger)
+				for _, f := range malformed {
+					out.Item("FAIL", fmt.Sprintf("%s: %s", oneline.Escape(f.Subject), oneline.Escape(oneline.Cap(f.Reason, oneline.TailBytes))))
+				}
+				return out.Emit(stdout, stderr, true)
+			}
+			rows := bounded.Capped(stderr, *failMax, "CORPUS", "malformed-row", failMaxRemedy)
+			for _, f := range malformed {
+				rows.Line(fmt.Sprintf("CORPUS FAIL %s: %s", oneline.Escape(f.Subject), oneline.Escape(oneline.Cap(f.Reason, oneline.TailBytes))))
+			}
+			rows.More()
 			// Rows were found and judged bad. The check RAN, and the answer
 			// is no — that is exit 1, not "could not run".
 			fmt.Fprintf(stderr, "CORPUS FAIL malformed=%d shown=%d anchors=0 ledger=%s: no row survived parsing\n",
 				rows.Total(), rows.Shown(), oneline.Field(*ledger))
 			return 1
 		}
-		return refuse(stderr, " corpus", fmt.Sprintf("%s: %s", oneline.Escape(*ledger), oneline.Err(parseErr)))
+		return refuseWith(stdout, stderr, *asJSON, " corpus", fmt.Sprintf("%s: %s", oneline.Escape(*ledger), oneline.Err(parseErr)))
 	}
 	failures, err := check.Corpus(*root, *ledger, *minAnchors, anchors)
 	if err != nil {
-		return refuse(stderr, " corpus", oneline.Err(err))
+		return refuseWith(stdout, stderr, *asJSON, " corpus", oneline.Err(err))
 	}
 	if len(failures) > 0 || len(malformed) > 0 {
+		if *asJSON {
+			out := verbout.Failed("corpus", 1)
+			out.StatusLast = true
+			out.FactInt("anchors", len(anchors))
+			out.FactInt("floor", *minAnchors)
+			out.FactInt("failed", len(failures))
+			out.FactInt("malformed", len(malformed))
+			out.Fact("ledger", *ledger)
+			for _, f := range malformed {
+				out.Item("FAIL", fmt.Sprintf("%s: %s", oneline.Escape(f.Subject), oneline.Escape(oneline.Cap(f.Reason, oneline.TailBytes))))
+			}
+			for _, f := range failures {
+				out.Item("FAIL", fmt.Sprintf("%s: %s", oneline.Escape(f.Subject), oneline.Escape(oneline.Cap(f.Reason, oneline.TailBytes))))
+			}
+			return out.Emit(stdout, stderr, true)
+		}
+		rows := bounded.Capped(stderr, *failMax, "CORPUS", "malformed-row", failMaxRemedy)
+		for _, f := range malformed {
+			rows.Line(fmt.Sprintf("CORPUS FAIL %s: %s", oneline.Escape(f.Subject), oneline.Escape(oneline.Cap(f.Reason, oneline.TailBytes))))
+		}
+		rows.More()
 		list := bounded.Capped(stderr, *failMax, "CORPUS", "anchor", failMaxRemedy)
 		for _, f := range failures {
 			list.Line(fmt.Sprintf("CORPUS FAIL %s: %s", oneline.Escape(f.Subject), oneline.Escape(oneline.Cap(f.Reason, oneline.TailBytes))))
@@ -835,6 +1015,13 @@ func cmdCorpus(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "CORPUS FAIL anchors=%d floor=%d failed=%d shown=%d malformed=%d ledger=%s\n",
 			len(anchors), *minAnchors, list.Total(), list.Shown(), rows.Total(), oneline.Field(*ledger))
 		return 1
+	}
+	out := verbout.OK("corpus")
+	out.FactInt("anchors", len(anchors))
+	out.FactInt("floor", *minAnchors)
+	out.Fact("ledger", *ledger)
+	if *asJSON {
+		return out.Emit(stdout, stderr, true)
 	}
 	fmt.Fprintf(stdout, "CORPUS OK anchors=%d floor=%d ledger=%s\n", len(anchors), *minAnchors, oneline.Field(*ledger))
 	return 0

@@ -39,6 +39,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/check"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/verbout"
 )
 
 // stagedRun drives one `nova-check nocode --staged --dir <repo>` advisory and
@@ -46,7 +47,7 @@ import (
 // stages no machinery, 1 with one `NOCODE FAIL <path>: <reason>` line per
 // finding on stderr, 2 for every refusal. --dir is required at the verb, on
 // the no-guessing law, and this function never sees it empty.
-func stagedRun(dir string, allow []string, deny []string, source string, failMax int, stdout, stderr io.Writer) int {
+func stagedRun(dir string, allow []string, deny []string, source string, failMax int, stdout, stderr io.Writer, asJSON bool) int {
 	denySet := make(map[string]bool, len(deny))
 	for _, e := range deny {
 		denySet[strings.ToLower(e)] = true
@@ -57,7 +58,7 @@ func stagedRun(dir string, allow []string, deny []string, source string, failMax
 	// belongs in a prose tree. --allow is the escape, and it is the caller's.
 	denyNames, denyPrefixes, err := check.FloorDenyNames()
 	if err != nil {
-		return refuse(stderr, " nocode", oneline.Err(err))
+		return refuseWith(stdout, stderr, asJSON, " nocode", oneline.Err(err))
 	}
 	allowPrefixes := normalizeStagedAllow(allow)
 
@@ -65,22 +66,22 @@ func stagedRun(dir string, allow []string, deny []string, source string, failMax
 	// refusal below is exit 2, and none of them may be read as a clean tree.
 	root, rerr := stagedRoot(dir)
 	if rerr != nil {
-		return refuse(stderr, " nocode", rerr.Error())
+		return refuseWith(stdout, stderr, asJSON, " nocode", rerr.Error())
 	}
 	base, berr := stagedBase(root)
 	if berr != nil {
-		return refuse(stderr, " nocode", berr.Error())
+		return refuseWith(stdout, stderr, asJSON, " nocode", berr.Error())
 	}
 	raw, derr := stagedGit(root, "diff-index", "-r", "--ignore-submodules=none", "--cached", "-z", base, "--")
 	if derr != nil {
 		// Every dynamic piece of a refusal reaches the stream through refuse,
 		// which escapes the whole line; oneline.Err escapes git's text here
 		// so the message is safe even before that.
-		return refuse(stderr, " nocode", "git diff-index failed against "+base+": "+oneline.Err(derr)+"; a failed diff-index is never a clean tree")
+		return refuseWith(stdout, stderr, asJSON, " nocode", "git diff-index failed against "+base+": "+oneline.Err(derr)+"; a failed diff-index is never a clean tree")
 	}
 	records, perr := parseDiffIndex(raw)
 	if perr != nil {
-		return refuse(stderr, " nocode", perr.Error())
+		return refuseWith(stdout, stderr, asJSON, " nocode", perr.Error())
 	}
 
 	var (
@@ -102,12 +103,12 @@ func stagedRun(dir string, allow []string, deny []string, source string, failMax
 		case "U":
 			// An unmerged entry has an all-zero destination and no staged
 			// content to classify; git refuses the commit in this state too.
-			return refuse(stderr, " nocode", "the index holds unmerged entries ("+rec.path+"); resolve the conflict and commit again")
+			return refuseWith(stdout, stderr, asJSON, " nocode", "the index holds unmerged entries ("+rec.path+"); resolve the conflict and commit again")
 		default:
 			// A switch with no default has an unbounded skip list: a gate
 			// that skips what it does not recognise is a fail-open whose size
 			// nobody can state, so an unrecognised letter stops the check.
-			return refuse(stderr, " nocode", "unrecognised status letter "+strconv.Quote(rec.status)+" on record for "+rec.path+"; this mode classifies A, M and T, skips D, and refuses the rest")
+			return refuseWith(stdout, stderr, asJSON, " nocode", "unrecognised status letter "+strconv.Quote(rec.status)+" on record for "+rec.path+"; this mode classifies A, M and T, skips D, and refuses the rest")
 		}
 		if isStagedAllowed(rec.path, allowPrefixes) {
 			continue
@@ -144,13 +145,13 @@ func stagedRun(dir string, allow []string, deny []string, source string, failMax
 			// -r is ever dropped from the record source, which is the whole
 			// reason to write the branch rather than leave a four-way switch
 			// with no default.
-			return refuse(stderr, " nocode", "staged record for "+rec.path+" has destination mode "+rec.dstMode+", which this mode does not classify")
+			return refuseWith(stdout, stderr, asJSON, " nocode", "staged record for "+rec.path+" has destination mode "+rec.dstMode+", which this mode does not classify")
 		}
 	}
 
 	heads, herr := stagedBlobHeads(root, blobs)
 	if herr != nil {
-		return refuse(stderr, " nocode", oneline.Err(herr))
+		return refuseWith(stdout, stderr, asJSON, " nocode", oneline.Err(herr))
 	}
 	for _, rec := range blobs {
 		reasons := stagedPathReasons(rec.path, denySet, source, denyNames, denyPrefixes)
@@ -180,6 +181,20 @@ func stagedRun(dir string, allow []string, deny []string, source string, failMax
 	}
 
 	if len(findings) > 0 {
+		if asJSON {
+			out := verbout.Failed("nocode", 1)
+			out.StatusLast = true
+			out.FactInt("staged", classified)
+			b := out.Bounded(failMax, "path", failMaxRemedy)
+			for _, f := range findings {
+				b.Line("FAIL", fmt.Sprintf("%s: %s", oneline.Escape(f.Subject), oneline.Escape(oneline.Cap(f.Reason, oneline.TailBytes))))
+			}
+			b.Finish()
+			out.FactInt("findings", b.Total())
+			out.FactInt("shown", b.Shown())
+			out.Fact("deny-list", source)
+			return out.Emit(stdout, stderr, true)
+		}
 		list := bounded.Capped(stderr, failMax, "NOCODE", "path", failMaxRemedy)
 		for _, f := range findings {
 			list.Line(fmt.Sprintf("NOCODE FAIL %s: %s", oneline.Escape(f.Subject), oneline.Escape(oneline.Cap(f.Reason, oneline.TailBytes))))
@@ -187,6 +202,13 @@ func stagedRun(dir string, allow []string, deny []string, source string, failMax
 		list.More()
 		fmt.Fprintf(stderr, "NOCODE FAIL staged=%d findings=%d shown=%d deny-list=%s\n", classified, list.Total(), list.Shown(), oneline.Field(source))
 		return 1
+	}
+	out := verbout.OK("nocode")
+	out.FactInt("staged", classified)
+	out.Fact("clean", "")
+	out.Fact("deny-list", source)
+	if asJSON {
+		return out.Emit(stdout, stderr, true)
 	}
 	// A clean run prints the audit's OK line, with the count of the records
 	// classified: nothing staged, or deletions only, is a count of zero and

@@ -117,6 +117,8 @@ func ParseText(text string) (*Value, error) {
 							v.Result.Exit = code
 						}
 					}
+				} else {
+					v.Fact(factWords[i], "")
 				}
 			}
 			continue

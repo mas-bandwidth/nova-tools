@@ -101,7 +101,7 @@ func cmdConvergence(args []string, stdout, stderr io.Writer) int {
 	var by repeatable
 	fs.Var(&by, "by", "narrow the EDGES rounds to this friend's receipts (repeatable; empty reads them all)")
 
-	if !parseFlags(fs, args, stderr) {
+	if !parseFlags(fs, args, stdout, stderr, false) {
 		return 2
 	}
 	if !requireConvergenceFlags(stderr, map[string]*string{

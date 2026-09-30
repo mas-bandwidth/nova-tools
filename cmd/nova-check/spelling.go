@@ -9,7 +9,9 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/check"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/verbout"
 )
 
 func cmdSpelling(args []string, stdout, stderr io.Writer) int {
@@ -25,22 +27,22 @@ func cmdSpelling(args []string, stdout, stderr io.Writer) int {
 	var exclude repeatable
 	fs.Var(&exclude, "exclude", "path prefix not scanned (repeatable; empty by default)")
 	failMax := addFailMax(fs)
+	asJSON := verbflag.JSON(fs)
 
-	if !parseFlags(fs, args, stderr) {
+	if !parseFlags(fs, args, stdout, stderr, *asJSON) {
 		return 2
 	}
-	if !checkFailMax(fs, *failMax, stderr) {
+	if !checkFailMax(fs, *failMax, stdout, stderr, *asJSON) {
 		return 2
 	}
 
 	if *dir == "" && len(files) == 0 && len(paths) == 0 {
-		refuse(stderr, " spelling", "give at least one of --dir, --file, or --path; refusing to guess")
-		return 2
+		return refuseWith(stdout, stderr, *asJSON, " spelling", "give at least one of --dir, --file, or --path; refusing to guess")
 	}
 
 	// Validate ignore flags before proceeding.
 	if _, err := check.ParseIgnoreSpec(ignore); err != nil {
-		return refuse(stderr, " spelling", oneline.Err(err))
+		return refuseWith(stdout, stderr, *asJSON, " spelling", oneline.Err(err))
 	}
 
 	root := *dir
@@ -99,10 +101,21 @@ func cmdSpelling(args []string, stdout, stderr io.Writer) int {
 		res, err = check.CheckSpellingDir(root, opts)
 	}
 	if err != nil {
-		return refuse(stderr, " spelling", oneline.Err(err))
+		return refuseWith(stdout, stderr, *asJSON, " spelling", oneline.Err(err))
 	}
 
 	if *write {
+		if *asJSON {
+			out := verbout.OK("spelling")
+			out.FactInt("files", res.FilesScanned)
+			out.FactInt("misspellings", len(res.Findings))
+			out.FactInt("written", res.Corrected)
+			for _, f := range res.Findings {
+				out.Item("FIXED", fmt.Sprintf("%s:%d:%d: %s -> %s",
+					oneline.Escape(f.File), f.Line, f.Column, oneline.Escape(f.Original), oneline.Escape(f.Replacement)))
+			}
+			return out.Emit(stdout, stderr, true)
+		}
 		for _, f := range res.Findings {
 			fmt.Fprintf(stdout, "SPELLING FIXED %s:%d:%d: %s -> %s\n",
 				oneline.Escape(f.File), f.Line, f.Column, oneline.Escape(f.Original), oneline.Escape(f.Replacement))
@@ -113,6 +126,20 @@ func cmdSpelling(args []string, stdout, stderr io.Writer) int {
 	}
 
 	if len(res.Findings) > 0 {
+		if *asJSON {
+			out := verbout.Failed("spelling", 1)
+			out.StatusLast = true
+			out.FactInt("files", res.FilesScanned)
+			b := out.Bounded(*failMax, "misspelling", failMaxRemedy)
+			for _, f := range res.Findings {
+				b.Line("FAIL", fmt.Sprintf("%s:%d:%d: %s -> %s",
+					oneline.Escape(f.File), f.Line, f.Column, oneline.Escape(f.Original), oneline.Escape(f.Replacement)))
+			}
+			b.Finish()
+			out.FactInt("misspellings", b.Total())
+			out.FactInt("shown", b.Shown())
+			return out.Emit(stdout, stderr, true)
+		}
 		list := bounded.Capped(stderr, *failMax, "SPELLING", "misspelling", failMaxRemedy)
 		for _, f := range res.Findings {
 			list.Line(fmt.Sprintf("SPELLING FAIL %s:%d:%d: %s -> %s",
@@ -124,6 +151,13 @@ func cmdSpelling(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 
+	out := verbout.OK("spelling")
+	out.FactInt("files", res.FilesScanned)
+	out.FactInt("misspellings", 0)
+	out.FactInt("excluded", res.Excluded)
+	if *asJSON {
+		return out.Emit(stdout, stderr, true)
+	}
 	fmt.Fprintf(stdout, "SPELLING OK files=%d misspellings=0 excluded=%d\n", res.FilesScanned, res.Excluded)
 	return 0
 }

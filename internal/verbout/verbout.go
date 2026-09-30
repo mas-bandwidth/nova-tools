@@ -362,9 +362,13 @@ func (v *Value) RenderText(w io.Writer) error {
 		if v.Facts != nil {
 			for _, p := range v.Facts.Pairs() {
 				b.WriteString(" ")
-				b.WriteString(p.Key)
-				b.WriteString("=")
-				b.WriteString(oneline.Field(p.Value))
+				if p.Value == "" {
+					b.WriteString(p.Key)
+				} else {
+					b.WriteString(p.Key)
+					b.WriteString("=")
+					b.WriteString(oneline.Field(p.Value))
+				}
 			}
 		}
 

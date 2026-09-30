@@ -241,3 +241,23 @@ func TestEmitRouting(t *testing.T) {
 		t.Errorf("JSON emit: exit=%d stdout=%q stderr=%q", exit, stdout.String(), stderr.String())
 	}
 }
+
+func TestBareFactWord(t *testing.T) {
+	t.Parallel()
+	v := OK("nocode")
+	v.FactInt("files", 1).Fact("clean", "").Fact("deny-list", "floor")
+
+	text := v.Text()
+	want := "NOCODE OK files=1 clean deny-list=floor\n"
+	if text != want {
+		t.Errorf("got %q, want %q", text, want)
+	}
+
+	parsed, err := ParseText(text)
+	if err != nil {
+		t.Fatalf("ParseText failed: %v", err)
+	}
+	if val, ok := parsed.Facts.Get("clean"); !ok || val != "" {
+		t.Errorf("expected clean fact to exist with empty value, got %q, %v", val, ok)
+	}
+}
