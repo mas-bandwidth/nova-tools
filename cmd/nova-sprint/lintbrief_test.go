@@ -115,3 +115,20 @@ func TestExitCodesRuleIsTheBannersLine(t *testing.T) {
 		t.Fatalf("the exit-codes rule is %+v; the banner prints %q", row, line)
 	}
 }
+
+// A sentinel carries no brief and is exempt from the card lint: a sentinel given a brief
+// that would fail the lint on any other card is admitted, and the lint writes nothing of
+// its own for it.
+func TestAddSentinelWithABriefIsNotLinted(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	code, out, errs := ta.do("add --stream s1 --sentinel gate-1 --brief 'stop here'")
+	if code != 0 || strings.Contains(errs, "LINT") {
+		t.Fatalf("a sentinel with a brief that fails the lint: exit %d, out %q, err %q; want admitted, not linted", code, out, errs)
+	}
+	// the same brief on a card that carries one is refused
+	if code, _, errs := ta.do("add --stream s1 --count 1 --brief 'stop here'"); code != 2 || !strings.Contains(errs, "LINT DRIFT brief ") {
+		t.Fatalf("the same brief on a --count card: exit %d, err %q; want the lint's refusal", code, errs)
+	}
+}

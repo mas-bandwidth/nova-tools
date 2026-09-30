@@ -204,21 +204,87 @@ func TestChildScanNamesTheLine(t *testing.T) {
 	}
 }
 
-// The RULES paragraph is where a card quotes what it forbids: a command in it is prose.
-// The same line after a STEP is a command, and a markdown heading ends the paragraph.
-func TestChildScansSkipTheRulesParagraph(t *testing.T) {
+// The RULES paragraph is where a card quotes what it forbids: it runs from its RULES line
+// to the first blank line, and a command in it is prose. Every other line is scanned: the
+// prose paragraph between RULES and STEP 1, a STEP, and a brief with no STEP at all.
+func TestChildScansSkipOnlyTheRulesParagraph(t *testing.T) {
 	t.Parallel()
-	card := "RESULT: x sha=abc\nRULES.\nrun git stash then rm -rf /\nSTEP 1. cd x\n"
-	if got := childChecks(LintCardChild([]byte(card))); containsStep(got) {
-		t.Errorf("the RULES paragraph is scanned: %v", got)
+	for name, c := range map[string]struct {
+		card string
+		hit  bool
+	}{
+		"inside the paragraph":        {"RESULT: x sha=abc\nRULES.\nrun git stash then rm -rf /\n\nSTEP 1. cd x\n", false},
+		"a STEP after it":             {"RESULT: x sha=abc\nRULES.\nprose\n\nSTEP 1. git stash\n", true},
+		"the task paragraph":          {"RESULT: x sha=abc\nRULES.\nprose\n\nTHE TASK. Then git stash.\n\nSTEP 1. cd x\n", true},
+		"prose after RULES, no STEP":  {"RESULT: x sha=abc\nRULES.\nprose\n\nRun git stash before you start.\n", true},
+		"the next line after RULES":   {"RESULT: x sha=abc\nRULES.\nprose\nSTEP 1. git stash\n", false},
+		"a heading rules paragraph":   {"RESULT: x sha=abc\n## RULES\ngit stash\n\n## Steps\ngit stash\n", true},
+		"the template's task section": {"", true},
+	} {
+		card := c.card
+		if card == "" {
+			card = strings.Replace(childTemplate(t), "THE TASK. <", "THE TASK. First git stash. <", 1)
+		}
+		got := contains(childChecks(LintCardChild([]byte(card))), "step-stash")
+		if name == "the next line after RULES" {
+			// STEP 1 follows RULES with no blank line: it is inside the paragraph by rule
+			if got {
+				t.Errorf("%s: scanned", name)
+			}
+			continue
+		}
+		if got != c.hit {
+			t.Errorf("%s: step-stash found=%v, want %v", name, got, c.hit)
+		}
 	}
-	card = "RESULT: x sha=abc\nRULES.\nprose\nSTEP 1. git stash\n"
-	if got := childChecks(LintCardChild([]byte(card))); !contains(got, "step-stash") {
-		t.Errorf("a STEP after the RULES paragraph is not scanned: %v", got)
+	// the same paragraph in the template, with a force-push in it, is refused too
+	tmpl := strings.Replace(childTemplate(t), "THE TASK. <", "THE TASK. Then git push --force. <", 1)
+	if got := LintCardChild([]byte(tmpl)); len(got) != 1 || got[0].Check != "step-force-push" {
+		t.Errorf("a force-push in the template's task paragraph draws %v", got)
 	}
-	card = "RESULT: x sha=abc\n## RULES\nprose\n## Steps\ngit stash\n"
-	if got := childChecks(LintCardChild([]byte(card))); !contains(got, "step-stash") {
-		t.Errorf("a heading does not end the RULES paragraph: %v", got)
+	// the second scan hit is the one outside the paragraph, at its own line
+	got := LintCardChild([]byte("RESULT: x sha=abc\nRULES.\ngit stash\n\nSTEP 1. git stash\n"))
+	if len(got) < 1 || got[len(got)-1].Line != 5 {
+		t.Errorf("want the finding on line 5 only: %v", got)
+	}
+}
+
+// A negation reaches only its own clause: a `;`, `,`, `&&`, `||` or `. ` ends it.
+func TestChildNegationIsLimitedToTheClause(t *testing.T) {
+	t.Parallel()
+	for _, line := range []string{
+		"STEP 7. Do not stop; git push --force",
+		"STEP 7. If it is not green, run go test ./x",
+		"STEP 7. Do not wait && git stash",
+		"STEP 7. No problem. git rebase main",
+		"STEP 7. never mind, kill 1234",
+	} {
+		if got := scanFindings(t, line); len(got) != 1 {
+			t.Errorf("%q draws %v, want one finding", line, got)
+		}
+	}
+	for _, line := range []string{
+		"STEP 7. Do not git stash here",
+		"STEP 7. Do not run it twice; never git rebase",
+	} {
+		if got := scanFindings(t, line); len(got) != 0 {
+			t.Errorf("%q draws %v, want none", line, got)
+		}
+	}
+}
+
+// `-timeout 0` (and `0s`) means no timeout: only a positive duration satisfies the scan.
+func TestChildTimeoutMustBePositive(t *testing.T) {
+	t.Parallel()
+	for _, line := range []string{"STEP 7. go test -timeout 0 ./x", "STEP 7. go test -timeout=0s ./x", "STEP 7. go test -timeout 00 ./x"} {
+		if got := scanFindings(t, line); len(got) != 1 || got[0] != "step-go-test-timeout" {
+			t.Errorf("%q draws %v, want step-go-test-timeout", line, got)
+		}
+	}
+	for _, line := range []string{"STEP 7. go test -timeout 600s ./x", "STEP 7. go test -timeout=10m ./x", "STEP 7. go test -timeout 1h30m ./x", "STEP 7. go test --timeout 0.5s ./x"} {
+		if got := scanFindings(t, line); len(got) != 0 {
+			t.Errorf("%q draws %v, want none", line, got)
+		}
 	}
 }
 

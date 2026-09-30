@@ -14,10 +14,9 @@ import (
 // A card is the whole of what a child is handed. The rules the coordinator gives every
 // child -- a private GOCACHE, no redis-server, no force-push, `-timeout 600s` on every
 // `go test`, the class tests before a push, the commit trailer, never merge, what the
-// report says -- used to live in brief files the coordinator pasted by hand, and a card
-// written on a tired day left one out: the child that never read the rule broke it. A card
-// that would not stand alone in front of a stranger is not ready, so the rules are now
-// the lint's: a card is refused before any spend when it does not carry them.
+// report says -- are carried by the card itself: a child that never read a rule breaks it.
+// A card that would not stand alone in front of a stranger is not ready, so the rules are
+// the lint's, and a card is refused before any spend when it does not carry them.
 //
 // TWO KINDS OF CHECK, BOTH OVER THE CARD'S TEXT AND NOTHING ELSE.
 //
@@ -28,9 +27,11 @@ import (
 //  2. SCAN. Where a violation can be read off the text, the text is scanned: a line that
 //     runs `redis-server`, `go clean`, `kill`, `rm -rf` outside the job, `git push
 //     --force`, `git rebase`, `git stash` or `gh pr merge`, or a `go test` with no
-//     `-timeout`, draws `step-<what>`. A line that says `never`, `not`, `no` or `without`
-//     before the command is prose about the rule, and is not read as a command; the
-//     RULES paragraph, which is where a card quotes what it forbids, is not scanned.
+//     `-timeout` of a positive duration, draws `step-<what>`. A clause (the text back to the
+//     last `;`, `,`, `&&`, `||` or `. `) that says `never`, `not`, `no` or `without` before the
+//     command is prose about the rule, and is not read as a command. The RULES paragraph,
+//     which is where a card quotes what it forbids, runs from its `RULES` line to the first
+//     blank line and is not scanned; every other line of the card is.
 //
 // WHAT THE TEXT CANNOT SHOW IS NOT CLAIMED. A card that says `Never kill a process you did
 // not start` and then `kill $!` is read as the child's own process; whether the child
@@ -77,7 +78,7 @@ var CardChildRules = []ChildRule{
 	{"pr-line", "PR bodies end with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.", "SAFETY.md"},
 	{"never-merge", "Open PRs against the base this card names; never merge.", "SAFETY.md, DIRTY-TICK-SLICES.md"},
 	{"exit-codes", "exit codes: 0 done, 1 refused, 2 usage or a store that did not answer", "the nova-sprint banner (cmd/nova-sprint usage text; a test holds the two equal)"},
-	{"pr-diffstat", "The PR body states the diff stat and what was deleted.", "the owner's list of 2026-09-30"},
+	{"pr-diffstat", "The PR body states the diff stat and what was deleted.", "the owner's list"},
 	{"pr-tests", "The PR body lists the tests, each with what it pins, and every local helper added.", "VERBS-COMMON.md"},
 	{"report-shape", "Report under 80 lines: PR number and sha, every test package line, what you could not do and why.", "SAFETY.md, DIRTY-TICK-SLICES.md"},
 	{"report-not-done", "\"Not done\" is a welcome report; a green claim you did not run is not.", "SAFETY.md"},
@@ -143,6 +144,11 @@ var (
 	// rule: `Never start a redis-server` and `No rm -rf outside the job` are the rules,
 	// not the violations.
 	childNegation = regexp.MustCompile(`(?i)(?:^|[^-\w])(?:never|not|no|don't|cannot|can't|without|forbid\w*|refus\w*)(?:[^-\w]|$)`)
+	// childClauseEnd ends a clause: a negation reaches the command only inside its clause.
+	childClauseEnd = regexp.MustCompile(`[;,]|&&|\|\||\.(?:[ \t]|$)`)
+	// childTimeout is `-timeout` with a positive duration: `600s`, `10m`, `=1h30m`; `0` and
+	// `0s` mean no timeout and do not count.
+	childTimeout = regexp.MustCompile(`(?:^|[ \t\x60"'])-{1,2}timeout[= \t]+"?[0-9.]*[1-9][0-9.hmsuµn]*`)
 	// childKillOwn is `kill $!` or `kill %<n>`: a process the child started itself.
 	childKillOwn = regexp.MustCompile(`^kill[ \t]+(?:-[A-Za-z0-9]+[ \t]+)*(?:"?\$!"?|%[0-9]+)(?:[ \t;&|)]|$)`)
 	// childSeparator ends one command on a line.
@@ -150,11 +156,11 @@ var (
 )
 
 // childHasTimeout reports whether the `go test` command starting at byte at carries
-// `-timeout` before the command ends (a `&&`, `||`, `;`, `|` or the end of the line).
+// `-timeout` with a positive duration before the command ends (a `&&`, `||`, `;`, `|` or the end of the line).
 func childHasTimeout(line string, at int) bool {
 	rest := line[at:]
 	end := childSeparator.FindStringIndex(rest)
-	return strings.Contains(rest[:end[0]], "-timeout")
+	return childTimeout.MatchString(rest[:end[0]])
 }
 
 // childRmInsideJob reports whether every target of the recursive `rm` at byte at is inside
@@ -253,11 +259,11 @@ func LintCardChild(raw []byte) []CardHeaderFinding {
 	for sc.Scan() {
 		n++
 		line := strings.TrimRight(sc.Text(), "\r")
-		switch {
-		case childRulesHeadRE.MatchString(line):
-			inRules = true
-		case stepHeadRE.MatchString(line), markdownHeadRE.MatchString(line):
+		// the RULES paragraph runs from its line to the first blank line
+		if strings.TrimSpace(line) == "" {
 			inRules = false
+		} else if childRulesHeadRE.MatchString(line) {
+			inRules = true
 		}
 		if inRules {
 			continue
@@ -265,7 +271,7 @@ func LintCardChild(raw []byte) []CardHeaderFinding {
 		for _, sc := range childScans {
 			for _, m := range sc.RE.FindAllStringSubmatchIndex(line, -1) {
 				at := m[2] // the command itself, group 1
-				if childNegation.MatchString(line[:at]) {
+				if childNegation.MatchString(childClause(line[:at])) {
 					continue
 				}
 				if sc.Allow != nil && sc.Allow(line, at) {
@@ -277,6 +283,15 @@ func LintCardChild(raw []byte) []CardHeaderFinding {
 		}
 	}
 	return out
+}
+
+// childClause is the text of line before a command that belongs to the command's own
+// clause: back to the last `;`, `,`, `&&`, `||` or `. `.
+func childClause(before string) string {
+	if all := childClauseEnd.FindAllStringIndex(before, -1); len(all) > 0 {
+		return before[all[len(all)-1][1]:]
+	}
+	return before
 }
 
 // ChildRuleNames is every child-rule check token, sorted, for listings and tests.

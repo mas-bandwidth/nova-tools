@@ -477,6 +477,71 @@ Every rule here is normative. Only living verbs are retained.
 13. **Publication by rename.** Reports are published whole by renaming `.tmp` over `RESULT.md`.
     The runner and verifier read only published reports to ensure no partially written revision is processed.
 
+## Card lint
+
+`nova-swarm lint --card <file>` checks a card's shape before any spend. `--child-rules` also
+holds the card to every rule the coordinator gives a child, and `nova-sprint add` holds every
+brief (`--brief` and `--brief-file`) to them before it writes anything, exit 2; a card with
+no brief (a `--count` card, an id card) and a sentinel carry none to check. `nova-swarm
+template --name card` prints a card with every rule in place, which lints clean as printed.
+`nova-swarm lint --rules` prints every token below with its remedy. A card written for a
+bench worker under the shape rules carries none of the child rules and is linted without the
+flag exactly as before.
+
+The child rules are the rows of `CardChildRules` in `internal/swarm/lintchild.go`, one row per
+rule. Two kinds of check read the card's text:
+
+- **Presence.** One `rule-<name>` token per required sentence; the card quotes the sentence
+  verbatim (blanks and line breaks folded, so a wrapped line still matches), conventionally in
+  a `RULES.` paragraph. A card without it draws the token at line 1 with the sentence in the
+  excerpt, and the remedy quotes the sentence and the file it came from.
+- **Scan.** One `step-<what>` token per forbidden command, read off every line outside the
+  `RULES.` paragraph, which runs from its `RULES` line to the first blank line. A clause (the
+  text back to the last `;`, `,`, `&&`, `||` or `. `) that says `never`, `not`, `no` or
+  `without` before the command is prose about the rule and is not read as a command.
+
+| rule token | the sentence the card quotes | from |
+| --- | --- | --- |
+| `rule-worktree` | Work only in the NEW worktree this card names. | SAFETY.md |
+| `rule-own-branch` | Touch only your own branch. | SAFETY.md |
+| `rule-gocache` | Export a private GOCACHE (the path this card names) and GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 before any go command. | SAFETY.md |
+| `rule-no-go-clean` | Never `go clean`, and never clean a shared cache. | SAFETY.md |
+| `rule-no-redis-server` | NEVER start a redis-server on this machine. | SAFETY.md |
+| `rule-no-kill` | Never kill a process you did not start. | SAFETY.md |
+| `rule-go-test-timeout` | Every `go test` gets `-timeout 600s`. | SAFETY.md, DIRTY-TICK-SLICES.md |
+| `rule-no-rm-rf` | No `rm -rf` outside the job directory. | SAFETY.md |
+| `rule-no-force-push` | Never force-push. | SAFETY.md, DIRTY-TICK-SLICES.md |
+| `rule-no-rebase` | Never rebase. | DIRTY-TICK-SLICES.md |
+| `rule-no-stash` | Do not use git stash (the stash list is shared by every worktree). | DIRTY-TICK-SLICES.md |
+| `rule-functional-in-container` | Functional tests (any test that needs Redis) run ONLY inside the container through `tools/functionalrun` (`--fresh-gocache --deadline 15m`), never against any other store. | SAFETY.md |
+| `rule-parallel` | Every new test opens with `t.Parallel()`. | SAFETY.md, DIRTY-TICK-SLICES.md |
+| `rule-class-tests` | Run `go test -count=1 -timeout 600s ./internal/ci/` before each push. | SAFETY.md, DIRTY-TICK-SLICES.md |
+| `rule-no-names` | No names of people, machines or friends in code, comments or docs. | SAFETY.md |
+| `rule-present-tense` | Docs and comments in the present tense. | SAFETY.md |
+| `rule-cite` | Cite the model or the design section from every function that implements a rule. | SAFETY.md, VERBS-COMMON.md |
+| `rule-only-named-files` | Touch only the files this card names; a fix that needs another file goes into your report as a proposed diff, not a commit. | DIRTY-TICK-SLICES.md |
+| `rule-minimal-diff` | Keep the diff minimal: every added line traceable to one sentence of this card. | DIRTY-TICK-SLICES.md |
+| `rule-commit-trailer` | Commit messages end with `Co-Authored-By: Claude <your model> <noreply@anthropic.com>`. | SAFETY.md |
+| `rule-pr-line` | PR bodies end with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`. | SAFETY.md |
+| `rule-never-merge` | Open PRs against the base this card names; never merge. | SAFETY.md, DIRTY-TICK-SLICES.md |
+| `rule-exit-codes` | exit codes: 0 done, 1 refused, 2 usage or a store that did not answer | the nova-sprint banner (cmd/nova-sprint usage text; a test holds the two equal) |
+| `rule-pr-diffstat` | The PR body states the diff stat and what was deleted. | the owner's list |
+| `rule-pr-tests` | The PR body lists the tests, each with what it pins, and every local helper added. | VERBS-COMMON.md |
+| `rule-report-shape` | Report under 80 lines: PR number and sha, every test package line, what you could not do and why. | SAFETY.md, DIRTY-TICK-SLICES.md |
+| `rule-report-not-done` | "Not done" is a welcome report; a green claim you did not run is not. | SAFETY.md |
+
+| scan token | what it wants |
+| --- | --- |
+| `step-redis-server` | no line starts a redis-server: a test that needs Redis is a functional test and runs only in the container through `tools/functionalrun`; a unit test opens no store (the machine's Redis belongs to whoever runs it) |
+| `step-go-clean` | no line runs `go clean`: a cache clean breaks every build that shares the cache; give the child a private GOCACHE (a path of its own) and let it be |
+| `step-kill` | no line kills a process: a child stops only a process it started itself, and says so as `kill $!` or `kill %<n>`; `pkill` and `killall` name processes by pattern and reach another child's |
+| `step-rm-rf` | a recursive `rm` names a path inside the job: a relative path without `..`, or one under `$PWD` or `<job>`; never `/`, `~`, `$HOME`, `.`, `*` or a path above the job, and never a variable the card cannot show the value of |
+| `step-force-push` | no line force-pushes (`--force`, `--force-with-lease`, `-f`, a `+` refspec): a child pushes its own branch with a plain `git push`, and a rewrite of a shared branch is the coordinator's act alone |
+| `step-rebase` | no line rebases: merge the base forward with `git merge --no-edit`; a rebase rewrites the history another worktree shares |
+| `step-stash` | no line stashes: the stash list is shared by every worktree of the repository, so a stash taken here is popped there; commit to the child's own branch instead |
+| `step-merge` | no line merges a pull request: the child opens it against the base the card names and stops; the coordinator lands it |
+| `step-go-test-timeout` | every `go test` carries `-timeout 600s` on the same command, so a hung test ends at ten minutes and not at the card's deadline |
+
 ## Test inventory
 
 List the current unit tests with `go test -list . ./cmd/nova-swarm/`.
