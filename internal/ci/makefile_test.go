@@ -160,9 +160,9 @@ func TestMakefileIsTheOneEntry(t *testing.T) {
 	recipes := strings.Join(mk.recipesUnder("check"), "\n")
 	for _, gate := range []string{
 		"go build ./...",
-		"gofmt -l .",
+		"go run ./tools/ci gofmt",
 		"go vet ./...",
-		"go test -count=1 $(shell bash .github/scripts/select-packages.sh --all)",
+		"go test -count=1 $(shell go run ./tools/ci select-packages --all)",
 		"go test -count=1 -run TestFriendSequence ./cmd/...",
 		"sh tools/ci/lisp-test.sh",
 	} {

@@ -11,13 +11,14 @@
 GO ?= go
 PKGS ?= ./...
 # CL_PKGS IS THE LIVING TREE, read the way ci.yml's test-packages job reads it:
-# `select-packages.sh --all` lists every package under cmd/, internal/ and
-# tools/ and drops the ones deprecated/PACKAGES names (a deprecated package is
-# never tested), or fails loudly when `go list` fails; it never selects nothing
-# in silence. Recursive (`=`), and the `test` and `test-functional` lines that
-# take it are recursive too, so the go list runs when one of those targets
-# runs and not on every make call; `make test PKGS=<shard>` never runs it.
-CL_PKGS = $(shell bash .github/scripts/select-packages.sh --all)
+# `go run ./tools/ci select-packages --all` lists every package under cmd/,
+# internal/ and tools/ and drops the ones deprecated/PACKAGES names (a
+# deprecated package is never tested), or fails loudly when `go list` fails; it
+# never selects nothing in silence. Recursive (`=`), and the `test` and
+# `test-functional` lines that take it are recursive too, so the go list runs
+# when one of those targets runs and not on every make call; `make test
+# PKGS=<shard>` never runs it.
+CL_PKGS = $(shell $(GO) run ./tools/ci select-packages --all)
 
 # THE HOST GUARD, on for every target. internal/testguard makes every ssh, scp
 # and rsync seam in this tree panic with its command line when this is 1, so a
@@ -147,12 +148,7 @@ build:
 
 # deprecated/ is out of scope of the testing drive (Glenn 2026-09-27); see deprecated/README.md
 fmt:
-	@unformatted="$$(gofmt -l . | grep -v '^deprecated/' || true)"; \
-	if [ -n "$$unformatted" ]; then \
-		echo "not gofmt-clean:"; \
-		echo "$$unformatted"; \
-		exit 1; \
-	fi
+	@$(GO) run ./tools/ci gofmt
 
 vet:
 	$(GO) vet $(PKGS)

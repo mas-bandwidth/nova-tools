@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -25,9 +26,12 @@ type localReply struct {
 
 // localFake answers commands from replies and records every command it saw.
 type localFake struct {
-	root    string
-	replies []localReply
-	calls   []localCmd
+	root     string
+	replies  []localReply
+	calls    []localCmd
+	selected []string
+	selErr   error
+	selAsked []string
 }
 
 func (f *localFake) answer(c localCmd) (int, error) {
@@ -63,15 +67,12 @@ func (f *localFake) call(prefix string) *localCmd {
 
 const localMergeBase = "0123456789abcdef0123456789abcdef01234567"
 
-// localCheckout makes a checkout with the select script and a Makefile holding
+// localCheckout makes a checkout with a go.mod and a Makefile holding
 // the given targets; with more than one, the test target takes GOTEST_TAGS.
 func localCheckout(t *testing.T, targets ...string) string {
 	t.Helper()
 	root := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(root, ".github", "scripts"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(root, ".github", "scripts", "select-packages.sh"), []byte("#!/usr/bin/env bash\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/m\n\ngo 1.26\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	var mk strings.Builder
@@ -88,15 +89,16 @@ func localCheckout(t *testing.T, targets ...string) string {
 	return root
 }
 
-// localFixture is a fake whose base, status and selection answer green; the
-// caller adds the make replies.
+// localFixture is a fake whose base and status answer green and whose selection
+// is the packages in selected (one per line); the caller adds the make replies.
+// The selection itself is pkgselect's, tested in its own package; the fixture
+// stands in for it (localSelected records what it was asked).
 func localFixture(t *testing.T, selected string, replies ...localReply) *localFake {
 	t.Helper()
-	f := &localFake{root: localCheckout(t, "test", "test-functional")}
+	f := &localFake{root: localCheckout(t, "test", "test-functional"), selected: strings.Fields(selected)}
 	f.replies = append(f.replies,
 		localReply{prefix: "git merge-base", stdout: localMergeBase + "\n"},
 		localReply{prefix: "git status"},
-		localReply{prefix: "nice -n 15 bash .github/scripts/select-packages.sh", stdout: selected},
 	)
 	f.replies = append(f.replies, replies...)
 	return f
@@ -105,8 +107,15 @@ func localFixture(t *testing.T, selected string, replies ...localReply) *localFa
 func runLocal(t *testing.T, f *localFake, args ...string) (int, string, string) {
 	t.Helper()
 	var out, errb bytes.Buffer
-	code := cmdLocal(args, &out, &errb, f.answer)
+	code := cmdLocalWith(args, &out, &errb, f.answer, f.selector)
 	return code, out.String(), errb.String()
+}
+
+// selector is the fake's package selection: the packages the fixture names, or
+// its error.
+func (f *localFake) selector(root, base string) ([]string, error) {
+	f.selAsked = append(f.selAsked, root+" "+base)
+	return f.selected, f.selErr
 }
 
 const localGreenStream = `{"Action":"start","Package":"example.com/m/cmd/a"}
@@ -132,9 +141,8 @@ func TestLocalGreenRunsTheUnitTierAsCIDoes(t *testing.T) {
 	if mb := f.call("git merge-base"); mb == nil || strings.Join(mb.Argv, " ") != "git merge-base origin/dev HEAD" || mb.Dir != f.root {
 		t.Fatalf("merge-base call = %+v, want `git merge-base origin/dev HEAD` in the checkout", mb)
 	}
-	sel := f.call("nice -n 15 bash")
-	if sel == nil || strings.Join(sel.Argv, " ") != "nice -n 15 bash .github/scripts/select-packages.sh "+localMergeBase {
-		t.Fatalf("selection call = %+v, want select-packages.sh against the merge base", sel)
+	if len(f.selAsked) != 1 || f.selAsked[0] != f.root+" "+localMergeBase {
+		t.Fatalf("selection asked = %v, want the checkout against the merge base", f.selAsked)
 	}
 	mk := f.call("nice -n 15 make test ")
 	if mk == nil {
@@ -317,9 +325,9 @@ func TestLocalRefusalsPrint(t *testing.T) {
 		}, nil, "no merge base between origin/dev and HEAD"},
 		{"selection fails", func(t *testing.T) *localFake {
 			f := plain(t)
-			f.replies = append([]localReply{{prefix: "nice -n 15 bash", stderr: "go: go.mod not found", code: 1}}, f.replies...)
+			f.selErr = errors.New("ERROR select-packages: go list failed\ngo: go.mod not found")
 			return f
-		}, nil, "select-packages.sh"},
+		}, nil, "the package selection against " + localMergeBase + " failed"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -360,5 +368,41 @@ func TestMakefileTestTargetTakesGOTEST_P(t *testing.T) {
 	}
 	if !strings.Contains(recipe, "-p $(GOTEST_P)") {
 		t.Errorf("make test does not pass -p $(GOTEST_P); nova-ci local's GOTEST_P=%s would be a phantom:\n%s", localCores, recipe)
+	}
+}
+
+// The real selection starts pkgselect's git and go commands through the verb's
+// own runner: niced at 15, GOMAXPROCS=2, in the checkout. A go.mod change puts
+// the whole tree in scope, so the diff and one go list answer it.
+func TestLocalSelectionRunsThroughTheNicedRunner(t *testing.T) {
+	t.Parallel()
+	f := &localFake{root: localCheckout(t, "test"), replies: []localReply{
+		{prefix: "nice -n 15 git fetch", code: 1},
+		{prefix: "nice -n 15 git diff --name-only " + localMergeBase + " HEAD", stdout: "go.mod\n"},
+		{prefix: "nice -n 15 go list ./cmd/... ./internal/... ./tools/...", stdout: "example.com/m/cmd/a\nexample.com/m/internal/ci\n"},
+	}}
+	pkgs, err := localSelectThrough(f.answer)(f.root, localMergeBase)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(pkgs, " "); got != "./cmd/a ./internal/ci" {
+		t.Errorf("selected %q, want ./cmd/a ./internal/ci", got)
+	}
+	for _, c := range f.calls {
+		if c.Dir != f.root || !strings.Contains(strings.Join(c.Env, " "), "GOMAXPROCS=2") || strings.Join(c.Argv[:3], " ") != "nice -n 15" {
+			t.Errorf("call %v ran in %q with env %v; want the checkout, GOMAXPROCS=2 and nice -n 15", c.Argv, c.Dir, c.Env)
+		}
+	}
+}
+
+// A selection that fails is refused by name, never an empty run.
+func TestLocalSelectionFailureIsAnError(t *testing.T) {
+	t.Parallel()
+	f := &localFake{root: localCheckout(t, "test"), replies: []localReply{
+		{prefix: "nice -n 15 git diff", stdout: "go.mod\n"},
+		{prefix: "nice -n 15 go list", stderr: "go: cannot find main module", code: 1},
+	}}
+	if _, err := localSelectThrough(f.answer)(f.root, localMergeBase); err == nil || !strings.Contains(err.Error(), "cannot find main module") {
+		t.Errorf("a failed go list = %v, want its message", err)
 	}
 }
