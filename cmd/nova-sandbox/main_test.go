@@ -1605,21 +1605,6 @@ func TestProbeRefusesWhenItCannotAnswerTheQuestion(t *testing.T) {
 	}
 }
 
-// toolBinary builds nova-sandbox once for a test that needs a REAL process, not run() in
-// this one: a process group is a property of a process, and the tests above that call
-// run() in process share the test binary's group.
-func toolBinary(t *testing.T) string {
-	t.Helper()
-	bin := filepath.Join(t.TempDir(), "nova-sandbox")
-	build := exec.Command("go", "build", "-o", bin, "./cmd/nova-sandbox")
-	build.Dir = repoRoot(t)
-	build.Env = goenv.Clean(os.Environ())
-	if out, err := build.CombinedOutput(); err != nil {
-		t.Fatalf("building the tool: %v\n%s", err, out)
-	}
-	return bin
-}
-
 // Rule 16: "a refusal names the flag and the form it wants". parse() is shared by every
 // verb, so the bare form accepted --secret (probe's) and --max (probe's and check's) and
 // then ignored them: `nova-sandbox --write <dir> --secret /etc/hosts --max 3 -- true`

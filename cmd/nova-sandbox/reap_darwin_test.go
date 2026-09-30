@@ -15,6 +15,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 )
 
 // The wall's child stays in the CALLER's process group, and the caller owns pgid and
@@ -68,4 +70,19 @@ func TestAForkedChildIsReapedWithTheCallersGroup(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	t.Fatalf("pid %d survived the caller's group kill (pgid %d): the tool put its child in a group of its own, outside the one the caller reaps", bg, pgid)
+}
+
+// toolBinary builds nova-sandbox once for a test that needs a REAL process, not run() in
+// this one: a process group is a property of a process, and the tests above that call
+// run() in process share the test binary's group.
+func toolBinary(t *testing.T) string {
+	t.Helper()
+	bin := filepath.Join(t.TempDir(), "nova-sandbox")
+	build := exec.Command("go", "build", "-o", bin, "./cmd/nova-sandbox")
+	build.Dir = repoRoot(t)
+	build.Env = goenv.Clean(os.Environ())
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("building the tool: %v\n%s", err, out)
+	}
+	return bin
 }

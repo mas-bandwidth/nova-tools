@@ -118,10 +118,11 @@ func findDeadCode(t *testing.T, root string) (map[string]bool, error) {
 //
 // It runs reachability analysis over the entire repository (main executables
 // and test entrypoints), and asserts:
-//   (1) no unreachable function exists outside the allowlist;
-//   (2) every allowlisted function is still present and still dead (stale rows
-//       fail and must be pruned with NOVA_CI_UPDATE=1);
-//   (3) the allowlist row count never exceeds its ceiling.
+//
+//	(1) no unreachable function exists outside the allowlist;
+//	(2) every allowlisted function is still present and still dead (stale rows
+//	    fail and must be pruned with NOVA_CI_UPDATE=1);
+//	(3) the allowlist row count never exceeds its ceiling.
 func TestNoDeadCode(t *testing.T) {
 	t.Parallel()
 
@@ -234,4 +235,3 @@ func TestDeadCodeWitness(t *testing.T) {
 		t.Errorf("expected refusal to grow, got: %v", rec4.lines)
 	}
 }
-

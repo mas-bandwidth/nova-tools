@@ -2558,6 +2558,15 @@ the original failed measurement.
 **Its lists.** `internal/ci/testdata/generality_text_fixtures_allowlist.txt`, `path reason`, whole files that are recorded data (captured output, a verbatim excerpt of a real record, a recorded reply of a public repository), a reason on every row; and `internal/ci/testdata/generality_text_allowlist.txt`, `path:token count`, the debt that existed when the scan was widened. Both only shrink: an unlisted finding, a rising count, a falling count and a stale row each fail, and `NOVA_CI_UPDATE=1` removes rows and never adds one.
 **Its narrowings.** The scan reads the files the shared walk finds with a suffix of `.lua .tsv .yml .yaml .j2 .md .sh .json .txt .ini .tmpl .tla .lisp .sexp .cfg .card .sql .py .ps1 .jsonl .log .notes`, and the files named `Makefile` and `Containerfile`; `.go` files are the other test's, and `deprecated/` and `.git` are never read. There is no marked-example exemption: a doc example is written with a generic name. A `[:space:]` character class is syntax and not a finding.
 
+### `deadcode` — no unreachable functions or methods
+
+**The rule.** Every package in the repository (main executables and test entrypoints) is analyzed by `deadcode`; no function or method is unreachable outside the allowlist, and every allowlisted entry must be present and still dead.
+**The mistake it prevents.** Unused, unreachable, and dead functions accumulating across the codebase; maintainer directive 2026-09-30 contraction phase ("dead code to zero with a class test holding it").
+**The test.** `TestNoDeadCode` (`internal/ci/dead_code_class_test.go`), with its allowlist mechanics witness `TestDeadCodeWitness`.
+**Its allowlist.** `internal/ci/testdata/dead_code_allowlist.txt`, the shrink-only ledger of unreachable symbols with ceiling; under `NOVA_CI_UPDATE=1` stale rows are dropped and the ceiling lowers. The list refuses to grow.
+**Its remedy line.** `remedy="delete the unreachable function or method; the allowlist only shrinks and refuses to add rows"`.
+**Its narrowings.** Analyzes static reachability across main executables and test entrypoints using `golang.org/x/tools/cmd/deadcode`. Platform-specific code only reached on other OSes is scoped by build tags on the declaring files.
+
 ## How the class tests read the tree: one walk, one parse, in parallel
 
 Every rule above is a sweep of this repository's own source. A rule that pays
