@@ -73,6 +73,10 @@ type Twin struct {
 	absent      map[string]map[string]bool
 	queue       []sprint.QueuedChange
 	queueKnown  bool
+	// last is the last snapshot read from the twin (its judgments, its
+	// coordinator, the machine's state): what peek answers with beside the
+	// tables.
+	last *sprint.Snapshot
 }
 
 // NewTwin is an empty twin: its first read reads the store whole.
@@ -159,6 +163,7 @@ func (st *Store) twinRead(ctx context.Context, tw *Twin, load []string, extras f
 		tw.valid, tw.gen = true, f.Gen
 		snap.QueueLen, snap.Running = f2.Queued, f2.Running
 		f2.Gen = f.Gen
+		tw.last = snap
 		if st.CheckTwin != nil {
 			if err := st.checkTwin(ctx, snap, f.Gen, load, extras); err != nil {
 				return nil, Fence{}, err
@@ -409,6 +414,33 @@ func (st *Store) showExtras(ctx context.Context, tw *Twin, s *sprint.Snapshot, l
 		}
 	}
 	return nil
+}
+
+// peek is the twin as the steps that wrote through it left it, read from no
+// store: the tables with their receipts applied, the queue as their commits
+// left it (projected for a step other than the pump's, as its step plans on
+// it), and the last read's judgments and coordinator. nil when the twin is not
+// known (dropped, or held by another step). The tick asks it only whether a
+// part has anything to do; the part's step then reads the store.
+func (st *Store) peek(tw *Twin, pump bool) *sprint.Snapshot {
+	if tw == nil || !tw.mu.TryLock() {
+		return nil
+	}
+	defer tw.mu.Unlock()
+	if !tw.valid || tw.last == nil || tw.tables == nil || !tw.queueKnown {
+		return nil
+	}
+	s := *tw.last
+	s.Now = st.now()
+	s.Work, s.Readers, s.Merge, s.Fleet = tw.tables[sprint.Work], tw.tables[sprint.Readers], tw.tables[sprint.Merge], tw.tables[sprint.Fleet]
+	if s.Work == nil || s.Readers == nil || s.Merge == nil || s.Fleet == nil {
+		return nil
+	}
+	s.QueueLen, s.Queue = len(tw.queue), nil
+	if !pump && len(tw.queue) > 0 {
+		return sprint.WithQueue(&s, slices.Clone(tw.queue))
+	}
+	return &s
 }
 
 // twinQueue is the work table's queue at the generation the step read: the

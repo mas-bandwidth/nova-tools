@@ -489,7 +489,7 @@ func tickExtras(s *sprint.Snapshot) map[string][]string {
 // set to what the last plan left due past the part's bounds.
 func TickPartStep(name string, fn sprint.TickPartFn, r sprint.TickReq, epoch *uint64, guard func(*sprint.Snapshot) string, due *int) Step {
 	return Step{Verb: "tick " + name, Actor: sprint.MachineActor, Load: All, Extras: tickExtras, Epoch: epoch,
-		Mirrors: name == "presence" || name == "deal" || name == "level" || name == "resume",
+		Mirrors: mirrors(name),
 		Plan: func(s *sprint.Snapshot) sprint.Plan {
 			if guard != nil {
 				if why := guard(s); why != "" {
@@ -502,6 +502,11 @@ func TickPartStep(name string, fn sprint.TickPartFn, r sprint.TickReq, epoch *ui
 			}
 			return unchangedNotWritten(s, p)
 		}}
+}
+
+// mirrors says the part's step brings the display cells up to date after it.
+func mirrors(name string) bool {
+	return name == "presence" || name == "deal" || name == "level" || name == "resume"
 }
 
 // unchangedNotWritten is the plan of a part with the writes that change no
@@ -871,6 +876,17 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	if out := t.parts("", sprint.TickEnd); out != tickOn && out != tickDone {
 		return t.end(out, last, unfinished, seen)
 	}
+	if t.unshown {
+		shown := st.meter()
+		err := st.SyncMirrors(ctx)
+		res.Times = append(res.Times, shown.part("", "display"))
+		if err != nil {
+			if st.clearedUnder(ctx, res) {
+				return unfinished, nil
+			}
+			return last, err
+		}
+	}
 	// 5. The tick-end note, the coordinator's one wake, is Tick's last step
 	// (tickend.go).
 	if t.lost {
@@ -928,6 +944,9 @@ type tickRun struct {
 	dirtied []string
 	lost    bool
 	err     error
+	// unshown says a part that brings the display cells up to date was
+	// passed over after a part ran: the tick's end brings them up to date.
+	unshown bool
 }
 
 // update is one table's update: its queue drained (the entries other updates
@@ -945,12 +964,23 @@ func (t *tickRun) update(u sprint.TableUpdate) tickOutcome {
 func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 	for _, part := range parts {
 		drain := part.Name == sprint.PartDrain && part.Fn == nil
-		if !t.ran {
-			if drain && t.snap.QueueLen == 0 {
+		// A part with nothing to do is passed over: on the tick's first read
+		// until a part has run, and after, on the twin as the tick's own
+		// writes left it (twin.go, peek), read from no store: what another
+		// writer did since is the next tick's.
+		view := t.snap
+		if t.ran {
+			view = t.st.peek(t.twin, table == sprint.Work)
+		}
+		if view != nil {
+			if drain && view.QueueLen == 0 {
 				continue
 			}
 			if !drain {
-				if p, due := part.Fn(t.snap, t.req); p.Empty() && due == 0 {
+				if p, due := part.Fn(view, t.req); p.Empty() && due == 0 {
+					// a part that brings the display cells up to date after
+					// it leaves them to the tick's end (tickRun.display)
+					t.unshown = t.unshown || t.ran && mirrors(part.Name)
 					continue
 				}
 			}
