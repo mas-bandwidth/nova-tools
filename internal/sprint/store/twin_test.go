@@ -33,9 +33,6 @@ func TestATickReadsTheSprintOnce(t *testing.T) {
 			break
 		}
 		c := res.Cost()
-		// the first tick tells of the harness's machines that beat before
-		// they were brought up: a step of its own, before the tick's read
-		c.Reads -= res.Times[0].Reads
 		want := int64(0)
 		if i == 0 {
 			want = int64(len(All))
@@ -86,11 +83,17 @@ func TestAWriteDuringTheTickIsReadAgain(t *testing.T) {
 	if len(ids) == 0 {
 		t.Fatal("m1 took nothing")
 	}
+	// the world is another process: a store of its own, with no twin of the
+	// tick's
+	world := &Store{B: h.m, Names: h.st.Names, Actor: "m1", Now: h.st.Now, NewID: h.st.NewID, Sleep: h.st.Sleep}
 	fired := false
 	h.st.Updates = []sprint.TableUpdate{sprint.TickTables[0], {Table: sprint.Readers, Parts: []sprint.TickPartDef{{Name: "ask", Fn: func(s *sprint.Snapshot, r sprint.TickReq) (sprint.Plan, int) {
 		if !fired {
 			fired = true
-			h.must(FinishStep(sprint.FinishReq{As: "m1", Sel: sprint.Sel{IDs: ids}, Gens: gens, Who: "m1"}))
+			res, err := world.Run(h.ctx, FinishStep(sprint.FinishReq{As: "m1", Sel: sprint.Sel{IDs: ids}, Gens: gens, Who: "m1"}))
+			if err != nil || len(res.Refused) > 0 {
+				t.Fatalf("the world's finish: %v %v", err, res.Refused)
+			}
 		}
 		return sprint.TickAsk(s, r)
 	}}}}, sprint.TickTables[2], sprint.TickTables[3]}
@@ -155,11 +158,11 @@ func TestATwinReadCutShortLeavesNoTableHalfRead(t *testing.T) {
 		return nil
 	}
 	tw := NewTwin()
-	if _, _, err := h.st.twinRead(h.ctx, tw, tickExtras, nil); err == nil || !failed {
+	if _, _, err := h.st.twinRead(h.ctx, tw, All, tickExtras, nil); err == nil || !failed {
 		t.Fatalf("the cut read: %v (failed %v)", err, failed)
 	}
 	h.m.Fail = nil
-	snap, gen, err := h.st.twinRead(h.ctx, tw, tickExtras, nil)
+	snap, gen, err := h.st.twinRead(h.ctx, tw, All, tickExtras, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

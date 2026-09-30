@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -933,6 +934,73 @@ func RowSet(ctx context.Context, c redis.Cmdable, name, key string, texts map[st
 	}
 	n, err := replyCount(reply)
 	return int(n), err
+}
+
+// RowSetMany sets the text cells of several rows of one table in one round
+// trip: one ns_table_row_set per row, all in one pipeline, each its own write
+// (its own revision and change event), as RowSet writes it. An error names
+// the first row the store refused, or the exchange that failed.
+func RowSetMany(ctx context.Context, c redis.Cmdable, name string, rows map[string]map[string]string, opts ...WriteOptions) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	if len(opts) > 1 {
+		return fmt.Errorf("table %q: one write-options value is allowed", name)
+	}
+	var wo WriteOptions
+	if len(opts) == 1 {
+		wo = opts[0]
+	}
+	options, err := payload(struct {
+		Epoch string `json:"epoch"`
+		Actor string `json:"actor"`
+		Fence string `json:"fence"`
+		Idem  string `json:"idem"`
+	}{strconv.FormatUint(wo.Epoch, 10), wo.Actor, wo.Fence, wo.Idem})
+	if err != nil {
+		return err
+	}
+	keys := make([]string, 0, len(rows))
+	for k := range rows {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	pipe := c.Pipeline()
+	cmds := make([]*redis.Cmd, len(keys))
+	for i, k := range keys {
+		if len(rows[k]) == 0 {
+			return fmt.Errorf("table %q: row set wants at least one text value", name)
+		}
+		body, err := payload(rows[k])
+		if err != nil {
+			return err
+		}
+		cmds[i] = pipe.FCall(ctx, FnRowSet, []string{DefKey(name)}, name, k, body, options)
+	}
+	if _, err := pipe.Exec(ctx); err != nil && !isRedisReply(err) {
+		return fmt.Errorf("table %q: row set of %d rows: %w", name, len(keys), err)
+	}
+	for i, cmd := range cmds {
+		o := operation{table: name, row: keys[i]}
+		reply, err := cmd.Slice()
+		if err != nil {
+			return fmt.Errorf("%s: %s: %w%s", o.location(), FnRowSet, err, runUnlessNamed(err, o.remedy()))
+		}
+		if err := o.refused(reply); err != nil {
+			return err
+		}
+		if len(reply) < 2 {
+			return fmt.Errorf("%s: missing committed receipt", o.location())
+		}
+	}
+	return nil
+}
+
+// isRedisReply says a pipeline's error is one command's reply, read with
+// that command, and not the exchange's.
+func isRedisReply(err error) bool {
+	var re redis.Error
+	return errors.As(err, &re)
 }
 
 // Drop removes the active epoch and its owned cells. The template and older

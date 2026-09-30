@@ -812,7 +812,13 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	// one tick to the next.
 	twin := st.twin()
 	read := st.meter()
-	snap, _, err := pinned.twinRead(withBudget(ctx), twin, tickExtras, nil)
+	var snap *sprint.Snapshot
+	if twin.mu.TryLock() {
+		snap, _, err = pinned.twinRead(withBudget(ctx), twin, All, tickExtras, nil)
+		twin.mu.Unlock()
+	} else {
+		snap, _, err = pinned.Fenced(withBudget(ctx), All, tickExtras, nil)
+	}
 	res.Times = append(res.Times, read.part("", "first read"))
 	unfinished := seen
 	unfinished.Full = time.Time{}
@@ -826,7 +832,11 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	at := snap.Epoch
 	res.Tables = newTables()
 	req := sprint.TickReq{Who: sprint.MachineActor, Stopped: m.StoppedBetween, Beats: beats, Started: m.FirstStart(snap.Cleared)}
-	t := &tickRun{st: st, ctx: ctx, res: res, req: req, at: at, snap: snap, queues: map[string]int{}, twin: twin}
+	// the first read as it was: the twin it came from moves on with every
+	// part's writes, and with any other writer in this process
+	first := *snap
+	first.Work, first.Readers, first.Merge, first.Fleet = snap.Work.Frozen(), snap.Readers.Frozen(), snap.Merge.Frozen(), snap.Fleet.Frozen()
+	t := &tickRun{st: st, ctx: ctx, res: res, req: req, at: at, snap: &first, queues: map[string]int{}, twin: twin}
 	updates := st.Updates
 	if updates == nil {
 		updates = sprint.TickTables

@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
@@ -57,6 +58,10 @@ type TableChanger interface {
 // Twin is a copy of the sprint (see above). The zero value is empty: its
 // first read reads the four tables whole.
 type Twin struct {
+	// mu is held by the step that reads and writes through the twin, from
+	// its read to its commit: a step that finds it held (a step run inside
+	// another's, or another goroutine's) reads the store itself.
+	mu     sync.Mutex
 	valid  bool   // gen and queue are known
 	gen    uint64 // the fence's generation the twin is the state at
 	epoch  uint64
@@ -89,6 +94,11 @@ func (tw *Twin) reset(epoch uint64) {
 	}
 }
 
+// ShareTwin has the store read and write through the twin (a process's
+// one twin of a store: every step it runs, a verb's or a tick's part, reads
+// only what changed since the last); nil is none.
+func (st *Store) ShareTwin(tw *Twin) { st.tw = tw }
+
 // twin is the store's twin, made on first use; its pinned copies share it.
 func (st *Store) twin() *Twin {
 	if st.tw == nil {
@@ -101,7 +111,7 @@ func (st *Store) twin() *Twin {
 // from the twin brought up to date (see above): the snapshot and the fence it
 // was read at. A pending operation is finished first, as fencedRead finishes
 // it.
-func (st *Store) twinRead(ctx context.Context, tw *Twin, extras func(*sprint.Snapshot) map[string][]string, repaired *[]string) (*sprint.Snapshot, Fence, error) {
+func (st *Store) twinRead(ctx context.Context, tw *Twin, load []string, extras func(*sprint.Snapshot) map[string][]string, repaired *[]string) (*sprint.Snapshot, Fence, error) {
 	r := st.retry(ctx)
 	for r.next(st.attempts()) {
 		f, err := st.B.ReadFence(ctx)
@@ -127,7 +137,7 @@ func (st *Store) twinRead(ctx context.Context, tw *Twin, extras func(*sprint.Sna
 		if tw.tables == nil || tw.epoch != st.epoch {
 			tw.reset(st.epoch)
 		}
-		snap, err := st.twinView(ctx, tw, extras)
+		snap, err := st.twinView(ctx, tw, load, extras)
 		var moved *movedError
 		if errors.As(err, &moved) {
 			continue
@@ -147,10 +157,10 @@ func (st *Store) twinRead(ctx context.Context, tw *Twin, extras func(*sprint.Sna
 			tw.queue, tw.queueKnown = nil, false
 		}
 		tw.valid, tw.gen = true, f.Gen
-		snap.QueueLen = f2.Queued
+		snap.QueueLen, snap.Running = f2.Queued, f2.Running
 		f2.Gen = f.Gen
 		if st.CheckTwin != nil {
-			if err := st.checkTwin(ctx, snap, f.Gen, extras); err != nil {
+			if err := st.checkTwin(ctx, snap, f.Gen, load, extras); err != nil {
 				return nil, Fence{}, err
 			}
 		}
@@ -161,10 +171,10 @@ func (st *Store) twinRead(ctx context.Context, tw *Twin, extras func(*sprint.Sna
 
 // checkTwin gives CheckTwin the twin's snapshot with a fresh read of the
 // same generation (its own read, not counted).
-func (st *Store) checkTwin(ctx context.Context, snap *sprint.Snapshot, gen uint64, extras func(*sprint.Snapshot) map[string][]string) error {
+func (st *Store) checkTwin(ctx context.Context, snap *sprint.Snapshot, gen uint64, load []string, extras func(*sprint.Snapshot) map[string][]string) error {
 	chk := *st
-	chk.Stats, chk.CheckTwin = &Stats{}, nil
-	fresh, at, err := chk.Fenced(ctx, All, extras, nil)
+	chk.Stats, chk.CheckTwin, chk.tw = &Stats{}, nil, nil
+	fresh, at, err := chk.Fenced(ctx, load, extras, nil)
 	if err != nil || at != gen {
 		return err
 	}
@@ -178,9 +188,9 @@ func (st *Store) checkTwin(ctx context.Context, snap *sprint.Snapshot, gen uint6
 // tables' shapes, the records written since, the open judgments, the
 // coordinator, the records the step's extras name) and is it as a step's
 // snapshot. A table that moved while it was read is a movedError.
-func (st *Store) twinView(ctx context.Context, tw *Twin, extras func(*sprint.Snapshot) map[string][]string) (*sprint.Snapshot, error) {
-	stored := make([]string, len(All))
-	for i, t := range All {
+func (st *Store) twinView(ctx context.Context, tw *Twin, load []string, extras func(*sprint.Snapshot) map[string][]string) (*sprint.Snapshot, error) {
+	stored := make([]string, len(load))
+	for i, t := range load {
 		stored[i] = st.Names.Table(t)
 	}
 	shapes, err := st.shapes(ctx, stored)
@@ -198,15 +208,15 @@ func (st *Store) twinView(ctx context.Context, tw *Twin, extras func(*sprint.Sna
 	// holds, so a read cut short leaves no table half read.
 	var whole []ntable.Table
 	for i, shape := range shapes {
-		t := tw.tables[All[i]]
+		t := tw.tables[load[i]]
 		switch {
 		case t == nil:
 			whole = append(whole, shape)
 		case t.Revision != shape.Revision:
-			if err := st.catchUp(ctx, tw, All[i], shape); err != nil {
+			if err := st.catchUp(ctx, tw, load[i], shape); err != nil {
 				return nil, err
 			}
-			tw.tables[All[i]].Revision = shape.Revision
+			tw.tables[load[i]].Revision = shape.Revision
 		}
 	}
 	if len(whole) > 0 {
@@ -227,7 +237,7 @@ func (st *Store) twinView(ctx context.Context, tw *Twin, extras func(*sprint.Sna
 		}
 	}
 	for i, shape := range shapes {
-		t := tw.tables[All[i]]
+		t := tw.tables[load[i]]
 		t.Epoch = shape.Epoch
 		t.SetProps(shape.Props)
 		rows := make([]string, 0, len(shape.Rows))
@@ -241,7 +251,18 @@ func (st *Store) twinView(ctx context.Context, tw *Twin, extras func(*sprint.Sna
 		t.SetRows(rows)
 		t.Texts = texts
 	}
-	s.Work, s.Readers, s.Merge, s.Fleet = tw.tables[sprint.Work], tw.tables[sprint.Readers], tw.tables[sprint.Merge], tw.tables[sprint.Fleet]
+	for _, name := range load {
+		switch name {
+		case sprint.Work:
+			s.Work = tw.tables[name]
+		case sprint.Readers:
+			s.Readers = tw.tables[name]
+		case sprint.Merge:
+			s.Merge = tw.tables[name]
+		case sprint.Fleet:
+			s.Fleet = tw.tables[name]
+		}
+	}
 	open, err := st.B.OpenNotes(ctx)
 	if err != nil {
 		return nil, err
@@ -250,7 +271,7 @@ func (st *Store) twinView(ctx context.Context, tw *Twin, extras func(*sprint.Sna
 	if s.Coordinator, err = st.B.Coordinator(ctx); err != nil {
 		return nil, err
 	}
-	if err := st.showExtras(ctx, tw, s, extras); err != nil {
+	if err := st.showExtras(ctx, tw, s, load, extras); err != nil {
 		return nil, err
 	}
 	st.stats().twin.Add(1)
@@ -333,7 +354,7 @@ func (st *Store) wholeTable(ctx context.Context, tw *Twin, name string, shape nt
 // showExtras puts in each table the kept records the step's extras name, read
 // once (a fresh read reads them with its tables), and takes out the ones it
 // does not name.
-func (st *Store) showExtras(ctx context.Context, tw *Twin, s *sprint.Snapshot, extras func(*sprint.Snapshot) map[string][]string) error {
+func (st *Store) showExtras(ctx context.Context, tw *Twin, s *sprint.Snapshot, load []string, extras func(*sprint.Snapshot) map[string][]string) error {
 	// The extras are named over the placed records (a fresh read names them
 	// before it reads any), which the kept ones shown do not change.
 	want := map[string]map[string]bool{}
@@ -342,7 +363,10 @@ func (st *Store) showExtras(ctx context.Context, tw *Twin, s *sprint.Snapshot, e
 			if want[table] == nil {
 				want[table] = map[string]bool{}
 			}
-			t := tw.tables[table]
+			t := s.T(table)
+			if t == nil {
+				continue // an extra of a table the step does not load: a fresh read reads none
+			}
 			var missing []string
 			for _, id := range ids {
 				if t.Placed(id) != nil {
@@ -369,7 +393,7 @@ func (st *Store) showExtras(ctx context.Context, tw *Twin, s *sprint.Snapshot, e
 			}
 		}
 	}
-	for _, table := range All {
+	for _, table := range load {
 		t := tw.tables[table]
 		for id := range tw.shown[table] {
 			if !want[table][id] {
@@ -422,6 +446,9 @@ func (st *Store) twinCommitted(tw *Twin, op OpRecord, receipts []receipt, gen ui
 		return
 	}
 	for _, r := range receipts {
+		if tw.tables[st.Names.Logical(r.man.Table)] == nil {
+			continue // a table the twin does not hold: its first read reads it whole
+		}
 		if err := tw.apply(st.Names.Logical(r.man.Table), r.man, r.rc); err != nil {
 			tw.drop()
 			return
@@ -507,11 +534,38 @@ func (tw *Twin) apply(table string, man ntable.BatchManifest, rc ntable.Receipt)
 
 // fencedStep is the step's read: from the twin when the step has one and
 // loads the four tables (twinRead), else fenced.
-func (st *Store) fencedStep(ctx context.Context, step Step, repaired *[]string) (*sprint.Snapshot, Fence, error) {
-	if step.Twin == nil || !slices.Equal(step.Load, All) {
+func (st *Store) fencedStep(ctx context.Context, tw *Twin, step Step, repaired *[]string) (*sprint.Snapshot, Fence, error) {
+	if tw == nil || len(step.Load) == 0 || !twinTables(step.Load) {
 		return st.fenced(ctx, step.Load, step.Extras, repaired)
 	}
-	return st.twinRead(ctx, step.Twin, step.Extras, repaired)
+	return st.twinRead(ctx, tw, step.Load, step.Extras, repaired)
+}
+
+// twinTables says the tables are the sprint's, each once.
+func twinTables(load []string) bool {
+	seen := map[string]bool{}
+	for _, t := range load {
+		if seen[t] || !slices.Contains(All, t) {
+			return false
+		}
+		seen[t] = true
+	}
+	return true
+}
+
+// stepTwin is the twin a step reads and writes through, held for it: the
+// step's own, else the store's; nil when there is none or it is held (a
+// step inside another, or another goroutine's), and the step reads the
+// store itself. The release is to be called when the step ends.
+func (st *Store) stepTwin(step Step) (*Twin, func()) {
+	tw := step.Twin
+	if tw == nil {
+		tw = st.tw
+	}
+	if tw == nil || !tw.mu.TryLock() {
+		return nil, func() {}
+	}
+	return tw, tw.mu.Unlock
 }
 
 // TwinDiff is how a snapshot planned on from the twin differs from a fresh
@@ -522,6 +576,12 @@ func TwinDiff(twin, fresh *sprint.Snapshot) string {
 	var out []string
 	for _, name := range All {
 		a, b := twin.T(name), fresh.T(name)
+		if a == nil || b == nil {
+			if (a == nil) != (b == nil) {
+				out = append(out, name+": loaded in one read and not the other")
+			}
+			continue
+		}
 		if a.Revision != b.Revision || a.Epoch != b.Epoch {
 			out = append(out, fmt.Sprintf("%s: revision %d/%d epoch %d/%d", name, a.Revision, b.Revision, a.Epoch, b.Epoch))
 		}
@@ -555,6 +615,9 @@ func TwinDiff(twin, fresh *sprint.Snapshot) string {
 	}
 	if fmt.Sprint(twin.Open) != fmt.Sprint(fresh.Open) || fmt.Sprint(twin.Acked) != fmt.Sprint(fresh.Acked) {
 		out = append(out, "the open judgments differ")
+	}
+	if twin.QueueLen != fresh.QueueLen || twin.Running != fresh.Running {
+		out = append(out, fmt.Sprintf("the queue %d/%d, running %v/%v", twin.QueueLen, fresh.QueueLen, twin.Running, fresh.Running))
 	}
 	if twin.Coordinator != fresh.Coordinator {
 		out = append(out, "the coordinator differs")

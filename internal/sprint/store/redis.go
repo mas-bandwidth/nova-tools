@@ -803,3 +803,10 @@ func changeIDs(ev changeEvent) ([]string, error) {
 }
 
 var _ TableChanger = (*Redis)(nil)
+
+// RowsSet writes the display cells of many rows in one round trip.
+func (r *Redis) RowsSet(ctx context.Context, table string, rows map[string]map[string]string) error {
+	return ntable.RowSetMany(ctx, r.C, table, rows, r.writeOpts())
+}
+
+var _ RowsSetter = (*Redis)(nil)
