@@ -593,6 +593,9 @@ func Path(from, to string) Norm {
 // the document as the variable a reader sets (`doc`, such as $ORG). The name is
 // replaced whole: a word boundary before it, and `/`, a blank, `,` or the end of
 // the line after it, so a longer name containing it is compared as written.
+// CompareTranscript refuses a declaration whose doc is not a `$NAME` a
+// documented command types, whose run the document prints as written, or whose
+// name or variable is declared twice.
 func Recorded(doc, run string) Norm {
 	return Norm{
 		Name: fmt.Sprintf("%s (the recorded fixture's name, written %s)", run, doc),
