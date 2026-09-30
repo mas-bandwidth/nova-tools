@@ -24,7 +24,7 @@ func missingTSetLogFragment(err error) bool {
 	return false
 }
 
-func requireTSetLogFragment(t *testing.T) {
+func requireTSetLogFragment(t testing.TB) {
 	t.Helper()
 	_, err := fn.TSetSource(fn.TSetComposed)
 	if err == nil {
