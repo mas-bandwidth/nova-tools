@@ -233,8 +233,8 @@ func TestQuickstartRunsBothChecksAndTakesTheWorstExit(t *testing.T) {
 	if !strings.Contains(stderr, "NOCODE FAIL") {
 		t.Errorf("nocode did not run after links failed; a first run must get both:\n%s", stderr)
 	}
-	if !strings.Contains(stdout, "QUICKSTART OK done=2 worst-exit=1") {
-		t.Errorf("the closing line must report both checks and the worst exit:\n%s", stdout)
+	if !strings.Contains(stdout, "QUICKSTART FAIL checks=2 failed=links,nocode worst-exit=1") {
+		t.Errorf("the closing line must say FAIL, name both failed checks and report the worst exit:\n%s", stdout)
 	}
 }
 
@@ -328,5 +328,44 @@ func copyTree(t *testing.T, from, to string) {
 		if err := os.WriteFile(filepath.Join(to, e.Name()), body, 0o644); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+// THE OK WORD IS A CLAIM THAT EVERY CHECK PASSED (a cold rating of the tools, 2026-09-30:
+// `QUICKSTART OK ... worst-exit=1` over two failed checks). With one failing check the run
+// prints no OK line at all, closes with FAIL naming exactly the failed check, and exits 1.
+func TestQuickstartWithOneFailingCheckPrintsFailAndNoOK(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.md"), []byte("[gone](nowhere.md)\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	exit, stdout, stderr := runCheck(t, "quickstart", "--dir", dir)
+	if exit != 1 {
+		t.Fatalf("exit = %d, want 1; stderr: %s", exit, stderr)
+	}
+	if strings.Contains(stdout, "QUICKSTART OK") {
+		t.Errorf("an OK line over a failed check:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "QUICKSTART FAIL checks=2 failed=links worst-exit=1 ") {
+		t.Errorf("the closing line must be FAIL and name only the failed check:\n%s", stdout)
+	}
+}
+
+// With both checks clean the run closes with OK, and only then.
+func TestQuickstartWithEveryCheckPassingPrintsOK(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.md"), []byte("no links here\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	exit, stdout, stderr := runCheck(t, "quickstart", "--dir", dir)
+	if exit != 0 {
+		t.Fatalf("exit = %d, want 0; stdout: %s\nstderr: %s", exit, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "QUICKSTART OK done=2 worst-exit=0 ") || strings.Contains(stdout, "QUICKSTART FAIL") {
+		t.Errorf("a clean run closes with OK:\n%s", stdout)
 	}
 }

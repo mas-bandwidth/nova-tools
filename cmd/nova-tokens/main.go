@@ -138,7 +138,8 @@ turn -- input, cache write, cache read, output, deduplicated on the message id s
 streamed message counts once -- prints one SESSION line with the weighted
 fresh-input equivalent (input + 1.25 x cache write + 0.1 x cache read + 5 x output)
 and the average context per turn, and with --out folds it into the day file as the
-model claude-fable-5-1/coordinator. The coordinator is a friend, and its spend is a
+model the transcript names, as <model>/coordinator (a transcript that names no
+model is refused, never booked under a guess). The coordinator is a friend, and its spend is a
 line in the ledger like everybody else's.
 
 example:

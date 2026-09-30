@@ -783,7 +783,7 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stdout, "LINT MORE script=%s findings=%d remedy=nova-swarm lint --fleet %s --max 0\n",
 				oneline.Field(name), len(findings), oneline.Field(*fleet))
 		}
-		return 2
+		return 1
 	}
 	f.want(*card, "card", "the path to the card file whose shape is checked before any spend; give --fleet <file> instead to lint a launcher script, or --rules to print every rule and what it wants")
 	if f.refused(stderr) {
@@ -867,7 +867,7 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	// ADVICE IS NOT A DEFECT, AND THE VERDICT SAYS WHICH (issues #1494, #1527). A drift is
-	// a defect and exits 2, which a caller refuses on; a note is advice and changes no
+	// a defect and exits 1 (the verb ran and said NO), which a caller refuses on; a note is advice and changes no
 	// verdict. The two are told apart here, once, so neither the writer nor the caller has
 	// to read the check's name to know what happened to the card.
 	var drifts, notes []cardFinding
@@ -919,5 +919,5 @@ func cmdLint(args []string, stdout, stderr io.Writer) int {
 	// exactly the writer who needs to know how close to the ceiling the card already is --
 	// and `advisory=true` is the answer to the question two managers asked on one day.
 	fmt.Fprintf(stdout, "LINT SIZE card=%s bytes=%d cap=%d advisory=true\n", oneline.Field(name), len(raw), cardMaxBytes)
-	return 2
+	return 1
 }
