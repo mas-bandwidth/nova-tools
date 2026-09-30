@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"sort"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -664,8 +665,23 @@ func (t *Twin) read(ctx context.Context, rr *ReadRequest) Result {
 		}
 	}
 	for i, q := range rr.Tset {
-		switch q.Kind {
-		case "last", "lines", "cardlines":
+		switch {
+		case q.Kind == "range" && strings.HasPrefix(q.Key, t.prefix+"sprint:"):
+			// Layer 1's range in its raw key form reads any sorted set under
+			// the deployment's prefix (L1 7), the sprint's own keys among them: the agenda's and
+			// the held queue's heads of RT1 (1.4.2). The twin holds those keys
+			// itself, and tset.Mem serves the raw form from its fixtures only.
+			if refusedAt >= 0 {
+				continue
+			}
+			ans, ref := t.keyRange(q)
+			if ref != nil {
+				refuseAt(ref, i)
+				continue
+			}
+			out.Tset[i] = ans
+			charged.RangeIDs += len(ans.IDs)
+		case q.Kind == "last" || q.Kind == "lines" || q.Kind == "cardlines":
 			if refusedAt >= 0 {
 				continue // a lower index already refused; this one cannot outrank it
 			}
@@ -725,6 +741,51 @@ func (t *Twin) read(ctx context.Context, rr *ReadRequest) Result {
 		out.Sprint[i] = ans
 	}
 	return Result{Read: out}
+}
+
+// keyRange is Layer 1's range in its raw key form over one of the sprint's own
+// sorted sets (L1 7): the first Limit members in [Min, Max] by score, then by
+// member (Desc from the highest), with their scores and whether more match. The
+// key form takes no records and no fields; a limit below 1, or a bound outside
+// the ZRANGE grammar, is REQUEST, a limit over 2,000 LIMIT, and a key of
+// another type WRONGTYPE.
+func (t *Twin) keyRange(q tset.ReadQuery) (tset.ReadAnswer, *Refusal) {
+	bad := func(code string) (tset.ReadAnswer, *Refusal) {
+		return tset.ReadAnswer{}, refuse(PhaseOpen, code, RefusalDetail{})
+	}
+	if q.Table != "" || q.Cell != "" || q.Records || q.Fields != nil || q.Limit < 1 {
+		return bad(CodeRequest)
+	}
+	if q.Limit > sprint.MaxRangeLimit {
+		return bad(CodeLimit) // as Layer 1's static check refuses it
+	}
+	if _, _, ok := parseBound(q.Min); !ok {
+		return bad(CodeRequest)
+	}
+	if _, _, ok := parseBound(q.Max); !ok {
+		return bad(CodeRequest)
+	}
+	if kind := t.keys.typeOf(q.Key); kind != kindNone && kind != kindZSet {
+		return bad(CodeWrongType)
+	}
+	pairs := t.keys.zpairs(q.Key)
+	if q.Desc {
+		for i, j := 0, len(pairs)-1; i < j; i, j = i+1, j-1 {
+			pairs[i], pairs[j] = pairs[j], pairs[i]
+		}
+	}
+	ans := tset.ReadAnswer{Kind: "range", IDs: []string{}, Scores: []string{}}
+	for _, p := range pairs {
+		if !inBounds(p.score, q.Min, q.Max) {
+			continue
+		}
+		if len(ans.IDs) == q.Limit {
+			ans.HasMore = true
+			break
+		}
+		ans.IDs, ans.Scores = append(ans.IDs, p.member), append(ans.Scores, formatScore(p.score))
+	}
+	return ans, nil
 }
 
 // page answers a page of lines from the log twin.

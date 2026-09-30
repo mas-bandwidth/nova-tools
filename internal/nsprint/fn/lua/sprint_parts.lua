@@ -550,7 +550,7 @@ do
       if err then return nil, err end
       if cur == nil or cur == '' then cur = '0' end
       if not S.uint(cur) then return nil, stored_refusal() end
-      if not run then return writes_nothing(ctx, {skipped = true, cur = cur, added = 0, dropped = 0, parked = 0}) end
+      if not run then return writes_nothing(ctx, {skipped = true, cur = cur, added = 0, dropped = 0, parked = 0, parked_keys = tset().array()}) end
       if cur ~= ing.from then
         return nil, refuse('INGESTAT', {cur = cur},
           'the cursor is at ' .. cur .. ' and this ingest starts at ' .. ing.from .. ': another loop ingested')
@@ -565,10 +565,11 @@ do
       local parked_map
       parked_map, err = hmget_present(ctx, parked_key, names, PARKED_VALUE_BYTES + 16, MAX_PIECES)
       if err then return nil, err end
-      local to_agenda, to_held, n_parked = {}, {}, 0
+      local to_agenda, to_held, n_parked, parked_names = {}, {}, 0, {}
       for _, k in ipairs(names) do
         if parked_map[k] ~= nil then
           n_parked = n_parked + 1
+          parked_names[#parked_names + 1] = k -- named in the reply: a new loop leaves it out of its plans (1.3.5)
         elseif rule_of(k) == 'held' then
           to_held[#to_held + 1] = k
         else
@@ -591,7 +592,8 @@ do
           new_held = new_held + 1
         end
       end
-      local plan = {skipped = false, cur = ing.to, added = (#add_agenda + #add_held) / 2, dropped = 0, parked = n_parked}
+      local plan = {skipped = false, cur = ing.to, added = (#add_agenda + #add_held) / 2, dropped = 0, parked = n_parked,
+        parked_keys = arr(parked_names)}
       local drop = {}
       local size
       size, err = S.rd(ctx, {'ZCARD', heldq}, 'zset', 32, 'cell')
