@@ -97,9 +97,50 @@ the gh configuration are in neither list and the kernel denies them.
 A command that runs outside the wall and dies
 inside it is missing a read_roots entry.
 
+A card to start from: nova-swarm template --name card prints one that passes
+nova-swarm lint --card <file> --child-rules (put it in a file, fill in its <...>
+lines, lint it, then hand it to batch, native or member). batch --cards is a
+TSV, one card a line: label, slot number, provider/model and the card's path,
+tab between them. batch, native and member each show one example line in
+their -h, and template -h lists the lines a card needs.
+
 example:
   nova-swarm template --name read-pr
 `
+
+// verbExamples is the one runnable example line each verb's -h shows, made
+// from the verb's own flags: what a stranger copies, then edits. template and
+// lint quote theirs from the banner's example block.
+var verbExamples = map[string]string{
+	"batch":  "nova-swarm batch --id demo --cards cards.tsv --deadline 1800 --root jobs --tokens unmetered --runner ./run-card.sh",
+	"native": "nova-swarm native --harness ./harness --model provider/model --card card.md --slot slots/1 --root jobs --deadline 30m --tokens unmetered",
+	"member": "nova-swarm member --as m1 --width 4 --harness ./harness --model provider/model --root jobs --deadline 30m --tokens unmetered --once",
+}
+
+// cardLines is what `template -h` lists: the lines a card needs, in the order
+// the card template writes them. `lint --rules` says why each is there, and
+// every line it lists is one of the template's own (a test holds the two).
+const cardLines = `a card's required lines (template --name card writes them; lint --card <file> --child-rules checks them, lint --rules says why each rule is there):
+  line 1     RESULT: <label> sha=<sha12>
+  a bound    Deadline: finish within <n> minutes.
+  RULES.     every rule the coordinator gives a child, each quoted whole
+  THE TASK.  what is wanted, the files or package it lives in, the worktree, branch, base and private GOCACHE
+  STEP 1.    one line a step, numbered 1, 2, 3 with no gap; the last step writes RESULT.md, whose line 1 is this card's line 1
+  a typed card (lint --typed) also carries KIND:, PATHS:, TEST:, DEPENDS-ON: and DONE-WHEN: lines
+`
+
+// verbHelpLines is what a verb's -h shows above its flags beyond the usage it
+// quotes: its example line, and for template the card's required lines.
+func verbHelpLines(verb string) string {
+	add := ""
+	if verb == "template" {
+		add = cardLines
+	}
+	if ex, ok := verbExamples[verb]; ok {
+		add = "example:\n  " + ex + "\n" + add
+	}
+	return add
+}
 
 // helpVerbs are the verbs `help <verb>` answers with that verb's help, the same text
 // `<verb> -h` prints.
@@ -130,7 +171,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0, before
 	// anything is read, dialed or written (the CLI style's rule (b), #4505). Only -h:
 	// every other exit of this tool is unchanged.
-	defer verbflag.Recover(stdout, "nova-swarm", usage, &code)
+	defer verbflag.RecoverWith(stdout, "nova-swarm", usage, &code, verbHelpLines)
 	// --seat <name> (or NOVA_SEAT): the Redis login is read from that seat's
 	// file through nova-secrets' library, in this process (#4052).
 	args, err := seatcred.FromArgs(args, os.Getenv)

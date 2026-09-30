@@ -32,8 +32,7 @@ import (
 // An entry added here has to name a branch that is genuinely open, and it stops
 // firing the moment that branch's section lands.
 var notYetOnTheStandard = map[string]string{
-	"nova-sprint": "origin/rowan/comfort-sprint-swarm",
-	"nova-work":   "origin/rowan/comfort-work",
+	"nova-work": "origin/rowan/banners-answer-three-questions",
 }
 
 func TestEveryCommandMeetsTheOnboardingStandard(t *testing.T) {

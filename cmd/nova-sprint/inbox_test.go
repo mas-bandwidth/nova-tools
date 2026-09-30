@@ -91,7 +91,7 @@ func TestAGroupOfAnotherSizeThanPrintedIsRefused(t *testing.T) {
 	ta.deal(3)
 	ta.failOnce("m1", "s1-1.w1@1", "tests red")
 	g := ta.group(sprint.NWorkFailed, "s1")
-	printed := g.Size
+	sizePrinted := g.Size
 	ta.failOnce("m1", "s1-2.w1@1", "tests red")
 	now := ta.group(sprint.NWorkFailed, "s1")
 	if now.ID != g.ID || now.Size != 2 {
@@ -108,7 +108,7 @@ func TestAGroupOfAnotherSizeThanPrintedIsRefused(t *testing.T) {
 	if ta.group(sprint.NWorkFailed, "s1").Size != 2 {
 		t.Fatalf("a refused verb changed the group")
 	}
-	_ = printed
+	_ = sizePrinted
 	out = ta.ok("rework --group " + g.ID + " --expect 2 --fix 'the fix'")
 	if !strings.Contains(out, "GROUP "+g.ID+" acted on 2, the group had 2 when printed") {
 		t.Fatalf("rework --expect: %s", out)

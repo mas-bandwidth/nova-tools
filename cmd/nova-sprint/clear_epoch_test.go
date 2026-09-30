@@ -178,7 +178,9 @@ func TestEveryVerbAfterAClearLeavesTheOldEpochAlone(t *testing.T) {
 			lines = append(lines, "teardown --confirm refused")
 			continue
 		}
-		lines = append(lines, v.example)
+		// an example names epoch 0, the epoch of a fresh sprint; the verb here
+		// runs after a clear, where the epoch is the new one (ta.do adds it)
+		lines = append(lines, strings.ReplaceAll(v.example, " --epoch 0", ""))
 	}
 	// the clear last: it reads the epoch it leaves (1), never epoch 0
 	slices.SortStableFunc(lines, func(a, b string) int {

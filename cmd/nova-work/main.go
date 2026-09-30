@@ -28,7 +28,7 @@ import (
 
 var version string
 
-const banner = `nova-work: imports GitHub issues for an organization into a single Lisp tree file and verifies them field for field against the API (docs/SPEC-WORK-V1.md)
+const bannerText = `nova-work: imports GitHub issues for an organization into a single Lisp tree file and verifies them field for field against the API (docs/SPEC-WORK-V1.md)
 
 State lives on the filesystem in a single Lisp tree file (--out or --tree) representing an organization's complete issue history. Import reads all open and closed issues, comments, cross-references, and closing pull requests read-only from GitHub using the gh CLI. Verify reads the tree file and queries GitHub again to compare every issue field for field. Discrepancies are reported as MISSING, EXTRA, or DRIFT lines, where zero output lines proves exact correspondence.
 
@@ -46,15 +46,26 @@ tree, not on GitHub), DRIFT (a field that differs). Zero lines is the proof.
 
 exit: 0 done, or verify found no difference; 1 verify found differences, or
 import's own round trip through the file failed; 2 could not run.
-
-example:
-  nova-work version
-  nova-work help import
-  nova-work help verify
-  nova-work import --org mas-bandwidth --repo mas-bandwidth/nova-tools --dry-run
-  nova-work import --org mas-bandwidth --repo mas-bandwidth/nova-tools --out ./tree.lisp
-  nova-work verify --tree ./tree.lisp --repo mas-bandwidth/nova-tools
 `
+
+var workExamples = []string{
+	"nova-work version",
+	"nova-work help import",
+	"nova-work help verify",
+	"nova-work import --org example-org --repo example-org/tools --dry-run",
+	"nova-work import --org example-org --repo example-org/tools --out ./tree.lisp",
+	"nova-work verify --tree ./tree.lisp --repo example-org/tools",
+}
+
+var banner = func() string {
+	var b strings.Builder
+	b.WriteString(bannerText)
+	b.WriteString("\nexample:\n")
+	for _, ex := range workExamples {
+		b.WriteString("  " + ex + "\n")
+	}
+	return b.String()
+}()
 
 const importHelp = `nova-work import --org <org> (--out <tree.lisp> | --dry-run) [flags]
 
