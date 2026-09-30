@@ -144,7 +144,9 @@ func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, nil)) }
 // run is the command; q, when not nil, replaces the GitHub seam (tests).
 func run(args []string, stdout, stderr io.Writer, q workgh.Query) int {
 	if len(args) == 0 {
-		fmt.Fprint(stderr, banner)
+		// ONBOARDING.md point 1: a bare command refuses in one line and names the
+		// door; the banner is behind help, not in front of every mistake.
+		fmt.Fprint(stderr, "nova-work: no verb; verbs: import verify help version; run: nova-work help\n")
 		return 2
 	}
 	switch args[0] {
