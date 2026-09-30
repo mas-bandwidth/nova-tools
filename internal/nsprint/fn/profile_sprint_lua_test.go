@@ -162,7 +162,12 @@ type luaSprint struct {
 	scopes, outside []string
 }
 
-// newLuaSprint loads the stubs and the sprint's two files, in load order.
+// newLuaSprint loads the stubs and the two files this item owns, sprint_00_core.lua
+// and sprint_zz_fn.lua, in load order. It loads those two by name and not
+// every sprint file the profile covers (SprintFragments): the phases and parts
+// of the later items' files are stand-ins here (setup), and a later item's
+// real file registering the same phase would be refused as registered twice.
+// Those files have their own tests.
 func newLuaSprint(t *testing.T) *luaSprint {
 	t.Helper()
 	L := lua.NewState()
@@ -197,12 +202,12 @@ func newLuaSprint(t *testing.T) *luaSprint {
 		return 1
 	}))
 	h.do(luaStubs)
-	frags, err := SprintFragments()
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, f := range frags {
-		h.do(f.Source)
+	for _, name := range []string{sprintCoreFragment, sprintFnFragment} {
+		b, err := sources.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		h.do(string(b))
 	}
 	return h
 }
