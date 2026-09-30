@@ -530,6 +530,10 @@ type Snapshot struct {
 	// Partial is what a snapshot loaded from a read plan was loaded from
 	// (LoadPartial, 1.5.2); nil for a snapshot built whole.
 	Partial *Partial
+	// Dropping maps a stream being dropped or removed to the op that drops it
+	// ({p}dropping@e): what Printed and Answerable leave out the decisions
+	// DROPPING refuses by (errata 3, H8). nil says no stream is dropping.
+	Dropping map[string]string
 }
 
 // T is the loaded table by logical name.
