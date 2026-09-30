@@ -64,6 +64,7 @@ type tsetSizeConfig struct {
 	proxyAddr string
 	space     string
 	owned     bool
+	profile   string
 }
 
 func (c tsetSizeConfig) validate() error {
@@ -260,11 +261,15 @@ func tsetSummary(samples []tsetSizeSample, selectDuration func(tsetSizeSample) t
 	return fmt.Sprintf("p50=%s p99=%s max=%s", tsetQuantile(values, .50), tsetQuantile(values, .99), tsetQuantile(values, 1))
 }
 
-func tsetReport(w io.Writer, results []tsetSizeResult) error {
+func tsetReport(w io.Writer, profile string, results []tsetSizeResult) error {
 	if w == nil {
 		return errors.New("nil report writer")
 	}
-	if _, err := io.WriteString(w, "L1 composed profile; durations and work triples are p50/p99/max. Store time is matched SLOWLOG FCALL, separate from client wall.\n\n| row | cards | route | store SLOWLOG | client wall | store commands | cell/field probes | fetched/argv/log/reply bytes | candidates/guards | limit | verdict | detail |\n|---|---:|---|---|---|---|---|---|---:|---|---|---|\n"); err != nil {
+	if profile == "" {
+		profile = "composed"
+	}
+	header := fmt.Sprintf("L1 %s profile; durations and work triples are p50/p99/max. Store time is matched SLOWLOG FCALL, separate from client wall.\n\n| row | cards | route | store SLOWLOG | client wall | store commands | cell/field probes | fetched/argv/log/reply bytes | candidates/guards | limit | verdict | detail |\n|---|---:|---|---|---|---|---|---|---:|---|---|---|\n", profile)
+	if _, err := io.WriteString(w, header); err != nil {
 		return err
 	}
 	for _, result := range results {
@@ -345,12 +350,12 @@ func tsetDecodeCounters(raw []byte, sample *tsetSizeSample) error {
 }
 
 // tsetPendingRows makes every required size and route visible before any run.
-// A proxy run has an independent verdict; its 256ms injected round trip makes
+// A proxy run has an independent verdict; its ~128ms injected round trip makes
 // the local store-time thresholds inapplicable to the client-wall column.
 func tsetPendingRows(includeProxy bool) []tsetSizeResult {
 	routes := []string{"local"}
 	if includeProxy {
-		routes = append(routes, "128ms-each-way-proxy")
+		routes = append(routes, "~128ms-per-trip-proxy")
 	}
 	var rows []tsetSizeResult
 	for _, cards := range []int{100_000, 1_000_000} {
@@ -755,16 +760,16 @@ func tsetTopologyCases(ctx context.Context, sampler tsetSizeSampler, space strin
 		added[i] = fmt.Sprintf("empty-%03d", i)
 	}
 	add := tsetOneStep(ctx, sampler, space, cards, route, "L1-19", []tset.Entry{{Kind: "rows", Table: "work", Add: added}}, 0)
-	if add.verdict() == "FAIL" || add.verdict() == "NOT MEASURED" {
-		add.complete = false
-		return []tsetSizeResult{add}
-	}
 	del := tsetOneStep(ctx, sampler, space, cards, route, "L1-19", []tset.Entry{{Kind: "rows", Table: "work", Del: added}}, 0)
 	add.samples = append(add.samples, del.samples...)
-	add.complete = del.complete
+	add.complete = add.complete && del.complete
 	add.correct = add.correct && del.correct
 	if del.why != "" {
-		add.why = del.why
+		if add.why != "" {
+			add.why += "; " + del.why
+		} else {
+			add.why = del.why
+		}
 	}
 	return []tsetSizeResult{add}
 }
@@ -1392,8 +1397,22 @@ type tsetOwnedStore interface {
 func tsetRunL1(ctx context.Context, cfg tsetSizeConfig,
 	load func(context.Context, *redis.Client) error,
 	newStore func(string, string) (tsetOwnedStore, error), out io.Writer) error {
+	return tsetRunL1Sizes(ctx, cfg, []int{100_000, 1_000_000}, load, newStore, out)
+}
+
+// tsetRunL1Sizes is tsetRunL1 for the given card counts, each 100,000 or
+// 1,000,000, in the order given. The rows it prints are those of the sizes it
+// ran. The functional size run uses it to measure one size per container run.
+func tsetRunL1Sizes(ctx context.Context, cfg tsetSizeConfig, sizes []int,
+	load func(context.Context, *redis.Client) error,
+	newStore func(string, string) (tsetOwnedStore, error), out io.Writer) error {
 	if err := cfg.validate(); err != nil {
 		return err
+	}
+	for _, cards := range sizes {
+		if cards != 100_000 && cards != 1_000_000 {
+			return fmt.Errorf("L1 size run wants 100,000 or 1,000,000 cards, got %d", cards)
+		}
 	}
 	if load == nil || newStore == nil {
 		return errors.New("L1 size run needs composed profile loader and Store constructor")
@@ -1406,13 +1425,21 @@ func tsetRunL1(ctx context.Context, cfg tsetSizeConfig,
 	if err := load(ctx, direct); err != nil {
 		return fmt.Errorf("load composed tset functions in owned container: %w", err)
 	}
-	results := tsetPendingRows(cfg.proxyAddr != "")
+	var results []tsetSizeResult
+	for _, pending := range tsetPendingRows(cfg.proxyAddr != "") {
+		for _, cards := range sizes {
+			if pending.cards == cards {
+				results = append(results, pending)
+				break
+			}
+		}
+	}
 	routes := []struct{ name, addr string }{{"local", cfg.redisAddr}}
 	if cfg.proxyAddr != "" {
-		routes = append(routes, struct{ name, addr string }{"128ms-each-way-proxy", cfg.proxyAddr})
+		routes = append(routes, struct{ name, addr string }{"~128ms-per-trip-proxy", cfg.proxyAddr})
 	}
 	var failed bool
-	for _, cards := range []int{100_000, 1_000_000} {
+	for _, cards := range sizes {
 		for _, route := range routes {
 			space := cfg.space + strconv.Itoa(cards) + ":" + route.name + ":"
 			clientName := fmt.Sprintf("tset-size-%d-%s", cards, route.name)
@@ -1479,7 +1506,19 @@ func tsetRunL1(ctx context.Context, cfg tsetSizeConfig,
 			}
 		}
 	}
-	if err := tsetReport(out, results); err != nil {
+	profile := cfg.profile
+	if profile == "" {
+		profile = "composed"
+		if raw, err := direct.Do(ctx, "FUNCTION", "LIST", "LIBRARYNAME", "nova_sprint", "WITHCODE").Result(); err == nil {
+			text := fmt.Sprint(raw)
+			if strings.Contains(text, "tset_profile = 'l1_only'") {
+				profile = "l1_only"
+			} else if strings.Contains(text, "tset_profile = 'composed'") {
+				profile = "composed"
+			}
+		}
+	}
+	if err := tsetReport(out, profile, results); err != nil {
 		return err
 	}
 	if failed {
