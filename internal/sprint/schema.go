@@ -98,6 +98,19 @@ func (n Names) MemberPrefix(logical string) string {
 	return n.Prefix + "sprint:" + logical[:1] + ":"
 }
 
+// TSetMemberPrefix is the record namespace of a logical table on Layer 1's
+// table store (tset/1), the event-driven machine's: <prefix>member:<logical>:,
+// the shape Layer 1's own tests use. MemberPrefix above lies under
+// <prefix>sprint:, which Layer 1 reserves with <prefix>table:, <prefix>tables
+// and the epoch key (DefineTable and table_set.lua refuse it CONFIG, L1 1.2),
+// so the new machine's tables take this one; the present build keeps
+// MemberPrefix, and its keys stay where they are, until the switch (IT23)
+// retires it. No two logical tables' prefixes overlap: each ends in ':'.
+// (Upper design version 2.1, errata 1, E7.3 and its addendum: IT12 chooses.)
+func (n Names) TSetMemberPrefix(logical string) string {
+	return n.Prefix + "member:" + logical + ":"
+}
+
 // Key is a sprint key outside the tables (the inbox, the operation records).
 func (n Names) Key(name string) string { return n.Prefix + "sprint:" + name }
 
