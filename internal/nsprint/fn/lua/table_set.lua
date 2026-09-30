@@ -101,6 +101,7 @@ do
     for _,field in ipairs(sealed_fields) do saved.fields[field]=ctx[field] end
     saved.fields.write_epoch=ctx.original_advance and S.next(ctx.request_epoch) or ctx.request_epoch
     saved.fields.intent_digest=ctx.intent and redis.sha1hex(ctx.intent) or nil
+    if ctx.operation=='read' then saved.read_before={};saved.read_row_scores={} end
     current_ctx=ctx;current_seal=saved
   end
   local function prefix_equal(current,original)
@@ -302,6 +303,13 @@ do
     ctx.query_index=index
     return true,nil
   end
+  local function read_cache_state(ctx)
+    local saved=ctx==current_ctx and current_seal or nil
+    if not saved or saved.fields.operation~='read' or not original_unchanged(ctx) or
+        saved.dispatch_index==nil or ctx.query_index~=saved.dispatch_index then return nil,S.refuse('CONFIG') end
+    local _,err=budget_monotone(ctx,false);if err then return nil,err end
+    return saved,nil
+  end
   -- Installed once by the read fragment. Only its lexical helpers receive
   -- the private read/dispatch closures; extensions cannot recover them.
   function S.bind_read_helpers(factory)
@@ -317,6 +325,9 @@ do
           saved.fields.request_epoch~=saved.read_active_epoch then return nil,S.refuse('CONFIG') end
       local _,err=budget_monotone(ctx,false);if err then return nil,err end
       return load_defs(ctx,t)
+    end,function(ctx)
+      local saved,err=read_cache_state(ctx);if err then return nil,err end
+      return saved.read_row_scores,nil
     end)
   end
   -- L2 owns the line reservation. Its separate initializer receives only
@@ -436,7 +447,12 @@ do
       if not record_charged then ok,err=S.charge(ctx,'record',#ids);if err then return nil,err end end
       ok,err=S.charge(ctx,'field',#ids*#(fields or {}));if err then return nil,err end
     end
-    local cache=ctx.before[t]; if not cache then cache={};ctx.before[t]=cache end
+    local records,row_scores=ctx.before,ctx.row_scores
+    if ctx.operation=='read' then
+      local saved,err=read_cache_state(ctx);if err then return nil,err end
+      records,row_scores=saved.read_before,saved.read_row_scores
+    end
+    local cache=records[t]; if not cache then cache={};records[t]=cache end
     local answer={}
     for _,id in ipairs(ids) do
       local key=ctx.operation=='read' and def.member_prefix..id or ctx.record_key(t,id)
@@ -468,12 +484,12 @@ do
               read_prefix=current_seal.fields.space..'table:'..t..(rec.epoch=='0' and '' or ':'..rec.epoch)
             end
             local rowskey=read_prefix and read_prefix..':rows' or ctx.rows_key(t,rec.epoch)
-            ctx.row_scores[rowskey]=ctx.row_scores[rowskey] or {}
-            local rank=ctx.row_scores[rowskey][row]
+            row_scores[rowskey]=row_scores[rowskey] or {}
+            local rank=row_scores[rowskey][row]
             if rank==nil then
               rank,err=rd(ctx,{'ZSCORE',rowskey,row},'zset',32,'cell')
               if err then return nil,err end
-              ctx.row_scores[rowskey][row]=rank
+              row_scores[rowskey][row]=rank
             end
             if not rank then return nil,S.refuse('DRIFT',{table=t,ids={id},rows={row}}) end
             local cellkey=read_prefix and read_prefix..':cell:'..row..':'..col or ctx.cell_key(t,rec.epoch,row,col)
@@ -516,8 +532,31 @@ do
     end
     return answer,nil
   end
+  -- Copy only this occurrence's projection, not the accumulated field cache.
+  -- Its work stays within the already charged record/field observations.
+  local function read_projection(rec,fields)
+    local place=rec.place
+    if type(place)=='table' then place={row=place.row,col=place.col} end
+    local out={exists=rec.exists,epoch=rec.epoch,revision=rec.revision,place=place,
+      score=rec.score,fields={},field_count=rec.field_count,hash_size=rec.hash_size}
+    for _,field in ipairs(fields or {}) do
+      local value=rec.fields[field]
+      out.fields[field]={present=value.present,value=value.value}
+    end
+    return out
+  end
   function S.before(ctx,t,ids,fields)
-    return before(ctx,t,ids,fields)
+    local found,err=before(ctx,t,ids,fields);if err then return nil,err end
+    if ctx.operation~='read' then return found,nil end
+    local answer={}
+    for id,rec in pairs(found) do answer[id]=read_projection(rec,fields) end
+    return answer,nil
+  end
+  local function whole_projection(rec,fields)
+    local names=S.array();for i,field in ipairs(fields) do names[i]=field end
+    local out=read_projection(rec,fields)
+    out.whole_names=names
+    return out,names,nil
   end
   -- Whole-record reads share metadata/placement validation and the projection
   -- cache. The preload is lexical, so extensions cannot fabricate facts.
@@ -525,11 +564,12 @@ do
     local _,err=budget_monotone(ctx,false);if err then return nil,nil,err end
     if ctx.operation~='read' or not S.name(id) then return nil,nil,S.refuse('REQUEST') end
     local def;def,err=S.ensure_read_table(ctx,t,ctx.query_index);if err then return nil,nil,err end
-    local cached=ctx.before[t] and ctx.before[t][id]
+    local saved;saved,err=read_cache_state(ctx);if err then return nil,nil,err end
+    local cached=saved.read_before[t] and saved.read_before[t][id]
     if cached and cached.whole_names then
       local found;found,err=before(ctx,t,{id},cached.whole_names)
       if err then return nil,nil,err end
-      return found[id],cached.whole_names,nil
+      return whole_projection(found[id],cached.whole_names)
     end
     local ok;ok,err=S.charge(ctx,'record',1);if err then return nil,nil,err end
     local key=def.member_prefix..id
@@ -563,7 +603,7 @@ do
     local found;found,err=before(ctx,t,{id},fields,preload,true)
     if err then return nil,nil,err end
     found[id].whole_names=fields
-    return found[id],fields,nil
+    return whole_projection(found[id],fields)
   end
   local function sameplace(a,row,col) return type(a)=='table' and a.row==row and a.col==col end
   local function sorted_fields(set)

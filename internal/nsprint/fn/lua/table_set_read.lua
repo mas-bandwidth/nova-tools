@@ -4,15 +4,16 @@ if NS.tset_profile then
   local S = NS.tset
   local MAX_RANK = '9007199254740991'
   local MAX_REPLY = 8388608
-  local trusted_readcmd, begin_query, load_current_defs
+  local trusted_readcmd, begin_query, load_current_defs, read_row_cache
   -- Redis runs one Function callback at a time. Core clears this one private
   -- slot on context replacement and on every protected entrypoint exit.
   local private_ctx, probe_prefixes, encoded_ledger, private_defs,
     public_defs, private_active_epoch, private_space, private_request_epoch
-  S.bind_read_helpers(function(readcmd, begin, load_defs)
+  S.bind_read_helpers(function(readcmd, begin, load_defs, row_cache)
     trusted_readcmd = readcmd
     begin_query = begin
     load_current_defs = load_defs
+    read_row_cache = row_cache
     return function()
       private_ctx, probe_prefixes, encoded_ledger = nil, nil, nil
       private_defs, public_defs, private_active_epoch = nil, nil, nil
@@ -361,8 +362,11 @@ if NS.tset_profile then
       return nil, fail(not row and 'REQUEST' or 'NOCOL', index, t, nil, name)
     end
     local key = rows_key(t, private_request_epoch)
-    local cached = ctx.row_scores[key]
-    if not cached then cached = {}; ctx.row_scores[key] = cached end
+    local row_scores
+    row_scores, err = read_row_cache(ctx)
+    if err then return nil, err end
+    local cached = row_scores[key]
+    if not cached then cached = {}; row_scores[key] = cached end
     local rank = cached[row]
     if rank == nil then
       rank, err = checked(ctx, {'ZSCORE', key, row}, key, 'zset', 32, 'cell')

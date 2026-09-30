@@ -519,3 +519,169 @@ func TestAL5ActiveDynamicDefinitionStillLoads(t *testing.T) {
 		t.Error("active dynamic read changed Redis image")
 	}
 }
+
+// The callback can mutate the public context and returned projections. Those
+// values must never become the read invocation's cached store observations.
+const al5PrivateCacheProbeLua = `
+redis.register_function('ns_tset_al5_private_cache_probe',function(keys,args)
+  local S=NS.tset
+  if #keys~=0 or #args~=3 then return S.json.encode(S.refuse('ARGS')) end
+  local mode=args[3]
+  local extension={kinds={'cacheguard'}}
+  extension.validate=function(q,index)
+    if not S.is_object(q) or q.kind~='cacheguard' then
+      return nil,S.refuse('REQUEST',{query_index=index})
+    end
+    for key in pairs(q) do
+      if key~='kind' then return nil,S.refuse('REQUEST',{query_index=index}) end
+    end
+    return true,nil
+  end
+  extension.read=function(ctx,q,index)
+    if mode=='inject_cell' then
+      ctx.row_scores={[ctx.space..'table:work:rows']={missing='99'}}
+      return {kind='cacheguard'},nil
+    end
+    if mode=='inject' then
+      ctx.before={work={card={exists=true,epoch='0',revision='1',
+        place={row='r',col='c'},score='99',fields={state={present=true,value='fake'}}}}}
+      ctx.row_scores={[ctx.space..'table:work:rows']={r='99'}}
+    end
+    local cell_start=ctx.budget.cell
+    local found,err=S.before(ctx,'work',{'card'},{'state'})
+    if err then return nil,err end
+    if mode=='refuse' then return nil,S.refuse('CONFIG',{query_index=index}) end
+    if mode=='throw' then error('intentional cache callback failure') end
+    local first=found.card
+    if mode=='detach_before' then
+      first.fields.state.value='fake'
+      first.place.row='other'
+      first.score='99'
+      found,err=S.before(ctx,'work',{'card'},{'state'})
+      if err then return nil,err end
+      first=found.card
+    elseif mode=='detach_whole' then
+      local whole,names
+      whole,names,err=S.before_whole(ctx,'work','card')
+      if err then return nil,err end
+      whole.fields.state.value='fake'
+      whole.place.row='other'
+      whole.score='99'
+      names[1]='fake'
+      whole.whole_names[1]='fake'
+      whole,names,err=S.before_whole(ctx,'work','card')
+      if err then return nil,err end
+      if names[1]~='state' or whole.whole_names[1]~='state' then
+        return nil,S.refuse('CONFIG',{query_index=index})
+      end
+      first=whole
+    elseif mode=='shared_probe' then
+      found,err=S.before(ctx,'work',{'card'},{'state'})
+      if err then return nil,err end
+      first=found.card
+    end
+    return {kind='cacheguard',value=first.fields.state.value,
+      score=first.score,row=first.place.row,
+      record=ctx.budget.record,field=ctx.budget.field,
+      cell_delta=ctx.budget.cell-cell_start},nil
+  end
+  return S.read(args[1],args[2],nil,extension)
+end)
+`
+
+func al5PrivateCacheCall(t *testing.T, fx *tsetFixture, mode string, sharedRow bool) al5GuardrailReply {
+	t.Helper()
+	queries := `[{"kind":"cacheguard"}]`
+	if sharedRow {
+		queries = `[{"kind":"count","t":"work","cells":["r:c"]},{"kind":"cacheguard"}]`
+	} else if mode == "inject_cell" {
+		queries = `[{"kind":"cacheguard"},{"kind":"count","t":"work","cells":["missing:c"]}]`
+	}
+	raw := readExtensionRaw(fx.Space, "0", "atomic", queries)
+	wire, err := fx.Client.FCall(context.Background(), "ns_tset_al5_private_cache_probe",
+		nil, Version, raw, mode).Text()
+	if err != nil {
+		t.Fatalf("private-cache %s: %v", mode, err)
+	}
+	var reply al5GuardrailReply
+	if err := json.Unmarshal([]byte(wire), &reply); err != nil {
+		t.Fatalf("decode private-cache %s: %v", mode, err)
+	}
+	return reply
+}
+
+func TestAL5PrivateReadCachesResistPublicMutation(t *testing.T) {
+	t.Parallel()
+	fx := newTSetFixture(t)
+	fx.Define(t, "work", "c")
+	ctx := context.Background()
+	if err := fx.Client.HSet(ctx, fixtureRecordKey(fx.Space, "work", "card"),
+		"epoch", "0", "revision", "1", "place:work", "r:c", "state", "ready").Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := fx.Client.ZAdd(ctx, fixtureRowsKey(fx.Space, "work", "0"),
+		redis.Z{Score: 0, Member: "r"}).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := fx.Client.ZAdd(ctx, fixtureCellKey(fx.Space, "work", "0", "r", "c"),
+		redis.Z{Score: 1, Member: "card"}).Err(); err != nil {
+		t.Fatal(err)
+	}
+	fx.ActivateWithLua(t, al5PrivateCacheProbeLua)
+	before := commitProbeImage(t, fx.Client)
+	for _, tc := range []struct {
+		mode      string
+		sharedRow bool
+		answers   int
+		zscores   int
+		cellDelta int
+		records   int
+		fields    int
+	}{
+		{mode: "inject", answers: 1, zscores: 2, cellDelta: 2, records: 1, fields: 1},
+		{mode: "detach_before", answers: 1, zscores: 2, cellDelta: 2, records: 2, fields: 2},
+		{mode: "detach_whole", answers: 1, zscores: 2, cellDelta: 2, records: 3, fields: 3},
+		{mode: "shared_probe", sharedRow: true, answers: 2, zscores: 2, cellDelta: 1, records: 2, fields: 2},
+		{mode: "inject_cell", answers: 0, zscores: 1},
+		{mode: "refuse", answers: 0, zscores: 2},
+		{mode: "inject", answers: 1, zscores: 2, cellDelta: 2, records: 1, fields: 1},
+		{mode: "throw", answers: 0, zscores: 2},
+		{mode: "inject", answers: 1, zscores: 2, cellDelta: 2, records: 1, fields: 1},
+	} {
+		statsBefore := readExtensionCommandStats(t, fx.Client)
+		reply := al5PrivateCacheCall(t, fx, tc.mode, tc.sharedRow)
+		statsAfter := readExtensionCommandStats(t, fx.Client)
+		if tc.mode == "throw" || tc.mode == "refuse" || tc.mode == "inject_cell" {
+			code := "CONFIG"
+			if tc.mode == "inject_cell" {
+				code = "NOROW"
+			}
+			if reply.Status != "refused" || reply.Code != code || len(reply.Answers) != 0 {
+				t.Errorf("%s did not refuse atomically: %+v", tc.mode, reply)
+			}
+		} else {
+			var answer struct {
+				Value     string `json:"value"`
+				Score     string `json:"score"`
+				Row       string `json:"row"`
+				Record    int    `json:"record"`
+				Field     int    `json:"field"`
+				CellDelta int    `json:"cell_delta"`
+			}
+			if reply.Status != "read" || len(reply.Answers) != tc.answers ||
+				json.Unmarshal(reply.Answers[len(reply.Answers)-1], &answer) != nil ||
+				answer.Value != "ready" || answer.Score != "1" || answer.Row != "r" ||
+				answer.Record != tc.records || answer.Field != tc.fields ||
+				answer.CellDelta != tc.cellDelta ||
+				reply.Counters.Record != tc.records || reply.Counters.Field != tc.fields {
+				t.Errorf("%s reused mutable cache or lost charges: %+v answer=%+v", tc.mode, reply, answer)
+			}
+		}
+		if got := readExtensionExecutedDelta(t, statsBefore, statsAfter, "ZSCORE"); got != tc.zscores {
+			t.Errorf("%s ran %d row/member ZSCORE commands, want %d", tc.mode, got, tc.zscores)
+		}
+		if after := commitProbeImage(t, fx.Client); !reflect.DeepEqual(before, after) {
+			t.Fatalf("%s changed Redis image", tc.mode)
+		}
+	}
+}
