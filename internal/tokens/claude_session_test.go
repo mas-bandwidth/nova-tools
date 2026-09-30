@@ -111,9 +111,13 @@ func TestSessionRowIsTheCoordinatorsOwnLine(t *testing.T) {
 	if len(days) != 1 || days[0] != "2026-09-16" {
 		t.Fatalf("days=%v, want one day 2026-09-16", days)
 	}
-	row := sum.Row(days[0])
-	if row.Model != CoordinatorModel || row.Repo != CoordinatorRepo {
-		t.Errorf("row is (%s, %s), want (%s, %s)", row.Model, row.Repo, CoordinatorModel, CoordinatorRepo)
+	rows := sum.Rows(days[0])
+	if len(rows) != 1 {
+		t.Fatalf("rows=%d, want one row for the one model the transcript names", len(rows))
+	}
+	row := rows[0]
+	if row.Model != "claude-opus-5/coordinator" || row.Repo != CoordinatorRepo {
+		t.Errorf("row is (%s, %s), want (claude-opus-5/coordinator, %s): the model the transcript names", row.Model, row.Repo, CoordinatorRepo)
 	}
 	if row.Counts.Cell(Reasoning) != Dash {
 		t.Errorf("the reasoning cell is %q, want %q: a transcript reports none", row.Counts.Cell(Reasoning), Dash)
@@ -158,5 +162,59 @@ func TestSessionSplitsAcrossMidnight(t *testing.T) {
 	// The undated turn is in the totals and in no day, and it is COUNTED so a reader knows.
 	if sum.Turns != 3 || sum.Input != 35 || sum.Unstamped != 1 {
 		t.Errorf("turns=%d input=%d unstamped=%d, want 3, 35 and 1", sum.Turns, sum.Input, sum.Unstamped)
+	}
+}
+
+// TestSessionRowsAreBookedUnderTheModelTheTranscriptNames: a transcript of one model is that
+// model's row, a window that changes model is one row per model, and a turn naming no model
+// makes the session unbookable instead of booking it under a guess.
+func TestSessionRowsAreBookedUnderTheModelTheTranscriptNames(t *testing.T) {
+	t.Parallel()
+
+	write := func(body string) string {
+		path := filepath.Join(t.TempDir(), "s.jsonl")
+		if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+
+	sum, err := ReadClaudeSession(write(`{"timestamp":"2026-09-16T09:00:00Z","message":{"id":"a","model":"other-model-9","usage":{"input_tokens":3,"output_tokens":1}}}
+{"timestamp":"2026-09-16T09:01:00Z","message":{"id":"b","model":"claude-opus-5","usage":{"input_tokens":4,"output_tokens":2}}}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if why := sum.UnbookableReason(); why != "" {
+		t.Fatalf("a transcript naming a model on every turn is bookable, got %q", why)
+	}
+	rows := sum.Rows("2026-09-16")
+	if len(rows) != 2 || rows[0].Model != "claude-opus-5/coordinator" || rows[1].Model != "other-model-9/coordinator" {
+		t.Fatalf("rows=%+v, want one row per model, sorted", rows)
+	}
+	if rows[0].Counts.Cell(Input) != "4" || rows[1].Counts.Cell(Input) != "3" {
+		t.Errorf("each model's row carries its own turns: %s and %s, want 4 and 3", rows[0].Counts.Cell(Input), rows[1].Counts.Cell(Input))
+	}
+
+	none, err := ReadClaudeSession(write(`{"timestamp":"2026-09-16T09:00:00Z","message":{"id":"a","usage":{"input_tokens":3,"output_tokens":1}}}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if why := none.UnbookableReason(); !strings.Contains(why, "names no model on any of its 1 turns") {
+		t.Errorf("a transcript that names no model is unbookable with a named reason, got %q", why)
+	}
+	if got := none.Rows("2026-09-16"); len(got) != 0 {
+		t.Errorf("a transcript that names no model has no rows, got %+v", got)
+	}
+
+	some, err := ReadClaudeSession(write(`{"timestamp":"2026-09-16T09:00:00Z","message":{"id":"a","model":"m","usage":{"input_tokens":3,"output_tokens":1}}}
+{"timestamp":"2026-09-16T09:01:00Z","message":{"id":"b","usage":{"input_tokens":4,"output_tokens":2}}}
+`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if why := some.UnbookableReason(); !strings.Contains(why, "names no model on 1 of its 2 turns") {
+		t.Errorf("a turn with no model is not booked under another's, got %q", why)
 	}
 }

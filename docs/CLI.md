@@ -30,7 +30,7 @@ nova-check spelling (--dir <dir> | --file <path> | --path <pattern>) [--ignore <
 
 ```
 $ nova-check quickstart --dir ./self
-QUICKSTART OK dir=./self checks=2: links, then nocode
+QUICKSTART RUN dir=./self checks=2: links, then nocode
 LINKS OK files=4 links=3 excluded=0
 NOCODE OK files=5 clean deny-list=floor-list
 QUICKSTART OK done=2 worst-exit=0 next=kernel,attest,floors,corpus (each wants a budget, a manifest or a ledger of yours: nova-check help)

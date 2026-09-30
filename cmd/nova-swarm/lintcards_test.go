@@ -24,7 +24,7 @@ import (
 //     a `go test` ellipsis whose last two dots and slash read as a parent path.
 //   - tools11-c2-links-toplevel.md -- three `no-parent-path` findings, two of them markdown
 //     link TARGETS quoted from the document the card repairs, and the card is 12260 bytes,
-//     over the advisory ceiling, which made the whole lint exit 2.
+//     over the advisory ceiling, which made the whole lint exit 1.
 //   - queue-1282-bench-hygiene-home-guard.md -- the control. It was clean before this
 //     change and it stays clean: the colon contract line, the clone on the STEP 1 line.
 //
@@ -82,7 +82,7 @@ func TestTheShiftsOwnCardsLintClean(t *testing.T) {
 			if strings.Contains(stdout, "no-parent-path") {
 				t.Fatalf("a quoted ../ is not a walk:\n%s", stdout)
 			}
-			if code != 2 || !strings.Contains(stdout, "kind-declared") || !strings.Contains(stdout, "dogfood") {
+			if code != 1 || !strings.Contains(stdout, "kind-declared") || !strings.Contains(stdout, "dogfood") {
 				t.Fatalf("KIND: dogfood is not a kind kinds.txt declares; exit=%d\n%s", code, stdout)
 			}
 			for _, line := range strings.Split(stdout, "\n") {
@@ -96,7 +96,7 @@ func TestTheShiftsOwnCardsLintClean(t *testing.T) {
 
 // The card that is over the ceiling says so on a NOTE, never a DRIFT: the ceiling is
 // advisory (issue #1527, #1494). This fixture also carries KIND: dogfood, which is a
-// true kind-declared drift as of #1853; that is why the verb exits 2, not the size.
+// true kind-declared drift as of #1853; that is why the verb exits 1, not the size.
 func TestACardOverTheCeilingIsAdvisedNotRefused(t *testing.T) {
 	t.Parallel()
 
