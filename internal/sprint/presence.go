@@ -99,14 +99,15 @@ func LoadText(b Beat, now time.Time) string {
 // every member that should be up and is not comes up, up to TickMaxMoves of
 // them, in one plan that levels the ready queues once over all the members
 // up (the design's R1, v2.1 section 2.3: each member seen is its own seen:m,
-// none waits behind another's); else one that should be down and is up goes
-// down and its unfinished work cards are dealt to the members up (or
-// withdrawn when none is), each with its happened notification. A down is
-// one a tick: the next tick applies the next on a fresh read. So a fleet that
-// beats before start is up, whole, at the first tick, and the deal that
-// follows goes round all of it (round.go) rather than round the members up
-// so far, one more a tick. The binding gives it the beats; with none given
-// it does nothing.
+// none waits behind another's; levelling moves are not counted in
+// TickMaxMoves); else members that should be down and are up go down, up to
+// TickMaxMoves of them, in one plan (the design's R2) and their unfinished
+// work cards are dealt to the members up (or withdrawn when none is), each
+// with its happened notification. So a fleet that beats before start is up,
+// whole, at the first tick, and the deal that follows goes round all of it
+// (round.go) rather than round the members up so far, one more a tick; and a
+// fleet that falls silent goes down together. The binding gives it the
+// beats; with none given it does nothing.
 func TickPresence(s *Snapshot, r TickReq) (Plan, int) {
 	return presence(s, r) // the rest are due: the next ticks apply them
 }
@@ -115,7 +116,8 @@ func presence(s *Snapshot, r TickReq) (Plan, int) {
 	if r.Beats == nil {
 		return Plan{}, 0
 	}
-	var live, ups, downs []string
+	live := []string{}
+	var ups, downs []string
 	for _, m := range s.Fleet.Rows() {
 		ctl := s.MemberCtl(m)
 		if ctl == nil {
@@ -153,15 +155,27 @@ func presence(s *Snapshot, r TickReq) (Plan, int) {
 		return p, len(ups) - n + len(downs)
 	}
 	if len(downs) > 0 {
-		m := downs[0]
-		why := "no beat for " + BeatDeadline.String()
-		switch {
-		case s.MemberCtl(m).F("held") != "":
-			why = "held"
-		case !r.Beats[m].Beaten():
-			why = "it has never beaten"
+		n := min(len(downs), TickMaxMoves)
+		all := append(append([]string(nil), live...), downs[:n]...)
+		rr := dealRoundWith(s, all...)
+		moves := roundMoves{}
+		var p Plan
+		for _, m := range downs[:n] {
+			why := "no beat for " + BeatDeadline.String()
+			switch {
+			case s.MemberCtl(m).F("held") != "":
+				why = "held"
+			case !r.Beats[m].Beaten():
+				why = "it has never beaten"
+			}
+			q := fleetStepPlan(s, FleetReq{Op: "down", Member: m, Who: r.who(), Live: live, Why: why}, rr, moves)
+			p.Rows = append(p.Rows, q.Rows...)
+			p.Units = append(p.Units, q.Units...)
+			p.Refused = append(p.Refused, q.Refused...)
 		}
-		return FleetStep(s, FleetReq{Op: "down", Member: m, Who: r.who(), Live: live, Why: why}), len(downs) - 1
+		p = Lawful(p)
+		roundWrites(&p, rr, moves)
+		return p, len(downs) - n
 	}
 	return Plan{}, 0
 }

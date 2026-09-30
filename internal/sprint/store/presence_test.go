@@ -45,7 +45,13 @@ func (h *harness) beatAt(member string, pct float64) sprint.Beat {
 // memberNotes is the happened notifications of a type naming member.
 func (h *harness) memberNotes(typ, member string) []string {
 	h.t.Helper()
-	notes, _, err := h.m.NotesSince(h.ctx, "", 100000)
+	var notes []sprint.Note
+	var err error
+	if h.m != nil {
+		notes, _, err = h.m.NotesSince(h.ctx, "", 100000)
+	} else {
+		notes, _, err = h.st.B.NotesSince(h.ctx, "", 100000)
+	}
 	if err != nil {
 		h.t.Fatal(err)
 	}
@@ -358,4 +364,49 @@ func TestAnUnknownMachineBeatingIsToldOnce(t *testing.T) {
 	if keys := h.m.Keys(h.st.Names); len(keys) != 0 {
 		t.Fatalf("teardown left %v", keys)
 	}
+}
+
+// TestMultipleSilentMembersGoDownInOneTick: when multiple fleet members fall
+// silent, a single machine tick brings all of them down together in one batch
+// (the design's R2) rather than taking them down one per tick.
+func testMultipleSilentMembersGoDownInOneTick(t *testing.T, h *harness) {
+	t.Helper()
+	members := []string{"m1", "m2", "m3", "m4"}
+	for _, m := range members {
+		h.must(FleetStep(sprint.FleetReq{Op: "release", Member: m, Who: "tester"}))
+	}
+	h.setLive(members...)
+	h.beat()
+	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 8}))
+	h.startMachine()
+	h.machine()
+	// All 4 members are up and have cards dealt to them.
+	for _, m := range members {
+		if st := h.snap().MemberCtl(m).F("status"); st != sprint.Up {
+			t.Fatalf("%s not up: %s", m, st)
+		}
+	}
+	// All 4 members stop beating and fall silent past BeatDeadline.
+	h.setLive()
+	h.tick(sprint.BeatDeadline + time.Second)
+	// ONE tick of the machine must take all 4 members down in one batch!
+	h.machine()
+	snap := h.snap()
+	for _, m := range members {
+		if st := snap.MemberCtl(m).F("status"); st != sprint.Down {
+			t.Fatalf("after one tick %s is %s, want down (downs must be batched)", m, st)
+		}
+		if n := h.memberNotes(sprint.NMemberDown, m); len(n) != 1 {
+			t.Fatalf("%s down notes: %q, want exactly 1", m, n)
+		}
+	}
+	if len(snap.UpMembers()) != 0 {
+		t.Fatalf("up members %v, want none", snap.UpMembers())
+	}
+	h.clean("multiple silent members down")
+}
+
+func TestMultipleSilentMembersGoDownInOneTick(t *testing.T) {
+	t.Parallel()
+	testMultipleSilentMembersGoDownInOneTick(t, newHarness(t))
 }

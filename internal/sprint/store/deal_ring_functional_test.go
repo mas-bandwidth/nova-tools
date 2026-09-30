@@ -27,3 +27,9 @@ func TestRedisTheRedealsGoRoundTheFleetInARunWithFailures(t *testing.T) {
 	h, _ := liveHarness(t)
 	dealRingWithFailures(t, h)
 }
+
+func TestRedisMultipleSilentMembersGoDownInOneTick(t *testing.T) {
+	t.Parallel()
+	h, _ := liveHarness(t)
+	testMultipleSilentMembersGoDownInOneTick(t, h)
+}

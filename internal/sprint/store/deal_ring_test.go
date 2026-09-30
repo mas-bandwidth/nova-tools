@@ -133,11 +133,6 @@ func dealRingOwnersRun(t *testing.T, h *harness) {
 func dealRingAcrossTicks(t *testing.T, h *harness) {
 	ringFleet(h)
 	h.startMachine()
-	// every member up before the first card, the presence changes applied
-	for i := 0; i < len(ringMembers)+2; i++ {
-		h.machine()
-		h.tick(time.Second)
-	}
 	var deals []string
 	var asks [][]string
 	for i := 0; i < 2*len(ringMembers); i++ {
@@ -151,6 +146,9 @@ func dealRingAcrossTicks(t *testing.T, h *harness) {
 		h.must(AddStep(sprint.AddReq{Stream: "s1", IDs: []string{fmt.Sprintf("c%02d", i)}}))
 		r := ringMachineTick(h)
 		t.Logf("tick %d: %s", i+1, r)
+		if i == 0 && len(r.eligible) != len(ringMembers) {
+			t.Fatalf("tick 1 eligible members %v, want all %d: presence brings them up at once", r.eligible, len(ringMembers))
+		}
 		deals = append(deals, r.deals...)
 		asks = append(asks, r.asks...)
 		for _, m := range r.deals {
