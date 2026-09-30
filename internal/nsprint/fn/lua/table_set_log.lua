@@ -1,6 +1,14 @@
--- tset/1 Layer 2, the log. DRAFT for the layer's owner to take, take from, or
--- discard; built to design/L2-CONTRACT.md revision 1 with the decided
--- revision-2 alignments of design/L1-CONTRACT.md section 10 (revision 4).
+-- tset/1 Layer 2, the log: design/L2-CONTRACT.md revision 1, with the decided
+-- revision-2 alignments of design/L1-CONTRACT.md section 10 (revision 4) and
+-- the decisions of design/L2-COLD-READ-AND-MODEL-2026-09-29.md. The model is
+-- tla/SetTableLog.tla: each of its reversed witnesses names a rule this file
+-- keeps (counter, refusedlines: seqs come from XINFO in plan and nothing is
+-- written before prepare; noopids: lines from changed_ids only; noscore:
+-- [before, after] on every member line; split: one prepare list; firstonly,
+-- nodedupe: every aligned about, once a line; cursorlimit: next follows the
+-- last line returned; perline: one ctx.now_ms; nocap: 1 MiB and 2,000 ids;
+-- noceiling: OVERFLOW past 2^53-1; trim: no XTRIM, XDEL, DEL, UNLINK or
+-- EXPIRE; shape: the XINFO equality, not the <n>-0 shape).
 --
 -- L.plan(ctx, table_plan) turns the frozen table plan and ctx.notes into one
 -- stream line per emitting entry and per note, allocates every sequence in
@@ -29,6 +37,10 @@ if NS.tset_profile then
   -- Reserved for this answer's fixed fields and, in page mode, the fields
   -- S.read adds (active_epoch, time_ms, counters).
   local ENVELOPE = 4096
+  -- The compact body's container depth: a request's meta is admitted at
+  -- depth 16 at most, and the body holds it at depth 2 (the AL5 exact-line
+  -- capability's bounded copy).
+  local MAX_BODY_DEPTH = 16
   local TAGS = {create = 'c', move = 'm', remove = 'x'}
   local WORDS = {c = 'create', m = 'move', x = 'remove', w = 'rows', a = 'advance', n = 'note'}
 
@@ -358,13 +370,82 @@ if NS.tset_profile then
       if err then return nil, err end
       commands[#commands + 1] = d
     end
-    -- ASK STELLA: there is no checked helper for this reporting counter.
+    -- Layer 1 has no checked helper for this reporting counter.
     ctx.budget.generated_log_bytes = (ctx.budget.generated_log_bytes or 0) + generated
     return {commands = commands, first_seq = seqs[1], last_seq = seqs[count],
       line_count = count, about_appends = appends, note_seqs = note_seqs}, nil
   end
 
   ------------------------------------------------------------------ reads
+
+  -- Layer 1's exact-line capability (AL5): authorize_line checks the sealed
+  -- read context and query index and names the sealed log key;
+  -- read_line_raw fetches one exact line under this layer's reservation.
+  -- Both stay lexical here. The caches of decoded lines and of observed
+  -- tails belong to one read context and are cleared by Layer 1 when the
+  -- context ends, so nothing a callback writes into ctx can feed them.
+  local authorize_line, read_line_raw
+  local cache_ctx, cached_lines, cached_tails
+  S.bind_log_helpers(LINE_RAW, function(authorize, raw)
+    authorize_line, read_line_raw = authorize, raw
+    return function() cache_ctx, cached_lines, cached_tails = nil, nil, nil end
+  end)
+
+  local function context_cache(ctx)
+    if cache_ctx ~= ctx then cache_ctx, cached_lines, cached_tails = ctx, {}, {} end
+  end
+
+  -- The container depth of a stored body, before it is decoded: strings and
+  -- their escapes are skipped whole.
+  local function body_depth_ok(d)
+    local depth, i, n = 0, 1, #d
+    while i <= n do
+      local at = string.find(d, '[%[%]{}"]', i)
+      if not at then return true end
+      local c = string.sub(d, at, at)
+      if c == '"' then
+        local j = at + 1
+        while true do
+          local q = string.find(d, '["\\]', j)
+          if not q then return false end
+          if string.sub(d, q, q) == '"' then i = q + 1; break end
+          j = q + 2
+        end
+      else
+        if c == '[' or c == '{' then
+          depth = depth + 1
+          if depth > MAX_BODY_DEPTH then return false end
+        else
+          depth = depth - 1
+        end
+        i = at + 1
+      end
+    end
+    return true
+  end
+
+  -- A bounded deep copy of a decoded body: arrays stay arrays, cjson.null
+  -- stays null, and the copy visits at most budget nodes, keys and bytes.
+  local function copy_body(v, depth, budget)
+    local t = type(v)
+    if t ~= 'table' then
+      if t == 'string' then budget.left = budget.left - #v end
+      budget.left = budget.left - 1
+      if budget.left < 0 then return nil, false end
+      return v, true
+    end
+    if v == cjson.null then return v, true end
+    if depth > MAX_BODY_DEPTH then return nil, false end
+    budget.left = budget.left - 1
+    local out = S.is_array(v) and S.array() or {}
+    for k, item in pairs(v) do
+      if type(k) == 'string' then budget.left = budget.left - #k end
+      local copied, ok = copy_body(item, depth + 1, budget)
+      if not ok then return nil, false end
+      out[k] = copied
+    end
+    return out, true
+  end
 
   local function fail(code, index, extra)
     local detail = {query_index = index}
@@ -378,8 +459,8 @@ if NS.tset_profile then
 
   -- The room this answer may use in the encoded reply: the shared 8 MiB less
   -- what earlier answers used, less a reserved envelope. bytes_limit is not
-  -- admitted by Layer 1's static validator yet (ASK STELLA); it is honoured
-  -- here if it arrives.
+  -- admitted by Layer 1's static validator; it is honoured here if it
+  -- arrives.
   local function answer_room(ctx, q)
     local cap = MAX_REPLY - (ctx.read_encoded or 512) - 1
     if type(q.bytes_limit) == 'number' and q.bytes_limit < cap then cap = q.bytes_limit end
@@ -387,8 +468,8 @@ if NS.tset_profile then
   end
 
   local function read_tail(ctx, key)
-    local tails = ctx.log_tails
-    if not tails then tails = {}; ctx.log_tails = tails end
+    context_cache(ctx)
+    local tails = cached_tails
     if tails[key] then return tails[key], nil end
     local kind, err = type_of(ctx, key)
     if err then return nil, err end
@@ -418,23 +499,24 @@ if NS.tset_profile then
     return f[2], f[4], nil
   end
 
-  -- Fetch and decode one exact line once per call; later uses are cache hits
-  -- with no fetch and no second raw-byte charge. short is true when the raw
-  -- budget cannot reserve a maximum line.
+  -- Fetch and decode one exact line once per call through the exact-line
+  -- capability; later uses are cache hits with no fetch and no second
+  -- raw-byte charge, and each is authorized again first. short is true when
+  -- the raw budget cannot reserve a maximum line.
   local function fetch_line(ctx, seq, index)
-    local key = ctx.log_key(ctx.request_epoch)
-    local cache = ctx.log_lines
-    if not cache then cache = {}; ctx.log_lines = cache end
-    local id = key .. '\0' .. seq
-    if cache[id] then return cache[id], nil, false end
-    if S.limits.fetched_bytes - ctx.budget.fetched_bytes < LINE_RAW then return nil, nil, true end
-    local batch, err = S.readcmd(ctx, {argv = {'XRANGE', key, seq .. '-0', seq .. '-0', 'COUNT', '1'},
-      access = {{key = key, kind = 'stream', mode = 'read'}}}, LINE_RAW, 'log')
-    if err then return nil, err end
+    local _, aerr = authorize_line(ctx, seq, index)
+    if aerr then return nil, aerr, false end
+    context_cache(ctx)
+    local hit = cached_lines[seq]
+    if hit then return hit, nil, false end
+    local batch, err, short = read_line_raw(ctx, seq, index)
+    if err then return nil, err, false end
+    if short then return nil, nil, true end
     -- A history seq with no line: the log is behind its history.
     if type(batch) ~= 'table' or #batch ~= 1 then return nil, fail('LOGID', index, {budget = 'log_line'}) end
     local n, d, perr = parse_entry(batch[1], seq, index)
     if perr then return nil, perr end
+    if not body_depth_ok(d) then return nil, fail('DRIFT', index, {budget = 'log_body'}) end
     local ok, body = pcall(S.json.decode, d)
     if not ok or type(body) ~= 'table' or S.is_array(body) or not WORDS[body.k] or
         type(body.ms) ~= 'string' then
@@ -449,7 +531,7 @@ if NS.tset_profile then
     -- n disagreeing with the body is DRIFT.
     if count ~= tonumber(n) then return nil, fail('DRIFT', index, {budget = 'log_id_count'}) end
     local line = {seq = seq, n = n, d = d, body = body}
-    cache[id] = line
+    cached_lines[seq] = line
     return line, nil, false
   end
 
@@ -464,8 +546,8 @@ if NS.tset_profile then
     local tail, err = read_tail(ctx, key)
     if err then return nil, err end
     local high = tail
-    -- OPEN (Johnny's wire choice): the high-water when an explicit through_seq
-    -- is given. Revision 1's text (L1 section 7 as adopted) captures the tail
+    -- Open for revision 2 of the Layer 2 contract: the high-water when an
+    -- explicit through_seq is given. Revision 1's text (L1 section 7 as adopted) captures the tail
     -- when through_seq is absent and emits only after_seq < seq <= through_seq
     -- when it is given; a lines request carries no other cursor, so a given
     -- through_seq is the fixed high-water, and one above the tail is CURSOR.
@@ -524,9 +606,10 @@ if NS.tset_profile then
       return {status = 'page', epoch = ctx.request_epoch, items = items, next = S.next(cur),
         through = high, exhausted = cur == high}, nil
     end
-    -- OPEN (Johnny's wire choice): the empty atomic answer. next is the first
-    -- seq not returned, as written; through is "0" when no line is returned,
-    -- revision 1's own spelling for "no line" (log_plan's seqs).
+    -- Open for revision 2 of the Layer 2 contract: the empty atomic answer.
+    -- next is the first seq not returned, as written; through is "0" when no
+    -- line is returned, revision 1's own spelling for "no line" (log_plan's
+    -- seqs).
     return {kind = 'lines', lines = items, next = S.next(cur),
       through = #items > 0 and cur or '0'}, nil
   end
@@ -543,7 +626,7 @@ if NS.tset_profile then
       end
       if not named then return nil, fail('DRIFT', index, {budget = 'history', ids = {about}}) end
       local item = {seq = line.seq, kind = 'note', at_ms = b.ms}
-      if include_meta and b.meta ~= nil then item.meta = b.meta end
+      if include_meta and b.meta ~= nil then item.meta = copy_body(b.meta, 2, {left = 2 * #line.d + 64}) end
       out[1] = item
       return out, nil
     end
@@ -554,8 +637,17 @@ if NS.tset_profile then
         (b.unset ~= nil and (type(b.unset) ~= 'table' or #b.unset ~= #ids)) then
       return nil, fail('DRIFT', index, {budget = 'history', ids = {about}})
     end
-    local shared = type(b.shared) == 'table' and b.shared or {}
+    if b.shared ~= nil and not S.is_object(b.shared) then
+      return nil, fail('DRIFT', index, {budget = 'log_body'})
+    end
+    local shared = b.shared or {}
     for j = 1, #ids do
+      -- A stored element of the wrong type is a broken stored invariant.
+      if type(ids[j]) ~= 'string' or type(abouts[j]) ~= 'string' or
+          (b.set ~= nil and type(b.set[j]) ~= 'table') or
+          (b.unset ~= nil and type(b.unset[j]) ~= 'table') then
+        return nil, fail('DRIFT', index, {budget = 'log_body'})
+      end
       if abouts[j] == about then
         local item = {seq = line.seq, kind = WORDS[b.k], at_ms = b.ms, table = b.tbl,
           id = ids[j], score = b.score[j], rev = b.rev[j]}
@@ -563,17 +655,21 @@ if NS.tset_profile then
         if b.to ~= nil then item.to = b.to end
         local own = b.set and b.set[j] or {}
         local gone = {}
-        for _, name in ipairs(b.unset and b.unset[j] or {}) do gone[name] = true end
+        for _, name in ipairs(b.unset and b.unset[j] or {}) do
+          if type(name) ~= 'string' then return nil, fail('DRIFT', index, {budget = 'log_body'}) end
+          gone[name] = true
+        end
         local set, unset = {}, S.array()
         for _, f in ipairs(fields) do
           local v = own[f]
           if v == nil then v = shared[f] end
+          if v ~= nil and type(v) ~= 'string' then return nil, fail('DRIFT', index, {budget = 'log_body'}) end
           if v ~= nil and set[f] == nil then set[f] = v
           elseif gone[f] then gone[f] = nil; unset[#unset + 1] = f end
         end
         if next(set) ~= nil then item.set = set end
         if #unset > 0 then item.unset = unset end
-        if include_meta and b.meta ~= nil then item.meta = b.meta end
+        if include_meta and b.meta ~= nil then item.meta = copy_body(b.meta, 2, {left = 2 * #line.d + 64}) end
         out[#out + 1] = item
       end
     end
@@ -616,9 +712,9 @@ if NS.tset_profile then
       local pos = {about = about, key = key, next_index = 0, through_index = llen - 1, next_item = 0}
       if cursor ~= nil then
         local c = cursor.positions[i]
-        -- OPEN (Johnny's wire choice): the item half of the pair is next_item,
-        -- zero-based, present only when a page ended inside a line. ASK
-        -- STELLA: Layer 1's validator and Go CardCursorPosition refuse it.
+        -- The item half of the pair is next_item, zero-based, present only
+        -- when a page ended inside a line; its name is open for revision 2 of
+        -- the Layer 2 contract (L1 10, item 4).
         local item = c.next_item == nil and 0 or c.next_item
         if c.through_index > llen - 1 or c.next_index > c.through_index + 1 or
             type(item) ~= 'number' or item < 0 or item ~= math.floor(item) or
@@ -632,7 +728,7 @@ if NS.tset_profile then
     end
     -- The fixed parts of the answer: slots, the cursor and the high-waters.
     local fixed = 2 * #S.json.encode(fields) + 128
-    for _, about in ipairs(abouts) do fixed = fixed + 2 * #str(about) + 112 end
+    for _, about in ipairs(abouts) do fixed = fixed + 2 * #str(about) + 160 end
     local room = answer_room(ctx, q) - fixed
     local limit, total, bytes = q.limit, 0, 0
     local stop, stop_detail
@@ -651,9 +747,13 @@ if NS.tset_profile then
           return nil, fail('DRIFT', index, {budget = 'history', ids = {pos.about}})
         end
         for _, seq in ipairs(seqs) do
-          if not S.uint(seq) or seq == '0' or S.cmp(seq, CEILING) > 0 then
+          -- A history is strictly ascending: a repeated or earlier seq is a
+          -- list changed outside the supported writer.
+          if not S.uint(seq) or seq == '0' or S.cmp(seq, CEILING) > 0 or
+              (pos.last_seq and S.cmp(seq, pos.last_seq) <= 0) then
             return nil, fail('DRIFT', index, {budget = 'history', ids = {pos.about}})
           end
+          pos.last_seq = seq
           local line, lerr, short = fetch_line(ctx, seq, index)
           if lerr then return nil, lerr end
           if short then stop = 'fetched_bytes'; break end
@@ -730,7 +830,8 @@ if NS.tset_profile then
 
   -- One exact line by seq, decoded: ids, about and meta, with the common
   -- fetched-byte, probe and log_id charges. A fetched line is reused within
-  -- the call, but each use charges its ids.
+  -- the call, but each use charges its ids. The ids, about and meta tables
+  -- are the call's cached decode: a caller reads them and never changes them.
   function L.read_line_at(ctx, seq, index)
     if type(seq) ~= 'string' or not S.uint(seq) or seq == '0' or S.cmp(seq, CEILING) > 0 then
       return nil, fail('REQUEST', index)
@@ -741,9 +842,12 @@ if NS.tset_profile then
     local ok
     ok, err = S.charge(ctx, 'log_id', tonumber(line.n))
     if err then return nil, err end
-    local b = line.body
+    -- The caller gets one bounded copy of the cached decode, never the
+    -- cache's own tables.
+    local b, copied = copy_body(line.body, 1, {left = 2 * #line.d + 64})
+    if not copied then return nil, fail('DRIFT', index, {budget = 'log_body'}) end
     return {seq = seq, n = line.n, kind = WORDS[b.k], at_ms = b.ms, table = b.tbl,
       from = b.from, to = b.to, ids = b.ids or S.array(), about = b.about or S.array(),
-      meta = b.meta, body = b, d = line.d}, nil
+      meta = b.meta, d = line.d}, nil
   end
 end

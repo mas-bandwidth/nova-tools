@@ -16,7 +16,7 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// Draft acceptance tests for lua/table_set_log.lua (Layer 2, the log), run on
+// Acceptance tests for lua/table_set_log.lua (Layer 2, the log), run on
 // the composed profile only, each on its own server inside the container.
 // Direct store writes below are fault injections and are marked as such.
 
@@ -645,9 +645,7 @@ func TestCardLinesPairCursorNeitherSkipsNorRepeats(t *testing.T) {
 		second := logDraftRaw(t, fx, fmt.Sprintf(`{"epoch":"0","space":%q,"mode":"page","queries":[`+
 			`{"kind":"cardlines","abouts":["p"],"fields":["brief"],"limit":2,"cursor":%s}]}`, fx.Space, first["next"]))
 		if code := logDraftCode(t, second); code != "" {
-			t.Fatalf("resuming inside a line refused %s: Layer 1's static read validator admits only "+
-				"about/next_index/through_index in a cursor position, so the item index of the pair "+
-				"cannot be sent back (ASK STELLA; the field name is Johnny's open wire choice)", code)
+			t.Fatalf("resuming inside a line refused %s: the pair cursor's item index was not accepted back", code)
 		}
 		if !strings.Contains(string(second["items"]), `"id":"m3"`) || strings.Contains(string(second["items"]), `"id":"m1"`) {
 			t.Fatalf("second page items=%s, want m3 then the note, no repeat of m1", second["items"])
@@ -685,7 +683,8 @@ func TestLogBudgetNoPartialAnswer(t *testing.T) {
 		}
 		empty := atomic("2", 10)
 		answers = nil
-		// OPEN (Johnny's wire choice): the empty answer's next and through.
+		// Open for revision 2 of the Layer 2 contract: the empty answer's next
+		// and through.
 		if err := json.Unmarshal(empty["answers"], &answers); err != nil || len(answers) != 1 ||
 			len(answers[0].Lines) != 0 || answers[0].Next != "3" || answers[0].Through != "0" {
 			t.Fatalf("empty answer=%s err=%v", empty["answers"], err)
