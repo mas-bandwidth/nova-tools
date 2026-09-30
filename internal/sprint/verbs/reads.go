@@ -199,11 +199,14 @@ const inboxNoticeLines = 1000
 
 // InboxReq is inbox's request: the cursor after which notices are listed, and
 // the page of open notes (0 is InboxPage). Read is --read, which moves the
-// cursor: refused until the write path carries it.
+// cursor: refused until the write path carries it. Wait is --wait, which
+// blocks on the notification stream for the first judgment after the cursor
+// (inboxWait).
 type InboxReq struct {
 	After uint64
 	Limit int
 	Read  bool
+	Wait  *InboxWait
 	Out   *InboxView
 }
 
@@ -279,6 +282,9 @@ func Inbox(ctx context.Context, e *Env, req InboxReq) (Result, error) {
 	if req.Read {
 		return Result{Verb: verb}, refuseLocal(verb, sprintfn.CodeRequest,
 			"inbox --read moves the coordinator's cursor, and the write path has no part that writes it yet (IT16's sprint part carries no inbox cursor)")
+	}
+	if req.Wait != nil {
+		return inboxWait(ctx, e, req)
 	}
 	limit := req.Limit
 	if limit <= 0 || limit > InboxPage {
@@ -394,6 +400,11 @@ func judgmentGroups(ids []string, rd *sprintfn.ReadReply) ([]sprint.Group, error
 		}
 	}
 	return groupLines(ids, lines), nil
+}
+
+// groupOfLine is one judgment note as a group of its own (inbox --wait).
+func groupOfLine(id string, l noteLine) sprint.Group {
+	return groupLines([]string{id}, []noteLine{l})[0]
 }
 
 // groupLines groups judgment notes' lines by type and cause (judgmentGroups).
