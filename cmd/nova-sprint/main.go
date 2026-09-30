@@ -27,6 +27,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/sprintfn"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 	spverbs "github.com/mas-bandwidth/nova-tools/internal/sprint/verbs"
+	"github.com/mas-bandwidth/nova-tools/internal/tset"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -71,6 +72,10 @@ type app struct {
 	newPath      bool
 	sprintClient func(ctx context.Context, addr string, names sprint.Names) (sprintfn.Client, func() error, error)
 	configRows   func(ctx context.Context, dsn string) (spverbs.ConfigRows, func() error, error)
+	// lifecycle opens Layer 1's lifecycle beside the sprint's client (the
+	// Redis store; the twin's Mem in tests): init defines the namespace
+	// through it, teardown deletes it.
+	lifecycle func(ctx context.Context, addr string) (tset.Lifecycle, func() error, error)
 	// noteStream is the store's notification stream, which inbox --wait
 	// blocks on (a read, never a write).
 	noteStream func(addr string) (spverbs.NoteStream, func() error, error)
@@ -82,6 +87,7 @@ func newApp(getenv func(string) string) *app {
 	a.backend = a.redisBackend
 	a.sprintClient = a.newPathClient
 	a.configRows = newPathConfig
+	a.lifecycle = a.newPathLifecycle
 	a.library = &sprintfn.Library{Name: fn.Library, Sum: fn.Sum, Source: func() (string, error) { return fn.TSetSource(fn.TSetSprint) }}
 	a.noteStream = a.redisNotes
 	a.newPath = true // the switch (IT23): every verb runs on the new path

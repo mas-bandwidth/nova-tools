@@ -9,6 +9,7 @@ import (
 	gotoken "go/token"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/config"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/sprintfn"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
@@ -142,6 +144,7 @@ func newNPApp(t *testing.T) *npApp {
 		return na.rec, nil, nil
 	}
 	na.a.configRows = func(context.Context, string) (spverbs.ConfigRows, func() error, error) { return cfg, nil, nil }
+	na.a.lifecycle = func(context.Context, string) (tset.Lifecycle, func() error, error) { return na.m, nil, nil }
 	na.a.backend = func(context.Context, string, sprint.Names) (store.Backend, error) {
 		na.mu.Lock()
 		na.olds++
@@ -322,12 +325,13 @@ func npCases() []npCase {
 		{verb: "where", setup: npWorld, line: "where --json", code: 0, want: []string{`"all":3`, `"machine":"NOT TICKING"`}},
 		{verb: "where", setup: npWorld, line: "where --watch --every 2s", code: 0, want: []string{"SPRINT TABLE", "NOT TICKING"}},
 
-		// No item builds these yet: the check and remove after; teardown at G0;
-		// repair; not in section 3: resolve, fleet level (kept as present).
+		// teardown: Layer 1's lifecycle (TestInitDefinesAndTeardownDeletesTheNamespace).
+		{verb: "teardown", setup: npWorld, line: "teardown --confirm other", code: exitRefused, want: []string{"wants --confirm sprint"}},
+		// No item builds these yet: the check and remove after; repair; not in
+		// section 3: resolve, fleet level (kept as present).
 		stub("check", "check", "IT26"),
 		stub("remove", "remove --stream s1 --confirm sprint", "IT27"),
 		stub("remove", "remove --abort --op op-rm-1", "IT27"),
-		stub("teardown", "teardown --confirm sprint", "G0"),
 		stub("repair", "repair", "AL7"),
 		stub("resolve", "resolve s1-1", "no item"),
 		stub("fleet level", "fleet level", "no item"),
@@ -484,8 +488,26 @@ func TestCommandFCALLOnly(t *testing.T) {
 		t.Errorf("the present path's store was opened %d times", na.olds)
 	}
 
+	// Layer 1's lifecycle is the one other route to the store, and it lives in
+	// newpath_lifecycle.go alone: define and teardown through tset.Lifecycle,
+	// on tset.NewRedis once, with the build from fn (the lifecycle amendment).
 	refused := []string{"github.com/redis/go-redis", "internal/sprint/store", "internal/redisconn", "internal/nsprint/fn", "internal/ntable", "internal/tset"}
 	fset := gotoken.NewFileSet()
+	lf, err := parser.ParseFile(fset, "newpath_lifecycle.go", nil, parser.ImportsOnly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, imp := range lf.Imports {
+		path, _ := strconv.Unquote(imp.Path.Value)
+		for _, r := range refused {
+			if strings.Contains(path, r) && !strings.HasSuffix(path, "/internal/tset") && !strings.HasSuffix(path, "/internal/nsprint/fn") {
+				t.Errorf("newpath_lifecycle.go imports %s: Layer 1's lifecycle needs tset and the build only", path)
+			}
+		}
+	}
+	if src, err := os.ReadFile("newpath_lifecycle.go"); err != nil || strings.Count(string(src), "NewRedis(") != 1 {
+		t.Errorf("newpath_lifecycle.go: %v, want one tset.NewRedis", err)
+	}
 	for _, name := range []string{"newpath.go", "newpath_verbs.go", "newpath_calls.go"} {
 		f, err := parser.ParseFile(fset, name, nil, parser.ImportsOnly)
 		if err != nil {
@@ -686,5 +708,50 @@ func TestExitThreeWritesTheJudgment(t *testing.T) {
 	}
 	if code, out, errs := na.do("start --op op-x --epoch 9"); code != exitRefused || judged() != 1 {
 		t.Fatalf("a refusal of the verb's own: exit %d, %d judgments\n%s%s", code, judged(), out, errs)
+	}
+}
+
+// TestInitDefinesAndTeardownDeletesTheNamespace: init defines the namespace
+// through Layer 1's lifecycle before its clock step (the four tables of
+// spverbs.TableColumns, set columns, and the view sprint, with this build),
+// and init on a namespace already defined goes on to the clock step;
+// teardown --confirm sprint deletes it through the lifecycle, and refuses
+// RUNNING while the machine runs, NOSPACE when there is none, and any other
+// confirmation before anything is sent.
+func TestInitDefinesAndTeardownDeletesTheNamespace(t *testing.T) {
+	t.Parallel()
+	na := newNPApp(t)
+	fresh := tset.NewMem()
+	build, err := fn.TSetBuild(fn.TSetSprint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh.SetBuild(build)
+	na.a.lifecycle = func(context.Context, string) (tset.Lifecycle, func() error, error) { return fresh, nil, nil }
+	na.ok("init")
+	if v := fresh.View(npPrefix); v != "sprint" {
+		t.Fatalf("init defined the view %q, want sprint", v)
+	}
+	receipts := fresh.LifecycleReceipts(npPrefix)
+	if len(receipts) != 1 || receipts[0].Fn != "define" || receipts[0].Build != build ||
+		!slices.Equal(receipts[0].Tables, []string{sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet}) {
+		t.Fatalf("the define: %+v", receipts)
+	}
+	if code, out, errs := na.do("init"); code != exitRefused || !strings.Contains(out+errs, "already initialised") {
+		t.Fatalf("init again: exit %d\n%s%s", code, out, errs)
+	}
+	if code, out, errs := na.do("teardown --confirm other"); code != exitRefused || len(fresh.LifecycleReceipts(npPrefix)) != 1 {
+		t.Fatalf("teardown with another name: exit %d\n%s%s", code, out, errs)
+	}
+	fresh.SetRunning(npPrefix, true)
+	if code, out, errs := na.do("teardown --confirm sprint"); code != exitRefused || !strings.Contains(out+errs, "RUNNING") {
+		t.Fatalf("teardown while running: exit %d\n%s%s", code, out, errs)
+	}
+	fresh.SetRunning(npPrefix, false)
+	if out := na.ok("teardown --confirm sprint"); !strings.Contains(out, "teardown: the sprint is gone") || fresh.View(npPrefix) != "" {
+		t.Fatalf("teardown: %s, the view %q", out, fresh.View(npPrefix))
+	}
+	if code, out, errs := na.do("teardown --confirm sprint"); code != exitRefused || !strings.Contains(out+errs, "NOSPACE") {
+		t.Fatalf("teardown of no sprint: exit %d\n%s%s", code, out, errs)
 	}
 }

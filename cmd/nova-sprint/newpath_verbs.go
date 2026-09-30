@@ -571,15 +571,15 @@ func init() {
 				return nil
 			},
 			call: stubbed("IT27, verbs.Remove (after; AL6 in the contract)")},
-		{name: "teardown", syntax: "--confirm sprint", item: "IT23, at G0 (Layer 1's lifecycle delete, L1 9)",
+		{name: "teardown", syntax: "--confirm sprint", item: "IT23 (Layer 1's lifecycle teardown)",
 			flags: []flagDef{{name: "confirm", usage: "the sprint's name, sprint, to confirm"}},
 			check: func(p *parsed) error {
 				if p.str("confirm") != confirmName() {
-					return fmt.Errorf("drops the four tables, the view, every key of the sprint and the library; wants --confirm %s", confirmName())
+					return fmt.Errorf("drops the four tables, the view and every key of the sprint but its lifecycle receipts; wants --confirm %s", confirmName())
 				}
 				return nil
 			},
-			call: stubbed("G0: teardown is Layer 1's lifecycle delete (L1 9), which no sprintfn.Client call reaches until the sprint profile loads on a store")},
+			call: callTeardown},
 		{name: "repair", item: "AL7 (Layer 1's repair entry) and IT26", call: stubbed("AL7 and IT26: repair is not a verb until they land (section 3)")},
 		{name: "resolve", syntax: "[<id>...] [--stream <s>] [--limit <n>]", item: "none: section 3 has no resolve (the tick's rules do it)", words: wordsAny,
 			flags: []flagDef{fStream, fLimit}, call: stubbed("no item: section 3 has no resolve verb; the tick's rules resolve waiting primaries")},
@@ -698,6 +698,29 @@ func callInit(ctx context.Context, e *spverbs.Env, p *parsed) (spverbs.Result, e
 			req.Coordinator = ""
 		}
 	}
+	// Layer 1's lifecycle defines the namespace first: the four tables, the
+	// view sprint and this build (the lifecycle amendment, section 2); a
+	// namespace already defined goes on to the clock step, which says whether
+	// the sprint is made.
+	build, err := sprintBuild()
+	if err != nil {
+		return spverbs.Result{Verb: p.verb}, err
+	}
+	// The store's library is checked before the define reaches it (the
+	// grammar decisions, 30): a store of another build is refused with
+	// nothing sent, as the client's first call would refuse it.
+	if lc, ok := e.C.(interface{ CheckLibrary(context.Context) error }); ok {
+		if err := lc.CheckLibrary(ctx); err != nil {
+			return spverbs.Result{Verb: p.verb}, err
+		}
+	}
+	lc, err := p.app.lifecycleAt(ctx, p.c.redis)
+	if err != nil {
+		return spverbs.Result{Verb: p.verb}, err
+	}
+	if _, err := spverbs.Define(ctx, lc, e.Names, build); err != nil {
+		return spverbs.Result{Verb: p.verb}, err
+	}
 	res, err := spverbs.Init(ctx, e, req)
 	var rf *spverbs.Refused
 	if p.has("coordinator") && errors.As(err, &rf) && rf.Local && rf.Code() == sprintfn.CodeMachineState {
@@ -706,6 +729,17 @@ func callInit(ctx context.Context, e *spverbs.Env, p *parsed) (spverbs.Result, e
 		return again, err
 	}
 	return res, err
+}
+
+// callTeardown is teardown: Layer 1's lifecycle teardown of the sprint's
+// namespace, confirmed by the view's name; refused RUNNING while the machine
+// runs (stop it first) and NOSPACE when there is no sprint.
+func callTeardown(ctx context.Context, e *spverbs.Env, p *parsed) (spverbs.Result, error) {
+	lc, err := p.app.lifecycleAt(ctx, p.c.redis)
+	if err != nil {
+		return spverbs.Result{Verb: p.verb}, err
+	}
+	return spverbs.Teardown(ctx, lc, e.Names, spverbs.TeardownReq{Confirm: p.str("confirm")})
 }
 
 // checkAdd is add's grammar, as the present add checks it.

@@ -100,6 +100,12 @@ func (r *Redis) checkLibrary(ctx context.Context) error {
 	return nil
 }
 
+// CheckLibrary runs the library check now, before anything else reaches the
+// store: a caller that sends through another route first (init's define,
+// Layer 1's lifecycle) refuses a store of another build as the first call
+// would, with nothing sent. Once passed, it is not run again.
+func (r *Redis) CheckLibrary(ctx context.Context) error { return r.checkLibrary(ctx) }
+
 // Matches judges a store's library against this build's (checkLibrary): nil
 // when the store holds this build's; otherwise the refusal, naming the store,
 // both digests and the command that loads the library, as the present

@@ -146,16 +146,17 @@ func newPathConfig(ctx context.Context, dsn string) (spverbs.ConfigRows, func() 
 // a first read at the old one, and the run loop's owner token and memory, so
 // the process's ticks go on from each other (IT17).
 type newPathState struct {
-	clients map[string]sprintfn.Client
-	epochs  map[string]uint64
-	closers []func() error
-	owner   string
-	loop    *machine.Loop
+	clients    map[string]sprintfn.Client
+	lifecycles map[string]lifecycleHandle
+	epochs     map[string]uint64
+	closers    []func() error
+	owner      string
+	loop       *machine.Loop
 }
 
 func (a *app) pathState() *newPathState {
 	if a.np == nil {
-		a.np = &newPathState{clients: map[string]sprintfn.Client{}, epochs: map[string]uint64{}}
+		a.np = &newPathState{clients: map[string]sprintfn.Client{}, lifecycles: map[string]lifecycleHandle{}, epochs: map[string]uint64{}}
 	}
 	return a.np
 }
