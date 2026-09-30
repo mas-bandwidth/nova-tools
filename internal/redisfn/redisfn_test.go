@@ -319,6 +319,39 @@ func TestFunctionsAreTheNamesTheFilesRegisterSorted(t *testing.T) {
 	}
 }
 
+func TestFunctionsRespectsFilter(t *testing.T) {
+	t.Parallel()
+	lib := two()
+	lib.Filter = func(name string) bool { return name != "fa" }
+	got, err := lib.Functions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got, []string{"fb"}) {
+		t.Fatalf("Functions = %v, want [fb]", got)
+	}
+
+	// WithFilter creates a copy with the filter set.
+	lib2 := two().WithFilter(func(name string) bool { return name == "fa" })
+	got2, err := lib2.Functions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(got2, []string{"fa"}) {
+		t.Fatalf("WithFilter Functions = %v, want [fa]", got2)
+	}
+
+	// A filter that rejects everything returns an empty slice.
+	libNone := two().WithFilter(func(string) bool { return false })
+	gotNone, err := libNone.Functions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(gotNone) != 0 {
+		t.Fatalf("Filter excluding all returned %v, want empty", gotNone)
+	}
+}
+
 // unreadable is a file system whose glob matches a file that cannot be read.
 type unreadable struct{ fstest.MapFS }
 

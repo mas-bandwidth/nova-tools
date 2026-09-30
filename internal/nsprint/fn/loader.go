@@ -25,8 +25,71 @@ var sources embed.FS
 // files, glob and prelude, so a living tool loads and checks it with redisfn
 // (nova-redis fn). Its Source is this package's Source, byte for byte, and so
 // its digest is Sum's. Remedy is left for the tool to fill in its own words.
+//
+// In the legacy library (where Prelude leaves NS.tset_profile unset), Lua
+// guards skip the tset and sprint fragments at load time, so Filter omits
+// the six profile-gated functions (TSetFunctions and SprintFunctions).
 func Spec() redisfn.Library {
-	return redisfn.Library{Name: Library, Files: sources, Glob: "lua/*.lua", Prelude: Prelude}
+	return SpecForProfile("")
+}
+
+// SpecForProfile returns nova_sprint as a redisfn.Library for profile.
+// When profile is empty (the legacy library), Filter omits both TSetFunctions
+// and SprintFunctions because the files' Lua guards skip them at load.
+// When profile is TSetStandalone or TSetComposed, TSetFunctions are admitted
+// while SprintFunctions remain omitted.
+// When profile is TSetSprint, all functions are admitted.
+func SpecForProfile(profile TSetProfile) redisfn.Library {
+	var filter func(name string) bool
+	switch profile {
+	case TSetStandalone, TSetComposed:
+		filter = func(name string) bool {
+			return !isSprintFunction(name)
+		}
+	case TSetSprint:
+		filter = nil
+	default:
+		filter = func(name string) bool {
+			return !isProfileGated(name)
+		}
+	}
+	return redisfn.Library{
+		Name:    Library,
+		Files:   sources,
+		Glob:    "lua/*.lua",
+		Prelude: Prelude,
+		Filter:  filter,
+	}
+}
+
+// FunctionsForProfile returns the sorted function names that the library
+// registers under profile.
+func FunctionsForProfile(profile TSetProfile) ([]string, error) {
+	if profile != "" && profile != TSetStandalone && profile != TSetComposed && profile != TSetSprint {
+		return nil, fmt.Errorf("unknown profile %q", profile)
+	}
+	return SpecForProfile(profile).Functions()
+}
+
+func isSprintFunction(name string) bool {
+	for _, fn := range SprintFunctions {
+		if fn == name {
+			return true
+		}
+	}
+	return false
+}
+
+func isProfileGated(name string) bool {
+	if isSprintFunction(name) {
+		return true
+	}
+	for _, fn := range TSetFunctions {
+		if fn == name {
+			return true
+		}
+	}
+	return false
 }
 
 // Prelude is the one chunk-level local of the assembled library: NS, the

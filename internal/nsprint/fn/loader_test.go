@@ -2,6 +2,7 @@ package fn
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -106,5 +107,99 @@ func TestCountLocalsSeesTheOldShape(t *testing.T) {
 	active, _, _ := countLocals(t, strings.Join(flat, "\n"))
 	if active <= MaxLocals {
 		t.Fatalf("unblocked chunk counts %d locals, want > %d (the guard must see the pre-fix shape)", active, MaxLocals)
+	}
+}
+
+// TestFunctionsForProfileReflectsGating verifies that Spec().Functions() and
+// FunctionsForProfile accurately reflect profile filtering without requiring
+// a Redis server:
+//   - Spec().Functions() (and FunctionsForProfile("")) omits all 6 profile-gated
+//     names (TSetFunctions and SprintFunctions).
+//   - FunctionsForProfile(TSetStandalone) and FunctionsForProfile(TSetComposed)
+//     include TSetFunctions (4) and omit SprintFunctions (2).
+//   - FunctionsForProfile(TSetSprint) includes both TSetFunctions and SprintFunctions.
+func TestFunctionsForProfileReflectsGating(t *testing.T) {
+	t.Parallel()
+
+	legacy, err := Spec().Functions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(legacy) == 0 {
+		t.Fatal("legacy Functions() is empty")
+	}
+
+	legacySet := map[string]bool{}
+	for _, n := range legacy {
+		legacySet[n] = true
+	}
+
+	// Verify all 6 profile-gated names are absent from legacy Spec().Functions().
+	for _, name := range append(append([]string(nil), TSetFunctions...), SprintFunctions...) {
+		if legacySet[name] {
+			t.Errorf("legacy Spec().Functions() includes profile-gated function %q", name)
+		}
+	}
+
+	// FunctionsForProfile("") matches Spec().Functions().
+	fromEmpty, err := FunctionsForProfile("")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(legacy, fromEmpty) {
+		t.Fatalf("FunctionsForProfile(\"\") = %v, want %v", fromEmpty, legacy)
+	}
+
+	// Standalone and Composed admit TSetFunctions, but not SprintFunctions.
+	for _, prof := range []TSetProfile{TSetStandalone, TSetComposed} {
+		names, err := FunctionsForProfile(prof)
+		if err != nil {
+			t.Fatalf("FunctionsForProfile(%q): %v", prof, err)
+		}
+		set := map[string]bool{}
+		for _, n := range names {
+			set[n] = true
+		}
+		for _, name := range TSetFunctions {
+			if !set[name] {
+				t.Errorf("profile %q missing TSetFunction %q", prof, name)
+			}
+		}
+		for _, name := range SprintFunctions {
+			if set[name] {
+				t.Errorf("profile %q unexpectedly includes SprintFunction %q", prof, name)
+			}
+		}
+		if len(names) != len(legacy)+len(TSetFunctions) {
+			t.Errorf("profile %q function count %d, want %d", prof, len(names), len(legacy)+len(TSetFunctions))
+		}
+	}
+
+	// Sprint profile admits both TSetFunctions and SprintFunctions.
+	sprintNames, err := FunctionsForProfile(TSetSprint)
+	if err != nil {
+		t.Fatalf("FunctionsForProfile(sprint): %v", err)
+	}
+	sprintSet := map[string]bool{}
+	for _, n := range sprintNames {
+		sprintSet[n] = true
+	}
+	for _, name := range TSetFunctions {
+		if !sprintSet[name] {
+			t.Errorf("sprint profile missing TSetFunction %q", name)
+		}
+	}
+	for _, name := range SprintFunctions {
+		if !sprintSet[name] {
+			t.Errorf("sprint profile missing SprintFunction %q", name)
+		}
+	}
+	if len(sprintNames) != len(legacy)+len(TSetFunctions)+len(SprintFunctions) {
+		t.Errorf("sprint profile function count %d, want %d", len(sprintNames), len(legacy)+len(TSetFunctions)+len(SprintFunctions))
+	}
+
+	// Unknown profile returns an error.
+	if _, err := FunctionsForProfile("unknown"); err == nil {
+		t.Error("FunctionsForProfile(\"unknown\") accepted; want error")
 	}
 }

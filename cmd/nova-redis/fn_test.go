@@ -200,6 +200,34 @@ func TestFnLibraryIsTheLoadersBytes(t *testing.T) {
 	}
 }
 
+// TestFnFunctionsExcludesProfileGated verifies that the library loaded by fn
+// names only the functions the legacy profile registers: the six profile-gated
+// functions in tset and sprint fragments are omitted without needing a Redis
+// server.
+func TestFnFunctionsExcludesProfileGated(t *testing.T) {
+	t.Parallel()
+	names, err := library().Functions()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(names) == 0 {
+		t.Fatal("library().Functions() is empty")
+	}
+	gated := map[string]bool{
+		"ns_tset_step":     true,
+		"ns_tset_read":     true,
+		"ns_tset_define":   true,
+		"ns_tset_teardown": true,
+		"ns_sprint_step":   true,
+		"ns_sprint_read":   true,
+	}
+	for _, name := range names {
+		if gated[name] {
+			t.Errorf("library().Functions() includes profile-gated function %q", name)
+		}
+	}
+}
+
 // TestFnLoadAndCheckOnAStore walks one store through every state: absent,
 // loaded, loaded again, other code under the name, replaced. Each step's
 // line, exit status and commands sent are what the verb promises.

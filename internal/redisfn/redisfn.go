@@ -160,6 +160,12 @@ type Library struct {
 	// error ends with it. When it is empty the error names Load.
 	Remedy string
 
+	// Filter optionally restricts the function names the library is
+	// considered to register (Functions, and collision checks against other
+	// libraries) to those for which Filter returns true. When nil, all
+	// function names registered in the files are admitted.
+	Filter func(name string) bool
+
 	// Bound is the longest one call of Load, Check, Ensure or LoadMissing
 	// waits on the store. Zero or less is DefaultBound.
 	Bound time.Duration
@@ -231,10 +237,10 @@ func (l Library) Digest() (string, error) {
 // Functions returns the function names the library registers, as its files
 // spell them, sorted. They are the names the loader can read: those written
 // as a string in a call of redis.register_function, as its first argument or
-// as the function_name of its table. A name the library computes when it
-// loads is not among them, so the store may hold more. No two of them are the
-// same name without case, or Source would refuse the library; the error is
-// Source's.
+// as the function_name of its table. When Filter is set, only names for which
+// it returns true are admitted. A name the library computes when it loads is
+// not among them, so the store may hold more. No two of them are the same name
+// without case, or Source would refuse the library; the error is Source's.
 func (l Library) Functions() ([]string, error) {
 	b, err := l.build()
 	if err != nil {
@@ -246,6 +252,12 @@ func (l Library) Functions() ([]string, error) {
 	}
 	sort.Strings(names)
 	return names, nil
+}
+
+// WithFilter returns a copy of l with its Filter set to filter.
+func (l Library) WithFilter(filter func(name string) bool) Library {
+	l.Filter = filter
+	return l
 }
 
 // Locate maps a line of Source, counted from 1 as Redis counts it in
@@ -366,6 +378,9 @@ func (l Library) build() (*built, error) {
 	first := map[string]registration{} // by lower-case name: Redis compares function names without case
 	register := func(regs []registration) error {
 		for _, reg := range regs {
+			if l.Filter != nil && !l.Filter(reg.name) {
+				continue
+			}
 			key := strings.ToLower(reg.name)
 			if was, ok := first[key]; ok {
 				return l.refuse("function %s is registered twice, at %s line %d and at %s line %d; the store keeps one function of a name, compared without case",
