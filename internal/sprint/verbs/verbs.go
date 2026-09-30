@@ -1625,9 +1625,10 @@ func clockOf(rd *sprintfn.ReadReply, slot int) (sprintfn.ClockResult, bool, erro
 	return c, has, nil
 }
 
-// running says the clock runs: no stopped_since_ms (1.2).
+// running says the clock runs: stopped_since_ms "" or absent (1.2), by
+// the one rule teardown's RUNNING reads (tset.ClockRunning).
 func running(c sprintfn.ClockResult) bool {
-	return c.Clock.StoppedSinceMS == nil || *c.Clock.StoppedSinceMS == ""
+	return tset.ClockRunning(c.Clock.StoppedSinceMS)
 }
 
 // ---- a counting client
