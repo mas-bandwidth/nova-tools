@@ -18,7 +18,6 @@ internal/pulse/cardheader.go the typed-header grammar that lands with #1721; lin
 internal/pulse/kinds.go SPEC-TOOLWORK §5's kinds-table file; the six kinds live in cutkind.go until the accept gate's table is one file of its own
 internal/tokens/message.go SPEC-TOKENS' plan: the message record
 internal/testkit docs/STANDARD.md's plan: the shared test rigs, fakes and harnesses; lands with the testkit PR
-internal/tool docs/STANDARD.md's plan: the shared tool skeleton; lands with the tool-skeleton PR
 tools/templates SPEC-CI cardtemplates: one of CardTemplateDirs, skipped until a template is written there
 
 # --- 2. An invented example: a name chosen to show the SHAPE of a path. ---
