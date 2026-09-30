@@ -330,4 +330,3 @@ func TestInboxWaitWithJSONOnTimeoutEmitsOnlyValidJSON(t *testing.T) {
 		t.Fatalf("inbox --wait --timeout 50ms: want timeout banner in stdout:\n%s", plain)
 	}
 }
-
