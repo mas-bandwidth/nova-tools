@@ -95,7 +95,6 @@ func TestAdoptWithCertifyRunsTheWorkloadsOnEachAdoptedMachineUnderTheVersionJust
 			"go-test":        "GO OK go version go1.26.5 linux/amd64 ok 0.4s\n",
 			"c-build":        "C OK cc (GCC) 13.2.0\n",
 			"cpp-build":      "CPP OK c++ (GCC) 13.2.0\n",
-			"sbcl":           "SBCL OK SBCL 2.5.8\n",
 			"git-push":       "GIT PUSH OK head=deadbeef git=git version 2.43.0\n",
 			"path-resolves":  "PATH OK /home/nova/.local/bin/nova-merge v0.16.0\n",
 			"go-on-path":     "GO PATH OK /home/gaffer/go/bin/go go version go1.26.5 linux/amd64\n",
@@ -117,7 +116,7 @@ func TestAdoptWithCertifyRunsTheWorkloadsOnEachAdoptedMachineUnderTheVersionJust
 	if !strings.Contains(o.String(), "CERTIFY hulk go-test OK") {
 		t.Fatalf("the adopted machine was not certified:\n%s", o.String())
 	}
-	if !strings.Contains(o.String(), "CERTIFY OK machines=1 ok=10 fail=0 warn=0") {
+	if !strings.Contains(o.String(), "CERTIFY OK machines=1 ok=9 fail=0 warn=0") {
 		t.Fatalf("no closing certification line:\n%s\n%s", o.String(), e.String())
 	}
 	// An adopt has no runner list to read, so the forge classes are SKIPPED and left
@@ -130,8 +129,8 @@ func TestAdoptWithCertifyRunsTheWorkloadsOnEachAdoptedMachineUnderTheVersionJust
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(rows) != 10 {
-		t.Fatalf("wrote %d certificate rows, want 10", len(rows))
+	if len(rows) != 9 {
+		t.Fatalf("wrote %d certificate rows, want 9", len(rows))
 	}
 	for _, r := range rows {
 		// THE POINT: the build on the row is the one this verb just put there, not the one

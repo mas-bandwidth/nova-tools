@@ -76,7 +76,7 @@ DARWIN_TIMEOUT ?= 110s
 # `?=` is what makes that environment value win.
 MERGE_TIMEOUT ?= 100s
 
-.PHONY: help build fmt vet vet-functional vet-laws vet-windows lint preflight test test-full test-short test-slow test-functional test-functional-container test-merge test-race test-e2e test-prewarm-done compile-lisp test-lisp check clean darwin-timeout map new-rule new-verb
+.PHONY: help build fmt vet vet-functional vet-laws vet-windows lint preflight test test-full test-short test-slow test-functional test-functional-container test-merge test-race test-e2e test-prewarm-done check clean darwin-timeout map new-rule new-verb
 
 help:
 	@echo "make tlc         bounded Linux TLC group (TLC_JAR, TLC_OUT, TLC_GROUP)"
@@ -102,9 +102,7 @@ help:
 	@echo "make test-race   go test -race ./... (the certification tier)"
 	@echo "make test-e2e    go test -count=1 -run TestFriendSequence ./cmd/..."
 	@echo "make test-prewarm-done run the exact #2498 S3 test manifest"
-	@echo "make test-lisp   sh tools/ci/lisp-test.sh (nothing to test while the live tree has no Lisp system)"
-	@echo "make compile-lisp nothing to compile while lisp/ holds no system; refuses if one appears"
-	@echo "make check       build, lint, test, test-e2e and test-lisp (CI's gates; the stream lander's batch test)"
+	@echo "make check       build, lint, test, and test-e2e (CI's gates; the stream lander's batch test)"
 	@echo "make clean       remove ./bin and ./scratch"
 	@echo "make map         regenerate AGENTS.md and per-directory maps"
 	@echo "make new-rule    scaffold a class rule skeleton (ARGS=<name>)"
@@ -359,28 +357,14 @@ test-prewarm-done:
 	$(GO) test -count=1 ./tools/testmanifest
 	$(GO) run ./tools/testmanifest --go "$(GO)" --package ./internal/swarm -- TestASDFMappingReusesCompiledOutputAcrossFreshJobClone TestPrewarmFailedRerunInvalidatesPriorReceipt TestPrewarmGitChildrenDropSecrets
 
-# The Lisp tier. nova-work, the one Lisp system, is PARKED under
-# deprecated/lisp/nova-work (Glenn 2026-09-27: deprecated code is not tested, not
-# built and never blocks CI), so lisp/ holds no system: test-lisp runs CI's
-# script, which prints "nothing to test" and exits 0, and compile-lisp (the
-# swarm prewarm's lisp phase) prints "nothing to compile". verify-roadmap and
-# measure-roadmap ran cmd/nova-work's verification verb and went with it.
-test-lisp:
-	sh tools/ci/lisp-test.sh
-
-compile-lisp:
-	@if [ -e lisp ]; then echo "compile-lisp: lisp/ exists and no compile step names it; write one" >&2; exit 1; fi
-	@echo "compile-lisp: nothing to compile: lisp/ holds no system (nova-work is parked under deprecated/lisp/nova-work)"
-
 # What CI runs on a pull request: the self-hosted lint job, the sharded test
-# job, the friend sequences and the lisp tier (test-lisp; nothing to test while
-# nova-work is parked).
+# job and the friend sequences.
 # The stream lander's batch test lands a whole stream, so it runs the
 # functional tier too (#4328). Over the whole tree the times are printed
 # against the old 60 s package budget and a SLEEPS skip off the ledger is red;
 # the target variables ride into `test` as its prerequisite.
 check: SLOWTESTS_FLAGS := --budget 60 --sleeps internal/ci/sleeps-skips_allowlist.txt
-check: build lint test test-functional test-e2e test-lisp
+check: build lint test test-functional test-e2e
 
 # An explicit list, never a computed path: clean removes the two directories a
 # local build and a worker's notes land in, and nothing else.

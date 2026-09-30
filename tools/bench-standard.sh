@@ -178,7 +178,7 @@ for tcroot in $NOVA_TOOLCHAIN_ROOTS; do
   fi
 done
 
-# (3) go version, sbcl, harness.
+# (3) go version, harness.
 if [ -z "$NOVA_GO" ]; then
   drift "go.mod go directive unread; set NOVA_GO or run from a nova-tools checkout"
 elif command -v go >/dev/null 2>&1; then
@@ -190,21 +190,13 @@ elif command -v go >/dev/null 2>&1; then
 else
   drift "go not on PATH want $NOVA_GO"
 fi
-if ! command -v sbcl >/dev/null 2>&1; then
-  drift "sbcl not on PATH"
-fi
 
 # (3c) THE TOOLCHAIN MUST BE RUNNABLE INSIDE THE WALL, not merely on PATH.
-# `command -v sbcl` answers about the bench user's own shell. A card runs behind the
-# sandbox wall, whose linux read roots are the system table of
+# A card runs behind the sandbox wall, whose linux read roots are the system table of
 # internal/sandbox/wrap_linux.go plus the toolchain roots of internal/swarm/toolchain.go.
 # Of the toolchain roots only `sdk` carries EXECUTE (`go/pkg/mod` is read WITHOUT execute),
-# so the roots that can run a tool are the system table plus `$HOME/sdk`. An sbcl at
-# $HOME/.local/bin/sbcl is on PATH and is `Permission denied` inside the wall, which is why
-# every lisp card was forced onto the one bench whose sbcl is /usr/bin/sbcl -- measured
-# 2026-09-19: E09-G1 on vision 1036 s against 248-393 s for the same class on space, and the
-# r1785 worker on mini fetched an SBCL 2.4.0 of its own into $TMPDIR before it could run a
-# test.
+# so the roots that can run a tool are the system table plus `$HOME/sdk`. A tool at
+# $HOME/.local/bin/go is on PATH and is `Permission denied` inside the wall.
 #
 # THE ROOTS ARE THE WALL'S, WHOLE. The system table below and linuxReadRoots in
 # internal/sandbox/wrap_linux.go are ONE list: internal/ci's class test fails when they
@@ -222,7 +214,7 @@ if [ -n "$wall_resolv" ] && [ -e "$wall_resolv" ]; then
   wall_resolv_dir="$(dirname "$wall_resolv")"
   case "$wall_resolv_dir" in /|.|"") wall_resolv_dir="" ;; esac
 fi
-for tool in go sbcl; do
+for tool in go; do
   p="$(command -v "$tool" 2>/dev/null || true)"
   [ -n "$p" ] || continue          # absent is the check above's DRIFT, not this one's
   rp="$(readlink -f "$p" 2>/dev/null || echo "$p")"
@@ -238,26 +230,6 @@ for tool in go sbcl; do
     drift "$tool on PATH is $p -> $rp, under NO read root the sandbox wall grants (the system roots of internal/sandbox/wrap_linux.go, the resolver directory, and \$HOME/sdk from internal/swarm/toolchain.go): a card cannot EXECUTE it inside the wall. Install it under $HOME_DIR/sdk/$tool-<ver>/ and point the PATH entry there"
   fi
 done
-# (3d) THE SBCL PIN, not only its presence (nova-tools#2053): space ran SBCL 2.6.0.debian
-# from /usr/bin while the fleet pins $NOVA_SBCL under ~/sdk, and a presence check printed
-# PINNED for it. The version is `sbcl --version`'s second word, compared whole (2.5.80 is
-# not 2.5.8); the path is the resolved one, compared against the resolved ~/sdk (macOS
-# temp and home dirs sit behind /var -> /private/var). An absent sbcl is (3)'s DRIFT.
-NOVA_SBCL="${NOVA_SBCL:-2.5.8}"
-sdk_real="$(readlink -f "$HOME_DIR/sdk" 2>/dev/null || echo "$HOME_DIR/sdk")"
-if command -v sbcl >/dev/null 2>&1; then
-  sbcl_out="$(sbcl --version 2>&1 | head -1 || true)"
-  sbcl_ver="$(printf '%s\n' "$sbcl_out" | awk '{print $2}')"
-  if [ "$sbcl_ver" != "$NOVA_SBCL" ]; then
-    drift "sbcl version [$sbcl_out] want $NOVA_SBCL (NOVA_SBCL)"
-  fi
-  sbcl_p="$(command -v sbcl)"
-  sbcl_rp="$(readlink -f "$sbcl_p" 2>/dev/null || echo "$sbcl_p")"
-  case "$sbcl_rp" in
-    "$sdk_real"/*) ;;
-    *) drift "sbcl at $sbcl_p -> $sbcl_rp not under $HOME_DIR/sdk (want $HOME_DIR/sdk/sbcl-$NOVA_SBCL/)" ;;
-  esac
-fi
 
 # (3e) THE PRO RUNG (nova-tools#2053): pro loops existed on five linux benches only; the
 # Macs were flash-only and 528 of 998 slots sat idle in a pro wave. A bench has the rung
@@ -275,6 +247,7 @@ if [ "$pro_rung" = "0" ]; then
   drift "pro rung missing (no executable NOVA_PRO_RUNG, no $HOME_DIR/nova-bench/rungs/pro, no $HOME_DIR/nova-bench/pro)"
 fi
 
+sdk_real="$(readlink -f "$HOME_DIR/sdk" 2>/dev/null || echo "$HOME_DIR/sdk")"
 # (3f) SQLITE3 UNDER ~/sdk (nova-tools#2053): space resolved /usr/bin/sqlite3 while the
 # other benches carry ~/sdk/sqlite3-<ver>, so one card saw two sqlite3s by bench.
 if ! command -v sqlite3 >/dev/null 2>&1; then

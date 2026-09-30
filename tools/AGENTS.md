@@ -6,7 +6,6 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | --- | --- | --- | --- |
 | `agentsmap/` | AGENTS.md map generator CLI | `go test ./internal/docs` | `make map` |
 | `analyzers/` | vetlaw verb-law analyzers | `go test ./tools/analyzers/...` | `make vet-laws` |
-| `ci/` | CI helper and build scripts | `go test ./internal/ci` | `make test` |
 | `fardelay/` | a store at a distance as a process: a loopback proxy that holds each write of its clients back by a fixed delay | `go test ./tools/fardelay` | `go run ./tools/fardelay --target HOST:PORT --delay 64ms` |
 | `functionalrun/` | the functional tier inside one container per run, and the reaper of its overdue containers | `go test ./tools/functionalrun` | `make test-functional-container` |
 | `newrule/` | class rule scaffolding CLI | `go test ./tools/newrule` | `go test ./tools/newrule` |

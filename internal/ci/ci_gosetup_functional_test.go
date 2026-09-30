@@ -118,10 +118,6 @@ func TestCIGoSetupPrefersTheGoModToolchain(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			// the fleet-probe copy also wants an sbcl
-			if err := os.WriteFile(filepath.Join(home, ".local", "bin", "sbcl"), []byte("#!/bin/sh\necho SBCL fake\n"), 0o755); err != nil {
-				t.Fatal(err)
-			}
 			if tc.gomod != "" {
 				if err := os.WriteFile(filepath.Join(work, "go.mod"), []byte(tc.gomod), 0o644); err != nil {
 					t.Fatal(err)
