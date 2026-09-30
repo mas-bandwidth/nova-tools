@@ -48,7 +48,8 @@ type Intent struct {
 // plan that read the key as it was is refused XGUARD when it has moved.
 type XGuard struct {
 	// Kind is what is guarded: memberup, beatstale, due, hold, clock,
-	// coordinator or stranger.
+	// coordinator or stranger; and for R17's step the version of its dry
+	// plans' inputs as read (revs, counter, ctl, beat: StopInputs, IT10).
 	Kind string
 	// Member is the fleet member the guard is about, when it is about one.
 	Member string
