@@ -143,8 +143,14 @@ func (w *world) hash(name string) map[string]string {
 // place is where a work card is, "" when it has none.
 func (w *world) place(id string) string {
 	w.t.Helper()
+	return w.placeIn(sprint.Work, id)
+}
+
+// placeIn is where a card of a table is, "" when it has none.
+func (w *world) placeIn(table, id string) string {
+	w.t.Helper()
 	res, err := sprintfn.Read(context.Background(), w.tw, &sprintfn.ReadRequest{Epoch: "0",
-		Tset: []tset.ReadQuery{{Kind: "ids", Table: sprint.Work, IDs: []string{id}}}})
+		Tset: []tset.ReadQuery{{Kind: "ids", Table: table, IDs: []string{id}}}})
 	if err != nil || res.Read == nil {
 		w.t.Fatalf("read %s: %v %+v", id, err, res.Refusal)
 	}

@@ -72,8 +72,8 @@ type Config struct {
 	Owner, Name string
 	// Rules are the tick's rules; nil is sprint.RuleTable().
 	Rules []sprint.Rule
-	// Build is the step builder (8.0's step.Build). The loop cannot run a rule's
-	// plan without one.
+	// Build is the step builder (8.0's step.Build); nil is StepBuilder, the
+	// adapter to stepbuild.Build that serves the real rules.
 	Build Builder
 	// Budget is the tick's; the zero Budget is DefaultBudget().
 	Budget Budget
@@ -269,12 +269,12 @@ func (e *errorStep) settle(c errChunk) {
 	e.notes = e.notes[c.notes:]
 }
 
-// NewLoop is a loop over a config: the design's spans and budget where the
-// config leaves them zero. A config with no builder, no owner or no name is
-// refused.
+// NewLoop is a loop over a config: the design's spans, budget and step
+// builder where the config leaves them zero. A config with no owner or no name
+// is refused.
 func NewLoop(cfg Config) (*Loop, error) {
 	if cfg.Build == nil {
-		return nil, errors.New("machine: no step builder (8.0's step.Build): the loop cannot turn a rule's plan into requests")
+		cfg.Build = StepBuilder(cfg.Names.Prefix)
 	}
 	if cfg.Owner == "" || cfg.Name == "" {
 		return nil, errors.New("machine: a loop needs an owner token and a name for the lease")
