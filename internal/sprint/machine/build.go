@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"reflect"
 	"strconv"
+	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/sprintfn"
@@ -47,6 +48,10 @@ func StepBuilder(prefix string) Builder {
 		if err := carried(rp); err != nil {
 			return nil, err
 		}
+		l1, guards, err := convertGuards(rp)
+		if err != nil {
+			return nil, err
+		}
 		units := make([]builtUnit, 0, len(rp.Plan.Units))
 		for i, u := range rp.Plan.Units {
 			es, err := stepEntries(u)
@@ -59,7 +64,7 @@ func StepBuilder(prefix string) Builder {
 		for _, r := range rp.Plan.Rows {
 			rows = append(rows, stepbuild.Entry{Kind: stepbuild.KindRows, Table: r.Table, Add: []string{r.Row}})
 		}
-		sb := &stepBodies{prefix: prefix, meta: m, bounds: b, rp: rp, rows: rows}
+		sb := &stepBodies{prefix: prefix, meta: m, bounds: b, rp: rp, rows: rows, l1: l1, guards: guards}
 		var group []builtUnit
 		n := 0
 		for _, u := range units {
@@ -106,11 +111,113 @@ type stepBodies struct {
 	rp     sprint.RulePlan
 	rows   []stepbuild.Entry
 	bodies []sprintfn.Body
+	// l1 are the plan's guards that are Layer 1 entries, and guards those X
+	// checks, as convertGuards made them; both ride the first body.
+	l1     []tset.Entry
+	guards []sprint.XGuard
 }
 
-// guardCount is the kind of XGuard that is Layer 1's count entry (the fleet
-// rules' guardCount).
-const guardCount = "count"
+// The kinds of XGuard the rules plan that are not X's own (8.0 has no field
+// for them; each rule file says why it rides in RulePlan.Guards). The builder
+// makes each a Layer 1 entry or a kind X has (convertGuards).
+const (
+	guardCount    = "count"    // rules_fleet.go guardCount: a ready cell held at most Score cards
+	guardRCount   = "rcount"   // rules_fleet.go guardRCount: "sent:<s> <max>", R6's zguard on sent:s
+	guardSetGuard = "setguard" // rules_position.go posSetGuard: a SetGuard as JSON (R3, R15)
+	guardCounter  = "counter"  // rules_position.go posCounter (R15), rules_time.go guardCounter (R17)
+	guardCtl      = "ctl"      // rules_time.go guardCtl: a member's control card's revision (R17)
+	guardBeat     = "beat"     // rules_time.go guardBeat: beat:<m>'s score in the due set (R17)
+	guardRevs     = "revs"     // rules_time.go guardRevs: the fold of a table's cards' revisions (R17)
+)
+
+// convertGuards makes a plan's guards what the store checks (1.3.5; L1 3):
+//
+//   - count (R6's receivers' ready cells): one Layer 1 count entry over the
+//     cells (1.3.6: "a count guard names many cells in one entry");
+//   - a SetGuard of kind rcount (R3's reach and unreach, R15's done): a Layer
+//     1 rcount entry, as it is;
+//   - R6's rcount on sent:s and a SetGuard of kind zguard on sent:<s> from
+//     -inf with at most 0 (R3's release): X's sent guard, S.zguard over
+//     {p}sprint:sent:<s>@e (sprintfn.XGuardSent);
+//   - counter (R15's COUNTER on next.streams, R17's score and streams): X's
+//     counter guard on the field of {p}next@e (sprintfn.XGuardCounter). A
+//     counter is a sprint key, not a card, so no Layer 1 entry can guard it;
+//     the sprint part's CounterChange guards only the fields it writes;
+//   - ctl (R17): a Layer 1 guard entry on the member's control card at its
+//     cell and revision; beat (R17): X's due guard on beat:<m>, absent when
+//     read as 0;
+//   - every other kind goes to X as it is.
+//
+// revs (R17's fold of the revisions of a table's cards) is refused: the fold
+// names no card, so neither Layer 1 nor X can check it (errata 3 H17 chose one
+// guard a table; its carrier is owed).
+func convertGuards(rp sprint.RulePlan) ([]tset.Entry, []sprint.XGuard, error) {
+	var guards []sprint.XGuard
+	var entries []tset.Entry
+	var count *tset.Entry
+	sets, err := sprint.SetGuardsOf(rp)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, g := range sets {
+		switch {
+		case g.Kind == sprint.GuardRCount:
+			e := tset.Entry{Kind: "rcount", Table: g.Table, Cells: append([]string(nil), g.Cells...), ScoreMin: g.Min, ScoreMax: g.Max}
+			if g.AtLeast != nil {
+				e.AtLeast = ptrUint(*g.AtLeast)
+			}
+			if g.AtMost != nil {
+				e.AtMost = ptrUint(*g.AtMost)
+			}
+			entries = append(entries, e)
+		case g.Kind == sprint.GuardZGuard && strings.HasPrefix(g.Key, "sent:") && g.Min == "-inf" && g.AtLeast == nil && g.AtMost != nil && *g.AtMost == 0:
+			guards = append(guards, sprint.XGuard{Kind: sprintfn.XGuardSent, Key: g.Key + " " + g.Max})
+		default:
+			return nil, nil, fmt.Errorf("a set guard of kind %s on %q that neither Layer 1 nor X checks", g.Kind, g.Key+strings.Join(g.Cells, ","))
+		}
+	}
+	for _, g := range rp.Guards {
+		switch g.Kind {
+		case guardSetGuard:
+		case guardCount:
+			if count == nil {
+				count = &tset.Entry{Kind: "count", Table: sprint.Fleet}
+			}
+			count.Cells = append(count.Cells, g.Key)
+			count.CountMax = append(count.CountMax, uint64(max(g.Score, 0)))
+		case guardRCount:
+			guards = append(guards, sprint.XGuard{Kind: sprintfn.XGuardSent, Key: g.Key})
+		case guardCounter:
+			field := "streams"
+			if g.Key == "next" {
+				field = "score"
+			}
+			guards = append(guards, sprint.XGuard{Kind: sprintfn.XGuardCounter, Key: field, Score: g.Score})
+		case guardCtl:
+			entries = append(entries, tset.Entry{Kind: "guard", Table: sprint.Fleet, From: g.Member + ":ctl",
+				IDs: []string{sprint.CtlID(g.Member)}, Revs: []tset.Decimal{tset.Decimal(strconv.FormatInt(g.Score, 10))}})
+		case guardBeat:
+			score := g.Score
+			if score == 0 {
+				score = sprintfn.XGuardAbsent
+			}
+			guards = append(guards, sprint.XGuard{Kind: sprintfn.XGuardDue, Key: g.Key, Score: score})
+		case guardRevs:
+			return nil, nil, fmt.Errorf("the fold of the revisions of the %s cards read (R17's stopinputs) has no guard in Layer 1 or X", g.Key)
+		default:
+			guards = append(guards, g)
+		}
+	}
+	if count != nil {
+		entries = append([]tset.Entry{*count}, entries...)
+	}
+	return entries, guards, nil
+}
+
+func ptrUint(n int) *uint64 {
+	u := uint64(max(n, 0))
+	return &u
+}
 
 // widestEpoch sizes a body at the longest epoch a request can carry, so the
 // size holds at the loop's real epoch.
@@ -152,31 +259,15 @@ func (sb *stepBodies) fit(group []builtUnit) error {
 }
 
 // extras puts the plan's notes, guards, intents and requeued keys on its first
-// body. The count guards become one Layer 1 count entry over their cells (1.3.6:
-// "a count guard names many cells in one entry"; rules_fleet.go, guardCount:
-// the cell of a fleet member's ready queue and the most it held); every other
-// guard goes to X as it is.
+// body, the guards as convertGuards made them: its Layer 1 entries first.
 func (sb *stepBodies) extras(body sprintfn.Body, first bool) sprintfn.Body {
 	if !first {
 		return body
 	}
-	var guards []sprint.XGuard
-	var count *tset.Entry
-	for _, g := range sb.rp.Guards {
-		if g.Kind != guardCount {
-			guards = append(guards, g)
-			continue
-		}
-		if count == nil {
-			count = &tset.Entry{Kind: "count", Table: sprint.Fleet}
-		}
-		count.Cells = append(count.Cells, g.Key)
-		count.CountMax = append(count.CountMax, uint64(max(g.Score, 0)))
+	if len(sb.l1) != 0 {
+		body.Entries = append(append([]tset.Entry(nil), sb.l1...), body.Entries...)
 	}
-	if count != nil {
-		body.Entries = append([]tset.Entry{*count}, body.Entries...)
-	}
-	body.Notes, body.Guards, body.Intents = sb.rp.Notes, guards, sb.rp.Intents
+	body.Notes, body.Guards, body.Intents = sb.rp.Notes, sb.guards, sb.rp.Intents
 	for _, k := range sb.rp.Requeue {
 		body.Requeue = append(body.Requeue, k.Key)
 	}
