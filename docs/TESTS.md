@@ -349,6 +349,14 @@ SELFTALK RULEDOC ./pages/RULES.md: rule documents: a finding here is a self-verd
 SELFTALK DATED n=1 files=2
 SELFTALK FAIL files=2 claims=2 standing=1 installations=2 dated=1 shown=3
 SELFTALK NOTE catches known SHAPES only: register, irony and quoted-specimen context are invisible to grammar, and a quoted verdict is a true positive on the grammar and a false one on the meaning. A green clears the known shapes, never the file.
+
+$ nova-self-talk --skip RULES.md ./pages/RULES.md ./pages/journal.md   # Stderr: whole
+SELFTALK SKIP ./pages/RULES.md (--skip)
+! SELFTALK FAIL ./pages/journal.md:4: STANDING: I cannot check my own work, so the second read went to someone else.
+! SELFTALK FAIL ./pages/journal.md:10: INSTALLATION RANKING: It is the worst habit I have, and the reason the checklist exists at all.
+SELFTALK DATED n=1 files=1
+SELFTALK FAIL files=1 claims=2 standing=1 installations=1 dated=1 shown=2
+SELFTALK NOTE catches known SHAPES only: register, irony and quoted-specimen context are invisible to grammar, and a quoted verdict is a true positive on the grammar and a false one on the meaning. A green clears the known shapes, never the file.
 ```
 
 ## nova-fuse
