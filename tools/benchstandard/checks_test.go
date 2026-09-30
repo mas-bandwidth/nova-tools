@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -743,4 +744,23 @@ func TestDiskHeadroomDriftsAndNamesTheThreeLargest(t *testing.T) {
 			t.Errorf("one KiB under 25G passed")
 		}
 	})
+}
+
+// What sourcing the sdk env file printed, its errors included, reaches the
+// witness's stderr: a broken env file is shown, never hidden, and the checks
+// still run on what it did set.
+func TestTheSdkEnvFilesErrorsAreShown(t *testing.T) {
+	t.Parallel()
+	b := conformingBench(t)
+	b.write("sdk/env.sh", "export PATH=...\n", false)
+	b.h.sourced = map[string]string{"PATH": b.bin}
+	b.h.sourceSaid = "sdk/env.sh: line 2: nosuch: command not found\n"
+	var stdout, stderr bytes.Buffer
+	code := run(nil, env{stdout: &stdout, stderr: &stderr, h: b.h, exeDir: t.TempDir(), cwd: t.TempDir(), systemDir: t.TempDir()})
+	if code != 0 {
+		t.Errorf("exit %d, want 0 (the env file set PATH):\n%s", code, stdout.String())
+	}
+	if !strings.Contains(stderr.String(), "nosuch: command not found") {
+		t.Errorf("the env file's error was not shown on stderr: %q", stderr.String())
+	}
 }

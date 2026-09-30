@@ -709,7 +709,7 @@ func writeGeneralityAllowlist(path string, measuredCounts map[string]int) error 
 	return os.WriteFile(path, []byte(sb.String()), mode)
 }
 
-// TestGeneralityGuardrail holds living Go code in cmd/ and internal/ to Glenn's
+// TestGeneralityGuardrail holds living Go code in cmd/, internal/ and tools/ to Glenn's
 // generality instruction (Rule 1): no hostnames or friend/person names in code,
 // contracts, defaults or refusals.
 func TestGeneralityGuardrail(t *testing.T) {
@@ -718,7 +718,7 @@ func TestGeneralityGuardrail(t *testing.T) {
 	tree := repoTree(t)
 
 	var files []GeneralitySourceFile
-	for _, f := range tree.GoFilesUnder(false, "cmd", "internal") {
+	for _, f := range tree.GoFilesUnder(false, "cmd", "internal", "tools") {
 		if f.HasDirNamed("testdata") || f.HasDirNamed("vendor") || f.HasDirNamed("deprecated") {
 			continue
 		}

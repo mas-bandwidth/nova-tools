@@ -30,6 +30,7 @@ type fakeHost struct {
 	osName   string
 	environ  []string
 	sourced  map[string]string
+	sourceSaid string // what sourcing the sdk env file printed
 	sourceEr error
 	answers  []answer
 	cgroups  map[string]string
@@ -43,8 +44,8 @@ type fakeHost struct {
 func (f *fakeHost) OS() string        { return f.osName }
 func (f *fakeHost) Environ() []string { return f.environ }
 
-func (f *fakeHost) SourceEnv(file string, environ []string) (map[string]string, error) {
-	return f.sourced, f.sourceEr
+func (f *fakeHost) SourceEnv(file string, environ []string) (map[string]string, string, error) {
+	return f.sourced, f.sourceSaid, f.sourceEr
 }
 
 func (f *fakeHost) ProcCgroup(pid string) (string, bool) {

@@ -33,6 +33,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -40,6 +41,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // Exit codes: the exit code of the step that failed, else 0. A gofmt finding,
@@ -94,8 +97,13 @@ type runner interface {
 
 type execRunner struct{}
 
+// run starts each step as a long-lived child (internal/subproc): gofmt, go vet and
+// the test run take as long as the packages take, and go test bounds itself, so
+// the child has no deadline of its own, only a bounded wait for its pipes.
 func (execRunner) run(c command) (int, error) {
-	cmd := exec.Command(c.name, c.args...)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	cmd := subproc.Long(ctx, c.name, c.args...)
 	cmd.Env = c.env
 	cmd.Dir = c.dir
 	cmd.Stdout = c.out

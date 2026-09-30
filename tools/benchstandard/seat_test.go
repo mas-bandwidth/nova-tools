@@ -47,7 +47,7 @@ func seatBench(t *testing.T, keys ...string) *bench {
 func TestOneSeatPerOSUser(t *testing.T) {
 	t.Parallel()
 
-	b := seatBench(t, "rowan.key")
+	b := seatBench(t, "ada.key")
 	code, output := b.standard()
 	if code != 0 || !strings.Contains(output, "STANDARD OK") {
 		t.Fatalf("one seat key exited %d, want 0 and STANDARD OK:\n%s", code, output)
@@ -61,7 +61,7 @@ func TestOneSeatPerOSUser(t *testing.T) {
 
 	// Two keys on one OS user: the control that proves the green above is not the
 	// witness saying yes to anything.
-	b2 := seatBench(t, "rowan.key", "air.key")
+	b2 := seatBench(t, "ada.key", "bo.key")
 	code, output = b2.standard()
 	if code == 0 {
 		t.Fatalf("two seat keys exited 0, want non-zero:\n%s", output)
@@ -83,7 +83,7 @@ func TestOneSeatPerOSUser(t *testing.T) {
 // item 6: "The bench standard checks exactly one seat key per owner prefix", because
 // two keys for one owner is either a lost key still trusted or a grant nobody
 // declared. The owner prefix is the part of a seat-key name before its first
-// "-": rowan-claude.key and rowan-codex.key are both owner rowan. The standard
+// "-": ada-claude.key and ada-codex.key are both owner ada. The standard
 // refuses two keys under one owner BY OWNER, on a line that names the prefix and
 // the seat directory, so the reader sees whose key is doubled and not only a
 // flat count.
@@ -92,10 +92,10 @@ func TestBenchStandardChecksOneSeatKeyPerOwnerPrefix(t *testing.T) {
 
 	t.Run("one key under one owner prefix passes", func(t *testing.T) {
 		t.Parallel()
-		b := seatBench(t, "rowan-claude.key")
+		b := seatBench(t, "ada-claude.key")
 		code, output := b.standard()
 		if code != 0 || !strings.Contains(output, "STANDARD OK") {
-			t.Fatalf("one key under owner rowan exited %d:\n%s", code, output)
+			t.Fatalf("one key under owner ada exited %d:\n%s", code, output)
 		}
 		if got := driftWith(output, "seat owner="); len(got) != 0 {
 			t.Fatalf("drifted on the owner-prefix line with one key: %v", got)
@@ -104,16 +104,16 @@ func TestBenchStandardChecksOneSeatKeyPerOwnerPrefix(t *testing.T) {
 
 	t.Run("two keys under one owner prefix drift by owner", func(t *testing.T) {
 		t.Parallel()
-		b := seatBench(t, "rowan-claude.key", "rowan-codex.key")
+		b := seatBench(t, "ada-claude.key", "ada-codex.key")
 		code, output := b.standard()
 		if code == 0 {
-			t.Fatalf("two keys for owner rowan exited 0:\n%s", output)
+			t.Fatalf("two keys for owner ada exited 0:\n%s", output)
 		}
 		lines := driftWith(output, "seat owner=")
 		if len(lines) != 1 {
-			t.Fatalf("no per-owner line for [rowan-claude.key rowan-codex.key]:\n%s", output)
+			t.Fatalf("no per-owner line for [ada-claude.key ada-codex.key]:\n%s", output)
 		}
-		want := "DRIFT seat owner=rowan keys=2 want=1 in " + filepath.Join(b.home, ".config", "nova-secrets")
+		want := "DRIFT seat owner=ada keys=2 want=1 in " + filepath.Join(b.home, ".config", "nova-secrets")
 		if lines[0] != want {
 			t.Errorf("owner line\n got %s\nwant %s", lines[0], want)
 		}
@@ -127,10 +127,10 @@ func TestBenchStandardChecksOneSeatKeyPerOwnerPrefix(t *testing.T) {
 		t.Parallel()
 		// Still DRIFT on the flat seat-keys line (one OS user, one key), but no
 		// owner is doubled, so no owner-prefix line.
-		b := seatBench(t, "rowan.key", "air.key")
+		b := seatBench(t, "ada.key", "bo.key")
 		_, output := b.standard()
 		if got := driftWith(output, "seat owner="); len(got) != 0 {
-			t.Fatalf("no prefix holds two keys in [rowan.key air.key], yet an owner was named: %v", got)
+			t.Fatalf("no prefix holds two keys in [ada.key bo.key], yet an owner was named: %v", got)
 		}
 		if len(driftWith(output, "seat keys=")) != 1 {
 			t.Fatalf("one OS user with two keys must still drift on the seat-keys line:\n%s", output)
@@ -139,10 +139,10 @@ func TestBenchStandardChecksOneSeatKeyPerOwnerPrefix(t *testing.T) {
 
 	t.Run("a name with no dash is its own owner", func(t *testing.T) {
 		t.Parallel()
-		b := seatBench(t, "rowan.key", "rowan-codex.key", "rowan-claude.key")
+		b := seatBench(t, "ada.key", "ada-codex.key", "ada-claude.key")
 		_, output := b.standard()
-		if got := driftWith(output, "seat owner=rowan keys=3 want=1"); len(got) != 1 {
-			t.Errorf("rowan.key, rowan-codex.key and rowan-claude.key are three keys of one owner, rowan:\n%s", output)
+		if got := driftWith(output, "seat owner=ada keys=3 want=1"); len(got) != 1 {
+			t.Errorf("ada.key, ada-codex.key and ada-claude.key are three keys of one owner, ada:\n%s", output)
 		}
 	})
 

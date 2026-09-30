@@ -310,7 +310,9 @@ func (w *witness) killStrays() {
 		if err != nil || n <= 1 {
 			continue
 		}
-		_ = w.h.Kill(n)
+		if err := w.h.Kill(n); err != nil {
+			fmt.Fprintf(w.out, "NOTE stray runner listener %d not killed: %v\n", n, err)
+		}
 	}
 	fmt.Fprintf(w.out, "NOTE stray runner listeners killed: %s\n", strings.Join(w.strays, " "))
 }
@@ -483,10 +485,14 @@ func (w *witness) checkHarnessCanary(hbin string) {
 	}
 	cdir, err := w.h.MkdirTemp(filepath.Join(w.home, "nova-bench"), "nova-canary.*")
 	if err != nil {
+		w.drift("harness canary: cannot make a dir under %s/nova-bench: %v", w.home, err)
 		return
 	}
 	defer w.h.RemoveUnder(filepath.Join(w.home, "nova-bench"), cdir)
-	_ = w.h.MkdirAll(filepath.Join(cdir, "home"), 0o755)
+	if err := w.h.MkdirAll(filepath.Join(cdir, "home"), 0o755); err != nil {
+		w.drift("harness canary: cannot make the wall's HOME under %s: %v", cdir, err)
+		return
+	}
 	res := w.runTool(sbin, []string{"--read", filepath.Join(w.home, "nova-bench"), "--write", cdir, "--cwd", cdir, "--", hbin, "--help"}, "HOME="+filepath.Join(cdir, "home"))
 	if !res.ok() {
 		w.drift("harness cannot start inside the sandbox wall; %s --help failed under nova-sandbox", hbin)
@@ -503,7 +509,10 @@ func (w *witness) checkSandboxNetwork() {
 		return
 	}
 	defer w.h.RemoveUnder(filepath.Join(w.home, "nova-bench"), dir)
-	_ = w.h.MkdirAll(filepath.Join(dir, "home"), 0o755)
+	if err := w.h.MkdirAll(filepath.Join(dir, "home"), 0o755); err != nil {
+		w.drift("sandbox-network: cannot make the wall's HOME under %s: %v", dir, err)
+		return
+	}
 	sbin := filepath.Join(w.home, ".local", "bin", "nova-sandbox")
 	if !w.isExec(sbin) {
 		w.drift("sandbox-network: %s not executable", sbin)
@@ -552,7 +561,7 @@ func (w *witness) checkBins() {
 
 // checkSeat: exactly one seat key, and at most one per owner prefix, and the
 // secrets tool accepts it. The owner is the key name before its first "-":
-// rowan-claude and rowan-codex are both owner rowan. Two keys for one owner is a
+// ada-claude and ada-codex are both owner ada. Two keys for one owner is a
 // lost key still trusted or a grant nobody declared, named by owner.
 func (w *witness) checkSeat() {
 	seatdir := filepath.Join(w.home, ".config", "nova-secrets")

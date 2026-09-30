@@ -77,6 +77,9 @@ const usage = `usage: benchstandard [--apply]
 // env is everything a run reads from outside itself.
 type env struct {
 	stdout io.Writer
+	// stderr is where the sdk env file's errors and output are shown, as a shell
+	// sourcing it would show them.
+	stderr io.Writer
 	h      host
 	exeDir string // the directory of the running binary
 	cwd    string // the working directory
@@ -88,7 +91,7 @@ type env struct {
 func main() {
 	exe, _ := os.Executable()
 	cwd, _ := os.Getwd()
-	os.Exit(run(os.Args[1:], env{stdout: os.Stdout, h: osHost{}, exeDir: filepath.Dir(exe), cwd: cwd, systemDir: "/etc/systemd/system"}))
+	os.Exit(run(os.Args[1:], env{stdout: os.Stdout, stderr: os.Stderr, h: osHost{}, exeDir: filepath.Dir(exe), cwd: cwd, systemDir: "/etc/systemd/system"}))
 }
 
 // run is the whole tool. An unknown argument is refused as drift, loudly: a
@@ -111,13 +114,13 @@ func run(args []string, e env) int {
 
 	process := parseEnvList(e.h.Environ())
 	w := &witness{
-		h:       e.h,
-		out:     e.stdout,
-		home:    process["HOME"],
-		apply:   apply,
-		goWant:  process["NOVA_GO"],
-		want:    process["NOVA_WANT"],
-		harness: process["NOVA_HARNESS"],
+		h:         e.h,
+		out:       e.stdout,
+		home:      process["HOME"],
+		apply:     apply,
+		goWant:    process["NOVA_GO"],
+		want:      process["NOVA_WANT"],
+		harness:   process["NOVA_HARNESS"],
 		systemDir: e.systemDir,
 	}
 	if w.goWant == "" {
@@ -127,7 +130,14 @@ func run(args []string, e env) int {
 	// The card's environment, before any tool is resolved.
 	w.env = process
 	if sdkEnv := filepath.Join(w.home, "sdk", "env.sh"); w.home != "" && w.isRegular(sdkEnv) {
-		if set, err := e.h.SourceEnv(sdkEnv, e.h.Environ()); err == nil {
+		set, said, err := e.h.SourceEnv(sdkEnv, e.h.Environ())
+		if said != "" && e.stderr != nil {
+			fmt.Fprint(e.stderr, said)
+		}
+		if err != nil && e.stderr != nil {
+			fmt.Fprintf(e.stderr, "benchstandard: sourcing %s: %v\n", sdkEnv, err)
+		}
+		if err == nil {
 			merged := map[string]string{}
 			for k, v := range process {
 				merged[k] = v

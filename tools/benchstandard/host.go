@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // host is every question the witness puts to the machine it runs on, and the
@@ -30,9 +31,10 @@ type host interface {
 	OS() string
 	// Environ is the process environment, KEY=value.
 	Environ() []string
-	// SourceEnv returns the variables a POSIX shell holds after it sources file
-	// with environ as its environment: only those the file set or changed.
-	SourceEnv(file string, environ []string) (map[string]string, error)
+	// SourceEnv returns the variables a shell holds after it sources file with
+	// environ as its environment (only those the file set or changed), and what
+	// the sourcing printed (its errors and its own output), which the caller shows.
+	SourceEnv(file string, environ []string) (set map[string]string, said string, err error)
 
 	Stat(path string) (fs.FileInfo, error)
 	ReadFile(path string) ([]byte, error)
@@ -136,7 +138,7 @@ func isExecutableFile(p string) bool {
 func (osHost) Run(s runSpec) runResult {
 	ctx, cancel := context.WithTimeout(context.Background(), probeTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, s.name, s.args...)
+	cmd := subproc.Context(ctx, s.name, s.args...)
 	cmd.Env = s.env
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
@@ -155,14 +157,20 @@ func (osHost) Run(s runSpec) runResult {
 	return res
 }
 
-// SourceEnv runs `sh -c '. "$1"; env'`, which is what the witness's own shell
-// predecessor did in-process: the card environment is the one a person gets by
-// sourcing the file, whatever the caller's PATH held. A value spanning lines is
-// rejoined from the lines that are not assignments.
-func (h osHost) SourceEnv(file string, environ []string) (map[string]string, error) {
-	res := h.Run(runSpec{name: "sh", args: []string{"-c", `. "$1" >/dev/null 2>&1; env`, "sh", file}, env: environ})
+// SourceEnv runs `bash -c '. "$1" >&2; env'` (sh where there is no bash): the card
+// environment is the one a person gets by sourcing the file in bash, whatever
+// the caller's PATH held. The file's own output and every error it raises go to
+// stderr and come back as said, for the witness to show, never into the
+// environment it reads. A value spanning lines is rejoined from the lines that
+// are not assignments.
+func (h osHost) SourceEnv(file string, environ []string) (map[string]string, string, error) {
+	shell := "sh"
+	if p, err := exec.LookPath("bash"); err == nil {
+		shell = p
+	}
+	res := h.Run(runSpec{name: shell, args: []string{"-c", `. "$1" >&2; env`, "sh", file}, env: environ})
 	if res.err != nil {
-		return nil, res.err
+		return nil, res.stderr, res.err
 	}
 	before := map[string]string{}
 	for k, v := range parseEnv(environ) {
@@ -178,7 +186,7 @@ func (h osHost) SourceEnv(file string, environ []string) (map[string]string, err
 			changed[k] = v
 		}
 	}
-	return changed, nil
+	return changed, res.stderr, nil
 }
 
 // parseEnv reads KEY=value lines. A line that does not begin an assignment is a

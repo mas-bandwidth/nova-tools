@@ -162,9 +162,13 @@ echo "noise on stderr" >&2
 		t.Fatal(err)
 	}
 	environ := []string{"HOME=/home/u", "PATH=/usr/bin:/bin", "UNCHANGED=same"}
-	got, err := osHost{}.SourceEnv(file, environ)
+	got, said, err := osHost{}.SourceEnv(file, environ)
 	if err != nil {
 		t.Fatal(err)
+	}
+	// What the file printed is shown to the person, never read as environment.
+	if !strings.Contains(said, "noise on stdout") || !strings.Contains(said, "noise on stderr") {
+		t.Errorf("the file's output was not returned to be shown: %q", said)
 	}
 	if got["PATH"] != "/home/u/sdk/go/bin:/home/u/.local/bin:/usr/bin:/bin" {
 		t.Errorf("PATH = %q", got["PATH"])
@@ -182,6 +186,30 @@ echo "noise on stderr" >&2
 		if strings.Contains(v, "noise") {
 			t.Errorf("%s carries the file's output: %q", k, v)
 		}
+	}
+}
+
+// An error the file raises is shown, as a shell sourcing it shows it, and the
+// assignments before and after it still count.
+func TestSourceEnvShowsTheFilesErrors(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("needs a shell")
+	}
+	file := filepath.Join(t.TempDir(), "env.sh")
+	body := "export BEFORE=1\nno_such_command_in_this_env_file\nexport AFTER=2\n"
+	if err := os.WriteFile(file, []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, said, err := osHost{}.SourceEnv(file, []string{"PATH=/usr/bin:/bin"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(said, "no_such_command_in_this_env_file") {
+		t.Errorf("the error was hidden: said %q", said)
+	}
+	if got["BEFORE"] != "1" || got["AFTER"] != "2" {
+		t.Errorf("sourced = %q", got)
 	}
 }
 
