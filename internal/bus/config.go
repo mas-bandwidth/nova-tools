@@ -63,6 +63,11 @@ type Config struct {
 	byGroup map[string]int
 }
 
+// RosterShape is what a refusal of the roster's shape adds, so a reader with no other
+// document sees the shape once: the file at the bus root, its one object, and where the
+// fuller account is.
+const RosterShape = `; the roster is <bus>/participants.json, {"participants":[{"name":"Ada","lane":"from-ada","git_name":"Ada","git_email":"ada@example.com"},{"name":"Bo"}]}, and "nova-bus help" has the ROSTER AND LANES paragraph`
+
 // LoadConfig reads and validates the roster at <bus>/participants.json.
 //
 // Decoding is strict: an unknown field is an error rather than a silently ignored line,
@@ -75,19 +80,19 @@ func LoadConfig(busDir string) (*Config, error) {
 	path := filepath.Join(busDir, ConfigName)
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("%s: %w", ConfigName, err)
+		return nil, fmt.Errorf("%s: %w%s", ConfigName, err, RosterShape)
 	}
 	// Duplicate keys inside one object are last-win in encoding/json. Refuse them the
 	// same way the prepared path does, with the same check.
 	dup := json.NewDecoder(strings.NewReader(string(raw)))
 	if err := checkJSONNoDuplicates(dup); err != nil {
-		return nil, fmt.Errorf("%s: %w", ConfigName, err)
+		return nil, fmt.Errorf("%s: %w%s", ConfigName, err, RosterShape)
 	}
 	dec := json.NewDecoder(strings.NewReader(string(raw)))
 	dec.DisallowUnknownFields()
 	var c Config
 	if err := dec.Decode(&c); err != nil {
-		return nil, fmt.Errorf("%s: %w", ConfigName, err)
+		return nil, fmt.Errorf("%s: %w%s", ConfigName, err, RosterShape)
 	}
 	// A second top-level value would otherwise be silently ignored, and a roster whose
 	// real content sits in the second object is a roster nobody is reading.
@@ -106,7 +111,7 @@ func LoadConfig(busDir string) (*Config, error) {
 // before two names collided at the wrong moment.
 func (c *Config) validate() error {
 	if len(c.Participants) == 0 {
-		return errors.New("no participants")
+		return errors.New("no participants" + RosterShape)
 	}
 	c.byName = make(map[string]int)
 	c.byGroup = make(map[string]int)
