@@ -1,6 +1,7 @@
 package stepbuild
 
 import (
+	"errors"
 	"fmt"
 	"math/rand/v2"
 	"reflect"
@@ -15,14 +16,17 @@ import (
 // not use the builder's), and the steps read back against the input.
 //
 // For every input:
-//   - every step is inside every bound (the request counted from its bytes);
-//   - the members of the steps, in step order, are the input's members in
-//     order: none lost, none repeated, each with its own score, revision,
-//     fields and about, and each wire entry carrying its entry's shared
-//     fields whole;
+//   - every step is inside every bound (the request counted from its bytes,
+//     the planned argv bytes by the model and by the strict count);
+//   - the entries are placed in the order of the input, except where rows and
+//     members need another (refOrder, an accounting written apart from the
+//     builder's), and the members of the steps, in step order, are the
+//     input's members in that order: none lost, none repeated, each with its
+//     own score, revision, fields and about, and each wire entry carrying its
+//     entry's shared fields whole;
 //   - each entry's guards are in every step that holds a part of it, once,
 //     ahead of the first part, and in no other step;
-//   - notes are in input order, after every part of their entry;
+//   - notes are in placement order, after every part of their entry;
 //   - no member is named twice in a step;
 //   - every step is as full as the bounds let it be: the first piece of the
 //     next step, added to it, would break a bound or name a member it names;
@@ -35,7 +39,7 @@ import (
 
 // smallBounds is a bound set every one of which a random input reaches.
 func smallBounds(ident bool) Bounds {
-	argv := 9000
+	argv := 40000
 	if ident {
 		argv += LimitReceiptBytes
 	}
@@ -96,7 +100,23 @@ func (g gen) coin(percent int) bool { return g.r.IntN(100) < percent }
 
 func (g gen) table() string { return genTables[g.r.IntN(len(genTables))] }
 
-func (g gen) cell() string { return g.str(6) + "r:" + []string{"todo", "done", "a:b"}[g.r.IntN(3)] }
+// rowName is row k of the rows the inputs name: the rows entries add and
+// delete them, and the cells of members read and write them.
+func rowName(k int) string {
+	if k%11 == 0 {
+		return "row-" + strconv.Itoa(k) + "\"q\\"
+	}
+	return "row-" + strconv.Itoa(k)
+}
+
+// cell is a cell reference: in a third of them a row the rows entries name.
+func (g gen) cell() string {
+	col := []string{"todo", "done", "a:b"}[g.r.IntN(3)]
+	if g.coin(33) {
+		return rowName(g.r.IntN(20)) + ":" + col
+	}
+	return g.str(6) + "r:" + col
+}
 
 func (g gen) notes() []Note {
 	if !g.coin(30) {
@@ -192,6 +212,13 @@ func (g gen) change(kind Kind) Entry {
 
 func (g gen) rows() Entry {
 	a, d := g.r.IntN(26), g.r.IntN(26)
+	if g.coin(75) { // most rows entries add or delete, few do both
+		if g.coin(50) {
+			d = 0
+		} else {
+			a = 0
+		}
+	}
 	if a+d == 0 {
 		a = 1
 	}
@@ -230,7 +257,29 @@ func (g gen) entry() Entry {
 		return Entry{Kind: KindNote, Notes: append(g.notes(), Note{About: g.pick("p", g.r.IntN(11), 12)})}
 	}
 	e.Guards, e.Notes = g.guards(), g.notes()
+	if e.Kind == KindRows {
+		e.Guards = guardsNotOn(e.Guards, e.Table, e.Del)
+	}
 	return e
+}
+
+// guardsNotOn is the guards without those whose source row is one of rows of
+// table: a rows entry that deletes a row its own guard names is refused
+// (TestARowsEntryThatDeletesARowItsOwnGuardNamesIsRefused).
+func guardsNotOn(guards []Entry, table string, rows []string) []Entry {
+	var out []Entry
+	for _, g := range guards {
+		keep := true
+		for _, r := range rows {
+			if g.Table == table && rowOf(g.From) == r {
+				keep = false
+			}
+		}
+		if keep {
+			out = append(out, g)
+		}
+	}
+	return out
 }
 
 func (g gen) input() []Entry {
@@ -246,45 +295,221 @@ func identFor(part int) Ident {
 	return Ident{Op: "op-" + strconv.Itoa(part), Intent: "i" + strings.Repeat("i", part%13), Result: strings.Repeat("r", part%5)}
 }
 
-// check runs every property on one input.
-func check(t testing.TB, seed uint64, bd Bounds, ident, full bool, in []Entry) []Step {
+// propKeys is the member prefix the property tests build with and count with.
+var propKeys = keyCfg{prefix: 16}
+
+// rowKey is a row of a table.
+type rowKey struct{ table, row string }
+
+// srcRowsOf are the rows an entry reads as a source: its own from cell and its
+// guards'.
+func srcRowsOf(e Entry) []rowKey {
+	var out []rowKey
+	if e.From != "" {
+		out = append(out, rowKey{e.Table, rowOf(e.From)})
+	}
+	for _, g := range e.Guards {
+		out = append(out, rowKey{g.Table, rowOf(g.From)})
+	}
+	return out
+}
+
+// dstRowsOf are the rows an entry writes as a destination: its to cell.
+func dstRowsOf(e Entry) []rowKey {
+	if e.To != "" {
+		return []rowKey{{e.Table, rowOf(e.To)}}
+	}
+	return nil
+}
+
+// membersOf are the (table, id) an entry names, its guards' included.
+func membersOf(e Entry) []rowKey {
+	var out []rowKey
+	if e.Kind != KindRows && e.Kind != KindNote {
+		for _, id := range e.IDs {
+			out = append(out, rowKey{e.Table, id})
+		}
+	}
+	for _, g := range e.Guards {
+		for _, id := range g.IDs {
+			out = append(out, rowKey{g.Table, id})
+		}
+	}
+	return out
+}
+
+func hasRow(rows []rowKey, k rowKey) bool {
+	for _, r := range rows {
+		if r == k {
+			return true
+		}
+	}
+	return false
+}
+
+// refOrder is the order the entries are placed in, counted by an accounting
+// written apart from the builder's (order.go): each pair of entries is asked
+// whether one must come before the other, by the rules of order.go's comment,
+// and the entries are taken lowest index first as each becomes ready. It says
+// false when the entries wait on each other.
+func refOrder(in []Entry) ([]int, bool) {
+	n := len(in)
+	first := make([][]bool, n) // first[a][z]: a is placed before z
+	for i := range first {
+		first[i] = make([]bool, n)
+	}
+	src, dst := make([]map[rowKey]bool, n), make([]map[rowKey]bool, n)
+	named := make([]map[rowKey]int, n) // rows entries: (table, row) -> 1 added, 2 deleted, 3 both
+	byMember := map[rowKey][]int{}
+	var rows []int // the rows entries
+	for i, e := range in {
+		src[i], dst[i] = map[rowKey]bool{}, map[rowKey]bool{}
+		for _, k := range srcRowsOf(e) {
+			src[i][k] = true
+		}
+		for _, k := range dstRowsOf(e) {
+			dst[i][k] = true
+		}
+		for _, m := range membersOf(e) {
+			byMember[m] = append(byMember[m], i)
+		}
+		if e.Kind == KindRows {
+			rows = append(rows, i)
+			named[i] = map[rowKey]int{}
+			for _, r := range e.Add {
+				named[i][rowKey{e.Table, r}] |= 1
+			}
+			for _, r := range e.Del {
+				named[i][rowKey{e.Table, r}] |= 2
+			}
+		}
+	}
+	// A member named by two entries: the earlier is placed first.
+	for _, list := range byMember {
+		for x := 0; x < len(list); x++ {
+			for y := x + 1; y < len(list); y++ {
+				if list[x] != list[y] {
+					first[list[x]][list[y]] = true
+				}
+			}
+		}
+	}
+	for _, a := range rows {
+		for _, z := range rows {
+			if a >= z {
+				continue
+			}
+			if len(in[a].Add) > 0 && len(in[z].Add) > 0 {
+				first[a][z] = true // ranks are in order of first occurrence
+			}
+			for k, da := range named[a] {
+				if dz, ok := named[z][k]; ok && (da|dz) == 3 {
+					first[a][z] = true // a row added by one and deleted by the other: in order
+				}
+			}
+		}
+		for z := 0; z < n; z++ {
+			if z == a {
+				continue
+			}
+			for _, r := range in[a].Add {
+				if dst[z][rowKey{in[a].Table, r}] {
+					first[a][z] = true // a row is added before a member is placed in it
+				}
+			}
+			for _, r := range in[a].Del {
+				if src[z][rowKey{in[a].Table, r}] {
+					first[z][a] = true // a row is deleted after the members leave it
+				}
+			}
+		}
+	}
+	waiting := make([]int, n) // entries each still waits for
+	for a := range first {
+		for z, before := range first[a] {
+			if before {
+				waiting[z]++
+			}
+		}
+	}
+	var out []int
+	placed := make([]bool, n)
+	for len(out) < n {
+		next := -1
+		for z := 0; z < n && next < 0; z++ {
+			if !placed[z] && waiting[z] == 0 {
+				next = z
+			}
+		}
+		if next < 0 {
+			return nil, false
+		}
+		placed[next] = true
+		out = append(out, next)
+		for z, before := range first[next] {
+			if before {
+				waiting[z]--
+			}
+		}
+	}
+	return out, true
+}
+
+// check runs every property on one input. acct counts every step by the full
+// accounting (the JSON model of the line and the planned argv bytes, by the
+// model and by the strict count), else by the lite one; deep adds the
+// fullness check and a second build.
+func check(t testing.TB, seed uint64, bd Bounds, ident, acct, deep bool, in []Entry) []Step {
 	t.Helper()
 	c := cfg()
 	c.Bounds = bd
+	c.MemberPrefixBytes = propKeys.prefix
 	if ident {
 		c.Ident = identFor
-	}
-	steps, err := Build(c, in)
-	if err != nil {
-		t.Fatalf("seed %d: Build refused: %v", seed, err)
 	}
 	fail := func(f string, a ...any) {
 		t.Helper()
 		t.Fatalf("seed %d: %s", seed, fmt.Sprintf(f, a...))
+	}
+	ord, orderable := refOrder(in)
+	steps, err := Build(c, in)
+	if !orderable {
+		var ie *InputError
+		if steps != nil || !errors.As(err, &ie) || ie.Field != "add/del" {
+			fail("entries that wait on each other were not refused: %d steps, %v", len(steps), err)
+		}
+		return nil
+	}
+	if err != nil {
+		fail("Build refused: %v", err)
+	}
+	pos := make([]int, len(in))
+	for p, i := range ord {
+		pos[i] = p
 	}
 	for i, s := range steps {
 		raw := s.Encode()
 		if s.Bytes != len(raw) || s.Part != i+1 || s.Parts != len(steps) {
 			fail("step %d: Bytes %d encoded %d, part %d of %d", i+1, s.Bytes, len(raw), s.Part, s.Parts)
 		}
-		if full {
-			if bad := measure(t, raw).within(bd); len(bad) > 0 {
+		if acct {
+			if bad := measureKeys(t, raw, propKeys).within(bd); len(bad) > 0 {
 				fail("step %d is outside its bounds: %v", i+1, bad)
 			}
 		} else if bad := measureLite(s, raw).withinLite(bd); len(bad) > 0 {
 			fail("step %d is outside its bounds: %v", i+1, bad)
 		}
 	}
-	checkMembers(t, seed, in, steps)
-	checkGuardsAndNotes(t, seed, in, steps)
-	if full {
-		checkFull(t, seed, bd, steps)
+	checkMembers(t, seed, in, ord, pos, steps)
+	checkGuardsAndNotes(t, seed, in, ord, pos, steps)
+	if deep {
+		checkFull(t, seed, bd, pos, steps)
 	}
 	checkResume(t, seed, steps)
-	// A second build of the same input: every input under the slow tag, one
-	// in four otherwise (the same input is built twice by TestTheSameInput...
-	// as well).
-	if full || seed%4 == 0 {
+	// A second build of the same input: every input that is checked deep, one
+	// in four otherwise (the same input is built twice by
+	// TestTheSameInputGivesTheSameSteps as well).
+	if deep || seed%4 == 0 {
 		again, err := Build(c, in)
 		if err != nil || !reflect.DeepEqual(again, steps) {
 			fail("a second build differs: %v", err)
@@ -295,8 +520,9 @@ func check(t testing.TB, seed uint64, bd Bounds, ident, full bool, in []Entry) [
 
 // checkMembers reads the steps back into the input: per input entry, the
 // concatenation of its parts is its members, in order, with its own aligned
-// values, and every part carries its shared fields whole.
-func checkMembers(t testing.TB, seed uint64, in []Entry, steps []Step) {
+// values, and every part carries its shared fields whole; and the entries come
+// in the order ord.
+func checkMembers(t testing.TB, seed uint64, in []Entry, ord, pos []int, steps []Step) {
 	t.Helper()
 	last := -1
 	parts := map[int][]Entry{}
@@ -305,14 +531,15 @@ func checkMembers(t testing.TB, seed uint64, in []Entry, steps []Step) {
 			if p.Guard {
 				continue
 			}
-			if p.Source < last {
-				t.Fatalf("seed %d: entry %d's part comes after entry %d's", seed, p.Source, last)
+			if pos[p.Source] < last {
+				t.Fatalf("seed %d: entry %d's part comes after the part of the entry placed at %d", seed, p.Source, last)
 			}
-			last = p.Source
+			last = pos[p.Source]
 			parts[p.Source] = append(parts[p.Source], p.Entry)
 		}
 	}
-	for i, e := range in {
+	for _, i := range ord {
+		e := in[i]
 		if e.Kind == KindNote {
 			if len(parts[i]) != 0 {
 				t.Fatalf("seed %d: a note entry has wire entries", seed)
@@ -361,15 +588,15 @@ func checkMembers(t testing.TB, seed uint64, in []Entry, steps []Step) {
 func wantWithout(e Entry) Entry { e.Guards, e.Notes = nil, nil; return e }
 
 // checkGuardsAndNotes: guards once per step that holds a part, ahead of it;
-// notes in input order and after every part of their entry.
-func checkGuardsAndNotes(t testing.TB, seed uint64, in []Entry, steps []Step) {
+// notes in placement order and after every part of their entry.
+func checkGuardsAndNotes(t testing.TB, seed uint64, in []Entry, ord, pos []int, steps []Step) {
 	t.Helper()
 	lastPartStep := map[int]int{}
 	firstPartStep := map[int]int{}
 	for k, s := range steps {
 		held := map[int][]Placed{}
 		firstPart := map[int]int{}
-		for pos, p := range s.Entries {
+		for at, p := range s.Entries {
 			switch {
 			case p.Guard:
 				held[p.Source] = append(held[p.Source], p)
@@ -379,11 +606,11 @@ func checkGuardsAndNotes(t testing.TB, seed uint64, in []Entry, steps []Step) {
 					firstPartStep[p.Source] = k
 				}
 				if _, ok := firstPart[p.Source]; !ok {
-					firstPart[p.Source] = pos
+					firstPart[p.Source] = at
 				}
 			}
 		}
-		for src, pos := range firstPart {
+		for src, at := range firstPart {
 			g := in[src].Guards
 			if len(held[src]) != len(g) {
 				t.Fatalf("seed %d: step %d holds %d of entry %d's %d guards", seed, k+1, len(held[src]), src, len(g))
@@ -393,8 +620,8 @@ func checkGuardsAndNotes(t testing.TB, seed uint64, in []Entry, steps []Step) {
 					t.Fatalf("seed %d: step %d: guard %d of entry %d is not the entry's", seed, k+1, gi, src)
 				}
 			}
-			for at, p := range s.Entries {
-				if p.Guard && p.Source == src && at > pos {
+			for i, p := range s.Entries {
+				if p.Guard && p.Source == src && i > at {
 					t.Fatalf("seed %d: step %d: a guard of entry %d comes after its part", seed, k+1, src)
 				}
 			}
@@ -406,8 +633,8 @@ func checkGuardsAndNotes(t testing.TB, seed uint64, in []Entry, steps []Step) {
 		}
 	}
 	var want []PlacedNote
-	for i, e := range in {
-		for _, n := range e.Notes {
+	for _, i := range ord {
+		for _, n := range in[i].Notes {
 			want = append(want, PlacedNote{Note: n, Source: i})
 		}
 	}
@@ -419,7 +646,7 @@ func checkGuardsAndNotes(t testing.TB, seed uint64, in []Entry, steps []Step) {
 				t.Fatalf("seed %d: a note of entry %d is in step %d, before its last part in step %d", seed, n.Source, k+1, last+1)
 			}
 			for src, first := range firstPartStep {
-				if src > n.Source && first < k {
+				if pos[src] > pos[n.Source] && first < k {
 					t.Fatalf("seed %d: entry %d starts in step %d, before a note of entry %d in step %d", seed, src, first+1, n.Source, k+1)
 				}
 			}
@@ -433,17 +660,17 @@ func checkGuardsAndNotes(t testing.TB, seed uint64, in []Entry, steps []Step) {
 // checkFull holds every step to be as full as the bounds let it be: what the
 // next step starts with, added to it, would break a bound or name a member it
 // names.
-func checkFull(t testing.TB, seed uint64, bd Bounds, steps []Step) {
+func checkFull(t testing.TB, seed uint64, bd Bounds, pos []int, steps []Step) {
 	t.Helper()
 	for k := 0; k+1 < len(steps); k++ {
 		cur, next := steps[k], steps[k+1]
 		hyp := cur
 		hyp.Entries = append([]Placed(nil), cur.Entries...)
 		hyp.Notes = append([]PlacedNote(nil), cur.Notes...)
-		if !addFirstPiece(&hyp, cur, next) {
+		if !addFirstPiece(&hyp, cur, next, pos) {
 			continue
 		}
-		if bad := measure(t, hyp.Encode()).within(bd); len(bad) == 0 {
+		if bad := measureKeys(t, hyp.Encode(), propKeys).within(bd); len(bad) == 0 {
 			t.Fatalf("seed %d: step %d was closed early: the first piece of step %d fits it", seed, k+1, k+2)
 		}
 	}
@@ -452,7 +679,7 @@ func checkFull(t testing.TB, seed uint64, bd Bounds, steps []Step) {
 // addFirstPiece adds to hyp the first piece the builder placed in next: a
 // note that led it, else its first member, with the guards of its entry when
 // cur does not hold them. It says false when there is nothing to add.
-func addFirstPiece(hyp *Step, cur, next Step) bool {
+func addFirstPiece(hyp *Step, cur, next Step, pos []int) bool {
 	var first *Placed
 	for i := range next.Entries {
 		if !next.Entries[i].Guard {
@@ -460,7 +687,7 @@ func addFirstPiece(hyp *Step, cur, next Step) bool {
 			break
 		}
 	}
-	if len(next.Notes) > 0 && (first == nil || next.Notes[0].Source < first.Source) {
+	if len(next.Notes) > 0 && (first == nil || pos[next.Notes[0].Source] < pos[first.Source]) {
 		hyp.Notes = append(hyp.Notes, next.Notes[0])
 		return true
 	}
@@ -531,13 +758,14 @@ func cursorLess(a, b Cursor) bool {
 // propertyInputs is how many random inputs the property test cuts.
 const propertyInputs = 10000
 
-// propertyShards split the run over parallel subtests; fullEvery is how often
-// an input gets the full accounting (the JSON model of the line and the argv
-// bytes, and the fullness check), the rest getting the lite one. The slow tag
-// runs every input fully.
+// propertyShards split the run over parallel subtests; deepEvery is how often
+// an input gets the fullness check and a second build. Every step of every
+// input is counted by the full accounting, the JSON model of the line and the
+// planned argv bytes by the model and by the strict count. The slow tag runs
+// every input deep.
 const (
 	propertyShards = 8
-	fullEvery      = 16
+	deepEvery      = 16
 )
 
 func TestPropertyEveryStepIsInsideEveryBoundAndTheWholeIsTheSumOfTheSteps(t *testing.T) {
@@ -553,7 +781,7 @@ func TestPropertyEveryStepIsInsideEveryBoundAndTheWholeIsTheSumOfTheSteps(t *tes
 			for seed := uint64(shard + 1); seed <= propertyInputs; seed += propertyShards {
 				g := gen{rand.New(rand.NewPCG(seed, 0x5eed))}
 				ident := seed%2 == 0
-				steps := check(t, seed, smallBounds(ident), ident, seed%fullEvery == 0, g.input())
+				steps := check(t, seed, smallBounds(ident), ident, true, seed%deepEvery == 0, g.input())
 				myRuns++
 				if len(steps) > 1 {
 					mySplits++
@@ -580,20 +808,20 @@ func TestPropertyEveryStepIsInsideEveryBoundAndTheWholeIsTheSumOfTheSteps(t *tes
 // each bound in turn is the one that closes steps.
 func randomBounds(r *rand.Rand, ident bool) Bounds {
 	in := func(lo, hi int) int { return lo + r.IntN(hi-lo+1) }
-	argv := in(3000, 12000)
+	argv := in(14000, 60000)
 	if ident {
 		argv += LimitReceiptBytes
 	}
 	return Bounds{
 		RequestBytes: in(3000, 9000), Entries: in(3, 9), Tables: in(3, 4), Candidates: in(1, 60), GuardOnly: in(6, 90),
-		EntryIDs: in(3, 30), RowPairs: in(1, 20), Notes: in(1, 6), AboutIDs: in(10, 80), FieldObservations: in(40, 400),
-		LineBytes: in(2000, 5000), LineIDs: in(1, 30), PlannedArgvBytes: argv,
+		EntryIDs: in(3, 30), RowPairs: in(3, 30), Notes: in(1, 6), AboutIDs: in(10, 80), FieldObservations: in(40, 400),
+		LineBytes: in(2000, 5000), LineIDs: in(10, 30), PlannedArgvBytes: argv,
 	}
 }
 
 // propertyRandomBounds runs the property with a different bound set for every
 // input: the interplay of the bounds, not each alone.
-func propertyRandomBounds(t *testing.T, inputs, shards int, fullEvery uint64) {
+func propertyRandomBounds(t *testing.T, inputs, shards int, deepEvery uint64) {
 	t.Helper()
 	for shard := 0; shard < shards; shard++ {
 		t.Run(strconv.Itoa(shard), func(t *testing.T) {
@@ -603,7 +831,7 @@ func propertyRandomBounds(t *testing.T, inputs, shards int, fullEvery uint64) {
 				ident := seed%2 == 1
 				bd := randomBounds(r, ident)
 				g := gen{rand.New(rand.NewPCG(seed, 0x5eed))}
-				check(t, seed, bd, ident, seed%fullEvery == 0, g.input())
+				check(t, seed, bd, ident, true, seed%deepEvery == 0, g.input())
 			}
 		})
 	}

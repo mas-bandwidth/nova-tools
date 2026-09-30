@@ -3,7 +3,7 @@ package stepbuild
 import "fmt"
 
 // The bounds of one Layer 1 write step. Every constant copies one row of
-// section 6 of the Layer 1 table contract (tset/1, contract revision 2), and
+// section 6 of the Layer 1 table contract (tset/1, contract revision 3), and
 // the section stands beside it: a change to the contract is a changed row
 // here and nowhere else. MiB is 1,048,576 bytes.
 //
@@ -19,13 +19,13 @@ const (
 	LimitCandidates        = 2000    // section 6: member mutation candidates per write, no-ops included
 	LimitGuardOnly         = 4000    // section 6: guard-only members per write, additional to the candidates
 	LimitEntryIDs          = 2000    // section 6: IDs in an entry
-	LimitRowPairs          = 100     // section 6: normal row add/delete names, distinct (table,row) pairs
+	LimitRowPairs          = 100     // section 6: normal row add/delete names, (table,row) pairs; counted before dedup, the stricter reading
 	LimitNotes             = 100     // section 6: notes per step
 	LimitAboutIDs          = 4000    // section 6: aligned about IDs per step, before dedup
 	LimitFieldObservations = 768000  // section 6: field-value observations per write (128 x 6,000)
 	LimitLineBytes         = 1 << 20 // section 6: one generated log line
 	LimitLineIDs           = 2000    // section 6: IDs in one log line
-	LimitPlannedArgvBytes  = 8 << 20 // section 6: summed encoded argv bytes of the planned commands
+	LimitPlannedArgvBytes  = 8 << 20 // section 6: summed encoded argv bytes of the planned commands (an upper bound, cost.go)
 
 	// LimitReceiptBytes is the stored done receipt's cap (section 6 and
 	// section 5). A step with an op reserves it whole in its planned argv
@@ -48,6 +48,13 @@ const (
 	// package writes never nests deeper than five (a note's meta object), so
 	// the bound is stated and tested, never reached.
 	LimitNesting = 16
+
+	// DefaultMemberPrefixBytes is the longest member prefix a build assumes
+	// when Config.MemberPrefixBytes is zero: a record's key is its table's
+	// member prefix and the stored ID (section 1.2), and every command that
+	// writes a record carries that key. The prefixes are a definition's, not
+	// the contract's; a caller that knows the longest of its own passes it.
+	DefaultMemberPrefixBytes = 256
 )
 
 // Bounds is the step-level bounds one build cuts to. The zero Bounds is
@@ -62,7 +69,7 @@ type Bounds struct {
 	Candidates        int // members changed by create, move or remove entries
 	GuardOnly         int // members named by guard entries
 	EntryIDs          int // members in one wire entry
-	RowPairs          int // distinct (table,row) pairs in the rows entries of one step
+	RowPairs          int // row names of the rows entries of one step, before dedup
 	Notes             int // notes in one step
 	AboutIDs          int // about IDs of the member entries and notes of one step
 	FieldObservations int // field-value observations of one step

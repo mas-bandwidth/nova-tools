@@ -22,11 +22,12 @@ const (
 type memberKey struct{ table, id string }
 
 // cost is what one member adds to a wire entry and to a step, in every unit a
-// bound measures. Sizes are exact; commas between members are the entry's.
+// bound measures. Sizes are exact; commas between members are the entry's,
+// except argv, an upper bound (see the planned commands below).
 type cost struct {
 	req   int // its items in the entry's member arrays (ids, scores, revs, each, about)
-	line  int // its share of the generated log line
-	argv  int // raw bytes of its effective fields: written to its record
+	line  int // its share of the generated line
+	argv  int // planned argv bytes of the commands it needs, an upper bound
 	obs   int // field-value observations: distinct names it sets, unsets or reads
 	about int // 1 when it carries an about ID
 }
@@ -37,7 +38,8 @@ type noteState struct{ use usage }
 // entryState is an entry validated and costed: everything the cut needs to
 // place it without looking at a string again.
 type entryState struct {
-	idx   int
+	idx   int // index of the input entry
+	pos   int // position in the order the entries are placed in: idx, unless rows and members need another (order.go)
 	e     *Entry
 	class class
 	n     int    // members: ids, or a rows entry's adds then dels
@@ -48,12 +50,20 @@ type entryState struct {
 
 	lineHead   int // bytes of the generated line with no member
 	lineArrays int // arrays of the generated line: the commas between members
-	rawUnset   int // raw bytes of the unset names, written once per member
+	argvHead   int // planned argv bytes of a wire entry before its first member: its log line's fixed part
+
+	hset, zrem, zadd int // planned argv bytes of the entry's HSET, ZREM and ZADD beside their members: name, and the record's own fields or the cell key
 
 	tables    []string // distinct: the entry's table and its guards'
 	guards    []*entryState
 	guardUse  usage       // what the guards add to a step that holds them
 	guardKeys []memberKey // the members the guards name
+
+	// The rows the entry reads as a source and writes as a destination, by
+	// table: its own from and to cells and its guards' from cells. Rows entries
+	// are ordered by these (order.go) and kept apart from them (place.go).
+	srcRows []memberKey
+	dstRows []memberKey
 
 	notes []noteState
 }
@@ -173,7 +183,9 @@ func (s site) names(field string, ss []string, bd bound, max int) error {
 }
 
 // prepare validates and costs every entry, in input order, before anything
-// is placed: the first fault refuses the build.
+// is placed: the first fault refuses the build. It then puts the entries in
+// the order they are placed in (order.go) and refuses the first member that no
+// step could hold (fitAlone).
 func (b *builder) prepare(entries []Entry) ([]*entryState, error) {
 	out := make([]*entryState, len(entries))
 	for i := range entries {
@@ -183,7 +195,56 @@ func (b *builder) prepare(entries []Entry) ([]*entryState, error) {
 		}
 		out[i] = es
 	}
+	out, err := b.order(out)
+	if err != nil {
+		return nil, err
+	}
+	if err := b.fitAlone(out); err != nil {
+		return nil, err
+	}
 	return out, nil
+}
+
+// fitAlone checks every member, row and note against a step that holds
+// nothing else, and has no identity: the first that no step could hold, in the
+// order of placement, refuses the build, naming the member and the bound. It
+// is asked of each in turn, and never of a step of the build, so it happens
+// before any identity is asked for.
+func (b *builder) fitAlone(states []*entryState) error {
+	s := b.newStep(Ident{})
+	b.cur = s
+	defer func() { b.cur = nil }()
+	for _, es := range states {
+		if es.class != classNote {
+			d, br := b.headUsage(es)
+			if br != nil {
+				return b.refuse(es, 0, br)
+			}
+			for j := 0; j < es.n; j++ {
+				var nd usage
+				var line int
+				if es.class == classRows {
+					nd = es.addRow(d, j)
+					nd.entryBytes += arrayKey
+				} else {
+					nd, line = es.addMember(d, j, 0, es.lineHead)
+				}
+				br := s.over(nd, b.bounds)
+				if br == nil && es.class != classRows {
+					br = b.wireBreach(es, 1, line)
+				}
+				if br != nil {
+					return b.refuse(es, j, br)
+				}
+			}
+		}
+		for i := range es.notes {
+			if br := s.over(es.notes[i].use, b.bounds); br != nil {
+				return &LimitError{Bound: br.bound.name, Section: br.bound.section, Limit: br.limit, Actual: br.actual, Entry: es.idx, Table: es.e.Table, Field: "notes", Note: i}
+			}
+		}
+	}
+	return nil
 }
 
 // fieldSet is a set of an entry's optional fields, by kind.
@@ -345,6 +406,7 @@ func (b *builder) costGuards(es *entryState, st site, seen map[memberKey]struct{
 			return gst.limit(boundEntryIDs, b.bounds.EntryIDs, gs.n, "", "ids")
 		}
 		es.guards = append(es.guards, gs)
+		es.srcRows = append(es.srcRows, gs.srcRows...)
 		es.guardUse = add(es.guardUse, usage{entries: 1, entryBytes: gs.wireBytes(0, gs.n), guardOnly: gs.n, obs: gs.sumObs()})
 		for _, id := range g.IDs {
 			es.guardKeys = append(es.guardKeys, memberKey{g.Table, id})
@@ -390,7 +452,116 @@ const (
 	lineChangeClose = `}`         // closed.
 	lineArrays      = 6           // member arrays of an event
 	lineNoteOpen    = `{"kind":"note","meta":`
+	lineNoteAbout   = `,"about":` // a note's line carries the IDs it is about
 )
+
+// The planned commands, modelled. Section 6 bounds the summed argv bytes of
+// every command the step plans, and section 1.4 says an argv is the command
+// name and every argument, keys included. The commands' layout is Layer 1's;
+// this package takes the strictest reading of it, an upper bound, so that a
+// step it emits is never refused LIMIT at prepare for its argv:
+//
+//   - every changed member is charged as its own command of each kind (an HSET
+//     of its record, an HDEL of its unset names, a ZREM out of its cell, a ZADD
+//     into its cell, an RPUSH of its seq to each history it is about), the
+//     most commands any batching could make, each with its command name and
+//     its key at the widest the key can be;
+//   - a record's key is the member prefix (Config.MemberPrefixBytes) and the
+//     stored ID; the other keys are the widest namespace the header can carry,
+//     a fixed tag, and the names in the key (structural);
+//   - a value the store supplies (a seq, a revision, a rank, a score the
+//     request leaves out) is charged at its widest, and the record's own
+//     fields in its HSET (epoch, revision, placement) with the epoch, the
+//     widest revision and the cell it lands in (recordOwn);
+//   - each wire entry and each note is one log line (an XADD with its stream
+//     ID and field name), each row name one ZADD or ZREM of the rows key and
+//     one item of the topology line, and a step with an op the receipt's
+//     HSET, with its key, its op and the receipt in full.
+//
+// The commands of an advance are not modelled: the builder does not cut
+// advance entries. Commands that only read are not planned argv.
+const (
+	cmdNameBytes     = len("RPUSH")            // the longest command name planned (HSET, HDEL, ZREM, ZADD, RPUSH, XADD)
+	uintBytes        = len(maxUintText)        // a revision, a seq or an epoch: a decimal uint64 at its widest
+	scoreBytes       = lineScoreBytes - 2      // a score at its widest canonical spelling, unquoted
+	rankBytes        = len("9007199254740991") // a row rank: at most 2^53-1 (section 3)
+	streamIDBytes    = 2*uintBytes + 1         // an XADD's stream ID: <ms>-<seq>, each a uint64
+	streamFieldBytes = 16                      // the name of the field an XADD carries the line in: Layer 2's to name
+	structTagBytes   = 24                      // the fixed text of a structural key beyond the namespace and its names
+
+	maxUintText = "18446744073709551615"
+)
+
+// keySizes are the sizes the planned keys work to, from the Config: the
+// longest member prefix, the widest namespace (the longest header value: the
+// request's namespace member is a name and every structural key starts with
+// it) and the epoch's digits.
+type keySizes struct{ member, ns, epoch int }
+
+func newKeySizes(cfg Config) keySizes {
+	k := keySizes{member: cfg.MemberPrefixBytes, epoch: len(cfg.Epoch)}
+	if k.member == 0 {
+		k.member = DefaultMemberPrefixBytes
+	}
+	for _, m := range cfg.Header {
+		k.ns = max(k.ns, len(m.Value))
+	}
+	return k
+}
+
+// recordOwn is the bytes of the record's own fields in its HSET, for a member
+// that lands in the cell ref: the names epoch and revision and their values (the
+// epoch, a revision at its widest), and the placement, which is the row and the
+// column and the names of two fields at the longest a placement's can be (one
+// for the row and one for the column, or one named for the column that holds
+// the row).
+func (k keySizes) recordOwn(ref string) int {
+	return len("epoch") + k.epoch + len("revision") + uintBytes + 2*len("place:col") + len(ref) - 1
+}
+
+// structural is a structural key that holds names of n bytes in all.
+func (k keySizes) structural(n int) int { return k.ns + structTagBytes + n }
+
+func (k keySizes) record(id string) int { return k.member + len(id) }
+
+// cell is a cell key of table and the cell reference "<row>:<col>".
+func (k keySizes) cell(table, ref string) int { return k.structural(len(table) + k.epoch + len(ref)) }
+
+func (k keySizes) history(about string) int { return k.structural(len(about) + k.epoch) }
+
+func (k keySizes) rows(table string) int { return k.structural(len(table) + k.epoch) }
+
+func (k keySizes) log() int { return k.structural(k.epoch) }
+
+func (k keySizes) done() int { return k.structural(k.epoch) }
+
+// xadd is the planned argv bytes of a log line beside the line itself.
+func (k keySizes) xadd() int { return cmdNameBytes + k.log() + streamIDBytes + streamFieldBytes }
+
+// rpush is the planned argv bytes of one history append.
+func (k keySizes) rpush(about string) int { return cmdNameBytes + k.history(about) + uintBytes }
+
+// receipt is the planned argv bytes of the done HSET of a step whose op is op:
+// the receipt is reserved whole, its size not being known before the step runs.
+func (k keySizes) receipt(op string) int {
+	return cmdNameBytes + k.done() + len(op) + LimitReceiptBytes
+}
+
+// The topology line of a rows entry (section 1.3: kind, entry_index, table,
+// added rows with their ranks, deleted rows), modelled as the change lines
+// are: the widest entry_index, each item with a comma.
+const (
+	lineRowsOpen  = `{"kind":"rows","entry_index":`
+	lineRowsTable = `,"table":`
+	lineRowsTail  = `,"added":[],"deleted":[]}`
+	lineRowAdd    = `{"row":,"rank":""}` // an added row's item without its row and rank
+)
+
+// rowsLineHead is the topology line's bytes with no row: the envelope, the
+// event and the brace that closes the line.
+func rowsLineHead(table string) int {
+	return len(lineEnvelope) + len(lineRowsOpen) + uintBytes + len(lineRowsTable) + quoted(table) + len(lineRowsTail) + 1
+}
 
 // lineHead is the generated line's bytes with no member: the envelope, the
 // event's kind, table, cells, empty member arrays, about and meta.
@@ -522,7 +693,25 @@ func (b *builder) costMembers(es *entryState, st site, seen map[memberKey]struct
 	if err != nil {
 		return err
 	}
-	es.n, es.cost, es.rawUnset = n, make([]cost, n), sh.rawUnset
+	es.n, es.cost = n, make([]cost, n)
+	if es.class == classChange {
+		src, dst := e.From, e.To
+		if src == "" {
+			src = dst
+		}
+		if dst == "" {
+			dst = src
+		}
+		es.hset = cmdNameBytes + b.keys.recordOwn(dst)
+		es.zrem = cmdNameBytes + b.keys.cell(e.Table, src)
+		es.zadd = cmdNameBytes + b.keys.cell(e.Table, dst)
+		if e.To != "" {
+			es.dstRows = append(es.dstRows, memberKey{e.Table, cellRow(e.To)})
+		}
+	}
+	if e.From != "" {
+		es.srcRows = append(es.srcRows, memberKey{e.Table, cellRow(e.From)})
+	}
 	for j := 0; j < n; j++ {
 		id := e.IDs[j]
 		if err := st.name("ids", id, id); err != nil {
@@ -544,9 +733,13 @@ func (b *builder) costMembers(es *entryState, st site, seen map[memberKey]struct
 	if es.class == classChange {
 		es.lineHead = lineHead(e)
 		es.lineArrays = lineArrays + flag(e.About != nil)
+		es.argvHead = es.lineHead + b.keys.xadd()
 	}
 	return nil
 }
+
+// cellRow is the row of a cell reference, which checkCells has found valid.
+func cellRow(ref string) string { return ref[:strings.LastIndexByte(ref, ':')] }
 
 // checkCells checks the cell references of an entry.
 func checkCells(st site, e *Entry) error {
@@ -629,6 +822,19 @@ func (b *builder) costMember(es *entryState, st site, sh *shared, j int) (cost, 
 	if es.class == classChange {
 		c.line = qid + lineScoreBytes + after + 2*lineRevBytes + aboutBytes +
 			len(lineChangeOpen) + eff + len(lineChangeUnset) + sh.unsetArr + len(lineChangeClose)
+		rec := b.keys.record(id)
+		c.argv += es.hset + rec // the HSET's name, key and the record's own fields; its effective fields are in c.argv
+		if len(e.Unset) > 0 {
+			c.argv += cmdNameBytes + rec + sh.rawUnset // the HDEL
+		}
+		score := scoreBytes // a score the request leaves out is the one the member has: at its widest
+		if e.Scores != nil {
+			score = max(score, len(e.Scores[j]))
+		}
+		c.argv += es.zrem + len(id) + es.zadd + score + len(id) // the ZREM and the ZADD
+		if e.About != nil {
+			c.argv += b.keys.rpush(e.About[j])
+		}
 	} else {
 		c.obs = len(sh.names)
 	}
@@ -669,7 +875,7 @@ func (b *builder) effective(es *entryState, st site, sh *shared, j int, c *cost)
 		return 0, st.limit(boundFields, LimitFieldsPerMember, items, es.e.IDs[j], "each")
 	}
 	if es.class == classChange {
-		c.argv = raw
+		c.argv = raw // the names and values the HSET writes
 		c.obs = len(sh.names) + extra
 	}
 	return 2 + itemBytes + max(items-1, 0), nil
@@ -687,6 +893,7 @@ func (b *builder) costRows(es *entryState, st site) error {
 	}
 	es.cost = make([]cost, es.n)
 	adds := make(map[string]struct{}, len(e.Add))
+	rk := b.keys.rows(e.Table)
 	for j := 0; j < es.n; j++ {
 		row, field := rowAt(e, j)
 		if err := st.name(field, "", row); err != nil {
@@ -697,13 +904,32 @@ func (b *builder) costRows(es *entryState, st site) error {
 		}
 		if j < len(e.Add) {
 			adds[row] = struct{}{}
+			// the ZADD of the row into the rows key and its item of the topology line
+			es.cost[j].argv = cmdNameBytes + rk + rankBytes + len(row) + len(lineRowAdd) + quoted(row) + rankBytes + 1
 		} else if _, clash := adds[row]; clash {
 			return st.input("del", "", "names a row the entry adds")
+		} else {
+			// the ZREM of the row from the rows key and its item of the topology line
+			es.cost[j].argv = cmdNameBytes + rk + len(row) + quoted(row) + 1
 		}
 		es.cost[j].req = quoted(row)
 	}
 	es.head = count(func(w sink) { emitRows(w, &Entry{Kind: KindRows, Table: e.Table}) })
-	return b.costGuards(es, st, make(map[memberKey]struct{}))
+	es.argvHead = b.keys.xadd() + rowsLineHead(e.Table)
+	if err := b.costGuards(es, st, make(map[memberKey]struct{})); err != nil {
+		return err
+	}
+	// A guard travels with the entry and keeps its member where it is: a row
+	// the entry deletes and one of its guards reads is never empty.
+	for j := len(e.Add); j < es.n; j++ {
+		row, _ := rowAt(e, j)
+		for _, k := range es.srcRows {
+			if k == (memberKey{e.Table, row}) {
+				return st.input("del", "", "names a row that one of the entry's guards reads: the guarded member stays in it")
+			}
+		}
+	}
+	return nil
 }
 
 // rowAt is row j of a rows entry's members, and the field it is in.
@@ -715,8 +941,10 @@ func rowAt(e *Entry, j int) (string, string) {
 }
 
 // costNote checks and costs note i of an entry: its meta and about IDs. A
-// note is not cut, so one over the about bound, or whose line is over the
-// line bound, is refused.
+// note is not cut, so one over the about bound, over the IDs a line may hold,
+// or whose line is over the line bound, is refused. The note's line carries
+// its about IDs, which count in its bytes and against the IDs of a line, as a
+// member's line counts its own.
 func (b *builder) costNote(st site, i int, n *Note) (noteState, error) {
 	fail := func(bd bound, limit, actual int) error {
 		return &LimitError{Bound: bd.name, Section: bd.section, Limit: limit, Actual: actual, Entry: st.entry, Table: st.table, Field: "notes", Note: i}
@@ -727,6 +955,10 @@ func (b *builder) costNote(st site, i int, n *Note) (noteState, error) {
 	if len(n.About) > b.bounds.AboutIDs {
 		return noteState{}, fail(boundAbout, b.bounds.AboutIDs, len(n.About))
 	}
+	if len(n.About) > b.bounds.LineIDs {
+		return noteState{}, fail(boundLineIDs, b.bounds.LineIDs, len(n.About))
+	}
+	pushes := 0
 	for _, a := range n.About {
 		if err := st.name("notes", "", a); err != nil {
 			if le, ok := err.(*LimitError); ok {
@@ -734,11 +966,12 @@ func (b *builder) costNote(st site, i int, n *Note) (noteState, error) {
 			}
 			return noteState{}, err
 		}
+		pushes += b.keys.rpush(a)
 	}
-	line := len(lineEnvelope) + 1 + len(lineNoteOpen) + objectBytes(n.Meta) + 1
+	line := len(lineEnvelope) + 1 + len(lineNoteOpen) + objectBytes(n.Meta) + len(lineNoteAbout) + arrayBytes(n.About) + 1
 	if line > b.bounds.LineBytes {
 		return noteState{}, fail(boundLineBytes, b.bounds.LineBytes, line)
 	}
 	sz := count(func(w sink) { emitNote(w, n) })
-	return noteState{use: usage{notes: 1, noteBytes: sz, about: len(n.About), argv: line}}, nil
+	return noteState{use: usage{notes: 1, noteBytes: sz, about: len(n.About), argv: b.keys.xadd() + line + pushes}}, nil
 }

@@ -172,10 +172,26 @@ func TestBoundRowPairs(t *testing.T) {
 	if steps := must(t, cfg(), []Entry{a, b}); len(steps) != 2 {
 		t.Fatalf("50 + 51 rows in two tables: %d steps", len(steps))
 	}
-	// The same row named again, in the same direction, costs nothing.
-	again := []Entry{rows(LimitRowPairs), {Kind: KindRows, Table: "work", Add: names("r", LimitRowPairs)}}
-	if steps := must(t, cfg(), again); len(steps) != 1 || len(steps[0].Entries) != 2 {
+	// The names are counted before dedup: a row named again, in the same
+	// direction, is a name of the step. Fifty rows named twice are a hundred
+	// names and fit; a hundred named twice are two hundred and do not.
+	again := func(n int) []Entry {
+		return []Entry{rows(n), {Kind: KindRows, Table: "work", Add: names("r", n)}}
+	}
+	if steps := must(t, cfg(), again(LimitRowPairs/2)); len(steps) != 1 || len(steps[0].Entries) != 2 {
+		t.Fatalf("50 rows named twice in the same direction: %d steps", len(steps))
+	}
+	if steps := must(t, cfg(), again(LimitRowPairs)); len(steps) != 2 {
 		t.Fatalf("100 rows named twice in the same direction: %d steps", len(steps))
+	}
+	// One row named 250 times is 250 names, cut into steps of a hundred.
+	repeat := make([]string, 250)
+	for i := range repeat {
+		repeat[i] = "r"
+	}
+	steps = must(t, cfg(), []Entry{{Kind: KindRows, Table: "work", Add: repeat}})
+	if len(steps) != 3 || len(steps[0].Entries[0].Add) != 100 || len(steps[1].Entries[0].Add) != 100 || len(steps[2].Entries[0].Add) != 50 {
+		t.Fatalf("one row named 250 times: %d steps", len(steps))
 	}
 	// Deletes count with adds.
 	mixed := Entry{Kind: KindRows, Table: "work", Add: names("a", 60), Del: names("d", 40)}
@@ -219,11 +235,11 @@ func TestBoundAboutIDs(t *testing.T) {
 	if len(steps) != 1 {
 		t.Fatalf("4,000 about IDs in two notes: %d steps", len(steps))
 	}
-	steps = must(t, cfg(), []Entry{{Kind: KindNote, Notes: []Note{note(2000), note(2001)}}})
-	if len(steps) != 2 || len(steps[0].Notes) != 1 || len(steps[1].Notes) != 1 {
-		t.Fatalf("2,000 + 2,001 about IDs in two notes: %d steps", len(steps))
+	steps = must(t, cfg(), []Entry{{Kind: KindNote, Notes: []Note{note(2000), note(1000), note(1001)}}})
+	if len(steps) != 2 || len(steps[0].Notes) != 2 || len(steps[1].Notes) != 1 {
+		t.Fatalf("2,000 + 1,000 + 1,001 about IDs in three notes: %d steps", len(steps))
 	}
-	// A note is not cut: one over the bound refuses the build.
+	// A note is not cut: one over the about bound refuses the build.
 	le := refused(t, cfg(), []Entry{{Kind: KindNote, Notes: []Note{note(LimitAboutIDs + 1)}}})
 	if le.Bound != boundAbout.name || le.Actual != LimitAboutIDs+1 || le.Note != 0 || le.Entry != 0 {
 		t.Fatalf("a note of 4,001 about IDs: %v", le)
@@ -236,42 +252,79 @@ func TestBoundAboutIDs(t *testing.T) {
 	if steps := must(t, cfg(), []Entry{e}); len(steps) != 1 {
 		t.Fatalf("2,000 member about IDs and 2,000 note about IDs: %d steps", len(steps))
 	}
-	e.Notes = []Note{note(2001)}
+	e.Notes = []Note{note(2000), note(1)}
 	steps = must(t, cfg(), []Entry{e})
 	if len(steps) != 2 || len(steps[1].Entries) != 0 || len(steps[1].Notes) != 1 {
 		t.Fatalf("2,000 member about IDs and 2,001 note about IDs: %d steps", len(steps))
 	}
 }
 
+// A note's line carries the IDs it is about: they count against the IDs one
+// line may hold, and in the bytes of the line and of the planned argv. A note
+// is not cut, so one over the bound refuses the build, naming it.
+func TestBoundNoteAboutIDsInTheLine(t *testing.T) {
+	t.Parallel()
+	note := func(n int) Note { return Note{About: names("p", n)} }
+	if steps := must(t, cfg(), []Entry{{Kind: KindNote, Notes: []Note{note(LimitLineIDs)}}}); len(steps) != 1 {
+		t.Fatalf("a note of 2,000 about IDs: %d steps", len(steps))
+	}
+	le := refused(t, cfg(), []Entry{{Kind: KindNote, Notes: []Note{note(1), note(LimitLineIDs + 1)}}})
+	if le.Bound != boundLineIDs.name || le.Limit != LimitLineIDs || le.Actual != LimitLineIDs+1 || le.Note != 1 || le.Entry != 0 || le.Field != "notes" {
+		t.Fatalf("a note of 2,001 about IDs: %+v", le)
+	}
+	// The same at a smaller measured chunk.
+	c := cfg()
+	c.Bounds = Contract()
+	c.Bounds.LineIDs = 10
+	if le := refused(t, c, []Entry{{Kind: KindNote, Notes: []Note{note(11)}}}); le.Bound != boundLineIDs.name || le.Limit != 10 || le.Actual != 11 {
+		t.Fatalf("a note of 11 about IDs in a line of 10: %+v", le)
+	}
+	// The line's bytes carry the IDs: a note whose meta alone fits a line does
+	// not once its IDs are in it.
+	// The line is tuned to 1 MiB by the meta value's length, and counted by
+	// the independent measure.
+	ids := names("p", 1000)
+	rest := len(lineEnvelope) + 1 + len(lineNoteOpen) + len(lineNoteAbout) + arrayBytes(ids) + 1 // all but the meta object
+	fits := Note{Meta: map[string]string{"m": pad(LimitLineBytes - rest - len(`{"m":""}`))}, About: ids}
+	steps := must(t, cfg(), []Entry{{Kind: KindNote, Notes: []Note{fits}}})
+	if got := measure(t, steps[0].Encode()).maxLine; len(steps) != 1 || got != LimitLineBytes {
+		t.Fatalf("a note whose line is exactly 1 MiB with its IDs: %d steps, %d bytes", len(steps), got)
+	}
+	fits.Meta["m"] += "p"
+	if le := refused(t, cfg(), []Entry{{Kind: KindNote, Notes: []Note{fits}}}); le.Bound != boundLineBytes.name || le.Actual != LimitLineBytes+1 {
+		t.Fatalf("a note whose line is 1 MiB + 1 with its IDs: %+v", le)
+	}
+}
+
 // TestBoundFieldObservations fills a step to its 768,000 observations
-// exactly, with 2,000 candidates that each set 128 fields, unset 128 and
-// declare 128 before_fields (384 distinct names each), and puts one guard
-// member with one before_field beside them: the 768,001st observation starts
+// exactly: 1,000 candidates that set, unset and declare 128 fields each (384
+// distinct names a member) and 3,000 guard-only members that declare 128
+// before_fields, all inside the other bounds. The 768,001st observation starts
 // the next step.
 func TestBoundFieldObservations(t *testing.T) {
 	t.Parallel()
-	set, unset, before := map[string]string{}, make([]string, 0, 128), make([]string, 0, 128)
+	set, unset, before := map[string]string{}, names("u", 128), names("b", 128)
 	for i := 0; i < 128; i++ {
 		set[fmt.Sprintf("s%03d", i)] = "v"
-		unset = append(unset, fmt.Sprintf("u%03d", i))
-		before = append(before, fmt.Sprintf("b%03d", i))
 	}
-	owner := mv("work", names("m", LimitCandidates))
+	owner := mv("work", names("m", 1000))
 	owner.Set, owner.Unset, owner.BeforeFields = set, unset, before
-	guard := gd("merge", []string{"g"})
-	guard.BeforeFields = []string{"only"}
+	guard := gd("merge", names("g", 3000))
+	guard.BeforeFields = before
+	one := gd("fleet", []string{"one"})
+	one.BeforeFields = []string{"only"}
 
-	steps := must(t, cfg(), []Entry{owner})
-	if len(steps) != 1 || measure(t, steps[0].Encode()).obs != LimitFieldObservations {
-		t.Fatalf("2,000 x 384 observations: %d steps, %d observations", len(steps), measure(t, steps[0].Encode()).obs)
+	steps := must(t, cfg(), []Entry{owner, guard})
+	if got := measure(t, steps[0].Encode()).obs; len(steps) != 1 || got != LimitFieldObservations {
+		t.Fatalf("1,000 x 384 and 3,000 x 128 observations: %d steps, %d observations", len(steps), got)
 	}
-	steps = must(t, cfg(), []Entry{owner, guard})
+	steps = must(t, cfg(), []Entry{owner, guard, one})
 	if len(steps) != 2 || len(steps[1].Entries) != 1 || steps[1].Entries[0].Kind != KindGuard {
 		t.Fatalf("768,001 observations: %d steps", len(steps))
 	}
 	// A guard with no before_fields observes nothing and joins the full step.
-	guard.BeforeFields = nil
-	if steps := must(t, cfg(), []Entry{owner, guard}); len(steps) != 1 {
+	one.BeforeFields = nil
+	if steps := must(t, cfg(), []Entry{owner, guard, one}); len(steps) != 1 {
 		t.Fatalf("a guard that observes no field: %d steps", len(steps))
 	}
 }

@@ -129,3 +129,60 @@ func TestARefusalNamesTheSameFaultEveryRun(t *testing.T) {
 		}
 	}
 }
+
+// The member no step can hold is found before any step is opened, so before
+// the identity of any step is asked for: an Ident that allocates an op, or
+// writes a manifest, is not called for steps of a build that is then refused.
+func TestAMemberNoStepCanHoldIsRefusedBeforeAnyIdentityIsAsked(t *testing.T) {
+	t.Parallel()
+	var asked []int
+	c := cfg()
+	c.Ident = func(part int) Ident {
+		asked = append(asked, part)
+		return Ident{Op: fmt.Sprint("op", part), Intent: "i"}
+	}
+	bad := mv("work", []string{"bad"})
+	bad.Set = fat(128, LimitFieldValueBytes)
+	rows := Entry{Kind: KindRows, Table: "work", Add: []string{"r"}, Guards: []Entry{gd("merge", names("a", 2000)), gd("merge", names("b", 2000)), gd("merge", names("c", 2000))}}
+	note := Entry{Kind: KindNote, Notes: []Note{{Meta: map[string]string{"big": pad(LimitLineBytes)}}}}
+	for _, tc := range []struct {
+		name    string
+		entries []Entry
+		member  string
+		bound   string
+	}{
+		{"a member with 8 MiB of fields", []Entry{mv("work", names("m", 5000)), mv("merge", names("n", 3000)), bad}, "bad", boundRequest.name},
+		{"guards no step can hold on a rows entry", []Entry{mv("work", names("m", 5000)), rows}, "r", boundGuardOnly.name},
+		{"a note too large for a line", []Entry{mv("work", names("m", 5000)), note}, "", boundLineBytes.name},
+	} {
+		asked = nil
+		le := refused(t, c, tc.entries)
+		if len(asked) != 0 || le.Member != tc.member || le.Bound != tc.bound {
+			t.Errorf("%s: %+v, the identity was asked for parts %v", tc.name, le, asked)
+		}
+	}
+}
+
+// The one refusal that can follow a call of Ident: a member that fits a step
+// with no identity and, with the receipt an op reserves, does not.
+func TestAnIdentityThatLeavesAMemberNoRoomRefusesAfterItIsAsked(t *testing.T) {
+	t.Parallel()
+	e := mv("work", []string{"m"})
+	e.Set = map[string]string{"f": pad(100)}
+	// A bound of exactly what the member plans without a receipt.
+	c := cfg()
+	c.Bounds = Contract()
+	c.Bounds.PlannedArgvBytes = measure(t, must(t, c, []Entry{e})[0].Encode()).argv
+	if steps := must(t, c, []Entry{e}); len(steps) != 1 {
+		t.Fatalf("%d steps", len(steps))
+	}
+	var asked []int
+	c.Ident = func(part int) Ident {
+		asked = append(asked, part)
+		return Ident{Op: "op", Intent: "i"}
+	}
+	le := refused(t, c, []Entry{e})
+	if le.Bound != boundArgv.name || le.Member != "m" || len(asked) != 1 {
+		t.Fatalf("%+v, identity asked for parts %v", le, asked)
+	}
+}

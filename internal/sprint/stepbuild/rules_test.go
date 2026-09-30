@@ -155,11 +155,11 @@ func TestNotesFollowTheMembersOfTheirEntry(t *testing.T) {
 	// fit the step its entry ended in leads the next one.
 	full := mv("work", names("a", LimitCandidates))
 	full.About = names("p", LimitCandidates)
-	full.Notes = []Note{{About: names("q", 2001)}}
+	full.Notes = []Note{{About: names("q", 2000)}, {About: []string{"z"}}}
 	next := mv("work", []string{"z"})
 	next.Notes = []Note{{Meta: map[string]string{"n": "z"}}}
 	steps = must(t, cfg(), []Entry{full, next})
-	if len(steps) != 2 || len(steps[0].Notes) != 0 || len(steps[0].Entries) != 1 {
+	if len(steps) != 2 || len(steps[0].Notes) != 1 || len(steps[0].Entries) != 1 {
 		t.Fatalf("%d steps", len(steps))
 	}
 	if len(steps[1].Notes) != 2 || steps[1].Notes[0].Source != 0 || steps[1].Notes[1].Source != 1 || steps[1].Entries[0].IDs[0] != "z" {
@@ -308,9 +308,38 @@ func TestCursorsNameTheLastMemberAndResumeAfterIt(t *testing.T) {
 	// steps of an entry whose notes spill into a step of their own.
 	full := mv("work", names("a", LimitCandidates))
 	full.About = names("p", LimitCandidates)
-	full.Notes = []Note{{About: names("q", 2001)}}
+	full.Notes = []Note{{About: names("q", 2000)}, {About: []string{"z"}}}
 	steps = must(t, cfg(), []Entry{full})
-	if len(steps) != 2 || steps[0].Cursor == steps[1].Cursor || steps[1].Cursor.Notes != 1 || steps[0].Cursor.Notes != 0 {
+	if len(steps) != 2 || steps[0].Cursor == steps[1].Cursor || steps[0].Cursor.Notes != 1 || steps[1].Cursor.Notes != 2 {
+		t.Fatalf("%+v", steps)
+	}
+}
+
+// A cursor moves when a member or a note is placed and not before: a step
+// closed because the next entry's note did not fit ends at the last thing it
+// holds, not at an entry it holds none of.
+func TestACursorNamesOnlyWhatTheStepHolds(t *testing.T) {
+	t.Parallel()
+	full := mv("work", names("a", LimitCandidates))
+	full.About = names("p", LimitCandidates)
+	full.Notes = []Note{{About: names("q", 2000)}}
+	spill := Entry{Kind: KindNote, Notes: []Note{{About: []string{"z"}}}}
+	steps := must(t, cfg(), []Entry{full, spill})
+	if len(steps) != 2 {
+		t.Fatalf("%d steps", len(steps))
+	}
+	want := Cursor{Entry: 0, Done: LimitCandidates, Notes: 1, Table: "work", ID: fmt.Sprintf("a%d", LimitCandidates-1)}
+	if steps[0].Cursor != want {
+		t.Fatalf("the first step holds entry 0 and ends at %+v, not %+v", steps[0].Cursor, want)
+	}
+	if got := (Cursor{Entry: 1, Notes: 1}); steps[1].Cursor != got {
+		t.Fatalf("the second step holds the note entry's note: %+v, want %+v", steps[1].Cursor, got)
+	}
+	// A note entry with two notes that end two steps: each cursor names the
+	// notes its step holds.
+	two := Entry{Kind: KindNote, Notes: []Note{{About: names("p", 2000)}, {About: names("q", 2000)}, {About: []string{"z"}}}}
+	steps = must(t, cfg(), []Entry{two})
+	if len(steps) != 2 || steps[0].Cursor != (Cursor{Entry: 0, Notes: 2}) || steps[1].Cursor != (Cursor{Entry: 0, Notes: 3}) {
 		t.Fatalf("%+v", steps)
 	}
 }
@@ -456,12 +485,54 @@ func TestInputThatIsNotARequestIsRefused(t *testing.T) {
 		{"an epoch with a leading zero", Config{Epoch: "01", Header: hdr}, []Entry{mv("work", []string{"a"})}, "epoch"},
 		{"an epoch past uint64", Config{Epoch: "18446744073709551616", Header: hdr}, []Entry{mv("work", []string{"a"})}, "epoch"},
 		{"a note with no note", cfg(), []Entry{{Kind: KindNote}}, "notes"},
+		{"a create that names a source", cfg(), []Entry{{Kind: KindCreate, Table: "work", From: "r:c", To: "r:c", IDs: []string{"a"}, Scores: []string{"1"}}}, "from"},
+		{"a create with revisions", cfg(), []Entry{{Kind: KindCreate, Table: "work", To: "r:c", IDs: []string{"a"}, Scores: []string{"1"}, Revs: []string{"1"}}}, "revs"},
+		{"a create that unsets", cfg(), []Entry{{Kind: KindCreate, Table: "work", To: "r:c", IDs: []string{"a"}, Scores: []string{"1"}, Unset: []string{"u"}}}, "unset"},
+		{"an empty score", cfg(), []Entry{{Kind: KindCreate, Table: "work", To: "r:c", IDs: []string{"a", "b"}, Scores: []string{"1", ""}}}, "scores"},
+		{"a score that is not UTF-8", cfg(), []Entry{{Kind: KindCreate, Table: "work", To: "r:c", IDs: []string{"a"}, Scores: []string{"1\xff"}}}, "scores"},
+		{"meta with a value that is not UTF-8", cfg(), over(func(e *Entry) { e.Meta = map[string]string{"k": "\xff"} }), "meta"},
+		{"meta with a key that is not UTF-8", cfg(), over(func(e *Entry) { e.Meta = map[string]string{"\xff": "v"} }), "meta"},
+		{"the meta of a note that is not UTF-8", cfg(), []Entry{{Kind: KindNote, Notes: []Note{{Meta: map[string]string{"k": "\xff"}}}}}, "notes"},
+		{"the meta of an entry's note that is not UTF-8", cfg(), over(func(e *Entry) { e.Notes = []Note{{Meta: map[string]string{"\xfe": "v"}}} }), "notes"},
 	} {
 		steps, err := Build(tc.cfg, tc.entries)
 		var ie *InputError
 		if steps != nil || !errors.As(err, &ie) || ie.Field != tc.field {
 			t.Errorf("%s: %v (%d steps), want a refusal of field %s", tc.name, err, len(steps), tc.field)
 		}
+	}
+}
+
+// The members of a request the builder writes itself cannot be header members:
+// a header "epoch" would write the member twice, and the last one wins.
+func TestNoHeaderMemberIsAMemberTheBuilderWrites(t *testing.T) {
+	t.Parallel()
+	for _, key := range []string{"epoch", "op", "intent", "result", "entries", "notes"} {
+		c := Config{Epoch: "1", Header: []Member{{"space", "s"}, {key, "v"}}}
+		steps, err := Build(c, []Entry{mv("work", []string{"a"})})
+		var ie *InputError
+		if steps != nil || !errors.As(err, &ie) || ie.Field != "header key" || ie.Entry != -1 {
+			t.Errorf("a header member %q: %v (%d steps)", key, err, len(steps))
+		}
+	}
+}
+
+// An attached guard is held to the bounds of the build, not the contract's: a
+// guard with more IDs than a tightened bound lets one entry hold is refused.
+func TestAnAttachedGuardIsHeldToTheBoundsOfTheBuild(t *testing.T) {
+	t.Parallel()
+	c := cfg()
+	c.Bounds = Contract()
+	c.Bounds.EntryIDs = 5
+	owner := mv("work", []string{"m"})
+	owner.Guards = []Entry{gd("merge", names("g", 5))}
+	if steps := must(t, c, []Entry{owner}); len(steps) != 1 {
+		t.Fatalf("a guard of 5 IDs: %d steps", len(steps))
+	}
+	owner.Guards = []Entry{gd("merge", names("g", 6))}
+	le := refused(t, c, []Entry{owner})
+	if le.Bound != boundEntryIDs.name || le.Limit != 5 || le.Actual != 6 || le.Field != "guards[0].ids" || le.Entry != 0 {
+		t.Fatalf("a guard of 6 IDs where an entry holds 5: %+v", le)
 	}
 }
 

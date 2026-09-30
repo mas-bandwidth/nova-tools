@@ -107,6 +107,12 @@ type lineEnv struct {
 
 const uint64Max = "18446744073709551615"
 
+// The widest a score and a revision are in a generated line (cost.go).
+var (
+	widestScore = strings.Repeat("x", 24)
+	widestRev   = strings.Repeat("9", 20)
+)
+
 // modelLine is the bytes of the generated line of a change entry under the
 // package's reading of the contract (see cost.go): the event of section 1.3
 // in full JSON, store-supplied values at their widest, each member's
@@ -114,19 +120,17 @@ const uint64Max = "18446744073709551615"
 func modelLine(t testing.TB, e wireEntry) int {
 	t.Helper()
 	body := lineBody{Kind: e.Kind, Table: e.T, From: e.From, To: e.To, ChangedIDs: e.IDs}
-	widest := strings.Repeat("x", 24)
-	rev := strings.Repeat("9", 20)
 	for i := range e.IDs {
-		after := widest
+		after := widestScore
 		if e.Scores != nil {
 			if n := jsonLen(t, e.Scores[i]) - 2; n > len(after) {
 				after = strings.Repeat("x", n)
 			}
 		}
-		body.BeforeScores = append(body.BeforeScores, widest)
+		body.BeforeScores = append(body.BeforeScores, widestScore)
 		body.AfterScores = append(body.AfterScores, after)
-		body.BeforeRevs = append(body.BeforeRevs, rev)
-		body.AfterRevs = append(body.AfterRevs, rev)
+		body.BeforeRevs = append(body.BeforeRevs, widestRev)
+		body.AfterRevs = append(body.AfterRevs, widestRev)
 		eff := map[string]string{}
 		for k, v := range e.Set {
 			eff[k] = v
@@ -159,24 +163,33 @@ func modelLine(t testing.TB, e wireEntry) int {
 	return jsonLen(t, lineEnv{uint64Max, uint64Max, uint64Max, body})
 }
 
+// modelNoteLine is the generated line of a note: its meta and the IDs it is
+// about, which its line carries.
 func modelNoteLine(t testing.TB, n wireNote) int {
 	t.Helper()
 	meta := n.Line.Meta
 	if meta == nil {
 		meta = map[string]string{}
 	}
+	about := n.About
+	if about == nil {
+		about = []string{}
+	}
 	return jsonLen(t, lineEnv{uint64Max, uint64Max, uint64Max, struct {
-		Kind string            `json:"kind"`
-		Meta map[string]string `json:"meta"`
-	}{"note", meta}})
+		Kind  string            `json:"kind"`
+		Meta  map[string]string `json:"meta"`
+		About []string          `json:"about"`
+	}{"note", meta, about}})
 }
 
 // measured is a step counted from its decoded request.
 type measured struct {
-	bytes, entries, tables, candidates, guardOnly, rowPairs int
-	notes, about, obs, argv                                 int
-	maxEntryIDs, maxLine, maxLineIDs, depth                 int
-	repeats                                                 []string
+	bytes, entries, tables, candidates, guardOnly, rowPairs, rowNames int
+	notes, about, obs                                                 int
+	argv                                                              int // planned argv bytes by the model of the builder (modelArgv)
+	strict                                                            int // planned argv bytes by the strict count (strictArgv)
+	maxEntryIDs, maxLine, maxLineIDs, depth                           int
+	repeats                                                           []string
 }
 
 func union(sets ...[]string) map[string]struct{} {
@@ -197,16 +210,35 @@ func keys(m map[string]string) []string {
 	return out
 }
 
+// keyCfg is what a test tells the counters of the Config it built with: the
+// longest member prefix (zero is the default).
+type keyCfg struct{ prefix int }
+
+func (k keyCfg) bytes() int {
+	if k.prefix == 0 {
+		return DefaultMemberPrefixBytes
+	}
+	return k.prefix
+}
+
+// rowOf is the row of a cell reference, split at its last colon.
+func rowOf(ref string) string { return ref[:strings.LastIndex(ref, ":")] }
+
 // measure counts every quantity a bound of section 6 names from the request
-// bytes alone.
-func measure(t testing.TB, raw []byte) measured {
+// bytes alone, with the default member prefix.
+func measure(t testing.TB, raw []byte) measured { return measureKeys(t, raw, keyCfg{}) }
+
+// measureKeys is measure for a build whose member prefix is kc's.
+func measureKeys(t testing.TB, raw []byte, kc keyCfg) measured {
 	t.Helper()
 	req := decode(t, raw)
 	m := measured{bytes: len(raw), entries: len(req.Entries), notes: len(req.Notes), depth: depthOf(raw)}
+	ls := lineSizes{entries: make([]int, len(req.Entries)), notes: make([]int, len(req.Notes))}
 	tables := map[string]struct{}{}
 	seen := map[[2]string]struct{}{}
-	rows := map[[2]string]bool{} // (table, row) -> added
-	for _, e := range req.Entries {
+	rows := map[[2]string]bool{}        // (table, row) -> added
+	memRows := map[[2]string]struct{}{} // rows member entries so far read or write
+	for ei, e := range req.Entries {
 		tables[e.T] = struct{}{}
 		m.about += len(e.About)
 		m.maxEntryIDs = max(m.maxEntryIDs, len(e.IDs))
@@ -221,9 +253,8 @@ func measure(t testing.TB, raw []byte) measured {
 		case "create", "move", "remove":
 			m.candidates += len(e.IDs)
 			m.maxLineIDs = max(m.maxLineIDs, len(e.IDs))
-			line := modelLine(t, e)
-			m.maxLine = max(m.maxLine, line)
-			m.argv += line
+			ls.entries[ei] = modelLine(t, e)
+			m.maxLine = max(m.maxLine, ls.entries[ei])
 			for i := range e.IDs {
 				eff := map[string]string{}
 				for k, v := range e.Set {
@@ -233,12 +264,6 @@ func measure(t testing.TB, raw []byte) measured {
 					for k, v := range e.Each[i] {
 						eff[k] = v
 					}
-				}
-				for k, v := range eff {
-					m.argv += len(k) + len(v)
-				}
-				for _, u := range e.Unset {
-					m.argv += len(u)
 				}
 				m.obs += len(union(keys(eff), e.Unset, e.BeforeFields))
 			}
@@ -255,22 +280,242 @@ func measure(t testing.TB, raw []byte) measured {
 					if was, in := rows[k]; in && was != dir.add {
 						m.repeats = append(m.repeats, "row "+e.T+"/"+r)
 					}
+					if _, in := memRows[k]; in && !dir.add {
+						m.repeats = append(m.repeats, "row-del "+e.T+"/"+r)
+					}
 					rows[k] = dir.add
+					m.rowNames++
 				}
 			}
 		default:
 			t.Fatalf("a kind the builder never writes: %q", e.Kind)
 		}
+		for _, ref := range []string{e.From, e.To} {
+			if ref != "" && e.Kind != "rows" {
+				memRows[[2]string{e.T, rowOf(ref)}] = struct{}{}
+			}
+		}
 	}
 	m.tables, m.rowPairs = len(tables), len(rows)
-	for _, n := range req.Notes {
+	for ni, n := range req.Notes {
 		m.about += len(n.About)
-		m.argv += modelNoteLine(t, n)
+		m.maxLineIDs = max(m.maxLineIDs, len(n.About))
+		ls.notes[ni] = modelNoteLine(t, n)
+		m.maxLine = max(m.maxLine, ls.notes[ni])
+	}
+	m.argv, m.strict = modelArgv(t, req, kc, ls), strictArgv(t, req, kc, ls)
+	return m
+}
+
+// lineSizes are the generated lines' bytes of a request's change entries and
+// notes, counted once for the counters of the planned argv bytes.
+type lineSizes struct{ entries, notes []int }
+
+// The planned argv bytes, counted twice, by two accountings written apart.
+//
+// modelArgv is the builder's upper bound as the tests read it (cost.go's
+// comment on the planned commands): per changed member an HSET, an HDEL when
+// it unsets, a ZREM, a ZADD and an RPUSH per about, each with its command
+// name and its key at the widest the key can be, and the widths of what the
+// store supplies at their widest. The builder cuts to it, and the property
+// test holds it to the sum of each step it emits.
+//
+// strictArgv is the safety check. It does not use the builder's sizes for a
+// key or a value: it builds every command as real strings under a reference
+// layout of the keys, and sums the length of every argument. The layout is the
+// strictest reading: no batching (every member is its own command of each
+// kind, the most commands any splitting could make), the keys built from the
+// names in them, and each value the store supplies as wide as the contract
+// lets it be (a revision at 20 digits, a seq and a rank at 16, a score at 24
+// bytes). Layer 1 refuses LIMIT at prepare when this exceeds the bound, so no
+// step the builder emits may have a strict count over it; and the strict count
+// of a step is never over the model's, or the model is not an upper bound.
+//
+// The reference layout of the keys:
+//
+//	record   <prefix><id>
+//	cell     <ns>sprint:cell:<table>:<epoch>:<row>:<col>
+//	rows     <ns>sprint:rows:<table>@<epoch>
+//	log      <ns>sprint:log@<epoch>
+//	history  <ns>sprint:cl:<about>@<epoch>
+//	done     <ns>sprint:done@<epoch>
+//
+// with the prefix a run of the configured length. A record's HSET carries its
+// own epoch, revision and placement fields beside the application's.
+func strictArgv(t testing.TB, req wireRequest, kc keyCfg, ls lineSizes) int {
+	t.Helper()
+	ns, ep := req.Space, req.Epoch
+	prefix := strings.Repeat("k", kc.bytes())
+	const seq, rev, rank = "9007199254740991", "99999999999999999999", "9007199254740991"
+	total := 0
+	cmd := func(args ...string) {
+		for _, a := range args {
+			total += len(a)
+		}
+	}
+	cellKey := func(table, ref string) string {
+		i := strings.LastIndex(ref, ":")
+		return ns + "sprint:cell:" + table + ":" + ep + ":" + ref[:i] + ":" + ref[i+1:]
+	}
+	rowsKey := func(table string) string { return ns + "sprint:rows:" + table + "@" + ep }
+	logKey := ns + "sprint:log@" + ep
+	xadd := func(line int) { cmd("XADD", logKey, seq+"-0", "line"); total += line }
+	for ei, e := range req.Entries {
+		switch e.Kind {
+		case "create", "move", "remove":
+			src, dst := e.From, e.To
+			if src == "" {
+				src = dst
+			}
+			if dst == "" {
+				dst = src
+			}
+			xadd(ls.entries[ei])
+			for i, id := range e.IDs {
+				rec := prefix + id
+				hset := []string{"HSET", rec, "epoch", ep, "revision", rev, "place:" + dst[strings.LastIndex(dst, ":")+1:], rowOf(dst)}
+				eff := map[string]string{}
+				for k, v := range e.Set {
+					eff[k] = v
+				}
+				if e.Each != nil {
+					for k, v := range e.Each[i] {
+						eff[k] = v
+					}
+				}
+				for k, v := range eff {
+					hset = append(hset, k, v)
+				}
+				cmd(hset...)
+				if len(e.Unset) > 0 {
+					cmd(append([]string{"HDEL", rec}, e.Unset...)...)
+				}
+				score := strings.Repeat("9", 24)
+				if e.Scores != nil {
+					score = e.Scores[i]
+				}
+				cmd("ZREM", cellKey(e.T, src), id)
+				cmd("ZADD", cellKey(e.T, dst), score, id)
+				if e.About != nil {
+					cmd("RPUSH", ns+"sprint:cl:"+e.About[i]+"@"+ep, seq)
+				}
+			}
+		case "rows":
+			line := struct {
+				Kind       string      `json:"kind"`
+				EntryIndex int         `json:"entry_index"`
+				Table      string      `json:"table"`
+				Added      []rowsAdded `json:"added"`
+				Deleted    []string    `json:"deleted"`
+			}{"rows", ei, e.T, []rowsAdded{}, []string{}}
+			for _, r := range e.Add {
+				cmd("ZADD", rowsKey(e.T), rank, r)
+				line.Added = append(line.Added, rowsAdded{r, rank})
+			}
+			for _, r := range e.Del {
+				cmd("ZREM", rowsKey(e.T), r)
+				line.Deleted = append(line.Deleted, r)
+			}
+			xadd(jsonLen(t, lineEnv{uint64Max, uint64Max, uint64Max, line}))
+		}
+	}
+	for ni, n := range req.Notes {
+		xadd(ls.notes[ni])
+		for _, a := range n.About {
+			cmd("RPUSH", ns+"sprint:cl:"+a+"@"+ep, seq)
+		}
 	}
 	if req.Op != "" {
-		m.argv += LimitReceiptBytes
+		cmd("HSET", ns+"sprint:done@"+ep, req.Op)
+		total += LimitReceiptBytes // the receipt, in full
 	}
-	return m
+	return total
+}
+
+type rowsAdded struct {
+	Row  string `json:"row"`
+	Rank string `json:"rank"`
+}
+
+func modelArgv(t testing.TB, req wireRequest, kc keyCfg, ls lineSizes) int {
+	t.Helper()
+	ns, ep := len(req.Space), len(req.Epoch)
+	structural := func(n int) int { return ns + structTagBytes + n }
+	cell := func(table, ref string) int { return structural(len(table) + ep + len(ref)) }
+	rowsKey := func(table string) int { return structural(len(table) + ep) }
+	hist := func(about string) int { return structural(len(about) + ep) }
+	xadd := cmdNameBytes + structural(ep) + streamIDBytes + streamFieldBytes
+	total := 0
+	for ei, e := range req.Entries {
+		switch e.Kind {
+		case "create", "move", "remove":
+			src, dst := e.From, e.To
+			if src == "" {
+				src = dst
+			}
+			if dst == "" {
+				dst = src
+			}
+			total += xadd + ls.entries[ei]
+			for i, id := range e.IDs {
+				rec := kc.bytes() + len(id)
+				total += cmdNameBytes + rec + len("epoch") + ep + len("revision") + uintBytes + 2*len("place:col") + len(dst) - 1
+				eff := map[string]string{}
+				for k, v := range e.Set {
+					eff[k] = v
+				}
+				if e.Each != nil {
+					for k, v := range e.Each[i] {
+						eff[k] = v
+					}
+				}
+				for k, v := range eff {
+					total += len(k) + len(v)
+				}
+				if len(e.Unset) > 0 {
+					total += cmdNameBytes + rec
+					for _, u := range e.Unset {
+						total += len(u)
+					}
+				}
+				score := scoreBytes
+				if e.Scores != nil {
+					score = max(score, len(e.Scores[i]))
+				}
+				total += cmdNameBytes + cell(e.T, src) + len(id)
+				total += cmdNameBytes + cell(e.T, dst) + score + len(id)
+				if e.About != nil {
+					total += cmdNameBytes + hist(e.About[i]) + uintBytes
+				}
+			}
+		case "rows":
+			head := struct {
+				Kind       string      `json:"kind"`
+				EntryIndex json.Number `json:"entry_index"`
+				Table      string      `json:"table"`
+				Added      []rowsAdded `json:"added"`
+				Deleted    []string    `json:"deleted"`
+			}{"rows", json.Number(strings.Repeat("9", uintBytes)), e.T, []rowsAdded{}, []string{}}
+			total += xadd + jsonLen(t, lineEnv{uint64Max, uint64Max, uint64Max, head})
+			for _, r := range e.Add {
+				total += cmdNameBytes + rowsKey(e.T) + rankBytes + len(r)
+				total += jsonLen(t, rowsAdded{r, strings.Repeat("9", rankBytes)}) + 1
+			}
+			for _, r := range e.Del {
+				total += cmdNameBytes + rowsKey(e.T) + len(r) + jsonLen(t, r) + 1
+			}
+		}
+	}
+	for ni, n := range req.Notes {
+		total += xadd + ls.notes[ni]
+		for _, a := range n.About {
+			total += cmdNameBytes + hist(a) + uintBytes
+		}
+	}
+	if req.Op != "" {
+		total += cmdNameBytes + structural(ep) + len(req.Op) + LimitReceiptBytes
+	}
+	return total
 }
 
 // depthOf is the deepest nesting of arrays and objects in JSON text.
@@ -308,12 +553,15 @@ func (m measured) within(bd Bounds) []string {
 		{"guard-only", m.guardOnly, bd.GuardOnly},
 		{"entry ids", m.maxEntryIDs, bd.EntryIDs},
 		{"row pairs", m.rowPairs, bd.RowPairs},
+		{"row names", m.rowNames, bd.RowPairs},
 		{"notes", m.notes, bd.Notes},
 		{"about ids", m.about, bd.AboutIDs},
 		{"field observations", m.obs, bd.FieldObservations},
 		{"line bytes", m.maxLine, bd.LineBytes},
 		{"line ids", m.maxLineIDs, bd.LineIDs},
 		{"planned argv", m.argv, bd.PlannedArgvBytes},
+		{"strict planned argv", m.strict, bd.PlannedArgvBytes},
+		{"strict planned argv over the model's", m.strict, m.argv},
 		{"nesting", m.depth, LimitNesting},
 	} {
 		if c.got > c.limit {
@@ -406,14 +654,14 @@ func countMembers(steps []Step) int {
 
 // measureLite counts the bounds that need no JSON model from the step's own
 // entries, and the encoded size from its bytes: every bound but the
-// generated line and the planned argv bytes. It is cheap enough to run on
-// every input of the property test; measure runs on some of them, and on all
-// of them under the slow tag.
+// generated line and the planned argv bytes. It is cheap, and checks what the
+// full measure checks of the rest.
 func measureLite(s Step, raw []byte) measured {
 	m := measured{bytes: len(raw), entries: len(s.Entries), notes: len(s.Notes)}
 	tables := map[string]struct{}{}
 	seen := map[[2]string]struct{}{}
 	rows := map[[2]string]bool{}
+	memRows := map[[2]string]struct{}{}
 	for _, p := range s.Entries {
 		tables[p.Table] = struct{}{}
 		m.about += len(p.About)
@@ -453,13 +701,25 @@ func measureLite(s Step, raw []byte) measured {
 					if was, in := rows[k]; in && was != dir.add {
 						m.repeats = append(m.repeats, "row "+p.Table+"/"+r)
 					}
+					if _, in := memRows[k]; in && !dir.add {
+						m.repeats = append(m.repeats, "row-del "+p.Table+"/"+r)
+					}
 					rows[k] = dir.add
+					m.rowNames++
+				}
+			}
+		}
+		if p.Kind != KindRows {
+			for _, ref := range []string{p.From, p.To} {
+				if ref != "" {
+					memRows[[2]string{p.Table, rowOf(ref)}] = struct{}{}
 				}
 			}
 		}
 	}
 	for _, n := range s.Notes {
 		m.about += len(n.About)
+		m.maxLineIDs = max(m.maxLineIDs, len(n.About))
 	}
 	m.tables, m.rowPairs = len(tables), len(rows)
 	return m

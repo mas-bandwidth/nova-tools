@@ -1,6 +1,6 @@
 // Package stepbuild cuts any list of entries into steps that Layer 1 of the
 // sprint's table store accepts: each step inside every bound of section 6 of
-// the Layer 1 table contract (tset/1, contract revision 2), such that applying
+// the Layer 1 table contract (tset/1, contract revision 3), such that applying
 // the steps in order is applying the whole. It is pure: no store, no socket,
 // no clock.
 //
@@ -35,10 +35,19 @@
 // the last step that holds a part of it or, when that step is full, in the
 // steps after it.
 //
+// Rows and members depend on each other (section 3), and once the bounds cut
+// the entries into steps the order they are in decides what each step sees. The
+// entries are placed in the order of the input except where that would make
+// the result depend on the cut: a rows entry that adds a row goes before the
+// member entries whose destination it is, and the member entries whose source
+// is a row go before the rows entry that deletes it (order.go). A rows entry
+// that deletes a row also ends the step of the member entries that name it
+// (place.go).
+//
 // The contract's bounds are constants (limits.go), each with its section. Where
-// the contract is silent (the size of a generated log line, the planned argv
-// bytes of a step) this package takes the stricter reading and says so where
-// it applies it (cost.go, place.go).
+// the contract is silent (the size of a generated log line, the commands a
+// step plans and their argv bytes) this package takes the stricter reading, an
+// upper bound, and says so where it applies it (cost.go, place.go).
 //
 // The cut is linear in the input: each member's strings are read once, to
 // validate and size them, and each member is placed by constant-time checks
@@ -135,13 +144,23 @@ type Config struct {
 
 	// Ident, when set, gives the identity of step number part (from 1, the
 	// step's final index, whatever the cut later finds the total to be). It
-	// is called once per step, in order, and its size is counted in the
-	// step's bytes. The ops it returns must differ from step to step: two
-	// steps sharing an op would replay as one, so the build refuses them.
+	// is called once per step, in order, as the step opens, and its size is
+	// counted in the step's bytes. The ops it returns must differ from step
+	// to step: two steps sharing an op would replay as one, so the build
+	// refuses them. Every entry has been validated, and every member has been
+	// found to fit an empty step, before the first call; only an identity so
+	// large that it leaves a member no room refuses the build later, after
+	// the calls made, so Ident is a pure function of part.
 	Ident func(part int) Ident
 
 	// Bounds is the cut's bounds; the zero value is Contract().
 	Bounds Bounds
+
+	// MemberPrefixBytes is the length of the longest member prefix of the
+	// tables the entries name: a record's key is the prefix and the stored ID
+	// (section 1.2), and the planned argv bytes of every command that writes a
+	// record count that key (cost.go). Zero is DefaultMemberPrefixBytes.
+	MemberPrefixBytes int
 }
 
 // Step is one Layer 1 write: its request in parts. Entries and notes share
@@ -177,9 +196,13 @@ type PlacedNote struct {
 }
 
 // Cursor is a position in the input: what a step leaves done. Steps' cursors
-// strictly increase, so a cursor names one step.
+// strictly increase, so a cursor names one step. The entries are placed in the
+// order of the input, except where rows and members need another (order.go);
+// Entry is the position in the order they were placed in, which is the input's
+// index for an input that needed none (a Placed entry's Source is always the
+// input's index).
 type Cursor struct {
-	Entry int    // index of the input entry the step ends in
+	Entry int    // position of the entry the step ends in, in the order the entries were placed in
 	Done  int    // members of that entry done, this step's included
 	Notes int    // notes of that entry done, this step's included
 	Table string // the table of the step's last member; empty when it has none
@@ -200,8 +223,10 @@ func After(steps []Step, done Cursor) ([]Step, error) {
 	return nil, fmt.Errorf("%w: entry %d, member %q, after %d members", ErrCursor, done.Entry, done.ID, done.Done)
 }
 
-// Build cuts the entries into steps. It validates and costs every entry
-// before it places any, so a refusal returns no step at all. An empty input
+// Build cuts the entries into steps. It validates and costs every entry, puts
+// them in their order and finds every member no step could hold, all before it
+// places any, so a refusal returns no step at all (and, but for an identity
+// that leaves a member no room, before cfg.Ident is called). An empty input
 // is no steps. The steps are numbered from 1 and each is inside every bound
 // of cfg.Bounds (the contract's, by default).
 func Build(cfg Config, entries []Entry) ([]Step, error) {

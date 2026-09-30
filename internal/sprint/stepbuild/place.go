@@ -9,12 +9,12 @@ type usage struct {
 	tables     int // distinct tables; in a piece's usage, the tables it adds
 	candidates int // members changed by create, move and remove entries
 	guardOnly  int // members named by guard entries
-	rowPairs   int // distinct (table,row) pairs of rows entries
+	rowPairs   int // row names of rows entries, before dedup
 	notes      int
 	noteBytes  int // encoded bytes of the notes, commas not counted
 	about      int // about IDs of member entries and notes, before dedup
 	obs        int // field-value observations
-	argv       int // planned argv bytes that can be counted from the request
+	argv       int // planned argv bytes, an upper bound (cost.go)
 }
 
 func add(a, b usage) usage {
@@ -45,6 +45,7 @@ type stepState struct {
 	tables   map[string]struct{}
 	seen     map[memberKey]struct{} // members the step names, per table
 	rows     map[memberKey]bool     // rows the step names: true when added
+	memRows  map[memberKey]struct{} // rows member entries of the step read as a source or write as a destination, per table
 	attached map[int]struct{}       // input entries whose guards the step holds
 }
 
@@ -95,6 +96,7 @@ func (s *stepState) over(d usage, bd Bounds) *breach {
 type builder struct {
 	cfg    Config
 	bounds Bounds
+	keys   keySizes
 	steps  []Step
 	cur    *stepState // nil when no step is open
 	at     Cursor     // what the input has reached
@@ -114,7 +116,10 @@ func newBuilder(cfg Config) (*builder, error) {
 	if err := checkHeader(hd, cfg.Header); err != nil {
 		return nil, err
 	}
-	return &builder{cfg: cfg, bounds: bd, ops: map[string]struct{}{}}, nil
+	if cfg.MemberPrefixBytes < 0 || cfg.MemberPrefixBytes > LimitPlannedArgvBytes {
+		return nil, hd.input("member prefix bytes", "", "is from 0 (the default) to the planned argv bound")
+	}
+	return &builder{cfg: cfg, bounds: bd, keys: newKeySizes(cfg), ops: map[string]struct{}{}}, nil
 }
 
 // reservedKeys are the request members the builder writes itself.
@@ -184,6 +189,24 @@ func (b *builder) ident(part int) (Ident, error) {
 	return id, nil
 }
 
+// newStep is an empty step with the identity id: its header counted, and the
+// receipt reserved when it has an op.
+func (b *builder) newStep(id Ident) *stepState {
+	s := &stepState{
+		step:     Step{Epoch: b.cfg.Epoch, Header: b.cfg.Header, Ident: id},
+		tables:   map[string]struct{}{},
+		seen:     map[memberKey]struct{}{},
+		rows:     map[memberKey]bool{},
+		memRows:  map[memberKey]struct{}{},
+		attached: map[int]struct{}{},
+	}
+	s.hdr = count(func(w sink) { emitRequest(w, &s.step) })
+	if id.Op != "" {
+		s.u.argv = b.keys.receipt(id.Op)
+	}
+	return s
+}
+
 // ensureOpen opens the next step when none is open.
 func (b *builder) ensureOpen() error {
 	if b.cur != nil {
@@ -193,18 +216,7 @@ func (b *builder) ensureOpen() error {
 	if err != nil {
 		return err
 	}
-	s := &stepState{
-		step:     Step{Epoch: b.cfg.Epoch, Header: b.cfg.Header, Ident: id},
-		tables:   map[string]struct{}{},
-		seen:     map[memberKey]struct{}{},
-		rows:     map[memberKey]bool{},
-		attached: map[int]struct{}{},
-	}
-	s.hdr = count(func(w sink) { emitRequest(w, &s.step) })
-	if id.Op != "" {
-		s.u.argv = LimitReceiptBytes
-	}
-	b.cur = s
+	b.cur = b.newStep(id)
 	return nil
 }
 
@@ -230,23 +242,25 @@ func (b *builder) finish() []Step {
 
 // place puts an entry's members, then its notes, into steps, in order.
 func (b *builder) place(es *entryState) error {
-	if es.class == classNote {
-		b.at = Cursor{Entry: es.idx}
-	} else if err := b.placeMembers(es); err != nil {
-		return err
+	if es.class != classNote {
+		if err := b.placeMembers(es); err != nil {
+			return err
+		}
 	}
 	return b.placeNotes(es)
 }
 
 // placeMembers cuts the entry's members into wire entries, each as long as
 // the bounds let it be, and closes the step whenever nothing more fits. A
-// step that holds nothing and still takes no member refuses the build.
+// step that holds nothing and still takes no member refuses the build (prepare
+// has found every member that no step could hold, so this is a member that
+// only this step's identity, with its bytes, leaves no room for).
 func (b *builder) placeMembers(es *entryState) error {
 	for pos := 0; pos < es.n; {
 		if err := b.ensureOpen(); err != nil {
 			return err
 		}
-		k, d, br := b.fit(es, pos)
+		k, d, br := b.fit(es, pos, es.n-pos)
 		if k == 0 {
 			if b.cur.empty() {
 				return b.refuse(es, pos, br)
@@ -261,13 +275,14 @@ func (b *builder) placeMembers(es *entryState) error {
 	return nil
 }
 
-// fit is how many members from pos the next wire entry of the open step can
-// take, with the usage of that wire entry, and the bound that stopped it.
-func (b *builder) fit(es *entryState, pos int) (int, usage, *breach) {
+// fit is how many members, at most most, from pos the next wire entry of the
+// open step can take, with the usage of that wire entry, and the bound that
+// stopped it.
+func (b *builder) fit(es *entryState, pos, most int) (int, usage, *breach) {
 	if es.class == classRows {
-		return b.fitRows(es, pos)
+		return b.fitRows(es, pos, most)
 	}
-	return b.fitMembers(es, pos)
+	return b.fitMembers(es, pos, most)
 }
 
 // headUsage is what a new wire entry of es costs before its first member: the
@@ -275,10 +290,7 @@ func (b *builder) fit(es *entryState, pos int) (int, usage, *breach) {
 // breach is nil when it fits.
 func (b *builder) headUsage(es *entryState) (usage, *breach) {
 	s := b.cur
-	d := usage{entries: 1, entryBytes: es.head}
-	if es.class == classChange {
-		d.argv = es.lineHead
-	}
+	d := usage{entries: 1, entryBytes: es.head, argv: es.argvHead}
 	for _, t := range es.tables {
 		if _, in := s.tables[t]; !in {
 			d.tables++
@@ -295,35 +307,41 @@ func (b *builder) headUsage(es *entryState) (usage, *breach) {
 	return d, s.over(d, b.bounds)
 }
 
-// fitMembers takes members of a change or guard entry from pos while every
-// bound of the step and of the wire entry (its IDs, its generated line) holds
-// and no member is one the step already names.
-func (b *builder) fitMembers(es *entryState, pos int) (int, usage, *breach) {
+// addMember is d, the usage of a wire entry that holds k members of es and a
+// generated line of line bytes, with member j added; and the new line's bytes.
+func (es *entryState) addMember(d usage, j, k, line int) (usage, int) {
+	c := es.cost[j]
+	d.entryBytes += c.req
+	d.obs += c.obs
+	d.about += c.about
+	if k > 0 {
+		d.entryBytes += es.arrays
+	}
+	if es.class != classChange {
+		d.guardOnly++
+		return d, line
+	}
+	d.candidates++
+	nl := line + c.line
+	if k > 0 {
+		nl += es.lineArrays
+	}
+	d.argv += c.argv + (nl - line)
+	return d, nl
+}
+
+// fitMembers takes members of a change or guard entry from pos, at most most,
+// while every bound of the step and of the wire entry (its IDs, its generated
+// line) holds and no member is one the step already names.
+func (b *builder) fitMembers(es *entryState, pos, most int) (int, usage, *breach) {
 	s := b.cur
 	d, br := b.headUsage(es)
 	if br != nil {
 		return 0, d, br
 	}
 	line, k := es.lineHead, 0
-	for j := pos; j < es.n; j++ {
-		c := es.cost[j]
-		nd, nl := d, line
-		nd.entryBytes += c.req
-		nd.obs += c.obs
-		nd.about += c.about
-		if k > 0 {
-			nd.entryBytes += es.arrays
-		}
-		if es.class == classChange {
-			nd.candidates++
-			nl += c.line
-			if k > 0 {
-				nl += es.lineArrays
-			}
-			nd.argv += c.argv + es.rawUnset + (nl - line)
-		} else {
-			nd.guardOnly++
-		}
+	for j := pos; j < es.n && k < most; j++ {
+		nd, nl := es.addMember(d, j, k, line)
 		if br := s.over(nd, b.bounds); br != nil {
 			return k, d, br
 		}
@@ -358,32 +376,30 @@ func (b *builder) wireBreach(es *entryState, ids, line int) *breach {
 // first row: the comma, the key, the brackets.
 const arrayKey = len(`,"add":[]`)
 
-// fitRows takes rows of a rows entry from pos while the step stays inside
-// its bounds, a row is not added in one entry and deleted in another of the
-// step (ROWCONFLICT), and the distinct (table,row) pairs stay under the row
-// bound. A row the step already names in the same direction costs nothing
-// new (section 3: repeated same-direction names deduplicate).
-func (b *builder) fitRows(es *entryState, pos int) (int, usage, *breach) {
+// fitRows takes rows of a rows entry from pos, at most most, while the step
+// stays inside its bounds, a row is not added in one entry and deleted in
+// another of the step (ROWCONFLICT), a row is not deleted in a step whose
+// member entries read it as a source or write it as a destination (they end
+// the step, and the delete leads the next), and the row names, counted before
+// dedup, stay under the row bound.
+func (b *builder) fitRows(es *entryState, pos, most int) (int, usage, *breach) {
 	s := b.cur
 	d, br := b.headUsage(es)
 	if br != nil {
 		return 0, d, br
 	}
-	local := map[string]struct{}{}
 	adds, dels, k := 0, 0, 0
-	for j := pos; j < es.n; j++ {
+	for j := pos; j < es.n && k < most; j++ {
 		row, _ := rowAt(es.e, j)
 		isAdd := j < len(es.e.Add)
 		key := memberKey{es.e.Table, row}
-		nd := d
 		if dir, in := s.rows[key]; in && dir != isAdd {
 			return k, d, repeated()
 		}
-		_, held := s.rows[key]
-		if _, in := local[row]; !held && !in {
-			nd.rowPairs++
+		if _, in := s.memRows[key]; in && !isAdd {
+			return k, d, repeated()
 		}
-		nd.entryBytes += es.cost[j].req
+		nd := es.addRow(d, j)
 		n := &dels
 		if isAdd {
 			n = &adds
@@ -397,10 +413,18 @@ func (b *builder) fitRows(es *entryState, pos int) (int, usage, *breach) {
 			return k, d, br
 		}
 		*n++
-		local[row] = struct{}{}
 		d, k = nd, k+1
 	}
 	return k, d, nil
+}
+
+// addRow is d with row j of a rows entry added: its name in the wire entry, one
+// of the step's row names, its commands and its item of the topology line.
+func (es *entryState) addRow(d usage, j int) usage {
+	d.entryBytes += es.cost[j].req
+	d.rowPairs++
+	d.argv += es.cost[j].argv
+	return d
 }
 
 // commit puts members [lo, hi) of es into the open step as one wire entry,
@@ -419,6 +443,12 @@ func (s *stepState) commit(es *entryState, lo, hi int, d usage) {
 	s.step.Entries = append(s.step.Entries, Placed{Entry: es.part(lo, hi), Source: es.idx})
 	for _, t := range es.tables {
 		s.tables[t] = struct{}{}
+	}
+	for _, k := range es.srcRows {
+		s.memRows[k] = struct{}{}
+	}
+	for _, k := range es.dstRows {
+		s.memRows[k] = struct{}{}
 	}
 	for j := lo; j < hi; j++ {
 		if es.class == classRows {
@@ -474,7 +504,7 @@ func cursorAfter(es *entryState, done int) Cursor {
 	} else {
 		id = es.e.IDs[done-1]
 	}
-	return Cursor{Entry: es.idx, Done: done, Table: es.e.Table, ID: id}
+	return Cursor{Entry: es.pos, Done: done, Table: es.e.Table, ID: id}
 }
 
 // placeNotes puts the entry's notes into steps after its members, each in
@@ -497,6 +527,11 @@ func (b *builder) placeNotes(es *entryState) error {
 		s := b.cur
 		s.step.Notes = append(s.step.Notes, PlacedNote{Note: es.e.Notes[i], Source: es.idx})
 		s.u = add(s.u, es.notes[i].use)
+		// The cursor moves when a note is placed: the entry's last member, with
+		// this note done; a note entry has no member, and its cursor is here.
+		if es.class == classNote {
+			b.at = Cursor{Entry: es.pos}
+		}
 		b.at.Notes = i + 1
 	}
 	return nil

@@ -57,7 +57,7 @@ var bigFragments = []func(g gen, prefix string) []Entry{
 		}
 		m := mv(g.table(), g.pick(prefix, 1000+g.r.IntN(1200), 2300))
 		m.About = g.pick("p", len(m.IDs), len(m.IDs))
-		m.Notes = []Note{{About: g.pick("q", 1500+g.r.IntN(1500), 3000)}}
+		m.Notes = []Note{{About: g.pick("q", 1500+g.r.IntN(501), 3000)}}
 		return []Entry{e, m}
 	},
 	// heavy bytes: members of hundreds of KiB, past the request and the line
@@ -88,6 +88,16 @@ var bigFragments = []func(g gen, prefix string) []Entry{
 			e.BeforeFields = append(e.BeforeFields, fmt.Sprintf("b%03d", i))
 		}
 		return []Entry{e, gd(g.table(), g.pick("g", 1+g.r.IntN(50), 50))}
+	},
+	// rows and members: thousands of members that leave a row and enter one,
+	// with the rows entries that add the one and delete the other, in any order
+	func(g gen, prefix string) []Entry {
+		table := g.table()
+		e := mv(table, g.pick(prefix, 1500+g.r.IntN(2500), 4000))
+		e.From, e.To = "src:c", "dst:c"
+		out := []Entry{e, {Kind: KindRows, Table: table, Add: []string{"dst"}}, {Kind: KindRows, Table: table, Del: []string{"src"}}}
+		g.r.Shuffle(len(out), func(i, j int) { out[i], out[j] = out[j], out[i] })
+		return out
 	},
 	// tables: more than four, with guards on others
 	func(g gen, prefix string) []Entry {
@@ -125,7 +135,7 @@ func TestSlowPropertyAtTheContractsBounds(t *testing.T) {
 				g := gen{rand.New(rand.NewPCG(seed, 0xb16))}
 				ident := seed%2 == 0
 				// The full accounting decodes megabytes: every 200th input.
-				check(t, seed, Contract(), ident, seed%200 == 0, g.bigInput())
+				check(t, seed, Contract(), ident, seed%200 == 0, seed%200 == 0, g.bigInput())
 			}
 		})
 	}
@@ -140,7 +150,7 @@ func TestSlowPropertyFullAccountingOnEveryScaledInput(t *testing.T) {
 			for seed := uint64(shard + 1); seed <= propertyInputs; seed += shards {
 				g := gen{rand.New(rand.NewPCG(seed, 0x5eed))}
 				ident := seed%2 == 0
-				check(t, seed, smallBounds(ident), ident, true, g.input())
+				check(t, seed, smallBounds(ident), ident, true, true, g.input())
 			}
 		})
 	}
