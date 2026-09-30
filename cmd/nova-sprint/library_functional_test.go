@@ -21,6 +21,7 @@ func TestAStoreWithoutThisBuildsLibraryIsRefused(t *testing.T) {
 	env := map[string]string{"NOVA_SPRINT_REDIS": addr, "NOVA_SPRINT_ACTOR": "coordinator"}
 	var out, errb bytes.Buffer
 	a := newApp(func(k string) string { return env[k] })
+	a.newPath = false // the present path's library check, behind the switch
 	defer a.close()
 	if code := a.run([]string{"init"}, &out, &errb); code != 2 || !strings.Contains(errb.String(), "nova-redis fn load --addr "+addr) {
 		t.Fatalf("init on a store with no library: %d %s", code, errb.String())
@@ -31,6 +32,7 @@ func TestAStoreWithoutThisBuildsLibraryIsRefused(t *testing.T) {
 		t.Fatal(err)
 	}
 	b := newApp(func(k string) string { return env[k] })
+	b.newPath = false
 	defer b.close()
 	if code := b.run([]string{"init"}, &out, &errb); code != 0 {
 		t.Fatalf("init with the library loaded: %s", errb.String())

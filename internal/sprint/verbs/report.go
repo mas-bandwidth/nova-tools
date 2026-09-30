@@ -41,13 +41,7 @@ func Report(stdout, stderr io.Writer, res Result, err error, max int) int {
 	if name == "" && rf != nil {
 		name = rf.Verb
 	}
-	listed(stdout, "MOVED", res.Moved, max, name)
-	why := make([]string, 0, len(res.Refused))
-	for _, r := range res.Refused {
-		why = append(why, r.ID+": "+strings.TrimSpace(r.Code+" "+r.Why))
-	}
-	listed(stderr, "REFUSED", why, max, name)
-	listed(stderr, "NOTWRITTEN", res.NotWritten, max, name)
+	ReportIDs(stdout, stderr, res, max, name)
 	status := "OK"
 	if code != 0 {
 		status = "FAIL"
@@ -80,6 +74,22 @@ func Report(stdout, stderr io.Writer, res Result, err error, max int) int {
 		fmt.Fprintf(stderr, "nova-sprint %s: %s\n", name, oneline.Escape(err.Error()))
 	}
 	return code
+}
+
+// ReportIDs prints a result's id lines as Report does, and nothing else: a
+// MOVED line on stdout for each id moved, a REFUSED line ("<id>: <code>
+// <why>") and a NOTWRITTEN line on stderr for each id refused and each id of
+// a refused step or part not written, at most max of each kind before a MORE
+// line naming verb (0 prints all). A command that prints its own verb line
+// prints these before it.
+func ReportIDs(stdout, stderr io.Writer, res Result, max int, verb string) {
+	listed(stdout, "MOVED", res.Moved, max, verb)
+	why := make([]string, 0, len(res.Refused))
+	for _, r := range res.Refused {
+		why = append(why, r.ID+": "+strings.TrimSpace(r.Code+" "+r.Why))
+	}
+	listed(stderr, "REFUSED", why, max, verb)
+	listed(stderr, "NOTWRITTEN", res.NotWritten, max, verb)
 }
 
 // token is a verb's name as the first word of its line.

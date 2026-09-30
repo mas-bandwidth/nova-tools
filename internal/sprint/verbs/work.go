@@ -440,12 +440,18 @@ func (e *Env) wkChunkDo(ctx context.Context, cur wkChunk, nxt *wkChunk, rd *spri
 					res.Retries++
 					continue
 				}
+				if active, ok := undec(ref.Detail.ActiveEpoch); ok && e.Held && epochMoved(ref.Code) {
+					return res, nil, heldGone(verb, e.epoch(), active)
+				}
 				return res, nil, &Refused{Verb: verb, Refusal: ref, Retries: res.Retries}
 			}
 			rd = r.Read
 		}
 		// AL2: the read names the active epoch; a verb plans at it.
 		if active, ok := undec(rd.ActiveEpoch); ok && active != e.epoch() {
+			if e.Held {
+				return res, nil, heldGone(verb, e.epoch(), active)
+			}
 			if res.Retries >= Retries {
 				return res, nil, &Refused{Verb: verb, Retries: res.Retries,
 					Refusal: &sprintfn.Refusal{Code: sprintfn.CodeStale, Message: "the epoch kept moving under the verb"}}
