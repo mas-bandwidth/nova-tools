@@ -15,7 +15,7 @@ func init() {
 		help: `ci deal --shards <n> --shard <i> [--heavy "<pkg> <pkg>..."]
 
 Deals the live packages of the module (go list ./..., less what deprecated/PACKAGES
-names) over <n> shards and prints shard <i>'s share as one line of space-separated
+names) over <n> shards and prints shard <i>'s share as one line of blank-separated
 packages, and appends HOSTED_PKGS=<that line> to $GITHUB_ENV for the steps after it.
 
 The heavy packages go first, one per shard: --heavy names them by a trailing path
@@ -37,7 +37,7 @@ func dealVerb(e env, args []string, h selHost) int {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	shards := fs.Int("shards", 0, "how many shards the tree is dealt over")
 	shard := fs.Int("shard", 0, "this shard, 1-based")
-	heavy := fs.String("heavy", "", "the heavy packages, space-separated, by trailing path")
+	heavy := fs.String("heavy", "", "the heavy packages, blank-separated, by trailing path")
 	if code, done := selFlags(e, name, fs, args); done {
 		return code
 	}
@@ -57,7 +57,7 @@ func dealVerb(e env, args []string, h selHost) int {
 		fmt.Fprintf(e.stderr, "deal: %v\n", err)
 		return 1
 	}
-	// One line, each package followed by a space: the line the steps after this
+	// One line, each package followed by one blank: the line the steps after this
 	// one read as $HOSTED_PKGS.
 	var line strings.Builder
 	for _, p := range mine {

@@ -37,7 +37,7 @@ example:
 func unitTestVerb(e env, args []string, h selHost) int {
 	const name = "unit-test"
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
-	packages := fs.String("packages", "", "this shard's packages, space-separated")
+	packages := fs.String("packages", "", "this shard's packages, blank-separated")
 	if code, done := selFlags(e, name, fs, args); done {
 		return code
 	}
