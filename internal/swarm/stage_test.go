@@ -6,6 +6,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestParseCardBase(t *testing.T) {
@@ -83,5 +86,46 @@ func TestStageCardFailsWithoutMirror(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no bench mirror") {
 		t.Fatalf("expected error mentioning no bench mirror, got: %v", err)
+	}
+}
+
+// TestStageCardRefusesACardValueGitWouldReadAsAnOption holds the refusal of ideas#829: a
+// base-repo:, base-sha: or BASE: ref that starts with `-` is refused by name before any git
+// runs, and nothing is staged. The mirror that the card's repository resolves to exists, so
+// the refusal is the validation and not a missing mirror.
+func TestStageCardRefusesACardValueGitWouldReadAsAnOption(t *testing.T) {
+	t.Parallel()
+
+	const sha = "09fbedc9052145b20677501a1dbcb5f5ba9c87d4"
+	cases := []struct {
+		name string
+		card string
+		what string
+	}{
+		{"base-repo", "base-repo: --bogus\nbase-sha: " + sha + "\n", "base-repo"},
+		{"base-sha", "base-repo: /srv/repo.git\nbase-sha: --bogus\n", "base-sha"},
+		{"BASE ref", "base-repo: /srv/repo.git\nBASE: --bogus\n", "BASE ref"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+
+			root := t.TempDir()
+			mirror := filepath.Join(root, "home", "nova-bench", "mirror", "--bogus.git")
+			require.NoError(t, os.MkdirAll(mirror, 0o755))
+			target := filepath.Join(root, "jobs", "card-1", "repo")
+			res, err := StageCard(StageOptions{
+				Card:      []byte(c.card),
+				TargetDir: target,
+				JobDir:    filepath.Join(root, "jobs", "card-1"),
+				BenchHome: filepath.Join(root, "home"),
+				BenchName: "testhost",
+				Timeout:   30 * time.Second,
+			})
+			require.Error(t, err)
+			assert.False(t, res.Staged)
+			assert.Contains(t, err.Error(), "staging refused: "+c.what+` "--bogus" starts with '-'`)
+			assert.NoDirExists(t, target, "a refused stage left a checkout behind")
+		})
 	}
 }

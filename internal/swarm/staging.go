@@ -114,7 +114,7 @@ func StageCloneIdentity(repoDir string, id StagingIdentity) error {
 		{"core.hooksPath", "/dev/null"},
 	} {
 		out, err := gitrun.Combined(context.Background(), gitrun.Options{Dir: repoDir, Env: append(os.Environ(), StagingGitEnv(id)...)},
-			"config", "--local", kv[0], kv[1])
+			"config", "--local", "--", kv[0], kv[1])
 		if err != nil {
 			return fmt.Errorf("staging %s local %s: %v: %s", repoDir, kv[0], err, strings.TrimSpace(string(out)))
 		}
