@@ -34,6 +34,8 @@ func TestEveryProviderLaunchesThroughOneArgv(t *testing.T) {
 	standardLaunchers := map[string]bool{
 		"opencode":                true,
 		"/usr/local/bin/opencode": true,
+		"claude":                  true,
+		"/usr/local/bin/claude":   true,
 	}
 
 	// Per-provider scripts are bespoke launchers: a path with a slash that
@@ -242,4 +244,134 @@ func readProvidersTSV(raw string) ([]providerRow, error) {
 		})
 	}
 	return out, nil
+}
+
+// TestClaudeCodeLaunchArgv asserts that LaunchArgv for claude and anthropic returns
+// the expected Claude Code command line with {model} and {prompt} expanded.
+func TestClaudeCodeLaunchArgv(t *testing.T) {
+	t.Parallel()
+
+	want := []string{
+		"/usr/local/bin/claude",
+		"--dangerously-skip-permissions",
+		"--model", "anthropic/claude-sonnet-4",
+		"-p", "PROMPT.md",
+	}
+
+	for _, provider := range []string{"claude", "anthropic"} {
+		for _, goos := range []string{"linux", "darwin"} {
+			t.Run(provider+"/"+goos, func(t *testing.T) {
+				argv, err := LaunchArgv(provider, goos)
+				if err != nil {
+					t.Fatalf("LaunchArgv(%q, %q): %v", provider, goos, err)
+				}
+				if len(argv) != len(want) {
+					t.Fatalf("LaunchArgv(%q, %q) returned %d args, want %d: %v", provider, goos, len(argv), len(want), argv)
+				}
+				for i := range want {
+					if argv[i] != want[i] {
+						t.Errorf("argv[%d] = %q, want %q", i, argv[i], want[i])
+					}
+				}
+			})
+		}
+	}
+}
+
+// TestClaudeCodeLaunchArgvForCustomRequest asserts that LaunchArgvFor expands custom
+// model, prompt, and harness for claude and anthropic providers.
+func TestClaudeCodeLaunchArgvForCustomRequest(t *testing.T) {
+	t.Parallel()
+
+	for _, provider := range []string{"claude", "anthropic"} {
+		t.Run(provider, func(t *testing.T) {
+			req := LaunchRequest{
+				Harness: "/custom/bin/claude",
+				Model:   "anthropic/claude-sonnet-4",
+				Title:   "card-label",
+				Prompt:  "custom prompt text",
+			}
+			argv, err := LaunchArgvFor(provider, "linux", req)
+			if err != nil {
+				t.Fatalf("LaunchArgvFor(%q): %v", provider, err)
+			}
+			want := []string{
+				"/custom/bin/claude",
+				"--dangerously-skip-permissions",
+				"--model", "anthropic/claude-sonnet-4",
+				"-p", "custom prompt text",
+			}
+			if len(argv) != len(want) {
+				t.Fatalf("argv len %d != want %d: %v", len(argv), len(want), argv)
+			}
+			for i := range want {
+				if argv[i] != want[i] {
+					t.Errorf("argv[%d] = %q, want %q", i, argv[i], want[i])
+				}
+			}
+		})
+	}
+}
+
+// TestClaudeCodeLaunchRow asserts that claude and anthropic map to their own rows
+// rather than DefaultLaunchRow.
+func TestClaudeCodeLaunchRow(t *testing.T) {
+	t.Parallel()
+
+	if row := LaunchRow("claude"); row != "claude" {
+		t.Errorf("LaunchRow(\"claude\") = %q, want \"claude\"", row)
+	}
+	if row := LaunchRow("anthropic"); row != "anthropic" {
+		t.Errorf("LaunchRow(\"anthropic\") = %q, want \"anthropic\"", row)
+	}
+}
+
+// TestClaudeCodeNativeLaunchArgvIntegration asserts that the one launcher builds the
+// correct argv for Claude models without a per-provider script when called with the
+// shape cmd/nova-swarm nativeLaunchArgv produces.
+func TestClaudeCodeNativeLaunchArgvIntegration(t *testing.T) {
+	t.Parallel()
+
+	card := "RESULT: c1 sha=0123456789ab nova-tools fix: a card\nKIND: fix\n"
+	cardPrompt := CardPrompt([]byte(card))
+
+	for _, tc := range []struct {
+		provider string
+		model    string
+	}{
+		{provider: "claude", model: "claude/claude-sonnet-4"},
+		{provider: "anthropic", model: "anthropic/claude-sonnet-4"},
+	} {
+		t.Run(tc.provider, func(t *testing.T) {
+			row := LaunchRow(tc.provider)
+			if row != tc.provider {
+				t.Fatalf("LaunchRow(%q) = %q, want %q", tc.provider, row, tc.provider)
+			}
+			for _, goos := range []string{"linux", "darwin"} {
+				argv, err := LaunchArgvFor(row, goos, LaunchRequest{
+					Harness: "/usr/local/bin/claude",
+					Model:   tc.model,
+					Title:   "label-1",
+					Prompt:  cardPrompt,
+				})
+				if err != nil {
+					t.Fatalf("LaunchArgvFor: %v", err)
+				}
+				want := []string{
+					"/usr/local/bin/claude",
+					"--dangerously-skip-permissions",
+					"--model", tc.model,
+					"-p", cardPrompt,
+				}
+				if len(argv) != len(want) {
+					t.Fatalf("argv len %d != want %d: %v", len(argv), len(want), argv)
+				}
+				for i := range want {
+					if argv[i] != want[i] {
+						t.Errorf("argv[%d] = %q, want %q", i, argv[i], want[i])
+					}
+				}
+			}
+		})
+	}
 }

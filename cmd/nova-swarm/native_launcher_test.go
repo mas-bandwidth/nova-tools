@@ -88,3 +88,54 @@ func TestNativeLaunchCarriesTheResultFormat(t *testing.T) {
 		t.Fatalf("the launch prompt does not carry the RESULT-FORMAT paragraph after the card:\n%s", prompt)
 	}
 }
+
+// TestNativeLaunchClaudeCodeArgv verifies that running nativeLaunchArgv with a Claude model
+// (for both "claude" and "anthropic" providers) builds the expected Claude Code argv
+// without a per-provider script, expanding {model} and the card prompt.
+func TestNativeLaunchClaudeCodeArgv(t *testing.T) {
+	t.Parallel()
+
+	card := "RESULT: c1 sha=0123456789ab nova-tools fix: a card\nKIND: fix\n"
+	for _, tc := range []struct {
+		provider string
+		model    string
+	}{
+		{provider: "claude", model: "claude/claude-sonnet-4"},
+		{provider: "anthropic", model: "anthropic/claude-sonnet-4"},
+	} {
+		t.Run(tc.provider, func(t *testing.T) {
+			cfg := nativeRunConfig{
+				model: tc.model,
+				label: "claude-lbl",
+				card:  []byte(card),
+			}
+			argv, err := nativeLaunchArgv("/usr/local/bin/claude", cfg, tc.provider)
+			if err != nil {
+				t.Fatalf("nativeLaunchArgv: %v", err)
+			}
+			if len(argv) != 6 {
+				t.Fatalf("nativeLaunchArgv returned %d args, want 6: %v", len(argv), argv)
+			}
+			if argv[0] != "/usr/local/bin/claude" {
+				t.Errorf("argv[0] = %q, want /usr/local/bin/claude (no per-provider script)", argv[0])
+			}
+			if argv[1] != "--dangerously-skip-permissions" {
+				t.Errorf("argv[1] = %q, want --dangerously-skip-permissions", argv[1])
+			}
+			if argv[2] != "--model" {
+				t.Errorf("argv[2] = %q, want --model", argv[2])
+			}
+			if argv[3] != tc.model {
+				t.Errorf("argv[3] = %q, want %q", argv[3], tc.model)
+			}
+			if argv[4] != "-p" {
+				t.Errorf("argv[4] = %q, want -p", argv[4])
+			}
+			prompt := argv[5]
+			if !strings.HasPrefix(prompt, card) || !strings.Contains(prompt, "RESULT-FORMAT") {
+				t.Errorf("prompt does not contain card and RESULT-FORMAT: %q", prompt)
+			}
+		})
+	}
+}
+

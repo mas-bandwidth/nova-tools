@@ -4,3 +4,5 @@ deepseek	/usr/local/bin/opencode	/usr/local/bin/opencode	["run","--model","{mode
 opencode	/usr/local/bin/opencode	/usr/local/bin/opencode	["run","--model","{model}","--title","{title}","--","{prompt}"]	OPENCODE_API_KEY	opencode/deepseek-v4-flash
 inception	/usr/local/bin/opencode	/usr/local/bin/opencode	["run","--model","{model}","--title","{title}","--","{prompt}"]	INCEPTION_API_KEY	inception/mercury-2.5
 ollama	/usr/local/bin/opencode	/usr/local/bin/opencode	["run","--model","{model}","--title","{title}","--","{prompt}"]	OLLAMA_API_KEY	ollama/north-mini-code-32k	http://127.0.0.1:11434
+claude	/usr/local/bin/claude	/usr/local/bin/claude	["--dangerously-skip-permissions","--model","{model}","-p","{prompt}"]	ANTHROPIC_API_KEY	anthropic/claude-sonnet-4
+anthropic	/usr/local/bin/claude	/usr/local/bin/claude	["--dangerously-skip-permissions","--model","{model}","-p","{prompt}"]	ANTHROPIC_API_KEY	anthropic/claude-sonnet-4
