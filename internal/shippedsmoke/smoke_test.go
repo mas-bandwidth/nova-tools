@@ -10,6 +10,9 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // underCI says whether the run is a CI run: GitHub Actions sets both variables.
@@ -39,7 +42,7 @@ func shippedBin(t *testing.T) string {
 	bin, fatal, skip := resolveShippedBin(os.Getenv)
 	switch {
 	case fatal:
-		t.Fatal("NOTHING WAS SMOKED: NOVA_SHIPPED_BIN names no shipped nova-check binary, and under CI that is a red, never a skip; the certification smoke step must pass the variable")
+		require.Fail(t, "NOTHING WAS SMOKED: NOVA_SHIPPED_BIN names no shipped nova-check binary, and under CI that is a red, never a skip; the certification smoke step must pass the variable")
 	case skip:
 		t.Skip("SKIPPED, NOTHING WAS SMOKED: NOVA_SHIPPED_BIN names no shipped nova-check binary (outside CI this skips)")
 	}
@@ -68,9 +71,9 @@ func TestShippedBinUnsetIsRedUnderCIAndASkipOutsideIt(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			bin, fatal, skip := resolveShippedBin(func(k string) string { return tc.env[k] })
-			if bin != tc.bin || fatal != tc.fatal || skip != tc.skip {
-				t.Fatalf("got (%q, fatal %t, skip %t), want (%q, fatal %t, skip %t)", bin, fatal, skip, tc.bin, tc.fatal, tc.skip)
-			}
+			assert.Equal(t, tc.bin, bin)
+			assert.Equal(t, tc.fatal, fatal, "fatal")
+			assert.Equal(t, tc.skip, skip, "skip")
 		})
 	}
 }
@@ -97,24 +100,20 @@ func runBin(t *testing.T, bin string, args ...string) (string, int) {
 	if errors.As(err, &ee) {
 		return string(out), ee.ExitCode()
 	}
-	t.Fatalf("%s %s: %v", bin, strings.Join(args, " "), err)
+	require.NoError(t, err, "%s %s", bin, strings.Join(args, " "))
 	return "", -1
 }
 
 func write(t *testing.T, dir, name, body string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644))
 }
 
 // linkTo makes a symlink to dir in a directory of its own and returns its path.
 func linkTo(t *testing.T, dir string) string {
 	t.Helper()
 	link := filepath.Join(t.TempDir(), "link")
-	if err := os.Symlink(dir, link); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Symlink(dir, link))
 	return link
 }
 
@@ -131,15 +130,11 @@ func TestShipped(t *testing.T) {
 		write(t, tree, "NOTES.md", "# notes\n")
 		write(t, tree, "plain.txt", "plain text\n")
 		out, rc := runBin(t, bin, "nocode", "--dir", tree)
-		if rc != 0 {
-			t.Fatalf("want exit 0, got %d: %s", rc, out)
-		}
+		require.Equal(t, 0, rc, "want exit 0: %s", out)
 		// files=2 is the load-bearing half. `nocode` prints NOCODE OK and exits
 		// 0 for a tree it never opened, so exit 0 alone cannot tell a pass from
 		// a walk that scanned nothing.
-		if !strings.Contains(out, "files=2 clean") {
-			t.Fatalf("want files=2 clean, got: %s", out)
-		}
+		require.Contains(t, out, "files=2 clean")
 	})
 
 	t.Run("a symlinked --dir is resolved, not passed over", func(t *testing.T) {
@@ -153,12 +148,8 @@ func TestShipped(t *testing.T) {
 		write(t, real, "NOTES.md", "# n\n")
 		write(t, real, "tool.py", "print(1)\n")
 		out, rc := runBin(t, bin, "nocode", "--dir", linkTo(t, real))
-		if rc != 1 {
-			t.Fatalf("symlinked --dir: want exit 1, got %d: %s", rc, out)
-		}
-		if !strings.Contains(out, "tool.py") {
-			t.Fatalf("symlinked --dir: the tree was not walked: %s", out)
-		}
+		require.Equal(t, 1, rc, "symlinked --dir: want exit 1: %s", out)
+		require.Contains(t, out, "tool.py", "symlinked --dir: the tree was not walked")
 	})
 
 	t.Run("a symlinked --dir is resolved, not passed over (links)", func(t *testing.T) {
@@ -171,12 +162,8 @@ func TestShipped(t *testing.T) {
 		real := t.TempDir()
 		write(t, real, "a.md", "fine\n\n[gone](gone.md)\n")
 		out, rc := runBin(t, bin, "links", "--dir", linkTo(t, real))
-		if rc != 1 {
-			t.Fatalf("symlinked --dir: want exit 1, got %d: %s", rc, out)
-		}
-		if !strings.Contains(out, "a.md:3: gone.md (does not exist)") {
-			t.Fatalf("symlinked --dir: the tree was not walked: %s", out)
-		}
+		require.Equal(t, 1, rc, "symlinked --dir: want exit 1: %s", out)
+		require.Contains(t, out, "a.md:3: gone.md (does not exist)", "symlinked --dir: the tree was not walked")
 	})
 
 	t.Run("a tree that classified nothing says so", func(t *testing.T) {
@@ -186,12 +173,8 @@ func TestShipped(t *testing.T) {
 		// machinery; what must not vanish is the sentence telling an operator
 		// that nothing was classified.
 		out, rc := runBin(t, bin, "nocode", "--dir", t.TempDir())
-		if rc != 0 {
-			t.Fatalf("empty tree: want exit 0, got %d: %s", rc, out)
-		}
-		if !strings.Contains(out, "classified NOTHING") {
-			t.Fatalf("empty tree: the scanned==0 warning is gone: %s", out)
-		}
+		require.Equal(t, 0, rc, "empty tree: want exit 0: %s", out)
+		require.Contains(t, out, "classified NOTHING", "empty tree: the scanned==0 warning is gone")
 	})
 
 	t.Run("each condition refuses separately, with the right code and reason", func(t *testing.T) {
@@ -202,12 +185,8 @@ func TestShipped(t *testing.T) {
 		// collapsed every case into one spurious finding.
 		check := func(desc string, tree string, wantReason string) {
 			out, rc := runBin(t, bin, "nocode", "--dir", tree)
-			if rc != 1 {
-				t.Errorf("%s: want exit 1, got %d: %s", desc, rc, out)
-				return
-			}
-			if !strings.Contains(out, wantReason) {
-				t.Errorf("%s: want reason %q, got: %s", desc, wantReason, out)
+			if assert.Equal(t, 1, rc, "%s: want exit 1: %s", desc, out) {
+				assert.Contains(t, out, wantReason, desc)
 			}
 		}
 
@@ -219,9 +198,7 @@ func TestShipped(t *testing.T) {
 		exe := t.TempDir()
 		write(t, exe, "NOTES.md", "# n\n")
 		write(t, exe, "thing", "not a script\n")
-		if err := os.Chmod(filepath.Join(exe, "thing"), 0o755); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.Chmod(filepath.Join(exe, "thing"), 0o755))
 		check("executable bit", exe, "executable (mode")
 
 		she := t.TempDir()
@@ -237,38 +214,28 @@ func TestShipped(t *testing.T) {
 		// and a file that is not a regular file at all, must be FINDINGS rather
 		// than passes. Making a file less readable must never make this gate
 		// greener.
-		if os.Getuid() == 0 {
-			// FAIL rather than skip. The hosted runners are non-root, so this
-			// firing means the environment changed under us, and a silent skip
-			// would turn the headline fail-open assertion into a no-op behind a
-			// green check.
-			t.Fatal("running as root: chmod cannot refuse a read, so this assertion cannot run")
-		}
+		// FAIL rather than skip. The hosted runners are non-root, so this
+		// firing means the environment changed under us, and a silent skip
+		// would turn the headline fail-open assertion into a no-op behind a
+		// green check.
+		require.NotEqual(t, 0, os.Getuid(), "running as root: chmod cannot refuse a read, so this assertion cannot run")
 		unreadable := t.TempDir()
 		write(t, unreadable, "NOTES.md", "# n\n")
 		write(t, unreadable, "secret", "x\n")
 		secret := filepath.Join(unreadable, "secret")
-		if err := os.Chmod(secret, 0); err != nil {
-			t.Fatal(err)
-		}
-		defer os.Chmod(secret, 0o644)
+		require.NoError(t, os.Chmod(secret, 0))
+		defer func() { assert.NoError(t, os.Chmod(secret, 0o644)) }()
 		out, rc := runBin(t, bin, "nocode", "--dir", unreadable)
-		if rc != 1 {
-			t.Errorf("unreadable: want exit 1, got %d: %s", rc, out)
-		} else if !strings.Contains(out, "cannot rule out machinery") {
-			t.Errorf("unreadable: wrong reason: %s", out)
+		if assert.Equal(t, 1, rc, "unreadable: want exit 1: %s", out) {
+			assert.Contains(t, out, "cannot rule out machinery", "unreadable: wrong reason")
 		}
 
 		fifo := t.TempDir()
 		write(t, fifo, "NOTES.md", "# n\n")
-		if err := makeFifo(filepath.Join(fifo, "pipe.sh")); err != nil {
-			t.Fatalf("mkfifo: %v", err)
-		}
+		require.NoError(t, makeFifo(filepath.Join(fifo, "pipe.sh")), "mkfifo")
 		out, rc = runBin(t, bin, "nocode", "--dir", fifo)
-		if rc != 1 {
-			t.Errorf("fifo: want exit 1, got %d: %s", rc, out)
-		} else if !strings.Contains(out, "not a regular file") {
-			t.Errorf("fifo: wrong reason: %s", out)
+		if assert.Equal(t, 1, rc, "fifo: want exit 1: %s", out) {
+			assert.Contains(t, out, "not a regular file", "fifo: wrong reason")
 		}
 	})
 
@@ -283,11 +250,7 @@ func TestShipped(t *testing.T) {
 		tree := t.TempDir()
 		write(t, tree, "NOTES.md", "# n\n")
 		out, rc := runBin(t, bin, "nocode", "--dir", tree, "--deny-ext", "@no-such-deny-list.txt")
-		if rc != 2 {
-			t.Fatalf("want exit 2, got %d: %s", rc, out)
-		}
-		if !strings.Contains(out, "deny-list file: open no-such-deny-list.txt") {
-			t.Fatalf("wrong message: %s", out)
-		}
+		require.Equal(t, 2, rc, "want exit 2: %s", out)
+		require.Contains(t, out, "deny-list file: open no-such-deny-list.txt", "wrong message")
 	})
 }

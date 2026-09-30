@@ -12,6 +12,7 @@
 //
 //	go test -tags shippedsmoke -count=1 -v ./internal/shippedsmoke
 //
-// on ubuntu, macos and windows. The package has no dependencies beyond the
-// standard library, so the job's Go compile stays inside its two minutes.
+// on ubuntu, macos and windows. The package's one dependency beyond the
+// standard library is testify, and the job restores the Go build cache, so the
+// job's Go compile stays inside its two minutes.
 package shippedsmoke

@@ -380,7 +380,7 @@ jobs:
       - name: set up Go, to run the smoke assertions
         id: setup_go
         # The assertions are a Go test against the shipped executable
-        # (internal/shippedsmoke), which has no dependency beyond the standard library; the
+        # (internal/shippedsmoke), whose one dependency beyond the standard library is testify; the
         # binary under test is the artifact's, never one this toolchain builds.
         uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:

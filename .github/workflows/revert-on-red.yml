@@ -18,6 +18,11 @@
 #   * the parent commit's ci run was not green -> the red predates this push
 #   * main has moved past this commit          -> the newer run decides
 #
+# A GitHub API call that fails (the parent's run, the failed run's jobs, the merged pull
+# request, the comment, the rerun) is NEVER one of those skips: the verb exits red and files
+# one issue naming the call, so a person decides what the verb could not ask. This workflow
+# has `issues: write` for that issue.
+#
 # Everything else is the plain "stop the red" path. The repository ruleset is
 # the one manual step this may need: it must let the github-actions app push
 # to main or open a revert/<sha> pull request (see docs/CONTRIBUTING.md).
@@ -75,6 +80,32 @@ jobs:
           go-version-file: .revert-tool/go.mod
           cache: false
 
+      - name: restore the go build and module cache
+        id: gocache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-gorevert-${{ hashFiles('.revert-tool/go.mod') }}
+          restore-keys: |
+            ${{ runner.os }}-gorevert-
+
+      - name: build the revert tool once
+        # Built ONCE, from dev's tip, before the verb runs; the step after calls the binary.
+        shell: bash
+        run: go -C .revert-tool build -o "$RUNNER_TEMP/ci" ./tools/ci
+
+      - name: save the go build and module cache
+        # On a miss or a restore-keys fallback only, before the verb, as ci.yml's test-hosted does.
+        if: steps.gocache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ steps.gocache.outputs.cache-primary-key }}
+
       - name: revert the push that turned main red
         # On the first attempt of the run it re-runs the failed jobs once and stops (the flake
         # guard); on the rerun's own completion (run_attempt 2) it reverts.
@@ -84,5 +115,4 @@ jobs:
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
           RUN_ID: ${{ github.event.workflow_run.id }}
         run: |
-          go -C .revert-tool build -o "$RUNNER_TEMP/ci" ./tools/ci
           "$RUNNER_TEMP/ci" revert-on-red --run-attempt "${{ github.event.workflow_run.run_attempt }}"
