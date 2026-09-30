@@ -997,7 +997,8 @@ do
         if not stage('ZADD', ekey(ctx, queue, e), 'zset', args) then return poison end
       end
     end
-    local parked = tbl(sp.sprint and sp.sprint.park)
+    local parked = {}
+    for _, k in ipairs(tbl(sp.sprint and sp.sprint.park)) do parked[k.key] = true end
     local by_queue = {[KEY_AGENDA] = {}, [KEY_HELDQ] = {}}
     for _, k in ipairs(sorted_unique(tbl(sp.done))) do
       if parked[k] == nil then table.insert(by_queue[queue_of(k)], k) end

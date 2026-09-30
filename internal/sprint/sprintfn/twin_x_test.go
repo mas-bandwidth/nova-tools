@@ -381,7 +381,7 @@ func xQuarantineStep(gen uint64, ids map[string]string) *Request {
 		subjects = append(subjects, id)
 	}
 	r.Body.Notes = []NoteReq{{Op: "open", Type: "invariant", Cause: "drift", Subjects: subjects}}
-	r.Sprint = &SprintPart{}
+	r.Sprint = &SprintPart{Quarantine: append([]Quarantined(nil), r.Body.Quarantine...)}
 	return r
 }
 
@@ -580,7 +580,7 @@ func TestXAgendaEdits(t *testing.T) {
 	req := xTick(1)
 	req.Body.Done = []string{"ask@48213", "resolve:s1", "held@50", "needs:n1", "needs:n1", "absent-key"}
 	req.Body.Requeue = []string{"ask@48213+2000", "deal", "held@50+2000"}
-	req.Sprint = &SprintPart{Park: map[string]string{"needs:n1": "n7"}}
+	req.Sprint = &SprintPart{Park: []ParkedKey{{Key: "needs:n1", Code: "LIMIT"}}}
 	h.applies("the edits", req)
 
 	agenda, held := h.zset("agenda@0"), h.zset("heldq@0")

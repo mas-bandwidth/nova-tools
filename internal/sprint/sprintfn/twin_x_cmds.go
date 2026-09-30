@@ -665,8 +665,8 @@ func xAgendaCmds(prefix string, carry *xCarry) []Cmd {
 	}
 	parked := map[string]bool{}
 	if req.Sprint != nil {
-		for k := range req.Sprint.Park {
-			parked[k] = true
+		for _, pk := range req.Sprint.Park {
+			parked[pk.Key] = true
 		}
 	}
 	byQueue := map[string][]string{}
