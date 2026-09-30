@@ -4,16 +4,61 @@ if NS.tset_profile then
   local S = NS.tset
   local MAX_RANK = '9007199254740991'
   local MAX_REPLY = 8388608
-  local trusted_readcmd
+  local trusted_readcmd, begin_query, load_current_defs
   -- Redis runs one Function callback at a time. Core clears this one private
   -- slot on context replacement and on every protected entrypoint exit.
-  local private_ctx, probe_prefixes, encoded_ledger
-  S.bind_read_helpers(function(readcmd)
+  local private_ctx, probe_prefixes, encoded_ledger, private_defs,
+    public_defs, private_active_epoch, private_space, private_request_epoch
+  S.bind_read_helpers(function(readcmd, begin, load_defs)
     trusted_readcmd = readcmd
+    begin_query = begin
+    load_current_defs = load_defs
     return function()
       private_ctx, probe_prefixes, encoded_ledger = nil, nil, nil
+      private_defs, public_defs, private_active_epoch = nil, nil, nil
+      private_space, private_request_epoch = nil, nil
     end
   end)
+
+  local function copy_value(value)
+    if type(value) ~= 'table' then return value end
+    local copied = S.is_array(value) and S.array() or {}
+    for key, item in pairs(value) do copied[key] = copy_value(item) end
+    return copied
+  end
+
+  local function same_value(current, saved, depth)
+    if type(current) ~= type(saved) then return false end
+    if type(saved) ~= 'table' then return current == saved end
+    if depth > 8 or S.is_array(current) ~= S.is_array(saved) then return false end
+    for key, item in pairs(saved) do
+      if not same_value(current[key], item, depth + 1) then return false end
+    end
+    for key in pairs(current) do if saved[key] == nil then return false end end
+    return true
+  end
+
+  local function defs_intact(ctx)
+    if ctx ~= private_ctx or ctx.defs ~= public_defs or not private_defs then return false end
+    for t, def in pairs(private_defs) do
+      if not same_value(ctx.defs[t], def, 0) then return false end
+    end
+    for t in pairs(ctx.defs) do if not private_defs[t] then return false end end
+    return true
+  end
+
+  local function table_prefix(t, epoch)
+    return private_space .. 'table:' .. t ..
+      (epoch == '0' and '' or ':' .. epoch)
+  end
+
+  local function rows_key(t, epoch)
+    return table_prefix(t, epoch) .. ':rows'
+  end
+
+  local function cell_key(t, epoch, row, col)
+    return table_prefix(t, epoch) .. ':cell:' .. row .. ':' .. col
+  end
 
   local function ledger(ctx)
     if ctx ~= private_ctx then return nil end
@@ -106,8 +151,8 @@ if NS.tset_profile then
     if structural_key(ctx, key) then return false, nil end
     local prefixes = probe_prefixes
     if not prefixes then
-      local catalog_key = ctx.request_epoch == ctx.active_epoch and
-        ctx.epoch_key or ctx.space .. 'sprint:epoch@' .. ctx.request_epoch
+      local catalog_key = private_request_epoch == private_active_epoch and
+        ctx.epoch_key or private_space .. 'sprint:epoch@' .. private_request_epoch
       local encoded, err = checked(ctx, {'HGET', catalog_key, 'tables'},
         catalog_key, 'hash', 2048, 'metadata')
       if err then return nil, indexed(err, index) end
@@ -261,23 +306,28 @@ if NS.tset_profile then
         not string.match(t, '^[A-Za-z0-9_][A-Za-z0-9_.-]*$') then
       return nil, fail('REQUEST', index, t)
     end
-    local def = ctx.defs[t]
-    if def then return def, nil end
-    if ctx.request_epoch == ctx.active_epoch then
-      local ok, err = S.load_defs(ctx, t)
+    if not defs_intact(ctx) then return nil, fail('CONFIG', index, t) end
+    local def = private_defs[t]
+    if def then return copy_value(def), nil end
+    if private_request_epoch == private_active_epoch then
+      local ok, err = load_current_defs(ctx, t)
       if err then return nil, err end
-      def = ctx.defs[t]
+      for name, loaded in pairs(ctx.defs) do
+        if not private_defs[name] then private_defs[name] = copy_value(loaded) end
+      end
+      def = private_defs[t]
       if not def then return nil, fail('NOTABLE', index, t) end
-      return def, nil
+      if not defs_intact(ctx) then return nil, fail('CONFIG', index, t) end
+      return copy_value(def), nil
     end
     local total = 0
-    for _ in pairs(ctx.defs) do total = total + 1 end
+    for _ in pairs(private_defs) do total = total + 1 end
     if total >= 4 then
       return nil, S.refuse('LIMIT', {query_index = index, table = t,
         ids = empty(), cells = empty(), rows = empty(),
         budget = 'tables', actual = total + 1, limit = 4})
     end
-    local key = ctx.definition_key(t, ctx.request_epoch)
+    local key = table_prefix(t, private_request_epoch) .. ':definition'
     local raw, err = checked(ctx, {'HGETALL', key}, key, 'hash', 49152, 'metadata')
     if err then return nil, err end
     if #raw == 0 then
@@ -289,13 +339,12 @@ if NS.tset_profile then
     def, err = S.definition(ctx, t, values)
     if err then return nil, err end
     ctx.defs[t] = def
-    return def, nil
+    private_defs[t] = copy_value(def)
+    return copy_value(private_defs[t]), nil
   end
 
   local function table_def(ctx, t, index)
-    local def = ctx.defs[t]
-    if not def then return nil, fail('NOTABLE', index, t) end
-    return def, nil
+    return S.ensure_read_table(ctx, t, index)
   end
 
   local function rank_valid(v)
@@ -311,18 +360,18 @@ if NS.tset_profile then
     if not row or not def.column_set[col] then
       return nil, fail(not row and 'REQUEST' or 'NOCOL', index, t, nil, name)
     end
-    local rows_key = ctx.rows_key(t, ctx.request_epoch)
-    local cached = ctx.row_scores[rows_key]
-    if not cached then cached = {}; ctx.row_scores[rows_key] = cached end
+    local key = rows_key(t, private_request_epoch)
+    local cached = ctx.row_scores[key]
+    if not cached then cached = {}; ctx.row_scores[key] = cached end
     local rank = cached[row]
     if rank == nil then
-      rank, err = checked(ctx, {'ZSCORE', rows_key, row}, rows_key, 'zset', 32, 'cell')
+      rank, err = checked(ctx, {'ZSCORE', key, row}, key, 'zset', 32, 'cell')
       if err then return nil, err end
       cached[row] = rank
     end
     if rank == false or rank == nil then return nil, fail('NOROW', index, t, nil, name) end
     if not rank_valid(rank) then return nil, fail('DRIFT', index, t, nil, name) end
-    return ctx.cell_key(t, ctx.request_epoch, row, col), nil
+    return cell_key(t, private_request_epoch, row, col), nil
   end
 
   local function record(ctx, t, id, requested, index)
@@ -497,7 +546,7 @@ if NS.tset_profile then
   local function rows(ctx, q, index)
     local _, err = table_def(ctx, q.t, index)
     if err then return nil, err end
-    local key = ctx.rows_key(q.t, ctx.request_epoch)
+    local key = rows_key(q.t, private_request_epoch)
     local count
     count, err = checked(ctx, {'ZCARD', key}, key, 'zset', 32, 'cell')
     if err then return nil, err end
@@ -583,6 +632,7 @@ if NS.tset_profile then
       ctx.read_emit = nil
       state.emit = nil
       if not valid_emit then return nil, fail('CONFIG', index) end
+      if not defs_intact(ctx) then return nil, fail('CONFIG', index) end
       if ctx.budget ~= budget then return nil, fail('CONFIG', index) end
       for name, value in pairs(prior) do
         if type(budget[name]) ~= 'number' or budget[name] < value then
@@ -629,9 +679,12 @@ if NS.tset_profile then
     ctx, err = S.context(request, 'read')
     if err then return S.json.encode(err) end
     private_ctx, probe_prefixes, encoded_ledger = ctx, nil, {bytes = 512}
+    private_space, private_request_epoch = ctx.space, ctx.request_epoch
     local opened
     opened, err = S.open_state(ctx)
     if err then return S.json.encode(err) end
+    public_defs, private_defs, private_active_epoch = ctx.defs, {}, ctx.active_epoch
+    for t, def in pairs(ctx.defs) do private_defs[t] = copy_value(def) end
     local now
     now, err = S.readcmd(ctx, {argv = {'TIME'}, access = {}}, 64, 'metadata')
     if err then return S.json.encode(err) end
@@ -639,7 +692,10 @@ if NS.tset_profile then
     local answers = empty()
     for n, q in ipairs(request.queries) do
       local result
-      ctx.query_index = n - 1
+      local begun
+      begun, err = begin_query(ctx, n - 1)
+      if err then return S.json.encode(observed_epoch(err, ctx, n - 1)) end
+      if not begun then return S.json.encode(fail('CONFIG', n - 1)) end
       result, err = answer(ctx, q, n - 1, log_reader, extension, extension_kinds)
       if err then
         return S.json.encode(observed_epoch(err, ctx, n - 1))

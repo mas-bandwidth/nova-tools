@@ -5,17 +5,21 @@ NS.tset = {}
 do
   local S = NS.tset
   local current_ctx,current_seal
-  local read_cleanup
+  local read_cleanup,log_cleanup
+  local bindings_open=true
+  local log_bound=false
   local scope_active=false
   local callback_depth=0
   local active_callback_ctx
   local original_unchanged
+  local load_defs
   S.profile = NS.tset_profile
   S.limits = {request_bytes=4194304,read_request_bytes=4194304,entries=256,queries=1024,
     ids_per_entry=2000,member_candidates=2000,guard_members=4000,rows=100,advance_rows=1024,
     field_names=128,field_value=65536,result=4096,intent=65536,notes=100,about=4000,
     commands=65536,argv_bytes=8388608,fetched_bytes=8388608,cell=20000,
     read_fields=1280000,write_fields=768000,record=10000,range_id=20000,log_id=200000}
+  local fetched_cap=S.limits.fetched_bytes
 
   function S.refuse(code, detail, message)
     detail = detail or {}
@@ -45,9 +49,10 @@ do
     local window=saved and saved.callback
     if callback_depth>0 and (ctx~=active_callback_ctx or not original_unchanged(ctx)) then return nil,S.refuse('CONFIG') end
     if not window then return true,nil end
+    if ctx.query_index~=window.index then return nil,S.refuse('CONFIG') end
     if ctx.budget~=window.budget then return nil,S.refuse('CONFIG') end
     for key,value in pairs(ctx.budget) do
-      if type(value)~='number' or value<0 or value~=math.floor(value) then return nil,S.refuse('CONFIG') end
+      if type(value)~='number' or value<0 or value==math.huge or value~=math.floor(value) then return nil,S.refuse('CONFIG') end
     end
     for key,floor in pairs(window.floors) do
       if type(ctx.budget[key])~='number' or ctx.budget[key]<floor then return nil,S.refuse('CONFIG') end
@@ -114,11 +119,14 @@ do
       local notes=saved.notes
       if not notes or ctx.notes~=notes or ctx.notes_array~=notes or ctx.request.notes~=notes then return false end
       if not prefix_equal(ctx.request.entries,saved.request.entries) or not prefix_equal(ctx.notes,saved.request.notes) then return false end
+      if saved.planned and (not equal_value(ctx.request.entries,saved.planned.entries) or
+          not equal_value(ctx.notes,saved.planned.notes)) then return false end
     elseif ctx.operation=='read' then
       -- A read has no append-only planning phase. Keep the exact validated
       -- request and its identity so replacing ctx.request cannot hide edits
       -- to the original array that the reader is still iterating.
       if ctx.request~=saved.read_request or not equal_value(ctx.request,saved.request) then return false end
+      if saved.read_active_epoch and ctx.active_epoch~=saved.read_active_epoch then return false end
     end
     if saved.opened and (ctx.raw_request~=saved.raw_request or ctx.request_hash~=saved.request_hash or
         ctx.active_epoch~=saved.active_epoch or ctx.now_ms~=saved.now_ms) then return false end
@@ -127,6 +135,7 @@ do
   local function clear_context()
     current_ctx=nil;current_seal=nil
     if read_cleanup then read_cleanup() end
+    if log_cleanup then log_cleanup() end
   end
   function S.release_context(ctx)
     if callback_depth>0 then return nil,S.refuse('CONFIG') end
@@ -136,6 +145,7 @@ do
   end
   function S.run_context(fn,...)
     if scope_active or callback_depth>0 then return S.json.encode(S.refuse('CONFIG')) end
+    bindings_open=false
     clear_context()
     scope_active=true
     local ok,result=pcall(fn,...)
@@ -146,6 +156,7 @@ do
   end
   function S.context(request, operation)
     if callback_depth>0 then return nil,S.refuse('CONFIG') end
+    bindings_open=false
     clear_context()
     local space = request.space
     local original_note_count = request.notes and #request.notes or 0
@@ -279,20 +290,79 @@ do
     if callback_depth>0 then return nil,S.refuse('CONFIG') end
     return readcmd(ctx,descriptor,reserve_bytes,probe_kind)
   end
+  local function begin_query(ctx,index)
+    local saved=ctx==current_ctx and current_seal or nil
+    if callback_depth>0 or not saved or saved.fields.operation~='read' or
+        not original_unchanged(ctx) or type(index)~='number' or index~=math.floor(index) or
+        index<0 or index>=#saved.request.queries or index~=(saved.dispatch_index or -1)+1 then
+      return nil,S.refuse('CONFIG')
+    end
+    if saved.dispatch_index==nil then saved.read_active_epoch=ctx.active_epoch end
+    saved.dispatch_index=index
+    ctx.query_index=index
+    return true,nil
+  end
   -- Installed once by the read fragment. Only its lexical helpers receive
-  -- the private read closure; extensions cannot recover it from their ctx.
+  -- the private read/dispatch closures; extensions cannot recover them.
   function S.bind_read_helpers(factory)
     S.bind_read_helpers=nil
+    if not bindings_open then error('tset read helpers must bind during initialization',0) end
     read_cleanup=factory(function(ctx,descriptor,reserve_bytes,probe_kind)
       if callback_depth>0 then return readcmd(ctx,descriptor,reserve_bytes,probe_kind) end
       return S.readcmd(ctx,descriptor,reserve_bytes,probe_kind)
+    end,begin_query,function(ctx,t)
+      local saved=ctx==current_ctx and current_seal or nil
+      if not saved or saved.fields.operation~='read' or not original_unchanged(ctx) or
+          saved.dispatch_index==nil or ctx.query_index~=saved.dispatch_index or
+          saved.fields.request_epoch~=saved.read_active_epoch then return nil,S.refuse('CONFIG') end
+      local _,err=budget_monotone(ctx,false);if err then return nil,err end
+      return load_defs(ctx,t)
     end)
+  end
+  -- L2 owns the line reservation. Its separate initializer receives only
+  -- exact-line authority, never the reader's arbitrary-descriptor closure.
+  function S.bind_log_helpers(line_raw_reservation,factory)
+    S.bind_log_helpers=nil
+    if not bindings_open or log_bound then error('tset log helpers must bind once during initialization',0) end
+    log_bound=true
+    if type(line_raw_reservation)~='number' or line_raw_reservation~=line_raw_reservation or
+        line_raw_reservation<=0 or line_raw_reservation>fetched_cap or
+        line_raw_reservation~=math.floor(line_raw_reservation) or type(factory)~='function' then
+      error('tset log helpers require a bounded positive integer reservation and factory',0)
+    end
+    local function authorize_line(ctx,seq,index)
+      local saved=ctx==current_ctx and current_seal or nil
+      if not saved or saved.fields.operation~='read' or not original_unchanged(ctx) or
+          saved.dispatch_index==nil or index~=saved.dispatch_index or ctx.query_index~=index or
+          (callback_depth>0 and (ctx~=active_callback_ctx or not saved.callback or saved.callback.index~=index)) then
+        return nil,S.refuse('CONFIG')
+      end
+      local _,err=budget_monotone(ctx,false);if err then return nil,err end
+      if type(seq)~='string' or not S.uint(seq) or seq=='0' or S.cmp(seq,'9007199254740991')>0 then
+        return nil,S.refuse('REQUEST',{query_index=index})
+      end
+      return saved.fields.space..'sprint:log@'..saved.fields.request_epoch,nil
+    end
+    local function read_line_raw(ctx,seq,index)
+      local key,err=authorize_line(ctx,seq,index)
+      if err then return nil,err,false end
+      if fetched_cap-ctx.budget.fetched_bytes<line_raw_reservation then return nil,nil,true end
+      local value
+      value,err=readcmd(ctx,{argv={'XRANGE',key,seq..'-0',seq..'-0','COUNT','1'},
+        access={{key=key,kind='stream',mode='read'}}},line_raw_reservation,'log')
+      return value,err,false
+    end
+    local cleanup=factory(authorize_line,read_line_raw)
+    if type(cleanup)~='function' then error('tset log helpers require a cleanup function',0) end
+    log_cleanup=cleanup
   end
   function S.read_callback(ctx,fn,q,index)
     local saved=ctx==current_ctx and current_seal or nil
-    if callback_depth>0 or not saved or saved.callback or not original_unchanged(ctx) then return nil,S.refuse('CONFIG') end
+    if callback_depth>0 or not saved or saved.callback or not original_unchanged(ctx) or
+        saved.fields.operation~='read' or saved.dispatch_index==nil or
+        index~=saved.dispatch_index or ctx.query_index~=index then return nil,S.refuse('CONFIG') end
     local floors={};for key,value in pairs(ctx.budget) do floors[key]=value end
-    saved.callback={floors=floors,budget=ctx.budget}
+    saved.callback={floors=floors,budget=ctx.budget,index=index}
     callback_depth=callback_depth+1
     active_callback_ctx=ctx
     local ok,value,problem=pcall(fn,ctx,q,index)
@@ -369,7 +439,7 @@ do
     local cache=ctx.before[t]; if not cache then cache={};ctx.before[t]=cache end
     local answer={}
     for _,id in ipairs(ids) do
-      local key=ctx.record_key(t,id)
+      local key=ctx.operation=='read' and def.member_prefix..id or ctx.record_key(t,id)
       local rec=cache[id]
       local err
       if not rec then
@@ -393,7 +463,11 @@ do
             local row,col=S.cell(vals[3])
             if not row or not def.column_set[col] then return nil,S.refuse('DRIFT',{table=t,ids={id}}) end
             rec.place={row=row,col=col}
-            local rowskey=ctx.rows_key(t,rec.epoch)
+            local read_prefix
+            if ctx.operation=='read' then
+              read_prefix=current_seal.fields.space..'table:'..t..(rec.epoch=='0' and '' or ':'..rec.epoch)
+            end
+            local rowskey=read_prefix and read_prefix..':rows' or ctx.rows_key(t,rec.epoch)
             ctx.row_scores[rowskey]=ctx.row_scores[rowskey] or {}
             local rank=ctx.row_scores[rowskey][row]
             if rank==nil then
@@ -402,7 +476,8 @@ do
               ctx.row_scores[rowskey][row]=rank
             end
             if not rank then return nil,S.refuse('DRIFT',{table=t,ids={id},rows={row}}) end
-            local score;score,err=rd(ctx,{'ZSCORE',ctx.cell_key(t,rec.epoch,row,col),id},'zset',32,'cell')
+            local cellkey=read_prefix and read_prefix..':cell:'..row..':'..col or ctx.cell_key(t,rec.epoch,row,col)
+            local score;score,err=rd(ctx,{'ZSCORE',cellkey,id},'zset',32,'cell')
             if err then return nil,err end
             if not score then return nil,S.refuse('DRIFT',{table=t,ids={id},cells={vals[3]}}) end
             if not S.score(score) then return nil,S.refuse('DRIFT',{table=t,ids={id}}) end
@@ -457,7 +532,7 @@ do
       return found[id],cached.whole_names,nil
     end
     local ok;ok,err=S.charge(ctx,'record',1);if err then return nil,nil,err end
-    local key=ctx.record_key(t,id)
+    local key=def.member_prefix..id
     local size=cached and cached.hash_size
     if not size then size,err=rd(ctx,{'HLEN',key},'hash',32,'record');if err then return nil,nil,err end end
     if size>131 then return nil,nil,S.refuse('DRIFT',{table=t,ids={id}}) end
@@ -525,6 +600,7 @@ do
     return ctx.request.fence==(ctx.original_fence and true or nil)
   end
   function S.plan(ctx)
+    if callback_depth>0 or ctx.operation~='step' then return nil,S.refuse('CONFIG') end
     if not original_unchanged(ctx) then return nil,S.refuse('REQUEST') end
     if not fence_unchanged(ctx) or ctx.original_fence then return nil,S.refuse('REQUEST') end
     -- Preplanners may append notes, but replacing either shared array loses
@@ -685,6 +761,7 @@ do
     end
     local ok;ok,err=S.rows_plan(ctx,topo,plan);if err then return nil,err end
     if ctx.write_epoch~=ctx.request_epoch then ok,err=S.advance_plan(ctx,plan);if err then return nil,err end end
+    current_seal.planned={entries=copy_value(ctx.request.entries),notes=copy_value(ctx.notes)}
     return plan,nil
   end
 
@@ -720,7 +797,7 @@ do
         epoch_key=h.epoch_key,epoch_field=h.epoch_field,raw=h},nil
   end
 
-  function S.load_defs(ctx,extra_t)
+  load_defs=function(ctx,extra_t)
     local names,seen={},{}
     if extra_t then
       if type(extra_t)~='string' or #extra_t>256 or not string.match(extra_t,'^[A-Za-z0-9_][A-Za-z0-9_.-]*$') then return nil,S.refuse('REQUEST') end
@@ -754,7 +831,7 @@ do
       if not ctx.defs[name] then
       total=total+1
       if total>4 then return nil,S.refuse('LIMIT',{budget='tables',actual=total,limit=4}) end
-      local key=ctx.table_key(name)
+      local key=ctx.operation=='read' and ctx.space..'table:'..name or ctx.table_key(name)
       local n,err=rd(ctx,{'HLEN',key},'hash',32,'metadata');if err then return nil,err end
       if n==0 then
         local detail={table=name}
@@ -772,6 +849,12 @@ do
       end
     end
     return true,nil
+  end
+  function S.load_defs(ctx,extra_t)
+    if callback_depth>0 then return nil,S.refuse('CONFIG') end
+    if ctx.operation=='read' and (ctx~=current_ctx or ctx.request_epoch~=ctx.active_epoch or
+        not original_unchanged(ctx)) then return nil,S.refuse('CONFIG') end
+    return load_defs(ctx,extra_t)
   end
 
   -- This registry is intentionally closed. Adding a command requires proving
@@ -832,8 +915,24 @@ do
     return true,nil
   end
   function S.prepare(ctx,table_plan,log_plan,other_plans)
+    if callback_depth>0 or ctx.operation~='step' then return nil,S.refuse('CONFIG') end
     if not original_unchanged(ctx) then return nil,S.refuse('REQUEST') end
     if not fence_unchanged(ctx) then return nil,S.refuse('REQUEST') end
+    local function aligned(value,count)
+      if type(value)~='table' or #value~=count then return false end
+      for key in pairs(value) do
+        if type(key)~='number' or key~=math.floor(key) or key<1 or key>count then return false end
+      end
+      for i=1,count do if value[i]==nil then return false end end
+      return true
+    end
+    local entries,notes=ctx.request.entries,ctx.notes
+    if not current_seal.planned and (#entries>0 or #notes>0) then return nil,S.refuse('REQUEST') end
+    if type(table_plan)~='table' or not aligned(table_plan.changed_per_entry,#entries) then return nil,S.refuse('REQUEST') end
+    if ctx.profile~='l1_only' and (type(log_plan)~='table' or
+        (not (log_plan.note_seqs==nil and #notes==0) and not aligned(log_plan.note_seqs,#notes))) then
+      return nil,S.refuse('REQUEST')
+    end
     local commands={}
     local function append(plan)
       if type(plan)~='table' or type(plan.commands)~='table' then return nil,S.refuse('REQUEST') end
@@ -903,6 +1002,7 @@ do
   -- Enclosing callers must take this path immediately after open/replay, before
   -- invoking any preplanner. The prepared plan has only the done receipt write.
   function S.fence_prepare(ctx)
+    if callback_depth>0 or ctx.operation~='step' then return nil,S.refuse('CONFIG') end
     if not original_unchanged(ctx) then return nil,S.refuse('REQUEST') end
     if ctx.operation~='step' or not ctx.original_fence or ctx.replay or
         not fence_unchanged(ctx) or ctx.request.space~=ctx.space or

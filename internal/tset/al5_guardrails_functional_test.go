@@ -357,3 +357,165 @@ func TestAL5WholeRecordUsesOneLengthAndDirectFetch(t *testing.T) {
 		t.Error("whole-record read changed the whole Redis image")
 	}
 }
+
+// This callback names its table dynamically, so retained open_state has no
+// top-level table name to preload. It tests that callback-visible definitions
+// cannot replace the retained snapshot used by the point reader.
+const al5DefinitionSealProbeLua = `
+redis.register_function('ns_tset_al5_definition_seal_probe',function(keys,args)
+  local S=NS.tset
+  if #keys~=0 or #args~=3 then return S.json.encode(S.refuse('ARGS')) end
+  local mode=args[3]
+  local extension={kinds={'defseal'}}
+  extension.validate=function(q,index)
+    if not S.is_object(q) or q.kind~='defseal' then
+      return nil,S.refuse('REQUEST',{query_index=index})
+    end
+    for key in pairs(q) do
+      if key~='kind' then return nil,S.refuse('REQUEST',{query_index=index}) end
+    end
+    return true,nil
+  end
+  extension.read=function(ctx,q,index)
+    if mode=='public_load' then
+      local _,err=S.load_defs(ctx,'work')
+      return nil,err
+    end
+    if mode=='injected_def' then
+      ctx.defs.work={member_prefix=ctx.space..'member:work_live:'}
+    elseif mode=='returned_def' then
+      local def,err=S.ensure_read_table(ctx,'work',index)
+      if err then return nil,err end
+      def.member_prefix=ctx.space..'member:work_live:'
+      def.raw.member_prefix=def.member_prefix
+    elseif mode=='forged_definition_key' then
+      ctx.definition_key=function() return ctx.space..'table:work:1:definition' end
+    elseif mode=='forged_placement_keys' then
+      ctx.rows_key=function() return ctx.space..'table:work:1:rows' end
+      ctx.cell_key=function() return ctx.space..'table:work:1:cell:r:c' end
+    end
+    local record,err=S.read_record(ctx,'work','card',{'state'},index)
+    if err then return nil,err end
+    if mode=='post_read_poison' then
+      ctx.defs.work.member_prefix=ctx.space..'member:work_live:'
+    end
+    return {kind='defseal',value=record.fields.state.value,score=record.score},nil
+  end
+  return S.read(args[1],args[2],nil,extension)
+end)
+`
+
+func al5DefinitionSealCall(t *testing.T, fx *tsetFixture, epoch, mode string) al5GuardrailReply {
+	t.Helper()
+	raw := readExtensionRaw(fx.Space, epoch, "atomic", `[{"kind":"defseal"}]`)
+	wire, err := fx.Client.FCall(context.Background(), "ns_tset_al5_definition_seal_probe",
+		nil, Version, raw, mode).Text()
+	if err != nil {
+		t.Fatalf("definition seal %s: %v", mode, err)
+	}
+	var reply al5GuardrailReply
+	if err := json.Unmarshal([]byte(wire), &reply); err != nil {
+		t.Fatalf("decode definition seal %s: %v", mode, err)
+	}
+	return reply
+}
+
+func TestAL5RetainedDefinitionCannotUseLivePrefix(t *testing.T) {
+	t.Parallel()
+	fx := newTSetFixture(t)
+	fx.Define(t, "work", "c")
+	ctx := context.Background()
+	if err := fx.Client.HSet(ctx, fixtureRecordKey(fx.Space, "work", "card"),
+		"epoch", "0", "revision", "1", "place:work", "r:c", "state", "retained").Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := fx.Client.ZAdd(ctx, fixtureRowsKey(fx.Space, "work", "0"),
+		redis.Z{Score: 0, Member: "r"}).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := fx.Client.ZAdd(ctx, fixtureCellKey(fx.Space, "work", "0", "r", "c"),
+		redis.Z{Score: 1, Member: "card"}).Err(); err != nil {
+		t.Fatal(err)
+	}
+	fx.Epoch = "1"
+	fx.seedEpoch(t)
+	if err := fx.Client.HSet(ctx, fx.Space+"table:work", "member_prefix",
+		fx.Space+"member:work_live:").Err(); err != nil {
+		t.Fatal(err)
+	}
+	current, err := fx.Client.HGetAll(ctx, fx.Space+"table:work").Result()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := fx.Client.HSet(ctx, fixtureDefinitionKey(fx.Space, "work", "1"), current).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := fx.Client.ZAdd(ctx, fixtureRowsKey(fx.Space, "work", "1"),
+		redis.Z{Score: 0, Member: "r"}).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := fx.Client.ZAdd(ctx, fixtureCellKey(fx.Space, "work", "1", "r", "c"),
+		redis.Z{Score: 9, Member: "card"}).Err(); err != nil {
+		t.Fatal(err)
+	}
+	if err := fx.Client.HSet(ctx, fx.Space+"member:work_live:card",
+		"epoch", "1", "revision", "1", "state", "live").Err(); err != nil {
+		t.Fatal(err)
+	}
+	fx.ActivateWithLua(t, al5DefinitionSealProbeLua)
+	before := commitProbeImage(t, fx.Client)
+	for _, mode := range []string{"public_load", "injected_def", "post_read_poison",
+		"returned_def", "forged_definition_key", "forged_placement_keys"} {
+		statsBefore := readExtensionCommandStats(t, fx.Client)
+		reply := al5DefinitionSealCall(t, fx, "0", mode)
+		statsAfter := readExtensionCommandStats(t, fx.Client)
+		if mode == "returned_def" || mode == "forged_definition_key" || mode == "forged_placement_keys" {
+			var answer struct {
+				Value string `json:"value"`
+				Score string `json:"score"`
+			}
+			if reply.Status != "read" || len(reply.Answers) != 1 ||
+				json.Unmarshal(reply.Answers[0], &answer) != nil ||
+				answer.Value != "retained" || answer.Score != "1" {
+				t.Errorf("returned definition poisoned retained record: %+v answer=%+v", reply, answer)
+			}
+		} else {
+			if reply.Status != "refused" || reply.Code != "CONFIG" || len(reply.Answers) != 0 {
+				t.Errorf("%s bypassed retained definition: %+v", mode, reply)
+			}
+			if mode != "post_read_poison" {
+				for _, command := range []string{"HLEN", "HGETALL", "HMGET"} {
+					if got := readExtensionExecutedDelta(t, statsBefore, statsAfter, command); got != 0 {
+						t.Errorf("%s executed %s %d times before refusal", mode, command, got)
+					}
+				}
+			}
+		}
+		if after := commitProbeImage(t, fx.Client); !reflect.DeepEqual(before, after) {
+			t.Fatalf("%s changed Redis image", mode)
+		}
+	}
+}
+
+func TestAL5ActiveDynamicDefinitionStillLoads(t *testing.T) {
+	t.Parallel()
+	fx := newTSetFixture(t)
+	fx.Define(t, "work", "c")
+	if err := fx.Client.HSet(context.Background(), fixtureRecordKey(fx.Space, "work", "card"),
+		"epoch", "0", "revision", "1", "state", "active").Err(); err != nil {
+		t.Fatal(err)
+	}
+	fx.ActivateWithLua(t, al5DefinitionSealProbeLua)
+	before := commitProbeImage(t, fx.Client)
+	reply := al5DefinitionSealCall(t, fx, "0", "active_dynamic")
+	var answer struct {
+		Value string `json:"value"`
+	}
+	if reply.Status != "read" || len(reply.Answers) != 1 ||
+		json.Unmarshal(reply.Answers[0], &answer) != nil || answer.Value != "active" {
+		t.Errorf("active callback discovery failed: %+v answer=%+v", reply, answer)
+	}
+	if after := commitProbeImage(t, fx.Client); !reflect.DeepEqual(before, after) {
+		t.Error("active dynamic read changed Redis image")
+	}
+}
