@@ -403,21 +403,20 @@ func (p *Partial) loadSprint(s *Snapshot, rp ReadPlan, ans ReadAnswer) error {
 			}
 			put(t, r.Card, ld)
 		}
-		_, lists := rowsOf[q.Kind]
-		if a.HasMore && (!lists || len(a.Rows) == 0) {
-			return misaligned("composite query %d (%s) says more rows than it returned, and it lists %d of them", i, q.Kind, len(a.Rows))
+		tables, lists := rowsOf[q.Kind]
+		if a.HasMore && len(a.Rows) == 0 {
+			return misaligned("composite query %d (%s) says more rows than it returned, and returned none", i, q.Kind)
 		}
 		if len(a.Rows) > 0 {
-			tables, ok := rowsOf[q.Kind]
-			if !ok {
+			if !lists {
 				return misaligned("composite query %d (%s) lists rows, and no such query does", i, q.Kind)
 			}
 			if most := q.units(); len(a.Rows) > most {
 				return misaligned("composite query %d (%s) lists %d rows, and it was read for at most %d", i, q.Kind, len(a.Rows), most)
 			}
-			// A listing with more rows than it returned is not the table's rows:
-			// what it leaves the table's rows as they were (read whole by another
-			// query, or not read) and never marks them read.
+			// A listing that says it has more rows than it returned is not the
+			// table's rows: it leaves them as they were (read whole by another query,
+			// or not read) and never marks them read.
 			if !a.HasMore {
 				for _, name := range tables {
 					t := s.T(name)
