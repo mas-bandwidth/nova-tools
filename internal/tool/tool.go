@@ -17,6 +17,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
@@ -40,12 +41,14 @@ type Verb struct {
 	Usage   string         // the usage line(s) after the tool's name, one form per line
 	Example string         // runnable line(s) after the tool's name, for the banner's example block
 	Effect  Effect         // what running it does to the world, stated in `help <verb>`
+	Detail  string         // lines `help <verb>` prints above its flags: a format, a worked example
 	Flags   func(f *Flags) // declares the verb's flags; nil declares none
 	Run     func(c *Call) *Out
 }
 
 // Effect is what running a verb does beyond printing: one of the three below,
-// optionally with a clause after it ("inspection; --send delivers").
+// optionally with a clause after it; a verb whose flags change it states the
+// strongest and says which flag (Problems holds every verb to one of the three).
 type Effect string
 
 const (
@@ -96,15 +99,58 @@ func (t *Tool) help(stdout io.Writer, code *int) {
 	if !ok {
 		panic(r)
 	}
-	verbflag.Print(stdout, t.Name, t.Banner(), h.FS)
-	effect := Effect("unstated")
+	var b strings.Builder
+	verbflag.Print(&b, t.Name, t.Banner(), h.FS)
+	effect, detail := Effect("unstated"), ""
 	for _, v := range t.verbs() {
-		if v.Name == h.FS.Name() && v.Effect != "" {
-			effect = v.Effect
+		if v.Name == h.FS.Name() {
+			detail = strings.Trim(v.Detail, "\n")
+			if v.Effect != "" {
+				effect = v.Effect
+			}
 		}
 	}
-	fmt.Fprintf(stdout, "effect: %s\n", effect)
+	if detail != "" {
+		detail += "\n"
+	}
+	fmt.Fprintf(stdout, "%seffect: %s\n", verbflag.Insert(b.String(), detail), effect)
 	*code = 0
+}
+
+// HowLines and HowWidth bound the banner's how-it-works text: a reader takes
+// in five lines at a glance, and a line past 100 characters wraps.
+const (
+	HowLines = 5
+	HowWidth = 100
+)
+
+// Problems is where t falls short of the standard its banner and help carry
+// by construction only when the definition is complete: a what line, an exit
+// table, a how text of at most HowLines lines of at most HowWidth characters,
+// and every verb's effect one of inspection, local write or delivery. A tool
+// on this package runs it in its own tests (internal/ci holds every such
+// package to that).
+func (t *Tool) Problems() []string {
+	var p []string
+	if strings.TrimSpace(t.What) == "" || strings.TrimSpace(t.ExitTable) == "" {
+		p = append(p, t.Name+": What and ExitTable are required")
+	}
+	how := strings.Split(strings.TrimSpace(t.How), "\n")
+	if len(how) > HowLines {
+		p = append(p, fmt.Sprintf("%s: the how text is %d lines, at most %d", t.Name, len(how), HowLines))
+	}
+	for i, l := range how {
+		if n := utf8.RuneCountInString(l); n > HowWidth {
+			p = append(p, fmt.Sprintf("%s: how line %d is %d characters, at most %d", t.Name, i+1, n, HowWidth))
+		}
+	}
+	for _, v := range t.verbs() {
+		e := string(v.Effect)
+		if !strings.HasPrefix(e, "inspection") && !strings.HasPrefix(e, "local write") && !strings.HasPrefix(e, "delivery") {
+			p = append(p, fmt.Sprintf("%s %s: the effect %q is not inspection, local write or delivery", t.Name, v.Name, e))
+		}
+	}
+	return p
 }
 
 // verbs is the tool's verbs and the version verb every tool has.

@@ -593,3 +593,12 @@ func TestVerbHelpPrintsUsageRatherThanTheFlagSentinel(t *testing.T) {
 		}
 	}
 }
+
+// nova-version's definition meets the standard its banner and help cannot
+// hold by construction: every verb's effect, and a how text of five short lines.
+func TestVersionToolMeetsTheStandard(t *testing.T) {
+	t.Parallel()
+	for _, p := range VersionTool("", Environment{}).Problems() {
+		t.Error(p)
+	}
+}

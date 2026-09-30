@@ -47,9 +47,9 @@ func cairnTool() *tool.Tool {
 		What:  "optional checkpoints, no memory lifecycle (see docs/SPEC-CAIRN.md)",
 		Stamp: version,
 		How: `The store is plain files under --store, fsync-durable before success; no Redis, remote or discovery.
-It reads its own layout (sessions/, entries/, log.jsonl) or one markdown file per session appended by hand.
+It reads its own layout (sessions/, entries/, log.jsonl) or a hand-kept markdown file per session.
 The same entry id with the same words is a duplicate, and with different words a conflict (exit 1).
---now stamps a replay (RFC 3339 UTC); there is no seal, consume, delete or grade verb (SPEC-CAIRN.md).
+--now stamps a replay (RFC 3339 UTC). There is no seal, consume, delete or grade verb (SPEC-CAIRN).
 The four examples are one sitting: the open makes ./cairns and the rest read it back.`,
 		ExitTable: "0 ran and passed, 1 ran and failed (conflict), 2 could not run (bad invocation).",
 		Verbs: []tool.Verb{

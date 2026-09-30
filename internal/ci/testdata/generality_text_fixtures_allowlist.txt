@@ -11,7 +11,6 @@
 # (docs/SPEC-CI.md#generality-text).
 #
 # ceiling: 15
-cmd/nova-tokens/testdata/units/pitstop-2026-09-18-units.lisp a verbatim excerpt of a real work set, copied as written
 internal/cairn/testdata/bench-b9395d11.md a captured cairn of one recorded session, including its transcript path
 internal/ci/testdata/failed/merge-darwin-timeout.log captured CI job output of a failed run
 internal/ci/testdata/failed/windows-sandbox.log captured CI job output of a failed run
@@ -22,7 +21,3 @@ internal/tlc/testdata/temporal-old.log captured TLC model checker output
 internal/workgh/testdata/reliable/call-01.json recorded GitHub GraphQL reply for a public repository
 internal/workgh/testdata/reliable/call-02.json recorded GitHub GraphQL reply for a public repository
 internal/workgh/testdata/reliable/call-03.json recorded GitHub GraphQL reply for a public repository
-internal/worklang/testdata/pitstop-2026-09-18-units.lisp a verbatim excerpt of a real work set, copied as written
-internal/worklang/testdata/pitstop-amended.lisp a verbatim excerpt of a real work set, copied as written
-internal/worklang/testdata/pitstop-cut.lisp a cut of a real work set taken verbatim, defects included
-internal/worklang/testdata/pitstop-shape.lisp a faithful excerpt of a real work set, copied as written

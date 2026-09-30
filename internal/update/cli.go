@@ -37,7 +37,7 @@ type options struct {
 	max                                                                     int
 	timeout, budget                                                         time.Duration
 	kinds                                                                   kindFlags
-	draft, send                                                             bool
+	draft, send, dryRun                                                     bool
 }
 type kindFlags []string
 
@@ -69,7 +69,8 @@ func refusal(w io.Writer, token string, err error) int {
 // the spec file and compares the two. nova-version's usage lines are its
 // verbs' own (versiontool.go).
 const updateVerbs = `nova-update check --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
-nova-update apply --file <path> <name> [--version <v>] [--timeout <d>]
+nova-update status --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
+nova-update apply --file <path> <name> [--version <v>] [--dry-run] [--timeout <d>]
 nova-update report --file <path> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to <who,who> | --send --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
 nova-update report --store <host:port> [--timeout <d>]
 nova-update watch --adopt <checks.tsv> [--bus <path> --remote <r> --branch <b> --as <friend> --to <who,who>] [--host <label>] [--timeout <d>] [--budget <d>]
@@ -98,11 +99,48 @@ func help(name string, w io.Writer) {
 	// and the help cannot drift apart. This is that string.
 	fmt.Fprintln(w, updateVerbs)
 	fmt.Fprintf(w, "%s version (or --version)\nDefaults: --max 20 (0 = all), --timeout 5s, --budget 60s; snapshot's --timeout is 30s, because the first run of a newly installed binary is assessed by the platform and that cost is charged to the deadline. Repeat --kind to select kinds.\n", name)
-	note := "Report needs no bus or network. Updates require an explicit apply name. "
+	note := "Report needs no bus or network. Updates require an explicit apply name. status is check with every entry shown, current ones too. apply --dry-run prints the plan and writes nothing. "
 	note += "Cross-process delivery recovery needs --snapshot; without it, each send is a new intention. Do not prepare again while pending; retry the saved artifact. A snapshot uses a sibling .lock file for a kernel lock; its presence never means a process is running."
 	fmt.Fprintln(w, note)
 	fmt.Fprintf(w, "\nLocals: latest=local:<path> runs that binary (or argv) on this host to read the version; e.g., local:/usr/local/bin/nova-update or local:go version. The installed column can be a version string (v1.2.3), a single command name found on PATH, or a full argv.\n")
-	fmt.Fprintf(w, "\nexit codes: 0 every entry current, an apply that left the box on the target, a report whose every entry answered; 1 the tool said NO (anything STALE, NEWER, DIFFERENT or UNKNOWN, an apply whose after is not the target, a report with an UNKNOWN or a send that was refused or unconfirmed); 2 could not run (a refusal naming the remedy).\n\nFrom a nova-tools checkout:\nexample:\n  %s report --file cmd/%s/testdata/example.tsv\n  %s version\n", name, name, name)
+	fmt.Fprint(w, oneBinary(name))
+	fmt.Fprint(w, manifestHelp(name))
+	fmt.Fprintf(w, "\n%s\n\nFrom a nova-tools checkout:\nexample:\n  %s report --file cmd/%s/testdata/example.tsv\n", exitCodes(name), name, name)
+	if name == "nova-update" {
+		fmt.Fprintf(w, "  %s status --file cmd/%s/testdata/example.tsv\n  %s apply --file cmd/%s/testdata/dry-run.tsv go --dry-run\n", name, name, name, name)
+	}
+	fmt.Fprintf(w, "  %s version\n", name)
+}
+
+// oneBinary says, in nova-update's banner, that nova-update and nova-version are one
+// binary and what nova-update's verbs are for, so a reader who finds both on a PATH knows
+// which to reach for; nova-version's banner says the same in its how text (versiontool.go).
+func oneBinary(name string) string {
+	// The line opens with "Both", not the tool's name: a banner line that opens
+	// with the name is read as a usage line naming a verb ("and").
+	const same = "Both nova-update and nova-version are ONE binary under two names: the same build, the same manifest reader and the same report (report prints the same thing under either name); only the verbs each name offers differ. "
+	return "\n" + same + "Use nova-update to ASK whether what you depend on is current and to CHANGE it: check and status (installed against latest, one line per finding; status shows the current ones too), apply (install the one entry you name, or print the plan with --dry-run), watch and adoption (the coordinator's adoption pass and its count) and release (cut, build, install and adopt a nova-tools release). nova-version's snapshot, diff, moved and send are the other name's; report is here too, and it reads only what is installed.\n"
+}
+
+// manifestHelp is the manifest format in six lines, under the `report` example line so
+// `report -h` quotes it (verbflag.Excerpt reads a verb's lines with the lines indented
+// beneath them): the rule-2 file --file names, the same for both names.
+func manifestHelp(name string) string {
+	return "\nTHE MANIFEST is the file --file names, written by hand, the same for both names:\n" +
+		"  " + name + " report --file versions.tsv     the six lines that say what versions.tsv holds:\n" +
+		"      1. line 1 is the header, byte for byte: " + strings.ReplaceAll(Header, "\t", "<TAB>") + "; every other line is six fields, one tab between, none empty; a line starting # is a comment\n" +
+		"      2. kind is harness, engine, model, tool or pin; name is unique in the file; owner is who answers for it\n" +
+		"      3. installed is a version (v1.2.3), a command name on PATH, or an argv whose first line of output carries the version (single spaces, no quotes)\n" +
+		"      4. latest is github:<owner>/<repo>, npm:<package>, brew:<formula>, ollama:<model>:<tag> (kind model), local:<argv> (a pin takes this only), or - for not known yet\n" +
+		"      5. apply is the argv that updates it, or none; a run prints EVERY problem of the file at once, each with its line, never the first alone\n" +
+		"      6. example: go<TAB>tool<TAB>go version<TAB>local:go version<TAB>none<TAB>me\n"
+}
+
+// exitCodes is nova-update's exit-code paragraph, for the verbs it has (check, apply,
+// report); nova-version's is its Tool's ExitTable (versiontool.go), and neither names a
+// verb of the other.
+func exitCodes(name string) string {
+	return "exit codes: 0 every entry current, an apply that left the box on the target (or an apply --dry-run that printed its plan), a report whose every entry answered; 1 the tool said NO (anything STALE, NEWER, DIFFERENT or UNKNOWN, an apply whose after is not the target, a report with an UNKNOWN or a send that was refused or unconfirmed); 2 could not run (a refusal naming the remedy)."
 }
 func interspersed(f *flag.FlagSet, args []string) []string {
 	var flags, positionals []string
@@ -186,7 +224,7 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 	if verb == "adoption" {
 		return adoptionVerb(name, args, stamp, out, errs)
 	}
-	if verb != "report" && verb != "check" && verb != "apply" && verb != "watch" {
+	if verb != "report" && verb != "check" && verb != "status" && verb != "apply" && verb != "watch" {
 		return refusal(errs, tool, fmt.Errorf("unknown verb (run %s help)", name))
 	}
 	if verb == "watch" {
@@ -203,6 +241,7 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 	f.DurationVar(&o.timeout, "timeout", o.timeout, "one read deadline")
 	if verb == "apply" {
 		f.StringVar(&o.target, "version", "", "target")
+		f.BoolVar(&o.dryRun, "dry-run", false, "prints the plan and writes nothing")
 	} else {
 		f.DurationVar(&o.budget, "budget", o.budget, "whole run deadline")
 		f.IntVar(&o.max, "max", 20, "per-kind output cap")
@@ -231,6 +270,13 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 // manifest read, and the verb run. nova-version's report and send reach it
 // through their verbs in versiontool.go with the flags already parsed.
 func checked(name, verb, token string, o options, positional []string, out, errs io.Writer, env Environment) int {
+	// status is check's read with every entry's line shown, current ones included
+	// (SPEC-UPDATE rule 9): the same reads, the same exit, its own first token so a
+	// caller scanning for UPDATE never mistakes one for the other.
+	pfx := "UPDATE"
+	if verb == "status" {
+		pfx = "STATUS"
+	}
 	// --store is the fleet read (#3880): every bench's nova-sprint build from
 	// its beat, so it takes no manifest, snapshot or note and never runs ssh.
 	if o.store != "" {
@@ -324,18 +370,18 @@ func checked(name, verb, token string, o options, positional []string, out, errs
 	if verb == "report" {
 		return report(ctx, entries, selected, o, strings.Join(kinds, ","), started, out, errs, env)
 	}
-	fmt.Fprintf(out, "UPDATE at=%s file=%s entries=%d kinds=%s timeout=%s budget=%s max=%d\n", field(started.UTC().Format(time.RFC3339)), field(o.file), len(entries), field(strings.Join(kinds, ",")), o.timeout, o.budget, o.max)
+	fmt.Fprintf(out, pfx+" at=%s file=%s entries=%d kinds=%s timeout=%s budget=%s max=%d\n", field(started.UTC().Format(time.RFC3339)), field(o.file), len(entries), field(strings.Join(kinds, ",")), o.timeout, o.budget, o.max)
 	results := readEntries(ctx, selected, o, env, false)
 	counts := map[string]int{}
 	pins := 0
-	group := bounded.Grouped(out, o.max, "UPDATE", "use --max 0 to show all")
+	group := bounded.Grouped(out, o.max, pfx, "use --max 0 to show all")
 	for _, r := range results {
 		status, ahead := verdict(r)
 		counts[status]++
 		if r.Entry.Kind == "pin" && status == "DIFFERENT" {
 			pins++
 		}
-		if status == "EQUAL" {
+		if status == "EQUAL" && verb != "status" {
 			continue
 		}
 		if status == "UNKNOWN" {
@@ -343,11 +389,11 @@ func checked(name, verb, token string, o options, positional []string, out, errs
 			if x.Known() {
 				x = r.Latest
 			}
-			group.Line("unknown", fmt.Sprintf("UPDATE UNKNOWN name=%s kind=%s installed=%s path=%s source=%s: %s (%s)", field(r.Entry.Name), field(r.Entry.Kind), field(r.Installed.Version), field(r.Installed.Path), field(r.Latest.Source), oneline.Escape(x.Reason), oneline.Escape(x.Remedy)))
+			group.Line("unknown", fmt.Sprintf(pfx+" UNKNOWN name=%s kind=%s installed=%s path=%s source=%s: %s (%s)", field(r.Entry.Name), field(r.Entry.Kind), field(r.Installed.Version), field(r.Installed.Path), field(r.Latest.Source), oneline.Escape(x.Reason), oneline.Escape(x.Remedy)))
 		} else if status == "AHEAD" {
-			group.Line("ahead", fmt.Sprintf("UPDATE AHEAD name=%s kind=%s installed=%s latest=%s ahead=%s path=%s source=%s owner=%s", field(r.Entry.Name), field(r.Entry.Kind), field(r.Installed.Version), field(r.Latest.Version), field(ahead), field(r.Installed.Path), field(r.Latest.Source), field(r.Entry.Owner)))
+			group.Line("ahead", fmt.Sprintf(pfx+" AHEAD name=%s kind=%s installed=%s latest=%s ahead=%s path=%s source=%s owner=%s", field(r.Entry.Name), field(r.Entry.Kind), field(r.Installed.Version), field(r.Latest.Version), field(ahead), field(r.Installed.Path), field(r.Latest.Source), field(r.Entry.Owner)))
 		} else {
-			group.Line(strings.ToLower(status), fmt.Sprintf("UPDATE %s name=%s kind=%s installed=%s latest=%s path=%s source=%s owner=%s", status, field(r.Entry.Name), field(r.Entry.Kind), field(r.Installed.Version), field(r.Latest.Version), field(r.Installed.Path), field(r.Latest.Source), field(r.Entry.Owner)))
+			group.Line(strings.ToLower(status), fmt.Sprintf(pfx+" %s name=%s kind=%s installed=%s latest=%s path=%s source=%s owner=%s", status, field(r.Entry.Name), field(r.Entry.Kind), field(r.Installed.Version), field(r.Latest.Version), field(r.Installed.Path), field(r.Latest.Source), field(r.Entry.Owner)))
 		}
 	}
 	group.More()
@@ -359,7 +405,7 @@ func checked(name, verb, token string, o options, positional []string, out, errs
 		result = "FAIL"
 		w = errs
 	}
-	fmt.Fprintf(w, "UPDATE %s checked=%d current=%d stale=%d newer=%d ahead=%d differ=%d unknown=%d pins=%d took=%s file=%s\n", result, len(selected), counts["EQUAL"], counts["STALE"], counts["NEWER"], counts["AHEAD"], counts["DIFFERENT"], counts["UNKNOWN"], pins, time.Since(started).Round(time.Millisecond), field(o.file))
+	fmt.Fprintf(w, pfx+" %s checked=%d current=%d stale=%d newer=%d ahead=%d differ=%d unknown=%d pins=%d took=%s file=%s\n", result, len(selected), counts["EQUAL"], counts["STALE"], counts["NEWER"], counts["AHEAD"], counts["DIFFERENT"], counts["UNKNOWN"], pins, time.Since(started).Round(time.Millisecond), field(o.file))
 	return code
 }
 func contains(xs []string, s string) bool {
@@ -475,11 +521,17 @@ func apply(entries []Entry, name string, o options, out, errs io.Writer, env Env
 		}
 	}
 	before := Installed(context.Background(), *e, o.timeout, false)
-	fmt.Fprintf(out, "APPLY BEFORE name=%s kind=%s installed=%s path=%s latest=%s source=%s\n", field(name), field(e.Kind), field(before.Version), field(before.Path), field(target), field(e.Latest))
 	args := append([]string(nil), e.Apply...)
 	for i := range args {
 		args[i] = strings.ReplaceAll(args[i], "{version}", target)
 	}
+	// --dry-run is the plan this function is about to take, printed and not taken
+	// (SPEC-UPDATE rule 13): every refusal above has passed, the target and the argv
+	// are the ones below, and no process starts.
+	if o.dryRun {
+		return applyDryRun(*e, before, target, args, out)
+	}
+	fmt.Fprintf(out, "APPLY BEFORE name=%s kind=%s installed=%s path=%s latest=%s source=%s\n", field(name), field(e.Kind), field(before.Version), field(before.Path), field(target), field(e.Latest))
 	fmt.Fprintf(out, "APPLY RUN name=%s argv=%d version=%s: %s\n", field(name), len(args), field(target), oneline.Escape(strings.Join(args, " ")))
 	ctx, cancel := context.WithTimeout(context.Background(), o.timeout)
 	p := process(ctx, args, nil, ChildCap)
@@ -498,6 +550,25 @@ func apply(entries []Entry, name string, o options, out, errs io.Writer, env Env
 		return 1
 	}
 	fmt.Fprintf(out, "APPLY OK name=%s from=%s to=%s took=%s\n", field(name), field(before.Version), field(after.Version), time.Since(started).Round(time.Millisecond))
+	return 0
+}
+
+// applyDryRun prints what `apply` would do to one entry and does none of it: the
+// entry's line as `status` prints it (installed against the target the real run would
+// install), what would be installed and from where, and the argv the real run's APPLY
+// RUN line carries. No process starts and nothing is written; it exits 0, the plan
+// having been made (SPEC-UPDATE rule 13, `--dry-run`).
+func applyDryRun(e Entry, before Read, target string, argv []string, out io.Writer) int {
+	r := entryRead{Entry: e, Installed: before, Latest: Read{Version: target, Source: e.Latest}}
+	state, _ := verdict(r)
+	if before.Known() {
+		fmt.Fprintf(out, "STATUS %s name=%s kind=%s installed=%s latest=%s path=%s source=%s owner=%s\n", state, field(e.Name), field(e.Kind), field(before.Version), field(target), field(before.Path), field(e.Latest), field(e.Owner))
+	} else {
+		fmt.Fprintf(out, "STATUS UNKNOWN name=%s kind=%s installed=- path=%s source=%s: %s (%s)\n", field(e.Name), field(e.Kind), field(before.Path), field(e.Latest), oneline.Escape(before.Reason), oneline.Escape(before.Remedy))
+	}
+	fmt.Fprintf(out, "APPLY DRY-RUN would install %s %s from %s\n", field(e.Name), field(target), field(e.Latest))
+	fmt.Fprintf(out, "APPLY DRY-RUN would run argv=%d version=%s: %s\n", len(argv), field(target), oneline.Escape(strings.Join(argv, " ")))
+	fmt.Fprintf(out, "APPLY DRY-RUN OK name=%s nothing installed, nothing written\n", field(e.Name))
 	return 0
 }
 

@@ -19,12 +19,12 @@ func VersionTool(stamp string, env Environment) *tool.Tool {
 		Name:  "nova-version",
 		What:  "installed tool identities: report, snapshot, diff, and the TOOLS MOVED note (see docs/SPEC-VERSION.md)",
 		Stamp: stamp,
-		How: `Report reads installed identities with no bus or network; --draft prints a note, send delivers it.
-Defaults: --max 20 (0 = all), --timeout 5s (snapshot 30s: a new binary's first run is assessed), --budget 60s.
-Delivery recovery across processes needs --snapshot; retry the saved artifact rather than prepare again.
-latest=local:<path> runs that binary (or argv) here; installed is a version, a command on PATH, or an argv.
-The examples run from a nova-tools checkout.`,
-		ExitTable: "0 the verb did what it said (a report whose every entry answered, a snapshot, a diff, a note written); 1 the tool said NO (a report with an UNKNOWN, a send that was refused or unconfirmed, a snapshot --file with a tool that did not answer); 2 could not run (a refusal naming the remedy).",
+		How: `nova-update and nova-version are ONE binary under two names: one build, reader and report.
+nova-version RECORDS and COMPARES; asking what is latest and installing it are nova-update's.
+THE MANIFEST is the file --file names, written by hand; report -h states its six rules.
+Report reads installed identities, no bus or network; --draft prints a note, send delivers it.
+Defaults: --max 20, --timeout 5s (snapshot 30s), --budget 60s. Examples run from a checkout.`,
+		ExitTable: "0 the verb ran and passed: a report whose every entry answered (under send, whose note nova-bus took), a snapshot whose tools all answer, a diff, a moved note written; 1 the tool said NO (a report or a snapshot with an UNKNOWN tool, a send that was refused or unconfirmed); 2 could not run (a refusal naming the remedy).",
 		Verbs: []tool.Verb{
 			{
 				Name:   "moved",
@@ -79,14 +79,19 @@ The examples run from a nova-tools checkout.`,
 				// The second example line is the version verb's: the banner's
 				// examples are its verbs' in order, and version is last.
 				Example: "report --file cmd/nova-version/testdata/example.tsv\nversion",
-				Effect:  tool.Inspection + "; --draft prints a note, --send delivers it",
-				Flags:   func(f *tool.Flags) { reportFlags(f, true) },
-				Run:     func(c *tool.Call) *tool.Out { return reportVerb(c, false, env) },
+				// The strongest effect a flag gives it: --send delivers the note and
+				// writes the --snapshot state file; without --send it only reads.
+				Effect: tool.Delivery + "; only with --send, which also writes the --snapshot state file; " +
+					"without --send, report reads and writes nothing (--draft prints the note)",
+				Detail: manifestHelp("nova-version"),
+				Flags:  func(f *tool.Flags) { reportFlags(f, true) },
+				Run:    func(c *tool.Call) *tool.Out { return reportVerb(c, false, env) },
 			},
 			{
 				Name:   "send",
 				Usage:  "send " + manifest + " --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b> [--snapshot <path>] [--host <label>]",
-				Effect: tool.Delivery,
+				Effect: tool.Delivery + "; --snapshot writes its state file",
+				Detail: manifestHelp("nova-version"),
 				Flags:  func(f *tool.Flags) { reportFlags(f, false) },
 				Run:    func(c *tool.Call) *tool.Out { return reportVerb(c, true, env) },
 			},
@@ -108,7 +113,7 @@ func reportFlags(f *tool.Flags, report bool) {
 	f.Prints()
 	f.String("file", "", "manifest (required): "+manifestShape)
 	f.String("host", "", "execution bench label")
-	f.String("snapshot", "", "explicit state file")
+	f.String("snapshot", "", "state file for delivery recovery across processes: retry the saved artifact, never prepare again while pending")
 	f.Bool("draft", false, "print the note only")
 	if report {
 		f.Bool("send", false, "explicit delivery")

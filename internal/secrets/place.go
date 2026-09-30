@@ -46,7 +46,11 @@ type PlaceInput struct {
 	Machines   string
 	Receipts   string
 	SSH        string
-	Now        func() time.Time
+	// DryRun prints the plan and writes nothing: the secret is decrypted (the read the
+	// verb needs to know it exists and to name its sha256) but no ssh child runs and no
+	// receipt is written.
+	DryRun bool
+	Now    func() time.Time
 }
 
 // PlacedInput is one `nova-secrets placed` invocation.
@@ -195,6 +199,10 @@ func RunPlace(in PlaceInput) (string, error) {
 		return "", fmt.Errorf("secret %s is not in %s; run: sops %s", in.Secret, targetFile, targetFile)
 	}
 
+	if in.DryRun {
+		return placeDryRun(in, machine, remotePath, sec)
+	}
+
 	var hash string
 	err = sec.Use(func(value string) error {
 		sum := sha256.Sum256([]byte(value))
@@ -218,6 +226,48 @@ func RunPlace(in PlaceInput) (string, error) {
 	return fmt.Sprintf("SECRETS PLACE OK machine=%s secret=%s path=%s sha256=%s stamp=%s",
 		oneline.Field(in.Machine), oneline.Field(in.Secret), oneline.Field(remotePath),
 		oneline.Field(hash), oneline.Field(stamp)), nil
+}
+
+// placeDryRun is `place --dry-run`: every refusal RunPlace has already passed by the time
+// it is called (the store, the key, the registry, the machine, the path, the secret in the
+// seat file), then the plan the real run takes -- the machine and ssh target, the remote
+// path and mode, the sha256 the receipt would record, and whether that receipt is added,
+// replaced or already holds this exact hash -- and nothing written: no ssh child, no
+// receipt, not even the receipts directory. The value is hashed and never shown.
+func placeDryRun(in PlaceInput, machine FleetMachine, remotePath string, sec Secret) (string, error) {
+	var hash string
+	if err := sec.Use(func(value string) error {
+		sum := sha256.Sum256([]byte(value))
+		hash = hex.EncodeToString(sum[:])
+		return nil
+	}); err != nil {
+		return "", err
+	}
+	receipts, err := readReceipts(in.Receipts, in.Machine)
+	if err != nil {
+		return "", err
+	}
+	receipt := "add"
+	for _, r := range receipts {
+		if r.Secret != in.Secret {
+			continue
+		}
+		receipt = "replace"
+		if r.SHA256 == hash && r.Path == remotePath {
+			receipt = "unchanged"
+		}
+	}
+	lines := []string{
+		fmt.Sprintf("SECRETS PLACE PLAN machine=%s secret=%s path=%s mode=0600 sha256=%s",
+			oneline.Field(in.Machine), oneline.Field(in.Secret), oneline.Field(remotePath), oneline.Field(hash)),
+		fmt.Sprintf("SECRETS PLACE PLAN ssh=%s target=%s writes=%s the value travels on stdin, never in an argument",
+			oneline.Field(in.SSH), oneline.Field(machine.Target), oneline.Field(remotePath)),
+		fmt.Sprintf("SECRETS PLACE PLAN receipt=%s action=%s",
+			oneline.Field(receiptPath(in.Receipts, in.Machine)), receipt),
+		fmt.Sprintf("SECRETS PLACE DRY-RUN OK machine=%s secret=%s nothing written, no ssh run",
+			oneline.Field(in.Machine), oneline.Field(in.Secret)),
+	}
+	return strings.Join(lines, "\n"), nil
 }
 
 // RunPlaced lists the receipts written for one machine, by name and hash.

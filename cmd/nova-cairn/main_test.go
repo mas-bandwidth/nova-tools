@@ -449,3 +449,12 @@ func TestEveryProblemIsNamedAtOnce(t *testing.T) {
 		})
 	}
 }
+
+// nova-cairn's definition meets the standard its banner and help cannot hold
+// by construction: every verb's effect, and a how text of five short lines.
+func TestCairnToolMeetsTheStandard(t *testing.T) {
+	t.Parallel()
+	for _, p := range cairnTool().Problems() {
+		t.Error(p)
+	}
+}

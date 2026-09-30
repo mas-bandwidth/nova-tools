@@ -208,6 +208,7 @@ func demo() *Tool {
 			{
 				Name: "put", Usage: "put --store <dir> --key <k> [--max <n>]", Example: "put --store ./s --key k",
 				Effect: LocalWrite,
+				Detail: "THE STORE is a directory the verb creates.",
 				Flags: func(f *Flags) {
 					f.Required("store", "a directory")
 					f.Required("key", "a name")
@@ -292,8 +293,8 @@ func TestRun(t *testing.T) {
 			stdout: []string{`{"result":{"verb":"","status":"refused","exit":2,"remedy":"nova-demo help","why":["unknown verb \"--json\"`}},
 		{name: "an unknown verb with --json refuses in JSON", args: []string{"bogus", "--json"}, code: 2, emptyStderr: true,
 			stdout: []string{`"status":"refused"`, `unknown verb \"bogus\"`}},
-		{name: "help of a verb states its effect", args: []string{"help", "put"}, code: 0, emptyStderr: true,
-			stdout: []string{"exit codes: 0 done", "effect: local write: writes files on this machine\n"}},
+		{name: "help of a verb carries its detail above its flags and states its effect", args: []string{"help", "put"}, code: 0, emptyStderr: true,
+			stdout: []string{"THE STORE is a directory the verb creates.\nflags:\n", "exit codes: 0 done", "effect: local write: writes files on this machine\n"}},
 		{name: "a verb that states none says so", args: []string{"deny", "-h"}, code: 0, emptyStderr: true,
 			stdout: []string{"effect: unstated\n"}},
 		{name: "a refusal under --json is one object on stdout", args: []string{"put", "--json"}, code: 2, emptyStderr: true,
@@ -374,6 +375,62 @@ func TestBannerMeetsTheOnboardingStandard(t *testing.T) {
 			if code := demo().Run([]string{verb, "-h"}, strings.NewReader(""), &out, &errs); code != 0 || errs.Len() != 0 ||
 				!strings.HasPrefix(out.String(), "usage: nova-demo "+verb) || !strings.Contains(out.String(), "exit codes: 0 done") {
 				t.Errorf("%s -h: exit %d stderr %q stdout:\n%s", verb, code, errs.String(), out.String())
+			}
+		})
+	}
+}
+
+// TestProblems holds a definition to the standard the banner cannot enforce by
+// construction: every verb's effect, and the how text's size.
+func TestProblems(t *testing.T) {
+	t.Parallel()
+	long := strings.Repeat("x", HowWidth+1)
+	for _, tc := range []struct {
+		name string
+		edit func(*Tool)
+		want []string
+	}{
+		{"the demo's unstated effects", func(*Tool) {}, []string{
+			`nova-demo who: the effect ""`, `nova-demo deny: the effect ""`, `nova-demo forget: the effect ""`, `nova-demo raw: the effect ""`}},
+		{"a complete tool has none", func(d *Tool) {
+			for i := range d.Verbs {
+				d.Verbs[i].Effect = Inspection + "; a clause is fine"
+			}
+		}, nil},
+		{"six how lines and a long one", func(d *Tool) {
+			for i := range d.Verbs {
+				d.Verbs[i].Effect = Delivery
+			}
+			d.How = "1\n2\n3\n4\n5\n" + long
+		}, []string{"the how text is 6 lines, at most 5", "how line 6 is 101 characters, at most 100"}},
+		{"an effect that is none of the three", func(d *Tool) {
+			for i := range d.Verbs {
+				d.Verbs[i].Effect = LocalWrite
+			}
+			d.Verbs[0].Effect = "writes a little"
+		}, []string{`nova-demo put: the effect "writes a little"`}},
+		{"no what and no exit table", func(d *Tool) {
+			for i := range d.Verbs {
+				d.Verbs[i].Effect = LocalWrite
+			}
+			d.What, d.ExitTable = "", ""
+		}, []string{"What and ExitTable are required"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			d := demo()
+			tc.edit(d)
+			got := strings.Join(d.Problems(), "\n")
+			if len(tc.want) == 0 && got != "" {
+				t.Errorf("problems: %s", got)
+			}
+			for _, w := range tc.want {
+				if !strings.Contains(got, w) {
+					t.Errorf("problems lack %q:\n%s", w, got)
+				}
+			}
+			if n := len(d.Problems()); n != len(tc.want) {
+				t.Errorf("%d problems, want %d:\n%s", n, len(tc.want), got)
 			}
 		})
 	}
