@@ -100,13 +100,15 @@ RUN arch="$(dpkg --print-architecture)" \
 
 # ---- redis-build: redis-server and redis-cli from the pinned source release ----
 # Redis 8, the wording the tests expect (internal/nsprint/deal reads Redis 8's
-# ACL errors, internal/redisfn's test texts are Redis 8's); 8.0.5 is also the
-# release .github/scripts/install-redis-server.sh builds where the distribution
-# has none.
+# ACL errors, internal/redisfn's test texts are Redis 8's); Redis 8.10.2 is also
+# the release .github/scripts/install-redis-server.sh builds where the
+# distribution has none. This ARG is the repository's one Redis version:
+# internal/ci's TestRedisIsOneVersionEverywhere holds every other place that
+# names one to it.
 FROM apt-base AS redis-build
 ARG DEBIAN_FRONTEND=noninteractive
-ARG REDIS_VERSION=8.0.5
-ARG REDIS_SHA256=012bca956fc7151abc2281950e69768ee9c53ce4b36588772041675bc95fd313
+ARG REDIS_VERSION=8.10.2
+ARG REDIS_SHA256=b9ffee226b5eecdba98a679260dad764b2a4ebd90dce4ad5ac9e9f3eef9c02b3
 RUN apt-get update \
  && apt-get install -y --no-install-recommends build-essential curl \
  && curl -fsSL -o /tmp/redis.tar.gz "https://download.redis.io/releases/redis-${REDIS_VERSION}.tar.gz" \
