@@ -412,7 +412,7 @@ jobs:
         # The verbs are built ONCE here and every later step calls the binary: `go run` compiles
         # and links the tool again on every step that names it. internal/ci: TestToolsCIIsBuiltOnceAndNeverRun.
         shell: bash
-        run: go build -o "$RUNNER_TEMP/ci" ./tools/ci
+        run: go build -o "$RUNNER_TEMP/ci${{ runner.os == 'Windows' && '.exe' || '' }}" ./tools/ci
 
       - name: save the go build and module cache
         # On a miss or a restore-keys fallback only, and before the tests, as ci.yml's
@@ -433,7 +433,7 @@ jobs:
         # executable. If it is not in the artifact the verb lists the artifact and fails.
         shell: bash
         run: |
-          "$RUNNER_TEMP/ci" take-shipped --os "${{ matrix.os }}" --tool nova-check --stamp v0.0.0-dry-run --dist dist --out "$BIN"
+          "$RUNNER_TEMP/ci${{ runner.os == 'Windows' && '.exe' || '' }}" take-shipped --os "${{ matrix.os }}" --tool nova-check --stamp v0.0.0-dry-run --dist dist --out "$BIN"
 
       - name: smoke the shipped binary
         id: smoke_test
@@ -459,7 +459,7 @@ jobs:
         if: ${{ !cancelled() }}
         shell: bash
         run: |
-          "$RUNNER_TEMP/ci" aggregate --skip-ok '*' --what "smoke assertion(s) failed" \
+          "$RUNNER_TEMP/ci${{ runner.os == 'Windows' && '.exe' || '' }}" aggregate --skip-ok '*' --what "smoke assertion(s) failed" \
             "download the shipped binaries=${{ steps.download.outcome }}" "set up Go=${{ steps.setup_go.outcome }}" "build tools/ci=${{ steps.build_ci.outcome }}" \
             "take this runner's binary=${{ steps.take_binary.outcome }}" "smoke the shipped binary=${{ steps.smoke_test.outcome }}"
 

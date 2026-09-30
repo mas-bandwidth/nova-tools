@@ -15,6 +15,11 @@ import (
 // on the binary every job builds once.
 const redisInstallCall = `"$RUNNER_TEMP/ci" install-redis-server`
 
+// ciExe is the binary's name on a job whose runner may be Windows: Go names a
+// Windows executable with .exe, so the build and every call name it that way
+// rather than leaning on the shell to find ci.exe for "ci".
+const ciExe = `"$RUNNER_TEMP/ci${{ runner.os == 'Windows' && '.exe' || '' }}"`
+
 // TestToolsCIIsBuiltOnceAndNeverRun holds every workflow to the one way a job
 // reaches tools/ci: the job builds the verbs ONCE, in an early step after its Go
 // setup, and every later step calls the binary at "$RUNNER_TEMP/ci". `go run
@@ -51,16 +56,21 @@ func TestToolsCIIsBuiltOnceAndNeverRun(t *testing.T) {
 		for name, job := range wf.Jobs {
 			where := filepath.Base(f) + " job " + name
 			builds, firstCall := 0, -1
+			// A job whose runner can be Windows names the binary with ciExe.
+			mayBeWindows := strings.Contains(asText(job.RunsOn), "windows") || strings.Contains(asText(job.RunsOn), "matrix.os")
 			cacheRestore, cacheSave := false, false
 			for i, s := range job.Steps {
 				assert.NotContains(t, s.Run, "go run ./tools/ci", "%s step %q runs tools/ci with go run; call the binary built once", where, s.Name)
 				for _, line := range strings.Split(s.Run, "\n") {
 					l := strings.TrimSpace(line)
 					switch {
-					case strings.HasPrefix(l, `go build -o "$RUNNER_TEMP/ci" ./tools/ci`), strings.HasPrefix(l, `go -C .revert-tool build -o "$RUNNER_TEMP/ci" ./tools/ci`):
+					case strings.HasPrefix(l, `go build -o "$RUNNER_TEMP/ci" ./tools/ci`), strings.HasPrefix(l, `go -C .revert-tool build -o "$RUNNER_TEMP/ci" ./tools/ci`),
+						strings.HasPrefix(l, `go build -o `+ciExe+` ./tools/ci`):
 						builds++
+						assert.Equal(t, mayBeWindows, strings.Contains(l, ciExe), "%s builds tools/ci as %q; a job that may run on Windows names it %s, any other \"$RUNNER_TEMP/ci\"", where, l, ciExe)
 						assert.Equal(t, -1, firstCall, "%s builds tools/ci after step %d already calls it", where, firstCall)
-					case strings.Contains(l, `"$RUNNER_TEMP/ci" `):
+					case strings.Contains(l, `"$RUNNER_TEMP/ci" `), strings.Contains(l, ciExe+` `):
+						assert.Equal(t, mayBeWindows, strings.Contains(l, ciExe), "%s calls tools/ci as %q; a job that may run on Windows calls %s", where, l, ciExe)
 						if firstCall < 0 {
 							firstCall = i
 						}
