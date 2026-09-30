@@ -398,3 +398,24 @@ func TestAppendStalls(t *testing.T) {
 		t.Fatalf("empty text: got %q", got)
 	}
 }
+
+// A stored view's HideZero reaches the frame: the named table hides a row whose
+// counts are all zero, and a table the view does not name keeps it.
+func TestViewReaderHidesZeroRowsOfTheTablesTheViewNames(t *testing.T) {
+	t.Parallel()
+	hidden, kept := demoTable(0), demoTable(0)
+	kept.Name = "kept"
+	viewGet := func(context.Context, redis.Cmdable, string) (ntable.View, error) {
+		return ntable.View{Name: "v", Tables: []string{"demo", "kept"}, HideZero: []string{"demo"}}, nil
+	}
+	snapshotter := func(redis.Cmdable, []string) func(context.Context) ([]ntable.Table, error) {
+		return func(context.Context) ([]ntable.Table, error) { return []ntable.Table{hidden, kept}, nil }
+	}
+	got, err := viewReaderWith(nil, "v", ntable.RenderOpts{}, false, viewGet, snapshotter, nil)(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(got, "demo") || !strings.Contains(got, "kept") || !strings.Contains(got, "build") {
+		t.Fatalf("demo (all zero) is not drawn, kept is:\n%s", got)
+	}
+}
