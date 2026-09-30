@@ -21,6 +21,10 @@ const HowItWorksLabel = "how it works:"
 // it is read before the usage lines, never found under them.
 const HowItWorksWithin = 15
 
+// HowItWorksMaxLines is the most lines the how-it-works paragraph takes: the
+// tool's nouns and where its state lives, not a second manual.
+const HowItWorksMaxLines = 5
+
 // MinExampleCommands is the fewest command lines an `example:` block holds: a
 // first run is a sitting, and one line is a single call rather than a sitting.
 const MinExampleCommands = 3
@@ -74,6 +78,25 @@ func HowItWorksLine(banner string) int {
 		}
 	}
 	return 0
+}
+
+// HowItWorksLength returns how many lines the how-it-works paragraph takes:
+// from its label up to the first blank line or the line that opens the first
+// run, whichever comes first; 0 when the banner has no such paragraph near the
+// top.
+func HowItWorksLength(banner string) int {
+	start := HowItWorksLine(banner)
+	if start == 0 {
+		return 0
+	}
+	n := 0
+	for _, line := range strings.Split(banner, "\n")[start-1:] {
+		if strings.TrimSpace(line) == "" || (n > 0 && strings.HasPrefix(line, "first run")) {
+			break
+		}
+		n++
+	}
+	return n
 }
 
 // ExampleCommands returns the command lines of a banner's first `example:`

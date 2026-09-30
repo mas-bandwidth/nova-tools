@@ -112,6 +112,8 @@ func TestEveryCommandMeetsTheOnboardingStandard(t *testing.T) {
 			}
 			if onboarding.HowItWorksLine(banner) == 0 {
 				t.Errorf("`%s help` has no %q paragraph in its first %d lines; it names the tool's nouns and where its state lives (docs/ONBOARDING.md point 6: how does it work?)", tool, onboarding.HowItWorksLabel, onboarding.HowItWorksWithin)
+			} else if n := onboarding.HowItWorksLength(banner); n > onboarding.HowItWorksMaxLines {
+				t.Errorf("`%s help`'s %q paragraph takes %d lines, over %d; it names the nouns and where the state lives, and the usage says the rest (docs/ONBOARDING.md point 6)", tool, onboarding.HowItWorksLabel, n, onboarding.HowItWorksMaxLines)
 			}
 			if got := onboarding.ExampleCommands(banner, tool); len(got) < onboarding.MinExampleCommands {
 				t.Errorf("`%s help`'s example: block runs the tool %d time(s): %q; a first run is at least %d command lines a stranger runs in order (docs/ONBOARDING.md point 6: how do I use it?)", tool, len(got), got, onboarding.MinExampleCommands)

@@ -71,3 +71,18 @@ func TestExampleCommandsCountsTheToolsLinesOnly(t *testing.T) {
 		t.Errorf("words that are not assignments were taken as assignments: %q", got)
 	}
 }
+
+func TestHowItWorksLengthStopsAtTheFirstRunOrABlankLine(t *testing.T) {
+	t.Parallel()
+	five := "nova-foo: does a thing well\n\nhow it works: one\ntwo\nthree\nfour\nfive\nfirst run: init.\n\nusage:\n"
+	if got := HowItWorksLength(five); got != 5 {
+		t.Errorf("HowItWorksLength = %d, want 5", got)
+	}
+	six := "nova-foo: does a thing well\n\nhow it works: one\ntwo\nthree\nfour\nfive\nsix\n\nusage:\n"
+	if got := HowItWorksLength(six); got != 6 || got <= HowItWorksMaxLines {
+		t.Errorf("HowItWorksLength = %d for a six-line paragraph ending at a blank line, want 6 (over %d)", got, HowItWorksMaxLines)
+	}
+	if got := HowItWorksLength("nova-foo: does a thing well\n\nusage:\n"); got != 0 {
+		t.Errorf("a banner with no paragraph measured %d lines", got)
+	}
+}
