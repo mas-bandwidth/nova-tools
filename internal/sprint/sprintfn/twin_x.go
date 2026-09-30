@@ -132,9 +132,9 @@ const (
 	// S.zguard(sent:s, rcount, -inf, the highest score admitted, atmost 0)
 	// (1.5.4), and R3's release by the same (2.3). A SetGuard of kind rcount is
 	// Layer 1's own entry, never an XGuard.
-	XGuardSet       = "setguard"
-	XGuardCounter   = "counter"
-	XGuardVersion   = "version"
+	XGuardSet     = "setguard"
+	XGuardCounter = "counter"
+	XGuardVersion = "version"
 )
 
 // XGuardAbsent is the Score of a due or clock guard over an entry or field

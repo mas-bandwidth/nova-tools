@@ -100,7 +100,12 @@ func (w *world) step(req *sprintfn.Request) *sprintfn.StepReply {
 		w.t.Fatalf("step: %v", err)
 	}
 	if res.Step == nil {
-		w.t.Fatalf("step refused: %+v, %v", res.Refusal, res.Err)
+		req, _ := json.Marshal(req)
+		var detail any
+		if res.Refusal != nil {
+			detail = res.Refusal.Detail
+		}
+		w.t.Fatalf("step refused: %+v (detail %+v), %v; the request %s", res.Refusal, detail, res.Err, req)
 	}
 	return res.Step
 }

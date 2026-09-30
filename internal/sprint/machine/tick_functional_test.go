@@ -78,7 +78,7 @@ func newStoreWorld(t *testing.T) *world {
 	if err := fn.LoadTSet(ctx, raw, fn.TSetSprint); err != nil {
 		t.Fatalf("FUNCTION LOAD of the sprint profile: %v", err)
 	}
-	c, err := sprintfn.NewRedis(addr, "", "", testNames)
+	c, err := sprintfn.NewRedis(addr, "", "", testNames, storeLibrary)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,32 +88,111 @@ func newStoreWorld(t *testing.T) *world {
 	return w
 }
 
-// requireSprintProfile fails a tick's store-tier test with what it still
-// owes: it never passes by doing nothing.
-func requireSprintProfile(t *testing.T) {
+// storeLibrary is this build's sprint library, which the store world's client
+// checks the store against before its first call, as the command's does.
+var storeLibrary = &sprintfn.Library{Name: fn.Library, Sum: fn.Sum,
+	Source: func() (string, error) { return fn.TSetSource(fn.TSetSprint) }}
+
+// storeTrips puts a round-trip counter on the store world's own client
+// (testredis.RoundTrips, added last; sprintfn.Redis.AddHookForTest, the
+// functional build's seam): what it counts is what the connection sent and
+// waited for, the store's own count of E8.
+func storeTrips(t *testing.T, w *world) *testredis.Counter {
 	t.Helper()
-	if _, err := fn.TSetSource(fn.TSetSprint); err != nil {
-		t.Fatalf("the sprint profile does not assemble: %v", err)
+	r, ok := w.c.(*sprintfn.Redis)
+	if !ok {
+		t.Fatalf("the store world's client is %T, not sprintfn.Redis", w.c)
 	}
-	t.Fatal("owed: the tick on a store world (newStoreWorld), its round trips counted " +
-		"(idle 1, busy at most 3, as tick_test.go pins on the twin); it needs a way to put the counting hook " +
-		"on sprintfn.Redis's own client, which has no exported seam")
+	trips, hook := testredis.RoundTrips(t)
+	r.AddHookForTest(hook)
+	return trips
+}
+
+// lastSeq is the log's last seq at epoch 0, read through the world's client.
+func (w *world) lastSeq() string {
+	w.t.Helper()
+	res, err := sprintfn.Read(context.Background(), w.c, &sprintfn.ReadRequest{Epoch: "0", Tset: []tset.ReadQuery{{Kind: "last"}}})
+	if err != nil || res.Read == nil {
+		w.t.Fatalf("read the log's last seq: %v %+v", err, res.Refusal)
+	}
+	return string(res.Read.Tset[0].LastSeq)
 }
 
 // TestTickStoreIdleOneRoundTrip: on the store, an idle tick is one round trip
-// (1.4.2, T5; E8).
+// (1.4.2, T5; E8), counted on the connection: the lease step, the page and
+// the read in one pipeline, which writes no line and moves no agenda entry.
+// The ticks before it are TestTickIdleOneRoundTrip's on the twin.
 func TestTickStoreIdleOneRoundTrip(t *testing.T) {
 	t.Parallel()
-	requireTSetLogFragment(t)
-	requireSprintProfile(t)
+	w := newStoreWorld(t)
+	trips := storeTrips(t, w)
+	w.rows("s1")
+	w.verb(create("s1:ready", fresh(), "p1", "p2"))
+	k := &counting{c: w.c}
+	l := w.loop("a", []sprint.Rule{dealRule(64)}, Budget{})
+	w.tick(l, k)
+	if rep := w.tick(l, k); rep.Lines == 0 || rep.Applied == 0 {
+		t.Fatalf("the busy tick: %+v", rep)
+	}
+	if rep := w.tick(l, k); rep.Lines != 1 || rep.RoundTrips != 2 {
+		t.Fatalf("the tick after: %+v", rep)
+	}
+	for i := 0; i < 3; i++ {
+		w.clk.add(TickEvery)
+		last, agenda := w.lastSeq(), w.zset("agenda@0")
+		var rep Report
+		trips.Expect(t, 1, func() { rep = w.tick(l, k) })
+		if rep.RoundTrips != 1 || !rep.Held {
+			t.Fatalf("idle tick %d: %d round trips, held %v, %+v", i, rep.RoundTrips, rep.Held, rep)
+		}
+		if got := w.lastSeq(); got != last {
+			t.Fatalf("idle tick %d wrote lines: the last seq %s, was %s", i, got, last)
+		}
+		if got := w.zset("agenda@0"); len(got) != len(agenda) {
+			t.Fatalf("idle tick %d changed the agenda: %v -> %v", i, agenda, got)
+		}
+		items := k.last()
+		if len(items) != 3 || items[0].Step == nil || items[0].Step.Lease == nil || items[1].Page == nil || items[2].Read == nil {
+			t.Fatalf("an idle tick's round trip is not the lease step, the page and the read: %+v", items)
+		}
+	}
 }
 
-// TestTickStoreBusyAtMostThree: on the store, a busy tick is at most three
-// round trips (1.4.2; E8).
+// TestTickStoreBusyAtMostThree: on the store, a busy tick (new lines, keys,
+// two rules' reads, their steps) is at most three round trips (1.4.2; E8),
+// counted on the connection, and deals and releases on the store as the twin
+// does (TestTickBusyAtMostThree); what it made due is dealt the next tick,
+// again in at most three.
 func TestTickStoreBusyAtMostThree(t *testing.T) {
 	t.Parallel()
-	requireTSetLogFragment(t)
-	requireSprintProfile(t)
+	w := newStoreWorld(t)
+	trips := storeTrips(t, w)
+	w.rows("s1")
+	k := &counting{c: w.c}
+	l := w.loop("a", []sprint.Rule{dealRule(64), releaseRule(64)}, Budget{})
+	w.tick(l, k)
+	w.verb(create("s1:ready", fresh(), "p1", "p2"), create("s1:waiting", waiting(), "q1", "q2", "q3"))
+	var rep Report
+	trips.Expect(t, 3, func() { rep = w.tick(l, k) })
+	if rep.RoundTrips != 3 || len(rep.Dealt) != 2 || rep.Applied != 2 || rep.Read["deal"] != 1 || rep.Read["resolve"] != 1 {
+		t.Fatalf("the busy tick did not deal and release in three round trips: %+v", rep)
+	}
+	for _, id := range []string{"p1", "p2"} {
+		if p := w.place(id); p != "s1:working" {
+			t.Fatalf("%s is at %q, not dealt", id, p)
+		}
+	}
+	for _, id := range []string{"q1", "q2", "q3"} {
+		if p := w.place(id); p != "s1:ready" {
+			t.Fatalf("%s is at %q, not released", id, p)
+		}
+	}
+	w.clk.add(TickEvery)
+	var n int
+	trips.Expect(t, 3, func() { rep = w.tick(l, k); n = rep.RoundTrips })
+	if n > 3 || w.place("q1") != "s1:working" {
+		t.Fatalf("the next tick: %d round trips, q1 at %q", n, w.place("q1"))
+	}
 }
 
 // The real rules' steps on the store (the integration's gaps a to e): the
