@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // FailedStep is one step of a job: enough to say what a cancellation cut short.
@@ -411,7 +412,7 @@ func urlQueryEscape(s string) string {
 func (g *GHFailForge) gh(big bool, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), g.Timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, g.GH, args...)
+	cmd := subproc.Context(ctx, g.GH, args...)
 	out, err := cmd.Output()
 	if err != nil {
 		what := "gh " + strings.Join(args, " ")

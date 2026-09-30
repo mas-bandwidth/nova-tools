@@ -44,7 +44,7 @@ no `--watch`, no state file of its own (rule 25's snapshot is the caller's, name
    entry 1 to the skip. The header and every line whose first character is `#` are
    skipped, nothing else is: neither is an entry, `entries=` counts neither, rule 5 never
    reads `kind=kind`. No field may be empty; `apply` may be `none`. More or fewer fields
-   is a refusal naming the line number, exit 2, never a skip. No graph, no lockfile.
+   is a refusal naming the line number, exit 2, never a skip. A manifest with several problems is refused ONCE, naming every one of them with its line (the header, each line's bad fields, each bad line; at most fifty, the rest counted as `and <n> more`), so a file is fixed in one pass. No graph, no lockfile.
 3. **A command is argv, never a shell.** `installed`, `apply` and rule 6's `local:<argv>`
    — this tool's three exec sites — are split on single spaces and executed directly: no
    shell, no pipe, no glob, no `&&`, no environment expansion. An argument needing a space
@@ -415,7 +415,8 @@ nova-update release pull --version <v> --out <dir> --changelog <path> [--machine
 nova-update help
 ```
 
-Those twelve usage lines are the string `nova-update help` prints, byte for byte: one string
+Those twelve usage lines are the string `nova-update help` prints, byte for byte, under the
+banner's opening (what the tool does, how it works, the first run): one string
 in the binary, so the spec and the help cannot drift apart; the five `release` lines are
 `release.Verbs`, spliced into that one string rather than copied beside it. `report --store <host:port>` is the fleet's view: it reads every registered bench's
 beat (`bench:<b>:beat`, field `build`, the version line the bench stamps each

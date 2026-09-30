@@ -103,7 +103,6 @@ github.com/mas-bandwidth/nova-tools/internal/check	-	1.1
 github.com/mas-bandwidth/nova-tools/internal/dogfood	-	1.1
 github.com/mas-bandwidth/nova-tools/cmd/nova-decide	-	1.0
 github.com/mas-bandwidth/nova-tools/cmd/nova-post	-	1.0
-github.com/mas-bandwidth/nova-tools/internal/decide	-	1.0
 github.com/mas-bandwidth/nova-tools/internal/worklang	-	0.9
 github.com/mas-bandwidth/nova-tools/internal/docs	-	0.8
 github.com/mas-bandwidth/nova-tools/internal/safepath	-	0.8

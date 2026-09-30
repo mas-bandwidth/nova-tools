@@ -78,6 +78,7 @@ func newApp(getenv func(string) string) *app {
 
 func (a *app) close() {
 	for _, c := range a.conns {
+		// ignored: a close at the end of the run, after every answer is printed
 		_ = c.Close()
 	}
 }
@@ -101,6 +102,7 @@ func (a *app) redisBackend(ctx context.Context, addr string, names sprint.Names)
 			return nil, err
 		}
 		if err := libraryMatches(ctx, conn.Client(), addr); err != nil {
+			// ignored: a close on the failure path; the library mismatch error is the one returned
 			_ = conn.Close()
 			return nil, err
 		}
@@ -275,9 +277,11 @@ const noPrefix = "there is no prefix: the tables are always work, merge, readers
 var errNoPrefix = errors.New(noPrefix)
 
 // argErr is what a verb refuses its arguments with: the words, then the error;
-// a --prefix flag is the one line errNoPrefix, alone.
+// a --prefix flag is the one line errNoPrefix, alone, and a flag refusal (flagError)
+// is its own line.
 func argErr(words string, err error) string {
-	if errors.Is(err, errNoPrefix) {
+	var fe *flagError
+	if errors.Is(err, errNoPrefix) || errors.As(err, &fe) {
 		return err.Error()
 	}
 	return fmt.Sprint(words, err)

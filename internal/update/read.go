@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 const ChildCap = 64 * 1024
@@ -123,7 +124,7 @@ func process(ctx context.Context, args []string, input io.Reader, cap int) Proce
 	child, cancel := context.WithCancel(ctx)
 	defer cancel()
 	out, errs := bounded.NewCapture(cap, cancel), bounded.NewCapture(cap, cancel)
-	cmd := exec.CommandContext(child, path, args[1:]...)
+	cmd := subproc.Context(child, path, args[1:]...)
 	cmd.Stdin = input
 	// The pipes are created here rather than handed to os/exec as plain writers,
 	// so this process can close the read ends itself when the deadline passes and
@@ -147,7 +148,9 @@ func process(ctx context.Context, args []string, input io.Reader, cap int) Proce
 
 	var copyWG sync.WaitGroup
 	copyWG.Add(2)
+	// ignored: a pipe pump; the child's exit, waited on below, is the report
 	go func() { defer copyWG.Done(); _, _ = io.Copy(out, stdoutRead) }()
+	// ignored: a pipe pump; the child's exit, waited on below, is the report
 	go func() { defer copyWG.Done(); _, _ = io.Copy(errs, stderrRead) }()
 
 	if err := cmd.Start(); err != nil {

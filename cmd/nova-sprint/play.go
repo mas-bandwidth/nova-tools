@@ -75,7 +75,7 @@ func (a *app) cmdPlay(args []string, stdout, stderr io.Writer) int {
 		Config: driver.Config{Every: *every, Batch: *batch, TakeLimit: *take, ReadLimit: *reads, Ticks: *ticks, Hold: *hold, Silent: silent}}
 	why, err := d.Loop()
 	if err != nil {
-		fmt.Fprintf(stderr, "%s play: %s\n", prog, oneline.Escape(err.Error()))
+		fmt.Fprintf(stderr, "%s play: %s\n", prog, oneline.WithRemedy(err.Error(), prog+" play -h"))
 		return 2
 	}
 	fmt.Fprintf(stdout, "PLAY OK stopped=%s seed=%d\n", why, *seed)

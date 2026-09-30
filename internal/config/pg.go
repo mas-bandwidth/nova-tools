@@ -106,6 +106,7 @@ func openPGWithin(ctx context.Context, dsn string, noDeadline time.Duration) (*P
 		defer cancel()
 	}
 	if err := db.PingContext(pingCtx); err != nil {
+		// ignored: a close on the failure path; the ping error is the one returned
 		_ = db.Close()
 		return nil, fmt.Errorf("postgres at %s: %w", Redact(dsn), err)
 	}
@@ -184,6 +185,7 @@ func (p *PG) applyOne(ctx context.Context, m Migration) error {
 	if err != nil {
 		return fmt.Errorf("migration %d: begin: %w", m.Version, err)
 	}
+	// ignored: a rollback after a commit is a no-op, and on a failure path the failure is the one returned
 	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.ExecContext(ctx, m.SQL); err != nil {
 		return fmt.Errorf("migration %d (%s): %w", m.Version, m.Name, err)
@@ -349,6 +351,7 @@ func (p *PG) MachinesAndFleet(ctx context.Context) ([]Row, Row, error) {
 	if err != nil {
 		return nil, Row{}, fmt.Errorf("postgres: begin read: %w", err)
 	}
+	// ignored: a read-only transaction; the rollback ends it and has nothing to undo
 	defer func() { _ = tx.Rollback() }()
 	machines, err := listRows(ctx, tx, KindMachine)
 	if err != nil {
@@ -413,6 +416,7 @@ func (p *PG) Insert(ctx context.Context, kind string, row Row, actor string) (in
 	if err != nil {
 		return 0, fmt.Errorf("postgres: begin: %w", err)
 	}
+	// ignored: a rollback after a commit is a no-op, and on a failure path the failure is the one returned
 	defer func() { _ = tx.Rollback() }()
 	args := values(k, row)
 	marks := make([]string, len(args))
@@ -462,6 +466,7 @@ func (p *PG) Update(ctx context.Context, kind, name string, changes map[string]s
 	if err != nil {
 		return Row{}, 0, fmt.Errorf("postgres: begin: %w", err)
 	}
+	// ignored: a rollback after a commit is a no-op, and on a failure path the failure is the one returned
 	defer func() { _ = tx.Rollback() }()
 	var sets []string
 	args := []any{name}
@@ -514,6 +519,7 @@ func (p *PG) Delete(ctx context.Context, kind, name string, actor string) (int64
 	if err != nil {
 		return 0, fmt.Errorf("postgres: begin: %w", err)
 	}
+	// ignored: a rollback after a commit is a no-op, and on a failure path the failure is the one returned
 	defer func() { _ = tx.Rollback() }()
 	if _, err := tx.ExecContext(ctx, `DELETE FROM config.`+quoteIdent(k.Table)+` WHERE name = $1`, name); err != nil {
 		if sqlState(err) == "23503" {

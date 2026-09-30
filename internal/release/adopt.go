@@ -587,9 +587,12 @@ func adopt(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 			// A leftover final dir from an older killed send would make
 			// `mv partial final` nest the new tree inside it. Remove this
 			// release's own files by name -- never recursively -- then rename.
+			// ignored: the test-and-move below refuses when the clear did not leave the final path free
 			_, _ = ssh.Run(ctx, machine, clearReleaseFilesArgv(remoteDir, arts))
+			// ignored: the test-and-move below refuses when the clear did not leave the final path free
 			_, _ = ssh.Run(ctx, machine, []string{"rmdir", remoteDir})
 			finalRoot := path.Dir(remoteDir)
+			// ignored: the test-and-move below refuses when the clear did not leave the final path free
 			_, _ = ssh.Run(ctx, machine, []string{"rmdir", finalRoot})
 			if output, err := ssh.Run(ctx, machine, []string{"test", "!", "-e", finalRoot, "&&", "mv", partialRoot, finalRoot}); err != nil {
 				refused++

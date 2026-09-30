@@ -3,13 +3,14 @@
 package swarm
 
 import (
-	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 )
 
 // These tests exec whole programs -- the fake runner this package builds

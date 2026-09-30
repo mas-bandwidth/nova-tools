@@ -66,3 +66,27 @@ func CardKindFromText(text string) string {
 func TakeSlotLeasesKind(store, owner string, k int, kind string, dur time.Duration, label string, now time.Time, pid int) (ids []string, held, share, free int, holders string, ok bool, err error) {
 	return takeSlotLeases(store, owner, k, SlotAdmissionWeight(kind), kind, dur, label, now, pid)
 }
+
+// cardHeaders are the field lines a card may state its own evidence with. The
+// set is closed: a line the card carries that is not one of these is the
+// card's business and is never read as evidence.
+var cardHeaders = []string{"kind", "files", "packages", "lanes", "lane", "platform", "touches", "deadline"}
+
+// cardFields reads the stated evidence lines, first occurrence winning.
+func cardFields(text string) map[string]string {
+	out := map[string]string{}
+	for _, line := range strings.Split(text, "\n") {
+		name, value, ok := strings.Cut(strings.TrimSpace(line), ":")
+		if !ok {
+			continue
+		}
+		name = strings.ToLower(strings.TrimSpace(name))
+		for _, h := range cardHeaders {
+			if name != h || out[h] != "" {
+				continue
+			}
+			out[h] = strings.ToLower(strings.TrimSpace(value))
+		}
+	}
+	return out
+}

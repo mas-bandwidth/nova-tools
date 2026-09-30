@@ -327,6 +327,7 @@ func runInWinPlace(f runFlags, dir string, job winJob, deadline time.Duration, s
 		// W2: closing the tool's last handle terminates every process still in the job,
 		// including a grandchild a harness spawned and abandoned. There is no grace and no
 		// escalation, because there is no signal to escalate FROM: windows has none.
+		// ignored: stepErr has already printed the failed kill step on stderr; the exit code is decided by the child's end
 		_ = stepErr(stderr, "kill", func() error { return runWinPlace.CloseJob(job) })
 	}
 	code, timedOut, interrupted := superviseWindows(started.done, deadlineC, sigs, closeJob)

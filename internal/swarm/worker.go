@@ -113,6 +113,13 @@ const (
 	UsageNone     = "none"
 )
 
+// The placeholders a worker description may write into harness_args.
+const (
+	ModelPlaceholder   = "{model}"
+	PromptPlaceholder  = "{prompt}"
+	BaseURLPlaceholder = "{base_url}"
+)
+
 // LoadWorker reads and checks a worker description, reporting EVERY independent problem in
 // one run (ONBOARDING point 2) rather than sending a first run back once per field.
 func LoadWorker(path string) (Worker, []error) {

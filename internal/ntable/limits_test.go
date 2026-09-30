@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	lua "github.com/yuin/gopher-lua"
 )
 
@@ -16,14 +18,10 @@ import (
 func luaLimits(t *testing.T) map[string]int {
 	t.Helper()
 	src, err := os.ReadFile("../nsprint/fn/lua/table.lua")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	block := func(head string) string {
 		i := strings.Index(string(src), head)
-		if i < 0 {
-			t.Fatalf("table.lua has no %s", head)
-		}
+		require.GreaterOrEqual(t, i, 0, "table.lua has no %s", head)
 		rest := string(src)[i:]
 		return rest[:strings.Index(rest, "\n  }")]
 	}
@@ -39,18 +37,14 @@ func luaLimits(t *testing.T) map[string]int {
 		}
 		out[m[2]] = v
 	}
-	if len(out) != len(values) {
-		t.Fatalf("table.lua: %d limit values, %d names", len(values), len(out))
-	}
+	require.Len(t, out, len(values), "table.lua: %d limit values, %d names", len(values), len(out))
 	return out
 }
 
 func specLimits(t *testing.T) map[string]int {
 	t.Helper()
 	src, err := os.ReadFile("../../docs/SPEC-NOVA-TABLE.md")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	out := map[string]int{}
 	for _, m := range regexp.MustCompile(`(?m)^\| ([a-z_0-9 -]+) \| (\d+) \|$`).FindAllStringSubmatch(string(src), -1) {
 		out[m[1]], _ = strconv.Atoi(m[2])
@@ -81,9 +75,7 @@ func TestBatchBoundsAgreeAcrossServerValidatorAndSpec(t *testing.T) {
 		limitNameBatchValues:  LimitBatchValueBytes,
 	}
 	for label, side := range map[string]map[string]int{"table.lua": luaLimits(t), "SPEC-NOVA-TABLE.md": specLimits(t)} {
-		if len(side) != len(goSide) {
-			t.Errorf("%s states %d bounds, the validator %d: %v", label, len(side), len(goSide), side)
-		}
+		assert.Len(t, side, len(goSide), "%s states %d bounds, the validator %d: %v", label, len(side), len(goSide), side)
 		for name, want := range goSide {
 			if got, ok := side[name]; !ok || got != want {
 				t.Errorf("%s: %s = %d (present %v), the validator holds %d", label, name, got, ok, want)
@@ -96,16 +88,11 @@ func TestBatchBoundsAgreeAcrossServerValidatorAndSpec(t *testing.T) {
 func TestReceiptValueBoundAgreesBetweenServerAndLibrary(t *testing.T) {
 	t.Parallel()
 	src, err := os.ReadFile("../nsprint/fn/lua/table.lua")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	m := regexp.MustCompile(`T\.receipt_value_bytes = (\d+)`).FindSubmatch(src)
-	if m == nil {
-		t.Fatal("table.lua has no T.receipt_value_bytes")
-	}
-	if got, _ := strconv.Atoi(string(m[1])); got != ReceiptValueBytes {
-		t.Errorf("table.lua %d, limits.go %d", got, ReceiptValueBytes)
-	}
+	require.NotNil(t, m, "table.lua has no T.receipt_value_bytes")
+	got, _ := strconv.Atoi(string(m[1]))
+	assert.Equal(t, ReceiptValueBytes, got, "table.lua %d, limits.go %d", got, ReceiptValueBytes)
 	if ReceiptValueBytes != 64 {
 		t.Errorf("a receipt holds a value of at most 64 bytes in full, limits.go says %d", ReceiptValueBytes)
 	}
@@ -116,35 +103,24 @@ func TestReceiptValueBoundAgreesBetweenServerAndLibrary(t *testing.T) {
 func TestSpecBatchSectionDescribesWhatIs(t *testing.T) {
 	t.Parallel()
 	src, err := os.ReadFile("../../docs/SPEC-NOVA-TABLE.md")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	text := string(src)
 	i := strings.Index(text, "## Batched member read and conditional write")
-	if i < 0 {
-		t.Fatal("no batch section")
-	}
+	require.GreaterOrEqual(t, i, 0, "no batch section")
 	for _, phrase := range []string{" gate", "mini-quack", "card manager", "card layer", "Use the existing", "Tests must", "must pin", "Extend the", "The design must", "resumes"} {
-		if strings.Contains(text[i:], phrase) {
-			t.Errorf("the batch section holds %q: it describes process, not what is", phrase)
-		}
+		assert.NotContains(t, text[i:], phrase, "the batch section holds %q: it describes process, not what is", phrase)
 	}
-	if _, err := os.Lstat("../../docs/SPEC-TABLE.md"); err == nil {
-		t.Errorf("docs/SPEC-TABLE.md exists: a second name for SPEC-NOVA-TABLE.md that nothing needs")
-	}
+	_, err = os.Lstat("../../docs/SPEC-TABLE.md")
+	assert.Error(t, err, "docs/SPEC-TABLE.md exists: a second name for SPEC-NOVA-TABLE.md that nothing needs")
 }
 
 // receiptSizeFunction is T.receipt_size as table.lua holds it, cut out of the file.
 func receiptSizeFunction(t *testing.T) string {
 	t.Helper()
 	src, err := os.ReadFile("../nsprint/fn/lua/table.lua")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	m := regexp.MustCompile(`(?s)  function T\.receipt_size\(.*?\n  end\n`).Find(src)
-	if m == nil {
-		t.Fatal("table.lua has no T.receipt_size")
-	}
+	require.NotNil(t, m, "table.lua has no T.receipt_size")
 	return string(m)
 }
 
@@ -175,20 +151,16 @@ size = T.receipt_size(encode, late)
 restored = a.delta.after_score == '1' and b.delta.after_score == nil and c.delta.after_score == '0.30000000000000004'
 none = T.receipt_size(function() return string.rep('.', 7) end, {})
 `
-	if err := L.DoString(script); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, L.DoString(script))
 	// three late scores, none of them shorter than the longest a score prints
 	want := 100 + 3*scoreTextBytes(t)
-	if got := int(L.GetGlobal("size").(lua.LNumber)); got != want {
-		t.Errorf("size %d, want %d", got, want)
-	}
+	got := int(L.GetGlobal("size").(lua.LNumber))
+	assert.Equal(t, want, got, "size %d, want %d", got, want)
 	if L.GetGlobal("restored") != lua.LTrue {
 		t.Errorf("a score was not put back")
 	}
-	if got := int(L.GetGlobal("none").(lua.LNumber)); got != 7 {
-		t.Errorf("a delta with no late score is its own length: %d", got)
-	}
+	got = int(L.GetGlobal("none").(lua.LNumber))
+	assert.Equal(t, 7, got, "a delta with no late score is its own length: %d", got)
 }
 
 // scoreTextBytes is T.score_text_bytes; the store prints a score with %.17g, and
@@ -196,13 +168,9 @@ none = T.receipt_size(function() return string.rep('.', 7) end, {})
 func scoreTextBytes(t *testing.T) int {
 	t.Helper()
 	src, err := os.ReadFile("../nsprint/fn/lua/table.lua")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	m := regexp.MustCompile(`T\.score_text_bytes = (\d+)`).FindSubmatch(src)
-	if m == nil {
-		t.Fatal("table.lua has no T.score_text_bytes")
-	}
+	require.NotNil(t, m, "table.lua has no T.score_text_bytes")
 	n, _ := strconv.Atoi(string(m[1]))
 	return n
 }
@@ -215,9 +183,8 @@ func TestScoreTextBoundHoldsEveryScoreTheStorePrints(t *testing.T) {
 			longest = n
 		}
 	}
-	if got := scoreTextBytes(t); got < longest {
-		t.Errorf("T.score_text_bytes %d is shorter than a score the store prints (%d)", got, longest)
-	}
+	got := scoreTextBytes(t)
+	assert.GreaterOrEqual(t, got, longest, "T.score_text_bytes %d is shorter than a score the store prints (%d)", got, longest)
 }
 
 // The receipt's bound is the manifest's: one MiB, in the server, the library and
@@ -238,7 +205,5 @@ func TestLimitErrorSaysAtLeastForAStoppedCount(t *testing.T) {
 	if !strings.Contains(exact, "observed 12") || strings.Contains(exact, "at least") {
 		t.Errorf("exact: %s", exact)
 	}
-	if !strings.Contains(least, "observed at least 12") {
-		t.Errorf("stopped count: %s", least)
-	}
+	assert.Contains(t, least, "observed at least 12", "stopped count: %s", least)
 }

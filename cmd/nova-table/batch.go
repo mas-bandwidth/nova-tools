@@ -23,8 +23,10 @@ func (app *application) cmdBatch(args []string, stdout, stderr io.Writer) int {
 	actor := fs.String("actor", app.defaults.Actor, "actor recorded with the change; it must equal the manifest's actor when the manifest names one")
 	receipt := fs.Bool("receipt", app.receipts, "print the committed event ID, epoch and revision")
 	asJSON := fs.Bool("json", false, "print the receipt as one JSON object instead of the lines")
+	// ignored: Set on a flag this function just defined, with a value its parser accepts
 	_ = fs.Set("receipt", "true")
 	if app.shared != nil && !app.receipts {
+		// ignored: Set on a flag this function just defined, with a value its parser accepts
 		_ = fs.Set("receipt", "false")
 	}
 

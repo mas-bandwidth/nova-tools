@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestValidateBatchManifestRaw(t *testing.T) {
@@ -34,18 +36,10 @@ func TestValidateBatchManifestRaw(t *testing.T) {
 	}`
 
 	manifest, err := ntable.ValidateBatchManifestRaw([]byte(validJSON))
-	if err != nil {
-		t.Fatalf("expected valid manifest, got error: %v", err)
-	}
-	if manifest.Table != "demo" {
-		t.Errorf("expected table demo, got %s", manifest.Table)
-	}
-	if len(manifest.Members) != 2 {
-		t.Fatalf("expected 2 members, got %d", len(manifest.Members))
-	}
-	if !manifest.Members[1].Remove {
-		t.Errorf("expected member m2 remove=true")
-	}
+	require.NoError(t, err, "expected valid manifest, got error")
+	assert.Equal(t, "demo", manifest.Table, "expected table demo, got %s", manifest.Table)
+	require.Len(t, manifest.Members, 2, "expected 2 members, got %d", len(manifest.Members))
+	assert.True(t, manifest.Members[1].Remove, "expected member m2 remove=true")
 
 	tests := []struct {
 		name      string
@@ -259,12 +253,8 @@ func TestValidateBatchManifestRaw(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			_, err := ntable.ValidateBatchManifestRaw([]byte(tc.raw))
-			if err == nil {
-				t.Fatalf("expected error containing %q, got nil", tc.errSubstr)
-			}
-			if !strings.Contains(err.Error(), tc.errSubstr) {
-				t.Errorf("expected error containing %q, got: %v", tc.errSubstr, err)
-			}
+			require.Error(t, err, "expected error containing %q, got nil", tc.errSubstr)
+			assert.ErrorContains(t, err, tc.errSubstr, "expected error containing %q, got: %v", tc.errSubstr, err)
 		})
 	}
 
@@ -273,12 +263,8 @@ func TestValidateBatchManifestRaw(t *testing.T) {
 		t.Parallel()
 		raw := `{"schema":1,"table":"demo","epoch":"0","expected_table_revision":"0","operation_id":"op","members":[{"id":"m","expect":{},"set":{"remove":"done"}}]}`
 		m, err := ntable.ValidateBatchManifestRaw([]byte(raw))
-		if err != nil {
-			t.Fatalf("expected valid manifest, got error: %v", err)
-		}
-		if m.Members[0].Set["remove"] != "done" {
-			t.Errorf("expected set.remove='done', got %q", m.Members[0].Set["remove"])
-		}
+		require.NoError(t, err, "expected valid manifest, got error")
+		assert.Equal(t, "done", m.Members[0].Set["remove"], "expected set.remove='done', got %q", m.Members[0].Set["remove"])
 	})
 }
 
@@ -314,9 +300,7 @@ func TestManifestErrorsSpeakTheManifestsLanguage(t *testing.T) {
 			t.Errorf("%s: %T is not a ManifestError", tc.name, err)
 		}
 		for _, leak := range []string{"unmarshal", "Go struct", "Go value", "cannot use", "json:"} {
-			if strings.Contains(err.Error(), leak) {
-				t.Errorf("%s: %q leaks the parser: %v", tc.name, leak, err)
-			}
+			assert.NotContains(t, err.Error(), leak, "%s: %q leaks the parser: %v", tc.name, leak, err)
 		}
 	}
 }
