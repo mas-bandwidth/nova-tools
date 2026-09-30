@@ -47,8 +47,16 @@ import (
 //  5. Phases.Before is one function, and this phase needs fields for the ids
 //     its intents name: it reads its own, through the same cache.
 //
+// The cost of a step grows with its input and never with the number of its
+// admissions. The needs walk visits each reachable card once a step, however
+// many admissions and needs name it (one depth-first search with a step-wide
+// memo of the strongly connected components it has found; see explore); the
+// request's entries are read into one index once a step; the store probes
+// (Lua) are batched by key. deriveWork counts the first two, and tests pin it.
+//
 // The derive phase is the twin of sprint_intents.lua; a test runs both on the
-// same scenarios and holds their entries, notes, commands and refusals equal.
+// same scenarios and holds their entries, notes, commands, refusals and work
+// counts equal.
 
 // The intent kinds of 1.3.3, in the words Intent.Kind carries.
 const (
@@ -109,19 +117,21 @@ type derivePlan struct {
 	Entries []tset.Entry
 	Notes   []NoteReq
 	Cmds    []Cmd
+	Work    deriveWork
 }
 
 // deriveWorld is what the phase reads besides the intents and the sprint's
-// keys: the work table's records, and the cards the step itself creates.
+// keys: the work table's records, and the entries of the request (the cards the
+// step itself creates, and the cards it names).
 type deriveWorld interface {
 	// records reads the work table's records of ids, each with the
 	// application fields named (an explicit empty list reads none), from the
 	// call's one state. A record that does not exist comes back with Exists
 	// false. The result is aligned with ids.
 	records(ids, fields []string) ([]tset.MemberRecord, *Refusal)
-	// created says the step's entries create the card, and gives its column and
-	// the fields its create entry sets.
-	created(card string) (createdCard, bool)
+	// entries are the request's entries, which the run reads into its index
+	// once; a world with no request has none.
+	entries() []tset.Entry
 }
 
 // createdCard is a card a create entry of the work table makes.
@@ -130,35 +140,111 @@ type createdCard struct {
 	fields map[string]string
 }
 
-// createdIn finds the create entry of the work table that names the card: the
-// column it is created in, and its fields, the shared set overridden by the
-// card's own each.
-func createdIn(entries []tset.Entry, card string) (createdCard, bool) {
-	for _, e := range entries {
-		if e.Kind != "create" || e.Table != sprint.Work {
+// deriveWork counts what one run did, so that a test can pin that the cost
+// grows with the input (the reachable cards, their needs, the request's ids)
+// and not with the number of admissions.
+type deriveWork struct {
+	// Expanded is the cards the needs walk expanded: each reachable card once a
+	// step.
+	Expanded int
+	// EdgesSeen is the needs of the expanded cards the walk looked at: each edge
+	// once a step.
+	EdgesSeen int
+	// Indexed is the ids of the request's entries taken into the step's index:
+	// once a step, however many intents look a card up.
+	Indexed int
+}
+
+// requestIndex is the request's entries of the work table read once a step:
+// which ids its create entries make (with the place of the entry that sets
+// their fields), and which ids any entry names, since a card is named once in a
+// step or Layer 1 refuses TWICE. A lookup is a map read.
+type requestIndex struct {
+	entries []tset.Entry
+	made    map[string]madeAt
+	named   map[string]namedAt
+}
+
+type madeAt struct{ entry, pos int }
+
+type namedAt struct {
+	entry int
+	kind  string
+}
+
+// newRequestIndex reads the entries once and adds the ids it took in to
+// work.Indexed.
+func newRequestIndex(entries []tset.Entry, work *deriveWork) *requestIndex {
+	x := &requestIndex{entries: entries, made: map[string]madeAt{}, named: map[string]namedAt{}}
+	for ei, e := range entries {
+		if e.Table != sprint.Work {
 			continue
 		}
-		for i, id := range e.IDs {
-			if id != card {
-				continue
+		switch e.Kind {
+		case "create", "move", "remove", "guard":
+		default:
+			continue
+		}
+		for pos, id := range e.IDs {
+			work.Indexed++
+			if _, ok := x.named[id]; !ok {
+				x.named[id] = namedAt{entry: ei, kind: e.Kind}
 			}
-			fields := make(map[string]string, len(e.Set))
-			for k, v := range e.Set {
-				fields[k] = v
-			}
-			if i < len(e.Each) {
-				for k, v := range e.Each[i] {
-					fields[k] = v
+			if e.Kind == "create" {
+				if _, ok := x.made[id]; !ok {
+					x.made[id] = madeAt{entry: ei, pos: pos}
 				}
 			}
-			col := e.To
-			if at := strings.LastIndexByte(col, ':'); at >= 0 {
-				col = col[at+1:]
-			}
-			return createdCard{col: col, fields: fields}, true
 		}
 	}
-	return createdCard{}, false
+	return x
+}
+
+// makes says a create entry of the work table makes the card.
+func (x *requestIndex) makes(card string) bool {
+	if x == nil {
+		return false
+	}
+	_, ok := x.made[card]
+	return ok
+}
+
+// created finds the create entry of the work table that names the card: the
+// column it is created in, and its fields, the shared set overridden by the
+// card's own each.
+func (x *requestIndex) created(card string) (createdCard, bool) {
+	if x == nil {
+		return createdCard{}, false
+	}
+	at, ok := x.made[card]
+	if !ok {
+		return createdCard{}, false
+	}
+	e := x.entries[at.entry]
+	fields := make(map[string]string, len(e.Set))
+	for k, v := range e.Set {
+		fields[k] = v
+	}
+	if at.pos < len(e.Each) {
+		for k, v := range e.Each[at.pos] {
+			fields[k] = v
+		}
+	}
+	col := e.To
+	if i := strings.LastIndexByte(col, ':'); i >= 0 {
+		col = col[i+1:]
+	}
+	return createdCard{col: col, fields: fields}, true
+}
+
+// namedBy finds the first entry of the work table that names the card (a
+// create, move, remove or guard).
+func (x *requestIndex) namedBy(card string) (namedAt, bool) {
+	if x == nil {
+		return namedAt{}, false
+	}
+	at, ok := x.named[card]
+	return at, ok
 }
 
 // intentKey is a per-epoch key of the sprint: {p}<name>@<e> (1.0, "Keys").
@@ -228,18 +314,28 @@ type deriveOp struct {
 }
 
 // deriveNote is one request to J, grouped by its operation, type and cause: a
-// note names every subject of its step (1.3.4).
+// note names every subject of its step (1.3.4). The subjects are kept in the
+// order they were named, with a set beside them: a note of 2,000 subjects is
+// 2,000 set reads, not 2,000 scans.
 type deriveNote struct {
 	op, typ, cause string
 	subjects       []string
+	named          map[string]bool
 }
 
 // deriveFold is what the step does to one existing card's fields: open lowered
-// by delta (each unmet need that is met or waived, once), and needs waived.
+// by delta (each unmet need that is met or waived, once), and needs waived. The
+// causes are the kinds of intent that fold it, named when the request names the
+// card too.
 type deriveFold struct {
 	delta  int
 	waived []string
+	causes []string
 }
+
+// waitAt is an admission's entry in wait:<need>, decided and not yet put in the
+// step's commands: the probes of the store are batched by key first.
+type waitAt struct{ need, card string }
 
 // deriveRun is one run of the phase: what it read, and what it has decided.
 type deriveRun struct {
@@ -250,8 +346,26 @@ type deriveRun struct {
 	own    map[string][]string // the needs of each card a waitfor of this step admits
 	walked map[string]bool     // the ids the walk looked up: the records it counts
 
+	req *requestIndex // the request's entries, read once
+
+	// The needs walk (explore): one depth-first search over the union of the
+	// open waiting cards and the step's own admissions, shared by every
+	// admission and every need of the step.
+	visit   map[string]int // the order the walk discovered each card in
+	low     map[string]int
+	onstack map[string]bool
+	comp    map[string]int // the strongly connected component of each finished card
+	tstack  []string
+	nvisit  int
+	ncomp   int
+	work    deriveWork
+
 	removed map[string]map[string]bool // per wait key: the members of the store this step removes
 	added   map[string]map[string]bool // per wait key: the members this step adds
+
+	pendWait       []waitAt        // admissions to put in wait:<n>, in the order they were decided
+	pendMissing    []string        // needs with no record to enter in missing, in the order they were decided
+	missingPending map[string]bool // the needs in pendMissing
 
 	folds     map[string]*deriveFold
 	foldOrder []string
@@ -267,10 +381,13 @@ type deriveRun struct {
 }
 
 func newDeriveRun(st *State, w deriveWorld) *deriveRun {
-	return &deriveRun{st: st, w: w, keys: st.Keys, recs: map[string]*tset.MemberRecord{}, own: map[string][]string{},
+	r := &deriveRun{st: st, w: w, keys: st.Keys, recs: map[string]*tset.MemberRecord{}, own: map[string][]string{},
 		walked: map[string]bool{}, removed: map[string]map[string]bool{}, added: map[string]map[string]bool{},
 		folds: map[string]*deriveFold{}, opIndex: map[string]*deriveOp{}, noteIndex: map[string]*deriveNote{},
-		missingAdded: map[string]bool{}}
+		missingAdded: map[string]bool{}, visit: map[string]int{}, low: map[string]int{},
+		onstack: map[string]bool{}, comp: map[string]int{}, missingPending: map[string]bool{}}
+	r.req = newRequestIndex(w.entries(), &r.work)
+	return r
 }
 
 // deriveOver is the derive phase over a world: the intents of one step, in
@@ -305,7 +422,15 @@ func deriveOver(st *State, w deriveWorld, in []Intent) (derivePlan, *Refusal) {
 			return derivePlan{}, ref
 		}
 	}
-	return r.finish()
+	if ref := r.flush(); ref != nil {
+		return derivePlan{}, ref
+	}
+	plan, ref := r.finish()
+	if ref != nil {
+		return derivePlan{}, ref
+	}
+	plan.Work = r.work
+	return plan, nil
 }
 
 // deriveCheck is the static shape of a step's intents: a known kind, the ids
@@ -449,19 +574,45 @@ func (r *deriveRun) op(cmd, key string) *deriveOp {
 	return o
 }
 
-// addWait puts the card in wait:<n>, unless it is there.
-func (r *deriveRun) addWait(need, card string) {
-	key := intentKey(r.st, "wait:"+need)
-	if _, there := r.keys.ZScore(key, card); there || r.added[key][card] {
-		return
+// wantWait decides the card is to be in wait:<n>; flush puts it there, unless
+// it is there already, once the step's probes are batched.
+func (r *deriveRun) wantWait(need, card string) {
+	r.pendWait = append(r.pendWait, waitAt{need: need, card: card})
+}
+
+// wantMissing decides the need, which has no record, is to be in missing;
+// flush enters it once, unless it is there.
+func (r *deriveRun) wantMissing(need string) {
+	if !r.missingPending[need] {
+		r.missingPending[need] = true
+		r.pendMissing = append(r.pendMissing, need)
 	}
-	o := r.op("ZADD", key)
-	o.scores = append(o.scores, deriveWaitScore)
-	o.members = append(o.members, card)
-	if r.added[key] == nil {
-		r.added[key] = map[string]bool{}
+}
+
+// flush puts what the intents decided in the commands: the admissions in
+// wait:<n>, then the needs in missing. The store's answers are read together
+// here, by key, and never a card at a time: a step of 2,000 admissions that
+// wait for one need asks wait:<n> once.
+func (r *deriveRun) flush() *Refusal {
+	for _, p := range r.pendWait {
+		key := intentKey(r.st, "wait:"+p.need)
+		if _, there := r.keys.ZScore(key, p.card); there || r.added[key][p.card] {
+			continue
+		}
+		o := r.op("ZADD", key)
+		o.scores = append(o.scores, deriveWaitScore)
+		o.members = append(o.members, p.card)
+		if r.added[key] == nil {
+			r.added[key] = map[string]bool{}
+		}
+		r.added[key][p.card] = true
 	}
-	r.added[key][card] = true
+	for _, n := range r.pendMissing {
+		if ref := r.enterMissing(n); ref != nil {
+			return ref
+		}
+	}
+	return nil
 }
 
 // removeWait takes the card out of wait:<n>; the caller has seen it there.
@@ -481,21 +632,27 @@ func (r *deriveRun) note(op, typ, cause, subject string) {
 	id := op + "\x00" + typ + "\x00" + cause
 	n := r.noteIndex[id]
 	if n == nil {
-		n = &deriveNote{op: op, typ: typ, cause: cause}
+		n = &deriveNote{op: op, typ: typ, cause: cause, named: map[string]bool{}}
 		r.noteIndex[id] = n
 		r.notes = append(r.notes, n)
 	}
-	if !containsID(n.subjects, subject) {
+	if !n.named[subject] {
+		n.named[subject] = true
 		n.subjects = append(n.subjects, subject)
 	}
 }
 
-func (r *deriveRun) fold(card string) *deriveFold {
+// fold is what the step does to an existing card's fields, for the intent of
+// the kind given: one entry a card, however many intents name it.
+func (r *deriveRun) fold(card, cause string) *deriveFold {
 	f := r.folds[card]
 	if f == nil {
 		f = &deriveFold{}
 		r.folds[card] = f
 		r.foldOrder = append(r.foldOrder, card)
+	}
+	if !containsID(f.causes, cause) {
+		f.causes = append(f.causes, cause)
 	}
 	return f
 }
@@ -550,15 +707,16 @@ const (
 )
 
 // waitFor admits a card that waits for needs (1.3.3). It first walks the
-// needs graph, refusing a cycle and a walk past the bound, then enters the
-// card in wait:<n> of each need that is open or has no record, enters a need
-// with no record in missing, and asks J to open the judgments. The card is
-// created by this step, and its create entry carries its needs and its open;
-// derive checks them against the real state. A need the same step creates is
-// open: it will be a card of the table.
+// needs graph, refusing a cycle and a walk past the bound, then decides the
+// card goes in wait:<n> of each need that is open or has no record, that a need
+// with no record goes in missing, and asks J to open the judgments (flush puts
+// the first two in the commands). The card is created by this step, and its
+// create entry carries its needs and its open; derive checks them against the
+// real state. A need the same step creates is open: it will be a card of the
+// table.
 func (r *deriveRun) waitFor(in Intent) *Refusal {
 	w, needs := in.Card, dedupIDs(in.Needs)
-	made, ok := r.w.created(w)
+	made, ok := r.req.created(w)
 	if !ok {
 		return deriveRefuse(CodeRequest, []string{w}, "%s waits for %s and no create entry of the step makes it", w, strings.Join(needs, ", "))
 	}
@@ -566,7 +724,7 @@ func (r *deriveRun) waitFor(in Intent) *Refusal {
 		return deriveRefuse(CodeRequest, []string{w}, "%s has needs and is created in %s; a card with needs is created in waiting", w, made.col)
 	}
 	for _, n := range needs {
-		if ref := r.walk(w, n); ref != nil {
+		if ref := r.reaches(w, n); ref != nil {
 			return ref
 		}
 	}
@@ -577,8 +735,8 @@ func (r *deriveRun) waitFor(in Intent) *Refusal {
 	open := 0
 	for i, n := range needs {
 		rec := r.recs[n]
-		switch _, own := r.w.created(n); {
-		case own:
+		switch {
+		case r.req.makes(n):
 			state[i] = needOpen
 		case !rec.Exists:
 			state[i] = needMissing
@@ -593,9 +751,12 @@ func (r *deriveRun) waitFor(in Intent) *Refusal {
 			open++
 		}
 	}
-	named := sprint.Split(made.fields[deriveFieldNeeds])
+	named := map[string]bool{}
+	for _, n := range sprint.Split(made.fields[deriveFieldNeeds]) {
+		named[n] = true
+	}
 	for _, n := range needs {
-		if !containsID(named, n) {
+		if !named[n] {
 			return deriveRefuse(CodeRequest, []string{w}, "%s waits for %s and its create entry does not name it in needs", w, n)
 		}
 	}
@@ -613,12 +774,10 @@ func (r *deriveRun) waitFor(in Intent) *Refusal {
 	for i, n := range needs {
 		switch state[i] {
 		case needOpen:
-			r.addWait(n, w)
+			r.wantWait(n, w)
 		case needMissing:
-			r.addWait(n, w)
-			if ref := r.enterMissing(n); ref != nil {
-				return ref
-			}
+			r.wantWait(n, w)
+			r.wantMissing(n)
 			r.note("open", sprint.NMissingNeed, n, w)
 		case needDropped:
 			r.note("open", sprint.NBlocked, n, w)
@@ -646,43 +805,119 @@ func (r *deriveRun) enterMissing(n string) *Refusal {
 	return nil
 }
 
-// walk is the cycle walk of a waitfor (1.3.3): from the need start, through
-// the needs of every open waiting card it reaches (the cards this step
-// admits included), looking for w. A need that reaches w is refused XGUARD
-// naming the chain, and a walk that would read more than WalkRecordsMax
+// reaches is the cycle check of one need of a waitfor (1.3.3): the need n of
+// the card w reaches w when w is on a cycle through n. The search is the
+// step's, shared by every admission and need: a card it has already expanded is
+// not expanded again, and what it knows of that card (its component) answers
+// for every later need that reaches it. A need that reaches w is refused
+// XGUARD naming the chain, and a walk that would read more than WalkRecordsMax
 // records in the step is refused XGUARD naming its head, the need it began at.
-func (r *deriveRun) walk(w, start string) *Refusal {
-	parent := map[string]string{start: ""}
-	if start == w {
-		return r.cycle(parent, start, w)
+func (r *deriveRun) reaches(w, n string) *Refusal {
+	if n == w {
+		return r.cycle(w, n)
 	}
-	stack := []string{start}
-	for len(stack) > 0 {
-		c := stack[len(stack)-1]
-		stack = stack[:len(stack)-1]
-		edges, ref := r.edges(c, start)
+	if ref := r.explore(n, w); ref != nil {
+		return ref
+	}
+	// w has a need n, so n reaches w exactly when the two are in one strongly
+	// connected component. Both are finished: the search that expanded n ended
+	// before this line, and w is expanded by it or by an earlier one when n
+	// reaches it, and unseen (no component) when it does not.
+	cn, okn := r.comp[n]
+	cw, okw := r.comp[w]
+	if okn && okw && cn == cw {
+		return r.cycle(w, n)
+	}
+	return nil
+}
+
+// walkFrame is one card of the depth-first search, with the needs it goes on
+// through and the next of them to look at.
+type walkFrame struct {
+	node  string
+	needs []string
+	next  int
+}
+
+// explore expands the cards reachable from start that no earlier search of the
+// step expanded, once each, as Tarjan's algorithm does: it numbers the cards in
+// the order the search meets them, keeps the lowest number each can reach, and
+// gives every card the number of its component when the card that opened the
+// component finishes. The cards it goes on through are the needs of a card this
+// step admits, and of an open waiting card; any other card ends the search
+// there. It refuses at once when a need of a card it expands is w, the waiter
+// whose need it is searching from: that is the cycle, found where the search
+// first meets it. The work is one expansion a card and one look at each of its
+// needs, however many admissions and needs of the step name the card.
+func (r *deriveRun) explore(start, w string) *Refusal {
+	if r.visit[start] != 0 {
+		return nil
+	}
+	var frames []walkFrame
+	enter := func(c string) *Refusal {
+		needs, ref := r.lookup(c, start)
 		if ref != nil {
 			return ref
 		}
-		for i := len(edges) - 1; i >= 0; i-- {
-			e := edges[i]
-			if _, seen := parent[e]; seen {
-				continue
-			}
-			parent[e] = c
+		r.nvisit++
+		r.visit[c], r.low[c] = r.nvisit, r.nvisit
+		r.tstack = append(r.tstack, c)
+		r.onstack[c] = true
+		r.work.Expanded++
+		frames = append(frames, walkFrame{node: c, needs: needs})
+		return nil
+	}
+	if ref := enter(start); ref != nil {
+		return ref
+	}
+	for len(frames) > 0 {
+		top := len(frames) - 1
+		f := &frames[top]
+		if f.next < len(f.needs) {
+			node, e := f.node, f.needs[f.next]
+			f.next++
+			r.work.EdgesSeen++
 			if e == w {
-				return r.cycle(parent, start, w)
+				return r.cycle(w, start)
 			}
-			stack = append(stack, e)
+			if r.visit[e] == 0 {
+				if ref := enter(e); ref != nil {
+					return ref
+				}
+			} else if r.onstack[e] && r.visit[e] < r.low[node] {
+				r.low[node] = r.visit[e]
+			}
+			continue
+		}
+		c := f.node
+		frames = frames[:top]
+		if r.low[c] == r.visit[c] {
+			r.ncomp++
+			for {
+				x := r.tstack[len(r.tstack)-1]
+				r.tstack = r.tstack[:len(r.tstack)-1]
+				r.onstack[x] = false
+				r.comp[x] = r.ncomp
+				if x == c {
+					break
+				}
+			}
+		}
+		if top > 0 {
+			if p := frames[top-1].node; r.low[c] < r.low[p] {
+				r.low[p] = r.low[c]
+			}
 		}
 	}
 	return nil
 }
 
-// edges are the needs the walk goes on through from the card c: those of a
-// card this step admits, or of an open waiting card. Any other card ends the
-// walk there. Looking a card up counts one of the step's WalkRecordsMax.
-func (r *deriveRun) edges(c, head string) ([]string, *Refusal) {
+// lookup is what the walk goes on through from the card c: the needs of a card
+// this step admits, or of an open waiting card. Any other card ends the walk
+// there. Looking a card up counts one of the step's WalkRecordsMax, whatever
+// the card turns out to be (waiting or not, present or not). The walk looks each
+// card up once; a card looked up again (by cycle) is counted and read once.
+func (r *deriveRun) lookup(c, head string) ([]string, *Refusal) {
 	if needs, ok := r.own[c]; ok {
 		return needs, nil
 	}
@@ -698,25 +933,53 @@ func (r *deriveRun) edges(c, head string) ([]string, *Refusal) {
 	if ref := r.fetch([]string{c}, []string{deriveFieldNeeds, deriveFieldOpen}); ref != nil {
 		return nil, ref
 	}
-	rec := r.recs[c]
-	if !isWaiting(rec) {
-		return nil, nil
+	var needs []string
+	if rec := r.recs[c]; isWaiting(rec) {
+		open, ok := openOf(rec)
+		if !ok {
+			return nil, drift(c, "has an open that is not a whole number")
+		}
+		if open > 0 {
+			needs = sprint.Split(fieldOf(rec, deriveFieldNeeds))
+		}
 	}
-	open, ok := openOf(rec)
-	if !ok {
-		return nil, drift(c, "has an open that is not a whole number")
-	}
-	if open == 0 {
-		return nil, nil
-	}
-	return sprint.Split(fieldOf(rec, deriveFieldNeeds)), nil
+	return needs, nil
 }
 
 // cycle is the refusal of a need that reaches its waiter: the chain from the
-// need to the waiter, read back through the walk's parents.
-func (r *deriveRun) cycle(parent map[string]string, start, w string) *Refusal {
+// need start to the waiter w. The chain is found by a depth-first search from
+// start, taking the needs of a card in the order it names them, over the cards
+// the walk has read (a card it has not is looked up as the walk would). It is
+// run once, for the one refusal of a step.
+func (r *deriveRun) cycle(w, start string) *Refusal {
 	chain := []string{start, w}
 	if start != w {
+		parent := map[string]string{start: ""}
+		stack := []string{start}
+		found := false
+		for len(stack) > 0 && !found {
+			c := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			needs, ref := r.lookup(c, start)
+			if ref != nil {
+				return ref
+			}
+			for i := len(needs) - 1; i >= 0; i-- {
+				e := needs[i]
+				if _, seen := parent[e]; seen {
+					continue
+				}
+				parent[e] = c
+				if e == w {
+					found = true
+					break
+				}
+				stack = append(stack, e)
+			}
+		}
+		if !found {
+			return deriveRefuse(CodeConfig, []string{w}, "the needs walk found a cycle through %s and %s that it cannot name", start, w)
+		}
 		chain = []string{w}
 		for c := parent[w]; c != ""; c = parent[c] {
 			chain = append(chain, c)
@@ -762,7 +1025,7 @@ func (r *deriveRun) needMet(in Intent) *Refusal {
 			return drift(w, "is in wait:"+n+" and is not a waiting card")
 		}
 		open, ok := openOf(rec)
-		f := r.fold(w)
+		f := r.fold(w, IntentNeedMet)
 		if !ok || open+f.delta < 1 {
 			return drift(w, "is in wait:"+n+" and its open does not count the need")
 		}
@@ -808,14 +1071,15 @@ func (r *deriveRun) waive(in Intent) *Refusal {
 		return ref
 	}
 	rec := r.recs[w]
+	waived := sprint.Split(fieldOf(rec, deriveFieldWaived))
 	for _, n := range needs {
 		blocked := r.judgmentOpen(w, sprint.NBlocked, n)
 		unmade := !blocked && r.judgmentOpen(w, sprint.NMissingNeed, n)
 		if !blocked && !unmade {
 			continue
 		}
-		f := r.fold(w)
-		if containsID(sprint.Split(fieldOf(rec, deriveFieldWaived)), n) || containsID(f.waived, n) {
+		f := r.fold(w, IntentWaive)
+		if containsID(waived, n) || containsID(f.waived, n) {
 			continue
 		}
 		if !isWaiting(rec) {
@@ -868,6 +1132,12 @@ func (r *deriveRun) finish() (derivePlan, *Refusal) {
 		f := r.folds[id]
 		if f.delta == 0 && len(f.waived) == 0 {
 			continue
+		}
+		// One entry names a card once (Layer 1 refuses TWICE, a bug code that parks the
+		// key): a card this phase folds is not also named by the request's own entries.
+		if at, named := r.req.namedBy(id); named {
+			return plan, deriveRefuse(CodeRequest, []string{id}, "%s is changed by the %s of this step and named by entry %d (%s) of the request; a card is named once in a step",
+				id, strings.Join(f.causes, " and "), at.entry, at.kind)
 		}
 		rec := r.recs[id]
 		open, _ := openOf(rec)
@@ -936,7 +1206,7 @@ func (w obsDeriveWorld) records(ids, fields []string) ([]tset.MemberRecord, *Ref
 	return out, nil
 }
 
-func (w obsDeriveWorld) created(string) (createdCard, bool) { return createdCard{}, false }
+func (w obsDeriveWorld) entries() []tset.Entry { return nil }
 
 // Derive is the derive phase as 8.0 fixes its signature (1.3.3; IT14): the
 // intents of a step turned into the entries and the requests to J they decide,
@@ -966,26 +1236,53 @@ func Derive(st *State, in []Intent, obs *Before) ([]tset.Entry, []NoteReq, *Refu
 func init() { defaultPhases.Derive = Derive }
 
 // twinDeriveWorld is the world of a twin's step: the twin's table twin for the
-// records, and the request X.pre saw for the create entries.
+// records, and the request X.pre saw for the entries.
 type twinDeriveWorld struct {
 	tab *tset.Mem
 	st  *State
 	req *Request
 	obs *Before
+	// fresh is the ids of the work table the phase has read and S.before had
+	// not. S.before counts every id a step reads toward the step's 6,000 (L1 6),
+	// the phases' reads included, so the twin counts these with the ids of obs.
+	fresh map[string]bool
 }
 
-func (w twinDeriveWorld) records(ids, fields []string) ([]tset.MemberRecord, *Refusal) {
+// beforeCount is how many ids the step has read: those of obs and those the
+// phase read after it.
+func (w *twinDeriveWorld) beforeCount() int {
+	n := len(w.fresh)
+	if w.obs != nil {
+		for _, byID := range w.obs.Records {
+			n += len(byID)
+		}
+	}
+	return n
+}
+
+func (w *twinDeriveWorld) records(ids, fields []string) ([]tset.MemberRecord, *Refusal) {
 	out := make([]tset.MemberRecord, len(ids))
 	ask, at := []string{}, []int{}
 	for i, id := range ids {
-		if rec, ok := w.obs.Record(sprint.Work, id); ok && (!rec.Exists || hasFields(&rec, fields)) {
+		rec, ok := w.obs.Record(sprint.Work, id)
+		if ok && (!rec.Exists || hasFields(&rec, fields)) {
 			out[i] = rec
 			continue
+		}
+		if !ok {
+			if w.fresh == nil {
+				w.fresh = map[string]bool{}
+			}
+			w.fresh[id] = true
 		}
 		ask, at = append(ask, id), append(at, i)
 	}
 	if len(ask) == 0 {
 		return out, nil
+	}
+	if w.beforeCount() > beforeRecordsMax {
+		limit, actual := int64(beforeRecordsMax), int64(beforeRecordsMax+1)
+		return nil, refuse(PhaseDerive, CodeLimit, RefusalDetail{RefusalDetail: tset.RefusalDetail{Budget: "before_records", Limit: &limit, Actual: &actual}})
 	}
 	q := tset.ReadQuery{Kind: "ids", Table: sprint.Work, IDs: ask, Fields: fields}
 	rep, err := w.tab.Read(context.Background(), newTSetReadPlan(w.st.Prefix, w.st.Epoch, "atomic", []tset.ReadQuery{q}))
@@ -1008,11 +1305,11 @@ func (w twinDeriveWorld) records(ids, fields []string) ([]tset.MemberRecord, *Re
 	return out, nil
 }
 
-func (w twinDeriveWorld) created(card string) (createdCard, bool) {
+func (w *twinDeriveWorld) entries() []tset.Entry {
 	if w.req == nil {
-		return createdCard{}, false
+		return nil
 	}
-	return createdIn(w.req.Body.Entries, card)
+	return w.req.Body.Entries
 }
 
 // intentBinding is the derive phase bound to one twin: its table twin for the
@@ -1046,7 +1343,7 @@ func (t *Twin) UseIntents() {
 		if b.st != st || b.req == nil {
 			return nil, nil, deriveRefuse(CodeConfig, nil, "the derive phase ran with no request: X.pre did not run before it")
 		}
-		plan, ref := deriveOver(st, twinDeriveWorld{tab: b.tab, st: st, req: b.req, obs: obs}, in)
+		plan, ref := deriveOver(st, &twinDeriveWorld{tab: b.tab, st: st, req: b.req, obs: obs}, in)
 		if ref != nil {
 			return nil, nil, ref
 		}

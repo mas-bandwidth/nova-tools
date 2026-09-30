@@ -123,6 +123,9 @@ type outcome struct {
 	Notes   any
 	Cmds    any
 	Refusal any
+	// Work is the counts of the walk and of the index (deriveWork), which the
+	// two halves hold equal: the same algorithm does the same work.
+	Work any
 }
 
 func refusalForm(code string, ids any, message string, budget any, limit, actual any) any {
@@ -140,7 +143,7 @@ func goOutcome(t *testing.T, sc diffScenario) outcome {
 	ks := newKeyspace()
 	ks.apply(sc.keys)
 	st := fixState(ks, sc.now)
-	plan, ref := deriveOver(st, &fixWorld{recs: sc.recs, entries: sc.entries}, sc.intents)
+	plan, ref := deriveOver(st, &fixWorld{recs: sc.recs, entryList: sc.entries}, sc.intents)
 	if ref != nil {
 		var budget, limit, actual any
 		if ref.Detail.Budget != "" {
@@ -178,6 +181,7 @@ func goOutcome(t *testing.T, sc diffScenario) outcome {
 		cmds = append(cmds, map[string]any{"argv": roundTrip(t, c.Argv), "access": access})
 	}
 	out.Entries, out.Notes, out.Cmds = entries, notes, cmds
+	out.Work = map[string]any{"expanded": float64(plan.Work.Expanded), "edges": float64(plan.Work.EdgesSeen), "indexed": float64(plan.Work.Indexed)}
 	return out
 }
 
@@ -218,13 +222,20 @@ type luaRig struct {
 	keys   *Keys
 	derive lua.LValue
 	sp     *lua.LTable
+	// reads counts the store commands of the sprint's own keys the last run
+	// sent, by command name, and before counts the ids it asked S.before for:
+	// what a test of the cost of a step reads.
+	reads  map[string]int
+	before int
+	// ctx is the call context of the last run.
+	ctx *lua.LTable
 }
 
 func newLuaRig(t *testing.T) *luaRig {
 	t.Helper()
 	L := lua.NewState()
 	t.Cleanup(L.Close)
-	g := &luaRig{t: t, L: L}
+	g := &luaRig{t: t, L: L, reads: map[string]int{}}
 	null := L.NewUserData()
 	L.SetGlobal("NULL", null)
 
@@ -232,6 +243,7 @@ func newLuaRig(t *testing.T) *luaRig {
 		ids, fields := L.CheckTable(2), L.CheckTable(3)
 		out := L.NewTable()
 		ids.ForEach(func(_, v lua.LValue) {
+			g.before++
 			id := v.String()
 			r, ok := g.sc.recs[id]
 			rec := L.NewTable()
@@ -270,6 +282,7 @@ func newLuaRig(t *testing.T) *luaRig {
 		for i := 1; i <= argv.Len(); i++ {
 			a = append(a, argv.RawGetInt(i).String())
 		}
+		g.reads[a[0]]++
 		score := func(k, m string) lua.LValue {
 			if s, ok := g.keys.ZScore(k, m); ok {
 				return lua.LString(scoreText(s))
@@ -339,13 +352,18 @@ func (g *luaRig) call(fn lua.LValue, n int, args ...lua.LValue) []lua.LValue {
 	return out
 }
 
-// run is the Lua phase on one scenario.
-func (g *luaRig) run(sc diffScenario) outcome {
+// run is the Lua phase on one scenario, and x_cmds taking the commands it staged.
+func (g *luaRig) run(sc diffScenario) outcome { return g.runTaking(sc, true) }
+
+// runTaking is run, with the commands taken (NS.SP.intent_commands, which x_cmds
+// calls) or left on the ctx.
+func (g *luaRig) runTaking(sc diffScenario, take bool) outcome {
 	t, L := g.t, g.L
 	t.Helper()
 	ks := newKeyspace()
 	ks.apply(sc.keys)
 	g.sc, g.keys = sc, &Keys{ks: ks}
+	g.reads, g.before = map[string]int{}, 0
 
 	entries := make([]any, 0, len(sc.entries))
 	for _, e := range sc.entries {
@@ -376,7 +394,11 @@ func (g *luaRig) run(sc diffScenario) outcome {
 		detail, _ := r["detail"].(map[string]any)
 		return outcome{Refusal: refusalForm(r["code"].(string), detail["ids"], r["message"].(string), detail["budget"], detail["limit"], detail["actual"])}
 	}
-	cmds := g.call(g.sp.RawGetString("intent_commands"), 1, ctx)[0]
+	g.ctx = ctx
+	var cmds lua.LValue = lua.LNil
+	if take {
+		cmds = g.call(g.sp.RawGetString("intent_commands"), 1, ctx)[0]
+	}
 	norm := func(v lua.LValue) any {
 		a := anyFrom(v)
 		if m, ok := a.(map[string]any); ok && len(m) == 0 {
@@ -384,7 +406,7 @@ func (g *luaRig) run(sc diffScenario) outcome {
 		}
 		return a
 	}
-	return outcome{Entries: norm(res[0]), Notes: norm(res[1]), Cmds: norm(cmds)}
+	return outcome{Entries: norm(res[0]), Notes: norm(res[1]), Cmds: norm(cmds), Work: anyFrom(ctx.RawGetString("intent_work"))}
 }
 
 func luaOutcome(t *testing.T, sc diffScenario) outcome {
@@ -598,6 +620,73 @@ func diffScenarios() []diffScenario {
 				{Kind: IntentNeedMet, Card: "b", Need: "b", Waiters: []string{"w"}},
 				{Kind: IntentWaive, Card: "w", Needs: []string{"c"}}}},
 
+		{name: "cycle found through a card an earlier admission expanded", now: now,
+			recs:    map[string]fixRec{"c": w("1", "w2", "1")},
+			entries: append(createW("w1", "c", "1"), createW("w2", "c", "1")...), intents: []Intent{waitfor("w1", "c"), waitfor("w2", "c")}},
+		{name: "cycle reachable by two paths", now: now,
+			recs:    map[string]fixRec{"n": w("1", "a,b", "2"), "a": w("1", "w", "1"), "b": w("1", "w", "1")},
+			entries: createW("w", "n", "1"), intents: []Intent{waitfor("w", "n")}},
+		{name: "cycle reachable by two paths, the needs the other way", now: now,
+			recs:    map[string]fixRec{"n": w("1", "b,a", "2"), "a": w("1", "w", "1"), "b": w("1", "w", "1")},
+			entries: createW("w", "n", "1"), intents: []Intent{waitfor("w", "n")}},
+		{name: "a cycle the second need closes", now: now,
+			recs:    map[string]fixRec{"p": w("1", "q", "1"), "q": w("1", "w", "1")},
+			entries: createW("w", "done,p", "2"), intents: []Intent{waitfor("w", "done", "p")}},
+		{name: "walk at the bound over landed, ready, absent and dropped records", now: now, keys: []Cmd{hset("clock", "stopped_ms", "0")},
+			recs: mixedTree(WalkRecordsMax, nil), entries: createW("w", "r0", "1"), intents: []Intent{waitfor("w", "r0")}},
+		{name: "walk one past the bound over landed, ready, absent and dropped records", now: now,
+			recs: mixedTree(WalkRecordsMax+1, nil), entries: createW("w", "r0", "1"), intents: []Intent{waitfor("w", "r0")}},
+		{name: "a cycle met before the bound", now: now,
+			recs: mixedTree(WalkRecordsMax+200, func(i int, leaves []string) []string {
+				if i == 0 {
+					return append(append([]string{}, leaves...), "w")
+				}
+				return leaves
+			}), entries: createW("w", "r0", "1"), intents: []Intent{waitfor("w", "r0")}},
+		{name: "the bound met before a cycle", now: now,
+			recs: mixedTree(WalkRecordsMax+200, func(i int, leaves []string) []string {
+				if i == 39 {
+					return append(append([]string{}, leaves...), "w")
+				}
+				return leaves
+			}), entries: createW("w", "r0", "1"), intents: []Intent{waitfor("w", "r0")}},
+		{name: "a bulk add of 2,000 cards that wait for one card", now: now, recs: chainRecs(50),
+			entries: func() []tset.Entry { e, _ := bulkAdmit(2000, "c0", "1"); return e }(),
+			intents: func() []Intent { _, in := bulkAdmit(2000, "c0", "1"); return in }()},
+		{name: "a bulk add of 2,000 cards that wait for one ghost", now: now, keys: []Cmd{hset("clock", "stopped_ms", "0")},
+			entries: func() []tset.Entry { e, _ := bulkAdmit(2000, "ghost", "1"); return e }(),
+			intents: func() []Intent { _, in := bulkAdmit(2000, "ghost", "1"); return in }()},
+
+		{name: "an admitted card already in the wait sets and in missing", now: now, keys: []Cmd{wait("c", "w"), wait("ghost", "w"), zadd("missing@0", "9", "ghost")},
+			recs:    map[string]fixRec{"c": w("1", "", "1")},
+			entries: createW("w", "c,ghost", "2"), intents: []Intent{waitfor("w", "c", "ghost")}},
+		{name: "needmet and needgone with no card", now: now,
+			recs:    map[string]fixRec{"n": landed, "d": dropped, "a": w("1", "n", "1"), "b": w("1", "d", "1")},
+			keys:    []Cmd{wait("n", "a"), wait("d", "b")},
+			intents: []Intent{{Kind: IntentNeedMet, Need: "n", Waiters: []string{"a"}}, {Kind: IntentNeedGone, Need: "d", Waiters: []string{"b"}}}},
+		{name: "needmet of a card the request names", now: now,
+			recs: map[string]fixRec{"n": landed, "w": w("1", "n", "1")}, keys: []Cmd{wait("n", "w")},
+			entries: []tset.Entry{{Kind: "move", Table: sprint.Work, From: "s1:waiting", To: "s1:ready", IDs: []string{"w"}}},
+			intents: []Intent{{Kind: IntentNeedMet, Need: "n", Waiters: []string{"w"}}}},
+		{name: "waive of a card the request guards", now: now,
+			recs:    map[string]fixRec{"d": dropped, "w": w("1", "d", "1")},
+			keys:    []Cmd{hset("jopen:w@0", "a primary is blocked on something dropped|d", "n2")},
+			entries: []tset.Entry{{Kind: "guard", Table: sprint.Work, IDs: []string{"x", "w"}}},
+			intents: []Intent{{Kind: IntentWaive, Card: "w", Needs: []string{"d"}}}},
+		{name: "needmet and waive of a card the request names", now: now,
+			recs: map[string]fixRec{"n": landed, "d": dropped, "w": w("1", "n,d", "2")}, keys: []Cmd{wait("n", "w"),
+				hset("jopen:w@0", "a primary is blocked on something dropped|d", "n2")},
+			entries: []tset.Entry{{Kind: "remove", Table: sprint.Work, From: "s1:waiting", IDs: []string{"w"}}},
+			intents: []Intent{{Kind: IntentNeedMet, Need: "n", Waiters: []string{"w"}}, {Kind: IntentWaive, Card: "w", Needs: []string{"d"}}}},
+		{name: "a card the request names that the phase does not change", now: now,
+			recs:    map[string]fixRec{"w": w("1", "run", "1")},
+			entries: []tset.Entry{{Kind: "guard", Table: sprint.Work, IDs: []string{"w"}}},
+			intents: []Intent{{Kind: IntentWaive, Card: "w", Needs: []string{"run"}}}},
+		{name: "a card another table's entry names", now: now,
+			recs: map[string]fixRec{"n": landed, "w": w("1", "n", "1")}, keys: []Cmd{wait("n", "w")},
+			entries: []tset.Entry{{Kind: "guard", Table: sprint.Fleet, IDs: []string{"w"}}},
+			intents: []Intent{{Kind: IntentNeedMet, Need: "n", Waiters: []string{"w"}}}},
+
 		{name: "shape: unknown kind", now: now, intents: []Intent{{Kind: "hold", Card: "w"}}},
 		{name: "shape: waitfor with no card", now: now, intents: []Intent{{Kind: IntentWaitFor, Needs: []string{"n"}}}},
 		{name: "shape: waitfor with no needs", now: now, intents: []Intent{{Kind: IntentWaitFor, Card: "w"}}},
@@ -660,7 +749,7 @@ func TestDeriveScenariosAreNotVacuous(t *testing.T) {
 	codes := map[string]int{}
 	var entries, notes, cmds, empty int
 	noop := map[string]bool{"waive with no judgment open": true, "waive of a need already waived": true,
-		"waive of a card that is quarantined": true}
+		"waive of a card that is quarantined": true, "a card the request names that the phase does not change": true}
 	for _, sc := range diffScenarios() {
 		o := nilIfEmpty(goOutcome(t, sc))
 		if o.Refusal != nil {
@@ -683,8 +772,8 @@ func TestDeriveScenariosAreNotVacuous(t *testing.T) {
 			t.Errorf("no scenario is refused %s", code)
 		}
 	}
-	if entries == 0 || notes == 0 || cmds == 0 || empty != 3 {
-		t.Errorf("scenarios with entries %d, notes %d, commands %d, no decision %d; want some of each and the three no-ops", entries, notes, cmds, empty)
+	if entries == 0 || notes == 0 || cmds == 0 || empty != len(noop) {
+		t.Errorf("scenarios with entries %d, notes %d, commands %d, no decision %d; want some of each and the %d no-ops", entries, notes, cmds, empty, len(noop))
 	}
 }
 
@@ -822,7 +911,9 @@ func randomScenario(rng *rand.Rand) diffScenario {
 	var needsWithWaiters []string
 	var judged [][2]string // (card, need) with a judgment open
 	for _, id := range waiting {
-		needs := dedupIDs(subset(append(append([]string{}, pool...), ghosts...), 0, 3))
+		// An existing card may name a fresh id: a card the step admits can then
+		// close a cycle through existing cards, which it did not before.
+		needs := dedupIDs(subset(append(append(append([]string{}, pool...), ghosts...), fresh...), 0, 3))
 		needs = slicesDeleteValue(needs, id)
 		open := 0
 		for _, n := range needs {
@@ -927,6 +1018,10 @@ func randomScenario(rng *rand.Rand) diffScenario {
 				who = append(subset(waiters[need], 1, 4), subset(pool, 0, 1)...)
 			}
 			sc.intents = append(sc.intents, Intent{Kind: kind, Need: need, Waiters: who})
+		case roll < 82:
+			// A plain entry of the request on a card: a card is named once in a step.
+			kind := []string{"guard", "move", "remove"}[rng.IntN(3)]
+			sc.entries = append(sc.entries, tset.Entry{Kind: kind, Table: sprint.Work, From: "s1:waiting", To: "s1:ready", IDs: []string{pick(pool)}})
 		default:
 			card, needs := pick(pool), subset(append(append([]string{}, pool...), ghosts...), 1, 2)
 			if len(judged) > 0 && chance(0.8) {
@@ -950,6 +1045,10 @@ func slicesDeleteValue(list []string, v string) []string {
 	return out
 }
 
+// existingCard matches the ids of the random draw's existing cards (c0 to c7)
+// in a refusal's message, which names the chain of a cycle.
+var existingCard = regexp.MustCompile(`\bc[0-7]\b`)
+
 // randomDifferentialRuns is how many random steps the differential runs, in
 // randomDifferentialChunks parallel parts: enough that every branch of the
 // phase is met many times, and few enough for a unit test.
@@ -967,6 +1066,7 @@ func TestDeriveRandomStepsLuaEqualsGo(t *testing.T) {
 	var mu sync.Mutex
 	codes := map[string]int{}
 	effects := map[string]int{}
+	kinds := map[string]int{} // refusals by what they say: a cycle, a card named twice
 	for chunk := 0; chunk < randomDifferentialChunks; chunk++ {
 		t.Run("chunk "+strconv.Itoa(chunk), func(t *testing.T) {
 			t.Parallel()
@@ -985,6 +1085,15 @@ func TestDeriveRandomStepsLuaEqualsGo(t *testing.T) {
 				mu.Lock()
 				if g.Refusal != nil {
 					codes[g.Refusal.(map[string]any)["code"].(string)]++
+					msg := g.Refusal.(map[string]any)["message"].(string)
+					for _, kind := range []string{"a needs cycle", "named by entry"} {
+						if strings.Contains(msg, kind) {
+							kinds[kind]++
+						}
+					}
+					if strings.Contains(msg, "a needs cycle") && existingCard.MatchString(msg) {
+						kinds["a needs cycle through an existing card"]++
+					}
 				} else {
 					for _, e := range []struct {
 						name string
@@ -1000,6 +1109,12 @@ func TestDeriveRandomStepsLuaEqualsGo(t *testing.T) {
 		})
 	}
 	t.Cleanup(func() {
+		t.Logf("refusals by kind %v, codes %v, effects %v", kinds, codes, effects)
+		for kind, least := range map[string]int{"a needs cycle": 50, "a needs cycle through an existing card": 30, "named by entry": 5} {
+			if kinds[kind] < least {
+				t.Errorf("the draw reached a refusal saying %q %d times; want at least %d (%v)", kind, kinds[kind], least, kinds)
+			}
+		}
 		for _, code := range []string{CodeRequest, CodeXGuard, "DRIFT"} {
 			if codes[code] < 10 {
 				t.Errorf("the draw reached refusal %s %d times; want at least 10 (codes %v)", code, codes[code], codes)
@@ -1011,4 +1126,39 @@ func TestDeriveRandomStepsLuaEqualsGo(t *testing.T) {
 			}
 		}
 	})
+}
+
+// TestDeriveLuaCommandsArePendingUntilTaken: the commands the Lua phase stages
+// on the call's ctx are pending until x_cmds takes them (NS.SP.intent_commands),
+// which is what lets the core refuse a step that left them behind; a call that
+// staged none has none pending.
+func TestDeriveLuaCommandsArePendingUntilTaken(t *testing.T) {
+	t.Parallel()
+	var withCmds, without diffScenario
+	for _, sc := range diffScenarios() {
+		switch sc.name {
+		case "needgone head moves":
+			withCmds = sc
+		case "waive with no judgment open":
+			without = sc
+		}
+	}
+	g := newLuaRig(t)
+	pending := func() bool {
+		return g.call(g.sp.RawGetString("intent_commands_pending"), 1, g.ctx)[0] == lua.LTrue
+	}
+	g.runTaking(withCmds, false)
+	if !pending() {
+		t.Fatal("commands staged and not taken are not pending")
+	}
+	if cmds := g.call(g.sp.RawGetString("intent_commands"), 1, g.ctx)[0]; cmds.(*lua.LTable).Len() == 0 {
+		t.Fatal("x_cmds was given no commands")
+	}
+	if pending() {
+		t.Fatal("commands taken are still pending")
+	}
+	g.runTaking(without, false)
+	if pending() {
+		t.Fatal("a call that staged no command has one pending")
+	}
 }

@@ -79,13 +79,16 @@ func newIntentRig(t *testing.T) *intentRig { return newIntentRigWith(t, true) }
 
 // newIntentRigWith is a rig whose twin has the derive phase bound to it, or,
 // unbound, the phase of 8.0's signature (Derive) alone.
-func newIntentRigWith(t *testing.T, bound bool) *intentRig {
+func newIntentRigWith(t *testing.T, bound bool, mutate ...func(*Phases)) *intentRig {
 	t.Helper()
 	j := &jRecorder{}
 	ph := passX()
 	ph.JDecide = j.decide
 	ph.JCmds = func(*State, JPlan, LogPlan) []Cmd { return nil }
 	ph.Derive = Derive
+	for _, m := range mutate {
+		m(&ph)
+	}
 	tw, m, log := newTestTwin(t, ph)
 	if bound {
 		tw.UseIntents()
@@ -250,17 +253,10 @@ func (r *intentRig) score(name, member string) (float64, bool) {
 
 func (r *intentRig) image(t *testing.T) string { return string(image(t, r.tw, r.m, r.log)) }
 
-// intentStep is a step of the coordinator carrying intents and entries. IT12's
-// S.before asks for the record of every intent's Card, and a needmet or a
-// needgone names no single card (8.0 gives Card to the waiter of a waitfor and
-// a waive): Layer 1 refuses the empty id REQUEST, before derive runs. So the
-// step names Need as Card for them, which no phase reads; an open question.
+// intentStep is a step of the coordinator carrying intents and entries. A
+// needmet or a needgone is sent as 8.0 gives it: a Need and its Waiters and no
+// Card, since it names no single card.
 func intentStep(entries []tset.Entry, intents ...Intent) *Request {
-	for i, in := range intents {
-		if (in.Kind == IntentNeedMet || in.Kind == IntentNeedGone) && in.Card == "" {
-			intents[i].Card = in.Need
-		}
-	}
 	return &Request{Epoch: "0", Meta: Meta{Verb: "add", Actor: "coordinator"},
 		Body: Body{Entries: entries, Intents: intents}}
 }
@@ -1126,7 +1122,7 @@ func TestTwinDeriveWorldReadsObsFirst(t *testing.T) {
 		// an absent record is complete whatever fields are asked.
 		"nope": {ID: "nope"},
 	}}}
-	w := twinDeriveWorld{tab: r.m, st: &State{Prefix: testPrefix, Epoch: "0"}, obs: obs}
+	w := &twinDeriveWorld{tab: r.m, st: &State{Prefix: testPrefix, Epoch: "0"}, obs: obs}
 	got, ref := w.records([]string{"w", "x", "nope", "unseen"}, []string{"open"})
 	if ref != nil || len(got) != 4 {
 		t.Fatalf("records: %v, %v", got, ref)
@@ -1149,4 +1145,248 @@ func TestTwinDeriveWorldReadsObsFirst(t *testing.T) {
 	if ref != nil || got[0].Fields["needs"].Value != "a" || got[0].Fields["open"].Value != "1" {
 		t.Errorf("w with another field: %+v, %v; want the store's record", got, ref)
 	}
+}
+
+// TestNeedmetAndNeedgoneNeedNoCard: 8.0 gives a needmet and a needgone a Need
+// and its Waiters and no Card (R4 sends them so), and the step is accepted:
+// S.before reads the need and the waiters, and the empty Card is not an id it
+// reads. A step that names neither a card nor a need is REQUEST from derive,
+// naming the intent, and not from the before phase for an id it cannot read.
+func TestNeedmetAndNeedgoneNeedNoCard(t *testing.T) {
+	t.Parallel()
+	r := newIntentRig(t)
+	r.seed(t,
+		seedCard{id: "n", col: "landed"}, seedCard{id: "g", col: "ready"},
+		seedCard{id: "w", col: "waiting", needs: "n", open: "1"},
+		seedCard{id: "x", col: "waiting", needs: "g", open: "1"})
+	r.drop(t, "s1:ready", "g")
+	r.writeKeys(t, zadd("wait:n@0", "0", "w"), zadd("wait:g@0", "0", "x"))
+
+	met := intentStep(nil, Intent{Kind: IntentNeedMet, Need: "n", Waiters: []string{"w"}})
+	gone := intentStep(nil, Intent{Kind: IntentNeedGone, Need: "g", Waiters: []string{"x"}})
+	if met.Body.Intents[0].Card != "" || gone.Body.Intents[0].Card != "" {
+		t.Fatal("the steps name a card; they are to name none")
+	}
+	if reply := r.mustApply(t, met); reply.Reply.Changed != 1 {
+		t.Fatalf("a needmet with no card changed %d cards, want 1", reply.Reply.Changed)
+	}
+	if got := r.card(t, "w"); got.fields["open"] != "0" {
+		t.Fatalf("w open %q, want 0", got.fields["open"])
+	}
+	r.mustApply(t, gone)
+	if r.members("wait:g@0") != nil {
+		t.Fatalf("wait:g after the needgone: %v, want empty", r.members("wait:g@0"))
+	}
+
+	for name, in := range map[string]Intent{
+		"a needmet":  {Kind: IntentNeedMet, Waiters: []string{"w"}},
+		"a needgone": {Kind: IntentNeedGone, Waiters: []string{"w"}},
+	} {
+		before := r.image(t)
+		ref := r.mustRefuse(t, intentStep(nil, in))
+		if ref.Code != CodeRequest || ref.Phase != PhaseDerive || !strings.Contains(ref.Message, "names no need") || r.image(t) != before {
+			t.Errorf("%s with no card and no need: refused %s in %s (%q), or the twin changed; want REQUEST from derive naming no need",
+				name, ref.Code, ref.Phase, ref.Message)
+		}
+	}
+}
+
+// TestIntentsRefuseACardTheRequestNames: a card the phase folds into an entry
+// is not also named by an entry of the request: Layer 1 would refuse the step
+// TWICE, a bug code that parks the key (1.3.5). Derive refuses REQUEST first,
+// naming the card, the intents that change it and the entry that names it, and
+// nothing is written. The same entry without the intent applies, and an entry
+// that names a card no intent changes is no matter.
+func TestIntentsRefuseACardTheRequestNames(t *testing.T) {
+	t.Parallel()
+	setup := func(t *testing.T) *intentRig {
+		r := newIntentRig(t)
+		r.seed(t, seedCard{id: "n", col: "landed"}, seedCard{id: "d", col: "ready"}, seedCard{id: "v", col: "waiting", needs: "d", open: "1"},
+			seedCard{id: "w", col: "waiting", needs: "n,d", open: "2"})
+		r.drop(t, "s1:ready", "d")
+		r.writeKeys(t, zadd("wait:n@0", "0", "w"), hset("jopen:w@0", droppedJ+"|d", "n1"))
+		return r
+	}
+	move := tset.Entry{Kind: "move", Table: sprint.Work, From: "s1:waiting", To: "s1:ready", IDs: []string{"w"}, About: []string{"w"}}
+	guard := tset.Entry{Kind: "guard", Table: sprint.Work, From: "s1:waiting", IDs: []string{"w"}, Revs: []tset.Decimal{"4"}}
+	remove := tset.Entry{Kind: "remove", Table: sprint.Work, From: "s1:waiting", IDs: []string{"w"}, About: []string{"w"}}
+	met := Intent{Kind: IntentNeedMet, Need: "n", Waiters: []string{"w"}}
+	waive := Intent{Kind: IntentWaive, Card: "w", Needs: []string{"d"}}
+	cases := []struct {
+		name    string
+		entry   tset.Entry
+		intents []Intent
+		in      string
+	}{
+		{"a move and a needmet", move, []Intent{met}, "w is changed by the needmet of this step and named by entry 0 (move) of the request"},
+		{"a remove and a waive", remove, []Intent{waive}, "w is changed by the waive of this step and named by entry 0 (remove) of the request"},
+		{"a guard, a needmet and a waive", guard, []Intent{met, waive}, "w is changed by the needmet and waive of this step and named by entry 0 (guard) of the request"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+			r := setup(t)
+			before := r.image(t)
+			ref := r.mustRefuse(t, intentStep([]tset.Entry{c.entry}, c.intents...))
+			if ref.Code != CodeRequest || ref.Phase != PhaseDerive || !strings.Contains(ref.Message, c.in) ||
+				!strings.HasSuffix(ref.Message, "; nothing was changed") || !reflect.DeepEqual(ref.Detail.IDs, []string{"w"}) {
+				t.Fatalf("refused %s in %s: %q ids %v\nwant REQUEST naming %q", ref.Code, ref.Phase, ref.Message, ref.Detail.IDs, c.in)
+			}
+			if r.image(t) != before {
+				t.Fatalf("a refused step changed the twin")
+			}
+			if got := r.j.take(); len(got) != 0 {
+				t.Fatalf("a refused derive asked J: %v", got)
+			}
+		})
+	}
+
+	t.Run("the entry alone applies", func(t *testing.T) {
+		t.Parallel()
+		r := setup(t)
+		r.mustApply(t, intentStep([]tset.Entry{move}))
+	})
+	t.Run("an entry that names a card no intent changes", func(t *testing.T) {
+		t.Parallel()
+		r := setup(t)
+		other := tset.Entry{Kind: "move", Table: sprint.Work, From: "s1:waiting", To: "s1:ready", IDs: []string{"v"}, About: []string{"v"}}
+		reply := r.mustApply(t, intentStep([]tset.Entry{other}, met))
+		if reply.Reply.Changed != 2 {
+			t.Fatalf("changed %d cards, want v (the entry's) and w (the needmet's)", reply.Reply.Changed)
+		}
+	})
+}
+
+// TestTwinCountsTheDeriveReadsTowardTheBeforeBound: a step reads at most 6,000
+// ids before its plan (L1 6), and S.before counts every id a phase reads, derive
+// included. The twin counts the ids the walk reads as S.before does. A step that
+// guards 4,000 cards and admits a card that waits for the head of a chain reads
+// 4,002 ids before derive, and the walk reads the chain's other cards: a chain
+// of 2,000 makes 6,001 and is refused LIMIT from derive, with nothing written;
+// a chain of 1,999 makes 6,000 and applies.
+func TestTwinCountsTheDeriveReadsTowardTheBeforeBound(t *testing.T) {
+	t.Parallel()
+	build := func(t *testing.T, chain int) (*intentRig, *Request) {
+		r := newIntentRig(t)
+		r.writeKeys(t, hset("clock", "stopped_ms", "0"))
+		var entries []tset.Entry
+		for first := 0; first < 4000; first += 2000 {
+			pad := make([]seedCard, 0, 2000)
+			guard := tset.Entry{Kind: "guard", Table: sprint.Work, From: "s1:ready"}
+			for i := first; i < first+2000; i++ {
+				id := "p" + strconv.Itoa(i)
+				pad = append(pad, seedCard{id: id, col: "ready"})
+				guard.IDs = append(guard.IDs, id)
+			}
+			r.seed(t, pad...)
+			entries = append(entries, guard)
+		}
+		r.seed(t, chainCards(chain)...)
+		admitted, in := admit("w", "c0", "1")
+		return r, intentStep(append(entries, admitted...), in)
+	}
+
+	t.Run("a chain of 2,000 makes 6,001", func(t *testing.T) {
+		t.Parallel()
+		r, req := build(t, 2000)
+		before := r.image(t)
+		ref := r.mustRefuse(t, req)
+		if ref.Code != CodeLimit || ref.Phase != PhaseDerive || ref.Detail.Budget != "before_records" ||
+			ref.Detail.Limit == nil || *ref.Detail.Limit != 6000 || ref.Detail.Actual == nil || *ref.Detail.Actual != 6001 {
+			t.Fatalf("refused %s in %s (%+v); want LIMIT from derive on before_records, 6001 against 6000", ref.Code, ref.Phase, ref.Detail)
+		}
+		if r.image(t) != before {
+			t.Fatalf("the refused step changed the twin")
+		}
+	})
+	t.Run("a chain of 1,999 makes 6,000 and applies", func(t *testing.T) {
+		t.Parallel()
+		r, req := build(t, 1999)
+		r.mustApply(t, req)
+		if got := r.members("wait:c0@0"); !reflect.DeepEqual(got, []string{"w"}) {
+			t.Fatalf("wait:c0 %v, want w", got)
+		}
+	})
+}
+
+// TestIntentsWithoutXCmdsAreNotApplied: the commands derive decides on wait:<n>
+// and missing ride X.plan's list. A twin whose X phases lost X.plan after the
+// derive phase was bound has nothing to carry them, and the step is not applied
+// (CONFIG, from the x_plan phase), where dropping the commands would lower open
+// with the card still in wait:<n> (I2). What the twin does with the refusal of a
+// phase after plan is IT12's (it refuses, or it reports that it diverged); the
+// test holds that the step does not apply either way.
+func TestIntentsWithoutXCmdsAreNotApplied(t *testing.T) {
+	t.Parallel()
+	r := newIntentRig(t)
+	r.seed(t, seedCard{id: "n", col: "landed"}, seedCard{id: "w", col: "waiting", needs: "n", open: "1"})
+	r.writeKeys(t, zadd("wait:n@0", "0", "w"))
+	r.tw.phases.XCmds = nil
+	res := r.step(t, intentStep(nil, Intent{Kind: IntentNeedMet, Need: "n", Waiters: []string{"w"}}))
+	switch {
+	case res.Step != nil:
+		t.Fatalf("the step applied without X.plan: %+v", res.Step)
+	case res.Refusal != nil && (res.Refusal.Code != CodeConfig || res.Refusal.Phase != PhaseXPlan):
+		t.Fatalf("refused %s in %s; want CONFIG in x_plan", res.Refusal.Code, res.Refusal.Phase)
+	case res.Refusal == nil && (res.Err == nil || !strings.Contains(res.Err.Error(), CodeConfig)):
+		t.Fatalf("neither refused nor an error naming CONFIG: %v", res.Err)
+	}
+}
+
+// TestIntentsSecondStepWritesNothing: the same step run a second time on the
+// state its first run left writes nothing (1.3.3, Idempotence), for the intents
+// this round changed: a needgone with no card, a bulk add of cards that wait for
+// one card and one ghost (the second step is refused at plan for creating what
+// exists, the image untouched, after derive decided no command), and a waive.
+func TestIntentsSecondStepWritesNothing(t *testing.T) {
+	t.Parallel()
+
+	t.Run("a needgone with no card", func(t *testing.T) {
+		t.Parallel()
+		r := newIntentRig(t)
+		r.seed(t, seedCard{id: "d", col: "ready"}, seedCard{id: "w", col: "waiting", needs: "d", open: "1"})
+		r.drop(t, "s1:ready", "d")
+		r.writeKeys(t, zadd("wait:d@0", "0", "w"))
+		req := intentStep(nil, Intent{Kind: IntentNeedGone, Need: "d", Waiters: []string{"w"}})
+		r.mustApply(t, req)
+		before := r.image(t)
+		again := r.mustApply(t, req)
+		if again.Reply.Changed != 0 || again.Reply.Lines != 0 || r.image(t) != before {
+			t.Fatalf("the second step changed %d cards and wrote %d lines, or the image moved", again.Reply.Changed, again.Reply.Lines)
+		}
+	})
+
+	t.Run("a bulk add", func(t *testing.T) {
+		t.Parallel()
+		r := newIntentRig(t)
+		r.writeKeys(t, hset("clock", "stopped_ms", "0"))
+		r.seed(t, seedCard{id: "busy", col: "ready"})
+		entries, intents := bulkAdmit(50, "busy,ghost", "2")
+		req := intentStep(entries, intents...)
+		r.mustApply(t, req)
+		if got := len(r.members("wait:busy@0")); got != 50 {
+			t.Fatalf("wait:busy holds %d cards, want 50", got)
+		}
+		r.j.take()
+		before := r.image(t)
+		ref := r.mustRefuse(t, req)
+		if ref.Code != "EXISTS" || ref.Phase != PhasePlan || r.image(t) != before {
+			t.Fatalf("the second step: %s in %s, or the image moved; want EXISTS at plan with nothing written", ref.Code, ref.Phase)
+		}
+	})
+
+	t.Run("a waive", func(t *testing.T) {
+		t.Parallel()
+		r := newIntentRig(t)
+		r.seed(t, seedCard{id: "d", col: "ready"}, seedCard{id: "w", col: "waiting", needs: "d", open: "1"})
+		r.drop(t, "s1:ready", "d")
+		r.writeKeys(t, zadd("wait:d@0", "0", "w"), hset("jopen:w@0", droppedJ+"|d", "n1"))
+		req := intentStep(nil, Intent{Kind: IntentWaive, Card: "w", Needs: []string{"d"}})
+		r.mustApply(t, req)
+		before := r.image(t)
+		again := r.mustApply(t, req)
+		if again.Reply.Changed != 0 || r.image(t) != before {
+			t.Fatalf("the second waive changed %d cards, or the image moved", again.Reply.Changed)
+		}
+	})
 }

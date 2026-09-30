@@ -19,6 +19,14 @@
 --   * the requests to J for the judgments that open and close, returned as
 --     the note requests the core gives j_decide.
 --
+-- The cost of a step grows with its input, never with the number of its
+-- admissions: the needs walk expands each reachable card once a step (one
+-- depth-first search with a step-wide memo of the strongly connected
+-- components it has found, shared by every admission and need); the request's
+-- entries are read into one index once; and the probes of the sprint's own keys
+-- are batched by key (wait:<n>, missing, quarantine). ctx.intent_work counts
+-- the first two, and a test holds the counts equal to the Go twin's.
+--
 -- Where the phase interface cannot carry the item (listed in twin_intents.go
 -- and on the pull request): the commands have no slot in derive's return, so
 -- they wait on ctx for x_cmds; the walk reads records it cannot name in
@@ -45,6 +53,9 @@ do
   -- S.readcmd): a score or a count, the clock's two fields, and the fixed
   -- shell of a reply.
   local RESERVE_SCORE, RESERVE_COUNT, RESERVE_CLOCK, RESERVE_SHELL = 64, 32, 128, 16
+  -- The bytes one member of a batched read of {p}quarantine@e reserves: the
+  -- value is the code, the rule, the stream and the refusal's cells.
+  local RESERVE_QUARANTINE = 512
   -- The judgment types, the words of sprint.NMissingNeed and sprint.NBlocked.
   local TYPE_MISSING = 'a primary is blocked on something missing'
   local TYPE_DROPPED = 'a primary is blocked on something dropped'
@@ -120,10 +131,33 @@ do
   -- One run: what it read, and what it has decided. Every list is an array,
   -- so the order of everything it emits is the order the intents name things.
   local function new_run(S, ctx)
-    return {S = S, ctx = ctx, recs = {}, own = {}, walked = {}, nwalked = 0,
+    local r = {S = S, ctx = ctx, recs = {}, own = {}, walked = {}, nwalked = 0,
+      visit = {}, low = {}, onstack = {}, comp = {}, tstack = {}, nvisit = 0, ncomp = 0,
+      work = {expanded = 0, edges = 0, indexed = 0},
       wait = {}, removed = {}, added = {}, nadded = {}, nremoved = {},
+      pend_wait = {}, pend_missing = {}, missing_pending = {}, quar = {},
       folds = {}, fold_order = {}, ops = {}, op_index = {}, notes = {}, note_index = {},
       missing_added = {}, waived_missing = {}, r_known = false, r = 0}
+    return r
+  end
+
+  -- index_request: the request's entries of the work table read once a step:
+  -- which ids its create entries make (with the entry that sets their fields),
+  -- and which ids any entry names, since a card is named once in a step or
+  -- Layer 1 refuses TWICE. Counts the ids it takes in (ctx.intent_work.indexed).
+  local function index_request(r)
+    local made, named = {}, {}
+    for ei, e in ipairs(r.ctx.request.entries or {}) do
+      local kind = e.kind
+      if e.t == work() and (kind == 'create' or kind == 'move' or kind == 'remove' or kind == 'guard') then
+        for pos, id in ipairs(e.ids or {}) do
+          r.work.indexed = r.work.indexed + 1
+          if named[id] == nil then named[id] = {entry = ei - 1, kind = kind} end
+          if kind == 'create' and made[id] == nil then made[id] = {entry = e, pos = pos} end
+        end
+      end
+    end
+    r.made, r.named = made, named
   end
 
   -- rd: a checked read of the sprint's own key (S.readcmd; the store's answer
@@ -163,19 +197,41 @@ do
     return n + (r.nadded[k] or 0) - (r.nremoved[k] or 0), nil
   end
 
-  -- quarantined: the card is in {p}quarantine@e; every derivation leaves it
-  -- out. One HLEN says whether anything is (normally nothing is).
-  local function quarantined(r, card)
+  -- quarantine_load: which of the cards are in {p}quarantine@e, in one HMGET in
+  -- pieces of at most 1,000 (a batch, never a probe a card); one HLEN says
+  -- whether anything is (normally nothing is), and then no HMGET is sent.
+  local function quarantine_load(r, cards)
     local k = key(r.ctx, 'quarantine')
+    local ask = {}
+    for _, c in ipairs(cards) do
+      if r.quar[c] == nil then r.quar[c] = false; ask[#ask + 1] = c end
+    end
+    if #ask == 0 then return nil end
     if r.qlen == nil then
       local n, err = rd(r, {'HLEN', k}, 'hash', k, RESERVE_COUNT)
-      if err then return nil, err end
+      if err then return err end
       r.qlen = n
     end
-    if r.qlen == 0 then return false, nil end
-    local n, err = rd(r, {'HEXISTS', k, card}, 'hash', k, RESERVE_COUNT)
-    if err then return nil, err end
-    return n == 1, nil
+    if r.qlen == 0 then return nil end
+    for first = 1, #ask, PIECE do
+      local argv = {'HMGET', k}
+      local last = math.min(first + PIECE - 1, #ask)
+      for i = first, last do argv[#argv + 1] = ask[i] end
+      local vals, err = rd(r, argv, 'hash', k, RESERVE_QUARANTINE * (last - first + 1) + RESERVE_SHELL)
+      if err then return err end
+      for i = first, last do r.quar[ask[i]] = vals[i - first + 1] ~= false and vals[i - first + 1] ~= nil end
+    end
+    return nil
+  end
+  -- quarantined: the card is in {p}quarantine@e; every derivation leaves it
+  -- out. The cards the intents name were loaded together (prefetch); one the
+  -- batch did not name is loaded alone.
+  local function quarantined(r, card)
+    if r.quar[card] == nil then
+      local err = quarantine_load(r, {card})
+      if err then return nil, err end
+    end
+    return r.quar[card], nil
   end
   -- judgment_open: the card has an open judgment of the type for the cause, the
   -- field <type>|<cause> of {p}jopen:<card>@e (1.3.1).
@@ -236,26 +292,22 @@ do
     return nil
   end
 
+  -- makes: a create entry of the work table makes the card.
+  local function makes(r, card) return r.made[card] ~= nil end
   -- created: the create entry of the work table that names the card, its
   -- column and the fields it sets, the shared set overridden by the card's each.
   local function created(r, card)
-    for _, e in ipairs(r.ctx.request.entries or {}) do
-      if e.kind == 'create' and e.t == work() then
-        for i, id in ipairs(e.ids or {}) do
-          if id == card then
-            local fields = {}
-            for k, v in pairs(e.set or {}) do fields[k] = v end
-            local each = e.each and e.each[i]
-            for k, v in pairs(each or {}) do fields[k] = v end
-            local col = e.to or ''
-            local at = string.find(col, ':[^:]*$')
-            if at then col = string.sub(col, at + 1) end
-            return {col = col, fields = fields}
-          end
-        end
-      end
-    end
-    return nil
+    local m = r.made[card]
+    if not m then return nil end
+    local e = m.entry
+    local fields = {}
+    for k, v in pairs(e.set or {}) do fields[k] = v end
+    local each = e.each and e.each[m.pos]
+    for k, v in pairs(each or {}) do fields[k] = v end
+    local col = e.to or ''
+    local at = string.find(col, ':[^:]*$')
+    if at then col = string.sub(col, at + 1) end
+    return {col = col, fields = fields}
   end
 
   -- op: the command a step sends one key, the members (and scores) in the
@@ -270,18 +322,18 @@ do
     end
     return o
   end
-  local function add_wait(r, need, card)
-    local k = key(r.ctx, 'wait:' .. need)
-    local err = wait_load(r, k, {card})
-    if err then return err end
-    if r.wait[k][card] or (r.added[k] and r.added[k][card]) then return nil end
-    local o = op(r, 'ZADD', k)
-    o.scores[#o.scores + 1] = WAIT_SCORE
-    o.members[#o.members + 1] = card
-    r.added[k] = r.added[k] or {}
-    r.added[k][card] = true
-    r.nadded[k] = (r.nadded[k] or 0) + 1
-    return nil
+  -- want_wait: the card is to be in wait:<n>; flush puts it there, unless it
+  -- is there already, once the probes of the step are batched.
+  local function want_wait(r, need, card)
+    r.pend_wait[#r.pend_wait + 1] = {need = need, card = card}
+  end
+  -- want_missing: the need, which has no record, is to be in missing; flush
+  -- enters it once, unless it is there.
+  local function want_missing(r, need)
+    if not r.missing_pending[need] then
+      r.missing_pending[need] = true
+      r.pend_missing[#r.pend_missing + 1] = need
+    end
   end
   local function remove_wait(r, need, card)
     local k = key(r.ctx, 'wait:' .. need)
@@ -297,19 +349,25 @@ do
     local id = o .. '\0' .. typ .. '\0' .. cause
     local n = r.note_index[id]
     if not n then
-      n = {op = o, type = typ, cause = cause, subjects = {}}
+      n = {op = o, type = typ, cause = cause, subjects = {}, named = {}}
       r.note_index[id] = n
       r.notes[#r.notes + 1] = n
     end
-    if not contains(n.subjects, subject) then n.subjects[#n.subjects + 1] = subject end
+    if not n.named[subject] then
+      n.named[subject] = true
+      n.subjects[#n.subjects + 1] = subject
+    end
   end
-  local function fold(r, card)
+  -- fold: what the step does to an existing card's fields, for the intent of
+  -- the kind given: one entry a card, however many intents name it.
+  local function fold(r, card, cause)
     local f = r.folds[card]
     if not f then
-      f = {delta = 0, waived = {}}
+      f = {delta = 0, waived = {}, causes = {}}
       r.folds[card] = f
       r.fold_order[#r.fold_order + 1] = card
     end
+    if not contains(f.causes, cause) then f.causes[#f.causes + 1] = cause end
     return f
   end
 
@@ -342,25 +400,71 @@ do
     return at, nil
   end
 
-  local function enter_missing(r, n)
+  -- flush_waits: put the admissions in wait:<n>, unless they are there. The
+  -- store's answer is read once a key, for every admitted card that waits for
+  -- it, in pieces of at most 1,000 (a step of 2,000 admissions that wait for one
+  -- need asks wait:<n> twice, not 2,000 times); the decisions are then made in
+  -- the order the intents were decided.
+  local function flush_waits(r)
+    local by_key, order = {}, {}
+    for _, p in ipairs(r.pend_wait) do
+      local k = key(r.ctx, 'wait:' .. p.need)
+      if not by_key[k] then by_key[k] = {}; order[#order + 1] = k end
+      local list = by_key[k]
+      list[#list + 1] = p.card
+    end
+    for _, k in ipairs(order) do
+      local err = wait_load(r, k, by_key[k])
+      if err then return err end
+    end
+    for _, p in ipairs(r.pend_wait) do
+      local k = key(r.ctx, 'wait:' .. p.need)
+      if not (r.wait[k][p.card] or (r.added[k] and r.added[k][p.card])) then
+        local o = op(r, 'ZADD', k)
+        o.scores[#o.scores + 1] = WAIT_SCORE
+        o.members[#o.members + 1] = p.card
+        r.added[k] = r.added[k] or {}
+        r.added[k][p.card] = true
+        r.nadded[k] = (r.nadded[k] or 0) + 1
+      end
+    end
+    return nil
+  end
+  -- flush_missing: enter the needs with no record in missing at R, each once,
+  -- unless it is there: the store has no ZADD NX, so the phase reads the scores,
+  -- one ZMSCORE in pieces, and decides (errata 2, item 5).
+  local function flush_missing(r)
+    local needs = r.pend_missing
+    if #needs == 0 then return nil end
     local k = key(r.ctx, 'missing')
-    local there, err = rd(r, {'ZSCORE', k, n}, 'zset', k, RESERVE_SCORE)
-    if err then return err end
-    if (there ~= false and there ~= nil) or r.missing_added[n] then return nil end
-    local at
-    at, err = running(r)
-    if err then return err end
-    local o = op(r, 'ZADD', k)
-    o.scores[#o.scores + 1] = string.format('%.0f', at)
-    o.members[#o.members + 1] = n
-    r.missing_added[n] = true
+    local there = {}
+    for first = 1, #needs, PIECE do
+      local argv = {'ZMSCORE', k}
+      local last = math.min(first + PIECE - 1, #needs)
+      for i = first, last do argv[#argv + 1] = needs[i] end
+      local vals, err = rd(r, argv, 'zset', k, RESERVE_SCORE * (last - first + 1) + RESERVE_SHELL)
+      if err then return err end
+      for i = first, last do there[needs[i]] = vals[i - first + 1] ~= false and vals[i - first + 1] ~= nil end
+    end
+    for _, n in ipairs(needs) do
+      if not (there[n] or r.missing_added[n]) then
+        local at, err = running(r)
+        if err then return err end
+        local o = op(r, 'ZADD', k)
+        o.scores[#o.scores + 1] = string.format('%.0f', at)
+        o.members[#o.members + 1] = n
+        r.missing_added[n] = true
+      end
+    end
     return nil
   end
 
-  -- edges: the needs the walk goes on through from the card c: those of a card
+  -- lookup: what the walk goes on through from the card c: the needs of a card
   -- this step admits, or of an open waiting card. Any other card ends the walk
-  -- there. Looking a card up counts one of the step's WALK_MAX.
-  local function edges(r, c, head)
+  -- there. Looking a card up counts one of the step's WALK_MAX, whatever the
+  -- card turns out to be (waiting or not, present or not). The walk looks each
+  -- card up once; a card looked up again (by cycle) is counted and read once.
+  local function lookup(r, c, head)
     if r.own[c] then return r.own[c], nil end
     if not r.walked[c] then
       if r.nwalked >= WALK_MAX then
@@ -372,18 +476,43 @@ do
     end
     local err = fetch(r, {c}, {'needs', 'open'})
     if err then return nil, err end
+    local needs = {}
     local rec = r.recs[c]
-    if not is_waiting(rec) then return {}, nil end
-    local open, ok = open_of(rec)
-    if not ok then return nil, drift(r, c, 'has an open that is not a whole number') end
-    if open == 0 then return {}, nil end
-    return split(field_of(rec, 'needs')), nil
+    if is_waiting(rec) then
+      local open, ok = open_of(rec)
+      if not ok then return nil, drift(r, c, 'has an open that is not a whole number') end
+      if open > 0 then needs = split(field_of(rec, 'needs')) end
+    end
+    return needs, nil
   end
-  -- cycle: the refusal of a need that reaches its waiter, the chain read back
-  -- through the walk's parents (1.3.3).
-  local function cycle(r, parent, start, w)
+  -- cycle: the refusal of a need that reaches its waiter w: the chain from the
+  -- need start to w, found by a depth-first search from start, taking the needs
+  -- of a card in the order it names them, over the cards the walk has read (a
+  -- card it has not is looked up as the walk would). Run once, for the one
+  -- refusal of a step (1.3.3).
+  local function cycle(r, w, start)
     local chain = {start, w}
     if start ~= w then
+      local parent = {[start] = ''}
+      local stack = {start}
+      local found = false
+      while #stack > 0 and not found do
+        local c = stack[#stack]
+        stack[#stack] = nil
+        local needs, err = lookup(r, c, start)
+        if err then return err end
+        for i = #needs, 1, -1 do
+          local e = needs[i]
+          if parent[e] == nil then
+            parent[e] = c
+            if e == w then found = true; break end
+            stack[#stack + 1] = e
+          end
+        end
+      end
+      if not found then
+        return refuse(r, 'CONFIG', {w}, 'the needs walk found a cycle through %s and %s that it cannot name', start, w)
+      end
       chain = {w}
       local c = parent[w]
       while c ~= nil and c ~= '' do chain[#chain + 1] = c; c = parent[c] end
@@ -402,37 +531,92 @@ do
     end
     return refuse(r, 'XGUARD', chain, '%s needs %s%s; a needs cycle', start, w, through)
   end
-  -- walk: the cycle walk of a waitfor (1.3.3), depth first, the needs of a card
-  -- in the order it names them: from the need start, through the needs of
-  -- every open waiting card it reaches (the cards this step admits included),
-  -- looking for w.
-  local function walk(r, w, start)
-    local parent = {[start] = ''}
-    if start == w then return cycle(r, parent, start, w) end
-    local stack = {start}
-    while #stack > 0 do
-      local c = stack[#stack]
-      stack[#stack] = nil
-      local es, err = edges(r, c, start)
+  -- explore: expand the cards reachable from start that no earlier search of the
+  -- step expanded, once each, as Tarjan's algorithm does: number the cards in the
+  -- order the search meets them, keep the lowest number each can reach, and give
+  -- every card the number of its component when the card that opened the
+  -- component finishes. Refuses at once when a need of a card it expands is w,
+  -- the waiter whose need it searches from: that is the cycle, found where the
+  -- search first meets it. One expansion a card and one look at each of its
+  -- needs, however many admissions and needs of the step name the card.
+  local function explore(r, start, w)
+    if r.visit[start] then return nil end
+    local frames = {}
+    local function enter(c)
+      local needs, err = lookup(r, c, start)
       if err then return err end
-      for i = #es, 1, -1 do
-        local e = es[i]
-        if parent[e] == nil then
-          parent[e] = c
-          if e == w then return cycle(r, parent, start, w) end
-          stack[#stack + 1] = e
+      r.nvisit = r.nvisit + 1
+      r.visit[c], r.low[c] = r.nvisit, r.nvisit
+      r.tstack[#r.tstack + 1] = c
+      r.onstack[c] = true
+      r.work.expanded = r.work.expanded + 1
+      frames[#frames + 1] = {node = c, needs = needs, next = 1}
+      return nil
+    end
+    local err = enter(start)
+    if err then return err end
+    while #frames > 0 do
+      local top = #frames
+      local f = frames[top]
+      if f.next <= #f.needs then
+        local e = f.needs[f.next]
+        f.next = f.next + 1
+        r.work.edges = r.work.edges + 1
+        if e == w then return cycle(r, w, start) end
+        if not r.visit[e] then
+          err = enter(e)
+          if err then return err end
+        elseif r.onstack[e] and r.visit[e] < r.low[f.node] then
+          r.low[f.node] = r.visit[e]
+        end
+      else
+        local c = f.node
+        frames[top] = nil
+        if r.low[c] == r.visit[c] then
+          r.ncomp = r.ncomp + 1
+          while true do
+            local x = r.tstack[#r.tstack]
+            r.tstack[#r.tstack] = nil
+            r.onstack[x] = false
+            r.comp[x] = r.ncomp
+            if x == c then break end
+          end
+        end
+        if top > 1 then
+          local p = frames[top - 1].node
+          if r.low[c] < r.low[p] then r.low[p] = r.low[c] end
         end
       end
     end
     return nil
   end
+  -- reaches: the cycle check of one need of a waitfor (1.3.3): the need n of the
+  -- card w reaches w when w is on a cycle through n. The search is the step's,
+  -- shared by every admission and need: a card it has expanded is not expanded
+  -- again, and what it knows of that card (its component) answers for every later
+  -- need that reaches it. A need that reaches w is refused XGUARD naming the
+  -- chain, and a walk that would read more than WALK_MAX records in the step is
+  -- refused XGUARD naming its head, the need it began at.
+  local function reaches(r, w, n)
+    if n == w then return cycle(r, w, n) end
+    local err = explore(r, n, w)
+    if err then return err end
+    -- w has a need n, so n reaches w exactly when the two are in one strongly
+    -- connected component. Both are finished: the search that expanded n ended
+    -- above, and w is expanded by it or by an earlier one when n reaches it, and
+    -- unseen (no component) when it does not.
+    local cn, cw = r.comp[n], r.comp[w]
+    if cn ~= nil and cw ~= nil and cn == cw then return cycle(r, w, n) end
+    return nil
+  end
 
   -- waitfor (1.3.3): admit a card that waits for needs. It first walks the
-  -- needs graph, then enters the card in wait:<n> of each need that is open or
-  -- has no record, enters a need with no record in missing, and asks J to open
-  -- the judgments. The card is created by this step; its create entry carries
-  -- its needs and its open, and derive checks them against the real state. A
-  -- need the same step creates is open: it will be a card of the table.
+  -- needs graph, then decides the card goes in wait:<n> of each need that is
+  -- open or has no record, that a need with no record goes in missing, and asks
+  -- J to open the judgments (flush puts the first two in the commands). The card
+  -- is created by this step; its create entry carries its needs and its open,
+  -- and derive checks them against the real state. A need the same step creates
+  -- is open: it will be a card of the table.
   local function wait_for(r, it)
     local w, needs = it.card, dedup(it.needs or {})
     local made = created(r, w)
@@ -443,7 +627,7 @@ do
       return refuse(r, 'REQUEST', {w}, '%s has needs and is created in %s; a card with needs is created in waiting', w, made.col)
     end
     for _, n in ipairs(needs) do
-      local err = walk(r, w, n)
+      local err = reaches(r, w, n)
       if err then return err end
     end
     local err = fetch(r, needs, {})
@@ -451,7 +635,7 @@ do
     local state, open = {}, 0
     for i, n in ipairs(needs) do
       local rec = r.recs[n]
-      if created(r, n) then
+      if makes(r, n) then
         state[i] = 'open'
       elseif not rec.exists then
         state[i] = 'missing'
@@ -464,9 +648,10 @@ do
       end
       if state[i] ~= 'landed' then open = open + 1 end
     end
-    local named = split(made.fields.needs)
+    local named = {}
+    for _, n in ipairs(split(made.fields.needs)) do named[n] = true end
     for _, n in ipairs(needs) do
-      if not contains(named, n) then
+      if not named[n] then
         return refuse(r, 'REQUEST', {w}, '%s waits for %s and its create entry does not name it in needs', w, n)
       end
     end
@@ -484,13 +669,10 @@ do
     end
     for i, n in ipairs(needs) do
       if state[i] == 'open' then
-        err = add_wait(r, n, w)
-        if err then return err end
+        want_wait(r, n, w)
       elseif state[i] == 'missing' then
-        err = add_wait(r, n, w)
-        if err then return err end
-        err = enter_missing(r, n)
-        if err then return err end
+        want_wait(r, n, w)
+        want_missing(r, n)
         note(r, 'open', TYPE_MISSING, n, w)
       elseif state[i] == 'dropped' then
         note(r, 'open', TYPE_DROPPED, n, w)
@@ -526,7 +708,7 @@ do
       local rec = r.recs[w]
       if not is_waiting(rec) then return drift(r, w, 'is in wait:' .. n .. ' and is not a waiting card') end
       local open, ok = open_of(rec)
-      local f = fold(r, w)
+      local f = fold(r, w, 'needmet')
       if not ok or open + f.delta < 1 then
         return drift(r, w, 'is in wait:' .. n .. ' and its open does not count the need')
       end
@@ -578,6 +760,7 @@ do
     err = fetch(r, {w}, {'open', 'waived'})
     if err then return err end
     local rec = r.recs[w]
+    local waived = split(field_of(rec, 'waived'))
     for _, n in ipairs(needs) do
       local blocked
       blocked, err = judgment_open(r, w, TYPE_DROPPED, n)
@@ -588,8 +771,8 @@ do
         if err then return err end
       end
       if blocked or unmade then
-        local f = fold(r, w)
-        if not (contains(split(field_of(rec, 'waived')), n) or contains(f.waived, n)) then
+        local f = fold(r, w, 'waive')
+        if not (contains(waived, n) or contains(f.waived, n)) then
           if not is_waiting(rec) then
             return drift(r, w, 'has a judgment open on ' .. n .. ' and is not a waiting card')
           end
@@ -647,6 +830,14 @@ do
     for _, id in ipairs(r.fold_order) do
       local f = r.folds[id]
       if f.delta ~= 0 or #f.waived > 0 then
+        -- One entry names a card once (Layer 1 refuses TWICE, a bug code that parks
+        -- the key): a card this phase folds is not also named by the request's own entries.
+        local at = r.named[id]
+        if at then
+          return nil, nil, nil, refuse(r, 'REQUEST', {id},
+            '%s is changed by the %s of this step and named by entry %d (%s) of the request; a card is named once in a step',
+            id, table.concat(f.causes, ' and '), at.entry, at.kind)
+        end
         local rec = r.recs[id]
         local open = open_of(rec)
         local each = {open = string.format('%d', open + f.delta)}
@@ -697,6 +888,40 @@ do
     return entries, notes, cmds, nil
   end
 
+  -- prefetch: the probes of the sprint's own keys the intents will need that
+  -- the intents themselves name, read together before any is decided: wait:<n>
+  -- of the waiters of every needmet and needgone, one key at a time across
+  -- the step's intents, and {p}quarantine@e of those that are in it and of the
+  -- card of every waive, in one batch (quarantine_load). The decisions are made
+  -- afterwards, in the order the intents name things, from what was read.
+  local function prefetch(r, intents)
+    local asks, order = {}, {}
+    for _, it in ipairs(intents) do
+      if it.kind == 'needmet' or it.kind == 'needgone' then
+        local k = key(r.ctx, 'wait:' .. it.need)
+        if not asks[k] then asks[k] = {}; order[#order + 1] = k end
+        local list = asks[k]
+        for _, w in ipairs(it.waiters or {}) do list[#list + 1] = w end
+      end
+    end
+    for _, k in ipairs(order) do
+      local err = wait_load(r, k, asks[k])
+      if err then return err end
+    end
+    local ids = {}
+    for _, it in ipairs(intents) do
+      if it.kind == 'needmet' or it.kind == 'needgone' then
+        local k = key(r.ctx, 'wait:' .. it.need)
+        for _, w in ipairs(it.waiters or {}) do
+          if r.wait[k][w] then ids[#ids + 1] = w end
+        end
+      elseif it.kind == 'waive' then
+        ids[#ids + 1] = it.card
+      end
+    end
+    return quarantine_load(r, ids)
+  end
+
   -- derive(ctx, intents, obs) -> entries, notes, refusal (sprint_00_core.lua's
   -- phase 'derive'). obs is the before-state of the ids the request names; the
   -- phase reads what it needs through S.before, which serves the cache.
@@ -705,9 +930,12 @@ do
     local err = check(S, intents)
     if err then return nil, nil, err end
     local r = new_run(S, ctx)
+    index_request(r)
     for _, it in ipairs(intents) do
       if it.kind == 'waitfor' then r.own[it.card] = dedup(it.needs or {}) end
     end
+    err = prefetch(r, intents)
+    if err then return nil, nil, err end
     for _, it in ipairs(intents) do
       if it.kind == 'waitfor' then err = wait_for(r, it)
       elseif it.kind == 'needmet' then err = need_met(r, it)
@@ -715,19 +943,35 @@ do
       else err = waive(r, it) end
       if err then return nil, nil, err end
     end
+    err = flush_waits(r)
+    if err then return nil, nil, err end
+    err = flush_missing(r)
+    if err then return nil, nil, err end
     local entries, notes, cmds
     entries, notes, cmds, err = finish(r)
     if err then return nil, nil, err end
-    ctx.intent_cmds = cmds
+    ctx.intent_cmds, ctx.intent_cmds_taken = cmds, false
+    ctx.intent_work = r.work
     return entries, notes, nil
   end
   -- intent_commands: the commands derive staged for this call, for x_cmds to
   -- append to its plan (derive returns entries and notes, and has no slot for
-  -- commands).
-  local function intent_commands(ctx) return ctx.intent_cmds or {} end
+  -- commands). Taking them is recorded, so that the core can tell commands left
+  -- behind (intent_commands_pending) and refuse the step before prepare rather
+  -- than drop them: open would be lowered with the card still in wait:<n> (I2).
+  local function intent_commands(ctx)
+    ctx.intent_cmds_taken = true
+    return ctx.intent_cmds or {}
+  end
+  -- intent_commands_pending: derive staged commands and nothing has taken them.
+  local function intent_commands_pending(ctx)
+    local cmds = ctx.intent_cmds
+    return cmds ~= nil and #cmds > 0 and not ctx.intent_cmds_taken
+  end
 
   SP.derive = derive
   SP.intent_commands = intent_commands
+  SP.intent_commands_pending = intent_commands_pending
   SP.phase('derive', derive)
 end
 end

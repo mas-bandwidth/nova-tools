@@ -18,11 +18,15 @@ type fixRec struct {
 // hold the Go phase equal to the Lua run the phase over, so that both read the
 // same state.
 type fixWorld struct {
-	recs    map[string]fixRec
-	entries []tset.Entry
+	recs      map[string]fixRec
+	entryList []tset.Entry
+	// asked is the ids the phase has asked records of, repeats counted: a test
+	// that pins the cost of a step reads it.
+	asked int
 }
 
 func (w *fixWorld) records(ids, fields []string) ([]tset.MemberRecord, *Refusal) {
+	w.asked += len(ids)
 	out := make([]tset.MemberRecord, len(ids))
 	for i, id := range ids {
 		r, ok := w.recs[id]
@@ -43,7 +47,7 @@ func (w *fixWorld) records(ids, fields []string) ([]tset.MemberRecord, *Refusal)
 	return out, nil
 }
 
-func (w *fixWorld) created(card string) (createdCard, bool) { return createdIn(w.entries, card) }
+func (w *fixWorld) entries() []tset.Entry { return w.entryList }
 
 // fixState is the call's State over a keyspace the test has written.
 func fixState(ks *keyspace, nowMS string) *State {

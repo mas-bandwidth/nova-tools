@@ -96,6 +96,14 @@ func nsFieldAvailable(name, field string, exported map[string]string) bool {
 			}
 		}
 	}
+	// The derive phase's file (IT14) is a sprint file that is not yet in
+	// sprintFragments, IT12's list, which its tests hold to two files until G0
+	// opens: it opens with the same guard and resolves Layer 1's NS.tset when a
+	// call runs, as sprint_zz_fn.lua does. When the file joins sprintFragments,
+	// this seam goes.
+	if name == intentsLuaFile && (field == "tset_profile" || field == "tset") {
+		return true
+	}
 	// ns_sprint_step and ns_sprint_read resolve Layer 1's NS.tset and Layer 2's
 	// NS.tlog when a call runs, inside the registered functions (errata 2,
 	// item 8): the sprint profile loads them after the composed fragments.

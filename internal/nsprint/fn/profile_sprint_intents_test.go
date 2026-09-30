@@ -100,9 +100,96 @@ func TestSprintIntentsLuaRegistersOnlyDerive(t *testing.T) {
 	if !sort.StringsAreSorted(names) {
 		t.Errorf("the file does not load after the core and before the function file: %v", names)
 	}
-	for _, n := range []string{"SP.derive = derive", "SP.intent_commands = intent_commands"} {
+	for _, n := range []string{"SP.derive = derive", "SP.intent_commands = intent_commands",
+		"SP.intent_commands_pending = intent_commands_pending"} {
 		if !strings.Contains(src, n) {
 			t.Errorf("the file does not export %q", n)
 		}
 	}
+}
+
+// TestSprintLuaNeedmetNeedgoneNeedNoCard: 8.0 gives a needmet and a needgone a
+// need and its waiters and no card (the wire sends "card":""), and the core's
+// before asks S.before for the need and the waiters, never for the empty card,
+// which Layer 1 refuses REQUEST (S.name(”) is false). The S.before here refuses
+// an empty id as Layer 1's does.
+func TestSprintLuaNeedmetNeedgoneNeedNoCard(t *testing.T) {
+	t.Parallel()
+	h := newLuaSprint(t)
+	h.setup(nil)
+	h.do(`BEFORE_IDS = {}
+function NS.tset.before(ctx, t, ids, fields)
+  trace('before')
+  for _, id in ipairs(ids) do
+    if id == '' then return nil, NS.tset.refuse('REQUEST') end
+    BEFORE_IDS[#BEFORE_IDS + 1] = t .. ':' .. id
+  end
+  return {}, nil
+end`)
+	reply := h.step(`{"meta":{"verb":"tick"},"intents":[` +
+		`{"kind":"needmet","card":"","need":"n","waiters":["w1","w2"]},` +
+		`{"kind":"needgone","card":"","need":"g","waiters":["x"]}]}`)
+	if code := refusalCode(reply); code != "" {
+		t.Fatalf("a needmet and a needgone with no card were refused %s: %s", code, reply)
+	}
+	h.do("BEFORE_LIST = table.concat(BEFORE_IDS, ',')")
+	got := h.L.GetGlobal("BEFORE_LIST").String()
+	for _, want := range []string{"work:n", "work:w1", "work:w2", "work:g", "work:x"} {
+		if !strings.Contains(","+got+",", ","+want+",") {
+			t.Errorf("S.before was not asked for %s; asked %s", want, got)
+		}
+	}
+	if strings.Contains(","+got+",", ",work:,") {
+		t.Errorf("S.before was asked for the empty card: %s", got)
+	}
+}
+
+// TestSprintLuaRefusesCommandsLeftBehind: the commands the derive phase stages
+// on the call's ctx are for x_cmds to append (NS.SP.intent_commands). If
+// x_cmds leaves them, the core refuses CONFIG before prepare and nothing is
+// committed: dropping them would lower open with the card still in wait:<n>
+// (I2). Commands that were taken, and a call with none, go on to prepare and
+// commit. The functions are the real ones of sprint_intents.lua, loaded after
+// the core; the stand-ins stage the commands as derive does.
+func TestSprintLuaRefusesCommandsLeftBehind(t *testing.T) {
+	t.Parallel()
+	staged := func(taken string) string {
+		return `T.ctx = function() return {request = {entries = {}}, notes = {},
+  intent_cmds = {{argv = {'ZREM', 'k', 'm'}}}, intent_cmds_taken = ` + taken + `} end`
+	}
+	run := func(t *testing.T, ctx string, x string) (*luaSprint, string) {
+		h := newLuaSprint(t)
+		h.setup([]string{"derive", "x_cmds"})
+		h.do(intentsSource(t))
+		h.do(ctx)
+		h.do(x)
+		return h, h.step(`{"meta":{"verb":"tick"}}`)
+	}
+	leaves := `NS.SP.phase('x_cmds', function(ctx, tp, lp) trace('x_cmds'); return {commands = {}} end)`
+	takes := `NS.SP.phase('x_cmds', function(ctx, tp, lp) trace('x_cmds'); return {commands = NS.SP.intent_commands(ctx)} end)`
+
+	t.Run("commands left behind are refused before prepare", func(t *testing.T) {
+		t.Parallel()
+		h, reply := run(t, staged("false"), leaves)
+		if refusalCode(reply) != "CONFIG" {
+			t.Fatalf("reply %s; want CONFIG", reply)
+		}
+		if contains(h.trace, "prepare") || contains(h.trace, "commit") {
+			t.Fatalf("the refused step went on: %v", h.trace)
+		}
+	})
+	t.Run("commands x_cmds took go on", func(t *testing.T) {
+		t.Parallel()
+		h, reply := run(t, staged("false"), takes)
+		if refusalCode(reply) != "" || !contains(h.trace, "commit") {
+			t.Fatalf("reply %s, trace %v; want the step committed", reply, h.trace)
+		}
+	})
+	t.Run("a call with no commands goes on", func(t *testing.T) {
+		t.Parallel()
+		h, reply := run(t, `T.ctx = function() return {request = {entries = {}}, notes = {}} end`, leaves)
+		if refusalCode(reply) != "" || !contains(h.trace, "commit") {
+			t.Fatalf("reply %s, trace %v; want the step committed", reply, h.trace)
+		}
+	})
 }
