@@ -1,17 +1,288 @@
-# loops.yml renders one unit per loop. The darwin plist is
+# loops.yml: a process supervisor for every fleet loop (nova-tools #2551).
+# Renders one unit per loop from fleet/loops.tsv. The darwin plist is
 # templates/nova-loop.plist.j2, and that template sets AbandonProcessGroup
 # so launchctl kickstart -k signals the unit's pid and not its process group.
 # A refresh that has called setsid is outside that group either way; both are
-# the restart (nova-tools #2681). The bench inventory that fills host_loops
-# is applied with this play.
+# the restart (nova-tools #2681).
+#
+# The play supports --check dry-run preflight first:
+#   ansible-playbook fleet/loops.yml --check --diff
+#   ansible-playbook fleet/loops.yml --diff
+#
+# Preflight validates command line expansions, machine self, width (> 0),
+# harness and model (provider/model) from the worker description, and lints
+# the plists before anything is installed.
 ---
-- name: loop units
-  hosts: localhost
-  gather_facts: false
+- name: supervised loops
+  hosts: all
+  gather_facts: true
+  vars:
+    nb: "{{ ansible_env.HOME }}/nova-bench"
+    loop_textfile_dir: "{{ node_exporter_textfile_dir_linux if ansible_system == 'Linux' else ansible_env.HOME + '/nova-bench/textfile' }}"
+    loop_path: "{{ ansible_env.HOME }}/.local/bin:{{ ansible_env.HOME }}/rowan-working/bin:{{ ansible_env.HOME }}/go/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+    loop_needs_become: "{{ node_exporter_needs_become | default(false) | bool }}"
+    launchd_dir: "{{ (ansible_env.HOME + '/Library/LaunchAgents') if not (loop_needs_become | bool) else '/Library/LaunchDaemons' }}"
+    systemd_dir: "{{ '/etc/systemd/system' if (loop_needs_system_unit | default(false) | bool) else ansible_env.HOME + '/.config/systemd/user' }}"
   tasks:
+    # ---- read the loops table ----
+    - name: read the loops table
+      ansible.builtin.set_fact:
+        loops: "{{ loops | default([]) + [ {'name': f[0], 'where': f[1], 'command': f[2], 'user': f[3], 'description': f[4]} ] }}"
+      vars:
+        f: "{{ item.split('\t') | list }}"
+      loop: "{{ lookup('file', playbook_dir + '/loops.tsv').splitlines() | select('search', '\t') | reject('match', '^#') | reject('match', '^name\t') | list }}"
+      loop_control: { label: "{{ item.split('\t')[0] }}" }
+
+    # every-bench rows run everywhere; coordinator rows run on the coordinator bench.
+    - name: determine loops for this host
+      ansible.builtin.set_fact:
+        host_loops_all: >-
+          {{ (loops | selectattr('where', 'equalto', 'every-bench') | list)
+             + (loops | selectattr('where', 'equalto', 'coordinator') | list
+                if (inventory_hostname in (groups['coordinator'] | default([])) or inventory_hostname in ['localhost', '127.0.0.1'] or (is_coordinator | default(false) | bool)) else []) }}
+
+    - name: filter loops if loop_name is passed
+      ansible.builtin.set_fact:
+        host_loops: "{{ host_loops_all if (loop_name is not defined) else (host_loops_all | selectattr('name', 'equalto', loop_name) | list) }}"
+
+    # ---- resolve machine name and width ----
+    - name: resolve machine self
+      ansible.builtin.command: "{{ ansible_env.HOME }}/.local/bin/nova-config machine self"
+      register: config_self
+      changed_when: false
+      check_mode: false
+      failed_when: false
+
+    - name: set member machine fact
+      ansible.builtin.set_fact:
+        member_machine: "{{ config_self.stdout | trim if (config_self.rc == 0 and (config_self.stdout | trim) != '') else (inventory_hostname | regex_replace('^swarm-', '') if inventory_hostname not in ['localhost', '127.0.0.1'] else 'studio') }}"
+
+    - name: resolve machine width
+      ansible.builtin.command: "{{ ansible_env.HOME }}/.local/bin/nova-config machine width {{ member_machine }} --json"
+      register: config_width
+      changed_when: false
+      check_mode: false
+      failed_when: false
+
+    - name: set member width fact
+      ansible.builtin.set_fact:
+        member_width: "{{ (config_width.stdout | from_json).width if (config_width.rc == 0 and (config_width.stdout | trim) != '') else (width | default(machine_width | default(128))) }}"
+
+    # ---- resolve harness and model from worker description ----
+    - name: check for worker description
+      ansible.builtin.stat:
+        path: "{{ ansible_env.HOME }}/nova-bench/worker.json"
+      register: worker_json_stat
+      check_mode: false
+
+    - name: read worker description
+      ansible.builtin.slurp:
+        src: "{{ ansible_env.HOME }}/nova-bench/worker.json"
+      register: worker_json_raw
+      check_mode: false
+      when: worker_json_stat.stat.exists
+
+    - name: check for card.env
+      ansible.builtin.stat:
+        path: "{{ ansible_env.HOME }}/nova-bench/launch/card.env"
+      register: card_env_stat
+      check_mode: false
+
+    - name: read card.env
+      ansible.builtin.slurp:
+        src: "{{ ansible_env.HOME }}/nova-bench/launch/card.env"
+      register: card_env_raw
+      check_mode: false
+      when: card_env_stat.stat.exists
+
+    - name: check for opencode binaries
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - "{{ ansible_env.HOME }}/.local/bin/opencode"
+        - "/opt/homebrew/bin/opencode"
+        - "/usr/local/bin/opencode"
+        - "/usr/bin/opencode"
+      register: opencode_bins
+      check_mode: false
+
+    - name: set member harness and model facts
+      ansible.builtin.set_fact:
+        member_harness: >-
+          {{ worker_data.harness | default(card_harness | default(available_opencode | default('/opt/homebrew/bin/opencode'))) | trim }}
+        member_model: >-
+          {{ (worker_model if worker_model != '' else 'opencode/deepseek-v4-flash') | trim }}
+      vars:
+        worker_data: "{{ (worker_json_raw.content | b64decode | from_json) if (worker_json_stat.stat.exists and worker_json_raw.content is defined) else {} }}"
+        raw_model: "{{ worker_data.model | default('') }}"
+        worker_model: "{{ (worker_data.provider + '/' + raw_model) if (raw_model != '' and '/' not in raw_model and worker_data.provider is defined) else raw_model }}"
+        card_env_lines: "{{ (card_env_raw.content | b64decode).splitlines() if (card_env_stat.stat.exists and card_env_raw.content is defined) else [] }}"
+        card_harness_line: "{{ (card_env_lines | select('match', '^export NOVA_CARD_HARNESS_BIN=') | list | first) | default('') }}"
+        card_harness: "{{ card_harness_line | regex_replace('^export NOVA_CARD_HARNESS_BIN=', '') }}"
+        available_opencode: "{{ (opencode_bins.results | selectattr('stat.exists', 'equalto', true) | map(attribute='item') | list | first) | default('') }}"
+
+    # ---- resolve sops binary ----
+    - name: find sops binary
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - "{{ ansible_env.HOME }}/.local/bin/sops"
+        - "/opt/homebrew/bin/sops"
+        - "/usr/local/bin/sops"
+        - "/usr/bin/sops"
+      register: sops_bins
+      check_mode: false
+
+    - name: set sops binary fact
+      ansible.builtin.set_fact:
+        loop_sops: "{{ (sops_bins.results | selectattr('stat.exists', 'equalto', true) | map(attribute='item') | list | first) | default('/opt/homebrew/bin/sops') }}"
+
+    # ---- expand command substitutions ----
+    - name: each loop's argv, substituted for this host
+      ansible.builtin.set_fact:
+        loop_cmds: "{{ loop_cmds | default({}) | combine({item.name: item.command
+          | replace('$HOME', ansible_env.HOME)
+          | replace('$TEXTFILE_DIR', loop_textfile_dir)
+          | replace('$STORE', fleet_store | default('100.64.75.86:6380'))
+          | replace('$HOST', member_machine)
+          | replace('$COORDINATOR_SEAT', coordinator_seat | default('studio'))
+          | replace('$SEAT', seat | default('swarm-' + member_machine))
+          | replace('$SOPS', loop_sops)
+          | replace('$WIDTH', member_width | string)
+          | replace('$HARNESS', member_harness)
+          | replace('$MODEL', member_model)}) }}"
+      loop: "{{ host_loops }}"
+      loop_control: { label: "{{ item.name }}" }
+
+    # ---- preflight assertions ----
+    - name: "preflight: no unsubstituted token in any argv"
+      ansible.builtin.assert:
+        that: "'$' not in loop_cmds[item.name]"
+        fail_msg: "{{ item.name }}: {{ loop_cmds[item.name] }} still has a $TOKEN loops.yml does not expand"
+        quiet: true
+      loop: "{{ host_loops }}"
+      loop_control: { label: "{{ item.name }}" }
+
+    - name: "preflight: validate nova-swarm-member parameters"
+      ansible.builtin.assert:
+        that:
+          - (member_width | int) > 0
+          - (member_harness | length) > 0
+          - (member_model | length) > 0
+          - "'/' in member_model"
+        fail_msg: "invalid nova-swarm-member parameters: width={{ member_width }}, harness={{ member_harness }}, model={{ member_model }}"
+        quiet: true
+      when: "'nova-swarm-member' in (host_loops | map(attribute='name') | list)"
+
+    # ---- directories ----
+    - name: loop directories
+      ansible.builtin.file:
+        path: "{{ nb }}/{{ item }}"
+        state: directory
+        mode: "0755"
+      loop: [logs, run, textfile]
+      when: host_loops | length > 0
+
+    # ================= darwin =================
+    - name: LaunchAgents directory (darwin, user agent only)
+      ansible.builtin.file:
+        path: "{{ ansible_env.HOME }}/Library/LaunchAgents"
+        state: directory
+        mode: "0755"
+      when: ansible_system == 'Darwin' and not (loop_needs_become | bool) and host_loops | length > 0
+
     - name: loop unit plists (darwin)
       ansible.builtin.template:
         src: templates/nova-loop.plist.j2
         dest: "{{ launchd_dir }}/com.nova.loop.{{ item.name }}.plist"
+        owner: "{{ 'root' if (loop_needs_become | bool) else omit }}"
+        group: "{{ 'wheel' if (loop_needs_become | bool) else omit }}"
         mode: "0644"
-      loop: "{{ host_loops | default([]) }}"
+        validate: "/usr/bin/plutil -lint %s"
+      become: "{{ loop_needs_become | bool }}"
+      vars:
+        l: "{{ item }}"
+        loop_argv: "{{ loop_cmds[item.name] | split(' ') }}"
+      loop: "{{ host_loops }}"
+      loop_control: { label: "{{ item.name }}" }
+      register: plists
+      when: ansible_system == 'Darwin'
+
+    - name: load the loop units (darwin)
+      ansible.builtin.shell: |
+        set -u
+        export HOME={{ ansible_env.HOME | quote }}
+        name={{ item.item.name | quote }}
+        plist={{ launchd_dir }}/com.nova.loop.$name.plist
+        domain={{ ('gui/' ~ ansible_user_uid) if not (loop_needs_become | bool) else 'system' }}
+        label=com.nova.loop.$name
+        argv0={{ loop_cmds[item.item.name].split(' ')[0] | quote }}
+        if [ ! -x "$argv0" ]; then echo "SKIPPED $name: script $argv0 missing"; exit 0; fi
+        if launchctl print "$domain/$label" >/dev/null 2>&1; then
+          if [ {{ item.changed | ternary(1, 0) }} = 1 ]; then
+            launchctl bootout "$domain/$label" 2>/dev/null || true
+            launchctl bootstrap "$domain" "$plist" || exit 1
+            echo "RELOADED $label"
+          else
+            echo "LOADED-ALREADY $label"
+          fi
+        else
+          launchctl bootstrap "$domain" "$plist" || exit 1
+          echo "BOOTSTRAPPED $label"
+        fi
+      args: { executable: /bin/bash }
+      become: "{{ loop_needs_become | bool }}"
+      loop: "{{ plists.results | default([]) }}"
+      loop_control: { label: "{{ item.item.name }}" }
+      register: dload
+      changed_when: "'BOOTSTRAPPED' in (dload.stdout | default('')) or 'RELOADED' in (dload.stdout | default(''))"
+      when: ansible_system == 'Darwin' and item.item.name not in (loops_hold | default([])) and not ansible_check_mode
+
+    # ================= linux =================
+    - name: systemd user unit directory (linux)
+      ansible.builtin.file:
+        path: "{{ ansible_env.HOME }}/.config/systemd/user"
+        state: directory
+        mode: "0755"
+      when: ansible_system == 'Linux' and host_loops | length > 0 and not (loop_needs_system_unit | default(false) | bool)
+
+    - name: loop unit files (linux)
+      ansible.builtin.template:
+        src: templates/nova-loop.service.j2
+        dest: "{{ systemd_dir }}/nova-loop-{{ item.name }}.service"
+        mode: "0644"
+      become: "{{ loop_needs_system_unit | default(false) | bool }}"
+      vars:
+        l: "{{ item }}"
+        loop_argv: "{{ loop_cmds[item.name] | split(' ') }}"
+      loop: "{{ host_loops }}"
+      loop_control: { label: "{{ item.name }}" }
+      register: units
+      when: ansible_system == 'Linux'
+
+    - name: load the loop units (linux)
+      ansible.builtin.shell: |
+        set -u
+        export HOME={{ ansible_env.HOME | quote }}
+        name={{ item.item.name | quote }}
+        unit=nova-loop-$name.service
+        argv0={{ loop_cmds[item.item.name].split(' ')[0] | quote }}
+        if [ ! -x "$argv0" ]; then echo "SKIPPED $name: script $argv0 missing"; exit 0; fi
+        {% if loop_needs_system_unit | default(false) | bool %}
+        sc="systemctl"
+        {% else %}
+        export XDG_RUNTIME_DIR=/run/user/{{ ansible_user_uid }}
+        sc="systemctl --user"
+        {% endif %}
+        $sc daemon-reload
+        before=$($sc is-active "$unit" 2>/dev/null || true)
+        $sc enable --now "$unit" || exit 1
+        if [ {{ item.changed | ternary(1, 0) }} = 1 ] && [ "$before" = active ]; then $sc restart "$unit"; echo "RELOADED $unit"; fi
+        [ "$before" = active ] || echo "STARTED $unit"
+      args: { executable: /bin/bash }
+      become: "{{ loop_needs_system_unit | default(false) | bool }}"
+      loop: "{{ units.results | default([]) }}"
+      loop_control: { label: "{{ item.item.name }}" }
+      register: lload
+      changed_when: "'STARTED' in (lload.stdout | default('')) or 'RELOADED' in (lload.stdout | default(''))"
+      when: ansible_system == 'Linux' and item.item.name not in (loops_hold | default([])) and not ansible_check_mode

@@ -1,0 +1,25 @@
+# fleet/loops.tsv: the supervised loops table (name, where, command, user, description).
+# Columns:
+#   name         the unit name: com.nova.loop.<name>.plist on Darwin, nova-loop-<name>.service on Linux.
+#   where        `every-bench` runs on all benches; `coordinator` runs on the coordination bench only.
+#   command      the command line to run under nova-loop:
+#                  $HOME              that host's seat home directory
+#                  $TEXTFILE_DIR      that host's node_exporter textfile directory
+#                  $STORE             the fleet Redis host:port
+#                  $HOST              the host's machine name (from nova-config machine self)
+#                  $SEAT              the host's bench seat (swarm-<bench>)
+#                  $COORDINATOR_SEAT  the coordinator seat (studio)
+#                  $SOPS              the sops binary path
+#                  $WIDTH             the member width (from nova-config machine width <self>)
+#                  $HARNESS           the harness binary path (from worker description)
+#                  $MODEL             the provider/model (from worker description)
+#   user         the user account (`-` for every-bench rows).
+#   description  what this loop does and what dies when it dies.
+name	where	command	user	description
+wake-serve-rowan	coordinator	$HOME/.local/bin/nova-wake serve --bus $HOME/rowan-working/wake/rowan/bus --as Rowan --receipt-max-words 40 --on-note $HOME/rowan-working/bin/wake-rowan.sh --interval 10s --batch-max 1 --state $HOME/rowan-working/wake/rowan/serve.state --hours 8 --remote origin --branch main --no-beat	glenn	Rowan's RECEIVE THREAD (Glenn 2026-09-22 5:12 PM, the XDP fast path)
+disk-guard	coordinator	$HOME/rowan-working/bin/disk-guard --loop	glenn	Every 60 s writes the data volume's free GiB to host:<host>:disk_free_g (EX 180) and ~/nova-bench/run/disk-guard.state; under FLOOR_G (200) disk-guard --check refuses writers (exit 3), under STOP_G (100) it boots out every other com.nova.loop.* unit
+mirror-refresh	every-bench	$HOME/.local/bin/mirror-refresh --loop 60	-	Fetches this bench's own ~/nova-bench/mirror/*.git from GitHub every 60 s
+nova-sprint-reconciler	coordinator	$HOME/.local/bin/nova-secrets exec --store $HOME/nova-bench/secrets --as $COORDINATOR_SEAT --key $HOME/.config/nova-secrets/$COORDINATOR_SEAT.key --sops $SOPS --only NOVA_REDIS_COORDINATOR_PASSWORD --require NOVA_REDIS_COORDINATOR_PASSWORD -- /usr/bin/env NOVA_SPRINT_REDIS_USER=coordinator NOVA_SPRINT_REDIS_PASSWORD_ENV=NOVA_REDIS_COORDINATOR_PASSWORD $HOME/.local/bin/nova-sprint reconcile --redis $STORE --host $HOST	glenn	The nova-sprint reconciler (nova-tools #3043): holds lease:reconciler and runs one pass a second as the coordinator ACL user
+nova-sprint-bench-beat	every-bench	$HOME/.local/bin/nova-secrets exec --store $HOME/nova-bench/secrets --as $SEAT --key $HOME/.config/nova-secrets/$SEAT.key --sops $SOPS --only NOVA_REDIS_BENCH_PASSWORD,GH_PUSH_TOKEN,DEEPSEEK_API_KEY,INCEPTION_API_KEY,OPENCODE_API_KEY,OPENROUTER_API_KEY --require NOVA_REDIS_BENCH_PASSWORD -- /usr/bin/env NOVA_SPRINT_REDIS_USER=ns-bench NOVA_SPRINT_REDIS_PASSWORD_ENV=NOVA_REDIS_BENCH_PASSWORD $HOME/.local/bin/nova-sprint bench beat --bench $HOST --host $HOST --redis $STORE	-	This bench's nova-sprint presence (nova-tools #3043): writes bench:<bench>:beat and bench:<bench>:owner (5 s TTL) once a second as the ns-bench seat
+sprint-table-live	coordinator	$HOME/.local/bin/nova-secrets exec --store $HOME/nova-bench/secrets --as $COORDINATOR_SEAT --key $HOME/.config/nova-secrets/$COORDINATOR_SEAT.key --sops $SOPS --only NOVA_REDIS_COORDINATOR_PASSWORD --require NOVA_REDIS_COORDINATOR_PASSWORD -- /usr/bin/env NOVA_SPRINT_REDIS_USER=coordinator NOVA_SPRINT_REDIS_PASSWORD_ENV=NOVA_REDIS_COORDINATOR_PASSWORD $HOME/.local/bin/nova-sprint table --layout live --loop 1 --redis $STORE --out $HOME/rowan-working/tmp/session-0919b/TABLE.txt	glenn	The live sprint table, the ONE writer of TABLE.txt at 1 s (nova-tools #3675)
+nova-swarm-member	every-bench	$HOME/.local/bin/nova-secrets exec --store $HOME/nova-bench/secrets --as $SEAT --key $HOME/.config/nova-secrets/$SEAT.key --sops $SOPS --only NOVA_REDIS_BENCH_PASSWORD,GH_PUSH_TOKEN,DEEPSEEK_API_KEY,INCEPTION_API_KEY,OPENCODE_API_KEY,OPENROUTER_API_KEY --require NOVA_REDIS_BENCH_PASSWORD -- /usr/bin/env NOVA_SPRINT_REDIS=$STORE NOVA_SPRINT_REDIS_USER=ns-bench NOVA_SPRINT_REDIS_PASSWORD_ENV=NOVA_REDIS_BENCH_PASSWORD $HOME/.local/bin/nova-swarm member --as $HOST --width $WIDTH --harness $HARNESS --model $MODEL --root $HOME/nova-bench --deadline 20m --tokens 200000	-	This bench's nova-swarm member loop: beats, reads its queue from the sprint, reports finished cards, takes up to width, each card one native child

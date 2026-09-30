@@ -1,0 +1,36 @@
+{% if loop_needs_system_unit %}
+# /etc/systemd/system/nova-loop-{{ l.name }}.service -- managed by Ansible (fleet/loops.yml).
+# This bench has no usable `systemctl --user` (no user manager, or no /run/user/<uid>), so the loop
+# is a SYSTEM unit dropped to the bench user by User=. The unit is otherwise identical.
+{% else %}
+# ~/.config/systemd/user/nova-loop-{{ l.name }}.service -- managed by Ansible (fleet/loops.yml).
+# A user unit, with `loginctl enable-linger` so it survives logout and comes back after a reboot.
+{% endif %}
+[Unit]
+Description={{ l.description }}
+After=network-online.target
+
+[Service]
+Type=simple
+{% if loop_needs_system_unit %}
+User={{ ansible_user_id }}
+{% endif %}
+WorkingDirectory={{ ansible_env.HOME }}/rowan-working
+Environment=HOME={{ ansible_env.HOME }}
+Environment=PATH={{ loop_path }}
+Environment=NOVA_LOOP_TEXTFILE_DIR={{ loop_textfile_dir }}
+# nova-loop is the single-instance wrapper: systemd guarantees one copy per UNIT, it guarantees one
+# copy per LOOP (a hand-started second copy exits 3). It execs the command, so the pid systemd
+# watches is the loop's own.
+ExecStart={{ ansible_env.HOME }}/.local/bin/nova-loop {{ l.name }} -- {{ loop_argv | join(' ') }}
+Restart=always
+RestartSec=2
+StandardOutput=append:{{ ansible_env.HOME }}/nova-bench/logs/{{ l.name }}.log
+StandardError=append:{{ ansible_env.HOME }}/nova-bench/logs/{{ l.name }}.log
+
+[Install]
+{% if loop_needs_system_unit %}
+WantedBy=multi-user.target
+{% else %}
+WantedBy=default.target
+{% endif %}
