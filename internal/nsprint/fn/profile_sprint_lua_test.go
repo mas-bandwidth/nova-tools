@@ -594,18 +594,41 @@ function TRY(f, ...) local ok, err = pcall(f, ...); if ok then return '' end; re
 		}
 	}
 	h.do("NS.SP.parts.lease = nil")
-	for _, spec := range []string{"{pre = 1, cmds = function() end}", "{pre = function() end}", "{cmds = function() end}", "7", "nil"} {
+	// A spec with a field missing, or no table, is refused at registration
+	// (which at load has no type()).
+	for _, spec := range []string{"{pre = function() end}", "{cmds = function() end}", "nil"} {
 		refused("part spec "+spec, "TRY(NS.SP.part, 'lease', "+spec+")")
 		if eval("NS.SP.parts.lease") != "nil" {
 			t.Errorf("a malformed part spec %s was registered", spec)
 		}
 	}
+	// A spec that is no table is an error too, from the index of it.
+	if eval("TRY(NS.SP.part, 'lease', 7)") == "" || eval("NS.SP.parts.lease") != "nil" {
+		t.Error("a part spec that is a number was registered")
+	}
+	// A field of the wrong kind registers, and SP.shapes_ok, which every call
+	// makes first, is false for as long as it stays.
+	if got := eval("TRY(NS.SP.part, 'lease', {pre = 1, cmds = function() end})"); got != "" {
+		t.Fatalf("a part spec with a field of the wrong kind: %s", got)
+	}
+	if eval("NS.SP.shapes_ok()") != "false" {
+		t.Error("shapes_ok is true with a part whose pre is not a function")
+	}
+	h.do("NS.SP.parts.lease = nil")
 
 	for _, name := range []string{"before", "x_pre", "x_cmds", "derive", "j_decide", "j_cmds"} {
-		refused("phase "+name+" that is not a function", "TRY(NS.SP.phase, '"+name+"', 'not a function')")
+		refused("phase "+name+" that is nil", "TRY(NS.SP.phase, '"+name+"', nil)")
 		if eval("NS.SP.phases."+name) != "nil" {
-			t.Errorf("a phase %s that is not a function was registered", name)
+			t.Errorf("a phase %s that is nil was registered", name)
 		}
+		// Not a function registers, and shapes_ok is false for as long as it stays.
+		if got := eval("TRY(NS.SP.phase, '" + name + "', 'not a function')"); got != "" {
+			t.Fatalf("phase %s, not a function: %s", name, got)
+		}
+		if eval("NS.SP.shapes_ok()") != "false" {
+			t.Errorf("shapes_ok is true with a phase %s that is not a function", name)
+		}
+		h.do("NS.SP.phases." + name + " = nil")
 		h.do("FIRST_" + name + " = function() end")
 		if got := eval("TRY(NS.SP.phase, '" + name + "', FIRST_" + name + ")"); got != "" {
 			t.Fatalf("phase %s: %s", name, got)
@@ -635,11 +658,24 @@ function TRY(f, ...) local ok, err = pcall(f, ...); if ok then return '' end; re
 			t.Errorf("query %q, a lower layer's kind, was registered", kind)
 		}
 	}
-	for _, spec := range []string{"{validate = function() end}", "{read = function() end}", "7"} {
+	for _, spec := range []string{"{validate = function() end}", "{read = function() end}", "nil"} {
 		refused("query spec "+spec, "TRY(NS.SP.query, 'front', "+spec+")")
 		if eval("NS.SP.queries.front") != "nil" {
 			t.Errorf("a malformed query spec %s was registered", spec)
 		}
+	}
+	if eval("TRY(NS.SP.query, 'front', 7)") == "" || eval("NS.SP.queries.front") != "nil" {
+		t.Error("a query spec that is a number was registered")
+	}
+	if got := eval("TRY(NS.SP.query, 'front', {validate = 1, read = function() end})"); got != "" {
+		t.Fatalf("a query spec with a field of the wrong kind: %s", got)
+	}
+	if eval("NS.SP.shapes_ok()") != "false" {
+		t.Error("shapes_ok is true with a query whose validate is not a function")
+	}
+	h.do("NS.SP.queries.front = nil")
+	if eval("NS.SP.shapes_ok()") != "true" {
+		t.Error("shapes_ok is false with only well-formed registrations")
 	}
 }
 
