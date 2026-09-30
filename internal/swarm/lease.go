@@ -11,10 +11,10 @@ package swarm
 //
 // A launcher knows what a heuristic can only guess, so it says so on disk: `nova-swarm
 // native` writes <job>/.lease before the child starts, carrying the launcher's pid, and
-// heartbeats the file's mtime while the child runs. The reaper (scripts/bench-hygiene.sh)
-// reads exactly this: a job whose lease names a live pid, or whose heartbeat is younger
-// than its stale window, is LIVE and is never touched. The file is removed when the run
-// ends, so a finished job leaves nothing behind that pretends to be alive.
+// heartbeats the file's mtime while the child runs. The reaper reads exactly this: a job
+// whose lease names a live pid, or whose heartbeat is younger than its stale window, is
+// LIVE and is never touched. The file is removed when the run ends, so a finished job
+// leaves nothing behind that pretends to be alive.
 //
 // IT IS ALSO THE ADMISSION TO THE JOB DIRECTORY. Two `native` runs were given one physical
 // <slot>/jobs/<label>: the bench store gave each its own seat, but the job directory, the
@@ -115,10 +115,9 @@ func touchProviderBeat(jobDir string, now time.Time) error {
 const JobLeaseHeartbeat = 30 * time.Second
 
 // JobLeaseStale is how old a heartbeat may be before a lease whose OWNER CANNOT BE ASKED
-// ABOUT stops counting as held. It is the reaper's own window
-// (scripts/bench-hygiene.sh, HYGIENE_LEASE_STALE_MIN=10), read the same way and for the
-// same reason: it is the only word there is about a record naming no pid this kernel can
-// answer for. A lease whose pid this host CAN be asked about never reaches it.
+// ABOUT stops counting as held. It is the reaper's own window, read the same way and for
+// the same reason: it is the only word there is about a record naming no pid this kernel
+// can answer for. A lease whose pid this host CAN be asked about never reaches it.
 const JobLeaseStale = 10 * time.Minute
 
 // jobLeaseAttempts bounds the take: each attempt either publishes, refuses, or reclaims one

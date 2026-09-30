@@ -1080,7 +1080,7 @@ code can hold it, and the practice it is where only a person can. They extend **
 test of this tool can see it.
 2. **one seat per OS user, keys for swarms not people** — an AI is a unix user with one file and
    one key, and a pool of workers shares a swarm key, because a person's credential in a shared
-   seat cannot be told from a worker's. Red test demanded: `TestOneSeatPerOSUser`.
+   seat cannot be told from a worker's. Held by `TestOneSeatPerOSUser` (`tools/benchstandard`).
 3. A seat file is **opened only by its seat key and the recovery key, exactly two recipients**,
    enforced by the seat-rule gate on `.sops.yaml`, because a third recipient is the grant every
    review is meant to catch. Held by `TestGateRefusesARuleWithThreeRecipients`.
@@ -1093,7 +1093,7 @@ test of this tool can see it.
    `TestHarnessConfigsReferenceEnvNames`.
 6. The bench standard checks **exactly one seat key per owner prefix** and that check passes,
    because two keys for one owner is either a lost key still trusted or a grant nobody declared.
-   Red test demanded: `TestBenchStandardChecksOneSeatKeyPerOwnerPrefix`.
+   Held by `TestBenchStandardChecksOneSeatKeyPerOwnerPrefix` (`tools/benchstandard`).
 7. The store is pulled on a bench over **the bench's own SSH key, generated on that bench**, its
    public half authorized on the GitHub account the bench acts as; **never a person's credential**,
    because a person's key in a bench's clone is that person on that bench; and **never present
@@ -1106,10 +1106,10 @@ test of this tool can see it.
 9. **seal is one step**: stdin or hidden prompt, PR, gate, merge, check, because a
    multi-step seal is a step somebody stops halfway. Held by `TestSealFullPathOpensPRAndMerges`.
 10. The bench standard **fails loudly on a plaintext key file**, because a plaintext key on the
-    bench is the boundary this page is about, already crossed. `tools/bench-standard.sh` check
-    (6) drifts on the ones it knows: `~/.local/share/opencode/auth.json`,
-    `~/.config/deepseek/env`, and a literal `apiKey": "sk-` in `~/.config/opencode/*.json`. No
-    test holds that check.
+    bench is the boundary this page is about, already crossed. `tools/benchstandard`'s
+    plaintext-key check drifts on the ones it knows: `~/.local/share/opencode/auth.json`,
+    `~/.config/deepseek/env`, and a literal `apiKey": "sk-` in `~/.config/opencode/*.json`. Held by
+    `TestPlaintextKeyRows`.
 
 ## Rules for receipts and new seats
 

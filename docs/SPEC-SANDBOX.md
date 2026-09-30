@@ -129,7 +129,7 @@ The test requirements are listed under **Tests this spec demands**.
    else does. **Inbound is not granted at all** unless the caller asks with
    `--net-listen`, which emits `(allow network-inbound (local ip))` and
    nothing wider; a job that does not listen cannot be listened to.
-   (`profiles/darwin-check.sh`, checks `unix_socket_outside`,
+   (`tools/sandboxcheck`, checks `unix_socket_outside`,
    `unix_socket_outside_control` and `unix_socket_inside`.)
    **The loopback is opened by name with `--net-allow <host:port>`.** The
    no-promise grant `(allow network-outbound (remote ip))` reaches remote IP
@@ -158,7 +158,7 @@ The test requirements are listed under **Tests this spec demands**.
    request while the `SANDBOX OK` line said `net=nopromise`, which is the
    silent sandbox rule 1 forbids. The literal is emitted **inside** the network
    marker, so `--net-deny` takes the resolver away with the network.
-   (`profiles/darwin-check.sh`, checks `dns_resolves` and
+   (`tools/sandboxcheck`, checks `dns_resolves` and
    `dns_resolves_control`: the same profile with the literal removed does not
    resolve, so the check cannot pass by the socket being irrelevant.)
    **`mach-lookup` is narrowed to three services, measured.** An unqualified
@@ -175,7 +175,7 @@ The test requirements are listed under **Tests this spec demands**.
    ```
 
    All five pass under it and `pbpaste` is `rc=1`
-   (`profiles/darwin-check.sh`, check `clipboard_denied`). **Accepted width,
+   (`tools/sandboxcheck`, check `clipboard_denied`). **Accepted width,
    named rather than removed:** under this narrowed set `launchctl print
    system` still answers and `security list-keychains` still lists the keychain
    **file names** — neither reads a secret, and both were measured to still
@@ -233,12 +233,12 @@ The test requirements are listed under **Tests this spec demands**.
    neither half. It is by **exclusion**, never an allow-list, because rule 6's
    credential must still arrive: the tool drops the names it knows are agents
    and passes everything else through untouched. The evidence is a **Go test**, not
-   the check script: `internal/sandbox/policy_test.go`'s `TestChildEnv` and
+   the check: `internal/sandbox/policy_test.go`'s `TestChildEnv` and
    `TestScrubSetIsExactlyTheSpecs` (test 27(c)) plant `SSH_AUTH_SOCK`,
    `SSH_AGENT_PID`, `GPG_AGENT_INFO`, `PODMAN_AGENT_SOCK`, `AI_AGENT`,
    `CLAUDE_AGENT_SDK_VERSION` and `FOO_TOKEN` and assert the exact set, and
    `cmd/nova-sandbox`'s `TestTheNoteNamesExactlyWhatWasDropped` asserts the same
-   thing end to end through the binary. `profiles/darwin-check.sh`'s
+   thing end to end through the binary. `tools/sandboxcheck`'s
    `env_no_ssh_auth_sock` builds the child environment by its **own** filter
    before `sandbox-exec` runs, so it can only agree with itself. The credential
    the caller deliberately passed by environment (rule 6) must arrive.
@@ -276,7 +276,7 @@ The test requirements are listed under **Tests this spec demands**.
    write is `Operation not permitted`, which is exactly the harness death two
    paragraphs up, moved later in the run and made harder to read. With `HOME`
    inside a `--write` the same `git status` exits 0 and the config write lands
-   (measured, `profiles/darwin-check.sh`, check `home_config_write`).
+   (measured, `tools/sandboxcheck`, check `home_config_write`).
    `HOME` rather than the XDG quartet (`XDG_CONFIG_HOME`, `XDG_DATA_HOME`,
    `XDG_CACHE_HOME` plus `GIT_CONFIG_GLOBAL`) because one variable covers
    every home-derived path a tool invents — `~/.gitconfig`, `~/.ssh`,
@@ -1295,8 +1295,8 @@ works today; it applies the profile and `exec`s the command in place, so it is
 not a second process sitting between the tool and the command.
 
 The profile text is **not in this document**. It ships in the repository as
-`profiles/darwin.sb.tmpl`, and this section describes that file and the script
-that checks it. A second copy of the profile can diverge from the generator.
+`profiles/darwin.sb.tmpl`, and this section describes that file and the check
+that measures it. A second copy of the profile can diverge from the generator.
 
 **`profiles/darwin.sb.tmpl`** is Sandbox Profile Language (SBPL, a Scheme
 dialect) and is the generator's only input. It carries the fixed clauses
@@ -1360,9 +1360,10 @@ read:
   *tool* added and the caller never named, so it belongs in the generator. The
   grant stays `file-read-metadata`: `/opt` becomes traversable, never readable.
 
-**`profiles/darwin-check.sh`** is how that file is known to be right. It fills
-the template for a scratch write set beside itself (bash, `set -euo pipefail`,
-no `/tmp`, any cwd), then runs inside the wall, by absolute path, the first
+**`tools/sandboxcheck`** is how that file is known to be right. It is a Go
+driver (`internal/sandbox/darwincheck`) around the real probes, and it fills the
+embedded template for a scratch write set under the working directory (no
+`/tmp`, any cwd), then runs inside the wall, by absolute path, the first
 second of a real job: `cd`, `mkdir -p`, `git init`, `git clone --shared` of a
 local repository, a config write under `HOME`, `cat /etc/hosts`,
 `/bin/sh -c true`, `sleep 5 & kill $!`, stdout to a pipe the caller drains and
@@ -1375,34 +1376,39 @@ write set cannot be connected to while the job's own socket **inside** it can
 (rule 7), and that the child environment holds none of rule 9's exact set while
 a caller variable beside them survives. One line per check,
 `CHECK OK name=...` / `CHECK FAIL name=...`, exit 1 on any FAIL. **The count is
-the script's own** and no number is stated here: a document that named one would
+the check's own** and no number is stated here: a document that named one would
 be wrong the first time a check was added. The recorded macOS 26.6.2 arm64
-measurement has every check `OK`. A platform claim requires the script to run
-on that platform, with its output included in the commit.
+measurement has every check `OK`. A platform claim requires the check to run
+on that platform, with its output included in the commit. It removes only what
+it made: a scratch directory handed to it keeps whatever else it holds.
 
-The script's child-environment filter is the **script's**, so it can only agree
+The check's child-environment filter is the **check's**, so it can only agree
 with itself: what it measures is the profile, not the tool's scrub. The scrub is
 asserted in Go, and rule 9 names those tests rather than this check.
 
-The script takes two environment variables for a caller that is a **test**
-rather than an operator, because test 16 is absolute — no test reaches outside
-`t.TempDir()` or touches the network, and a Go wrapper around this script was
-doing both. `NOVA_CHECK_SCRATCH` puts the scratch tree where the caller says
-instead of beside the script; `NOVA_CHECK_NO_NETWORK=1` skips the two DNS
-checks, which are the only ones that leave the machine, and prints
-`CHECK SKIP name=... reason=no_network` for each. The operator run and the mac
-CI job set neither: there the DNS checks are the rule-7 measurement and they
-run. (Built on #73 alongside `NOVA_SANDBOX_FILL`; this branch carries only the
-rule 9 scrub fix to the script.)
+The check takes four options for a caller that is a **test** rather than an
+operator, each a flag and each read from an environment variable when the flag
+is absent, because test 16 is absolute — no test reaches outside `t.TempDir()`
+or touches the network. `--scratch` (`NOVA_CHECK_SCRATCH`) puts the scratch tree
+where the caller says instead of under the working directory; `--no-network`
+(`NOVA_CHECK_NO_NETWORK=1`) skips the two DNS checks, which are the only ones
+that leave the machine, and prints `CHECK SKIP name=... reason=no_network` for
+each; `--dump-profile` (`NOVA_CHECK_DUMP_PROFILE=1`) prints the filled profile
+and exits 0 before any check runs, so a test can compare the hand filler with
+the tool generator; `--fill BIN` (`NOVA_SANDBOX_FILL`) judges the profile a
+`nova-sandbox` binary generates for the same write set instead of the hand-filled
+one, so a drift between the two fillings is a named FAIL. The operator run and
+the mac CI job set none of them: there the DNS checks are the rule-7
+measurement and they run.
 
-A third thing the script measured, small and load-bearing: `sun_path` is **104
+A third thing the check measured, small and load-bearing: `sun_path` is **104
 bytes**, and a socket bound by absolute path under a deep scratch directory
 silently fails to bind — which would make `unix_socket_outside` pass because
 nothing was listening, the exact shape of failure the controls exist to catch.
-The script binds and connects by **relative** path with the cwd set, and treats
+The check binds and connects by **relative** path with the cwd set, and treats
 a socket that did not appear within a bounded wait as a FAIL, not a pass.
 
-Two things the script measured that the rules above now carry. The **cwd** is
+Two things the check measured that the rules above now carry. The **cwd** is
 load-bearing beyond rule 13's fence argument: with a cwd outside every named
 path, `getcwd(3)` is denied and every `git` command dies with
 `shell-init: error retrieving current directory ... Operation not permitted`
@@ -1782,20 +1788,20 @@ command rather than running it without containment.
 
 A reader on another machine, or on another model, checks this document by
 running it rather than by trusting it. The darwin check is not four lines of
-shell in a document any more — it is `profiles/darwin-check.sh`, which ships in
+shell in a document any more — it is `tools/sandboxcheck`, which ships in
 this repository, fills `profiles/darwin.sb.tmpl` itself and prints one
 `CHECK` line per check:
 
 ```
-# 1. darwin, the whole wall, from any cwd, writing only beside itself:
-bash profiles/darwin-check.sh ; echo "exit=$?"
+# 1. darwin, the whole wall, from the repository root, writing only beside itself:
+go run ./tools/sandboxcheck ; echo "exit=$?"
 ```
 
 A reader who wants to see the policy itself asks the tool for it: the `policy`
 verb prints exactly what a wrapped run would apply, and runs nothing. It is
 pasteable as written — no scratch directory to find, no `-f <file>` form (which
-this tool never uses), no placeholder. `bash -x profiles/darwin-check.sh` shows
-the same profile filled the script's own way for every check, and the template's
+this tool never uses), no placeholder. `go run ./tools/sandboxcheck --dump-profile` shows
+the same profile filled the check's own way for every check, and the template's
 header says what each marker is replaced by.
 
 ```
@@ -1869,7 +1875,7 @@ that cannot confirm one changes this document rather than asserting it.
    side, release.
 8. That a unix-domain socket **under** a Landlock write rule can be connected
    to while one outside every rule cannot — the linux half of what
-   `profiles/darwin-check.sh` now measures on darwin. Landlock's path rules
+   `tools/sandboxcheck` now measures on darwin. Landlock's path rules
    govern the socket file's *lookup*, not `connect(2)` itself, so this may
    come back as "the filesystem wall does not close it below the ABI that
    adds `RESOLVE_UNIX`". Do not infer a socket restriction from the environment
@@ -1939,7 +1945,7 @@ One per rule:
    **inside** the network marker, so `--net-deny` takes it away with the rest;
    and it carries exactly the three measured `global-name`s and no bare
    `(allow mach-lookup)`. A mutation deleting either turns a Go test red. The
-   live DNS measurement stays in `profiles/darwin-check.sh`, where the operator
+   live DNS measurement stays in `tools/sandboxcheck`, where the operator
    run and the mac CI job execute it and a Go test does not (test 16).
    On linux, an ABI forced **above** this tool's table is a **clamp**: the wall
    is built at the table's maximum, `abi=` carries the kernel's number and
@@ -2112,7 +2118,7 @@ And one for each thing the rules above assert but no test yet reached:
     `AI_AGENT` and `CLAUDE_AGENT_SDK_VERSION` and a caller variable set
     beside them arrive unchanged — and a connect to a unix-domain socket the
     test binds outside every named path is denied, with the control connect
-    outside the wall succeeding (darwin today: `profiles/darwin-check.sh`
+    outside the wall succeeding (darwin today: `tools/sandboxcheck`
     checks `unix_socket_outside` and `unix_socket_outside_control`; linux is
     **to verify at build** item 8 and the test skips by name, not by
     assertion, until it is); (d) `origin` rewritten to an HTTPS URL with no

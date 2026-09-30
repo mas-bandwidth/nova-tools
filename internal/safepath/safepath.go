@@ -12,10 +12,9 @@
 //
 // The hygiene verbs use the second door, RemoveUnderRoots: it is the same removal
 // check reached through a small set of literal roots, with a ".." element refused
-// before anything resolves and no element left non-writable. It is the Go half of
-// bin/bench-hygiene.sh's `under_root` and `remove`: the path is never built from
-// user text, it is the join of a literal root and a name, and the check is by
-// construction rather than by a caller's care.
+// before anything resolves and no element left non-writable. The path is never
+// built from user text, it is the join of a literal root and a name, and the check
+// is by construction rather than by a caller's care.
 package safepath
 
 import (
