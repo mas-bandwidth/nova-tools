@@ -397,8 +397,17 @@ func TestHelpShowsTheWorkedExample(t *testing.T) {
 				t.Fatalf("%s lacks %q:\n%s", line, want, out)
 			}
 		}
-		if n := strings.Count(out[strings.Index(out, "one answer to each judgment"):], "\n  "); n != len(sprint.Decisions)+1 {
-			t.Fatalf("%s: %d answers for %d judgment types and the repeat", line, n, len(sprint.Decisions))
+		// the sprint done is no judgment of the tick (errata 3 amendment 6):
+		// help shows it as the HAPPENED line it is, above the answers
+		want := len(sprint.Decisions) + 1
+		if _, ok := sprint.Decisions[sprint.NSprintDone]; ok {
+			want--
+		}
+		if n := strings.Count(out[strings.Index(out, "one answer to each judgment"):], "\n  "); n != want {
+			t.Fatalf("%s: %d answers for %d judgment types and the repeat", line, n, want-1)
+		}
+		if !strings.Contains(out, "  HAPPENED tick-done-0317a1b2-1.1   the sprint is done  x1  for=coordinator") {
+			t.Fatalf("%s does not show the sprint done:\n%s", line, out)
 		}
 	}
 	if out := ta.ok("help inbox"); !strings.HasPrefix(out, "usage: nova-sprint inbox [flags]") || !strings.Contains(out, "--open <string>") {

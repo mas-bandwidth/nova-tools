@@ -53,6 +53,8 @@ var noteCarry = map[string]carried{
 	"Needs":       {"attr", ""},
 	"Review":      {"attr", ""},
 	"ReviewSet":   {"attr", ""},
+	"To":          {"attr", ""},
+	"Hint":        {"attr", ""},
 }
 
 func TestEveryFieldOfANoteIsCarriedOrLeftOutInWords(t *testing.T) {
