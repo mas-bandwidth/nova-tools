@@ -1162,8 +1162,7 @@ host is loaded, they turned a working-branch pull request red for a reason the
 change did not cause and held the queue behind them.
 **The test.** `TestDarwinOn` and `TestFanoutWithTheDarwinLegsOffIsLinuxOnly`
 (`internal/pkgselect`) hold the gate over the events and the targets, prefixed and
-bare; `TestTestMatrixWithTheDarwinGateOffIsLinuxOnly` and
-`TestTestMatrixDarwinOnlyChangeIsNothingUntilItReachesDev` (`tools/ci`) hold the verb.
+bare; the `test-matrix` tests in `tools/ci/sel_test.go` hold the verb with the gate off.
 `TestDarwinShardsRunOnlyForIntegrationBranches` (`internal/ci/darwin_gate_class_test.go`)
 reads ci.yml: `pkgselect.DarwinBranches` equals the integration list, the list step
 hands the verb each event's own target branch, and no other job carries a macOS label

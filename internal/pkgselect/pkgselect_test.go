@@ -1,11 +1,9 @@
 package pkgselect
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -95,12 +93,8 @@ func tree(t *testing.T) string {
 	}
 	for name, body := range files {
 		p := filepath.Join(root, filepath.FromSlash(name))
-		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.MkdirAll(filepath.Dir(p), 0o755))
+		require.NoError(t, os.WriteFile(p, []byte(body), 0o644))
 	}
 	return root
 }
@@ -149,33 +143,27 @@ func TestDeprecatedPackagesAreDroppedAndKeepLinesKept(t *testing.T) {
 		"./cmd/older",
 		mod + "/cmd/nova-bus",
 	}
-	if got := d.Live(in); !reflect.DeepEqual(got, want) {
-		t.Errorf("Live = %v\nwant %v (a path drops that package and everything under it, a keep line keeps one, a name that only starts the same is another package)", got, want)
-	}
+	assert.Equal(t, want, d.Live(in), "a path drops that package and everything under it, a keep line keeps one, a name that only starts the same is another package")
 }
 
 func TestNoDeprecatedListKeepsEverything(t *testing.T) {
 	t.Parallel()
 	var d *Deprecated
 	in := []string{"./a", "", mod + "/b"}
-	if got := d.Live(in); !reflect.DeepEqual(got, in) {
-		t.Errorf("a nil list dropped something: %v", got)
-	}
+	assert.Equal(t, in, d.Live(in), "a nil list dropped something")
 	got, err := LoadDeprecated(t.TempDir())
-	if err != nil || got != nil {
-		t.Errorf("LoadDeprecated of a root with no list = %v, %v; want nil, nil", got, err)
-	}
+	assert.NoError(t, err)
+	assert.Nil(t, got, "LoadDeprecated of a root with no list")
 }
 
 func TestLoadDeprecatedReadsTheModuleFromGoMod(t *testing.T) {
 	t.Parallel()
 	d, err := LoadDeprecated(tree(t))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if d.LivePackage(mod+"/cmd/gone") || !d.LivePackage(mod+"/cmd/gone/kept") || d.LivePackage("./cmd/gone/other") || !d.LivePackage("./cmd/goner") {
-		t.Errorf("the fixture list is not read as written: %+v", d)
-	}
+	require.NoError(t, err)
+	assert.False(t, d.LivePackage(mod+"/cmd/gone"), "the fixture list is not read as written")
+	assert.True(t, d.LivePackage(mod+"/cmd/gone/kept"))
+	assert.False(t, d.LivePackage("./cmd/gone/other"))
+	assert.True(t, d.LivePackage("./cmd/goner"))
 }
 
 func TestSelectAllListsTheLiveTreeAsDotPaths(t *testing.T) {
@@ -185,15 +173,10 @@ func TestSelectAllListsTheLiveTreeAsDotPaths(t *testing.T) {
 		listTree: {Stdout: imports("cmd/foo", "cmd/gone", "internal/bar", "internal/ci", "internal/docs")},
 	})
 	out, err := Select(f.run, Options{Root: root, All: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := []string{"./cmd/foo", "./internal/bar", "./internal/ci", "./internal/docs"}; !reflect.DeepEqual(out.Packages, want) || out.Warning != "" {
-		t.Errorf("Select --all = %v %q, want %v", out.Packages, out.Warning, want)
-	}
-	if f.called("git fetch") {
-		t.Error("--all fetched a base")
-	}
+	require.NoError(t, err)
+	assert.Equal(t, []string{"./cmd/foo", "./internal/bar", "./internal/ci", "./internal/docs"}, out.Packages, "Select --all")
+	assert.Empty(t, out.Warning)
+	assert.False(t, f.called("git fetch"), "--all fetched a base")
 }
 
 // A change to cmd/foo selects it and its dependents, then internal/ci and
@@ -219,12 +202,9 @@ func TestSelectChangeIsTheTouchedPackagesTheirDependentsAndTheClassTestPackages(
 				listDeps: {Stdout: depsListing},
 			})
 			out, err := Select(f.run, Options{Root: root, Base: "base"})
-			if err != nil {
-				t.Fatal(err)
-			}
-			if !reflect.DeepEqual(out.Packages, tc.want) || out.Warning != "" {
-				t.Errorf("selected %v %q, want %v", out.Packages, out.Warning, tc.want)
-			}
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, out.Packages)
+			assert.Empty(t, out.Warning)
 		})
 	}
 }
@@ -274,15 +254,9 @@ func TestSelectGoModChangePutsTheWholeTreeInScope(t *testing.T) {
 			listTree: {Stdout: imports("cmd/foo", "internal/bar", "internal/ci", "internal/docs")},
 		})
 		out, err := Select(f.run, Options{Root: tree(t), Base: "base"})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if strings.Join(out.Packages, "\n")+"\n" != wholeTreeIs {
-			t.Errorf("%s changed: selected %v, want the whole tree", strings.TrimSpace(changed), out.Packages)
-		}
-		if f.called("go list -f") {
-			t.Errorf("%s changed: the dependents were listed though the whole tree is in scope", strings.TrimSpace(changed))
-		}
+		require.NoError(t, err)
+		assert.Equal(t, wholeTreeIs, strings.Join(out.Packages, "\n")+"\n", "%s changed: want the whole tree", strings.TrimSpace(changed))
+		assert.False(t, f.called("go list -f"), "%s changed: the dependents were listed though the whole tree is in scope", strings.TrimSpace(changed))
 	}
 }
 
@@ -330,20 +304,15 @@ func TestSelectNeverSilentlySelectsNothing(t *testing.T) {
 			out, err := Select(newFake(answers).run, Options{Root: root, All: tc.all, Base: "base", WholeTreeOnError: tc.wholeTree})
 			if tc.wantErr != "" {
 				var le *ListError
-				if !errors.As(err, &le) || !strings.Contains(le.Text, tc.wantErr) || len(out.Packages) != 0 {
-					t.Fatalf("got %v %v, want a ListError containing %q and no packages", out, err, tc.wantErr)
-				}
-				if !strings.HasSuffix(le.Text, "\n") {
-					t.Errorf("the error text %q does not end in a newline", le.Text)
-				}
+				require.ErrorAs(t, err, &le, "want a ListError containing %q", tc.wantErr)
+				require.Contains(t, le.Text, tc.wantErr)
+				require.Empty(t, out.Packages)
+				assert.True(t, strings.HasSuffix(le.Text, "\n"), "the error text %q does not end in a newline", le.Text)
 				return
 			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got := strings.Join(out.Packages, "\n") + "\n"; got != wholeTreeIs || out.Warning != tc.wantWarn {
-				t.Errorf("got %q and warning %q, want the whole tree and %q", got, out.Warning, tc.wantWarn)
-			}
+			require.NoError(t, err)
+			assert.Equal(t, wholeTreeIs, strings.Join(out.Packages, "\n")+"\n", "want the whole tree")
+			assert.Equal(t, tc.wantWarn, out.Warning)
 		})
 	}
 }
@@ -354,24 +323,18 @@ func TestWholeTreeFromTheTrackedFiles(t *testing.T) {
 	t.Parallel()
 	s := &selector{run: newFake(map[string]Result{lsFilesCmd: {Stdout: tracked()}}).run, o: Options{Root: tree(t)}}
 	dep, err := LoadDeprecated(s.o.Root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	s.dep = dep
 	got, err := s.treeFromFiles()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := []string{"./cmd/foo", "./internal/bar", "./internal/ci", "./internal/docs"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("tree from files = %v, want %v", got, want)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, []string{"./cmd/foo", "./internal/bar", "./internal/ci", "./internal/docs"}, got, "tree from files")
 }
 
 func TestSelectRefusesWithNoBase(t *testing.T) {
 	t.Parallel()
-	if _, err := Select(newFake(nil).run, Options{Root: tree(t)}); err == nil || !strings.Contains(err.Error(), "no base commit") {
-		t.Errorf("Select with no base and no --all: %v, want a refusal", err)
-	}
+	_, err := Select(newFake(nil).run, Options{Root: tree(t)})
+	require.Error(t, err, "Select with no base and no --all is a refusal")
+	assert.Contains(t, err.Error(), "no base commit")
 }
 
 func TestSelectReportsAGitDiffFailure(t *testing.T) {
@@ -379,9 +342,9 @@ func TestSelectReportsAGitDiffFailure(t *testing.T) {
 	f := newFake(map[string]Result{diffCmd: {Stderr: "fatal: bad object base\n", Code: 128}})
 	_, err := Select(f.run, Options{Root: tree(t), Base: "base"})
 	var le *ListError
-	if !errors.As(err, &le) || !strings.Contains(le.Text, "exited 128") || !strings.Contains(le.Text, "bad object base") {
-		t.Errorf("a failed git diff = %v, want its status and message", err)
-	}
+	require.ErrorAs(t, err, &le, "a failed git diff")
+	assert.Contains(t, le.Text, "exited 128")
+	assert.Contains(t, le.Text, "bad object base")
 }
 
 func TestDealPutsHeavyFirstOnePerShardThenRoundRobin(t *testing.T) {
@@ -397,42 +360,33 @@ func TestDealPutsHeavyFirstOnePerShardThenRoundRobin(t *testing.T) {
 	home := map[string]int{}
 	for i := 1; i <= 4; i++ {
 		got, err := Deal(pkgs, heavy, 4, i)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		for _, p := range got {
 			seen[p]++
 			home[p] = i
 		}
 	}
 	for _, p := range pkgs {
-		if seen[p] != 1 {
-			t.Errorf("%s dealt %d times", p, seen[p])
-		}
+		assert.Equal(t, 1, seen[p], "%s dealt %d times", p, seen[p])
 	}
-	if home[mod+"/cmd/nova-bus"] != 1 || home[mod+"/internal/heavy2"] != 2 {
-		t.Errorf("the heavy packages are on shards %d and %d, want 1 and 2", home[mod+"/cmd/nova-bus"], home[mod+"/internal/heavy2"])
-	}
+	assert.Equal(t, 1, home[mod+"/cmd/nova-bus"], "the heavy packages are on shards 1 and 2")
+	assert.Equal(t, 2, home[mod+"/internal/heavy2"])
 	// the first other package takes the shard after the heavy ones, then round robin
-	if home[mod+"/cmd/p01"] != 3 || home[mod+"/cmd/p02"] != 4 || home[mod+"/cmd/p03"] != 1 || home[mod+"/cmd/p04"] != 2 {
-		t.Errorf("round robin after the heavy: p01..p04 on %d %d %d %d, want 3 4 1 2", home[mod+"/cmd/p01"], home[mod+"/cmd/p02"], home[mod+"/cmd/p03"], home[mod+"/cmd/p04"])
-	}
+	assert.Equal(t, []int{3, 4, 1, 2}, []int{home[mod+"/cmd/p01"], home[mod+"/cmd/p02"], home[mod+"/cmd/p03"], home[mod+"/cmd/p04"]}, "round robin after the heavy: p01..p04")
 }
 
 func TestDealMatchesOnAPathSuffixNotASubstring(t *testing.T) {
 	t.Parallel()
 	got, err := Deal([]string{mod + "/cmd/nova-bus-extra", mod + "/cmd/nova-bus"}, []string{"cmd/nova-bus"}, 2, 1)
-	if err != nil || !reflect.DeepEqual(got, []string{mod + "/cmd/nova-bus"}) {
-		t.Errorf("shard 1 = %v, %v; want only the exact heavy package", got, err)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, []string{mod + "/cmd/nova-bus"}, got, "shard 1 is only the exact heavy package")
 }
 
 func TestDealRefusesAShardThatIsNotOne(t *testing.T) {
 	t.Parallel()
 	for _, c := range [][2]int{{0, 0}, {4, 0}, {4, 5}, {-1, 1}} {
-		if _, err := Deal([]string{"a"}, nil, c[0], c[1]); err == nil {
-			t.Errorf("Deal(shards %d, shard %d) did not refuse", c[0], c[1])
-		}
+		_, err := Deal([]string{"a"}, nil, c[0], c[1])
+		assert.Error(t, err, "Deal(shards %d, shard %d) did not refuse", c[0], c[1])
 	}
 }
 
@@ -440,21 +394,15 @@ func TestOrderHeavyFirstAndFunctional(t *testing.T) {
 	t.Parallel()
 	all := []string{"./cmd/a", "./cmd/nova-sandbox", "./cmd/nova-bus", "./cmd/b", "./internal/sandbox", "./cmd/c", "./cmd/d", "./cmd/e"}
 	ordered := OrderHeavyFirst(all)
-	if ordered[0] != "./cmd/nova-bus" || len(ordered) != len(all) || ordered[1] != "./cmd/a" {
-		t.Errorf("OrderHeavyFirst = %v, want the heavy package first and the rest in order", ordered)
-	}
+	assert.Equal(t, "./cmd/nova-bus", ordered[0], "the heavy package first")
+	assert.Len(t, ordered, len(all))
+	assert.Equal(t, "./cmd/a", ordered[1], "the rest in order")
 	g := Groups{Linux: "lin", Mac: "mac"}
 	got := MarshalLegs(Functional(ordered, g))
 	want := `[{"name":"1/4 lin","packages":"./cmd/nova-bus ./cmd/d"},{"name":"2/4 lin","packages":"./cmd/a ./cmd/e"},{"name":"3/4 lin","packages":"./cmd/b"},{"name":"4/4 lin","packages":"./cmd/c"}]`
-	if got != want {
-		t.Errorf("Functional = %s\nwant %s (the darwin-only packages have no Linux leg)", got, want)
-	}
-	if got := MarshalLegs(Functional(nil, g)); got != `[{"name":"nothing","packages":""}]` {
-		t.Errorf("Functional of nothing = %s", got)
-	}
-	if got := MarshalLegs([]Leg{NothingLeg(g)}); got != `[{"name":"nothing","packages":"","os":"linux","arch":"x64","group":"lin"}]` {
-		t.Errorf("the nothing leg = %s", got)
-	}
+	assert.Equal(t, want, got, "Functional: the darwin-only packages have no Linux leg")
+	assert.Equal(t, `[{"name":"nothing","packages":""}]`, MarshalLegs(Functional(nil, g)), "Functional of nothing")
+	assert.Equal(t, `[{"name":"nothing","packages":"","os":"linux","arch":"x64","group":"lin"}]`, MarshalLegs([]Leg{NothingLeg(g)}), "the nothing leg")
 }
 
 func TestShardsFollowTheEvent(t *testing.T) {
@@ -466,9 +414,7 @@ func TestShardsFollowTheEvent(t *testing.T) {
 		"schedule":          {Linux: 8, Mac: 8},
 		"workflow_dispatch": {Linux: 8, Mac: 8},
 	} {
-		if got := ShardsFor(event); got != want {
-			t.Errorf("ShardsFor(%s) = %+v, want %+v", event, got, want)
-		}
+		assert.Equal(t, want, ShardsFor(event), "ShardsFor(%s)", event)
 	}
 }
 
@@ -503,16 +449,14 @@ func TestFanoutByEvent(t *testing.T) {
 		sort.Strings(got)
 		want := append([]string{}, tc.want...)
 		sort.Strings(want)
-		if !reflect.DeepEqual(got, want) {
-			t.Errorf("%s:\n got %v\nwant %v", tc.event, got, want)
-		}
+		assert.Equal(t, want, got, tc.event)
 	}
 	// a pull request with every package sensitive keeps the old shape
 	all := DarwinSensitive{All: true}
 	legs := Fanout("pull_request", []string{"./cmd/a", "./cmd/b"}, all, g, true)
-	if got := MarshalLegs(legs); !strings.Contains(got, `"os":"macOS","arch":"ARM64","group":"mac"`) || !strings.Contains(got, `"os":"linux","arch":"x64","group":"lin"`) {
-		t.Errorf("legs = %s, want both groups with their labels", got)
-	}
+	got := MarshalLegs(legs)
+	assert.Contains(t, got, `"os":"macOS","arch":"ARM64","group":"mac"`)
+	assert.Contains(t, got, `"os":"linux","arch":"x64","group":"lin"`)
 }
 
 const (
@@ -540,24 +484,21 @@ func TestDetectDarwinSensitive(t *testing.T) {
 	t.Parallel()
 	f := darwinFake(map[string]string{"linux": filesLinux, "darwin": filesDarwin, "deps": depsDarwin})
 	sens, ok, err := DetectDarwinSensitive(f.run, t.TempDir())
-	if err != nil || !ok {
-		t.Fatalf("DetectDarwinSensitive = %v, %v, %v", sens, ok, err)
-	}
-	if got := sens.Sorted(); got != "./cmd/a ./internal/c " {
-		t.Errorf("sensitive = %q, want ./cmd/a (imports the differing ./internal/c) and ./internal/c itself", got)
-	}
-	if !sens.Needs("./cmd/a") || sens.Needs("./cmd/b") {
-		t.Errorf("Needs: a=%v b=%v, want true and false", sens.Needs("./cmd/a"), sens.Needs("./cmd/b"))
-	}
+	require.NoError(t, err)
+	require.True(t, ok, "DetectDarwinSensitive = %v", sens)
+	assert.Equal(t, "./cmd/a ./internal/c ", sens.Sorted(), "want ./cmd/a (imports the differing ./internal/c) and ./internal/c itself")
+	assert.True(t, sens.Needs("./cmd/a"))
+	assert.False(t, sens.Needs("./cmd/b"))
 }
 
 func TestDetectDarwinSensitiveWithNothingDifferent(t *testing.T) {
 	t.Parallel()
 	f := darwinFake(map[string]string{"linux": filesLinux, "darwin": filesLinux, "deps": depsDarwin})
 	sens, ok, err := DetectDarwinSensitive(f.run, t.TempDir())
-	if err != nil || !ok || sens.All || sens.Sorted() != "" {
-		t.Errorf("identical listings: %+v %v %v, want an empty set", sens, ok, err)
-	}
+	assert.NoError(t, err)
+	assert.True(t, ok)
+	assert.False(t, sens.All)
+	assert.Empty(t, sens.Sorted(), "identical listings: an empty set")
 }
 
 // If go list fails, every touched package keeps its macOS leg.
@@ -571,9 +512,10 @@ func TestDetectDarwinSensitiveFallsBackToAll(t *testing.T) {
 			}
 		}
 		sens, ok, err := DetectDarwinSensitive(f.run, t.TempDir())
-		if err != nil || ok || !sens.All || !sens.Needs("./anything") {
-			t.Errorf("%s failing: %+v %v %v, want All", broken, sens, ok, err)
-		}
+		assert.NoError(t, err, broken)
+		assert.False(t, ok, broken)
+		assert.True(t, sens.All, broken)
+		assert.True(t, sens.Needs("./anything"), broken)
 	}
 }
 
@@ -586,24 +528,20 @@ func TestRaceDepsAreTheExternalPackagesOfTheLiveTreeSortedOnce(t *testing.T) {
 		goListDeps + mod + "/cmd/foo " + mod + "/internal/bar": {Stdout: "\nexample.org/z\n\nexample.org/a\nexample.org/z\n"},
 	})
 	got, err := RaceDeps(f.run, root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := []string{"example.org/a", "example.org/z"}; !reflect.DeepEqual(got, want) {
-		t.Errorf("RaceDeps = %v, want %v (the deprecated package is not asked about)", got, want)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, []string{"example.org/a", "example.org/z"}, got, "the deprecated package is not asked about")
 }
 
 func TestRaceDepsRefuseAFailedList(t *testing.T) {
 	t.Parallel()
 	f := newFake(map[string]Result{"go list ./...": {Code: 1, Stderr: "go: no go.mod\n"}})
-	if _, err := RaceDeps(f.run, tree(t)); err == nil || !strings.Contains(err.Error(), "no go.mod") {
-		t.Errorf("a failed go list = %v, want its message", err)
-	}
+	_, err := RaceDeps(f.run, tree(t))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no go.mod")
 	f = newFake(map[string]Result{"go list ./...": {Stdout: imports("cmd/gone")}})
-	if _, err := RaceDeps(f.run, tree(t)); err == nil || !strings.Contains(err.Error(), "no live package") {
-		t.Errorf("a tree of only deprecated packages = %v, want a refusal", err)
-	}
+	_, err := RaceDeps(f.run, tree(t))
+	require.Error(t, err, "a tree of only deprecated packages is a refusal")
+	assert.Contains(t, err.Error(), "no live package")
 }
 
 func TestPerfRunsFindTheTestsOnlyTheTagAdds(t *testing.T) {
@@ -611,12 +549,8 @@ func TestPerfRunsFindTheTestsOnlyTheTagAdds(t *testing.T) {
 	root := tree(t)
 	write := func(rel, body string) string {
 		p := filepath.Join(root, filepath.FromSlash(rel))
-		if err := os.MkdirAll(p, 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(p, "x_test.go"), []byte(body), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.MkdirAll(p, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(p, "x_test.go"), []byte(body), 0o644))
 		return p
 	}
 	perfDir := write("internal/perfy", "//go:build perf\n\npackage perfy\n")
@@ -633,29 +567,21 @@ func TestPerfRunsFindTheTestsOnlyTheTagAdds(t *testing.T) {
 		"go test -tags perf -list . " + mod + "/internal/hollow": {Stdout: "TestA\n"},
 	})
 	runs, notes, err := PerfRuns(f.run, root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := []PerfRun{{Package: mod + "/internal/perfy", Run: "^(BenchmarkFast|TestSlow)$"}}; !reflect.DeepEqual(runs, want) {
-		t.Errorf("runs = %v, want %v", runs, want)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, []PerfRun{{Package: mod + "/internal/perfy", Run: "^(BenchmarkFast|TestSlow)$"}}, runs)
 	wantNotes := []string{mod + "/internal/perfy: BenchmarkFast TestSlow", mod + "/internal/hollow carries a perf constraint and no test behind it"}
 	sort.Strings(wantNotes)
 	sort.Strings(notes)
-	if !reflect.DeepEqual(notes, wantNotes) {
-		t.Errorf("notes = %q, want %q", notes, wantNotes)
-	}
-	if f.called("go test -list . "+mod+"/internal/plain") || f.called("go test -list . "+mod+"/cmd/gone/perf") {
-		t.Error("a package with no perf constraint, or a deprecated one, was asked for its tests")
-	}
+	assert.Equal(t, wantNotes, notes)
+	assert.False(t, f.called("go test -list . "+mod+"/internal/plain") || f.called("go test -list . "+mod+"/cmd/gone/perf"), "a package with no perf constraint, or a deprecated one, was asked for its tests")
 }
 
 func TestLiveTreeRefusesAFailedList(t *testing.T) {
 	t.Parallel()
 	f := newFake(map[string]Result{"go list ./...": {Code: 1, Stderr: "boom\n"}})
-	if _, err := LiveTree(f.run, tree(t)); err == nil || !strings.Contains(err.Error(), "boom") {
-		t.Errorf("LiveTree = %v, want the go list error", err)
-	}
+	_, err := LiveTree(f.run, tree(t))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "boom")
 }
 
 func TestRunnerShareIsCoresOverRunnersBetweenOneAndTwo(t *testing.T) {
@@ -668,9 +594,9 @@ func TestRunnerShareIsCoresOverRunnersBetweenOneAndTwo(t *testing.T) {
 		{64, "", 8, 2}, {16, "8", 8, 2}, {12, "8", 8, 1}, {4, "8", 8, 1}, {1, "1", 1, 1}, {64, "1", 1, 2},
 		{6, "3", 3, 2}, {6, "4", 4, 1}, {16, "0", 8, 2}, {16, "many", 8, 2}, {16, "-3", 8, 2}, {0, "4", 4, 1},
 	} {
-		if runners, share := RunnerShare(tc.cores, tc.says); runners != tc.wantRunners || share != tc.want {
-			t.Errorf("RunnerShare(%d, %q) = %d runners, share %d; want %d and %d", tc.cores, tc.says, runners, share, tc.wantRunners, tc.want)
-		}
+		runners, share := RunnerShare(tc.cores, tc.says)
+		assert.Equal(t, tc.wantRunners, runners, "RunnerShare(%d, %q) runners", tc.cores, tc.says)
+		assert.Equal(t, tc.want, share, "RunnerShare(%d, %q) share", tc.cores, tc.says)
 	}
 }
 
@@ -687,9 +613,7 @@ func TestUnitMakeArgsByRun(t *testing.T) {
 		"the nightly leg measures uncached and enforces":                {"", true, common + " GOTEST_COUNT_FLAG=-count=1 GOTEST_LDFLAGS=-ldflags=-w SLOWTESTS_ENFORCE=1"},
 		"a whole-tree run outranks the nightly flag":                    {"--budget 60", true, common + " GOTEST_COUNT_FLAG= GOTEST_LDFLAGS=-ldflags=-w SLOWTESTS_FLAGS=--budget 60"},
 	} {
-		if got := strings.Join(UnitMakeArgs("./cmd/a", tc.whole, tc.nightly), " "); got != tc.want {
-			t.Errorf("%s:\n got %s\nwant %s", name, got, tc.want)
-		}
+		assert.Equal(t, tc.want, strings.Join(UnitMakeArgs("./cmd/a", tc.whole, tc.nightly), " "), name)
 	}
 }
 
@@ -697,22 +621,14 @@ func TestWriteUnitShimRefusesWithExit86(t *testing.T) {
 	t.Parallel()
 	tmp := t.TempDir()
 	shim, err := WriteUnitShim(tmp)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if shim != filepath.Join(tmp, UnitShimDir, "redis-server") {
-		t.Errorf("shim at %s", shim)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(tmp, UnitShimDir, "redis-server"), shim)
 	b, err := os.ReadFile(shim)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if want := "#!/bin/sh\necho \"" + UnitShimMessage + "\" >&2\nexit 86\n"; string(b) != want {
-		t.Errorf("shim body = %q, want %q", b, want)
-	}
-	if fi, err := os.Stat(shim); err != nil || fi.Mode().Perm() != 0o755 {
-		t.Errorf("shim mode = %v, %v; want 0755", fi, err)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, "#!/bin/sh\necho \""+UnitShimMessage+"\" >&2\nexit 86\n", string(b), "shim body")
+	fi, err := os.Stat(shim)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o755), fi.Mode().Perm(), "shim mode")
 }
 
 // The darwin legs are dealt on schedule and workflow_dispatch and where the

@@ -4,9 +4,11 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"slices"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/pkgselect"
 )
@@ -73,9 +75,7 @@ var (
 func classTestSelection(t *testing.T) []string {
 	t.Helper()
 	root := t.TempDir()
-	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/m\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/m\n"), 0o644))
 	run := func(dir string, env []string, argv ...string) (pkgselect.Result, error) {
 		switch strings.Join(argv, " ") {
 		case "git diff --name-only base HEAD":
@@ -88,9 +88,7 @@ func classTestSelection(t *testing.T) []string {
 		return pkgselect.Result{}, nil // git fetch
 	}
 	out, err := pkgselect.Select(run, pkgselect.Options{Root: root, Base: "base"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return out.Packages
 }
 
@@ -101,12 +99,8 @@ func TestSelectPackagesAlwaysAddsInternalCI(t *testing.T) {
 
 	root := repoRoot(t)
 	src := readFile(t, filepath.Join(root, "internal", "pkgselect", "select.go"))
-	if !selectAppendRe.MatchString(src) {
-		t.Errorf("pkgselect.Select does not add ./internal/ci to want unconditionally; internal/ci scans the tree instead of importing what it guards, so an edit elsewhere selects no shard to run its class tests")
-	}
-	if got := classTestSelection(t); !slices.Contains(got, "./internal/ci") {
-		t.Errorf("a docs-only change selected %v: ./internal/ci is missing", got)
-	}
+	assert.Regexp(t, selectAppendRe, src, "pkgselect.Select does not add ./internal/ci to want unconditionally; internal/ci scans the tree instead of importing what it guards, so an edit elsewhere selects no shard to run its class tests")
+	assert.Contains(t, classTestSelection(t), "./internal/ci", "a docs-only change must select ./internal/ci")
 }
 
 // TestSelectPackagesAlwaysAddsInternalDocs pins the selection: ./internal/docs
@@ -117,12 +111,8 @@ func TestSelectPackagesAlwaysAddsInternalDocs(t *testing.T) {
 
 	root := repoRoot(t)
 	src := readFile(t, filepath.Join(root, "internal", "pkgselect", "select.go"))
-	if !selectDocsAppendRe.MatchString(src) {
-		t.Errorf("pkgselect.Select does not add ./internal/docs to want unconditionally; internal/docs scans the tree instead of importing what it guards, so a docs-only change that breaks TestAgentsPageNamesEveryClassRule (#1504) selects no shard to run it, and the red surfaces in an integration batch instead of on the PR (#1364 toolchainroots, #1409 hostseam)")
-	}
-	if got := classTestSelection(t); !slices.Contains(got, "./internal/docs") {
-		t.Errorf("a docs-only change selected %v: ./internal/docs is missing", got)
-	}
+	assert.Regexp(t, selectDocsAppendRe, src, "pkgselect.Select does not add ./internal/docs to want unconditionally; internal/docs scans the tree instead of importing what it guards, so a docs-only change that breaks TestAgentsPageNamesEveryClassRule (#1504) selects no shard to run it, and the red surfaces in an integration batch instead of on the PR (#1364 toolchainroots, #1409 hostseam)")
+	assert.Contains(t, classTestSelection(t), "./internal/docs", "a docs-only change must select ./internal/docs")
 }
 
 // stepBody returns the source text of one step, from its `- name:` key to the

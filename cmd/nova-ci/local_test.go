@@ -8,6 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // local_test.go is the contract of `nova-ci local` (nova-tools#4336). Every
@@ -382,16 +385,12 @@ func TestLocalSelectionRunsThroughTheNicedRunner(t *testing.T) {
 		{prefix: "nice -n 15 go list ./cmd/... ./internal/... ./tools/...", stdout: "example.com/m/cmd/a\nexample.com/m/internal/ci\n"},
 	}}
 	pkgs, err := localSelectThrough(f.answer)(f.root, localMergeBase)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := strings.Join(pkgs, " "); got != "./cmd/a ./internal/ci" {
-		t.Errorf("selected %q, want ./cmd/a ./internal/ci", got)
-	}
+	require.NoError(t, err)
+	assert.Equal(t, []string{"./cmd/a", "./internal/ci"}, pkgs)
 	for _, c := range f.calls {
-		if c.Dir != f.root || !strings.Contains(strings.Join(c.Env, " "), "GOMAXPROCS=2") || strings.Join(c.Argv[:3], " ") != "nice -n 15" {
-			t.Errorf("call %v ran in %q with env %v; want the checkout, GOMAXPROCS=2 and nice -n 15", c.Argv, c.Dir, c.Env)
-		}
+		assert.Equal(t, f.root, c.Dir, "call %v", c.Argv)
+		assert.Contains(t, strings.Join(c.Env, " "), "GOMAXPROCS=2", "call %v", c.Argv)
+		assert.Equal(t, "nice -n 15", strings.Join(c.Argv[:3], " "), "call %v", c.Argv)
 	}
 }
 
@@ -402,7 +401,7 @@ func TestLocalSelectionFailureIsAnError(t *testing.T) {
 		{prefix: "nice -n 15 git diff", stdout: "go.mod\n"},
 		{prefix: "nice -n 15 go list", stderr: "go: cannot find main module", code: 1},
 	}}
-	if _, err := localSelectThrough(f.answer)(f.root, localMergeBase); err == nil || !strings.Contains(err.Error(), "cannot find main module") {
-		t.Errorf("a failed go list = %v, want its message", err)
-	}
+	_, err := localSelectThrough(f.answer)(f.root, localMergeBase)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot find main module")
 }

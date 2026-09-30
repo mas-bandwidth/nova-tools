@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // TestAncestryFetchesAreOneVerb: the classtests rule reads a landing from git,
@@ -28,9 +30,7 @@ func TestAncestryFetchesAreOneVerb(t *testing.T) {
 		`len(strings.Fields(res.Stdout)) < 3`,
 		`e.getenv("GITHUB_EVENT_NAME") != "pull_request"`,
 	} {
-		if !strings.Contains(verb, want) {
-			t.Errorf("tools/ci/sel_ancestry.go does not contain %q: the fetch is not the one %s and %s name", want, devHistoryFetch, foundationHistoryFetch)
-		}
+		assert.Contains(t, verb, want, "tools/ci/sel_ancestry.go: the fetch is not the one %s and %s name", devHistoryFetch, foundationHistoryFetch)
 	}
 
 	for _, file := range []string{"ci.yml", "certification.yml"} {
@@ -40,16 +40,14 @@ func TestAncestryFetchesAreOneVerb(t *testing.T) {
 			{"fetch sprint/foundation's ancestry for a promotion", ciRunner + " fetch-ancestry --promotion sprint/foundation"},
 		} {
 			body := stepBody(src, step.name)
-			if body == "" {
-				t.Errorf("%s has no step %q", file, step.name)
+			if !assert.NotEmpty(t, body, "%s has no step %q", file, step.name) {
 				continue
 			}
-			if !strings.Contains(body, step.want) {
-				t.Errorf("%s step %q does not run %q:\n%s", file, step.name, step.want, body)
-			}
+			assert.Contains(t, body, step.want, "%s step %q", file, step.name)
 			for _, line := range strings.Split(body, "\n") {
-				if code := strings.TrimSpace(line); !strings.HasPrefix(code, "#") && strings.Contains(code, "git fetch") {
-					t.Errorf("%s step %q spells a git fetch itself (%q); the fetch is the verb's", file, step.name, code)
+				code := strings.TrimSpace(line)
+				if !strings.HasPrefix(code, "#") {
+					assert.NotContains(t, code, "git fetch", "%s step %q spells a git fetch itself; the fetch is the verb's", file, step.name)
 				}
 			}
 		}
