@@ -91,7 +91,7 @@ func TestAGroupOfAnotherSizeThanPrintedIsRefused(t *testing.T) {
 	ta.deal(3)
 	ta.failOnce("m1", "s1-1.w1@1", "tests red")
 	g := ta.group(sprint.NWorkFailed, "s1")
-	printed := g.Size
+	sizePrinted := g.Size
 	ta.failOnce("m1", "s1-2.w1@1", "tests red")
 	now := ta.group(sprint.NWorkFailed, "s1")
 	if now.ID != g.ID || now.Size != 2 {
@@ -108,7 +108,7 @@ func TestAGroupOfAnotherSizeThanPrintedIsRefused(t *testing.T) {
 	if ta.group(sprint.NWorkFailed, "s1").Size != 2 {
 		t.Fatalf("a refused verb changed the group")
 	}
-	_ = printed
+	_ = sizePrinted
 	out = ta.ok("rework --group " + g.ID + " --expect 2 --fix 'the fix'")
 	if !strings.Contains(out, "GROUP "+g.ID+" acted on 2, the group had 2 when printed") {
 		t.Fatalf("rework --expect: %s", out)
@@ -403,7 +403,8 @@ func TestHelpShowsTheWorkedExample(t *testing.T) {
 		if _, ok := sprint.Decisions[sprint.NSprintDone]; ok {
 			want--
 		}
-		if n := strings.Count(out[strings.Index(out, "one answer to each judgment"):], "\n  "); n != want {
+		answers, _, _ := strings.Cut(out[strings.Index(out, "one answer to each judgment"):], "\n\n")
+		if n := strings.Count(answers, "\n  "); n != want {
 			t.Fatalf("%s: %d answers for %d judgment types and the repeat", line, n, want-1)
 		}
 		if !strings.Contains(out, "  HAPPENED tick-done-0317a1b2-1.1   the sprint is done  x1  for=coordinator") {

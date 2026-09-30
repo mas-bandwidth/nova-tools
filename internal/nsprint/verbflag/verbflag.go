@@ -94,6 +94,41 @@ func Recover(out io.Writer, prog, banner string, code *int) {
 	*code = 0
 }
 
+// RecoverWith is Recover for a tool that adds lines of its own to a verb's
+// help: extra is given the verb's name (as Verb gives it) and returns the
+// lines to print above the flags, each line ending in a newline ("" for none).
+// It is what a tool defers in place of Recover to show a worked example per
+// verb. It is deferred directly, as Recover is.
+func RecoverWith(out io.Writer, prog, banner string, code *int, extra func(verb string) string) {
+	r := recover()
+	if r == nil {
+		return
+	}
+	h, ok := r.(Help)
+	if !ok {
+		panic(r)
+	}
+	var b strings.Builder
+	Print(&b, prog, banner, h.FS)
+	_, _ = io.WriteString(out, Insert(b.String(), extra(Verb(prog, h.FS))))
+	*code = 0
+}
+
+// Insert puts lines into a printed verb help above its flags (above its
+// exit codes when it lists none, at its end when it has neither).
+func Insert(help, lines string) string {
+	if lines == "" {
+		return help
+	}
+	if i := strings.Index(help, "\nflags:\n"); i >= 0 {
+		return help[:i+1] + lines + help[i+1:]
+	}
+	if i := strings.Index(help, "\nexit codes:"); i >= 0 {
+		return help[:i+1] + lines + help[i+1:]
+	}
+	return help + lines
+}
+
 // IsHelp reports whether one argument asks for help.
 func IsHelp(a string) bool { return a == "-h" || a == "-help" || a == "--help" || a == "--h" }
 

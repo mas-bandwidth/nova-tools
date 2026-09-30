@@ -1667,12 +1667,16 @@ do
 
   -- A read that returns nothing and no refusal is a bug of this file, which
   -- Layer 1 turns into CONFIG; a refusal keeps its own code.
-  for _, name in ipairs({'related', 'front', 'waiters', 'streams', 'fleet', 'readers', 'needchain', 'jnote'}) do
+  -- Indexed loops: this runs at FUNCTION LOAD, where no builtin exists (sprint_00_core.lua).
+  local listed = {'related', 'front', 'waiters', 'streams', 'fleet', 'readers', 'needchain', 'jnote'}
+  for i = 1, #listed do
+    local name = listed[i]
     local reader = name == 'fleet' and Q.listing or (name == 'readers' and Q.listing or Q[name])
     SP.query(name, {validate = Q.validator(Q.check), read = reader, cost = Q.cost})
   end
-  for _, name in ipairs({'clock', 'lease', 'tick', 'heartbeat', 'dropping', 'parked', 'missing', 'jopen', 'duecount'}) do
-    SP.query(name, {validate = Q.validator(Q.check_key), read = Q.read_key, cost = Q.key_cost})
+  local keyed = {'clock', 'lease', 'tick', 'heartbeat', 'dropping', 'parked', 'missing', 'jopen', 'duecount'}
+  for i = 1, #keyed do
+    SP.query(keyed[i], {validate = Q.validator(Q.check_key), read = Q.read_key, cost = Q.key_cost})
   end
 end
 end

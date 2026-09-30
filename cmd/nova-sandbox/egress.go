@@ -136,7 +136,9 @@ func parseEgress(args []string) egressFlags {
 		case "--plan":
 			f.plan = want("--plan")
 		default:
-			add("no_command", oneline.Escape(a)+" is not a flag of the egress verbs; run: nova-sandbox help")
+			text, took := unknownArg(args, i, "egress")
+			add("no_command", text)
+			i += took
 		}
 	}
 	return f
