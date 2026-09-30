@@ -36,7 +36,7 @@ const (
 	drivePerStream = 1000
 	driveMembers   = 8
 	driveWidth     = 64
-	driveSample    = 50 // ticks between two samples of the streams
+	driveSample    = 50 // ticks between two samples of the streams (every tick before the 50th)
 )
 
 // driveTick is one tick of the loop as it was told of: what started it, what
@@ -106,10 +106,11 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 	// read and its cursor moved; a judgment is not expected, none is open to
 	// answer, and any that comes is recorded
 	var (
-		mu         sync.Mutex
-		notesSeen  = map[string]int{}
-		judgments  []string
-		coordReads int
+		mu                     sync.Mutex
+		notesSeen              = map[string]int{}
+		judgments              []string
+		coordReads             int
+		accepts, acceptRefused int
 	)
 	wake := make(chan struct{}, 1)
 	coordDone := make(chan struct{})
@@ -142,13 +143,52 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 			}
 			mu.Lock()
 			coordReads++
+			mu.Unlock()
 			for _, g := range v.Groups {
+				mu.Lock()
 				notesSeen[g.Kind+": "+g.Type] += g.Count
-				if g.Kind == sprint.Judgment {
+				mu.Unlock()
+				if g.Kind != sprint.Judgment {
+					continue
+				}
+				switch g.Type {
+				case sprint.NNoMember:
+					// the first tick's pump deals before its fleet update brings the
+					// machines up: the judgment closes itself when they are
+				case sprint.NReadyToAccept:
+					// accepted mechanically, with the command the inbox gives
+					accepted := false
+					for _, cmd := range g.Commands {
+						if cmd.Decision != "accept" || len(cmd.Lines) == 0 {
+							continue
+						}
+						words := strings.Fields(cmd.Lines[0])
+						if len(words) < 2 {
+							continue
+						}
+						var o, e bytes.Buffer
+						code := coord.run(words[1:], &o, &e)
+						mu.Lock()
+						if code == 0 {
+							accepts++
+						} else {
+							acceptRefused++
+						}
+						mu.Unlock()
+						accepted = true
+						break
+					}
+					if !accepted {
+						mu.Lock()
+						judgments = append(judgments, fmt.Sprintf("%s (%s) offers no accept", g.Type, g.Stream))
+						mu.Unlock()
+					}
+				default:
+					mu.Lock()
 					judgments = append(judgments, fmt.Sprintf("%s (%s) on %v", g.Type, g.Stream, g.Primaries))
+					mu.Unlock()
 				}
 			}
-			mu.Unlock()
 		}
 	}()
 
@@ -171,6 +211,7 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 			}
 		}
 		samples = append(samples, s)
+		fmt.Fprintf(os.Stderr, "drive: tick %d landed %v at %s\n", n, s.landed, time.Now().Format("15:04:05.000"))
 	}
 	first := make(chan struct{})
 	loopDone := make(chan struct{})
@@ -188,7 +229,10 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 				tk.err = err.Error()
 			}
 			ticks = append(ticks, tk)
-			if i%driveSample == 0 {
+			// a sample every driveSample ticks, and at every tick while the loop
+			// has ticked fewer times than that: a tick that deals or lands
+			// hundreds of cards is one tick of the loop
+			if i%driveSample == 0 || i < driveSample {
 				sampleNow(i)
 			}
 			if i == 1 {
@@ -213,9 +257,50 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 	}()
 	<-first
 
+	// a stall watchdog: the landed count not moving for a minute ends the drive
+	// with the tables, the inbox and the check printed
+	stalled := make(chan string, 1)
+	go func() {
+		last, at := -1, time.Now()
+		for ctx.Err() == nil {
+			time.Sleep(time.Second)
+			n := 0
+			if snap, err := st.Load(ctx, store.All, nil); err == nil {
+				for _, s := range streams {
+					n += snap.Work.Count(s, sprint.Landed)
+				}
+			}
+			if n != last {
+				last, at = n, time.Now()
+			}
+			if n < total && time.Since(at) > time.Minute {
+				var b strings.Builder
+				for _, args := range [][]string{{"where"}, {"inbox"}, {"check"}} {
+					var out, errb bytes.Buffer
+					code := coord.run(args, &out, &errb)
+					fmt.Fprintf(&b, "%v: %d\n%s%s\n", args, code, tail(out.String(), 60), errb.String())
+				}
+				stalled <- fmt.Sprintf("%d of %d landed and nothing moved for a minute:\n%s", n, total, b.String())
+				return
+			}
+		}
+	}()
+
 	began := time.Now()
 	var pout, perr bytes.Buffer
-	code = world.run([]string{"play", "--every", "10ms"}, &pout, &perr)
+	played := make(chan int, 1)
+	go func() {
+		played <- world.run([]string{"play", "--every", "10ms", "--broken", "0", "--fail", "0", "--stuck", "0", "--cross", "0", "--down", "0", "--up", "0"}, &pout, &perr)
+	}()
+	select {
+	case code = <-played:
+	case why := <-stalled:
+		cancel()
+		t.Fatalf("the sprint stalled: %s", why)
+	case <-ctx.Done():
+		cancel()
+		t.Fatalf("the sprint did not land in 12 minutes")
+	}
 	wall := time.Since(began)
 	// let the loop's last ticks say the sprint is done, then stop it
 	for i := 0; i < 100; i++ {
@@ -257,6 +342,9 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 		if hi-lo > maxSpread {
 			maxSpread, at = hi-lo, s.tick
 		}
+	}
+	if len(samples) == 0 {
+		t.Errorf("the loop took no sample of the streams")
 	}
 	if limit := total / 10; maxSpread > limit {
 		t.Errorf("a stream was %d cards ahead of another at tick %d, over 10%% of the total (%d)", maxSpread, at, limit)
@@ -333,7 +421,7 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 		t.Errorf("%d tick-end notes on the inbox and %d ticks that addressed the coordinator: want one each", tickEnds, wroteNote)
 	}
 	mu.Lock()
-	reads, judged := coordReads, append([]string(nil), judgments...)
+	reads, judged, accepted, refused := coordReads, append([]string(nil), judgments...), accepts, acceptRefused
 	var seen []string
 	for k, n := range notesSeen {
 		seen = append(seen, fmt.Sprintf("%s x%d", k, n))
@@ -346,12 +434,12 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 
 	report := fmt.Sprintf("DIRTY-TICK DRIVE: %d cards in %d streams on %d machines of width %d: all landed in %s over %d ticks (%.1f ticks/s)\n"+
 		"  the loop's ticks began on: %v; %d idle, %d did something, %d needed more than the four first updates (most updates in one tick: %d); the slowest tick took %s\n"+
-		"  tick-end notes: %d (one for each of the %d ticks that addressed the coordinator), the coordinator read the inbox %d times: %s\n"+
-		"  the streams' widest gap at a sample: %d cards (tick %d) of a limit of %d; done by machine: %s (mean %.1f)",
+		"  tick-end notes: %d (one for each of the %d ticks that addressed the coordinator), the coordinator read the inbox %d times (accepted %d groups, %d refused as already accepted by the machine): %s\n"+
+		"  the streams' widest gap over %d samples: %d cards (tick %d) of a limit of %d; done by machine: %s (mean %.1f)",
 		total, driveStreams, driveMembers, driveWidth, wall.Round(time.Millisecond), len(ticks), float64(len(ticks))/wall.Seconds(),
 		whyCount, idle, didSomething, settle, maxOrder, slowest.Round(time.Millisecond),
-		tickEnds, wroteNote, reads, strings.Join(seen, ", "),
-		maxSpread, at, total/10, strings.Join(doneLine, " "), mean)
+		tickEnds, wroteNote, reads, accepted, refused, strings.Join(seen, ", "),
+		len(samples), maxSpread, at, total/10, strings.Join(doneLine, " "), mean)
 	fmt.Fprintln(os.Stderr, report)
 	t.Log("\n" + report)
 }
