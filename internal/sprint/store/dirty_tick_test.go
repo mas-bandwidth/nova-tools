@@ -674,4 +674,3 @@ func TestAnAcceptHeldBackByTheQueueEmitsNoPhantomReadyToMergeNote(t *testing.T) 
 		}
 	})
 }
-
