@@ -238,6 +238,16 @@ func edges() []edge {
 		{name: "counter fields set", ok: sp(&SprintPart{Counter: counterOf(CounterFieldsMax, CounterFieldsMax)}),
 			bad: sp(&SprintPart{Counter: counterOf(CounterFieldsMax+1, CounterFieldsMax+1)})},
 		{name: "coordinator bytes", ok: sp(&SprintPart{Coordinator: rep(256, "c")}), bad: sp(&SprintPart{Coordinator: rep(257, "c")})},
+		{name: "time due entries", ok: func() *Request { return timeReq(&SprintTime{Due: dueN(SprintKeysMax)}) },
+			bad: func() *Request { return timeReq(&SprintTime{Due: dueN(SprintKeysMax + 1)}) }},
+		{name: "time due key bytes", ok: func() *Request { return timeReq(&SprintTime{Due: []DueAt{{Key: rep(256, "k"), At: "1"}}}) },
+			bad: func() *Request { return timeReq(&SprintTime{Due: []DueAt{{Key: rep(257, "k"), At: "1"}}}) }},
+		{name: "time due at the top of the exact range", ok: func() *Request { return timeReq(&SprintTime{Due: []DueAt{{Key: "k", At: "9007199254740991"}}}) },
+			bad: func() *Request { return timeReq(&SprintTime{Due: []DueAt{{Key: "k", At: "9007199254740992"}}}) }},
+		{name: "time goal claims", ok: func() *Request { return timeReq(&SprintTime{Goals: claimsN(SprintMembersMax)}) },
+			bad: func() *Request { return timeReq(&SprintTime{Goals: claimsN(SprintMembersMax + 1)}) }},
+		{name: "time goal person bytes", ok: func() *Request { return timeReq(&SprintTime{Goals: []GoalClaim{{Person: rep(128, "p"), R: "1"}}}) },
+			bad: func() *Request { return timeReq(&SprintTime{Goals: []GoalClaim{{Person: rep(129, "p"), R: "1"}}}) }},
 		{name: "tick end backlog", ok: sp(&SprintPart{TickEnd: &TickEnd{Backlog: "18446744073709551615"}}),
 			bad: sp(&SprintPart{TickEnd: &TickEnd{Backlog: "18446744073709551616"}})},
 	}
@@ -1266,4 +1276,21 @@ func TestPartsRunTwiceWriteNothing(t *testing.T) {
 			}
 		})
 	}
+}
+
+// dueN is n due writes of distinct keys; claimsN n claims of distinct people.
+func dueN(n int) []DueAt {
+	out := make([]DueAt, n)
+	for i, k := range names("k", n) {
+		out[i] = DueAt{Key: k, At: "1"}
+	}
+	return out
+}
+
+func claimsN(n int) []GoalClaim {
+	out := make([]GoalClaim, n)
+	for i, p := range names("p", n) {
+		out[i] = GoalClaim{Person: p, R: "1"}
+	}
+	return out
 }

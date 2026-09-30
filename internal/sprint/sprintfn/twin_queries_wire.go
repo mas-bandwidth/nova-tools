@@ -3,6 +3,7 @@ package sprintfn
 import (
 	"encoding/json"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -213,12 +214,10 @@ func validSource(s sprint.IDSource, kinds ...string) bool {
 
 // queryKeys are the sprint keys a composite query may also read, by the kinds
 // that may name them (sprint.SprintQ.Keys; rules_position_read.go): the
-// dropping marks of the streams the query reaches, and {p}next@e.streams. The
-// jopen keys (jopen:G, jopen:sprint) give the types of the judgments open on a
-// subject, which only an enumeration of its jopen hash finds, and Layer 1's
-// checked probes admit none (S.read_probe has no HKEYS or HGETALL): a query
-// naming one is REQUEST until Layer 1 has such a probe.
-var queryKeys = map[string]bool{sprint.KeyDropping: true, sprint.KeyNextStreams: true}
+// dropping marks of the streams the query reaches, {p}next@e.streams, and the
+// jopen keys, each read as the one field its rule tests (jopenFields): jopen:G
+// only by `front`, whose first sentinel it is about.
+var queryKeys = map[string]bool{sprint.KeyDropping: true, sprint.KeyNextStreams: true, sprint.KeyJOpenG: true, sprint.KeyJOpenSprint: true}
 
 // keysKinds are the composite kinds whose answer reaches streams, and so may
 // name sprint keys.
@@ -232,6 +231,9 @@ var keysKinds = map[string]bool{sprint.QueryFront: true, sprint.QueryWaiters: tr
 func validExtensions(q sprint.SprintQ) bool {
 	if len(q.Keys) > 0 {
 		if !keysKinds[q.Kind] || !distinctNames(q.Keys, func(k string) bool { return queryKeys[k] }) {
+			return false
+		}
+		if q.Kind != sprint.QueryFront && slices.Contains(q.Keys, sprint.KeyJOpenG) {
 			return false
 		}
 	}

@@ -17,6 +17,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/sprintfn"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/stepbuild"
 	"github.com/mas-bandwidth/nova-tools/internal/tset"
+	"github.com/redis/go-redis/v9"
 )
 
 // The tests' world: the composed twin (sprintfn.Twin over tset.Mem and the log
@@ -48,12 +49,17 @@ func (c *clock) add(d time.Duration) {
 	c.at = c.at.Add(d)
 }
 
-// world is one test's store and clock.
+// world is one test's store and clock. c is the store the steps and reads go
+// to: the twin, or a real store (tick_functional_test.go's store world). tw,
+// mem and log are the twin's parts, nil on a store world; raw is the store
+// world's own connection, for the sprint's raw keys, nil on the twin.
 type world struct {
 	t   *testing.T
+	c   sprintfn.Client
 	tw  *sprintfn.Twin
 	mem *tset.Mem
 	log *sprintfn.LogStub
+	raw *redis.Client
 	clk *clock
 	gen uint64 // the generation a test's own tick steps carry
 }
@@ -72,17 +78,24 @@ func newWorld(t *testing.T) *world {
 	tw.UseQueries()
 	clk := &clock{at: time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)}
 	tw.SetClock(clk.now)
-	w := &world{t: t, tw: tw, mem: m, log: log, clk: clk}
+	w := &world{t: t, c: tw, tw: tw, mem: m, log: log, clk: clk}
+	w.seed()
+	return w
+}
+
+// seed sets the sprint's counters, as the coordinator does before the first
+// card: the same first step on the twin and on a store.
+func (w *world) seed() {
+	w.t.Helper()
 	w.step(&sprintfn.Request{Epoch: "0", Meta: sprintfn.Meta{Verb: "seed", Actor: "coordinator"},
 		Sprint: &sprintfn.SprintPart{Counter: &sprintfn.CounterChange{Read: map[string]string{"score": "", "streams": ""},
 			Set: map[string]string{"score": "100000000", "streams": "1"}}}})
-	return w
 }
 
 // step applies a request or fails the test.
 func (w *world) step(req *sprintfn.Request) *sprintfn.StepReply {
 	w.t.Helper()
-	res, err := sprintfn.Step(context.Background(), w.tw, req)
+	res, err := sprintfn.Step(context.Background(), w.c, req)
 	if err != nil {
 		w.t.Fatalf("step: %v", err)
 	}
@@ -130,14 +143,34 @@ func ids(prefix string, n int) []string {
 	return out
 }
 
-// zset is one of the twin's sorted sets.
+// zset is one of the sprint's sorted sets, on the twin or on the store.
 func (w *world) zset(name string) map[string]float64 {
-	return w.tw.SprintKeys()[testNames.Key(name)].ZSet
+	w.t.Helper()
+	if w.raw == nil {
+		return w.tw.SprintKeys()[testNames.Key(name)].ZSet
+	}
+	zs, err := w.raw.ZRangeWithScores(context.Background(), testNames.Key(name), 0, -1).Result()
+	if err != nil {
+		w.t.Fatalf("read the sorted set %s: %v", name, err)
+	}
+	out := make(map[string]float64, len(zs))
+	for _, z := range zs {
+		out[z.Member.(string)] = z.Score
+	}
+	return out
 }
 
-// hash is one of the twin's hashes.
+// hash is one of the sprint's hashes, on the twin or on the store.
 func (w *world) hash(name string) map[string]string {
-	return w.tw.SprintKeys()[testNames.Key(name)].Hash
+	w.t.Helper()
+	if w.raw == nil {
+		return w.tw.SprintKeys()[testNames.Key(name)].Hash
+	}
+	h, err := w.raw.HGetAll(context.Background(), testNames.Key(name)).Result()
+	if err != nil {
+		w.t.Fatalf("read the hash %s: %v", name, err)
+	}
+	return h
 }
 
 // place is where a work card is, "" when it has none.
@@ -149,7 +182,7 @@ func (w *world) place(id string) string {
 // placeIn is where a card of a table is, "" when it has none.
 func (w *world) placeIn(table, id string) string {
 	w.t.Helper()
-	res, err := sprintfn.Read(context.Background(), w.tw, &sprintfn.ReadRequest{Epoch: "0",
+	res, err := sprintfn.Read(context.Background(), w.c, &sprintfn.ReadRequest{Epoch: "0",
 		Tset: []tset.ReadQuery{{Kind: "ids", Table: table, IDs: []string{id}}}})
 	if err != nil || res.Read == nil {
 		w.t.Fatalf("read %s: %v %+v", id, err, res.Refusal)

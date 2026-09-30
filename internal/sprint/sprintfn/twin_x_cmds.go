@@ -34,6 +34,22 @@ func (r *xRead) zmscore(key string, members []string) (map[string]float64, *Refu
 	return out, nil
 }
 
+// zcount is the number of members of a sorted set scored within min and max
+// (the store's bound grammar): S.zguard's ZCOUNT, one probe.
+func (r *xRead) zcount(key, min, max string) (int, *Refusal) {
+	r.probes++
+	if ref := r.wrongType(key, kindZSet); ref != nil {
+		return 0, ref
+	}
+	n := 0
+	for _, p := range r.k.ks.zpairs(key) {
+		if inBounds(p.score, min, max) {
+			n++
+		}
+	}
+	return n, nil
+}
+
 // xScore spells an index score for ZADD, as the Lua's score_text does
 // (TestXScoreSpellingAgrees): a whole number below 1e15 as itself, zero (minus zero
 // too) as "0", and any other number from the fewest of 15, 16 and 17 significant
@@ -520,6 +536,27 @@ func xCommands(prefix string, carry *xCarry, tp TablePlan) ([]Cmd, error) {
 	}
 	cmds = append(cmds, xQuarantineCmds(prefix, carry)...)
 	cmds = append(cmds, xAgendaCmds(prefix, carry)...)
+	// each table a card of which the plan changes, one version on (errata 3
+	// H17): X.pre read the version of every table the step could change
+	var args []string
+	changed := map[string]bool{}
+	for _, pe := range tp.Entries {
+		if xChanged(pe.Entry) {
+			changed[pe.Entry.Table] = true
+		}
+	}
+	for _, v := range carry.versions {
+		if changed[v.table] {
+			args = append(args, v.table, v.to)
+			delete(changed, v.table)
+		}
+	}
+	if len(changed) != 0 {
+		return nil, fmt.Errorf("the plan changes cards of a table whose version X.pre did not read: %v", changed)
+	}
+	if len(args) != 0 {
+		cmds = append(cmds, Command("HSET", prefix+"sprint:"+xKeyVersion+"@"+string(carry.writeEpoch), kindHash, args...))
+	}
 	return cmds, nil
 }
 

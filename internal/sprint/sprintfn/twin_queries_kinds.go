@@ -209,7 +209,7 @@ func (e *qeval) front(q sprint.SprintQ) (FrontResult, *Refusal) {
 		res.Heads = append(res.Heads, hr)
 	}
 	res.LeftOut = left.ids()
-	keys, ref := e.sprintKeys(q, []string{q.Stream})
+	keys, ref := e.sprintKeys(q, []string{q.Stream}, res.G)
 	if ref != nil {
 		return res, ref
 	}
@@ -223,9 +223,11 @@ func (e *qeval) front(q sprint.SprintQ) (FrontResult, *Refusal) {
 // streams the query reached (reach, in order: for `front` its stream, for
 // `waiters` the streams of the waiters it returned, for `streams` every stream
 // it lists; 1.3.5), one HMGET of {p}dropping@e naming each stream once and none
-// when it reached none; and {p}next@e.streams, one HMGET of one field (2.3 R15).
-// The jopen keys are refused before any read (ValidateSprintQ).
-func (e *qeval) sprintKeys(q sprint.SprintQ, reach []string) ([]KeyResult, *Refusal) {
+// when it reached none; {p}next@e.streams, one HMGET of one field (2.3 R15);
+// and a jopen key, one HMGET of the one field its rule tests (jopenFields):
+// jopen:G of the first sentinel g of a `front` (none when the stream has none;
+// 2.3 R3), and jopen:sprint of the sprint's subject (2.3 R15).
+func (e *qeval) sprintKeys(q sprint.SprintQ, reach []string, g string) ([]KeyResult, *Refusal) {
 	var out []KeyResult
 	for _, k := range q.Keys {
 		kr := KeyResult{Key: k, Streams: []string{}}
@@ -262,6 +264,22 @@ func (e *qeval) sprintKeys(q sprint.SprintQ, reach []string) ([]KeyResult, *Refu
 					return nil, e.fail(codeDrift, tset.RefusalDetail{})
 				}
 				kr.N = *v[0]
+			}
+		case sprint.KeyJOpenG, sprint.KeyJOpenSprint:
+			subject := g
+			if k == sprint.KeyJOpenSprint {
+				subject = sprint.SprintSubject
+			}
+			if subject != "" {
+				v, ref := e.hmget(e.key("jopen:"+subject), []string{jopenFields[k]}, hashFieldBytes)
+				if ref != nil {
+					return nil, ref
+				}
+				state, ok := jopenState(v[0])
+				if !ok {
+					return nil, e.fail(codeDrift, tset.RefusalDetail{})
+				}
+				kr.Subject, kr.State = subject, state
 			}
 		default:
 			return nil, queryRequestRefusal()
@@ -359,7 +377,7 @@ func (e *qeval) waiters(q sprint.SprintQ) (WaitersResult, *Refusal) {
 		}
 		res.Items = append(res.Items, it)
 	}
-	keys, ref := e.sprintKeys(q, reach)
+	keys, ref := e.sprintKeys(q, reach, "")
 	if ref != nil {
 		return res, ref
 	}
@@ -528,7 +546,7 @@ func (e *qeval) streams(q sprint.SprintQ) (StreamsResult, *Refusal) {
 		}
 	}
 	res.Items, res.LeftOut = items, left.ids()
-	keys, ref := e.sprintKeys(q, rows)
+	keys, ref := e.sprintKeys(q, rows, "")
 	if ref != nil {
 		return res, ref
 	}
@@ -794,3 +812,34 @@ func (e *qeval) jnote(q sprint.SprintQ) (JnoteResult, *Refusal) {
 	}
 	return res, nil
 }
+
+// jopenFields is the one field of a subject's jopen hash that the rule reading
+// a jopen key tests, `<type>|<cause>` (J's field; twin_j.go jKeyJopen): R3 the
+// sentinel reached on G, R15 the sprint done on the sprint (2.3). Each rule
+// tests one known type, so the read is an HMGET of one field and needs no
+// enumeration of the hash (Layer 1's probes have none).
+var jopenFields = map[string]string{
+	sprint.KeyJOpenG:      sprint.NSentinelReached + "|" + sprint.ReachedCause,
+	sprint.KeyJOpenSprint: sprint.NSprintDone + "|" + sprint.SprintDoneCause,
+}
+
+// jopenState is what a jopen field holds, as J writes it: "" when absent,
+// "open" for a note's id, "held" for h and a note's id; ok is false for any
+// other value, which is DRIFT (twin_j.go, jDecider.state).
+func jopenState(v *string) (state string, ok bool) {
+	switch {
+	case v == nil:
+		return "", true
+	case strings.HasPrefix(*v, jHoldPrefix+jNotePrefix) && len(*v) > 2:
+		return jopenHeld, true
+	case strings.HasPrefix(*v, jNotePrefix) && len(*v) > 1:
+		return jopenOpen, true
+	}
+	return "", false
+}
+
+// The states of a jopen field in a KeyResult.
+const (
+	jopenOpen = "open"
+	jopenHeld = "held"
+)

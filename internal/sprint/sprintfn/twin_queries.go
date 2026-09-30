@@ -1213,7 +1213,8 @@ func QueryProbes(q sprint.SprintQ) int {
 // extensionProbes are the probes of IT08's extensions of a query: a name for
 // each stream the dropping marks are read of (the most a query reaches: its
 // stream, the waiters it may return, or the streams it lists), one for
-// {p}next@e.streams, and a ZCARD for each cell a `streams` query counts.
+// {p}next@e.streams, one for each jopen key's field, and a ZCARD for each cell
+// a `streams` query counts.
 func extensionProbes(q sprint.SprintQ) int {
 	total := 0
 	for _, k := range q.Keys {
@@ -1228,7 +1229,7 @@ func extensionProbes(q sprint.SprintQ) int {
 			case sprint.QueryStreams:
 				total += unitsOf(q)
 			}
-		case sprint.KeyNextStreams:
+		case sprint.KeyNextStreams, sprint.KeyJOpenG, sprint.KeyJOpenSprint:
 			total++
 		}
 	}

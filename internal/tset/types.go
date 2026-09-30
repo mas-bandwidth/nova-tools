@@ -101,13 +101,16 @@ type Reply struct {
 	MemPlan         *MemPlan        `json:"-"` // Mem-only, fresh ordinary steps; never a wire field.
 }
 
-// MemPlan is the in-memory twin's normalized observation of a successful
-// ordinary step. It is not persisted in receipts or encoded on the Redis wire.
+// MemPlan is the in-memory twin's normalized observation and Plan/Commit
+// handle. Fence and replay plans have no normalized entries. It is never
+// persisted in receipts or encoded on the Redis reply wire.
 type MemPlan struct {
-	Entries  []MemPlanEntry
-	Before   map[string]map[string]MemberRecord // observed table, then ID; includes guards and no-ops
-	Replay   bool                               // observation only; Commit uses its private captured reply
-	prepared *memPrepared                       // twin-only Plan/Commit handle; never serialized
+	Entries          []MemPlanEntry
+	Before           map[string]map[string]MemberRecord // observed table, then ID; includes guards and no-ops
+	Replay           bool                               // observation only; Commit uses its private captured reply
+	PlannedCommands  int64                              // planned L1 store commands, including a named receipt write
+	PlannedArgvBytes int64                              // planned L1 command and argv bytes
+	prepared         *memPrepared                       // twin-only Plan/Commit handle; never serialized
 }
 
 type MemPlanEntry struct {
