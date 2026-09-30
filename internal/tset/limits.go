@@ -1,6 +1,6 @@
 package tset
 
-// These bounds are the admission limits of tset/1 revision 2 with Rowan's
+// These bounds are the admission limits of tset/1 revision 2 with the
 // confirmed A9 and A12 amendments. They are checked before any Redis call.
 const (
 	MaxWriteRequestBytes = 4 << 20
