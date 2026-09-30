@@ -233,8 +233,8 @@ func Inbox(r InboxReq) []Group {
 	at = map[string]int{}
 	restMembers := map[int]map[string]bool{}
 	for _, n := range r.Recent {
-		if n.Kind == Judgment || n.Kind == Acknowledged {
-			continue // judgments are shown while open, above; an acknowledgement is its decided note
+		if n.Kind == Judgment || n.Kind == Acknowledged || n.Type == NTickEnd {
+			continue // judgments are shown while open, above; an acknowledgement is its decided note; a tick end wakes, it says nothing
 		}
 		k := n.Kind + "\x00" + n.Type + "\x00" + n.Stream + "\x00" + n.To
 		i, ok := at[k]
@@ -263,17 +263,22 @@ func Inbox(r InboxReq) []Group {
 		}
 		g.Notes = append(g.Notes, n.ID)
 	}
-	var top, other []Group
+	var done, top, other []Group
 	for i := range rest {
 		rest[i].Members = sortedSet(restMembers[i])
 		rest[i].Size = len(rest[i].Members)
-		if rest[i].To != "" {
+		switch {
+		case rest[i].Type == NSprintDone:
+			done = append(done, rest[i])
+		case rest[i].To != "":
 			top = append(top, rest[i])
-		} else {
+		default:
 			other = append(other, rest[i])
 		}
 	}
-	return append(append(top, out...), other...)
+	// the sprint done first, then the judgments, then the other notes to the
+	// coordinator (ready to merge, the tick-end line), then the rest
+	return append(append(append(done, out...), top...), other...)
 }
 
 // FindGroup is the group of the id, if it is in the inbox.

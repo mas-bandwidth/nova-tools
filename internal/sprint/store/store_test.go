@@ -102,7 +102,11 @@ func (h *harness) clean(when string) {
 func (h *harness) snap() *sprint.Snapshot {
 	h.t.Helper()
 	s := h.table()
-	q, err := h.st.B.QueueRead(h.ctx)
+	pinned, err := h.st.pin(h.ctx)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	q, err := pinned.B.QueueRead(h.ctx)
 	if err != nil {
 		h.t.Fatal(err)
 	}
