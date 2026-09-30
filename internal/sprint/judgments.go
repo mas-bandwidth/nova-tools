@@ -357,8 +357,11 @@ func noticeTable(rows []Notice) map[string]Notice {
 
 // Printed is the decisions the inbox prints for the open judgment o in the
 // snapshot: its row's decisions where their conditions hold, and for a stalled
-// card the decisions its place allows first. A note that is no judgment of
-// the table prints none.
+// card the decisions its place allows first, less every decision DROPPING
+// refuses (frozenDecision). A note that is no judgment of the table prints
+// none.
+//
+// Follows dropcond in tla/SprintEvents.tla (errata 3, H8).
 func Printed(s *Snapshot, o Open) []Decision { return printedIn(Judgments, s, o) }
 
 // placeDecisions are the rows whose decisions follow the place of the card
@@ -379,6 +382,9 @@ func printedIn(table map[string]JudgmentType, s *Snapshot, o Open) []Decision {
 	var out []Decision
 	offer := func(ds []Decision) {
 		for _, d := range ds {
+			if frozenDecision(s, row, o, d) {
+				continue
+			}
 			if d.Accepted != nil {
 				if ok, _ := d.Accepted(s, o); !ok {
 					continue
@@ -403,7 +409,11 @@ func printedIn(table map[string]JudgmentType, s *Snapshot, o Open) []Decision {
 // Answerable is the invariant of section 5: every decision printed for an open
 // judgment is accepted by its verb's guard in the present state. A violation
 // is a decision the inbox would print that its verb would refuse; the row or
-// its condition is wrong, and the machine cannot be left offering it.
+// its condition is wrong, and the machine cannot be left offering it. It holds
+// the decisions Printed prints, so a decision DROPPING refuses is left out of
+// both.
+//
+// Follows dropcond in tla/SprintEvents.tla (errata 3, H8).
 func Answerable(s *Snapshot, open []Open) []Violation { return answerableIn(Judgments, s, open) }
 
 func answerableIn(table map[string]JudgmentType, s *Snapshot, open []Open) []Violation {
@@ -434,6 +444,103 @@ func answerableIn(table map[string]JudgmentType, s *Snapshot, open []Open) []Vio
 		}
 	}
 	return out
+}
+
+// The DROPPING clause of Printed and Answerable (errata 3 to version 2.1, H8,
+// as amended at 04:35): every verb that changes a card of a stream being
+// dropped or removed is refused DROPPING (section 3), so no decision that
+// makes one is printed while its stream is. Follows dropcond in
+// tla/SprintEvents.tla (errata 3, H8), whose verbs are drop, rework, release,
+// land, ack of a dropped, missing or refused judgment, and add n while n's
+// stream is being dropped. This package has more verbs that change a card
+// than the model: land is merge here (MergeStep), and accept, return, ask,
+// rank, resume and add --before change a card of the stream they act on as
+// well, so they are left out the same way (the errata's "every verb DROPPING
+// refuses"). An ack changes a card only where it waives or clears: the two
+// blocked judgments (it waives the need) and "the machine could not move a
+// card" (it clears refused); the ack of any other judgment closes a note
+// alone and is printed. The decisions of a verb in parts stopped before its
+// end are that op's own (its parts are not refused), and a sprint-level
+// decision (add when the sprint is done) names no stream.
+
+// changesACard are the verbs whose decisions change a card of the stream they
+// act on: DROPPING refuses each while that stream is being dropped.
+var changesACard = map[string]bool{
+	"release": true, "add": true, "drop": true, "rework": true, "ask": true,
+	"accept": true, "return": true, "merge": true, "rank": true, "resume": true,
+}
+
+// ackChangesACard are the judgments whose ack changes their card: it waives a
+// dropped or missing need, or clears the card's refused field.
+var ackChangesACard = map[string]bool{NBlocked: true, NMissingNeed: true, typeCouldNotMove: true}
+
+// frozenDecision says DROPPING refuses the decision d of the open judgment o
+// of the row: its verb changes a card, and a stream it changes a card of is
+// being dropped.
+//
+// Follows dropcond in tla/SprintEvents.tla (errata 3, H8).
+func frozenDecision(s *Snapshot, row JudgmentType, o Open, d Decision) bool {
+	if !changesACard[d.Verb] && !(d.Verb == "ack" && ackChangesACard[row.Type]) {
+		return false
+	}
+	for _, stream := range decisionStreams(s, row, o, d) {
+		if streamDropping(s, stream) {
+			return true
+		}
+	}
+	return false
+}
+
+// decisionStreams are the streams whose cards the decision d of o changes:
+// for rank, the stream of the card a cross stop needs; for add <n>, the
+// waiter's (Add creates n in it); for a stopped stream or a stream's
+// lateness, the stream; for a judgment on a card, the stream of its primary.
+// The op's own decisions and a sprint's name none. Reads the primaries named,
+// by id (see the conditions' comment).
+func decisionStreams(s *Snapshot, row JudgmentType, o Open, d Decision) []string {
+	n := o.Note
+	switch {
+	case row.Subject == subjOp, n.SprintLevel:
+		return nil
+	case d.Verb == "rank":
+		if c := placedPrimary(s, n.Other); c != nil {
+			return []string{c.Row}
+		}
+		return streamList(n.OtherStream)
+	case n.StreamLevel:
+		return streamList(n.Stream)
+	}
+	if c := placedPrimary(s, primaryOfCard(o.Subject())); c != nil {
+		return []string{c.Row}
+	}
+	return streamList(n.Stream)
+}
+
+// streamList is the stream as a list, none when it is "".
+func streamList(stream string) []string {
+	if stream == "" {
+		return nil
+	}
+	return []string{stream}
+}
+
+// streamDropping says the stream is being dropped or removed ({p}dropping@e):
+// a mark in the snapshot's Dropping, or in the dropping marks a read plan
+// asked for. A snapshot loaded from a read plan that did not ask for the marks
+// says no stream is dropping: the read plan for the inbox (IT22) has to read
+// the marks of the streams of the judgments it prints, as it reads the cards
+// by id the conditions name.
+func streamDropping(s *Snapshot, stream string) bool {
+	if s == nil || stream == "" {
+		return false
+	}
+	if s.Dropping[stream] != "" {
+		return true
+	}
+	if pos := posOf(s); pos != nil && pos.askedDropping {
+		return pos.dropping[stream]
+	}
+	return false
 }
 
 // stalledDecisions are the decisions a stalled card's place allows that its
