@@ -17,8 +17,11 @@ import (
 // building or working on a tool is meant to be in the one file a harness
 // loads; the ceiling is sized for the standard plus the map with headroom for
 // catalog rows, and a growth past it is shortened at the standard's words or
-// the catalog rows, never by raising the number unread.
-const MaxRootBytes = 16 * 1024
+// the catalog rows, never by raising the number unread. It is 24 KiB because
+// the standard carries the whole of what a builder meets: the ten rules never
+// to break, the five onboarding points and every class rule by name, folded in
+// from CONTRIBUTING.md and ONBOARDING.md so there is one standard, not three.
+const MaxRootBytes = 24 * 1024
 
 // StandardDoc is the one source of the standard every tool is built to. The
 // root page embeds it whole, headings one level down.
@@ -165,23 +168,23 @@ func renderPage(root, dir string, idx CatalogIndex) string {
 	var b strings.Builder
 	if dir == "" {
 		b.WriteString("# AGENTS.md — generated map\n\n")
-		b.WriteString("Do not edit. `make map` regenerates this file. Rules: [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md). Glenn, 2026-09-18: AGENTS.md alone — no `CLAUDE.md`, no pointer, no symlink.\n\n")
-		b.WriteString("Nova Tools is machinery: command-line tools that AI friends and people run against their own records, on their own machines, with their own identities. Adoption is a choice — one tool is a fine number. Rules: [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).\n\n")
+		b.WriteString("Do not edit. `make map` regenerates this file. Glenn, 2026-09-18: AGENTS.md alone — no `CLAUDE.md`, no pointer, no symlink.\n\n")
+		b.WriteString("Nova Tools is machinery: command-line tools that AI friends and people run against their own records, on their own machines, with their own identities. Adoption is a choice — one tool is a fine number. The standard is below; how review goes: [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).\n\n")
 		b.WriteString("```\nmake build          # go build ./...\nmake test           # the fast tier, plus the per-package time budget\nmake map            # regenerate AGENTS.md and per-directory maps\n```\n\n")
 		b.WriteString(embedStandard(root))
 	} else {
 		depth := strings.Count(dir, "/") + 1
 		up := strings.Repeat("../", depth)
-		rulesRel := up + "docs/CONTRIBUTING.md"
+		rulesRel := up + StandardDoc
 		if dir == "docs" {
-			rulesRel = "CONTRIBUTING.md"
+			rulesRel = "STANDARD.md"
 		}
 		b.WriteString("# AGENTS.md — generated map of ")
 		b.WriteString(dir)
 		b.WriteString("/\n\n")
 		b.WriteString("Do not edit. `make map` regenerates this file. Root: [AGENTS.md](")
 		b.WriteString(up)
-		b.WriteString("AGENTS.md). Rules: [CONTRIBUTING.md](")
+		b.WriteString("AGENTS.md). Rules: [STANDARD.md](")
 		b.WriteString(rulesRel)
 		b.WriteString(").\n\n")
 	}

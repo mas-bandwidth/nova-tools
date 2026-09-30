@@ -41,8 +41,11 @@ func TestRootMapIsAFourColumnTable(t *testing.T) {
 	if !strings.Contains(body, "| dir | purpose | guard | command |") {
 		t.Fatalf("%s is not a directory → purpose → guard → command map", RootAgents)
 	}
+	if !strings.Contains(body, "docs/STANDARD.md") {
+		t.Errorf("%s does not point at the standard in docs/STANDARD.md", RootAgents)
+	}
 	if !strings.Contains(body, "docs/CONTRIBUTING.md") {
-		t.Errorf("%s does not point at the prose rules in docs/CONTRIBUTING.md", RootAgents)
+		t.Errorf("%s does not point at how review goes in docs/CONTRIBUTING.md", RootAgents)
 	}
 }
 
@@ -187,7 +190,7 @@ func TestRootMapCarriesTheWholeStandard(t *testing.T) {
 			continue
 		}
 		if !strings.Contains(body, line) {
-			t.Errorf("%s does not carry this line of %s: %q; run: make map", RootAgents, StandardDoc, line)
+			t.Errorf("%s as rendered does not carry this line of %s: %q; the embed in agentsmap.go drops this line (embedStandard)", RootAgents, StandardDoc, line)
 		}
 	}
 }
