@@ -88,3 +88,12 @@ func TestFakeRunnerPublishesAWholeFileWriteAtomically(t *testing.T) {
 		t.Fatalf("the published file is %q, want the body", got)
 	}
 }
+
+func readTestFile(t *testing.T, path string) string {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading %s: %v", path, err)
+	}
+	return string(raw)
+}

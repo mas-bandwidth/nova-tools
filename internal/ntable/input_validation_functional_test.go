@@ -7,12 +7,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"math/rand/v2"
-	"reflect"
 	"testing"
 	"unicode/utf8"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestBindRequiresAnActualJSONArray(t *testing.T) {
@@ -23,21 +24,15 @@ func TestBindRequiresAnActualJSONArray(t *testing.T) {
 			_, c := live(t)
 			ctx := context.Background()
 			cols, _ := ntable.ParseColumns("a")
-			if err := ntable.Create(ctx, c, ntable.Table{Name: "t", Columns: cols}, now); err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, ntable.Create(ctx, c, ntable.Table{Name: "t", Columns: cols}, now))
 			if _, err := ntable.RowAdd(ctx, c, "t", "keep", ntable.RowSpec{}); err != nil {
 				t.Fatal(err)
 			}
 			before := storeImage(t, c)
 			body := `{"fields":{"order":"a","col:a":"count:sum:0:","footer":""},"rows":` + rows + `}`
 			got, err := c.FCall(ctx, ntable.FnBind, nil, "t", body, `{"epoch":"0"}`).Slice()
-			if err != nil || len(got) < 2 || got[0] != "REFUSED" || got[1] != "ROW" {
-				t.Errorf("want ROW refusal, got %v %v", got, err)
-			}
-			if !reflect.DeepEqual(before, storeImage(t, c)) {
-				t.Fatal("invalid row list changed store")
-			}
+			assert.True(t, replyOpens(got, err, "REFUSED", "ROW"), "want ROW refusal, got %v %v", got, err)
+			require.Equal(t, before, storeImage(t, c), "invalid row list changed store")
 		})
 	}
 	// Empty arrays remain the way to declare a table without rows. JSON field
@@ -48,9 +43,7 @@ func TestBindRequiresAnActualJSONArray(t *testing.T) {
 			_, c := live(t)
 			body := `{"fields":{"order":"a","col:a":"count:sum:0:","footer":""},` + tail + `}`
 			got, err := c.FCall(context.Background(), ntable.FnBind, nil, "t", body, `{"epoch":"0"}`).Slice()
-			if err != nil || len(got) == 0 || got[0] != "OK" {
-				t.Fatalf("empty array refused: %v %v", got, err)
-			}
+			require.True(t, replyOpens(got, err, "OK"), "empty array refused: %v %v", got, err)
 		})
 	}
 }
@@ -64,18 +57,13 @@ func TestInvalidUTF8RowIdentityRefusesBeforeJSONOrMutation(t *testing.T) {
 			ctx := context.Background()
 			cols, _ := ntable.ParseColumns("a")
 			tab := ntable.Table{Name: "t", Columns: cols}
-			if err := ntable.Create(ctx, c, tab, now); err != nil {
-				t.Fatal(err)
-			}
+			newTable(t, c, tab)
 			// This is the real, distinct name encoding/json would silently substitute.
 			var replacement string
 			encoded, _ := json.Marshal(bad)
-			if err := json.Unmarshal(encoded, &replacement); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := ntable.RowsAdd(ctx, c, "t", []string{replacement, "last"}); err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, json.Unmarshal(encoded, &replacement))
+			_, err := ntable.RowsAdd(ctx, c, "t", []string{replacement, "last"})
+			require.NoError(t, err)
 			before := storeImage(t, c)
 			calls := map[string]func() error{
 				"row add":   func() error { _, err := ntable.RowAdd(ctx, c, "t", bad, ntable.RowSpec{}); return err },
@@ -100,12 +88,8 @@ func TestInvalidUTF8RowIdentityRefusesBeforeJSONOrMutation(t *testing.T) {
 				},
 			}
 			for name, call := range calls {
-				if err := call(); err == nil {
-					t.Errorf("%s accepted invalid UTF-8", name)
-				}
-				if !reflect.DeepEqual(before, storeImage(t, c)) {
-					t.Fatalf("%s changed state", name)
-				}
+				assert.Error(t, call(), "%s accepted invalid UTF-8", name)
+				require.Equal(t, before, storeImage(t, c), "%s changed state", name)
 			}
 		})
 	}
@@ -129,9 +113,7 @@ func TestRawAndGoRowKeysAgreeOnBytes(t *testing.T) {
 	_, c := live(t)
 	ctx := context.Background()
 	cols, _ := ntable.ParseColumns("a")
-	if err := ntable.Create(ctx, c, ntable.Table{Name: "t", Columns: cols}, now); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, ntable.Create(ctx, c, ntable.Table{Name: "t", Columns: cols}, now))
 	cases := []string{"", "日本語", "é", "\u0080", "\u07ff", "\u0800", "\ud7ff", "\ue000", "\uffff", "\U00010000", "\U0010ffff", "�", "\x00", "\x7f", "\xc2", "\xe0\xa0", "\xf0\x90\x80", "\xed\xa0\x80", "\xf4\x90\x80\x80"}
 	r := rand.New(rand.NewPCG(42, 19))
 	for i := 0; i < 200; i++ {
@@ -153,13 +135,9 @@ func TestRawAndGoRowKeysAgreeOnBytes(t *testing.T) {
 		}
 		revision := c.HGet(ctx, ntable.RevisionKey("t"), "n").Val()
 		got, err := c.FCall(ctx, ntable.FnRowAdd, nil, "t", key, `{}`, `{"epoch":"0"}`).Slice()
-		if err != nil {
-			t.Fatalf("raw row key %q: %v", key, err)
-		}
+		require.NoError(t, err, "raw row key %q: %v", key, err)
 		accepted := len(got) > 0 && got[0] == "ROW"
-		if accepted != valid {
-			t.Fatalf("raw row key %q: %v want accepted=%v", key, got, valid)
-		}
+		require.Equal(t, valid, accepted, "raw row key %q: %v want accepted=%v", key, got, valid)
 		if !valid && (c.HGet(ctx, ntable.RevisionKey("t"), "n").Val() != revision || len(got) < 2 || got[1] != "ROW") {
 			t.Fatalf("invalid %q did not refuse cleanly: %v", key, got)
 		}

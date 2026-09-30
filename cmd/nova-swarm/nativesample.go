@@ -18,10 +18,9 @@ import (
 // in the deadline's way: a read is given 5 seconds whatever the interval, no sample starts
 // while one is unanswered, a read still unanswered at its limit is abandoned and counted as
 // a failed read, and the deadline and a TERM from outside end the card at their own instants
-// whatever a read is doing." The pool route samples SYNCHRONOUSLY inside its select
-// (internal/swarm/supervise.go), and there a slow read is a stretch of time in which the
-// deadline case cannot run -- the very fault the walWait comment in internal/swarm/opencode.go
-// records, where two slow queries spent ~40s in one sample. On this route the sample runs
+// whatever a read is doing." A sample SYNCHRONOUSLY inside the select would make a slow
+// read a stretch of time in which the deadline case cannot run -- the very fault the walWait
+// comment in internal/swarm/opencode.go records, where two slow queries spent ~40s in one sample. On this route the sample runs
 // beside the select and never inside it, so the longest read this tool can suffer costs the
 // deadline nothing.
 //

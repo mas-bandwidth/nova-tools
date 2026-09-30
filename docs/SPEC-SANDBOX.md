@@ -317,7 +317,7 @@ The test requirements are listed under **Tests this spec demands**.
 11. **This tool has no way to run a command unwalled.** There is no
     `--no-sandbox`, no environment variable and no config file: a
     `nova-sandbox --no-sandbox` is `SANDBOX REFUSED reason=no_command:
-    --no-sandbox is not a flag this tool has` at exit 125, like any other flag
+    unknown flag --no-sandbox; run: nova-sandbox help` at exit 125, like any other flag
     the tool does not have. A wall this tool cannot build is a refusal (rule 1),
     and it stays a refusal — a tool whose whole reason is containment does not
     ship the switch that turns containment off.
@@ -2005,8 +2005,8 @@ One per rule:
     than a probe that "could not read" a file that was never there.
 11. `--no-sandbox` is **not a flag this tool has**: the test runs
     `nova-sandbox --no-sandbox -- <command>` and asserts the existing refusal,
-    `SANDBOX REFUSED reason=no_command: --no-sandbox is not a flag this tool
-    has; run: nova-sandbox help`, at exit 125, with the command not run. No
+    `SANDBOX REFUSED reason=no_command: unknown flag --no-sandbox; run:
+    nova-sandbox help`, at exit 125, with the command not run. No
     environment variable and no file can turn the wall off either — the test
     sets every plausible name and the tool still sandboxes.
 12. A wrapped command exiting 3 gives exit 3; one killed by `SIGKILL` gives

@@ -349,6 +349,14 @@ SELFTALK RULEDOC ./pages/RULES.md: rule documents: a finding here is a self-verd
 SELFTALK DATED n=1 files=2
 SELFTALK FAIL files=2 claims=2 standing=1 installations=2 dated=1 shown=3
 SELFTALK NOTE catches known SHAPES only: register, irony and quoted-specimen context are invisible to grammar, and a quoted verdict is a true positive on the grammar and a false one on the meaning. A green clears the known shapes, never the file.
+
+$ nova-self-talk --skip RULES.md ./pages/RULES.md ./pages/journal.md   # Stderr: whole
+SELFTALK SKIP ./pages/RULES.md (--skip)
+! SELFTALK FAIL ./pages/journal.md:4: STANDING: I cannot check my own work, so the second read went to someone else.
+! SELFTALK FAIL ./pages/journal.md:10: INSTALLATION RANKING: It is the worst habit I have, and the reason the checklist exists at all.
+SELFTALK DATED n=1 files=1
+SELFTALK FAIL files=1 claims=2 standing=1 installations=1 dated=1 shown=2
+SELFTALK NOTE catches known SHAPES only: register, irony and quoted-specimen context are invisible to grammar, and a quoted verdict is a true positive on the grammar and a false one on the meaning. A green clears the known shapes, never the file.
 ```
 
 ## nova-fuse
@@ -435,8 +443,8 @@ MEMORY NOTE a hit in a dated log class is evidence the event was recorded, not t
 
 Fixture: owned directories under `t.TempDir()` and fake harnesses. The transcript
 comparators invoke the dispatcher with fixture paths and compare its output with
-the examples below. The [quickstart guide](nova-swarm-quickstart.md) includes a
-complete local batch fixture using a synthetic runner.
+the examples below. The [quickstart guide](nova-swarm-quickstart.md) shows a
+`native` run and a sprint member.
 
 ### The budget word on the native route
 
@@ -691,6 +699,19 @@ MIGRATION version=3 file=0003_friend.sql lines=13
 MIGRATION version=4 file=0004_fleet.sql lines=14
 MIGRATION version=5 file=0005_sprint.sql lines=12
 CONFIG MIGRATE print=5 pg=-
+
+$ nova-config machine add -h
+usage: nova-config machine add [flags]
+from `nova-config help`:
+  nova-config machine add -h
+flags:
+  --as <string>  the friend making the change (env NOVA_FRIEND); every write records it in config.history
+  --pg <string>  Postgres DSN postgres://user@host:port/db with no password (env NOVA_PG_DSN); the password comes from the variable NOVA_PG_PASSWORD_ENV names
+  --runners <string>  how many CI runners it hosts; 0 (the default) hosts none
+  --seat <string>  its nova-secrets seat: the identity it opens secrets as, one <seat>.yaml in the store
+  --slots <string>  how many cards it may run at once, the machine ceiling (machine:<m>:ceiling); 0 runs none
+  --user <string>  the login the plays and seals use on it (ssh <user>@<name>)
+exit codes: 0 done, 1 refused, 2 usage
 ```
 
 `kinds` is one line per kind: its table under schema `config`, its fields in
@@ -721,8 +742,8 @@ $ nova-cairn append --store ./cairns --session s1 --entry e1 --text "the words t
 APPEND OK session=s1 entry=e1 source=bench-a/session-7#L3 persisted=true published=false publish=manual duplicate=false stamp=2026-09-17T12:05:00Z
 
 $ nova-cairn index --store ./cairns
+INDEX OK sessions=1 entries=1
 INDEX ENTRY session=s1 entry=e1 stamp=2026-09-17T12:05:00Z bytes=17 source=bench-a/session-7#L3
-INDEX COVERAGE sessions=1 entries=1 shown=1
 
 $ nova-cairn receipt --store ./cairns --session s1 --entry e1
 RECEIPT OK session=s1 entry=e1 stamp=2026-09-17T12:05:00Z bytes=17 source=bench-a/session-7#L3 persisted=true published=false publish=manual
@@ -916,3 +937,47 @@ MOVED s1-1 review -> merging queued (ok from reader-a, reader-b)
 ACCEPT OK moved=1 refused=0 notes=2 op=accept-t26-1
 0/1 0.0% -> ETA  machine: running
 ```
+
+## nova-work
+
+Run by `cmd/nova-work/firstrun_test.go` against a recorded conversation with
+GitHub (`internal/workgh/testdata/reliable`: one public repository of twenty
+issues, read at fifteen a page), so no network is used. `$ORG` and `$REPO` are
+yours: the test stands them for the recording's organization and repository,
+and the counts below are that repository's. The first line of every run names
+the gh it found; yours is the gh on your PATH, and here it is `./gh`, a stand-in
+that answers each call from the recording. The `sha256` is the tree file's, and
+the tree records the instant it was fetched, so it differs on every real run;
+the test fixes its clock so the value below reproduces. `./tree.lisp` is a file
+in a directory of the test's own. The usage banner's `example:` block is this
+same sitting, line for line.
+
+Requires: a gh login that can read the repository (`gh auth status`); import
+and verify read GitHub through gh and write nothing there.
+
+### First run
+
+```text
+$ nova-work import --org $ORG --repo $ORG/$REPO --page-size 15 --dry-run
+GH OK path=./gh
+PLAN OK org=$ORG repos=1 issues=20 est_calls=3 max_calls=1500 page_size=15
+REPO OK repo=$ORG/$REPO issues=20 comments=74 references=4 linked_prs=2 calls=2
+IMPORT OK org=$ORG out=- repos=1 issues=20 comments=74 references=4 linked_prs=2 bytes=65206 sha256=492ee7e0aaeb987b3c8935a01dd5194bb8826f9742d20575d24d090d04fb4a71 calls=3 points=3 rest=0 seconds=0.0 dry_run=true
+
+$ nova-work import --org $ORG --repo $ORG/$REPO --page-size 15 --out ./tree.lisp
+GH OK path=./gh
+PLAN OK org=$ORG repos=1 issues=20 est_calls=3 max_calls=1500 page_size=15
+REPO OK repo=$ORG/$REPO issues=20 comments=74 references=4 linked_prs=2 calls=2
+IMPORT OK org=$ORG out=./tree.lisp repos=1 issues=20 comments=74 references=4 linked_prs=2 bytes=65206 sha256=492ee7e0aaeb987b3c8935a01dd5194bb8826f9742d20575d24d090d04fb4a71 calls=3 points=3 rest=0 seconds=0.0 dry_run=false
+
+$ nova-work verify --tree ./tree.lisp --repo $ORG/$REPO --page-size 15
+GH OK path=./gh
+VERIFY OK tree=./tree.lisp sha256=492ee7e0aaeb987b3c8935a01dd5194bb8826f9742d20575d24d090d04fb4a71 repos=1 issues=20 comments=74 calls=3 points=3 rest=0 seconds=0.0 differences=0
+```
+
+The dry run is the plan and nothing else: `est_calls` is the calls the import
+will spend, checked against `max_calls` before any issue is read, and `out=-`
+says no file was written. The import prints the same plan, one `REPO OK` per
+repository, and the `sha256` of the file it wrote; verify names the same
+`sha256` and prints one `MISSING`, `EXTRA` or `DRIFT` line per difference above
+its summary. `differences=0` is the proof the tree holds what GitHub holds.

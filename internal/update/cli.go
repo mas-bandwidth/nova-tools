@@ -19,6 +19,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/release"
+	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
 // Environment supplies deterministic clock/network seams. Nil values use the
@@ -41,6 +42,7 @@ type options struct {
 type kindFlags []string
 
 func (k *kindFlags) String() string { return strings.Join(*k, ",") }
+func (k *kindFlags) Get() any       { return k }
 func (k *kindFlags) Set(v string) error {
 	if !kindValid(v) {
 		return fmt.Errorf("unknown kind %s (use harness,engine,model,tool,pin)", v)
@@ -59,14 +61,13 @@ func refusal(w io.Writer, token string, err error) int {
 	return 2
 }
 
-// updateVerbs and versionVerbs are SPEC-UPDATE's verbs block, byte for byte,
+// updateVerbs is SPEC-UPDATE's verbs block, byte for byte,
 // including its placeholder spellings: <k> not <kind>, <v> not <version>,
 // <who,who> not <recipients>, <r> and <b> for the remote and the branch, and the
 // report line's alternation showing that --send is the one that needs a bus. A
 // change here belongs in the spec first, and TestHelpIsTheSpecsVerbsBlock reads
-// the spec file and compares the two. nova-version's moved line is SPEC-
-// VERSION's own block, byte for byte, which the spec carried before the verb
-// existed (#2288).
+// the spec file and compares the two. nova-version's usage lines are its
+// verbs' own (versiontool.go).
 const updateVerbs = `nova-update check --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
 nova-update status --file <path> [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
 nova-update apply --file <path> <name> [--version <v>] [--dry-run] [--timeout <d>]
@@ -84,13 +85,20 @@ nova-update help`
 // named; the spec carries the same shape once (SPEC-UPDATE rule 2).
 const manifestShape = "one line per tool, six tab-separated fields name kind installed latest apply owner, written by hand"
 
-const versionVerbs = `nova-version moved --from <sha> --to <sha> --repo <dir> --out <path>
-nova-version snapshot --file <manifest: ` + manifestShape + `>
-nova-version snapshot --bin <dir> --out <file.tsv> [--timeout <d>] [--budget <d>]
-nova-version diff --from <a.tsv> --to <b.tsv>
-nova-version report --file <manifest: ` + manifestShape + `> [--host <label>] [--snapshot <path>] [--draft --as <friend> --to <who,who>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]
-nova-version send --file <manifest: ` + manifestShape + `> --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b> [--snapshot <path>] [--host <label>]
-nova-version help`
+// updateOpening opens the banner with its three answers:
+// what the tool does (line 1, the README's sentence), how it works, and the
+// first run (ONBOARDING.md point 6).
+const (
+	updateOpening = `nova-update: compare installed tools with their latest releases, and update one when asked
+
+how it works: the manifest is a tab-separated file you write, one tool per line:
+how to read its installed version, where its latest release is published, and
+the command that installs it. check and report compare the two; apply runs one
+named entry's command and reads the version again, nothing else. The release
+verbs build, publish and install nova-tools' own releases.
+first run: from a nova-tools checkout, the lines under example: read the
+included manifest; they install nothing.`
+)
 
 // helpText is what help prints, as a string: the text verbflag quotes a verb's
 // lines from.
@@ -104,28 +112,49 @@ func help(name string, w io.Writer) {
 	// SPEC-UPDATE's "The verbs" block says these lines are what help prints,
 	// BYTE FOR BYTE, and names one string in the binary as the reason the spec
 	// and the help cannot drift apart. This is that string.
-	if name == "nova-version" {
-		fmt.Fprintln(w, versionVerbs)
-	} else {
-		fmt.Fprintln(w, updateVerbs)
-	}
+	fmt.Fprintf(w, "%s\n\n", updateOpening)
+	fmt.Fprintln(w, updateVerbs)
 	fmt.Fprintf(w, "%s version (or --version)\nDefaults: --max 20 (0 = all), --timeout 5s, --budget 60s; snapshot's --timeout is 30s, because the first run of a newly installed binary is assessed by the platform and that cost is charged to the deadline. Repeat --kind to select kinds.\n", name)
-	note := "Report needs no bus or network. "
-	if name != "nova-version" {
-		note += "Updates require an explicit apply name. status is check with every entry shown, current ones too. apply --dry-run prints the plan and writes nothing. "
-	}
+	note := "Report needs no bus or network. Updates require an explicit apply name. status is check with every entry shown, current ones too. apply --dry-run prints the plan and writes nothing. "
 	note += "Cross-process delivery recovery needs --snapshot; without it, each send is a new intention. Do not prepare again while pending; retry the saved artifact. A snapshot uses a sibling .lock file for a kernel lock; its presence never means a process is running."
 	fmt.Fprintln(w, note)
 	fmt.Fprintf(w, "\nLocals: latest=local:<path> runs that binary (or argv) on this host to read the version; e.g., local:/usr/local/bin/nova-update or local:go version. The installed column can be a version string (v1.2.3), a single command name found on PATH, or a full argv.\n")
-	applyDry := ""
-	if name == "nova-update" {
-		applyDry = " (or an apply --dry-run that printed its plan)"
-	}
-	fmt.Fprintf(w, "\nexit codes: 0 every entry current, an apply that left the box on the target"+applyDry+", a report whose every entry answered; 1 the tool said NO (anything STALE, NEWER, DIFFERENT or UNKNOWN, an apply whose after is not the target, a report with an UNKNOWN or a send that was refused or unconfirmed); 2 could not run (a refusal naming the remedy).\n\nFrom a nova-tools checkout:\nexample:\n  %s report --file cmd/%s/testdata/example.tsv\n", name, name)
-	if name == "nova-update" {
-		fmt.Fprintf(w, "  %s status --file cmd/%s/testdata/example.tsv\n  %s apply --file cmd/%s/testdata/dry-run.tsv go --dry-run\n", name, name, name, name)
-	}
+	fmt.Fprint(w, oneBinary(name))
+	fmt.Fprint(w, manifestHelp(name))
+	fmt.Fprintf(w, "\n%s\n\nFrom a nova-tools checkout:\nexample:\n  %s report --file cmd/%s/testdata/example.tsv\n", exitCodes(name), name, name)
+	fmt.Fprintf(w, "  %s status --file cmd/%s/testdata/example.tsv\n  %s apply --file cmd/%s/testdata/dry-run.tsv go --dry-run\n", name, name, name, name)
 	fmt.Fprintf(w, "  %s version\n", name)
+}
+
+// oneBinary says, in nova-update's banner, that nova-update and nova-version are one
+// binary and what nova-update's verbs are for, so a reader who finds both on a PATH knows
+// which to reach for; nova-version's banner says the same in its how text (versiontool.go).
+func oneBinary(name string) string {
+	// The line opens with "Both", not the tool's name: a banner line that opens
+	// with the name is read as a usage line naming a verb ("and").
+	const same = "Both nova-update and nova-version are ONE binary under two names: the same build, the same manifest reader and the same report (report prints the same thing under either name); only the verbs each name offers differ. "
+	return "\n" + same + "Use nova-update to ASK whether what you depend on is current and to CHANGE it: check and status (installed against latest, one line per finding; status shows the current ones too), apply (install the one entry you name, or print the plan with --dry-run), watch and adoption (the coordinator's adoption pass and its count) and release (cut, build, install and adopt a nova-tools release). nova-version's snapshot, diff, moved and send are the other name's; report is here too, and it reads only what is installed.\n"
+}
+
+// manifestHelp is the manifest format in six lines, under the `report` example line so
+// `report -h` quotes it (verbflag.Excerpt reads a verb's lines with the lines indented
+// beneath them): the rule-2 file --file names, the same for both names.
+func manifestHelp(name string) string {
+	return "\nTHE MANIFEST is the file --file names, written by hand, the same for both names:\n" +
+		"  " + name + " report --file versions.tsv     the six lines that say what versions.tsv holds:\n" +
+		"      1. line 1 is the header, byte for byte: " + strings.ReplaceAll(Header, "\t", "<TAB>") + "; every other line is six fields, one tab between, none empty; a line starting # is a comment\n" +
+		"      2. kind is harness, engine, model, tool or pin; name is unique in the file; owner is who answers for it\n" +
+		"      3. installed is a version (v1.2.3), a command name on PATH, or an argv whose first line of output carries the version (single spaces, no quotes)\n" +
+		"      4. latest is github:<owner>/<repo>, npm:<package>, brew:<formula>, ollama:<model>:<tag> (kind model), local:<argv> (a pin takes this only), or - for not known yet\n" +
+		"      5. apply is the argv that updates it, or none; a run prints EVERY problem of the file at once, each with its line, never the first alone\n" +
+		"      6. example: go<TAB>tool<TAB>go version<TAB>local:go version<TAB>none<TAB>me\n"
+}
+
+// exitCodes is nova-update's exit-code paragraph, for the verbs it has (check, apply,
+// report); nova-version's is its Tool's ExitTable (versiontool.go), and neither names a
+// verb of the other.
+func exitCodes(name string) string {
+	return "exit codes: 0 every entry current, an apply that left the box on the target (or an apply --dry-run that printed its plan), a report whose every entry answered; 1 the tool said NO (anything STALE, NEWER, DIFFERENT or UNKNOWN, an apply whose after is not the target, a report with an UNKNOWN or a send that was refused or unconfirmed); 2 could not run (a refusal naming the remedy)."
 }
 func interspersed(f *flag.FlagSet, args []string) []string {
 	var flags, positionals []string
@@ -163,16 +192,16 @@ func Main(name string, args []string, stamp string, out, errs io.Writer) int {
 	return Run(name, args, stamp, out, errs, Environment{})
 }
 func Run(name string, args []string, stamp string, out, errs io.Writer, env Environment) (rc int) {
-	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
-	// before any manifest, bus or store is read (the CLI style's rule (b), #4505).
-	defer verbflag.Recover(out, name, helpText(name), &rc)
 	if env.Now == nil {
 		env.Now = time.Now
 	}
-	tool := "UPDATE"
 	if name == "nova-version" {
-		tool = "VERSION"
+		return VersionTool(stamp, env).Run(args, nil, out, errs)
 	}
+	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
+	// before any manifest, bus or store is read (the CLI style's rule (b), #4505).
+	defer verbflag.Recover(out, name, helpText(name), &rc)
+	tool := "UPDATE"
 	if len(args) == 0 {
 		return refusal(errs, tool, fmt.Errorf("a verb is required (run: %s help)", name))
 	}
@@ -196,53 +225,20 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 		fmt.Fprintln(out, buildinfo.Line(name, stamp))
 		return 0
 	}
-	if verb == "snapshot" {
-		if name != "nova-version" {
-			return refusal(errs, tool, fmt.Errorf("unknown verb (run %s help)", name))
-		}
-		return snapshotVerb(name, args, out, errs, env)
-	}
-	if verb == "diff" {
-		if name != "nova-version" {
-			return refusal(errs, tool, fmt.Errorf("unknown verb (run %s help)", name))
-		}
-		return diffVerb(name, args, out, errs)
-	}
-	// `moved` writes the TOOLS MOVED note from two revisions' own builds
-	// (SPEC-VERSION; #2288). It is nova-version's, like snapshot and diff:
-	// the note compares revisions of the whole cmd/* set, which is the
-	// question this binary exists to answer.
-	if verb == "moved" {
-		if name != "nova-version" {
-			return refusal(errs, tool, fmt.Errorf("unknown verb (run %s help)", name))
-		}
-		return movedVerb(name, args, out, errs, env)
-	}
-	impliedSend := name == "nova-version" && verb == "send"
-	asked := verb // the verb as typed: send's help is send's, though it runs as report
-	if impliedSend {
-		verb = "report"
-	}
 	// `release` is the last mile -- cut, build, install, adopt -- and it is a
 	// verb of nova-update rather than a tool of its own because it is the same
 	// question this binary already answers (what is installed here, and is it
 	// what it should be) asked from the other end. internal/release holds it.
 	if verb == "release" {
-		if name != "nova-update" {
-			return refusal(errs, tool, fmt.Errorf("unknown verb (run %s help)", name))
-		}
 		// The stamp goes down with it: `release adopt` compares what THIS
 		// binary is against the release it is fanning out, because the
 		// install every machine runs is the one this host is holding.
 		return release.Main(name, args, stamp, out, errs)
 	}
 	if verb == "adoption" {
-		if name != "nova-update" {
-			return refusal(errs, tool, fmt.Errorf("unknown verb (run %s help)", name))
-		}
 		return adoptionVerb(name, args, stamp, out, errs)
 	}
-	if (name == "nova-version" && verb != "report") || (verb != "report" && verb != "check" && verb != "status" && verb != "apply" && verb != "watch") {
+	if verb != "report" && verb != "check" && verb != "status" && verb != "apply" && verb != "watch" {
 		return refusal(errs, tool, fmt.Errorf("unknown verb (run %s help)", name))
 	}
 	if verb == "watch" {
@@ -252,15 +248,8 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 	if verb == "check" {
 		token = "UPDATE"
 	}
-	// status is check's read with every entry's line shown, current ones included
-	// (SPEC-UPDATE rule 9): the same reads, the same exit, its own first token so a
-	// caller scanning for UPDATE never mistakes one for the other.
-	pfx := "UPDATE"
-	if verb == "status" {
-		pfx = "STATUS"
-	}
 	o := options{max: 20, timeout: 5 * time.Second, budget: 60 * time.Second}
-	f := flag.NewFlagSet(asked, flag.ContinueOnError)
+	f := flag.NewFlagSet(verb, flag.ContinueOnError)
 	f.SetOutput(io.Discard)
 	f.StringVar(&o.file, "file", "", "manifest")
 	f.DurationVar(&o.timeout, "timeout", o.timeout, "one read deadline")
@@ -276,13 +265,11 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 		f.StringVar(&o.host, "host", "", "execution bench label")
 		f.StringVar(&o.snapshot, "snapshot", "", "explicit state file")
 		f.BoolVar(&o.draft, "draft", false, "print note only")
-		f.BoolVar(&o.send, "send", impliedSend, "explicit delivery")
+		f.BoolVar(&o.send, "send", false, "explicit delivery")
 		for flagName, p := range map[string]*string{"as": &o.as, "to": &o.to, "bus": &o.bus, "remote": &o.remote, "branch": &o.branch} {
 			f.StringVar(p, flagName, "", flagName)
 		}
-		if name == "nova-update" {
-			f.StringVar(&o.store, "store", "", "fleet Redis host:port: read the bench beats")
-		}
+		f.StringVar(&o.store, "store", "", "fleet Redis host:port: read the bench beats")
 	}
 	if err := verbflag.Parse(f, interspersed(f, args)); err != nil {
 		// `<tool> <verb> --help` never lands here: verbflag.Parse raises that
@@ -290,10 +277,24 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 		// error; darwin dogfood, 2026-09-18).
 		return refusal(errs, token, fmt.Errorf("%s (run %s help)", err, name))
 	}
+	return checked(name, verb, token, o, f.Args(), out, errs, env)
+}
+
+// checked is a parsed check, apply or report: the flags' own rules, the
+// manifest read, and the verb run. nova-version's report and send reach it
+// through their verbs in versiontool.go with the flags already parsed.
+func checked(name, verb, token string, o options, positional []string, out, errs io.Writer, env Environment) int {
+	// status is check's read with every entry's line shown, current ones included
+	// (SPEC-UPDATE rule 9): the same reads, the same exit, its own first token so a
+	// caller scanning for UPDATE never mistakes one for the other.
+	pfx := "UPDATE"
+	if verb == "status" {
+		pfx = "STATUS"
+	}
 	// --store is the fleet read (#3880): every bench's nova-sprint build from
 	// its beat, so it takes no manifest, snapshot or note and never runs ssh.
 	if o.store != "" {
-		if o.file != "" || o.snapshot != "" || o.draft || o.send || o.host != "" || len(f.Args()) != 0 {
+		if o.file != "" || o.snapshot != "" || o.draft || o.send || o.host != "" || len(positional) != 0 {
 			return refusal(errs, token, fmt.Errorf("--store reads the bench beats and takes no --file, --snapshot, --host, --draft or --send (run report --file without --store for this box)"))
 		}
 		if o.timeout <= 0 {
@@ -325,7 +326,7 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 	if o.max < 0 || o.timeout <= 0 || o.budget <= 0 {
 		return refusal(errs, token, fmt.Errorf("invalid bound (use --max >= 0 and positive --timeout/--budget)"))
 	}
-	if (verb == "apply" && len(f.Args()) != 1) || (verb != "apply" && len(f.Args()) != 0) {
+	if (verb == "apply" && len(positional) != 1) || (verb != "apply" && len(positional) != 0) {
 		return refusal(errs, token, fmt.Errorf("%s requires %s (run %s help)", verb, map[bool]string{true: "exactly one entry name", false: "no positional arguments"}[verb == "apply"], name))
 	}
 	if o.draft && o.send {
@@ -357,7 +358,7 @@ func Run(name string, args []string, stamp string, out, errs io.Writer, env Envi
 		return refusal(errs, token, fmt.Errorf("%s: %w", o.file, err))
 	}
 	if verb == "apply" {
-		return apply(entries, f.Args()[0], o, out, errs, env)
+		return apply(entries, positional[0], o, out, errs, env)
 	}
 	selected := []Entry{}
 	for _, e := range entries {
@@ -610,36 +611,10 @@ var movedBudget = 60 * time.Second
 // deleted and one that appears is added; a rename is counted only when a commit
 // message or a MOVED file states it and the builds confirm it (rule 2); an
 // empty diff is three zeros, exit 0, never a refusal (rule 3).
-func movedVerb(name string, args []string, out, errs io.Writer, env Environment) int {
+func movedVerb(c *tool.Call, env Environment) *tool.Out {
 	started := env.Now()
-	fs := flag.NewFlagSet("moved", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	var from, to, repo, outPath string
-	timeout, budget := movedChildTimeout, movedBudget
-	fs.StringVar(&from, "from", "", "revision to compare from")
-	fs.StringVar(&to, "to", "", "revision to compare to")
-	fs.StringVar(&repo, "repo", "", "checkout holding both revisions")
-	fs.StringVar(&outPath, "out", "", "note to write")
-	fs.DurationVar(&timeout, "timeout", timeout, "one child's deadline")
-	fs.DurationVar(&budget, "budget", budget, "whole run deadline")
-	if err := verbflag.Parse(fs, interspersed(fs, args)); err != nil {
-		return refusal(errs, "MOVED", fmt.Errorf("%s (run %s help)", err, name))
-	}
-	var missing []string
-	for _, x := range []struct{ n, v string }{{"--from", from}, {"--to", to}, {"--repo", repo}, {"--out", outPath}} {
-		if x.v == "" {
-			missing = append(missing, x.n)
-		}
-	}
-	if len(missing) > 0 {
-		return refusal(errs, "MOVED", fmt.Errorf("missing %s; refusing to guess (supply each named flag; run: %s help)", strings.Join(missing, ", "), name))
-	}
-	if timeout <= 0 || budget <= 0 {
-		return refusal(errs, "MOVED", fmt.Errorf("invalid bound (use positive --timeout/--budget)"))
-	}
-	if len(fs.Args()) != 0 {
-		return refusal(errs, "MOVED", fmt.Errorf("moved takes no positional arguments (run %s help)", name))
-	}
+	from, to, repo, outPath := c.Str("from"), c.Str("to"), c.Str("repo"), c.Str("out")
+	timeout, budget := c.Dur("timeout"), c.Dur("budget")
 	// One deadline per child and one for the run: every git, every go build
 	// and every help hangs off both, through the same bounded process
 	// machinery -- internal/bounded's capture -- the rest of this package
@@ -673,11 +648,11 @@ func movedVerb(name string, args []string, out, errs io.Writer, env Environment)
 	}
 	fromSha, err := resolve(from)
 	if err != nil {
-		return refusal(errs, "MOVED", err)
+		return tool.Refuse(err.Error())
 	}
 	toSha, err := resolve(to)
 	if err != nil {
-		return refusal(errs, "MOVED", err)
+		return tool.Refuse(err.Error())
 	}
 	// A rename is stated, never inferred: the commits between the two
 	// revisions and a MOVED file at --to are the only sources, and a
@@ -692,7 +667,7 @@ func movedVerb(name string, args []string, out, errs io.Writer, env Environment)
 		}
 	}
 	if p := runChild([]string{"git", "-C", repo, "log", "--format=%B", fromSha + ".." + toSha}); p.Reason != "" {
-		return refusal(errs, "MOVED", fmt.Errorf("cannot read the commits between %s and %s in %s (%s)", fromSha, toSha, repo, oneline.Escape(p.Reason)))
+		return tool.Refuse(fmt.Sprintf("cannot read the commits between %s and %s in %s (%s)", fromSha, toSha, repo, oneline.Escape(p.Reason)))
 	} else {
 		readStated(p.Stdout)
 	}
@@ -705,7 +680,7 @@ func movedVerb(name string, args []string, out, errs io.Writer, env Environment)
 	// person wrote.
 	stage, err := os.MkdirTemp("", "nova-version-moved-")
 	if err != nil {
-		return refusal(errs, "MOVED", fmt.Errorf("cannot create a staging directory (%s)", oneline.Escape(err.Error())))
+		return tool.Refuse(fmt.Sprintf("cannot create a staging directory (%s)", oneline.Escape(err.Error())))
 	}
 	// The staging tree comes down by the names it went up with, through
 	// os.Remove alone: the removeall class rule allows no os.RemoveAll of a
@@ -736,6 +711,7 @@ func movedVerb(name string, args []string, out, errs io.Writer, env Environment)
 		}
 		// The worktree is git's own tree, so git takes it down; anything it
 		// leaves behind stays behind rather than being removed by hand.
+		// ignored: git takes its own worktree down (see the comment above); anything left stays in the scratch root
 		defer func() { _ = runChild([]string{"git", "-C", repo, "worktree", "remove", "--force", work}) }()
 		// The build directory is named for the revision, so the two builds
 		// cannot collide and the set each revision produced sits in one
@@ -749,8 +725,8 @@ func movedVerb(name string, args []string, out, errs io.Writer, env Environment)
 			return nil, fmt.Errorf("cannot build ./cmd/... at %s (%s) (repair the package at that revision)", rev, oneline.Escape(p.Reason))
 		}
 		inv := movedInv{}
-		for _, tool := range tools {
-			bin := filepath.Join(built, tool)
+		for _, cmd := range tools {
+			bin := filepath.Join(built, cmd)
 			staged = append(staged, bin)
 			p := runChild([]string{bin, "help"})
 			what := "it printed no help"
@@ -762,29 +738,29 @@ func movedVerb(name string, args []string, out, errs io.Writer, env Environment)
 				// bound was spent, so a spent budget is never reported as a
 				// slow binary.
 				if run.Err() != nil {
-					what = "the run's " + budget.String() + " budget was spent before " + tool + " was read"
+					what = "the run's " + budget.String() + " budget was spent before " + cmd + " was read"
 				} else if p.Reason == "timeout" {
 					what = "timeout after " + timeout.String()
 				}
 			}
 			if p.Reason != "" || strings.TrimSpace(p.Stdout) == "" {
 				// SPEC-VERSION rule 4: a cmd/* that builds but answers no
-				// help names the tool, the revision and the build to repair
+				// help names the cmd, the revision and the build to repair
 				// there.
-				return nil, fmt.Errorf("cannot read %s help at %s (%s) (repair the build there: go build ./cmd/%s, or raise --timeout)", tool, rev, what, tool)
+				return nil, fmt.Errorf("cannot read %s help at %s (%s) (repair the build there: go build ./cmd/%s, or raise --timeout)", cmd, rev, what, cmd)
 			}
-			inv[tool] = parseMovedHelp(tool, p.Stdout)
+			inv[cmd] = parseMovedHelp(cmd, p.Stdout)
 		}
 		return inv, nil
 	}
 	before, err := inventory(fromSha)
 	if err != nil {
-		return refusal(errs, "MOVED", err)
+		return tool.Refuse(err.Error())
 	}
 	after := before
 	if toSha != fromSha {
 		if after, err = inventory(toSha); err != nil {
-			return refusal(errs, "MOVED", err)
+			return tool.Refuse(err.Error())
 		}
 	}
 	entries, counts := diffMoved(before, after, stated)
@@ -794,14 +770,13 @@ func movedVerb(name string, args []string, out, errs io.Writer, env Environment)
 		fmt.Fprintln(&note, e)
 	}
 	if err := os.WriteFile(outPath, []byte(note.String()), 0o644); err != nil {
-		return refusal(errs, "MOVED", fmt.Errorf("cannot write --out %s (supply a writable --out path)", outPath))
+		return tool.Refuse(fmt.Sprintf("cannot write --out %s (supply a writable --out path)", outPath))
 	}
 	// The one line, every field named (SPEC-VERSION rule 3): added, deleted
 	// and renamed count tools, and verbs counts the (tool, verb) pairs the
 	// --to build answers -- the size of the surface the note describes.
-	fmt.Fprintf(out, "MOVED OK from=%s to=%s added=%d deleted=%d renamed=%d verbs=%d file=%s\n",
-		field(fromSha), field(toSha), counts.added, counts.deleted, counts.renamed, counts.verbs, field(outPath))
-	return 0
+	return tool.Done().Fact("from", fromSha).Fact("to", toSha).Fact("added", counts.added).Fact("deleted", counts.deleted).
+		Fact("renamed", counts.renamed).Fact("verbs", counts.verbs).Fact("file", outPath)
 }
 
 // movedInv is one revision's inventory as its own builds reported it: every

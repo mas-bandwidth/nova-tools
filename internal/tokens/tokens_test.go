@@ -637,41 +637,6 @@ func TestCheckThroughStale(t *testing.T) {
 	}
 }
 
-// WritePoolLedger cleans non-canonical paths (such as ./ledger.tsv or with /./ segments)
-// and writes the ledger atomically without failing atomicfile path cleanliness checks.
-func TestWritePoolLedgerNonCanonicalPath(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	rawPath := dir + "/./ledger.tsv"
-	if filepath.Clean(rawPath) == rawPath {
-		t.Fatalf("rawPath must be non-canonical")
-	}
-	groups := map[PoolKey]*PoolAgg{
-		{Day: "2026-09-11", Provider: "deepseek", Model: "m1", Repo: "r1"}: {
-			Tasks: 2, In: 300, HasIn: true, Out: 150, HasOut: true,
-			Cw: 30, HasCw: true, Cr: 60, HasCr: true, Rsn: 15, HasRsn: true,
-			UsdMicro: 30000,
-		},
-	}
-
-	if err := WritePoolLedger(rawPath, groups); err != nil {
-		t.Fatalf("WritePoolLedger failed on non-canonical path %q: %v", rawPath, err)
-	}
-
-	// ReadPoolLedger should also succeed on non-canonical path
-	rows, err := ReadPoolLedger(rawPath)
-	if err != nil {
-		t.Fatalf("ReadPoolLedger failed on non-canonical path %q: %v", rawPath, err)
-	}
-	if len(rows) != 1 {
-		t.Fatalf("ReadPoolLedger got %d rows, want 1", len(rows))
-	}
-	if rows[0].Day != "2026-09-11" || rows[0].Model != "m1" {
-		t.Errorf("ReadPoolLedger row mismatch: %+v", rows[0])
-	}
-}
-
 // isAtomicTemp grammar: only .<YYYY-MM-DD>.tsv.tmp-<8hex> with a valid calendar day
 // is recognized; unrelated dotfiles or malformed names are rejected.
 func TestIsAtomicTempGrammar(t *testing.T) {

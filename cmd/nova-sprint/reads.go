@@ -194,7 +194,7 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 }
 
 func (a *app) readFailed(verbName string, err error, stderr io.Writer) int {
-	fmt.Fprintf(stderr, "%s %s: %s\n", prog, verbName, oneline.Escape(err.Error()))
+	fmt.Fprintf(stderr, "%s %s: %s\n", prog, verbName, oneline.WithRemedy(err.Error(), prog+" "+verbName+" -h"))
 	if ntable.IsRefusal(err) {
 		return 1
 	}

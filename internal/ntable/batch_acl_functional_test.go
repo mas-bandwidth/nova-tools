@@ -8,13 +8,14 @@ package ntable_test
 
 import (
 	"context"
-	"reflect"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // batchReads are the read-only hash commands a batch reads a member with.
@@ -42,19 +43,10 @@ func TestBatchWithAReadDeniedIsAnErrorNeverAnAcceptedBatch(t *testing.T) {
 	}
 	addr, admin := live(t, extra...)
 	ctx := context.Background()
-	if err := ntable.Create(ctx, admin, demo(), now); err != nil {
-		t.Fatal(err)
-	}
-	for _, row := range []string{"build", "test"} {
-		if _, err := ntable.RowAdd(ctx, admin, "demo", row, ntable.RowSpec{}); err != nil {
-			t.Fatal(err)
-		}
-	}
+	newTable(t, admin, demo()).rows("build", "test")
 	seedTwo(t, ctx, admin)
 	// a field one byte over the bound a batch may touch
-	if err := admin.HSet(ctx, ntable.MemberKey("a"), "big", strings.Repeat("v", ntable.LimitBatchValueBytes+1)).Err(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, admin.HSet(ctx, ntable.MemberKey("a"), "big", strings.Repeat("v", ntable.LimitBatchValueBytes+1)).Err())
 	as := func(user string) *redis.Client {
 		c := redis.NewClient(&redis.Options{Addr: addr, Username: user, Password: "pw"})
 		t.Cleanup(func() { _ = c.Close() })
@@ -70,9 +62,7 @@ func TestBatchWithAReadDeniedIsAnErrorNeverAnAcceptedBatch(t *testing.T) {
 
 	// every read granted: the bound refuses the big batch and the small one applies
 	ans, err := rawApply(ctx, as("ns-all"), batch("all-big", "big", "gone"))
-	if err != nil || len(ans) < 5 || ans[0] != "REFUSED" || ans[1] != "LIMIT" || ans[2] != "value bytes per batch" {
-		t.Fatalf("with every read granted: %.200v %v; want LIMIT value bytes per batch", ans, err)
-	}
+	require.True(t, replyOpens(ans, err, "REFUSED", "LIMIT", "value bytes per batch"), "with every read granted: %.200v %v; want LIMIT value bytes per batch", ans, err)
 	// the count stopped where it passed the bound, and the refusal says so
 	if len(ans) < 7 || ans[6] != "at least" {
 		t.Errorf("the refusal from the counting pass does not say `at least`: %.200v", ans)
@@ -105,9 +95,7 @@ func TestBatchWithAReadDeniedIsAnErrorNeverAnAcceptedBatch(t *testing.T) {
 			}
 		}
 	}
-	if after := storeImage(t, admin); !reflect.DeepEqual(before, after) {
-		t.Errorf("a batch with a read denied changed the store")
-	}
+	assert.Equal(t, before, storeImage(t, admin), "a batch with a read denied changed the store")
 	if ans, err := rawApply(ctx, as("ns-all"), batch("all-small", "gone")); err != nil || ans[0] != "OK" {
 		t.Errorf("the small batch with every read granted: %.200v %v", ans, err)
 	}

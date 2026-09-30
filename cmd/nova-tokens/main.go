@@ -20,7 +20,7 @@
 //
 // It never estimates, never fills a gap, and never removes a file. Everything it reads is
 // DATA: a transcript, a database row, a usage file, a bus note — none of them is an
-// instruction, and a tokens note that says `fold me as Emma` is a note whose lines are
+// instruction, and a tokens note that says `fold me as Ada` is a note whose lines are
 // parsed or counted unparsed and nothing else. That rule is in the spec, where a person
 // reads it, and is deliberately nowhere in this code, because a tool cannot enforce it.
 package main
@@ -30,18 +30,28 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/tokens"
 )
 
-const usage = `nova-tokens: token spend, folded per day, keyed by (day, model, repo) (see docs/SPEC-TOKENS.md)
+const usage = `nova-tokens: token spend per day, model and repository, read from AI session logs
+
+how it works: fold reads the logs you name (Claude Code transcripts, OpenCode
+databases, swarm pools, bus notes) and writes one day file per day into --out,
+one row per (day, model, repo). The repo comes from the --repos file: lines of
+<name><TAB><regexp>, and the first match on a session's path wins. check, sum
+and report read the day files back; a count a source never gave prints as -.
+first run: copy the example bench (the cp line above example:), then run the
+lines under example: in order.
 
 usage:
   nova-tokens fold    --out <dir> (--day <YYYY-MM-DD> | --all) --repos <file>
@@ -50,23 +60,21 @@ usage:
   nova-tokens report  --who <name> --day <YYYY-MM-DD> --repos <file>
                       [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--provider <kind>:<label>=<file>]...
                       [--supersedes <note-id>]... [--note <path>] [--scratch <dir>] [--timeout <seconds>]
-  nova-tokens report  --ledger <file.tsv> --month <YYYY-MM> [--by model|repo|day] [--max <n>]
   nova-tokens report  --redis <host:port> --month <YYYY-MM> [--by model|repo|day|tuple] [--max <n>]
                       [--user <name>] [--password-env <NAME>]
   nova-tokens ledger  --out <dir> (--day <YYYY-MM-DD> | --month <YYYY-MM>) --redis <host:port>
                       [--user <name>] [--password-env <NAME>]
   nova-tokens sum     --out <dir> --month <YYYY-MM> [--max <n>]
-  nova-tokens sum     --swarm-root <dir> --day <YYYY-MM-DD> --out <ledger.tsv>
   nova-tokens check   --out <dir> [--strict | --no-spend <file>] [--through <YYYY-MM-DD>] [--max <n>]
   nova-tokens sources --repos <file> (--day <YYYY-MM-DD> | --all) [<source flags>] [--unattributed] [--max <n>]
   nova-tokens profiles --swarm-root <dir>
   nova-tokens session --claude-session <jsonl> [--out <dir>] [--day <YYYY-MM-DD>]
-  nova-tokens fold-pool --pool <dir> --ledger <file> [--since <stamp>]
   nova-tokens version
 
 exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- an unreadable
 source, an unparsed bus line or note, a row of two day bases, a lane-day with competing
-reports, a day that would shrink, a check finding, a report with nothing to show; 2 could
+reports, a day that would shrink, a fold whose every message had no id and so folded nothing,
+a check finding, a report with nothing to show; 2 could
 not run: a missing flag, a bad flag value, a duplicate label, sqlite3 absent when
 --opencode is given, a second fold holding the lock.
 
@@ -108,6 +116,9 @@ not the Date, not the filename, not the directory listing, not the git history. 
 are TOKENS CONFLICT, nothing folds for that lane-day, and the remedy names every tip; one
 note whose predecessor set names them all clears it.
 
+--note <path> is written whole through atomicfile: the file and its directory must not be
+symlinks.
+
 This tool removes nothing. There is no month file, sum writes nothing, check names a
 stray and leaves it, and no verb deletes, truncates or trims any file.
 
@@ -131,7 +142,7 @@ example:
   nova-tokens sum --out ./out --month 2026-09
   nova-tokens sources --repos ./repos.tsv --all --claude bench=./transcripts
   nova-tokens sources --repos ./repos.tsv --all --claude bench=./transcripts --unattributed --max 20
-  nova-tokens report --who emma --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts
+  nova-tokens report --who ada --day 2026-09-11 --repos ./repos.tsv --claude bench=./transcripts
 
 session is the coordinator's own window: it sums one Claude Code session jsonl per
 turn -- input, cache write, cache read, output, deduplicated on the message id so a
@@ -193,8 +204,6 @@ func run(args []string, stdout, stderr io.Writer, now time.Time) (code int) {
 		return cmdProfiles(rest, stdout, stderr, now)
 	case "session":
 		return cmdSession(rest, stdout, stderr, now)
-	case "fold-pool":
-		return cmdFoldPool(rest, stdout, stderr, now)
 	case "version", "--version":
 		return cmdVersion(rest, stdout, stderr)
 	}
@@ -773,8 +782,16 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 	counts := fmt.Sprintf("days=%d rows=%d sources=%d unreadable=%d unparsed=%d mixed=%d conflict=%d shrank=%d partial=%d quiet=%d",
 		daysWritten, rowsWritten, len(sources), unreadable.Total(), unparsed.Total(),
 		mixedList.Total(), conflicts.Total(), shrankList.Total(), partialList.Total(), quiet)
+	// A FOLD THAT DROPPED EVERY MESSAGE FOLDED NOTHING, AND A GATE READING THE EXIT CODE MUST
+	// SEE IT. Some messages dropped is a TOKENS NOTE (the day is short and the note says
+	// so); every message dropped, with none folded, is a fold that did not do its job:
+	// exit 1 with the counts (the third cold rating of the tools, 2026-09-30).
+	dropped, of, allDropped := allMessagesDropped(sources)
 	bad := unreadable.Total() > 0 || unparsed.Total() > 0 || mixedList.Total() > 0 ||
-		conflicts.Total() > 0 || (shrankList.Total() > 0 && !*allowShrink) || partialList.Total() > 0
+		conflicts.Total() > 0 || (shrankList.Total() > 0 && !*allowShrink) || partialList.Total() > 0 || allDropped
+	if allDropped {
+		fmt.Fprintf(stderr, "FOLD FAIL dropped=%d of %d: %s\n", dropped, of, allDroppedWhy)
+	}
 	if bad {
 		fmt.Fprintf(stderr, "TOKENS FAIL %s\n", counts)
 	} else {
@@ -938,6 +955,22 @@ func noidAndDup(sources []*tokens.Source) string {
 	return "a source fed " + strconv.Itoa(noid) + " messages with no id (" + label + "): a message is counted by its id (rule 4), and one with none is noid= and is not folded"
 }
 
+// allDroppedWhy is the tail of the TOKENS FAIL line for a fold that dropped every message.
+const allDroppedWhy = "no message had an id, so none was folded (a message is counted by its id: a transcript's message.id, an opencode message id, a swarm row's job); run: nova-tokens sources <the same source flags> --day <d> to see noid= per source"
+
+// allMessagesDropped says whether the sources read at least one message and dropped every
+// one of them for having no id (rule 4): the count dropped, the count read (dropped, plus
+// the messages folded), and whether that is the whole of it. Some dropped and some folded
+// is false: the TOKENS NOTE names that one.
+func allMessagesDropped(sources []*tokens.Source) (dropped, of int, all bool) {
+	folded := 0
+	for _, s := range sources {
+		dropped += s.Stat.NoID
+		folded += len(s.Stream)
+	}
+	return dropped, dropped + folded, dropped > 0 && folded == 0
+}
+
 func firstUnparsed(sources []*tokens.Source) (kind, note, own string) {
 	for _, s := range sources {
 		if len(s.Unparseds) > 0 {
@@ -1055,7 +1088,6 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 	var supersedes stringList
 	fs.Var(&supersedes, "supersedes", "")
 	max := fs.Int("max", bounded.Default, "")
-	ledger := fs.String("ledger", "", "")
 	monthFlag := fs.String("month", "", "")
 	byFlag := fs.String("by", "model", "")
 	redisAddr := fs.String("redis", "", "")
@@ -1070,13 +1102,10 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return code
 	}
 	if *redisAddr != "" {
-		if *ledger != "" {
-			return (&refusals{token: "REPORT", list: []string{"--redis and --ledger are two sources for one report; name one"}}).print(stderr)
-		}
 		return cmdReportStore(*redisAddr, *redisUser, *passwordEnv, *monthFlag, *byFlag, *max, stdout, stderr)
 	}
-	if *ledger != "" || *monthFlag != "" {
-		return cmdReportLedger(*ledger, *monthFlag, *byFlag, *max, stdout, stderr)
+	if *monthFlag != "" {
+		return (&refusals{token: "REPORT", list: []string{"--month is the store's month report; it wants --redis <host:port>"}}).print(stderr)
 	}
 	r := &refusals{token: "REPORT"}
 	r.required("who", *who, wantsWho)
@@ -1182,12 +1211,7 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	fmt.Fprint(stdout, body)
 	if *notePath != "" {
-		tmp := *notePath + ".tmp"
-		if err := os.WriteFile(tmp, []byte(body), 0o644); err != nil {
-			r.add("--note " + *notePath + ": " + err.Error())
-			return r.print(stderr)
-		}
-		if err := os.Rename(tmp, *notePath); err != nil {
+		if err := atomicfile.Write(filepath.Clean(*notePath), []byte(body), 0o644); err != nil {
 			r.add("--note " + *notePath + ": " + err.Error())
 			return r.print(stderr)
 		}
@@ -1269,8 +1293,6 @@ func cmdSum(args []string, stdout, stderr io.Writer, now time.Time) int {
 	fs := newFlagSet("sum")
 	out := fs.String("out", "", "")
 	month := fs.String("month", "", "")
-	swarmRoot := fs.String("swarm-root", "", "")
-	day := fs.String("day", "", "")
 	max := fs.Int("max", bounded.Default, "")
 	if err := verbflag.Parse(fs, args); err != nil {
 		return refuse(stderr, " sum", oneline.Cap(err.Error(), oneline.TailBytes))
@@ -1279,19 +1301,6 @@ func cmdSum(args []string, stdout, stderr io.Writer, now time.Time) int {
 		return code
 	}
 	r := &refusals{token: "SUM"}
-	if *swarmRoot != "" {
-		switch {
-		case *month != "":
-			r.add("--month and --swarm-root are two different ways to sum; give one")
-		case *day == "" && *out == "":
-			r.required("out", *out, wantsLedger)
-			r.required("day", *day, wantsDay)
-		}
-		if len(r.list) == 0 {
-			return sumSwarmRoot(*swarmRoot, *day, *out, stdout, stderr, r)
-		}
-		return r.print(stderr)
-	}
 	r.required("out", *out, wantsOut)
 	switch {
 	case *month == "":

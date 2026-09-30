@@ -4,7 +4,6 @@ package ntable_test
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"math/rand"
 	"slices"
@@ -16,6 +15,8 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"pgregory.net/rapid"
 )
 
@@ -36,9 +37,7 @@ func TestTableMemberBatchesAgainstModel(t *testing.T) {
 				t.Errorf("batch generator missed acceptance/refusal for %s: %v; this run is insufficient coverage", []string{"add", "remove", "move"}[op], counts)
 			}
 		}
-		if len(tally.gapOrder) > 0 {
-			t.Errorf("contract gaps: %v", tally.gapOrder)
-		}
+		assert.Empty(t, tally.gapOrder, "contract gaps: %v", tally.gapOrder)
 	}()
 	present := storeHasFunction(t, ctx, c, checkFn)
 	rapid.Check(t, func(rt *rapid.T) {
@@ -625,103 +624,68 @@ func (o *batchOracle) verifyPhysical(t *testing.T, ctx context.Context, c *redis
 		r, col := parts[0], parts[1]
 		redisKey := "table:" + o.table.name + ":cell:" + r + ":" + col
 		zs, err := c.ZRangeWithScores(ctx, redisKey, 0, -1).Result()
-		if err != nil {
-			t.Fatalf("verifyPhysical: ZRangeWithScores %s: %v", redisKey, err)
-		}
-		if len(zs) != len(expectedMembers) {
-			t.Fatalf("verifyPhysical: cell %s member count mismatch: got %d, want %d", cellKey, len(zs), len(expectedMembers))
-		}
+		require.NoError(t, err, "verifyPhysical: ZRangeWithScores %s: %v", redisKey, err)
+		require.Len(t, zs, len(expectedMembers), "verifyPhysical: cell %s member count mismatch: got %d, want %d", cellKey, len(zs), len(expectedMembers))
 		for _, z := range zs {
 			memID, ok := z.Member.(string)
-			if !ok {
-				t.Fatalf("verifyPhysical: cell %s member not string: %v", cellKey, z.Member)
-			}
+			require.True(t, ok, "verifyPhysical: cell %s member not string: %v", cellKey, z.Member)
 			expScore, found := expectedMembers[memID]
-			if !found {
-				t.Fatalf("verifyPhysical: cell %s unexpected extra member %s", cellKey, memID)
-			}
-			if z.Score != expScore {
-				t.Fatalf("verifyPhysical: cell %s member %s score mismatch: got %g, want %g", cellKey, memID, z.Score, expScore)
-			}
+			require.True(t, found, "verifyPhysical: cell %s unexpected extra member %s", cellKey, memID)
+			require.Equal(t, expScore, z.Score, "verifyPhysical: cell %s member %s score mismatch: got %g, want %g", cellKey, memID, z.Score, expScore)
 		}
 	}
 
 	for mid, m := range o.members {
 		h, err := c.HGetAll(ctx, ntable.MemberKey(mid)).Result()
-		if err != nil {
-			t.Fatalf("verifyPhysical: HGetAll %s: %v", mid, err)
-		}
+		require.NoError(t, err, "verifyPhysical: HGetAll %s: %v", mid, err)
 		if !m.exists {
-			if len(h) != 0 {
-				t.Fatalf("verifyPhysical: member %s expected not to exist, got hash %v", mid, h)
-			}
+			require.Empty(t, h, "verifyPhysical: member %s expected not to exist, got hash %v", mid, h)
 			continue
 		}
-		if len(h) == 0 {
-			t.Fatalf("verifyPhysical: member %s expected to exist, but hash is empty", mid)
-		}
+		require.NotEmpty(t, h, "verifyPhysical: member %s expected to exist, but hash is empty", mid)
 		expectedRev := strconv.FormatUint(m.revision, 10)
-		if h["revision"] != expectedRev {
-			t.Fatalf("verifyPhysical: member %s revision mismatch: got %s, want %s", mid, h["revision"], expectedRev)
-		}
+		require.Equal(t, expectedRev, h["revision"], "verifyPhysical: member %s revision mismatch: got %s, want %s", mid, h["revision"], expectedRev)
 		if m.exists {
-			if h["epoch"] != "0" {
-				t.Fatalf("verifyPhysical: member %s epoch unexpected: %q", mid, h["epoch"])
-			}
+			require.Equal(t, "0", h["epoch"], "verifyPhysical: member %s epoch unexpected: %q", mid, h["epoch"])
 		}
 		placeKey := "place:" + o.table.name
 		if m.placed {
 			expectedPlace := m.row + ":" + m.col
-			if h[placeKey] != expectedPlace {
-				t.Fatalf("verifyPhysical: member %s place mismatch: got %s, want %s", mid, h[placeKey], expectedPlace)
-			}
+			require.Equal(t, expectedPlace, h[placeKey], "verifyPhysical: member %s place mismatch: got %s, want %s", mid, h[placeKey], expectedPlace)
 			cellKey := m.row + ":" + m.col
 			if expScore, ok := o.table.cells[cellKey][mid]; !ok || expScore != m.score {
 				t.Fatalf("verifyPhysical: member %s score in cell %s mismatch: got %g, want %g", mid, cellKey, expScore, m.score)
 			}
 		} else {
-			if _, ok := h[placeKey]; ok {
-				t.Fatalf("verifyPhysical: member %s unplaced but has place field %s", mid, h[placeKey])
-			}
+			_, ok := h[placeKey]
+			require.False(t, ok, "verifyPhysical: member %s unplaced but has place field %s", mid, h[placeKey])
 		}
 		for k, v := range m.fields {
 			actualVal, exists := h[k]
-			if !exists {
-				t.Fatalf("verifyPhysical: member %s field %s expected to exist with value %q, but missing from hash", mid, k, v)
-			}
-			if actualVal != v {
-				t.Fatalf("verifyPhysical: member %s field %s mismatch: got %q, want %q", mid, k, actualVal, v)
-			}
+			require.True(t, exists, "verifyPhysical: member %s field %s expected to exist with value %q, but missing from hash", mid, k, v)
+			require.Equal(t, v, actualVal, "verifyPhysical: member %s field %s mismatch: got %q, want %q", mid, k, actualVal, v)
 		}
 		for k := range h {
 			if k == "revision" || k == "epoch" {
 				continue
 			}
 			if k == placeKey {
-				if !m.placed {
-					t.Fatalf("verifyPhysical: member %s unexpected place field: %s", mid, h[k])
-				}
+				require.True(t, m.placed, "verifyPhysical: member %s unexpected place field: %s", mid, h[k])
 				continue
 			}
-			if strings.HasPrefix(k, "place:") {
-				t.Fatalf("verifyPhysical: member %s unexpected foreign place field %s=%s", mid, k, h[k])
-			}
-			if _, ok := m.fields[k]; !ok {
-				t.Fatalf("verifyPhysical: member %s unexpected extra field %s=%s", mid, k, h[k])
-			}
+			require.False(t, strings.HasPrefix(k, "place:"), "verifyPhysical: member %s unexpected foreign place field %s=%s", mid, k, h[k])
+			_, ok := m.fields[k]
+			require.True(t, ok, "verifyPhysical: member %s unexpected extra field %s=%s", mid, k, h[k])
 		}
 	}
 
 	memKeys, err := c.Keys(ctx, "table::member:*").Result()
-	if err != nil {
-		t.Fatalf("verifyPhysical: KEYS table::member:*: %v", err)
-	}
+	require.NoError(t, err, "verifyPhysical: KEYS table::member:*")
 	for _, mk := range memKeys {
 		mid := strings.TrimPrefix(mk, "table::member:")
 		om, ok := o.members[mid]
-		if !ok || !om.exists {
-			t.Fatalf("verifyPhysical: unexpected global member key in store: %s", mk)
-		}
+		require.True(t, ok, "verifyPhysical: unexpected global member key in store: %s", mk)
+		require.True(t, om.exists, "verifyPhysical: unexpected global member key in store: %s", mk)
 	}
 
 	keys, err := c.Keys(ctx, "table:"+o.table.name+":*").Result()
@@ -734,14 +698,11 @@ func (o *batchOracle) verifyPhysical(t *testing.T, ctx context.Context, c *redis
 		case suffix == "definition" || suffix == "revision" || suffix == "identity" || suffix == "rows" || suffix == "changes" || suffix == "events":
 		case strings.HasPrefix(suffix, "row:"):
 			row := strings.TrimPrefix(suffix, "row:")
-			if !slices.Contains(o.table.rows, row) {
-				t.Fatalf("verifyPhysical: unexpected row key %s in store", k)
-			}
+			require.True(t, slices.Contains(o.table.rows, row), "verifyPhysical: unexpected row key %s in store", k)
 		case strings.HasPrefix(suffix, "cell:"):
 			cell := strings.TrimPrefix(suffix, "cell:")
-			if _, ok := o.table.cells[cell]; !ok {
-				t.Fatalf("verifyPhysical: unexpected cell key %s in store", k)
-			}
+			_, ok := o.table.cells[cell]
+			require.True(t, ok, "verifyPhysical: unexpected cell key %s in store", k)
 		case suffix == "ops":
 		default:
 			t.Fatalf("verifyPhysical: unexpected table key in store: %s", k)
@@ -868,9 +829,7 @@ func TestBatchApplyPropertyAndReceiptReplay(t *testing.T) {
 	}()
 
 	for _, seed := range seeds {
-		if err := c.FlushAll(ctx).Err(); err != nil {
-			t.Fatalf("flushall: %v", err)
-		}
+		require.NoError(t, c.FlushAll(ctx).Err(), "flushall")
 
 		rnd := rand.New(rand.NewSource(seed))
 		tableName := fmt.Sprintf("t_prop_%d", seed)
@@ -886,13 +845,9 @@ func TestBatchApplyPropertyAndReceiptReplay(t *testing.T) {
 		}
 
 		revStr, err := c.HGet(ctx, ntable.DefKey(tableName)+":revision", "n").Result()
-		if err != nil {
-			t.Fatalf("get table revision: %v", err)
-		}
+		require.NoError(t, err, "get table revision")
 		initRev, err := strconv.ParseUint(revStr, 10, 64)
-		if err != nil {
-			t.Fatalf("parse initial revision: %v", err)
-		}
+		require.NoError(t, err, "parse initial revision")
 
 		oracle := newBatchOracle(tableName, rows, cols, initRev)
 
@@ -1032,89 +987,54 @@ func TestBatchApplyPropertyAndReceiptReplay(t *testing.T) {
 			wantVerdict, willChange := oracle.predict(manifest)
 
 			beforeSnap, err := dumpStore(ctx, c)
-			if err != nil {
-				t.Fatalf("dumpStore before: %v", err)
-			}
+			require.NoError(t, err, "dumpStore before")
 
 			rcpt, err := ntable.ApplyBatch(ctx, c, manifest)
 
 			if !wantVerdict.ok() {
 				tally.refused++
-				if err == nil {
-					t.Fatalf("seed %d step %d: wanted refusal %s, got success receipt %+v", seed, step, wantVerdict, rcpt)
-				}
-				if !strings.Contains(err.Error(), "changed=no") {
-					t.Fatalf("seed %d step %d: refusal missing changed=no: %v", seed, step, err)
-				}
+				require.Error(t, err, "seed %d step %d: wanted refusal %s, got success receipt %+v", seed, step, wantVerdict, rcpt)
+				require.ErrorContains(t, err, "changed=no", "seed %d step %d: refusal missing changed=no: %v", seed, step, err)
 				afterSnap, err := dumpStore(ctx, c)
-				if err != nil {
-					t.Fatalf("dumpStore after: %v", err)
-				}
-				if diff := diffSnapshots(beforeSnap, afterSnap); diff != "" {
-					t.Fatalf("seed %d step %d: refused batch changed store state: %s (err: %v)", seed, step, diff, err)
-				}
+				require.NoError(t, err, "dumpStore after")
+				diff := diffSnapshots(beforeSnap, afterSnap)
+				require.Empty(t, diff, "seed %d step %d: refused batch changed store state: %s (err: %v)", seed, step, diff, err)
 			} else {
 				tally.accepted++
-				if err != nil {
-					t.Fatalf("seed %d step %d: expected success, got error: %v", seed, step, err)
-				}
+				require.NoError(t, err, "seed %d step %d: expected success, got error: %v", seed, step, err)
 
 				wantOutcome := "noop"
 				if willChange {
 					wantOutcome = "changed"
 				}
-				if rcpt.Outcome != wantOutcome {
-					t.Fatalf("seed %d step %d: expected outcome %q, got %q", seed, step, wantOutcome, rcpt.Outcome)
-				}
-				if rcpt.Before != oracle.table.revision {
-					t.Fatalf("seed %d step %d: expected rev before %d, got %d", seed, step, oracle.table.revision, rcpt.Before)
-				}
-				if rcpt.After != oracle.table.revision+1 {
-					t.Fatalf("seed %d step %d: expected rev after %d, got %d", seed, step, oracle.table.revision+1, rcpt.After)
-				}
+				require.Equal(t, wantOutcome, rcpt.Outcome, "seed %d step %d: expected outcome %q, got %q", seed, step, wantOutcome, rcpt.Outcome)
+				require.Equal(t, rcpt.Before, oracle.table.revision, "seed %d step %d: expected rev before %d, got %d", seed, step, oracle.table.revision, rcpt.Before)
+				require.Equal(t, oracle.table.revision+1, rcpt.After, "seed %d step %d: expected rev after %d, got %d", seed, step, oracle.table.revision+1, rcpt.After)
 
 				predDelta := oracle.predictDelta(manifest)
-				if rcpt.BatchDelta == nil {
-					t.Fatalf("missing BatchDelta")
-				}
-				if rcpt.BatchDelta.SelectedCount != predDelta.SelectedCount {
-					t.Fatalf("SelectedCount mismatch: got %d, want %d", rcpt.BatchDelta.SelectedCount, predDelta.SelectedCount)
-				}
-				if rcpt.BatchDelta.GuardCount != predDelta.GuardCount {
-					t.Fatalf("GuardCount mismatch: got %d, want %d", rcpt.BatchDelta.GuardCount, predDelta.GuardCount)
-				}
-				if rcpt.BatchDelta.ChangedCount != predDelta.ChangedCount {
-					t.Fatalf("ChangedCount mismatch: got %d, want %d", rcpt.BatchDelta.ChangedCount, predDelta.ChangedCount)
-				}
-				if len(rcpt.BatchDelta.Members) != len(predDelta.Members) {
-					t.Fatalf("seed %d step %d: members delta count mismatch: got %d, want %d", seed, step, len(rcpt.BatchDelta.Members), len(predDelta.Members))
-				}
+				require.NotNil(t, rcpt.BatchDelta, "missing BatchDelta")
+				require.Equal(t, predDelta.SelectedCount, rcpt.BatchDelta.SelectedCount, "SelectedCount mismatch: got %d, want %d", rcpt.BatchDelta.SelectedCount, predDelta.SelectedCount)
+				require.Equal(t, predDelta.GuardCount, rcpt.BatchDelta.GuardCount, "GuardCount mismatch: got %d, want %d", rcpt.BatchDelta.GuardCount, predDelta.GuardCount)
+				require.Equal(t, predDelta.ChangedCount, rcpt.BatchDelta.ChangedCount, "ChangedCount mismatch: got %d, want %d", rcpt.BatchDelta.ChangedCount, predDelta.ChangedCount)
+				require.Len(t, rcpt.BatchDelta.Members, len(predDelta.Members), "seed %d step %d: members delta count mismatch: got %d, want %d", seed, step, len(rcpt.BatchDelta.Members), len(predDelta.Members))
 				for idx := range rcpt.BatchDelta.Members {
 					gotM := rcpt.BatchDelta.Members[idx]
 					wantM := predDelta.Members[idx]
-					if gotM.ID != wantM.ID {
-						t.Fatalf("seed %d step %d member %d: id got %s, want %s", seed, step, idx, gotM.ID, wantM.ID)
-					}
-					if gotM.BeforeRev != wantM.BeforeRev || gotM.AfterRev != wantM.AfterRev {
-						t.Fatalf("seed %d step %d member %s: rev got %s->%s, want %s->%s", seed, step, gotM.ID, gotM.BeforeRev, gotM.AfterRev, wantM.BeforeRev, wantM.AfterRev)
-					}
-					if gotM.BeforePlace != wantM.BeforePlace || gotM.AfterPlace != wantM.AfterPlace {
-						t.Fatalf("seed %d step %d member %s: place got %s->%s, want %s->%s", seed, step, gotM.ID, gotM.BeforePlace, gotM.AfterPlace, wantM.BeforePlace, wantM.AfterPlace)
-					}
+					require.Equal(t, wantM.ID, gotM.ID, "seed %d step %d member %d: id got %s, want %s", seed, step, idx, gotM.ID, wantM.ID)
+					require.Equal(t, wantM.BeforeRev, gotM.BeforeRev, "seed %d step %d member %s: rev got %s->%s, want %s->%s", seed, step, gotM.ID, gotM.BeforeRev, gotM.AfterRev, wantM.BeforeRev, wantM.AfterRev)
+					require.Equal(t, wantM.AfterRev, gotM.AfterRev, "seed %d step %d member %s: rev got %s->%s, want %s->%s", seed, step, gotM.ID, gotM.BeforeRev, gotM.AfterRev, wantM.BeforeRev, wantM.AfterRev)
+					require.Equal(t, wantM.BeforePlace, gotM.BeforePlace, "seed %d step %d member %s: place got %s->%s, want %s->%s", seed, step, gotM.ID, gotM.BeforePlace, gotM.AfterPlace, wantM.BeforePlace, wantM.AfterPlace)
+					require.Equal(t, wantM.AfterPlace, gotM.AfterPlace, "seed %d step %d member %s: place got %s->%s, want %s->%s", seed, step, gotM.ID, gotM.BeforePlace, gotM.AfterPlace, wantM.BeforePlace, wantM.AfterPlace)
 					if (gotM.BeforeScore == nil) != (wantM.BeforeScore == nil) || (gotM.BeforeScore != nil && *gotM.BeforeScore != *wantM.BeforeScore) {
 						t.Fatalf("seed %d step %d member %s: score before got %v, want %v", seed, step, gotM.ID, gotM.BeforeScore, wantM.BeforeScore)
 					}
 					if (gotM.AfterScore == nil) != (wantM.AfterScore == nil) || (gotM.AfterScore != nil && *gotM.AfterScore != *wantM.AfterScore) {
 						t.Fatalf("seed %d step %d member %s: score after got %v, want %v", seed, step, gotM.ID, gotM.AfterScore, wantM.AfterScore)
 					}
-					if len(gotM.Fields) != len(wantM.Fields) {
-						t.Fatalf("seed %d step %d member %s: fields count mismatch: got %d, want %d", seed, step, gotM.ID, len(gotM.Fields), len(wantM.Fields))
-					}
+					require.Len(t, gotM.Fields, len(wantM.Fields), "seed %d step %d member %s: fields count mismatch: got %d, want %d", seed, step, gotM.ID, len(gotM.Fields), len(wantM.Fields))
 					for f, wantCh := range wantM.Fields {
 						gotCh, ok := gotM.Fields[f]
-						if !ok {
-							t.Fatalf("seed %d step %d member %s: field %s missing in delta", seed, step, gotM.ID, f)
-						}
+						require.True(t, ok, "seed %d step %d member %s: field %s missing in delta", seed, step, gotM.ID, f)
 						if (gotCh.Before == nil) != (wantCh.Before == nil) || (gotCh.Before != nil && *gotCh.Before != *wantCh.Before) {
 							t.Fatalf("seed %d step %d member %s field %s before mismatch: got %v, want %v", seed, step, gotM.ID, f, gotCh.Before, wantCh.Before)
 						}
@@ -1128,48 +1048,27 @@ func TestBatchApplyPropertyAndReceiptReplay(t *testing.T) {
 				oracle.verifyPhysical(t, ctx, c)
 
 				rs, err := ntable.ReadSetMembers(ctx, c, oracle.table.name, membersPool)
-				if err != nil {
-					t.Fatalf("seed %d step %d: ReadSetMembers: %v", seed, step, err)
-				}
-				if rs.Revision != oracle.table.revision {
-					t.Fatalf("seed %d step %d: ReadSet revision %d != oracle %d", seed, step, rs.Revision, oracle.table.revision)
-				}
+				require.NoError(t, err, "seed %d step %d: ReadSetMembers: %v", seed, step, err)
+				require.Equal(t, oracle.table.revision, rs.Revision, "seed %d step %d: ReadSet revision %d != oracle %d", seed, step, rs.Revision, oracle.table.revision)
 				for _, mid := range membersPool {
 					mState := oracle.members[mid]
 					if mState == nil || !mState.exists {
-						if !rs.IsMissing(mid) {
-							t.Fatalf("seed %d step %d: member %s should be missing, but found in ReadSet", seed, step, mid)
-						}
+						require.True(t, rs.IsMissing(mid), "seed %d step %d: member %s should be missing, but found in ReadSet", seed, step, mid)
 					} else {
 						rm, found := rs.Member(mid)
-						if !found {
-							t.Fatalf("seed %d step %d: member %s should exist in ReadSet, but not found", seed, step, mid)
-						}
-						if rm.Placed != mState.placed {
-							t.Fatalf("seed %d step %d: member %s placed=%v, oracle placed=%v", seed, step, mid, rm.Placed, mState.placed)
-						}
+						require.True(t, found, "seed %d step %d: member %s should exist in ReadSet, but not found", seed, step, mid)
+						require.Equal(t, mState.placed, rm.Placed, "seed %d step %d: member %s placed=%v, oracle placed=%v", seed, step, mid, rm.Placed, mState.placed)
 						if mState.placed {
-							if rm.Row != mState.row || rm.Col != mState.col {
-								t.Fatalf("seed %d step %d: member %s place=%s:%s, oracle=%s:%s", seed, step, mid, rm.Row, rm.Col, mState.row, mState.col)
-							}
-							if rm.Score != mState.score {
-								t.Fatalf("seed %d step %d: member %s score=%g, oracle=%g", seed, step, mid, rm.Score, mState.score)
-							}
+							require.Equal(t, mState.row, rm.Row, "seed %d step %d: member %s place=%s:%s, oracle=%s:%s", seed, step, mid, rm.Row, rm.Col, mState.row, mState.col)
+							require.Equal(t, mState.col, rm.Col, "seed %d step %d: member %s place=%s:%s, oracle=%s:%s", seed, step, mid, rm.Row, rm.Col, mState.row, mState.col)
+							require.Equal(t, mState.score, rm.Score, "seed %d step %d: member %s score=%g, oracle=%g", seed, step, mid, rm.Score, mState.score)
 						}
-						if rm.Revision != mState.revision {
-							t.Fatalf("seed %d step %d: member %s revision=%d, oracle=%d", seed, step, mid, rm.Revision, mState.revision)
-						}
-						if len(rm.Fields) != len(mState.fields) {
-							t.Fatalf("seed %d step %d: member %s fields count=%d, oracle=%d", seed, step, mid, len(rm.Fields), len(mState.fields))
-						}
+						require.Equal(t, mState.revision, rm.Revision, "seed %d step %d: member %s revision=%d, oracle=%d", seed, step, mid, rm.Revision, mState.revision)
+						require.Len(t, rm.Fields, len(mState.fields), "seed %d step %d: member %s fields count=%d, oracle=%d", seed, step, mid, len(rm.Fields), len(mState.fields))
 						for fk, fv := range mState.fields {
 							actualFv, exists := rm.Fields[fk]
-							if !exists {
-								t.Fatalf("seed %d step %d: member %s field %s missing, oracle=%q", seed, step, mid, fk, fv)
-							}
-							if actualFv != fv {
-								t.Fatalf("seed %d step %d: member %s field %s=%q, oracle=%q", seed, step, mid, fk, actualFv, fv)
-							}
+							require.True(t, exists, "seed %d step %d: member %s field %s missing, oracle=%q", seed, step, mid, fk, fv)
+							require.Equal(t, fv, actualFv, "seed %d step %d: member %s field %s=%q, oracle=%q", seed, step, mid, fk, actualFv, fv)
 						}
 					}
 				}
@@ -1177,50 +1076,32 @@ func TestBatchApplyPropertyAndReceiptReplay(t *testing.T) {
 				// Receipt Replay 1: Exact replay
 				tally.replays++
 				replaySnapBefore, err := dumpStore(ctx, c)
-				if err != nil {
-					t.Fatalf("replay dumpStore before: %v", err)
-				}
+				require.NoError(t, err, "replay dumpStore before")
 				replayRcpt, err := ntable.ApplyBatch(ctx, c, manifest)
-				if err != nil {
-					t.Fatalf("seed %d step %d: exact replay failed: %v", seed, step, err)
-				}
+				require.NoError(t, err, "seed %d step %d: exact replay failed: %v", seed, step, err)
 				if replayRcpt.ID != rcpt.ID || replayRcpt.Outcome != rcpt.Outcome ||
 					replayRcpt.Before != rcpt.Before || replayRcpt.After != rcpt.After {
 					t.Fatalf("seed %d step %d: replay receipt mismatch: got %+v, original %+v", seed, step, replayRcpt, rcpt)
 				}
 				replaySnapAfter, err := dumpStore(ctx, c)
-				if err != nil {
-					t.Fatalf("replay dumpStore after: %v", err)
-				}
-				if diff := diffSnapshots(replaySnapBefore, replaySnapAfter); diff != "" {
-					t.Fatalf("seed %d step %d: exact replay mutated store: %s", seed, step, diff)
-				}
+				require.NoError(t, err, "replay dumpStore after")
+				diff := diffSnapshots(replaySnapBefore, replaySnapAfter)
+				require.Empty(t, diff, "seed %d step %d: exact replay mutated store: %s", seed, step, diff)
 
 				// Receipt Replay 2: Conflicting payload with identical operation ID
 				tally.conflicts++
 				conflictManifest := manifest
 				conflictManifest.Actor = manifest.Actor + "-conflict"
 				conflictSnapBefore, err := dumpStore(ctx, c)
-				if err != nil {
-					t.Fatalf("conflict dumpStore before: %v", err)
-				}
+				require.NoError(t, err, "conflict dumpStore before")
 				_, conflictErr := ntable.ApplyBatch(ctx, c, conflictManifest)
-				if conflictErr == nil {
-					t.Fatalf("seed %d step %d: conflicting replay unexpectedly succeeded", seed, step)
-				}
-				if !errors.Is(conflictErr, ntable.ErrOpConflict) {
-					t.Fatalf("seed %d step %d: expected ErrOpConflict, got: %v", seed, step, conflictErr)
-				}
-				if !strings.Contains(conflictErr.Error(), "changed=no") {
-					t.Fatalf("seed %d step %d: conflict error missing changed=no: %v", seed, step, conflictErr)
-				}
+				require.Error(t, conflictErr, "seed %d step %d: conflicting replay unexpectedly succeeded", seed, step)
+				require.ErrorIs(t, conflictErr, ntable.ErrOpConflict, "seed %d step %d: expected ErrOpConflict, got: %v", seed, step, conflictErr)
+				require.ErrorContains(t, conflictErr, "changed=no", "seed %d step %d: conflict error missing changed=no: %v", seed, step, conflictErr)
 				conflictSnapAfter, err := dumpStore(ctx, c)
-				if err != nil {
-					t.Fatalf("conflict dumpStore after: %v", err)
-				}
-				if diff := diffSnapshots(conflictSnapBefore, conflictSnapAfter); diff != "" {
-					t.Fatalf("seed %d step %d: conflicting replay mutated store: %s", seed, step, diff)
-				}
+				require.NoError(t, err, "conflict dumpStore after")
+				diff = diffSnapshots(conflictSnapBefore, conflictSnapAfter)
+				require.Empty(t, diff, "seed %d step %d: conflicting replay mutated store: %s", seed, step, diff)
 			}
 		}
 	}
@@ -1242,13 +1123,9 @@ func TestBatchPropertyNMaxAndLimits(t *testing.T) {
 	}
 
 	revStr, err := c.HGet(ctx, ntable.DefKey(tableName)+":revision", "n").Result()
-	if err != nil {
-		t.Fatalf("get table revision: %v", err)
-	}
+	require.NoError(t, err, "get table revision")
 	curRev, err := strconv.ParseUint(revStr, 10, 64)
-	if err != nil {
-		t.Fatalf("parse revision: %v", err)
-	}
+	require.NoError(t, err, "parse revision")
 
 	// 1. 129 syntactic mutations -> MUST BE REFUSED with LIMIT and changed=no, 0 store changes
 	mut129 := make([]ntable.BatchMemberEntry, 129)
@@ -1270,26 +1147,15 @@ func TestBatchPropertyNMaxAndLimits(t *testing.T) {
 	}
 
 	snapBefore129, err := dumpStore(ctx, c)
-	if err != nil {
-		t.Fatalf("dumpStore: %v", err)
-	}
+	require.NoError(t, err, "dumpStore")
 	rcpt129, err129 := ntable.ApplyBatch(ctx, c, manifest129)
-	if err129 == nil {
-		t.Fatalf("expected refusal for 129 mutations, got receipt: %+v", rcpt129)
-	}
-	if !strings.Contains(strings.ToLower(err129.Error()), "limit") {
-		t.Fatalf("expected limit in err, got: %v", err129)
-	}
-	if !strings.Contains(err129.Error(), "changed=no") {
-		t.Fatalf("expected changed=no in err, got: %v", err129)
-	}
+	require.Error(t, err129, "expected refusal for 129 mutations, got receipt: %+v", rcpt129)
+	require.Contains(t, strings.ToLower(err129.Error()), "limit", "expected limit in err, got: %v", err129)
+	require.ErrorContains(t, err129, "changed=no", "expected changed=no in err, got")
 	snapAfter129, err := dumpStore(ctx, c)
-	if err != nil {
-		t.Fatalf("dumpStore: %v", err)
-	}
-	if diff := diffSnapshots(snapBefore129, snapAfter129); diff != "" {
-		t.Fatalf("129 mutations mutated store: %s", diff)
-	}
+	require.NoError(t, err, "dumpStore")
+	diff := diffSnapshots(snapBefore129, snapAfter129)
+	require.Empty(t, diff, "129 mutations mutated store: %s", diff)
 
 	// 2. 128 syntactic mutations -> MUST BE ACCEPTED (Nmax mutations)
 	mut128 := make([]ntable.BatchMemberEntry, 128)
@@ -1310,12 +1176,8 @@ func TestBatchPropertyNMaxAndLimits(t *testing.T) {
 		Members:               mut128,
 	}
 	rcpt128, err128 := ntable.ApplyBatch(ctx, c, manifest128)
-	if err128 != nil {
-		t.Fatalf("128 mutations rejected: %v", err128)
-	}
-	if rcpt128.Outcome != "changed" {
-		t.Fatalf("expected outcome 'changed', got: %s", rcpt128.Outcome)
-	}
+	require.NoError(t, err128, "128 mutations rejected")
+	require.Equal(t, "changed", rcpt128.Outcome, "expected outcome 'changed', got: %s", rcpt128.Outcome)
 	curRev = rcpt128.After
 
 	// 3. 1,025 guard-only entries -> MUST BE REFUSED with LIMIT and changed=no, 0 store changes
@@ -1336,26 +1198,15 @@ func TestBatchPropertyNMaxAndLimits(t *testing.T) {
 		Members:               guard1025,
 	}
 	snapBeforeGuard1025, err := dumpStore(ctx, c)
-	if err != nil {
-		t.Fatalf("dumpStore: %v", err)
-	}
+	require.NoError(t, err, "dumpStore")
 	rcptGuard1025, errGuard1025 := ntable.ApplyBatch(ctx, c, manifestGuard1025)
-	if errGuard1025 == nil {
-		t.Fatalf("expected refusal for 1025 guards, got receipt: %+v", rcptGuard1025)
-	}
-	if !strings.Contains(strings.ToLower(errGuard1025.Error()), "limit") {
-		t.Fatalf("expected limit in err, got: %v", errGuard1025)
-	}
-	if !strings.Contains(errGuard1025.Error(), "changed=no") {
-		t.Fatalf("expected changed=no in err, got: %v", errGuard1025)
-	}
+	require.Error(t, errGuard1025, "expected refusal for 1025 guards, got receipt: %+v", rcptGuard1025)
+	require.Contains(t, strings.ToLower(errGuard1025.Error()), "limit", "expected limit in err, got: %v", errGuard1025)
+	require.ErrorContains(t, errGuard1025, "changed=no", "expected changed=no in err, got")
 	snapAfterGuard1025, err := dumpStore(ctx, c)
-	if err != nil {
-		t.Fatalf("dumpStore: %v", err)
-	}
-	if diff := diffSnapshots(snapBeforeGuard1025, snapAfterGuard1025); diff != "" {
-		t.Fatalf("1025 guards mutated store: %s", diff)
-	}
+	require.NoError(t, err, "dumpStore")
+	diff = diffSnapshots(snapBeforeGuard1025, snapAfterGuard1025)
+	require.Empty(t, diff, "1025 guards mutated store: %s", diff)
 
 	// 4. 1,024 guard-only entries -> MUST BE ACCEPTED (Nmax guards, outcome="noop")
 	guard1024 := make([]ntable.BatchMemberEntry, 1024)
@@ -1375,12 +1226,8 @@ func TestBatchPropertyNMaxAndLimits(t *testing.T) {
 		Members:               guard1024,
 	}
 	rcptGuard1024, errGuard1024 := ntable.ApplyBatch(ctx, c, manifestGuard1024)
-	if errGuard1024 != nil {
-		t.Fatalf("1024 guards rejected: %v", errGuard1024)
-	}
-	if rcptGuard1024.Outcome != "noop" {
-		t.Fatalf("expected outcome 'noop', got: %s", rcptGuard1024.Outcome)
-	}
+	require.NoError(t, errGuard1024, "1024 guards rejected")
+	require.Equal(t, "noop", rcptGuard1024.Outcome, "expected outcome 'noop', got: %s", rcptGuard1024.Outcome)
 }
 
 func TestBatchReceiptDrivenStateReplay(t *testing.T) {
@@ -1421,23 +1268,16 @@ func TestBatchReceiptDrivenStateReplay(t *testing.T) {
 
 		// Verify previous table revision endpoint on clientB before advancing
 		prevRevStr, err := clientB.HGet(ctx, ntable.DefKey(targetTable)+":revision", "n").Result()
-		if err != nil {
-			t.Fatalf("replayDelta: clientB get prev rev: %v", err)
-		}
+		require.NoError(t, err, "replayDelta: clientB get prev rev")
 		var prevRev uint64
-		if _, err := fmt.Sscanf(prevRevStr, "%d", &prevRev); err != nil {
-			t.Fatalf("replayDelta: parse clientB prev rev %q: %v", prevRevStr, err)
-		}
-		if prevRev != rev-1 {
-			t.Fatalf("replayDelta: clientB table revision sequence error: got %d, expected %d before advancing to %d", prevRev, rev-1, rev)
-		}
+		_, err = fmt.Sscanf(prevRevStr, "%d", &prevRev)
+		require.NoError(t, err, "replayDelta: parse clientB prev rev %q: %v", prevRevStr, err)
+		require.Equal(t, prevRev, rev-1, "replayDelta: clientB table revision sequence error: got %d, expected %d before advancing to %d", prevRev, rev-1, rev)
 
 		for _, md := range delta.Members {
 			memKey := ntable.MemberKey(md.ID)
 			curHash, err := clientB.HGetAll(ctx, memKey).Result()
-			if err != nil {
-				t.Fatalf("replayDelta: clientB HGetAll %s: %v", md.ID, err)
-			}
+			require.NoError(t, err, "replayDelta: clientB HGetAll %s: %v", md.ID, err)
 
 			// Validate BeforeRev
 			curRev := curHash["revision"]
@@ -1448,31 +1288,21 @@ func TestBatchReceiptDrivenStateReplay(t *testing.T) {
 			if expectedBeforeRev == "" {
 				expectedBeforeRev = "0"
 			}
-			if curRev != expectedBeforeRev {
-				t.Fatalf("replayDelta: member %s before rev mismatch: got %s, want %s", md.ID, curRev, expectedBeforeRev)
-			}
+			require.Equal(t, expectedBeforeRev, curRev, "replayDelta: member %s before rev mismatch: got %s, want %s", md.ID, curRev, expectedBeforeRev)
 
 			// Validate BeforePlace
 			placeKey := "place:" + targetTable
 			curPlace := curHash[placeKey]
-			if curPlace != md.BeforePlace {
-				t.Fatalf("replayDelta: member %s before place mismatch: got %q, want %q", md.ID, curPlace, md.BeforePlace)
-			}
+			require.Equal(t, md.BeforePlace, curPlace, "replayDelta: member %s before place mismatch: got %q, want %q", md.ID, curPlace, md.BeforePlace)
 
 			// Validate BeforeScore
 			if md.BeforePlace != "" {
-				if md.BeforeScore == nil {
-					t.Fatalf("replayDelta: member %s has BeforePlace %q but BeforeScore is nil", md.ID, md.BeforePlace)
-				}
+				require.NotNil(t, md.BeforeScore, "replayDelta: member %s has BeforePlace %q but BeforeScore is nil", md.ID, md.BeforePlace)
 				parts := strings.Split(md.BeforePlace, ":")
 				cellKey := fmt.Sprintf("table:%s:cell:%s:%s", targetTable, parts[0], parts[1])
 				score, err := clientB.ZScore(ctx, cellKey, md.ID).Result()
-				if err != nil {
-					t.Fatalf("replayDelta: member %s missing from before cell %s: %v", md.ID, cellKey, err)
-				}
-				if score != *md.BeforeScore {
-					t.Fatalf("replayDelta: member %s before score mismatch in %s: got %g, want %g", md.ID, cellKey, score, *md.BeforeScore)
-				}
+				require.NoError(t, err, "replayDelta: member %s missing from before cell %s: %v", md.ID, cellKey, err)
+				require.Equal(t, *md.BeforeScore, score, "replayDelta: member %s before score mismatch in %s: got %g, want %g", md.ID, cellKey, score, *md.BeforeScore)
 			} else {
 				if md.BeforeScore != nil {
 					t.Fatalf("replayDelta: member %s has BeforeScore %g but BeforePlace is empty", md.ID, *md.BeforeScore)
@@ -1483,36 +1313,26 @@ func TestBatchReceiptDrivenStateReplay(t *testing.T) {
 			for f, ch := range md.Fields {
 				actualVal, exists := curHash[f]
 				if ch.Before == nil {
-					if exists {
-						t.Fatalf("replayDelta: member %s field %s expected absent, got %q", md.ID, f, actualVal)
-					}
+					require.False(t, exists, "replayDelta: member %s field %s expected absent, got %q", md.ID, f, actualVal)
 				} else {
 					if !exists {
 						t.Fatalf("replayDelta: member %s field %s expected %q, but missing", md.ID, f, *ch.Before)
 					}
-					if actualVal != *ch.Before {
-						t.Fatalf("replayDelta: member %s field %s before mismatch: got %q, want %q", md.ID, f, actualVal, *ch.Before)
-					}
+					require.Equal(t, *ch.Before, actualVal, "replayDelta: member %s field %s before mismatch: got %q, want %q", md.ID, f, actualVal, *ch.Before)
 				}
 			}
 
 			// Apply md to clientB
 			if md.BeforeRev == "0" || md.BeforeRev == "" {
-				if err := clientB.HSet(ctx, memKey, "epoch", "0").Err(); err != nil {
-					t.Fatalf("replay member epoch: %v", err)
-				}
+				require.NoError(t, clientB.HSet(ctx, memKey, "epoch", "0").Err(), "replay member epoch")
 			}
 			if md.AfterRev != "" {
-				if err := clientB.HSet(ctx, memKey, "revision", md.AfterRev).Err(); err != nil {
-					t.Fatalf("replay member revision: %v", err)
-				}
+				require.NoError(t, clientB.HSet(ctx, memKey, "revision", md.AfterRev).Err(), "replay member revision")
 			}
 			if md.BeforePlace != "" && md.BeforePlace != md.AfterPlace {
 				oldParts := strings.Split(md.BeforePlace, ":")
 				oldKey := fmt.Sprintf("table:%s:cell:%s:%s", targetTable, oldParts[0], oldParts[1])
-				if err := clientB.ZRem(ctx, oldKey, md.ID).Err(); err != nil {
-					t.Fatalf("replay cell zrem: %v", err)
-				}
+				require.NoError(t, clientB.ZRem(ctx, oldKey, md.ID).Err(), "replay cell zrem")
 			}
 			if md.AfterPlace != "" {
 				newParts := strings.Split(md.AfterPlace, ":")
@@ -1521,64 +1341,40 @@ func TestBatchReceiptDrivenStateReplay(t *testing.T) {
 				if md.AfterScore != nil {
 					sc = *md.AfterScore
 				}
-				if err := clientB.ZAdd(ctx, newKey, redis.Z{Score: sc, Member: md.ID}).Err(); err != nil {
-					t.Fatalf("replay cell zadd: %v", err)
-				}
-				if err := clientB.HSet(ctx, memKey, "place:"+targetTable, md.AfterPlace).Err(); err != nil {
-					t.Fatalf("replay member place: %v", err)
-				}
+				require.NoError(t, clientB.ZAdd(ctx, newKey, redis.Z{Score: sc, Member: md.ID}).Err(), "replay cell zadd")
+				require.NoError(t, clientB.HSet(ctx, memKey, "place:"+targetTable, md.AfterPlace).Err(), "replay member place")
 			} else if md.BeforePlace != "" {
-				if err := clientB.HDel(ctx, memKey, "place:"+targetTable).Err(); err != nil {
-					t.Fatalf("replay member hdel place: %v", err)
-				}
+				require.NoError(t, clientB.HDel(ctx, memKey, "place:"+targetTable).Err(), "replay member hdel place")
 			}
 			for f, ch := range md.Fields {
 				if ch.After != nil {
-					if err := clientB.HSet(ctx, memKey, f, *ch.After).Err(); err != nil {
-						t.Fatalf("replay field hset: %v", err)
-					}
+					require.NoError(t, clientB.HSet(ctx, memKey, f, *ch.After).Err(), "replay field hset")
 				} else {
-					if err := clientB.HDel(ctx, memKey, f).Err(); err != nil {
-						t.Fatalf("replay field hdel: %v", err)
-					}
+					require.NoError(t, clientB.HDel(ctx, memKey, f).Err(), "replay field hdel")
 				}
 			}
 		}
 
 		// Advance table revision on clientB after checking all preconditions and applying mutations
-		if err := clientB.HSet(ctx, ntable.DefKey(targetTable)+":revision", "n", rev).Err(); err != nil {
-			t.Fatalf("replay revision: %v", err)
-		}
+		require.NoError(t, clientB.HSet(ctx, ntable.DefKey(targetTable)+":revision", "n", rev).Err(), "replay revision")
 	}
 
 	verifyTablesMatch := func() {
 		t.Helper()
 		revA, err := clientA.HGet(ctx, ntable.DefKey(targetTable)+":revision", "n").Result()
-		if err != nil {
-			t.Fatalf("get rev A: %v", err)
-		}
+		require.NoError(t, err, "get rev A")
 		revB, err := clientB.HGet(ctx, ntable.DefKey(targetTable)+":revision", "n").Result()
-		if err != nil {
-			t.Fatalf("get rev B: %v", err)
-		}
-		if revA != revB {
-			t.Fatalf("table revision mismatch: A=%s, B=%s", revA, revB)
-		}
+		require.NoError(t, err, "get rev B")
+		require.Equal(t, revB, revA, "table revision mismatch: A=%s, B=%s", revA, revB)
 
 		for _, r := range rows {
 			for _, col := range cols {
 				cellKey := fmt.Sprintf("table:%s:cell:%s:%s", targetTable, r, col)
 				zsA, err := clientA.ZRangeWithScores(ctx, cellKey, 0, -1).Result()
-				if err != nil {
-					t.Fatalf("zrange A: %v", err)
-				}
+				require.NoError(t, err, "zrange A")
 				zsB, err := clientB.ZRangeWithScores(ctx, cellKey, 0, -1).Result()
-				if err != nil {
-					t.Fatalf("zrange B: %v", err)
-				}
-				if len(zsA) != len(zsB) {
-					t.Fatalf("cell %s:%s member count mismatch: A has %d, B has %d", r, col, len(zsA), len(zsB))
-				}
+				require.NoError(t, err, "zrange B")
+				require.Len(t, zsA, len(zsB), "cell %s:%s member count mismatch: A has %d, B has %d", r, col, len(zsA), len(zsB))
 				mapA := make(map[string]float64)
 				for _, z := range zsA {
 					mapA[z.Member.(string)] = z.Score
@@ -1586,121 +1382,62 @@ func TestBatchReceiptDrivenStateReplay(t *testing.T) {
 				for _, z := range zsB {
 					mid := z.Member.(string)
 					expScore, ok := mapA[mid]
-					if !ok {
-						t.Fatalf("cell %s:%s B has unexpected member %s", r, col, mid)
-					}
-					if expScore != z.Score {
-						t.Fatalf("cell %s:%s member %s score mismatch: A=%g, B=%g", r, col, mid, expScore, z.Score)
-					}
+					require.True(t, ok, "cell %s:%s B has unexpected member %s", r, col, mid)
+					require.Equal(t, expScore, z.Score, "cell %s:%s member %s score mismatch: A=%g, B=%g", r, col, mid, expScore, z.Score)
 				}
 			}
 		}
 
 		rsA, err := ntable.ReadSetMembers(ctx, clientA, targetTable, membersPool)
-		if err != nil {
-			t.Fatalf("ReadSetMembers A: %v", err)
-		}
+		require.NoError(t, err, "ReadSetMembers A")
 		rsB, err := ntable.ReadSetMembers(ctx, clientB, targetTable, membersPool)
-		if err != nil {
-			t.Fatalf("ReadSetMembers B: %v", err)
-		}
-		if rsA.Revision != rsB.Revision {
-			t.Fatalf("ReadSet revision mismatch: A=%d, B=%d", rsA.Revision, rsB.Revision)
-		}
+		require.NoError(t, err, "ReadSetMembers B")
+		require.Equal(t, rsB.Revision, rsA.Revision, "ReadSet revision mismatch: A=%d, B=%d", rsA.Revision, rsB.Revision)
 		for _, mid := range membersPool {
 			if rsA.IsMissing(mid) {
-				if !rsB.IsMissing(mid) {
-					t.Fatalf("member %s missing in A but present in B", mid)
-				}
+				require.True(t, rsB.IsMissing(mid), "member %s missing in A but present in B", mid)
 			} else {
-				if rsB.IsMissing(mid) {
-					t.Fatalf("member %s present in A but missing in B", mid)
-				}
+				require.False(t, rsB.IsMissing(mid), "member %s present in A but missing in B", mid)
 				rmA, _ := rsA.Member(mid)
 				rmB, _ := rsB.Member(mid)
-				if rmA.Placed != rmB.Placed {
-					t.Fatalf("member %s placed mismatch: A=%v, B=%v", mid, rmA.Placed, rmB.Placed)
-				}
+				require.Equal(t, rmB.Placed, rmA.Placed, "member %s placed mismatch: A=%v, B=%v", mid, rmA.Placed, rmB.Placed)
 				if rmA.Placed {
-					if rmA.Row != rmB.Row || rmA.Col != rmB.Col {
-						t.Fatalf("member %s place mismatch: A=%s:%s, B=%s:%s", mid, rmA.Row, rmA.Col, rmB.Row, rmB.Col)
-					}
-					if rmA.Score != rmB.Score {
-						t.Fatalf("member %s score mismatch: A=%g, B=%g", mid, rmA.Score, rmB.Score)
-					}
+					require.Equal(t, rmB.Row, rmA.Row, "member %s place mismatch: A=%s:%s, B=%s:%s", mid, rmA.Row, rmA.Col, rmB.Row, rmB.Col)
+					require.Equal(t, rmB.Col, rmA.Col, "member %s place mismatch: A=%s:%s, B=%s:%s", mid, rmA.Row, rmA.Col, rmB.Row, rmB.Col)
+					require.Equal(t, rmB.Score, rmA.Score, "member %s score mismatch: A=%g, B=%g", mid, rmA.Score, rmB.Score)
 				}
-				if rmA.Revision != rmB.Revision {
-					t.Fatalf("member %s revision mismatch: A=%d, B=%d", mid, rmA.Revision, rmB.Revision)
-				}
-				if len(rmA.Fields) != len(rmB.Fields) {
-					t.Fatalf("member %s fields length mismatch: A=%v, B=%v", mid, rmA.Fields, rmB.Fields)
-				}
+				require.Equal(t, rmB.Revision, rmA.Revision, "member %s revision mismatch: A=%d, B=%d", mid, rmA.Revision, rmB.Revision)
+				require.Len(t, rmA.Fields, len(rmB.Fields), "member %s fields length mismatch: A=%v, B=%v", mid, rmA.Fields, rmB.Fields)
 				for fk, fv := range rmA.Fields {
-					if rmB.Fields[fk] != fv {
-						t.Fatalf("member %s field %s mismatch: A=%s, B=%s", mid, fk, fv, rmB.Fields[fk])
-					}
+					require.Equal(t, fv, rmB.Fields[fk], "member %s field %s mismatch: A=%s, B=%s", mid, fk, fv, rmB.Fields[fk])
 				}
 			}
 		}
 
 		for _, mid := range membersPool {
 			hA, err := clientA.HGetAll(ctx, ntable.MemberKey(mid)).Result()
-			if err != nil {
-				t.Fatalf("HGetAll clientA %s: %v", mid, err)
-			}
+			require.NoError(t, err, "HGetAll clientA %s: %v", mid, err)
 			hB, err := clientB.HGetAll(ctx, ntable.MemberKey(mid)).Result()
-			if err != nil {
-				t.Fatalf("HGetAll clientB %s: %v", mid, err)
-			}
-			if len(hA) != len(hB) {
-				t.Fatalf("member %s hash len mismatch: A=%v, B=%v", mid, hA, hB)
-			}
+			require.NoError(t, err, "HGetAll clientB %s: %v", mid, err)
+			require.Len(t, hA, len(hB), "member %s hash len mismatch: A=%v, B=%v", mid, hA, hB)
 			for k, v := range hA {
-				if hB[k] != v {
-					t.Fatalf("member %s hash key %s mismatch: A=%q, B=%q", mid, k, v, hB[k])
-				}
+				require.Equal(t, v, hB[k], "member %s hash key %s mismatch: A=%q, B=%q", mid, k, v, hB[k])
 			}
 		}
 
 		// Enumerate global member keys on clientA and clientB to verify identical keyspace and zero unexpected keys
 		memKeysA, err := clientA.Keys(ctx, "table::member:*").Result()
-		if err != nil {
-			t.Fatalf("keys clientA member: %v", err)
-		}
+		require.NoError(t, err, "keys clientA member")
 		memKeysB, err := clientB.Keys(ctx, "table::member:*").Result()
-		if err != nil {
-			t.Fatalf("keys clientB member: %v", err)
-		}
-		if len(memKeysA) != len(memKeysB) {
-			t.Fatalf("global member keys count mismatch: A has %d, B has %d", len(memKeysA), len(memKeysB))
-		}
-		slices.Sort(memKeysA)
-		slices.Sort(memKeysB)
-		for i := range memKeysA {
-			if memKeysA[i] != memKeysB[i] {
-				t.Fatalf("global member keys mismatch at %d: A=%s, B=%s", i, memKeysA[i], memKeysB[i])
-			}
-		}
+		require.NoError(t, err, "keys clientB member")
+		require.ElementsMatch(t, memKeysB, memKeysA, "global member keys differ between A and B")
 
 		// Enumerate cell keys on clientA and clientB to verify identical cell keyspace
 		cellKeysA, err := clientA.Keys(ctx, "table:"+targetTable+":cell:*").Result()
-		if err != nil {
-			t.Fatalf("keys clientA cells: %v", err)
-		}
+		require.NoError(t, err, "keys clientA cells")
 		cellKeysB, err := clientB.Keys(ctx, "table:"+targetTable+":cell:*").Result()
-		if err != nil {
-			t.Fatalf("keys clientB cells: %v", err)
-		}
-		if len(cellKeysA) != len(cellKeysB) {
-			t.Fatalf("cell keys count mismatch: A has %d, B has %d", len(cellKeysA), len(cellKeysB))
-		}
-		slices.Sort(cellKeysA)
-		slices.Sort(cellKeysB)
-		for i := range cellKeysA {
-			if cellKeysA[i] != cellKeysB[i] {
-				t.Fatalf("cell keys mismatch at %d: A=%s, B=%s", i, cellKeysA[i], cellKeysB[i])
-			}
-		}
+		require.NoError(t, err, "keys clientB cells")
+		require.ElementsMatch(t, cellKeysB, cellKeysA, "cell keys differ between A and B")
 	}
 
 	// Batch 1: Create members m1, m2, m3
@@ -1734,12 +1471,8 @@ func TestBatchReceiptDrivenStateReplay(t *testing.T) {
 		},
 	}
 	rcpt1, err := ntable.ApplyBatch(ctx, clientA, manifest1)
-	if err != nil {
-		t.Fatalf("batch 1 failed: %v", err)
-	}
-	if rcpt1.BatchDelta == nil {
-		t.Fatalf("batch 1 missing BatchDelta")
-	}
+	require.NoError(t, err, "batch 1 failed")
+	require.NotNil(t, rcpt1.BatchDelta, "batch 1 missing BatchDelta")
 	replayDelta(rcpt1.BatchDelta, targetTable, rcpt1.After)
 	verifyTablesMatch()
 
@@ -1774,12 +1507,8 @@ func TestBatchReceiptDrivenStateReplay(t *testing.T) {
 		},
 	}
 	rcpt2, err := ntable.ApplyBatch(ctx, clientA, manifest2)
-	if err != nil {
-		t.Fatalf("batch 2 failed: %v", err)
-	}
-	if rcpt2.BatchDelta == nil {
-		t.Fatalf("batch 2 missing BatchDelta")
-	}
+	require.NoError(t, err, "batch 2 failed")
+	require.NotNil(t, rcpt2.BatchDelta, "batch 2 missing BatchDelta")
 	replayDelta(rcpt2.BatchDelta, targetTable, rcpt2.After)
 	verifyTablesMatch()
 
@@ -1812,12 +1541,8 @@ func TestBatchReceiptDrivenStateReplay(t *testing.T) {
 		},
 	}
 	rcpt3, err := ntable.ApplyBatch(ctx, clientA, manifest3)
-	if err != nil {
-		t.Fatalf("batch 3 failed: %v", err)
-	}
-	if rcpt3.BatchDelta == nil {
-		t.Fatalf("batch 3 missing BatchDelta")
-	}
+	require.NoError(t, err, "batch 3 failed")
+	require.NotNil(t, rcpt3.BatchDelta, "batch 3 missing BatchDelta")
 	replayDelta(rcpt3.BatchDelta, targetTable, rcpt3.After)
 	verifyTablesMatch()
 }

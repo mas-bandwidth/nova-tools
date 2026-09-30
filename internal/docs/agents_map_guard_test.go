@@ -21,14 +21,14 @@ func TestCommittedMapMatchesTree(t *testing.T) {
 	}
 }
 
-func TestRootMapStaysUnder3KB(t *testing.T) {
+func TestRootMapStaysUnderTheByteCap(t *testing.T) {
 	t.Parallel()
 
 	root := testRoot(t)
 	pages, _ := Render(root, DefaultCatalog)
 	n := len(pages[RootAgents])
 	if n >= MaxRootBytes {
-		t.Errorf("%s is %d bytes, over the %d-byte cap; a harness reads this page at every session start — shorten the catalog rows", RootAgents, n, MaxRootBytes)
+		t.Errorf("%s is %d bytes, over the %d-byte cap; a harness reads this page at every session start — shorten the catalog rows or the standard", RootAgents, n, MaxRootBytes)
 	}
 }
 
@@ -41,8 +41,11 @@ func TestRootMapIsAFourColumnTable(t *testing.T) {
 	if !strings.Contains(body, "| dir | purpose | guard | command |") {
 		t.Fatalf("%s is not a directory → purpose → guard → command map", RootAgents)
 	}
+	if !strings.Contains(body, "docs/STANDARD.md") {
+		t.Errorf("%s does not point at the standard in docs/STANDARD.md", RootAgents)
+	}
 	if !strings.Contains(body, "docs/CONTRIBUTING.md") {
-		t.Errorf("%s does not point at the prose rules in docs/CONTRIBUTING.md", RootAgents)
+		t.Errorf("%s does not point at how review goes in docs/CONTRIBUTING.md", RootAgents)
 	}
 }
 
@@ -90,7 +93,14 @@ func TestStaleMapFailsUntilRegenerate(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(dir, "alpha"), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	if err := os.Mkdir(filepath.Join(dir, "docs"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(StandardDoc)), []byte("# The standard\n\nA rule.\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	cat := []Entry{
+		E("docs", "the standard", "go test", "go test"),
 		Page("alpha", "the mapped tree", "go test", "go test"),
 	}
 	pages, issues := Render(dir, cat)
@@ -160,4 +170,27 @@ func testRoot(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return root
+}
+
+// TestRootMapCarriesTheWholeStandard holds the owner's rule: everything someone
+// needs to know while building or working on the tools is in the root page, so
+// the page embeds docs/STANDARD.md whole.
+func TestRootMapCarriesTheWholeStandard(t *testing.T) {
+	t.Parallel()
+
+	root := testRoot(t)
+	raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(StandardDoc)))
+	if err != nil {
+		t.Fatalf("%s: %v; the standard is the one source the root page embeds", StandardDoc, err)
+	}
+	pages, _ := Render(root, DefaultCatalog)
+	body := pages[RootAgents]
+	for _, line := range strings.Split(strings.TrimRight(string(raw), "\n"), "\n") {
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		if !strings.Contains(body, line) {
+			t.Errorf("%s as rendered does not carry this line of %s: %q; the embed in agentsmap.go drops this line (embedStandard)", RootAgents, StandardDoc, line)
+		}
+	}
 }

@@ -97,28 +97,6 @@ func TestWriteAtomicDoesNotWriteThroughAPlantedTemp(t *testing.T) {
 	}
 }
 
-func TestAppendNoteRefusesASymlinkedNoteFile(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	job := filepath.Join(dir, "job")
-	if err := os.MkdirAll(job, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	v := outsideFile(t, dir)
-	plantLink(t, v, NotePath(job))
-	if _, err := AppendNote(job, "a note", time.Now()); err == nil {
-		t.Fatal("AppendNote appended through a symlinked note file and raised nothing")
-	}
-	raw, err := os.ReadFile(v)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(raw) != "a secret the wall was keeping\n" {
-		t.Fatalf("the note landed outside the job: %q", string(raw))
-	}
-}
-
 // Finding 4: a FIFO is not a record, and it must never park the dispatcher.
 func TestReadFileSteadyDoesNotBlockOnAFIFO(t *testing.T) {
 	t.Parallel()

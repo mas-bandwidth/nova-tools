@@ -7,6 +7,9 @@ import (
 	"testing"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The guarantees of this package over arbitrary input, not over examples: a
@@ -47,9 +50,7 @@ func propertyCases(t *testing.T, seed uint64, check func(t *testing.T, s string)
 	for i := 0; i < 20000; i++ {
 		s := propertyInput(r)
 		check(t, s)
-		if t.Failed() {
-			t.Fatalf("seed %d case %d input %q", seed, i, s)
-		}
+		require.False(t, t.Failed(), "seed %d case %d input %q", seed, i, s)
 	}
 }
 
@@ -57,13 +58,9 @@ func propertyCases(t *testing.T, seed uint64, check func(t *testing.T, s string)
 // separator and no bidi control.
 func oneLine(t *testing.T, what, out string) {
 	t.Helper()
-	if !utf8.ValidString(out) {
-		t.Errorf("%s: not valid UTF-8: %q", what, out)
-	}
+	assert.True(t, utf8.ValidString(out), "%s: not valid UTF-8: %q", what, out)
 	for _, r := range out {
-		if mustBeEscaped(r) {
-			t.Errorf("%s: holds %U: %q", what, r, out)
-		}
+		assert.False(t, mustBeEscaped(r), "%s: holds %U: %q", what, r, out)
 	}
 }
 
@@ -89,9 +86,7 @@ func TestPropertyEscapeIsOneLineAndLeavesCleanTextAlone(t *testing.T) {
 	propertyCases(t, 1, func(t *testing.T, s string) {
 		out := Escape(s)
 		oneLine(t, "Escape", out)
-		if out != Escape(s) {
-			t.Errorf("Escape is not deterministic on %q", s)
-		}
+		assert.Equal(t, Escape(s), out, "Escape is not deterministic on %q", s)
 		clean := utf8.ValidString(s)
 		for _, r := range s {
 			if mustBeEscaped(r) {
@@ -101,9 +96,8 @@ func TestPropertyEscapeIsOneLineAndLeavesCleanTextAlone(t *testing.T) {
 		if clean && out != s {
 			t.Errorf("Escape changed text that needed nothing: %q -> %q", s, out)
 		}
-		if got := Err(errString(s)); got != out {
-			t.Errorf("Err(%q) = %q, Escape gives %q", s, got, out)
-		}
+		got := Err(errString(s))
+		assert.Equal(t, out, got, "Err(%q) = %q, Escape gives %q", s, got, out)
 	})
 }
 
@@ -129,13 +123,9 @@ func TestPropertyQuoteIsOneLineAndGivesTheValueBack(t *testing.T) {
 		out := Quote(s)
 		oneLine(t, "Quote", out)
 		back, err := strconv.Unquote(out)
-		if err != nil {
-			t.Errorf("Quote(%q) = %s does not unquote: %v", s, out, err)
-		}
+		assert.NoError(t, err, "Quote(%q) = %s does not unquote: %v", s, out, err)
 		// strconv.Quote writes an invalid byte as \xNN, which unquotes to that byte.
-		if back != s {
-			t.Errorf("Quote(%q) unquotes to %q", s, back)
-		}
+		assert.Equal(t, s, back, "Quote(%q) unquotes to %q", s, back)
 	})
 }
 
@@ -146,9 +136,7 @@ func TestPropertyCapKeepsAPrefixSaysWhatItDroppedAndHoldsTheCeiling(t *testing.T
 		n := r.IntN(40) - 4
 		out := Cap(s, n)
 		if len(s) <= n {
-			if out != s {
-				t.Errorf("Cap(%q, %d) changed a value under the ceiling: %q", s, n, out)
-			}
+			assert.Equal(t, s, out, "Cap(%q, %d) changed a value under the ceiling: %q", s, n, out)
 			return
 		}
 		if s != "" && out == "" {
@@ -158,9 +146,8 @@ func TestPropertyCapKeepsAPrefixSaysWhatItDroppedAndHoldsTheCeiling(t *testing.T
 			// Over the ceiling and unchanged: only when the value is one rune,
 			// which Cap keeps whole rather than erase. Anything longer must be
 			// cut (a Cap that returns its input passes nothing else here).
-			if _, size := utf8.DecodeRuneInString(s); size != len(s) {
-				t.Errorf("Cap(%q, %d) left %d bytes over the ceiling uncut", s, n, len(s))
-			}
+			_, size := utf8.DecodeRuneInString(s)
+			assert.Equal(t, len(s), size, "Cap(%q, %d) left %d bytes over the ceiling uncut", s, n, len(s))
 			return
 		}
 		at := strings.LastIndex(out, "...+")
@@ -176,9 +163,7 @@ func TestPropertyCapKeepsAPrefixSaysWhatItDroppedAndHoldsTheCeiling(t *testing.T
 		// No cut inside a rune: what was kept escapes to the start of what the
 		// whole value escapes to. (A stray continuation byte after the cut is
 		// not the inside of a rune; a byte-level check calls it one.)
-		if !strings.HasPrefix(Escape(s), Escape(kept)) {
-			t.Errorf("Cap(%q, %d) cut inside a rune: %q", s, n, out)
-		}
+		assert.True(t, strings.HasPrefix(Escape(s), Escape(kept)), "Cap(%q, %d) cut inside a rune: %q", s, n, out)
 		if utf8.ValidString(s) && !utf8.ValidString(kept) {
 			t.Errorf("Cap(%q, %d) kept a broken prefix: %q", s, n, kept)
 		}
@@ -210,9 +195,8 @@ func TestCapKeepsOneRuneWholeAndCutsTwo(t *testing.T) {
 		{"abcdefghij", 9, "ab...+8B"}, // the mark is sized for the whole length, seven bytes
 		{string([]byte{0xff, 0x80, 0x80}), 1, string([]byte{0xff}) + "...+2B"},
 	} {
-		if got := Cap(c.in, c.n); got != c.want {
-			t.Errorf("Cap(%q, %d) = %q, want %q", c.in, c.n, got, c.want)
-		}
+		got := Cap(c.in, c.n)
+		assert.Equal(t, c.want, got, "Cap(%q, %d) = %q, want %q", c.in, c.n, got, c.want)
 	}
 }
 
