@@ -235,7 +235,7 @@ func unlawful(u Unit, p *Plan) string {
 			return "a sentinel moves only waiting -> landed, by release"
 		}
 		switch {
-		case e.Remove && !IsOpen(from):
+		case e.Remove && !IsOpen(from) && !p.removing:
 			return "the lifecycle has no move off the table from " + from
 		case e.Move != nil && e.Move.Col != from && !Legal(from, e.Move.Col):
 			return "the lifecycle has no move " + from + " -> " + e.Move.Col
