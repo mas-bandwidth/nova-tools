@@ -193,6 +193,12 @@ jobs:
           # which a cancelled job never reaches.
           cache: false
 
+      - name: build tools/ci once
+        # The verbs are built ONCE here and every later step calls the binary: `go run` compiles
+        # and links the tool again on every step that names it. internal/ci: TestToolsCIIsBuiltOnceAndNeverRun.
+        shell: bash
+        run: go build -o "$RUNNER_TEMP/ci" ./tools/ci
+
       - name: start installing redis-server in the background
         # The install is 3-45 s of apt or brew on a hosted runner (45 s on ubuntu-latest shard 3
         # of run 36377703562, the leg's longest step). Started here, it overlaps the gofmt, the
@@ -200,7 +206,7 @@ jobs:
         # runs the same verb, which waits on the first one's lock, finds the binary and publishes
         # its directory to PATH for the steps after it. The runner reaps the process at job end.
         shell: bash
-        run: nohup go run ./tools/ci install-redis-server > "${RUNNER_TEMP}/redis-install.log" 2>&1 &
+        run: nohup "$RUNNER_TEMP/ci" install-redis-server > "${RUNNER_TEMP}/redis-install.log" 2>&1 &
 
       - name: gofmt
         # gofmt -l prints unformatted files and exits 0 either way, so the exit
@@ -313,7 +319,7 @@ jobs:
         # Finishes (or waits on) the background install started earlier in the job.
         shell: bash
         run: |
-          go run ./tools/ci install-redis-server || { cat "${RUNNER_TEMP}/redis-install.log"; exit 1; }
+          "$RUNNER_TEMP/ci" install-redis-server || { cat "${RUNNER_TEMP}/redis-install.log"; exit 1; }
 
       - name: test (shard ${{ matrix.shard }} of ${{ matrix.shards }})
         # -count=1: the restored cache must never answer for a test. -timeout 75s: this step
@@ -381,6 +387,44 @@ jobs:
           go-version-file: go.mod
           cache: false
 
+      - name: name the Go caches under the runner's temp directory
+        # One spelling on all three operating systems (Windows keeps Go's cache under
+        # %LocalAppData%, the others under ~/.cache or ~/Library/Caches), so the cache steps
+        # below take one path. The value is the runner's own temp path, as bash prints it.
+        shell: bash
+        run: |
+          echo "GOCACHE=${RUNNER_TEMP}/gocache" >> "$GITHUB_ENV"
+          echo "GOMODCACHE=${RUNNER_TEMP}/gomodcache" >> "$GITHUB_ENV"
+
+      - name: restore the go build and module cache
+        id: gocache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ${{ env.GOCACHE }}
+            ${{ env.GOMODCACHE }}
+          key: ${{ runner.os }}-gosmoke-${{ hashFiles('go.mod') }}
+          restore-keys: |
+            ${{ runner.os }}-gosmoke-
+
+      - name: build tools/ci once
+        id: build_ci
+        # The verbs are built ONCE here and every later step calls the binary: `go run` compiles
+        # and links the tool again on every step that names it. internal/ci: TestToolsCIIsBuiltOnceAndNeverRun.
+        shell: bash
+        run: go build -o "$RUNNER_TEMP/ci" ./tools/ci
+
+      - name: save the go build and module cache
+        # On a miss or a restore-keys fallback only, and before the tests, as ci.yml's
+        # test-hosted does: a cancelled job never reaches a post-step save.
+        if: steps.gocache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ${{ env.GOCACHE }}
+            ${{ env.GOMODCACHE }}
+          key: ${{ steps.gocache.outputs.cache-primary-key }}
+
       - name: take this runner's shipped binary
         id: take_binary
         # THE BINARY THAT WOULD SHIP, not one built here: a binary built in this job is a
@@ -388,7 +432,8 @@ jobs:
         # host has it), and this job's whole argument is that what a release ships is the
         # executable. If it is not in the artifact the verb lists the artifact and fails.
         shell: bash
-        run: go run ./tools/ci take-shipped --os "${{ matrix.os }}" --tool nova-check --stamp v0.0.0-dry-run --dist dist --out "$BIN"
+        run: |
+          "$RUNNER_TEMP/ci" take-shipped --os "${{ matrix.os }}" --tool nova-check --stamp v0.0.0-dry-run --dist dist --out "$BIN"
 
       - name: smoke the shipped binary
         id: smoke_test
@@ -414,8 +459,8 @@ jobs:
         if: ${{ !cancelled() }}
         shell: bash
         run: |
-          go run ./tools/ci aggregate --skip-ok '*' --what "smoke assertion(s) failed" \
-            "download the shipped binaries=${{ steps.download.outcome }}" "set up Go=${{ steps.setup_go.outcome }}" \
+          "$RUNNER_TEMP/ci" aggregate --skip-ok '*' --what "smoke assertion(s) failed" \
+            "download the shipped binaries=${{ steps.download.outcome }}" "set up Go=${{ steps.setup_go.outcome }}" "build tools/ci=${{ steps.build_ci.outcome }}" \
             "take this runner's binary=${{ steps.take_binary.outcome }}" "smoke the shipped binary=${{ steps.smoke_test.outcome }}"
 
   release-build:
@@ -1352,6 +1397,12 @@ jobs:
           restore-keys: |
             perf-
 
+      - name: build tools/ci once
+        # The verbs are built ONCE here and every later step calls the binary: `go run` compiles
+        # and links the tool again on every step that names it. internal/ci: TestToolsCIIsBuiltOnceAndNeverRun.
+        shell: bash
+        run: go build -o "$RUNNER_TEMP/ci" ./tools/ci
+
       - name: find the perf-tagged tests
         # Writes `<import path> <run regexp>`, one line per package, to $RUNNER_TEMP/perf-runs.
         # A perf-tagged package with no test behind the tag is reported and skipped; a tree
@@ -1397,7 +1448,8 @@ jobs:
       - name: install redis-server
         # #3113: NOVA_CI fails a control that wants redis-server and cannot find it. The
         # binary is not the fleet store.
-        run: go run ./tools/ci install-redis-server
+        run: |
+          "$RUNNER_TEMP/ci" install-redis-server
 
       - name: the wall-clock tests, one at a time
         # `-p 1 -parallel 1` because these are wall clocks: a bound in seconds measured while
@@ -1436,11 +1488,38 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
+
+      - name: restore the go build and module cache
+        id: gocache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-gotools-${{ hashFiles('go.mod') }}
+          restore-keys: |
+            ${{ runner.os }}-gotools-
+
+      - name: build tools/ci once
+        # The verbs are built ONCE here and every later step calls the binary: `go run` compiles
+        # and links the tool again on every step that names it. internal/ci: TestToolsCIIsBuiltOnceAndNeverRun.
+        shell: bash
+        run: go build -o "$RUNNER_TEMP/ci" ./tools/ci
+
+      - name: save the go build and module cache
+        if: steps.gocache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ steps.gocache.outputs.cache-primary-key }}
+
       - name: every job succeeded
         if: always()
         shell: bash
         run: |
-          go run ./tools/ci aggregate \
+          "$RUNNER_TEMP/ci" aggregate \
             race-cache=${{ needs.race-cache.result }} test=${{ needs.test.result }} smoke=${{ needs.smoke.result }} \
             release-build=${{ needs.release-build.result }} release-dry-run=${{ needs.release-dry-run.result }} \
             release-checks=${{ needs.release-checks.result }} perf=${{ needs.perf.result }}

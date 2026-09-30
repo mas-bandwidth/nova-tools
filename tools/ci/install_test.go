@@ -2,12 +2,19 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+const testHolderPID = 4242
 
 var fixedNow = time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 
@@ -51,6 +58,13 @@ func newTestInstallHost(t *testing.T) testInstallHost {
 		lock:   filepath.Join(dir, "install.lock"),
 		isExec: func(string) bool { return false },
 		glob:   func(string) []string { return nil },
+		// this process is pid 4242, every other pid is alive, no signal ever
+		// arrives and an exit is recorded, never taken: nothing reaches the
+		// test process or the machine.
+		pid:    func() int { return testHolderPID },
+		alive:  func(int) bool { return true },
+		sigCtx: func(parent context.Context) (context.Context, context.CancelFunc) { return context.WithCancel(parent) },
+		exit:   func(int) {},
 	}
 	return testInstallHost{installHost: h, out: out, errb: errb, runner: r, githubPath: gp, sleeps: sleeps, home: home}
 }
@@ -579,4 +593,134 @@ func TestEnsureSbclAptFailureIsTheExitCode(t *testing.T) {
 	if h.runner.ran("sbcl") {
 		t.Fatalf("ran sbcl after a failed install: %q", h.runner.lines())
 	}
+}
+
+// writeHolder makes a lock another install holds, naming holder, made at when.
+func writeHolder(t *testing.T, h testInstallHost, holder int, when time.Time) {
+	t.Helper()
+	require.NoError(t, os.Mkdir(h.lock, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(h.lock, installLockPidFile), []byte(strconv.Itoa(holder)+"\n"), 0o644))
+	require.NoError(t, os.Chtimes(h.lock, when, when))
+}
+
+func TestInstallLockNamesItsHolderWhileHeldAndIsGoneAfter(t *testing.T) {
+	t.Parallel()
+	h := newTestInstallHost(t)
+	var during string
+	code := lockedInstall(h.installHost, "thing", func() bool { return false }, func() int { return 0 }, func() int {
+		b, err := os.ReadFile(filepath.Join(h.lock, installLockPidFile))
+		require.NoError(t, err)
+		during = string(b)
+		return 0
+	})
+	assert.Equal(t, 0, code)
+	assert.Equal(t, "4242\n", during)
+	assert.False(t, h.lockHeld(), "the lock outlived its install")
+}
+
+// A holder killed outright leaves its lock and its pid: a fresh lock whose pid
+// is gone is stale at once, without the ten minutes of the age rule.
+func TestInstallLockWhoseHolderPidIsGoneIsTakenOverAtOnce(t *testing.T) {
+	t.Parallel()
+	h := newTestInstallHost(t)
+	writeHolder(t, h, 99999, fixedNow) // fresh: the age rule says held
+	h.installHost.alive = func(pid int) bool { return pid != 99999 }
+	ran := false
+	code := lockedInstall(h.installHost, "thing", func() bool { return false }, func() int { return 0 }, func() int { ran = true; return 0 })
+	assert.Equal(t, 0, code, h.errb.String())
+	assert.True(t, ran, "the dead holder's lock was not taken over")
+	assert.Equal(t, 0, *h.sleeps, "polled on a lock whose holder is gone")
+	assert.False(t, h.lockHeld())
+}
+
+func TestInstallLockWhoseHolderPidIsAliveIsHeldUntilTheTimeout(t *testing.T) {
+	t.Parallel()
+	h := newTestInstallHost(t)
+	writeHolder(t, h, 99999, fixedNow)
+	h.installHost.alive = func(int) bool { return true }
+	ran := false
+	code := lockedInstall(h.installHost, "thing", func() bool { return false }, func() int { return 0 }, func() int { ran = true; return 0 })
+	assert.Equal(t, 1, code)
+	assert.False(t, ran)
+	assert.Equal(t, installLockTries, *h.sleeps)
+	assert.True(t, h.lockHeld(), "a waiter took a live holder's lock")
+}
+
+// The holder dies while a waiter polls: the waiter takes the lock over on the
+// poll after, not at the timeout.
+func TestInstallLockWaiterTakesOverWhenTheHolderDiesWhilePolling(t *testing.T) {
+	t.Parallel()
+	h := newTestInstallHost(t)
+	writeHolder(t, h, 99999, fixedNow)
+	dead := false
+	h.installHost.alive = func(pid int) bool { return !dead }
+	h.installHost.sleep = func(time.Duration) { *h.sleeps++; dead = *h.sleeps == 2 }
+	ran := false
+	code := lockedInstall(h.installHost, "thing", func() bool { return false }, func() int { return 0 }, func() int { ran = true; return 0 })
+	assert.Equal(t, 0, code)
+	assert.True(t, ran)
+	assert.Equal(t, 2, *h.sleeps)
+}
+
+// A SIGTERM or SIGINT to a holder mid-install: the lock is released before the
+// process exits, and the exit is red. The signal is a cancelled context; none is
+// sent to the test process.
+func TestInstallLockIsReleasedWhenTheHolderIsSignalled(t *testing.T) {
+	t.Parallel()
+	h := newTestInstallHost(t)
+	sig, raise := context.WithCancel(context.Background())
+	h.installHost.sigCtx = func(context.Context) (context.Context, context.CancelFunc) { return sig, func() {} }
+	exited := make(chan int, 1)
+	lockAtExit := make(chan bool, 1)
+	h.installHost.exit = func(code int) {
+		_, err := os.Stat(h.lock)
+		lockAtExit <- err == nil
+		exited <- code
+	}
+	code := lockedInstall(h.installHost, "thing", func() bool { return false }, func() int { return 0 }, func() int {
+		assert.True(t, h.lockHeld(), "the install runs with the lock held")
+		raise() // the signal arrives mid-install
+		select {
+		case <-exited:
+			exited <- 1 // put it back for the assertion below
+		case <-time.After(10 * time.Second):
+			t.Error("the signal did not end the install")
+		}
+		return 1
+	})
+	assert.Equal(t, 1, code)
+	assert.Equal(t, 1, <-exited)
+	assert.False(t, <-lockAtExit, "the process exited with its lock still held")
+	assert.False(t, h.lockHeld())
+	assert.Contains(t, h.errb.String(), "install lock released")
+}
+
+// A waiter that is signalled stops waiting at once and takes nothing.
+func TestInstallLockWaiterGivesUpWhenSignalled(t *testing.T) {
+	t.Parallel()
+	h := newTestInstallHost(t)
+	writeHolder(t, h, 99999, fixedNow)
+	sig, raise := context.WithCancel(context.Background())
+	h.installHost.sigCtx = func(context.Context) (context.Context, context.CancelFunc) { return sig, func() {} }
+	h.installHost.sleep = func(time.Duration) { *h.sleeps++; raise() }
+	ran := false
+	code := lockedInstall(h.installHost, "thing", func() bool { return false }, func() int { return 0 }, func() int { ran = true; return 0 })
+	assert.Equal(t, 1, code)
+	assert.False(t, ran)
+	assert.Equal(t, 1, *h.sleeps, "kept waiting after the signal")
+	assert.Contains(t, h.errb.String(), "interrupted while waiting")
+	assert.True(t, h.lockHeld(), "a waiter released a lock it never took")
+}
+
+// An install that ran long enough to have its lock taken over as stale does not
+// remove the new holder's lock when it finishes.
+func TestInstallLockOfAnotherHolderIsNotReleasedByThisOne(t *testing.T) {
+	t.Parallel()
+	h := newTestInstallHost(t)
+	code := lockedInstall(h.installHost, "thing", func() bool { return false }, func() int { return 0 }, func() int {
+		require.NoError(t, os.WriteFile(filepath.Join(h.lock, installLockPidFile), []byte("777\n"), 0o644))
+		return 0
+	})
+	assert.Equal(t, 0, code)
+	assert.True(t, h.lockHeld(), "removed a lock that now names another holder")
 }

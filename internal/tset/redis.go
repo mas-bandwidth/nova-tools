@@ -275,6 +275,7 @@ func (r *RedisStore) Steps(ctx context.Context, steps []Step) ([]StepResult, err
 	}
 	// Exec flushes this one pipeline. Its aggregate error is not a substitute
 	// for the per-command results: known replies remain known.
+	// ignored: each command keeps its own result (see the comment above); the aggregate is read per reply below
 	_, _ = pipe.Exec(ctx)
 	result := make([]StepResult, len(steps))
 	for i, cmd := range cmds {

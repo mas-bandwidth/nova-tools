@@ -1,22 +1,34 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
+	"os/signal"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
 	"time"
 )
 
 // Several runners share one machine, and apt does not survive a concurrent
-// dpkg, so an install takes a lock: a directory, created atomically by mkdir.
-// A lock older than installLockStale belongs to a dead install and is taken
-// over; a waiter polls every installLockPoll and gives up after
-// installLockTries polls.
+// dpkg, so an install takes a lock: a directory, created atomically by mkdir,
+// holding one file with its holder's pid. A lock is stale, and taken over, when
+// it is older than installLockStale, or when the pid it names is no longer a
+// running process (a holder killed outright leaves the lock behind; the pid says
+// so at once, where the age would take ten minutes). A holder that is told to
+// stop (SIGTERM or SIGINT) releases its lock before it exits. A waiter polls
+// every installLockPoll and gives up after installLockTries polls.
 const (
 	installLockStale = 600 * time.Second
 	installLockPoll  = 3 * time.Second
 	installLockTries = 40
+	// installLockPidFile is the file in the lock directory naming the holder.
+	installLockPidFile = "pid"
 )
 
 // installHost is what an install verb needs from outside itself, so a test
@@ -33,6 +45,94 @@ type installHost struct {
 	// pattern matches, sorted.
 	isExec func(string) bool
 	glob   func(string) []string
+	// pid is this process's id (written into the lock it takes); alive says
+	// whether a pid is a running process; sigCtx derives a context cancelled by
+	// SIGTERM or SIGINT; exit ends the process with a code. The four are here
+	// so a test stops an install with no signal sent to the test process. A nil
+	// one is the real one.
+	pid    func() int
+	alive  func(pid int) bool
+	sigCtx func(parent context.Context) (context.Context, context.CancelFunc)
+	exit   func(code int)
+}
+
+func (h installHost) ownPID() int {
+	if h.pid != nil {
+		return h.pid()
+	}
+	return os.Getpid()
+}
+
+func (h installHost) pidAlive(pid int) bool {
+	if h.alive != nil {
+		return h.alive(pid)
+	}
+	return processAlive(pid)
+}
+
+func (h installHost) stopContext(parent context.Context) (context.Context, context.CancelFunc) {
+	if h.sigCtx != nil {
+		return h.sigCtx(parent)
+	}
+	return signal.NotifyContext(parent, syscall.SIGTERM, syscall.SIGINT)
+}
+
+func (h installHost) exitWith(code int) {
+	if h.exit != nil {
+		h.exit(code)
+		return
+	}
+	os.Exit(code)
+}
+
+// lockHolder is the pid a lock names, 0 when it names none that can be read (a
+// lock just made, or one written by an older tool: only its age speaks then).
+func (h installHost) lockHolder() int {
+	b, err := os.ReadFile(filepath.Join(h.lock, installLockPidFile))
+	if err != nil {
+		return 0
+	}
+	pid, err := strconv.Atoi(strings.TrimSpace(string(b)))
+	if err != nil || pid <= 0 {
+		return 0
+	}
+	return pid
+}
+
+// lockIsStale says whether the lock held at h.lock belongs to no live install.
+func (h installHost) lockIsStale(fi os.FileInfo) bool {
+	if h.now().Sub(fi.ModTime()) > installLockStale {
+		return true
+	}
+	pid := h.lockHolder()
+	return pid != 0 && !h.pidAlive(pid)
+}
+
+// removeLock takes the lock away: its pid file, then the directory. A path
+// already gone is a lock already released, not an error.
+func (h installHost) removeLock() {
+	for _, p := range []string{filepath.Join(h.lock, installLockPidFile), h.lock} {
+		if err := os.Remove(p); err != nil && !errors.Is(err, fs.ErrNotExist) {
+			fmt.Fprintf(h.stderr, "cannot remove install lock %s: %v\n", p, err)
+		}
+	}
+}
+
+// releaseOwnLock releases the lock this process took, and only that one: a lock
+// that names another pid was taken over as stale while this install ran, and is
+// that install's now.
+func (h installHost) releaseOwnLock() {
+	if pid := h.lockHolder(); pid != 0 && pid != h.ownPID() {
+		return
+	}
+	h.removeLock()
+}
+
+// takeOverStaleLock removes a lock that belongs to no live install.
+func (h installHost) takeOverStaleLock() {
+	if fi, err := os.Stat(h.lock); err == nil && fi.IsDir() && h.lockIsStale(fi) {
+		h.removeLock()
+	}
 }
 
 // publish hands dir to the steps after this one (GITHUB_PATH).
@@ -50,9 +150,12 @@ func lockedInstall(h installHost, what string, have func() bool, found func() in
 	if have() {
 		return found()
 	}
-	if fi, err := os.Stat(h.lock); err == nil && fi.IsDir() && h.now().Sub(fi.ModTime()) > installLockStale {
-		os.Remove(h.lock) // a stale lock is taken over; an empty directory is all it is
-	}
+	// SIGTERM and SIGINT are caught from here to the return: a waiter gives up
+	// and a holder releases its lock and exits, where the default would leave
+	// the lock behind.
+	ctx, stop := h.stopContext(context.Background())
+	defer stop()
+	h.takeOverStaleLock()
 	for n := 0; ; {
 		if err := os.Mkdir(h.lock, 0o755); err == nil {
 			break
@@ -60,14 +163,40 @@ func lockedInstall(h installHost, what string, have func() bool, found func() in
 		if have() {
 			return found()
 		}
+		if ctx.Err() != nil {
+			fmt.Fprintf(h.stderr, "interrupted while waiting to install %s\n", what)
+			return 1
+		}
 		n++
 		if n > installLockTries {
 			fmt.Fprintf(h.stderr, "timed out waiting to install %s\n", what)
 			return 1
 		}
 		h.sleep(installLockPoll)
+		h.takeOverStaleLock()
 	}
-	defer os.Remove(h.lock)
+	if err := os.WriteFile(filepath.Join(h.lock, installLockPidFile), []byte(strconv.Itoa(h.ownPID())+"\n"), 0o644); err != nil {
+		fmt.Fprintf(h.stderr, "cannot write the install lock's pid: %v\n", err)
+		h.removeLock()
+		return 1
+	}
+	finished := make(chan struct{})
+	released := make(chan struct{})
+	go func() {
+		defer close(released)
+		select {
+		case <-ctx.Done():
+			h.releaseOwnLock()
+			fmt.Fprintf(h.stderr, "interrupted while installing %s; install lock released\n", what)
+			h.exitWith(1)
+		case <-finished:
+		}
+	}()
+	defer func() {
+		close(finished)
+		<-released
+		h.releaseOwnLock()
+	}()
 	if have() {
 		return found()
 	}

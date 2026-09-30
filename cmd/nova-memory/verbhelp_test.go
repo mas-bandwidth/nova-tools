@@ -22,10 +22,9 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 		{Verb: "verify", Flags: root},
 		{Verb: "eval", Flags: root},
 		{Verb: "boot", Flags: root},
-		{Verb: "view"},
 		{Verb: "version"},
 	})
-	testverbhelp.HelpVerb(t, memoryRun, "nova-memory", "search", "view", "version")
+	testverbhelp.HelpVerb(t, memoryRun, "nova-memory", "search", "version")
 }
 
 func memoryRun(args []string, stdout, stderr io.Writer) int {

@@ -135,7 +135,7 @@ func TestParseCLIReadsThisRepositorysOwnReference(t *testing.T) {
 	want := map[string]bool{
 		"nova-check links":          false,
 		"nova-check corpus":         false,
-		"nova-swarm batch":          false,
+		"nova-swarm native":         false,
 		"nova-bus send":             false,
 		"nova-fuse lift quarantine": false,
 		"nova-version snapshot":     false,

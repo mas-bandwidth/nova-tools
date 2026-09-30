@@ -12,7 +12,7 @@ import (
 // ci_goenv.go is the machine behind the `goenv` class test. It reads every .go
 // file under root/internal and root/cmd -- tests included, because a test
 // helper that builds a binary is a tool spawning go exactly like a verb is --
-// and refuses an exec.Command whose argv[0] is the literal "go" unless the
+// and refuses an exec.Command (or subproc.Command, CommandFor, Context, Long) whose argv[0] is the literal "go" unless the
 // function around it builds the child's environment with goenv.Clean.
 //
 // The class is one bug seen once: CI's `make test` exports GOFLAGS=-json, the
@@ -270,22 +270,28 @@ func scanGoEnvFileWith(rel string, raw []byte, seams SourceSeams) ([]GoEnvFindin
 	return findings, true
 }
 
-// goCommandArgv0 reports whether call is exec.Command or exec.CommandContext
-// with the literal "go" as argv[0], and where that literal stands.
+// goCommandArgv0 reports whether call is exec.Command, exec.CommandContext or
+// one of internal/subproc's constructors with the literal "go" as argv[0], and where that literal stands.
 func goCommandArgv0(call *ast.CallExpr) (token.Pos, bool) {
 	sel, ok := call.Fun.(*ast.SelectorExpr)
 	if !ok {
 		return 0, false
 	}
 	pkg, ok := sel.X.(*ast.Ident)
-	if !ok || pkg.Name != "exec" {
+	if !ok || (pkg.Name != "exec" && pkg.Name != "subproc") {
 		return 0, false
 	}
 	argv0 := -1
-	switch sel.Sel.Name {
-	case "Command":
+	switch {
+	case pkg.Name == "exec" && sel.Sel.Name == "Command":
 		argv0 = 0
-	case "CommandContext":
+	case pkg.Name == "exec" && sel.Sel.Name == "CommandContext":
+		argv0 = 1
+	// internal/subproc is the door every child goes through: Command and CommandFor
+	// take (ctx, kind-or-budget, name, ...), Context and Long take (ctx, name, ...).
+	case pkg.Name == "subproc" && (sel.Sel.Name == "Command" || sel.Sel.Name == "CommandFor"):
+		argv0 = 2
+	case pkg.Name == "subproc" && (sel.Sel.Name == "Context" || sel.Sel.Name == "Long"):
 		argv0 = 1
 	default:
 		return 0, false

@@ -338,8 +338,6 @@ nova-memory verify --root <dir> --links <gate|info> [--coverage <A:B>]... [--fro
 nova-memory eval   --root <dir>... --channels <list> --k <n> --floor <f> [--exclude <glob>]... [--fail-max <n>] <gold.tsv>
                                                                         known-answer harness: recall@k and MRR, fails below the floor
 nova-memory boot   --root <dir> --pin <file>                            the session loads exactly the pinned memories, never walks the directory
-nova-memory view   [--exclude <glob>]... [--max <n>] <file>...
-                                                                        the companion view: a chronological timeline of shared moments, sources never rewritten
 ```
 
 ### First run
@@ -707,21 +705,26 @@ MIT, see [LICENSE](../LICENSE).
 ## nova-swarm
 
 ```
-nova-swarm: a pool of one-task workers, with the ways a swarm fails taken out (see docs/SPEC-SWARM.md)
+nova-swarm: one-task AI workers, each run in the sandbox with a deadline and a token budget
+
+how it works: a card is one task, a markdown file with a header and its RULES;
+a worker description (JSON) names the harness, the model, the key file and the
+directories it may read. native runs one card as one child inside nova-sandbox;
+batch runs many under a pool of slots (leases in a --slots-store directory);
+each result lands in the job directory under --root. Nothing has a default.
+first run: the lines under example: need nothing: a card, a worker description
+and the lint's rules; running a card needs a harness, a model's key file and nova-sandbox.
 
 usage:
   nova-swarm version    print this build identity (--version also accepted)
   nova-swarm doctor    [--path <file>] [--local <file>]   refuse a launch under a shadowed nova-swarm (PATH vs ~/.local/bin build stamp)
-  nova-swarm batch     --id <id> --cards <file> --deadline <seconds> --root <dir> --tokens <n>|unmetered (--runner <cmd> | --harness <path> --slots-store <dir> --owner <name>) [--idle <seconds>] [--slots <lo>-<hi>] [--then <command>] [--benches <file> --bench <name>[,<name>...]]
-                       (without --runner, batch requires --slots-store <dir> --owner <name> and runs each card through nova-swarm native)
   nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
   nova-swarm lint      --card <file> [--typed] [--child-rules] [--trust <file>] [--lineup <file>] [--max <n>] | --fleet <file> [--max <n>] | --rules
                        (--fleet lints a launcher script against the coordinator's /bin/bash 3.2: shebang, bash-4 builtins, unquoted expansions)
                        (--child-rules holds the card to every rule the coordinator gives a child: one rule-<name> per required sentence, one step-<what> per forbidden command; template --name card prints a card that passes)
   nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|card|read|fix|text|replay|drift|tone|models.tsv
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
-  nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--events-store <host:port>]
-  nova-swarm route     --card <file> --routes <routes.tsv> [--floor 0.9] [--default <worker json>] [--key-env <name>] [--base-url <url>]
+  nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now]
   nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
   nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>] [--kind <kind>]
   nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all) [--force]
@@ -737,11 +740,11 @@ absent or empty, a bad invocation.
 
 NO GUESSED ANYTHING. There is no default pool, no default worker description, no
 default number of workers, no default deadline, and no default token budget.
-batch takes --cards; native and route require --card; lint takes --card, or
+native requires --card; lint takes --card, or
 --fleet or --rules instead; verify takes --card as an option and reads it only
 when given (because a card this tool chose would be a guess about somebody
 else's task); the remaining verbs take no card flag. --tokens is required on
-batch and native because a budget this tool supplied would be a guess about
+native and member because a budget this tool supplied would be a guess about
 somebody else's task, and --tokens unmetered is a caller's statement that this
 provider has no live accounting and the deadline is the only stop. Zero is
 refused for tokens.
@@ -764,6 +767,8 @@ never about the output.
 
 example:
   nova-swarm template --name read-pr
+  nova-swarm template --name worker
+  nova-swarm lint --rules
 ```
 
 ### First run
@@ -1196,13 +1201,13 @@ WORKTREE OK removed=0 kept=1
 
 Token spend, folded from declared sources into **one file per day**, keyed exactly by `(day, model, repo)`, with the five token types kept apart — and those day files summed into a month. It reads sources. It never estimates, never fills a gap, and never removes a file. The contract is [docs/SPEC-TOKENS.md](SPEC-TOKENS.md).
 
-The core accounting verbs are `fold`, `report`, `sum`, `check` and `sources` — `nova-tokens help` lists all ten verbs. `fold` reads every declared source and writes the days it could compute. `report` is for a friend on another machine: it folds that machine's own sources for one day and prints, on standard output, exactly the body of a tokens note, so nobody types a number. `sum` is two calls, and `nova-tokens help` prints one synopsis line for each: `sum --out <dir> --month <YYYY-MM>` adds day files into a month and asserts nothing, and `sum --swarm-root <dir> --day <YYYY-MM-DD> --out <ledger.tsv>` writes the daily ledger. The two forms do not combine — `--month` beside `--swarm-root` is refused — so the banner never presents them as one call with two `--out` flags. `check` is the gate. `sources` shows what a fold would count before it writes.
+The core accounting verbs are `fold`, `report`, `sum`, `check` and `sources` — `nova-tokens help` lists all nine verbs. `fold` reads every declared source and writes the days it could compute. `report` is for a friend on another machine: it folds that machine's own sources for one day and prints, on standard output, exactly the body of a tokens note, so nobody types a number. `sum --out <dir> --month <YYYY-MM>` adds day files into a month and asserts nothing. `check` is the gate. `sources` shows what a fold would count before it writes.
 
 ```sh
 nova-tokens check --out <dir> [--strict | --no-spend <file>] [--through <YYYY-MM-DD>] [--max <n>]
 ```
 
-`check --out <dir>` counts what it does not name, so that it can go green on a real directory: a calendar day between the first and the last with no file is `gap=<n>`, and a `*.md`, a `*.log` or a `pre-*` archive directory beside the day files is `notes=<n>`. A gap becomes `CHECK MISSING` only when something says there was spend on it — `--strict` names every gap (and every non-day entry, which is the old reading whole), and `--no-spend <file>`, one `YYYY-MM-DD` per line, names the gaps your list does not account for. The two flags are two answers to one question and giving both is exit 2. `--through <YYYY-MM-DD>` asserts that the ledger is current through the specified day; when the newest folded day under `--out` is older than the given day (or if `--out` has no folded days), `check` prints `CHECK FAIL stale last=<last> through=<day>` on standard error, marks the run failed, and exits 1. `sources --unattributed [--max <n>]` prints the path stems that were seen and matched no rule, heaviest first, which is what the `other=<pct>%` share on a `TOKENS DAY` line is made of and the one evidence for improving the `--repos` file; `SOURCES OK` then carries `unattributed=<n>`, and `-` when the flag was not given. `profiles --swarm-root <dir>` walks a swarm root's card usage files and prints, per model, the card count, the median `tokens_out` and the budget overshoots, writing nothing. `version` prints the build identity. `sum --swarm-root <dir> --day <d> --out <ledger.tsv>` writes the daily ledger and, when a card's receipt carries a `tool` column, prints one `TOOLS` line naming each tool and its invocation count for the day — `TOOLS review:1,pulse:2` — so a tool nobody used is visible by its absence on the line. A harness that records nothing a tool can read (Antigravity, Grok, Codex) is counted provider-side, never apportioned: `--provider <kind>:<label>=<file>`, the kind one of `google`, `openai`, `xai`. The `xai` parser reads both the comma-separated export and the `grok usage` JSON (a `sessionId` and a `turns` array), folding each turn's five token counts and its `costUsdTicks` — an integer count of micro-dollar ticks — into the model's `usd=` on the day's `TOKENS AVG` lines. One `--provider xai:<label>=<file>` names one file. A missing path is `TOKENS UNREADABLE` and is not a search of a session store; a directory is not walked.
+`check --out <dir>` counts what it does not name, so that it can go green on a real directory: a calendar day between the first and the last with no file is `gap=<n>`, and a `*.md`, a `*.log` or a `pre-*` archive directory beside the day files is `notes=<n>`. A gap becomes `CHECK MISSING` only when something says there was spend on it — `--strict` names every gap (and every non-day entry, which is the old reading whole), and `--no-spend <file>`, one `YYYY-MM-DD` per line, names the gaps your list does not account for. The two flags are two answers to one question and giving both is exit 2. `--through <YYYY-MM-DD>` asserts that the ledger is current through the specified day; when the newest folded day under `--out` is older than the given day (or if `--out` has no folded days), `check` prints `CHECK FAIL stale last=<last> through=<day>` on standard error, marks the run failed, and exits 1. `sources --unattributed [--max <n>]` prints the path stems that were seen and matched no rule, heaviest first, which is what the `other=<pct>%` share on a `TOKENS DAY` line is made of and the one evidence for improving the `--repos` file; `SOURCES OK` then carries `unattributed=<n>`, and `-` when the flag was not given. `profiles --swarm-root <dir>` walks a swarm root's card usage files and prints, per model, the card count, the median `tokens_out` and the budget overshoots, writing nothing. `version` prints the build identity. A harness that records nothing a tool can read (Antigravity, Grok, Codex) is counted provider-side, never apportioned: `--provider <kind>:<label>=<file>`, the kind one of `google`, `openai`, `xai`. The `xai` parser reads both the comma-separated export and the `grok usage` JSON (a `sessionId` and a `turns` array), folding each turn's five token counts and its `costUsdTicks` — an integer count of micro-dollar ticks — into the model's `usd=` on the day's `TOKENS AVG` lines. One `--provider xai:<label>=<file>` names one file. A missing path is `TOKENS UNREADABLE` and is not a search of a session store; a directory is not walked.
 
 ### First run
 
@@ -1212,7 +1217,7 @@ What a first run gets wrong, and what each one wants:
 
 - **No `--repos`.** There is no built-in list of repos, because the two the prototype carried disagreed about three of them. It wants a file of `<name><TAB><regexp>` lines in priority order; the `unknown=` and `other=` shares on every `TOKENS DAY` line are how you see whether yours is good enough.
 - **Expecting exit 0 with an unreadable file.** A declared source is a claim that the report covers it, so an unreadable one is one `TOKENS UNREADABLE` line, one in `unreadable=`, and exit 1 — and the day files still land. `written=true` is about the files; the exit code is about the claim.
-- **Reading a `-` as a zero.** A dash is "this source did not report that type" and a zero is a measurement. `sum` counts the dashes per column beside the totals, and nothing here folds one type into another. The daily ledger `sum --swarm-root <dir> --day <d> --out <ledger.tsv>` writes keeps the rule: its columns are `day`, `model`, `tokens_in`, `tokens_out`, `usd`, `cards`, `dashes`, a kept field a card did not report is `-` never 0, and the trailing `dashes` column counts the cards that left input, output and usd unknown.
+- **Reading a `-` as a zero.** A dash is "this source did not report that type" and a zero is a measurement. `sum` counts the dashes per column beside the totals, and nothing here folds one type into another.
 - **Sending a second tokens note for a day.** Two notes in one lane for one day are `TOKENS CONFLICT` and fold nothing, because no winner can be read off a clock, a filename or a git history. A correction names what it corrects: `supersedes=<id>[,<id>…]` in the subject, which `report --supersedes` writes for you.
 - **Reusing one label across two kinds.** A label is unique across the whole run, not per flag: `--claude bench=… --opencode bench=…` is `TOKENS REFUSED … the label bench is used twice`, exit 2, before anything is read. Two sources with one label would make the `sources` column a lie. A `--provider` is the one flag whose label carries its parser too — `--provider google:emma=<export>` — so two friends' exports from one provider are `google:emma` and `google:freddy`.
 - **Declaring one harness twice.** **One harness is one `--claude`.** This fold does not de-duplicate across sources, by design (SPEC-TOKENS, *what it deliberately does not do*), so two declared directories holding the same transcripts count every message twice and the day file, `check` and `sum` are all green about it. Measured on this bench: `~/.claude/projects/<session>/subagents/agent-*.jsonl` and `/private/tmp/claude-501/*/tasks/*.output` were the same 10,281 messages for one day, and the doubled fold said `written=true`. A fold that sees two sources feed one message id now says so on its `TOKENS NOTE` line, naming both labels and the count — it is a warning, not a correction: the numbers are still doubled and the remedy is to drop one flag.
@@ -1220,22 +1225,6 @@ What a first run gets wrong, and what each one wants:
 - **`--scratch` without `--opencode`, or the other way round.** The OpenCode database is copied into `--scratch` and read there with `sqlite3 -readonly`, which is this tool's one subprocess; a scratch directory with nothing to put in it is a flag that does nothing, and both mistakes are refused with the sentence saying so.
 
 There is **no `quickstart` verb**, and that is deliberate. Every verb here needs a path this tool must not invent — an output directory, a rules file, at least one source — so a one-word first run would have to write state nobody asked for, in a directory nobody named. `nova-tokens help` carries seven example lines a stranger can paste instead — six under its first `example:` and one under the `session` example, and `sources` is the one verb that only looks.
-
-### Worker-pool usage
-
-```sh
-nova-tokens fold-pool --pool ./pool --ledger ./pool-usage.tsv
-```
-
-Reads `usage/*.tsv` under the named pool (or TSVs directly under that directory)
-and groups usage by day, provider, model and repository. `--since` takes an
-RFC3339 start timestamp. The ledger includes task counts, five separate token
-columns and cost; unreported values remain unknown. Repeating the same fold
-replaces matching aggregate rows rather than adding them again. Use a separate
-ledger for each pool: the aggregate key does not contain a pool ID.
-
-This ledger is distinct from the `sum --swarm-root` daily ledger above. See
-`nova-tokens help` for `profiles`, `session` and ledger-reporting options.
 
 **The token ledger on Redis** (SPEC-STATE test 17, #2201). `ledger` indexes folded day files
 into the fleet Redis, one hash per day, and `report --redis` is the month as one GROUP BY
@@ -1683,57 +1672,6 @@ nova-ci github receipt: --repo wants owner/name, got "nova-tools"; run: nova-ci 
 $ nova-ci github receipt --from-runner --repo mas-bandwidth/nova-tools --sha 9af23a05e0000000000000000000000000000000 --run-id 1 --workflow CI --conclusion skipped
 nova-ci github receipt: --conclusion wants success, failure or cancelled (job.status), got "skipped"; run: nova-ci help
 ```
-
-### cost
-
-`nova-ci cost --repo owner/name --sha <40hex> --run-id <n> --workflow <name>
---conclusion success|failure|cancelled [--pr <n>] [--at <rfc3339>] [--redis <addr>]
-< jobs.json` is the one COST line of a CI run: where the run's job-seconds went.
-It reads the forge's job listing for the run on stdin (the body of
-`repos/<owner>/<name>/actions/runs/<id>/jobs`: one JSON object whose `jobs`
-array holds exactly `total_count` jobs, whether a single complete page or pages
-combined into one object; raw concatenated pages are refused), prices it, and
-prints one line: the receipt's identity (the flags are `github receipt`'s, spelt
-the same, so the `ci-ok` step writes both from the same context), then
-`jobs=<n> total=<s> spin=<s> unknown=<n>` and one
-`job=<name>:<seconds>:<conclusion>:<attempt>:<why>` field per job in the
-listing's order. A job's seconds are its `completed_at` minus its `started_at`
-as the forge stamped them; `spin` is the seconds that bought no verdict, the
-jobs whose `why` is `failed`, `cancelled`, `rerun` (attempt above one) or
-`superseded` (an earlier attempt the listing also holds a later one of); a job
-with no `completed_at` yet has unknown seconds, printed `-` and counted in
-`unknown=`, never summed as zero. The verb makes no call of its own: what
-fetched the listing is the caller's business (internal/cicost).
-
-A complete listing is required: if `total_count` exceeds the jobs read, or if
-the counts mismatch, the command refuses before any dial (exit 2) naming the
-jobs read, expected count, and pagination guidance (`listing is partial (<n>
-jobs read, <m> expected); page through the forge's listing, or pass every page`).
-
-`--redis <addr>` appends the same entry to the `ci:cost` stream first (one
-entry per run: the receipt's fields, the totals, one `job:<name>:<attempt>`
-field per job; a reader joins it to the run's `ev:github` row by `repo`, `sha`
-and `run_id`) and the line ends in the entry's id; without it the line ends in
-`ev=-`. The store is dialled as the environment's seat, the receipt's way. Exit
-0 with the line; 1 when the store would not take the entry, one line on stderr
-ending `the COST entry was not written: fix the store or the bench seat and
-rerun ci-ok`. If an XADD write succeeds but closing the connection subsequently
-fails, the COST line with its event id is printed on stdout, the close failure
-is reported on stderr (`nova-ci cost: close: <err>`), and the command exits 1
-without instructing the caller to rerun the write (preventing duplicate entries);
-2 a refusal before any dial, for a flag the receipt refuses, an empty stdin, a
-listing that is not the forge's JSON, a listing holding no jobs, or a partial or
-count-mismatched listing.
-
-```
-$ nova-ci cost --repo mas-bandwidth/nova-tools --sha 0123456789abcdef0123456789abcdef01234567 --run-id 777 --workflow ci --conclusion failure --pr 4328 < internal/cicost/testdata/jobs.json
-COST repo=mas-bandwidth/nova-tools sha=0123456789abcdef0123456789abcdef01234567 run=777 workflow=ci conclusion=failure pr=4328 jobs=5 total=150 spin=75 unknown=0 job=lint:15:success:1:ok job=test\x20(linux):42:failure:1:failed job=functional:33:success:2:rerun job=docs:0:skipped:1:ok job=test-hosted:60:success:1:ok ev=-
-```
-
-The fixture is five jobs of one run: `lint` 15 s green, `test (linux)` 42 s
-red, `functional` 33 s green in its second attempt, `docs` skipped, `test-hosted`
-60 s green; so `total=150` and `spin=75`, the red job's 42 s and the rerun's
-33 s. A job name is one token: the space in `test (linux)` prints as `\x20`.
 
 ## nova-config
 

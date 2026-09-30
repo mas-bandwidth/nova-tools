@@ -19,7 +19,8 @@ flake guard) and stops: the rerun's own completion re-enters the workflow with
 run-attempt 2, and only a rerun that is red too is reverted.
 
 Otherwise one of three guards stops it with a notice and exit 0 (a skip is not a
-red):
+red; a guard decides only on what GitHub ANSWERED, never on a question it could
+not ask):
   * the head commit is itself a revert        -> no revert loops
   * main has moved past this commit           -> the newer run decides
   * the parent commit's ci run was not green  -> the red predates this push
@@ -32,11 +33,17 @@ auto-merge and lands nothing on its own: CI lands nothing by itself, a person or
 a batch does. Either way it posts ONE comment on the merged pull request, naming
 the revert.
 
+A GitHub API call that fails (the parent's run lookup, the failed run's job
+list, the merged pull request lookup, the comment, the rerun) is never a skip:
+the verb exits 1 and files ONE needs-glenn issue naming the call, before any
+revert is pushed when the call comes before the revert (every lookup does), so
+a person decides what a blind verb could not.
+
 Environment: GITHUB_REPOSITORY, GITHUB_TOKEN, HEAD_SHA, RUN_ID (all required).
 git and gh run in the working directory, which is the checkout of HEAD_SHA.
 
 exit 0  reverted, or skipped by a guard, or rerun once
-exit 1  a git or gh step failed
+exit 1  a git or gh step failed (a gh failure also files the needs-glenn issue)
 exit 2  usage, or a required variable is unset
 `,
 		do: func(e env, args []string) int { return revertOnRed(e, osCmdRunner{}, args) },
@@ -108,13 +115,10 @@ func (v *reverter) git(args ...string) (string, int) {
 	return out, code
 }
 
-// gh runs gh with the token; stderr is dropped when quiet, the way the
-// lookups that may fail and be skipped were silent.
-func (v *reverter) gh(quiet bool, args ...string) (string, int) {
-	c := cmdSpec{Name: "gh", Args: args, Dir: v.e.dir, Env: v.ghEnv}
-	if !quiet {
-		c.Stderr = v.e.stderr
-	}
+// gh runs gh with the token; its stderr is always shown, because no gh failure
+// is ever read as "nothing found".
+func (v *reverter) gh(args ...string) (string, int) {
+	c := cmdSpec{Name: "gh", Args: args, Dir: v.e.dir, Env: v.ghEnv, Stderr: v.e.stderr}
 	out, code, err := capture(v.r, c)
 	if err != nil {
 		fmt.Fprintf(v.e.stderr, "revert-on-red: gh: %v\n", err)
@@ -128,11 +132,30 @@ func (v *reverter) fail(format string, a ...any) int {
 	return 1
 }
 
+// undecided is the exit of a verb that could not ask GitHub something it had to
+// know: it is red (exit 1), and it files ONE needs-glenn issue (the way
+// nightly-report files its issue: gh issue create on the repository) naming the
+// call, so a person decides. It never reads the failure as "skip". If the issue
+// cannot be filed either, that is said on stderr and the exit is still 1.
+func (v *reverter) undecided(what string) int {
+	fmt.Fprintf(v.e.stderr, "revert-on-red: %s; not deciding for a person, exiting red and filing a needs-glenn issue\n", what)
+	title := fmt.Sprintf("needs-glenn: revert-on-red could not decide on %s", shortSHA(v.head))
+	body := fmt.Sprintf("revert-on-red ran for ci run %s at %s on main and could not ask GitHub something it had to know:\n\n%s\n\nIt did not skip and it pushed no revert for this failure. Decide by hand whether main at %s is to be reverted.", v.runID, v.head, what, shortSHA(v.head))
+	out, code := v.gh("issue", "create", "--repo", v.repo, "--title", title, "--body", body)
+	if out != "" {
+		fmt.Fprintln(v.e.stdout, out)
+	}
+	if code != 0 {
+		fmt.Fprintf(v.e.stderr, "revert-on-red: gh issue create exited %d; no needs-glenn issue was filed\n", code)
+	}
+	return 1
+}
+
 // rerunOnce is the flake guard: the first red of a run is only a trigger to run
 // its failed jobs again.
 func (v *reverter) rerunOnce() int {
-	if _, code := v.gh(false, "run", "rerun", v.runID, "--failed"); code != 0 {
-		return v.fail("gh run rerun %s --failed exited %d", v.runID, code)
+	if _, code := v.gh("run", "rerun", v.runID, "--failed"); code != 0 {
+		return v.undecided(fmt.Sprintf("gh run rerun %s --failed exited %d", v.runID, code))
 	}
 	v.notice("run %s failed on attempt 1; re-ran its failed jobs once (flake guard). The rerun's own workflow_run completion re-enters this workflow with run_attempt 2, and only a rerun that is red too is reverted.", v.runID)
 	return 0
@@ -176,7 +199,10 @@ func (v *reverter) revert() int {
 		}
 	}
 	fmt.Fprintf(v.e.stdout, "head=%s parent=%s\n", short, shortSHA(parent))
-	conclusion := v.parentConclusion(parent)
+	conclusion, err := v.parentConclusion(parent)
+	if err != nil {
+		return v.undecided(err.Error())
+	}
 	if conclusion == "" {
 		v.notice("no ci push run found for parent %s; no green baseline, skipping.", shortSHA(parent))
 		return 0
@@ -186,9 +212,18 @@ func (v *reverter) revert() int {
 		return 0
 	}
 
-	failing := v.failingJobs()
+	failing, err := v.failingJobs()
+	if err != nil {
+		return v.undecided(err.Error())
+	}
 	if failing == "" {
 		failing = "no failing job named"
+	}
+	// the merged PR is asked BEFORE the revert is pushed: a lookup that fails
+	// must leave nothing pushed to main.
+	pr, err := v.mergedPR()
+	if err != nil {
+		return v.undecided(err.Error())
 	}
 
 	// the revert
@@ -227,10 +262,10 @@ func (v *reverter) revert() int {
 	}
 
 	// ONE comment on the merged PR, found by the commit's PR association
-	if pr := v.mergedPR(); pr != "" {
+	if pr != "" {
 		comment := fmt.Sprintf("Main was red on %s. Reverted by %s (mechanical revert-on-red); fix forward on a branch.", failing, shortSHA(newSHA))
-		if _, code := v.gh(false, "api", fmt.Sprintf("repos/%s/issues/%s/comments", v.repo, pr), "-f", "body="+comment); code != 0 {
-			return v.fail("commenting on #%s exited %d", pr, code)
+		if _, code := v.gh("api", fmt.Sprintf("repos/%s/issues/%s/comments", v.repo, pr), "-f", "body="+comment); code != 0 {
+			return v.undecided(fmt.Sprintf("commenting on #%s exited %d; the revert is already landed (see the run's log)", pr, code))
 		}
 		fmt.Fprintf(v.e.stdout, "commented on #%s naming revert %s\n", pr, shortSHA(newSHA))
 	} else {
@@ -267,12 +302,12 @@ func (v *reverter) land(msg, newSHA string) int {
 		}
 	}
 	prBody := fmt.Sprintf("Mechanical revert-on-red. ci failed on main at %s; reverted as %s. Fix forward on a branch.", short, newShort)
-	if _, code := v.gh(false, "pr", "create", "--base", "main", "--head", branch, "--title", msg, "--body", prBody); code != 0 {
+	if _, code := v.gh("pr", "create", "--base", "main", "--head", branch, "--title", msg, "--body", prBody); code != 0 {
 		fmt.Fprintf(v.e.stdout, "PR already exists for %s; reusing it.\n", branch)
 	}
-	num, code := v.gh(false, "pr", "view", branch, "--json", "number", "--jq", ".number")
+	num, code := v.gh("pr", "view", branch, "--json", "number", "--jq", ".number")
 	if code != 0 {
-		return v.fail("gh pr view %s exited %d", branch, code)
+		return v.undecided(fmt.Sprintf("gh pr view %s exited %d; the revert branch is pushed", branch, code))
 	}
 	fmt.Fprintf(v.e.stdout, "revert PR #%s open on %s\n", num, branch)
 	v.notice("revert PR #%s is OPEN on %s and lands nothing by itself: main is red until somebody lands it -- merge it by hand.", num, branch)
@@ -280,13 +315,15 @@ func (v *reverter) land(msg, newSHA string) int {
 }
 
 // parentConclusion is the conclusion of the ci workflow's push run on main at
-// the parent commit, looked for on the first five pages of runs; "" when none
-// is found. A run with no conclusion yet reads "null", which is not success.
-func (v *reverter) parentConclusion(parent string) string {
+// the parent commit, looked for on the first five pages of runs; "" when every
+// page answered and none names it. A run with no conclusion yet reads "null",
+// which is not success. A page that cannot be fetched or read is an error: a
+// lookup that failed is never "no run found".
+func (v *reverter) parentConclusion(parent string) (string, error) {
 	for page := 1; page <= 5; page++ {
-		out, code := v.gh(true, "api", fmt.Sprintf("repos/%s/actions/workflows/ci.yml/runs?branch=main&event=push&per_page=100&page=%d", v.repo, page))
+		out, code := v.gh("api", fmt.Sprintf("repos/%s/actions/workflows/ci.yml/runs?branch=main&event=push&per_page=100&page=%d", v.repo, page))
 		if code != 0 {
-			continue
+			return "", fmt.Errorf("gh api of ci.yml runs page %d exited %d", page, code)
 		}
 		var runs struct {
 			WorkflowRuns []struct {
@@ -294,28 +331,29 @@ func (v *reverter) parentConclusion(parent string) string {
 				Conclusion *string `json:"conclusion"`
 			} `json:"workflow_runs"`
 		}
-		if json.Unmarshal([]byte(out), &runs) != nil {
-			continue
+		if err := json.Unmarshal([]byte(out), &runs); err != nil {
+			return "", fmt.Errorf("gh api of ci.yml runs page %d printed no run list: %v", page, err)
 		}
 		for _, run := range runs.WorkflowRuns {
 			if run.HeadSHA != parent {
 				continue
 			}
 			if run.Conclusion == nil {
-				return "null"
+				return "null", nil
 			}
-			return *run.Conclusion
+			return *run.Conclusion, nil
 		}
 	}
-	return ""
+	return "", nil
 }
 
 // failingJobs names the jobs of the failed run that did not succeed and were
-// not skipped, comma separated; "" when the lookup fails or none is named.
-func (v *reverter) failingJobs() string {
-	out, code := v.gh(true, "api", fmt.Sprintf("repos/%s/actions/runs/%s/jobs?per_page=100", v.repo, v.runID))
+// not skipped, comma separated; "" when none is named. A lookup that fails is
+// an error, never "none named".
+func (v *reverter) failingJobs() (string, error) {
+	out, code := v.gh("api", fmt.Sprintf("repos/%s/actions/runs/%s/jobs?per_page=100", v.repo, v.runID))
 	if code != 0 {
-		return ""
+		return "", fmt.Errorf("gh api of run %s jobs exited %d", v.runID, code)
 	}
 	var jobs struct {
 		Jobs []struct {
@@ -323,8 +361,8 @@ func (v *reverter) failingJobs() string {
 			Conclusion *string `json:"conclusion"`
 		} `json:"jobs"`
 	}
-	if json.Unmarshal([]byte(out), &jobs) != nil {
-		return ""
+	if err := json.Unmarshal([]byte(out), &jobs); err != nil {
+		return "", fmt.Errorf("gh api of run %s jobs printed no job list: %v", v.runID, err)
 	}
 	var names []string
 	for _, j := range jobs.Jobs {
@@ -333,27 +371,28 @@ func (v *reverter) failingJobs() string {
 		}
 		names = append(names, j.Name)
 	}
-	return strings.Join(names, ", ")
+	return strings.Join(names, ", "), nil
 }
 
 // mergedPR is the number of the first merged pull request the head commit
-// belongs to, "" when there is none or the lookup fails.
-func (v *reverter) mergedPR() string {
-	out, code := v.gh(true, "api", fmt.Sprintf("repos/%s/commits/%s/pulls", v.repo, v.head))
+// belongs to, "" when it belongs to none. A lookup that fails is an error,
+// never "no pull request".
+func (v *reverter) mergedPR() (string, error) {
+	out, code := v.gh("api", fmt.Sprintf("repos/%s/commits/%s/pulls", v.repo, v.head))
 	if code != 0 {
-		return ""
+		return "", fmt.Errorf("gh api of the pull requests of %s exited %d", shortSHA(v.head), code)
 	}
 	var prs []struct {
 		Number   int     `json:"number"`
 		MergedAt *string `json:"merged_at"`
 	}
-	if json.Unmarshal([]byte(out), &prs) != nil {
-		return ""
+	if err := json.Unmarshal([]byte(out), &prs); err != nil {
+		return "", fmt.Errorf("gh api of the pull requests of %s printed no list: %v", shortSHA(v.head), err)
 	}
 	for _, p := range prs {
 		if p.MergedAt != nil {
-			return fmt.Sprint(p.Number)
+			return fmt.Sprint(p.Number), nil
 		}
 	}
-	return ""
+	return "", nil
 }

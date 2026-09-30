@@ -7,12 +7,17 @@ package main
 // takes a cmdRunner, so a test drives it with no program started.
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // cmdSpec is one command a verb runs: the program, its arguments, the
@@ -33,8 +38,8 @@ type cmdSpec struct {
 // process inherit.
 type cmdRunner interface {
 	// Run runs c and returns its exit code. err is non-nil only when the
-	// program could not be started at all (not found, not executable); the
-	// code is then -1.
+	// program could not be started at all (not found, not executable), or when
+	// its budget ended it (a *subproc.TimeoutError); the code is then -1.
 	Run(c cmdSpec) (code int, err error)
 	// LookPath finds a program on PATH.
 	LookPath(name string) (string, error)
@@ -43,23 +48,60 @@ type cmdRunner interface {
 	PrependPath(dir string)
 }
 
-// osCmdRunner is the real cmdRunner: os/exec and the process's own PATH.
+// osCmdRunner is the real cmdRunner. Every child goes through the repository's
+// one door (internal/subproc, internal/gitrun): git through gitrun, with its
+// budget by command; a long-lived child (make, a test or build run, a package
+// install, the lisp suite, a secrets-wrapped run) through subproc.Long, bounded
+// by the job's own cap and not by a budget of ours; every other program as a
+// one-shot under its kind's budget. Each carries a bounded wait for its pipes.
 type osCmdRunner struct{}
+
+// longRunning says whether c is a child whose length is the work's own: a
+// package build or install, a test or build run, a suite. Everything else is a
+// one-shot answer (gh, curl, tar, a version print, go list).
+func longRunning(c cmdSpec) bool {
+	switch filepath.Base(c.Name) {
+	case "make", "apt-get", "brew", "sbcl", "nova-secrets", "sudo":
+		return true
+	case "go":
+		if len(c.Args) > 0 {
+			switch c.Args[0] {
+			case "test", "build", "run", "install", "vet":
+				return true
+			}
+		}
+	}
+	return false
+}
 
 func (osCmdRunner) Run(c cmdSpec) (int, error) {
 	if c.Name == "" {
 		return -1, errors.New("no command")
 	}
-	cmd := exec.Command(c.Name, c.Args...)
-	cmd.Dir = c.Dir
-	cmd.Env = append(os.Environ(), c.Env...)
-	cmd.Stdout = c.Stdout
-	cmd.Stderr = c.Stderr
-	err := cmd.Run()
+	env := append(os.Environ(), c.Env...)
+	var b subproc.Bounded
+	switch {
+	case filepath.Base(c.Name) == "git":
+		b = gitrun.Prepare(context.Background(), gitrun.Options{Bin: c.Name, Dir: c.Dir, Env: env}, c.Args...)
+	case longRunning(c):
+		ctx, cancel := context.WithCancel(context.Background())
+		b = subproc.Bounded{Cmd: subproc.Long(ctx, c.Name, c.Args...), Ctx: ctx, Cancel: cancel}
+	default:
+		b = subproc.Prepare(context.Background(), subproc.BudgetOf(c.Name, c.Args), c.Name, c.Args...)
+	}
+	defer b.Cancel()
+	b.Cmd.Dir = c.Dir
+	b.Cmd.Env = env
+	b.Cmd.Stdout = c.Stdout
+	b.Cmd.Stderr = c.Stderr
+	err := b.Wrap(strings.Join(append([]string{c.Name}, c.Args...), " "), b.Cmd.Run())
 	var exit *exec.ExitError
+	var timeout *subproc.TimeoutError
 	switch {
 	case err == nil:
 		return 0, nil
+	case errors.As(err, &timeout):
+		return -1, err
 	case errors.As(err, &exit):
 		return exit.ExitCode(), nil
 	}

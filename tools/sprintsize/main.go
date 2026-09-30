@@ -23,8 +23,11 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // step is one operation of the run and its limit (0: none).
@@ -67,7 +70,8 @@ func run() []step {
 // local store only (localStore), and the teardown that follows fails loudly on
 // a store that cannot be reached.
 func sprintExists(bin string, env []string) bool {
-	cmd := exec.Command(bin, "where")
+	cmd, cancel := subproc.Command(context.Background(), subproc.Tool, bin, "where")
+	defer cancel()
 	cmd.Env = env
 	return cmd.Run() == nil
 }
@@ -122,6 +126,10 @@ func main() {
 		fmt.Fprintln(os.Stderr, "sprintsize: a sprint already exists on "+*redis+"; the run tears it down first. Pass --replace to tear it down")
 		os.Exit(2)
 	}
+	// Each step is a long-lived child: it runs under a context an interrupt cancels and no
+	// deadline (the step's own limit is a column of the report, not a kill).
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
 	steps := run()
 	if !*keep {
 		steps = append(steps, step{"teardown", "110,000", 0, []string{"teardown", "--confirm", "sprint"}, nil})
@@ -130,7 +138,7 @@ func main() {
 	failed := false
 	fmt.Fprintf(&out, "| operation | size | time | limit | result |\n|---|---|---|---|---|\n")
 	for _, st := range steps {
-		cmd := exec.Command(*bin, st.args...)
+		cmd := subproc.Long(ctx, *bin, st.args...)
 		cmd.Env = env
 		var o, e bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &o, &e

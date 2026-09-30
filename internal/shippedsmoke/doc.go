@@ -4,7 +4,9 @@
 // user actually runs.
 //
 // The test lives behind the build tag shippedsmoke, so it is not part of the
-// unit tier, and reads the binary's path from NOVA_SHIPPED_BIN. The
+// unit tier, and reads the binary's path from NOVA_SHIPPED_BIN. With the variable
+// unset the test is RED under CI (CI or GITHUB_ACTIONS is "true"), so a smoke
+// that smoked nothing never reads as a pass, and skips only outside CI. The
 // certification workflow's smoke job takes each hosted runner's shipped binary
 // out of the release build, sets that variable and runs
 //

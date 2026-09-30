@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 const (
@@ -25,6 +27,8 @@ type revertWorld struct {
 	pushBranchRC  int
 	prCreateCode  int
 	rerunCode     int
+	issueCode     int
+	badJSON       string // a command prefix that answers exit 0 with text that is no JSON
 	failCmd       string // a command prefix that exits 1
 }
 
@@ -34,7 +38,12 @@ func (w revertWorld) answer(t *testing.T) func(c cmdSpec) (string, int, error) {
 		if w.failCmd != "" && strings.HasPrefix(line, w.failCmd) {
 			return "", 1, nil
 		}
+		if w.badJSON != "" && strings.HasPrefix(line, w.badJSON) {
+			return "<html>502</html>", 0, nil
+		}
 		switch {
+		case strings.HasPrefix(line, "gh issue create"):
+			return "https://github.com/o/r/issues/99\n", w.issueCode, nil
 		case strings.HasPrefix(line, "git log -1 --format=%s"):
 			return w.subject + "\n", 0, nil
 		case strings.HasPrefix(line, "git log -1 --format=%B"):
@@ -398,4 +407,93 @@ func TestRevertOnRedReusesAPullRequestThatAlreadyExists(t *testing.T) {
 	if code != 0 || !strings.Contains(out, "PR already exists for revert/aaaaaaaaaaaa; reusing it.") || !strings.Contains(out, "revert PR #9 open on revert/aaaaaaaaaaaa") {
 		t.Fatalf("exit %d\n%s", code, out)
 	}
+}
+
+// The law: a GitHub API call that fails is never read as "nothing found". The
+// verb exits red and files ONE needs-glenn issue, and for every lookup (which
+// all come before the revert) it has pushed nothing to main and opened no PR.
+func TestRevertOnRedAnAPIFailureIsRedAndFilesTheIssueAndPushesNothing(t *testing.T) {
+	t.Parallel()
+	for name, tc := range map[string]struct {
+		fail, bad string
+		want      string
+	}{
+		"parent runs page 1 fails":      {fail: "gh api repos/o/r/actions/workflows/ci.yml/runs?branch=main&event=push&per_page=100&page=1", want: "ci.yml runs page 1 exited 1"},
+		"parent runs page 3 fails":      {fail: "gh api repos/o/r/actions/workflows/ci.yml/runs?branch=main&event=push&per_page=100&page=3", want: "ci.yml runs page 3 exited 1"},
+		"parent runs are no JSON":       {bad: "gh api repos/o/r/actions/workflows/", want: "printed no run list"},
+		"failed run's jobs fail":        {fail: "gh api repos/o/r/actions/runs/77/jobs", want: "run 77 jobs exited 1"},
+		"failed run's jobs are no JSON": {bad: "gh api repos/o/r/actions/runs/77/jobs", want: "printed no job list"},
+		"merged PR lookup fails":        {fail: "gh api repos/o/r/commits/", want: "the pull requests of aaaaaaaaaaaa exited 1"},
+		"merged PR lookup is no JSON":   {bad: "gh api repos/o/r/commits/", want: "printed no list"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			w := defaultWorld()
+			w.failCmd, w.badJSON = tc.fail, tc.bad
+			if name == "parent runs page 3 fails" {
+				// pages 1 and 2 answer without naming the parent, so page 3 is reached
+				w.parentRuns = `{"workflow_runs":[{"head_sha":"someone-else","conclusion":"success"}]}`
+			}
+			code, out, errb, r := runRevert(t, w, "--run-attempt", "2")
+			assert.Equal(t, 1, code, "stderr %q stdout %q", errb, out)
+			assert.Contains(t, errb, tc.want)
+			assert.Contains(t, errb, "not deciding for a person")
+			assert.NotContains(t, out, "skipping", "a failed lookup must never read as a skip")
+			assert.Equal(t, 1, countPrefix(r, "gh issue create"), "one needs-glenn issue: %q", r.lines())
+			for _, forbidden := range []string{"git revert", "git push", "git branch", "gh pr create", "gh api repos/o/r/issues/"} {
+				assert.False(t, r.ran(forbidden), "%s ran after a failed lookup: %q", forbidden, r.lines())
+			}
+			for _, c := range r.calls {
+				if c.Name == "gh" && len(c.Args) > 1 && c.Args[0] == "issue" {
+					line := strings.Join(c.Args, " ")
+					assert.Contains(t, line, "--repo o/r")
+					assert.Contains(t, line, "needs-glenn: revert-on-red could not decide on aaaaaaaaaaaa")
+					assert.Contains(t, line, tc.want)
+				}
+			}
+		})
+	}
+}
+
+func countPrefix(r *fakeCmdRunner, prefix string) int {
+	n := 0
+	for _, l := range r.lines() {
+		if strings.HasPrefix(l, prefix) {
+			n++
+		}
+	}
+	return n
+}
+
+func TestRevertOnRedAFailedRerunFilesTheIssueToo(t *testing.T) {
+	t.Parallel()
+	w := defaultWorld()
+	w.rerunCode = 1
+	code, _, errb, r := runRevert(t, w, "--run-attempt", "1")
+	assert.Equal(t, 1, code)
+	assert.Contains(t, errb, "gh run rerun 77 --failed exited 1")
+	assert.Equal(t, 1, countPrefix(r, "gh issue create"))
+}
+
+// The comment is the one call after the revert: a failure still files the issue
+// and is red, and says the revert already landed.
+func TestRevertOnRedAFailedCommentIsRedAndFilesTheIssue(t *testing.T) {
+	t.Parallel()
+	w := defaultWorld()
+	w.failCmd = "gh api repos/o/r/issues/5/comments"
+	code, out, errb, r := runRevert(t, w, "--run-attempt", "2")
+	assert.Equal(t, 1, code, "stdout %q", out)
+	assert.Contains(t, errb, "commenting on #5 exited 1; the revert is already landed")
+	assert.Equal(t, 1, countPrefix(r, "gh issue create"))
+}
+
+func TestRevertOnRedIsStillRedWhenTheIssueCannotBeFiledEither(t *testing.T) {
+	t.Parallel()
+	w := defaultWorld()
+	w.failCmd = "gh api repos/o/r/actions/runs/77/jobs"
+	w.issueCode = 1
+	code, _, errb, r := runRevert(t, w, "--run-attempt", "2")
+	assert.Equal(t, 1, code)
+	assert.Contains(t, errb, "gh issue create exited 1; no needs-glenn issue was filed")
+	assert.False(t, r.ran("git revert"))
 }

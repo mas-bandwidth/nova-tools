@@ -12,16 +12,67 @@ import (
 	"testing"
 )
 
-// shippedBin is the binary under test. With the variable unset there is nothing
-// to smoke and the test SKIPS, loudly, saying so: a green run that asserted
-// nothing must read as a skip, never as a pass.
+// underCI says whether the run is a CI run: GitHub Actions sets both variables.
+func underCI(getenv func(string) string) bool {
+	return getenv("CI") == "true" || getenv("GITHUB_ACTIONS") == "true"
+}
+
+// resolveShippedBin reads the binary under test from NOVA_SHIPPED_BIN. The
+// variable unset is fatal under CI: a certification smoke that smoked nothing
+// must be RED, never a skip that reads as a pass. Outside CI (a developer's
+// `go test -tags shippedsmoke` with no binary at hand) the test skips, loudly.
+func resolveShippedBin(getenv func(string) string) (bin string, fatal, skip bool) {
+	bin = getenv("NOVA_SHIPPED_BIN")
+	if bin != "" {
+		return bin, false, false
+	}
+	if underCI(getenv) {
+		return "", true, false
+	}
+	return "", false, true
+}
+
+// shippedBin is the binary under test: fatal under CI when there is none, a
+// loud skip outside it.
 func shippedBin(t *testing.T) string {
 	t.Helper()
-	bin := os.Getenv("NOVA_SHIPPED_BIN")
-	if bin == "" {
-		t.Skip("SKIPPED, NOTHING WAS SMOKED: NOVA_SHIPPED_BIN names no shipped nova-check binary")
+	bin, fatal, skip := resolveShippedBin(os.Getenv)
+	switch {
+	case fatal:
+		t.Fatal("NOTHING WAS SMOKED: NOVA_SHIPPED_BIN names no shipped nova-check binary, and under CI that is a red, never a skip; the certification smoke step must pass the variable")
+	case skip:
+		t.Skip("SKIPPED, NOTHING WAS SMOKED: NOVA_SHIPPED_BIN names no shipped nova-check binary (outside CI this skips)")
 	}
 	return bin
+}
+
+// TestShippedBinUnsetIsRedUnderCIAndASkipOutsideIt pins the rule above over
+// fake environments: the variable set is never a problem, unset is fatal when
+// CI or GITHUB_ACTIONS is "true" and a skip otherwise.
+func TestShippedBinUnsetIsRedUnderCIAndASkipOutsideIt(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name        string
+		env         map[string]string
+		bin         string
+		fatal, skip bool
+	}{
+		{"set, no CI", map[string]string{"NOVA_SHIPPED_BIN": "/x/nova-check"}, "/x/nova-check", false, false},
+		{"set, under CI", map[string]string{"NOVA_SHIPPED_BIN": "/x/nova-check", "CI": "true"}, "/x/nova-check", false, false},
+		{"unset, no CI", map[string]string{}, "", false, true},
+		{"unset, CI=true", map[string]string{"CI": "true"}, "", true, false},
+		{"unset, GITHUB_ACTIONS=true", map[string]string{"GITHUB_ACTIONS": "true"}, "", true, false},
+		{"unset, CI=false", map[string]string{"CI": "false"}, "", false, true},
+		{"unset under CI, empty value", map[string]string{"CI": "true", "NOVA_SHIPPED_BIN": ""}, "", true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			bin, fatal, skip := resolveShippedBin(func(k string) string { return tc.env[k] })
+			if bin != tc.bin || fatal != tc.fatal || skip != tc.skip {
+				t.Fatalf("got (%q, fatal %t, skip %t), want (%q, fatal %t, skip %t)", bin, fatal, skip, tc.bin, tc.fatal, tc.skip)
+			}
+		})
+	}
 }
 
 // posixOnly skips the fixtures that need an executable bit, chmod refusing a

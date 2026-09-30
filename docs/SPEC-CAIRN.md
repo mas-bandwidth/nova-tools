@@ -93,8 +93,8 @@ across records. A missing store or a missing explicitly named session refuses
 at exit 2; an existing empty store or session is a successful empty index.
 Every listing takes `--max` (default 20, 0 prints all) and
 prints one `MORE` line with its remedy; the count is never capped and the
-`INDEX COVERAGE sessions=<n> entries=<n>` line carries the total whether
-the run passed or failed.
+first line, `INDEX OK sessions=<n> entries=<n>`, carries the total whether
+or not entries were elided.
 
 **`receipt --store <dir> --session <id> --entry <id>` names what was
 preserved for one entry**: its stamp, source pointers, size and the same
@@ -136,7 +136,7 @@ New regression cases must demonstrate the defect before the repair.
 23. `TestIndexRowCarriesStampSourceAndSize` — index rows are derived from the stored entries: session/entry pointers, stamps, sources, sizes — never recopied narratives.
 24. `TestIndexMaxDefaultTwentyAndZeroPrintsAll` — every listing takes `--max` (default 20, 0 prints all).
 25. `TestIndexPrintsMORELineWithRemedy` — index prints one `MORE` line with its remedy.
-26. `TestCoverageCarriesTheTotalWhenCapped` — the count is never capped and the `INDEX COVERAGE` line carries the total whether the run passed or failed.
+26. `TestCoverageCarriesTheTotalWhenCapped` — the count is never capped and the `INDEX OK` line carries the total whether or not entries were elided.
 27. `TestReceiptReportsStampSourceSizeAndPublish` — `receipt` names stamp, source pointers, size and the `persisted=true published=false publish=<policy>` split.
 28. `TestLifecycleVerbsStayRefused` — there is deliberately no seal/consume/delete/grade/consolidate/wake/rollup/retention verb; naming one on the command line is exit 2, unknown subcommand.
 29. `TestAnUnreadableLogRefusesTheAppendAndWritesNothing` — a `log.jsonl` that exists and cannot be read is not a store with no source: an append that would inherit the session's pointer refuses at exit 2 naming the log, and writes no entry and no pointer line (skipped on windows, as root, and wherever a 0200 file stays readable).
