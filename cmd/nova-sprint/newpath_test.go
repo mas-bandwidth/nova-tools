@@ -330,9 +330,10 @@ func npCases() []npCase {
 
 		// teardown: Layer 1's lifecycle (TestInitDefinesAndTeardownDeletesTheNamespace).
 		{verb: "teardown", setup: npWorld, line: "teardown --confirm other", code: exitRefused, want: []string{"wants --confirm sprint"}},
-		// No item builds these yet: the check and remove after; repair; not in
-		// section 3: resolve, fleet level (kept as present).
-		stub("check", "check", "IT26"),
+		// check: rule 11, the cycles of needs (errata 3 amendment 7)
+		{verb: "check", setup: npWorld, line: "check", code: 0, want: []string{"no cycle of needs in 1 streams"}},
+		// No item builds these yet: the remove after; repair; not in section 3:
+		// resolve, fleet level (kept as present).
 		stub("remove", "remove --stream s1 --confirm sprint", "IT27"),
 		stub("remove", "remove --abort --op op-rm-1", "IT27"),
 		stub("repair", "repair", "AL7"),
@@ -612,7 +613,8 @@ func TestNewTableCoversThePresentVerbs(t *testing.T) {
 // stops the process on a front its read did not load (the repro of the
 // integration's gap 1, with the members beating so that they are up). One
 // stream of three goes m1, m2, m1; two streams go in turns, s1 then s2, round
-// the fleet, until the room (two ready cards a member) is taken.
+// the fleet, every card in one deal (the room is each member's width, 64 by
+// default: errata 3 amendment 9).
 func TestDealOnNewPath(t *testing.T) {
 	t.Parallel()
 	dealt := func(na *npApp) []string {
@@ -638,7 +640,7 @@ func TestDealOnNewPath(t *testing.T) {
 		want string
 	}{
 		{[]string{"add --stream s1 --count 3"}, "s1-1.w1>m1 s1-2.w1>m2 s1-3.w1>m1"},
-		{[]string{"add --stream s1 --count 3", "add --stream s2 --count 2"}, "s1-1.w1>m1 s2-1.w1>m2 s1-2.w1>m1 s2-2.w1>m2"},
+		{[]string{"add --stream s1 --count 3", "add --stream s2 --count 2"}, "s1-1.w1>m1 s2-1.w1>m2 s1-2.w1>m1 s2-2.w1>m2 s1-3.w1>m1"},
 	} {
 		na := newNPApp(t)
 		for _, l := range append(append([]string{"init", "reader add r1 r2", "fleet up m1 m2", "fleet beat m1 m2"}, c.add...), "start", "tick", "tick") {
