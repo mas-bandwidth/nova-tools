@@ -185,13 +185,26 @@ func FindBenchMirror(benchHome, baseRepo string) string {
 // for ci run: a local clone of the bench mirror that borrows its
 // objects and dissociates, so staging never reads the network and a later gc of the
 // mirror cannot take objects from under the clone. noCheckout leaves the worktree empty
-// for a caller that checks out an exact sha next.
+// for a caller that checks out an exact sha next. The mirror and the target follow `--`:
+// a card names the repository, and a name that starts with `-` is an operand, never an option.
 func MirrorCloneArgs(mirror, target string, noCheckout bool) []string {
 	args := []string{"clone", "-q"}
 	if noCheckout {
 		args = append(args, "--no-checkout")
 	}
-	return append(args, "--reference", mirror, "--dissociate", mirror, target)
+	return append(args, "--reference", mirror, "--dissociate", "--", mirror, target)
+}
+
+// refuseOptionLike is the refusal of a card value git would read as an option. Every git
+// call below also puts its card-derived operands behind `--` or `--end-of-options`
+// (internal/ci TestCardDerivedGitOperandsFollowTheSeparator holds that), so a value that
+// starts with `-` is never a flag; no repository, sha or ref a card can mean starts with
+// one, so staging refuses it by name instead of handing git a string it cannot use.
+func refuseOptionLike(what, value string) error {
+	if strings.HasPrefix(value, "-") {
+		return fmt.Errorf("staging refused: %s %q starts with '-'; a repository, sha or ref never does", what, value)
+	}
+	return nil
 }
 
 func isGitDir(dir string) bool {
@@ -301,6 +314,13 @@ func StageCard(opts StageOptions) (StageResult, error) {
 	if isGitDir(opts.TargetDir) {
 		return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Staged: true}, nil
 	}
+	for _, v := range []struct{ what, value string }{
+		{"base-repo", baseRepo}, {"base-sha", baseSha}, {"BASE ref", cb.Ref},
+	} {
+		if err := refuseOptionLike(v.what, v.value); err != nil {
+			return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Ref: cb.Ref}, err
+		}
+	}
 
 	bench := opts.BenchName
 	if bench == "" {
@@ -338,7 +358,7 @@ func StageCard(opts StageOptions) (StageResult, error) {
 	defer cancel()
 
 	start := time.Now()
-	cloneArgs := []string{"clone", "-q", cloneSource, opts.TargetDir}
+	cloneArgs := []string{"clone", "-q", "--", cloneSource, opts.TargetDir}
 	if mirror != "" {
 		cloneArgs = MirrorCloneArgs(mirror, opts.TargetDir, false)
 	}
@@ -355,7 +375,7 @@ func StageCard(opts StageOptions) (StageResult, error) {
 
 	// Update remote origin to baseRepo if cloned from mirror
 	if cloneSource != baseRepo {
-		remCmd := stageGit(ctx, "-C", opts.TargetDir, "remote", "set-url", "origin", baseRepo)
+		remCmd := stageGit(ctx, "-C", opts.TargetDir, "remote", "set-url", "origin", "--", baseRepo)
 		if out, err := remCmd.CombinedOutput(); err != nil {
 			// A checkout whose origin still names the mirror pushes to the mirror:
 			// refuse the stage rather than hand the card that checkout.
@@ -377,27 +397,27 @@ func StageCard(opts StageOptions) (StageResult, error) {
 	branch := CardStageBranch(opts.Card)
 	switch {
 	case baseSha != "":
-		catCmd := stageGit(ctx, "-C", opts.TargetDir, "cat-file", "-e", baseSha+"^{commit}")
+		catCmd := stageGit(ctx, "-C", opts.TargetDir, "cat-file", "-e", "--end-of-options", baseSha+"^{commit}")
 		if err := catCmd.Run(); err != nil {
 			// Commit not present locally, fetch from origin
-			fetchCmd := stageGit(ctx, "-C", opts.TargetDir, "fetch", "-q", "origin", baseSha)
+			fetchCmd := stageGit(ctx, "-C", opts.TargetDir, "fetch", "-q", "--", "origin", baseSha)
 			if out, ferr := fetchCmd.CombinedOutput(); ferr != nil {
 				return fail("fetch", out, ferr)
 			}
 		}
-		coCmd := stageGit(ctx, "-C", opts.TargetDir, "checkout", "-q", "-B", branch, baseSha)
+		coCmd := stageGit(ctx, "-C", opts.TargetDir, "checkout", "-q", "-B", branch, "--end-of-options", baseSha)
 		if out, cerr := coCmd.CombinedOutput(); cerr != nil {
 			return fail("checkout", out, cerr)
 		}
 	case cb.Ref != "":
 		// The clone's remote-tracking ref first (the mirror's branch), then the ref as
 		// written (a tag or a sha the clone holds).
-		coCmd := stageGit(ctx, "-C", opts.TargetDir, "checkout", "-q", "-B", branch, "origin/"+cb.Ref)
+		coCmd := stageGit(ctx, "-C", opts.TargetDir, "checkout", "-q", "-B", branch, "--end-of-options", "origin/"+cb.Ref)
 		if out, cerr := coCmd.CombinedOutput(); cerr != nil {
 			if stageTimedOut(ctx, cerr) {
 				return fail("checkout", out, cerr)
 			}
-			coCmd = stageGit(ctx, "-C", opts.TargetDir, "checkout", "-q", "-B", branch, cb.Ref)
+			coCmd = stageGit(ctx, "-C", opts.TargetDir, "checkout", "-q", "-B", branch, "--end-of-options", cb.Ref)
 			if out, cerr := coCmd.CombinedOutput(); cerr != nil {
 				return fail("checkout", out, cerr)
 			}

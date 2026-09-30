@@ -94,7 +94,7 @@ func LintCardBase(raw []byte, bc BaseCheck) []CardHeaderFinding {
 		case base == "":
 			add("paths-at-base", paths.line, "MISSING: the card names no base-sha (no `base-sha:` line, no `sha=` on the contract line), so PATHS was not resolved")
 		default:
-			full, err := baseGit(bc.Repo, "rev-parse", "--verify", "--quiet", base+"^{commit}")
+			full, err := baseGit(bc.Repo, "rev-parse", "--verify", "--quiet", "--end-of-options", base+"^{commit}")
 			if err != nil || full == "" {
 				add("paths-at-base", baseLine, fmt.Sprintf("MISSING: base-sha %s is not a commit in %s; fetch it, then lint again", base, bc.Repo))
 				break
@@ -110,7 +110,7 @@ func LintCardBase(raw []byte, bc BaseCheck) []CardHeaderFinding {
 			// PR-HEAD the repository does not hold is MISSING, never a pass.
 			if len(miss) > 0 && h["PR-HEAD"].found && h["PR-HEAD"].value != "" {
 				prh := h["PR-HEAD"]
-				prFull, perr := baseGit(bc.Repo, "rev-parse", "--verify", "--quiet", prh.value+"^{commit}")
+				prFull, perr := baseGit(bc.Repo, "rev-parse", "--verify", "--quiet", "--end-of-options", prh.value+"^{commit}")
 				if perr != nil || prFull == "" {
 					add("paths-at-base", prh.line, fmt.Sprintf("MISSING: PR-HEAD %s is not a commit in %s, and PATHS %s is not at base-sha %s; fetch the PR head, then lint again", prh.value, bc.Repo, quoteDepends(miss), short12(full)))
 					break
@@ -216,7 +216,7 @@ func LintCardBase(raw []byte, bc BaseCheck) []CardHeaderFinding {
 		case base == "":
 			add("donewhen-test-name", dwLine, "MISSING: the card names no base-sha (no `base-sha:` line, no `sha=` on the contract line), so the DONE-WHEN test was not looked up")
 		default:
-			full, err := baseGit(bc.Repo, "rev-parse", "--verify", "--quiet", base+"^{commit}")
+			full, err := baseGit(bc.Repo, "rev-parse", "--verify", "--quiet", "--end-of-options", base+"^{commit}")
 			if err != nil || full == "" {
 				add("donewhen-test-name", baseLine, fmt.Sprintf("MISSING: base-sha %s is not a commit in %s; fetch it, then lint again", base, bc.Repo))
 				break
@@ -346,7 +346,7 @@ func testDefinedAt(repo, sha string, tn doneTest) (bool, error) {
 	default:
 		pat, specs = `fn[ \t]+`+tn.name+`[ \t]*[(<]`, []string{"*.rs"}
 	}
-	args := append([]string{"grep", "-q", "-E", "-e", pat, sha, "--"}, specs...)
+	args := append([]string{"grep", "-q", "-E", "-e", pat, "--end-of-options", sha, "--"}, specs...)
 	res, err := gitrun.Run(context.Background(), gitrun.Options{C: repo}, args...)
 	if err == nil {
 		return true, nil
@@ -443,7 +443,7 @@ func pytestTargets(seg string) []string {
 func goTestPathspecs(repo, sha string, scope []string) []string {
 	module := ""
 	if len(scope) > 0 {
-		if gm, err := baseGit(repo, "show", sha+":go.mod"); err == nil {
+		if gm, err := baseGit(repo, "show", "--end-of-options", sha+":go.mod"); err == nil {
 			for _, l := range strings.Split(gm, "\n") {
 				if v, ok := strings.CutPrefix(strings.TrimSpace(l), "module "); ok {
 					module = strings.Trim(strings.TrimSpace(v), `"`)
@@ -489,7 +489,7 @@ func pytestPathspecs(repo, sha string, scope []string) []string {
 			specs = append(specs, ":(literal)"+t)
 			continue
 		}
-		if typ, err := baseGit(repo, "cat-file", "-t", sha+":"+t); err == nil && strings.TrimSpace(typ) == "tree" {
+		if typ, err := baseGit(repo, "cat-file", "-t", "--end-of-options", sha+":"+t); err == nil && strings.TrimSpace(typ) == "tree" {
 			specs = append(specs, globSpec(t, true, "*.py"))
 		}
 	}
@@ -579,7 +579,7 @@ func baseGit(repo string, args ...string) (string, error) {
 // NEW `_test` file is the one entry allowed to be absent: a card that writes the
 // red test first creates it.
 func pathsMissingAt(repo, sha string, entries []string) ([]string, error) {
-	list, err := baseGit(repo, "ls-tree", "-r", "--name-only", "-z", sha)
+	list, err := baseGit(repo, "ls-tree", "-r", "--name-only", "-z", "--end-of-options", sha)
 	if err != nil {
 		return nil, err
 	}

@@ -82,9 +82,6 @@ internal/ci/ci_cardtemplates.go:vision 1
 internal/ci/ci_net.go:glenn 2
 internal/ci/ci_templates.go:glenn 1
 internal/ci/ci_testbins.go:stella 1
-internal/ci/failed.go:rowan 2
-internal/ci/failed.go:space 1
-internal/ci/failed.go:studio 1
 internal/ci/functional/functional.go:glenn 1
 internal/ci/slowtests/slowtests.go:batman 2
 internal/ci/slowtests/slowtests.go:rowan 1
