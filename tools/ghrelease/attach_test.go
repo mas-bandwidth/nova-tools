@@ -1,6 +1,7 @@
 package main
 
 import (
+	"io"
 	"strings"
 	"testing"
 )
@@ -37,11 +38,11 @@ func attachWorld(t *testing.T, tagStatus, taggedSHA string) *harness {
 		}
 		return `[]`, 0
 	}
-	h.runner.output = func(c command) (string, int) {
+	h.runner.stream = func(c command, stdout, stderr io.Writer) int {
 		if c.name == "git" && len(c.args) > 0 && c.args[0] == "rev-parse" {
-			return taggedSHA + "\n", 0
+			io.WriteString(stdout, taggedSHA+"\n")
 		}
-		return "", 0
+		return 0
 	}
 	return h
 }
@@ -124,13 +125,41 @@ func TestAttachRefusesATagThatIsAnotherTreesBeforeSummingOrUploading(t *testing.
 	wantNoRelease(t, h)
 }
 
-func TestAttachPassesAFailedFetchOrResolveOn(t *testing.T) {
+func TestAttachPassesAFailedFetchOn(t *testing.T) {
 	t.Parallel()
 	h := attachWorld(t, "200", attachSHA)
 	h.runner.output = func(c command) (string, int) { return "fatal: could not read from remote\n", 128 }
 	h.wantRC(h.do("attach"), 128)
 	h.mustContain("fatal: could not read from remote")
 	wantNoRelease(t, h)
+}
+
+func TestAttachPassesAFailedResolveOn(t *testing.T) {
+	t.Parallel()
+	h := attachWorld(t, "200", attachSHA)
+	h.runner.stream = func(c command, stdout, stderr io.Writer) int {
+		io.WriteString(stderr, "fatal: ambiguous argument\n")
+		return 128
+	}
+	h.wantRC(h.do("attach"), 128)
+	h.mustContain("fatal: ambiguous argument")
+	h.mustNotContain("SHA256SUMS over")
+	wantNoRelease(t, h)
+}
+
+// A warning git prints on stderr while it resolves the tag is the log's, never
+// part of the sha compared with the one this run built.
+func TestAttachResolvesTheTagFromStdoutAlone(t *testing.T) {
+	t.Parallel()
+	h := attachWorld(t, "200", attachSHA)
+	h.runner.stream = func(c command, stdout, stderr io.Writer) int {
+		io.WriteString(stderr, "warning: refname 'v0.14.0' is ambiguous.\n")
+		io.WriteString(stdout, attachSHA+"\n")
+		return 0
+	}
+	h.wantRC(h.do("attach"), 0)
+	h.mustContain("SHA256SUMS over 1 artifacts:")
+	h.mustNotContain("is the tag for")
 }
 
 func TestAttachStopsAtSumsWhenDistIsNotTheShippedSet(t *testing.T) {

@@ -134,7 +134,10 @@ func doBuild(e env, args []string) int {
 		return 1
 	}
 	fmt.Fprintf(e.stdout, "built %d tools for %s/%s\n", len(names), t.goos, t.goarch)
-	listDir(e.stdout, outDir)
+	if err := listDir(e.stdout, outDir); err != nil {
+		fmt.Fprintf(e.stderr, "%s build: listing %s: %v\n", tool, outDir, err)
+		return 1
+	}
 	return 0
 }
 
@@ -177,17 +180,19 @@ func moveFile(src, dst string) error {
 }
 
 // listDir prints the directory the way a person reads a release's output: one
-// line per entry, mode, size, name.
-func listDir(w io.Writer, dir string) {
+// line per entry, mode, size, name. A directory it cannot read, or an entry it
+// cannot stat, is an error: the build just wrote them, so either is a fault.
+func listDir(w io.Writer, dir string) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
-		return
+		return err
 	}
 	for _, ent := range entries {
 		fi, err := ent.Info()
 		if err != nil {
-			continue
+			return err
 		}
 		fmt.Fprintf(w, "%s %10d %s\n", fi.Mode(), fi.Size(), ent.Name())
 	}
+	return nil
 }

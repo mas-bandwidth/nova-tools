@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"strings"
 )
@@ -81,12 +82,14 @@ func doAttach(e env, args []string) int {
 		fmt.Fprintln(e.stdout, chomp(out))
 		return rc
 	}
-	out, rc := git("rev-parse", fmt.Sprintf("refs/tags/%s^{commit}", tag))
-	if rc != 0 {
-		fmt.Fprintln(e.stdout, chomp(out))
+	// The commit is read from stdout alone: a warning git prints on stderr (a
+	// refname it finds ambiguous, a replace ref) goes to the log, never into the
+	// sha compared below.
+	var revOut bytes.Buffer
+	if rc := e.runner().Stream(command{dir: e.dir, name: "git", args: []string{"rev-parse", fmt.Sprintf("refs/tags/%s^{commit}", tag)}}, &revOut, e.stderr); rc != 0 {
 		return rc
 	}
-	if tagged := strings.TrimSpace(out); tagged != sha {
+	if tagged := strings.TrimSpace(revOut.String()); tagged != sha {
 		fmt.Fprintf(e.stdout, "refusing: %s is the tag for %s, but this run built %s\n", tag, tagged, sha)
 		fmt.Fprintf(e.stdout, "attaching here would replace %s's published artifacts with a build from another tree\n", tag)
 		return 1
