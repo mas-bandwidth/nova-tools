@@ -1392,8 +1392,22 @@ type tsetOwnedStore interface {
 func tsetRunL1(ctx context.Context, cfg tsetSizeConfig,
 	load func(context.Context, *redis.Client) error,
 	newStore func(string, string) (tsetOwnedStore, error), out io.Writer) error {
+	return tsetRunL1Sizes(ctx, cfg, []int{100_000, 1_000_000}, load, newStore, out)
+}
+
+// tsetRunL1Sizes is tsetRunL1 for the given card counts, each 100,000 or
+// 1,000,000, in the order given. The rows it prints are those of the sizes it
+// ran. The functional size run uses it to measure one size per container run.
+func tsetRunL1Sizes(ctx context.Context, cfg tsetSizeConfig, sizes []int,
+	load func(context.Context, *redis.Client) error,
+	newStore func(string, string) (tsetOwnedStore, error), out io.Writer) error {
 	if err := cfg.validate(); err != nil {
 		return err
+	}
+	for _, cards := range sizes {
+		if cards != 100_000 && cards != 1_000_000 {
+			return fmt.Errorf("L1 size run wants 100,000 or 1,000,000 cards, got %d", cards)
+		}
 	}
 	if load == nil || newStore == nil {
 		return errors.New("L1 size run needs composed profile loader and Store constructor")
@@ -1406,13 +1420,21 @@ func tsetRunL1(ctx context.Context, cfg tsetSizeConfig,
 	if err := load(ctx, direct); err != nil {
 		return fmt.Errorf("load composed tset functions in owned container: %w", err)
 	}
-	results := tsetPendingRows(cfg.proxyAddr != "")
+	var results []tsetSizeResult
+	for _, pending := range tsetPendingRows(cfg.proxyAddr != "") {
+		for _, cards := range sizes {
+			if pending.cards == cards {
+				results = append(results, pending)
+				break
+			}
+		}
+	}
 	routes := []struct{ name, addr string }{{"local", cfg.redisAddr}}
 	if cfg.proxyAddr != "" {
 		routes = append(routes, struct{ name, addr string }{"128ms-each-way-proxy", cfg.proxyAddr})
 	}
 	var failed bool
-	for _, cards := range []int{100_000, 1_000_000} {
+	for _, cards := range sizes {
 		for _, route := range routes {
 			space := cfg.space + strconv.Itoa(cards) + ":" + route.name + ":"
 			clientName := fmt.Sprintf("tset-size-%d-%s", cards, route.name)
