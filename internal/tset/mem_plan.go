@@ -507,6 +507,8 @@ func (m *Mem) planStep(ctx context.Context, pre, next *memNamespace, step Step) 
 	}
 	// L1-only profile has no L2 semantic log. Counters are intentionally limited
 	// to work this independent model can measure without Redis command choices.
+	plan.PlannedCommands = int64(budget.plannedCommands)
+	plan.PlannedArgvBytes = int64(budget.plannedBytes)
 	reply.Counters = budget.counters(candidates, guarded, changed, len(rowUnion))
 	reply.MemPlan = plan
 	return reply, nil
@@ -584,7 +586,8 @@ func cloneMemPlan(plan *MemPlan) *MemPlan {
 	if plan == nil {
 		return nil
 	}
-	out := &MemPlan{Replay: plan.Replay, Entries: make([]MemPlanEntry, len(plan.Entries)),
+	out := &MemPlan{Replay: plan.Replay, PlannedCommands: plan.PlannedCommands,
+		PlannedArgvBytes: plan.PlannedArgvBytes, Entries: make([]MemPlanEntry, len(plan.Entries)),
 		Before: make(map[string]map[string]MemberRecord, len(plan.Before))}
 	for table, records := range plan.Before {
 		out.Before[table] = make(map[string]MemberRecord, len(records))

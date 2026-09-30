@@ -22,6 +22,12 @@ redis.register_function('ns_tset_original_seal_probe',function(keys,args)
     ctx.intent='rebound-intent';ctx.request.intent='rebound-intent'
     ctx.intent_digest=redis.sha1hex('rebound-intent')
   end
+  local function append_derived()
+    ctx.request.entries[#ctx.request.entries+1]=S.json.decode(
+      '{"kind":"create","t":"work","to":"r:c","ids":["new"],"scores":["2"]}')
+    ctx.notes[#ctx.notes+1]=S.json.decode(
+      '{"line":{"kind":"note","meta":{"source":"derived"}},"about":[]}')
+  end
   if mode=='drop' then table.remove(ctx.request.entries,1)
   elseif mode=='replace' then
     local entries=S.array();entries[1]=ctx.request.entries[2];ctx.request.entries=entries
@@ -31,6 +37,8 @@ redis.register_function('ns_tset_original_seal_probe',function(keys,args)
   elseif mode=='alter_note' then ctx.notes[1].line.meta.source='changed'
   elseif mode=='drop_note' then table.remove(ctx.notes,1)
   elseif mode=='rebind' or mode=='fence_rebind' then rebind()
+  elseif mode=='op_only' then ctx.op='rebound';ctx.request.op='rebound'
+  elseif mode=='intent_only' then ctx.intent='rebound-intent';ctx.request.intent='rebound-intent'
   elseif mode=='epoch' then ctx.request.epoch='1';ctx.request_epoch='1';ctx.write_epoch='1'
   elseif mode=='write_epoch' then ctx.write_epoch='1'
   elseif mode=='space' then ctx.space=ctx.space..'other:';ctx.request.space=ctx.space
@@ -38,18 +46,40 @@ redis.register_function('ns_tset_original_seal_probe',function(keys,args)
   elseif mode=='raw' then ctx.raw_request='{}';ctx.request_hash=redis.sha1hex('{}')
   elseif mode=='active' then ctx.active_epoch='1'
   elseif mode=='original_count' then ctx.original_note_count=0
-  elseif mode=='append' then
-    ctx.request.entries[#ctx.request.entries+1]=S.json.decode(
-      '{"kind":"create","t":"work","to":"r:c","ids":["new"],"scores":["2"]}')
-    ctx.notes[#ctx.notes+1]=S.json.decode(
-      '{"line":{"kind":"note","meta":{"source":"derived"}},"about":[]}')
+  elseif mode=='append' or mode=='mutate_derived_after_plan' or
+      mode=='mutate_derived_note_after_plan' then append_derived()
+  elseif mode=='append_after_plan' or mode=='append_note_after_plan' or
+      mode=='misaligned_changed_per_entry' or mode=='prepare_op_only' or
+      mode=='prepare_rebind' or mode=='baseline' or mode=='no_plan' then
+    -- These cases mutate after S.plan or deliberately omit S.plan.
+  else return S.json.encode(S.refuse('REQUEST'))
   end
   local prepared
   if mode=='fence_rebind' then
     prepared,err=S.fence_prepare(ctx)
+  elseif mode=='no_plan' then
+    local changed=S.array()
+    for i=1,#ctx.request.entries do changed[i]=0 end
+    local plan={commands=S.array(),changed=0,guarded=0,changed_per_entry=changed}
+    local log={commands=S.array(),first_seq='0',last_seq='0',line_count=0,about_appends=0}
+    prepared,err=S.prepare(ctx,plan,log,{})
   else
     local plan;plan,err=S.plan(ctx);if err then return S.json.encode(err) end
     if mode=='prepare_rebind' then rebind() end
+    if mode=='prepare_op_only' then ctx.op='rebound';ctx.request.op='rebound' end
+    if mode=='append_after_plan' then
+      ctx.request.entries[#ctx.request.entries+1]=S.json.decode(
+        '{"kind":"create","t":"work","to":"r:c","ids":["late"],"scores":["3"]}')
+    elseif mode=='append_note_after_plan' then
+      ctx.notes[#ctx.notes+1]=S.json.decode(
+        '{"line":{"kind":"note","meta":{"source":"late"}},"about":[]}')
+    elseif mode=='mutate_derived_after_plan' then
+      ctx.request.entries[#ctx.request.entries].ids[1]='other'
+    elseif mode=='mutate_derived_note_after_plan' then
+      ctx.notes[#ctx.notes].line.meta.source='other'
+    elseif mode=='misaligned_changed_per_entry' then
+      table.remove(plan.changed_per_entry)
+    end
     local log={commands={},first_seq='0',last_seq='0',line_count=0,about_appends=0}
     prepared,err=S.prepare(ctx,plan,log,{})
   end
@@ -75,16 +105,29 @@ func originalSealFixture(t *testing.T) *tsetFixture {
 	return fx
 }
 
-func originalSealCall(t *testing.T, fx *tsetFixture, raw, mode string) (string, string) {
+type originalSealReply struct {
+	Status          string `json:"status"`
+	Code            string `json:"code"`
+	Changed         int    `json:"changed"`
+	ChangedPerEntry []int  `json:"changed_per_entry"`
+}
+
+func originalSealCallFull(t *testing.T, fx *tsetFixture, raw, mode string) originalSealReply {
 	t.Helper()
 	wire, err := fx.Client.FCall(context.Background(), "ns_tset_original_seal_probe", []string{}, Version, raw, mode).Text()
 	if err != nil {
 		t.Fatal(err)
 	}
-	var reply struct{ Status, Code string }
+	var reply originalSealReply
 	if err := json.Unmarshal([]byte(wire), &reply); err != nil {
 		t.Fatalf("reply %q: %v", wire, err)
 	}
+	return reply
+}
+
+func originalSealCall(t *testing.T, fx *tsetFixture, raw, mode string) (string, string) {
+	t.Helper()
+	reply := originalSealCallFull(t, fx, raw, mode)
 	return reply.Status, reply.Code
 }
 
@@ -116,7 +159,7 @@ func TestPreplanPrivateIdentitySeal(t *testing.T) {
 	t.Parallel()
 	fx := originalSealFixture(t)
 	raw := fmt.Sprintf(`{"space":%q,"epoch":"0","op":"original","intent":"stable","entries":[{"kind":"create","t":"work","to":"r:c","ids":["new"],"scores":["2"]}],"notes":[{"line":{"kind":"note","meta":{}},"about":[]}]}`, fx.Space)
-	for _, mode := range []string{"rebind", "epoch", "write_epoch", "space", "result", "raw", "active", "original_count", "prepare_rebind", "fence_rebind"} {
+	for _, mode := range []string{"rebind", "op_only", "intent_only", "epoch", "write_epoch", "space", "result", "raw", "active", "original_count", "prepare_rebind", "prepare_op_only", "fence_rebind"} {
 		t.Run(mode, func(t *testing.T) {
 			input := raw
 			if mode == "fence_rebind" {
@@ -130,6 +173,39 @@ func TestPreplanPrivateIdentitySeal(t *testing.T) {
 			if after := commitProbeImage(t, fx.Client); !reflect.DeepEqual(before, after) {
 				t.Fatal("private-identity refusal changed the complete Redis image")
 			}
+			for _, op := range []string{"original", "rebound"} {
+				if fx.Client.HExists(context.Background(), fixtureDoneKey(fx.Space, "0"), op).Val() {
+					t.Fatalf("private-identity refusal persisted %q receipt", op)
+				}
+			}
+		})
+	}
+}
+
+func TestPreplanCombinedPlanSeal(t *testing.T) {
+	t.Parallel()
+	fx := originalSealFixture(t)
+	raw := fmt.Sprintf(`{"space":%q,"epoch":"0","op":"original","intent":"stable","entries":[{"kind":"guard","t":"work","from":"r:c","ids":["existing"],"revs":["1"]}],"notes":[{"line":{"kind":"note","meta":{"source":"caller"}},"about":[]}]}`, fx.Space)
+	for _, mode := range []string{"append_after_plan", "append_note_after_plan", "mutate_derived_after_plan", "mutate_derived_note_after_plan", "misaligned_changed_per_entry", "no_plan"} {
+		t.Run(mode, func(t *testing.T) {
+			before := commitProbeImage(t, fx.Client)
+			status, code := originalSealCall(t, fx, raw, mode)
+			if status != "refused" || code != "REQUEST" {
+				t.Fatalf("post-plan %s = %s/%s, want refused/REQUEST", mode, status, code)
+			}
+			if after := commitProbeImage(t, fx.Client); !reflect.DeepEqual(before, after) {
+				t.Fatalf("post-plan %s changed the complete Redis image", mode)
+			}
+			for _, op := range []string{"original", "rebound"} {
+				if fx.Client.HExists(context.Background(), fixtureDoneKey(fx.Space, "0"), op).Val() {
+					t.Fatalf("post-plan %s persisted %q receipt", mode, op)
+				}
+			}
+			for _, id := range []string{"new", "late", "other"} {
+				if fx.Client.Exists(context.Background(), fixtureRecordKey(fx.Space, "work", id)).Val() != 0 {
+					t.Fatalf("post-plan %s wrote member %q", mode, id)
+				}
+			}
 		})
 	}
 }
@@ -138,9 +214,10 @@ func TestPreplanOriginalSealAllowsDerivedSuffix(t *testing.T) {
 	t.Parallel()
 	fx := originalSealFixture(t)
 	raw := fmt.Sprintf(`{"space":%q,"epoch":"0","op":"original","intent":"stable","entries":[{"kind":"guard","t":"work","from":"r:c","ids":["existing"],"revs":["1"]}],"notes":[{"line":{"kind":"note","meta":{"source":"caller"}},"about":[]}]}`, fx.Space)
-	status, code := originalSealCall(t, fx, raw, "append")
-	if status != "ok" || code != "" {
-		t.Fatalf("derived append got %s/%s", status, code)
+	reply := originalSealCallFull(t, fx, raw, "append")
+	if reply.Status != "ok" || reply.Code != "" || reply.Changed != 1 ||
+		!reflect.DeepEqual(reply.ChangedPerEntry, []int{0, 1}) {
+		t.Fatalf("derived append and plan alignment = %+v", reply)
 	}
 	ctx := context.Background()
 	if n := fx.Client.Exists(ctx, fixtureRecordKey(fx.Space, "work", "new")).Val(); n != 1 {
