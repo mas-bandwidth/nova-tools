@@ -35,8 +35,8 @@ one tree file: a (work-tree ...) record holding each repository and every field
 of each issue. verify reads GitHub again and prints one MISSING, EXTRA or DRIFT
 line per difference; no lines is the proof. The calls are counted and checked
 against --max-calls before any issue is read.
-first run: needs gh logged in (gh auth status); the lines under example: read
-one public repository.
+first run: needs gh logged in (gh auth status) and ORG and REPO set to one
+repository you can read; then the lines under example:, in order.
 
 usage:
   nova-work import --org <org> (--out <tree.lisp> | --dry-run) [--repo <owner/name>]... [--max-calls <n>] [--page-size <n>] [--gh <path>] [--timeout <d>]
@@ -53,9 +53,14 @@ tree, not on GitHub), DRIFT (a field that differs). Zero lines is the proof.
 exit: 0 done, or verify found no difference; 1 verify found differences, or
 import's own round trip through the file failed; 2 could not run.
 
-first run (a login gh can use, and a scratch directory):
-  nova-work import --org <org> --repo <org>/<repo> --out /tmp/tree.lisp
-  nova-work verify --tree /tmp/tree.lisp --repo <org>/<repo>
+In a scratch directory, export ORG=<an organization> REPO=<one of its
+repositories> first. The dry run plans the calls and writes nothing; the import
+writes ./tree.lisp; the verify reads GitHub again against it.
+
+example:
+  nova-work import --org $ORG --repo $ORG/$REPO --page-size 15 --dry-run
+  nova-work import --org $ORG --repo $ORG/$REPO --page-size 15 --out ./tree.lisp
+  nova-work verify --tree ./tree.lisp --repo $ORG/$REPO --page-size 15
 `
 
 const importHelp = `nova-work import --org <org> (--out <tree.lisp> | --dry-run) [flags]

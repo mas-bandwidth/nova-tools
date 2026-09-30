@@ -51,3 +51,6 @@ cmd/nova-self-talk/firstrun_test.go:TestHelpExamplesAreTheFirstRunThroughTheComp
 cmd/nova-sandbox/firstrun_example_test.go:TestHelpFirstRunLinesProveTheWall example: mkdir -p /tmp/trial/home
 cmd/nova-sandbox/firstrun_example_test.go:TestHelpFirstRunLinesProveTheWall example: HOME=/tmp/trial/home nova-sandbox probe --write /tmp/trial
 cmd/nova-sandbox/firstrun_example_test.go:TestHelpFirstRunLinesProveTheWall example: HOME=/tmp/trial/home nova-sandbox --write /tmp/trial -- /bin/sh -c 'echo inside > /tmp/trial/out'
+cmd/nova-work/firstrun_test.go:TestHelpExamplesRunThroughTheComparator example: nova-work import --org $ORG --repo $ORG/$REPO --page-size 15 --dry-run
+cmd/nova-work/firstrun_test.go:TestHelpExamplesRunThroughTheComparator example: nova-work import --org $ORG --repo $ORG/$REPO --page-size 15 --out ./tree.lisp
+cmd/nova-work/firstrun_test.go:TestHelpExamplesRunThroughTheComparator example: nova-work verify --tree ./tree.lisp --repo $ORG/$REPO --page-size 15
