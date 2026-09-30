@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"sort"
 	"strconv"
 	"testing"
 
@@ -97,15 +96,6 @@ func xStandInJCmds(st *State, jp JPlan, lp LogPlan) []Cmd {
 				n.Req.Type+"|"+n.Req.Cause, "n"+string(lp.NoteSeqs[n.Index])))
 		}
 	}
-	return out
-}
-
-func xSortedKeys(m map[string]string) []string {
-	out := make([]string, 0, len(m))
-	for k := range m {
-		out = append(out, k)
-	}
-	sort.Strings(out)
 	return out
 }
 
@@ -263,7 +253,7 @@ func (h *xh) img() string { return string(image(h.t, h.tw, h.mem, h.log)) }
 // the members' control cards, m1 up and m2 down.
 func (h *xh) fixture() {
 	h.t.Helper()
-	h.do(&Request{Epoch: "0", Meta: Meta{Verb: "seed"}, Sprint: &SprintPart{Counter: &CounterChange{Read: map[string]string{}, Set: map[string]string{"score": "1000", "streams": "1"}}}})
+	h.do(&Request{Epoch: "0", Meta: Meta{Verb: "seed"}, Sprint: &SprintPart{Counter: &CounterChange{Read: map[string]string{"score": "", "streams": ""}, Set: map[string]string{"score": "1000", "streams": "1"}}}})
 	h.do(xVerb("seed", tset.Entry{Kind: "rows", Table: sprint.Work, Add: []string{"s1", "s2"}},
 		tset.Entry{Kind: "rows", Table: sprint.Fleet, Add: []string{"m1", "m2"}},
 		tset.Entry{Kind: "rows", Table: sprint.Readers, Add: []string{"r1"}},

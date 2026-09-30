@@ -124,6 +124,31 @@ const xScoreCounterKey = xFieldNextScore
 // of a key's derivation (sprint.IndexPiece).
 const xPiece = sprint.IndexPiece
 
+// xMarkPiece is the most ids of one read of {p}quarantine@e: X needs only whether
+// an id is marked, but a hash answers with the value, which nothing but the
+// sprint part bounds, so each id is reserved at Layer 1's field cap (xMarkValueCap)
+// and a read of 16 ids reserves 1 MiB of the step's 8 MiB. An empty mark key is
+// found by one HLEN, which is the common case.
+const xMarkPiece = 16
+
+// xMarkValueCap is the most bytes of one id's value in {p}quarantine@e X reads:
+// Layer 1's field cap (1.0's table: one field value, 64 KiB). A longer value is
+// DRIFT, as the store's read reservation refuses it.
+const xMarkValueCap = 64 * 1024
+
+// xMaxSeq is the largest seq a line has (Layer 2's LOGID bound, 2^53 - 1), so the
+// largest line a requeued key can name.
+const xMaxSeq = 1<<53 - 1
+
+// xWholeChars is the most characters of a whole-number field of a card the
+// derivation reads (a count or a due time): the store's Lua holds numbers as
+// doubles, and reads at most this many (sprint_x.lua, WHOLE_CHARS).
+const xWholeChars = 18
+
+// xScoreDigits is the most digits of the score counter: a double keeps 15 decimal
+// digits exactly, and the counter is a whole number (U2).
+const xScoreDigits = 15
+
 // xStashMax is the most steps the twin may have between X.pre and X.plan at
 // once before the oldest is forgotten (see xCarry). One step is in flight a
 // call, under the twin's mutex, so the bound is reached only by steps refused
@@ -159,7 +184,8 @@ type xCarry struct {
 	quarantined map[string]bool
 	requeue     map[string]float64 // the requeued keys that are not queued, and the order each is added at
 	writeEpoch  tset.Decimal
-	probes      int // the store reads X.pre made, for the coster's check
+	probes      int             // the store reads X.pre made, for the coster's check
+	readKeys    map[string]bool // the keys X.pre read, typed: prepare does not type-read them again
 }
 
 // xStashT holds the carries by call, oldest first, at most max of them.
@@ -227,11 +253,15 @@ func init() {
 // xRead is X.pre's reader of the sprint's own keys: typed, and counting what it
 // reads, since every read of a sprint key is one cell or key probe against the
 // step's 20,000 (L1 6). A key of the wrong type is WRONGTYPE (1.0, "Refusals").
+// It also keeps the keys it has read: Layer 1's prepare type-reads every key a
+// step writes that no earlier read has typed, one probe each, which the coster
+// adds for X's writes (CostX).
 type xRead struct {
 	k      *Keys
 	prefix string
 	epoch  tset.Decimal
 	probes int
+	read   map[string]bool // the keys read, typed
 }
 
 // sprint is the sprint-level key {p}name.
@@ -241,6 +271,10 @@ func (r *xRead) sprint(name string) string { return r.prefix + "sprint:" + name 
 func (r *xRead) at(name string) string { return r.sprint(name) + "@" + string(r.epoch) }
 
 func (r *xRead) wrongType(key, want string) *Refusal {
+	if r.read == nil {
+		r.read = map[string]bool{}
+	}
+	r.read[key] = true
 	if t := r.k.Type(key); t != kindNone && t != want {
 		return refuse(PhaseXPre, CodeWrongType, RefusalDetail{})
 	}
@@ -255,6 +289,18 @@ func (r *xRead) hget(key, field string) (string, bool, *Refusal) {
 	}
 	v, ok := r.k.HGet(key, field)
 	return v, ok, nil
+}
+
+// hlen is the number of fields of a hash. One probe.
+func (r *xRead) hlen(key string) (int, *Refusal) {
+	r.probes++
+	if ref := r.wrongType(key, kindHash); ref != nil {
+		return 0, ref
+	}
+	if v := r.k.ks.vals[key]; v != nil && v.kind == kindHash {
+		return len(v.hash), nil
+	}
+	return 0, nil
 }
 
 // zscore is one member's score of a sorted set, and whether it is there. One
@@ -278,22 +324,38 @@ func (r *xRead) get(key string) (string, bool, *Refusal) {
 	return v, ok, nil
 }
 
-// xProbesFor is the probes a batched read of n members costs: one command of at
-// most xPiece members, so one probe a piece (and one for none, which the store
-// does not send: the reader asks nothing of an empty list, see xRead.hmget).
-func xProbesFor(n int) int { return (n + xPiece - 1) / xPiece }
+// xProbesFor is the probes a batched read of n members costs in pieces of piece:
+// one command of at most piece members each, so one probe a piece (and none for
+// none, which the store does not send: the reader asks nothing of an empty list).
+func xProbesFor(n, piece int) int { return (n + piece - 1) / piece }
 
 // hmget is several fields of one hash, in commands of at most xPiece fields: one
 // probe each.
 func (r *xRead) hmget(key string, fields []string) (map[string]string, *Refusal) {
-	r.probes += xProbesFor(len(fields))
+	return r.hmgetIn(key, fields, xPiece, 0)
+}
+
+// hmgetIn is hmget in commands of at most piece fields. When reserve is not 0 each
+// field of a command is reserved reserve bytes, and a command whose values come to
+// more than its fields' reservations is DRIFT, as the store's read reservation
+// refuses it (S.readcmd compares what the command returned with what it reserved).
+func (r *xRead) hmgetIn(key string, fields []string, piece, reserve int) (map[string]string, *Refusal) {
+	r.probes += xProbesFor(len(fields), piece)
 	if ref := r.wrongType(key, kindHash); ref != nil {
 		return nil, ref
 	}
 	out := make(map[string]string, len(fields))
-	for _, f := range fields {
-		if v, ok := r.k.HGet(key, f); ok {
-			out[f] = v
+	for i := 0; i < len(fields); i += piece {
+		last := min(i+piece, len(fields))
+		bytes := 0
+		for _, f := range fields[i:last] {
+			if v, ok := r.k.HGet(key, f); ok {
+				out[f] = v
+				bytes += len(v)
+			}
+		}
+		if reserve != 0 && bytes > reserve*(last-i) {
+			return nil, xRefuse("DRIFT", RefusalDetail{}, "DRIFT: a read of %d fields of %s returned %d bytes, over the %d it reserves", last-i, key, bytes, reserve*(last-i))
 		}
 	}
 	return out, nil
@@ -354,7 +416,7 @@ func xBefore(st *State, req *Request) []BeforeAsk {
 		a.IDs = append(a.IDs, ids...)
 		a.Fields = append(a.Fields, fields...)
 	}
-	indexFields := sprint.IndexFields()
+	indexFields := xIndexFields()
 	for _, e := range req.Body.Entries {
 		if !xChanged(e) {
 			continue
@@ -394,6 +456,16 @@ func xBefore(st *State, req *Request) []BeforeAsk {
 		a.IDs, a.Fields = xDistinct(a.IDs), xDistinct(a.Fields)
 		out = append(out, *a)
 	}
+	return out
+}
+
+// xSortedKeys is the keys of a map, sorted.
+func xSortedKeys(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
 	return out
 }
 
@@ -566,9 +638,9 @@ func xPlacedScoresBelow(req *Request, stored string, have bool) *Refusal {
 		}
 	}
 	var over []string
-	limit, err := strconv.ParseFloat(counter, 64)
-	if haveCounter && err != nil {
-		return xRefuse(CodeConfig, RefusalDetail{}, "the score counter holds %q, not a number", counter)
+	limit, whole := xWholeScore(counter)
+	if haveCounter && !whole {
+		return xRefuse(CodeConfig, RefusalDetail{}, "the score counter holds %q, not a whole number", counter)
 	}
 	for _, e := range req.Body.Entries {
 		if e.Table != sprint.Work || (e.Kind != "create" && e.Kind != "move") {
@@ -589,6 +661,29 @@ func xPlacedScoresBelow(req *Request, stored string, have bool) *Refusal {
 	}
 	return xRefuse(CodeCounter, RefusalDetail{RefusalDetail: tset.RefusalDetail{IDs: over}},
 		"COUNTER: a score is at or above the counter %s and the step does not raise it", counter)
+}
+
+// xCounterRises holds a step that sets the score counter to a value the counter
+// can take: never below the value it holds (1.3.1, U2: the counter only rises, so
+// a plan made on a stale read, or made wrong, can never take it below a score
+// already placed). A step that sets it to the value it holds changes nothing.
+func xCounterRises(req *Request, stored string, have bool) *Refusal {
+	c := req.Sprint
+	if c == nil || c.Counter == nil || !have {
+		return nil
+	}
+	set, ok := c.Counter.Set[xScoreCounterKey]
+	if !ok {
+		return nil
+	}
+	was, whole := xWholeScore(stored)
+	if !whole {
+		return xRefuse(CodeConfig, RefusalDetail{}, "the score counter holds %q, not a whole number", stored)
+	}
+	if now, _ := xWholeScore(set); now < was {
+		return xRefuse(CodeCounter, RefusalDetail{}, "COUNTER: the step sets the score counter to %s, below %s which it holds; the counter only rises", set, stored)
+	}
+	return nil
 }
 
 // XPre is X's pre stage (1.0): the checks that read the sprint's own keys and
@@ -729,6 +824,9 @@ func xPre(st *State, req *Request, obs *Before) (*xCarry, *Refusal) {
 			}
 		}
 		v, have := stored[xScoreCounterKey]
+		if ref := xCounterRises(req, v, have); ref != nil {
+			return nil, ref
+		}
 		if ref := xPlacedScoresBelow(req, v, have); ref != nil {
 			return nil, ref
 		}
@@ -767,12 +865,16 @@ func xPre(st *State, req *Request, obs *Before) (*xCarry, *Refusal) {
 		return nil, ref
 	}
 	carry.probes = r.probes
+	carry.readKeys = r.read
 	return carry, nil
 }
 
-// xCheckShape holds the parts of a request X reads to their shapes, REQUEST
-// for the caller's fault (1.0): a guard of a kind 7 does not have, or without
-// what its kind names.
+// xCheckShape holds the parts of a request X reads to their shapes, REQUEST for
+// the caller's fault (1.0): a guard of a kind 7 does not have, or without what its
+// kind names; a counter change that sets a field it did not read, or a score that
+// is not a whole number (a compare-and-set names everything it writes, U2); an
+// agenda key that names nothing, or that one step both finishes and requeues (the
+// requeue would be undone by the finish: owed work lost).
 func xCheckShape(req *Request) *Refusal {
 	bad := func(format string, args ...any) *Refusal {
 		return xRefuse(CodeRequest, RefusalDetail{}, format, args...)
@@ -809,7 +911,47 @@ func xCheckShape(req *Request) *Refusal {
 			return bad("a quarantine names no card")
 		}
 	}
+	if c := req.Sprint; c != nil && c.Counter != nil {
+		for _, f := range xSortedKeys(c.Counter.Set) {
+			if _, read := c.Counter.Read[f]; !read {
+				return bad("the counter sets %s and did not read it: a counter change guards every field it writes", f)
+			}
+		}
+		if v, ok := c.Counter.Set[xScoreCounterKey]; ok {
+			if _, ok := xWholeScore(v); !ok {
+				return bad("the score counter is set to %q, which is not a whole number of at most %d digits", v, xScoreDigits)
+			}
+		}
+	}
+	requeued := make(map[string]bool, len(req.Body.Requeue))
+	for _, k := range req.Body.Requeue {
+		if k == "" {
+			return bad("an agenda key is requeued and names nothing")
+		}
+		requeued[k] = true
+	}
+	for _, k := range req.Body.Done {
+		if k == "" {
+			return bad("an agenda key is finished and names nothing")
+		}
+		if requeued[k] {
+			return bad("the agenda key %s is both finished and requeued in one step", k)
+		}
+	}
 	return nil
+}
+
+// xWholeScore is a whole number of at most xScoreDigits digits, as the score
+// counter holds it.
+func xWholeScore(v string) (float64, bool) {
+	if v == "" || len(v) > xScoreDigits {
+		return 0, false
+	}
+	n, err := strconv.ParseUint(v, 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return float64(n), true
 }
 
 // xGuard checks one XGuard against the real keys.
@@ -836,8 +978,8 @@ func xGuard(r *xRead, st *State, g XGuard, obs *Before, clock xClockState) *Refu
 		if ref != nil {
 			return ref
 		}
-		if ok && int64(score) > clock.r() {
-			return fail("a beat of member %s since the read moved its beat to %d, above R (%d)", g.Member, int64(score), clock.r())
+		if ok && score > float64(clock.r()) {
+			return fail("a beat of member %s since the read moved its beat to %s, above R (%d)", g.Member, xScore(score), clock.r())
 		}
 	case XGuardDue:
 		set := xKeyDue
@@ -850,8 +992,8 @@ func xGuard(r *xRead, st *State, g XGuard, obs *Before, clock xClockState) *Refu
 		}
 		switch {
 		case g.Score == XGuardAbsent && ok:
-			return fail("the entry %s was absent when read and is at %d now", g.Key, int64(score))
-		case g.Score != XGuardAbsent && (!ok || int64(score) != g.Score):
+			return fail("the entry %s was absent when read and is at %s now", g.Key, xScore(score))
+		case g.Score != XGuardAbsent && (!ok || score != float64(g.Score)):
 			return fail("the entry %s moved since the read (it was %d)", g.Key, g.Score)
 		}
 	case XGuardHold:

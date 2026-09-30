@@ -2,9 +2,11 @@ package sprintfn
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/tset"
@@ -19,7 +21,7 @@ import (
 // zmscore is the scores of several members of one sorted set, in commands of at
 // most xPiece members: one probe each.
 func (r *xRead) zmscore(key string, members []string) (map[string]float64, *Refusal) {
-	r.probes += xProbesFor(len(members))
+	r.probes += xProbesFor(len(members), xPiece)
 	if ref := r.wrongType(key, kindZSet); ref != nil {
 		return nil, ref
 	}
@@ -32,9 +34,45 @@ func (r *xRead) zmscore(key string, members []string) (map[string]float64, *Refu
 	return out, nil
 }
 
-// xScore spells an index score for ZADD: the shortest decimal that reads back
-// as the same number, with no exponent.
-func xScore(f float64) string { return strconv.FormatFloat(f, 'f', -1, 64) }
+// xScore spells an index score for ZADD, as the Lua's score_text does
+// (TestXScoreSpellingAgrees): a whole number below 1e15 as itself, zero (minus zero
+// too) as "0", and any other number from the fewest of 15, 16 and 17 significant
+// digits that read back as the same number, in plain notation with no exponent.
+// Both halves print the digits of one correctly rounded conversion, so they are the
+// same bytes, and the argv bytes the coster counts are the bytes the store is sent.
+func xScore(f float64) string {
+	if f == 0 {
+		return "0"
+	}
+	if f == math.Trunc(f) && math.Abs(f) < 1e15 {
+		return strconv.FormatInt(int64(f), 10)
+	}
+	a, sign := math.Abs(f), ""
+	if f < 0 {
+		sign = "-"
+	}
+	var text string
+	for digits := 15; digits <= 17; digits++ {
+		text = strconv.FormatFloat(a, 'e', digits-1, 64)
+		if back, err := strconv.ParseFloat(text, 64); err == nil && back == a {
+			break
+		}
+	}
+	mant, exp, _ := strings.Cut(text, "e")
+	digs := strings.TrimRight(strings.Replace(mant, ".", "", 1), "0")
+	if digs == "" {
+		digs = "0"
+	}
+	n, _ := strconv.Atoi(exp)
+	point := n + 1 // the digits before the decimal point
+	switch {
+	case point <= 0:
+		return sign + "0." + strings.Repeat("0", -point) + digs
+	case point >= len(digs):
+		return sign + digs + strings.Repeat("0", point-len(digs))
+	}
+	return sign + digs[:point] + "." + digs[point:]
+}
 
 // xIndexKey is the stored key of an index or of the due set at an epoch:
 // {p}<index>:<arg>@e, "@0" included (0, change 1). IT02's IndexKey.Stored spells
@@ -52,6 +90,10 @@ func xIndexKey(prefix string, k sprint.IndexKey, epoch tset.Decimal) string {
 // unless a derived entry is malformed.
 var xPoison = Cmd{}
 
+// xIndexFields is sprint.IndexFields, computed once: the derivation asks for it
+// of every card, and it does not change while the process runs.
+var xIndexFields = sync.OnceValue(sprint.IndexFields)
+
 // xFieldsOf is the fields a card had, from every observation of it: the
 // pre stage's (the derivation's fields) and the table plan's (the step's own
 // projection), and the fields of sprint.IndexFields neither observed.
@@ -66,12 +108,60 @@ func xFieldsOf(recs ...tset.MemberRecord) (fields map[string]string, unobserved 
 			}
 		}
 	}
-	for _, name := range sprint.IndexFields() {
+	for _, name := range xIndexFields() {
 		if !seen[name] {
 			unobserved = append(unobserved, name)
 		}
 	}
 	return fields, unobserved
+}
+
+// xNarrowWhole holds the whole-number fields the derivation reads of a card to
+// xWholeChars characters, as the store's Lua does (it holds numbers as doubles):
+// the counts of the definitions' conditions and the due fields of the card kinds,
+// read only where the card is in the table and column that read them. IT02's
+// derivation accepts what an int64 does; X refuses what the store refuses, so the
+// twin and the store refuse alike.
+func xNarrowWhole(c *sprint.IndexCard) error {
+	if c == nil || c.Col == "" {
+		return nil
+	}
+	check := func(name string) error {
+		if v := c.Fields[name]; len(v) > xWholeChars {
+			return fmt.Errorf("%s card %s: field %s is %q, not a whole number", c.Table, c.ID, name, v)
+		}
+		return nil
+	}
+	for _, d := range sprint.IndexDefs {
+		if d.Table != c.Table || d.Col != c.Col {
+			continue
+		}
+		for _, w := range d.Where {
+			if w.Test == sprint.FieldNum || w.Test == sprint.FieldAtLeast {
+				if err := check(w.Field); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	for _, k := range sprint.DueKinds {
+		if k.Table == c.Table && k.Col == c.Col && c.Fields[k.Field] != "" {
+			if err := check(k.Field); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// xValidCard is what the derivation needs of a card: its whole-number fields
+// within the store's reading, and every field IT02's derivation reads well formed.
+func xValidCard(c *sprint.IndexCard) error {
+	if err := xNarrowWhole(c); err != nil {
+		return err
+	}
+	_, err := sprint.IndexOps(c, c)
+	return err
 }
 
 // xCardOf is a card as the derivation sees it, from one observation.
@@ -160,8 +250,10 @@ func xQueueOf(key string) string {
 }
 
 // xLineOf is the seq a key names, when it names a line: <rule>@<seq> or
-// <rule>@<seq>+<offset> (1.1, E6). A key a rule requeues with an offset is
-// scored by the line's seq, the order the key it continues was queued at.
+// <rule>@<seq>+<offset> (1.1, E6): the digits after the first @, up to the end of
+// the key or the first +, and no more than a line's seq can be (xMaxSeq). What
+// follows the + is the offset and is not read. A key a rule requeues with an
+// offset is scored by the line's seq, the order the key it continues was queued at.
 func xLineOf(key string) (uint64, bool) {
 	i := strings.IndexByte(key, '@')
 	if i < 0 {
@@ -172,7 +264,7 @@ func xLineOf(key string) (uint64, bool) {
 		rest = rest[:j]
 	}
 	n, err := strconv.ParseUint(rest, 10, 64)
-	return n, err == nil
+	return n, err == nil && n <= xMaxSeq
 }
 
 // xChangedIDs is the ids a request changes: the cards the derivation reads.
@@ -193,6 +285,28 @@ func xChangedIDs(req *Request) []string {
 	return xDistinct(ids)
 }
 
+// xReadMarks is the ids of a step that are in {p}quarantine@e. X needs only
+// membership, and a hash answers with each id's value, so the read is one HLEN
+// (an empty key, the usual case, ends it) and then the ids in commands of
+// xMarkPiece, each reserved at the field cap: no value a mark can hold refuses the
+// read, and what it costs is one probe for 16 ids.
+func xReadMarks(r *xRead, ids []string) (map[string]bool, *Refusal) {
+	key := r.at(xKeyQuarantine)
+	out := map[string]bool{}
+	n, ref := r.hlen(key)
+	if ref != nil || n == 0 {
+		return out, ref
+	}
+	vals, ref := r.hmgetIn(key, ids, xMarkPiece, xMarkValueCap)
+	if ref != nil {
+		return nil, ref
+	}
+	for id := range vals {
+		out[id] = true
+	}
+	return out, nil
+}
+
 // xPrepareDerivation reads what X.plan will need and validates what it will
 // read: the write epoch; the ids of the step already in {p}quarantine@e (one
 // probe); the orders of the requeued keys (one probe a queue); and every indexed
@@ -206,13 +320,11 @@ func xPrepareDerivation(r *xRead, st *State, req *Request, obs *Before, carry *x
 	}
 	carry.quarantined = map[string]bool{}
 	if ids := xChangedIDs(req); len(ids) != 0 {
-		marks, ref := r.hmget(r.at(xKeyQuarantine), ids)
+		marked, ref := xReadMarks(r, ids)
 		if ref != nil {
 			return ref
 		}
-		for id := range marks {
-			carry.quarantined[id] = true
-		}
+		carry.quarantined = marked
 	}
 	carry.requeue = map[string]float64{}
 	byQueue := map[string][]string{}
@@ -258,7 +370,7 @@ func xPrepareDerivation(r *xRead, st *State, req *Request, obs *Before, carry *x
 				var err error
 				if rec.Exists {
 					if before, err = xCardOf(e.Table, id, rec, fields); err == nil {
-						_, err = sprint.IndexOps(before, before)
+						err = xValidCard(before)
 					}
 					if err != nil {
 						return xRefuse("DRIFT", RefusalDetail{RefusalDetail: tset.RefusalDetail{Table: e.Table, IDs: []string{id}}}, "DRIFT: %v", err)
@@ -267,7 +379,7 @@ func xPrepareDerivation(r *xRead, st *State, req *Request, obs *Before, carry *x
 			}
 			after, err := xProspectiveCard(e, i, before)
 			if err == nil {
-				_, err = sprint.IndexOps(after, after)
+				err = xValidCard(after)
 			}
 			if err != nil {
 				return xRefuse(CodeRequest, RefusalDetail{RefusalDetail: tset.RefusalDetail{Table: e.Table, IDs: []string{id}}}, "%v", err)
@@ -289,7 +401,7 @@ func xPrepareDerivation(r *xRead, st *State, req *Request, obs *Before, carry *x
 			}
 			c, err := xCardOf(sprint.Work, id, rec, fields)
 			if err == nil {
-				_, err = sprint.IndexOps(c, c)
+				err = xValidCard(c)
 			}
 			if err != nil {
 				return xRefuse("DRIFT", RefusalDetail{RefusalDetail: tset.RefusalDetail{Table: sprint.Work, IDs: []string{id}}}, "DRIFT: %v", err)
@@ -304,7 +416,9 @@ func xPrepareDerivation(r *xRead, st *State, req *Request, obs *Before, carry *x
 //
 //  1. the derivation of the indexes and the card kinds of the due set, from
 //     each changed card's before and after (1.3.2), one ZREM and one ZADD a key
-//     in pieces of at most 1,000 members;
+//     in pieces of at most 1,000 members; for a quarantined card, every removal
+//     its change makes and the additions of sent alone (xQuarantinedOps), so a
+//     verb that removes it takes it out of every index and wait in the same step;
 //  2. the removal of each id a quarantine names from elig, fresh and again of
 //     its stream and from askwait (1.3.5: "X takes the id out"; a sentinel stays in
 //     sent);
@@ -348,6 +462,9 @@ func xCommands(prefix string, carry *xCarry, tp TablePlan) ([]Cmd, error) {
 				if before, err = xCardOf(e.Table, id, pe.Before[j], fields); err != nil {
 					return nil, err
 				}
+				if err = xNarrowWhole(before); err != nil {
+					return nil, err
+				}
 			}
 			afterFields := map[string]string{}
 			if before != nil {
@@ -362,6 +479,9 @@ func xCommands(prefix string, carry *xCarry, tp TablePlan) ([]Cmd, error) {
 				delete(afterFields, k)
 			}
 			after, err := xCardOf(e.Table, id, pe.After[j], afterFields)
+			if err == nil {
+				err = xNarrowWhole(after)
+			}
 			if err != nil {
 				return nil, err
 			}
@@ -377,19 +497,13 @@ func xCommands(prefix string, carry *xCarry, tp TablePlan) ([]Cmd, error) {
 	if err != nil {
 		return nil, err
 	}
-	// A quarantined card is given no index membership but sent (1.3.2; I1): its
-	// other memberships, and its due entries and waits, are left as they are.
-	for _, ch := range quarantined {
-		qops, err := sprint.StepIndexOps([]sprint.IndexChange{ch})
-		if err != nil {
-			return nil, err
-		}
-		for _, o := range qops {
-			if o.Key.Index == sprint.IndexSent {
-				ops = append(ops, o)
-			}
-		}
+	// A quarantined card is given no index membership but sent, and leaves every
+	// index its change ends it in (1.3.2; I1, D1).
+	qops, err := xQuarantinedOps(quarantined)
+	if err != nil {
+		return nil, err
 	}
+	ops = append(ops, qops...)
 	var cmds []Cmd
 	for _, o := range ops {
 		key := xIndexKey(prefix, o.Key, carry.writeEpoch)
@@ -407,6 +521,81 @@ func xCommands(prefix string, carry *xCarry, tp TablePlan) ([]Cmd, error) {
 	cmds = append(cmds, xQuarantineCmds(prefix, carry)...)
 	cmds = append(cmds, xAgendaCmds(prefix, carry)...)
 	return cmds, nil
+}
+
+// xQuarantinedOps is what a step does to the indexes for the quarantined cards it
+// changes (1.3.2, I1, D1). A quarantined card is given no membership but sent, so
+// the additions are the sent index's alone; it leaves every index its change ends
+// its membership of, its due entries and its wait:<n> included, so a verb that
+// removes it takes it out of everything in the same step (a removal of a member
+// that is not there, as elig, fresh and again are once it is quarantined, changes
+// nothing). The ops are folded one a key and cut in pieces of xPiece, as
+// sprint.StepIndexOps does for the others, so what X writes grows with the keys
+// and the pieces and not with the cards.
+func xQuarantinedOps(changes []sprint.IndexChange) ([]sprint.IndexOp, error) {
+	type named struct{ table, id string }
+	seen := map[named]bool{}
+	byKey := map[sprint.IndexKey]*sprint.IndexOp{}
+	for _, ch := range changes {
+		c := ch.Before
+		if c == nil {
+			c = ch.After
+		}
+		if c == nil {
+			continue
+		}
+		id := named{c.Table, c.ID}
+		if seen[id] {
+			return nil, fmt.Errorf("%s card %s is changed twice in one step", c.Table, c.ID)
+		}
+		seen[id] = true
+		ops, err := sprint.IndexOps(ch.Before, ch.After)
+		if err != nil {
+			return nil, err
+		}
+		for _, o := range ops {
+			var add []sprint.Scored
+			if o.Key.Index == sprint.IndexSent {
+				add = o.Add
+			}
+			if len(o.Rem) == 0 && len(add) == 0 {
+				continue
+			}
+			f := byKey[o.Key]
+			if f == nil {
+				f = &sprint.IndexOp{Key: o.Key}
+				byKey[o.Key] = f
+			}
+			f.Rem, f.Add = append(f.Rem, o.Rem...), append(f.Add, add...)
+		}
+	}
+	keys := make([]sprint.IndexKey, 0, len(byKey))
+	for k := range byKey {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].Index != keys[j].Index {
+			return keys[i].Index < keys[j].Index
+		}
+		return keys[i].Arg < keys[j].Arg
+	})
+	var out []sprint.IndexOp
+	for _, k := range keys {
+		o := byKey[k]
+		sort.Strings(o.Rem)
+		sort.Slice(o.Add, func(i, j int) bool { return o.Add[i].Member < o.Add[j].Member })
+		for i := 0; i < len(o.Rem) || i < len(o.Add); i += xPiece {
+			p := sprint.IndexOp{Key: k}
+			if i < len(o.Rem) {
+				p.Rem = o.Rem[i:min(i+xPiece, len(o.Rem))]
+			}
+			if i < len(o.Add) {
+				p.Add = o.Add[i:min(i+xPiece, len(o.Add))]
+			}
+			out = append(out, p)
+		}
+	}
+	return out, nil
 }
 
 // xZRemPieces is ZREM of the members of a key, in commands of at most xPiece.
@@ -494,8 +683,8 @@ func xAgendaCmds(prefix string, carry *xCarry) []Cmd {
 
 // XCost is X's share of a body's cost, in the units of the step builder's
 // Coster (8.0: step.Cost{Commands, ArgvBytes, Probes, Notes}): the commands X.plan
-// writes, their argv bytes, the keys X.pre probes, and the notes it adds (none:
-// J's). The builder counts X's share from the read by running the twin's XCmds on
+// writes, their argv bytes, the probes (the keys X.pre reads, and one type read in
+// prepare for each other key X writes), and the notes it adds (none: J's). The builder counts X's share from the read by running the twin's XCmds on
 // the plan, with 25% headroom (1.3.6); IT04's package does not export the
 // Coster of 8.0 yet, so this is its words and this package's types.
 type XCost struct{ Commands, ArgvBytes, Probes, Notes int }
@@ -521,9 +710,17 @@ func CostX(st *State, req *Request, obs *Before) (XCost, *Refusal) {
 		return XCost{}, xRefuse(CodeRequest, RefusalDetail{}, "%v", err)
 	}
 	cost := XCost{Commands: len(cmds), Probes: carry.probes}
+	typed := map[string]bool{}
 	for _, c := range cmds {
 		for _, a := range c.Argv {
 			cost.ArgvBytes += len(a)
+		}
+		// prepare type-reads every key a step writes that no read has typed yet,
+		// one probe a key (S.prepare's key_type, one cell a TYPE): X.pre has typed
+		// the keys it read, and no other key X writes.
+		if key := c.Argv[1]; !carry.readKeys[key] && !typed[key] {
+			typed[key] = true
+			cost.Probes++
 		}
 	}
 	return cost, nil

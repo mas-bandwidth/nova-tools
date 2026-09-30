@@ -136,7 +136,7 @@ func newXWalk(t *testing.T, seed uint64, mirror bool) *xWalk {
 	h := newXHarnessMirrored(t, mirror)
 	w := &xWalk{t: t, h: h, rng: rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15)), cards: map[string]*xWalkCard{},
 		wait: map[[2]string]bool{}, prev: sprint.Indexes{}, cover: newXWalkCover()}
-	h.do(&Request{Epoch: "0", Meta: Meta{Verb: "seed"}, Sprint: &SprintPart{Counter: &CounterChange{Read: map[string]string{},
+	h.do(&Request{Epoch: "0", Meta: Meta{Verb: "seed"}, Sprint: &SprintPart{Counter: &CounterChange{Read: map[string]string{"score": "", "streams": ""},
 		Set: map[string]string{"score": strconv.Itoa(xWalkScore * 1000), "streams": "1"}}}})
 	var rows []tset.Entry
 	for _, table := range []string{sprint.Work, sprint.Fleet, sprint.Readers, sprint.Merge} {

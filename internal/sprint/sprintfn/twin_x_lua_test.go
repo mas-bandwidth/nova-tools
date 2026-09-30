@@ -38,13 +38,26 @@ type xLuaMirror struct {
 
 	probes    int // the store reads the Lua X.pre has made in this call
 	pre, cmds int // comparisons made
+
+	reads      []xLuaRead      // the store reads the Lua X.pre made in this call, in order
+	readKeys   map[string]bool // the keys they read: Layer 1 types a key when it reads it
+	typeProbes int             // the type reads prepare would make for the keys the Lua x_cmds wrote and X.pre had not read
+	cmdLog     [][]string      // the argv of the commands the Lua x_cmds wrote in the last call
+}
+
+// xLuaRead is one store read the Lua X.pre made: its command, key, how many
+// members or fields it named, and what it reserved.
+type xLuaRead struct {
+	cmd, key       string
+	members        int
+	reserve, bytes int
 }
 
 func newXLuaMirror(t *testing.T) *xLuaMirror {
 	t.Helper()
 	L := lua.NewState()
 	t.Cleanup(L.Close)
-	m := &xLuaMirror{t: t, L: L, null: L.NewUserData(), ctxs: map[*State]*lua.LTable{}}
+	m := &xLuaMirror{t: t, L: L, null: L.NewUserData(), ctxs: map[*State]*lua.LTable{}, readKeys: map[string]bool{}}
 	cjson := L.NewTable()
 	cjson.RawSetString("null", m.null)
 	L.SetGlobal("cjson", cjson)
@@ -199,12 +212,36 @@ func (m *xLuaMirror) install(s *lua.LTable) {
 	s.RawSetString("before", L.NewFunction(m.before))
 }
 
-// rd is S.rd: a typed read of a sprint key, counted as one probe.
+// payload is Layer 1's payload(): the bytes of a reply, as the read reservation
+// counts them.
+func xPayload(v lua.LValue) int {
+	switch x := v.(type) {
+	case lua.LString:
+		return len(x)
+	case lua.LNumber:
+		return len(x.String())
+	case *lua.LTable:
+		n := 0
+		x.ForEach(func(k, e lua.LValue) {
+			if ks, ok := k.(lua.LString); ok {
+				n += len(ks)
+			}
+			n += xPayload(e)
+		})
+		return n
+	}
+	return 0
+}
+
+// rd is S.rd: a typed read of a sprint key, counted as one probe, and refused DRIFT
+// when its reply is larger than the bytes it reserved, as S.readcmd refuses it.
 func (m *xLuaMirror) rd(L *lua.LState) int {
-	argv, kind := L.CheckTable(2), L.CheckString(3)
+	argv, kind, reserve := L.CheckTable(2), L.CheckString(3), L.CheckInt(4)
 	cmd := strings.ToUpper(argv.RawGetInt(1).String())
 	key := argv.RawGetInt(2).String()
 	m.probes++
+	m.readKeys[key] = true
+	read := xLuaRead{cmd: cmd, key: key, members: argv.Len() - 2, reserve: reserve}
 	keys := m.cur.Keys
 	if t := keys.Type(key); t != kindNone && t != kind {
 		L.Push(lua.LNil)
@@ -233,6 +270,12 @@ func (m *xLuaMirror) rd(L *lua.LState) int {
 		} else {
 			L.Push(lua.LString(v))
 		}
+	case "HLEN":
+		n := 0
+		if v := keys.ks.vals[key]; v != nil && v.kind == kindHash {
+			n = len(v.hash)
+		}
+		L.Push(lua.LNumber(n))
 	case "HMGET", "ZMSCORE":
 		out := L.NewTable()
 		for _, f := range rest() {
@@ -251,6 +294,14 @@ func (m *xLuaMirror) rd(L *lua.LState) int {
 		L.Push(out)
 	default:
 		L.RaiseError("the fake S.rd does not answer %s", cmd)
+	}
+	read.bytes = xPayload(L.Get(-1))
+	m.reads = append(m.reads, read)
+	if read.bytes > reserve {
+		L.Pop(1)
+		L.Push(lua.LNil)
+		L.Push(m.refusal("DRIFT", lua.LNil, lua.LNil))
+		return 2
 	}
 	L.Push(lua.LNil)
 	return 2
@@ -394,6 +445,7 @@ func xStrings(t *lua.LTable) []string {
 func (m *xLuaMirror) checkPre(st *State, req *Request, obs *Before, goRef *Refusal) {
 	m.t.Helper()
 	m.cur, m.obs, m.probes = st, obs, 0
+	m.reads, m.readKeys = nil, map[string]bool{}
 	ctx, sp := m.newCtx(st, req)
 	if err := m.L.CallByParam(lua.P{Fn: m.phase("x_pre"), NRet: 2, Protect: true}, ctx, sp, m.L.NewTable()); err != nil {
 		m.t.Fatalf("Lua x_pre: %v", err)
@@ -498,6 +550,7 @@ func (m *xLuaMirror) checkCmds(st *State, tp TablePlan, lp LogPlan, goCmds []Cmd
 	}
 	delete(m.ctxs, st)
 	m.cur = st
+	m.cmdLog = nil
 	if err := m.L.CallByParam(lua.P{Fn: m.phase("x_cmds"), NRet: 1, Protect: true}, ctx, m.tablePlan(tp, ctx), m.L.NewTable()); err != nil {
 		m.t.Fatalf("Lua x_cmds: %v", err)
 	}
@@ -521,6 +574,7 @@ func (m *xLuaMirror) checkCmds(st *State, tp TablePlan, lp LogPlan, goCmds []Cmd
 			access = e.RawGetString("key").String() + " " + e.RawGetString("kind").String() + " " + e.RawGetString("mode").String()
 		}
 		got = append(got, xDescribeCmd(parts, access))
+		m.cmdLog = append(m.cmdLog, parts)
 	}
 	var want []string
 	for _, c := range goCmds {
@@ -533,19 +587,20 @@ func (m *xLuaMirror) checkCmds(st *State, tp TablePlan, lp LogPlan, goCmds []Cmd
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		m.t.Fatalf("x_cmds: the Lua wrote\n%s\nthe twin wrote\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
 	}
+	typed := map[string]bool{}
+	m.typeProbes = 0
+	for _, argv := range m.cmdLog {
+		if key := argv[1]; !m.readKeys[key] && !typed[key] {
+			typed[key] = true
+			m.typeProbes++
+		}
+	}
 	m.cmds++
 }
 
-// xDescribeCmd is a command as one line, the scores of a ZADD spelled as the
-// numbers they are, so that "4" and "4.000" compare equal.
+// xDescribeCmd is a command as one line, every byte of it: the two halves spell a
+// score alike (the shortest decimal that reads back the same), so that the argv
+// bytes the coster counts are the bytes the store is sent.
 func xDescribeCmd(argv []string, access string) string {
-	out := append([]string(nil), argv...)
-	if len(out) > 2 && out[0] == "ZADD" {
-		for i := 2; i+1 < len(out); i += 2 {
-			if f, err := strconv.ParseFloat(out[i], 64); err == nil {
-				out[i] = strconv.FormatFloat(f, 'g', -1, 64)
-			}
-		}
-	}
-	return strings.Join(out, " ") + " | " + access
+	return strings.Join(argv, " ") + " | " + access
 }

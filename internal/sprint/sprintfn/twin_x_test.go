@@ -717,14 +717,26 @@ func TestXWrongTypeIsRefused(t *testing.T) {
 
 // TestXCostIsExact: the coster counts X's share of a body from the read by
 // running X on the plan the entries make: the commands and their argv bytes are
-// exactly what XCmds writes for the same step, and the probes are exactly the
-// reads X.pre made; a body X would refuse is refused. The step builder keeps its
+// exactly what XCmds writes for the same step, and the probes are the reads X.pre
+// made plus one type read in prepare for each other key X writes (S.prepare's
+// key_type: one cell probe for every key a step writes that no read has typed),
+// which the Lua half's commands and reads give independently; a body X would refuse
+// is refused. The steps include the removal of a card that leaves waiting with its
+// needs, a change of a quarantined sentinel and a quarantined card that is removed,
+// so a coster that leaves any removal out is wrong. The step builder keeps its
 // headroom for what a derived entry adds (1.3.6).
 func TestXCostIsExact(t *testing.T) {
 	t.Parallel()
 	h := newXHarness(t)
 	h.fixture()
-	h.write(xLease("1"), xRunning(0), Command("ZADD", xp+"agenda@0", kindZSet, "5", "deal", "6", "held:p1"))
+	h.do(xVerb("seed",
+		xCreate(sprint.Work, "s1:waiting", "p6", "6", map[string]string{"kind": "primary", "open": "0", "needs": "n1,n2"}),
+		xCreate(sprint.Work, "s1:waiting", "g2", "7", map[string]string{"kind": "sentinel"}),
+		xCreate(sprint.Fleet, "m1:ready", "q1", "8", map[string]string{"stream": "s1", "due_untaken": "9100"})))
+	h.write(xLease("1"), xRunning(0), Command("ZADD", xp+"agenda@0", kindZSet, "5", "deal", "6", "held:p1"),
+		Command("ZADD", xp+"wait:n1@0", kindZSet, "0", "p6"), Command("ZADD", xp+"wait:n2@0", kindZSet, "0", "p6"))
+	h.write(Command("SET", xp+"coordinator", kindString, "c1"))
+	h.applies("the quarantine of a sentinel and a timed card", xQuarantineStep(1, map[string]string{"g2": "s1", "q1": "s1"}))
 	steps := []*Request{
 		xTick(1, xMoveWaitingReady("p1"), xMove(sprint.Work, "s1:ready", "s1:working", "p3", map[string]string{"attempt": "1"})),
 		func() *Request {
@@ -739,10 +751,24 @@ func TestXCostIsExact(t *testing.T) {
 			r.Meta.Actor = "c1"
 			return r
 		}(),
-		xQuarantineStep(1, map[string]string{"p2": "s1"}),
+		// a card that leaves waiting with needs, by a move and by a remove: its wait:<n> removals
+		xVerb("rank", xMove(sprint.Work, "s1:waiting", "s1:ready", "p6", nil)),
+		xVerb("drop", xRemove(sprint.Work, "s1:waiting", "p2")),
+		// a quarantined sentinel re-scored, and a quarantined timed card removed: what a quarantined card is owed
+		xVerb("rank", tset.Entry{Kind: "move", Table: sprint.Work, From: "s1:waiting", IDs: []string{"g2"}, Scores: []string{"7.5"}, About: []string{"g2"}}),
+		xVerb("drop", xRemove(sprint.Fleet, "m1:ready", "q1")),
+		xQuarantineStep(1, map[string]string{"p3": "s1"}),
 		xTick(1),
 	}
-	h.write(Command("SET", xp+"coordinator", kindString, "c1"))
+	// the commands the steps that remove, or that change a quarantined card, must
+	// have among them: the coster counts them, and a coster that left a removal out
+	// would not match what X wrote
+	wantCmds := map[int][]string{
+		3: {"ZREM " + xp + "elig:s1@0 p6", "ZREM " + xp + "wait:n1@0 p6", "ZREM " + xp + "wait:n2@0 p6", "ZADD " + xp + "fresh:s1@0"},
+		4: {"ZREM " + xp + "elig:s1@0 p2"},
+		5: {"ZADD " + xp + "sent:s1@0 7.5 g2"},
+		6: {"ZREM " + xp + "due@0 untaken:q1"},
+	}
 	for i, req := range steps {
 		st := &State{Prefix: testPrefix, Epoch: "0", NowMS: tset.Decimal(xMS(xNow)), Names: testNames, Keys: &Keys{ks: h.tw.keys}}
 		obs, ref := h.tw.before(context.Background(), st, req)
@@ -755,6 +781,15 @@ func TestXCostIsExact(t *testing.T) {
 		}
 		h.last = nil
 		h.applies("a step the coster counted", req)
+		for _, want := range wantCmds[i] {
+			found := false
+			for _, c := range h.last {
+				found = found || strings.Contains(strings.Join(c.Argv, " "), want)
+			}
+			if !found {
+				t.Fatalf("step %d: X wrote %v, which has no command with %q", i, h.last, want)
+			}
+		}
 		if len(h.last) != cost.Commands {
 			t.Fatalf("step %d: the coster counted %d commands, X wrote %d: %v", i, cost.Commands, len(h.last), h.last)
 		}
@@ -768,12 +803,21 @@ func TestXCostIsExact(t *testing.T) {
 			t.Fatalf("step %d: the coster counted %d argv bytes, X wrote %d", i, cost.ArgvBytes, bytes)
 		}
 		carry, _ := xPre(st, req, obs)
-		if carry == nil || carry.probes != cost.Probes {
-			t.Fatalf("step %d: the coster counted %d probes, X.pre made %d", i, cost.Probes, carry.probes)
+		if carry == nil {
+			t.Fatalf("step %d: X.pre refused what the step applied with", i)
+		}
+		// X.pre's reads, and the type reads of prepare for the keys it writes and did not read,
+		// counted from the commands the Lua half wrote and the reads it made.
+		if want := h.mirror.probes + h.mirror.typeProbes; cost.Probes != want {
+			t.Fatalf("step %d: the coster counted %d probes; the Lua half made %d reads and prepare would type-read %d keys more (%d)",
+				i, cost.Probes, h.mirror.probes, h.mirror.typeProbes, want)
+		}
+		if cost.Probes < carry.probes {
+			t.Fatalf("step %d: the coster counted %d probes, X.pre alone made %d", i, cost.Probes, carry.probes)
 		}
 	}
-	// A body X refuses is refused by the coster, with X's refusal.
 	st := &State{Prefix: testPrefix, Epoch: "0", NowMS: tset.Decimal(xMS(xNow)), Names: testNames, Keys: &Keys{ks: h.tw.keys}}
+	// A body X refuses is refused by the coster, with X's refusal.
 	bad := xTick(9, xMoveWaitingReady("p1"))
 	obs, _ := h.tw.before(context.Background(), st, bad)
 	if _, ref := CostX(st, bad, obs); ref == nil || ref.Code != CodeStaleGen {

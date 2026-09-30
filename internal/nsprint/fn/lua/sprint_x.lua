@@ -13,7 +13,9 @@
 -- (MACHINESTATE), in that order, and validates every field the derivation will
 -- read so that x_cmds, which has no refusal channel in IT12's core, cannot meet a
 -- malformed one. x_cmds derives the indexes and the card kinds of the due set from
--- each changed card's before and after (1.3.2), takes each quarantined id out of
+-- each changed card's before and after (1.3.2) (for a quarantined card, every removal
+-- its change makes and the additions of sent alone, so a verb that removes it takes it
+-- out of every index and wait in the same step), takes each quarantined id out of
 -- elig, fresh, again and askwait (1.3.5), and edits the agenda in A1's order.
 --
 -- Layer 1's helpers are resolved when a call runs (table_set*.lua sorts after this
@@ -40,9 +42,18 @@ do
   local PIECE = 1000
   -- Reserve for a read of one short value, and for each id of a batched read, in bytes.
   local RESERVE_ONE, RESERVE_EACH = 1024, 300
-  -- The most digits of a whole number X reads from a card's field: int64's are 19,
-  -- and a double keeps 15 exactly; 18 is the narrower reading of the two.
-  local WHOLE_DIGITS = 18
+  -- The quarantine's marks are read for membership alone, but a hash answers with the
+  -- value, which nothing but the sprint part bounds: each id is reserved at Layer 1's
+  -- field cap (64 KiB), 16 ids to a read (1 MiB), after one HLEN that ends the read
+  -- when no card is marked (sprintfn xMarkPiece, xMarkValueCap).
+  local MARK_PIECE, MARK_VALUE_CAP = 16, 64 * 1024
+  -- The most characters of a whole-number field of a card the derivation reads (a
+  -- count or a due time): the Lua holds numbers as doubles (sprintfn xWholeChars).
+  local WHOLE_CHARS = 18
+  -- The most digits of the score counter, a whole number a double keeps exactly
+  -- (sprintfn xScoreDigits), and the largest seq a line has: 2^53 - 1, Layer 2's
+  -- LOGID bound (sprintfn xMaxSeq).
+  local SCORE_DIGITS, MAX_SEQ = 15, 9007199254740991
 
   -- The definitions, rendered from sprint.IndexDefs, sprint.DueKinds and
   -- sprint.IndexFields: TestSprintXLuaDefsGolden holds this block equal to the
@@ -81,10 +92,12 @@ do
     return S().refuse(code, detail, select('#', ...) > 0 and string.format(fmt, ...) or fmt)
   end
 
+  -- The distinct strings of a list, sorted (sprintfn xDistinct): an empty string is a
+  -- string like another, and what names nothing is refused where it is read.
   local function sorted_unique(list)
     local seen, out = {}, {}
     for _, v in ipairs(list) do
-      if v ~= '' and not seen[v] then seen[v] = true; out[#out + 1] = v end
+      if not seen[v] then seen[v] = true; out[#out + 1] = v end
     end
     table.sort(out)
     return out
@@ -94,15 +107,17 @@ do
   local function rd(ctx, argv, kind, reserve)
     return S().rd(ctx, argv, kind, reserve, 'cell')
   end
-  -- hmget reads several fields of one hash, in commands of at most PIECE fields,
-  -- each one probe (sprintfn xRead.hmget): a map of the fields that are set.
-  local function hmget(ctx, key, fields)
+  -- hmget reads several fields of one hash, in commands of at most `piece` fields
+  -- (PIECE unless given), each one probe and each field reserved at `each` bytes
+  -- (RESERVE_EACH unless given) (sprintfn xRead.hmgetIn): a map of the fields set.
+  local function hmget(ctx, key, fields, piece, each)
+    piece, each = piece or PIECE, each or RESERVE_EACH
     local out = {}
-    for i = 1, #fields, PIECE do
-      local last = math.min(i + PIECE - 1, #fields)
+    for i = 1, #fields, piece do
+      local last = math.min(i + piece - 1, #fields)
       local argv = {'HMGET', key}
       for j = i, last do argv[#argv + 1] = fields[j] end
-      local vals, err = rd(ctx, argv, 'hash', RESERVE_EACH * (last - i + 1))
+      local vals, err = rd(ctx, argv, 'hash', each * (last - i + 1))
       if err then return nil, err end
       for j = i, last do
         local v = vals[j - i + 1]
@@ -142,7 +157,7 @@ do
   local function whole(card, name)
     local v = card.fields[name]
     if v == nil or v == '' then return 0, nil end
-    if not string.match(v, '^[+-]?%d+$') or #v > WHOLE_DIGITS then
+    if not string.match(v, '^[+-]?%d+$') or #v > WHOLE_CHARS then
       return nil, string.format('%s card %s: field %s is %q, not a whole number', card.table, card.id, name, v)
     end
     return tonumber(v), nil
@@ -284,8 +299,10 @@ do
 
   -- fold is every card's ops folded into one op a key, members in order, cut in
   -- pieces of at most PIECE members (sprint.StepIndexOps); keys in the order
-  -- index, then arg.
-  local function fold(changes)
+  -- index, then arg. For quarantined cards (sprintfn xQuarantinedOps) it keeps every
+  -- removal and the additions of sent alone: a quarantined card is given no
+  -- membership but sent (1.3.2; I1) and leaves every index its change ends it in (D1).
+  local function fold(changes, quarantined)
     local seen, by_key = {}, {}
     for _, ch in ipairs(changes) do
       local c = ch.before or ch.after
@@ -296,10 +313,14 @@ do
         local ops, err = card_ops(ch.before, ch.after)
         if err then return nil, err end
         for k, o in pairs(ops) do
-          local f = by_key[k]
-          if not f then f = {index = o.index, arg = o.arg, rem = {}, add = {}}; by_key[k] = f end
-          for _, m in ipairs(o.rem) do f.rem[#f.rem + 1] = m end
-          for _, a in ipairs(o.add) do f.add[#f.add + 1] = a end
+          local add = o.add
+          if quarantined and o.index ~= 'sent' then add = {} end
+          if #o.rem > 0 or #add > 0 then
+            local f = by_key[k]
+            if not f then f = {index = o.index, arg = o.arg, rem = {}, add = {}}; by_key[k] = f end
+            for _, m in ipairs(o.rem) do f.rem[#f.rem + 1] = m end
+            for _, a in ipairs(add) do f.add[#f.add + 1] = a end
+          end
         end
       end
     end
@@ -334,11 +355,15 @@ do
     if rule == 'held' then return KEY_HELDQ end
     return KEY_AGENDA
   end
-  -- The line a key names: <rule>@<seq> or <rule>@<seq>+<offset> (sprintfn xLineOf).
+  -- The line a key names: <rule>@<seq> or <rule>@<seq>+<offset>: the digits after the
+  -- first @, up to the end of the key or the first +, and no more than a line's seq
+  -- can be (sprintfn xLineOf). What follows the + is the offset and is not read.
   local function line_of(key)
-    local seq = string.match(key, '^[^@]*@(%d+)')
-    if seq then return tonumber(seq) end
-    return nil
+    local seq = string.match(key, '^[^@]*@(%d+)$') or string.match(key, '^[^@]*@(%d+)%+')
+    if seq == nil then return nil end
+    local n = tonumber(seq)
+    if n == nil or n > MAX_SEQ then return nil end
+    return n
   end
 
   -- A stored id of a member's control card at an epoch (sprint.StoredID(CtlID)).
@@ -365,7 +390,9 @@ do
       if changed(e) then for _, id in ipairs(e.ids) do out[#out + 1] = id end end
     end
     for _, in_ in ipairs(tbl(sp.intents)) do
-      for _, id in ipairs(intent_ids(in_)) do out[#out + 1] = id end
+      for _, id in ipairs(intent_ids(in_)) do
+        if id ~= '' then out[#out + 1] = id end
+      end
     end
     return sorted_unique(out)
   end
@@ -412,8 +439,18 @@ do
     return recs, nil
   end
 
+  -- The score counter holds a whole number of at most SCORE_DIGITS digits (sprintfn
+  -- xWholeScore): nil for anything else.
+  local function whole_score(v)
+    if type(v) ~= 'string' or v == '' or #v > SCORE_DIGITS or not string.match(v, '^%d+$') then return nil end
+    return tonumber(v)
+  end
+
   -- The shape of the parts X reads: REQUEST for the caller's fault (sprintfn
-  -- xCheckShape).
+  -- xCheckShape): a guard of a kind 7 does not have, or without what its kind names;
+  -- a counter change that sets a field it did not read, or a score that is not a
+  -- whole number; an agenda key that names nothing, or that one step both finishes
+  -- and requeues.
   local function check_shape(sp)
     local function bad(fmt, ...) return refuse('REQUEST', {}, fmt, ...) end
     for _, g in ipairs(tbl(sp.guards)) do
@@ -435,6 +472,27 @@ do
     end
     for _, q in ipairs(tbl(sp.quarantine)) do
       if q.id == nil or q.id == '' then return bad('a quarantine names no card') end
+    end
+    local counter = sp.sprint and sp.sprint.counter or nil
+    if type(counter) == 'table' then
+      local read, set, names = tbl(counter.read), tbl(counter.set), {}
+      for f in pairs(set) do names[#names + 1] = f end
+      table.sort(names)
+      for _, f in ipairs(names) do
+        if read[f] == nil then return bad('the counter sets %s and did not read it: a counter change guards every field it writes', f) end
+      end
+      if set.score ~= nil and whole_score(set.score) == nil then
+        return bad('the score counter is set to %q, which is not a whole number of at most %d digits', tostring(set.score), SCORE_DIGITS)
+      end
+    end
+    local requeued = {}
+    for _, k in ipairs(tbl(sp.requeue)) do
+      if k == '' then return bad('an agenda key is requeued and names nothing') end
+      requeued[k] = true
+    end
+    for _, k in ipairs(tbl(sp.done)) do
+      if k == '' then return bad('an agenda key is finished and names nothing') end
+      if requeued[k] then return bad('the agenda key %s is both finished and requeued in one step', k) end
     end
     return nil
   end
@@ -664,9 +722,18 @@ do
       end
       local limit_text, have = stored.score, stored.score ~= nil
       local set = counter and tbl(counter.set) or {}
+      -- The counter only rises (U2): a step that sets it below the value it holds would
+      -- let the next add land on a score already placed (sprintfn xCounterRises).
+      if have and set.score ~= nil then
+        local was = whole_score(stored.score)
+        if was == nil then return nil, refuse('CONFIG', {}, 'the score counter holds %q, not a whole number', tostring(stored.score)) end
+        if whole_score(set.score) < was then
+          return nil, refuse('COUNTER', {}, 'COUNTER: the step sets the score counter to %s, below %s which it holds; the counter only rises', set.score, stored.score)
+        end
+      end
       if set.score ~= nil then limit_text, have = set.score, true end
-      local limit = tonumber(limit_text or '')
-      if have and limit == nil then return nil, refuse('CONFIG', {}, 'the score counter holds %q, not a number', tostring(limit_text)) end
+      local limit = whole_score(limit_text)
+      if have and limit == nil then return nil, refuse('CONFIG', {}, 'the score counter holds %q, not a whole number', tostring(limit_text)) end
       local over = {}
       for _, en in ipairs(ctx.request.entries) do
         if en.t == 'work' and (en.kind == 'create' or en.kind == 'move') then
@@ -703,10 +770,18 @@ do
     x.quarantined = {}
     local ids = changed_ids(ctx, sp)
     if #ids > 0 then
-      local marks
-      marks, err = hmget(ctx, ekey(ctx, KEY_QUARANTINE, e), ids)
+      -- One HLEN, which ends the read when no card is marked; then the ids, 16 to a
+      -- read and each reserved at the field cap (sprintfn xReadMarks).
+      local qkey = ekey(ctx, KEY_QUARANTINE, e)
+      local marked
+      marked, err = rd(ctx, {'HLEN', qkey}, 'hash', RESERVE_ONE)
       if err then return nil, err end
-      for id in pairs(marks) do x.quarantined[id] = true end
+      if (tonumber(marked) or 0) > 0 then
+        local marks
+        marks, err = hmget(ctx, qkey, ids, MARK_PIECE, MARK_VALUE_CAP)
+        if err then return nil, err end
+        for id in pairs(marks) do x.quarantined[id] = true end
+      end
     end
     x.requeue = {}
     local by_queue = {[KEY_AGENDA] = {}, [KEY_HELDQ] = {}}
@@ -790,11 +865,27 @@ do
     return true, nil
   end
 
-  -- Score text for ZADD: a whole number as itself, anything else at full precision.
+  -- Score text for ZADD, the shortest decimal that reads back as the same number and
+  -- has no exponent (sprintfn xScore): a whole number as itself; any other from the
+  -- fewest of 15, 16 and 17 significant digits that read back equal.
   local function score_text(n)
     if n == math.floor(n) and math.abs(n) < 1e15 then return string.format('%d', n) end
-    return string.format('%.17g', n)
+    local a, sign = math.abs(n), ''
+    if n < 0 then sign = '-' end
+    local text
+    for digits = 15, 17 do
+      text = string.format('%.' .. (digits - 1) .. 'e', a)
+      if tonumber(text) == a then break end
+    end
+    local first, rest, exp = string.match(text, '^(%d)%.?(%d*)e([+-]%d+)$')
+    local digs = string.gsub(first .. rest, '0+$', '')
+    if digs == '' then digs = '0' end
+    local point = tonumber(exp) + 1
+    if point <= 0 then return sign .. '0.' .. string.rep('0', -point) .. digs end
+    if point >= #digs then return sign .. digs .. string.rep('0', point - #digs) end
+    return sign .. string.sub(digs, 1, point) .. '.' .. string.sub(digs, point + 1)
   end
+  SP.x_score_text = score_text
 
   -- x_cmds: commands only, in A1's order (sprintfn XCmds): the derivation, then the
   -- quarantine's removals, then the agenda's edits. It cannot refuse: if it cannot
@@ -847,14 +938,11 @@ do
     end
     local ops, err = fold(changes)
     if err then return poison end
-    -- A quarantined card is given no membership but sent (1.3.2; I1).
-    for _, ch in ipairs(quarantined) do
-      local qops, qerr = fold({ch})
-      if qerr then return poison end
-      for _, o in ipairs(qops) do
-        if o.index == 'sent' then ops[#ops + 1] = o end
-      end
-    end
+    -- A quarantined card is given no membership but sent, and leaves every index its
+    -- change ends it in (1.3.2; I1, D1): folded once, not a card at a time.
+    local qops, qerr = fold(quarantined, true)
+    if qerr then return poison end
+    for _, o in ipairs(qops) do ops[#ops + 1] = o end
     for _, o in ipairs(ops) do
       local key = ctx.space .. 'sprint:' .. key_name(o.index, o.arg) .. '@' .. e
       if #o.rem > 0 and not stage('ZREM', key, 'zset', o.rem) then return poison end
