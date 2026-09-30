@@ -136,6 +136,8 @@ const (
 	guardCtl      = "ctl"      // rules_time.go guardCtl: a member's control card's revision (R17)
 	guardBeat     = "beat"     // rules_time.go guardBeat: beat:<m>'s score in the due set (R17)
 	guardRevs     = "revs"     // rules_time.go guardRevs: the fold of a table's cards' revisions (R17)
+	guardDue      = "due"      // rules_time.go noEntryAbove: no due (or cut) entry above Score (R11, R14, R18)
+	guardClock    = "clock"    // rules_time.go guardClock: a clock field as read, 0 for an empty one (R17)
 )
 
 // convertGuards makes a plan's guards what the store checks (1.3.5; L1 3):
@@ -151,6 +153,14 @@ const (
 //     counter guard on the field of {p}next@e (sprintfn.XGuardCounter). A
 //     counter is a sprint key, not a card, so no Layer 1 entry can guard it;
 //     the sprint part's CounterChange guards only the fields it writes;
+//   - due (the time rules' noEntryAbove: R11's cut clock, R14, R18): X's
+//     dueatmost guard, the entry absent or at or below the time; X's own due
+//     kind holds an entry to its score as read, and the pop takes the entry,
+//     so it would refuse every such step (the erratum on 2.3's two readings
+//     is owed);
+//   - clock (R17): X's clock guard, a field R17 read as 0 guarded as
+//     XGuardAbsent: sprint.Clock reads an empty field as 0, and the clock part
+//     writes every field but stopped_ms empty for 0 (X reads "" as absent);
 //   - ctl (R17): a Layer 1 guard entry on the member's control card at its
 //     cell and revision; beat (R17): X's due guard on beat:<m>, absent when
 //     read as 0;
@@ -204,6 +214,13 @@ func convertGuards(rp sprint.RulePlan) ([]tset.Entry, []sprint.XGuard, error) {
 		case guardCtl:
 			entries = append(entries, tset.Entry{Kind: "guard", Table: sprint.Fleet, From: g.Member + ":ctl",
 				IDs: []string{sprint.CtlID(g.Member)}, Revs: []tset.Decimal{tset.Decimal(strconv.FormatInt(g.Score, 10))}})
+		case guardDue:
+			guards = append(guards, sprint.XGuard{Kind: sprintfn.XGuardDueAtMost, Key: g.Key, Score: g.Score})
+		case guardClock:
+			if g.Score == 0 && g.Key != "stopped_ms" {
+				g.Score = sprintfn.XGuardAbsent
+			}
+			guards = append(guards, g)
 		case guardBeat:
 			score := g.Score
 			if score == 0 {
