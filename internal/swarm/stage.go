@@ -415,8 +415,8 @@ func StageCard(opts StageOptions) (StageResult, error) {
 	}
 	head := strings.TrimSpace(string(headOut))
 
-	_ = exec.Command("git", "-C", opts.TargetDir, "config", "user.name", "Rowan").Run()
-	_ = exec.Command("git", "-C", opts.TargetDir, "config", "user.email", "rowan@mas-bandwidth.com").Run()
+	_ = stageGit(ctx, "-C", opts.TargetDir, "config", "user.name", "Rowan").Run()
+	_ = stageGit(ctx, "-C", opts.TargetDir, "config", "user.email", "rowan@mas-bandwidth.com").Run()
 
 	return StageResult{
 		BaseRepo: baseRepo,

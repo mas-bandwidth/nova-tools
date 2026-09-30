@@ -30,11 +30,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -113,6 +115,9 @@ its subject: supersedes=<id>[,<id>...], sorted, no duplicates. Nothing else orde
 not the Date, not the filename, not the directory listing, not the git history. Two tips
 are TOKENS CONFLICT, nothing folds for that lane-day, and the remedy names every tip; one
 note whose predecessor set names them all clears it.
+
+--note <path> is written whole through atomicfile: the file and its directory must not be
+symlinks.
 
 This tool removes nothing. There is no month file, sum writes nothing, check names a
 stray and leaves it, and no verb deletes, truncates or trims any file.
@@ -1206,12 +1211,7 @@ func cmdReport(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	fmt.Fprint(stdout, body)
 	if *notePath != "" {
-		tmp := *notePath + ".tmp"
-		if err := os.WriteFile(tmp, []byte(body), 0o644); err != nil {
-			r.add("--note " + *notePath + ": " + err.Error())
-			return r.print(stderr)
-		}
-		if err := os.Rename(tmp, *notePath); err != nil {
+		if err := atomicfile.Write(filepath.Clean(*notePath), []byte(body), 0o644); err != nil {
 			r.add("--note " + *notePath + ": " + err.Error())
 			return r.print(stderr)
 		}

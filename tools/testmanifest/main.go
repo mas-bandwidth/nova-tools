@@ -6,16 +6,19 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
+	"os/signal"
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 type event struct {
@@ -44,7 +47,11 @@ func main() {
 	}
 
 	pattern := "^(?:" + strings.Join(quoteNames(tests), "|") + ")$"
-	cmd := exec.Command(goCommand, "test", "-json", "-count=1", "-run", pattern, pkg)
+	// A long-lived child: go test runs as long as the tests do, under a context an
+	// interrupt cancels and no deadline.
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+	cmd := subproc.Long(ctx, goCommand, "test", "-json", "-count=1", "-run", pattern, pkg)
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr

@@ -394,6 +394,27 @@ func TestATextColumnOfWholeNumbersFoldsSumAndMax(t *testing.T) {
 	}
 }
 
+// TestRenderCellsAlignByTerminalColumns: cell width is counted in terminal columns, so a
+// wide East Asian row key (2 columns a rune) and one with a combining mark (0 columns) line
+// up with their ASCII neighbours and the separators stay in one column.
+func TestRenderCellsAlignByTerminalColumns(t *testing.T) {
+	t.Parallel()
+
+	keys := []string{"cafe\u0301", "abcd", "日本語"}
+	tbl := counts([]string{"a", "b"}, map[string][]int64{keys[0]: {1, 2}, keys[1]: {3, 4}, keys[2]: {5, 6}}, keys)
+	want := "row    | a |  b\n" +
+		"-------+---+---\n" +
+		"cafe\u0301   | 1 |  2\n" +
+		"abcd   | 3 |  4\n" +
+		"日本語 | 5 |  6\n" +
+		"-------+---+---\n" +
+		"       | 9 | 12\n"
+	got := ntable.Render(tbl, ntable.RenderOpts{})
+	if got != want {
+		t.Fatalf("wide and combining rows rendered:\n%s\nwant:\n%s", got, want)
+	}
+}
+
 // A union footer is the members of every row together, "-" for none, and "?"
 // when a row's set did not come back.
 func TestRenderUnionFooterIsUnknownWhenARowIsUnread(t *testing.T) {

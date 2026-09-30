@@ -3,6 +3,7 @@ package secrets
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -13,7 +14,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // execCommand runs one helper process and returns its stdout. The encrypt step
@@ -22,7 +25,10 @@ import (
 type execCommand func(stdin io.Reader, env []string, dir, name string, args ...string) ([]byte, error)
 
 func realExecCommand(stdin io.Reader, env []string, dir, name string, args ...string) ([]byte, error) {
-	cmd := exec.Command(name, args...)
+	// The deadline is the kind of the program named: git, gh, sops and the rest each have
+	// their own default (subproc.KindOf).
+	cmd, cancel := subproc.CommandFor(context.Background(), subproc.BudgetOf(name, args), name, args...)
+	defer cancel()
 	cmd.Env = env
 	cmd.Dir = dir
 	cmd.Stdin = stdin
@@ -534,7 +540,8 @@ func disableEcho(tty *os.File) func() {
 }
 
 func runStty(tty *os.File, arg string) error {
-	cmd := exec.Command("stty", arg)
+	cmd, cancel := subproc.Command(context.Background(), subproc.Tool, "stty", arg)
+	defer cancel()
 	cmd.Stdin = tty
 	return cmd.Run()
 }
@@ -648,36 +655,8 @@ func sealGH(run execCommand, ghPath, dir string, args ...string) (string, error)
 
 // atomicWriteFile writes the ciphertext beside the target and renames it into place.
 func atomicWriteFile(path string, data []byte, perm os.FileMode) error {
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, ".nova-seal-*.tmp")
-	if err != nil {
-		return fmt.Errorf("unable to create temporary file in %s: %w", dir, err)
-	}
-	tmpName := tmp.Name()
-	cleanup := true
-	defer func() {
-		if cleanup {
-			os.Remove(tmpName)
-		}
-	}()
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
+	if err := atomicfile.Write(filepath.Clean(path), data, perm, atomicfile.ExactMode()); err != nil {
 		return fmt.Errorf("unable to write %s: %w", path, err)
 	}
-	if err := tmp.Chmod(perm); err != nil {
-		tmp.Close()
-		return fmt.Errorf("unable to chmod %s: %w", path, err)
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return fmt.Errorf("unable to sync %s: %w", path, err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("unable to close %s: %w", path, err)
-	}
-	if err := os.Rename(tmpName, path); err != nil {
-		return fmt.Errorf("unable to rename into %s: %w", path, err)
-	}
-	cleanup = false
 	return nil
 }

@@ -2,7 +2,8 @@
 # `nova-sprint init --rules fleet/child-rules.txt` records the path, `nova-sprint add --rules <file>` names it
 # for one add, and `nova-swarm lint --card <file> --child-rules-file fleet/child-rules.txt` checks a card against it.
 # A `[name]` opens a line to name the token its finding carries (rule-<name>); the rules named no-go-clean and
-# go-test-timeout also switch on the scans for `go clean` and for a `go test` with no -timeout.
+# go-test-timeout also switch on the scans for `go clean` and for a `go test` with no -timeout, and the rule named
+# libraries-considered switches on the check that a card that builds code carries a filled `Libraries considered:` line.
 
 [worktree] Work only in the NEW worktree this card names.
 [own-branch] Touch only your own branch.
@@ -30,3 +31,4 @@
 [pr-tests] The PR body lists the tests, each with what it pins, and every local helper added.
 [report-shape] Report under 80 lines: PR number and sha, every test package line, what you could not do and why.
 [report-not-done] "Not done" is a welcome report; a green claim you did not run is not.
+[libraries-considered] A card that builds code carries a filled line `Libraries considered: <what the standard library and the adopted modules offered, and why each was used or not>` (docs/STANDARD.md section 7).
