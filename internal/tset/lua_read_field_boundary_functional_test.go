@@ -7,6 +7,9 @@ import (
 	"encoding/json"
 	"reflect"
 	"testing"
+	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
 // A repeated projection charges each returned record and field occurrence,
@@ -15,6 +18,13 @@ import (
 func TestLuaReadFieldObservationMaximum(t *testing.T) {
 	t.Parallel()
 	fx := newTSetFixture(t)
+	// The fixture client uses the normal short timeout. This read probe
+	// verifies 1,280,000 field observations inside one FCALL, which under
+	// concurrent test container execution requires a generous ceiling.
+	probeClient := redis.NewClient(&redis.Options{Addr: fx.Client.Options().Addr,
+		MaxRetries: -1, ReadTimeout: 30 * time.Second})
+	t.Cleanup(func() { _ = probeClient.Close() })
+	fx.Client = probeClient
 	fx.Define(t, "work", "c")
 	if err := fx.Client.HSet(context.Background(),
 		fixtureRecordKey(fx.Space, "work", "one"),
