@@ -109,9 +109,8 @@ const (
 )
 
 // followPrimary is the follow R2's read takes from a work card to its primary
-// (2.3 R2: "through related with each card's primary"). 1.0's list has none
-// from a card to its primary (work goes the other way): open question 5.
-const followPrimary = "primary"
+// (2.3 R2: "through related with each card's primary"): FollowPrimary.
+const followPrimary = FollowPrimary
 
 // The fleet rules, as rows: the name and the two functions. The place in the
 // round robin (1.4.2) is IT05's table (PriorityOf), taken where the rows are
@@ -278,12 +277,42 @@ var ruleFacts = map[string][]string{
 
 // withFacts is the read plan with the ranges of the sprint keys the rule's plan
 // consults.
-func withFacts(rp ReadPlan, rule string) ReadPlan {
+func withFacts(rp ReadPlan, rule string) ReadPlan { return withFactsBut(rp, rule, "") }
+
+// withFactsBut is withFacts without the range of one fact, which the rule's read
+// asks another way (R2's beats: BeatQuery).
+func withFactsBut(rp ReadPlan, rule, but string) ReadPlan {
 	rp.Ranges = slices.Clone(rp.Ranges)
 	for _, k := range ruleFacts[rule] {
-		rp.Ranges = append(rp.Ranges, RangeQ{Key: k, Limit: factLimit[k]})
+		if k != but {
+			rp.Ranges = append(rp.Ranges, RangeQ{Key: k, Limit: factLimit[k]})
+		}
 	}
 	return rp
+}
+
+// QueryBeat is the sprint-key read of the members' beat entries (2.3 R2: "the
+// score of beat:<m> in the due set"): a SprintQ of this kind names the members
+// in its Source (a list of ids), and its answer gives, in Keys, one KeyAnswer
+// {Key: "beat", Subject: m, N: the score} for each member whose entry is in the
+// due set. The wire sends it as sprintfn's key read `beat` (machine/wire.go),
+// one ZMSCORE; a member with no entry is absent from the answer.
+const QueryBeat = "beat"
+
+// BeatQuery is the beat read of the members.
+func BeatQuery(members []string) SprintQ {
+	return SprintQ{Kind: QueryBeat, Source: IDSource{Kind: SourceIDs, IDs: append([]string(nil), members...)}, Fields: []string{}}
+}
+
+// beatAnswer is the answer of the snapshot's beat read, and whether its plan
+// asked one.
+func beatAnswer(p *Partial) (Answer, bool) {
+	for i, q := range p.Plan.Sprint {
+		if q.Kind == QueryBeat && i < len(p.Answer.Sprint) {
+			return p.Answer.Sprint[i], true
+		}
+	}
+	return Answer{}, false
 }
 
 // unloadedKeyMessage is the refusal of a plan that consulted a sprint key its read
@@ -345,6 +374,14 @@ func factsOf(s *Snapshot, rule string) fleetFacts {
 		return f
 	}
 	for _, kind := range ruleFacts[rule] {
+		if kind == factBeats {
+			if b, asked := beatAnswer(s.Partial); asked {
+				for _, k := range b.Keys {
+					f.BeatDue[k.Subject] = int64(k.N)
+				}
+				continue
+			}
+		}
 		a, ok := sprintKeyRange(s.Partial, kind)
 		switch {
 		case !ok:
@@ -906,7 +943,10 @@ func readDown(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []AgendaK
 	for _, m := range ks.subjects {
 		rp.Sprint = append(rp.Sprint, downQueries(m, lim)...)
 	}
-	return withFacts(rp, ruleDown), left
+	// beat:<m>'s score in the due set for each member of the keys (2.3 R2's
+	// read), the sprint-key read `beat` (QueryBeat), in place of the range fact
+	rp.Sprint = append(rp.Sprint, BeatQuery(ks.subjects))
+	return withFactsBut(rp, ruleDown, factBeats), left
 }
 
 // R6 deal.

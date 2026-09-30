@@ -1389,7 +1389,8 @@ func TestDownReadFirst2000(t *testing.T) {
 	}
 	rp, left := readDown(ks, fleetBounds(), 0)
 	hs := heads(rp)
-	if len(rp.Sprint) != 3 || rp.Sprint[0].Kind != QueryFleet || len(hs) != 2 || len(left) != 2 || keyTexts(left) != "down:m2,down:m3" {
+	if len(rp.Sprint) != 4 || rp.Sprint[0].Kind != QueryFleet || len(hs) != 2 || len(left) != 2 || keyTexts(left) != "down:m2,down:m3" ||
+		rp.Sprint[3].Kind != QueryBeat || strings.Join(rp.Sprint[3].Source.IDs, ",") != "m1" {
 		t.Fatalf("read %+v, left %s", rp, keyTexts(left))
 	}
 	if hs[0].Source.Limit != 2000 || hs[1].Source.Limit != 2000 || hs[0].Source.Key != "m1:ready" || hs[1].Source.Key != "m1:working" ||

@@ -136,10 +136,16 @@ const (
 	FollowJOpen     = "jopen"
 	FollowDue       = "due"
 	FollowIndex     = "index"
+	// FollowPrimary goes from a card of a member's cells (a work card) to its
+	// primary in the work table, by the card's primary field: R2's read of a
+	// member's cells with each card's primary (2.3 R2, "through related with
+	// each card's primary"; 1.0's list had no follow from a card to its
+	// primary, open question 5 of the rules' build, closed by this follow).
+	FollowPrimary = "primary"
 )
 
 // Follows are the follows of 1.0, in its order.
-var Follows = []string{FollowWork, FollowWithdrawn, FollowRCards, FollowMerge, FollowControl, FollowNeeds, FollowMember, FollowJOpen, FollowDue, FollowIndex}
+var Follows = []string{FollowWork, FollowWithdrawn, FollowRCards, FollowMerge, FollowControl, FollowNeeds, FollowMember, FollowJOpen, FollowDue, FollowIndex, FollowPrimary}
 
 // followCosts are the records a follow adds to a record: the read cards of a
 // primary are at most 15 (1.3.1, `rcards`), and a card names at most 64
@@ -474,6 +480,11 @@ var queryCosts = map[string]func(q SprintQ) Cost{
 	},
 	QueryReaders: func(q SprintQ) Cost {
 		return recordsCost(q.units(), 0, q.Fields).Add(propsCost(q.Props))
+	},
+	// the beat read: a score a member, no record (QueryBeat, rules_fleet.go)
+	QueryBeat: func(q SprintQ) Cost {
+		n, _ := q.Source.size()
+		return Cost{Bytes: n * FieldBytes}
 	},
 	// up to max records.
 	QueryNeedchain: func(q SprintQ) Cost {

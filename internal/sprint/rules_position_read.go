@@ -252,6 +252,9 @@ func (p *Partial) loadPosition(s *Snapshot, i int, q SprintQ, a Answer) error {
 
 // loadKeys keeps the sprint keys a query answered.
 func (pos *posLoaded) loadKeys(i int, q SprintQ, a Answer) error {
+	if q.Kind == QueryBeat {
+		return nil // the beat read's answers are its members' beats (QueryBeat), read by factsOf
+	}
 	if len(a.Keys) != len(q.Keys) {
 		return misaligned("composite query %d asked %d sprint keys, %d answered", i, len(q.Keys), len(a.Keys))
 	}

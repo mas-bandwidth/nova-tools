@@ -55,6 +55,7 @@ const (
 	fieldRCards  = "rcards"  // a primary's read cards, a comma list
 	fieldNeeds   = "needs"   // a card's needs, a comma list
 	fieldMember  = "member"  // the member a card names
+	fieldPrimary = "primary" // the primary a card of a member's cells names (FollowPrimary)
 )
 
 // The bounds of one query's own reads (L1 6, 7).
@@ -638,6 +639,8 @@ func fieldUnion(fields, follow []string, extra ...string) []string {
 			add(fieldNeeds)
 		case sprint.FollowMember:
 			add(fieldMember)
+		case sprint.FollowPrimary:
+			add(fieldPrimary)
 		}
 	}
 	sort.Strings(out)
@@ -732,6 +735,10 @@ func (e *qeval) followTargets(follow, table string, r Record) ([]followTarget, *
 	case sprint.FollowMember:
 		if m := recordField(r, fieldMember); m != "" {
 			return []followTarget{{sprint.Fleet, sprint.CtlID(m)}}, nil
+		}
+	case sprint.FollowPrimary:
+		if p := recordField(r, fieldPrimary); p != "" {
+			return []followTarget{{sprint.Work, p}}, nil
 		}
 	}
 	return nil, nil
@@ -835,6 +842,10 @@ func (e *qeval) follows(table string, recs []Record, follow, fields []string, le
 		case sprint.FollowMember:
 			if r.Exists {
 				f.Member = append(f.Member, r)
+			}
+		case sprint.FollowPrimary:
+			if r.Exists {
+				f.Primary = append(f.Primary, r)
 			}
 		}
 	}
@@ -1184,7 +1195,7 @@ func sourceSize(src sprint.IDSource) (n, probes int) {
 func followProbes(follow []string) (perRecord, targets int) {
 	for _, f := range follow {
 		switch f {
-		case sprint.FollowWork, sprint.FollowWithdrawn, sprint.FollowMerge, sprint.FollowControl, sprint.FollowMember:
+		case sprint.FollowWork, sprint.FollowWithdrawn, sprint.FollowMerge, sprint.FollowControl, sprint.FollowMember, sprint.FollowPrimary:
 			targets++
 		case sprint.FollowRCards:
 			targets += followMaxRCards

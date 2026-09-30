@@ -97,6 +97,7 @@ type Follows struct {
 	JOpen     *JOpenCount  `json:"jopen,omitempty"`
 	Due       []DueEntry   `json:"due,omitempty"`
 	Index     []IndexEntry `json:"index,omitempty"`
+	Primary   []Record     `json:"primary,omitempty"`
 }
 
 // RelatedItem is one id read: its record and what its follows reached.
@@ -382,6 +383,7 @@ func (f *Follows) followCards() []sprint.TableCard {
 		out = append(out, tableCards(sprint.Work, n.Record)...)
 	}
 	out = append(out, tableCards(sprint.Fleet, f.Member...)...)
+	out = append(out, tableCards(sprint.Work, f.Primary...)...)
 	return out
 }
 

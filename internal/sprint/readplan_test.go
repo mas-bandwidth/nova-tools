@@ -45,7 +45,7 @@ func TestTheDesignsNumbersArePinned(t *testing.T) {
 		{"records of the read cards of a primary (1.0: rcards)", followCosts[FollowRCards], 15},
 		{"needs of a card (1.0: needs)", followCosts[FollowNeeds], 64},
 		{"records of any other follow (1.0)", followCostDefault, 1},
-		{"follows of 1.0", len(Follows), 10},
+		{"follows of 1.0 and the rules' primary (FollowPrimary)", len(Follows), 11},
 	} {
 		if c.got != c.want {
 			t.Errorf("%s: %d, the design says %d", c.what, c.got, c.want)
@@ -82,7 +82,7 @@ func TestQueryCostTable(t *testing.T) {
 		{"related, one follow", SprintQ{Kind: QueryRelated, Source: list(10), Follow: []string{FollowWork}}, Cost{Records: 20}},
 		{"related, rcards", SprintQ{Kind: QueryRelated, Source: list(10), Follow: []string{FollowRCards}}, Cost{Records: 160}},
 		{"related, needs", SprintQ{Kind: QueryRelated, Source: list(10), Follow: []string{FollowNeeds}}, Cost{Records: 650}},
-		{"related, every follow", SprintQ{Kind: QueryRelated, Source: list(2), Follow: allFollows}, Cost{Records: 2 * (1 + 8 + 15 + 64)}},
+		{"related, every follow", SprintQ{Kind: QueryRelated, Source: list(2), Follow: allFollows}, Cost{Records: 2 * (1 + 9 + 15 + 64)}},
 		{"related, a head reads its limit in range ids", SprintQ{Kind: QueryRelated, Source: IDSource{Kind: SourceHead, Key: "elig:s", Limit: 40}}, Cost{Records: 40, RangeIDs: 40}},
 		{"related, a line's ids", SprintQ{Kind: QueryRelated, Source: IDSource{Kind: SourceLine, Seq: 9}}, Cost{Records: MaxLineIDs}},
 		{"related, a line's about", SprintQ{Kind: QueryRelated, Source: IDSource{Kind: SourceLine, Seq: 9, About: true}}, Cost{Records: MaxAboutIDs}},
@@ -133,8 +133,8 @@ func TestQueryCostTable(t *testing.T) {
 			t.Errorf("follow %s: %d records an id, want %d", f, got, want)
 		}
 	}
-	if len(Follows) != 10 {
-		t.Errorf("1.0 names ten follows, the table has %d", len(Follows))
+	if len(Follows) != 11 {
+		t.Errorf("1.0 names ten follows and the rules add primary, the table has %d", len(Follows))
 	}
 
 	// Bytes: records with their projection, and range ids.

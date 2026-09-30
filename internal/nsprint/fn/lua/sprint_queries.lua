@@ -60,6 +60,7 @@ do
   -- for is where the writer records it, the control card's `other`; `need_card`
   -- is read when `other` is empty, as IT11's held rule reads the two.
   Q.F_ATTEMPT, Q.F_RCARDS, Q.F_NEEDS, Q.F_MEMBER = 'attempt', 'rcards', 'needs', 'member'
+  Q.F_PRIMARY = 'primary'
   Q.C_STATE, Q.C_CAUSE, Q.C_OTHER, Q.C_NEED = 'state', 'cause', 'other', 'need_card'
   Q.STOPPED, Q.CROSS = 'stopped', 'cross'
 
@@ -91,7 +92,8 @@ do
   Q.HEARTBEAT_FIELD_BYTES = 8192 -- the heartbeat's rules field holds a count for every rule
   Q.SCORE_BYTES = 40            -- a score's reply: at most 24 digits and a margin
   Q.NAME_RE = '^[A-Za-z0-9_][A-Za-z0-9_.~-]*$'
-  Q.FOLLOWS = {work = 1, withdrawn = 1, rcards = 15, merge = 1, control = 1, needs = 64, member = 1, jopen = 1, due = 1, index = 1}
+  Q.FOLLOWS = {work = 1, withdrawn = 1, rcards = 15, merge = 1, control = 1, needs = 64, member = 1, jopen = 1, due = 1, index = 1,
+    primary = 1}
   Q.HEAD_INDEXES = {elig = true, ['fresh-below'] = true, ['fresh-above'] = true, again = true}
   Q.INDEX_PREFIXES = {sent = true, elig = true, fresh = true, again = true, wait = true}
   -- The sprint keys a composite query may also read (IT08's `keys`), and the
@@ -296,7 +298,7 @@ do
     local per, targets = 0, 0
     for i = 1, #follow do
       local f = follow[i]
-      if f == 'work' or f == 'withdrawn' or f == 'merge' or f == 'control' or f == 'member' then
+      if f == 'work' or f == 'withdrawn' or f == 'merge' or f == 'control' or f == 'member' or f == 'primary' then
         targets = targets + 1
       elseif f == 'rcards' then
         targets = targets + Q.MAX_RCARDS
@@ -695,7 +697,8 @@ do
       if f == 'work' or f == 'withdrawn' then add(Q.F_ATTEMPT)
       elseif f == 'rcards' then add(Q.F_RCARDS)
       elseif f == 'needs' then add(Q.F_NEEDS)
-      elseif f == 'member' then add(Q.F_MEMBER) end
+      elseif f == 'member' then add(Q.F_MEMBER)
+      elseif f == 'primary' then add(Q.F_PRIMARY) end
     end
     table.sort(out)
     return out
@@ -826,6 +829,10 @@ do
     elseif follow == 'member' then
       local m = Q.field(rec, Q.F_MEMBER)
       if m ~= '' then return {{Q.FLEET, 'ctl-' .. m}}, nil end
+    elseif follow == 'primary' then
+      -- a card of a member's cells to its primary (sprint.FollowPrimary)
+      local p = Q.field(rec, Q.F_PRIMARY)
+      if p ~= '' then return {{Q.WORK, p}}, nil end
     end
     return {}, nil
   end
@@ -944,6 +951,8 @@ do
           f.needs[#f.needs + 1] = {id = s.id, record = r, in_wait = s2 ~= false and s2 ~= nil}
         elseif s.follow == 'member' then
           if r.exists then f.member = f.member or {}; f.member[#f.member + 1] = r end
+        elseif s.follow == 'primary' then
+          if r.exists then f.primary = f.primary or {}; f.primary[#f.primary + 1] = r end
         end
       end
     end
@@ -972,7 +981,7 @@ do
   -- something, each list an array, every record with the projection only.
   function Q.follows_answer(f, fields)
     local out = {}
-    for _, name in ipairs({'work', 'withdrawn', 'rcards', 'merge', 'control', 'member'}) do
+    for _, name in ipairs({'work', 'withdrawn', 'rcards', 'merge', 'control', 'member', 'primary'}) do
       if f[name] and #f[name] > 0 then out[name] = Q.array(Q.project_list(f[name], fields)) end
     end
     if f.needs and #f.needs > 0 then
