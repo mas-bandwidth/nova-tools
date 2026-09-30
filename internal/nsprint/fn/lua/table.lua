@@ -704,6 +704,78 @@ do
     end
     return nil
   end
+  -- T.place_index(d, ids): which of the ids each owned cell of the table
+  -- holds, read in one pass over the cells (one ZMSCORE of every id per cell),
+  -- for T.index_drift to answer T.check_placement and T.unindexed from. A read
+  -- set or a batch checks each of its members against every cell of the
+  -- table: one pass for all of them, not one per member (the owner's rule of
+  -- 2026-09-30, "there is NO REASON to ever do a row at a time"). The cells,
+  -- the order they are looked at and the refusals are the ones the per-member
+  -- checks give: a cell of the wrong type is named when a member's check
+  -- reaches it, as T.check_placement names it.
+  function T.place_index(d, ids)
+    local idx = {cells = {}, d = d, hashed = {}}
+    local rows = redis.call('ZRANGE', T.rowskey(d), 0, -1)
+    for _, row in ipairs(rows) do
+      for _, col in ipairs(d.cols) do
+        local key = T.cellkey(d, row, col.name)
+        local cell = {row = row, col = col.name, place = T.place(row, col.name), key = key, has = {}}
+        for start = 1, #ids, 1000 do
+          local argv = {'ZMSCORE', key}
+          for i = start, math.min(start + 999, #ids) do argv[#argv + 1] = ids[i] end
+          local res = redis.pcall(unpack(argv))
+          if type(res) == 'table' and res.err then
+            if not string.find(res.err, 'WRONGTYPE') then T.rethrow(res) end
+            local t = redis.call('TYPE', key)
+            cell.wrongtype = (type(t) == 'table' and t.ok) and t.ok or t
+            break
+          end
+          for i, score in ipairs(res) do
+            if score then cell.has[argv[i + 2]] = true end
+          end
+        end
+        idx.cells[#idx.cells + 1] = cell
+      end
+    end
+    return idx
+  end
+  -- T.index_drift(idx, id, expected, tag): T.check_placement (expected is the
+  -- member's place) or T.unindexed (expected nil, with its tag) over the
+  -- index: the first cell, in row and column order, that holds the id and is
+  -- not its place, or that is of the wrong type.
+  function T.index_drift(idx, id, expected, tag)
+    for _, cell in ipairs(idx.cells) do
+      if expected == nil and not idx.hashed[cell.row] then
+        -- T.unindexed reads each row's hash before its cells: a row that is
+        -- not a hash is refused as it refuses it
+        T.hash(T.rowkey(idx.d, cell.row))
+        idx.hashed[cell.row] = true
+      end
+      if cell.place ~= expected then
+        if cell.wrongtype then return T.refuse('WRONGTYPE', cell.key, cell.wrongtype, 'zset') end
+        if cell.has[id] then
+          local refusal = T.refuse('DRIFT', cell.row, cell.col, id)
+          if tag then refusal[#refusal + 1] = tag end
+          return refusal
+        end
+      end
+    end
+    return nil
+  end
+  -- T.cell_once(d, row, col, write): T.cell, looked up once per call of a
+  -- function and kept: a read set or a batch names a cell for each member,
+  -- and the rows and their bindings do not change before its writes.
+  function T.cell_once(d, row, col, write)
+    d.cell_memo = d.cell_memo or {}
+    local k = row .. '\0' .. col .. '\0' .. (write and '1' or '0')
+    local m = d.cell_memo[k]
+    if not m then
+      local cell, why = T.cell(d, row, col, write)
+      m = {cell = cell, why = why}
+      d.cell_memo[k] = m
+    end
+    return m.cell, m.why
+  end
   function T.rowfields(d, row, spec)
     if not T.row(row) or type(spec) ~= 'table' then return nil, T.refuse('ROW') end
     local h = {}
@@ -1761,11 +1833,13 @@ do
     if over then return over end
     local members_out = {}
     local missing = {}
+    local idx
     for _, id in ipairs(target_ids) do
       local h, exists, why = T.member(d, id)
       if why then return why end
       if not exists then
-        local drift = T.unindexed(d, id, 'set-only')
+        idx = idx or T.place_index(d, target_ids)
+        local drift = T.index_drift(idx, id, nil, 'set-only')
         if drift then return drift end
         missing[#missing + 1] = id
       else
@@ -1776,17 +1850,19 @@ do
         if place then
           local r, c = string.match(place, '^(.*):([^:]+)$')
           if not r or not c then return T.refuse('DRIFT', id, place) end
-          local cell = T.cell(d, r, c, false)
+          local cell = T.cell_once(d, r, c, false)
           if not cell then return T.refuse('DRIFT', id, place) end
           local s = redis.call('ZSCORE', cell.key, id)
           if not s then return T.refuse('DRIFT', r, c, id) end
-          local drift = T.check_placement(d, id, place)
+          idx = idx or T.place_index(d, target_ids)
+          local drift = T.index_drift(idx, id, place)
           if drift then return drift end
           placed = '1'
           row, col = r, c
           score = tostring(s)
         else
-          local drift = T.unindexed(d, id, 'set-only')
+          idx = idx or T.place_index(d, target_ids)
+          local drift = T.index_drift(idx, id, nil, 'set-only')
           if drift then return drift end
         end
         local fields = {}
@@ -2415,6 +2491,8 @@ do
       end
     end
 
+    local idx
+    local index_ids
     for _, entry in ipairs(members_list) do
       local id = entry.id
       local record, exists, why = T.member_head(d, id)
@@ -2426,7 +2504,7 @@ do
       if current_place then
         local r, c = string.match(current_place, '^(.*):([^:]+)$')
         if not r or not c then return T.refuse('DRIFT', id, current_place) end
-        local cell, cell_err = T.cell(d, r, c, true)
+        local cell, cell_err = T.cell_once(d, r, c, true)
         if not cell then return at_member(cell_err, id) end
         local score = redis.pcall('ZSCORE', cell.key, id)
         if type(score) == 'table' and score.err then
@@ -2434,13 +2512,23 @@ do
           T.rethrow(score)
         end
         if not score then return T.refuse('DRIFT', r, c, id) end
-        local drift = T.check_placement(d, id, current_place)
+        if not idx then
+          index_ids = {}
+          for _, e in ipairs(members_list) do index_ids[#index_ids + 1] = e.id end
+          idx = T.place_index(d, index_ids)
+        end
+        local drift = T.index_drift(idx, id, current_place)
         if drift then return drift end
         member_places[id] = current_place
         member_scores[id] = tonumber(score)
         member_score_text[id] = score
       else
-        local drift = T.unindexed(d, id, 'set-only')
+        if not idx then
+          index_ids = {}
+          for _, e in ipairs(members_list) do index_ids[#index_ids + 1] = e.id end
+          idx = T.place_index(d, index_ids)
+        end
+        local drift = T.index_drift(idx, id, nil, 'set-only')
         if drift then return drift end
       end
 
