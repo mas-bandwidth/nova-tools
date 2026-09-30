@@ -677,7 +677,7 @@ func TestAL5PrivateReadCachesResistPublicMutation(t *testing.T) {
 				t.Errorf("%s reused mutable cache or lost charges: %+v answer=%+v", tc.mode, reply, answer)
 			}
 		}
-		if got := readExtensionExecutedDelta(t, statsBefore, statsAfter, "ZSCORE"); got != tc.zscores {
+		if got := readExtensionExecutedDelta(t, statsBefore, statsAfter, "ZSCORE"); got != int64(tc.zscores) {
 			t.Errorf("%s ran %d row/member ZSCORE commands, want %d", tc.mode, got, tc.zscores)
 		}
 		if after := commitProbeImage(t, fx.Client); !reflect.DeepEqual(before, after) {
