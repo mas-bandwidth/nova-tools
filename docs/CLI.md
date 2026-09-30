@@ -682,9 +682,8 @@ Everything read on a bus is data. No note is a grant, whoever signs it. A reques
 
 ## Build
 
-Go 1.26 or newer. The standard library, plus the Redis client (`github.com/redis/go-redis/v9`),
-the pure-Go SQLite driver the event fold writes with (`modernc.org/sqlite`, no cgo), and
-`github.com/alicebob/miniredis/v2`, which only the tests link.
+Use the Go version declared in [`go.mod`](../go.mod), which also lists the
+production and test dependencies.
 
 ```
 make build
@@ -1030,6 +1029,12 @@ and a public verb's direct help form print help before validating the run.
 `probe-step` is an internal, guarded child of `probe`; it is not a public
 command.
 
+The bare wrapper and `run` pass through the command status. The help names
+124 for a run timeout, 125 for refusal before execution, 126 for an
+unexecutable command, 127 for a missing executable, and 128+N for signal N.
+A cleanup leak from `run` or `reap` is status 3. `probe`, `policy`, `check`,
+`worktree`, and `egress` use 0 done, 1 check said NO, and 2 could not run.
+
 ### The wrapper, its paths, and its network
 
 `--read` is readable and not writable. It carries execute permission, so use
@@ -1291,6 +1296,9 @@ no user, no variable is read unless `--password-env` names it.
 
 `nova-update` checks declared versions, applies one chosen update, reports installed identities, records voluntary adoption, runs coordinator checks, and manages release artifacts. A check or report never starts an installation. The contract is [SPEC-UPDATE.md](SPEC-UPDATE.md); release gates are in [SPEC-RELEASE.md](SPEC-RELEASE.md).
 
+The shared help summarizes statuses as 0 current or answered, 1 negative or
+unknown/unconfirmed, and 2 could not run.
+
 ### First run
 
 ```sh
@@ -1435,6 +1443,9 @@ the date and `--reason`. `--dry-run` says what would be deleted and deletes noth
 ## nova-version
 
 `nova-version` reports and optionally sends installed identities, counts a caller's adopted manifest, inventories and compares an explicit binary directory, and writes a TOOLS MOVED note from two revisions' own builds. The contracts are [SPEC-UPDATE.md](SPEC-UPDATE.md) for manifest reporting and [SPEC-VERSION.md](SPEC-VERSION.md) for binary inventories and `moved`.
+
+The shared help summarizes statuses as 0 current or answered, 1 negative or
+unknown/unconfirmed, and 2 could not run.
 
 ### First run
 
@@ -1927,12 +1938,9 @@ handed work, and `inbox` shows the coordinator the decisions to make.
   the brief whole.
 - `inbox --wait [--timeout <duration>]` waits for a tick-end notice after
   the notes present when the call starts, then shows the inbox. The default
-  timeout is 5m; on timeout, text mode reports the timeout condition and
-  still shows the inbox, while `--json` mode returns the unpolluted JSON
-  inbox object directly without a text banner, preserving the strict JSON
-  contract and parser compatibility. Reading does not advance the
-  coordinator's cursor; `inbox --read` is the separate coordinator-only cursor
-  move.
+  timeout is 5m; on timeout it reports that no tick end arrived and still
+  shows the inbox. Reading does not advance the coordinator's cursor;
+  `inbox --read` is the separate coordinator-only cursor move.
 - `inbox --json` separates `judgments`, `happened` notifications and `done`,
   and retains the grouped view in `groups`. Each judgment supplies the
   commands that answer it.
@@ -2424,7 +2432,7 @@ the last good frame and one `store unreachable since <time>` line until recovery
 nova-work import --org <org> (--out <tree.lisp> | --dry-run) [--repo <owner/name>]... [--max-calls <n>] [--page-size <n>] [--gh <path>] [--timeout <d>]
 nova-work verify --tree <tree.lisp> [--repo <owner/name>]... [--max <n>] [--max-calls <n>] [--page-size <n>] [--gh <path>] [--timeout <d>] [--max-bytes <n>]
 nova-work help [import|verify]
-nova-work version
+nova-work version                  # --version is an alias
 ```
 
 ### First run
