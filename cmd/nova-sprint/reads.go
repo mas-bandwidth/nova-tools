@@ -386,6 +386,8 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 	deadline := fs.Duration("deadline", defaultDeadline, "a judgment open longer is overdue")
 	stale := fs.Duration("stale", defaultStale, "a stream with no progress for longer is shown stalled")
 	atEpoch := fs.Int64("at-epoch", -1, "the inbox as it was at an earlier epoch (before a clear)")
+	wait := fs.Bool("wait", false, "block until the next tick-end note (the tick addressed the coordinator something), then show the inbox")
+	timeout := fs.Duration("timeout", 5*time.Minute, "with --wait, the longest wait; the inbox is shown when it passes")
 	pos, err := parse(fs, args)
 	if err != nil || len(pos) > 0 {
 		return refuse(stderr, "inbox", argErr("takes no words ", err))
@@ -415,6 +417,24 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 	}
 	if isNumber(*open) {
 		return refuse(stderr, "inbox", "group numbers are not accepted: --open wants a group's id, as inbox prints it")
+	}
+	if *wait {
+		// the coordinator's one wake a tick (errata 3 amendment 8): the next
+		// tick-end note after the notes as they stand now
+		if *atEpoch >= 0 || *timeout <= 0 {
+			return refuse(stderr, "inbox", "--wait waits on the sprint's epoch for at most a --timeout above zero")
+		}
+		_, from, err := st.B.Tails(ctx)
+		if err != nil {
+			return a.readFailed("inbox", err, stderr)
+		}
+		woke, err := st.WaitTickEnd(ctx, from, *timeout)
+		if err != nil {
+			return a.readFailed("inbox", err, stderr)
+		}
+		if !woke {
+			fmt.Fprintf(stdout, "inbox --wait: no tick end in %s\n", *timeout)
+		}
 	}
 	v, err := st.Inbox(ctx, *deadline, *stale, 10000)
 	if err != nil {

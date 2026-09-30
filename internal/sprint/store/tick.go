@@ -361,7 +361,10 @@ type PartResult struct {
 // under it, or the machine was stopped), and how many moves and judgments it
 // left due past its bounds.
 type TickResult struct {
-	State    string         `json:"state"`
+	State string `json:"state"`
+	// TickEnd is the count of the tick-end note the tick wrote (tickend.go):
+	// the notes for the coordinator it covered, 0 for none written.
+	TickEnd  int            `json:"tick_end,omitempty"`
 	Idle     bool           `json:"idle,omitempty"`
 	Repaired []RepairResult `json:"repaired,omitempty"`
 	Parts    []PartResult   `json:"parts,omitempty"`
@@ -533,6 +536,11 @@ func (st *Store) Tick(ctx context.Context) (TickResult, error) {
 				err = fmt.Errorf("remind: %w", rerr)
 			}
 		}
+	}
+	if err == nil && res.Stale == "" {
+		// the coordinator's one wake of the tick, last (tickend.go); a tick the
+		// clear overtook writes nothing more
+		res.TickEnd, err = st.tickEnd(ctx)
 	}
 	now := st.now()
 	if err == nil && res.Idle && res.Halted == "" && len(res.Parts) == 0 && hb.Error == "" && now.Sub(hb.At) < HeartbeatIdleEvery && !hb.At.Before(m.Since) &&
