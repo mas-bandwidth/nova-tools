@@ -69,8 +69,9 @@ func TestCIGoSetupPrefersTheGoModToolchain(t *testing.T) {
 		t.Skip("no bash")
 	}
 	runs := goSetupRuns(t)
-	if len(runs) != 8 {
-		t.Fatalf("ci.yml has %d Go setup steps carrying %q, want 8 (update this test with the workflow)", len(runs), goSetupMarker)
+	// 7: the test-race-queue job, and its copy of the step, went with #4866.
+	if len(runs) != 7 {
+		t.Fatalf("ci.yml has %d Go setup steps carrying %q, want 7 (update this test with the workflow)", len(runs), goSetupMarker)
 	}
 	// A step copied verbatim into another job (the functional job's is the
 	// test job's) is the same script: it runs once, so a copy costs the unit

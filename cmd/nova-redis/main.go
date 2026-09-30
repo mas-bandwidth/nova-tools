@@ -110,6 +110,13 @@ restart on the same --dir keeps every key. A bench runs it as
 nova-secrets exec --only NOVA_REDIS_PASSWORD -- nova-redis serve
 --bind 127.0.0.1,100.101.102.103 --port 6379 --dir /var/lib/nova-redis
 
+exit codes: 0 done (spill written, recall found, fn load done, fn check finds the
+library loaded, serve stopped); 1 ran and said NO (a recall of a missing, expired
+or unbounded key, fn check STALE or MISSING, a spill whose reply was lost, a
+refusal by the store, a serve that could not start); 2 could not run (a usage
+error, a flag refused before dialling, a store that did not answer or a login it
+refused).
+
 example:
   nova-redis version
   nova-redis spill --addr 127.0.0.1:6379 --owner rowan --name note --ttl 10m --value hi
