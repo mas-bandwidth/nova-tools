@@ -503,8 +503,11 @@ func (w *timeWorld) apply(p RulePlan) timeEffect {
 		case c.ClearDueSince:
 			w.clock.DueSinceMs = 0
 		}
-		if c.StopRaised != nil {
+		switch {
+		case c.StopRaised != nil:
 			w.clock.StopRaisedMs = *c.StopRaised
+		case c.ClearStopRaised:
+			w.clock.StopRaisedMs = 0
 		}
 		e.Writes++
 	}
@@ -1179,7 +1182,7 @@ func TestStoppedCountsFromMovesDue(t *testing.T) {
 	// The backlog is not an input at all: three cards change, and that is
 	// what is named.
 	c := Clock{StoppedSinceMs: stoppedSince, DueSinceMs: timeWall0 - 11*timeMin}
-	p := StoppedLook(dry, c, timeWall0)
+	p := StoppedLook(dry, StopRead{Clock: c, Wall: timeWall0})
 	n := noteReq(p, requestOpen, NStoppedWithDue)
 	if n == nil || !strings.Contains(n.Text, "3 moves have been due for 11m0s") || !reflect.DeepEqual(n.Subjects, []string{"sprint"}) {
 		t.Fatalf("the judgment: %+v", p.Notes)
@@ -1213,23 +1216,23 @@ func TestStoppedNothingDueNoJudgment(t *testing.T) {
 	}
 	// Nothing was due, and nothing is recorded: the look plans nothing.
 	c := Clock{StoppedSinceMs: stoppedSince}
-	if p := StoppedLook(dry, c, timeWall0); !silent(p) {
+	if p := StoppedLook(dry, StopRead{Clock: c, Wall: timeWall0}); !silent(p) {
 		t.Fatalf("a look with nothing due: %+v", p)
 	}
 	// Moves were due, and are not now: due_since_ms is cleared, and no
 	// judgment is raised however long ago it was set.
 	c.DueSinceMs = timeWall0 - 3*timeHour
-	p := StoppedLook(dry, c, timeWall0)
+	p := StoppedLook(dry, StopRead{Clock: c, Wall: timeWall0})
 	if len(p.Notes) != 0 || p.Sprint.Clock == nil || !p.Sprint.Clock.ClearDueSince || p.Sprint.Clock.StopRaised != nil {
 		t.Fatalf("moves gone: %+v %+v", p.Notes, p.Sprint.Clock)
 	}
 	// No dry plan at all likewise.
-	if q := StoppedLook(nil, c, timeWall0); len(q.Notes) != 0 {
+	if q := StoppedLook(nil, StopRead{Clock: c, Wall: timeWall0}); len(q.Notes) != 0 {
 		t.Fatalf("no plan, a judgment: %+v", q.Notes)
 	}
 	// A RUNNING machine is not looked at.
 	running := []RulePlan{dryPlan("a")}
-	if p = StoppedLook(running, Clock{}, timeWall0); !silent(p) {
+	if p = StoppedLook(running, StopRead{Clock: Clock{}, Wall: timeWall0}); !silent(p) {
 		t.Fatalf("a look at a RUNNING machine: %+v", p)
 	}
 }
@@ -1240,7 +1243,7 @@ func TestStoppedRaisedOncePerSpan(t *testing.T) {
 	dry := []RulePlan{dryPlan("a")}
 	span := StoppedDueSpan.Milliseconds()
 	w.clock = Clock{StoppedSinceMs: timeWall0 - timeHour}
-	look := func(wall int64) RulePlan { return StoppedLook(dry, w.clock, wall) }
+	look := func(wall int64) RulePlan { return StoppedLook(dry, StopRead{Clock: w.clock, Wall: wall}) }
 	// The first look that finds moves due records when.
 	p := look(timeWall0)
 	if len(p.Notes) != 0 || p.Sprint.Clock == nil || p.Sprint.Clock.DueSince == nil || *p.Sprint.Clock.DueSince != timeWall0 {
@@ -1485,11 +1488,11 @@ func TestTimeRulesTwiceSecondEmpty(t *testing.T) {
 	} {
 		w := newTimeWorld(t)
 		w.clock = c
-		p := StoppedLook(dry, w.clock, timeWall0)
+		p := StoppedLook(dry, StopRead{Clock: w.clock, Wall: timeWall0})
 		if eff := w.apply(p); eff.zero() {
 			t.Fatalf("%+v: the first look changed nothing", c)
 		}
-		p = StoppedLook(dry, w.clock, timeWall0)
+		p = StoppedLook(dry, StopRead{Clock: w.clock, Wall: timeWall0})
 		if !silent(p) {
 			t.Fatalf("%+v: the second look plans %+v", c, p)
 		}
@@ -1544,7 +1547,7 @@ func TestRegisteredPlansCarryTheSprintWrites(t *testing.T) {
 	}
 	// R17 and the parked key have no registered rule: their functions return
 	// the plan whole.
-	if q := StoppedLook([]RulePlan{dryPlan("a")}, Clock{StoppedSinceMs: 1}, timeWall0); q.Sprint.Clock == nil {
+	if q := StoppedLook([]RulePlan{dryPlan("a")}, StopRead{Clock: Clock{StoppedSinceMs: 1}, Wall: timeWall0}); q.Sprint.Clock == nil {
 		t.Fatalf("R17's clock fields are not in the plan: %+v", q.Sprint)
 	}
 	if q, _ := OnBug("ask", timeKeyOf("ask@1", 1), "REQUEST", "1 entry", 0); len(q.Sprint.Park) != 1 {
@@ -2346,13 +2349,13 @@ func TestStoppedLookCountsTheCardsIntentsChange(t *testing.T) {
 	due := Clock{StoppedSinceMs: stoppedSince, DueSinceMs: timeWall0 - 11*timeMin}
 
 	// Two waiters, and nothing else: moves are due, and named.
-	p := StoppedLook([]RulePlan{needmet}, due, timeWall0)
+	p := StoppedLook([]RulePlan{needmet}, StopRead{Clock: due, Wall: timeWall0})
 	n := noteReq(p, requestOpen, NStoppedWithDue)
 	if n == nil || !strings.Contains(n.Text, "2 moves have been due") || p.Sprint.Clock == nil || p.Sprint.Clock.ClearDueSince {
 		t.Fatalf("an intent-only dry plan is not named: %+v", p)
 	}
 	// The first look records when.
-	p = StoppedLook([]RulePlan{needmet}, Clock{StoppedSinceMs: stoppedSince}, timeWall0)
+	p = StoppedLook([]RulePlan{needmet}, StopRead{Clock: Clock{StoppedSinceMs: stoppedSince}, Wall: timeWall0})
 	if p.Sprint.Clock == nil || p.Sprint.Clock.DueSince == nil || *p.Sprint.Clock.DueSince != timeWall0 || p.Sprint.Clock.ClearDueSince {
 		t.Fatalf("due_since_ms is not recorded for an intent-only dry plan: %+v", p.Sprint.Clock)
 	}
@@ -2367,7 +2370,7 @@ func TestStoppedLookCountsTheCardsIntentsChange(t *testing.T) {
 	if got := movesDue([]RulePlan{gone}); got != 0 {
 		t.Fatalf("needgone counted %d cards", got)
 	}
-	p = StoppedLook([]RulePlan{gone}, due, timeWall0)
+	p = StoppedLook([]RulePlan{gone}, StopRead{Clock: due, Wall: timeWall0})
 	if p.Sprint.Clock == nil || !p.Sprint.Clock.ClearDueSince || len(p.Notes) != 0 {
 		t.Fatalf("a dry plan that changes no card is not cleared: %+v", p)
 	}
