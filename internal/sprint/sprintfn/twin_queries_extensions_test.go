@@ -2,6 +2,7 @@ package sprintfn
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"testing"
 
@@ -68,10 +69,8 @@ func answerPlan(t *testing.T, w *qworld, rp sprint.ReadPlan) []sprint.Answer {
 // TestRuleReadsLoadFromTheTwin: R4's own reads (needs:n, made:n+w with its
 // cursor and the made filter, a line of needs, each with the dropping marks)
 // and R5's (streams with the stuck ids and the marks) are answered by the twin
-// and load. R15's read names jopen:sprint, which the twin refuses REQUEST
-// before any read: Layer 1's checked probes enumerate no hash, and the types of
-// the judgments open on a subject are its fields' names (the report's owed
-// item).
+// and load; so do R3's (front with jopen:G) and R15's (streams with
+// jopen:sprint), each jopen key read as the one field its rule tests.
 func TestRuleReadsLoadFromTheTwin(t *testing.T) {
 	t.Parallel()
 	w, line := extWorld(t)
@@ -92,9 +91,64 @@ func TestRuleReadsLoadFromTheTwin(t *testing.T) {
 	if want := []sprint.KeyAnswer{{Key: sprint.KeyDropping, Streams: []string{"s1", "s2"}}}; !reflect.DeepEqual(as[0].Keys, want) {
 		t.Fatalf("cross reads the marks of every stream: %+v", as[0].Keys)
 	}
-	done := ruleRead(t, "done", sprint.AgendaKey{Key: "done", Seq: 1})
-	if _, err := w.tw.Query(done.Sprint[0]); err == nil || err.(*Refusal).Code != CodeRequest {
-		t.Fatalf("a read of jopen:sprint: %v, want REQUEST", err)
+	as = answerPlan(t, w, ruleRead(t, "done", sprint.AgendaKey{Key: "done", Seq: 1}))
+	if want := (sprint.KeyAnswer{Key: sprint.KeyJOpenSprint, Subject: sprint.SprintSubject}); !reflect.DeepEqual(as[0].Keys[1], want) {
+		t.Fatalf("done reads jopen:sprint: %+v", as[0].Keys)
+	}
+	as = answerPlan(t, w, ruleRead(t, "resolve", sprint.AgendaKey{Key: "resolve:s1", Seq: 1}))
+	if want := (sprint.KeyAnswer{Key: sprint.KeyJOpenG, Subject: "g1"}); !reflect.DeepEqual(as[0].Keys[0], want) {
+		t.Fatalf("resolve reads jopen of g1: %+v", as[0].Keys)
+	}
+}
+
+// TestQueryJOpenKeys: jopen:G reads the one field R3 tests on the first
+// sentinel of a `front` (none when the stream has none), jopen:sprint the one
+// R15 tests on the sprint, each one HMGET of one field and one probe: absent is
+// no judgment, a note's id is open, h and a note's id is held, and anything
+// else is DRIFT; jopen:G of a kind other than `front` is REQUEST (2.3 R3, R15).
+func TestQueryJOpenKeys(t *testing.T) {
+	t.Parallel()
+	w := standard(t)
+	front := sprint.SprintQ{Kind: sprint.QueryFront, Stream: "s1", Fields: []string{}, Heads: []sprint.HeadQ{}, Keys: []string{sprint.KeyJOpenG}}
+	streams := sprint.SprintQ{Kind: sprint.QueryStreams, Fields: []string{}, Keys: []string{sprint.KeyJOpenSprint}}
+	keyOf := func(q sprint.SprintQ) sprint.KeyAnswer {
+		t.Helper()
+		a, err := w.tw.Query(q)
+		if err != nil || len(a.Keys) != 1 {
+			t.Fatalf("%s: %v %+v", q.Kind, err, a.Keys)
+		}
+		return a.Keys[0]
+	}
+	if k := keyOf(front); k.Subject != "g1" || len(k.Open)+len(k.Held) != 0 {
+		t.Fatalf("no judgment on g1: %+v", k)
+	}
+	if k := keyOf(streams); k.Subject != sprint.SprintSubject || len(k.Open)+len(k.Held) != 0 {
+		t.Fatalf("no judgment on the sprint: %+v", k)
+	}
+	w.note(sprint.NSentinelReached, sprint.ReachedCause, "g1")
+	w.note(sprint.NSprintDone, sprint.SprintDoneCause, sprint.SprintSubject)
+	if k := keyOf(front); !reflect.DeepEqual(k.Open, []string{sprint.NSentinelReached}) || len(k.Held) != 0 {
+		t.Fatalf("reached open on g1: %+v", k)
+	}
+	if k := keyOf(streams); !reflect.DeepEqual(k.Open, []string{sprint.NSprintDone}) {
+		t.Fatalf("done open on the sprint: %+v", k)
+	}
+	w.seed(w.hset("jopen:g1", sprint.NSentinelReached+"|"+sprint.ReachedCause, "hn1"))
+	if k := keyOf(front); !reflect.DeepEqual(k.Held, []string{sprint.NSentinelReached}) || len(k.Open) != 0 {
+		t.Fatalf("reached held on g1: %+v", k)
+	}
+	if _, c := w.query(front); c.Probes > QueryProbes(front) {
+		t.Fatalf("charged %d probes, declared %d", c.Probes, QueryProbes(front))
+	}
+	w.seed(w.hset("jopen:g1", sprint.NSentinelReached+"|"+sprint.ReachedCause, "x"))
+	if ref := w.refused(front); ref.Code != codeDrift {
+		t.Fatalf("a field that is no note: %+v", ref)
+	}
+	if k := keyOf(sprint.SprintQ{Kind: sprint.QueryFront, Stream: "s9", Fields: []string{}, Heads: []sprint.HeadQ{}, Keys: []string{sprint.KeyJOpenG}}); k.Subject != "" {
+		t.Fatalf("a stream with no sentinel reads no jopen: %+v", k)
+	}
+	if ref := ValidateSprintQ(sprint.SprintQ{Kind: sprint.QueryStreams, Fields: []string{}, Keys: []string{sprint.KeyJOpenG}}); ref == nil || ref.Code != CodeRequest {
+		t.Fatalf("jopen:G of streams: %v", ref)
 	}
 }
 
@@ -176,15 +230,15 @@ func TestStreamsCountsLoad(t *testing.T) {
 }
 
 // TestQueryExtensionsRefusedBeforeAnyRead: an extension on a kind that has no
-// use for it, a sprint key no store read answers (the jopen keys), a cursor of
-// a source that is not one id, and a malformed name are REQUEST, before any
-// read (ValidateSprintQ).
+// use for it (jopen:G of a query that has no first sentinel), a cursor of a
+// source that is not one id, and a malformed name are REQUEST, before any read
+// (ValidateSprintQ).
 func TestQueryExtensionsRefusedBeforeAnyRead(t *testing.T) {
 	t.Parallel()
 	one := ids("n")
 	for name, q := range map[string]sprint.SprintQ{
-		"jopen:G":             {Kind: sprint.QueryFront, Stream: "s1", Fields: []string{}, Keys: []string{sprint.KeyJOpenG}},
-		"jopen:sprint":        {Kind: sprint.QueryStreams, Fields: []string{}, Keys: []string{sprint.KeyJOpenSprint}},
+		"jopen:G of streams":  {Kind: sprint.QueryStreams, Fields: []string{}, Keys: []string{sprint.KeyJOpenG}},
+		"jopen:G of waiters":  {Kind: sprint.QueryWaiters, Source: one, Limit: 1, Fields: []string{}, Keys: []string{sprint.KeyJOpenG}},
 		"a key twice":         {Kind: sprint.QueryStreams, Fields: []string{}, Keys: []string{sprint.KeyDropping, sprint.KeyDropping}},
 		"keys of related":     {Kind: sprint.QueryRelated, Table: sprint.Work, Source: one, Fields: []string{}, Keys: []string{sprint.KeyDropping}},
 		"counts of waiters":   {Kind: sprint.QueryWaiters, Source: one, Limit: 1, Fields: []string{}, Counts: []string{"waiting"}},
@@ -298,4 +352,39 @@ func TestLuaQueryExtensionsEqualTwin(t *testing.T) {
 	bad := standard(t)
 	bad.seed(bad.hset("next", "streams", "18446744073709551616"))
 	newLuaHarness(t, bad).agree("a counter past 2^64 - 1", mustEncode(t, sprint.SprintQ{Kind: sprint.QueryStreams, Fields: []string{}, Keys: []string{sprint.KeyNextStreams}}))
+}
+
+// TestLuaQueriesJOpenKeys: the Lua reads the jopen keys as the twin does, the
+// same answer and charge, for a field absent, open, held and not a note (DRIFT),
+// on a `front` with and without a first sentinel and on `streams` (2.3 R3, R15).
+func TestLuaQueriesJOpenKeys(t *testing.T) {
+	t.Parallel()
+	qs := []sprint.SprintQ{
+		{Kind: sprint.QueryFront, Stream: "s1", Fields: []string{"kind"}, Heads: []sprint.HeadQ{{Index: sprint.HeadEligBelow, Limit: 2}}, Keys: []string{sprint.KeyJOpenG, sprint.KeyDropping}},
+		{Kind: sprint.QueryFront, Stream: "s9", Fields: []string{}, Heads: []sprint.HeadQ{}, Keys: []string{sprint.KeyJOpenG}},
+		{Kind: sprint.QueryStreams, Fields: []string{"dropped"}, Counts: []string{"waiting", "landed"}, Keys: []string{sprint.KeyNextStreams, sprint.KeyJOpenSprint}},
+		{Kind: sprint.QueryWaiters, Source: ids("ghost"), Limit: 1, Fields: []string{}, Keys: []string{sprint.KeyJOpenSprint}},
+	}
+	reached, done := sprint.NSentinelReached+"|"+sprint.ReachedCause, sprint.NSprintDone+"|"+sprint.SprintDoneCause
+	for name, seed := range map[string][]string{
+		"absent": nil,
+		"open":   {"n3", "n4"},
+		"held":   {"hn3", "hn4"},
+		"drift":  {"h", "x9"},
+	} {
+		w := standard(t)
+		if seed != nil {
+			w.seed(w.hset("jopen:g1", reached, seed[0]), w.hset("jopen:"+sprint.SprintSubject, done, seed[1]))
+		}
+		h := newLuaHarness(t, w)
+		for i, q := range qs {
+			h.agree(fmt.Sprintf("%s #%d %s", name, i, q.Kind), mustEncode(t, q))
+		}
+		if name == "drift" && h.refused[sprint.QueryFront] == 0 {
+			t.Fatalf("a jopen field that is no note is not refused")
+		}
+		if name == "held" && h.answered[sprint.QueryStreams] == 0 {
+			t.Fatalf("held: nothing answered")
+		}
+	}
 }

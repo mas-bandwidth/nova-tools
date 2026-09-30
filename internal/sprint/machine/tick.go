@@ -1106,11 +1106,14 @@ func (l *Loop) cut(rule sprint.Rule, bt Batch, rp sprint.RulePlan, rep *Report) 
 		return nil, nil
 	}
 	p := &planned{rule: rule, batch: bt, plan: rp, whole: len(bodies) == 1}
-	for _, body := range bodies {
+	for i, body := range bodies {
 		if !p.whole {
 			body.Done = nil // a cut plan leaves its keys queued (1.3.6)
 		}
 		req := &sprintfn.Request{Epoch: l.epoch, Body: body, Meta: meta}
+		if i == 0 {
+			req.Sprint = TimePart(rp.Sprint) // the writes to the sprint's own keys ride the first request (IT16's sprint part)
+		}
 		c, ref := costOf(l.cfg.Names.Prefix, req)
 		if ref != nil {
 			l.onBug(bt, ref.Code, "", "its step is refused before it is sent: "+ref.Message, rep)

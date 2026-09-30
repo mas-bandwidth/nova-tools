@@ -528,6 +528,72 @@ func TestXGuardKinds(t *testing.T) {
 	}
 }
 
+// TestXSentAndCounterGuardsAgree: a sent guard holds the step to no sentinel of
+// its stream placed at or below its max, as S.zguard(sent:<s>, rcount, -inf,
+// max, atmost 0) (2.3, R3 and R6), an open bound excluding the max; a counter
+// guard holds it to a field of {p}next@e as read, 0 for a field absent (2.3,
+// R15; errata 3 H14). Each refuses XGUARD with nothing written when the key has
+// moved, a sent key of another type WRONGTYPE, a counter that is no whole
+// number CONFIG, and a malformed guard REQUEST; the Lua half agrees on each (the
+// harness runs it beside the twin), its bound grammar included.
+func TestXSentAndCounterGuardsAgree(t *testing.T) {
+	t.Parallel()
+	h := newXHarness(t)
+	h.fixture()
+	h.write(xLease("1"), xRunning(300),
+		Command("ZADD", xp+"sent:s1@0", kindZSet, "20.5", "g1", "40", "g2"),
+		Command("HSET", xp+"sent:bad@0", kindHash, "x", "1"))
+	guard := func(g ...XGuard) *Request {
+		r := xTick(1)
+		r.Body.Guards = g
+		return r
+	}
+	h.write(Command("HDEL", xp+"next@0", kindHash, "streams"))
+	h.applies("a counter field absent reads 0", guard(XGuard{Kind: XGuardCounter, Key: "streams", Score: 0}))
+	h.wantRefusal(guard(XGuard{Kind: XGuardCounter, Key: "streams", Score: 1}), CodeXGuard)
+	h.write(Command("HSET", xp+"next@0", kindHash, "streams", "3"))
+	for _, ok := range [][]XGuard{
+		{{Kind: XGuardSent, Key: "sent:s1 20.4"}, {Kind: XGuardSent, Key: "sent:s1 (20.5"}, {Kind: XGuardSent, Key: "sent:s9 1e+21"}},
+		{{Kind: XGuardSent, Key: "sent:s1 -3"}, {Kind: XGuardSent, Key: "sent:s1 2.04e1"}},
+		{{Kind: XGuardCounter, Key: "streams", Score: 3}, {Kind: XGuardCounter, Key: "score", Score: 1000}},
+	} {
+		h.applies(fmt.Sprintf("%+v", ok), guard(ok...))
+	}
+	for _, moved := range []XGuard{
+		{Kind: XGuardSent, Key: "sent:s1 20.5"}, {Kind: XGuardSent, Key: "sent:s1 (20.6"}, {Kind: XGuardSent, Key: "sent:s1 1e2"},
+		{Kind: XGuardCounter, Key: "streams", Score: 2}, {Kind: XGuardCounter, Key: "streams", Score: 0}, {Kind: XGuardCounter, Key: "score", Score: 1},
+	} {
+		if ref := h.wantRefusal(guard(moved), CodeXGuard); !strings.Contains(ref.Message, "XGUARD") {
+			t.Fatalf("%+v: message %q", moved, ref.Message)
+		}
+	}
+	h.wantRefusal(guard(XGuard{Kind: XGuardSent, Key: "sent:bad 1"}), CodeWrongType)
+	for _, bad := range []XGuard{{Kind: XGuardSent}, {Kind: XGuardSent, Key: "sent:s1"}, {Kind: XGuardSent, Key: "s1 1"},
+		{Kind: XGuardSent, Key: "sent: 1"}, {Kind: XGuardSent, Key: "sent:s1 +inf"}, {Kind: XGuardSent, Key: "sent:s1 1e100"},
+		{Kind: XGuardSent, Key: "sent:s1 0x10"}, {Kind: XGuardSent, Key: "sent:s1 1."}, {Kind: XGuardSent, Key: "sent:s1  1"},
+		{Kind: XGuardSent, Key: "sent:s 1 1"}, {Kind: XGuardSent, Key: "sent:s@0 1"},
+		{Kind: XGuardCounter, Key: "id", Score: 1}, {Kind: XGuardCounter, Key: "streams", Score: -1}, {Kind: XGuardCounter}} {
+		h.wantRefusal(guard(bad), CodeRequest)
+	}
+	h.write(Command("HSET", xp+"next@0", kindHash, "streams", "03"))
+	h.wantRefusal(guard(XGuard{Kind: XGuardCounter, Key: "streams", Score: 3}), CodeConfig)
+
+	// dueatmost: the entry absent, or at or below the time (2.3: R11's cut
+	// clock, R14, R18; the time rules' noEntryAbove)
+	h.write(Command("ZADD", xp+"due@0", kindZSet, "5000", "remind:alice"), Command("ZADD", xp+"cut@0", kindZSet, "7000", "cut:op1"))
+	h.applies("at or below, or absent", guard(XGuard{Kind: XGuardDueAtMost, Key: "remind:alice", Score: 5000},
+		XGuard{Kind: XGuardDueAtMost, Key: "remind:bob", Score: 0}, XGuard{Kind: XGuardDueAtMost, Key: "cut:op1", Score: 9000}))
+	for _, moved := range []XGuard{{Kind: XGuardDueAtMost, Key: "remind:alice", Score: 4999}, {Kind: XGuardDueAtMost, Key: "cut:op1", Score: 6999}} {
+		h.wantRefusal(guard(moved), CodeXGuard)
+	}
+	for _, bad := range []XGuard{{Kind: XGuardDueAtMost, Score: 1}, {Kind: XGuardDueAtMost, Key: "a", Score: -1}} {
+		h.wantRefusal(guard(bad), CodeRequest)
+	}
+	if h.mirror.pre == 0 {
+		t.Fatal("the Lua half was not compared")
+	}
+}
+
 // TestXMachineState: a stop on a STOPPED machine, a start on a RUNNING one and a
 // clear on one that is not STOPPED are refused MACHINESTATE with nothing written,
 // and so a second stop can never move stopped_since_ms (A2); each verb applies in

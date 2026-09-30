@@ -492,10 +492,6 @@ func (w *timeWorld) apply(p RulePlan) timeEffect {
 	}
 	w.claims += len(tw.Goal)
 	e.Writes += len(tw.Goal)
-	if tw.Tick != nil {
-		w.f.Tick.BehindN = tw.Tick.BehindN
-		e.Writes++
-	}
 	if c := tw.Clock; c != nil {
 		switch {
 		case c.DueSince != nil:
@@ -1075,12 +1071,12 @@ func TestBehindArmsAndJudges(t *testing.T) {
 		w.f.Tick = tick
 		return w
 	}
-	// A backlog that shrank since it was armed is armed again with the new
-	// backlog, and judged nothing.
+	// A backlog that shrank since it was armed is armed again, its entry alone
+	// (behind_n is the tick end's), and judged nothing.
 	w := worldWith(TickFact{Backlog: 400, Agenda: 30, DueNow: 5, BehindN: 500})
 	p := w.plan("behind", "behind")
 	want(t, "re-armed", p.Sprint.Due, []DueSet{{Key: "behind", At: w.now.R + 5*timeMin}})
-	if p.Sprint.Tick == nil || p.Sprint.Tick.BehindN != 400 || len(p.Notes) != 0 {
+	if len(p.Notes) != 0 {
 		t.Fatalf("shrinking is only to know: %+v %+v", p.Sprint, p.Notes)
 	}
 	if !hasGuard(p, noEntryAbove("behind", w.now.R)) {
@@ -1316,7 +1312,7 @@ func TestLimitHalvesThenParks(t *testing.T) {
 			}
 			// At a chunk of one card: parked, out of the agenda, its park written.
 			if next != 0 || !reflect.DeepEqual(timeKeyTexts(p.Done), []string{"ask@48213"}) || len(p.Requeue) != 0 ||
-				!reflect.DeepEqual(p.Sprint.Park, []ParkKey{{Key: "ask@48213"}}) || !strings.Contains(n.Text, "parked") {
+				!reflect.DeepEqual(p.Sprint.Park, []ParkKey{{Key: "ask@48213", Rule: "ask", Code: code}}) || !strings.Contains(n.Text, "parked") {
 				t.Fatalf("%s at a chunk of one: next %d, done %v, writes %+v", code, next, p.Done, p.Sprint)
 			}
 			parkedAt = h
@@ -1341,7 +1337,7 @@ func TestOtherBugParksAtOnce(t *testing.T) {
 			p, next := OnBug("deal", key, code, "1 entry", h)
 			n := noteReq(p, requestOpen, NStepRefused)
 			if next != 0 || n == nil || !reflect.DeepEqual(timeKeyTexts(p.Done), []string{"deal"}) || len(p.Requeue) != 0 ||
-				!reflect.DeepEqual(p.Sprint.Park, []ParkKey{{Key: "deal"}}) || !strings.Contains(n.Text, "code "+code) || !strings.Contains(n.Text, "parked") {
+				!reflect.DeepEqual(p.Sprint.Park, []ParkKey{{Key: "deal", Rule: "deal", Code: code}}) || !strings.Contains(n.Text, "code "+code) || !strings.Contains(n.Text, "parked") {
 				t.Fatalf("%s at %d halvings: next %d, %+v", code, h, next, p)
 			}
 			want(t, code+": the decisions", n.Decisions, []string{"log --since", "ack", "stop", "wait"})
@@ -1542,7 +1538,7 @@ func TestRegisteredPlansCarryTheSprintWrites(t *testing.T) {
 		[]any{[]DueSet{{Key: "remind:person-a", At: w.now.R + 5*timeMin}}, []GoalClaim{{Person: "person-a", R: w.now.R}}})
 	w.f.Tick = TickFact{Backlog: 400, BehindN: 500}
 	p = w.plan("behind", "behind")
-	if p.Sprint.Tick == nil || len(p.Sprint.Due) != 1 || p.Sprint.Due[0].Key != "behind" {
+	if len(p.Sprint.Due) != 1 || p.Sprint.Due[0].Key != "behind" {
 		t.Fatalf("R18's re-arm is not in the plan: %+v", p.Sprint)
 	}
 	// R17 and the parked key have no registered rule: their functions return
@@ -2988,4 +2984,21 @@ func timeBenchWorld(b *testing.B, perKind int) (*timeWorld, map[string][]string)
 	add("behind", "behind")
 	w.f.Tick = TickFact{Backlog: 400, BehindN: 500}
 	return w, batches
+}
+
+// TestTimeRuleTypesAreTheTables: every type the time rules raise through their
+// helpers (know, judge, note), whose type the class test of the rules' notes
+// cannot read at the site (sprintfn TestRuleNotesJAccepts stands a type in for
+// a helper's), is a row of 2.2's judgments or of 2.5's notices in the tables'
+// own words, so J takes it (a know of a type 2.5 does not have is REQUEST).
+func TestTimeRuleTypesAreTheTables(t *testing.T) {
+	t.Parallel()
+	for _, typ := range []string{NReplacedUntaken, NReplacedLateWork, NReplacedLateRead, NIdle, NPastDue, NCutStopped, NStepRefused,
+		NWorkLate, NReadLate, NMergeLate, NStoppedWithDue} {
+		_, judgment := Judgments[typ]
+		_, notice := Notices[typ]
+		if !judgment && !notice {
+			t.Errorf("%q is in neither table", typ)
+		}
+	}
 }

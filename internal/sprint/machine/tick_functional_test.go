@@ -43,3 +43,41 @@ func TestTickStoreBusyAtMostThree(t *testing.T) {
 	requireTSetLogFragment(t)
 	requireSprintProfile(t)
 }
+
+// The real rules' steps on the store (the integration's gaps a to e): the
+// twin tier's TestRealRule* scenarios, R3 resolve, R6 deal, R15 done, R11 late
+// and R17's look, each applied through ns_sprint_step. Every step runs Layer
+// 2's plan (sprint_zz_fn.lua, `L.plan(ctx, tp)`), whose fragment
+// lua/table_set_log.lua is not in the library (tset_loader.go's tsetFragments),
+// and TSetSource assembles no sprint profile before G0 (profile_sprint.go): they
+// skip on the first and fail on the second, as the store tier above does.
+
+func TestRealRuleStoreResolve(t *testing.T) {
+	t.Parallel()
+	requireTSetLogFragment(t)
+	requireSprintProfile(t)
+}
+
+func TestRealRuleStoreDeal(t *testing.T) {
+	t.Parallel()
+	requireTSetLogFragment(t)
+	requireSprintProfile(t)
+}
+
+func TestRealRuleStoreDone(t *testing.T) {
+	t.Parallel()
+	requireTSetLogFragment(t)
+	requireSprintProfile(t)
+}
+
+func TestRealRuleStoreLate(t *testing.T) {
+	t.Parallel()
+	requireTSetLogFragment(t)
+	requireSprintProfile(t)
+}
+
+func TestRealRuleStoreStoppedLook(t *testing.T) {
+	t.Parallel()
+	requireTSetLogFragment(t)
+	requireSprintProfile(t)
+}

@@ -451,6 +451,27 @@ do
   -- a counter change that sets a field it did not read, or a score that is not a
   -- whole number; an agenda key that names nothing, or that one step both finishes
   -- and requeues.
+  -- A sent guard's max (sprintfn xSentBound): a decimal, an exponent of at most
+  -- two digits, "(" before it for an open bound.
+  local function sent_bound(b)
+    if string.sub(b, 1, 1) == '(' then b = string.sub(b, 2) end
+    local mant, exp = string.match(b, '^(-?[%d.]+)(.*)$')
+    if mant == nil then return false end
+    if not (string.match(mant, '^-?%d+$') or string.match(mant, '^-?%d+%.%d+$')) then return false end
+    return exp == '' or string.match(exp, '^[eE][+-]?%d%d?$') ~= nil
+  end
+  -- A sent guard's key as its stream and max (sprintfn xSentKey): "sent:<stream>
+  -- <max>", the stream a name with no blank or @; nil when it is not one.
+  local function sent_key(key)
+    if type(key) ~= 'string' or string.sub(key, 1, 5) ~= 'sent:' then return nil end
+    local rest = string.sub(key, 6)
+    local i = string.find(rest, ' ', 1, true)
+    if i == nil then return nil end
+    local stream, max = string.sub(rest, 1, i - 1), string.sub(rest, i + 1)
+    if stream == '' or string.find(stream, '[ @]') or not sent_bound(max) then return nil end
+    return stream, max
+  end
+
   local function check_shape(sp)
     local function bad(fmt, ...) return refuse('REQUEST', {}, fmt, ...) end
     for _, g in ipairs(tbl(sp.guards)) do
@@ -466,6 +487,14 @@ do
         local known = false
         for _, f in ipairs(CLOCK_FIELDS) do known = known or f == key end
         if not known or (score < 0 and score ~= ABSENT) then return bad('a clock guard names %q, which is not a clock field, or a score that is neither a time nor XGuardAbsent', key) end
+      elseif k == 'sent' then
+        if sent_key(key) == nil then return bad('a sent guard\'s key %q is not sent:<stream> <max>', key) end
+      elseif k == 'dueatmost' then
+        if key == '' or score < 0 then return bad('a dueatmost guard names no entry, or a time below zero') end
+      elseif k == 'counter' then
+        if (key ~= 'score' and key ~= 'streams') or score < 0 then
+          return bad('a counter guard names %q, which is not score or streams, or a value below zero', key)
+        end
       elseif k ~= 'coordinator' then
         return bad('%q is not a kind of guard', tostring(k))
       end
@@ -621,6 +650,30 @@ do
       local vals, err = hmget(ctx, skey(ctx, KEY_STRANGERS), {g.member})
       if err then return err end
       if vals[g.member] == NOTICED then return fail('machine %s has been noticed already', g.member) end
+    elseif k == 'sent' then
+      -- Layer 1's S.zguard over the stream's sentinel index: RANGECOUNT when a
+      -- sentinel is placed at or below max, which is X's XGUARD here.
+      local stream, max = sent_key(g.key)
+      local _, err = S().zguard(ctx, ekey(ctx, 'sent:' .. stream, e), {kind = 'rcount', min = '-inf', max = max, atmost = 0})
+      if err then
+        if err.code == 'RANGECOUNT' then return fail('a sentinel of %s is placed at or below %s since the read', stream, max) end
+        return err
+      end
+    elseif k == 'dueatmost' then
+      local set = KEY_DUE
+      if string.sub(g.key, 1, 4) == 'cut:' then set = KEY_CUT end
+      local scores, err = zmscore(ctx, ekey(ctx, set, e), {g.key})
+      if err then return err end
+      local score, most = scores[g.key], tonumber(g.score)
+      if score ~= nil and score > most then return fail('the entry %s is at %d, above %d', g.key, score, most) end
+    elseif k == 'counter' then
+      local vals, err = hmget(ctx, ekey(ctx, KEY_NEXT, e), {g.key})
+      if err then return err end
+      local got = vals[g.key]
+      if got == nil then got = '0'
+      elseif not S().uint(got) then return refuse('CONFIG', {}, "the counter's %s holds %q, not a whole number", g.key, got) end
+      local want = string.format('%d', tonumber(g.score or 0) or 0)
+      if got ~= want then return fail("the counter's %s is %s now, read as %s", g.key, got, want) end
     end
     return nil
   end

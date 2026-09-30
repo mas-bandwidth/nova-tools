@@ -210,6 +210,18 @@ func (m *xLuaMirror) install(s *lua.LTable) {
 	}))
 	s.RawSetString("rd", L.NewFunction(m.rd))
 	s.RawSetString("before", L.NewFunction(m.before))
+	// S.zguard (table_set.lua) over the fake S.rd: one ZCOUNT, and RANGECOUNT
+	// naming the key when the count is outside its bounds.
+	if err := L.DoString(`NS.tset.zguard = function(ctx, key, g)
+		local n, err = NS.tset.rd(ctx, {'ZCOUNT', key, g.min, g.max}, 'zset', 32, 'cell')
+		if err then return nil, err end
+		if (g.atleast and n < g.atleast) or (g.atmost and n > g.atmost) then
+			return nil, NS.tset.refuse('RANGECOUNT', {cells = {key}})
+		end
+		return n, nil
+	end`); err != nil {
+		m.t.Fatal(err)
+	}
 }
 
 // payload is Layer 1's payload(): the bytes of a reply, as the read reservation
@@ -270,6 +282,14 @@ func (m *xLuaMirror) rd(L *lua.LState) int {
 		} else {
 			L.Push(lua.LString(v))
 		}
+	case "ZCOUNT":
+		n := 0
+		for _, p := range keys.ks.zpairs(key) {
+			if inBounds(p.score, rest()[0], rest()[1]) {
+				n++
+			}
+		}
+		L.Push(lua.LNumber(n))
 	case "HLEN":
 		n := 0
 		if v := keys.ks.vals[key]; v != nil && v.kind == kindHash {
