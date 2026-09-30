@@ -35,20 +35,22 @@ local function utf8_valid(s)
     if type(s) ~= 'string' then return false end
     local i, n = 1, #s
     while i <= n do
+        -- Let the native search skip an ASCII run; inspect every non-ASCII
+        -- sequence with the same byte-boundary rules as before.
+        local high = string.find(s, '[\128-\255]', i)
+        if not high then return true end
+        i = high
         local a = string.byte(s, i)
-        if a < 128 then i = i + 1
-        else
-            local b, c, d = string.byte(s, i+1), string.byte(s, i+2), string.byte(s, i+3)
-            local function cont(x) return x and x >= 128 and x <= 191 end
-            if a >= 194 and a <= 223 and cont(b) then i = i + 2
-            elseif a == 224 and b and b >= 160 and b <= 191 and cont(c) then i = i + 3
-            elseif ((a >= 225 and a <= 236) or (a >= 238 and a <= 239)) and cont(b) and cont(c) then i = i + 3
-            elseif a == 237 and b and b >= 128 and b <= 159 and cont(c) then i = i + 3
-            elseif a == 240 and b and b >= 144 and b <= 191 and cont(c) and cont(d) then i = i + 4
-            elseif a >= 241 and a <= 243 and cont(b) and cont(c) and cont(d) then i = i + 4
-            elseif a == 244 and b and b >= 128 and b <= 143 and cont(c) and cont(d) then i = i + 4
-            else return false end
-        end
+        local b, c, d = string.byte(s, i+1), string.byte(s, i+2), string.byte(s, i+3)
+        local function cont(x) return x and x >= 128 and x <= 191 end
+        if a >= 194 and a <= 223 and cont(b) then i = i + 2
+        elseif a == 224 and b and b >= 160 and b <= 191 and cont(c) then i = i + 3
+        elseif ((a >= 225 and a <= 236) or (a >= 238 and a <= 239)) and cont(b) and cont(c) then i = i + 3
+        elseif a == 237 and b and b >= 128 and b <= 159 and cont(c) then i = i + 3
+        elseif a == 240 and b and b >= 144 and b <= 191 and cont(c) and cont(d) then i = i + 4
+        elseif a >= 241 and a <= 243 and cont(b) and cont(c) and cont(d) then i = i + 4
+        elseif a == 244 and b and b >= 128 and b <= 143 and cont(c) and cont(d) then i = i + 4
+        else return false end
     end
     return true
 end
@@ -99,10 +101,12 @@ local function exact_request_numbers(raw)
             local first = i
             i = i + 1
             while i <= n do
-                local c = raw:sub(i,i)
-                if c == '\\' then i = i + 2
-                elseif c == '"' then i = i + 1; break
-                else i = i + 1 end
+                -- A native search skips the quoted payload up to the next
+                -- escape or quote. Escapes still consume exactly two raw bytes.
+                local special = string.find(raw, '[\\"]', i)
+                if not special then i = n + 1; break end
+                if raw:sub(special,special) == '\\' then i = special + 2
+                else i = special + 1; break end
             end
             local next_i = i
             while next_i <= n and raw:sub(next_i,next_i):match('%s') do next_i = next_i + 1 end
