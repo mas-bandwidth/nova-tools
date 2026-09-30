@@ -74,13 +74,16 @@ func enlist(spec sentrySpec) (*post, error) {
 	if err != nil {
 		// Killed and waited for: a sentry that does not stand is not left
 		// behind either. The wait closes the pipe the reader is on.
+		// ignored: a sentry that did not stand is killed; the stand error is the one returned
 		_ = cmd.Process.Kill()
+		// ignored: the sentry was killed on the line above; its exit status is that kill
 		_ = cmd.Wait()
 		release()
 		return nil, fmt.Errorf("the sentry %s does not stand: %w\n%s", exe, err, said.Bytes())
 	}
 	gone := make(chan struct{})
 	go func() {
+		// ignored: the sentry's end is the signal the gone channel carries; its exit status says nothing more
 		_ = cmd.Wait()
 		release()
 		close(gone)

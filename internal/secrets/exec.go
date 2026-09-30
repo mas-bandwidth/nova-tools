@@ -146,6 +146,7 @@ func RunExec(storeDir, asName, keyPath, sopsPath, onlyArg string, required []str
 	}
 	env := cleanEnv
 	for k, sec := range selectedSecrets {
+		// ignored: Use fails only when its function is nil or fails, and this one does neither
 		_ = sec.Use(func(val string) error {
 			env = append(env, k+"="+val)
 			return nil

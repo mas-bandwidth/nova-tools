@@ -200,11 +200,13 @@ func (d diskutilVolumes) createOnce(container, name, size string) (diskVolume, e
 	}
 	info, err := diskutilRun("info", disk)
 	if err != nil {
+		// ignored: a best-effort delete of the volume just made; the info error is the one returned
 		_ = d.Delete(disk)
 		return diskVolume{}, err
 	}
 	mount := field(info, "Mount Point")
 	if mount == "" || !strings.HasPrefix(mount, volumesRoot+"/") {
+		// ignored: a best-effort delete of the volume just made; the mount refusal below is the one returned
 		_ = d.Delete(disk)
 		// The volume EXISTS at this point, and the mount is what did not happen, so the
 		// error says which of the two it is: a reader told the create failed goes to
@@ -239,6 +241,7 @@ func rootOwnedAndWritable(mount string) error {
 		return fmt.Errorf("the root of %s is owned by this user and still not writable: %w", mount, err)
 	}
 	path := probe.Name()
+	// ignored: an empty probe file; its removal below is checked
 	_ = probe.Close()
 	// Removed through safepath, under the mount it was made in, like every other
 	// deletion this repository performs.
@@ -269,15 +272,19 @@ func lockVolumeCreate() (func(), error) {
 		err := syscall.Flock(fd, syscall.LOCK_EX|syscall.LOCK_NB)
 		if err == nil {
 			return func() {
+				// ignored: the lock is released when the descriptor closes on the next line either way
 				_ = syscall.Flock(fd, syscall.LOCK_UN)
+				// ignored: a close of the lock file; nothing was written through it
 				_ = f.Close()
 			}, nil
 		}
 		if !errors.Is(err, syscall.EWOULDBLOCK) {
+			// ignored: a close on the failure path; the flock error is the one returned
 			_ = f.Close()
 			return nil, fmt.Errorf("the volume-creation lock at %s could not be taken: %w", path, err)
 		}
 		if time.Now().After(deadline) {
+			// ignored: a close on the failure path; the deadline error is the one returned
 			_ = f.Close()
 			return nil, fmt.Errorf("another nova-sandbox held the volume-creation lock at %s for %s; concurrent `diskutil apfs addVolume` is what this lock prevents, so this run waits rather than making a volume it could not write",
 				path, volumeLockWait)

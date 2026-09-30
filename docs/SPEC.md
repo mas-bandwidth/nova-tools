@@ -4631,8 +4631,8 @@ to the timeout line, only for the caller that asked.
 
 **A harness that cannot loop — OpenCode's, and every harness like it — runs this
 exact sequence and nothing else.** Once, to clear the backlog: `nova-bus inbox
---bus ~/bus --as Freddy --receipt-max-words 40 --advance --remote origin --branch
-main`. Then one wait per turn: `nova-bus wait --bus ~/bus --as Freddy
+--bus ~/bus --as Bo --receipt-max-words 40 --advance --remote origin --branch
+main`. Then one wait per turn: `nova-bus wait --bus ~/bus --as Bo
 --receipt-max-words 40 --timeout 25m --until 2026-09-18T18:00:00Z --idle-exit 3
 --advance --remote origin --branch main`.
 Exit 0 is a note: the listing is on stdout, answer it, then issue the same wait

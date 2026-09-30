@@ -114,6 +114,7 @@ func PrepareLispJobCache(root, sourceRoot string) error {
 	if err != nil {
 		return err
 	}
+	// ignored: a deferred cleanup of this call's own temp directory, below its parent
 	defer func() { _ = safepath.RemoveUnder(parent, tmp) }()
 	if head, err := gitOutput(sourceRoot, "rev-parse", "HEAD"); err == nil && fullHexSHA(strings.TrimSpace(head)) {
 		seed := filepath.Join(LispCacheDir(root), strings.ToLower(strings.TrimSpace(head)))

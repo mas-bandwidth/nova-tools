@@ -16,8 +16,7 @@
 # - Adding a second occurrence to an already-allowed file exceeds the ceiling and fails.
 # - A count lower than the allowed count requires shrinking the allowlist entry.
 #
-# ceiling: 247
-cmd/nova-bus/main.go:freddy 3
+# ceiling: 240
 cmd/nova-bus/main.go:glenn 2
 cmd/nova-bus/main.go:johnny 3
 cmd/nova-bus/main.go:space 10
@@ -33,7 +32,6 @@ cmd/nova-check/staged.go:space 1
 cmd/nova-ci/local.go:glenn 1
 cmd/nova-ci/main.go:space 1
 cmd/nova-ci/timing.go:mas-bandwidth 4
-cmd/nova-redis/main.go:rowan 2
 cmd/nova-redis/serve.go:rowan 1
 cmd/nova-sandbox/denied.go:studio 1
 cmd/nova-sandbox/denied_darwin.go:studio 1
@@ -49,12 +47,10 @@ cmd/nova-sandbox/runwin_windows.go:glenn 1
 cmd/nova-sandbox/runwin_windows.go:space 1
 cmd/nova-sandbox/volumes_darwin.go:studio 2
 cmd/nova-secrets/main.go:glenn 1
-cmd/nova-secrets/main.go:mini 2
-cmd/nova-secrets/main.go:rowan 14
+cmd/nova-secrets/main.go:rowan 1
 cmd/nova-table/main.go:space 1
 cmd/nova-table/order.go:glenn 1
 cmd/nova-table/watch.go:glenn 3
-cmd/nova-tokens/main.go:emma 2
 cmd/nova-tokens/version.go:space 1
 internal/bus/address.go:space 2
 internal/bus/bus.go:space 1
@@ -98,15 +94,13 @@ internal/ci/slowtests/slowtests.go:superman 2
 internal/ci/source.go:glenn 1
 internal/ci/timing/timing.go:mas-bandwidth 4
 internal/config/kind.go:glenn 4
-internal/config/kind.go:hulk 1
 internal/config/kind.go:space 1
-internal/config/kind.go:studio 1
 internal/config/redis.go:glenn 1
 internal/converge/converge.go:glenn 1
 internal/converge/converge.go:rowan 1
 internal/converge/sources.go:hulk 1
 internal/converge/streams.go:glenn 1
-internal/docs/agentsmap.go:glenn 2
+internal/docs/agentsmap.go:glenn 1
 internal/dogfood/authors.go:rowan 1
 internal/dogfood/authors.go:stella 1
 internal/dogfood/cli.go:glenn 1

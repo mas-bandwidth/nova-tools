@@ -66,7 +66,15 @@ const (
 	fieldExpires = "expires_ms"
 )
 
-const usage = `nova-redis — owns the local Redis instance and its scratch verbs (docs/SPEC-REDIS.md)
+const usage = `nova-redis: run a local Redis store, and keep short-lived named values in it
+
+how it works: serve runs redis-server on loopback or tailnet addresses only,
+with its data in --dir. spill writes a value under <owner>:<name> with a
+required expiry, and recall reads it back (exit 1 once it has expired). fn load
+and fn check install and verify the functions nova-table and nova-sprint call.
+Passwords come from an environment variable, never from an argument.
+first run: needs a Redis you may write to; the lines under example: expect one
+at 127.0.0.1:6379 (redis-server --port 6379 in another terminal is enough).
 
 usage:
   nova-redis serve  --bind <addr>[,<addr>...] --port <port> --dir <store-dir>
@@ -119,8 +127,8 @@ refused).
 
 example:
   nova-redis version
-  nova-redis spill --addr 127.0.0.1:6379 --owner rowan --name note --ttl 10m --value hi
-  nova-redis recall --addr 127.0.0.1:6379 --owner rowan --name note
+  nova-redis spill --addr 127.0.0.1:6379 --owner ada --name note --ttl 10m --value hi
+  nova-redis recall --addr 127.0.0.1:6379 --owner ada --name note
 `
 
 // deps are the seams run() reaches the world through: the clock and the
@@ -245,6 +253,7 @@ func cmdSpill(args []string, stdout, stderr io.Writer, d deps) int {
 	if err != nil {
 		return failed(stderr, "SPILL", *owner+":"+*name, err, store, d)
 	}
+	// ignored: a deferred close after the verb's answer is printed; the answer is the report
 	defer func() { _ = conn.Close() }()
 	s := &scratch{rdb: conn.Client(), now: d.now}
 	key, err := s.spill(ctx, *owner, *name, *value, ttl)
@@ -286,6 +295,7 @@ func cmdRecall(args []string, stdout, stderr io.Writer, d deps) int {
 	if err != nil {
 		return failed(stderr, "RECALL", key, err, store, d)
 	}
+	// ignored: a deferred close after the verb's answer is printed; the answer is the report
 	defer func() { _ = conn.Close() }()
 	s := &scratch{rdb: conn.Client(), now: d.now}
 	v, err := s.recall(ctx, *owner, *name)

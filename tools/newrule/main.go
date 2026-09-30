@@ -12,6 +12,7 @@ import (
 func main() {
 	fs := flag.NewFlagSet("newrule", flag.ExitOnError)
 	root := fs.String("root", ".", "nova-tools checkout directory")
+	// ignored: flag.ExitOnError: Parse exits with its own message instead of returning an error
 	_ = fs.Parse(os.Args[1:])
 
 	if fs.NArg() != 1 {

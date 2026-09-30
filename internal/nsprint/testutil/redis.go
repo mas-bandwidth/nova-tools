@@ -80,6 +80,7 @@ func startOnce(t *testing.T, bin string, extra []string) (string, bool, string) 
 	if err != nil {
 		t.Fatal(err)
 	}
+	// ignored: a test fixture's cleanup; the test's own assertions are the report
 	t.Cleanup(func() { _ = logf.Close() })
 	args := append([]string{"--bind", "127.0.0.1", "--port", port, "--save", "", "--appendonly", "no", "--dir", dir}, extra...)
 	// A long-lived child: a cancellable context and no deadline, released when the wait
@@ -92,12 +93,15 @@ func startOnce(t *testing.T, bin string, extra []string) (string, bool, string) 
 		t.Fatalf("redis-server did not start: %v", err)
 	}
 	exited := make(chan struct{})
+	// ignored: a test fixture's server is killed by the cleanup, so its exit status is always a signal
 	go func() { _ = cmd.Wait(); release(); close(exited) }()
 	t.Cleanup(func() {
+		// ignored: a test fixture's cleanup; the server may already have exited
 		_ = cmd.Process.Kill()
 		<-exited
 	})
 	client := redis.NewClient(&redis.Options{Addr: addr})
+	// ignored: a probe client closed after the readiness wait; the test's own assertions are the report
 	defer func() { _ = client.Close() }()
 	deadline := time.Now().Add(30 * time.Second)
 	for {

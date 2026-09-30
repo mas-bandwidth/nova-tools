@@ -182,7 +182,7 @@ func TestHelpEndsInRunnableExamplesAndVersionIsOneLine(t *testing.T) {
 
 	h := newHarness()
 	code, out, _ := h.run(t, "help")
-	if code != 0 || !strings.HasSuffix(out, "example:\n  nova-config kinds\n  nova-config migrate --print\n") {
+	if code != 0 || !strings.HasSuffix(out, "example:\n  nova-config kinds\n  nova-config migrate --print\n  nova-config machine add -h\n") {
 		t.Fatalf("help exit %d, tail %q", code, out[max(0, len(out)-80):])
 	}
 	for _, k := range config.Kinds {

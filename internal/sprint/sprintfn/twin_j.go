@@ -872,6 +872,7 @@ func jMetaOf(g jGroup) json.RawMessage {
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
 	enc.SetEscapeHTML(false)
+	// ignored: a map of strings and a list of strings always encodes (see the comment on the line)
 	_ = enc.Encode(m) // a map of strings and a list of strings encodes
 	return json.RawMessage(bytes.TrimRight(buf.Bytes(), "\n"))
 }

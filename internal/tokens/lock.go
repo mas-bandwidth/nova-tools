@@ -53,7 +53,9 @@ func TakeFoldLock(out string, wait time.Duration) (func(), error) {
 			return nil, fmt.Errorf("the lock at %s could not be taken: %w", path, lockErr)
 		}
 		if ok {
+			// ignored: the pid stamp is advice for a reader of a held lock; the flock itself is the lock
 			_ = f.Truncate(0)
+			// ignored: the pid stamp is advice for a reader of a held lock; the flock itself is the lock
 			_, _ = f.WriteAt([]byte(strconv.Itoa(os.Getpid())+"\n"), 0)
 			released := false
 			return func() {

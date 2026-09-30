@@ -176,8 +176,8 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(steps) != 2 {
-		t.Fatalf("the `### First run` block runs %d commands, want 2: one file, then the rule document beside it", len(steps))
+	if len(steps) != 3 {
+		t.Fatalf("the `### First run` block runs %d commands, want 3: one file, the rule document beside it, then the rule document skipped", len(steps))
 	}
 
 	dir := t.TempDir()
@@ -185,6 +185,51 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	t.Chdir(dir)
 
 	for _, p := range onboarding.Execute(steps, runDocumented) {
+		t.Error(p)
+	}
+}
+
+// TestHelpExamplesAreTheFirstRunThroughTheComparator: the help's `example:`
+// block is the docs/TESTS.md first run, command for command, and each of its
+// lines is executed through the comparator (ONBOARDING.md point 6: the example
+// block is the first run). The fixture is copied to a directory of this test's
+// own and the documented ./pages stands for it, so the test runs in parallel
+// without moving the process's working directory.
+func TestHelpExamplesAreTheFirstRunThroughTheComparator(t *testing.T) {
+	t.Parallel()
+	linesOfTheBanner := []string{
+		"nova-self-talk ./pages/journal.md",
+		"nova-self-talk --rule-doc RULES.md ./pages/RULES.md ./pages/journal.md",
+		"nova-self-talk --skip RULES.md ./pages/RULES.md ./pages/journal.md",
+	}
+	if got := examples(t); strings.Join(got, "\n") != strings.Join(linesOfTheBanner, "\n") {
+		t.Fatalf("the banner's example block is not the sitting this test runs\nbanner:\n  %s\nwant:\n  %s",
+			strings.Join(got, "\n  "), strings.Join(linesOfTheBanner, "\n  "))
+	}
+	lines, err := onboarding.FirstRun(transcriptDoc(t), "nova-self-talk")
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps, err := onboarding.Steps("nova-self-talk", lines)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(steps) != len(linesOfTheBanner) {
+		t.Fatalf("the first run runs %d commands and the banner's example block %d; they are one list", len(steps), len(linesOfTheBanner))
+	}
+	pages := filepath.Join(t.TempDir(), "pages")
+	copyDir(t, examplePages, pages)
+	for i, s := range steps {
+		if got := "nova-self-talk " + strings.Join(s.Args, " "); got != linesOfTheBanner[i] {
+			t.Fatalf("first-run command %d is %q and the banner's example is %q; they are one list", i+1, got, linesOfTheBanner[i])
+		}
+		for j, a := range s.Args {
+			if rest, ok := strings.CutPrefix(a, "./pages/"); ok {
+				steps[i].Args[j] = filepath.Join(pages, rest)
+			}
+		}
+	}
+	for _, p := range onboarding.Execute(steps, runDocumented, onboarding.Path("./pages", pages)) {
 		t.Error(p)
 	}
 }

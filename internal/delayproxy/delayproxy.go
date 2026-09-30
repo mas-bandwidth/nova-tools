@@ -183,6 +183,7 @@ func Listen(addr, target string, delay time.Duration, opts Options) (*Proxy, err
 	}
 	p, err := Serve(ln, target, delay, opts)
 	if err != nil {
+		// ignored: a close on the failure path; the Serve error is the one returned
 		_ = ln.Close()
 		return nil, err
 	}
@@ -298,6 +299,7 @@ func (p *Proxy) Stop() {
 	p.end.Do(func() {
 		close(p.stop)
 		p.cancel()
+		// ignored: Stop closes a listener that may already be closed; the accept loop's end is the proof
 		_ = p.ln.Close()
 		p.mu.Lock()
 		p.stopped = true
@@ -352,6 +354,7 @@ func (p *Proxy) accept() {
 				// client is refused at once and not left in a backlog nobody
 				// reads; the connections already open go on until they end.
 				p.logf("delayproxy: no longer accepting on %s: %v; closing the listener", p.Addr(), err)
+				// ignored: the accept failure is logged on the line above; this close only refuses later clients at once
 				_ = p.ln.Close()
 			}
 			return
@@ -408,7 +411,9 @@ func (p *Proxy) serve(client net.Conn) {
 	end := func() {
 		once.Do(func() {
 			close(done)
+			// ignored: the connection is over either way; a close error has nothing left to lose
 			_ = client.Close()
+			// ignored: the connection is over either way; a close error has nothing left to lose
 			_ = up.Close()
 		})
 	}
@@ -425,6 +430,7 @@ func (p *Proxy) serve(client net.Conn) {
 	p.spawn(&conn, func() { p.forward(up, queue, done, end) })
 	// Replies are not delayed. The copy ends when the target hangs up or the
 	// client cannot be written to, and then the connection is over.
+	// ignored: the copy ends when either side hangs up (see the comment above), and then the connection is over
 	_, _ = io.Copy(client, up)
 	end()
 	conn.Wait()
@@ -466,6 +472,7 @@ func (p *Proxy) forward(up net.Conn, queue <-chan held, done <-chan struct{}, en
 		case got, ok := <-queue:
 			if !ok {
 				if half, can := up.(interface{ CloseWrite() error }); can {
+					// ignored: a half-close to pass the client's EOF on; a target that cannot take it ends the connection itself
 					_ = half.CloseWrite()
 				}
 				return
@@ -478,6 +485,7 @@ func (p *Proxy) forward(up net.Conn, queue <-chan held, done <-chan struct{}, en
 			return
 		}
 		p.record(p.clock.now().Sub(h.at))
+		// ignored: a target that cannot be written to ends the connection, which end() does; the client sees the hang-up
 		if _, err := up.Write(h.data); err != nil {
 			end()
 			return

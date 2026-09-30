@@ -39,7 +39,15 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
-const usage = `nova-swarm: a pool of one-task workers, with the ways a swarm fails taken out (see docs/SPEC-SWARM.md)
+const usage = `nova-swarm: one-task AI workers, each run in the sandbox with a deadline and a token budget
+
+how it works: a card is one task, a markdown file with a header and its RULES;
+a worker description (JSON) names the harness, the model, the key file and the
+directories it may read. native runs one card as one child inside nova-sandbox;
+batch runs many under a pool of slots (leases in a --slots-store directory);
+each result lands in the job directory under --root. Nothing has a default.
+first run: the lines under example: need nothing: a card, a worker description
+and the lint's rules; running a card needs a harness, a model's key file and nova-sandbox.
 
 usage:
   nova-swarm version    print this build identity (--version also accepted)
@@ -97,6 +105,8 @@ one example line in their -h, and template -h lists the lines a card needs.
 
 example:
   nova-swarm template --name read-pr
+  nova-swarm template --name worker
+  nova-swarm lint --rules
 `
 
 // verbExamples is the one runnable example line each verb's -h shows, made
@@ -416,7 +426,7 @@ func cmdVerify(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if err := swarm.WriteReceipt(*result+".receipt", out, c); err != nil {
-		fmt.Fprintf(stderr, "nova-swarm verify: the receipt could not be written: %s\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "nova-swarm verify: the receipt could not be written: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-swarm verify -h"))
 		return 2
 	}
 	fmt.Fprintln(stdout, oneline.Escape(out.Line))
@@ -440,7 +450,7 @@ func cmdTemplate(args []string, stdout, stderr io.Writer) int {
 	}
 	body, err := swarm.Template(*name)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-swarm template: %s\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "nova-swarm template: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-swarm template -h"))
 		return 2
 	}
 	// A template is printed VERBATIM because it is a document a person redirects into a
@@ -574,7 +584,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		loaded, problems := swarm.LoadWorker(*workerFile)
 		if len(problems) > 0 {
 			for _, problem := range problems {
-				fmt.Fprintf(stderr, "nova-swarm native: %s\n", oneline.Err(problem))
+				fmt.Fprintf(stderr, "nova-swarm native: %s\n", oneline.WithRemedy(oneline.Err(problem), "nova-swarm worker check "+*workerFile))
 			}
 			return 2
 		}
@@ -614,7 +624,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	if workerGiven && w.HasCardBudget() {
 		if sc, err := swarm.ReadStartupCost(*root); err == nil {
 			if line := w.BudgetRefusal(sc); line != "" {
-				fmt.Fprintln(stderr, oneline.Escape(line))
+				fmt.Fprintln(stderr, oneline.WithRemedy(line, "nova-swarm native -h"))
 				return 2
 			}
 		}
@@ -642,7 +652,7 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if reason := swarm.NativeUsageIntervalRefusal(usageInterval.d, d); reason != "" {
-		fmt.Fprintf(stderr, "nova-swarm native: %s\n", oneline.Escape(reason))
+		fmt.Fprintf(stderr, "nova-swarm native: %s\n", oneline.WithRemedy(reason, "nova-swarm native -h"))
 		return 2
 	}
 	idleDur := swarm.DefaultNativeIdle

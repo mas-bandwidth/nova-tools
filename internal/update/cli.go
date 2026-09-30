@@ -85,6 +85,21 @@ nova-update help`
 // named; the spec carries the same shape once (SPEC-UPDATE rule 2).
 const manifestShape = "one line per tool, six tab-separated fields name kind installed latest apply owner, written by hand"
 
+// updateOpening opens the banner with its three answers:
+// what the tool does (line 1, the README's sentence), how it works, and the
+// first run (ONBOARDING.md point 6).
+const (
+	updateOpening = `nova-update: compare installed tools with their latest releases, and update one when asked
+
+how it works: the manifest is a tab-separated file you write, one tool per line:
+how to read its installed version, where its latest release is published, and
+the command that installs it. check and report compare the two; apply runs one
+named entry's command and reads the version again, nothing else. The release
+verbs build, publish and install nova-tools' own releases.
+first run: from a nova-tools checkout, the lines under example: read the
+included manifest; they install nothing.`
+)
+
 // helpText is what help prints, as a string: the text verbflag quotes a verb's
 // lines from.
 func helpText(name string) string {
@@ -97,6 +112,7 @@ func help(name string, w io.Writer) {
 	// SPEC-UPDATE's "The verbs" block says these lines are what help prints,
 	// BYTE FOR BYTE, and names one string in the binary as the reason the spec
 	// and the help cannot drift apart. This is that string.
+	fmt.Fprintf(w, "%s\n\n", updateOpening)
 	fmt.Fprintln(w, updateVerbs)
 	fmt.Fprintf(w, "%s version (or --version)\nDefaults: --max 20 (0 = all), --timeout 5s, --budget 60s; snapshot's --timeout is 30s, because the first run of a newly installed binary is assessed by the platform and that cost is charged to the deadline. Repeat --kind to select kinds.\n", name)
 	note := "Report needs no bus or network. Updates require an explicit apply name. status is check with every entry shown, current ones too. apply --dry-run prints the plan and writes nothing. "
@@ -106,9 +122,7 @@ func help(name string, w io.Writer) {
 	fmt.Fprint(w, oneBinary(name))
 	fmt.Fprint(w, manifestHelp(name))
 	fmt.Fprintf(w, "\n%s\n\nFrom a nova-tools checkout:\nexample:\n  %s report --file cmd/%s/testdata/example.tsv\n", exitCodes(name), name, name)
-	if name == "nova-update" {
-		fmt.Fprintf(w, "  %s status --file cmd/%s/testdata/example.tsv\n  %s apply --file cmd/%s/testdata/dry-run.tsv go --dry-run\n", name, name, name, name)
-	}
+	fmt.Fprintf(w, "  %s status --file cmd/%s/testdata/example.tsv\n  %s apply --file cmd/%s/testdata/dry-run.tsv go --dry-run\n", name, name, name, name)
 	fmt.Fprintf(w, "  %s version\n", name)
 }
 
@@ -697,6 +711,7 @@ func movedVerb(c *tool.Call, env Environment) *tool.Out {
 		}
 		// The worktree is git's own tree, so git takes it down; anything it
 		// leaves behind stays behind rather than being removed by hand.
+		// ignored: git takes its own worktree down (see the comment above); anything left stays in the scratch root
 		defer func() { _ = runChild([]string{"git", "-C", repo, "worktree", "remove", "--force", work}) }()
 		// The build directory is named for the revision, so the two builds
 		// cannot collide and the set each revision produced sits in one

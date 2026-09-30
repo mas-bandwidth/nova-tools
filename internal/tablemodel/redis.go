@@ -176,6 +176,7 @@ func (s *Server) remove() { removeDir(s.Dir) }
 
 // removeDir deletes a directory this package made, which sits strictly below
 // the directory it was made in.
+// ignored: a scratch directory this package made; a leftover sits in its own temp root
 func removeDir(dir string) { _ = safepath.RemoveUnder(filepath.Dir(dir), dir) }
 
 // Close stops the server (terminate, then kill after five seconds) and removes

@@ -282,8 +282,12 @@ func CheckInvariant5(storeDir, keyPath string) []CheckFailure {
 		}
 	}
 
+	// ignored: the callback returns nil for every path, and records what it cannot read as a failure
 	_ = filepath.WalkDir(storeDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
+			// Never silent: a path the walk cannot read was not checked, and a
+			// pass over it would read as "no private key here".
+			failures = append(failures, unreadableFailure("store-private-key", storeDir, path, err))
 			return nil
 		}
 		if d.IsDir() {
@@ -293,7 +297,11 @@ func CheckInvariant5(storeDir, keyPath string) []CheckFailure {
 			return nil
 		}
 		data, err := os.ReadFile(path)
-		if err == nil && bytes.Contains(data, []byte("AGE-SECRET-KEY-1")) {
+		if err != nil {
+			failures = append(failures, unreadableFailure("store-private-key", storeDir, path, err))
+			return nil
+		}
+		if bytes.Contains(data, []byte("AGE-SECRET-KEY-1")) {
 			rel, _ := filepath.Rel(storeDir, path)
 			failures = append(failures, CheckFailure{
 				Kind:   "store-private-key",
@@ -305,6 +313,20 @@ func CheckInvariant5(storeDir, keyPath string) []CheckFailure {
 	})
 
 	return failures
+}
+
+// unreadableFailure is a path an invariant could not read, as a failure of that
+// invariant: a check that skipped a file has not cleared it.
+func unreadableFailure(kind, storeDir, path string, err error) CheckFailure {
+	rel, relErr := filepath.Rel(storeDir, path)
+	if relErr != nil {
+		rel = path
+	}
+	return CheckFailure{
+		Kind:   kind,
+		File:   rel,
+		Reason: fmt.Sprintf("could not be read, so it was not checked: %v; fix its permissions and rerun the check", err),
+	}
 }
 
 // CheckInvariant6 verifies that the key file mode is 0600 and directory is 0700.
@@ -334,8 +356,10 @@ func CheckInvariant7(storeDir string, trackedFiles map[string]bool) []CheckFailu
 
 	envLineRegex := regexp.MustCompile(`^[A-Z][A-Z0-9_]*:\s*(.*)$`)
 
+	// ignored: the callback returns nil for every path, and records what it cannot read as a failure
 	_ = filepath.WalkDir(storeDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
+			failures = append(failures, unreadableFailure("untracked-plaintext", storeDir, path, err))
 			return nil
 		}
 		if d.IsDir() {
@@ -357,6 +381,7 @@ func CheckInvariant7(storeDir string, trackedFiles map[string]bool) []CheckFailu
 
 		f, err := os.Open(path)
 		if err != nil {
+			failures = append(failures, unreadableFailure("untracked-plaintext", storeDir, path, err))
 			return nil
 		}
 		defer f.Close()

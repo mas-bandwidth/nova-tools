@@ -38,6 +38,7 @@ func Alive(pid int, started string) bool {
 // TerminateGroup asks every process in a group to stop.
 func TerminateGroup(pgid int, started string) {
 	if pgid > 0 {
+		// ignored: the group may already be gone; KillGroup and the liveness reads after it are the check
 		_ = syscall.Kill(-pgid, syscall.SIGTERM)
 	}
 }
@@ -45,6 +46,7 @@ func TerminateGroup(pgid int, started string) {
 // KillGroup ends every process in a group.
 func KillGroup(pgid int, started string) {
 	if pgid > 0 {
+		// ignored: the group may already be gone; the caller reads liveness afterwards
 		_ = syscall.Kill(-pgid, syscall.SIGKILL)
 	}
 }
