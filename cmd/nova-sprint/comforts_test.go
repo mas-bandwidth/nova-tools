@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -301,5 +302,30 @@ func TestInboxJSONSaysWhenTheSprintIsDone(t *testing.T) {
 	ta.json("inbox", &in)
 	if !in.Done || len(in.Judgments) != 0 || len(in.Happened) == 0 || in.Happened[0].Type != sprint.NSprintDone || in.Happened[0].To != "coordinator" || in.Happened[0].Hint == "" {
 		t.Fatalf("the inbox of a done sprint: %+v", in)
+	}
+}
+
+// inbox --wait --json on timeout emits only the clean JSON payload, with no
+// plain-text timeout banner preceding it (stella-89ad0fb7b7c4).
+func TestInboxWaitWithJSONOnTimeoutEmitsOnlyValidJSON(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	for _, cmd := range []string{
+		"inbox --wait --timeout 50ms --json",
+		"inbox --wait --json",
+	} {
+		out := ta.ok(cmd)
+		if strings.Contains(out, "inbox --wait:") {
+			t.Fatalf("%s: plain-text banner printed before JSON:\n%s", cmd, out)
+		}
+		var in map[string]any
+		if err := json.Unmarshal([]byte(out), &in); err != nil {
+			t.Fatalf("%s: stdout is not valid JSON (%v):\n%s", cmd, err, out)
+		}
+	}
+	plain := ta.ok("inbox --wait --timeout 50ms")
+	if !strings.Contains(plain, "inbox --wait: no tick end in 50ms") {
+		t.Fatalf("inbox --wait --timeout 50ms: want timeout banner in stdout:\n%s", plain)
 	}
 }
