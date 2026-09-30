@@ -2269,51 +2269,81 @@ was ADDED to `internal/ci/testdata/deleted-tests.txt` in the same change; a
 row that names no deletion of the change is red too. On a pull request the
 checkout is the merge ref and the first parent is dev's tip, so the set is
 exactly what merging the change deletes from dev; in the merge queue the
-same; on dev, a squash's own effect. On the promotion of dev to main (the
-`pull_request` event with `GITHUB_BASE_REF` main and `GITHUB_HEAD_REF` dev
-whose payload's head repository is this repository, read by `promotionSkip`)
-the comparison does not run and the run logs a NOTE saying why: the first
-parent is main's tip, so the set would be every deletion dev accumulated
-since the last promotion, each declared in the change that made it on dev,
-where this rule ran; main takes pull requests only, so no other event carries
-a promotion, and a fork's branch named dev is refused by the head
-repository. Once the promotion has landed, a main run (`mainRun`: `push`,
-`workflow_dispatch` or `schedule` on `refs/heads/main`, main being the
-default branch where schedules run; or no GitHub environment with main
-checked out, so a local audit agrees with CI) at a two-parent merge keeps
-the first-parent comparison and excuses what dev itself did
-(`excuseDevDeletions`): a deletion is excused only when dev's history since
-the last promotion (`git log --no-renames <merge-base>..<second-parent>
---diff-filter=D --name-only`, the second parent's ancestry above the merge
-base with the first parent) deleted the path AND the second parent's tree
-lacks it, so a file dev deleted once and restored is still dev's, and a file
-dev deleted before the last promotion that main holds again is main's; a row
-added in the change is excused when that history deleted its path. The
-second parent must be dev's: `git merge-base --is-ancestor <second-parent>
-refs/remotes/origin/dev` must hold, which dev's non-fast-forward rule keeps
-true for every promotion, and `origin/dev` is read for that confirmation
-only, never as the history, so the verdict for one main sha never changes as
-dev advances; a second parent outside dev's history, or one `origin/dev`
-cannot vouch for here (stale, or shallow), excuses nothing and is a finding
-of its own naming the fetch. What is not excused is a
-finding as everywhere: a file main alone had and the merge lost, since dev
-never deleted it. And the merge's own change is checked against the
-second parent: every guarded path dev's tip has and HEAD lacks is a finding
-unless a row added beyond dev declares it, which first-parent comparison
-alone never sees. The NOTE names how many deletions and rows the history
-excused. A one-parent commit on main is compared with its parent as
-everywhere. The ancestry must be complete: the main-run steps of ci.yml
-(`test`, `test-hosted`) and certification.yml (`test`), on the default
-branch, run `git fetch --no-tags --filter=blob:none --unshallow origin
-+dev:refs/remotes/origin/dev` after checkout (commits and trees, the whole
-history; a workspace that is already complete takes the same fetch without
-`--unshallow`); when the second parent's ancestry is cut by a shallow
-graft, or the second parent is missing, nothing is excused, the readable
-comparisons run (the first parent's, and the second parent's tree whenever
-that commit is present, as it is at `fetch-depth: 2`), and the unreadable
-history is a finding of its own naming that fetch, so a main run never
-passes on a history it could not read, and the verdict for one main sha
-never depends on what dev did later.
+same; on dev, a squash's own effect. On a promotion — dev to main or
+sprint/foundation to dev (the `pull_request` event with `GITHUB_BASE_REF` main
+and `GITHUB_HEAD_REF` dev, or `GITHUB_BASE_REF` dev and `GITHUB_HEAD_REF`
+sprint/foundation, whose payload's head repository is this repository, read by
+`promotionSkip`) the comparison does not run and the run logs a NOTE saying why:
+the first parent is the base branch's tip, so the set would be every deletion
+the head branch accumulated since the last promotion, each declared in the
+change that made it on that branch, where this rule ran; a fork's branch named
+dev or sprint/foundation is refused by the head repository. On
+sprint/foundation to dev the skip drops the stale-base check too (a head that
+lacks files dev has reads as a deletion only in the comparison the skip
+drops), so it has one precondition, read from git (`promotionBaseCheck`): dev
+is expected to be an ancestor of the head's history at promotion time, dev
+merged into sprint/foundation first; `git merge-base --is-ancestor` of the
+merge ref's first parent (dev's tip) and second parent (the head) must hold.
+When it does not, or the head's ancestry is cut by a shallow graft so it
+cannot be read, or the checkout is not a merge ref, the skip is not taken: the
+full comparison runs and the NOTE says why (fail closed). The promotion pull
+request's runs fetch the head's full history (`git fetch --no-tags
+--filter=blob:none --unshallow origin
++sprint/foundation:refs/remotes/origin/sprint/foundation`) to answer it. Once
+the promotion has landed, a landing run (`landingRun`) at a two-parent merge
+keeps the first-parent comparison and excuses what the promoted branch itself
+did (`excuseDevDeletions`). A main run (`mainRun`: `push`, `workflow_dispatch`
+or `schedule` on `refs/heads/main`, main being the default branch where
+schedules run; or no GitHub environment with main checked out, so a local
+audit agrees with CI) excuses dev's history. A dev run (`devRun`: a merge-queue
+group for dev, ref `refs/heads/gh-readonly-queue/dev/...`; `push` or
+`workflow_dispatch` on `refs/heads/dev`; or no GitHub environment with dev
+checked out) excuses sprint/foundation's, the same rule one branch down: the
+group carries no head branch name, so the landed promotion is read from git as
+a merge commit whose second parent is an ancestor of
+`refs/remotes/origin/sprint/foundation`. Below, "the side branch" is dev on a
+main run and sprint/foundation on a dev run. A deletion is excused only when
+the side branch's history since the last promotion (`git log --no-renames
+<merge-base>..<second-parent> --diff-filter=D --name-only`, the second
+parent's ancestry above the merge base with the first parent) deleted the path
+AND the second parent's tree lacks it, so a file the side branch deleted once
+and restored is still its own, and a file it deleted before the last promotion
+that the base branch holds again is the base branch's; a row added in the
+change is excused when that history deleted its path. The second parent must
+be the side branch's: `git merge-base --is-ancestor <second-parent>
+refs/remotes/origin/<side-branch>` must hold, which the side branch's
+non-fast-forward rule keeps true for every promotion, and the ref is read for
+that confirmation only, never as the history, so the verdict for one sha never
+changes as the side branch advances. On main a second parent outside dev's
+history, or one `origin/dev` cannot vouch for here (stale, or shallow),
+excuses nothing and is a finding of its own naming the fetch. On dev a merge
+commit whose second parent is not sprint/foundation's is not a promotion: it
+excuses nothing and is compared as everywhere, with a NOTE and no finding of
+its own; a missing or shallow `origin/sprint/foundation` is the finding naming
+the fetch, as on main. What is not excused is a finding as everywhere: a file
+the base branch alone had and the merge lost, since the side branch never
+deleted it. And the merge's own change is checked against the second parent:
+every guarded path the side branch's tip has and HEAD lacks is a finding
+unless a row added beyond it declares it, which first-parent comparison alone
+never sees. The NOTE names how many deletions and rows the history excused. A
+one-parent commit on main or dev is compared with its parent as everywhere:
+the dev queue's merge method is squash, so a promotion that lands through the
+queue as a squash is the ordinary comparison and is red for every deletion the
+promoted branch made; only a promotion that lands as a merge commit is read as
+one (the squash of the same tree is not excused). The ancestry must be
+complete: the landing steps of ci.yml (`test`, `test-hosted`) and
+certification.yml (`test`) run `git fetch --no-tags --filter=blob:none
+--unshallow origin +dev:refs/remotes/origin/dev` after checkout on the default
+branch, and `git fetch --no-tags --filter=blob:none --unshallow origin
++sprint/foundation:refs/remotes/origin/sprint/foundation` on a dev run at a
+merge commit and on the promotion pull request (a workspace that is already
+complete takes the same fetch without `--unshallow`); when the second parent's
+ancestry is cut by a shallow graft, or the second parent is missing, nothing is
+excused, the readable comparisons run (the first parent's, and the second
+parent's tree whenever that commit is present, as it is at `fetch-depth: 2`),
+and the unreadable history is a finding of its own naming that fetch, so a
+landing run never passes on a history it could not read, and the verdict for
+one sha never depends on what the side branch did later.
 **The mistake it prevents.** A branch rebased with a stale tree that lacks
 files dev gained an hour before — a class test, its allowlist and its controls —
 undoes the fixes they held when it merges. Every check on the merge is green,
@@ -2335,9 +2365,20 @@ row green, a row naming no deletion red, an old row declaring nothing.
 `TestGuardedByMergeRuleReadsThePath` and
 `TestDeclaredRowsAddedReadsOnlyTheAddedRows` pin the two readers;
 `TestPromotionSkipReadsTheEvent` pins the promotion shape against its
-reversed witnesses (the same event into dev, a feature branch into main, a
-fork's branch named dev, an absent payload, a push, a merge-queue group, no
-environment); `TestMainRunReadsTheEventRefAndBranch` pins the main-run shape
+reversed witnesses (the same event into dev from a feature branch, a feature
+branch into main, sprint/foundation into main, another sprint branch into dev,
+dev into sprint/foundation, a fork's branch named dev or sprint/foundation, an
+absent payload, a push, a merge-queue group, no environment), so a loosened
+promotion form (any base, a `sprint/` prefix) is red;
+`TestPromotionBaseCheckReadsTheAncestry` pins the skip's ancestry precondition
+over a merge ref built as GitHub builds it (dev's tip an ancestor of the head
+passes; a head cut from before dev moved is refused naming dev's tip; dev to
+main has no precondition; a one-parent checkout is refused; a depth-2 checkout
+is refused naming the fetch, and passes after it);
+`TestDevRunReadsTheEventRefAndBranch` pins the dev-run shape against its own
+(main's events, another branch's queue, a dev-prefixed branch's queue,
+sprint/foundation's push, a pull request's merge ref, a local run off dev);
+`TestMainRunReadsTheEventRefAndBranch` pins the main-run shape
 against its own (the same events on dev, a pull request's merge ref, a
 merge-queue group, a local run off main or detached);
 `TestExcuseDevDeletionsReadsHistoryAndDevTree` pins the filter; and
@@ -2357,7 +2398,21 @@ new file is red for it (control 2); a squash on main is red as everywhere; a
 depth-2 clone is red for the shallow history itself, naming the fetch, beside
 the readable findings (control 3); a feature branch off the base that deletes
 a test, merged into main, is red for the test and for the second parent
-outside dev's history (control 4). `TestMainRunNeverPassesOnAShallowAncestry`
+outside dev's history (control 4). `TestDevLandingExcusesWhatFoundationDeleted`,
+`TestDevLandingHoldsItsTreeControls`, `TestDevLandingExcusesOnlyFoundationsHistory`
+and `TestDevLandingFailsClosedOnAnUnreadableHistory` are the same witnesses one
+branch down, over a repository of sprint/foundation's shape (foundation deletes
+one file with a row, deletes another and restores it, trims the rows, adds a
+file; dev adds a file of its own): the landed promotion, a merge commit whose
+second parent is foundation's tip, is green under a merge-queue group, a push
+to dev and no environment on dev, and red as a squash of the same tree, for
+the file foundation deleted; red off dev (a pull request's merge ref, a feature
+branch, main's queue); a merge missing a file foundation deleted and restored
+(control 1), a file dev never had (control 2) or a file foundation never had
+(dev's own) is red for it; a feature branch merged into dev is compared as
+everywhere; and a checkout with no `origin/sprint/foundation`, or a depth-2
+one, is red naming the fetch, green after it (control 3).
+`TestMainRunNeverPassesOnAShallowAncestry`
 is the counterexample that shape must refuse: a merge whose tree is main's
 tip, losing dev's new test, has an empty first-parent diff, and a depth-2
 clone of it is red twice, for the shallow history and for the test against

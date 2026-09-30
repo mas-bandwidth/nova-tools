@@ -73,8 +73,8 @@ func TestLintNamesTheParentPathLine(t *testing.T) {
 	}, "\n")
 	card := writeLintCard(t, "parent.card", body)
 	exit, stdout, _ := runSwarm(t, "lint", "--card", card)
-	if exit != 2 {
-		t.Fatalf("a card with a ../ path drifts at exit 2, got %d\nstdout: %s", exit, stdout)
+	if exit != 1 {
+		t.Fatalf("a card with a ../ path drifts at exit 1, got %d\nstdout: %s", exit, stdout)
 	}
 	if !strings.Contains(stdout, "LINT DRIFT card=parent.card no-parent-path: 3:") {
 		t.Fatalf("the no-parent-path finding names check, line and card: %q", stdout)
@@ -100,8 +100,8 @@ func TestLintNamesTheMissingRedTest(t *testing.T) {
 	}, "\n")
 	card := writeLintCard(t, "nored.card", body)
 	exit, stdout, _ := runSwarm(t, "lint", "--card", card)
-	if exit != 2 {
-		t.Fatalf("a card with no red test drifts at exit 2, got %d\nstdout: %s", exit, stdout)
+	if exit != 1 {
+		t.Fatalf("a card with no red test drifts at exit 1, got %d\nstdout: %s", exit, stdout)
 	}
 	if !strings.Contains(stdout, "LINT DRIFT card=nored.card red-test:") {
 		t.Fatalf("the red-test finding names the check: %q", stdout)
@@ -117,8 +117,8 @@ func TestLintRefusesNovaSandbox(t *testing.T) {
 		"STEP 2. nova-sandbox probe --secret /root/.ssh/id_rsa", 1)
 	card := writeLintCard(t, "sandbox.card", body)
 	exit, stdout, _ := runSwarm(t, "lint", "--card", card)
-	if exit != 2 {
-		t.Fatalf("a card invoking nova-sandbox drifts at exit 2, got %d\nstdout: %s", exit, stdout)
+	if exit != 1 {
+		t.Fatalf("a card invoking nova-sandbox drifts at exit 1, got %d\nstdout: %s", exit, stdout)
 	}
 	if !strings.Contains(stdout, "LINT DRIFT card=sandbox.card no-sandbox: 4:") {
 		t.Fatalf("the no-sandbox finding names check and line: %q", stdout)
@@ -202,7 +202,7 @@ func TestAnOversizeDriftingCardIsRefusedForTheDriftAndSaysTheCeilingIsAdvisory(t
 	body := lintGoodCard() + "STEP 6. cd ../elsewhere\n" + "RESULT: padding " + strings.Repeat("x", 12000) + "\n"
 	card := writeLintCard(t, "bigdrift.card", body)
 	exit, stdout, _ := runSwarm(t, "lint", "--card", card)
-	if exit != 2 {
+	if exit != 1 {
 		t.Fatalf("a card that walks above the job is refused, got %d\nstdout: %s", exit, stdout)
 	}
 	if !strings.Contains(stdout, "LINT DRIFT card=bigdrift.card no-parent-path:") {

@@ -32,10 +32,16 @@ const (
 	WeightOutput     = 5.0
 )
 
-// CoordinatorModel is the ledger row a coordinator's session folds into. It names the model
-// AND the seat: the same model driving a worker is a different line, because the question
-// the ledger answers is what the coordinating cost, not what the model cost.
-const CoordinatorModel = "claude-fable-5-1/coordinator"
+// CoordinatorSeat is the suffix of the ledger row a coordinator's session folds into. The row
+// names the model the TRANSCRIPT names and the seat: `<model>/coordinator`. The same model
+// driving a worker is a different line, because the question the ledger answers is what the
+// coordinating cost, not what the model cost. The model is read from each turn (the same
+// `message.model` field the spend fold reads) and never assumed: a transcript of another
+// model is booked under that model, and a transcript that names none is refused.
+const CoordinatorSeat = "/coordinator"
+
+// CoordinatorModelOf is the ledger model cell of a coordinator turn made by `model`.
+func CoordinatorModelOf(model string) string { return model + CoordinatorSeat }
 
 // CoordinatorRepo is the repo cell of that row. A coordinator's turns are not one repo's
 // work -- they are the bench's -- and a row attributed to whichever repo a tool call
@@ -63,6 +69,16 @@ type SessionSum struct {
 	// totals and in no day: a turn measured but not dated is named, never dropped and
 	// never dated by a guess.
 	Unstamped int
+
+	// Models is every model the transcript names, sorted, and Unnamed counts the turns that
+	// name none. A turn with no model cannot be booked under one, and is never booked under
+	// a guess: the fold refuses while Unnamed is above zero.
+	Models  []string
+	Unnamed int
+
+	// DayModels is the split of Days by the model of each turn: day, then model. A session
+	// that changes model mid-window is one row per model, never one row under the last.
+	DayModels map[string]map[string]*SessionSum
 }
 
 // sessionLine is the part of a transcript line this reader needs.
@@ -90,6 +106,7 @@ func ReadClaudeSession(path string) (SessionSum, error) {
 
 	type turn struct {
 		day                                  string
+		model                                string
 		dated                                bool
 		input, cacheWrite, cacheRead, output int64
 	}
@@ -127,6 +144,7 @@ func ReadClaudeSession(path string) (SessionSum, error) {
 		t.cacheWrite = usageOf(l.Message.Usage, "cache_creation_input_tokens")
 		t.cacheRead = usageOf(l.Message.Usage, "cache_read_input_tokens")
 		t.output = usageOf(l.Message.Usage, "output_tokens")
+		t.model = l.Message.Model
 		if day, ok := DayOfStamp(l.Timestamp); ok {
 			t.day, t.dated = day, true
 		}
@@ -138,9 +156,15 @@ func ReadClaudeSession(path string) (SessionSum, error) {
 		return SessionSum{}, fmt.Errorf("no readable turn in %d lines; %d of them are not JSON", n, bad)
 	}
 
-	s := SessionSum{Days: map[string]*SessionSum{}}
+	s := SessionSum{Days: map[string]*SessionSum{}, DayModels: map[string]map[string]*SessionSum{}}
+	named := map[string]bool{}
 	for _, id := range order {
 		t := turns[id]
+		if t.model == "" {
+			s.Unnamed++
+		} else {
+			named[t.model] = true
+		}
 		s.Turns++
 		s.Input += t.input
 		s.CacheWrite += t.cacheWrite
@@ -160,7 +184,29 @@ func ReadClaudeSession(path string) (SessionSum, error) {
 		d.CacheWrite += t.cacheWrite
 		d.CacheRead += t.cacheRead
 		d.Output += t.output
+		if t.model == "" {
+			continue
+		}
+		byModel, ok := s.DayModels[t.day]
+		if !ok {
+			byModel = map[string]*SessionSum{}
+			s.DayModels[t.day] = byModel
+		}
+		m, ok := byModel[t.model]
+		if !ok {
+			m = &SessionSum{}
+			byModel[t.model] = m
+		}
+		m.Turns++
+		m.Input += t.input
+		m.CacheWrite += t.cacheWrite
+		m.CacheRead += t.cacheRead
+		m.Output += t.output
 	}
+	for m := range named {
+		s.Models = append(s.Models, m)
+	}
+	sort.Strings(s.Models)
 	return s, nil
 }
 
@@ -211,16 +257,46 @@ func (s SessionSum) DayList() []string {
 	return out
 }
 
-// Row is the day file row one day of this session folds into.
-func (s SessionSum) Row(day string) DayRow {
-	d, ok := s.Days[day]
-	if !ok {
-		d = &SessionSum{}
+// UnbookableReason is why this session cannot be folded into the ledger, or "" when it can:
+// every row is booked under the model the transcript names, so a transcript that names none
+// (or names it on only some turns) has no honest row. The caller refuses with this text.
+func (s SessionSum) UnbookableReason() string {
+	switch {
+	case s.Unnamed > 0 && len(s.Models) == 0:
+		return fmt.Sprintf("the transcript names no model on any of its %d turns, and the ledger row is booked under the model the transcript names, never under a guess; nothing written", s.Unnamed)
+	case s.Unnamed > 0:
+		return fmt.Sprintf("the transcript names no model on %d of its %d turns, and a turn is booked under the model the transcript names, never under a guess; nothing written", s.Unnamed, s.Turns)
 	}
-	r := DayRow{Date: day, Model: CoordinatorModel, Repo: CoordinatorRepo, Basis: UTC, Sources: []string{SessionLabel}}
-	r.Counts.Set(Input, d.Input)
-	r.Counts.Set(Output, d.Output)
-	r.Counts.Set(CacheWrite, d.CacheWrite)
-	r.Counts.Set(CacheRead, d.CacheRead)
-	return r
+	return ""
+}
+
+// Rows is the day file rows one day of this session folds into: one per model the turns of
+// that day name, each `<model>/coordinator`. A day the session has no turn on is a row of
+// zeros for every model the session names, because "this window spent nothing that day" is
+// a measurement; a session that names no model has no rows.
+func (s SessionSum) Rows(day string) []DayRow {
+	byModel := s.DayModels[day]
+	names := make([]string, 0, len(s.Models))
+	if len(byModel) > 0 {
+		for m := range byModel {
+			names = append(names, m)
+		}
+		sort.Strings(names)
+	} else {
+		names = append(names, s.Models...)
+	}
+	rows := make([]DayRow, 0, len(names))
+	for _, m := range names {
+		d := byModel[m]
+		if d == nil {
+			d = &SessionSum{}
+		}
+		r := DayRow{Date: day, Model: CoordinatorModelOf(m), Repo: CoordinatorRepo, Basis: UTC, Sources: []string{SessionLabel}}
+		r.Counts.Set(Input, d.Input)
+		r.Counts.Set(Output, d.Output)
+		r.Counts.Set(CacheWrite, d.CacheWrite)
+		r.Counts.Set(CacheRead, d.CacheRead)
+		rows = append(rows, r)
+	}
+	return rows
 }

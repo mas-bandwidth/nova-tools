@@ -62,8 +62,8 @@ func TestIssue2012(t *testing.T) {
 	t.Run("mapfile-is-not-a-bash-32-builtin", func(t *testing.T) {
 		path := fleetScript(t, "mapfile-launcher.sh", issue2012Mapfile)
 		exit, stdout, stderr := runSwarm(t, "lint", "--fleet", path)
-		if exit != 2 {
-			t.Fatalf("a launcher that reads lines with `mapfile` drifts at exit 2 -- the coordinator's /bin/bash is 3.2 and has no `mapfile`, which is the first outage of #2012 -- got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+		if exit != 1 {
+			t.Fatalf("a launcher that reads lines with `mapfile` drifts at exit 1 -- the coordinator's /bin/bash is 3.2 and has no `mapfile`, which is the first outage of #2012 -- got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
 		}
 		if !strings.Contains(stdout, "LINT DRIFT script=mapfile-launcher.sh bash4-builtin: 2:") {
 			t.Fatalf("the drift names the rule, the script and the `mapfile` line:\n%s", stdout)
@@ -82,8 +82,8 @@ func TestIssue2012(t *testing.T) {
 	t.Run("zsh-does-not-word-split-unquoted-variables", func(t *testing.T) {
 		path := fleetScript(t, "zsh-one-liner.sh", issue2012ZshSplit)
 		exit, stdout, stderr := runSwarm(t, "lint", "--fleet", path)
-		if exit != 2 {
-			t.Fatalf("a launcher that leans on unquoted word splitting drifts at exit 2 -- zsh does not split it and four loops died on exactly this, which is the second outage of #2012 -- got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+		if exit != 1 {
+			t.Fatalf("a launcher that leans on unquoted word splitting drifts at exit 1 -- zsh does not split it and four loops died on exactly this, which is the second outage of #2012 -- got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
 		}
 		for _, want := range []string{
 			"unquoted-expansion: 2:", // for c in $CARDS
@@ -119,8 +119,8 @@ func TestIssue2012(t *testing.T) {
 			t.Run(tc.name, func(t *testing.T) {
 				path := fleetScript(t, tc.name+".sh", tc.body)
 				exit, stdout, stderr := runSwarm(t, "lint", "--fleet", path)
-				if exit != 2 {
-					t.Fatalf("a fleet script the coordinator cannot run under /bin/bash drifts at exit 2, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
+				if exit != 1 {
+					t.Fatalf("a fleet script the coordinator cannot run under /bin/bash drifts at exit 1, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)
 				}
 				if !strings.Contains(stdout, "LINT DRIFT script="+tc.name+".sh bash-shebang: 1:") {
 					t.Fatalf("the drift names the interpreter line, which is line 1:\n%s", stdout)
@@ -179,7 +179,7 @@ func TestIssue2012(t *testing.T) {
 		}
 		code := fleetScript(t, "subst-mapfile.sh", "#!/usr/bin/env bash\nx=\"$(mapfile -t a < f)\"\n")
 		exit, stdout, _ = runSwarm(t, "lint", "--fleet", code)
-		if exit != 2 || !strings.Contains(stdout, "bash4-builtin: 2:") {
+		if exit != 1 || !strings.Contains(stdout, "bash4-builtin: 2:") {
 			t.Fatalf("`mapfile` inside a quoted `$( )` is still code and drifts, got %d\n%s", exit, stdout)
 		}
 		// Held on #2872 at 9a640fbb: a `$( )` is scanned with its own quote
@@ -192,7 +192,7 @@ func TestIssue2012(t *testing.T) {
 		}
 		nested := fleetScript(t, "subst-nested-mapfile.sh", "#!/usr/bin/env bash\nx=\"$(echo \"$(mapfile -t a < f)\")\"\ny=\"$(ls $DIR)\"\n")
 		exit, stdout, _ = runSwarm(t, "lint", "--fleet", nested)
-		if exit != 2 || !strings.Contains(stdout, "bash4-builtin: 2:") || !strings.Contains(stdout, "unquoted-expansion: 3:") {
+		if exit != 1 || !strings.Contains(stdout, "bash4-builtin: 2:") || !strings.Contains(stdout, "unquoted-expansion: 3:") {
 			t.Fatalf("a builtin in a nested `$( )` and an unquoted expansion inside `$( )` are code and drift, got %d\n%s", exit, stdout)
 		}
 	})

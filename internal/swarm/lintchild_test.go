@@ -68,7 +68,7 @@ func TestChildRulesTableIsWellFormed(t *testing.T) {
 	for _, need := range []string{
 		"gocache", "no-go-clean", "no-redis-server", "no-kill", "go-test-timeout", "no-rm-rf", "no-force-push", "no-rebase",
 		"functional-in-container", "parallel", "class-tests", "no-names", "present-tense", "commit-trailer", "pr-line",
-		"never-merge", "exit-codes", "pr-diffstat", "report-not-done", "no-stash",
+		"never-merge", "pr-diffstat", "report-not-done", "no-stash",
 	} {
 		if !seen[need] {
 			t.Errorf("the rule %s the coordinator gives every child is not a row", need)

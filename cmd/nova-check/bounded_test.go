@@ -120,7 +120,7 @@ func TestQuickstartInheritsTheCaps(t *testing.T) {
 	if !strings.Contains(stderr, "LINKS MORE") || !strings.Contains(stderr, "NOCODE MORE") {
 		t.Errorf("quickstart did not pass the cap down to both checks:\n%s", stderr)
 	}
-	if !strings.Contains(stdout, "QUICKSTART OK done=2") {
+	if !strings.Contains(stdout, "QUICKSTART FAIL checks=2") {
 		t.Errorf("the closing line is missing: %q", stdout)
 	}
 }
