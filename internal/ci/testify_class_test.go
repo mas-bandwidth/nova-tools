@@ -4,9 +4,7 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
-	"os"
 	"path"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -19,7 +17,8 @@ import (
 )
 
 // testify_class_test.go holds the standard's testing rule (docs/STANDARD.md, section 8):
-// every Go test uses github.com/stretchr/testify, and every test runs in parallel.
+// every Go test uses github.com/stretchr/testify. That every test runs in parallel is held
+// by TestEveryTestOpensWithTParallel and its serial-tests_allowlist.txt, not counted here.
 // require carries setup and preconditions; assert carries the checks inside a table
 // row, so one bad row does not hide the rest; a shared rig is a testify suite or a
 // helper struct in the package's testkit; ErrorIs, ErrorAs, ErrorContains, Eventually,
@@ -28,12 +27,11 @@ import (
 // directory are injected through the code's config, never mutated with t.Setenv or a
 // Chdir.
 //
-// The tree is measured per package, in three kinds of site:
+// The tree is measured per package, in two kinds of site:
 //
 //	assert    an `if` whose body calls t.Fatal, t.Fatalf, t.Error, t.Errorf, t.Fail or
 //	          t.FailNow: `if err != nil { t.Fatal }`, `if got != want { t.Errorf }`,
 //	          `if !strings.Contains(...) { t.Errorf }`, a reflect.DeepEqual guard
-//	parallel  a file with a top-level test function that does not open with t.Parallel()
 //	env       a call of t.Setenv, t.Chdir or os.Chdir
 //
 // testdata/testify_allowlist.txt is the ledger: one `<package>:<kind> <sites> <reason>`
@@ -44,14 +42,13 @@ import (
 // drops the rows at zero, and never raises one or adds one.
 const testifyLedgerPath = "testdata/testify_allowlist.txt"
 
-// testifyKinds are the three kinds of site, in the order the ledger lists them.
-var testifyKinds = []string{"assert", "parallel", "env"}
+// testifyKinds are the two kinds of site, in the order the ledger lists them.
+var testifyKinds = []string{"assert", "env"}
 
 // testifyRemedy is the one thing to do for each kind.
 var testifyRemedy = map[string]string{
-	"assert":   "replace each site with its testify call: `if err != nil { t.Fatal }` -> require.NoError(t, err); `if err == nil` -> require.Error; `if got != want` -> assert.Equal (assert.NotEqual for ==); a nil guard -> assert.Nil or assert.NotNil; `!strings.Contains` -> assert.Contains; a reflect.DeepEqual guard -> assert.Equal, assert.ElementsMatch or assert.JSONEq; a length guard -> assert.Len or assert.Empty; any other bool -> assert.True or assert.False; require for setup and preconditions, assert inside table rows",
-	"parallel": "open every test with t.Parallel() and inject the environment and the working directory through the code's config",
-	"env":      "inject the value through the code's config or the child's own environment (cmd.Env) and open the test with t.Parallel(); t.Setenv and Chdir forbid it",
+	"assert": "replace each site with its testify call: `if err != nil { t.Fatal }` -> require.NoError(t, err); `if err == nil` -> require.Error; `if got != want` -> assert.Equal (assert.NotEqual for ==); a nil guard -> assert.Nil or assert.NotNil; `!strings.Contains` -> assert.Contains; a reflect.DeepEqual guard -> assert.Equal, assert.ElementsMatch or assert.JSONEq; a length guard -> assert.Len or assert.Empty; any other bool -> assert.True or assert.False; require for setup and preconditions, assert inside table rows",
+	"env":    "inject the value through the code's config or the child's own environment (cmd.Env) and open the test with t.Parallel(); t.Setenv and Chdir forbid it",
 }
 
 // testifyShapeRemedy is the testify call for each shape of assert site.
@@ -114,7 +111,7 @@ func TestTestsUseTestify(t *testing.T) {
 	if !changed {
 		return
 	}
-	require.NoError(t, testifyWriteLedger(l.Path, out))
+	require.NoError(t, allowlist.WriteAtomic(l.Path, out))
 	assert.Fail(t, allowlist.UpdatedRerun, fmt.Sprintf("%s: %d rows lowered or dropped", l.Path, len(lowered)))
 }
 
@@ -203,28 +200,6 @@ func testifyRewrite(text string, lowered map[string]int) (string, bool) {
 	return strings.Join(out, "\n"), changed
 }
 
-// testifyWriteLedger replaces the ledger through a temp file in its own directory.
-func testifyWriteLedger(p, text string) error {
-	f, err := os.CreateTemp(filepath.Dir(p), "."+filepath.Base(p)+".*")
-	if err != nil {
-		return err
-	}
-	tmp := f.Name()
-	if _, err := f.WriteString(text); err != nil {
-		return fmt.Errorf("%w (close: %v, remove: %v)", err, f.Close(), os.Remove(tmp))
-	}
-	if err := f.Close(); err != nil {
-		return fmt.Errorf("%w (remove: %v)", err, os.Remove(tmp))
-	}
-	if err := os.Chmod(tmp, 0o644); err != nil {
-		return fmt.Errorf("%w (remove: %v)", err, os.Remove(tmp))
-	}
-	if err := os.Rename(tmp, p); err != nil {
-		return fmt.Errorf("%w (remove: %v)", err, os.Remove(tmp))
-	}
-	return nil
-}
-
 // testifyExamples lists up to max sites with the testify call each shape wants.
 func testifyExamples(sites []testifySite, max int) string {
 	var b strings.Builder
@@ -252,8 +227,7 @@ func sortedKeys(m map[string]int) []string {
 }
 
 // testifySitesInFile measures one parsed test file: the bare assertion sites, the
-// environment and working-directory sites, and whether the file has a test that does
-// not open with t.Parallel() (one site for the file).
+// environment and working-directory sites.
 func testifySitesInFile(fset *token.FileSet, file *ast.File, rel string) []testifySite {
 	pkg := path.Dir(rel)
 	names := testingNames(file)
@@ -274,20 +248,6 @@ func testifySitesInFile(fset *token.FileSet, file *ast.File, rel string) []testi
 		return true
 	})
 
-	for _, decl := range file.Decls {
-		fn, ok := decl.(*ast.FuncDecl)
-		if !ok || fn.Recv != nil || fn.Body == nil || !isGoTestName(fn.Name.Name) {
-			continue
-		}
-		tname, ok := testingTParam(fn)
-		if !ok {
-			continue
-		}
-		if len(fn.Body.List) == 0 || !isParallelStmt(fn.Body.List[0], tname) {
-			sites = append(sites, testifySite{Pkg: pkg, Kind: "parallel", Where: at(fn.Pos())})
-			break
-		}
-	}
 	return sites
 }
 
@@ -311,7 +271,7 @@ func isEnvSite(call *ast.CallExpr, names map[string]bool) bool {
 }
 
 // testingNames are the identifiers the file binds to a *testing.T, *testing.B or
-// testing.TB (a function's parameter), plus the conventional t, tb and b.
+// testing.TB (a function's parameter), plus the conventional t and tb.
 func testingNames(file *ast.File) map[string]bool {
 	names := map[string]bool{"t": true, "tb": true}
 	ast.Inspect(file, func(n ast.Node) bool {

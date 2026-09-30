@@ -24,7 +24,7 @@ import (
 // It rose from 24 KiB by two KiB for two rules the standard states as a goal
 // and its checks: every Go test uses testify (section 8), and the standard
 // library and the adopted modules are searched before a helper is written
-// (section 7); the page measures 25.3 KiB with both.
+// (section 7); the page measures 24.2 KiB with both.
 const MaxRootBytes = 26 * 1024
 
 // StandardDoc is the one source of the standard every tool is built to. The

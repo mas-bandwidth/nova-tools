@@ -1879,7 +1879,7 @@ does not count, a test that opens with `t.Parallel()` and then races a shared
 resource is not seen (that is `go test -race`'s job), and subtests are not
 required to call it.
 
-### `testify` — every Go test uses testify, and every test runs in parallel
+### `testify` — every Go test uses testify
 
 **The rule.** Every Go test under `cmd/` and `internal/` uses
 `github.com/stretchr/testify` (docs/STANDARD.md, section 8): `require` for setup and
@@ -1889,6 +1889,9 @@ for a shared rig, `testify/mock` for a fake with expectations, `ErrorIs`, `Error
 over their hand-written equivalents, named cases under `t.Run`, `t.Parallel()` in
 every test, and the environment and working directory injected through the code's
 config.
+Opening every test with `t.Parallel()` is held by `parallel`
+(`TestEveryTestOpensWithTParallel` and `serial-tests_allowlist.txt`); this check does
+not count it a second time.
 **The mistake it prevents.** A test that stops at its first bad row hides the rest; a
 hand-written `if got != want { t.Errorf }` prints less than the assertion it imitates;
 `t.Setenv` and a Chdir forbid `t.Parallel()`, so the package's tests queue.
@@ -1896,12 +1899,11 @@ hand-written `if got != want { t.Errorf }` prints less than the assertion it imi
 detector is pinned by `TestTestifyLedgerMeasuresEachShape` and the ledger's
 judgement by `TestTestifyLedgerOnlyFalls` (`internal/ci/testify_shapes_test.go`).
 It counts, per package and per kind: `assert`, an `if` whose body calls `t.Fatal`,
-`t.Fatalf`, `t.Error`, `t.Errorf`, `t.Fail` or `t.FailNow` (the shapes `if err != nil`,
-`if got != want`, `if !strings.Contains(...)`, a `reflect.DeepEqual` guard and every
-other bool); `parallel`, a test file with a test function that does not open with
-`t.Parallel()`; `env`, a `t.Setenv`, `t.Chdir` or `os.Chdir` call.
+`t.Fatalf`, `t.Error`, `t.Errorf`, `t.Fail` or `t.FailNow` directly (the shapes
+`if err != nil`, `if got != want`, `if !strings.Contains(...)`, a `reflect.DeepEqual`
+guard and every other bool); `env`, a `t.Setenv`, `t.Chdir` or `os.Chdir` call.
 **Its allowlist.** `internal/ci/testdata/testify_allowlist.txt`, one
-`<package>:<kind> <sites> <reason>` row per package and kind still short. The count
+`<package>:<kind> <sites> <reason>` row per package and kind (`assert`, `env`) still short. The count
 only falls: a package measuring more sites than its row, a package with a site and
 no row, and a row above what the package measures are each a red run, and
 `NOVA_CI_UPDATE=1` lowers the counts and drops the rows at zero, never raises a
@@ -1918,6 +1920,11 @@ a receiver is taken as a testing value when it is named `t` or `tb` or is a
 parameter typed `*testing.T`, `*testing.B` or `testing.TB`, a test that uses testify
 for some checks and a bare `if` for others is counted for the bare ones, and
 `os.Setenv` is not counted (a `TestMain` may set the process environment once).
+Shapes the matcher does not count yet: a failing call in an `else { ... }` block (an
+`else if` is an `if` and is counted), a failing call inside a loop or a nested block
+under the `if`, a failing call in a `switch` or `select` case body, and a helper in a
+non-test file that takes a `testing.TB` and fails it. Each is a bare assertion the
+ledger does not see, so the ledger's count is a floor, not the whole of the work.
 
 ### `slowwaits` — no per-commit test sleeps over a second or waits out a deadline
 

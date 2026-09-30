@@ -78,7 +78,7 @@ func TestClean(t *testing.T) {
 			shapes[s.Shape]++
 		}
 	}
-	assert.Equal(t, map[string]int{"assert": 7, "parallel": 1, "env": 3}, byKind)
+	assert.Equal(t, map[string]int{"assert": 7, "env": 3}, byKind)
 	assert.Equal(t, map[string]int{"err": 1, "compare": 1, "contains": 1, "deepequal": 1, "len": 1, "compound": 1, "nil": 1}, shapes)
 }
 

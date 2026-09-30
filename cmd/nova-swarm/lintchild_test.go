@@ -1,8 +1,11 @@
 package main
 
 import (
+	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
@@ -13,15 +16,27 @@ import (
 // rules and lints as it always has; a card written for a child of the coordinator is held
 // to all of them when `--child-rules` says so (and always by `nova-sprint add`).
 
-// `template --name card` prints a card that passes the lint as printed: the twelve shape
+// filledLibraries replaces the placeholder of the card template's Libraries considered
+// line with what a writer would say, the state of a finished card.
+func filledLibraries(body string) string {
+	return regexp.MustCompile(`(?m)^Libraries considered:.*$`).ReplaceAllString(body, "Libraries considered: testify for the asserts, used; nothing else found for this work")
+}
+
+// `template --name card` prints a card whose only finding is the Libraries considered
+// placeholder the writer fills; with the line filled it passes the lint: the twelve shape
 // rules, the typed-header rules and every child rule. It is linted for real (the verbatim
 // template shortcut of the card templates is not taken for it).
 func TestCardTemplateLintsCleanWithTheChildRules(t *testing.T) {
 	t.Parallel()
-	exit, body, stderr := runSwarm(t, "template", "--name", "card")
+	exit, printed, stderr := runSwarm(t, "template", "--name", "card")
 	if exit != 0 || stderr != "" {
 		t.Fatalf("template --name card: exit %d, stderr %q", exit, stderr)
 	}
+	exit, stdout, _ := runSwarm(t, "lint", "--card", writeLintCard(t, "printed.md", printed), "--child-rules", "--max", "0")
+	assert.Equal(t, 1, exit)
+	assert.Contains(t, stdout, "rule-libraries-considered: ")
+	assert.Equal(t, 1, strings.Count(stdout, "LINT DRIFT "))
+	body := filledLibraries(printed)
 	card := writeLintCard(t, "card.md", body)
 	for _, args := range [][]string{{"--card", card}, {"--card", card, "--child-rules"}} {
 		exit, stdout, _ := runSwarm(t, append([]string{"lint"}, args...)...)
@@ -75,7 +90,7 @@ func TestChildRulesAreAskedForByTheFlag(t *testing.T) {
 func TestChildScanThroughTheCommand(t *testing.T) {
 	t.Parallel()
 	_, body, _ := runSwarm(t, "template", "--name", "card")
-	card := writeLintCard(t, "bad.card", body+"STEP 7. git push --force origin HEAD && git stash\n")
+	card := writeLintCard(t, "bad.card", filledLibraries(body)+"STEP 7. git push --force origin HEAD && git stash\n")
 	exit, stdout, _ := runSwarm(t, "lint", "--card", card, "--child-rules", "--max", "0")
 	if exit != 1 || !strings.Contains(stdout, "LINT DRIFT card=bad.card step-force-push: ") || !strings.Contains(stdout, "LINT DRIFT card=bad.card step-stash: ") {
 		t.Fatalf("exit %d\n%s", exit, stdout)

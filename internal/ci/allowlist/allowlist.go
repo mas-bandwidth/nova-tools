@@ -246,7 +246,7 @@ func CheckMode(r Reporter, l *List, measured map[string]bool, update bool) Resul
 	if out == l.Text() {
 		return res
 	}
-	if err := writeAtomic(l.Path, out); err != nil {
+	if err := WriteAtomic(l.Path, out); err != nil {
 		r.Errorf("%s: the update could not write the list: %v", l.Path, err)
 		return res
 	}
@@ -286,9 +286,9 @@ func (l *List) render(drop map[int]bool, grow []string, kept int) string {
 	return strings.Join(out, "\n") + "\n"
 }
 
-// writeAtomic replaces path through a temp file in its own directory, so a reader
+// WriteAtomic replaces path through a temp file in its own directory, so a reader
 // never sees half a list.
-func writeAtomic(path, text string) error {
+func WriteAtomic(path, text string) error {
 	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*")
 	if err != nil {
 		return err

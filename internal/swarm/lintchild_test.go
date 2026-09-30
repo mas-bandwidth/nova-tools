@@ -17,13 +17,28 @@ import (
 // listing carries its remedy; and every scan is held against a violating line and the
 // clean line beside it.
 
-func childTemplate(t *testing.T) string {
+// childTemplateRaw is the card template as printed: its Libraries considered line still
+// carries the writer's placeholder.
+func childTemplateRaw(t *testing.T) string {
 	t.Helper()
 	body, err := Template("card")
 	if err != nil {
 		t.Fatal(err)
 	}
 	return body
+}
+
+const childLibrariesFilledLine = "Libraries considered: testify for the asserts, used; nothing else found for this work\n"
+
+// childTemplate is the card template with its Libraries considered line filled, the state
+// a card is in when a writer has finished with it.
+func childTemplate(t *testing.T) string {
+	t.Helper()
+	body := childTemplateRaw(t)
+	start := strings.Index(body, "Libraries considered:")
+	require.GreaterOrEqual(t, start, 0, "the card template carries a Libraries considered line")
+	end := start + strings.Index(body[start:], "\n") + 1
+	return body[:start] + childLibrariesFilledLine + body[end:]
 }
 
 func childChecks(fs []CardHeaderFinding) []string {
@@ -82,13 +97,18 @@ func TestChildRulesTableIsWellFormed(t *testing.T) {
 }
 
 // The template is the shape the coordinator starts from: it carries every rule sentence,
-// and it lints clean as printed.
+// and once the writer has filled its Libraries considered line it lints clean. As printed
+// the line still carries its placeholder, and that is the one finding it draws.
 func TestChildTemplateLintsClean(t *testing.T) {
 	t.Parallel()
 	body := childTemplate(t)
 	if got := LintCardChild([]byte(body)); len(got) != 0 {
-		t.Fatalf("the card template draws findings: %v", got)
+		t.Fatalf("the filled card template draws findings: %v", got)
 	}
+	raw := LintCardChild([]byte(childTemplateRaw(t)))
+	require.Len(t, raw, 1)
+	assert.Equal(t, LibrariesConsideredRule, raw[0].Check)
+	assert.Contains(t, raw[0].Excerpt, "unfilled: Libraries considered: <")
 	for _, r := range CardChildRules {
 		if !strings.Contains(body, r.Sentence) {
 			t.Errorf("the card template does not quote the rule %s: %s", r.Name, r.Sentence)
@@ -326,24 +346,36 @@ func containsStep(xs []string) bool {
 // carries the line, filled; a card that builds none is not asked for it.
 func TestChildCardThatBuildsCodeCarriesLibrariesConsidered(t *testing.T) {
 	t.Parallel()
-	body := childTemplate(t)
-	const line = "Libraries considered:"
-	start := strings.Index(body, line)
-	require.GreaterOrEqual(t, start, 0, "the card template carries a Libraries considered line")
-	end := start + strings.Index(body[start:], "\n") + 1
+	raw := childTemplateRaw(t)
+	start := strings.Index(raw, "Libraries considered:")
+	require.GreaterOrEqual(t, start, 0)
+	end := start + strings.Index(raw[start:], "\n") + 1
+	with := func(line string) string { return raw[:start] + line + raw[end:] }
 	rules := ChildRulesParagraph()
+	lib := []string{LibrariesConsideredRule}
 	tests := []struct {
 		name string
 		card string
 		want []string
 	}{
-		{"template", body, nil},
-		{"line removed", body[:start] + body[end:], []string{LibrariesConsideredRule}},
-		{"line empty", body[:start] + line + "   \n" + body[end:], []string{LibrariesConsideredRule}},
-		{"line filled", body[:start] + line + " testify for asserts, used; errgroup, not needed\n" + body[end:], nil},
-		{"line bulleted", body[:start] + "- " + line + " none found\n" + body[end:], nil},
-		{"names a go file", "RESULT: x sha=abc\nAdd a helper in internal/x/y.go\n\n" + rules, []string{LibrariesConsideredRule}},
-		{"runs go test", "RESULT: x sha=abc\nRun go test -timeout 600s ./internal/x/\n\n" + rules, []string{LibrariesConsideredRule}},
+		{"template as printed, placeholder unfilled", raw, lib},
+		{"line removed", with(""), lib},
+		{"line empty", with("Libraries considered:   \n"), lib},
+		{"line empty, bulleted", with("- Libraries considered:\n"), lib},
+		{"line keeps a placeholder", with("Libraries considered: testify; <why errgroup was not used>\n"), lib},
+		{"line filled", with("Libraries considered: testify for asserts, used; errgroup, not needed\n"), nil},
+		{"line bulleted", with("- Libraries considered: none found\n"), nil},
+		{"one of two lines filled", with("Libraries considered: <x>\nLibraries considered: testify, used\n"), nil},
+		{"runs go test", "RESULT: x sha=abc\nRun go test -timeout 600s ./internal/x/\n\n" + rules, lib},
+		{"runs go build", "RESULT: x sha=abc\nThen go build ./...\n\n" + rules, lib},
+		{"runs go run", "RESULT: x sha=abc\nTry go run ./cmd/x\n\n" + rules, lib},
+		{"runs go generate", "RESULT: x sha=abc\nRun go generate ./...\n\n" + rules, lib},
+		{"writes a go file", "RESULT: x sha=abc\nWrite a helper in internal/x/y.go\n\n" + rules, lib},
+		{"adds to a go file", "RESULT: x sha=abc\nAdd a case to internal/x/y.go.\n\n" + rules, lib},
+		{"implements in a go file", "RESULT: x sha=abc\nImplement the verb in cmd/x/main.go\n\n" + rules, lib},
+		{"only reads a go file", "RESULT: x sha=abc\nRead internal/x/y.go and report what it does.\n\n" + rules, nil},
+		{"cites pkg.go.dev", "RESULT: x sha=abc\nWrite up what pkg.go.dev says about errgroup.\n\n" + rules, nil},
+		{"runs go vet only", "RESULT: x sha=abc\nRun go vet ./internal/x/\n\n" + rules, nil},
 		{"builds no code", "RESULT: x sha=abc\nRewrite the README paragraph on seats.\n\n" + rules, nil},
 		{"rules paragraph alone", rules, nil},
 	}

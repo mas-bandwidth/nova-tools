@@ -95,7 +95,8 @@ const templateFixCard = `fix-card — take one card and land the fix
 
 // templateCard is the card the coordinator starts from: the contract line, the RULES
 // paragraph with every rule of CardChildRules quoted verbatim (lintchild.go), the task,
-// and the steps. It passes `nova-swarm lint --card --child-rules` as printed, and it is
+// and the steps. It passes `nova-swarm lint --card --child-rules` once the writer has filled the Libraries
+// considered line, which as printed carries its placeholder and is the one finding it draws; it is
 // what `nova-sprint add` holds every brief to: a card without the paragraph is refused
 // before anything is written. The <angle> words are the writer's to fill.
 var templateCard = "RESULT: <label> sha=<sha12>\n" +

@@ -36,11 +36,12 @@ import (
 //  3. LIBRARIES CONSIDERED. A card that builds code carries a `Libraries considered:` line
 //     saying what the standard library and the adopted modules offered for the work and why
 //     each was used or not (docs/STANDARD.md, section 7, library first). A card builds code
-//     when a line outside the RULES paragraph runs `go build`, `go test`, `go vet`, `go run`
-//     or `go generate`, or names a `.go` file. A card that builds code without the line draws
-//     `rule-libraries-considered`. The check is the line's presence and that it says
-//     something, never whether what it says is true: a reader names hand-rolled code that a
-//     library already does.
+//     when a line outside the RULES paragraph runs `go build`, `go test`, `go run` or
+//     `go generate`, or says write, add or implement beside a `.go` path; a card that only
+//     reads a `.go` file or cites pkg.go.dev builds nothing. A card that builds code without
+//     the line, or whose line is empty or still carries an angle-bracket placeholder, draws
+//     `rule-libraries-considered`. The check is that the line says something, never whether
+//     what it says is true: a reader names hand-rolled code that a library already does.
 //
 // WHAT THE TEXT CANNOT SHOW IS NOT CLAIMED. A card that says `Never kill a process you did
 // not start` and then `kill $!` is read as the child's own process; whether the child
@@ -96,15 +97,34 @@ var CardChildRules = []ChildRule{
 const LibrariesConsideredRule = "rule-libraries-considered"
 
 // LibrariesConsideredRemedy is what that token wants, in the remedies' table shape.
-const LibrariesConsideredRemedy = "a card that builds code carries one line `Libraries considered: <what the standard library and the adopted modules offered, and why each was used or not>` (docs/STANDARD.md section 7); search before any helper of more than about thirty lines is written, and name what was found; `nova-swarm template --name card` prints the line"
+const LibrariesConsideredRemedy = "a card that builds code carries one line `Libraries considered: <what the standard library and the adopted modules offered, and why each was used or not>` (docs/STANDARD.md section 7), filled: a line that is empty after the colon or still carries an angle-bracket placeholder does not count; search before any helper of more than about thirty lines is written, and name what was found; `nova-swarm template --name card` prints the line"
 
 var (
-	// childLibrariesLine is the line itself: the words, then something after them.
-	childLibrariesLine = regexp.MustCompile(`^[ \t]*(?:[-*][ \t]+)?Libraries considered:[ \t]*\S`)
-	// childBuildsCode is a line outside the RULES paragraph that runs the Go toolchain or
-	// names a Go source file: the card is asked to write code.
-	childBuildsCode = regexp.MustCompile(`(?:^|[^A-Za-z0-9_./-])go[ \t]+(?:build|test|vet|run|generate)\b|[A-Za-z0-9_<>/.-]+\.go\b`)
+	// childLibrariesLine is a `Libraries considered:` line; group 1 is what follows the colon.
+	childLibrariesLine = regexp.MustCompile(`^[ \t]*(?:[-*][ \t]+)?Libraries considered:(.*)$`)
+	// childPlaceholder is an angle-bracket placeholder the writer has not filled.
+	childPlaceholder = regexp.MustCompile(`<[^<>]*>`)
+	// childRunsGo is a line that runs the toolchain to build: go build, test, run or generate.
+	childRunsGo = regexp.MustCompile(`(?:^|[^A-Za-z0-9_./-])go[ \t]+(?:build|test|run|generate)\b`)
+	// childWrites is a line asking for work: write, add or implement.
+	childWrites = regexp.MustCompile(`(?i)\b(?:write|writes|writing|add|adds|adding|implement|implements|implementing)\b`)
+	// childGoPath is a path to a Go source file: a name ending `.go` and then a delimiter or
+	// the end of the line, so `pkg.go.dev` is no path.
+	childGoPath = regexp.MustCompile(`[A-Za-z0-9_<>/.-]+\.go(?:[ \t)\x60"',:;]|\.(?:[ \t]|$)|$)`)
 )
+
+// childBuilds reports whether a line outside the RULES paragraph asks for code to be built:
+// it runs go build, test, run or generate, or it says write, add or implement beside a .go
+// path. A card that only reads a .go file, or cites pkg.go.dev, builds nothing.
+func childBuilds(line string) bool {
+	return childRunsGo.MatchString(line) || (childWrites.MatchString(line) && childGoPath.MatchString(line))
+}
+
+// childLibrariesFilled reports whether what follows the colon says something: not empty
+// and not still an angle-bracket placeholder.
+func childLibrariesFilled(rest string) bool {
+	return strings.TrimSpace(rest) != "" && !childPlaceholder.MatchString(rest)
+}
 
 // childScan is one direct check: the check name, the command it looks for, what to do
 // instead, and the rule it enforces (a name in CardChildRules).
@@ -276,10 +296,16 @@ func LintCardChild(raw []byte) []CardHeaderFinding {
 			out = append(out, CardHeaderFinding{Check: "rule-" + r.Name, Line: 1, Excerpt: "missing: " + r.Sentence})
 		}
 	}
-	builds, hasLibraries := false, false
+	builds, filled, unfilledAt, unfilled := false, false, 0, ""
 	childLines(raw, func(n int, line string) {
-		builds = builds || childBuildsCode.MatchString(line)
-		hasLibraries = hasLibraries || childLibrariesLine.MatchString(line)
+		builds = builds || childBuilds(line)
+		if m := childLibrariesLine.FindStringSubmatch(line); m != nil {
+			if childLibrariesFilled(m[1]) {
+				filled = true
+			} else if unfilled == "" {
+				unfilledAt, unfilled = n, line
+			}
+		}
 		for _, sc := range childScans {
 			for _, m := range sc.RE.FindAllStringSubmatchIndex(line, -1) {
 				at := m[2] // the command itself, group 1
@@ -294,8 +320,12 @@ func LintCardChild(raw []byte) []CardHeaderFinding {
 			}
 		}
 	})
-	if builds && !hasLibraries {
-		out = append(out, CardHeaderFinding{Check: LibrariesConsideredRule, Line: 1, Excerpt: "missing: Libraries considered: <what was found, why used or not>"})
+	if builds && !filled {
+		if unfilled != "" {
+			out = append(out, CardHeaderFinding{Check: LibrariesConsideredRule, Line: unfilledAt, Excerpt: "unfilled: " + strings.TrimSpace(unfilled)})
+		} else {
+			out = append(out, CardHeaderFinding{Check: LibrariesConsideredRule, Line: 1, Excerpt: "missing: Libraries considered: <what was found, why used or not>"})
+		}
 	}
 	return out
 }
