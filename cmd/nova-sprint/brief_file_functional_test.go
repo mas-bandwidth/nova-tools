@@ -44,6 +44,8 @@ func TestAddBriefFileOnTheStore(t *testing.T) {
 	}
 	run("init", "--readers", "reader-a,reader-b", "--members", "m1")
 	run("add", "--stream", "s1", "--count", "1", "--brief-file", path)
+	run("fleet", "beat", "m1")
+	run("start")
 	run("tick")
 	var q struct{ Cards []queueCard }
 	if err := json.Unmarshal([]byte(run("queue", "--as", "m1", "--json")), &q); err != nil {
