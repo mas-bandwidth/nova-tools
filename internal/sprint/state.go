@@ -158,6 +158,7 @@ type Table struct {
 	cells     map[[2]string][]*Card // built on first use; Put resets it
 	byPrimary map[string][]*Card
 	lines     map[string][]*Card // each row's cards not landed, in score order; built with cells
+	stops     map[string][]int   // each line's last sentinel at or before each place (lineStops); built with lines
 
 	// part says which cells a table loaded from a read plan holds whole (the
 	// upper design, version 2.1, section 1.5.2). Nil on a table built whole,
@@ -298,7 +299,7 @@ func (t *Table) index() {
 	if t.cells != nil {
 		return
 	}
-	t.cells, t.byPrimary, t.lines = map[[2]string][]*Card{}, map[string][]*Card{}, nil
+	t.cells, t.byPrimary, t.lines, t.stops = map[[2]string][]*Card{}, map[string][]*Card{}, nil, nil
 	for _, c := range t.cards {
 		if !c.Placed() {
 			continue
