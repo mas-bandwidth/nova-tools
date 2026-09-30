@@ -178,7 +178,6 @@ internal/onboarding/transcript.go:space 1
 internal/onboarding/transcript.go:stella 1
 internal/oneline/audit/audit.go:mas-bandwidth 1
 internal/oneline/oneline.go:space 4
-internal/play/play.go:space 2
 internal/records/doc.go:stella 1
 internal/redisconn/options.go:space 1
 internal/redisfn/redisfn.go:space 1

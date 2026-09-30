@@ -36,7 +36,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `ntable/` | a general Redis-backed table: ordered sets per cell, projections, folds, the render | `go test ./internal/ntable` | `go test ./internal/ntable` |
 | `onboarding/` | onboarding banner and doc verifier | `go test ./internal/onboarding` | `go test ./internal/onboarding` |
 | `oneline/` | single-line log and output grammar | `go test ./internal/oneline` | `go test ./internal/oneline` |
-| `play/` | sandboxed code experiment runner | `go test ./internal/play` | `go test ./internal/play` |
+| `play/` | read-only Markdown timeline view behind nova-memory view | `go test ./internal/play` | `go test ./internal/play` |
 | `record/` | decision and execution records | `go test ./internal/record` | `go test ./internal/record` |
 | `records/` | database models and record formats | `go test ./internal/records` | `go test ./internal/records` |
 | `redisconn/` | the one way a nova tool opens its Redis connection: options from the environment, one bounded dial, trips counted, errors classified, no secret shown | `go test ./internal/redisconn` | `go test ./internal/redisconn` |
