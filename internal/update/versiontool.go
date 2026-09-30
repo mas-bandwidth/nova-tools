@@ -19,68 +19,85 @@ func VersionTool(stamp string, env Environment) *tool.Tool {
 		Name:  "nova-version",
 		What:  "installed tool identities: report, snapshot, diff, and the TOOLS MOVED note (see docs/SPEC-VERSION.md)",
 		Stamp: stamp,
-		How: `Report needs no bus or network. Defaults: --max 20 (0 = all), --timeout 5s,
---budget 60s; snapshot's --timeout is 30s, because the first run of a newly
-installed binary is assessed by the platform and that cost is charged to the
-deadline. Repeat --kind to select kinds. Cross-process delivery recovery needs
---snapshot; without it, each send is a new intention. Do not prepare again while
-pending; retry the saved artifact. A snapshot uses a sibling .lock file for a
-kernel lock; its presence never means a process is running.
-
-Locals: latest=local:<path> runs that binary (or argv) on this host to read the
-version; e.g., local:/usr/local/bin/nova-update or local:go version. The
-installed column can be a version string (v1.2.3), a single command name found
-on PATH, or a full argv. The example runs from a nova-tools checkout.`,
+		How: `Report reads installed identities with no bus or network; --draft prints a note, send delivers it.
+Defaults: --max 20 (0 = all), --timeout 5s (snapshot 30s: a new binary's first run is assessed), --budget 60s.
+Delivery recovery across processes needs --snapshot; retry the saved artifact rather than prepare again.
+latest=local:<path> runs that binary (or argv) here; installed is a version, a command on PATH, or an argv.
+The examples run from a nova-tools checkout.`,
 		ExitTable: "0 the verb did what it said (a report whose every entry answered, a snapshot, a diff, a note written); 1 the tool said NO (a report with an UNKNOWN, a send that was refused or unconfirmed, a snapshot --file with a tool that did not answer); 2 could not run (a refusal naming the remedy).",
 		Verbs: []tool.Verb{
 			{
-				Name:  "moved",
-				Usage: "moved --from <sha> --to <sha> --repo <dir> --out <path>",
+				Name:   "moved",
+				Usage:  "moved --from <sha> --to <sha> --repo <dir> --out <path>",
+				Effect: tool.LocalWrite,
 				Flags: func(f *tool.Flags) {
-					f.String("from", "", "revision to compare from (required)")
-					f.String("to", "", "revision to compare to (required)")
-					f.String("repo", "", "checkout holding both revisions (required)")
-					f.String("out", "", "note to write (required)")
+					f.Required("from", "the revision to compare from")
+					f.Required("to", "the revision to compare to")
+					f.Required("repo", "the checkout holding both revisions")
+					f.Required("out", "the path of the note to write")
 					f.Duration("timeout", movedChildTimeout, "one child's deadline")
 					f.Duration("budget", movedBudget, "whole run deadline")
+					f.Check(positiveBounds)
 				},
 				Run: func(c *tool.Call) *tool.Out { return movedVerb(c, env) },
 			},
 			{
-				Name:  "snapshot",
-				Usage: "snapshot " + manifest + "\nsnapshot --bin <dir> --out <file.tsv> [--timeout <d>] [--budget <d>]",
+				Name:   "snapshot",
+				Usage:  "snapshot " + manifest + "\nsnapshot --bin <dir> --out <file.tsv> [--timeout <d>] [--budget <d>]",
+				Effect: tool.LocalWrite + "; with --file, inspection",
 				Flags: func(f *tool.Flags) {
 					f.String("file", "", "manifest of adopted tools: count how many answer")
 					f.String("bin", "", "directory holding the binaries")
 					f.String("out", "", "TSV snapshot to write")
 					f.Duration("timeout", snapshotChildTimeout, "one binary's read deadline")
 					f.Duration("budget", snapshotBudget, "whole run deadline")
+					// Neither path is guessed: both are the caller's to name
+					// (SPEC-UPDATE rule 1), unless --file asks the manifest shape.
+					f.Check(func(c *tool.Call) {
+						if !c.Given("file") {
+							c.Want("bin", "the directory holding the binaries, for example ./bin")
+							c.Want("out", "the TSV snapshot to write, for example ./before.tsv")
+						}
+					})
+					f.Check(positiveBounds)
 				},
 				Run: snapshotVerb,
 			},
 			{
-				Name:  "diff",
-				Usage: "diff --from <a.tsv> --to <b.tsv>",
+				Name:   "diff",
+				Usage:  "diff --from <a.tsv> --to <b.tsv>",
+				Effect: tool.Inspection,
 				Flags: func(f *tool.Flags) {
-					f.String("from", "", "snapshot to compare from (required)")
-					f.String("to", "", "snapshot to compare to (required)")
+					f.Required("from", "the snapshot to compare from")
+					f.Required("to", "the snapshot to compare to")
 				},
 				Run: diffVerb,
 			},
 			{
-				Name:    "report",
-				Usage:   "report " + manifest + " [--host <label>] [--snapshot <path>] [--draft --as <friend> --to <who,who>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]",
-				Example: "report --file cmd/nova-version/testdata/example.tsv",
+				Name:  "report",
+				Usage: "report " + manifest + " [--host <label>] [--snapshot <path>] [--draft --as <friend> --to <who,who>] [--max <n>] [--timeout <d>] [--budget <d>] [--kind <k>]",
+				// The second example line is the version verb's: the banner's
+				// examples are its verbs' in order, and version is last.
+				Example: "report --file cmd/nova-version/testdata/example.tsv\nversion",
+				Effect:  tool.Inspection + "; --draft prints a note, --send delivers it",
 				Flags:   func(f *tool.Flags) { reportFlags(f, true) },
 				Run:     func(c *tool.Call) *tool.Out { return reportVerb(c, false, env) },
 			},
 			{
-				Name:  "send",
-				Usage: "send " + manifest + " --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b> [--snapshot <path>] [--host <label>]",
-				Flags: func(f *tool.Flags) { reportFlags(f, false) },
-				Run:   func(c *tool.Call) *tool.Out { return reportVerb(c, true, env) },
+				Name:   "send",
+				Usage:  "send " + manifest + " --as <friend> --to <who,who> --bus <path> --remote <r> --branch <b> [--snapshot <path>] [--host <label>]",
+				Effect: tool.Delivery,
+				Flags:  func(f *tool.Flags) { reportFlags(f, false) },
+				Run:    func(c *tool.Call) *tool.Out { return reportVerb(c, true, env) },
 			},
 		},
+	}
+}
+
+// positiveBounds is the rule on --timeout and --budget: a bound is positive.
+func positiveBounds(c *tool.Call) {
+	if c.Dur("timeout") <= 0 || c.Dur("budget") <= 0 {
+		c.Problem("invalid bound (use positive --timeout/--budget)")
 	}
 }
 

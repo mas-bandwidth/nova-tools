@@ -30,12 +30,12 @@ func fromLines(t *testing.T, token, text string) parsed {
 	p := parsed{Facts: map[string]string{}}
 	for i, l := range strings.Split(strings.TrimSuffix(text, "\n"), "\n") {
 		rest, ok := strings.CutPrefix(l, token+" ")
-		if !ok {
+		if !ok { // the payload: alone, or last
 			if i == 0 {
-				p.Status, p.Payload = "ok", l
-				continue
+				p.Status = "ok"
 			}
-			t.Fatalf("line %q does not open with %s", l, token)
+			p.Payload = l
+			continue
 		}
 		word, rest, _ := strings.Cut(rest, " ")
 		if w, ok := strings.CutSuffix(word, ":"); ok {
@@ -158,6 +158,13 @@ func TestRender(t *testing.T) {
 			"DEMO FAIL entry=e1: the words differ\n"},
 		{"a payload is printed as it is", Payload("nova-demo v1 darwin/arm64 go1"),
 			"nova-demo v1 darwin/arm64 go1\n"},
+		{"a payload beside a fact prints both, the payload last", Payload("the document").Fact("path", "p"),
+			"DEMO OK path=p\nthe document\n"},
+		{"a refusal with a payload prints the refusal and the payload", func() *Out {
+			o := Refuse("half written")
+			o.Payload = "the part"
+			return o
+		}(), "DEMO REFUSED: half written\nthe part\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -200,18 +207,20 @@ func demo() *Tool {
 		Verbs: []Verb{
 			{
 				Name: "put", Usage: "put --store <dir> --key <k> [--max <n>]", Example: "put --store ./s --key k",
+				Effect: LocalWrite,
 				Flags: func(f *Flags) {
-					f.String("store", "", "the store")
-					f.String("key", "", "the key")
+					f.Required("store", "a directory")
+					f.Required("key", "a name")
 					f.Int("n", 0, "how many rows")
+					f.Check(func(c *Call) {
+						if c.Int("n") < 0 {
+							c.Problem("--n must be zero or more")
+						}
+					})
 					f.Max()
 				},
 				Run: func(c *Call) *Out {
-					store, key := c.Want("store", "a directory"), c.Want("key", "a name")
-					if o := c.Refused(); o != nil {
-						return o
-					}
-					o := Done().Fact("store", store).Fact("key", key)
+					o := Done().Fact("store", c.Str("store")).Fact("key", c.Str("key"))
 					for i := 0; i < c.Int("n"); i++ {
 						o.Item("row", "i", i)
 					}
@@ -268,12 +277,25 @@ func TestRun(t *testing.T) {
 		{name: "version --json carries the line as the payload", args: []string{"version", "--json"}, code: 0, emptyStderr: true,
 			stdout: []string{`{"result":{"verb":"version","status":"ok","exit":0},"facts":{},"payload":"nova-demo v9.9.9 `}},
 		{name: "version refuses an argument", args: []string{"version", "x"}, code: 2, emptyStdout: true,
-			stderr: []string{`VERSION REFUSED: unexpected argument "x"; this verb takes flags only; run: nova-demo help`}},
+			stderr: []string{`VERSION REFUSED: takes no positional arguments, got "x" (flags come before arguments); run: nova-demo help`}},
 		{name: "an unknown verb is refused", args: []string{"seal"}, code: 2, emptyStdout: true,
 			stderr: []string{`DEMO REFUSED: unknown verb "seal"`}},
 		{name: "every missing flag is named at once", args: []string{"put"}, code: 2, emptyStdout: true, stderrLines: 2,
 			stderr: []string{"PUT REFUSED: --store is required; it wants a directory; refusing to guess; run: nova-demo help\n",
 				"PUT REFUSED: --key is required; it wants a name; refusing to guess; run: nova-demo help\n"}},
+		{name: "every problem at once: required, a check, --max and an argument", args: []string{"put", "--n", "-1", "--max", "-2", "stray"}, code: 2,
+			emptyStdout: true, stderrLines: 5, stderr: []string{"PUT REFUSED: --store is required", "PUT REFUSED: --key is required",
+				"PUT REFUSED: --n must be zero or more", "PUT REFUSED: --max must be zero or more", `PUT REFUSED: takes no positional arguments, got "stray"`}},
+		{name: "two bad things are two lines", args: []string{"put", "--store", "s", "--key", "k", "--n", "-1", "stray"}, code: 2,
+			emptyStdout: true, stderrLines: 2, stderr: []string{"PUT REFUSED: --n must be zero or more", `PUT REFUSED: takes no positional arguments, got "stray"`}},
+		{name: "a bare tool with --json refuses in JSON", args: []string{"--json"}, code: 2, emptyStderr: true,
+			stdout: []string{`{"result":{"verb":"","status":"refused","exit":2,"remedy":"nova-demo help","why":["unknown verb \"--json\"`}},
+		{name: "an unknown verb with --json refuses in JSON", args: []string{"bogus", "--json"}, code: 2, emptyStderr: true,
+			stdout: []string{`"status":"refused"`, `unknown verb \"bogus\"`}},
+		{name: "help of a verb states its effect", args: []string{"help", "put"}, code: 0, emptyStderr: true,
+			stdout: []string{"exit codes: 0 done", "effect: local write: writes files on this machine\n"}},
+		{name: "a verb that states none says so", args: []string{"deny", "-h"}, code: 0, emptyStderr: true,
+			stdout: []string{"effect: unstated\n"}},
 		{name: "a refusal under --json is one object on stdout", args: []string{"put", "--json"}, code: 2, emptyStderr: true,
 			stdout: []string{`{"result":{"verb":"put","status":"refused","exit":2,"remedy":"nova-demo help","why":["--store is required`}},
 		{name: "an unknown flag under --json is still JSON", args: []string{"put", "--json", "--nope"}, code: 2, emptyStderr: true,
@@ -289,7 +311,7 @@ func TestRun(t *testing.T) {
 		{name: "a negative --max is refused", args: []string{"put", "--store", "s", "--key", "k", "--max", "-1"}, code: 2,
 			emptyStdout: true, stderr: []string{"PUT REFUSED: --max must be zero or more"}},
 		{name: "a positional is refused", args: []string{"put", "--store", "s", "--key", "k", "extra"}, code: 2,
-			emptyStdout: true, stderr: []string{`PUT REFUSED: unexpected argument "extra"`}},
+			emptyStdout: true, stderr: []string{`PUT REFUSED: takes no positional arguments, got "extra"`}},
 		{name: "the opt-in flags read their values and --redis its seat-first default", args: []string{"who", "--actor", "a", "--op", "o1", "--width", "2"},
 			code: 0, emptyStderr: true, stdout: []string{"WHO OK actor=a op=o1 redis=seat.example:6379 width=2\n"}},
 		{name: "a count under one and an empty address are both refused", args: []string{"who", "--redis", ""}, code: 2, emptyStdout: true, stderrLines: 2,

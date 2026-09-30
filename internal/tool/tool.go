@@ -39,9 +39,20 @@ type Verb struct {
 	Name    string
 	Usage   string         // the usage line(s) after the tool's name, one form per line
 	Example string         // runnable line(s) after the tool's name, for the banner's example block
+	Effect  Effect         // what running it does to the world, stated in `help <verb>`
 	Flags   func(f *Flags) // declares the verb's flags; nil declares none
 	Run     func(c *Call) *Out
 }
+
+// Effect is what running a verb does beyond printing: one of the three below,
+// optionally with a clause after it ("inspection; --send delivers").
+type Effect string
+
+const (
+	Inspection Effect = "inspection: reads, writes nothing"
+	LocalWrite Effect = "local write: writes files on this machine"
+	Delivery   Effect = "delivery: sends beyond this machine"
+)
 
 // Main runs the tool over the process's arguments and streams and returns the exit code.
 func (t *Tool) Main() int { return t.Run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr) }
@@ -50,7 +61,7 @@ func (t *Tool) Main() int { return t.Run(os.Args[1:], os.Stdin, os.Stdout, os.St
 // `help <verb>` print that verb's help on stdout at exit 0 before anything is
 // read or written (the CLI style's rule (b)).
 func (t *Tool) Run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
-	defer verbflag.Recover(stdout, t.Name, t.Banner(), &code)
+	defer t.help(stdout, &code)
 	if len(args) == 0 {
 		return t.emit(nil, Refuse("no verb given; the verbs are "+strings.Join(t.names(), ", ")), false, stdout, stderr)
 	}
@@ -69,15 +80,40 @@ func (t *Tool) Run(args []string, stdin io.Reader, stdout, stderr io.Writer) (co
 			return t.call(v, args[1:], stdin, stdout, stderr)
 		}
 	}
-	return t.emit(nil, Refuse(fmt.Sprintf("unknown verb %q; the verbs are %s", args[0], strings.Join(t.names(), ", "))), false, stdout, stderr)
+	return t.emit(nil, Refuse(fmt.Sprintf("unknown verb %q; the verbs are %s", args[0], strings.Join(t.names(), ", "))),
+		verbflag.BoolAsked(args, "json"), stdout, stderr)
+}
+
+// help is deferred by Run: a verb's -h (verbflag's Help) prints that verb's
+// help, quoted from the banner with its flags and the exit codes, then the
+// verb's effect, on stdout at exit 0.
+func (t *Tool) help(stdout io.Writer, code *int) {
+	r := recover()
+	if r == nil {
+		return
+	}
+	h, ok := r.(verbflag.Help)
+	if !ok {
+		panic(r)
+	}
+	verbflag.Print(stdout, t.Name, t.Banner(), h.FS)
+	effect := Effect("unstated")
+	for _, v := range t.verbs() {
+		if v.Name == h.FS.Name() && v.Effect != "" {
+			effect = v.Effect
+		}
+	}
+	fmt.Fprintf(stdout, "effect: %s\n", effect)
+	*code = 0
 }
 
 // verbs is the tool's verbs and the version verb every tool has.
 func (t *Tool) verbs() []Verb {
 	return append(append([]Verb(nil), t.Verbs...), Verb{
-		Name:  "version",
-		Usage: "version",
-		Run:   func(*Call) *Out { return Payload(buildinfo.Line(t.Name, t.Stamp)) },
+		Name:   "version",
+		Usage:  "version",
+		Effect: Inspection,
+		Run:    func(*Call) *Out { return Payload(buildinfo.Line(t.Name, t.Stamp)) },
 	})
 }
 
@@ -140,15 +176,23 @@ func (t *Tool) call(v Verb, args []string, stdin io.Reader, stdout, stderr io.Wr
 	f := v.flags()
 	c := &Call{Stdin: stdin, Stdout: stdout, Stderr: stderr, flags: f, given: map[string]bool{}}
 	if err := verbflag.Parse(f.FlagSet, args); err != nil {
-		return t.emit(&v, Refuse(oneline.Cap(err.Error(), oneline.TailBytes)), jsonAsked(f, args), stdout, stderr)
+		return t.emit(&v, Refuse(oneline.Cap(err.Error(), oneline.TailBytes)), !f.prints && verbflag.BoolAsked(args, "json"), stdout, stderr)
 	}
 	f.Visit(func(fl *flag.Flag) { c.given[fl.Name] = true })
 	asJSON := !f.prints && c.Bool("json")
+	// One pass over every rule the verb declared, so one run names every
+	// problem: the required flags, the verb's own checks, --max, arguments.
+	for _, r := range f.required {
+		c.Want(r[0], r[1])
+	}
+	for _, check := range f.checks {
+		check(c)
+	}
 	if f.max && c.Int("max") < 0 {
 		c.Problem(fmt.Sprintf("--max must be zero or more (got %d); 0 lists all", c.Int("max")))
 	}
 	if !f.args && f.NArg() > 0 {
-		c.Problem(fmt.Sprintf("unexpected argument %q; this verb takes flags only", f.Arg(0)))
+		c.Problem(fmt.Sprintf("takes no positional arguments, got %q (flags come before arguments)", f.Arg(0)))
 	}
 	if o := c.Refused(); o != nil {
 		return t.emit(&v, o, asJSON, stdout, stderr)
@@ -176,23 +220,6 @@ func (v Verb) flags() *Flags {
 		f.Bool("json", false, "print the result as one JSON object instead of lines")
 	}
 	return f
-}
-
-// jsonAsked reads --json off the raw arguments, for a refusal that happened
-// before the flag set could say.
-func jsonAsked(f *Flags, args []string) bool {
-	if f.prints {
-		return false
-	}
-	for _, a := range args {
-		if a == "--" {
-			return false
-		}
-		if a == "--json" || a == "-json" || a == "--json=true" || a == "-json=true" {
-			return true
-		}
-	}
-	return false
 }
 
 // emit fills what the tool knows (the verb, the door) and renders o: lines on
@@ -224,7 +251,20 @@ func (t *Tool) emit(v *Verb, o *Out, asJSON bool, stdout, stderr io.Writer) int 
 type Flags struct {
 	*flag.FlagSet
 	max, args, prints bool
+	required          [][2]string
+	checks            []func(c *Call)
 }
+
+// Required declares a string flag the verb cannot run without: empty, it is a
+// problem that says what it wants, named with every other problem at once.
+func (f *Flags) Required(name, wants string) {
+	f.String(name, "", wants+" (required)")
+	f.required = append(f.required, [2]string{name, wants})
+}
+
+// Check adds a rule over the parsed flags (c.Problem, c.Want, c.WantCount),
+// run with the required flags, --max and the arguments before the verb runs.
+func (f *Flags) Check(rule func(c *Call)) { f.checks = append(f.checks, rule) }
 
 // Max adds --max: the items listed before one MORE line stands for the rest.
 func (f *Flags) Max() {

@@ -46,28 +46,23 @@ func cairnTool() *tool.Tool {
 		Name:  "nova-cairn",
 		What:  "optional checkpoints, no memory lifecycle (see docs/SPEC-CAIRN.md)",
 		Stamp: version,
-		How: `The store is plain files named by --store; there is no environment variable and
-no discovery. A note is fsync-durable before success is reported, independently
-of Redis and of any remote. Two shapes are read: this tool's own
-(sessions/<id>.md, entries/, log.jsonl) and one markdown file per session
-directly under the store (<id>.md), appended by hand, where append lands a dated
-"## <stamp> - <entry>" section at the end of the file. Retrying an append with
-the same entry id and the same words succeeds as a duplicate; the same id with
-different words is a conflict. --now stamps a replay (RFC 3339 UTC); the real
-clock in UTC is the default. There is deliberately no seal, consume, delete,
-grade, consolidate or wake verb (SPEC-CAIRN.md's boundary). The four examples
-are one sitting, in order: the open makes ./cairns and the rest read it back.`,
+		How: `The store is plain files under --store, fsync-durable before success; no Redis, remote or discovery.
+It reads its own layout (sessions/, entries/, log.jsonl) or one markdown file per session appended by hand.
+The same entry id with the same words is a duplicate, and with different words a conflict (exit 1).
+--now stamps a replay (RFC 3339 UTC); there is no seal, consume, delete or grade verb (SPEC-CAIRN.md).
+The four examples are one sitting: the open makes ./cairns and the rest read it back.`,
 		ExitTable: "0 ran and passed, 1 ran and failed (conflict), 2 could not run (bad invocation).",
 		Verbs: []tool.Verb{
 			{
 				Name:    "open",
 				Usage:   "open --store <dir> --session <id> [--source <ptr>] --publish <never|manual|deferred|immediate> [--now <rfc3339-utc>]",
 				Example: "open --store ./cairns --session s1 --publish manual",
+				Effect:  tool.LocalWrite,
 				Flags: func(f *tool.Flags) {
 					record(f)
 					f.String("source", "", "where the record points back to; appends with no --source carry it")
-					f.String("publish", "", "publication policy: "+publishes+" (required)")
-					f.String("now", "", "RFC 3339 UTC stamp for tests and replays; default the real clock")
+					f.Required("publish", "the publication policy: "+publishes)
+					now(f)
 				},
 				Run: open,
 			},
@@ -75,14 +70,25 @@ are one sitting, in order: the open makes ./cairns and the rest read it back.`,
 				Name:    "append",
 				Usage:   "append --store <dir> --session <id> --entry <id> (--text <words> | --file <path|->) [--source <ptr>] --publish <never|manual|deferred|immediate> [--now <rfc3339-utc>]",
 				Example: `append --store ./cairns --session s1 --entry e1 --text "the words to keep" --publish manual`,
+				Effect:  tool.LocalWrite,
 				Flags: func(f *tool.Flags) {
 					record(f)
-					f.String("entry", "", "stable entry identifier (required)")
+					f.Required("entry", "the stable entry identifier")
 					f.String("text", "", "the friend's exact words, stored byte for byte; exactly one of --text or --file")
 					f.String("file", "", "file holding the exact words; - reads stdin")
 					f.String("source", "", "where the words came from; recorded, never opened")
-					f.String("publish", "", "publication policy: "+publishes+" (required)")
-					f.String("now", "", "RFC 3339 UTC stamp for tests and replays; default the real clock")
+					f.Required("publish", "the publication policy: "+publishes)
+					now(f)
+					// The words arrive by exactly one road: two roads is two candidates
+					// for "the friend's chosen words", and the tool must not pick.
+					f.Check(func(c *tool.Call) {
+						switch {
+						case c.Given("text") && c.Given("file"):
+							c.Problem("--text and --file both name the words; give exactly one")
+						case !c.Given("text") && !c.Given("file"):
+							c.Problem("the words come from --text or --file; refusing to guess")
+						}
+					})
 				},
 				Run: appendEntry,
 			},
@@ -90,8 +96,9 @@ are one sitting, in order: the open makes ./cairns and the rest read it back.`,
 				Name:    "index",
 				Usage:   "index --store <dir> [--session <id>] [--max <n>]",
 				Example: "index --store ./cairns",
+				Effect:  tool.Inspection,
 				Flags: func(f *tool.Flags) {
-					f.String("store", "", "checkpoint store directory (required)")
+					f.Required("store", "the checkpoint store directory")
 					f.String("session", "", "one session to index; default every record")
 					f.Max()
 				},
@@ -101,9 +108,10 @@ are one sitting, in order: the open makes ./cairns and the rest read it back.`,
 				Name:    "receipt",
 				Usage:   "receipt --store <dir> --session <id> --entry <id>",
 				Example: "receipt --store ./cairns --session s1 --entry e1",
+				Effect:  tool.Inspection,
 				Flags: func(f *tool.Flags) {
 					record(f)
-					f.String("entry", "", "stable entry identifier (required)")
+					f.Required("entry", "the stable entry identifier")
 				},
 				Run: receipt,
 			},
@@ -113,22 +121,28 @@ are one sitting, in order: the open makes ./cairns and the rest read it back.`,
 
 // record declares the two flags every verb that names a record takes.
 func record(f *tool.Flags) {
-	f.String("store", "", "checkpoint store directory (required)")
-	f.String("session", "", "stable session identifier (required)")
+	f.Required("store", "the checkpoint store directory")
+	f.Required("session", "the stable session identifier")
 }
 
-// clock resolves the stamp: the real clock in UTC unless --now names one.
-// --now exists for tests and replays; a masked, local-format or otherwise
+// now declares --now and its rule: a masked, local-format or otherwise
 // unparsable time is a refusal, because a stamp that did not come from a clock
 // (or an explicit replay of one) is how estimates get filed as facts.
+func now(f *tool.Flags) {
+	f.String("now", "", "RFC 3339 UTC stamp for tests and replays; default the real clock")
+	f.Check(func(c *tool.Call) {
+		if _, err := time.Parse(time.RFC3339, strings.TrimSpace(c.Str("now"))); c.Given("now") && err != nil {
+			c.Problem("--now must parse as RFC 3339 UTC (got " + c.Str("now") + "); refusing to guess")
+		}
+	})
+}
+
+// clock is the stamp: the real clock in UTC unless --now (checked) names one.
 func clock(c *tool.Call) time.Time {
 	if !c.Given("now") {
 		return time.Now().UTC()
 	}
-	t, err := time.Parse(time.RFC3339, strings.TrimSpace(c.Str("now")))
-	if err != nil {
-		c.Problem("--now must parse as RFC 3339 UTC (got " + c.Str("now") + "); refusing to guess")
-	}
+	t, _ := time.Parse(time.RFC3339, strings.TrimSpace(c.Str("now")))
 	return t.UTC()
 }
 
@@ -143,13 +157,7 @@ func sourceOf(s string) string {
 }
 
 func open(c *tool.Call) *tool.Out {
-	store := c.Want("store", "the checkpoint store directory")
-	session := c.Want("session", "the stable session identifier")
-	publish := c.Want("publish", "the publication policy: "+publishes)
-	stamp := clock(c)
-	if o := c.Refused(); o != nil {
-		return o
-	}
+	store, session, publish, stamp := c.Str("store"), c.Str("session"), c.Str("publish"), clock(c)
 	if err := cairn.Open(store, session, c.Str("source"), stamp, publish); err != nil {
 		return tool.Refuse(err.Error())
 	}
@@ -162,31 +170,16 @@ func open(c *tool.Call) *tool.Out {
 }
 
 func appendEntry(c *tool.Call) *tool.Out {
-	store := c.Want("store", "the checkpoint store directory")
-	session := c.Want("session", "the stable session identifier")
-	entry := c.Want("entry", "the stable entry identifier")
-	publish := c.Want("publish", "the publication policy: "+publishes)
-	// The words arrive by exactly one road: two roads is two candidates for
-	// "the friend's chosen words", and the tool must not pick between them.
-	words := ""
-	switch {
-	case c.Given("text") && c.Given("file"):
-		c.Problem("--text and --file both name the words; give exactly one")
-	case c.Given("text"):
-		words = c.Str("text")
-	case c.Given("file"):
+	store, session, entry, publish := c.Str("store"), c.Str("session"), c.Str("entry"), c.Str("publish")
+	words := c.Str("text")
+	if c.Given("file") {
 		raw, err := readWords(c.Str("file"), c.Stdin)
 		if err != nil {
-			c.Problem(err.Error())
+			return tool.Refuse(err.Error())
 		}
 		words = string(raw)
-	default:
-		c.Problem("the words come from --text or --file; refusing to guess")
 	}
 	stamp := clock(c)
-	if o := c.Refused(); o != nil {
-		return o
-	}
 	res, err := cairn.Append(store, session, entry, words, c.Str("source"), stamp, publish)
 	var conflict *cairn.ConflictError
 	switch {
@@ -218,10 +211,7 @@ func readWords(name string, stdin io.Reader) ([]byte, error) {
 // index lists every entry; the coverage counts on its first line are never
 // capped, so the total is carried whether or not --max elides entries.
 func index(c *tool.Call) *tool.Out {
-	store := c.Want("store", "the checkpoint store directory")
-	if o := c.Refused(); o != nil {
-		return o
-	}
+	store := c.Str("store")
 	all, total, err := cairn.Index(store, c.Str("session"), 0)
 	if err != nil {
 		return tool.Refuse(err.Error())
@@ -234,13 +224,7 @@ func index(c *tool.Call) *tool.Out {
 }
 
 func receipt(c *tool.Call) *tool.Out {
-	store := c.Want("store", "the checkpoint store directory")
-	session := c.Want("session", "the stable session identifier")
-	entry := c.Want("entry", "the stable entry identifier")
-	if o := c.Refused(); o != nil {
-		return o
-	}
-	rc, err := cairn.Receipt(store, session, entry)
+	rc, err := cairn.Receipt(c.Str("store"), c.Str("session"), c.Str("entry"))
 	if err != nil {
 		return tool.Refuse(err.Error())
 	}

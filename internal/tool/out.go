@@ -35,8 +35,9 @@ var word = map[Status]string{OK: "OK", Failed: "FAIL", Refused: "REFUSED"}
 //	{"result":{"verb","status","exit","remedy","why"},"facts":{},"items":[{"kind","fields"}],
 //	 "more":[{"kind","shown","total","remedy"}],"notes":[],"payload":""}
 //
-// A payload (the version line, a document a program reads) is printed as it is
-// in the text form, and is the "payload" key of the JSON. Values are strings,
+// A payload (the version line, a document a program reads) is printed as it is,
+// last, in the text form, and alone when the result carries nothing else; it is
+// the "payload" key of the JSON. Values are strings,
 // integers or booleans; an empty value is "-" in the text form.
 type Out struct {
 	Verb    string
@@ -115,19 +116,17 @@ func (o *Out) Item(kind string, kv ...any) *Out {
 // capItems keeps the first max items of each kind (0 keeps all) and records a
 // More for each kind with items left over, counted by internal/bounded.
 func (o *Out) capItems(max int) {
-	g := bounded.Grouped(io.Discard, max, "", MaxRemedy)
+	tl := bounded.NewTally(max)
 	kept := o.Items[:0]
 	for _, it := range o.Items {
-		shown := g.Shown()
-		g.Line(it.Kind, "")
-		if g.Shown() > shown {
+		if tl.Add(it.Kind) {
 			kept = append(kept, it)
 		}
 	}
 	o.Items = kept
-	for _, kind := range g.Kinds() {
-		if l := g.List(kind); l.Elided() > 0 {
-			o.More = append(o.More, More{kind, l.Shown(), l.Total(), MaxRemedy})
+	for _, kind := range tl.Kinds() {
+		if tl.Shown(kind) < tl.Total(kind) {
+			o.More = append(o.More, More{kind, tl.Shown(kind), tl.Total(kind), MaxRemedy})
 		}
 	}
 }
@@ -144,9 +143,10 @@ func (o *Out) Render(w io.Writer, asJSON bool) {
 	if token == "" {
 		token = strings.ToUpper(o.Verb)
 	}
-	if o.Payload != "" && o.Status == OK {
-		fmt.Fprintln(w, strings.TrimSuffix(o.Payload, "\n"))
-	} else {
+	// A bare payload is the whole of the text form (the version line); a
+	// payload with anything else beside it prints last, after the lines.
+	bare := o.Payload != "" && o.Status == OK && o.Remedy == "" && len(o.Facts)+len(o.Items)+len(o.Notes) == 0
+	if !bare {
 		head := token + " " + word[o.Status] + o.Facts.text()
 		tail := ""
 		if o.Remedy != "" {
@@ -167,6 +167,9 @@ func (o *Out) Render(w io.Writer, asJSON bool) {
 	}
 	for _, n := range o.Notes {
 		fmt.Fprintln(w, oneline.Field(token)+" NOTE "+oneline.Escape(n))
+	}
+	if o.Payload != "" {
+		fmt.Fprintln(w, strings.TrimSuffix(o.Payload, "\n"))
 	}
 }
 

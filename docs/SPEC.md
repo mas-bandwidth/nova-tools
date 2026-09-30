@@ -142,7 +142,8 @@ The lines are `<TOKEN> OK|FAIL|REFUSED k=v ...` first, then `<TOKEN> <KIND> k=v 
 per item, the MORE line per capped kind, and `<TOKEN> NOTE <text>`; a refusal names
 every problem of the invocation at once, one line each,
 `<TOKEN> REFUSED: <what>; run: <remedy>`. The status follows the exit: ok 0,
-failed 1 (it ran and said no), refused 2 (it could not run).
+failed 1 (it ran and said no), refused 2 (it could not run). `help <verb>` ends
+with the verb's effect: inspection, local write, or delivery.
 
 **An event is exactly one line, and nothing a caller supplies or a file holds
 can add a second.** This is one guarantee, stated once here and met by every

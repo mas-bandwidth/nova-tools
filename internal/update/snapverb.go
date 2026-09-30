@@ -133,15 +133,8 @@ func snapshotVerb(c *tool.Call) *tool.Out {
 	if c.Given("file") {
 		return snapshotAdopted(c.Str("file"))
 	}
-	bin := c.Want("bin", "the directory holding the binaries, for example ./bin")
-	outPath := c.Want("out", "the TSV snapshot to write, for example ./before.tsv")
+	bin, outPath := c.Str("bin"), c.Str("out")
 	timeout, budget := c.Dur("timeout"), c.Dur("budget")
-	if timeout <= 0 || budget <= 0 {
-		c.Problem("invalid bound (use positive --timeout/--budget)")
-	}
-	if o := c.Refused(); o != nil {
-		return o
-	}
 	entries, err := os.ReadDir(bin)
 	if err != nil {
 		return tool.Refuse(fmt.Sprintf("cannot read --bin %s (supply a readable --bin: a directory of nova-* executables)", bin))

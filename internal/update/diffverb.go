@@ -44,11 +44,7 @@ func readSnapshotFile(path string) (map[string]snapRow, error) {
 // diffVerb compares two snapshots: one item per changed binary, and a DIFF OK
 // line that counts the state -- every name on either side -- not the output.
 func diffVerb(c *tool.Call) *tool.Out {
-	from := c.Want("from", "the snapshot to compare from")
-	to := c.Want("to", "the snapshot to compare to")
-	if o := c.Refused(); o != nil {
-		return o
-	}
+	from, to := c.Str("from"), c.Str("to")
 	before, err := readSnapshotFile(from)
 	if err != nil {
 		return tool.Refuse(fmt.Sprintf("cannot read %s as a snapshot (%s) (write one with nova-version snapshot --bin <dir> --out <file.tsv>)", from, err))
@@ -77,8 +73,17 @@ func diffVerb(c *tool.Call) *tool.Out {
 		if inA && inB && a == b {
 			continue
 		}
-		o.Item("changed", "name", n, "from", a.stamp, "to", b.stamp)
+		o.Item("changed", "name", n, "from", stampOrDash(a.stamp, inA), "to", stampOrDash(b.stamp, inB))
 		changed++
 	}
 	return o.Fact("changed", changed)
+}
+
+// stampOrDash is a snapshot row's stamp, or "-" for a name absent on that side:
+// the same value in the lines and in the JSON.
+func stampOrDash(stamp string, present bool) string {
+	if !present {
+		return "-"
+	}
+	return stamp
 }

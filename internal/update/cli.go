@@ -528,17 +528,8 @@ var movedBudget = 60 * time.Second
 // empty diff is three zeros, exit 0, never a refusal (rule 3).
 func movedVerb(c *tool.Call, env Environment) *tool.Out {
 	started := env.Now()
-	from := c.Want("from", "the revision to compare from")
-	to := c.Want("to", "the revision to compare to")
-	repo := c.Want("repo", "the checkout holding both revisions")
-	outPath := c.Want("out", "the path of the note to write")
+	from, to, repo, outPath := c.Str("from"), c.Str("to"), c.Str("repo"), c.Str("out")
 	timeout, budget := c.Dur("timeout"), c.Dur("budget")
-	if timeout <= 0 || budget <= 0 {
-		c.Problem("invalid bound (use positive --timeout/--budget)")
-	}
-	if o := c.Refused(); o != nil {
-		return o
-	}
 	// One deadline per child and one for the run: every git, every go build
 	// and every help hangs off both, through the same bounded process
 	// machinery -- internal/bounded's capture -- the rest of this package
