@@ -46,7 +46,7 @@ internal/bus:assert 1197 bare assertions to convert to testify
 internal/bus:env 1 t.Setenv and Chdir sites to inject through config
 internal/cairn:assert 79 bare assertions to convert to testify
 internal/cardhdr:assert 46 bare assertions to convert to testify
-internal/check:assert 452 bare assertions to convert to testify
+internal/check:assert 419 bare assertions to convert to testify
 internal/check:env 1 t.Setenv and Chdir sites to inject through config
 internal/ci:assert 1302 bare assertions to convert to testify
 internal/ci/allowlist:assert 38 bare assertions to convert to testify
@@ -82,7 +82,6 @@ internal/onboarding:assert 160 bare assertions to convert to testify
 internal/oneline:assert 24 bare assertions to convert to testify
 internal/oneline/audit:assert 1 bare assertions to convert to testify
 internal/record:assert 105 bare assertions to convert to testify
-internal/records:assert 494 bare assertions to convert to testify
 internal/redisconn:assert 289 bare assertions to convert to testify
 internal/redisfn:assert 289 bare assertions to convert to testify
 internal/release:assert 584 bare assertions to convert to testify
@@ -108,7 +107,7 @@ internal/testredis:assert 434 bare assertions to convert to testify
 internal/testverbhelp:assert 2 bare assertions to convert to testify
 internal/textbody:assert 5 bare assertions to convert to testify
 internal/tlc:assert 222 bare assertions to convert to testify
-internal/tokens:assert 707 bare assertions to convert to testify
+internal/tokens:assert 164 bare assertions to convert to testify
 internal/tool:assert 16 bare assertions to convert to testify
 internal/tty:assert 6 bare assertions to convert to testify
 internal/typedrec:assert 39 bare assertions to convert to testify

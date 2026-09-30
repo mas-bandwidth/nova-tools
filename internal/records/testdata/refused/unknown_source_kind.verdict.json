@@ -1,5 +1,0 @@
-{
-  "field": "body.source.kind",
-  "rule": "unknown_source_kind",
-  "verdict": "refused"
-}

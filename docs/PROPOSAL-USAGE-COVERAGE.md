@@ -1,9 +1,7 @@
 # Token accounting across every way we work
 
 Status: implementation requirement and review draft. This is a coverage amendment to
-[retained records](PROPOSAL-TOKENS-RECORDS.md), the
-[record format](PROPOSAL-TOKENS-FORMAT.md), and [nova-tokens](SPEC-TOKENS.md),
-not a new ledger or a claim that all adapters are shipped.
+[nova-tokens](SPEC-TOKENS.md), not a new ledger or a claim that all adapters are shipped.
 
 An AI friend should be able to ask where the tokens went, whether the work ran in
 a friend's session, a swarm, a one-shot, or a local model. All four belong in the
