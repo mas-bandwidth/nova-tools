@@ -337,13 +337,7 @@ func Ack(ctx context.Context, e *Env, req AckReq) (Result, error) {
 	for round := 0; ; round++ {
 		n := need
 		res, err = e.Do(ctx, Planned{Verb: verb, Op: req.Op, Args: args, Read: ackRead(notes, n),
-			Plan: func(rd *sprintfn.ReadReply) (Part, error) {
-				req, err := ackPlan(notes, req.Reason, rd, n)
-				if err != nil || req == nil {
-					return Part{}, err
-				}
-				return Part{Req: req}, nil
-			}})
+			Plan: stepPlan(func(rd *sprintfn.ReadReply) (*sprintfn.Request, error) { return ackPlan(notes, req.Reason, rd, n) })})
 		trips += res.Trips
 		retries += res.Retries
 		var nm *needMore
@@ -557,24 +551,24 @@ func Wait(ctx context.Context, e *Env, req WaitReq) (Result, error) {
 	args := map[string]any{"notes": notes, "reason": req.Reason, "for_ms": strconv.FormatInt(d, 10)}
 	res, err := e.Do(ctx, Planned{Verb: verb, Op: req.Op, Args: args,
 		Read: notesRead(notes, sprintfn.KeyQ{Kind: sprintfn.KeyClock}),
-		Plan: func(rd *sprintfn.ReadReply) (Part, error) {
+		Plan: stepPlan(func(rd *sprintfn.ReadReply) (*sprintfn.Request, error) {
 			n := len(jnoteQueries(notesAt(notes, rd.Epoch)))
 			items, err := noteItems(rd, 0, n)
 			if err != nil {
-				return Part{}, err
+				return nil, err
 			}
 			js, err := judged(verb, notes, rd, items)
 			if err != nil {
-				return Part{}, err
+				return nil, err
 			}
 			c, _, err := clockOf(rd, n)
 			if err != nil {
-				return Part{}, err
+				return nil, err
 			}
 			r, err1 := strconv.ParseInt(c.R, 10, 64)
 			wall, err2 := strconv.ParseInt(c.WallMS, 10, 64)
 			if err1 != nil || err2 != nil {
-				return Part{}, fmt.Errorf("wait: the clock's R %q or wall %q is not a number", c.R, c.WallMS)
+				return nil, fmt.Errorf("wait: the clock's R %q or wall %q is not a number", c.R, c.WallMS)
 			}
 			step := &sprintfn.Request{}
 			for _, j := range js {
@@ -586,16 +580,16 @@ func Wait(ctx context.Context, e *Env, req WaitReq) (Result, error) {
 					at = wall // 1.3.4: the STOPPED judgment's hold is wall time
 				}
 				if at > jUntilMax-d {
-					return Part{}, refuseLocal(verb, sprintfn.CodeRequest, "--for %s is past the latest time a hold may name", req.For)
+					return nil, refuseLocal(verb, sprintfn.CodeRequest, "--for %s is past the latest time a hold may name", req.For)
 				}
 				step.Body.Notes = append(step.Body.Notes, sprintfn.NoteReq{Op: sprintfn.JOpHold, Type: j.item.Type, Cause: j.item.Cause,
 					Subjects: append([]string(nil), j.open...), Text: "wait: " + req.Reason, Until: at + d})
 			}
 			if len(step.Body.Notes) == 0 {
-				return Part{}, nil
+				return nil, nil
 			}
-			return Part{Req: step}, nil
-		}})
+			return step, nil
+		})})
 	if err == nil && !res.Replay && res.Said == "" {
 		res.Said = fmt.Sprintf("wait: %d notes wait %s", len(notes), req.For)
 		if res.Step == nil {

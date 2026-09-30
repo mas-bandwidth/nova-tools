@@ -4,7 +4,6 @@ import (
 	"container/list"
 	"encoding/json"
 	"fmt"
-	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -105,11 +104,10 @@ var xClockFields = []string{xClockStopped, xClockSince, xClockStopHold, xClockDu
 //	            (init --coordinator, 3).
 //	stranger    Member: the machine. {p}strangers[Member] is not yet noticed
 //	            (2.3, R1).
-//	sent        Key: "sent:<stream> <max>", max a score (a decimal, "(" before
-//	            it for an open bound). No sentinel of the stream is placed at
-//	            or below max: S.zguard(sent:<stream>, rcount, -inf, max,
-//	            atmost 0) over {p}sprint:sent:<stream>@e (2.3, R3's release
-//	            and R6's deal).
+//	setguard    Key: a sprint.SetGuard of kind zguard as JSON. The count of
+//	            the index's members within Min and Max is held within AtLeast
+//	            and AtMost, or RANGECOUNT: S.zguard (2.3, R3's release and R6's
+//	            deal as S.zguard(sent:<stream>, rcount, -inf, max, atmost 0)).
 //	version     Key: a table. Score: its version in {p}tver@e as read, 0 for
 //	            none (errata 3 H17: R17's guard on the cards of each table its
 //	            dry plans read; X moves the version on every step that changes
@@ -127,30 +125,17 @@ const (
 	XGuardClock       = "clock"
 	XGuardCoordinator = "coordinator"
 	XGuardStranger    = "stranger"
-	XGuardSent        = "sent"
-	XGuardCounter     = "counter"
-	XGuardVersion     = "version"
-	XGuardSet         = "setguard"
+	// XGuardSet is a set guard over a sprint index (IT08's sprint.SetGuard of
+	// kind zguard, its JSON the Key): Layer 1's S.zguard, the count of the
+	// index's members within Min and Max held within AtLeast and AtMost, or
+	// RANGECOUNT (a race). Added by IT19: an add's ready cards are guarded by
+	// S.zguard(sent:s, rcount, -inf, the highest score admitted, atmost 0)
+	// (1.5.4), and R3's release by the same (2.3). A SetGuard of kind rcount is
+	// Layer 1's own entry, never an XGuard.
+	XGuardSet     = "setguard"
+	XGuardCounter = "counter"
+	XGuardVersion = "version"
 )
-
-// xSentBound is the score grammar of a sent guard's max: a decimal, with an
-// exponent of at most two digits, "(" before it for an open bound. The Lua's
-// sent_bound reads the same (TestXSentAndCounterGuardsAgree).
-var xSentBound = regexp.MustCompile(`^\(?-?[0-9]+(\.[0-9]+)?([eE][+-]?[0-9]{1,2})?$`)
-
-// xSentKey is a sent guard's key as its stream and max: "sent:<stream> <max>",
-// the stream a name with no blank, the max a score of xSentBound.
-func xSentKey(key string) (stream, max string, ok bool) {
-	rest, ok := strings.CutPrefix(key, "sent:")
-	if !ok {
-		return "", "", false
-	}
-	stream, max, ok = strings.Cut(rest, " ")
-	if !ok || stream == "" || strings.ContainsAny(stream, " @") || !xSentBound.MatchString(max) {
-		return "", "", false
-	}
-	return stream, max, true
-}
 
 // XGuardAbsent is the Score of a due or clock guard over an entry or field
 // that was absent (or empty) when the plan read it. No running or wall time is
@@ -200,10 +185,11 @@ const xStashMax = 4096
 // xCoordinatorVerbs are the verbs the design names as the coordinator's, which
 // X refuses from any actor but {p}coordinator (NOTCOORD): release (0, row 43),
 // ack and wait (2.2: "Judgments are the coordinator's"), accept and rework
-// (3: "as R9, by the coordinator", "as R10, by the coordinator"). The design
-// gives no complete list; this is the narrower reading, listed as an open
-// question.
-var xCoordinatorVerbs = map[string]bool{"release": true, "ack": true, "wait": true, "accept": true, "rework": true}
+// (3: "as R9, by the coordinator", "as R10, by the coordinator"), and inbox
+// --read, which moves the coordinator's cursor (section 3, inbox: "the cursor
+// (--read)"). The design gives no complete list; this is the narrower reading,
+// listed as an open question.
+var xCoordinatorVerbs = map[string]bool{"release": true, "ack": true, "wait": true, "accept": true, "rework": true, "inbox --read": true}
 
 // xStreamTables are the tables whose rows are streams: a card placed in one of
 // them is in the stream its row names (1.3.1). Every other card names its
@@ -1016,9 +1002,9 @@ func xCheckShape(req *Request) *Refusal {
 				return bad("a clock guard names %q, which is not a clock field, or a score that is neither a time nor XGuardAbsent", g.Key)
 			}
 		case XGuardCoordinator:
-		case XGuardSent:
-			if _, _, ok := xSentKey(g.Key); !ok {
-				return bad("a sent guard's key %q is not sent:<stream> <max>", g.Key)
+		case XGuardSet:
+			if _, ok := xSetGuardOf(g); !ok {
+				return bad("a set guard is not a zguard over a sprint index with bounds and a count: %q", g.Key)
 			}
 		case XGuardVersion:
 			if g.Key == "" || strings.ContainsAny(g.Key, " \t\n\v\f\r@") || g.Score < 0 || g.Score > xVersionMax {
@@ -1027,10 +1013,6 @@ func xCheckShape(req *Request) *Refusal {
 		case XGuardCounter:
 			if (g.Key != xFieldNextScore && g.Key != xFieldNextStream) || g.Score < 0 {
 				return bad("a counter guard names %q, which is not score or streams, or a value below zero", g.Key)
-			}
-		case XGuardSet:
-			if _, ok := xSetGuardOf(g); !ok {
-				return bad("a set guard is not a zguard over a sprint index with bounds and a count: %q", g.Key)
 			}
 		default:
 			return bad("%q is not a kind of guard", g.Kind)
@@ -1156,14 +1138,22 @@ func xGuard(r *xRead, st *State, g XGuard, obs *Before, clock xClockState) *Refu
 		if ok && got == xNoticed {
 			return fail("machine %s has been noticed already", g.Member)
 		}
-	case XGuardSent:
-		stream, max, _ := xSentKey(g.Key)
-		n, ref := r.zcount(r.at("sent:"+stream), "-inf", max)
-		if ref != nil {
+	case XGuardSet:
+		sg, _ := xSetGuardOf(g)
+		key := r.at(sg.Key)
+		r.probes++
+		if ref := r.wrongType(key, kindZSet); ref != nil {
 			return ref
 		}
-		if n > 0 {
-			return fail("a sentinel of %s is placed at or below %s since the read", stream, max)
+		n := 0
+		for _, p := range r.k.ks.zpairs(key) {
+			if inBounds(p.score, sg.Min, sg.Max) {
+				n++
+			}
+		}
+		if sg.AtLeast != nil && n < *sg.AtLeast || sg.AtMost != nil && n > *sg.AtMost {
+			return xRefuse("RANGECOUNT", RefusalDetail{RefusalDetail: tset.RefusalDetail{Cells: []string{key}}},
+				"RANGECOUNT: %s holds %d members in [%s, %s] since the read", sg.Key, n, sg.Min, sg.Max)
 		}
 	case XGuardVersion:
 		stored, ref := r.hmget(r.at(xKeyVersion), []string{g.Key})
@@ -1190,30 +1180,13 @@ func xGuard(r *xRead, st *State, g XGuard, obs *Before, clock xClockState) *Refu
 		if want := strconv.FormatInt(g.Score, 10); got != want {
 			return fail("the counter's %s is %s now, read as %s", g.Key, got, want)
 		}
-	case XGuardSet:
-		sg, _ := xSetGuardOf(g)
-		key := r.at(sg.Key)
-		r.probes++
-		if ref := r.wrongType(key, kindZSet); ref != nil {
-			return ref
-		}
-		n := 0
-		for _, p := range r.k.ks.zpairs(key) {
-			if inBounds(p.score, sg.Min, sg.Max) {
-				n++
-			}
-		}
-		if sg.AtLeast != nil && n < *sg.AtLeast || sg.AtMost != nil && n > *sg.AtMost {
-			return xRefuse("RANGECOUNT", RefusalDetail{RefusalDetail: tset.RefusalDetail{Cells: []string{key}}},
-				"RANGECOUNT: %s holds %d members in [%s, %s] since the read", sg.Key, n, sg.Min, sg.Max)
-		}
 	}
 	return nil
 }
 
 // xSetIndexes are the sprint indexes a set guard may count (1.3.1): the four
 // indexes of a stream.
-var xSetIndexes = []string{"sent", "elig", "fresh", "again"}
+var xSetIndexes = []string{sprint.IndexSent, sprint.IndexElig, sprint.IndexFresh, sprint.IndexAgain}
 
 // xSetCountMax is the largest count bound of a set guard: 2^53 - 1, the
 // largest integer the Lua's numbers hold exactly.

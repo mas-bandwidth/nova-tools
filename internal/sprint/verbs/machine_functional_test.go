@@ -47,7 +47,7 @@ func TestMachineVerbsOnAStore(t *testing.T) {
 	if defined, err := Define(ctx, lc, storeNames, build); err != nil || defined {
 		t.Fatalf("define again: %v, defined %v; want EXISTS, taken as defined", err, defined)
 	}
-	c, err := sprintfn.NewRedis(addr, "", "", storeNames)
+	c, err := sprintfn.NewRedis(addr, "", "", storeNames, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

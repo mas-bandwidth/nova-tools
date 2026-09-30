@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/sprintfn"
@@ -15,11 +14,6 @@ import (
 // The merger's verbs of section 3 (item IT21): merge, one stream's batch with
 // its facts, and resume, a set of stopped streams moved again. Each is one
 // step through Env.Do: two round trips.
-
-// IdleSpan is how long a stream with open cards may land nothing before R11
-// says so (1.2, `idle:<stream>`: R + IdleSpan at each landing of one of its
-// cards; section 2.5: 2 h, the owner's value, section 7).
-const IdleSpan = 2 * time.Hour
 
 // The work table's open cells, in the order a drop drains them (1.5.4).
 var openCols = []string{sprint.Waiting, sprint.Ready, sprint.Working, sprint.Review, sprint.Merging}
@@ -57,7 +51,7 @@ const (
 // queued cell, in work order (one stream by nature: its batch is one stream's
 // queue), and the facts the merger gives. With no fact the batch lands: each
 // merge card queued -> merged, each primary merging -> landed, and the control
-// card's ci green, moved, and due_idle = R + IdleSpan (1.2); the stream
+// card's ci green, moved, and due_idle = R + sprint.IdleSpan (1.2); the stream
 // landed when every open card of it has, waiting when nothing is queued or
 // stuck after the batch (due_mergeidle unset), else merging with
 // due_mergeidle = R + 30 min; KNOW "batch landed", and "stream landed". A fact
@@ -130,20 +124,16 @@ func Merge(ctx context.Context, e *Env, req MergeReq) (Result, error) {
 		"suspects": append([]string{}, req.Suspects...), "rejected": req.Rejected, "note": req.Note}
 	return e.Do(ctx, Planned{Verb: verb, Op: req.Op, Args: args,
 		Read: func(epoch tset.Decimal) *sprintfn.ReadRequest { return vr.readAt(e.Names, epoch, &failed) },
-		Plan: func(rd *sprintfn.ReadReply) (Part, error) {
+		Plan: stepPlan(func(rd *sprintfn.ReadReply) (*sprintfn.Request, error) {
 			if failed != nil {
-				return Part{}, failed
+				return nil, failed
 			}
 			va, err := vr.load(rd)
 			if err != nil {
-				return Part{}, err
+				return nil, err
 			}
-			req, err := planMerge(verb, va, req, other)
-			if err != nil {
-				return Part{}, err
-			}
-			return Part{Req: req}, nil
-		}})
+			return planMerge(verb, va, req, other)
+		})})
 }
 
 // rangeIDs is the ids a range of the verb's plan answered, by its index.
@@ -301,7 +291,7 @@ func planMerge(verb string, va *verbAnswer, req MergeReq, other string) (*sprint
 			b.move(sprint.Work, pr, sprint.Landed, map[string]string{"ci": "green", "landed": wall})
 		}
 		landing := len(batch)
-		ctlSet["ci"], ctlSet["moved"], ctlSet["due_idle"] = "green", wall, dueAt(now, IdleSpan)
+		ctlSet["ci"], ctlSet["moved"], ctlSet["due_idle"] = "green", wall, dueAt(now, sprint.IdleSpan)
 		var unset []string
 		landed := false
 		switch {
@@ -318,7 +308,7 @@ func planMerge(verb string, va *verbAnswer, req MergeReq, other string) (*sprint
 			if started {
 				ctlSet["since"] = wall
 			}
-			ctlSet["due_mergeidle"] = dueAt(now, mergeIdleSpan) // a merge step moves the idle deadline
+			ctlSet["due_mergeidle"] = dueAt(now, sprint.MergeIdleSpan) // a merge step moves the idle deadline
 		}
 		b.move(sprint.Merge, ctl, "", ctlSet, unset...)
 		if started {
@@ -394,13 +384,13 @@ func Resume(ctx context.Context, e *Env, req ResumeReq) (Result, error) {
 	var failed error
 	return e.Do(ctx, Planned{Verb: verb, Op: req.Op, Args: map[string]any{"streams": streams, "did": req.Did},
 		Read: func(epoch tset.Decimal) *sprintfn.ReadRequest { return vr.readAt(e.Names, epoch, &failed) },
-		Plan: func(rd *sprintfn.ReadReply) (Part, error) {
+		Plan: stepPlan(func(rd *sprintfn.ReadReply) (*sprintfn.Request, error) {
 			if failed != nil {
-				return Part{}, failed
+				return nil, failed
 			}
 			va, err := vr.load(rd)
 			if err != nil {
-				return Part{}, err
+				return nil, err
 			}
 			snap, now := va.snap, va.now
 			counts := countsOf(va, 0)
@@ -442,7 +432,7 @@ func Resume(ctx context.Context, e *Env, req ResumeReq) (Result, error) {
 				set := map[string]string{"since": wallStamp(now)}
 				unset := []string{"cause", "card", "other"}
 				if len(stuck)+counts[i] > 0 {
-					set["state"], set["due_mergeidle"] = sprint.StreamMerging, dueAt(now, mergeIdleSpan)
+					set["state"], set["due_mergeidle"] = sprint.StreamMerging, dueAt(now, sprint.MergeIdleSpan)
 				} else {
 					set["state"] = sprint.StreamWaiting
 					unset = append(unset, "due_mergeidle")
@@ -456,12 +446,12 @@ func Resume(ctx context.Context, e *Env, req ResumeReq) (Result, error) {
 				}
 			}
 			if len(refused) != 0 {
-				return Part{}, refusedIDs(verb, refused)
+				return nil, refusedIDs(verb, refused)
 			}
 			entries, err := b.entries()
 			if err != nil {
-				return Part{}, err
+				return nil, err
 			}
-			return Part{Req: &sprintfn.Request{Meta: sprintfn.Meta{Verb: verb}, Body: sprintfn.Body{Entries: entries, Notes: notes}}}, nil
-		}})
+			return &sprintfn.Request{Meta: sprintfn.Meta{Verb: verb}, Body: sprintfn.Body{Entries: entries, Notes: notes}}, nil
+		})})
 }

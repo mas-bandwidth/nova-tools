@@ -184,14 +184,14 @@ func TestInboxComputedGroups(t *testing.T) {
 	}
 }
 
-// TestInboxReadRefused: inbox --read is refused until the write path carries
-// the coordinator's cursor, and nothing is read.
-func TestInboxReadRefused(t *testing.T) {
+// TestInboxReadWithWaitRefused: inbox --read and --wait are two calls, and
+// nothing is read.
+func TestInboxReadWithWaitRefused(t *testing.T) {
 	t.Parallel()
 	w := newJRWorld(t)
 	w.cc.Reset()
-	if _, err := Inbox(context.Background(), w.env, InboxReq{Read: true}); codeOf(err) != sprintfn.CodeRequest || w.cc.Trips() != 0 {
-		t.Fatalf("inbox --read: %v after %d round trips, want a local REQUEST", err, w.cc.Trips())
+	if _, err := Inbox(context.Background(), w.env, InboxReq{Read: true, Wait: newJRWaiter().wait(time.Hour)}); codeOf(err) != sprintfn.CodeRequest || w.cc.Trips() != 0 {
+		t.Fatalf("inbox --read --wait: %v after %d round trips, want a local REQUEST", err, w.cc.Trips())
 	}
 }
 

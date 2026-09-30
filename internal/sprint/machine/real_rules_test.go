@@ -182,7 +182,7 @@ func realRuleResolve(t *testing.T, w *world) {
 	}
 	reqs := w.applyReal(l, "resolve", rp)
 	first := reqs[0].Body
-	if !hasGuardKind(first.Guards, sprintfn.XGuardSent) || !hasEntryKind(first.Entries, "rcount") {
+	if !hasGuardKind(first.Guards, sprintfn.XGuardSet) || !hasEntryKind(first.Entries, "rcount") {
 		t.Fatalf("R3's guards as the store checks them: %+v %+v", first.Guards, first.Entries)
 	}
 	if got := w.place("p1"); got != "s1:ready" {
@@ -218,7 +218,7 @@ func realRuleDeal(t *testing.T, w *world) {
 		t.Fatalf("the deal planned %d units: %+v", len(rp.Plan.Units), rp)
 	}
 	reqs := w.applyReal(l, "deal", rp)
-	if b := reqs[0].Body; !hasGuardKind(b.Guards, sprintfn.XGuardSent) || !hasEntryKind(b.Entries, "count") {
+	if b := reqs[0].Body; !hasGuardKind(b.Guards, sprintfn.XGuardSet) || !hasEntryKind(b.Entries, "count") {
 		t.Fatalf("R6's guards as the store checks them: %+v %+v", b.Guards, b.Entries)
 	}
 	for _, p := range []string{"p1", "p2"} {
@@ -228,10 +228,11 @@ func realRuleDeal(t *testing.T, w *world) {
 	}
 }
 
-// TestRealRuleDoneApplies (R15, 2.3): with every card of s1 landed, "the sprint
-// is done" opens on the sprint under a Layer 1 rcount entry of the open cells
-// and X's counter guard on next.streams; read again, jopen:sprint says it is
-// open and R15 plans nothing; with a card added, it closes (gaps a, d, e).
+// TestRealRuleDoneApplies (R15, 2.3; errata 3 amendment 6): with every card
+// of s1 landed, "the sprint is done" is a KNOW for the coordinator under a
+// Layer 1 rcount entry of the open cells and X's counter guard on
+// next.streams, and the same step stops the machine (the clock part's stop):
+// no judgment opens on the sprint. With a card added, R15 writes nothing.
 func TestRealRuleDoneApplies(t *testing.T) {
 	t.Parallel()
 	realRuleDone(t, newWorld(t))
@@ -245,28 +246,29 @@ func realRuleDone(t *testing.T, w *world) {
 	l := w.leased()
 	done := realRule(t, "done")
 	rp := w.planReal(done, keyOf("done"))
-	if n := noteOf(rp, "open", sprint.NSprintDone); n == nil || n.Cause != sprint.SprintDoneCause {
-		t.Fatalf("the sprint is done: %+v", rp.Notes)
+	if n := noteOf(rp, "know", sprint.NSprintDone); n == nil || !rp.Stop {
+		t.Fatalf("the sprint is done: %+v, stop %v", rp.Notes, rp.Stop)
+	}
+	if running := w.hash("clock")["stopped_ms"]; running != "" {
+		t.Fatalf("the world's machine is not running: %v", w.hash("clock"))
 	}
 	reqs := w.applyReal(l, "done", rp)
 	if b := reqs[0].Body; !hasGuardKind(b.Guards, sprintfn.XGuardCounter) || !hasEntryKind(b.Entries, "rcount") {
 		t.Fatalf("R15's guards as the store checks them: %+v %+v", b.Guards, b.Entries)
 	}
-	field := sprint.NSprintDone + "|" + sprint.SprintDoneCause
-	if v := w.hash("jopen:" + sprint.SprintSubject + "@0")[field]; !strings.HasPrefix(v, "n") {
-		t.Fatalf("jopen of the sprint: %v", w.hash("jopen:"+sprint.SprintSubject+"@0"))
+	if last := reqs[len(reqs)-1]; last.Clock == nil || last.Clock.Verb != sprintfn.ClockStop {
+		t.Fatalf("R15's step does not stop the machine: %+v", last.Clock)
 	}
-	if again := w.planReal(done, keyOf("done")); len(again.Notes) != 0 {
-		t.Fatalf("R15 read its open judgment and wrote again: %+v", again.Notes)
+	if stopped := w.hash("clock")["stopped_ms"]; stopped == "" {
+		t.Fatalf("the machine runs after the sprint is done: %v", w.hash("clock"))
+	}
+	field := sprint.NSprintDone + "|" + sprint.SprintDoneCause
+	if _, open := w.hash("jopen:" + sprint.SprintSubject + "@0")[field]; open {
+		t.Fatalf("a judgment opened on the sprint: %v", w.hash("jopen:"+sprint.SprintSubject+"@0"))
 	}
 	w.verb(create("s1:waiting", waiting(), "p9"))
-	rp = w.planReal(done, keyOf("done"))
-	if n := noteOf(rp, "close", sprint.NSprintDone); n == nil {
-		t.Fatalf("work was added: %+v", rp.Notes)
-	}
-	w.applyReal(l, "done", rp)
-	if _, open := w.hash("jopen:" + sprint.SprintSubject + "@0")[field]; open {
-		t.Fatalf("the judgment is still open: %v", w.hash("jopen:"+sprint.SprintSubject+"@0"))
+	if rp = w.planReal(done, keyOf("done")); len(rp.Notes) != 0 || rp.Stop {
+		t.Fatalf("work was added: %+v, stop %v", rp.Notes, rp.Stop)
 	}
 }
 

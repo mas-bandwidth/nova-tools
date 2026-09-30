@@ -146,9 +146,11 @@ const (
 //     cells (1.3.6: "a count guard names many cells in one entry");
 //   - a SetGuard of kind rcount (R3's reach and unreach, R15's done): a Layer
 //     1 rcount entry, as it is;
-//   - R6's rcount on sent:s and a SetGuard of kind zguard on sent:<s> from
-//     -inf with at most 0 (R3's release): X's sent guard, S.zguard over
-//     {p}sprint:sent:<s>@e (sprintfn.XGuardSent);
+//   - a SetGuard of kind zguard with a count bound (R3's release, the add's
+//     ready guard) and R6's rcount on sent:s ("sent:<s> <max>", made
+//     S.zguard(sent:s, rcount, -inf, max, atmost 0)): X's set guard, S.zguard
+//     over the index's key {p}sprint:<index>@e (sprintfn.XGuardSet, IT19's; the
+//     one kind X has for a zguard);
 //   - counter (R15's COUNTER on next.streams, R17's score and streams): X's
 //     counter guard on the field of {p}next@e (sprintfn.XGuardCounter). A
 //     counter is a sprint key, not a card, so no Layer 1 entry can guard it;
@@ -193,8 +195,8 @@ func convertGuards(rp sprint.RulePlan) ([]tset.Entry, []sprint.XGuard, error) {
 				e.AtMost = ptrUint(*g.AtMost)
 			}
 			entries = append(entries, e)
-		case g.Kind == sprint.GuardZGuard && strings.HasPrefix(g.Key, "sent:") && g.Min == "-inf" && g.AtLeast == nil && g.AtMost != nil && *g.AtMost == 0:
-			guards = append(guards, sprint.XGuard{Kind: sprintfn.XGuardSent, Key: g.Key + " " + g.Max})
+		case g.Kind == sprint.GuardZGuard && (g.AtLeast != nil || g.AtMost != nil):
+			guards = append(guards, g.XGuard())
 		default:
 			return nil, nil, notCarried("a set guard of kind %s on %q, which neither Layer 1 nor X checks", g.Kind, g.Key+strings.Join(g.Cells, ","))
 		}
@@ -209,7 +211,11 @@ func convertGuards(rp sprint.RulePlan) ([]tset.Entry, []sprint.XGuard, error) {
 			count.Cells = append(count.Cells, g.Key)
 			count.CountMax = append(count.CountMax, uint64(max(g.Score, 0)))
 		case guardRCount:
-			guards = append(guards, sprint.XGuard{Kind: sprintfn.XGuardSent, Key: g.Key})
+			sent, most, ok := strings.Cut(g.Key, " ")
+			if !ok || !strings.HasPrefix(sent, "sent:") {
+				return nil, nil, fmt.Errorf("R6's rcount %q is not sent:<s> <max>", g.Key)
+			}
+			guards = append(guards, sprint.SetGuard{Kind: sprint.GuardZGuard, Key: sent, Min: "-inf", Max: most, AtMost: ptrInt(0)}.XGuard())
 		case guardCounter:
 			var field string
 			switch g.Key {
@@ -530,3 +536,5 @@ func TimePart(w sprint.TimeWrites) *sprintfn.SprintPart {
 	}
 	return sp
 }
+
+func ptrInt(n int) *int { return &n }

@@ -13,6 +13,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint/machine"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/sprintfn"
 	spverbs "github.com/mas-bandwidth/nova-tools/internal/sprint/verbs"
 )
@@ -27,9 +28,12 @@ import (
 // (1.3.5).
 //
 // The switch: app.newPath selects this path for every verb run through the
-// command's entry point (app.run), the driver's included. It is false in an
-// ordinary build until the verb items IT17 and IT19 to IT22 are in the table;
-// the tests set it.
+// command's entry point (app.run), the driver's included. It is on: newApp
+// sets it, and every verb of the table calls its item's function.
+//
+// There is no prefix (the grammar decisions of IT23): the tables are work,
+// merge, readers and fleet and the view is sprint, and Layer 1's namespace is
+// pathNames, a constant the user never names.
 
 // Exit codes of the new path (8.1, IT23).
 const (
@@ -39,8 +43,9 @@ const (
 )
 
 // codeNotOnNewPath is the refusal of a verb the table names and whose item
-// has not landed: local, nothing sent. It is the command's own code and never
-// reaches the store.
+// has not landed (check, remove, teardown, repair, resolve, fleet level):
+// local, nothing sent. It is the command's own code and never reaches the
+// store.
 const codeNotOnNewPath = "NOTONNEWPATH"
 
 // The machine's state words, as the present start and stop print them.
@@ -83,10 +88,11 @@ func (u *usageError) Error() string { return u.why }
 func usage(format string, args ...any) error { return &usageError{why: fmt.Sprintf(format, args...)} }
 
 // exitOf is a verb's exit code from its error (8.1, IT23; 1.3.5): 0 done; 3
-// when the store refused the step with a bug code; 2 for every other refusal
-// (the verb's own from its read, a race past its retries, a usage refusal),
-// for an outcome the store did not confirm (spverbs.Unknown), and for a store
-// that did not answer.
+// when the store refused the step with a bug code, and for a write the store
+// did not confirm (spverbs.Unknown: the store did not answer, a bug class; the
+// grammar decisions, 26); 2 for every other refusal (the verb's own from its
+// read, a race past its retries, a usage refusal), and for a store that could
+// not be reached before anything was sent.
 func exitOf(err error) int {
 	if err == nil {
 		return exitDone
@@ -95,13 +101,18 @@ func exitOf(err error) int {
 	if errors.As(err, &rf) && !rf.Local && !spverbs.IsRace(rf.Code()) && bugCodes[rf.Code()] {
 		return exitBug
 	}
+	var un *spverbs.Unknown
+	if errors.As(err, &un) {
+		return exitBug
+	}
 	return exitRefused
 }
 
 // newPathClient is the production client of the new path: sprintfn.NewRedis
 // at the address, with the login the present command dials with
 // (NOVA_SPRINT_REDIS_USER, and the variable NOVA_SPRINT_REDIS_PASSWORD_ENV
-// names, else NOVA_REDIS_BENCH_PASSWORD).
+// names, else NOVA_REDIS_BENCH_PASSWORD), and this build's library, which the
+// client checks the store's against before its first call (decision 30).
 func (a *app) newPathClient(_ context.Context, addr string, names sprint.Names) (sprintfn.Client, func() error, error) {
 	user, passwordEnv := a.getenv(redisauth.UserEnv), ""
 	if user != "" {
@@ -110,7 +121,7 @@ func (a *app) newPathClient(_ context.Context, addr string, names sprint.Names) 
 			passwordEnv = redisauth.DefaultPasswordEnv
 		}
 	}
-	r, err := sprintfn.NewRedis(addr, user, passwordEnv, names)
+	r, err := sprintfn.NewRedis(addr, user, passwordEnv, names, a.library)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -130,24 +141,29 @@ func newPathConfig(ctx context.Context, dsn string) (spverbs.ConfigRows, func() 
 }
 
 // newPathState is what one process keeps of the new path between the verbs
-// it runs (the driver runs many): the clients, opened once per address and
-// prefix, and the epoch each last saw, so a verb after a clear plans at the
-// new epoch without a first read at the old one.
+// it runs (the driver runs many): the clients, opened once per address, the
+// epoch each last saw, so a verb after a clear plans at the new epoch without
+// a first read at the old one, and the run loop's owner token and memory, so
+// the process's ticks go on from each other (IT17).
 type newPathState struct {
-	clients map[string]sprintfn.Client
-	epochs  map[string]uint64
-	closers []func() error
+	clients    map[string]sprintfn.Client
+	lifecycles map[string]lifecycleHandle
+	epochs     map[string]uint64
+	closers    []func() error
+	owner      string
+	loop       *machine.Loop
 }
 
 func (a *app) pathState() *newPathState {
 	if a.np == nil {
-		a.np = &newPathState{clients: map[string]sprintfn.Client{}, epochs: map[string]uint64{}}
+		a.np = &newPathState{clients: map[string]sprintfn.Client{}, lifecycles: map[string]lifecycleHandle{}, epochs: map[string]uint64{}}
 	}
 	return a.np
 }
 
 // env is the verbs' Env for a verb run with the common flags c: the client
-// at --redis, the actor, and the epoch the caller holds (--epoch), else the
+// at --redis, the actor, and the epoch the caller holds (--epoch: with no
+// --op the verb is refused when the sprint has left it, Env.Held), else the
 // one this process last saw, else 0 (the verb's first read names the active
 // epoch, AL2).
 func (a *app) env(ctx context.Context, c common, class string) (*spverbs.Env, string, error) {
@@ -179,6 +195,7 @@ func (a *app) env(ctx context.Context, c common, class string) (*spverbs.Env, st
 	e := &spverbs.Env{C: cl, Names: names, Actor: c.actor, Epoch: ps.epochs[key]}
 	if c.epoch >= 0 {
 		e.Epoch = uint64(c.epoch)
+		e.Held = c.op == ""
 	}
 	return e, key, nil
 }
@@ -263,6 +280,7 @@ func (a *app) dispatch(v newVerb, args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "%s %s: %s\n", prog, v.name, oneline.Escape(err.Error()))
 		return exitRefused
 	}
+	p.out = stdout
 	res, err := v.call(ctx, e, p)
 	if err == nil || res.EpochAfter > 0 || res.Epoch > 0 {
 		a.pathState().epochs[key] = e.Epoch
@@ -271,27 +289,52 @@ func (a *app) dispatch(v newVerb, args []string, stdout, stderr io.Writer) int {
 	if errors.As(err, &u) {
 		return refuse(stderr, v.name, err.Error())
 	}
-	return render(v, p, res, err, stdout, stderr)
+	code := render(v, p, res, err, stdout, stderr)
+	if code == exitDone && !p.c.json && v.writes {
+		writeSprintLine(ctx, e, res, stdout)
+	}
+	if code == exitBug {
+		judgeBug(ctx, e, err, stderr)
+	}
+	return code
+}
+
+// judgeBug writes the judgment of a verb's step the store refused with a bug
+// code (1.3.5: the verb "prints it as an error (exit 3) and writes the same
+// judgment, so the coordinator sees it whoever ran the verb"; the grammar
+// decisions, 31), and says so, or says why it could not. An unconfirmed write
+// (spverbs.Unknown) exits 3 with no refusal to name, and writes none.
+func judgeBug(ctx context.Context, e *spverbs.Env, err error, stderr io.Writer) {
+	var rf *spverbs.Refused
+	if !errors.As(err, &rf) || rf.Local {
+		return
+	}
+	if _, jerr := spverbs.StepRefused(ctx, e, rf); jerr != nil {
+		fmt.Fprintf(stderr, "%s %s: the judgment \"the machine's step was refused\" was not written: %s\n", prog, rf.Verb, oneline.Escape(jerr.Error()))
+		return
+	}
+	fmt.Fprintf(stderr, "%s %s: judgment \"the machine's step was refused\" open on %s, cause %s\n", prog, rf.Verb, rf.Verb, rf.Code())
 }
 
 // newOut is a verb's report for a program: the present report's fields
 // (verb, op, moved, refused, notes, attempts, replay, error, unknown; and
 // start's and stop's before, after and changed), then the new path's own.
-// moved and refused are always lists, as the present --json prints them; the
-// new path's Result carries no per-card lists yet, so they are empty.
+// moved and refused are always lists, as the present --json prints them,
+// from the Result's totals over the parts (IT18).
 type newOut struct {
-	Verb     string           `json:"verb"`
-	Op       string           `json:"op,omitempty"`
-	Moved    []string         `json:"moved"`
-	Refused  []sprint.Refusal `json:"refused"`
-	Notes    int              `json:"notes"`
-	Attempts int              `json:"attempts"`
-	Replay   bool             `json:"replay,omitempty"`
-	Error    string           `json:"error,omitempty"`
-	Unknown  bool             `json:"unknown,omitempty"`
-	Before   string           `json:"before,omitempty"`
-	After    string           `json:"after,omitempty"`
-	Changed  *bool            `json:"changed,omitempty"`
+	Verb       string           `json:"verb"`
+	Op         string           `json:"op,omitempty"`
+	Moved      []string         `json:"moved"`
+	Refused    []sprint.Refusal `json:"refused"`
+	NotWritten []string         `json:"notwritten,omitempty"`
+	Notes      int              `json:"notes"`
+	Attempts   int              `json:"attempts"`
+	Replay     bool             `json:"replay,omitempty"`
+	Error      string           `json:"error,omitempty"`
+	Unknown    bool             `json:"unknown,omitempty"`
+	Before     string           `json:"before,omitempty"`
+	After      string           `json:"after,omitempty"`
+	Changed    *bool            `json:"changed,omitempty"`
 
 	Code       string `json:"code,omitempty"`
 	Epoch      uint64 `json:"epoch"`
@@ -329,19 +372,36 @@ func machineStates(verb string, err error) (before, after string, changed bool, 
 }
 
 // render prints a verb's result, as the present verbs print theirs: with
-// --json one object on stdout; else its token line (OK on stdout, FAIL on
-// stderr), its one line, and on an error the error on stderr. The exit code
-// is exitOf's.
+// --json one object on stdout (a read verb's view, else newOut); else the ids
+// it moved, refused and did not write (IT18's ReportIDs: MOVED on stdout,
+// REFUSED and NOTWRITTEN on stderr), its token line (OK on stdout, FAIL on
+// stderr) with the counts, its one line, and on an error the error on
+// stderr. The exit code is exitOf's. start while running and stop while
+// stopped are done, not refused: the line says the machine is so already
+// (the grammar decisions, 27).
 func render(v newVerb, p *parsed, res spverbs.Result, err error, stdout, stderr io.Writer) int {
+	before, after, changed, isClock := machineStates(v.name, err)
+	if isClock && !changed {
+		err = nil // already so: a hand driver is not wrong for asking twice
+	}
 	code := exitOf(err)
 	var rf *spverbs.Refused
 	var un *spverbs.Unknown
 	isRefused, isUnknown := errors.As(err, &rf), errors.As(err, &un)
 	if p.c.json {
-		o := newOut{Verb: v.name, Op: res.Op, Moved: []string{}, Refused: []sprint.Refusal{}, Attempts: 1 + res.Retries,
-			Replay: res.Replay, Unknown: isUnknown, Epoch: res.Epoch, EpochAfter: res.EpochAfter, Parts: res.Parts,
+		if p.view != nil && err == nil {
+			b, _ := json.Marshal(p.view)
+			fmt.Fprintln(stdout, string(b))
+			return code
+		}
+		o := newOut{Verb: v.name, Op: res.Op, Moved: []string{}, Refused: []sprint.Refusal{}, NotWritten: res.NotWritten, Notes: res.Notes,
+			Attempts: 1 + res.Retries, Replay: res.Replay, Unknown: isUnknown, Epoch: res.Epoch, EpochAfter: res.EpochAfter, Parts: res.Parts,
 			Resumed: res.Resumed, Retries: res.Retries, Trips: res.Trips, Recorded: res.Recorded, Said: res.Said, Exit: code}
-		if before, after, changed, ok := machineStates(v.name, err); ok {
+		o.Moved = append(o.Moved, res.Moved...)
+		for _, r := range res.Refused {
+			o.Refused = append(o.Refused, sprint.Refusal{Key: r.ID, Why: strings.TrimSpace(r.Code + " " + r.Why)})
+		}
+		if isClock {
 			o.Before, o.After, o.Changed = before, after, &changed
 		}
 		if err != nil {
@@ -357,8 +417,19 @@ func render(v newVerb, p *parsed, res spverbs.Result, err error, stdout, stderr 
 		fmt.Fprintln(stdout, string(b))
 		return code
 	}
-	var fields []string
-	if before, after, changed, ok := machineStates(v.name, err); ok {
+	if err == nil && !v.writes && res.Said != "" {
+		// A read verb prints what it read, as the present reads do.
+		for _, l := range strings.Split(strings.TrimRight(res.Said, "\n"), "\n") {
+			fmt.Fprintln(stdout, oneline.Escape(l))
+		}
+		return code
+	}
+	spverbs.ReportIDs(stdout, stderr, res, p.c.max, v.name)
+	fields := []string{fmt.Sprintf("moved=%d refused=%d notes=%d", len(res.Moved), len(res.Refused), res.Notes)}
+	if len(res.NotWritten) > 0 {
+		fields = append(fields, fmt.Sprintf("notwritten=%d", len(res.NotWritten)))
+	}
+	if isClock {
 		fields = append(fields, "before="+before, "after="+after)
 		if changed {
 			fields = append(fields, "changed")
@@ -409,8 +480,14 @@ func render(v newVerb, p *parsed, res spverbs.Result, err error, stdout, stderr 
 		fmt.Fprintf(stderr, "%s %s: %s\n", prog, v.name, oneline.Escape(err.Error()))
 		return code
 	}
+	if isClock && !changed {
+		fmt.Fprintf(stdout, "%s: the machine is %s already; nothing was written\n", v.name, after)
+		return code
+	}
 	if res.Said != "" {
-		fmt.Fprintln(stdout, oneline.Escape(res.Said))
+		for _, l := range strings.Split(res.Said, "\n") {
+			fmt.Fprintln(stdout, oneline.Escape(l))
+		}
 	}
 	return code
 }

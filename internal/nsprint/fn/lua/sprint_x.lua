@@ -38,7 +38,7 @@ do
   -- The clock's fields, in 1.2's order (sprintfn clockFields).
   local CLOCK_FIELDS = {'stopped_ms', 'stopped_since_ms', 'stophold_ms', 'due_since_ms', 'stopraised_ms'}
   -- The verbs the design names as the coordinator's (sprintfn xCoordinatorVerbs).
-  local COORD_VERBS = {release = true, ack = true, wait = true, accept = true, rework = true}
+  local COORD_VERBS = {release = true, ack = true, wait = true, accept = true, rework = true, ['inbox --read'] = true}
   -- Tables whose rows are streams (sprintfn streamTables).
   local STREAM_TABLES = {work = true, merge = true}
   -- The most members of one command (L1 1.4 pieces; sprint.IndexPiece).
@@ -454,25 +454,29 @@ do
   -- a counter change that sets a field it did not read, or a score that is not a
   -- whole number; an agenda key that names nothing, or that one step both finishes
   -- and requeues.
-  -- A sent guard's max (sprintfn xSentBound): a decimal, an exponent of at most
-  -- two digits, "(" before it for an open bound.
-  local function sent_bound(b)
-    if string.sub(b, 1, 1) == '(' then b = string.sub(b, 2) end
-    local mant, exp = string.match(b, '^(-?[%d.]+)(.*)$')
-    if mant == nil then return false end
-    if not (string.match(mant, '^-?%d+$') or string.match(mant, '^-?%d+%.%d+$')) then return false end
-    return exp == '' or string.match(exp, '^[eE][+-]?%d%d?$') ~= nil
-  end
-  -- A sent guard's key as its stream and max (sprintfn xSentKey): "sent:<stream>
-  -- <max>", the stream a name with no blank or @; nil when it is not one.
-  local function sent_key(key)
-    if type(key) ~= 'string' or string.sub(key, 1, 5) ~= 'sent:' then return nil end
-    local rest = string.sub(key, 6)
-    local i = string.find(rest, ' ', 1, true)
-    if i == nil then return nil end
-    local stream, max = string.sub(rest, 1, i - 1), string.sub(rest, i + 1)
-    if stream == '' or string.find(stream, '[ @]') or not sent_bound(max) then return nil end
-    return stream, max
+  -- set_guard_of is a set guard's own shape (sprintfn xSetGuardOf; IT19): the JSON
+  -- of a sprint.SetGuard of kind zguard over a stream's sent, elig, fresh or again,
+  -- its bounds in the store's grammar and at least one count bound, each at most
+  -- 2^53 - 1, and no other field. nil otherwise.
+  local function set_guard_of(key)
+    local ok, g = pcall(cjson.decode, key)
+    if not ok or type(g) ~= 'table' or g.kind ~= 'zguard' or type(g.key) ~= 'string' then return nil end
+    local idx, stream = string.match(g.key, '^(%a+):(.+)$')
+    if not (idx == 'sent' or idx == 'elig' or idx == 'fresh' or idx == 'again') then return nil end
+    if #stream > 128 or not string.match(stream, '^[%w_][%w_%-]*$') then return nil end
+    if type(g.min) ~= 'string' or type(g.max) ~= 'string' or not S().bound(g.min) or not S().bound(g.max) then return nil end
+    for k in pairs(g) do
+      if k ~= 'kind' and k ~= 'key' and k ~= 'min' and k ~= 'max' and k ~= 'atleast' and k ~= 'atmost' then return nil end
+    end
+    local lo, hi = g.atleast, g.atmost
+    if lo == cjson.null then lo = nil end
+    if hi == cjson.null then hi = nil end
+    if lo == nil and hi == nil then return nil end
+    for _, v in ipairs({lo or 0, hi or 0}) do
+      if type(v) ~= 'number' or v < 0 or v ~= math.floor(v) or v > 9007199254740991 then return nil end
+    end
+    if lo ~= nil and hi ~= nil and lo > hi then return nil end
+    return {key = g.key, min = g.min, max = g.max, atleast = lo, atmost = hi}
   end
 
   -- set_guard_of is a set guard's own shape (sprintfn xSetGuardOf; IT19): the JSON
@@ -515,8 +519,8 @@ do
         local known = false
         for _, f in ipairs(CLOCK_FIELDS) do known = known or f == key end
         if not known or (score < 0 and score ~= ABSENT) then return bad('a clock guard names %q, which is not a clock field, or a score that is neither a time nor XGuardAbsent', key) end
-      elseif k == 'sent' then
-        if sent_key(key) == nil then return bad('a sent guard\'s key %q is not sent:<stream> <max>', key) end
+      elseif k == 'setguard' then
+        if set_guard_of(key) == nil then return bad('a set guard is not a zguard over a sprint index with bounds and a count: %q', key) end
       elseif k == 'counter' then
         if (key ~= 'score' and key ~= 'streams') or score < 0 then
           return bad('a counter guard names %q, which is not score or streams, or a value below zero', key)
@@ -692,15 +696,11 @@ do
       local vals, err = hmget(ctx, skey(ctx, KEY_STRANGERS), {g.member})
       if err then return err end
       if vals[g.member] == NOTICED then return fail('machine %s has been noticed already', g.member) end
-    elseif k == 'sent' then
-      -- Layer 1's S.zguard over the stream's sentinel index: RANGECOUNT when a
-      -- sentinel is placed at or below max, which is X's XGUARD here.
-      local stream, max = sent_key(g.key)
-      local _, err = S().zguard(ctx, ekey(ctx, 'sent:' .. stream, e), {kind = 'rcount', min = '-inf', max = max, atmost = 0})
-      if err then
-        if err.code == 'RANGECOUNT' then return fail('a sentinel of %s is placed at or below %s since the read', stream, max) end
-        return err
-      end
+    elseif k == 'setguard' then
+      -- Layer 1's S.zguard over the index (1.5.4, 2.3 R3): RANGECOUNT when the count moved.
+      local sg = set_guard_of(g.key)
+      local _, err = S().zguard(ctx, ekey(ctx, sg.key, e), {kind = 'rcount', min = sg.min, max = sg.max, atleast = sg.atleast, atmost = sg.atmost})
+      if err then return err end
     elseif k == 'counter' then
       local vals, err = hmget(ctx, ekey(ctx, KEY_NEXT, e), {g.key})
       if err then return err end
@@ -1017,8 +1017,15 @@ do
     local s = S()
     local plan = {commands = {}}
     local poison = {commands = {{}}}
+    -- why X.plan could not derive, for the core's refusal to say (the core
+    -- refuses the step REQUEST before prepare, naming it; the poisoned plan is
+    -- refused REQUEST by S.prepare were it ever sent)
+    local function poisoned(why)
+      ctx.x_poisoned = why
+      return poison
+    end
     local x = ctx.x
-    if x == nil or x.sp == nil then return poison end
+    if x == nil or x.sp == nil then return poisoned('X.pre did not run before X.plan') end
     local sp = x.sp
     local e = ctx.write_epoch
     local function stage(command, key, kind, args)
@@ -1035,10 +1042,10 @@ do
           local before
           if rec and rec.exists then
             local missing = unobserved(rec)
-            if #missing > 0 then return poison end
+            if #missing > 0 then return poisoned('the fields ' .. table.concat(missing, ',') .. ' of ' .. pe.table .. ' card ' .. id .. ' were not observed') end
             local cerr
             before, cerr = card_of(pe.table, id, rec, fields_of(rec))
-            if cerr then return poison end
+            if cerr then return poisoned('the card ' .. id .. ' of ' .. pe.table .. ' cannot be read: ' .. tostring(cerr) .. '') end
           end
           local fc = pe.field_changes[j] or {}
           local fields = {}
@@ -1048,9 +1055,9 @@ do
           local after = {table = pe.table, id = id, row = '', col = '', score = 0, fields = fields}
           if pe.kind ~= 'remove' and not is_null(pe.to) then
             local row, col = s.cell(pe.to)
-            if not row then return poison end
+            if not row then return poisoned('an entry places ' .. id .. ' in no cell') end
             local score = tonumber(pe.after_scores[j])
-            if score == nil then return poison end
+            if score == nil then return poisoned('an entry gives ' .. id .. ' no score') end
             after.row, after.col, after.score = row, col, score
           end
           local ch = {before = before, after = after}
@@ -1059,19 +1066,19 @@ do
       end
     end
     local ops, err = fold(changes)
-    if err then return poison end
+    if err then return poisoned('the index changes cannot be folded: ' .. tostring(err) .. '') end
     -- A quarantined card is given no membership but sent, and leaves every index its
     -- change ends it in (1.3.2; I1, D1): folded once, not a card at a time.
     local qops, qerr = fold(quarantined, true)
-    if qerr then return poison end
+    if qerr then return poisoned('the index changes of the quarantine cannot be folded: ' .. tostring(qerr) .. '') end
     for _, o in ipairs(qops) do ops[#ops + 1] = o end
     for _, o in ipairs(ops) do
       local key = ctx.space .. 'sprint:' .. key_name(o.index, o.arg) .. '@' .. e
-      if #o.rem > 0 and not stage('ZREM', key, 'zset', o.rem) then return poison end
+      if #o.rem > 0 and not stage('ZREM', key, 'zset', o.rem) then return poisoned('an index removal cannot be staged') end
       if #o.add > 0 then
         local args = {}
         for _, a in ipairs(o.add) do args[#args + 1] = score_text(a.score); args[#args + 1] = a.member end
-        if not stage('ZADD', key, 'zset', args) then return poison end
+        if not stage('ZADD', key, 'zset', args) then return poisoned('an index addition cannot be staged') end
       end
     end
 
@@ -1100,10 +1107,10 @@ do
       for _, stream in ipairs(streams) do
         local ids = sorted_unique(by_stream[stream])
         for _, index in ipairs({'elig', 'fresh', 'again'}) do
-          if not zrem_pieces(ctx.space .. 'sprint:' .. index .. ':' .. stream .. '@' .. e, ids) then return poison end
+          if not zrem_pieces(ctx.space .. 'sprint:' .. index .. ':' .. stream .. '@' .. e, ids) then return poisoned('the index removals of the quarantine cannot be staged') end
         end
       end
-      if not zrem_pieces(ekey(ctx, KEY_ASKWAIT, e), sorted_unique(all)) then return poison end
+      if not zrem_pieces(ekey(ctx, KEY_ASKWAIT, e), sorted_unique(all)) then return poisoned('the askwait removals of the quarantine cannot be staged') end
     end
 
     -- The agenda: a requeued key is added before the key it continues is removed
@@ -1116,7 +1123,7 @@ do
       for i = 1, #keys, PIECE do
         local args = {}
         for j = i, math.min(i + PIECE - 1, #keys) do args[#args + 1] = score_text(x.requeue[keys[j]]); args[#args + 1] = keys[j] end
-        if not stage('ZADD', ekey(ctx, queue, e), 'zset', args) then return poison end
+        if not stage('ZADD', ekey(ctx, queue, e), 'zset', args) then return poisoned('an agenda key cannot be requeued') end
       end
     end
     local parked = {}
@@ -1126,7 +1133,7 @@ do
       if parked[k] == nil then table.insert(by_queue[queue_of(k)], k) end
     end
     for _, queue in ipairs({KEY_AGENDA, KEY_HELDQ}) do
-      if not zrem_pieces(ekey(ctx, queue, e), by_queue[queue]) then return poison end
+      if not zrem_pieces(ekey(ctx, queue, e), by_queue[queue]) then return poisoned('an agenda key cannot be removed') end
     end
     -- each table a card of which the plan changes, one version on (errata 3 H17):
     -- x_pre read the version of every table the step could change
@@ -1144,8 +1151,15 @@ do
         nchanged = nchanged - 1
       end
     end
-    if nchanged ~= 0 then return poison end
-    if #args > 0 and not stage('HSET', ekey(ctx, KEY_VERSION, e), 'hash', args) then return poison end
+    if nchanged ~= 0 then return poisoned('the tables the plan changes are not the tables X.pre read the versions of') end
+    if #args > 0 and not stage('HSET', ekey(ctx, KEY_VERSION, e), 'hash', args) then return poisoned('the versions cannot be staged') end
+    -- the derive phase's commands on wait:<n> and missing (SP.intent_commands,
+    -- sprint_intents.lua), last, as the twin's UseIntents ends XCmds with them:
+    -- a step with a need (add --needs, a waitfor) stages them, and the core
+    -- refuses a step that leaves them behind
+    if SP.intent_commands then
+      for _, d in ipairs(SP.intent_commands(ctx)) do plan.commands[#plan.commands + 1] = d end
+    end
     return plan
   end
 

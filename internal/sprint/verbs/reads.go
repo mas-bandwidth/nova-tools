@@ -66,16 +66,20 @@ const InboxPage = 100
 const inboxNoticeLines = 1000
 
 // InboxReq is inbox's request: the cursor after which notices are listed, and
-// the page of open notes (0 is InboxPage). Read is --read, which moves the
-// cursor: refused until the write path carries it. Wait is --wait, which
-// blocks on the notification stream for the first judgment after the cursor
-// (inboxWait).
+// the page of open notes (0 is InboxPage). After is the caller's own cursor
+// (--after); Stored says the cursor is the coordinator's, the one on the
+// sprint (inbox_cursor.go), and After is not read. Read is --read, which
+// moves the stored cursor to the last line shown, in a step of its own after
+// the read (it reads from the stored cursor whatever After says). Wait is
+// --wait, which blocks on the notification stream for the next tick-end note
+// after the cursor, one wake a tick (inboxWait; errata 3 amendment 8).
 type InboxReq struct {
-	After uint64
-	Limit int
-	Read  bool
-	Wait  *InboxWait
-	Out   *InboxView
+	After  uint64
+	Stored bool
+	Limit  int
+	Read   bool
+	Wait   *InboxWait
+	Out    *InboxView
 }
 
 // InboxView is the inbox as a program reads it, in the command's JSON shape
@@ -93,6 +97,11 @@ type InboxView struct {
 	Machine     string         `json:"machine"`
 	More        bool           `json:"more,omitempty"`
 	NoticesMore bool           `json:"notices_more,omitempty"`
+	// Woke and Judgments are inbox --wait's: it woke on a tick-end note,
+	// whose count of items for the coordinator is Judgments (errata 3
+	// amendment 8).
+	Woke      bool `json:"woke,omitempty"`
+	Judgments int  `json:"judgments,omitempty"`
 }
 
 // semanticLine is an item of a lines or cardlines page as the verbs read and
@@ -164,12 +173,24 @@ func (l noteLine) at() time.Time {
 // a decision whose condition reads a card is left out.
 func Inbox(ctx context.Context, e *Env, req InboxReq) (Result, error) {
 	const verb = "inbox"
+	if req.Read && req.Wait != nil {
+		return Result{Verb: verb}, refuseLocal(verb, sprintfn.CodeRequest, "inbox --read and --wait are two calls: wait, then read")
+	}
 	if req.Read {
-		return Result{Verb: verb}, refuseLocal(verb, sprintfn.CodeRequest,
-			"inbox --read moves the coordinator's cursor, and the write path has no part that writes it yet (IT16's sprint part carries no inbox cursor)")
+		req.Stored = true
 	}
 	if req.Wait != nil {
 		return inboxWait(ctx, e, req)
+	}
+	var pre Result
+	if req.Stored {
+		// The lines the inbox reads start after the cursor, so the cursor is
+		// read first: one more trip than an own cursor takes.
+		c, r, err := storedCursor(ctx, e, verb)
+		if err != nil {
+			return r, err
+		}
+		req.After, pre = c, r
 	}
 	limit := req.Limit
 	if limit <= 0 || limit > InboxPage {
@@ -255,10 +276,25 @@ func Inbox(ctx context.Context, e *Env, req InboxReq) (Result, error) {
 	if v.Groups == nil {
 		v.Groups = []sprint.Group{}
 	}
+	res.Trips += pre.Trips
+	res.Said = inboxText(v)
+	if req.Read {
+		to := req.After
+		if v.Last != "" {
+			to, _ = strconv.ParseUint(v.Last, 10, 64)
+		}
+		moved, err := moveCursor(ctx, e, res.Epoch, to)
+		res.Trips += moved.Trips
+		res.Retries += moved.Retries
+		res.Step = moved.Step
+		if err != nil {
+			return res, err
+		}
+		res.Said += moved.Said
+	}
 	if req.Out != nil {
 		*req.Out = v
 	}
-	res.Said = inboxText(v)
 	return res, nil
 }
 
@@ -285,11 +321,6 @@ func judgmentGroups(ids []string, rd *sprintfn.ReadReply) ([]sprint.Group, error
 		}
 	}
 	return groupLines(ids, lines), nil
-}
-
-// groupOfLine is one judgment note as a group of its own (inbox --wait).
-func groupOfLine(id string, l noteLine) sprint.Group {
-	return groupLines([]string{id}, []noteLine{l})[0]
 }
 
 // groupLines groups judgment notes' lines by type and cause (judgmentGroups).
@@ -519,6 +550,7 @@ type WhereMachine struct {
 	Dropping  map[string]string `json:"dropping"`
 	DropCount int               `json:"dropping_count"`
 }
+
 
 
 // The fields the view reads of a control card: a stream's (merge's text

@@ -55,6 +55,9 @@ const (
 	fieldRCards  = "rcards"  // a primary's read cards, a comma list
 	fieldNeeds   = "needs"   // a card's needs, a comma list
 	fieldMember  = "member"  // the member a card names
+	fieldPrimary = "primary" // the primary a card of a member's cells names (FollowPrimary)
+	fieldKind    = "kind"    // a card's kind: work, or sentinel (needchain's place in line)
+	kindSentinel = "sentinel"
 )
 
 // The bounds of one query's own reads (L1 6, 7).
@@ -638,6 +641,8 @@ func fieldUnion(fields, follow []string, extra ...string) []string {
 			add(fieldNeeds)
 		case sprint.FollowMember:
 			add(fieldMember)
+		case sprint.FollowPrimary:
+			add(fieldPrimary)
 		}
 	}
 	sort.Strings(out)
@@ -732,6 +737,10 @@ func (e *qeval) followTargets(follow, table string, r Record) ([]followTarget, *
 	case sprint.FollowMember:
 		if m := recordField(r, fieldMember); m != "" {
 			return []followTarget{{sprint.Fleet, sprint.CtlID(m)}}, nil
+		}
+	case sprint.FollowPrimary:
+		if p := recordField(r, fieldPrimary); p != "" {
+			return []followTarget{{sprint.Work, p}}, nil
 		}
 	}
 	return nil, nil
@@ -835,6 +844,10 @@ func (e *qeval) follows(table string, recs []Record, follow, fields []string, le
 		case sprint.FollowMember:
 			if r.Exists {
 				f.Member = append(f.Member, r)
+			}
+		case sprint.FollowPrimary:
+			if r.Exists {
+				f.Primary = append(f.Primary, r)
 			}
 		}
 	}
@@ -1184,7 +1197,7 @@ func sourceSize(src sprint.IDSource) (n, probes int) {
 func followProbes(follow []string) (perRecord, targets int) {
 	for _, f := range follow {
 		switch f {
-		case sprint.FollowWork, sprint.FollowWithdrawn, sprint.FollowMerge, sprint.FollowControl, sprint.FollowMember:
+		case sprint.FollowWork, sprint.FollowWithdrawn, sprint.FollowMerge, sprint.FollowControl, sprint.FollowMember, sprint.FollowPrimary:
 			targets++
 		case sprint.FollowRCards:
 			targets += followMaxRCards
@@ -1263,12 +1276,15 @@ func queryProbes(q sprint.SprintQ) int {
 		// a stuck cell's row and range and the quarantine of its ids, for each stream
 		return 1 + 2*unitsOf(q) + unitsOf(q)*(2+q.Limit)
 	case sprint.QueryFleet, sprint.QueryReaders:
-		// the rows' head, the quarantine of the control cards, and a cell's count
-		// for each column of each row
-		return 1 + unitsOf(q) + unitsOf(q)*maxTableColumns
+		// the rows' head, the quarantine of the control cards, a cell's count
+		// for each column of each row, and a cell for each property named (one
+		// HMGET of the table's property hash)
+		return 1 + unitsOf(q) + unitsOf(q)*maxTableColumns + len(q.Props)
 	case sprint.QueryNeedchain:
-		// the quarantine of the source's ids, and of every need of every card read
-		return found + n + q.Limit*followMaxNeeds
+		// the quarantine of the source's ids, and of every need of every card
+		// read; for each card read its place read, and the quarantine of the ids
+		// the place reads return (at most the limit in all)
+		return found + n + q.Limit*followMaxNeeds + 2*q.Limit
 	case sprint.QueryJnote:
 		// for each note the quarantine of its subjects, and for each an HLEN and an
 		// HMGET of its own field

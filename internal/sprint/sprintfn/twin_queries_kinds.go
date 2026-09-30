@@ -649,7 +649,12 @@ func (e *qeval) listing(q sprint.SprintQ) (ListingResult, *Refusal) {
 	}
 	res.LeftOut = left.ids()
 	if len(q.Props) > 0 {
-		// the table properties the query names, read with the listing
+		// the table properties the query names, read with the listing: one
+		// HMGET of the table's property hash, a cell for each name (the Lua's
+		// S.read_probe)
+		if ref := e.probes(len(q.Props)); ref != nil {
+			return res, ref
+		}
 		ans, ref := e.memRead([]tset.ReadQuery{{Kind: "props", Table: table, Names: q.Props}})
 		if ref != nil {
 			return res, ref
@@ -662,8 +667,15 @@ func (e *qeval) listing(q sprint.SprintQ) (ListingResult, *Refusal) {
 // needchain walks the needs reachable from the ids through open waiting cards,
 // breadth first, reading each card once, up to the query's limit of records.
 // A card is expanded when it exists and waits (is in the work table's waiting
-// cell); its needs are the ids of its `needs` field. Cut says cards remained
-// to read when the limit was reached. Quarantined ids are left out.
+// cell). What it waits for (errata 3 amendment 7) is the ids of its `needs`
+// field and its place in line: a sentinel waits for the waiting cards of its
+// stream before it, and any other card for the stream's open sentinels before
+// it (sent:<s>, below its score). Those are the edges of cycle.go's graph, the
+// rank interval taken whole back to the stream's head: a card before the
+// sentinel before it is needed through that sentinel, so the cards reached are
+// the same. The place reads take at most the query's limit of ids in all.
+// Cut says cards remained to read when the limit was reached, or a place read
+// was cut. Quarantined ids are left out.
 func (e *qeval) needchain(q sprint.SprintQ) (NeedchainResult, *Refusal) {
 	res := NeedchainResult{Kind: q.Kind, Items: []ChainItem{}, LeftOut: []string{}}
 	var left leftOut
@@ -684,13 +696,14 @@ func (e *qeval) needchain(q sprint.SprintQ) (NeedchainResult, *Refusal) {
 		visited[id], start[id] = true, true
 	}
 	read := 0
+	placeLeft, placeCut := q.Limit, false
 	for len(frontier) > 0 && read < q.Limit {
 		batch := frontier
 		if room := q.Limit - read; len(batch) > room {
 			batch = frontier[:room]
 		}
 		rest := frontier[len(batch):]
-		recs, ref := e.records(sprint.Work, batch, fieldUnion(q.Fields, nil, fieldNeeds))
+		recs, ref := e.records(sprint.Work, batch, fieldUnion(q.Fields, nil, fieldNeeds, fieldKind))
 		if ref != nil {
 			return res, ref
 		}
@@ -716,6 +729,18 @@ func (e *qeval) needchain(q sprint.SprintQ) (NeedchainResult, *Refusal) {
 							next = append(next, n)
 						}
 					}
+					place, cut, ref := e.placeNeeds(r, placeLeft)
+					if ref != nil {
+						return res, ref
+					}
+					placeLeft -= len(place)
+					placeCut = placeCut || cut
+					for _, n := range place {
+						if !visited[n] {
+							visited[n] = true
+							next = append(next, n)
+						}
+					}
 				}
 			}
 			res.Items = append(res.Items, it)
@@ -726,8 +751,36 @@ func (e *qeval) needchain(q sprint.SprintQ) (NeedchainResult, *Refusal) {
 		}
 		frontier = append(append([]string{}, rest...), next...)
 	}
-	res.Cut, res.LeftOut = len(frontier) > 0, left.ids()
+	res.Cut, res.LeftOut = len(frontier) > 0 || placeCut, left.ids()
 	return res, nil
+}
+
+// placeNeeds is what a waiting card waits for by its place in line (errata 3
+// amendment 7): for a sentinel, the waiting cards of its stream below its
+// score; for another card, the stream's open sentinels below its score (the
+// sentinel index sent:<s>). One range read of at most left ids, a probe and
+// the ids it returns; cut when the range held more, or nothing is left.
+func (e *qeval) placeNeeds(r Record, left int) (ids []string, cut bool, ref *Refusal) {
+	if r.Score == "" {
+		return nil, false, nil
+	}
+	if left <= 0 {
+		return nil, true, nil
+	}
+	below := "(" + r.Score
+	if recordField(r, fieldKind) == kindSentinel {
+		if ref = e.probe(); ref != nil {
+			return nil, false, ref
+		}
+		ans, ref := e.memRead([]tset.ReadQuery{{Kind: "range", Table: sprint.Work, Cell: r.Place.Row + ":" + sprint.Waiting, Min: "-inf", Max: below, Limit: left}})
+		if ref != nil {
+			return nil, false, ref
+		}
+		ids = nonNilStrings(ans[0].IDs)
+		return ids, ans[0].HasMore, e.rangeIDs(len(ids))
+	}
+	ids, _, more, ref := e.rangeHead(e.key("sent:"+r.Place.Row), "-inf", below, left)
+	return ids, more, ref
 }
 
 // noteSeq is the seq of a note's id, n<seq> with the epoch suffix ~<epoch> of a

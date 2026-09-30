@@ -69,13 +69,46 @@ func readRequest(names sprint.Names, epoch tset.Decimal, rp sprint.ReadPlan) (*s
 		rr.Tset = append(rr.Tset, q)
 	}
 	for _, q := range rp.Sprint {
-		w, ref := sprintfn.EncodeSprintQ(q)
+		var w sprintfn.SprintQuery
+		var ref *sprintfn.Refusal
+		if q.Kind == sprint.QueryBeat {
+			// the beat read is a sprint-key read (sprintfn KeyBeat): one ZMSCORE
+			// of the due set for the members named
+			w, ref = sprintfn.EncodeKeyQ(sprintfn.KeyQ{Kind: sprintfn.KeyBeat, IDs: q.Source.IDs})
+		} else {
+			w, ref = sprintfn.EncodeSprintQ(q)
+		}
 		if ref != nil {
 			return nil, ref
 		}
 		rr.Sprint = append(rr.Sprint, w)
 	}
 	return rr, nil
+}
+
+// beatAnswer is the beat read's reply as sprint.QueryBeat's answer: a KeyAnswer
+// for each member named whose beat entry is in the due set, with its score.
+func beatAnswer(q sprint.SprintQ, raw []byte) (sprint.Answer, error) {
+	res, err := sprintfn.DecodeResult(sprintfn.KeyBeat, raw)
+	if err != nil {
+		return sprint.Answer{}, err
+	}
+	b, ok := res.(sprintfn.BeatResult)
+	if !ok || len(b.Scores) != len(q.Source.IDs) {
+		return sprint.Answer{}, fmt.Errorf("machine: the beat read of %d members answered %T", len(q.Source.IDs), res)
+	}
+	a := sprint.Answer{Kind: sprint.QueryBeat}
+	for i, s := range b.Scores {
+		if s == nil {
+			continue
+		}
+		f, err := strconv.ParseFloat(*s, 64)
+		if err != nil || f < 0 {
+			return sprint.Answer{}, fmt.Errorf("machine: the beat of %s is scored %q", q.Source.IDs[i], *s)
+		}
+		a.Keys = append(a.Keys, sprint.KeyAnswer{Key: sprint.QueryBeat, Subject: q.Source.IDs[i], N: uint64(f)})
+	}
+	return a, nil
 }
 
 // bound is a score bound, or its default when the plan leaves it empty.
@@ -123,6 +156,14 @@ func readAnswer(rp sprint.ReadPlan, rep *sprintfn.ReadReply) (sprint.ReadAnswer,
 		ans.Tset = append(ans.Tset, out)
 	}
 	for i, q := range rp.Sprint {
+		if q.Kind == sprint.QueryBeat {
+			a, err := beatAnswer(q, rep.Sprint[i])
+			if err != nil {
+				return ans, err
+			}
+			ans.Sprint = append(ans.Sprint, a)
+			continue
+		}
 		res, err := sprintfn.DecodeResult(q.Kind, rep.Sprint[i])
 		if err != nil {
 			return ans, err

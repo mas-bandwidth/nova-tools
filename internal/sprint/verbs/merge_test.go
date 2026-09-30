@@ -94,7 +94,7 @@ func TestMergeLandingSetsIdle(t *testing.T) {
 		}
 	}
 	ctl := w.rec(sprint.Merge, sprint.CtlID("s1")).Fields
-	if want := strconv.FormatInt(r+IdleSpan.Milliseconds(), 10); ctl["due_idle"].Value != want {
+	if want := strconv.FormatInt(r+sprint.IdleSpan.Milliseconds(), 10); ctl["due_idle"].Value != want {
 		t.Fatalf("due_idle is %q, want R + IdleSpan = %s", ctl["due_idle"].Value, want)
 	}
 	if ctl["state"].Value != sprint.StreamWaiting || ctl["due_mergeidle"].Present {

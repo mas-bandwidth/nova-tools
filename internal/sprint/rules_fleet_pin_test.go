@@ -770,7 +770,19 @@ func TestEveryFactOfEveryReadIsNeededByItsPlan(t *testing.T) {
 			}
 			keys = append(keys, r.Key)
 		}
-		if strings.Join(keys, ",") != strings.Join(ruleFacts[sc.rule], ",") {
+		// R2 reads its members' beats by the beat read (QueryBeat), and every
+		// other fact as a range
+		var want []string
+		for _, k := range ruleFacts[sc.rule] {
+			if sc.rule == ruleDown && k == factBeats {
+				if !slices.ContainsFunc(f.readPlan(sc.rule, ks).Sprint, func(q SprintQ) bool { return q.Kind == QueryBeat }) {
+					t.Fatalf("%s: R2's read has no beat read", sc.name)
+				}
+				continue
+			}
+			want = append(want, k)
+		}
+		if strings.Join(keys, ",") != strings.Join(want, ",") {
 			t.Fatalf("%s: the read asks for %v, the rule's facts are %v", sc.name, keys, ruleFacts[sc.rule])
 		}
 		f.mutate = func(rp *ReadPlan) {
@@ -781,6 +793,9 @@ func TestEveryFactOfEveryReadIsNeededByItsPlan(t *testing.T) {
 				}
 			}
 			rp.Ranges = rest
+			if sc.key == factBeats {
+				rp.Sprint = slices.DeleteFunc(slices.Clone(rp.Sprint), func(q SprintQ) bool { return q.Kind == QueryBeat })
+			}
 		}
 		if !f.differs(sc.rule, ks) {
 			t.Errorf("%s: the plan does not need %q, which its read asks for", sc.name, sc.key)
@@ -813,12 +828,14 @@ func TestAFactThatWasNotReadWholeIsUnread(t *testing.T) {
 		t.Fatalf("exactly the most is read whole: %+v %v", rp, s.UnloadedErr())
 	}
 
-	// a beat answered with no scores
+	// a range of beats answered with no scores (R17's read of the beats)
 	g := newFleetT(t, 2, "m1", "m2")
 	g.run(ruleDeal, "deal")
 	g.facts.BeatDue["m1"] = g.now.R + 15_000
 	ks := agendaOf("down:m1")
 	read := g.readPlan(ruleDown, ks)
+	read.Sprint = slices.DeleteFunc(slices.Clone(read.Sprint), func(q SprintQ) bool { return q.Kind == QueryBeat })
+	read.Ranges = append(read.Ranges, RangeQ{Key: factBeats, Limit: factLimit[factBeats]})
 	ans := fleetTwin{whole: g.snap(), facts: g.facts}.Answer(read)
 	for i := range ans.Tset {
 		ans.Tset[i].Scores = nil
@@ -839,8 +856,9 @@ func TestFactsAreTheAnswersOfTheRead(t *testing.T) {
 	f.facts.Strangers["zed"], f.facts.Strangers["old"] = true, false
 	f.facts.Dropping["s9"] = true
 	for rule, want := range map[string]fleetFacts{
-		ruleSeen:  {BeatDue: map[string]int64{}, Strangers: map[string]bool{"zed": true}, Dropping: map[string]bool{}},
-		ruleDown:  {BeatDue: map[string]int64{"m1": 40_000, "m2": 30_000}, Strangers: map[string]bool{}, Dropping: map[string]bool{"s9": true}},
+		ruleSeen: {BeatDue: map[string]int64{}, Strangers: map[string]bool{"zed": true}, Dropping: map[string]bool{}},
+		// R2 reads the beats of the members its keys name (QueryBeat): m1's
+		ruleDown:  {BeatDue: map[string]int64{"m1": 40_000}, Strangers: map[string]bool{}, Dropping: map[string]bool{"s9": true}},
 		ruleDeal:  {BeatDue: map[string]int64{}, Strangers: map[string]bool{}, Dropping: map[string]bool{"s9": true}},
 		ruleLevel: {BeatDue: map[string]int64{}, Strangers: map[string]bool{}, Dropping: map[string]bool{"s9": true}},
 	} {

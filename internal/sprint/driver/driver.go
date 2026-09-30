@@ -277,7 +277,9 @@ func (d *Driver) Loop() (string, error) {
 	if !d.read(&first, "where") {
 		return "", fmt.Errorf("the view could not be read: run: %s", commandLine(append([]string{"where"}, d.Base...)))
 	}
-	if first.Machine != "machine: running" && !strings.HasPrefix(first.Machine, "machine: running;") {
+	// The machine's line: "running", or "running (catching up: ...)" (IT17's
+	// MachineLine); the present path's "machine: running" too.
+	if line := strings.TrimPrefix(first.Machine, "machine: "); line != "running" && !strings.HasPrefix(line, "running;") && !strings.HasPrefix(line, "running (") {
 		return "", fmt.Errorf("no machine is running (%s): the driver plays only the outside actors; run: nova-sprint start, and nova-sprint run", orDash(first.Machine))
 	}
 	d.held = first.Epoch
@@ -506,7 +508,10 @@ func (d *Driver) tick(tick int, c Config, w where) {
 		var q queue
 		if d.read(&q, "queue", "--stream", s) {
 			for _, card := range q.Cards {
-				if card.Col == "queued" {
+				// the present path's stream queue lists the merge cards
+				// (queued); the new path's lists the work cells, where a
+				// primary queued to merge is merging
+				if card.Col == "queued" || card.Col == "merging" {
 					out = append(out, card.ID)
 				}
 			}

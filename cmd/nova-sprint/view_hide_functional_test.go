@@ -29,6 +29,7 @@ func TestTheViewShowsAStreamWithNoCards(t *testing.T) {
 	}
 	env := map[string]string{"NOVA_SPRINT_REDIS": addr, "NOVA_SPRINT_ACTOR": "coordinator"}
 	a := newApp(func(k string) string { return env[k] })
+	a.newPath = false // the present path's view, behind the switch
 	defer a.close()
 	run := func(args ...string) {
 		t.Helper()

@@ -238,8 +238,8 @@ func wkCellCounts(rd *sprintfn.ReadReply, slot int, kind, row string) (bool, map
 	return false, nil, nil
 }
 
-// wkWallStamp is a wall time in ms as the stamps for the reader are written.
-func wkWallStamp(ms int64) string { return time.UnixMilli(ms).UTC().Format(time.RFC3339) }
+// stampOf is a wall time in ms as the stamps for the reader are written.
+func stampOf(ms int64) string { return time.UnixMilli(ms).UTC().Format(time.RFC3339) }
 
 // wkMsOf is a time in ms as a field's value.
 func wkMsOf(v int64) string { return strconv.FormatInt(v, 10) }
@@ -440,12 +440,18 @@ func (e *Env) wkChunkDo(ctx context.Context, cur wkChunk, nxt *wkChunk, rd *spri
 					res.Retries++
 					continue
 				}
+				if active, ok := undec(ref.Detail.ActiveEpoch); ok && e.Held && epochMoved(ref.Code) {
+					return res, nil, heldGone(verb, e.epoch(), active)
+				}
 				return res, nil, &Refused{Verb: verb, Refusal: ref, Retries: res.Retries}
 			}
 			rd = r.Read
 		}
 		// AL2: the read names the active epoch; a verb plans at it.
 		if active, ok := undec(rd.ActiveEpoch); ok && active != e.epoch() {
+			if e.Held {
+				return res, nil, heldGone(verb, e.epoch(), active)
+			}
 			if res.Retries >= Retries {
 				return res, nil, &Refused{Verb: verb, Retries: res.Retries,
 					Refusal: &sprintfn.Refusal{Code: sprintfn.CodeStale, Message: "the epoch kept moving under the verb"}}
@@ -683,7 +689,7 @@ func wkTakeChunk(as string, cards []CardGen) wkChunk {
 			}
 			var bad wkFaults
 			en := tset.Entry{Kind: "move", Table: sprint.Fleet, From: as + ":" + string(sprint.Ready), To: as + ":" + string(sprint.Working),
-				Set:   map[string]string{wkfTaken: wkWallStamp(wall)},
+				Set:   map[string]string{wkfTaken: stampOf(wall)},
 				Unset: []string{wkfUntakenR, wkfUntakenRepl, wkfDueUntaken, wkfUntakenSince, wkfRefused}}
 			for i, c := range cards {
 				rec := works[i]
@@ -883,7 +889,7 @@ func wkFinishChunk(as string, cards []CardGen, req FinishReq) wkChunk {
 				return nil, refuseLocal(verb, sprintfn.CodeRequest, "%s is no fleet member", as)
 			}
 			var bad wkFaults
-			set := map[string]string{wkfResult: result, wkfFinished: wkWallStamp(wall)}
+			set := map[string]string{wkfResult: result, wkfFinished: stampOf(wall)}
 			for k, v := range map[string]string{wkfReport: req.Report, wkfBranch: req.Branch, wkfBase: req.Base} {
 				if v != "" {
 					set[k] = v
@@ -1233,13 +1239,13 @@ func wkReadChunk(as string, cards []CardGen, req ReadCardReq) wkChunk {
 // for a begin, to the verdict for a report (with the begin's stamps for a card
 // never begun).
 func wkReadEntry(as, col string, req ReadCardReq, r, wall int64) *tset.Entry {
-	begin := map[string]string{wkfBegun: wkWallStamp(wall), wkfBegunR: wkMsOf(r)}
+	begin := map[string]string{wkfBegun: stampOf(wall), wkfBegunR: wkMsOf(r)}
 	if req.Begin {
 		begin[wkfDueUnreport] = wkMsOf(r + wkUnreportedSpan.Milliseconds())
 		return &tset.Entry{Kind: "move", Table: sprint.Readers, From: as + ":" + col, To: as + ":" + sprint.Reading,
 			Set: begin, Unset: []string{wkfDueUnbegun, wkfRefused}}
 	}
-	set := map[string]string{wkfVerdict: req.Verdict, wkfReadAt: wkWallStamp(wall)}
+	set := map[string]string{wkfVerdict: req.Verdict, wkfReadAt: stampOf(wall)}
 	if req.Summary != "" {
 		set[wkfSummary] = req.Summary
 	}
@@ -1379,6 +1385,28 @@ func QueueRead(ctx context.Context, e *Env, req QueueReq) (QueuePage, Result, er
 	if !sprint.ValidID(row) {
 		return page, Result{Verb: verb}, refuseLocal(verb, sprintfn.CodeRequest, "%q is not a member's or a stream's name", row)
 	}
+	page, res, err := queueCells(ctx, e, limit, cur, req.After, table, row, cols, fields)
+	var rf *Refused
+	if req.As != "" && errors.As(err, &rf) && rf.Code() == "NOROW" {
+		// not a member: a reader's queue, its asked and reading cells (one more
+		// round trip, for a reader only)
+		page, res, err = queueCells(ctx, e, limit, cur, req.After, sprint.Readers, row,
+			[]string{string(sprint.Asked), string(sprint.Reading)}, wkQueueReadCardFields)
+		if errors.As(err, &rf) && rf.Code() == "NOROW" {
+			rf.Hint = fmt.Sprintf("%s has no row in the fleet table or the readers table", row)
+		}
+	}
+	return page, res, err
+}
+
+// wkQueueReadCardFields are what a reader's queue shows of a read card.
+var wkQueueReadCardFields = []string{"kind", wkfPrimary, "stream", "reader", "attempt", wkfHead}
+
+// queueCells is QueueRead's page of the cells of one row of a table.
+func queueCells(ctx context.Context, e *Env, limit int, cur wkQueueCursor, after, table, row string, cols, fields []string) (QueuePage, Result, error) {
+	const verb = "queue"
+	var page QueuePage
+	req := QueueReq{After: after}
 	if cur.cell >= len(cols) {
 		return page, Result{Verb: verb}, refuseLocal(verb, sprintfn.CodeRequest, "--after %q is past the queue's cells", req.After)
 	}

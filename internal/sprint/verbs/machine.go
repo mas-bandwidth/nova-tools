@@ -82,7 +82,8 @@ type InitReq struct {
 	Config ConfigRows
 	// Coordinator is the name the command gives (init --coordinator <name>,
 	// else its actor). With Config nil it is the coordinator; with Config
-	// set, nova-config's is, and a name that is not it is refused.
+	// set, nova-config's is, and a name that is not it is refused (the IT23
+	// grammar decisions, 9 to 12).
 	Coordinator string
 }
 
@@ -160,7 +161,7 @@ func InitCoordinator(ctx context.Context, e *Env, req InitReq) (Result, error) {
 		return Result{Verb: verb}, err
 	}
 	if e.Actor != who {
-		return Result{Verb: verb}, refuseLocal(verb, sprintfn.CodeNotCoord, "nova-config names %s as the coordinator, and %q is not %s", who, e.Actor, who)
+		return Result{Verb: verb}, refuseLocal(verb, sprintfn.CodeNotCoord, "the coordinator is %s, and %q is not %s", who, e.Actor, who)
 	}
 	res, err := e.Do(ctx, Planned{Verb: verb, Op: req.Op, Args: map[string]any{"coordinator": who},
 		Read: clockRead,
@@ -566,13 +567,18 @@ func goalStep(ctx context.Context, e *Env, verb string, req GoalReq, goal string
 	return res, err
 }
 
-// GoalShow is a person's goal (section 3, goal show). The sprint's key reads
-// (IT30) have no read of {p}goal:<person>, so it is refused, naming the read
-// it needs; nothing is sent.
+// GoalShow is a person's goal, or with no person every goal (section 3, goal
+// show; the grammar decisions, 13 and 14). The sprint's key reads (IT30) have
+// no read of {p}goal:<person>, nor of the set of goals, so it is refused,
+// naming the read it needs; nothing is sent.
 func GoalShow(ctx context.Context, e *Env, req GoalReq) (Result, error) {
-	if !sprint.ValidID(req.Person) {
+	if req.Person != "" && !sprint.ValidID(req.Person) {
 		return Result{Verb: "goal show"}, refuseLocal("goal show", sprintfn.CodeRequest, "%q is not a person's name", req.Person)
 	}
+	what := "a person's goal"
+	if req.Person == "" {
+		what = "the goals"
+	}
 	return Result{Verb: "goal show"}, refuseLocal("goal show", sprintfn.CodeRequest,
-		"the sprint's key reads have no read of a person's goal yet (IT30's kinds: clock, lease, tick, heartbeat, dropping, parked, missing, jopen, duecount)")
+		"the sprint's key reads have no read of %s yet (IT30's kinds: clock, lease, tick, heartbeat, dropping, parked, missing, jopen, duecount)", what)
 }

@@ -229,6 +229,13 @@ func (tw fleetTwin) query(q SprintQ) Answer {
 				}
 			}
 		}
+	case QueryBeat:
+		// each member's beat entry in the due set, with its score
+		for _, m := range q.Source.IDs {
+			if score, ok := tw.facts.BeatDue[m]; ok {
+				a.Keys = append(a.Keys, KeyAnswer{Key: QueryBeat, Subject: m, N: uint64(score)})
+			}
+		}
 	default:
 		panic("the twin: a query of kind " + q.Kind)
 	}

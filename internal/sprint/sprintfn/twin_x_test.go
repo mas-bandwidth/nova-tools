@@ -198,7 +198,7 @@ func TestXNotCoord(t *testing.T) {
 	h.applies("a verb that is not the coordinator's, with no coordinator set", xWithActor(xVerb("rank", xMoveWaitingReady("p1")), "anyone"))
 
 	h.applies("init --coordinator", &Request{Epoch: "0", Meta: Meta{Verb: "init"}, Sprint: &SprintPart{Coordinator: "c1"}})
-	for _, v := range []string{"release", "ack", "wait", "accept", "rework"} {
+	for _, v := range []string{"release", "ack", "wait", "accept", "rework", "inbox --read"} {
 		ref := h.wantRefusal(xWithActor(xVerb(v, xMoveWaitingReady("p2")), "intruder"), CodeNotCoord)
 		if !strings.Contains(ref.Message, v) {
 			t.Fatalf("message %q does not name the verb %s", ref.Message, v)
@@ -528,17 +528,20 @@ func TestXGuardKinds(t *testing.T) {
 	}
 }
 
-// TestXSentAndCounterGuardsAgree: a sent guard holds the step to no sentinel of
-// its stream placed at or below its max, as S.zguard(sent:<s>, rcount, -inf,
-// max, atmost 0) (2.3, R3 and R6), an open bound excluding the max; a counter
-// guard holds it to a field of {p}next@e as read, 0 for a field absent (2.3,
-// R15; errata 3 H14). Each refuses XGUARD with nothing written when the key has
-// moved, a sent key of another type WRONGTYPE, a counter that is no whole
-// number CONFIG, and a malformed guard REQUEST; the Lua half agrees on each (the
-// harness runs it beside the twin), its bound grammar included.
-func TestXSentAndCounterGuardsAgree(t *testing.T) {
+// TestXCounterAndSetGuardsAgree: R6's sent guard is X's set guard (IT19's
+// setguard, the one kind X has for S.zguard; gap (b)'s "sent" folded into it):
+// it holds the step to no sentinel of its stream placed at or below its max,
+// S.zguard(sent:<s>, rcount, -inf, max, atmost 0) (2.3, R3 and R6), an open
+// bound excluding the max; a counter guard holds it to a field of {p}next@e as
+// read, 0 for a field absent (2.3, R15; errata 3 H14). A moved counter refuses
+// XGUARD and a moved sent index RANGECOUNT, each with nothing written; a sent
+// key of another type WRONGTYPE, a counter that is no whole number CONFIG, and
+// a malformed guard REQUEST; the Lua half agrees on each (the harness runs it
+// beside the twin).
+func TestXCounterAndSetGuardsAgree(t *testing.T) {
 	t.Parallel()
 	h := newXHarness(t)
+	withZGuard(h)
 	h.fixture()
 	h.write(xLease("1"), xRunning(300),
 		Command("ZADD", xp+"sent:s1@0", kindZSet, "20.5", "g1", "40", "g2"),
@@ -548,30 +551,31 @@ func TestXSentAndCounterGuardsAgree(t *testing.T) {
 		r.Body.Guards = g
 		return r
 	}
+	sent := func(s, max string) XGuard { return setGuard("sent:"+s, "-inf", max, nil, ip(0)) }
 	h.write(Command("HDEL", xp+"next@0", kindHash, "streams"))
 	h.applies("a counter field absent reads 0", guard(XGuard{Kind: XGuardCounter, Key: "streams", Score: 0}))
 	h.wantRefusal(guard(XGuard{Kind: XGuardCounter, Key: "streams", Score: 1}), CodeXGuard)
 	h.write(Command("HSET", xp+"next@0", kindHash, "streams", "3"))
 	for _, ok := range [][]XGuard{
-		{{Kind: XGuardSent, Key: "sent:s1 20.4"}, {Kind: XGuardSent, Key: "sent:s1 (20.5"}, {Kind: XGuardSent, Key: "sent:s9 1e+21"}},
-		{{Kind: XGuardSent, Key: "sent:s1 -3"}, {Kind: XGuardSent, Key: "sent:s1 2.04e1"}},
+		{sent("s1", "20.4"), sent("s1", "(20.5"), sent("s9", "1e+21")},
+		{sent("s1", "-3"), sent("s1", "2.04e1")},
 		{{Kind: XGuardCounter, Key: "streams", Score: 3}, {Kind: XGuardCounter, Key: "score", Score: 1000}},
 	} {
 		h.applies(fmt.Sprintf("%+v", ok), guard(ok...))
 	}
+	for _, moved := range []XGuard{sent("s1", "20.5"), sent("s1", "(20.6"), sent("s1", "1e2")} {
+		h.wantRefusal(guard(moved), "RANGECOUNT")
+	}
 	for _, moved := range []XGuard{
-		{Kind: XGuardSent, Key: "sent:s1 20.5"}, {Kind: XGuardSent, Key: "sent:s1 (20.6"}, {Kind: XGuardSent, Key: "sent:s1 1e2"},
 		{Kind: XGuardCounter, Key: "streams", Score: 2}, {Kind: XGuardCounter, Key: "streams", Score: 0}, {Kind: XGuardCounter, Key: "score", Score: 1},
 	} {
 		if ref := h.wantRefusal(guard(moved), CodeXGuard); !strings.Contains(ref.Message, "XGUARD") {
 			t.Fatalf("%+v: message %q", moved, ref.Message)
 		}
 	}
-	h.wantRefusal(guard(XGuard{Kind: XGuardSent, Key: "sent:bad 1"}), CodeWrongType)
-	for _, bad := range []XGuard{{Kind: XGuardSent}, {Kind: XGuardSent, Key: "sent:s1"}, {Kind: XGuardSent, Key: "s1 1"},
-		{Kind: XGuardSent, Key: "sent: 1"}, {Kind: XGuardSent, Key: "sent:s1 +inf"}, {Kind: XGuardSent, Key: "sent:s1 1e100"},
-		{Kind: XGuardSent, Key: "sent:s1 0x10"}, {Kind: XGuardSent, Key: "sent:s1 1."}, {Kind: XGuardSent, Key: "sent:s1  1"},
-		{Kind: XGuardSent, Key: "sent:s 1 1"}, {Kind: XGuardSent, Key: "sent:s@0 1"},
+	h.wantRefusal(guard(sent("bad", "1")), CodeWrongType)
+	for _, bad := range []XGuard{{Kind: XGuardSet}, {Kind: XGuardSet, Key: "sent:s1 1"}, sent("", "1"),
+		sent("s 1", "1"), sent("s1", "x"),
 		{Kind: XGuardCounter, Key: "id", Score: 1}, {Kind: XGuardCounter, Key: "streams", Score: -1}, {Kind: XGuardCounter}} {
 		h.wantRefusal(guard(bad), CodeRequest)
 	}

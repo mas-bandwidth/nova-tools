@@ -93,7 +93,7 @@ const (
 	// ruleIdleSpan is how long a stream with open cards may land nothing before
 	// the owner is told (2.5): provisional so the build can run, the owner's to
 	// set (7).
-	ruleIdleSpan = 2 * time.Hour
+	ruleIdleSpan = IdleSpan
 )
 
 // The card fields the time rules read and write (1.2, 1.3.1): every stamp and

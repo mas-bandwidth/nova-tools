@@ -9,6 +9,7 @@ import (
 	gotoken "go/token"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/config"
+	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/sprintfn"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
@@ -126,13 +128,23 @@ func newNPApp(t *testing.T) *npApp {
 	}
 	env := map[string]string{"NOVA_SPRINT_REDIS": "twin:0", "NOVA_SPRINT_ACTOR": "coord"}
 	na.a = newApp(func(k string) string { return env[k] })
-	na.a.newPath = true
+	if !na.a.newPath {
+		t.Fatal("the switch is off: newApp runs the present path")
+	}
+	// run and where --watch end at an interrupt: here, the first one.
+	na.a.notify = func(ctx context.Context) (context.Context, context.CancelFunc) {
+		c, cancel := context.WithCancel(ctx)
+		cancel()
+		return c, cancel
+	}
+	na.a.noteStream = func(string) (spverbs.NoteStream, func() error, error) { return spverbs.NewMemStream(), nil, nil }
 	na.a.now = na.clock
 	na.a.sleep = func(d time.Duration) { na.mu.Lock(); na.now = na.now.Add(d); na.mu.Unlock() }
 	na.a.sprintClient = func(context.Context, string, sprint.Names) (sprintfn.Client, func() error, error) {
 		return na.rec, nil, nil
 	}
 	na.a.configRows = func(context.Context, string) (spverbs.ConfigRows, func() error, error) { return cfg, nil, nil }
+	na.a.lifecycle = func(context.Context, string) (tset.Lifecycle, func() error, error) { return na.m, nil, nil }
 	na.a.backend = func(context.Context, string, sprint.Names) (store.Backend, error) {
 		na.mu.Lock()
 		na.olds++
@@ -192,8 +204,7 @@ func (na *npApp) image() string {
 
 // npCase is one line through the entry point: the lines before it (each must
 // exit 0), the exit code it must give, and what its output (stdout and stderr
-// together) must hold. A stubbed verb's case wants exit 2 and its item named;
-// when the item lands, the case's code and want change and nothing else.
+// together) must hold.
 type npCase struct {
 	verb  string // the table's verb the case covers
 	setup []string
@@ -202,7 +213,8 @@ type npCase struct {
 	want  []string
 }
 
-// stub is a stubbed verb's case: refused, naming the item.
+// stub is the case of a verb no item builds yet: refused, naming what it
+// waits for.
 func stub(verb, line, item string) npCase {
 	return npCase{verb: verb, line: line, code: exitRefused, want: []string{codeNotOnNewPath, "not on the new path yet (" + item}}
 }
@@ -211,86 +223,135 @@ var npInit = []string{"init"}
 
 var npRunning = []string{"init", "start"}
 
+// npWorld is a sprint with two readers, two fleet members, a stream of three
+// primaries and its machine running (never ticked: the machine's deal is the
+// tick loop's, IT17, which these cases do not run).
+var npWorld = []string{"init", "reader add r1 r2", "fleet up m1 m2", "add --stream s1 --count 3", "start"}
+
+// npWith is npWorld and more lines after it.
+func npWith(more ...string) []string { return append(append([]string{}, npWorld...), more...) }
+
+// npTicking is a sprint whose machine has ticked twice (the heartbeat's
+// tick_at is written by the second tick's first step, A3), with a stream of
+// six primaries added after the ticks: the view reads it running.
+var npTicking = []string{"init", "reader add reader-a reader-b", "fleet up m1 m2", "fleet beat m1 m2", "start", "tick", "tick", "add --stream s1 --count 6"}
+
 func npCases() []npCase {
 	return []npCase{
-		// IT18: the machine's verbs, on the twin.
+		// IT18: the machine's verbs.
 		{verb: "init", line: "init", code: 0, want: []string{"INIT OK", "epoch=0", "trips=2", "the sprint is made, STOPPED, with coordinator coord"}},
-		{verb: "init", setup: npInit, line: "init", code: exitRefused, want: []string{"INIT FAIL code=MACHINESTATE changed=no", "already initialised"}},
-		{verb: "init", setup: npInit, line: "init --coordinator", code: 0, want: []string{"INIT OK", "the coordinator is coord"}},
-		{verb: "init", setup: npInit, line: "init --coordinator --actor other", code: exitRefused, want: []string{"code=NOTCOORD"}},
-		{verb: "init", line: "init --coordinator someone", code: exitRefused, want: []string{"--coordinator takes no name on the new path"}},
+		{verb: "init", setup: npInit, line: "init", code: exitRefused, want: []string{"INIT FAIL", "code=MACHINESTATE changed=no", "already initialised"}},
+		{verb: "init", line: "init --coordinator someone", code: 0, want: []string{"INIT OK", "with coordinator someone"}},
+		{verb: "init", setup: npInit, line: "init --coordinator coord", code: 0, want: []string{"INIT OK", "the coordinator is coord"}},
+		{verb: "init", setup: npInit, line: "init --coordinator other", code: exitRefused, want: []string{"code=NOTCOORD"}},
+		{verb: "init", line: "init --pg config", code: 0, want: []string{"INIT OK", "with coordinator coord"}},
+		{verb: "init", line: "init --pg config --coordinator other", code: exitRefused, want: []string{"nova-config names coord as the coordinator, and --coordinator names other"}},
 		{verb: "init", line: "init --readers r1,r2", code: exitRefused, want: []string{"run nova-sprint reader add after init"}},
 		{verb: "init", line: "init --members m1", code: exitRefused, want: []string{"run nova-sprint fleet up after init"}},
-		{verb: "start", setup: npInit, line: "start", code: 0, want: []string{"START OK before=STOPPED after=RUNNING changed", "start: the machine runs"}},
-		{verb: "start", setup: npRunning, line: "start", code: exitRefused, want: []string{"START FAIL before=RUNNING after=RUNNING unchanged: the machine is RUNNING already code=MACHINESTATE"}},
+		{verb: "init", line: "init --prefix t:", code: exitRefused, want: []string{noPrefix}},
+		{verb: "start", setup: npInit, line: "start", code: 0, want: []string{"START OK", "before=STOPPED after=RUNNING changed", "start: the machine runs", "NOT TICKING"}},
+		{verb: "start", setup: npRunning, line: "start", code: 0, want: []string{"START OK", "before=RUNNING after=RUNNING unchanged: the machine is RUNNING already", "the machine is RUNNING already; nothing was written"}},
 		{verb: "start", setup: npInit, line: "start --json", code: 0, want: []string{`"verb":"start"`, `"before":"STOPPED"`, `"after":"RUNNING"`, `"changed":true`, `"moved":[]`, `"exit":0`}},
 		{verb: "start", line: "start", code: exitRefused, want: []string{"there is no sprint: run init"}},
-		{verb: "stop", setup: npRunning, line: "stop", code: 0, want: []string{"STOP OK before=RUNNING after=STOPPED changed"}},
-		{verb: "stop", setup: npInit, line: "stop", code: exitRefused, want: []string{"code=MACHINESTATE", "already stopped"}},
+		{verb: "stop", setup: npRunning, line: "stop", code: 0, want: []string{"STOP OK", "before=RUNNING after=STOPPED changed"}},
+		{verb: "stop", setup: npInit, line: "stop", code: 0, want: []string{"STOP OK", "unchanged: the machine is STOPPED already"}},
 		{verb: "stop", setup: []string{"init", "start", "stop --op op-stop-1"}, line: "stop --op op-stop-1", code: 0, want: []string{"STOP OK", "op=op-stop-1 replay=yes", "already applied at epoch 0; nothing was written"}},
 		{verb: "clear", setup: npInit, line: "clear --confirm sprint", code: 0, want: []string{"CLEAR OK", "epoch=0->1", "clear: the sprint is at epoch 1, STOPPED"}},
 		{verb: "clear", setup: npRunning, line: "clear --confirm sprint", code: exitRefused, want: []string{"code=MACHINESTATE", "run stop first"}},
 		{verb: "clear", setup: npInit, line: "clear --confirm other", code: exitRefused, want: []string{"wants --confirm sprint"}},
 		// The write path does not carry goals yet: the store refuses the step
 		// REQUEST, a bug code (1.3.5), and the verb exits 3.
-		{verb: "goal set", setup: []string{"init"}, line: "goal set p1 --file {dir}/goal.txt", code: exitBug, want: []string{"GOAL-SET FAIL code=REQUEST", "the write path does not carry goals yet"}},
+		{verb: "goal set", setup: npInit, line: "goal set p1 --file {dir}/goal.txt", code: exitBug, want: []string{"GOAL-SET FAIL", "code=REQUEST", "the write path does not carry goals yet"}},
 		{verb: "goal set", setup: npInit, line: "goal set p1 --file {dir}/goal.txt --to file:/x", code: exitRefused, want: []string{"--to is not on the new path"}},
-		{verb: "goal show", setup: npInit, line: "goal show p1", code: exitRefused, want: []string{"GOAL-SHOW FAIL code=REQUEST", "no read of a person's goal yet"}},
-		{verb: "goal show", line: "goal show", code: exitRefused, want: []string{"takes one name"}},
-		{verb: "goal drop", setup: npInit, line: "goal drop p1", code: exitBug, want: []string{"GOAL-DROP FAIL code=REQUEST"}},
+		{verb: "goal show", setup: npInit, line: "goal show p1", code: exitRefused, want: []string{"GOAL-SHOW FAIL", "code=REQUEST", "no read of a person's goal yet"}},
+		{verb: "goal show", setup: npInit, line: "goal show", code: exitRefused, want: []string{"GOAL-SHOW FAIL", "code=REQUEST", "no read of the goals yet"}},
+		{verb: "goal show", line: "goal show p1 p2", code: exitRefused, want: []string{"takes one name, or none for every goal"}},
+		{verb: "goal drop", setup: npInit, line: "goal drop p1", code: exitBug, want: []string{"GOAL-DROP FAIL", "code=REQUEST"}},
 
-		// IT17.
-		stub("run", "run", "IT17"),
-		stub("tick", "tick", "IT17"),
-		// IT19.
-		stub("add", "add --stream s1 --count 3", "IT19"),
+		// IT17: the machine's loop.
+		{verb: "run", setup: npRunning, line: "run", code: 0, want: []string{"RUN OK", "run: interrupted; the loop stopped ticking"}},
+		{verb: "tick", setup: npRunning, line: "tick", code: 0, want: []string{"TICK OK", "tick: RUNNING, lease held true"}},
+		{verb: "tick", setup: []string{"init", "start", "tick"}, line: "tick", code: 0, want: []string{"TICK OK", "steps applied, 0 refused"}},
+
+		// IT19: add, release, rank.
+		{verb: "add", setup: npInit, line: "add --stream s1 --count 3", code: 0, want: []string{"MOVED s1-1", "MOVED s1-3", "ADD OK moved=3", "parts=1", "STOPPED  0/3"}},
+		{verb: "add", setup: npInit, line: "add --stream s1 --sentinel g1 --op op-add-1", code: 0, want: []string{"MOVED g1", "ADD OK moved=1", "op=op-add-1"}},
 		{verb: "add", line: "add --stream s1", code: exitRefused, want: []string{"wants --stream and either ids, --count <n> or --sentinel <id>"}},
-		stub("release", "release s1-gate-1 --reason looked", "IT19"),
-		stub("rank", "rank s1-2 --first", "IT19"),
-		stub("rank", "rank s1-2 --after s1-3", "IT19"),
-		// IT20.
-		stub("take", "take --as m1 s1-1@1", "IT20"),
+		{verb: "release", setup: []string{"init", "add --stream s1 --sentinel g1"}, line: "release g1 --reason looked", code: 0, want: []string{"MOVED g1", "RELEASE OK moved=1", "release: g1 landed"}},
+		{verb: "release", setup: npWorld, line: "release s1-2 --reason looked", code: exitRefused, want: []string{"code=REQUEST", "s1-2 is not a sentinel"}},
+		{verb: "release", setup: npWith("add --stream s1 --sentinel g1"), line: "release g1 --reason looked", code: exitRefused, want: []string{"3 open cards of stream s1 sort before g1"}},
+		{verb: "rank", setup: npWorld, line: "rank s1-2 --after s1-3", code: 0, want: []string{"MOVED s1-2", "RANK OK moved=1", "rank: s1-2 rescored"}},
+		{verb: "rank", setup: npWorld, line: "rank s1-2 --first", code: exitRefused, want: []string{"--first is not on the new path's rank yet"}},
+
+		// IT20: the workers' verbs and the fleet's.
+		{verb: "take", setup: npWith("fleet beat m1 m2"), line: "take --as m1", code: 0, want: []string{"take: m1 has nothing ready; nothing was written"}},
+		{verb: "take", setup: npWorld, line: "take --as m1 s1-1.w1@1", code: exitRefused, want: []string{"TAKE FAIL", "code=REQUEST", "no work card is placed"}},
 		{verb: "take", line: "take --as m1 s1-1", code: exitRefused, want: []string{"<card>@<gen>"}},
-		stub("finish", "finish --as m1 s1-1@1 --failed --report red", "IT20"),
-		stub("read", "read --as r1 --ok s1-1", "IT20"),
-		stub("queue", "queue --as m1", "IT20"),
-		stub("fleet beat", "fleet beat m1 m2", "IT20"),
-		stub("fleet up", "fleet up m1 m2", "IT20"),
-		stub("fleet down", "fleet down m1", "IT20"),
-		stub("reader add", "reader add r1 r2", "IT20"),
-		// IT21.
-		stub("ask", "ask s1-1 --another", "IT21"),
-		stub("accept", "accept s1-1", "IT21"),
-		stub("accept", "accept --stream s1,s2", "IT21"),
-		{verb: "rework", line: "rework s1-1 --fix 'handle the empty case'", code: exitRefused, want: []string{"REWORK FAIL code=REQUEST", "s1-1: no such card on the table"}},
-		stub("return", "return s1-1 --reason suspect", "IT21"),
-		{verb: "drop", line: "drop s1-1 --reason obsolete", code: exitRefused, want: []string{"DROP FAIL code=REQUEST", "s1-1: not open on the table (no such card)"}},
-		{verb: "drop", line: "drop --stream s1,s2 --col ready --reason obsolete", code: exitRefused, want: []string{"DROP FAIL code=NOROW"}},
-		{verb: "drop", line: "drop --abort --op op-drop-1", code: exitRefused, want: []string{"DROP FAIL code=REQUEST", "the sprint has no stream: op op-drop-1 freezes nothing"}},
+		{verb: "finish", setup: npWorld, line: "finish --as m1 s1-1.w1@1 --failed --report red", code: exitRefused, want: []string{"FINISH FAIL", "no work card is placed"}},
+		{verb: "finish", setup: npWith("stop", "clear --confirm sprint"), line: "finish --as m1 s1-1.w1@1 --epoch 0", code: exitRefused, want: []string{"code=STALE", "the sprint was cleared at epoch 1: this verb holds epoch 0"}},
+		{verb: "read", setup: npWorld, line: "read --as r1 --ok s1-1.r1.r1", code: exitRefused, want: []string{"READ FAIL", "no read card is placed"}},
+		{verb: "read", setup: npWorld, line: "read --as r1 --ok --limit 1", code: exitRefused, want: []string{"--limit is not on the new path's read yet"}},
+		{verb: "queue", setup: npWorld, line: "queue --stream s1", code: 0, want: []string{"queue: 3 cards", "s1-1 ready", "s1-3 ready"}},
+		{verb: "queue", setup: npWorld, line: "queue --as m1 --json", code: 0, want: []string{`{"cards":[]}`}},
+		{verb: "fleet beat", setup: npWorld, line: "fleet beat m1 m2", code: 0, want: []string{"FLEET-BEAT OK", "fleet beat: 2 members"}},
+		{verb: "fleet up", setup: npInit, line: "fleet up m1 m2", code: 0, want: []string{"MOVED ctl-m1", "MOVED ctl-m2", "FLEET-UP OK moved=2", "fleet up: down until they beat: m1, m2"}},
+		{verb: "fleet down", setup: npWorld, line: "fleet down m1", code: 0, want: []string{"MOVED ctl-m1", "FLEET-DOWN OK moved=1", "held m1"}},
+		{verb: "reader add", setup: npInit, line: "reader add r1 r2", code: 0, want: []string{"READER-ADD OK", "reader add: r1, r2"}},
+
+		// IT21: review, merge, drop.
+		{verb: "ask", setup: npWorld, line: "ask s1-1 --another", code: exitRefused, want: []string{"ASK FAIL", "not in review"}},
+		{verb: "ask", setup: npWorld, line: "ask --stream s1", code: exitRefused, want: []string{"--stream is not on the new path's ask yet"}},
+		{verb: "accept", setup: npWorld, line: "accept s1-1", code: exitRefused, want: []string{"ACCEPT FAIL", "not in review"}},
+		{verb: "accept", setup: npWorld, line: "accept --stream s1", code: 0, want: []string{"ACCEPT OK", "finished in 1 parts"}},
+		{verb: "rework", setup: npWorld, line: "rework s1-1 --fix 'handle the empty case'", code: exitRefused, want: []string{"REWORK FAIL", "not review"}},
+		{verb: "return", setup: npWorld, line: "return s1-1", code: exitRefused, want: []string{"RETURN FAIL", "not merging"}},
+		{verb: "return", setup: npWorld, line: "return s1-1 --reason suspect", code: exitRefused, want: []string{"--reason is not on the new path's return yet"}},
+		{verb: "drop", setup: npWorld, line: "drop s1-3 --reason obsolete", code: 0, want: []string{"MOVED s1-3", "DROP OK moved=1", "0/2"}},
+		{verb: "drop", setup: npWorld, line: "drop --stream s1 --col ready --reason obsolete", code: 0, want: []string{"MOVED s1-1", "DROP OK moved=3"}},
+		{verb: "drop", setup: npWorld, line: "drop --abort --op op-drop-1", code: exitRefused, want: []string{"there is nothing to abort"}},
 		{verb: "drop", line: "drop --abort", code: exitRefused, want: []string{"drop --abort takes --op <op> alone"}},
-		stub("ci", "ci s1-1 --red --run 812", "IT21"),
-		stub("merge", "merge --stream s1 --batch 100 --red --suspect s1-4 s1-5", "IT21"),
-		stub("resume", "resume --stream s1,s2 --did rebased", "IT21"),
-		// IT22.
-		stub("ack", "ack n-1 --reason flaky", "IT22"),
-		stub("wait", "wait n-1 n-2 --for 30m --reason later", "IT22"),
-		stub("inbox", "inbox --read", "IT22"),
-		stub("card", "card s1-1", "IT22"),
-		stub("log", "log --card s1-1", "IT22"),
-		stub("where", "where --json", "IT22"),
-		stub("where", "where --watch --every 2s", "IT22"),
-		// After: the check, remove; no item: teardown, repair; not in
-		// section 3: resolve, fleet level.
-		stub("check", "check", "IT26"),
+		{verb: "ci", setup: npWorld, line: "ci s1-1 --red", code: 0, want: []string{"MOVED s1-1", "CI OK moved=1 refused=0 notes=1"}},
+		{verb: "ci", setup: npWorld, line: "ci s1-1 --red --run 812", code: exitRefused, want: []string{"--run is not on the new path's ci yet"}},
+		{verb: "merge", setup: npWorld, line: "merge --stream s1 --batch 100 --red --suspect s1-2 s1-3", code: exitRefused, want: []string{"MERGE FAIL", "nothing is queued in stream s1"}},
+		{verb: "resume", setup: npWorld, line: "resume --stream s1 --did rebased", code: exitRefused, want: []string{"RESUME FAIL", "not stopped"}},
+
+		// IT22: judgments and reads.
+		{verb: "ack", setup: npWith("ci s1-1 --red"), line: "ack n11 --reason flaky", code: 0, want: []string{"ACK OK", "ack: 1 notes answered"}},
+		{verb: "wait", setup: npWith("ci s1-1 --red"), line: "wait n11 --for 30m --reason later", code: 0, want: []string{"WAIT OK", "wait: 1 notes wait 30m0s"}},
+		{verb: "inbox", setup: npWith("ci s1-1 --red"), line: "inbox", code: 0, want: []string{"JUDGMENT n11 ci red on a primary", "the machine is not ticking", "HAPPENED"}},
+		{verb: "inbox", setup: npWorld, line: "inbox --json", code: 0, want: []string{`"groups":[`, `"machine":"NOT TICKING"`}},
+		{verb: "inbox", setup: npWorld, line: "inbox --read", code: 0, want: []string{"INBOX OK", "INBOX CURSOR"}},
+		{verb: "inbox", setup: npWorld, line: "inbox --read --after 0", code: exitRefused, want: []string{"--read moves the coordinator's stored cursor and --after reads from one of the caller's own"}},
+		{verb: "inbox", setup: npWorld, line: "inbox --read --wait", code: exitRefused, want: []string{"--read and --wait are two calls"}},
+		{verb: "inbox", setup: npWorld, line: "inbox --actor someone --read", code: exitRefused, want: []string{"NOTCOORD"}},
+		{verb: "card", setup: npWorld, line: "card s1-1", code: 0, want: []string{"card s1-1 at s1:ready"}},
+		{verb: "log", setup: npWorld, line: "log --stream s1", code: 0, want: []string{`"kind":"create"`, `"s1-1","s1-2","s1-3"`}},
+		{verb: "where", setup: npWorld, line: "where --json", code: 0, want: []string{`"all":3`, `"machine":"NOT TICKING"`}},
+		{verb: "where", setup: npWorld, line: "where --watch --every 2s", code: 0, want: []string{"SPRINT TABLE", "NOT TICKING"}},
+
+		// teardown: Layer 1's lifecycle (TestInitDefinesAndTeardownDeletesTheNamespace).
+		{verb: "teardown", setup: npWorld, line: "teardown --confirm other", code: exitRefused, want: []string{"wants --confirm sprint"}},
+		// check: rule 11, the cycles of needs (errata 3 amendment 7)
+		{verb: "check", setup: npWorld, line: "check", code: 0, want: []string{"no cycle of needs in 1 streams"}},
+		// No item builds these yet: the remove after; repair; not in section 3:
+		// resolve, fleet level (kept as present).
 		stub("remove", "remove --stream s1 --confirm sprint", "IT27"),
 		stub("remove", "remove --abort --op op-rm-1", "IT27"),
-		stub("teardown", "teardown --confirm sprint", "no item"),
 		stub("repair", "repair", "AL7"),
 		stub("resolve", "resolve s1-1", "no item"),
 		stub("fleet level", "fleet level", "no item"),
-		// play: the driver over the entry point reads where --json first,
-		// which is IT22's; until it lands the driver cannot read the view.
-		{verb: "play", setup: npRunning, line: "play --ticks 1 --simulation", code: exitRefused, want: []string{"the view could not be read"}},
+		// play: R8's driver over the entry point, on the new path.
+		{verb: "play", setup: npTicking, line: "play --ticks 1 --simulation", code: 0, want: []string{"chances:", "tick 1", "PLAY OK stopped=ticks"}},
+		{verb: "play", setup: npWorld, line: "play --ticks 1 --simulation", code: exitRefused, want: []string{"no machine is running (NOT TICKING)"}},
+	}
+}
+
+// TestNewPathBannerNamesNoPrefix (the 4806 read, m1): the new path's help
+// names no --prefix and no NOVA_SPRINT_PREFIX, which it refuses.
+func TestNewPathBannerNamesNoPrefix(t *testing.T) {
+	t.Parallel()
+	if b := newBanner(); strings.Contains(b, "--prefix") || strings.Contains(b, "NOVA_SPRINT_PREFIX") {
+		t.Errorf("the banner names the prefix:\n%s", b)
 	}
 }
 
@@ -385,10 +446,10 @@ func TestNewPathExitCodes(t *testing.T) {
 		{ref("REQUEST", true), exitRefused},       // the verb's own, from its read
 		{ref("MACHINESTATE", false), exitRefused}, // the sprint's refusal
 		{ref("NOTCOORD", false), exitRefused},
-		{ref("REVISION", false), exitRefused}, // a race past its retries
-		{ref("EXISTS", false), exitRefused},   // a race on a derived id (1.0)
-		{ref("DRIFT", false), exitRefused},    // a card the lower layers refuse
-		{&spverbs.Unknown{Verb: "v", Err: tset.ErrOutcomeUnknown}, exitRefused},
+		{ref("REVISION", false), exitRefused},                               // a race past its retries
+		{ref("EXISTS", false), exitRefused},                                 // a race on a derived id (1.0)
+		{ref("DRIFT", false), exitRefused},                                  // a card the lower layers refuse
+		{&spverbs.Unknown{Verb: "v", Err: tset.ErrOutcomeUnknown}, exitBug}, // an unconfirmed write (the grammar decisions, 26)
 		{usage("words"), exitRefused},
 		{errors.New("the store did not answer"), exitRefused},
 	} {
@@ -408,7 +469,7 @@ func TestNewPathExitCodes(t *testing.T) {
 // is never opened; and the new path's files import no Redis client, no
 // present-path store and no table function library, and build their client
 // only with sprintfn.NewRedis. The store's half is
-// TestCommandFCALLOnlyOnTheStore.
+// TestCommandFCALLOnlyOnTheStore (newpath_store_functional_test.go).
 func TestCommandFCALLOnly(t *testing.T) {
 	t.Parallel()
 	na := newNPApp(t)
@@ -441,9 +502,27 @@ func TestCommandFCALLOnly(t *testing.T) {
 		t.Errorf("the present path's store was opened %d times", na.olds)
 	}
 
+	// Layer 1's lifecycle is the one other route to the store, and it lives in
+	// newpath_lifecycle.go alone: define and teardown through tset.Lifecycle,
+	// on tset.NewRedis once, with the build from fn (the lifecycle amendment).
 	refused := []string{"github.com/redis/go-redis", "internal/sprint/store", "internal/redisconn", "internal/nsprint/fn", "internal/ntable", "internal/tset"}
 	fset := gotoken.NewFileSet()
-	for _, name := range []string{"newpath.go", "newpath_verbs.go"} {
+	lf, err := parser.ParseFile(fset, "newpath_lifecycle.go", nil, parser.ImportsOnly)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, imp := range lf.Imports {
+		path, _ := strconv.Unquote(imp.Path.Value)
+		for _, r := range refused {
+			if strings.Contains(path, r) && !strings.HasSuffix(path, "/internal/tset") && !strings.HasSuffix(path, "/internal/nsprint/fn") {
+				t.Errorf("newpath_lifecycle.go imports %s: Layer 1's lifecycle needs tset and the build only", path)
+			}
+		}
+	}
+	if src, err := os.ReadFile("newpath_lifecycle.go"); err != nil || strings.Count(string(src), "NewRedis(") != 1 {
+		t.Errorf("newpath_lifecycle.go: %v, want one tset.NewRedis", err)
+	}
+	for _, name := range []string{"newpath.go", "newpath_verbs.go", "newpath_calls.go"} {
 		f, err := parser.ParseFile(fset, name, nil, parser.ImportsOnly)
 		if err != nil {
 			t.Fatal(err)
@@ -466,30 +545,19 @@ func TestCommandFCALLOnly(t *testing.T) {
 	}
 }
 
-// TestCommandFCALLOnlyOnTheStore: the same suite on the store's client, with
-// testredis.OnlyFCALL on it. sprintfn builds its client itself and takes no
-// hook from a caller (redis.go: newRedisWithClient is its own tests' seam),
-// so the command's half on the store waits for G0 and the store in the
-// container, with sprintfn's TestComposeFCALLOnlyOnTheStore.
-func TestCommandFCALLOnlyOnTheStore(t *testing.T) {
-	t.Parallel()
-	t.Skip("G0: needs the store (Layer 1 revision 4 pinned, Layer 2 accepted again) and the sprint profile loaded in a container; sprintfn takes no hook from a caller")
-}
-
 // TestPlaySimulationOnNewPath (IT23): R8's driver, run by play --simulation
 // through the entry point on the new path, reads where --json, queue --json
-// and inbox --json as before and plays a tick. It needs the read verbs of
-// IT22 (Where, Inbox), IT20 (Queue) and IT17's run: until they land, play is
-// refused at its first read (TestEveryVerbOnNewPath's play case pins that).
+// and inbox --json as before and plays its ticks. The machine ticks twice
+// before play (the driver plays only the outside actors, and reads the
+// machine running), and the stream is added after those ticks.
 func TestPlaySimulationOnNewPath(t *testing.T) {
 	t.Parallel()
-	t.Skip("IT22 (verbs.Where, verbs.Inbox), IT20 (verbs.Queue) and IT17 (machine.Run): the driver's reads are stubbed on the new path until they land")
 	na := newNPApp(t)
-	for _, l := range []string{"init", "reader add reader-a reader-b", "fleet up m1 m2", "add --stream s1 --count 6", "start"} {
+	for _, l := range npTicking {
 		na.ok(l)
 	}
 	out := na.ok("play --simulation --ticks 3")
-	if !strings.Contains(out, "PLAY OK stopped=") {
+	if !strings.Contains(out, "PLAY OK stopped=ticks") || !strings.Contains(out, "tick 3 ") {
 		t.Fatalf("play:\n%s", out)
 	}
 	var w struct {
@@ -497,8 +565,11 @@ func TestPlaySimulationOnNewPath(t *testing.T) {
 		All     int64  `json:"all"`
 		Machine string `json:"machine"`
 	}
-	if err := json.Unmarshal([]byte(na.ok("where --json")), &w); err != nil || w.All != 6 {
+	if err := json.Unmarshal([]byte(na.ok("where --json")), &w); err != nil || w.All != 6 || w.Epoch != 0 {
 		t.Fatalf("where --json after play: %+v, %v", w, err)
+	}
+	if na.olds != 0 {
+		t.Fatalf("the present path's store was opened %d times", na.olds)
 	}
 }
 
@@ -533,5 +604,186 @@ func TestNewTableCoversThePresentVerbs(t *testing.T) {
 	}
 	if strings.Join(added, ",") != "remove" {
 		t.Errorf("verbs the new path adds: %v, want [remove] (section 3)", added)
+	}
+}
+
+// TestDealOnNewPath: the tick deals through the command on the twin (2.3 R6;
+// errata 3 amendments 4 and 5). R6's read names every stream's front, from the
+// streams the tick's first read found, so the second tick deals, and never
+// stops the process on a front its read did not load (the repro of the
+// integration's gap 1, with the members beating so that they are up). One
+// stream of three goes m1, m2, m1; two streams go in turns, s1 then s2, round
+// the fleet, every card in one deal (the room is each member's width, 64 by
+// default: errata 3 amendment 9).
+func TestDealOnNewPath(t *testing.T) {
+	t.Parallel()
+	dealt := func(na *npApp) []string {
+		var out []string
+		for _, l := range strings.Split(strings.TrimSpace(na.ok("log")), "\n") {
+			var line struct {
+				Kind, Table, To string
+				IDs             []string
+			}
+			if err := json.Unmarshal([]byte(l), &line); err != nil {
+				t.Fatalf("log line %q: %v", l, err)
+			}
+			if line.Kind == "create" && line.Table == sprint.Fleet && strings.HasSuffix(line.To, ":ready") {
+				for _, id := range line.IDs {
+					out = append(out, id+">"+strings.TrimSuffix(line.To, ":ready"))
+				}
+			}
+		}
+		return out
+	}
+	for _, c := range []struct {
+		add  []string
+		want string
+	}{
+		{[]string{"add --stream s1 --count 3"}, "s1-1.w1>m1 s1-2.w1>m2 s1-3.w1>m1"},
+		{[]string{"add --stream s1 --count 3", "add --stream s2 --count 2"}, "s1-1.w1>m1 s2-1.w1>m2 s1-2.w1>m1 s2-2.w1>m2 s1-3.w1>m1"},
+	} {
+		na := newNPApp(t)
+		for _, l := range append(append([]string{"init", "reader add r1 r2", "fleet up m1 m2", "fleet beat m1 m2"}, c.add...), "start", "tick", "tick") {
+			na.ok(l)
+		}
+		if got := strings.Join(dealt(na), " "); got != c.want {
+			t.Fatalf("%v: dealt %s, want %s", c.add, got, c.want)
+		}
+	}
+}
+
+// bugOnce refuses the first step it is armed for with a bug code, as a store
+// that refuses a verb's step CONFIG would, and passes every other item on.
+type bugOnce struct {
+	c     sprintfn.Client
+	mu    sync.Mutex
+	armed bool
+}
+
+func (b *bugOnce) Pipeline(ctx context.Context, items []sprintfn.Item) ([]sprintfn.Result, error) {
+	b.mu.Lock()
+	armed := b.armed && len(items) == 1 && items[0].Step != nil
+	if armed {
+		b.armed = false
+	}
+	b.mu.Unlock()
+	if armed {
+		return []sprintfn.Result{{Refusal: &sprintfn.Refusal{Code: "CONFIG", Message: "CONFIG: the store's definition disagrees; nothing was changed",
+			Detail: sprintfn.RefusalDetail{RefusalDetail: tset.RefusalDetail{Budget: "entries"}}}}}, nil
+	}
+	return b.c.Pipeline(ctx, items)
+}
+
+// TestExitThreeWritesTheJudgment: a verb whose step the store refuses with a
+// bug code exits 3 and writes "the machine's step was refused" (1.3.5: "a
+// verb that receives such a refusal prints it as an error (exit 3) and writes
+// the same judgment, so the coordinator sees it whoever ran the verb"; the
+// grammar decisions, 31): one step of notes only, open on the verb, its cause
+// the code, its text naming the verb, the code and the bound. A refusal the
+// verb makes itself (exit 2) writes none.
+func TestExitThreeWritesTheJudgment(t *testing.T) {
+	t.Parallel()
+	na := newNPApp(t)
+	bug := &bugOnce{c: na.rec}
+	na.a.sprintClient = func(context.Context, string, sprint.Names) (sprintfn.Client, func() error, error) {
+		return bug, nil, nil
+	}
+	na.ok("init")
+	bug.mu.Lock()
+	bug.armed = true
+	bug.mu.Unlock()
+	code, out, errs := na.do("reader add r1")
+	if code != exitBug || !strings.Contains(errs, `judgment "the machine's step was refused" open on reader add, cause CONFIG`) {
+		t.Fatalf("reader add refused CONFIG: exit %d\n%s%s", code, out, errs)
+	}
+	judged := func() int {
+		n := 0
+		for _, l := range strings.Split(na.ok("log"), "\n") {
+			if strings.Contains(l, `"type":"the machine's step was refused"`) && strings.Contains(l, `"cause":"CONFIG"`) {
+				n++
+			}
+		}
+		return n
+	}
+	if n := judged(); n != 1 {
+		t.Fatalf("%d judgments in the log after the bug:\n%s", n, na.ok("log"))
+	}
+	if text := na.ok("inbox"); !strings.Contains(text, "verb reader add, code CONFIG, bound entries") {
+		t.Fatalf("the inbox does not name the verb, the code and the bound:\n%s", text)
+	}
+	if code, out, errs := na.do("start --op op-x --epoch 9"); code != exitRefused || judged() != 1 {
+		t.Fatalf("a refusal of the verb's own: exit %d, %d judgments\n%s%s", code, judged(), out, errs)
+	}
+}
+
+// TestInitDefinesAndTeardownDeletesTheNamespace: init defines the namespace
+// through Layer 1's lifecycle before its clock step (the four tables of
+// spverbs.TableColumns, set columns, and the view sprint, with this build),
+// and init on a namespace already defined goes on to the clock step;
+// teardown --confirm sprint deletes it through the lifecycle, and refuses
+// RUNNING while the machine runs, NOSPACE when there is none, and any other
+// confirmation before anything is sent.
+func TestInitDefinesAndTeardownDeletesTheNamespace(t *testing.T) {
+	t.Parallel()
+	na := newNPApp(t)
+	fresh := tset.NewMem()
+	build, err := fn.TSetBuild(fn.TSetSprint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh.SetBuild(build)
+	na.a.lifecycle = func(context.Context, string) (tset.Lifecycle, func() error, error) { return fresh, nil, nil }
+	na.ok("init")
+	if v := fresh.View(npPrefix); v != "sprint" {
+		t.Fatalf("init defined the view %q, want sprint", v)
+	}
+	receipts := fresh.LifecycleReceipts(npPrefix)
+	if len(receipts) != 1 || receipts[0].Fn != "define" || receipts[0].Build != build ||
+		!slices.Equal(receipts[0].Tables, []string{sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet}) {
+		t.Fatalf("the define: %+v", receipts)
+	}
+	if code, out, errs := na.do("init"); code != exitRefused || !strings.Contains(out+errs, "already initialised") {
+		t.Fatalf("init again: exit %d\n%s%s", code, out, errs)
+	}
+	if code, out, errs := na.do("teardown --confirm other"); code != exitRefused || len(fresh.LifecycleReceipts(npPrefix)) != 1 {
+		t.Fatalf("teardown with another name: exit %d\n%s%s", code, out, errs)
+	}
+	fresh.SetRunning(npPrefix, true)
+	if code, out, errs := na.do("teardown --confirm sprint"); code != exitRefused || !strings.Contains(out+errs, "RUNNING") {
+		t.Fatalf("teardown while running: exit %d\n%s%s", code, out, errs)
+	}
+	fresh.SetRunning(npPrefix, false)
+	if out := na.ok("teardown --confirm sprint"); !strings.Contains(out, "teardown: the sprint is gone") || fresh.View(npPrefix) != "" {
+		t.Fatalf("teardown: %s, the view %q", out, fresh.View(npPrefix))
+	}
+	if code, out, errs := na.do("teardown --confirm sprint"); code != exitRefused || !strings.Contains(out+errs, "NOSPACE") {
+		t.Fatalf("teardown of no sprint: exit %d\n%s%s", code, out, errs)
+	}
+}
+
+// TestPlayMergesOnNewPath (the 4806 read, m4): play's driver merges on the new
+// path, whose stream queue lists the work cells (a primary queued to merge is
+// merging), so a simulation lands cards: before, it looked for merge cards in
+// that queue and never merged.
+func TestPlayMergesOnNewPath(t *testing.T) {
+	t.Parallel()
+	na := newNPApp(t)
+	for _, l := range npTicking {
+		na.ok(l)
+	}
+	// the machine's tick and one turn of the world's play, in turn
+	var out string
+	for i := 0; i < 40; i++ {
+		na.ok("tick")
+		code, o, errs := na.do("play --simulation --ticks 1 --seed " + strconv.Itoa(i+1))
+		if out = o + errs; code != 0 {
+			break // the sprint is done and the machine stopped itself
+		}
+	}
+	var w struct {
+		Landed int64 `json:"landed"`
+	}
+	if err := json.Unmarshal([]byte(na.ok("where --json")), &w); err != nil || w.Landed == 0 {
+		t.Fatalf("play merged nothing: landed %d, %v\n%s\n%s\n%s", w.Landed, err, out, na.ok("where"), na.ok("inbox"))
 	}
 }

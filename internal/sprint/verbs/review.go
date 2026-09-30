@@ -221,7 +221,7 @@ func cardOfRecord(r tset.MemberRecord) *sprint.Card {
 
 // wallStamp is a wall time as the stamps for the reader are written (1.2:
 // wall stamps stay for the reader; no rule reads them).
-func wallStamp(now sprint.Now) string { return time.UnixMilli(now.Wall).UTC().Format(time.RFC3339) }
+func wallStamp(now sprint.Now) string { return stampOf(now.Wall) }
 
 // dueAt is a due field's value: running milliseconds, R plus the span (1.2).
 func dueAt(now sprint.Now, span time.Duration) string {
@@ -431,6 +431,16 @@ func planOps(b *stepOps, p sprint.Plan) error {
 			}
 		}
 	}
+	return nil
+}
+
+// propEntries are the plan's table properties as Layer 1 entries (the deal's
+// and the ask's rolling index, round.go; L1 contract amendment, table
+// properties): each a propguard on the value the plan read, then the prop, in
+// the same step as the cards they place, as the tick's step builder writes them
+// (machine.stepBodies.extras).
+func propEntries(p sprint.Plan) []tset.Entry {
+	var out []tset.Entry
 	for _, pw := range p.Props {
 		guard := tset.Entry{Kind: "propguard", Table: pw.Table, Name: pw.Name}
 		if !pw.WasAbsent {
@@ -438,10 +448,9 @@ func planOps(b *stepOps, p sprint.Plan) error {
 			guard.Value = &was
 		}
 		value := pw.Value
-		b.entry(guard)
-		b.entry(tset.Entry{Kind: "prop", Table: pw.Table, Name: pw.Name, Value: &value})
+		out = append(out, guard, tset.Entry{Kind: "prop", Table: pw.Table, Name: pw.Name, Value: &value})
 	}
-	return nil
+	return out
 }
 
 func changeOp(b *stepOps, table string, e ntable.BatchMemberEntry) error {
@@ -730,9 +739,6 @@ type AskReq struct {
 // askFields is what ask reads of a primary and its read cards.
 var askFields = []string{sprint.PrimaryField, "attempt", "result", "asked", "refused", "rcards", "head", "reader"}
 
-// askDeadline is an asked read card's due (1.2: 30 minutes).
-const askDeadline = 30 * time.Minute
-
 // Ask asks readers for primaries in review (section 3, `ask --another p...`;
 // 2.2's "stranded in review" prints `ask` for one never asked at its attempt).
 // Without Another it is R8's ask by the coordinator: two read cards to the two
@@ -760,20 +766,16 @@ func Ask(ctx context.Context, e *Env, req AskReq) (Result, error) {
 	var failed error
 	return e.Do(ctx, Planned{Verb: verb, Op: req.Op, Args: map[string]any{"ids": idsArgs(ids), "another": req.Another},
 		Read: func(epoch tset.Decimal) *sprintfn.ReadRequest { return vr.readAt(e.Names, epoch, &failed) },
-		Plan: func(rd *sprintfn.ReadReply) (Part, error) {
+		Plan: stepPlan(func(rd *sprintfn.ReadReply) (*sprintfn.Request, error) {
 			if failed != nil {
-				return Part{}, failed
+				return nil, failed
 			}
 			va, err := vr.load(rd)
 			if err != nil {
-				return Part{}, err
+				return nil, err
 			}
-			req, err := planAsk(verb, va, ids, req.Another)
-			if err != nil {
-				return Part{}, err
-			}
-			return Part{Req: req}, nil
-		}})
+			return planAsk(verb, va, ids, req.Another)
+		})})
 }
 
 func planAsk(verb string, va *verbAnswer, ids []string, another bool) (*sprintfn.Request, error) {
@@ -857,7 +859,7 @@ func planAsk(verb string, va *verbAnswer, ids []string, another bool) (*sprintfn
 			queue[rd]++
 			rid := sprint.ReadCardID(c.ID, attempt, rd)
 			b.create(sprint.Readers, rd, sprint.Asked, rid, c.Score, map[string]string{"kind": "read", sprint.PrimaryField: c.ID, "stream": c.Row,
-				"reader": rd, "attempt": strconv.Itoa(attempt), "head": c.F("head"), "asked": wallStamp(now), "due_unbegun": dueAt(now, askDeadline)})
+				"reader": rd, "attempt": strconv.Itoa(attempt), "head": c.F("head"), "asked": wallStamp(now), "due_unbegun": dueAt(now, sprint.UnbegunSpan)})
 			rcards = append(rcards, rid)
 		}
 		set := map[string]string{"rcards": strings.Join(rcards, ",")}
@@ -897,6 +899,9 @@ type AcceptReq struct {
 	IDs     []string
 	Streams []string
 	Chunk   int
+	// ReadOK is accept --read-ok: every primary in review with ok reads from
+	// two different readers, in every stream (the walk of Streams over all).
+	ReadOK bool
 }
 
 // acceptFields is what accept reads of a primary and what its follows reach:
@@ -911,10 +916,6 @@ var acceptFollow = []string{sprint.FollowRCards, sprint.FollowMerge, sprint.Foll
 // the two ok ones), beside its stream's control card.
 const acceptEach = 2 + sprint.MaxRCards - sprint.AcceptReaders + 1
 
-// mergeIdleSpan is a merging stream's deadline for its next merge step (1.2:
-// last merge step or state change + 30 min).
-const mergeIdleSpan = 30 * time.Minute
-
 // Accept accepts primaries for merging, as R9 by the coordinator (section 3):
 // review -> merging, the merge card queued at the primary's score (created, or
 // moved from returned), the stream merging with since and due_mergeidle when it
@@ -928,9 +929,35 @@ const mergeIdleSpan = 30 * time.Minute
 // accept refuses the part, naming it, and the parts before stay applied
 // (1.5.3). With Streams, the parts walk each stream's review cell from a
 // cursor to its boundary (1.5.4): the eligible are accepted, the others left
-// in review. n + 1 round trips.
+// in review. n + 1 round trips. With ReadOK, the walk is over every stream of
+// the work table, read first (one more round trip): the primaries with two ok
+// reads are accepted, the others left in review.
 func Accept(ctx context.Context, e *Env, req AcceptReq) (Result, error) {
 	const verb = "accept"
+	if req.ReadOK {
+		if len(req.IDs) != 0 || len(req.Streams) != 0 {
+			return Result{Verb: verb}, refuseLocal(verb, sprintfn.CodeRequest, "--read-ok takes no ids and no --stream")
+		}
+		res, err := e.Do(ctx, Planned{Verb: verb, Read: func(epoch tset.Decimal) *sprintfn.ReadRequest {
+			return &sprintfn.ReadRequest{Epoch: epoch, Tset: []tset.ReadQuery{{Kind: "rows", Table: sprint.Work}}}
+		}})
+		if err != nil {
+			return res, err
+		}
+		if res.Read == nil || len(res.Read.Tset) != 1 {
+			return res, fmt.Errorf("accept: the rows read answered nothing")
+		}
+		for _, r := range res.Read.Tset[0].Rows {
+			req.Streams = append(req.Streams, r.Row)
+		}
+		if len(req.Streams) == 0 {
+			res.Said = "accept: no stream, nothing to accept"
+			return res, nil
+		}
+		out, err := walkReview(ctx, e, acceptWalk(req.Streams), req.Op, req.Streams, req.Chunk)
+		out.Trips += res.Trips
+		return out, err
+	}
 	if len(req.Streams) != 0 {
 		if len(req.IDs) != 0 {
 			return Result{Verb: verb}, refuseLocal(verb, sprintfn.CodeRequest, "names cards and --stream both")
@@ -1008,7 +1035,7 @@ func (a *acceptance) accept(b *stepOps, c *sprint.Card, id string) string {
 	if !a.ctl[c.Row] {
 		a.ctl[c.Row] = true
 		if ctl.F("state") == sprint.StreamWaiting {
-			b.move(sprint.Merge, ctl, "", map[string]string{"state": sprint.StreamMerging, "since": wallStamp(now), "due_mergeidle": dueAt(now, mergeIdleSpan)})
+			b.move(sprint.Merge, ctl, "", map[string]string{"state": sprint.StreamMerging, "since": wallStamp(now), "due_mergeidle": dueAt(now, sprint.MergeIdleSpan)})
 			a.started = append(a.started, c.Row)
 		} else {
 			b.guard(sprint.Merge, ctl)
@@ -1075,7 +1102,7 @@ func namedParts(ctx context.Context, e *Env, verb, op string, ids []string, chun
 			if err != nil {
 				return Part{}, err
 			}
-			return Part{Req: req, Next: strconv.Itoa(next), Last: next >= len(ids)}, nil
+			return Part{Req: req, Moved: movedOf(req), Next: strconv.Itoa(next), Last: next >= len(ids)}, nil
 		}})
 }
 
@@ -1280,7 +1307,7 @@ func walkReview(ctx context.Context, e *Env, w walk, op string, streams []string
 				nb, _ := json.Marshal(wc)
 				next = string(nb)
 			}
-			return Part{Req: req, Next: next, Last: last}, nil
+			return Part{Req: req, Moved: movedOf(req), Next: next, Last: last}, nil
 		}})
 }
 
@@ -1318,9 +1345,12 @@ var reworkFields = []string{sprint.PrimaryField, "attempt", "result", "asked", "
 var reworkFollow = []string{sprint.FollowRCards, sprint.FollowWork, sprint.FollowWithdrawn}
 
 // reworkBeside are the listings ReworkAt reads beside the primaries: the
-// fleet's rows, counts and members' status and width, which it deals the next attempt
+// fleet's rows, counts and members' status, which it deals the next attempt
 // from, and the readers' rows, which the judgment of a primary it refuses
 // reads.
+// The fleet is read with each member's width and the deal's rolling index
+// (round.go, errata 3 amendments 5 and 9): the next attempt goes to the next
+// member round the fleet below its width, and the step moves the index.
 var reworkBeside = []sprint.SprintQ{{Kind: sprint.QueryFleet, Fields: []string{"status", sprint.FieldWidth}, Props: []string{sprint.PropDealIndex}}, {Kind: sprint.QueryReaders, Fields: []string{}}}
 
 // reworkEach is the most members one primary's rework changes: the primary,
@@ -1419,7 +1449,7 @@ func planRework(va *verbAnswer, ids []string, fix, who string) (*sprintfn.Reques
 	if err != nil {
 		return nil, p, err
 	}
-	r := &sprintfn.Request{Meta: sprintfn.Meta{Verb: "rework"}, Body: sprintfn.Body{Entries: entries}}
+	r := &sprintfn.Request{Meta: sprintfn.Meta{Verb: "rework"}, Body: sprintfn.Body{Entries: append(entries, propEntries(p)...)}}
 	var k closer
 	var reworked []string
 	for _, u := range p.Units {
@@ -1464,13 +1494,13 @@ func Return(ctx context.Context, e *Env, req ReturnReq) (Result, error) {
 	var failed error
 	return e.Do(ctx, Planned{Verb: verb, Op: req.Op, Args: map[string]any{"ids": idsArgs(ids)},
 		Read: func(epoch tset.Decimal) *sprintfn.ReadRequest { return vr.readAt(e.Names, epoch, &failed) },
-		Plan: func(rd *sprintfn.ReadReply) (Part, error) {
+		Plan: stepPlan(func(rd *sprintfn.ReadReply) (*sprintfn.Request, error) {
 			if failed != nil {
-				return Part{}, failed
+				return nil, failed
 			}
 			va, err := vr.load(rd)
 			if err != nil {
-				return Part{}, err
+				return nil, err
 			}
 			var b stepOps
 			var refused []sprint.Refusal
@@ -1480,20 +1510,20 @@ func Return(ctx context.Context, e *Env, req ReturnReq) (Result, error) {
 				}
 			}
 			if len(refused) != 0 {
-				return Part{}, refusedIDs(verb, refused)
+				return nil, refusedIDs(verb, refused)
 			}
 			b.unsetRefused(va.snap)
 			entries, err := b.entries()
 			if err != nil {
-				return Part{}, err
+				return nil, err
 			}
 			var k closer
 			couldNotMove(&k, ids)
-			return Part{Req: &sprintfn.Request{Meta: sprintfn.Meta{Verb: verb}, Body: sprintfn.Body{Entries: entries,
+			return &sprintfn.Request{Meta: sprintfn.Meta{Verb: verb}, Body: sprintfn.Body{Entries: entries,
 				Notes: append([]sprintfn.NoteReq{note(sprintfn.JOpOpen, typeReturned, causeReturn,
 					"returned to review from merging: the coordinator decides it again", ids, decisionsOf(typeReturned)...)},
-					k.notes("returned by the coordinator")...)}}}, nil
-		}})
+					k.notes("returned by the coordinator")...)}}, nil
+		})})
 }
 
 // retreat plans a merging primary's return to review, and its merge card's to
@@ -1544,13 +1574,13 @@ func CI(ctx context.Context, e *Env, req CIReq) (Result, error) {
 	var failed error
 	return e.Do(ctx, Planned{Verb: verb, Op: req.Op, Args: map[string]any{"ids": idsArgs(ids), "result": result, "head": req.Head},
 		Read: func(epoch tset.Decimal) *sprintfn.ReadRequest { return vr.readAt(e.Names, epoch, &failed) },
-		Plan: func(rd *sprintfn.ReadReply) (Part, error) {
+		Plan: stepPlan(func(rd *sprintfn.ReadReply) (*sprintfn.Request, error) {
 			if failed != nil {
-				return Part{}, failed
+				return nil, failed
 			}
 			va, err := vr.load(rd)
 			if err != nil {
-				return Part{}, err
+				return nil, err
 			}
 			var b stepOps
 			var refused []sprint.Refusal
@@ -1584,11 +1614,11 @@ func CI(ctx context.Context, e *Env, req CIReq) (Result, error) {
 				}
 			}
 			if len(refused) != 0 {
-				return Part{}, refusedIDs(verb, refused)
+				return nil, refusedIDs(verb, refused)
 			}
 			entries, err := b.entries()
 			if err != nil {
-				return Part{}, err
+				return nil, err
 			}
 			r := &sprintfn.Request{Meta: sprintfn.Meta{Verb: verb}, Body: sprintfn.Body{Entries: entries}}
 			if req.Red {
@@ -1599,6 +1629,6 @@ func CI(ctx context.Context, e *Env, req CIReq) (Result, error) {
 					r.Body.Notes = append(r.Body.Notes, note(sprintfn.JOpClose, typeCIRed, causeCI, "CI green at the same head", closing))
 				}
 			}
-			return Part{Req: r}, nil
-		}})
+			return r, nil
+		})})
 }

@@ -81,9 +81,9 @@ func TestStepBuilderBuildsARealRule(t *testing.T) {
 		if g.Kind == guardCount || g.Kind == guardRCount {
 			t.Fatalf("a guard of kind %s went to X: %+v", g.Kind, g)
 		}
-		if g.Kind == sprintfn.XGuardSent {
+		if g.Kind == sprintfn.XGuardSet {
 			sent++
-			if g.Key != "sent:s1 2" {
+			if g.Key != `{"kind":"zguard","key":"sent:s1","min":"-inf","max":"2","atmost":0}` {
 				t.Fatalf("R6's sent guard: %+v", g)
 			}
 		}
@@ -163,7 +163,7 @@ func TestStepBuilderRefusesWhatItDoesNotCarry(t *testing.T) {
 	}{
 		"a revs fold with no version": {sprint.RulePlan{Guards: []sprint.XGuard{{Kind: guardRevs, Key: sprint.Work, Score: 7},
 			{Kind: guardVersion, Key: sprint.Merge, Score: 2}}}, "the fold of the revisions of the work cards read (R17's stopinputs) with no version guard of the table"},
-		"a zguard X has no kind for": {sprint.RulePlan{Guards: []sprint.XGuard{sprint.SetGuard{Kind: sprint.GuardZGuard, Key: "sent:s1", Min: "-inf", Max: "5"}.XGuard()}},
+		"a zguard with no count bound": {sprint.RulePlan{Guards: []sprint.XGuard{sprint.SetGuard{Kind: sprint.GuardZGuard, Key: "sent:s1", Min: "-inf", Max: "5"}.XGuard()}},
 			"a set guard of kind zguard"},
 		"bumps": {sprint.RulePlan{Plan: sprint.Plan{Units: []sprint.Unit{{Key: "p1", Bumps: []sprint.Bump{{Table: sprint.Work, ID: "p1", Field: "n", Delta: 1}}}}}}, "unit p1: bumps, notes or closes of a unit"},
 		"a counter that is not next's": {sprint.RulePlan{Guards: []sprint.XGuard{{Kind: guardCounter, Key: "id", Score: 3}}},

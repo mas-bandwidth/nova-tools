@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint/sprintfn"
 	spverbs "github.com/mas-bandwidth/nova-tools/internal/sprint/verbs"
 )
 
@@ -71,7 +73,14 @@ type newVerb struct {
 	words wordsRule
 	// check refuses the words and flags before anything is read (exit 2).
 	check func(p *parsed) error
-	call  verbCall
+	// notYet are the present flags the verb's function does not carry yet,
+	// each with what it waits for: parsed as the present grammar has them, and
+	// refused by name when given, before anything is read.
+	notYet map[string]string
+	// writes says the verb writes: after it applied, the sprint's line is
+	// printed (the present command's sprint line, from IT22's Where).
+	writes bool
+	call   verbCall
 	// local is a verb of the command itself, given its raw words (play: the
 	// driver, whose every verb is run through the entry point).
 	local func(a *app, args []string, stdout, stderr io.Writer) int
@@ -85,6 +94,10 @@ type parsed struct {
 	words []string
 	vals  map[string]any
 	given map[string]bool
+	// view is what a read verb's call read, printed with --json; out is where
+	// a verb that draws (where --watch) draws.
+	view any
+	out  io.Writer
 }
 
 func (p *parsed) str(n string) string { return *(p.vals[n].(*string)) }
@@ -140,6 +153,11 @@ func (a *app) parseNew(v newVerb, args []string) (*parsed, error) {
 		return nil, err
 	}
 	fs.Visit(func(f *flag.Flag) { p.given[f.Name] = true })
+	for _, f := range v.flags {
+		if why, ok := v.notYet[f.name]; ok && p.given[f.name] {
+			return nil, fmt.Errorf("--%s is not on the new path's %s yet: %s", f.name, v.name, why)
+		}
+	}
 	p.words = words
 	switch {
 	case v.words == wordsNone && len(words) > 0:
@@ -213,21 +231,21 @@ var newVerbs []newVerb
 func init() {
 	newVerbs = []newVerb{
 		// IT18: the machine's verbs.
-		{name: "init", syntax: "[--coordinator] [--pg <dsn>]", item: "IT18", words: wordsAny,
+		{name: "init", syntax: "[--coordinator <name>] [--pg <dsn>]", item: "IT18", words: wordsAny, writes: true,
 			flags: []flagDef{
-				{name: "coordinator", kind: kBool, usage: "an existing sprint: set its coordinator to the one nova-config names now (the actor must be it)"},
+				{name: "coordinator", usage: "the sprint's coordinator, the one actor who releases sentinels (default: the actor); on a sprint that has one, set it anew (the actor must be it)"},
 				{name: "pg", env: envPG, usage: "nova-config's store, where the coordinator is read (else " + envPG + ")"},
 				{name: "readers", usage: "not on the new path: init makes the clock and the coordinator; run reader add after it"},
 				{name: "members", usage: "not on the new path: init makes the clock and the coordinator; run fleet up after it"},
 			},
 			check: checkInit, call: callInit},
-		{name: "start", item: "IT18", call: func(ctx context.Context, e *spverbs.Env, p *parsed) (spverbs.Result, error) {
+		{name: "start", item: "IT18", writes: true, call: func(ctx context.Context, e *spverbs.Env, p *parsed) (spverbs.Result, error) {
 			return spverbs.Start(ctx, e, spverbs.ClockReq{Op: p.c.op})
 		}},
-		{name: "stop", item: "IT18", call: func(ctx context.Context, e *spverbs.Env, p *parsed) (spverbs.Result, error) {
+		{name: "stop", item: "IT18", writes: true, call: func(ctx context.Context, e *spverbs.Env, p *parsed) (spverbs.Result, error) {
 			return spverbs.Stop(ctx, e, spverbs.ClockReq{Op: p.c.op})
 		}},
-		{name: "clear", syntax: "--confirm sprint", item: "IT18",
+		{name: "clear", syntax: "--confirm sprint", item: "IT18", writes: true,
 			flags: []flagDef{{name: "confirm", usage: "the sprint's name, sprint, to confirm"}},
 			check: func(p *parsed) error {
 				if p.str("confirm") != confirmName() {
@@ -259,15 +277,19 @@ func init() {
 				}
 				return spverbs.GoalSet(ctx, e, spverbs.GoalReq{Op: p.c.op, Person: p.words[0], Goal: text})
 			}},
-		{name: "goal show", syntax: "<name>", item: "IT18", words: wordsAny,
+		{name: "goal show", syntax: "[<name>]", item: "IT18", words: wordsAny,
 			check: func(p *parsed) error {
-				if len(p.words) != 1 {
-					return fmt.Errorf("takes one name: the new path reads one person's goal")
+				if len(p.words) > 1 {
+					return fmt.Errorf("takes one name, or none for every goal")
 				}
 				return nil
 			},
 			call: func(ctx context.Context, e *spverbs.Env, p *parsed) (spverbs.Result, error) {
-				return spverbs.GoalShow(ctx, e, spverbs.GoalReq{Person: p.words[0]})
+				req := spverbs.GoalReq{}
+				if len(p.words) == 1 {
+					req.Person = p.words[0]
+				}
+				return spverbs.GoalShow(ctx, e, req)
 			}},
 		{name: "goal drop", syntax: "<name>", item: "IT18", words: wordsOne,
 			call: func(ctx context.Context, e *spverbs.Env, p *parsed) (spverbs.Result, error) {
@@ -275,8 +297,8 @@ func init() {
 			}},
 
 		// IT17: the machine's loop.
-		{name: "run", item: "IT17", call: stubbed("IT17, the tick loop's Run")},
-		{name: "tick", item: "IT17", call: stubbed("IT17, the tick loop's Tick")},
+		{name: "run", item: "IT17", call: callRun, writes: true},
+		{name: "tick", item: "IT17", call: callTick, writes: true},
 
 		// IT19: add, release, rank.
 		{name: "add", syntax: "--stream <s> (<id>... | --count <n> | --sentinel <id>) [--needs <a,b>] [--before <id> | --after <id> | --score <n>] [--brief <text>] [--sentinel-every <k> [--sentinel-last]]",
@@ -293,7 +315,7 @@ func init() {
 				{name: "sentinel-every", kind: kInt, usage: "with --count: a sentinel <stream>-gate-<n> after every k cards"},
 				{name: "sentinel-last", kind: kBool, usage: "with --sentinel-every: a sentinel after the last card too"},
 			},
-			check: checkAdd, call: stubbed("IT19, verbs.Add")},
+			check: checkAdd, call: callAdd, writes: true},
 		{name: "release", syntax: "<sentinel>... --reason <text> [--answers <note>]", item: "IT19", words: wordsSome,
 			flags: []flagDef{{name: "reason", usage: "what you looked at and found"}, fAnswers},
 			check: func(p *parsed) error {
@@ -302,11 +324,12 @@ func init() {
 				}
 				return nil
 			},
-			call: stubbed("IT19, verbs.Release")},
+			call: callRelease, writes: true},
 		{name: "rank", syntax: "<id>... (--score <n> | --first | --before <id> | --after <id>) [--answers <note>]", item: "IT19", words: wordsSome,
 			flags: []flagDef{{name: "score", usage: "the new score of the first id; the rest follow it"},
 				{name: "first", kind: kBool, usage: "ahead of every primary"},
 				{name: "before", usage: "in front of this primary"}, {name: "after", usage: "after this primary"}, fAnswers},
+			notYet: map[string]string{"first": "section 3's rank takes --score, --before or --after (rank <id> --before <the stream's first>)"},
 			check: func(p *parsed) error {
 				if count(p.str("score") != "", p.on("first"), p.str("before") != "", p.str("after") != "") != 1 {
 					return fmt.Errorf("wants ids and one of --score <n>, --first, --before <id>, --after <id>")
@@ -318,17 +341,17 @@ func init() {
 				}
 				return nil
 			},
-			call: stubbed("IT19, verbs.Rank")},
+			call: callRank, writes: true},
 
 		// IT20: the workers' verbs and the fleet's.
 		{name: "take", syntax: "--as <member> [<card>@<gen>...] [--limit <n>]", item: "IT20", words: wordsAny,
 			flags: []flagDef{{name: "as", usage: "the fleet member taking its cards"}, {name: "limit", kind: kInt, usage: "take the first n of its ready queue (default 1)"}},
-			check: checkCardGens(false), call: stubbed("IT20, verbs.Take")},
+			check: checkCardGens(false), call: callTake, writes: true},
 		{name: "finish", syntax: "--as <member> <card>@<gen>... [--failed] [--head <h>] [--report <text>] [--branch <b>] [--base <b>]", item: "IT20", words: wordsSome,
 			flags: []flagDef{{name: "as", usage: "the fleet member finishing its cards"}, {name: "failed", kind: kBool, usage: "the work failed (default: ok)"},
 				{name: "head", usage: "the head the work finished at"}, {name: "report", usage: "the worker's report"},
 				{name: "branch", usage: "the branch the work is on"}, {name: "base", usage: "the branch the work started from"}},
-			check: checkCardGens(true), call: stubbed("IT20, verbs.Finish")},
+			check: checkCardGens(true), call: callFinish, writes: true},
 		{name: "read", syntax: "--as <reader> (--begin | --ok | --broken) [<card>...] [--limit <n>] [--finding <text>]", item: "IT20", words: wordsAny,
 			flags: []flagDef{{name: "as", usage: "the reader"}, {name: "begin", kind: kBool, usage: "asked -> reading"},
 				{name: "ok", kind: kBool, usage: "the read found it good"}, {name: "broken", kind: kBool, usage: "the read found it broken"},
@@ -339,7 +362,8 @@ func init() {
 				}
 				return nil
 			},
-			call: stubbed("IT20, verbs.ReadCard")},
+			notYet: map[string]string{"limit": "the readers' queue is not a read of IT20's queue yet; name the read cards"},
+			call:   callRead, writes: true},
 		{name: "queue", syntax: "--as <reader|member> | --stream <s> [--col waiting]", item: "IT20",
 			flags: []flagDef{{name: "as", usage: "a reader or a fleet member"}, {name: "stream", usage: "a stream: its merge queue, then its stuck cards"},
 				{name: "col", usage: "with --stream: waiting lists the stream's waiting primaries"}},
@@ -352,12 +376,12 @@ func init() {
 				}
 				return nil
 			},
-			call: stubbed("IT20, verbs.Queue")},
+			call: callQueue},
 		{name: "fleet beat", syntax: "<member>... [--load <percent>]", item: "IT20", words: wordsSome,
 			flags: []flagDef{{name: "load", usage: "the load as a percent of all the machine's cores, instead of measuring it"}},
-			call:  stubbed("IT20, verbs.FleetBeat")},
-		{name: "fleet up", syntax: "<member>...", item: "IT20", words: wordsSome, call: stubbed("IT20, verbs.FleetUp")},
-		{name: "fleet down", syntax: "<member>...", item: "IT20", words: wordsSome, call: stubbed("IT20, verbs.FleetDown")},
+			call:  callFleetBeat, writes: true},
+		{name: "fleet up", syntax: "<member>...", item: "IT20", words: wordsSome, call: callFleetUp, writes: true},
+		{name: "fleet down", syntax: "<member>...", item: "IT20", words: wordsSome, call: callFleetDown, writes: true},
 		{name: "reader add", syntax: "<reader>...", item: "IT20", words: wordsSome,
 			check: func(p *parsed) error {
 				for _, n := range p.words {
@@ -367,12 +391,13 @@ func init() {
 				}
 				return nil
 			},
-			call: stubbed("IT20, verbs.ReaderAdd")},
+			call: callReaderAdd, writes: true},
 
 		// IT21: review, merge, drop.
 		{name: "ask", syntax: "[<id>... | --group <id> [--expect <n>]] [--stream <s>] [--limit <n>] [--another] [--answers <note>]", item: "IT21", words: wordsAny,
-			flags: setFlags(false, flagDef{name: "another", kind: kBool, usage: "one more reader for a primary already asked"}, fAnswers),
-			check: checkGroup, call: stubbed("IT21, verbs.Ask")},
+			flags:  setFlags(false, flagDef{name: "another", kind: kBool, usage: "one more reader for a primary already asked"}, fAnswers),
+			notYet: map[string]string{"stream": "ask names its primaries", "limit": "ask names its primaries", "group": "the new inbox has no --group selection yet", "expect": "the new inbox has no --group selection yet", "answers": "ask's request carries no answers"},
+			check:  checkGroup, call: callAsk, writes: true},
 		{name: "accept", syntax: "(<id>... | --stream <s> | --read-ok | --group <id> [--expect <n>]) [--answers <note>]", item: "IT21", words: wordsAny,
 			flags: setFlags(false, flagDef{name: "read-ok", kind: kBool, usage: "every primary in review with ok reads from two different readers"}, fAnswers),
 			check: func(p *parsed) error {
@@ -384,15 +409,19 @@ func init() {
 				}
 				return nil
 			},
-			call: stubbed("IT21, verbs.Accept")},
+			notYet: map[string]string{"limit": "accept takes ids, --stream or --read-ok", "group": "the new inbox has no --group selection yet", "expect": "the new inbox has no --group selection yet", "answers": "accept's request carries no answers"},
+			call:   callAccept, writes: true},
 		{name: "rework", syntax: "(<id>... | --group <id> [--expect <n>]) [--fix <text>] [--answers <note>]", item: "IT21", words: wordsAny,
-			flags: setFlags(false, flagDef{name: "fix", usage: "the fix for every primary"}, fAnswers),
-			check: needsSet("wants ids (or --group, --stream); --fix <text> for all, else each primary's own finding or report"),
-			call:  callRework},
+			flags:  setFlags(false, flagDef{name: "fix", usage: "the fix for every primary"}, fAnswers),
+			check:  needsSet("wants ids (or --group, --stream); --fix <text> for all, else each primary's own finding or report"),
+			notYet: map[string]string{"limit": "rework takes ids or --stream", "group": "the new inbox has no --group selection yet", "expect": "the new inbox has no --group selection yet", "answers": "rework's request carries no answers"},
+			call:   callRework, writes: true},
 		{name: "return", syntax: "(<id>... | --group <id> [--expect <n>]) [--reason <text>] [--answers <note>]", item: "IT21", words: wordsAny,
 			flags: setFlags(false, flagDef{name: "reason", usage: "why it goes back to review"}, fAnswers),
 			check: needsSet("wants ids, --stream <s> or --group <id>"),
-			call:  stubbed("IT21, verbs.Return")},
+			notYet: map[string]string{"stream": "return names its primaries", "limit": "return names its primaries", "group": "the new inbox has no --group selection yet", "expect": "the new inbox has no --group selection yet",
+				"reason": "return's request carries no reason", "answers": "return's request carries no answers"},
+			call: callReturn, writes: true},
 		{name: "drop", syntax: "(<id>... | --stream <s>[,<s>...] [--col <state>] | --group <id> [--expect <n>]) --reason <text> [--answers <note>] | --abort --op <op>", item: "IT21", words: wordsAny,
 			flags: setFlags(true, flagDef{name: "reason", usage: "why it leaves the table; kept with its record"}, fAnswers,
 				flagDef{name: "abort", kind: kBool, usage: "with --op: end a drop in parts, clearing its marks and naming what was left"}),
@@ -411,7 +440,8 @@ func init() {
 				}
 				return nil
 			},
-			call: callDrop},
+			notYet: map[string]string{"limit": "drop takes ids or --stream", "group": "the new inbox has no --group selection yet", "expect": "the new inbox has no --group selection yet", "answers": "drop's request carries no answers"},
+			call:   callDrop, writes: true},
 		{name: "ci", syntax: "<id>... (--red | --green) [--head <h>] [--run <id>] [--source <s>] [--note <text>]", item: "IT21", words: wordsAny,
 			flags: setFlags(false, flagDef{name: "red", kind: kBool, usage: "the run failed"}, flagDef{name: "green", kind: kBool, usage: "the run passed"},
 				flagDef{name: "head", usage: "the head the run tested"}, flagDef{name: "run", usage: "the run's id"},
@@ -425,7 +455,9 @@ func init() {
 				}
 				return nil
 			},
-			call: stubbed("IT21, verbs.CI")},
+			notYet: map[string]string{"stream": "ci names its primaries", "limit": "ci names its primaries", "group": "the new inbox has no --group selection yet", "expect": "the new inbox has no --group selection yet",
+				"run": "ci's request carries the head alone", "source": "ci's request carries the head alone", "note": "ci's request carries the head alone"},
+			call: callCI, writes: true},
 		{name: "merge", syntax: "--stream <s> [--batch <n>] [--conflict <id> | --cross <id>=<other> | --red [--suspect <id>...] | --rejected] [--note <text>]", item: "IT21", words: wordsAny,
 			flags: []flagDef{{name: "stream", usage: "the stream"}, {name: "batch", kind: kInt, def: "10", usage: "the batch: the head n of the stream's queue"},
 				{name: "conflict", usage: "fact: this card of the batch did not merge"}, {name: "cross", usage: "fact: <card>=<other>"},
@@ -444,7 +476,7 @@ func init() {
 				}
 				return nil
 			},
-			call: stubbed("IT21, verbs.Merge")},
+			call: callMerge, writes: true},
 		{name: "resume", syntax: "--stream <s>[,<s>...] [--did <text>] [--answers <note>]", item: "IT21",
 			flags: []flagDef{{name: "stream", usage: "the stopped streams, comma separated"}, {name: "did", usage: "what the coordinator did about the cause"}, fAnswers},
 			check: func(p *parsed) error {
@@ -453,7 +485,8 @@ func init() {
 				}
 				return nil
 			},
-			call: stubbed("IT21, verbs.Resume")},
+			notYet: map[string]string{"answers": "resume's request carries no answers"},
+			call:   callResume, writes: true},
 
 		// IT22: judgments and reads.
 		{name: "ack", syntax: "<note>... --reason <text>", item: "IT22", words: wordsSome,
@@ -464,7 +497,7 @@ func init() {
 				}
 				return nil
 			},
-			call: stubbed("IT22, verbs.Ack")},
+			call: callAck, writes: true},
 		{name: "wait", syntax: "<note>... (--for <duration> | --until <RFC3339>) [--reason <text>]", item: "IT22", words: wordsSome,
 			flags: []flagDef{{name: "for", kind: kDuration, usage: "review it again after this long"}, {name: "until", usage: "review it again at this time (RFC3339)"},
 				{name: "reason", usage: "why it waits"}},
@@ -479,11 +512,16 @@ func init() {
 				}
 				return nil
 			},
-			call: stubbed("IT22, verbs.Wait")},
-		{name: "inbox", syntax: "[--open <group>] [--read] [--deadline <duration>] [--stale <duration>] [--at-epoch <n>]", item: "IT22",
+			call: callWait, writes: true},
+		{name: "inbox", syntax: "[--open <group>] [--read] [--wait [--timeout <duration>]] [--after <cursor>] [--deadline <duration>] [--stale <duration>] [--at-epoch <n>]", item: "IT22",
 			flags: []flagDef{{name: "open", usage: "list every member and notification of the group of this id"},
-				{name: "read", kind: kBool, usage: "move the cursor past what is shown"},
+				{name: "read", kind: kBool, usage: "move the coordinator's cursor, stored on the sprint, to the last line shown (the coordinator's alone)"},
+				{name: "after", kind: kInt64, def: "-1", usage: "the lines after this cursor, for a caller that keeps its own (from --wait's last); by default the coordinator's stored cursor, from which --wait also starts"},
+				{name: "wait", kind: kBool, usage: "block until the end of the next tick that addressed the coordinator (one wake a tick), then say where its batch is"},
+				{name: "timeout", kind: kDuration, usage: "with --wait: at most this long (default a judgment's deadline)"},
 				{name: "deadline", kind: kDuration, def: defaultDeadline.String(), usage: "a judgment open longer is overdue"}, fStale, fAtEpoch},
+			notYet: map[string]string{"open": "the new inbox lists groups, not their members", "deadline": "the new inbox's deadlines are the design's",
+				"stale": "the new inbox's spans are the design's", "at-epoch": "the reads read the active epoch"},
 			check: func(p *parsed) error {
 				if p.on("read") && p.num64("at-epoch") >= 0 {
 					return fmt.Errorf("--read moves the cursor of the sprint's epoch, and --at-epoch reads an earlier one as it was: give one of them")
@@ -491,16 +529,27 @@ func init() {
 				if isNumber(p.str("open")) {
 					return fmt.Errorf("group numbers are not accepted: --open wants a group's id, as inbox prints it")
 				}
+				if p.has("after") && p.num64("after") < 0 {
+					return fmt.Errorf("--after wants a cursor: the seq of a line, 0 or more")
+				}
+				if p.has("after") && p.on("read") {
+					return fmt.Errorf("--read moves the coordinator's stored cursor and --after reads from one of the caller's own: give one of them")
+				}
+				if p.on("read") && p.on("wait") {
+					return fmt.Errorf("--read and --wait are two calls: wait, then read")
+				}
 				return nil
 			},
-			call: stubbed("IT22, verbs.Inbox")},
+			call: callInbox},
 		{name: "card", syntax: "<id> [--fields] [--at-epoch <n>]", item: "IT22", words: wordsOne,
-			flags: []flagDef{fAtEpoch, {name: "fields", kind: kBool, usage: "every field of the primary and its cards, instead of its story"}},
-			call:  stubbed("IT22, verbs.Card")},
+			flags:  []flagDef{fAtEpoch, {name: "fields", kind: kBool, usage: "every field of the primary and its cards, instead of its story"}},
+			notYet: map[string]string{"at-epoch": "the reads read the active epoch", "fields": "card shows the record and its follows"},
+			call:   callCard},
 		{name: "log", syntax: "[--card <id>] [--stream <s>] [--member <m>] [--since <10m|RFC3339>] [--at-epoch <n>]", item: "IT22",
 			flags: []flagDef{{name: "card", usage: "the lines about this card"}, {name: "stream", usage: "the lines of this stream"},
 				{name: "member", usage: "the lines of this fleet member or reader"}, {name: "since", usage: "the lines at or after this time"}, fAtEpoch},
-			call: stubbed("IT22, verbs.Log")},
+			notYet: map[string]string{"member": "log reads a card, a stream or the lines after a seq", "at-epoch": "the reads read the active epoch"},
+			call:   callLog},
 		{name: "where", syntax: "[--watch] [--every <duration>] [--stale <duration>] [--at-epoch <n>]", item: "IT22",
 			flags: []flagDef{{name: "watch", kind: kBool, usage: "redraw in place every --every until interrupted"},
 				{name: "every", kind: kDuration, def: time.Second.String(), usage: "the redraw interval with --watch, above 0"}, fStale, fAtEpoch},
@@ -510,7 +559,8 @@ func init() {
 				}
 				return nil
 			},
-			call: stubbed("IT22, verbs.Where")},
+			notYet: map[string]string{"stale": "the new view's spans are the design's", "at-epoch": "the reads read the active epoch"},
+			call:   callWhere},
 
 		// The command's own: the driver, every verb of which runs through the
 		// entry point, on the path the app is on.
@@ -518,7 +568,9 @@ func init() {
 			item: "the command (R8's driver)", local: (*app).cmdPlay},
 
 		// No item on the stack builds these yet.
-		{name: "check", item: "IT26, verbs.Check (after)", call: stubbed("IT26, verbs.Check (after)")},
+		{name: "check", item: "IT26's rule 11 (errata 3 amendment 7)", call: func(ctx context.Context, e *spverbs.Env, _ *parsed) (spverbs.Result, error) {
+			return spverbs.Check(ctx, e)
+		}},
 		{name: "remove", syntax: "--stream <s>[,<s>...] --confirm sprint | --abort --op <op>", class: classCoordinator, item: "IT27, verbs.Remove (after; AL6)",
 			flags: []flagDef{{name: "stream", usage: "the streams to remove, comma separated"}, {name: "confirm", usage: "the sprint's name, sprint, to confirm"},
 				{name: "abort", kind: kBool, usage: "with --op: end a remove in parts"}},
@@ -535,15 +587,15 @@ func init() {
 				return nil
 			},
 			call: stubbed("IT27, verbs.Remove (after; AL6 in the contract)")},
-		{name: "teardown", syntax: "--confirm sprint", item: "no item (Layer 1's lifecycle delete, L1 9)",
+		{name: "teardown", syntax: "--confirm sprint", item: "IT23 (Layer 1's lifecycle teardown)",
 			flags: []flagDef{{name: "confirm", usage: "the sprint's name, sprint, to confirm"}},
 			check: func(p *parsed) error {
 				if p.str("confirm") != confirmName() {
-					return fmt.Errorf("drops the four tables, the view and every key of the sprint under prefix %s; wants --confirm %s", strconv.Quote(pathNames.Prefix), confirmName())
+					return fmt.Errorf("drops the four tables, the view and every key of the sprint but its lifecycle receipts; wants --confirm %s", confirmName())
 				}
 				return nil
 			},
-			call: stubbed("no item: teardown is Layer 1's lifecycle delete (L1 9), the one writer outside ns_sprint_step")},
+			call: callTeardown},
 		{name: "repair", item: "AL7 (Layer 1's repair entry) and IT26", call: stubbed("AL7 and IT26: repair is not a verb until they land (section 3)")},
 		{name: "resolve", syntax: "[<id>...] [--stream <s>] [--limit <n>]", item: "none: section 3 has no resolve (the tick's rules do it)", words: wordsAny,
 			flags: []flagDef{fStream, fLimit}, call: stubbed("no item: section 3 has no resolve verb; the tick's rules resolve waiting primaries")},
@@ -576,9 +628,10 @@ func newBanner() string {
 	}
 	b.WriteString(`
 Every store verb takes --redis <addr> (else NOVA_SPRINT_REDIS, then
-NOVA_REDIS_ADDR), --actor <name> (else NOVA_SPRINT_ACTOR), --op <id> (the same op
-and arguments again return the recorded result; other arguments are refused),
---epoch <n> (the epoch the caller holds), --json and --max <n>.
+NOVA_REDIS_ADDR), --actor <name> (else NOVA_SPRINT_ACTOR), --op <id> (the same
+op and arguments again return the recorded result; other arguments are
+refused), --epoch <n> (the epoch the caller holds), --json and --max <n>. The
+sprint's namespace is the layer's own: there is no prefix to name.
 
 exit codes: 0 done, 2 refused, 3 a bug refusal (the store refused the step
 with a code that is a bug, 1.3.5 of the design)
@@ -625,8 +678,7 @@ func count(conds ...bool) int {
 }
 
 // checkInit is init's grammar on the new path: --readers and --members are
-// refused naming the verbs that do them now, and --coordinator takes no name
-// (nova-config names the coordinator).
+// refused naming the verbs that do them now; init takes no words.
 func checkInit(p *parsed) error {
 	for _, f := range []struct{ flag, verb string }{{"readers", "reader add"}, {"members", "fleet up"}} {
 		if p.has(f.flag) {
@@ -634,64 +686,76 @@ func checkInit(p *parsed) error {
 		}
 	}
 	if len(p.words) > 0 {
-		if p.on("coordinator") {
-			return fmt.Errorf("--coordinator takes no name on the new path: the coordinator is the one nova-config's sprint row names (nova-config sprint set --coordinator <name>)")
-		}
 		return fmt.Errorf("takes no words, found %s", p.words[0])
 	}
 	return nil
 }
 
-// callInit is init, or init --coordinator, with nova-config at --pg.
+// callInit is init: the coordinator is --coordinator's name, else the actor;
+// nova-config is read only when --pg (or NOVA_PG_DSN) names its store, and
+// then the name given must be the one it names (the grammar decisions, 9 to
+// 12). On a sprint that has a clock, init --coordinator <name> sets the
+// coordinator anew (IT18's InitCoordinator: the actor must be it).
 func callInit(ctx context.Context, e *spverbs.Env, p *parsed) (spverbs.Result, error) {
-	verb := "init"
-	if p.on("coordinator") {
-		verb = "init --coordinator"
+	req := spverbs.InitReq{Op: p.c.op, Coordinator: p.str("coordinator")}
+	if req.Coordinator == "" {
+		req.Coordinator = e.Actor
 	}
-	rows, closer, err := p.app.configRows(ctx, p.str("pg"))
+	if dsn := p.str("pg"); dsn != "" {
+		rows, closer, err := p.app.configRows(ctx, dsn)
+		if err != nil {
+			return spverbs.Result{Verb: p.verb}, err
+		}
+		if closer != nil {
+			defer func() { _ = closer() }()
+		}
+		req.Config = rows
+		if !p.has("coordinator") {
+			req.Coordinator = ""
+		}
+	}
+	// Layer 1's lifecycle defines the namespace first: the four tables, the
+	// view sprint and this build (the lifecycle amendment, section 2); a
+	// namespace already defined goes on to the clock step, which says whether
+	// the sprint is made.
+	build, err := sprintBuild()
 	if err != nil {
-		return spverbs.Result{Verb: verb}, err
+		return spverbs.Result{Verb: p.verb}, err
 	}
-	if closer != nil {
-		defer func() { _ = closer() }()
+	// The store's library is checked before the define reaches it (the
+	// grammar decisions, 30): a store of another build is refused with
+	// nothing sent, as the client's first call would refuse it.
+	if lc, ok := e.C.(interface{ CheckLibrary(context.Context) error }); ok {
+		if err := lc.CheckLibrary(ctx); err != nil {
+			return spverbs.Result{Verb: p.verb}, err
+		}
 	}
-	req := spverbs.InitReq{Op: p.c.op, Config: rows}
-	if p.on("coordinator") {
-		return spverbs.InitCoordinator(ctx, e, req)
+	lc, err := p.app.lifecycleAt(ctx, p.c.redis)
+	if err != nil {
+		return spverbs.Result{Verb: p.verb}, err
 	}
-	return spverbs.Init(ctx, e, req)
+	if _, err := spverbs.Define(ctx, lc, e.Names, build); err != nil {
+		return spverbs.Result{Verb: p.verb}, err
+	}
+	res, err := spverbs.Init(ctx, e, req)
+	var rf *spverbs.Refused
+	if p.has("coordinator") && errors.As(err, &rf) && rf.Local && rf.Code() == sprintfn.CodeMachineState {
+		again, err := spverbs.InitCoordinator(ctx, e, req)
+		again.Trips += res.Trips
+		return again, err
+	}
+	return res, err
 }
 
-// callDrop is drop or drop --abort (IT21).
-func callDrop(ctx context.Context, e *spverbs.Env, p *parsed) (spverbs.Result, error) {
-	if p.on("abort") {
-		return spverbs.DropAbort(ctx, e, spverbs.DropAbortReq{Op: p.c.op})
+// callTeardown is teardown: Layer 1's lifecycle teardown of the sprint's
+// namespace, confirmed by the view's name; refused RUNNING while the machine
+// runs (stop it first) and NOSPACE when there is no sprint.
+func callTeardown(ctx context.Context, e *spverbs.Env, p *parsed) (spverbs.Result, error) {
+	lc, err := p.app.lifecycleAt(ctx, p.c.redis)
+	if err != nil {
+		return spverbs.Result{Verb: p.verb}, err
 	}
-	var streams []string
-	if s := p.str("stream"); s != "" {
-		streams = sprint.Split(s)
-	}
-	return spverbs.Drop(ctx, e, spverbs.DropReq{
-		Op:      p.c.op,
-		IDs:     p.words,
-		Streams: streams,
-		Col:     p.str("col"),
-		Reason:  p.str("reason"),
-	})
-}
-
-// callRework is rework (IT21).
-func callRework(ctx context.Context, e *spverbs.Env, p *parsed) (spverbs.Result, error) {
-	var streams []string
-	if s := p.str("stream"); s != "" {
-		streams = sprint.Split(s)
-	}
-	return spverbs.Rework(ctx, e, spverbs.ReworkReq{
-		Op:      p.c.op,
-		IDs:     p.words,
-		Streams: streams,
-		Fix:     p.str("fix"),
-	})
+	return spverbs.Teardown(ctx, lc, e.Names, spverbs.TeardownReq{Confirm: p.str("confirm")})
 }
 
 // checkAdd is add's grammar, as the present add checks it.

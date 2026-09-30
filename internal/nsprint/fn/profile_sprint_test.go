@@ -241,8 +241,8 @@ func TestSprintLuaOrdersMatchGo(t *testing.T) {
 
 // TestSprintProfileAssembles: the sprint profile is the composed profile's
 // source followed by every sprint fragment in load order, under a filter that
-// admits Layer 1's functions (TSetFunctions) and the sprint's two; no other
-// tset profile carries a sprint fragment.
+// admits Layer 1's functions and the sprint's two; no other tset profile
+// carries a sprint fragment.
 func TestSprintProfileAssembles(t *testing.T) {
 	t.Parallel()
 	sprintSource, err := TSetSource(TSetSprint)
@@ -261,10 +261,18 @@ func TestSprintProfileAssembles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	filter := "name == 'ns_tset_step' or name == 'ns_tset_read' or name == 'ns_tset_define' or name == 'ns_tset_teardown'" +
-		" or name == 'ns_sprint_step' or name == 'ns_sprint_read'"
+	filter := "name == 'ns_tset_step' or name == 'ns_tset_read' or name == 'ns_tset_define' or name == 'ns_tset_teardown' or " +
+		"name == 'ns_sprint_step' or name == 'ns_sprint_read'"
 	if !strings.Contains(sprintSource, "    if "+filter+" then\n") {
-		t.Fatal("the sprint profile's registration filter is not TSetFunctions and SprintFunctions")
+		t.Fatal("the sprint profile's registration filter is not Layer 1's functions (TSetFunctions) and SprintFunctions")
+	}
+	build, err := TSetBuild(TSetSprint)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prelude := strings.SplitN(sprintSource, "\n", 3); len(prelude) < 3 || !strings.Contains(prelude[1], "tset_profile = 'sprint'") ||
+		!strings.Contains(prelude[1], "tset_build = '"+build+"'") {
+		t.Fatalf("the sprint profile's prelude does not carry its profile and its build %s: %q", build, prelude[:2])
 	}
 	if strings.Contains(composed, "ns_sprint_step' or") || strings.Contains(standalone, "ns_sprint_step' or") {
 		t.Fatal("a tset profile admits the sprint's functions")

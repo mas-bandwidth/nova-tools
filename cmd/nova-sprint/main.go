@@ -27,6 +27,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/sprintfn"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 	spverbs "github.com/mas-bandwidth/nova-tools/internal/sprint/verbs"
+	"github.com/mas-bandwidth/nova-tools/internal/tset"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -46,6 +47,10 @@ func main() {
 // shared by every verb it runs (the driver runs many), its clock, and how it
 // sleeps. Tests give it a backend of their own.
 type app struct {
+	// library is this build's function library, which the new path's client
+	// checks a store's against before its first call (the grammar decisions,
+	// 30): the sprint profile of the nova_sprint library.
+	library *sprintfn.Library
 	getenv  func(string) string
 	now     func() time.Time
 	sleep   func(time.Duration)
@@ -67,7 +72,14 @@ type app struct {
 	newPath      bool
 	sprintClient func(ctx context.Context, addr string, names sprint.Names) (sprintfn.Client, func() error, error)
 	configRows   func(ctx context.Context, dsn string) (spverbs.ConfigRows, func() error, error)
-	np           *newPathState
+	// lifecycle opens Layer 1's lifecycle beside the sprint's client (the
+	// Redis store; the twin's Mem in tests): init defines the namespace
+	// through it, teardown deletes it.
+	lifecycle func(ctx context.Context, addr string) (tset.Lifecycle, func() error, error)
+	// noteStream is the store's notification stream, which inbox --wait
+	// blocks on (a read, never a write).
+	noteStream func(addr string) (spverbs.NoteStream, func() error, error)
+	np         *newPathState
 	// ticked, when set, is told of each tick run begins: its count, when it
 	// began, and why (the loop's start, a line on the log, the clock of a
 	// quiet log, a retry).
@@ -79,6 +91,10 @@ func newApp(getenv func(string) string) *app {
 	a.backend = a.redisBackend
 	a.sprintClient = a.newPathClient
 	a.configRows = newPathConfig
+	a.lifecycle = a.newPathLifecycle
+	a.library = &sprintfn.Library{Name: fn.Library, Sum: fn.Sum, Source: func() (string, error) { return fn.TSetSource(fn.TSetSprint) }}
+	a.noteStream = a.redisNotes
+	a.newPath = true // the switch (IT23): every verb runs on the new path
 	return a
 }
 
@@ -292,4 +308,27 @@ func (a *app) storeAtCtx(ctx context.Context, c common, at int64) (*store.Store,
 		return st, err
 	}
 	return st.At(uint64(at)), nil
+}
+
+// redisNotes is inbox --wait's stream on the store: a client of its own at
+// the address, with the login the present command dials with, read with
+// XREAD (IT22's RedisNotes). It writes nothing.
+func (a *app) redisNotes(addr string) (spverbs.NoteStream, func() error, error) {
+	user, passwordEnv := a.getenv(redisauth.UserEnv), ""
+	if user != "" {
+		passwordEnv = a.getenv(redisauth.PasswordEnvEnv)
+		if passwordEnv == "" {
+			passwordEnv = redisauth.DefaultPasswordEnv
+		}
+	}
+	password := ""
+	if passwordEnv != "" {
+		v, ok := os.LookupEnv(passwordEnv)
+		if !ok {
+			return nil, nil, fmt.Errorf("the password environment variable %q is not set", passwordEnv)
+		}
+		password = v
+	}
+	c := redis.NewClient(&redis.Options{Addr: addr, Username: user, Password: password, MaxRetries: -1})
+	return spverbs.RedisNotes{C: c}, c.Close, nil
 }

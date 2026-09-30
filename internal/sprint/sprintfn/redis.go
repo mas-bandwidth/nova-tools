@@ -9,6 +9,7 @@ import (
 	"reflect"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/redis/go-redis/v9"
 
@@ -25,6 +26,13 @@ type Redis struct {
 	conn   redis.UniversalClient
 	prefix string
 	close  func() error
+	// addr is the store's address, for the library check's words; library
+	// is this build's function library (nil: no check).
+	addr    string
+	library *Library
+	// checked says the library check passed; the first call waits for it.
+	mu      sync.Mutex
+	checked bool
 }
 
 // NewRedis is the Client of the store at address, for one deployment's
@@ -36,12 +44,83 @@ type Redis struct {
 // empty name is a server without a password, and a name that is not set is
 // an error. No caller-supplied client, option, hook or router is accepted.
 // The returned Redis must be closed by its owner.
-func NewRedis(address, user, passwordEnvVar string, names sprint.Names) (*Redis, error) {
+//
+// With a Library, the client checks the store's library against it once,
+// before its first call (checkLibrary); a nil Library checks nothing.
+func NewRedis(address, user, passwordEnvVar string, names sprint.Names, library *Library) (*Redis, error) {
 	client, err := newOwnedClient(address, user, passwordEnvVar, os.LookupEnv)
 	if err != nil {
 		return nil, err
 	}
-	return &Redis{conn: client, prefix: names.Prefix, close: client.Close}, nil
+	return &Redis{conn: client, prefix: names.Prefix, close: client.Close, addr: address, library: library}, nil
+}
+
+// Library is this build's function library, as the library check judges a
+// store's against it (the grammar decisions, 30): its name, its source, and
+// the digest that names a version. The caller gives internal/nsprint/fn's
+// (fn.Library, the sprint profile's source, fn.Sum), which this package
+// cannot import (fn's own tests import this package).
+type Library struct {
+	Name   string
+	Source func() (string, error)
+	Sum    func(source string) string
+}
+
+// checkLibrary is the library-matches-this-build check (the grammar decisions,
+// 30; the present command's libraryMatches): one FUNCTION LIST before the
+// client's first call, once. A store that holds no nova_sprint library, or one
+// whose digest is not this build's, is refused with nothing sent, naming both
+// digests and the command that loads the library: every step through a
+// library of another build would be refused or unreadable.
+func (r *Redis) checkLibrary(ctx context.Context) error {
+	if r.library == nil {
+		return nil
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.checked {
+		return nil
+	}
+	lib := r.library
+	libs, err := r.conn.FunctionList(ctx, redis.FunctionListQuery{LibraryNamePattern: lib.Name, WithCode: true}).Result()
+	if err != nil {
+		return fmt.Errorf("list the %s function library at %s: %w", lib.Name, r.addr, err)
+	}
+	code, found := "", false
+	for _, l := range libs {
+		if l.Name == lib.Name {
+			code, found = l.Code, true
+		}
+	}
+	want, wantErr := lib.Source()
+	if err := lib.Matches(r.addr, code, found, want, wantErr); err != nil {
+		return err
+	}
+	r.checked = true
+	return nil
+}
+
+// CheckLibrary runs the library check now, before anything else reaches the
+// store: a caller that sends through another route first (init's define,
+// Layer 1's lifecycle) refuses a store of another build as the first call
+// would, with nothing sent. Once passed, it is not run again.
+func (r *Redis) CheckLibrary(ctx context.Context) error { return r.checkLibrary(ctx) }
+
+// Matches judges a store's library against this build's (checkLibrary): nil
+// when the store holds this build's; otherwise the refusal, naming the store,
+// both digests and the command that loads the library, as the present
+// command's libraryMatches does. A build whose own library does not assemble
+// (before gate G0, the sprint profile) matches no store.
+func (lib *Library) Matches(addr, code string, found bool, want string, wantErr error) error {
+	switch {
+	case wantErr != nil:
+		return fmt.Errorf("this build's %s library does not assemble, so it matches no store (%v); the store at %s cannot run the sprint's steps", lib.Name, wantErr, addr)
+	case !found:
+		return fmt.Errorf("the store at %s holds no %s function library; run: nova-redis fn load --addr %s", addr, lib.Name, addr)
+	case lib.Sum(code) != lib.Sum(want):
+		return fmt.Errorf("the store at %s holds %s library %s, and this build is %s; run: nova-redis fn load --addr %s", addr, lib.Name, lib.Sum(code), lib.Sum(want), addr)
+	}
+	return nil
 }
 
 // newOwnedClient is the one client NewRedis builds: Layer 1's rule, with the
@@ -170,6 +249,9 @@ func (r *Redis) Pipeline(ctx context.Context, items []Item) ([]Result, error) {
 		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	if err := r.checkLibrary(ctx); err != nil {
 		return nil, err
 	}
 	pipe := r.conn.Pipeline()

@@ -90,9 +90,9 @@ const (
 	// reviewDeadlineUnbegun, reviewDeadlineUntaken and reviewDeadlineMergeIdle
 	// are the spans of the due times these rules stamp (1.2: an asked read card
 	// 30 minutes, a dealt work card 15, a merging stream with no merge step 30).
-	reviewDeadlineUnbegun   = 30 * time.Minute
+	reviewDeadlineUnbegun   = UnbegunSpan
 	reviewDeadlineUntaken   = 15 * time.Minute
-	reviewDeadlineMergeIdle = 30 * time.Minute
+	reviewDeadlineMergeIdle = MergeIdleSpan
 )
 
 // The types of the notices these rules raise (2.5). A judgment they raise is
@@ -253,7 +253,7 @@ func lineKey(rule string, line uint64, offset int) string {
 // later. A key that names a primary costs one primary's records. A key that
 // names a line reads the ids of the line from its offset, and askwait the head
 // of its set, each up to what is left of the read (the most a line holds is
-// MaxLineIDs, and askwait's chunk is AskwaitChunk): the line's plan says where
+// MaxLineIDs, read from its about, and askwait's chunk is AskwaitChunk): the line's plan says where
 // its read got to and puts the key back from there (reviewFinish), so a line of
 // 2,000 primaries is read in the reads it takes and never in one over the
 // bound. The first key is always read, at least one id of it, since a read of
@@ -285,7 +285,13 @@ func (r reviewRule) read(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan
 		switch {
 		case !ok:
 		case rk.kind == keyLine:
-			want, src = max(0, MaxLineIDs-rk.offset), IDSource{Kind: SourceLine, Seq: rk.line, Offset: rk.offset}
+			// the line's about, never its ids: a line of read cards (read --ok
+			// naming several) is about their primaries, and a line of primaries
+			// about themselves (L2 1.2, about aligned with the ids), as R16 reads
+			// its lines (rules_held.go). The keys of these rules name move lines,
+			// whose about is as long as their ids (at most MaxLineIDs), and notes
+			// of a bounded list of subjects (Note.Bound)
+			want, src = max(0, MaxLineIDs-rk.offset), IDSource{Kind: SourceLine, Seq: rk.line, About: true, Offset: rk.offset}
 		case rk.kind == keyHead:
 			want, src = AskwaitChunk, IDSource{Kind: SourceHead, Key: reviewHeadAskwait}
 		default:
@@ -350,7 +356,7 @@ func reviewSourceRead(s *Snapshot, rk reviewKey) (q SprintQ, loaded int, found b
 		}
 		src := q.Source
 		switch {
-		case rk.kind == keyLine && src.Kind == SourceLine && src.Seq == rk.line && src.Offset == rk.offset,
+		case rk.kind == keyLine && src.Kind == SourceLine && src.About && src.Seq == rk.line && src.Offset == rk.offset,
 			rk.kind == keyHead && src.Kind == SourceHead && src.Key == reviewHeadAskwait:
 			return q, len(s.Partial.Answer.Sprint[i].IDs), true
 		}
@@ -368,7 +374,7 @@ func reviewLineCut(s *Snapshot, rk reviewKey) (next int, cut bool) {
 		return 0, false
 	}
 	if rk.kind == keyLine && rk.offset+loaded >= MaxLineIDs {
-		return 0, false // a line holds no more than MaxLineIDs ids
+		return 0, false // a line these rules key names no more than MaxLineIDs ids
 	}
 	return rk.offset + loaded, true
 }

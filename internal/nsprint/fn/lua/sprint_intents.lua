@@ -879,9 +879,13 @@ do
         local cell = rec.place.row .. ':' .. rec.place.col
         local e = by_cell[cell]
         if not e then
-          local fields = {}
+          -- Layer 1 validates the combined step as JSON (json_tree): every list
+          -- of an entry is an array, never a Lua table of integer keys, which
+          -- reads as an object and is refused REQUEST
+          local fields = S.array()
           for i, name in ipairs(INDEX_FIELDS) do fields[i] = name end
-          e = {kind = 'move', t = work(), from = cell, ids = {}, revs = {}, each = {}, about = {}, before_fields = fields}
+          e = {kind = 'move', t = work(), from = cell, ids = S.array(), revs = S.array(), each = S.array(), about = S.array(),
+            before_fields = fields}
           by_cell[cell] = e
           entries[#entries + 1] = e
         end

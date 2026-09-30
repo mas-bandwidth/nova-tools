@@ -75,8 +75,14 @@ type Env struct {
 	// 0 until a look-back is refused EPOCHGONE, when the driver finds it
 	// (learnFirst) and keeps it here; a command that knows it may set it.
 	FirstEpoch uint64
-	mu         sync.Mutex // guards Epoch and FirstEpoch against two verbs of one Env at once
-	noWait     bool       // tests: retry without the jitter's wait
+	// Held says the caller holds Epoch (the command's --epoch with no --op):
+	// a verb that finds the sprint at another epoch is refused STALE, naming
+	// the clear, and is never moved to the active epoch (a worker's report
+	// after a clear is refused, as the present --epoch guard refuses it; the
+	// IT23 grammar decisions, 25).
+	Held   bool
+	mu     sync.Mutex // guards Epoch and FirstEpoch against two verbs of one Env at once
+	noWait bool       // tests: retry without the jitter's wait
 }
 
 func (e *Env) epoch() uint64 {
@@ -648,6 +654,9 @@ func (e *Env) Do(ctx context.Context, p Planned) (Result, error) {
 					if active, ok := undec(ref.Detail.ActiveEpoch); ok && pinned {
 						return res, opMoved(p.Verb, p.Op, 0, at, active, 0)
 					}
+					if active, ok := undec(ref.Detail.ActiveEpoch); ok && e.Held {
+						return res, heldGone(p.Verb, at, active)
+					}
 					if !pinned && res.Retries < Retries && e.reload(ref) {
 						res.Retries++
 						continue
@@ -692,6 +701,9 @@ func (e *Env) Do(ctx context.Context, p Planned) (Result, error) {
 						}
 					}
 					return res, opMoved(p.Verb, p.Op, 0, at, active, 0)
+				}
+				if e.Held {
+					return res, heldGone(p.Verb, at, active)
 				}
 				if res.Retries >= Retries {
 					return res, &Refused{Verb: p.Verb, Retries: res.Retries, Op: p.Op,
@@ -953,11 +965,24 @@ func (e *Env) fill(req *sprintfn.Request, verb string, epoch tset.Decimal) {
 // that names none leaves the epoch, and the next read's active epoch (AL2)
 // moves it.
 func (e *Env) reload(ref *sprintfn.Refusal) bool {
+	if e.Held {
+		return false // the caller holds its epoch: the refusal stands
+	}
 	if n, ok := undec(ref.Detail.ActiveEpoch); ok {
 		e.setEpoch(n)
 		return true
 	}
 	return ref.Code == sprintfn.CodeStale // the next read names the active epoch
+}
+
+// heldGone is the refusal of a verb whose caller holds an epoch the sprint
+// has left (Env.Held): nothing was changed, and the caller reads the sprint
+// again before it acts on the active epoch.
+func heldGone(verb string, held, active uint64) *Refused {
+	d := emptyDetail()
+	d.ActiveEpoch = dec(active)
+	return &Refused{Verb: verb, Local: true, Refusal: &sprintfn.Refusal{Code: sprintfn.CodeStale, Detail: d,
+		Message: fmt.Sprintf("the sprint was cleared at epoch %d: this verb holds epoch %d; nothing was changed; read the sprint again (nova-sprint queue, where) and act on epoch %d", active, held, active)}}
 }
 
 // build is the step builder's check (1.3.6, IT04): the request's member and
@@ -1187,7 +1212,7 @@ func (e *Env) Parts(ctx context.Context, op string, pp PartsPlan) (Result, error
 	}
 	retries := 0
 	move := func(active uint64) bool { // a made op not yet begun plans at the active epoch (AL2)
-		if !made || begun || retries >= Retries {
+		if !made || begun || retries >= Retries || e.Held {
 			return false
 		}
 		retries++

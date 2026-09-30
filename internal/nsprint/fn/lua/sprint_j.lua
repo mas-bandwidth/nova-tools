@@ -86,6 +86,7 @@ do
     ['stream started merging'] = true,
     ['the machine started'] = true,
     ['the machine stopped'] = true,
+    ['the sprint is done'] = true,
     ['the sprint was cleared, and is STOPPED'] = true,
     ['work came back ok'] = true,
   }
@@ -118,7 +119,10 @@ do
   local DONE = 'the sprint is done'
   local UNTIL_MAX = 999999999999999
   local STATE_OPS = {open = true, close = true, update = true, hold = true, unhold = true}
-  local OPS = {open = true, close = true, update = true, hold = true, unhold = true, know = true, request = true}
+  local OPS = {open = true, close = true, update = true, hold = true, unhold = true, know = true, request = true, tickend = true}
+  -- The tick's end note (errata 3 amendment 8; sprintfn JOpTickEnd): its type,
+  -- its one subject (who it is to) and its text's head.
+  local TICK_END, TICK_END_TO = 'tick-end', 'coordinator'
   -- What a read of a quarantine record may cost, a field at a time.
   local QUARANTINE_FIELD_BYTES = 1024
 
@@ -238,6 +242,11 @@ do
     end
     if r.op == 'know' then
       if not SP.j_notices[r.type] then return refuse_req(S, i, 'is a notice of a type 2.5 does not have') end
+    elseif r.op == 'tickend' then
+      local n = string.match(r.text, '^judgments=(%d+)$')
+      if r.type ~= TICK_END or n == nil or (#n > 1 and string.sub(n, 1, 1) == '0') or #r.subjects ~= 1 or r.subjects[1] ~= TICK_END_TO then
+        return refuse_req(S, i, 'is a tick-end note that is not of its type, to the coordinator, with judgments=N')
+      end
     elseif r.op ~= 'request' then
       if SP.j_judgments[r.type] == nil then return refuse_req(S, i, 'is on a judgment type 2.2 does not have') end
     end
@@ -535,6 +544,9 @@ do
       m.kind = 'decided'
     elseif r.op == 'know' then
       m.kind = 'happened'
+    elseif r.op == 'tickend' then
+      m.kind = TICK_END
+      m.to = TICK_END_TO
     end
     if r.op == 'hold' or r.op == 'review' then m['until'] = num(r['until']) end
     return m

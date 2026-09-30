@@ -602,7 +602,7 @@ func TestComposeFCALLOnly(t *testing.T) {
 
 	t.Run("the store's client", func(t *testing.T) {
 		t.Parallel()
-		r, err := NewRedis("sprintfn-unit-test", "", "", testNames)
+		r, err := NewRedis("sprintfn-unit-test", "", "", testNames, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -627,7 +627,7 @@ func TestComposeFCALLOnly(t *testing.T) {
 			}
 		}
 
-		live, err := NewRedis("sprintfn-unit-test", "", "", testNames)
+		live, err := NewRedis("sprintfn-unit-test", "", "", testNames, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

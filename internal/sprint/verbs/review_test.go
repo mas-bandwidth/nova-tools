@@ -367,7 +367,7 @@ func TestAcceptNamedInParts(t *testing.T) {
 		t.Fatalf("part 3 is refused naming p3: %v", rf)
 	}
 	if res.Parts != 2 || n() != 1+2 {
-		t.Fatalf("parts 1 and 2 applied (%d), in %d round trips: atomic resume read, then n parts and the refused third's read, want 3", res.Parts, n())
+		t.Fatalf("parts 1 and 2 applied (%d), in %d round trips: n + 1 for the two parts (the op's done rides part 1's read) and the refused third's read with part 2's step, want 3", res.Parts, n())
 	}
 	for _, p := range []string{"p1", "p2"} {
 		if got := w.at(sprint.Work, p); got != "s1:merging" {

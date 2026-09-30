@@ -388,7 +388,7 @@ func addRead(names sprint.Names, epoch tset.Decimal, r sprint.AddReq, anchor anc
 		if first {
 			q.chain = len(q.rp.Sprint)
 			q.rp.Sprint = append(q.rp.Sprint, sprint.SprintQ{Kind: sprint.QueryNeedchain,
-				Source: sprint.IDSource{Kind: sprint.SourceIDs, IDs: needs}, Fields: []string{"needs"}, Limit: sprint.AddWalkMax})
+				Source: sprint.IDSource{Kind: sprint.SourceIDs, IDs: needs}, Fields: []string{"needs", "kind"}, Limit: sprint.AddWalkMax})
 		}
 	}
 	if len(slice) > 0 {
@@ -606,15 +606,21 @@ func addReserve(e *Env, r sprint.AddReq, anchor anchorRead, rd *sprintfn.ReadRep
 	}
 	res = sprint.Reserve(next, r)
 	res.Open(next, fresh)
+	var cards []sprint.ChainCard
 	if q.chain >= 0 {
 		cr, err := sprintfn.DecodeResult(sprint.QueryNeedchain, rd.Sprint[q.chain])
 		if err != nil {
 			return res, nil, err
 		}
 		chain := cr.(sprintfn.NeedchainResult)
-		var cards []sprint.ChainCard
 		for _, it := range chain.Items {
-			cards = append(cards, sprint.ChainCard{ID: it.ID, Needs: it.Needs})
+			cc := sprint.ChainCard{ID: it.ID, Needs: it.Needs, Start: it.Start}
+			if rec := it.Record; rec.Exists && rec.Place != nil {
+				cc.Stream, cc.Waiting = rec.Place.Row, rec.Place.Col == string(sprint.Waiting)
+				cc.Score, _ = strconv.ParseFloat(rec.Score, 64)
+				cc.Sentinel = fieldOf(rec, "kind") == sprint.Sentinel
+			}
+			cards = append(cards, cc)
 		}
 		makes := func(stored string) bool { return sprint.IDEpoch(stored) == ep && res.Makes(r, sprint.CardID(stored)) }
 		if ep == 0 {
@@ -638,6 +644,17 @@ func addReserve(e *Env, r sprint.AddReq, anchor anchorRead, rd *sprintfn.ReadRep
 		res.Anchor, res.Neighbour = anchor.ID, nb
 		if _, err := sprint.InsertScores(res.Lo, res.Hi, res.Total); err != nil {
 			return res, nil, refuseLocal(verb, sprintfn.CodeRequest, "%v: rank the neighbours apart first (rank <id> --score or --before/--after), then add", err)
+		}
+		// a loop through the gates: the cards placed after the anchor are waited
+		// for by the stream's sentinels after them (errata 3 amendment 7)
+		if len(cards) > 0 {
+			placed := r.IDs
+			if len(placed) == 0 {
+				placed = []string{fmt.Sprintf("the %d cards of this add", res.Total)}
+			}
+			if why := sprint.AddPlaceCycle(cards, placed, anchor.Stream, res.Lo, r.Sentinel); why != "" {
+				return res, nil, refuseLocal(verb, "XGUARD", "%s", why)
+			}
 		}
 	}
 	counter := &sprintfn.CounterChange{Read: next.Read, Set: map[string]string{}}

@@ -41,6 +41,7 @@ const jrCoord = "coord"
 type jrWorld struct {
 	t   *testing.T
 	tw  *sprintfn.Twin
+	log *sprintfn.MemLog // the twin's log (the tick-end wake tests mirror it)
 	cc  *Counting
 	env *Env
 	mu  sync.Mutex
@@ -60,7 +61,8 @@ func newJRWorld(t *testing.T) *jrWorld {
 		}
 	}
 	w := &jrWorld{t: t, now: time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)}
-	w.tw = sprintfn.NewTwin(m, sprintfn.NewMemLog(), jrNames)
+	w.log = sprintfn.NewMemLog()
+	w.tw = sprintfn.NewTwin(m, w.log, jrNames)
 	w.tw.UseQueries()
 	w.tw.UseIntents()
 	w.tw.SetClock(func() time.Time {
@@ -186,14 +188,6 @@ func (w *jrWorld) record(id string, fields ...string) tset.MemberRecord {
 	return rd.Tset[0].Records[0]
 }
 
-// field is a record's field, "" when absent.
-func field(r tset.MemberRecord, name string) string {
-	if v, ok := r.Fields[name]; ok && v.Present {
-		return v.Value
-	}
-	return ""
-}
-
 // admit adds cards on the work table in one step, and the stream row s1 when
 // it is new: each card in s1:<col>, with its fields, and for a waiting card
 // with needs the waitfor the builder would carry (1.3.3; IT14's admission).
@@ -290,8 +284,8 @@ func TestAckWaivesMissingOnlyWhileMissing(t *testing.T) {
 			t.Fatalf("the judgment is still open on w: %q", got)
 		}
 		rec := w.record("w", "open", "waived")
-		if field(rec, "open") != "0" || field(rec, "waived") != "ghost" {
-			t.Fatalf("w: open %q waived %q, want 0 and ghost", field(rec, "open"), field(rec, "waived"))
+		if fieldOf(rec, "open") != "0" || fieldOf(rec, "waived") != "ghost" {
+			t.Fatalf("w: open %q waived %q, want 0 and ghost", fieldOf(rec, "open"), fieldOf(rec, "waived"))
 		}
 	})
 
@@ -321,8 +315,8 @@ func TestAckWaivesMissingOnlyWhileMissing(t *testing.T) {
 			t.Fatalf("the judgment changed: %q, want %q", got, note)
 		}
 		after := w.record("w", "open", "waived")
-		if field(after, "open") != field(before, "open") || field(after, "waived") != "" || after.Revision != before.Revision {
-			t.Fatalf("w changed: open %q waived %q rev %s, before rev %s", field(after, "open"), field(after, "waived"), after.Revision, before.Revision)
+		if fieldOf(after, "open") != fieldOf(before, "open") || fieldOf(after, "waived") != "" || after.Revision != before.Revision {
+			t.Fatalf("w changed: open %q waived %q rev %s, before rev %s", fieldOf(after, "open"), fieldOf(after, "waived"), after.Revision, before.Revision)
 		}
 	})
 }
@@ -472,7 +466,7 @@ func TestAckClearsRefused(t *testing.T) {
 	if res.Trips != 3 || w.cc.Trips() != 3 {
 		t.Fatalf("ack took %d round trips (counted %d), want 3", res.Trips, w.cc.Trips())
 	}
-	if got := field(w.record("p1", "refused"), "refused"); got != "" {
+	if got := fieldOf(w.record("p1", "refused"), "refused"); got != "" {
 		t.Fatalf("refused is still %q", got)
 	}
 	if got := w.own("p1", typeCouldNotMove, "refused"); got != "" {
@@ -517,7 +511,7 @@ func TestAckOnFrozenCardRefusedDropping(t *testing.T) {
 		note := w.own("w", typeBlockedMissing, "ghost")
 		drop(w, "s1")
 		frozen(t, w, note, "w")
-		if w.own("w", typeBlockedMissing, "ghost") != note || field(w.record("w", "open"), "open") != "1" {
+		if w.own("w", typeBlockedMissing, "ghost") != note || fieldOf(w.record("w", "open"), "open") != "1" {
 			t.Fatalf("the refused ack changed the card or its judgment")
 		}
 	})
@@ -539,7 +533,7 @@ func TestAckOnFrozenCardRefusedDropping(t *testing.T) {
 		note := w.open(typeCouldNotMove, "refused", "p1")
 		drop(w, "s1")
 		frozen(t, w, note, "p1")
-		if field(w.record("p1", "refused"), "refused") == "" || w.own("p1", typeCouldNotMove, "refused") != note {
+		if fieldOf(w.record("p1", "refused"), "refused") == "" || w.own("p1", typeCouldNotMove, "refused") != note {
 			t.Fatalf("the refused ack changed the card or its judgment")
 		}
 	})

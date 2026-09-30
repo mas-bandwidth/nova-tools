@@ -202,7 +202,7 @@ func TestSprintProfileLoadsInTheLoadSandbox(t *testing.T) {
 	if err != nil {
 		t.Fatalf("the sprint profile does not load: %v", err)
 	}
-	for _, want := range append([]string{"ns_tset_read", "ns_tset_step"}, SprintFunctions...) {
+	for _, want := range append(append([]string(nil), TSetFunctions...), SprintFunctions...) {
 		if !slices.Contains(names, want) {
 			t.Errorf("the load registered %v, not %s", names, want)
 		}

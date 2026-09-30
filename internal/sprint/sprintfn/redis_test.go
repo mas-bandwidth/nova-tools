@@ -445,7 +445,7 @@ func TestServerErrorClassification(t *testing.T) {
 // on the tests' seam owns nothing to close.
 func TestNewRedisOwnsItsClient(t *testing.T) {
 	t.Parallel()
-	if _, err := NewRedis(" ", "", "", testNames); err == nil {
+	if _, err := NewRedis(" ", "", "", testNames, nil); err == nil {
 		t.Fatal("an empty address was accepted")
 	}
 	env := map[string]string{"SPRINTFN_TEST_PASSWORD": "test-value"}
@@ -475,7 +475,7 @@ func TestNewRedisOwnsItsClient(t *testing.T) {
 		_ = client.Close()
 	}
 
-	r, err := NewRedis("sprintfn-unit-test", "sprint", "", testNames)
+	r, err := NewRedis("sprintfn-unit-test", "sprint", "", testNames, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
