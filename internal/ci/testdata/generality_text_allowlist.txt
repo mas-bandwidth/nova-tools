@@ -158,7 +158,6 @@ docs/SPEC-UPDATE.md:rowan 5
 docs/SPEC-UPDATE.md:space 1
 docs/SPEC-UPDATE.md:stella 6
 docs/SPEC-UPDATE.md:studio 6
-docs/SPEC.md:freddy 2
 docs/SPEC.md:rowan 4
 docs/SPEC.md:space 16
 docs/SPEC.md:studio 1
@@ -194,7 +193,6 @@ internal/ci/testdata/cardtemplate_allowlist.txt:mini 1
 internal/ci/testdata/cardtemplate_allowlist.txt:space 1
 internal/ci/testdata/cardtemplate_allowlist.txt:studio 1
 internal/ci/testdata/cardtemplate_allowlist.txt:vision 1
-internal/ci/testdata/compared_examples.txt:rowan 2
 internal/ci/testdata/deleted-tests.txt:glenn 9
 internal/ci/testdata/deleted-tests.txt:rowan 1
 internal/ci/testdata/deleted-tests.txt:space 1
@@ -208,10 +206,8 @@ internal/ci/testdata/serial-tests_allowlist.txt:stella 4
 internal/ci/testdata/silent_allowlist.txt:glenn 1
 internal/ci/testdata/testoutpath/after.go.txt:emma 1
 internal/ci/testdata/testoutpath/before.go.txt:emma 1
-internal/ci/testdata/unexecuted_examples.txt:emma 1
 internal/ci/testdata/unexecuted_examples.txt:mas-bandwidth 3
-internal/ci/testdata/unexecuted_examples.txt:mini 2
-internal/ci/testdata/unexecuted_examples.txt:rowan 19
+internal/ci/testdata/unexecuted_examples.txt:rowan 6
 internal/ci/testdata/unexecuted_examples.txt:stella 1
 internal/ci/timing/testdata/events.jsonl:mas-bandwidth 420
 internal/ci/timing/testdata/table.tsv:mas-bandwidth 400

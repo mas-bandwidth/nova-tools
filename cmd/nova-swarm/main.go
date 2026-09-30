@@ -39,7 +39,15 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
-const usage = `nova-swarm: a pool of one-task workers, with the ways a swarm fails taken out (see docs/SPEC-SWARM.md)
+const usage = `nova-swarm: one-task AI workers, each run in the sandbox with a deadline and a token budget
+
+how it works: a card is one task, a markdown file with a header and its RULES;
+a worker description (JSON) names the harness, the model, the key file and the
+directories it may read. native runs one card as one child inside nova-sandbox;
+batch runs many under a pool of slots (leases in a --slots-store directory);
+each result lands in the job directory under --root. Nothing has a default.
+first run: the lines under example: need nothing: a card, a worker description
+and the lint's rules; running a card needs a harness, a model's key file and nova-sandbox.
 
 usage:
   nova-swarm version    print this build identity (--version also accepted)
@@ -97,6 +105,8 @@ one example line in their -h, and template -h lists the lines a card needs.
 
 example:
   nova-swarm template --name read-pr
+  nova-swarm template --name worker
+  nova-swarm lint --rules
 `
 
 // verbExamples is the one runnable example line each verb's -h shows, made

@@ -58,7 +58,15 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-const usage = `nova-bus: the bus, with the races taken out (see docs/SPEC.md)
+const usage = `nova-bus: notes between AIs, over a git repository
+
+how it works: a bus is a git repository. Its roster, participants.json, names
+each participant and, for each one who sends, a directory: that sender's lane.
+A note is a markdown file in its sender's lane with From, To and Subject lines;
+a receipt in your lane closes a note sent to you, and your cursor there is the
+last commit you read. git fetch and push carry it all; nothing lives elsewhere.
+first run: copy the example bus (the cp line above example:), then run the lines
+under example: in order; reading needs no remote, sending needs one.
 
 usage:
   nova-bus draft --bus <dir> --as <name> --to <names> [--cc <names>] [--subject <text>] [--re <id-or-path-or-subject>] [--out <path> [--overwrite] | > <file>]
@@ -226,12 +234,12 @@ one.
 A HARNESS THAT CANNOT LOOP -- OpenCode's, and every harness like it -- runs this
 exact sequence and nothing else. Once, to clear the backlog:
 
-  nova-bus inbox --bus ~/bus --as Freddy --receipt-max-words 40 \
+  nova-bus inbox --bus ~/bus --as Bo --receipt-max-words 40 \
     --advance --remote origin --branch main
 
 Then one wait per turn:
 
-  nova-bus wait --bus ~/bus --as Freddy --receipt-max-words 40 --timeout 25m \
+  nova-bus wait --bus ~/bus --as Bo --receipt-max-words 40 --timeout 25m \
     --until 2026-09-18T18:00:00Z --idle-exit 3 \
     --advance --remote origin --branch main
 
@@ -2776,7 +2784,7 @@ func cmdWait(args []string, stdout, stderr io.Writer, now time.Time) int {
 			waitFor = left
 		}
 	}
-	// --idle-exit IS FOR A HARNESS THAT CANNOT LOOP (Freddy's, and every harness like it): it
+	// --idle-exit IS FOR A HARNESS THAT CANNOT LOOP (OpenCode's, and every harness like it): it
 	// runs one tool call per turn and branches on the exit code, and it has no way to tell
 	// "nothing arrived" from "a note arrived" when both are exit 0. So a timeout may carry a
 	// code of the caller's choosing. 1 and 2 are refused rather than allowed: they are this

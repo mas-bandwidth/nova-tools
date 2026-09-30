@@ -124,6 +124,11 @@ const (
 	HowWidth = 100
 )
 
+// HowLabel opens the how-it-works text in the banner (docs/ONBOARDING.md point
+// 6), so a tool's How is the paragraph without it; the width bound counts it on
+// the first line, where it is printed.
+const HowLabel = "how it works: "
+
 // Problems is where t falls short of the standard its banner and help carry
 // by construction only when the definition is complete: a what line, an exit
 // table, a how text of at most HowLines lines of at most HowWidth characters,
@@ -140,6 +145,9 @@ func (t *Tool) Problems() []string {
 		p = append(p, fmt.Sprintf("%s: the how text is %d lines, at most %d", t.Name, len(how), HowLines))
 	}
 	for i, l := range how {
+		if i == 0 {
+			l = HowLabel + l
+		}
 		if n := utf8.RuneCountInString(l); n > HowWidth {
 			p = append(p, fmt.Sprintf("%s: how line %d is %d characters, at most %d", t.Name, i+1, n, HowWidth))
 		}
@@ -177,7 +185,7 @@ func (t *Tool) Banner() string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "%s: %s\n\n", t.Name, t.What)
 	if how := strings.TrimSpace(t.How); how != "" {
-		b.WriteString(how + "\n\n")
+		b.WriteString(HowLabel + how + "\n\n")
 	}
 	b.WriteString("usage:\n")
 	for _, v := range t.verbs() {

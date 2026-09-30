@@ -386,8 +386,8 @@ func TestIssue2218HelpBannerLineLedByAnotherToolIsCounted(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, w := range []string{
-		"example: nova-redis spill --addr 127.0.0.1:6379 --owner rowan --name note --ttl 10m --value hi",
-		"example: nova-redis recall --addr 127.0.0.1:6379 --owner rowan --name note",
+		"example: nova-redis spill --addr 127.0.0.1:6379 --owner ada --name note --ttl 10m --value hi",
+		"example: nova-redis recall --addr 127.0.0.1:6379 --owner ada --name note",
 	} {
 		if repo[w] != "cmd/nova-redis/main.go" {
 			t.Errorf("HelpBannerExamples(repo)[%q] = %q; want cmd/nova-redis/main.go", w, repo[w])

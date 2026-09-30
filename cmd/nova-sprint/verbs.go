@@ -42,11 +42,11 @@ func init() {
 		{"goal set", "<name> [--file <path>] [--to file:<path>]", "goal set friend-a --file goal-a.txt --to file:/tmp/reminder-a.txt", (*app).cmdGoalSet},
 		{"goal show", "[<name>]", "goal show friend-a", (*app).cmdGoalShow},
 		{"goal drop", "<name>", "goal drop friend-a", (*app).cmdGoalDrop},
-		{"take", "--as <member> [<card>@<gen>...] [--limit <n>]", "take --as m1 s1-1.w1@1 --epoch 0", (*app).cmdTake},
-		{"finish", "--as <member> <card>@<gen>... [--failed] [--head <h>] [--report <text>]", "finish --as m1 s1-1.w1@1 --epoch 0 --report 'tests green'", (*app).cmdFinish},
+		{"take", "--as <member> [<card>@<gen>...] [--epoch <n>] [--limit <n>]", "take --as m1 s1-1.w1@1 --epoch 0", (*app).cmdTake},
+		{"finish", "--as <member> <card>@<gen>... --epoch <n> [--failed] [--head <h>] [--report <text>]", "finish --as m1 s1-1.w1@1 --epoch 0 --report 'tests green'", (*app).cmdFinish},
 		{"ask", "[<id>... | --group <id> [--expect <n>]] [--stream <s>] [--limit <n>] [--another] [--answers <note>]", "ask", (*app).cmdAsk},
 		{"queue", "--as <reader|member> | --stream <s>", "queue --as reader-a", (*app).cmdQueue},
-		{"read", "--as <reader> (--begin | --ok | --broken) [<card>...] [--limit <n>] [--finding <text>]", "read --as reader-a --ok --limit 5 --epoch 0", (*app).cmdRead},
+		{"read", "--as <reader> (--begin | --ok | --broken) [<card>...] --epoch <n> [--limit <n>] [--finding <text>]", "read --as reader-a --ok --limit 5 --epoch 0", (*app).cmdRead},
 		{"accept", "(<id>... | --stream <s> | --read-ok | --group <id> [--expect <n>]) [--answers <note>]", "accept --read-ok", (*app).cmdAccept},
 		{"rework", "(<id>... | --group <id> [--expect <n>]) [--fix <text>] [--answers <note>]", "rework s1-4 --fix 'handle the empty case'", (*app).cmdRework},
 		{"return", "(<id>... | --group <id> [--expect <n>]) [--reason <text>] [--answers <note>]", "return s1-7 --reason 'suspect of the red batch'", (*app).cmdReturn},
@@ -60,7 +60,7 @@ func init() {
 		{"fleet sync", "[--check] [--pg <dsn>]", "fleet sync --check", (*app).cmdFleetSync},
 		{"fleet level", "", "fleet level", func(a *app, args []string, o, e io.Writer) int { return a.cmdFleet("level", args, o, e) }},
 		{"reader add", "<reader>...", "reader add reader-d", (*app).cmdReaderAdd},
-		{"ci", "<id>... (--red | --green) [--head <h>] [--run <id>] [--source <s>] [--note <text>]", "ci s1-3 --red --run 812 --source ci --epoch 0", (*app).cmdCI},
+		{"ci", "<id>... (--red | --green) --epoch <n> [--head <h>] [--run <id>] [--source <s>] [--note <text>]", "ci s1-3 --red --run 812 --source ci --epoch 0", (*app).cmdCI},
 		{"wait", "<note> (--for <duration> | --until <RFC3339>)", "wait tick-ask-x-1.2 --for 30m", (*app).cmdWait},
 		{"ack", "<note>... --reason <text>", "ack ci-x-1.1 --reason 'a flaky runner; the rerun is green'", (*app).cmdAck},
 		{"inbox", "[--open <group>] [--read] [--wait [--timeout <duration>]] [--deadline <duration>] [--stale <duration>]", "inbox --wait", (*app).cmdInbox},
@@ -88,9 +88,24 @@ func verbNames() []string {
 	return append(out, "help", "version")
 }
 
+// opening is the banner's first three answers: what the tool does (line 1,
+// the README's sentence), how it works, and the first run (ONBOARDING.md
+// point 6).
+const opening = `nova-sprint: a sprint of work cards, dealt to a fleet of workers and read before they land
+
+how it works: one store (a Redis, or a twin file) holds one sprint as four
+tables (work, merge, readers, fleet) and the view sprint. A card is one unit of
+work in a stream; each tick deals ready cards to members (machines with a
+width), sends finished work to readers, queues what they pass to merge by
+stream, and puts every judgment it cannot make in the coordinator's inbox.
+first run, no Redis (the store is the file sprint.twin):
+  export NOVA_SPRINT_REDIS=mem:sprint.twin NOVA_SPRINT_ACTOR=boss
+then the card's flow under "trying it without a Redis", ticking by hand; the
+example: block is the coordinator's day on a real store.`
+
 func banner() string {
 	var b strings.Builder
-	b.WriteString("nova-sprint: the sprint table: four tables on nova-table, the moves between them, and the coordinator's inbox\n\nusage:\n")
+	b.WriteString(opening + "\n\nusage:\n")
 	for _, v := range verbs {
 		b.WriteString("  nova-sprint " + strings.TrimSpace(v.name+" "+v.syntax) + "\n")
 	}

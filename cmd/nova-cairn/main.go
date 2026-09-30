@@ -44,13 +44,13 @@ const publishes = "never, manual, deferred or immediate"
 func cairnTool() *tool.Tool {
 	return &tool.Tool{
 		Name:  "nova-cairn",
-		What:  "optional checkpoints, no memory lifecycle (see docs/SPEC-CAIRN.md)",
+		What:  "a session's words, kept durably as plain files you can come back to",
 		Stamp: version,
-		How: `The store is plain files under --store, fsync-durable before success; no Redis, remote or discovery.
-It reads its own layout (sessions/, entries/, log.jsonl) or a hand-kept markdown file per session.
-The same entry id with the same words is a duplicate, and with different words a conflict (exit 1).
---now stamps a replay (RFC 3339 UTC). There is no seal, consume, delete or grade verb (SPEC-CAIRN).
-The four examples are one sitting: the open makes ./cairns and the rest read it back.`,
+		How: `a store is a directory you name (--store), plain files only, synced to disk before OK.
+open starts a session; append keeps an entry's exact words in entries/<session>/<entry>.json.
+The same entry id with the same words is a duplicate; with other words a conflict (exit 1).
+--publish records your policy only: nothing is sent, and every line says published=false.
+first run: the four examples are one sitting: the open makes ./cairns, the rest read it back.`,
 		ExitTable: "0 ran and passed, 1 ran and failed (conflict), 2 could not run (bad invocation).",
 		Verbs: []tool.Verb{
 			{

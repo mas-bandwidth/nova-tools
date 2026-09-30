@@ -415,7 +415,8 @@ nova-update release pull --version <v> --out <dir> --changelog <path> [--machine
 nova-update help
 ```
 
-Those twelve usage lines are the string `nova-update help` prints, byte for byte: one string
+Those twelve usage lines are the string `nova-update help` prints, byte for byte, under the
+banner's opening (what the tool does, how it works, the first run): one string
 in the binary, so the spec and the help cannot drift apart; the five `release` lines are
 `release.Verbs`, spliced into that one string rather than copied beside it. `report --store <host:port>` is the fleet's view: it reads every registered bench's
 beat (`bench:<b>:beat`, field `build`, the version line the bench stamps each

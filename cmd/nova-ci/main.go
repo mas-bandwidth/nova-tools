@@ -23,7 +23,15 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-const usage = `nova-ci: the checks this repository's CI runs on its own test output (see docs/SPEC-CI.md)
+const usage = `nova-ci: test-time budgets over go test -json output, and this repository's own CI steps
+
+how it works: slowtests reads go test -json events on stdin and prints a CI-SLOW
+line for each package or test over its budget, and one CI-LOAD line; it keeps no
+state and works on any Go project. local, functional, new-rule and new-verb run
+inside a nova-tools checkout (its Makefile and scripts); github receipt and cost
+write one record of a CI run to a Redis store.
+first run: in any Go module, go test -json ./... > events.jsonl, then feed that
+file on stdin to slowtests --budget 60, the last line under example:.
 
 usage:
   nova-ci help        print this banner and the verbs below
