@@ -24,9 +24,14 @@ do
     return false
   end
   -- The static phase: the sprint half decoded and shaped before TIME or any
-  -- store access.
-  local function decode_sprint(S, raw)
-    if type(raw) ~= 'string' or #raw > S.limits.request_bytes then return nil, S.refuse('REQUEST') end
+  -- store access. Both halves together count against the request bound, as
+  -- sprintfn's clients count them (errata 2, item 1): Layer 1's step alone is
+  -- bounded again by S.open.
+  local function decode_sprint(S, step_raw, raw)
+    if type(step_raw) ~= 'string' or type(raw) ~= 'string' then return nil, S.refuse('REQUEST') end
+    if #step_raw + #raw > S.limits.request_bytes then
+      return nil, S.refuse('LIMIT', {budget = 'request_bytes'})
+    end
     local ok, sp = pcall(S.json.decode, raw)
     if not ok or type(sp) ~= 'table' or type(sp.meta) ~= 'table' then return nil, S.refuse('REQUEST') end
     return sp, nil
@@ -84,7 +89,7 @@ do
   local function step(keys, args)
     local S, L = layers()
     if #keys ~= 0 or #args ~= 3 then return S.json.encode(S.refuse('ARGS')) end
-    local sp, err = decode_sprint(S, args[3])
+    local sp, err = decode_sprint(S, args[2], args[3])
     if err then return S.json.encode(err) end
     -- open: Layer 1's size, version, definitions and receipt replay.
     local ctx
