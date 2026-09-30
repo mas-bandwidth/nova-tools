@@ -22,13 +22,13 @@ import (
 // key alone afterwards, holds the new value beside the names it had, and the
 // change sits on a seal branch the gate approves.
 
-// injectStore is a store with two seats: rowan, the coordinator's, and air, a
-// bench's. Both hold GH_TOKEN; rowan holds the new redis password and air the old.
+// injectStore is a store with two seats: ada, the coordinator's, and bo, a
+// bench's. Both hold GH_TOKEN; ada holds the new redis password and bo the old.
 type injectStore struct {
 	storeDir string
 	recovery keyPair
-	rowan    keyPair
-	air      keyPair
+	ada      keyPair
+	bo       keyPair
 }
 
 func newInjectStore(t *testing.T, td, sopsPath string) injectStore {
@@ -39,21 +39,21 @@ func newInjectStore(t *testing.T, td, sopsPath string) injectStore {
 	}
 	initGitStore(t, s.storeDir)
 	s.recovery = genKey(t, td, "recovery")
-	s.rowan = genKey(t, td, "rowan")
-	s.air = genKey(t, td, "air")
+	s.ada = genKey(t, td, "ada")
+	s.bo = genKey(t, td, "bo")
 	if err := os.WriteFile(filepath.Join(s.storeDir, "recovery.pub"), []byte(s.recovery.pubKey+"\n"), 0644); err != nil {
 		t.Fatal(err)
 	}
-	cfg := fmt.Sprintf("creation_rules:\n  - path_regex: ^rowan\\.yaml$\n    age: %s,%s\n  - path_regex: ^air\\.yaml$\n    age: %s,%s\n",
-		s.rowan.pubKey, s.recovery.pubKey, s.air.pubKey, s.recovery.pubKey)
+	cfg := fmt.Sprintf("creation_rules:\n  - path_regex: ^ada\\.yaml$\n    age: %s,%s\n  - path_regex: ^bo\\.yaml$\n    age: %s,%s\n",
+		s.ada.pubKey, s.recovery.pubKey, s.bo.pubKey, s.recovery.pubKey)
 	if err := os.WriteFile(filepath.Join(s.storeDir, ".sops.yaml"), []byte(cfg), 0644); err != nil {
 		t.Fatal(err)
 	}
-	sealFileWithSops(t, sopsPath, filepath.Join(s.storeDir, "rowan.yaml"),
-		[]string{s.rowan.pubKey, s.recovery.pubKey},
+	sealFileWithSops(t, sopsPath, filepath.Join(s.storeDir, "ada.yaml"),
+		[]string{s.ada.pubKey, s.recovery.pubKey},
 		"GH_TOKEN: carried-token\nNOVA_REDIS_BENCH_PASSWORD: redis-new\nLEFT_BEHIND: stays-home\n")
-	sealFileWithSops(t, sopsPath, filepath.Join(s.storeDir, "air.yaml"),
-		[]string{s.air.pubKey, s.recovery.pubKey},
+	sealFileWithSops(t, sopsPath, filepath.Join(s.storeDir, "bo.yaml"),
+		[]string{s.bo.pubKey, s.recovery.pubKey},
 		"GH_TOKEN: carried-token\nNOVA_REDIS_BENCH_PASSWORD: redis-old\n")
 	commitAndPush(t, s.storeDir)
 	return s
@@ -71,13 +71,13 @@ func TestSeatInjectReSealsAValueIntoAnExistingSeat(t *testing.T) {
 	s := newInjectStore(t, td, sopsPath)
 
 	out, errOut, code := runNovaSecrets(bin, "seat", "inject",
-		"--store", s.storeDir, "--as", "air", "--from", "rowan", "--only", "NOVA_REDIS_BENCH_PASSWORD",
-		"--key", s.rowan.privPath, "--sops", sopsPath, "--no-pr")
+		"--store", s.storeDir, "--as", "bo", "--from", "ada", "--only", "NOVA_REDIS_BENCH_PASSWORD",
+		"--key", s.ada.privPath, "--sops", sopsPath, "--no-pr")
 	if code != 0 {
 		t.Fatalf("seat inject exited %d: %s", code, errOut)
 	}
 	line := strings.TrimSpace(out)
-	if !strings.HasPrefix(line, "SECRETS SEAT INJECT OK seat=air from=rowan names=1 committed branch=seal/air-NOVA_REDIS_BENCH_PASSWORD-") {
+	if !strings.HasPrefix(line, "SECRETS SEAT INJECT OK seat=bo from=ada names=1 committed branch=seal/bo-NOVA_REDIS_BENCH_PASSWORD-") {
 		t.Errorf("unexpected OK line: %s", line)
 	}
 	for _, v := range injectValues {
@@ -97,28 +97,28 @@ func TestSeatInjectReSealsAValueIntoAnExistingSeat(t *testing.T) {
 
 	// The commit on the seal branch: the bench's key opens it, the new value is in,
 	// the name it had is still there, and the coordinator's key opens nothing.
-	sealed := runCmd(t, s.storeDir, "git", "show", branch+":air.yaml")
-	blob := filepath.Join(td, "air-sealed.yaml")
+	sealed := runCmd(t, s.storeDir, "git", "show", branch+":bo.yaml")
+	blob := filepath.Join(td, "bo-sealed.yaml")
 	if err := os.WriteFile(blob, []byte(sealed), 0600); err != nil {
 		t.Fatal(err)
 	}
-	plain := sopsDecrypt(t, sopsPath, s.air.privPath, blob)
+	plain := sopsDecrypt(t, sopsPath, s.bo.privPath, blob)
 	if !strings.Contains(plain, "NOVA_REDIS_BENCH_PASSWORD: redis-new") || !strings.Contains(plain, "GH_TOKEN: carried-token") {
 		t.Errorf("the bench's file does not hold the new value beside the name it had:\n%s", plain)
 	}
 	if strings.Contains(plain, "redis-old") || strings.Contains(plain, "LEFT_BEHIND") {
 		t.Errorf("the old value survived, or a name nobody asked for came along:\n%s", plain)
 	}
-	for _, key := range []string{s.air.pubKey, s.recovery.pubKey} {
+	for _, key := range []string{s.bo.pubKey, s.recovery.pubKey} {
 		if !strings.Contains(sealed, "recipient: "+key) {
 			t.Errorf("the re-sealed file does not name recipient %s", key)
 		}
 	}
-	if strings.Contains(sealed, "recipient: "+s.rowan.pubKey) {
+	if strings.Contains(sealed, "recipient: "+s.ada.pubKey) {
 		t.Error("the re-sealed file names the coordinator's key; the target's recipients were widened")
 	}
 	cmd := exec.Command(sopsPath, "-d", blob)
-	cmd.Env = []string{"PATH=/usr/bin:/bin", "SOPS_AGE_KEY_FILE=" + s.rowan.privPath, "HOME=" + td}
+	cmd.Env = []string{"PATH=/usr/bin:/bin", "SOPS_AGE_KEY_FILE=" + s.ada.privPath, "HOME=" + td}
 	if _, err := cmd.Output(); err == nil {
 		t.Error("the coordinator's key opens the bench's file after inject")
 	}
@@ -140,8 +140,8 @@ func TestSeatInjectRefusesASeatWithNoFile(t *testing.T) {
 	td := t.TempDir()
 	s := newInjectStore(t, td, sopsPath)
 	_, errOut, code := runNovaSecrets(bin, "seat", "inject",
-		"--store", s.storeDir, "--as", "mini", "--from", "rowan", "--only", "NOVA_REDIS_BENCH_PASSWORD",
-		"--key", s.rowan.privPath, "--sops", sopsPath, "--no-pr")
+		"--store", s.storeDir, "--as", "mini", "--from", "ada", "--only", "NOVA_REDIS_BENCH_PASSWORD",
+		"--key", s.ada.privPath, "--sops", sopsPath, "--no-pr")
 	if code != 2 {
 		t.Fatalf("seat inject exited %d, want 2: %s", code, errOut)
 	}
@@ -166,11 +166,11 @@ func TestTheHelpExampleIsWhatSeatInjectPrints(t *testing.T) {
 	t.Parallel()
 
 	seatInjectTranscript := []string{
-		"$ nova-secrets seat inject --store ./secrets --as air --from rowan --only NOVA_REDIS_BENCH_PASSWORD --key ~/.config/nova-secrets/rowan.key --sops /opt/homebrew/bin/sops --no-pr",
-		"! seat inject: reading rowan.yaml",
-		"! seat inject: encrypting 1 value(s) to air.yaml's own recipients",
+		"$ nova-secrets seat inject --store ./secrets --as bo --from ada --only NOVA_REDIS_BENCH_PASSWORD --key ~/.config/nova-secrets/ada.key --sops /opt/homebrew/bin/sops --no-pr",
+		"! seat inject: reading ada.yaml",
+		"! seat inject: encrypting 1 value(s) to bo.yaml's own recipients",
 		"! seat inject: returning the store to its branch",
-		"SECRETS SEAT INJECT OK seat=air from=rowan names=1 committed branch=seal/air-NOVA_REDIS_BENCH_PASSWORD-20260927-013000",
+		"SECRETS SEAT INJECT OK seat=bo from=ada names=1 committed branch=seal/bo-NOVA_REDIS_BENCH_PASSWORD-20260927-013000",
 	}
 
 	sopsPath := findSops(t)
@@ -185,11 +185,11 @@ func TestTheHelpExampleIsWhatSeatInjectPrints(t *testing.T) {
 	if err := os.MkdirAll(keyDir, 0700); err != nil {
 		t.Fatal(err)
 	}
-	rowanKey, err := os.ReadFile(s.rowan.privPath)
+	adaKey, err := os.ReadFile(s.ada.privPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(keyDir, "rowan.key"), rowanKey, 0600); err != nil {
+	if err := os.WriteFile(filepath.Join(keyDir, "ada.key"), adaKey, 0600); err != nil {
 		t.Fatal(err)
 	}
 

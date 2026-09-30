@@ -127,8 +127,8 @@ refused).
 
 example:
   nova-redis version
-  nova-redis spill --addr 127.0.0.1:6379 --owner rowan --name note --ttl 10m --value hi
-  nova-redis recall --addr 127.0.0.1:6379 --owner rowan --name note
+  nova-redis spill --addr 127.0.0.1:6379 --owner ada --name note --ttl 10m --value hi
+  nova-redis recall --addr 127.0.0.1:6379 --owner ada --name note
 `
 
 // deps are the seams run() reaches the world through: the clock and the

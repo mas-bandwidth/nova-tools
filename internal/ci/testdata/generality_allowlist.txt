@@ -34,7 +34,6 @@ cmd/nova-check/staged.go:space 1
 cmd/nova-ci/local.go:glenn 1
 cmd/nova-ci/main.go:space 1
 cmd/nova-ci/timing.go:mas-bandwidth 4
-cmd/nova-redis/main.go:rowan 2
 cmd/nova-redis/serve.go:rowan 1
 cmd/nova-sandbox/denied.go:studio 1
 cmd/nova-sandbox/denied_darwin.go:studio 1
@@ -50,8 +49,7 @@ cmd/nova-sandbox/runwin_windows.go:glenn 1
 cmd/nova-sandbox/runwin_windows.go:space 1
 cmd/nova-sandbox/volumes_darwin.go:studio 2
 cmd/nova-secrets/main.go:glenn 1
-cmd/nova-secrets/main.go:mini 2
-cmd/nova-secrets/main.go:rowan 14
+cmd/nova-secrets/main.go:rowan 1
 cmd/nova-table/main.go:space 1
 cmd/nova-table/order.go:glenn 1
 cmd/nova-table/watch.go:glenn 3
