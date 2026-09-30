@@ -35,13 +35,13 @@ type Goal struct {
 }
 
 // Packet is what a push carries: counts only, from phase 1's read (the size
-// of jnotes, which is the open judgments), and which sprint and epoch it is of.
+// of jnotes, which is the open judgments), and the epoch it is of (a store
+// holds one sprint).
 type Packet struct {
-	N      int // the push's number for the person
-	Open   int // the open judgments (jnotes' size)
-	Sprint string
-	Epoch  uint64
-	At     time.Time
+	N     int // the push's number for the person
+	Open  int // the open judgments (jnotes' size)
+	Epoch uint64
+	At    time.Time
 }
 
 // Outcome is what a push did, for phase 3: delivered, or failed with its
@@ -85,7 +85,7 @@ func push(ctx context.Context, d Deliver, g Goal, packet Packet) Outcome {
 	}
 	done := make(chan error, 1)
 	go func() {
-		done <- dv.Deliver(store.Reminder{N: packet.N, To: g.Person, At: packet.At, Sprint: packet.Sprint, Epoch: packet.Epoch, Text: text})
+		done <- dv.Deliver(store.Reminder{N: packet.N, To: g.Person, At: packet.At, Epoch: packet.Epoch, Text: text})
 	}()
 	select {
 	case err := <-done:
