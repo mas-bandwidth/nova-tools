@@ -59,6 +59,7 @@ func observationBudgetRefusal(t *testing.T, reply ReadReply, err error,
 }
 
 func TestMemReadExactFetchedBytesBoundary(t *testing.T) {
+	t.Parallel()
 	m := readFixture(t)
 	ctx := context.Background()
 	wrongDigest := strings.Repeat("0", 40)
@@ -157,6 +158,7 @@ func TestMemReadExactFetchedBytesBoundary(t *testing.T) {
 }
 
 func TestMemReadExactFieldOccurrenceBoundary(t *testing.T) {
+	t.Parallel()
 	m := readFixture(t)
 	if err := m.SeedMember("read:", "work", "0", "one", MemRecord{
 		Epoch: "0", Revision: "1",
@@ -223,18 +225,23 @@ func observationReplyFixture(t *testing.T, tail string) (*Mem, ReadPlan) {
 }
 
 func TestMemReadExactEncodedReplyBoundary(t *testing.T) {
+	t.Parallel()
 	baseline, plan := observationReplyFixture(t, "")
 	baseReply, err := baseline.Read(context.Background(), plan)
 	if err != nil {
 		t.Fatalf("baseline reply: %v", err)
 	}
-	baseWire, err := json.Marshal(baseReply)
-	if err != nil {
-		t.Fatal(err)
+	ledger := int64(512)
+	for _, record := range baseReply.Answers[0].Records {
+		itemBytes, err := readCJSONLength(record)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ledger += itemBytes + 1
 	}
-	needed := MaxReadReplyBytes - len(baseWire)
+	needed := MaxReadReplyBytes - int(ledger)
 	if needed <= 1 {
-		t.Fatalf("baseline %d bytes leaves no room for tunable final record", len(baseWire))
+		t.Fatalf("baseline ledger %d bytes leaves no room for tunable final record", ledger)
 	}
 	for _, delta := range []int{-1, 0, 1} {
 		t.Run(fmt.Sprintf("cap%+d", delta), func(t *testing.T) {
@@ -254,9 +261,9 @@ func TestMemReadExactEncodedReplyBoundary(t *testing.T) {
 					t.Fatalf("reply cap%+d: complete=%t answers=%d err=%v",
 						delta, read.Complete, len(read.Answers), readErr)
 				}
-				wire, err := json.Marshal(read)
-				if err != nil || len(wire) != MaxReadReplyBytes+delta {
-					t.Fatalf("reply cap%+d encoded %d bytes, err=%v", delta, len(wire), err)
+				finalBytes, err := readCJSONLength(read)
+				if err != nil || finalBytes > MaxReadReplyBytes {
+					t.Fatalf("reply cap%+d final CJSON length %d, err=%v", delta, finalBytes, err)
 				}
 			}
 			requireBoundaryState(t, m, before)

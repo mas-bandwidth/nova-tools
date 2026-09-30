@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -13,36 +14,31 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-// This private AL5 query uses the production S.read context and S.done_read
-// helper. It does not claim to exercise the built-in done query wrapper:
-// unique identities are chosen from the live post-TIME budget inside the
-// callback, while the built-in wrapper separately validates exact duplicates.
+// This test-only wrapper intercepts the built-in done query after S.read has
+// sampled TIME. It builds unique identities from that invocation's live
+// fetched-byte baseline, then calls the original production S.done_read.
+// No AL5 callback gains access to the internal receipt reader.
 const luaReadFetchedBoundaryProbe = `
 redis.register_function('ns_tset_lua_read_fetched_boundary_probe', function(keys,args)
   local S=NS.tset
-  if #keys~=0 or #args~=2 then return S.json.encode(S.refuse('ARGS')) end
-  local extension={kinds={'fetchboundary'}}
-  extension.validate=function(q,index)
-    if not S.is_object(q) or q.kind~='fetchboundary' or
-        (q.delta~=-1 and q.delta~=0 and q.delta~=1) then
-      return nil,S.refuse('REQUEST',{query_index=index})
-    end
-    for key in pairs(q) do
-      if key~='kind' and key~='delta' then
-        return nil,S.refuse('REQUEST',{query_index=index})
-      end
-    end
-    return true,nil
+  if #keys~=0 or #args~=3 then return S.json.encode(S.refuse('ARGS')) end
+  local delta=tonumber(args[3])
+  if delta~=-1 and delta~=0 and delta~=1 then
+    return S.json.encode(S.refuse('REQUEST'))
   end
-  extension.read=function(ctx,q,index)
+  local original=S.done_read
+  local probe={}
+  S.done_read=function(ctx,_)
     local cap,count,low_bytes=8388608,400,20971
     local baseline=ctx.budget.fetched_bytes
     -- The last low receipt triggers one five-byte HSTRLEN. Choose the number
     -- of high receipts from this invocation's post-TIME baseline, never from
     -- a different call's sampled clock payload.
-    local highs=cap+q.delta-baseline-5-count*low_bytes
+    local highs=cap+delta-baseline-5-count*low_bytes
+    probe.baseline=baseline
+    probe.high_count=highs
     if highs<0 or highs>count-1 or highs~=math.floor(highs) then
-      return nil,S.refuse('CONFIG',{query_index=index,budget='calibration',
+      return nil,S.refuse('CONFIG',{query_index=ctx.query_index,budget='calibration',
         actual=highs,limit=count-1})
     end
     local before=ctx.budget.metadata_commands or 0
@@ -56,26 +52,24 @@ redis.register_function('ns_tset_lua_read_fetched_boundary_probe', function(keys
         intent_digest=wrong_digest(i)}
     end
     ops[count]={epoch=ctx.request_epoch,op='low',intent_digest=wrong_digest(count)}
-    local slots,err=S.done_read(ctx,ops)
-    local metadata_delta=(ctx.budget.metadata_commands or 0)-before
-    if err then
-      err.detail=err.detail or {}
-      err.detail.metadata_delta=metadata_delta
-      err.detail.baseline=baseline
-      err.detail.high_count=highs
-      return nil,err
-    end
-    if #slots~=count then return nil,S.refuse('CONFIG',{query_index=index}) end
-    for i=1,count do
-      if slots[i].status~='conflict' then
-        return nil,S.refuse('CONFIG',{query_index=index})
+    local slots,err=original(ctx,ops)
+    probe.metadata_delta=(ctx.budget.metadata_commands or 0)-before
+    probe.fetched_bytes=ctx.budget.fetched_bytes
+    probe.slots=slots and #slots or 0
+    if slots then
+      if #slots~=count then return nil,S.refuse('CONFIG',{query_index=ctx.query_index}) end
+      for i=1,count do
+        if slots[i].status~='conflict' then
+          return nil,S.refuse('CONFIG',{query_index=ctx.query_index})
+        end
       end
     end
-    return {kind='fetchboundary',fetched_bytes=ctx.budget.fetched_bytes,
-      metadata_delta=metadata_delta,baseline=baseline,high_count=highs,
-      slots=#slots},nil
+    return slots,err
   end
-  return S.read(args[1],args[2],nil,extension)
+  local ok,encoded=pcall(S.read,args[1],args[2],nil,nil)
+  S.done_read=original
+  if not ok then error(encoded,0) end
+  return S.json.encode({reply=S.json.decode(encoded),probe=probe})
 end)
 `
 
@@ -119,6 +113,7 @@ func luaFetchedBoundaryReceipt(t *testing.T, target int) string {
 }
 
 func TestLuaReadExactFetchedBytesBoundary(t *testing.T) {
+	t.Parallel()
 	const (
 		lowBytes = 20971
 		count    = 400
@@ -148,28 +143,18 @@ func TestLuaReadExactFetchedBytesBoundary(t *testing.T) {
 		MaxRetries: -1, ReadTimeout: 20 * time.Second})
 	t.Cleanup(func() { _ = probeClient.Close() })
 	type boundaryReply struct {
-		Status   string `json:"status"`
-		Code     string `json:"code"`
-		Complete bool   `json:"complete"`
-		Answers  []struct {
-			Kind          string `json:"kind"`
-			FetchedBytes  int    `json:"fetched_bytes"`
-			MetadataDelta int    `json:"metadata_delta"`
-			Baseline      int    `json:"baseline"`
-			HighCount     int    `json:"high_count"`
-			Slots         int    `json:"slots"`
-		} `json:"answers"`
+		Status   string            `json:"status"`
+		Code     string            `json:"code"`
+		Complete bool              `json:"complete"`
+		Answers  []json.RawMessage `json:"answers"`
 		Counters struct {
 			FetchedBytes int `json:"fetched_bytes"`
 		} `json:"counters"`
 		Detail struct {
-			QueryIndex    *int   `json:"query_index"`
-			Budget        string `json:"budget"`
-			Actual        *int   `json:"actual"`
-			Limit         *int   `json:"limit"`
-			MetadataDelta int    `json:"metadata_delta"`
-			Baseline      int    `json:"baseline"`
-			HighCount     int    `json:"high_count"`
+			QueryIndex *int   `json:"query_index"`
+			Budget     string `json:"budget"`
+			Actual     *int   `json:"actual"`
+			Limit      *int   `json:"limit"`
 		} `json:"detail"`
 	}
 	for _, tc := range []struct {
@@ -179,7 +164,8 @@ func TestLuaReadExactFetchedBytesBoundary(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			plan, err := json.Marshal(map[string]any{"epoch": "0", "space": fx.Space,
 				"mode": "atomic", "queries": []any{map[string]any{
-					"kind": "fetchboundary", "delta": tc.delta}}})
+					"kind": "done", "ops": []any{map[string]any{
+						"epoch": "0", "op": "low", "intent_digest": strings.Repeat("0", 40)}}}}})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -187,14 +173,24 @@ func TestLuaReadExactFetchedBytesBoundary(t *testing.T) {
 			callCtx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 			defer cancel()
 			wire, err := probeClient.FCall(callCtx,
-				"ns_tset_lua_read_fetched_boundary_probe", nil, Version, string(plan)).Text()
+				"ns_tset_lua_read_fetched_boundary_probe", nil, Version, string(plan), strconv.Itoa(tc.delta)).Text()
 			if err != nil {
-				t.Fatalf("AL5 receipt read returned Redis error: %v", err)
+				t.Fatalf("receipt boundary read returned Redis error: %v", err)
 			}
-			var reply boundaryReply
-			if err := json.Unmarshal([]byte(wire), &reply); err != nil {
-				t.Fatalf("decode AL5 receipt reply: %v", err)
+			var observed struct {
+				Reply boundaryReply `json:"reply"`
+				Probe struct {
+					FetchedBytes  int `json:"fetched_bytes"`
+					MetadataDelta int `json:"metadata_delta"`
+					Baseline      int `json:"baseline"`
+					HighCount     int `json:"high_count"`
+					Slots         int `json:"slots"`
+				} `json:"probe"`
 			}
+			if err := json.Unmarshal([]byte(wire), &observed); err != nil {
+				t.Fatalf("decode receipt boundary reply: %v", err)
+			}
+			reply, probe := observed.Reply, observed.Probe
 			after := commitProbeImage(t, fx.Client)
 			if !reflect.DeepEqual(after, before) {
 				t.Fatal("read boundary probe changed the whole Redis TYPE/DUMP image")
@@ -204,17 +200,15 @@ func TestLuaReadExactFetchedBytesBoundary(t *testing.T) {
 				if len(reply.Answers) != 1 {
 					t.Fatalf("accepted target %d returned %d answers: %+v", want, len(reply.Answers), reply)
 				}
-				planned := reply.Answers[0].Baseline + count*lowBytes +
-					reply.Answers[0].HighCount + 5
+				planned := probe.Baseline + count*lowBytes + probe.HighCount + 5
 				if reply.Status != "read" || !reply.Complete ||
-					reply.Answers[0].Kind != "fetchboundary" ||
-					reply.Answers[0].FetchedBytes != want || reply.Counters.FetchedBytes != want ||
-					reply.Answers[0].MetadataDelta != count+1 || reply.Answers[0].Slots != count ||
+					probe.FetchedBytes != want || reply.Counters.FetchedBytes != want ||
+					probe.MetadataDelta != count+1 || probe.Slots != count ||
 					planned != want {
-					t.Fatalf("accepted target %d: reply=%+v", want, reply)
+					t.Fatalf("accepted target %d: reply=%+v probe=%+v", want, reply, probe)
 				}
-				if reply.Answers[0].HighCount < 0 || reply.Answers[0].HighCount >= count {
-					t.Fatalf("high receipt count %d outside calibrated range", reply.Answers[0].HighCount)
+				if probe.HighCount < 0 || probe.HighCount >= count {
+					t.Fatalf("high receipt count %d outside calibrated range", probe.HighCount)
 				}
 				return
 			}
@@ -222,23 +216,27 @@ func TestLuaReadExactFetchedBytesBoundary(t *testing.T) {
 			if err := json.Unmarshal([]byte(wire), &envelope); err != nil {
 				t.Fatal(err)
 			}
-			if _, hasAnswers := envelope["answers"]; hasAnswers {
+			var nested map[string]json.RawMessage
+			if err := json.Unmarshal(envelope["reply"], &nested); err != nil {
+				t.Fatal(err)
+			}
+			if _, hasAnswers := nested["answers"]; hasAnswers {
 				t.Fatalf("refusal exposed partial answers: %s", wire)
 			}
 			if reply.Status != "refused" || reply.Code != "BUDGET" ||
 				reply.Detail.QueryIndex == nil || *reply.Detail.QueryIndex != 0 ||
 				reply.Detail.Budget != "fetched_bytes" ||
-				reply.Detail.MetadataDelta != count {
-				t.Fatalf("over-cap target %d: reply=%+v", want, reply)
+				probe.MetadataDelta != count {
+				t.Fatalf("over-cap target %d: reply=%+v probe=%+v", want, reply, probe)
 			}
-			planned := reply.Detail.Baseline + count*lowBytes + reply.Detail.HighCount + 5
+			planned := probe.Baseline + count*lowBytes + probe.HighCount + 5
 			if planned != want ||
 				(reply.Detail.Actual != nil && *reply.Detail.Actual != want) ||
 				(reply.Detail.Limit != nil && *reply.Detail.Limit != MaxFetchedBytes) {
 				t.Fatalf("over-cap planned byte boundary %d: reply=%+v", want, reply)
 			}
-			if reply.Detail.HighCount < 0 || reply.Detail.HighCount >= count {
-				t.Fatalf("high receipt count %d outside calibrated range", reply.Detail.HighCount)
+			if probe.HighCount < 0 || probe.HighCount >= count {
+				t.Fatalf("high receipt count %d outside calibrated range", probe.HighCount)
 			}
 		})
 	}

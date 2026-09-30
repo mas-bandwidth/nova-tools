@@ -20,12 +20,14 @@ import (
 // source or assuming that a function's declared flag limits its commands.
 func TestLoadedWriterSurface(t *testing.T) {
 	t.Parallel()
-	t.Run("standalone writer surface", func(t *testing.T) {
-		profileLoadedSurface(t, fn.TSetStandalone)
-	})
-	t.Run("composed writer surface", func(t *testing.T) {
-		profileLoadedSurface(t, fn.TSetComposed)
-	})
+	profileLoadedSurface(t, newTSetFixture(t))
+}
+
+// The composed source has its own gate so an absent Layer 2 fragment cannot
+// prevent the standalone registered surface from being checked.
+func TestLoadedComposedWriterSurface(t *testing.T) {
+	t.Parallel()
+	profileLoadedSurface(t, newComposedTSetFixture(t))
 }
 
 // The legacy library is still available on its own server, while the tset
@@ -55,13 +57,31 @@ func TestEngineIsolation(t *testing.T) {
 		t.Fatalf("legacy writer surface: ns_oset_move=%v ns_tset_step=%v", foundOld, foundNew)
 	}
 	before := commitProbeImage(t, fx.Client)
-	_, err = NewRedis(fx.Client).Step(ctx, profileCreateStep(fx.Space))
+	_, err = newFixtureRedis(t, fx.Client).Step(ctx, profileCreateStep(fx.Space))
 	var mapped *ClientError
 	if !errors.As(err, &mapped) || mapped.Code != "FUNCTIONMISSING" {
 		t.Fatalf("tset Step on legacy library = %v, want FUNCTIONMISSING", err)
 	}
 	if after := commitProbeImage(t, fx.Client); !reflect.DeepEqual(before, after) {
 		t.Error("tset Step changed legacy store")
+	}
+}
+
+func TestLegacyPreludeLoadsNoTsetFunctions(t *testing.T) {
+	t.Parallel()
+	fx := newTSetFixture(t)
+	if err := fn.Load(context.Background(), fx.Client); err != nil {
+		t.Fatal(err)
+	}
+	functions := profileFunctions(t, fx.Client)
+	for _, name := range []string{"ns_tset_step", "ns_tset_read"} {
+		if _, present := functions[name]; present {
+			t.Errorf("legacy library registered %s", name)
+		}
+		_, err := fx.Client.FCall(context.Background(), name, []string{}).Result()
+		if err == nil || !profileMissingFunctionError(err) {
+			t.Errorf("legacy FCALL %s = %v, want absent function", name, err)
+		}
 	}
 }
 
@@ -132,7 +152,6 @@ func TestMissingLibraryNoImplicitLoad(t *testing.T) {
 
 func TestStandaloneIsolatedLoadOnly(t *testing.T) {
 	t.Parallel()
-	profileClusterUnsupported(t)
 	fx := newTSetFixture(t)
 	ctx := context.Background()
 	if err := fn.Load(ctx, fx.Client); err != nil {
@@ -152,27 +171,21 @@ func TestStandaloneIsolatedLoadOnly(t *testing.T) {
 }
 
 var profileAllowedFunctions = map[string][]string{
-	"ns_tset_step":         nil,
-	"ns_tset_read":         {"no-writes"},
-	"ns_table_check":       {"no-writes"},
-	"ns_table_list":        {"no-writes"},
-	"ns_table_member_find": {"no-writes"},
-	"ns_table_members":     {"no-writes"},
-	"ns_table_read":        {"no-writes"},
-	"ns_table_read_set":    {"no-writes"},
-	"ns_view_get":          {"no-writes"},
-	"ns_view_list":         {"no-writes"},
+	"ns_tset_step": nil,
+	"ns_tset_read": {"no-writes"},
 }
 
-// Inventory includes the old primitive, every old table/view writer, and
-// lifecycle names that would let a general client bypass the one step writer.
-var profileForbiddenWriters = []string{
+// Inventory includes every old table/view callback, the old primitive, and
+// lifecycle names that would expose an unsupported tset client surface.
+var profileForbiddenFunctions = []string{
 	"ns_oset_move", "ns_table_apply", "ns_table_apply_multi",
 	"ns_table_bind", "ns_table_cell_add", "ns_table_cell_move", "ns_table_cell_remove",
-	"ns_table_clear", "ns_table_create", "ns_table_drop", "ns_table_drop_definition",
-	"ns_table_member_create", "ns_table_row_add", "ns_table_row_del", "ns_table_row_set",
+	"ns_table_check", "ns_table_clear", "ns_table_create", "ns_table_drop", "ns_table_drop_definition",
+	"ns_table_list", "ns_table_member_create", "ns_table_member_find", "ns_table_members",
+	"ns_table_read", "ns_table_read_set", "ns_table_row_add", "ns_table_row_del", "ns_table_row_set",
 	"ns_table_rows_add", "ns_table_rows_hide", "ns_table_set",
-	"ns_view_del", "ns_view_set", "ns_sprint_step", "ns_tset_init", "ns_tset_teardown",
+	"ns_view_del", "ns_view_get", "ns_view_list", "ns_view_set",
+	"ns_sprint_step", "ns_tset_init", "ns_tset_teardown",
 }
 
 func profileFunctions(t *testing.T, c *redis.Client) map[string][]string {
@@ -196,26 +209,25 @@ func profileFunctions(t *testing.T, c *redis.Client) map[string][]string {
 	return functions
 }
 
-func profileLoadedSurface(t *testing.T, mode fn.TSetProfile) {
+func profileLoadedSurface(t *testing.T, fx *tsetFixture) {
 	t.Helper()
-	fx := newTSetFixtureProfile(t, mode)
 	fx.Activate(t)
 	got := profileFunctions(t, fx.Client)
 	if !reflect.DeepEqual(got, profileAllowedFunctions) {
-		t.Errorf("%s FUNCTION LIST surface = %+v, want %+v", mode, got, profileAllowedFunctions)
+		t.Errorf("%s FUNCTION LIST surface = %+v, want %+v", fx.profile, got, profileAllowedFunctions)
 	}
 	before := commitProbeImage(t, fx.Client)
-	for _, name := range profileForbiddenWriters {
+	for _, name := range profileForbiddenFunctions {
 		if _, present := got[name]; present {
-			t.Errorf("forbidden writer %q registered in %s profile", name, mode)
+			t.Errorf("forbidden callback %q registered in %s profile", name, fx.profile)
 		}
 		_, err := fx.Client.FCall(context.Background(), name, []string{}, "l1:probe").Result()
 		if err == nil || !profileMissingFunctionError(err) {
-			t.Errorf("FCALL %s in %s profile = %v, want absent function", name, mode, err)
+			t.Errorf("FCALL %s in %s profile = %v, want absent function", name, fx.profile, err)
 		}
 	}
 	if after := commitProbeImage(t, fx.Client); !reflect.DeepEqual(before, after) {
-		t.Error("calling forbidden writers changed the private store")
+		t.Error("calling forbidden callbacks changed the private store")
 	}
 }
 
@@ -248,7 +260,7 @@ func profileMissingFunction(t *testing.T) {
 	if libraries, err := fx.Client.FunctionList(context.Background(), redis.FunctionListQuery{}).Result(); err != nil || len(libraries) != 0 {
 		t.Fatalf("fresh private server unexpectedly has functions: %+v err=%v", libraries, err)
 	}
-	_, err := NewRedis(fx.Client).Step(context.Background(), profileCreateStep(fx.Space))
+	_, err := newFixtureRedis(t, fx.Client).Step(context.Background(), profileCreateStep(fx.Space))
 	var mapped *ClientError
 	if !errors.As(err, &mapped) || mapped.Code != "FUNCTIONMISSING" {
 		t.Fatalf("missing function Step error = %v, want FUNCTIONMISSING", err)
@@ -314,7 +326,7 @@ func profileOOMStart(t *testing.T) {
 		}
 	})
 	before := commitProbeImage(t, fx.Client)
-	_, err = NewRedis(fx.Client).Step(ctx, profileCreateStep(fx.Space))
+	_, err = newFixtureRedis(t, fx.Client).Step(ctx, profileCreateStep(fx.Space))
 	var mapped *ClientError
 	if !errors.As(err, &mapped) || mapped.Code != "OOMSTART" {
 		t.Fatalf("private server OOM entry error = %v, want OOMSTART", err)
@@ -323,15 +335,4 @@ func profileOOMStart(t *testing.T) {
 		t.Error("preexecution OOM changed the whole store")
 	}
 	commitProbeNoKeys(t, fx.Client, []string{fixtureRecordKey(fx.Space, "work", "card-1"), fixtureCellKey(fx.Space, "work", "0", "r", "ready")})
-}
-
-func profileClusterUnsupported(t *testing.T) {
-	t.Helper()
-	client := redis.NewClusterClient(&redis.ClusterOptions{Addrs: []string{"127.0.0.1:1"}})
-	t.Cleanup(func() { _ = client.Close() })
-	_, err := NewRedis(client).Step(context.Background(), profileCreateStep("l1:"))
-	var mapped *ClientError
-	if !errors.As(err, &mapped) || mapped.Code != "UNSUPPORTEDSTORE" {
-		t.Fatalf("cluster client error = %v, want UNSUPPORTEDSTORE before dispatch", err)
-	}
 }

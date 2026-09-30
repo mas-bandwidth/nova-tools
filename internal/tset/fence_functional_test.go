@@ -14,13 +14,14 @@ import (
 // into L.plan observable. It does not claim real composed integration, whose
 // L2 fragment has separate gates.
 const fenceTripwireLua = `
-local S = NS.tset
-S.before = function(...) error('fence test: preplan hook called') end
-S.plan = function(...) error('fence test: table planner called') end
-NS.tlog = {plan = function(...) error('fence test: synthetic Layer 2 planner called') end}
-S.profile = 'test-composed'
 redis.register_function('ns_tset_fence_tripwire', function(keys,args)
-  return 'test-only inert hook'
+  if #keys~=0 or #args~=1 or args[1]~='arm' then return 'ARGS' end
+  local S=NS.tset
+  S.before=function(...) error('fence test: preplan hook called') end
+  S.plan=function(...) error('fence test: table planner called') end
+  NS.tlog={plan=function(...) error('fence test: synthetic Layer 2 planner called') end}
+  S.profile='test-composed'
+  return 'armed'
 end)
 `
 
@@ -56,12 +57,16 @@ end)
 // tlog tripwire prove that the helper did not enter any preplanner. It does not
 // prove integration with the real Layer 2 library, which has its own gates.
 const fenceEnclosingProbeLua = `
-local S=NS.tset
-S.before=function(...) error('fence test: enclosing preplan hook called') end
-S.plan=function(...) error('fence test: enclosing table planner called') end
-NS.tlog={plan=function(...) error('fence test: enclosing synthetic Layer 2 planner called') end}
-S.profile='test-composed'
 redis.register_function('ns_tset_fence_enclosing_probe', function(keys,args)
+  if #keys==0 and #args==1 and args[1]=='arm' then
+    local S=NS.tset
+    S.before=function(...) error('fence test: enclosing preplan hook called') end
+    S.plan=function(...) error('fence test: enclosing table planner called') end
+    NS.tlog={plan=function(...) error('fence test: enclosing synthetic Layer 2 planner called') end}
+    S.profile='test-composed'
+    return 'armed'
+  end
+  local S=NS.tset
   if #keys~=0 or #args~=2 then return S.json.encode(S.refuse('ARGS')) end
   local ctx,err=S.open(args[1],args[2])
   if err then return S.json.encode(err) end
@@ -74,11 +79,13 @@ end)
 `
 
 func TestFenceFunctional(t *testing.T) {
+	t.Parallel()
 	t.Run("winning fence bypasses planners and writes only receipt", func(t *testing.T) {
 		fx := newTSetFixture(t)
 		fx.Define(t, "work", "cards")
 		fx.AddRow(t, "work", "r", 0)
 		fx.ActivateWithLua(t, fenceTripwireLua)
+		fenceArmPlannerTrap(t, fx, "ns_tset_fence_tripwire")
 
 		op, intent := "fence-win", "fence functional winning identity"
 		request := fenceRequest(fx.Space, op, intent)
@@ -143,6 +150,7 @@ func TestFenceFunctional(t *testing.T) {
 		fx.Define(t, "work", "cards")
 		fx.AddRow(t, "work", "r", 0)
 		fx.ActivateWithLua(t, fenceEnclosingProbeLua)
+		fenceArmPlannerTrap(t, fx, "ns_tset_fence_enclosing_probe")
 
 		op, intent := "fence-enclosed", "enclosing fence helper identity"
 		request := fenceRequest(fx.Space, op, intent)
@@ -189,6 +197,16 @@ func TestFenceFunctional(t *testing.T) {
 			})
 		}
 	})
+}
+
+// The fixture flushes queued rows through the public writer during Activate.
+// Arm fatal hooks only after that setup finishes, before the fence under test.
+func fenceArmPlannerTrap(t *testing.T, fx *tsetFixture, function string) {
+	t.Helper()
+	result, err := fx.Client.FCall(context.Background(), function, []string{}, "arm").Text()
+	if err != nil || result != "armed" {
+		t.Fatalf("arm fence planner trap %s: result=%q err=%v", function, result, err)
+	}
 }
 
 func fenceRequest(space, op, intent string) map[string]any {

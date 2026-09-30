@@ -13,6 +13,7 @@ import (
 // while S.before fetches the single selected value only once. The public read
 // limits of 10,000 records and 128 fields per record meet at 1,280,000.
 func TestLuaReadFieldObservationMaximum(t *testing.T) {
+	t.Parallel()
 	fx := newTSetFixture(t)
 	fx.Define(t, "work", "c")
 	if err := fx.Client.HSet(context.Background(),
