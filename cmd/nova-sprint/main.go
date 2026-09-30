@@ -46,6 +46,10 @@ func main() {
 // shared by every verb it runs (the driver runs many), its clock, and how it
 // sleeps. Tests give it a backend of their own.
 type app struct {
+	// library is this build's function library, which the new path's client
+	// checks a store's against before its first call (the grammar decisions,
+	// 30): the sprint profile of the nova_sprint library.
+	library *sprintfn.Library
 	getenv  func(string) string
 	now     func() time.Time
 	sleep   func(time.Duration)
@@ -78,6 +82,7 @@ func newApp(getenv func(string) string) *app {
 	a.backend = a.redisBackend
 	a.sprintClient = a.newPathClient
 	a.configRows = newPathConfig
+	a.library = &sprintfn.Library{Name: fn.Library, Sum: fn.Sum, Source: func() (string, error) { return fn.TSetSource(fn.TSetSprint) }}
 	a.noteStream = a.redisNotes
 	a.newPath = true // the switch (IT23): every verb runs on the new path
 	return a

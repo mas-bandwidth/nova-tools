@@ -111,7 +111,8 @@ func exitOf(err error) int {
 // newPathClient is the production client of the new path: sprintfn.NewRedis
 // at the address, with the login the present command dials with
 // (NOVA_SPRINT_REDIS_USER, and the variable NOVA_SPRINT_REDIS_PASSWORD_ENV
-// names, else NOVA_REDIS_BENCH_PASSWORD).
+// names, else NOVA_REDIS_BENCH_PASSWORD), and this build's library, which the
+// client checks the store's against before its first call (decision 30).
 func (a *app) newPathClient(_ context.Context, addr string, names sprint.Names) (sprintfn.Client, func() error, error) {
 	user, passwordEnv := a.getenv(redisauth.UserEnv), ""
 	if user != "" {
@@ -120,7 +121,7 @@ func (a *app) newPathClient(_ context.Context, addr string, names sprint.Names) 
 			passwordEnv = redisauth.DefaultPasswordEnv
 		}
 	}
-	r, err := sprintfn.NewRedis(addr, user, passwordEnv, names)
+	r, err := sprintfn.NewRedis(addr, user, passwordEnv, names, a.library)
 	if err != nil {
 		return nil, nil, err
 	}

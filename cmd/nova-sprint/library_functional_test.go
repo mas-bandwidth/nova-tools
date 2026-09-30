@@ -38,3 +38,35 @@ func TestAStoreWithoutThisBuildsLibraryIsRefused(t *testing.T) {
 		t.Fatalf("init with the library loaded: %s", errb.String())
 	}
 }
+
+// TestNewPathRefusesAStoreWithoutThisBuildsLibrary: the new path's library
+// check (the grammar decisions, 30): one FUNCTION LIST before the client's
+// first call refuses a store whose nova_sprint library is not this build's,
+// exit 2, naming the library, with nothing written; the legacy library is not
+// this build's (the sprint profile, which does not assemble before G0, so no
+// store matches it yet).
+func TestNewPathRefusesAStoreWithoutThisBuildsLibrary(t *testing.T) {
+	t.Parallel()
+	addr := testutil.Start(t)
+	env := map[string]string{"NOVA_SPRINT_REDIS": addr, "NOVA_SPRINT_ACTOR": "coordinator"}
+	c := redis.NewClient(&redis.Options{Addr: addr})
+	defer c.Close()
+	for i, load := range []bool{false, true} {
+		if load {
+			if err := fn.Load(context.Background(), c); err != nil {
+				t.Fatal(err)
+			}
+		}
+		var out, errb bytes.Buffer
+		a := newApp(func(k string) string { return env[k] })
+		code := a.run([]string{"init"}, &out, &errb)
+		a.close()
+		if code != exitRefused || !strings.Contains(errb.String()+out.String(), "nova_sprint") {
+			t.Fatalf("case %d: init on the new path: exit %d\n%s%s", i, code, out.String(), errb.String())
+		}
+		if n, err := c.DBSize(context.Background()).Result(); err != nil || n != 0 {
+			t.Fatalf("case %d: the store holds %d keys (%v) after a refused init", i, n, err)
+		}
+	}
+}
+
