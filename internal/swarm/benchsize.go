@@ -40,12 +40,6 @@ type SizeRound struct {
 	Held            bool
 }
 
-// IsPowerOfTwo reports whether n is 1, 2, 4, 8, ...: the only widths a bench
-// is ever measured at.
-func IsPowerOfTwo(n int) bool {
-	return n > 0 && n&(n-1) == 0
-}
-
 // SizeRoundHolds answers the three rules for one round: load at most
 // 1.25 x cores, throughput at least 1.5 x the previous round (vacuous for the
 // first round, which has no W/2), and no abstain.
@@ -118,93 +112,12 @@ func PlanBenchLaunch(cores int, load float64, width, queued int) int {
 	return n
 }
 
-// EffectiveWidth is what a batch fills a bench to: its measured width, or,
-// for a row without one, its core count as today, or -1 for unbounded.
-func EffectiveWidth(b Bench) int {
-	if b.Width > 0 {
-		return b.Width
-	}
-	list, err := CoresList(b.Cores)
-	if err != nil || b.Cores == "-" || b.Cores == "" {
-		if c := coreCount(b.Cores); c >= 0 {
-			return c
-		}
-		return -1
-	}
-	return len(list)
-}
-
-// WidthNeedsRemeasure is the adopt step's question: re-measure whenever the
-// tool version changed under the row, or the row was never measured. A machine
-// change arrives the same way, through probe: a bench whose cores no longer
-// match is proved again before it is sized again.
-func WidthNeedsRemeasure(row Bench, currentVersion string) bool {
-	if row.Width <= 0 {
-		return true
-	}
-	return row.Version != currentVersion
-}
-
 // Version8 is the row's version: the tool's identity in 8 characters.
 func Version8(v string) string {
 	if len(v) > 8 {
 		return v[:8]
 	}
 	return v
-}
-
-// RecordBenchWidth writes width, measured and version onto the bench's row in
-// place and writes the measured table beside it at <path>.measured: one
-// header line and one row naming the bench, its width, stamp and version. It
-// returns the bench's core count and the table's row count for the BENCH
-// WIDTH line.
-func RecordBenchWidth(path, name string, width int, measured, version string) (cores, rows int, err error) {
-	if !IsPowerOfTwo(width) {
-		return 0, 0, fmt.Errorf("width %d is not a power of two", width)
-	}
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return 0, 0, err
-	}
-	lines := strings.Split(string(raw), "\n")
-	found := false
-	for i, line := range lines {
-		if strings.TrimSpace(line) == "" {
-			continue
-		}
-		cols := strings.Split(line, "\t")
-		if len(cols) != 7 && len(cols) != 10 {
-			return 0, 0, fmt.Errorf("--benches line %d wants 7 columns or 7 with width<TAB>measured<TAB>version, got %d fields", i+1, len(cols))
-		}
-		if cols[0] == "name" {
-			continue
-		}
-		rows++
-		if strings.TrimSpace(cols[0]) != name {
-			continue
-		}
-		found = true
-		base := cols[:7]
-		lines[i] = strings.Join(base, "\t") + "\t" + fmt.Sprint(width) + "\t" + measured + "\t" + version
-		if list, cerr := CoresList(base[3]); cerr == nil {
-			cores = len(list)
-			if strings.TrimSpace(base[3]) == "-" {
-				cores = -1
-			}
-		}
-	}
-	if !found {
-		return 0, 0, fmt.Errorf("no bench %s in %s", name, path)
-	}
-	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")), 0o600); err != nil {
-		return 0, 0, err
-	}
-	measuredPath := path + ".measured"
-	summary := "bench\twidth\tmeasured\tversion\n" + name + "\t" + fmt.Sprint(width) + "\t" + measured + "\t" + version + "\n"
-	if err := os.WriteFile(measuredPath, []byte(summary), 0o600); err != nil {
-		return 0, 0, err
-	}
-	return cores, rows, nil
 }
 
 // WriteMeasuredTable writes one doubling round beside the benches table: one

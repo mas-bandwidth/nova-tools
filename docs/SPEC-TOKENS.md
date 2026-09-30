@@ -390,13 +390,11 @@ nova-tokens fold    --out <dir> (--day <YYYY-MM-DD> | --all) --repos <file>
 nova-tokens report  --who <name> --day <YYYY-MM-DD> --repos <file>
                     [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--provider <kind>:<label>=<file>]...
                     [--supersedes <note-id>]... [--note <path>] [--scratch <dir>] [--timeout <seconds>]
-nova-tokens report  --ledger <file.tsv> --month <YYYY-MM> [--by model|repo|day] [--max <n>]
 nova-tokens report  --redis <host:port> --month <YYYY-MM> [--by model|repo|day|tuple] [--max <n>]
                     [--user <name>] [--password-env <NAME>]
 nova-tokens ledger  --out <dir> (--day <YYYY-MM-DD> | --month <YYYY-MM>) --redis <host:port>
                     [--user <name>] [--password-env <NAME>]
 nova-tokens sum     --out <dir> --month <YYYY-MM> [--max <n>]
-nova-tokens sum     --swarm-root <dir> --day <YYYY-MM-DD> --out <ledger.tsv>
 nova-tokens check   --out <dir> [--strict | --no-spend <file>] [--through <YYYY-MM-DD>] [--max <n>]
 nova-tokens sources --repos <file> (--day <YYYY-MM-DD> | --all)
                     [--claude <label>=<dir>]... [--opencode <label>=<file>]... [--swarm <label>=<dir>]... [--bus <dir>]
@@ -404,7 +402,6 @@ nova-tokens sources --repos <file> (--day <YYYY-MM-DD> | --all)
                     [--scratch <dir>] [--timeout <seconds>] [--max <n>]
 nova-tokens profiles --swarm-root <dir>
 nova-tokens session --claude-session <jsonl> [--out <dir>] [--day <YYYY-MM-DD>]
-nova-tokens fold-pool --pool <dir> --ledger <file> [--since <stamp>]
 nova-tokens help
 nova-tokens version
 ```
@@ -448,60 +445,6 @@ zero. Writes nothing. Exits
 0 whenever it ran, including over a month with gaps: answering is its job,
 and `missing=<n>` is the answer. `sum` is a **report**. Never gate on it.
 
-`sum --swarm-root <dir> --day <d> --out <ledger.tsv>` is the one form that
-writes: it walks every card's `usage.tsv` under `<dir>/*/jobs/*/`, keeps the
-rows whose `started` stamp is on `--day`, and appends one row per `(model, repo)`
-pair to the ledger in the ledger's own column order — `day`, `model`, `repo`,
-`tokens_in`, `tokens_out`, `usd`, `cards`, `completed`, `usd_per_task`, `dashes` —
-reading the header and refusing (exit 2) when it
-differs, so a ledger filled by hand and one filled by this verb agree. A second
-run for the same day replaces that day's rows, never doubling, so the ledger can
-be filled again and again; a kept field a card did not report is `-` in the ledger, never 0,
-and the trailing `dashes` column counts how many cards left each of input, output, usd and rc unknown.
-
-A receipt that carries a `tool` column names the nova tool whose work the card
-is, and `sum --swarm-root` counts those receipts per tool and prints one `TOOLS`
-line after `SUM OK`, a `tool:n` per named tool in sorted order —
-
-```
-SUM OK day=<d> models=<n> cards=<n> in=<n> out=<n> usd=<x.xxxx>
-TOOLS <tool>:<n>,<tool>:<n>,…
-```
-
-— so a tool nobody used in the day has no name on the line and is visible by its
-absence. A receipt with no `tool` column, or a `-`, names no tool and is not
-counted; when no receipt names a tool, no `TOOLS` line prints.
-
-**Cost per completed task per (model, repo).** The routing metric is **cost
-per completed task**, not price per token: a model at four times the
-per-token price that finishes in a third of the turns is the cheaper model,
-and it is the number that decides which seat a job goes to. The row key is
-`(day, model, repo)`, because the same model costs differently against a
-small tool repo and a large one. Three columns carry it on every row:
-
-- `repo`, the repo the card's receipt names, so the row is per `(model,
-  repo)`;
-- `completed`, how many of that row's cards carry a receipt with `rc=0`, a
-  task that finished, read from the receipt and never inferred from a card
-  that reported none;
-- `usd_per_task`, `usd / completed` in dollars to six decimals, and `-` when
-  `completed` is zero: there is no cost over no finished task, and the ratio
-  is never divided.
-
-The column order is `day`, `model`, `repo`, `tokens_in`, `tokens_out`, `usd`,
-`cards`, `completed`, `usd_per_task`, `dashes`: the ledger lands one row per
-`(model, repo)` pair, as `sum` prints one `SUM PAIR` line per pair. `cards` is the count
-of every card that reported, and `completed` is its own column,
-not `cards` minus anything. A receipt that names no `repo` counts under
-`unattributed`, so a receipt with no repo is visible rather than guessed, and
-the header is the order above. A receipt whose `rc`
-is `-` or empty names no completion, counts in `cards` and as the fourth count
-of the `dashes` column, and never in `completed`: it is read as neither failed
-nor finished.
-A `completed` of zero is a valid row, never a refusal; the one refusal of
-this form is the header mismatch, which names the wanted order, the order
-above.
-
 ### `check`
 
 Asserts what rule 13 says. Says NO (exit 1) on any malformed file, any
@@ -519,7 +462,7 @@ printed and counted here too. Exits 0 whenever it ran. `sources` is a
 **report**; it exists so a person can see what a fold would count before it
 writes.
 
-### `profiles`, `session`, `fold-pool`
+### `profiles`, `session`
 
 `profiles --swarm-root <dir>` is a measurement over a swarm root: one
 `PROFILES MODEL` line per model (card count, median `tokens_out`, overshoot
@@ -529,23 +472,11 @@ line, exit 0 whenever it ran. `session --claude-session <jsonl>` prints one
 with `--out`, folds the coordinator's turns into the day file as one row per
 model the transcript names, `<model>/coordinator`, beside retained rows; a
 transcript that names no model on some turn is refused, never booked under a
-guess. `fold-pool --pool <dir>
---ledger <file>` folds a pool's `usage/*.tsv` into the monthly ledger and
-prints one `FOLD OK` line. Their lines are in the output grammar; a scanner
+guess. Their lines are in the output grammar; a scanner
 that reads the grammar parses them.
 
-`report --ledger <file.tsv> --month <YYYY-MM> [--by model|repo|day] [--max <n>]`
-sums one month of the pool ledger `fold-pool` writes (header `day, provider,
-model, repo, tasks, tokens_in, tokens_out, cache_write, cache_read, reasoning,
-usd, source`) by the `--by` group, default `model`: one `REPORT model=|repo=|day=<g>
-tasks=<n> in=<n> out=<n> cache_read=<n> usd=<usd>` line per group, capped at
-`--max`, then `REPORT OK month=<month> groups=<n> rows=<n> usd=<usd>`, exit 0. A
-missing `--ledger` or `--month`, a malformed month, a `--by` outside the three,
-a ledger that is a directory or does not read, and `--ledger` given with
-`--redis` are refusals, exit 2. `report --redis` and `ledger` are the Redis
+`report --redis` and `ledger` are the Redis
 token ledger's verbs, specified in [SPEC-STATE.md](SPEC-STATE.md).
-
-`fold-pool` folds a pool's `usage/*.tsv` rows into the monthly ledger, summed by (day of `started`, `provider`, `model`, `repo`) and upserted into rows `day, provider, model, repo, tasks, tokens_in, tokens_out, cache_write, cache_read, reasoning, usd, source=pool`, replacing any existing row for the same key so a second run leaves the ledger byte-identical; a token cell with no reported input stays `-`, a `usd` of `-` on any input makes the row's `usd` `-`, and an optional `--since <RFC 3339 stamp>` folds only rows at or after it. A pool that cannot be read is `FOLD REFUSED` naming `--pool`, and a malformed `--since` is `FOLD REFUSED` naming the stamp: a valid stamp is never blamed for an unreadable pool.
 
 ## Exit codes
 
@@ -626,8 +557,6 @@ SESSION turns=<n> input=<n> cache_write=<n> cache_read=<n> output=<n> weighted=<
 PROFILES MODEL model=<model> cards=<n> median_out=<n|-> overshoot=<n>
 PROFILES OK models=<n> cards=<n> overshoot=<n>
 PROFILES REFUSED: <reason>
-FOLD OK rows=<n> tasks=<n> days=<n> ledger=<file>
-FOLD REFUSED: <reason>
 ```
 
 Every `label=` in the block is `<kind>:<name>`, the kind one of the five
@@ -1119,8 +1048,7 @@ trusted.
 
 ## Tests this spec demands
 
-One line per rule in **the rules, numbered**, and one (22) for
-`sum --swarm-root`'s cost per completed task. Each is a test the work list
+One line per rule in **the rules, numbered**. Each is a test the work list
 builds, each runs inside `t.TempDir()` against a fake `sqlite3` on `PATH`
 where the OpenCode source is involved, with no network, and each must be
 seen red before it is trusted.
@@ -1345,15 +1273,6 @@ seen red before it is trusted.
     a friend's tokens note whose body is one `# repos: schema, serialize`
     line and nothing else is a valid note with zero rows, yields
     `TOKENS TOUCHED … repos=schema,serialize`, and changes no count.
-
-22. A fixture ledger and a fixture swarm root of cards whose receipts carry
-    `repo` and `rc`: `sum --swarm-root` writes one ledger row per `(model,
-    repo)` pair with `repo` from the receipt, `completed` counting only the
-    `rc=0` cards, and `usd_per_task` equal to `usd / completed` to six
-    decimals; a pair with `completed=0` writes `usd_per_task=-`, never a
-    division, and a receipt whose `rc` is `-` counts in `cards` and `dashes`
-    and never in `completed`; the header is the ten columns in order, and a
-    ledger whose header differs is refused (exit 2) naming that order.
 
 ## The work list
 

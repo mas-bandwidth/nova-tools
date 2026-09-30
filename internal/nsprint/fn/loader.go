@@ -31,9 +31,8 @@ func Spec() redisfn.Library {
 
 // Prelude is the one chunk-level local of the assembled library: NS, the
 // table through which a file hands helpers to a file that sorts after it
-// (friend.lua -> redistribute*.lua as NS.friend, redistribute.lua ->
-// redistribute_assign.lua as NS.redistribute, task_claim.lua -> task_queue.lua
-// as NS.DEP).
+// (table_set.lua -> table_set_*.lua and sprint_*.lua as NS.tset,
+// sprint_00_core.lua -> sprint_*.lua as NS.SP).
 const Prelude = "local NS = {}\n"
 
 // MaxLocals is the most active locals the library's main function may hold.
