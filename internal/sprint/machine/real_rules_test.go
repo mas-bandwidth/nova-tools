@@ -42,7 +42,7 @@ func realRule(t *testing.T, name string) sprint.Rule {
 func (w *world) leased() *Loop {
 	w.t.Helper()
 	l := w.loop("a", nil, Budget{})
-	w.tick(l, &counting{c: w.tw})
+	w.tick(l, &counting{c: w.c})
 	if l.gen == 0 {
 		w.t.Fatal("the loop took no lease")
 	}
@@ -69,7 +69,7 @@ func (w *world) readReal(rule sprint.Rule, keys ...sprint.AgendaKey) *sprint.Sna
 	if err != nil {
 		w.t.Fatalf("%s's read: %v", rule.Name, err)
 	}
-	res, err := sprintfn.Read(context.Background(), w.tw, rr)
+	res, err := sprintfn.Read(context.Background(), w.c, rr)
 	if err != nil || res.Read == nil {
 		w.t.Fatalf("%s's read: %v %+v", rule.Name, err, res.Refusal)
 	}
@@ -145,7 +145,13 @@ func hasEntryKind(es []tset.Entry, kind string) bool {
 // is open, and R3 plans no second open (gaps a, b, d, e).
 func TestRealRuleResolveApplies(t *testing.T) {
 	t.Parallel()
-	w := newWorld(t)
+	realRuleResolve(t, newWorld(t))
+}
+
+// realRuleResolve is R3's scenario on a world: the twin's, or a store's
+// (TestRealRuleStoreResolve).
+func realRuleResolve(t *testing.T, w *world) {
+	t.Helper()
 	w.rows("s1", "s2")
 	w.verb(create("s1:waiting", waiting(), "p1"))
 	w.verb(tset.Entry{Kind: "create", Table: sprint.Work, To: "s1:waiting", IDs: []string{"g1"}, Scores: []string{"20"},
@@ -183,7 +189,13 @@ func TestRealRuleResolveApplies(t *testing.T) {
 // nothing and keeps its key; the snapshot here is the world's, whole.
 func TestRealRuleDealApplies(t *testing.T) {
 	t.Parallel()
-	w, s, deal := dealWorld(t, "p1", "p2")
+	realRuleDeal(t, newWorld(t))
+}
+
+// realRuleDeal is R6's scenario on a world (TestRealRuleStoreDeal).
+func realRuleDeal(t *testing.T, w *world) {
+	t.Helper()
+	s, deal := dealWorldOn(t, w, "p1", "p2")
 	l := w.leased()
 	rp := deal.Plan(s, []sprint.AgendaKey{keyOf("deal")}, w.now())
 	if len(rp.Plan.Units) != 2 {
@@ -206,7 +218,12 @@ func TestRealRuleDealApplies(t *testing.T) {
 // open and R15 plans nothing; with a card added, it closes (gaps a, d, e).
 func TestRealRuleDoneApplies(t *testing.T) {
 	t.Parallel()
-	w := newWorld(t)
+	realRuleDone(t, newWorld(t))
+}
+
+// realRuleDone is R15's scenario on a world (TestRealRuleStoreDone).
+func realRuleDone(t *testing.T, w *world) {
+	t.Helper()
 	w.rows("s1")
 	w.verb(create("s1:landed", map[string]string{"kind": "primary"}, "d1"))
 	l := w.leased()
@@ -246,7 +263,12 @@ func TestRealRuleDoneApplies(t *testing.T) {
 // here is the world's, whole.
 func TestRealRuleLateApplies(t *testing.T) {
 	t.Parallel()
-	w := newWorld(t)
+	realRuleLate(t, newWorld(t))
+}
+
+// realRuleLate is R11's scenario on a world (TestRealRuleStoreLate).
+func realRuleLate(t *testing.T, w *world) {
+	t.Helper()
 	w.rows("s1")
 	w.verb(tset.Entry{Kind: "rows", Table: sprint.Merge, Add: []string{"s1"}})
 	ctl := sprint.CtlID("s1")
@@ -275,7 +297,7 @@ func TestRealRuleLateApplies(t *testing.T) {
 // fields are a card's fields on the world.
 func (w *world) fields(table, id string) map[string]string {
 	w.t.Helper()
-	res, err := sprintfn.Read(context.Background(), w.tw, &sprintfn.ReadRequest{Epoch: "0",
+	res, err := sprintfn.Read(context.Background(), w.c, &sprintfn.ReadRequest{Epoch: "0",
 		Tset: []tset.ReadQuery{{Kind: "ids", Table: table, IDs: []string{id}}}})
 	if err != nil || res.Read == nil {
 		w.t.Fatalf("read %s: %v %+v", id, err, res.Refusal)
@@ -294,8 +316,21 @@ func (w *world) fields(table, id string) map[string]string {
 func stoppedWorld(t *testing.T) (*world, sprint.Clock) {
 	t.Helper()
 	w := newWorld(t)
+	return w, stoppedOn(t, w)
+}
+
+// stoppedOn initialises a world's machine STOPPED and returns the clock as
+// R17 reads it: stopped since the store's own time of the init, read back
+// from the clock hash (the twin's time is the world's clock; a store's is its
+// TIME).
+func stoppedOn(t *testing.T, w *world) sprint.Clock {
+	t.Helper()
 	w.step(&sprintfn.Request{Epoch: "0", Meta: sprintfn.Meta{Verb: "init", Actor: "coordinator"}, Clock: &sprintfn.ClockPart{Verb: sprintfn.ClockInit}})
-	return w, sprint.Clock{StoppedSinceMs: w.clk.now().UnixMilli()}
+	since, err := strconv.ParseInt(w.hash("clock")["stopped_since_ms"], 10, 64)
+	if err != nil || since <= 0 {
+		t.Fatalf("the clock after init: %v", w.hash("clock"))
+	}
+	return sprint.Clock{StoppedSinceMs: since}
 }
 
 // TestRealRuleStoppedLookApplies (R17, 2.3; errata 3 H7, H16): a look that
@@ -307,6 +342,16 @@ func stoppedWorld(t *testing.T) (*world, sprint.Clock) {
 func TestRealRuleStoppedLookApplies(t *testing.T) {
 	t.Parallel()
 	w, c := stoppedWorld(t)
+	if c.StoppedSinceMs != w.clk.now().UnixMilli() {
+		t.Fatalf("the twin's init is stopped since %d, its clock says %d", c.StoppedSinceMs, w.clk.now().UnixMilli())
+	}
+	realRuleStoppedLook(t, w, c)
+}
+
+// realRuleStoppedLook is R17's scenario on a world whose machine was
+// initialised STOPPED (TestRealRuleStoreStoppedLook).
+func realRuleStoppedLook(t *testing.T, w *world, c sprint.Clock) {
+	t.Helper()
 	l := w.leased()
 	due := sprint.RulePlan{Plan: sprint.Plan{Units: []sprint.Unit{{Key: "p1", Changes: []sprint.Change{{Table: sprint.Work,
 		Entry: ntable.BatchMemberEntry{ID: "p1", Move: &ntable.MemberMoveOp{Row: "s1", Col: "ready"}}}}}}}}
