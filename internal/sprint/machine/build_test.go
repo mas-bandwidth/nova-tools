@@ -1,6 +1,7 @@
 package machine
 
 import (
+	"errors"
 	"strings"
 	"testing"
 
@@ -134,10 +135,30 @@ func TestStepBuilderRefusesWhatItDoesNotCarry(t *testing.T) {
 		"a zguard X has no kind for": {sprint.RulePlan{Guards: []sprint.XGuard{sprint.SetGuard{Kind: sprint.GuardZGuard, Key: "sent:s1", Min: "-inf", Max: "5"}.XGuard()}},
 			"a set guard of kind zguard"},
 		"bumps": {sprint.RulePlan{Plan: sprint.Plan{Units: []sprint.Unit{{Key: "p1", Bumps: []sprint.Bump{{Table: sprint.Work, ID: "p1", Field: "n", Delta: 1}}}}}}, "unit p1: bumps, notes or closes of a unit"},
+		"a counter that is not next's": {sprint.RulePlan{Guards: []sprint.XGuard{{Kind: guardCounter, Key: "id", Score: 3}}},
+			`a counter guard on "id", which is not next, streams or next.streams`},
 	} {
 		_, err := build(c.rp, sprintfn.Meta{Rule: "x", Tick: true, Gen: 1}, stepbuild.Contract())
-		if err == nil || !strings.Contains(err.Error(), c.want) {
-			t.Fatalf("%s: refused with %v, want the reason %q", name, err, c.want)
+		var nc *NotCarried
+		if !errors.As(err, &nc) || !strings.Contains(err.Error(), "not carried: "+c.want) {
+			t.Fatalf("%s: refused with %v, want not carried: %q", name, err, c.want)
+		}
+	}
+}
+
+// TestStepBuilderMapsCounterKeys (L2): the counters a rule guards are next's
+// score (next) and its stream-set counter (streams, R15's; next.streams,
+// R17's), each X's counter guard on its field as read.
+func TestStepBuilderMapsCounterKeys(t *testing.T) {
+	t.Parallel()
+	for key, field := range map[string]string{"next": "score", "streams": "streams", sprint.KeyNextStreams: "streams"} {
+		rp := sprint.RulePlan{Guards: []sprint.XGuard{{Kind: guardCounter, Key: key, Score: 4}}, Done: []sprint.AgendaKey{{Key: "k", Seq: 1}}}
+		bodies, err := StepBuilder(testNames.Prefix)(rp, sprintfn.Meta{Rule: "x", Tick: true, Gen: 1}, stepbuild.Contract())
+		if err != nil || len(bodies) != 1 || len(bodies[0].Guards) != 1 {
+			t.Fatalf("%s: %v %+v", key, err, bodies)
+		}
+		if g := bodies[0].Guards[0]; g.Kind != sprintfn.XGuardCounter || g.Key != field || g.Score != 4 {
+			t.Fatalf("%s: %+v", key, g)
 		}
 	}
 }

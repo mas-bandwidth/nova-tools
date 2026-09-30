@@ -2,7 +2,6 @@ package machine
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"reflect"
 	"strconv"
@@ -190,7 +189,7 @@ func convertGuards(rp sprint.RulePlan) ([]tset.Entry, []sprint.XGuard, error) {
 		case g.Kind == sprint.GuardZGuard && strings.HasPrefix(g.Key, "sent:") && g.Min == "-inf" && g.AtLeast == nil && g.AtMost != nil && *g.AtMost == 0:
 			guards = append(guards, sprint.XGuard{Kind: sprintfn.XGuardSent, Key: g.Key + " " + g.Max})
 		default:
-			return nil, nil, fmt.Errorf("a set guard of kind %s on %q that neither Layer 1 nor X checks", g.Kind, g.Key+strings.Join(g.Cells, ","))
+			return nil, nil, notCarried("a set guard of kind %s on %q, which neither Layer 1 nor X checks", g.Kind, g.Key+strings.Join(g.Cells, ","))
 		}
 	}
 	for _, g := range rp.Guards {
@@ -205,9 +204,14 @@ func convertGuards(rp sprint.RulePlan) ([]tset.Entry, []sprint.XGuard, error) {
 		case guardRCount:
 			guards = append(guards, sprint.XGuard{Kind: sprintfn.XGuardSent, Key: g.Key})
 		case guardCounter:
-			field := "streams"
-			if g.Key == "next" {
+			var field string
+			switch g.Key {
+			case "next":
 				field = "score"
+			case "streams", sprint.KeyNextStreams:
+				field = "streams"
+			default:
+				return nil, nil, notCarried("a counter guard on %q, which is not next, streams or %s", g.Key, sprint.KeyNextStreams)
 			}
 			guards = append(guards, sprint.XGuard{Kind: sprintfn.XGuardCounter, Key: field, Score: g.Score})
 		case guardCtl:
@@ -231,7 +235,7 @@ func convertGuards(rp sprint.RulePlan) ([]tset.Entry, []sprint.XGuard, error) {
 			}
 			guards = append(guards, sprint.XGuard{Kind: sprintfn.XGuardDue, Key: g.Key, Score: score})
 		case guardRevs:
-			return nil, nil, fmt.Errorf("the fold of the revisions of the %s cards read (R17's stopinputs) has no guard in Layer 1 or X", g.Key)
+			return nil, nil, notCarried("the fold of the revisions of the %s cards read (R17's stopinputs), which neither Layer 1 nor X checks", g.Key)
 		default:
 			guards = append(guards, g)
 		}
@@ -314,15 +318,27 @@ func (sb *stepBodies) check(body sprintfn.Body) error {
 	return nil
 }
 
+// NotCarried is the builder's refusal of a plan that names what no wire or
+// store check carries (a guard, a write, a legacy shape), with the thing it
+// names. It is not a size: the loop parks the plan's keys with it, naming it,
+// and never halves them (1.3.5; a halving cannot give a plan a carrier).
+type NotCarried struct{ What string }
+
+func (e *NotCarried) Error() string { return "not carried: " + e.What }
+
+func notCarried(format string, args ...any) error {
+	return &NotCarried{What: fmt.Sprintf(format, args...)}
+}
+
 // carried refuses a plan with what the adapter does not carry.
 func carried(rp sprint.RulePlan) error {
 	p := rp.Plan
 	if len(p.Notes)+len(p.Closes)+len(p.Updates) != 0 {
-		return errors.New("the plan's legacy notes, closes or updates (a rule's notes are RulePlan.Notes)")
+		return notCarried("the plan's legacy notes, closes or updates (a rule's notes are RulePlan.Notes)")
 	}
 	for _, u := range p.Units {
 		if len(u.Bumps)+len(u.Notes)+len(u.Closes) != 0 {
-			return fmt.Errorf("unit %s: bumps, notes or closes of a unit", u.Key)
+			return notCarried("unit %s: bumps, notes or closes of a unit", u.Key)
 		}
 	}
 	return nil
@@ -339,18 +355,18 @@ func stepEntries(u sprint.Unit) ([]stepbuild.Entry, error) {
 		}
 		x := e.Expect
 		if x != nil && len(x.Fields) != 0 {
-			return nil, fmt.Errorf("%s: a field guard", e.ID)
+			return nil, notCarried("%s: a field guard", e.ID)
 		}
 		se := stepbuild.Entry{Table: c.Table, IDs: []string{e.ID}, About: []string{about}, Set: e.Set, Unset: e.Unset}
 		switch {
 		case e.Create != nil:
 			if x == nil || !x.Absent || x.Place != nil || x.Revision != "" {
-				return nil, fmt.Errorf("%s: a create is guarded on absence alone", e.ID)
+				return nil, notCarried("%s: a create guarded on more than absence", e.ID)
 			}
 			se.Kind, se.To = stepbuild.KindCreate, e.Create.Row+":"+e.Create.Col
 			se.Scores = []string{strconv.FormatFloat(e.Create.Score, 'f', -1, 64)}
 		case x == nil || x.Place == nil || x.Absent:
-			return nil, fmt.Errorf("%s: a change of a card with no place to guard it at", e.ID)
+			return nil, notCarried("%s: a change of a card with no place to guard it at", e.ID)
 		default:
 			se.From = x.Place.Row + ":" + x.Place.Col
 			if x.Revision != "" {

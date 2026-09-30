@@ -550,3 +550,24 @@ func TestRealRuleBehindThroughTicks(t *testing.T) {
 // fallingBehind is R18's judgment (2.5), the field of jopen:sprint its cause
 // "behind" follows.
 const fallingBehind = "the machine is falling behind"
+
+// TestNotCarriedIsParkedNeverHalved (M4): a plan that names what no wire or
+// store check carries is not a size. cut() parks its keys NOTCARRIED, "not
+// carried: <what>", in the error step's judgment, and halves nothing.
+func TestNotCarriedIsParkedNeverHalved(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t)
+	l := w.leased()
+	rp := sprint.RulePlan{Guards: []sprint.XGuard{{Kind: "counter", Key: "id", Score: 1}}, Done: []sprint.AgendaKey{keyOf("done")}}
+	p, rep := w.cutReal(l, "done", rp)
+	if p != nil || !slices.Equal(rep.Parked, []string{"done"}) || len(l.halvings) != 0 {
+		t.Fatalf("cut: %+v, parked %v, halvings %v", p, rep.Parked, l.halvings)
+	}
+	if len(l.owed.park) != 1 || l.owed.park[0].Code != CodeNotCarried || l.owed.park[0].Rule != "done" {
+		t.Fatalf("the park owed: %+v", l.owed.park)
+	}
+	if len(l.owed.notes) != 1 || l.owed.notes[0].Cause != CodeNotCarried ||
+		!strings.Contains(l.owed.notes[0].Text, `not carried: a counter guard on "id"`) {
+		t.Fatalf("the judgment owed: %+v", l.owed.notes)
+	}
+}
