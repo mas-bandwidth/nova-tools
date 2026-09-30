@@ -89,7 +89,6 @@ checks=(
   "PATH lacks go/bin"    # unit file stanza (2)
   "toolchain root"       # (3a)
   "go version"           # (3)
-  "sbcl not on PATH"     # (3)
   "harness missing"      # (3)
   "sandbox-network"      # (3b) network probe
   "NOVA_WANT"            # (4) the 11 nova bins
@@ -428,11 +427,10 @@ rm -rf "$TMP_HW"
 # (5) TestBenchStandardRowsSbclProRungSqlite3SlotShare (nova-tools #2053,
 #     recut of #2813)
 # ---------------------------------------------------------------------------
-# Four drift rows for the ways the benches actually differ: the sbcl pin
-# (version, and resolving under ~/sdk), the pro rung, sqlite3 resolving under
-# ~/sdk, and a declared NOVA_SLOT_SHARE. Each row is EXECUTED here, not
-# grepped: one conforming fake bench must print STANDARD OK, and each fake
-# bench that lacks exactly one thing must print that row's DRIFT line.
+# Three drift rows for the ways the benches actually differ: the pro rung,
+# sqlite3 resolving under ~/sdk, and a declared NOVA_SLOT_SHARE. Each row is
+# EXECUTED here, not grepped: one conforming fake bench must print STANDARD OK,
+# and each fake bench that lacks exactly one thing must print that row's DRIFT line.
 #
 # No bench-user row: the bench user is per bench, a registry field (Glenn
 # 2026-09-20), so the conforming bench below runs as whoever runs this test
@@ -446,13 +444,11 @@ rows_bench() {
   local d="$1" h="$1/home" b="$1/bin" name
   mkdir -p "$h/go/pkg/mod" "$h/.local/bin" "$h/.config/nova-secrets" \
     "$h/nova-bench/harness-v1" "$h/nova-bench/rungs/pro" "$b" \
-    "$h/sdk/go-go1.26.5/bin" "$h/sdk/sbcl-2.5.8/bin" "$h/sdk/sqlite3-3.46.0/bin"
+    "$h/sdk/go-go1.26.5/bin" "$h/sdk/sqlite3-3.46.0/bin"
   printf '#!/bin/sh\necho "go version go1.26.5 linux/amd64"\n' > "$h/sdk/go-go1.26.5/bin/go"
-  printf '#!/bin/sh\necho "SBCL 2.5.8"\n' > "$h/sdk/sbcl-2.5.8/bin/sbcl"
   printf '#!/bin/sh\necho "3.46.0 2024-05-23"\n' > "$h/sdk/sqlite3-3.46.0/bin/sqlite3"
-  chmod +x "$h/sdk/go-go1.26.5/bin/go" "$h/sdk/sbcl-2.5.8/bin/sbcl" "$h/sdk/sqlite3-3.46.0/bin/sqlite3"
+  chmod +x "$h/sdk/go-go1.26.5/bin/go" "$h/sdk/sqlite3-3.46.0/bin/sqlite3"
   ln -s "$h/sdk/go-go1.26.5/bin/go" "$b/go"
-  ln -s "$h/sdk/sbcl-2.5.8/bin/sbcl" "$b/sbcl"
   ln -s "$h/sdk/sqlite3-3.46.0/bin/sqlite3" "$b/sqlite3"
   printf '#!/bin/sh\necho 200\n' > "$b/curl"
   printf '#!/bin/sh\nexit 0\n' > "$b/nova-secrets"
@@ -504,38 +500,10 @@ rows_expect() {
 rows_bench "$TMP_R/ok"
 out_r=$(rows_run "$TMP_R/ok"); rc_r=$?
 if [ "$rc_r" = "0" ] && printf '%s\n' "$out_r" | grep -q '^STANDARD OK ' && ! printf '%s\n' "$out_r" | grep -q '^DRIFT'; then
-  ok "a bench with the sbcl pin, a pro rung, sqlite3 under ~/sdk and NOVA_SLOT_SHARE is STANDARD OK"
+  ok "a bench with a pro rung, sqlite3 under ~/sdk and NOVA_SLOT_SHARE is STANDARD OK"
 else
   bad "the conforming fake bench is not STANDARD OK (rc=$rc_r): $out_r"
 fi
-
-# (5b) sbcl row: a bench with no sbcl at all trips it. /usr/bin/sbcl on the
-# host would still trip the ~/sdk half, so any sbcl DRIFT line counts.
-rows_bench "$TMP_R/nosbcl"; rm -f "$TMP_R/nosbcl/bin/sbcl"
-out_r=$(rows_run "$TMP_R/nosbcl"); rc_r=$?
-rows_expect "a bench missing sbcl drifts on sbcl" "$rc_r" "$out_r" "sbcl "
-
-# (5c) sbcl pin: the version is the pin, not only presence (space ran
-# 2.6.0.debian while the fleet pins 2.5.8).
-rows_bench "$TMP_R/sbclver"
-printf '#!/bin/sh\necho "SBCL 2.6.0.debian"\n' > "$TMP_R/sbclver/home/sdk/sbcl-2.5.8/bin/sbcl"
-out_r=$(rows_run "$TMP_R/sbclver"); rc_r=$?
-rows_expect "sbcl 2.6.0.debian drifts on the pin" "$rc_r" "$out_r" "sbcl version \[SBCL 2\.6\.0\.debian\] want 2\.5\.8"
-out_r=$(rows_run "$TMP_R/sbclver" NOVA_SBCL=2.6.0.debian); rc_r=$?
-if printf '%s\n' "$out_r" | grep -q '^DRIFT sbcl version'; then
-  bad "NOVA_SBCL does not override the sbcl pin: $out_r"
-else
-  ok "NOVA_SBCL overrides the sbcl pin"
-fi
-
-# (5d) sbcl pin: the pinned sbcl resolves under ~/sdk, not beside it.
-rows_bench "$TMP_R/sbclpath"
-mkdir -p "$TMP_R/sbclpath/elsewhere"
-printf '#!/bin/sh\necho "SBCL 2.5.8"\n' > "$TMP_R/sbclpath/elsewhere/sbcl"
-chmod +x "$TMP_R/sbclpath/elsewhere/sbcl"
-rm -f "$TMP_R/sbclpath/bin/sbcl"; ln -s "$TMP_R/sbclpath/elsewhere/sbcl" "$TMP_R/sbclpath/bin/sbcl"
-out_r=$(rows_run "$TMP_R/sbclpath"); rc_r=$?
-rows_expect "an sbcl outside ~/sdk drifts on the sbcl path" "$rc_r" "$out_r" "sbcl at .* not under .*/sdk"
 
 # (5e) pro rung: a bench with no pro rung trips it (the Macs were flash-only,
 # 528 of 998 slots idle in a pro wave).

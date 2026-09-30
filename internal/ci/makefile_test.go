@@ -25,11 +25,11 @@ import (
 // ci_budget_test.go takes for the job names and timeouts.
 
 // buildTestLintRe matches a build, test or lint COMMAND at the start of a shell
-// statement: `go build`, `go vet`, `go test`, `gofmt`, or CI's lisp script
-// (tools/ci/lisp-test.sh). `go version`, `go list` and `go env` are setup and are
-// deliberately not matched. The command may follow a shell separator — `;`,
-// `&&`, `||`, `|` or `$(` — so a command substitution is caught too.
-var buildTestLintRe = regexp.MustCompile(`(^|[;&|($])\s*(go\s+(build|vet|test)\b|gofmt\b|(sh\s+)?tools/ci/lisp-test\.sh\b)`)
+// statement: `go build`, `go vet`, `go test`, or `gofmt`. `go version`, `go list`
+// and `go env` are setup and are deliberately not matched. The command may
+// follow a shell separator — `;`, `&&`, `||`, `|` or `$(` — so a command
+// substitution is caught too.
+var buildTestLintRe = regexp.MustCompile(`(^|[;&|($])\s*(go\s+(build|vet|test)\b|gofmt\b)`)
 
 // commandAllowlist names the setup and shard-loop lines that are allowed not to
 // be a make invocation. They run no test and check no formatting: they discover
@@ -140,17 +140,10 @@ func TestMakefileIsTheOneEntry(t *testing.T) {
 	for _, d := range mk.deps["check"] {
 		checkDeps[d] = true
 	}
-	// The lisp gate is test-lisp, CI's own lisp script. It was verify-roadmap
-	// (cmd/nova-work's verification verb over the suite, #3459) until nova-work
-	// was parked under deprecated/ on 2026-09-27; the script now prints "nothing
-	// to test" while lisp/ holds no system.
-	for _, want := range []string{"build", "lint", "test", "test-e2e", "test-lisp"} {
+	for _, want := range []string{"build", "lint", "test", "test-e2e"} {
 		if !checkDeps[want] {
-			t.Errorf("Makefile check does not run %q; the contract is build, lint, test, test-e2e and test-lisp", want)
+			t.Errorf("Makefile check does not run %q; the contract is build, lint, test and test-e2e", want)
 		}
-	}
-	if got := strings.TrimSpace(strings.Join(mk.recipeFor("test-lisp"), "\n")); got != "sh tools/ci/lisp-test.sh" {
-		t.Errorf("Makefile test-lisp is %q, want CI's lisp script sh tools/ci/lisp-test.sh (CI's lisp job and the merge gate's lisp step both run it)", got)
 	}
 
 	// And the gates themselves: every command `make check` would run, gathered
@@ -164,7 +157,6 @@ func TestMakefileIsTheOneEntry(t *testing.T) {
 		"go vet ./...",
 		"go test -count=1 $(shell bash .github/scripts/select-packages.sh --all)",
 		"go test -count=1 -run TestFriendSequence ./cmd/...",
-		"sh tools/ci/lisp-test.sh",
 	} {
 		if !strings.Contains(recipes, gate) {
 			t.Errorf("`make check` does not reach %q; the recipes it runs are:\n%s", gate, recipes)

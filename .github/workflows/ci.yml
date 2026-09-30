@@ -472,7 +472,7 @@ jobs:
           # plus every in-repo package that imports them, read from the diff
           # against the event's own base by .github/scripts/select-packages.sh
           # (a go.mod or go.sum change selects the whole tree). A change that
-          # touches no Go package — docs or lisp only — selects nothing and
+          # touches no Go package — docs only — selects nothing and
           # collapses to ONE leg that prints "nothing to test for this change"
           # and exits 0, instead of the whole tree on every runner. The push to
           # dev and the nightly schedule keep the whole tree: the full matrix
@@ -707,8 +707,8 @@ jobs:
     # many ways to split it. A ceiling that cancels honest work is not a
     # budget, it is a coin flip. Six is a hang detector for a leg measured at
     # one to two minutes; the budget itself is the run, and the run is what to
-    # hold to the law. The fast jobs — lint, test-packages, lisp at 32, 11 and
-    # 12 s — keep the 2 they always had.
+    # hold to the law. The fast jobs — lint, test-packages at 32 and
+    # 11 s — keep the 2 they always had.
     # The Studio at load 55 ran a double-size shard in 6-7 min (2026-09-16 05:16Z);
     # the cap stayed 6 by the two-minute law (internal/ci) and the shards got
     # smaller instead. On 2026-09-19 six started cancelling honest work again:
@@ -726,7 +726,7 @@ jobs:
     steps:
       - name: nothing to test for this change
         # test-packages emits one leg with an empty package list when the change
-        # touches no Go package (docs or lisp only). It prints this and exits 0
+        # touches no Go package (docs only). It prints this and exits 0
         # in seconds; every real step below is gated off, so the leg never
         # checks out or compiles anything and a docs-only change costs one
         # runner instead of the whole fan-out.
@@ -1592,246 +1592,6 @@ jobs:
       - name: friend sequences
         run: make test-e2e
 
-  lisp-changes:
-    # THE PATH FILTER for the lisp tier, and it exists because the lisp job must
-    # not occupy a self-hosted runner for a change that touches no lisp/ path.
-    # This job answers "did a lisp/ path move?" and the lisp job reads the answer
-    # and skips otherwise; no tree holds a lisp/ path today. On a change that
-    # touches none, the lisp job is skipped and ci-ok counts that as a pass. It runs on one Linux runner; it is a gate, not a check.
-    if: github.event_name != 'schedule' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
-    runs-on: [self-hosted, linux, x64, space]
-    timeout-minutes: 2
-    outputs:
-      changed: ${{ steps.filter.outputs.changed }}
-    steps:
-      - name: remove stale build dirs from the shared runner
-        # The self-hosted runners reuse the _work directory across jobs; a tree left
-        # by an aborted or overlapping run makes checkout fail. Start from clean.
-        # The sweep below is `rm -rf` over whatever the workspace holds, so it only
-        # ever runs on a directory this repository has checked out: an empty
-        # variable is refused, a workspace that does not exist yet is the normal
-        # first-run state (#1751), and a workspace with no `.git` is not ours to
-        # empty — actions/checkout clears a non-repository workspace itself.
-        shell: bash
-        run: |
-          [ -n "${GITHUB_WORKSPACE}" ] || exit 1
-          [ -d "${GITHUB_WORKSPACE}" ] || exit 0
-          [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0
-          # Clean in place, keep the tree (Glenn 2026-09-26 10:20 AM ET, fs_usage
-          # on the Studio: four `find ... rm -rf` sweeps and the re-seeds behind
-          # them were the file-event storm fseventsd digested at 100% CPU;
-          # "lots of tiny files is a really slow way to work"). A checkout of
-          # ours is reset to its HEAD and every untracked or ignored file is
-          # removed: the same hygiene as emptying it, a few hundred operations
-          # instead of a hundred thousand, and the next checkout fetches only
-          # the new commit. A tree git cannot reset is emptied as before.
-          if git -C "${GITHUB_WORKSPACE}" reset -q --hard && git -C "${GITHUB_WORKSPACE}" clean -ffdxq; then
-            echo "workspace cleaned in place: $(git -C "${GITHUB_WORKSPACE}" rev-parse --short HEAD 2>/dev/null || echo '-')"
-            exit 0
-          fi
-          find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
-
-      - name: borrow objects from the bench mirror
-        # THE CHECKOUT FETCH WAS THE HANG. Every self-hosted job empties its
-        # workspace above, so actions/checkout fetched the whole commit from
-        # GitHub (11 MB at --depth=1) on every job, and on the house benches
-        # that fetch stalled: 17 of the cancelled jobs in the last 25 PR runs
-        # (2026-09-23 02:00Z) died at `git fetch --depth=1 origin +<merge
-        # sha>` at the two-minute job cap (hulk 9, vision 5, studio 3, #2795),
-        # the same stall that failed 566 staged cards (#2882). Every bench
-        # already keeps $HOME/nova-bench/mirror/nova-tools.git fresh, so the
-        # workspace borrows its objects (objects/info/alternates) and starts
-        # detached at the mirror's HEAD: the fetch then carries only what the
-        # mirror lacks. Measured on hulk: 11 MB and 3.1 s -> 24 KB and 1.1 s.
-        # actions/checkout keeps a workspace whose origin URL matches and whose
-        # HEAD is a commit (it cleans and resets it, both no-ops here), so the
-        # checkout step itself is unchanged.
-        # A bench with no mirror, or a workspace that is not empty, is left to
-        # actions/checkout exactly as before, and this step never fails a job.
-        shell: bash
-        run: |
-          m="$HOME/nova-bench/mirror/nova-tools.git"
-          w="${GITHUB_WORKSPACE:?}"
-          [ -d "$m/objects" ] || { echo "no bench mirror at $m: checkout fetches from GitHub"; exit 0; }
-          mkdir -p "$w"
-          [ -z "$(ls -A "$w")" ] || { echo "workspace not empty: left to actions/checkout"; exit 0; }
-          seed() {
-            tip=$(git --git-dir="$m" rev-parse --verify -q 'HEAD^{commit}') || return 1
-            git init -q "$w" &&
-              git -C "$w" remote add origin "${{ github.server_url }}/${{ github.repository }}" &&
-              echo "$m/objects" > "$w/.git/objects/info/alternates" &&
-              git -C "$w" -c advice.detachedHead=false checkout -q --detach "$tip" &&
-              echo "workspace borrows $m, detached at its HEAD $tip"
-          }
-          seed || { echo "seeding from $m failed: left to actions/checkout"; rm -rf -- "$w/.git"; }
-
-      # RESILIENT CHECKOUT (ideas #793): a transient first-fetch failure must
-      # not redden a job. Attempt one tolerates its own failure ONLY so the
-      # retry below runs; the retry itself is not tolerated, so a checkout
-      # that fails twice still fails the job: fail-closed, not fail-open.
-      - name: checkout
-        id: checkout
-        continue-on-error: true
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
-      - name: checkout retry
-        if: steps.checkout.outcome == 'failure'
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
-
-      - uses: dorny/paths-filter@de90cc6fb38fc0963ad72b210f1f284cd68cea36 # v3.0.2
-        id: filter
-        with:
-          filters: |
-            changed:
-              - 'lisp/**'
-
-  lisp:
-    # PARKED SUBJECT (2026-09-27). nova-work, the one Lisp system, moved to
-    # deprecated/lisp/nova-work (Glenn: deprecated code is not tested, not built
-    # and never blocks CI), and lisp/ holds no system. The job stays, because
-    # the merge gate names a lisp step. The filter above fires only on a lisp/
-    # path, so today it never runs; if it does, `make test-lisp` runs tools/ci/lisp-test.sh, which refuses a
-    # lisp/ tree it does not know. The history below is the job's.
-    # THE LISP TIER, and it is one job because it is one system. `lisp/nova-work`
-    # is the engine's own tree; its
-    # acceptance suite runs under SBCL non-interactively and exits non-zero on
-    # any failing case, so the exit code is the product here. It is in the CL
-    # tier, but no longer inside two minutes: the 579-case suite alone takes
-    # 62-110 s, and the cap is lispCeiling in internal/ci/ci_budget_test.go.
-    # It runs on the Linux space runners because a failure that is really
-    # about SBCL or the platform (journal fsync differs between Darwin and
-    # Linux) must be caught somewhere that is not just Linux — but the macOS
-    # leg does not come back as darwin-x64 (nova-tools#3634 moved it off the
-    # Studio onto the Intel Macs batman/superman, 47992e058, and every run
-    # since has failed there: TestE02F06PinCommonLispImplementationGo
-    # requires the platform to be in the pinned table, which is darwin-arm64 and linux-x64 only — darwin-x64 is not pinned and
-    # per Glenn stays unpinned — and a-flooding-resolver-is-refused-and-its-
-    # output-is-never-drained's 3 s bound is missed on a loaded Intel iMac).
-    # The macOS leg returns here as darwin-arm64 once an arm64 CI bench
-    # exists; the Studio is for friends, not CI, so it is not the fallback.
-    # It only starts when the path filter above saw a lisp/ path
-    # move, so a Go-only change never waits on the SBCL
-    # runners, and it is fork-guarded transitively: the filter job above is the
-    # guarded entry point, so a fork never reaches the SBCL machines.
-    needs: lisp-changes
-    if: needs.lisp-changes.outputs.changed == 'true'
-    strategy:
-      fail-fast: false
-      matrix:
-        entry:
-          - {os: linux, arch: x64, group: space}
-    name: lisp (${{ matrix.entry.group }})
-    # Labels are carried per entry as single-string variables: runs-on expressions
-    # must resolve to a string, not to an array.
-    runs-on: [self-hosted, "${{ matrix.entry.os }}", "${{ matrix.entry.arch }}", "${{ matrix.entry.group }}"]
-    # 15 = 2x the measured max lisp job, 430 s (studio at load 50-70, runs 36011449625/36011918432: checkout 107-157 s, suite up to 110 s)
-    timeout-minutes: 2
-    steps:
-      - name: remove stale build dirs from the shared runner
-        # The self-hosted runners reuse the _work directory across jobs; a tree left
-        # by an aborted or overlapping run makes checkout fail. Start from clean.
-        # The sweep below is `rm -rf` over whatever the workspace holds, so it only
-        # ever runs on a directory this repository has checked out: an empty
-        # variable is refused, a workspace that does not exist yet is the normal
-        # first-run state (#1751), and a workspace with no `.git` is not ours to
-        # empty — actions/checkout clears a non-repository workspace itself.
-        shell: bash
-        run: |
-          [ -n "${GITHUB_WORKSPACE}" ] || exit 1
-          [ -d "${GITHUB_WORKSPACE}" ] || exit 0
-          [ -d "${GITHUB_WORKSPACE}/.git" ] || exit 0
-          # Clean in place, keep the tree (Glenn 2026-09-26 10:20 AM ET, fs_usage
-          # on the Studio: four `find ... rm -rf` sweeps and the re-seeds behind
-          # them were the file-event storm fseventsd digested at 100% CPU;
-          # "lots of tiny files is a really slow way to work"). A checkout of
-          # ours is reset to its HEAD and every untracked or ignored file is
-          # removed: the same hygiene as emptying it, a few hundred operations
-          # instead of a hundred thousand, and the next checkout fetches only
-          # the new commit. A tree git cannot reset is emptied as before.
-          if git -C "${GITHUB_WORKSPACE}" reset -q --hard && git -C "${GITHUB_WORKSPACE}" clean -ffdxq; then
-            echo "workspace cleaned in place: $(git -C "${GITHUB_WORKSPACE}" rev-parse --short HEAD 2>/dev/null || echo '-')"
-            exit 0
-          fi
-          find "${GITHUB_WORKSPACE}" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
-
-      - name: borrow objects from the bench mirror
-        # THE CHECKOUT FETCH WAS THE HANG. Every self-hosted job empties its
-        # workspace above, so actions/checkout fetched the whole commit from
-        # GitHub (11 MB at --depth=1) on every job, and on the house benches
-        # that fetch stalled: 17 of the cancelled jobs in the last 25 PR runs
-        # (2026-09-23 02:00Z) died at `git fetch --depth=1 origin +<merge
-        # sha>` at the two-minute job cap (hulk 9, vision 5, studio 3, #2795),
-        # the same stall that failed 566 staged cards (#2882). Every bench
-        # already keeps $HOME/nova-bench/mirror/nova-tools.git fresh, so the
-        # workspace borrows its objects (objects/info/alternates) and starts
-        # detached at the mirror's HEAD: the fetch then carries only what the
-        # mirror lacks. Measured on hulk: 11 MB and 3.1 s -> 24 KB and 1.1 s.
-        # actions/checkout keeps a workspace whose origin URL matches and whose
-        # HEAD is a commit (it cleans and resets it, both no-ops here), so the
-        # checkout step itself is unchanged.
-        # A bench with no mirror, or a workspace that is not empty, is left to
-        # actions/checkout exactly as before, and this step never fails a job.
-        shell: bash
-        run: |
-          m="$HOME/nova-bench/mirror/nova-tools.git"
-          w="${GITHUB_WORKSPACE:?}"
-          [ -d "$m/objects" ] || { echo "no bench mirror at $m: checkout fetches from GitHub"; exit 0; }
-          mkdir -p "$w"
-          [ -z "$(ls -A "$w")" ] || { echo "workspace not empty: left to actions/checkout"; exit 0; }
-          seed() {
-            tip=$(git --git-dir="$m" rev-parse --verify -q 'HEAD^{commit}') || return 1
-            git init -q "$w" &&
-              git -C "$w" remote add origin "${{ github.server_url }}/${{ github.repository }}" &&
-              echo "$m/objects" > "$w/.git/objects/info/alternates" &&
-              git -C "$w" -c advice.detachedHead=false checkout -q --detach "$tip" &&
-              echo "workspace borrows $m, detached at its HEAD $tip"
-          }
-          seed || { echo "seeding from $m failed: left to actions/checkout"; rm -rf -- "$w/.git"; }
-
-      # RESILIENT CHECKOUT (ideas #793): a transient first-fetch failure must
-      # not redden a job. Attempt one tolerates its own failure ONLY so the
-      # retry below runs; the retry itself is not tolerated, so a checkout
-      # that fails twice still fails the job: fail-closed, not fail-open.
-      - name: checkout
-        id: checkout
-        continue-on-error: true
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
-      - name: checkout retry
-        if: steps.checkout.outcome == 'failure'
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-        with:
-          fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
-
-      - name: install sbcl if missing
-        # The self-hosted runners need no sudo; install directly when sbcl is absent.
-        run: |
-          # A runner user keeps sbcl in its own ~/.local/bin (hulk, vision); a listener started
-          # before its .path file saw none of it (2026-09-16), so the step finds it itself.
-          for d in "$HOME/.local/bin"; do [ -x "$d/sbcl" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; }; done
-          if ! command -v sbcl >/dev/null 2>&1; then
-            apt-get update -qq
-            apt-get install -y --no-install-recommends sbcl
-          fi
-          sbcl --version
-
-      - name: sbcl version
-        # The runners carry SBCL already (2.2.9 on Linux, 2.6.8 on macOS); the
-        # suite is written to the older of the two, so nothing newer than 2.2.9
-        # is used. No install step: apt-get does not exist on macOS.
-        run: sbcl --version
-
-      - name: nova-work acceptance
-        # Loads the system from the checkout with the ASDF SBCL bundles — no
-        # quicklisp, no download — and runs every acceptance case; the script
-        # exits non-zero on any failure. The budget is the job's
-        # timeout-minutes above.
-        run: make test-lisp
-
   # fleet-probe: prove a bench's runners BEFORE the loop trusts them (Glenn, 2026-09-16:
   # "run some tests to make sure that hulk and vision actually work, before trusting them";
   # the pattern was new things thrown into the work loop and trusted while not working).
@@ -1886,11 +1646,9 @@ jobs:
           for d in "$sdk" "$HOME/go/bin" /usr/local/go/bin /opt/homebrew/bin; do
             [ -n "$d" ] && [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; }
           done
-          for d in "$HOME/.local/bin"; do [ -x "$d/sbcl" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; }; done
-          echo "PROBE runner=$RUNNER_NAME slot=${{ matrix.slot }} go=$(command -v go || echo -) sbcl=$(command -v sbcl || echo -) home=$HOME"
+          echo "PROBE runner=$RUNNER_NAME slot=${{ matrix.slot }} go=$(command -v go || echo -) home=$HOME"
           command -v go >/dev/null 2>&1 || { echo "PROBE FAIL runner=$RUNNER_NAME no Go on PATH"; exit 1; }
-          command -v sbcl >/dev/null 2>&1 || { echo "PROBE FAIL runner=$RUNNER_NAME no sbcl on PATH"; exit 1; }
-          go version; sbcl --version
+          go version
           echo "GO SETUP want=${want:-none} go=$(command -v go) gomodcache=$(go env GOMODCACHE) gocache=$(go env GOCACHE)"
       - name: the network probe, inside nova-sandbox
         # rule R: nothing enters the loop untested, and the probe itself is no
@@ -1922,7 +1680,7 @@ jobs:
     # THE ONE CHECK TO REQUIRE, and the reason it exists rather than a list of check names
     # in a branch ruleset. It aggregates EXACTLY the jobs of this file and nothing else —
     # the CL tier: what a change is required to pass. On a pull_request that is the
-    # self-hosted matrix (lint, test, e2e, lisp) plus test-hosted-pr on the
+    # self-hosted matrix (lint, test, e2e) plus test-hosted-pr on the
     # platform leg whose paths the PR touches; on push to main the hosted full
     # suite joins it, so ci-ok on main needs the hosted matrix too. `needs` on a
     # matrix job is success
@@ -1945,7 +1703,7 @@ jobs:
     # reference and the run was never created. test-hosted is skipped on a pull
     # request and ci-ok's `always()` still runs; the per-event steps below check
     # exactly the jobs that event actually ran.
-    needs: [lint, test, functional, e2e, lisp, test-hosted, test-hosted-pr]
+    needs: [lint, test, functional, e2e, test-hosted, test-hosted-pr]
     # PRs are self-hosted only; hosted runners are reserved for push to main and
     # the nightly schedule. ci-ok aggregates on the Linux space runner either way.
     runs-on: [self-hosted, linux, x64, space]
@@ -1964,7 +1722,6 @@ jobs:
             "lint:${{ needs.lint.result }}" \
             "test:${{ needs.test.result }}" \
             "functional:${{ needs.functional.result }}" \
-            "lisp:${{ needs.lisp.result }}" \
             "e2e:${{ needs.e2e.result }}" \
             "test-hosted-pr:${{ needs.test-hosted-pr.result }}"
           do
@@ -1974,14 +1731,10 @@ jobs:
             # test-hosted-pr is skipped on a fork PR (the head-repo guard) and
             # on a manual run; its test step is skipped when the diff matches no
             # platform path. A skip is ok — the check is that it is not red.
-            # lisp is gated on the path filter and is skipped when no lisp/
-            # path moved; a skipped lisp is a pass. A red
-            # lisp still blocks the merge.
             # test-hosted-merge runs only on the merge group's own commit, so a
             # skip is ok elsewhere — but on a merge_group it is NOT skipped: it
             # is the full hosted evidence the queue's gate must see (Rule T).
             [ "$result" = "success" ] && continue
-            [ "$job" = "lisp" ] && [ "$result" = "skipped" ] && continue
             [ "$job" = "test-hosted-pr" ] && [ "$result" = "skipped" ] && continue
             # functional runs on merge_group and workflow_dispatch only; on a
             # pull request it is skipped by design. When it ran, it must pass.
@@ -2003,15 +1756,10 @@ jobs:
             "lint:${{ needs.lint.result }}" \
             "test:${{ needs.test.result }}" \
             "e2e:${{ needs.e2e.result }}" \
-            "lisp:${{ needs.lisp.result }}" \
             "test-hosted:${{ needs.test-hosted.result }}"
           do
             job="${pair%:*}"; result="${pair##*:}"
             echo "$result	$job"
-            # lisp is gated on the path filter and is skipped when no lisp/
-            # path moved; a skipped lisp is a pass. A red
-            # lisp still blocks the merge.
-            if [ "$job" = "lisp" ] && [ "$result" = "skipped" ]; then continue; fi
             [ "$result" = "success" ] || bad=$((bad + 1))
           done
           [ "$bad" -eq 0 ] || { echo "$bad job(s) did not succeed"; exit 1; }

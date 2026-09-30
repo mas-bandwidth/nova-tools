@@ -147,7 +147,6 @@ func TestTheStandardWorkloadsAreTheShippedClasses(t *testing.T) {
 		"go-test":        RoleBench,
 		"c-build":        RoleBench,
 		"cpp-build":      RoleBench,
-		"sbcl":           RoleBench,
 		"git-push":       RoleBench,
 		"runner-online":  RoleRunner,
 		"loki-ready":     RoleServices,
@@ -192,8 +191,8 @@ func TestTheStandardWorkloadsAreTheShippedClasses(t *testing.T) {
 	if len(byClass["go-test"].Reads) == 0 {
 		t.Error("go-test names no read root for the wall; the toolchain outside the wall is the failure being certified against")
 	}
-	if !byClass["git-push"].Wall || !byClass["sbcl"].Wall || !byClass["wall-toolchain"].Wall {
-		t.Error("git-push, sbcl and wall-toolchain must run inside the wall: a card pushes and builds from inside it")
+	if !byClass["git-push"].Wall || !byClass["wall-toolchain"].Wall {
+		t.Error("git-push and wall-toolchain must run inside the wall: a card pushes and builds from inside it")
 	}
 	// These three are plain ssh ON PURPOSE. What they certify is the machine as a CI runner
 	// or as a neighbour on the network, and wrapping them would certify the wall instead.
@@ -422,7 +421,7 @@ func TestEvidenceIsOneLineOnTheRowAndOnTheLine(t *testing.T) {
 // somebody makes in a test as well as in a directory.
 var spaceBenchClasses = []string{
 	"c-build", "cpp-build", "git-identity", "git-push", "go-on-path", "go-test",
-	"path-resolves", "registry-truth", "sbcl", "services-reach", "wall-toolchain",
+	"path-resolves", "registry-truth", "services-reach", "wall-toolchain",
 }
 
 func benchOK() map[string]remoteAnswer {
@@ -431,7 +430,6 @@ func benchOK() map[string]remoteAnswer {
 		"space|go-test":        {out: "GO OK go version go1.26.5 linux/amd64 ok\n"},
 		"space|c-build":        {out: "C OK\n"},
 		"space|cpp-build":      {out: "CPP OK\n"},
-		"space|sbcl":           {out: "SBCL OK 2.5.8\n"},
 		"space|git-push":       {out: "GIT PUSH OK\n"},
 		"space|path-resolves":  {out: "PATH OK /home/u/.local/bin/nova-merge v0.17.0\n"},
 		"space|go-on-path":     {out: "GO PATH OK /home/u/go/bin/go go version go1.26.5 linux/amd64\n"},

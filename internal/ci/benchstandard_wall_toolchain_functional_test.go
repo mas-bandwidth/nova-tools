@@ -64,35 +64,26 @@ func driftLinesFor(out, tool string) []string {
 
 // TestBenchStandardDriftsOnAToolTheWallCannotExecute is the negative direction: a tool that
 // resolves under NO root the wall grants execute must be one DRIFT line, and that line must
-// NAME THE REMEDY, because "your sbcl is in the wrong place" is a sentence somebody then has
+// NAME THE REMEDY, because "your go is in the wrong place" is a sentence somebody then has
 // to go and work out the right place for at whatever hour it is.
 func TestBenchStandardDriftsOnAToolTheWallCannotExecute(t *testing.T) {
 	t.Parallel()
 
-	// $HOME/.local/bin is exactly where the fleet's sbcl was on hulk, vision, mini and
-	// captainamerica on 2026-09-19, and exactly where the wall denied it.
-	out, path := benchStandardWithTool(t, "sbcl", ".local/bin/sbcl")
-	lines := driftLinesFor(out, "sbcl")
+	outGo, pathGo := benchStandardWithTool(t, "go", ".local/bin/go")
+	lines := driftLinesFor(outGo, "go")
 	if len(lines) == 0 {
-		t.Fatalf("an sbcl at %s is on PATH and `Permission denied` inside the wall, and the standard said nothing:\n%s", path, out)
+		t.Fatalf("a go at %s is on PATH and `Permission denied` inside the wall, and the standard said nothing:\n%s", pathGo, outGo)
 	}
 	if len(lines) != 1 {
-		t.Errorf("the wall-toolchain finding is not one line for sbcl:\n%s", strings.Join(lines, "\n"))
+		t.Errorf("the wall-toolchain finding is not one line for go:\n%s", strings.Join(lines, "\n"))
 	}
 	line := lines[0]
 	// The path as PATH gave it, the path it really resolves to, the granted home, and the
 	// remedy. A DRIFT line that names the fault without naming the fix is half a finding.
-	for _, want := range []string{path, "$HOME/sdk", "sdk/sbcl-", "EXECUTE"} {
+	for _, want := range []string{pathGo, "$HOME/sdk", "sdk/go-", "EXECUTE"} {
 		if !strings.Contains(line, want) {
 			t.Errorf("the wall-toolchain DRIFT line does not carry %q:\n%s", want, line)
 		}
-	}
-
-	// go is held to the same rule; the check is a loop over both and must not have been
-	// written for sbcl alone.
-	outGo, pathGo := benchStandardWithTool(t, "go", ".local/bin/go")
-	if got := driftLinesFor(outGo, "go"); len(got) != 1 {
-		t.Errorf("a go at %s drew %d wall-toolchain DRIFT lines, want 1:\n%s", pathGo, len(got), outGo)
 	}
 }
 
@@ -103,10 +94,6 @@ func TestBenchStandardDriftsOnAToolTheWallCannotExecute(t *testing.T) {
 func TestBenchStandardAcceptsAToolUnderAGrantedRoot(t *testing.T) {
 	t.Parallel()
 
-	out, path := benchStandardWithTool(t, "sbcl", "sdk/sbcl-2.5.8/bin/sbcl")
-	if lines := driftLinesFor(out, "sbcl"); len(lines) != 0 {
-		t.Errorf("an sbcl at %s is under the granted $HOME/sdk and still drifted:\n%s", path, strings.Join(lines, "\n"))
-	}
 	outGo, pathGo := benchStandardWithTool(t, "go", "sdk/go1.26.6/bin/go")
 	if lines := driftLinesFor(outGo, "go"); len(lines) != 0 {
 		t.Errorf("a go at %s is under the granted $HOME/sdk and still drifted:\n%s", pathGo, strings.Join(lines, "\n"))
@@ -134,16 +121,16 @@ func TestBenchStandardGrantsTheResolverDirectoryTheWallGrants(t *testing.T) {
 		}
 		return []string{"NOVA_RESOLV_CONF=" + link}
 	}
-	out, path := benchStandardWithTool(t, "sbcl", "mnt/wsl/sbcl-2.5.8/bin/sbcl", resolver)
-	if lines := driftLinesFor(out, "sbcl"); len(lines) != 0 {
-		t.Errorf("an sbcl at %s is under the resolver directory the wall grants and still drifted:\n%s", path, strings.Join(lines, "\n"))
+	out, path := benchStandardWithTool(t, "go", "mnt/wsl/go1.26.6/bin/go", resolver)
+	if lines := driftLinesFor(out, "go"); len(lines) != 0 {
+		t.Errorf("a go at %s is under the resolver directory the wall grants and still drifted:\n%s", path, strings.Join(lines, "\n"))
 	}
 
 	missing := func(home string) []string {
 		return []string{"NOVA_RESOLV_CONF=" + filepath.Join(home, "no-resolv.conf")}
 	}
-	outCtl, pathCtl := benchStandardWithTool(t, "sbcl", "mnt/wsl/sbcl-2.5.8/bin/sbcl", missing)
-	if got := driftLinesFor(outCtl, "sbcl"); len(got) != 1 {
-		t.Errorf("control: an sbcl at %s with no resolver pointing there drew %d wall-toolchain DRIFT lines, want 1:\n%s", pathCtl, len(got), outCtl)
+	outCtl, pathCtl := benchStandardWithTool(t, "go", "mnt/wsl/go1.26.6/bin/go", missing)
+	if got := driftLinesFor(outCtl, "go"); len(got) != 1 {
+		t.Errorf("control: a go at %s with no resolver pointing there drew %d wall-toolchain DRIFT lines, want 1:\n%s", pathCtl, len(got), outCtl)
 	}
 }

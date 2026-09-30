@@ -21,7 +21,7 @@
 # fixture; changing the path changes the record's id, so the fixture is regenerated as a
 # piece, not edited.
 #
-# ceiling: 444
+# ceiling: 436
 .github/scripts/assert-version-stamp.sh:stella 1
 .github/scripts/live-packages.sh:glenn 1
 .github/scripts/plan-merge-shards.sh:rowan 1
@@ -32,15 +32,15 @@
 .github/workflows/certification.yml:space 2
 .github/workflows/certification.yml:stella 1
 .github/workflows/certification.yml:studio 4
-.github/workflows/ci.yml:batman 22
-.github/workflows/ci.yml:glenn 23
-.github/workflows/ci.yml:hulk 24
+.github/workflows/ci.yml:batman 21
+.github/workflows/ci.yml:glenn 19
+.github/workflows/ci.yml:hulk 19
 .github/workflows/ci.yml:mini 1
 .github/workflows/ci.yml:rowan 2
-.github/workflows/ci.yml:space 61
-.github/workflows/ci.yml:studio 74
-.github/workflows/ci.yml:superman 19
-.github/workflows/ci.yml:vision 10
+.github/workflows/ci.yml:space 58
+.github/workflows/ci.yml:studio 67
+.github/workflows/ci.yml:superman 18
+.github/workflows/ci.yml:vision 7
 .github/workflows/nightly-slow.yml:glenn 1
 .github/workflows/revert-on-red.yml:glenn 1
 AGENTS.md:glenn 1
@@ -56,7 +56,7 @@ CHANGELOG.md:stella 6
 CHANGELOG.md:studio 2
 CHANGELOG.md:superman 3
 CHANGELOG.md:vision 24
-Makefile:glenn 8
+Makefile:glenn 7
 Makefile:rowan 1
 Makefile:space 1
 Makefile:studio 3
@@ -447,18 +447,14 @@ tools/bench-standard.sh:antman 1
 tools/bench-standard.sh:batman 1
 tools/bench-standard.sh:hetzner 1
 tools/bench-standard.sh:hulk 3
-tools/bench-standard.sh:mini 1
 tools/bench-standard.sh:rowan 3
-tools/bench-standard.sh:space 6
+tools/bench-standard.sh:space 4
 tools/bench-standard.sh:studio 1
 tools/bench-standard.sh:superman 1
-tools/bench-standard.sh:vision 3
+tools/bench-standard.sh:vision 2
 tools/bench-standard_test.sh:glenn 1
-tools/bench-standard_test.sh:space 2
+tools/bench-standard_test.sh:space 1
 tools/bench-wsl2.ps1:glenn 1
 tools/bench-wsl2.ps1:mas-bandwidth 1
 tools/bench-wsl2.ps1:rowan 2
-tools/ci/lisp-test.sh:glenn 1
-tools/ci/lisp-test.sh:space 1
-tools/ci/lisp-test.sh:studio 1
 tools/preflight.sh:glenn 1
