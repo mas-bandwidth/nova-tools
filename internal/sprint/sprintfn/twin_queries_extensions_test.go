@@ -256,13 +256,13 @@ func TestWaitersMoreIDsOnTheWire(t *testing.T) {
 	}
 }
 
-// TestLuaWaitersCursorAwaitsALexHead: the Lua refuses CONFIG, before it reads
+// TestLuaWaitersCursorAwaitsAnOrderedHead: the Lua refuses CONFIG, before it reads
 // anything, a waiters query with a cursor. wait:n's members are all scored 0,
 // so the head after a member is a lexicographic range, and Layer 1's checked
 // reads give a sorted set's head by score only (S.read_range_head): the twin
 // answers the cursor, and the store cannot until Layer 1 has such a head. This
 // pins the gap until it closes.
-func TestLuaWaitersCursorAwaitsALexHead(t *testing.T) {
+func TestLuaWaitersCursorAwaitsAnOrderedHead(t *testing.T) {
 	t.Parallel()
 	w, _ := extWorld(t)
 	h := newLuaHarness(t, w)

@@ -375,7 +375,7 @@ func (e *qeval) waiters(q sprint.SprintQ) (WaitersResult, *Refusal) {
 // quarantined are left out. The store's half answers no cursor yet: wait:n's
 // members are all scored 0, Layer 1's checked head is by score only, and the Lua
 // refuses a cursor CONFIG until Layer 1 has a lexicographic head
-// (TestLuaWaitersCursorAwaitsALexHead).
+// (TestLuaWaitersCursorAwaitsAnOrderedHead).
 func (e *qeval) waitHead(n, after string, limit int) (ids []string, more bool, ref *Refusal) {
 	key := e.key(sprint.IndexWait + ":" + n)
 	if after == "" {
