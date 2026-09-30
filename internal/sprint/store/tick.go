@@ -57,7 +57,21 @@ const (
 type KV interface {
 	GetKey(ctx context.Context, name string) (string, bool, error)
 	SetKey(ctx context.Context, name, value string) error
+	// SetKeyShowing writes a record and a stored view's state text in one
+	// atomic step (one MULTI/EXEC on Redis), so the view never shows a state
+	// the record does not hold; a view that is not there is left alone
+	// (docs/SPEC-SPRINT.md sections 1 and 14).
+	SetKeyShowing(ctx context.Context, name, value, view, state string) error
+	// ShowState writes only a stored view's state text; a view that is not
+	// there is left alone.
+	ShowState(ctx context.Context, view, state string) error
 }
+
+// Both stores keep the machine's records.
+var (
+	_ KV = (*Mem)(nil)
+	_ KV = (*Redis)(nil)
+)
 
 // Span is one time the machine was STOPPED; To is zero while it still is.
 type Span = sprint.Span
@@ -129,6 +143,32 @@ func (m Machine) StoppedTotal(now time.Time) time.Duration {
 		d += now.Sub(m.Spans[n-1].From)
 	}
 	return d
+}
+
+// ViewState is the state text the sprint's stored view shows as its summary
+// line for the machine (docs/SPEC-SPRINT.md section 1): STOPPED alone, with
+// no counts, percent or ETA, while the machine is STOPPED (no record is
+// STOPPED); none, so the counts show, while it is RUNNING.
+func ViewState(m Machine) string {
+	if m.Running() {
+		return ""
+	}
+	return Stopped
+}
+
+// putMachine writes the state record and the view's state text for it in one
+// atomic step (section 14): the view's summary line and the record never
+// disagree.
+func (st *Store) putMachine(ctx context.Context, m Machine) error {
+	kv, err := st.kv()
+	if err != nil {
+		return err
+	}
+	b, err := json.Marshal(m)
+	if err != nil {
+		return err
+	}
+	return kv.SetKeyShowing(ctx, keyMachine, string(b), st.Names.View(), ViewState(m))
 }
 
 // MachineLine is the machine's part of the sprint line: running, running
@@ -227,6 +267,14 @@ func (st *Store) SetMachine(ctx context.Context, running bool) (before, after Ma
 		return before, before, res, err
 	}
 	if before.Running() == running {
+		// The record is not written; the view's state is written again from
+		// it, so a view that lost its state (or was stored before it had
+		// one) shows the machine as it is (section 1).
+		if kv, ok := st.B.(KV); ok {
+			if err := kv.ShowState(ctx, st.Names.View(), ViewState(before)); err != nil {
+				return before, before, res, err
+			}
+		}
 		return before, before, res, nil
 	}
 	now := st.now()
@@ -246,7 +294,7 @@ func (st *Store) SetMachine(ctx context.Context, running bool) (before, after Ma
 		after.State = Stopped
 	}
 	after.Since, after.Who = now, st.Actor
-	if err := st.putJSON(ctx, keyMachine, after); err != nil {
+	if err := st.putMachine(ctx, after); err != nil {
 		return before, before, res, err
 	}
 	res, err = st.Run(ctx, Step{Verb: verb, Plan: func(s *sprint.Snapshot) sprint.Plan {
@@ -664,6 +712,39 @@ func (m *Mem) GetKey(_ context.Context, name string) (string, bool, error) {
 	return v, ok, nil
 }
 
+// SetKeyShowing writes a machine record and the view's state under one lock.
+func (m *Mem) SetKeyShowing(_ context.Context, name, value, view, state string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.fail("kv"); err != nil {
+		return err
+	}
+	if m.kv == nil {
+		m.kv = map[string]string{}
+	}
+	m.kv[name] = value
+	m.showState(view, state)
+	return nil
+}
+
+// ShowState writes only the view's state.
+func (m *Mem) ShowState(_ context.Context, view, state string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.fail("kv"); err != nil {
+		return err
+	}
+	m.showState(view, state)
+	return nil
+}
+
+func (m *Mem) showState(view, state string) {
+	if v, ok := m.views[view]; ok {
+		v.State = state
+		m.views[view] = v
+	}
+}
+
 // SetKey writes a machine record.
 func (m *Mem) SetKey(_ context.Context, name, value string) error {
 	m.mu.Lock()
@@ -690,6 +771,36 @@ func (r *Redis) GetKey(ctx context.Context, name string) (string, bool, error) {
 // SetKey writes a machine record.
 func (r *Redis) SetKey(ctx context.Context, name, value string) error {
 	return r.C.Set(ctx, r.Names.Key(name), value, 0).Err()
+}
+
+// SetKeyShowing writes a machine record and the view's state in one
+// MULTI/EXEC: both or, when the store refuses the transaction, neither. A
+// view that is not there is left alone and is no error.
+func (r *Redis) SetKeyShowing(ctx context.Context, name, value, view, state string) error {
+	var shown *redis.Cmd
+	_, err := r.C.TxPipelined(ctx, func(p redis.Pipeliner) error {
+		p.Set(ctx, r.Names.Key(name), value, 0)
+		shown = ntable.QueueViewState(ctx, p, view, state)
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	return viewShown(ntable.ViewStateResult(view, shown))
+}
+
+// ShowState writes only the view's state.
+func (r *Redis) ShowState(ctx context.Context, view, state string) error {
+	return viewShown(ntable.ViewState(ctx, r.C, view, state))
+}
+
+// viewShown is a view state write's error, with a view that is not there no
+// error: nothing shows the machine, so nothing can disagree with it.
+func viewShown(err error) error {
+	if errors.Is(err, ntable.ErrNoView) {
+		return nil
+	}
+	return err
 }
 
 // GetKeys reads machine records in one call.

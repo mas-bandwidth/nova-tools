@@ -27,16 +27,19 @@ func (st *Store) Init(ctx context.Context) error {
 		return err
 	}
 	// The machine is STOPPED from the start: the time before the first start
-	// is a STOPPED span, and counts toward no deadline.
-	if _, ok := st.B.(KV); ok {
+	// is a STOPPED span, and counts toward no deadline. The view shows it
+	// (section 1): STOPPED, written with the record in one step; on a sprint
+	// that has a machine already, the view's state is written from it.
+	if kv, ok := st.B.(KV); ok {
 		m, _, err := st.Machine(ctx)
 		if err != nil {
 			return err
 		}
 		if m.State == "" {
 			now := st.now()
-			return st.putJSON(ctx, keyMachine, Machine{State: Stopped, Since: now, Who: st.Actor, Spans: []Span{{From: now}}})
+			return st.putMachine(ctx, Machine{State: Stopped, Since: now, Who: st.Actor, Spans: []Span{{From: now}}})
 		}
+		return kv.ShowState(ctx, st.Names.View(), ViewState(m))
 	}
 	return nil
 }

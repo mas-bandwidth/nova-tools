@@ -771,7 +771,7 @@ func (tw *posTwin) posPositionHolds(stream string) string {
 			return fmt.Sprintf("%s is ready behind the sentinel %s", r.id, ss[0].id)
 		}
 	}
-	if tw.opened(NSentinelReached, "", ss[0].id) {
+	if tw.opened(NSentinelReached, ReachedCause, ss[0].id) {
 		for _, r := range tw.work {
 			if r.row == stream && r.score < sigma && posIsOpen(r.col) {
 				return fmt.Sprintf("%s is reached with %s open before it", ss[0].id, r.id)

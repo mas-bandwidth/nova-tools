@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -132,10 +131,11 @@ func viewReaderWith(
 		if len(v.Tables) == 0 {
 			return oneline.Escape(v.Title) + "\n(no tables in view " + oneline.Escape(name) + ")\n", nil
 		}
-		// The view's frame, Glenn's layout (2026-09-27): the time to the
-		// second, a blank line, the title, a blank line, the summary
-		// "x/y z% -> ETA" when the view names a done column, a blank line,
-		// the tables. Nothing else goes in.
+		// The view's frame (2026-09-27): the time to the second, a blank
+		// line, the title, a blank line, the summary line, a blank line, the
+		// tables. Nothing else goes in. The summary line is the view's state
+		// alone while it has one ("STOPPED", nothing more), else
+		// "x/y z% -> ETA" when the view names a done column.
 		tables, err := snapshotter(c, v.Tables)(ctx)
 		if err != nil {
 			return "", err
@@ -147,10 +147,9 @@ func viewReaderWith(
 			b.WriteString(oneline.Escape(v.Title))
 			b.WriteString("\n\n")
 		}
-		if v.Summary != "" {
-			// Reuse the same snapshot as the table body. Unread input stays
-			// unknown in the summary, including hidden rows and columns.
-			b.WriteString(viewSummary(tables[0], v.Summary))
+		// The summary reuses the same snapshot as the table body.
+		if line := ntable.SummaryLine(v, tables[0]); line != "" {
+			b.WriteString(line)
 			b.WriteString("\n\n")
 		}
 		b.WriteString(renderAll("", tables, opts))
@@ -252,40 +251,6 @@ func tableSnapshots(c redis.Cmdable, names []string) func(context.Context) ([]nt
 		}
 		return tables, nil
 	}
-}
-
-// viewSummary pools the first table's counts from the displayed snapshot.
-// ETA has no value until change-stream rate sampling is available.
-func viewSummary(t ntable.Table, column string) string {
-	found := false
-	for _, col := range t.Columns {
-		if col.Name == column && col.Projection == ntable.Count {
-			found = true
-		}
-	}
-	if !found {
-		return "?/? ? -> ETA"
-	}
-	var part, total int64
-	for _, r := range t.Rows {
-		for k, col := range t.Columns {
-			if col.Projection != ntable.Count {
-				continue
-			}
-			if k >= len(r.Cells) || r.Cells[k].Unread {
-				return "?/? ? -> ETA"
-			}
-			total += r.Cells[k].Count
-			if col.Name == column {
-				part += r.Cells[k].Count
-			}
-		}
-	}
-	pct := "0.0%" // empty known totals use the same numeric display as other percentages
-	if total > 0 {
-		pct = strconv.FormatFloat(100*float64(part)/float64(total), 'f', 1, 64) + "%"
-	}
-	return fmt.Sprintf("%d/%d %s -> ETA", part, total, pct)
 }
 
 func isReplyError(err error) bool {

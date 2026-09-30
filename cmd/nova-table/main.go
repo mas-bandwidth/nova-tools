@@ -58,7 +58,8 @@ cell is a view, read freely, and cell add, cell remove, cell move and clear
 refuse it, naming the --owner verb. --exclude names one member the row's
 counts and members leave out. render <table> prints the table and nothing else,
 nothing at all when it is empty. render --view <name> prints one frame with
-the view's timestamp, title and summary. watch redraws it in place every --every
+the view's timestamp, title and summary line; view state sets a text the
+summary line shows alone, in place of the counts, until --clear. watch redraws it in place every --every
 (1s) with no shell loop, or publishes it to --out by atomic rename.
 
 Order is kept by the table: rows draw in the order they were added and

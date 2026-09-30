@@ -345,3 +345,36 @@ func TestKnownEmptyPercentageBodyAndFooter(t *testing.T) {
 		t.Fatalf("unread row/footer: %s", got)
 	}
 }
+
+// TestSummaryLineIsTheStateAloneWhileThereIsOne: a view's state is its summary
+// line, alone, whatever the counts; without one, the counts; with neither, no
+// line. A state is one line of at most MaxViewState bytes.
+func TestSummaryLineIsTheStateAloneWhileThereIsOne(t *testing.T) {
+	t.Parallel()
+	cols, err := ntable.ParseColumns("ready,done")
+	if err != nil {
+		t.Fatal(err)
+	}
+	tb := ntable.Table{Name: "w", Columns: cols}
+	r := ntable.NewRow(tb, "s")
+	r.Cells[0].Count, r.Cells[1].Count = 3, 1
+	tb.Rows = []ntable.Row{r}
+	for _, c := range []struct {
+		v    ntable.View
+		want string
+	}{
+		{ntable.View{Summary: "done", State: "STOPPED"}, "STOPPED"},
+		{ntable.View{State: "STOPPED"}, "STOPPED"},
+		{ntable.View{Summary: "done"}, "1/4 25.0% -> ETA"},
+		{ntable.View{}, ""},
+	} {
+		if got := ntable.SummaryLine(c.v, tb); got != c.want {
+			t.Errorf("%+v: %q, want %q", c.v, got, c.want)
+		}
+	}
+	for text, ok := range map[string]bool{"": true, "STOPPED": true, "a\nb": false, "\x1b[2J": false, strings.Repeat("x", ntable.MaxViewState): true, strings.Repeat("x", ntable.MaxViewState+1): false} {
+		if ntable.ValidViewState(text) != ok {
+			t.Errorf("ValidViewState(%q) = %v", text, !ok)
+		}
+	}
+}

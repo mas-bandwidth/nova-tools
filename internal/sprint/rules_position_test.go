@@ -169,7 +169,7 @@ func TestReachGuardRcountZero(t *testing.T) {
 	if len(p.Notes) != 1 || p.Notes[0].Op != posOpen || p.Notes[0].Type != NSentinelReached || !reflect.DeepEqual(p.Notes[0].Subjects, []string{"g"}) {
 		t.Fatalf("the judgment: %+v", p.Notes)
 	}
-	if out := tw.apply(p); out.refused != "" || !tw.opened(NSentinelReached, "", "g") {
+	if out := tw.apply(p); out.refused != "" || !tw.opened(NSentinelReached, ReachedCause, "g") {
 		t.Fatalf("apply %+v, judged %v", out, tw.judged)
 	}
 	if q := tw.plan(t, "resolve", 0, k); !posQuiet(q) {
@@ -183,8 +183,8 @@ func TestReachNotRaised(t *testing.T) {
 		"a card is open before σ": func(tw *posTwin) { tw.card("w", "s1", Working, 2) },
 		"G counts a need":         func(tw *posTwin) { tw.work["g"].f["open"] = "1" },
 		"G is quarantined":        func(tw *posTwin) { tw.quar["g"] = true },
-		"the judgment is open":    func(tw *posTwin) { tw.judge(NSentinelReached, "", "g") },
-		"the judgment is held":    func(tw *posTwin) { tw.hold(NSentinelReached, "", "g") },
+		"the judgment is open":    func(tw *posTwin) { tw.judge(NSentinelReached, ReachedCause, "g") },
+		"the judgment is held":    func(tw *posTwin) { tw.hold(NSentinelReached, ReachedCause, "g") },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -210,7 +210,7 @@ func TestHeldReachJudgmentClosesOnUnreach(t *testing.T) {
 	t.Parallel()
 	tw := newPosTwin("s1")
 	tw.sentinel("g", "s1", 5)
-	tw.hold(NSentinelReached, "", "g")
+	tw.hold(NSentinelReached, ReachedCause, "g")
 	k := posKeyOf("resolve:s1")
 	if p := tw.plan(t, "resolve", 0, k); len(p.Notes) != 0 || len(p.Guards) != 0 || len(p.Plan.Units) != 0 {
 		t.Fatalf("a held judgment was raised again: %+v", p)
@@ -220,7 +220,7 @@ func TestHeldReachJudgmentClosesOnUnreach(t *testing.T) {
 	if out.refused != "" || len(p.Notes) != 1 || p.Notes[0].Op != posClose || p.Notes[0].Type != NSentinelReached {
 		t.Fatalf("a card came before it: %+v %+v", p.Notes, out)
 	}
-	if len(tw.held) != 0 || tw.opened(NSentinelReached, "", "g") {
+	if len(tw.held) != 0 || tw.opened(NSentinelReached, ReachedCause, "g") {
 		t.Fatalf("the held judgment stays: held %v open %v", tw.held, tw.judged)
 	}
 	if q := tw.plan(t, "resolve", 0, k); !posQuiet(q) {
@@ -243,7 +243,7 @@ func TestReachRefusedWhenACardComesBeforeSigma(t *testing.T) {
 		return tw, p
 	}
 	tw, p := build()
-	if out := tw.apply(p); out.refused == "" || tw.opened(NSentinelReached, "", "g") {
+	if out := tw.apply(p); out.refused == "" || tw.opened(NSentinelReached, ReachedCause, "g") {
 		t.Fatalf("the plan was not refused: %+v, judged %v", out, tw.judged)
 	}
 	tw, p = build()
@@ -261,7 +261,7 @@ func TestUnreachAtLeastOne(t *testing.T) {
 	tw := newPosTwin("s1")
 	tw.sentinel("g", "s1", 5)
 	tw.card("in", "s1", Ready, 3)
-	tw.judge(NSentinelReached, "", "g")
+	tw.judge(NSentinelReached, ReachedCause, "g")
 	k := posKeyOf("resolve:s1")
 	p := tw.plan(t, "resolve", 0, k)
 	if len(p.Plan.Units) != 0 || len(p.Notes) != 1 || p.Notes[0].Op != posClose || p.Notes[0].Type != NSentinelReached ||
@@ -275,11 +275,11 @@ func TestUnreachAtLeastOne(t *testing.T) {
 	// the card lands between read and apply: the guard refuses, and the
 	// judgment stays
 	tw.work["in"].col = Landed
-	if out := tw.apply(p); out.refused == "" || !tw.opened(NSentinelReached, "", "g") {
+	if out := tw.apply(p); out.refused == "" || !tw.opened(NSentinelReached, ReachedCause, "g") {
 		t.Fatalf("apply after the card landed: %+v", out)
 	}
 	tw.work["in"].col = Ready
-	if out := tw.apply(p); out.refused != "" || tw.opened(NSentinelReached, "", "g") {
+	if out := tw.apply(p); out.refused != "" || tw.opened(NSentinelReached, ReachedCause, "g") {
 		t.Fatalf("apply: %+v", out)
 	}
 	if q := tw.plan(t, "resolve", 0, k); !posQuiet(q) {
@@ -1502,7 +1502,7 @@ func TestPositionRulesTwiceSecondEmpty(t *testing.T) {
 			tw := newPosTwin("s1")
 			tw.sentinel("g", "s1", 5)
 			tw.card("a", "s1", Waiting, 1)
-			tw.judge(NSentinelReached, "", "g")
+			tw.judge(NSentinelReached, ReachedCause, "g")
 			return tw, posKeyOf("resolve:s1")
 		}},
 		{ruleNeeds, func() (*posTwin, AgendaKey) { // two missing needs of one waiter, made by one line
@@ -1548,7 +1548,7 @@ func TestPositionRulesTwiceSecondEmpty(t *testing.T) {
 			tw := newPosTwin("s1")
 			tw.sentinel("g", "s1", 5)
 			tw.card("in", "s1", Ready, 3)
-			tw.hold(NSentinelReached, "", "g")
+			tw.hold(NSentinelReached, ReachedCause, "g")
 			return tw, posKeyOf("resolve:s1")
 		}},
 		{ruleDone, func() (*posTwin, AgendaKey) { // every card dropped

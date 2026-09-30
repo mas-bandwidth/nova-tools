@@ -54,6 +54,9 @@ func init() {
 		{"view set", "<name> --tables <a,b,...> [--title <text>] [--summary <count-column>]", "view set work --tables demo --title Work --summary done", func(app *application, a []string, o, e io.Writer) int {
 			return app.cmdView(append([]string{"set"}, a...), o, e)
 		}},
+		{"view state", "<name> (<text> | --clear)", "view state work STOPPED", func(app *application, a []string, o, e io.Writer) int {
+			return app.cmdView(append([]string{"state"}, a...), o, e)
+		}},
 		{"view show", "<name>", "view show work", func(app *application, a []string, o, e io.Writer) int {
 			return app.cmdView(append([]string{"show"}, a...), o, e)
 		}},

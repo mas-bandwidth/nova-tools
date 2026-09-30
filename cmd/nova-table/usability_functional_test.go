@@ -48,7 +48,7 @@ func TestWorkingStateAndViewLifecycle(t *testing.T) {
 		t.Errorf("missing: %s", out)
 	}
 	success("view", "set", "today", "--tables", "work", "--summary", "done", "--title", "My work")
-	if out = success("view", "show", "today"); !strings.Contains(out, `title="My work" summary=done trips=1`) {
+	if out = success("view", "show", "today"); !strings.Contains(out, `title="My work" summary=done state="" trips=1`) {
 		t.Errorf("view show: %s", out)
 	}
 	if out = success("view", "list"); out != "VIEW LIST views=1 trips=1\nVIEW view=today\n" {
@@ -83,5 +83,69 @@ func TestWorkingStateAndViewLifecycle(t *testing.T) {
 	}
 	if out = success("check", "work"); !strings.Contains(out, "revision=8 members=2") {
 		t.Errorf("view operations changed table: %s", out)
+	}
+}
+
+// TestViewStateVerb: view state sets the text the summary line shows alone,
+// view show prints it, view set keeps it, --clear shows the counts again, and a
+// missing view or a bad state is refused.
+func TestViewStateVerb(t *testing.T) {
+	t.Parallel()
+	addr := throwaway(t)
+	success := func(args ...string) string {
+		t.Helper()
+		code, out, errout := runTable(at(addr, args...)...)
+		if code != 0 || errout != "" {
+			t.Fatalf("%v: %d %q %q", args, code, out, errout)
+		}
+		return out
+	}
+	summary := func() string {
+		t.Helper()
+		out := success("render", "--view", "today")
+		parts := strings.SplitN(out, "\n\n", 4) // clock, title, summary line, tables
+		if len(parts) < 3 {
+			t.Fatalf("frame: %q", out)
+		}
+		return parts[2]
+	}
+	success("create", "work", "--columns", "todo,done")
+	success("row", "add", "work", "build")
+	success("cell", "add", "work", "build", "todo", "a", "b")
+	success("cell", "move", "work", "build", "todo", "done", "a")
+	success("view", "set", "today", "--tables", "work", "--summary", "done", "--title", "My work")
+	if got := summary(); got != "1/2 50.0% -> ETA" {
+		t.Fatalf("no state: %q", got)
+	}
+	if out := success("view", "state", "today", "STOPPED"); out != "VIEW STATE view=today state=\"STOPPED\" trips=1\n" {
+		t.Fatalf("view state: %q", out)
+	}
+	if got := summary(); got != "STOPPED" {
+		t.Fatalf("with a state: %q, want STOPPED alone", got)
+	}
+	if out := success("view", "show", "today"); !strings.Contains(out, `summary=done state="STOPPED" trips=1`) {
+		t.Fatalf("view show: %q", out)
+	}
+	success("view", "set", "today", "--tables", "work", "--summary", "done", "--title", "My work")
+	if got := summary(); got != "STOPPED" {
+		t.Fatalf("view set dropped the state: %q", got)
+	}
+	success("view", "state", "today", "--clear")
+	if got := summary(); got != "1/2 50.0% -> ETA" {
+		t.Fatalf("cleared: %q", got)
+	}
+	for _, bad := range []struct {
+		args []string
+		code int
+		want string
+	}{
+		{[]string{"view", "state", "missing", "STOPPED"}, 1, `view "missing": no such view`},
+		{[]string{"view", "state", "today"}, 2, "wants a view name and its state text"},
+		{[]string{"view", "state", "today", "a\nb"}, 2, "a state is one line"},
+	} {
+		code, out, errout := runTable(at(addr, bad.args...)...)
+		if code != bad.code || out != "" || !strings.Contains(errout, bad.want) {
+			t.Errorf("%v: %d %q %q", bad.args, code, out, errout)
+		}
 	}
 }

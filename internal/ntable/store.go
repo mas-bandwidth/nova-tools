@@ -382,7 +382,7 @@ func (o operation) refused(reply []any) error {
 	case typedrec.TableRefusalNoMember:
 		cause = errors.New("wants at least one member")
 	case typedrec.TableRefusalNoView:
-		cause = errors.New("no such view")
+		cause = ErrNoView
 		remedy = "nova-table view set " + shellWord(o.table) + " --tables <a,b,...>"
 	case typedrec.TableRefusalViewTable:
 		if len(reply) != 3 {
@@ -1150,6 +1150,62 @@ type View struct {
 	Tables  []string
 	Title   string
 	Summary string // the count column of the first table the summary line counts as done ("" for no line)
+	// State, when set, is the summary line, alone, in place of the counts:
+	// the state of whatever fills the view ("STOPPED"). ViewState writes it;
+	// ViewSet leaves it as it is.
+	State string
+}
+
+// MaxViewState bounds a view's state text, in bytes.
+const MaxViewState = 64
+
+// ValidViewState says a state text is one a view takes: empty (none), or one
+// line of at most MaxViewState bytes with no control characters.
+func ValidViewState(text string) bool {
+	if len(text) > MaxViewState {
+		return false
+	}
+	for _, r := range text {
+		if r < 0x20 || r == 0x7f {
+			return false
+		}
+	}
+	return true
+}
+
+// ErrNoView is a view that is not there.
+var ErrNoView = errors.New("no such view")
+
+// ViewState sets a view's state text, the summary line shown alone in place
+// of the counts while it is set; "" clears it and the counts show again. The
+// view must exist.
+func ViewState(ctx context.Context, c redis.Cmdable, name, text string) error {
+	if !ValidViewState(text) {
+		return fmt.Errorf("view %q: a state is one line of at most %d bytes", name, MaxViewState)
+	}
+	_, err := (operation{table: name, view: true}).call(ctx, c, fnViewState, false, text)
+	return err
+}
+
+const fnViewState = "ns_view_state"
+
+// QueueViewState queues ViewState on a pipeline or a transaction, so a caller
+// writes a view's state in the same MULTI/EXEC as a record of its own (the
+// state it shows); ViewStateResult reads the queued call's answer after Exec.
+func QueueViewState(ctx context.Context, p redis.Pipeliner, name, text string) *redis.Cmd {
+	return p.FCall(ctx, fnViewState, []string{"view:" + name}, name, text)
+}
+
+// ViewStateResult is the answer of a call QueueViewState queued, after Exec:
+// nil, a refusal (errors.Is ErrNoView when the view is not there), or the
+// store's error.
+func ViewStateResult(name string, cmd *redis.Cmd) error {
+	o := operation{table: name, view: true}
+	reply, err := cmd.Slice()
+	if err != nil {
+		return fmt.Errorf("%s: %s: %w%s", o.location(), fnViewState, err, runUnlessNamed(err, o.remedy()))
+	}
+	return o.refused(reply)
 }
 
 // ViewSet writes a view; every table must exist.
@@ -1171,7 +1227,7 @@ func ViewGet(ctx context.Context, c redis.Cmdable, name string) (View, error) {
 	if err != nil {
 		return View{}, err
 	}
-	v := View{Name: name, Title: h["title"], Summary: h["summary"]}
+	v := View{Name: name, Title: h["title"], Summary: h["summary"], State: h["state"]}
 	if t := strings.TrimSpace(h["tables"]); t != "" {
 		v.Tables = strings.Split(t, ",")
 	}
