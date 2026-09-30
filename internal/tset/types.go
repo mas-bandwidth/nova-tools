@@ -24,11 +24,13 @@ type Store interface {
 
 // Step is one tset/1 atomic request. Op and Intent are either both nil or both
 // non-nil; pointer presence distinguishes an omitted value from an empty one.
+// Fence explicitly settles a named operation without applying its effects.
 type Step struct {
 	Epoch   Decimal
 	Space   string
 	Op      *string
 	Intent  *string
+	Fence   bool
 	Result  string
 	Entries []Entry
 	Notes   []Note
@@ -90,6 +92,31 @@ type Reply struct {
 	Result          string          `json:"result"`
 	Replay          bool            `json:"replay"`
 	Counters        json.RawMessage `json:"counters"`
+	MemPlan         *MemPlan        `json:"-"` // Mem-only, fresh ordinary steps; never a wire field.
+}
+
+// MemPlan is the in-memory twin's normalized observation of a successful
+// ordinary step. It is not persisted in receipts or encoded on the Redis wire.
+type MemPlan struct {
+	Entries []MemPlanEntry
+	Before  map[string]map[string]MemberRecord // observed table, then ID; includes guards and no-ops
+}
+
+type MemPlanEntry struct {
+	Index        int
+	Entry        Entry
+	Before       []MemberRecord // aligned with effective Entry.IDs
+	After        []MemberRecord // aligned with effective Entry.IDs
+	FieldChanges []MemFieldChange
+	Added        []RowRank // effective rows.add with assigned ranks
+	Deleted      []string  // effective rows.del
+}
+
+// MemFieldChange contains only actual application-field mutations for one
+// changed member. It is aligned with a MemPlanEntry's effective Entry.IDs.
+type MemFieldChange struct {
+	Set   map[string]string
+	Unset []string
 }
 
 // MarshalJSON keeps the amended compact replay response free of invented
