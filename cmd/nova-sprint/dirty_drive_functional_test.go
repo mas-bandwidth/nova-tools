@@ -288,6 +288,9 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 		}
 	}()
 
+	// the watchdog reads through a store of its own: its whole reads are its
+	// own, not counted as the loop's (the gate counts the loop's)
+	watch := &store.Store{B: st.B, Names: st.Names, Actor: st.Actor, Now: st.Now, NewID: st.NewID, Sleep: st.Sleep}
 	// a stall watchdog: the landed count not moving for a minute of polls ends
 	// the drive with the tables, the inbox and the check printed
 	stalled := make(chan string, 1)
@@ -302,7 +305,7 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 			case <-poll.C:
 			}
 			n := 0
-			if snap, err := st.Load(ctx, store.All, nil); err == nil {
+			if snap, err := watch.Load(ctx, store.All, nil); err == nil {
 				for _, s := range streams {
 					n += snap.Work.Count(s, sprint.Landed)
 				}
