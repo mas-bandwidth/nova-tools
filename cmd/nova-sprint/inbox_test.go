@@ -403,7 +403,8 @@ func TestHelpShowsTheWorkedExample(t *testing.T) {
 		if _, ok := sprint.Decisions[sprint.NSprintDone]; ok {
 			want--
 		}
-		if n := strings.Count(out[strings.Index(out, "one answer to each judgment"):], "\n  "); n != want {
+		answers, _, _ := strings.Cut(out[strings.Index(out, "one answer to each judgment"):], "\n\n")
+		if n := strings.Count(answers, "\n  "); n != want {
 			t.Fatalf("%s: %d answers for %d judgment types and the repeat", line, n, want-1)
 		}
 		if !strings.Contains(out, "  HAPPENED tick-done-0317a1b2-1.1   the sprint is done  x1  for=coordinator") {
