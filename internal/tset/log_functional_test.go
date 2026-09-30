@@ -463,7 +463,7 @@ func TestLogReplaySmallEpochEqualsTables(t *testing.T) {
 		{Kind: "remove", Table: "work", From: "r1:a", IDs: []string{"x3"}, Set: map[string]string{"retired": "yes"},
 			About: []string{"p3"}}}})
 	composedWrite(t, store, logNamed(Step{Epoch: "0", Space: s, Entries: []Entry{
-		{Kind: "rows", Table: "work", Del: []string{"r3"}}}, Notes: []Note{logNote(`{"n":1}`, "p1", "p2")}}, "notes"))
+		{Kind: "rows", Table: "work", Del: []string{"r3"}}}, Notes: []Note{logNote(`{"n":"1"}`, "p1", "p2")}}, "notes"))
 	composedWrite(t, store, Step{Epoch: "0", Space: s, Entries: []Entry{
 		{Kind: "move", Table: "work", From: "r1:a", To: "r2:a", IDs: []string{"x2"}, Set: map[string]string{"n": "22"},
 			About: []string{"p2"}},

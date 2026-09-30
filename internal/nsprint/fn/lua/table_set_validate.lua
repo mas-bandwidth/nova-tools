@@ -661,6 +661,10 @@ local function note(n)
         or not strings(n.about, cap('about'), name) then return false end
     return true
 end
+-- Layer 2's static step rules, bound once at load: the log fragment loads
+-- before this one, and the standalone profile does not load it, so this is
+-- nil there. A later change to NS.tlog does not reach it.
+local log_check_step = NS.tlog and NS.tlog.check_step
 local function validate_step(req, allow_derived_notes)
     if S.is_object(req) and S.is_array(req.entries) and #req.entries > cap('entries') then return failure('LIMIT') end
     if S.is_object(req) and S.is_array(req.notes) and #req.notes > cap('notes') then return failure('LIMIT') end
@@ -758,10 +762,9 @@ local function validate_step(req, allow_derived_notes)
         if abouts > cap('about') then return failure('LIMIT') end
     end
     -- The composed profile's static rules (Layer 2's L.check_step): part of
-    -- this static phase, before any guard (L1 8). The standalone profile does
-    -- not load the log, so NS.tlog is absent there.
-    if NS.tlog then
-        local _, err = NS.tlog.check_step(req)
+    -- this static phase, before any guard (L1 8).
+    if log_check_step then
+        local _, err = log_check_step(req)
         if err then return nil, err end
     end
     return req, nil
