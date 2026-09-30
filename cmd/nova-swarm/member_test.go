@@ -541,4 +541,3 @@ func TestMemberAcceptsPositiveTicks(t *testing.T) {
 		t.Fatalf("stdout %q, want completion after 2 ticks", out.String())
 	}
 }
-
