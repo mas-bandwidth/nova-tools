@@ -75,7 +75,7 @@ cmd/nova-version/testdata/versions.tsv:rowan 3
 cmd/nova-version/testdata/versions.tsv:stella 1
 docs/CLI.md:emma 3
 docs/CLI.md:freddy 1
-docs/CLI.md:glenn 2
+docs/CLI.md:glenn 1
 docs/CLI.md:johnny 2
 docs/CLI.md:mas-bandwidth 4
 docs/CLI.md:mini 2
@@ -142,7 +142,6 @@ docs/SPEC-TOKENS.md:emma 13
 docs/SPEC-TOKENS.md:freddy 2
 docs/SPEC-TOKENS.md:glenn 2
 docs/SPEC-TOKENS.md:johnny 2
-docs/SPEC-TOKENS.md:rowan 2
 docs/SPEC-TOKENS.md:space 2
 docs/SPEC-TOKENS.md:stella 2
 docs/SPEC-UPDATE.md:emma 1
@@ -154,8 +153,6 @@ docs/SPEC-UPDATE.md:rowan 5
 docs/SPEC-UPDATE.md:space 1
 docs/SPEC-UPDATE.md:stella 6
 docs/SPEC-UPDATE.md:studio 6
-docs/SPEC-WORKLANG.md:emma 1
-docs/SPEC-WORKLANG.md:rowan 2
 docs/SPEC.md:freddy 2
 docs/SPEC.md:rowan 4
 docs/SPEC.md:space 16
@@ -403,7 +400,6 @@ internal/records/testdata/valid/v1_aggregate_import.json:rowan 3
 internal/records/testdata/valid/v1_aggregate_import.json:studio 3
 internal/swarm/testdata/providers.tsv:mini 1
 internal/textbody/README.md:space 2
-internal/worklang/testdata/set-defects.lisp:emma 1
 profiles/darwin-check.sh:emma 1
 scripts/bench-hygiene.sh:antman 1
 scripts/bench-hygiene.sh:glenn 1

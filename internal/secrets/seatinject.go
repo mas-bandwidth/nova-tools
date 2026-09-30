@@ -46,6 +46,12 @@ type SeatInjectOptions struct {
 
 	NoPR bool
 
+	// DryRun prints the plan and writes nothing: the source is decrypted (the read the
+	// verb needs to know the names exist) but nothing is encrypted, no file is written
+	// and no git write, push or gh call runs. The plan is read off the same carry the
+	// real run walks, so the two cannot differ.
+	DryRun bool
+
 	// Progress receives one short line per step that can take time (nil = silent).
 	// It never carries a value: step names and public facts only.
 	Progress io.Writer
@@ -135,16 +141,10 @@ func RunSeatInject(opts SeatInjectOptions) (string, error) {
 		return "", err
 	}
 
-	opts.say("encrypting %d value(s) to %s's own recipients", len(names), seatFile)
-	ciphertext, err := sealEncrypt(run, opts.SopsPath, opts.KeyPath, opts.StoreDir, seatFile, document)
-	if err != nil {
-		return "", err
-	}
-
 	joined := strings.Join(names, "+")
 	branch := fmt.Sprintf("seal/%s-%s-%s", opts.AsName, joined, opts.Now().UTC().Format("20060102-150405"))
 	commitMsg := fmt.Sprintf("inject %s into %s from %s", strings.Join(names, ","), seatFile, opts.From)
-	prNum, merged, err := sealCarry{
+	carry := sealCarry{
 		run:      run,
 		storeDir: opts.StoreDir,
 		gitPath:  opts.GitPath,
@@ -164,7 +164,23 @@ func RunSeatInject(opts SeatInjectOptions) (string, error) {
 			}
 			return checkFn(opts.StoreDir, opts.AsName, opts.KeyPath, opts.SopsPath)
 		},
-	}.carry(ciphertext)
+	}
+
+	if opts.DryRun {
+		home, err := carry.preflight()
+		if err != nil {
+			return "", err
+		}
+		return seatInjectPlan(opts, names, held, carry, home, targetFile), nil
+	}
+
+	opts.say("encrypting %d value(s) to %s's own recipients", len(names), seatFile)
+	ciphertext, err := sealEncrypt(run, opts.SopsPath, opts.KeyPath, opts.StoreDir, seatFile, document)
+	if err != nil {
+		return "", err
+	}
+
+	prNum, merged, err := carry.carry(ciphertext)
 	if err != nil {
 		return "", err
 	}
@@ -246,8 +262,9 @@ func seatInjectValidate(opts *SeatInjectOptions) ([]string, error) {
 // it holds, in file order, and which of them stand in the clear (with the clear value,
 // kept verbatim).
 type seatInjectHeld struct {
-	names []string
-	clear map[string]string
+	names      []string
+	clear      map[string]string
+	recipients []string // the file's own recipients, in metadata order
 }
 
 // seatInjectTarget reads the target's recipients out of its sops metadata and holds
@@ -271,6 +288,7 @@ func seatInjectTarget(storeDir, seatFile, recoveryKey string) (seatInjectHeld, e
 	if !containsString(recipients, recoveryKey) {
 		return held, fmt.Errorf("seat file %s does not name the key recovery.pub declares among its recipients; the recovery key is always kept, so this file is re-sealed by sops updatekeys in a reviewed pull request first", seatFile)
 	}
+	held.recipients = append([]string(nil), recipients...)
 	cfg, err := ParseSopsConfig(storeDir)
 	if err != nil {
 		return held, fmt.Errorf("store %s: %w", storeDir, err)
@@ -383,4 +401,32 @@ func seatInjectCompose(plaintext []byte, held seatInjectHeld, names []string, fr
 			as, strings.Join(missingHeld, ", "), from, as, strings.Join(missingHeld, ", "), from, storeDir, from, missingHeld[0])
 	}
 	return []byte(b.String()), nil
+}
+
+// seatInjectPlan is `seat inject --dry-run`'s answer: the refusals the real run has
+// already passed (the target's recipients held to its rule, the source opened, every
+// --only name and every held sealed name present in the source), the file the real run
+// would write, and the road it would take. Only names and public keys appear: no value,
+// fragment or length reaches a line.
+func seatInjectPlan(opts SeatInjectOptions, names []string, held seatInjectHeld, carry sealCarry, home, targetFile string) string {
+	var kept []string
+	for _, n := range held.names {
+		if _, clear := held.clear[n]; clear && !containsString(names, n) {
+			kept = append(kept, n)
+		}
+	}
+	lines := []string{fmt.Sprintf("SECRETS SEAT INJECT PLAN write=%s from=%s deliver=%s recipients=%s keep-clear=%s every other held name is re-sealed from the source; values not shown",
+		oneline.Field(targetFile), oneline.Field(opts.From), oneline.Field(strings.Join(names, ",")),
+		oneline.Field(strings.Join(held.recipients, ",")), oneline.Field(dashIfEmpty(strings.Join(kept, ","))))}
+	lines = append(lines, carry.planLines("SEAT INJECT", home)...)
+	lines = append(lines, fmt.Sprintf("SECRETS SEAT INJECT DRY-RUN OK seat=%s from=%s names=%d nothing written, no push, no gh call",
+		oneline.Field(opts.AsName), oneline.Field(opts.From), len(names)))
+	return strings.Join(lines, "\n")
+}
+
+func dashIfEmpty(s string) string {
+	if s == "" {
+		return "-"
+	}
+	return s
 }
