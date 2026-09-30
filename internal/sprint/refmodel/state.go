@@ -98,9 +98,10 @@ const (
 	KindSentinel = "sentinel"
 )
 
-// MaxReadyPerMember is the longest ready queue the tick deals a member (spec
-// section 5).
-const MaxReadyPerMember = 2
+// Width is every member's width, the engine's default (sprint.DefaultWidth,
+// errata 3 amendment 9): the most work cards, ready and working together, the
+// tick deals a member.
+const Width = 64
 
 // MaxRedeals is the spec's redeal bound (section 2): an attempt's work card
 // is dealt again at most this many times after its member went down.
@@ -383,6 +384,17 @@ func (s State) Up() []string {
 		}
 	}
 	return out
+}
+
+// Held is the member's work cards held against its width: ready and working.
+func (s State) Held(m string) int {
+	n := 0
+	for _, w := range s.Work {
+		if w.Member == m && (w.Place == FReady || w.Place == FWorking) {
+			n++
+		}
+	}
+	return n
 }
 
 // RL is SprintTables.tla RL(m): the member's ready queue length.

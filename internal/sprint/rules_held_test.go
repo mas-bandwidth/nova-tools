@@ -269,6 +269,7 @@ func (w *hworld) answer(rp ReadPlan) (ReadAnswer, map[string]bool) {
 			for _, m := range a.Rows {
 				add(Fleet, w.s.Fleet.Card(CtlID(m)))
 				a.Counts = append(a.Counts, CellCount{Row: m, Col: Ready, N: w.s.Fleet.Count(m, Ready)})
+				a.Counts = append(a.Counts, CellCount{Row: m, Col: Working, N: w.s.Fleet.Count(m, Working)})
 			}
 		default:
 			panic("twin: R16 asked a query of kind " + q.Kind)
@@ -457,7 +458,7 @@ var holdFixtures = map[string]hfixture{
 	"ready, in fresh below the first sentinel or in again / no room: every up member's ready cell is full": func(w *hworld) string {
 		w.primary("p1", "s1", Ready, 1)
 		for _, m := range []string{"m1", "m2"} {
-			for i := range heldReadyPerMember {
+			for i := range DefaultWidth {
 				w.s.Fleet.Put(&Card{ID: m + "-w" + strconv.Itoa(i), Row: m, Col: Ready, Rev: 1, Fields: hkv("kind", "work")})
 			}
 		}
@@ -913,9 +914,9 @@ func TestHeldRuleShape(t *testing.T) {
 		}
 	}
 	// the numbers of the design that R16 and the holder carry
-	if HeldChunk != 2000 || HeldBacklogBound != 5000 || heldReadyPerMember != 2 || heldMaxAttempts != 3 {
-		t.Fatalf("the design's numbers: chunk %d (2,000), backlog %d (5,000), ready cap %d (2), attempts %d (3)",
-			HeldChunk, HeldBacklogBound, heldReadyPerMember, heldMaxAttempts)
+	if HeldChunk != 2000 || HeldBacklogBound != 5000 || DefaultWidth != 64 || heldMaxAttempts != 3 {
+		t.Fatalf("the design's numbers: chunk %d (2,000), backlog %d (5,000), default width %d (64), attempts %d (3)",
+			HeldChunk, HeldBacklogBound, DefaultWidth, heldMaxAttempts)
 	}
 }
 

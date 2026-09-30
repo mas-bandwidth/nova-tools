@@ -608,10 +608,12 @@ type DealReq struct {
 
 // Deal moves ready -> working: for each primary, in work order, its work
 // card is dealt to the next member round the fleet (round.go, errata 3
-// amendment 5): the first from the rolling index, wrapping, that is up with
-// fewer than MaxReadyPerMember ready cards, or, when none has room, the first
-// up; the index (the fleet table's deal_index) moves past the member dealt
-// to, written with the deal. A card withdrawn because no member was up is the
+// amendment 5): the first from the rolling index, wrapping, that is up and
+// holds fewer work cards, ready and working, than its width (width.go, errata
+// 3 amendment 9), or, when none has room, the first up; the index (the fleet
+// table's deal_index) moves past the member dealt to, written with the deal.
+// Every card of the selection is dealt in the one plan, one card at a time
+// round the fleet. A card withdrawn because no member was up is the
 // same card dealt again at a new generation, its attempt unchanged; otherwise
 // the next attempt's card is cut.
 func Deal(s *Snapshot, r DealReq) Plan {
@@ -633,11 +635,15 @@ func dealPlan(s *Snapshot, r DealReq, rr *round) (Plan, roundMoves) {
 		}
 		return p, moves
 	}
-	q := readyQueues(s, up)
+	q, widths := memberLoads(s, up), memberWidths(s, up)
+	unbounded := map[string]int{}
+	for _, m := range up {
+		unbounded[m] = math.MaxInt
+	}
 	next := func() string {
-		m := rr.member(up, q, MaxReadyPerMember, "")
+		m := rr.member(up, q, widths, "")
 		if m == "" {
-			m = rr.member(up, q, math.MaxInt, "")
+			m = rr.member(up, q, unbounded, "")
 		}
 		return m
 	}
@@ -933,6 +939,9 @@ type FleetReq struct {
 	Live []string
 	// Why is said in the happened notification of a change of status.
 	Why string
+	// Width, above zero, is the member's width set by up or release (the
+	// machine's child cap, width.go); zero leaves the width as it is.
+	Width int `json:",omitempty"`
 }
 
 // Fleet brings a member up (and levels the ready queues), takes one down
@@ -994,6 +1003,10 @@ func fleetStepPlan(s *Snapshot, r FleetReq) Plan {
 			p.refuse(r.Member, "a member name wants letters, digits, _ and -")
 			return p
 		}
+		if r.Width < 0 || r.Width > MaxWidth {
+			p.refuse(r.Member, fmt.Sprintf("a width wants a whole number from 1 to %d", MaxWidth))
+			return p
+		}
 		if !s.Fleet.HasRow(r.Member) {
 			p.Rows = append(p.Rows, RowAdd{Fleet, r.Member})
 		}
@@ -1011,14 +1024,20 @@ func fleetStepPlan(s *Snapshot, r FleetReq) Plan {
 			} else {
 				line = r.Member + " added, down until it beats"
 			}
-			head = append(head, change(Fleet, createEntry(CtlID(r.Member), r.Member, Ctl, 0,
-				map[string]string{"kind": "member", "status": status, "since": stamp(s.Now)})))
+			fields := map[string]string{"kind": "member", "status": status, "since": stamp(s.Now)}
+			if r.Width > 0 {
+				fields[FieldWidth] = itoa(r.Width)
+			}
+			head = append(head, change(Fleet, createEntry(CtlID(r.Member), r.Member, Ctl, 0, fields)))
 		default:
 			set := map[string]string{}
 			var unset []string
 			if comeUp && ctl.F("status") != Up {
 				set["status"], set["since"] = Up, stamp(s.Now)
 				n = statusNote(s, r, NMemberUp, "up")
+			}
+			if r.Width > 0 && ctl.F(FieldWidth) != itoa(r.Width) {
+				set[FieldWidth] = itoa(r.Width)
 			}
 			if r.Op == "release" && ctl.F("held") != "" {
 				unset = append(unset, "held")
@@ -1029,6 +1048,9 @@ func fleetStepPlan(s *Snapshot, r FleetReq) Plan {
 			if len(set) > 0 || len(unset) > 0 {
 				head = append(head, change(Fleet, setEntry(ctl, set, unset...)))
 			}
+		}
+		if r.Width > 0 && (ctl == nil || ctl.F(FieldWidth) != itoa(r.Width)) {
+			line += " width=" + itoa(r.Width)
 		}
 		if comeUp {
 			level(s, &p, orderLike(s.Fleet.Rows(), append(liveFor(s, r), r.Member), r.Member))
@@ -1095,29 +1117,33 @@ func fleetStepPlan(s *Snapshot, r FleetReq) Plan {
 }
 
 // level evens the up members' ready queues: the newest cards (the last in
-// work order) of the longest queue move to the shortest, until no two differ
-// by more than one.
+// work order) of the longest queue move to the shortest of the members below
+// their width (width.go: a member at its width takes no more), until no two
+// differ by more than one.
 func level(s *Snapshot, p *Plan, up []string) {
 	if len(up) < 2 {
 		return
 	}
 	queues := map[string][]*Card{}
+	held, widths := memberLoads(s, up), memberWidths(s, up)
 	for _, m := range up {
 		queues[m] = append([]*Card{}, s.Fleet.Cell(m, Ready)...)
 	}
 	for {
-		long, short := up[0], up[0]
+		long, short := up[0], ""
 		for _, m := range up {
 			if len(queues[m]) > len(queues[long]) {
 				long = m
 			}
-			if len(queues[m]) < len(queues[short]) {
+			if held[m] < widths[m] && (short == "" || len(queues[m]) < len(queues[short])) {
 				short = m
 			}
 		}
-		if len(queues[long])-len(queues[short]) <= 1 {
+		if short == "" || len(queues[long])-len(queues[short]) <= 1 {
 			return
 		}
+		held[long]--
+		held[short]++
 		q := queues[long]
 		c := q[len(q)-1]
 		queues[long] = q[:len(q)-1]

@@ -336,7 +336,7 @@ func TestDownCutIsFoundFromTheCountsNotTheHead(t *testing.T) {
 // nothing is dealt to it.
 func TestDealRoomIsTheCellCounts(t *testing.T) {
 	t.Parallel()
-	f := newFleetT(t, 3, "m1", "m2")
+	f := newFleetW(t, 3, 2, "m1", "m2")
 	for i := 1; i <= 3; i++ {
 		putWorkCard(f, "x"+itoa(i), "m1", Ready, float64(20+i), nil)
 	}
@@ -483,11 +483,12 @@ func TestDownOnlyAWorkingCardIsAtTheBound(t *testing.T) {
 // even when it used all the room on the other streams (1.3.5).
 func TestDealKeepsTheKeyWhenTheRoomIsUsedAndAStreamWasSkipped(t *testing.T) {
 	t.Parallel()
-	f := newFleetT(t, 1, "m1", "m2")
+	const width = 2
+	f := newFleetW(t, 1, width, "m1", "m2")
 	f.w.must(Add(f.snap(), AddReq{Stream: "s2", Count: 5}))
 	f.facts.Dropping["s1"] = true
 	rp := f.plan(ruleDeal, "deal")
-	if len(rp.Plan.Units) != 2*RuleReadyCap || hasUnit(rp, "s1-1") {
+	if len(rp.Plan.Units) != 2*width || hasUnit(rp, "s1-1") {
 		t.Fatalf("units: %+v", rp.Plan.Units)
 	}
 	if keyTexts(rp.Requeue) != "deal" || len(rp.Done) != 0 || len(rp.HeldBack) != 0 {
@@ -634,8 +635,8 @@ func TestRegisteredReadsOfDealAndLevelKeepTheirKeys(t *testing.T) {
 	keptWhole(t, "deal with nobody up", rp, s, "front of s1", "deal")
 
 	// R6: no room, nothing can be dealt, and the key goes: room frees queue it again
-	h := newFleetT(t, 4, "m1")
-	h.run(ruleDeal, "deal") // m1 holds its two; two primaries wait
+	h := newFleetW(t, 4, 2, "m1")
+	h.run(ruleDeal, "deal") // m1 at its width of two; two primaries wait
 	h.byRegistered = true
 	rp, s = h.shortPlan(ruleDeal, "deal")
 	quiet(t, "deal with no room", rp, "deal")
@@ -949,8 +950,8 @@ func TestDealAgainIgnoresTheAvoidMember(t *testing.T) {
 // The numbers of the rules are the design's, the rules' own.
 func TestRuleConstantsAreTheDesigns(t *testing.T) {
 	t.Parallel()
-	if RuleReadyCap != 2 || RuleUntakenDeadline != 15*time.Minute || RuleBeatDeadline != 15*time.Second {
-		t.Fatalf("ready cap %d, untaken deadline %v, beat deadline %v", RuleReadyCap, RuleUntakenDeadline, RuleBeatDeadline)
+	if DefaultWidth != 64 || RuleUntakenDeadline != 15*time.Minute || RuleBeatDeadline != 15*time.Second {
+		t.Fatalf("default width %d, untaken deadline %v, beat deadline %v", DefaultWidth, RuleUntakenDeadline, RuleBeatDeadline)
 	}
 	if got := untakenDue(1000); got != 1000+15*60_000 {
 		t.Fatalf("a card dealt at R = 1000 is due at %d", got)

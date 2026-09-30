@@ -31,10 +31,11 @@ measured), the highest of the last `+sprint.LoadWindow.String()+`.`) + "\n"
 }
 
 // fleetStep is the coordinator's fleet verb as a step: up releases a hold
-// and brings the member up at once when its beat is fresh; down holds it
-// down; level evens the ready queues.
-func (a *app) fleetStep(st *store.Store, op, member, who string) store.Step {
-	r := sprint.FleetReq{Op: op, Member: member, Who: who}
+// and brings the member up at once when its beat is fresh, and sets its
+// width when width is above zero; down holds it down; level evens the ready
+// queues.
+func (a *app) fleetStep(st *store.Store, op, member, who string, width int) store.Step {
+	r := sprint.FleetReq{Op: op, Member: member, Who: who, Width: width}
 	switch op {
 	case "up":
 		r.Op = "release"

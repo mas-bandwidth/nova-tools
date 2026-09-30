@@ -223,7 +223,7 @@ func (st *Store) Beats(ctx context.Context, members []string) (map[string]sprint
 }
 
 // SyncFleet brings every display cell of the fleet up to date, reading the
-// control cards: each member's status (derived: held, up or down), load (the
+// control cards: each member's status (derived: held, up or down), width, load (the
 // highest measured load of the last LoadWindow while its beat is fresh); done
 // and ok% are the table's own formulas. A store that keeps no beats shows the
 // control card's status and no load. It is what a step's mirrors run. It says whether it wrote.
@@ -260,7 +260,7 @@ func (st *Store) SyncFleet(ctx context.Context) (bool, error) {
 	for _, row := range shape.Rows {
 		m, _ := rs.Member(pinned.sid(sprint.CtlID(row.Key)))
 		ctl := &sprint.Card{Fields: m.Fields}
-		want := map[string]string{sprint.Status: dash(ctl.F("status")), sprint.Load: ""}
+		want := map[string]string{sprint.Status: dash(ctl.F("status")), sprint.Load: "", sprint.FieldWidth: sprint.WidthText(ctl)}
 		if beats != nil {
 			b := beats[row.Key]
 			want[sprint.Status], want[sprint.Load] = sprint.MemberStatus(ctl, b, now), sprint.LoadText(b, now)

@@ -31,7 +31,7 @@ func TestStartAndStopSayTheStateBeforeAndAfter(t *testing.T) {
 		t.Fatalf("start when running: %s", out)
 	}
 	out = ta.ok("tick")
-	if !strings.Contains(out, "MOVED deal: s1-1 ready -> working") || !strings.Contains(out, "TICK OK state=RUNNING idle=no moved=2") {
+	if !strings.Contains(out, "MOVED deal: s1-1 ready -> working") || !strings.Contains(out, "TICK OK state=RUNNING idle=no moved=3") {
 		t.Fatalf("tick: %s", out)
 	}
 	ta.a.sleep(store.MachineSilence + time.Second)

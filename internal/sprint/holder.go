@@ -87,10 +87,6 @@ type HeldLine struct {
 // (MaxReadyPerMember, MaxRedeals) are today's scanning tick's, which the switch
 // (IT23) moves, and a rule that changes one changes one row here.
 const (
-	// heldReadyPerMember is the ready cards a member holds at most: R6's room is
-	// this less a member's ready count (2.3 R6: "2 less each ready count", "a
-	// constant here").
-	heldReadyPerMember = 2
 	// heldMaxAttempts is R10's attempts (2.3 R10): below it a failed or broken
 	// primary is reworked, at it R10 sets its bound.
 	heldMaxAttempts = 3
@@ -392,7 +388,9 @@ func newHoldView(s *Snapshot, f HeldFacts, now Now) *holdView {
 		for _, m := range s.Fleet.Rows() {
 			if s.MemberCtl(m).F("status") == Up {
 				v.up = append(v.up, m)
-				v.room += max(0, heldReadyPerMember-s.Fleet.Count(m, Ready))
+				// R6's room: the member's width less its ready and working
+				// cards (width.go, errata 3 amendment 9)
+				v.room += max(0, s.Width(m)-s.Fleet.Count(m, Ready)-s.Fleet.Count(m, Working))
 			}
 		}
 	}
@@ -829,13 +827,13 @@ func dealRoom(v *holdView, c *Card) string {
 	return fmt.Sprintf("%d free places at %d up members", v.room, len(v.up))
 }
 
-// dealNoRoom is (d) of a ready primary when every up member's ready cell is
-// full: it waits for a place to free, and freeing one queues deal.
+// dealNoRoom is (d) of a ready primary when every up member is at its width
+// (width.go): it waits for a place to free, and freeing one queues deal.
 func dealNoRoom(v *holdView, c *Card) string {
 	if len(v.up) == 0 || v.room > 0 {
 		return ""
 	}
-	return fmt.Sprintf("%d up members, each with %d ready", len(v.up), heldReadyPerMember)
+	return fmt.Sprintf("%d up members, each at its width", len(v.up))
 }
 
 // noMemberJudged is (c) of a ready primary when no member is up: the

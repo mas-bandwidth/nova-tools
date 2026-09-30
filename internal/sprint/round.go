@@ -112,11 +112,13 @@ func (r *round) moved(name string) {
 }
 
 // member is the member the next card goes to: the first from the index that is
-// up and has fewer than most ready cards, the avoid member only when no other
-// is; "" when none has room. It does not move the index.
-func (r *round) member(up []string, q map[string]int, most int, avoid string) string {
-	m := r.scan(func(x string) bool { return x != avoid && contains(up, x) && q[x] < most })
-	if m == "" && avoid != "" && contains(up, avoid) && q[avoid] < most {
+// up and holds fewer cards (q) than its width (widths; a member with no width
+// there has no room), the avoid member only when no other is; "" when none has
+// room. It does not move the index.
+func (r *round) member(up []string, q, widths map[string]int, avoid string) string {
+	room := func(x string) bool { return contains(up, x) && q[x] < widths[x] }
+	m := r.scan(func(x string) bool { return x != avoid && room(x) })
+	if m == "" && avoid != "" && room(avoid) {
 		m = avoid
 	}
 	return m

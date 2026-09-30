@@ -291,8 +291,8 @@ func Waive(s State, p string, qs []string) (State, error) {
 // card of the attempt is dealt to m, which must be the next member round the
 // fleet (NextMember, errata 3 amendment 5; the rolling index moved past it): cut at generation 1, or, when it was withdrawn, the
 // same card dealt again at a new generation (G1, D3). limit, when above zero,
-// is the tick's MaxReadyPerMember (spec section 5): only members whose ready
-// queue is shorter are dealt to.
+// is the tick's Width (errata 3 amendment 9): only members holding fewer work
+// cards, ready and working, are dealt to.
 func Start(s State, p, m string, limit int) (State, error) {
 	if err := free(s); err != nil {
 		return s, err
@@ -304,7 +304,7 @@ func Start(s State, p, m string, limit int) (State, error) {
 	if limit > 0 {
 		var room []string
 		for _, x := range up {
-			if s.RL(x) < limit {
+			if s.Held(x) < limit {
 				room = append(room, x)
 			}
 		}
@@ -1013,7 +1013,7 @@ func (s State) level(moves map[string]string) (State, error) {
 		if !ok || w.Place != FReady || !has(up, w.Member) || !has(up, to) || to == w.Member {
 			return s, badChoice("level moves %s to %s: not a ready card of an up member to another", id, to)
 		}
-		if s.RL(to) >= s.RL(w.Member) {
+		if s.RL(to) >= s.RL(w.Member) || s.Held(to) >= Width {
 			return s, badChoice("level moves %s from %s (%d ready) to %s (%d ready)", id, w.Member, s.RL(w.Member), to, s.RL(to))
 		}
 		bySource[w.Member] = append(bySource[w.Member], id)
@@ -1037,21 +1037,22 @@ func (s State) level(moves map[string]string) (State, error) {
 	lo, hi := -1, -1
 	for _, x := range up {
 		l := n.RL(x)
-		if lo < 0 || l < lo {
+		if n.Held(x) < Width && (lo < 0 || l < lo) {
 			lo = l
 		}
 		if l > hi {
 			hi = l
 		}
 	}
-	if hi-lo > 1 {
+	if lo >= 0 && hi-lo > 1 {
 		return s, badChoice("the ready queues differ by %d after levelling", hi-lo)
 	}
 	return n, nil
 }
 
 // levelDefault levels when no choice was given: the newest card of the
-// first longest queue goes to the first shortest, until no two differ by more
+// first longest queue goes to the first shortest of the members below their
+// Width, until no two differ by more
 // than one.
 func (n *State) levelDefault() {
 	for {
@@ -1059,16 +1060,16 @@ func (n *State) levelDefault() {
 		if len(up) < 2 {
 			return
 		}
-		lo, hi := up[0], up[0]
+		lo, hi := "", up[0]
 		for _, x := range up {
-			if n.RL(x) < n.RL(lo) {
+			if n.Held(x) < Width && (lo == "" || n.RL(x) < n.RL(lo)) {
 				lo = x
 			}
 			if n.RL(x) > n.RL(hi) {
 				hi = x
 			}
 		}
-		if n.RL(hi)-n.RL(lo) <= 1 {
+		if lo == "" || n.RL(hi)-n.RL(lo) <= 1 {
 			return
 		}
 		newest := ""

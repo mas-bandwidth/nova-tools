@@ -832,12 +832,12 @@ func TestReworkSetsAvoidResetsRereads(t *testing.T) {
 	w = rvReview(t, 0, 1)
 	worked = w.s.Fleet.Card(w.s.Work.Card("s1-1").F("work")).Row
 	other = map[string]string{"m1": "m2", "m2": "m1"}[worked]
-	rvFillReady(w, other, MaxReadyPerMember)
+	rvFillReady(w, other, reviewMaxReady)
 	if c := rvCreates(rvPlanAt(w, ruleRework, now, "rework:s1-1").Plan, Fleet); len(c) != 1 || c[0].Create.Row != worked {
 		t.Errorf("with %s full, dealt to %+v, want %s", other, c, worked)
 	}
 	// nobody has room: the primary goes back to ready with avoid, into again
-	rvFillReady(w, worked, MaxReadyPerMember)
+	rvFillReady(w, worked, reviewMaxReady)
 	rp = rvPlanAt(w, ruleRework, now, "rework:s1-1")
 	move = rvEntries(rp.Plan, Work, "s1-1")
 	if len(rvCreates(rp.Plan, Fleet)) != 0 || len(move) != 1 || move[0].Move == nil || move[0].Move.Col != Ready || move[0].Set["avoid"] != worked || move[0].Set["rereads"] != "0" {

@@ -166,9 +166,16 @@ and it is the coordinator's decision, receipted.
 
 ## 5. The fleet
 
-- The machine's tick deals ready primaries, oldest first by score, each to the
-  up member with the shortest ready queue, no ready queue longer than two
-  (MaxReadyPerMember): work is dealt late and little.
+- A member is a fleet machine with a width: the most work cards it holds at
+  once, ready and working together (its child cap; `init --members m1:64` or
+  `fleet up m1 --width 64`; default 64). The fleet table shows it in the width
+  column beside working.
+- The machine's tick deals every ready primary the fleet has room for in one
+  step, in stream turns (each stream's oldest first by score), one card at a
+  time to the next up member round the fleet (the rolling index `deal_index`)
+  that is below its width: 150 ready over eight machines of width 64 all go to
+  working in one tick, 18 or 19 a machine. A machine at its width takes no
+  more.
 - A member going down: its unfinished work cards are dealt to up members.
 - No member up: unfinished work cards are withdrawn (kept in `withdrawn`);
   primaries return to ready. The tick deals the same card again at a new

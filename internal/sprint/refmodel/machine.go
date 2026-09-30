@@ -115,8 +115,8 @@ func (n *State) tickResume() {
 
 // tickDeal is T3: ready primaries in stream turns (one from each stream in
 // turn, streams in name order, each stream's oldest first by score), each to the up
-// next member round the fleet (NextMember), no ready queue longer than
-// MaxReadyPerMember; with no member up and primaries to deal, the no-member
+// next member round the fleet (NextMember), no member holding more work
+// cards, ready and working, than its Width (errata 3 amendment 9); with no member up and primaries to deal, the no-member
 // judgment once, closed when the condition clears (section 14).
 func (n *State) tickDeal(choice map[string]string) error {
 	var ready []string
@@ -160,7 +160,7 @@ func (n *State) tickDeal(choice map[string]string) error {
 	for _, p := range ready {
 		var room []string
 		for _, m := range n.Up() {
-			if n.RL(m) < MaxReadyPerMember {
+			if n.Held(m) < Width {
 				room = append(room, m)
 			}
 		}
@@ -171,7 +171,7 @@ func (n *State) tickDeal(choice map[string]string) error {
 		if m == "" {
 			m = n.NextMember(room)
 		}
-		next, err := Start(*n, p, m, MaxReadyPerMember)
+		next, err := Start(*n, p, m, Width)
 		if err != nil {
 			return err
 		}
