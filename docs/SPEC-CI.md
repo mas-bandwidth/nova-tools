@@ -1249,14 +1249,14 @@ its shard is the macOS and Linux compile of the race build.
 ### `release-legs` — the release and its dry run build one leg per platform and sum the whole set on one machine
 
 **The rule.** release.yml's `build` and certification.yml's `release-build` are a
-matrix of one leg per line of `.github/scripts/release-targets`, the same list in
-all three places. Each leg's only compile is `.github/scripts/release-build.sh
+matrix of one leg per line of `tools/ghrelease/release-targets`, the same list in
+all three places. Each leg's only compile is `go run ./tools/ghrelease build
 <stamp> <goos> <goarch> dist` (every `cmd/*/` tool, `-trimpath`, `CGO_ENABLED=0`,
-the ldflags `release-ldflags.sh` composes, named `<tool>_<stamp>_<goos>_<goarch>[.exe]`),
+the ldflags `ghrelease ldflags` composes, named `<tool>_<stamp>_<goos>_<goarch>[.exe]`),
 and each uploads the artifact `release-<goos>-<goarch>`. release.yml's `release`
 and certification.yml's `release-dry-run` need those legs, download every
-`release-*` artifact into one directory, run `assert-version-stamp.sh` over the
-linux/amd64 binaries, and then run `.github/scripts/release-sums.sh`, which
+`release-*` artifact into one directory, run `ghrelease stamp` over the
+linux/amd64 binaries, and then run `ghrelease sums`, which
 refuses a directory that is not exactly the shipped set and writes and verifies
 `SHA256SUMS` over the whole of it. In release.yml that runs in the step that
 attaches the set to the release. release.yml restores the certification build
@@ -1266,21 +1266,28 @@ does not fit the two-minute cap: the cap cancels it inside that build, and
 release.yml's build is the same loop. Two copies of
 a target list drift, and a dry run that builds differently from the release proves
 nothing about the release.
-**The test.** `TestReleaseMatricesAreTheTargetsFile` and
-`TestReleaseSumsAreOneMachineOverTheWholeSet`
+**The test.** `TestReleaseMatricesAreTheTargetsFile`,
+`TestReleaseSumsAreOneMachineOverTheWholeSet`,
+`TestEveryJobThatRunsGhreleaseSetsUpGoFirst` (a job that runs `go run ./tools/ghrelease`
+carries the pinned `actions/setup-go` with `go-version-file: go.mod` before its first
+call) and `TestNoWorkflowStepRunsAReleaseScript` (no release or certification step runs a
+release shell script; the verbs are `tools/ghrelease`)
 (`internal/ci/release_matrix_class_test.go`): both matrices equal the targets
-file; no `go build` in a build leg, one `release-build.sh` call over the matrix
+file; no `go build` in a build leg, one `ghrelease build` call over the matrix
 target, one `release-<goos>-<goarch>` upload; no cache save in release.yml; the
 final job needs the legs and downloads every `release-*` artifact, asserts the
-stamp, then runs `release-sums.sh`, in release.yml in the attaching step.
-**Its allowlist.** None. The targets file is the list.
-**Its remedy line.** A platform is added or dropped in `release-targets` and in
-both matrices in one change; a compile change goes into `release-build.sh`.
+stamp, then runs `ghrelease sums`, in release.yml in the attaching step
+(`ghrelease attach`).
+**Its allowlist.** None. The targets file is the list, embedded in `tools/ghrelease`.
+**Its remedy line.** A platform is added or dropped in `tools/ghrelease/release-targets`
+and in both matrices in one change; a compile change goes into `tools/ghrelease/build.go`.
 **Its narrowings.** The tests read the workflow text; whether a leg fits the cap is
-measured by a certification run. The negative controls of the release scripts
-(stamp refusals, tag alphabet, certified gate, upload boundary) run in
-certification.yml's `release-checks`, which builds its fixtures on the
-linux-amd64 leg's cache; they are fixtures and are never summed or shipped.
+measured by a certification run. The negative controls of the release verbs that
+need no binary (stamp refusals, tag alphabet, certified gate, upload boundary) are
+unit tests of `tools/ghrelease`; the ones that need this tree's real binaries (an
+unstamped build, a tool that loses its stamp) are `ghrelease controls`, run in
+certification.yml's `release-checks`, which builds them on the linux-amd64 leg's
+cache; they are fixtures and are never summed or shipped.
 
 ### `onboarding` — every command meets the onboarding standard
 
@@ -1408,8 +1415,8 @@ repository's own top-level directories (`cmd`, `internal`, `docs`, `tools`,
 `scripts`, `testdata`, `fleet`, `infra`, `.github`) and carries a slash must
 name a file or a directory that is in the tree, or be named in the allowlist
 with its reason.
-**The mistake it prevents.** A comment that places `bench-standard.sh` under
-`scripts/` when the file is `tools/bench-standard.sh` sends a friend following it to
+**The mistake it prevents.** A comment that places the bench standard's witness under
+`scripts/` when it is `tools/benchstandard` sends a friend following it to
 nothing, because a path inside a comment or a string is just text to Go and
 nothing else in CI has an opinion about it. Prompts give positive instructions
 with EXACT paths; the text a friend reads IS the mechanism, so a dead path is
@@ -1744,9 +1751,9 @@ execute, `~/go/bin` granted under neither, and on darwin the installed trees
 `/opt/homebrew/opt/openjdk`, `/Library/Java/JavaVirtualMachines`,
 `/usr/local/share/dotnet`) read **and execute**, never a launcher directory.
 The linux side of the agreement is the linux provisioning standard:
-`tools/bench-standard.sh` carries the linux names between its
-`NOVA_TOOLCHAIN_ROOTS` markers and drifts on a missing one. A Mac bench has no
-script standard, because a Mac's toolchains are installed rather than
+`tools/benchstandard` carries the linux names between its
+`NOVA_TOOLCHAIN_ROOTS` markers (in `checks.go`) and drifts on a missing one. A Mac bench has no
+witness, because a Mac's toolchains are installed rather than
 provisioned into a home, so the darwin side is the wall's list alone.
 The granted roots are the one list in `internal/swarm/toolchain.go`
 (`toolchainRoots`, per GOOS, each with its kind).
@@ -1786,18 +1793,18 @@ Cellar prefix is read off the launcher rather than guessed by
 
 ### `walltoolchain` — a toolchain on PATH is a toolchain the WALL can execute
 
-**The rule.** `tools/bench-standard.sh` check **(3c)** resolves each of `go` and
-`sbcl` off PATH with `readlink -f` and drifts unless the real path lies under a
+**The rule.** `tools/benchstandard`'s executable-root check resolves each of `go` and
+`sbcl` off PATH, links followed, and drifts unless the real path lies under a
 read root the sandbox wall grants: the WHOLE linux system table
 (`linuxReadRoots` in `internal/sandbox/wrap_linux.go`, copied between the
-`NOVA_WALL_READ_ROOTS` markers — `/usr /bin /sbin /lib /lib64 /etc
+`NOVA_WALL_READ_ROOTS` markers of `tools/benchstandard/checks.go` — `/usr /bin /sbin /lib /lib64 /etc
 /run/systemd/resolve /opt /dev /proc`, every one landlock's read subset, which
 carries execute), the directory `/etc/resolv.conf` resolves to on this machine
-(the wall's `linuxRoots`; `NOVA_RESOLV_CONF` is the script's test seam
+(the wall's `linuxRoots`; `NOVA_RESOLV_CONF` is the witness's test seam
 for that file), and `$HOME/sdk` from `internal/swarm/toolchain.go`. The line names the PATH entry, the path it really
 resolves to, the granted home, and the remedy — `$HOME/sdk/<tool>-<ver>/` — so
-the finding carries its own fix. `(3c)` is about EXECUTABILITY INSIDE THE WALL
-and is a separate line from `(3)`'s `sbcl not on PATH`, which is about presence:
+the finding carries its own fix. That check is about EXECUTABILITY INSIDE THE WALL
+and is a separate line from `sbcl not on PATH`, which is about presence:
 a bench can fail either, both, or neither.
 **The mistake it prevents.** `command -v sbcl` answers about the bench user's
 own shell. A card runs behind the wall, and an interpreter at
@@ -1806,20 +1813,19 @@ to the card — so the bench passes the standard and every card on it dies, and
 the work crowds onto the one bench whose toolchain happens to sit under a
 granted root. Moved under `$HOME/sdk/<tool>-<ver>/`, the same toolchain runs
 inside the wall.
-**The test.** `TestBenchStandardDriftsOnAToolTheWallCannotExecute` and
-`TestBenchStandardAcceptsAToolUnderAGrantedRoot`
-(`internal/ci/benchstandard_wall_toolchain_test.go`), in the shape
-`benchstandard_disk_functional_test.go` already uses: run the REAL script with a FAKE PATH
-layout and a HOME of its own. The negative half puts the tool at
+**The test.** The witness's own tests, in `tools/benchstandard/wall_test.go`, run
+the witness against a FAKE bench: a real directory tree under a HOME of its own
+and a host whose processes answer from a script. The negative half puts the tool at
 `$HOME/.local/bin` — a real misplacement — and demands exactly
 one DRIFT line carrying the remedy. The positive half puts it at
 `$HOME/sdk/<tool>-<ver>/bin` and demands NO line, which is the half that catches
 a check written as "always drift".
-`TestBenchStandardAndTheWallNameTheSameReadRoots` holds the script's marker
+`TestBenchStandardAndTheWallNameTheSameReadRoots`
+(`internal/ci/benchstandard_wall_toolchain_test.go`) holds the witness's marker
 block equal, in order, to `linuxReadRoots` read from the wall's source, and the
-root loop to reading it — a hand-picked subset without `/etc`,
+check to reading it — a hand-picked subset without `/etc`,
 `/run/systemd/resolve`, `/dev` or `/proc` rejects a conforming bench.
-`TestBenchStandardGrantsTheResolverDirectoryTheWallGrants` is the dynamic root:
+The same file holds the dynamic root:
 a WSL2-shaped symlinked resolver config makes a tool under its directory
 accepted, and the same layout with no resolver pointing there drifts.
 **Its allowlist.** None. Both tools are held to the same rule by one loop; a
@@ -1834,7 +1840,7 @@ would in fact grant execute on that root — `toolchainroots` holds the kinds, a
 only `sdk` is the execute kind, so `go/pkg/mod` is deliberately not a root this
 check accepts; it covers `go` and `sbcl` only, so a third toolchain added to a
 bench is invisible until it joins the loop; and the root list here is the LINUX
-one, because `tools/bench-standard.sh` is the linux bench's standard.
+one, because `tools/benchstandard` is the linux bench's witness.
 
 ### `ciworkspace` — the workspace cleanup never fails a job before checkout
 

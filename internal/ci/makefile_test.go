@@ -181,7 +181,7 @@ func TestMakefileIsTheOneEntry(t *testing.T) {
 
 // TestMakefilePreflightTarget verifies that Makefile declares the preflight
 // target (#2498 Item S4), that it is .PHONY, listed in help, and executes
-// tools/preflight.sh.
+// tools/preflight.
 func TestMakefilePreflightTarget(t *testing.T) {
 	t.Parallel()
 
@@ -199,8 +199,8 @@ func TestMakefilePreflightTarget(t *testing.T) {
 		t.Errorf("help target does not list make preflight:\n%s", help)
 	}
 	recipe := strings.Join(mk.recipeFor("preflight"), "\n")
-	if !strings.Contains(recipe, "tools/preflight.sh") {
-		t.Errorf("preflight recipe does not invoke tools/preflight.sh: %q", recipe)
+	if !strings.Contains(recipe, "./tools/preflight") {
+		t.Errorf("preflight recipe does not invoke tools/preflight: %q", recipe)
 	}
 }
 

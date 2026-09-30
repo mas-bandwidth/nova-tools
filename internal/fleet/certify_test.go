@@ -305,7 +305,7 @@ func TestAWorkloadWithoutARoleOrAnExpectIsRefused(t *testing.T) {
 func TestTheStandardHashMovesWithTheStandardAndWithTheWorkloads(t *testing.T) {
 	t.Parallel()
 
-	standard := writeFile(t, "bench-standard.sh", "echo standard v1\n")
+	standard := writeFile(t, "standard.go", "echo standard v1\n")
 	loads, err := StandardWorkloads()
 	if err != nil {
 		t.Fatal(err)
@@ -321,7 +321,7 @@ func TestTheStandardHashMovesWithTheStandardAndWithTheWorkloads(t *testing.T) {
 	if first != again {
 		t.Fatalf("the hash is not stable: %s then %s", first, again)
 	}
-	moved := writeFile(t, "bench-standard.sh", "echo standard v2\n")
+	moved := writeFile(t, "standard.go", "echo standard v2\n")
 	if h, _ := StandardHash(moved, loads); h == first {
 		t.Error("the standard file changed and the hash did not")
 	}
