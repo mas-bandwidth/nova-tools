@@ -118,7 +118,7 @@ func (st *Store) CardOf(ctx context.Context, id string) (CardInfo, error) {
 	if err != nil {
 		return v, err
 	}
-	rs, err := st.B.ReadSet(ctx, st.Names.Table(sprint.Work), []string{st.sid(id)})
+	rs, err := st.readSet(ctx, st.Names.Table(sprint.Work), []string{st.sid(id)})
 	if err != nil {
 		return v, err
 	}
@@ -192,7 +192,7 @@ func (st *Store) records(ctx context.Context, logical string, ids []string) ([]*
 	var out []*sprint.Card
 	for start := 0; start < len(ids); start += ntable.LimitReadSetMembers {
 		end := min(start+ntable.LimitReadSetMembers, len(ids))
-		rs, err := st.B.ReadSet(ctx, st.Names.Table(logical), st.sids(ids[start:end]))
+		rs, err := st.readSet(ctx, st.Names.Table(logical), st.sids(ids[start:end]))
 		if err != nil {
 			return nil, err
 		}

@@ -57,6 +57,7 @@ func (st *Store) loadOnce(ctx context.Context, tables []string, extras func(*spr
 	if err != nil {
 		return nil, err
 	}
+	st.stats().reads.Add(int64(len(tables)))
 	ids, err := st.B.CellIDs(ctx, shapes)
 	if err != nil {
 		return nil, err
@@ -148,7 +149,7 @@ func (st *Store) shapes(ctx context.Context, stored []string) ([]ntable.Table, e
 func (st *Store) readInto(ctx context.Context, t *sprint.Table, ids []string, placed bool) error {
 	for start := 0; start < len(ids); start += ntable.LimitReadSetMembers {
 		end := min(start+ntable.LimitReadSetMembers, len(ids))
-		res, err := st.B.ReadSet(ctx, st.Names.Table(t.Name), ids[start:end])
+		res, err := st.readSet(ctx, st.Names.Table(t.Name), ids[start:end])
 		if err != nil {
 			return err
 		}
@@ -167,4 +168,11 @@ func (st *Store) readInto(ctx context.Context, t *sprint.Table, ids []string, pl
 		}
 	}
 	return nil
+}
+
+// readSet is one read set of a table, its records counted (stats.go).
+func (st *Store) readSet(ctx context.Context, table string, ids []string) (ntable.ReadSetResult, error) {
+	res, err := st.B.ReadSet(ctx, table, ids)
+	st.stats().rows.Add(int64(len(res.Members)))
+	return res, err
 }

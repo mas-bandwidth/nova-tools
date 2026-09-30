@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"sync/atomic"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
@@ -25,6 +26,9 @@ type Redis struct {
 	// as it was, not the active one.
 	Pinned uint64
 	Old    bool
+	// trips counts the client's round trips, once CountTrips is called
+	// (stats.go); the backend's pinned copies share it.
+	trips *atomic.Int64
 }
 
 func (r *Redis) key(name string) string { return r.Names.KeyAt(name, r.Pinned) }

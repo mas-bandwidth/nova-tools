@@ -73,6 +73,9 @@ type Store struct {
 	// Updates is the tick's table updates, in order; nil is the tick's own
 	// (sprint.TickTables). A test gives its own.
 	Updates []sprint.TableUpdate
+	// Stats is what the store's reads cost (stats.go); nil is made on the
+	// first tick. Its pinned copies share it.
+	Stats   *Stats
 	root    Backend   // the backend before pinning
 	epoch   uint64    // the epoch the store is pinned to
 	cleared time.Time // when the pinned epoch began
@@ -1313,7 +1316,7 @@ func (st *Store) stillExpected(ctx context.Context, man ntable.BatchManifest) (u
 	found := map[string]ntable.ReadSetMember{}
 	for start := 0; start < len(ids); start += ntable.LimitReadSetMembers {
 		end := min(start+ntable.LimitReadSetMembers, len(ids))
-		rs, err := st.B.ReadSet(ctx, man.Table, ids[start:end])
+		rs, err := st.readSet(ctx, man.Table, ids[start:end])
 		if err != nil {
 			return 0, err
 		}
@@ -1526,7 +1529,7 @@ func (st *Store) applyEntries(ctx context.Context, man ntable.BatchManifest, bar
 		one.OperationID = fmt.Sprintf("%s.e%d", man.OperationID, j+1)
 		outcome := ""
 		for a := 0; a < st.attempts() && outcome == ""; a++ {
-			rs, err := st.B.ReadSet(ctx, man.Table, []string{e.ID})
+			rs, err := st.readSet(ctx, man.Table, []string{e.ID})
 			if err != nil {
 				return nil, err
 			}

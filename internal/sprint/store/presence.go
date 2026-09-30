@@ -245,7 +245,7 @@ func (st *Store) SyncFleet(ctx context.Context) (bool, error) {
 	if len(ids) == 0 {
 		return false, nil
 	}
-	rs, err := pinned.B.ReadSet(ctx, shape.Name, ids)
+	rs, err := pinned.readSet(ctx, shape.Name, ids)
 	if err != nil {
 		return false, err
 	}

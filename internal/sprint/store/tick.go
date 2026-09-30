@@ -392,6 +392,9 @@ type TickResult struct {
 	// Times is how long each part the tick ran took, in order, its drains
 	// before it included: what a tick spends its time on.
 	Times []PartTime `json:"times,omitempty"`
+	// Took is the tick's wall time, from its first read of the machine's
+	// state to its heartbeat.
+	Took time.Duration `json:"took_ns"`
 }
 
 // PartTime is one part of a tick and the time its step took.
@@ -399,6 +402,14 @@ type PartTime struct {
 	Table string        `json:"table,omitempty"`
 	Name  string        `json:"name"`
 	Took  time.Duration `json:"took_ns"`
+	// Trips is the round trips the part made to the store, Reads the
+	// whole-table reads it took, Rows the records its reads brought back,
+	// and Stale the reads of the tick's twin it refused because another
+	// writer wrote since (stats.go).
+	Trips int64 `json:"trips"`
+	Reads int64 `json:"reads"`
+	Rows  int64 `json:"rows"`
+	Stale int64 `json:"stale,omitempty"`
 }
 
 // TableRows is one table of a tick and the rows its parts changed in it.
@@ -570,8 +581,11 @@ func staleRefusal(refused []sprint.Refusal, at uint64) bool {
 // state: every step it runs carries that epoch, and a clear since (which sets
 // the machine STOPPED first) stops the tick without writing anything at the
 // new epoch.
-func (st *Store) Tick(ctx context.Context) (TickResult, error) {
-	st, err := st.repin(ctx)
+func (st *Store) Tick(ctx context.Context) (res TickResult, err error) {
+	began := time.Now()
+	st.stats()
+	defer func() { res.Took = time.Since(began) }()
+	st, err = st.repin(ctx)
 	if err != nil {
 		return TickResult{}, err
 	}
@@ -579,7 +593,7 @@ func (st *Store) Tick(ctx context.Context) (TickResult, error) {
 	if err != nil {
 		return TickResult{}, err
 	}
-	res := TickResult{State: m.StateWord(), Epoch: st.epoch}
+	res = TickResult{State: m.StateWord(), Epoch: st.epoch}
 	if !m.Running() {
 		// A STOPPED machine moves nothing; the tick shows the fleet as its
 		// beats say and says it looked, so start can tell a run loop is
@@ -601,6 +615,7 @@ func (st *Store) Tick(ctx context.Context) (TickResult, error) {
 	seen, err := st.tick(ctx, m, hb, &res)
 	if err == nil && res.Halted == "" && res.Done == "" {
 		// The reminder duty is a part too: it begins only while RUNNING.
+		mt := st.meter()
 		if halted, herr := st.halted(ctx, &res, "remind"); herr != nil {
 			err = herr
 		} else if !halted {
@@ -608,14 +623,16 @@ func (st *Store) Tick(ctx context.Context) (TickResult, error) {
 				err = fmt.Errorf("remind: %w", rerr)
 			}
 		}
+		res.Times = append(res.Times, mt.part("", "remind"))
 	}
 	if err == nil && res.Stale == "" {
 		// the coordinator's one wake of the tick, last (tickend.go); a tick the
 		// clear overtook writes nothing more
-		ended := time.Now()
+		mt := st.meter()
 		res.TickEnd, err = st.tickEnd(ctx)
-		res.Times = append(res.Times, PartTime{Name: "tick end", Took: time.Since(ended)})
+		res.Times = append(res.Times, mt.part("", "tick end"))
 	}
+	defer func(mt meter) { res.Times = append(res.Times, mt.part("", "heartbeat")) }(st.meter())
 	now := st.now()
 	if err == nil && res.Idle && res.Halted == "" && len(res.Parts) == 0 && hb.Error == "" && now.Sub(hb.At) < HeartbeatIdleEvery && !hb.At.Before(m.Since) &&
 		seen.Revisions == hb.Revisions && slices.Equal(seen.Fresh, hb.Fresh) {
@@ -694,6 +711,7 @@ func (st *Store) look(ctx context.Context) (Heartbeat, []ntable.Table, error) {
 // halt, or moves due past a bound) leaves a full read due (Full zero), so the
 // next tick reads the state and does the rest.
 func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickResult) (Heartbeat, error) {
+	looked := st.meter()
 	f, err := st.B.ReadFence(ctx)
 	if err != nil {
 		return last, err
@@ -757,6 +775,7 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	}
 	now := st.now()
 	seen.Fresh = freshOf(fleet, beats, now)
+	res.Times = append(res.Times, looked.part("", "look"))
 	// Every tick reads and plans every table, whatever changed since the last
 	// (errata 3 amendment 10: "each table should be updated per-tick at least
 	// once"): no tick is skipped because nothing changed, and no part waits for
@@ -764,9 +783,9 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	seen.Full = now
 	// Every fleet cell up to date before the parts, the control cards read:
 	// the revisions it leaves are what this tick saw.
-	synced := time.Now()
+	synced := st.meter()
 	wrote, err := st.SyncFleet(ctx)
-	res.Times = append(res.Times, PartTime{Name: "fleet display", Took: time.Since(synced)})
+	res.Times = append(res.Times, synced.part("", "fleet display"))
 	if err != nil && st.clearedUnder(ctx, res) {
 		return last, nil
 	}
@@ -787,9 +806,9 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	if err != nil {
 		return last, err
 	}
-	read := time.Now()
+	read := st.meter()
 	snap, _, err := pinned.Fenced(withBudget(ctx), All, tickExtras, nil)
-	res.Times = append(res.Times, PartTime{Name: "first read", Took: time.Since(read)})
+	res.Times = append(res.Times, read.part("", "first read"))
 	unfinished := seen
 	unfinished.Full = time.Time{}
 	if errors.Is(err, errCleared) {
@@ -920,6 +939,7 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 				}
 			}
 		}
+		began := t.st.meter()
 		if halted, err := t.st.halted(t.ctx, t.res, part.Name); err != nil {
 			t.err = err
 			return tickFailed
@@ -947,7 +967,6 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 		}
 		step := TickPartStep(part.Name, fn, t.req, &t.at, nil, &due)
 		step.Pump, step.Drain = table == sprint.Work, drain
-		began := time.Now()
 		r, err := t.st.Run(t.ctx, step)
 		for _, d := range r.Drained {
 			// a drain the part's step made before it planned is the tick's
@@ -964,7 +983,7 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 				t.res.addRows(sprint.PlanRows(planned))
 			}
 		}
-		t.res.Times = append(t.res.Times, PartTime{Table: table, Name: part.Name, Took: time.Since(began)})
+		t.res.Times = append(t.res.Times, began.part(table, part.Name))
 		t.ran = true
 		var cleared *ClearedError
 		if errors.As(err, &cleared) {

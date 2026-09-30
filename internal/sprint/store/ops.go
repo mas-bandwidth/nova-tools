@@ -229,7 +229,7 @@ func (st *Store) SyncMirrors(ctx context.Context) error {
 		if len(ids) == 0 {
 			continue
 		}
-		rs, err := st.B.ReadSet(ctx, shape.Name, ids)
+		rs, err := st.readSet(ctx, shape.Name, ids)
 		if err != nil {
 			return err
 		}
@@ -460,7 +460,7 @@ func (st *Store) StreamClocks(ctx context.Context) ([]sprint.StreamClock, error)
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	rs, err := st.B.ReadSet(ctx, name, ids)
+	rs, err := st.readSet(ctx, name, ids)
 	if err != nil {
 		return nil, err
 	}
