@@ -101,7 +101,7 @@ func runVerify(args []string, stdout, stderr io.Writer, q workgh.Query) int {
 	diffs := workfile.Diff(tree, fresh, c.repos)
 	for i, d := range diffs {
 		if *maxLines > 0 && i >= *maxLines {
-			fmt.Fprintf(stdout, "VERIFY MORE kind=difference shown=%d total=%d nova-work verify --tree %s --max 0\n", *maxLines, len(diffs), oneline.Field(*treePath))
+			fmt.Fprintf(stdout, "VERIFY MORE kind=difference shown=%d total=%d run: nova-work verify --tree %s --max 0\n", *maxLines, len(diffs), oneline.Field(*treePath))
 			break
 		}
 		switch d.Kind {
