@@ -27,4 +27,3 @@ func TestRedisMemberDownRedealsAndLevelGoRoundTheFleet(t *testing.T) {
 	h, _ := liveHarness(t)
 	dealRingMemberDownAndLevel(t, h)
 }
-

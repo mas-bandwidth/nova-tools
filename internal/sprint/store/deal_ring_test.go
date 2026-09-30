@@ -188,19 +188,19 @@ func TestTheIndexesGoOnFromTickToTick(t *testing.T) {
 // down, its cards and any levelled cards distribute round the fleet from the
 // deal's rolling index (deal_index) rather than to the shortest queue by name
 // (errata 3 amendment 5):
-// 1. Eight members (m1..m8) are up. 12 cards are dealt, placing 2 cards on
-//    m1..m4 and 1 card on m5..m8, leaving deal_index at m4.
-// 2. Members m2..m8 finish their work, leaving m1 with 2 ready cards and
-//    m2..m8 with 0 ready cards. The deal_index remains m4.
-// 3. m1's beat lapses and m1 goes down at the tick. Its 2 cards are redealt:
-//    starting past deal_index (m4), the cards go to m5 and m6 (the next up
-//    members with room), advancing deal_index to m6. Under shortest queue by
-//    name, m2 and m3 (having count 0 and earlier names) would have been picked.
-// 4. Queues are made uneven while m1 is down: 9 cards are dealt across m2..m8
-//    advancing deal_index to m6 (m5 has 2, m6 has 2, m2..m4 and m7..m8 have 1).
-// 5. m1 beats again and comes up. Levelling (R7 / T4) moves an excess card
-//    round the fleet past deal_index (m6) to m1 (below the mean), moving
-//    deal_index past m1.
+//  1. Eight members (m1..m8) are up. 12 cards are dealt, placing 2 cards on
+//     m1..m4 and 1 card on m5..m8, leaving deal_index at m4.
+//  2. Members m2..m8 finish their work, leaving m1 with 2 ready cards and
+//     m2..m8 with 0 ready cards. The deal_index remains m4.
+//  3. m1's beat lapses and m1 goes down at the tick. Its 2 cards are redealt:
+//     starting past deal_index (m4), the cards go to m5 and m6 (the next up
+//     members with room), advancing deal_index to m6. Under shortest queue by
+//     name, m2 and m3 (having count 0 and earlier names) would have been picked.
+//  4. Queues are made uneven while m1 is down: 9 cards are dealt across m2..m8
+//     advancing deal_index to m6 (m5 has 2, m6 has 2, m2..m4 and m7..m8 have 1).
+//  5. m1 beats again and comes up. Levelling (R7 / T4) moves an excess card
+//     round the fleet past deal_index (m6) to m1 (below the mean), moving
+//     deal_index past m1.
 func dealRingMemberDownAndLevel(t *testing.T, h *harness) {
 	ringFleet(h)
 	h.startMachine()
@@ -325,4 +325,3 @@ func TestMemberDownRedealsAndLevelGoRoundTheFleet(t *testing.T) {
 	t.Parallel()
 	dealRingMemberDownAndLevel(t, newHarness(t))
 }
-
