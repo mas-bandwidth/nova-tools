@@ -11,8 +11,10 @@ without saying what it wanted. Every binary under `cmd/` meets all six points.
    exit 2 is "could not run", and an example exiting 2 is a broken example.
 
    The bare command used to BE the banner, and that half is now the other way
-   round: an invocation the tool cannot run prints one line —
-   `<tool>[ <verb>]: <what was wrong>; run: <tool> help` — and exits 2, while
+   round: an invocation the tool cannot run prints one line per problem —
+   `<TOKEN> REFUSED: <what was wrong>; run: <tool> help` on a tool built on
+   `internal/tool`, `<tool>[ <verb>]: <what was wrong>; run: <tool> help` on one
+   not yet built on it — and exits 2, while
    `<tool> help` prints the banner on stdout and exits 0. The reason is the same
    newcomer: a flag typo cost between 1,900 and 6,500 bytes of banner to say
    that a dash was in the wrong place, and a harness reading a tool's stderr

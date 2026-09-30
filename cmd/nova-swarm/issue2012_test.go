@@ -40,7 +40,7 @@ func fleetScript(t *testing.T, name, body string) string {
 const issue2012Mapfile = `#!/bin/bash
 mapfile -t cards < "$queue"
 for c in "${cards[@]}"; do
-	nova-swarm batch --id "$c" --deadline 1800
+	nova-swarm native --label "$c" --deadline 30m
 done
 `
 
@@ -142,7 +142,7 @@ func TestIssue2012(t *testing.T) {
 			"# read the queue the 3.2 way: no mapfile, every expansion quoted",
 			"while IFS= read -r c; do",
 			"	[ -n \"$c\" ] || continue",
-			"	nova-swarm batch --id \"$c\" --deadline 1800",
+			"	nova-swarm native --label \"$c\" --deadline 30m",
 			"done < \"$queue\"",
 			"",
 		}, "\n")

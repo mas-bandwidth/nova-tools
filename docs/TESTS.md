@@ -443,8 +443,8 @@ MEMORY NOTE a hit in a dated log class is evidence the event was recorded, not t
 
 Fixture: owned directories under `t.TempDir()` and fake harnesses. The transcript
 comparators invoke the dispatcher with fixture paths and compare its output with
-the examples below. The [quickstart guide](nova-swarm-quickstart.md) includes a
-complete local batch fixture using a synthetic runner.
+the examples below. The [quickstart guide](nova-swarm-quickstart.md) shows a
+`native` run and a sprint member.
 
 ### The budget word on the native route
 
@@ -742,8 +742,8 @@ $ nova-cairn append --store ./cairns --session s1 --entry e1 --text "the words t
 APPEND OK session=s1 entry=e1 source=bench-a/session-7#L3 persisted=true published=false publish=manual duplicate=false stamp=2026-09-17T12:05:00Z
 
 $ nova-cairn index --store ./cairns
+INDEX OK sessions=1 entries=1
 INDEX ENTRY session=s1 entry=e1 stamp=2026-09-17T12:05:00Z bytes=17 source=bench-a/session-7#L3
-INDEX COVERAGE sessions=1 entries=1 shown=1
 
 $ nova-cairn receipt --store ./cairns --session s1 --entry e1
 RECEIPT OK session=s1 entry=e1 stamp=2026-09-17T12:05:00Z bytes=17 source=bench-a/session-7#L3 persisted=true published=false publish=manual

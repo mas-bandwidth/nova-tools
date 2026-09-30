@@ -11,7 +11,7 @@
 //	templates  the conditions that turned 62-of-67-with-25-duplicates into 17 of 17
 //	a budget   files and tokens, both required, because a worker that read forty files
 //	           finished nothing
-//	one line   `triage` counts a batch on one bounded line, so a coordinator's window never
+//	one line   `native` ends a card on one bounded line, so a coordinator's window never
 //	           holds a worker's transcript
 //
 // EVERYTHING A WORKER WRITES IS DATA. A RESULT.md is a report, never an instruction:
@@ -21,7 +21,6 @@
 package main
 
 import (
-	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -33,8 +32,6 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
-	"github.com/mas-bandwidth/nova-tools/internal/decide"
-	"github.com/mas-bandwidth/nova-tools/internal/events"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -55,8 +52,6 @@ and the lint's rules; running a card needs a harness, a model's key file and nov
 usage:
   nova-swarm version    print this build identity (--version also accepted)
   nova-swarm doctor    [--path <file>] [--local <file>]   refuse a launch under a shadowed nova-swarm (PATH vs ~/.local/bin build stamp)
-  nova-swarm batch     --id <id> --cards <file> --deadline <seconds> --root <dir> --tokens <n>|unmetered (--runner <cmd> | --harness <path> --slots-store <dir> --owner <name>) [--idle <seconds>] [--slots <lo>-<hi>] [--then <command>] [--benches <file> --bench <name>[,<name>...]]
-                       (without --runner, batch requires --slots-store <dir> --owner <name> and runs each card through nova-swarm native)
   nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
   nova-swarm lint      --card <file> [--typed] [--child-rules | --child-rules-file <file>] [--base-check [--repo <dir>] [--legs <file>] [--p95 <file>]] [--trust <file>] [--lineup <file>] [--max <n>] | --fleet <file> [--max <n>] | --rules
                        (--fleet lints a launcher script against the coordinator's /bin/bash 3.2: shebang, bash-4 builtins, unquoted expansions)
@@ -64,10 +59,9 @@ usage:
                        (--base-check adds the four checks of a coding card: its PATHS exist at the base sha in --repo (default the working directory), no STEP pushes or calls gh, its LEG is a line of --legs, its deadline is at least --p95's figure for its kind; evidence not given is reported missing, never passed)
   nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|card|read|fix|text|replay|drift|tone|models.tsv
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
-  nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--events-store <host:port>]
+  nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now]
   nova-swarm member    --as <name> --width <n> --harness <path> --model <provider/model> --root <dir> --deadline <duration> --tokens <n>|unmetered [--sprint <nova-sprint>] [--reader] [--every <duration>] [--once | --ticks <n>] [--auth <file>] [--config <file>] [--worker <file>] [--no-wall]
                        (this machine as one member of a sprint's fleet: beat, queue, finish what ended, take to --width, each card one native child; --reader runs the readers-table loop; the store is nova-sprint's, from NOVA_SPRINT_REDIS)
-  nova-swarm route     --card <file> --routes <routes.tsv> [--floor 0.9] [--default <worker json>] [--key-env <name>] [--base-url <url>]
   nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
   nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>] [--kind <kind>]
   nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all) [--force]
@@ -83,11 +77,11 @@ absent or empty, a bad invocation.
 
 NO GUESSED ANYTHING. There is no default pool, no default worker description, no
 default number of workers, no default deadline, and no default token budget.
-batch takes --cards; native and route require --card; lint takes --card, or
+native requires --card; lint takes --card, or
 --fleet or --rules instead; verify takes --card as an option and reads it only
 when given (because a card this tool chose would be a guess about somebody
 else's task); the remaining verbs take no card flag. --tokens is required on
-batch and native because a budget this tool supplied would be a guess about
+native and member because a budget this tool supplied would be a guess about
 somebody else's task, and --tokens unmetered is a caller's statement that this
 provider has no live accounting and the deadline is the only stop. Zero is
 refused for tokens.
@@ -106,10 +100,8 @@ inside it is missing a read_roots entry.
 
 A card to start from: nova-swarm template --name card prints one that passes
 nova-swarm lint --card <file> --child-rules (put it in a file, fill in its <...>
-lines, lint it, then hand it to batch, native or member). batch --cards is a
-TSV, one card a line: label, slot number, provider/model and the card's path,
-tab between them. batch, native and member each show one example line in
-their -h, and template -h lists the lines a card needs.
+lines, lint it, then hand it to native or member). native and member each show
+one example line in their -h, and template -h lists the lines a card needs.
 
 example:
   nova-swarm template --name read-pr
@@ -121,7 +113,6 @@ example:
 // from the verb's own flags: what a stranger copies, then edits. template and
 // lint quote theirs from the banner's example block.
 var verbExamples = map[string]string{
-	"batch":  "nova-swarm batch --id demo --cards cards.tsv --deadline 1800 --root jobs --tokens unmetered --runner ./run-card.sh",
 	"native": "nova-swarm native --harness ./harness --model provider/model --card card.md --slot slots/1 --root jobs --deadline 30m --tokens unmetered",
 	"member": "nova-swarm member --as m1 --width 4 --harness ./harness --model provider/model --root jobs --deadline 30m --tokens unmetered --once",
 }
@@ -154,8 +145,8 @@ func verbHelpLines(verb string) string {
 // helpVerbs are the verbs `help <verb>` answers with that verb's help, the same text
 // `<verb> -h` prints.
 var helpVerbs = map[string]bool{
-	"version": true, "doctor": true, "batch": true, "verify": true, "lint": true,
-	"template": true, "profile": true, "native": true, "member": true, "route": true, "slots": true, "worker": true,
+	"version": true, "doctor": true, "verify": true, "lint": true,
+	"template": true, "profile": true, "native": true, "member": true, "slots": true, "worker": true,
 }
 
 // refuse is what an unusable invocation costs: ONE line naming what was wrong and the door
@@ -203,8 +194,6 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 		return cmdVersion(rest, stdout, stderr)
 	case "doctor":
 		return cmdDoctor(rest, stdout, stderr)
-	case "batch":
-		return cmdBatch(rest, stdout, stderr)
 	case "verify":
 		return cmdVerify(rest, stdout, stderr)
 	case "lint":
@@ -215,8 +204,6 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 		return cmdNative(rest, stdout, stderr)
 	case "member":
 		return cmdMember(rest, stdout, stderr)
-	case "route":
-		return cmdRoute(rest, stdout, stderr)
 	case "slots":
 		return cmdSlots(rest, stdout, stderr)
 	case "profile":
@@ -350,12 +337,6 @@ func (f *flags) tokens(value string) (int, bool) {
 	return n, false
 }
 
-func parseInt(s string) (int, error) {
-	var n int
-	_, err := fmt.Sscanf(strings.TrimSpace(s), "%d", &n)
-	return n, err
-}
-
 // maxFlag is the ceiling every listing here carries.
 func maxFlag(fs *flag.FlagSet) *int {
 	return fs.Int("max", bounded.Default, "at most this many item lines, 0 for all")
@@ -371,260 +352,6 @@ func (f *flags) wantMax(value int) {
 }
 
 // ------------------------------------------------------------------------------- verbs
-
-type batchFlags struct {
-	tokens        *string
-	deadline      *string
-	cards         *string
-	runner        *string
-	id            *string
-	root          *string
-	idle          *int
-	maxInflight   *int
-	stallAfter    *int
-	benches       *string
-	bench         *string
-	then          *string
-	harness       *string
-	auth          *string
-	slots         *string
-	slotsStore    *string
-	slotOwner     *string
-	route         *bool
-	noRoute       *bool
-	routeReason   *string
-	routeRegistry *string
-	routeFloor    *float64
-	routeLog      *string
-	routeUsage    *string
-	routeKeyEnv   *string
-	routeBaseURL  *string
-	workerFile    *string
-}
-
-func batchFlagSet() (*flags, *batchFlags) {
-	f := newFlags("batch")
-	// --max-inflight caps how many of this batch's cards run against ONE provider/model/key
-	// at a time, and --stall-after ends a card that has produced no first token in that
-	// many seconds, so a free tier that queues forever does not hold the batch. Both default
-	// to zero, which is off.
-	//
-	// With routing, the model a card is dispatched with is the ladder's answer rather than
-	// the string the fill script wrote in the TSV, and the TSV's model is the fallback.
-	// Routing is the launcher's default: --route is kept for callers that spell it out, and
-	// --no-route --reason is the one way out. --route-log and --route-usage name the
-	// accounting home, and a call nobody can account for is not made: with a key set and
-	// either flag missing the rules answer and the receipt says why=no-accounting; with no
-	// key it says why=no-key, and with no registry (or one with no rungs) why=no-ladder.
-	bf := &batchFlags{
-		tokens:        f.fs.String("tokens", "", ""),
-		deadline:      f.fs.String("deadline", "", ""),
-		cards:         f.fs.String("cards", "", ""),
-		runner:        f.fs.String("runner", "", ""),
-		id:            f.fs.String("id", "", ""),
-		root:          f.fs.String("root", "", ""),
-		idle:          f.fs.Int("idle", 300, ""),
-		maxInflight:   f.fs.Int("max-inflight", 0, ""),
-		stallAfter:    f.fs.Int("stall-after", 0, ""),
-		benches:       f.fs.String("benches", "", ""),
-		bench:         f.fs.String("bench", "", ""),
-		then:          f.fs.String("then", "", ""),
-		harness:       f.fs.String("harness", "", ""),
-		auth:          f.fs.String("auth", "", ""),
-		slots:         f.fs.String("slots", "", ""),
-		slotsStore:    f.fs.String("slots-store", "", ""),
-		slotOwner:     f.fs.String("owner", "", ""),
-		route:         f.fs.Bool("route", false, ""),
-		noRoute:       f.fs.Bool("no-route", false, ""),
-		routeReason:   f.fs.String("reason", "", ""),
-		routeRegistry: f.fs.String("route-registry", "", ""),
-		routeFloor:    f.fs.Float64("route-floor", swarm.DefaultRouteFloor, ""),
-		routeLog:      f.fs.String("route-log", "", ""),
-		routeUsage:    f.fs.String("route-usage", "", ""),
-		routeKeyEnv:   f.fs.String("route-key-env", decide.DefaultKeyEnv, ""),
-		routeBaseURL:  f.fs.String("route-base-url", decide.DefaultBaseURL, ""),
-		workerFile:    f.fs.String("worker", "", ""),
-	}
-	return f, bf
-}
-
-func cmdBatch(args []string, stdout, stderr io.Writer) int {
-	f, bf := batchFlagSet()
-	tokens := bf.tokens
-	deadline := bf.deadline
-	cards := bf.cards
-	runner := bf.runner
-	id := bf.id
-	root := bf.root
-	idle := bf.idle
-	maxInflight := bf.maxInflight
-	stallAfter := bf.stallAfter
-	benches := bf.benches
-	bench := bf.bench
-	then := bf.then
-	harness := bf.harness
-	auth := bf.auth
-	slots := bf.slots
-	slotsStore := bf.slotsStore
-	slotOwner := bf.slotOwner
-	route := bf.route
-	noRoute := bf.noRoute
-	routeReason := bf.routeReason
-	routeRegistry := bf.routeRegistry
-	routeFloor := bf.routeFloor
-	routeLog := bf.routeLog
-	routeUsage := bf.routeUsage
-	routeKeyEnv := bf.routeKeyEnv
-	routeBaseURL := bf.routeBaseURL
-	workerFile := bf.workerFile
-	if !f.parse(args, stderr) {
-		return 2
-	}
-	// H4 (#1625): routing is the launcher's default; the only way out is an
-	// explicit --no-route carrying the --reason that opens it, so a launch
-	// cannot forget the route the way a sentence in a brief can.
-	routeOn := *route || !*noRoute
-	if *noRoute && strings.TrimSpace(*routeReason) == "" {
-		f.add("--no-route needs --reason <text>: a skipped route is a fact in the log, so the reason that opens the skip is not optional")
-	}
-	return cmdBatchGather(f, *id, *cards, *deadline, *runner, *root, *idle, *maxInflight, *stallAfter, *benches, *bench, *then, *harness, *auth, *slots, *slotsStore, *slotOwner, *workerFile, *tokens,
-		routeFlags{on: routeOn, reason: *routeReason, registry: *routeRegistry, floor: *routeFloor, log: *routeLog,
-			usage: *routeUsage, keyEnv: *routeKeyEnv, baseURL: *routeBaseURL}, stdout, stderr)
-}
-
-// cmdBatchGather executes a TSV of cards: it starts one runner process per card, waits
-// until they all end or the batch's deadline, and folds every card's RESULT.md into one
-// bounded packet.
-// routeFlags is the --route family, held together so the batch verb's own
-// signature stays readable.
-type routeFlags struct {
-	on bool
-	// reason is the --reason that opens an explicit --no-route. It is empty
-	// whenever the launcher routes.
-	reason   string
-	registry string
-	floor    float64
-	log      string
-	usage    string
-	keyEnv   string
-	baseURL  string
-}
-
-// routeInput builds the batch's route seam, or refuses with the one line that
-// says what is missing. nil with no refusal means --route was not asked for.
-//
-// The key is read from the environment the caller names and NEVER from argv or
-// a file, and it is never printed: an absent key is not a refusal, it is the
-// fallback -- the rules answer, no call is made, and every card keeps today's
-// model, so the loop runs on a bench with no API at all.
-func routeInput(f *flags, r routeFlags, stderr io.Writer) *swarm.RouteInput {
-	if !r.on {
-		if strings.TrimSpace(r.reason) == "" {
-			return nil
-		}
-		// An explicit --no-route --reason still needs the log home for its
-		// skipped row, so the reason is a fact in the log and not an absence.
-		return &swarm.RouteInput{Floor: r.floor, Log: r.log, Usage: r.usage}
-	}
-	if err := decide.ValidFloor(r.floor); err != nil {
-		f.add(fmt.Sprintf("--route-floor %s is not a confidence; it wants a number between 0 and 1, such as --route-floor 0.9",
-			oneline.Field(strconv.FormatFloat(r.floor, 'g', -1, 64))))
-		return nil
-	}
-	// H4 (#1625): a missing accounting home is not a refusal. The rules answer,
-	// no call is made, and the receipt says why=no-accounting; the one way out
-	// of the route is --no-route --reason.
-	in := &swarm.RouteInput{Floor: r.floor, Log: r.log, Usage: r.usage}
-	reg, err := decide.LoadRegistry(r.registry)
-	if err != nil {
-		f.add(fmt.Sprintf("--route-registry: %s", oneline.Err(err)))
-		return nil
-	}
-	in.Registry = reg
-	client, err := decide.New(r.baseURL, r.keyEnv)
-	if err != nil {
-		// No key is no call. It is said once, by the name of the variable and
-		// never by its value, and the batch runs on today's models.
-		fmt.Fprintf(stderr, "BATCH NOTE route: %s; the ladder answers by its rules alone and every card keeps today's model\n", oneline.Err(err))
-		return in
-	}
-	in.Decide = client.Decide
-	return in
-}
-
-func cmdBatchGather(f *flags, id, cards, deadline, runner, root string, idle, maxInflight, stallAfter int, benches, bench, then, harness, auth, slots, slotsStore, slotOwner, workerFile, tokens string, route routeFlags, stdout, stderr io.Writer) int {
-	f.want(id, "id", "the batch id; it is the packet's first token so a reader can match it to admission")
-	// THE BUDGET WORD is validated by the same f.tokens as native. A non-number
-	// or zero is refused before launch. What is CARRIED is the
-	// word as typed: rule 13d puts it "verbatim into every `native` argv", and `native` is
-	// the verb that decides what it means.
-	//
-	// AN ABSENT WORD IS THE BATCH'S OWN REFUSAL (#3202): f.tokens's sentence is per-job
-	// ("a token budget for this job"), and the one a batch caller needs says the word is
-	// for EACH card and never divided, which is swarm.NoBatchTokensRefusal. It is said
-	// here, beside every other flag problem, so it reaches a caller of the binary and not
-	// only a caller of swarm.Batch.
-	noTokens := strings.TrimSpace(tokens) == ""
-	if !noTokens {
-		f.tokens(tokens)
-	}
-	f.want(cards, "cards", "a TSV naming one card per line: label<TAB>slot<TAB>model<TAB>card-path")
-	f.want(deadline, "deadline", "a whole number of seconds, the whole batch's one deadline")
-	// #636: --runner is one of two ways to run a local card; --harness (or a `local` row in
-	// --benches) runs it through this binary's own `native`, so neither alone is required.
-	if bench == "" && runner == "" && harness == "" && benches == "" {
-		f.add("--runner or --harness is required: --runner <cmd> starts once per card with label slot model card-path root tokens, and --harness <path> runs each card through this binary's own `nova-swarm native`; refusing to guess")
-	}
-	if bench != "" {
-		f.want(benches, "benches", "a table of one bench per row: name host root cores harness auth wall")
-	}
-	f.want(root, "root", "the directory a card's RESULT.md hangs under (<root>/<slot>/jobs/<label>/RESULT.md)")
-	seconds := 0
-	if deadline != "" {
-		n, err := parseInt(deadline)
-		if err != nil || n < 1 {
-			f.add(fmt.Sprintf("--deadline wants a whole number of seconds, got %q; a batch whose deadline is not a wait is a typo", deadline))
-		} else {
-			seconds = n
-		}
-	}
-	if idle < 1 {
-		f.add(fmt.Sprintf("--idle wants a whole number of seconds, got %d; a card whose log has not grown this long is killed", idle))
-	}
-	routed := routeInput(f, route, stderr)
-	if noTokens {
-		fmt.Fprintln(stderr, swarm.NoBatchTokensRefusal)
-	}
-	if f.refused(stderr) || noTokens {
-		return 2
-	}
-	var w swarm.Worker
-	if strings.TrimSpace(workerFile) != "" {
-		loaded, problems := swarm.LoadWorker(workerFile)
-		if len(problems) > 0 {
-			for _, problem := range problems {
-				fmt.Fprintf(stderr, "nova-swarm batch: %s\n", oneline.Err(problem))
-			}
-			return 2
-		}
-		w = loaded
-	}
-	return swarm.Batch(swarm.BatchInput{
-		ID: id, Deadline: time.Duration(seconds) * time.Second,
-		Idle:        time.Duration(idle) * time.Second,
-		MaxInflight: maxInflight,
-		StallAfter:  time.Duration(stallAfter) * time.Second,
-		Cards:       cards, Root: root, Runner: runner,
-		Benches: benches, Bench: bench, Then: then,
-		Harness: harness, Auth: auth, Slots: slots,
-		SlotsStore: slotsStore, SlotOwner: slotOwner,
-		Tokens:    tokens,
-		Route:     routed,
-		RouteSkip: route.reason,
-		Worker:    w,
-		Stdout:    stdout, Stderr: stderr,
-	})
-}
 
 func cmdVerify(args []string, stdout, stderr io.Writer) int {
 	f := newFlags("verify")
@@ -767,7 +494,6 @@ type nativeFlags struct {
 	sweepNow        *bool
 	tokensWord      *string
 	usageInterval   *secondsFlag
-	eventsStore     *string
 	benchFlag       *string
 	stageTimeout    *string
 	repos           []string
@@ -778,7 +504,7 @@ func nativeFlagSet() (*flags, *nativeFlags) {
 	f := newFlags("native")
 	// --idle bounds stillness, which is not the bound on length: a card is idle only when
 	// neither its own output nor its process tree has moved for this long, so a `go test`
-	// printing nothing for minutes is not a dead card. The default is `batch --idle`'s 300s,
+	// printing nothing for minutes is not a dead card. The default is 300s,
 	// and 0 turns the watch off.
 	//
 	// --results-root is where RESULT.md, usage.tsv and the report are published; empty
@@ -811,13 +537,6 @@ func nativeFlagSet() (*flags, *nativeFlags) {
 	_ = f.fs.String("owner", "", "")
 	nf.tokensWord = f.fs.String("tokens", "", "")
 	nf.usageInterval = newSecondsFlag(f.fs, "usage-interval", swarm.DefaultUsageInterval)
-	// --events-store names the fleet Redis this card's one `ok`/`fail` entry is XADDed to.
-	// It is optional and defaults to the environment (NOVA_REDIS_ADDR, else
-	// NOVA_REDIS_HOST:NOVA_REDIS_PORT), and the whole emit is SILENTLY SKIPPED unless
-	// NOVA_REDIS_BENCH_PASSWORD is also in the environment. A bench that has not been given
-	// the store's password must still run cards, so there is no refusal and no default host
-	// (internal/events/writer.go). The password is never a flag and is never printed.
-	nf.eventsStore = f.fs.String("events-store", "", "")
 	nf.benchFlag = f.fs.String("bench", "", "")
 	nf.stageTimeout = f.fs.String("stage-timeout", "", "")
 	f.fs.Var(stringListValue{&nf.repos}, "repo", "")
@@ -848,7 +567,6 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	sweepNow := nf.sweepNow
 	tokensWord := nf.tokensWord
 	usageInterval := nf.usageInterval
-	eventsStore := nf.eventsStore
 	benchFlag := nf.benchFlag
 	stageTimeout := nf.stageTimeout
 	repos := nf.repos
@@ -1087,27 +805,6 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(stdout, "NATIVE NOTE: the card published no report of its own; one naming the block was written to %s\n", oneline.Field(res.blockedPath))
 		}
 	}
-	// THE CARD-END ENTRY, after the receipt and after every report line, and BEFORE
-	// --sweep-now can remove the job directory: cardEndEvent's classification reads the
-	// card's own report from res.job (resultIsFailed), so the entry must be built while
-	// that directory still exists. The emit returns no error by construction
-	// (internal/events/writer.go) -- a store that is down costs one line on stderr and
-	// the exit code below is the run's own, untouched.
-	emitCardEnd(context.Background(), seatEventLogin(events.WriterOptions{
-		Addr: *eventsStore, Log: stderr, Timeout: nativeEventTimeout,
-	}), cfg, res, verdict, benchName())
-	// THE CARD WRAPPER'S HAND-OFF (swarm cardout.go). Under nova-card the harness is
-	// handed NOVA_CARD_OUT, and the wrapper commits $NOVA_CARD_OUT/repo and reads
-	// $NOVA_CARD_OUT/RESULT.md; the card cloned into this job instead, in a slot the bench
-	// chose. The repo moves there after every report line and the card-end entry have read
-	// the job, and before --sweep-now can delete it. No NOVA_CARD_OUT is no hand-off.
-	if res.job != "" {
-		if h, err := swarm.HandOffCardOut(res.job, os.Getenv(swarm.CardOutEnv)); err != nil {
-			fmt.Fprintf(stderr, "NATIVE NOTE: the card's work was not handed to %s: %s\n", oneline.Field(swarm.CardOutEnv), oneline.Escape(err.Error()))
-		} else if h.Repo != "" {
-			fmt.Fprintf(stderr, "NATIVE NOTE: the card's repo was handed to %s (moved=%t)\n", oneline.Field(h.Repo), h.Moved)
-		}
-	}
 	// THE JOB IS DISPOSABLE ONLY AFTER THE RESULTS EXIST (issue #2632). --sweep-now
 	// is the control: it deletes the job directory the way the bench sweep does,
 	// and only when publishNativeResults named the directory it landed in. A
@@ -1124,11 +821,6 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	}
 	return nativeProcessExit(res.rc)
 }
-
-// nativeEventTimeout bounds the card-end emit. It is short on purpose: the card is already
-// finished and its dealt seat is still counted against the bench, so a store that is not
-// answering must cost seconds, never minutes.
-const nativeEventTimeout = 5 * time.Second
 
 // ------------------------------------------------------------------------------- helpers
 
@@ -1216,7 +908,7 @@ func dash(s string) string {
 
 // fenceSuffix renders what the harness's OWN fence did to this card (issue #644): the empty
 // string when it rejected nothing, and ` fence=rejected path=<p>` naming the first path it
-// auto-rejected otherwise. It is the FIELD the batch reads to score the card `fence` instead
+// auto-rejected otherwise. It is the FIELD a reader of the NATIVE line scores the card `fence` by instead
 // of `no-result` -- the machinery fenced the card off a path its own card named, which is
 // nothing like a model that chose to publish nothing, and a coordinator reading `no-result`
 // went looking at the model for eight cards that never got to run (2026-09-16).

@@ -908,3 +908,107 @@ internal/worklang/units_test.go the work-set half of worklang is deleted (the wo
 internal/worklang/workset_test.go the work-set half of worklang is deleted (the work-set half was theoretical and nova-sprint's cards supersede work sets; nova-tokens fold --units appeared in the token reports only 2026-09-20 to 09-22 and in no loop since); internal/worklang keeps the reader and reader_test.go
 internal/tokens/units_test.go fold --units and the unit attribution path are deleted with the work-set half of worklang; its one ordering test, TestTwoUnitsOnOnePairAreWrittenInUnitOrder, moved to internal/tokens/tokens_test.go
 cmd/nova-tokens/units_test.go fold --units is deleted with the work-set half of worklang; the day file's units column still reads, and sum --by unit keeps its tests in token_ledger_test.go
+cmd/nova-ci/cost_test.go nova-ci cost is deleted: its CI step was reverted (#4701) and nothing reads ci:cost
+cmd/nova-memory/issue223_test.go nova-memory view and internal/play are deleted: the nova-play companion view, retired with nova-play
+cmd/nova-swarm/batch_cards_tokens_help_test.go nova-swarm batch and route, the card-end event writer and the NOVA_CARD_OUT hand-off are deleted (superseded by nova-sprint and member); this file tested only them
+cmd/nova-swarm/batch_flag_wiring_test.go nova-swarm batch and route, the card-end event writer and the NOVA_CARD_OUT hand-off are deleted (superseded by nova-sprint and member); this file tested only them
+cmd/nova-swarm/batch_queue_refusal_test.go nova-swarm batch and route, the card-end event writer and the NOVA_CARD_OUT hand-off are deleted (superseded by nova-sprint and member); this file tested only them
+cmd/nova-swarm/native_cardout_test.go nova-swarm batch and route, the card-end event writer and the NOVA_CARD_OUT hand-off are deleted (superseded by nova-sprint and member); this file tested only them
+cmd/nova-swarm/nativeevent_test.go nova-swarm batch and route, the card-end event writer and the NOVA_CARD_OUT hand-off are deleted (superseded by nova-sprint and member); this file tested only them
+cmd/nova-swarm/route_default_test.go nova-swarm batch and route, the card-end event writer and the NOVA_CARD_OUT hand-off are deleted (superseded by nova-sprint and member); this file tested only them
+cmd/nova-swarm/route_test.go nova-swarm batch and route, the card-end event writer and the NOVA_CARD_OUT hand-off are deleted (superseded by nova-sprint and member); this file tested only them
+cmd/nova-swarm/seat_event_test.go nova-swarm batch and route, the card-end event writer and the NOVA_CARD_OUT hand-off are deleted (superseded by nova-sprint and member); this file tested only them
+cmd/nova-tokens/foldpool_test.go nova-tokens sum --swarm-root, fold-pool and report --ledger are deleted: the pool ledgers, superseded by fold and sum --month day files
+cmd/nova-tokens/reportledger_test.go nova-tokens sum --swarm-root, fold-pool and report --ledger are deleted: the pool ledgers, superseded by fold and sum --month day files
+cmd/nova-tokens/sumswarm_completed_test.go nova-tokens sum --swarm-root, fold-pool and report --ledger are deleted: the pool ledgers, superseded by fold and sum --month day files
+cmd/nova-tokens/sumswarm_test.go nova-tokens sum --swarm-root, fold-pool and report --ledger are deleted: the pool ledgers, superseded by fold and sum --month day files
+internal/ci/epochnames_class_test.go a class rule over the old card machine's Lua table sets, which are deleted; the sprint writes its tables through internal/ntable
+internal/ci/tablemoves_class_test.go a class rule over the old card machine's Lua table sets, which are deleted; the sprint writes its tables through internal/ntable
+internal/ci/taskwriter_class_test.go a class rule over the old card machine's Lua table sets, which are deleted; the sprint writes its tables through internal/ntable
+internal/cicost/cicost_test.go nova-ci cost is deleted: its CI step was reverted (#4701) and nothing reads ci:cost
+internal/decide/answers_test.go internal/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
+internal/decide/decide_test.go internal/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
+internal/decide/doc_test.go internal/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
+internal/decide/friends_test.go internal/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
+internal/decide/hold_test.go internal/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
+internal/decide/kind_alias_test.go internal/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
+internal/decide/ladder_test.go internal/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
+internal/decide/latency_test.go internal/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
+internal/decide/mechanicaloffer_test.go internal/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
+internal/decide/public_test.go internal/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
+internal/decide/questions_envelope_test.go internal/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
+internal/decide/registry_test.go internal/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
+internal/decide/routelog_test.go internal/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
+internal/decide/rule_test.go internal/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
+internal/decide/securityread_test.go internal/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
+internal/decide/stepup_test.go internal/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
+internal/decide/transcript_kind_test.go internal/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
+internal/decide/usage_test.go internal/decide is deleted: the routing ladder only nova-swarm batch and route ran; both verbs are superseded by nova-sprint (the fleet table and nova-swarm member)
+internal/docs/issue1501_test.go it read internal/decide/registry.json, deleted with internal/decide
+internal/events/events_test.go internal/events is deleted: the cards:done writer behind native --events-store had no living reader; a card's end is its row in the sprint's work table
+internal/events/issue3277_test.go internal/events is deleted: the cards:done writer behind native --events-store had no living reader; a card's end is its row in the sprint's work table
+internal/events/writer_test.go internal/events is deleted: the cards:done writer behind native --events-store had no living reader; a card's end is its row in the sprint's work table
+internal/nsprint/fn/probe_sets_test.go the old card machine's Lua (02_card_move, presence, waiting_resolve and the rest) is deleted; this test read only those files
+internal/nsprint/fn/tableset_add_test.go the old card machine's Lua (02_card_move, presence, waiting_resolve and the rest) is deleted; this test read only those files
+internal/nsprint/fn/taskwriter_test.go the old card machine's Lua (02_card_move, presence, waiting_resolve and the rest) is deleted; this test read only those files
+internal/nsprint/fn/waiting_resolve_owner_test.go the old card machine's Lua (02_card_move, presence, waiting_resolve and the rest) is deleted; this test read only those files
+internal/play/view_test.go nova-memory view and internal/play are deleted: the nova-play companion view, retired with nova-play
+internal/swarm/admitrepo_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/batch_clock_functional_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/batch_clock_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/batch_functional_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/batch_idle_dribble_functional_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/batch_idle_dribble_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/batch_idle_explore_functional_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/batch_issue618_functional_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/batch_label_name_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/batch_native_636_functional_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/batch_native_636_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/batch_reliability_functional_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/batch_reliability_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/batch_route_cap_functional_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/batch_tokens_13d_functional_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/batch_tree_640_functional_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/batch_usage_reaped_functional_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/bench_functional_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/bench_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/benchpull_functional_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/cardshape_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/cardunit_chore_alias_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/contained_below_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/cost_by_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/cost_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/endwith_live_group_functional_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/finalize_malformed_slot_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/inflight_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/issue2035_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/issue2370_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/issue2371_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/linttestgate_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/native_verdict_line_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/pipeline_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/planted_gather_functional_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/profile_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/publicbatch_functional_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/quarantine_stress_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/quarantine_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/queue_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/resultlint_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/route_core_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/routeladder_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/share_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/signature_functional_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/slotwait_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/sparse_functional_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/testline_grammar_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/usagecard_functional_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/usagecard_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/wall_batch_functional_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/wallterms_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/warm_functional_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/swarm/warm_test.go internal/swarm code reached only by nova-swarm batch (the batch, bench, pull, queue, pool, route and gate files) is deleted with the verb; this file tested only that code
+internal/typedrec/cardline_test.go typedrec's RESULT parser, legacy adapter, synth and template are deleted: reached only by nova-swarm batch's gather
+internal/typedrec/kind_test.go typedrec's RESULT parser, legacy adapter, synth and template are deleted: reached only by nova-swarm batch's gather
+internal/typedrec/pathsrefusal_test.go typedrec's RESULT parser, legacy adapter, synth and template are deleted: reached only by nova-swarm batch's gather
+internal/swarm/sparse_test.go its one test held SPEC-SWARM's sparse-checkout section, deleted with internal/swarm/sparse.go (reached only by nova-swarm batch)
+internal/typedrec/evidence_functional_test.go its one test drove ns_card_result, a function of the old card machine's Lua, which is deleted
