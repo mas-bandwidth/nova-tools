@@ -137,7 +137,7 @@ func (r *RedisStore) preflight() error {
 		return &ClientError{Code: "UNSUPPORTEDSTORE", Cause: errors.New("no Redis client")}
 	}
 	// The standalone Function accepts zero KEYS. A cluster router cannot route
-	// this call to the one store that owns the configured space.
+	// this call to the one store that owns the configured namespace.
 	if _, ok := r.client.(*redis.ClusterClient); ok {
 		return &ClientError{Code: "UNSUPPORTEDSTORE", Cause: errors.New("standalone tset requires a single-node client")}
 	}

@@ -88,7 +88,7 @@ func TestMemTwoPhaseRejectsMovedAndForeignState(t *testing.T) {
 	if _, refusal := m.Commit(nil); refusal == nil || refusal.Code != "REQUEST" {
 		t.Fatalf("nil plan: %v", refusal)
 	}
-	// SeedRow mutates the same memSpace pointer; the version check, not only
+	// SeedRow mutates the same memNamespace pointer; the version check, not only
 	// pointer identity, must reject the prepared candidate.
 	if err := m.SeedRow(step.Space, "work", "0", "later", "1"); err != nil {
 		t.Fatal(err)
@@ -107,7 +107,7 @@ func TestMemTwoPhaseRejectsMovedAndForeignState(t *testing.T) {
 	if _, refusal := m.Commit(plan); refusal == nil || refusal.Code != "REQUEST" {
 		t.Fatalf("reused stale plan: %v", refusal)
 	}
-	// A successful Step replaces the space pointer, including for a no-op.
+	// A successful Step replaces the namespace pointer, including for a no-op.
 	newPlan, refusal := m.Plan(step)
 	if refusal != nil {
 		t.Fatal(refusal)
@@ -137,14 +137,14 @@ func TestMemTwoPhaseReplayFenceAndAbsentSpace(t *testing.T) {
 		t.Fatalf("replay Plan handle: %+v refusal=%v", replay, refusal)
 	}
 	replay.Replay = false // Public observation does not control the captured commit.
-	beforeSpace, beforeVersion := m.spaces[step.Space], m.spaces[step.Space].version
+	beforeNamespace, beforeVersion := m.spaces[step.Space], m.spaces[step.Space].version
 	before, err := m.Snapshot(step.Space)
 	if err != nil {
 		t.Fatal(err)
 	}
 	reply, refusal := m.Commit(replay)
 	if refusal != nil || !reply.Replay || reply.MemPlan != nil ||
-		m.spaces[step.Space] != beforeSpace || m.spaces[step.Space].version != beforeVersion {
+		m.spaces[step.Space] != beforeNamespace || m.spaces[step.Space].version != beforeVersion {
 		t.Fatalf("replay republished state: reply=%+v refusal=%v", reply, refusal)
 	}
 	fenceOp, fenceIntent := "fence-op", "fence-intent"

@@ -387,10 +387,10 @@ func validateReadQuery(q ReadQuery) error {
 	return nil
 }
 
-func (m *Mem) readOne(spaceName string, space *memSpace, epoch *memEpoch, q ReadQuery, b *readBudget) (ReadAnswer, error) {
+func (m *Mem) readOne(namespaceName string, space *memNamespace, epoch *memEpoch, q ReadQuery, b *readBudget) (ReadAnswer, error) {
 	switch q.Kind {
 	case "range":
-		return readRange(spaceName, space, epoch, q, b)
+		return readRange(namespaceName, space, epoch, q, b)
 	case "count", "rcount":
 		return readCounts(space, epoch, q, b)
 	case "ids":
@@ -404,7 +404,7 @@ func (m *Mem) readOne(spaceName string, space *memSpace, epoch *memEpoch, q Read
 	}
 }
 
-func readTable(space *memSpace, epoch *memEpoch, name string) (*memTableDef, *memTableEpoch, error) {
+func readTable(space *memNamespace, epoch *memEpoch, name string) (*memTableDef, *memTableEpoch, error) {
 	def := space.defs[name]
 	if def == nil {
 		return nil, nil, memRefusal("NOTABLE", RefusalDetail{Table: name})
@@ -512,7 +512,7 @@ type readPair struct {
 	numeric   float64
 }
 
-func readRange(spaceName string, space *memSpace, epoch *memEpoch, q ReadQuery, b *readBudget) (ReadAnswer, error) {
+func readRange(namespaceName string, space *memNamespace, epoch *memEpoch, q ReadQuery, b *readBudget) (ReadAnswer, error) {
 	if q.Limit <= 0 || q.Limit > 2000 {
 		return ReadAnswer{}, memRefusal("LIMIT", RefusalDetail{})
 	}
@@ -524,7 +524,7 @@ func readRange(spaceName string, space *memSpace, epoch *memEpoch, q ReadQuery, 
 	var members map[string]string
 	var table *memTableEpoch
 	if q.Key != "" {
-		if q.Table != "" || q.Cell != "" || q.Records || q.Fields != nil || !strings.HasPrefix(q.Key, spaceName) {
+		if q.Table != "" || q.Cell != "" || q.Records || q.Fields != nil || !strings.HasPrefix(q.Key, namespaceName) {
 			return ReadAnswer{}, memRefusal("REQUEST", RefusalDetail{})
 		}
 		members = space.zsets[q.Key]
@@ -629,7 +629,7 @@ func readRange(spaceName string, space *memSpace, epoch *memEpoch, q ReadQuery, 
 	return answer, nil
 }
 
-func readCounts(space *memSpace, epoch *memEpoch, q ReadQuery, b *readBudget) (ReadAnswer, error) {
+func readCounts(space *memNamespace, epoch *memEpoch, q ReadQuery, b *readBudget) (ReadAnswer, error) {
 	def, table, err := readTable(space, epoch, q.Table)
 	if err != nil {
 		return ReadAnswer{}, err
@@ -689,7 +689,7 @@ func readCounts(space *memSpace, epoch *memEpoch, q ReadQuery, b *readBudget) (R
 	return answer, nil
 }
 
-func readIDs(space *memSpace, epoch *memEpoch, q ReadQuery, b *readBudget) (ReadAnswer, error) {
+func readIDs(space *memNamespace, epoch *memEpoch, q ReadQuery, b *readBudget) (ReadAnswer, error) {
 	_, requestedTable, err := readTable(space, epoch, q.Table)
 	if err != nil {
 		return ReadAnswer{}, err
@@ -948,7 +948,7 @@ func projectReadRecord(tableName string, table *memTableEpoch, id string, fields
 	return answer, nil
 }
 
-func readRows(space *memSpace, epoch *memEpoch, q ReadQuery, b *readBudget) (ReadAnswer, error) {
+func readRows(space *memNamespace, epoch *memEpoch, q ReadQuery, b *readBudget) (ReadAnswer, error) {
 	_, table, err := readTable(space, epoch, q.Table)
 	if err != nil {
 		return ReadAnswer{}, err

@@ -144,7 +144,7 @@ func TestMemRecordLocationIndexTracksRetainedEpochsAndAtomicPublication(t *testi
 		m.mu.Unlock()
 		t.Fatalf("seed index: found=%t epoch=%s", found, epoch)
 	}
-	clone := cloneMemSpace(m.spaces[space])
+	clone := cloneMemNamespace(m.spaces[space])
 	clone.recordEpoch["work"]["p"] = "9"
 	if m.spaces[space].recordEpoch["work"]["p"] != "0" {
 		m.mu.Unlock()

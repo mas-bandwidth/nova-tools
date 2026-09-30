@@ -11,7 +11,7 @@ func TestS7TopologyContract(t *testing.T) {
 
 	t.Run("rows_union_deduplicates_and_assigns_first_occurrence_ranks", func(t *testing.T) {
 		m := s7NewMem(t)
-		reply := s7Step(t, m, Step{Epoch: "0", Space: s7Space, Entries: []Entry{
+		reply := s7Step(t, m, Step{Epoch: "0", Space: s7Namespace, Entries: []Entry{
 			{Kind: "rows", Table: "work", Add: []string{"one", "two"}},
 			{Kind: "rows", Table: "work", Add: []string{"two", "three"}},
 		}})
@@ -25,7 +25,7 @@ func TestS7TopologyContract(t *testing.T) {
 
 	t.Run("row_add_and_create_share_the_prospective_topology", func(t *testing.T) {
 		m := s7NewMem(t)
-		s7Step(t, m, Step{Epoch: "0", Space: s7Space, Entries: []Entry{
+		s7Step(t, m, Step{Epoch: "0", Space: s7Namespace, Entries: []Entry{
 			{Kind: "rows", Table: "work", Add: []string{"new"}},
 			{Kind: "create", Table: "work", To: "new:c", IDs: []string{"p"}, Scores: []string{"7"}},
 		}})
@@ -39,10 +39,10 @@ func TestS7TopologyContract(t *testing.T) {
 	t.Run("delete_accepts_a_row_left_empty_by_remove_in_the_same_step", func(t *testing.T) {
 		m := s7NewMem(t)
 		s7SeedRow(t, m, "gone", "0")
-		if err := m.SeedMember(s7Space, "work", "0", "p", MemRecord{Epoch: "0", Revision: "1", Row: "gone", Column: "c", Score: "1", Fields: map[string]string{"keep": "yes"}}); err != nil {
+		if err := m.SeedMember(s7Namespace, "work", "0", "p", MemRecord{Epoch: "0", Revision: "1", Row: "gone", Column: "c", Score: "1", Fields: map[string]string{"keep": "yes"}}); err != nil {
 			t.Fatalf("SeedMember: %v", err)
 		}
-		s7Step(t, m, Step{Epoch: "0", Space: s7Space, Entries: []Entry{
+		s7Step(t, m, Step{Epoch: "0", Space: s7Namespace, Entries: []Entry{
 			{Kind: "rows", Table: "work", Del: []string{"gone"}},
 			{Kind: "remove", Table: "work", From: "gone:c", IDs: []string{"p"}, Revs: []Decimal{"1"}},
 		}})
@@ -56,16 +56,16 @@ func TestS7TopologyContract(t *testing.T) {
 	t.Run("delete_with_incoming_member_refuses_without_mutation", func(t *testing.T) {
 		m := s7NewMem(t)
 		s7SeedRow(t, m, "old", "0")
-		before, err := m.Snapshot(s7Space)
+		before, err := m.Snapshot(s7Namespace)
 		if err != nil {
 			t.Fatalf("Snapshot before refusal: %v", err)
 		}
-		_, err = m.Step(context.Background(), Step{Epoch: "0", Space: s7Space, Entries: []Entry{
+		_, err = m.Step(context.Background(), Step{Epoch: "0", Space: s7Namespace, Entries: []Entry{
 			{Kind: "rows", Table: "work", Del: []string{"old"}},
 			{Kind: "create", Table: "work", To: "old:c", IDs: []string{"incoming"}, Scores: []string{"1"}},
 		}})
 		s7WantRefusal(t, err, "ROWCONFLICT")
-		after, err := m.Snapshot(s7Space)
+		after, err := m.Snapshot(s7Namespace)
 		if err != nil {
 			t.Fatalf("Snapshot after refusal: %v", err)
 		}

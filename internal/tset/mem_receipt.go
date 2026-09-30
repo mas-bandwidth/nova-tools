@@ -114,7 +114,7 @@ func (r memReceipt) replayReply() Reply {
 // checkReceipt runs after static request and namespace validation but before
 // any current-epoch, member, row, or log guard. The original request epoch is
 // looked up even when the active epoch has advanced twice or more.
-func (m *Mem) checkReceipt(space *memSpace, step Step) (Reply, bool, error) {
+func (m *Mem) checkReceipt(space *memNamespace, step Step) (Reply, bool, error) {
 	if step.Op == nil {
 		return Reply{}, false, nil
 	}
@@ -134,10 +134,10 @@ func (m *Mem) checkReceipt(space *memSpace, step Step) (Reply, bool, error) {
 	return r.replayReply(), true, nil
 }
 
-// saveReceipt is called against the cloned space only after successful plan
+// saveReceipt is called against the cloned namespace only after successful plan
 // and before that clone is published. The 32 KiB bound is on the actual encoded
 // object, matching the Redis hash value stored by the Lua implementation.
-func (m *Mem) saveReceipt(space *memSpace, step Step, reply Reply) error {
+func (m *Mem) saveReceipt(space *memNamespace, step Step, reply Reply) error {
 	if step.Op == nil {
 		return nil
 	}
@@ -161,7 +161,7 @@ func (m *Mem) saveReceipt(space *memSpace, step Step, reply Reply) error {
 
 // doneLookup returns one slot for each submitted identity, preserving order and
 // keeping a conflict local to its slot. No epoch scan occurs.
-func doneLookup(space *memSpace, identities []DoneIdentity) []DoneSlot {
+func doneLookup(space *memNamespace, identities []DoneIdentity) []DoneSlot {
 	slots := make([]DoneSlot, len(identities))
 	for i, identity := range identities {
 		r, ok := space.receipts[identity.Epoch][identity.Op]
@@ -185,7 +185,7 @@ func doneLookup(space *memSpace, identities []DoneIdentity) []DoneSlot {
 // absent slots and original epochs different from the surrounding read epoch.
 // The outer Read call makes this a single atomic snapshot and withholds all
 // answers when any later slot exhausts the shared read budget.
-func (m *Mem) readDoneQuery(space *memSpace, q ReadQuery, budget *readBudget) (ReadAnswer, error) {
+func (m *Mem) readDoneQuery(space *memNamespace, q ReadQuery, budget *readBudget) (ReadAnswer, error) {
 	if len(q.Ops) == 0 || len(q.Ops) > 2000 {
 		return ReadAnswer{}, memRefusal("REQUEST", RefusalDetail{})
 	}

@@ -7,7 +7,7 @@ import (
 	"testing"
 )
 
-const s7Space = "s7:"
+const s7Namespace = "s7:"
 
 func TestS7FieldContract(t *testing.T) {
 	t.Parallel()
@@ -16,7 +16,7 @@ func TestS7FieldContract(t *testing.T) {
 		m := s7NewMem(t)
 		s7SeedRow(t, m, "r", "0")
 		s7Step(t, m, Step{
-			Epoch: "0", Space: s7Space,
+			Epoch: "0", Space: s7Namespace,
 			Entries: []Entry{{
 				Kind: "create", Table: "work", To: "r:c",
 				IDs: []string{"a", "b"}, Scores: []string{"1", "2"},
@@ -39,7 +39,7 @@ func TestS7FieldContract(t *testing.T) {
 		})
 
 		noChange := s7Step(t, m, Step{
-			Epoch: "0", Space: s7Space,
+			Epoch: "0", Space: s7Namespace,
 			Entries: []Entry{{
 				Kind: "move", Table: "work", From: "r:c", To: "r:c",
 				IDs: []string{"a", "b"}, Scores: []string{"1.0", "2.0"}, Revs: []Decimal{"1", "1"},
@@ -56,7 +56,7 @@ func TestS7FieldContract(t *testing.T) {
 		}
 
 		removedEmpty := s7Step(t, m, Step{
-			Epoch: "0", Space: s7Space,
+			Epoch: "0", Space: s7Namespace,
 			Entries: []Entry{{
 				Kind: "move", Table: "work", From: "r:c", To: "r:c", IDs: []string{"a", "b"}, Revs: []Decimal{"1", "1"},
 				Unset: []string{"empty", "absent"}, BeforeFields: []string{"empty", "absent"},
@@ -79,12 +79,12 @@ func TestS7FieldContract(t *testing.T) {
 	t.Run("remove_keeps_unmentioned_fields_and_records_retirement", func(t *testing.T) {
 		m := s7NewMem(t)
 		s7SeedRow(t, m, "r", "0")
-		s7Step(t, m, Step{Epoch: "0", Space: s7Space, Entries: []Entry{{
+		s7Step(t, m, Step{Epoch: "0", Space: s7Namespace, Entries: []Entry{{
 			Kind: "create", Table: "work", To: "r:c", IDs: []string{"p"}, Scores: []string{"3"},
 			Set: map[string]string{"keep": "yes", "replace": "old"},
 		}}})
 
-		reply := s7Step(t, m, Step{Epoch: "0", Space: s7Space, Entries: []Entry{{
+		reply := s7Step(t, m, Step{Epoch: "0", Space: s7Namespace, Entries: []Entry{{
 			Kind: "remove", Table: "work", From: "r:c", IDs: []string{"p"}, Revs: []Decimal{"1"},
 			Set: map[string]string{"retired": "true", "retired_by": "review", "replace": "new"},
 		}}})
@@ -105,11 +105,11 @@ func TestS7FieldContract(t *testing.T) {
 		m := s7NewMem(t)
 		s7SeedRow(t, m, "r", "0")
 		s7SeedRow(t, m, "other", "1")
-		s7Step(t, m, Step{Epoch: "0", Space: s7Space, Entries: []Entry{{
+		s7Step(t, m, Step{Epoch: "0", Space: s7Namespace, Entries: []Entry{{
 			Kind: "create", Table: "work", To: "r:c", IDs: []string{"p"}, Scores: []string{"1"},
 		}}})
 
-		s7Step(t, m, Step{Epoch: "0", Space: s7Space, Entries: []Entry{{
+		s7Step(t, m, Step{Epoch: "0", Space: s7Namespace, Entries: []Entry{{
 			Kind: "move", Table: "work", From: "r:c", To: "r:c", IDs: []string{"p"}, Scores: []string{"2"}, Revs: []Decimal{"1"},
 		}}})
 		table := s7Table(t, m)
@@ -126,8 +126,8 @@ func TestS7FieldContract(t *testing.T) {
 func s7NewMem(t *testing.T) *Mem {
 	t.Helper()
 	m := NewMem()
-	if err := m.DefineTable(s7Space, "work", TableDefinition{
-		Columns: []string{"c", "d"}, MemberPrefix: s7Space + "member:", EpochKey: s7Space + "epoch", EpochField: "current",
+	if err := m.DefineTable(s7Namespace, "work", TableDefinition{
+		Columns: []string{"c", "d"}, MemberPrefix: s7Namespace + "member:", EpochKey: s7Namespace + "epoch", EpochField: "current",
 	}); err != nil {
 		t.Fatalf("DefineTable: %v", err)
 	}
@@ -136,7 +136,7 @@ func s7NewMem(t *testing.T) *Mem {
 
 func s7SeedRow(t *testing.T, m *Mem, row string, rank Decimal) {
 	t.Helper()
-	if err := m.SeedRow(s7Space, "work", "0", row, rank); err != nil {
+	if err := m.SeedRow(s7Namespace, "work", "0", row, rank); err != nil {
 		t.Fatalf("SeedRow %q: %v", row, err)
 	}
 }
@@ -152,7 +152,7 @@ func s7Step(t *testing.T, m *Mem, step Step) Reply {
 
 func s7Table(t *testing.T, m *Mem) MemTableSnapshot {
 	t.Helper()
-	snapshot, err := m.Snapshot(s7Space)
+	snapshot, err := m.Snapshot(s7Namespace)
 	if err != nil {
 		t.Fatalf("Snapshot: %v", err)
 	}

@@ -270,7 +270,7 @@ func compareJSON(label string, left, right any) string {
 func nextCompareAction(r *rand.Rand, snapshot MemSnapshot, space string, seed int64, index int, replay *compareAction) compareAction {
 	epoch := snapshot.ActiveEpoch
 	base := Step{Epoch: epoch, Space: space}
-	// Every generated request keeps its original space and epoch in the trace,
+	// Every generated request keeps its original namespace and epoch in the trace,
 	// so a shrink replay cannot silently rewrite a stale request.
 	if index == 0 {
 		base.Entries = []Entry{{Kind: "rows", Table: compareTable, Add: []string{"r0", "r1"}}}

@@ -217,19 +217,19 @@ func TestS7StoredFieldCountBoundary(t *testing.T) {
 	} {
 		m := s7NewMem(t)
 		s7SeedRow(t, m, "r", "0")
-		create := Step{Epoch: "0", Space: s7Space, Entries: []Entry{{
+		create := Step{Epoch: "0", Space: s7Namespace, Entries: []Entry{{
 			Kind: "create", Table: "work", To: "r:c", IDs: []string{"p"}, Scores: []string{"1"}, Set: boundsFieldMap(tc.initial),
 		}}}
 		if _, err := m.Step(context.Background(), create); err != nil {
 			t.Fatalf("create member with %d fields: %v", tc.initial, err)
 		}
-		update := Step{Epoch: "0", Space: s7Space, Entries: []Entry{{
+		update := Step{Epoch: "0", Space: s7Namespace, Entries: []Entry{{
 			Kind: "move", Table: "work", From: "r:c", To: "r:c", IDs: []string{"p"}, Set: map[string]string{"boundary": "v"},
 		}}}
 		if _, err := EncodeStep(update); err != nil {
 			t.Fatalf("static update request at initial field count %d: %v", tc.initial, err)
 		}
-		before, err := m.Snapshot(s7Space)
+		before, err := m.Snapshot(s7Namespace)
 		if err != nil {
 			t.Fatalf("snapshot at initial field count %d: %v", tc.initial, err)
 		}
@@ -241,7 +241,7 @@ func TestS7StoredFieldCountBoundary(t *testing.T) {
 			continue
 		}
 		boundsWantRefusal(t, err, "LIMIT")
-		after, err := m.Snapshot(s7Space)
+		after, err := m.Snapshot(s7Namespace)
 		if err != nil {
 			t.Fatalf("snapshot after over-limit update: %v", err)
 		}
@@ -342,7 +342,7 @@ func TestS7ExpandedSharedFieldBudgetRefusesBeforeMutation(t *testing.T) {
 	m := s7NewMem(t)
 	s7SeedRow(t, m, "r", "0")
 	step := Step{
-		Epoch: "0", Space: s7Space,
+		Epoch: "0", Space: s7Namespace,
 		Entries: []Entry{{
 			Kind: "create", Table: "work", To: "r:c",
 			IDs:    boundsIDs(2000, "member-000000000000000000000000"),
@@ -358,7 +358,7 @@ func TestS7ExpandedSharedFieldBudgetRefusesBeforeMutation(t *testing.T) {
 	if len(encoded) >= MaxWriteRequestBytes {
 		t.Fatalf("request unexpectedly approaches its wire cap: %d bytes", len(encoded))
 	}
-	before, err := m.Snapshot(s7Space)
+	before, err := m.Snapshot(s7Namespace)
 	if err != nil {
 		t.Fatalf("Snapshot before: %v", err)
 	}
@@ -367,7 +367,7 @@ func TestS7ExpandedSharedFieldBudgetRefusesBeforeMutation(t *testing.T) {
 	if refusal.Detail.Budget != "planned_argv_bytes" {
 		t.Fatalf("refusal budget=%q, want planned_argv_bytes", refusal.Detail.Budget)
 	}
-	after, err := m.Snapshot(s7Space)
+	after, err := m.Snapshot(s7Namespace)
 	if err != nil {
 		t.Fatalf("Snapshot after: %v", err)
 	}
@@ -398,7 +398,7 @@ func TestS7ExactExpandedArgvBoundaryRefusesBeforeMutation(t *testing.T) {
 	} {
 		m := s7NewMem(t)
 		s7SeedRow(t, m, "r", "0")
-		seed := Step{Epoch: "0", Space: s7Space, Entries: []Entry{{
+		seed := Step{Epoch: "0", Space: s7Namespace, Entries: []Entry{{
 			Kind: "create", Table: "work", To: "r:c", IDs: ids, Scores: boundsStrings(len(ids), "1"),
 		}}}
 		if _, err := m.Step(context.Background(), seed); err != nil {
@@ -408,7 +408,7 @@ func TestS7ExactExpandedArgvBoundaryRefusesBeforeMutation(t *testing.T) {
 		if _, err := EncodeStep(step); err != nil {
 			t.Fatalf("%s compact write request: %v", tc.name, err)
 		}
-		before, err := m.Snapshot(s7Space)
+		before, err := m.Snapshot(s7Namespace)
 		if err != nil {
 			t.Fatalf("%s snapshot before: %v", tc.name, err)
 		}
@@ -418,7 +418,7 @@ func TestS7ExactExpandedArgvBoundaryRefusesBeforeMutation(t *testing.T) {
 			if refusal.Detail.Budget != "planned_argv_bytes" || refusal.Detail.Actual == nil || *refusal.Detail.Actual != MaxPlannedArgvBytes+1 {
 				t.Fatalf("%s refusal detail=%#v, want exact planned_argv_bytes overflow", tc.name, refusal.Detail)
 			}
-			after, snapErr := m.Snapshot(s7Space)
+			after, snapErr := m.Snapshot(s7Namespace)
 			if snapErr != nil {
 				t.Fatalf("%s snapshot after: %v", tc.name, snapErr)
 			}
@@ -447,7 +447,7 @@ func TestS7EffectiveFieldUnionBoundary(t *testing.T) {
 
 	m := s7NewMem(t)
 	s7SeedRow(t, m, "r", "0")
-	accepted := Step{Epoch: "0", Space: s7Space, Entries: []Entry{{
+	accepted := Step{Epoch: "0", Space: s7Namespace, Entries: []Entry{{
 		Kind: "create", Table: "work", To: "r:c", IDs: []string{"p"}, Scores: []string{"1"}, About: []string{"p"},
 		Set: boundsFieldMap(MaxFieldsPerMember - 1), Each: []map[string]string{{"extra": "x"}},
 	}}}
@@ -458,7 +458,7 @@ func TestS7EffectiveFieldUnionBoundary(t *testing.T) {
 		t.Fatalf("effective union at %d fields should commit: %v", MaxFieldsPerMember, err)
 	}
 
-	over := Step{Epoch: "0", Space: s7Space, Entries: []Entry{{
+	over := Step{Epoch: "0", Space: s7Namespace, Entries: []Entry{{
 		Kind: "create", Table: "work", To: "r:c", IDs: []string{"q"}, Scores: []string{"1"}, About: []string{"q"},
 		Set: boundsFieldMap(MaxFieldsPerMember), Each: []map[string]string{{"extra": "x"}},
 	}}}
@@ -467,7 +467,7 @@ func TestS7EffectiveFieldUnionBoundary(t *testing.T) {
 	} else {
 		boundsWantRefusal(t, err, "LIMIT")
 	}
-	before, err := m.Snapshot(s7Space)
+	before, err := m.Snapshot(s7Namespace)
 	if err != nil {
 		t.Fatalf("Snapshot before: %v", err)
 	}
@@ -476,7 +476,7 @@ func TestS7EffectiveFieldUnionBoundary(t *testing.T) {
 	if refusal.Detail.EntryIndex == nil || *refusal.Detail.EntryIndex != 0 {
 		t.Fatalf("effective-field refusal has no entry index: %#v", refusal.Detail)
 	}
-	after, err := m.Snapshot(s7Space)
+	after, err := m.Snapshot(s7Namespace)
 	if err != nil {
 		t.Fatalf("Snapshot after: %v", err)
 	}
@@ -492,7 +492,7 @@ func TestS7MaximumLegalResultFitsReceipt(t *testing.T) {
 	s7SeedRow(t, m, "r", "0")
 	op, intent := "full-result", `{"verb":"create","part":"0"}`
 	step := Step{
-		Epoch: "0", Space: s7Space, Op: &op, Intent: &intent,
+		Epoch: "0", Space: s7Namespace, Op: &op, Intent: &intent,
 		Result:  strings.Repeat("r", MaxResultBytes),
 		Entries: []Entry{{Kind: "create", Table: "work", To: "r:c", IDs: []string{"p"}, Scores: []string{"1"}, About: []string{"p"}}},
 	}
@@ -642,7 +642,7 @@ func boundsValueStep(size int) Step {
 func boundsExpandedFieldStep(ids []string, sharedBytes, lastBytes int) Step {
 	first := append([]string(nil), ids[:len(ids)-1]...)
 	last := append([]string(nil), ids[len(ids)-1:]...)
-	return Step{Epoch: "0", Space: s7Space, Entries: []Entry{
+	return Step{Epoch: "0", Space: s7Namespace, Entries: []Entry{
 		{Kind: "move", Table: "work", From: "r:c", To: "r:c", IDs: first, Set: map[string]string{"payload": strings.Repeat("x", sharedBytes)}},
 		{Kind: "move", Table: "work", From: "r:c", To: "r:c", IDs: last, Set: map[string]string{"payload": strings.Repeat("x", lastBytes)}},
 	}}

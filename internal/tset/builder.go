@@ -197,7 +197,7 @@ func entryUpperBounds(e Entry) (lineBytes, argvBytes int) {
 	// revision, score and field-name arguments. The shared field value is
 	// charged separately for every record write below. The final planner
 	// remains authoritative because actual changed masks and key lengths
-	// depend on the initialized space and pre-state.
+	// depend on the initialized namespace and pre-state.
 	argvBytes = len(raw) + 280*len(e.IDs) + 1024
 	for name, value := range e.Set {
 		argvBytes += len(e.IDs) * (len(name) + len(value) + 16)

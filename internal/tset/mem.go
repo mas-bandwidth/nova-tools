@@ -14,10 +14,10 @@ import (
 )
 
 // Mem is an independent, atomic model of the table store.  A step plans against
-// a private copy of one space; only a completely successful plan replaces it.
+// a private copy of one namespace; only a completely successful plan replaces it.
 type Mem struct {
 	mu     sync.Mutex
-	spaces map[string]*memSpace
+	spaces map[string]*memNamespace
 	now    func() time.Time
 }
 
@@ -69,7 +69,7 @@ type MemTableSnapshot struct {
 	Records map[string]MemRecord
 }
 
-type memSpace struct {
+type memNamespace struct {
 	version         uint64 // changes on every supported mutation or successful publication
 	active          Decimal
 	engine          string
@@ -116,7 +116,7 @@ type memPlace struct {
 }
 
 func NewMem() *Mem {
-	return &Mem{spaces: make(map[string]*memSpace), now: time.Now}
+	return &Mem{spaces: make(map[string]*memNamespace), now: time.Now}
 }
 
 func (m *Mem) SetClock(now func() time.Time) {
@@ -130,7 +130,7 @@ func (m *Mem) SetClock(now func() time.Time) {
 }
 
 // SetEngine injects a stored engine marker fault into a fixture. Production
-// Mem spaces start with the tset/1 marker.
+// Mem namespaces start with the tset/1 marker.
 func (m *Mem) SetEngine(space, engine string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -143,13 +143,13 @@ func (m *Mem) SetEngine(space, engine string) error {
 	return nil
 }
 
-func (m *Mem) space(name string) *memSpace {
+func (m *Mem) space(name string) *memNamespace {
 	if m.spaces == nil {
-		m.spaces = make(map[string]*memSpace)
+		m.spaces = make(map[string]*memNamespace)
 	}
 	s := m.spaces[name]
 	if s == nil {
-		s = &memSpace{
+		s = &memNamespace{
 			active: "0", engine: Version, defs: make(map[string]*memTableDef), definitionOrder: make([]string, 0),
 			epochs:      map[Decimal]*memEpoch{"0": {tables: make(map[string]*memTableEpoch)}},
 			recordEpoch: make(map[string]map[string]Decimal),
@@ -186,7 +186,7 @@ func memPrefixesOverlap(a, b string) bool { return strings.HasPrefix(a, b) || st
 // validateMemConfig rechecks the stored definition view on every step. A
 // fixture may corrupt it after initialization, just as a Redis hash can drift.
 // This runs before receipt lookup, matching the protocol's admission order.
-func validateMemConfig(space string, s *memSpace) error {
+func validateMemConfig(space string, s *memNamespace) error {
 	if len(s.defs) > 4 {
 		return memRefusal("CONFIG", RefusalDetail{})
 	}
@@ -218,7 +218,7 @@ func validateMemConfig(space string, s *memSpace) error {
 }
 
 // DefineTable installs a bounded definition before model steps.  All tables in
-// one space use the same epoch key, and their member-key namespaces are disjoint.
+// one namespace share the same epoch key, and their member-key namespaces are disjoint.
 func (m *Mem) DefineTable(space, table string, def TableDefinition) error {
 	if !validMemName(space) || !validMemColumn(table) || len(def.Columns) == 0 || len(def.Columns) > 32 ||
 		def.MemberPrefix == "" || def.EpochKey == "" || def.EpochField == "" {
@@ -357,8 +357,8 @@ func (m *Mem) SeedMember(space, table string, epoch Decimal, id string, record M
 }
 
 // recordTable resolves the single member namespace to its retained table
-// snapshot. Callers hold m.mu; the index is published with the cloned space.
-func (s *memSpace) recordTable(table, id string) (*memTableEpoch, Decimal, bool) {
+// snapshot. Callers hold m.mu; the index is published with the cloned namespace.
+func (s *memNamespace) recordTable(table, id string) (*memTableEpoch, Decimal, bool) {
 	epoch, ok := s.recordEpoch[table][id]
 	if !ok {
 		return nil, "", false
@@ -485,8 +485,8 @@ func cloneMemCells(cells map[string]map[string]map[string]string) map[string]map
 	return out
 }
 
-func cloneMemSpace(s *memSpace) *memSpace {
-	out := &memSpace{version: s.version, active: s.active, engine: s.engine, epochKey: s.epochKey, epochField: s.epochField,
+func cloneMemNamespace(s *memNamespace) *memNamespace {
+	out := &memNamespace{version: s.version, active: s.active, engine: s.engine, epochKey: s.epochKey, epochField: s.epochField,
 		defs: make(map[string]*memTableDef, len(s.defs)), definitionOrder: append([]string(nil), s.definitionOrder...), epochs: make(map[Decimal]*memEpoch, len(s.epochs)),
 		recordEpoch: make(map[string]map[string]Decimal, len(s.recordEpoch)),
 		receipts:    make(map[Decimal]map[string]memReceipt, len(s.receipts)), zsets: make(map[string]map[string]string, len(s.zsets))}
@@ -543,7 +543,7 @@ func cloneMemSpace(s *memSpace) *memSpace {
 // rawDefinition and rawEpochMarker expose the exact bounded hash payloads
 // fetched by the Redis planner. Their field names and values are included in
 // the Mem read budget, while the public snapshot stays semantic.
-func (s *memSpace) rawDefinition(table string) map[string]string {
+func (s *memNamespace) rawDefinition(table string) map[string]string {
 	def := s.defs[table]
 	if def == nil {
 		return nil
@@ -558,7 +558,7 @@ func (s *memSpace) rawDefinition(table string) map[string]string {
 	return raw
 }
 
-func (s *memSpace) rawEpochMarker(epoch Decimal) map[string]string {
+func (s *memNamespace) rawEpochMarker(epoch Decimal) map[string]string {
 	names := s.definitionOrder
 	if names == nil {
 		names = []string{}
@@ -628,9 +628,9 @@ func memNextDecimal(d Decimal) (Decimal, bool) {
 type memPrepared struct {
 	owner       *Mem
 	space       string
-	base        *memSpace
+	base        *memNamespace
 	baseVersion uint64
-	next        *memSpace
+	next        *memNamespace
 	reply       Reply
 	publish     bool
 	used        bool
@@ -680,7 +680,7 @@ func (m *Mem) prepareLocked(ctx context.Context, step Step) (*memPrepared, error
 	} else if c > 0 {
 		return nil, memEpochRefusal("EPOCHAHEAD", s.active)
 	}
-	next := cloneMemSpace(s)
+	next := cloneMemNamespace(s)
 	var reply Reply
 	var err error
 	if step.Fence {

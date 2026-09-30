@@ -150,7 +150,7 @@ func (b *memWorkBudget) observeMember(record *memRecord, entry Entry, memberInde
 	return nil
 }
 
-func (m *Mem) planStep(ctx context.Context, pre, next *memSpace, step Step) (Reply, error) {
+func (m *Mem) planStep(ctx context.Context, pre, next *memNamespace, step Step) (Reply, error) {
 	writeEpoch := step.Epoch
 	rowsetPrefix := 0
 	for rowsetPrefix < len(step.Entries) && step.Entries[rowsetPrefix].Kind == "rowset" {
@@ -655,7 +655,7 @@ func cloneMemPlanInput(entry Entry) Entry {
 }
 
 // planFence prepares the one receipt command without entering table, row,
-// member or log planning. The caller publishes the cloned space only after
+// member or log planning. The caller publishes the cloned namespace only after
 // saveReceipt succeeds, giving the fence and the original operation one
 // atomic receipt winner.
 func (m *Mem) planFence(step Step) (Reply, error) {
@@ -729,7 +729,7 @@ func memEpochEmpty(e *memEpoch) bool {
 	return true
 }
 
-func (b *memWorkBudget) planWrites(pre, next *memSpace, step Step, epoch Decimal, rowOrder []struct{ table, row string }) {
+func (b *memWorkBudget) planWrites(pre, next *memNamespace, step Step, epoch Decimal, rowOrder []struct{ table, row string }) {
 	// Count the scalar argv bytes of each prospective command. The model does
 	// not issue Redis commands, but admission must still use concrete keys and
 	// field/value occurrences, with no RESP framing or arbitrary allowance.
@@ -986,7 +986,7 @@ func memPlanRCount(t *memTableEpoch, def *memTableDef, entry Entry, index int) e
 	return nil
 }
 
-func memPlanMember(pre, next *memSpace, preEpoch, workEpoch *memEpoch, rowOps map[string]map[string]*memRowOp, entry Entry, index, memberIndex int) (bool, error) {
+func memPlanMember(pre, next *memNamespace, preEpoch, workEpoch *memEpoch, rowOps map[string]map[string]*memRowOp, entry Entry, index, memberIndex int) (bool, error) {
 	id := entry.IDs[memberIndex]
 	def := next.defs[entry.Table]
 	before := preEpoch.tables[entry.Table]
@@ -1171,7 +1171,7 @@ func memPlanMember(pre, next *memSpace, preEpoch, workEpoch *memEpoch, rowOps ma
 	return true, nil
 }
 
-func entryEpoch(pre, next *memSpace) Decimal {
+func entryEpoch(pre, next *memNamespace) Decimal {
 	if next.active != pre.active {
 		return next.active
 	}
