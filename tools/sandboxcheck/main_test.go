@@ -35,7 +35,7 @@ func (r *recordingSystem) Sleep(time.Duration)  {}
 
 type stopper struct{}
 
-func (stopper) Stop() {}
+func (stopper) Stop() error { return nil }
 
 func env(kv ...string) func(string) string {
 	m := map[string]string{}

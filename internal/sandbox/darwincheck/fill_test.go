@@ -1,9 +1,10 @@
 package darwincheck
 
 import (
-	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 
 	"github.com/mas-bandwidth/nova-tools/profiles"
 )
@@ -63,39 +64,27 @@ func TestFillTemplateReplacesEachMarkerLineAndNothingElse(t *testing.T) {
 		"  @@NET@@",
 		"",
 	}, "\n")
-	if got != want {
-		t.Errorf("filled text\n%s\nwant\n%s", got, want)
-	}
+	assert.Equal(t, want, got, "filled text")
 }
 
 func TestAnAbsentOptionalRootLeavesTheMarkerEmpty(t *testing.T) {
 	t.Parallel()
 	got := fillTemplate("a\n@@OPTROOTS@@\nb\n", fillInput{write: "/x/w", ref: "/x/r"})
-	if got != "a\nb\n" {
-		t.Errorf("an empty optional-roots marker left %q", got)
-	}
+	assert.Equal(t, "a\nb\n", got, "an empty optional-roots marker")
 }
 
 func TestATemplateLineWithNoNewlineIsNotALine(t *testing.T) {
 	t.Parallel()
 	// A shell's `while read -r` drops a final line with no newline; the embedded
 	// template ends with one, and the filler reads it the same way.
-	if got := fillTemplate("a\nb", fillInput{}); got != "a\n" {
-		t.Errorf("fillTemplate = %q", got)
-	}
-	if !strings.HasSuffix(profiles.DarwinTemplate, "\n") {
-		t.Errorf("profiles/darwin.sb.tmpl does not end with a newline")
-	}
+	assert.Equal(t, "a\n", fillTemplate("a\nb", fillInput{}))
+	assert.True(t, strings.HasSuffix(profiles.DarwinTemplate, "\n"), "profiles/darwin.sb.tmpl does not end with a newline")
 }
 
 func TestAncestorsAreProperAndSlashIsExcluded(t *testing.T) {
 	t.Parallel()
-	if got := ancestorsOf("/a/b/c"); !reflect.DeepEqual(got, []string{"/a/b", "/a"}) {
-		t.Errorf("ancestorsOf(/a/b/c) = %v", got)
-	}
-	if got := ancestorsOf("/a"); len(got) != 0 {
-		t.Errorf("ancestorsOf(/a) = %v", got)
-	}
+	assert.Equal(t, []string{"/a/b", "/a"}, ancestorsOf("/a/b/c"))
+	assert.Empty(t, ancestorsOf("/a"))
 }
 
 // The embedded template, filled: every marker is gone and the grants the check's
@@ -103,11 +92,9 @@ func TestAncestorsAreProperAndSlashIsExcluded(t *testing.T) {
 func TestTheRealTemplateFillsCompletely(t *testing.T) {
 	t.Parallel()
 	got := fillTemplate(profiles.DarwinTemplate, fillInput{write: "/private/var/s/w", ref: "/private/var/s/ref", optRoots: []string{"/opt/homebrew"}})
-	if strings.Contains(got, "@@") {
-		for _, l := range strings.Split(got, "\n") {
-			if strings.Contains(l, "@@") && !strings.HasPrefix(l, ";;") {
-				t.Errorf("a marker survived: %s", l)
-			}
+	for _, l := range strings.Split(got, "\n") {
+		if strings.Contains(l, "@@") {
+			assert.True(t, strings.HasPrefix(l, ";;"), "a marker survived: %s", l)
 		}
 	}
 	for _, want := range []string{
@@ -118,14 +105,12 @@ func TestTheRealTemplateFillsCompletely(t *testing.T) {
 		`(allow file-read* (subpath "/opt/homebrew"))`,
 		`(allow file-read-metadata (literal "/private/var/s"))`,
 	} {
-		if !strings.Contains(got, want) {
-			t.Errorf("the filled template lacks %s", want)
-		}
+		assert.Contains(t, got, want, "the filled template lacks it")
 	}
 	// The network grant is IP only: never (allow network*) on a line of policy.
 	for _, l := range strings.Split(got, "\n") {
-		if !strings.HasPrefix(l, ";;") && strings.Contains(l, "(allow network*)") {
-			t.Errorf("the filled profile grants every unix-domain socket: %s", l)
+		if !strings.HasPrefix(l, ";;") {
+			assert.NotContains(t, l, "(allow network*)", "the filled profile grants every unix-domain socket")
 		}
 	}
 }
@@ -137,16 +122,12 @@ func TestOptionalRoots(t *testing.T) {
 		t.Parallel()
 		got := optionalRoots(fakeFS{dirs: all}, "/opt/tools/bin")
 		want := []string{"/opt/homebrew", "/opt/local", "/opt/tools/bin"}
-		if !reflect.DeepEqual(got, want) {
-			t.Errorf("roots = %v, want %v", got, want)
-		}
+		assert.Equal(t, want, got)
 	})
 	t.Run("an absent root is skipped, never refused", func(t *testing.T) {
 		t.Parallel()
 		got := optionalRoots(fakeFS{dirs: map[string]bool{"/opt/local": true}}, "/nowhere")
-		if !reflect.DeepEqual(got, []string{"/opt/local"}) {
-			t.Errorf("roots = %v", got)
-		}
+		assert.Equal(t, []string{"/opt/local"}, got)
 	})
 	t.Run("a root the template already grants is skipped", func(t *testing.T) {
 		t.Parallel()
@@ -155,21 +136,15 @@ func TestOptionalRoots(t *testing.T) {
 			dirs[r] = true
 		}
 		for r := range dirs {
-			if got := optionalRoots(fakeFS{dirs: dirs}, r); len(got) != 0 {
-				t.Errorf("%s was granted as an optional root: %v", r, got)
-			}
+			assert.Empty(t, optionalRoots(fakeFS{dirs: dirs}, r), "%s was granted as an optional root", r)
 		}
 		// /bin/foo is not /bin: the template grants the tree /usr, and /bin exactly.
-		if got := optionalRoots(fakeFS{dirs: map[string]bool{"/bin/foo": true}}, "/bin/foo"); len(got) != 1 {
-			t.Errorf("/bin/foo skipped: %v", got)
-		}
+		assert.Len(t, optionalRoots(fakeFS{dirs: map[string]bool{"/bin/foo": true}}, "/bin/foo"), 1, "/bin/foo skipped")
 	})
 	t.Run("the git directory is named once", func(t *testing.T) {
 		t.Parallel()
 		got := optionalRoots(fakeFS{dirs: all}, "/opt/homebrew")
-		if !reflect.DeepEqual(got, []string{"/opt/homebrew", "/opt/local"}) {
-			t.Errorf("roots = %v", got)
-		}
+		assert.Equal(t, []string{"/opt/homebrew", "/opt/local"}, got)
 	})
 }
 
@@ -222,8 +197,9 @@ func TestOptionalRootsFollowXcodeSelectLink(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			got := optionalRoots(tc.fs, "/nowhere")
-			if len(got) != len(tc.want) || (len(got) > 0 && !reflect.DeepEqual(got, tc.want)) {
-				t.Errorf("roots = %v, want %v", got, tc.want)
+			assert.Len(t, got, len(tc.want))
+			if len(got) > 0 {
+				assert.Equal(t, tc.want, got)
 			}
 		})
 	}
@@ -239,7 +215,5 @@ func TestChildEnvDropsExactlyTheAgentVariables(t *testing.T) {
 		"NOVA_KEEP=kept", "AI_AGENT=claude", "CLAUDE_AGENT_SDK_VERSION=1", "AGENT=x", "SSH_AUTH_SOCKET=keep", "PATH=/bin",
 	}
 	want := []string{"NOVA_KEEP=kept", "AI_AGENT=claude", "CLAUDE_AGENT_SDK_VERSION=1", "AGENT=x", "SSH_AUTH_SOCKET=keep", "PATH=/bin"}
-	if got := childEnv(in); !reflect.DeepEqual(got, want) {
-		t.Errorf("childEnv = %v, want %v", got, want)
-	}
+	assert.Equal(t, want, childEnv(in))
 }

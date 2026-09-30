@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // Spec is one process to run.
@@ -35,8 +37,9 @@ func (r Result) Combined() string { return r.Stdout + r.Stderr }
 
 // Process is a background process the check started: a socket listener.
 type Process interface {
-	// Stop ends the process and reaps it.
-	Stop()
+	// Stop ends the process and reaps it. It returns what went wrong doing so:
+	// a process that was already gone is not an error.
+	Stop() error
 }
 
 // System is every question the check puts to the machine and every process it
@@ -106,7 +109,7 @@ func (OSSystem) Real(path string) string {
 func (OSSystem) Run(s Spec) Result {
 	ctx, cancel := context.WithTimeout(context.Background(), runDeadline)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, s.Name, s.Args...)
+	cmd := subproc.Context(ctx, s.Name, s.Args...)
 	cmd.Dir, cmd.Env = s.Dir, s.Env
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
@@ -125,19 +128,34 @@ func (OSSystem) Run(s Spec) Result {
 	return res
 }
 
-type osProcess struct{ cmd *exec.Cmd }
+// osProcess is a listener the check started under its own cancellable context.
+type osProcess struct {
+	cmd    *exec.Cmd
+	cancel context.CancelFunc
+}
 
-func (p osProcess) Stop() {
-	_ = p.cmd.Process.Kill()
-	_ = p.cmd.Wait()
+// Stop cancels the listener's context, which kills it, and reaps it. The kill
+// makes Wait report an exit status, or the cancellation when the listener had
+// already exited; both are the expected end and not an error, anything else (a
+// pipe still held past WaitDelay) is returned.
+func (p osProcess) Stop() error {
+	p.cancel()
+	err := p.cmd.Wait()
+	var ee *exec.ExitError
+	if err != nil && !errors.As(err, &ee) && !errors.Is(err, context.Canceled) {
+		return err
+	}
+	return nil
 }
 
 func (OSSystem) Start(s Spec) (Process, error) {
-	cmd := exec.Command(s.Name, s.Args...)
+	ctx, cancel := context.WithCancel(context.Background())
+	cmd := subproc.Long(ctx, s.Name, s.Args...)
 	cmd.Dir, cmd.Env = s.Dir, s.Env
 	cmd.Stdout, cmd.Stderr = io.Discard, io.Discard
 	if err := cmd.Start(); err != nil {
+		cancel()
 		return nil, err
 	}
-	return osProcess{cmd}, nil
+	return osProcess{cmd: cmd, cancel: cancel}, nil
 }

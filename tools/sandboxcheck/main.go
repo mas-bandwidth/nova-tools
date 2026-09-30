@@ -11,13 +11,17 @@
 // wall. The probes are the real processes (git, /bin/sh, mkdir, cat, pbpaste, nc,
 // curl); the driver around them is internal/sandbox/darwincheck.
 //
-// The scratch tree is made under the working directory by default, never in a
-// shared temp directory, and only what the check made is removed at the end.
+// The scratch tree is the check's own fresh directory (os.MkdirTemp) under the
+// working directory by default, never in a shared temp directory, and only that
+// directory is removed at the end: a directory handed in with --scratch keeps
+// whatever else is in it. A cleanup that cannot remove everything says so on
+// standard error and exits 1.
 //
 // Flags, each also read from the environment variable beside it (the flag wins):
 //
-//	--scratch DIR       NOVA_CHECK_SCRATCH: put the scratch tree here. A Go test
-//	                    hands it t.TempDir() so it reaches outside nothing.
+//	--scratch DIR       NOVA_CHECK_SCRATCH: make the scratch tree inside this
+//	                    directory. A Go test hands it t.TempDir() so it reaches
+//	                    outside nothing.
 //	--no-network        NOVA_CHECK_NO_NETWORK=1: skip the two DNS checks, the only
 //	                    ones that touch the network. The operator run keeps them:
 //	                    they are the measurement of the DNS rule.
@@ -53,7 +57,7 @@ const usage = `usage: sandboxcheck [--scratch DIR] [--no-network] [--dump-profil
 The darwin profile check of nova-sandbox: one CHECK OK / CHECK FAIL line per
 check, exit 1 on any FAIL. Darwin only.
 
-  --scratch DIR     scratch tree here instead of under the working directory
+  --scratch DIR     scratch tree inside DIR instead of under the working directory
                     (env NOVA_CHECK_SCRATCH)
   --no-network      skip the two DNS checks (env NOVA_CHECK_NO_NETWORK=1)
   --dump-profile    print the filled profile and exit 0 (env NOVA_CHECK_DUMP_PROFILE=1)
