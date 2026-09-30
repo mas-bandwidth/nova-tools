@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"strings"
@@ -27,12 +28,18 @@ import (
 // with nothing changed writes nothing and raises nothing (1.3.3, E7), and a
 // key is delivered at least once. A rule does not read the cells of the review
 // column: it takes the primaries its read loaded (the cards of the work table
-// the snapshot holds), so that a partial snapshot is never scanned (1.5.2).
+// the snapshot holds), so that a partial snapshot is never scanned (1.5.2). Its
+// read names every field, count and row its plan reads and nothing else, and the
+// tests plan each rule on the snapshot LoadPartial makes of an answer that holds
+// only that.
 //
-// Every plan says the keys it finished (Done) and, for the askwait key, the one
-// it puts back. A plan too large for one request is cut by the step builder,
-// which then leaves the plan's keys queued (1.3.6): a rule does not cut its
-// own plan.
+// Every plan says the keys it finished (Done) and the ones it puts back
+// (Requeue). A key that names a line of the log is read from its offset within
+// what one read holds, and a line the read did not reach the end of is put back
+// with the offset the read got to (E6: ask@48213+528), the old key finished;
+// the askwait key is put back while its chunk was full. A plan too large for
+// one request is cut by the step builder, which then leaves the plan's keys
+// queued (1.3.6): a rule does not cut its own plan.
 //
 // A card a rule chose and its planner refused is marked and named (1.3.5): the
 // rule sets refused = "<rule>: <reason>" on the primary in its own step, which
@@ -63,14 +70,33 @@ const (
 	// AskwaitChunk is how many of askwait one pass of R8 reads (2.3 R8: the
 	// first 2,000 of askwait).
 	AskwaitChunk = 2000
-	// reviewLineIDs is the most ids a line names, so the most primaries a key
-	// that names a line reads: one generated line is at most 2,000 ids (1.0).
-	reviewLineIDs = 2000
 	// reviewReasonBytes is how much of a fix or a finding a notice repeats.
 	// The design bounds no notice's text; a notice lists at most MaxListed
 	// primaries, so this keeps one under 64 KiB, the bound of a field value
 	// (1.0).
 	reviewReasonBytes = 200
+)
+
+// The numbers these rules take from the design as their own, not from today's
+// machine's constants: the machine of version 2.1 replaces today's at the
+// switch (IT23), and until then a change to one is not a change to the other.
+// Where they differ from today's the pull request lists it as a question for
+// the switch: today's MaxRedeals is 3 and the design's is 5 (R2, R11).
+const (
+	// reviewMaxReady is the longest ready queue a reworked attempt is dealt into
+	// (2.3 R6: the cap of two ready cards a member).
+	reviewMaxReady = 2
+	// reviewMaxRedeals is how many times one attempt's work card is dealt again
+	// before its primary is at the redeal bound, where the coordinator's rework
+	// takes it in ready (2.3 R2 and R11: "redeals below 5"; 2.2 "a card reached
+	// its bound").
+	reviewMaxRedeals = 5
+	// reviewDeadlineUnbegun, reviewDeadlineUntaken and reviewDeadlineMergeIdle
+	// are the spans of the due times these rules stamp (1.2: an asked read card
+	// 30 minutes, a dealt work card 15, a merging stream with no merge step 30).
+	reviewDeadlineUnbegun   = 30 * time.Minute
+	reviewDeadlineUntaken   = 15 * time.Minute
+	reviewDeadlineMergeIdle = 30 * time.Minute
 )
 
 // The types of the notices these rules raise (2.5). A judgment they raise is
@@ -84,11 +110,11 @@ const (
 // The words of a NoteReq's Op and of an XGuard's Kind that the review rules use
 // (8.0), and the name of the set R8's askwait key reads the head of (1.3.1).
 const (
-	reviewOpen        = "open"
-	reviewClose       = "close"
-	reviewKnow        = "know"
-	guardMemberUp     = "memberup"
-	reviewHeadAskwait = "askwait"
+	reviewOpen          = "open"
+	reviewClose         = "close"
+	reviewKnow          = "know"
+	reviewGuardMemberUp = "memberup"
+	reviewHeadAskwait   = "askwait"
 )
 
 // reviewCauses is the cause each judgment these rules raise is kept under
@@ -108,45 +134,60 @@ var reviewFixWhenSilent = map[string]string{
 }
 
 // reviewRule is one row of the table that registers the three rules: the name
-// of the keys a rule takes, its place in the round robin (1.4.2: after R7 and
-// before R11), what its read projects and follows, the queries that do not
-// depend on its keys, and its plan.
+// of the keys a rule takes (its priority is PriorityOf's, the order of 1.4.2),
+// what its read projects and follows, the queries that do not depend on its
+// keys, and its plan.
+//
+// The fields are what the rule's plan reads of every record its `related` query
+// returns, the primaries and the read cards, merge card, control card and work
+// card the follows reach alike: a query has one projection, and a read of a
+// field it did not name is refused in a test and recorded in a release
+// (Snapshot.Unloaded). A test loads each plan through LoadPartial from an
+// answer that holds only these fields, so a field a plan reads that is not
+// here fails there.
 type reviewRule struct {
-	name     string
-	priority int
-	section  string
-	fields   []string
-	follow   []string
-	fixed    []SprintQ
-	plan     func(s *Snapshot, keys []AgendaKey, now Now) RulePlan
+	name    string
+	section string
+	fields  []string
+	follow  []string
+	fixed   []SprintQ
+	plan    func(s *Snapshot, keys []AgendaKey, now Now) RulePlan
 }
+
+// reviewMemberFields is what R10 reads of a member's control card: whether it
+// is up. The readers' control cards are read for their counts, and no field.
+var reviewMemberFields = []string{"status"}
 
 var reviewRules = []reviewRule{
 	{
-		name: ruleAsk, priority: 8, section: "2.3 R8",
+		name: ruleAsk, section: "2.3 R8",
 		fields: []string{"attempt", "result", "asked", "refused", "rcards", "head"},
-		follow: []string{"rcards", "jopen"},
-		fixed:  []SprintQ{{Kind: qReaders}},
+		follow: []string{FollowRCards, FollowJOpen},
+		fixed:  []SprintQ{{Kind: QueryReaders, Fields: reviewMemberFields}},
 		plan:   planAsk,
 	},
 	{
-		name: ruleAccept, priority: 9, section: "2.3 R9",
-		fields: []string{"attempt", "head", "ci", "ci_head", "refused", "rcards"},
-		follow: []string{"rcards", "merge", "control", "jopen"},
+		name: ruleAccept, section: "2.3 R9",
+		fields: []string{"attempt", "head", "ci", "ci_head", "refused", "rcards", "reader", "state", "outcome"},
+		follow: []string{FollowRCards, FollowMerge, FollowControl, FollowJOpen},
 		plan:   planAccept,
 	},
 	{
-		name: ruleRework, priority: 10, section: "2.3 R10",
-		fields: []string{"attempt", "result", "head", "asked", "refused", "rcards", "work", "avoid", "rereads", "bound", "reworks", "broken_reads"},
-		follow: []string{"rcards", "work"},
-		fixed:  []SprintQ{{Kind: qFleet}},
+		name: ruleRework, section: "2.3 R10",
+		fields: []string{"attempt", "result", "asked", "refused", "rcards", "work", "bound", "reworks", "broken_reads", "reader", "finding", "member", "report"},
+		follow: []string{FollowRCards, FollowWork},
+		fixed:  []SprintQ{{Kind: QueryFleet, Fields: reviewMemberFields}},
 		plan:   planRework,
 	},
 }
 
 func init() {
 	for _, r := range reviewRules {
-		RegisterRule(Rule{Name: r.name, Priority: r.priority, Read: r.read, Plan: r.plan})
+		priority, ok := PriorityOf(r.name)
+		if !ok {
+			panic("sprint: the review rule " + r.name + " has no priority in RulePriorities")
+		}
+		RegisterRule(Rule{Name: r.name, Priority: priority, Read: r.read, Plan: r.plan})
 	}
 }
 
@@ -192,61 +233,78 @@ func parseReviewKey(k AgendaKey) (reviewKey, bool) {
 	return reviewKey{}, false
 }
 
+// lineKey is the key of a line of the log from an offset: the rule's name, the
+// line's seq, and "+offset" past the first id (E6: ask@48213+528).
+func lineKey(rule string, line uint64, offset int) string {
+	if offset == 0 {
+		return rule + "@" + strconv.FormatUint(line, 10)
+	}
+	return rule + "@" + strconv.FormatUint(line, 10) + "+" + strconv.Itoa(offset)
+}
+
 // read is a rule's read (8.0): the queries its keys need, sized by their
 // declared cost to what layer 1 lets one read hold, and the keys it left for
-// later. A key that names a primary costs one primary's records; one that
-// names a line costs the line's most ids (reviewLineIDs less the offset), and
-// askwait its chunk, both more than one read holds, so such a key is read
-// alone and the cut of its queries is ReadPlan.Split's; the first key is
-// always read, since a read of one key is the least there is. A halving
-// halves the records the read may cost. A key that names nothing costs
-// nothing and is taken, for the plan removes it.
+// later. A key that names a primary costs one primary's records. A key that
+// names a line reads the ids of the line from its offset, and askwait the head
+// of its set, each up to what is left of the read (the most a line holds is
+// MaxLineIDs, and askwait's chunk is AskwaitChunk): the line's plan says where
+// its read got to and puts the key back from there (reviewFinish), so a line of
+// 2,000 primaries is read in the reads it takes and never in one over the
+// bound. The first key is always read, at least one id of it, since a read of
+// one key is the least there is; keys are taken in order and none is passed
+// over for a later one. A halving halves the ids the read may name, keys and
+// windows alike, down to one (1.4.2). A key that names nothing costs nothing
+// and is taken, for the plan removes it.
+//
+// The cost is the declared one (QueryCost) against every bound of b: records,
+// range ids and bytes. A bound of 0 or less is no bound.
 func (r reviewRule) read(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []AgendaKey) {
 	var rp ReadPlan
-	per := QueryCost(SprintQ{Kind: qRelated, Table: Work, IDs: []string{""}, Fields: r.fields, Follow: r.follow}).Records
-	fixed := 0
+	related := func(src IDSource) SprintQ {
+		return SprintQ{Kind: QueryRelated, Table: Work, Source: src, Fields: r.fields, Follow: r.follow}
+	}
+	// An id costs the most a source makes it (a head reads a range id too).
+	per := QueryCost(related(IDSource{Kind: SourceHead, Key: reviewHeadAskwait, Limit: 1}))
+	var fixed Cost
 	for _, q := range r.fixed {
-		fixed += QueryCost(q).Records
+		fixed = fixed.Add(QueryCost(q))
 	}
-	budget := max(per, (b.Records-fixed)>>max(0, halvings))
-	related := func(q SprintQ) SprintQ {
-		q.Kind, q.Table, q.Fields, q.Follow = qRelated, Work, r.fields, r.follow
-		return q
-	}
+	room := Halved(reviewCapacity(per, fixed, b), halvings)
 	var ids []string
 	var sources []SprintQ
-	used, took, i := 0, 0, 0
+	took, i := 0, 0
 	for ; i < len(keys); i++ {
 		rk, ok := parseReviewKey(keys[i])
-		cost := 0
+		want, src := 0, IDSource{}
 		switch {
 		case !ok:
 		case rk.kind == keyLine:
-			cost = per * max(1, reviewLineIDs-rk.offset)
+			want, src = max(0, MaxLineIDs-rk.offset), IDSource{Kind: SourceLine, Seq: rk.line, Offset: rk.offset}
 		case rk.kind == keyHead:
-			cost = per * AskwaitChunk
+			want, src = AskwaitChunk, IDSource{Kind: SourceHead, Key: reviewHeadAskwait}
 		default:
-			cost = per
+			want = 1
 		}
-		if took > 0 && used+cost > budget {
-			break
+		if want > 0 && took > 0 {
+			if room <= 0 || b.Queries > 0 && len(sources)+len(r.fixed)+2 > b.Queries {
+				break
+			}
 		}
-		used += cost
-		if cost > 0 {
-			took++
-		}
+		n := min(want, room)
+		room -= n
 		switch {
-		case !ok:
-		case rk.kind == keyLine:
-			sources = append(sources, related(SprintQ{Line: rk.line, Offset: rk.offset, Limit: max(1, reviewLineIDs-rk.offset)}))
-		case rk.kind == keyHead:
-			sources = append(sources, related(SprintQ{Head: reviewHeadAskwait, Limit: min(AskwaitChunk, max(1, budget/per))}))
-		default:
+		case want == 0:
+		case rk.kind == keyPrimary:
 			ids = append(ids, rk.subject)
+			took++
+		default:
+			src.Limit = n
+			sources = append(sources, related(src))
+			took++
 		}
 	}
 	if len(ids) > 0 {
-		rp.Sprint = append(rp.Sprint, related(SprintQ{IDs: ids}))
+		rp.Sprint = append(rp.Sprint, related(IDSource{Kind: SourceIDs, IDs: ids}))
 	}
 	rp.Sprint = append(rp.Sprint, sources...)
 	if len(rp.Sprint) > 0 {
@@ -255,19 +313,164 @@ func (r reviewRule) read(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan
 	return rp, keys[i:]
 }
 
+// reviewCapacity is how many ids costing per each fit beside what costs fixed,
+// under every bound of b, and never fewer than one. With no bound at all it is
+// more ids than any key names.
+func reviewCapacity(per, fixed Cost, b ReadBounds) int {
+	n := math.MaxInt32
+	fit := func(bound, used, each int) {
+		if bound > 0 && each > 0 {
+			n = min(n, (bound-used)/each)
+		}
+	}
+	fit(b.Records, fixed.Records, per.Records)
+	fit(b.RangeIDs, fixed.RangeIDs, per.RangeIDs)
+	fit(b.Bytes, fixed.Bytes, per.Bytes)
+	return max(n, 1)
+}
+
+// reviewSourceRead is what a read of a key's source got: the query of the
+// snapshot's plan over the line (or, for askwait, the head) the key names from
+// its offset, and how many ids its answer named. A key the plan read no such
+// query for names nothing to read, and a snapshot built whole read every id its
+// keys name.
+func reviewSourceRead(s *Snapshot, rk reviewKey) (q SprintQ, loaded int, found bool) {
+	if s.Partial == nil {
+		return SprintQ{}, 0, false
+	}
+	for i, q := range s.Partial.Plan.Sprint {
+		if q.Kind != QueryRelated || i >= len(s.Partial.Answer.Sprint) {
+			continue
+		}
+		src := q.Source
+		switch {
+		case rk.kind == keyLine && src.Kind == SourceLine && src.Seq == rk.line && src.Offset == rk.offset,
+			rk.kind == keyHead && src.Kind == SourceHead && src.Key == reviewHeadAskwait:
+			return q, len(s.Partial.Answer.Sprint[i].IDs), true
+		}
+	}
+	return SprintQ{}, 0, false
+}
+
+// reviewLineCut says a read of the key's source stopped short of the end of what it
+// names: it took every id its Limit allowed, and the line may hold more past
+// them (or the set beyond its chunk), so the rest is for a later read. It
+// returns where the read got to, the first id the next read starts at.
+func reviewLineCut(s *Snapshot, rk reviewKey) (next int, cut bool) {
+	q, loaded, found := reviewSourceRead(s, rk)
+	if !found || loaded < 1 || q.Source.Limit < 1 || loaded < q.Source.Limit {
+		return 0, false
+	}
+	if rk.kind == keyLine && rk.offset+loaded >= MaxLineIDs {
+		return 0, false // a line holds no more than MaxLineIDs ids
+	}
+	return rk.offset + loaded, true
+}
+
+// reviewFinish is the keys of a plan: each key is finished, except that a key
+// that names a line the read did not reach the end of is finished and put back
+// from the offset the read got to, keeping its order (E6, ChunkProgress: the
+// offset strictly grows because the read took at least one id), and the askwait
+// key is put back while its chunk was full and the pass asked a primary
+// (2.3 R8: "requeued while it had a full chunk and a reader was able"; a pass
+// that asks none has nothing to make progress on). A key that names a primary,
+// or nothing, is finished.
+func reviewFinish(rp *RulePlan, s *Snapshot, keys []AgendaKey, progressed bool) {
+	for _, k := range keys {
+		rk, ok := parseReviewKey(k)
+		if !ok {
+			rp.Done = append(rp.Done, k)
+			continue
+		}
+		next, cut := reviewLineCut(s, rk)
+		switch {
+		case cut && rk.kind == keyLine:
+			rp.Done = append(rp.Done, k)
+			rp.Requeue = append(rp.Requeue, AgendaKey{Key: lineKey(RuleOf(k.Key), rk.line, next), Seq: k.Seq})
+		case cut && rk.kind == keyHead && progressed:
+			rp.Requeue = append(rp.Requeue, k)
+		default:
+			rp.Done = append(rp.Done, k)
+		}
+	}
+}
+
+// reviewCtx is what a plan builds once from its snapshot so that no primary
+// costs a scan of the judgments, the readers or the read cards: the judgments
+// open or acknowledged by (type, subject), the readers' places in their row
+// order (for the rule that reads the readers), and the read cards of each
+// primary at its attempt. Each is built the first time it is asked for, in
+// O(what it indexes), and never twice.
+type reviewCtx struct {
+	s     *Snapshot
+	held  map[[2]string]bool
+	rank  map[string]int
+	reads map[string][]*Card
+}
+
+func newReviewCtx(s *Snapshot) *reviewCtx { return &reviewCtx{s: s, reads: map[string][]*Card{}} }
+
+// isHeld says a judgment of the type is open on the subject, or held on it by
+// an acknowledgement.
+func (x *reviewCtx) isHeld(typ, subject string) bool {
+	if x.held == nil {
+		x.held = map[[2]string]bool{}
+		for _, list := range [][]Open{x.s.Open, x.s.Acked} {
+			for _, o := range list {
+				x.held[[2]string{o.Note.Type, o.Subject()}] = true
+			}
+		}
+	}
+	return x.held[[2]string{typ, subject}]
+}
+
+// readerRank is each reader's place in the readers table's row order.
+func (x *reviewCtx) readerRank() map[string]int {
+	if x.rank == nil {
+		rows := x.s.Readers.Rows()
+		x.rank = make(map[string]int, len(rows))
+		for i, rd := range rows {
+			x.rank[rd] = i
+		}
+	}
+	return x.rank
+}
+
+// readsOf is the read cards of the primary at its attempt that its rcards lists
+// and the snapshot holds, placed or retired, in the order rcards lists them. A
+// retired card is a record kept, and its reader has read the attempt. rcards is
+// every read card ever made for the primary (1.3.1), so a card it does not list
+// is not one of the primary's reads, whatever the readers table holds.
+func (x *reviewCtx) readsOf(c *Card) []*Card {
+	if out, ok := x.reads[c.ID]; ok {
+		return out
+	}
+	var out []*Card
+	if x.s.Readers != nil {
+		attempt := c.Int("attempt")
+		for _, id := range Split(c.F("rcards")) {
+			if rc := x.s.Readers.Card(id); rc != nil && rc.Int("attempt") == attempt {
+				out = append(out, rc)
+			}
+		}
+	}
+	x.reads[c.ID] = out
+	return out
+}
+
 // The predicates of the rules' conditions, for the held rule's table of who
 // holds a card in review (2.3 R16: R8 never asked at its attempt, R9 two oks,
 // CI not red, not returned, R10 failed or broken): each says, of a snapshot
 // that holds the primary and what its rule reads, that the rule would act on
 // it now. A refused primary is out of all three, held by its judgment.
 
-// AskDue says R8 would ask the primary: it is in review, its work did not come
+// askDue says R8 would ask the primary: it is in review, its work did not come
 // back failed, it is not refused, and it has no read card at its attempt.
-func AskDue(s *Snapshot, c *Card) bool {
+func (x *reviewCtx) askDue(c *Card) bool {
 	if !reviewInReview(c) || c.F("refused") != "" || c.F("result") == "failed" {
 		return false
 	}
-	for _, rc := range reviewReads(s, c, c.Int("attempt")) {
+	for _, rc := range x.readsOf(c) {
 		if rc.Placed() {
 			return false
 		}
@@ -275,27 +478,64 @@ func AskDue(s *Snapshot, c *Card) bool {
 	return true
 }
 
-// AcceptDue says R9 would accept the primary: it is in review and not refused,
+// acceptDue says R9 would accept the primary: it is in review and not refused,
 // ok reads from two different readers stand at its head, its CI is not red at
 // its head (a red CI is judged by "ci red on a primary") and "returned to
 // review" is not open on it (the coordinator decides it).
-func AcceptDue(s *Snapshot, c *Card) bool {
-	if !reviewInReview(c) || c.F("refused") != "" || len(reviewOKReaders(s, c)) < AcceptReaders {
+func (x *reviewCtx) acceptDue(c *Card) bool {
+	if !reviewInReview(c) || c.F("refused") != "" || len(x.okReaders(c)) < AcceptReaders {
 		return false
 	}
-	return !reviewCIRed(c) && !reviewHeld(s, NReturned, c.ID)
+	return !reviewCIRed(c) && !x.isHeld(NReturned, c.ID)
 }
 
-// ReworkDue says R10 would act on the primary: it is in review, not refused
+// reworkDue says R10 would act on the primary: it is in review, not refused
 // and not at its bound, and its work came back failed or a reader found it
 // broken at its attempt. At MaxAttempts the rule sets the bound; below it, it
 // reworks.
-func ReworkDue(s *Snapshot, c *Card) bool {
+func (x *reviewCtx) reworkDue(c *Card) bool {
 	if !reviewInReview(c) || c.F("refused") != "" || c.F("bound") != "" {
 		return false
 	}
-	return c.F("result") == "failed" || len(reviewBroken(s, c)) > 0
+	return c.F("result") == "failed" || len(x.broken(c)) > 0
 }
+
+// AskDue says R8 would ask the primary: it is in review, its work did not come
+// back failed, it is not refused, and it has no read card at its attempt. Each
+// call costs a little more than the primary's own cards; a caller that asks it
+// of many primaries of one snapshot takes a ReviewView.
+func AskDue(s *Snapshot, c *Card) bool { return newReviewCtx(s).askDue(c) }
+
+// AcceptDue says R9 would accept the primary: it is in review and not refused,
+// ok reads from two different readers stand at its head, its CI is not red at
+// its head and "returned to review" is not open on it. A call indexes the
+// judgments and the readers: a caller that asks it of many primaries of one
+// snapshot takes a ReviewView.
+func AcceptDue(s *Snapshot, c *Card) bool { return newReviewCtx(s).acceptDue(c) }
+
+// ReworkDue says R10 would act on the primary: it is in review, not refused
+// and not at its bound, and its work came back failed or a reader found it
+// broken at its attempt.
+func ReworkDue(s *Snapshot, c *Card) bool { return newReviewCtx(s).reworkDue(c) }
+
+// ReviewView answers the three predicates for the primaries of one snapshot in
+// time linear in the snapshot: the judgments and the readers are indexed once,
+// the first time a predicate needs them, and not for every primary. The view
+// is of the snapshot as it was when the view was made, and is not safe for
+// concurrent use.
+type ReviewView struct{ x *reviewCtx }
+
+// NewReviewView is the view of the snapshot.
+func NewReviewView(s *Snapshot) *ReviewView { return &ReviewView{x: newReviewCtx(s)} }
+
+// AskDue is AskDue of the view's snapshot.
+func (v *ReviewView) AskDue(c *Card) bool { return v.x.askDue(c) }
+
+// AcceptDue is AcceptDue of the view's snapshot.
+func (v *ReviewView) AcceptDue(c *Card) bool { return v.x.acceptDue(c) }
+
+// ReworkDue is ReworkDue of the view's snapshot.
+func (v *ReviewView) ReworkDue(c *Card) bool { return v.x.reworkDue(c) }
 
 // reviewInReview says the primary is placed in review.
 func reviewInReview(c *Card) bool { return c.Placed() && c.Col == Review }
@@ -307,14 +547,8 @@ func reviewCIRed(c *Card) bool {
 	return c.F("ci") == "red" && (c.F("ci_head") == "" || c.F("ci_head") == c.F("head"))
 }
 
-// reviewHeld says a judgment of the type is open on the subject, or held on
-// it by an acknowledgement.
-func reviewHeld(s *Snapshot, typ, subject string) bool {
-	return hasOpen(s.Open, typ, subject) || hasOpen(s.Acked, typ, subject)
-}
-
 // reviewPrimaries is the primaries in review the snapshot holds, in work
-// order.
+// order: the records its read loaded, never the cells of the review column.
 func reviewPrimaries(s *Snapshot) []*Card {
 	if s == nil || s.Work == nil {
 		return nil
@@ -329,78 +563,34 @@ func reviewPrimaries(s *Snapshot) []*Card {
 	return out
 }
 
-// reviewReads is the read cards of a primary at an attempt that the snapshot
-// holds, placed or retired: those its rcards lists, then those a reader's row
-// derives (ReadCardID) that rcards does not (a read card made before rcards
-// listed it). A retired card is a record kept, and its reader has read the
-// attempt.
-func reviewReads(s *Snapshot, c *Card, attempt int) []*Card {
-	if s.Readers == nil {
+// okReaders is the ok read cards of two different readers at the primary's
+// attempt and head, in the order its rcards lists them (the order they were
+// asked: R9's read has no reader rows to order them by): fewer when there are
+// fewer. A card whose row, id and reader field do not name one reader counts
+// for no reader (ReadCardAgrees).
+func (x *reviewCtx) okReaders(c *Card) []*Card {
+	if x.s.Readers == nil {
 		return nil
 	}
-	seen := map[string]bool{}
-	var out []*Card
-	add := func(id string) {
-		if seen[id] {
-			return
-		}
-		seen[id] = true
-		if rc := s.Readers.Card(id); rc != nil && rc.Int("attempt") == attempt {
-			out = append(out, rc)
-		}
-	}
-	for _, id := range Split(c.F("rcards")) {
-		add(id)
-	}
-	for _, rd := range s.Readers.Rows {
-		add(ReadCardID(c.ID, attempt, rd))
-	}
-	return out
-}
-
-// reviewOKReaders is the ok read cards of two different readers at the
-// primary's attempt and head, in reader row order: fewer when there are fewer.
-// A card whose row, id and reader field do not name one reader counts for no
-// reader (ReadCardAgrees).
-func reviewOKReaders(s *Snapshot, c *Card) []*Card {
-	if s.Readers == nil {
-		return nil
-	}
-	seen := map[string]bool{}
 	var oks []*Card
-	for _, rc := range reviewReads(s, c, c.Int("attempt")) {
+	seen := map[string]bool{}
+	for _, rc := range x.readsOf(c) {
 		rd := rc.F("reader")
 		if rc.Placed() && rc.Col == OK && rc.F("head") == c.F("head") && ReadCardAgrees(rc) && !seen[rd] {
 			seen[rd] = true
-			oks = append(oks, rc)
+			if oks = append(oks, rc); len(oks) == AcceptReaders {
+				break
+			}
 		}
-	}
-	rank := map[string]int{}
-	for i, rd := range s.Readers.Rows {
-		rank[rd] = i
-	}
-	sort.SliceStable(oks, func(i, j int) bool {
-		ri, iok := rank[oks[i].F("reader")]
-		rj, jok := rank[oks[j].F("reader")]
-		if iok != jok {
-			return iok
-		}
-		if ri != rj {
-			return ri < rj
-		}
-		return oks[i].F("reader") < oks[j].F("reader")
-	})
-	if len(oks) > AcceptReaders {
-		oks = oks[:AcceptReaders]
 	}
 	return oks
 }
 
-// reviewBroken is the read cards at the primary's attempt that found it
-// broken and still stand.
-func reviewBroken(s *Snapshot, c *Card) []*Card {
+// broken is the read cards at the primary's attempt that found it broken and
+// still stand.
+func (x *reviewCtx) broken(c *Card) []*Card {
 	var out []*Card
-	for _, rc := range reviewReads(s, c, c.Int("attempt")) {
+	for _, rc := range x.readsOf(c) {
 		if rc.Placed() && rc.Col == Broken {
 			out = append(out, rc)
 		}
@@ -418,6 +608,21 @@ func reviewWorkCard(s *Snapshot, c *Card) *Card {
 		return wc
 	}
 	return s.Fleet.Card(WorkCardID(c.ID, c.Int("attempt")))
+}
+
+// reviewAtRedealBound is the withdrawn work card of a primary in ready that has
+// been dealt again reviewMaxRedeals times: the primary is at its redeal bound,
+// and the coordinator's rework takes it (2.2 "a card reached its bound"). Nil
+// for any other primary.
+func reviewAtRedealBound(s *Snapshot, c *Card) *Card {
+	if c == nil || !c.Placed() || c.Col != Ready || s.Fleet == nil {
+		return nil
+	}
+	wc := s.Fleet.Placed(WorkCardID(c.ID, c.Int("attempt")))
+	if wc != nil && wc.Col == Withdrawn && wc.Int("redeals") >= reviewMaxRedeals {
+		return wc
+	}
+	return nil
 }
 
 // reviewKeys is the keys a plan finished, as a copy.
@@ -529,26 +734,32 @@ func reviewRefused(rp *RulePlan, s *Snapshot, rule string) {
 // attempt, retired too, is not asked again, so a read that replaces another
 // goes to a reader not yet asked. Each new id is appended to rcards. With
 // fewer than two readers able, "cannot ask" is opened on the primary, which J
-// puts in askwait; asked, it is closed. Key: removed, askwait put back while
-// the pass asked a primary, since a pass that asks none has nothing to make
-// progress on. Cost: O(r) a primary and one step for every primary of the tick,
-// O(p log p) to put the primaries in order.
+// puts in askwait; asked, it is closed. Key: removed; a key that names a line
+// the read did not reach the end of is put back from the offset it got to, and
+// askwait while its chunk was full and the pass asked a primary (reviewFinish).
+// Cost: O(k) a primary in the reads it holds (at most 15) and O(log r) to find
+// its readers, O(r log r) once to order the readers, one step for every primary
+// of the tick, O(p log p) to put the primaries in order.
 func planAsk(s *Snapshot, keys []AgendaKey, now Now) RulePlan {
 	var rp RulePlan
 	var p Plan
 	if s.Readers == nil {
 		return RulePlan{Done: reviewKeys(keys)}
 	}
-	q := reviewAskedQueues(s)
+	x := newReviewCtx(s)
+	var rq *readerQueue // built when a primary is due, so a read of none reads no readers
 	var asked, cannot, closing []string
 	for _, c := range reviewPrimaries(s) {
-		if !AskDue(s, c) {
+		if !x.askDue(c) {
 			continue
 		}
+		if rq == nil {
+			rq = newReaderQueue(s, x.readerRank())
+		}
 		attempt := c.Int("attempt")
-		chosen := reviewAble(s, c, q)
+		chosen := rq.choose(Split(c.F("asked")), x.readersAt(c))
 		if len(chosen) < AskReaders {
-			if !reviewHeld(s, NCannotAsk, c.ID) {
+			if !x.isHeld(NCannotAsk, c.ID) {
 				cannot = append(cannot, c.ID)
 			}
 			continue
@@ -564,16 +775,16 @@ func planAsk(s *Snapshot, keys []AgendaKey, now Now) RulePlan {
 		}
 		u := Unit{Key: c.ID, Stream: c.Row}
 		for i, rd := range chosen {
-			q[rd]++
+			rq.asked(rd)
 			u.Changes = append(u.Changes, change(Readers, createEntry(ids[i], rd, Asked, c.Score, map[string]string{
 				"kind": "read", "primary": c.ID, "stream": c.Row, "reader": rd, "attempt": itoa(attempt), "head": c.F("head"),
-				"asked": reviewWall(now), "asked_r": strconv.FormatInt(now.R, 10), "due_unbegun": reviewDue(now, DeadlineUnbegun)})))
+				"asked": reviewWall(now), "asked_r": strconv.FormatInt(now.R, 10), "due_unbegun": reviewDue(now, reviewDeadlineUnbegun)})))
 		}
 		u.Changes = append(u.Changes, change(Work, setEntry(c, map[string]string{"asked": strings.Join(chosen, ","), "rcards": strings.Join(rcards, ",")})))
 		u.Moved = c.ID + " asked of " + strings.Join(chosen, ", ")
 		p.Units = append(p.Units, u)
 		asked = append(asked, c.ID)
-		if reviewHeld(s, NCannotAsk, c.ID) {
+		if x.isHeld(NCannotAsk, c.ID) {
 			closing = append(closing, c.ID)
 		}
 	}
@@ -587,60 +798,95 @@ func planAsk(s *Snapshot, keys []AgendaKey, now Now) RulePlan {
 		rp.Notes = append(rp.Notes, NoteReq{Op: reviewClose, Type: NCannotAsk, Cause: reviewCauses[NCannotAsk], Subjects: closing,
 			Text: "asked"})
 	}
-	for _, k := range keys {
-		if rk, ok := parseReviewKey(k); ok && rk.kind == keyHead && len(asked) > 0 {
-			rp.Requeue = append(rp.Requeue, k)
-			continue
-		}
-		rp.Done = append(rp.Done, k)
-	}
+	reviewFinish(&rp, s, keys, len(asked) > 0)
 	return rp
 }
 
-// reviewAskedQueues is each reader's asked count, the queue a new read joins.
-func reviewAskedQueues(s *Snapshot) map[string]int {
-	q := map[string]int{}
-	if s.Readers == nil {
-		return q
-	}
-	for _, rd := range s.Readers.Rows {
-		q[rd] = s.Readers.Count(rd, Asked)
-	}
-	return q
-}
-
-// reviewAble is the readers to ask of a primary: up to AskReaders different
-// ones among those that have no card at its attempt, retired ones included; the
-// readers the primary names first, in the order it names them, then the ones
-// with the shortest asked queues, the first in row order on a tie. Fewer than
-// AskReaders when fewer are able.
-func reviewAble(s *Snapshot, c *Card, q map[string]int) []string {
-	attempt := c.Int("attempt")
-	var free []string
-	for _, rd := range s.Readers.Rows {
-		if s.Readers.Card(ReadCardID(c.ID, attempt, rd)) == nil {
-			free = append(free, rd)
+// readersAt is the readers that have a read card at the primary's attempt,
+// retired ones included: a reader is asked of an attempt once. A card names its
+// reader by its id, the one an ask would make again.
+func (x *reviewCtx) readersAt(c *Card) map[string]bool {
+	var used map[string]bool
+	for _, rc := range x.readsOf(c) {
+		if _, _, rd, ok := ParseReadCard(rc.ID); ok {
+			if used == nil {
+				used = map[string]bool{}
+			}
+			used[rd] = true
 		}
 	}
+	return used
+}
+
+// readerQueue is the readers in the order R8 asks them: by the count of reads
+// asked and not begun, fewest first, the first in row order on a tie. It is
+// kept in that order as reads are given out, so the readers a primary is asked
+// of are found from its front and not by a scan of every reader for every
+// primary.
+type readerQueue struct {
+	order []string
+	count map[string]int
+	rank  map[string]int
+}
+
+// newReaderQueue is the snapshot's readers, ordered by their asked counts (the
+// counts the readers query gave) and rows.
+func newReaderQueue(s *Snapshot, rank map[string]int) *readerQueue {
+	rq := &readerQueue{order: append([]string(nil), s.Readers.Rows()...), count: make(map[string]int, len(rank)), rank: rank}
+	for _, rd := range rq.order {
+		rq.count[rd] = s.Readers.Count(rd, Asked)
+	}
+	sort.Slice(rq.order, func(i, j int) bool {
+		return rq.before(rq.order[i], rq.count[rq.order[i]], rq.order[j], rq.count[rq.order[j]])
+	})
+	return rq
+}
+
+// before says the reader a with count ca is asked before the reader b with cb.
+func (rq *readerQueue) before(a string, ca int, b string, cb int) bool {
+	if ca != cb {
+		return ca < cb
+	}
+	return rq.rank[a] < rq.rank[b]
+}
+
+// at is where the reader with that count is (or would be inserted) in the order.
+func (rq *readerQueue) at(rd string, count int) int {
+	return sort.Search(len(rq.order), func(i int) bool {
+		return !rq.before(rq.order[i], rq.count[rq.order[i]], rd, count)
+	})
+}
+
+// choose is the readers to ask of a primary: up to AskReaders different ones
+// among those that have no card at its attempt (used); the readers the primary
+// names first, in the order it names them, then the ones with the shortest
+// asked queues, the first in row order on a tie. Fewer than AskReaders when
+// fewer are able.
+func (rq *readerQueue) choose(named []string, used map[string]bool) []string {
 	var chosen []string
-	for _, rd := range Split(c.F("asked")) {
-		if contains(free, rd) && !contains(chosen, rd) && len(chosen) < AskReaders {
+	for _, rd := range named {
+		if _, isReader := rq.rank[rd]; isReader && !used[rd] && !contains(chosen, rd) && len(chosen) < AskReaders {
 			chosen = append(chosen, rd)
 		}
 	}
-	for len(chosen) < AskReaders {
-		var left []string
-		for _, rd := range free {
-			if !contains(chosen, rd) {
-				left = append(left, rd)
-			}
+	for i := 0; len(chosen) < AskReaders && i < len(rq.order); i++ {
+		if rd := rq.order[i]; !used[rd] && !contains(chosen, rd) {
+			chosen = append(chosen, rd)
 		}
-		if len(left) == 0 {
-			break
-		}
-		chosen = append(chosen, shortest(left, q))
 	}
 	return chosen
+}
+
+// asked says a read was given to the reader: its queue is one longer, and it
+// moves back in the order past the readers with as many or fewer.
+func (rq *readerQueue) asked(rd string) {
+	i := rq.at(rd, rq.count[rd])
+	rq.order = append(rq.order[:i], rq.order[i+1:]...)
+	rq.count[rd]++
+	j := rq.at(rd, rq.count[rd])
+	rq.order = append(rq.order, "")
+	copy(rq.order[j+1:], rq.order[j:])
+	rq.order[j] = rd
 }
 
 // R9 accept. Trigger: accept:<p> or accept@<seq> (a read card entered ok, a
@@ -657,16 +903,19 @@ func reviewAble(s *Snapshot, c *Card, q map[string]int) []string {
 // waiting, and every read card of the attempt still asked or reading retired.
 // The machine never merges: the merge step is the merger's verb. A merge card
 // anywhere else, or a stream with no control card, is a planner refusal.
-// Key: removed. Raises: "accepted by the machine" and, for a stream that was
-// waiting, "stream started merging". Cost: O(r) a primary (its read cards are
-// at most 15 and its reader rows r); the design's figure for the store's time
-// is about 0.13 ms for one (measured, tracer 1).
+// Key: removed; a key that names a line the read did not reach the end of is
+// put back from the offset it got to (reviewFinish). Raises: "accepted by the
+// machine" and, for a stream that was waiting, "stream started merging". Cost:
+// O(k) a primary in its read cards (at most 15) and O(r) once to place the
+// readers; the design's figure for the store's time is about 0.13 ms for one
+// (measured, tracer 1).
 func planAccept(s *Snapshot, keys []AgendaKey, now Now) RulePlan {
-	rp := RulePlan{Done: reviewKeys(keys)}
+	rp := RulePlan{}
 	var p Plan
+	x := newReviewCtx(s)
 	readers := map[string]string{}
 	for _, c := range reviewPrimaries(s) {
-		if !AcceptDue(s, c) {
+		if !x.acceptDue(c) {
 			continue
 		}
 		if s.StreamCtl(c.Row) == nil {
@@ -678,9 +927,9 @@ func planAccept(s *Snapshot, keys []AgendaKey, now Now) RulePlan {
 			p.refuse(c.ID, "its merge record is "+placeWord(m))
 			continue
 		}
-		oks := reviewOKReaders(s, c)
+		oks := x.okReaders(c)
 		readers[c.ID] = strings.Join([]string{oks[0].F("reader"), oks[1].F("reader")}, ",")
-		p.Units = append(p.Units, acceptUnit(s, c, oks, m, readers[c.ID], now))
+		p.Units = append(p.Units, acceptUnit(x, c, oks, m, readers[c.ID], now))
 	}
 	p = Lawful(p)
 	var accepted []reviewItem
@@ -696,7 +945,7 @@ func planAccept(s *Snapshot, keys []AgendaKey, now Now) RulePlan {
 			reviewGuardStream(&p, st, ctl)
 			continue
 		}
-		setStream(&p, s, st, map[string]string{"state": StreamMerging, "since": reviewWall(now), "due_mergeidle": reviewDue(now, DeadlineMergeIdle)})
+		setStream(&p, s, st, map[string]string{"state": StreamMerging, "since": reviewWall(now), "due_mergeidle": reviewDue(now, reviewDeadlineMergeIdle)})
 		started = append(started, st)
 	}
 	rp.Plan = p
@@ -705,19 +954,20 @@ func planAccept(s *Snapshot, keys []AgendaKey, now Now) RulePlan {
 	for _, st := range started {
 		rp.Notes = append(rp.Notes, NoteReq{Op: reviewKnow, Type: NStartedMerging, Subjects: []string{StreamSubject(st)}})
 	}
+	reviewFinish(&rp, s, keys, false)
 	return rp
 }
 
 // acceptUnit is one primary's accept: the guards on its two ok reads, the
 // retirement of its outstanding reads, its merge card queued and the primary
 // moved into merging.
-func acceptUnit(s *Snapshot, c *Card, oks []*Card, m *Card, readers string, now Now) Unit {
+func acceptUnit(x *reviewCtx, c *Card, oks []*Card, m *Card, readers string, now Now) Unit {
 	u := Unit{Key: c.ID, Stream: c.Row}
 	for _, o := range oks {
 		u.Changes = append(u.Changes, change(Readers, guardEntry(o)))
 	}
 	retired := 0
-	for _, rc := range reviewReads(s, c, c.Int("attempt")) {
+	for _, rc := range x.readsOf(c) {
 		if rc.Placed() && (rc.Col == Asked || rc.Col == Reading) {
 			u.Changes = append(u.Changes, change(Readers, removeEntry(rc, map[string]string{"retired": reviewWall(now), "retired_by": "accept"})))
 			retired++
@@ -764,18 +1014,22 @@ func reviewGuardStream(p *Plan, stream string, ctl *Card) {
 // room, to avoid only when no other has room, and with no member able to take
 // it the primary goes review -> ready with avoid, into again, for R6 to deal;
 // the attempt's read cards are retired. At MaxAttempts: bound is set to
-// BoundAttempts and the primary stays in review. Key: removed. Raises:
-// "reworked by the machine", and at the bound "a card reached its bound".
-// Cost: O(r + f) a primary.
+// BoundAttempts and the primary stays in review. Key: removed; a key that names
+// a line the read did not reach the end of is put back from the offset it got
+// to (reviewFinish). Raises: "reworked by the machine", and at the bound "a card
+// reached its bound". Cost: O(k + f) a primary in its read cards (at most 15)
+// and the up members.
 func planRework(s *Snapshot, keys []AgendaKey, now Now) RulePlan {
-	rp := RulePlan{Done: reviewKeys(keys)}
+	rp := RulePlan{}
 	var p Plan
-	up, q := reviewMembers(s)
+	x := newReviewCtx(s)
+	var up []string
+	var q map[string]int // the fleet's, read when a primary is due, so a read of none reads no fleet
 	dealt := map[string]string{}
 	fixes := map[string]string{}
 	bound := map[string]bool{}
 	for _, c := range reviewPrimaries(s) {
-		if !ReworkDue(s, c) {
+		if !x.reworkDue(c) {
 			continue
 		}
 		if c.Int("attempt") >= MaxAttempts {
@@ -785,7 +1039,10 @@ func planRework(s *Snapshot, keys []AgendaKey, now Now) RulePlan {
 			bound[c.ID] = true
 			continue
 		}
-		fix := reviewOwnFix(s, c)
+		if q == nil {
+			up, q = reviewMembers(s)
+		}
+		fix := reviewOwnFix(x, c)
 		tag := "broken"
 		if c.F("result") == "failed" {
 			tag = "failed"
@@ -793,7 +1050,7 @@ func planRework(s *Snapshot, keys []AgendaKey, now Now) RulePlan {
 		if fix == "" {
 			fix = reviewFixWhenSilent[tag]
 		}
-		u, member, why := reworkUnit(s, c, fix, up, q, now)
+		u, member, why := reworkUnit(x, c, fix, up, q, now)
 		if why != "" {
 			p.refuse(c.ID, why)
 			continue
@@ -821,7 +1078,7 @@ func planRework(s *Snapshot, keys []AgendaKey, now Now) RulePlan {
 	}
 	rp.Plan = p
 	for _, m := range members {
-		rp.Guards = append(rp.Guards, XGuard{Kind: guardMemberUp, Member: m})
+		rp.Guards = append(rp.Guards, XGuard{Kind: reviewGuardMemberUp, Member: m})
 	}
 	reviewRefused(&rp, s, ruleRework)
 	rp.Notes = append(rp.Notes, reviewNotices(typeReworked, did)...)
@@ -836,6 +1093,7 @@ func planRework(s *Snapshot, keys []AgendaKey, now Now) RulePlan {
 		}
 		rp.Notes = append(rp.Notes, NoteReq{Op: reviewOpen, Type: NBound, Cause: reviewCauses[NBound], Subjects: ids, Text: text})
 	}
+	reviewFinish(&rp, s, keys, false)
 	return rp
 }
 
@@ -851,9 +1109,10 @@ func reviewMembers(s *Snapshot) ([]string, map[string]int) {
 
 // reviewOwnFix is a primary's own fix: the findings of its broken reads at its
 // attempt, else the report of its failed work; "" when it has neither.
-func reviewOwnFix(s *Snapshot, c *Card) string {
+func reviewOwnFix(x *reviewCtx, c *Card) string {
+	s := x.s
 	var found []string
-	for _, rc := range reviewBroken(s, c) {
+	for _, rc := range x.broken(c) {
 		if f := rc.F("finding"); f != "" && !contains(found, f) {
 			found = append(found, f)
 		}
@@ -875,14 +1134,14 @@ func reviewOwnFix(s *Snapshot, c *Card) string {
 func reviewMember(up []string, q map[string]int, avoid string) string {
 	var others []string
 	for _, m := range up {
-		if m != avoid && q[m] < MaxReadyPerMember {
+		if m != avoid && q[m] < reviewMaxReady {
 			others = append(others, m)
 		}
 	}
 	switch {
 	case len(others) > 0:
 		return shortest(others, q)
-	case avoid != "" && contains(up, avoid) && q[avoid] < MaxReadyPerMember:
+	case avoid != "" && contains(up, avoid) && q[avoid] < reviewMaxReady:
 		return avoid
 	}
 	return ""
@@ -895,7 +1154,8 @@ func reviewMember(up []string, q map[string]int, avoid string) string {
 // the next attempt's work card dealt to the member reviewMember picks, or the
 // primary moved to ready with avoid when none can take it. It returns the
 // member dealt to, "" when none, and a reason when it cannot be done.
-func reworkUnit(s *Snapshot, c *Card, fix string, up []string, q map[string]int, now Now) (Unit, string, string) {
+func reworkUnit(x *reviewCtx, c *Card, fix string, up []string, q map[string]int, now Now) (Unit, string, string) {
+	s := x.s
 	attempt := c.Int("attempt")
 	avoid := ""
 	if wc := reviewWorkCard(s, c); wc != nil {
@@ -904,12 +1164,12 @@ func reworkUnit(s *Snapshot, c *Card, fix string, up []string, q map[string]int,
 		}
 	}
 	var retire []Change
-	if wc := AtRedealBound(s, c); wc != nil {
+	if wc := reviewAtRedealBound(s, c); wc != nil {
 		retire = append(retire, change(Fleet, removeEntry(wc, map[string]string{"retired": reviewWall(now), "retired_by": "rework"})))
 	}
 	broken := 0
 	var readers []string
-	for _, rc := range reviewReads(s, c, attempt) {
+	for _, rc := range x.readsOf(c) {
 		if !contains(readers, rc.F("reader")) {
 			readers = append(readers, rc.F("reader"))
 		}
@@ -922,10 +1182,11 @@ func reworkUnit(s *Snapshot, c *Card, fix string, up []string, q map[string]int,
 		retire = append(retire, change(Readers, removeEntry(rc, map[string]string{"retired": reviewWall(now), "retired_by": "rework"})))
 	}
 	// the readers kept are the pair the primary was asked of, so the fixed work
-	// is asked of them again when it returns
+	// is asked of them again when it returns; a primary that names none keeps the
+	// readers of its reads, in the order its rcards lists them
 	asked := c.F("asked")
 	if asked == "" && len(readers) > 0 {
-		asked = strings.Join(orderLike(s.Readers.Rows, readers, ""), ",")
+		asked = strings.Join(readers, ",")
 	}
 	set := map[string]string{"fix": fix, "reworks": itoa(c.Int("reworks") + 1), "broken_reads": itoa(c.Int("broken_reads") + broken), "rereads": "0"}
 	unset := []string{"result", "readers", "bound"}
@@ -953,7 +1214,7 @@ func reworkUnit(s *Snapshot, c *Card, fix string, up []string, q map[string]int,
 	wall := reviewWall(now)
 	fields := map[string]string{"kind": "work", "primary": c.ID, "stream": c.Row, "attempt": itoa(attempt + 1), "gen": "1", "member": member,
 		"dealt": wall, "first_dealt": wall, "untaken_since": wall, "fix": fix,
-		"untaken_r": strconv.FormatInt(now.R, 10), "due_untaken": reviewDue(now, DeadlineUntaken)}
+		"untaken_r": strconv.FormatInt(now.R, 10), "due_untaken": reviewDue(now, reviewDeadlineUntaken)}
 	changes := append(retire, change(Fleet, createEntry(card, member, Ready, c.Score, fields)), change(Work, moveEntry(c, c.Row, Working, set, unset...)))
 	u := Unit{Key: c.ID, Stream: c.Row, Changes: changes}
 	u.Moved = fmt.Sprintf("%s %s -> working (rework, attempt %d) card=%s member=%s, avoiding %s; %d cards retired",
@@ -969,13 +1230,19 @@ func reviewPool(s *Snapshot) []*Card {
 	}
 	var out []*Card
 	for _, c := range s.Work.Cards {
-		if reviewInReview(c) || c.Placed() && c.Col == Ready && AtRedealBound(s, c) != nil {
+		if reviewInReview(c) || c.Placed() && c.Col == Ready && reviewAtRedealBound(s, c) != nil {
 			out = append(out, c)
 		}
 	}
 	SortCards(out)
 	return out
 }
+
+// reviewReworkResolves is the judgments the coordinator's rework of version 2.1
+// discharges on its primary: today's ReworkResolves and "cannot ask", whose
+// decisions (2.2) list `rework --fix`. The list is this path's own, so that
+// today's Rework closes what it always did.
+var reviewReworkResolves = append(append([]string(nil), ReworkResolves...), NCannotAsk)
 
 // ReworkV21 is the coordinator's rework (2.3 R10 "by the coordinator", section
 // 3): each named primary, or each of a stream, is sent back with the fix and
@@ -985,8 +1252,13 @@ func reviewPool(s *Snapshot) []*Card {
 // and the primary's bound is unset), and for one in ready at its redeal bound,
 // whose withdrawn work card it retires; with no fix given, each primary's own
 // is the finding of its broken read or the report of its failed work, and a
-// primary with neither is refused by name. It plans at the snapshot's time
-// taken as R and wall (ReworkAt has the clocks given).
+// primary with neither is refused by name. It closes the judgments the rework
+// answers (reviewReworkResolves, "cannot ask" among them), so `--answers`
+// naming one is accepted. It plans at the snapshot's time taken as R and wall
+// (ReworkAt has the clocks given). What its read must load is the verb's to
+// plan (IT21): the primaries and their read cards, rcards, work card and
+// withdrawn card, the fleet's rows, counts and members' status, and the open
+// judgments.
 func ReworkV21(s *Snapshot, r ReworkReq) Plan { return ReworkAt(s, r, reviewNowOf(s)) }
 
 // ReworkAt is ReworkV21 with the clocks it plans at given: the due times of
@@ -997,11 +1269,12 @@ func ReworkAt(s *Snapshot, r ReworkReq, now Now) Plan {
 		if c.Placed() && c.Col == Merging {
 			return "merging: return it first: nova-sprint return " + c.ID
 		}
-		if AtRedealBound(s, c) != nil {
+		if reviewAtRedealBound(s, c) != nil {
 			return ""
 		}
 		return inState(c, Review)
 	}, s.primaryCard)
+	x := newReviewCtx(s)
 	up, q := reviewMembers(s)
 	for _, c := range chosen {
 		// A primary the rework refuses stays in review: the judgment it needs is
@@ -1013,19 +1286,19 @@ func ReworkAt(s *Snapshot, r ReworkReq, now Now) Plan {
 		}
 		fix := r.Fix
 		if fix == "" {
-			if fix = reviewOwnFix(s, c); fix == "" {
+			if fix = reviewOwnFix(x, c); fix == "" {
 				p.refuse(c.ID, "no --fix, and no finding of a broken read or report of failed work to take as its fix; give --fix <text>")
 				stays()
 				continue
 			}
 		}
-		u, _, why := reworkUnit(s, c, fix, up, q, now)
+		u, _, why := reworkUnit(x, c, fix, up, q, now)
 		if why != "" {
 			p.refuse(c.ID, why)
 			stays()
 			continue
 		}
-		u.Closes = closesFor(s.Open, ReworkResolves, c.ID)
+		u.Closes = closesFor(s.Open, reviewReworkResolves, c.ID)
 		p.Units = append(p.Units, u)
 	}
 	answered(&p, s, r.Answers, r.Who)
