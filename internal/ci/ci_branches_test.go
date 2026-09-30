@@ -45,7 +45,7 @@ func TestSelfHostedShardsSelectThePackagesAChangeTouches(t *testing.T) {
 	// The step hands the event's own bases to the verb that selects and deals;
 	// the verb holds the rest of the law.
 	for _, want := range []string{
-		"go run ./tools/ci test-matrix",
+		ciRunner + " test-matrix",
 		`--event "${{ github.event_name }}"`,
 		`--pull-request-base "${{ github.event.pull_request.base.sha }}"`,
 		`--merge-group-base "${{ github.event.merge_group.base_sha }}"`,
@@ -180,6 +180,10 @@ func jobUsesShort(block string) bool {
 // branch added to the list and nowhere else is a red test that names the lines
 // to change, never a silent half-rule.
 
+// ciRunner is how a workflow step runs tools/ci: the binary its job built once
+// into $RUNNER_TEMP, never `go run`, which would compile it again in each step.
+const ciRunner = `"$RUNNER_TEMP/ci"`
+
 // integrationListRe matches THE list definition: a fromJSON of a JSON array of
 // refs, single-quoted inside the concurrency expression.
 var integrationListRe = regexp.MustCompile(`fromJSON\('(\[[^']*refs/heads/[^']*\])'\)`)
@@ -288,7 +292,7 @@ func TestRunnersPerMachineIsOneNumber(t *testing.T) {
 	if step == "" {
 		t.Fatal("no fair-share step in ci.yml (a step whose name says it takes this runner's share of the machine); GOMAXPROCS per leg is what row 9 of #828 got wrong")
 	}
-	if !strings.Contains(step, "go run ./tools/ci runner-share") {
+	if !strings.Contains(step, ciRunner + " runner-share") {
 		t.Error("the fair-share step does not call `ci runner-share`, which holds the division")
 	}
 	// The divisor is the runner service's fact, and 8 is today's fleet as the

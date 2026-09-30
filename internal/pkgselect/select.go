@@ -192,13 +192,36 @@ func hasBuildLine(b []byte) bool {
 
 var goModFileRe = regexp.MustCompile(`^(go\.mod|go\.sum)$`)
 
+// ensureBase makes the base commit present. It fetches only when the commit is
+// missing, and passes --depth=1 only when the clone is already shallow: a
+// fetch with --depth shallows the clone it runs in, and `nova-ci local` runs
+// this in a developer's own clone. A failed fetch is not an error: the diff
+// that follows says whether the base is there.
+func (s *selector) ensureBase() error {
+	have, err := s.run(s.o.Root, nil, "git", "cat-file", "-e", s.o.Base+"^{commit}")
+	if err != nil {
+		return err
+	}
+	if have.Code == 0 {
+		return nil
+	}
+	argv := []string{"git", "fetch", "-q"}
+	shallow, err := s.run(s.o.Root, nil, "git", "rev-parse", "--is-shallow-repository")
+	if err != nil {
+		return err
+	}
+	if shallow.Code == 0 && strings.TrimSpace(shallow.Stdout) == "true" {
+		argv = append(argv, "--depth=1")
+	}
+	_, err = s.run(s.o.Root, nil, append(argv, "origin", s.o.Base)...)
+	return err
+}
+
 func (s *selector) selectChange() (Outcome, error) {
 	if strings.TrimSpace(s.o.Base) == "" {
 		return Outcome{}, fmt.Errorf("select-packages: no base commit and no --all")
 	}
-	// The base may not be in a shallow clone; a failed fetch is not an error:
-	// the diff below says whether it is there.
-	if _, err := s.run(s.o.Root, nil, "git", "fetch", "-q", "--depth=1", "origin", s.o.Base); err != nil {
+	if err := s.ensureBase(); err != nil {
 		return Outcome{}, err
 	}
 	diff, err := s.run(s.o.Root, nil, "git", "diff", "--name-only", s.o.Base, "HEAD")

@@ -105,7 +105,7 @@ func TestCertificationRaceShardsPartitionTheLiveTree(t *testing.T) {
 	if want := `--heavy "` + strings.Join(certRaceHeavy, " ") + `"`; !strings.Contains(script, want) {
 		t.Errorf("the deal step does not spell %s", want)
 	}
-	if !strings.Contains(script, "go run ./tools/ci deal --shards ${{ matrix.shards }} --shard ${{ matrix.shard }}") {
+	if !strings.Contains(script, ciRunner + " deal --shards ${{ matrix.shards }} --shard ${{ matrix.shard }}") {
 		t.Fatalf("the deal step does not deal the live list over matrix.shards through `ci deal`:\n%s", script)
 	}
 	heavy := dealHeavy(t, script)
@@ -207,7 +207,7 @@ func TestCertificationRaceShardsPartitionTheLiveTree(t *testing.T) {
 	if !(restore < deps && deps < save && save < test) {
 		t.Errorf("certification.yml test must restore (%d), build the race dependencies (%d), save (%d), then test (%d), in that order", restore, deps, save, test)
 	}
-	if !strings.Contains(job.Steps[deps].Run, "go run ./tools/ci race-deps") {
+	if !strings.Contains(job.Steps[deps].Run, ciRunner + " race-deps") {
 		t.Errorf("the dependency build is not `ci race-deps`:\n%s", job.Steps[deps].Run)
 	}
 	if verb := readFile(t, filepath.Join(repoRoot(t), "tools", "ci", "sel_racedeps.go")); !strings.Contains(verb, `"go", "build", "-race"`) {

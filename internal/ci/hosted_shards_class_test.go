@@ -146,7 +146,7 @@ func TestHostedShardsUnderTheCap(t *testing.T) {
 	if deal < 0 {
 		t.Fatalf("test-hosted has no %q step", hostedDealStep)
 	}
-	if !strings.Contains(job.Steps[deal].Run, "go run ./tools/ci deal --shards ${{ matrix.shards }} --shard ${{ matrix.shard }}") {
+	if !strings.Contains(job.Steps[deal].Run, ciRunner + " deal --shards ${{ matrix.shards }} --shard ${{ matrix.shard }}") {
 		t.Errorf("the deal step does not deal this shard of matrix.shards through `ci deal`:\n%s", job.Steps[deal].Run)
 	}
 	vet, test := -1, -1

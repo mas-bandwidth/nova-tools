@@ -35,7 +35,7 @@ import (
 func fakeGoList(mode string) pkgselect.Runner {
 	return func(dir string, env []string, argv ...string) (pkgselect.Result, error) {
 		switch strings.Join(argv, " ") {
-		case "git fetch -q --depth=1 origin base":
+		case "git cat-file -e base^{commit}":
 			return pkgselect.Result{}, nil
 		case "git diff --name-only base HEAD":
 			return pkgselect.Result{Stdout: "cmd/foo/foo.go\n"}, nil
@@ -152,7 +152,7 @@ func TestCIReadsSelectionExitStatus(t *testing.T) {
 		t.Errorf("ci.yml reads the selection through `< <(...)`, which discards its exit status: a go list failure became `test (nothing)` on PR #4370; run the verb as the step")
 	}
 	block := jobBody(src, "test-packages")
-	if !strings.Contains(block, "run: go run ./tools/ci test-matrix --event") {
+	if !strings.Contains(block, "run: " + ciRunner + " test-matrix --event") {
 		t.Errorf("test-packages does not run `ci test-matrix` as the step itself, so its exit status is the step's")
 	}
 	verb := readFile(t, filepath.Join(root, "tools", "ci", "sel_matrix.go"))

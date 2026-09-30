@@ -15,6 +15,8 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/pkgselect"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The selection verbs run against a selFake: every process they would start is
@@ -228,7 +230,7 @@ func TestTestMatrixPushDealsTheWholeTree(t *testing.T) {
 	f, repo := matrixRepoFake(t, nil)
 	gh := filepath.Join(t.TempDir(), "output")
 	code, out, errb := selRun(func(e env, a []string) int { return testMatrixVerb(e, a, f.host()) }, repo,
-		map[string]string{"GITHUB_OUTPUT": gh}, "--event", "push", "--linux-group", "lin", "--macos-group", "mac")
+		map[string]string{"GITHUB_OUTPUT": gh}, "--event", "push", "--target-branch", "dev", "--linux-group", "lin", "--macos-group", "mac")
 	if code != 0 || errb != "" {
 		t.Fatalf("exit %d, stderr %q\n%s", code, errb, out)
 	}
@@ -251,7 +253,7 @@ func TestTestMatrixPushDealsTheWholeTree(t *testing.T) {
 func TestTestMatrixPullRequestSelectsAgainstItsBase(t *testing.T) {
 	t.Parallel()
 	f, repo := matrixRepoFake(t, map[string]selReply{
-		"git fetch -q --depth=1 origin basesha": {},
+		"git cat-file -e basesha^{commit}":      {},
 		"git diff --name-only basesha HEAD":     {out: "cmd/a/a.go\n"},
 		selListDeps:                             {out: selMod + "/cmd/a fmt\n" + selMod + "/cmd/nova-bus fmt\n" + selMod + "/internal/ci fmt\n" + selMod + "/internal/docs fmt\n"},
 		"go list -m":                            {out: selMod + "\n"},
@@ -261,7 +263,7 @@ func TestTestMatrixPullRequestSelectsAgainstItsBase(t *testing.T) {
 	})
 	gh := filepath.Join(t.TempDir(), "output")
 	code, out, errb := selRun(func(e env, a []string) int { return testMatrixVerb(e, a, f.host()) }, repo,
-		map[string]string{"GITHUB_OUTPUT": gh}, "--event", "pull_request", "--pull-request-base", "basesha", "--merge-group-base", "ignored", "--linux-group", "lin", "--macos-group", "mac")
+		map[string]string{"GITHUB_OUTPUT": gh}, "--event", "pull_request", "--pull-request-base", "basesha", "--merge-group-base", "ignored", "--target-branch", "dev", "--linux-group", "lin", "--macos-group", "mac")
 	if code != 0 || errb != "" {
 		t.Fatalf("exit %d, stderr %q\n%s", code, errb, out)
 	}
@@ -275,9 +277,50 @@ func TestTestMatrixPullRequestSelectsAgainstItsBase(t *testing.T) {
 			t.Errorf("stdout lacks %q:\n%s", want, out)
 		}
 	}
-	if f.called("git fetch -q --depth=1 origin ignored") {
+	if f.called("git cat-file -e ignored") {
 		t.Error("a pull request read the merge group's base")
 	}
+}
+
+// A change bound for a working branch meets Linux only: every package on the
+// Linux legs, the darwin-only packages dropped before the nothing-to-test
+// check, the darwin-sensitivity analysis not run.
+func TestTestMatrixWithTheDarwinGateOffIsLinuxOnly(t *testing.T) {
+	t.Parallel()
+	f, repo := matrixRepoFake(t, nil)
+	gh := filepath.Join(t.TempDir(), "output")
+	code, out, errb := selRun(func(e env, a []string) int { return testMatrixVerb(e, a, f.host()) }, repo,
+		map[string]string{"GITHUB_OUTPUT": gh}, "--event", "push", "--target-branch", "sprint/foundation", "--linux-group", "lin", "--macos-group", "mac")
+	require.Equal(t, 0, code, "stderr %q\n%s", errb, out)
+	assert.Contains(t, out, "darwin shards: false (push -> sprint/foundation; on for main dev)\n")
+	assert.Contains(t, out, "darwin shards off: 5 package(s) on the Linux shards: ./cmd/a ./cmd/nova-bus ./internal/b ./internal/ci ./internal/docs\n")
+	got := selRead(t, gh)
+	assert.NotContains(t, got, "macOS")
+	assert.NotContains(t, got, "nova-sandbox")
+	assert.False(t, f.called("GOOS="), "the darwin-sensitivity analysis ran with the gate off")
+}
+
+// A pull request whose selection is only darwin-only packages falls to the one
+// nothing leg while the gate is off, and keeps its darwin leg while it is on.
+func TestTestMatrixDarwinOnlyChangeIsNothingUntilItReachesDev(t *testing.T) {
+	t.Parallel()
+	answers := func() map[string]selReply {
+		return map[string]selReply{
+			"git cat-file -e basesha^{commit}":  {},
+			"git diff --name-only basesha HEAD": {out: "cmd/nova-sandbox/main.go\n"},
+			selListTree:                         {out: selImports("cmd/nova-sandbox", "internal/ci", "internal/docs")},
+			selListDeps:                         {out: selMod + "/cmd/nova-sandbox fmt\n" + selMod + "/internal/ci fmt\n" + selMod + "/internal/docs fmt\n"},
+		}
+	}
+	run := func(target string) string {
+		f := newSelFake(answers())
+		code, out, errb := selRun(func(e env, a []string) int { return testMatrixVerb(e, a, f.host()) }, selRepo(t),
+			map[string]string{"GITHUB_OUTPUT": filepath.Join(t.TempDir(), "o")}, "--event", "merge_group", "--merge-group-base", "basesha", "--target-branch", target, "--linux-group", "lin", "--macos-group", "mac")
+		require.Equal(t, 0, code, "stderr %q\n%s", errb, out)
+		return out
+	}
+	assert.Contains(t, run("refs/heads/sprint/foundation"), "darwin shards off: 2 package(s) on the Linux shards: ./internal/ci ./internal/docs\n")
+	assert.Contains(t, run("refs/heads/dev"), `"os":"macOS"`)
 }
 
 // A change that touches no Go package still gets the two class-test packages,
@@ -286,7 +329,7 @@ func TestTestMatrixPullRequestSelectsAgainstItsBase(t *testing.T) {
 func TestTestMatrixNothingToTestIsOneLegThatExitsZero(t *testing.T) {
 	t.Parallel()
 	f := newSelFake(map[string]selReply{
-		"git fetch -q --depth=1 origin basesha": {},
+		"git cat-file -e basesha^{commit}":      {},
 		"git diff --name-only basesha HEAD":     {out: "README.md\n"},
 		selListTree:                             {out: selImports("cmd/gone")},
 		selListDeps:                             {out: selMod + "/cmd/gone fmt\n"},
@@ -310,7 +353,7 @@ func TestTestMatrixSelectionFailureFailsTheStepOnAPullRequestOnly(t *testing.T) 
 	t.Parallel()
 	answers := func() map[string]selReply {
 		return map[string]selReply{
-			"git fetch -q --depth=1 origin basesha": {},
+			"git cat-file -e basesha^{commit}":      {},
 			"git diff --name-only basesha HEAD":     {out: "cmd/a/a.go\n"},
 			selListTree:                             {err: "open /c/go-build/x: no such file or directory\n", code: 1},
 		}

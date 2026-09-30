@@ -319,7 +319,7 @@ jobs:
     # The darwin shards are dealt only when the target branch is dev or main
     # (a pull_request's base, the merge queue's base_ref, a push's ref name), on
     # schedule and on workflow_dispatch; for a working branch the matrix is Linux
-    # only (the `darwin_on` gate in the list step).
+    # only (pkgselect.DarwinOn, read by `ci test-matrix --target-branch` in the list step).
     # It runs on the nightly schedule too, for the `functional` job's list and
     # for the unit `test` job's nightly space shards (#4413).
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
@@ -431,16 +431,25 @@ jobs:
           go version
           echo "GO SETUP want=${want:-none} go=$(command -v go) gomodcache=$(go env GOMODCACHE) gocache=$(go env GOCACHE)"
 
+      - name: build the ci runner
+        # tools/ci is built once in this job and every later step runs the binary; `go run` would
+        # compile it again in each step. (`go run ./tools/ci help` lists its verbs.)
+        shell: bash
+        run: go build -o "$RUNNER_TEMP/ci" ./tools/ci
+
       - id: list
         # The fan-out: the packages this event tests, dealt onto the runner
         # groups (internal/pkgselect, `go run ./tools/ci help test-matrix`). A pull
         # request and a merge group carry the packages the change touched and their
         # dependents, read against the event's own base; a push and the nightly run
-        # keep the whole tree. A pull request's macOS legs are for the code that
+        # keep the whole tree. The macOS legs are dealt only where the target branch
+        # is dev or main (--target-branch: a pull request's base_ref, a merge
+        # group's base_ref, a push's ref name), and on schedule and
+        # workflow_dispatch; a pull request's macOS legs are for the code that
         # differs on macOS. The two group labels are the runs-on labels the legs
         # carry.
         shell: bash
-        run: go run ./tools/ci test-matrix --event "${{ github.event_name }}" --pull-request-base "${{ github.event.pull_request.base.sha }}" --merge-group-base "${{ github.event.merge_group.base_sha }}" --linux-group space --macos-group studio
+        run: "$RUNNER_TEMP/ci" test-matrix --event "${{ github.event_name }}" --pull-request-base "${{ github.event.pull_request.base.sha }}" --merge-group-base "${{ github.event.merge_group.base_sha }}" --target-branch "${{ github.base_ref || github.event.merge_group.base_ref || github.ref_name }}" --linux-group space --macos-group studio
 
   test:
     # THE UNIT TESTS, SHARDED, no race detector: ./cmd/* and ./internal/... in
@@ -620,6 +629,13 @@ jobs:
           go version
           echo "GO SETUP want=${want:-none} go=$(command -v go) gomodcache=$(go env GOMODCACHE) gocache=$(go env GOCACHE)"
 
+      - name: build the ci runner
+        if: matrix.entry.packages != ''
+        # tools/ci is built once in this job and every later step runs the binary; `go run` would
+        # compile it again in each step. (`go run ./tools/ci help` lists its verbs.)
+        shell: bash
+        run: go build -o "$RUNNER_TEMP/ci" ./tools/ci
+
       - name: fetch dev's ancestry for a main run
         # On main (the default branch) at a merge commit, the landed promotion,
         # the classtests rule excuses a deletion only when the second parent's
@@ -627,7 +643,7 @@ jobs:
         # this fetch (`go run ./tools/ci help fetch-ancestry`).
         if: matrix.entry.packages != '' && github.ref_name == github.event.repository.default_branch
         shell: bash
-        run: go run ./tools/ci fetch-ancestry dev
+        run: "$RUNNER_TEMP/ci" fetch-ancestry dev
       - name: fetch sprint/foundation's ancestry for a promotion
         # The classtests rule reads a promotion from git: on the promotion pull request
         # (sprint/foundation into dev) dev's tip must be an ancestor of the head, and on a
@@ -637,7 +653,7 @@ jobs:
         # A one-parent commit on a dev run has no promotion to read, so nothing is fetched.
         if: (matrix.entry.packages != '') && (github.event_name == 'pull_request' && github.base_ref == 'dev' && github.head_ref == 'sprint/foundation' || github.event_name == 'merge_group' || github.event_name == 'push' && github.ref_name == 'dev')
         shell: bash
-        run: go run ./tools/ci fetch-ancestry --promotion sprint/foundation
+        run: "$RUNNER_TEMP/ci" fetch-ancestry --promotion sprint/foundation
 
       - name: take this runner's share of the machine, not all of it
         if: matrix.entry.packages != ''
@@ -652,7 +668,7 @@ jobs:
         # `go run ./tools/ci help runner-share`; internal/ci:
         # TestRunnersPerMachineIsOneNumber.
         shell: bash
-        run: go run ./tools/ci runner-share
+        run: "$RUNNER_TEMP/ci" runner-share
 
       - name: the unit tier refuses redis-server
         if: matrix.entry.packages != ''
@@ -664,7 +680,7 @@ jobs:
         # starting a real server on a shared runner. The `functional` job
         # installs the real one. internal/ci: TestUnitTierRefusesRedisServer.
         shell: bash
-        run: go run ./tools/ci unit-tier-shim
+        run: "$RUNNER_TEMP/ci" unit-tier-shim
 
       # No actions/cache here. These runners are PERSISTENT: ~/.cache/go-build
       # survives between jobs on the machine itself, so the action spends 6 s
@@ -690,7 +706,7 @@ jobs:
         if: matrix.entry.packages != '' && github.event_name == 'push'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: go run ./tools/ci proved-by-merge-group --repo "${{ github.repository }}" --sha "${{ github.sha }}"
+        run: "$RUNNER_TEMP/ci" proved-by-merge-group --repo "${{ github.repository }}" --sha "${{ github.sha }}"
 
       - name: vet
         if: matrix.entry.packages != '' && steps.proved.outputs.proved != 'true'
@@ -738,7 +754,7 @@ jobs:
           WHOLE_TREE_SLOWTESTS: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && '--budget 60 --sleeps internal/ci/sleeps-skips_allowlist.txt' || '' }}
           NIGHTLY_ENFORCE: ${{ github.event_name == 'schedule' && matrix.entry.group == 'space' && '1' || '0' }}
         shell: bash
-        run: go run ./tools/ci unit-test --packages "${{ matrix.entry.packages }}"
+        run: "$RUNNER_TEMP/ci" unit-test --packages "${{ matrix.entry.packages }}"
 
   functional:
     # THE FUNCTIONAL TIER (nova-tools#4328; Glenn 2026-09-26 11:20 AM ET: "we
@@ -835,11 +851,18 @@ jobs:
           go version
           echo "GO SETUP want=${want:-none} go=$(command -v go) gomodcache=$(go env GOMODCACHE) gocache=$(go env GOCACHE)"
 
+      - name: build the ci runner
+        if: matrix.entry.packages != ''
+        # tools/ci is built once in this job and every later step runs the binary; `go run` would
+        # compile it again in each step. (`go run ./tools/ci help` lists its verbs.)
+        shell: bash
+        run: go build -o "$RUNNER_TEMP/ci" ./tools/ci
+
       - name: take this runner's share of the machine, not all of it
         if: matrix.entry.packages != ''
         # The unit legs' rule: cores over NOVA_RUNNERS_PER_MACHINE, at most 2.
         shell: bash
-        run: go run ./tools/ci runner-share
+        run: "$RUNNER_TEMP/ci" runner-share
 
       - name: install redis-server
         if: matrix.entry.packages != ''
@@ -932,25 +955,6 @@ jobs:
           # This workflow manages caching explicitly; do not probe for a missing go.sum.
           cache: false
 
-      - name: fetch dev's ancestry for a main run
-        # On main (the default branch) at a merge commit, the landed promotion,
-        # the classtests rule excuses a deletion only when the second parent's
-        # ancestry shows dev deleting it; a shallow ancestry is a red run naming
-        # this fetch (`go run ./tools/ci help fetch-ancestry`).
-        if: github.ref_name == github.event.repository.default_branch
-        shell: bash
-        run: go run ./tools/ci fetch-ancestry dev
-      - name: fetch sprint/foundation's ancestry for a promotion
-        # The classtests rule reads a promotion from git: on the promotion pull request
-        # (sprint/foundation into dev) dev's tip must be an ancestor of the head, and on a
-        # dev run at a merge commit (a merge-queue group, a push to dev) the second parent
-        # must be sprint/foundation's and its history excuses what it deleted. A shallow
-        # ancestry is a red run naming this fetch (internal/ci foundationHistoryFetch).
-        # A one-parent commit on a dev run has no promotion to read, so nothing is fetched.
-        if: (github.event_name == 'pull_request' && github.base_ref == 'dev' && github.head_ref == 'sprint/foundation' || github.event_name == 'merge_group' || github.event_name == 'push' && github.ref_name == 'dev')
-        shell: bash
-        run: go run ./tools/ci fetch-ancestry --promotion sprint/foundation
-
       - name: cache go build and module cache
         id: gocache
         if: runner.environment == 'github-hosted'
@@ -974,6 +978,12 @@ jobs:
       - name: build
         run: make build
 
+      - name: build the ci runner
+        # tools/ci is built once in this job and every later step runs the binary; `go run` would
+        # compile it again in each step. (`go run ./tools/ci help` lists its verbs.)
+        shell: bash
+        run: go build -o "$RUNNER_TEMP/ci" ./tools/ci
+
       - name: save go build and module cache
         # On a miss or a restore-keys fallback only: an exact hit is already the entry. Shards
         # race for the key; the first reserves it and the rest log a warning and go on.
@@ -984,6 +994,25 @@ jobs:
             ${{ runner.os == 'macOS' && '~/Library/Caches/go-build' || '~/.cache/go-build' }}
             ~/go/pkg/mod
           key: ${{ steps.gocache.outputs.cache-primary-key }}
+
+      - name: fetch dev's ancestry for a main run
+        # On main (the default branch) at a merge commit, the landed promotion,
+        # the classtests rule excuses a deletion only when the second parent's
+        # ancestry shows dev deleting it; a shallow ancestry is a red run naming
+        # this fetch (`go run ./tools/ci help fetch-ancestry`).
+        if: github.ref_name == github.event.repository.default_branch
+        shell: bash
+        run: "$RUNNER_TEMP/ci" fetch-ancestry dev
+      - name: fetch sprint/foundation's ancestry for a promotion
+        # The classtests rule reads a promotion from git: on the promotion pull request
+        # (sprint/foundation into dev) dev's tip must be an ancestor of the head, and on a
+        # dev run at a merge commit (a merge-queue group, a push to dev) the second parent
+        # must be sprint/foundation's and its history excuses what it deleted. A shallow
+        # ancestry is a red run naming this fetch (internal/ci foundationHistoryFetch).
+        # A one-parent commit on a dev run has no promotion to read, so nothing is fetched.
+        if: (github.event_name == 'pull_request' && github.base_ref == 'dev' && github.head_ref == 'sprint/foundation' || github.event_name == 'merge_group' || github.event_name == 'push' && github.ref_name == 'dev')
+        shell: bash
+        run: "$RUNNER_TEMP/ci" fetch-ancestry --promotion sprint/foundation
 
       - name: deal this shard's packages
         # The heavy packages first, one per shard: cmd/nova-bus (46 s -short on
@@ -996,7 +1025,7 @@ jobs:
         # read the same deal ($HOSTED_PKGS). `go run ./tools/ci help deal`;
         # internal/ci: TestHostedDealSplitsTheHeavyPackages (hostedHeavy).
         shell: bash
-        run: go run ./tools/ci deal --shards ${{ matrix.shards }} --shard ${{ matrix.shard }} --heavy "cmd/nova-bus cmd/nova-swarm"
+        run: "$RUNNER_TEMP/ci" deal --shards ${{ matrix.shards }} --shard ${{ matrix.shard }} --heavy "cmd/nova-bus cmd/nova-swarm"
 
       - name: vet this shard's packages
         # The shard's packages only: every shard vetting the whole tree would be a
@@ -1564,6 +1593,9 @@ jobs:
           command -v sbcl >/dev/null 2>&1 || { echo "PROBE FAIL runner=$RUNNER_NAME no sbcl on PATH"; exit 1; }
           go version; sbcl --version
           echo "GO SETUP want=${want:-none} go=$(command -v go) gomodcache=$(go env GOMODCACHE) gocache=$(go env GOCACHE)"
+      - name: build the ci runner
+        if: steps.want.outputs.run == 'yes' && runner.os == 'Linux'
+        run: go build -o "$RUNNER_TEMP/ci" ./tools/ci
       - name: the network probe, inside nova-sandbox
         # rule R: nothing enters the loop untested, and the probe itself is no
         # exception. #893 is the cost of forgetting it — a probe on the host
@@ -1574,7 +1606,7 @@ jobs:
         # sandbox backend is landlock there, seatbelt on the macOS benches).
         # `go run ./tools/ci help sandbox-probe`.
         if: steps.want.outputs.run == 'yes' && runner.os == 'Linux'
-        run: go run ./tools/ci sandbox-probe --slot "${{ matrix.slot }}"
+        run: "$RUNNER_TEMP/ci" sandbox-probe --slot "${{ matrix.slot }}"
       - name: build, one real package, write beside the repo
         if: steps.want.outputs.run == 'yes'
         run: |

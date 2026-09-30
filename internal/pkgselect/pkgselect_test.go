@@ -10,6 +10,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // fake is a Runner answered from a table keyed by the command line (with
@@ -20,7 +23,14 @@ type fake struct {
 	calls   []string
 }
 
-func newFake(answers map[string]Result) *fake { return &fake{answers: answers} }
+// newFake answers the base check as "the base commit is here" unless the
+// table says otherwise, so a test that is not about the fetch never meets one.
+func newFake(answers map[string]Result) *fake {
+	if _, ok := answers[catFileCmd]; !ok {
+		answers[catFileCmd] = Result{}
+	}
+	return &fake{answers: answers}
+}
 
 func (f *fake) run(dir string, env []string, argv ...string) (Result, error) {
 	key := strings.Join(argv, " ")
@@ -54,7 +64,10 @@ const (
 	listTree    = "go list ./cmd/... ./internal/... ./tools/..."
 	listDeps    = "go list -f {{.ImportPath}}{{range .Deps}} {{.}}{{end}} ./cmd/... ./internal/... ./tools/..."
 	diffCmd     = "git diff --name-only base HEAD"
-	fetchCmd    = "git fetch -q --depth=1 origin base"
+	catFileCmd  = "git cat-file -e base^{commit}"
+	shallowCmd  = "git rev-parse --is-shallow-repository"
+	fetchCmd    = "git fetch -q origin base"
+	fetchDeep   = "git fetch -q --depth=1 origin base"
 	lsFilesCmd  = "git ls-files -z -- cmd/*.go internal/*.go tools/*.go"
 	cacheErr    = "open /home/u/.cache/go-build/5e/5e1f-d: no such file or directory\n"
 	wholeTreeIs = "./cmd/foo\n./internal/bar\n./internal/ci\n./internal/docs\n"
@@ -198,7 +211,6 @@ func TestSelectChangeIsTheTouchedPackagesTheirDependentsAndTheClassTestPackages(
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			f := newFake(map[string]Result{
-				fetchCmd: {Code: 128},
 				diffCmd:  {Stdout: tc.diff},
 				listTree: {Stdout: imports("cmd/foo", "internal/bar", "internal/ci", "internal/docs")},
 				listDeps: {Stdout: depsListing},
@@ -210,8 +222,42 @@ func TestSelectChangeIsTheTouchedPackagesTheirDependentsAndTheClassTestPackages(
 			if !reflect.DeepEqual(out.Packages, tc.want) || out.Warning != "" {
 				t.Errorf("selected %v %q, want %v", out.Packages, out.Warning, tc.want)
 			}
-			if !f.called("git fetch -q --depth=1 origin base") {
-				t.Error("the base was not fetched (a shallow clone may lack it)")
+		})
+	}
+}
+
+// The base is fetched only when it is missing, and --depth=1 only into a clone
+// that is already shallow: a fetch with --depth shallows the clone it runs in,
+// and `nova-ci local` runs here in a developer's own clone.
+func TestSelectFetchesTheBaseOnlyWhenMissingAndNeverShallowsAFullClone(t *testing.T) {
+	t.Parallel()
+	root := tree(t)
+	cases := []struct {
+		name      string
+		answers   map[string]Result
+		wantFetch string // the fetch command expected, "" for none
+	}{
+		{"base present: no fetch", map[string]Result{catFileCmd: {}}, ""},
+		{"base absent in a full clone: fetch without --depth", map[string]Result{catFileCmd: {Code: 128}, shallowCmd: {Stdout: "false\n"}, fetchCmd: {}}, fetchCmd},
+		{"base absent in a shallow clone: fetch --depth=1", map[string]Result{catFileCmd: {Code: 128}, shallowCmd: {Stdout: "true\n"}, fetchDeep: {}}, fetchDeep},
+		{"a failed fetch is not an error, the diff says", map[string]Result{catFileCmd: {Code: 128}, shallowCmd: {Stdout: "false\n"}, fetchCmd: {Code: 128}}, fetchCmd},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			tc.answers[diffCmd] = Result{Stdout: "docs/CLI.md\n"}
+			tc.answers[listTree] = Result{Stdout: imports("cmd/foo", "internal/bar", "internal/ci", "internal/docs")}
+			tc.answers[listDeps] = Result{Stdout: depsListing}
+			f := newFake(tc.answers)
+			_, err := Select(f.run, Options{Root: root, Base: "base"})
+			require.NoError(t, err)
+			if tc.wantFetch == "" {
+				assert.False(t, f.called("git fetch"), "the base was here and was fetched")
+				return
+			}
+			assert.True(t, f.called(tc.wantFetch), "want %q in %v", tc.wantFetch, f.calls)
+			if tc.wantFetch == fetchCmd {
+				assert.False(t, f.called("git fetch -q --depth"), "a full clone was shallowed")
 			}
 		})
 	}
@@ -221,7 +267,6 @@ func TestSelectGoModChangePutsTheWholeTreeInScope(t *testing.T) {
 	t.Parallel()
 	for _, changed := range []string{"go.mod\n", "go.sum\n"} {
 		f := newFake(map[string]Result{
-			fetchCmd: {},
 			diffCmd:  {Stdout: "README.md\n" + changed},
 			listTree: {Stdout: imports("cmd/foo", "internal/bar", "internal/ci", "internal/docs")},
 		})
@@ -273,7 +318,6 @@ func TestSelectNeverSilentlySelectsNothing(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			answers := map[string]Result{
-				fetchCmd:   {},
 				diffCmd:    {Stdout: "cmd/foo/foo.go\n"},
 				lsFilesCmd: {Stdout: tracked()},
 			}
@@ -329,7 +373,7 @@ func TestSelectRefusesWithNoBase(t *testing.T) {
 
 func TestSelectReportsAGitDiffFailure(t *testing.T) {
 	t.Parallel()
-	f := newFake(map[string]Result{fetchCmd: {}, diffCmd: {Stderr: "fatal: bad object base\n", Code: 128}})
+	f := newFake(map[string]Result{diffCmd: {Stderr: "fatal: bad object base\n", Code: 128}})
 	_, err := Select(f.run, Options{Root: tree(t), Base: "base"})
 	var le *ListError
 	if !errors.As(err, &le) || !strings.Contains(le.Text, "exited 128") || !strings.Contains(le.Text, "bad object base") {
@@ -452,7 +496,7 @@ func TestFanoutByEvent(t *testing.T) {
 		{"push", []string{"1/8 lin=./cmd/a", "2/8 lin=./cmd/b", "3/8 lin=./cmd/c", "1/8 darwin-arm64=./cmd/a", "2/8 darwin-arm64=./cmd/b", "3/8 darwin-arm64=./cmd/nova-sandbox", "4/8 darwin-arm64=./cmd/c", "5/8 darwin-arm64=./internal/sandbox"}},
 	}
 	for _, tc := range cases {
-		got := legNames(Fanout(tc.event, pkgs, sens, g))
+		got := legNames(Fanout(tc.event, pkgs, sens, g, true))
 		sort.Strings(got)
 		want := append([]string{}, tc.want...)
 		sort.Strings(want)
@@ -462,7 +506,7 @@ func TestFanoutByEvent(t *testing.T) {
 	}
 	// a pull request with every package sensitive keeps the old shape
 	all := DarwinSensitive{All: true}
-	legs := Fanout("pull_request", []string{"./cmd/a", "./cmd/b"}, all, g)
+	legs := Fanout("pull_request", []string{"./cmd/a", "./cmd/b"}, all, g, true)
 	if got := MarshalLegs(legs); !strings.Contains(got, `"os":"macOS","arch":"ARM64","group":"mac"`) || !strings.Contains(got, `"os":"linux","arch":"x64","group":"lin"`) {
 		t.Errorf("legs = %s, want both groups with their labels", got)
 	}
@@ -666,4 +710,55 @@ func TestWriteUnitShimRefusesWithExit86(t *testing.T) {
 	if fi, err := os.Stat(shim); err != nil || fi.Mode().Perm() != 0o755 {
 		t.Errorf("shim mode = %v, %v; want 0755", fi, err)
 	}
+}
+
+// The darwin legs are dealt on schedule and workflow_dispatch and where the
+// target branch is dev or main; the target is read bare (a pull request's
+// base_ref, a push's ref name) or as a ref (a merge group's base_ref).
+func TestDarwinOn(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		event, target string
+		want          bool
+	}{
+		{"schedule", "", true},
+		{"workflow_dispatch", "", true},
+		{"workflow_dispatch", "sprint/foundation", true},
+		{"pull_request", "dev", true},
+		{"pull_request", "main", true},
+		{"pull_request", "sprint/foundation", false},
+		{"merge_group", "refs/heads/dev", true},
+		{"merge_group", "refs/heads/main", true},
+		{"merge_group", "refs/heads/sprint/foundation", false},
+		{"push", "dev", true},
+		{"push", "main", true},
+		{"push", "sprint/foundation", false},
+		{"push", "", false},
+		{"pull_request", "devel", false},
+		{"push", "refs/heads/dev", true},
+		{"merge_group", "dev", true},
+	}
+	for _, tc := range cases {
+		assert.Equal(t, tc.want, DarwinOn(tc.event, tc.target), "%s -> %q", tc.event, tc.target)
+	}
+}
+
+// With the darwin legs off every package rides the Linux shards and the
+// darwin-only packages have no leg, on every event.
+func TestFanoutWithTheDarwinLegsOffIsLinuxOnly(t *testing.T) {
+	t.Parallel()
+	g := Groups{Linux: "lin", Mac: "mac"}
+	pkgs := []string{"./cmd/a", "./cmd/nova-sandbox", "./internal/sandbox", "./cmd/b"}
+	for _, event := range []string{"pull_request", "merge_group", "push"} {
+		legs := Fanout(event, pkgs, DarwinSensitive{All: true}, g, false)
+		require.NotEmpty(t, legs, event)
+		var dealt []string
+		for _, l := range legs {
+			assert.Equal(t, "linux", l.OS, "%s: leg %s", event, l.Name)
+			dealt = append(dealt, strings.Fields(l.Packages)...)
+		}
+		sort.Strings(dealt)
+		assert.Equal(t, []string{"./cmd/a", "./cmd/b"}, dealt, event)
+	}
+	assert.Equal(t, []string{"./cmd/a", "./cmd/b"}, DropDarwinOnly(pkgs))
 }

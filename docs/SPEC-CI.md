@@ -1140,34 +1140,39 @@ per-package timing.
 
 ### `darwin-gate` — the darwin unit shards run only where the target branch is dev or main
 
-**The rule.** ci.yml's `test-packages` deals the unit matrix, and its `list` step
-deals the darwin shards only when `DARWIN_BRANCHES` (`main dev`, the integration
-list of the concurrency group in short form) holds the event's target branch: a
-pull_request's `github.base_ref`, the merge queue's `github.event.merge_group.base_ref`
-(its `refs/heads/` prefix cut), a push's `github.ref_name`. `schedule` and
-`workflow_dispatch` keep the shape they have. With the gate off every selected
-package rides the Linux shards, the darwin-only packages (`cmd/nova-sandbox`,
-`internal/sandbox`) have no leg, the darwin-sensitivity analysis does not run, and
-a change that selected only darwin-only packages gets the one leg that prints
-"nothing to test for this change". Linux shards are unchanged, `ci-ok` reads the
-`test` job whose matrix has no darwin entry on a working branch, and
-certification.yml (which runs on pushes to dev, nightly and on dispatch, and certifies on darwin) is untouched. A change that touches only darwin-only packages gets no test run until it reaches dev. No ruleset
-applies to a working branch, so no darwin check is required there.
+**The rule.** ci.yml's `test-packages` deals the unit matrix with `ci test-matrix`,
+and the darwin shards are dealt only when `pkgselect.DarwinOn(event, target)` says
+so: always on `schedule` and `workflow_dispatch`; otherwise only when `--target-branch`
+(a pull_request's `github.base_ref`, the merge queue's `github.event.merge_group.base_ref`,
+a push's `github.ref_name`; a `refs/heads/` prefix is cut) is one of
+`pkgselect.DarwinBranches` (`main`, `dev`, the integration list of the concurrency
+group in short form). With the gate off every selected package rides the Linux
+shards, the darwin-only packages (`cmd/nova-sandbox`, `internal/sandbox`) are dropped
+before the nothing-to-test check and have no leg, the darwin-sensitivity analysis
+does not run, and a change that selected only darwin-only packages gets the one leg
+that prints "nothing to test for this change". Linux shards are unchanged, `ci-ok`
+reads the `test` job whose matrix has no darwin entry on a working branch, and
+certification.yml (which runs on pushes to dev, nightly and on dispatch, and certifies
+on darwin) is untouched. A change that touches only darwin-only packages gets no test
+run until it reaches dev. No ruleset applies to a working branch, so no darwin check
+is required there.
 **The mistake it prevents.** The Go is the same Go on both OSes and the darwin legs
 are the slowest and the scarcest: cancelled at the two-minute cap whenever their
 host is loaded, they turned a working-branch pull request red for a reason the
 change did not cause and held the queue behind them.
-**The test.** `TestDarwinShardsRunOnlyForIntegrationBranches`
-(`internal/ci/darwin_gate_class_test.go`) reads ci.yml's list step: the branch list
-equals the integration list, each event reads its own target branch, the deal loop
-sends every package to a Linux shard before it can append to the darwin group
-while the gate is off, the darwin-only-only change falls back to the empty leg, and
-no other job carries a macOS label on a `runs-on` list (any position, quoted or
-block form, any case) or runs macos-latest on a pull_request or merge_group.
-`TestMacOSRunnerMatchCatchesEveryPosition` holds that label match itself.
+**The test.** `TestDarwinOn` and `TestFanoutWithTheDarwinLegsOffIsLinuxOnly`
+(`internal/pkgselect`) hold the gate over the events and the targets, prefixed and
+bare; `TestTestMatrixWithTheDarwinGateOffIsLinuxOnly` and
+`TestTestMatrixDarwinOnlyChangeIsNothingUntilItReachesDev` (`tools/ci`) hold the verb.
+`TestDarwinShardsRunOnlyForIntegrationBranches` (`internal/ci/darwin_gate_class_test.go`)
+reads ci.yml: `pkgselect.DarwinBranches` equals the integration list, the list step
+hands the verb each event's own target branch, and no other job carries a macOS label
+on a `runs-on` list (any position, quoted or block form, any case) or runs macos-latest
+on a pull_request or merge_group. `TestMacOSRunnerMatchCatchesEveryPosition` holds that
+label match itself.
 **Its allowlist.** None.
-**Its remedy line.** Put the darwin leg behind `darwin_on`, or add the branch to the
-integration list and to `DARWIN_BRANCHES` together.
+**Its remedy line.** Add the branch to the integration list and to
+`pkgselect.DarwinBranches` together.
 **Its narrowings.** It reads the workflow as text and does not run the step; the
 branch expressions are GitHub's.
 

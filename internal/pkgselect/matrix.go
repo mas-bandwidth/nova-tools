@@ -42,6 +42,45 @@ var DarwinOnly = []string{"./cmd/nova-sandbox", "./internal/sandbox"}
 // eight apart and so shared a leg on every push.
 var HeavyFirst = []string{"./cmd/nova-bus"}
 
+// DarwinBranches are the target branches whose changes meet the darwin legs:
+// the integration branches (the concurrency group's integration list in
+// ci.yml, in short form; internal/ci's TestDarwinShardsRunOnlyForIntegrationBranches
+// holds the two equal). A change bound for a working branch meets Linux only:
+// the Go is the same Go on both OSes, the Linux legs run every selected
+// package, and the darwin legs are the slowest and the scarcest.
+var DarwinBranches = []string{"main", "dev"}
+
+// DarwinOn reports whether the darwin legs are dealt for a workflow event
+// aimed at target: always on schedule and workflow_dispatch; otherwise only
+// when target, with any refs/heads/ prefix cut (a merge group's base_ref
+// carries it, a pull request's base_ref and a push's ref name do not), is one
+// of DarwinBranches.
+func DarwinOn(event, target string) bool {
+	switch event {
+	case "schedule", "workflow_dispatch":
+		return true
+	}
+	target = strings.TrimPrefix(target, "refs/heads/")
+	for _, b := range DarwinBranches {
+		if target == b {
+			return true
+		}
+	}
+	return false
+}
+
+// DropDarwinOnly is pkgs without the packages that have no Linux leg: what a
+// run with the darwin legs off selects.
+func DropDarwinOnly(pkgs []string) []string {
+	kept := make([]string, 0, len(pkgs))
+	for _, p := range pkgs {
+		if !IsDarwinOnly(p) {
+			kept = append(kept, p)
+		}
+	}
+	return kept
+}
+
 // IsDarwinOnly reports whether pkg has no Linux leg.
 func IsDarwinOnly(pkg string) bool {
 	for _, d := range DarwinOnly {
@@ -275,15 +314,16 @@ func firstField(l string) string {
 // only. Everything else, a push to dev and a manual run, runs on both, dealt
 // round-robin within each group so every package is covered exactly once per
 // OS; the darwin-only packages go to the macOS group only. `sens` is read on a
-// pull_request only.
-func Fanout(event string, pkgs []string, sens DarwinSensitive, g Groups) []Leg {
+// pull_request only. With darwin false (DarwinOn said no) every package rides
+// the Linux shards and the darwin-only packages have no leg, as on schedule.
+func Fanout(event string, pkgs []string, sens DarwinSensitive, g Groups, darwin bool) []Leg {
 	sh := ShardsFor(event)
 	linux := make([][]string, sh.Linux)
 	mac := make([][]string, sh.Mac)
 	s, st := 0, 0
 	addLinux := func(p string) { linux[s%sh.Linux] = append(linux[s%sh.Linux], p); s++ }
 	for _, p := range pkgs {
-		if event == "schedule" {
+		if event == "schedule" || !darwin {
 			if IsDarwinOnly(p) {
 				continue
 			}

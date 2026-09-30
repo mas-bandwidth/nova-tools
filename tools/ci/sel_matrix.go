@@ -14,7 +14,7 @@ func init() {
 		name:    "test-matrix",
 		summary: "deal the selected packages onto the unit and functional test legs",
 		help: `ci test-matrix --event <name> [--pull-request-base <sha>] [--merge-group-base <sha>]
-               --linux-group <label> --macos-group <label>
+               [--target-branch <name>] --linux-group <label> --macos-group <label>
 
 Writes the test legs a workflow event fans out to, as the two GITHUB_OUTPUT keys the
 jobs read: packages= (the unit tier's matrix) and functional= (the functional tier's).
@@ -31,6 +31,14 @@ The heavy package is dealt first, so the heaviest never share a leg. A pull requ
 macOS legs are only for the packages whose code, or whose imports' code, differs
 under GOOS=darwin. The nightly schedule runs Linux only. The leg names carry their
 platform: two legs under one name are two checks no reader can tell apart.
+
+THE DARWIN LEGS run on schedule, on workflow_dispatch and where --target-branch (the
+pull request's base branch, the merge group's base_ref, the push's ref name; a refs/heads/
+prefix is cut) is dev or main. For any other target the matrix is Linux only: every
+selected package rides the Linux legs, the darwin-only packages (cmd/nova-sandbox,
+internal/sandbox) are dropped from the selection before the nothing-to-test check, and
+the darwin-sensitivity analysis does not run. The darwin evidence is taken at dev and
+main (internal/pkgselect DarwinOn).
 
 --linux-group and --macos-group are the runner-group labels the legs carry (the
 workflow's own runs-on labels).
@@ -50,6 +58,7 @@ func testMatrixVerb(e env, args []string, h selHost) int {
 	event := fs.String("event", "", "the workflow event name")
 	prBase := fs.String("pull-request-base", "", "the pull request's base sha")
 	mgBase := fs.String("merge-group-base", "", "the merge group's base sha")
+	target := fs.String("target-branch", "", "the branch the change is bound for (the darwin legs run for dev and main)")
 	linux := fs.String("linux-group", "", "the Linux runner-group label")
 	mac := fs.String("macos-group", "", "the macOS runner-group label")
 	if code, done := selFlags(e, name, fs, args); done {
@@ -100,6 +109,17 @@ func testMatrixVerb(e env, args []string, h selHost) int {
 		fmt.Fprintln(e.stdout, "no packages: the fan-out would be empty and green")
 		return 1
 	}
+
+	darwin := pkgselect.DarwinOn(*event, *target)
+	fmt.Fprintf(e.stdout, "darwin shards: %t (%s -> %s; on for %s)\n", darwin, *event, orNA(*target), strings.Join(pkgselect.DarwinBranches, " "))
+	if !darwin {
+		all = pkgselect.DropDarwinOnly(all)
+		shown := "none"
+		if len(all) > 0 {
+			shown = strings.Join(all, " ")
+		}
+		fmt.Fprintf(e.stdout, "darwin shards off: %d package(s) on the Linux shards: %s\n", len(all), shown)
+	}
 	all = pkgselect.OrderHeavyFirst(all)
 
 	functional := pkgselect.MarshalLegs(pkgselect.Functional(all, groups))
@@ -121,7 +141,7 @@ func testMatrixVerb(e env, args []string, h selHost) int {
 	}
 
 	sens := pkgselect.DarwinSensitive{}
-	if *event == "pull_request" {
+	if *event == "pull_request" && darwin {
 		var ok bool
 		var err error
 		sens, ok, err = pkgselect.DetectDarwinSensitive(h.run, selRoot(e))
@@ -136,7 +156,7 @@ func testMatrixVerb(e env, args []string, h selHost) int {
 		}
 	}
 
-	legs := pkgselect.Fanout(*event, all, sens, groups)
+	legs := pkgselect.Fanout(*event, all, sens, groups, darwin)
 	if len(legs) == 0 {
 		fmt.Fprintln(e.stdout, "no packages with tests: the fan-out would be empty and green")
 		return 1
@@ -148,4 +168,11 @@ func testMatrixVerb(e env, args []string, h selHost) int {
 		return 1
 	}
 	return 0
+}
+
+func orNA(s string) string {
+	if s == "" {
+		return "n/a"
+	}
+	return s
 }

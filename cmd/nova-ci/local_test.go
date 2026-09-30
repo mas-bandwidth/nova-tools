@@ -377,7 +377,7 @@ func TestMakefileTestTargetTakesGOTEST_P(t *testing.T) {
 func TestLocalSelectionRunsThroughTheNicedRunner(t *testing.T) {
 	t.Parallel()
 	f := &localFake{root: localCheckout(t, "test"), replies: []localReply{
-		{prefix: "nice -n 15 git fetch", code: 1},
+		{prefix: "nice -n 15 git cat-file -e " + localMergeBase + "^{commit}"},
 		{prefix: "nice -n 15 git diff --name-only " + localMergeBase + " HEAD", stdout: "go.mod\n"},
 		{prefix: "nice -n 15 go list ./cmd/... ./internal/... ./tools/...", stdout: "example.com/m/cmd/a\nexample.com/m/internal/ci\n"},
 	}}
