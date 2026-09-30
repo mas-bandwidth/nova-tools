@@ -336,6 +336,10 @@ func EpochPrefix(table string, epoch uint64) string {
 }
 
 func RowsKeyAt(table string, epoch uint64) string { return EpochPrefix(table, epoch) + ":rows" }
+
+// PropsKeyAt is the table's properties at the epoch (L1 contract amendment,
+// table properties): a hash of name -> value beside the rows key.
+func PropsKeyAt(table string, epoch uint64) string { return EpochPrefix(table, epoch) + ":props" }
 func RowKeyAt(table, row string, epoch uint64) string {
 	return EpochPrefix(table, epoch) + ":row:" + row
 }

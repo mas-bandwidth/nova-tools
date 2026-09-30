@@ -1299,6 +1299,9 @@ do
       if err then return nil, err end
     end
     T.stage(d, 'DEL', T.rowskey(d))
+    -- the table's properties at the epoch go with its rows (L1 contract
+    -- amendment, table properties)
+    T.stage(d, 'DEL', T.propskey(d))
     if op == 'drop' or op == 'drop_definition' then
       d.present = false
       -- The table's operation records, of every epoch, are one key (T.opskey):
