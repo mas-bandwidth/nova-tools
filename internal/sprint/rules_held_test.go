@@ -2336,7 +2336,7 @@ func TestHeldReadWithoutFrontsAgreesWithWhole(t *testing.T) {
 	for seed := int64(1); seed <= 300; seed++ {
 		w := randomHWorld(rand.New(rand.NewSource(seed)))
 		var ids []string
-		for _, c := range w.s.Work.Cards {
+		for _, c := range w.s.Work.Cards() {
 			ids = append(ids, c.ID)
 		}
 		sort.Strings(ids)
@@ -2391,7 +2391,7 @@ func TestHeldRegisteredRuleAgreesWithPlanHeldOnRandomSprints(t *testing.T) {
 	for seed := int64(1); seed <= 100; seed++ {
 		w := randomHWorld(rand.New(rand.NewSource(1000 + seed)))
 		var ids []string
-		for _, c := range w.s.Work.Cards {
+		for _, c := range w.s.Work.Cards() {
 			ids = append(ids, c.ID)
 		}
 		sort.Strings(ids)
@@ -2428,7 +2428,7 @@ func TestHeldRegisteredRuleTwiceOnRandomSprintsSecondEmpty(t *testing.T) {
 	for seed := int64(1); seed <= 150; seed++ {
 		w := randomHWorld(rand.New(rand.NewSource(5000 + seed)))
 		var ids []string
-		for _, c := range w.s.Work.Cards {
+		for _, c := range w.s.Work.Cards() {
 			ids = append(ids, c.ID)
 		}
 		sort.Strings(ids)
