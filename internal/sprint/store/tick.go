@@ -378,6 +378,9 @@ type TickResult struct {
 	// and Hint what to do next.
 	Done string `json:"done,omitempty"`
 	Hint string `json:"hint,omitempty"`
+	// Epoch is the epoch the tick ran at: the log the run loop waits on
+	// after it (waitlog.go).
+	Epoch uint64 `json:"-"`
 }
 
 // TableRows is one table of a tick and the rows its parts changed in it.
@@ -501,7 +504,7 @@ func (st *Store) Tick(ctx context.Context) (TickResult, error) {
 	if err != nil {
 		return TickResult{}, err
 	}
-	res := TickResult{State: m.StateWord()}
+	res := TickResult{State: m.StateWord(), Epoch: st.epoch}
 	if !m.Running() {
 		// A STOPPED machine moves nothing; the tick shows the fleet as its
 		// beats say and says it looked, so start can tell a run loop is

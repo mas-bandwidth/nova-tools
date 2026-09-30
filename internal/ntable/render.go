@@ -2,7 +2,6 @@ package ntable
 
 import (
 	"fmt"
-	"slices"
 	"strconv"
 	"strings"
 
@@ -18,8 +17,6 @@ type RenderOpts struct {
 	// LabelWidth fixes the row-label column's width the same way (the
 	// sprint's stream block keeps its names 25 wide); 0 fits the labels.
 	LabelWidth int
-	// HideZeroRows hides a row whose count cells are all zero and all read.
-	HideZeroRows bool
 	// Title is the table's name, printed in the top-left cell, the header
 	// of the row-label column (Glenn 2026-09-27: "tables need a title";
 	// "the title goes where 'row' is currently").
@@ -33,11 +30,9 @@ type RenderOpts struct {
 // are separated by " | " and the rule joins dashes with "-+-". A cell whose
 // set did not come back prints "?", and so does a fold over it. The last
 // column is padded only when it is right-aligned, so no line ends in a
-// space. An empty table, and a table with no visible row, renders as the
-// empty string with no newline, title or not (Glenn 2026-09-26 10:00 AM
-// ET: an empty stream table is hidden with no extra newline; 2026-09-27:
-// "When a table has no rows, it should automatically hide. When it has
-// rows again, it should show").
+// space. A table always renders, with its header and its footer, and with no
+// body line when it has no row (Glenn 2026-09-30, the owner's ruling: tables
+// and rows always show, empty or not).
 //
 // The row's label is always the first column (Glenn 2026-09-27, the live
 // session: eight benches rendered as eight anonymous rows of numbers), put
@@ -53,13 +48,10 @@ type RenderOpts struct {
 func Render(t Table, opts RenderOpts) string {
 	rows := make([]Row, 0, len(t.Rows))
 	for _, r := range t.Rows {
-		if r.Hidden || opts.HideZeroRows && allZero(t, r) {
+		if r.Hidden {
 			continue // a hidden row stays in the folds (Glenn 2026-09-27: "hide the rows a-z but keep them there logically")
 		}
 		rows = append(rows, r)
-	}
-	if len(rows) == 0 {
-		return ""
 	}
 	// cols is what is printed; src[j] is the definition's column behind
 	// cols[j], or -1 for the row-label column put in front.
@@ -128,7 +120,7 @@ func Render(t Table, opts RenderOpts) string {
 	}
 	right := make([]bool, n)
 	for j, c := range cols {
-		right[j] = c.Projection == Count || IsSum(c.Projection)
+		right[j] = c.Projection == Count || IsSum(c.Projection) || numericText(c)
 	}
 	var b, l strings.Builder
 	line := func(cells []string, footerRow bool) {
@@ -187,22 +179,6 @@ func pad(b *strings.Builder, s string, w int, right, last bool) {
 		b.WriteString(s)
 		b.WriteString(strings.Repeat(" ", fill))
 	}
-}
-
-// allZero says every count cell of r is 0 and read; a row with no count
-// cell is never all-zero.
-func allZero(t Table, r Row) bool {
-	counts := 0
-	for j, c := range t.Columns {
-		if c.Projection != Count || j >= len(r.Cells) {
-			continue
-		}
-		counts++
-		if r.Cells[j].Unread || r.Cells[j].Count != 0 {
-			return false
-		}
-	}
-	return counts > 0
 }
 
 // CellText returns a full, unpadded projected cell. Render and machine-readable
@@ -325,10 +301,29 @@ func namedCount(cols []Column, r Row, name string) (int64, bool) {
 	return 0, false
 }
 
+// numericText says c is a text column that folds sum or max: its cells are
+// whole numbers, printed right-aligned like counts.
+func numericText(c Column) bool {
+	return c.Projection == Text && (c.Fold == Sum || c.Fold == Max)
+}
+
+// textNumber is a numeric text cell's value: a blank cell is 0; ok is false
+// for text that is no whole number.
+func textNumber(v string) (int64, bool) {
+	if v == "" {
+		return 0, true
+	}
+	n, err := strconv.ParseInt(v, 10, 64)
+	return n, err == nil
+}
+
 // countValue is a count cell's value, or a sum(<a>+<b>) cell's (the named
 // counts added); ok is false when a count it reads did not come back.
 func countValue(cols []Column, r Row, j int) (int64, bool) {
 	c := cols[j]
+	if numericText(c) {
+		return textNumber(r.Texts[c.Name])
+	}
 	if !IsSum(c.Projection) {
 		if j >= len(r.Cells) || r.Cells[j].Unread {
 			return 0, false
@@ -497,11 +492,9 @@ func countSummary(t Table, column string) string {
 }
 
 // RenderTables is the title line, then every table's render, one blank line
-// between two that print; a table kept and read but not drawn (HiddenTable),
-// an empty table and a table with no visible row print nothing and leave no
-// gap. The tables named in hideZero also hide a row whose count cells are all
-// zero: a stored view's own setting (View.HideZero), over opts.
-func RenderTables(title string, tables []Table, opts RenderOpts, hideZero []string) string {
+// between two; a table kept and read but not drawn (HiddenTable) prints
+// nothing and leaves no gap. An empty table prints its header and footer.
+func RenderTables(title string, tables []Table, opts RenderOpts) string {
 	var parts []string
 	if title != "" {
 		parts = append(parts, oneline.Escape(title)+"\n")
@@ -511,11 +504,8 @@ func RenderTables(title string, tables []Table, opts RenderOpts, hideZero []stri
 			continue // set --hidden: kept and read, not drawn, and drawn again by set --visible with no restart
 		}
 		o := opts
-		o.HideZeroRows = o.HideZeroRows || slices.Contains(hideZero, t.Name)
 		o.Title = t.Name // every block says which table it is
-		if text := Render(t, o); text != "" {
-			parts = append(parts, text)
-		}
+		parts = append(parts, Render(t, o))
 	}
 	return strings.Join(parts, "\n")
 }

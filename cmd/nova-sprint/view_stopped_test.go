@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
@@ -68,9 +67,9 @@ func TestTheViewsSummaryLineIsStoppedAloneWhileTheMachineIsStopped(t *testing.T)
 	}
 }
 
-// The view init stores hides a stream with no cards in the work and merge
-// tables only (docs/SPEC-SPRINT.md, the view): readers and fleet keep every row.
-func TestTheStoredViewHidesZeroRowsOfWorkAndMergeOnly(t *testing.T) {
+// The view init stores names no rule that hides a table or a row: every table
+// shows every row, empty or not (docs/SPEC-SPRINT.md, the view).
+func TestTheStoredViewHoldsTheFourTablesAndHidesNothing(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a --members m1")
@@ -78,7 +77,7 @@ func TestTheStoredViewHidesZeroRowsOfWorkAndMergeOnly(t *testing.T) {
 	if !ok {
 		t.Fatal("no sprint view")
 	}
-	if got := strings.Join(v.HideZero, ","); got != "work,merge" {
-		t.Fatalf("hide_zero %q, want work,merge", got)
+	if len(v.Tables) != 4 {
+		t.Fatalf("the view holds %v, want the four tables of the view", v.Tables)
 	}
 }

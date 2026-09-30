@@ -212,22 +212,18 @@ func (n Names) Definitions() []ntable.Table {
 		mk(Work, "waiting,ready,working,review,merging,landed"),
 		mk(Readers, "asked,reading,ok,broken"),
 		mk(Merge, "queued,merged,stuck,ci:text,state:text,since:text,returned,ctl:first:none", Since, Returned, Ctl),
-		mk(Fleet, "ready,working,width:text,done:sum(ok+failed),okpct:pct(ok/ok+failed):pooled:ok%,status:text,load:text,withdrawn,ok,failed,ctl:first:none",
+		mk(Fleet, "ready,working,width:text:sum,done:sum(ok+failed),okpct:pct(ok/ok+failed):pooled:ok%,status:text,load:text,withdrawn,ok,failed,ctl:first:none",
 			Withdrawn, DoneOK, DoneFailed, Ctl),
 	}
 }
 
-// ViewDef is the view as init sets it: the four tables, the summary line
-// counting landed primaries, and the work and merge tables hiding a stream
-// whose counts are all zero.
+// ViewDef is the view as init sets it: the four tables and the summary line
+// counting landed primaries. Every table shows every row, empty or not.
 func (n Names) ViewDef() ntable.View {
 	v := ntable.View{Name: n.View(), Title: "SPRINT TABLE", Summary: Landed}
 	for _, t := range ViewOrder {
 		v.Tables = append(v.Tables, n.Table(t))
 	}
-	// A stream with no cards in any column is not shown in the work and merge
-	// tables (SPEC-SPRINT.md, the view); readers and fleet keep every row.
-	v.HideZero = []string{n.Table(Work), n.Table(Merge)}
 	return v
 }
 

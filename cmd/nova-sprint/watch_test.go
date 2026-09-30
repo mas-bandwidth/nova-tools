@@ -72,7 +72,8 @@ func (l *writeLog) Write(p []byte) (int, error) {
 
 // whereFixture is a sprint with every table showing: three primaries in one
 // stream, one of them read and accepted into merging, and a second stream
-// whose only primary was dropped, so it has no cards in any column.
+// whose only primary was dropped, so it has no cards in any column and its row
+// shows, at zero.
 func whereFixture(t *testing.T) *testApp {
 	t.Helper()
 	ta := newTestApp(t)
@@ -197,7 +198,7 @@ func TestWhereFrameHoldsOnlyTheHeaderAndTheTables(t *testing.T) {
 		}
 	}
 	// the identity of a row is its first cell
-	for name, want := range map[string]string{"work": "s1", "readers": "reader-a,reader-b", "merge": "s1", "fleet": "m1,m2"} {
+	for name, want := range map[string]string{"work": "s1,s2", "readers": "reader-a,reader-b", "merge": "s1,s2", "fleet": "m1,m2"} {
 		if got := strings.Join(rowsOf(tableOf(frame, name)), ","); got != want {
 			t.Errorf("table %s: rows %q, want %q:\n%s", name, got, want, frame)
 		}
@@ -210,9 +211,10 @@ func TestWhereFrameHoldsOnlyTheHeaderAndTheTables(t *testing.T) {
 	}
 }
 
-// A table with no rows is not in the frame, and a stream with no cards in any
-// column is not in its tables; each is there again when it has a row.
-func TestWhereShowsAnEmptyTableAndAnEmptyStreamOnlyWithRows(t *testing.T) {
+// Every table is in the frame, with no rows when it has none, and a stream with
+// no cards in any column is in the work and merge tables, at zero; the rows of
+// a table come when it has them.
+func TestWhereShowsEveryTableAndEveryStream(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	ta.ok("init --members m1")
@@ -220,13 +222,18 @@ func TestWhereShowsAnEmptyTableAndAnEmptyStreamOnlyWithRows(t *testing.T) {
 	ta.ok("add --stream s2 --count 1")
 	ta.ok("drop s2-1 --reason obsolete")
 	frame := ta.ok("where")
-	for _, name := range []string{"readers", "merge"} {
-		if tableOf(frame, name) != "" {
-			t.Errorf("table %s has no rows and shows:\n%s", name, frame)
+	for _, name := range []string{"work", "readers", "merge", "fleet"} {
+		if !strings.Contains(frame, "\n"+name+" ") {
+			t.Errorf("table %s is not in the frame:\n%s", name, frame)
 		}
 	}
-	if got := rowsOf(tableOf(frame, "work")); strings.Join(got, ",") != "s1" {
-		t.Errorf("work rows %q: s2 has no cards in any column:\n%s", got, frame)
+	if got := rowsOf(tableOf(frame, "readers")); len(got) != 0 {
+		t.Errorf("readers rows %q, want none:\n%s", got, frame)
+	}
+	for _, name := range []string{"work", "merge"} {
+		if got := rowsOf(tableOf(frame, name)); strings.Join(got, ",") != "s1,s2" {
+			t.Errorf("%s rows %q: s2 has no cards in any column and shows:\n%s", name, got, frame)
+		}
 	}
 
 	// the readers come, and a card comes to s2
@@ -238,9 +245,6 @@ func TestWhereShowsAnEmptyTableAndAnEmptyStreamOnlyWithRows(t *testing.T) {
 	}
 	if got := rowsOf(tableOf(frame, "work")); strings.Join(got, ",") != "s1,s2" {
 		t.Errorf("work rows %q:\n%s", got, frame)
-	}
-	if tableOf(frame, "merge") != "" {
-		t.Errorf("merge has no cards yet and shows:\n%s", frame)
 	}
 
 	// a card comes to merge
@@ -259,8 +263,8 @@ func TestWhereShowsAnEmptyTableAndAnEmptyStreamOnlyWithRows(t *testing.T) {
 	ta.ok("read --as reader-b --ok --limit 10")
 	ta.ok("accept --read-ok")
 	frame = ta.ok("where")
-	if got := rowsOf(tableOf(frame, "merge")); len(got) != 1 {
-		t.Errorf("merge rows %q:\n%s", got, frame)
+	if got := rowsOf(tableOf(frame, "merge")); len(got) != 2 {
+		t.Errorf("merge rows %q, want both streams:\n%s", got, frame)
 	}
 }
 

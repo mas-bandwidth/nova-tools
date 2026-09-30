@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -13,7 +14,8 @@ import (
 )
 
 // The machine: start and stop set its state; run is the process that ticks
-// once a second while it is RUNNING; tick is one tick by hand.
+// on every line of the log and once a second while the log is quiet; tick is
+// one tick by hand.
 
 // machineOut is start's, stop's and tick's report for a program.
 type machineOut struct {
@@ -206,21 +208,43 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 	if st == nil {
 		return code
 	}
-	fmt.Fprintf(stdout, "RUN ticking every %s while the machine is RUNNING; %s\n", store.TickEvery, st.MachineLine(context.Background()))
+	fmt.Fprintf(stdout, "RUN ticking on every line of the log (at most every %s) and every %s while it is quiet; %s\n", store.TickFloor, store.TickEvery, st.MachineLine(context.Background()))
 	a.runLoop(context.Background(), st, c.max, 0, stdout, stderr)
 	return 0
 }
 
-// runLoop ticks every TickEvery, n times (0 is for ever). Every tick of a
-// RUNNING machine is printed, naming every table and the rows it changed in
-// each (errata 3 amendment 10), and every tick that failed; an error is
-// printed always and the loop goes on, waiting longer after each failure in a
-// row, up to TickBackoffCap.
+// Why a tick of run began: the loop's start, a line on the log, the clock of
+// a quiet log, or the retry after a failed tick.
+const (
+	tickStart = "start"
+	tickLog   = "log"
+	tickClock = "clock"
+	tickRetry = "retry"
+)
+
+// runLoop ticks n times (0 is for ever), waking on the log, not the clock
+// (the owner's finding of 2026-09-30; store/waitlog.go): after each tick it blocks on the
+// epoch's log from the last line it has seen, and a line wakes it, so a step
+// that frees room or makes cards ready (a finish, a merge, a drop, a release,
+// fleet up, start) is ticked on, and its room dealt, at most TickFloor after
+// the tick before began; a quiet log ticks it TickEvery after the tick before
+// began (the sweep, the presence, the lateness). A wake costs the blocked
+// read alone. Every tick of a RUNNING machine is printed, naming every table
+// and the rows it changed in each (errata 3 amendment 10), and every tick that
+// failed; an error is printed always and the loop goes on, waiting longer
+// after each failure in a row, up to TickBackoffCap.
 func (a *app) runLoop(ctx context.Context, st *store.Store, max, n int, stdout, stderr io.Writer) {
 	failures := 0
 	was := ""
-	for i := 0; n == 0 || i < n; i++ {
+	// every line before the loop is seen: the first tick reads the state whole
+	cursor, _ := st.LogTail(ctx)
+	why := tickStart
+	for i := 0; (n == 0 || i < n) && ctx.Err() == nil; i++ {
+		began := a.now()
 		res, err := st.Tick(ctx)
+		if a.ticked != nil {
+			a.ticked(i+1, began, why)
+		}
 		if res.State != was && res.State != "" {
 			fmt.Fprintf(stdout, "%s machine %s\n", a.now().Format("15:04:05"), res.State)
 			was = res.State
@@ -232,28 +256,54 @@ func (a *app) runLoop(ctx context.Context, st *store.Store, max, n int, stdout, 
 				fmt.Fprintln(stdout, line)
 			}
 		}
-		wait := store.TickEvery
+		if n != 0 && i == n-1 {
+			return
+		}
 		if err != nil {
 			failures++
-			wait = min(store.TickEvery<<min(failures-1, 8), store.TickBackoffCap)
-		} else {
-			failures = 0
+			a.sleep(min(store.TickEvery<<min(failures-1, 8), store.TickBackoffCap))
+			why = tickRetry
+			continue
 		}
-		a.sleep(wait)
+		failures = 0
+		cursor, why = a.pace(ctx, st, res.Epoch, cursor, began)
 	}
+}
+
+// pace is the wait between two ticks of run: it blocks on the log of the
+// epoch the tick ran at from cursor, until a line comes or TickEvery after
+// the tick began (never less than TickFloor); a line wakes it, and the next
+// tick begins TickFloor after the last began at the soonest. It returns the
+// cursor for the next wait and why the next tick begins. A wait the store
+// refuses falls back to the clock.
+func (a *app) pace(ctx context.Context, st *store.Store, epoch uint64, cursor string, began time.Time) (string, string) {
+	d := max(store.TickEvery-a.now().Sub(began), store.TickFloor)
+	tail, woke, err := st.WaitLog(ctx, epoch, cursor, d)
+	if err != nil {
+		a.sleep(max(store.TickEvery-a.now().Sub(began), 0))
+		return cursor, tickClock
+	}
+	if !woke {
+		return tail, tickClock
+	}
+	if left := store.TickFloor - a.now().Sub(began); left > 0 {
+		a.sleep(left)
+	}
+	return tail, tickLog
 }
 
 // machineWords is the machine's part of the help.
 func machineWords() string {
 	return strings.TrimSpace(`
 The machine: nova-sprint start sets it RUNNING, nova-sprint stop sets it
-STOPPED; nova-sprint run ticks once a second while it is RUNNING, and
-nova-sprint tick is one tick by hand. Each tick deals ready primaries, asks
-readers, resolves waiting primaries whose needs landed, and writes the
-judgments that need the coordinator; a judgment open past its due time is
-marked overdue, once. A stop halts the tick before its next part. When nothing
-is left open (every card landed or dropped) the tick says "the sprint is done"
-to the coordinator and stops the machine itself: DONE, in where and the view;
-work added after leaves it STOPPED until nova-sprint start. Every verb works
-in both states.`) + "\n"
+STOPPED; nova-sprint run ticks as soon as a line comes on the log (a verb's
+step: a finish, a merge, a start), at most every 100ms, and once a second
+while the log is quiet; nova-sprint tick is one tick by hand. Each tick deals
+ready primaries, asks readers, resolves waiting primaries whose needs landed,
+and writes the judgments that need the coordinator; a judgment open past its
+due time is marked overdue, once. A stop halts the tick before its next part.
+When nothing is left open (every card landed or dropped) the tick says "the
+sprint is done" to the coordinator and stops the machine itself: DONE, in
+where and the view; work added after leaves it STOPPED until nova-sprint
+start. Every verb works in both states.`) + "\n"
 }
