@@ -76,7 +76,9 @@ func fairStreams(t *testing.T, count, width int) {
 	ta.live = nil
 	const few = 3
 	for tick := 1; tick <= 200; tick++ {
-		ta.ok("tick")
+		if ta.tickDone() {
+			return
+		}
 		play := ta.ok(fmt.Sprintf("play --simulation --fail 0 --broken 0 --stuck 0 --cross 0 --down 0 --seed %d --ticks 1", tick))
 		var v tablesView
 		ta.json("where", &v)
@@ -96,7 +98,6 @@ func fairStreams(t *testing.T, count, width int) {
 		if strings.Contains(play, "every stream has landed") {
 			return
 		}
-		ta.ok("accept --read-ok")
 	}
 	t.Fatal("not landed after 200 ticks")
 }

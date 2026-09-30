@@ -210,18 +210,6 @@ func Tick(s *Snapshot, r TickReq) []TickPart {
 // coordinator's ("accept is mechanical, but the merge step is not").
 const NReadyToMerge = "ready to merge"
 
-// NTickEnd is the tick-end note (errata 3 amendment 8): one a tick, to the
-// coordinator, only when the tick addressed the coordinator, its text
-// judgments=N.
-const NTickEnd = "tick-end"
-
-// TickEndNote is the tick-end note of a tick that addressed n items to the
-// coordinator.
-func TickEndNote(coordinator string, n int, now time.Time) Note {
-	return Note{Kind: Happened, Type: NTickEnd, To: coordinator, Who: MachineActor, At: now,
-		What: "judgments=" + itoa(n), SprintLevel: true}
-}
-
 // TickAccept is R9 as the machine's (the owner's ruling of 2026-09-30:
 // "accept is mechanical, but the merge step is not"): every primary in review
 // with ok reads from two different readers at its head moves to merging and

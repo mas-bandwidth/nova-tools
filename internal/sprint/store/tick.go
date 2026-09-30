@@ -362,7 +362,10 @@ type PartResult struct {
 // under it, or the machine was stopped), and how many moves and judgments it
 // left due past its bounds.
 type TickResult struct {
-	State    string         `json:"state"`
+	State string `json:"state"`
+	// TickEnd is the count of the tick-end note the tick wrote (tickend.go):
+	// the notes for the coordinator it covered, 0 for none written.
+	TickEnd  int            `json:"tick_end,omitempty"`
 	Idle     bool           `json:"idle,omitempty"`
 	Repaired []RepairResult `json:"repaired,omitempty"`
 	Parts    []PartResult   `json:"parts,omitempty"`
@@ -386,10 +389,6 @@ type TickResult struct {
 	// work, readers, merge and fleet, then each table another update wrote,
 	// in the order written, then "end" (errata 3 amendment 12).
 	Order []string `json:"order,omitempty"`
-	// TickEnd is the count the tick's tick-end note carries (the judgments it
-	// opened and the notes it addressed to the coordinator); 0 when it wrote
-	// none.
-	TickEnd int `json:"tick_end,omitempty"`
 }
 
 // TableRows is one table of a tick and the rows its parts changed in it.
@@ -599,6 +598,11 @@ func (st *Store) Tick(ctx context.Context) (TickResult, error) {
 				err = fmt.Errorf("remind: %w", rerr)
 			}
 		}
+	}
+	if err == nil && res.Stale == "" {
+		// the coordinator's one wake of the tick, last (tickend.go); a tick the
+		// clear overtook writes nothing more
+		res.TickEnd, err = st.tickEnd(ctx)
 	}
 	now := st.now()
 	if err == nil && res.Idle && res.Halted == "" && len(res.Parts) == 0 && hb.Error == "" && now.Sub(hb.At) < HeartbeatIdleEvery && !hb.At.Before(m.Since) &&
@@ -817,10 +821,8 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	if out := t.parts("", sprint.TickEnd); out != tickOn && out != tickDone {
 		return t.end(out, last, unfinished, seen)
 	}
-	// 5. One tick-end note to the coordinator, when the tick addressed them.
-	if err := t.tickEnd(); err != nil {
-		return last, err
-	}
+	// 5. The tick-end note, the coordinator's one wake, is Tick's last step
+	// (tickend.go).
 	if t.lost {
 		seen.Full = time.Time{}
 	}
@@ -862,8 +864,7 @@ const (
 
 // tickRun is one tick's updates as they run: the queue of each table other
 // than the work table (the entries the tick's other updates wrote to it,
-// which its update drains), the order the tables were written in, and what
-// the tick addressed to the coordinator.
+// which its update drains), and the order the tables were written in.
 type tickRun struct {
 	st      *Store
 	ctx     context.Context
@@ -874,7 +875,6 @@ type tickRun struct {
 	ran     bool             // a part ran: every later part plans on a fresh read
 	queues  map[string]int
 	dirtied []string
-	told    int
 	lost    bool
 	err     error
 }
@@ -932,6 +932,16 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 		step := TickPartStep(part.Name, fn, t.req, &t.at, nil, &due)
 		step.Pump, step.Drain = table == sprint.Work, drain
 		r, err := t.st.Run(t.ctx, step)
+		for i := 1; drain && err == nil && i < MaxDrains && len(planned.Requeue) > 0; i++ {
+			// a card created and taken off the table in one queue: its
+			// removal was left for the next drain, which runs now, so the
+			// pump's resolve and deal never see it
+			var more Result
+			if more, err = t.st.Run(t.ctx, step); err == nil && len(more.Moved) > 0 {
+				t.res.Parts = append(t.res.Parts, PartResult{Name: part.Name, Result: more})
+				t.res.addRows(sprint.PlanRows(planned))
+			}
+		}
 		t.ran = true
 		var cleared *ClearedError
 		if errors.As(err, &cleared) {
@@ -952,7 +962,6 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 		if !r.Lost && len(r.Moved) > 0 {
 			t.res.addRows(sprint.PlanRows(planned))
 		}
-		t.told += r.Judgments + r.Told
 		// Each table this part wrote, other than its own and the work table,
 		// holds what it wrote in its queue until its update runs.
 		for _, x := range All {
@@ -980,26 +989,6 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 		}
 	}
 	return tickOn
-}
-
-// tickEnd writes the tick-end note (errata 3 amendment 8): one note to the
-// coordinator, judgments=N, when the tick opened judgments or addressed notes
-// to them (N of them), and none otherwise: the coordinator's one wake a tick.
-func (t *tickRun) tickEnd() error {
-	if t.told == 0 {
-		return nil
-	}
-	n := t.told
-	r, err := t.st.Run(t.ctx, Step{Verb: "tick end", Actor: sprint.MachineActor, Epoch: &t.at, Plan: func(s *sprint.Snapshot) sprint.Plan {
-		return sprint.Plan{Notes: []sprint.Note{sprint.TickEndNote(s.Coordinator, n, s.Now)}}
-	}})
-	if err != nil {
-		return fmt.Errorf("tick end: %w", err)
-	}
-	if r.Notes > 0 {
-		t.res.TickEnd = n
-	}
-	return nil
 }
 
 // end is what the tick returns when an update or a part ended it early.

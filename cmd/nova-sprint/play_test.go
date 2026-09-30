@@ -10,14 +10,23 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
-// coordinate is a coordinator by rule: accept what two readers passed, rework
-// what came back failed or broken, resume a stopped stream, and leave a stream
-// stopped for another stream's card to the machine, which resumes it when that
-// card lands (T7): resume refuses it while the card is not landed. It is what
-// the person at the inbox does, typed as the same verbs.
+// tickDone is the machine's tick, and whether it found the sprint done: the
+// merge queues the last landings for the next tick's pump, which drains them,
+// and the same tick's done part stops the machine, so the driver (it plays
+// only while a machine runs) is not run after it.
+func (ta *testApp) tickDone() bool {
+	ta.t.Helper()
+	return strings.Contains(ta.ok("tick"), "the sprint is done")
+}
+
+// coordinate is a coordinator by rule: rework what came back failed or broken,
+// resume a stopped stream, and leave a stream stopped for another stream's card
+// to the machine, which resumes it when that card lands (T7): resume refuses it
+// while the card is not landed. The machine accepts what two readers passed
+// (the pump's accept: "accept is mechanical"). It is what the person at the
+// inbox does, typed as the same verbs.
 func (ta *testApp) coordinate() {
 	ta.t.Helper()
-	_, _, _ = ta.do("accept --read-ok")
 	var in struct{ Groups []sprint.Group }
 	ta.json("inbox", &in)
 	for _, g := range in.Groups {
@@ -46,7 +55,14 @@ func TestPlayWithACoordinatorLandsEveryStream(t *testing.T) {
 	}
 	ta.ok("start")
 	for round := 1; round <= 300; round++ {
-		ta.ok("tick") // the machine: every mechanical move
+		if ta.tickDone() { // the machine: every mechanical move
+			var w whereView
+			ta.json("where", &w)
+			if w.Landed != 45 || w.All != 45 {
+				t.Fatalf("done with %d landed of %d", w.Landed, w.All)
+			}
+			return
+		}
 		out := ta.ok(fmt.Sprintf("play --seed %d --ticks 1 --every 1s --fail 0.1 --broken 0.05 --stuck 0.1 --cross 0 --batch 10 --take 20 --reads 20", round))
 		if round == 1 && !strings.Contains(out, "tick 1") {
 			t.Fatalf("the first tick:\n%s", out)
