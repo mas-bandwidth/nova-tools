@@ -3,10 +3,8 @@ package swarm
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strconv"
 	"strings"
-	"time"
 )
 
 // USAGE OUTLIVES THE JOB (rule 12).
@@ -79,94 +77,6 @@ func (p *Pool) WriteUsage(id string, row UsageRow) (string, bool, error) {
 	}
 	body := strings.Join(head, "\t") + "\n" + strings.Join(values, "\t") + "\n"
 	return path, false, writeAtomic(path, []byte(body), 0o644)
-}
-
-// ReadUsage reads every usage row in the pool, in job-id order, which is time order.
-func (p *Pool) ReadUsage() ([]UsageRow, error) {
-	entries, err := os.ReadDir(p.Path(Usage))
-	if err != nil {
-		return nil, err
-	}
-	var out []UsageRow
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".tsv") {
-			continue
-		}
-		row, err := readUsageFile(filepath.Join(p.Path(Usage), e.Name()))
-		if err != nil {
-			continue
-		}
-		out = append(out, row)
-	}
-	return out, nil
-}
-
-func readUsageFile(path string) (UsageRow, error) {
-	// The usage row is written by writeAtomic (WriteUsage) and read back by `report` and
-	// `reclaim` while a run is still finalizing other jobs: same rename, same collision.
-	raw, err := readFileSteady(path)
-	if err != nil {
-		return nil, err
-	}
-	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
-	if len(lines) < 2 {
-		return nil, fmt.Errorf("%s holds no row", path)
-	}
-	head := strings.Split(lines[0], "\t")
-	// ONE FILE, ONE ROW is the pool's shape; ONE FILE, MANY ROWS is a retried native card
-	// (issue #900), where each launch appended its own row. The last row names the card; the
-	// numeric columns are summed across every row, and a column any attempt left a dash
-	// stays a dash rather than becoming a zero. A single-row file reads exactly as before.
-	if len(lines) > 2 {
-		return foldUsageRows(head, lines[1:]), nil
-	}
-	values := strings.Split(lines[1], "\t")
-	row := UsageRow{}
-	for i, name := range head {
-		if i < len(values) {
-			row[name] = values[i]
-		}
-	}
-	return row, nil
-}
-
-// foldUsageRows sums the numeric columns of a multi-row usage file and keeps the last row's
-// naming columns. A dash in any attempt for a column keeps that column a dash: a sum that
-// counted a missing attempt as zero would be a measurement the provider never made.
-func foldUsageRows(head []string, lines []string) UsageRow {
-	split := func(line string) map[string]string {
-		out := map[string]string{}
-		values := strings.Split(line, "\t")
-		for i, name := range head {
-			if i < len(values) {
-				out[name] = values[i]
-			}
-		}
-		return out
-	}
-	row := split(lines[len(lines)-1])
-	numeric := append(append([]string{}, TokenColumns...), "usd")
-	for _, name := range numeric {
-		sum := 0.0
-		complete := true
-		for _, line := range lines {
-			f, err := strconv.ParseFloat(strings.TrimSpace(split(line)[name]), 64)
-			if err != nil {
-				complete = false
-				break
-			}
-			sum += f
-		}
-		switch {
-		case !complete:
-			row[name] = Dash
-		case name == "usd":
-			row[name] = strconv.FormatFloat(sum, 'f', 4, 64)
-		default:
-			row[name] = strconv.FormatInt(int64(sum), 10)
-		}
-	}
-	return row
 }
 
 // Int reads a numeric column, reporting whether it is a number at all -- a dash is not.
@@ -268,6 +178,3 @@ func ReadProviderUsage(source, dataHome string) (ProviderUsage, error) {
 		return ProviderUsage{}, fmt.Errorf("the usage source %q is not one this tool reads; it wants `%s` or `%s`", source, UsageOpenCode, UsageNone)
 	}
 }
-
-// Stamp is the one time format this tool writes: a UTC instant, seconds resolution.
-func Stamp(t time.Time) string { return t.UTC().Format(time.RFC3339) }

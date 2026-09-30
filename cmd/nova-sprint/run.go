@@ -72,7 +72,7 @@ func (a *app) setMachine(name string, running bool, args []string, stdout, stder
 		return 0
 	}
 	if err != nil {
-		fmt.Fprintf(stderr, "%s %s: %s\n", prog, name, oneline.Escape(err.Error()))
+		fmt.Fprintf(stderr, "%s %s: %s\n", prog, name, oneline.WithRemedy(err.Error(), prog+" "+name+" -h"))
 		return 2
 	}
 	what := "changed"

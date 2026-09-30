@@ -32,6 +32,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -47,6 +48,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/pkgselect"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/yield"
 )
 
@@ -90,7 +92,11 @@ func execLocal(c localCmd) (int, error) {
 	if len(c.Argv) == 0 {
 		return -1, errors.New("empty command")
 	}
-	cmd := exec.Command(c.Argv[0], c.Argv[1:]...)
+	// A long-lived child: a local CI command runs as long as it runs, under a cancellable
+	// context and no deadline.
+	ctx, stop := context.WithCancel(context.Background())
+	defer stop()
+	cmd := subproc.Long(ctx, c.Argv[0], c.Argv[1:]...)
 	cmd.Dir = c.Dir
 	cmd.Env = append(os.Environ(), c.Env...)
 	cmd.Stdout, cmd.Stderr = c.Stdout, c.Stderr

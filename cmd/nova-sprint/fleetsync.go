@@ -143,7 +143,7 @@ func (a *app) cmdFleetSync(args []string, stdout, stderr io.Writer) int {
 	ctx := context.Background()
 	ws, err := a.inventory(ctx, *pg, c.redis)
 	if err != nil {
-		fmt.Fprintf(stderr, "%s %s: the config cannot be read: %s; nothing was changed\n", prog, name, oneline.Escape(err.Error()))
+		fmt.Fprintf(stderr, "%s %s: the config cannot be read: %s; nothing was changed\n", prog, name, oneline.WithRemedy(err.Error(), "nova-config machine list"))
 		return exitCannotRead
 	}
 	if len(ws) == 0 {
@@ -172,7 +172,7 @@ func (a *app) cmdFleetSync(args []string, stdout, stderr io.Writer) int {
 	}
 	snap, err := st.Load(ctx, []string{sprint.Fleet, sprint.Work}, nil)
 	if err != nil {
-		fmt.Fprintf(stderr, "%s %s: %s\n", prog, name, nothingChanged(err))
+		fmt.Fprintf(stderr, "%s %s: %s\n", prog, name, oneline.WithRemedy(nothingChanged(err), prog+" "+name+" -h"))
 		if *check {
 			return exitCannotRead
 		}
@@ -236,7 +236,7 @@ func (a *app) syncCheck(asJSON bool, rep syncReport, drift []sprint.Drift, stdou
 	}
 	if len(drift) == 0 {
 		fmt.Fprintf(stdout, "FLEET-SYNC CHECK OK drift=0 members=%d: the fleet table matches the inventory\n", rep.Members)
-		return code
+		return 0
 	}
 	fmt.Fprintf(stdout, "FLEET-SYNC CHECK DRIFT drift=%d members=%d: run: nova-sprint fleet sync\n", len(drift), rep.Members)
 	return code

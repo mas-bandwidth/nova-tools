@@ -316,6 +316,10 @@ jobs:
     # packages run on the darwin-x64 shards only. On pull_request and merge_group it
     # selects only the packages the change touches and their in-module
     # importers; the push to dev and the nightly run keep the whole tree.
+    # The darwin shards are dealt only when the target branch is dev or main
+    # (a pull_request's base, the merge queue's base_ref, a push's ref name), on
+    # schedule and on workflow_dispatch; for a working branch the matrix is Linux
+    # only (the `darwin_on` gate in the list step).
     # It runs on the nightly schedule too, for the `functional` job's list and
     # for the unit `test` job's nightly space shards (#4413).
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
@@ -445,7 +449,10 @@ jobs:
     # leg does not cancel its siblings. Each leg vets and tests only its own
     # shard. Measured green end to end in run 35021822106: sixteen legs from
     # 14 s to 251 s, whole run 5 m 57 s. The whole-tree `-race` run is the
-    # certification tier's `test` job. On pull_request and merge_group the legs
+    # certification tier's `test` job. The darwin legs exist only where the
+    # target branch is dev or main (test-packages deals them); a pull request
+    # to a working branch runs the Linux legs alone, and no darwin job stands in
+    # its merge gate. On pull_request and merge_group the legs
     # carry the packages the change touched, not the whole tree; a change that
     # touched no Go package gets one leg with an empty package list that prints
     # and exits 0.

@@ -447,6 +447,7 @@ func DecodeCodexRollout(m *CodexMapping, b CodexBinding, paths []string) (*Codex
 	closers := make([]io.Closer, 0, len(paths))
 	defer func() {
 		for _, c := range closers {
+			// ignored: a deferred close of files only read from; every read was checked
 			_ = c.Close()
 		}
 	}()

@@ -4,11 +4,12 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // exeSuffix is the extension a built binary carries on Windows. It IS the
@@ -63,7 +64,7 @@ type HelpRunner func(ctx context.Context, bin string) (string, error)
 // telling you its verbs and the parser ignores every line that is not a
 // command anyway.
 func RunHelp(ctx context.Context, bin string) (string, error) {
-	cmd := exec.CommandContext(ctx, bin, "help")
+	cmd := subproc.Context(ctx, bin, "help")
 	out, err := cmd.CombinedOutput()
 	if err != nil && len(out) == 0 {
 		return "", err

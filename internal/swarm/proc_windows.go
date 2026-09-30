@@ -3,11 +3,14 @@
 package swarm
 
 import (
+	"context"
 	"errors"
 	"os"
 	"os/exec"
 	"strconv"
 	"syscall"
+
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // The process layer on Windows.
@@ -95,7 +98,8 @@ func killPidSyscall(pid int) error {
 // Force=true invokes taskkill /PID <pid> /T /F (forceful tree kill).
 func killPidTaskkill(pid int, force bool) error {
 	args := TaskkillArgs(pid, force)
-	cmd := exec.Command("taskkill", args...)
+	cmd, cancel := subproc.Command(context.Background(), subproc.Tool, "taskkill", args...)
+	defer cancel()
 	return cmd.Run()
 }
 
@@ -109,11 +113,14 @@ func killPidWithStrategy(pid int, started string, force bool, strat WindowsKillS
 	case StrategyTaskkill:
 		if err := killPidTaskkill(pid, force); err != nil {
 			// Fallback to direct syscall if taskkill executable fails or is unavailable
+			// ignored: the fallback after taskkill failed; the caller reads liveness afterwards
 			_ = killPidSyscall(pid)
 		}
 	case StrategySyscall:
+		// ignored: a kill of a process that may already have exited; the caller reads liveness afterwards
 		_ = killPidSyscall(pid)
 	default:
+		// ignored: a kill of a process that may already have exited; the caller reads liveness afterwards
 		_ = killPidSyscall(pid)
 	}
 }
@@ -165,9 +172,6 @@ func StartStamp(pid int) string {
 	}
 	return strconv.FormatUint(uint64(creation.HighDateTime)<<32|uint64(creation.LowDateTime), 10)
 }
-
-// GroupMembers counts the processes in a group other than self. Unavailable here.
-func GroupMembers(pgid, self int) (int, bool) { return 0, false }
 
 // pgidOf has no process group to report here, so a process is its own group of one.
 func pgidOf(pid int) int { return pid }

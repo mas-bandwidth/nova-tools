@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/redis/go-redis/v9"
+
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // CIEnv is set to "1" by the CI workflows. A missing redis-server fails the
@@ -78,20 +80,28 @@ func startOnce(t *testing.T, bin string, extra []string) (string, bool, string) 
 	if err != nil {
 		t.Fatal(err)
 	}
+	// ignored: a test fixture's cleanup; the test's own assertions are the report
 	t.Cleanup(func() { _ = logf.Close() })
 	args := append([]string{"--bind", "127.0.0.1", "--port", port, "--save", "", "--appendonly", "no", "--dir", dir}, extra...)
-	cmd := exec.Command(bin, args...)
+	// A long-lived child: a cancellable context and no deadline, released when the wait
+	// returns; the cleanup below is what ends it.
+	ctx, release := context.WithCancel(context.Background())
+	cmd := subproc.Long(ctx, bin, args...)
 	cmd.Stdout, cmd.Stderr = logf, logf
 	if err := cmd.Start(); err != nil {
+		release()
 		t.Fatalf("redis-server did not start: %v", err)
 	}
 	exited := make(chan struct{})
-	go func() { _ = cmd.Wait(); close(exited) }()
+	// ignored: a test fixture's server is killed by the cleanup, so its exit status is always a signal
+	go func() { _ = cmd.Wait(); release(); close(exited) }()
 	t.Cleanup(func() {
+		// ignored: a test fixture's cleanup; the server may already have exited
 		_ = cmd.Process.Kill()
 		<-exited
 	})
 	client := redis.NewClient(&redis.Options{Addr: addr})
+	// ignored: a probe client closed after the readiness wait; the test's own assertions are the report
 	defer func() { _ = client.Close() }()
 	deadline := time.Now().Add(30 * time.Second)
 	for {

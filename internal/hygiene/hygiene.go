@@ -25,13 +25,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -489,15 +489,6 @@ func diffPath(field string) string {
 	return strings.TrimPrefix(field, "b/")
 }
 
-func gitCmd(ctx context.Context, dir string, args ...string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, "git", append(append([]string(nil), configOpts...), args...)...)
-	cmd.Dir = dir
-	// A bench's own git config cannot be allowed to change what this reads: the whole
-	// point of the identity check is that the bench's configuration is not evidence.
-	cmd.Env = append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")
-	return cmd
-}
-
 func gitLine(ctx context.Context, dir string, args ...string) (string, error) {
 	out, err := gitOut(ctx, dir, args...)
 	return strings.TrimSpace(out), err
@@ -515,8 +506,10 @@ func verb(args []string) string {
 }
 
 func gitOut(ctx context.Context, dir string, args ...string) (string, error) {
-	cmd := gitCmd(ctx, dir, args...)
-	out, err := cmd.Output()
+	// A bench's own git config cannot be allowed to change what this reads: the whole
+	// point of the identity check is that the bench's configuration is not evidence.
+	res, err := gitrun.Run(ctx, gitrun.Options{Dir: dir, Env: append(os.Environ(), "GIT_CONFIG_GLOBAL=/dev/null", "GIT_CONFIG_NOSYSTEM=1")},
+		append(append([]string(nil), configOpts...), args...)...)
 	// A cancelled or expired context is a could-not-run whatever the process did on
 	// its way out, and this package has exactly one rule about could-not-run: it is
 	// never an empty answer, because an empty answer reads as a clean range.
@@ -524,13 +517,12 @@ func gitOut(ctx context.Context, dir string, args ...string) (string, error) {
 		return "", fmt.Errorf("git %s: %v", verb(args), ctx.Err())
 	}
 	if err != nil {
-		var ee *exec.ExitError
-		if errors.As(err, &ee) && len(ee.Stderr) > 0 {
-			return "", fmt.Errorf("git %s: %v: %s", verb(args), err, strings.TrimSpace(string(ee.Stderr)))
+		if stderr := strings.TrimSpace(string(res.Stderr)); stderr != "" {
+			return "", fmt.Errorf("git %s: %v: %s", verb(args), err, stderr)
 		}
 		return "", err
 	}
-	return string(out), nil
+	return string(res.Stdout), nil
 }
 
 // modeFinding judges one entry's TYPE and MODE, and it is a function of its own so it

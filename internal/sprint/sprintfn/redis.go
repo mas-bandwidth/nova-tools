@@ -191,6 +191,7 @@ func (r *Redis) Pipeline(ctx context.Context, items []Item) ([]Result, error) {
 	// One flush. Its aggregate error does not stand for the replies: each
 	// command keeps its own, and a command no reply reached holds the
 	// transport's error.
+	// ignored: each command keeps its own error (see the comment above); the aggregate is read per reply below
 	_, _ = pipe.Exec(ctx)
 	results := make([]Result, len(wire))
 	for i, cmd := range cmds {

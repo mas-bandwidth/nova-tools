@@ -1,14 +1,15 @@
 package swarm
 
 import (
+	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"sync"
 
+	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -242,12 +243,6 @@ func wallPathToken(line string) string {
 	return ""
 }
 
-// wallTail is the bounded field the batch's ABSTAIN line carries after log=<n>: the path the
-// wall refused and the step the card reached. The full report line is WallLine, on the notes.
-func wallTail(w WallRefusal) string {
-	return "path=" + dashOr(w.Path) + " step=" + dashOr(w.Step)
-}
-
 // WallLine is the ONE line a wall death is reported on, to the coordinator and to the
 // harvester. It names the task, the refused path and the last step the card reached, and --
 // when the clone holds commits past its base -- the count and the branch, so work a dead card
@@ -311,13 +306,8 @@ func wallBaseRef(repoDir string) string {
 // empty string, because every caller here treats a missing answer as "no answer" and never
 // as zero.
 func gitOut(dir string, args ...string) string {
-	cmd := exec.Command("git", append([]string{"-C", dir}, args...)...)
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0")
-	out, err := cmd.Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
+	out, _ := gitrun.Output(context.Background(), gitrun.Options{C: dir, Env: append(os.Environ(), "GIT_TERMINAL_PROMPT=0")}, args...)
+	return out
 }
 
 // A DENIAL IN THE CAPTURE IS NEVER AN OK, AND IT IS NEVER A DIAGNOSIS EITHER

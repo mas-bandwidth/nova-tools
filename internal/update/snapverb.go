@@ -2,9 +2,7 @@ package update
 
 import (
 	"context"
-	"flag"
 	"fmt"
-	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -12,7 +10,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
+	"github.com/mas-bandwidth/nova-tools/internal/tool"
 )
 
 // snapshotChildTimeout is the default deadline one binary's `version` gets, and
@@ -131,50 +129,15 @@ func parseVersionLine(s string) (stamp, revision, platform string, src buildinfo
 // executables sit in a bin directory or on PATH. With --bin/--out it inventories
 // a directory of binaries by running each one's own `version`. Every path comes
 // from a flag; neither the file's name nor PATH is trusted for the reading.
-func snapshotVerb(name string, args []string, out, errs io.Writer, env Environment) int {
-	fs := flag.NewFlagSet("snapshot", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	var bin, outPath, file string
-	timeout, budget := snapshotChildTimeout, snapshotBudget
-	fs.StringVar(&bin, "bin", "", "directory holding the binaries")
-	fs.StringVar(&outPath, "out", "", "TSV snapshot to write")
-	fs.StringVar(&file, "file", "", "manifest of adopted tools")
-	fs.DurationVar(&timeout, "timeout", timeout, "one binary's read deadline")
-	fs.DurationVar(&budget, "budget", budget, "whole run deadline")
-	if err := verbflag.Parse(fs, interspersed(fs, args)); err != nil {
-		return refusal(errs, "SNAPSHOT", fmt.Errorf("%s (run %s help)", err, name))
+func snapshotVerb(c *tool.Call) *tool.Out {
+	if c.Given("file") {
+		return snapshotAdopted(c.Str("file"))
 	}
-	if file != "" {
-		if len(fs.Args()) != 0 {
-			return refusal(errs, "SNAPSHOT", fmt.Errorf("snapshot takes no positional arguments (run %s help)", name))
-		}
-		return snapshotAdopted(file, out, errs)
-	}
-	var missing []string
-	if bin == "" {
-		missing = append(missing, "--bin")
-	}
-	if outPath == "" {
-		missing = append(missing, "--out")
-	}
-	if len(missing) > 0 {
-		// NEITHER PATH IS GUESSED, and the refusal now says so with a line
-		// somebody can paste. `--bin <dir>` reads as a complete command and is
-		// not one; the fourth release dogfood met that as `missing --out` with
-		// no example of what --out should be. SPEC-UPDATE rule 1 -- no search
-		// of the cwd, no $HOME -- is why there is no default to fall back on.
-		return refusal(errs, "SNAPSHOT", fmt.Errorf("missing %s; refusing to guess (both paths are the caller's to name, for example: %s snapshot --bin ./bin --out ./before.tsv; run: %s help)",
-			strings.Join(missing, ", "), name, name))
-	}
-	if timeout <= 0 || budget <= 0 {
-		return refusal(errs, "SNAPSHOT", fmt.Errorf("invalid bound (use positive --timeout/--budget)"))
-	}
-	if len(fs.Args()) != 0 {
-		return refusal(errs, "SNAPSHOT", fmt.Errorf("snapshot takes no positional arguments (run %s help)", name))
-	}
+	bin, outPath := c.Str("bin"), c.Str("out")
+	timeout, budget := c.Dur("timeout"), c.Dur("budget")
 	entries, err := os.ReadDir(bin)
 	if err != nil {
-		return refusal(errs, "SNAPSHOT", fmt.Errorf("cannot read --bin %s (supply a readable --bin: a directory of nova-* executables)", bin))
+		return tool.Refuse(fmt.Sprintf("cannot read --bin %s (supply a readable --bin: a directory of nova-* executables)", bin))
 	}
 	// The run's own deadline. Every child hangs off it, so a directory of
 	// binaries cannot cost more than `--budget` however many of them there are
@@ -218,21 +181,21 @@ func snapshotVerb(name string, args []string, out, errs io.Writer, env Environme
 				reason = "the run's " + budget.String() + " budget was spent before this binary was read"
 				remedy = "raise --budget, or snapshot fewer binaries per --bin"
 			}
-			return refusal(errs, "SNAPSHOT", fmt.Errorf("cannot read %s version (%s) (%s)", e.Name(), reason, remedy))
+			return tool.Refuse(fmt.Sprintf("cannot read %s version (%s) (%s)", e.Name(), reason, remedy))
 		}
 		stamp, revision, platform, src, has, ok := parseVersionLine(p.Stdout)
 		if !ok {
-			return refusal(errs, "SNAPSHOT", fmt.Errorf("cannot read %s version (it printed no version line: want `<tool> <stamp> <goos>/<goarch> <go version>` and then any key=value extras) (repair the build there: go build ./cmd/%s)", e.Name(), e.Name()))
+			return tool.Refuse(fmt.Sprintf("cannot read %s version (it printed no version line: want `<tool> <stamp> <goos>/<goarch> <go version>` and then any key=value extras) (repair the build there: go build ./cmd/%s)", e.Name(), e.Name()))
 		}
 		rows = append(rows, snapRow{e.Name(), stamp, revision, platform, src, has})
 	}
 	if len(rows) == 0 {
-		return refusal(errs, "SNAPSHOT", fmt.Errorf("--bin %s holds no nova-* regular file (supply a readable --bin: a directory of nova-* executables)", bin))
+		return tool.Refuse(fmt.Sprintf("--bin %s holds no nova-* regular file (supply a readable --bin: a directory of nova-* executables)", bin))
 	}
 	sort.Slice(rows, func(i, j int) bool { return rows[i].name < rows[j].name })
 	for i := 1; i < len(rows); i++ {
 		if rows[i].stamp != rows[0].stamp {
-			return refusal(errs, "SNAPSHOT", fmt.Errorf("mixed stamps: %s=%s %s=%s (rebuild the set under one stamp with nova-update release build --version <v> --out <dir> --source <checkout>, then nova-update release install --from <dir> --version <v> --bin <dir>; or use a --bin per set)", rows[0].name, rows[0].stamp, rows[i].name, rows[i].stamp))
+			return tool.Refuse(fmt.Sprintf("mixed stamps: %s=%s %s=%s (rebuild the set under one stamp with nova-update release build --version <v> --out <dir> --source <checkout>, then nova-update release install --from <dir> --version <v> --bin <dir>; or use a --bin per set)", rows[0].name, rows[0].stamp, rows[i].name, rows[i].stamp))
 		}
 	}
 	// SOURCE METADATA GATE (#2291, SPEC-VERSION item 6). The version stamp
@@ -260,7 +223,7 @@ func snapshotVerb(name string, args []string, out, errs io.Writer, env Environme
 			continue
 		}
 		if r.src != firstSrc {
-			return refusal(errs, "SNAPSHOT", fmt.Errorf("mixed source: %s=%s %s=%s (rebuild the set under one source with nova-update release build --version <v> --out <dir> --source <checkout>, then nova-update release install --from <dir> --version <v> --bin <dir>; or use a --bin per set)", firstSrcName, sourceString(firstSrc), r.name, sourceString(r.src)))
+			return tool.Refuse(fmt.Sprintf("mixed source: %s=%s %s=%s (rebuild the set under one source with nova-update release build --version <v> --out <dir> --source <checkout>, then nova-update release install --from <dir> --version <v> --bin <dir>; or use a --bin per set)", firstSrcName, sourceString(firstSrc), r.name, sourceString(r.src)))
 		}
 	}
 	var b strings.Builder
@@ -269,10 +232,9 @@ func snapshotVerb(name string, args []string, out, errs io.Writer, env Environme
 		fmt.Fprintf(&b, "%s\t%s\t%s\t%s\n", r.name, r.stamp, r.revision, r.platform)
 	}
 	if err := os.WriteFile(outPath, []byte(b.String()), 0o644); err != nil {
-		return refusal(errs, "SNAPSHOT", fmt.Errorf("cannot write --out %s (supply a writable --out path)", outPath))
+		return tool.Refuse(fmt.Sprintf("cannot write --out %s (supply a writable --out path)", outPath))
 	}
-	fmt.Fprintf(out, "SNAPSHOT OK bin=%s out=%s tools=%d stamp=%s\n", field(bin), field(outPath), len(rows), field(rows[0].stamp))
-	return 0
+	return tool.Done().Fact("bin", bin).Fact("out", outPath).Fact("tools", len(rows)).Fact("stamp", rows[0].stamp)
 }
 
 // snapshotAdopted counts how many of the adopted manifest's tools answer, and is
@@ -284,15 +246,15 @@ func snapshotVerb(name string, args []string, out, errs io.Writer, env Environme
 // is written: the manifest is adopted, not discovered. The verdict mirrors
 // report's: one count line, exit 0 when every adopted tool answers and exit 1
 // when any does not.
-func snapshotAdopted(file string, out, errs io.Writer) int {
+func snapshotAdopted(file string) *tool.Out {
 	f, err := os.Open(file)
 	if err != nil {
-		return refusal(errs, "SNAPSHOT", fmt.Errorf("cannot open %s (supply a readable --file: %s)", file, manifestShape))
+		return tool.Refuse(fmt.Sprintf("cannot open %s (supply a readable --file: %s)", file, manifestShape))
 	}
 	entries, err := Load(f)
 	f.Close()
 	if err != nil {
-		return refusal(errs, "SNAPSHOT", fmt.Errorf("%s: %w", file, err))
+		return tool.Refuse(fmt.Sprintf("%s: %s", file, err))
 	}
 	known := 0
 	for _, e := range entries {
@@ -303,10 +265,9 @@ func snapshotAdopted(file string, out, errs io.Writer) int {
 			known++
 		}
 	}
-	code, result, w := 0, "OK", out
+	o := tool.Done()
 	if known != len(entries) {
-		code, result, w = 1, "FAIL", errs
+		o = tool.Fail()
 	}
-	fmt.Fprintf(w, "SNAPSHOT %s checked=%d known=%d unknown=%d file=%s\n", result, len(entries), known, len(entries)-known, field(file))
-	return code
+	return o.Fact("checked", len(entries)).Fact("known", known).Fact("unknown", len(entries)-known).Fact("file", file)
 }

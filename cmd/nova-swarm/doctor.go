@@ -4,7 +4,7 @@
 // older nova-swarm before the one at ~/.local/bin, every card runs the older one and nothing
 // downstream can tell which build ran. The doctor reads the one `version` line the nova-swarm
 // first on PATH prints and the one the literal ~/.local/bin/nova-swarm prints, and if the two
-// differ it prints both in full and names the fix. `batch` and `native` run the same check
+// differ it prints both in full and names the fix. `native` runs the same check
 // before they start anything, so a launch refuses before it spends rather than after
 // somebody notices. It invents no version of its own: internal/buildinfo produces the line
 // and this file only reads what a binary said.
@@ -432,9 +432,9 @@ func doctorOtherSentence(r doctorReport, role string) string {
 }
 
 // doctorLaunchVerb reports whether v is a verb that starts a card, which is where the
-// preflight belongs: `batch` starts workers and `native` starts one child, and neither may
-// spend anything under a shadowed binary.
-func doctorLaunchVerb(v string) bool { return v == "batch" || v == "native" }
+// preflight belongs: `native` starts one child, and it may not spend anything under a
+// shadowed binary.
+func doctorLaunchVerb(v string) bool { return v == "native" }
 
 // preflightDoctor is what main calls before the dispatcher. It is at the process boundary
 // rather than inside cmdRun/cmdNative on purpose: the question is about the real PATH and
@@ -447,7 +447,7 @@ func preflightDoctor(args []string, stderr io.Writer) (int, bool) {
 
 func (e doctorEnv) preflight(args []string, stderr io.Writer) (int, bool) {
 	// The dispatcher takes --seat out of the arguments before it reads the verb, so the
-	// preflight reads them the same way: `--seat s batch ...` is a launch, and `batch --seat
+	// preflight reads them the same way: `--seat s native ...` is a launch, and `native --seat
 	// s -h` is a help request. A --seat with no name is the dispatcher's own refusal to make.
 	args, err := doctorStripSeat(args)
 	if err != nil {
@@ -472,15 +472,12 @@ func doctorStripSeat(args []string) ([]string, error) {
 	return scratch.FromArgs(args, nil)
 }
 
-// doctorLaunchHelp reports whether args asking for a launch verb (batch or native)
+// doctorLaunchHelp reports whether args asking for a launch verb (native)
 // are actually a request for help, rather than a launch carrying a flag value
-// spelled "-h" (like `batch --id -h`).
+// spelled "-h" (like `native --label -h`).
 func doctorLaunchHelp(verb string, args []string) bool {
 	var fs *flag.FlagSet
 	switch verb {
-	case "batch":
-		f, _ := batchFlagSet()
-		fs = f.fs
 	case "native":
 		f, _ := nativeFlagSet()
 		fs = f.fs
