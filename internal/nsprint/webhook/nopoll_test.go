@@ -27,6 +27,13 @@ var pollAllowed = map[string]string{
 	"internal/ci/failed_forge.go":    "the old ci failed-run reader; not a nova-sprint verb",
 	"internal/release/edges.go":      "nova-release reads check-runs by gh; not a nova-sprint verb",
 	"internal/wake/run.go":           "nova-wake polls check-runs by gh; not a nova-sprint verb",
+	// `nova-ci cost` names the forge's job-listing path in its usage and in
+	// its refusals, to say what stdin holds: it reads the listing from stdin
+	// (one run's body, handed to it), never dials the forge and never loops,
+	// so it is a one-shot read of a run's cost, not a check-state poll.
+	"cmd/nova-ci/cost.go":       "names the job-listing path in its refusal text; reads stdin, never the forge",
+	"cmd/nova-ci/main.go":       "names the job-listing path in the usage of the cost verb; reads nothing",
+	"internal/cicost/cicost.go": "names the job-listing path in a comment on the body it parses; reads nothing",
 }
 
 // TestNoPollingPathsRemain: no source in the module (every package under
