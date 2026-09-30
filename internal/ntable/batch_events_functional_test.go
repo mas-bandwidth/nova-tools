@@ -66,9 +66,7 @@ func TestBatchEventsMatchOrdinaryVerbsForTheSameChange(t *testing.T) {
 			t.Fatalf("%s: %v", s.name, err)
 		}
 		ans, err := rawApply(ctx, b, manifestWith(probeRev(ctx, b), fmt.Sprintf("s%d", i), s.batch))
-		if err != nil || ans[0] != "OK" {
-			t.Fatalf("%s: %v %v", s.name, trunc(ans), err)
-		}
+		require.True(t, replyOpens(ans, err, "OK"), "%s: %v %v", s.name, trunc(ans), err)
 	}
 	ea, eb := eventShape(t, a), eventShape(t, b)
 	require.Len(t, ea, len(eb), "%d ordinary events, %d batch events", len(ea), len(eb))

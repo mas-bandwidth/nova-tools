@@ -1430,24 +1430,14 @@ func TestBatchReceiptDrivenStateReplay(t *testing.T) {
 		require.NoError(t, err, "keys clientA member")
 		memKeysB, err := clientB.Keys(ctx, "table::member:*").Result()
 		require.NoError(t, err, "keys clientB member")
-		require.Len(t, memKeysA, len(memKeysB), "global member keys count mismatch: A has %d, B has %d", len(memKeysA), len(memKeysB))
-		slices.Sort(memKeysA)
-		slices.Sort(memKeysB)
-		for i := range memKeysA {
-			require.Equal(t, memKeysB[i], memKeysA[i], "global member keys mismatch at %d: A=%s, B=%s", i, memKeysA[i], memKeysB[i])
-		}
+		require.ElementsMatch(t, memKeysB, memKeysA, "global member keys differ between A and B")
 
 		// Enumerate cell keys on clientA and clientB to verify identical cell keyspace
 		cellKeysA, err := clientA.Keys(ctx, "table:"+targetTable+":cell:*").Result()
 		require.NoError(t, err, "keys clientA cells")
 		cellKeysB, err := clientB.Keys(ctx, "table:"+targetTable+":cell:*").Result()
 		require.NoError(t, err, "keys clientB cells")
-		require.Len(t, cellKeysA, len(cellKeysB), "cell keys count mismatch: A has %d, B has %d", len(cellKeysA), len(cellKeysB))
-		slices.Sort(cellKeysA)
-		slices.Sort(cellKeysB)
-		for i := range cellKeysA {
-			require.Equal(t, cellKeysB[i], cellKeysA[i], "cell keys mismatch at %d: A=%s, B=%s", i, cellKeysA[i], cellKeysB[i])
-		}
+		require.ElementsMatch(t, cellKeysB, cellKeysA, "cell keys differ between A and B")
 	}
 
 	// Batch 1: Create members m1, m2, m3

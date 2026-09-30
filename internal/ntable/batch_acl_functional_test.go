@@ -43,12 +43,7 @@ func TestBatchWithAReadDeniedIsAnErrorNeverAnAcceptedBatch(t *testing.T) {
 	}
 	addr, admin := live(t, extra...)
 	ctx := context.Background()
-	require.NoError(t, ntable.Create(ctx, admin, demo(), now))
-	for _, row := range []string{"build", "test"} {
-		if _, err := ntable.RowAdd(ctx, admin, "demo", row, ntable.RowSpec{}); err != nil {
-			t.Fatal(err)
-		}
-	}
+	newTable(t, admin, demo()).rows("build", "test")
 	seedTwo(t, ctx, admin)
 	// a field one byte over the bound a batch may touch
 	require.NoError(t, admin.HSet(ctx, ntable.MemberKey("a"), "big", strings.Repeat("v", ntable.LimitBatchValueBytes+1)).Err())
@@ -67,9 +62,7 @@ func TestBatchWithAReadDeniedIsAnErrorNeverAnAcceptedBatch(t *testing.T) {
 
 	// every read granted: the bound refuses the big batch and the small one applies
 	ans, err := rawApply(ctx, as("ns-all"), batch("all-big", "big", "gone"))
-	if err != nil || len(ans) < 5 || ans[0] != "REFUSED" || ans[1] != "LIMIT" || ans[2] != "value bytes per batch" {
-		t.Fatalf("with every read granted: %.200v %v; want LIMIT value bytes per batch", ans, err)
-	}
+	require.True(t, replyOpens(ans, err, "REFUSED", "LIMIT", "value bytes per batch"), "with every read granted: %.200v %v; want LIMIT value bytes per batch", ans, err)
 	// the count stopped where it passed the bound, and the refusal says so
 	if len(ans) < 7 || ans[6] != "at least" {
 		t.Errorf("the refusal from the counting pass does not say `at least`: %.200v", ans)

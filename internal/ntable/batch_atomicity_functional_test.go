@@ -26,11 +26,7 @@ func probeTable(t *testing.T) (*redis.Client, context.Context) {
 	t.Helper()
 	c, _ := store(t)
 	ctx := context.Background()
-	require.NoError(t, ntable.Create(ctx, c, demo(), now))
-	for _, r := range []string{"build", "test"} {
-		_, err := ntable.RowAdd(ctx, c, "demo", r, ntable.RowSpec{})
-		require.NoError(t, err)
-	}
+	newTable(t, c, demo()).rows("build", "test")
 	return c, ctx
 }
 
@@ -250,9 +246,7 @@ func TestBatchSequencesReplayStaleAndConflict(t *testing.T) {
 	assert.NoError(t, err, "read set")
 	assert.Equal(t, img, storeImage(t, c), "read set wrote")
 	rs, err := c.FCallRO(ctx, ntable.FnReadSet, []string{ntable.DefKey("demo")}, "demo", `{"members":["a",7,{"x":1}]}`).Slice()
-	if err != nil || len(rs) < 2 || rs[0] != "REFUSED" || rs[1] != "ARGS" {
-		t.Errorf("a read set with non-string ids: %v %v; want REFUSED ARGS", trunc(rs), err)
-	}
+	assert.True(t, replyOpens(rs, err, "REFUSED", "ARGS"), "a read set with non-string ids: %v %v; want REFUSED ARGS", trunc(rs), err)
 }
 
 // The first write of an epoch, by a batch or by an ordinary verb, leaves that
@@ -267,9 +261,7 @@ func TestBatchFirstWriteOfAnEpochKeepsItsHistory(t *testing.T) {
 			rev := c.HGet(ctx, ntable.DefKey(tb.Name)+":revision", "n").Val()
 			raw := `{"schema":1,"table":"epoch-test","epoch":"1","expected_table_revision":"` + rev + `","operation_id":"e1","actor":"p","members":[{"id":"f","expect":{"absent":true}}]}`
 			ans, err := c.FCall(ctx, ntable.FnApply, []string{ntable.DefKey(tb.Name)}, tb.Name, raw).Slice()
-			if err != nil || len(ans) == 0 || ans[0] != "OK" {
-				t.Fatalf("apply at epoch 1: %v %v", trunc(ans), err)
-			}
+			require.True(t, replyOpens(ans, err, "OK"), "apply at epoch 1: %v %v", trunc(ans), err)
 		} else if err := ntable.MemberCreate(ctx, c, tb.Name, "f", ntable.WriteOptions{Epoch: 1}); err != nil {
 			t.Fatalf("member create at epoch 1: %v", err)
 		}
@@ -313,9 +305,7 @@ func TestBatchMoveScoreMustBeANumber(t *testing.T) {
 	for i, v := range []string{`"abc"`, `null`, `true`} {
 		raw := fmt.Sprintf(`{"schema":1,"table":"demo","epoch":"0","expected_table_revision":"%s","operation_id":"ms-%d","actor":"p","members":[{"id":"a","expect":{},"move":{"row":"test","col":"done","score":%s}}]}`, probeRev(ctx, c), i, v)
 		ans, err := rawApply(ctx, c, raw)
-		if err != nil || len(ans) < 2 || ans[0] != "REFUSED" || ans[1] != "SCORE" {
-			t.Errorf("move with score %s: %v %v; want REFUSED SCORE", v, trunc(ans), err)
-		}
+		assert.True(t, replyOpens(ans, err, "REFUSED", "SCORE"), "move with score %s: %v %v; want REFUSED SCORE", v, trunc(ans), err)
 	}
 }
 

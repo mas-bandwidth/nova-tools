@@ -79,9 +79,7 @@ func TestBatchReceiptOverTheBoundIsRefusedBeforeAnyWrite(t *testing.T) {
 	// within the bound
 	small := manifestWith(probeRev(ctx, c), "small-unset", unset(0, 4))
 	ans, err = rawApply(ctx, c, small)
-	if err != nil || ans[0] != "OK" {
-		t.Fatalf("four members: %.200v %v", ans, err)
-	}
+	require.True(t, replyOpens(ans, err, "OK"), "four members: %.200v %v", ans, err)
 	ev := c.XRevRangeN(ctx, ntable.DefKey("demo")+":changes", "+", "-", 1).Val()
 	got := len(fmt.Sprint(ev[0].Values["batch_delta"]))
 	assert.LessOrEqual(t, got, int(ntable.LimitReceiptBytes), "an accepted batch left a delta of %d bytes, over %d", got, ntable.LimitReceiptBytes)
@@ -96,9 +94,7 @@ func TestBatchReceiptDigestsALongValueInEveryRecordOfIt(t *testing.T) {
 	require.NoError(t, c.HSet(ctx, ntable.MemberKey("a"), "at", at, "over", over).Err())
 	raw := manifestWith(probeRev(ctx, c), "digests", `{"id":"a","expect":{},"unset":["at","over"]}`)
 	ans, err := rawApply(ctx, c, raw)
-	if err != nil || ans[0] != "OK" {
-		t.Fatalf("apply: %.200v %v", ans, err)
-	}
+	require.True(t, replyOpens(ans, err, "OK"), "apply: %.200v %v", ans, err)
 	sum := sha1.Sum([]byte(over))
 	digest := hex.EncodeToString(sum[:])
 	event := fmt.Sprint(c.XRevRangeN(ctx, ntable.DefKey("demo")+":changes", "+", "-", 1).Val()[0].Values["batch_delta"])

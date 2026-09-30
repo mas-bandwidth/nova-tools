@@ -93,7 +93,5 @@ func TestPropLimitAndValidation(t *testing.T) {
 	}
 	raw := `{"schema":1,"table":"demo","epoch":"0","expected_table_revision":"` + probeRev(ctx, c) + `","operation_id":"bad","members":[],"props":{"bad name":"v"}}`
 	ans, err := rawApply(ctx, c, raw)
-	if err != nil || len(ans) < 2 || ans[0] != "REFUSED" {
-		t.Fatalf("an invalid property name: %v %v", ans, err)
-	}
+	require.True(t, replyOpens(ans, err, "REFUSED"), "an invalid property name: %v %v", ans, err)
 }

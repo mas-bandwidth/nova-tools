@@ -21,12 +21,7 @@ func epochFixture(t *testing.T) (*redis.Client, ntable.Table) {
 	cols, err := ntable.ParseColumns("ready,working")
 	require.NoError(t, err)
 	tb := ntable.Table{Name: "epoch-test", Columns: cols, EpochKey: "domain:epoch"}
-	ctx := context.Background()
-	require.NoError(t, ntable.Create(ctx, c, tb, now))
-	_, err = ntable.RowAdd(ctx, c, tb.Name, "build", ntable.RowSpec{})
-	require.NoError(t, err)
-	_, err = ntable.CellAdd(ctx, c, tb.Name, "build", "ready", "old", 7)
-	require.NoError(t, err)
+	newTable(t, c, tb).rows("build").cell("build", "ready", "old", 7)
 	return c, tb
 }
 
@@ -54,22 +49,22 @@ func TestEpochTransitionKeepsHistoryAndRejectsEveryStaleWrite(t *testing.T) {
 		"drop-definition": func() error { _, e := ntable.DropDefinition(ctx, c, tb.Name); return e },
 		"member-create":   func() error { return ntable.MemberCreate(ctx, c, tb.Name, "new") },
 	}
-	before := memberStoreImage(t, c)
+	before := storeImage(t, c)
 	for name, call := range calls {
 		if err := call(); !errors.Is(err, ntable.ErrStale) {
 			t.Fatalf("%s = %v, want stale", name, err)
 		}
-		require.Equal(t, before, memberStoreImage(t, c), "%s stale write changed store", name)
+		require.Equal(t, before, storeImage(t, c), "%s stale write changed store", name)
 	}
 	opts := ntable.WriteOptions{Epoch: 1}
 	row, err := ntable.RowAdd(ctx, c, tb.Name, "build", ntable.RowSpec{}, opts)
 	require.NoError(t, err, "epoch row = %#v, %v", row, err)
 	require.Equal(t, ntable.CellKeyAt(tb.Name, "build", "ready", 1), row.Cells[0].Key, "epoch row = %#v, %v", row, err)
-	before = memberStoreImage(t, c)
+	before = storeImage(t, c)
 	_, err = ntable.CellAdd(ctx, c, tb.Name, "build", "ready", "old", 9, opts)
 	require.ErrorIs(t, err, ntable.ErrMemberEpoch, "old identity =")
 	require.ErrorIs(t, ntable.MemberCreate(ctx, c, tb.Name, "old", opts), ntable.ErrMemberEpoch, "reused ID =")
-	require.Equal(t, before, memberStoreImage(t, c), "old member refusal changed store")
+	require.Equal(t, before, storeImage(t, c), "old member refusal changed store")
 	_, err = ntable.CellAdd(ctx, c, tb.Name, "build", "ready", "new", 9, opts)
 	require.NoError(t, err)
 	_, err = ntable.CellMove(ctx, c, tb.Name, "build", "ready", "working", "new", opts)
@@ -96,9 +91,9 @@ func TestEpochDropTemplateAndMemberIdentity(t *testing.T) {
 	require.True(t, c.HExists(ctx, ntable.DefKey(tb.Name), "order").Val(), "drop lost template")
 	require.NoError(t, ntable.Create(ctx, c, tb, now, opts))
 	require.NoError(t, ntable.MemberCreate(ctx, c, tb.Name, "unplaced", opts))
-	before := memberStoreImage(t, c)
+	before := storeImage(t, c)
 	require.ErrorIs(t, ntable.MemberCreate(ctx, c, tb.Name, "unplaced", opts), ntable.ErrMemberExists, "duplicate create =")
-	require.Equal(t, before, memberStoreImage(t, c), "duplicate create changed store")
+	require.Equal(t, before, storeImage(t, c), "duplicate create changed store")
 	_, err = ntable.DropDefinition(ctx, c, tb.Name, opts)
 	require.NoError(t, err)
 	require.Equal(t, int64(0), c.Exists(ctx, ntable.DefKey(tb.Name)).Val(), "explicit definition drop retained template")
@@ -162,10 +157,10 @@ func TestTableChangeReceiptAndRefusalAreAtomic(t *testing.T) {
 		t.Fatalf("member change = %v", members)
 	}
 	n := c.XLen(ctx, ntable.ChangesKey(tb.Name)).Val()
-	image := memberStoreImage(t, c)
+	image := storeImage(t, c)
 	_, err = ntable.CellAdd(ctx, c, tb.Name, "build", "ready", "m1", 9, opts)
 	require.ErrorIs(t, err, ntable.ErrPlaced)
-	require.Equal(t, memberStoreImage(t, c), image, "refused placement produced an event or mutation")
+	require.Equal(t, storeImage(t, c), image, "refused placement produced an event or mutation")
 	_, err = ntable.CellRemove(ctx, c, tb.Name, "build", "ready", "absent", opts)
 	require.NoError(t, err)
 	require.Equal(t, "noop", receipt.Outcome, "accepted noop receipt = %#v", receipt)
@@ -208,11 +203,11 @@ func TestTableReceiptPreflightPreventsPartialMoves(t *testing.T) {
 					assert.NoError(t, writer.Close())
 				})
 			}
-			before := memberStoreImage(t, c)
+			before := storeImage(t, c)
 			if _, err := ntable.CellMove(ctx, writer, tb.Name, "build", "ready", "working", "m1"); err == nil || strings.Contains(err.Error(), "unknown function") {
 				t.Fatalf("preflight = %v", err)
 			}
-			require.Equal(t, before, memberStoreImage(t, c), "receipt failure partially moved the member")
+			require.Equal(t, before, storeImage(t, c), "receipt failure partially moved the member")
 		})
 	}
 }
@@ -227,12 +222,8 @@ func TestGenericTableDriftDetection(t *testing.T) {
 	cols, err := ntable.ParseColumns("ready")
 	require.NoError(t, err)
 	tb := ntable.Table{Name: "tasks", Columns: cols, MemberPrefix: "task:"}
-	require.NoError(t, ntable.Create(ctx, c, tb, now))
-	_, err = ntable.RowAdd(ctx, c, tb.Name, "r", ntable.RowSpec{})
-	require.NoError(t, err)
-	_, err = ntable.CellAdd(ctx, c, tb.Name, "r", "ready", "existing", 1)
-	require.NoError(t, err)
-	before := memberStoreImage(t, c)
+	newTable(t, c, tb).rows("r").cell("r", "ready", "existing", 1)
+	before := storeImage(t, c)
 
 	// An external write forging a different placement for the existing member is refused by CellMove and detected by Check.
 	require.NoError(t, c.HSet(ctx, "task:existing", "place:tasks", "elsewhere:ready").Err())
@@ -248,5 +239,5 @@ func TestGenericTableDriftDetection(t *testing.T) {
 	require.ErrorIs(t, err, ntable.ErrDrift, "ghost placement check = %v, want ErrDrift", err)
 	require.NoError(t, c.Del(ctx, "task:new").Err())
 
-	require.Equal(t, before, memberStoreImage(t, c), "store did not match expected image after cleanup")
+	require.Equal(t, before, storeImage(t, c), "store did not match expected image after cleanup")
 }

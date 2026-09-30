@@ -48,23 +48,17 @@ func TestBatchReplayPrecedesTheStaticChecks(t *testing.T) {
 	// other bytes under the recorded id conflict, even when they are also invalid
 	other := manifestWith(probeRev(ctx, c), "old", `{"id":"h","expect":{"absent":true},"create":{"row":"build","col":"ready","score":"nan"}}`)
 	ans, err = rawApply(ctx, c, other)
-	if err != nil || len(ans) < 2 || ans[0] != "REFUSED" || ans[1] != "OPCONFLICT" {
-		t.Errorf("different bytes under a recorded id: %v %v; want REFUSED OPCONFLICT", trunc(ans), err)
-	}
+	assert.True(t, replyOpens(ans, err, "REFUSED", "OPCONFLICT"), "different bytes under a recorded id: %v %v; want REFUSED OPCONFLICT", trunc(ans), err)
 
 	// an unrecorded invalid request is still refused by its rule
 	fresh := manifestWith(probeRev(ctx, c), "new", `{"id":"h","expect":{"absent":true},"create":{"row":"build","col":"ready","score":"0x10"}}`)
 	ans, err = rawApply(ctx, c, fresh)
-	if err != nil || len(ans) < 2 || ans[0] != "REFUSED" || ans[1] != "SCORE" {
-		t.Errorf("an unrecorded request with a string score: %v %v; want REFUSED SCORE", trunc(ans), err)
-	}
+	assert.True(t, replyOpens(ans, err, "REFUSED", "SCORE"), "an unrecorded request with a string score: %v %v; want REFUSED SCORE", trunc(ans), err)
 
 	// a valid recorded request replays after the revisions moved on
 	valid := manifestWith(probeRev(ctx, c), "ok", `{"id":"h2","expect":{"absent":true},"create":{"row":"build","col":"ready","score":3}}`)
 	first, err := rawApply(ctx, c, valid)
-	if err != nil || first[0] != "OK" {
-		t.Fatalf("%v %v", trunc(first), err)
-	}
+	require.True(t, replyOpens(first, err, "OK"), "%v %v", trunc(first), err)
 	_, err = rawApply(ctx, c, manifestWith(probeRev(ctx, c), "move-on", `{"id":"h3","expect":{"absent":true},"create":{"row":"build","col":"ready","score":4}}`))
 	require.NoError(t, err)
 	again, err := rawApply(ctx, c, valid)

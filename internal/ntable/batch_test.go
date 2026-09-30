@@ -11,8 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func strPtr(s string) *string { return &s }
-
 func TestBatchManifestSerialization(t *testing.T) {
 	t.Parallel()
 	manifest := ntable.BatchManifest{
@@ -29,7 +27,7 @@ func TestBatchManifestSerialization(t *testing.T) {
 					Revision: "2",
 					Place:    &ntable.PlaceExpect{Row: "build", Col: "ready"},
 					Fields: map[string]ntable.FieldGuard{
-						"definition": {Equals: strPtr("definition-id")},
+						"definition": {Equals: new("definition-id")},
 					},
 				},
 				Move: &ntable.MemberMoveOp{Row: "build", Col: "working"},

@@ -29,9 +29,7 @@ func TestBatchFailuresAtTheLastChecksWriteNothing(t *testing.T) {
 		t.Helper()
 		before := storeImage(t, c)
 		ans, err := rawApply(ctx, c, manifestWith(probeRev(ctx, c), "late-"+strings.ReplaceAll(name, " ", "-"), members))
-		if err != nil || len(ans) < 2 || ans[0] != "REFUSED" || ans[1] != code {
-			t.Errorf("%s: %v %v; want REFUSED %s", name, trunc(ans), err, code)
-		}
+		assert.True(t, replyOpens(ans, err, "REFUSED", code), "%s: %v %v; want REFUSED %s", name, trunc(ans), err, code)
 		assert.Equal(t, before, storeImage(t, c), "%s: the store changed", name)
 	}
 	refusedWith("late bound cell", first+`,{"id":"n9","expect":{"absent":true},"create":{"row":"bnd","col":"ready","score":1}}`, "BOUND")

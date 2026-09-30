@@ -108,9 +108,7 @@ func TestBatchValueBytesAreBoundedAndCountedBeforeAnyRead(t *testing.T) {
 
 	// exactly the bound: two members, 128 fields each
 	ans, _ := holdApply(t, ctx, c, "16 MiB of before-values accepted", manifestWith(probeRev(ctx, c), "at", holdUnset("m", 2, perMember)))
-	if ans[0] != "OK" {
-		t.Fatalf("a batch touching exactly %d bytes: %.200v", ntable.LimitBatchValueBytes, ans)
-	}
+	require.True(t, replyOpens(ans, nil, "OK"), "a batch touching exactly %d bytes: %.200v", ntable.LimitBatchValueBytes, ans)
 	// one field more than the bound refuses, and nothing changes
 	holdFill(t, ctx, c, "m", 3, perMember, field)
 	before := storeImage(t, c)
@@ -139,9 +137,7 @@ func TestBatchGuardOnlyEntriesDoNotReadWholeRecords(t *testing.T) {
 		ents = append(ents, fmt.Sprintf(`{"id":"g%d","expect":{"fields":{"nope":{"absent":true}}}}`, i))
 	}
 	ans, _ := holdApply(t, ctx, c, "256 guards over 128 MiB of records", manifestWith(probeRev(ctx, c), "guards", strings.Join(ents, ",")))
-	if ans[0] != "OK" {
-		t.Fatalf("guards: %.200v", ans)
-	}
+	require.True(t, replyOpens(ans, nil, "OK"), "guards: %.200v", ans)
 }
 
 // The costliest cases the manifest bound allows: a
@@ -162,16 +158,12 @@ func TestBatchLargestManifestsHoldTheStoreUnderASecond(t *testing.T) {
 		ents = append(ents, fmt.Sprintf(`{"id":"h%d","expect":{"fields":{%s}}}`, i, strings.Join(g, ",")))
 	}
 	ans, _ := holdApply(t, ctx, c, "1 MiB of satisfied guards", manifestWith(probeRev(ctx, c), "guards", strings.Join(ents, ",")))
-	if ans[0] != "OK" {
-		t.Fatalf("guards: %.200v", ans)
-	}
+	require.True(t, replyOpens(ans, nil, "OK"), "guards: %.200v", ans)
 
 	// a receipt near its bound: 48 fields of 64 bytes unset on each of 128 members
 	holdFill(t, ctx, c, "h", 128, 48, ntable.ReceiptValueBytes)
 	ans, _ = holdApply(t, ctx, c, "receipt near its bound", manifestWith(probeRev(ctx, c), "near", holdUnset("h", 128, 48)))
-	if ans[0] != "OK" {
-		t.Fatalf("near the receipt bound: %.200v", ans)
-	}
+	require.True(t, replyOpens(ans, nil, "OK"), "near the receipt bound: %.200v", ans)
 
 	// a receipt over its bound: 1000 fields of 64 bytes unset on each of 128 members
 	holdFill(t, ctx, c, "h", 128, 1000, ntable.ReceiptValueBytes)

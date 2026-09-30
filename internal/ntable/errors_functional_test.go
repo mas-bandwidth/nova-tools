@@ -54,10 +54,7 @@ func TestKeyACLDenialOnCellKeysIsAnErrorNotAMalformedReply(t *testing.T) {
 		"~table:demo:identity", "~table:demo:changes", "~table:demo:ops", "~table::member:*", "~tables"}
 	addr, admin := live(t, perms...)
 	ctx := context.Background()
-	require.NoError(t, ntable.Create(ctx, admin, demo(), now))
-	if _, err := ntable.RowAdd(ctx, admin, "demo", "build", ntable.RowSpec{}); err != nil {
-		t.Fatal(err)
-	}
+	newTable(t, admin, demo()).rows("build")
 	require.NoError(t, ntable.MemberCreate(ctx, admin, "demo", "q"))
 	nc := redis.NewClient(&redis.Options{Addr: addr, Username: "nc", Password: "pw"})
 	defer nc.Close()
@@ -98,10 +95,7 @@ func TestStoreErrorsPassThroughTheScriptUnchanged(t *testing.T) {
 	extra := append([]string{"--user", "default", "on", "nopass", "~*", "&*", "+@all", "--user", "nt", "on", ">pw", "resetkeys", "resetchannels", "-@all", "+ping"}, grants...)
 	addr, admin := live(t, extra...)
 	ctx := context.Background()
-	require.NoError(t, ntable.Create(ctx, admin, demo(), now))
-	if _, err := ntable.RowAdd(ctx, admin, "demo", "r", ntable.RowSpec{}); err != nil {
-		t.Fatal(err)
-	}
+	newTable(t, admin, demo()).rows("r")
 	nt := redis.NewClient(&redis.Options{Addr: addr, Username: "nt", Password: "pw"})
 	defer nt.Close()
 	before := storeImage(t, admin)

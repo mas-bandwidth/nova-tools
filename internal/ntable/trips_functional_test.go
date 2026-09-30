@@ -119,7 +119,7 @@ func TestRefusedMoveIsAtomicAndNamesItsRepair(t *testing.T) {
 	_, c := live(t)
 	ctx := context.Background()
 	tb := demo()
-	require.NoError(t, ntable.Create(ctx, c, tb, now))
+	newTable(t, c, tb)
 	row, member := "a row's name", "job ' ; echo wrong"
 	if _, err := ntable.RowAdd(ctx, c, "demo", row, ntable.RowSpec{}); err != nil {
 		t.Fatal(err)
@@ -157,12 +157,7 @@ func TestNewRowFollowsLastRankAfterDeletion(t *testing.T) {
 	t.Parallel()
 	_, c := live(t)
 	ctx := context.Background()
-	require.NoError(t, ntable.Create(ctx, c, demo(), now))
-	for _, row := range []string{"a", "b", "z"} {
-		if _, err := ntable.RowAdd(ctx, c, "demo", row, ntable.RowSpec{}); err != nil {
-			t.Fatal(err)
-		}
-	}
+	newTable(t, c, demo()).rows("a", "b", "z")
 	if _, err := ntable.RowDel(ctx, c, "demo", "b"); err != nil {
 		t.Fatal(err)
 	}
@@ -196,15 +191,11 @@ func TestSourceACLTableReaderKeepsReadOnlyAccess(t *testing.T) {
 		return c
 	}
 	writer, reader := as("ns-coordinator"), as("ns-table")
-	require.NoError(t, ntable.Create(ctx, writer, demo(), now))
-	_, err := ntable.RowAdd(ctx, writer, "demo", "r", ntable.RowSpec{})
-	require.NoError(t, err)
-	_, err = ntable.CellAdd(ctx, writer, "demo", "r", "ready", "job", 7)
-	require.NoError(t, err)
+	newTable(t, writer, demo()).rows("r").cell("r", "ready", "job", 7)
 	// the coordinator row runs a batch as it is written in source; the reader row does not
 	batch := ntable.BatchManifest{Schema: 1, Table: "demo", Epoch: "0", ExpectedTableRevision: writer.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val(), OperationID: "acl-1", Members: []ntable.BatchMemberEntry{
 		{ID: "bm", Expect: &ntable.MemberExpect{Absent: true}, Create: &ntable.MemberCreateOp{Row: "r", Col: "working", Score: 1}, Set: map[string]string{"k": "v"}, Unset: []string{"gone"}}}}
-	_, err = ntable.ApplyBatch(ctx, writer, batch)
+	_, err := ntable.ApplyBatch(ctx, writer, batch)
 	require.NoError(t, err, "batch as ns-coordinator")
 	batch.OperationID = "acl-2"
 	if _, err := ntable.ApplyBatch(ctx, reader, batch); err == nil || !strings.Contains(err.Error(), "NOPERM") && !strings.Contains(err.Error(), "no permissions") {

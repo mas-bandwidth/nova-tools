@@ -18,16 +18,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func boolPtr(b bool) *bool        { return &b }
-func floatPtr(f float64) *float64 { return &f }
-
 func TestBatchApplyAndReadSetContract(t *testing.T) {
 	t.Parallel()
 	c, _ := store(t)
 	ctx := context.Background()
 
 	tb := demo()
-	require.NoError(t, ntable.Create(ctx, c, tb, now))
+	newTable(t, c, tb)
 	if _, err := ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{}); err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +190,7 @@ func TestBatchApplyAndReadSetContract(t *testing.T) {
 				ID: "m1",
 				Expect: &ntable.MemberExpect{
 					Fields: map[string]ntable.FieldGuard{
-						"definition": {Equals: strPtr("wrong-def")},
+						"definition": {Equals: new("wrong-def")},
 					},
 				},
 			},
@@ -211,7 +208,7 @@ func TestBatchApplyAndReadSetContract(t *testing.T) {
 			ID: "m1",
 			Expect: &ntable.MemberExpect{
 				Fields: map[string]ntable.FieldGuard{
-					"definition": {Absent: boolPtr(true)},
+					"definition": {Absent: new(true)},
 				},
 			},
 		},
@@ -251,13 +248,13 @@ func TestBatchApplyAndReadSetContract(t *testing.T) {
 					Revision: "1",
 					Place:    &ntable.PlaceExpect{Row: "build", Col: "ready"},
 					Fields: map[string]ntable.FieldGuard{
-						"definition": {Equals: strPtr("job-1")},
+						"definition": {Equals: new("job-1")},
 					},
 				},
 				Move: &ntable.MemberMoveOp{
 					Row:   "build",
 					Col:   "working",
-					Score: floatPtr(15),
+					Score: new(float64(15)),
 				},
 				Set: map[string]string{
 					"status": "in-progress",
@@ -389,7 +386,7 @@ func TestBatchReceiptReplayExhaustive(t *testing.T) {
 	ctx := context.Background()
 
 	tb := demo()
-	require.NoError(t, ntable.Create(ctx, c, tb, now))
+	newTable(t, c, tb)
 	if _, err := ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{}); err != nil {
 		t.Fatal(err)
 	}
@@ -483,7 +480,7 @@ func TestBatchReceiptReplayExhaustive(t *testing.T) {
 					Revision: "1",
 					Place:    &ntable.PlaceExpect{Row: "build", Col: "ready"},
 					Fields: map[string]ntable.FieldGuard{
-						"status": {Equals: strPtr("pending")},
+						"status": {Equals: new("pending")},
 					},
 				},
 			},
@@ -534,7 +531,7 @@ func TestBatchReceiptReplayExhaustive(t *testing.T) {
 				Move: &ntable.MemberMoveOp{
 					Row:   "build",
 					Col:   "working",
-					Score: floatPtr(50),
+					Score: new(float64(50)),
 				},
 				Set: map[string]string{"status": "in-progress"},
 			},
@@ -598,8 +595,8 @@ func TestBatchDualStoreReplayFromStream(t *testing.T) {
 	ctx := context.Background()
 
 	tb := demo()
-	require.NoError(t, ntable.Create(ctx, c1, tb, now))
-	require.NoError(t, ntable.Create(ctx, c2, tb, now))
+	newTable(t, c1, tb)
+	newTable(t, c2, tb)
 	for _, row := range []string{"build", "test"} {
 		if _, err := ntable.RowAdd(ctx, c1, "demo", row, ntable.RowSpec{}); err != nil {
 			t.Fatal(err)
@@ -654,14 +651,14 @@ func TestBatchDualStoreReplayFromStream(t *testing.T) {
 					Revision: "1",
 					Place:    &ntable.PlaceExpect{Row: "build", Col: "ready"},
 				},
-				Move: &ntable.MemberMoveOp{Row: "build", Col: "working", Score: floatPtr(150)},
+				Move: &ntable.MemberMoveOp{Row: "build", Col: "working", Score: new(float64(150))},
 				Set:  map[string]string{"state": "running"},
 			},
 			{
 				ID: "m2",
 				Expect: &ntable.MemberExpect{
 					Revision: "1",
-					Fields:   map[string]ntable.FieldGuard{"flavor": {Equals: strPtr("chocolate")}},
+					Fields:   map[string]ntable.FieldGuard{"flavor": {Equals: new("chocolate")}},
 				},
 				Set: map[string]string{"extra": "sprinkles"},
 			},
@@ -722,7 +719,7 @@ func TestBatchDualStoreReplayFromStream(t *testing.T) {
 					Revision: "2",
 					Place:    &ntable.PlaceExpect{Row: "build", Col: "ready"},
 				},
-				Move:  &ntable.MemberMoveOp{Row: "test", Col: "ready", Score: floatPtr(250)},
+				Move:  &ntable.MemberMoveOp{Row: "test", Col: "ready", Score: new(float64(250))},
 				Unset: []string{"extra"},
 			},
 		},
@@ -805,13 +802,7 @@ func TestReviewWrongTypeDestinationPartialWrite(t *testing.T) {
 	t.Parallel()
 	c, _ := store(t)
 	ctx := context.Background()
-	require.NoError(t, ntable.Create(ctx, c, demo(), now))
-	if _, err := ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ntable.CellAdd(ctx, c, "demo", "build", "ready", "m1", 7); err != nil {
-		t.Fatal(err)
-	}
+	newTable(t, c, demo()).rows("build").cell("build", "ready", "m1", 7)
 	dest := ntable.CellKey("demo", "build", "working")
 	require.NoError(t, c.Set(ctx, dest, "wrong-type", 0).Err())
 	before := storeImage(t, c)
@@ -850,10 +841,7 @@ func TestReviewBatchStreamWrongTypePartialWrite(t *testing.T) {
 	t.Parallel()
 	c, _ := store(t)
 	ctx := context.Background()
-	require.NoError(t, ntable.Create(ctx, c, demo(), now))
-	if _, err := ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{}); err != nil {
-		t.Fatal(err)
-	}
+	newTable(t, c, demo()).rows("build")
 	require.NoError(t, c.Set(ctx, ntable.DefKey("demo")+":changes", "wrong-type", 0).Err())
 	before := storeImage(t, c)
 	rev := c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
@@ -892,13 +880,7 @@ func TestReviewReadSetHidesPlacementDrift(t *testing.T) {
 	t.Parallel()
 	c, _ := store(t)
 	ctx := context.Background()
-	require.NoError(t, ntable.Create(ctx, c, demo(), now))
-	if _, err := ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ntable.CellAdd(ctx, c, "demo", "build", "ready", "m1", 7); err != nil {
-		t.Fatal(err)
-	}
+	newTable(t, c, demo()).rows("build").cell("build", "ready", "m1", 7)
 	require.NoError(t, c.ZRem(ctx, ntable.CellKey("demo", "build", "ready"), "m1").Err())
 	_, err := ntable.ReadSetMembers(ctx, c, "demo", []string{"m1"})
 	require.Error(t, err, "expected ReadSetMembers to refuse placement drift, got nil")
@@ -909,13 +891,7 @@ func TestReviewHiddenDuplicatePlacementAccepted(t *testing.T) {
 	t.Parallel()
 	c, _ := store(t)
 	ctx := context.Background()
-	require.NoError(t, ntable.Create(ctx, c, demo(), now))
-	if _, err := ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ntable.CellAdd(ctx, c, "demo", "build", "ready", "m1", 7); err != nil {
-		t.Fatal(err)
-	}
+	newTable(t, c, demo()).rows("build").cell("build", "ready", "m1", 7)
 	hidden := ntable.CellKey("demo", "build", "working")
 	require.NoError(t, c.ZAdd(ctx, hidden, redis.Z{Score: 9, Member: "m1"}).Err())
 	before := storeImage(t, c)
@@ -954,7 +930,7 @@ func TestReviewUnknownAndDuplicateJSONAccepted(t *testing.T) {
 	t.Parallel()
 	c, _ := store(t)
 	ctx := context.Background()
-	require.NoError(t, ntable.Create(ctx, c, demo(), now))
+	newTable(t, c, demo())
 	rev := c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
 
 	// 1. Unknown top-level field rejected with REFUSED MANIFEST and zero mutation
@@ -963,9 +939,7 @@ func TestReviewUnknownAndDuplicateJSONAccepted(t *testing.T) {
 	ans, err := c.FCall(ctx, ntable.FnApply, []string{ntable.DefKey("demo")}, "demo", rawUnknown).Slice()
 	after := storeImage(t, c)
 	require.NoError(t, err, "FCall err")
-	if len(ans) < 2 || ans[0] != "REFUSED" || ans[1] != "MANIFEST" {
-		t.Fatalf("expected REFUSED MANIFEST for unknown top-level field, got: %v", ans)
-	}
+	require.True(t, replyOpens(ans, nil, "REFUSED", "MANIFEST"), "expected REFUSED MANIFEST for unknown top-level field, got: %v", ans)
 	require.Equal(t, before, after, "expected store unchanged after unknown field refusal")
 
 	// 2. Duplicate top-level key rejected with REFUSED MANIFEST and zero mutation
@@ -974,33 +948,27 @@ func TestReviewUnknownAndDuplicateJSONAccepted(t *testing.T) {
 	ans, err = c.FCall(ctx, ntable.FnApply, []string{ntable.DefKey("demo")}, "demo", rawDuplicate).Slice()
 	after2 := storeImage(t, c)
 	require.NoError(t, err, "FCall err")
-	if len(ans) < 2 || ans[0] != "REFUSED" || ans[1] != "MANIFEST" {
-		t.Fatalf("expected REFUSED MANIFEST for duplicate top-level key, got: %v", ans)
-	}
+	require.True(t, replyOpens(ans, nil, "REFUSED", "MANIFEST"), "expected REFUSED MANIFEST for duplicate top-level key, got: %v", ans)
 	require.Equal(t, before2, after2, "expected store unchanged after duplicate key refusal")
 
 	// 3. Nested unknown key inside expect rejected
 	rawNestedUnknown := fmt.Sprintf(`{"schema":1,"table":"demo","epoch":"0","expected_table_revision":%q,"operation_id":"review-nested-unknown","actor":"review","members":[{"id":"m1","expect":{"revision":"1","unknown":true}}]}`, rev)
 	ans, err = c.FCall(ctx, ntable.FnApply, []string{ntable.DefKey("demo")}, "demo", rawNestedUnknown).Slice()
 	require.NoError(t, err, "FCall err")
-	if len(ans) < 2 || ans[0] != "REFUSED" || ans[1] != "MANIFEST" {
-		t.Fatalf("expected REFUSED MANIFEST for nested unknown key, got: %v", ans)
-	}
+	require.True(t, replyOpens(ans, nil, "REFUSED", "MANIFEST"), "expected REFUSED MANIFEST for nested unknown key, got: %v", ans)
 
 	// 4. Nested duplicate key inside expect rejected
 	rawNestedDuplicate := fmt.Sprintf(`{"schema":1,"table":"demo","epoch":"0","expected_table_revision":%q,"operation_id":"review-nested-duplicate","actor":"review","members":[{"id":"m1","expect":{"revision":"1","revision":"2"}}]}`, rev)
 	ans, err = c.FCall(ctx, ntable.FnApply, []string{ntable.DefKey("demo")}, "demo", rawNestedDuplicate).Slice()
 	require.NoError(t, err, "FCall err")
-	if len(ans) < 2 || ans[0] != "REFUSED" || ans[1] != "MANIFEST" {
-		t.Fatalf("expected REFUSED MANIFEST for nested duplicate key, got: %v", ans)
-	}
+	require.True(t, replyOpens(ans, nil, "REFUSED", "MANIFEST"), "expected REFUSED MANIFEST for nested duplicate key, got: %v", ans)
 }
 
 func TestBatchContractWrongTypeMemberRefusal(t *testing.T) {
 	t.Parallel()
 	c, _ := store(t)
 	ctx := context.Background()
-	require.NoError(t, ntable.Create(ctx, c, demo(), now))
+	newTable(t, c, demo())
 	rev := c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
 
 	// Pre-populate member key as a Redis string instead of hash
@@ -1041,7 +1009,7 @@ func TestBatchContractRemoveAndOverlapValidation(t *testing.T) {
 	t.Parallel()
 	c, _ := store(t)
 	ctx := context.Background()
-	require.NoError(t, ntable.Create(ctx, c, demo(), now))
+	newTable(t, c, demo())
 	rev := c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
 
 	// 1. remove: false in raw JSON refuses before writes
@@ -1050,9 +1018,7 @@ func TestBatchContractRemoveAndOverlapValidation(t *testing.T) {
 	ans, err := c.FCall(ctx, ntable.FnApply, []string{ntable.DefKey("demo")}, "demo", rawRemoveFalse).Slice()
 	after1 := storeImage(t, c)
 	require.NoError(t, err, "FCall err")
-	if len(ans) < 2 || ans[0] != "REFUSED" || ans[1] != "ARGS" {
-		t.Fatalf("expected REFUSED ARGS for remove:false, got: %v", ans)
-	}
+	require.True(t, replyOpens(ans, nil, "REFUSED", "ARGS"), "expected REFUSED ARGS for remove:false, got: %v", ans)
 	require.Equal(t, before1, after1, "store changed on remove:false refusal")
 
 	// 2. remove: true on unplaced member refuses NOTMEMBER
@@ -1109,10 +1075,7 @@ func TestBatchContractMoveNoopAndScoreSemantics(t *testing.T) {
 	t.Parallel()
 	c, _ := store(t)
 	ctx := context.Background()
-	require.NoError(t, ntable.Create(ctx, c, demo(), now))
-	if _, err := ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{}); err != nil {
-		t.Fatal(err)
-	}
+	newTable(t, c, demo()).rows("build")
 	rev := c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
 
 	// Initial create of m1 at build:ready with score 10
@@ -1219,10 +1182,7 @@ func TestBatchContractReceiptBeforeAfterDeltas(t *testing.T) {
 	t.Parallel()
 	c, _ := store(t)
 	ctx := context.Background()
-	require.NoError(t, ntable.Create(ctx, c, demo(), now))
-	if _, err := ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{}); err != nil {
-		t.Fatal(err)
-	}
+	newTable(t, c, demo()).rows("build")
 	rev := c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
 
 	// Initial batch: create m1 with fields and m3 placed
@@ -1343,10 +1303,7 @@ func TestBatchContractRefusalStoreImagePreserved(t *testing.T) {
 	t.Parallel()
 	c, _ := store(t)
 	ctx := context.Background()
-	require.NoError(t, ntable.Create(ctx, c, demo(), now))
-	if _, err := ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{}); err != nil {
-		t.Fatal(err)
-	}
+	newTable(t, c, demo()).rows("build")
 	rev := c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
 
 	// Initial setup: place m1 at build:ready with field role=worker
@@ -1453,7 +1410,7 @@ func TestBatchContractRefusalStoreImagePreserved(t *testing.T) {
 						ID: "m1",
 						Expect: &ntable.MemberExpect{
 							Revision: "1",
-							Fields:   map[string]ntable.FieldGuard{"role": {Absent: boolPtr(true)}},
+							Fields:   map[string]ntable.FieldGuard{"role": {Absent: new(true)}},
 						},
 					},
 				},
@@ -1645,7 +1602,7 @@ func TestBatchAcceptedInteractingCrossRowMultiMemberWitness(t *testing.T) {
 	cols, err := ntable.ParseColumns("col1,col2")
 	require.NoError(t, err)
 	tb := ntable.Table{Name: "demo", Columns: cols}
-	require.NoError(t, ntable.Create(ctx, c, tb, now))
+	newTable(t, c, tb)
 	_, err = ntable.RowAdd(ctx, c, "demo", "row1", ntable.RowSpec{})
 	require.NoError(t, err)
 	_, err = ntable.RowAdd(ctx, c, "demo", "row2", ntable.RowSpec{})
@@ -1832,7 +1789,7 @@ func testBatchLateInvalidAtNMaxRefusal(t *testing.T) {
 	cols, err := ntable.ParseColumns("ready")
 	require.NoError(t, err)
 	tb := ntable.Table{Name: "demo", Columns: cols}
-	require.NoError(t, ntable.Create(ctx, c, tb, now))
+	newTable(t, c, tb)
 	_, err = ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{})
 	require.NoError(t, err)
 
@@ -1964,7 +1921,7 @@ func TestBatchRetainedUnplacedMemberRemovalWitness(t *testing.T) {
 	cols, err := ntable.ParseColumns("ready")
 	require.NoError(t, err)
 	tb := ntable.Table{Name: "demo", Columns: cols}
-	require.NoError(t, ntable.Create(ctx, c, tb, now))
+	newTable(t, c, tb)
 	_, err = ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{})
 	require.NoError(t, err)
 
@@ -2100,7 +2057,7 @@ func TestBatchNoopGuardCountAndCardinalityWitness(t *testing.T) {
 	cols, err := ntable.ParseColumns("ready")
 	require.NoError(t, err)
 	tb := ntable.Table{Name: "demo", Columns: cols}
-	require.NoError(t, ntable.Create(ctx, c, tb, now))
+	newTable(t, c, tb)
 	_, err = ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{})
 	require.NoError(t, err)
 
@@ -2213,7 +2170,7 @@ func TestBatchAcceptedOmittedRevisionAfterWriterAdvanceWitness(t *testing.T) {
 	cols, err := ntable.ParseColumns("ready,working")
 	require.NoError(t, err)
 	tb := ntable.Table{Name: "demo", Columns: cols}
-	require.NoError(t, ntable.Create(ctx, c, tb, now))
+	newTable(t, c, tb)
 	_, err = ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{})
 	require.NoError(t, err)
 
@@ -2328,9 +2285,7 @@ func TestBatchAcceptedOmittedRevisionAfterWriterAdvanceWitness(t *testing.T) {
 	rawWriter3 := fmt.Sprintf(`{"schema":1,"table":"demo","epoch":"0","expected_table_revision":%q,"operation_id":"op-w3-wire-omitted","actor":"writer3","members":[{"id":"m1","expect":{"fields":{"status":{"equals":"step2"}}},"set":{"status":"step3","wire":"accepted"}}]}`, revAfterW2)
 	ans, err := c.FCall(ctx, ntable.FnApply, []string{ntable.DefKey("demo")}, "demo", rawWriter3).Slice()
 	require.NoError(t, err, "writer3 raw apply")
-	if len(ans) < 2 || ans[0] != "OK" {
-		t.Fatalf("writer3 expected OK, got %v", ans)
-	}
+	require.True(t, replyOpens(ans, nil, "OK"), "writer3 expected OK, got %v", ans)
 
 	// Verify m1 revision advanced to 4 and status is step3
 	rsW3, err := ntable.ReadSetMembers(ctx, c, "demo", []string{"m1"})

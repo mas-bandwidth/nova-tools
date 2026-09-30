@@ -31,9 +31,7 @@ func TestBindRequiresAnActualJSONArray(t *testing.T) {
 			before := storeImage(t, c)
 			body := `{"fields":{"order":"a","col:a":"count:sum:0:","footer":""},"rows":` + rows + `}`
 			got, err := c.FCall(ctx, ntable.FnBind, nil, "t", body, `{"epoch":"0"}`).Slice()
-			if err != nil || len(got) < 2 || got[0] != "REFUSED" || got[1] != "ROW" {
-				t.Errorf("want ROW refusal, got %v %v", got, err)
-			}
+			assert.True(t, replyOpens(got, err, "REFUSED", "ROW"), "want ROW refusal, got %v %v", got, err)
 			require.Equal(t, before, storeImage(t, c), "invalid row list changed store")
 		})
 	}
@@ -45,9 +43,7 @@ func TestBindRequiresAnActualJSONArray(t *testing.T) {
 			_, c := live(t)
 			body := `{"fields":{"order":"a","col:a":"count:sum:0:","footer":""},` + tail + `}`
 			got, err := c.FCall(context.Background(), ntable.FnBind, nil, "t", body, `{"epoch":"0"}`).Slice()
-			if err != nil || len(got) == 0 || got[0] != "OK" {
-				t.Fatalf("empty array refused: %v %v", got, err)
-			}
+			require.True(t, replyOpens(got, err, "OK"), "empty array refused: %v %v", got, err)
 		})
 	}
 }
@@ -61,7 +57,7 @@ func TestInvalidUTF8RowIdentityRefusesBeforeJSONOrMutation(t *testing.T) {
 			ctx := context.Background()
 			cols, _ := ntable.ParseColumns("a")
 			tab := ntable.Table{Name: "t", Columns: cols}
-			require.NoError(t, ntable.Create(ctx, c, tab, now))
+			newTable(t, c, tab)
 			// This is the real, distinct name encoding/json would silently substitute.
 			var replacement string
 			encoded, _ := json.Marshal(bad)

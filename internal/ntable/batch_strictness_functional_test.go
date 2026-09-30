@@ -273,9 +273,7 @@ func TestBatchScoresAreFiniteJSONNumbers(t *testing.T) {
 		before := storeImage(t, c)
 		raw := manifestWith(probeRev(ctx, c), "sc", createWithScore(v))
 		ans, err := rawApply(ctx, c, raw)
-		if err != nil || len(ans) < 2 || ans[0] != "REFUSED" {
-			t.Errorf("create score %s: %v %v", v, trunc(ans), err)
-		}
+		assert.True(t, replyOpens(ans, err, "REFUSED"), "create score %s: %v %v", v, trunc(ans), err)
 		assert.Equal(t, before, storeImage(t, c), "create score %s wrote", v)
 	}
 	// a string score names what it found

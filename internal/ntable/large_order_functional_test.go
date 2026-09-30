@@ -105,8 +105,8 @@ func TestLargeRankChunksAllPreflightBeforeWrites(t *testing.T) {
 	require.NoError(t, c.Do(ctx, "ACL", "SETUSER", "rank-writer", "on", ">rank-test-only", "+@all", "~*", "-xadd").Err())
 	writer := redis.NewClient(&redis.Options{Addr: c.Options().Addr, Username: "rank-writer", Password: "rank-test-only"})
 	t.Cleanup(func() { _ = writer.Close() })
-	before := memberStoreImage(t, c)
+	before := storeImage(t, c)
 	_, err := ntable.Set(ctx, writer, "large", ntable.SetOpts{RowMove: &ntable.Reorder{Item: rows[len(rows)-1], Place: at("first", "")}})
 	require.ErrorContains(t, err, "NOPERM", "rank write without receipt permission = %v; want NOPERM", err)
-	require.Equal(t, before, memberStoreImage(t, c), "late receipt permission refusal wrote rank chunks or other state")
+	require.Equal(t, before, storeImage(t, c), "late receipt permission refusal wrote rank chunks or other state")
 }

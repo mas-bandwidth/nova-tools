@@ -41,9 +41,7 @@ func TestBatchReceiptSizeIsExactAtItsBound(t *testing.T) {
 	// have one length); find the pad that fills it
 	probe := manifestWithActor(probeRev(ctx, c), "op-p", strings.Repeat("a", 1000), body)
 	ans, err := rawApply(ctx, c, probe)
-	if err != nil || ans[0] != "OK" {
-		t.Fatalf("probe: %.200v %v", ans, err)
-	}
+	require.True(t, replyOpens(ans, err, "OK"), "probe: %.200v %v", ans, err)
 	pad := 1000 + ntable.LimitReceiptBytes - deltaLen(ans)
 	for i := 0; i < 128; i++ { // put the members back so the creates are fresh
 		c.Del(ctx, ntable.MemberKey(fmt.Sprintf("m%03d", i)), ntable.CellKey("demo", "build", "ready"))
@@ -59,9 +57,7 @@ func TestBatchReceiptSizeIsExactAtItsBound(t *testing.T) {
 	assert.Equal(t, before, storeImage(t, c), "a refusal changed the store")
 	at := manifestWithActor(probeRev(ctx, c), "op-a", strings.Repeat("a", pad), body)
 	ans, err = rawApply(ctx, c, at)
-	if err != nil || ans[0] != "OK" {
-		t.Fatalf("at the bound: %.200v %v", ans, err)
-	}
+	require.True(t, replyOpens(ans, err, "OK"), "at the bound: %.200v %v", ans, err)
 	got := deltaLen(ans)
 	assert.Equal(t, int(ntable.LimitReceiptBytes), got, "the largest accepted receipt is %d bytes, want exactly %d", got, ntable.LimitReceiptBytes)
 }
@@ -81,9 +77,7 @@ func TestBatchDigestRuleIsExactInEveryRecordAndTheRequestIsKeptAsSent(t *testing
 	require.NoError(t, c.HSet(ctx, ntable.MemberKey("a"), "b64", b64, "b65", b65, "u64", u64, "u66", u66).Err())
 	raw := manifestWith(probeRev(ctx, c), "dg", `{"id":"a","expect":{},"unset":["b64","b65","u64","u66"],"set":{"n64":"`+n64+`","n65":"`+n65+`"}}`)
 	ans, err := rawApply(ctx, c, raw)
-	if err != nil || ans[0] != "OK" {
-		t.Fatalf("apply %.300v %v", ans, err)
-	}
+	require.True(t, replyOpens(ans, err, "OK"), "apply %.300v %v", ans, err)
 	event := fmt.Sprint(c.XRevRangeN(ctx, ntable.DefKey("demo")+":changes", "+", "-", 1).Val()[0].Values)
 	var record struct {
 		Request string `json:"request"`

@@ -89,7 +89,7 @@ func TestBatchRefusalsNameOperationMemberStateAndNextCommand(t *testing.T) {
 		},
 		{
 			"field guard",
-			refusalFixtureBatch(rev, "r-fg", ntable.BatchMemberEntry{ID: "a", Expect: &ntable.MemberExpect{Fields: map[string]ntable.FieldGuard{"role": {Absent: boolPtr(true)}}}}),
+			refusalFixtureBatch(rev, "r-fg", ntable.BatchMemberEntry{ID: "a", Expect: &ntable.MemberExpect{Fields: map[string]ntable.FieldGuard{"role": {Absent: new(true)}}}}),
 			[]string{`member "a"`, `field "role"`, "expected absent", `observed "x"`, "changed=no", "; run: nova-table member read 'demo' 'a'"},
 			nil,
 		},

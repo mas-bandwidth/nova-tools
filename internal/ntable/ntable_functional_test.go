@@ -27,6 +27,21 @@ func live(t *testing.T, extra ...string) (string, *redis.Client) {
 	return addr, c
 }
 
+// replyOpens reports whether a server call succeeded and its reply opens with
+// words, in order: the check every FCALL test makes of an OK or a REFUSED reply.
+// Pass a nil err for a reply read without one.
+func replyOpens(ans []any, err error, words ...string) bool {
+	if err != nil || len(ans) < len(words) {
+		return false
+	}
+	for i, w := range words {
+		if ans[i] != any(w) {
+			return false
+		}
+	}
+	return true
+}
+
 // TestMoveAndClearAreOneCallEach: cell move is one FCALL that keeps the
 // member's score, refuses NOTMEMBER and writes nothing then; clear is one
 // FCALL that empties every owned cell and removes every row, keeping the
@@ -168,7 +183,7 @@ func TestTableGrantsAreExactlyWhatTheWriterNeeds(t *testing.T) {
 		{ID: "bt", Expect: &ntable.MemberExpect{Absent: true}, Create: &ntable.MemberCreateOp{Row: "build", Col: "ready", Score: 2}, Set: map[string]string{"k": "v"}}}})
 	require.NoError(t, err, "batch create as the writer")
 	_, err = ntable.ApplyBatch(ctx, w, ntable.BatchManifest{Schema: 1, Table: "demo", Epoch: "0", ExpectedTableRevision: rev(), OperationID: "grants-2", Members: []ntable.BatchMemberEntry{
-		{ID: "bt", Expect: &ntable.MemberExpect{Fields: map[string]ntable.FieldGuard{"k": {Equals: strPtr("v")}}}, Set: map[string]string{"k": "w"}, Unset: []string{"gone"}}}})
+		{ID: "bt", Expect: &ntable.MemberExpect{Fields: map[string]ntable.FieldGuard{"k": {Equals: new("v")}}}, Set: map[string]string{"k": "w"}, Unset: []string{"gone"}}}})
 	require.NoError(t, err, "batch set as the writer")
 	bound := ntable.Table{Name: "views", Columns: tb.Columns[:2]}
 	r := ntable.NewRow(bound, "v")

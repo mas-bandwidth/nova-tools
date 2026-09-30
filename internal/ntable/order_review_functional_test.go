@@ -76,7 +76,7 @@ func TestStandingSortCombinedManualEditsRefuseAtomically(t *testing.T) {
 			_, c := live(t)
 			ctx := context.Background()
 			orderTable(t, c)
-			change := ntable.SetOpts{RowSort: &ntable.Sort{By: "name", Keep: true}, Footer: ptr("should not write")}
+			change := ntable.SetOpts{RowSort: &ntable.Sort{By: "name", Keep: true}, Footer: new("should not write")}
 			if verb == "move" {
 				change.RowMove = &ntable.Reorder{Item: "z", Place: at("first", "")}
 			} else {
@@ -192,7 +192,7 @@ func TestOrderDefinitionOnlyReceiptsReportChange(t *testing.T) {
 		{ntable.SetOpts{RowSort: &ntable.Sort{Manual: true}}, "noop"},
 		{ntable.SetOpts{ColMove: &ntable.Reorder{Item: "note", Place: at("first", "")}}, "changed"},
 		{ntable.SetOpts{ColMove: &ntable.Reorder{Item: "note", Place: at("first", "")}}, "noop"},
-		{ntable.SetOpts{Footer: ptr("total")}, "changed"},
+		{ntable.SetOpts{Footer: new("total")}, "changed"},
 	} {
 		var receipt ntable.Receipt
 		if _, err := ntable.Set(ctx, c, "t", step.change, ntable.WriteOptions{Receipt: &receipt}); err != nil {

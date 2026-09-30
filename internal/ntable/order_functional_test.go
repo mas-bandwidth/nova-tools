@@ -233,7 +233,7 @@ func TestOrderRefusalsWriteNothing(t *testing.T) {
 		{"sort by a column that is not there", ntable.SetOpts{RowSort: &ntable.Sort{By: "nope"}}, `column "nope": no such column`},
 		{"sort by a percentage", ntable.SetOpts{RowSort: &ntable.Sort{By: "p"}}, "not p"},
 		{"standing sort by a count", ntable.SetOpts{RowSort: &ntable.Sort{By: "a", Keep: true}}, "row sort 't' --by 'a'"},
-		{"good footer, then a bad move", ntable.SetOpts{Footer: ptr("total"), RowMove: &ntable.Reorder{Item: "nope", Place: at("first", "")}}, "no such row"},
+		{"good footer, then a bad move", ntable.SetOpts{Footer: new("total"), RowMove: &ntable.Reorder{Item: "nope", Place: at("first", "")}}, "no such row"},
 		{"good column move, then a bad column", ntable.SetOpts{ColMove: &ntable.Reorder{Item: "a", Place: at("last", "")}, ColDel: "nope"}, "no such column"},
 	}
 	for _, tc := range cases {
@@ -272,5 +272,3 @@ func TestOrderLateWrongTypeWritesNothing(t *testing.T) {
 	require.Error(t, err, "a sort over a row of the wrong type was accepted")
 	require.Equal(t, storeImage(t, c), image, "the failed sort wrote")
 }
-
-func ptr(s string) *string { return &s }

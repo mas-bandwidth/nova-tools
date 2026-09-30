@@ -7,7 +7,8 @@ package ntable_test
 
 import (
 	"fmt"
-	"sort"
+	"maps"
+	"slices"
 	"strings"
 	"testing"
 
@@ -111,12 +112,7 @@ func TestBatchFurtherMalformedManifestsRefusedByServerAndValidator(t *testing.T)
 		"absent with place":      head(`"members":[{"id":"n","expect":{"absent":true,"place":{"row":"build","col":"ready"}}}]}`),
 		"member no expect":       head(`"members":[{"id":"a"}]}`),
 	}
-	names := make([]string, 0, len(cases))
-	for k := range cases {
-		names = append(names, k)
-	}
-	sort.Strings(names)
-	for n, name := range names {
+	for n, name := range slices.Sorted(maps.Keys(cases)) {
 		raw := strings.Replace(cases[name], `"operation_id":"m"`, fmt.Sprintf(`"operation_id":"f%d"`, n), 1)
 		before := storeImage(t, c)
 		ans, err := rawApply(ctx, c, raw)
@@ -153,9 +149,7 @@ func TestBatchSurrogateEscapesAreRefusedAlikeByServerAndValidator(t *testing.T) 
 		raw := manifestWith(probeRev(ctx, c), fmt.Sprintf("lone%d", i), member(v))
 		before := storeImage(t, c)
 		ans, err := rawApply(ctx, c, raw)
-		if err != nil || len(ans) < 2 || ans[0] != "REFUSED" {
-			t.Errorf("%s: the server: %v %v", v, trunc(ans), err)
-		}
+		assert.True(t, replyOpens(ans, err, "REFUSED"), "%s: the server: %v %v", v, trunc(ans), err)
 		_, verr := ntable.ValidateBatchManifestRaw([]byte(raw))
 		assert.Error(t, verr, "%s: the Go validator accepts it", v)
 		assert.Equal(t, before, storeImage(t, c), "%s: the store changed", v)

@@ -23,7 +23,7 @@ func editFixture(t *testing.T) (*redis.Client, ntable.Table) {
 	cols, err := ntable.ParseColumns("status:text:none,a,b,x")
 	require.NoError(t, err)
 	tb := ntable.Table{Name: "edits", Columns: cols, EpochKey: "domain:epoch"}
-	require.NoError(t, ntable.Create(context.Background(), c, tb, now))
+	newTable(t, c, tb)
 	_, err = ntable.RowsAdd(context.Background(), c, tb.Name, []string{"r", "s"})
 	require.NoError(t, err)
 	return c, tb

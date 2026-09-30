@@ -100,9 +100,7 @@ func TestBatchRestoresAMissingIdentity(t *testing.T) {
 		require.NoError(t, c.Del(ctx, ntable.DefKey("demo")+":identity").Err())
 		if viaApply {
 			ans, err := batchRaw(ctx, c, probeRev(ctx, c), "id", `{"id":"q","expect":{"absent":true},"create":{"row":"build","col":"ready","score":1}}`)
-			if err != nil || len(ans) == 0 || ans[0] != "OK" {
-				t.Fatalf("apply: %v %v", trunc(ans), err)
-			}
+			require.True(t, replyOpens(ans, err, "OK"), "apply: %v %v", trunc(ans), err)
 		} else if _, err := ntable.CellAdd(ctx, c, "demo", "build", "ready", "q", 1); err != nil {
 			t.Fatal(err)
 		}
@@ -124,9 +122,7 @@ func TestBatchMissingTemplateMatchesOrdinaryWrite(t *testing.T) {
 	ans, err := batchRaw(ctx, c, "0", "tpl", `{"id":"q","expect":{"absent":true},"create":{"row":"build","col":"ready","score":1}}`)
 	require.Error(t, ordinary, "ordinary write on a missing template: %v", ordinary)
 	require.ErrorIs(t, ordinary, ntable.ErrNoTable, "ordinary write on a missing template: %v", ordinary)
-	if err != nil || len(ans) < 2 || ans[0] != "REFUSED" || ans[1] != "NOTABLE" {
-		t.Errorf("batch on a missing template: %v %v, want REFUSED NOTABLE", trunc(ans), err)
-	}
+	assert.True(t, replyOpens(ans, err, "REFUSED", "NOTABLE"), "batch on a missing template: %v %v, want REFUSED NOTABLE", trunc(ans), err)
 	assert.Equal(t, before, storeImage(t, c), "a refused write changed the store")
 }
 
@@ -148,9 +144,7 @@ func TestBatchUnsetOfAThousandFieldsIsOneCommit(t *testing.T) {
 		names[i] = fmt.Sprintf(`"u%d"`, i)
 	}
 	ans, err := batchRaw(ctx, c, rev, "chunk", `{"id":"a","expect":{},"unset":[`+strings.Join(names, ",")+`]}`)
-	if err != nil || len(ans) == 0 || ans[0] != "OK" {
-		t.Fatalf("unset: %v %v", trunc(ans), err)
-	}
+	require.True(t, replyOpens(ans, err, "OK"), "unset: %v %v", trunc(ans), err)
 	if left := c.HLen(ctx, ntable.MemberKey("a")).Val(); left != 4 { // epoch, place:demo, revision, role
 		t.Errorf("fields left = %d, want 4", left)
 	}

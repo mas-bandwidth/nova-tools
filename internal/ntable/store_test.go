@@ -64,6 +64,40 @@ func store(t *testing.T) (*redis.Client, *tripLog) {
 
 var now = time.Date(2026, 9, 27, 3, 0, 0, 0, time.UTC)
 
+// tableRig is a table on a live store under setup: each step is one plain
+// command, and a step that fails fails the test. It is the setup the contract
+// tests repeat before the call they are about: create, rows, members in cells.
+type tableRig struct {
+	t    *testing.T
+	c    *redis.Client
+	name string
+}
+
+// newTable creates tb at now.
+func newTable(t *testing.T, c *redis.Client, tb ntable.Table) *tableRig {
+	t.Helper()
+	require.NoError(t, ntable.Create(context.Background(), c, tb, now))
+	return &tableRig{t: t, c: c, name: tb.Name}
+}
+
+// rows adds each row, one RowAdd per row, in order.
+func (r *tableRig) rows(keys ...string) *tableRig {
+	r.t.Helper()
+	for _, k := range keys {
+		_, err := ntable.RowAdd(context.Background(), r.c, r.name, k, ntable.RowSpec{})
+		require.NoError(r.t, err, "row %s", k)
+	}
+	return r
+}
+
+// cell puts member in the cell (row, col) at score.
+func (r *tableRig) cell(row, col, member string, score float64) *tableRig {
+	r.t.Helper()
+	_, err := ntable.CellAdd(context.Background(), r.c, r.name, row, col, member, score)
+	require.NoError(r.t, err, "cell %s:%s member %s", row, col, member)
+	return r
+}
+
 func demo() ntable.Table {
 	cols, err := ntable.ParseColumns("ready,working,done,who:members:union")
 	if err != nil {
@@ -81,7 +115,7 @@ func TestCreateRowAddCellAddReadRender(t *testing.T) {
 
 	c, _ := store(t)
 	ctx := context.Background()
-	require.NoError(t, ntable.Create(ctx, c, demo(), now))
+	newTable(t, c, demo())
 	require.NoError(t, ntable.Create(ctx, c, demo(), now), "second identical create")
 	other := demo()
 	other.Columns = other.Columns[:2]
@@ -148,15 +182,7 @@ func TestRowOrderIsStableAcrossReAdds(t *testing.T) {
 
 	c, _ := store(t)
 	ctx := context.Background()
-	require.NoError(t, ntable.Create(ctx, c, demo(), now))
-	for _, key := range []string{"c", "a", "b"} {
-		if _, err := ntable.RowAdd(ctx, c, "demo", key, ntable.RowSpec{}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if _, err := ntable.CellAdd(ctx, c, "demo", "a", "ready", "m", 1); err != nil {
-		t.Fatal(err)
-	}
+	newTable(t, c, demo()).rows("c", "a", "b").cell("a", "ready", "m", 1)
 	if _, err := ntable.RowAdd(ctx, c, "demo", "a", ntable.RowSpec{Label: "A"}); err != nil {
 		t.Fatal(err)
 	}
@@ -203,12 +229,7 @@ func TestReaderTakesOnePipelineInTheSteadyState(t *testing.T) {
 
 	c, log := store(t)
 	ctx := context.Background()
-	require.NoError(t, ntable.Create(ctx, c, demo(), now))
-	for _, key := range []string{"a", "b"} {
-		if _, err := ntable.RowAdd(ctx, c, "demo", key, ntable.RowSpec{}); err != nil {
-			t.Fatal(err)
-		}
-	}
+	newTable(t, c, demo()).rows("a", "b")
 	r := ntable.NewReader("demo")
 	log.reset()
 	if _, err := r.Read(ctx, c); err != nil {
@@ -352,7 +373,7 @@ func TestBatchApplyMoveDestinationWrongTypePreservesSource(t *testing.T) {
 	ctx := context.Background()
 
 	tb := demo()
-	require.NoError(t, ntable.Create(ctx, c, tb, now))
+	newTable(t, c, tb)
 	if _, err := ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{}); err != nil {
 		t.Fatal(err)
 	}

@@ -20,7 +20,7 @@ func TestViewDeleteStagesAllCommands(t *testing.T) {
 			t.Parallel()
 			_, c := live(t)
 			ctx := context.Background()
-			require.NoError(t, ntable.Create(ctx, c, demo(), now))
+			newTable(t, c, demo())
 			require.NoError(t, ntable.ViewSet(ctx, c, ntable.View{Name: "v", Tables: []string{"demo"}}))
 			writer := c
 			if mode == "registry-type" {
@@ -48,7 +48,7 @@ func TestMemberFindReportsIndexedOwnedPlacementAndDrift(t *testing.T) {
 	table := demo()
 	table.EpochKey = "domain"
 	table.MemberPrefix = "task:"
-	require.NoError(t, ntable.Create(ctx, c, table, now))
+	newTable(t, c, table)
 	if _, err := ntable.RowAdd(ctx, c, "demo", "r: one", ntable.RowSpec{}); err != nil {
 		t.Fatal(err)
 	}

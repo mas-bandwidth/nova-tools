@@ -39,9 +39,7 @@ func TestBatchReceiptRecordsLongValuesByLengthAndDigest(t *testing.T) {
 	raw := manifestWith(probeRev(ctx, c), "big-unset", `{"id":"a","expect":{},"unset":[`+strings.Join(quoted, ",")+`]}`)
 	require.LessOrEqual(t, len(raw), 2000, "the manifest is %d bytes", len(raw))
 	ans, err := rawApply(ctx, c, raw)
-	if err != nil || ans[0] != "OK" {
-		t.Fatalf("apply: %.200v %v", ans, err)
-	}
+	require.True(t, replyOpens(ans, err, "OK"), "apply: %.200v %v", ans, err)
 	size := len(fmt.Sprint(ans))
 	assert.LessOrEqual(t, size, 64<<10, "the receipt is %d bytes for a %d-byte manifest", size, len(raw))
 	record := c.HGet(ctx, ntable.DefKey("demo")+":ops", "0:big-unset").Val()

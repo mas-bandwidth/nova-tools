@@ -38,14 +38,10 @@ func TestReview4456RefusalsAreAtomic(t *testing.T) {
 			cols, err := ntable.ParseColumns("a:text:none,b")
 			require.NoError(t, err)
 			tb := ntable.Table{Name: "demo", Columns: cols}
-			require.NoError(t, ntable.Create(ctx, c, tb, now))
-			_, err = ntable.RowAdd(ctx, c, tb.Name, "r", ntable.RowSpec{})
-			require.NoError(t, err)
-			_, err = ntable.CellAdd(ctx, c, tb.Name, "r", "b", "m1", 1)
-			require.NoError(t, err)
+			newTable(t, c, tb).rows("r").cell("r", "b", "m1", 1)
 			busy := tb
 			busy.Name = "busy"
-			require.NoError(t, ntable.Create(ctx, c, busy, now))
+			newTable(t, c, busy)
 			before := review4456Image(t, c)
 			switch mode {
 			case "row-set-late-bad-column":
@@ -56,9 +52,7 @@ func TestReview4456RefusalsAreAtomic(t *testing.T) {
 			case "raw-invalid-definition":
 				reply, callErr := c.FCall(ctx, ntable.FnSet, []string{ntable.DefKey(tb.Name)}, tb.Name, `{"columns":{"order":"a,missing","col:a":"text:none:0:"}}`, `{"epoch":"0"}`).Slice()
 				require.NoError(t, callErr)
-				if len(reply) < 2 || reply[0] != "REFUSED" || reply[1] != "DEFINITION" {
-					t.Fatalf("raw reply=%v", reply)
-				}
+				require.True(t, replyOpens(reply, nil, "REFUSED", "DEFINITION"), "raw reply=%v", reply)
 				require.Equal(t, before, review4456Image(t, c), "REFUSED DEFINITION changed stored definition or cells")
 				return
 			case "hide-occupied-column":
@@ -79,9 +73,7 @@ func TestReview4456RowMetadataKeepsTextValues(t *testing.T) {
 	cols, err := ntable.ParseColumns("a:text:none,b")
 	require.NoError(t, err)
 	tb := ntable.Table{Name: "demo", Columns: cols}
-	require.NoError(t, ntable.Create(ctx, c, tb, now))
-	_, err = ntable.RowAdd(ctx, c, tb.Name, "r", ntable.RowSpec{})
-	require.NoError(t, err)
+	newTable(t, c, tb).rows("r")
 	_, err = ntable.RowSet(ctx, c, tb.Name, "r", map[string]string{"a": "up"})
 	require.NoError(t, err)
 	_, err = ntable.RowAdd(ctx, c, tb.Name, "r", ntable.RowSpec{Label: "new label"})

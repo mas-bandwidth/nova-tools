@@ -106,9 +106,7 @@ func TestBatchBoundsAreOneSet(t *testing.T) {
 				t.Fatalf("at the bound %d the Go validator refuses: %v", bc.bound, err)
 			}
 			ans, err := rawApply(ctx, c, raw)
-			if err != nil || len(ans) == 0 || ans[0] != "OK" {
-				t.Fatalf("at the bound %d the server refuses: %v %v", bc.bound, trunc(ans), err)
-			}
+			require.True(t, replyOpens(ans, err, "OK"), "at the bound %d the server refuses: %v %v", bc.bound, trunc(ans), err)
 
 			// One over: refused on every path with the same name, bound and count.
 			raw = boundsManifest(probeRev(ctx, c), "over", bc.build(bc.bound+1), "p")
@@ -116,9 +114,7 @@ func TestBatchBoundsAreOneSet(t *testing.T) {
 
 			ans, err = rawApply(ctx, c, raw)
 			require.NoError(t, err, "raw FCALL")
-			if len(ans) < 5 || ans[0] != "REFUSED" || ans[1] != "LIMIT" {
-				t.Fatalf("raw FCALL one over the bound: %v", trunc(ans))
-			}
+			require.True(t, replyOpens(ans, nil, "REFUSED", "LIMIT"), "raw FCALL one over the bound: %v", trunc(ans))
 			if ans[2] != bc.limit || replyNumber(ans[3]) != fmt.Sprint(bc.bound) || replyNumber(ans[4]) != fmt.Sprint(bc.bound+1) {
 				t.Errorf("raw FCALL refusal %v; want %s, bound %d, observed %d", trunc(ans), bc.limit, bc.bound, bc.bound+1)
 			}

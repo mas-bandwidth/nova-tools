@@ -21,13 +21,7 @@ func TestAViewsStateIsItsSummaryLineAlone(t *testing.T) {
 	t.Parallel()
 	_, c := live(t)
 	ctx := context.Background()
-	require.NoError(t, ntable.Create(ctx, c, demo(), now))
-	_, err := ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{})
-	require.NoError(t, err)
-	_, err = ntable.CellAdd(ctx, c, "demo", "build", "done", "a", 1)
-	require.NoError(t, err)
-	_, err = ntable.CellAdd(ctx, c, "demo", "build", "ready", "b", 1)
-	require.NoError(t, err)
+	newTable(t, c, demo()).rows("build").cell("build", "done", "a", 1).cell("build", "ready", "b", 1)
 	def := ntable.View{Name: "v", Tables: []string{"demo"}, Title: "T", Summary: "done"}
 	require.NoError(t, ntable.ViewSet(ctx, c, def))
 	line := func() string {
@@ -61,15 +55,13 @@ func TestAViewsStateIsItsSummaryLineAlone(t *testing.T) {
 	// The store refuses a state that is not one short line, whoever calls.
 	for _, bad := range []string{"two\nlines", strings.Repeat("x", ntable.MaxViewState+1)} {
 		reply, err := c.FCall(ctx, "ns_view_state", []string{"view:v"}, "v", bad).Slice()
-		if err != nil || len(reply) < 2 || reply[0] != "REFUSED" || reply[1] != "ARGS" {
-			t.Fatalf("state %q: %v %v", bad, reply, err)
-		}
+		require.True(t, replyOpens(reply, err, "REFUSED", "ARGS"), "state %q: %v %v", bad, reply, err)
 		require.False(t, ntable.ValidViewState(bad), "state %q passes the client's check", bad)
 	}
 
 	// In one transaction with a record of the caller's: both are written.
 	var shown *redis.Cmd
-	_, err = c.TxPipelined(ctx, func(p redis.Pipeliner) error {
+	_, err := c.TxPipelined(ctx, func(p redis.Pipeliner) error {
 		p.Set(ctx, "record", "stopped", 0)
 		shown = ntable.QueueViewState(ctx, p, "v", "STOPPED")
 		return nil

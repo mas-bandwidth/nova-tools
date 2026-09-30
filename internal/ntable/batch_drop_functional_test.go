@@ -33,9 +33,7 @@ func TestBatchDropRemovesTheOperationRecordsAndTheNameStartsAgain(t *testing.T) 
 			member := `{"id":"a","expect":{"absent":true},"create":{"row":"build","col":"ready","score":1}}`
 			old := manifestWith(probeRev(ctx, c), "op-1", member)
 			first, err := rawApply(ctx, c, old)
-			if err != nil || first[0] != "OK" {
-				t.Fatalf("first apply: %v %v", trunc(first), err)
-			}
+			require.True(t, replyOpens(first, err, "OK"), "first apply: %v %v", trunc(first), err)
 			// within the table's life the replay returns the original receipt
 			if again, err := rawApply(ctx, c, old); err != nil || !reflect.DeepEqual(asReplayed(again), first) {
 				t.Fatalf("replay: %v %v", trunc(again), err)
@@ -53,9 +51,7 @@ func TestBatchDropRemovesTheOperationRecordsAndTheNameStartsAgain(t *testing.T) 
 					t.Errorf("after %s the store holds the operation key %s", verb, k)
 				}
 			}
-			require.NoError(t, ntable.Create(ctx, c, demo(), now))
-			_, err = ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{})
-			require.NoError(t, err)
+			newTable(t, c, demo()).rows("build")
 
 			// the old bytes are a new request of a new table: judged on their merits, never answered from the old receipt
 			ans, err := rawApply(ctx, c, old)
@@ -66,9 +62,7 @@ func TestBatchDropRemovesTheOperationRecordsAndTheNameStartsAgain(t *testing.T) 
 			if _, marked := asReplay(ans); marked {
 				t.Errorf("a request after drop and create is marked a replay: %v", trunc(ans))
 			}
-			if len(ans) < 2 || ans[0] != "REFUSED" || ans[1] != "REVISION" {
-				t.Errorf("the old bytes against the new table: %v; want a refusal on the table revision", trunc(ans))
-			}
+			assert.True(t, replyOpens(ans, nil, "REFUSED", "REVISION"), "the old bytes against the new table: %v; want a refusal on the table revision", trunc(ans))
 
 			// the same operation id with a request that fits applies freshly
 			fresh := manifestWith(probeRev(ctx, c), "op-1", `{"id":"b","expect":{"absent":true},"create":{"row":"build","col":"ready","score":1}}`)
@@ -103,9 +97,7 @@ func TestBatchOperationsOfEarlierEpochsReplayAndAllGoWithTheDrop(t *testing.T) {
 	}
 	zero := raw("0", "op-e0")
 	first := call(zero)
-	if first[0] != "OK" {
-		t.Fatalf("epoch 0: %v", trunc(first))
-	}
+	require.True(t, replyOpens(first, nil, "OK"), "epoch 0: %v", trunc(first))
 	if err := c.HSet(ctx, tb.EpochKey, "n", 1).Err(); err != nil { // the epoch advances
 		t.Fatal(err)
 	}

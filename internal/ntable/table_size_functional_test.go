@@ -58,9 +58,7 @@ func TestTableColumnsAreBounded(t *testing.T) {
 	}
 	fields = append(fields, `"order":"`+strings.Join(names, ",")+`"`)
 	ans, err := c.FCall(ctx, ntable.FnCreate, []string{ntable.DefKey("wider")}, "wider", "{"+strings.Join(fields, ",")+"}", `{"epoch":"0","actor":"","fence":"","idem":""}`).Slice()
-	if err != nil || len(ans) < 5 || ans[0] != "REFUSED" || ans[1] != "LIMIT" || ans[2] != "columns per table" {
-		t.Errorf("raw create past the bound: %v %v", trunc(ans), err)
-	}
+	assert.True(t, replyOpens(ans, err, "REFUSED", "LIMIT", "columns per table"), "raw create past the bound: %v %v", trunc(ans), err)
 	assert.Equal(t, int64(0), c.Exists(ctx, ntable.DefKey("wider")).Val(), "a refused create wrote the template")
 }
 
