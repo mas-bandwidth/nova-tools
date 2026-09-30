@@ -2,6 +2,7 @@ package machine
 
 import (
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -175,5 +176,55 @@ func TestNewLoopBuildsWithStepBuilder(t *testing.T) {
 	rp := deal.Plan(s, []sprint.AgendaKey{{Key: "deal", Seq: 1}}, sprint.Now{R: 1000, Wall: s.Now.UnixMilli(), Running: true})
 	if bodies, err := l.cfg.Build(rp, sprintfn.Meta{Rule: "deal", Tick: true, Gen: 1}, stepbuild.Contract()); err != nil || len(bodies) != 1 {
 		t.Fatalf("the default builder: %d bodies, %v", len(bodies), err)
+	}
+}
+
+// TestTimePartCarriesEveryField (L3): each field of sprint.TimeWrites, set
+// alone, reaches the sprint part TimePart makes; a field this test does not
+// name fails it, so a new write is carried or refused by decision, never
+// dropped by TimeWrites.Empty.
+func TestTimePartCarriesEveryField(t *testing.T) {
+	t.Parallel()
+	d, set := int64(7), true
+	fields := map[string]struct {
+		set     func(*sprint.TimeWrites)
+		carried func(*sprintfn.SprintPart) bool
+	}{
+		"Due": {func(w *sprint.TimeWrites) { w.Due = []sprint.DueSet{{Key: "remind:ann", At: 9}} },
+			func(p *sprintfn.SprintPart) bool {
+				return p.Time != nil && len(p.Time.Due) == 1 && p.Time.Due[0].At == "9"
+			}},
+		"Goal": {func(w *sprint.TimeWrites) { w.Goal = []sprint.GoalClaim{{Person: "ann", R: 5}} },
+			func(p *sprintfn.SprintPart) bool {
+				return p.Time != nil && len(p.Time.Goals) == 1 && p.Time.Goals[0].R == "5"
+			}},
+		"UnarmBehind": {func(w *sprint.TimeWrites) { w.UnarmBehind = set },
+			func(p *sprintfn.SprintPart) bool { return p.Time != nil && p.Time.UnarmBehind }},
+		"Clock": {func(w *sprint.TimeWrites) { w.Clock = &sprint.ClockSet{DueSince: &d, ClearStopRaised: true} },
+			func(p *sprintfn.SprintPart) bool {
+				return p.Time != nil && p.Time.Clock != nil && *p.Time.Clock.DueSince == "7" && *p.Time.Clock.StopRaised == ""
+			}},
+		"Park": {func(w *sprint.TimeWrites) { w.Park = []sprint.ParkKey{{Key: "deal", Rule: "deal", Code: "REQUEST"}} },
+			func(p *sprintfn.SprintPart) bool { return len(p.Park) == 1 && p.Park[0].Code == "REQUEST" }},
+	}
+	rt := reflect.TypeOf(sprint.TimeWrites{})
+	for i := range rt.NumField() {
+		name := rt.Field(i).Name
+		f, ok := fields[name]
+		if !ok {
+			t.Errorf("TimeWrites.%s: TimePart's carriage of it is not decided", name)
+			continue
+		}
+		var w sprint.TimeWrites
+		f.set(&w)
+		if w.Empty() {
+			t.Errorf("TimeWrites.%s set alone is Empty", name)
+		}
+		if p := TimePart(w); p == nil || !f.carried(p) {
+			t.Errorf("TimeWrites.%s is not carried: %+v", name, p)
+		}
+	}
+	if len(fields) != rt.NumField() {
+		t.Errorf("the test names %d fields, TimeWrites has %d", len(fields), rt.NumField())
 	}
 }
