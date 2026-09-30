@@ -48,7 +48,7 @@ func TestWorkingStateAndViewLifecycle(t *testing.T) {
 		t.Errorf("missing: %s", out)
 	}
 	success("view", "set", "today", "--tables", "work", "--summary", "done", "--title", "My work")
-	if out = success("view", "show", "today"); !strings.Contains(out, `title="My work" summary=done trips=1`) {
+	if out = success("view", "show", "today"); !strings.Contains(out, `title="My work" summary=done state="" trips=1`) {
 		t.Errorf("view show: %s", out)
 	}
 	if out = success("view", "list"); out != "VIEW LIST views=1 trips=1\nVIEW view=today\n" {
