@@ -155,7 +155,20 @@ func TestSprintJLuaRegistersItsPhases(t *testing.T) {
 	`); err != nil {
 		t.Fatal(err)
 	}
-	if err := L.DoString(sprintJSource(t)); err == nil || !strings.Contains(err.Error(), "registered twice") {
+	// A second load's registrations are refused: recorded (in Redis the load
+	// stops on sprint_registration_refused), and the first phases stay.
+	if err := L.DoString(`J_FIRST = NS.SP.phases.j_decide`); err != nil {
+		t.Fatal(err)
+	}
+	if err := L.DoString(sprintJSource(t)); err != nil {
+		t.Fatalf("a second load raised: %v", err)
+	}
+	if err := L.DoString(`
+		local SP = NS.SP
+		assert(#SP.refused == 2, 'refused ' .. #SP.refused)
+		assert(string.find(SP.refused[1], 'registered twice', 1, true), SP.refused[1])
+		assert(SP.phases.j_decide == J_FIRST, 'a second load replaced the phase')
+	`); err != nil {
 		t.Fatalf("a second load registered the phases again: %v", err)
 	}
 }
