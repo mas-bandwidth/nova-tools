@@ -30,13 +30,15 @@ import (
 // simulated world takes and finishes work (one in ten failed), reads (one in
 // ten broken), merges, and the coordinator answers the inbox, until every
 // card lands or the time runs out. What it asserts is the owner's: every
-// card lands; the deal goes round the fleet and the ask round the readers
-// (each member's first attempts, redeals and each reader's reads within one
-// of each other); the gates release in order; the machine stops itself at
-// done and says so; where, the view and the inbox agree; the exit codes are
-// 0, 2 and 3; a tick is one round trip idle and at most three busy (E8, on
-// the connection); no judgment is left open; teardown leaves only the
-// lifecycle receipts.
+// card lands; the deal goes round the fleet (every member's placements,
+// first attempts and redeals together on one rolling index, within 2 of each
+// other) and the ask round the readers (the two readers of a pair alike, the
+// pairs within the reworked attempts); the gates release in order; the
+// machine stops itself at done and says so; where, the view and the inbox
+// agree; the exit codes are 0, 2 and 3; no step of the machine is refused; a
+// tick is one round trip idle (a tick after the stop, which writes nothing)
+// and at most three busy (E8, on the connection); no judgment is left open;
+// teardown leaves only the lifecycle receipts.
 
 // driveStreams, driveMembers and driveReaders are the drive's sprint.
 var (
@@ -656,6 +658,16 @@ func driveOn(t *testing.T, a *app, coord string, trips func() int64, keys func()
 		}
 	}
 	wall := time.Since(start)
+	// One idle tick after the machine stopped itself, the world still: one
+	// round trip, and nothing written.
+	if stoppedAt > 0 {
+		seq := d.seq
+		d.tick()
+		d.follow()
+		if d.seq != seq {
+			t.Errorf("the idle tick after the stop wrote lines %d..%d", seq+1, d.seq)
+		}
+	}
 	w = d.agree("end")
 	d.follow()
 
@@ -768,6 +780,12 @@ func driveOn(t *testing.T, a *app, coord string, trips func() int64, keys func()
 	}
 	if d.codes[exitBug] > 0 {
 		t.Errorf("%d verbs exited 3 (a bug refusal)", d.codes[exitBug])
+	}
+	if len(d.connIdle) == 0 {
+		t.Errorf("no idle tick was measured")
+	}
+	if n := d.judged[sprint.NStepRefused]; n > 0 {
+		t.Errorf("the machine's step was refused %d times: %v", n, d.texts)
 	}
 	if idleMax > 1 || busyMax > 3 {
 		t.Errorf("round trips a tick: idle at most %d (want 1), busy at most %d (want 3)", idleMax, busyMax)
