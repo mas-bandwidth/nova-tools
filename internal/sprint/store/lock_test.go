@@ -70,3 +70,44 @@ func TestAPartThatLostATryLocksAndWrites(t *testing.T) {
 	}
 	h.clean("locked")
 }
+
+// A part that lost a try and then, on its next read, found nothing to write
+// (another writer did it) leaves the twin as it read it: the next part reads
+// no table whole. (The drive's six whole-table reads after its first tick: a
+// step that lost a try and ended without writing threw its twin away.)
+func TestALostTryThatEndsWithoutWritingKeepsTheTwin(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setup(4)
+	h.startMachine()
+	h.st.CheckTwin = nil
+	var acquired []string
+	epoch := h.st.PinnedEpoch()
+	tw := NewTwin()
+	st := &Store{B: loseFirstAcquire{Mem: h.m, h: h, acquired: &acquired}, Names: h.st.Names, Actor: sprint.MachineActor, Now: h.st.Now, NewID: h.st.NewID, Sleep: h.st.Sleep}
+	plans := 0
+	once := func(s *sprint.Snapshot, r sprint.TickReq) (sprint.Plan, int) {
+		plans++
+		if plans > 1 {
+			return sprint.Plan{}, 0 // the next read finds nothing to do
+		}
+		return ping(sprint.Fleet, 1)(s, r)
+	}
+	step := TickPartStep("once", once, sprint.TickReq{Who: sprint.MachineActor}, &epoch, nil, nil)
+	step.Twin, step.Halts = tw, true
+	if _, err := st.Run(h.ctx, step); err != nil {
+		t.Fatal(err)
+	}
+	if len(acquired) != 1 {
+		t.Fatalf("the part's acquires: %v, want the one lost", acquired)
+	}
+	next := TickPartStep("deal", sprint.TickDeal, sprint.TickReq{Who: sprint.MachineActor}, &epoch, nil, nil)
+	next.Twin, next.Halts, next.Pump = tw, true, true
+	before := st.stats().reads.Load()
+	if _, err := st.Run(h.ctx, next); err != nil {
+		t.Fatal(err)
+	}
+	if n := st.stats().reads.Load() - before; n != 0 {
+		t.Fatalf("the next part read %d tables whole: the twin was thrown away after a try that wrote nothing", n)
+	}
+}

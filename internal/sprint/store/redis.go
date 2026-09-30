@@ -742,8 +742,11 @@ var twinVerbs = map[string]bool{"apply": true, "row_set": true, "rows_add": true
 // from to to at the pinned epoch, or one is a write that does not name its
 // records.
 func (r *Redis) TableChanges(ctx context.Context, table string, from, to uint64) ([]string, bool, error) {
+	gap := func(why string) ([]string, bool, error) {
+		return nil, false, &GapError{Table: table, From: from, To: to, Why: why}
+	}
 	if to < from {
-		return nil, false, nil
+		return gap("the twin is ahead of the table")
 	}
 	if to == from {
 		return nil, true, nil
@@ -764,7 +767,7 @@ func (r *Redis) TableChanges(ctx context.Context, table string, from, to uint64)
 			return nil, false, err
 		}
 		if len(evs) == 0 {
-			return nil, false, nil
+			return gap(fmt.Sprintf("the stream ends before revision %d", need))
 		}
 		for _, x := range evs {
 			ev := readChange(x.Values)
@@ -773,12 +776,15 @@ func (r *Redis) TableChanges(ctx context.Context, table string, from, to uint64)
 				// read of the records sees it, and refuses the revision)
 				continue
 			}
-			if ev.after != need || !twinVerbs[ev.verb] {
-				return nil, false, nil
+			if ev.after != need {
+				return gap(fmt.Sprintf("the event before revision %d leaves revision %d", need, ev.after))
+			}
+			if !twinVerbs[ev.verb] {
+				return gap(fmt.Sprintf("a write %q at revision %d names no records", ev.verb, ev.after))
 			}
 			named, err := changeIDs(ev)
 			if err != nil {
-				return nil, false, nil
+				return gap(fmt.Sprintf("the event at revision %d is unreadable: %v", ev.after, err))
 			}
 			ids = append(ids, named...)
 			need = ev.before
@@ -786,12 +792,12 @@ func (r *Redis) TableChanges(ctx context.Context, table string, from, to uint64)
 				return ids, true, nil
 			}
 			if need < from {
-				return nil, false, nil
+				return gap(fmt.Sprintf("the events skip revision %d", from))
 			}
 		}
 		end = "(" + evs[len(evs)-1].ID
 	}
-	return nil, false, nil
+	return gap("more than 64 pages of events")
 }
 
 func readChange(v map[string]any) changeEvent {

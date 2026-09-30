@@ -350,7 +350,7 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 	twinKept := true
 	defer func() {
 		if tw != nil && !twinKept {
-			tw.drop()
+			tw.drop("the step " + step.Verb + " ended without knowing what its write did")
 		}
 	}()
 	// A part of the tick that lost a try to another writer takes the fence
@@ -559,6 +559,9 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			return res, fmt.Errorf("%w: acquiring the fence for %s: %v; run: nova-sprint repair", ErrUnknown, op.ID, err)
 		}
 		if !ok {
+			// nothing of this try was written: the twin is still the state it
+			// read, only older (the next read catches it up)
+			twinKept = true
 			// lost to another writer: a part of the tick with a twin takes
 			// the fence before its next read, once (tla/DirtyTickRead.tla, Lock)
 			if _, can := st.B.(Relocker); can && st.LockAfterLoss && tw != nil && step.Halts {
@@ -586,6 +589,8 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			return res, err
 		}
 		if !applied {
+			// the first manifest was refused: nothing of the step applied
+			twinKept = true
 			if err := st.B.Release(ctx, op, false); err != nil {
 				res.Pending = op.ID
 				return res, fmt.Errorf("%w: releasing %s after its first manifest was refused: %v; run: nova-sprint repair", ErrUnknown, op.ID, err)

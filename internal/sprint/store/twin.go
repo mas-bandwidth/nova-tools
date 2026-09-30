@@ -65,6 +65,18 @@ func (e *GrantError) Error() string {
 	return fmt.Sprintf("the store refused %s on %s to this user (%v): grant +%s to its seat; the tick reads the table whole until then", e.Command, e.Key, e.Cause, strings.ToLower(e.Command))
 }
 
+// GapError is a table's change stream that does not account for every
+// revision between two: the table is read whole, and the tick says why.
+type GapError struct {
+	Table    string
+	From, To uint64
+	Why      string
+}
+
+func (e *GapError) Error() string {
+	return fmt.Sprintf("table %s read whole: its change stream does not account for revisions %d to %d: %s", e.Table, e.From, e.To, e.Why)
+}
+
 // TableChanger is a store that says which records a table's writes changed
 // between two of its revisions: the table layer's change stream. ok is false
 // when the stream does not account for every revision between (a gap,
@@ -131,6 +143,9 @@ type Twin struct {
 	absent      map[string]map[string]bool
 	queue       []sprint.QueuedChange
 	queueKnown  bool
+	// why is the reason the twin was last dropped: the next whole read says it
+	// (a NOTE), as a table read whole for want of its change stream does
+	why string
 	// last is the last snapshot read from the twin (its judgments, its
 	// coordinator, the machine's state): what peek answers with beside the
 	// tables.
@@ -141,13 +156,15 @@ type Twin struct {
 func NewTwin() *Twin { return &Twin{} }
 
 // drop forgets the twin's records: the next read reads every table whole.
-func (tw *Twin) drop() {
+func (tw *Twin) drop(why string) {
 	tw.valid, tw.tables, tw.queue, tw.queueKnown = false, nil, nil, false
+	tw.why = why
 }
 
 // reset is an empty twin of the epoch.
 func (tw *Twin) reset(epoch uint64) {
-	tw.drop()
+	why := tw.why
+	tw.drop(why)
 	tw.epoch = epoch
 	tw.tables = map[string]*sprint.Table{}
 	tw.kept, tw.shown, tw.absent = map[string]map[string]*sprint.Card{}, map[string]map[string]*sprint.Card{}, map[string]map[string]bool{}
@@ -304,10 +321,15 @@ func (st *Store) twinView(ctx context.Context, tw *Twin, load []string, v View, 
 				// counts at the revision both are of: the table is read whole
 				// (counted, Stats.mismatch), whatever the cause
 				st.stats().mismatch.Add(1)
+				st.stats().note(why)
 				delete(tw.tables, load[i])
 				whole = append(whole, shape)
 			}
 		}
+	}
+	if len(whole) > 0 && tw.why != "" {
+		st.stats().note("the twin read the tables whole: " + tw.why)
+		tw.why = ""
 	}
 	if len(whole) > 0 {
 		ids, err := st.B.CellIDs(ctx, whole)
@@ -376,6 +398,11 @@ func (st *Store) catchUp(ctx context.Context, tw *Twin, name string, shape ntabl
 		var grant *GrantError
 		if errors.As(err, &grant) {
 			st.stats().note(grant.Error())
+			ok, err = false, nil
+		}
+		var gap *GapError
+		if errors.As(err, &gap) {
+			st.stats().note(gap.Error())
 			ok, err = false, nil
 		}
 		if err != nil {
@@ -583,7 +610,7 @@ func (st *Store) twinCommitted(tw *Twin, op OpRecord, receipts []receipt, gen ui
 		return
 	}
 	if len(receipts) != len(op.Manifests) || tw.epoch != st.epoch {
-		tw.drop()
+		tw.drop(fmt.Sprintf("the step %s applied %d manifests with %d receipts that account for them", op.Verb, len(op.Manifests), len(receipts)))
 		return
 	}
 	for _, r := range receipts {
@@ -591,7 +618,7 @@ func (st *Store) twinCommitted(tw *Twin, op OpRecord, receipts []receipt, gen ui
 			continue // a table the twin does not hold: its first read reads it whole
 		}
 		if err := tw.apply(st.Names.Logical(r.man.Table), r.man, r.rc); err != nil {
-			tw.drop()
+			tw.drop(fmt.Sprintf("a receipt of the step %s does not follow the twin: %v", op.Verb, err))
 			return
 		}
 	}
