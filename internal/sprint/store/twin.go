@@ -582,17 +582,24 @@ func TwinDiff(twin, fresh *sprint.Snapshot) string {
 			}
 			continue
 		}
-		if a.Revision != b.Revision || a.Epoch != b.Epoch {
-			out = append(out, fmt.Sprintf("%s: revision %d/%d epoch %d/%d", name, a.Revision, b.Revision, a.Epoch, b.Epoch))
+		if a.Epoch != b.Epoch {
+			out = append(out, fmt.Sprintf("%s: epoch %d/%d", name, a.Epoch, b.Epoch))
 		}
-		if !slices.Equal(a.Rows(), b.Rows()) {
-			out = append(out, fmt.Sprintf("%s: rows %v, fresh %v", name, a.Rows(), b.Rows()))
+		// A table's revision, rows and texts move with the writes outside the
+		// fence too (the display cells, the rows a step declares), which the
+		// fresh read, made after, may see and the twin's read not: they are
+		// compared when the two reads saw the same revision. The records and
+		// properties are written only under the fence: always compared.
+		if a.Revision == b.Revision {
+			if !slices.Equal(a.Rows(), b.Rows()) {
+				out = append(out, fmt.Sprintf("%s: rows %v, fresh %v", name, a.Rows(), b.Rows()))
+			}
+			if fmt.Sprint(a.Texts) != fmt.Sprint(b.Texts) {
+				out = append(out, fmt.Sprintf("%s: texts %v, fresh %v", name, a.Texts, b.Texts))
+			}
 		}
 		if fmt.Sprint(a.Props()) != fmt.Sprint(b.Props()) {
 			out = append(out, fmt.Sprintf("%s: props %v, fresh %v", name, a.Props(), b.Props()))
-		}
-		if fmt.Sprint(a.Texts) != fmt.Sprint(b.Texts) {
-			out = append(out, fmt.Sprintf("%s: texts %v, fresh %v", name, a.Texts, b.Texts))
 		}
 		ac, bc := a.LoadedCards(), b.LoadedCards()
 		byID := map[string]*sprint.Card{}
