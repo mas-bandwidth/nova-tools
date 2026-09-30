@@ -770,3 +770,30 @@ func TestInitDefinesAndTeardownDeletesTheNamespace(t *testing.T) {
 		t.Fatalf("teardown of no sprint: exit %d\n%s%s", code, out, errs)
 	}
 }
+
+// TestPlayMergesOnNewPath (the 4806 read, m4): play's driver merges on the new
+// path, whose stream queue lists the work cells (a primary queued to merge is
+// merging), so a simulation lands cards: before, it looked for merge cards in
+// that queue and never merged.
+func TestPlayMergesOnNewPath(t *testing.T) {
+	t.Parallel()
+	na := newNPApp(t)
+	for _, l := range npTicking {
+		na.ok(l)
+	}
+	// the machine's tick and one turn of the world's play, in turn
+	var out string
+	for i := 0; i < 40; i++ {
+		na.ok("tick")
+		code, o, errs := na.do("play --simulation --ticks 1 --seed " + strconv.Itoa(i+1))
+		if out = o + errs; code != 0 {
+			break // the sprint is done and the machine stopped itself
+		}
+	}
+	var w struct {
+		Landed int64 `json:"landed"`
+	}
+	if err := json.Unmarshal([]byte(na.ok("where --json")), &w); err != nil || w.Landed == 0 {
+		t.Fatalf("play merged nothing: landed %d, %v\n%s\n%s\n%s", w.Landed, err, out, na.ok("where"), na.ok("inbox"))
+	}
+}

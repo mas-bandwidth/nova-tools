@@ -508,7 +508,10 @@ func (d *Driver) tick(tick int, c Config, w where) {
 		var q queue
 		if d.read(&q, "queue", "--stream", s) {
 			for _, card := range q.Cards {
-				if card.Col == "queued" {
+				// the present path's stream queue lists the merge cards
+				// (queued); the new path's lists the work cells, where a
+				// primary queued to merge is merging
+				if card.Col == "queued" || card.Col == "merging" {
 					out = append(out, card.ID)
 				}
 			}

@@ -1385,6 +1385,28 @@ func QueueRead(ctx context.Context, e *Env, req QueueReq) (QueuePage, Result, er
 	if !sprint.ValidID(row) {
 		return page, Result{Verb: verb}, refuseLocal(verb, sprintfn.CodeRequest, "%q is not a member's or a stream's name", row)
 	}
+	page, res, err := queueCells(ctx, e, limit, cur, req.After, table, row, cols, fields)
+	var rf *Refused
+	if req.As != "" && errors.As(err, &rf) && rf.Code() == "NOROW" {
+		// not a member: a reader's queue, its asked and reading cells (one more
+		// round trip, for a reader only)
+		page, res, err = queueCells(ctx, e, limit, cur, req.After, sprint.Readers, row,
+			[]string{string(sprint.Asked), string(sprint.Reading)}, wkQueueReadCardFields)
+		if errors.As(err, &rf) && rf.Code() == "NOROW" {
+			rf.Hint = fmt.Sprintf("%s has no row in the fleet table or the readers table", row)
+		}
+	}
+	return page, res, err
+}
+
+// wkQueueReadCardFields are what a reader's queue shows of a read card.
+var wkQueueReadCardFields = []string{"kind", wkfPrimary, "stream", "reader", "attempt", wkfHead}
+
+// queueCells is QueueRead's page of the cells of one row of a table.
+func queueCells(ctx context.Context, e *Env, limit int, cur wkQueueCursor, after, table, row string, cols, fields []string) (QueuePage, Result, error) {
+	const verb = "queue"
+	var page QueuePage
+	req := QueueReq{After: after}
 	if cur.cell >= len(cols) {
 		return page, Result{Verb: verb}, refuseLocal(verb, sprintfn.CodeRequest, "--after %q is past the queue's cells", req.After)
 	}
