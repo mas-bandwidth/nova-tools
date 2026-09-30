@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"reflect"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -53,12 +52,12 @@ func passX() Phases {
 	}
 }
 
-// newTestTwin is a twin over a fresh Mem and log stub, with its own part
+// newTestTwin is a twin over a fresh Mem and log twin, with its own part
 // registry and the phases given, at a fixed time.
-func newTestTwin(t *testing.T, phases Phases) (*Twin, *tset.Mem, *LogStub) {
+func newTestTwin(t *testing.T, phases Phases) (*Twin, *tset.Mem, *MemLog) {
 	t.Helper()
 	m := newTestMem(t)
-	log := NewLogStub()
+	log := NewMemLog()
 	tw := NewTwin(m, log, testNames)
 	if tw.broken != nil {
 		t.Fatal(tw.broken)
@@ -100,7 +99,7 @@ func mustStep(t *testing.T, c Client, req *Request) *StepReply {
 // image is everything the twin holds, as bytes: the Mem's exported state,
 // the sprint's keys and the log's lines, so two images are equal exactly when
 // nothing changed.
-func image(t *testing.T, tw *Twin, m *tset.Mem, log *LogStub) []byte {
+func image(t *testing.T, tw *Twin, m *tset.Mem, log *MemLog) []byte {
 	t.Helper()
 	snap, err := m.Snapshot(testPrefix)
 	if err != nil {
@@ -126,7 +125,7 @@ func image(t *testing.T, tw *Twin, m *tset.Mem, log *LogStub) []byte {
 // set); the log is one stream of lines a epoch and one list a history. The
 // sum of an entry is of its content encoded as JSON, whose maps are in key
 // order, so two entries are equal exactly when their contents are.
-func storeImage(t *testing.T, tw *Twin, m *tset.Mem, log *LogStub) map[string]testredis.Entry {
+func storeImage(t *testing.T, tw *Twin, m *tset.Mem, log *MemLog) map[string]testredis.Entry {
 	t.Helper()
 	out := map[string]testredis.Entry{}
 	put := func(key, kind string, content any) {
@@ -171,12 +170,10 @@ func storeImage(t *testing.T, tw *Twin, m *tset.Mem, log *LogStub) map[string]te
 	for key, v := range tw.SprintKeys() {
 		put(key, v.Kind, v)
 	}
-	log.mu.Lock()
-	defer log.mu.Unlock()
-	for lk, lg := range log.logs {
-		at := "log:" + strings.ReplaceAll(lk, "\x00", "@") // prefix@epoch
-		put(at+":lines", "stream", lg.lines)
-		for about, seqs := range lg.history {
+	for lk, lg := range log.Twin().Dump() {
+		at := "log:" + lk // prefix@epoch
+		put(at+":lines", "stream", lg.Lines)
+		for about, seqs := range lg.History {
 			put(at+":history:"+about, "list", seqs)
 		}
 	}
@@ -190,7 +187,7 @@ type twinState struct {
 	image map[string]testredis.Entry
 }
 
-func capture(t *testing.T, tw *Twin, m *tset.Mem, log *LogStub) twinState {
+func capture(t *testing.T, tw *Twin, m *tset.Mem, log *MemLog) twinState {
 	t.Helper()
 	return twinState{bytes: image(t, tw, m, log), image: storeImage(t, tw, m, log)}
 }

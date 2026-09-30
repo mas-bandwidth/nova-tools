@@ -236,10 +236,15 @@ type DoneIdentity struct {
 	IntentDigest string  `json:"intent_digest"`
 }
 
+// CardCursorPosition is one primary's place in a cardlines page chain: the
+// pair (list index, item index within that line). NextItem is present only
+// when a page ended inside a line (L1 10, item 4); its name is Layer 2's
+// revision-2 wire choice.
 type CardCursorPosition struct {
 	About        string `json:"about"`
 	NextIndex    int64  `json:"next_index"`
 	ThroughIndex int64  `json:"through_index"`
+	NextItem     int64  `json:"next_item,omitempty"`
 }
 
 type CardCursor struct {
@@ -252,7 +257,9 @@ type CardCursor struct {
 // ReadQuery covers the L1 table queries and the L2 log queries. Fields nil
 // means omitted; an allocated empty slice means an explicit empty projection.
 // Names is the props query's optional property list with the same rule
-// (L1 contract amendment 2026-09-30, property, section 3).
+// (L1 contract amendment 2026-09-30, property, section 3). BytesLimit is a
+// lines query's optional bound on its answer's encoded bytes, envelope
+// included, at most the 8 MiB reply (L1 7; decision 6); 0 means omitted.
 type ReadQuery struct {
 	Kind        string
 	Table       string
@@ -270,6 +277,7 @@ type ReadQuery struct {
 	AfterSeq    Decimal
 	ThroughSeq  *Decimal
 	IDsLimit    int
+	BytesLimit  int
 	Abouts      []string
 	Cursor      *CardCursor
 	IncludeMeta bool
@@ -395,7 +403,12 @@ type ReadAnswer struct {
 	LastSeq Decimal           `json:"last_seq,omitempty"`
 	Lines   []json.RawMessage `json:"lines,omitempty"`
 	Props   map[string]string `json:"props,omitempty"`
-	Raw     json.RawMessage   `json:"-"`
+	// Next and Through are an atomic lines answer's coverage: the first seq
+	// not returned and the last seq returned (L1 7). Raw keeps them as the
+	// store wrote them.
+	Next    json.RawMessage `json:"next,omitempty"`
+	Through json.RawMessage `json:"through,omitempty"`
+	Raw     json.RawMessage `json:"-"`
 }
 
 func (a ReadAnswer) MarshalJSON() ([]byte, error) {
@@ -443,6 +456,12 @@ func (a ReadAnswer) MarshalJSON() ([]byte, error) {
 			m["lines"] = []json.RawMessage{}
 		} else {
 			m["lines"] = a.Lines
+		}
+		if len(a.Next) != 0 {
+			m["next"] = a.Next
+		}
+		if len(a.Through) != 0 {
+			m["through"] = a.Through
 		}
 	case "props":
 		if a.Props == nil {

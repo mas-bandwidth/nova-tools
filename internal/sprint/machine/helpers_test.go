@@ -58,7 +58,7 @@ type world struct {
 	c   sprintfn.Client
 	tw  *sprintfn.Twin
 	mem *tset.Mem
-	log *sprintfn.LogStub
+	log *sprintfn.MemLog
 	raw *redis.Client
 	clk *clock
 	gen uint64 // the generation a test's own tick steps carry
@@ -73,7 +73,7 @@ func newWorld(t *testing.T) *world {
 			t.Fatalf("define %s: %v", table, err)
 		}
 	}
-	log := sprintfn.NewLogStub()
+	log := sprintfn.NewMemLog()
 	tw := sprintfn.NewTwin(m, log, testNames)
 	tw.UseQueries()
 	clk := &clock{at: time.Date(2026, 9, 30, 12, 0, 0, 0, time.UTC)}

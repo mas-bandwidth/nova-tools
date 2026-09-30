@@ -39,8 +39,10 @@ var TSetFunctions = []string{"ns_tset_step", "ns_tset_read", "ns_tset_define", "
 
 // TSetSource assembles an isolated nova_sprint library with the tset writer,
 // reader and lifecycle. The lexical shim registers only TSetFunctions at
-// library load time; the unchanged legacy table.lua belongs to the old-tool
-// profile. The prelude carries the profile and the build: a digest of the
+// library load time, and in the sprint profile SprintFunctions beside them;
+// the unchanged legacy table.lua belongs to the old-tool profile. The
+// standalone profile leaves Layer 2's log out; the composed and sprint
+// profiles load it. The prelude carries the profile and the build: a digest of the
 // profile and of everything after the prelude, which ns_tset_define compares
 // with the build its caller names (the lifecycle amendment, section 2). The
 // build is the library's declaration of its source, made here at assembly
@@ -79,7 +81,7 @@ func tsetBuild(profile TSetProfile, body string) string {
 
 // tsetBody is the library after its prelude: the redis shim and the fragments.
 func tsetBody(profile TSetProfile) (string, error) {
-	if profile != TSetStandalone && profile != TSetComposed {
+	if profile != TSetStandalone && profile != TSetComposed && profile != TSetSprint {
 		return "", fmt.Errorf("unknown tset profile %q", profile)
 	}
 	var b strings.Builder
@@ -97,28 +99,46 @@ func tsetBody(profile TSetProfile) (string, error) {
 	b.WriteString("  acl_check_cmd = function(...) return runtime_redis().acl_check_cmd(...) end,\n")
 	b.WriteString("  register_function = function(spec, callback)\n")
 	b.WriteString("    local name = callback and spec or spec.function_name\n")
-	b.WriteString("    if " + tsetFilter() + " then\n")
+	b.WriteString("    if " + tsetFilter(profile) + " then\n")
 	b.WriteString("      if callback == nil then return native_redis.register_function(spec) end\n")
 	b.WriteString("      return native_redis.register_function(spec, callback)\n")
 	b.WriteString("    end\n")
 	b.WriteString("  end,\n}\n")
 
 	for _, name := range tsetFragments {
-		if name == "lua/table_set_log.lua" && profile != TSetComposed {
+		if name == "lua/table_set_log.lua" && profile == TSetStandalone {
 			continue
 		}
 		if err := appendTSetFragment(&b, name); err != nil {
 			return "", err
 		}
 	}
+	if profile == TSetSprint {
+		// The sprint profile is the composed profile's fragments followed by
+		// the sprint's own, in sorted order (profile_sprint.go).
+		names, err := sprintFragments(sources)
+		if err != nil {
+			return "", err
+		}
+		for _, name := range names {
+			if err := appendTSetFragment(&b, name); err != nil {
+				return "", err
+			}
+		}
+	}
 	return b.String(), nil
 }
 
 // tsetFilter is the registration filter's condition: the name is one of
-// TSetFunctions.
-func tsetFilter() string {
-	parts := make([]string, len(TSetFunctions))
-	for i, name := range TSetFunctions {
+// TSetFunctions (the log registers none of its own), or, in the sprint
+// profile, one of SprintFunctions.
+func tsetFilter(profile TSetProfile) string {
+	names := append([]string(nil), TSetFunctions...)
+	if profile == TSetSprint {
+		names = append(names, SprintFunctions...)
+	}
+	parts := make([]string, len(names))
+	for i, name := range names {
 		parts[i] = "name == '" + name + "'"
 	}
 	return strings.Join(parts, " or ")

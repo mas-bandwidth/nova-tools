@@ -661,6 +661,10 @@ local function note(n)
         or not strings(n.about, cap('about'), name) then return false end
     return true
 end
+-- Layer 2's static step rules, bound once at load: the log fragment loads
+-- before this one, and the standalone profile does not load it, so this is
+-- nil there. A later change to NS.tlog does not reach it.
+local log_check_step = NS.tlog and NS.tlog.check_step
 local function validate_step(req, allow_derived_notes)
     if S.is_object(req) and S.is_array(req.entries) and #req.entries > cap('entries') then return failure('LIMIT') end
     if S.is_object(req) and S.is_array(req.notes) and #req.notes > cap('notes') then return failure('LIMIT') end
@@ -757,6 +761,12 @@ local function validate_step(req, allow_derived_notes)
         end
         if abouts > cap('about') then return failure('LIMIT') end
     end
+    -- The composed profile's static rules (Layer 2's L.check_step): part of
+    -- this static phase, before any guard (L1 8).
+    if log_check_step then
+        local _, err = log_check_step(req)
+        if err then return nil, err end
+    end
     return req, nil
 end
 
@@ -808,6 +818,8 @@ local function query(q, i, kinds, extension)
     if q.kind == 'range' and type(q.limit) == 'number' and q.limit > 2000 then return failure('LIMIT', detail) end
     if q.kind == 'lines' and type(q.limit) == 'number' and q.limit > 5000 then return failure('LIMIT', detail) end
     if q.kind == 'lines' and type(q.ids_limit) == 'number' and q.ids_limit > 200000 then return failure('LIMIT', detail) end
+    -- bytes_limit is bounded by the 8 MiB encoded reply (L1 7; decision 6).
+    if q.kind == 'lines' and type(q.bytes_limit) == 'number' and q.bytes_limit > 8388608 then return failure('LIMIT', detail) end
     if q.kind == 'cardlines' and type(q.limit) == 'number' and q.limit > 500 then return failure('LIMIT', detail) end
     local common = {kind=true,t=true,cell=true,key=true,min=true,max=true,limit=true,desc=true,records=true,fields=true}
     if q.kind == 'range' then
@@ -859,10 +871,11 @@ local function query(q, i, kinds, extension)
     elseif q.kind == 'last' then
         if not only(q,{kind=true}) then return failure('REQUEST', detail) end
     elseif q.kind == 'lines' then
-        if not only(q,{kind=true,after_seq=true,through_seq=true,limit=true,ids_limit=true})
+        if not only(q,{kind=true,after_seq=true,through_seq=true,limit=true,ids_limit=true,bytes_limit=true})
             or not S.uint(q.after_seq) or (q.through_seq ~= nil and not S.uint(q.through_seq))
             or not uint_count(q.limit,5000,true)
-            or (q.ids_limit ~= nil and not uint_count(q.ids_limit,200000)) then return failure('REQUEST', detail) end
+            or (q.ids_limit ~= nil and not uint_count(q.ids_limit,200000))
+            or (q.bytes_limit ~= nil and not uint_count(q.bytes_limit,8388608,true)) then return failure('REQUEST', detail) end
     elseif q.kind == 'cardlines' then
         if not only(q,{kind=true,abouts=true,limit=true,fields=true,include_meta=true,cursor=true})
             or not strings(q.abouts,2000,name,1) or not uint_count(q.limit,500,true)
@@ -883,12 +896,17 @@ local function query(q, i, kinds, extension)
             for j = 1, #cur.positions do
                 local p = cur.positions[j]
                 if S.is_object(p) and ((type(p.next_index) == 'number' and p.next_index > 9007199254740991)
-                    or (type(p.through_index) == 'number' and p.through_index > 9007199254740991)) then
+                    or (type(p.through_index) == 'number' and p.through_index > 9007199254740991)
+                    or (type(p.next_item) == 'number' and p.next_item > 9007199254740991)) then
                     return failure('OVERFLOW', detail)
                 end
-                if not only(p,{about=true,next_index=true,through_index=true})
+                -- A position is the pair (list index, item index within the
+                -- line); next_item is present only when a page ended inside
+                -- a line (L1 10, item 4; its name is Layer 2's revision 2).
+                if not only(p,{about=true,next_index=true,through_index=true,next_item=true})
                     or not name(p.about)
                     or not uint_count(p.next_index,9007199254740991)
+                    or (p.next_item ~= nil and not uint_count(p.next_item,9007199254740991))
                     or type(p.through_index) ~= 'number'
                     or p.through_index ~= math.floor(p.through_index)
                     or p.through_index < -1 or p.through_index > 9007199254740991 then return failure('REQUEST', detail) end
