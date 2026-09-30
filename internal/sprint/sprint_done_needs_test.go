@@ -7,29 +7,28 @@ import (
 )
 
 // The sprint is done: an add that only opens a stream admits no card and
-// leaves it done; it has no due time and is never overdue.
+// leaves it done; "the sprint is done" is a happened note, never a judgment,
+// so it has no due time and is never overdue (errata 3 amendment 6).
 func TestSprintDoneOutlastsAnAddOfNoCardAndIsNeverOverdue(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 1)
 	accepted(w, "s1-1")
 	w.must(MergeStep(w.s, MergeReq{Stream: "s1"}))
-	if len(w.openOn(SprintSubject)) != 1 {
-		t.Fatalf("not done: %+v", w.s.Open)
-	}
 	w.must(Add(w.s, AddReq{Stream: "s2"}))
-	if w.s.StreamCtl("s2") == nil || len(w.openOn(SprintSubject)) != 1 {
-		t.Fatalf("an add that only opens a stream: s2 %v, done open %d", w.s.StreamCtl("s2") != nil, len(w.openOn(SprintSubject)))
+	if p, _ := TickDone(w.s, TickReq{}); w.s.StreamCtl("s2") == nil || len(p.Notes) != 1 {
+		t.Fatalf("an add that only opens a stream: s2 %v, done %+v", w.s.StreamCtl("s2") != nil, p)
 	}
-	for _, g := range Inbox(InboxReq{Now: w.s.Now.Add(1000 * time.Hour), Open: w.s.Open, Deadline: time.Minute}) {
-		if g.Type == NSprintDone && (g.Overdue || g.Marked || !g.Due.IsZero() || contains(g.Decisions, "act")) {
-			t.Fatalf("the sprint is done, shown overdue: %+v", g)
+	w.must(tickDone(w.s, TickReq{}))
+	for _, g := range Inbox(InboxReq{Now: w.s.Now.Add(1000 * time.Hour), Open: w.s.Open, Recent: w.notes, Deadline: time.Minute}) {
+		if g.Type == NSprintDone && (g.Kind != Happened || g.Overdue || g.Marked || !g.Due.IsZero() || len(g.Decisions) != 0) {
+			t.Fatalf("the sprint is done, shown as a judgment or overdue: %+v", g)
 		}
 	}
-	if !w.openOn(SprintSubject)[0].Note.Due(time.Minute).IsZero() {
-		t.Fatalf("the sprint is done has a due time")
+	if len(w.s.Open) != 0 {
+		t.Fatalf("the sprint done opened a judgment: %+v", w.s.Open)
 	}
 	w.must(Add(w.s, AddReq{Stream: "s2", Count: 1}))
-	if len(w.openOn(SprintSubject)) != 0 {
+	if p, _ := TickDone(w.s, TickReq{}); !p.Empty() {
 		t.Fatalf("an add of a card left the sprint done")
 	}
 }
@@ -39,9 +38,19 @@ func TestSprintDoneWithNothingLanded(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 2)
 	w.must(Drop(w.s, DropReq{Sel: Sel{IDs: []string{"s1-1", "s1-2"}}, Reason: "obsolete"}))
+	w.must(tickDone(w.s, TickReq{}))
 	done := w.notesOf(NSprintDone)
-	if len(done) != 1 || done[0].What != "0 landed, 2 dropped" || len(w.openOn(SprintSubject)) != 1 {
+	if len(done) != 1 || done[0].What != "0 landed, 2 dropped" || len(w.s.Open) != 0 {
 		t.Fatalf("all dropped: %+v", done)
+	}
+}
+
+// A sprint that never had a card is not done.
+func TestAnEmptySprintIsNotDone(t *testing.T) {
+	t.Parallel()
+	w := setup(t, 0)
+	if p, _ := TickDone(w.s, TickReq{}); !p.Empty() {
+		t.Fatalf("an empty sprint is done: %+v", p)
 	}
 }
 
@@ -75,4 +84,10 @@ func TestAckWaivesOnlyTheNeedsItsJudgmentNames(t *testing.T) {
 		t.Fatalf("needs of b: %+v", needs)
 	}
 	w.clean("waived")
+}
+
+// tickDone is the done part's plan alone.
+func tickDone(s *Snapshot, r TickReq) Plan {
+	p, _ := TickDone(s, r)
+	return p
 }

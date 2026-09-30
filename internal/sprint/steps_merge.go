@@ -269,38 +269,11 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		for _, id := range landed {
 			lands[id] = true
 		}
-		if d, ok := sprintDone(s, lands, nil, r.Who); ok {
-			last.Notes = append(last.Notes, d)
-		}
+		// A sprint this merge finishes is found done by the tick's done part
+		// (TickDone), which says so and stops the machine.
 		p.Units = append(p.Units, resolveAfter(s, lands, r.Who)...)
 	}
 	return p
-}
-
-// sprintDone is the judgment "the sprint is done", written once by the step
-// that takes the last open primary of the whole sprint out of the open states
-// (landing lands, leaving drops): every primary is landed or off the table,
-// and at least one landed. The dropped count is the streams' control cards'
-// dropped counters, with this step's.
-func sprintDone(s *Snapshot, landing, leaving map[string]bool, who string) (Note, bool) {
-	if len(landing)+len(leaving) == 0 || hasOpen(s.Open, NSprintDone, SprintSubject) {
-		return Note{}, false
-	}
-	for _, st := range []State{Waiting, Ready, Working, Review, Merging} {
-		for _, c := range s.Work.Column(st) {
-			if !landing[c.ID] && !leaving[c.ID] {
-				return Note{}, false
-			}
-		}
-	}
-	landed := len(s.Work.Column(Landed)) + len(landing)
-	dropped := len(leaving)
-	for _, st := range s.Work.Rows() {
-		dropped += s.StreamCtl(st).Int("dropped")
-	}
-	n := judgment(NSprintDone, "", s.Now, 0)
-	n.SprintLevel, n.Who, n.What = true, who, fmt.Sprintf("%d landed, %d dropped", landed, dropped)
-	return n, true
 }
 
 // ResumeReq moves a stopped stream again.

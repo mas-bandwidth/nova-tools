@@ -551,7 +551,7 @@ func TestEveryPartOfTheTickIsADutyAndEveryDutyIsNamedInOrder(t *testing.T) {
 		}
 	}
 	want := []string{refmodel.DutyStrangers, refmodel.DutyPresence, refmodel.DutyResolve, refmodel.DutyResume, refmodel.DutyDeal,
-		refmodel.DutyLevel, refmodel.DutyAsk, refmodel.DutyCheck, refmodel.DutyDeadlines, refmodel.DutyOverdue, refmodel.DutyRemind}
+		refmodel.DutyLevel, refmodel.DutyAsk, refmodel.DutyCheck, refmodel.DutyDeadlines, refmodel.DutyOverdue, refmodel.DutyDone, refmodel.DutyRemind}
 	var got []string
 	for _, d := range refmodel.Duties {
 		got = append(got, d.Name)

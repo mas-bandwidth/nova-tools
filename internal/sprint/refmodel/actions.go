@@ -32,8 +32,9 @@ type AddArgs struct {
 // the choice of each new id's score (the model's Score0, a constant there).
 //
 // Sentinels by position, add --before/--after, a sentinel pulling ready
-// cards back to waiting, and add closing the sprint-done judgment are from
-// the spec (sections 8 and 16), not yet in the model.
+// cards back to waiting are from the spec (section 16), not yet in the
+// model. An add opens no sprint-done judgment to close: the sprint done is
+// the tick's (tickDone, errata 3 amendment 6).
 func Add(s State, a AddArgs, scores map[string]float64) (State, error) {
 	if err := free(s); err != nil {
 		return s, err
@@ -117,7 +118,6 @@ func Add(s State, a AddArgs, scores map[string]float64) (State, error) {
 			n.open(JBlocked, id)
 		}
 	}
-	n.closeOn(SprintSubject, JDone)
 	return n, nil
 }
 
@@ -642,8 +642,9 @@ func Rework(s State, p, m string) (State, error) {
 // Drop is SprintTables.tla Drop(p) (line 478): off the table. Its
 // unfinished work card is withdrawn, its outstanding read cards retire, its
 // merge place goes (the returned place too, spec section 7); work last. A
-// waiting primary that needs it is blocked. Every judgment on it closes. The
-// sprint-done judgment is the spec's (section 8).
+// waiting primary that needs it is blocked. Every judgment on it closes. A
+// sprint it finishes is found done by the tick (tickDone, errata 3 amendment
+// 6).
 func Drop(s State, p string) (State, error) {
 	if err := free(s); err != nil {
 		return s, err
@@ -651,7 +652,6 @@ func Drop(s State, p string) (State, error) {
 	if !s.Placedp(p) || s.InWork(p, Landed) {
 		return s, refuse("%s is not an open primary on the table", p)
 	}
-	doneBefore := s.sprintDone()
 	n := s.Clone()
 	st := n.Primaries[p].Stream
 	for _, id := range Keys(n.Work) {
@@ -681,9 +681,6 @@ func Drop(s State, p string) (State, error) {
 	}
 	n.closeOn(p)
 	n.setPrimary(p, func(x *Primary) { x.State = Off })
-	if !doneBefore && n.sprintDone() {
-		n.open(JDone, SprintSubject)
-	}
 	return n, nil
 }
 
@@ -782,8 +779,8 @@ func Return(s State, p string) (State, error) {
 // green: the batch is the first n of the stream's queued cards in score order
 // (a prefix: section 7, 1), and lands. The same step moves every waiting
 // primary whose needs have all landed to ready and marks reached every
-// sentinel whose needs have all landed (spec section 7), and writes the
-// sprint-done judgment (section 8): the spec's, not the model's.
+// sentinel whose needs have all landed (spec section 7). A sprint it finishes
+// is found done by the tick (tickDone, errata 3 amendment 6).
 func MergeGreen(s State, stream string, batch int) (State, error) {
 	if err := free(s); err != nil {
 		return s, err
@@ -804,7 +801,6 @@ func MergeGreen(s State, stream string, batch int) (State, error) {
 			return s, refuse("stuck %s is a barrier", x)
 		}
 	}
-	doneBefore := s.sprintDone()
 	n := s.Clone()
 	x := n.Streams[stream]
 	x.State = n.streamAfter(stream, SMerging, b, nil)
@@ -816,9 +812,6 @@ func MergeGreen(s State, stream string, batch int) (State, error) {
 		n.setPrimary(p, func(x *Primary) { x.State = Landed })
 	}
 	n.resolveAll()
-	if !doneBefore && n.sprintDone() {
-		n.open(JDone, SprintSubject)
-	}
 	return n, nil
 }
 

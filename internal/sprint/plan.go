@@ -266,16 +266,6 @@ func answered(p *Plan, s *Snapshot, ids []string, who string) {
 	}
 }
 
-// hasOpen says an open judgment of the type is open on the subject.
-func hasOpen(open []Open, typ, subject string) bool {
-	for _, o := range open {
-		if o.Note.Type == typ && o.Subject() == subject {
-			return true
-		}
-	}
-	return false
-}
-
 // decided is the answer to a judgment that stays open (a stopped stream's,
 // until it resumes): recorded, not closed.
 func decided(o Open, what, who string, now time.Time, primaries ...string) Note {

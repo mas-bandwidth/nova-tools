@@ -841,9 +841,8 @@ func Drop(s *Snapshot, r DropReq) Plan {
 		}
 		setStream(&p, s, st, map[string]string{"dropped": itoa(s.StreamCtl(st).Int("dropped") + k)})
 	}
-	if d, ok := sprintDone(s, nil, dropping, r.Who); ok && len(p.Units) > 0 {
-		p.Units[len(p.Units)-1].Notes = append(p.Units[len(p.Units)-1].Notes, d)
-	}
+	// A sprint this drop finishes is found done by the tick's done part
+	// (TickDone), which says so and stops the machine.
 	answered(&p, s, r.Answers, r.Who)
 	return Lawful(p)
 }

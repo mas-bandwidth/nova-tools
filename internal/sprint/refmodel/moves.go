@@ -363,6 +363,8 @@ func noteAttrs(n sprint.Note) []string {
 	flag("sprint_level", n.SprintLevel)
 	flag("stream_level", n.StreamLevel)
 	add("suspects", strings.Join(slices.Sorted(slices.Values(n.Suspects)), ","))
+	add("to", n.To)
+	add("hint", n.Hint)
 	add("who", n.Who)
 	sort.Strings(out)
 	return out
