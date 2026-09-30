@@ -33,6 +33,15 @@ import (
 //     which is where a card quotes what it forbids, runs from its `RULES` line to the first
 //     blank line and is not scanned; every other line of the card is.
 //
+//  3. LIBRARIES CONSIDERED. A card that builds code carries a `Libraries considered:` line
+//     saying what the standard library and the adopted modules offered for the work and why
+//     each was used or not (docs/STANDARD.md, section 7, library first). A card builds code
+//     when a line outside the RULES paragraph runs `go build`, `go test`, `go vet`, `go run`
+//     or `go generate`, or names a `.go` file. A card that builds code without the line draws
+//     `rule-libraries-considered`. The check is the line's presence and that it says
+//     something, never whether what it says is true: a reader names hand-rolled code that a
+//     library already does.
+//
 // WHAT THE TEXT CANNOT SHOW IS NOT CLAIMED. A card that says `Never kill a process you did
 // not start` and then `kill $!` is read as the child's own process; whether the child
 // kills what it did not start is a run's fact, not a card's. The lint checks the card.
@@ -82,6 +91,20 @@ var CardChildRules = []ChildRule{
 	{"report-shape", "Report under 80 lines: PR number and sha, every test package line, what you could not do and why.", "SAFETY.md, DIRTY-TICK-SLICES.md"},
 	{"report-not-done", "\"Not done\" is a welcome report; a green claim you did not run is not.", "SAFETY.md"},
 }
+
+// LibrariesConsideredRule is the token of the line a card that builds code carries.
+const LibrariesConsideredRule = "rule-libraries-considered"
+
+// LibrariesConsideredRemedy is what that token wants, in the remedies' table shape.
+const LibrariesConsideredRemedy = "a card that builds code carries one line `Libraries considered: <what the standard library and the adopted modules offered, and why each was used or not>` (docs/STANDARD.md section 7); search before any helper of more than about thirty lines is written, and name what was found; `nova-swarm template --name card` prints the line"
+
+var (
+	// childLibrariesLine is the line itself: the words, then something after them.
+	childLibrariesLine = regexp.MustCompile(`^[ \t]*(?:[-*][ \t]+)?Libraries considered:[ \t]*\S`)
+	// childBuildsCode is a line outside the RULES paragraph that runs the Go toolchain or
+	// names a Go source file: the card is asked to write code.
+	childBuildsCode = regexp.MustCompile(`(?:^|[^A-Za-z0-9_./-])go[ \t]+(?:build|test|vet|run|generate)\b|[A-Za-z0-9_<>/.-]+\.go\b`)
+)
 
 // childScan is one direct check: the check name, the command it looks for, what to do
 // instead, and the rule it enforces (a name in CardChildRules).
@@ -222,6 +245,7 @@ func init() {
 		}
 		CardChildRemedies[s.Check] = s.Remedy
 	}
+	CardChildRemedies[LibrariesConsideredRule] = LibrariesConsideredRemedy
 }
 
 // ChildRulesParagraph is the RULES paragraph with every rule sentence, one per line: what
@@ -252,21 +276,10 @@ func LintCardChild(raw []byte) []CardHeaderFinding {
 			out = append(out, CardHeaderFinding{Check: "rule-" + r.Name, Line: 1, Excerpt: "missing: " + r.Sentence})
 		}
 	}
-	sc := bufio.NewScanner(bytes.NewReader(raw))
-	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
-	n, inRules := 0, false
-	for sc.Scan() {
-		n++
-		line := strings.TrimRight(sc.Text(), "\r")
-		// the RULES paragraph runs from its line to the first blank line
-		if strings.TrimSpace(line) == "" {
-			inRules = false
-		} else if childRulesHeadRE.MatchString(line) {
-			inRules = true
-		}
-		if inRules {
-			continue
-		}
+	builds, hasLibraries := false, false
+	childLines(raw, func(n int, line string) {
+		builds = builds || childBuildsCode.MatchString(line)
+		hasLibraries = hasLibraries || childLibrariesLine.MatchString(line)
 		for _, sc := range childScans {
 			for _, m := range sc.RE.FindAllStringSubmatchIndex(line, -1) {
 				at := m[2] // the command itself, group 1
@@ -280,8 +293,31 @@ func LintCardChild(raw []byte) []CardHeaderFinding {
 				break
 			}
 		}
+	})
+	if builds && !hasLibraries {
+		out = append(out, CardHeaderFinding{Check: LibrariesConsideredRule, Line: 1, Excerpt: "missing: Libraries considered: <what was found, why used or not>"})
 	}
 	return out
+}
+
+// childLines calls fn with every line of the card outside the RULES paragraph, which runs
+// from its `RULES` line to the first blank line and is where a card quotes what it forbids.
+func childLines(raw []byte, fn func(n int, line string)) {
+	sc := bufio.NewScanner(bytes.NewReader(raw))
+	sc.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	n, inRules := 0, false
+	for sc.Scan() {
+		n++
+		line := strings.TrimRight(sc.Text(), "\r")
+		if strings.TrimSpace(line) == "" {
+			inRules = false
+		} else if childRulesHeadRE.MatchString(line) {
+			inRules = true
+		}
+		if !inRules {
+			fn(n, line)
+		}
+	}
 }
 
 // childClause is the text of line before a command that belongs to the command's own

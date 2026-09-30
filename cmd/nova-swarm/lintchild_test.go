@@ -57,9 +57,10 @@ func TestChildRulesAreAskedForByTheFlag(t *testing.T) {
 			}
 		}
 	}
-	// every rule is missing, and the card's own `go test` without -timeout is a scan hit
-	if want := len(swarm.CardChildRules) + 2; drifts != want {
-		t.Errorf("%d child-rule drifts, want %d (every rule, plus the two `go test` lines without -timeout)\n%s", drifts, want, stdout)
+	// every rule is missing, the card's own `go test` without -timeout is a scan hit, and
+	// the card that runs `go test` carries no Libraries considered line
+	if want := len(swarm.CardChildRules) + 3; drifts != want {
+		t.Errorf("%d child-rule drifts, want %d (every rule, the two `go test` lines without -timeout, and the Libraries considered line)\n%s", drifts, want, stdout)
 	}
 	if !strings.Contains(stdout, "rule-no-redis-server: 1: missing: NEVER start a redis-server on this machine.") {
 		t.Errorf("the missing rule is named with its sentence:\n%s", stdout)

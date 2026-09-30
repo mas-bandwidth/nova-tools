@@ -4,6 +4,9 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // THE CHILD RULES ARE ONE TABLE, AND EVERY ROW IS HELD (lintchild.go).
@@ -62,9 +65,11 @@ func TestChildRulesTableIsWellFormed(t *testing.T) {
 			t.Errorf("scan %s is not a step-<what> token with a remedy", s.Check)
 		}
 	}
-	if want := len(CardChildRules) + len(childScans); len(CardChildRemedies) != want {
-		t.Errorf("the remedy table holds %d tokens, want %d: one per rule and one per scan", len(CardChildRemedies), want)
+	// one per rule, one per scan, and the libraries-considered line
+	if want := len(CardChildRules) + len(childScans) + 1; len(CardChildRemedies) != want {
+		t.Errorf("the remedy table holds %d tokens, want %d: one per rule and one per scan, and the libraries-considered line", len(CardChildRemedies), want)
 	}
+	assert.Contains(t, CardChildRemedies[LibrariesConsideredRule], "Libraries considered:")
 	for _, need := range []string{
 		"gocache", "no-go-clean", "no-redis-server", "no-kill", "go-test-timeout", "no-rm-rf", "no-force-push", "no-rebase",
 		"functional-in-container", "parallel", "class-tests", "no-names", "present-tense", "commit-trailer", "pr-line",
@@ -315,4 +320,37 @@ func containsStep(xs []string) bool {
 		}
 	}
 	return false
+}
+
+// LIBRARIES CONSIDERED (docs/STANDARD.md section 7, library first): a card that builds code
+// carries the line, filled; a card that builds none is not asked for it.
+func TestChildCardThatBuildsCodeCarriesLibrariesConsidered(t *testing.T) {
+	t.Parallel()
+	body := childTemplate(t)
+	const line = "Libraries considered:"
+	start := strings.Index(body, line)
+	require.GreaterOrEqual(t, start, 0, "the card template carries a Libraries considered line")
+	end := start + strings.Index(body[start:], "\n") + 1
+	rules := ChildRulesParagraph()
+	tests := []struct {
+		name string
+		card string
+		want []string
+	}{
+		{"template", body, nil},
+		{"line removed", body[:start] + body[end:], []string{LibrariesConsideredRule}},
+		{"line empty", body[:start] + line + "   \n" + body[end:], []string{LibrariesConsideredRule}},
+		{"line filled", body[:start] + line + " testify for asserts, used; errgroup, not needed\n" + body[end:], nil},
+		{"line bulleted", body[:start] + "- " + line + " none found\n" + body[end:], nil},
+		{"names a go file", "RESULT: x sha=abc\nAdd a helper in internal/x/y.go\n\n" + rules, []string{LibrariesConsideredRule}},
+		{"runs go test", "RESULT: x sha=abc\nRun go test -timeout 600s ./internal/x/\n\n" + rules, []string{LibrariesConsideredRule}},
+		{"builds no code", "RESULT: x sha=abc\nRewrite the README paragraph on seats.\n\n" + rules, nil},
+		{"rules paragraph alone", rules, nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.ElementsMatch(t, tc.want, childChecks(LintCardChild([]byte(tc.card))))
+		})
+	}
 }

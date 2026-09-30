@@ -17,11 +17,15 @@ import (
 // building or working on a tool is meant to be in the one file a harness
 // loads; the ceiling is sized for the standard plus the map with headroom for
 // catalog rows, and a growth past it is shortened at the standard's words or
-// the catalog rows, never by raising the number unread. It is 24 KiB because
+// the catalog rows, never by raising the number unread. It is 26 KiB because
 // the standard carries the whole of what a builder meets: the ten rules never
 // to break, the five onboarding points and every class rule by name, folded in
 // from CONTRIBUTING.md and ONBOARDING.md so there is one standard, not three.
-const MaxRootBytes = 24 * 1024
+// It rose from 24 KiB by two KiB for two rules the standard states as a goal
+// and its checks: every Go test uses testify (section 8), and the standard
+// library and the adopted modules are searched before a helper is written
+// (section 7); the page measures 25.3 KiB with both.
+const MaxRootBytes = 26 * 1024
 
 // StandardDoc is the one source of the standard every tool is built to. The
 // root page embeds it whole, headings one level down.
