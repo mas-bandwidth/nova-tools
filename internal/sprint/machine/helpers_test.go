@@ -180,7 +180,11 @@ func (k *counting) Pipeline(ctx context.Context, items []sprintfn.Item) ([]sprin
 }
 
 // last is the items of the last round trip.
-func (k *counting) last() []sprintfn.Item { k.mu.Lock(); defer k.mu.Unlock(); return k.sent[len(k.sent)-1] }
+func (k *counting) last() []sprintfn.Item {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	return k.sent[len(k.sent)-1]
+}
 
 // loop is a loop over the world with the test rules and builder.
 func (w *world) loop(name string, rules []sprint.Rule, b Budget) *Loop {
@@ -262,15 +266,44 @@ type builderOpts struct {
 
 // testBuild turns a rule's plan into bodies (8.0's step.Build, as far as the
 // tests' plans go): each unit's changes are entries, grouped by table, kind,
-// cells and fields into one entry unless unitEntry, packed greedily into
-// bodies inside the bounds' candidates and request bytes (measured by
-// sprintfn.EncodedSize), each unit whole. The notes, guards, intents and
-// requeues ride the first body; Done rides a plan of one body.
+// cells and fields into one entry unless unitEntry, packed into bodies inside
+// the bounds' candidates (and maxUnits), then each body halved until it is
+// inside the request bytes (measured by sprintfn.EncodedSize), each unit
+// whole. The notes, guards, intents and requeues ride the first body; Done
+// rides a plan of one body.
 func testBuild(o builderOpts) Builder {
 	return func(rp sprint.RulePlan, m sprintfn.Meta, b stepbuild.Bounds) ([]sprintfn.Body, error) {
-		var bodies []sprintfn.Body
-		var cur sprintfn.Body
-		units, cands := 0, 0
+		type unit struct {
+			es []tset.Entry
+			n  int
+		}
+		var us []unit
+		for _, u := range rp.Plan.Units {
+			es, n, err := unitEntries(u)
+			if err != nil {
+				return nil, err
+			}
+			us = append(us, unit{es, n})
+		}
+		var groups [][]unit
+		var cur []unit
+		cands := 0
+		for _, u := range us {
+			if len(cur) > 0 && ((o.maxUnits > 0 && len(cur) >= o.maxUnits) || cands+u.n > b.Candidates) {
+				groups, cur, cands = append(groups, cur), nil, 0
+			}
+			cur, cands = append(cur, u), cands+u.n
+		}
+		if len(cur) > 0 {
+			groups = append(groups, cur)
+		}
+		body := func(g []unit) sprintfn.Body {
+			var es []tset.Entry
+			for _, u := range g {
+				es = appendEntries(es, u.es, o.unitEntry)
+			}
+			return sprintfn.Body{Entries: es}
+		}
 		size := func(body sprintfn.Body) int {
 			n, ref := sprintfn.EncodedSize(testNames.Prefix, &sprintfn.Request{Epoch: "0", Body: body, Meta: m})
 			if ref != nil {
@@ -278,32 +311,27 @@ func testBuild(o builderOpts) Builder {
 			}
 			return n
 		}
-		flush := func() {
-			if len(cur.Entries) != 0 {
-				bodies = append(bodies, cur)
+		var bodies []sprintfn.Body
+		var fit func(g []unit) error
+		fit = func(g []unit) error {
+			bd := body(g)
+			if size(bd) <= b.RequestBytes {
+				bodies = append(bodies, bd)
+				return nil
 			}
-			cur, units, cands = sprintfn.Body{}, 0, 0
+			if len(g) == 1 {
+				return fmt.Errorf("a unit is over %d bytes alone", b.RequestBytes)
+			}
+			if err := fit(g[:len(g)/2]); err != nil {
+				return err
+			}
+			return fit(g[len(g)/2:])
 		}
-		for _, u := range rp.Plan.Units {
-			es, n, err := unitEntries(u)
-			if err != nil {
+		for _, g := range groups {
+			if err := fit(g); err != nil {
 				return nil, err
 			}
-			if units > 0 && ((o.maxUnits > 0 && units >= o.maxUnits) || cands+n > b.Candidates) {
-				flush()
-			}
-			next := cur
-			next.Entries = appendEntries(append([]tset.Entry(nil), cur.Entries...), es, o.unitEntry)
-			if units > 0 && size(next) > b.RequestBytes {
-				flush()
-				next = sprintfn.Body{Entries: appendEntries(nil, es, o.unitEntry)}
-			}
-			if size(next) > b.RequestBytes {
-				return nil, fmt.Errorf("unit %s is over %d bytes alone", u.Key, b.RequestBytes)
-			}
-			cur, units, cands = next, units+1, cands+n
 		}
-		flush()
 		if len(bodies) == 0 && (len(rp.Notes)+len(rp.Done)+len(rp.Requeue)+len(rp.Guards)+len(rp.Intents)) != 0 {
 			bodies = []sprintfn.Body{{}}
 		}

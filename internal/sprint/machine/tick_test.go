@@ -1,8 +1,11 @@
 package machine
 
 import (
-	"context"
+	"fmt"
+	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/tset"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/sprintfn"
@@ -107,6 +110,230 @@ func TestTickBusyAtMostThree(t *testing.T) {
 	if rep.RoundTrips > 3 || w.place("q1") != "s1:working" {
 		t.Fatalf("the next tick: %d round trips, q1 at %q", rep.RoundTrips, w.place("q1"))
 	}
-	_ = context.Background
-	_ = sprintfn.PopMax
+}
+
+// bigRule is a rule whose plan, whatever it reads, moves n cards of s1 (ids
+// the tests make up: the steps are refused, which these tests do not look
+// at), one unit each, with a field of pad bytes; each unit its own entry when
+// apart.
+func bigRule(name string, n, pad int) sprint.Rule {
+	return testRule(name, headRead(sprint.IndexElig, 1, []string{"kind"}, nil),
+		func(s *sprint.Snapshot, keys []sprint.AgendaKey, now sprint.Now) sprint.RulePlan {
+			var rp sprint.RulePlan
+			set := map[string]string{"attempt": "0"}
+			if pad > 0 {
+				set["pad"] = strings.Repeat("x", pad)
+			}
+			for i := 0; i < n; i++ {
+				rp.Plan.Units = append(rp.Plan.Units, moveUnit(sprint.Work, fmt.Sprintf("r%d", i), "s1", "waiting", "ready", set))
+			}
+			rp.Done = keys
+			return rp
+		})
+}
+
+// busyWorld is a world with a loop that has learned the cursor, and a fresh
+// card in s1: its line queues resolve:s1 and deal (2.1).
+func busyWorld(t *testing.T, rules []sprint.Rule, b Budget, o builderOpts) (*world, *Loop, *counting) {
+	t.Helper()
+	w := newWorld(t)
+	w.rows("s1")
+	k := &counting{c: w.tw}
+	l, err := NewLoop(Config{Names: testNames, Owner: "token-a", Name: "a", Rules: rules, Build: testBuild(o), Budget: b})
+	if err != nil {
+		t.Fatal(err)
+	}
+	w.tick(l, k)
+	w.verb(create("s1:ready", fresh(), "p1"))
+	return w, l, k
+}
+
+// TestTickRoundRobin: every rule with keys gets a step before any gets a
+// second, so a release of 100,000 does not starve a deal (1.4.2;
+// SprintEvents.tla Rounds): the release's first step, then the deal's, then
+// the release's next steps until the budget of 10,000 changes is spent.
+func TestTickRoundRobin(t *testing.T) {
+	t.Parallel()
+	w, l, k := busyWorld(t, []sprint.Rule{bigRule("resolve", 100000, 0), dealRule(64)}, Budget{}, builderOpts{})
+	rep := w.tick(l, k)
+	want := []string{"resolve", "deal", "resolve", "resolve", "resolve"}
+	if strings.Join(rep.Dealt, ",") != strings.Join(want, ",") {
+		t.Fatalf("dealt %v, want %v", rep.Dealt, want)
+	}
+	if rep.Changes > DefaultBudget().Changes || rep.Changes != 4*2000+1 {
+		t.Fatalf("changes %d: the release's four steps of 2,000 and the deal's one", rep.Changes)
+	}
+	if w.place("p1") != "s1:working" {
+		t.Fatalf("the deal was starved: p1 is at %s", w.place("p1"))
+	}
+	if rep.RoundTrips != 3 {
+		t.Fatalf("%d round trips", rep.RoundTrips)
+	}
+}
+
+// TestTickReadsWithinBounds: each rule's keys are cut to what its read fits in
+// Layer 1's read bounds by the queries' declared costs, and what does not fit
+// stays queued: the read never costs a fourth round trip (1.4.2).
+func TestTickReadsWithinBounds(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t)
+	streams := ids("s", 200)
+	w.rows(streams...)
+	var es []tset.Entry
+	for i, s := range streams {
+		es = append(es, create(s+":waiting", waiting(), fmt.Sprintf("q%d", i+1)))
+	}
+	w.verb(es...)
+	perKey := func(k sprint.AgendaKey) sprint.SprintQ {
+		return sprint.SprintQ{Kind: sprint.QueryRelated, Table: sprint.Work, Fields: []string{"kind", "open"},
+			Source: sprint.IDSource{Kind: sprint.SourceHead, Key: sprint.IndexElig + ":" + strings.TrimPrefix(k.Key, "resolve:"), Limit: 60}}
+	}
+	release := testRule("resolve", func(keys []sprint.AgendaKey, b sprint.ReadBounds, h int) (sprint.ReadPlan, []sprint.AgendaKey) {
+		take, rest := sprint.FitKeys(keys, func(k sprint.AgendaKey) sprint.Cost { return sprint.QueryCost(perKey(k)) }, sprint.Cost{}, b, h)
+		var rp sprint.ReadPlan
+		for _, k := range take {
+			rp.Sprint = append(rp.Sprint, perKey(k))
+		}
+		return rp, rest
+	}, func(s *sprint.Snapshot, keys []sprint.AgendaKey, now sprint.Now) sprint.RulePlan {
+		var rp sprint.RulePlan
+		for _, c := range s.Work.LoadedCards() {
+			rp.Plan.Units = append(rp.Plan.Units, moveUnit(sprint.Work, c.ID, c.Row, "waiting", "ready", map[string]string{"attempt": "0"}))
+		}
+		rp.Done = keys
+		return rp
+	})
+	k := &counting{c: w.tw}
+	l := w.loop("a", []sprint.Rule{release}, Budget{})
+	w.tick(l, k)
+	released := 0
+	for i := 0; i < 4 && released < 200; i++ {
+		w.clk.add(TickEvery)
+		rep := w.tick(l, k)
+		if rep.RoundTrips > 3 {
+			t.Fatalf("tick %d took %d round trips", i, rep.RoundTrips)
+		}
+		if i == 0 && (rep.Read["resolve"] != 10000/60 || rep.Left["resolve"] != 200-10000/60) {
+			t.Fatalf("the first read took %d keys and left %d; want %d and %d", rep.Read["resolve"], rep.Left["resolve"], 10000/60, 200-10000/60)
+		}
+		for _, round := range k.sent[len(k.sent)-rep.RoundTrips:] {
+			for _, it := range round {
+				if it.Read == nil || len(it.Read.Sprint) == 0 {
+					continue
+				}
+				var c sprint.Cost
+				for _, q := range it.Read.Sprint {
+					if q.Kind != sprint.QueryRelated {
+						continue // RT1's sprint-key reads
+					}
+					sq, ref := sprintfn.DecodeSprintQ(q)
+					if ref != nil {
+						t.Fatal(ref)
+					}
+					c = c.Add(sprint.QueryCost(sq))
+				}
+				if b := sprint.L1ReadBounds(); len(it.Read.Sprint) > b.Queries || c.Records > b.Records || c.RangeIDs > b.RangeIDs {
+					t.Fatalf("a read of %d queries declares %+v, over %+v", len(it.Read.Sprint), c, b)
+				}
+			}
+		}
+		released = 0
+		for _, s := range streams {
+			if len(w.zset("elig:"+s+"@0")) == 0 {
+				released++
+			}
+		}
+	}
+	if released != 200 {
+		t.Fatalf("%d of 200 streams released in four ticks", released)
+	}
+}
+
+// TestTickBudgetEntriesAndBytes: RT3 carries at most 2,500 entries and notes,
+// 2 MiB of requests, 10,000 changes and 32 steps a tick (1.0, the tick budget
+// and "Bytes"), whatever the plans hold: what is not dealt stays for a later
+// tick.
+func TestTickBudgetEntriesAndBytes(t *testing.T) {
+	t.Parallel()
+	sentBytes := func(t *testing.T, k *counting) (bytes, entries, steps int) {
+		for _, it := range k.last() {
+			n, ref := sprintfn.EncodedSize(testNames.Prefix, it.Step)
+			if ref != nil {
+				t.Fatal(ref)
+			}
+			bytes, entries, steps = bytes+n, entries+len(it.Step.Body.Entries)+len(it.Step.Body.Notes), steps+1
+		}
+		return
+	}
+	t.Run("entries", func(t *testing.T) {
+		t.Parallel()
+		w, l, k := busyWorld(t, []sprint.Rule{bigRule("resolve", 3000, 0)}, Budget{}, builderOpts{maxUnits: 100, unitEntry: true})
+		rep := w.tick(l, k)
+		_, entries, steps := sentBytes(t, k)
+		if rep.EntriesNotes != 2500 || entries != 2500 || steps != 25 {
+			t.Fatalf("dealt %d entries and notes in %d steps (report %d); want 2,500 in 25", entries, steps, rep.EntriesNotes)
+		}
+	})
+	t.Run("bytes", func(t *testing.T) {
+		t.Parallel()
+		w, l, k := busyWorld(t, []sprint.Rule{bigRule("resolve", 1000, 4000)}, Budget{}, builderOpts{maxUnits: 100, unitEntry: true})
+		rep := w.tick(l, k)
+		bytes, _, steps := sentBytes(t, k)
+		if bytes > 2<<20 || rep.RequestBytes != bytes || steps < 4 || steps > 5 {
+			t.Fatalf("dealt %d bytes in %d steps (report %d); want at most 2 MiB", bytes, steps, rep.RequestBytes)
+		}
+	})
+	t.Run("steps", func(t *testing.T) {
+		t.Parallel()
+		w, l, k := busyWorld(t, []sprint.Rule{bigRule("resolve", 40, 0)}, Budget{}, builderOpts{maxUnits: 1})
+		w.tick(l, k)
+		if _, _, steps := sentBytes(t, k); steps != 32 {
+			t.Fatalf("dealt %d steps; want 32", steps)
+		}
+	})
+}
+
+// TestTickPageLimitFromBytes: the ingest's page limit is set each tick from
+// the last page's bytes a line, to expect at most 2 MiB, and at least one
+// line (1.0, "Bytes"; lines takes no byte limit).
+func TestTickPageLimitFromBytes(t *testing.T) {
+	t.Parallel()
+	for _, pageBytes := range []int{2 << 20, 1000} {
+		w := newWorld(t)
+		w.rows("s1")
+		long := make([]string, 1000)
+		for i := range long {
+			long[i] = fmt.Sprintf("%0200d", i)
+		}
+		w.verb(create("s1:waiting", waiting(), long...))
+		b := DefaultBudget()
+		b.PageBytes = pageBytes
+		k := &counting{c: w.tw}
+		l := w.loop("a", nil, b)
+		w.tick(l, k)
+		lines := w.log.Lines(testNames.Prefix, "0")
+		want := min(5000, pageBytes/assumedLineBytes) // before any page: the assumed bytes a line
+		sawOne := false
+		for i := 0; i < 3; i++ {
+			before := seqOf(l.cur)
+			w.clk.add(TickEvery)
+			rep := w.tick(l, k)
+			if rep.PageLimit != want || k.sent[len(k.sent)-rep.RoundTrips][1].Page.Queries[0].Limit != want {
+				t.Fatalf("page bytes %d, tick %d: the page's limit is %d; want %d", pageBytes, i, rep.PageLimit, want)
+			}
+			sawOne = sawOne || want == 1
+			after := seqOf(l.cur)
+			if after == before {
+				break
+			}
+			total := 0
+			for _, line := range lines[before:after] {
+				total += len(line)
+			}
+			want = max(1, min(5000, pageBytes/(total/int(after-before))))
+		}
+		if pageBytes == 1000 && !sawOne {
+			t.Fatal("a line over the page's bytes did not bring the limit to one line")
+		}
+	}
 }
