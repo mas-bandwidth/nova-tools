@@ -47,6 +47,16 @@ func TestNewPathAddNeedsOnAStore(t *testing.T) {
 			t.Fatalf("%s on a store: exit %d\n%s", line, code, out)
 		}
 	}
+	// a need that closes a loop through the gates is refused on a store too
+	// (M1): a-3 needs b-4, behind b's gate, and b-loop needs a-3 before the gate
+	for _, line := range []string{"add --stream b --sentinel b-gate", "add --stream b --count 2", "add --stream a a-4 --needs b-4"} {
+		if code, out := run(line); code != 0 {
+			t.Fatalf("%s on a store: exit %d\n%s", line, code, out)
+		}
+	}
+	if code, out := run("add --stream b b-loop --needs a-4 --after b-1"); code != exitRefused || !strings.Contains(out, "a-4 needs b-4") || !strings.Contains(out, "b-gate") {
+		t.Errorf("the add that closes a loop through the gates on a store: exit %d\n%s", code, out)
+	}
 }
 
 // TestNewPathDealsOnAStore (the 4806 read, B1): the machine deals through the

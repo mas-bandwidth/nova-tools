@@ -56,6 +56,8 @@ const (
 	fieldNeeds   = "needs"   // a card's needs, a comma list
 	fieldMember  = "member"  // the member a card names
 	fieldPrimary = "primary" // the primary a card of a member's cells names (FollowPrimary)
+	fieldKind    = "kind"    // a card's kind: work, or sentinel (needchain's place in line)
+	kindSentinel = "sentinel"
 )
 
 // The bounds of one query's own reads (L1 6, 7).
@@ -1279,8 +1281,10 @@ func queryProbes(q sprint.SprintQ) int {
 		// HMGET of the table's property hash)
 		return 1 + unitsOf(q) + unitsOf(q)*maxTableColumns + len(q.Props)
 	case sprint.QueryNeedchain:
-		// the quarantine of the source's ids, and of every need of every card read
-		return found + n + q.Limit*followMaxNeeds
+		// the quarantine of the source's ids, and of every need of every card
+		// read; for each card read its place read, and the quarantine of the ids
+		// the place reads return (at most the limit in all)
+		return found + n + q.Limit*followMaxNeeds + 2*q.Limit
 	case sprint.QueryJnote:
 		// for each note the quarantine of its subjects, and for each an HLEN and an
 		// HMGET of its own field

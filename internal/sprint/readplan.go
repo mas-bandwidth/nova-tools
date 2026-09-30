@@ -486,10 +486,11 @@ var queryCosts = map[string]func(q SprintQ) Cost{
 		n, _ := q.Source.size()
 		return Cost{Bytes: n * FieldBytes}
 	},
-	// up to max records.
+	// up to max records, and the ids the place reads return, at most the
+	// limit in all (errata 3 amendment 7)
 	QueryNeedchain: func(q SprintQ) Cost {
 		_, ranged := q.Source.size()
-		return recordsCost(q.Limit, ranged, q.Fields)
+		return recordsCost(q.Limit, ranged+q.Limit, q.Fields)
 	},
 	// 1 + subjects a note.
 	QueryJnote: func(q SprintQ) Cost {

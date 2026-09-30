@@ -106,8 +106,8 @@ func TestQueryCostTable(t *testing.T) {
 		{"fleet, three", SprintQ{Kind: QueryFleet, Units: 3}, Cost{Records: 3}},
 		{"readers, the most", SprintQ{Kind: QueryReaders}, Cost{Records: MaxReaders}},
 		{"readers, seven", SprintQ{Kind: QueryReaders, Units: 7}, Cost{Records: 7}},
-		// needchain: up to max records.
-		{"needchain", SprintQ{Kind: QueryNeedchain, Source: list(50), Limit: 300}, Cost{Records: 300}},
+		// needchain: up to max records, and its place reads up to max ids.
+		{"needchain", SprintQ{Kind: QueryNeedchain, Source: list(50), Limit: 300}, Cost{Records: 300, RangeIDs: 300}},
 		// jnote: 1 + subjects a note.
 		{"jnote, five subjects", SprintQ{Kind: QueryJnote, Source: list(3), Subjects: 5}, Cost{Records: 18}},
 		{"jnote, the most", SprintQ{Kind: QueryJnote, Source: list(1)}, Cost{Records: 1 + MaxAboutIDs}},

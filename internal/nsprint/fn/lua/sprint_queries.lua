@@ -61,6 +61,7 @@ do
   -- is read when `other` is empty, as IT11's held rule reads the two.
   Q.F_ATTEMPT, Q.F_RCARDS, Q.F_NEEDS, Q.F_MEMBER = 'attempt', 'rcards', 'needs', 'member'
   Q.F_PRIMARY = 'primary'
+  Q.F_KIND = 'kind'
   Q.C_STATE, Q.C_CAUSE, Q.C_OTHER, Q.C_NEED = 'state', 'cause', 'other', 'need_card'
   Q.STOPPED, Q.CROSS = 'stopped', 'cross'
 
@@ -270,8 +271,9 @@ do
       if units == 0 then units = kind == 'fleet' and Q.MAX_MEMBERS or Q.MAX_READERS end
       return units, 0
     elseif kind == 'needchain' then
+      -- the place reads return at most the limit's ids in all (amendment 7)
       local _, ranged = Q.source_size(q.src)
-      return q.limit, ranged
+      return q.limit, ranged + q.limit
     elseif kind == 'jnote' then
       local n, ranged = Q.source_size(q.src)
       local subjects = q.subjects or 0
@@ -373,7 +375,7 @@ do
     elseif kind == 'waiters' then
       return found + 2 * n + n * (1 + q.limit)
     elseif kind == 'needchain' then
-      return found + n + q.limit * Q.MAX_NEEDS
+      return found + n + q.limit * Q.MAX_NEEDS + 2 * q.limit
     elseif kind == 'jnote' then
       local subjects = q.subjects or 0
       if subjects == 0 then subjects = Q.MAX_ABOUT end
@@ -1506,6 +1508,7 @@ do
     local visited, start = {}, {}
     for i = 1, #frontier do visited[frontier[i]] = true; start[frontier[i]] = true end
     local items, read = {}, 0
+    local place_left, place_cut = q.limit, false
     while #frontier > 0 and read < q.limit do
       local batch, rest = {}, {}
       local room = q.limit - read
@@ -1513,7 +1516,7 @@ do
         if i <= room then batch[#batch + 1] = frontier[i] else rest[#rest + 1] = frontier[i] end
       end
       local recs
-      recs, err = Q.records(ctx, Q.WORK, batch, Q.union(q.fields, nil, {Q.F_NEEDS}), index)
+      recs, err = Q.records(ctx, Q.WORK, batch, Q.union(q.fields, nil, {Q.F_NEEDS, Q.F_KIND}), index)
       if err then return nil, err end
       read = read + #batch
       local nxt = {}
@@ -1531,6 +1534,14 @@ do
             for _, n in ipairs(needs) do
               if not visited[n] then visited[n] = true; nxt[#nxt + 1] = n end
             end
+            local place, cut
+            place, cut, err = Q.place_needs(ctx, r, place_left, index)
+            if err then return nil, err end
+            place_left = place_left - #place
+            place_cut = place_cut or cut
+            for _, n in ipairs(place) do
+              if not visited[n] then visited[n] = true; nxt[#nxt + 1] = n end
+            end
           end
         end
         local ok
@@ -1544,9 +1555,31 @@ do
       for i = 1, #rest do frontier[#frontier + 1] = rest[i] end
       for i = 1, #nxt do frontier[#frontier + 1] = nxt[i] end
     end
-    res.cut = #frontier > 0
+    res.cut = #frontier > 0 or place_cut
     res.items, res.left_out = Q.array(items), Q.array(left.list)
     return res, nil
+  end
+
+  -- What a waiting card waits for by its place in line (errata 3 amendment 7;
+  -- sprintfn placeNeeds): for a sentinel, the waiting cards of its stream below
+  -- its score; for another card, the stream's open sentinels below its score
+  -- (sent:<s>). One range read of at most left ids; cut when it held more, or
+  -- when nothing is left.
+  function Q.place_needs(ctx, r, left, index)
+    if type(r.score) ~= 'string' or r.score == '' then return {}, false, nil end
+    if left <= 0 then return {}, true, nil end
+    local below = '(' .. r.score
+    local key
+    if Q.field(r, Q.F_KIND) == 'sentinel' then
+      key = ctx.cell_key(Q.WORK, ctx.request_epoch, r.place.row, Q.WAITING)
+    else
+      key = Q.key(ctx, 'sent:' .. r.place.row)
+    end
+    local head, err = Q.head_of(ctx, key, '-inf', below, left, index)
+    if err then return nil, nil, err end
+    local ids = {}
+    for i = 1, #head.ids do ids[i] = head.ids[i] end
+    return ids, head.has_more == true, nil
   end
 
   function Q.jnote(ctx, q, index)

@@ -564,7 +564,9 @@ func init() {
 			item: "the command (R8's driver)", local: (*app).cmdPlay},
 
 		// No item on the stack builds these yet.
-		{name: "check", item: "IT26, verbs.Check (after)", call: stubbed("IT26, verbs.Check (after)")},
+		{name: "check", item: "IT26's rule 11 (errata 3 amendment 7)", call: func(ctx context.Context, e *spverbs.Env, _ *parsed) (spverbs.Result, error) {
+			return spverbs.Check(ctx, e)
+		}},
 		{name: "remove", syntax: "--stream <s>[,<s>...] --confirm sprint | --abort --op <op>", class: classCoordinator, item: "IT27, verbs.Remove (after; AL6)",
 			flags: []flagDef{{name: "stream", usage: "the streams to remove, comma separated"}, {name: "confirm", usage: "the sprint's name, sprint, to confirm"},
 				{name: "abort", kind: kBool, usage: "with --op: end a remove in parts"}},

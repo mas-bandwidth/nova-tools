@@ -640,4 +640,82 @@ func (res Reservation) Makes(r AddReq, id string) bool {
 type ChainCard struct {
 	ID    string
 	Needs []string
+	// Start says the card is one the add names as a need; Waiting that it waits
+	// (in the work table's waiting cell), Stream and Score its place, and
+	// Sentinel that it is a stop (errata 3 amendment 7: what its place in line
+	// makes it wait for).
+	Start, Waiting, Sentinel bool
+	Stream                   string
+	Score                    float64
+}
+
+// AddPlaceCycle is the add's check of a cycle through the gates (errata 3
+// amendment 7; the new path's half of cycle.go's walk): the cards the add
+// places in stream at a score above after wait for their needs, and are waited
+// for by their place in line: every open sentinel of the stream after them
+// (and, for a sentinel the add places, every card after it). A card of the
+// needs walk (the needchain, which followed the named needs and the places in
+// line) that is such a card closes a loop through the add's cards. The loop is
+// named from the need the add names, by the walk's own edges, to that card:
+// "" is no loop.
+func AddPlaceCycle(chain []ChainCard, placed []string, stream string, after float64, sentinel bool) string {
+	byID := make(map[string]*ChainCard, len(chain))
+	for i := range chain {
+		byID[chain[i].ID] = &chain[i]
+	}
+	closes := func(c *ChainCard) bool {
+		return c.Waiting && c.Stream == stream && c.Score > after && (c.Sentinel || sentinel)
+	}
+	// what a waiting card of the walk waits for: its named needs, and its place
+	// (a sentinel: the waiting cards of its stream before it; another card: the
+	// sentinels of its stream before it)
+	edges := func(c *ChainCard) []string {
+		if !c.Waiting {
+			return nil
+		}
+		out := append([]string(nil), c.Needs...)
+		for i := range chain {
+			o := &chain[i]
+			if o.Waiting && o.Stream == c.Stream && o.Score < c.Score && (c.Sentinel || o.Sentinel) {
+				out = append(out, o.ID)
+			}
+		}
+		return out
+	}
+	parent := map[string]string{}
+	var queue []string
+	for i := range chain {
+		if chain[i].Start {
+			parent[chain[i].ID] = ""
+			queue = append(queue, chain[i].ID)
+		}
+	}
+	for len(queue) > 0 {
+		id := queue[0]
+		queue = queue[1:]
+		c := byID[id]
+		if c == nil {
+			continue
+		}
+		if closes(c) {
+			var path []string
+			for at := id; at != ""; at = parent[at] {
+				path = append([]string{CardID(at)}, path...)
+			}
+			names := make([]string, len(placed))
+			for i, p := range placed {
+				names[i] = CardID(p)
+			}
+			first := strings.Join(names, ", ")
+			return fmt.Sprintf("the needs would make a cycle through the gates: %s needs %s, which needs %s by its place in line (%s is placed before it in stream %s: a card behind a sentinel needs it, and a sentinel needs every card of its stream before it)",
+				first, strings.Join(path, " needs "), first, first, stream)
+		}
+		for _, n := range edges(c) {
+			if _, seen := parent[n]; !seen {
+				parent[n] = id
+				queue = append(queue, n)
+			}
+		}
+	}
+	return ""
 }
