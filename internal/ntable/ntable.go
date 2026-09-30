@@ -267,6 +267,10 @@ type Table struct {
 	HiddenTable bool     // the whole table kept and read, not drawn by watch (set --hidden / --visible)
 	Sort        string   // the standing row sort (row sort --keep): name, -name, label, -label; empty is by hand
 	Rows        []Row
+	// Props are the table's properties at the snapshot's epoch, name -> value
+	// (nil when it has none): values a batch writes with its members, such as
+	// a rolling index (L1 contract amendment, table properties).
+	Props map[string]string
 }
 
 // IsHidden is whether a column is kept but not drawn.
@@ -332,6 +336,10 @@ func EpochPrefix(table string, epoch uint64) string {
 }
 
 func RowsKeyAt(table string, epoch uint64) string { return EpochPrefix(table, epoch) + ":rows" }
+
+// PropsKeyAt is the table's properties at the epoch (L1 contract amendment,
+// table properties): a hash of name -> value beside the rows key.
+func PropsKeyAt(table string, epoch uint64) string { return EpochPrefix(table, epoch) + ":props" }
 func RowKeyAt(table, row string, epoch uint64) string {
 	return EpochPrefix(table, epoch) + ":row:" + row
 }

@@ -210,7 +210,7 @@ func checkSprintQuery(q SprintQuery) *Refusal {
 // may not take (E6: a duplicate kind is CONFIG in the store; here it is the
 // caller's fault).
 var lowerKinds = map[string]bool{"range": true, "count": true, "rcount": true, "ids": true,
-	"rows": true, "done": true, "last": true, "lines": true, "cardlines": true}
+	"rows": true, "done": true, "last": true, "lines": true, "cardlines": true, "props": true}
 
 // checkPage holds a page plan to errata E2: Mode "page", exactly one Kind
 // "lines" query.

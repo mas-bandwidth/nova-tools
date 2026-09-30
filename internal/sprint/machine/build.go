@@ -351,6 +351,9 @@ func carried(rp sprint.RulePlan) error {
 	if len(p.Notes)+len(p.Closes)+len(p.Updates) != 0 {
 		return notCarried("the plan's legacy notes, closes or updates (a rule's notes are RulePlan.Notes)")
 	}
+	if len(p.Props) != 0 {
+		return notCarried("the plan's table properties (tset/1 prop entries) have no wire in the sprint part yet")
+	}
 	for _, u := range p.Units {
 		if len(u.Bumps)+len(u.Notes)+len(u.Closes) != 0 {
 			return notCarried("unit %s: bumps, notes or closes of a unit", u.Key)

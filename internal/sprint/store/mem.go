@@ -86,10 +86,11 @@ type memTable struct {
 	ops     map[string]memOp
 }
 
-// memEpoch is a table's rows and text cells at one epoch.
+// memEpoch is a table's rows, text cells and properties at one epoch.
 type memEpoch struct {
 	rows  []string
 	texts map[string]map[string]string
+	props map[string]string // the table's properties (L1 contract amendment, table properties)
 }
 
 type memMember struct {
@@ -253,6 +254,13 @@ func (m *Mem) Shapes(_ context.Context, tables []string) ([]ntable.Table, error)
 		s.Revision, s.Epoch = t.rev, e
 		s.Rows = nil
 		ep := t.at(e)
+		s.Props = nil
+		if len(ep.props) > 0 {
+			s.Props = make(map[string]string, len(ep.props))
+			for k, v := range ep.props {
+				s.Props[k] = v
+			}
+		}
 		for _, r := range ep.rows {
 			row := ntable.NewRow(s, r)
 			row.Texts = map[string]string{}
@@ -403,12 +411,46 @@ func (m *Mem) Apply(_ context.Context, man ntable.BatchManifest) (ntable.Receipt
 	if man.ExpectedTableRevision != strconv.FormatUint(t.rev, 10) {
 		return ntable.Receipt{}, refusal("REVISION", fmt.Sprintf("table revision mismatch: expected %s, observed %d", man.ExpectedTableRevision, t.rev))
 	}
+	props := t.at(active).props
+	for name, v := range man.PropExpect {
+		if cur, ok := props[name]; !ok || cur != v {
+			return ntable.Receipt{}, refusal("PROPGUARD", "table "+man.Table+" property "+name)
+		}
+	}
+	for _, name := range man.PropAbsent {
+		if _, ok := props[name]; ok {
+			return ntable.Receipt{}, refusal("PROPGUARD", "table "+man.Table+" property "+name)
+		}
+	}
+	changedProps := map[string]string{}
+	held := len(props)
+	for name, v := range man.Props {
+		if cur, ok := props[name]; !ok || cur != v {
+			if !ok {
+				held++
+			}
+			changedProps[name] = v
+		}
+	}
+	if held > ntable.LimitTableProps {
+		return ntable.Receipt{}, refusal("LIMIT", fmt.Sprintf("properties per table: bound %d, observed %d", ntable.LimitTableProps, held))
+	}
 	for _, e := range man.Members {
 		if err := t.judge(active, e); err != nil {
 			return ntable.Receipt{}, err
 		}
 	}
 	delta := &ntable.BatchDelta{OperationID: man.OperationID, Actor: man.Actor, SelectedCount: len(man.Members)}
+	if len(changedProps) > 0 {
+		ep := t.at(active)
+		if ep.props == nil {
+			ep.props = map[string]string{}
+		}
+		for name, v := range changedProps {
+			ep.props[name] = v
+		}
+		delta.Props = changedProps
+	}
 	for _, e := range man.Members {
 		d, changed := t.commit(active, e)
 		if changed {
@@ -422,7 +464,7 @@ func (m *Mem) Apply(_ context.Context, man ntable.BatchManifest) (ntable.Receipt
 	t.rev++
 	t.wrote[active] = true
 	outcome := "changed"
-	if delta.ChangedCount == 0 {
+	if delta.ChangedCount == 0 && len(changedProps) == 0 {
 		outcome = "noop"
 	}
 	m.seq++
