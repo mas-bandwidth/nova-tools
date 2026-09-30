@@ -105,17 +105,20 @@ type Config struct {
 	Reader bool   // run the readers-table loop instead of the fleet's
 }
 
-// launch is one child and the claim it was started for: the card at the
-// generation (a read: the attempt) and the epoch of the packet it was handed,
-// so its result settles that claim and no other (a card cleared and dealt
-// again is a new claim, and an old child's result is reaped, never reported).
+// launch is one child and the claim it was started for: retaining the launch's
+// epoch, gen, table, member, and packet, so its result settles that claim and
+// no other (a card cleared and dealt again is a new claim, and an old child's
+// result is fenced or reaped, never reported against a mismatched claim).
 type launch struct {
 	child   Child
 	gen     int
 	attempt int
 	epoch   uint64
 	branch  string
+	table   string
+	member  string
 	spent   bool // a read whose child ended with no verdict: not ours to report, not run again until the sprint moves the card
+	packet  Packet
 }
 
 // Member is the loop's state: the children running, by card id.
@@ -187,26 +190,59 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 			continue
 		}
 		l, ours := m.running[id]
-		if ours && c.Packet != nil && (l.epoch != c.Packet.Epoch || (!m.cfg.Reader && l.gen != c.Packet.Gen) || (m.cfg.Reader && l.attempt != c.Packet.Attempt)) {
-			// the claim moved under the child (a clear, a redeal): its result
-			// is nobody's; it is reaped when it ends and the new claim is run
-			if !l.child.Done() {
-				continue
+		if ours {
+			mismatched := false
+			if c.Gen != 0 && l.gen != 0 && c.Gen != l.gen {
+				mismatched = true
 			}
-			fmt.Fprintf(m.out, "reap %s: the claim moved (epoch %d gen %d attempt %d, now epoch %d gen %d attempt %d)\n", id, l.epoch, l.gen, l.attempt, c.Packet.Epoch, c.Packet.Gen, c.Packet.Attempt)
-			delete(m.running, id)
-			ours = false
+			if c.Packet != nil && c.Packet.Gen != 0 && l.gen != 0 && c.Packet.Gen != l.gen {
+				mismatched = true
+			}
+			if q.Epoch != 0 && l.epoch != 0 && q.Epoch != l.epoch {
+				mismatched = true
+			}
+			if c.Packet != nil && c.Packet.Epoch != 0 && l.epoch != 0 && c.Packet.Epoch != l.epoch {
+				mismatched = true
+			}
+			if m.cfg.Reader && c.Packet != nil && c.Packet.Attempt != 0 && l.attempt != 0 && c.Packet.Attempt != l.attempt {
+				mismatched = true
+			}
+			if mismatched {
+				// the claim moved under the child (a clear, a redeal): its result
+				// is nobody's; it is reaped when it ends and the new claim is run
+				if !l.child.Done() {
+					continue
+				}
+				fmt.Fprintf(m.out, "reap %s: the claim moved (epoch %d gen %d attempt %d, now epoch %d gen %d attempt %d)\n", id, l.epoch, l.gen, l.attempt, q.Epoch, c.Gen, attemptOf(c.Packet))
+				delete(m.running, id)
+				ours = false
+			}
 		}
 		if !ours {
 			if c.Packet == nil {
 				continue
 			}
-			if m.start(*c.Packet) {
+			pkt := *c.Packet
+			if pkt.Gen == 0 && c.Gen != 0 {
+				pkt.Gen = c.Gen
+			}
+			if pkt.Epoch == 0 {
+				pkt.Epoch = q.Epoch
+			}
+			if m.start(pkt) {
 				acted++
 			}
 			continue
 		}
 		if l.spent || !l.child.Done() {
+			continue
+		}
+		if (l.gen != 0 && c.Gen != 0 && c.Gen != l.gen) ||
+			(c.Packet != nil && c.Packet.Gen != 0 && l.gen != 0 && c.Packet.Gen != l.gen) ||
+			(q.Epoch != 0 && l.epoch != 0 && q.Epoch != l.epoch) ||
+			(c.Packet != nil && c.Packet.Epoch != 0 && l.epoch != 0 && c.Packet.Epoch != l.epoch) {
+			fmt.Fprintf(m.out, "fence %s: launch identity mismatch (launch gen=%d epoch=%d, queue gen=%d epoch=%d)\n", id, l.gen, l.epoch, c.Gen, q.Epoch)
+			delete(m.running, id)
 			continue
 		}
 		r := l.child.Result()
@@ -325,9 +361,37 @@ func (m *Member) start(p Packet) bool {
 		fmt.Fprintf(m.out, "start %s: %v\n", p.Card, err)
 		return false
 	}
-	m.running[p.Card] = launch{child: ch, gen: p.Gen, attempt: p.Attempt, epoch: p.Epoch, branch: p.Branch}
+	epoch := p.Epoch
+	if epoch == 0 {
+		epoch = m.epoch
+	}
+	table := "fleet"
+	if m.cfg.Reader {
+		table = "readers"
+	}
+	member := m.cfg.As
+	if p.As != "" {
+		member = p.As
+	}
+	m.running[p.Card] = launch{
+		child:   ch,
+		gen:     p.Gen,
+		attempt: p.Attempt,
+		epoch:   epoch,
+		branch:  p.Branch,
+		table:   table,
+		member:  member,
+		packet:  p,
+	}
 	fmt.Fprintf(m.out, "start %s attempt=%d gen=%d running=%d/%d\n", p.Card, p.Attempt, p.Gen, m.Running(), m.cfg.Width)
 	return true
+}
+
+func attemptOf(p *Packet) int {
+	if p == nil {
+		return 0
+	}
+	return p.Attempt
 }
 
 // oneLine is a report as one line for a verb's flag: the first non-empty

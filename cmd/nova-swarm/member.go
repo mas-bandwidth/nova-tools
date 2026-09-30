@@ -169,6 +169,24 @@ func (r *nativeRunner) Start(p member.Packet) (member.Child, error) {
 	results := filepath.Join(r.resultsRoot, name)
 	logPath := filepath.Join(r.slots, name+".native.log")
 	pidPath := filepath.Join(r.slots, name+".pid")
+	cardPath := filepath.Join(r.slots, name+".card.md")
+
+	if !strictlyWithin(r.slots, slot) {
+		return nil, fmt.Errorf("slot %s is not strictly within slots %s", slot, r.slots)
+	}
+	if !strictlyWithin(r.slots, cardPath) {
+		return nil, fmt.Errorf("card path %s is not strictly within slots %s", cardPath, r.slots)
+	}
+	if !strictlyWithin(r.slots, logPath) {
+		return nil, fmt.Errorf("log path %s is not strictly within slots %s", logPath, r.slots)
+	}
+	if !strictlyWithin(r.slots, pidPath) {
+		return nil, fmt.Errorf("pid path %s is not strictly within slots %s", pidPath, r.slots)
+	}
+	if !strictlyWithin(r.resultsRoot, results) {
+		return nil, fmt.Errorf("results path %s is not strictly within results %s", results, r.resultsRoot)
+	}
+
 	if pid := livePID(pidPath); pid > 0 {
 		c := &nativeChild{card: p.Card, logPath: logPath, results: results, done: make(chan struct{})}
 		go func() {
@@ -179,13 +197,22 @@ func (r *nativeRunner) Start(p member.Packet) (member.Child, error) {
 		}()
 		return c, nil
 	}
-	if err := safepath.RemoveUnder(r.slots, slot); err != nil && !os.IsNotExist(err) {
-		return nil, err
+	if _, err := os.Stat(r.slots); err == nil {
+		if err := safepath.RemoveUnder(r.slots, slot); err != nil && !os.IsNotExist(err) {
+			return nil, err
+		}
 	}
 	if err := os.MkdirAll(slot, 0o755); err != nil {
 		return nil, err
 	}
-	cardPath := filepath.Join(r.slots, name+".card.md")
+	if _, err := os.Stat(r.resultsRoot); err == nil {
+		if err := safepath.RemoveUnder(r.resultsRoot, results); err != nil && !os.IsNotExist(err) {
+			return nil, err
+		}
+	}
+	if err := os.MkdirAll(results, 0o755); err != nil {
+		return nil, err
+	}
 	if err := os.WriteFile(cardPath, []byte(member.CardText(p, r.sprintBin)), 0o644); err != nil {
 		return nil, err
 	}
@@ -351,8 +378,21 @@ func readResult(path string) (head, verdict, report string) {
 	if report == "" {
 		report = first
 	}
-	if strings.ContainsAny(head, " \t") || len(head) > 64 {
+	if strings.ContainsAny(head, " \t") || len(head) > 64 || !isHex(head) {
 		head = ""
 	}
 	return head, verdict, report
+}
+
+func isHex(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		b := s[i]
+		if !(b >= '0' && b <= '9' || b >= 'a' && b <= 'f' || b >= 'A' && b <= 'F') {
+			return false
+		}
+	}
+	return true
 }

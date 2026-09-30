@@ -65,6 +65,7 @@ func TestReadResultRefusesARevThatIsNotASha(t *testing.T) {
 		"spaces":   "abc def",
 		"a tab":    "abc\tdef",
 		"too long": strings.Repeat("a", 65),
+		"not hex":  "0123xyz",
 	} {
 		head, _, report := readResult(resultFixture(t, "rev: "+rev+"\n## One line\nthe line\n"))
 		if head != "" {
@@ -291,7 +292,6 @@ func TestMemberRefusesAModelAndATokenBudgetThatEveryCardWouldRefuse(t *testing.T
 		}
 	}
 }
-
 // TestLaunchNameIsTheCardAtItsGenerationInItsEpoch pins the name of one
 // launch, which names its slot, results root, log and pid file: a work card
 // is its id at its generation in its epoch, a read its id at its attempt in
@@ -456,5 +456,77 @@ func TestEveryIsBoundedUnderTheBeatDeadline(t *testing.T) {
 	errb.Reset()
 	if code := run(with(t.TempDir(), "5s"), strings.NewReader(""), &out, &errb, time.Now()); code != 0 {
 		t.Fatalf("--every 5s: exit %d, stderr %q, want it accepted", code, errb.String())
+	}
+}
+
+// TestNativeRunnerSlotStrictlyWithinSlots pins that Start rejects slot paths
+// outside r.slots before any mutation.
+func TestNativeRunnerSlotStrictlyWithinSlots(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	rn := &nativeRunner{
+		root:        root,
+		slots:       filepath.Join(root, "slots"),
+		resultsRoot: filepath.Join(root, "results"),
+	}
+	// Card names that attempt path traversal or escaping slots root
+	for _, card := range []string{"../escape", "a/b", ".."} {
+		p := member.Packet{Card: card}
+		_, err := rn.Start(p)
+		if err == nil {
+			t.Errorf("Start(%q) succeeded, want error", card)
+		}
+	}
+}
+
+// TestNativeRunnerIsolatesChildResultsFromPreviousRun pins that a new child
+// clears leftover results under its results directory so an old run's RESULT.md
+// is never picked up if the new run publishes none.
+func TestNativeRunnerIsolatesChildResultsFromPreviousRun(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	slots := filepath.Join(root, "slots")
+	resultsRoot := filepath.Join(root, "results")
+	if err := os.MkdirAll(slots, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(resultsRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	p := member.Packet{Card: "c1", Gen: 1, Epoch: 1}
+	launchDir := launchName(p)
+	oldResult := filepath.Join(resultsRoot, launchDir, "c1", "old-run", "1", "RESULT.md")
+	write(t, oldResult, "rev: deadbeef\n## One line\nold report\n")
+
+	if _, err := os.Stat(oldResult); err != nil {
+		t.Fatalf("old result not written: %v", err)
+	}
+
+	truePath, err := exec.LookPath("true")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rn := &nativeRunner{
+		self:        truePath,
+		harness:     truePath,
+		model:       "fake/model",
+		root:        root,
+		slots:       slots,
+		resultsRoot: resultsRoot,
+		deadline:    time.Second,
+		tokens:      "unmetered",
+	}
+
+	child, err := rn.Start(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(oldResult); !os.IsNotExist(err) {
+		t.Fatalf("old result was not removed by Start: %v", err)
+	}
+	nc := child.(*nativeChild)
+	res := nc.Result()
+	if res.Head == "deadbeef" || res.Report == "old report" {
+		t.Fatalf("nc.Result picked up old result: %+v", res)
 	}
 }

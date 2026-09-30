@@ -961,3 +961,74 @@ func TestTakeAsksForTheRoom(t *testing.T) {
 		})
 	}
 }
+
+// TestEndedCardWithMismatchedGenOrEpochIsFenced pins that when a child finishes,
+// if the queue card's Gen or Epoch differs from the launch identity, the mismatch
+// is fenced and no finish is reported on the fresh card.
+func TestEndedCardWithMismatchedGenOrEpochIsFenced(t *testing.T) {
+	t.Parallel()
+	t.Run("gen mismatch", func(t *testing.T) {
+		t.Parallel()
+		g := newRig(Config{As: "m", Width: 2})
+		p := pk("c1")
+		p.Gen = 1
+		g.s.set("queue", 0, queueJSON(t, 7, ready("c1")))
+		g.s.set("take", 0, takeJSON(t, p))
+		if _, err := g.tick(t); err != nil {
+			t.Fatal(err)
+		}
+		g.r.child("c1").end(Result{Ran: true, OK: true, Head: "abc123", Report: "done"})
+		pNew := pk("c1")
+		pNew.Gen = 2
+		g.s.set("queue", 0, queueJSON(t, 7, working("c1", 2, &pNew)))
+		g.s.reset()
+		acted, err := g.tick(t)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(g.s.lines("finish")) != 0 {
+			t.Fatalf("finish lines: %q, want none (fenced mismatch)", g.s.lines("finish"))
+		}
+		if !strings.Contains(g.out.String(), "launch identity mismatch") && !strings.Contains(g.out.String(), "the claim moved") {
+			t.Fatalf("expected fence output, got: %q", g.out.String())
+		}
+		// The fresh claim at gen 2 was started, obsolete gen 1 was not reported
+		if acted != 1 || g.m.Running() != 1 {
+			t.Fatalf("acted = %d running = %d, want 1 and 1", acted, g.m.Running())
+		}
+		if g.m.running["c1"].gen != 2 {
+			t.Fatalf("running gen = %d, want 2", g.m.running["c1"].gen)
+		}
+	})
+	t.Run("epoch mismatch", func(t *testing.T) {
+		t.Parallel()
+		g := newRig(Config{As: "m", Width: 2})
+		p := pk("c1")
+		g.s.set("queue", 0, queueJSON(t, 7, ready("c1")))
+		g.s.set("take", 0, takeJSON(t, p))
+		if _, err := g.tick(t); err != nil {
+			t.Fatal(err)
+		}
+		g.r.child("c1").end(Result{Ran: true, OK: true, Head: "abc123", Report: "done"})
+		pNew := pk("c1")
+		pNew.Epoch = 8
+		g.s.set("queue", 0, queueJSON(t, 8, working("c1", 1, &pNew)))
+		g.s.reset()
+		acted, err := g.tick(t)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(g.s.lines("finish")) != 0 {
+			t.Fatalf("finish lines: %q, want none (fenced mismatch)", g.s.lines("finish"))
+		}
+		if !strings.Contains(g.out.String(), "launch identity mismatch") && !strings.Contains(g.out.String(), "the claim moved") {
+			t.Fatalf("expected fence output, got: %q", g.out.String())
+		}
+		if acted != 1 || g.m.Running() != 1 {
+			t.Fatalf("acted = %d running = %d, want 1 and 1", acted, g.m.Running())
+		}
+		if g.m.running["c1"].epoch != 8 {
+			t.Fatalf("running epoch = %d, want 8", g.m.running["c1"].epoch)
+		}
+	})
+}
