@@ -26,11 +26,12 @@ const (
 
 	// imageBatchKeys is how many keys one batch reads. A batch is two pipelines,
 	// TYPE and PEXPIRETIME of every key (two commands each) and then the content
-	// of every key that is there (one command each). It bounds the count of keys
-	// whose replies are held at once and the time one round trip holds the
-	// server. It is a bound on keys and not on bytes: 500 large values are held
-	// together and read under one read deadline, and an image is for keys of the
-	// size a test writes.
+	// of every key that is there (one command each), and a third, when the batch
+	// holds a hash, with the HPEXPIRETIME of each hash (one command each, of all
+	// the fields of the hash). It bounds the count of keys whose replies are held
+	// at once and the time one round trip holds the server. It is a bound on keys
+	// and not on bytes: 500 large values are held together and read under one
+	// read deadline, and an image is for keys of the size a test writes.
 	imageBatchKeys = 500
 )
 
@@ -49,15 +50,18 @@ const (
 )
 
 // What PEXPIRETIME answers for a key that exists and has no expiry, and for a
-// key that does not exist. Every other answer is the key's expiry time.
+// key that does not exist, and what HPEXPIRETIME answers for a field that has no
+// expiry, and for a field that does not exist (or a key that does not). Every
+// other answer is the expiry time.
 const (
 	expiryNone  = -1
 	expiryNoKey = -2
 )
 
 // Entry is what an image holds of one key: the key's TYPE and a sum of its
-// content and its expiry time. Two entries are equal when the key has the same
-// type, the same content and the same expiry time.
+// content and its expiry times. Two entries are equal when the key has the same
+// type, the same content and the same expiry times: the key's, and for a hash
+// each field's.
 //
 // THE SUM IS A CONTENT SUM, NOT THE SHA256 OF THE KEY'S DUMP ALONE. The
 // specification of this helper said the SHA256 of DUMP; it is amended to this.
@@ -79,16 +83,27 @@ const (
 //     members, then each member, sorted bytewise, as its length and the member. A
 //     sorted set contributes the number of its members, then each member, sorted
 //     bytewise, as its length, the member and the IEEE 754 bits of its score.
+//   - The expiry of each field of a hash, after the content of the hash and in
+//     the same order as its fields: HPEXPIRETIME, the time in milliseconds since
+//     the Unix epoch at which the field expires, as a signed number, and -1 for a
+//     field with no expiry. The other types have no such part.
 //   - The key's absolute expiry, in every key's sum: PEXPIRETIME, the time in
 //     milliseconds since the Unix epoch at which the key expires, as a signed
 //     number, and -1 for a key with no expiry.
 //
+// So the sum of a hash is the SHA256 of: its field count; each field and its
+// value, in field order; the expiry of each field, in field order; and the key's
+// expiry. A field's expiry is in neither HGETALL nor PEXPIRETIME, so it has its
+// own part, and it is read with one HPEXPIRETIME for each hash.
+//
 // What follows. A read changes no Sum. A hash, set or sorted set rewritten in
 // another order, or in another encoding, with the same content, has the same
 // Sum. A write of the expiry alone (EXPIRE, PEXPIRE, PEXPIREAT to another time,
-// PERSIST) changes the Sum, so a step that wrote nothing but a time to live is
-// seen. The expiry is absolute, so a time to live that runs down by itself is not
-// a change, and the same absolute time set again is not either.
+// PERSIST; and on a field of a hash HEXPIRE, HPEXPIRE, HPEXPIREAT, HPERSIST)
+// changes the Sum, so a step that wrote nothing but a time to live is seen,
+// whether it is the key's or a field's. The expiry is absolute, so a time to
+// live that runs down by itself is not a change, and the same absolute time set
+// again is not either.
 //
 // The sum of a string, a list and a stream stays the sum of their DUMP: a write
 // that leaves one of them with the same content in another encoding is a change
@@ -101,9 +116,9 @@ type Entry struct {
 // Image is every key of the store under prefix, each with its Entry: the whole
 // of what a test needs to prove that a step wrote nothing (Diff of an image
 // before it and one after it is empty) or wrote exactly what it should. The
-// Entry of a key is its type and a content sum that folds in its expiry time
-// (see Entry): a write of a time to live alone is seen, and a read, or a
-// rewrite of a hash, set or sorted set in another order, is not.
+// Entry of a key is its type and a content sum that folds in its expiry time, and
+// for a hash each field's (see Entry): a write of a time to live alone is seen,
+// and a read, or a rewrite of a hash, set or sorted set in another order, is not.
 //
 // THE KEYS ARE FOUND BY SCAN, never KEYS. SCAN MATCH prefix*, COUNT 1000,
 // follows the cursor until the server says it is done, and every key is read
@@ -115,18 +130,25 @@ type Entry struct {
 // THE KEYS ARE READ IN PIPELINES, IN BATCHES OF AT MOST 500. A batch is two
 // round trips: TYPE and PEXPIRETIME of every key, then the content of the keys
 // that are there, by type (HGETALL of a hash, SMEMBERS of a set, ZRANGE WITHSCORES
-// of a sorted set, DUMP of every other type). An image of ten thousand keys is
-// forty pipelines and the SCAN calls, not thirty thousand round trips. A batch is
-// bounded by its count of keys and not by bytes: 500 large values are held
-// together and read under one read deadline, so an image is for keys of the size
-// a test writes. The server needs PEXPIRETIME: Redis 7.0 or later.
+// of a sorted set, DUMP of every other type); and a third when the batch holds a
+// hash, HPEXPIRETIME of all the fields of each hash. An image of ten thousand
+// keys is at most sixty pipelines and the SCAN calls, not thirty thousand round
+// trips. A batch is bounded by its count of keys and not by bytes: 500 large
+// values are held together and read under one read deadline, so an image is for
+// keys of the size a test writes. The server needs PEXPIRETIME (Redis 7.0 or
+// later) and, for a hash, HPEXPIRETIME of fields (Redis 7.4 or later).
 //
 // IT IS AN IMAGE OF A STORE AT REST. The keys are read in several calls, so an
 // image taken while another client writes is not a snapshot. A key that is gone
 // when its turn to be read comes (deleted, or expired on its own) is not in the
-// image. A key that was gone at TYPE and there at PEXPIRETIME, or that is not of
-// the type TYPE said when its content is read, was written while the image was
-// taken, and Image fails and names it.
+// image. A key that was gone at TYPE and there at PEXPIRETIME, a hash, set or
+// sorted set that is not of the type TYPE said when its content is read (the
+// server answers WRONGTYPE), and a hash that is not of that type, or that has lost
+// a field that HGETALL read, when its fields' expiries are read, were written
+// while the image was taken: Image fails and names the key. A key read by DUMP (a
+// string, list, stream, or another type) that is replaced by a key of another type
+// between the round trips is not found out: its Entry has the type TYPE said and
+// the sum of the DUMP that answered.
 //
 // The image is of the one database the client reads. Image refuses a cluster
 // client and a ring, whose SCAN reads one node: an image of part of a store
@@ -269,9 +291,19 @@ type contentRead struct {
 	zset *redis.ZSliceCmd
 }
 
+// hashRead is a hash the second round trip read and whose fields' expiries the
+// third reads: its state, its fields and their values, and the fields' names
+// sorted bytewise, the order the third round trip asks for them and the sum
+// takes them in.
+type hashRead struct {
+	key    keyState
+	fields map[string]string
+	names  []string
+}
+
 // readContents is the second round trip: the content of every key the first
-// found, each by its type, and from it the entry. A key whose content is gone
-// is left out.
+// found, each by its type, and from it the entry; and for the hashes among them
+// the third. A key whose content is gone is left out.
 func readContents(ctx context.Context, c redis.UniversalClient, there []keyState, image map[string]Entry) error {
 	pipe := c.Pipeline()
 	reads := make([]contentRead, len(there))
@@ -290,7 +322,18 @@ func readContents(ctx context.Context, c redis.UniversalClient, there []keyState
 	if err := execPipeline(ctx, pipe, len(there)); err != nil {
 		return err
 	}
+	var hashes []hashRead
 	for i, k := range there {
+		if reads[i].hash != nil {
+			fields, err := reads[i].hash.Result()
+			if err != nil {
+				return contentError(k, "hgetall", err)
+			}
+			if len(fields) > 0 { // a hash with no field is not a key of the store
+				hashes = append(hashes, hashRead{key: k, fields: fields, names: slices.Sorted(maps.Keys(fields))})
+			}
+			continue
+		}
 		sum, present, err := reads[i].sum(k)
 		if err != nil {
 			return err
@@ -298,6 +341,54 @@ func readContents(ctx context.Context, c redis.UniversalClient, there []keyState
 		if present {
 			image[k.key] = Entry{Type: k.kind, Sum: sum}
 		}
+	}
+	return readFieldExpiries(ctx, c, hashes, image)
+}
+
+// readFieldExpiries is the third round trip, for the hashes of the batch: the
+// HPEXPIRETIME of every field of each, in the order of the sorted names, and
+// from it the entry of the hash. A field's expiry is in neither HGETALL nor the
+// key's PEXPIRETIME. A hash that is gone (every field answers that it is not
+// there: the key was deleted, or its last fields expired) is left out, as a key
+// that is gone is; a hash that has lost some of the fields HGETALL read was
+// written while the image was taken.
+func readFieldExpiries(ctx context.Context, c redis.UniversalClient, hashes []hashRead, image map[string]Entry) error {
+	if len(hashes) == 0 {
+		return nil
+	}
+	pipe := c.Pipeline()
+	cmds := make([]*redis.IntSliceCmd, len(hashes))
+	for i, h := range hashes {
+		cmds[i] = pipe.HPExpireTime(ctx, h.key.key, h.names...)
+	}
+	if err := execPipeline(ctx, pipe, len(hashes)); err != nil {
+		return err
+	}
+	for i, h := range hashes {
+		expiries, err := cmds[i].Result()
+		if err != nil {
+			return contentError(h.key, "hpexpiretime", err)
+		}
+		if len(expiries) != len(h.names) {
+			return fmt.Errorf("hpexpiretime of %q answered %d expiries for its %d fields", h.key.key, len(expiries), len(h.names))
+		}
+		missing := -1 // the first field the server says is not there
+		gone := 0
+		for j, at := range expiries {
+			if at == expiryNoKey {
+				gone++
+				if missing < 0 {
+					missing = j
+				}
+			}
+		}
+		switch {
+		case gone == len(expiries):
+			continue // the hash is gone
+		case gone > 0:
+			return fmt.Errorf("field %q of %q was there for HGETALL and is not there for HPEXPIRETIME: it was written while the image was taken", h.names[missing], h.key.key)
+		}
+		image[h.key.key] = Entry{Type: typeHash, Sum: sumOfHash(h.names, h.fields, expiries, h.key.expiry)}
 	}
 	return nil
 }
@@ -316,9 +407,10 @@ func execPipeline(ctx context.Context, pipe redis.Pipeliner, keys int) error {
 	return nil
 }
 
-// sum is the key's content sum and whether the key is there. A key is not
-// there when its content read found nothing: a DUMP that answered Nil, or a
-// hash, set or sorted set with no member, which no key of those types is.
+// sum is the content sum of a key that is not a hash, and whether the key is
+// there. A key is not there when its content read found nothing: a DUMP that
+// answered Nil, or a set or sorted set with no member, which no key of those types
+// is. A hash is summed by readFieldExpiries, which has its fields' expiries.
 func (r contentRead) sum(k keyState) ([32]byte, bool, error) {
 	var none [32]byte
 	switch {
@@ -331,12 +423,6 @@ func (r contentRead) sum(k keyState) ([32]byte, bool, error) {
 			return none, false, contentError(k, "dump", err)
 		}
 		return sumOfDump(dump, k.expiry), true, nil
-	case r.hash != nil:
-		fields, err := r.hash.Result()
-		if err != nil {
-			return none, false, contentError(k, "hgetall", err)
-		}
-		return sumOfHash(fields, k.expiry), len(fields) > 0, nil
 	case r.set != nil:
 		members, err := r.set.Result()
 		if err != nil {
@@ -356,8 +442,9 @@ func (r contentRead) sum(k keyState) ([32]byte, bool, error) {
 	}
 }
 
-// contentError is the error of a content read. A server that refuses to read a
-// key as the type TYPE said it was says the key was written in between.
+// contentError is the error of a content read, of the fields' expiries of a hash
+// too. A server that refuses to read a key as the type TYPE said it was says the
+// key was written in between.
 func contentError(k keyState, command string, err error) error {
 	var answer redis.Error
 	if errors.As(err, &answer) && strings.HasPrefix(answer.Error(), "WRONGTYPE") {
@@ -395,12 +482,17 @@ func sumOfDump(dump []byte, expiry int64) [32]byte {
 	return b.done(expiry)
 }
 
-func sumOfHash(fields map[string]string, expiry int64) [32]byte {
+// sumOfHash is the sum of a hash: the fields in the order of names, sorted
+// bytewise, each with its value, then the expiry of each field in the same order.
+func sumOfHash(names []string, fields map[string]string, fieldExpiries []int64, expiry int64) [32]byte {
 	b := newSumBuilder()
-	b.number(uint64(len(fields)))
-	for _, field := range slices.Sorted(maps.Keys(fields)) {
+	b.number(uint64(len(names)))
+	for _, field := range names {
 		b.text(field)
 		b.text(fields[field])
+	}
+	for _, at := range fieldExpiries {
+		b.number(uint64(at))
 	}
 	return b.done(expiry)
 }
@@ -435,11 +527,11 @@ func sumOfZSet(scored []redis.Z, expiry int64) ([32]byte, error) {
 // Diff is what changed between two images, as one line per key: "+key" for a
 // key the second image has and the first does not, "-key" for a key the first
 // has and the second does not, "~key" for a key both have whose Entry is not
-// the same, that is whose type, content or expiry time is not. The lines are in
-// key order, sorted bytewise by the key, each with its mark in front, so the
-// lines of added, removed and changed keys are interleaved as their keys are
-// and a test reads them by key. It is empty, and not nil, when the images are
-// equal, and a nil image is an empty one.
+// the same, that is whose type, content, expiry time or (for a hash) fields'
+// expiry times are not. The lines are in key order, sorted bytewise by the key,
+// each with its mark in front, so the lines of added, removed and changed keys
+// are interleaved as their keys are and a test reads them by key. It is empty,
+// and not nil, when the images are equal, and a nil image is an empty one.
 //
 // A read and a rewrite of a hash, set or sorted set with the same content are
 // not changes (see Entry). The sum of a string, a list and a stream is of their

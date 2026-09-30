@@ -38,10 +38,12 @@ const (
 var keyKinds = []string{"string", "hash", "list", "set", "zset", "stream"}
 
 // seeded is a key the seeding wrote: its type, and the time it expires in
-// milliseconds since the epoch, 0 for a key with no expiry.
+// milliseconds since the epoch, 0 for a key with no expiry; and for a hash the
+// time its field "one" expires, 0 for none.
 type seeded struct {
-	kind   string
-	expiry int64
+	kind        string
+	expiry      int64
+	fieldExpiry int64
 }
 
 // writeKey adds to pipe the commands that write a small key of the kind, whose
@@ -66,7 +68,9 @@ func writeKey(ctx context.Context, pipe redis.Pipeliner, kind, key, num string) 
 // seedKeys writes n keys under prefix, cycling through keyKinds, and returns
 // every key with its type and expiry. The key names its kind and its number,
 // and every fourth key expires, at an absolute time an hour ahead that the test
-// knows, so the expected sum does not have to ask the server for it.
+// knows, so the expected sum does not have to ask the server for it. Every
+// other hash has an expiry on its field "one" as well, and one in four of those
+// has an expiry of its own too.
 func seedKeys(ctx context.Context, t *testing.T, c *redis.Client, prefix string, n int) map[string]seeded {
 	t.Helper()
 	expiryBase := time.Now().Add(time.Hour).UnixMilli()
@@ -78,6 +82,10 @@ func seedKeys(ctx context.Context, t *testing.T, c *redis.Client, prefix string,
 			key := prefix + kind + ":" + strconv.Itoa(i)
 			writeKey(ctx, pipe, kind, key, strconv.Itoa(i))
 			entry := seeded{kind: kind}
+			if kind == "hash" && (i%12 == 1 || i%24 == 7) {
+				entry.fieldExpiry = expiryBase + 1000 + int64(i)
+				pipe.Do(ctx, "hpexpireat", key, entry.fieldExpiry, "fields", 1, "one")
+			}
 			if i%4 == 3 {
 				entry.expiry = expiryBase + int64(i)
 				pipe.PExpireAt(ctx, key, time.UnixMilli(entry.expiry))
@@ -92,11 +100,11 @@ func seedKeys(ctx context.Context, t *testing.T, c *redis.Client, prefix string,
 }
 
 // oracleImage is what an image of the seeded keys is, worked out without Image
-// and without SCAN, TYPE, PEXPIRETIME, HGETALL, SMEMBERS or ZRANGE: the DUMP of
-// a string, list or stream, the HSCAN, SSCAN or ZSCAN of a hash, set or sorted
-// set, the expiry the seeding set, and the sum written out byte by byte by
-// oracleSum from the layout Entry documents. The keys are small, so one page of
-// a scan is the whole key.
+// and without SCAN, TYPE, PEXPIRETIME, HGETALL, HPEXPIRETIME, SMEMBERS or ZRANGE:
+// the DUMP of a string, list or stream, the HSCAN, SSCAN or ZSCAN of a hash, set
+// or sorted set, the expiries the seeding set, and the sum written out byte by
+// byte by oracleSum from the layout Entry documents. The keys are small, so one
+// page of a scan is the whole key.
 func oracleImage(ctx context.Context, t *testing.T, c *redis.Client, written map[string]seeded) map[string]Entry {
 	t.Helper()
 	keys := slices.Sorted(maps.Keys(written))
@@ -128,6 +136,7 @@ func oracleImage(ctx context.Context, t *testing.T, c *redis.Client, written map
 			}
 			var dump string
 			var fields map[string]string
+			var fieldExpiry map[string]int64
 			var members []string
 			var scores map[string]float64
 			if cmds[i] != nil {
@@ -147,6 +156,9 @@ func oracleImage(ctx context.Context, t *testing.T, c *redis.Client, written map
 					for j := 0; j+1 < len(page); j += 2 {
 						fields[page[j]] = page[j+1]
 					}
+					if at := written[key].fieldExpiry; at != 0 {
+						fieldExpiry = map[string]int64{"one": at}
+					}
 				case "set":
 					members = page
 				case "zset":
@@ -160,7 +172,7 @@ func oracleImage(ctx context.Context, t *testing.T, c *redis.Client, written map
 					}
 				}
 			}
-			image[key] = Entry{Type: kind, Sum: oracleSum(kind, dump, fields, members, scores, expiry)}
+			image[key] = Entry{Type: kind, Sum: oracleSum(kind, dump, fields, fieldExpiry, members, scores, expiry)}
 		}
 	}
 	return image
@@ -313,18 +325,43 @@ func (l *commandLog) pipelinesWith(name string) int {
 	return n
 }
 
-// readPipelines is how many pipelines held a command that reads a key. The
-// client's own pipeline on its first connection (CLIENT SETINFO) is not one.
+// readPipelines is how many pipelines held a command that reads a key, or the
+// fields' expiries of a hash. The client's own pipeline on its first connection
+// (CLIENT SETINFO) is not one.
 func (l *commandLog) readPipelines() int {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	n := 0
 	for _, names := range l.pipelines {
-		if slices.ContainsFunc(names, func(name string) bool { return name == "type" || name == "pexpiretime" || contentNames[name] }) {
+		if slices.ContainsFunc(names, func(name string) bool {
+			return name == "type" || name == "pexpiretime" || name == "hpexpiretime" || contentNames[name]
+		}) {
 			n++
 		}
 	}
 	return n
+}
+
+// betweenReads is a client hook that runs fn, once, right after the pipeline
+// that reads the content of hashes (HGETALL) has been answered and before the
+// next pipeline is sent: a write that lands between two round trips of an image.
+type betweenReads struct {
+	once sync.Once
+	fn   func()
+}
+
+func (h *betweenReads) DialHook(next redis.DialHook) redis.DialHook { return next }
+
+func (h *betweenReads) ProcessHook(next redis.ProcessHook) redis.ProcessHook { return next }
+
+func (h *betweenReads) ProcessPipelineHook(next redis.ProcessPipelineHook) redis.ProcessPipelineHook {
+	return func(ctx context.Context, cmds []redis.Cmder) error {
+		err := next(ctx, cmds)
+		if slices.ContainsFunc(cmds, func(cmd redis.Cmder) bool { return strings.EqualFold(cmd.Name(), "hgetall") }) {
+			h.once.Do(h.fn)
+		}
+		return err
+	}
 }
 
 // contentNames are the commands that read the content of a key.
@@ -337,7 +374,7 @@ func serverRefused(err error) bool {
 	return errors.As(err, &answer)
 }
 
-// TestImageOnARealStore holds the image to a real server, in nine tests that
+// TestImageOnARealStore holds the image to a real server, in eleven tests that
 // run side by side against the one server:
 //
 //	an image of ten thousand keys          every key, its type and its content sum, and no other
@@ -346,8 +383,10 @@ func serverRefused(err error) bool {
 //	an image of an unchanged store         taken twice, and after reads, is the same image
 //	a prefix of glob characters            is a literal
 //	a write of a time to live alone        is a change, and a time to live that runs down is not
+//	a write of a hash field's time to live alone  is a change, and one that runs down is not
+//	a hash written between the reads       is left out when it is gone, and refused when it is not the hash that was read
 //	a rewrite in another order or encoding is the same content and the same sum
-//	reads of large tables                  change no sum
+//	reads of large tables                  change no sum, and the sums are the ones an oracle works out
 //	scores                                 are compared to the last bit
 func TestImageOnARealStore(t *testing.T) {
 	t.Parallel()
@@ -408,8 +447,9 @@ func TestImageOnARealStore(t *testing.T) {
 			}
 		}
 		// What the image asked: SCAN and never KEYS, in more than one call, each
-		// with the prefix and COUNT; TYPE and PEXPIRETIME of each key, and the
-		// content of each by its type, in pipelines of at most imageBatchKeys keys.
+		// with the prefix and COUNT; TYPE and PEXPIRETIME of each key, the
+		// content of each by its type, and the HPEXPIRETIME of each hash, in
+		// pipelines of at most imageBatchKeys keys.
 		if n := log.sent("keys"); n != 0 {
 			t.Errorf("Image sent KEYS %d times", n)
 		}
@@ -423,8 +463,18 @@ func TestImageOnARealStore(t *testing.T) {
 			}
 		}
 		wantSent := map[string]int{"type": bigImageKeys, "pexpiretime": bigImageKeys}
+		withFieldExpiry := 0
 		for _, entry := range written {
 			wantSent[contentCommands[entry.kind]]++
+			if entry.kind == "hash" {
+				wantSent["hpexpiretime"]++
+			}
+			if entry.fieldExpiry != 0 {
+				withFieldExpiry++
+			}
+		}
+		if withFieldExpiry == 0 {
+			t.Fatalf("no seeded hash has a field with an expiry; the test expects some")
 		}
 		for name, n := range wantSent {
 			if got := log.sent(name); got != n {
@@ -435,8 +485,12 @@ func TestImageOnARealStore(t *testing.T) {
 		if got := log.pipelinesWith("type"); got != batches {
 			t.Errorf("Image read the kinds of %d keys in %d pipelines; want %d of at most %d keys", bigImageKeys, got, batches, imageBatchKeys)
 		}
-		if got := log.readPipelines(); got != 2*batches {
-			t.Errorf("Image read %d keys in %d pipelines; want %d, two for each of %d batches", bigImageKeys, got, 2*batches, batches)
+		// Every batch of 500 keys holds hashes: the kinds cycle, six to a turn.
+		if got := log.pipelinesWith("hpexpiretime"); got != batches {
+			t.Errorf("Image read the fields' expiries of the hashes in %d pipelines; want %d, one for each of %d batches", got, batches, batches)
+		}
+		if got := log.readPipelines(); got != 3*batches {
+			t.Errorf("Image read %d keys in %d pipelines; want %d, three for each of %d batches", bigImageKeys, got, 3*batches, batches)
 		}
 		for _, names := range log.pipelines {
 			if len(names) > 2*imageBatchKeys {
@@ -699,6 +753,120 @@ func TestImageOnARealStore(t *testing.T) {
 		}
 	})
 
+	t.Run("a write of a hash field's time to live alone is a change", func(t *testing.T) {
+		t.Parallel()
+
+		ctx := bounded(t)
+		c := dial(t, addr)
+		const prefix = "image:fieldttl:"
+		key := prefix + "hash"
+		mustDo(ctx, t, c, "hset", key, "f", "1", "g", "2")
+		content := c.HGetAll(ctx, key).Val()
+		if len(content) != 2 {
+			t.Fatalf("the hash holds %v; want its two fields", content)
+		}
+		fieldTTL := func(field string) int64 {
+			t.Helper()
+			left, err := c.HPTTL(ctx, key, field).Result()
+			if err != nil || len(left) != 1 {
+				t.Fatalf("HPTTL of %s: %v, %v", field, left, err)
+			}
+			return left[0]
+		}
+		fieldExpiry := func(field string) int64 {
+			t.Helper()
+			at, err := c.HPExpireTime(ctx, key, field).Result()
+			if err != nil || len(at) != 1 {
+				t.Fatalf("HPEXPIRETIME of %s: %v, %v", field, at, err)
+			}
+			return at[0]
+		}
+		before := liveImage(ctx, t, c, prefix)
+		for _, step := range []struct {
+			name  string
+			write func()
+			want  []string
+		}{
+			{"an HEXPIRE of one field", func() { mustDo(ctx, t, c, "hexpire", key, 3600, "fields", 1, "f") }, []string{"~" + key}},
+			{"the expiry that field already has, set again", func() { mustDo(ctx, t, c, "hpexpireat", key, fieldExpiry("f"), "fields", 1, "f") }, []string{}},
+			{"an HPEXPIRE of that field to another time", func() { mustDo(ctx, t, c, "hpexpire", key, 7200000, "fields", 1, "f") }, []string{"~" + key}},
+			{"a field's time to live that ran down by itself", func() {
+				// No write: the clock moves until the server's time to live is less.
+				left := fieldTTL("f")
+				for fieldTTL("f") >= left {
+					if err := ctx.Err(); err != nil {
+						t.Fatalf("the time to live of the field did not run down: %v", err)
+					}
+				}
+			}, []string{}},
+			{"an HEXPIRE of the other field", func() { mustDo(ctx, t, c, "hexpire", key, 3600, "fields", 1, "g") }, []string{"~" + key}},
+			{"an HPERSIST of one field", func() { mustDo(ctx, t, c, "hpersist", key, "fields", 1, "f") }, []string{"~" + key}},
+			{"an HPERSIST of a field with no expiry", func() { mustDo(ctx, t, c, "hpersist", key, "fields", 1, "f") }, []string{}},
+			{"an HPERSIST of the other field", func() { mustDo(ctx, t, c, "hpersist", key, "fields", 1, "g") }, []string{"~" + key}},
+		} {
+			step.write()
+			after := liveImage(ctx, t, c, prefix)
+			if got := Diff(before, after); !slices.Equal(got, step.want) {
+				t.Fatalf("after %s the diff is %q; want %q", step.name, got, step.want)
+			}
+			// Nothing but a field's time to live was written: the fields and their
+			// values are what they were, and the key has no expiry of its own.
+			if now := c.HGetAll(ctx, key).Val(); !maps.Equal(now, content) {
+				t.Fatalf("after %s the hash holds %v; want %v", step.name, now, content)
+			}
+			if at := c.Do(ctx, "pexpiretime", key).Val(); at != int64(-1) {
+				t.Fatalf("after %s the key's own expiry is %v; want -1, none", step.name, at)
+			}
+			before = after
+		}
+	})
+
+	t.Run("a hash written between the reads is left out when it is gone and refused when it is not the hash that was read", func(t *testing.T) {
+		t.Parallel()
+
+		ctx := bounded(t)
+		writer := dial(t, addr)
+		const prefix = "image:between:"
+		stays, victim := prefix+"stays", prefix+"victim"
+		for _, tc := range []struct {
+			name    string
+			write   func() // runs after HGETALL has been answered and before HPEXPIRETIME is sent
+			refused string // what the error says, or "" for an image that leaves the victim out
+		}{
+			{"the hash deleted", func() { mustDo(ctx, t, writer, "del", victim) }, ""},
+			{"the last of its fields removed by an expiry in the past", func() {
+				mustDo(ctx, t, writer, "hpexpireat", victim, 1, "fields", 2, "one", "two")
+			}, ""},
+			{"a field deleted", func() { mustDo(ctx, t, writer, "hdel", victim, "two") }, `field "two"`},
+			{"the hash replaced by a string", func() { mustDo(ctx, t, writer, "set", victim, "a string") }, "WRONGTYPE"},
+		} {
+			mustDo(ctx, t, writer, "del", stays, victim)
+			mustDo(ctx, t, writer, "hset", stays, "one", "1", "two", "2")
+			mustDo(ctx, t, writer, "hset", victim, "one", "1", "two", "2")
+
+			fired := false
+			hook := &betweenReads{fn: func() { fired = true; tc.write() }}
+			c := dial(t, addr)
+			c.AddHook(hook)
+			got, err := Image(ctx, c, prefix)
+			if !fired {
+				t.Fatalf("%s: the write did not run between the reads", tc.name)
+			}
+			if tc.refused == "" {
+				if err != nil {
+					t.Fatalf("%s: Image = %v; want an image without the hash that is gone", tc.name, err)
+				}
+				if _, there := got[victim]; there || len(got) != 1 || got[stays].Type != "hash" {
+					t.Fatalf("%s: the image is %v; want the one hash that stayed", tc.name, got)
+				}
+				continue
+			}
+			if err == nil || got != nil || !strings.Contains(err.Error(), victim) || !strings.Contains(err.Error(), "written while the image was taken") || !strings.Contains(err.Error(), tc.refused) {
+				t.Fatalf("%s: Image = %v, %v; want no image and the error that names %s, says %s and says it was written while the image was taken", tc.name, got, err, victim, tc.refused)
+			}
+		}
+	})
+
 	t.Run("a rewrite in another order or encoding is the same content and the same sum", func(t *testing.T) {
 		t.Parallel()
 
@@ -783,7 +951,7 @@ func TestImageOnARealStore(t *testing.T) {
 		}
 	})
 
-	t.Run("reads of large tables change no sum", func(t *testing.T) {
+	t.Run("reads of large tables change no sum, and the sums are the oracle's", func(t *testing.T) {
 		t.Parallel()
 
 		ctx := bounded(t)
@@ -797,12 +965,45 @@ func TestImageOnARealStore(t *testing.T) {
 				t.Fatalf("a %s of %d members is %s; the test expects %s", kind, tableKeys, got, want)
 			}
 		}
+		// An expiry on every tenth field of the hash, in one command.
+		fieldExpiry := map[string]int64{}
+		expireAt := time.Now().Add(time.Hour).UnixMilli()
+		args := []any{"hpexpireat", prefix + "hash", expireAt, "fields", tableKeys / 10}
+		for i := 0; i < tableKeys; i += 10 {
+			field := "field " + strconv.Itoa(i)
+			fieldExpiry[field] = expireAt
+			args = append(args, field)
+		}
+		mustDo(ctx, t, c, args...)
 		first := liveImage(ctx, t, c, prefix)
 		if len(first) != len(tables) {
 			t.Fatalf("the image holds %d keys; want %d", len(first), len(tables))
 		}
 		if d := Diff(first, liveImage(ctx, t, c, prefix)); len(d) != 0 {
 			t.Fatalf("an image taken again gave the diff %q; want none", d)
+		}
+
+		// The sums an oracle works out from what the test wrote, without reading
+		// the server: every member of every table is in the sum, so a read of a
+		// table that stops short is a wrong sum.
+		fields := make(map[string]string, tableKeys)
+		members := make([]string, 0, tableKeys)
+		scores := make(map[string]float64, tableKeys)
+		for i := 0; i < tableKeys; i++ {
+			num := strconv.Itoa(i)
+			fields["field "+num] = "value " + num
+			members = append(members, "member "+num)
+			scores["member "+num] = float64(i)
+		}
+		want := map[string]Entry{
+			prefix + "hash": {Type: "hash", Sum: oracleSum("hash", "", fields, fieldExpiry, nil, nil, -1)},
+			prefix + "set":  {Type: "set", Sum: oracleSum("set", "", nil, nil, members, nil, -1)},
+			prefix + "zset": {Type: "zset", Sum: oracleSum("zset", "", nil, nil, nil, scores, -1)},
+		}
+		for key, entry := range want {
+			if have := first[key]; have != entry {
+				t.Errorf("%s: the image has type %q and sum %x; the oracle's is type %q and sum %x", key, have.Type, have.Sum[:4], entry.Type, entry.Sum[:4])
+			}
 		}
 
 		// Every member read, one command each, and every table read whole.
@@ -819,6 +1020,8 @@ func TestImageOnARealStore(t *testing.T) {
 		pipe.HLen(ctx, prefix+"hash")
 		pipe.SCard(ctx, prefix+"set")
 		pipe.ZCard(ctx, prefix+"zset")
+		pipe.HPTTL(ctx, prefix+"hash", "field 0", "field 10", "field 1")
+		pipe.HPExpireTime(ctx, prefix+"hash", "field 0", "field 10", "field 1")
 		if _, err := pipe.Exec(ctx); err != nil {
 			t.Fatalf("read every member: %v", err)
 		}

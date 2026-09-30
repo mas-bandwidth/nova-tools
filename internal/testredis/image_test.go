@@ -21,9 +21,9 @@ import (
 
 // The unit tier of the image: Diff is a pure function, and Image runs against
 // a fake store that sits behind the client's hooks, answers SCAN, TYPE,
-// PEXPIRETIME, DUMP, HGETALL, SMEMBERS and ZRANGE from a map the way a server
-// does, and writes nothing to any socket. What the fake records is what Image
-// sent.
+// PEXPIRETIME, DUMP, HGETALL, HPEXPIRETIME, SMEMBERS and ZRANGE from a map the
+// way a server does, and writes nothing to any socket. What the fake records is
+// what Image sent.
 
 // The size of the fake store and of one page of its SCAN, small enough that
 // the cursor loop takes many turns and large enough that the keys need several
@@ -43,6 +43,8 @@ type fakeKey struct {
 	members []string          // set: what SMEMBERS answers, in the order given
 	scored  []redis.Z         // sorted set: what ZRANGE WITHSCORES answers, in the order given
 	expires int64             // the key's expiry in milliseconds since the epoch; 0 is no expiry
+
+	fieldExpires map[string]int64 // hash: the expiry of a field, as expires is; a field not in it has none
 }
 
 // The keys of each kind.
@@ -68,6 +70,16 @@ func fakeHash(pairs ...string) fakeKey {
 // expiring is the key with an expiry.
 func (k fakeKey) expiring(ms int64) fakeKey {
 	k.expires = ms
+	return k
+}
+
+// fieldExpiring is the hash with an expiry on one of its fields, 0 for none.
+func (k fakeKey) fieldExpiring(field string, ms int64) fakeKey {
+	k.fieldExpires = maps.Clone(k.fieldExpires)
+	if k.fieldExpires == nil {
+		k.fieldExpires = map[string]int64{}
+	}
+	k.fieldExpires[field] = ms
 	return k
 }
 
@@ -105,7 +117,13 @@ type fakeStore struct {
 	lostAtExpiry map[string]bool  // the key is gone after TYPE: PEXPIRETIME says -2 and the content is nothing
 	appeared     map[string]bool  // the key is there after TYPE: TYPE says none, PEXPIRETIME answers
 	retyped      map[string]bool  // the key is another type by the time its content is read: HGETALL, SMEMBERS and ZRANGE are refused
-	onScan       func(fakeScan)   // called with every SCAN, before it answers
+
+	lostAtFieldExpiry    map[string]bool   // the hash is gone after HGETALL: HPEXPIRETIME says -2 for every field
+	fieldLost            map[string]string // the hash loses this field after HGETALL: HPEXPIRETIME says -2 for it alone
+	retypedAtFieldExpiry map[string]bool   // the key is another type by the time its fields' expiries are read: HPEXPIRETIME is refused
+	shortReply           map[string]bool   // HPEXPIRETIME answers one expiry fewer than it was asked for
+
+	onScan func(fakeScan) // called with every SCAN, before it answers
 }
 
 // fakeScan is one SCAN as the client sent it.
@@ -128,6 +146,11 @@ func newFakeStore(keys map[string]fakeKey) *fakeStore {
 		lostAtExpiry: map[string]bool{},
 		appeared:     map[string]bool{},
 		retyped:      map[string]bool{},
+
+		lostAtFieldExpiry:    map[string]bool{},
+		fieldLost:            map[string]string{},
+		retypedAtFieldExpiry: map[string]bool{},
+		shortReply:           map[string]bool{},
 	}
 }
 
@@ -271,6 +294,8 @@ func (s *fakeStore) answer(cmd redis.Cmder, name, key string) error {
 		default:
 			c.SetVal(k.expires)
 		}
+	case *redis.IntSliceCmd: // HPEXPIRETIME key FIELDS n field...
+		return s.answerFieldExpiries(c, name, key, k, inContent && !s.lostAtFieldExpiry[key])
 	case *redis.StringCmd: // DUMP
 		if name != "dump" {
 			return fmt.Errorf("the fake store does not answer %s as a StringCmd", name)
@@ -320,6 +345,40 @@ func (s *fakeStore) answer(cmd redis.Cmder, name, key string) error {
 	return nil
 }
 
+// answerFieldExpiries is the store's answer to HPEXPIRETIME key FIELDS n field...,
+// which is -2 for every field of a key that is not there and for a field that is
+// not there, -1 for a field with no expiry, and its expiry for any other.
+func (s *fakeStore) answerFieldExpiries(c *redis.IntSliceCmd, name, key string, k fakeKey, there bool) error {
+	args := c.Args()
+	if name != "hpexpiretime" || len(args) < 4 || fmt.Sprint(args[2]) != "FIELDS" || fmt.Sprint(len(args)-4) != fmt.Sprint(args[3]) {
+		return fmt.Errorf("the fake store answers HPEXPIRETIME key FIELDS n field... and not %v", args)
+	}
+	if len(args) == 4 {
+		return serverError("ERR wrong number of arguments for 'hpexpiretime' command") // a server takes no empty FIELDS
+	}
+	if there && (k.kind != "hash" || s.retypedAtFieldExpiry[key]) {
+		return wrongType
+	}
+	answers := make([]int64, len(args)-4)
+	for i, arg := range args[4:] {
+		field := fmt.Sprint(arg)
+		_, has := k.fields[field]
+		switch {
+		case !there || !has || s.fieldLost[key] == field:
+			answers[i] = expiryNoKey
+		case k.fieldExpires[field] == 0:
+			answers[i] = expiryNone
+		default:
+			answers[i] = k.fieldExpires[field]
+		}
+	}
+	if s.shortReply[key] {
+		answers = answers[:len(answers)-1]
+	}
+	c.SetVal(answers)
+	return nil
+}
+
 // literalPrefix reads a MATCH pattern as a prefix that is a literal, the one
 // shape Image sends: characters are themselves, a backslash makes the next one
 // itself, and an unescaped * that ends the pattern is the end. Any other glob
@@ -353,8 +412,8 @@ func literalPrefix(pattern string) (string, error) {
 var fakeKinds = []string{"string", "hash", "list", "set", "zset", "stream"}
 
 // fakeKeysUnder are n keys under prefix, cycling through the six kinds, each
-// with a content that names the key so no two are alike, and every fourth with
-// an expiry.
+// with a content that names the key so no two are alike, every fourth with an
+// expiry and every other hash with an expiry on one of its fields.
 func fakeKeysUnder(prefix string, n int) map[string]fakeKey {
 	keys := make(map[string]fakeKey, n)
 	for i := 0; i < n; i++ {
@@ -365,6 +424,9 @@ func fakeKeysUnder(prefix string, n int) map[string]fakeKey {
 			k = fakeString("dump of " + key)
 		case "hash":
 			k = fakeHash("one", "a "+key, "two", "b "+key)
+			if i%12 == 1 {
+				k = k.fieldExpiring("one", 1_800_000_000_000+int64(i))
+			}
 		case "list":
 			k = fakeList("dump of " + key)
 		case "set":
@@ -395,11 +457,12 @@ func merge(parts ...map[string]fakeKey) map[string]fakeKey {
 
 // oracleSum is the sum of Entry's documentation, written out byte by byte from
 // the documented layout and sharing no code with Image: a string, a list, a
-// stream and any other type give their dump, a hash its fields, a set its
-// members and a sorted set its members and scores, each sorted bytewise; and
-// every sum ends in the key's expiry, -1 for none. Every number is 8 bytes, big
-// endian, and every string follows its length.
-func oracleSum(kind, dump string, fields map[string]string, members []string, scores map[string]float64, expiry int64) [32]byte {
+// stream and any other type give their dump, a hash its fields and then the
+// expiry of each field, a set its members and a sorted set its members and
+// scores, each sorted bytewise; and every sum ends in the key's expiry, -1 for
+// none. A field that is not in fieldExpiry has none, and is -1. Every number is 8
+// bytes, big endian, and every string follows its length.
+func oracleSum(kind, dump string, fields map[string]string, fieldExpiry map[string]int64, members []string, scores map[string]float64, expiry int64) [32]byte {
 	var b []byte
 	num := func(n uint64) { b = binary.BigEndian.AppendUint64(b, n) }
 	text := func(s string) {
@@ -417,6 +480,13 @@ func oracleSum(kind, dump string, fields map[string]string, members []string, sc
 		for _, name := range names {
 			text(name)
 			text(fields[name])
+		}
+		for _, name := range names {
+			at := int64(-1)
+			if fieldExpiry[name] != 0 {
+				at = fieldExpiry[name]
+			}
+			num(uint64(at))
 		}
 	case "set":
 		sorted := append([]string(nil), members...)
@@ -453,7 +523,7 @@ func expectedEntry(k fakeKey) Entry {
 	if k.expires != 0 {
 		expiry = k.expires
 	}
-	return Entry{Type: k.kind, Sum: oracleSum(k.kind, k.dump, k.fields, k.members, scores, expiry)}
+	return Entry{Type: k.kind, Sum: oracleSum(k.kind, k.dump, k.fields, k.fieldExpires, k.members, scores, expiry)}
 }
 
 // expected is what an image of keys is.
@@ -494,8 +564,8 @@ func TestImageIsEveryKeyUnderThePrefixReadBySCANInPipelines(t *testing.T) {
 
 	// Only SCAN and the commands that read a key were sent: never KEYS.
 	for name := range s.commands {
-		if !slices.Contains([]string{"scan", "type", "pexpiretime", "dump", "hgetall", "smembers", "zrange"}, name) {
-			t.Errorf("Image sent %s; it sends SCAN, TYPE, PEXPIRETIME and the command that reads the type", name)
+		if !slices.Contains([]string{"scan", "type", "pexpiretime", "dump", "hgetall", "hpexpiretime", "smembers", "zrange"}, name) {
+			t.Errorf("Image sent %s; it sends SCAN, TYPE, PEXPIRETIME, the command that reads the type, and HPEXPIRETIME of a hash", name)
 		}
 	}
 	if n := s.commands["keys"]; n != 0 {
@@ -517,17 +587,27 @@ func TestImageIsEveryKeyUnderThePrefixReadBySCANInPipelines(t *testing.T) {
 	}
 
 	// The reads: a batch of at most imageBatchKeys keys is two pipelines, TYPE
-	// and PEXPIRETIME of each key and then one content command of each, so the
-	// round trips are the pipelines and the scans.
+	// and PEXPIRETIME of each key and then one content command of each, and a
+	// third with the HPEXPIRETIME of each hash the batch holds. SCAN walks the
+	// fake in key order, so the batches are the sorted keys, imageBatchKeys at
+	// a time.
+	order := slices.Sorted(maps.Keys(mine))
 	batches := (fakeImageKeys + imageBatchKeys - 1) / imageBatchKeys
-	if len(s.pipelines) != 2*batches {
-		t.Fatalf("Image sent %d pipelines for %d keys; want %d, two for each of %d batches", len(s.pipelines), fakeImageKeys, 2*batches, batches)
-	}
+	next := 0 // the pipeline the batch starts at
 	for b := 0; b < batches; b++ {
-		keys := min(imageBatchKeys, fakeImageKeys-b*imageBatchKeys)
-		kinds, contents := s.pipelines[2*b], s.pipelines[2*b+1]
-		if len(kinds) != 2*keys || len(contents) != keys {
-			t.Errorf("batch %d of %d keys was pipelines of %d and %d commands; want %d and %d", b, keys, len(kinds), len(contents), 2*keys, keys)
+		batch := order[b*imageBatchKeys : min(len(order), (b+1)*imageBatchKeys)]
+		hashes := 0
+		for _, key := range batch {
+			if mine[key].kind == "hash" {
+				hashes++
+			}
+		}
+		if hashes == 0 || next+3 > len(s.pipelines) {
+			t.Fatalf("batch %d of %d keys holds %d hashes, and %d pipelines were sent in all; the test expects hashes in every batch and three pipelines from pipeline %d", b, len(batch), hashes, len(s.pipelines), next)
+		}
+		kinds, contents, fields := s.pipelines[next], s.pipelines[next+1], s.pipelines[next+2]
+		if len(kinds) != 2*len(batch) || len(contents) != len(batch) || len(fields) != hashes {
+			t.Errorf("batch %d of %d keys was pipelines of %d, %d and %d commands; want %d, %d and %d", b, len(batch), len(kinds), len(contents), len(fields), 2*len(batch), len(batch), hashes)
 		}
 		for i, name := range kinds {
 			if want := []string{"type", "pexpiretime"}[i%2]; name != want {
@@ -539,11 +619,24 @@ func TestImageIsEveryKeyUnderThePrefixReadBySCANInPipelines(t *testing.T) {
 				t.Fatalf("batch %d: command %d of the second pipeline is %s; want a content read", b, i, name)
 			}
 		}
+		for i, name := range fields {
+			if name != "hpexpiretime" {
+				t.Fatalf("batch %d: command %d of the third pipeline is %s; want hpexpiretime", b, i, name)
+			}
+		}
+		next += 3
 	}
-	// Each key is read by the command of its type, once.
+	if next != len(s.pipelines) {
+		t.Fatalf("Image sent %d pipelines for %d keys; want %d, three for each of %d batches", len(s.pipelines), fakeImageKeys, next, batches)
+	}
+	// Each key is read by the command of its type, once, and each hash has its
+	// fields' expiries read once.
 	wantCommands := map[string]int{"type": fakeImageKeys, "pexpiretime": fakeImageKeys}
 	for _, k := range mine {
 		wantCommands[contentCommands[k.kind]]++
+		if k.kind == "hash" {
+			wantCommands["hpexpiretime"]++
+		}
 	}
 	for name, n := range wantCommands {
 		if s.commands[name] != n {
@@ -669,9 +762,15 @@ func TestImageReadsAKeyOnceWhateverNumberOfTimesSCANNamesIt(t *testing.T) {
 	if d := Diff(expected(mine), got); len(d) != 0 {
 		t.Fatalf("the image differs from the store: %v", d)
 	}
-	// Three commands for each key, each once.
-	if len(s.sent) != 3*len(mine) {
-		t.Fatalf("Image sent %d distinct commands for %d keys that SCAN named more than once; want %d", len(s.sent), len(mine), 3*len(mine))
+	// Three commands for each key, and one more for each hash, each once.
+	hashes := 0
+	for _, k := range mine {
+		if k.kind == "hash" {
+			hashes++
+		}
+	}
+	if len(s.sent) != 3*len(mine)+hashes {
+		t.Fatalf("Image sent %d distinct commands for %d keys (%d hashes) that SCAN named more than once; want %d", len(s.sent), len(mine), hashes, 3*len(mine)+hashes)
 	}
 	for command, n := range s.sent {
 		if n != 1 {
@@ -692,6 +791,8 @@ func TestImageLeavesOutAKeyThatIsGoneWhenItsTurnComes(t *testing.T) {
 		prefix + "lost-hash":      fakeHash("field", "value"),
 		prefix + "lost-set":       fakeSet("member"),
 		prefix + "lost-zset":      fakeZSet(redis.Z{Score: 1, Member: "member"}),
+
+		prefix + "lost-at-field-expiry": fakeHash("field", "value"),
 	}
 	s := newFakeStore(mine)
 	s.gone[prefix+"gone"] = true                   // gone before TYPE
@@ -699,6 +800,7 @@ func TestImageLeavesOutAKeyThatIsGoneWhenItsTurnComes(t *testing.T) {
 	for _, kind := range []string{"string", "hash", "set", "zset"} {
 		s.lost[prefix+"lost-"+kind] = true // gone between the first round trip and the second
 	}
+	s.lostAtFieldExpiry[prefix+"lost-at-field-expiry"] = true // a hash gone between the second round trip and the third
 
 	got, err := Image(context.Background(), s.client(t), prefix)
 	if err != nil {
@@ -714,23 +816,29 @@ func TestImageRefusesAKeyThatWasWrittenWhileItWasRead(t *testing.T) {
 	t.Parallel()
 
 	const prefix = "img:"
+	// Keys 0 to 5 are a string, a hash, a list, a set, a sorted set and a stream.
 	for name, tc := range map[string]struct {
+		key   string // the number of the key that is written
 		spoil func(s *fakeStore, key string)
-		want  string
+		want  string // what the error says besides the key
 	}{
-		"not there for TYPE and there for PEXPIRETIME": {func(s *fakeStore, key string) { s.appeared[key] = true }, "written while"},
-		"another type when its content is read":        {func(s *fakeStore, key string) { s.retyped[key] = true }, "written while"},
+		"not there for TYPE and there for PEXPIRETIME":                   {"3", func(s *fakeStore, key string) { s.appeared[key] = true }, "written while"},
+		"a hash of another type when its content is read":                {"1", func(s *fakeStore, key string) { s.retyped[key] = true }, "written while"},
+		"a set of another type when its content is read":                 {"3", func(s *fakeStore, key string) { s.retyped[key] = true }, "written while"},
+		"a sorted set of another type when its content is read":          {"4", func(s *fakeStore, key string) { s.retyped[key] = true }, "written while"},
+		"a hash of another type when its fields' expiries are read":      {"1", func(s *fakeStore, key string) { s.retypedAtFieldExpiry[key] = true }, "written while"},
+		"a hash that lost a field between its fields and their expiries": {"1", func(s *fakeStore, key string) { s.fieldLost[key] = "two" }, `field "two"`},
 	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			mine := fakeKeysUnder(prefix, 4) // key 3 is a set
-			s := newFakeStore(mine)
-			tc.spoil(s, prefix+"3")
+			key := prefix + tc.key
+			s := newFakeStore(fakeKeysUnder(prefix, 6))
+			tc.spoil(s, key)
 
 			got, err := Image(context.Background(), s.client(t), prefix)
-			if err == nil || !strings.Contains(err.Error(), prefix+"3") || !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("Image = %v, %v; want the error that names %s and says it was written while the image was taken", got, err, prefix+"3")
+			if err == nil || !strings.Contains(err.Error(), key) || !strings.Contains(err.Error(), "written while the image was taken") || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("Image = %v, %v; want the error that names %s, %s, and says it was written while the image was taken", got, err, key, tc.want)
 			}
 			if got != nil {
 				t.Fatalf("Image answered %d entries with its error; want none, an error is never a partial image", len(got))
@@ -760,6 +868,10 @@ func TestImageReturnsTheErrorOfAFailedCommandAndNoImage(t *testing.T) {
 			s.lost[prefix+"0"] = true
 			s.fail["hgetall "+prefix+"1"] = refused
 		}, refused, `hgetall of "img:1"`},
+		"an HPEXPIRETIME": {func(s *fakeStore) { s.fail["hpexpiretime "+prefix+"1"] = refused }, refused, `hpexpiretime of "img:1"`},
+		"an HPEXPIRETIME that answers fewer expiries than fields": {func(s *fakeStore) {
+			s.shortReply[prefix+"1"] = true
+		}, nil, `answered 1 expiries for its 2 fields`},
 		"a SMEMBERS behind a redis.Nil": {func(s *fakeStore) {
 			s.lost[prefix+"0"] = true
 			s.fail["smembers "+prefix+"3"] = refused
@@ -966,24 +1078,79 @@ func TestImageSumFoldsInTheExpiry(t *testing.T) {
 	}
 }
 
+func TestImageSumOfAHashFoldsInEveryFieldsExpiry(t *testing.T) {
+	t.Parallel()
+
+	const prefix = "img:"
+	const key = prefix + "hash"
+	const at = 1_900_000_000_000
+	base := fakeHash("f", "1", "g", "2")
+	s := newFakeStore(map[string]fakeKey{key: base})
+	before := imageOf(t, s, prefix)
+	for _, step := range []struct {
+		name string
+		hash fakeKey
+		want []string
+	}{
+		{"an expiry on one field", base.fieldExpiring("f", at), []string{"~" + key}},
+		{"the same expiry on the same field again", base.fieldExpiring("f", at), []string{}},
+		{"another expiry on that field", base.fieldExpiring("f", at+1), []string{"~" + key}},
+		{"an expiry on the other field too", base.fieldExpiring("f", at+1).fieldExpiring("g", at), []string{"~" + key}},
+		{"the expiries swapped between the fields", base.fieldExpiring("f", at).fieldExpiring("g", at+1), []string{"~" + key}},
+		{"the first field's expiry removed", base.fieldExpiring("g", at+1), []string{"~" + key}},
+		{"its removal again", base.fieldExpiring("f", 0).fieldExpiring("g", at+1), []string{}},
+		{"the same expiry moved from the second field to the first", base.fieldExpiring("f", at+1), []string{"~" + key}},
+		{"the expiry moved from the field to the key", base.expiring(at + 1), []string{"~" + key}},
+		{"every expiry removed", base, []string{"~" + key}},
+		{"no expiry again", base, []string{}},
+	} {
+		s.keys[key] = step.hash
+		after := imageOf(t, s, prefix)
+		if d := Diff(before, after); !slices.Equal(d, step.want) {
+			t.Fatalf("after %s the diff is %q; want %q", step.name, d, step.want)
+		}
+		before = after
+	}
+}
+
+func TestImageReadsWithTheBoundsThePinNames(t *testing.T) {
+	t.Parallel()
+
+	// The pin: SCAN COUNT 1000, and pipelines of 500 keys. The other tests hold
+	// Image to these constants, so this one holds the constants to the pin.
+	for name, tc := range map[string]struct{ got, want int }{
+		"the COUNT of a SCAN": {imageScanCount, 1000},
+		"the keys of a batch": {imageBatchKeys, 500},
+	} {
+		if tc.got != tc.want {
+			t.Errorf("%s is %d; the pin says %d", name, tc.got, tc.want)
+		}
+	}
+}
+
 func TestImageSumIsTheLayoutEntryDocuments(t *testing.T) {
 	t.Parallel()
 
 	const prefix = "img:"
 	const none = "\xff\xff\xff\xff\xff\xff\xff\xff" // an expiry of -1
 	const at = "\x00\x00\x01\xd1\xa9\x4a\x20\x00"   // an expiry of 2,000,000,000,000 ms
+	const at1 = "\x00\x00\x01\xd1\xa9\x4a\x20\x01"  // an expiry of 2,000,000,000,001 ms
 	num := func(n byte) string { return "\x00\x00\x00\x00\x00\x00\x00" + string([]byte{n}) }
 	for name, tc := range map[string]struct {
 		key   fakeKey
 		bytes string
 	}{
-		"a string is its dump and then its expiry":   {fakeString("abc"), "abc" + none},
-		"a list is its dump too":                     {fakeList("xyz"), "xyz" + none},
-		"a hash is its fields in order":              {fakeHash("b", "22", "a", "1"), num(2) + num(1) + "a" + num(1) + "1" + num(1) + "b" + num(2) + "22" + none},
-		"a set is its members in order":              {fakeSet("b", "a"), num(2) + num(1) + "a" + num(1) + "b" + none},
-		"a sorted set is its members and their bits": {fakeZSet(redis.Z{Score: 1, Member: "m"}), num(1) + num(1) + "m" + "\x3f\xf0\x00\x00\x00\x00\x00\x00" + none},
-		"an expiry is the last of it":                {fakeString("abc").expiring(2_000_000_000_000), "abc" + at},
-		"an empty string dump is the expiry alone":   {fakeString(""), none},
+		"a string is its dump and then its expiry":           {fakeString("abc"), "abc" + none},
+		"a list is its dump too":                             {fakeList("xyz"), "xyz" + none},
+		"a hash is its fields in order, then their expiries": {fakeHash("b", "22", "a", "1"), num(2) + num(1) + "a" + num(1) + "1" + num(1) + "b" + num(2) + "22" + none + none + none},
+		"a hash's field expiries are in field order":         {fakeHash("b", "22", "a", "1").fieldExpiring("b", 2_000_000_000_001).fieldExpiring("a", 2_000_000_000_000), num(2) + num(1) + "a" + num(1) + "1" + num(1) + "b" + num(2) + "22" + at + at1 + none},
+		"a hash's field expiry belongs to its field":         {fakeHash("b", "22", "a", "1").fieldExpiring("b", 2_000_000_000_001), num(2) + num(1) + "a" + num(1) + "1" + num(1) + "b" + num(2) + "22" + none + at1 + none},
+		"a field's expiry is not the key's":                  {fakeHash("a", "1").fieldExpiring("a", 2_000_000_000_000), num(1) + num(1) + "a" + num(1) + "1" + at + none},
+		"a hash's own expiry is the last of it":              {fakeHash("a", "1").expiring(2_000_000_000_000), num(1) + num(1) + "a" + num(1) + "1" + none + at},
+		"a set is its members in order":                      {fakeSet("b", "a"), num(2) + num(1) + "a" + num(1) + "b" + none},
+		"a sorted set is its members and their bits":         {fakeZSet(redis.Z{Score: 1, Member: "m"}), num(1) + num(1) + "m" + "\x3f\xf0\x00\x00\x00\x00\x00\x00" + none},
+		"an expiry is the last of it":                        {fakeString("abc").expiring(2_000_000_000_000), "abc" + at},
+		"an empty string dump is the expiry alone":           {fakeString(""), none},
 	} {
 		s := newFakeStore(map[string]fakeKey{prefix + "k": tc.key})
 		got := imageOf(t, s, prefix)[prefix+"k"]
