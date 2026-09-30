@@ -239,12 +239,19 @@ func TestSprintLuaOrdersMatchGo(t *testing.T) {
 	}
 }
 
-// TestSprintProfileIsNotLoadable: before G0 the tset assembler refuses the
-// sprint profile, and no tset profile's source carries a sprint fragment.
-func TestSprintProfileIsNotLoadable(t *testing.T) {
+// TestSprintProfileAssembles: the sprint profile is the composed profile's
+// source followed by every sprint fragment in load order, under a filter that
+// admits Layer 1's two callbacks and the sprint's two; no other tset profile
+// carries a sprint fragment.
+func TestSprintProfileAssembles(t *testing.T) {
 	t.Parallel()
-	if _, err := TSetSource(TSetSprint); err == nil {
-		t.Fatal("the tset assembler accepted the sprint profile before G0")
+	sprintSource, err := TSetSource(TSetSprint)
+	if err != nil {
+		t.Fatalf("the sprint profile does not assemble: %v", err)
+	}
+	composed, err := TSetSource(TSetComposed)
+	if err != nil {
+		t.Fatal(err)
 	}
 	standalone, err := TSetSource(TSetStandalone)
 	if err != nil {
@@ -254,9 +261,25 @@ func TestSprintProfileIsNotLoadable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	filter := "name == 'ns_tset_step' or name == 'ns_tset_read' or name == 'ns_sprint_step' or name == 'ns_sprint_read'"
+	if !strings.Contains(sprintSource, "    if "+filter+" then\n") {
+		t.Fatal("the sprint profile's registration filter is not Layer 1's two callbacks and SprintFunctions")
+	}
+	if strings.Contains(composed, "ns_sprint_step' or") || strings.Contains(standalone, "ns_sprint_step' or") {
+		t.Fatal("a tset profile admits the sprint's functions")
+	}
+	if !strings.Contains(sprintSource, "\n-- lua/table_set_log.lua\n") {
+		t.Fatal("the sprint profile leaves out Layer 2's log")
+	}
+	last := strings.Index(sprintSource, "\n-- lua/table_set_validate.lua\n")
 	for _, name := range names {
-		if strings.Contains(standalone, "\n-- "+name+"\n") {
-			t.Fatalf("the standalone tset profile carries %s", name)
+		at := strings.Index(sprintSource, "\n-- "+name+"\n")
+		if at < 0 || at < last {
+			t.Fatalf("the sprint profile carries %s at %d, after the tset fragments at %d", name, at, last)
+		}
+		last = at
+		if strings.Contains(standalone, "\n-- "+name+"\n") || strings.Contains(composed, "\n-- "+name+"\n") {
+			t.Fatalf("a tset profile carries %s", name)
 		}
 	}
 }

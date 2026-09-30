@@ -30,9 +30,11 @@ var tsetFragments = []string{
 
 // TSetSource assembles an isolated nova_sprint library with the tset writer
 // and reader. The lexical shim registers only those two callbacks at library
-// load time; the unchanged legacy table.lua belongs to the old-tool profile.
+// load time, and in the sprint profile the sprint's two beside them; the
+// unchanged legacy table.lua belongs to the old-tool profile. The standalone
+// profile leaves Layer 2's log out; the composed and sprint profiles load it.
 func TSetSource(profile TSetProfile) (string, error) {
-	if profile != TSetStandalone && profile != TSetComposed {
+	if profile != TSetStandalone && profile != TSetComposed && profile != TSetSprint {
 		return "", fmt.Errorf("unknown tset profile %q", profile)
 	}
 	var b strings.Builder
@@ -54,21 +56,49 @@ func TSetSource(profile TSetProfile) (string, error) {
 	b.WriteString("  acl_check_cmd = function(...) return runtime_redis().acl_check_cmd(...) end,\n")
 	b.WriteString("  register_function = function(spec, callback)\n")
 	b.WriteString("    local name = callback and spec or spec.function_name\n")
-	b.WriteString("    if name == 'ns_tset_step' or name == 'ns_tset_read' then\n")
+	b.WriteString("    if " + registrationFilter(profile) + " then\n")
 	b.WriteString("      if callback == nil then return native_redis.register_function(spec) end\n")
 	b.WriteString("      return native_redis.register_function(spec, callback)\n")
 	b.WriteString("    end\n")
 	b.WriteString("  end,\n}\n")
 
 	for _, name := range tsetFragments {
-		if name == "lua/table_set_log.lua" && profile != TSetComposed {
+		if name == "lua/table_set_log.lua" && profile == TSetStandalone {
 			continue
 		}
 		if err := appendTSetFragment(&b, name); err != nil {
 			return "", err
 		}
 	}
+	if profile == TSetSprint {
+		// The sprint profile is the composed profile's fragments followed by
+		// the sprint's own, in sorted order (profile_sprint.go).
+		names, err := sprintFragments(sources)
+		if err != nil {
+			return "", err
+		}
+		for _, name := range names {
+			if err := appendTSetFragment(&b, name); err != nil {
+				return "", err
+			}
+		}
+	}
 	return b.String(), nil
+}
+
+// registrationFilter is the Lua condition the shim admits a registration
+// under: Layer 1's two callbacks in every profile (the log registers none of
+// its own), and the sprint's two (SprintFunctions) in the sprint profile.
+func registrationFilter(profile TSetProfile) string {
+	names := []string{"ns_tset_step", "ns_tset_read"}
+	if profile == TSetSprint {
+		names = append(names, SprintFunctions...)
+	}
+	conds := make([]string, len(names))
+	for i, n := range names {
+		conds[i] = "name == '" + n + "'"
+	}
+	return strings.Join(conds, " or ")
 }
 
 func appendTSetFragment(b *strings.Builder, name string) error {

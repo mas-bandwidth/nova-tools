@@ -12,12 +12,12 @@ import (
 // the server-selected profiles l1_only, composed and sprint; the upper design,
 // version 2.1, 1.0; item IT12).
 //
-// Before gate G0 (Layer 1's revision 4 pinned, Layer 2 accepted again against
-// its hash) no store loads it: TSetSource refuses the profile, and nothing
-// here assembles or loads its source. After G0 the sprint profile is the
-// composed profile's fragments followed by SprintFragments, under a
-// registration filter that admits SprintFunctions and, in production, drops
-// ns_tset_step (L1 9); that filter is tset_loader.go's, Layer 1's file.
+// The sprint profile is the composed profile's fragments, Layer 2's log among
+// them, followed by SprintFragments, under a registration filter that admits
+// Layer 1's two callbacks and SprintFunctions (tset_loader.go's TSetSource and
+// registrationFilter). It loads only on a test's own store: a production
+// loader, which drops ns_tset_step (L1 9), waits on gate G0 (Layer 2's
+// contract accepted again against Layer 1's revision 4).
 const TSetSprint TSetProfile = "sprint"
 
 // SprintFunctions are the two functions the sprint profile registers: the one
