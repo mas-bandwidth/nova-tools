@@ -520,6 +520,13 @@ func readResolve(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []Agen
 	return rp, append(left, mine[len(rp.Sprint):]...)
 }
 
+// ReachedCause is the cause of "sentinel reached" (the model's "-": a sentinel
+// is reached for no cause beyond itself; tla/SprintEvents.tla, VEff "release"
+// and ReachedPassed close JClose(@, "reached", CS(a), "-")). J refuses a state
+// op with an empty cause (REQUEST), so R3's reach, its unreach, release and a
+// rank or insertion that passes the sentinel all name this one.
+const ReachedCause = "-"
+
 // planResolve is R3, resolve:s, on the partial snapshot: for each stream, in
 // this order and at most one chunk in all,
 //
@@ -535,6 +542,9 @@ func readResolve(keys []AgendaKey, b ReadBounds, halvings int) (ReadPlan, []Agen
 //     0;
 //  3. unreach: the judgment is open or held and something is before σ: it
 //     closes, with the reason, guarded by the same rcount at least 1.
+//
+// Both name the judgment's cause ReachedCause, so the close meets the field the
+// open wrote.
 //
 // A quarantined sentinel is σ still, so nothing behind it is released, and R3
 // plans no reach for it (1.0). A dropping stream plans nothing and its key
@@ -611,11 +621,11 @@ func (rp *RulePlan) resolveStream(s *Snapshot, stream string, f posFront, head [
 		rp.Plan.Units = append(rp.Plan.Units, Unit{Key: g.ID, Stream: stream,
 			Changes: []Change{change(Work, guardEntry(g))}, Moved: "sentinel " + g.ID + " reached"})
 		rp.Guards = append(rp.Guards, posBefore(stream, g.Score, nil, posInt(0)).XGuard())
-		rp.Notes = append(rp.Notes, NoteReq{Op: posOpen, Type: NSentinelReached, Subjects: []string{g.ID},
+		rp.Notes = append(rp.Notes, NoteReq{Op: posOpen, Type: NSentinelReached, Cause: ReachedCause, Subjects: []string{g.ID},
 			Text: fmt.Sprintf("sentinel %s reached: nothing of %s is open before it", g.ID, stream)})
 	case judged && f.NBefore > 0:
 		rp.Guards = append(rp.Guards, posBefore(stream, g.Score, posInt(1), nil).XGuard())
-		rp.Notes = append(rp.Notes, NoteReq{Op: posClose, Type: NSentinelReached, Subjects: []string{g.ID},
+		rp.Notes = append(rp.Notes, NoteReq{Op: posClose, Type: NSentinelReached, Cause: ReachedCause, Subjects: []string{g.ID},
 			Text: fmt.Sprintf("%d cards now before it", f.NBefore)})
 	}
 	return moved
