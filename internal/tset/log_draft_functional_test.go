@@ -26,7 +26,7 @@ func logDraftFixture(t *testing.T) (*tsetFixture, *RedisStore) {
 	fx.Define(t, "work", "a", "b")
 	fx.Define(t, "aux", "c")
 	fx.Activate(t)
-	return fx, NewRedis(fx.Client)
+	return fx, newFixtureRedis(t, fx.Client)
 }
 
 func logNamed(step Step, op string) Step {
@@ -300,7 +300,9 @@ func TestAdvanceNewLogStartsAtOne(t *testing.T) {
 		ID: "1-0", Values: []any{"n", "0", "d", `{"k":"n","ms":"1"}`}}).Err(); err != nil {
 		t.Fatal(err)
 	}
-	logRefused(t, fx, store, Step{Epoch: "0", Space: fx.Space, Entries: []Entry{{Kind: "advance", AdvanceFrom: "0"}}}, "DRIFT")
+	// An advance carries an op and an intent (revision 4), so it reaches the check.
+	logRefused(t, fx, store, logNamed(Step{Epoch: "0", Space: fx.Space,
+		Entries: []Entry{{Kind: "advance", AdvanceFrom: "0"}}}, "advance-drift"), "DRIFT")
 }
 
 // logDraftReplay folds lines into reconstructed table state, value by value.
@@ -861,7 +863,7 @@ func TestLogPlanDescriptors(t *testing.T) {
 	fx := newComposedTSetFixture(t)
 	fx.Define(t, "work", "a", "b")
 	fx.ActivateWithLua(t, logDraftPlanProbeLua)
-	store := NewRedis(fx.Client)
+	store := newFixtureRedis(t, fx.Client)
 	composedWrite(t, store, logRows(fx.Space, "0", "work", "r"))
 	composedWrite(t, store, Step{Epoch: "0", Space: fx.Space, Entries: []Entry{{Kind: "create",
 		Table: "work", To: "r:a", IDs: []string{"x", "y"}, Scores: []string{"1", "2"}, About: []string{"p", "q"}}}})
@@ -966,7 +968,7 @@ func TestLogReadLineAt(t *testing.T) {
 	fx := newComposedTSetFixture(t)
 	fx.Define(t, "work", "a", "b")
 	fx.ActivateWithLua(t, logDraftLineAtProbeLua)
-	store := NewRedis(fx.Client)
+	store := newFixtureRedis(t, fx.Client)
 	composedWrite(t, store, logRows(fx.Space, "0", "work", "r"))
 	composedWrite(t, store, Step{Epoch: "0", Space: fx.Space, Entries: []Entry{{Kind: "create",
 		Table: "work", To: "r:a", IDs: []string{"x", "y"}, Scores: []string{"1", "2"}, About: []string{"p", "q"},
