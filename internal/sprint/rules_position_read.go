@@ -149,6 +149,14 @@ func posQueryKey(q SprintQ) string {
 // every id of a head or a waiters' head with its record, and every sprint key
 // asked answered and none besides. An answer that does not is ErrMisaligned, and
 // nothing is planned on it (1.5.1).
+//
+// It is called for every composite query of every rule's read, so it asks of a
+// query no more than the position rules read of it. A `front` answer that lists
+// no heads gives its heads as records only, IT05's Answer (the fleet rules read
+// their heads that way, from the cells the records load): it loads, and a plan
+// that reads a head of it is refused at the read (posHeadOf), so no key is
+// planned on a head that was not listed. An answer that lists heads lists every
+// head asked, in order.
 func (p *Partial) loadPosition(s *Snapshot, i int, q SprintQ, a Answer) error {
 	pos := p.position()
 	if err := pos.loadKeys(i, q, a); err != nil {
@@ -157,7 +165,7 @@ func (p *Partial) loadPosition(s *Snapshot, i int, q SprintQ, a Answer) error {
 	hasRecord := func(id string) bool { return s.Work.Card(id) != nil }
 	switch q.Kind {
 	case QueryFront:
-		if len(a.Heads) != len(q.Heads) {
+		if len(a.Heads) > 0 && len(a.Heads) != len(q.Heads) {
 			return misaligned("composite query %d asked %d heads of %q, %d answered", i, len(q.Heads), q.Stream, len(a.Heads))
 		}
 		for j, h := range a.Heads {
@@ -315,17 +323,18 @@ func posFrontOf(s *Snapshot, stream string) (posFront, bool) {
 }
 
 // posHeadOf is the head of front(s) at the index, with its records in order and
-// whether the index has more beyond it. A head the read did not ask for is
-// refused.
-func posHeadOf(s *Snapshot, stream, index string) (cards []*Card, more bool) {
+// whether the index has more beyond it; ok is false when the answer does not list
+// the head. A head the read did not ask for, or whose answer gave its records and
+// did not list it (loadPosition), is refused, and the plan does not end its key.
+func posHeadOf(s *Snapshot, stream, index string) (cards []*Card, more, ok bool) {
 	pos := posOf(s)
 	if pos == nil {
-		return nil, false
+		return nil, false, false
 	}
-	i, ok := pos.front[stream]
-	if !ok {
+	i, asked := pos.front[stream]
+	if !asked {
 		posNotLoaded(s, "front of "+stream+", which")
-		return nil, false
+		return nil, false, false
 	}
 	for _, h := range s.Partial.Answer.Sprint[i].Heads {
 		if h.Index != index {
@@ -334,10 +343,10 @@ func posHeadOf(s *Snapshot, stream, index string) (cards []*Card, more bool) {
 		for _, id := range h.IDs {
 			cards = append(cards, s.Work.Card(id))
 		}
-		return cards, h.More
+		return cards, h.More, true
 	}
 	posNotLoaded(s, "the head "+index+" of "+stream+", which")
-	return nil, false
+	return nil, false, false
 }
 
 // posJudgedG says a judgment of the type is open, or held by the coordinator,

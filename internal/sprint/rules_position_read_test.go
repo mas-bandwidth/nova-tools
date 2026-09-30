@@ -48,7 +48,12 @@ func TestPositionAnswersThatDoNotAnswerTheirReadAreRefused(t *testing.T) {
 		twin   func() *posTwin
 		break_ func(*ReadPlan, *ReadAnswer)
 	}{
-		{"a head missing", front, posResolveTwin, func(rp *ReadPlan, a *ReadAnswer) { a.Sprint[0].Heads = nil }},
+		{"a head of two missing", front, posResolveTwin, func(rp *ReadPlan, a *ReadAnswer) {
+			rp.Sprint[0].Heads = append(rp.Sprint[0].Heads, HeadQ{Index: HeadFreshAbove, Limit: 1})
+		}},
+		{"a head too many", front, posResolveTwin, func(rp *ReadPlan, a *ReadAnswer) {
+			a.Sprint[0].Heads = append(a.Sprint[0].Heads, HeadAnswer{Index: HeadFreshAbove})
+		}},
 		{"a head of another index", front, posResolveTwin, func(rp *ReadPlan, a *ReadAnswer) { a.Sprint[0].Heads[0].Index = HeadAgain }},
 		{"a head over its limit", front, posResolveTwin, func(rp *ReadPlan, a *ReadAnswer) {
 			rp.Sprint[0].Heads[0].Limit = 1
@@ -140,6 +145,67 @@ func TestPositionAnswersThatDoNotAnswerTheirReadAreRefused(t *testing.T) {
 	}
 }
 
+// A `front` answer that lists no heads gives them as records only, IT05's
+// Answer, which is how the fleet rules' reads are answered (IT07): the loader,
+// which runs for every composite query of every rule, takes it, and a position
+// rule that reads a head of it is refused at the read. In a test build its plan
+// panics there; in a release build it plans nothing, ends no key, and the
+// snapshot names the head (UnloadedErr), so the tick refuses the plan. (Found on
+// the merge with IT07: the loader refused every front answer that did not list
+// its heads, and 30 of IT07's tests with it.)
+func TestPositionFrontAnswerWithoutHeadsIsRefusedAtTheRead(t *testing.T) {
+	t.Parallel()
+	for name, key := range map[string]string{ruleResolve: "resolve:s1", posPullbackRule: "pullback:s1"} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			tw := posResolveTwin()
+			tw.card("f", "s1", Ready, 8)
+			keys := []AgendaKey{posKeyOf(key)}
+			rp, left := posRule(t, name).Read(keys, posBounds, 0)
+			if len(left) != 0 || len(rp.Sprint) != 1 || rp.Sprint[0].Kind != QueryFront || len(rp.Sprint[0].Heads) == 0 {
+				t.Fatalf("%s's read is not one front query with heads: %+v left %v", name, rp, left)
+			}
+			unlisted := func() ReadAnswer {
+				a := tw.answer(rp)
+				if len(a.Sprint[0].Heads) == 0 {
+					t.Fatalf("the twin listed no heads to take away")
+				}
+				a.Sprint[0].Heads = nil // the records stay, as IT05's Answer gives them
+				return a
+			}
+			s, err := loadPartial(rp, unlisted(), false)
+			if err != nil {
+				t.Fatalf("a front answer that lists no heads does not load: %v", err)
+			}
+			if _, ok := posFrontOf(s, "s1"); !ok {
+				t.Fatal("the front itself was not read")
+			}
+			p := posRule(t, name).Plan(s, keys, tw.now)
+			if len(p.Done)+len(p.Requeue)+len(p.HeldBack)+len(p.Plan.Units)+len(p.Plan.Refused)+len(p.Notes)+len(p.Intents) != 0 {
+				t.Fatalf("%s planned on heads the answer did not list: %+v", name, p)
+			}
+			if err := s.UnloadedErr(); !errors.Is(err, ErrUnloaded) || !strings.Contains(err.Error(), "the head ") {
+				t.Fatalf("%s read a head the answer did not list, and the snapshot says: %v", name, err)
+			}
+			strict, err := LoadPartial(rp, unlisted())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if msg := posPanicOf(func() { posRule(t, name).Plan(strict, keys, tw.now) }); !strings.Contains(msg, "did not load") {
+				t.Fatalf("%s in a test build: %q", name, msg)
+			}
+			// the same read with its heads listed plans
+			whole, err := LoadPartial(rp, tw.answer(rp))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if p := posRule(t, name).Plan(whole, keys, tw.now); len(p.Done)+len(p.Requeue) == 0 {
+				t.Fatalf("%s with its heads listed ends no key: %+v", name, p)
+			}
+		})
+	}
+}
+
 // The agenda key of a waiters query is the key its rule built it from, for every
 // form of key: the plan finds its answer by it.
 func TestWaitersQueryKeyIsTheKeyItWasBuiltFrom(t *testing.T) {
@@ -179,8 +245,8 @@ func TestPositionAccessorsRefuseWhatWasNotAsked(t *testing.T) {
 	if f, ok := posFrontOf(s, "s1"); !ok || f.G == nil || f.G.ID != "g" || f.NBefore != 3 {
 		t.Fatalf("front: %+v %v", f, ok)
 	}
-	if head, more := posHeadOf(s, "s1", HeadEligBelow); len(head) != 3 || more {
-		t.Fatalf("head: %d %v", len(head), more)
+	if head, more, ok := posHeadOf(s, "s1", HeadEligBelow); len(head) != 3 || more || !ok {
+		t.Fatalf("head: %d %v %v", len(head), more, ok)
 	}
 	if posJudgedG(s, "s1", NSentinelReached) || posDropping(s, "s1") {
 		t.Fatal("nothing is judged or dropping")

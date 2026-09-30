@@ -556,7 +556,10 @@ func planResolve(s *Snapshot, keys []AgendaKey, now Now) RulePlan {
 			rp.HeldBack = append(rp.HeldBack, k)
 			continue
 		}
-		head, more := posHeadOf(s, p.subject, HeadEligBelow)
+		head, more, ok := posHeadOf(s, p.subject, HeadEligBelow)
+		if !ok {
+			continue
+		}
 		moved := rp.resolveStream(s, p.subject, f, head)
 		if more && moved {
 			rp.Requeue = append(rp.Requeue, k)
@@ -1131,7 +1134,10 @@ func planPullback(s *Snapshot, keys []AgendaKey, now Now) RulePlan {
 			rp.HeldBack = append(rp.HeldBack, k)
 			continue
 		}
-		head, more := posHeadOf(s, p.subject, HeadFreshAbove)
+		head, more, ok := posHeadOf(s, p.subject, HeadFreshAbove)
+		if !ok {
+			continue
+		}
 		moved := rp.pullStream(p.subject, f, head)
 		if more && moved {
 			rp.Requeue = append(rp.Requeue, k)

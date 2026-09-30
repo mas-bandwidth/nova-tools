@@ -247,6 +247,8 @@ type Answer struct {
 	Front *FrontAnswer
 	// Heads are the heads of a `front` query, one for each of the query's
 	// Heads in its order; their records are in Records (rules_position_read.go).
+	// An answer that lists none gives the heads' records only: it loads, and a
+	// position rule's plan that reads a head of it is refused.
 	Heads []HeadAnswer
 	// Needs are the needs of a `waiters` query, one for each id its source
 	// named, in order; the waiters' records are in Records. MoreIDs says a
