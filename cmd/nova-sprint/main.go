@@ -67,6 +67,7 @@ type app struct {
 	newPath      bool
 	sprintClient func(ctx context.Context, addr string, names sprint.Names) (sprintfn.Client, func() error, error)
 	configRows   func(ctx context.Context, dsn string) (spverbs.ConfigRows, func() error, error)
+	noteStream   func(ctx context.Context, addr string) (spverbs.NoteStream, func() error, error)
 	np           *newPathState
 }
 
@@ -75,6 +76,7 @@ func newApp(getenv func(string) string) *app {
 	a.backend = a.redisBackend
 	a.sprintClient = a.newPathClient
 	a.configRows = newPathConfig
+	a.noteStream = a.newPathNoteStream
 	return a
 }
 
@@ -85,14 +87,8 @@ func (a *app) close() {
 	}
 }
 
-// redisBackend opens the store once per address, as nova-table dials it: the
-// address, then NOVA_SPRINT_REDIS_USER and the variable
-// NOVA_SPRINT_REDIS_PASSWORD_ENV names.
-func (a *app) redisBackend(ctx context.Context, addr string, names sprint.Names) (store.Backend, error) {
-	key := addr
-	if b, ok := a.cached[key]; ok {
-		return b, nil
-	}
+// conn dials or returns the cached connection to addr.
+func (a *app) conn(ctx context.Context, addr string) (*redisconn.Conn, error) {
 	conn, ok := a.conns[addr]
 	if !ok {
 		o := redisconn.Options{Addr: addr, Env: redisconn.Env{User: redisauth.UserEnv}}
@@ -115,9 +111,33 @@ func (a *app) redisBackend(ctx context.Context, addr string, names sprint.Names)
 		}
 		a.conns[addr] = conn
 	}
+	return conn, nil
+}
+
+// redisBackend opens the store once per address, as nova-table dials it: the
+// address, then NOVA_SPRINT_REDIS_USER and the variable
+// NOVA_SPRINT_REDIS_PASSWORD_ENV names.
+func (a *app) redisBackend(ctx context.Context, addr string, names sprint.Names) (store.Backend, error) {
+	key := addr
+	if b, ok := a.cached[key]; ok {
+		return b, nil
+	}
+	conn, err := a.conn(ctx, addr)
+	if err != nil {
+		return nil, err
+	}
 	b := &store.Redis{C: conn.Client(), Names: names, Now: a.now}
 	a.cached[key] = b
 	return b, nil
+}
+
+// newPathNoteStream returns the notification stream for inbox --wait on the store.
+func (a *app) newPathNoteStream(ctx context.Context, addr string) (spverbs.NoteStream, func() error, error) {
+	conn, err := a.conn(ctx, addr)
+	if err != nil {
+		return nil, nil, err
+	}
+	return spverbs.RedisNotes{C: conn.Client()}, nil, nil
 }
 
 // libraryMatches refuses a store whose loaded table function library is not

@@ -1201,6 +1201,10 @@ func logPage(ctx context.Context, e *Env, res *Result, q tset.ReadQuery, cursor 
 			Queries: []tset.ReadQuery{q}}}})
 		res.Trips++
 		if err != nil {
+			var it *sprintfn.ItemError
+			if errors.As(err, &it) && it.Refusal != nil {
+				return tset.ReadReply{}, epoch, &Refused{Verb: verb, Refusal: it.Refusal, Retries: res.Retries}
+			}
 			return tset.ReadReply{}, epoch, err
 		}
 		if len(out) != 1 {

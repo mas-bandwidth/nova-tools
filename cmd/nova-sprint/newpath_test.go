@@ -125,12 +125,33 @@ func newNPApp(t *testing.T) *npApp {
 		t.Fatal(err)
 	}
 	env := map[string]string{"NOVA_SPRINT_REDIS": "twin:0", "NOVA_SPRINT_ACTOR": "coord"}
+	var cancel context.CancelFunc
 	na.a = newApp(func(k string) string { return env[k] })
 	na.a.newPath = true
 	na.a.now = na.clock
-	na.a.sleep = func(d time.Duration) { na.mu.Lock(); na.now = na.now.Add(d); na.mu.Unlock() }
+	na.a.notify = func(ctx context.Context) (context.Context, context.CancelFunc) {
+		ctx, c := context.WithCancel(ctx)
+		na.mu.Lock()
+		cancel = c
+		na.mu.Unlock()
+		return ctx, c
+	}
+	na.a.sleep = func(d time.Duration) {
+		na.mu.Lock()
+		na.now = na.now.Add(d)
+		c := cancel
+		cancel = nil
+		na.mu.Unlock()
+		if c != nil {
+			c()
+		}
+	}
 	na.a.sprintClient = func(context.Context, string, sprint.Names) (sprintfn.Client, func() error, error) {
 		return na.rec, nil, nil
+	}
+	memNotes := spverbs.NewMemStream()
+	na.a.noteStream = func(context.Context, string) (spverbs.NoteStream, func() error, error) {
+		return memNotes, nil, nil
 	}
 	na.a.configRows = func(context.Context, string) (spverbs.ConfigRows, func() error, error) { return cfg, nil, nil }
 	na.a.backend = func(context.Context, string, sprint.Names) (store.Backend, error) {
@@ -272,13 +293,13 @@ func npCases() []npCase {
 		stub("merge", "merge --stream s1 --batch 100 --red --suspect s1-4 s1-5", "IT21"),
 		stub("resume", "resume --stream s1,s2 --did rebased", "IT21"),
 		// IT22.
-		stub("ack", "ack n-1 --reason flaky", "IT22"),
-		stub("wait", "wait n-1 n-2 --for 30m --reason later", "IT22"),
-		stub("inbox", "inbox --read", "IT22"),
-		stub("card", "card s1-1", "IT22"),
-		stub("log", "log --card s1-1", "IT22"),
-		stub("where", "where --json", "IT22"),
-		stub("where", "where --watch --every 2s", "IT22"),
+		{verb: "ack", line: "ack n-1 --reason flaky", code: exitRefused, want: []string{"ACK FAIL code=REQUEST", "not a note id"}},
+		{verb: "wait", line: "wait n-1 n-2 --for 30m --reason later", code: exitRefused, want: []string{"WAIT FAIL code=REQUEST", "not a note id"}},
+		{verb: "inbox", line: "inbox --read", code: exitRefused, want: []string{"INBOX FAIL code=REQUEST", "inbox --read moves the coordinator's cursor"}},
+		{verb: "card", setup: npInit, line: "card s1-1", code: 0, want: []string{"card s1-1 has no record"}},
+		{verb: "log", line: "log --card s1-1", code: exitBug, want: []string{"LOG FAIL code=REQUEST"}},
+		{verb: "where", setup: npInit, line: "where --json", code: 0, want: []string{`"tables":`, `"summary":`, `"epoch":0`}},
+		{verb: "where", setup: npInit, line: "where --watch --every 2s", code: 0, want: []string{"SPRINT TABLE"}},
 		// After: the check, remove; no item: teardown, repair; not in
 		// section 3: resolve, fleet level.
 		stub("check", "check", "IT26"),
@@ -288,9 +309,9 @@ func npCases() []npCase {
 		stub("repair", "repair", "AL7"),
 		stub("resolve", "resolve s1-1", "no item"),
 		stub("fleet level", "fleet level", "no item"),
-		// play: the driver over the entry point reads where --json first,
-		// which is IT22's; until it lands the driver cannot read the view.
-		{verb: "play", setup: npRunning, line: "play --ticks 1 --simulation", code: exitRefused, want: []string{"the view could not be read"}},
+		// play: the driver over the entry point reads where --json first (IT22),
+		// and fails because the machine has not run a tick.
+		{verb: "play", setup: npRunning, line: "play --ticks 1 --simulation", code: exitRefused, want: []string{"no machine is running"}},
 	}
 }
 
@@ -610,5 +631,118 @@ func TestReworkAndDropOnNewPath(t *testing.T) {
 	out = na.ok("drop --abort --op op-abort-1")
 	if !strings.Contains(out, "DROP OK") || !strings.Contains(out, "op-abort-1 aborted") {
 		t.Fatalf("drop --abort: %s", out)
+	}
+}
+
+// TestIT22VerbsOnNewPath: IT22 verbs (where, inbox, card, log, ack, wait, inbox --wait)
+// on the new path against the twin.
+func TestIT22VerbsOnNewPath(t *testing.T) {
+	t.Parallel()
+	na := newNPApp(t)
+	na.ok("init")
+	na.ok("start")
+
+	// 1. where (text) and where --json:
+	whereOut := na.ok("where")
+	if !strings.Contains(whereOut, "SPRINT TABLE") || !strings.Contains(whereOut, "NOT TICKING") {
+		t.Fatalf("where output:\n%s", whereOut)
+	}
+	whereJSON := na.ok("where --json")
+	var wv spverbs.WhereView
+	if err := json.Unmarshal([]byte(whereJSON), &wv); err != nil {
+		t.Fatalf("where --json unmarshal: %v\n%s", err, whereJSON)
+	}
+	if wv.Epoch != 0 || wv.Tables == nil {
+		t.Fatalf("where --json view: %+v", wv)
+	}
+
+	// 2. inbox and inbox --json:
+	inboxOut := na.ok("inbox")
+	if !strings.Contains(inboxOut, "INBOX OK") {
+		t.Fatalf("inbox output:\n%s", inboxOut)
+	}
+	inboxJSON := na.ok("inbox --json")
+	var iv spverbs.InboxView
+	if err := json.Unmarshal([]byte(inboxJSON), &iv); err != nil {
+		t.Fatalf("inbox --json unmarshal: %v\n%s", err, inboxJSON)
+	}
+
+	// 4. card before and after card creation:
+	cardEmpty := na.ok("card s1-1")
+	if !strings.Contains(cardEmpty, "card s1-1 has no record") {
+		t.Fatalf("card empty:\n%s", cardEmpty)
+	}
+	// Initialize score counter once:
+	res, err := sprintfn.Step(context.Background(), na.tw, &sprintfn.Request{
+		Epoch:  "0",
+		Meta:   sprintfn.Meta{Verb: "fixture", Actor: "coord"},
+		Sprint: &sprintfn.SprintPart{Counter: &sprintfn.CounterChange{Read: map[string]string{"score": ""}, Set: map[string]string{"score": "1000000"}}},
+	})
+	if err != nil || res.Refusal != nil || res.Err != nil {
+		t.Fatalf("init counter: %v %v %v", err, res.Refusal, res.Err)
+	}
+	raw := func(entries ...tset.Entry) {
+		t.Helper()
+		res, err := sprintfn.Step(context.Background(), na.tw, &sprintfn.Request{
+			Epoch: "0",
+			Meta:  sprintfn.Meta{Verb: "fixture", Actor: "coord"},
+			Body:  sprintfn.Body{Entries: entries},
+		})
+		if err != nil || res.Refusal != nil || res.Err != nil {
+			t.Fatalf("fixture: err %v, refusal %v, result err %v", err, res.Refusal, res.Err)
+		}
+	}
+	raw(
+		tset.Entry{Kind: "rows", Table: sprint.Work, Add: []string{"s1"}},
+		tset.Entry{Kind: "create", Table: sprint.Work, To: "s1:ready", IDs: []string{"s1-1"}, Scores: []string{"1"},
+			Each: []map[string]string{{"kind": "work", "stream": "s1", sprint.PrimaryField: "s1-1"}}, About: []string{"s1-1"}},
+	)
+	cardPresent := na.ok("card s1-1")
+	if !strings.Contains(cardPresent, "card s1-1 at s1:ready") {
+		t.Fatalf("card present:\n%s", cardPresent)
+	}
+	cardJSON := na.ok("card s1-1 --json")
+	var cv spverbs.CardView
+	if err := json.Unmarshal([]byte(cardJSON), &cv); err != nil {
+		t.Fatalf("card --json unmarshal: %v\n%s", err, cardJSON)
+	}
+	if cv.ID != "s1-1" || cv.Record == nil || !cv.Record.Exists {
+		t.Fatalf("card --json view: %+v", cv)
+	}
+
+	// 5. log:
+	_ = na.ok("log --stream s1")
+	logJSON := na.ok("log --stream s1 --json")
+	var lv spverbs.LogView
+	if err := json.Unmarshal([]byte(logJSON), &lv); err != nil {
+		t.Fatalf("log --json unmarshal: %v\n%s", err, logJSON)
+	}
+
+	// 6. ack and wait validations and calls:
+	ackBadCode, _, ackBadErr := na.do("ack n-1 --reason bad")
+	if ackBadCode != exitRefused || !strings.Contains(ackBadErr, "ACK FAIL code=REQUEST") {
+		t.Fatalf("ack bad: exit %d, %s", ackBadCode, ackBadErr)
+	}
+	waitBadCode, _, waitBadErr := na.do("wait n-1 --for 10m --reason bad")
+	if waitBadCode != exitRefused || !strings.Contains(waitBadErr, "WAIT FAIL code=REQUEST") {
+		t.Fatalf("wait bad: exit %d, %s", waitBadCode, waitBadErr)
+	}
+
+	// Ack on notice note n1 (created by start): refused because notices need no answer:
+	ackNoticeCode, _, ackNoticeErr := na.do("ack n1 --reason handled")
+	if ackNoticeCode != exitRefused || !strings.Contains(ackNoticeErr, "a notice and not a judgment") {
+		t.Fatalf("ack notice: exit %d, %s", ackNoticeCode, ackNoticeErr)
+	}
+
+	// Wait on notice note n1 (created by start): refused because notices need no answer:
+	waitNoticeCode, _, waitNoticeErr := na.do("wait n1 --for 5m --reason 'check later'")
+	if waitNoticeCode != exitRefused || !strings.Contains(waitNoticeErr, "a notice and not a judgment") {
+		t.Fatalf("wait notice: exit %d, %s", waitNoticeCode, waitNoticeErr)
+	}
+
+	// 7. inbox --wait with timeout:
+	waitInboxOut := na.ok("inbox --wait --timeout 20ms")
+	if !strings.Contains(waitInboxOut, "INBOX WAIT nothing") {
+		t.Fatalf("inbox --wait timeout:\n%s", waitInboxOut)
 	}
 }

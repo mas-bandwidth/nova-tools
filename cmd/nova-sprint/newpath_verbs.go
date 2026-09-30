@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
@@ -80,12 +81,15 @@ type newVerb struct {
 
 // parsed is a verb's words and flags, read.
 type parsed struct {
-	app   *app
-	verb  string
-	c     common
-	words []string
-	vals  map[string]any
-	given map[string]bool
+	app    *app
+	verb   string
+	c      common
+	words  []string
+	vals   map[string]any
+	given  map[string]bool
+	stdout io.Writer
+	stderr io.Writer
+	view   any
 }
 
 func (p *parsed) str(n string) string { return *(p.vals[n].(*string)) }
@@ -465,7 +469,7 @@ func init() {
 				}
 				return nil
 			},
-			call: stubbed("IT22, verbs.Ack")},
+			call: callAck},
 		{name: "wait", syntax: "<note>... (--for <duration> | --until <RFC3339>) [--reason <text>]", item: "IT22", words: wordsSome,
 			flags: []flagDef{{name: "for", kind: kDuration, usage: "review it again after this long"}, {name: "until", usage: "review it again at this time (RFC3339)"},
 				{name: "reason", usage: "why it waits"}},
@@ -480,9 +484,12 @@ func init() {
 				}
 				return nil
 			},
-			call: stubbed("IT22, verbs.Wait")},
-		{name: "inbox", syntax: "[--open <group>] [--read] [--deadline <duration>] [--stale <duration>] [--at-epoch <n>]", item: "IT22",
-			flags: []flagDef{{name: "open", usage: "list every member and notification of the group of this id"},
+			call: callWait},
+		{name: "inbox", syntax: "[--wait] [--timeout <duration>] [--open <group>] [--read] [--deadline <duration>] [--stale <duration>] [--at-epoch <n>]", item: "IT22",
+			flags: []flagDef{
+				{name: "wait", kind: kBool, usage: "block on the notification stream for the first judgment after the cursor"},
+				{name: "timeout", kind: kDuration, usage: "with --wait: how long to wait (default 30m; at most 24h)"},
+				{name: "open", usage: "list every member and notification of the group of this id"},
 				{name: "read", kind: kBool, usage: "move the cursor past what is shown"},
 				{name: "deadline", kind: kDuration, def: defaultDeadline.String(), usage: "a judgment open longer is overdue"}, fStale, fAtEpoch},
 			check: func(p *parsed) error {
@@ -494,14 +501,14 @@ func init() {
 				}
 				return nil
 			},
-			call: stubbed("IT22, verbs.Inbox")},
+			call: callInbox},
 		{name: "card", syntax: "<id> [--fields] [--at-epoch <n>]", item: "IT22", words: wordsOne,
 			flags: []flagDef{fAtEpoch, {name: "fields", kind: kBool, usage: "every field of the primary and its cards, instead of its story"}},
-			call:  stubbed("IT22, verbs.Card")},
+			call:  callCard},
 		{name: "log", syntax: "[--card <id>] [--stream <s>] [--member <m>] [--since <10m|RFC3339>] [--at-epoch <n>]", item: "IT22",
 			flags: []flagDef{{name: "card", usage: "the lines about this card"}, {name: "stream", usage: "the lines of this stream"},
 				{name: "member", usage: "the lines of this fleet member or reader"}, {name: "since", usage: "the lines at or after this time"}, fAtEpoch},
-			call: stubbed("IT22, verbs.Log")},
+			call: callLog},
 		{name: "where", syntax: "[--watch] [--every <duration>] [--stale <duration>] [--at-epoch <n>]", item: "IT22",
 			flags: []flagDef{{name: "watch", kind: kBool, usage: "redraw in place every --every until interrupted"},
 				{name: "every", kind: kDuration, def: time.Second.String(), usage: "the redraw interval with --watch, above 0"}, fStale, fAtEpoch},
@@ -511,7 +518,7 @@ func init() {
 				}
 				return nil
 			},
-			call: stubbed("IT22, verbs.Where")},
+			call: callWhere},
 
 		// The command's own: the driver, every verb of which runs through the
 		// entry point, on the path the app is on.
@@ -703,6 +710,154 @@ func callRework(ctx context.Context, e *spverbs.Env, p *parsed) (spverbs.Result,
 		Fix:     p.str("fix"),
 		Chunk:   p.num("limit"),
 	})
+}
+
+// callAck is ack (item IT22).
+func callAck(ctx context.Context, e *spverbs.Env, p *parsed) (spverbs.Result, error) {
+	return spverbs.Ack(ctx, e, spverbs.AckReq{
+		Op:     p.c.op,
+		Notes:  p.words,
+		Reason: p.str("reason"),
+	})
+}
+
+// callWait is wait (item IT22).
+func callWait(ctx context.Context, e *spverbs.Env, p *parsed) (spverbs.Result, error) {
+	forDur := p.dur("for")
+	if u := p.str("until"); u != "" {
+		t, err := time.Parse(time.RFC3339, u)
+		if err != nil {
+			return spverbs.Result{Verb: p.verb}, usage("--until wants an RFC3339 time")
+		}
+		forDur = t.Sub(p.app.now())
+		if forDur <= 0 {
+			return spverbs.Result{Verb: p.verb}, usage("--until %s is in the past", u)
+		}
+	}
+	return spverbs.Wait(ctx, e, spverbs.WaitReq{
+		Op:     p.c.op,
+		Notes:  p.words,
+		For:    forDur,
+		Reason: p.str("reason"),
+	})
+}
+
+// callInbox is inbox (item IT22).
+func callInbox(ctx context.Context, e *spverbs.Env, p *parsed) (spverbs.Result, error) {
+	var view spverbs.InboxView
+	req := spverbs.InboxReq{
+		Read: p.on("read"),
+		Out:  &view,
+	}
+	if p.on("wait") {
+		if p.app.noteStream == nil {
+			return spverbs.Result{Verb: p.verb}, fmt.Errorf("inbox --wait: note stream is not configured")
+		}
+		ns, closer, err := p.app.noteStream(ctx, p.c.redis)
+		if err != nil {
+			return spverbs.Result{Verb: p.verb}, err
+		}
+		if closer != nil {
+			defer closer()
+		}
+		req.Wait = &spverbs.InboxWait{
+			Notes:   ns,
+			Timeout: p.dur("timeout"),
+		}
+	}
+	res, err := spverbs.Inbox(ctx, e, req)
+	if err != nil {
+		return res, err
+	}
+	p.view = &view
+	return res, nil
+}
+
+// callCard is card (item IT22).
+func callCard(ctx context.Context, e *spverbs.Env, p *parsed) (spverbs.Result, error) {
+	var view spverbs.CardView
+	req := spverbs.CardReq{
+		ID:  p.words[0],
+		Out: &view,
+	}
+	res, err := spverbs.Card(ctx, e, req)
+	if err != nil {
+		return res, err
+	}
+	p.view = &view
+	return res, nil
+}
+
+// callLog is log (item IT22).
+func callLog(ctx context.Context, e *spverbs.Env, p *parsed) (spverbs.Result, error) {
+	var since uint64
+	if s := p.str("since"); s != "" {
+		if n, err := strconv.ParseUint(s, 10, 64); err == nil {
+			since = n
+		}
+	}
+	var view spverbs.LogView
+	req := spverbs.LogReq{
+		Card:   p.str("card"),
+		Stream: p.str("stream"),
+		Since:  since,
+		Out:    &view,
+	}
+	res, err := spverbs.Log(ctx, e, req)
+	if err != nil {
+		return res, err
+	}
+	p.view = &view
+	return res, nil
+}
+
+// callWhere is where (item IT22).
+func callWhere(ctx context.Context, e *spverbs.Env, p *parsed) (spverbs.Result, error) {
+	watch := p.on("watch")
+	every := p.dur("every")
+	if watch {
+		var stop context.CancelFunc
+		ctx, stop = p.app.notify(ctx)
+		defer stop()
+	}
+	var w *watchWriter
+	if watch && !p.c.json {
+		w = newWatchWriter(p.stdout, func() (int, int) { return p.app.screen(p.stdout) })
+		w.hideCursor()
+		defer w.showCursor()
+	}
+	var rows spverbs.WhereRows
+	for {
+		var view spverbs.WhereView
+		req := spverbs.WhereReq{Rows: rows, Out: &view}
+		res, err := spverbs.Where(ctx, e, req)
+		if err != nil {
+			if ctx.Err() != nil {
+				return spverbs.Result{Verb: p.verb}, nil
+			}
+			return res, err
+		}
+		rows = view.Rows
+		if !watch {
+			p.view = &view
+			return res, nil
+		}
+		switch {
+		case p.c.json:
+			b, _ := json.Marshal(view)
+			fmt.Fprintln(p.stdout, string(b))
+		case w != nil:
+			if err := w.frame(res.Said); err != nil {
+				fmt.Fprintf(p.stderr, "%s where: stdout: %s\n", prog, oneline.Escape(err.Error()))
+				return res, err
+			}
+		default:
+			fmt.Fprint(p.stdout, res.Said)
+		}
+		if !p.app.pause(ctx, every) {
+			return spverbs.Result{Verb: p.verb}, nil
+		}
+	}
 }
 
 // checkAdd is add's grammar, as the present add checks it.

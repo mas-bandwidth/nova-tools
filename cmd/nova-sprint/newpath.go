@@ -253,6 +253,8 @@ func (a *app) dispatch(v newVerb, args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, v.name, err.Error())
 	}
+	p.stdout = stdout
+	p.stderr = stderr
 	ctx := context.Background()
 	e, key, err := a.env(ctx, p.c, classOf(v))
 	if err != nil {
@@ -337,6 +339,31 @@ func render(v newVerb, p *parsed, res spverbs.Result, err error, stdout, stderr 
 	var rf *spverbs.Refused
 	var un *spverbs.Unknown
 	isRefused, isUnknown := errors.As(err, &rf), errors.As(err, &un)
+	if classOf(v) == classRead {
+		if err == nil {
+			if v.name == "where" && p.on("watch") {
+				return code
+			}
+			if p.c.json {
+				if p.view != nil {
+					b, err := json.Marshal(p.view)
+					if err != nil {
+						fmt.Fprintf(stderr, "%s %s: %s\n", prog, v.name, oneline.Escape(err.Error()))
+						return exitRefused
+					}
+					fmt.Fprintln(stdout, string(b))
+					return code
+				}
+			} else {
+				if strings.HasSuffix(res.Said, "\n") {
+					fmt.Fprint(stdout, res.Said)
+				} else if res.Said != "" {
+					fmt.Fprintln(stdout, res.Said)
+				}
+				return code
+			}
+		}
+	}
 	if p.c.json {
 		o := newOut{Verb: v.name, Op: res.Op, Moved: []string{}, Refused: []sprint.Refusal{}, Attempts: 1 + res.Retries,
 			Replay: res.Replay, Unknown: isUnknown, Epoch: res.Epoch, EpochAfter: res.EpochAfter, Parts: res.Parts,
