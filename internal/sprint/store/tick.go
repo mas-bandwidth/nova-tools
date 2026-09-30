@@ -829,6 +829,8 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 		snap, _, err = pinned.twinRead(withBudget(ctx), twin, All, tickExtras, nil)
 		twin.mu.Unlock()
 	} else {
+		// another step of this process holds the twin: this read is the store's
+		st.stats().note("the tick's first read found its twin held by another step, and read the store whole")
 		snap, _, err = pinned.Fenced(withBudget(ctx), All, tickExtras, nil)
 	}
 	res.Times = append(res.Times, read.part("", "first read"))

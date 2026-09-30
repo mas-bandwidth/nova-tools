@@ -146,6 +146,9 @@ type Twin struct {
 	// why is the reason the twin was last dropped: the next whole read says it
 	// (a NOTE), as a table read whole for want of its change stream does
 	why string
+	// seeded says the twin has read tables whole once: a table read whole
+	// after that is said
+	seeded bool
 	// last is the last snapshot read from the twin (its judgments, its
 	// coordinator, the machine's state): what peek answers with beside the
 	// tables.
@@ -330,6 +333,12 @@ func (st *Store) twinView(ctx context.Context, tw *Twin, load []string, v View, 
 	if len(whole) > 0 && tw.why != "" {
 		st.stats().note("the twin read the tables whole: " + tw.why)
 		tw.why = ""
+	} else if len(whole) > 0 && tw.seeded {
+		var names []string
+		for _, sh := range whole {
+			names = append(names, sh.Name)
+		}
+		st.stats().note(fmt.Sprintf("the twin read %s whole: not held after an earlier read of it was cut short", strings.Join(names, ", ")))
 	}
 	if len(whole) > 0 {
 		ids, err := st.B.CellIDs(ctx, whole)
@@ -347,6 +356,7 @@ func (st *Store) twinView(ctx context.Context, tw *Twin, load []string, v View, 
 			tw.tables[name] = fresh
 			tw.kept[name], tw.shown[name], tw.absent[name] = map[string]*sprint.Card{}, map[string]*sprint.Card{}, map[string]bool{}
 		}
+		tw.seeded = true
 	}
 	for i, shape := range shapes {
 		t := tw.tables[load[i]]
