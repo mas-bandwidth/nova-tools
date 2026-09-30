@@ -3,6 +3,7 @@ package store
 import (
 	"fmt"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -182,4 +183,163 @@ func TestTheDealGoesRoundTheFleetThroughTheTick(t *testing.T) {
 func TestTheIndexesGoOnFromTickToTick(t *testing.T) {
 	t.Parallel()
 	dealRingAcrossTicks(t, newHarness(t))
+}
+
+// workFailing plays a member taking and finishing every ready card it holds,
+// the ones fail names failed.
+func workFailing(h *harness, member string, fail func(id string) bool) {
+	h.t.Helper()
+	h.run(TakeStep(sprint.TakeReq{As: member, Sel: sprint.Sel{Limit: 100}, Who: member}))
+	var ok, failed []string
+	gens := map[string]int{}
+	for _, c := range h.snap().Fleet.Cell(member, sprint.Working) {
+		gens[c.ID] = c.Int("gen")
+		if fail(c.ID) {
+			failed = append(failed, c.ID)
+		} else {
+			ok = append(ok, c.ID)
+		}
+	}
+	if len(ok) > 0 {
+		h.must(FinishStep(sprint.FinishReq{As: member, Sel: sprint.Sel{IDs: ok}, Gens: gens, Who: member}))
+	}
+	if len(failed) > 0 {
+		h.must(FinishStep(sprint.FinishReq{As: member, Sel: sprint.Sel{IDs: failed}, Gens: gens, Failed: true, Report: "tests red", Who: member}))
+	}
+}
+
+// attemptsBy is the members each attempt's work cards were placed on: the
+// count of first attempts (.w1) and of redeals (every later attempt) by member.
+func attemptsBy(h *harness) (first, again map[string]int) {
+	first, again = map[string]int{}, map[string]int{}
+	for _, c := range h.snap().Fleet.Cards() {
+		p, attempt, ok := sprint.ParseWorkCard(c.ID)
+		if !ok || p == "" {
+			continue
+		}
+		m := c.F("member")
+		if m == "" {
+			m = c.Row
+		}
+		if attempt == 1 {
+			first[m]++
+		} else {
+			again[m]++
+		}
+	}
+	return first, again
+}
+
+// within fails unless every member's count is within most of the others.
+func within(t *testing.T, what string, counts map[string]int, most int) {
+	t.Helper()
+	lo, hi := -1, 0
+	for _, m := range ringMembers {
+		if lo < 0 || counts[m] < lo {
+			lo = counts[m]
+		}
+		hi = max(hi, counts[m])
+	}
+	if hi-lo > most {
+		t.Fatalf("%s by member %v: want every member within %d of the others", what, counts, most)
+	}
+}
+
+// dealRingWithFailures is a run with failures (errata 3 amendment 5: every
+// placement, first attempts and redeals and levelling alike, moves the index):
+// eight members beaten up before start, 32 cards in four streams, the machine
+// ticking and every member working its ready cards at once, the odd-numbered
+// cards' first attempts failing; once every first attempt is dealt the
+// coordinator reworks each failed primary, one at a time, each worked at once. The first attempts and the redeals
+// each go round the fleet: every member's count of each within one of the
+// others, where the shortest queue with its ties by name gave the redeals to
+// the first members.
+func dealRingWithFailures(t *testing.T, h *harness) {
+	ringFleet(h)
+	for _, st := range []string{"s1", "s2", "s3", "s4"} {
+		h.must(AddStep(sprint.AddReq{Stream: st, Count: 8}))
+	}
+	h.startMachine()
+	failFirst := func(id string) bool {
+		p, attempt, ok := sprint.ParseWorkCard(id)
+		if !ok || attempt != 1 {
+			return false
+		}
+		_, n, _ := strings.Cut(p, "-")
+		k, err := strconv.Atoi(n)
+		return err == nil && k%2 == 1
+	}
+	for i := 0; i < 20; i++ {
+		h.machine()
+		for _, m := range ringMembers {
+			workFailing(h, m, failFirst)
+		}
+		h.readAll()
+		h.tick(time.Second)
+		if first, _ := attemptsBy(h); sum(first) == 32 {
+			break
+		}
+	}
+	var failed []string
+	for _, c := range h.snap().Work.Column(sprint.Review) {
+		if c.F("result") == "failed" {
+			failed = append(failed, c.ID)
+		}
+	}
+	if len(failed) != 16 {
+		t.Fatalf("%d primaries came back failed, want 16", len(failed))
+	}
+	// one rework at a time, each worked at once: every queue is empty at every
+	// rework, where the shortest queue with its ties by name gives each to m1
+	skips := 0
+	for _, id := range failed {
+		// every member is idle: the next member round the fleet is the one past
+		// the index, and a rework whose failed attempt was on it skips it
+		past, _ := h.snap().Fleet.Prop(sprint.PropDealIndex)
+		next := ringMembers[(slices.Index(ringMembers, past)+1)%len(ringMembers)]
+		failedOn := h.snap().Fleet.Card(sprint.WorkCardID(id, 1)).Row
+		h.must(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{id}}, Fix: "make the test pass", Who: "tester"}))
+		to := h.snap().Fleet.Card(sprint.WorkCardID(id, 2)).Row
+		want := next
+		if next == failedOn {
+			want = ringMembers[(slices.Index(ringMembers, next)+1)%len(ringMembers)]
+			skips++
+		}
+		if to != want {
+			t.Fatalf("%s (failed on %s) was redealt to %s, want %s: the next member round the fleet past %s, the member that failed it skipped", id, failedOn, to, want, past)
+		}
+		for _, m := range ringMembers {
+			workFailing(h, m, func(string) bool { return false })
+		}
+	}
+	first, again := attemptsBy(h)
+	t.Logf("first attempts by member: %v", first)
+	t.Logf("redeals by member:        %v (the member that failed a card skipped %d times)", again, skips)
+	if sum(first) != 32 || sum(again) != 16 {
+		t.Fatalf("%d first attempts and %d redeals, want 32 and 16", sum(first), sum(again))
+	}
+	within(t, "first attempts", first, 1)
+	// a skip of the member that failed the card gives its turn to the next, and
+	// the index moves past that one: each skip can put one member a card behind
+	within(t, "redeals", again, 1+skips)
+	for _, id := range failed {
+		was := h.snap().Fleet.Card(sprint.WorkCardID(id, 1))
+		now := h.snap().Fleet.Card(sprint.WorkCardID(id, 2))
+		if was == nil || now == nil || now.Row == was.Row {
+			t.Fatalf("%s's redeal is on %v, its failed attempt on %v: the member that failed it is avoided while another has room", id, now, was)
+		}
+	}
+}
+
+func sum(counts map[string]int) int {
+	n := 0
+	for _, v := range counts {
+		n += v
+	}
+	return n
+}
+
+func TestTheRedealsGoRoundTheFleetInARunWithFailures(t *testing.T) {
+	t.Parallel()
+	dealRingWithFailures(t, newHarness(t))
 }

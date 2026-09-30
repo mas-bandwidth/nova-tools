@@ -82,6 +82,7 @@ func TestPresenceTakesAMemberDownAndDealsItsCards(t *testing.T) {
 	got := refmodel.PresenceMoves(w.snapshot(beats), later(0))
 	expect(t, got,
 		"set fleet ctl-m1 since=2030-01-02T03:04:05Z,status=down",
+		"prop fleet deal_index=m2", // every placement moves the deal's index (errata 3 amendment 5)
 		"move fleet s1-1.w1 m1:working>m2:ready",
 		"move fleet s1-3.w1 m1:ready>m2:ready",
 		"notice fleet member down []")
@@ -108,6 +109,7 @@ func TestPresenceBringsAMemberUpWhenItBeatsAndLevelsTheQueues(t *testing.T) {
 	got := refmodel.PresenceMoves(w.snapshot(w.fresh()), later(0))
 	expect(t, got,
 		"set fleet ctl-m2 since=2030-01-02T03:04:05Z,status=up",
+		"prop fleet deal_index=m2", // the levelling moves the deal's index too
 		"move fleet s1-3.w1 m1:ready>m2:ready",
 		"notice fleet member up []")
 }
@@ -268,7 +270,7 @@ func TestDealStopsAtTheRedealBound(t *testing.T) {
 	}
 }
 
-func TestLevelMovesTheNewestFromTheLongestToTheShortest(t *testing.T) {
+func TestLevelMovesTheNewestFromTheLongestRoundTheFleet(t *testing.T) {
 	t.Parallel()
 	w := sprintOf(t, "m1")
 	w.add(t, "s1", 2)
@@ -279,9 +281,9 @@ func TestLevelMovesTheNewestFromTheLongestToTheShortest(t *testing.T) {
 	ctl.Fields["status"] = sprint.Up // up without the step that would level the queues
 	w.s.Fleet.Put(ctl)
 	got := refmodel.LevelMoves(w.snapshot(w.fresh()), later(0))
-	expect(t, got, "move fleet s1-2.w1 m1:ready>m2:ready")
-	if !slices.Contains(got[0].Set, "gen=2") || !slices.Contains(got[0].Set, "member=m2") {
-		t.Errorf("a card dealt again is the next generation, of its new member: %v", got[0].Set)
+	expect(t, got, "prop fleet deal_index=m2", "move fleet s1-2.w1 m1:ready>m2:ready")
+	if !slices.Contains(got[1].Set, "gen=2") || !slices.Contains(got[1].Set, "member=m2") {
+		t.Errorf("a card dealt again is the next generation, of its new member: %v", got[1].Set)
 	}
 }
 
