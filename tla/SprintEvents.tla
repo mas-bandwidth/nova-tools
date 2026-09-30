@@ -92,8 +92,9 @@
 \*   decisions are not decided; the model prints `drop` only, and the
 \*   judgment is neither held nor acked.
 \*
-\* Broken names a reversed witness (section 5's table, W1 to W27, and W28 of
-\* errata 3's amendment 4, the deal's order; W5Reach
+\* Broken names a reversed witness (section 5's table, W1 to W27, W28 of
+\* errata 3's amendment 4, the deal's order, and W29 of amendment 5, the deal's
+\* member choice by the rolling index; W5Reach
 \* is W5's reach half, breaking reach and unreach and not the verb; W7 is
 \* split into W7a and W7b) that changes exactly one rule; "none" is the
 \* design.
@@ -655,11 +656,12 @@ Counts == [m \in Members |-> RCount(m)]
 \* from the index, wrapping, with room (the avoid member only when no other
 \* has), and the index moves past it; a card refused moves nothing. It
 \* replaces the shortest ready queue with its ties broken by the order, which
-\* gives every card of an idle fleet to the first members.
+\* gives every card of an idle fleet to the first members. W29: the scan starts
+\* at the first member every time (the old rule), not at the rolling index.
 RoundOne(cnt, ms, av, at) ==
   LET room == {m \in ms : cnt[m] < Cap}
   IN IF room = {} THEN None
-     ELSE FirstFrom(MemSeq, at, IF room \ {av} # {} THEN room \ {av} ELSE room)
+     ELSE FirstFrom(MemSeq, IF Broken = "W29" THEN 1 ELSE at, IF room \ {av} # {} THEN room \ {av} ELSE room)
 RECURSIVE RoundAssign(_, _, _, _)
 RoundAssign(q0, c0, ms0, at0) ==
   CHOOSE r \in {IF q = <<>> THEN <<>>
@@ -953,7 +955,7 @@ Init ==
   /\ cut = [o \in Ops |-> -1]
   /\ receipts = {}
   /\ next = Scn.next
-  /\ dcur = 1 /\ acur = 1
+  /\ dcur = Scn.dcur /\ acur = 1
   /\ lease = [owner |-> None, gen |-> 0]
   /\ tk = [t \in Ticks |-> TkIdle({})]
   /\ vk = [v \in VerbProcs |-> VIdle]
@@ -1875,6 +1877,19 @@ DealTakesTurns ==
     IN /\ \A c \in T, d \in Dealable \ T : S(c) = S(d) => Before(c, d)
        /\ \A d \in Dealable \ T : \A x \in Streams :
              n(x) <= n(S(d)) + (IF n(x) > 0 /\ x # S(d) /\ StreamOrd(x) < StreamOrd(S(d)) THEN 1 ELSE 0)
+
+\* Errata 3, amendment 5 (R6): the deal goes round the fleet. With every member
+\* up and idle (no ready card at any), consecutive deals go to distinct members
+\* in the fixed order, from the rolling index dcur, until every member has one:
+\* the i-th card the plan deals goes to the member i - 1 places past dcur in the
+\* ring of the members (no card dealt is one to avoid a member, which shifts
+\* the ring). Stated from dcur and the ring, not from RoundOne.
+DealOp(u) == u.op \in {"deal", "redealw"}
+DealGoesRound ==
+  (Dealable # {} /\ DealRoom > 0 /\ DealUp = Members /\ \A m \in Members : RCount(m) = 0) =>
+    LET dl == SelectSeq(PlanDeal(DealK, Chunk).units, DealOp)
+    IN (\A i \in DOMAIN dl : fld[dl[i].c].avoid = None) =>
+         \A i \in 1..Min(Len(dl), Cardinality(Members)) : dl[i].m = At(MemSeq, dcur, i - 1)
 
 -----------------------------------------------------------------------------
 \* Action properties (section 5). Lifecycle and DropComplete speak of steps,
