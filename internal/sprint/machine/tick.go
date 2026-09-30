@@ -290,6 +290,7 @@ type rt1 struct {
 	items                     []sprintfn.Item
 	lease, errStep, page, get int
 	pageLimit                 int
+	parkedAsked               []string // the parked keys the read names
 }
 
 // The atomic read of RT1, by index (1.4.2; errata 1's addendum: the
@@ -330,6 +331,7 @@ func (l *Loop) rt1() rt1 {
 		parked = append(parked, k)
 	}
 	sort.Strings(parked)
+	r.parkedAsked = parked
 	var sq []sprintfn.SprintQuery
 	for _, q := range []sprintfn.KeyQ{{Kind: sprintfn.KeyClock}, {Kind: sprintfn.KeyTick}, {Kind: sprintfn.KeyDueCount},
 		{Kind: sprintfn.KeyDropping, Streams: []string{}}, {Kind: sprintfn.KeyParked, Keys: parked}} {
@@ -438,10 +440,13 @@ func (l *Loop) tick(ctx context.Context, c sprintfn.Client, rep *Report) error {
 	l.stopped = rd.clock.Stopped
 	l.hb["tick_at"] = rd.timeMS
 	l.hb["agenda"], l.hb["heldq"], l.hb["due_now"] = rd.agendaText(), rd.heldText(), strconv.Itoa(rd.due)
-	for k := range l.parked {
+	for _, k := range r1.parkedAsked {
 		if _, still := rd.parked[k]; !still {
 			delete(l.parked, k) // acknowledged: its judgment closed, its line queues it again
 		}
+	}
+	for k := range l.parked {
+		rd.parked[k] = "" // parked by this tick's error step, after the read was asked
 	}
 
 	// The page: the lines after the real cursor (1.1, "Where the loop learns
@@ -1144,6 +1149,9 @@ func parseRT1(rep *sprintfn.ReadReply) (rt1Read, error) {
 	if err != nil {
 		return out, err
 	}
-	out.parked = pr.(sprintfn.ParkedResult).Notes
+	out.parked = map[string]string{}
+	for k, v := range pr.(sprintfn.ParkedResult).Notes {
+		out.parked[k] = v
+	}
 	return out, nil
 }

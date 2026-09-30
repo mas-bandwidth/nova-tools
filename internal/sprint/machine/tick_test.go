@@ -1,20 +1,21 @@
 package machine
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/tset"
-
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/sprintfn"
+	"github.com/mas-bandwidth/nova-tools/internal/tset"
 )
 
 // dealRule is the tests' deal (R6's key): the head of fresh:s1, each card to
 // working at attempt 1.
 func dealRule(limit int, follow ...string) sprint.Rule {
-	return testRule("deal", headRead(sprint.IndexFresh, limit, []string{"kind", "attempt"}, follow),
+	return testRule("deal", headRead(sprint.IndexFresh, limit, []string{"kind", "attempt", sprint.PrimaryField}, follow),
 		moveAll("ready", "working", map[string]string{"attempt": "1"}))
 }
 
@@ -335,5 +336,285 @@ func TestTickPageLimitFromBytes(t *testing.T) {
 		if pageBytes == 1000 && !sawOne {
 			t.Fatal("a line over the page's bytes did not bring the limit to one line")
 		}
+	}
+}
+
+// TestTickDriftReadQuarantines: a read refused DRIFT naming a card under the
+// head of fresh:s quarantines it in RT3 of the same tick, and the rule reads
+// again next tick without it and deals the rest (1.3.5, 1.4.2).
+func TestTickDriftReadQuarantines(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t)
+	w.rows("s1")
+	// p2 names sixteen read cards where a primary keeps fifteen (1.3.1): the
+	// read that follows them is refused DRIFT naming p2.
+	bad := fresh()
+	bad["rcards"] = strings.Join(ids("x", 16), ",")
+	w.verb(create("s1:ready", fresh(), "p1"), create("s1:ready", bad, "p2"), create("s1:ready", fresh(), "p3"))
+	k := &counting{c: w.tw}
+	l := w.loop("a", []sprint.Rule{dealRule(64, sprint.FollowRCards)}, Budget{})
+	w.tick(l, k)
+	rep := w.tick(l, k)
+	if rep.Refused["DRIFT"] != 1 || strings.Join(rep.Quarantined, ",") != "p2" || rep.RoundTrips != 3 {
+		t.Fatalf("the refused read: %+v", rep)
+	}
+	rt3 := k.last()
+	if len(rt3) != 1 || rt3[0].Step.Sprint == nil || len(rt3[0].Step.Sprint.Quarantine) != 1 || rt3[0].Step.Sprint.Quarantine[0].Stream != "s1" {
+		t.Fatalf("RT3 is not the quarantine of p2 in s1: %+v", rt3)
+	}
+	if _, ok := w.hash("quarantine@0")["p2"]; !ok {
+		t.Fatalf("p2 is not quarantined: %v", w.hash("quarantine@0"))
+	}
+	if _, ok := w.zset("fresh:s1@0")["p2"]; ok {
+		t.Fatal("p2 is still in fresh:s1")
+	}
+	if len(w.hash("jopen:p2@0")) == 0 {
+		t.Fatal("no judgment is open on p2")
+	}
+	w.clk.add(TickEvery)
+	rep = w.tick(l, k)
+	if w.place("p1") != "s1:working" || w.place("p3") != "s1:working" || w.place("p2") != "s1:ready" {
+		t.Fatalf("the next tick: p1 %s, p2 %s, p3 %s; %+v", w.place("p1"), w.place("p2"), w.place("p3"), rep)
+	}
+}
+
+// bigCards are n fresh cards of s1 with a field of 64,000 bytes each: a read of
+// their whole records past 8 MiB of reply is refused BUDGET (L1 7).
+func bigCards(w *world, n int) {
+	pad := strings.Repeat("y", 64000)
+	for i := 0; i < n; i += 50 {
+		var cards []string
+		for j := i; j < min(i+50, n); j++ {
+			cards = append(cards, fmt.Sprintf("b%d", j+1))
+		}
+		f := fresh()
+		f["brief"] = pad
+		w.verb(create("s1:ready", f, cards...))
+	}
+}
+
+// TestTickBudgetReadHalvesThenParks: a read refused BUDGET is a bug, named in
+// "the machine's step was refused", and the rule reads next tick at half its
+// size; only a read of one key at limits of one parks the key (1.4.2, 1.3.5;
+// SprintEvents.tla Apply's LIMIT branch; IT10's OnBug).
+func TestTickBudgetReadHalvesThenParks(t *testing.T) {
+	t.Parallel()
+	whole := func(limit int, halve bool) sprint.Rule {
+		return testRule("deal", func(keys []sprint.AgendaKey, b sprint.ReadBounds, h int) (sprint.ReadPlan, []sprint.AgendaKey) {
+			if !halve {
+				h = 0 // a rule that reads the same whatever it is told
+			}
+			return sprint.ReadPlan{Sprint: []sprint.SprintQ{{Kind: sprint.QueryRelated, Table: sprint.Work, Fields: []string{"kind", "attempt", "brief"},
+				Source: sprint.IDSource{Kind: sprint.SourceHead, Key: "fresh:s1", Limit: sprint.Halved(limit, h)}}}}, nil
+		}, moveAll("ready", "working", map[string]string{"attempt": "1"}))
+	}
+	t.Run("halves", func(t *testing.T) {
+		t.Parallel()
+		w := newWorld(t)
+		w.rows("s1")
+		bigCards(w, 150)
+		k := &counting{c: w.tw}
+		l := w.loop("a", []sprint.Rule{whole(150, true)}, Budget{})
+		w.tick(l, k)
+		rep := w.tick(l, k)
+		if rep.Refused["BUDGET"] != 1 || rep.Halved["deal"] != 1 || len(rep.Parked) != 0 {
+			t.Fatalf("the refused read: %+v", rep)
+		}
+		if rt3 := k.last(); len(rt3) != 1 || len(rt3[0].Step.Body.Notes) != 1 || rt3[0].Step.Body.Notes[0].Type != TypeStepRefused {
+			t.Fatalf("the refusal is not named in RT3: %+v", rt3)
+		}
+		if len(w.hash("jopen:deal@0")) == 0 {
+			t.Fatal(`"the machine's step was refused" is not open on deal`)
+		}
+		w.clk.add(TickEvery)
+		rep = w.tick(l, k)
+		if rep.Refused["BUDGET"] != 0 || rep.Applied == 0 || w.place("b1") != "s1:working" || w.place("b150") != "s1:ready" {
+			t.Fatalf("the read at half: %+v; b1 %s, b150 %s", rep, w.place("b1"), w.place("b150"))
+		}
+		if _, ok := rep.Halved["deal"]; ok {
+			t.Fatal("the halving outlived a plan that applied whole (1.3.6)")
+		}
+	})
+	t.Run("parks at one", func(t *testing.T) {
+		t.Parallel()
+		w := newWorld(t)
+		w.rows("s1")
+		bigCards(w, 150)
+		k := &counting{c: w.tw}
+		l := w.loop("a", []sprint.Rule{whole(150, false)}, Budget{})
+		w.tick(l, k)
+		// The key has been halved to limits of one already (eleven halvings
+		// take 2,000 to one): one more BUDGET parks it.
+		l.halvings["deal"] = 11
+		rep := w.tick(l, k)
+		if rep.Refused["BUDGET"] != 1 || strings.Join(rep.Parked, ",") != "deal" {
+			t.Fatalf("the read at one: %+v", rep)
+		}
+		w.clk.add(TickEvery)
+		rep = w.tick(l, k)
+		if _, ok := w.hash("parked@0")["deal"]; !ok {
+			t.Fatalf("deal is not parked: %v", w.hash("parked@0"))
+		}
+		if _, ok := w.zset("agenda@0")["deal"]; ok {
+			t.Fatal("a parked key is still in the agenda")
+		}
+		// A new line that would queue it does not: it waits for its judgment.
+		w.verb(create("s1:ready", fresh(), "p1"))
+		w.clk.add(TickEvery)
+		if rep = w.tick(l, k); rep.Read["deal"] != 0 {
+			t.Fatalf("a parked key was planned: %+v", rep)
+		}
+	})
+}
+
+// TestTickHoldsBackDroppingKeys: a key whose only work was in dropping streams
+// is held back: it stays in the agenda and is not planned again until a new
+// line queues it or a dropping mark changes (1.3.5).
+func TestTickHoldsBackDroppingKeys(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t)
+	w.rows("s1", "s2")
+	hold := true
+	deal := testRule("deal", headRead(sprint.IndexFresh, 64, []string{"kind", "attempt"}, nil),
+		func(s *sprint.Snapshot, keys []sprint.AgendaKey, now sprint.Now) sprint.RulePlan {
+			if hold {
+				return sprint.RulePlan{HeldBack: keys}
+			}
+			return moveAll("ready", "working", map[string]string{"attempt": "1"})(s, keys, now)
+		})
+	k := &counting{c: w.tw}
+	l := w.loop("a", []sprint.Rule{deal}, Budget{})
+	w.tick(l, k)
+	w.verb(create("s1:ready", fresh(), "p1"))
+	if rep := w.tick(l, k); rep.Read["deal"] != 1 || strings.Join(rep.HeldBack, ",") != "deal" {
+		t.Fatalf("the plan that held deal back: %+v", rep)
+	}
+	if _, ok := w.zset("agenda@0")["deal"]; !ok {
+		t.Fatal("a held back key left the agenda")
+	}
+	w.clk.add(TickEvery)
+	if rep := w.tick(l, k); rep.Read["deal"] != 0 || rep.RoundTrips != 1 {
+		t.Fatalf("a held back key was planned: %+v", rep)
+	}
+	// A new line that queues deal plans it again.
+	w.verb(create("s1:ready", fresh(), "p2"))
+	w.clk.add(TickEvery)
+	if rep := w.tick(l, k); rep.Read["deal"] != 1 || strings.Join(rep.HeldBack, ",") != "deal" {
+		t.Fatalf("a new line of deal did not plan it: %+v", rep)
+	}
+	// A dropping mark that changes plans it again.
+	w.step(&sprintfn.Request{Epoch: "0", Meta: sprintfn.Meta{Verb: "drop", Actor: "coordinator"},
+		Sprint: &sprintfn.SprintPart{Dropping: map[string]string{"s2": "op-drop-1"}}})
+	hold = false
+	w.clk.add(TickEvery)
+	if rep := w.tick(l, k); rep.Read["deal"] != 1 || len(rep.HeldBack) != 0 || w.place("p2") != "s1:working" {
+		t.Fatalf("a changed mark did not plan deal: %+v", rep)
+	}
+}
+
+// TestTickCurFromAtomicRead: a new lease holder whose cursor is stale pages
+// from it, and in the same tick drops the lines at or before the real cursor,
+// which RT1's read gives, and ingests the rest from there (1.1).
+func TestTickCurFromAtomicRead(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t)
+	w.rows("s1")
+	k := &counting{c: w.tw}
+	a, b := w.loop("a", nil, Budget{}), w.loop("b", nil, Budget{})
+	w.tick(b, k)
+	w.verb(create("s1:waiting", waiting(), "q1"))
+	w.tick(b, k) // b ingests the first lines
+	stale := b.cur
+	w.verb(create("s1:waiting", waiting(), "q2"))
+	w.clk.add(LeaseHold + TickEvery) // b's lease runs out
+	if rep := w.tick(a, k); !rep.Held {
+		t.Fatalf("a did not take the lease: %+v", rep)
+	}
+	w.tick(a, k) // a ingests past b's cursor
+	real := a.cur
+	w.verb(create("s1:waiting", waiting(), "q3"), create("s1:waiting", waiting(), "q4"))
+	w.clk.add(LeaseHold + TickEvery)
+	if b.cur != stale || seqOf(stale) >= seqOf(real) {
+		t.Fatalf("b's cursor %s is not stale against %s", b.cur, real)
+	}
+	rep := w.tick(b, k)
+	if !rep.Held || rep.Refused[sprintfn.CodeIngestAt] != 0 {
+		t.Fatalf("b's tick: %+v", rep)
+	}
+	page := k.sent[len(k.sent)-rep.RoundTrips][1].Page.Queries[0]
+	ingest := k.sent[len(k.sent)-rep.RoundTrips+1][0].Step.Ingest
+	last := len(w.log.Lines(testNames.Prefix, "0"))
+	if page.AfterSeq != stale || ingest.From != real || rep.Lines != last-int(seqOf(real)) || b.cur != decimal(uint64(last)) {
+		t.Fatalf("paged after %s, ingested from %s, %d lines to %s; want from %s, %d lines to %d", page.AfterSeq, ingest.From, rep.Lines, b.cur, real, last-int(seqOf(real)), last)
+	}
+}
+
+// TestTwoLoopsOneTicks: two loops over one store: one holds the lease and
+// ticks; the other's step writes only its idle fields, and it does nothing
+// more (1.4.2, E4; SprintEvents.tla LeaseFree, GenOK).
+func TestTwoLoopsOneTicks(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t)
+	w.rows("s1")
+	k := &counting{c: w.tw}
+	a, b := w.loop("a", []sprint.Rule{dealRule(64)}, Budget{}), w.loop("b", []sprint.Rule{dealRule(64)}, Budget{})
+	for i := 0; i < 5; i++ {
+		w.verb(create("s1:ready", fresh(), fmt.Sprintf("p%d", i)))
+		ra, rb := w.tick(a, k), w.tick(b, k)
+		if !ra.Held || rb.Held || rb.RoundTrips != 1 {
+			t.Fatalf("round %d: a held %v, b held %v in %d round trips", i, ra.Held, rb.Held, rb.RoundTrips)
+		}
+		if hb := w.hash("heartbeat"); hb["idle_loop"] != "b" || hb["owner"] != "token-a" {
+			t.Fatalf("round %d: the heartbeat %v", i, hb)
+		}
+		w.clk.add(TickEvery)
+	}
+	for i := 0; i < 4; i++ {
+		if p := w.place(fmt.Sprintf("p%d", i)); p != "s1:working" {
+			t.Fatalf("p%d is at %s", i, p)
+		}
+	}
+}
+
+// TestTickKeepsFailing: a tick that fails is counted, and the next tick's RT1
+// writes the count and the error in the heartbeat, where "the tick keeps
+// failing" is computed at three (1.4.1).
+func TestTickKeepsFailing(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t)
+	w.rows("s1")
+	k := &counting{c: w.tw}
+	l := w.loop("a", []sprint.Rule{dealRule(64)}, Budget{})
+	w.tick(l, k)
+	k.fail = func(call int, items []sprintfn.Item) error {
+		if items[0].Step != nil && items[0].Step.Ingest != nil {
+			return errors.New("the store went away")
+		}
+		return nil
+	}
+	for i := 1; i <= 4; i++ {
+		w.verb(create("s1:ready", fresh(), fmt.Sprintf("p%d", i)))
+		w.clk.add(TickEvery)
+		if _, err := Tick(context.Background(), k, l); err == nil {
+			t.Fatalf("tick %d did not fail", i)
+		}
+	}
+	res, _, err := w.tw.KeyQuery(sprintfn.KeyQ{Kind: sprintfn.KeyHeartbeat})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hb := ParseHeartbeat(res.(sprintfn.HeartbeatResult).Fields)
+	if hb.Failures != 3 || !strings.Contains(hb.Error, "the store went away") {
+		t.Fatalf("the heartbeat says %d failures, %q", hb.Failures, hb.Error)
+	}
+	groups := InboxGroups(hb, Clock{}, hb.TickAt)
+	if len(groups) != 1 || groups[0].ID != GroupFailing || !strings.Contains(groups[0].What, "the store went away") {
+		t.Fatalf("groups %+v", groups)
+	}
+	// A tick that succeeds starts the count again.
+	k.fail = nil
+	w.clk.add(TickEvery)
+	if rep := w.tick(l, k); rep.Err != nil || l.failures != 0 {
+		t.Fatalf("the tick after: %+v, failures %d", rep, l.failures)
 	}
 }
