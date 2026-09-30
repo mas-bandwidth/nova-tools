@@ -24,6 +24,7 @@ func TestFactF1NoRollback(t *testing.T) {
 	addr := testredis.Start(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	defer c.Close()
+	logRedisVersion(t, c)
 
 	ctx := context.Background()
 
@@ -56,8 +57,12 @@ end)`
 func TestFactF2KillOnlyBeforeWrite(t *testing.T) {
 	t.Parallel()
 	addr := testredis.Start(t)
-	c := redis.NewClient(&redis.Options{Addr: addr})
-	defer c.Close()
+	c := redis.NewClient(&redis.Options{
+		Addr:        addr,
+		ReadTimeout: 30 * time.Second,
+	})
+	t.Cleanup(func() { _ = c.Close() })
+	logRedisVersion(t, c)
 
 	ctx := context.Background()
 
@@ -74,6 +79,18 @@ func TestFactF2KillOnlyBeforeWrite(t *testing.T) {
 	if err := c.ConfigSet(ctx, "busy-reply-threshold", "1000").Err(); err != nil {
 		t.Fatalf("config set busy-reply-threshold 1000: %v", err)
 	}
+	t.Cleanup(func() {
+		if err := c.ConfigSet(ctx, "busy-reply-threshold", "5000").Err(); err != nil {
+			t.Fatalf("config set busy-reply-threshold 5000: %v", err)
+		}
+		cfgRestored, err := c.ConfigGet(ctx, "busy-reply-threshold").Result()
+		if err != nil {
+			t.Fatalf("config get busy-reply-threshold: %v", err)
+		}
+		if cfgRestored["busy-reply-threshold"] != "5000" {
+			t.Fatalf("expected restored busy-reply-threshold 5000, got %s", cfgRestored["busy-reply-threshold"])
+		}
+	})
 
 	code := `#!lua name=facts_test
 redis.register_function('fct_f2_writeloop', function(keys, args)
@@ -95,9 +112,9 @@ end)`
 
 	// Case 1: Writing function -> FUNCTION KILL answers UNKILLABLE
 	{
-		cRunner := redis.NewClient(&redis.Options{Addr: addr})
+		cRunner := redis.NewClient(&redis.Options{Addr: addr, ReadTimeout: 30 * time.Second})
 		defer cRunner.Close()
-		cKiller := redis.NewClient(&redis.Options{Addr: addr})
+		cKiller := redis.NewClient(&redis.Options{Addr: addr, ReadTimeout: 30 * time.Second})
 		defer cKiller.Close()
 
 		var wg sync.WaitGroup
@@ -141,9 +158,9 @@ end)`
 
 	// Case 2: No-writes function -> FUNCTION KILL answers OK
 	{
-		cRunner := redis.NewClient(&redis.Options{Addr: addr})
+		cRunner := redis.NewClient(&redis.Options{Addr: addr, ReadTimeout: 30 * time.Second})
 		defer cRunner.Close()
-		cKiller := redis.NewClient(&redis.Options{Addr: addr})
+		cKiller := redis.NewClient(&redis.Options{Addr: addr, ReadTimeout: 30 * time.Second})
 		defer cKiller.Close()
 
 		var wg sync.WaitGroup
@@ -181,18 +198,6 @@ end)`
 			t.Fatalf("expected 'Script killed by user' error, got res=%q err=%v", runnerRes, runnerErr)
 		}
 	}
-
-	// Restore 5000 and assert it was restored
-	if err := c.ConfigSet(ctx, "busy-reply-threshold", "5000").Err(); err != nil {
-		t.Fatalf("config set busy-reply-threshold 5000: %v", err)
-	}
-	cfgRestored, err := c.ConfigGet(ctx, "busy-reply-threshold").Result()
-	if err != nil {
-		t.Fatalf("config get busy-reply-threshold: %v", err)
-	}
-	if cfgRestored["busy-reply-threshold"] != "5000" {
-		t.Fatalf("expected restored busy-reply-threshold 5000, got %s", cfgRestored["busy-reply-threshold"])
-	}
 }
 
 // TestFactF3UnpackLimit verifies the exact unpack bound: 7,999 values works and 8,000 fails.
@@ -201,6 +206,7 @@ func TestFactF3UnpackLimit(t *testing.T) {
 	addr := testredis.Start(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	defer c.Close()
+	logRedisVersion(t, c)
 
 	ctx := context.Background()
 
@@ -245,7 +251,8 @@ func TestFactF4OOMInsideStartedFunction(t *testing.T) {
 	t.Parallel()
 	addr := testredis.Start(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
-	defer c.Close()
+	t.Cleanup(func() { _ = c.Close() })
+	logRedisVersion(t, c)
 
 	ctx := context.Background()
 
@@ -289,6 +296,18 @@ redis.register_function{
 	if err := c.ConfigSet(ctx, "maxmemory", strconv.FormatInt(maxMem, 10)).Err(); err != nil {
 		t.Fatalf("config set maxmemory: %v", err)
 	}
+	t.Cleanup(func() {
+		if err := c.ConfigSet(ctx, "maxmemory", "0").Err(); err != nil {
+			t.Fatalf("config set maxmemory 0: %v", err)
+		}
+		cfg, err := c.ConfigGet(ctx, "maxmemory").Result()
+		if err != nil {
+			t.Fatalf("config get maxmemory: %v", err)
+		}
+		if cfg["maxmemory"] != "0" {
+			t.Fatalf("expected restored maxmemory 0, got %s", cfg["maxmemory"])
+		}
+	})
 
 	// Started function runs to end and writes everything
 	res, err := c.FCall(ctx, "fct_f4_write", []string{"dev-facts-f4"}, 2000).Int()
@@ -322,18 +341,6 @@ redis.register_function{
 	if len(val) != 1024 {
 		t.Fatalf("expected 1024 bytes, got %d", len(val))
 	}
-
-	// Restore maxmemory to 0 and assert it was restored
-	if err := c.ConfigSet(ctx, "maxmemory", "0").Err(); err != nil {
-		t.Fatalf("config set maxmemory 0: %v", err)
-	}
-	cfg, err := c.ConfigGet(ctx, "maxmemory").Result()
-	if err != nil {
-		t.Fatalf("config get maxmemory: %v", err)
-	}
-	if cfg["maxmemory"] != "0" {
-		t.Fatalf("expected restored maxmemory 0, got %s", cfg["maxmemory"])
-	}
 }
 
 // TestFactF5GlobalNamesAndReplaceWhole verifies that function names are global across
@@ -343,6 +350,7 @@ func TestFactF5GlobalNamesAndReplaceWhole(t *testing.T) {
 	addr := testredis.Start(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	defer c.Close()
+	logRedisVersion(t, c)
 
 	ctx := context.Background()
 
@@ -402,6 +410,7 @@ func TestFactF6UndeclaredKeys(t *testing.T) {
 	addr := testredis.Start(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	defer c.Close()
+	logRedisVersion(t, c)
 
 	ctx := context.Background()
 
@@ -448,6 +457,7 @@ func TestFactF7StreamIDsAndReset(t *testing.T) {
 	addr := testredis.Start(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	defer c.Close()
+	logRedisVersion(t, c)
 
 	ctx := context.Background()
 	streamKey := "dev-facts-f7"
@@ -571,6 +581,7 @@ func TestFactF8TimeFrozenInFunction(t *testing.T) {
 	addr := testredis.Start(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	defer c.Close()
+	logRedisVersion(t, c)
 
 	ctx := context.Background()
 
@@ -633,10 +644,18 @@ redis.register_function{
 func TestFactF9ZMSCOREAndXINFO(t *testing.T) {
 	t.Parallel()
 	addr := testredis.Start(t)
-	c := redis.NewClient(&redis.Options{Addr: addr})
+	c := redis.NewClient(&redis.Options{
+		Addr:        addr,
+		ReadTimeout: 60 * time.Second,
+	})
 	defer c.Close()
+	logRedisVersion(t, c)
 
 	ctx := context.Background()
+
+	if err := c.ConfigSet(ctx, "slowlog-log-slower-than", "0").Err(); err != nil {
+		t.Fatalf("config set slowlog-log-slower-than 0: %v", err)
+	}
 
 	code := `#!lua name=facts_test
 redis.register_function('fct_f9_zadd', function(keys, args)
@@ -700,21 +719,29 @@ end)`
 	sampleXInfo := func(samples int) time.Duration {
 		var durations []time.Duration
 		for i := 0; i < samples; i++ {
-			t0 := time.Now()
-			_, err := c.XInfoStream(ctx, streamKey).Result()
-			if err != nil {
+			if err := c.SlowLogReset(ctx).Err(); err != nil {
+				t.Fatalf("slowlog reset: %v", err)
+			}
+			if _, err := c.XInfoStream(ctx, streamKey).Result(); err != nil {
 				t.Fatalf("xinfo: %v", err)
 			}
-			durations = append(durations, time.Now().Sub(t0))
+			entries, err := c.SlowLogGet(ctx, 1).Result()
+			if err != nil {
+				t.Fatalf("slowlog get: %v", err)
+			}
+			if len(entries) == 0 {
+				t.Fatalf("slowlog empty")
+			}
+			durations = append(durations, entries[0].Duration)
 		}
 		slices.Sort(durations)
 		return durations[len(durations)/2] // median
 	}
 
-	med10 := sampleXInfo(30)
+	med10 := sampleXInfo(20)
 
-	// Add 500,000 entries (runs in well under 20 seconds)
-	const largeSize = 500000
+	// Add 5,000,000 entries
+	const largeSize = 5000000
 	fillStart := time.Now()
 	res, err := c.FCall(ctx, "fct_f9_fill", []string{streamKey}, largeSize).Int()
 	elapsedSec := float64(time.Now().Sub(fillStart).Milliseconds()) / 1000.0
@@ -725,17 +752,13 @@ end)`
 		t.Fatalf("fill %d took %.3fs (> 20s bound)", largeSize, elapsedSec)
 	}
 
-	medLarge := sampleXInfo(30)
+	medLarge := sampleXInfo(20)
 
 	// Assert XINFO STREAM time does not grow by more than ten times
-	base := med10
-	if base < 100*time.Microsecond {
-		base = 100 * time.Microsecond
+	if medLarge > 10*med10 {
+		t.Fatalf("XINFO STREAM time scaled with stream size: 10 entries=%v, 5000000 entries=%v (> 10x)", med10, medLarge)
 	}
-	limit := 10 * base
-	if medLarge > limit {
-		t.Fatalf("XINFO STREAM time grew by more than 10x: med10=%v medLarge=%v limit=%v", med10, medLarge, limit)
-	}
+	t.Logf("XINFO STREAM SLOWLOG: 10 entries=%v, 5000000 entries=%v", med10, medLarge)
 }
 
 // TestFactF10Commandstats verifies that commands issued inside functions are counted
@@ -745,6 +768,7 @@ func TestFactF10Commandstats(t *testing.T) {
 	addr := testredis.Start(t)
 	c := redis.NewClient(&redis.Options{Addr: addr})
 	defer c.Close()
+	logRedisVersion(t, c)
 
 	ctx := context.Background()
 
@@ -832,4 +856,22 @@ func parseCommandStats(info string) map[string]int64 {
 		}
 	}
 	return out
+}
+
+func logRedisVersion(t *testing.T, c *redis.Client) {
+	t.Helper()
+	info, err := c.Info(context.Background(), "server").Result()
+	if err != nil {
+		t.Fatalf("info server: %v", err)
+	}
+	scanner := bufio.NewScanner(strings.NewReader(info))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if strings.HasPrefix(line, "redis_version:") {
+			ver := strings.TrimPrefix(line, "redis_version:")
+			t.Logf("redis_version: %s", strings.TrimSpace(ver))
+			return
+		}
+	}
+	t.Fatalf("redis_version not found in INFO server:\n%s", info)
 }
