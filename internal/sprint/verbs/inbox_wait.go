@@ -268,14 +268,25 @@ func inboxWait(ctx context.Context, e *Env, req InboxReq) (Result, error) {
 	if now == nil {
 		now = time.Now
 	}
+	// The read is the log's last seq and, when the cursor is the stored one,
+	// the cursor: one trip.
+	queries := []tset.ReadQuery{{Kind: "last"}}
+	if req.Stored {
+		queries = append(queries, cursorQuery())
+	}
 	res, err := e.Do(ctx, Planned{Verb: verb, Read: func(epoch tset.Decimal) *sprintfn.ReadRequest {
-		return &sprintfn.ReadRequest{Epoch: epoch, Tset: []tset.ReadQuery{{Kind: "last"}}}
+		return &sprintfn.ReadRequest{Epoch: epoch, Tset: queries}
 	}})
 	if err != nil {
 		return res, err
 	}
-	if len(res.Read.Tset) != 1 {
+	if len(res.Read.Tset) != len(queries) {
 		return res, errors.New("inbox --wait: the read answered the wrong number of queries")
+	}
+	if req.Stored {
+		if req.After, _, err = cursorAnswer(verb, res.Read.Tset[1]); err != nil {
+			return res, err
+		}
 	}
 	epoch, ok := undec(res.Read.Epoch)
 	last, ok2 := undec(res.Read.Tset[0].LastSeq)
@@ -298,11 +309,18 @@ func inboxWait(ctx context.Context, e *Env, req InboxReq) (Result, error) {
 	v := InboxView{Groups: []sprint.Group{}, Cursor: strconv.FormatUint(cursor, 10), Last: strconv.FormatUint(got.Last, 10),
 		At: now().UTC(), Woke: got.Found, Judgments: got.Judgments}
 	if got.Found {
-		res.Said = fmt.Sprintf("INBOX WAIT tick-end=%s judgments=%d cursor=%s last=%s\n"+
-			"  the tick's batch is ready: inbox after %s reads it; the next wait is after %s\n",
-			got.ID, got.Judgments, v.Cursor, v.Last, v.Cursor, v.Last)
+		if req.Stored {
+			res.Said = fmt.Sprintf("INBOX WAIT tick-end=%s judgments=%d cursor=%s last=%s\n"+
+				"  the tick's batch is ready: inbox --read reads it from the cursor %s and moves the cursor; the next wait starts from the cursor\n"+
+				"  (a caller that keeps its own cursor: inbox --after %s, and the next wait --after %s)\n",
+				got.ID, got.Judgments, v.Cursor, v.Last, v.Cursor, v.Cursor, v.Last)
+		} else {
+			res.Said = fmt.Sprintf("INBOX WAIT tick-end=%s judgments=%d cursor=%s last=%s\n"+
+				"  the tick's batch is ready: inbox --after %s reads it; the next wait is --after %s\n",
+				got.ID, got.Judgments, v.Cursor, v.Last, v.Cursor, v.Last)
+		}
 	} else {
-		res.Said = fmt.Sprintf("INBOX WAIT nothing: no tick-end after %s in %s; last=%s\n", v.Cursor, timeout, v.Last)
+		res.Said = fmt.Sprintf("INBOX WAIT nothing: no tick-end after %s in %s; cursor=%s last=%s\n", v.Cursor, timeout, v.Cursor, v.Last)
 	}
 	if req.Out != nil {
 		*req.Out = v

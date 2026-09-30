@@ -45,6 +45,12 @@ func jrWaitBound(t *testing.T) time.Duration {
 // docs/SPEC-CI.md's waits rule). Then the blocked reader's connection is
 // killed and the next tick with a judgment written: the wait reads again, on a
 // new connection, from where it had read to, and wakes on that tick's end.
+//
+// The coordinator's loop is the command's: inbox --wait from the stored cursor
+// (Layer 1's table property on the store), on a wake inbox --read, which moves
+// the stored cursor to the last line it shows. The cursor a wake reports is
+// the stored one, so the wake after the killed connection starts from what the
+// read before it stored, and a client of a new process reads the same cursor.
 func TestInboxWaitWakesOnTheStore(t *testing.T) {
 	t.Parallel()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -98,21 +104,25 @@ func TestInboxWaitWakesOnTheStore(t *testing.T) {
 	// The coordinator's loop, on its own connection: wait, and on a wake send it
 	// and wait again from the tick-end.
 	type wake struct {
-		v  InboxView
-		at time.Time
+		v    InboxView
+		read InboxView // the inbox --read that answered it
+		at   time.Time
 	}
 	wakes := make(chan wake, 16)
 	ce := &Env{C: c, Names: storeNames, Actor: "coordinator"}
 	go func() {
-		cursor := uint64(0)
 		for ctx.Err() == nil {
-			var v InboxView
-			if _, err := Inbox(ctx, ce, InboxReq{After: cursor, Wait: &InboxWait{Notes: RedisNotes{C: reader}, Timeout: bound}, Out: &v}); err != nil {
+			var v, read InboxView
+			if _, err := Inbox(ctx, ce, InboxReq{Stored: true, Wait: &InboxWait{Notes: RedisNotes{C: reader}, Timeout: bound}, Out: &v}); err != nil {
 				return
 			}
 			if v.Woke {
-				wakes <- wake{v: v, at: time.Now()}
-				cursor, _ = strconv.ParseUint(v.Last, 10, 64)
+				at := time.Now()
+				if _, err := Inbox(ctx, ce, InboxReq{Read: true, Out: &read}); err != nil {
+					t.Errorf("inbox --read after a wake: %v", err)
+					return
+				}
+				wakes <- wake{v: v, read: read, at: at}
 			}
 		}
 	}()
@@ -164,6 +174,26 @@ func TestInboxWaitWakesOnTheStore(t *testing.T) {
 	if w.v.Judgments != 2 || w.v.Cursor != "0" {
 		t.Fatalf("the wake: %+v, want the tick-end of 2 from cursor 0", w.v)
 	}
+	// The read after it stored the last line it showed, which is at or past the
+	// tick-end, and a client of a new process reads that cursor from the store.
+	stored := func() string {
+		t.Helper()
+		c2, err := sprintfn.NewRedis(addr, "", "", storeNames, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = c2.Close() }()
+		cur, _, err := storedCursor(ctx, &Env{C: c2, Names: storeNames, Actor: "coordinator"}, "inbox")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strconv.FormatUint(cur, 10)
+	}
+	first := stored()
+	tickEnd, _ := strconv.ParseUint(w.v.Last, 10, 64)
+	if got, _ := strconv.ParseUint(first, 10, 64); first != w.read.Last || got < tickEnd {
+		t.Fatalf("after the read the store holds cursor %s, want the read's last %s, at or past the tick-end %d", first, w.read.Last, tickEnd)
+	}
 	blocked()
 	n = 0
 	if rep, _ := tick(); rep.Wake != 0 {
@@ -181,7 +211,20 @@ func TestInboxWaitWakesOnTheStore(t *testing.T) {
 	}
 	n = 1
 	tick()
-	if w := next(); w.v.Judgments != 1 {
+	w = next()
+	if w.v.Judgments != 1 {
 		t.Fatalf("after the reader's connection was killed the wait returned %+v, want the next tick-end, of 1", w.v)
+	}
+	// Across the killed connection the wait's cursor is the stored one: it
+	// began from what the first read stored, and nothing of the first batch
+	// was read again.
+	if w.v.Cursor != first {
+		t.Fatalf("the wake after the kill began from cursor %s, want the stored %s", w.v.Cursor, first)
+	}
+	if w.read.Cursor != first || w.read.Last == first {
+		t.Fatalf("the read after the kill: cursor %s last %s, want it from %s and past it", w.read.Cursor, w.read.Last, first)
+	}
+	if now := stored(); now != w.read.Last {
+		t.Fatalf("the store holds cursor %s after the second read, want %s", now, w.read.Last)
 	}
 }

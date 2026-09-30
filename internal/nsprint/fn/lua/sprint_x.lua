@@ -38,7 +38,7 @@ do
   -- The clock's fields, in 1.2's order (sprintfn clockFields).
   local CLOCK_FIELDS = {'stopped_ms', 'stopped_since_ms', 'stophold_ms', 'due_since_ms', 'stopraised_ms'}
   -- The verbs the design names as the coordinator's (sprintfn xCoordinatorVerbs).
-  local COORD_VERBS = {release = true, ack = true, wait = true, accept = true, rework = true}
+  local COORD_VERBS = {release = true, ack = true, wait = true, accept = true, rework = true, ['inbox --read'] = true}
   -- Tables whose rows are streams (sprintfn streamTables).
   local STREAM_TABLES = {work = true, merge = true}
   -- The most members of one command (L1 1.4 pieces; sprint.IndexPiece).

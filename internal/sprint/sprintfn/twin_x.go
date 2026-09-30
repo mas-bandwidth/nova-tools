@@ -185,10 +185,11 @@ const xStashMax = 4096
 // xCoordinatorVerbs are the verbs the design names as the coordinator's, which
 // X refuses from any actor but {p}coordinator (NOTCOORD): release (0, row 43),
 // ack and wait (2.2: "Judgments are the coordinator's"), accept and rework
-// (3: "as R9, by the coordinator", "as R10, by the coordinator"). The design
-// gives no complete list; this is the narrower reading, listed as an open
-// question.
-var xCoordinatorVerbs = map[string]bool{"release": true, "ack": true, "wait": true, "accept": true, "rework": true}
+// (3: "as R9, by the coordinator", "as R10, by the coordinator"), and inbox
+// --read, which moves the coordinator's cursor (section 3, inbox: "the cursor
+// (--read)"). The design gives no complete list; this is the narrower reading,
+// listed as an open question.
+var xCoordinatorVerbs = map[string]bool{"release": true, "ack": true, "wait": true, "accept": true, "rework": true, "inbox --read": true}
 
 // xStreamTables are the tables whose rows are streams: a card placed in one of
 // them is in the stream its row names (1.3.1). Every other card names its

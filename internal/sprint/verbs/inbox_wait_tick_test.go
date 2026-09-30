@@ -39,6 +39,13 @@ type wakeRig struct {
 // mirrored so far, and the coordinator blocked in inbox --wait from cursor 0.
 func newWakeRig(t *testing.T, rules ...sprint.Rule) *wakeRig {
 	t.Helper()
+	return newWakeRigWith(t, true, rules...)
+}
+
+// newWakeRigWith is newWakeRig with the coordinator's loop run in its own
+// goroutine only when run says so: with none, the test is the coordinator.
+func newWakeRigWith(t *testing.T, run bool, rules ...sprint.Rule) *wakeRig {
+	t.Helper()
 	w := newJRWorld(t)
 	w.start()
 	// The start verb's notice, whose line queues the keys of deal and done
@@ -51,6 +58,9 @@ func newWakeRig(t *testing.T, rules ...sprint.Rule) *wakeRig {
 	}
 	r := &wakeRig{t: t, w: w, wt: newJRWaiter(), loop: l, wakes: make(chan InboxView, 64)}
 	for r.mirror() {
+	}
+	if !run {
+		return r
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)

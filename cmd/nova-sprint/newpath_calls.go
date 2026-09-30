@@ -332,6 +332,11 @@ func callWait(ctx context.Context, e *spverbs.Env, p *parsed) (spverbs.Result, e
 func callInbox(ctx context.Context, e *spverbs.Env, p *parsed) (spverbs.Result, error) {
 	var v spverbs.InboxView
 	req := spverbs.InboxReq{Read: p.on("read"), Out: &v}
+	if p.has("after") {
+		req.After = uint64(p.num64("after")) // the caller's own cursor
+	} else {
+		req.Stored = true // the coordinator's, on the sprint
+	}
 	if p.on("wait") {
 		notes, closer, err := p.app.noteStream(p.c.redis)
 		if err != nil {

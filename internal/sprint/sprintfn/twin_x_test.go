@@ -198,7 +198,7 @@ func TestXNotCoord(t *testing.T) {
 	h.applies("a verb that is not the coordinator's, with no coordinator set", xWithActor(xVerb("rank", xMoveWaitingReady("p1")), "anyone"))
 
 	h.applies("init --coordinator", &Request{Epoch: "0", Meta: Meta{Verb: "init"}, Sprint: &SprintPart{Coordinator: "c1"}})
-	for _, v := range []string{"release", "ack", "wait", "accept", "rework"} {
+	for _, v := range []string{"release", "ack", "wait", "accept", "rework", "inbox --read"} {
 		ref := h.wantRefusal(xWithActor(xVerb(v, xMoveWaitingReady("p2")), "intruder"), CodeNotCoord)
 		if !strings.Contains(ref.Message, v) {
 			t.Fatalf("message %q does not name the verb %s", ref.Message, v)

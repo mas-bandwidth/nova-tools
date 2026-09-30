@@ -509,9 +509,10 @@ func init() {
 				return nil
 			},
 			call: callWait, writes: true},
-		{name: "inbox", syntax: "[--open <group>] [--read] [--wait [--timeout <duration>]] [--deadline <duration>] [--stale <duration>] [--at-epoch <n>]", item: "IT22",
+		{name: "inbox", syntax: "[--open <group>] [--read] [--wait [--timeout <duration>]] [--after <cursor>] [--deadline <duration>] [--stale <duration>] [--at-epoch <n>]", item: "IT22",
 			flags: []flagDef{{name: "open", usage: "list every member and notification of the group of this id"},
-				{name: "read", kind: kBool, usage: "move the cursor past what is shown"},
+				{name: "read", kind: kBool, usage: "move the coordinator's cursor, stored on the sprint, to the last line shown (the coordinator's alone)"},
+				{name: "after", kind: kInt64, def: "-1", usage: "the lines after this cursor, for a caller that keeps its own (from --wait's last); by default the coordinator's stored cursor, from which --wait also starts"},
 				{name: "wait", kind: kBool, usage: "block until the end of the next tick that addressed the coordinator (one wake a tick), then say where its batch is"},
 				{name: "timeout", kind: kDuration, usage: "with --wait: at most this long (default a judgment's deadline)"},
 				{name: "deadline", kind: kDuration, def: defaultDeadline.String(), usage: "a judgment open longer is overdue"}, fStale, fAtEpoch},
@@ -523,6 +524,15 @@ func init() {
 				}
 				if isNumber(p.str("open")) {
 					return fmt.Errorf("group numbers are not accepted: --open wants a group's id, as inbox prints it")
+				}
+				if p.has("after") && p.num64("after") < 0 {
+					return fmt.Errorf("--after wants a cursor: the seq of a line, 0 or more")
+				}
+				if p.has("after") && p.on("read") {
+					return fmt.Errorf("--read moves the coordinator's stored cursor and --after reads from one of the caller's own: give one of them")
+				}
+				if p.on("read") && p.on("wait") {
+					return fmt.Errorf("--read and --wait are two calls: wait, then read")
 				}
 				return nil
 			},
