@@ -17,6 +17,13 @@ import (
 func dealWorld(t *testing.T, primaries ...string) (*world, *sprint.Snapshot, sprint.Rule) {
 	t.Helper()
 	w := newWorld(t)
+	s, deal := dealWorldOn(t, w, primaries...)
+	return w, s, deal
+}
+
+// dealWorldOn is dealWorld's cards on a world: the twin's, or a store's.
+func dealWorldOn(t *testing.T, w *world, primaries ...string) (*sprint.Snapshot, sprint.Rule) {
+	t.Helper()
 	w.rows("s1")
 	w.verb(tset.Entry{Kind: "rows", Table: sprint.Fleet, Add: []string{"m1"}})
 	w.verb(tset.Entry{Kind: "create", Table: sprint.Fleet, To: "m1:ctl", IDs: []string{sprint.CtlID("m1")}, Scores: []string{"0"},
@@ -34,11 +41,11 @@ func dealWorld(t *testing.T, primaries ...string) (*world, *sprint.Snapshot, spr
 	}
 	for _, r := range sprint.RuleTable() {
 		if r.Name == "deal" {
-			return w, s, r
+			return s, r
 		}
 	}
 	t.Fatal("no deal rule in the rule table")
-	return nil, nil, sprint.Rule{}
+	return nil, sprint.Rule{}
 }
 
 // TestStepBuilderBuildsARealRule: the adapter from the loop's Builder to
@@ -57,7 +64,7 @@ func TestStepBuilderBuildsARealRule(t *testing.T) {
 		t.Fatalf("the deal planned %d units", len(rp.Plan.Units))
 	}
 	l := w.loop("a", nil, Budget{})
-	k := &counting{c: w.tw}
+	k := &counting{c: w.c}
 	w.tick(l, k) // the lease, for the step's generation
 	meta := sprintfn.Meta{Rule: "deal", Tick: true, Gen: l.gen}
 	bodies, err := StepBuilder(testNames.Prefix)(rp, meta, stepbuild.Contract())
