@@ -25,8 +25,9 @@
 \*   working except on the FIRST PASS on the work stream table, once
 \*   per-tick."
 \*   The rules ruled the same day: a placement on a machine, a reader or a
-\*   stream takes a uint64 counter modulo the count of the candidates
-\*   (persisting across ticks; clear resets it, and clear is not modelled);
+\*   stream starts at a uint64 counter modulo the full ordered name count and
+\*   advances past every skipped name plus the selected name (persisting
+\*   across ticks; clear resets it, and clear is not modelled);
 \*   a machine has a width; the coordinator is woken once, at the tick's end,
 \*   with the count of what the tick addressed to it, and not at all if
 \*   nothing.
@@ -98,11 +99,16 @@ Pend(t, k, c) == Count(Q[t], LAMBDA e : e.k = k /\ e.c = c)
 \* Order. The index of x in an order sequence; the rank of x in a set.
 Idx(ord, x) == CHOOSE i \in 1..Len(ord) : ord[i] = x
 Rank(ord, S, x) == Cardinality({y \in S : Idx(ord, y) < Idx(ord, x)})
-\* THE PLACEMENT RULE: the candidate whose rank is the counter modulo the
-\* count. The witness "name" takes the first by name instead.
+\* PastCtr is the positions in the full order ring from the counter modulo the
+\* full count to x: the names passed over plus one for x itself (round.go moved,
+\* errata 3 amendment 5).
+PastCtr(ord, ctr, x) == ((Idx(ord, x) - 1 - (ctr % Len(ord)) + Len(ord)) % Len(ord)) + 1
+\* THE PLACEMENT RULE: start at counter modulo the full ordered name count and
+\* take the first eligible candidate in ring order. The witness "name" takes
+\* the first by name instead.
 Pick(ord, S, ctr) ==
   IF Broken = "name" THEN CHOOSE x \in S : Rank(ord, S, x) = 0
-  ELSE CHOOSE x \in S : Rank(ord, S, x) = ctr % Cardinality(S)
+  ELSE CHOOSE x \in S : \A y \in S : PastCtr(ord, ctr, x) <= PastCtr(ord, ctr, y)
 
 Before(c, d) == StreamOf[c] = StreamOf[d] /\ Pos[d] < Pos[c]
 Lowest(S) == CHOOSE x \in S : \A y \in S : Idx(COrder, x) <= Idx(COrder, y)
@@ -195,7 +201,8 @@ DealOne(S, cand) ==
       ms == UpRoom(S)
       m == Pick(MOrder, ms, S.mctr)
   IN Put([S EXCEPT !.col[c] = "working",
-                   !.sctr = (@ + 1) % CtrMod, !.mctr = (@ + 1) % CtrMod,
+                   !.sctr = (@ + PastCtr(SOrder, S.sctr, st)) % CtrMod,
+                   !.mctr = (@ + PastCtr(MOrder, S.mctr, m)) % CtrMod,
                    !.dealt[st] = Min(@ + 1, 3),
                    !.plc = @ \o <<[k |-> "s", ctr |-> S.sctr, el |-> ss, pick |-> st],
                                   [k |-> "m", ctr |-> S.mctr, el |-> ms, pick |-> m]>>],
@@ -241,7 +248,7 @@ PlaceReads(S) ==
            rs == AbleReaders(S)
            r == Pick(ROrder, rs, S.rctr)
        IN PlaceReads(Put([S EXCEPT !.askw[c] = FALSE, !.rd[c] = r,
-                                   !.rctr = (@ + 1) % CtrMod,
+                                   !.rctr = (@ + PastCtr(ROrder, S.rctr, r)) % CtrMod,
                                    !.plc = Append(@, [k |-> "r", ctr |-> S.rctr, el |-> rs, pick |-> r])],
                          "fleet", E("readon", c, Host[r])))
 
@@ -537,21 +544,28 @@ NoWakeIfNothing ==
   [][act' = "TickEnd" => /\ (notes' > notes) <=> (addr > 0)
                          /\ addr > 0 => wake' = addr]_vars
 
-\* PLACEMENTS ROUND: each placement takes the candidate at the counter modulo
-\* their count, in the candidates' order (stated with SelectSeq, not with the
-\* plan's Rank); each placement moves its counter by one, and nothing else
-\* moves a counter.
+\* PLACEMENTS ROUND: each placement starts at the counter modulo the full
+\* count and takes the first eligible candidate in ring order (stated with
+\* SelectSeq on the rotated full ring); each placement advances its counter
+\* past skipped candidates plus the selected candidate, and nothing else moves
+\* a counter.
 OrdOf(k) == CASE k = "m" -> MOrder [] k = "r" -> ROrder [] k = "s" -> SOrder
-RoundPick(p) == LET s == SelectSeq(OrdOf(p.k), LAMBDA x : x \in p.el)
-                IN s[(p.ctr % Len(s)) + 1]
+RotSeq(ord, ctr) ==
+  LET at == ctr % Len(ord) IN
+  IF at = 0 THEN ord
+  ELSE SubSeq(ord, at + 1, Len(ord)) \o SubSeq(ord, 1, at)
+RoundPick(p) == Head(SelectSeq(RotSeq(OrdOf(p.k), p.ctr), LAMBDA x : x \in p.el))
 CtrOf(k) == CASE k = "m" -> mctr [] k = "r" -> rctr [] k = "s" -> sctr
 CtrOfP(k) == CASE k = "m" -> mctr' [] k = "r" -> rctr' [] k = "s" -> sctr'
 PlacementsRound ==
   [][/\ \A i \in 1..Len(plc') : plc'[i].pick = RoundPick(plc'[i])
      /\ \A k \in {"m", "r", "s"} :
           LET ks == SelectSeq(plc', LAMBDA p : p.k = k) IN
-          /\ \A j \in 1..Len(ks) : ks[j].ctr = (CtrOf(k) + j - 1) % CtrMod
-          /\ CtrOfP(k) = (CtrOf(k) + Len(ks)) % CtrMod]_vars
+          /\ Len(ks) > 0 => ks[1].ctr = CtrOf(k)
+          /\ \A j \in 2..Len(ks) :
+               ks[j].ctr = (ks[j-1].ctr + PastCtr(OrdOf(k), ks[j-1].ctr, ks[j-1].pick)) % CtrMod
+          /\ CtrOfP(k) = IF ks = <<>> THEN CtrOf(k)
+                         ELSE (ks[Len(ks)].ctr + PastCtr(OrdOf(k), ks[Len(ks)].ctr, ks[Len(ks)].pick)) % CtrMod]_vars
 
 \* WIDTH: a machine never holds more cards and reads than its width.
 WidthRespected == \A m \in Machines : Cardinality(mc[m]) + Cardinality(mr[m]) <= Width[m]
