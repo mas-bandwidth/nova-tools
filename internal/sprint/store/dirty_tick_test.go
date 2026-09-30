@@ -302,3 +302,272 @@ func TestEveryDrainIsNamed(t *testing.T) {
 		t.Fatalf("a STOPPED machine keeps a queue of %d", len(q))
 	}
 }
+
+// cascadePing is a table update that writes another table's member (Merge's
+// stream control card, Fleet's member control card, or Readers' member card)
+// until its counter field reaches limit, then writes nothing: a pure planner.
+func cascadePing(targetTable string, limit int) sprint.TickPartFn {
+	return func(s *sprint.Snapshot, _ sprint.TickReq) (sprint.Plan, int) {
+		var (
+			id   string
+			rev  uint64
+			row  string
+			col  string
+			curr int
+		)
+		switch targetTable {
+		case sprint.Fleet:
+			c := s.MemberCtl("m1")
+			if c == nil {
+				return sprint.Plan{}, 0
+			}
+			id, rev, row, col, curr = c.ID, c.Rev, c.Row, c.Col, c.Int("cascade_fleet")
+		case sprint.Merge:
+			c := s.StreamCtl("s1")
+			if c == nil {
+				return sprint.Plan{}, 0
+			}
+			id, rev, row, col, curr = c.ID, c.Rev, c.Row, c.Col, c.Int("cascade_merge")
+		case sprint.Readers:
+			c := s.Readers.Card("c-reader-a")
+			if c == nil {
+				if limit <= 0 {
+					return sprint.Plan{}, 0
+				}
+				e := ntable.BatchMemberEntry{
+					ID:     "c-reader-a",
+					Expect: &ntable.MemberExpect{Absent: true},
+					Create: &ntable.MemberCreateOp{Row: "reader-a", Col: sprint.Asked, Score: 1},
+					Set:    map[string]string{"cascade_readers": "1"},
+				}
+				return sprint.Plan{Units: []sprint.Unit{{Key: "c-reader-a", Changes: []sprint.Change{{Table: sprint.Readers, Entry: e}}, Moved: "cascade " + sprint.Readers}}}, 0
+			}
+			id, rev, row, col, curr = c.ID, c.Rev, c.Row, c.Col, c.Int("cascade_readers")
+		default:
+			return sprint.Plan{}, 0
+		}
+
+		if curr >= limit {
+			return sprint.Plan{}, 0
+		}
+		fieldName := "cascade_" + targetTable
+		e := ntable.BatchMemberEntry{
+			ID:     id,
+			Expect: &ntable.MemberExpect{Revision: strconv.FormatUint(rev, 10), Place: &ntable.PlaceExpect{Row: row, Col: col}},
+			Set:    map[string]string{fieldName: strconv.Itoa(curr + 1)},
+		}
+		return sprint.Plan{Units: []sprint.Unit{{Key: id, Changes: []sprint.Change{{Table: targetTable, Entry: e}}, Moved: "cascade " + targetTable}}}, 0
+	}
+}
+
+// Edge case: A multi-table cascade dirtying across Readers -> Merge -> Fleet -> Readers.
+// Each written table's dirty queue is drained in order and clears before the tick ends.
+func TestMultiTableCascadeDirtying(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setup(1)
+	h.startMachine()
+
+	// Readers writes Merge; Merge writes Fleet; Fleet writes Readers.
+	// Limit is 2 rounds.
+	h.st.Updates = []sprint.TableUpdate{
+		{Table: sprint.Work},
+		{Table: sprint.Readers, Parts: []sprint.TickPartDef{{Name: "to-merge", Fn: cascadePing(sprint.Merge, 2)}}},
+		{Table: sprint.Merge, Parts: []sprint.TickPartDef{{Name: "to-fleet", Fn: cascadePing(sprint.Fleet, 2)}}},
+		{Table: sprint.Fleet, Parts: []sprint.TickPartDef{{Name: "to-readers", Fn: cascadePing(sprint.Readers, 2)}}},
+	}
+
+	res := h.machine()
+	want := []string{
+		sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet,
+		sprint.Readers, sprint.Merge, sprint.Fleet,
+		sprint.Readers, "end",
+	}
+	if !slices.Equal(res.Order, want) {
+		t.Fatalf("cascade updated %v, want %v", res.Order, want)
+	}
+
+	// Verify all counters reached limit.
+	s := h.snap()
+	if got := s.StreamCtl("s1").Int("cascade_merge"); got != 2 {
+		t.Fatalf("merge counter is %d, want 2", got)
+	}
+	if got := s.MemberCtl("m1").Int("cascade_fleet"); got != 2 {
+		t.Fatalf("fleet counter is %d, want 2", got)
+	}
+	if got := s.Readers.Card("c-reader-a").Int("cascade_readers"); got != 2 {
+		t.Fatalf("readers counter is %d, want 2", got)
+	}
+
+	// The subsequent tick writes nothing: single pass only.
+	nextRes := h.machine()
+	if !slices.Equal(nextRes.Order, []string{sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet, "end"}) {
+		t.Fatalf("next tick order: %v", nextRes.Order)
+	}
+}
+
+// Edge case: Simultaneous dirtying where a single table update writes to
+// multiple other tables at once; both dirty tables are drained in FIFO order.
+func TestSimultaneousMultiTableDirtying(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setup(1)
+	h.startMachine()
+
+	// Fleet update writes both Readers and Merge at the same time on pass 1.
+	h.st.Updates = []sprint.TableUpdate{
+		{Table: sprint.Work},
+		{Table: sprint.Readers},
+		{Table: sprint.Merge},
+		{Table: sprint.Fleet, Parts: []sprint.TickPartDef{
+			{Name: "fleet-to-readers", Fn: cascadePing(sprint.Readers, 1)},
+			{Name: "fleet-to-merge", Fn: cascadePing(sprint.Merge, 1)},
+		}},
+	}
+
+	res := h.machine()
+	want := []string{
+		sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet,
+		sprint.Readers, sprint.Merge, "end",
+	}
+	if !slices.Equal(res.Order, want) {
+		t.Fatalf("simultaneous dirty updated %v, want %v", res.Order, want)
+	}
+}
+
+// Edge case: Empty queues. When the queue is empty at tick start, the pump
+// drain step skips or is a clean no-op; the tick is quiescent and moves nothing.
+func TestEmptyQueueDrainAndQuiescentTick(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setup(0)
+	h.startMachine()
+
+	// 1. Snapshot drain on an empty queue returns an empty plan.
+	s := h.snap()
+	p := sprint.Drain(s, nil, "tester")
+	if !p.Empty() || len(p.Units) != 0 || len(p.Notes) != 0 || len(p.Refused) != 0 {
+		t.Fatalf("drain on nil queue is not empty: %+v", p)
+	}
+	pEmpty := sprint.Drain(s, []sprint.QueuedChange{}, "tester")
+	if !pEmpty.Empty() || len(pEmpty.Units) != 0 {
+		t.Fatalf("drain on empty slice is not empty: %+v", pEmpty)
+	}
+
+	// 2. Direct DrainStep on the store with empty queue moves nothing.
+	drainRes := h.must(DrainStep())
+	if len(drainRes.Moved) != 0 || len(drainRes.Refused) != 0 {
+		t.Fatalf("DrainStep moved %v, refused %v", drainRes.Moved, drainRes.Refused)
+	}
+
+	// 3. A tick on an empty sprint is completely idle and modifies no tables.
+	revBefore := h.table().Work.Revision
+	res := h.machine()
+	if !res.Idle {
+		t.Fatalf("empty tick idle is false, parts: %+v", res.Parts)
+	}
+	if len(res.Moved()) != 0 {
+		t.Fatalf("empty tick moved: %v", res.Moved())
+	}
+	if revAfter := h.table().Work.Revision; revAfter != revBefore {
+		t.Fatalf("work table revision changed: %d -> %d", revBefore, revAfter)
+	}
+	if !slices.Equal(res.Order, []string{sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet, "end"}) {
+		t.Fatalf("empty tick order: %v", res.Order)
+	}
+}
+
+// Edge case: Large batch of hundreds of queued changes composed and applied
+// in a single pump update at tick start.
+func TestLargeBatchQueuedDrain(t *testing.T) {
+	t.Parallel()
+	const count = 200
+	h := newHarness(t)
+	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1", Width: count}))
+	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m2", Width: count}))
+	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: count}))
+	h.clean("setup")
+	h.startMachine()
+
+	// First tick deals all cards.
+	h.machine()
+	s := h.snap()
+	if n := s.Work.Count("s1", sprint.Working); n != count {
+		t.Fatalf("working cards: %d, want %d", n, count)
+	}
+
+	// Workers finish all cards; since machine is running, finishes are queued.
+	h.work("m1")
+	h.work("m2")
+
+	q, err := h.m.QueueRead(h.ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(q) != count {
+		t.Fatalf("queued %d finishes, want %d", len(q), count)
+	}
+
+	// The work table must NOT have moved to review yet.
+	if st := h.table().StateOf("s1-1"); st != sprint.Working {
+		t.Fatalf("s1-1 is %s before tick, want working", st)
+	}
+	revBefore := h.table().Work.Revision
+
+	// Run tick: the pump drains all 200 queued changes in ONE update at tick start.
+	res := h.machine()
+	revAfter := h.table().Work.Revision
+
+	// The work table revision incremented for the drain update.
+	if revAfter <= revBefore {
+		t.Fatalf("work table revision did not increment: %d -> %d", revBefore, revAfter)
+	}
+
+	// All 200 finishes are drained from the queue. Any new entries in the queue
+	// are the ask updates queued during Phase 2 (Readers), to be drained in the next tick.
+	qAfter, _ := h.m.QueueRead(h.ctx)
+	for _, x := range qAfter {
+		if x.Verb == "finish" {
+			t.Fatalf("finish for %s was not drained: %+v", x.Entry.ID, x)
+		}
+	}
+
+	// All cards are now in review.
+	tableSnap := h.table()
+	for i := 1; i <= count; i++ {
+		id := "s1-" + strconv.Itoa(i)
+		if st := tableSnap.StateOf(id); st != sprint.Review {
+			t.Fatalf("%s is %s, want review", id, st)
+		}
+	}
+
+	// Parts in tick result includes the drain of all 200 finishes.
+	drainedCount := 0
+	for _, p := range res.Parts {
+		if p.Name == sprint.PartDrain {
+			drainedCount += len(p.Moved)
+		}
+	}
+	if drainedCount != count {
+		t.Fatalf("drained %d cards in tick parts, want %d", drainedCount, count)
+	}
+
+	// The next tick drains the ask changes queued during Phase 2.
+	resNext := h.machine()
+	drainedAsks := 0
+	for _, p := range resNext.Parts {
+		if p.Name == sprint.PartDrain {
+			drainedAsks += len(p.Moved)
+		}
+	}
+	if drainedAsks != count {
+		t.Fatalf("next tick drained %d asks, want %d", drainedAsks, count)
+	}
+
+	if qFinal, _ := h.m.QueueRead(h.ctx); len(qFinal) != 0 {
+		t.Fatalf("queue has %d remaining after next tick", len(qFinal))
+	}
+
+	h.clean("large batch drained cleanly")
+}
+
