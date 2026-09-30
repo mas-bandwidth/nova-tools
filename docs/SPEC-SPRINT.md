@@ -508,7 +508,14 @@ exactly, member by member, never by their counts.
 11. A primary anywhere but waiting has every need landed or waived. A need that
     was dropped or missing and acknowledged is recorded on the card as waived,
     by whom and when, and counts as satisfied; nothing else does. add refuses needs that
-    would make a cycle, naming it.
+    would make a cycle, naming it. The walk follows what a waiting card waits
+    for: the needs it names, and its place in line (a card behind a sentinel
+    needs the sentinel; a sentinel needs every card of its stream before it),
+    so a need across streams behind the gates on both sides is refused when it
+    closes a loop through them. Only the add that closes a cycle is refused;
+    a cycle already in a store is reported by `check` as "a cycle through
+    <loop>: <n> cards can never be reached", and the tick raises it as "an
+    invariant is broken".
 12. Nothing stalls. Every primary on the table that has not landed is held by
     one of: (a) an outside actor before its deadline (its live work card in an
     up member's ready or working cell, a read card asked or reading, its merge

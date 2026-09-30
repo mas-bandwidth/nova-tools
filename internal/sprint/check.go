@@ -227,6 +227,13 @@ func Check(s *Snapshot, pending *Pending) []Violation {
 			out = append(out, Violation{11, fmt.Sprintf("%s is %s and needs %s, not landed", c.ID, c.Col, strings.Join(w, ","))})
 		}
 	}
+	// 11. The needs make no cycle: add refuses the add that would close one
+	// (errata 3 amendment 7), and a store written before add walked the
+	// sentinels' needs may still hold one; each is named with the cards it
+	// keeps from ever being reached.
+	for _, f := range Cycles(s) {
+		out = append(out, Violation{11, f.String()})
+	}
 	// 10. A step that did not finish: the fence holds it.
 	if pending != nil {
 		out = append(out, Violation{10, "operation " + pending.ID + " (" + pending.Verb + ") is pending; run: nova-sprint repair"})
