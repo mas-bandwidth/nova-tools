@@ -252,7 +252,7 @@ func timeRuleNamed(t testing.TB, name string) Rule {
 func agendaKeys(keys []string) []AgendaKey {
 	ks := make([]AgendaKey, len(keys))
 	for i, k := range keys {
-		ks[i] = keyOf(k, uint64(i+1))
+		ks[i] = timeKeyOf(k, uint64(i+1))
 	}
 	return ks
 }
@@ -1208,7 +1208,7 @@ func TestStoppedNothingDueNoJudgment(t *testing.T) {
 	guardOnly := &Card{ID: "g", Row: "s1", Col: Waiting, Rev: 1}
 	// Plans that change no card: notes, a guard, a key removed.
 	dry := []RulePlan{
-		{Notes: make([]NoteReq, 50), Done: []AgendaKey{keyOf("deal", 1)}},
+		{Notes: make([]NoteReq, 50), Done: []AgendaKey{timeKeyOf("deal", 1)}},
 		{Plan: Plan{Units: []Unit{{Changes: []Change{change(Work, guardEntry(guardOnly))}}}}},
 	}
 	// Nothing was due, and nothing is recorded: the look plans nothing.
@@ -1287,7 +1287,7 @@ func TestStoppedRaisedOncePerSpan(t *testing.T) {
 func TestLimitHalvesThenParks(t *testing.T) {
 	t.Parallel()
 	for _, code := range []string{"LIMIT", "BUDGET"} {
-		key := keyOf("ask@48213", 48213)
+		key := timeKeyOf("ask@48213", 48213)
 		var chunks []int
 		h, parkedAt := 0, -1
 		for i := 0; i < 40; i++ {
@@ -1334,7 +1334,7 @@ func TestOtherBugParksAtOnce(t *testing.T) {
 	for _, code := range []string{"REQUEST", "TWICE", "EXISTS", "WRONGTYPE", "NOPERM", "OVERFLOW", "LOGID", "CONFIG", "ENGINE",
 		"NOROW", "NOCOL", "FIELDNAME", "FIELDOVERLAP", "ROWCONFLICT", "OCCUPIED", "OPCONFLICT"} {
 		for _, h := range []int{0, 3} {
-			key := keyOf("deal", 9)
+			key := timeKeyOf("deal", 9)
 			p, next := OnBug("deal", key, code, "1 entry", h)
 			n := noteReq(p, requestOpen, NStepRefused)
 			if next != 0 || n == nil || !reflect.DeepEqual(timeKeyTexts(p.Done), []string{"deal"}) || len(p.Requeue) != 0 ||
@@ -1547,7 +1547,7 @@ func TestRegisteredPlansCarryTheSprintWrites(t *testing.T) {
 	if q := StoppedLook([]RulePlan{dryPlan("a")}, Clock{StoppedSinceMs: 1}, timeWall0); q.Sprint.Clock == nil {
 		t.Fatalf("R17's clock fields are not in the plan: %+v", q.Sprint)
 	}
-	if q, _ := OnBug("ask", keyOf("ask@1", 1), "REQUEST", "1 entry", 0); len(q.Sprint.Park) != 1 {
+	if q, _ := OnBug("ask", timeKeyOf("ask@1", 1), "REQUEST", "1 entry", 0); len(q.Sprint.Park) != 1 {
 		t.Fatalf("the park is not in the plan: %+v", q.Sprint)
 	}
 }
@@ -1660,7 +1660,7 @@ func TestMergeIdleJudgedOnlyWhenMergingOrQueued(t *testing.T) {
 func mkKeys(n int, f func(i int) string) []AgendaKey {
 	var ks []AgendaKey
 	for i := 0; i < n; i++ {
-		ks = append(ks, keyOf(f(i), uint64(i+1)))
+		ks = append(ks, timeKeyOf(f(i), uint64(i+1)))
 	}
 	return ks
 }
@@ -1722,8 +1722,8 @@ func TestTimeReadsWithinBoundsAndHalve(t *testing.T) {
 	// readers, the dropping marks, the stream's control card, a stream's queued
 	// count, and the cut set.
 	keys := []AgendaKey{
-		keyOf("late:untaken:p1.w1", 1), keyOf("late:unfinished:p2.w3", 2), keyOf("late:unbegun:p3.r1.r2", 3),
-		keyOf("late:mergeidle:s1", 4), keyOf("late:idle:s2", 5), keyOf("late:cut:op-1", 6), keyOf("late:junk", 7),
+		timeKeyOf("late:untaken:p1.w1", 1), timeKeyOf("late:unfinished:p2.w3", 2), timeKeyOf("late:unbegun:p3.r1.r2", 3),
+		timeKeyOf("late:mergeidle:s1", 4), timeKeyOf("late:idle:s2", 5), timeKeyOf("late:cut:op-1", 6), timeKeyOf("late:junk", 7),
 	}
 	rp, rest = readLate(keys, b, 0)
 	if len(rest) != 0 {
@@ -1754,7 +1754,7 @@ func TestTimeReadsWithinBoundsAndHalve(t *testing.T) {
 
 	// A read of stream keys and cut keys alone asks for no fleet and no readers:
 	// the cut clock is the op's and reads no dropping mark.
-	rp, _ = readLate([]AgendaKey{keyOf("late:cut:op-1", 1)}, b, 0)
+	rp, _ = readLate([]AgendaKey{timeKeyOf("late:cut:op-1", 1)}, b, 0)
 	if len(rp.Sprint) != 1 || rp.Sprint[0].Kind != queryCut {
 		t.Fatalf("a cut key reads more than its entry: %+v", rp.Sprint)
 	}
@@ -1930,7 +1930,7 @@ func TestTimeReadKindsAreInTheQueryCosts(t *testing.T) {
 	b := L1ReadBounds()
 	for _, key := range []string{"late:untaken:p1.w1", "late:unfinished:p1.w1", "late:unbegun:p1.r1.r1", "late:unreported:p1.r1.r1",
 		"late:mergeidle:s1", "late:idle:s1", "late:cut:op-1"} {
-		rp, rest := readLate([]AgendaKey{keyOf(key, 1)}, b, 0)
+		rp, rest := readLate([]AgendaKey{timeKeyOf(key, 1)}, b, 0)
 		if len(rest) != 0 {
 			t.Fatalf("%s: left %v", key, timeKeyTexts(rest))
 		}
@@ -1955,7 +1955,7 @@ func TestTimeReadKindsAreInTheQueryCosts(t *testing.T) {
 
 // mustRead is the read a rule plans for one key within layer 1's bounds.
 func mustRead(read func([]AgendaKey, ReadBounds, int) (ReadPlan, []AgendaKey), key string) ReadPlan {
-	rp, _ := read([]AgendaKey{keyOf(key, 1)}, L1ReadBounds(), 0)
+	rp, _ := read([]AgendaKey{timeKeyOf(key, 1)}, L1ReadBounds(), 0)
 	return rp
 }
 

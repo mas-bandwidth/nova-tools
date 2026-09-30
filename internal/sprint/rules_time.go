@@ -1650,7 +1650,7 @@ func chunkAfter(halvings int) int {
 // when the item merges: the time rules stand on them and are changed only
 // where they say.
 //
-//	IT01  keyText, keyOf: AgendaKey is {Key, Seq} in the tree, and 8.0 gives it
+//	IT01  keyText, timeKeyOf: AgendaKey is {Key, Seq} in the tree, and 8.0 gives it
 //	      {Rule, Subject, Line, Offset, Order} with String and ParseAgendaKey.
 //	      Only these two functions know the shape; on IT01's revision they
 //	      become k.String() and ParseAgendaKey.
@@ -1663,9 +1663,9 @@ func chunkAfter(halvings int) int {
 // subject (2.1).
 func keyText(k AgendaKey) string { return k.Key }
 
-// keyOf is the agenda key with the text and the order (the score in the
+// timeKeyOf is the agenda key with the text and the order (the score in the
 // agenda, 1.1).
-func keyOf(text string, order uint64) AgendaKey { return AgendaKey{Key: text, Seq: order} }
+func timeKeyOf(text string, order uint64) AgendaKey { return AgendaKey{Key: text, Seq: order} }
 
 // Clock is the running clock's record (1.2, 8.1 IT03): the fields of {p}clock.
 // A field that is "" in the store is 0 here; StoppedSinceMs is 0 while the
