@@ -16,14 +16,18 @@ import (
 // and the three run one after the other on one connection so each sees only its
 // own writes in the ledger.
 //
-// WHAT IS ASSERTED. The events, never the wall clock: a test that asserts on
-// elapsed time asserts on the load of its machine (docs/SPEC-CI.md CI-WAITS
-// refuses it). The proxy counts every write it held and forwarded and the least
-// time any was held by its own clock, and a client that waits for each reply
-// cannot go faster than the holds it is behind: so "one PING takes about one
-// delay, a pipeline of a hundred one delay and not a hundred, three commands at
-// least three" is the count of writes and the shortest hold. The times a client
-// measured are logged, for a reader who wants the numbers, and never compared.
+// WHAT IS ASSERTED HERE. The events, exactly: the proxy counts every write it
+// held and forwarded and the least time any was held by its own clock, and a
+// client that waits for each reply cannot go faster than the holds it is behind,
+// so "a pipeline of a hundred pays one delay and not a hundred, three commands
+// pay three" is the count of writes and the shortest hold. The count is exact at
+// any load. The times a client measured are logged here, for a reader who wants
+// the numbers.
+//
+// THE WALL CLOCK is asserted too, in tools/fardelay/distance_functional_test.go:
+// one PING takes at least the delay and at most the delay plus a slack, and so on.
+// It lives there because internal/ci's waits class (docs/SPEC-CI.md) reads every
+// _test.go under internal/ and cmd/ and refuses a comparison with elapsed time.
 
 // farStoreDelay is the distance of these tests.
 const farStoreDelay = 100 * time.Millisecond

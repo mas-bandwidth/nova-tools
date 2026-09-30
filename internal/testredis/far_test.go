@@ -4,6 +4,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -139,6 +140,23 @@ func farDial(t *testing.T, addr string) net.Conn {
 	return c
 }
 
+// farDialOutliving is farDial for a client that must outlive the test that dials
+// it: a failure is sub's, and the client is closed at the end of owner, the
+// parent, after every cleanup of sub has run. It is what lets a test read what the
+// proxy did to a client from outside the test the proxy lived in.
+func farDialOutliving(sub, owner *testing.T, addr string) net.Conn {
+	sub.Helper()
+	c, err := net.Dial("tcp", addr)
+	if err != nil {
+		sub.Fatal(err)
+	}
+	if err := c.SetDeadline(time.Now().Add(farCeiling)); err != nil {
+		sub.Fatal(err)
+	}
+	owner.Cleanup(func() { _ = c.Close() })
+	return c
+}
+
 // farRoundTrip writes send in one write and reads that many bytes back.
 func farRoundTrip(t *testing.T, c net.Conn, send string) string {
 	t.Helper()
@@ -221,26 +239,35 @@ func TestFarStopsInCleanupAndLeavesNothingRunning(t *testing.T) {
 	var p *delayproxy.Proxy
 	var ln net.Listener
 	var left net.Conn
-	t.Run("a test that ends with a write held", func(t *testing.T) {
+	t.Run("a test that ends with a write held", func(sub *testing.T) {
 		fake := &farClock{blocked: make(chan struct{}, 1)}
-		p = real.far(t, target, farDelay, fake.options(), func(network, address string) (net.Listener, error) {
+		p = real.far(sub, target, farDelay, fake.options(), func(network, address string) (net.Listener, error) {
 			var err error
 			ln, err = net.Listen(network, address)
 			return ln, err
 		})
-		left = farDial(t, p.Addr())
+		// The client belongs to the parent: dialled on sub it would be closed by
+		// sub's cleanup, before the proxy's, and what it reads afterwards would be
+		// its own closed socket and never the proxy's hang-up.
+		left = farDialOutliving(sub, t, p.Addr())
 		if _, err := io.WriteString(left, farPing); err != nil {
-			t.Fatal(err)
+			sub.Fatal(err)
 		}
 		<-fake.blocked // held
 		if got, want := p.Live(), 1+delayproxy.GoroutinesPerConn; got != want {
-			t.Fatalf("Live = %d with one client; want %d: one to accept and %d for the client", got, want, delayproxy.GoroutinesPerConn)
+			sub.Fatalf("Live = %d with one client; want %d: one to accept and %d for the client", got, want, delayproxy.GoroutinesPerConn)
 		}
 	})
 	if got := p.Live(); got != 0 {
 		t.Fatalf("Live = %d after the test's cleanup; want 0", got)
 	}
-	if got, err := io.ReadAll(left); len(got) != 0 {
+	got, err := io.ReadAll(left)
+	switch {
+	case errors.Is(err, net.ErrClosed):
+		t.Fatalf("the client read its own closed socket (%v); it must outlive the test the proxy ran in, or it cannot tell whether the proxy hung up on it", err)
+	case errors.Is(err, os.ErrDeadlineExceeded):
+		t.Fatalf("the client was not hung up on before the ceiling (%v); want the proxy to close it when the test ends", err)
+	case len(got) != 0:
 		t.Fatalf("the client read %q, %v after the cleanup; want it hung up on with nothing", got, err)
 	}
 	if p.Writes() != 0 {

@@ -21,8 +21,15 @@ import (
 // A write is what one read of the client's connection returns, which for a
 // write of up to 16 KiB on the loopback is the write. Reads that arrive
 // together are each sent on at their own arrival plus delay, so they pay it
-// once between them. The delay is held by a timer, so a test that asserts on
-// wall time asserts on its machine's load: assert on FarLink's ledger instead.
+// once between them, up to a window of delayproxy.WindowBytes (4 MiB) in flight:
+// a pipeline past it pays the delay once more for each further window.
+//
+// The delay is held by a timer, so a test that asserts on wall time asserts on
+// its machine's load: a test of another package asserts on FarLink's ledger
+// instead. The wall-clock windows of Far itself (one PING takes the delay, a
+// pipeline takes it once, three commands one after the other take it three
+// times) are asserted in the container by tools/fardelay's functional test, with
+// a slack for a busy machine on the upper bounds.
 //
 // target is the address of a store this test owns, an IP in 127.0.0.0/8 or ::1
 // or localhost, and a port, typically the address Start returned: Far is a way
