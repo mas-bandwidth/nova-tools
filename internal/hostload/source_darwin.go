@@ -2,10 +2,11 @@ package hostload
 
 import (
 	"context"
-	"os/exec"
 	"runtime"
 	"syscall"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // topTimeout bounds one run of top.
@@ -18,7 +19,7 @@ func localSource() Source {
 		Top: func() (string, error) {
 			ctx, cancel := context.WithTimeout(context.Background(), topTimeout)
 			defer cancel()
-			out, err := exec.CommandContext(ctx, "/usr/bin/top", "-l", "1", "-n", "0", "-s", "0").Output()
+			out, err := subproc.Context(ctx, "/usr/bin/top", "-l", "1", "-n", "0", "-s", "0").Output()
 			return string(out), err
 		},
 		Load1: func() (float64, bool) {

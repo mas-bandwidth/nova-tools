@@ -1,6 +1,7 @@
 package secrets
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -8,6 +9,7 @@ import (
 	"regexp"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // KeygenNextLine is the one line that tells the reader what is left to do in the rule
@@ -101,7 +103,8 @@ func RunKeygen(asName, keyPath, ageKeygenPath, storeDir string) (lines []string,
 	}
 
 	// 4. Generate key
-	cmd := exec.Command(ageKeygenPath, "-o", keyPath)
+	cmd, cancel := subproc.Command(context.Background(), subproc.Tool, ageKeygenPath, "-o", keyPath)
+	defer cancel()
 	cmd.Env = []string{"PATH=/usr/bin:/bin"}
 	_, err = cmd.CombinedOutput()
 	if err != nil {

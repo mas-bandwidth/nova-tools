@@ -8,7 +8,6 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"sort"
@@ -18,6 +17,7 @@ import (
 	"unicode"
 
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // CILegsFromYAML reads the ci.yml workflow text and returns the GOOS values
@@ -518,7 +518,7 @@ func ListAtCommit(root, commit, rel string) (string, bool, error) {
 func gitOut(root string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", append([]string{"-C", root}, args...)...)
+	cmd := subproc.Context(ctx, "git", append([]string{"-C", root}, args...)...)
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()

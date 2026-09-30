@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
@@ -166,35 +167,11 @@ func (f FileRoute) Deliver(r Reminder) (err error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(dir, "."+filepath.Base(f.Path)+".*")
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err != nil {
-			// ignored: a close on the failure path; the delivery error is the one returned
-			_ = tmp.Close()
-			// ignored: a best-effort cleanup of the temp file; the delivery error is the one returned
-			_ = os.Remove(tmp.Name())
-		}
-	}()
 	text := r.Text
 	if text == "" || text[len(text)-1] != '\n' {
 		text += "\n"
 	}
-	if _, err = tmp.WriteString(r.Header() + "\n" + text); err != nil {
-		return err
-	}
-	if err = tmp.Sync(); err != nil {
-		return err
-	}
-	if err = tmp.Chmod(0o644); err != nil {
-		return err
-	}
-	if err = tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp.Name(), f.Path)
+	return atomicfile.Write(filepath.Clean(f.Path), []byte(r.Header()+"\n"+text), 0o644, atomicfile.ExactMode())
 }
 
 // workEpoch is the epoch of the work table: the sprint's, changed by a clear.

@@ -375,6 +375,12 @@ func bypassesIn(t *testing.T, f source, shadows, allowed map[string]bool) {
 						f.at(node), f.text(node.Args[0]))
 				}
 			case "Write", "WriteString", "WriteByte", "WriteRune":
+				// atomicfile.Write takes a path and the bytes of a file and puts no byte on
+				// any stream; it is how a binary writes a file whole, and the import is
+				// still a decision made in the binary's own Imports list.
+				if x, ok := sel.X.(*ast.Ident); ok && x.Name == "atomicfile" && sel.Sel.Name == "Write" {
+					return true
+				}
 				t.Errorf("%s: %s writes bytes past the escaping path; print through fmt.Fprintf with an escaped argument",
 					f.at(node), f.text(node.Fun))
 			}

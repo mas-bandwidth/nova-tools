@@ -63,7 +63,7 @@ func TestTheCardTemplateCarriesNoExitCodesLineAndLintsClean(t *testing.T) {
 			t.Fatalf("the card template carries a banner line inside its RULES: %q", line)
 		}
 	}
-	card := writeLintCard(t, "template.card", tmpl)
+	card := writeLintCard(t, "template.card", filledLibraries(tmpl))
 	exit, stdout, stderr := runSwarm(t, "lint", "--card", card, "--child-rules")
 	if exit != 0 || !strings.Contains(stdout, "LINT OK card=template.card ") {
 		t.Fatalf("the card template lints clean under --child-rules, got %d\nstdout: %s\nstderr: %s", exit, stdout, stderr)

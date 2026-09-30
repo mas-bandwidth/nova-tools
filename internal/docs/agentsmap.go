@@ -17,11 +17,18 @@ import (
 // building or working on a tool is meant to be in the one file a harness
 // loads; the ceiling is sized for the standard plus the map with headroom for
 // catalog rows, and a growth past it is shortened at the standard's words or
-// the catalog rows, never by raising the number unread. It is 24 KiB because
+// the catalog rows, never by raising the number unread. It is 32 KiB because
 // the standard carries the whole of what a builder meets: the ten rules never
-// to break, the five onboarding points and every class rule by name, folded in
+// to break, the onboarding points and every class rule by name, folded in
 // from CONTRIBUTING.md and ONBOARDING.md so there is one standard, not three.
-const MaxRootBytes = 24 * 1024
+// The owner's rule: everything somebody should need to know while building or
+// working on nova-tools goes into AGENTS.md. It rose from 24 KiB for two rules
+// the standard states as a goal and its checks (every Go test uses testify,
+// section 8; the standard library and the adopted modules are searched before a
+// helper is written, section 7) and for the section "Doing it right the first
+// time", which says which wrong turn each rule prevents; the page measures
+// 30.2 KiB with all three.
+const MaxRootBytes = 32 * 1024
 
 // StandardDoc is the one source of the standard every tool is built to. The
 // root page embeds it whole, headings one level down.
