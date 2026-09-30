@@ -255,3 +255,50 @@ func TestOneTickEndNoteOnlyWhenTheTickAddressedTheCoordinator(t *testing.T) {
 		t.Fatalf("a quiet tick wrote a tick-end note: %d", ends())
 	}
 }
+
+// A drain a step makes before it plans is said, never silent: a pump part
+// that finds a change queued after the tick's first read drains it first and
+// the tick names that drain among its parts; a verb on a STOPPED machine
+// that drains the queue it left says so in its result.
+func TestEveryDrainIsNamed(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setup(2)
+	h.startMachine()
+	h.machine() // deals both
+	h.run(TakeStep(sprint.TakeReq{As: "m1", Sel: sprint.Sel{Limit: 100}, Who: "m1"}))
+	queued := false
+	work := sprint.TickTables[0]
+	work.Parts = append([]sprint.TickPartDef{{Name: "world", Fn: func(s *sprint.Snapshot, _ sprint.TickReq) (sprint.Plan, int) {
+		if !queued {
+			queued = true
+			h.work("m1") // a finish queued after the tick's first read
+			return sprint.Plan{Notes: []sprint.Note{{Kind: sprint.Happened, Type: "world", At: s.Now}}}, 0
+		}
+		return sprint.Plan{}, 0
+	}}}, work.Parts...)
+	h.st.Updates = []sprint.TableUpdate{work, sprint.TickTables[1], sprint.TickTables[2], sprint.TickTables[3]}
+	res := h.machine()
+	named := false
+	for _, p := range res.Parts {
+		named = named || p.Name == sprint.PartDrain && len(p.Moved) > 0
+	}
+	if !named {
+		t.Fatalf("the drain before a pump part is not among the tick's parts: %+v", res.Parts)
+	}
+	h.st.Updates = nil
+	h.work("m2") // queued: the machine is running
+	if q, _ := h.m.QueueRead(h.ctx); len(q) == 0 {
+		t.Fatal("nothing queued before the stop")
+	}
+	_, _, r, err := h.st.SetMachine(h.ctx, false) // STOPPED: its own step drains first
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Drained) == 0 || len(r.Drained[0].Moved) == 0 {
+		t.Fatalf("the stop drained the queue silently: %+v", r)
+	}
+	if q, _ := h.m.QueueRead(h.ctx); len(q) != 0 {
+		t.Fatalf("a STOPPED machine keeps a queue of %d", len(q))
+	}
+}

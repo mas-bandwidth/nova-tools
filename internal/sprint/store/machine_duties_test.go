@@ -135,8 +135,10 @@ func TestCRDeadlinesThatNeverFire(t *testing.T) {
 	}
 }
 
-// PROBE A2: a primary in review with two ok reads waits on the coordinator's
-// accept with only a happened note; no judgment, no deadline.
+// PROBE A2: a primary with two ok reads is accepted by the machine ("accept is
+// mechanical, but the merge step is not": the pump moves it to merging), and
+// then waits on the coordinator's merge with only a happened note; the stream's
+// merge deadline is the judgment that names it.
 func TestCRReadyToAcceptIsNeverAJudgment(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
@@ -146,6 +148,10 @@ func TestCRReadyToAcceptIsNeverAJudgment(t *testing.T) {
 	h.work("m1")
 	h.machine()
 	h.readAll()
+	h.crTicks(2, "accepted") // the pump applies the reads, then accepts
+	if got := h.state("s1-1"); got != sprint.Merging {
+		t.Fatalf("two oks: s1-1 is %s, not accepted to merging", got)
+	}
 	h.tick(48 * time.Hour)
 	h.crTicks(3, "two oks")
 	open, _ := h.m.OpenNotes(h.ctx)
@@ -154,7 +160,7 @@ func TestCRReadyToAcceptIsNeverAJudgment(t *testing.T) {
 			return
 		}
 	}
-	t.Errorf("A (by the letter): s1-1 in review with two oks for 48h: no open judgment names it or its stream; open=%d", len(open))
+	t.Errorf("A (by the letter): s1-1 accepted and unmerged for 48h: no open judgment names it or its stream; open=%d", len(open))
 }
 
 // PROBE A3: the coordinator acks a work-failed judgment: nothing asks, nothing
