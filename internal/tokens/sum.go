@@ -78,8 +78,7 @@ type ModelSum struct {
 	Agg   *Agg
 }
 
-// UnitSum is one work-set unit's grouping: what one PIECE OF WORK cost, which is the
-// question the repo column cannot answer.
+// UnitSum is one unit's grouping, read from the `units` column of the day files.
 type UnitSum struct {
 	Unit string
 	Agg  *Agg

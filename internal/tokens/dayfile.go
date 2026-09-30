@@ -55,9 +55,9 @@ var HeaderLine = strings.Join(Columns, "\t")
 // DayRow is one written row.
 type DayRow struct {
 	Date, Model, Repo string
-	// Unit is the work-set unit this row's spend is attributed to, or `-`. It is the
-	// `units` column: a fold run without --units writes `-` on every row, which is the
-	// file this tool wrote before the column existed with one more cell on it.
+	// Unit is the unit this row's spend names, or `-`. It is the `units` column: a fold
+	// writes `-` on every row, which is the file this tool wrote before the column existed
+	// with one more cell on it, and a day file that carries a unit still reads.
 	Unit    string
 	Counts  Counts
 	Rough   int

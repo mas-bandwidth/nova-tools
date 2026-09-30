@@ -127,7 +127,7 @@ type Message struct {
 	Basis    string // UTC, or the zone a provider export declares
 	Model    string
 	Repo     string // already attributed by the reader, through repo.go's one function
-	Unit     string // the work-set unit, through units.go's one function; "-" when none
+	Unit     string // the unit a source names (a ledger card); "-" when none
 	Counts   Counts
 	Rough    int    // how many `~` bus lines this message stands for
 	Turn     bool   // counted into turns= (the sources that count messages)
@@ -141,8 +141,8 @@ type Message struct {
 //
 // The UNIT is in it because the question it answers cannot be asked otherwise: a row that
 // summed two units' spend under one (model, repo) could be split back only by guessing.
-// A fold with no --units puts every message on "-", which is one unit value, so the key is
-// exactly what it was and every existing day file still folds to the same rows.
+// A source that names no unit puts every message on "-", which is one unit value, so the
+// key is exactly what it was and every existing day file still folds to the same rows.
 type Key struct{ Day, Model, Repo, Unit string }
 
 // Row is one line of a day file while it is still being accumulated.
@@ -420,17 +420,6 @@ func (s *Source) AddMessage(id string, m Message) {
 	s.byID[id] = m
 }
 
-// markUnit puts one unit on every message added since index first. It is how a unit is
-// attributed per TRANSCRIPT: the reader marks the file's own slice of the stream once the
-// file has said which unit it worked on, rather than deciding message by message.
-func (s *Source) markUnit(first int, unit string) {
-	for _, id := range s.order[first:] {
-		m := s.byID[id]
-		m.Unit = unit
-		s.byID[id] = m
-	}
-}
-
 // Collapse lays the collapsed messages into Stream, in first-seen order, and counts them.
 // Every reader that calls AddMessage ends with it.
 func (s *Source) Collapse() {
@@ -666,9 +655,13 @@ func readSource(path string) ([]byte, error) {
 	return raw, nil
 }
 
+// NoUnit is the cell a row carries when nothing named a unit: the `-` every absent value
+// in this tool is written as, never an empty cell and never a guess.
+const NoUnit = Dash
+
 // orNoUnit is the one place an absent unit becomes the dash. A message from a source that
-// knows nothing about units, and every message of a fold run without --units, arrives with
-// an empty Unit, and an empty cell is the thing the day file forbids.
+// names no unit arrives with an empty Unit, and an empty cell is the thing the day file
+// forbids.
 func orNoUnit(u string) string {
 	if u == "" {
 		return NoUnit

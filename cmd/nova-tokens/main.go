@@ -273,7 +273,6 @@ func (r *refusals) print(stderr io.Writer) int {
 const (
 	wantsOut     = "the directory the day files are written to"
 	wantsRepos   = "a file of <name><TAB><regexp> lines, in priority order, naming your repos"
-	wantsUnits   = "a work set, `(work-set \"id\" :units ((unit \"u1\" :pr 1412 :branch \"…\" :lane \"…\") …))`, whose units a transcript is attributed to"
 	wantsDay     = "one UTC day as YYYY-MM-DD, or --all for every day the sources name"
 	wantsWho     = "the name this report is from, as the bus knows it"
 	wantsMonth   = "one month as YYYY-MM"
@@ -411,17 +410,9 @@ func (s *sourceFlags) check(r *refusals) {
 
 // read reads every declared source, in declaration order, through the one reader per kind.
 func (s *sourceFlags) read(rules *tokens.Rules, now time.Time) []*tokens.Source {
-	return s.readWithUnits(rules, nil, now)
-}
-
-// readWithUnits is read with the work set a fold was given, which only the Claude reader
-// uses: a unit is attributed from a CHILD TRANSCRIPT's tool inputs, and a billing export,
-// a swarm usage file and a bus self-report carry no tool inputs to read one from. Their
-// rows are `-`, which is the truthful answer and not a gap.
-func (s *sourceFlags) readWithUnits(rules *tokens.Rules, units *tokens.Units, now time.Time) []*tokens.Source {
 	var out []*tokens.Source
 	for _, it := range s.claude.items {
-		out = append(out, tokens.ReadClaude(it.label, it.value, rules, units))
+		out = append(out, tokens.ReadClaude(it.label, it.value, rules))
 	}
 	for _, it := range s.opencode.items {
 		out = append(out, tokens.ReadOpenCode(it.label, it.value, s.scratch, time.Duration(s.timeout)*time.Second, rules))
@@ -554,7 +545,6 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 	day := fs.String("day", "", "")
 	all := fs.Bool("all", false, "")
 	allowShrink := fs.Bool("allow-shrink", false, "")
-	unitsPath := fs.String("units", "", "")
 	max := fs.Int("max", bounded.Default, "")
 	var sf sourceFlags
 	sf.declare(fs, true)
@@ -588,14 +578,6 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 		r.add("--repos " + sf.repos + ": " + err.Error() + "; it wants " + wantsRepos)
 		return r.print(stderr)
 	}
-	var units *tokens.Units
-	if *unitsPath != "" {
-		units, err = tokens.LoadUnits(*unitsPath)
-		if err != nil {
-			r.add("--units " + *unitsPath + ": " + err.Error() + "; it wants " + wantsUnits)
-			return r.print(stderr)
-		}
-	}
 	release, err := tokens.TakeFoldLock(*out, tokens.LockWait)
 	if err != nil {
 		r.add(err.Error())
@@ -603,11 +585,7 @@ func cmdFold(args []string, stdout, stderr io.Writer, now time.Time) int {
 	}
 	defer release()
 
-	sources := sf.readWithUnits(rules, units, now)
-	if units != nil {
-		fmt.Fprintf(stdout, "TOKENS UNITS set=%s units=%d file=%s\n",
-			oneline.Field(orDashText(units.Set)), units.Len(), oneline.Field(*unitsPath))
-	}
+	sources := sf.read(rules, now)
 	folder := tokens.NewFolder()
 	for _, s := range sources {
 		for _, m := range s.Stream {
@@ -1503,13 +1481,4 @@ func cmdCheck(args []string, stdout, stderr io.Writer, now time.Time) int {
 		oneline.Field(stamp(now)), oneline.Field(buildVersion()), res.Files, res.Rows,
 		oneline.Field(first), oneline.Field(last), len(res.Gaps), len(res.Notes))
 	return 0
-}
-
-// orDashText is the dash a value nobody wrote is printed as: a work set with no id of its
-// own still loads, and an empty field on a printed line is a field a scanner cannot read.
-func orDashText(s string) string {
-	if strings.TrimSpace(s) == "" {
-		return tokens.Dash
-	}
-	return s
 }

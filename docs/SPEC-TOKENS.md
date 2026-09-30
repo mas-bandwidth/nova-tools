@@ -437,33 +437,6 @@ directory with one file in it is one file), or that two sources overlap (see
 because a transcript spans days. `--all` writes every day the sources name.
 A day the sources name no row for is not written and not removed.
 
-`--units <set.lisp>` names a **work set**, and is how a row is attributed to a
-PIECE OF WORK rather than to a repo. The repo column answers "what did this
-month cost on nova-tools"; the obligation is the other question — what did
-THIS piece of work cost — and a work set already names the pieces, so the tool
-reads the coordinator's own taxonomy instead of inventing one. One line says
-what was loaded: `TOKENS UNITS set=<id> units=<n> file=<file>`.
-
-The rule, once, and it is deliberately coarser than the repo rule: **a unit is
-attributed per TRANSCRIPT**, not per message. A repo is per message because one
-window touches three repos in an hour; a child is spawned for one unit and
-works on it until it stops, and attributing per message would put a child's
-`gh pr view` of a sibling's PR onto the sibling's unit. Within one transcript:
-take every tool-call input in order; the first token that names a unit decides
-the file, and every message in it carries that unit; a file that names none is
-`-`. A token names a unit when it carries that unit's `:pr` number (`#1412`,
-`/pull/1412`), its `:branch`, or its `:lane`'s clone directory (`lane-<name>`
-as `tmp/lane-three/` or `~/lane-three`). Each of the three is **bounded** —
-`#141` does not match inside `#1412`, and the branch `rowan/x` does not match
-inside `rowan/xylem` — because an unbounded substring would put one lane's
-spend on another's unit and nobody would see it.
-
-Only the Claude reader attributes units: a billing export, a swarm usage file
-and a bus self-report carry no tool inputs to read one from, and their rows are
-`-`, which is the truthful answer rather than a gap. A fold with no `--units`
-puts every row on `-`, which is one unit value, so it splits no
-`(model, repo)` row.
-
 ### `sum`
 
 Asserts nothing. Reads `<out>/<month>-??.tsv`, prints per `(model, repo)`,
@@ -478,8 +451,8 @@ and `missing=<n>` is the answer. `sum` is a **report**. Never gate on it.
 `--by unit` prints the **units table** instead of the two `(model, repo)`
 tables: one `SUM UNIT` line per unit the month's rows named, `-` among them,
 heaviest first. The `-` group is printed and never hidden — the share of a
-month nobody attributed is the number that says whether the work set is good
-enough, and it is the same reasoning as `unknown=` and `other=` on a fold's
+month nobody attributed is the number that says how much of it names no unit,
+and it is the same reasoning as `unknown=` and `other=` on a fold's
 day line. `SUM TOTAL` and `SUM OK` carry `units=<n>` whichever table was
 printed.
 
@@ -610,7 +583,6 @@ after `: ` is capped at `oneline.TailBytes`.
 
 ```
 TOKENS FOLD at=<stamp> build=<id> out=<dir> sources=<n> days=<all|d> repos=<file>
-TOKENS UNITS set=<id|-> units=<n> file=<file>
 TOKENS SOURCE label=<label> kind=<claude|opencode|swarm|bus|provider> path=<path> reports=<types> day_basis=<utc|mixed|<zone>> files=<n> unreadable=<n> messages=<n> dup=<n> noid=<n> nousage=<n> unparsed=<n> comments=<n> redated=<n> superseded=<n> rows=<n>
 TOKENS UNREADABLE label=<label> path=<path>: <why>
 TOKENS UNPARSED label=<kind>:<name> note=<id> line=<n>: <text or why>
@@ -738,7 +710,7 @@ fold with no `--out`, no `--repos` and a bad label says all three.
 ```
 nova-tokens v1 day=2026-09-11 at=2026-09-11T23:55:02Z build=<id> turns=1204 sources=claude:glenn,opencode:bench,swarm:deepseek,bus:emma,google:emma
 date	model	repo	input	output	cache_write	cache_read	reasoning	rough	day_basis	sources	units
-2026-09-11	claude-fable-5-1	schema	8410	593734	1504393	236002356	-	0	utc	claude:glenn	u3
+2026-09-11	claude-fable-5-1	schema	8410	593734	1504393	236002356	-	0	utc	claude:glenn	-
 2026-09-11	deepseek-v3	serialize	812004	40211	-	-	-	0	utc	swarm:deepseek	-
 2026-09-11	gemini-2.5-pro	schema	123456	7890	-	-	-	1	utc	bus:emma	-
 2026-09-11	gemini-2.5-pro	unattributed	9912340	301122	-	-	-	0	America/Los_Angeles	google:emma	-
@@ -754,7 +726,7 @@ date	model	repo	input	output	cache_write	cache_read	reasoning	rough	day_basis	so
 | `rough` | how many `~` bus lines fed this row |
 | `day_basis` | `utc` for a row dated from stamps; the export's own zone for a provider row that is a local-day total (rule 17) |
 | `sources` | sorted, comma-joined labels that fed this row |
-| `units` | the work-set unit this row's spend is attributed to, or `-` (rule: the unit is attributed per TRANSCRIPT, by `fold --units`) |
+| `units` | the unit this row's spend names, or `-`; a fold writes `-` on every row, and the column is kept so the day files that carry a unit still read |
 
 Twelve columns, every one written on every row. A `-` in a type cell is a
 fact about the source ("did not report"), not about the day, and `sum`
