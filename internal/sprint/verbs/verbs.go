@@ -330,6 +330,8 @@ var raceCodes = map[string]bool{
 	sprintfn.CodeDropping: true, sprintfn.CodeStopped: true, sprintfn.CodeXGuard: true,
 	sprintfn.CodeStale: true, sprintfn.CodeEpochAhead: true, "EXISTS": true, "NOROW": true,
 	"ROWSET": true,
+	// PROPGUARD: a guard on a table property as read (L1 amendment 2026-09-30).
+	"PROPGUARD": true,
 }
 
 // IsRace says a refusal code is a race, which a verb plans again on a fresh

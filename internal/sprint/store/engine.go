@@ -864,6 +864,26 @@ func (st *Store) operation(verb, actor, id string, plan sprint.Plan, snap *sprin
 		entries[k.table] = append(entries[k.table], ntable.BatchMemberEntry{ID: sprint.StoredID(c.ID, snap.Epoch),
 			Expect: &ntable.MemberExpect{Revision: strconv.FormatUint(c.Rev, 10), Place: &ntable.PlaceExpect{Row: c.Row, Col: c.Col}}, Set: set})
 	}
+	// The table properties the step writes go in the first manifest of their
+	// table, with its members, guarded on the values the plan read (L1
+	// contract amendment, table properties, section 4).
+	props := map[string]*ntable.BatchManifest{}
+	for _, pw := range plan.Props {
+		m := props[pw.Table]
+		if m == nil {
+			m = &ntable.BatchManifest{Props: map[string]string{}}
+			props[pw.Table] = m
+		}
+		m.Props[pw.Name] = pw.Value
+		if pw.WasAbsent {
+			m.PropAbsent = append(m.PropAbsent, pw.Name)
+		} else {
+			if m.PropExpect == nil {
+				m.PropExpect = map[string]string{}
+			}
+			m.PropExpect[pw.Name] = pw.Was
+		}
+	}
 	k := 0
 	for _, t := range sprint.ApplyOrder {
 		tb := snap.T(t)
@@ -871,20 +891,29 @@ func (st *Store) operation(verb, actor, id string, plan sprint.Plan, snap *sprin
 		if tb != nil {
 			rev = tb.Revision
 		}
-		if len(entries[t]) == 0 {
+		if len(entries[t]) == 0 && props[t] == nil {
 			continue
 		}
 		var cur []ntable.BatchMemberEntry
 		changed, guards, size := 0, 0, 0
+		first := true
 		manifest := func(members []ntable.BatchMemberEntry) ntable.BatchManifest {
-			return ntable.BatchManifest{Schema: 1, Table: st.Names.Table(t), Epoch: strconv.FormatUint(tb.Epoch, 10),
+			m := ntable.BatchManifest{Schema: 1, Table: st.Names.Table(t), Epoch: strconv.FormatUint(tb.Epoch, 10),
 				ExpectedTableRevision: strconv.FormatUint(rev, 10), OperationID: fmt.Sprintf("%s-%d", id, k+1), Actor: st.Actor, Members: members}
+			if p := props[t]; first && p != nil {
+				m.Props, m.PropExpect, m.PropAbsent = p.Props, p.PropExpect, p.PropAbsent
+			}
+			return m
 		}
 		flush := func() {
-			if len(cur) == 0 {
+			if len(cur) == 0 && !(first && props[t] != nil) {
 				return
 			}
+			if cur == nil {
+				cur = []ntable.BatchMemberEntry{}
+			}
 			op.Manifests = append(op.Manifests, manifest(cur))
+			first = false
 			k++
 			rev++
 			cur, changed, guards, size = nil, 0, 0, 0
@@ -1168,9 +1197,13 @@ var RepairSkippedDecisions = sprint.Decisions[sprint.NRepairSkipped]
 type Skip struct {
 	Card, Primary, Table, Expected, Found string
 	Refused                               string // the store's own refusal
+	Prop                                  string // a table property skipped, in place of a card
 }
 
 func (k Skip) String() string {
+	if k.Prop != "" {
+		return fmt.Sprintf("table property %s on %s; the store: %s", k.Prop, k.Table, k.Refused)
+	}
 	return fmt.Sprintf("card %s (primary %s) on %s: expected %s, found %s; the store: %s", k.Card, k.Primary, k.Table, k.Expected, k.Found, k.Refused)
 }
 
@@ -1307,8 +1340,10 @@ func (st *Store) finishOp(ctx context.Context, op OpRecord) (RepairResult, error
 // and it is never sent.
 func (st *Store) applyEntries(ctx context.Context, man ntable.BatchManifest, barred map[string]string) ([]Skip, error) {
 	var skips []Skip
+	changedOne := false
 	for j, e := range man.Members {
 		one := man
+		one.Props, one.PropExpect, one.PropAbsent = nil, nil, nil
 		one.Members = []ntable.BatchMemberEntry{e}
 		one.OperationID = fmt.Sprintf("%s.e%d", man.OperationID, j+1)
 		outcome := ""
@@ -1329,6 +1364,7 @@ func (st *Store) applyEntries(ctx context.Context, man ntable.BatchManifest, bar
 			switch {
 			case err == nil, refusalCode(err) == "OPCONFLICT":
 				outcome = "applied"
+				changedOne = changedOne || hasChanges(e)
 			case refusalCode(err) == "REVISION":
 				// the table moved between the read and the send: read again
 			case !ntable.IsRefusal(err) && !errors.Is(err, ntable.ErrMalformedManifest):
@@ -1345,7 +1381,64 @@ func (st *Store) applyEntries(ctx context.Context, man ntable.BatchManifest, bar
 			return nil, fmt.Errorf("member %s: the table kept moving through %d sends", e.ID, st.attempts())
 		}
 	}
-	return skips, nil
+	propSkips, err := st.applyProps(ctx, man, changedOne)
+	if err != nil {
+		return nil, err
+	}
+	return append(skips, propSkips...), nil
+}
+
+// applyProps applies the table properties of a manifest finished entry by
+// entry: only when one of its member changes applied, in a manifest of its own
+// holding the properties and their expectations, which refuses them all
+// when an expectation no longer holds. Otherwise they are skipped: a deal none
+// of whose cards applied leaves its index where it was (L1 contract
+// amendment, table properties, section 4).
+func (st *Store) applyProps(ctx context.Context, man ntable.BatchManifest, changedOne bool) ([]Skip, error) {
+	if len(man.Props)+len(man.PropExpect)+len(man.PropAbsent) == 0 {
+		return nil, nil
+	}
+	skipAll := func(why string) []Skip {
+		var out []Skip
+		for _, name := range sortedKeys(man.Props) {
+			out = append(out, Skip{Table: man.Table, Prop: name, Refused: why})
+		}
+		return out
+	}
+	if !changedOne {
+		return skipAll("no member change of its manifest applied"), nil
+	}
+	one := man
+	one.Members = []ntable.BatchMemberEntry{}
+	one.OperationID = man.OperationID + ".props"
+	for a := 0; a < st.attempts(); a++ {
+		shapes, err := st.B.Shapes(ctx, []string{man.Table})
+		if err != nil {
+			return nil, err
+		}
+		one.ExpectedTableRevision = strconv.FormatUint(shapes[0].Revision, 10)
+		_, err = st.send(ctx, one)
+		switch {
+		case err == nil, refusalCode(err) == "OPCONFLICT":
+			return nil, nil
+		case refusalCode(err) == "REVISION":
+		case !ntable.IsRefusal(err) && !errors.Is(err, ntable.ErrMalformedManifest):
+			return nil, err
+		default:
+			return skipAll(err.Error()), nil
+		}
+	}
+	return nil, fmt.Errorf("the properties of %s: the table kept moving through %d sends", man.OperationID, st.attempts())
+}
+
+// sortedKeys is a map's keys in order.
+func sortedKeys(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // rejudge holds the entries of the operation's manifests from the from-th on

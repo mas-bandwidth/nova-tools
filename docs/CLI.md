@@ -1974,11 +1974,11 @@ first, connection flags next, epoch and receipt metadata last. For example,
 | `batch (<manifest-file> \| - \| '<json>')` | Applies an atomic batch manifest (file, stdin or inline JSON) of member mutations and preconditions |
 | `check <table>` | Audits both directions of all record/set links, including hidden cells |
 | `clear <table>` | Removes active rows and owned cells, retaining the definition; refuses bound cells |
-| `show <table> [--at-epoch <n>]` | Prints complete projected values as typed lines, including text and percentages; a cell that cannot be read prints `?`, and a warning line names its key and type and `show` exits 1 |
+| `show <table> [--at-epoch <n>]` | Prints complete projected values as typed lines, including text and percentages, then one `TABLE PROP table= <name>=<value>` line for each of the table's properties (values a batch manifest writes with its members, such as a rolling index), in name order; a cell that cannot be read prints `?`, and a warning line names its key and type and `show` exits 1 |
 | `render <table>` | Prints a text table; an empty table prints nothing |
 | `render --view <name>` | Prints one stored-view frame with timestamp, title and optional summary |
 | `watch <table>[,<table>...]` | Redraws tables; `--once` renders once, `--out` publishes a file atomically |
-| `view set <name> --tables <a,b,...> [--title <text>] [--summary <count-column>]` | Stores a view; summary uses the first table |
+| `view set <name> --tables <a,b,...> [--title <text>] [--summary <count-column>] [--hide-zero <tables>]` | Stores a view, replacing its title, summary and hide-zero together; summary uses the first table; hide-zero names tables of the view that hide all-zero rows |
 | `view state <name> (<text> \| --clear)` | Sets the view's state: while set, the summary line is that text alone, in place of the counts; `--clear` shows the counts again |
 | `view show <name>` | Prints view configuration, including summary and state |
 | `view list` | Lists view names |

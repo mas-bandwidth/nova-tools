@@ -27,6 +27,7 @@ local DEFAULT = {
     rows = 100, advance_rows = 1024, name = 256,
     field_names = 128, field_value = 65536, result = 4096,
     intent = 65536, notes = 100, about = 4000,
+    props = 64, prop_entries = 64,
 }
 local function cap(k)
     return S.limits and S.limits[k] or DEFAULT[k]
@@ -266,6 +267,7 @@ end
 local function symbolic(s)
     return symbolic_shape(s) and #s <= cap('name')
 end
+S.symbolic = symbolic
 local function row_shape(s)
     if not name_shape(s) or s:find('[%z\1-\31\127]') then return false end
     -- UTF-8 C1 controls U+0080..U+009F are C2 80..9F. UTF-8 validity was
@@ -353,8 +355,10 @@ local function over_entry_names(e)
     local kind = e.kind
     if kind == 'advance' then return false end
     if kind ~= 'create' and kind ~= 'move' and kind ~= 'remove' and kind ~= 'guard'
-        and kind ~= 'rows' and kind ~= 'rowset' and kind ~= 'count' and kind ~= 'rcount' then return false end
+        and kind ~= 'rows' and kind ~= 'rowset' and kind ~= 'count' and kind ~= 'rcount'
+        and kind ~= 'prop' and kind ~= 'propguard' then return false end
     if over_identifier(e.t, symbolic_shape) then return true end
+    if kind == 'prop' or kind == 'propguard' then return over_identifier(e.name, symbolic_shape) end
     if kind == 'rows' then return over_array_names(e.add, row_shape) or over_array_names(e.del, row_shape) end
     if kind == 'rowset' then
         if S.is_array(e.rows) then
@@ -394,6 +398,8 @@ local function over_query_names(q)
             or over_array_names(q.fields, name_shape) then return true end
     elseif kind == 'rows' then
         if over_identifier(q.t, symbolic_shape) then return true end
+    elseif kind == 'props' then
+        if over_identifier(q.t, symbolic_shape) or over_array_names(q.names, symbolic_shape) then return true end
     elseif kind == 'cardlines' then
         if over_array_names(q.abouts, name_shape) or over_array_names(q.fields, name_shape) then return true end
     end
@@ -523,6 +529,9 @@ local function entry(e, i)
         rows={kind=true,t=true,add=true,del=true},
         rowset={kind=true,t=true,rows=true},
         advance={kind=true,from=true},
+        -- Amendment 2026-09-30 (property), section 2.
+        prop={kind=true,t=true,name=true,value=true},
+        propguard={kind=true,t=true,name=true,value=true},
     }
     if not only(e, allowed[kind] or {}) then return failure('REQUEST', detail) end
     for _, spec in ipairs({
@@ -544,6 +553,15 @@ local function entry(e, i)
         return true
     end
     if not symbolic(e.t) then return failure('REQUEST', detail) end
+    if kind == 'prop' or kind == 'propguard' then
+        -- Amendment 2026-09-30 (property), sections 1 and 2: an identifier
+        -- name; a value bounded as a field value, required by prop and
+        -- optional for propguard (omitted means the property is absent).
+        if type(e.value) == 'string' and #e.value > cap('field_value') then return failure('LIMIT', detail) end
+        if not symbolic(e.name) or (e.value ~= nil and type(e.value) ~= 'string')
+            or (kind == 'prop' and e.value == nil) then return failure('REQUEST', detail) end
+        return true
+    end
     if kind == 'rowset' then
         if not dense(e.rows, cap('advance_rows')) then return failure('REQUEST', detail) end
         local seen = {}
@@ -666,6 +684,7 @@ local function validate_step(req, allow_derived_notes)
             (not S.is_array(req.notes) or #req.notes ~= 0))
         or (req.result ~= nil and req.result ~= '')) then return failure('REQUEST') end
     local advances, candidates, guards, abouts, row_names, tables = 0, 0, 0, 0, {}, {}
+    local props, prop_pairs = 0, {}
     local rowset_tables, rowset_prefix, nonrowset_seen = {}, 0, false
     for i = 1, #req.entries do
         local e, err = entry(req.entries[i], i)
@@ -695,6 +714,16 @@ local function validate_step(req, allow_derived_notes)
             nonrowset_seen = true
             candidates = candidates + #x.ids
             if x.about then abouts = abouts + #x.about end
+        elseif x.kind == 'prop' or x.kind == 'propguard' then
+            -- Amendment 2026-09-30 (property), section 2: TWICE for a second
+            -- prop on one (t,name); a propguard beside it is legal.
+            nonrowset_seen = true
+            props = props + 1
+            if x.kind == 'prop' then
+                local pair = x.t .. '\0' .. x.name
+                if prop_pairs[pair] then return failure('TWICE', {entry_index=i-1, table=x.t, name=x.name}) end
+                prop_pairs[pair] = true
+            end
         else
             nonrowset_seen = true
         end
@@ -702,7 +731,8 @@ local function validate_step(req, allow_derived_notes)
     if rowset_prefix > 0 and advances ~= 1 then return failure('REQUEST') end
     local table_count = 0
     for _ in pairs(tables) do table_count = table_count + 1 end
-    if table_count > 4 or candidates > cap('member_candidates') or guards > cap('guard_members') or abouts > cap('about') then
+    if table_count > 4 or candidates > cap('member_candidates') or guards > cap('guard_members') or abouts > cap('about')
+        or props > cap('prop_entries') then
         return failure('LIMIT')
     end
     local rows_count = 0
@@ -731,7 +761,7 @@ local function validate_step(req, allow_derived_notes)
 end
 
 local BUILTIN_KINDS = {range=true,count=true,rcount=true,ids=true,rows=true,
-    done=true,last=true,lines=true,cardlines=true}
+    done=true,last=true,lines=true,cardlines=true,props=true}
 -- The extension is trusted Lua code, but its registry still has to be a
 -- bounded, dense and collision-free list before any read context is opened.
 -- Sprint's eight composite kinds are included, and additional bounded
@@ -773,7 +803,8 @@ local function query(q, i, kinds, extension)
     end
     if over_array(q.cells, 20000) or over_array(q.ids, 10000)
         or over_array(q.fields, cap('field_names')) or over_array(q.ops, 2000)
-        or over_array(q.abouts, 2000) then return failure('LIMIT', detail) end
+        or over_array(q.abouts, 2000)
+        or (q.kind == 'props' and over_array(q.names, cap('props'))) then return failure('LIMIT', detail) end
     if q.kind == 'range' and type(q.limit) == 'number' and q.limit > 2000 then return failure('LIMIT', detail) end
     if q.kind == 'lines' and type(q.limit) == 'number' and q.limit > 5000 then return failure('LIMIT', detail) end
     if q.kind == 'lines' and type(q.ids_limit) == 'number' and q.ids_limit > 200000 then return failure('LIMIT', detail) end
@@ -803,6 +834,15 @@ local function query(q, i, kinds, extension)
         if q.fields then for j = 1, #q.fields do if reserved(q.fields[j]) then return failure('FIELDNAME', detail) end end end
     elseif q.kind == 'rows' then
         if not only(q, {kind=true,t=true}) or not symbolic(q.t) then return failure('REQUEST', detail) end
+    elseif q.kind == 'props' then
+        -- Amendment 2026-09-30 (property), section 3: optional distinct names.
+        if not only(q, {kind=true,t=true,names=true}) or not symbolic(q.t)
+            or (q.names ~= nil and not strings(q.names, cap('props'), symbolic)) then return failure('REQUEST', detail) end
+        local seen = {}
+        for j = 1, #(q.names or {}) do
+            if seen[q.names[j]] then return failure('REQUEST', detail) end
+            seen[q.names[j]] = true
+        end
     elseif q.kind == 'done' then
         if not only(q, {kind=true,ops=true}) or not dense(q.ops, 2000, 1) then return failure('REQUEST', detail) end
         local seen = {}

@@ -62,6 +62,9 @@ type Plan struct {
 	// facts (a lateness while its attempt lives): same id, new text, each a
 	// line of the log.
 	Updates []Note
+	// Props are the table properties the step writes, each with the guard on
+	// the value its plan read.
+	Props []PropWrite
 	// pre is the pre-state the plan was built on, set only by the steps of
 	// this package that may admit or move a primary into ready (on): the
 	// lifecycle judges a primary's needs against it, and a plan without one
@@ -74,6 +77,16 @@ type Plan struct {
 	// removing says remove built the plan: the one step that takes a landed
 	// primary off the table.
 	removing bool
+}
+
+// PropWrite is a table property a step writes (L1 contract amendment, table
+// properties): the table (logical name), the property and its new value,
+// guarded on the value the plan read (Was, or WasAbsent when it read none),
+// applied in the same atomic batch as the step's changes of that table.
+type PropWrite struct {
+	Table, Name, Value string
+	Was                string
+	WasAbsent          bool
 }
 
 // on records the pre-state the plan was built on (see Plan.pre).
@@ -89,6 +102,9 @@ func (p Plan) Tables() []string {
 		for _, b := range u.Bumps {
 			seen[b.Table] = true
 		}
+	}
+	for _, pw := range p.Props {
+		seen[pw.Table] = true
 	}
 	var out []string
 	for _, t := range ApplyOrder {

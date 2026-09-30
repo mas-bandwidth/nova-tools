@@ -254,7 +254,8 @@ func validateStep(s Step, requireNotesOp bool) error {
 	seen := make(map[string]bool)
 	rows := make(map[string]bool)
 	rowsetTables := make(map[string]bool)
-	candidates, guards, abouts := 0, 0, 0
+	seenProps := make(map[string]bool)
+	candidates, guards, abouts, props := 0, 0, 0, 0
 	advance := false
 	sawNonRowset := false
 	for i, e := range s.Entries {
@@ -315,6 +316,17 @@ func validateStep(s Step, requireNotesOp bool) error {
 			for _, row := range e.Rows {
 				rows[e.Table+"\x00"+row.Row] = true
 			}
+		case "prop", "propguard":
+			// Amendment 2026-09-30 (property), section 2: a (t,name) pair is in
+			// at most one prop entry; a propguard beside it reads the pre-state.
+			props++
+			if e.Kind == "prop" {
+				key := e.Table + "\x00" + e.Name
+				if seenProps[key] {
+					return NewRefusal("TWICE", RefusalDetail{EntryIndex: ptrInt(i), Table: e.Table, Name: e.Name})
+				}
+				seenProps[key] = true
+			}
 		}
 	}
 	if len(rowsetTables) != 0 && !advance {
@@ -340,7 +352,7 @@ func validateStep(s Step, requireNotesOp bool) error {
 	if advance {
 		rowLimit = MaxRowsWithAdvance
 	}
-	if candidates > MaxMemberCandidates || guards > MaxGuardMembers || abouts > MaxAboutBeforeDedup || len(rows) > rowLimit {
+	if candidates > MaxMemberCandidates || guards > MaxGuardMembers || abouts > MaxAboutBeforeDedup || len(rows) > rowLimit || props > MaxPropEntries {
 		return bad("LIMIT")
 	}
 	return nil
@@ -371,6 +383,9 @@ func validateEntry(epoch Decimal, e Entry, index int) error {
 		return ref("REQUEST")
 	}
 	if e.Kind != "move" && e.Kind != "remove" && e.Kind != "guard" && e.From != "" {
+		return ref("REQUEST")
+	}
+	if e.Kind != "prop" && e.Kind != "propguard" && (e.Name != "" || e.Value != nil) {
 		return ref("REQUEST")
 	}
 	if len(e.Meta) > 0 && !validMeta(e.Meta) {
@@ -497,6 +512,23 @@ func validateEntry(epoch Decimal, e Entry, index int) error {
 				if unset[field] {
 					return NewRefusal("FIELDOVERLAP", RefusalDetail{EntryIndex: ptrInt(index), Table: e.Table, IDs: []string{id}})
 				}
+			}
+		}
+	case "prop", "propguard":
+		// Amendment 2026-09-30 (property), sections 1 and 2: a name is an
+		// identifier; a value is bounded and charged as a field value.
+		if code := symbolicCode(e.Name); code != "" {
+			return ref(code)
+		}
+		if e.Kind == "prop" && e.Value == nil {
+			return ref("REQUEST")
+		}
+		if e.Value != nil {
+			if len(*e.Value) > MaxFieldValueBytes {
+				return ref("LIMIT")
+			}
+			if !utf8.ValidString(*e.Value) {
+				return ref("REQUEST")
 			}
 		}
 	case "rows":
@@ -1002,6 +1034,12 @@ func (e Entry) MarshalJSON() ([]byte, error) {
 	if e.Cells != nil {
 		m["cells"] = e.Cells
 	}
+	if e.Name != "" {
+		m["name"] = e.Name
+	}
+	if e.Value != nil {
+		m["value"] = *e.Value
+	}
 	if e.Kind == "count" {
 		m["max"] = e.CountMax
 	} else if e.Kind == "rcount" {
@@ -1031,7 +1069,7 @@ func (r *RowRank) UnmarshalJSON(data []byte) error {
 }
 
 func (e *Entry) UnmarshalJSON(data []byte) error {
-	m, err := strictObject(data, "kind", "t", "from", "to", "ids", "scores", "revs", "set", "each", "unset", "before_fields", "about", "meta", "add", "del", "rows", "cells", "min", "max", "atleast", "atmost")
+	m, err := strictObject(data, "kind", "t", "from", "to", "ids", "scores", "revs", "set", "each", "unset", "before_fields", "about", "meta", "add", "del", "rows", "cells", "min", "max", "atleast", "atmost", "name", "value")
 	if err != nil {
 		return err
 	}
@@ -1048,6 +1086,9 @@ func (e *Entry) UnmarshalJSON(data []byte) error {
 		"advance": "kind from",
 		"count":   "kind t cells max",
 		"rcount":  "kind t cells min max atleast atmost",
+		// Amendment 2026-09-30 (property), section 2.
+		"prop":      "kind t name value",
+		"propguard": "kind t name value",
 	}[e.Kind]
 	if allowed == "" {
 		return errors.New("unknown entry kind")
@@ -1160,6 +1201,18 @@ func (e *Entry) UnmarshalJSON(data []byte) error {
 		if err != nil {
 			return err
 		}
+	}
+	if raw, ok := m["name"]; ok {
+		if string(raw) == "null" || json.Unmarshal(raw, &e.Name) != nil {
+			return errors.New("invalid name")
+		}
+	}
+	if raw, ok := m["value"]; ok {
+		var value string
+		if string(raw) == "null" || json.Unmarshal(raw, &value) != nil {
+			return errors.New("invalid value")
+		}
+		e.Value = &value
 	}
 	return nil
 }
@@ -1334,6 +1387,25 @@ func ValidateReadPlan(p ReadPlan) error {
 			if q.Table == "" {
 				return fail("REQUEST")
 			}
+		case "props":
+			// Amendment 2026-09-30 (property), section 3: an optional list of
+			// distinct property names, at most one table's 64.
+			if len(q.Names) > MaxPropsPerTable {
+				return fail("LIMIT")
+			}
+			if q.Table == "" {
+				return fail("REQUEST")
+			}
+			seenNames := make(map[string]bool, len(q.Names))
+			for _, name := range q.Names {
+				if code := symbolicCode(name); code != "" {
+					return fail(code)
+				}
+				if seenNames[name] {
+					return fail("REQUEST")
+				}
+				seenNames[name] = true
+			}
 		case "done":
 			if len(q.Ops) > 2000 {
 				return fail("LIMIT")
@@ -1502,11 +1574,14 @@ func (q ReadQuery) MarshalJSON() ([]byte, error) {
 	if q.IncludeMeta {
 		m["include_meta"] = true
 	}
+	if q.Names != nil {
+		m["names"] = q.Names
+	}
 	return json.Marshal(m)
 }
 
 func (q *ReadQuery) UnmarshalJSON(data []byte) error {
-	m, err := strictObject(data, "kind", "t", "cell", "key", "min", "max", "limit", "desc", "records", "fields", "cells", "ids", "ops", "after_seq", "through_seq", "ids_limit", "abouts", "cursor", "include_meta")
+	m, err := strictObject(data, "kind", "t", "cell", "key", "min", "max", "limit", "desc", "records", "fields", "cells", "ids", "ops", "after_seq", "through_seq", "ids_limit", "abouts", "cursor", "include_meta", "names")
 	if err != nil {
 		return err
 	}
@@ -1523,6 +1598,7 @@ func (q *ReadQuery) UnmarshalJSON(data []byte) error {
 		"last":      "kind",
 		"lines":     "kind after_seq through_seq limit ids_limit",
 		"cardlines": "kind abouts cursor limit fields include_meta",
+		"props":     "kind t names", // amendment 2026-09-30 (property), section 3
 	}[q.Kind]
 	if allowed == "" {
 		return errors.New("unknown query kind")
@@ -1560,7 +1636,7 @@ func (q *ReadQuery) UnmarshalJSON(data []byte) error {
 			}
 		}
 	}
-	for name, out := range map[string]any{"t": &q.Table, "cell": &q.Cell, "key": &q.Key, "min": &q.Min, "max": &q.Max, "desc": &q.Desc, "records": &q.Records, "fields": &q.Fields, "cells": &q.Cells, "ids": &q.IDs, "ops": &q.Ops, "after_seq": &q.AfterSeq, "through_seq": &q.ThroughSeq, "abouts": &q.Abouts, "cursor": &q.Cursor, "include_meta": &q.IncludeMeta} {
+	for name, out := range map[string]any{"t": &q.Table, "cell": &q.Cell, "key": &q.Key, "min": &q.Min, "max": &q.Max, "desc": &q.Desc, "records": &q.Records, "fields": &q.Fields, "cells": &q.Cells, "ids": &q.IDs, "ops": &q.Ops, "after_seq": &q.AfterSeq, "through_seq": &q.ThroughSeq, "abouts": &q.Abouts, "cursor": &q.Cursor, "include_meta": &q.IncludeMeta, "names": &q.Names} {
 		if raw, ok := m[name]; ok {
 			if string(raw) == "null" || json.Unmarshal(raw, out) != nil {
 				return fmt.Errorf("invalid %s", name)

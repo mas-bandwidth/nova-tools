@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -293,6 +294,16 @@ func (app *application) cmdShow(args []string, stdout, stderr io.Writer) int {
 		}
 		fmt.Fprintln(stdout, b.String())
 	}
+	// the table's properties, one line each, in name order (L1 contract
+	// amendment, table properties, section 4)
+	names := make([]string, 0, len(t.Props))
+	for name := range t.Props {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		fmt.Fprintf(stdout, "TABLE PROP table=%s %s=%s\n", t.Name, name, field(t.Props[name]))
+	}
 	// A cell that did not come back prints as ? above, never as a false 0; show is
 	// the record of the table, so it also says which cell and why, and exits 1.
 	unread := 0
@@ -403,6 +414,15 @@ func (app *application) cmdRender(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+// hideZeroWord is the " hide_zero=<tables>" word of a view line, "" when the
+// view hides no rows.
+func hideZeroWord(tables []string) string {
+	if len(tables) == 0 {
+		return ""
+	}
+	return " hide_zero=" + strings.Join(tables, ",")
+}
+
 // cmdView manages presentation configuration independently of table receipts.
 func (app *application) cmdView(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
@@ -415,7 +435,7 @@ func (app *application) cmdView(args []string, stdout, stderr io.Writer) int {
 	verb := "view " + sub
 	fs := verbflag.New(verb)
 	addr := app.redisFlag(fs)
-	var tables, title, summary string
+	var tables, title, summary, hideZero string
 	var clearState bool
 	if sub == "state" {
 		fs.BoolVar(&clearState, "clear", false, "clear the state: the summary line shows the counts again")
@@ -424,6 +444,7 @@ func (app *application) cmdView(args []string, stdout, stderr io.Writer) int {
 		fs.StringVar(&tables, "tables", "", "the tables, comma-separated, in order")
 		fs.StringVar(&title, "title", "", "the view's title line")
 		fs.StringVar(&summary, "summary", "", "a count column in the first table to count as done (x/y z% -> ETA)")
+		fs.StringVar(&hideZero, "hide-zero", "", "the tables, comma-separated, that hide a row whose count cells are all zero when the view is drawn (view set replaces title, summary and hide-zero together: one left out is cleared)")
 	}
 	pos, err := parseInterleaved(fs, args[1:])
 	if err != nil {
@@ -462,10 +483,16 @@ func (app *application) cmdView(args []string, stdout, stderr io.Writer) int {
 	trips := st.CountTrips()
 	switch sub {
 	case "set":
-		if err := ntable.ViewSet(ctx, c, ntable.View{Name: pos[0], Tables: list, Title: title, Summary: summary}); err != nil {
+		var hide []string
+		for _, n := range strings.Split(hideZero, ",") {
+			if n = strings.TrimSpace(n); n != "" {
+				hide = append(hide, n)
+			}
+		}
+		if err := ntable.ViewSet(ctx, c, ntable.View{Name: pos[0], Tables: list, Title: title, Summary: summary, HideZero: hide}); err != nil {
 			return st.refusal(stderr, verb, err)
 		}
-		fmt.Fprintf(stdout, "VIEW SET view=%s tables=%s title=%q summary=%s trips=%d\n", pos[0], strings.Join(list, ","), title, field(summary), trips.N())
+		fmt.Fprintf(stdout, "VIEW SET view=%s tables=%s title=%q summary=%s%s trips=%d\n", pos[0], strings.Join(list, ","), title, field(summary), hideZeroWord(hide), trips.N())
 	case "state":
 		text := ""
 		if !clearState {
@@ -480,7 +507,7 @@ func (app *application) cmdView(args []string, stdout, stderr io.Writer) int {
 		if err != nil {
 			return st.refusal(stderr, verb, err)
 		}
-		fmt.Fprintf(stdout, "VIEW view=%s tables=%s title=%q summary=%s state=%q trips=%d\n", v.Name, strings.Join(v.Tables, ","), v.Title, field(v.Summary), v.State, trips.N())
+		fmt.Fprintf(stdout, "VIEW view=%s tables=%s title=%q summary=%s state=%q%s trips=%d\n", v.Name, strings.Join(v.Tables, ","), v.Title, field(v.Summary), v.State, hideZeroWord(v.HideZero), trips.N())
 	case "list":
 		names, err := ntable.ViewList(ctx, c)
 		if err != nil {

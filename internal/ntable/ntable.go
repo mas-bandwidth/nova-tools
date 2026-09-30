@@ -267,6 +267,10 @@ type Table struct {
 	HiddenTable bool     // the whole table kept and read, not drawn by watch (set --hidden / --visible)
 	Sort        string   // the standing row sort (row sort --keep): name, -name, label, -label; empty is by hand
 	Rows        []Row
+	// Props are the table's properties at the snapshot's epoch, name -> value
+	// (nil when it has none): values a batch writes with its members, such as
+	// a rolling index (L1 contract amendment, table properties).
+	Props map[string]string
 }
 
 // IsHidden is whether a column is kept but not drawn.

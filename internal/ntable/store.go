@@ -52,6 +52,7 @@ var (
 	ErrMemberRevision    = errors.New("member revision mismatch")
 	ErrFieldGuard        = errors.New("failed field guard")
 	ErrPlaceGuard        = errors.New("failed place guard")
+	ErrPropGuard         = errors.New("failed property guard")
 	ErrOpConflict        = errors.New("operation ID conflict")
 	ErrLimit             = errors.New("limit exceeded")
 	ErrReservedField     = errors.New("reserved field write")
@@ -478,6 +479,14 @@ func (o operation) refused(reply []any) error {
 		}
 		if o.member != "" {
 			remedy = memberReadCommand(o.table, o.member)
+		}
+	case typedrec.TableRefusalPropGuard:
+		// a table property's expectation (the manifest's prop_expect or
+		// prop_absent) did not hold: L1 contract amendment, table properties
+		if len(reply) >= 4 {
+			cause = fmt.Errorf("%w: table %q property %q", ErrPropGuard, reply[2], reply[3])
+		} else {
+			cause = fmt.Errorf("%w: %s", ErrPropGuard, words(reply[2:]))
 		}
 	case typedrec.TableRefusalPlaceGuard:
 		if len(reply) >= 5 {
@@ -1150,6 +1159,10 @@ type View struct {
 	Tables  []string
 	Title   string
 	Summary string // the count column of the first table the summary line counts as done ("" for no line)
+	// HideZero names the tables of the view that hide a row whose count cells
+	// are all zero when the view is drawn, each one of Tables (the sprint view
+	// sets its work and merge tables: a stream with no cards is not shown).
+	HideZero []string
 	// State, when set, is the summary line, alone, in place of the counts:
 	// the state of whatever fills the view ("STOPPED"). ViewState writes it;
 	// ViewSet leaves it as it is.
@@ -1210,7 +1223,7 @@ func ViewStateResult(name string, cmd *redis.Cmd) error {
 
 // ViewSet writes a view; every table must exist.
 func ViewSet(ctx context.Context, c redis.Cmdable, v View) error {
-	_, err := (operation{table: v.Name, view: true}).call(ctx, c, "ns_view_set", false, strings.Join(v.Tables, ","), v.Title, v.Summary)
+	_, err := (operation{table: v.Name, view: true}).call(ctx, c, "ns_view_set", false, strings.Join(v.Tables, ","), v.Title, v.Summary, strings.Join(v.HideZero, ","))
 	return err
 }
 
@@ -1230,6 +1243,9 @@ func ViewGet(ctx context.Context, c redis.Cmdable, name string) (View, error) {
 	v := View{Name: name, Title: h["title"], Summary: h["summary"], State: h["state"]}
 	if t := strings.TrimSpace(h["tables"]); t != "" {
 		v.Tables = strings.Split(t, ",")
+	}
+	if t := strings.TrimSpace(h["hide_zero"]); t != "" {
+		v.HideZero = strings.Split(t, ",")
 	}
 	return v, nil
 }
@@ -1277,6 +1293,13 @@ type BatchManifest struct {
 	OperationID           string             `json:"operation_id"`
 	Actor                 string             `json:"actor,omitempty"`
 	Members               []BatchMemberEntry `json:"members"`
+	// Props are the table's properties the batch sets, PropExpect the ones it
+	// expects present with a value and PropAbsent the ones it expects absent,
+	// checked before any write and applied in the same atomic call as the
+	// members (L1 contract amendment, table properties, section 4).
+	Props      map[string]string `json:"props,omitempty"`
+	PropExpect map[string]string `json:"prop_expect,omitempty"`
+	PropAbsent []string          `json:"prop_absent,omitempty"`
 }
 
 // BatchMemberEntry defines expectations and mutations for one member.
@@ -1334,17 +1357,21 @@ type BatchDelta struct {
 	GuardCount    int                `json:"guard_count"`
 	ChangedCount  int                `json:"changed_count"`
 	Members       []BatchMemberDelta `json:"members"`
+	// Props are the table's properties the batch changed, name -> new value
+	// (L1 contract amendment, table properties).
+	Props map[string]string `json:"props,omitempty"`
 }
 
 func (b *BatchDelta) UnmarshalJSON(data []byte) error {
 	type rawBatchDelta struct {
-		OperationID   string          `json:"operation_id"`
-		Digest        string          `json:"digest"`
-		Actor         string          `json:"actor"`
-		SelectedCount int             `json:"selected_count"`
-		GuardCount    int             `json:"guard_count"`
-		ChangedCount  int             `json:"changed_count"`
-		Members       json.RawMessage `json:"members"`
+		OperationID   string            `json:"operation_id"`
+		Digest        string            `json:"digest"`
+		Actor         string            `json:"actor"`
+		SelectedCount int               `json:"selected_count"`
+		GuardCount    int               `json:"guard_count"`
+		ChangedCount  int               `json:"changed_count"`
+		Members       json.RawMessage   `json:"members"`
+		Props         map[string]string `json:"props"`
 	}
 	var raw rawBatchDelta
 	if err := json.Unmarshal(data, &raw); err != nil {
@@ -1356,6 +1383,7 @@ func (b *BatchDelta) UnmarshalJSON(data []byte) error {
 	b.SelectedCount = raw.SelectedCount
 	b.GuardCount = raw.GuardCount
 	b.ChangedCount = raw.ChangedCount
+	b.Props = raw.Props
 	if len(raw.Members) > 0 && string(raw.Members) != "{}" && string(raw.Members) != "null" {
 		var m []BatchMemberDelta
 		if err := json.Unmarshal(raw.Members, &m); err != nil {
