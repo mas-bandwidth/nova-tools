@@ -78,7 +78,7 @@ func Drop(ctx context.Context, e *Env, req DropReq) (Result, error) {
 			for _, id := range part {
 				c := primaryOf(va.snap, id)
 				if c == nil || !c.Placed() || c.Col == sprint.Landed {
-					refused = append(refused, sprint.Refusal{Key: id, Why: "not open on the table (" + placeOf(c) + ")"})
+					refused = append(refused, sprint.Refusal{Key: id, Why: "not open on the table (" + cardPlace(c) + ")"})
 					continue
 				}
 				dropPrimary(&b, &k, va, c, req.Reason)

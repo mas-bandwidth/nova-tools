@@ -129,6 +129,14 @@ do
   function Q.valid_text(s)
     return type(s) == 'string' and #s >= 1 and #s <= Q.MAX_NAME and not s:find('[%z\r\n]')
   end
+  -- A field of {p}next@e (1.3.1; sprintfn.NextField): score, streams, id:<s>
+  -- or gate:<s>, s a stream's name as sprint.ValidID has it.
+  function Q.next_field(f)
+    if f == 'score' or f == 'streams' then return true end
+    if type(f) ~= 'string' then return false end
+    local s = f:match('^id:(.*)$') or f:match('^gate:(.*)$')
+    return s ~= nil and #s <= 128 and s:match('^[%w_][%w_%-]*$') ~= nil
+  end
   -- only: the object has no key outside the set given.
   function Q.only(o, allowed)
     for k in pairs(o) do if not allowed[k] then return false end end
@@ -380,8 +388,9 @@ do
     if kind == 'duecount' then return #Q.CLOCK_FIELDS + 1 end
     if kind == 'dropping' then return 1 + #q.streams end
     if kind == 'parked' then return 1 + #q.keys end
-    if kind == 'missing' then return #q.ids end
+    if kind == 'missing' or kind == 'beat' then return #q.ids end
     if kind == 'jopen' then return #q.subjects * (1 + #q.names) end
+    if kind == 'next' then return #q.names end
     return Q.MAX_PROBES
   end
   -- The cost a query declares, from its arguments alone: the records and range
@@ -503,7 +512,7 @@ do
   function Q.check_key(q)
     if not Q.is_object(q) or type(q.kind) ~= 'string' then return 'REQUEST' end
     local allowed = {kind = true, fields = true}
-    local extra = {dropping = {'streams'}, parked = {'keys'}, missing = {'ids'}, jopen = {'subjects', 'names'}}
+    local extra = {dropping = {'streams'}, parked = {'keys'}, missing = {'ids'}, beat = {'ids'}, jopen = {'subjects', 'names'}, next = {'names'}}
     for _, name in ipairs(extra[q.kind] or {}) do allowed[name] = true end
     if not Q.only(q, allowed) then return 'REQUEST' end
     if not Q.is_array(q.fields) or #q.fields ~= 0 then return 'REQUEST' end
@@ -512,10 +521,12 @@ do
       if not Q.distinct(q.streams, Q.valid_name, most) then return 'REQUEST' end
     elseif q.kind == 'parked' then
       if not Q.distinct(q.keys, Q.valid_text, most) then return 'REQUEST' end
-    elseif q.kind == 'missing' then
+    elseif q.kind == 'missing' or q.kind == 'beat' then
       if not Q.distinct(q.ids, Q.valid_name, most) then return 'REQUEST' end
     elseif q.kind == 'jopen' then
       if not Q.distinct(q.subjects, Q.valid_name, most) or not Q.distinct(q.names, Q.valid_text, most) then return 'REQUEST' end
+    elseif q.kind == 'next' then
+      if not Q.distinct(q.names, Q.next_field, most) then return 'REQUEST' end
     end
     return nil
   end
@@ -1636,6 +1647,20 @@ do
         i = i + Q.PROBE_CHUNK
       end
       return {kind = kind, scores = Q.array(scores)}, nil
+    elseif kind == 'beat' then
+      -- The score of beat:<m> in the due set for each member named (1.4.4): a
+      -- member's beat is fresh while it lies above R.
+      local scores = {}
+      local i = 1
+      while i <= #q.ids do
+        local chunk = {}
+        for k = i, math.min(i + Q.PROBE_CHUNK - 1, #q.ids) do chunk[#chunk + 1] = 'beat:' .. q.ids[k] end
+        local got, err = Q.zmscore(ctx, Q.key(ctx, 'due'), chunk, index)
+        if err then return nil, err end
+        for k = 1, #chunk do scores[#scores + 1] = Q.nullable(got[k]) end
+        i = i + Q.PROBE_CHUNK
+      end
+      return {kind = kind, scores = Q.array(scores)}, nil
     elseif kind == 'jopen' then
       local items = {}
       for _, s in ipairs(q.subjects) do
@@ -1652,6 +1677,17 @@ do
         items[#items + 1] = {id = s, count = n, fields = found}
       end
       return {kind = kind, items = Q.array(items)}, nil
+    elseif kind == 'next' then
+      -- {p}next@e (1.3.1): the fields named that the hash holds (IT19).
+      local found = {}
+      if #q.names > 0 then
+        local vals, err = Q.hmget(ctx, Q.key(ctx, 'next'), q.names, index)
+        if err then return nil, err end
+        for i, name in ipairs(q.names) do
+          if vals[i] then found[name] = vals[i] end
+        end
+      end
+      return {kind = kind, fields = found}, nil
     elseif kind == 'duecount' then
       local _, r, err = Q.clock_at(ctx, index)
       if err then return nil, err end
@@ -1667,11 +1703,17 @@ do
 
   -- A read that returns nothing and no refusal is a bug of this file, which
   -- Layer 1 turns into CONFIG; a refusal keeps its own code.
-  for _, name in ipairs({'related', 'front', 'waiters', 'streams', 'fleet', 'readers', 'needchain', 'jnote'}) do
+  -- These loops run while the library loads, where ipairs is not a global
+  -- (fact F12): numeric loops over the lists.
+  local composite = {'related', 'front', 'waiters', 'streams', 'fleet', 'readers', 'needchain', 'jnote'}
+  for i = 1, #composite do
+    local name = composite[i]
     local reader = name == 'fleet' and Q.listing or (name == 'readers' and Q.listing or Q[name])
     SP.query(name, {validate = Q.validator(Q.check), read = reader, cost = Q.cost})
   end
-  for _, name in ipairs({'clock', 'lease', 'tick', 'heartbeat', 'dropping', 'parked', 'missing', 'jopen', 'duecount'}) do
+  local keyed = {'clock', 'lease', 'tick', 'heartbeat', 'dropping', 'parked', 'missing', 'jopen', 'duecount', 'next', 'beat'}
+  for i = 1, #keyed do
+    local name = keyed[i]
     SP.query(name, {validate = Q.validator(Q.check_key), read = Q.read_key, cost = Q.key_cost})
   end
 end

@@ -216,7 +216,7 @@ func planMerge(verb string, va *verbAnswer, req MergeReq, other string) (*sprint
 	primary := func(id string) (*sprint.Card, string) {
 		pr := snap.Work.Card(id)
 		if pr == nil || !pr.Placed() || pr.Col != sprint.Merging || pr.Row != s {
-			return nil, fmt.Sprintf("%s is queued in merge and not merging in work (%s)", id, placeOf(pr))
+			return nil, fmt.Sprintf("%s is queued in merge and not merging in work (%s)", id, cardPlace(pr))
 		}
 		return pr, ""
 	}
@@ -427,7 +427,7 @@ func Resume(ctx context.Context, e *Env, req ResumeReq) (Result, error) {
 						need = ctl.F("need_card")
 					}
 					if nc := snap.Work.Card(need); nc == nil || nc.Col != sprint.Landed {
-						refused = append(refused, sprint.Refusal{Key: s, Why: fmt.Sprintf("unresolved: it needs %s landed first, and it is %s", need, placeOf(nc))})
+						refused = append(refused, sprint.Refusal{Key: s, Why: fmt.Sprintf("unresolved: it needs %s landed first, and it is %s", need, cardPlace(nc))})
 						continue
 					}
 				}

@@ -1301,10 +1301,12 @@ func KeyProbes(q KeyQ) int {
 		return 1 + len(q.Streams)
 	case KeyParked:
 		return 1 + len(q.Keys)
-	case KeyMissing:
+	case KeyMissing, KeyBeat:
 		return len(q.IDs)
 	case KeyJOpen:
 		return len(q.Subjects) * (1 + len(q.Names))
+	case KeyNext:
+		return len(q.Names)
 	}
 	return queryMaxProbes
 }

@@ -425,6 +425,11 @@ type Report struct {
 	// the keys held back for a drop.
 	Quarantined, Parked, HeldBack []string
 	Halved                        map[string]int
+	// Short names each rule whose read came back short this tick, with what
+	// its plan read and the read did not load: the plan is refused, its keys
+	// parked and named in "the machine's step was refused", and the tick fails
+	// naming it (Tick's error) once its other steps are sent (1.3.5).
+	Short []string
 	// Outcomes are the pushes of R14's phase 2 that finished since the last
 	// tick, which this tick's error step records (phase 3); Pushes the pushes
 	// this tick started, off the tick, and PushesSkipped the claims past
@@ -485,6 +490,9 @@ type leaseReply struct {
 func Tick(ctx context.Context, c sprintfn.Client, l *Loop) (Report, error) {
 	rep := Report{Read: map[string]int{}, Left: map[string]int{}, Refused: map[string]int{}, Halved: map[string]int{}}
 	err := l.tick(ctx, c, &rep)
+	if err == nil && len(rep.Short) != 0 {
+		err = fmt.Errorf("machine: a rule's read came back short, its plan refused: %s", strings.Join(rep.Short, "; "))
+	}
 	l.ticks++
 	if err != nil {
 		l.failures++
@@ -520,10 +528,14 @@ type rt1 struct {
 
 // The atomic read of RT1 (1.4.2; errata 1's addendum: the sprint-key reads):
 // the agenda head's ranges (Layer 1 range, raw key form, one or more), then
-// the held queue's head and Layer 2's last; the sprint keys follow.
+// the held queue's head, Layer 2's last and the work table's rows (the
+// streams, which a rule's read names: sprint.TickShape; R6's front(s) of every
+// stream, 2.3 R6 "Read:"); the sprint keys follow.
 const (
-	rtHeldQ = iota // after the agenda's ranges: the held queue's head
-	rtLast         // Layer 2's last
+	rtHeldQ      = iota // after the agenda's ranges: the held queue's head
+	rtLast              // Layer 2's last
+	rtRows              // the work table's rows: the streams
+	rtAfterBands        // the Layer 1 queries after the bands
 )
 
 // agendaBandsMax is the most ranges RT1 reads of the agenda's head: with the
@@ -576,6 +588,7 @@ func (l *Loop) rt1() rt1 {
 	r.items = append(r.items, sprintfn.Item{Read: &sprintfn.ReadRequest{Epoch: l.epoch, Tset: append(ranges,
 		tset.ReadQuery{Kind: "range", Key: l.cfg.Names.Key("heldq") + "@" + string(l.epoch), Min: "-inf", Max: "+inf", Limit: b.HeldHead},
 		tset.ReadQuery{Kind: "last"},
+		tset.ReadQuery{Kind: "rows", Table: sprint.Work},
 	), Sprint: sq}})
 	return r
 }
@@ -803,7 +816,7 @@ func (l *Loop) tick(ctx context.Context, c sprintfn.Client, rep *Report) error {
 		rep.Looked = true
 	}
 	// RT2 (SprintEvents.tla RT2): the ingest, and one read a rule.
-	batches := dispatch(l.rules, keys, held, l.halvings, l.budget)
+	batches := dispatch(l.rules, keys, held, l.halvings, l.budget, sprint.TickShape{Streams: rd.streams})
 	var items []sprintfn.Item
 	ingest := -1
 	if seqOf(pageTo) > seqOf(realCur) {
@@ -911,7 +924,7 @@ func (l *Loop) tick(ctx context.Context, c sprintfn.Client, rep *Report) error {
 		if err != nil {
 			return err
 		}
-		snap, err := sprint.LoadPartial(s.batch.Plan, ans)
+		snap, err := sprint.LoadPartialRefusing(s.batch.Plan, ans)
 		if err != nil {
 			return fmt.Errorf("machine: rule %s's read: %w", s.batch.Rule, err)
 		}
@@ -925,8 +938,13 @@ func (l *Loop) tick(ctx context.Context, c sprintfn.Client, rep *Report) error {
 			}
 		}
 		rp := rule.Plan(snap, bt.Keys, now)
-		if snap.UnloadedErr() != nil {
-			continue // a plan on a short read decides nothing: its keys stay, and it reads again
+		if err := snap.UnloadedErr(); err != nil {
+			// A plan on a short read decides nothing, and its read plan did not
+			// load what the rule reads: a bug of the rule's read (1.3.5), never a
+			// crash. The plan is refused by name, its keys parked and named in
+			// "the machine's step was refused", and the tick fails naming it.
+			l.onShortRead(bt, err, rep)
+			continue
 		}
 		if !now.Running {
 			dry = append(dry, rp)
@@ -1307,6 +1325,22 @@ func (l *Loop) halve(bt Batch, code, budget, what string, rep *Report) []sprint.
 	return []sprint.NoteReq{stepRefusedNote(bt, code, budget, fmt.Sprintf("%s was refused %s; it is planned again at half", what, code))}
 }
 
+// CodeShortRead is the code the loop names a short read by (Report.Short, "the
+// machine's step was refused"): a rule's plan read what its read plan did not
+// load (sprint.ErrUnloaded). It is the loop's own, never a store's.
+const CodeShortRead = "SHORTREAD"
+
+// onShortRead refuses a plan made on a read that came back short (1.3.5; the
+// guard of sprint.UnloadedErr): the rule's keys are parked as a bug's and
+// named, with what the plan read, in "the machine's step was refused", and
+// the report names it so that the tick fails (Report.Short).
+func (l *Loop) onShortRead(bt Batch, err error, rep *Report) {
+	what := fmt.Sprintf("rule %s: %v", bt.Rule, err)
+	rep.Short = append(rep.Short, what)
+	rep.refused(bt.Rule, CodeShortRead)
+	l.onBug(bt, CodeShortRead, "", "its read came back short: "+err.Error(), rep)
+}
+
 // onBug parks a batch's keys at once and names the refusal (1.3.5): the
 // error step of the next RT1 moves each key out of the agenda into
 // {p}parked@e, the park written first, and it is not planned until the
@@ -1496,6 +1530,9 @@ type rt1Read struct {
 	heldMore      bool
 	marks         int
 	parked        map[string]string
+	// streams are the work table's rows, in name order: the tick's shape
+	// (sprint.TickShape), which R6's read names the fronts of.
+	streams []string
 }
 
 func (r rt1Read) agendaText() string { return headText(len(r.agenda), r.agendaMore) }
@@ -1517,7 +1554,7 @@ func parseRT1(rep *sprintfn.ReadReply, bands int) (rt1Read, error) {
 	if out.wall, err = strconv.ParseInt(string(rep.TimeMS), 10, 64); err != nil {
 		return out, fmt.Errorf("machine: the read's time %q", rep.TimeMS)
 	}
-	if bands < 1 || len(rep.Tset) != bands+2 || len(rep.Sprint) != 5 {
+	if bands < 1 || len(rep.Tset) != bands+rtAfterBands || len(rep.Sprint) != 5 {
 		return out, errors.New("machine: the tick's read is not aligned with its queries")
 	}
 	keys := func(a tset.ReadAnswer) ([]sprint.AgendaKey, error) {
@@ -1548,6 +1585,10 @@ func parseRT1(rep *sprintfn.ReadReply, bands int) (rt1Read, error) {
 	}
 	out.heldMore = rest[rtHeldQ].HasMore
 	out.last = seqOf(rest[rtLast].LastSeq)
+	for _, r := range rest[rtRows].Rows {
+		out.streams = append(out.streams, r.Row)
+	}
+	sort.Strings(out.streams)
 	decode := func(i int, kind string) (sprintfn.QueryResult, error) {
 		return sprintfn.DecodeResult(kind, rep.Sprint[i])
 	}

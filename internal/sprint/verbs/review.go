@@ -676,17 +676,6 @@ func perPart(chunk, each int) int { return max(1, chunk/each) }
 // primaryOf is the primary a named id loaded, nil when it has no record.
 func primaryOf(s *sprint.Snapshot, id string) *sprint.Card { return s.Work.Card(id) }
 
-// placeOf is where a card is, in words.
-func placeOf(c *sprint.Card) string {
-	switch {
-	case c == nil:
-		return "no such card"
-	case !c.Placed():
-		return "off the table"
-	}
-	return c.Col
-}
-
 // readsAt is the primary's read cards at its attempt that its rcards lists
 // and the read loaded (1.3.1: rcards is every read card ever made for it).
 func readsAt(s *sprint.Snapshot, c *sprint.Card) []*sprint.Card {
@@ -789,7 +778,7 @@ func planAsk(verb string, va *verbAnswer, ids []string, another bool) (*sprintfn
 	for _, id := range ids {
 		c := primaryOf(s, id)
 		if c == nil || !c.Placed() || c.Col != sprint.Review {
-			refused = append(refused, sprint.Refusal{Key: id, Why: "not in review (" + placeOf(c) + ")"})
+			refused = append(refused, sprint.Refusal{Key: id, Why: "not in review (" + cardPlace(c) + ")"})
 			continue
 		}
 		rcards := sprint.Split(c.F("rcards"))
@@ -976,7 +965,7 @@ func newAcceptance(va *verbAnswer) *acceptance { return &acceptance{va: va, ctl:
 func (a *acceptance) accept(b *stepOps, c *sprint.Card, id string) string {
 	s, now := a.va.snap, a.va.now
 	if c == nil || !c.Placed() || c.Col != sprint.Review {
-		return "not in review (" + placeOf(c) + ")"
+		return "not in review (" + cardPlace(c) + ")"
 	}
 	oks := okPair(s, c)
 	if len(oks) < sprint.AcceptReaders {
@@ -984,7 +973,7 @@ func (a *acceptance) accept(b *stepOps, c *sprint.Card, id string) string {
 	}
 	m := s.Merge.Card(c.ID)
 	if m != nil && (!m.Placed() || m.Col != sprint.Returned) {
-		return "its merge card is " + placeOf(m)
+		return "its merge card is " + cardPlace(m)
 	}
 	ctl := s.StreamCtl(c.Row)
 	if ctl == nil {
@@ -1500,11 +1489,11 @@ func Return(ctx context.Context, e *Env, req ReturnReq) (Result, error) {
 // returned, stamping the primary's field why; it says why it cannot.
 func retreat(b *stepOps, va *verbAnswer, c *sprint.Card, why string) string {
 	if c == nil || !c.Placed() || c.Col != sprint.Merging {
-		return "not merging (" + placeOf(c) + ")"
+		return "not merging (" + cardPlace(c) + ")"
 	}
 	m := va.snap.Merge.Card(c.ID)
 	if m == nil || !m.Placed() || (m.Col != sprint.Queued && m.Col != sprint.Stuck) {
-		return "its merge card is " + placeOf(m) + ", not queued or stuck"
+		return "its merge card is " + cardPlace(m) + ", not queued or stuck"
 	}
 	b.move(sprint.Merge, m, sprint.Returned, nil, "need_card", "need_stream")
 	b.move(sprint.Work, c, sprint.Review, map[string]string{why: wallStamp(va.now)})
@@ -1558,7 +1547,7 @@ func CI(ctx context.Context, e *Env, req CIReq) (Result, error) {
 			for _, id := range ids {
 				c := primaryOf(va.snap, id)
 				if c == nil || !c.Placed() || c.Col == sprint.Landed {
-					refused = append(refused, sprint.Refusal{Key: id, Why: "not open on the table (" + placeOf(c) + ")"})
+					refused = append(refused, sprint.Refusal{Key: id, Why: "not open on the table (" + cardPlace(c) + ")"})
 					continue
 				}
 				head := req.Head

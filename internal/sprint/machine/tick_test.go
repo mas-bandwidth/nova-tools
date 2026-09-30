@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 
@@ -541,13 +542,15 @@ func TestTickCurFromAtomicRead(t *testing.T) {
 	if b.cur != stale || seqOf(stale) >= seqOf(real) {
 		t.Fatalf("b's cursor %s is not stale against %s", b.cur, real)
 	}
+	// the lines before b's tick: its own steps (the real rules' deal, resolve
+	// and held) write lines after its page
+	last := len(w.log.Lines(testNames.Prefix, "0"))
 	rep := w.tick(b, k)
 	if !rep.Held || rep.Refused[sprintfn.CodeIngestAt] != 0 {
 		t.Fatalf("b's tick: %+v", rep)
 	}
 	page := pageOf(k.sent[len(k.sent)-rep.RoundTrips])
 	ingest := k.sent[len(k.sent)-rep.RoundTrips+1][0].Step.Ingest
-	last := len(w.log.Lines(testNames.Prefix, "0"))
 	if page.AfterSeq != stale || ingest.From != real || rep.Lines != last-int(seqOf(real)) || b.cur != decimal(uint64(last)) {
 		t.Fatalf("paged after %s, ingested from %s, %d lines to %s; want from %s, %d lines to %d", page.AfterSeq, ingest.From, rep.Lines, b.cur, real, last-int(seqOf(real)), last)
 	}
@@ -620,5 +623,51 @@ func TestTickKeepsFailing(t *testing.T) {
 	w.clk.add(TickEvery)
 	if rep := w.tick(l, k); rep.Err != nil || l.failures != 0 {
 		t.Fatalf("the tick after: %+v, failures %d", rep, l.failures)
+	}
+}
+
+// TestTickShortReadRefusesThePlanByName: a rule whose read comes back short
+// (its plan reads what its read plan did not load) never panics the process:
+// the tick refuses the plan by name and fails naming what was not loaded, the
+// rule's key is parked, and the next tick's error step opens "the machine's
+// step was refused" naming it (1.3.5; sprint.UnloadedErr). The case is R6 on
+// its registered read, which names no stream's front: a stream on the table
+// and no member up is a card R6 must look behind, "front of s1". The tick's
+// own table reads R6 with the streams RT1 found (TickShape), and is not short
+// (TestTickCurFromAtomicRead ticks the same world whole).
+func TestTickShortReadRefusesThePlanByName(t *testing.T) {
+	t.Parallel()
+	w := newWorld(t)
+	w.rows("s1")
+	var rules []sprint.Rule
+	for _, r := range sprint.RuleTable() {
+		if r.Name == "deal" {
+			r.ReadFor = nil // the registered read: it names no front
+		}
+		rules = append(rules, r)
+	}
+	k := &counting{c: w.tw}
+	l := w.loop("a", rules, Budget{})
+	w.tick(l, k)
+	w.verb(create("s1:waiting", waiting(), "q1"))
+	var rep Report
+	var err error
+	for i := 0; i < 3 && err == nil; i++ {
+		rep, err = Tick(context.Background(), k, l)
+	}
+	if err == nil || !strings.Contains(err.Error(), "rule deal") || !strings.Contains(err.Error(), "front of s1") {
+		t.Fatalf("the short read's tick: %v, want it failed naming rule deal and front of s1", err)
+	}
+	if len(rep.Short) != 1 || rep.Refused[CodeShortRead] != 1 || !slices.Contains(rep.Parked, "deal") {
+		t.Fatalf("the report: short %v, refused %v, parked %v", rep.Short, rep.Refused, rep.Parked)
+	}
+	w.tick(l, k) // the error step parks the key and opens the judgment
+	var named bool
+	for _, line := range w.log.Lines(testNames.Prefix, "0") {
+		s := string(line)
+		named = named || strings.Contains(s, TypeStepRefused) && strings.Contains(s, "front of s1") && strings.Contains(s, CodeShortRead)
+	}
+	if !named {
+		t.Fatal("no judgment names the short read")
 	}
 }
