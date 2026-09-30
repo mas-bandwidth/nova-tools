@@ -85,6 +85,19 @@ func intentDigest(intent string) string {
 	return hex.EncodeToString(sum[:])
 }
 
+func memReceiptForReply(step Step, reply Reply) memReceipt {
+	return memReceipt{
+		IntentDigest: intentDigest(*step.Intent),
+		Status:       reply.Status,
+		EpochBefore:  reply.EpochBefore,
+		EpochAfter:   reply.EpochAfter,
+		FirstSeq:     reply.FirstSeq,
+		LastSeq:      reply.LastSeq,
+		Changed:      reply.Changed,
+		Result:       reply.Result,
+	}
+}
+
 func (r memReceipt) replayReply() Reply {
 	return Reply{
 		Status:      r.Status,
@@ -131,16 +144,7 @@ func (m *Mem) saveReceipt(space *memSpace, step Step, reply Reply) error {
 	if step.Intent == nil {
 		return &Refusal{Status: "refused", Code: "REQUEST", Message: "operation has no intent; nothing was changed"}
 	}
-	r := memReceipt{
-		IntentDigest: intentDigest(*step.Intent),
-		Status:       reply.Status,
-		EpochBefore:  reply.EpochBefore,
-		EpochAfter:   reply.EpochAfter,
-		FirstSeq:     reply.FirstSeq,
-		LastSeq:      reply.LastSeq,
-		Changed:      reply.Changed,
-		Result:       reply.Result,
-	}
+	r := memReceiptForReply(step, reply)
 	encoded := encodeMemReceipt(r)
 	if len(encoded) > maxReceiptBytes {
 		return &Refusal{Status: "refused", Code: "LIMIT", Message: "receipt exceeds limit; nothing was changed"}

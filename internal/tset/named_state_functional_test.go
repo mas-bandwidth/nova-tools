@@ -55,6 +55,10 @@ func (h *namedStateHarness) apply(t *testing.T, step Step) Reply {
 	if modelErr != nil || luaErr != nil {
 		t.Fatalf("step refused unexpectedly: Mem=%v Lua=%v step=%+v", modelErr, luaErr, step)
 	}
+	if lua.MemPlan != nil {
+		t.Fatalf("Lua reply exposed twin-only MemPlan: %+v", lua.MemPlan)
+	}
+	model.MemPlan = nil // Compare the public wire outcome; MemPlan is twin-only.
 	model.Counters, lua.Counters = nil, nil
 	if !reflect.DeepEqual(model, lua) {
 		t.Fatalf("Mem/Lua replies differ: %s", compareJSON("reply", model, lua))

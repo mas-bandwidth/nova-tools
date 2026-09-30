@@ -396,23 +396,18 @@ func TestPreplanAppendedEntriesAndNotes(t *testing.T) {
 	})
 }
 
-func TestPreplanDerivedNoteRequiresOp(t *testing.T) {
+func TestPreplanDerivedNoteWithoutOpPlans(t *testing.T) {
 	t.Parallel()
-	fx := newComposedTSetFixture(t)
-	fx.Define(t, "work", "c")
-	fx.Define(t, "aux", "c")
-	fx.AddRow(t, "work", "r", 0)
-	fx.ActivateWithLua(t, preplanProbeLua)
-	seedPreplanMember(t, fx)
+	fx := newPreplanNoteIdentityFixture(t)
 	before := commitProbeImage(t, fx.Client)
-	reply := preplanProbeCall(t, fx, "unnamed_note")
-	if reply.Status != "refused" || reply.Code != "REQUEST" || reply.Phase != "plan" ||
-		!reply.First.Exists || reply.First.Fields["state"].Value != "old" ||
-		reply.BeforeNew.Exists || reply.LoadedDefs != 2 {
-		t.Fatalf("derived note without original op did not refuse after preplan: %+v", reply)
+	raw := fmt.Sprintf(`{"epoch":"0","space":%q,"entries":[]}`, fx.Space)
+	reply := preplanNoteIdentityCall(t, fx, raw, "valid")
+	if reply.Status != "planned" || reply.Code != "" || reply.OriginalCount != 0 ||
+		!reply.Implicit || !reply.Alias || reply.NoteCount != 1 || reply.InputNotes != 1 {
+		t.Fatalf("op-less step did not plan its real-state-derived note: %+v", reply)
 	}
 	if after := commitProbeImage(t, fx.Client); !reflect.DeepEqual(before, after) {
-		t.Error("unnamed derived note changed the store")
+		t.Error("plan-only derived note changed the store")
 	}
 }
 

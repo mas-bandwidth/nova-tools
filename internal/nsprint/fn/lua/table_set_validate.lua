@@ -642,7 +642,7 @@ local function note(n)
         or not strings(n.about, cap('about'), name) then return false end
     return true
 end
-local function validate_step(req)
+local function validate_step(req, allow_derived_notes)
     if S.is_object(req) and S.is_array(req.entries) and #req.entries > cap('entries') then return failure('LIMIT') end
     if S.is_object(req) and S.is_array(req.notes) and #req.notes > cap('notes') then return failure('LIMIT') end
     if S.is_object(req) then
@@ -651,13 +651,19 @@ local function validate_step(req)
             or (type(req.intent) == 'string' and #req.intent > cap('intent'))
             or (type(req.result) == 'string' and #req.result > cap('result')) then return failure('LIMIT') end
     end
-    if not only(req, {epoch=true,space=true,op=true,intent=true,result=true,entries=true,notes=true})
+    if not only(req, {epoch=true,space=true,op=true,intent=true,result=true,entries=true,notes=true,fence=true})
         or not S.uint(req.epoch) or not name(req.space)
         or (req.op == nil) ~= (req.intent == nil)
         or (req.op ~= nil and not name(req.op))
         or (req.intent ~= nil and (type(req.intent) ~= 'string' or #req.intent > cap('intent')))
         or (req.result ~= nil and (type(req.result) ~= 'string' or #req.result > cap('result')))
         or not dense(req.entries, cap('entries')) then return failure('REQUEST') end
+    -- A fence is an explicit original-request identity settlement. Empty
+    -- ordinary named steps remain ordinary steps when the flag is absent.
+    if req.fence ~= nil and (req.fence ~= true or req.op == nil
+        or #req.entries ~= 0 or (req.notes ~= nil and
+            (not S.is_array(req.notes) or #req.notes ~= 0))
+        or (req.result ~= nil and req.result ~= '')) then return failure('REQUEST') end
     local advances, candidates, guards, abouts, row_names, tables = 0, 0, 0, 0, {}, {}
     local rowset_tables, rowset_prefix, nonrowset_seen = {}, 0, false
     for i = 1, #req.entries do
@@ -699,8 +705,8 @@ local function validate_step(req)
     for _ in pairs(row_names) do rows_count = rows_count + 1 end
     if rows_count > (advances > 0 and cap('advance_rows') or cap('rows')) then return failure('LIMIT') end
     if req.notes ~= nil then
-        if not dense(req.notes, cap('notes')) then return failure('LIMIT') end
-        if #req.notes > 0 and req.op == nil then return failure('REQUEST') end
+        if not dense(req.notes, cap('notes')) then return failure('REQUEST') end
+        if #req.notes > 0 and req.op == nil and not allow_derived_notes then return failure('REQUEST') end
         for i = 1, #req.notes do
             if S.is_object(req.notes[i]) and over_array(req.notes[i].about, cap('about')) then return failure('LIMIT') end
             if not note(req.notes[i]) then return failure('REQUEST') end
@@ -720,9 +726,47 @@ local function validate_step(req)
     return req, nil
 end
 
-local function query(q, i)
+local BUILTIN_KINDS = {range=true,count=true,rcount=true,ids=true,rows=true,
+    done=true,last=true,lines=true,cardlines=true}
+-- The extension is trusted Lua code, but its registry still has to be a
+-- bounded, dense and collision-free list before any read context is opened.
+-- Sprint's eight composite kinds are included, and additional bounded
+-- Sprint-key kinds use this same seam.
+function S.extension_kinds(extension)
+    if extension == nil then return nil, nil end
+    if not only(extension, {kinds=true,validate=true,read=true})
+        or type(extension.validate) ~= 'function' or type(extension.read) ~= 'function'
+        or type(extension.kinds) ~= 'table' then return failure('CONFIG') end
+    local kinds, n, count = extension.kinds, #extension.kinds, 0
+    if n < 1 or n > cap('queries') then return failure('CONFIG') end
+    local registered = {}
+    for index, kind in pairs(kinds) do
+        count = count + 1
+        if type(index) ~= 'number' or index ~= math.floor(index)
+            or index < 1 or index > n or not symbolic(kind)
+            or BUILTIN_KINDS[kind]
+            or registered[kind] then return failure('CONFIG') end
+        registered[kind] = true
+    end
+    if count ~= n then return failure('CONFIG') end
+    return registered, nil
+end
+
+local function query(q, i, kinds, extension)
     local detail = {query_index=i-1}
     if not S.is_object(q) or type(q.kind) ~= 'string' then return failure('REQUEST', detail) end
+    if kinds and kinds[q.kind] then
+        local called, valid, refusal = pcall(extension.validate, q, i-1)
+        if not called then return failure('CONFIG', detail) end
+        if valid == true and refusal == nil then return true end
+        if valid == nil and type(refusal) == 'table'
+            and refusal.status == 'refused' and type(refusal.code) == 'string'
+            and type(refusal.detail) == 'table' then
+            if refusal.detail.query_index == nil then refusal.detail.query_index = i - 1 end
+            return nil, refusal
+        end
+        return failure('CONFIG', detail)
+    end
     if over_array(q.cells, 20000) or over_array(q.ids, 10000)
         or over_array(q.fields, cap('field_names')) or over_array(q.ops, 2000)
         or over_array(q.abouts, 2000) then return failure('LIMIT', detail) end
@@ -810,7 +854,7 @@ local function query(q, i)
     return true
 end
 S.validate_read_query = query
-local function validate_read(req)
+local function validate_read(req, extension, kinds)
     if S.is_object(req) and S.is_array(req.queries) and #req.queries > cap('queries') then return failure('LIMIT') end
     if S.is_object(req) and type(req.space) == 'string' and #req.space > cap('name') then return failure('LIMIT') end
     if not only(req,{epoch=true,space=true,mode=true,queries=true})
@@ -823,27 +867,50 @@ local function validate_read(req)
             (first.kind ~= 'lines' and first.kind ~= 'cardlines') then return failure('REQUEST') end
     end
     for i = 1, #req.queries do
-        local ok, err = query(req.queries[i],i)
+        local ok, err = query(req.queries[i],i,kinds,extension)
         if not ok then return nil, err end
-        if req.queries[i].cursor ~= nil and req.mode ~= 'page' then return failure('REQUEST',{query_index=i-1}) end
+        if req.queries[i].kind == 'cardlines' and req.queries[i].cursor ~= nil
+            and req.mode ~= 'page' then return failure('REQUEST',{query_index=i-1}) end
     end
     return req, nil
 end
-function S.validate_request(req, operation)
+local function validate_request(req, operation, extension, allow_derived_notes)
+    local kinds
+    if operation == 'read' then
+        local err
+        kinds, err = S.extension_kinds(extension)
+        if err then return nil, err end
+    elseif extension ~= nil then return failure('CONFIG') end
     if not json_tree(req,1) then return failure('REQUEST') end
     if long_reserved_application_field(req, operation) then return failure('FIELDNAME') end
     if over_request_identifiers(req, operation) then return failure('LIMIT') end
-    if operation == 'step' then return validate_step(req) end
-    if operation == 'read' then return validate_read(req) end
+    if operation == 'step' then return validate_step(req, allow_derived_notes) end
+    if operation == 'read' then return validate_read(req, extension, kinds) end
     return failure('REQUEST')
 end
-function S.validate(version, raw, operation)
+function S.validate_request(req, operation, extension)
+    return validate_request(req, operation, extension, false)
+end
+-- Only the already-opened effective write phase may call this helper. The
+-- original note count is captured before the trusted preplan can append to
+-- the aliased notes array. Raw S.validate never reaches this exemption.
+function S.validate_effective_step(req, original_note_count)
+    if type(original_note_count) ~= 'number' or original_note_count < 0
+        or original_note_count ~= math.floor(original_note_count)
+        or original_note_count > cap('notes')
+        or (S.is_object(req) and S.is_array(req.notes)
+            and original_note_count > #req.notes) then return failure('REQUEST') end
+    return validate_request(req, 'step', nil, original_note_count == 0)
+end
+function S.validate(version, raw, operation, extension)
     if version ~= 'tset/1' then return failure('VERSION') end
     if type(raw) ~= 'string' then return failure('REQUEST') end
     if #raw > (operation == 'read' and cap('read_request_bytes') or cap('request_bytes')) then return failure('LIMIT') end
     if not utf8_valid(raw) or not exact_request_numbers(raw) then return failure('REQUEST') end
     local ok, decoded = pcall(codec().decode, raw)
     if not ok then return failure('REQUEST') end
+    -- Never forward an effective-step option from a raw caller request.
+    if operation == 'read' then return S.validate_request(decoded, operation, extension) end
     return S.validate_request(decoded, operation)
 end
 end

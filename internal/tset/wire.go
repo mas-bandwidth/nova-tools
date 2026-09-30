@@ -241,6 +241,12 @@ func validateStep(s Step, requireNotesOp bool) error {
 	if !utf8.ValidString(s.Result) {
 		return bad("REQUEST")
 	}
+	if s.Fence {
+		if s.Op == nil || len(s.Entries) != 0 || len(s.Notes) != 0 || s.Result != "" {
+			return bad("REQUEST")
+		}
+		return nil
+	}
 	if len(s.Entries) > MaxEntries || len(s.Notes) > MaxNotes {
 		return bad("LIMIT")
 	}
@@ -730,6 +736,9 @@ func canonicalMeta(raw json.RawMessage) (json.RawMessage, error) {
 
 func (s Step) MarshalJSON() ([]byte, error) {
 	m := map[string]any{"epoch": s.Epoch, "space": s.Space, "entries": s.Entries}
+	if s.Fence {
+		m["fence"] = true
+	}
 	if s.Op != nil {
 		m["op"] = *s.Op
 	}
@@ -746,10 +755,11 @@ func (s Step) MarshalJSON() ([]byte, error) {
 }
 
 func (s *Step) UnmarshalJSON(data []byte) error {
-	m, err := strictObject(data, "epoch", "space", "op", "intent", "result", "entries", "notes")
+	m, err := strictObject(data, "epoch", "space", "op", "intent", "result", "entries", "notes", "fence")
 	if err != nil {
 		return err
 	}
+	*s = Step{}
 	if err := unmarshalRequired(m, "epoch", &s.Epoch); err != nil {
 		return err
 	}
@@ -782,6 +792,12 @@ func (s *Step) UnmarshalJSON(data []byte) error {
 		if err := json.Unmarshal(raw, &s.Notes); err != nil || s.Notes == nil {
 			return errors.New("notes must be an array")
 		}
+	}
+	if raw, ok := m["fence"]; ok {
+		if !bytes.Equal(bytes.TrimSpace(raw), []byte("true")) {
+			return errors.New("fence must be literal true")
+		}
+		s.Fence = true
 	}
 	return nil
 }
@@ -1616,6 +1632,57 @@ func (p *CardCursorPosition) UnmarshalJSON(data []byte) error {
 
 // DecodeReply and DecodeReadReply retain deliberate refusals as machine-coded
 // errors. They never return a partial success envelope beside a refusal.
+func validateWriteReplyShape(data []byte, replay bool) error {
+	compact := []string{"status", "epoch_before", "epoch_after", "changed", "first_seq", "last_seq", "result", "replay"}
+	full := []string{"status", "epoch_before", "epoch_after", "changed", "guarded", "changed_per_entry", "first_seq", "last_seq", "lines", "result", "replay", "counters"}
+	fields := full
+	if replay {
+		fields = compact
+	}
+	m, err := strictObject(data, fields...)
+	if err != nil || len(m) != len(fields) {
+		return errors.New("tset: malformed write response fields")
+	}
+	for _, name := range fields {
+		if _, ok := m[name]; !ok {
+			return fmt.Errorf("tset: missing write response field %s", name)
+		}
+	}
+	for _, name := range []string{"status", "epoch_before", "epoch_after", "first_seq", "last_seq", "result"} {
+		var value string
+		if bytes.Equal(bytes.TrimSpace(m[name]), []byte("null")) || json.Unmarshal(m[name], &value) != nil {
+			return fmt.Errorf("tset: invalid write response field %s", name)
+		}
+	}
+	for _, name := range []string{"changed", "guarded", "lines"} {
+		if _, ok := m[name]; !ok {
+			continue
+		}
+		var value int
+		if bytes.Equal(bytes.TrimSpace(m[name]), []byte("null")) || json.Unmarshal(m[name], &value) != nil {
+			return fmt.Errorf("tset: invalid write response field %s", name)
+		}
+	}
+	if replay {
+		if !bytes.Equal(bytes.TrimSpace(m["replay"]), []byte("true")) {
+			return errors.New("tset: invalid compact replay marker")
+		}
+		return nil
+	}
+	if !bytes.Equal(bytes.TrimSpace(m["replay"]), []byte("false")) {
+		return errors.New("tset: invalid fresh replay marker")
+	}
+	var changedPer []int
+	if raw := bytes.TrimSpace(m["changed_per_entry"]); len(raw) == 0 || raw[0] != '[' || json.Unmarshal(raw, &changedPer) != nil {
+		return errors.New("tset: invalid changed_per_entry")
+	}
+	var counters map[string]json.RawMessage
+	if raw := bytes.TrimSpace(m["counters"]); len(raw) == 0 || raw[0] != '{' || json.Unmarshal(raw, &counters) != nil {
+		return errors.New("tset: invalid counters")
+	}
+	return nil
+}
+
 func DecodeReply(data []byte) (Reply, error) {
 	var head struct {
 		Status string `json:"status"`
@@ -1630,15 +1697,21 @@ func DecodeReply(data []byte) (Reply, error) {
 		}
 		return Reply{}, &r
 	}
-	if head.Status != "ok" {
+	if head.Status != "ok" && head.Status != "fenced" {
 		return Reply{}, errors.New("tset: unknown write response status")
 	}
 	var r Reply
 	if err := json.Unmarshal(data, &r); err != nil {
 		return Reply{}, err
 	}
+	if err := validateWriteReplyShape(data, r.Replay); err != nil {
+		return Reply{}, err
+	}
 	if !ValidDecimal(r.EpochBefore) || !ValidDecimal(r.EpochAfter) || !ValidDecimal(r.FirstSeq) || !ValidDecimal(r.LastSeq) || r.Changed < 0 || !r.Replay && (r.Guarded < 0 || r.Lines < 0) {
 		return Reply{}, errors.New("tset: malformed write response integers")
+	}
+	if r.Status == "fenced" && (r.EpochBefore != r.EpochAfter || r.Changed != 0 || r.FirstSeq != "0" || r.LastSeq != "0" || r.Result != "" || !r.Replay && (r.Guarded != 0 || len(r.ChangedPerEntry) != 0 || r.Lines != 0)) {
+		return Reply{}, errors.New("tset: malformed fenced response")
 	}
 	return r, nil
 }

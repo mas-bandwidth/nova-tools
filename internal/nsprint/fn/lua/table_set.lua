@@ -48,6 +48,7 @@ do
   end
   function S.context(request, operation)
     local space = request.space
+    local original_note_count = request.notes and #request.notes or 0
     local notes_implicit = operation == 'step' and request.notes == nil
     if notes_implicit then request.notes = S.array() end
     local original_rowsets = {}
@@ -62,7 +63,9 @@ do
     local original_advance = advance and advance.kind == 'advance' or false
     local ctx = {operation=operation,profile=S.profile,version='tset/1',request=request,
       space=space,op=request.op,intent=request.intent,result=request.result or '',
+      original_fence=request.fence==true,
       notes=request.notes,notes_array=request.notes,notes_implicit=notes_implicit,
+      original_note_count=original_note_count,
       request_epoch=request.epoch,write_epoch=request.epoch,limits=S.limits,
       original_rowsets=original_rowsets,original_advance=original_advance,
       original_advance_index=advance_index,
@@ -208,7 +211,11 @@ do
     if type(ids)~='table' or #ids>10000 or type(fields or {})~='table' or #(fields or {})>384 then return nil,S.refuse('LIMIT') end
     for _,id in ipairs(ids) do if not S.name(id) then return nil,S.refuse('REQUEST') end end
     for _,field in ipairs(fields or {}) do if not S.name(field) then return nil,S.refuse('REQUEST') end end
-    if not ctx.defs[t] then local ok,err=S.load_defs(ctx,t);if err then return nil,err end end
+    if ctx.operation=='read' then
+      local ok,err=S.ensure_read_table(ctx,t,ctx.query_index);if err then return nil,err end
+    elseif not ctx.defs[t] then
+      local ok,err=S.load_defs(ctx,t);if err then return nil,err end
+    end
     local def=ctx.defs[t]; if not def then return nil,S.refuse('NOTABLE',{table=t}) end
     local cache=ctx.before[t]; if not cache then cache={};ctx.before[t]=cache end
     local answer={}
@@ -310,13 +317,17 @@ do
       elseif e.kind=='create' or e.kind=='move' or e.kind=='remove' then b.member_candidates=b.member_candidates+#e.ids end
     end
   end
+  local function fence_unchanged(ctx)
+    return ctx.request.fence==(ctx.original_fence and true or nil)
+  end
   function S.plan(ctx)
+    if not fence_unchanged(ctx) or ctx.original_fence then return nil,S.refuse('REQUEST') end
     -- Preplanners may append notes, but replacing either shared array loses
     -- the aligned order that the log planner uses for note_seqs.
     if ctx.notes~=ctx.notes_array or ctx.request.notes~=ctx.notes_array then
       return nil,S.refuse('REQUEST')
     end
-    local _,err=S.validate_request(ctx.request,'step');if err then return nil,err end
+    local _,err=S.validate_effective_step(ctx.request,ctx.original_note_count);if err then return nil,err end
     if ctx.request.space~=ctx.space or ctx.request.epoch~=ctx.request_epoch or ctx.request.op~=ctx.op or
         ctx.request.intent~=ctx.intent or (ctx.request.result or '')~=ctx.result then return nil,S.refuse('REQUEST') end
     local size_request=ctx.request
@@ -610,6 +621,7 @@ do
     return true,nil
   end
   function S.prepare(ctx,table_plan,log_plan,other_plans)
+    if not fence_unchanged(ctx) then return nil,S.refuse('REQUEST') end
     local commands={}
     local function append(plan)
       if type(plan)~='table' or type(plan.commands)~='table' then return nil,S.refuse('REQUEST') end
@@ -624,7 +636,12 @@ do
     ok,err=append(log_plan);if err then return nil,err end
     for _,plan in ipairs(other_plans or {}) do ok,err=append(plan);if err then return nil,err end end
     if not S.uint(log_plan.first_seq) or not S.uint(log_plan.last_seq) then return nil,S.refuse('REQUEST') end
-    local reply={status='ok',epoch_before=ctx.active_epoch,epoch_after=ctx.write_epoch,
+    local fenced=ctx.original_fence
+    if fenced and (#commands~=0 or ctx.write_epoch~=ctx.request_epoch or
+        table_plan.changed~=0 or table_plan.guarded~=0 or #table_plan.changed_per_entry~=0 or
+        log_plan.first_seq~='0' or log_plan.last_seq~='0' or log_plan.line_count~=0 or
+        ctx.result~='') then return nil,S.refuse('REQUEST') end
+    local reply={status=fenced and 'fenced' or 'ok',epoch_before=ctx.active_epoch,epoch_after=ctx.write_epoch,
       changed=table_plan.changed,guarded=table_plan.guarded,changed_per_entry=table_plan.changed_per_entry,
       first_seq=log_plan.first_seq,last_seq=log_plan.last_seq,lines=log_plan.line_count,
       result=ctx.result,replay=false,counters=ctx.budget}
@@ -671,6 +688,20 @@ do
     if #encoded>8388608 then return nil,limit(ctx,'reply_bytes',#encoded,8388608) end
     return {commands=frozen,reply=encoded},nil
   end
+  -- Enclosing callers must take this path immediately after open/replay, before
+  -- invoking any preplanner. The prepared plan has only the done receipt write.
+  function S.fence_prepare(ctx)
+    if ctx.operation~='step' or not ctx.original_fence or ctx.replay or
+        not fence_unchanged(ctx) or ctx.request.space~=ctx.space or
+        ctx.request.epoch~=ctx.request_epoch or ctx.request.op~=ctx.op or
+        ctx.request.intent~=ctx.intent or (ctx.request.result or '')~=ctx.result or
+        ctx.result~='' or type(ctx.request.entries)~='table' or
+        #ctx.request.entries~=0 or type(ctx.request.notes)~='table' or
+        #ctx.request.notes~=0 then return nil,S.refuse('REQUEST') end
+    local table_plan={commands={},changed=0,guarded=0,changed_per_entry=S.array()}
+    local log_plan={commands={},first_seq='0',last_seq='0',line_count=0,about_appends=0}
+    return S.prepare(ctx,table_plan,log_plan,{})
+  end
   function S.commit(plan)
     for i=1,#plan.commands do redis.call(unpack(plan.commands[i])) end
     return plan.reply
@@ -679,6 +710,10 @@ do
     if #keys~=0 or #args~=2 then return S.json.encode(S.refuse('ARGS')) end
     local ctx,err=S.open(args[1],args[2]);if err then return S.json.encode(err) end
     if ctx.replay then return S.json.encode(ctx.replay) end
+    if ctx.original_fence then
+      local commit;commit,err=S.fence_prepare(ctx);if err then return S.json.encode(err) end
+      return S.commit(commit)
+    end
     local table_plan;table_plan,err=S.plan(ctx);if err then return S.json.encode(err) end
     local log_plan={commands={},first_seq='0',last_seq='0',line_count=0,about_appends=0}
     if ctx.profile~='l1_only' then

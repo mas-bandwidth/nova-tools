@@ -31,8 +31,7 @@ if NS.tset_profile then
     return S.charge(ctx, unit, count)
   end
 
-  local function output(ctx, value, index)
-    local bytes = #S.json.encode(value)
+  local function encoded_bytes(ctx, bytes, index)
     local total = (ctx.read_encoded or 512) + bytes + 1
     if total > MAX_REPLY then
       return nil, S.refuse('BUDGET', {query_index = index,
@@ -41,6 +40,174 @@ if NS.tset_profile then
     end
     ctx.read_encoded = total
     return true, nil
+  end
+
+  local function output(ctx, value, index)
+    return encoded_bytes(ctx, #S.json.encode(value), index)
+  end
+
+  local function indexed(err, index)
+    if err and type(err) == 'table' then
+      err.detail = err.detail or {}
+      if err.detail.query_index == nil then err.detail.query_index = index end
+    end
+    return err
+  end
+
+  -- Generic probes return only scalars or a fixed, caller-named field vector.
+  -- Collection reads need a bounded helper that charges returned occurrences.
+  local probe_commands = {
+    HGET={'hash',3,3}, HMGET={'hash',3,2002}, HLEN={'hash',2,2},
+    HSTRLEN={'hash',3,3}, HEXISTS={'hash',3,3},
+    ZSCORE={'zset',3,3}, ZMSCORE={'zset',3,2002},
+    ZCARD={'zset',2,2}, ZCOUNT={'zset',4,4}, XLEN={'stream',2,2},
+    LLEN={'list',2,2}, LINDEX={'list',3,3},
+    GET={'string',2,2}, STRLEN={'string',2,2},
+    TYPE={'any',2,2}, EXISTS={'any',2,2}}
+
+  function S.read_probe(ctx, argv, key, kind, reserve)
+    local index = ctx and ctx.query_index
+    if not ctx or ctx.operation ~= 'read' or type(index) ~= 'number' then
+      return nil, fail('CONFIG', index)
+    end
+    if type(argv) ~= 'table' then return nil, fail('REQUEST', index) end
+    local count, command = #argv, argv[1]
+    local spec = type(command) == 'string' and probe_commands[command]
+    if not spec or count < spec[2] or count > spec[3] or
+        kind ~= spec[1] or type(key) ~= 'string' or #key == 0 or
+        string.sub(key, 1, #ctx.space) ~= ctx.space or
+        type(reserve) ~= 'number' or reserve ~= reserve or reserve == math.huge or
+        reserve < 0 or reserve ~= math.floor(reserve) then
+      return nil, fail('REQUEST', index)
+    end
+    for k, value in pairs(argv) do
+      if type(k) ~= 'number' or k ~= math.floor(k) or k < 1 or k > count or
+          type(value) ~= 'string' then return nil, fail('REQUEST', index) end
+    end
+    for i = 1, count do
+      if type(argv[i]) ~= 'string' then return nil, fail('REQUEST', index) end
+    end
+    if argv[2] ~= key then
+      return nil, fail('REQUEST', index)
+    end
+    local value, err = S.readcmd(ctx, {argv = argv,
+      access = {{key = key, kind = kind, mode = 'read'}}}, reserve, 'cell')
+    if err then return nil, indexed(err, index) end
+    return value, nil
+  end
+
+  function S.read_range_head(ctx, key, bounds, limit)
+    local index = ctx and ctx.query_index
+    if not ctx or ctx.operation ~= 'read' or type(index) ~= 'number' then
+      return nil, fail('CONFIG', index)
+    end
+    if type(bounds) ~= 'table' or type(key) ~= 'string' or #key == 0 or
+        string.sub(key, 1, #ctx.space) ~= ctx.space or
+        type(limit) ~= 'number' or limit ~= limit or limit == math.huge or
+        limit ~= math.floor(limit) or limit < 1 then
+      return nil, fail('REQUEST', index)
+    end
+    if limit > 2000 then return nil, fail('LIMIT', index) end
+    for name in pairs(bounds) do
+      if name ~= 'min' and name ~= 'max' and name ~= 'desc' then
+        return nil, fail('REQUEST', index)
+      end
+    end
+    if not S.score_bound(bounds.min) or not S.score_bound(bounds.max) or
+        (bounds.desc ~= nil and type(bounds.desc) ~= 'boolean') then
+      return nil, fail('REQUEST', index)
+    end
+    local argv = {'ZRANGE', key, bounds.desc and bounds.max or bounds.min,
+      bounds.desc and bounds.min or bounds.max, 'BYSCORE'}
+    if bounds.desc then argv[#argv + 1] = 'REV' end
+    argv[#argv + 1] = 'LIMIT'
+    argv[#argv + 1] = '0'
+    argv[#argv + 1] = tostring(limit + 1)
+    argv[#argv + 1] = 'WITHSCORES'
+    local raw_pairs, err = checked(ctx, argv, key, 'zset',
+      (limit + 1) * 320, 'cell')
+    if err then return nil, indexed(err, index) end
+    if type(raw_pairs) ~= 'table' or #raw_pairs % 2 ~= 0 or
+        #raw_pairs > 2 * (limit + 1) then
+      return nil, fail('DRIFT', index)
+    end
+    local size = #raw_pairs
+    for position, value in pairs(raw_pairs) do
+      if type(position) ~= 'number' or position ~= math.floor(position) or
+          position < 1 or position > size or type(value) ~= 'string' then
+        return nil, fail('DRIFT', index)
+      end
+    end
+    for i = 1, size do
+      if type(raw_pairs[i]) ~= 'string' then return nil, fail('DRIFT', index) end
+    end
+    local total = size / 2
+    for i = 1, total do
+      if not S.name(raw_pairs[2 * i - 1]) or
+          type(raw_pairs[2 * i]) ~= 'string' then
+        return nil, fail('DRIFT', index)
+      end
+    end
+    local kept = math.min(total, limit)
+    local ok
+    ok, err = charge(ctx, 'range_id', kept)
+    if err then return nil, indexed(err, index) end
+    local ids, scores = empty(), empty()
+    for i = 1, kept do
+      ids[i], scores[i] = raw_pairs[2 * i - 1], raw_pairs[2 * i]
+    end
+    return {ids = ids, scores = scores, has_more = total > limit}, nil
+  end
+
+  -- A callback calls this before appending each growing nested item. Its
+  -- estimated bytes are replaced by the exact answer size at query return.
+  function S.emit_read_item(ctx, item, index)
+    if not ctx or ctx.operation ~= 'read' or not ctx.read_emit or
+        index ~= ctx.query_index or ctx.read_emit.index ~= index then
+      return nil, fail('CONFIG', index)
+    end
+    if type(item) ~= 'table' then return nil, fail('CONFIG', index) end
+    local ok, encoded = pcall(S.json.encode, item)
+    if not ok or type(encoded) ~= 'string' then return nil, fail('CONFIG', index) end
+    return encoded_bytes(ctx, #encoded, index)
+  end
+
+  -- Composite readers discover table names after open_state has examined the
+  -- top-level queries. A retained read must never fall back to today's hash.
+  function S.ensure_read_table(ctx, t, index)
+    if not ctx or ctx.operation ~= 'read' or type(t) ~= 'string' or #t > 256 or
+        not string.match(t, '^[A-Za-z0-9_][A-Za-z0-9_.-]*$') then
+      return nil, fail('REQUEST', index, t)
+    end
+    local def = ctx.defs[t]
+    if def then return def, nil end
+    if ctx.request_epoch == ctx.active_epoch then
+      local ok, err = S.load_defs(ctx, t)
+      if err then return nil, err end
+      def = ctx.defs[t]
+      if not def then return nil, fail('NOTABLE', index, t) end
+      return def, nil
+    end
+    local total = 0
+    for _ in pairs(ctx.defs) do total = total + 1 end
+    if total >= 4 then
+      return nil, S.refuse('LIMIT', {query_index = index, table = t,
+        ids = empty(), cells = empty(), rows = empty(),
+        budget = 'tables', actual = total + 1, limit = 4})
+    end
+    local key = ctx.definition_key(t, ctx.request_epoch)
+    local raw, err = checked(ctx, {'HGETALL', key}, key, 'hash', 49152, 'metadata')
+    if err then return nil, err end
+    if #raw == 0 then
+      return nil, S.refuse('EPOCHGONE', {query_index = index, table = t,
+        active_epoch = ctx.active_epoch, ids = empty(), cells = empty(), rows = empty()})
+    end
+    local values = {}
+    for i = 1, #raw, 2 do values[raw[i]] = raw[i + 1] end
+    def, err = S.definition(ctx, t, values)
+    if err then return nil, err end
+    ctx.defs[t] = def
+    return def, nil
   end
 
   local function table_def(ctx, t, index)
@@ -128,6 +295,45 @@ if NS.tset_profile then
       revision = b.revision or cjson.null, place = b.place or cjson.null,
       score = b.score or cjson.null, fields = values}
     return out, nil
+  end
+
+  -- Sprint composite projections require an explicit field array. This keeps
+  -- each occurrence charged while S.before fetches each payload only once.
+  function S.read_record(ctx, t, id, fields, index)
+    if not ctx or ctx.operation ~= 'read' or not S.name(id) then
+      return nil, fail('REQUEST', index, t, id)
+    end
+    if type(fields) ~= 'table' or #fields > 128 then
+      return nil, fail(type(fields) == 'table' and 'LIMIT' or 'REQUEST', index, t, id)
+    end
+    local length = #fields
+    local selected, seen, repeated = empty(), {}, 0
+    for k, field in pairs(fields) do
+      if type(k) ~= 'number' or k ~= math.floor(k) or k < 1 or k > length or
+          not S.name(field) then
+        return nil, fail('REQUEST', index, t, id)
+      end
+      if field == 'epoch' or field == 'revision' or string.sub(field, 1, 6) == 'place:' then
+        return nil, fail('FIELDNAME', index, t, id)
+      end
+    end
+    for i = 1, length do
+      if fields[i] == nil then return nil, fail('REQUEST', index, t, id) end
+      if seen[fields[i]] then
+        repeated = repeated + 1
+      else
+        seen[fields[i]] = true
+        selected[#selected + 1] = fields[i]
+      end
+    end
+    local _, err = S.ensure_read_table(ctx, t, index)
+    if err then return nil, err end
+    -- A duplicate projected name is still an occurrence, but one context
+    -- fetch and one object field suffice for its value.
+    local ok
+    ok, err = charge(ctx, 'field', repeated)
+    if err then return nil, err end
+    return record(ctx, t, id, selected, index)
   end
 
   local function range(ctx, q, index)
@@ -264,7 +470,7 @@ if NS.tset_profile then
     return {kind = 'rows', rows = out}, nil
   end
 
-  local function answer(ctx, q, index, log_reader)
+  local function answer(ctx, q, index, log_reader, extension, extension_kinds)
     if q.kind == 'range' then return range(ctx, q, index) end
     if q.kind == 'count' or q.kind == 'rcount' then return counts(ctx, q, index) end
     if q.kind == 'ids' then return ids(ctx, q, index) end
@@ -279,7 +485,8 @@ if NS.tset_profile then
       end
       return {kind = 'done', slots = slots}, nil
     end
-    if log_reader then
+    if q.kind == 'last' or q.kind == 'lines' or q.kind == 'cardlines' then
+      if not log_reader then return nil, fail('REQUEST', index) end
       local result, err = log_reader(ctx, q)
       if err then return nil, err end
       local ok
@@ -287,12 +494,39 @@ if NS.tset_profile then
       if err then return nil, err end
       return result, nil
     end
+    if extension_kinds and extension_kinds[q.kind] then
+      local preceding = ctx.read_encoded or 512
+      ctx.read_emit = {index = index, preceding = preceding}
+      local result, err = extension.read(ctx, q, index)
+      ctx.read_emit = nil
+      if err then
+        if type(err) ~= 'table' or err.status ~= 'refused' or
+            type(err.code) ~= 'string' or type(err.detail) ~= 'table' then
+          return nil, fail('CONFIG', index)
+        end
+        return nil, err
+      end
+      if type(result) ~= 'table' then return nil, fail('CONFIG', index) end
+      local ok, encoded = pcall(S.json.encode, result)
+      if not ok or type(encoded) ~= 'string' then return nil, fail('CONFIG', index) end
+      -- Emitted nested items were charged before append. Replace only this
+      -- query's estimate by its exact complete answer, avoiding double charge.
+      ctx.read_encoded = preceding
+      ok, err = encoded_bytes(ctx, #encoded, index)
+      if err then return nil, err end
+      return result, nil
+    end
     return nil, fail('REQUEST', index)
   end
 
-  function S.read(version, raw_plan, log_reader)
-    local request, err = S.validate(version, raw_plan, 'read')
+  function S.read(version, raw_plan, log_reader, extension)
+    local request, err = S.validate(version, raw_plan, 'read', extension)
     if err then return S.json.encode(err) end
+    local extension_kinds
+    if extension then
+      extension_kinds, err = S.extension_kinds(extension)
+      if err then return S.json.encode(err) end
+    end
     local ctx
     ctx, err = S.context(request, 'read')
     if err then return S.json.encode(err) end
@@ -306,7 +540,8 @@ if NS.tset_profile then
     local answers = empty()
     for n, q in ipairs(request.queries) do
       local result
-      result, err = answer(ctx, q, n - 1, log_reader)
+      ctx.query_index = n - 1
+      result, err = answer(ctx, q, n - 1, log_reader, extension, extension_kinds)
       if err then
         err.detail = err.detail or {}
         err.detail.query_index = err.detail.query_index or n - 1
@@ -326,8 +561,9 @@ if NS.tset_profile then
     end
     local encoded = S.json.encode(reply)
     if #encoded > MAX_REPLY then
-      return S.json.encode(S.refuse('BUDGET', {ids = empty(), cells = empty(),
-        rows = empty(), budget = 'encoded_reply', limit = MAX_REPLY,
+      return S.json.encode(S.refuse('BUDGET', {query_index = ctx.query_index,
+        ids = empty(), cells = empty(), rows = empty(),
+        budget = 'encoded_reply', limit = MAX_REPLY,
         actual = #encoded}))
     end
     return encoded

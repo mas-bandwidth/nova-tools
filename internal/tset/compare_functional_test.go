@@ -210,6 +210,10 @@ func (h *compareHarness) apply(index int, action compareAction) *compareFailure 
 			return &compareFailure{index, "expected-code", fmt.Sprintf("action=%s want=%s mem=%s lua=%s", action.Label, action.WantCode, memRef.Code, luaRef.Code)}
 		}
 	} else {
+		if luaReply.MemPlan != nil {
+			return &compareFailure{index, "reply", fmt.Sprintf("action=%s Lua reply exposed twin-only MemPlan", action.Label)}
+		}
+		memReply.MemPlan = nil                          // twin-only observation is deliberately absent from the wire reply.
 		memReply.Counters, luaReply.Counters = nil, nil // implementation work counts differ; outcomes must not.
 		if !reflect.DeepEqual(memReply, luaReply) {
 			return &compareFailure{index, "reply", compareJSON(action.Label, memReply, luaReply)}

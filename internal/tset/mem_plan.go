@@ -341,6 +341,24 @@ func (m *Mem) planStep(ctx context.Context, pre, next *memSpace, step Step) (Rep
 	}
 
 	changedPer := make([]int, len(step.Entries))
+	plan := &MemPlan{Entries: make([]MemPlanEntry, len(step.Entries)), Before: make(map[string]map[string]MemberRecord)}
+	for i, entry := range step.Entries {
+		normalized := cloneMemPlanInput(entry)
+		if entry.Kind == "create" || entry.Kind == "move" || entry.Kind == "remove" || entry.Kind == "guard" {
+			normalized.IDs = nil
+			normalized.Scores = nil
+			normalized.Revs = nil
+			normalized.About = nil
+			normalized.Set = nil
+			normalized.Each = nil
+			normalized.Unset = nil
+		}
+		if entry.Kind == "rows" {
+			normalized.Add = nil
+			normalized.Del = nil
+		}
+		plan.Entries[i] = MemPlanEntry{Index: i, Entry: normalized}
+	}
 	seenID := make(map[string]bool)
 	candidates, guarded, changed := 0, 0, 0
 	for i, entry := range step.Entries {
@@ -392,13 +410,38 @@ func (m *Mem) planStep(ctx context.Context, pre, next *memSpace, step Step) (Rep
 			if err := budget.observeMember(preEpoch.tables[entry.Table].records[id], entry, j); err != nil {
 				return Reply{}, err
 			}
+			var before *memRecord
+			if table := preEpoch.tables[entry.Table]; table != nil {
+				before = table.records[id]
+			}
+			fields := memPlanProjection(entry, j)
+			prior := memProjectPlanRecord(id, before, fields)
 			didChange, err := memPlanMember(pre, next, preEpoch, workEpoch, rowOps, entry, i, j)
 			if err != nil {
 				return Reply{}, err
 			}
+			if plan.Before[entry.Table] == nil {
+				plan.Before[entry.Table] = make(map[string]MemberRecord)
+			}
+			plan.Before[entry.Table][id] = cloneMemPlanRecord(prior)
 			if didChange {
 				changed++
 				changedPer[i]++
+				planned := &plan.Entries[i]
+				after := memProjectPlanRecord(id, workEpoch.tables[entry.Table].records[id], fields)
+				planned.Entry.IDs = append(planned.Entry.IDs, id)
+				if len(entry.Scores) != 0 {
+					planned.Entry.Scores = append(planned.Entry.Scores, entry.Scores[j])
+				}
+				if len(entry.Revs) != 0 {
+					planned.Entry.Revs = append(planned.Entry.Revs, entry.Revs[j])
+				}
+				if len(entry.About) != 0 {
+					planned.Entry.About = append(planned.Entry.About, entry.About[j])
+				}
+				planned.Before = append(planned.Before, prior)
+				planned.After = append(planned.After, after)
+				planned.FieldChanges = append(planned.FieldChanges, memPlanFieldChange(prior, after, fields))
 			}
 		}
 	}
@@ -424,29 +467,195 @@ func (m *Mem) planStep(ctx context.Context, pre, next *memSpace, step Step) (Rep
 		delete(t.rows, key.row)
 		delete(t.cells, key.row)
 	}
+	for _, key := range rowOrder {
+		op := rowOps[key.table][key.row]
+		beforeRank := preEpoch.tables[key.table].rows[key.row]
+		afterRank := workEpoch.tables[key.table].rows[key.row]
+		planned := &plan.Entries[op.index]
+		if op.add && beforeRank == "" && afterRank != "" {
+			planned.Entry.Add = append(planned.Entry.Add, key.row)
+			planned.Added = append(planned.Added, RowRank{Row: key.row, Rank: afterRank})
+		}
+		if op.del && beforeRank != "" && afterRank == "" {
+			planned.Entry.Del = append(planned.Entry.Del, key.row)
+			planned.Deleted = append(planned.Deleted, key.row)
+		}
+	}
 	reply := Reply{Status: "ok", EpochBefore: step.Epoch, EpochAfter: writeEpoch,
 		Changed: changed, Guarded: guarded, ChangedPerEntry: changedPer,
 		FirstSeq: "0", LastSeq: "0", Lines: 0, Result: step.Result, Replay: false}
 	budget.planWrites(pre, next, step, writeEpoch, rowOrder)
-	if step.Op != nil {
-		r := memReceipt{IntentDigest: intentDigest(*step.Intent), Status: reply.Status,
-			EpochBefore: reply.EpochBefore, EpochAfter: reply.EpochAfter,
-			FirstSeq: reply.FirstSeq, LastSeq: reply.LastSeq,
-			Changed: reply.Changed, Result: reply.Result}
-		encoded := encodeMemReceipt(r)
-		if len(encoded) > maxReceiptBytes {
-			return Reply{}, memRefusal("LIMIT", RefusalDetail{Budget: "receipt_bytes", Limit: memInt64(maxReceiptBytes), Actual: memInt64(int64(len(encoded)))})
-		}
-		budget.charge("HSET", step.Space+"sprint:done@"+string(step.Epoch), *step.Op, string(encoded))
+	if err := budget.planReceipt(step, reply); err != nil {
+		return Reply{}, err
 	}
-	if budget.plannedBytes > 8<<20 {
-		return Reply{}, memRefusal("LIMIT", RefusalDetail{Budget: "planned_argv_bytes", Limit: memInt64(8 << 20), Actual: memInt64(int64(budget.plannedBytes))})
-	}
-	if budget.plannedCommands > 65536 {
-		return Reply{}, memRefusal("LIMIT", RefusalDetail{Budget: "planned_commands", Limit: memInt64(65536), Actual: memInt64(int64(budget.plannedCommands))})
+	if err := budget.checkPlannedLimits(); err != nil {
+		return Reply{}, err
 	}
 	// L1-only profile has no L2 semantic log. Counters are intentionally limited
 	// to work this independent model can measure without Redis command choices.
+	reply.Counters = budget.counters(candidates, guarded, changed, len(rowUnion))
+	reply.MemPlan = plan
+	return reply, nil
+}
+
+// The table plan exposes only the fields the L1 planner observed: the
+// effective mutation-field union and declared before_fields. In particular,
+// unrelated stored application fields are not exposed to an enclosing plan.
+func memPlanProjection(entry Entry, memberIndex int) []string {
+	selected := make(map[string]bool, len(entry.Set)+len(entry.Unset)+len(entry.BeforeFields))
+	for name := range entry.Set {
+		selected[name] = true
+	}
+	if len(entry.Each) != 0 {
+		for name := range entry.Each[memberIndex] {
+			selected[name] = true
+		}
+	}
+	for _, name := range entry.Unset {
+		selected[name] = true
+	}
+	for _, name := range entry.BeforeFields {
+		selected[name] = true
+	}
+	fields := make([]string, 0, len(selected))
+	for name := range selected {
+		fields = append(fields, name)
+	}
+	sort.Strings(fields)
+	return fields
+}
+
+func memProjectPlanRecord(id string, record *memRecord, fields []string) MemberRecord {
+	out := MemberRecord{ID: id, Fields: make(map[string]FieldValue, len(fields))}
+	if record != nil {
+		out.Exists = true
+		out.Epoch = record.epoch
+		out.Revision = record.revision
+		out.Score = record.score
+		if record.place != nil {
+			out.Place = &CellPlace{Row: record.place.row, Col: record.place.col}
+		}
+	}
+	for _, name := range fields {
+		if record != nil {
+			if value, present := record.fields[name]; present {
+				out.Fields[name] = FieldValue{Present: true, Value: value}
+				continue
+			}
+		}
+		out.Fields[name] = FieldValue{Present: false}
+	}
+	return out
+}
+
+func cloneMemPlanRecord(record MemberRecord) MemberRecord {
+	out := record
+	if record.Place != nil {
+		place := *record.Place
+		out.Place = &place
+	}
+	if record.Fields != nil {
+		out.Fields = make(map[string]FieldValue, len(record.Fields))
+		for name, value := range record.Fields {
+			out.Fields[name] = value
+		}
+	}
+	return out
+}
+
+func memPlanFieldChange(before, after MemberRecord, fields []string) MemFieldChange {
+	out := MemFieldChange{Set: make(map[string]string)}
+	for _, name := range fields {
+		prior, next := before.Fields[name], after.Fields[name]
+		if next.Present && (!prior.Present || prior.Value != next.Value) {
+			out.Set[name] = next.Value
+		} else if prior.Present && !next.Present {
+			out.Unset = append(out.Unset, name)
+		}
+	}
+	return out
+}
+
+func cloneMemPlanInput(entry Entry) Entry {
+	out := entry
+	out.IDs = append([]string(nil), entry.IDs...)
+	out.Scores = append([]string(nil), entry.Scores...)
+	out.Revs = append([]Decimal(nil), entry.Revs...)
+	if entry.Set != nil {
+		out.Set = cloneFields(entry.Set)
+	}
+	if entry.Each != nil {
+		out.Each = make([]map[string]string, len(entry.Each))
+		for i, fields := range entry.Each {
+			if fields != nil {
+				out.Each[i] = cloneFields(fields)
+			}
+		}
+	}
+	out.Unset = append([]string(nil), entry.Unset...)
+	out.BeforeFields = append([]string(nil), entry.BeforeFields...)
+	out.About = append([]string(nil), entry.About...)
+	out.Meta = append([]byte(nil), entry.Meta...)
+	out.Add = append([]string(nil), entry.Add...)
+	out.Del = append([]string(nil), entry.Del...)
+	out.Rows = append([]RowRank(nil), entry.Rows...)
+	out.Cells = append([]string(nil), entry.Cells...)
+	out.CountMax = append([]uint64(nil), entry.CountMax...)
+	if entry.AtLeast != nil {
+		v := *entry.AtLeast
+		out.AtLeast = &v
+	}
+	if entry.AtMost != nil {
+		v := *entry.AtMost
+		out.AtMost = &v
+	}
+	return out
+}
+
+// planFence prepares the one receipt command without entering table, row,
+// member or log planning. The caller publishes the cloned space only after
+// saveReceipt succeeds, giving the fence and the original operation one
+// atomic receipt winner.
+func (m *Mem) planFence(step Step) (Reply, error) {
+	reply := Reply{Status: "fenced", EpochBefore: step.Epoch, EpochAfter: step.Epoch,
+		ChangedPerEntry: []int{}, FirstSeq: "0", LastSeq: "0", Result: ""}
+	budget := memWorkBudget{}
+	if err := budget.planReceipt(step, reply); err != nil {
+		return Reply{}, err
+	}
+	if err := budget.checkPlannedLimits(); err != nil {
+		return Reply{}, err
+	}
+	reply.Counters = budget.counters(0, 0, 0, 0)
+	return reply, nil
+}
+
+func (b *memWorkBudget) planReceipt(step Step, reply Reply) error {
+	if step.Op == nil {
+		return nil
+	}
+	if step.Intent == nil {
+		return memRefusal("REQUEST", RefusalDetail{})
+	}
+	encoded := encodeMemReceipt(memReceiptForReply(step, reply))
+	if len(encoded) > maxReceiptBytes {
+		return memRefusal("LIMIT", RefusalDetail{Budget: "receipt_bytes", Limit: memInt64(maxReceiptBytes), Actual: memInt64(int64(len(encoded)))})
+	}
+	b.charge("HSET", step.Space+"sprint:done@"+string(step.Epoch), *step.Op, string(encoded))
+	return nil
+}
+
+func (b *memWorkBudget) checkPlannedLimits() error {
+	if b.plannedBytes > 8<<20 {
+		return memRefusal("LIMIT", RefusalDetail{Budget: "planned_argv_bytes", Limit: memInt64(8 << 20), Actual: memInt64(int64(b.plannedBytes))})
+	}
+	if b.plannedCommands > 65536 {
+		return memRefusal("LIMIT", RefusalDetail{Budget: "planned_commands", Limit: memInt64(65536), Actual: memInt64(int64(b.plannedCommands))})
+	}
+	return nil
+}
+
+func (b *memWorkBudget) counters(candidates, guarded, changed, rows int) json.RawMessage {
 	counters, _ := json.Marshal(struct {
 		Candidates        int `json:"candidates"`
 		Guarded           int `json:"guarded"`
@@ -457,10 +666,9 @@ func (m *Mem) planStep(ctx context.Context, pre, next *memSpace, step Step) (Rep
 		FetchedBytes      int `json:"raw_fetched_bytes"`
 		PlannedBytes      int `json:"planned_argv_bytes"`
 		PlannedCommands   int `json:"planned_commands"`
-	}{candidates, guarded, changed, len(rowUnion), budget.fieldObservations, budget.cellProbes,
-		budget.fetchedBytes, budget.plannedBytes, budget.plannedCommands})
-	reply.Counters = counters
-	return reply, nil
+	}{candidates, guarded, changed, rows, b.fieldObservations, b.cellProbes,
+		b.fetchedBytes, b.plannedBytes, b.plannedCommands})
+	return counters
 }
 
 func memEpochEmpty(e *memEpoch) bool {
