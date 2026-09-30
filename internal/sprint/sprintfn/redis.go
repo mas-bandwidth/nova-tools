@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"regexp"
 
 	"github.com/redis/go-redis/v9"
 
@@ -274,20 +275,38 @@ func pageResult(text string, err error) Result {
 	return Result{Page: &reply}
 }
 
-// notRunCode names a server error the store gives before a function runs, so
-// that the call is known not to have applied; "" for anything else. A script
-// error can carry the same words after a write began, so only these exact
-// replies count (as Layer 1's client reads them, tset/redis.go).
+// notRunCode names a server error that proves the function never ran, so that
+// the call is known not to have applied; "" for anything else. Only replies
+// the server gives before it enters the function count: no such function and
+// an out-of-memory refusal at the start (the two Layer 1's client reads,
+// tset/redis.go), an arity error, and an ACL refusal of the FCALL itself.
+// Every other reply, and every transport error, is an unknown
+// outcome: a script error, a WRONGTYPE from inside the function, BUSY, LOADING
+// and READONLY can follow a write that began, and a script error or a
+// transport error can quote any of these words, so a match is made on the whole
+// reply of a typed server error and never on a substring.
 func notRunCode(err error) string {
 	var server redis.Error
 	if !errors.As(err, &server) {
 		return ""
 	}
-	switch server.Error() {
-	case "ERR Function not found", "NOSUCHFUNCTION No matching function":
+	message := server.Error()
+	switch message {
+	case "ERR Function not found", "NOSUCHFUNCTION No matching function",
+		"NOSCRIPT No matching script. Please use EVAL.":
 		return "FUNCTIONMISSING"
 	case "OOM command not allowed when used memory > 'maxmemory'", "OOM command not allowed when used memory > 'maxmemory'.":
 		return "OOMSTART"
+	case "ERR wrong number of arguments for 'fcall' command", "ERR wrong number of arguments for 'fcall_ro' command":
+		return "ARITY"
+	}
+	if noPermFCall.MatchString(message) {
+		return "NOPERM"
 	}
 	return ""
 }
+
+// noPermFCall is the ACL refusal of the FCALL command itself, given before
+// dispatch. An ACL refusal of a command the function runs is a script error,
+// which names another command and is not this reply.
+var noPermFCall = regexp.MustCompile(`^NOPERM User \S+ has no permissions to run the 'fcall(_ro)?' command$`)

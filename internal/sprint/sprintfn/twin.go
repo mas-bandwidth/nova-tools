@@ -561,16 +561,34 @@ func (t *Twin) read(ctx context.Context, rr *ReadRequest) Result {
 	}
 	out := &ReadReply{Epoch: rr.Epoch, ActiveEpoch: t.active, TimeMS: nowMS,
 		Tset: make([]tset.ReadAnswer, len(rr.Tset)), Sprint: make([]json.RawMessage, len(rr.Sprint))}
+	// The store answers the queries in input order and reports the first one
+	// that refuses (L1 8). Layer 2's queries are answered one at a time here and
+	// Layer 1's in one Mem call, whose refusal names its index within that
+	// call, so each source finds its own first refusal and the lower index is
+	// the read's. A refusal that names no query is the plan's, which the store
+	// finds before it answers any.
 	var l1 []int
+	var refused *Refusal
+	refusedAt := -1
+	refuseAt := func(ref *Refusal, i int) {
+		if refusedAt < 0 || i < refusedAt {
+			refused, refusedAt = atQuery(ref, i), i
+		}
+	}
 	for i, q := range rr.Tset {
 		switch q.Kind {
 		case "last", "lines", "cardlines":
+			if refusedAt >= 0 {
+				continue // a lower index already refused; this one cannot outrank it
+			}
 			rep, ref := t.log.Read(t.prefix, newTSetReadPlan(t.prefix, rr.Epoch, "atomic", []tset.ReadQuery{q}))
 			if ref != nil {
-				return Result{Refusal: atQuery(ref, i)}
+				refuseAt(ref, i)
+				continue
 			}
 			if len(rep.Answers) != 1 {
-				return Result{Refusal: atQuery(refuse(PhaseOpen, CodeConfig, RefusalDetail{}), i)}
+				refuseAt(refuse(PhaseOpen, CodeConfig, RefusalDetail{}), i)
+				continue
 			}
 			out.Tset[i] = rep.Answers[0]
 		default:
@@ -589,14 +607,18 @@ func (t *Twin) read(ctx context.Context, rr *ReadRequest) Result {
 				return Result{Err: err}
 			}
 			ref := fromTset(PhaseOpen, lref)
-			if lref.Detail.QueryIndex != nil && *lref.Detail.QueryIndex < len(l1) {
-				ref = atQuery(ref, l1[*lref.Detail.QueryIndex])
+			if lref.Detail.QueryIndex == nil || *lref.Detail.QueryIndex >= len(l1) {
+				return Result{Refusal: ref}
 			}
-			return Result{Refusal: ref}
+			refuseAt(ref, l1[*lref.Detail.QueryIndex])
+		} else {
+			for j, i := range l1 {
+				out.Tset[i] = t.withDoneSeqs(rr.Tset[i], rep.Answers[j])
+			}
 		}
-		for j, i := range l1 {
-			out.Tset[i] = t.withDoneSeqs(rr.Tset[i], rep.Answers[j])
-		}
+	}
+	if refused != nil {
+		return Result{Refusal: refused}
 	}
 	st := &State{Prefix: t.prefix, Epoch: rr.Epoch, NowMS: nowMS, Names: t.names, Keys: &Keys{ks: t.keys}}
 	for i, q := range rr.Sprint {
