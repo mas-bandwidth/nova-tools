@@ -27,7 +27,9 @@ const (
 	// with it and a later primary never waits behind a long queue.
 	MaxReadyPerMember = 2
 	// TickMaxMoves bounds the units one part of a tick applies; the rest are
-	// due, and the next tick reads the whole sprint and moves them.
+	// due, and the next tick reads the whole sprint and moves them. Levelling
+	// moves are not counted in it. The deal's own bound is TickMaxDeal (width.go):
+	// it fills every member to its width in one step.
 	TickMaxMoves = 200
 	// TickMaxNotes bounds the judgments one part of a tick writes; the rest
 	// are due, and the next tick writes them.
