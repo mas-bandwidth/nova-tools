@@ -360,8 +360,6 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 	wantLock, locked := false, false
 	defer func() {
 		if lock != nil {
-			// a lock not released is an operation with no manifests, let go by
-			// its grace (lock.go); the step's own result is the one returned
 			// ignored: a lock left behind is released unwritten past its grace (finishOp)
 			_ = st.B.Release(context.WithoutCancel(ctx), *lock, false)
 		}

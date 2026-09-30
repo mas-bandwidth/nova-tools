@@ -146,7 +146,7 @@ and prints each one's generation.
 ` + twinWords() + `
 exit codes: 0 done, 1 refused, 2 usage or a store that did not answer (fleet sync --check: there is drift), 3 fleet sync could not read the config
 
-the coordinator's day, in six lines (NOVA_SPRINT_REDIS and NOVA_SPRINT_ACTOR set; brief.txt is a card that passes the lint, from nova-swarm template --name card):
+the coordinator's day, in five lines (NOVA_SPRINT_REDIS and NOVA_SPRINT_ACTOR set; brief.txt is a card that passes the lint, from nova-swarm template --name card):
 
 example:
 `)
@@ -156,13 +156,12 @@ example:
 	return b.String()
 }
 
-// dayLines is the coordinator's day in six lines, the banner's example: block.
+// dayLines is the coordinator's day in five lines, the banner's example: block.
 var dayLines = []string{
 	"nova-sprint init --readers reader-a,reader-b --members m1:8",
 	"nova-sprint add --stream s1 --count 3 --brief-file brief.txt",
 	"nova-sprint start",
 	"nova-sprint inbox --wait",
-	"nova-sprint accept --read-ok",
 	"nova-sprint merge --stream s1 --batch 3",
 }
 
