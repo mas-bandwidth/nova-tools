@@ -33,7 +33,6 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	width := fs.Int("width", 0, "")
 	reader := fs.Bool("reader", false, "")
 	sprintBin := fs.String("sprint", "nova-sprint", "")
-	redis := fs.String("redis", "", "")
 	harness := fs.String("harness", "", "")
 	model := fs.String("model", "", "")
 	root := fs.String("root", "", "")
@@ -60,10 +59,8 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	if deadline.d <= 0 {
 		f.add("--deadline is required; it wants the wall bound per card; refusing to guess")
 	}
-	if *redis == "" {
-		*redis = os.Getenv("NOVA_SPRINT_REDIS")
-	}
-	f.want(*redis, "redis", "the sprint store, host:port (else NOVA_SPRINT_REDIS)")
+	// The store is nova-sprint's to know: the member passes its environment
+	// through (NOVA_SPRINT_REDIS, or a seat) and names no address itself.
 	if !safepath.NameOK(*as) {
 		f.add(fmt.Sprintf("--as %q is not a name (letters, digits, - _ .)", *as))
 	}
@@ -85,7 +82,7 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, " member", "own executable: "+err.Error())
 	}
-	sp := &execSprint{bin: *sprintBin, redis: *redis, actor: *as}
+	sp := &execSprint{bin: *sprintBin, actor: *as}
 	rn := &nativeRunner{
 		self: self, sprintBin: *sprintBin, harness: *harness, model: *model, root: *root, slots: *slots,
 		resultsRoot: *resultsRoot, deadline: deadline.d, tokens: *tokensWord, auth: *auth, config: *config,
@@ -96,7 +93,7 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	if *reader {
 		kind = "reader"
 	}
-	fmt.Fprintf(stdout, "MEMBER %s as=%s width=%d every=%s store=%s harness=%s model=%s\n", kind, *as, *width, every.d, *redis, *harness, *model)
+	fmt.Fprintf(stdout, "MEMBER %s as=%s width=%d every=%s sprint=%s harness=%s model=%s\n", kind, *as, *width, every.d, *sprintBin, *harness, *model)
 	n := 0
 	for {
 		n++
@@ -116,14 +113,16 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-// execSprint runs the sprint's verbs as the nova-sprint binary.
+// execSprint runs the sprint's verbs as the nova-sprint binary, with this
+// process's environment (the store address is nova-sprint's own flag or
+// environment, never the member's).
 type execSprint struct {
-	bin, redis, actor string
+	bin, actor string
 }
 
 func (s *execSprint) Run(args ...string) (int, []byte) {
-	cmd := exec.Command(s.bin, append(args, "--redis", s.redis)...)
-	cmd.Env = append(os.Environ(), "NOVA_SPRINT_ACTOR="+s.actor, "NOVA_SPRINT_REDIS="+s.redis)
+	cmd := exec.Command(s.bin, args...)
+	cmd.Env = append(os.Environ(), "NOVA_SPRINT_ACTOR="+s.actor)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	err := cmd.Run()
@@ -154,7 +153,7 @@ func (r *nativeRunner) Start(p member.Packet) (member.Child, error) {
 		return nil, fmt.Errorf("card %q is not a name", p.Card)
 	}
 	slot := filepath.Join(r.slots, p.Card)
-	if err := os.RemoveAll(slot); err != nil {
+	if err := safepath.RemoveUnder(r.slots, slot); err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
 	if err := os.MkdirAll(slot, 0o755); err != nil {

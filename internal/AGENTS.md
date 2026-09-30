@@ -36,6 +36,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `keyshape/` | cryptographic key format verification | `go test ./internal/keyshape` | `go test ./internal/keyshape` |
 | `lanes/` | lane cursor and dispatch isolation | `go test ./internal/lanes` | `go test ./internal/lanes` |
 | `log/` | structured logging helpers | `go test ./internal/log` | `go test ./internal/log` |
+| `member/` | a sprint fleet member's loop: beat, queue, finish, take to width, each card a child | `go test ./internal/member` | `go test ./internal/member` |
 | `memindex/` | memory vector and text index | `go test ./internal/memindex` | `go test ./internal/memindex` |
 | `merge/` | batch merge queue and land operations | `go test ./internal/merge` | `go test ./internal/merge` |
 | `metrics/` | Prometheus surface shared by the queue verbs | `go test ./internal/metrics/...` | `go test ./internal/metrics/...` |

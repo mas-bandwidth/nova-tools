@@ -104,6 +104,7 @@ var DefaultCatalog = []Entry{
 	E("internal/sprint", "the sprint table's pure core (lifecycle, steps, check, inbox) and its binding to the table layer (store) and its driver (play)", "go test ./internal/sprint/...", "go test ./internal/sprint/..."),
 	E("internal/sprintline", "sprint x/y z% -> eta line", "go test ./internal/sprintline", "go test ./internal/sprintline"),
 	E("internal/sprinttable", "sprint table publish and restart behaviour", "go test ./internal/sprinttable", "go test ./internal/sprinttable"),
+	E("internal/member", "a sprint fleet member's loop: beat, queue, finish, take to width, each card a child", "go test ./internal/member", "go test ./internal/member"),
 	E("internal/swarm", "swarm worker pool and execution engine", "go test ./internal/swarm", "go test ./internal/swarm"),
 	E("internal/testbin", "places a built program into a test dir", "go test ./internal/testbin", "go test ./internal/testbin"),
 	E("internal/testguard", "host seam and leak interception", "go test ./internal/testguard", "go test ./internal/testguard"),
