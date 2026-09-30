@@ -47,7 +47,7 @@ func unitTestVerb(e env, args []string, h selHost) int {
 	if *packages == "" {
 		return selRefuse(e, name, "--packages is required")
 	}
-	shim := filepath.Join(e.getenv("RUNNER_TEMP"), unitShimDir, "redis-server")
+	shim := filepath.Join(e.getenv("RUNNER_TEMP"), pkgselect.UnitShimDir, "redis-server")
 	if found, _ := h.lookPath("redis-server"); found != shim {
 		fmt.Fprintf(e.stdout, "unit tier: redis-server on PATH is %s, not the refusing shim\n", found)
 		return 1

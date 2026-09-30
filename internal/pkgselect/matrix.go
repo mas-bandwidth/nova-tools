@@ -169,7 +169,7 @@ type DarwinSensitive struct {
 func (d DarwinSensitive) Needs(pkg string) bool { return d.All || d.Pkgs[pkg] }
 
 // Sorted is the set, sorted, as the line printed for it: each name followed by
-// a space.
+// one blank.
 func (d DarwinSensitive) Sorted() string {
 	var names []string
 	for p := range d.Pkgs {

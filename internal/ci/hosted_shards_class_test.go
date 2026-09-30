@@ -2,13 +2,14 @@ package ci
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/pkgselect"
 	"gopkg.in/yaml.v3"
 )
 
@@ -145,8 +146,8 @@ func TestHostedShardsUnderTheCap(t *testing.T) {
 	if deal < 0 {
 		t.Fatalf("test-hosted has no %q step", hostedDealStep)
 	}
-	if !strings.Contains(job.Steps[deal].Run, "n=${{ matrix.shards }}") {
-		t.Errorf("the deal step does not divide by matrix.shards:\n%s", job.Steps[deal].Run)
+	if !strings.Contains(job.Steps[deal].Run, "go run ./tools/ci deal --shards ${{ matrix.shards }} --shard ${{ matrix.shard }}") {
+		t.Errorf("the deal step does not deal this shard of matrix.shards through `ci deal`:\n%s", job.Steps[deal].Run)
 	}
 	vet, test := -1, -1
 	for i, s := range job.Steps {
@@ -167,17 +168,37 @@ func TestHostedShardsUnderTheCap(t *testing.T) {
 	}
 }
 
-// liveScript is the deal step's filter by its real path: runStep runs the step
-// in an empty directory, and the step reads the tree's list through
-// .github/scripts/live-packages.sh (deprecated packages are never dealt).
-func liveScript(t *testing.T) string {
+// dealHeavyRe reads the heavy list the deal step passes.
+var dealHeavyRe = regexp.MustCompile(`--heavy "([^"]*)"`)
+
+// dealHeavy is the heavy packages a workflow's deal step names.
+func dealHeavy(t *testing.T, run string) []string {
 	t.Helper()
-	return filepath.Join(repoRoot(t), ".github", "scripts", "live-packages.sh")
+	m := dealHeavyRe.FindStringSubmatch(run)
+	if m == nil {
+		t.Fatalf("the deal step names no --heavy list:\n%s", run)
+	}
+	return strings.Fields(m[1])
 }
 
-// TestHostedDealPartitionsTheTree runs the deal step itself over a stand-in
-// package list at each OS's actual shard count: every package lands in exactly one
-// shard, so more shards never drops a package.
+// liveRepoPackages is the repository's own `go list ./...` through the same
+// deprecated filter the deal reads: the live tree.
+func liveRepoPackages(t *testing.T) []string {
+	t.Helper()
+	dep, err := pkgselect.LoadDeprecated(repoRoot(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	live := dep.Live(strings.Fields(string(repoGoList(t))))
+	if len(live) == 0 {
+		t.Fatal("the live tree is empty")
+	}
+	return live
+}
+
+// TestHostedDealPartitionsTheTree deals a stand-in package list with the
+// deal's own function and heavy list at each OS's actual shard count: every
+// package lands in exactly one shard, so more shards never drops a package.
 func TestHostedDealPartitionsTheTree(t *testing.T) {
 	t.Parallel()
 
@@ -186,27 +207,21 @@ func TestHostedDealPartitionsTheTree(t *testing.T) {
 	if deal < 0 {
 		t.Fatalf("test-hosted has no %q step", hostedDealStep)
 	}
+	heavy := dealHeavy(t, job.Steps[deal].Run)
 	const packages = 23
+	var list []string
+	for j := 1; j <= packages; j++ {
+		list = append(list, fmt.Sprintf("p%02d", j))
+	}
 	for runner, shards := range hostedWorkflowLegs(t) {
 		n := len(shards)
 		seen := make(map[string]int)
 		for i := 1; i <= n; i++ {
-			script := job.Steps[deal].Run
-			script = strings.ReplaceAll(script, "${{ matrix.shards }}", strconv.Itoa(n))
-			script = strings.ReplaceAll(script, "${{ matrix.shard }}", strconv.Itoa(i))
-			script = strings.ReplaceAll(script, "go list ./...", fmt.Sprintf("seq -f 'p%%02g' 1 %d", packages))
-			script = strings.ReplaceAll(script, ".github/scripts/live-packages.sh", liveScript(t))
-			env := filepath.Join(t.TempDir(), "env")
-			runStep(t, script, "GITHUB_ENV="+env)
-			b, err := os.ReadFile(env)
+			mine, err := pkgselect.Deal(list, heavy, n, i)
 			if err != nil {
 				t.Fatal(err)
 			}
-			line := strings.TrimSpace(string(b))
-			if !strings.HasPrefix(line, "HOSTED_PKGS=") || strings.Contains(line, "\n") {
-				t.Fatalf("%s shard %d wrote %q, want one HOSTED_PKGS= line", runner, i, line)
-			}
-			for _, p := range strings.Fields(strings.TrimPrefix(line, "HOSTED_PKGS=")) {
+			for _, p := range mine {
 				seen[p]++
 			}
 		}
@@ -224,10 +239,10 @@ func TestHostedDealPartitionsTheTree(t *testing.T) {
 	}
 }
 
-// TestHostedDealSplitsTheHeavyPackages runs the deal step over the real
-// `go list ./...` at each OS's actual shard count (reader repro, #4421 round 2): no two
-// hostedHeavy packages share a shard, every heavy package is in the tree, and
-// the step's heavy list is hostedHeavy.
+// TestHostedDealSplitsTheHeavyPackages deals the real live tree at each OS's
+// actual shard count (reader repro, #4421 round 2): no two hostedHeavy packages
+// share a shard, every heavy package is in the tree, and the step's heavy list is
+// hostedHeavy.
 func TestHostedDealSplitsTheHeavyPackages(t *testing.T) {
 	t.Parallel()
 	job := ciJobs(t)["test-hosted"]
@@ -235,30 +250,20 @@ func TestHostedDealSplitsTheHeavyPackages(t *testing.T) {
 	if deal < 0 {
 		t.Fatalf("test-hosted has no %q step", hostedDealStep)
 	}
-	if want := `heavy="` + strings.Join(hostedHeavy, " ") + `"`; !strings.Contains(job.Steps[deal].Run, want) {
+	if want := `--heavy "` + strings.Join(hostedHeavy, " ") + `"`; !strings.Contains(job.Steps[deal].Run, want) {
 		t.Errorf("the deal step does not spell %s", want)
 	}
-	list := repoGoList(t)
-	listFile := filepath.Join(t.TempDir(), "pkgs")
-	if err := os.WriteFile(listFile, list, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	heavy := dealHeavy(t, job.Steps[deal].Run)
+	live := liveRepoPackages(t)
 	for runner, shards := range hostedWorkflowLegs(t) {
 		n := len(shards)
 		home := map[string]int{}
 		for i := 1; i <= n; i++ {
-			script := job.Steps[deal].Run
-			script = strings.ReplaceAll(script, "${{ matrix.shards }}", strconv.Itoa(n))
-			script = strings.ReplaceAll(script, "${{ matrix.shard }}", strconv.Itoa(i))
-			script = strings.ReplaceAll(script, "go list ./...", "cat "+listFile)
-			script = strings.ReplaceAll(script, ".github/scripts/live-packages.sh", liveScript(t))
-			env := filepath.Join(t.TempDir(), "env")
-			runStep(t, script, "GITHUB_ENV="+env)
-			b, err := os.ReadFile(env)
+			mine, err := pkgselect.Deal(live, heavy, n, i)
 			if err != nil {
 				t.Fatal(err)
 			}
-			for _, p := range strings.Fields(strings.TrimPrefix(strings.TrimSpace(string(b)), "HOSTED_PKGS=")) {
+			for _, p := range mine {
 				for _, h := range hostedHeavy {
 					if strings.HasSuffix(p, "/"+h) {
 						home[h] = i

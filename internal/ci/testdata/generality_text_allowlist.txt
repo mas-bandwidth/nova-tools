@@ -21,25 +21,20 @@
 # fixture; changing the path changes the record's id, so the fixture is regenerated as a
 # piece, not edited.
 #
-# ceiling: 444
+# ceiling: 439
 .github/scripts/assert-version-stamp.sh:stella 1
-.github/scripts/live-packages.sh:glenn 1
-.github/scripts/plan-merge-shards.sh:rowan 1
 .github/scripts/revert-on-red.sh:glenn 1
-.github/scripts/select-packages.sh:glenn 1
-.github/scripts/select-packages.sh:space 1
-.github/workflows/certification.yml:glenn 1
 .github/workflows/certification.yml:space 2
 .github/workflows/certification.yml:stella 1
 .github/workflows/certification.yml:studio 4
-.github/workflows/ci.yml:batman 22
-.github/workflows/ci.yml:glenn 23
+.github/workflows/ci.yml:batman 19
+.github/workflows/ci.yml:glenn 19
 .github/workflows/ci.yml:hulk 24
 .github/workflows/ci.yml:mini 1
 .github/workflows/ci.yml:rowan 2
-.github/workflows/ci.yml:space 61
-.github/workflows/ci.yml:studio 74
-.github/workflows/ci.yml:superman 19
+.github/workflows/ci.yml:space 34
+.github/workflows/ci.yml:studio 39
+.github/workflows/ci.yml:superman 16
 .github/workflows/ci.yml:vision 10
 .github/workflows/nightly-slow.yml:glenn 1
 .github/workflows/revert-on-red.yml:glenn 1
@@ -118,7 +113,7 @@ docs/SPEC-CI.md:hulk 1
 docs/SPEC-CI.md:mas-bandwidth 1
 docs/SPEC-CI.md:mini 1
 docs/SPEC-CI.md:rowan 2
-docs/SPEC-CI.md:space 13
+docs/SPEC-CI.md:space 12
 docs/SPEC-CI.md:studio 2
 docs/SPEC-CI.md:superman 1
 docs/SPEC-CI.md:vision 1

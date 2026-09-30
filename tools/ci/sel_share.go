@@ -3,23 +3,8 @@ package main
 import (
 	"flag"
 	"fmt"
-	"strconv"
-)
 
-// The leg's share of the machine: the cores divided by the runners the machine
-// says it runs, never below 1 and never above shareCeiling.
-const (
-	// shareRunnersEnv is the variable the runner service exports: how many
-	// runners share this machine. HOW MANY RUNNERS is the MACHINE's fact, not
-	// this program's: written here it goes stale, and did, when a fleet grew
-	// from four runners a machine to eight.
-	shareRunnersEnv = "NOVA_RUNNERS_PER_MACHINE"
-	// shareDefaultRunners is today's fleet, for a machine that says nothing.
-	shareDefaultRunners = 8
-	// shareCeiling: AT MOST TWO cores a leg. Unit tests "must not be so
-	// aggressive that they fill a whole machine cores": min(share, 2), the
-	// Makefile's GOTEST_P, whatever the box (nova-tools#4328).
-	shareCeiling = 2
+	"github.com/mas-bandwidth/nova-tools/internal/pkgselect"
 )
 
 func init() {
@@ -58,18 +43,8 @@ func runnerShareVerb(e env, args []string, h selHost) int {
 		return selRefuse(e, name, fmt.Sprintf("unexpected argument %q", fs.Arg(0)))
 	}
 	cores := h.cores()
-	runners, err := strconv.Atoi(e.getenv(shareRunnersEnv))
-	if err != nil || runners < 1 {
-		runners = shareDefaultRunners
-	}
-	share := cores / runners
-	if share < 1 {
-		share = 1
-	}
-	if share > shareCeiling {
-		share = shareCeiling
-	}
-	fmt.Fprintf(e.stdout, "%d cores on this machine, %d runners per machine (%s), this leg takes %d (at most %d)\n", cores, runners, shareRunnersEnv, share, shareCeiling)
+	runners, share := pkgselect.RunnerShare(cores, e.getenv(pkgselect.RunnersEnv))
+	fmt.Fprintf(e.stdout, "%d cores on this machine, %d runners per machine (%s), this leg takes %d (at most %d)\n", cores, runners, pkgselect.RunnersEnv, share, pkgselect.ShareCeiling)
 	if err := selAppend(e, "GITHUB_ENV", fmt.Sprintf("GOMAXPROCS=%d", share)); err != nil {
 		fmt.Fprintf(e.stderr, "runner-share: %v\n", err)
 		return 1

@@ -1,10 +1,14 @@
 package ci
 
 import (
+	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/pkgselect"
 )
 
 // ci_selection_test.go pins the SELECTION side of the class-test contract. The
@@ -12,25 +16,24 @@ import (
 // which packages must run them. Two independent places choose the packages a
 // change tests:
 //
-//   - .github/scripts/select-packages.sh builds the `want` set the self-hosted
-//     shards use; and
+//   - internal/pkgselect's Select builds the `want` set the self-hosted shards
+//     use (`ci test-matrix` and `nova-ci local` both call it); and
 //   - ci.yml's test-hosted-merge job has its own inline selection and does not
 //     call the script.
 //
-// internal/ci holds class tests that read the workflow and script files as text
+// internal/ci holds class tests that read the workflow and source files as text
 // and scan the tree rather than import what they guard. A cmd/nova-swarm edit
 // (PR #1073) therefore turned an internal/ci class test red but named no
 // dependent in the import graph, so no shard was selected to run it and the
 // branch sat for two hours. Both selection points must name ./internal/ci on
-// every run; these tests read the two files as text, like the rest of the
-// package (go.mod carries no YAML library).
+// every run; these tests run the selection over a fixture and read its source.
 
 var (
-	// selectAppendRe is the top-level line (no leading whitespace) that adds
-	// ./internal/ci to the script's `want` set, outside any `if`. The current
-	// bug is that the line lives inside an `if` guarded on a .github/ diff, so
-	// the regex is red until it moves to the top level.
-	selectAppendRe = regexp.MustCompile(`(?m)^want="\$want \./internal/ci"\s*$`)
+	// selectAppendRe is the statement (one tab of indentation: the body of
+	// selectChange, outside any `if`) that adds ./internal/ci to the `want` set.
+	// The bug it guards is that the line lives inside an `if` guarded on a
+	// .github/ diff, so the regex is red until it is at the top level.
+	selectAppendRe = regexp.MustCompile(`(?m)^\twant\["\./internal/ci"\] = true\s*$`)
 
 	// mergeAppendRe is the append to the merge gate's `$pkgs`, outside any `||`
 	// fallback, so every group runs internal/ci and not only one that changed no
@@ -48,12 +51,12 @@ var (
 )
 
 var (
-	// selectDocsAppendRe is the top-level line (no leading whitespace) that adds
-	// ./internal/docs to the script's `want` set, outside any `if`, beside the
+	// selectDocsAppendRe is the statement (one tab of indentation, outside any
+	// `if`) that adds ./internal/docs to the `want` set, beside the
 	// ./internal/ci line. internal/docs scans the tree instead of importing what
 	// it guards, so a docs-only edit can break its class test without naming a
 	// single dependent in the import graph.
-	selectDocsAppendRe = regexp.MustCompile(`(?m)^want="\$want \./internal/docs"\s*$`)
+	selectDocsAppendRe = regexp.MustCompile(`(?m)^\twant\["\./internal/docs"\] = true\s*$`)
 
 	// mergeDocsAppendRe is the append to the merge gate's `$pkgs`, outside any
 	// `||` fallback, so every group runs internal/docs and not only one that
@@ -64,27 +67,61 @@ var (
 	mergeDocsAppendRe = regexp.MustCompile(`(?m)^\s*(\*\)\s*)?pkgs="\$pkgs \./internal/docs"\s*(;;)?\s*$`)
 )
 
-// TestSelectPackagesAlwaysAddsInternalCI pins the script: ./internal/ci is
+// classTestSelection runs pkgselect.Select over a docs-only change in a fixture
+// tree and returns what it selected: no Go package moved, so the answer is the
+// packages selected on every run.
+func classTestSelection(t *testing.T) []string {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/m\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	run := func(dir string, env []string, argv ...string) (pkgselect.Result, error) {
+		switch strings.Join(argv, " ") {
+		case "git diff --name-only base HEAD":
+			return pkgselect.Result{Stdout: "docs/CLI.md\n.github/workflows/ci.yml\n"}, nil
+		case "go list ./cmd/... ./internal/... ./tools/...":
+			return pkgselect.Result{Stdout: "example.com/m/cmd/a\nexample.com/m/internal/ci\nexample.com/m/internal/docs\n"}, nil
+		case "go list -f {{.ImportPath}}{{range .Deps}} {{.}}{{end}} ./cmd/... ./internal/... ./tools/...":
+			return pkgselect.Result{Stdout: "example.com/m/cmd/a fmt\nexample.com/m/internal/ci fmt\nexample.com/m/internal/docs fmt\n"}, nil
+		}
+		return pkgselect.Result{}, nil // git fetch
+	}
+	out, err := pkgselect.Select(run, pkgselect.Options{Root: root, Base: "base"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return out.Packages
+}
+
+// TestSelectPackagesAlwaysAddsInternalCI pins the selection: ./internal/ci is
 // added to `want` on every selection, not only when the diff touches .github/.
 func TestSelectPackagesAlwaysAddsInternalCI(t *testing.T) {
 	t.Parallel()
 
 	root := repoRoot(t)
-	src := readFile(t, filepath.Join(root, ".github", "scripts", "select-packages.sh"))
+	src := readFile(t, filepath.Join(root, "internal", "pkgselect", "select.go"))
 	if !selectAppendRe.MatchString(src) {
-		t.Errorf("select-packages.sh does not add ./internal/ci to want unconditionally; internal/ci scans the tree instead of importing what it guards, so an edit elsewhere selects no shard to run its class tests")
+		t.Errorf("pkgselect.Select does not add ./internal/ci to want unconditionally; internal/ci scans the tree instead of importing what it guards, so an edit elsewhere selects no shard to run its class tests")
+	}
+	if got := classTestSelection(t); !slices.Contains(got, "./internal/ci") {
+		t.Errorf("a docs-only change selected %v: ./internal/ci is missing", got)
 	}
 }
 
-// TestSelectPackagesAlwaysAddsInternalDocs pins the script: ./internal/docs is
-// added to `want` on every selection, not only when the diff touches .github/.
+// TestSelectPackagesAlwaysAddsInternalDocs pins the selection: ./internal/docs
+// is added to `want` on every selection, not only when the diff touches
+// .github/.
 func TestSelectPackagesAlwaysAddsInternalDocs(t *testing.T) {
 	t.Parallel()
 
 	root := repoRoot(t)
-	src := readFile(t, filepath.Join(root, ".github", "scripts", "select-packages.sh"))
+	src := readFile(t, filepath.Join(root, "internal", "pkgselect", "select.go"))
 	if !selectDocsAppendRe.MatchString(src) {
-		t.Errorf("select-packages.sh does not add ./internal/docs to want unconditionally; internal/docs scans the tree instead of importing what it guards, so a docs-only change that breaks TestAgentsPageNamesEveryClassRule (#1504) selects no shard to run it, and the red surfaces in an integration batch instead of on the PR (#1364 toolchainroots, #1409 hostseam)")
+		t.Errorf("pkgselect.Select does not add ./internal/docs to want unconditionally; internal/docs scans the tree instead of importing what it guards, so a docs-only change that breaks TestAgentsPageNamesEveryClassRule (#1504) selects no shard to run it, and the red surfaces in an integration batch instead of on the PR (#1364 toolchainroots, #1409 hostseam)")
+	}
+	if got := classTestSelection(t); !slices.Contains(got, "./internal/docs") {
+		t.Errorf("a docs-only change selected %v: ./internal/docs is missing", got)
 	}
 }
 

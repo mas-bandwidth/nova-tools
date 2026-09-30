@@ -13,6 +13,8 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/pkgselect"
 )
 
 // The selection verbs run against a selFake: every process they would start is
@@ -520,8 +522,8 @@ func TestUnitTierShimRefusesRedisServer(t *testing.T) {
 	}
 	res, err := exec.Command(shim, "--port", "0").CombinedOutput()
 	var exit *exec.ExitError
-	if !errors.As(err, &exit) || exit.ExitCode() != 86 || string(res) != unitShimMessage+"\n" {
-		t.Errorf("the shim: %v, output %q; want exit 86 and %q", err, res, unitShimMessage)
+	if !errors.As(err, &exit) || exit.ExitCode() != 86 || string(res) != pkgselect.UnitShimMessage+"\n" {
+		t.Errorf("the shim: %v, output %q; want exit 86 and %q", err, res, pkgselect.UnitShimMessage)
 	}
 	if fi, err := os.Stat(shim); err != nil || fi.Mode().Perm()&0o111 == 0 {
 		t.Errorf("the shim is not executable: %v %v", fi, err)

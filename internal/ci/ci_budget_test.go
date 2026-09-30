@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/pkgselect"
 )
 
 // ci_budget_test.go is the two-minute law, read off the workflow files as text
@@ -92,9 +94,9 @@ func TestEveryCIJobIsCappedAtTwoMinutes(t *testing.T) {
 	}
 }
 
-// goTestTimeoutRe reads the sharded test job's `go test -timeout`, which must
-// end the run with a Go stack before the job cap kills it without one.
-var goTestTimeoutRe = regexp.MustCompile(`GOTEST_TIMEOUT="(-?[0-9]+)s"`)
+// The sharded test job's `go test -timeout` must end the run with a Go stack
+// before the job cap kills it without one. It is pkgselect.ShardGoTestTimeout,
+// which `ci unit-test` passes to make test as GOTEST_TIMEOUT.
 
 // checkPositiveTimeoutUnderCap validates that a timeout duration d is strictly
 // positive and strictly under the job cap (0 < d < cap).
@@ -132,17 +134,31 @@ func TestShardGoTestTimeoutIsUnderTheJobCap(t *testing.T) {
 
 	jobCap := time.Duration(twoMinuteCap) * time.Minute
 	job := jobBody(readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml")), "test")
-	matches := goTestTimeoutRe.FindAllStringSubmatch(job, -1)
-	if len(matches) == 0 {
-		t.Fatal("the test job passes no literal GOTEST_TIMEOUT=\"<n>s\" to make test")
+	if !strings.Contains(job, "go run ./tools/ci unit-test") {
+		t.Fatal("the test job does not run its shard through `ci unit-test`, which passes make test the go test timeout")
 	}
-	for _, m := range matches {
-		d, err := time.ParseDuration(m[1] + "s")
+	// every run the verb makes (the default, the whole tree, the nightly leg)
+	// carries the same timeout
+	for _, args := range [][]string{
+		pkgselect.UnitMakeArgs("./cmd/a", "", false),
+		pkgselect.UnitMakeArgs("./cmd/a", "--budget 60", false),
+		pkgselect.UnitMakeArgs("./cmd/a", "", true),
+	} {
+		found := ""
+		for _, a := range args {
+			if v, ok := strings.CutPrefix(a, "GOTEST_TIMEOUT="); ok {
+				found = v
+			}
+		}
+		if found == "" {
+			t.Fatalf("make test is run with %v: no GOTEST_TIMEOUT", args)
+		}
+		d, err := time.ParseDuration(found)
 		if err != nil {
-			t.Errorf("workflow GOTEST_TIMEOUT %q is not a duration: %v", m[1]+"s", err)
+			t.Errorf("GOTEST_TIMEOUT %q is not a duration: %v", found, err)
 			continue
 		}
-		requirePositiveTimeoutUnderCap(t, fmt.Sprintf("go test -timeout %s", m[1]+"s"), d, jobCap)
+		requirePositiveTimeoutUnderCap(t, fmt.Sprintf("go test -timeout %s", found), d, jobCap)
 	}
 
 	mk := parseMakefile(t, filepath.Join(repoRoot(t), "Makefile"))
@@ -263,31 +279,41 @@ func TestPositiveTimeoutUnderJobCapWitnesses(t *testing.T) {
 	}
 }
 
-// macOSEntryRe reads a macOS shard entry's arch and group from test-packages.
-var macOSEntryRe = regexp.MustCompile(`entries\+=\(.*\\"os\\":\\"macOS\\",\\"arch\\":\\"([^"\\]+)\\",\\"group\\":\\"([^"\\]+)\\"`)
+// macOSGroupFlagRe reads the macOS runner-group label test-packages hands to
+// the verb that deals the legs.
+var macOSGroupFlagRe = regexp.MustCompile(`--macos-group (\S+)`)
 
 // TestMacOSShardsRunOnTheStudioForNow pins the 2026-09-25 decision (Glenn: "let's
 // have the darwin tests run on studio, so we can move forward"; "running tests
 // in under 2 minutes will require modern machines"): the darwin legs select the
 // Studio's ARM64 runners until the Mac minis (~2026-10-10) take them. #3634's
-// rule (no CI on the Studio) is suspended for the darwin legs only.
+// rule (no CI on the Studio) is suspended for the darwin legs only. The group is
+// the label the workflow passes (--macos-group); the arch and OS are what the
+// fan-out (pkgselect.Fanout) writes into every macOS leg.
 func TestMacOSShardsRunOnTheStudioForNow(t *testing.T) {
 	t.Parallel()
 
 	src := readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
+	m := macOSGroupFlagRe.FindStringSubmatch(jobBody(src, "test-packages"))
+	if m == nil {
+		t.Fatal("test-packages hands no --macos-group to the verb that deals the legs")
+	}
+	if m[1] != "studio" {
+		t.Errorf("the macOS test shards select group %q, want studio (2026-09-25, until the Mac minis)", m[1])
+	}
+	legs := pkgselect.Fanout("push", []string{"./cmd/a"}, pkgselect.DarwinSensitive{}, pkgselect.Groups{Linux: "linux-group", Mac: m[1]})
 	found := 0
-	for _, line := range strings.Split(jobBody(src, "test-packages"), "\n") {
-		m := macOSEntryRe.FindStringSubmatch(line)
-		if m == nil {
+	for _, leg := range legs {
+		if leg.OS != "macOS" {
 			continue
 		}
 		found++
-		if m[1] != "ARM64" || m[2] != "studio" {
-			t.Errorf("a macOS test shard selects arch %q group %q, want ARM64 on studio (2026-09-25, until the Mac minis): %s", m[1], m[2], strings.TrimSpace(line))
+		if leg.Arch != "ARM64" || leg.Group != m[1] {
+			t.Errorf("a macOS test shard selects arch %q group %q, want ARM64 on %s (2026-09-25, until the Mac minis): %+v", leg.Arch, leg.Group, m[1], leg)
 		}
 	}
 	if found == 0 {
-		t.Error("test-packages emits no macOS shard entry this test can read")
+		t.Error("the fan-out emits no macOS shard entry this test can read")
 	}
 	if jobBody(src, "test-hosted-merge") != "" || jobBody(src, "plan-merge") != "" {
 		t.Error("the merge group carries a hosted leg again; since 2026-09-26 its gate is the sharded test legs on our own benches (Glenn: \"Less dependency on github is my bet\")")
@@ -368,11 +394,16 @@ func TestFleetProbeRunsTheNetworkProbeInsideNovaSandbox(t *testing.T) {
 	if job == "" {
 		t.Fatal("no fleet-probe job in ci.yml; the bench would enter the loop with no probe at all")
 	}
-	if !strings.Contains(job, "go build ./cmd/nova-sandbox") {
-		t.Errorf("the fleet-probe job does not build nova-sandbox from the checkout; a probe that does not run in the sandbox is the host probe #893 killed")
+	if !strings.Contains(job, "go run ./tools/ci sandbox-probe") {
+		t.Errorf("the fleet-probe job does not call `ci sandbox-probe`; a probe that does not run in the sandbox is the host probe #893 killed")
 	}
-	if !strings.Contains(job, "nova-sandbox --read") || !strings.Contains(job, "curl -s") {
-		t.Errorf("the fleet-probe job does not run the network probe inside nova-sandbox (need `nova-sandbox --read` and `curl -s` in one step); a bench enters the loop only after the sandboxed probe is green")
+	// The verb builds nova-sandbox from the checkout and runs curl inside it.
+	verb := readFile(t, filepath.Join(root, "tools", "ci", "sel_sandboxprobe.go"))
+	if !strings.Contains(verb, `"go", "build", "./cmd/nova-sandbox"`) {
+		t.Errorf("tools/ci/sel_sandboxprobe.go does not build nova-sandbox from the checkout; a probe that does not run in the sandbox is the host probe #893 killed")
+	}
+	if !strings.Contains(verb, `"./nova-sandbox", "--read"`) || !strings.Contains(verb, `"curl", "-s"`) {
+		t.Errorf("tools/ci/sel_sandboxprobe.go does not run the network probe inside nova-sandbox (need `nova-sandbox --read` and `curl -s` in one command); a bench enters the loop only after the sandboxed probe is green")
 	}
 	if !strings.Contains(job, "runner.os == 'Linux'") {
 		t.Errorf("the sandboxed network probe is not guarded to Linux runners only")
@@ -698,22 +729,30 @@ func TestMakefileHasNoTargetSpecificConditionalPKGS(t *testing.T) {
 func TestShardsUseTheGoTestCache(t *testing.T) {
 	t.Parallel()
 	ci := readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml"))
-	steps := 0
-	for _, line := range strings.Split(ci, "\n") {
-		if !strings.Contains(line, "make test ") {
-			continue
-		}
-		steps++
-		nightly := strings.Contains(line, "SLOWTESTS_ENFORCE=1") && strings.Contains(line, "GOTEST_COUNT_FLAG=-count=1 ")
-		if !nightly && (!strings.Contains(line, "GOTEST_COUNT_FLAG=") || strings.Contains(line, "GOTEST_COUNT_FLAG=-")) {
-			t.Errorf("a shard step runs the suite with the cache off: %s", strings.TrimSpace(line))
-		}
-		if !strings.Contains(line, "GOTEST_LDFLAGS=-ldflags=-w") {
-			t.Errorf("a shard step links test binaries with DWARF (dsymutil per binary on darwin): %s", strings.TrimSpace(line))
-		}
+	if !strings.Contains(jobBody(ci, "test"), "go run ./tools/ci unit-test") {
+		t.Fatal("no shard step in ci.yml's test job runs `make test` through `ci unit-test`")
 	}
-	if steps == 0 {
-		t.Fatal("no `make test` shard step in ci.yml")
+	flag := func(args []string, name string) (string, bool) {
+		for _, a := range args {
+			if v, ok := strings.CutPrefix(a, name+"="); ok {
+				return v, true
+			}
+		}
+		return "", false
+	}
+	for name, args := range map[string][]string{
+		"the default leg":  pkgselect.UnitMakeArgs("./cmd/a", "", false),
+		"a whole-tree run": pkgselect.UnitMakeArgs("./cmd/a", "--budget 60", false),
+		"the nightly leg":  pkgselect.UnitMakeArgs("./cmd/a", "", true),
+	} {
+		count, ok := flag(args, "GOTEST_COUNT_FLAG")
+		nightly := strings.Contains(strings.Join(args, " "), "SLOWTESTS_ENFORCE=1")
+		if !ok || (!nightly && count != "") || (nightly && count != "-count=1") {
+			t.Errorf("%s runs the suite with GOTEST_COUNT_FLAG=%q (present %v): only the nightly leg passes -count=1, every other leg lets Go's test cache serve unchanged packages: %v", name, count, ok, args)
+		}
+		if v, _ := flag(args, "GOTEST_LDFLAGS"); v != "-ldflags=-w" {
+			t.Errorf("%s links test binaries with GOTEST_LDFLAGS=%q (DWARF, and a dsymutil per binary on darwin): %v", name, v, args)
+		}
 	}
 	mk := readFile(t, filepath.Join(repoRoot(t), "Makefile"))
 	if !strings.Contains(mk, "GOTEST_COUNT_FLAG ?= -count=1") || !strings.Contains(mk, "$(GOTEST_COUNT_FLAG)") {
@@ -728,17 +767,25 @@ func TestShardsUseTheGoTestCache(t *testing.T) {
 // trouble (a missing count reads as 0).
 func TestPushOfAProvedShaSkipsTheShards(t *testing.T) {
 	t.Parallel()
-	job := jobBody(readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml")), "test")
+	root := repoRoot(t)
+	job := jobBody(readFile(t, filepath.Join(root, ".github", "workflows", "ci.yml")), "test")
 	for _, want := range []string{
 		"id: proved",
 		"github.event_name == 'push'",
-		"event=merge_group&head_sha=${{ github.sha }}&status=success",
-		"|| echo 0",
+		`go run ./tools/ci proved-by-merge-group --repo "${{ github.repository }}" --sha "${{ github.sha }}"`,
 		"- name: vet\n        if: matrix.entry.packages != '' && steps.proved.outputs.proved != 'true'",
 		"- name: test\n        if: matrix.entry.packages != '' && steps.proved.outputs.proved != 'true'",
 	} {
 		if !strings.Contains(job, want) {
 			t.Errorf("the test job lacks %q", want)
+		}
+	}
+	// The ask: a successful merge_group run of this sha. Any trouble reads as
+	// zero runs, never a skip (tools/ci's TestProvedByMergeGroup runs each shape).
+	verb := readFile(t, filepath.Join(root, "tools", "ci", "sel_proved.go"))
+	for _, want := range []string{`q.Set("event", "merge_group")`, `q.Set("head_sha", sha)`, `q.Set("status", "success")`, "resp.StatusCode != http.StatusOK"} {
+		if !strings.Contains(verb, want) {
+			t.Errorf("tools/ci/sel_proved.go lacks %q", want)
 		}
 	}
 }

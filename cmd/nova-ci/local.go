@@ -136,12 +136,10 @@ func localSelectThrough(runner localRunner) localSelector {
 // SLEEPS skip off the ledger), a step that could not run, or a refusal. A
 // CI-SLOW line is printed and, as on every CI leg but the nightly one, is not
 // a verdict.
-func cmdLocal(args []string, stdout, stderr io.Writer, runner localRunner) int {
-	return cmdLocalWith(args, stdout, stderr, runner, localSelectThrough(runner))
-}
-
-// cmdLocalWith is cmdLocal with the package selection given.
-func cmdLocalWith(args []string, stdout, stderr io.Writer, runner localRunner, selectPackages localSelector) int {
+//
+// The package selection is a parameter: main passes localSelectThrough over the
+// same runner, a test passes a table.
+func cmdLocal(args []string, stdout, stderr io.Writer, runner localRunner, selectPackages localSelector) int {
 	fs := flag.NewFlagSet("local", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}

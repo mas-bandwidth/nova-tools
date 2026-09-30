@@ -670,7 +670,7 @@ nova-ci local
 ```
 
 `nova-ci local` runs the unit tier CI runs for your change: the packages
-`.github/scripts/select-packages.sh` picks against `origin/dev`, through `make test` at
+`go run ./tools/ci select-packages` picks against `origin/dev`, through `make test` at
 `-p 2` under `nice`, with the unit budgets ([TESTING.md](../TESTING.md)). Never run the whole
 tree on a shared bench; CI runs it on every push to dev. CI also runs the race detector. Some tests are
 held back from the per-change run by a build tag -- today that is `cmd/nova-bus/timing_test.go`, whose two
@@ -1612,7 +1612,7 @@ the dated project policy, not in an assumed higher tool default.
 
 `nova-ci local [--base origin/dev] [--functional]` runs, on your machine, exactly
 the unit tier CI runs for your change: the packages
-`.github/scripts/select-packages.sh` picks against the merge base of `--base` and
+`go run ./tools/ci select-packages` picks against the merge base of `--base` and
 `HEAD`, through the Makefile's `test` target (its go test flags and slowtests
 budgets) under `nice -n 15` with `GOMAXPROCS=2`, `GOTEST_P=2` and `-count=1`. It
 prints one `PKG` line per package with its seconds and one `RED` line per failing

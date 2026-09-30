@@ -86,11 +86,7 @@ jobs:
       - name: build the race-instrumented dependencies
         if: steps.probe.outputs.cache-hit != 'true'
         shell: bash
-        run: |
-          set -euo pipefail
-          deps=$(go list -deps -test -f '{{if not .Standard}}{{if not .Module.Main}}{{.ImportPath}}{{end}}{{end}}' $(go list ./... | bash .github/scripts/live-packages.sh) | sort -u)
-          echo "$(printf '%s\n' "$deps" | grep -c .) external packages"
-          go build -race $deps
+        run: go run ./tools/ci race-deps
 
       - name: save the race build cache
         if: steps.probe.outputs.cache-hit != 'true'
@@ -204,38 +200,21 @@ jobs:
 
       - name: gofmt
         # gofmt -l prints unformatted files and exits 0 either way, so the exit
-        # code is not the product here — the output is. Checked on one leg:
-        # formatting is a property of the source, not of the platform or the shard.
+        # code is not the product here — the output is, and `ci gofmt` turns it
+        # into the exit. Checked on one leg: formatting is a property of the
+        # source, not of the platform or the shard. deprecated/ is out of scope
+        # of the testing drive; see deprecated/README.md.
         if: matrix.os == 'ubuntu-latest' && matrix.shard == 1
         shell: bash
-        run: |
-          # deprecated/ is out of scope of the testing drive (Glenn 2026-09-27); see deprecated/README.md
-          unformatted=$(gofmt -l . | grep -v '^deprecated/' || true)
-          if [ -n "$unformatted" ]; then
-            echo "not gofmt-clean:"
-            echo "$unformatted"
-            exit 1
-          fi
+        run: go run ./tools/ci gofmt
 
       - name: deal this shard's packages
-        # ci.yml test-hosted's deal, with this job's measured heavy list (above): the heavy
+        # ci.yml test-hosted's deal, with this job's measured heavy list: the heavy
         # packages first, one per shard, then every other live package round-robin in go list
-        # order. One line of space-separated packages. internal/ci:
-        # TestCertificationRaceShardsPartitionTheLiveTree (certRaceHeavy).
+        # order. One line of space-separated packages. `go run ./tools/ci help deal`;
+        # internal/ci: TestCertificationRaceShardsPartitionTheLiveTree (certRaceHeavy).
         shell: bash
-        run: |
-          heavy="internal/ci cmd/nova-tokens cmd/nova-sandbox cmd/nova-self-talk internal/update cmd/nova-secrets internal/bus"
-          deal='
-            BEGIN { h = split(heavy, hv, " ") }
-            {
-              k = 0
-              for (j = 1; j <= h; j++) if ($0 ~ ("/" hv[j] "$")) k = j
-              if (k) s = (k - 1) % n; else { s = (h + r) % n; r++ }
-              if (s == i - 1) print
-            }'
-          pkgs=$(go list ./... | bash .github/scripts/live-packages.sh | awk -v n=${{ matrix.shards }} -v i=${{ matrix.shard }} -v heavy="$heavy" "$deal" | tr '\n' ' ')
-          echo "$pkgs"
-          echo "HOSTED_PKGS=$pkgs" >> "$GITHUB_ENV"
+        run: go run ./tools/ci deal --shards ${{ matrix.shards }} --shard ${{ matrix.shard }} --heavy "internal/ci cmd/nova-tokens cmd/nova-sandbox cmd/nova-self-talk internal/update cmd/nova-secrets internal/bus"
 
       - name: fetch origin/dev for the deprecated-imports ratchet
         # internal/ci's TestDeprecatedImportsAllowlistOnlyShrinksAgainstMergeBase compares the
@@ -252,17 +231,11 @@ jobs:
         # the classtests rule excuses a deletion only when the second parent's
         # ancestry shows dev deleting it; a shallow ancestry is a red run naming
         # this fetch. blob:none brings commits and trees only; --unshallow
-        # completes them, after the depth-1 fetch above as well as instead of it.
+        # completes them, after the depth-1 fetch above as well as instead of it
+        # (`go run ./tools/ci help fetch-ancestry`).
         if: github.ref_name == github.event.repository.default_branch
         shell: bash
-        # A complete workspace (a repeat run on a persistent runner) takes a
-        # plain fetch: --unshallow on a complete repository is fatal.
-        run: |
-          if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
-            git fetch --no-tags --filter=blob:none --unshallow origin +dev:refs/remotes/origin/dev
-          else
-            git fetch --no-tags --filter=blob:none origin +dev:refs/remotes/origin/dev
-          fi
+        run: go run ./tools/ci fetch-ancestry dev
       - name: fetch sprint/foundation's ancestry for a promotion
         # The classtests rule reads a promotion from git: on the promotion pull request
         # (sprint/foundation into dev) dev's tip must be an ancestor of the head, and on a
@@ -272,28 +245,13 @@ jobs:
         # A one-parent commit on a dev run has no promotion to read, so nothing is fetched.
         if: (github.event_name == 'push' && github.ref_name == 'dev')
         shell: bash
-        # A complete workspace (a repeat run on a persistent runner) takes a
-        # plain fetch: --unshallow on a complete repository is fatal.
-        run: |
-          if [ "$GITHUB_EVENT_NAME" != pull_request ] && [ "$(git rev-list --parents -n 1 HEAD | wc -w)" -lt 3 ]; then
-            echo "a one-parent commit: no promotion to read"
-            exit 0
-          fi
-          if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
-            git fetch --no-tags --filter=blob:none --unshallow origin +sprint/foundation:refs/remotes/origin/sprint/foundation
-          else
-            git fetch --no-tags --filter=blob:none origin +sprint/foundation:refs/remotes/origin/sprint/foundation
-          fi
+        run: go run ./tools/ci fetch-ancestry --promotion sprint/foundation
 
       - name: build the race-instrumented dependencies
         # Every external package the live tree's tests import, -race, whatever this shard
         # holds: the same list on every shard, so the entry saved next serves them all.
         shell: bash
-        run: |
-          set -euo pipefail
-          deps=$(go list -deps -test -f '{{if not .Standard}}{{if not .Module.Main}}{{.ImportPath}}{{end}}{{end}}' $(go list ./... | bash .github/scripts/live-packages.sh) | sort -u)
-          echo "$(printf '%s\n' "$deps" | grep -c .) external packages"
-          go build -race $deps
+        run: go run ./tools/ci race-deps
 
       - name: save the race build cache
         # On a miss or a restore-keys fallback only: an exact hit is already the entry. Shards
@@ -1539,27 +1497,10 @@ jobs:
       - name: find the perf-tagged tests
         # Writes `<import path> <run regexp>`, one line per package, to $RUNNER_TEMP/perf-runs.
         # A perf-tagged package with no test behind the tag is reported and skipped; a tree
-        # with no perf-tagged test at all is red, because then this job asserts nothing.
+        # with no perf-tagged test at all is red, because then this job asserts nothing
+        # (`go run ./tools/ci help perf-tests`).
         shell: bash
-        run: |
-          set -euo pipefail
-          : > "${RUNNER_TEMP}/perf-runs"
-          go list -tags perf -f '{{.ImportPath}} {{.Dir}}' ./... > "${RUNNER_TEMP}/perf-list"
-          while read -r pkg dir; do
-            grep -lqE '^//go:build .*\bperf\b' "$dir"/*.go 2>/dev/null || continue
-            [ -n "$(echo "$pkg" | bash .github/scripts/live-packages.sh)" ] || continue
-            extra=$(comm -13 \
-              <(go test -list . "$pkg" | grep -E '^(Test|Benchmark|Example|Fuzz)' | LC_ALL=C sort) \
-              <(go test -tags perf -list . "$pkg" | grep -E '^(Test|Benchmark|Example|Fuzz)' | LC_ALL=C sort))
-            if [ -z "$extra" ]; then
-              echo "$pkg carries a perf constraint and no test behind it"
-              continue
-            fi
-            echo "$pkg: $(echo $extra)"
-            echo "$pkg ^($(echo $extra | tr ' ' '|'))\$" >> "${RUNNER_TEMP}/perf-runs"
-          done < "${RUNNER_TEMP}/perf-list"
-          [ -s "${RUNNER_TEMP}/perf-runs" ] || { echo "no live package holds a perf-tagged test: this job would assert nothing"; exit 1; }
-          echo "PERF_PKGS=$(cut -d' ' -f1 "${RUNNER_TEMP}/perf-runs" | tr '\n' ' ')" >> "$GITHUB_ENV"
+        run: go run ./tools/ci perf-tests
 
       - name: vet the perf-tagged tests
         # `go vet` without the tag cannot see a file behind it, so the one place a perf file is

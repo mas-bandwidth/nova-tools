@@ -144,7 +144,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
 	case "slowtests":
 		return cmdSlowtests(args[1:], stdin, stdout, stderr)
 	case "local":
-		return cmdLocal(args[1:], stdout, stderr, execLocal)
+		return cmdLocal(args[1:], stdout, stderr, execLocal, localSelectThrough(execLocal))
 	case "functional":
 		return cmdFunctional(args[1:], stdout, stderr)
 	case "new-rule":

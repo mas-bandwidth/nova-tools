@@ -1,14 +1,13 @@
 package ci
 
 import (
-	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/pkgselect"
 	"gopkg.in/yaml.v3"
 )
 
@@ -103,49 +102,34 @@ func TestCertificationRaceShardsPartitionTheLiveTree(t *testing.T) {
 		t.Fatalf("certification.yml test has no %q step", certRaceDealStep)
 	}
 	script := job.Steps[deal].Run
-	if want := `heavy="` + strings.Join(certRaceHeavy, " ") + `"`; !strings.Contains(script, want) {
+	if want := `--heavy "` + strings.Join(certRaceHeavy, " ") + `"`; !strings.Contains(script, want) {
 		t.Errorf("the deal step does not spell %s", want)
 	}
-	if !strings.Contains(script, "go list ./... | bash .github/scripts/live-packages.sh | awk") || !strings.Contains(script, "n=${{ matrix.shards }}") {
-		t.Fatalf("the deal step does not deal the live list over matrix.shards:\n%s", script)
+	if !strings.Contains(script, "go run ./tools/ci deal --shards ${{ matrix.shards }} --shard ${{ matrix.shard }}") {
+		t.Fatalf("the deal step does not deal the live list over matrix.shards through `ci deal`:\n%s", script)
 	}
+	heavy := dealHeavy(t, script)
 
-	list := repoGoList(t)
-	listFile := filepath.Join(t.TempDir(), "pkgs")
-	if err := os.WriteFile(listFile, list, 0o644); err != nil {
-		t.Fatal(err)
-	}
-	live := exec.Command("bash", liveScript(t))
-	live.Stdin = strings.NewReader(string(list))
-	liveOut, err := live.Output()
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := strings.Fields(string(liveOut))
-	if len(want) == 0 {
-		t.Fatalf("live-packages.sh kept none of the %d packages", len(strings.Fields(string(list))))
-	}
-	// The script reads deprecated/PACKAGES: a package under its internal/nsprint
+	want := liveRepoPackages(t)
+	// The deal reads deprecated/PACKAGES: a package under its internal/nsprint
 	// prefix that no keep line names is dropped. No such package is in the tree
 	// any more, so the control is one that is not.
 	probe := "github.com/mas-bandwidth/nova-tools/internal/nsprint/deprecatedprobe"
-	pr := exec.Command("bash", liveScript(t))
-	pr.Stdin = strings.NewReader(string(list) + probe + "\n")
-	prOut, err := pr.Output()
+	dep, err := pkgselect.LoadDeprecated(repoRoot(t))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(prOut), probe) {
-		t.Fatalf("live-packages.sh kept %s; the stand-in for deprecated/PACKAGES is not being read", probe)
+	if dep.LivePackage(probe) {
+		t.Fatalf("the deprecated list kept %s; the stand-in for deprecated/PACKAGES is not being read", probe)
 	}
 
 	// One deal per distinct shard count: two OSes at the same n deal the same.
 	// n is the EXPANDED MATRIX's count, never certRaceMinShards: the minimum is
 	// only the floor asserted above. Reversed witness (Stella's read of #4487,
-	// stella-d0fb88089706): with the matrix at shard 1..9, shards: 9, and the
-	// deal's awk printing `if (s == i - 1 && !(n == 9 && s == 8))`, a deal at
-	// the floor of eight passed while the real nine-shard deal lost 13 live
-	// packages; dealing at len(legs[runner]) fails it naming all 13.
+	// stella-d0fb88089706): with the matrix at shard 1..9, shards: 9, and a deal
+	// that dropped the last shard, a deal at the floor of eight passed while the
+	// real nine-shard deal lost 13 live packages; dealing at len(legs[runner])
+	// fails it naming all 13.
 	runners := make([]string, 0, len(certRaceMinShards))
 	for runner := range certRaceMinShards {
 		runners = append(runners, runner)
@@ -160,21 +144,11 @@ func TestCertificationRaceShardsPartitionTheLiveTree(t *testing.T) {
 		seen := map[string]int{}
 		home := map[string]int{}
 		for i := 1; i <= n; i++ {
-			s := strings.ReplaceAll(script, "${{ matrix.shards }}", strconv.Itoa(n))
-			s = strings.ReplaceAll(s, "${{ matrix.shard }}", strconv.Itoa(i))
-			s = strings.ReplaceAll(s, "go list ./...", "cat "+listFile)
-			s = strings.ReplaceAll(s, ".github/scripts/live-packages.sh", liveScript(t))
-			env := filepath.Join(t.TempDir(), "env")
-			runStep(t, s, "GITHUB_ENV="+env)
-			b, err := os.ReadFile(env)
+			mine, err := pkgselect.Deal(want, heavy, n, i)
 			if err != nil {
 				t.Fatal(err)
 			}
-			line := strings.TrimSpace(string(b))
-			if !strings.HasPrefix(line, "HOSTED_PKGS=") || strings.Contains(line, "\n") {
-				t.Fatalf("%s shard %d wrote %q, want one HOSTED_PKGS= line", runner, i, line)
-			}
-			for _, p := range strings.Fields(strings.TrimPrefix(line, "HOSTED_PKGS=")) {
+			for _, p := range mine {
 				seen[p]++
 				for _, h := range certRaceHeavy {
 					if strings.HasSuffix(p, "/"+h) {
@@ -233,8 +207,11 @@ func TestCertificationRaceShardsPartitionTheLiveTree(t *testing.T) {
 	if !(restore < deps && deps < save && save < test) {
 		t.Errorf("certification.yml test must restore (%d), build the race dependencies (%d), save (%d), then test (%d), in that order", restore, deps, save, test)
 	}
-	if !strings.Contains(job.Steps[deps].Run, "go build -race") {
-		t.Errorf("the dependency build is not -race, so the saved cache would not serve the race tests:\n%s", job.Steps[deps].Run)
+	if !strings.Contains(job.Steps[deps].Run, "go run ./tools/ci race-deps") {
+		t.Errorf("the dependency build is not `ci race-deps`:\n%s", job.Steps[deps].Run)
+	}
+	if verb := readFile(t, filepath.Join(repoRoot(t), "tools", "ci", "sel_racedeps.go")); !strings.Contains(verb, `"go", "build", "-race"`) {
+		t.Error("`ci race-deps` does not build under -race, so the saved cache would not serve the race tests")
 	}
 	if !strings.Contains(job.Steps[save].If, "cache-hit != 'true'") {
 		t.Errorf("the save runs on an exact hit too: if: %q", job.Steps[save].If)

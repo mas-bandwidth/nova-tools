@@ -79,6 +79,7 @@ var DefaultCatalog = []Entry{
 	E("internal/ntable", "a general Redis-backed table: ordered sets per cell, projections, folds, the render", "go test ./internal/ntable", "go test ./internal/ntable"),
 	E("internal/onboarding", "onboarding banner and doc verifier", "go test ./internal/onboarding", "go test ./internal/onboarding"),
 	E("internal/oneline", "single-line log and output grammar", "go test ./internal/oneline", "go test ./internal/oneline"),
+	E("internal/pkgselect", "package selection, the shard deal and the test fan-out that CI and nova-ci local share", "go test ./internal/pkgselect", "go test ./internal/pkgselect"),
 	E("internal/play", "read-only Markdown timeline view behind nova-memory view", "go test ./internal/play", "go test ./internal/play"),
 	E("internal/record", "decision and execution records", "go test ./internal/record", "go test ./internal/record"),
 	E("internal/records", "database models and record formats", "go test ./internal/records", "go test ./internal/records"),

@@ -3,18 +3,9 @@ package main
 import (
 	"flag"
 	"fmt"
-	"os"
 	"path/filepath"
-)
 
-const (
-	// unitShimDir is the directory under $RUNNER_TEMP that holds the shim.
-	unitShimDir = "unit-tier-bin"
-	// unitShimExit is the shim's exit status.
-	unitShimExit = 86
-	// unitShimMessage is what the shim prints on stderr. internal/nsprint/testutil.Start
-	// names this line.
-	unitShimMessage = "unit tier: redis-server is functional-only (build tag functional)"
+	"github.com/mas-bandwidth/nova-tools/internal/pkgselect"
 )
 
 func init() {
@@ -56,25 +47,16 @@ func unitTierShimVerb(e env, args []string) int {
 		fmt.Fprintln(e.stderr, "unit-tier-shim: RUNNER_TEMP is not set")
 		return 1
 	}
-	dir := filepath.Join(tmp, unitShimDir)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	shim, err := pkgselect.WriteUnitShim(tmp)
+	if err != nil {
 		fmt.Fprintf(e.stderr, "unit-tier-shim: %v\n", err)
 		return 1
 	}
-	shim := filepath.Join(dir, "redis-server")
-	body := fmt.Sprintf("#!/bin/sh\necho %q >&2\nexit %d\n", unitShimMessage, unitShimExit)
-	if err := os.WriteFile(shim, []byte(body), 0o755); err != nil {
-		fmt.Fprintf(e.stderr, "unit-tier-shim: %v\n", err)
-		return 1
-	}
-	if err := os.Chmod(shim, 0o755); err != nil {
-		fmt.Fprintf(e.stderr, "unit-tier-shim: %v\n", err)
-		return 1
-	}
+	dir := filepath.Dir(shim)
 	if err := selAppend(e, "GITHUB_PATH", dir); err != nil {
 		fmt.Fprintf(e.stderr, "unit-tier-shim: %v\n", err)
 		return 1
 	}
-	fmt.Fprintf(e.stdout, "redis-server on this leg is %s (exit %d)\n", shim, unitShimExit)
+	fmt.Fprintf(e.stdout, "redis-server on this leg is %s (exit %d)\n", shim, pkgselect.UnitShimExit)
 	return 0
 }

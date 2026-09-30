@@ -107,7 +107,7 @@ func localFixture(t *testing.T, selected string, replies ...localReply) *localFa
 func runLocal(t *testing.T, f *localFake, args ...string) (int, string, string) {
 	t.Helper()
 	var out, errb bytes.Buffer
-	code := cmdLocalWith(args, &out, &errb, f.answer, f.selector)
+	code := cmdLocal(args, &out, &errb, f.answer, f.selector)
 	return code, out.String(), errb.String()
 }
 
