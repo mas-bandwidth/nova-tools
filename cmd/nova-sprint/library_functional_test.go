@@ -5,6 +5,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
+	"io/fs"
 	"strings"
 	"testing"
 
@@ -70,3 +72,35 @@ func TestNewPathRefusesAStoreWithoutThisBuildsLibrary(t *testing.T) {
 	}
 }
 
+// TestNewPathOnAStore: the command on the new path runs a sprint's life on a
+// real store: init (which defines the four tables and the engine before its
+// step, the grammar decisions 9 to 12), where, add, start, one tick, stop,
+// clear and teardown, each exit 0.
+//
+// It skips for one cause only, the fragment rule: Layer 2's fragment
+// lua/table_set_log.lua is not in the tree, so the composed library, which the
+// sprint profile extends, cannot be assembled. Once the fragment lands it
+// runs, and fails naming the first verb that does not run, until gate G0 lets
+// the sprint profile assemble and load, and a production lifecycle of Layer 1
+// (define the tables, the view and the engine; delete them) is reachable from
+// init and teardown; it never passes by doing nothing.
+func TestNewPathOnAStore(t *testing.T) {
+	t.Parallel()
+	if _, err := fn.TSetSource(fn.TSetComposed); err != nil {
+		var pathErr *fs.PathError
+		if errors.As(err, &pathErr) && pathErr.Path == "lua/table_set_log.lua" && errors.Is(pathErr.Err, fs.ErrNotExist) {
+			t.Skip("Layer 2's fragment not landed")
+		}
+		t.Fatalf("assemble the composed tset source: %v", err)
+	}
+	addr := testutil.Start(t)
+	env := map[string]string{"NOVA_SPRINT_REDIS": addr, "NOVA_SPRINT_ACTOR": "coordinator"}
+	a := newApp(func(k string) string { return env[k] })
+	defer a.close()
+	for _, line := range []string{"init", "where", "add --stream s1 --count 3", "start", "tick", "stop", "clear --confirm sprint", "teardown --confirm sprint"} {
+		var out, errb bytes.Buffer
+		if code := a.run(strings.Fields(line), &out, &errb); code != 0 {
+			t.Fatalf("%s on a store: exit %d\n%s%s", line, code, out.String(), errb.String())
+		}
+	}
+}
