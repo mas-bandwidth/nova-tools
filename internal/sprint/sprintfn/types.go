@@ -270,10 +270,12 @@ type LogPlan struct {
 }
 
 // JPlan is what J decided in the pre stage for X.plan to write once the log's
-// seqs are known (1.3.4): each note of the step J made, and what jopen held
-// for its cause when J read it. IT15 owns the meaning; IT12 carries it.
+// seqs are known (1.3.4): each note of the step J made, what jopen held for its
+// cause when J read it, and what else J read that its commands need (the counts,
+// R, the epoch it writes at). IT15 owns the meaning; IT12 carries it.
 type JPlan struct {
 	Notes []JNote
+	calc  *jCalc // J's own reads, which JCmds writes from and reads nothing beside
 }
 
 // JNote is one note J made: Index is its place in the step's notes, so
@@ -282,6 +284,7 @@ type JNote struct {
 	Index    int
 	Req      NoteReq
 	Existing string // the note id or hold jopen held for the cause, "" when none
+	Digest   string // the digest of the text and decisions an open or an update writes
 }
 
 // Before is the before-state S.before observed for the request (L1 1.1, 1.2):
@@ -314,6 +317,11 @@ type State struct {
 	Epoch  tset.Decimal // the request epoch
 	NowMS  tset.Decimal // the call's one TIME, in ms
 	Names  sprint.Names
+	// Entries are the step's combined entries, the caller's and the ones the
+	// derive phase made, as S.plan takes them. They are known from the derive
+	// phase on; a phase before it sees none. J reads them to see the timed
+	// states a step ends (1.3.4) and whether it advances the epoch.
+	Entries []tset.Entry
 	// Keys is the sprint's own keys as the pre stage reads them. Phases read;
 	// only commit writes.
 	Keys *Keys
