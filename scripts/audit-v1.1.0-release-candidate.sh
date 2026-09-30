@@ -309,7 +309,7 @@ if [[ $SKIP_FUNCTIONAL -eq 1 ]]; then
   GATE6_NOTE="Functional tier skipped by user request (--skip-functional)"
   echo "PASS (SKIPPED)"
 else
-  if make test-functional PKGS="./cmd/nova-sprint" > "$SCRATCH_DIR/gate6_functional.log" 2>&1; then
+  if make test-functional FUNCTIONAL_TIMEOUT="${FUNCTIONAL_TIMEOUT:-300s}" PKGS="./cmd/nova-sprint" > "$SCRATCH_DIR/gate6_functional.log" 2>&1; then
     GATE6_ELAPSED="$(stop_timer "$t0")"
     GATE6_STATUS="PASS"
     GATE6_NOTE="Functional store test suite (cmd/nova-sprint) passed cleanly"
