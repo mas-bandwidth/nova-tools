@@ -4,10 +4,12 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type fakeClock struct {
@@ -34,9 +36,7 @@ func suiteTree(t *testing.T) (string, []Case) {
 		"MCA.cfg": "SPECIFICATION Spec\n", "MCABroken.cfg": "SPECIFICATION Spec\n", "MCATerm.cfg": termCfg,
 	})
 	cases, err := LoadCases(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return root, cases
 }
 
@@ -82,17 +82,12 @@ func TestRunSuiteRecordsEachCaseAndKeepsTheCheckoutClean(t *testing.T) {
 	if err != nil || res.Failed || res.Refused != "" {
 		t.Fatalf("suite = %+v, %v", res, err)
 	}
-	if !reflect.DeepEqual(reported, res.Records) || len(res.Records) != 3 {
-		t.Fatalf("reported %d records, kept %d", len(reported), len(res.Records))
-	}
+	require.Equal(t, res.Records, reported, "reported %d records, kept %d", len(reported), len(res.Records))
+	require.Len(t, res.Records, 3, "reported %d records, kept %d", len(reported), len(res.Records))
 	src, err := SourceAt(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	fp, files, err := src.Fingerprint("MCA.cfg")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	first := res.Records[0]
 	want := Record{Config: "MCA.cfg", Module: "MCA.tla", InputSHA256: fp, InputFiles: files, JarSHA256: strings.Repeat("b", 64), JavaVersion: "21.0.12.1", Workers: 2, Host: "linux-amd64", CPUs: 8,
 		StartedUTC: "2026-09-28T12:00:00.250000+00:00", Generated: "15518", Distinct: "263", Seconds: "0.250",
@@ -115,9 +110,7 @@ func TestRunSuiteRecordsEachCaseAndKeepsTheCheckoutClean(t *testing.T) {
 		if r.Workers != wantFlags[i].workers || r.NoDeadlock != wantFlags[i].noDeadlock || !r.LnCheckFinal {
 			t.Errorf("%s: workers=%d noDeadlock=%v lncheck=%v", r.Config, r.Workers, r.NoDeadlock, r.LnCheckFinal)
 		}
-		if !reflect.DeepEqual(r.JVM, []string{"-XX:+UseParallelGC", "-XX:ActiveProcessorCount=2", "-Xmx2g"}) {
-			t.Errorf("%s: JVM = %v", r.Config, r.JVM)
-		}
+		assert.Equal(t, []string{"-XX:+UseParallelGC", "-XX:ActiveProcessorCount=2", "-Xmx2g"}, r.JVM, "%s: JVM = %v", r.Config, r.JVM)
 		if r.Dir != res.Work || r.Jar != "/j/tla2tools.jar" || r.Java != "/usr/bin/java" {
 			t.Errorf("%s: dir=%s jar=%s java=%s", r.Config, r.Dir, r.Jar, r.Java)
 		}
@@ -130,20 +123,16 @@ func TestRunSuiteRecordsEachCaseAndKeepsTheCheckoutClean(t *testing.T) {
 	}
 
 	// TLC's error traces landed in the private copy, never in tla/.
-	if m, _ := filepath.Glob(filepath.Join(root, "tla", "*TTrace*")); len(m) != 0 {
-		t.Errorf("the checkout gained %v", m)
-	}
-	if m, _ := filepath.Glob(filepath.Join(res.Work, "*TTrace*")); len(m) == 0 {
-		t.Error("no error trace was kept with the private copy")
-	}
-	if _, err := os.Stat(filepath.Join(res.Work, "CASES.tsv")); err == nil {
-		t.Error("the plan was copied into the working copy")
-	}
+	m, _ := filepath.Glob(filepath.Join(root, "tla", "*TTrace*"))
+	assert.Empty(t, m, "the checkout gained %v", m)
+	m, _ = filepath.Glob(filepath.Join(res.Work, "*TTrace*"))
+	assert.NotEmpty(t, m, "no error trace was kept with the private copy")
+	_, err = os.Stat(filepath.Join(res.Work, "CASES.tsv"))
+	assert.Error(t, err, "the plan was copied into the working copy")
 
 	recs, err := ReadRecordsFile(filepath.Join(out, RunsFile))
-	if err != nil || !reflect.DeepEqual(recs, res.Records) {
-		t.Fatalf("RUNS.tsv = %v, %v", recs, err)
-	}
+	require.NoError(t, err, "RUNS.tsv = %v, %v", recs, err)
+	require.Equal(t, res.Records, recs, "RUNS.tsv = %v, %v", recs, err)
 	if raw, err := os.ReadFile(filepath.Join(out, "MCA.cfg.log")); err != nil || string(raw) != fixture(t, "pass.log") {
 		t.Fatalf("the case's log was not kept: %v", err)
 	}
@@ -163,15 +152,13 @@ func TestRunSuiteFailsACaseThatIsNotWhatItDeclares(t *testing.T) {
 	}
 	clock := &fakeClock{now: time.Now(), step: time.Millisecond}
 	res, err := RunSuite(suiteOptions(root, cases, filepath.Join(t.TempDir(), "o"), wrong, clock))
-	if err != nil || !res.Failed {
-		t.Fatalf("suite = %+v, %v", res, err)
-	}
+	require.NoError(t, err, "suite = %+v, %v", res, err)
+	require.True(t, res.Failed, "suite = %+v, %v", res, err)
 	if got := res.Records[1]; got.Result != "FAIL" || got.Exit != 0 {
 		t.Fatalf("record = %+v", got)
 	}
-	if res.Records[0].Result != "PASS" || res.Records[2].Result != "PASS" {
-		t.Fatal("a failing case failed its neighbours")
-	}
+	require.Equal(t, "PASS", res.Records[0].Result, "a failing case failed its neighbours")
+	require.Equal(t, "PASS", res.Records[2].Result, "a failing case failed its neighbours")
 }
 
 func TestRunSuiteWritesNothingWhenItsInputsMoveUnderIt(t *testing.T) {
@@ -188,15 +175,11 @@ func TestRunSuiteWritesNothingWhenItsInputsMoveUnderIt(t *testing.T) {
 	}
 	clock := &fakeClock{now: time.Now(), step: time.Millisecond}
 	res, err := RunSuite(suiteOptions(root, cases, out, meddle, clock))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !res.Failed || res.Refused != "model inputs changed during execution" {
-		t.Fatalf("suite = %+v", res)
-	}
-	if _, err := os.Stat(filepath.Join(out, RunsFile)); err == nil {
-		t.Fatal("records were written for inputs that changed under the run")
-	}
+	require.NoError(t, err)
+	require.True(t, res.Failed, "suite = %+v", res)
+	require.Equal(t, "model inputs changed during execution", res.Refused, "suite = %+v", res)
+	_, err = os.Stat(filepath.Join(out, RunsFile))
+	require.Error(t, err, "records were written for inputs that changed under the run")
 }
 
 func TestRunSuiteEndsWhenTheBudgetDoes(t *testing.T) {
@@ -210,16 +193,13 @@ func TestRunSuiteEndsWhenTheBudgetDoes(t *testing.T) {
 	o := suiteOptions(root, cases, out, script(t, &seen), clock)
 	o.Budget = 90 * time.Second
 	res, err := RunSuite(o)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	if !res.Failed || len(res.Records) >= len(cases) || len(seen) != len(res.Records) {
 		t.Fatalf("records=%d ran=%d failed=%v", len(res.Records), len(seen), res.Failed)
 	}
 	recs, err := ReadRecordsFile(filepath.Join(out, RunsFile))
-	if err != nil || len(recs) != len(res.Records) {
-		t.Fatalf("the records of the cases that ran were not kept: %v, %v", recs, err)
-	}
+	require.NoError(t, err, "the records of the cases that ran were not kept: %v, %v", recs, err)
+	require.Len(t, recs, len(res.Records), "the records of the cases that ran were not kept: %v, %v", recs, err)
 }
 
 func TestRunSuiteNeverStartsACaseAfterTheBudget(t *testing.T) {
@@ -236,9 +216,8 @@ func TestRunSuiteNeverStartsACaseAfterTheBudget(t *testing.T) {
 	if got := res.Records[0]; got.Exit != ExitTimeout || got.Result != "FAIL" || got.Generated != "-" {
 		t.Fatalf("record = %+v", got)
 	}
-	if raw, _ := os.ReadFile(filepath.Join(o.Out, "MCA.cfg.log")); !strings.Contains(string(raw), "before starting") {
-		t.Fatalf("log = %q", raw)
-	}
+	raw, _ := os.ReadFile(filepath.Join(o.Out, "MCA.cfg.log"))
+	require.Contains(t, string(raw), "before starting", "log = %q", raw)
 }
 
 func TestRunSuiteRecordsAManualRun(t *testing.T) {
@@ -268,43 +247,31 @@ func TestRunSuiteRefusesModelsEditedBetweenTheDigestAndTheCopy(t *testing.T) {
 		_ = os.WriteFile(filepath.Join(root, "tla", "MCA.tla"), []byte("edited before the copy\n"), 0o644)
 	}
 	res, err := RunSuite(o)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	if !res.Failed || res.Refused != "model inputs changed while the models were copied" || ran != 0 || len(res.Records) != 0 {
 		t.Fatalf("suite = %+v, ran %d cases", res, ran)
 	}
-	if _, err := os.Stat(filepath.Join(out, RunsFile)); err == nil {
-		t.Fatal("records were written for models that were not the digest's")
-	}
+	_, err = os.Stat(filepath.Join(out, RunsFile))
+	require.Error(t, err, "records were written for models that were not the digest's")
 }
 
 func TestACopyOfTheModelsHasTheFingerprintsOfItsSource(t *testing.T) {
 	t.Parallel()
 	root, cases := suiteTree(t)
 	work := filepath.Join(t.TempDir(), "work")
-	if err := CopyModels(filepath.Join(root, "tla"), work); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, CopyModels(filepath.Join(root, "tla"), work))
 	src, err := SourceAt(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	want, err := fingerprints(src, cases)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	copied := src
 	copied.TLADir = work
 	if got, err := fingerprints(copied, cases); err != nil || !sameFingerprints(got, want) {
 		t.Fatalf("copy fingerprints %v (%v), source %v", got, err, want)
 	}
-	if err := os.WriteFile(filepath.Join(work, "MCA.tla"), []byte("other\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if got, _ := fingerprints(copied, cases); sameFingerprints(got, want) {
-		t.Fatal("an edited copy has its source's fingerprints")
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(work, "MCA.tla"), []byte("other\n"), 0o644))
+	got, _ := fingerprints(copied, cases)
+	require.False(t, sameFingerprints(got, want), "an edited copy has its source's fingerprints")
 }
 
 // The cases are parsed before the digest is taken. A plan edited between the
@@ -317,26 +284,20 @@ func TestRunSuiteRefusesACasePlanEditedAfterItWasRead(t *testing.T) {
 		row("MCA.cfg", "MCA.tla", "invariant", "OnePlacePerTable", "check", "alpha", "required", "-") +
 		row("MCABroken.cfg", "MCA.tla", "invariant", "OnePlacePerTable", "ignore-terminal", "alpha", "required", "-") +
 		row("MCATerm.cfg", "MCA.tla", "temporal", "TermEnds", "check", "alpha", "required", "-")
-	if err := os.WriteFile(filepath.Join(root, "tla", CasesFile), []byte(edited), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(root, "tla", CasesFile), []byte(edited), 0o644))
 	out := filepath.Join(t.TempDir(), "o")
 	ran := 0
 	clock := &fakeClock{now: time.Now(), step: time.Millisecond}
 	res, err := RunSuite(suiteOptions(root, cases, out, func(context.Context, Run, string) int { ran++; return 0 }, clock))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	want := "CASES.tsv changed after the cases were read (MCA.cfg is not as it was)"
 	if !res.Failed || res.Refused != want || ran != 0 || len(res.Records) != 0 {
 		t.Fatalf("suite = %+v, ran %d cases", res, ran)
 	}
-	if _, err := os.Stat(filepath.Join(out, RunsFile)); err == nil {
-		t.Fatal("records were written for a plan that was not the one read")
-	}
-	if _, err := os.Stat(filepath.Join(out, workDir)); err == nil {
-		t.Fatal("the models were copied for a suite that was refused")
-	}
+	_, err = os.Stat(filepath.Join(out, RunsFile))
+	require.Error(t, err, "records were written for a plan that was not the one read")
+	_, err = os.Stat(filepath.Join(out, workDir))
+	require.Error(t, err, "the models were copied for a suite that was refused")
 }
 
 func TestRunSuiteRunsCasesTheEditedPlanStillHolds(t *testing.T) {
@@ -349,19 +310,14 @@ func TestRunSuiteRunsCasesTheEditedPlanStillHolds(t *testing.T) {
 			row("MCATerm.cfg", "MCA.tla", "temporal", term, "check", "beta", "required", "-")
 	}
 	write := func(text string) {
-		if err := os.WriteFile(filepath.Join(root, "tla", CasesFile), []byte(text), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(filepath.Join(root, "tla", CasesFile), []byte(text), 0o644))
 	}
 	write(planWith("TermEnds"))
 	all, err := LoadCases(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	selected, err := Select(all, "alpha", 1, 0)
-	if err != nil || len(selected) != 2 {
-		t.Fatalf("selected %v, %v", selected, err)
-	}
+	require.NoError(t, err, "selected %v, %v", selected, err)
+	require.Len(t, selected, 2, "selected %v, %v", selected, err)
 	// An edit to a case outside the selection is not a change to the cases run.
 	write(planWith("Another"))
 	var seen []Run
@@ -387,20 +343,13 @@ func TestRunSuiteNeverExecutesTheFieldsItWasHanded(t *testing.T) {
 		planPath := filepath.Join(root, "tla", CasesFile)
 		raw, _ := os.ReadFile(planPath)
 		text := strings.Replace(string(raw), "MCATerm.cfg\tMCA.tla\ttemporal\tTermEnds\tcheck\talpha", "MCATerm.cfg\tMCA.tla\ttemporal\tTermEnds\tcheck\tbeta", 1)
-		if err := os.WriteFile(planPath, []byte(text), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(root, "tla", "MCB.tla"), []byte("other\n"), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(planPath, []byte(text), 0o644))
+		require.NoError(t, os.WriteFile(filepath.Join(root, "tla", "MCB.tla"), []byte("other\n"), 0o644))
 		all, err := LoadCases(root)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		alpha, err := Select(all, "alpha", 1, 0)
-		if err != nil || len(alpha) != 2 {
-			t.Fatalf("alpha = %v, %v", alpha, err)
-		}
+		require.NoError(t, err, "alpha = %v, %v", alpha, err)
+		require.Len(t, alpha, 2, "alpha = %v, %v", alpha, err)
 		return root, alpha
 	}
 	runIn := func(root string, alpha []Case) (Result, []Run, error) {
@@ -433,12 +382,8 @@ func TestRunSuiteNeverExecutesTheFieldsItWasHanded(t *testing.T) {
 		planPath := filepath.Join(root, "tla", CasesFile)
 		raw, _ := os.ReadFile(planPath)
 		edited := edit(string(raw))
-		if edited == string(raw) {
-			t.Fatalf("%s: the edit changed nothing", name)
-		}
-		if err := os.WriteFile(planPath, []byte(edited), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		require.NotEqual(t, string(raw), edited, "%s: the edit changed nothing", name)
+		require.NoError(t, os.WriteFile(planPath, []byte(edited), 0o644))
 		res, seen, err := runIn(root, alpha)
 		if err != nil || !res.Failed || !strings.HasPrefix(res.Refused, "CASES.tsv changed after the cases were read") || len(seen) != 0 || len(res.Records) != 0 {
 			t.Errorf("%s: suite = %+v, ran %d cases, %v", name, res, len(seen), err)
@@ -459,9 +404,7 @@ func TestRunSuiteRunsTheDigestedPlansCases(t *testing.T) {
 		t.Fatalf("suite = %+v, ran %d, %v", res, len(seen), err)
 	}
 	plan, err := LoadCases(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	for i, r := range seen {
 		c := plan[i]
 		if r.Config != c.Config || r.Module != c.Module || r.NoDeadlock != (c.Deadlock == "ignore-terminal") ||
@@ -489,9 +432,7 @@ func TestRunSuiteIgnoresAnEditToAModelNoChosenCaseReads(t *testing.T) {
 				"MCA.cfg": "c\n", "MCB.cfg": "c\n",
 			})
 			cases, err := LoadCases(root)
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
 			chosen, _ := Select(cases, "alpha", 1, 0)
 			exec := func(_ context.Context, r Run, log string) int {
 				_ = os.WriteFile(filepath.Join(root, "tla", tc.edited), []byte("edited while running\n"), 0o644)
@@ -502,12 +443,9 @@ func TestRunSuiteIgnoresAnEditToAModelNoChosenCaseReads(t *testing.T) {
 			o := suiteOptions(root, chosen, filepath.Join(t.TempDir(), "o"), exec, clock)
 			o.Selection = Selection{Group: "alpha"}
 			res, err := RunSuite(o)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if tc.refused != (res.Refused == "model inputs changed during execution") || res.Failed != tc.refused {
-				t.Fatalf("suite = %+v", res)
-			}
+			require.NoError(t, err)
+			require.Equal(t, res.Refused == "model inputs changed during execution", tc.refused, "suite = %+v", res)
+			require.Equal(t, tc.refused, res.Failed, "suite = %+v", res)
 		})
 	}
 }
@@ -521,9 +459,8 @@ func TestRunSuiteRecordsTheWorkersAndTheJavaVersion(t *testing.T) {
 	var seen []Run
 	clock := &fakeClock{now: time.Now(), step: time.Millisecond}
 	res, err := RunSuite(suiteOptions(root, cases, filepath.Join(t.TempDir(), "o"), script(t, &seen), clock))
-	if err != nil || len(res.Records) != 3 {
-		t.Fatalf("%+v, %v", res, err)
-	}
+	require.NoError(t, err, "%+v, %v", res, err)
+	require.Len(t, res.Records, 3, "%+v, %v", res, err)
 	for i, want := range []int{2, 1, 1} {
 		if r := res.Records[i]; r.Workers != want || r.JavaVersion != "21.0.12.1" || seen[i].Workers != want {
 			t.Errorf("%s: workers %d (ran with %d), java %q; want %d workers", r.Config, r.Workers, seen[i].Workers, r.JavaVersion, want)
@@ -531,9 +468,8 @@ func TestRunSuiteRecordsTheWorkersAndTheJavaVersion(t *testing.T) {
 	}
 	o := suiteOptions(root, cases, filepath.Join(t.TempDir(), "o2"), script(t, &seen), clock)
 	o.JavaVer = ""
-	if _, err := RunSuite(o); err == nil || !strings.Contains(err.Error(), "no java version") {
-		t.Fatalf("a suite with no java version: %v", err)
-	}
+	_, err = RunSuite(o)
+	require.ErrorContains(t, err, "no java version", "a suite with no java version")
 	for name, mutate := range map[string]func(*Options){
 		"a machine name": func(o *Options) { o.Platform = "build-host-7.example" },
 		"no platform":    func(o *Options) { o.Platform = "" },
