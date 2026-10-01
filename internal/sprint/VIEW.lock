@@ -1,0 +1,90 @@
+# THE NOVA SPRINT VIEW IS LOCKED.
+# Glenn, 2026-10-01: "i dislike this drift from the design of nova sprint tables that is
+# *complete and locked*" / "strike everything that shows to my sprint table" / "This drift
+# (visually) and logically away from the design is a real problem."
+#
+# Below is every byte `nova-sprint where` and `nova-sprint where --watch` print for one
+# fixed store: whereFixture in cmd/nova-sprint/watch_test.go. Its sprint: one stream s1 with
+# three cards (two working, one merging), a second stream s2 whose only card was dropped (a
+# row at zero), readers reader-a and reader-b (one accepted card each), members m1 and m2
+# (width 64, load 0). The first section is the plain frame; the next three are the watch's
+# writes in order (cursor hidden, the frame drawn in place, cursor shown).
+#
+# How to read it: a `$` ends each piece of text between newlines, so blank lines and
+# trailing spaces show, and a final `$` alone means the text ends in a newline. `\e` is the
+# escape byte (0x1b), `\\` a backslash, `\xNN` any other control byte.
+#
+# internal/ci cannot import package main, so the class test `TestSprintViewIsLocked`
+# (cmd/nova-sprint/view_lock_test.go) renders the fixture through the real renderer and is
+# red on any difference, printing the first differing line with both texts. Nothing
+# regenerates this file. Change what the view shows only when Glenn asks for it, and then
+# change this file by hand in the same PR so a read sees it.
+== where
+SPRINT TABLE$
+$
+0/3 0.0% -> ETA$
+$
+work | waiting | ready | working | review | merging | landed$
+-----+---------+-------+---------+--------+---------+-------$
+s1   |       0 |     0 |       2 |      0 |       1 |      0$
+s2   |       0 |     0 |       0 |      0 |       0 |      0$
+-----+---------+-------+---------+--------+---------+-------$
+     |       0 |     0 |       2 |      0 |       1 |      0$
+$
+readers  | asked | reading | ok | broken$
+---------+-------+---------+----+-------$
+reader-a |     0 |       0 |  1 |      0$
+reader-b |     0 |       0 |  1 |      0$
+---------+-------+---------+----+-------$
+         |     0 |       0 |  2 |      0$
+$
+merge | queued | merged | stuck | ci | state$
+------+--------+--------+-------+----+--------$
+s1    |      1 |      0 |     0 | -  | merging$
+s2    |      0 |      0 |     0 | -  | waiting$
+------+--------+--------+-------+----+--------$
+      |      1 |      0 |     0 |    |$
+$
+fleet | ready | working | width | done | ok%    | status | load$
+------+-------+---------+-------+------+--------+--------+-----$
+m1    |     1 |       0 |    64 |    1 | 100.0% | up     | 0.0%$
+m2    |     1 |       0 |    64 |    0 | 0.0%   | up     | 0.0%$
+------+-------+---------+-------+------+--------+--------+-----$
+      |     2 |       0 |   128 |    1 | 100.0% |        |$
+$
+== where --watch, write 1: the cursor hidden
+\e[?25l$
+== where --watch, write 2: the frame
+\e[HSPRINT TABLE\e[K$
+\e[K$
+0/3 0.0% -> ETA\e[K$
+\e[K$
+work | waiting | ready | working | review | merging | landed\e[K$
+-----+---------+-------+---------+--------+---------+-------\e[K$
+s1   |       0 |     0 |       2 |      0 |       1 |      0\e[K$
+s2   |       0 |     0 |       0 |      0 |       0 |      0\e[K$
+-----+---------+-------+---------+--------+---------+-------\e[K$
+     |       0 |     0 |       2 |      0 |       1 |      0\e[K$
+\e[K$
+readers  | asked | reading | ok | broken\e[K$
+---------+-------+---------+----+-------\e[K$
+reader-a |     0 |       0 |  1 |      0\e[K$
+reader-b |     0 |       0 |  1 |      0\e[K$
+---------+-------+---------+----+-------\e[K$
+         |     0 |       0 |  2 |      0\e[K$
+\e[K$
+merge | queued | merged | stuck | ci | state\e[K$
+------+--------+--------+-------+----+--------\e[K$
+s1    |      1 |      0 |     0 | -  | merging\e[K$
+s2    |      0 |      0 |     0 | -  | waiting\e[K$
+------+--------+--------+-------+----+--------\e[K$
+      |      1 |      0 |     0 |    |\e[K$
+\e[K$
+fleet | ready | working | width | done | ok%    | status | load\e[K$
+------+-------+---------+-------+------+--------+--------+-----\e[K$
+m1    |     1 |       0 |    64 |    1 | 100.0% | up     | 0.0%\e[K$
+m2    |     1 |       0 |    64 |    0 | 0.0%   | up     | 0.0%\e[K$
+------+-------+---------+-------+------+--------+--------+-----\e[K$
+      |     2 |       0 |   128 |    1 | 100.0% |        |\e[K\e[J$
+== where --watch, write 3: the cursor shown
+\e[?25h$
