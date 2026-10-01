@@ -19,6 +19,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/binstamp"
 	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
+	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 	"github.com/mas-bandwidth/nova-tools/internal/member"
@@ -478,6 +479,10 @@ var nativeRC = regexp.MustCompile(`\bNATIVE (\S+) .*\brc=(-?\d+)\b.*\bharness=(\
 // nativeSpent is the NATIVE line's wall seconds and budget word, the launch's usage.
 var nativeSpent = regexp.MustCompile(`\bNATIVE \S+ .*\bwall=([0-9.]+s)\b.*\bbudget=(\S+)`)
 
+// nativeSpend is the NATIVE line's spend= word (spendWord): the job's tokens by class,
+// requests, largest prompt, the harness's cost and model.
+var nativeSpend = regexp.MustCompile(`\bNATIVE \S+ .*\bspend=(\S+)`)
+
 // nativeEnd is how a launch that did not finish ended, from its log: the provider's
 // failure (a NATIVE PROVIDER- line), the budget (stopped=), the deadline (rc=-1 with
 // neither, and no TERM from outside), else "".
@@ -548,7 +553,14 @@ func (c *nativeChild) Result() member.Result {
 				ran = string(m[1]) == "OK" && string(m[2]) == "0" && string(m[3]) == "ok"
 			}
 			if m := nativeSpent.FindSubmatch(b); m != nil {
-				usage = "wall=" + string(m[1]) + " budget=" + string(m[2])
+				// the launch's cost record (internal/cardcost): the wall and the budget word,
+				// and what the job spent by token class with the harness's cost (spend=)
+				u := cardcost.NoUsage()
+				if s := nativeSpend.FindSubmatch(b); s != nil {
+					u = cardcost.ParseSpend(string(s[1]))
+				}
+				u.Wall, u.Budget = string(m[1]), string(m[2])
+				usage = u.String()
 			}
 			end = nativeEnd(b)
 			provider = providerReason(b)

@@ -787,6 +787,11 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		// what the harness left in its group, ended before this line (nativeEndLeftovers)
 		fmt.Fprintf(stdout, " survivors=%s", oneline.Field(res.survivors))
 	}
+	// what the job spent, by token class, with the harness's own cost (spendWord): the
+	// member carries it into the card's cost record (internal/cardcost, ParseSpend)
+	if res.spend != "" {
+		fmt.Fprintf(stdout, " spend=%s", oneline.Field(res.spend))
+	}
 	if why != "" {
 		fmt.Fprintf(stdout, " why=%s", oneline.Field(why))
 	}

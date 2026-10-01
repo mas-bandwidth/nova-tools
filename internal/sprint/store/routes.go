@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strconv"
 
+	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 	"github.com/mas-bandwidth/nova-tools/internal/config"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -108,12 +109,12 @@ func (r *Redis) Routes(ctx context.Context) ([]sprint.Route, map[string][]string
 }
 
 // RouteOf is a route from its hash as nova-config's apply writes it: a field
-// missing or unreadable is its zero.
+// missing or unreadable is its zero, and the price sheet its price fields.
 func RouteOf(name string, h map[string]string) sprint.Route {
 	n := func(k string) int { v, _ := strconv.Atoi(h[k]); return v }
 	enabled, _ := strconv.ParseBool(h["enabled"])
 	return sprint.Route{Name: name, Tier: h["tier"], Provider: h["provider"], Model: h["model"], Tokens: n("tokens"),
-		Deadline: n("deadline"), Enabled: enabled}
+		Deadline: n("deadline"), Enabled: enabled, Prices: cardcost.PricesOf(h)}
 }
 
 // Routes is the routes SetRoutes gave the store and the arrays SetTiers gave it.
