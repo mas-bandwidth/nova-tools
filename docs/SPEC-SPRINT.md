@@ -29,7 +29,7 @@ The view shows work, readers, merge, fleet in that order. The one line under
 the title is the word `STOPPED` when the machine is stopped, and the summary
 line (landed / all primaries, percent, ETA, with no machine text) when it is
 running; a RUNNING machine that has not ticked for 5 s shows
-`STOPPED (no tick for Ns)`. Every count cell is an ordered set.
+`STOPPED`, with no count of seconds. Every count cell is an ordered set.
 
 The stored view `sprint` (`nova-table watch --view sprint`) says the same:
 its summary line is `STOPPED`, and nothing more (no counts, no percent, no
@@ -42,8 +42,8 @@ machine in that state already writes the view's state again from the record.
 The view knows no heartbeat: a RUNNING machine that has stopped ticking keeps
 its progress line there, and `where` and `inbox` say it is not ticking.
 
-A frame of the view holds the time, the words `SPRINT TABLE`, that line and the
-tables, and nothing else: no pending operation, no stalled stream, no line about
+A frame of the view holds the words `SPRINT TABLE`, that line and the
+tables, and nothing else: no time, no pending operation, no stalled stream, no line about
 the people and no coordinator (`where --json` carries them; `check`, `inbox` and
 `goal show` say the same in their own words). The merge table has no `since`
 column. Every table is shown, with its header and footer, empty or not, and every
@@ -352,8 +352,8 @@ id (`--op`) returns the original result, with no second counter or notification.
   last beat is within the beat bound (`ReaderBeatBound`, the fleet's 15 s),
   away when it beat and has lapsed, down when it has never beaten; the
   coordinator's `reader away <reader>` holds it away whatever it beats, and
-  `reader up <reader>` releases the hold. `where` shows each reader's state in
-  the readers table's `status` cell; the cell is shown, never stored in the
+  `reader up <reader>` releases the hold. The readers table has no `status`
+  column and `where` shows no reader's state; the state is never stored in the
   table. The state is read, never typed: the tick reads it once, with its first
   read, and every part plans on that reading.
 - ask deals every primary in review that lacks reads to TWO DIFFERENT readers
@@ -967,17 +967,16 @@ began; a quiet log ticks it TickEvery (1 s) after the tick before began. It
 moves nothing while STOPPED; `tick` is one tick by hand. The state
 is read at the start of each tick and before each of its parts: after `stop`
 returns STOPPED no part begins, and the part in flight finishes. Every verb works in both states; only the tick's duties
-wait. `inbox` says `machine: running`,
-`machine: running (catching up: <n> moves due)`, `machine: STOPPED`, or
-`machine: STOPPED (no tick for Ns)` when the state is
-RUNNING and nothing has ticked for 15 s (MachineSilence). The sprint line of every
+wait. `inbox` says `machine: running`, `machine: STOPPED` or `machine: DONE`,
+and nothing after the word: `machine: STOPPED` is also what it says when the
+state is RUNNING and nothing has ticked for 15 s (MachineSilence). The sprint line of every
 verb says the same of a running machine after the progress
 (`3/10 30.0% -> ETA  machine: running`); a STOPPED machine has no ETA, so its
-line is `STOPPED` (or `STOPPED (no tick for Ns)`), followed with cards on the
+line is `STOPPED`, followed with cards on the
 table by the progress alone (`STOPPED  3/10 30.0%`); the STOPPED text is the
 one the header of `where` shows, which carries no progress; a failed tick keeps
 its error on the heartbeat, with the count of failed ticks in a row, and the
-line shows it. A tick that did nothing writes the heartbeat at most once every
+inbox judges it (the line carries no suffix). A tick that did nothing writes the heartbeat at most once every
 5 s (HeartbeatIdleEvery); a STOPPED machine's tick only records that it
 looked. `where` shows the same
 state as the one line under its title (section 1).

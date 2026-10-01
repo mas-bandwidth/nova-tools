@@ -185,10 +185,10 @@ func TestWhereFrameHoldsOnlyTheHeaderAndTheTables(t *testing.T) {
 
 	frame := ta.ok("where")
 	lines := strings.Split(frame, "\n")
-	if got, want := lines[:6], []string{"2030-01-02 06:04:05 UTC", "", "SPRINT TABLE", "", "STOPPED (no tick for 10800s)", ""}; strings.Join(got, "\n") != strings.Join(want, "\n") {
+	if got, want := lines[:4], []string{"SPRINT TABLE", "", "STOPPED", ""}; strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("the head of the frame:\n%q\nwant\n%q", got, want)
 	}
-	for _, l := range lines[6:] {
+	for _, l := range lines[4:] {
 		if l != "" && !strings.Contains(l, " | ") && !strings.Contains(l, "-+-") {
 			t.Errorf("a line that is not a table's: %q\n%s", l, frame)
 		}
@@ -316,9 +316,9 @@ func TestWatchDrawsEachFrameInPlaceWithOneWrite(t *testing.T) {
 			t.Errorf("frame %d ends in an empty line: %q", i+1, w)
 		}
 	}
-	// the second frame is a new read: the clock ran one second between them
-	if !strings.Contains(screen.writes[1], "2030-01-02 03:04:05 UTC") || !strings.Contains(screen.writes[2], "2030-01-02 03:04:06 UTC") {
-		t.Errorf("the clock of the frames:\n%q\n%q", screen.writes[1], screen.writes[2])
+	// no frame shows a time: the view's first line is its title
+	if strings.Contains(screen.writes[1], "2030-01-02") || !strings.Contains(screen.writes[1], "\x1b[HSPRINT TABLE") {
+		t.Errorf("the head of a frame:\n%q", screen.writes[1])
 	}
 }
 

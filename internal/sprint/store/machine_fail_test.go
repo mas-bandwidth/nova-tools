@@ -35,8 +35,8 @@ func TestCRTickFailsAtEveryCallAndRecovers(t *testing.T) {
 		}
 		where := fmt.Sprintf("fail %q (call %d)", fired, k)
 		line := h.st.MachineLine(h.ctx)
-		if terr != nil && fired != "kv" && !strings.Contains(line, "last tick failed") {
-			t.Errorf("%s: tick error %v but the line says %q", where, terr, line)
+		if strings.Contains(line, "failed") || strings.Contains(line, "(") {
+			t.Errorf("%s: tick error %v and the line carries a suffix: %q", where, terr, line)
 		}
 		for i := 0; i < 3; i++ {
 			h.tick(2 * time.Minute) // past the grace
