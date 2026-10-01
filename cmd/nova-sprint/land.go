@@ -395,6 +395,14 @@ func (l *lander) batch(ctx context.Context, stream string, cards []landCard) (la
 		return refuse(why)
 	}
 	for attempt := 1; len(merged) > 0; attempt++ {
+		// the batch as built: this commit is what is pushed and reported, whatever the
+		// clone's checkout becomes after (another landing sharing the clone cuts its own
+		// branch there; pushing HEAD then pushed the other job's and reported this one
+		// landed with its work nowhere on the base)
+		tip, err := l.git(ctx, dir, "rev-parse", "--verify", "HEAD^{commit}")
+		if err != nil {
+			return refuse("the batch branch has no tip: " + firstLine("", err))
+		}
 		if why := l.runCheck(ctx, dir); why != "" {
 			b.Cards, b.IDs = len(merged), ids[:len(merged)]
 			return l.fact(b, sprint.MergeReq{Stream: stream, Batch: len(merged), Red: true, Note: why}, cards[:len(merged)], "red", why)
@@ -405,11 +413,7 @@ func (l *lander) batch(ctx context.Context, stream string, cards []landCard) (la
 		if l.a.beforePush != nil {
 			l.a.beforePush(attempt)
 		}
-		tip, err := l.git(ctx, dir, "rev-parse", "HEAD")
-		if err != nil {
-			return refuse("the batch branch has no tip: " + firstLine("", err))
-		}
-		_, err = l.git(ctx, dir, "push", "--porcelain", "origin", "HEAD:refs/heads/"+b.Base)
+		_, err = l.git(ctx, dir, "push", "--porcelain", "origin", tip+":refs/heads/"+b.Base)
 		if err == nil {
 			b.Tip = tip
 			if !l.landed(b, stream, cards[:len(merged)]) {
