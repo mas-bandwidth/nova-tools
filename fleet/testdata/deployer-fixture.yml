@@ -1,0 +1,8 @@
+# The fixture the deployer plays' check test runs against: the machine running
+# the test, named localhost, is the store and the coordinator, so the
+# store_deployer plays of tools.yml and redis.yml run on it. The test hands the
+# plays a nova-secrets that prints what it was asked and dials nothing.
+machines:
+  localhost: {user: nova, seat: seat-local, slots: 1}
+fleet: {store: localhost, coordinator: localhost}
+loops: {}

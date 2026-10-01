@@ -53,6 +53,7 @@ var Families = []Family{
 	{"loops", []string{"loops", "loop:*"}, "internal/config LoopsKey, LoopKey"},
 	{"config", []string{"config:decl"}, "internal/config DeclKey"},
 	{"tokens", []string{"tokens:ledger:*"}, "internal/record LedgerPrefix: nova-tokens ledger and report, logged in as the seat's user"},
+	{"events", []string{"ev:github"}, "internal/ghevent/wire Stream: the CI run receipt (nova-ci github receipt, tools/ci/reportrun.go) XADDs it as the bench user"},
 }
 
 // keys is the key rules for families by access: "rw" families as ~<pattern>,
@@ -115,7 +116,7 @@ func Roles() []Role {
 	// Every store verb lists the library before it calls it (fn.LoadMissing,
 	// the sprint store's open): FUNCTION LIST is every role's.
 	list := []string{"+function|list"}
-	read := map[string]string{"tables": "r", "views": "r", "sprint": "r", "machines": "r", "beats": "r", "friends": "r", "fleet": "r", "loops": "r", "config": "r", "tokens": "r"}
+	read := map[string]string{"tables": "r", "views": "r", "sprint": "r", "machines": "r", "beats": "r", "friends": "r", "fleet": "r", "loops": "r", "config": "r", "tokens": "r", "events": "r"}
 	with := func(over map[string]string) map[string]string {
 		out := map[string]string{}
 		for k, v := range read {
@@ -129,7 +130,7 @@ func Roles() []Role {
 	return []Role{
 		{Name: Coordinator, User: "coordinator", Keys: []string{"~*"}, Commands: writerCommands, All: true,
 			Extra: []string{"+function|load", "+function|list"}},
-		{Name: Member, User: "bench", Keys: keys(with(map[string]string{"tables": "rw", "views": "rw", "sprint": "rw", "beats": "rw", "tokens": "rw"})),
+		{Name: Member, User: "bench", Keys: keys(with(map[string]string{"tables": "rw", "views": "rw", "sprint": "rw", "beats": "rw", "tokens": "rw", "events": "rw"})),
 			Commands: writerCommands, Files: member, Extra: list},
 		{Name: Table, User: "ns-table", Keys: keys(read), Commands: readerCommands, Files: []string{"lua/table.lua"}, ReadOnly: true, Extra: list},
 		{Name: Friend, User: "ns-friend", Keys: keys(with(map[string]string{"tables": "rw", "views": "rw", "sprint": "rw", "friends": "rw", "tokens": "rw"})),
