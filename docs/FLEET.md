@@ -164,3 +164,42 @@ enabled=<n> written=<n> retired=<n>`.
 The inventory carries `nova_loops` only once the loop kind has been applied to
 the store; until then `loops.yml` refuses each machine by name instead of
 reading the absence as "no loops" and retiring every unit.
+
+### CI over cards
+
+A machine that runs CI runners and a sprint member runs both under one rule
+(nova-tools#4293, the owner: "We really need to have CI winning over children,
+or we will have failed CIs non-stop across the fleet"): under contention the
+runners' jobs get the CPU and the cards' trees get what is left. Two layers
+make it so, and neither throttles what the member takes.
+
+- Inside the member's tree, `nova-swarm native` steps itself to nice 15 (#5026)
+  (`internal/yield`) before it starts the wall, so the harness and everything a
+  card runs are at 15 while the member's own loop (beats, queue, push, finish)
+  stays at 0 and wins inside its own group.
+- Between the member and the runners, nice does not reach: on Linux the CPU is
+  shared out between cgroups by weight first, and a weight only ranks a cgroup
+  against its siblings. So a loop whose record runs `nova-swarm member` (work or
+  `--reader`) gets `CPUWeight=idle` in its unit (`cpu.idle=1`: it runs only when
+  no non-idle sibling wants the CPU), and on darwin `ProcessType` `Background`
+  in its plist (background QoS: off the performance cores and behind on disk,
+  which nice alone does not do on darwin). No other loop is touched.
+
+The weight only works where the member's unit and the runners' units are
+siblings: the same slice of the same systemd manager. Runners installed as
+user units of the bench user (the runner play outside this repository) sit in
+the user manager's `app.slice` beside the loop units, which is where
+`CPUWeight=idle` ranks them. A runner left as a hand-installed system unit (in
+`system.slice`) competes with the member one level up, `system.slice` against
+`user.slice`, both weight 100, and gets about half the CPU under contention
+however idle the member's unit is: move it to a user unit. The same
+holds the other way: a machine whose loops are system units
+(`nova_systemd_scope: system`) wants its runners as system units too.
+
+To see it on a machine: `systemctl --user show nova-loop-member-<m>.service -p
+CPUWeight` says `idle`, `cat /sys/fs/cgroup/user.slice/user-<uid>.slice/user@<uid>.service/app.slice/nova-loop-member-<m>.service/cpu.idle`
+says `1`, `app.slice/cgroup.subtree_control` lists `cpu`, and each runner's
+`/proc/<pid>/cgroup` names `app.slice/nova-runner-<i>.service`. A test run by
+hand over ssh is in the login's `session-<n>.scope`, a sibling of the whole
+user manager, so it shares the CPU with the member and the runners together
+half and half: it is not a measure of CI.

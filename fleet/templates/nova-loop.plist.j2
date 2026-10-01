@@ -30,6 +30,12 @@
 </dict>
 <key>WorkingDirectory</key>
 <string>{{ nova_home | e }}</string>
+{% if loop_cards | bool %}
+<!-- CI over cards (docs/FLEET.md): this loop launches cards; background QoS keeps its
+     tree off the cores and the disk CI wants (nice 15 alone does neither on darwin) -->
+<key>ProcessType</key>
+<string>Background</string>
+{% endif %}
 <key>RunAtLoad</key>
 <true/>
 {% if l.keepalive %}
