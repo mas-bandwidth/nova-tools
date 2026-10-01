@@ -67,6 +67,10 @@ type Push struct {
 	PRNote  string // why a pull request the result asked for was not opened, "" when none was asked or it opened
 }
 
+// ReadStageRetry is how long a read whose stage failed waits before it is run again by the
+// same reader (docs/SPEC-SPRINT.md, the readers; docs/SPEC-CARD-CONTRACT.md, staging).
+const ReadStageRetry = 15 * time.Second
+
 // pushWidth is the most pushes one tick runs at once: each is one git to
 // origin, and a tick whose children ended together pushes them together.
 const pushWidth = 8
@@ -98,6 +102,10 @@ type Result struct {
 	// (docs/SPEC-CARD-CONTRACT.md section 4; tla/CardContract.tla, ProviderFailure).
 	// "" when the end was a launch the provider never accepted, which names no reason.
 	Provider string
+	// StageFailed is whether the launch ended at staging (native's STAGE FAIL line): no child
+	// ran, so the end says nothing of the card. A read whose stage failed is run again
+	// (ReadStageRetry), never judged (docs/SPEC-CARD-CONTRACT.md, staging).
+	StageFailed bool
 }
 
 // The ends Judge names first in a failed finish.
@@ -234,8 +242,9 @@ type launch struct {
 	epoch   uint64
 	branch  string
 	packet  Packet
-	push    *Push // the push at its end, once made (a finish the store did not answer is reported again, never pushed again)
-	spent   bool  // a read whose child ended with no verdict: not ours to report, not run again until the sprint moves the card
+	push    *Push     // the push at its end, once made (a finish the store did not answer is reported again, never pushed again)
+	spent   bool      // a read whose child ended with no verdict: not ours to report, not run again until the sprint moves the card
+	retryAt time.Time // a read whose stage failed: when this reader runs it again; zero before the failure is seen
 }
 
 // Member is the loop's state: the children running, by card id.
@@ -351,6 +360,25 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 		var args []string
 		ok := r.OK // as reported: a work card whose push was refused is reported failed
 		if m.cfg.Reader {
+			if r.StageFailed {
+				// RULE (docs/SPEC-SPRINT.md, the readers): a read's stage failure never spends the
+				// reader's turn. No verdict is recorded and the card stays this reader's: it is
+				// run again here after ReadStageRetry, before the sprint asks another reader.
+				if l.retryAt.IsZero() {
+					l.retryAt = now.Add(ReadStageRetry)
+					m.running[id] = l
+					fmt.Fprintf(m.out, "read %s: stage failed (%s); no verdict recorded; run again in %s\n", id, oneLine(r.Report), ReadStageRetry)
+					continue
+				}
+				if now.Before(l.retryAt) {
+					continue
+				}
+				delete(m.running, id)
+				if c.Packet != nil && m.start(*c.Packet) {
+					acted++
+				}
+				continue
+			}
 			if !r.Ran || (r.Verdict != "ok" && r.Verdict != "broken") {
 				// no verdict is no finding: the read stays reading for the
 				// sprint's lateness rule to re-ask; the child is let go

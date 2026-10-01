@@ -1,6 +1,7 @@
 package swarm
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"fmt"
@@ -14,6 +15,9 @@ import (
 
 // DefaultStageTimeout is the hard timeout for card staging (120 s).
 const DefaultStageTimeout = 120 * time.Second
+
+// stageFetchRetryDelay is the pause before the one retry of the fetch of a head the stage lacks.
+const stageFetchRetryDelay = 2 * time.Second
 
 // ErrStageTimeout is returned when card staging exceeds the hard timeout.
 var ErrStageTimeout = errors.New("stage-timeout")
@@ -300,6 +304,10 @@ type StageOptions struct {
 	// git, when set, builds every staging git call in place of stageGit: a test's seam for
 	// a step git itself would not fail.
 	git func(ctx context.Context, args ...string) *exec.Cmd
+
+	// fetchRetryDelay, when set, is the pause before the one retry of a head fetch, in place
+	// of stageFetchRetryDelay: a test's seam for the clock.
+	fetchRetryDelay time.Duration
 }
 
 // StageResult is the outcome of a staging operation.
@@ -435,13 +443,32 @@ func StageCard(opts StageOptions) (StageResult, error) {
 	}
 	switch {
 	case baseSha != "":
-		catCmd := stageCmd(ctx, "-C", opts.TargetDir, "cat-file", "-e", "--end-of-options", baseSha+"^{commit}")
-		if err := catCmd.Run(); err != nil {
-			// Commit not present locally, fetch from origin
-			fetchCmd := stageCmd(ctx, "-C", opts.TargetDir, "fetch", "-q", "--", "origin", baseSha)
-			if out, ferr := fetchCmd.CombinedOutput(); ferr != nil {
-				return fail("fetch", out, ferr)
+		// RULE (docs/SPEC-CARD-CONTRACT.md, staging): the head is checked out only when its
+		// tree is in the stage, the mirror's own refresh no dependency of a stage: else the head
+		// is fetched from origin by sha, and fetched once more after stageFetchRetryDelay; a head
+		// still absent is refused in one line. The commit alone is no answer: a mirror caught
+		// between a commit and its tree hands the clone the commit, and the checkout of a head
+		// whose tree is unread fails (or, in git 2.43, reports done with an empty worktree).
+		haveHead := func() bool {
+			return stageCmd(ctx, "-C", opts.TargetDir, "cat-file", "-e", "--end-of-options", baseSha+"^{tree}").Run() == nil
+		}
+		var fetched []byte
+		for try := 0; try < 2 && !haveHead(); try++ {
+			if try > 0 {
+				select {
+				case <-time.After(cmp.Or(opts.fetchRetryDelay, stageFetchRetryDelay)):
+				case <-ctx.Done():
+				}
 			}
+			var ferr error
+			if fetched, ferr = stageCmd(ctx, "-C", opts.TargetDir, "fetch", "-q", "--", "origin", baseSha).CombinedOutput(); stageTimedOut(ctx, ferr) {
+				return fail("fetch", fetched, ferr)
+			}
+		}
+		if !haveHead() {
+			why := strings.Join(strings.Fields(string(fetched)), " ")
+			return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Ref: cb.Ref, Mirror: mirror, Wall: time.Since(start)},
+				fmt.Errorf("staging refused: head %s is in neither the mirror %s nor origin %s: %s", baseSha, cmp.Or(mirror, "(none)"), baseRepo, why)
 		}
 		coCmd := stageCmd(ctx, "-C", opts.TargetDir, "switch", "-q", "-C", branch, "--end-of-options", baseSha)
 		if out, cerr := coCmd.CombinedOutput(); cerr != nil {

@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -1206,4 +1207,76 @@ func TestADrainingMemberTakesNothingNewButReportsWhatEnded(t *testing.T) {
 	require.Len(t, g.s.lines("finish"), 1, "what ended is reported")
 	require.Empty(t, g.s.lines("take"), "nothing new is taken")
 	require.Equal(t, []string{"c1"}, g.r.started(), "no child is started, taken or recovered")
+}
+
+// tickAt is one tick at the given second.
+func (g *rig) tickAt(t *testing.T, sec int64) (int, error) {
+	t.Helper()
+	return g.m.Tick(time.Unix(sec, 0))
+}
+
+// TestAReadWhoseStageFailedIsRunAgainByTheSameReader pins the rule of docs/SPEC-SPRINT.md's
+// readers: a read's stage failure never spends the reader's turn. No verdict is reported and
+// the card is not spent; the reader keeps its place until ReadStageRetry has passed, then runs
+// the same card again, with no other verb and before the sprint is asked for another reader.
+// Treating the stage failure like any no-verdict end (the `l.spent = true` path) fails it:
+// the card is never run again.
+func TestAReadWhoseStageFailedIsRunAgainByTheSameReader(t *testing.T) {
+	t.Parallel()
+	g := newRig(Config{As: "r", Width: 1, Reader: true})
+	p := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7, Head: "h1"}
+	g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &p)))
+	_, err := g.tickAt(t, 0)
+	require.NoError(t, err)
+	require.Equal(t, []string{"r1"}, g.r.started())
+	g.r.child("r1").end(Result{Ran: false, StageFailed: true, Report: "STAGE FAIL bench=b reason=git checkout failed"})
+	g.s.reset()
+
+	acted, err := g.tickAt(t, 1)
+	require.NoError(t, err)
+	assert.Zero(t, acted)
+	assert.Empty(t, g.s.lines("report"), "a stage failure is no verdict")
+	assert.Equal(t, 1, g.m.Running(), "the reader keeps its place while the read waits to run again")
+	assert.Contains(t, g.out.String(), "stage failed")
+	assert.Contains(t, g.out.String(), "no verdict recorded")
+
+	acted, err = g.tickAt(t, int64(ReadStageRetry/time.Second)-1)
+	require.NoError(t, err)
+	assert.Zero(t, acted, "before ReadStageRetry the read is not run again")
+	assert.Equal(t, []string{"r1"}, g.r.started())
+
+	acted, err = g.tickAt(t, int64(ReadStageRetry/time.Second)+1)
+	require.NoError(t, err)
+	assert.Equal(t, 1, acted)
+	assert.Equal(t, []string{"r1", "r1"}, g.r.started(), "the same read, run again by the same reader")
+	assert.Empty(t, g.s.lines("report"))
+	assert.Empty(t, g.s.lines("begin"), "no other read is begun ahead of the retry")
+	assert.Equal(t, 1, g.m.Running())
+
+	// the retry is a launch like any: its verdict is reported as a verdict
+	g.r.child("r1").end(Result{Ran: true, OK: true, Verdict: "ok", Report: "clean"})
+	_, err = g.tickAt(t, int64(ReadStageRetry/time.Second)+2)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"read --as r --ok r1 --finding clean --epoch 7"}, g.s.lines("report"))
+}
+
+// TestAWorkCardWhoseStageFailedIsFinishedFailedAsBefore pins that rule 2 is a read's: a work
+// card whose launch ended at staging is judged as every other ended work card (a failed
+// finish), never run again by the member.
+func TestAWorkCardWhoseStageFailedIsFinishedFailedAsBefore(t *testing.T) {
+	t.Parallel()
+	g := newRig(Config{As: "m", Width: 1})
+	p := pk("c1")
+	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p)))
+	_, err := g.tickAt(t, 0)
+	require.NoError(t, err)
+	g.r.child("c1").end(Result{Ran: false, StageFailed: true, Report: "STAGE FAIL bench=b reason=git checkout failed"})
+	g.s.reset()
+	_, err = g.tickAt(t, 1) // pushes (none: no head), then finishes
+	require.NoError(t, err)
+	_, err = g.tickAt(t, 2)
+	require.NoError(t, err)
+	fin := g.s.lines("finish")
+	require.Len(t, fin, 1)
+	assert.Contains(t, fin[0], "--failed")
 }

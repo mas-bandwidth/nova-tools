@@ -57,6 +57,17 @@ The frame reads the brief's **header only**: line 1 and the `key: value` lines t
 up to the first blank line or line of prose (`swarm.ReadCardBase`). A `base-repo:`, `BASE:` or
 clone URL in the body names nothing.
 
+**The head a stage checks out.** The stage checks out the frame's commit only when its tree is
+in the stage: else it fetches that head from origin by sha (`git fetch origin <sha>`), and once
+more after a short delay (`stageFetchRetryDelay`), then checks out. The mirror's own refresh is no
+dependency of a stage, and a commit without its tree is no head. A head still absent is refused
+in one line naming the sha, the mirror and origin (`TestStageCardFetchesAHeadTheMirrorLacks`,
+`TestStageCardFetchesAHeadWhoseCommitTheStageHasWithoutItsTree`,
+`TestStageCardRefusesAHeadNeitherTheMirrorNorOriginHolds`, functional tier). A read whose stage
+fails (native's `STAGE FAIL` line) is no verdict and no finish: the reader's member runs it again
+(`TestAReadWhoseStageFailedIsRunAgainByTheSameReader`); a work card's stage failure ends as any
+failed launch.
+
 **Staged recipes.** A header line `Stage: <path> [<path>...]` names files the member stages into
 `<job>/recipes/<path>` before the child starts, from its own `<root>/recipes/<path>`: a recipe a
 card works from (a pull request body to rewrite, a long table) can be larger than the brief's

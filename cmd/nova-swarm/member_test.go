@@ -587,3 +587,32 @@ func TestAMemberWithNoPassSaysSo(t *testing.T) {
 	assert.Empty(t, passNote("anthropic/claude-x", nil, "/auth.json"))
 	assert.Empty(t, passNote("ollama/qwen3", nil, ""))
 }
+
+// TestAChildThatEndedAtStagingIsStageFailed pins the member's reading of native's log for the
+// read's stage rule (docs/SPEC-SPRINT.md, the readers): native's STAGE FAIL line, a refusal or
+// a timeout alike, marks the result StageFailed and is its report; a log without it is not.
+func TestAChildThatEndedAtStagingIsStageFailed(t *testing.T) {
+	t.Parallel()
+	done := make(chan struct{})
+	close(done)
+	fail := "STAGE FAIL bench=b repo=r base=0123abcd reason=staging refused: head 0123 is in neither the mirror m nor origin o"
+	for _, tc := range []struct {
+		name, log, report string
+		failed            bool
+	}{
+		{"a stage refusal", fail + "\n", fail, true},
+		{"a stage timeout", "STAGE FAIL bench=b repo=r base=0123abcd secs=120 reason=stage-timeout\n", "STAGE FAIL bench=b repo=r base=0123abcd secs=120 reason=stage-timeout", true},
+		{"staged, then ended", "STAGE OK bench=b repo=r base=0123abcd secs=1\nNATIVE INCOMPLETE label=c1 job=j tmp=t rc=0 wall=none harness=ok budget=10/1000 why=no-result\n", "", false},
+	} {
+		dir := t.TempDir()
+		logPath := filepath.Join(dir, "c1.native.log")
+		write(t, logPath, tc.log)
+		c := &nativeChild{card: "c1", logPath: logPath, results: filepath.Join(dir, "results"), job: filepath.Join(dir, "job"), done: done}
+		r := c.Result()
+		assert.Equal(t, tc.failed, r.StageFailed, tc.name)
+		assert.False(t, r.Ran, tc.name)
+		if tc.failed {
+			assert.Equal(t, tc.report, r.Report, tc.name)
+		}
+	}
+}
