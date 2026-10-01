@@ -54,8 +54,9 @@ func newHeadRig(t *testing.T) *headRig {
 // stage stages sha as the card's base, the repository's URL read as the local origin. A
 // commitOnly sha makes the clone step leave the stage holding that commit object and nothing
 // else (no tree, no parent): the state a mirror caught between its objects hands a clone,
-// which a real mirror cannot be made to hand over on demand.
-func (g *headRig) stage(t *testing.T, sha, commitOnly string) (StageResult, error) {
+// which a real mirror cannot be made to hand over on demand; refAt also points the clone's
+// refs/remotes/origin/main at it, as a clone of a mirror whose ref moved before its tree arrived.
+func (g *headRig) stage(t *testing.T, sha, commitOnly string, refAt bool) (StageResult, error) {
 	t.Helper()
 	target := filepath.Join(g.root, "jobs", "c", "repo")
 	return StageCard(StageOptions{
@@ -65,6 +66,9 @@ func (g *headRig) stage(t *testing.T, sha, commitOnly string) (StageResult, erro
 		git: func(ctx context.Context, args ...string) *exec.Cmd {
 			if commitOnly != "" && args[0] == "clone" {
 				script := `git init -q "$1" && git -C "$1" remote add origin "$2" && git -C "$2" cat-file commit "$3" | git -C "$1" hash-object -t commit -w --stdin >/dev/null`
+				if refAt {
+					script += ` && git -C "$1" update-ref refs/remotes/origin/main "$3"`
+				}
 				return exec.CommandContext(ctx, "sh", "-c", script, "sh", target, g.origin, commitOnly)
 			}
 			return stageGit(ctx, append([]string{"-c", "url." + g.origin + ".insteadOf=" + headTestURL}, args...)...)
@@ -88,7 +92,7 @@ func (g *headRig) assertStaged(t *testing.T) {
 func TestStageCardFetchesAHeadTheMirrorLacks(t *testing.T) {
 	t.Parallel()
 	g := newHeadRig(t)
-	res, err := g.stage(t, g.c2, "")
+	res, err := g.stage(t, g.c2, "", false)
 	require.NoError(t, err)
 	assert.True(t, res.Staged)
 	assert.Equal(t, g.c2, res.BaseSha)
@@ -101,10 +105,22 @@ func TestStageCardFetchesAHeadTheMirrorLacks(t *testing.T) {
 func TestStageCardFetchesAHeadWhoseCommitTheStageHasWithoutItsTree(t *testing.T) {
 	t.Parallel()
 	g := newHeadRig(t)
-	res, err := g.stage(t, g.c2, g.c2)
+	res, err := g.stage(t, g.c2, g.c2, false)
 	require.NoError(t, err, "a stage holding a commit and not its tree failed")
 	assert.True(t, res.Staged)
 	assert.Equal(t, g.c2, res.BaseSha)
+	g.assertStaged(t)
+}
+
+// TestStageCardFetchesAHeadAStageRefReachesWhoseTreeIsAbsent pins the refetch: a plain
+// `git fetch origin <sha>` does nothing for a commit a ref of the stage already reaches, so the
+// tree would stay absent; `--refetch` brings it.
+func TestStageCardFetchesAHeadAStageRefReachesWhoseTreeIsAbsent(t *testing.T) {
+	t.Parallel()
+	g := newHeadRig(t)
+	res, err := g.stage(t, g.c2, g.c2, true)
+	require.NoError(t, err, "a stage ref reaching a commit with no tree failed the stage")
+	assert.True(t, res.Staged)
 	g.assertStaged(t)
 }
 
@@ -114,7 +130,7 @@ func TestStageCardRefusesAHeadNeitherTheMirrorNorOriginHolds(t *testing.T) {
 	t.Parallel()
 	g := newHeadRig(t)
 	const gone = "0123456789abcdef0123456789abcdef01234567"
-	res, err := g.stage(t, gone, "")
+	res, err := g.stage(t, gone, "", false)
 	require.Error(t, err)
 	assert.False(t, res.Staged)
 	assert.NotContains(t, err.Error(), "\n", "the refusal is one line")

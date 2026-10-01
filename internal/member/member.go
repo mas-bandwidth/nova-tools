@@ -67,7 +67,7 @@ type Push struct {
 	PRNote  string // why a pull request the result asked for was not opened, "" when none was asked or it opened
 }
 
-// ReadStageRetry is how long a read whose stage failed waits before it is run again by the
+// ReadStageRetry is how long a read whose stage failed waits before it is run again once by the
 // same reader (docs/SPEC-SPRINT.md, the readers; docs/SPEC-CARD-CONTRACT.md, staging).
 const ReadStageRetry = 15 * time.Second
 
@@ -104,7 +104,7 @@ type Result struct {
 	Provider string
 	// StageFailed is whether the launch ended at staging (native's STAGE FAIL line): no child
 	// ran, so the end says nothing of the card. A read whose stage failed is run again
-	// (ReadStageRetry), never judged (docs/SPEC-CARD-CONTRACT.md, staging).
+	// once (ReadStageRetry), then returned, never judged (docs/SPEC-CARD-CONTRACT.md, staging).
 	StageFailed bool
 }
 
@@ -245,6 +245,7 @@ type launch struct {
 	push    *Push     // the push at its end, once made (a finish the store did not answer is reported again, never pushed again)
 	spent   bool      // a read whose child ended with no verdict: not ours to report, not run again until the sprint moves the card
 	retryAt time.Time // a read whose stage failed: when this reader runs it again; zero before the failure is seen
+	retried bool      // a read run again after a stage failure: a second one is returned
 }
 
 // Member is the loop's state: the children running, by card id.
@@ -360,10 +361,10 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 		var args []string
 		ok := r.OK // as reported: a work card whose push was refused is reported failed
 		if m.cfg.Reader {
-			if r.StageFailed {
-				// RULE (docs/SPEC-SPRINT.md, the readers): a read's stage failure never spends the
-				// reader's turn. No verdict is recorded and the card stays this reader's: it is
-				// run again here after ReadStageRetry, before the sprint asks another reader.
+			if r.StageFailed && !l.retried {
+				// RULE (docs/SPEC-SPRINT.md, the readers): a read's stage failure is never a
+				// verdict. The stage is tried once more here after ReadStageRetry; a second
+				// failure falls to the return below, which hands the read to another reader.
 				if l.retryAt.IsZero() {
 					l.retryAt = now.Add(ReadStageRetry)
 					m.running[id] = l
@@ -376,6 +377,9 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 				delete(m.running, id)
 				if c.Packet != nil && m.start(*c.Packet) {
 					acted++
+					l2 := m.running[id]
+					l2.retried = true
+					m.running[id] = l2
 				}
 				continue
 			}

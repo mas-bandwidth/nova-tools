@@ -448,7 +448,9 @@ func StageCard(opts StageOptions) (StageResult, error) {
 		// is fetched from origin by sha, and fetched once more after stageFetchRetryDelay; a head
 		// still absent is refused in one line. The commit alone is no answer: a mirror caught
 		// between a commit and its tree hands the clone the commit, and the checkout of a head
-		// whose tree is unread fails (or, in git 2.43, reports done with an empty worktree).
+		// whose tree is unread fails (or, in git 2.43, reports done with an empty worktree). The
+		// fetch is --refetch: a plain fetch of a sha does nothing when a stage ref (a clone's
+		// refs/remotes/origin/*) already reaches the commit, whatever its tree.
 		haveHead := func() bool {
 			return stageCmd(ctx, "-C", opts.TargetDir, "cat-file", "-e", "--end-of-options", baseSha+"^{tree}").Run() == nil
 		}
@@ -461,7 +463,7 @@ func StageCard(opts StageOptions) (StageResult, error) {
 				}
 			}
 			var ferr error
-			if fetched, ferr = stageCmd(ctx, "-C", opts.TargetDir, "fetch", "-q", "--", "origin", baseSha).CombinedOutput(); stageTimedOut(ctx, ferr) {
+			if fetched, ferr = stageCmd(ctx, "-C", opts.TargetDir, "fetch", "-q", "--refetch", "--", "origin", baseSha).CombinedOutput(); stageTimedOut(ctx, ferr) {
 				return fail("fetch", fetched, ferr)
 			}
 		}
