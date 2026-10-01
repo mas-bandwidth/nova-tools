@@ -79,7 +79,7 @@ func TestTheSessionsRecordOfTheFailedMessageIsTheCause(t *testing.T) {
 	needsSQLite(t)
 	_, errb := providerRun(t, "pf6", "FAKE-SESSION-ERROR\nFAKE-NORESULT\n", nil)
 	assert.Contains(t, errb, "NATIVE PROVIDER-FAIL label=pf6 ")
-	assert.Contains(t, errb, " reason=provider: class=out-of-credit status=402 msg=Insufficient credits. key [redacted] has none left")
+	assert.Contains(t, errb, " reason=provider: class=out-of-credit status=402 msg=Insufficient credits. key [redacted]\n")
 	assert.NotContains(t, errb, "abcdefghij", "a key-shaped value never reaches the line")
 }
 

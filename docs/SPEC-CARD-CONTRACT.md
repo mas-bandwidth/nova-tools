@@ -169,8 +169,8 @@ last message is not a final assistant message (the last assistant message finish
 (the provider does not know or serve the model id: a config error), `auth`, `out-of-credit`,
 `rate-limited`, `provider-5xx`, `timeout` and `other` (none of these, or the harness recorded
 no cause, as its own `UnknownError` does); the status is the provider's HTTP status, `-` when
-the record names none; the words are the provider's own message, one line, every
-secret-shaped value removed, cut to 120 bytes with the cut said. They come from the session's
+the record names none; the words are the provider's own message, one line, everything
+after a `key:` or `key ` dropped and every other secret-shaped value removed, cut to 120 bytes with the cut said. They come from the session's
 record of the failed message when it has one (an API error keeps the provider's status and
 body there), else the log's error line, else (a run that ended on a tool) `ended without a
 final message`, class `other`. Native prints it as `NATIVE PROVIDER-FAIL label=<l> wall=<s>s

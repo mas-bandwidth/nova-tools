@@ -117,9 +117,15 @@ func ClassifyProvider(status int, text string) string {
 	return CauseOther
 }
 
-// textStatusRE is an HTTP status a line names: `statusCode=503`, `error.error.code=504`,
-// `status 502`, `HTTP 529`.
-var textStatusRE = regexp.MustCompile(`(?i)\b(?:status(?:code)?|code|http)\W{0,3}([1-5]\d\d)\b`)
+// textStatusRE is an HTTP error status a line names: `statusCode=503`, `error.error.code=504`,
+// `status 502`, `HTTP 529`. Only 400..599: a provider failure's status is an error's, and a
+// URL's `http://127.0.0.1` is no status.
+var textStatusRE = regexp.MustCompile(`(?i)\b(?:status(?:code)?|code|http)\W{0,3}([45]\d\d)\b`)
+
+// keyTailRE is where a provider starts echoing a key in its own words (`key: <value>`,
+// `key <value>`): everything after it is dropped, since a short or lowercase-hex key is no
+// shape the redactor knows.
+var keyTailRE = regexp.MustCompile(`(?i)\bkey(?::|\s)`)
 
 // textMessageRE is the provider's own words on a harness log line, best first: the error's
 // message, the error itself, then the line's message.
@@ -189,10 +195,13 @@ func CauseFromSessionError(raw string) (ProviderCause, bool) {
 }
 
 // causeMessage is a message as a cause carries it: unescaped from the log's quoting, one
-// line, every secret-shaped value removed (internal/log Redact), cut to providerMsgBytes
-// with the cut said.
+// line, everything after a `key:` or `key ` dropped (keyTailRE), every other secret-shaped
+// value removed (internal/log Redact), cut to providerMsgBytes with the cut said.
 func causeMessage(s string) string {
 	s = strings.ReplaceAll(s, `\"`, `"`)
 	s = strings.Join(strings.Fields(s), " ")
+	if loc := keyTailRE.FindStringIndex(s); loc != nil {
+		s = s[:loc[0]+len("key")] + " " + novalog.Redacted
+	}
 	return oneline.Cap(novalog.Redact(s), providerMsgBytes)
 }
