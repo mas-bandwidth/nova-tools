@@ -31,7 +31,7 @@ each landed card's total cost for that work stream, and then a total at the
 bottom."), is a stream's landed cards' cost: the sum, over its landed primaries,
 of each one's total, which is, over its consumers (section 2, What a card cost),
 each one's actual cost where one was reported, else its predicted one, a
-consumer with neither adding nothing. It is in US dollars to four places
+consumer with neither adding nothing. It is in US dollars and cents, rounded up to the next cent (the card keeps the exact figure)
 (`$1.2345`), `-` for a stream with no priced landed card, and the footer is the
 sum over the streams, in exact decimals end to end. A stream with some unpriced
 landed cards shows the sum of the priced ones; `nova-sprint card <id>` and its
