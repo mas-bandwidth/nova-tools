@@ -1,6 +1,7 @@
 package store
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -131,4 +132,67 @@ func refusedText(res Result) []string {
 		out = append(out, r.Why)
 	}
 	return out
+}
+
+// A read returned and asked of a reader that then goes away, with no reader
+// left free at the attempt: the tick takes the away read back and raises
+// "cannot ask" for the primary, never a step that fails every tick with no
+// note (tickExtras reads every retired read card of a primary in review,
+// whatever is placed beside it).
+func TestAReturnedReadWhoseNextReaderGoesAwayIsAskedOrJudgedNeverSilent(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	require.NoError(t, h.m.RowsAdd(h.ctx, "t-readers", []string{"reader-d"}))
+	h.beat()
+	require.NoError(t, h.st.SetReaderAway(h.ctx, "reader-c", true, "coordinator"))
+	require.NoError(t, h.st.SetReaderAway(h.ctx, "reader-d", true, "coordinator"))
+	h.asked1(1)
+	readersOf := func() []string {
+		var out []string
+		for _, c := range h.snap().Readers.Of("s1-1") {
+			out = append(out, c.Row)
+		}
+		return out
+	}
+	require.ElementsMatch(t, []string{"reader-a", "reader-b"}, readersOf())
+	require.NoError(t, h.st.SetReaderAway(h.ctx, "reader-c", false, "coordinator"))
+	h.must(ReadStep(sprint.ReadReq{As: "reader-a", Return: true, Reason: "STAGE FAIL", Sel: sprint.Sel{IDs: []string{"s1-1.r1.reader-a"}}, Who: "reader-a"}))
+	h.machine()
+	require.ElementsMatch(t, []string{"reader-b", "reader-c"}, readersOf())
+	require.NoError(t, h.st.SetReaderAway(h.ctx, "reader-c", true, "coordinator"))
+	for i := 0; i < 2; i++ {
+		res, err := h.st.Tick(h.ctx)
+		require.NoError(t, err, "tick %d", i+1)
+		for _, p := range res.Parts {
+			assert.NotContains(t, strings.Join(p.Moved, " "), "kept changing", "tick %d %s", i+1, p.Name)
+		}
+	}
+	asked := readersOf()
+	assert.NotContains(t, asked, "reader-a", "the reader that returned it is never asked again at the attempt")
+	// asked again of two readers up, or the primary's "cannot ask" judgment
+	// is open: a read left on reader-c, away, with nothing said is the silence
+	if slices.Contains(asked, "reader-c") || len(asked) < 2 {
+		assert.NotEmpty(t, h.openOf(sprint.NCannotAsk), "a read that cannot be asked again is a judgment: %v", asked)
+	}
+}
+
+// Only a read still asked or reading can be returned: a read reported ok, or
+// broken, is refused, and its verdict stands.
+func TestAReturnOfAReadAlreadyReportedIsRefused(t *testing.T) {
+	t.Parallel()
+	for _, verdict := range []string{"ok", "broken"} {
+		t.Run(verdict, func(t *testing.T) {
+			t.Parallel()
+			h := newHarness(t)
+			h.asked1(1)
+			rc := h.snap().Readers.Of("s1-1")[0]
+			h.must(ReadStep(sprint.ReadReq{As: rc.Row, Verdict: verdict, Finding: "f", Sel: sprint.Sel{IDs: []string{rc.ID}}, Who: rc.Row}))
+			res := h.run(ReadStep(sprint.ReadReq{As: rc.Row, Return: true, Reason: "late", Sel: sprint.Sel{IDs: []string{rc.ID}}, Who: rc.Row}))
+			require.NotEmpty(t, res.Refused)
+			c := h.snap().Readers.Placed(rc.ID)
+			require.NotNil(t, c, "the reported read stays")
+			assert.Equal(t, verdict, c.Col)
+			assert.Empty(t, h.returnNotes())
+		})
+	}
 }
