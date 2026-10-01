@@ -136,10 +136,6 @@ func TestFleetPlaysPassSyntaxAndCheckOnTheFixture(t *testing.T) {
 		assert.Contains(t, loops, w)
 	}
 	assert.NotContains(t, loops, "WOULD-RETIRE member-local")
-	// CI over cards (docs/FLEET.md): the member's unit, and only it (the tick record
-	// launches no cards), is idle against the runners' units beside it
-	assert.Equal(t, 1, strings.Count(loops, "+CPUWeight=idle"), "one unit, the member's, is CPUWeight=idle:\n%s", loops)
-	assert.Contains(t, loops, "+RestartSec=10\n+# CI over cards", "the idle line is in the kept-alive member's [Service]")
 	assert.NotContains(t, loops, `\u0001`)
 	plist := play("loops.yml", append(check, "-e", "ansible_system=Darwin", "-e", "nova_launchd_domain=gui")...)
 	for _, w := range []string{
@@ -154,9 +150,6 @@ func TestFleetPlaysPassSyntaxAndCheckOnTheFixture(t *testing.T) {
 	} {
 		assert.Contains(t, plist, w)
 	}
-	// the member's plist, and only it, runs at background QoS on darwin
-	assert.Equal(t, 1, strings.Count(plist, "+<key>ProcessType</key>"), "one plist, the member's, has a ProcessType:\n%s", plist)
-	assert.Contains(t, plist, "+<key>ProcessType</key>\n+<string>Background</string>")
 	_, err := os.Stat(filepath.Join(home, ".config", "nova"))
 	assert.True(t, os.IsNotExist(err), "--check wrote the build fact")
 	_, err = os.Stat(filepath.Join(units, "nova-loop-old.service"))

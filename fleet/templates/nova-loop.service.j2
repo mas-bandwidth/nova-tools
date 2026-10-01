@@ -21,12 +21,6 @@ Type=oneshot
 {% if loop_system %}
 User={{ ansible_user_id }}
 {% endif %}
-{% if loop_cards | bool %}
-# CI over cards (docs/FLEET.md): this loop launches cards, so its whole cgroup is
-# idle against its siblings, the CI runners' units in the same slice; inside it the
-# loop (nice 0) still beats over its children (nice 15, nova-swarm native).
-CPUWeight=idle
-{% endif %}
 WorkingDirectory={{ nova_home }}
 Environment="HOME={{ nova_home }}"
 Environment="PATH={{ nova_loop_path }}"

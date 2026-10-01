@@ -110,10 +110,6 @@
               + (item['keys'] | map('regex_replace', '^', '--require=') | list) + ['--']) if item['keys'] else [] }}
         loop_exec: "{{ loop_secrets + loop_argv }}"
         loop_log: "{{ item.log | regex_replace('^~/', nova_home ~ '/') }}"
-        # A loop that launches cards (its record runs `nova-swarm member`, work or
-        # --reader) runs behind CI as a whole: CPUWeight=idle on linux, ProcessType
-        # Background on darwin (docs/FLEET.md, "CI over cards").
-        loop_cards: "{{ (item.argv[0] | basename) == 'nova-swarm' and (item.argv | length) > 1 and item.argv[1] == 'member' }}"
       loop: "{{ nova_loops }}"
       loop_control: { label: "{{ item.name }}" }
       become: "{{ loop_system }}"
