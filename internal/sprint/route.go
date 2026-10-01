@@ -248,6 +248,17 @@ func RouteStats(routes []Route, fleet *Table) []RouteStat {
 		out = append(out, RouteStat{Route: r})
 	}
 	walls := map[string][]time.Duration{}
+	// statOf is the row of a route's name, made on first meeting.
+	statOf := func(name string, pinned bool, model string) *RouteStat {
+		i, ok := at[name]
+		if !ok {
+			i = len(out)
+			at[name] = i
+			provider, m, _ := strings.Cut(model, "/")
+			out = append(out, RouteStat{Route: Route{Name: name, Provider: provider, Model: m}, Pinned: pinned})
+		}
+		return &out[i]
+	}
 	for _, c := range fleet.Column(Ready, Working, DoneOK, DoneFailed, Withdrawn) {
 		name := c.F(FieldRoute)
 		if name == "" {
@@ -257,23 +268,31 @@ func RouteStats(routes []Route, fleet *Table) []RouteStat {
 		if pinned {
 			name = RoutePin + ":" + c.F(FieldModel)
 		}
-		i, ok := at[name]
-		if !ok {
-			i = len(out)
-			at[name] = i
-			provider, model, _ := strings.Cut(c.F(FieldModel), "/")
-			out = append(out, RouteStat{Route: Route{Name: name, Provider: provider, Model: model}, Pinned: pinned})
+		// each take of the card the provider failed is an attempt of the route it ran on,
+		// failed, and counted apart (FieldProviderFailed; the card was dealt again after it)
+		for _, failed := range Split(c.F(FieldProviderFailed)) {
+			f, model := name, c.F(FieldModel)
+			if failed != RoutePin {
+				f = failed
+				if f != name {
+					model = "" // a route the card was drawn before: its row is the store's
+				}
+			}
+			st := statOf(f, pinned && failed == RoutePin, model)
+			st.Attempts++
+			st.Failed++
+			st.Provider++
 		}
-		st := &out[i]
+		if c.Col == Withdrawn && c.F(FieldProviderError) != "" {
+			continue // dealt again at the next deal: no take of it is on this route now
+		}
+		st := statOf(name, pinned, c.F(FieldModel))
 		st.Attempts++
 		switch c.F("ok") {
 		case "yes":
 			st.OK++
 		case "no":
 			st.Failed++
-			if strings.HasPrefix(c.F("report"), cardhdr.EndProvider) {
-				st.Provider++
-			}
 		}
 		t0, e0 := time.Parse(time.RFC3339, c.F("taken"))
 		t1, e1 := time.Parse(time.RFC3339, c.F("finished"))

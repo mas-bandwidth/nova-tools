@@ -270,6 +270,50 @@ func TestEndedNotOkCardIsFinishedFailed(t *testing.T) {
 	}
 }
 
+// A run the provider failed that left no result is finished failed with the kind
+// `provider failure` first and the provider's own reason, whatever the missing shape
+// says; the sprint deals that card again (tla/CardContract.tla, ProviderFailure).
+func TestAProviderFailedRunIsFinishedFailedWithTheProvidersKindAndReason(t *testing.T) {
+	t.Parallel()
+	g := newRig(Config{As: "m", Width: 2})
+	p := pk("c1")
+	p.Gen = 2
+	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 2, &p)))
+	_, err := g.tick(t) // restart: the child is ours now
+	require.NoError(t, err)
+	g.r.child("c1").end(Result{Report: "the child ended without a result", End: EndProvider, Provider: "provider: message=\"stream error\" server_error"})
+	g.s.reset()
+	_, err = g.tick(t)
+	require.NoError(t, err)
+	require.Equal(t, []string{"finish --as m c1@2 --report provider failure: provider: message=\"stream error\" server_error; the child ended without a result --failed --epoch 7"}, g.s.lines("finish"))
+}
+
+// Judge puts the provider's reason after the kind for a run with no result, leaves a
+// launch the provider never accepted (no reason) as it was, and never takes a finished
+// result from a card the provider failed after it.
+func TestJudgeNamesTheProviderForARunItFailed(t *testing.T) {
+	t.Parallel()
+	fin, why := Judge(Result{End: EndProvider, Provider: "provider: ended without a final message"}, Push{None: "nothing"})
+	require.Equal(t, FinishFailed, fin)
+	require.Equal(t, "provider failure: provider: ended without a final message", why)
+
+	fin, why = Judge(Result{End: EndProvider}, Push{None: "nothing"})
+	require.Equal(t, FinishFailed, fin)
+	require.Equal(t, "provider failure: no RESULT.md shape", why, "a launch the provider never accepted names no reason")
+
+	fin, why = Judge(Result{End: EndProvider, Provider: "provider: x", Shaped: true, Verdict: "ok"}, Push{Sha: fullSha})
+	require.Equal(t, FinishOK, fin, "a shaped ok result pushed is finished work")
+	require.Empty(t, why)
+
+	fin, why = Judge(Result{End: EndProvider, Provider: "provider: x"}, Push{Refused: "rejected"})
+	require.Equal(t, FinishFailed, fin)
+	require.Equal(t, "provider failure: push refused: rejected", why, "git's refusal is still said")
+
+	fin, why = Judge(Result{Provider: "provider: x"}, Push{None: "nothing"})
+	require.Equal(t, "no RESULT.md shape", why, "no provider end: the reason is the shape's")
+	require.Equal(t, FinishFailed, fin)
+}
+
 // TestFinishWithoutABranchInThePacketCarriesNone pins that --branch is the
 // packet's: with none there is nothing to push to, and the finish is failed,
 // no commit, naming no head and no branch.

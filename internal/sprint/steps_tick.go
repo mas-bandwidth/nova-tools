@@ -62,6 +62,23 @@ const MaxRedeals = 3
 // the deal that places it again counts that take, and unsets the mark.
 const FieldTakeEnded = "take_ended"
 
+// A take the provider failed ends like any take that ended without a finish: the card
+// is withdrawn with FieldTakeEnded and dealt again, never judged as failed work
+// (docs/SPEC-SPRINT.md, the work card's redeals; tla/CardContract.tla, ProviderFailure;
+// tla/DirtyTick.tla, RedealsAreEndedTakes). The work card keeps the last failure's line
+// (FieldProviderError, for the bound's judgment) and every route a take of it failed on
+// (FieldProviderFailed, one name a failed take, which the route stats count); the
+// member's control card counts the failures it reported (FieldProviderFailures, the
+// fleet table's provider column).
+const (
+	FieldProviderError    = "provider_error"
+	FieldProviderFailed   = "provider_failed"
+	FieldProviderFailures = "provider_failures"
+)
+
+// MaxProviderErrorBytes bounds the line FieldProviderError keeps.
+const MaxProviderErrorBytes = 200
+
 // FieldReturnedAttempt is the primary's attempt when the coordinator last
 // returned it to review (return): at that attempt the pump does not accept
 // it, and the judgment "returned to review" decides it.
@@ -467,7 +484,7 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	for _, c := range s.Work.Column(Ready) {
 		if wc := AtRedealBound(s, c); wc != nil {
 			conds = append(conds, cond{typ: NBound, stream: c.Row, card: wc.ID, primaries: []string{c.ID},
-				what: fmt.Sprintf("%s: attempt %s was redealt %d times, its bound, and is not dealt again; its history: nova-sprint log --card %s", wc.ID, wc.F("attempt"), wc.Int("redeals"), c.ID)})
+				what: fmt.Sprintf("%s: attempt %s was redealt %d times, its bound, and is not dealt again%s; its history: nova-sprint log --card %s", wc.ID, wc.F("attempt"), wc.Int("redeals"), providerWhy(wc), c.ID)})
 			continue
 		}
 		if IsSentinel(c) {
@@ -522,6 +539,18 @@ func AtRedealBound(s *Snapshot, pr *Card) *Card {
 		return wc
 	}
 	return nil
+}
+
+// providerWhy is what a bound's judgment adds when the take that ended last was the
+// provider's: the provider (the model id's first word) and the last error line
+// (tla/CardContract.tla, ProviderFailure).
+func providerWhy(wc *Card) string {
+	line := wc.F(FieldProviderError)
+	if line == "" {
+		return ""
+	}
+	provider, _, _ := strings.Cut(wc.F(FieldModel), "/")
+	return fmt.Sprintf(": the provider %s failed it, last error: %s", orDash(provider), line)
 }
 
 // redealBound says the withdrawn work card's next deal would count a take

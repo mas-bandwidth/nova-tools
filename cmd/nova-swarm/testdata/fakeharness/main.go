@@ -483,6 +483,22 @@ func main() {
 		_ = os.Remove(out)
 		_ = os.WriteFile(out, []byte("STEP 3 run the gate\nok\n"), 0o644)
 	}
+	// THE HARNESS'S OWN RECORD OF A RUN THE PROVIDER FAILED (cmd/nova-swarm/nativeprovider.go),
+	// written before the run ends however it ends. FAKE-STREAM-ERROR appends the two
+	// stream-error lines a real harness logged in its own log in the data home.
+	// FAKE-ENDS-ON-TOOL writes a session whose last assistant message finished `tool-calls`
+	// (the transcript stops on a tool result), FAKE-ENDS-ON-FINAL one whose last message is a
+	// final assistant message (`stop`). Each leaves the rest to the card: with FAKE-NORESULT
+	// the run ends clean and publishes nothing, without it the result is published.
+	if _, ok := directive(prompt, "FAKE-STREAM-ERROR"); ok {
+		writeProviderLog(data)
+	}
+	if _, ok := directive(prompt, "FAKE-ENDS-ON-TOOL"); ok {
+		writeSession(data, "tool-calls")
+	}
+	if _, ok := directive(prompt, "FAKE-ENDS-ON-FINAL"); ok {
+		writeSession(data, "stop")
+	}
 	if _, ok := directive(prompt, "FAKE-NORESULT"); ok {
 		os.Exit(0)
 	}
@@ -709,6 +725,39 @@ INSERT INTO message (data, time_created) VALUES (json_object(
 	cmd.Stdin = strings.NewReader(sql)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		fmt.Fprintf(os.Stderr, "fake harness: the usage database could not be written: %v: %s\n", err, strings.TrimSpace(string(out)))
+	}
+}
+
+// writeProviderLog appends two stream-error lines to the harness's own log in the data
+// home, in the harness's own format.
+func writeProviderLog(data string) {
+	path := filepath.Join(data, "opencode", "log", "opencode.log")
+	_ = os.MkdirAll(filepath.Dir(path), 0o755)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if err != nil {
+		return
+	}
+	defer f.Close()
+	for i := 0; i < 2; i++ {
+		fmt.Fprintf(f, "timestamp=2030-01-02T03:04:0%d.000Z level=ERROR run=ab12cd34 message=\"stream error\" providerID=fake modelID=fake-model session.id=ses_x error.error.type=server_error \"Streaming response failed: [internal_error] Stream error: h2 protocol error\"\n", i)
+	}
+}
+
+// writeSession writes a session into the harness's database in the data home: a user
+// message, an assistant message that finished on a tool call, and a last assistant message
+// with the finish given.
+func writeSession(data, finish string) {
+	path := openCodeDB(data)
+	_ = os.MkdirAll(filepath.Dir(path), 0o755)
+	now := time.Now().UnixMilli()
+	sql := "CREATE TABLE IF NOT EXISTS message (id INTEGER PRIMARY KEY, data TEXT NOT NULL, time_created INTEGER NOT NULL);\n" +
+		fmt.Sprintf("INSERT INTO message (data, time_created) VALUES ('{\"role\":\"user\"}', %d);\n", now) +
+		fmt.Sprintf("INSERT INTO message (data, time_created) VALUES ('{\"role\":\"assistant\",\"finish\":\"tool-calls\"}', %d);\n", now+1) +
+		fmt.Sprintf("INSERT INTO message (data, time_created) VALUES ('{\"role\":\"assistant\",\"finish\":\"%s\"}', %d);\n", finish, now+2)
+	cmd := exec.Command("sqlite3", path)
+	cmd.Stdin = strings.NewReader(sql)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		fmt.Fprintf(os.Stderr, "fake harness: the session could not be written: %v: %s\n", err, strings.TrimSpace(string(out)))
 	}
 }
 

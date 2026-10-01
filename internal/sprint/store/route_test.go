@@ -9,7 +9,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
@@ -216,7 +215,7 @@ func TestARedealLeavesOutTheRouteItWasDealtOn(t *testing.T) {
 	}
 }
 
-// Three routes, three attempts each failed by the provider: every attempt leaves out
+// Three routes, three attempts each failed: every attempt leaves out
 // every route drawn before, so the three attempts run on the three routes.
 func TestTheExclusionCoversEveryAttempt(t *testing.T) {
 	t.Parallel()
@@ -234,7 +233,7 @@ func TestTheExclusionCoversEveryAttempt(t *testing.T) {
 		gens := map[string]int{wc.ID: wc.Int("gen")}
 		h.must(TakeStep(sprint.TakeReq{As: wc.Row, Sel: sprint.Sel{IDs: []string{wc.ID}}, Gens: gens, Who: wc.Row}))
 		h.must(FinishStep(sprint.FinishReq{As: wc.Row, Sel: sprint.Sel{IDs: []string{wc.ID}}, Gens: gens, Failed: true,
-			Report: cardhdr.EndProvider + ": 529", Who: wc.Row}))
+			Report: "the model gave up", Who: wc.Row}))
 		h.must(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Fix: "again", Who: "tester"}))
 	}
 	assert.ElementsMatch(t, []string{"pro-a", "pro-b", "pro-c"}, seen)
@@ -316,7 +315,7 @@ func TestALaterAttemptLeavesOutTheRoutesAlreadyDrawn(t *testing.T) {
 		gens := map[string]int{w1.ID: w1.Int("gen")}
 		h.must(TakeStep(sprint.TakeReq{As: w1.Row, Sel: sprint.Sel{IDs: []string{w1.ID}}, Gens: gens, Who: w1.Row}))
 		h.must(FinishStep(sprint.FinishReq{As: w1.Row, Sel: sprint.Sel{IDs: []string{w1.ID}}, Gens: gens, Failed: true,
-			Report: cardhdr.EndProvider + ": 529 overloaded", Usage: "wall=12.00s budget=300/1000", Who: w1.Row}))
+			Report: "the model gave up", Usage: "wall=12.00s budget=300/1000", Who: w1.Row}))
 		h.must(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Fix: "again", Who: "tester"}))
 		cards := h.workCards()
 		w2 := cards["s1-1.w2"]
@@ -330,13 +329,13 @@ func TestALaterAttemptLeavesOutTheRoutesAlreadyDrawn(t *testing.T) {
 
 		line := sprint.AttemptLine(cards["s1-1.w1"])
 		for _, want := range []string{"ATTEMPT 1 ", "route=" + first, "model=prov-" + first + "/model-" + first, "member=" + w1.Row,
-			"usage=wall=12.00s budget=300/1000", "end=failed: " + cardhdr.EndProvider} {
+			"usage=wall=12.00s budget=300/1000", "end=failed: the model gave up"} {
 			assert.Contains(t, line, want)
 		}
 		for _, x := range sprint.RouteStats(routes, h.snap().Fleet) {
 			if x.Route.Name == first {
 				assert.Equal(t, 1, x.Failed)
-				assert.Equal(t, 1, x.Provider, "the provider's failure counts apart")
+				assert.Equal(t, 0, x.Provider, "the card's own failure is not the provider's")
 			}
 		}
 		notes, _, err := h.st.B.NotesSince(h.ctx, "", 1000)

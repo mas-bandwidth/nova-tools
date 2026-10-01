@@ -93,6 +93,11 @@ type Result struct {
 	// reported with the finish onto the attempt's record.
 	End   string
 	Usage string
+	// Provider is why End is EndProvider, as native read it from the harness's own log
+	// or transcript: the first error line, or `ended without a final message`
+	// (docs/SPEC-CARD-CONTRACT.md section 4; tla/CardContract.tla, ProviderFailure).
+	// "" when the end was a launch the provider never accepted, which names no reason.
+	Provider string
 }
 
 // The ends Judge names first in a failed finish.
@@ -116,7 +121,10 @@ const (
 // when the result has the shape, its verdict is ok, and the member pushed a
 // commit the child made; otherwise failed, with the reason. Every work card
 // ends with a commit: a child with nothing to do says `verdict: nothing`, and
-// that is a failed finish, nothing to do, for the coordinator to judge.
+// that is a failed finish, nothing to do, for the coordinator to judge. A run the
+// provider failed that left no result is failed with the provider's reason, its kind
+// `provider failure` first: the sprint deals that card again and never judges it
+// (tla/CardContract.tla, ProviderFailure).
 func Judge(r Result, pu Push) (fin Finish, why string) {
 	defer func() {
 		if fin == FinishFailed && r.End != "" {
@@ -126,6 +134,10 @@ func Judge(r Result, pu Push) (fin Finish, why string) {
 	switch {
 	case pu.Refused != "":
 		return FinishFailed, "push refused: " + pu.Refused
+	case r.End == EndProvider && r.Provider != "" && !r.Shaped:
+		// the provider failed the run and it left no result: the reason is the
+		// provider's, never the shape's, and the sprint deals the card again
+		return FinishFailed, r.Provider
 	case !r.Shaped:
 		return FinishFailed, "no RESULT.md shape"
 	case r.Verdict == "nothing":

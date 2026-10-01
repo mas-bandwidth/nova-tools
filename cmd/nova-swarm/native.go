@@ -811,6 +811,10 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// symlink planted there by an earlier run of the same card would carry the child's
 	// output out of the wall, through a process that has no wall (security#30's class).
 	outLog := filepath.Join(jobDir, "harness-output.log")
+	// where the harness's own log stands before this run: what it appends after is this
+	// run's (nativeprovider.go), the slot keeping one log for every run it hosts
+	providerMark := fileSize(filepath.Join(dataHome, filepath.FromSlash(harnessLogFile)))
+	runStart := time.Now()
 	harnessOut, err := os.OpenFile(outLog, os.O_WRONLY|os.O_CREATE|os.O_APPEND|swarm.ONoFollow, 0o644)
 	if err != nil {
 		log.Close()
@@ -1243,10 +1247,12 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// re-dealt to the same route. The machinery's own ends come first; what is left, when
 	// the harness's last words are the provider's, is handed back to the next route in
 	// $NOVA_SWARM_ROUTES with the failed one named for the re-deal to avoid.
+	handedBack := false
 	if !res.lost && !res.idled && !res.terminated && res.wallReport == "" && (res.wallRefusal == swarm.WallRefusal{}) {
 		if raw, err := os.ReadFile(outLog); err == nil {
 			if h, ok := swarm.ProviderHandback(swarm.ProviderExit{Tail: raw, Job: jobDir, RC: res.rc, Wall: time.Duration(res.wallSeconds * float64(time.Second)), Route: cfg.model, Routes: swarm.ParseRouteList(os.Getenv(swarm.RoutesEnv))}); ok {
 				fmt.Fprintln(errOut, oneline.Escape(h.Line(cfg.label)))
+				handedBack = true
 			}
 		}
 	}
@@ -1268,6 +1274,21 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 				fmt.Fprintf(errOut, "NATIVE NOTE: the asked report could not be written: %s\n", oneline.Escape(err.Error()))
 			} else if wrote {
 				fmt.Fprintf(errOut, "NATIVE NOTE: the card ended its last turn with a question and published no report of its own; one naming the question was written to %s\n", oneline.Field(path))
+			}
+		}
+	}
+	// A PROVIDER FAILURE IS NOT THE CARD'S (nativeprovider.go; tla/CardContract.tla,
+	// ProviderFailure). The machinery's own ends came first, and so did the question: what
+	// is left is a run that ended with no result, a budget it was not stopped on, and the
+	// harness's own record saying the provider failed it (a provider error in its log, or
+	// a transcript that stops on a tool result after a clean exit). The line names the
+	// reason; the member finishes the take `provider failure` and the sprint deals the
+	// card again. A run with neither is `no-result` as before.
+	if !res.lost && !res.idled && !res.terminated && !handedBack && res.stopped == "" && res.wallReport == "" &&
+		(res.wallRefusal == swarm.WallRefusal{}) && (res.shellDenial == swarm.ShellDenial{}) {
+		if _, published := swarm.FindCardResult(jobDir); !published {
+			if why := providerEnd(dataHome, providerMark, runStart, res.rc); why != "" {
+				fmt.Fprintln(errOut, oneline.Escape(providerLine(cfg.label, res.wallSeconds, cfg.model, why)))
 			}
 		}
 	}

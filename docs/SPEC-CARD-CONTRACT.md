@@ -19,7 +19,7 @@ and opens the pull request). The model is `tla/CardContract.tla`.
 | 1. the frame | the member writes `<slot>.frame.json` from the packet and the brief's header lines: the repository, the base ref, the commit to stage (the base, or for attempt 2 and later the previous attempt's pushed head, `base_head` in the packet, or for a read the head under read), the branch, the attempt, the previous head, why the attempt exists (`why`), the readers' finding and the coordinator's fix, the tier, the model | `TestTheFrameIsThePackets`, `TestALaterAttemptStartsFromThePreviousPushedHead` |
 | 2. staging | `native --frame` stages that commit on that branch (never the brief's prose, never a branch name that never reached origin) and writes `JOB.md` into the job directory | `TestStageCardStagesTheFramesCommitOnItsBranch` (functional tier) |
 | 3. the profile | the child's model family picks a profile; the profile writes the shims first on the child's `PATH` and the text of `JOB.md` | `internal/cardcontract`: unit tests of the text and the shape, functional tests of every shim verb form |
-| 4. the finish | the member reads the result shape, pushes the head, opens the pull request, and judges the finish: ok, failed with its reason, or reaped | `TestJudgeIsTheFinishRule` and the push tests of `internal/member`, the twin tests of `cmd/nova-sprint`, `tla/CardContract.tla` |
+| 4. the finish | the member reads the result shape, pushes the head, opens the pull request, and judges the finish: ok, failed with its reason, or reaped | `TestJudgeIsTheFinishRule`, `TestJudgeNamesTheProviderForARunItFailed` and the push tests of `internal/member`, the twin tests of `cmd/nova-sprint`, `tla/CardContract.tla` |
 | 5. end to end | a scripted child (clone, branch, commit, push, `gh pr create`) runs under the real member and native on the mem twin with a local bare origin, once per profile | `TestTheScriptedChildEndToEnd` (functional tier) |
 
 ## 2. The frame and JOB.md
@@ -99,8 +99,29 @@ A work card's finish is judged in one place, `member.Judge`, cited from the mode
   `verdict <word>`, `no commit: <why>`, `push refused: <git's line>`; a failed finish passes
   `--failed` and opens the failed-work judgment, never review, and passes `--head` and
   `--branch` only when a push landed;
+- **provider failure**, a failed finish of its own kind, when the run ended with no result and
+  the harness's own record says the provider failed it (below); its reason is
+  `provider failure: provider: <why>`, a refused push still named first, and the sprint treats it
+  as an ended take (docs/SPEC-SPRINT.md, the work card's redeals), never as the card's failure;
 - **reaped** when the claim moved under the child (a clear, a redeal) or the card left the
   member's queue (a drop, a return): nothing is reported, because the result is nobody's.
+
+**A provider failure is not the card's** (`tla/CardContract.tla`, `ProviderFailure`; its
+invariants `ProviderIsNotFailedWork`, `RedealBound`, `BoundJudgedOnce` and
+`RedealAvoidsFailedRoute`, each with a reversed witness). After a run, native reads the
+harness's own record in the job's data home, at the places the harness profile names: its log
+(`opencode/log/opencode.log`), from where it stood when the run began and bounded to its last
+64 KiB, and its session database (`opencode/opencode.db`, the `message` table). A run that ended
+with no result, by no end of the machinery's (the deadline, a TERM, the watch, the wall, the
+budget, a lost response, a question), is a provider failure when either holds: the log carries
+a provider error written by this run, an `ERROR` line that says a stream error, `server_error`,
+a rate limit, an overload or an HTTP 5xx status, and the reason is `provider: <the first such
+line from its message on, one line, cut to 200 bytes>`; or the run exited 0 and the session's
+last message is not a final assistant message (the last assistant message finished
+`tool-calls`, or none finished), and the reason is `provider: ended without a final message`.
+Native prints it as `NATIVE PROVIDER-FAIL label=<l> wall=<s>s route=<model> reason=<why>`, and
+the member reads the line (`member.Result`'s `Provider`) and judges the finish. A run with no
+result and no provider error that ends with a final assistant message stays `no-result`.
 
 The head the member pushes is the result's `head`, else the last head the git shim recorded in
 `<job>/.sprint/pushed.tsv`. The member pushes from its own bare repository, fetching every

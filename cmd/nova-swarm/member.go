@@ -410,6 +410,11 @@ func nativeEnd(log []byte) string {
 	return ""
 }
 
+// nativeProviderWhy is the reason of a run the provider failed (nativeprovider.go's
+// PROVIDER-FAIL line): the rest of the line after reason=. The launch grace's
+// PROVIDER-5XX line names none.
+var nativeProviderWhy = regexp.MustCompile(`(?m)\bNATIVE PROVIDER-FAIL \S.* reason=(.+)$`)
+
 var (
 	nativeProvider = regexp.MustCompile(`\bNATIVE PROVIDER-`)
 	nativeStopped  = regexp.MustCompile(`\bNATIVE \S+ .*\bstopped=`)
@@ -426,7 +431,7 @@ var (
 func (c *nativeChild) Result() member.Result {
 	c.once.Do(func() {
 		ran := false
-		var end, usage string
+		var end, usage, provider string
 		if b, err := os.ReadFile(c.logPath); err == nil {
 			if m := nativeRC.FindSubmatch(b); m != nil {
 				ran = string(m[1]) == "OK" && string(m[2]) == "0" && string(m[3]) == "ok"
@@ -435,6 +440,9 @@ func (c *nativeChild) Result() member.Result {
 				usage = "wall=" + string(m[1]) + " budget=" + string(m[2])
 			}
 			end = nativeEnd(b)
+			if m := nativeProviderWhy.FindSubmatch(b); m != nil {
+				provider = strings.TrimSpace(string(m[1]))
+			}
 		}
 		path := newestResult(c.results)
 		var raw []byte
@@ -473,7 +481,7 @@ func (c *nativeChild) Result() member.Result {
 				report = "the child ended without a result (see " + c.logPath + ")"
 			}
 		}
-		c.result = member.Result{Ran: ran, OK: ran, Shaped: cr.Shaped, Verdict: verdict, Head: head, Report: report, Title: cr.Title, Body: cr.Body, End: end, Usage: usage}
+		c.result = member.Result{Ran: ran, OK: ran, Shaped: cr.Shaped, Verdict: verdict, Head: head, Report: report, Title: cr.Title, Body: cr.Body, End: end, Usage: usage, Provider: provider}
 	})
 	return c.result
 }
