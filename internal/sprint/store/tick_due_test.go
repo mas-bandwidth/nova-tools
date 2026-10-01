@@ -51,7 +51,7 @@ func TestTheTickResolvesEveryWaiterOfOneNeedPastTheBound(t *testing.T) {
 	if res.Due != 50 {
 		t.Fatalf("the first tick: due %d, want 50", res.Due)
 	}
-	if line := h.st.MachineLine(h.ctx); line != "machine: running (catching up: 50 moves due)" {
+	if line := h.st.MachineLine(h.ctx); line != "machine: running" {
 		t.Fatalf("the line after a bounded tick: %q", line)
 	}
 	h.tick(time.Second)

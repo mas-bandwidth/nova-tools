@@ -375,7 +375,7 @@ func TestAStuckOperationIsReportedOnceByTheFirstWriterAfterRepair(t *testing.T) 
 	if _, err := h.st.Tick(h.ctx); err == nil || !strings.Contains(err.Error(), "could not finish it") {
 		t.Fatalf("the tick with an operation it cannot finish: %v", err)
 	}
-	if line := h.st.MachineLine(h.ctx); !strings.Contains(line, "last tick failed") {
+	if line := h.st.MachineLine(h.ctx); line != "machine: running" {
 		t.Fatalf("the machine line: %s", line)
 	}
 	h.m.Fail = nil

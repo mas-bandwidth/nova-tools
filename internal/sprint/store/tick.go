@@ -200,11 +200,10 @@ func (st *Store) putMachine(ctx context.Context, m Machine) error {
 	return kv.SetKeyShowing(ctx, keyMachine, string(b), st.Names.View(), ViewState(m))
 }
 
-// MachineLine is the machine's part of the sprint line: running, running
-// and catching up when the last tick left moves due past its bounds, STOPPED,
-// or STOPPED because a RUNNING machine has not ticked for MachineSilence (the
-// state word alone: how long it has been silent is the inbox's judgment); a
-// last tick that failed is shown with its error.
+// MachineLine is the machine's part of the sprint line: the state word alone,
+// running, STOPPED (also a RUNNING machine that has not ticked for
+// MachineSilence) or DONE, with no suffix of any kind: a silent loop, a failing
+// tick and moves due are the inbox's judgments.
 func MachineLine(now time.Time, m Machine, hb Heartbeat) string {
 	if m.Done() {
 		return "machine: " + DoneState
@@ -216,16 +215,10 @@ func MachineLine(now time.Time, m Machine, hb Heartbeat) string {
 	if m.Since.After(last) {
 		last = m.Since
 	}
-	line := "machine: running"
-	if gap := now.Sub(last); gap > MachineSilence {
-		line = "machine: STOPPED"
-	} else if hb.Due > 0 && !hb.At.Before(m.Since) {
-		line = fmt.Sprintf("machine: running (catching up: %d moves due)", hb.Due)
+	if now.Sub(last) > MachineSilence {
+		return "machine: STOPPED"
 	}
-	if hb.Error != "" && !hb.At.Before(m.Since) {
-		line += "; last tick failed: " + hb.Error
-	}
-	return line
+	return "machine: running"
 }
 
 func (st *Store) kv() (KV, error) {
