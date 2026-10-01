@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
@@ -194,21 +196,16 @@ func TestLintAdvisesAnOversizeCardAndDoesNotRefuseIt(t *testing.T) {
 		t.Fatalf("a clean card still carries its size and the cap: %q", stdout)
 	}
 	// the note says where the refusal is: nova-sprint add holds a brief to 16384 bytes
-	if !strings.Contains(stdout, "nova-sprint add refuses a brief over 16384 bytes") {
-		t.Fatalf("the size note names the sprint's refusal bound: %q", stdout)
-	}
+	assert.Contains(t, stdout, "nova-sprint add refuses a brief over 16384 bytes")
 }
 
 // The lint's two numbers agree with the sprint's: 12000 is the advice, and the bound the
 // note names is the one nova-sprint add enforces (store.MaxBriefBytes), above the advice.
 func TestTheSizeNoteAgreesWithTheSprintsBriefBound(t *testing.T) {
 	t.Parallel()
-	if cardRefusedBytes != store.MaxBriefBytes {
-		t.Fatalf("the note names %d, the sprint refuses over %d", cardRefusedBytes, store.MaxBriefBytes)
-	}
-	if cardMaxBytes != 12000 || cardMaxBytes >= cardRefusedBytes {
-		t.Fatalf("the advice %d sits under the bound %d", cardMaxBytes, cardRefusedBytes)
-	}
+	assert.Equal(t, store.MaxBriefBytes, cardRefusedBytes, "the note names the bound the sprint enforces")
+	assert.Equal(t, 12000, cardMaxBytes)
+	assert.Less(t, cardMaxBytes, cardRefusedBytes, "the advice sits under the bound")
 }
 
 // A card that is BOTH over the ceiling and drifting is refused for the drift alone, and the

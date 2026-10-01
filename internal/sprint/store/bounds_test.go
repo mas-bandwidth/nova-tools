@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
@@ -46,21 +48,17 @@ func TestACardTextOverTheBoundRefusesTheStepWhole(t *testing.T) {
 	}
 	why := res.Refused[0].Why
 	for _, want := range []string{"field brief", fmt.Sprintf("is %d bytes, over the bound of 16384 bytes", MaxBriefBytes+1), "a child's whole brief", "shorten it, or point to a file or a comment"} {
-		if !strings.Contains(why, want) {
-			t.Fatalf("the refusal has no %q: %s", want, why)
-		}
+		assert.Contains(t, why, want)
 	}
-	if strings.Contains(why, "kept changing") {
-		t.Fatalf("the refusal: %s", why)
-	}
+	assert.NotContains(t, why, "kept changing")
 	h.nothingWritten(before)
 	// a brief of 12000 bytes (the card lint's advice) and one at the bound are admitted whole
 	h.must(AddStep(sprint.AddReq{Stream: "s2", Count: 2, Brief: strings.Repeat("b", 12000)}))
 	h.must(AddStep(sprint.AddReq{Stream: "s3", Count: 2, Brief: strings.Repeat("b", MaxBriefBytes)}))
 	// every other text field keeps 8 KiB: the brief's room is the brief's alone
-	if TextBound("fix") != MaxCardTextBytes || TextBound("did") != MaxCardTextBytes || TextBound("brief") != 16<<10 {
-		t.Fatalf("the bounds: brief %d fix %d did %d", TextBound("brief"), TextBound("fix"), TextBound("did"))
-	}
+	assert.Equal(t, MaxCardTextBytes, TextBound("fix"))
+	assert.Equal(t, MaxCardTextBytes, TextBound("did"))
+	assert.Equal(t, 16<<10, TextBound("brief"))
 }
 
 // S2 (a). A step the table layer's own validation refuses (a field value
