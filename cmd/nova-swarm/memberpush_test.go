@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -206,6 +207,67 @@ func TestAGitThatRefusesThePushIsRefused(t *testing.T) {
 	g.git = (&recordGit{refusePush: line}).run
 	assert.Equal(t, member.Push{Refused: line}, g.Push(b.p, member.Result{Head: head}))
 	assert.Empty(t, b.originHas(t, "sprint/c1"))
+}
+
+// rejectGit is a git whose first n pushes origin rejects on its own side, git's
+// `[remote rejected]` line; every other git, and the pushes after, run.
+type rejectGit struct {
+	mu     sync.Mutex
+	reject int
+	pushes int
+}
+
+func (r *rejectGit) run(ctx context.Context, o gitrun.Options, args ...string) (gitrun.Result, error) {
+	if slices.Contains(args, "push") {
+		r.mu.Lock()
+		r.pushes++
+		rejected := r.pushes <= r.reject
+		r.mu.Unlock()
+		if rejected {
+			return gitrun.Result{Stdout: []byte("To the origin\n!\t0123:refs/heads/sprint/c1\t[remote rejected] (failed)\nDone\n")}, assert.AnError
+		}
+	}
+	return gitrun.Run(ctx, o, args...)
+}
+
+// A push origin rejected on its own side is the remote's failure, not the
+// commit's: it is sent again after a wait, and the commit lands. Origin rejecting
+// it every time is the refusal, with git's line, after the last wait; a push
+// refused for the commit itself is never sent again.
+func TestAPushTheRemoteRejectedIsSentAgain(t *testing.T) {
+	t.Parallel()
+	b := newPushBench(t)
+	head := b.commit(t, "the work\n")
+	var waits []time.Duration
+	g := b.pusher()
+	twice := &rejectGit{reject: 2}
+	g.git, g.sleep = twice.run, func(d time.Duration) { waits = append(waits, d) }
+	require.Equal(t, member.Push{Sha: head}, g.Push(b.p, member.Result{Head: head}))
+	assert.Equal(t, 3, twice.pushes, "rejected twice, landed on the third")
+	assert.Equal(t, pushWaits[:2], waits)
+	assert.Equal(t, head, b.originHas(t, "sprint/c1"))
+
+	b2 := newPushBench(t)
+	head2 := b2.commit(t, "the work\n")
+	waits = nil
+	g2 := b2.pusher()
+	always := &rejectGit{reject: 100}
+	g2.git, g2.sleep = always.run, func(d time.Duration) { waits = append(waits, d) }
+	got := g2.Push(b2.p, member.Result{Head: head2})
+	assert.Contains(t, got.Refused, "[remote rejected]")
+	assert.Equal(t, len(pushWaits)+1, always.pushes)
+	assert.Equal(t, pushWaits, waits)
+	assert.Empty(t, b2.originHas(t, "sprint/c1"))
+
+	b3 := newPushBench(t)
+	head3 := b3.commit(t, "the work\n")
+	waits = nil
+	g3 := b3.pusher()
+	rec := &recordGit{refusePush: "!\t0123:refs/heads/sprint/c1\t[rejected] (non-fast-forward)"}
+	g3.git, g3.sleep = rec.run, func(d time.Duration) { waits = append(waits, d) }
+	got = g3.Push(b3.p, member.Result{Head: head3})
+	assert.Contains(t, got.Refused, "[rejected]")
+	assert.Empty(t, waits, "a push refused for the commit is not sent again")
 }
 
 // What is not pushed, each said: a head that is not a sha, a branch that is
