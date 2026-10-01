@@ -267,10 +267,6 @@ var swarmAudit = audit.Config{
 		// POSTs the state and the four questions and returns typed answers, with
 		// the key travelling only on the Authorization header and never printed.
 		`"math"`, `"sort"`,
-		// diskfree_windows.go: windows is one call, GetDiskFreeSpaceEx, that returns the free
-		// bytes of a volume as a number; it holds no writer and writes no stream, and the
-		// number reaches a line only through the member's own %.1f format (slotclean.go).
-		`"golang.org/x/sys/windows"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/decide"`,
 		// testguard (bench.go) is the host guard: one atomic load on the way to an ssh
 		// child, and nothing at all when NOVA_TEST_NO_HOST is unset, which is every

@@ -2,17 +2,10 @@
 
 package main
 
-import "golang.org/x/sys/windows"
+import "errors"
 
-// diskFree is the bytes the caller may still use on the volume holding path.
-func diskFree(path string) (uint64, error) {
-	p, err := windows.UTF16PtrFromString(path)
-	if err != nil {
-		return 0, err
-	}
-	var free uint64
-	if err := windows.GetDiskFreeSpaceEx(p, &free, nil, nil); err != nil {
-		return 0, err
-	}
-	return free, nil
+// diskFree is not measured on Windows: a Windows machine is a client of the swarm, never a
+// bench (windowsIsNotABench), so a member there refuses to start a card, saying why.
+func diskFree(string) (uint64, error) {
+	return 0, errors.New("free disk is not measured on Windows, which is a client of the swarm and never a bench")
 }

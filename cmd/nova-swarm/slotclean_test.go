@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -37,15 +38,31 @@ func newPool(t *testing.T) *pool {
 	require.NoError(t, os.MkdirAll(p.slots, 0o755))
 	require.NoError(t, os.MkdirAll(p.results, 0o755))
 	p.r = &nativeRunner{root: root, slots: p.slots, resultsRoot: p.results, stderr: p.errb}
+	// what a test keeps read-only is made writable again before the temp dir is removed
+	t.Cleanup(func() {
+		_ = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+			if err == nil && d.Type()&fs.ModeSymlink == 0 {
+				_ = os.Chmod(path, 0o755) // ignored: best effort; the temp dir's own removal reports what is left
+			}
+			return nil
+		})
+	})
 	return p
 }
 
 // launch stages a fake launch of card at gen as the member would leave it: the directory
-// with a checkout, the small files beside it and a result; its activity is at.
+// with a checkout holding a module cache as Go leaves one (directories 0555, files 0444),
+// the small files beside it and a result; its activity is at.
 func (p *pool) launch(card string, gen int, at time.Time) string {
 	p.t.Helper()
 	name := launchName(member.Packet{Card: card, Kind: "work", Gen: gen, Epoch: 1})
 	write(p.t, filepath.Join(p.slots, name, "jobs", card, "repo", "main.go"), "package main\n")
+	mod := filepath.Join(p.slots, name, "jobs", card, "gomodcache", "example.com", "mod@v1.0.0")
+	write(p.t, filepath.Join(mod, "mod.go"), "package mod\n")
+	require.NoError(p.t, os.Chmod(filepath.Join(mod, "mod.go"), 0o444))
+	for d := mod; d != filepath.Join(p.slots, name, "jobs", card); d = filepath.Dir(d) {
+		require.NoError(p.t, os.Chmod(d, 0o555))
+	}
 	for _, sib := range []string{".native.log", ".card.md", ".frame.json"} {
 		write(p.t, filepath.Join(p.slots, name+sib), "kept\n")
 	}
@@ -74,9 +91,10 @@ func TestAnEndedLaunchLeavesNoCheckout(t *testing.T) {
 	t.Parallel()
 	p := newPool(t)
 	name := p.launch("c1", 1, time.Now())
-	ro := filepath.Join(p.slots, name, "jobs", "c1", "modcache")
-	write(t, filepath.Join(ro, "mod.go"), "package mod\n")
-	require.NoError(t, os.Chmod(ro, 0o555))
+	ro := filepath.Join(p.slots, name, "jobs", "c1", "gomodcache")
+	fi, err := os.Stat(ro)
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0o555), fi.Mode().Perm(), "the rig's module cache is read-only")
 	p.r.started(name)
 	p.r.Ended(member.Packet{Card: "c1", Kind: "work", Gen: 1, Epoch: 1}, false)
 	assert.False(t, p.exists(name), "the launch's directory is removed")
@@ -180,7 +198,7 @@ func TestTheDiskFloorRefusesToStartAndSaysWhy(t *testing.T) {
 	}{
 		{"above the floor", 120 * gib, nil, true, "is 120.0 GiB, above the floor of 100 GiB"},
 		{"at the floor", 100 * gib, nil, true, "above the floor"},
-		{"under the floor", 42 * gib, nil, false, "is 42.0 GiB, under the floor of 100 GiB; no card is started until it is above; run: free space on that volume, or start the member with a lower --disk-floor"},
+		{"under the floor", 42 * gib, nil, false, "is 42.0 GiB, under the floor of 100 GiB; no card is started until it is above; run: free disk on that volume, or start the member with a lower --disk-floor"},
 		{"unreadable", 0, errors.New("statfs: no such file"), false, "could not be read (statfs: no such file); no card is started until it can"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

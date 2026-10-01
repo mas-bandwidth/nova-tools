@@ -298,7 +298,8 @@ type nativeRunner struct {
 	stderr                                                    io.Writer
 	env                                                       []string // added to this process's environment: none in production, a test's
 	pass                                                      []string // the secret names handed to native (--pass, the worker's secret)
-	live, kept                                                map[string]bool // launches started and not yet ended; failed ones ended and kept (slotclean.go)
+
+	live, kept map[string]bool // launches started and not yet ended; failed ones ended and kept (slotclean.go)
 }
 
 // started marks a launch running, so no prune of the pool touches its directory until the

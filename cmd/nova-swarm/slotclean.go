@@ -29,7 +29,9 @@ import (
 // pid file names a live process, and never one another process may still be finishing (any
 // activity, the directory's or its native log's, in the last leftoverIdle). Removal is by
 // name, one launch name directly under the slots directory, never through a link
-// (safepath.RemoveUnderRoots).
+// (safepath.RemoveUnderRoots, which, once the path is placed under the slots, makes the tree
+// writable without following a link and then removes it: a Go module cache in a job holds
+// directories 0555 and files 0444, which a plain recursive remove cannot delete inside).
 
 // keepFailed is how many failed launches' directories a pool keeps for inspection.
 const keepFailed = 5
@@ -137,7 +139,7 @@ func (r *nativeRunner) removeLaunch(name string) error {
 const gib = 1 << 30
 
 // diskRoom is the member's Room (member.Config): the free bytes on the slots' volume against
-// the floor, read once a tick before any child is started; a volume whose free space cannot
+// the floor, read once a tick before any child is started; a volume whose free bytes cannot
 // be read refuses too. free is diskFree, a test's fake.
 func diskRoom(slots string, floorGiB int, free func(string) (uint64, error)) func() (bool, string) {
 	return func() (bool, string) {
@@ -146,7 +148,7 @@ func diskRoom(slots string, floorGiB int, free func(string) (uint64, error)) fun
 			return false, fmt.Sprintf("the free disk on the volume of %s could not be read (%s); no card is started until it can; run: df %s", oneline.Field(slots), oneline.Err(err), oneline.Field(slots))
 		}
 		if n < uint64(floorGiB)*gib {
-			return false, fmt.Sprintf("free disk on the volume of %s is %.1f GiB, under the floor of %d GiB; no card is started until it is above; run: free space on that volume, or start the member with a lower --disk-floor",
+			return false, fmt.Sprintf("free disk on the volume of %s is %.1f GiB, under the floor of %d GiB; no card is started until it is above; run: free disk on that volume, or start the member with a lower --disk-floor",
 				oneline.Field(slots), float64(n)/gib, floorGiB)
 		}
 		return true, fmt.Sprintf("free disk on the volume of %s is %.1f GiB, above the floor of %d GiB", oneline.Field(slots), float64(n)/gib, floorGiB)
