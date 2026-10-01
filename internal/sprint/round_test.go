@@ -3,6 +3,7 @@ package sprint
 import (
 	"fmt"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -25,6 +26,75 @@ func propsAnswer(t *Table, names []string) map[string]string {
 		}
 	}
 	return out
+}
+
+// fleetWorld is a world of the members up at the width (0: the default) and
+// n ready primaries in stream s1.
+func fleetWorld(t *testing.T, primaries, width int, members ...string) *world {
+	t.Helper()
+	w := newWorld(t, "reader-a")
+	for _, m := range members {
+		w.must(FleetStep(w.s, FleetReq{Op: "up", Member: m, Width: width}))
+	}
+	if primaries > 0 {
+		w.must(Add(w.s, AddReq{Stream: "s1", Count: primaries}))
+	}
+	return w
+}
+
+// part runs one part of the tick (steps_tick.go) on the world's state and
+// applies its plan.
+func (w *world) part(fn func(*Snapshot, TickReq) (Plan, int), r TickReq) Plan {
+	w.t.Helper()
+	p, _ := fn(w.s, r)
+	return w.must(p)
+}
+
+// place moves a card to row and column in the table, as a write of the store
+// would.
+func (w *world) place(tb *Table, id, row, col string) {
+	w.t.Helper()
+	c := tb.Card(id)
+	if c == nil {
+		w.t.Fatalf("no card %s in %s", id, tb.Name)
+	}
+	c.Row, c.Col = row, col
+	c.Rev++
+	tb.cells, tb.byPrimary = nil, nil
+}
+
+// putWorkCard puts primary p's first work card on the member in the column,
+// and the primary in the state that card's place gives it.
+func putWorkCard(w *world, p, member, col string, score float64, extra map[string]string) {
+	fields := map[string]string{"kind": "work", "primary": p, "stream": "s1", "attempt": "1", "gen": "2", "member": member,
+		"dealt": stamp(t0), "untaken_since": stamp(t0), "redeals": "0"}
+	for k, v := range extra {
+		fields[k] = v
+	}
+	w.s.Fleet.Put(&Card{ID: p + ".w1", Row: member, Col: col, Score: score, Rev: 1, Fields: fields})
+	prim := map[string]string{"kind": "primary", "attempt": "1", "stream": "s1"}
+	pcol := Working
+	if col == Withdrawn {
+		pcol = Ready
+	} else {
+		prim["work"] = p + ".w1"
+	}
+	w.s.Work.Put(&Card{ID: p, Row: "s1", Col: pcol, Score: score, Rev: 1, Fields: prim})
+}
+
+// putRead puts a read card of the primary at the attempt by the reader, placed
+// in the column ("" keeps it unplaced), and names it on the primary (rcards),
+// as the ask and the read leave it.
+func putRead(w *world, primary string, attempt int, reader, col string) *Card {
+	pr := w.s.Work.Card(primary)
+	c := &Card{ID: ReadCardID(primary, attempt, reader), Score: pr.Score, Rev: 1, Fields: map[string]string{
+		"kind": "read", "primary": primary, "stream": pr.Row, "reader": reader, "attempt": itoa(attempt), "head": pr.F("head")}}
+	if col != "" {
+		c.Row, c.Col = reader, col
+	}
+	w.s.Readers.Put(c)
+	pr.Fields["rcards"] = strings.Join(append(Split(pr.F("rcards")), c.ID), ",")
+	return c
 }
 
 // eightIdle is a world of 8 up members of room 2 and 30 ready primaries.
@@ -97,17 +167,17 @@ func TestTheDealGoesRoundTheFleet(t *testing.T) {
 	evenly(t, "done", done, members, false)
 }
 
-// The same through R6: one card ready at a time, dealt by the rule, worked at
-// once.
-func TestR6GoesRoundTheFleet(t *testing.T) {
+// The same through the tick's deal (T3): one card ready at a time, dealt by
+// the tick, worked at once.
+func TestTheTickDealGoesRoundTheFleet(t *testing.T) {
 	t.Parallel()
-	f := newFleetT(t, 0, "m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8")
-	members := f.snap().Fleet.Rows()
+	w := fleetWorld(t, 0, 0, "m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8")
+	members := w.s.Fleet.Rows()
 	dealt := map[string]int{}
 	for i := 1; i <= 24; i++ {
-		f.w.must(Add(f.snap(), AddReq{Stream: "s1", Count: 1}))
-		f.run(ruleDeal, "deal")
-		cs := f.snap().Fleet.Column(Ready)
+		w.must(Add(w.s, AddReq{Stream: "s1", Count: 1}))
+		w.part(TickDeal, TickReq{})
+		cs := w.s.Fleet.Column(Ready)
 		if len(cs) != 1 {
 			t.Fatalf("deal %d: nothing dealt", i)
 		}
@@ -116,7 +186,7 @@ func TestR6GoesRoundTheFleet(t *testing.T) {
 			t.Fatalf("deal %d went to %s, want %s", i, wc.Row, want)
 		}
 		dealt[wc.Row]++
-		workIt(f.w, wc)
+		workIt(w, wc)
 		evenly(t, fmt.Sprintf("after deal %d", i), dealt, members, i%8 == 0)
 	}
 }
@@ -211,16 +281,20 @@ func TestTheAskGoesRoundTheReaders(t *testing.T) {
 	}
 }
 
-// R8 asks round the readers too: one primary in review at a time.
-func TestR8GoesRoundTheReaders(t *testing.T) {
+// The tick's ask (T2) asks round the readers too: one primary in review at a
+// time, each worked as it is dealt.
+func TestTheTickAskGoesRoundTheReaders(t *testing.T) {
 	t.Parallel()
-	w := rvReview(t, 12, 0)
+	w := eightIdle(t, "reader-a", "reader-b", "reader-c")
 	readers := w.s.Readers.Rows()
 	asked := map[string]int{}
 	for i := 1; i <= 12; i++ {
 		id := fmt.Sprintf("s1-%d", i)
-		rp := rvPlan(w, ruleAsk, "ask:"+id)
-		w.must(rp.Plan)
+		w.must(Deal(w.s, DealReq{Sel: Sel{IDs: []string{id}}}))
+		workIt(w, w.s.Fleet.Card(WorkCardID(id, 1)))
+		if p := w.part(TickAsk, TickReq{}); len(p.Units) != 1 {
+			t.Fatalf("ask %d: the tick asked %d primaries, want the one in review", i, len(p.Units))
+		}
 		for _, rd := range readers {
 			if w.s.Readers.Card(ReadCardID(id, 1, rd)) != nil {
 				asked[rd]++
@@ -258,27 +332,27 @@ func TestTheDealGoesRoundTheFleetAcrossStreams(t *testing.T) {
 	}
 }
 
-// R6 over 10 streams of 3: each run deals the room in stream turns, and the
-// members' counts stay within one fleet-wide after every run.
-func TestR6GoesRoundTheFleetOverTenStreams(t *testing.T) {
+// The tick's deal over 10 streams of 3: each run deals the room in stream
+// turns, and the members' counts stay within one fleet-wide after every run.
+func TestTheTickDealGoesRoundTheFleetOverTenStreams(t *testing.T) {
 	t.Parallel()
-	f := newFleetT(t, 0, "m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8")
+	w := fleetWorld(t, 0, 0, "m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8")
 	for i := 1; i <= 10; i++ {
-		f.w.must(Add(f.snap(), AddReq{Stream: fmt.Sprintf("s%02d", i), Count: 3}))
+		w.must(Add(w.s, AddReq{Stream: fmt.Sprintf("s%02d", i), Count: 3}))
 	}
-	members := f.snap().Fleet.Rows()
+	members := w.s.Fleet.Rows()
 	dealt := map[string]int{}
-	for run := 1; len(f.snap().Work.Column(Ready)) > 0; run++ {
+	for run := 1; len(w.s.Work.Column(Ready)) > 0; run++ {
 		if run > 10 {
 			t.Fatalf("not dealt in 10 runs")
 		}
-		f.run(ruleDeal, "deal")
-		cs := f.snap().Fleet.Column(Ready)
+		w.part(TickDeal, TickReq{})
+		cs := w.s.Fleet.Column(Ready)
 		for _, wc := range cs {
 			dealt[wc.Row]++
 		}
 		for _, wc := range cs {
-			workIt(f.w, wc)
+			workIt(w, wc)
 		}
 		evenly(t, fmt.Sprintf("after run %d", run), dealt, members, false)
 	}
