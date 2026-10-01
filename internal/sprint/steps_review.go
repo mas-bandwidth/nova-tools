@@ -122,13 +122,13 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		// JudgedOnlyAfterTheBound): a read handed back goes to a free
 		// reader when there is one, its card retired; when none is free its
 		// own reader is asked it again, in place, the round not moved and no
-		// bound of the primary spent, its reasked counted (ReasksBounded: Read
-		// retires a return past MaxReadReasks, and the refusal below is then
-		// the "cannot ask" judgment).
+		// bound of the primary spent (ReasksBounded: Read counts each return
+		// in reasked and retires the one past MaxReadReasks, and the refusal
+		// below is then the "cannot ask" judgment).
 		var again, retiredFrom []string
 		for _, rc := range returned {
 			if len(chosenReaders)+len(again) < want {
-				takenBack = append(takenBack, change(Readers, setEntry(rc, map[string]string{"asked": stamp(s.Now), FieldReasked: itoa(rc.Int(FieldReasked) + 1)}, FieldReturned)))
+				takenBack = append(takenBack, change(Readers, setEntry(rc, map[string]string{"asked": stamp(s.Now)}, FieldReturned)))
 				again = append(again, rc.F("reader"))
 				continue
 			}
@@ -274,7 +274,7 @@ func Read(s *Snapshot, r ReadReq) Plan {
 				return "retired at " + c.F("retired") + ": the reader was away; the read was asked of another reader"
 			}
 			if c.F("retired_by") == "returned" {
-				return "retired at " + c.F("retired") + ": the read was returned; it was asked of another reader"
+				return "retired at " + c.F("retired") + ": the read was returned; it was asked of another reader, or judged"
 			}
 			return "retired at " + c.F("retired") + " by " + orDash(c.F("retired_by")) + ": the primary was sent back; its next attempt is read on a new card"
 		}
@@ -283,6 +283,10 @@ func Read(s *Snapshot, r ReadReq) Plan {
 		}
 		if !contains(from, c.Col) {
 			return "not " + strings.Join(from, " or ") + " (it is " + c.Col + ")"
+		}
+		if r.Return && returnedRead(c) {
+			// a return is counted once: the card is back in asked since it, not begun
+			return "returned already at " + c.F(FieldReturned) + " and not begun since: a return is counted once"
 		}
 		return ""
 	}, s.Readers.Card)
@@ -313,17 +317,21 @@ func Read(s *Snapshot, r ReadReq) Plan {
 			// no bound of the primary is spent. Once it was asked again in
 			// place MaxReadReasks times (ReasksBounded) the return is counted
 			// as a read: the card is retired, and a primary no reader is left
-			// to read is the ask's "cannot ask" judgment (StrandingIsJudged)
+			// to read is the ask's "cannot ask" judgment (StrandingIsJudged).
+			// The return counts itself (FieldReasked), here, whatever the tick
+			// does: the ask does not run while fewer than two readers are up
 			n := happened(NReadReturned, c.F("stream"), s.Now, c.F("primary"))
 			n.What = c.Row + " returned " + c.ID + ": " + r.Reason
 			n.Who = r.Who
 			// a read handed back still cost tokens and time: the run's own numbered
 			// record (cost.go, FieldReadTake), so a later run of the same card keeps
-			// it. The card is asked again in place at most MaxReadReasks times, so it
-			// holds at most MaxReadReasks+1 of these records, far under MaxTakes:
-			// the cap is unreachable here
-			set := map[string]string{FieldReadTake + itoa(nextTake(c, FieldReadTake)): costRecord(s, r.Usage, "", "", true, c.F("asked"), cmp.Or(c.F("begun"), stamp(s.Now)))}
-			if c.Int(FieldReasked) >= MaxReadReasks {
+			// it. Each return is counted here and the one past MaxReadReasks retires
+			// the card, so it holds at most MaxReadReasks+1 of these records, far
+			// under MaxTakes
+			returns := c.Int(FieldReasked) + 1
+			set := map[string]string{FieldReadTake + itoa(nextTake(c, FieldReadTake)): costRecord(s, r.Usage, "", "", true, c.F("asked"), cmp.Or(c.F("begun"), stamp(s.Now))),
+				FieldReasked: itoa(returns)}
+			if returns > MaxReadReasks {
 				n.What += fmt.Sprintf("; asked again of %s %d times, the read is retired", c.Row, MaxReadReasks)
 				set["retired"], set["retired_by"] = stamp(s.Now), "returned"
 				p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"),
