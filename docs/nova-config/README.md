@@ -222,7 +222,7 @@ SPRINT name=sprint coordinator=rowan created=2026-09-27T02:00:00Z updated=2026-0
 
 A supervised process on one machine: the command, the seat it opens its
 secrets from and the names of those secrets, and how it runs. The command is
-a JSON array, the program first, so a word may hold a space and nothing is
+a JSON array, the program first, so a word may hold a blank and nothing is
 split by a shell; a secret is never in it, it goes by name in `--keys`:
 
 ```

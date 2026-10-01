@@ -572,23 +572,28 @@ func (a *RedisApplier) removeMachine(ctx context.Context, m, actor, idem string)
 
 // --- loops -------------------------------------------------------------------
 
-// readLoops reads every loop's hash in one pipeline: the set, then each
-// hash and the stamp. A field the hash lacks reads as the type's zero, so a
-// hash written by hand short of a field is put right by the next apply.
+// readLoops reads the set and the stamp in one round trip, then every
+// loop's hash in a second; a store with no loop takes the one trip alone.
+// A field the hash lacks reads as the type's zero, so a hash written by hand
+// short of a field is put right by the next apply.
 func (a *RedisApplier) readLoops(ctx context.Context) (map[string]View, int64, error) {
-	names, err := a.Client.SMembers(ctx, LoopsKey).Result()
-	if err != nil {
-		return nil, 0, fmt.Errorf("redis: read %s: %w", LoopsKey, err)
-	}
-	sort.Strings(names)
-	pipe := a.Client.Pipeline()
-	hashes := make([]*redis.MapStringStringCmd, len(names))
-	for i, n := range names {
-		hashes[i] = pipe.HGetAll(ctx, LoopKey(n))
-	}
-	rev := pipe.HGet(ctx, DeclKey, revField(KindLoop))
-	if err := redisconn.Exec(ctx, pipe); err != nil {
+	first := a.Client.Pipeline()
+	members := first.SMembers(ctx, LoopsKey)
+	rev := first.HGet(ctx, DeclKey, revField(KindLoop))
+	if err := redisconn.Exec(ctx, first); err != nil {
 		return nil, 0, fmt.Errorf("redis: read loops: %w", err)
+	}
+	names := members.Val()
+	sort.Strings(names)
+	hashes := make([]*redis.MapStringStringCmd, len(names))
+	if len(names) > 0 {
+		pipe := a.Client.Pipeline()
+		for i, n := range names {
+			hashes[i] = pipe.HGetAll(ctx, LoopKey(n))
+		}
+		if err := redisconn.Exec(ctx, pipe); err != nil {
+			return nil, 0, fmt.Errorf("redis: read loops: %w", err)
+		}
 	}
 	k, _ := Lookup(KindLoop)
 	views := make(map[string]View, len(names))

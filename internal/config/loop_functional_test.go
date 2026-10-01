@@ -6,6 +6,7 @@ import (
 	"context"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -139,9 +140,13 @@ func TestApplyWritesTheLoopViewThePlaysRead(t *testing.T) {
 	assert.Equal(t, len(want)+2, len(got), "the fields, the log, rev and at, and nothing else: %v", got)
 	assert.Equal(t, c.HGet(ctx, DeclKey, "rev:loop").Val(), got["rev"])
 
-	// A second apply of the same rows writes nothing and keeps the stamp.
+	// A second apply of the same rows writes nothing and keeps the stamp,
+	// in two round trips: the set and the stamp, then the hashes.
+	trips := redisconn.CountTrips(c)
+	before := trips.N()
 	res2, err := Apply(ctx, st, ap, KindLoop, "t", false, func(Op) {})
 	require.NoError(t, err)
+	assert.Equal(t, int64(2), trips.N()-before, "a steady loop apply reads in two trips and writes none")
 	assert.Zero(t, res2.Add+res2.Set+res2.Remove)
 	assert.Equal(t, rev, res2.RedisRev)
 

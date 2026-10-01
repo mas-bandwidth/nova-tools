@@ -313,8 +313,10 @@ machine):
    `CONFLICT`.
 
 A second apply of the same Postgres is a no-op: no `APPLY` line, the counts
-zero, the revision unchanged (steady apply is 6 Redis round trips down from 18;
-first run across the seed kinds takes 30 trips down from the 42 baseline, with
+zero, the revision unchanged (steady apply is 7 Redis round trips down from 18, one of them the loop
+kind's read of a store with no loop: its set and stamp in one trip, its
+hashes in a second only when it has loops;
+first run across the seed kinds takes 31 trips down from the 42 baseline, with
 each machine running its ceiling check before its write transaction).
 
 ### What apply writes, per kind
