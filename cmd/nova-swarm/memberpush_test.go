@@ -276,3 +276,47 @@ func TestAChildThatRemovedTheRemoteAndCommittedNothingIsNotPushed(t *testing.T) 
 	assert.Contains(t, got.None, "the child committed nothing")
 	assert.Empty(t, b.originHas(t, "sprint/c1"))
 }
+
+// A commit another launch left in the member's push repository is not this
+// launch's: the head must be on this checkout's branches or HEAD, and descend
+// from the commit this launch was staged at (docs/SPEC-CARD-CONTRACT.md
+// section 4; red when the count alone decided).
+func TestACommitAnotherLaunchLeftInThePushRepositoryIsRefused(t *testing.T) {
+	t.Parallel()
+	b := newPushBench(t)
+	g := b.pusher()
+	foreign := b.commit(t, "card one's change\n")
+	require.Equal(t, member.Push{Sha: foreign}, g.Push(b.p, member.Result{Head: foreign}), "card one's push leaves its objects in push.git")
+
+	otherSeed, otherOrigin := filepath.Join(b.root, "other-seed"), filepath.Join(b.root, "other.git")
+	runGit(t, "", "init", "-q", "-b", "main", "--", otherSeed)
+	require.NoError(t, os.WriteFile(filepath.Join(otherSeed, "f"), []byte("other base\n"), 0o644))
+	gitAs(t, otherSeed, "add", "f")
+	gitAs(t, otherSeed, "commit", "-q", "-m", "other base")
+	runGit(t, "", "clone", "-q", "--bare", "--", otherSeed, otherOrigin)
+	p2 := member.Packet{Card: "c2", Kind: "work", As: "m1", Primary: "p2", Stream: "s2", Attempt: 1, Gen: 1, Epoch: 7,
+		Brief: "RESULT: c2\nbase-repo: " + otherOrigin + "\nBASE: main\n\nOther work.", Branch: "sprint/c2"}
+	checkout := filepath.Join(b.slots, launchName(p2), "jobs", "c2", swarm.JobRepo)
+	runGit(t, "", "clone", "-q", "--", otherOrigin, checkout)
+	write(t, filepath.Join(b.slots, launchName(p2), "staged"), gitAs(t, otherOrigin, "rev-parse", "main")+"\n")
+
+	got := g.Push(p2, member.Result{Head: foreign})
+	assert.Empty(t, got.Sha)
+	assert.Contains(t, got.Refused, "is not on this checkout's branches or HEAD")
+	assert.Empty(t, strings.TrimSpace(runGit(t, otherOrigin, "for-each-ref", "refs/heads/sprint/c2")))
+}
+
+// A head on this checkout that does not descend from the staged commit (the
+// child reset to another history) is refused, never pushed.
+func TestAHeadThatDoesNotDescendFromTheStagedCommitIsRefused(t *testing.T) {
+	t.Parallel()
+	b := newPushBench(t)
+	head := b.commit(t, "the work\n")
+	gitAs(t, b.checkout, "checkout", "-q", "--orphan", "elsewhere")
+	gitAs(t, b.checkout, "commit", "-q", "-m", "another history")
+	orphan := gitAs(t, b.checkout, "rev-parse", "HEAD")
+	b.staged(t, head)
+	got := b.pusher().Push(b.p, member.Result{Head: orphan})
+	assert.Empty(t, got.Sha)
+	assert.Contains(t, got.Refused, "does not descend from the staged commit")
+}

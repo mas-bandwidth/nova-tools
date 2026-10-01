@@ -16,7 +16,7 @@ func TestTheFrameIsThePackets(t *testing.T) {
 	t.Parallel()
 	brief := "c1: do it (tools) tier: pro\nbase-repo: https://example.com/example-owner/example-repo.git\nBASE: main@" + fullSha + "\n\nThe task."
 	work := member.Packet{Card: "c1.w1", Kind: "work", Attempt: 1, Brief: brief, Branch: "sprint/c1.w1"}
-	f := frameOf(work, "test/claude-x")
+	f := frameOf(work, "test/claude-x", "/root")
 	assert.Equal(t, "work", f.Kind)
 	assert.Equal(t, "https://example.com/example-owner/example-repo.git", f.Repo)
 	assert.Equal(t, "main", f.BaseRef)
@@ -24,26 +24,33 @@ func TestTheFrameIsThePackets(t *testing.T) {
 	assert.Equal(t, "sprint/c1.w1", f.Branch)
 	assert.Equal(t, "pro", f.Tier)
 	assert.Equal(t, "test/claude-x", f.Model)
+	assert.Empty(t, f.Stage)
+	assert.Empty(t, f.Recipes, "no Stage: line, no recipes directory")
+	staged := work
+	staged.Brief = "c1: do it\nREPO: o/n\nStage: pr/4926.md\n\nThe task."
+	f = frameOf(staged, "m", "/root")
+	assert.Equal(t, []string{"pr/4926.md"}, f.Stage)
+	assert.Equal(t, "/root/recipes", f.Recipes)
 
 	again := work
 	again.Card, again.Attempt, again.Branch, again.Base, again.Fix = "c1.w2", 2, "sprint/c1.w2", "sprint/c1.w1", "f.go:3 the bound"
-	f = frameOf(again, "m")
+	f = frameOf(again, "m", "/root")
 	assert.Equal(t, fullSha, f.StageSha, "a branch name the attempt before never pushed is not staged")
 	assert.Empty(t, f.PrevHead)
 	again.BaseHead = pushedSha
-	f = frameOf(again, "m")
+	f = frameOf(again, "m", "/root")
 	assert.Equal(t, pushedSha, f.StageSha, "the attempt starts from the previous pushed head")
 	assert.Equal(t, pushedSha, f.PrevHead)
 	assert.Equal(t, "f.go:3 the bound", f.Finding)
 	assert.Equal(t, "sprint/c1.w2", f.Branch)
 
 	read := member.Packet{Card: "c1.r1", Kind: "read", Attempt: 1, Brief: brief, Head: pushedSha, WorkBranch: "sprint/c1.w1"}
-	f = frameOf(read, "m")
+	f = frameOf(read, "m", "/root")
 	assert.Equal(t, pushedSha, f.StageSha, "a read stages the head under read")
 	assert.Equal(t, "sprint/c1.w1", f.Branch)
 	assert.Equal(t, "main", f.ReviewBase)
 	read.Head = "c1.w1" // a finish that named no head
-	assert.Equal(t, fullSha, frameOf(read, "m").StageSha)
+	assert.Equal(t, fullSha, frameOf(read, "m", "/root").StageSha)
 }
 
 // The member names the repository to gh as gh names it: a GitHub URL's

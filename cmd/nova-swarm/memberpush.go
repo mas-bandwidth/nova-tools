@@ -66,10 +66,10 @@ func (g *gitPusher) Push(p member.Packet, r member.Result) member.Push {
 	if !pushBranchRE.MatchString(p.Branch) || strings.Contains(p.Branch, "..") || strings.HasSuffix(p.Branch, "/") || strings.HasSuffix(p.Branch, ".lock") {
 		return member.Push{Refused: fmt.Sprintf("the packet's branch %q is not a branch name", p.Branch)}
 	}
-	// the repository staging cloned: read from the card the member wrote, never
-	// from the checkout's configuration
-	cb := swarm.ReadCardBase([]byte(member.CardText(p, g.sprintBin)))
-	url := cb.Repo
+	// the repository staging cloned: the launch's frame (the member wrote it, the
+	// brief's header, docs/SPEC-CARD-CONTRACT.md layer 1), else the brief's header
+	// for a launch from before frames; never the checkout's configuration
+	url, ref := g.cardRepo(p)
 	if url == "" {
 		return member.Push{None: "the card names no repository"}
 	}
@@ -96,6 +96,12 @@ func (g *gitPusher) Push(p member.Packet, r member.Result) member.Push {
 	if err != nil || len(full) < 40 {
 		return member.Push{Refused: "the result's head " + head + " is not a commit on the checkout's branches"}
 	}
+	// the head must be one this launch's checkout holds: the push repository keeps
+	// every launch's objects, so a commit being there is no evidence it is this one's
+	res, err = g.run(ctx, repo, nil, "for-each-ref", "--count=1", "--format=%(refname)", "--contains", full, ns+"/")
+	if err != nil || strings.TrimSpace(string(res.Stdout)) == "" {
+		return member.Push{Refused: "the result's head " + full + " is not on this checkout's branches or HEAD"}
+	}
 	// the child committed when its head has a commit the staged commit does not:
 	// counted from the commit native recorded in the slot, never from the
 	// checkout's own refs, which a stale mirror or the child can move
@@ -104,6 +110,9 @@ func (g *gitPusher) Push(p member.Packet, r member.Result) member.Push {
 	base := strings.TrimSpace(string(staged))
 	if err != nil || !typedrec.IsFullSha(base) {
 		return member.Push{None: "no staged commit is recorded for this launch to count the child's commits from"}
+	}
+	if res, err := g.run(ctx, repo, nil, "merge-base", "--is-ancestor", "--end-of-options", base, full); err != nil {
+		return member.Push{Refused: "the result's head " + full + " does not descend from the staged commit " + base + ": " + gitLine(res, err)}
 	}
 	res, err = g.run(ctx, repo, nil, "rev-list", "--count", "--end-of-options", full, "^"+base)
 	if err != nil {
@@ -118,9 +127,21 @@ func (g *gitPusher) Push(p member.Packet, r member.Result) member.Push {
 	}
 	pu := member.Push{Sha: full}
 	if strings.TrimSpace(r.Title) != "" {
-		pu.PR, pu.PRNote = g.openPR(url, cb.Ref, p.Branch, r.Title, r.Body)
+		pu.PR, pu.PRNote = g.openPR(url, ref, p.Branch, r.Title, r.Body)
 	}
 	return pu
+}
+
+// cardRepo is the repository and base ref of a launch: its frame's, else the brief's header.
+func (g *gitPusher) cardRepo(p member.Packet) (url, ref string) {
+	if f, err := cardcontract.ReadFrame(filepath.Join(g.slots, launchName(p)+cardcontract.FrameName)); err == nil && f.Repo != "" {
+		if url = swarm.CardRepoURL(f.Repo); url == "" {
+			url = f.Repo
+		}
+		return url, f.BaseRef
+	}
+	cb := swarm.ReadCardBase([]byte(p.Brief))
+	return cb.Repo, cb.Ref
 }
 
 // prBudget bounds the member's gh pr create: one call to the forge, and a stuck one is a

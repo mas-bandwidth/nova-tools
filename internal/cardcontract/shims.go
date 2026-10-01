@@ -2,6 +2,7 @@ package cardcontract
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 )
 
@@ -11,7 +12,8 @@ func shq(v string) string { return "'" + strings.ReplaceAll(v, "'", `'\''`) + "'
 
 // prelude is every shim's head: what it is, the frame's values, and the two helpers.
 // nova_key folds a repository's spellings (https, ssh, scp form, .git or not, a user, a
-// trailing slash, case) into one, so a clone of the card's repository is known in any of them.
+// trailing slash, the scheme's default port, case) into one, so a clone of the card's
+// repository is known in any of them.
 func prelude(name, family string, f Frame, s Staged) string {
 	base := f.ReviewBase
 	if base == "" {
@@ -27,7 +29,7 @@ func prelude(name, family string, f Frame, s Staged) string {
 		fmt.Fprintf(&b, "%s=%s\n", kv[0], shq(kv[1]))
 	}
 	b.WriteString(`nova_q() { printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"; }
-nova_key() { printf '%s' "$1" | sed -e 's#/*$##' -e 's#\.git$##' -e 's#^[A-Za-z][A-Za-z0-9+.-]*://##' -e 's#^[^@/]*@##' -e 's#^\([^/:]*\):#\1/#' | tr 'A-Z' 'a-z'; }
+nova_key() { printf '%s' "$1" | sed -e 's#/*$##' -e 's#\.git$##' -e 's#^\(ssh://[^/]*\):22/#\1/#' -e 's#^\(https://[^/]*\):443/#\1/#' -e 's#^\(http://[^/]*\):80/#\1/#' -e 's#^\(git://[^/]*\):9418/#\1/#' -e 's#^[A-Za-z][A-Za-z0-9+.-]*://##' -e 's#^[^@/]*@##' -e 's#^\([^/:]*\):#\1/#' | tr 'A-Z' 'a-z'; }
 `)
 	return b.String()
 }
@@ -52,8 +54,18 @@ case "$nova_sub" in
 // at the finish: that branch to the card's branch on origin.
 const gitPush = `push)
 	shift "$nova_n"
-	nova_pos=""
-	for nova_a in "$@"; do case "$nova_a" in -*) ;; *) nova_pos="$nova_pos $(nova_q "$nova_a")" ;; esac; done
+	nova_pos=""; nova_skip=""
+	for nova_a in "$@"; do
+		if [ -n "$nova_skip" ]; then nova_skip=""; continue; fi
+		case "$nova_a" in
+		-d|--delete|--mirror|--prune|--all|--branches|--tags|-o|--push-option|--push-option=*|-o?*)
+			echo "error: REFUSED git push $nova_a: a card's push carries one commit to the card's branch, which the sprint pushes when the card finishes; it deletes, prunes, mirrors and passes options for nothing" >&2; exit 1 ;;
+		--repo|--receive-pack|--exec|--signed) nova_skip=1 ;;
+		--) ;;
+		-*) ;;
+		*) nova_pos="$nova_pos $(nova_q "$nova_a")" ;;
+		esac
+	done
 	eval "set -- $nova_pos"
 	nova_src=HEAD; nova_dst=""
 	if [ $# -ge 2 ]; then
@@ -148,6 +160,7 @@ mkdir -p "$NOVA_JOB/.sprint" || exit 1
 nova_body=""
 case "$1 $2" in
 "pr create")
+	if [ "$NOVA_KIND" = read ]; then echo "gh: REFUSED pr create: this card is a read; it ends with gh pr review" >&2; exit 2; fi
 	nova_title=""; nova_fill=""
 	shift 2
 	while [ $# -gt 0 ]; do
@@ -174,6 +187,7 @@ case "$1 $2" in
 	echo "pull request recorded for $nova_br: the sprint pushes it to $NOVA_BRANCH and opens it when this card finishes"
 	exit 0 ;;
 "pr review")
+	if [ "$NOVA_KIND" != read ]; then echo "gh: REFUSED pr review: this card is work; it ends with gh pr create" >&2; exit 2; fi
 	nova_v=""
 	shift 2
 	while [ $# -gt 0 ]; do
@@ -267,9 +281,13 @@ func (plain) JobText(f Frame, s Staged) string {
 	return b.String()
 }
 
-// writeCommon is what every JOB.md ends with: the test environment, the tier, what the
-// attempt before left, and the sprint's rules.
+// writeCommon is what every JOB.md ends with: the files staged for the child, the test
+// environment, the tier, and what the attempt before left. The sprint's rules are the
+// brief's own RULES paragraph (the add lint holds it), never repeated here.
 func writeCommon(b *strings.Builder, f Frame, s Staged) {
+	if len(f.Stage) > 0 {
+		fmt.Fprintf(b, "Staged for you in %s: %s.\n", filepath.Join(s.Job, RecipesName), strings.Join(f.Stage, ", "))
+	}
 	fmt.Fprintf(b, "Tests: export GOCACHE=%s/gocache; run every go command as `nice -n 19`, every go test with -count=1 and -timeout 600s.\n", s.Job)
 	if f.Tier != "" {
 		fmt.Fprintf(b, "Tier: %s.\n", f.Tier)
@@ -285,9 +303,7 @@ func writeCommon(b *strings.Builder, f Frame, s Staged) {
 			b.WriteString("\n")
 		}
 	}
-	if strings.TrimSpace(f.Rules) != "" {
-		b.WriteString("\n" + strings.TrimSpace(f.Rules) + "\n")
-	}
+
 }
 
 func orDash(s string) string {
