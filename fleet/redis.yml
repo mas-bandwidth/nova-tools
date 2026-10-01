@@ -31,7 +31,9 @@
 
 - name: the store's ACL
   hosts: store_deployer
-  gather_facts: false
+  # the facts give nova_home (group_vars) the login's home
+  gather_facts: true
+  gather_subset: [min]
   vars:
     redis_login: >-
       {{ [nova_bin_dir ~ '/nova-secrets', 'exec', '--store', nova_secrets_store, '--as', nova_seat,
