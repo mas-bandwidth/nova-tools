@@ -2401,6 +2401,13 @@ func writeJobConfig(cfg nativeRunConfig, provider, dataHome, jobDir string, read
 		raw = body
 	}
 	body, merged := swarm.MergeFencePermission(raw, jobDir, reads)
+	// the route's model is declared in the config, so the harness knows it whatever
+	// catalog it starts with (swarm.DeclareRouteModel: the fresh-home catalog race)
+	if merged && strings.HasPrefix(cfg.model, provider+"/") {
+		if declared, ok := swarm.DeclareRouteModel(body, provider, cfg.model[len(provider)+1:]); ok {
+			body = declared
+		}
+	}
 	var proxy *swarm.ProviderProxy
 	if merged {
 		// headerTimeout and chunkTimeout are written for a harness that honors
