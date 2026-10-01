@@ -42,8 +42,8 @@ machine in that state already writes the view's state again from the record.
 The view knows no heartbeat: a RUNNING machine that has stopped ticking keeps
 its progress line there, and `where` and `inbox` say it is not ticking.
 
-A frame of the view holds the time, the words `SPRINT TABLE`, that line and the
-tables, and nothing else: no pending operation, no stalled stream, no line about
+A frame of the view holds the words `SPRINT TABLE`, that line and the
+tables, and nothing else: no time, no pending operation, no stalled stream, no line about
 the people and no coordinator (`where --json` carries them; `check`, `inbox` and
 `goal show` say the same in their own words). The merge table has no `since`
 column. Every table is shown, with its header and footer, empty or not, and every
@@ -344,8 +344,8 @@ id (`--op`) returns the original result, with no second counter or notification.
   last beat is within the beat bound (`ReaderBeatBound`, the fleet's 15 s),
   away when it beat and has lapsed, down when it has never beaten; the
   coordinator's `reader away <reader>` holds it away whatever it beats, and
-  `reader up <reader>` releases the hold. `where` shows each reader's state in
-  the readers table's `status` cell; the cell is shown, never stored in the
+  `reader up <reader>` releases the hold. The readers table has no `status`
+  column and `where` shows no reader's state; the state is never stored in the
   table. The state is read, never typed: the tick reads it once, with its first
   read, and every part plans on that reading.
 - ask deals every primary in review that lacks reads to TWO DIFFERENT readers

@@ -48,8 +48,7 @@ when it beat and has lapsed, down when it has never beaten; reader away holds
 one away whatever it beats and reader up releases the hold. The ask deals a
 read to a reader up only: a read asked of a reader that is not up is asked of
 another at the next tick, and with fewer than two readers up the tick asks none
-and raises one judgment (fewer than two readers up). where shows each reader's
-status. reader remove takes a row off the readers table, refused while the
+and raises one judgment (fewer than two readers up). reader remove takes a row off the readers table, refused while the
 reader holds a read (asked, reading, ok or broken).`) + "\n"
 }
 
