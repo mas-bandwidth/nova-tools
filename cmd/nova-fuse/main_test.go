@@ -123,7 +123,7 @@ func TestLiftLockdownRefusesBeforeReadingAnything(t *testing.T) {
 	box := boxIn(t)
 	writeRaw(t, box, "{corrupt")
 	code, _, errOut = capture(t, []string{"lift", "lockdown", "--box", box}, nowish())
-	assert.Equal(t, 2, code, "the refusal must not depend on the box being readable")
+	assert.Equal(t, 2, code, "exit = %d, stderr = %q: the refusal must not depend on the box being readable", code, errOut)
 	assert.Contains(t, errOut, "REFUSED", "exit = %d, stderr = %q: the refusal must not depend on the box being readable", code, errOut)
 	assert.NotContains(t, errOut, "JSON", "the refusal must come before any read of the box, got %q", errOut)
 	assert.NotContains(t, errOut, "unreadable", "the refusal must come before any read of the box, got %q", errOut)
@@ -542,8 +542,12 @@ func TestTheWriteLeavesNoLitter(t *testing.T) {
 
 	entries, err := os.ReadDir(dir)
 	require.NoError(t, err)
-	require.Len(t, entries, 1)
-	assert.Equal(t, "fuses.json", entries[0].Name())
+	var names []string
+	for _, e := range entries {
+		names = append(names, e.Name())
+	}
+	require.Len(t, entries, 1, "temp files must not survive the rename, dir holds %v", names)
+	assert.Equal(t, "fuses.json", entries[0].Name(), "temp files must not survive the rename, dir holds %v", names)
 }
 
 func TestPathEchoesTheBoxFlag(t *testing.T) {

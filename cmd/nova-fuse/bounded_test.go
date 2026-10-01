@@ -62,7 +62,7 @@ func TestStatusRefusesANegativeCeiling(t *testing.T) {
 
 	box := crowdedBox(t, 1)
 	exit, _, stderr := runFuse(t, "status", "--box", box, "--max", "-1")
-	assert.Equal(t, 2, exit)
+	assert.Equal(t, 2, exit, "exit = %d, stderr = %q", exit, stderr)
 	assert.Contains(t, stderr, "--max must be a line ceiling")
 }
 

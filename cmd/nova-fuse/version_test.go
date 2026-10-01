@@ -36,7 +36,7 @@ func TestVersionLineShape(t *testing.T) {
 	assert.NotEmpty(t, fields[1], "field 2 is the build identity and is never empty: %q", line)
 	assert.False(t, strings.ContainsAny(fields[1], " \t"), "field 2 is one token: %q", line)
 	want := runtime.GOOS + "/" + runtime.GOARCH
-	assert.Equal(t, fields[2], want, "field 3: got %q, want %q", fields[2], want)
+	assert.Equal(t, want, fields[2], "field 3: got %q, want %q", fields[2], want)
 	assert.Equal(t, runtime.Version(), fields[3], "field 4: got %q, want %q", fields[3], runtime.Version())
 }
 
@@ -85,7 +85,9 @@ func TestVersionVerbIsReachableFromTheDispatch(t *testing.T) {
 	t.Parallel()
 	for _, verb := range []string{"version", "--version"} {
 		var out, errOut bytes.Buffer
-		require.Equal(t, 0, run([]string{verb}, &out, &errOut, time.Now().UTC()), "%s: want exit 0\nstderr: %s", verb, errOut.String())
+		if !assert.Equal(t, 0, run([]string{verb}, &out, &errOut, time.Now().UTC()), "%s: want exit 0\nstderr: %s", verb, errOut.String()) {
+			continue
+		}
 		assert.True(t, strings.HasPrefix(out.String(), "nova-fuse "), "%s: not the version line: %q", verb, out.String())
 		assert.Equal(t, 1, strings.Count(out.String(), "\n"), "%s: not the version line: %q", verb, out.String())
 	}
