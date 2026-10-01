@@ -38,10 +38,7 @@ func TestCapPrintsMaxLinesThenOneMoreLine(t *testing.T) {
 	assert.Equal(t, "VERIFY FAIL wikilink entry-19", got[Default-1], "last item line is %q, want entry-19", got[Default-1])
 	want := "VERIFY MORE kind=wikilink shown=20 total=500 --fail-max <n> (0 = all)"
 	assert.Equal(t, want, got[Default], "MORE line is\n  %q\nwant\n  %q", got[Default], want)
-	if l.Total() != 500 || l.Shown() != 20 || l.Elided() != 480 {
-		t.Errorf("counted shown=%d total=%d elided=%d; want 20/500/480 -- the count must be the truth about the STATE, not about the output",
-			l.Shown(), l.Total(), l.Elided())
-	}
+	assert.Equal(t, [3]int{20, 500, 480}, [3]int{l.Shown(), l.Total(), l.Elided()}, "counted shown/total/elided; the count must be the truth about the STATE, not about the output")
 }
 
 // A cap that cannot be turned off is a tool deciding what its user may see.
@@ -82,9 +79,7 @@ func TestEmptyListPrintsNothing(t *testing.T) {
 	var out bytes.Buffer
 	l := Capped(&out, 20, "NOCODE", "file", "--fail-max <n>")
 	l.More()
-	if out.Len() != 0 {
-		t.Errorf("an empty listing wrote %q", out.String())
-	}
+	assert.Empty(t, out.String(), "an empty listing wrote %q", out.String())
 }
 
 // The cap must not be able to break its own line count. A finding's text is corpus text,
@@ -98,9 +93,8 @@ func TestAnItemLineCannotAddASecondLine(t *testing.T) {
 	l.More()
 	got := lines(&out)
 	require.Len(t, got, 1, "one Line produced %d lines: %q", len(got), got)
-	if strings.Contains(got[0], "\n") || !strings.Contains(got[0], `\x0a`) {
-		t.Errorf("the embedded newline is not escaped: %q", got[0])
-	}
+	assert.NotContains(t, got[0], "\n", "the embedded newline is not escaped: %q", got[0])
+	assert.Contains(t, got[0], `\x0a`, "the embedded newline is not escaped: %q", got[0])
 }
 
 // A caller converting an existing fmt.Fprintf site copies a format string ending in \n.
@@ -150,12 +144,8 @@ func TestGroupCapsEachKindSoOneCannotBuryAnother(t *testing.T) {
 	require.Len(t, got, 22, "got %d lines, want 22: %q", len(got), got)
 	assert.Equal(t, "VERIFY FAIL frontmatter the one that matters", got[20], "the buried kind is missing; line 21 is %q", got[20])
 	assert.Equal(t, "VERIFY MORE kind=wikilink shown=20 total=500 --fail-max <n> (0 = all)", got[21], "MORE line is %q", got[21])
-	if g.Total() != 501 || g.Shown() != 21 {
-		t.Errorf("group counted shown=%d total=%d, want 21/501", g.Shown(), g.Total())
-	}
-	if kinds := g.Kinds(); len(kinds) != 2 || kinds[0] != "wikilink" || kinds[1] != "frontmatter" {
-		t.Errorf("kinds are %q; want first-seen order", kinds)
-	}
+	assert.Equal(t, [2]int{21, 501}, [2]int{g.Shown(), g.Total()}, "group counted shown/total, want 21/501")
+	assert.Equal(t, []string{"wikilink", "frontmatter"}, g.Kinds(), "kinds are %q; want first-seen order", g.Kinds())
 }
 
 // Determinism: the same findings in the same order print the same bytes, run after run.

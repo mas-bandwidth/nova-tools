@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestIssue2209 — see the package doc above.
@@ -108,11 +109,8 @@ func TestIssue2209(t *testing.T) {
 	// 7, 8, 9: a timeout, a missing job, and a superseded cancellation
 	//    each read as their own receipt (a distinct kind on the header
 	//    line, never the same "fail" the verifier saw above).
-	if ReceiptKindFail == ReceiptKindTimeout ||
-		ReceiptKindFail == ReceiptKindMissing ||
-		ReceiptKindFail == ReceiptKindSuperseded {
-		t.Fatalf("a non-fail outcome shares the fail kind: %q", ReceiptKindFail)
-	}
+	require.NotContains(t, []string{ReceiptKindTimeout, ReceiptKindMissing, ReceiptKindSuperseded}, ReceiptKindFail,
+		"a non-fail outcome shares the fail kind: %q", ReceiptKindFail)
 	if ReceiptKindTimeout == ReceiptKindMissing ||
 		ReceiptKindTimeout == ReceiptKindSuperseded ||
 		ReceiptKindMissing == ReceiptKindSuperseded {
