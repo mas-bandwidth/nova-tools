@@ -16,7 +16,7 @@ cmd/nova-bus:env 3 t.Setenv and Chdir sites to inject through config
 cmd/nova-cairn:env 1 t.Setenv and Chdir sites to inject through config
 cmd/nova-check:assert 623 bare assertions to convert to testify
 cmd/nova-check:env 1 t.Setenv and Chdir sites to inject through config
-cmd/nova-ci:assert 161 bare assertions to convert to testify
+cmd/nova-ci:assert 160 bare assertions to convert to testify
 cmd/nova-ci:env 1 t.Setenv and Chdir sites to inject through config
 cmd/nova-config:assert 271 bare assertions to convert to testify
 cmd/nova-fuse:assert 338 bare assertions to convert to testify
@@ -48,7 +48,7 @@ internal/cairn:assert 79 bare assertions to convert to testify
 internal/cardhdr:assert 46 bare assertions to convert to testify
 internal/check:assert 419 bare assertions to convert to testify
 internal/check:env 1 t.Setenv and Chdir sites to inject through config
-internal/ci:assert 1200 bare assertions to convert to testify
+internal/ci:assert 1197 bare assertions to convert to testify
 internal/ci/allowlist:assert 38 bare assertions to convert to testify
 internal/ci/functional:assert 9 bare assertions to convert to testify
 internal/ci/slowtests:assert 37 bare assertions to convert to testify
