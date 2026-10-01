@@ -109,11 +109,22 @@
 \*   scenario that turns Scn.misses on models the windows; one that does not
 \*   takes a lapse to come after them, as it always did.
 \*
+\* THE RETURN (2026-10-01, the owner's ask: a reader whose launch was refused
+\*   held the read for the whole two-hour deadline, and took the next). The
+\*   outside's ReadReturn(c) is the reader that holds c's read handing it back
+\*   with no verdict (read --return): an entry to the readers queue. The
+\*   readers update applies "handback" as "raway" applies a reader's going
+\*   away, for the one read: off the reader, its readoff to the fleet, and
+\*   asked again in the same update (askw), no broken report counted; a return
+\*   of a read the reader no longer holds changes nothing. The witness
+\*   "handkeeps" asks it again and keeps the hold (W24, NothingLost). The scenario
+\*   turns the event on (Scn.hand).
+\*
 \* WHAT IS NOT MODELLED. Clear and epochs (the counters' reset); two reads
 \* per attempt (one read each); rework but by a broken read; take is
 \* modelled only for the redeals (a finish needs no take); verbs other than
 \* add, take, finish, report, merge, ci, return, accept, beat and lapse (and a
-\* reader's away and back);
+\* reader's away and back, and a read returned);
 \* outside actions during a tick (they run between ticks); byte and step
 \* budgets; two sentinels in one stream (the pump lands at most one per
 \* stream per tick); the log itself (a queue entry is its line).
@@ -336,6 +347,10 @@ ApplyR(S, e) ==
                       [S1 EXCEPT !.col[c] = "ready", !.att[c] = Min(@ + 1, MaxAttempts),
                                  !.brk[c] = Min(@ + 1, MaxAttempts)]
                  ELSE Put([S1 EXCEPT !.brk[c] = Min(@ + 1, MaxAttempts)], "work", E("broken", c, "-"))
+    [] e.k = "handback" ->  \* the reader returns the read it holds: asked again
+         IF S.rd[c] # e.x THEN S
+         ELSE IF Broken = "handkeeps" THEN [S EXCEPT !.askw[c] = TRUE]   \* the witness keeps the hold
+         ELSE Put([S EXCEPT !.rd[c] = NoR, !.askw[c] = TRUE], "fleet", E("readoff", c, Host[e.x]))
     [] e.k = "unread" ->
          IF S.rd[c] # NoR THEN [S EXCEPT !.rd[c] = NoR, !.askw[c] = TRUE] ELSE S
     [] e.k = "raway" ->     \* the reader is not up: its reads are taken back and asked again
@@ -567,6 +582,10 @@ ReaderAway(r) ==
   /\ Scn.away /\ live[r] /\ acts < MaxActs
   /\ live' = [live EXCEPT ![r] = FALSE] /\ acts' = acts + 1 /\ UNCHANGED miss
   /\ Outside("readers", E("raway", "-", r))
+\* The reader that holds a read returns it with no verdict (read --return).
+ReadReturn(c) ==
+  /\ Scn.hand /\ rd[c] # NoR /\ live[rd[c]] /\ acts < MaxActs /\ Pend("readers", "handback", c) = 0
+  /\ acts' = acts + 1 /\ Outside("readers", E("handback", c, rd[c])) /\ UNCHANGED <<live, miss>>
 ReaderBack(r) ==
   /\ Scn.away /\ ~live[r] /\ acts < MaxActs
   /\ live' = [live EXCEPT ![r] = TRUE] /\ acts' = acts + 1 /\ UNCHANGED miss
@@ -648,7 +667,7 @@ TickNext == TickStart \/ PumpWork \/ DrainWork \/ TickEnd \/
 OutsideNext ==
   \/ \E c \in Cards : Add(c) \/ Merge(c) \/ \E v \in {"ok", "broken"} : Report(c, v)
   \/ \E c \in Cards, m \in Machines : Finish(c, m) \/ Take(c, m)
-  \/ \E c \in Cards : CIRed(c) \/ CIGreen(c) \/ CIOld(c) \/ Return(c) \/ CoordAccept(c)
+  \/ \E c \in Cards : CIRed(c) \/ CIGreen(c) \/ CIOld(c) \/ Return(c) \/ CoordAccept(c) \/ ReadReturn(c)
   \/ \E m \in Machines : Beat(m) \/ Lapse(m) \/ Miss(m) \/ BeatReset(m)
   \/ \E r \in Readers : ReaderAway(r) \/ ReaderBack(r)
 Next == TickNext \/ OutsideNext
