@@ -60,7 +60,8 @@ const usageTop = `nova-config: a fleet's machines and AI friends as rows in Post
 
 how it works: PostgreSQL holds the rows, in the schema migrate makes: a machine
 row per host ssh reaches, a friend row per AI, one fleet row, one sprint row,
-a loop row per supervised process and a route row per way to run a model tier;
+a loop row per supervised process, a route row per way to run a model tier
+and a tier row per tier, its route array;
 every write adds a history row naming who made it. apply copies the rows into
 Redis, the view the fleet reads; status checks Redis is at Postgres's revision.
 first run: the lines under example: need no database; the rest needs PostgreSQL:
@@ -100,8 +101,10 @@ usage:
   nova-config fleet|sprint history
   nova-config loop add <name> --machine <m> --argv '["/path/prog","--flag","v"]' (--every <seconds> | --keepalive true) [--seat <seat> --keys <NAME,...>] [--width <n>] [--enabled false] --as <friend>
       a supervised loop on one machine; the secrets it needs go by NAME in --keys, opened from --seat, never on the command; apply writes loop:<name> (its fields and its log path ~/nova-bench/loops/<name>.log) and the set loops, which the plays read
-  nova-config route add <name> --tier flash|pro --provider <p> --model <m> --deadline <seconds> [--tokens <n>] [--weight <n>] [--enabled false] --as <friend>
-      one way to run a model tier: the harness is launched with <provider>/<model>; the deal draws one enabled route of a card's tier per deal, weighted, and a card's model: header pins it instead; frontier cards are never drawn from routes, they escalate to the coordinator; apply writes route:<name> (its fields) and the set routes, which the deal reads
+  nova-config route add <name> --tier flash|pro --provider <p> --model <m> --deadline <seconds> [--tokens <n>] [--enabled false] --as <friend>
+      one way to run a model tier: the harness is launched with <provider>/<model>; the deal takes a card's route from its tier's array, and a card's model: header pins it instead; frontier cards are never dealt from routes, they escalate to the coordinator; apply writes route:<name> (its fields) and the set routes, which the deal reads
+  nova-config tier set flash|pro --routes <route,route,...> --as <friend>
+      the tier's route array, in order, a route named twice taking two turns; each an enabled route of the tier; the deal takes routes[index mod len] for each card of the tier and moves the index by one; empty takes the tier's enabled routes in name order; migrate makes both rows; tier list prints them; apply writes tier:<name> and the set tiers, which the deal reads with the routes
 
 Postgres is the permanent store; Redis is a copy of it that apply rebuilds.
 Connect with export NOVA_PG_DSN=postgres://user@host:5432/db (or --pg) with NO
@@ -784,10 +787,10 @@ func runMigrate(ctx context.Context, args []string, stdout, stderr io.Writer, d 
 }
 
 // laterKind is a kind whose table a later migration made (loops since
-// version 6, routes since 7): each of its verbs refuses on a store older
+// version 6, routes since 7, tiers since 8): each of its verbs refuses on a store older
 // than this binary's migrations (behindSchema), which does not have it.
 func laterKind(k *config.Kind) bool {
-	return k.Name == config.KindLoop || k.Name == config.KindRoute
+	return k.Name == config.KindLoop || k.Name == config.KindRoute || k.Name == config.KindTier
 }
 
 // behindSchema is the refusal for a store whose schema is older than this

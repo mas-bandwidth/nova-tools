@@ -24,8 +24,8 @@ func TestTheRouteRowIsWhatTheDealReads(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "routes", k.Table)
 	assert.False(t, k.Singleton)
-	assert.Equal(t, "tier,provider,model,tokens,deadline,weight,enabled", strings.Join(k.FieldNames(), ","), "the deal reads exactly these names")
-	types := map[string]Type{"tier": TypeEnum, "provider": TypeText, "model": TypeText, "tokens": TypeInt, "deadline": TypeInt, "weight": TypeInt, "enabled": TypeBool}
+	assert.Equal(t, "tier,provider,model,tokens,deadline,enabled", strings.Join(k.FieldNames(), ","), "the deal reads exactly these names")
+	types := map[string]Type{"tier": TypeEnum, "provider": TypeText, "model": TypeText, "tokens": TypeInt, "deadline": TypeInt, "enabled": TypeBool}
 	required := map[string]bool{"tier": true, "provider": true, "model": true, "deadline": true}
 	for _, f := range k.Fields {
 		assert.Equal(t, types[f.Name], f.Type, "--%s", f.Name)
@@ -37,7 +37,7 @@ func TestTheRouteRowIsWhatTheDealReads(t *testing.T) {
 		assert.Contains(t, Tiers, w, "a route tier is a tier")
 	}
 	names := KindNames()
-	assert.Equal(t, KindRoute, names[len(names)-1], "routes apply last")
+	assert.Equal(t, []string{KindRoute, KindTier}, names[len(names)-2:], "routes apply before the tiers that name them")
 
 	// The Redis view: route:<name> in the set routes, no derived field; a
 	// loop's view keeps its log.
@@ -61,14 +61,14 @@ func TestRouteNewRowCanonicalisesAndRefusesEveryProblemAtOnce(t *testing.T) {
 		not  []string          // phrases it must not say
 	}{
 		{
-			name: "defaults: unmetered, weight 1, enabled",
+			name: "defaults: unmetered, enabled",
 			raw:  map[string]string{"tier": "flash", "provider": "opencode", "model": "m1", "deadline": "600"},
-			want: map[string]string{"tokens": "0", "weight": "1", "enabled": "true"},
+			want: map[string]string{"tokens": "0", "enabled": "true"},
 		},
 		{
 			name: "a model holding slashes",
-			raw:  map[string]string{"tier": "pro", "provider": "openrouter", "model": "x-ai/grok-4", "deadline": "1800", "weight": "0", "enabled": "false"},
-			want: map[string]string{"model": "x-ai/grok-4", "weight": "0", "enabled": "false"},
+			raw:  map[string]string{"tier": "pro", "provider": "openrouter", "model": "x-ai/grok-4", "deadline": "1800", "enabled": "false"},
+			want: map[string]string{"model": "x-ai/grok-4", "enabled": "false"},
 		},
 		{
 			name: "frontier is no route's tier",
@@ -107,9 +107,9 @@ func TestRouteNewRowCanonicalisesAndRefusesEveryProblemAtOnce(t *testing.T) {
 			not:  []string{"route r1 has"},
 		},
 		{
-			name: "a bad tier, a slashed provider and a negative weight, all at once",
-			raw:  map[string]string{"tier": "max", "provider": "a/b", "model": "m", "deadline": "60", "weight": "-1"},
-			errs: []string{`--tier "max"`, `--provider "a/b"`, `--weight "-1": want a non-negative integer`},
+			name: "a bad tier, a slashed provider and a negative budget, all at once",
+			raw:  map[string]string{"tier": "max", "provider": "a/b", "model": "m", "deadline": "60", "tokens": "-1"},
+			errs: []string{`--tier "max"`, `--provider "a/b"`, `--tokens "-1": want a non-negative integer`},
 		},
 	}
 	for _, tc := range cases {
@@ -147,7 +147,7 @@ func TestRouteSetIsCheckedOnTheRowItWouldLeave(t *testing.T) {
 		{name: "deadline 0", changes: map[string]string{"deadline": "0"}, refuse: "--deadline 0"},
 		{name: "a slashed provider", changes: map[string]string{"provider": "x-ai/grok"}, refuse: "no slash"},
 		{name: "an empty model", changes: map[string]string{"model": ""}, refuse: `--model ""`},
-		{name: "out of the draw by weight", changes: map[string]string{"weight": "0"}},
+		{name: "out of the deal", changes: map[string]string{"enabled": "false"}},
 		{name: "another provider and model", changes: map[string]string{"provider": "openrouter", "model": "x-ai/grok-4"}},
 	}
 	for _, tc := range cases {
@@ -207,13 +207,13 @@ func TestApplyWritesRoutesAndReachesParity(t *testing.T) {
 	assert.Empty(t, lines, "a second apply of the same rows writes nothing")
 	assert.Zero(t, res.Add+res.Set+res.Remove)
 
-	_, _, err = st.Update(ctx, KindRoute, "pro-opencode", map[string]string{"weight": "3"}, "t")
+	_, _, err = st.Update(ctx, KindRoute, "pro-opencode", map[string]string{"tokens": "3"}, "t")
 	require.NoError(t, err)
 	_, err = st.Delete(ctx, KindRoute, "pro-deepseek", "t")
 	require.NoError(t, err)
 	_, err = Apply(ctx, st, ap, KindRoute, "t", false, report)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"APPLY SET kind=route name=pro-opencode changed=weight", "APPLY REMOVE kind=route name=pro-deepseek"}, lines)
+	assert.Equal(t, []string{"APPLY SET kind=route name=pro-opencode changed=tokens", "APPLY REMOVE kind=route name=pro-deepseek"}, lines)
 	rev, _ = st.Rev(ctx, KindRoute)
 	assert.Equal(t, rev, ap.revs[KindRoute])
 }

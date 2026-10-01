@@ -38,7 +38,7 @@ func (h *harness) failTake(card, report string) *sprint.Card {
 // take; the route's stats count it.
 func TestAProviderFailureRedealsTheCardAndIsNeverAFailedWorkJudgment(t *testing.T) {
 	t.Parallel()
-	h := routeHarness(t, route("pro-a", "pro", 1), route("pro-b", "pro", 1))
+	h := routeHarness(t, route("pro-a", "pro"), route("pro-b", "pro"))
 	h.addReady("s1", 1, briefOf("pro", ""))
 	h.startMachine()
 	h.machine()
@@ -67,7 +67,7 @@ func TestAProviderFailureRedealsTheCardAndIsNeverAFailedWorkJudgment(t *testing.
 	assert.Equal(t, 1, w.Int("redeals"), "the ended take counts toward the bound")
 	assert.NotEqual(t, first, w.F(sprint.FieldRoute), "another route remains: the redeal leaves the failed one out")
 	assert.Empty(t, h.openOf(sprint.NWorkFailed))
-	for _, x := range sprint.RouteStats([]sprint.Route{route("pro-a", "pro", 1), route("pro-b", "pro", 1)}, h.snap().Fleet) {
+	for _, x := range sprint.RouteStats([]sprint.Route{route("pro-a", "pro"), route("pro-b", "pro")}, h.snap().Fleet) {
 		if x.Route.Name == first {
 			assert.Equal(t, [3]int{1, 1, 1}, [3]int{x.Attempts, x.Failed, x.Provider}, "the route's provider failures count apart")
 		}
@@ -88,7 +88,7 @@ func TestAProviderFailureRedealsTheCardAndIsNeverAFailedWorkJudgment(t *testing.
 // run on.
 func TestAProviderFailureWithOneRouteIsRedealtToThatRoute(t *testing.T) {
 	t.Parallel()
-	h := routeHarness(t, route("pro-a", "pro", 1))
+	h := routeHarness(t, route("pro-a", "pro"))
 	h.addReady("s1", 1, briefOf("pro", ""))
 	h.startMachine()
 	h.machine()
@@ -105,7 +105,7 @@ func TestAProviderFailureWithOneRouteIsRedealtToThatRoute(t *testing.T) {
 // the last error line, never a failed-work judgment.
 func TestAFourthProviderFailureRetiresTheCardWithOneJudgmentNamingTheProvider(t *testing.T) {
 	t.Parallel()
-	h := routeHarness(t, route("pro-a", "pro", 1))
+	h := routeHarness(t, route("pro-a", "pro"))
 	h.addReady("s1", 1, briefOf("pro", ""))
 	h.startMachine()
 	h.machine()
@@ -139,7 +139,7 @@ func TestAFourthProviderFailureRetiresTheCardWithOneJudgmentNamingTheProvider(t 
 func TestAFailedFinishWithoutTheProviderKindStaysFailedWork(t *testing.T) {
 	t.Parallel()
 	for _, report := range []string{"no RESULT.md shape; " + strings.ToUpper(cardhdr.EndProvider), "push refused: rejected; r", "nothing to do: done already; r", "verdict not-done; r"} {
-		h := routeHarness(t, route("pro-a", "pro", 1))
+		h := routeHarness(t, route("pro-a", "pro"))
 		h.addReady("s1", 1, briefOf("pro", ""))
 		h.must(DealStep(sprint.DealReq{}))
 		h.failTake("s1-1.w1", report)

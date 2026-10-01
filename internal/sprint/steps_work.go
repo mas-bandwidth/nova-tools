@@ -686,10 +686,12 @@ type DealReq struct {
 // same card dealt again at a new generation, its attempt unchanged; otherwise
 // the next attempt's card is cut.
 func Deal(s *Snapshot, r DealReq) Plan {
-	rr := dealRound(s)
-	p, moves := dealPlan(s, r, rr)
+	rr, ri := dealRound(s), routeIndexesOf(s)
+	p, moves := dealPlan(s, r, rr, ri)
 	p = Lawful(p)
 	roundWrites(&p, rr, moves)
+	// each tier's route index moves by the cards dealt on it (route.go)
+	ri.write(&p)
 	// the streams take turns from the work table's stream index (round.go,
 	// errata 3 amendment 10): it moves past the stream of the last card dealt
 	streamIndexWrite(&p, streamRound(s, PropStreamIndex), s.Work.Placed)
@@ -700,7 +702,7 @@ func Deal(s *Snapshot, r DealReq) Plan {
 // when one has room.
 const noRoomWhy = "every up fleet member is at its width: the tick deals it when one has room"
 
-func dealPlan(s *Snapshot, r DealReq, rr *round) (Plan, roundMoves) {
+func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMoves) {
 	var p Plan
 	moves := roundMoves{}
 	ready := func(c *Card) string { return inState(c, Ready) }
@@ -713,7 +715,7 @@ func dealPlan(s *Snapshot, r DealReq, rr *round) (Plan, roundMoves) {
 		return p, moves
 	}
 	q, widths := memberLoads(s, up), memberWidths(s, up)
-	next := func() string { return rr.next(up, q, widths, "", false) }
+	next := func() string { return rr.next(up, q, widths, "") }
 	for _, c := range chosen {
 		if wc := s.Fleet.Placed(WorkCardID(c.ID, c.Int("attempt"))); wc != nil && wc.Col == Withdrawn {
 			if redealBound(wc) {
@@ -732,13 +734,13 @@ func dealPlan(s *Snapshot, r DealReq, rr *round) (Plan, roundMoves) {
 					p.refuse(c.ID, fmt.Sprintf("%s was refused at staging by every member up (%s): rework it with a fix, or drop it", wc.ID, strings.Join(refused, ", ")))
 					continue
 				}
-				m = rr.next(others, q, widths, "", false)
+				m = rr.next(others, q, widths, "")
 			}
 			if m == "" {
 				p.refuse(c.ID, noRoomWhy)
 				continue
 			}
-			u, why := redeal(s, c, wc, m, q)
+			u, why := redeal(s, c, wc, m, q, ri)
 			if why != "" {
 				p.refuse(c.ID, why)
 				continue
@@ -757,7 +759,7 @@ func dealPlan(s *Snapshot, r DealReq, rr *round) (Plan, roundMoves) {
 			p.refuse(c.ID, noRoomWhy)
 			continue
 		}
-		u, why := deal(s, c, c.F("fix"), m, q, nil, map[string]string{"finding": c.F("finding"), "why": c.F("why")})
+		u, why := deal(s, c, c.F("fix"), m, q, ri, nil, map[string]string{"finding": c.F("finding"), "why": c.F("why")})
 		if why != "" {
 			p.refuse(c.ID, why)
 			continue
@@ -771,15 +773,16 @@ func dealPlan(s *Snapshot, r DealReq, rr *round) (Plan, roundMoves) {
 
 // deal cuts the primary's next attempt's work card, carrying the fix and the
 // primary's score, into the ready queue of the up member m (the next round the
-// fleet, a deal's or a rework's), at generation 1, and moves
+// fleet, a deal's or a rework's), at generation 1, on the route at its tier's
+// index (ri, moved past it: route.go), and moves
 // the primary to working with set; given is more fields of the work card.
-func deal(s *Snapshot, c *Card, fix, m string, q map[string]int, set, given map[string]string, unset ...string) (Unit, string) {
+func deal(s *Snapshot, c *Card, fix, m string, q map[string]int, ri routeIndexes, set, given map[string]string, unset ...string) (Unit, string) {
 	attempt := c.Int("attempt") + 1
 	card := WorkCardID(c.ID, attempt)
 	if s.Fleet.Card(card) != nil {
 		return Unit{}, "work card " + card + " exists already"
 	}
-	route, _, why := s.routeOf(c, nil)
+	route, _, why := s.routeOf(c, nil, ri)
 	if why != "" {
 		return Unit{}, why
 	}
@@ -819,9 +822,10 @@ func deal(s *Snapshot, c *Card, fix, m string, q map[string]int, set, given map[
 // moves its primary to working on it. The attempt, the fix and the score are
 // the card's own, unchanged. The redeal counts only when a take of the card
 // ended (FieldTakeEnded): a card withdrawn while ready keeps its count
-// (tla/DirtyTick.tla DealOne).
-func redeal(s *Snapshot, c, wc *Card, m string, q map[string]int) (Unit, string) {
-	route, _, why := s.routeOf(c, wc)
+// (tla/DirtyTick.tla DealOne). Its route is the next at its tier's index that the
+// card was not dealt on (ri, moved past it and the entries skipped: route.go).
+func redeal(s *Snapshot, c, wc *Card, m string, q map[string]int, ri routeIndexes) (Unit, string) {
+	route, _, why := s.routeOf(c, wc, ri)
 	if why != "" {
 		return Unit{}, why
 	}
@@ -1384,7 +1388,7 @@ func downPlan(s *Snapshot, r FleetReq, up []string, rr *round, moves roundMoves,
 			// index moved past it; with none below its width the card is
 			// withdrawn, and the next deal places it where there is room: a
 			// member at its width takes no more (errata 3 amendment 9)
-			if m := rr.next(without(up, StagingRefusers(c)), q, widths, "", false); m != "" {
+			if m := rr.next(without(up, StagingRefusers(c)), q, widths, ""); m != "" {
 				rr.moved(m)
 				moves[c.ID] = m
 				q[m]++

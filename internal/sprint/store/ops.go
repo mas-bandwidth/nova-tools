@@ -173,11 +173,11 @@ func (st *Store) heldState(ctx context.Context, s *sprint.Snapshot, pending *OpR
 	}
 	if s.Routes == nil {
 		// the no-stall rule asks what the next deal does: it draws from the routes
-		rs, err := st.routes(ctx)
+		rs, tiers, err := st.routes(ctx)
 		if err != nil {
 			return h, err
 		}
-		s.Routes = rs
+		s.Routes, s.Tiers = rs, tiers
 	}
 	if pending != nil {
 		h.Pending = &sprint.PendingOp{ID: pending.ID, Verb: pending.Verb, At: pending.At}

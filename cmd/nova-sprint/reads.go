@@ -894,7 +894,7 @@ func (a *app) cmdRoutes(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "routes", err.Error())
 	}
 	ctx := context.Background()
-	rs, err := st.Routes(ctx)
+	rs, _, err := st.Routes(ctx)
 	if err != nil {
 		return a.readFailed("routes", err, stderr)
 	}
@@ -917,7 +917,7 @@ func (a *app) cmdRoutes(args []string, stdout, stderr io.Writer) int {
 		if r.Provider != "" {
 			model = r.Provider + "/" + r.Model
 		}
-		how := fmt.Sprintf("tier=%s weight=%d enabled=%t", oneline.Field(orDashStr(r.Tier, "-")), r.Weight, r.Enabled)
+		how := fmt.Sprintf("tier=%s enabled=%t", oneline.Field(orDashStr(r.Tier, "-")), r.Enabled)
 		if x.Pinned {
 			how = "pinned"
 		} else if r.Tier == "" {

@@ -249,27 +249,34 @@ machine a loop names cannot be removed until the loop is.
 ### route
 
 One way to run a model tier: the provider and model a card of that tier runs
-on, its token budget per card, its deadline in seconds, and its weight in the
-tier's draw. A tier with several routes spreads its cards across providers and
-models. Three pro routes, then the apply that hands them to the deal:
+on, its token budget per card and its deadline in seconds. A tier with several
+routes spreads its cards across providers and models, in the order of the
+tier's array. Three pro routes, the pro array (the direct route named twice, so
+it takes two turns of every four), then the apply that hands them to the deal:
 
 ```
 nova-config route add pro-deepseek-opencode --tier pro --provider opencode --model deepseek-v4 --tokens 400000 --deadline 1800
-nova-config route add pro-deepseek-direct --tier pro --provider deepseek --model deepseek-v4 --tokens 400000 --deadline 1800 --weight 2
+nova-config route add pro-deepseek-direct --tier pro --provider deepseek --model deepseek-v4 --tokens 400000 --deadline 1800
 nova-config route add pro-grok-openrouter --tier pro --provider openrouter --model x-ai/grok-4 --tokens 300000 --deadline 1800
+nova-config tier set pro --routes pro-deepseek-direct,pro-deepseek-opencode,pro-deepseek-direct,pro-grok-openrouter
 nova-config apply
 ```
 
 The harness is launched with `<provider>/<model>`: `--provider` is one word
 with no slash, and `--model` is the rest, which may hold slashes
 (`x-ai/grok-4`). `--tokens 0` (the default) is unmetered, the deadline the only
-stop; `--deadline` is required and above 0. The deal draws one enabled route of
-the card's tier per deal, weighted by `--weight` (1 by default; 0 takes a route
-out of the draw as `--enabled false` does), excluding routes already drawn for
-that card when another remains; a card's `model:` header pins it instead. The
-tier is `flash` or `pro`: frontier cards are never drawn from routes, they
-escalate to the coordinator. apply writes the hash `route:<name>` and the set
-`routes`, which the deal reads.
+stop; `--deadline` is required and above 0; `--enabled false` takes a route out
+of the deal. The deal takes `routes[index mod len]` of the card's tier's array
+for each card, the index a counter on the fleet table moved by one a card
+dealt, and a redeal moves past the routes already taken for that card when
+another remains; a card's `model:` header pins it instead and moves no index.
+`tier set` refuses a route that is not a row, is disabled or is of another
+tier, and `tier remove` is refused (migrate made both rows and the deal reads
+them); a tier with an empty array takes its enabled routes in name order;
+`nova-config tier list` prints the arrays. The tier is `flash` or
+`pro`: frontier cards are never dealt from routes, they escalate to the
+coordinator. apply writes the hashes `route:<name>` and `tier:<name>` and the
+sets `routes` and `tiers`, which the deal reads.
 
 ### Refusals
 

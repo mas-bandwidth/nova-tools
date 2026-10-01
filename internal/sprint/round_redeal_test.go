@@ -231,7 +231,7 @@ func TestTheLevelGoesRoundTheFleet(t *testing.T) {
 		w.must(FleetStep(w.s, FleetReq{Op: "down", Member: m}))
 	}
 	w.must(Add(w.s, AddReq{Stream: "s1", Count: 12}))
-	w.must(Deal(w.s, DealReq{Sel: Sel{Limit: 12}})) // m1 alone: every card spills to it
+	w.must(Deal(w.s, DealReq{Sel: Sel{Limit: 12}})) // m1 alone: every card goes to it (12 is within its width)
 	upAll(w.s)
 	w.must(FleetStep(w.s, FleetReq{Op: "level"}))
 	check(t, w.s, "fleet level")
