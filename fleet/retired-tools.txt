@@ -1,0 +1,18 @@
+# The tools nova-tools once shipped and ships no more, one name per line.
+# fleet/tools.yml removes exactly these names from a machine's bin directory,
+# and nothing else: a nova-* nova-tools never shipped (a credential helper, a
+# wrapper of the fleet's own, a .prev or .new copy) is never touched. A tool
+# leaves cmd/ and gains its line here in the same change; a name here is never
+# also a cmd/ directory (TestFleetPlaysReadOnlyTheInventory).
+nova-board
+nova-card
+nova-decide
+nova-friend
+nova-merge
+nova-message-bus
+nova-play
+nova-post
+nova-pulse
+nova-review
+nova-test
+nova-wake
