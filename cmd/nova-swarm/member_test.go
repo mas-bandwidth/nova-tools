@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/member"
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
@@ -478,15 +480,12 @@ func TestMemberRefusesCombiningOnceWithTicks(t *testing.T) {
 	root := t.TempDir()
 	args := append(memberFull(root), "--ticks", "3")
 	var out, errb bytes.Buffer
-	if code := run(args, strings.NewReader(""), &out, &errb, time.Now()); code != 2 || !strings.Contains(errb.String(), "--once and --ticks are exclusive") {
-		t.Fatalf("exit %d, stderr %q, want exit 2 naming exclusive", code, errb.String())
-	}
-	if out.Len() != 0 {
-		t.Fatalf("stdout %q, want empty", out.String())
-	}
-	if _, err := os.Stat(filepath.Join(root, "slots")); !os.IsNotExist(err) {
-		t.Fatalf("directories made before refusal: %v", err)
-	}
+	code := run(args, strings.NewReader(""), &out, &errb, time.Now())
+	require.Equal(t, 2, code, "stderr %q", errb.String())
+	require.Contains(t, errb.String(), "give --once or --ticks <n>, not both")
+	require.Empty(t, out.String())
+	_, err := os.Stat(filepath.Join(root, "slots"))
+	require.True(t, os.IsNotExist(err), "directories made before refusal: %v", err)
 }
 
 // TestMemberRefusesZeroOrNegativeTicks pins that --ticks requires a positive count:
@@ -494,18 +493,18 @@ func TestMemberRefusesCombiningOnceWithTicks(t *testing.T) {
 func TestMemberRefusesZeroOrNegativeTicks(t *testing.T) {
 	t.Parallel()
 	for _, val := range []string{"0", "-1", "-5"} {
-		root := t.TempDir()
-		args := append(memberWithoutOnce(root), "--ticks", val)
-		var out, errb bytes.Buffer
-		if code := run(args, strings.NewReader(""), &out, &errb, time.Now()); code != 2 || !strings.Contains(errb.String(), "--ticks is at least 1, got "+val) {
-			t.Errorf("--ticks %s: exit %d, stderr %q, want exit 2 naming at least 1", val, code, errb.String())
-		}
-		if out.Len() != 0 {
-			t.Errorf("--ticks %s: stdout %q, want empty", val, out.String())
-		}
-		if _, err := os.Stat(filepath.Join(root, "slots")); !os.IsNotExist(err) {
-			t.Errorf("--ticks %s made directories before refusal: %v", val, err)
-		}
+		t.Run(val, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			args := append(memberWithoutOnce(root), "--ticks", val)
+			var out, errb bytes.Buffer
+			code := run(args, strings.NewReader(""), &out, &errb, time.Now())
+			require.Equal(t, 2, code, "stderr %q", errb.String())
+			require.Contains(t, errb.String(), "give --ticks 1 or more, or leave it out to run until stopped")
+			require.Empty(t, out.String())
+			_, err := os.Stat(filepath.Join(root, "slots"))
+			require.True(t, os.IsNotExist(err), "directories made before refusal: %v", err)
+		})
 	}
 }
 
@@ -516,15 +515,9 @@ func TestMemberRefusesBothOnceAndNonPositiveTicksNamesBothPins(t *testing.T) {
 	root := t.TempDir()
 	args := append(memberFull(root), "--ticks", "0")
 	var out, errb bytes.Buffer
-	if code := run(args, strings.NewReader(""), &out, &errb, time.Now()); code != 2 {
-		t.Fatalf("exit %d, want 2", code)
-	}
-	if !strings.Contains(errb.String(), "--once and --ticks are exclusive") {
-		t.Errorf("stderr %q missing exclusivity error", errb.String())
-	}
-	if !strings.Contains(errb.String(), "--ticks is at least 1, got 0") {
-		t.Errorf("stderr %q missing positivity error", errb.String())
-	}
+	require.Equal(t, 2, run(args, strings.NewReader(""), &out, &errb, time.Now()))
+	require.Contains(t, errb.String(), "give --once or --ticks <n>, not both")
+	require.Contains(t, errb.String(), "give --ticks 1 or more, or leave it out to run until stopped")
 }
 
 // TestMemberAcceptsPositiveTicks pins that valid positive --ticks runs for the
@@ -534,10 +527,6 @@ func TestMemberAcceptsPositiveTicks(t *testing.T) {
 	root := t.TempDir()
 	args := append(memberWithoutOnce(root), "--ticks", "2", "--every", "1ms", "--sprint", filepath.Join(root, "absent-sprint"))
 	var out, errb bytes.Buffer
-	if code := run(args, strings.NewReader(""), &out, &errb, time.Now()); code != 0 {
-		t.Fatalf("exit %d, stderr %q, want exit 0", code, errb.String())
-	}
-	if !strings.Contains(out.String(), "MEMBER OK as=m1 ticks=2 running=0") {
-		t.Fatalf("stdout %q, want completion after 2 ticks", out.String())
-	}
+	require.Equal(t, 0, run(args, strings.NewReader(""), &out, &errb, time.Now()), "stderr %q", errb.String())
+	require.Contains(t, out.String(), "MEMBER OK as=m1 ticks=2 running=0")
 }

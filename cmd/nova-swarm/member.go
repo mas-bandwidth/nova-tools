@@ -86,10 +86,10 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 		}
 	})
 	if onceGiven && ticksGiven {
-		f.add("--once and --ticks are exclusive: member runs either once, for a number of ticks, or until stopped")
+		f.add("give --once or --ticks <n>, not both")
 	}
 	if ticksGiven && *ticks <= 0 {
-		f.add(fmt.Sprintf("--ticks is at least 1, got %d; member runs either once, for a number of ticks, or until stopped", *ticks))
+		f.add("give --ticks 1 or more, or leave it out to run until stopped")
 	}
 	if f.refused(stderr) {
 		return 2

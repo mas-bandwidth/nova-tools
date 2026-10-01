@@ -197,6 +197,8 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 	}
 	m.epoch = q.Epoch
 	held := []string{"--epoch", strconv.FormatUint(q.Epoch, 10)}
+	// 1. Report every child that ended, one verb per card (each report is its
+	// own words).
 	wasOurs := map[string]bool{}
 	for id := range m.running {
 		wasOurs[id] = true
