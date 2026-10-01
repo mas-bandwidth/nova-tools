@@ -34,9 +34,6 @@ type Unit struct {
 	Notes   []Note
 	Closes  []Open // open judgments this unit answers: recorded as decided
 	Moved   string // what moved, one line
-	// RowDels are rows the unit's part deletes once its changes are applied:
-	// only the last part of a remove has them (Remove).
-	RowDels []RowDel
 }
 
 // Refusal is a card the step did not move, and why.

@@ -65,7 +65,6 @@ func (w *world) do(p Plan) Plan {
 			tb.props = map[string]string{}
 		}
 		tb.props[pw.Name] = pw.Value
-		tb.propsRead = true
 	}
 	for _, tb := range []*Table{w.s.Work, w.s.Readers, w.s.Merge, w.s.Fleet} {
 		tb.cells, tb.byPrimary = nil, nil
