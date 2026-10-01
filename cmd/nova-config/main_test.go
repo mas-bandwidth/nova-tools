@@ -428,7 +428,7 @@ func TestTheSixVerbsEndToEndOnTheFake(t *testing.T) {
 	}
 	// The sprint row: who coordinates; a friend it names stays.
 	_, errs = step(1, "sprint", "set", "--coordinator", "nobody")
-	if errs != "nova-config sprint set: --coordinator nobody names no friend row; run: nova-config sprint show\n" {
+	if errs != "nova-config sprint set: --coordinator nobody names no friend row; run: nova-config friend list\n" {
 		t.Fatalf("sprint set naming no friend: %q", errs)
 	}
 	out, _ = step(0, "sprint", "set", "--coordinator", "rowan")
@@ -490,7 +490,7 @@ func TestTheSixVerbsEndToEndOnTheFake(t *testing.T) {
 		t.Fatalf("fleet history before a set: %q", out)
 	}
 	_, errs = step(1, "fleet", "set", "--store", "space")
-	if errs != "nova-config fleet set: --store space names no machine row; run: nova-config fleet show\n" {
+	if errs != "nova-config fleet set: --store space names no machine row; run: nova-config machine list\n" {
 		t.Fatalf("fleet set naming no machine: %q", errs)
 	}
 	out, _ = step(0, "fleet", "set", "--store", "hulk", "--coordinator", "studio")
