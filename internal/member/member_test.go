@@ -1539,26 +1539,41 @@ func TestTheRunnerIsToldWhenTheMemberIsDoneWithALaunch(t *testing.T) {
 	}
 }
 
-// TestNoRoomStartsNothingAndSaysSoOnce pins Config.Room: while it says no, no card is taken
-// or recovered, the refusal is said once with its reason, and once the room is back the take
-// resumes, said once.
-func TestNoRoomStartsNothingAndSaysSoOnce(t *testing.T) {
+// TestNoRoomRefusesAtStagingWithTheReason pins Config.Room: while it says no, no child is
+// started, and every card the tick would start (a taken one, a recovered one, a read begun)
+// is ended on the staging refusal path with the reason, so the sprint deals it elsewhere and
+// says why; the refusal and the resume are each said once in the member's log.
+func TestNoRoomRefusesAtStagingWithTheReason(t *testing.T) {
 	t.Parallel()
-	room, why := false, "free disk 3.0 GiB under the floor of 100 GiB"
+	room, why := false, "free disk 3.0 GiB under the floor of 10 GiB"
 	g := newRig(Config{As: "m", Width: 2, Room: func() (bool, string) { return room, why }})
 	p := pk("c2")
 	g.s.set("queue", 0, queueJSON(t, 7, ready("c1"), working("c2", 1, &p)))
 	g.s.set("take", 0, takeJSON(t, pk("c1")))
-	for range 2 {
-		_, err := g.tick(t)
-		require.NoError(t, err)
-	}
-	assert.Empty(t, g.r.started(), "neither a taken card nor a recovered one is started")
-	assert.Empty(t, g.s.lines("take"))
-	assert.Equal(t, 1, strings.Count(g.out.String(), "take REFUSED: "+why+"\n"), "said once, with the reason")
-	room, why = true, "free disk 120.0 GiB above the floor of 100 GiB"
 	_, err := g.tick(t)
 	require.NoError(t, err)
+	assert.Empty(t, g.r.started(), "neither a taken card nor a recovered one is started")
+	assert.Equal(t, []string{
+		"finish --as m c2@1 --failed --report staging refused: " + why + " --epoch 7",
+		"finish --as m c1@1 --failed --report staging refused: " + why + " --epoch 7",
+	}, g.s.lines("finish"))
+	_, err = g.tick(t)
+	require.NoError(t, err)
+	assert.Equal(t, 1, strings.Count(g.out.String(), "take REFUSED: "+why+"\n"), "said once, with the reason")
+
+	r := newRig(Config{As: "r", Width: 1, Reader: true, Room: func() (bool, string) { return false, why }})
+	a := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7}
+	r.s.set("queue", 0, queueJSON(t, 7, asked("r1", &a)))
+	_, err = r.tick(t)
+	require.NoError(t, err)
+	assert.Empty(t, r.r.started())
+	assert.Equal(t, []string{"read --as r --return r1 --reason staging refused: " + why + " --epoch 7"}, r.s.lines("return"))
+
+	room, why = true, "free disk 120.0 GiB above the floor of 10 GiB"
+	g.s.reset()
+	_, err = g.tick(t)
+	require.NoError(t, err)
 	assert.Equal(t, []string{"c2", "c1"}, g.r.started())
+	assert.Empty(t, g.s.lines("finish"))
 	assert.Contains(t, g.out.String(), "NOTE take resumed: "+why+"\n")
 }

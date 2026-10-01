@@ -222,3 +222,33 @@ func TestMemberRefusesANegativeDiskFloor(t *testing.T) {
 	require.Equal(t, 2, code)
 	assert.Contains(t, errb.String(), "--disk-floor is the free GiB the slots' volume must keep for the member to start a card: 0 or more")
 }
+
+// TestAFiveLevelReadOnlyModuleCacheIsRemoved pins the shape that held a recursive remove on
+// its prompt on a fleet machine: a Go module cache five directories deep, every directory
+// 0555 and every file in it 0444, under a launch the member is done with. It is removed
+// whole, and nothing beside it is touched.
+func TestAFiveLevelReadOnlyModuleCacheIsRemoved(t *testing.T) {
+	t.Parallel()
+	p := newPool(t)
+	name := p.launch("deep", 1, time.Now())
+	top := filepath.Join(p.slots, name, "jobs", "deep", "pkg", "mod")
+	var dirs []string
+	d := top
+	for i := range 5 {
+		d = filepath.Join(d, "level"+strconv.Itoa(i))
+		dirs = append(dirs, d)
+		write(t, filepath.Join(d, "file.go"), "package level\n")
+	}
+	for i := len(dirs) - 1; i >= 0; i-- {
+		require.NoError(t, os.Chmod(filepath.Join(dirs[i], "file.go"), 0o444))
+		require.NoError(t, os.Chmod(dirs[i], 0o555))
+	}
+	fi, err := os.Stat(dirs[4])
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0o555), fi.Mode().Perm())
+	p.r.started(name)
+	p.r.Ended(member.Packet{Card: "deep", Kind: "work", Gen: 1, Epoch: 1}, false)
+	assert.False(t, p.exists(name), "the read-only tree is removed whole")
+	assert.FileExists(t, filepath.Join(p.slots, name+".native.log"))
+	assert.Empty(t, p.errb.String())
+}

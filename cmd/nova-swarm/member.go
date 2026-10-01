@@ -59,7 +59,7 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	noWall := fs.Bool("no-wall", false, "")
 	ghBin := fs.String("gh", "gh", "")
 	passFlag := fs.String("pass", "", "")
-	diskFloor := fs.Int("disk-floor", 100, "")
+	diskFloor := fs.Int("disk-floor", 10, "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -111,7 +111,7 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 		f.add("give --ticks 1 or more, or leave it out to run until stopped")
 	}
 	if *diskFloor < 0 {
-		f.add("--disk-floor is the free GiB the slots' volume must keep for the member to start a card: 0 or more (0 checks nothing; default 100)")
+		f.add("--disk-floor is the free GiB the slots' volume must keep for the member to start a card: 0 or more (0 checks nothing; default 10)")
 	}
 	pass := splitNames(*passFlag)
 	for _, n := range pass {
