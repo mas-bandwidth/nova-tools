@@ -61,9 +61,8 @@ const usageTop = `nova-config: a fleet's machines and AI friends as rows in Post
 how it works: PostgreSQL holds the rows, in the schema migrate makes: a machine
 row per host ssh reaches, a friend row per AI, one fleet row, one sprint row,
 a loop row per supervised process, a route row per way to run a model tier
-and a tier row per tier, its route array;
-every write adds a history row naming who made it. apply copies the rows into
-Redis, the view the fleet reads; status checks Redis is at Postgres's revision.
+and a tier row per tier, its route array; writes add history naming their actor.
+apply copies the rows into Redis, the view the fleet reads; status checks its revision.
 first run: the lines under example: need no database; the rest needs PostgreSQL:
 export NOVA_PG_DSN=postgres://user@127.0.0.1:5432/db (a database you own), then
 run migrate.
