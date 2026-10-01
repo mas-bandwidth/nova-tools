@@ -1,4 +1,4 @@
-# Migrated counted package ledger; original row keys preserved.
+# Counted package ledger; full row keys are preserved.
 # ceiling: 52
 internal/swarm/cardbudget.go:stella 1
 internal/swarm/fence.go:rowan 1

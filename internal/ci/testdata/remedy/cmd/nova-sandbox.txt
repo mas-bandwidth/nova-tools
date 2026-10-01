@@ -1,3 +1,3 @@
-# Migrated counted package ledger; original row keys preserved.
+# Counted package ledger; full row keys are preserved.
 # ceiling: 1
 cmd/nova-sandbox/runwin.go:finishWindows:refuse-print 1 the SANDBOX LEAK line printed just before it carries remedy="rmdir /s /q <dir>"; this NOTE says why

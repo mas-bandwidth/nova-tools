@@ -75,6 +75,26 @@ func TestPackagesExplicitPackageKeysKeepTheirOwner(t *testing.T) {
 	require.Error(t, err, "file-key mode must not conflate a package with its parent")
 }
 
+func TestPackagesShardPathNamesExistingAndProspectiveShard(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	existing := writePackageShard(t, dir, "internal/ci.txt", "# ceiling: 1\ninternal/ci/check.go:f:blank 1 existing\n")
+	p := loadPackageFixture(t, dir)
+
+	got, err := p.ShardPath("internal/ci/check.go:f:blank")
+	require.NoError(t, err)
+	assert.Equal(t, existing, got)
+
+	got, err = p.ShardPath("cmd/nova-ci/main.go:f:blank")
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(dir, "cmd", "nova-ci.txt"), got)
+	_, err = os.Stat(got)
+	assert.ErrorIs(t, err, os.ErrNotExist)
+
+	_, err = p.ShardPath("/outside.go:f:blank")
+	require.Error(t, err)
+}
+
 // Growth in B must not let UPDATE shrink A before it discovers the refusal.
 func TestPackagesUpdatePreflightsEveryShardBeforeWriting(t *testing.T) {
 	t.Parallel()
@@ -90,6 +110,7 @@ func TestPackagesUpdatePreflightsEveryShardBeforeWriting(t *testing.T) {
 	}, true)
 	assert.False(t, res.Updated)
 	assert.Len(t, res.Over, 1)
+	assert.Contains(t, strings.Join(r.lines, "\n"), filepath.Join(dir, "b.txt"))
 	assert.Contains(t, strings.Join(r.lines, "\n"), "refuses to raise a count")
 	assert.Equal(t, beforeA, readBack(t, a))
 	assert.Equal(t, beforeB, readBack(t, b))
@@ -235,6 +256,7 @@ func TestPackagesMissingDirectoryIsEmptyAndCannotGrow(t *testing.T) {
 	res := CheckPackagesCountedMode(r, p, map[string]int{"cmd/new/new.go:f:blank": 1}, true)
 	assert.False(t, res.Updated)
 	assert.Len(t, res.Unlisted, 1)
+	assert.Contains(t, strings.Join(r.lines, "\n"), filepath.Join(dir, "cmd", "new.txt"))
 	assert.Equal(t, 1, r.count("refuses to grow"))
 	_, err := os.Stat(dir)
 	assert.ErrorIs(t, err, os.ErrNotExist)

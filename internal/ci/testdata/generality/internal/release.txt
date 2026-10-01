@@ -1,4 +1,4 @@
-# Migrated counted package ledger; original row keys preserved.
+# Counted package ledger; full row keys are preserved.
 # ceiling: 23
 internal/release/adopt.go:emma 1
 internal/release/adopt.go:glenn 1

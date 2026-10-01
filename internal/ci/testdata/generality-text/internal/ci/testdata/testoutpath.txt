@@ -1,4 +1,4 @@
-# Migrated counted package ledger; original row keys preserved.
+# Counted package ledger; full row keys are preserved.
 # ceiling: 2
 internal/ci/testdata/testoutpath/after.go.txt:emma 1
 internal/ci/testdata/testoutpath/before.go.txt:emma 1

@@ -1,4 +1,4 @@
-# Migrated counted package ledger; original row keys preserved.
+# Counted package ledger; full row keys are preserved.
 # ceiling: 2
 internal/ci/timing/testdata/events.jsonl:mas-bandwidth 420
 internal/ci/timing/testdata/table.tsv:mas-bandwidth 400

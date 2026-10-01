@@ -1,4 +1,4 @@
-# Migrated counted package ledger; original row keys preserved.
+# Counted package ledger; full row keys are preserved.
 # ceiling: 3
 internal/cardhdr/cardhdr.go:glenn 2
 internal/cardhdr/invariant.go:glenn 1

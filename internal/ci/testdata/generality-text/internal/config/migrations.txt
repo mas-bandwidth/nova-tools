@@ -1,4 +1,4 @@
-# Migrated counted package ledger; original row keys preserved.
+# Counted package ledger; full row keys are preserved.
 # ceiling: 2
 internal/config/migrations/0004_fleet.sql:glenn 1
 internal/config/migrations/0005_sprint.sql:glenn 1

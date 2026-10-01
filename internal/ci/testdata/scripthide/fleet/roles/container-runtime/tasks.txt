@@ -1,3 +1,3 @@
-# Migrated counted package ledger; original row keys preserved.
+# Counted package ledger; full row keys are preserved.
 # ceiling: 1
 fleet/roles/container-runtime/tasks/main.yml:stderr-null 1 the rootfs probe expects its write to fail and exits 15 if it lands; fleet/ is being reworked, so the reason comment waits for that

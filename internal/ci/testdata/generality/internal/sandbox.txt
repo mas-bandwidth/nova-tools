@@ -1,4 +1,4 @@
-# Migrated counted package ledger; original row keys preserved.
+# Counted package ledger; full row keys are preserved.
 # ceiling: 6
 internal/sandbox/egress.go:johnny 2
 internal/sandbox/landlock_linux.go:johnny 1

@@ -1,4 +1,4 @@
-# Migrated counted package ledger; original row keys preserved.
+# Counted package ledger; full row keys are preserved.
 # ceiling: 12
 internal/fleet/workloads/diag-size.card:hulk 1
 internal/fleet/workloads/go-on-path.card:mini 1

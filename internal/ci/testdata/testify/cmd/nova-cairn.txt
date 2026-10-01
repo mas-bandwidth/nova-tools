@@ -1,3 +1,3 @@
-# Migrated counted package ledger; original row keys preserved.
+# Counted package ledger; full row keys are preserved.
 # ceiling: 1
 cmd/nova-cairn:env 1 t.Setenv and Chdir sites to inject through config

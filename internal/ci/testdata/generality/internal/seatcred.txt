@@ -1,4 +1,4 @@
-# Migrated counted package ledger; original row keys preserved.
+# Counted package ledger; full row keys are preserved.
 # ceiling: 2
 internal/seatcred/profile.go:space 1
 internal/seatcred/seatcred.go:studio 2

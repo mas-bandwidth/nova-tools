@@ -1,4 +1,4 @@
-# Migrated counted package ledger; original row keys preserved.
+# Counted package ledger; full row keys are preserved.
 # ceiling: 69
 docs/CLI.md:emma 3
 docs/CLI.md:freddy 1

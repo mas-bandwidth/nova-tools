@@ -1,4 +1,4 @@
-# Migrated counted package ledger; original row keys preserved.
+# Counted package ledger; full row keys are preserved.
 # ceiling: 5
 internal/typedrec/contract.go:space 4
 internal/typedrec/disposition.go:johnny 2

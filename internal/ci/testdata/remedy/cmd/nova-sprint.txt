@@ -1,4 +1,4 @@
-# Migrated counted package ledger; original row keys preserved.
+# Counted package ledger; full row keys are preserved.
 # ceiling: 2
 cmd/nova-sprint/run.go:app.cmdTick:exit-2 2 under --json the error is the object's error field; otherwise printTick has printed it on stderr the line before
 cmd/nova-sprint/run.go:app.setMachine:exit-2 1 under --json the error is the object's error field on stdout, which a reader of the JSON reads there

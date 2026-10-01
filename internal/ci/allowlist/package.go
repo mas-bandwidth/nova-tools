@@ -120,6 +120,17 @@ func (p *Packages) Count(key string) int {
 	return 0
 }
 
+// ShardPath returns the physical shard that owns key. It also returns the
+// canonical prospective shard for a valid key with no row, so a refusal can
+// name the file where that key would belong without creating it.
+func (p *Packages) ShardPath(key string) (string, error) {
+	owner, err := p.owner(key)
+	if err != nil {
+		return "", err
+	}
+	return packageShardPath(p.Path, owner)
+}
+
 // Rows returns all shards' rows sorted by their full keys. Lists returns the
 // underlying lists in package-name order when a caller needs shard provenance.
 func (p *Packages) Rows() []Row {
@@ -280,10 +291,18 @@ func CheckPackagesCountedMode(r Reporter, p *Packages, measured map[string]int, 
 	}
 	if blocked {
 		for _, key := range result.Unlisted {
-			r.Errorf("%s is ceiling-only and refuses to grow under %s=1: %s is not listed", p.Path, UpdateEnv, key)
+			file, err := p.ShardPath(key)
+			if err != nil {
+				file = p.Path
+			}
+			r.Errorf("%s is ceiling-only and refuses to grow under %s=1: %s is not listed", file, UpdateEnv, key)
 		}
 		for _, row := range result.Over {
-			r.Errorf("%s refuses to raise a count under %s=1: %s is listed at %d sites and measured at %d", p.Path, UpdateEnv, row.Key, row.Listed, row.Measured)
+			file, err := p.ShardPath(row.Key)
+			if err != nil {
+				file = p.Path
+			}
+			r.Errorf("%s refuses to raise a count under %s=1: %s is listed at %d sites and measured at %d", file, UpdateEnv, row.Key, row.Listed, row.Measured)
 		}
 		return result
 	}

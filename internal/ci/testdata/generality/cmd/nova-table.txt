@@ -1,4 +1,4 @@
-# Migrated counted package ledger; original row keys preserved.
+# Counted package ledger; full row keys are preserved.
 # ceiling: 3
 cmd/nova-table/main.go:space 1
 cmd/nova-table/order.go:glenn 1

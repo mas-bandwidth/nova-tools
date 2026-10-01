@@ -1,4 +1,4 @@
-# Migrated counted package ledger; original row keys preserved.
+# Counted package ledger; full row keys are preserved.
 # ceiling: 4
 cmd/nova-update/testdata/apply.tsv:rowan 1
 cmd/nova-update/testdata/versions.tsv:freddy 1

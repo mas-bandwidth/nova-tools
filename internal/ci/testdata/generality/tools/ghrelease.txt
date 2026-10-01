@@ -1,4 +1,4 @@
-# Migrated counted package ledger; original row keys preserved.
+# Counted package ledger; full row keys are preserved.
 # ceiling: 4
 tools/ghrelease/controls.go:space 1 the English word, not a machine
 tools/ghrelease/gh.go:space 5 the English word, not a machine

@@ -98,6 +98,13 @@ func TestTestsUseTestify(t *testing.T) {
 
 	update := allowlist.Updating()
 	problems, kindsSeen, _ := testifyJudge(counts, byKey, rows, update)
+	for i, problem := range problems {
+		key, _, ok := strings.Cut(problem, ": ")
+		require.True(t, ok, "testify problem has key: %q", problem)
+		shard, err := l.ShardPath(key)
+		require.NoError(t, err, "testify problem key %q", key)
+		problems[i] = fmt.Sprintf("%s: %s", repositoryLedgerPath(shard), problem)
+	}
 	if len(problems) > 0 {
 		var remedies []string
 		for _, kind := range testifyKinds {
@@ -105,7 +112,7 @@ func TestTestsUseTestify(t *testing.T) {
 				remedies = append(remedies, kind+": "+testifyRemedy[kind])
 			}
 		}
-		assert.Failf(t, "the testing rule", "%s\n%s\n(docs/STANDARD.md section 8; the ledger is %s)", strings.Join(problems, "\n"), strings.Join(remedies, "\n"), testifyLedgerPath)
+		assert.Failf(t, "the testing rule", "%s\n%s\n(docs/STANDARD.md section 8)", strings.Join(problems, "\n"), strings.Join(remedies, "\n"))
 		return
 	}
 	allowlist.CheckPackagesCountedMode(t, l, counts, update)

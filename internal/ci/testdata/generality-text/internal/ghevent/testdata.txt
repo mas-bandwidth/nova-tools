@@ -1,4 +1,4 @@
-# Migrated counted package ledger; original row keys preserved.
+# Counted package ledger; full row keys are preserved.
 # ceiling: 4
 internal/ghevent/testdata/check_run.json:johnny 1
 internal/ghevent/testdata/check_run_rerequested.json:johnny 1

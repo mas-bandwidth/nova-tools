@@ -1,4 +1,4 @@
-# Migrated counted package ledger; original row keys preserved.
+# Counted package ledger; full row keys are preserved.
 # ceiling: 9
 internal/ci/ci_cardtemplates.go:hulk 2
 internal/ci/ci_cardtemplates.go:mini 1

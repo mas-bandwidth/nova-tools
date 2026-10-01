@@ -1,4 +1,4 @@
-# Migrated counted package ledger; original row keys preserved.
+# Counted package ledger; full row keys are preserved.
 # ceiling: 2
 infra/image/README.md:studio 1
 infra/image/egress.txt:johnny 1

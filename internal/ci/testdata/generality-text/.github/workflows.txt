@@ -1,4 +1,4 @@
-# Migrated counted package ledger; original row keys preserved.
+# Counted package ledger; full row keys are preserved.
 # ceiling: 13
 # certification.yml:space, the third: the bench runner label for the tick-gate job; labels live in workflows
 .github/workflows/certification.yml:space 3

@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -183,6 +184,9 @@ func isTextScanned(rel string) bool {
 	if strings.HasSuffix(rel, ".go") {
 		return false
 	}
+	if strings.HasPrefix(rel, "internal/ci/testdata/generality/") || strings.HasPrefix(rel, "internal/ci/testdata/generality-text/") {
+		return false
+	}
 	base := path.Base(rel)
 	if textScanNames[base] {
 		return true
@@ -275,16 +279,9 @@ func checkTextGenerality(files []textScanFile, fixtures *allowlist.List, debt ge
 	// Debt rows: path:token count. The shared counted parser owns the row
 	// grammar and each package shard's ceiling; fixture rows remain a flat list.
 	allowed := map[string]int{}
-	var debtPath string
-	switch ledger := debt.(type) {
-	case *allowlist.List:
-		debtPath = ledger.Path
-	case *allowlist.Packages:
-		debtPath = ledger.Path
-	}
 	for _, row := range debt.Rows() {
 		if fixtureFile[fileOfKey(row.Key)] {
-			v = append(v, fmt.Sprintf("%s:%d: %s is a fixture (%s); it has no debt row", debtPath, row.Line, fileOfKey(row.Key), fixtures.Path))
+			v = append(v, fmt.Sprintf("%s:%d: %s is a fixture (%s); it has no debt row", generalityLedgerShardPath(debt, row.Key), row.Line, fileOfKey(row.Key), fixtures.Path))
 		}
 		allowed[row.Key] = debt.Count(row.Key)
 	}
@@ -319,12 +316,12 @@ func checkTextGenerality(files []textScanFile, fixtures *allowlist.List, debt ge
 		case n > a:
 			v = append(v, fmt.Sprintf("%s: %d occurrences of %q exceeds allowed count %d (the list only shrinks)", fileOfKey(key), n, tok, a))
 		case n < a:
-			v = append(v, fmt.Sprintf("%s: %d occurrences of %q is below allowed count %d; shrink the row in %s (the list only shrinks)", fileOfKey(key), n, tok, a, debtPath))
+			v = append(v, fmt.Sprintf("%s: %d occurrences of %q is below allowed count %d; shrink the row in %s (the list only shrinks)", fileOfKey(key), n, tok, a, generalityLedgerShardPath(debt, key)))
 		}
 	}
 	for key := range allowed {
 		if counts[key] == 0 {
-			v = append(v, fmt.Sprintf("%s lists %s, but no reference is in the living tree any more; delete the stale row (the list only shrinks)", debtPath, key))
+			v = append(v, fmt.Sprintf("%s lists %s, but no reference is in the living tree any more; delete the stale row (the list only shrinks)", generalityLedgerShardPath(debt, key), key))
 		}
 	}
 	sort.Strings(v)
@@ -377,11 +374,15 @@ func TestGeneralityText(t *testing.T) {
 				counts[k] = n
 			}
 		}
-		allowlist.CheckPackagesCounted(t, debt, counts)
+		reporter := &generalityMessageReporter{}
+		allowlist.CheckPackagesCounted(reporter, debt, counts)
+		for _, message := range reporter.messages {
+			assert.Fail(t, repoRelativeMessage(repoTree(t).Root, message))
+		}
 		return
 	}
 	for _, v := range checkTextGenerality(files, fixtures, debt) {
-		t.Error(v)
+		t.Error(repoRelativeMessage(repoTree(t).Root, v))
 	}
 }
 
@@ -472,20 +473,23 @@ func TestGeneralityTextScope(t *testing.T) {
 	t.Parallel()
 
 	for rel, want := range map[string]bool{
-		"fleet/machines.tsv":                            true,
-		"fleet/templates/unit.service.j2":               true,
-		"fleet/loops.yml":                               true,
-		".github/workflows/ci.yml":                      true,
-		"docs/CLI.md":                                   true,
-		"Makefile":                                      true,
-		"tools/run.sh":                                  true,
-		"internal/nsprint/fn/lua/x.lua":                 true,
-		"internal/x/testdata/case.json":                 true,
-		"infra/image/Containerfile":                     true,
-		"internal/x/code.go":                            false,
-		"assets/logo.png":                               false,
-		"go.sum":                                        false,
-		"fleet/inventory.container-runtime.example.ini": true,
+		"fleet/machines.tsv":                                  true,
+		"fleet/templates/unit.service.j2":                     true,
+		"fleet/loops.yml":                                     true,
+		".github/workflows/ci.yml":                            true,
+		"docs/CLI.md":                                         true,
+		"Makefile":                                            true,
+		"tools/run.sh":                                        true,
+		"internal/nsprint/fn/lua/x.lua":                       true,
+		"internal/x/testdata/case.json":                       true,
+		"internal/ci/testdata/generality/internal/x.txt":      false,
+		"internal/ci/testdata/generality-text/internal/x.txt": false,
+		"internal/ci/testdata/testify/internal/x.txt":         true,
+		"infra/image/Containerfile":                           true,
+		"internal/x/code.go":                                  false,
+		"assets/logo.png":                                     false,
+		"go.sum":                                              false,
+		"fleet/inventory.container-runtime.example.ini":       true,
 	} {
 		if got := isTextScanned(rel); got != want {
 			t.Errorf("isTextScanned(%q) = %v, want %v", rel, got, want)
@@ -576,5 +580,25 @@ func TestGeneralityTextWitness(t *testing.T) {
 		if v := checkTextGenerality(file("fleet/a.yml", "a: none\n"), noFixtures, debt); len(v) == 0 {
 			t.Error("a stale row passed")
 		}
+	})
+	t.Run("zeroed-package-shard-is-accounting-not-living-text", func(t *testing.T) {
+		dir := t.TempDir()
+		shard := filepath.Join(dir, "fleet.txt")
+		require.NoError(t, os.WriteFile(shard, []byte("# ceiling: 1\nfleet/a.yml:studio 1\n"), 0600))
+		ledger, err := allowlist.LoadPackages(dir, allowlist.Options{Ceiling: true, Counted: true})
+		require.NoError(t, err)
+		reporter := &generalityMessageReporter{}
+		result := allowlist.CheckPackagesCountedMode(reporter, ledger, map[string]int{}, true)
+		assert.True(t, result.Updated)
+		raw, err := os.ReadFile(shard)
+		require.NoError(t, err)
+		assert.Equal(t, "# ceiling: 0\n", string(raw))
+
+		ledger, err = allowlist.LoadPackages(dir, allowlist.Options{Ceiling: true, Counted: true})
+		require.NoError(t, err)
+		assert.False(t, isTextScanned("internal/ci/testdata/generality-text/fleet.txt"))
+		require.Empty(t, checkTextGenerality(nil, noFixtures, ledger))
+		assert.True(t, isTextScanned("docs/living.txt"))
+		require.NotEmpty(t, checkTextGenerality(file("docs/living.txt", "name: studio\n"), noFixtures, ledger))
 	})
 }
