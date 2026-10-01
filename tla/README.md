@@ -1,5 +1,20 @@
 # tla: the models of nova-tools' state machines, and their runners
 
+> **The nova-sprint models are stale as of 2026-10-01 and are not the design.** The owner's ruling that day: nova-tables is
+> the modelled layer and stays so; nova-sprint is in its get-it-done stage and is changed, tested on the twin store, read,
+> landed and run on the real fleet without a model change each time ("we aren't going to model the whole thing in TLA+
+> everytime we make a change"; "the thing that is built upon, is held to a higher standard than the thing built on top of
+> it"). The modules this covers: `DirtyTick` (and `DirtyTickRead`), `RouteIndex`, `Land`, `CardContract`, `SprintEvents`,
+> `CardMachine`, `WorkImport`. Where they are known to disagree with the code today: the deal places up to twice a member's
+> width (`DealAhead`), the models say never past the width; the fleet table and the readers table are rebalanced at the
+> start of every tick and a held or down member keeps no card, the models have no such step; a read's re-ask is counted
+> when the reader hands it back, the model counts it at the ask; reads draw routes from the tier's index beside work
+> cards, checked in the model with one read and no redeal; `SprintEvents` and `CardMachine` describe designs no longer run.
+> The run records (`RUNS.tsv`) still match these model files, which is all `TestTLCRecordsCoverCurrentModels` checks: it
+> does not check the models against the code. At the contraction pass each is either re-derived from the behaviour the
+> fleet passes proved, or deleted. The table-layer models below (`TableMachine`, `MemberTable`, `EpochMemberTable`,
+> `TableEdit`, `TableOrder`, `TableSession`, `RedisFn`, `TableFirstContact`, `FirstConn`, `FuseBox`) are current.
+
 The TLA+ modules here are the specifications of the state machines this repo implements (rowan-new SPEC-COORDINATOR section 8: the backend is the state machine, the verbs are its actions; Glenn 2026-09-27: TLA+ for every state machine, every project). The findings each model produced, verified against the code by hand, are in rowan-new `specs/tla/FINDINGS.md`; the model documents (`TABLE-MODEL.md`, `MEMBER-TABLE-MODEL.md`) are copied here beside the modules they describe.
 
 | Module | Instance | What it is |
