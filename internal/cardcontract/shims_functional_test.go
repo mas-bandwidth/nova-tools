@@ -328,6 +328,28 @@ func TestAPushTheMemberCannotCarryIsRefused(t *testing.T) {
 	assert.Equal(t, head, got, "an option's value is consumed, never read as the source")
 }
 
+// git accepts an unambiguous prefix of a long flag, so each refused long flag is refused at
+// every prefix (docs/SPEC-CARD-CONTRACT.md, the push): the refusal names the flag as typed,
+// records nothing, and the lease and ordinary pushes still pass.
+func TestAPushRefusesAbbreviatedFlags(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "claude", "work")
+	head := r.commit(r.repo, "w")
+	for _, flag := range []string{"--del", "--dele", "--delete", "--mirr", "--mirror", "--push-o=x", "--push-option=x", "--pus=x", "--pru", "--bra", "--tag", "--al"} {
+		code, _, errb := r.sh(r.repo, "git push "+flag+" origin HEAD")
+		assert.Equal(t, 1, code, flag)
+		assert.Contains(t, errb, "REFUSED git push "+flag+":", flag)
+		_, err := os.Stat(filepath.Join(r.job, PushedName))
+		assert.True(t, os.IsNotExist(err), "a refused push records nothing: %s", flag)
+	}
+	for _, line := range []string{"git push --force-with-lease origin HEAD", "git push --force-with-lease=main origin HEAD", "git push origin HEAD"} {
+		code, _, errb := r.sh(r.repo, line)
+		require.Equal(t, 0, code, "%s: %s", line, errb)
+		_, got := LastPushed(r.job)
+		assert.Equal(t, head, got, line)
+	}
+}
+
 // gh's finishes are scoped to the card's kind: a read never creates a pull
 // request and work never reviews one; neither writes a finish.
 func TestGhFinishesAreScopedToTheCardsKind(t *testing.T) {

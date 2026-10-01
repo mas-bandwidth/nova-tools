@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 )
 
 // Sprint runs one sprint verb and returns its exit code and stdout.
@@ -221,6 +222,10 @@ type Config struct {
 	// names, read with its queue every tick (the fleet row is the truth).
 	Width  int
 	Reader bool // run the readers-table loop instead of the fleet's
+	// Meter is the machine's one-second CPU samples, taken by a goroutine of the caller
+	// (hostload.Sampler.Run); nil, or with no sample since the last beat, the beat
+	// measures the machine itself.
+	Meter *hostload.Sampler
 }
 
 // launch is one child and the claim it was started for: the card at the
@@ -249,6 +254,7 @@ type Member struct {
 	epoch   uint64
 	width   int // the width this tick runs to: the override, else the fleet row's
 	drain   bool
+	beaten  uint64 // the Meter's samples the last written beat has carried
 }
 
 // New is a member with nothing running. A reader pushes nothing, and its
@@ -296,9 +302,24 @@ func (m *Member) readCall(args ...string) (int, []byte) {
 // the card is left for the next pass), a store that does not answer is.
 func (m *Member) Tick(now time.Time) (acted int, err error) {
 	if !m.cfg.Reader {
-		// the beat names no load: nova-sprint fleet beat measures the machine's CPU use and
-		// keeps the highest of the last sprint.LoadWindow (docs/SPEC-SPRINT.md, the fleet)
-		if code, out := m.readCall("fleet", "beat", m.cfg.As); code == 2 {
+		// the beat names the highest one-second sample since the last beat written, so the
+		// ten-second highest nova-sprint keeps over its beats (docs/SPEC-SPRINT.md, the
+		// fleet) is the highest of the last ten seconds; with no sample it names none and
+		// nova-sprint fleet beat measures the machine itself
+		args := []string{"fleet", "beat", m.cfg.As}
+		var total uint64
+		if m.cfg.Meter != nil {
+			var pct float64
+			var ok bool
+			if pct, total, ok = m.cfg.Meter.Peak(m.beaten); ok {
+				args = append(args, "--load", strconv.FormatFloat(pct, 'f', 1, 64))
+			}
+		}
+		code, out := m.readCall(args...)
+		if code == 0 && m.cfg.Meter != nil {
+			m.beaten = total
+		}
+		if code == 2 {
 			return 0, fmt.Errorf("beat: the store did not answer: %s", strings.TrimSpace(string(out)))
 		}
 	}
@@ -367,11 +388,25 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 		ok := r.OK // as reported: a work card whose push was refused is reported failed
 		if m.cfg.Reader {
 			if !r.Ran || (r.Verdict != "ok" && r.Verdict != "broken") {
-				// no verdict is no finding: the read stays reading for the
-				// sprint's lateness rule to re-ask; the child is let go
-				fmt.Fprintf(m.out, "read %s: no verdict (ran=%t verdict=%q); left for the sprint to re-ask\n", id, r.Ran, r.Verdict)
-				l.spent = true
-				m.running[id] = l
+				// no verdict is no finding: the read is returned, so the
+				// sprint's next tick asks it of another reader up, before
+				// this reader takes its next read (docs/SPEC-SPRINT.md
+				// section 6; tla/DirtyTick.tla, ReadReturn). A return refused
+				// leaves the launch spent: the read stays for the lateness rule.
+				reason := cut(fmt.Sprintf("no verdict (ran=%t verdict=%q): %s", r.Ran, r.Verdict, oneLine(r.Report)))
+				args := append([]string{"read", "--as", m.cfg.As, "--return", id, "--reason", reason}, launched...)
+				code, out := m.sprint.Run(args...)
+				fmt.Fprintf(m.out, "read %s: returned exit=%d: %s\n", id, code, reason)
+				if code == 2 {
+					return acted, fmt.Errorf("read --return %s: the store did not answer: %s", id, strings.TrimSpace(string(out)))
+				}
+				if code != 0 {
+					l.spent = true
+					m.running[id] = l
+					continue
+				}
+				delete(m.running, id)
+				acted++
 				continue
 			}
 			word := "--ok"

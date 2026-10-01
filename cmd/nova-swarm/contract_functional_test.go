@@ -18,7 +18,6 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
 	"github.com/mas-bandwidth/nova-tools/internal/member"
-	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
@@ -35,6 +34,10 @@ func scriptFor(t *testing.T, family string) string {
 	t.Helper()
 	dir := filepath.Join("..", "..", "internal", "cardcontract", "testdata", "scripted")
 	b, err := os.ReadFile(filepath.Join(dir, family+".sh"))
+	if family == "openai" {
+		require.NoError(t, err, "the OpenAI profile requires its own scripted child under %s", dir)
+		return string(b)
+	}
 	if os.IsNotExist(err) {
 		b, err = os.ReadFile(filepath.Join(dir, "plain.sh"))
 	}
@@ -46,12 +49,11 @@ func scriptFor(t *testing.T, family string) string {
 // (docs/SPEC-CARD-CONTRACT.md, Writing a profile): one card on the mem twin,
 // its repository a local bare origin, run by the member loop (in this
 // process, one command at a time on the twin) and the built native, with the
-// family's scripted child as the harness. The child does what the
-// family's models do (the claude child clones into a directory of its own,
-// branches, commits, pushes and runs gh pr create); the member pushes the
-// child's commit to the card's branch on origin, opens the pull request with
-// the child's title and body when the child asked for one, and finishes the
-// card ok.
+// family's scripted child as the harness. The claude child clones into a
+// directory of its own; the OpenAI child uses a linked worktree. Both commit,
+// record a push and request a pull request. The member pushes the child's
+// commit to the card's branch on origin, opens the pull request with the
+// child's title and body, and finishes the card.
 func TestTheScriptedChildEndToEnd(t *testing.T) {
 	t.Parallel()
 	if runtime.GOOS == "windows" {
@@ -66,23 +68,63 @@ func TestTheScriptedChildEndToEnd(t *testing.T) {
 	}
 }
 
-// TestTheScriptedChildEndToEndInsideTheWall is the claude child of the test
-// above with the wall on, as a fleet runs it: the shims run inside it, and the
-// member pushes and opens the pull request from outside it. A machine with no
-// wall binary on PATH skips it, saying so: the functional image is one (it
-// holds no nova-sandbox; the wall's own tests run on the benches).
+// TestTheScriptedChildEndToEndInsideTheWall runs the claude and OpenAI children
+// with the package's real wall binary on Darwin or Linux. TestMain builds that
+// binary, so the test does not depend on nova-sandbox being installed on PATH.
 func TestTheScriptedChildEndToEndInsideTheWall(t *testing.T) {
 	t.Parallel()
-	if _, err := exec.LookPath(swarm.SandboxBinary); err != nil {
-		t.Skipf("no %s on PATH: the walled run needs the wall binary, which this machine does not have", swarm.SandboxBinary)
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		t.Skipf("the repository builds real wall backends only on Darwin and Linux, not %s", runtime.GOOS)
 	}
-	scriptedChild(t, "claude", true)
+	for _, family := range []string{"claude", "openai"} {
+		family := family
+		t.Run(family, func(t *testing.T) {
+			t.Parallel()
+			scriptedChild(t, family, true)
+		})
+	}
+}
+
+func realWallBackend(t *testing.T) string {
+	t.Helper()
+	require.NotEmpty(t, builtSandbox, "TestMain builds nova-sandbox for the real wall run")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, builtSandbox, "check")
+	cmd.WaitDelay = 2 * time.Second
+	out, err := cmd.Output()
+	require.NoError(t, err, "nova-sandbox check failed; stdout=%q", string(out))
+	fields := strings.Fields(string(out))
+	require.GreaterOrEqual(t, len(fields), 2, "malformed nova-sandbox check output: %q", string(out))
+	require.Equal(t, "CHECK", fields[0], "malformed nova-sandbox check output: %q", string(out))
+	require.Equal(t, "OK", fields[1], "malformed nova-sandbox check output: %q", string(out))
+	backend := ""
+	for _, field := range fields[2:] {
+		if strings.HasPrefix(field, "backend=") {
+			backend = strings.TrimPrefix(field, "backend=")
+			break
+		}
+	}
+	require.NotEmpty(t, backend, "CHECK OK did not name a backend: %q", string(out))
+	if backend == "none" {
+		t.Skipf("the built nova-sandbox reports no supported backend on this kernel: %s", strings.TrimSpace(string(out)))
+	}
+	want := "sandbox-exec"
+	if runtime.GOOS == "linux" {
+		want = "landlock"
+	}
+	require.Equal(t, want, backend, "unexpected real wall backend: %q", string(out))
+	return backend
 }
 
 // scriptedChild runs one family's scripted child through the member loop and
 // native, walled or not, and asserts the finish (TestTheScriptedChildEndToEnd).
 func scriptedChild(t *testing.T, family string, walled bool) {
 	t.Helper()
+	wallBackend := ""
+	if walled {
+		wallBackend = realWallBackend(t)
+	}
 	bin := builtSprint(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -117,6 +159,10 @@ func scriptedChild(t *testing.T, family string, walled bool) {
 	rn := &nativeRunner{self: builtTool, sprintBin: bin, harness: harness, model: familyModel[family], root: root,
 		slots: filepath.Join(root, "slots"), resultsRoot: filepath.Join(root, "results"), deadline: time.Minute,
 		tokens: "unmetered", noWall: !walled, stderr: io.Discard}
+	if walled {
+		require.NotEmpty(t, builtSandbox, "TestMain builds the wall binary for the walled profile run")
+		rn.env = []string{"PATH=" + filepath.Dir(builtSandbox) + string(os.PathListSeparator) + os.Getenv("PATH")}
+	}
 	pu := newGitPusher(root, rn.slots, bin)
 	pu.gh = gh
 	out := &lockedBuf{}
@@ -137,21 +183,39 @@ func scriptedChild(t *testing.T, family string, walled bool) {
 		time.Sleep(100 * time.Millisecond)
 	}
 	assert.NotContains(t, story, "FAILED", story)
-	pushed := strings.TrimSpace(runGit(t, origin, "rev-parse", "--verify", "-q", "refs/heads/sprint/a-1.w1"))
+	pushed := strings.TrimSpace(runGit(t, origin, "rev-parse", "--verify", "-q", "refs/heads/sprint/a-1.w1.e0"))
 	require.Len(t, pushed, 40, "the card's branch is on origin:\n%s", story)
 	assert.Equal(t, "the change", strings.TrimSpace(runGit(t, origin, "log", "-1", "--format=%s", pushed)), "origin holds the child's commit")
-	assert.Contains(t, story, "pushed="+pushed+" to sprint/a-1.w1")
+	assert.Contains(t, story, "pushed="+pushed+" to sprint/a-1.w1.e0")
+	if walled {
+		logs, err := filepath.Glob(filepath.Join(root, "slots", "*.native.log"))
+		require.NoError(t, err)
+		require.Len(t, logs, 1, "the wall run writes one native log")
+		launch := strings.TrimSuffix(filepath.Base(logs[0]), ".native.log")
+		runLog := filepath.Join(root, "slots", launch, "native.log")
+		raw, err := os.ReadFile(runLog)
+		require.NoError(t, err)
+		backend, cwd, reason := wallNamed(string(raw))
+		require.Empty(t, reason, "launch native log %s contains no valid SANDBOX OK receipt: %s", runLog, raw)
+		require.Equal(t, wallBackend, backend, "the framed child ran under the checked real backend")
+		jobDir := filepath.Join(root, "slots", launch, "jobs", "a-1.w1")
+		require.True(t, sameDir(cwd, jobDir), "SANDBOX OK cwd %q must name job %q", cwd, jobDir)
+	}
 
 	args, err := os.ReadFile(filepath.Join(dir, "gh.args"))
-	if family != "claude" {
+	if family != "claude" && family != "openai" {
 		assert.True(t, os.IsNotExist(err), "%s asked for no pull request", family)
 		return
 	}
 	require.NoError(t, err, "the member opened the pull request")
-	assert.Equal(t, []string{"pr", "create", "--repo", origin, "--head", "sprint/a-1.w1", "--title", "The change", "--body-file", "-", "--base", "main"},
+	assert.Equal(t, []string{"pr", "create", "--repo", origin, "--head", "sprint/a-1.w1.e0", "--title", "The change", "--body-file", "-", "--base", "main"},
 		strings.Split(strings.TrimSpace(string(args)), "\n"))
 	body, err := os.ReadFile(filepath.Join(dir, "gh.body"))
 	require.NoError(t, err)
-	assert.Equal(t, "the body, line one\nline two", strings.TrimSpace(string(body)))
+	wantBody := "the body, line one\nline two"
+	if family == "openai" {
+		wantBody = "## Summary\n\nthe body, line two"
+	}
+	assert.Equal(t, wantBody, strings.TrimSpace(string(body)))
 	assert.Contains(t, story, "pr=https://example.com/o/n/pull/42")
 }
