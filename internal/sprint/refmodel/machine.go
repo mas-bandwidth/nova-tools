@@ -3,8 +3,17 @@ package refmodel
 // The machine, the tick, sentinels' release and clear: from the spec
 // (sections 13, 14 and 16), not yet in the model. The model's Next lets any
 // enabled action happen at any time; the spec's machine runs the mechanical
-// ones (Resolve, Start, Ask, FleetUp's levelling, and Resume on a landed
-// cross need) as the parts of one tick, in a fixed order.
+// ones (Resolve, Start, Accept, Ask, FleetUp's levelling, and Resume on a
+// landed cross need) as the parts of one tick, in a fixed order.
+//
+// The state of the model is the sprint as the next tick's pump will leave the
+// work table (the owner's tick, 2026-09-30, errata 3 amendment 12): while the
+// machine runs, every step but the pump queues its work-table changes, and the
+// engine plans each on the work table with the ones before it applied
+// (sprint.WithQueue), so the abstract state of the engine is read the same
+// way (the differential harness's observe), and a step's effect on the work
+// table is the model's at once. The pump, the tick's first update, is the only
+// place a card is taken out of waiting or ready or accepted out of review.
 
 // TickChoices is the choices a tick makes: the member each primary is dealt
 // to, the member each levelled card moves to, and the two readers each
@@ -29,8 +38,13 @@ func SetMachine(s State, running bool) (State, error) {
 
 // Tick is one tick of the machine (spec section 14): a STOPPED machine moves
 // nothing; a RUNNING one runs its parts in order, each on the state the one
-// before left: resolve (T1), resume (T7), deal (T3), level (T4), ask (T2), and
-// done (R15, errata 3 amendment 6), which stops the machine on a done sprint.
+// before left, the four tables' updates in the owner's order: the work pump's
+// resolve (T1), deal (T3) and accept (the owner's ruling of 2026-09-30,
+// "accept is mechanical"), the readers' ask (T2), the merge's resume (T7), the
+// fleet's level (T4), and then done (R15, errata 3 amendment 6), which stops
+// the machine on a done sprint. The tables the updates dirty are updated again
+// until none is; the model's parts dirty no earlier table, so one pass is the
+// fixpoint.
 // The check, deadline and overdue parts write nothing while the rules hold
 // and no clock deadline passes, which the differential test keeps so. From
 // the spec, not yet in the model (the model's Resolve, Start, FleetUp and Ask
@@ -44,18 +58,21 @@ func Tick(s State, ch TickChoices) (State, error) {
 	}
 	n := s.Clone()
 	n.tickResolve()
-	n.tickResume()
 	if err := n.tickDeal(ch.Deal); err != nil {
 		return s, err
 	}
+	if err := n.tickAccept(); err != nil {
+		return s, err
+	}
+	if err := n.tickAsk(ch.Ask); err != nil {
+		return s, err
+	}
+	n.tickResume()
 	lv, err := n.level(ch.Level)
 	if err != nil {
 		return s, err
 	}
 	n = lv
-	if err := n.tickAsk(ch.Ask); err != nil {
-		return s, err
-	}
 	n.tickDone()
 	return n, nil
 }
@@ -206,6 +223,33 @@ func (n *State) tickAsk(choice map[string][]string) error {
 		}
 		*n = next
 	}
+	return nil
+}
+
+// tickAccept is the machine's accept (sprint.TickAccept): every primary in
+// review whose work did not fail, with ok reads from two different readers, and
+// no merge record but a returned one, moves to merging and into its stream's
+// merge queue, in stream turns from the accept's stream index, in one step
+// (Accept). The merge is the coordinator's: the machine never lands a card.
+func (n *State) tickAccept() error {
+	var ids []string
+	for id, p := range n.Primaries {
+		if p.State != Review || n.Failed(id) || !n.Acceptable(id) {
+			continue
+		}
+		if m, ok := n.Merge[id]; ok && m.Place != Returned {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+	next, err := Accept(*n, n.streamTurns(ids, n.AcceptStreamLast))
+	if err != nil {
+		return err
+	}
+	*n = next
 	return nil
 }
 

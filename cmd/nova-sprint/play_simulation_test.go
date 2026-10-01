@@ -157,7 +157,10 @@ func landsUnder(t *testing.T, flags string) map[string]int {
 	ta.live = nil // from here the driver's machines beat, and a silent one is silent
 	seen := map[string]int{}
 	for round := 1; round <= 600; round++ {
-		ta.ok("tick")
+		if ta.tickDone() {
+			t.Logf("play --simulation %s landed after %d rounds; events %v", flags, round, seen)
+			return seen
+		}
 		out := ta.ok(fmt.Sprintf("play --simulation %s --seed %d --ticks 5 --batch 5", flags, round))
 		for _, l := range strings.Split(out, "\n") {
 			if verb, ok := strings.CutPrefix(l, "  nova-sprint "); ok {

@@ -34,6 +34,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `ntable/` | a general Redis-backed table: ordered sets per cell, projections, folds, the render | `go test ./internal/ntable` | `go test ./internal/ntable` |
 | `onboarding/` | onboarding banner and doc verifier | `go test ./internal/onboarding` | `go test ./internal/onboarding` |
 | `oneline/` | single-line log and output grammar | `go test ./internal/oneline` | `go test ./internal/oneline` |
+| `pkgselect/` | package selection, the shard deal and the test fan-out that CI and nova-ci local share | `go test ./internal/pkgselect` | `go test ./internal/pkgselect` |
 | `record/` | decision and execution records | `go test ./internal/record` | `go test ./internal/record` |
 | `redisconn/` | the one way a nova tool opens its Redis connection: options from the environment, one bounded dial, trips counted, errors classified, no secret shown | `go test ./internal/redisconn` | `go test ./internal/redisconn` |
 | `redisfn/` | build, load and check a Redis function library from embedded Lua source | `go test ./internal/redisfn` | `go test ./internal/redisfn` |
@@ -44,6 +45,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `seatcred/` | a seat's Redis login read through the secrets library (--seat, NOVA_SEAT) | `go test ./internal/seatcred/...` | `go test ./internal/seatcred/...` |
 | `secrets/` | zero-leak memory and file vault | `go test ./internal/secrets` | `go test ./internal/secrets` |
 | `selftalk/` | agent self-talk journal stream | `go test ./internal/selftalk` | `go test ./internal/selftalk` |
+| `shippedsmoke/` | the smoke test of a shipped nova-check binary, behind the shippedsmoke build tag, run by the certification workflow | `go test -tags shippedsmoke ./internal/shippedsmoke` | `NOVA_SHIPPED_BIN=<binary> go test -tags shippedsmoke -v ./internal/shippedsmoke` |
 | `sprint/` | the sprint table's pure core (lifecycle, steps, check, inbox) and its binding to the table layer (store) and its driver (play) | `go test ./internal/sprint/...` | `go test ./internal/sprint/...` |
 | `subproc/` | the one door a child process goes through: a named deadline per kind, WaitDelay, and a cancellable context for long-lived children | `go test ./internal/subproc` | `go test ./internal/subproc` |
 | `swarm/` | the native card runner: staging, the wall, budgets, slot leases and card lint | `go test ./internal/swarm` | `go test ./internal/swarm` |

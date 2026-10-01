@@ -71,6 +71,7 @@ type memLog struct {
 	notes    map[string]sprint.Note
 	open     map[string]string
 	cursor   string
+	queue    []sprint.QueuedChange // the work table's queue, oldest first
 }
 
 type memNote struct {
@@ -90,6 +91,16 @@ type memTable struct {
 	rev     uint64
 	members map[string]*memMember
 	ops     map[string]memOp
+	// changes is the table's change stream: each write's revisions, epoch,
+	// verb and the records it named (TableChanges).
+	changes []memChange
+}
+
+// memChange is one event of a table's change stream.
+type memChange struct {
+	epoch, before, after uint64
+	verb                 string
+	ids                  []string
 }
 
 // memEpoch is a table's rows, text cells and properties at one epoch.
@@ -317,6 +328,9 @@ func (m *Mem) ReadSet(_ context.Context, table string, ids []string) (ntable.Rea
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.Calls["readset"]++
+	if err := m.fail("readset " + table); err != nil {
+		return ntable.ReadSetResult{}, err
+	}
 	if len(ids) == 0 || len(ids) > ntable.LimitReadSetMembers {
 		return ntable.ReadSetResult{}, refusal("LIMIT", fmt.Sprintf("read set members: bound %d, observed %d", ntable.LimitReadSetMembers, len(ids)))
 	}
@@ -469,6 +483,11 @@ func (m *Mem) Apply(_ context.Context, man ntable.BatchManifest) (ntable.Receipt
 	before := t.rev
 	t.rev++
 	t.wrote[active] = true
+	ids := make([]string, len(man.Members))
+	for i, e := range man.Members {
+		ids[i] = e.ID
+	}
+	t.changes = append(t.changes, memChange{epoch: active, before: before, after: t.rev, verb: "apply", ids: ids})
 	outcome := "changed"
 	if delta.ChangedCount == 0 && len(changedProps) == 0 {
 		outcome = "noop"
@@ -579,6 +598,11 @@ func (t *memTable) commit(active uint64, e ntable.BatchMemberEntry) (ntable.Batc
 		mm.rev++
 	}
 	d.AfterPlace, d.AfterRev = place(mm), strconv.FormatUint(mm.rev, 10)
+	if mm.placed {
+		// the score as the store's receipt gives it: parsed, and its text
+		score, text := mm.score, strconv.FormatFloat(mm.score, 'f', -1, 64)
+		d.AfterScore, d.AfterScoreText = &score, &text
+	}
 	return d, changed
 }
 
@@ -623,6 +647,7 @@ func (m *Mem) RowsAdd(_ context.Context, table string, rows []string) error {
 	}
 	t.rev++
 	t.wrote[m.active(t)] = true
+	t.changes = append(t.changes, memChange{epoch: m.active(t), before: t.rev - 1, after: t.rev, verb: "rows_add"})
 	return nil
 }
 
@@ -663,6 +688,7 @@ func (m *Mem) RowSet(_ context.Context, table, row string, texts map[string]stri
 	}
 	t.rev++
 	t.wrote[m.active(t)] = true
+	t.changes = append(t.changes, memChange{epoch: m.active(t), before: t.rev - 1, after: t.rev, verb: "row_set"})
 	return nil
 }
 
@@ -727,7 +753,12 @@ func (m *Mem) ReadFence(context.Context) (Fence, error) {
 	if err := m.fail("fence"); err != nil {
 		return Fence{}, err
 	}
-	f := Fence{Gen: l.gen}
+	f := Fence{Gen: l.gen, Queued: len(l.queue)}
+	if raw, ok := m.kv[keyMachine]; ok {
+		var mc Machine
+		f.Running = json.Unmarshal([]byte(raw), &mc) == nil && mc.Running()
+	}
+	f.Stuck = m.kv[keyStuck]
 	if l.fence != nil {
 		op := *l.fence
 		f.Pending = &op
@@ -774,6 +805,10 @@ func (m *Mem) Release(_ context.Context, op OpRecord, commit bool) error {
 		return nil
 	}
 	if commit {
+		if op.Drain > 0 {
+			l.queue = append([]sprint.QueuedChange(nil), l.queue[min(op.Drain, len(l.queue)):]...)
+		}
+		l.queue = append(l.queue, op.Queue...)
 		for _, line := range op.Log {
 			m.seq++
 			l.lines = append(l.lines, memLine{fmt.Sprintf("%d-0", m.seq), line})
@@ -819,9 +854,21 @@ func (m *Mem) Release(_ context.Context, op OpRecord, commit bool) error {
 	return nil
 }
 
+// QueueRead is the pinned epoch's work-table queue.
+func (m *Mem) QueueRead(context.Context) ([]sprint.QueuedChange, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.Calls["queue"]++
+	if err := m.fail("queue"); err != nil {
+		return nil, err
+	}
+	return append([]sprint.QueuedChange(nil), m.log().queue...), nil
+}
+
 func (m *Mem) Done(_ context.Context, callerOp string) (string, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.count("done")
 	l := m.log()
 	v, ok := l.done[callerOp]
 	return v, ok, nil
@@ -876,6 +923,7 @@ func (m *Mem) Pending() *OpRecord {
 func (m *Mem) OpenNotes(context.Context) ([]sprint.Open, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.count("open")
 	l := m.log()
 	var out []sprint.Open
 	for k, nid := range l.open {
@@ -968,6 +1016,7 @@ func (m *Mem) SetCursor(_ context.Context, id string) error {
 func (m *Mem) Coordinator(context.Context) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.count("coord")
 	return m.kv[keyCoordinator], nil
 }
 
@@ -1002,3 +1051,54 @@ func (m *Mem) Revision(table string) uint64 {
 	}
 	return 0
 }
+
+// TableChanges is the records the table's writes between two revisions
+// named, from its change stream, as the table layer's (twin.go).
+func (m *Mem) TableChanges(_ context.Context, table string, from, to uint64) ([]string, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.count("changes")
+	t := m.tables[table]
+	if t == nil || to < from {
+		return nil, false, nil
+	}
+	active := m.active(t)
+	need := to
+	var ids []string
+	for i := len(t.changes) - 1; i >= 0 && need > from; i-- {
+		c := t.changes[i]
+		if c.epoch != active || c.after > to {
+			continue
+		}
+		if c.after != need {
+			return nil, false, nil
+		}
+		ids = append(ids, c.ids...)
+		need = c.before
+	}
+	return ids, need == from, nil
+}
+
+var _ TableChanger = (*Mem)(nil)
+
+// count counts one exchange of the kind (Calls), for a kind that did not count
+// itself before; the lock is held.
+func (m *Mem) count(kind string) {
+	if m.Calls != nil {
+		m.Calls[kind]++
+	}
+}
+
+// Trips is the exchanges made so far, every kind (Calls): what a store's round
+// trips are to the tick's cost (stats.go).
+func (m *Mem) Trips() int64 {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for _, c := range m.Calls {
+		n += c
+	}
+	return int64(n)
+}
+
+var _ Tripper = (*Mem)(nil)
