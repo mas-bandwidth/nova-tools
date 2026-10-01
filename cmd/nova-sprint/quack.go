@@ -3,11 +3,10 @@ package main
 import (
 	"context"
 	"crypto/rand"
-	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"io"
-	"strconv"
+	"regexp"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
@@ -28,11 +27,12 @@ const quackBase = "dev"
 // writes: twelve hex digits, so two passes share an id or a file name with a
 // chance of about one in 2^48 per pair, and no card's diff is empty unless
 // they do. The briefs are held to the card lint as add holds them, and one
-// step adds every card. A call with --op takes its stamp from the op and the
-// sprint's epoch (quackStamp), so the same call retried makes the same cards
-// and replays the recorded result (the --op contract, docs/SPEC-SPRINT.md
-// section 11), and other arguments under that op are refused as add refuses
-// them.
+// step adds every card. A call with --op whose operation this store has
+// recorded takes the recorded call's stamp (quackStamp), so the same call
+// retried makes the same cards and replays the recorded result (the --op
+// contract, docs/SPEC-SPRINT.md section 11), and other arguments under that op
+// are refused as add refuses them; an op this store has no record of (a new
+// store, one torn down, another sprint) draws a fresh random stamp.
 func (a *app) cmdQuack(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("quack")
 	streams := fs.String("streams", "", "the streams to cut quack cards into, comma separated (a stream new to the sprint is made)")
@@ -89,15 +89,7 @@ func (a *app) cmdQuack(args []string, stdout, stderr io.Writer) int {
 			return refuse(stderr, "quack", err.Error())
 		}
 	}
-	var epoch uint64
-	if c.op != "" {
-		es, err := st.EpochNow(context.Background())
-		if err != nil {
-			return a.readFailed("quack", err, stderr)
-		}
-		epoch = es.N
-	}
-	stamp, err := quackStamp(c.op, epoch)
+	stamp, err := quackStamp(context.Background(), st, c.op)
 	if err != nil {
 		return refuse(stderr, "quack", "no run stamp: "+err.Error())
 	}
@@ -148,16 +140,28 @@ func (a *app) cmdQuack(args []string, stdout, stderr io.Writer) int {
 // their files, so the stamp alone keeps a new pass's files new.
 const quackStampBytes = 6
 
-// quackStamp is a run's stamp: with an op id, the first bytes of the SHA-256
-// of the op and the sprint's epoch, so a retry of the call makes the same
-// cards and a clear gives the same op new ones; with none, bytes from the
-// system's random source.
-func quackStamp(op string, epoch uint64) (string, error) {
-	b := make([]byte, quackStampBytes)
+// recordedStamp is a quack stamp in an operation's recorded result: the
+// recorded call's card ids carry it.
+var recordedStamp = regexp.MustCompile(`quack-([0-9a-f]{12})-`)
+
+// quackStamp is a run's stamp: the stamp of the call this store recorded under
+// the op id, when it recorded one (the store's own record of the operation,
+// read with the store's replay, Backend.Done, so a retry makes the same cards
+// and the step replays); else bytes from the system's random source. An op id
+// and an epoch do not name a sprint's incarnation: a store torn down, or
+// another store, holds no record and the call draws a new stamp.
+func quackStamp(ctx context.Context, st *store.Store, op string) (string, error) {
 	if op != "" {
-		sum := sha256.Sum256([]byte("quack\x00" + op + "\x00" + strconv.FormatUint(epoch, 10)))
-		copy(b, sum[:])
-	} else if _, err := rand.Read(b); err != nil {
+		raw, ok, err := st.B.Done(ctx, op)
+		if err != nil {
+			return "", err
+		}
+		if m := recordedStamp.FindStringSubmatch(raw); ok && m != nil {
+			return m[1], nil
+		}
+	}
+	b := make([]byte, quackStampBytes)
+	if _, err := rand.Read(b); err != nil {
 		return "", err
 	}
 	return hex.EncodeToString(b), nil

@@ -132,3 +132,40 @@ func TestQuackIsAllOrNoneAcrossItsStreams(t *testing.T) {
 	assert.Equal(t, before, ta.applies(), "nothing is written")
 	assert.Empty(t, quackID.FindAllString(out, -1), "no card was added")
 }
+
+// The reader's probes on #5021: an op id names a call in one store's record, not
+// a sprint's incarnation. The same quack with the same --op after teardown and
+// init, or in another store, has no recorded operation to replay and draws a new
+// stamp, so its cards' files are new to the repository's history.
+func TestQuackOpReusedInAnotherIncarnationDrawsANewStamp(t *testing.T) {
+	t.Parallel()
+	const line = "quack --streams a,b --count 1 --repo https://example.com/quack.git --op "
+	t.Run("teardown then init", func(t *testing.T) {
+		t.Parallel()
+		ta := newTestApp(t)
+		ta.ok("init --readers reader-a,reader-b --members m1")
+		first, _ := ta.quackCards(line + "reused-after-teardown")
+		require.Len(t, first, 2)
+		ta.ok("teardown --confirm sprint")
+		ta.ok("init --readers reader-a,reader-b --members m1")
+		again, _ := ta.quackCards(line + "reused-after-teardown")
+		require.Len(t, again, 2)
+		for _, id := range again {
+			assert.False(t, slices.Contains(first, id), "%s: a torn-down store's op draws a new stamp", id)
+		}
+	})
+	t.Run("two stores", func(t *testing.T) {
+		t.Parallel()
+		var passes [][]string
+		for i := 0; i < 2; i++ {
+			ta := newTestApp(t)
+			ta.ok("init --readers reader-a,reader-b --members m1")
+			ids, _ := ta.quackCards(line + "shared-operation-name")
+			require.Len(t, ids, 2)
+			passes = append(passes, ids)
+		}
+		for _, id := range passes[1] {
+			assert.False(t, slices.Contains(passes[0], id), "%s: another store's op draws a new stamp", id)
+		}
+	})
+}
