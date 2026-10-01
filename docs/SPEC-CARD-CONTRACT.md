@@ -112,7 +112,16 @@ A work card's finish is judged in one place, `member.Judge`, cited from the mode
   `--failed` and opens the failed-work judgment, never review, and passes `--head` and
   `--branch` only when a push landed;
 - **reaped** when the claim moved under the child (a clear, a redeal) or the card left the
-  member's queue (a drop, a return): nothing is reported, because the result is nobody's.
+  member's queue (a drop, a return): nothing is reported, because the result is nobody's. A
+  moved claim is reaped whatever column the queue lists the card in: a redeal, and a withdrawn
+  card dealt again, list it in the member's own ready (a read: asked) column at a later
+  generation (attempt), and the ended launch is reaped within one tick and its place of the
+  width taken again.
+
+The child has ended when native's process has. Native's output goes to a file in the slot,
+never a pipe back to the member, so what a harness left running cannot hold the finish; and
+native, which runs the harness as the leader of its own process group, ends what the harness
+left in that group before it exits and names it on its line (docs/SPEC-SWARM.md, `native`).
 
 The head the member pushes is the result's `head`, else the last head the git shim recorded in
 `<job>/.sprint/pushed.tsv`. The member pushes from its own bare repository, fetching every

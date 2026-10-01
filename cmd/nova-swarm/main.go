@@ -783,6 +783,10 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		oneline.Field(verdict), oneline.Field(cfg.label), oneline.Field(res.job), oneline.Field(res.tmp), res.rc, res.wallSeconds, oneline.Field(res.wall), oneline.Field(res.cardSHA256), oneline.Field(res.binarySHA256), oneline.Field(dash(res.configSHA)), oneline.Field(orElse(res.harness, "silent")),
 		oneline.Field(swarm.BudgetWord(cfg.unmetered, cfg.tokens, res.spent, res.observed, res.partial)),
 		fenceSuffix(res.fence), usageSuffix(res.usageReason, res.usageState), termSuffix(res.terminated), stoppedSuffix(res.stopped))
+	if res.survivors != "" {
+		// what the harness left in its group, ended before this line (nativeEndLeftovers)
+		fmt.Fprintf(stdout, " survivors=%s", oneline.Field(res.survivors))
+	}
 	if why != "" {
 		fmt.Fprintf(stdout, " why=%s", oneline.Field(why))
 	}

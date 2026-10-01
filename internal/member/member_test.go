@@ -1057,6 +1057,61 @@ func TestASpentReadStaysSpentAcrossTicks(t *testing.T) {
 	}
 }
 
+// TestAnEndedLaunchWhoseCardCameBackReadyIsReapedAndTheWidthFreed pins the
+// finish of a launch whose claim moved while it ran and whose card the queue now
+// lists back in this member's own ready (asked) column at a later generation
+// (attempt): the store's redeal and a withdrawn card dealt again both put it
+// there, never in working. The ended child is reaped, never reported, within
+// one tick, and the place it held is taken again in the same tick
+// (tla/CardContract.tla, Reap and EveryLaunchEnds). Moving the moved-claim test
+// below the in-flight filter in Member.Tick fails it: the ended launch holds
+// the width with nothing reported, the half-hour sit of a finished card.
+func TestAnEndedLaunchWhoseCardCameBackReadyIsReapedAndTheWidthFreed(t *testing.T) {
+	t.Parallel()
+	t.Run("work: dealt again to this member's ready", func(t *testing.T) {
+		t.Parallel()
+		g := newRig(Config{As: "m", Width: 1})
+		old := pk("c1") // gen 1, epoch 7
+		g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &old)))
+		_, err := g.tick(t)
+		require.NoError(t, err)
+		g.r.child("c1").end(Result{Ran: true, OK: true, Shaped: true, Verdict: "ok", Head: "h", Report: "done"})
+		again := pk("c1")
+		again.Gen = 3
+		g.s.set("queue", 0, queueJSON(t, 7, queueCard{ID: "c1", Col: "ready", Gen: 3, Packet: &again}))
+		g.s.set("take", 0, takeJSON(t, again))
+		g.s.reset()
+		acted, err := g.tick(t)
+		require.NoError(t, err)
+		require.Empty(t, g.s.lines("finish"), "a moved claim is never reported")
+		require.Contains(t, g.out.String(), "reaped c1: the claim moved")
+		require.Len(t, g.s.lines("take"), 1, "the freed place is taken in the same tick")
+		require.Equal(t, 1, acted)
+		require.Equal(t, 1, g.m.Running())
+		require.Len(t, g.r.packets, 2)
+		require.Equal(t, 3, g.r.packets[1].Gen)
+	})
+	t.Run("read: asked again at the next attempt", func(t *testing.T) {
+		t.Parallel()
+		g := newRig(Config{As: "r", Width: 1, Reader: true})
+		old := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7}
+		g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &old)))
+		_, err := g.tick(t)
+		require.NoError(t, err)
+		g.r.child("r1").end(Result{Ran: true, Verdict: "ok", Report: "clean"})
+		again := old
+		again.Attempt = 2
+		g.s.set("queue", 0, queueJSON(t, 7, asked("r1", &again)))
+		g.s.reset()
+		_, err = g.tick(t)
+		require.NoError(t, err)
+		require.Empty(t, g.s.lines("report"), "attempt 1's verdict is never filed against attempt 2")
+		require.Contains(t, g.out.String(), "reaped r1: the claim moved")
+		require.Len(t, g.r.packets, 2)
+		require.Equal(t, 2, g.r.packets[1].Attempt)
+	})
+}
+
 // A member told to drain (its binary was replaced) reports what ended and takes
 // nothing new, though room is left and cards are ready; it starts no child for an
 // in-flight card of no child of ours either.
