@@ -288,6 +288,7 @@ func TestInventoryWrapperFromTheHelpRunsWithTheBuiltBinary(t *testing.T) {
 	r := newReal(t, true)
 	r.run(t, 0, "migrate")
 	r.run(t, 0, "machine", "add", "bench-alpha", "--user", "user-a", "--seat", "seat-alpha", "--slots", "4", "--as", "operator")
+	r.run(t, 0, "fleet", "set", "--redis_port", "6380", "--pg_dsn", "postgres://nova_config@localhost:5432/nova", "--as", "operator")
 	r.run(t, 0, "apply", "--as", "operator")
 
 	help, _ := r.run(t, 0, "inventory", "-h")
