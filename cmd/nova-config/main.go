@@ -679,6 +679,12 @@ func runKindRead(ctx context.Context, k *config.Kind, which string, args []strin
 	}
 	defer st.Close()
 	if which == "show" {
+		if k.Name == config.KindMachine {
+			// show reads the loops table beside the machine row.
+			if code, stale := behindSchema(ctx, st, stderr, verb, *pg); stale {
+				return code
+			}
+		}
 		row, found, err := st.Get(ctx, k.Name, name)
 		if err != nil {
 			return refuse(stderr, verb, err.Error())
@@ -759,6 +765,33 @@ func runMigrate(ctx context.Context, args []string, stdout, stderr io.Writer, d 
 	return 0
 }
 
+// behindSchema is the refusal for a store whose schema is older than this
+// binary's migrations: a table a newer kind reads (loops, since version 6) is
+// not there, and the store's own "relation does not exist" says nothing about
+// the cause. It returns the exit code and true when it refused, and writes
+// nothing and returns false when the store is at (or past) this binary's
+// version. pg is the --pg flag, repeated in the command it names.
+func behindSchema(ctx context.Context, st pgStore, stderr io.Writer, verb, pg string) (int, bool) {
+	have, err := st.Version(ctx)
+	if err != nil {
+		return refuse(stderr, verb, err.Error()), true
+	}
+	return behindVersion(have, stderr, verb, pg)
+}
+
+// behindVersion is behindSchema for a version already read.
+func behindVersion(have int, stderr io.Writer, verb, pg string) (int, bool) {
+	all, err := config.Migrations()
+	if err != nil || have >= len(all) {
+		return 0, false
+	}
+	migrate := tool + " migrate"
+	if pg != "" {
+		migrate += " --pg " + shq(pg)
+	}
+	return refused(stderr, verb, fmt.Sprintf("schema config is at version %d and this binary carries %d", have, len(all)), migrate), true
+}
+
 func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer, d deps) int {
 	const verb = "status"
 	fs := verbflag.New(verb)
@@ -787,6 +820,9 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer, d d
 		fmt.Fprintln(stdout, line+" redis=-")
 		fmt.Fprintf(stderr, "%s status: schema config is not there yet; run: %s migrate\n", tool, tool)
 		return 1
+	}
+	if code, stale := behindVersion(schema, stderr, verb, *pg); stale {
+		return code
 	}
 	counts, err := st.Counts(ctx)
 	if err != nil {
@@ -883,6 +919,9 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 		return refuse(stderr, verb, err.Error())
 	}
 	defer st.Close()
+	if code, stale := behindSchema(ctx, st, stderr, verb, *pg); stale {
+		return code
+	}
 	rs, err := d.openRedis(ctx, addr)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
