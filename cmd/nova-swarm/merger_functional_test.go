@@ -30,7 +30,7 @@ echo '{"total_count":1,"check_runs":[{"name":"ci","status":"completed","conclusi
 // TestMergerFunctionalLandsTheQueueOnARealStore is the merger against the real
 // sprint: a store in the container, one card worked, read ok twice and accepted
 // by the tick's pump, its head pushed to origin's sprint/a-1.w1; the built
-// `nova-swarm member --merger` builds sprint/a.e<epoch>, pushes it, reads green
+// `nova-swarm member --merger` builds sprint/a.e<epoch>.b1, pushes it, reads green
 // checks through its gh, fast-forwards origin's main and feeds `merge --batch 1`
 // as itself, and the next tick lands the card (docs/SPEC-SWARM.md, `member
 // --merger`; tla/Merger.tla).
@@ -105,12 +105,12 @@ func TestMergerFunctionalLandsTheQueueOnARealStore(t *testing.T) {
 	cmd.Env = append(os.Environ(), "NOVA_SPRINT_REDIS="+addr, "GIT_CONFIG_GLOBAL="+cfg, "GIT_CONFIG_NOSYSTEM=1")
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "%s", out)
-	assert.Contains(t, string(out), "merge a batch=a-1 branch=sprint/a.e"+epoch+" head=")
+	assert.Contains(t, string(out), "merge a batch=a-1 branch=sprint/a.e"+epoch+".b1 head=")
 	assert.Contains(t, string(out), "merge a batch batch=a-1 exit=0")
 
 	landedHead := strings.TrimSpace(runGit(t, origin, "rev-parse", "refs/heads/main"))
 	assert.NotEqual(t, base, landedHead)
-	assert.Equal(t, strings.TrimSpace(runGit(t, origin, "rev-parse", "refs/heads/sprint/a.e"+epoch)), landedHead, "main fast-forwarded to the stream branch")
+	assert.Equal(t, strings.TrimSpace(runGit(t, origin, "rev-parse", "refs/heads/sprint/a.e"+epoch+".b1")), landedHead, "main fast-forwarded to the stream branch")
 	runGit(t, origin, "merge-base", "--is-ancestor", head, landedHead)
 	w = d.where()
 	assert.Equal(t, 1, cellInt(w, "merge", "a", "merged"), "%+v", w.Tables["merge"])

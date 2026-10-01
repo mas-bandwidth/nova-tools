@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -24,8 +25,8 @@ import (
 // --merger`): one working repository per card repository under <root>/merge/,
 // with no hooks and the bench mirror as an alternate, fetched from origin every
 // batch and pushed to origin with this machine's own credential. It merges
-// (a merge commit per card, never a rebase) and pushes without force: the
-// stream branch only grows, and the development branch only fast-forwards.
+// (a merge commit per card, never a rebase) and pushes without force: each
+// batch's branch is new, and the development branch only fast-forwards.
 type gitMerger struct {
 	root string
 	// env is added to this process's environment for every git: none in
@@ -39,17 +40,14 @@ func newGitMerger(root string) *gitMerger {
 	return &gitMerger{root: root, git: gitrun.Run}
 }
 
-// mergeSubject is the subject of the merge commit of a card's head, which a
-// later build reads to know which cards origin's stream branch holds.
+// mergeSubject begins the subject of the merge commit of a card's head:
+// `merger: merge <card> <sha>`, so a batch branch says what it holds.
 const mergeSubject = "merger: merge "
-
-var mergeSubjectRE = regexp.MustCompile(`^merger: merge (\S+) ([0-9a-f]{40})$`)
 
 // The refs a batch is fetched into, in the merger's own namespace.
 const (
-	refDev    = "refs/merger/dev"
-	refStream = "refs/merger/stream"
-	refCards  = "refs/merger/cards/"
+	refDev   = "refs/merger/dev"
+	refCards = "refs/merger/cards/"
 )
 
 // run is one git in dir (none: the process's), with no terminal prompt.
@@ -98,40 +96,45 @@ func sanitize(s string) string {
 	}, s)
 }
 
-// fetch brings origin's development branch, the stream branch when origin has
-// it, and every card's branch into the merger's refs; streamHeld says origin
-// has the stream branch. A card's head must be on its branch.
-func (g *gitMerger) fetch(b member.Batch) (dir string, streamHeld bool, err error) {
+// fetch brings origin's development branch and every card's branch into the
+// merger's refs, and names the batch's branch: sprint/<stream>.e<epoch>.b<k>, k
+// one past the highest of the stream's batch branches origin holds at the epoch
+// (1 for the first). A card's head must be on its branch.
+func (g *gitMerger) fetch(b member.Batch) (dir, branch string, err error) {
 	if dir, err = g.repo(b.Repo); err != nil {
-		return "", false, err
+		return "", "", err
 	}
-	res, err := g.run(dir, "ls-remote", "--heads", "--", b.Repo, "refs/heads/"+b.Branch)
+	stem := member.StreamBranch(b.Stream, b.Epoch)
+	res, err := g.run(dir, "ls-remote", "--heads", "--", b.Repo, "refs/heads/"+stem+".b*")
 	if err != nil {
-		return "", false, fmt.Errorf("ls-remote %s: %s", b.Repo, gitLine(res, err))
+		return "", "", fmt.Errorf("ls-remote %s: %s", b.Repo, gitLine(res, err))
 	}
-	streamHeld = strings.TrimSpace(string(res.Stdout)) != ""
+	k := 0 // the highest batch branch of the stem origin holds
+	for _, l := range strings.Split(string(res.Stdout), "\n") {
+		if m := batchBranchRE.FindStringSubmatch(strings.TrimSpace(l)); m != nil && m[1] == "refs/heads/"+stem {
+			if n, _ := strconv.Atoi(m[2]); n > k {
+				k = n
+			}
+		}
+	}
 	specs := []string{"+refs/heads/" + b.Base + ":" + refDev}
-	if streamHeld {
-		specs = append(specs, "+refs/heads/"+b.Branch+":"+refStream)
-	}
 	for _, c := range b.Cards {
 		specs = append(specs, "+refs/heads/"+c.Branch+":"+refCards+c.ID)
 	}
 	fetch := append([]string{"fetch", "-q", "--no-tags", "--no-write-fetch-head", "--", b.Repo}, specs...)
 	if res, err := g.run(dir, fetch...); err != nil {
-		return "", false, fmt.Errorf("fetch from %s: %s", b.Repo, gitLine(res, err))
-	}
-	if !streamHeld {
-		// ignored: the ref of a stream branch origin no longer holds; streamHeld false is what Build reads
-		_, _ = g.run(dir, "update-ref", "-d", refStream)
+		return "", "", fmt.Errorf("fetch from %s: %s", b.Repo, gitLine(res, err))
 	}
 	for _, c := range b.Cards {
 		if !g.ancestor(dir, c.Head, refCards+c.ID) {
-			return "", false, fmt.Errorf("card %s's head %s is not on origin's %s", c.ID, c.Head, c.Branch)
+			return "", "", fmt.Errorf("card %s's head %s is not on origin's %s", c.ID, c.Head, c.Branch)
 		}
 	}
-	return dir, streamHeld, nil
+	return dir, stem + ".b" + strconv.Itoa(k+1), nil
 }
+
+// batchBranchRE is a batch branch's ls-remote line: its stem's ref and its k.
+var batchBranchRE = regexp.MustCompile(`\s(refs/heads/\S+)\.b([0-9]+)$`)
 
 // ancestor says a is an ancestor of (or is) b in dir.
 func (g *gitMerger) ancestor(dir, a, b string) bool {
@@ -153,77 +156,37 @@ func (g *gitMerger) Landed(b member.Batch) (bool, error) {
 	return true, nil
 }
 
-// Build makes the stream branch for the batch in the working repository: from
-// origin's development branch, or, when origin's stream branch is not on the
-// development branch and holds only cards of this batch at their heads (a batch
-// whose landing was rejected), from it with the development branch merged in;
-// then each card's head merged in order, a merge commit each. A stream branch
-// that holds a card this batch does not (a batch that went red) is never
-// rewritten: the build is refused, naming the cards, for the coordinator.
-func (g *gitMerger) Build(b member.Batch) (head, conflict string, err error) {
-	dir, streamHeld, err := g.fetch(b)
+// Build makes the batch's branch in the working repository, fresh from origin's
+// development branch: each card's head merged in order, a merge commit each. On
+// a conflict head is what was built before it, the batch's record. The branch is
+// new every batch (fetch names it), so its push is never a rewrite and a batch
+// that went red or conflicted needs nothing deleted: the next batch takes the
+// next branch.
+func (g *gitMerger) Build(b member.Batch) (branch, head, conflict string, err error) {
+	dir, branch, err := g.fetch(b)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
-	start := refDev
-	var held []string // the cards origin's stream branch holds, in the order merged
-	if streamHeld && !g.ancestor(dir, refStream, refDev) {
-		res, err := g.run(dir, "log", "--first-parent", "--format=%s", refDev+".."+refStream)
-		if err != nil {
-			return "", "", fmt.Errorf("reading %s: %s", b.Branch, gitLine(res, err))
-		}
-		heads := map[string]string{}
-		for _, c := range b.Cards {
-			heads[c.ID] = c.Head
-		}
-		var foreign []string
-		for _, l := range strings.Split(strings.TrimSpace(string(res.Stdout)), "\n") {
-			m := mergeSubjectRE.FindStringSubmatch(strings.TrimSpace(l))
-			if m == nil {
-				continue
-			}
-			if heads[m[1]] != m[2] {
-				foreign = append(foreign, m[1]+"@"+m[2][:12])
-				continue
-			}
-			held = append([]string{m[1]}, held...)
-		}
-		if len(foreign) > 0 {
-			return "", "", fmt.Errorf("origin's %s holds %s, which is not this batch (%s), and is never rewritten: delete it (git push %s --delete %s) and the next pass builds it again",
-				b.Branch, strings.Join(foreign, ","), strings.Join(b.IDs(), ","), b.Repo, b.Branch)
-		}
-		start = refStream
+	if res, err := g.run(dir, "checkout", "-q", "-f", "-B", "merger", refDev); err != nil {
+		return "", "", "", fmt.Errorf("checkout %s: %s", refDev, gitLine(res, err))
 	}
-	if res, err := g.run(dir, "checkout", "-q", "-f", "-B", "merger", start); err != nil {
-		return "", "", fmt.Errorf("checkout %s: %s", start, gitLine(res, err))
-	}
-	if res, err := g.run(dir, "reset", "-q", "--hard", start); err != nil {
-		return "", "", fmt.Errorf("reset to %s: %s", start, gitLine(res, err))
-	}
-	if start == refStream && !g.ancestor(dir, refDev, "HEAD") {
-		dev, _ := g.run(dir, "rev-parse", refDev)
-		if !g.merge(dir, refDev, "merger: bring "+b.Base+" "+strings.TrimSpace(string(dev.Stdout))) {
-			// the development branch moved under the batch the branch holds: the
-			// first card of it is the conflict the coordinator is told
-			if len(held) == 0 {
-				return "", b.Cards[0].ID, nil
-			}
-			return "", held[0], nil
-		}
+	if res, err := g.run(dir, "reset", "-q", "--hard", refDev); err != nil {
+		return "", "", "", fmt.Errorf("reset to %s: %s", refDev, gitLine(res, err))
 	}
 	for _, c := range b.Cards {
 		if g.ancestor(dir, c.Head, "HEAD") {
 			continue
 		}
 		if !g.merge(dir, c.Head, mergeSubject+c.ID+" "+c.Head) {
-			return "", c.ID, nil
+			conflict = c.ID
+			break
 		}
 	}
 	res, err := g.run(dir, "rev-parse", "HEAD")
 	if err != nil {
-		return "", "", fmt.Errorf("rev-parse: %s", gitLine(res, err))
+		return "", "", "", fmt.Errorf("rev-parse: %s", gitLine(res, err))
 	}
-	return strings.TrimSpace(string(res.Stdout)), "", nil
+	return branch, strings.TrimSpace(string(res.Stdout)), conflict, nil
 }
 
 // merge merges a commit into HEAD with a merge commit of the subject; false,

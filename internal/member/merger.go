@@ -15,9 +15,11 @@ import (
 // its facts by the caller"; docs/SPEC-SWARM.md, `member --merger`). One runs
 // per sprint store. Every pass, for each stream the merge table says is
 // merging, one batch at a time: the head of the stream's queue in work order
-// (never past a stuck card), each card's head merged into the stream branch
-// sprint/<stream>.e<epoch>, the branch pushed and proved by the repository's
-// checks, a green branch landed on the development branch by a fast-forward,
+// (never past a stuck card), each card's head merged into a branch of its own,
+// sprint/<stream>.e<epoch>.b<k> built fresh from the development branch (k counts
+// the stream's batches in the epoch; a red or conflicting batch's branch stays on
+// origin as its record and the next batch takes k+1, so resume is all the
+// coordinator does), the branch pushed and proved by the repository's checks, a green branch landed on the development branch by a fast-forward,
 // and each outcome fed as one of the merge verb's facts: --batch n once the
 // development branch holds the batch, --conflict <card>, --red with the batch
 // as suspects, --rejected. It decides nothing the spec gives the coordinator: a
@@ -29,12 +31,14 @@ import (
 type MergeGit interface {
 	// Landed says whether the development branch on origin holds every card's head.
 	Landed(b Batch) (bool, error)
-	// Build makes the stream branch for the batch: each card's head merged in
-	// order onto the development branch (or onto origin's stream branch when it
-	// holds a part of this batch, a batch rejected before). conflict is the card
-	// whose head did not merge, "" when every one did; head is what was built.
-	Build(b Batch) (head, conflict string, err error)
-	// Push puts the built head on origin's stream branch, never forced.
+	// Build makes the batch's branch, named after the stream's branches origin
+	// holds (sprint/<stream>.e<epoch>.b<k>, k one past the highest): each card's
+	// head merged in order onto the development branch. conflict is the card
+	// whose head did not merge, "" when every one did; head is what was built,
+	// up to the conflict.
+	Build(b Batch) (branch, head, conflict string, err error)
+	// Push puts the built head on origin's branch of the batch, never forced: a
+	// new branch every batch.
 	Push(b Batch, head string) error
 	// Land pushes the head to origin's development branch, a fast-forward only:
 	// rejected is git's line when origin refused it as none.
@@ -49,7 +53,7 @@ const (
 	CheckNone    = "none"    // no check run on the head
 )
 
-// Checks is the proof of a pushed stream branch: the repository's CI on its head.
+// Checks is the proof of a pushed batch branch: the repository's CI on its head.
 type Checks interface {
 	// State is the checks on the head now, with a note: the runs that failed or
 	// are pending, by name.
@@ -57,13 +61,13 @@ type Checks interface {
 }
 
 // Batch is one stream's batch: the head n queued cards in work order, the
-// repository and development branch their briefs name, and the stream branch.
+// repository and development branch their briefs name, and the batch's branch.
 type Batch struct {
 	Stream string
 	Epoch  uint64
 	Repo   string // the clone URL (or a local path) the cards' briefs name
 	Base   string // the development branch
-	Branch string // the stream branch: sprint/<stream>.e<epoch>
+	Branch string // the batch's branch, sprint/<stream>.e<epoch>.b<k> (Build names it)
 	Cards  []BatchCard
 }
 
@@ -82,7 +86,8 @@ func (b Batch) IDs() []string {
 	return out
 }
 
-// StreamBranch is a stream's branch at an epoch: sprint/<stream>.e<epoch>.
+// StreamBranch is the stem of a stream's batch branches at an epoch:
+// sprint/<stream>.e<epoch>, each batch's .b<k> after it.
 func StreamBranch(stream string, epoch uint64) string {
 	return "sprint/" + stream + ".e" + strconv.FormatUint(epoch, 10)
 }
@@ -216,7 +221,7 @@ func (m *Merger) note(stream, what string) {
 // none at or past the first stuck card (a stuck card is a barrier,
 // docs/SPEC-SPRINT.md section 7), each with its head, branch and repository.
 func (m *Merger) batchOf(stream string, epoch uint64) (Batch, string, error) {
-	b := Batch{Stream: stream, Epoch: epoch, Branch: StreamBranch(stream, epoch)}
+	b := Batch{Stream: stream, Epoch: epoch}
 	ids, problem, err := m.queueHead(stream, m.cfg.Batch)
 	if err != nil || problem != "" || len(ids) == 0 {
 		return b, problem, err
@@ -315,12 +320,18 @@ func (m *Merger) start(stream string, epoch uint64, now time.Time) (int, error) 
 		// the development branch holds every head: the fact is fed now (tla/Merger.tla, FactsMatchBranch)
 		return m.feed(b, "the development branch "+b.Base+" holds the batch already")
 	}
-	head, conflict, err := m.git.Build(b)
+	branch, head, conflict, err := m.git.Build(b)
 	if err != nil {
-		m.note(stream, "building "+b.Branch+": "+err.Error())
+		m.note(stream, "building the batch's branch of "+StreamBranch(stream, epoch)+": "+err.Error())
 		return 0, nil
 	}
+	b.Branch = branch
 	if conflict != "" {
+		// the branch as built up to the conflict is the batch's record on origin; the
+		// next batch takes the next branch, so nothing is ever deleted or rewritten
+		if err := m.git.Push(b, head); err != nil {
+			m.note(stream, "pushing the record "+b.Branch+": "+err.Error())
+		}
 		return m.feed(b, "", "--conflict", conflict, "--note", "the head of "+conflict+" did not merge into "+b.Branch)
 	}
 	if err := m.git.Push(b, head); err != nil {

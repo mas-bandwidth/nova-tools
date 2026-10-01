@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -154,10 +155,16 @@ func (b *mergeBench) tick(m *member.Merger, at time.Time) {
 	require.NoError(b.t, err)
 }
 
+// gitTry is one git in dir that may fail: its output and its error.
+func gitTry(dir string, args ...string) (string, error) {
+	out, err := exec.Command("git", append([]string{"-C", dir}, args...)...).CombinedOutput()
+	return string(out), err
+}
+
 var mergeT0 = time.Date(2026, 10, 1, 8, 0, 0, 0, time.UTC)
 
-// One card lands: the stream branch is main with the card's head merged, pushed
-// to origin; green, main fast-forwards to it and --batch 1 is fed naming it.
+// One card lands: the batch's branch sprint/s1.e0.b1 is main with the card's head
+// merged, pushed to origin; green, main fast-forwards to it and --batch 1 is fed.
 func TestTheMergerLandsACardOnOrigin(t *testing.T) {
 	t.Parallel()
 	b := newMergeBench(t)
@@ -165,27 +172,34 @@ func TestTheMergerLandsACardOnOrigin(t *testing.T) {
 	before := b.ref("main")
 	m, out := b.merger(1, &benchChecks{state: member.CheckGreen})
 	b.tick(m, mergeT0)
-	stream := b.ref("sprint/s1.e0")
-	require.NotEmpty(t, stream, "the stream branch is pushed: %s", out)
+	branch := b.ref("sprint/s1.e0.b1")
+	require.NotEmpty(t, branch, "the batch's branch is pushed: %s", out)
 	assert.Equal(t, before, b.ref("main"), "nothing lands before the checks")
-	parents := strings.Fields(runGit(t, b.origin, "rev-list", "--parents", "-n", "1", stream))
-	assert.Equal(t, []string{stream, before, c.Head}, parents, "a merge commit of main and the card's head")
+	parents := strings.Fields(runGit(t, b.origin, "rev-list", "--parents", "-n", "1", branch))
+	assert.Equal(t, []string{branch, before, c.Head}, parents, "a merge commit of main and the card's head")
 	b.tick(m, mergeT0.Add(time.Second))
-	assert.Equal(t, stream, b.ref("main"), "main fast-forwards to the stream branch")
-	assert.Equal(t, []string{"merge --stream s1 --batch 1 --note landed main at " + stream + "; ci --epoch 0"}, b.sprint.facts)
+	assert.Equal(t, branch, b.ref("main"), "main fast-forwards to the batch's branch")
+	assert.Equal(t, []string{"merge --stream s1 --batch 1 --note landed main at " + branch + "; ci --epoch 0"}, b.sprint.facts)
 }
 
 // A batch of two whose second card conflicts with the first stops there:
-// --conflict on it, and nothing is pushed.
+// --conflict on it; the branch as built up to it (main and s1-1) is pushed as
+// the batch's record, and main does not move.
 func TestAConflictingSecondCardStopsTheBatch(t *testing.T) {
 	t.Parallel()
 	b := newMergeBench(t)
-	b.card("s1-1", "f", "one\n")
-	b.card("s1-2", "f", "two\n")
+	one := b.card("s1-1", "f", "one\n")
+	two := b.card("s1-2", "f", "two\n")
+	before := b.ref("main")
 	m, _ := b.merger(2, &benchChecks{state: member.CheckGreen})
 	b.tick(m, mergeT0)
-	assert.Equal(t, []string{"merge --stream s1 --batch 2 --conflict s1-2 --note the head of s1-2 did not merge into sprint/s1.e0 --epoch 0"}, b.sprint.facts)
-	assert.Empty(t, b.ref("sprint/s1.e0"), "a batch that did not build is not pushed")
+	assert.Equal(t, []string{"merge --stream s1 --batch 2 --conflict s1-2 --note the head of s1-2 did not merge into sprint/s1.e0.b1 --epoch 0"}, b.sprint.facts)
+	record := b.ref("sprint/s1.e0.b1")
+	require.NotEmpty(t, record, "the record is pushed")
+	runGit(t, b.origin, "merge-base", "--is-ancestor", one.Head, record)
+	assert.Equal(t, before, b.ref("main"))
+	_, err := gitTry(b.origin, "merge-base", "--is-ancestor", two.Head, record)
+	assert.Error(t, err, "the conflicting card is not in the record")
 }
 
 // Red checks feed --red with the batch; main does not move.
@@ -198,20 +212,20 @@ func TestRedChecksOnOriginFeedRed(t *testing.T) {
 	b.tick(m, mergeT0)
 	b.tick(m, mergeT0.Add(time.Second))
 	require.Len(t, b.sprint.facts, 1)
-	assert.Contains(t, b.sprint.facts[0], "merge --stream s1 --batch 1 --red --suspect s1-1 --note checks red on sprint/s1.e0")
+	assert.Contains(t, b.sprint.facts[0], "merge --stream s1 --batch 1 --red --suspect s1-1 --note checks red on sprint/s1.e0.b1")
 	assert.Equal(t, before, b.ref("main"))
 }
 
 // main moved after the build: the landing is not a fast-forward and is fed
-// --rejected; after resume the same batch is built again on origin's stream
-// branch with main merged in, pushed as a fast-forward, and lands.
+// --rejected; after resume the same batch is built fresh from the moved main on
+// the next branch, b2, and lands; b1 stays as it was.
 func TestANonFastForwardLandingIsRejectedAndTheBatchLandsAfterResume(t *testing.T) {
 	t.Parallel()
 	b := newMergeBench(t)
 	c := b.card("s1-1", "a", "one\n")
 	m, _ := b.merger(1, &benchChecks{state: member.CheckGreen})
 	b.tick(m, mergeT0)
-	first := b.ref("sprint/s1.e0")
+	first := b.ref("sprint/s1.e0.b1")
 	b.advanceMain("other")
 	moved := b.ref("main")
 	b.tick(m, mergeT0.Add(time.Second))
@@ -221,35 +235,44 @@ func TestANonFastForwardLandingIsRejectedAndTheBatchLandsAfterResume(t *testing.
 
 	b.sprint.state = "merging" // the coordinator resumed
 	b.tick(m, mergeT0.Add(2*time.Second))
-	again := b.ref("sprint/s1.e0")
-	require.NotEqual(t, first, again)
-	runGit(t, b.origin, "merge-base", "--is-ancestor", first, again)  // the branch only grew
-	runGit(t, b.origin, "merge-base", "--is-ancestor", moved, again)  // main is in it
-	runGit(t, b.origin, "merge-base", "--is-ancestor", c.Head, again) // and the card
+	again := b.ref("sprint/s1.e0.b2")
+	require.NotEmpty(t, again)
+	assert.Equal(t, []string{again, moved, c.Head}, strings.Fields(runGit(t, b.origin, "rev-list", "--parents", "-n", "1", again)), "fresh from the moved main")
+	assert.Equal(t, first, b.ref("sprint/s1.e0.b1"), "the rejected batch's branch stays as its record")
 	b.tick(m, mergeT0.Add(3*time.Second))
 	assert.Equal(t, again, b.ref("main"))
 	require.Len(t, b.sprint.facts, 2)
 	assert.Contains(t, b.sprint.facts[1], "merge --stream s1 --batch 1 --note landed main at "+again)
 }
 
-// After a red batch the stream branch holds its card; a later batch without it is
-// never built over it: the merger says so, naming the card and the delete, and feeds nothing.
-func TestAStreamBranchHoldingAnotherCardIsNeverRewritten(t *testing.T) {
+// A red batch then resume: the coordinator returns the red card and resumes, and
+// the next batch is built fresh from main on the next branch and lands; the red
+// batch's branch stays on origin as its record, and nothing is deleted.
+func TestAfterARedBatchResumeIsEnoughForTheNextBatchToLand(t *testing.T) {
 	t.Parallel()
 	b := newMergeBench(t)
 	b.card("s1-1", "a", "one\n")
-	m, out := b.merger(1, &benchChecks{state: member.CheckRed})
+	checks := &benchChecks{state: member.CheckRed}
+	m, _ := b.merger(1, checks)
 	b.tick(m, mergeT0)
 	b.tick(m, mergeT0.Add(time.Second))
-	red := b.ref("sprint/s1.e0")
-	b.sprint.queue = nil // the coordinator returned s1-1 and resumed
+	red := b.ref("sprint/s1.e0.b1")
+	require.NotEmpty(t, red)
+	require.Len(t, b.sprint.facts, 1)
+	b.sprint.queue = nil // the coordinator returned s1-1 and resumed: nothing else
 	b.sprint.state = "merging"
-	b.card("s1-2", "b", "two\n")
+	two := b.card("s1-2", "b", "two\n")
+	before := b.ref("main")
+	checks.state = member.CheckGreen
 	b.tick(m, mergeT0.Add(2*time.Second))
-	assert.Equal(t, red, b.ref("sprint/s1.e0"), "the branch is not rewritten")
-	assert.Len(t, b.sprint.facts, 1, "nothing more is fed")
-	assert.Contains(t, out.String(), "NOTE merge s1: building sprint/s1.e0: origin's sprint/s1.e0 holds s1-1@")
-	assert.Contains(t, out.String(), "--delete sprint/s1.e0) and the next pass builds it again")
+	next := b.ref("sprint/s1.e0.b2")
+	require.NotEmpty(t, next)
+	assert.Equal(t, []string{next, before, two.Head}, strings.Fields(runGit(t, b.origin, "rev-list", "--parents", "-n", "1", next)), "fresh from main, without the red card")
+	b.tick(m, mergeT0.Add(3*time.Second))
+	assert.Equal(t, next, b.ref("main"))
+	assert.Equal(t, red, b.ref("sprint/s1.e0.b1"), "the red batch's branch is its record, untouched")
+	require.Len(t, b.sprint.facts, 2)
+	assert.Contains(t, b.sprint.facts[1], "merge --stream s1 --batch 1 --note landed main at "+next)
 }
 
 // A stopped stream is untouched: no working repository, no branch, no fact.
@@ -261,7 +284,7 @@ func TestTheMergerLeavesAStoppedStreamAlone(t *testing.T) {
 	m, _ := b.merger(1, &benchChecks{state: member.CheckGreen})
 	b.tick(m, mergeT0)
 	assert.Empty(t, b.sprint.facts)
-	assert.Empty(t, b.ref("sprint/s1.e0"))
+	assert.Empty(t, b.ref("sprint/s1.e0.b1"))
 	_, err := os.Stat(filepath.Join(b.root, "merger", "merge"))
 	assert.True(t, os.IsNotExist(err), "no working repository is made for a stream left alone")
 }

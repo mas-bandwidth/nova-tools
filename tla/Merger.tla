@@ -9,17 +9,21 @@
 \*   col     the merge table: a card queued, stuck, merged (landed), or returned
 \*           by the coordinator (off the queue)
 \*   sstate  a stream's state: merging, or stopped (it needs the coordinator)
-\*   br      the stream branch of a stream's one batch: its state (none,
-\*           building, pushed, green, red, landed), the batch's cards in order,
-\*           k the cards merged into it so far, base the development branch's
-\*           length when it was built (a landing is a fast-forward only from it)
+\*   br      the branch of a stream's one batch, sprint/<stream>.e<epoch>.b<k>, a
+\*           new one every batch built fresh from the development branch (the
+\*           record resets with each Start; a red, conflicting or rejected
+\*           batch's branch is left on origin, never deleted or rewritten): its
+\*           state (none, building, pushed, green, red, landed), the batch's cards
+\*           in order, k the cards merged into it so far, base the development
+\*           branch's length when it was built (a landing is a fast-forward only
+\*           from it)
 \*   dev     the development branch: the cards it holds, in the order landed
 \*   ci      ghost: the CI result the batch was proved with (none, green, red)
 \*
 \* THE MERGER, per stream, one batch at a time: Start takes the first Batch
 \* queued cards in work order (the stream's Order), and none while a card of the
-\* stream is stuck (a stuck card is a barrier); Build merges the next card into
-\* the stream branch, or Conflict feeds `--conflict` on it (the card stuck, the
+\* stream is stuck (a stuck card is a barrier), onto a new branch; Build merges
+\* the next card into it, or Conflict feeds `--conflict` on it (the card stuck, the
 \* stream stopped); Push puts the built branch on origin; CI is the checks' result
 \* on the pushed head; Land fast-forwards the development branch to a green
 \* branch, or Rejected feeds `--rejected` when the development branch moved;

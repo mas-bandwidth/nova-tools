@@ -104,9 +104,9 @@ func (g *fakeMergeGit) Landed(b Batch) (bool, error) {
 	g.calls = append(g.calls, "landed")
 	return g.landed, nil
 }
-func (g *fakeMergeGit) Build(b Batch) (string, string, error) {
-	g.calls = append(g.calls, "build "+strings.Join(b.IDs(), ",")+" on "+b.Branch)
-	return strings.Repeat("b", 40), g.conflict, nil
+func (g *fakeMergeGit) Build(b Batch) (string, string, string, error) {
+	g.calls = append(g.calls, "build "+strings.Join(b.IDs(), ","))
+	return StreamBranch(b.Stream, b.Epoch) + ".b1", strings.Repeat("b", 40), g.conflict, nil
 }
 func (g *fakeMergeGit) Push(b Batch, head string) error {
 	g.calls = append(g.calls, "push")
@@ -143,7 +143,7 @@ func mergerOn(s *mergeSprint, g *fakeMergeGit, c *fakeChecks) (*Merger, *bytes.B
 
 func sha40(c byte) string { return strings.Repeat(string(c), 40) }
 
-// One card lands: built on sprint/s1.e3, pushed, proved green next pass, landed,
+// One card lands: built on sprint/s1.e3.b1, pushed, proved green next pass, landed,
 // and fed --batch 1 with the landing in the note, at the epoch read.
 func TestTheMergerLandsAGreenBatchAndFeedsTheBatch(t *testing.T) {
 	t.Parallel()
@@ -152,7 +152,7 @@ func TestTheMergerLandsAGreenBatchAndFeedsTheBatch(t *testing.T) {
 	m, out := mergerOn(s, g, &fakeChecks{states: []string{CheckGreen}})
 	_, err := m.Tick(mt0)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"landed", "build s1-1 on sprint/s1.e3", "push"}, g.calls)
+	assert.Equal(t, []string{"landed", "build s1-1", "push"}, g.calls)
 	assert.Empty(t, s.merges(), "nothing is fed before the checks")
 	assert.Equal(t, 1, m.Running())
 	acted, err := m.Tick(mt0.Add(time.Second))
@@ -160,10 +160,11 @@ func TestTheMergerLandsAGreenBatchAndFeedsTheBatch(t *testing.T) {
 	assert.Equal(t, 1, acted)
 	assert.Equal(t, []string{"merge --stream s1 --batch 1 --note landed main at " + sha40('b') + "; ci --epoch 3"}, s.merges())
 	assert.Equal(t, 0, m.Running())
-	assert.Contains(t, out.String(), "merge s1 batch=s1-1 branch=sprint/s1.e3 head="+sha40('b')+" pushed")
+	assert.Contains(t, out.String(), "merge s1 batch=s1-1 branch=sprint/s1.e3.b1 head="+sha40('b')+" pushed")
 }
 
-// A card whose head does not merge stops the batch: --conflict on it, nothing pushed.
+// A card whose head does not merge stops the batch: --conflict on it; the branch as
+// built up to it is pushed as the batch's record, and nothing waits on checks.
 func TestAConflictFeedsTheConflictAndPushesNothing(t *testing.T) {
 	t.Parallel()
 	s := &mergeSprint{state: "merging", queue: []mergeCardOf{{"s1-1", "queued", 1, sha40('a')}}}
@@ -171,8 +172,8 @@ func TestAConflictFeedsTheConflictAndPushesNothing(t *testing.T) {
 	m, _ := mergerOn(s, g, &fakeChecks{states: []string{CheckGreen}})
 	_, err := m.Tick(mt0)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"merge --stream s1 --batch 1 --conflict s1-1 --note the head of s1-1 did not merge into sprint/s1.e3 --epoch 3"}, s.merges())
-	assert.NotContains(t, g.calls, "push")
+	assert.Equal(t, []string{"merge --stream s1 --batch 1 --conflict s1-1 --note the head of s1-1 did not merge into sprint/s1.e3.b1 --epoch 3"}, s.merges())
+	assert.Equal(t, []string{"landed", "build s1-1", "push"}, g.calls, "the record is pushed")
 	assert.Equal(t, 0, m.Running())
 }
 
@@ -187,7 +188,7 @@ func TestRedChecksFeedRedWithTheBatch(t *testing.T) {
 		require.NoError(t, err)
 	}
 	require.Len(t, s.merges(), 1)
-	assert.True(t, strings.HasPrefix(s.merges()[0], "merge --stream s1 --batch 1 --red --suspect s1-1 --note checks red on sprint/s1.e3"), s.merges()[0])
+	assert.True(t, strings.HasPrefix(s.merges()[0], "merge --stream s1 --batch 1 --red --suspect s1-1 --note checks red on sprint/s1.e3.b1"), s.merges()[0])
 	assert.NotContains(t, g.calls, "land")
 }
 
@@ -269,18 +270,18 @@ func TestTheChecksBounds(t *testing.T) {
 	m.Tick(mt0)
 	m.Tick(mt0.Add(2 * time.Hour))
 	require.Len(t, s.merges(), 1)
-	assert.Contains(t, s.merges()[0], "--red --suspect s1-1 --note checks red on sprint/s1.e3 at "+sha40('b')+": the checks did not conclude within 1h0m0s")
+	assert.Contains(t, s.merges()[0], "--red --suspect s1-1 --note checks red on sprint/s1.e3.b1 at "+sha40('b')+": the checks did not conclude within 1h0m0s")
 }
 
 // The merger's own problems are a NOTE, said once while they stand, and nothing is fed.
 func TestTheMergersOwnProblemsAreSaidOnce(t *testing.T) {
 	t.Parallel()
 	s := &mergeSprint{state: "merging", queue: []mergeCardOf{{"s1-1", "queued", 1, sha40('a')}}}
-	m, out := mergerOn(s, &fakeMergeGit{pushErr: errors.New("! refs/heads/sprint/s1.e3 [remote rejected] (permission denied)")}, &fakeChecks{states: []string{CheckGreen}})
+	m, out := mergerOn(s, &fakeMergeGit{pushErr: errors.New("! refs/heads/sprint/s1.e3.b1 [remote rejected] (permission denied)")}, &fakeChecks{states: []string{CheckGreen}})
 	for i := 0; i < 3; i++ {
 		m.Tick(mt0.Add(time.Duration(i) * time.Second))
 	}
-	assert.Equal(t, 1, strings.Count(out.String(), "NOTE merge s1: pushing sprint/s1.e3: ! refs/heads/sprint/s1.e3 [remote rejected] (permission denied)"), out.String())
+	assert.Equal(t, 1, strings.Count(out.String(), "NOTE merge s1: pushing sprint/s1.e3.b1: ! refs/heads/sprint/s1.e3.b1 [remote rejected] (permission denied)"), out.String())
 	assert.Empty(t, s.merges())
 
 	s = &mergeSprint{state: "merging", queue: []mergeCardOf{{"s1-1", "queued", 1, "short"}}}
