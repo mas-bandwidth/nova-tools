@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -48,6 +49,8 @@ func verbOf(args []string) string {
 		return "beat"
 	case args[0] == "read" && slices.Contains(args, "--begin"):
 		return "begin"
+	case args[0] == "read" && slices.Contains(args, "--return"):
+		return "return"
 	case args[0] == "read":
 		return "report"
 	}
@@ -970,20 +973,27 @@ func TestAMovedClaimIsReapedNotReported(t *testing.T) {
 	})
 }
 
-// TestAReadWithNoVerdictIsLeftForTheSprint pins that a reader files a finding
-// only when it has one: a child that did not run, or ran and gave no verdict
-// (or one that is not ok or broken), leaves no `read` verb, the child is let
-// go, and the card stays reading for the sprint's lateness rule.
-func TestAReadWithNoVerdictIsLeftForTheSprint(t *testing.T) {
+// TestAReadWithNoVerdictIsReturnedForTheSprintToAskAgain pins that a reader
+// files a finding only when it has one: a child that did not run (a launch
+// refused at staging), or ran and gave no verdict (or one that is not ok or
+// broken), files no ok or broken; the read is returned with the reason, in
+// the same pass, so the sprint's next tick asks it of another reader, and the
+// child holds no place.
+func TestAReadWithNoVerdictIsReturnedForTheSprintToAskAgain(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name string
 		res  Result
+		want string
 	}{
-		{"ran, no verdict", Result{Ran: true, OK: true, Verdict: "", Report: "it ran"}},
-		{"ran, a word that is no verdict", Result{Ran: true, OK: true, Verdict: "maybe", Report: "it ran"}},
-		{"did not run, no verdict", Result{Ran: false, Verdict: "", Report: "the child ended without a result"}},
-		{"did not run, a stale verdict line", Result{Ran: false, Verdict: "ok", Report: "the child ended without a result"}},
+		{"ran, no verdict", Result{Ran: true, OK: true, Verdict: "", Report: "it ran"},
+			`read --as r --return r1 --reason no verdict (ran=true verdict=""): it ran --epoch 7`},
+		{"ran, a word that is no verdict", Result{Ran: true, OK: true, Verdict: "maybe", Report: "it ran"},
+			`read --as r --return r1 --reason no verdict (ran=true verdict="maybe"): it ran --epoch 7`},
+		{"did not run, no verdict", Result{Ran: false, Verdict: "", Report: "STAGE FAIL no bench mirror"},
+			`read --as r --return r1 --reason no verdict (ran=false verdict=""): STAGE FAIL no bench mirror --epoch 7`},
+		{"did not run, a stale verdict line", Result{Ran: false, Verdict: "ok", Report: "the child ended without a result"},
+			`read --as r --return r1 --reason no verdict (ran=false verdict="ok"): the child ended without a result --epoch 7`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -996,26 +1006,48 @@ func TestAReadWithNoVerdictIsLeftForTheSprint(t *testing.T) {
 			g.r.child("r1").end(tc.res)
 			g.s.reset()
 			acted, err := g.tick(t)
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
 			// Removing the `!r.Ran ||` term (the "did not run" cases) or the
 			// verdict-is-ok-or-broken term (the "no verdict" cases) of the
 			// reader's no-verdict test in Member.Tick makes this fail.
-			if got := g.s.lines("report"); len(got) != 0 {
-				t.Fatalf("a read with no finding was reported: %q", got)
-			}
-			if acted != 0 || g.m.Running() != 0 {
-				t.Fatalf("acted=%d running=%d, want 0 and 0: the child is dropped", acted, g.m.Running())
-			}
-			if !strings.Contains(g.out.String(), "no verdict") {
-				t.Fatalf("the drop was not printed: %q", g.out.String())
-			}
-			if got := g.s.lines("begin"); len(got) != 0 {
-				t.Fatalf("a read was begun: %q", got)
-			}
+			assert.Empty(t, g.s.lines("report"), "a read with no finding files no ok or broken")
+			assert.Equal(t, []string{tc.want}, g.s.lines("return"))
+			assert.Equal(t, 1, acted)
+			assert.Equal(t, 0, g.m.Running(), "a returned read holds no place")
+			assert.Empty(t, g.s.lines("begin"))
 		})
 	}
+}
+
+// TestAWidthOneReaderReturningThreeReadsHoldsAtMostOne pins the live break of
+// 2026-10-01: a width-1 reader whose launches are refused returns each read
+// before it begins the next, so it never holds more than one, and after the
+// third return it holds none.
+func TestAWidthOneReaderReturningThreeReadsHoldsAtMostOne(t *testing.T) {
+	t.Parallel()
+	g := newRig(Config{As: "r", Width: 1, Reader: true})
+	ps := []Packet{}
+	for _, id := range []string{"r1", "r2", "r3"} {
+		ps = append(ps, Packet{Card: id, Kind: "read", As: "r", Attempt: 1, Epoch: 7})
+	}
+	g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &ps[0])))
+	_, err := g.tick(t)
+	require.NoError(t, err)
+	for i := range ps {
+		g.r.child(ps[i].Card).end(Result{Ran: false, Report: "STAGE FAIL no bench mirror"})
+		cards := []queueCard{reading(ps[i].Card, &ps[i])}
+		if i+1 < len(ps) {
+			cards = append(cards, asked(ps[i+1].Card, &ps[i+1]))
+		}
+		g.s.set("queue", 0, queueJSON(t, 7, cards...))
+		_, err := g.tick(t)
+		require.NoError(t, err)
+		assert.LessOrEqual(t, g.m.Running(), 1, "after return %d", i+1)
+	}
+	assert.Len(t, g.s.lines("return"), 3)
+	assert.Equal(t, []string{"read --as r --begin r2 --epoch 7", "read --as r --begin r3 --epoch 7"}, g.s.lines("begin"))
+	assert.Equal(t, 0, g.m.Running(), "three returned, none held")
+	assert.Empty(t, g.s.lines("report"))
 }
 
 // TestAReadReportsOnlyItsVerdict pins that the verdict flag is the reader's
@@ -1116,14 +1148,16 @@ func TestTakeAsksForTheRoom(t *testing.T) {
 }
 
 // TestASpentReadStaysSpentAcrossTicks pins that a read whose child gave no
-// verdict is not run again while its claim stands: three more ticks start
-// nothing and issue no read verb. Removing the spent record (member.go, the
-// `l.spent = true` line) fails it: the card would be restarted every tick.
+// verdict, and whose return the store refused, is not run again while its
+// claim stands: three more ticks start nothing and issue no ok or broken.
+// Removing the spent record (member.go, the `l.spent = true` line) fails it:
+// the card would be restarted every tick.
 func TestASpentReadStaysSpentAcrossTicks(t *testing.T) {
 	t.Parallel()
 	g := newRig(Config{As: "r", Width: 2, Reader: true})
 	p := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7, Head: "h1"}
 	g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &p)))
+	g.s.set("return", 1, "refused")
 	if _, err := g.tick(t); err != nil {
 		t.Fatal(err)
 	}
@@ -1134,8 +1168,8 @@ func TestASpentReadStaysSpentAcrossTicks(t *testing.T) {
 		if _, err := g.tick(t); err != nil {
 			t.Fatal(err)
 		}
-		if got := g.s.lines("read"); len(got) != 0 {
-			t.Fatalf("tick %d issued %q, want no read verb for a spent read", i+2, got)
+		if got := g.s.lines("report"); len(got) != 0 {
+			t.Fatalf("tick %d issued %q, want no ok or broken for a spent read", i+2, got)
 		}
 	}
 	if len(g.r.started()) != starts {

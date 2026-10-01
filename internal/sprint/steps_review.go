@@ -174,11 +174,18 @@ type ReadReq struct {
 	Verdict string // ok or broken
 	Finding string
 	Who     string
+	// Return hands the named read back, with the reason: no verdict, no
+	// finding against the work; the tick asks it of another reader.
+	Return bool   `json:",omitempty"`
+	Reason string `json:",omitempty"`
 }
 
 // Read moves a reader's read cards: asked -> reading, or asked|reading -> ok|broken
 // with the finding (a report on a card still asked is the begin and the report
-// in one step, begun stamped with it). A broken read is a judgment; the second different reader's
+// in one step, begun stamped with it), or, with Return, hands a read it holds
+// back: retired, the reason in one happened note, and the next tick's ask
+// asks it of another reader up at the same attempt (tla/DirtyTick.tla,
+// ReadReturn). A broken read is a judgment; the second different reader's
 // ok at the primary's head is the judgment ready to accept, which accept,
 // rework and drop close. As may name several readers, comma separated: every
 // card named is one of theirs, each read as its own reader's, in the one plan
@@ -190,6 +197,10 @@ func Read(s *Snapshot, r ReadReq) Plan {
 		sel.Limit = 1
 	}
 	readers := Split(r.As)
+	if r.Return && (!named(sel) || r.Reason == "") {
+		p.refuse("read", "a return names its card and the reason: read --as <reader> --return <card> --reason <text>")
+		return p
+	}
 	if len(readers) > 1 && !named(sel) {
 		p.refuse("read", "a read by selection names one reader: --as <reader>; several readers name their cards")
 		return p
@@ -209,6 +220,9 @@ func Read(s *Snapshot, r ReadReq) Plan {
 		if !c.Placed() && c.F("retired") != "" {
 			if c.F("retired_by") == "away" {
 				return "retired at " + c.F("retired") + ": the reader was away; the read was asked of another reader"
+			}
+			if c.F("retired_by") == "returned" {
+				return "retired at " + c.F("retired") + ": the read was returned; it was asked of another reader"
 			}
 			return "retired at " + c.F("retired") + " by " + orDash(c.F("retired_by")) + ": the primary was sent back; its next attempt is read on a new card"
 		}
@@ -237,6 +251,17 @@ func Read(s *Snapshot, r ReadReq) Plan {
 		if r.Begin {
 			p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Readers, moveEntry(c, c.Row, Reading, map[string]string{"begun": stamp(s.Now)}))},
 				Moved: c.ID + " asked -> reading"})
+			continue
+		}
+		if r.Return {
+			// retired as the away take-back retires: the reader keeps its card
+			// at the attempt, so the ask never asks it of this reader again
+			n := happened(NReadReturned, c.F("stream"), s.Now, c.F("primary"))
+			n.What = c.Row + " returned " + c.ID + ": " + r.Reason
+			n.Who = r.Who
+			p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"),
+				Changes: []Change{change(Readers, removeEntry(c, map[string]string{"retired": stamp(s.Now), "retired_by": "returned"}))},
+				Moved:   c.ID + " " + c.Col + " -> returned", Notes: []Note{n}})
 			continue
 		}
 		set := map[string]string{"verdict": r.Verdict, "read": stamp(s.Now)}
