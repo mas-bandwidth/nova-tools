@@ -374,7 +374,7 @@ func StageCard(opts StageOptions) (StageResult, error) {
 
 	mirror := FindBenchMirror(opts.BenchHome, baseRepo)
 	if mirror == "" && isRemoteRepo(baseRepo) {
-		return StageResult{BaseRepo: baseRepo, BaseSha: baseSha}, fmt.Errorf("staging refused: no bench mirror for %s: a card may not clone directly from github without a bench mirror", baseRepo)
+		return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Ref: cb.Ref}, fmt.Errorf("staging refused: no bench mirror for %s: a card may not clone directly from github without a bench mirror", baseRepo)
 	}
 
 	cloneSource := mirror

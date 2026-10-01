@@ -597,8 +597,11 @@ func (a *app) report(ctx context.Context, verbName string, c common, st *store.S
 	var pe *store.PendingError
 	var cut *store.CutError
 	var cleared *store.ClearedError
+	var synced *store.SyncError
 	switch {
 	case err == nil:
+	case errors.As(err, &synced):
+		// the write committed: its cards are in the table, so the step is not a failure
 	case errors.Is(err, store.ErrUnknown):
 		code = 2
 	case errors.As(err, &pe), errors.As(err, &cut), errors.As(err, &cleared):
@@ -651,7 +654,7 @@ func (a *app) report(ctx context.Context, verbName string, c common, st *store.S
 	if res.Pending != "" {
 		fields += " pending=" + oneline.Escape(res.Pending)
 	}
-	if err != nil {
+	if err != nil && synced == nil {
 		changed := "no"
 		if errors.Is(err, store.ErrUnknown) {
 			changed = "unknown"

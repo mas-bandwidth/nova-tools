@@ -84,7 +84,9 @@ member with no finished card shows `0` and `0.0%`; the footer pools ok% over
 the members (every ok over every finished card, never a mean of the members'
 percentages). The text cells (ci, state, since, status, load) are display
 copies of the control cards, written after each step; the control cards are
-written with the moves.
+written with the moves. A step whose write committed and whose display copies
+then failed to sync reports OK, for every verb, with the sync's error on its own
+line, never FAIL: the table holds what the step wrote.
 
 ## 2. The cards
 
@@ -129,7 +131,20 @@ provider_take_<n> (its route, model, member, end, usage and line), which stays
 through the redeals and which `card` prints as one ATTEMPT line for the take
 (`end=provider failure: <line>`, `take=<n>`) before the card's own; a card retired by provider failures has the
 judgment "a card reached its bound" name the provider and that last error
-line; tla/CardContract.tla, ProviderFailure), ok (set
+line; tla/CardContract.tla, ProviderFailure; a launch its member refused at
+staging, before any child ran, is the member's failure and never the card's:
+the member's failed finish whose report begins `staging refused` withdraws the
+card WITHOUT take_ended, so it spends none of the redeal bound, returns its
+primary to ready with no failed-work judgment, tells the inbox "staging
+refused on <member>: <reason>", and keeps a record, staging_take_<gen> (its
+route, model, member, end and reason), which `card` prints as one ATTEMPT line
+(`end=staging refused: <reason>`, `gen=<g>`) before the card's own; the deal,
+the level and a down member's redeal never place the attempt's card on a
+member that refused it, which refuses it once (one record, one note), and when every
+member up has refused it the judgment "a card reached its bound" names the
+members and the reason, once, and it is dealt no more until a member that has
+not refused it is up, a rework or a drop; tla/CardContract.tla, StageRefused
+and Restage), ok (set
 only when finished), head, report. It takes its primary's score. The primary
 names its live work card.
 

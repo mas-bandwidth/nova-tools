@@ -99,11 +99,15 @@ type Result struct {
 	// (docs/SPEC-CARD-CONTRACT.md section 4; tla/CardContract.tla, ProviderFailure).
 	// "" when the end was a launch the provider never accepted, which names no reason.
 	Provider string
+	// Staging is why End is EndStaging: the reason of native's STAGE FAIL line, the launch
+	// refused before any child ran (tla/CardContract.tla, StageRefused).
+	Staging string
 }
 
 // The ends Judge names first in a failed finish.
 const (
 	EndProvider = cardhdr.EndProvider // the sprint's route stats count it apart
+	EndStaging  = cardhdr.EndStaging  // no child ran: the sprint deals the card to another member
 	EndBudget   = "budget"
 	EndDeadline = "deadline"
 )
@@ -126,16 +130,22 @@ const (
 // provider failed that left no result, its push not refused, is failed with the kind
 // `provider failure` and the provider's reason, and only that one: the sprint deals that
 // card again and never judges it; a refused push or a result with the shape is failed work
-// whatever the run's end (tla/CardContract.tla, JudgeOf and ProviderFailure).
+// whatever the run's end (tla/CardContract.tla, JudgeOf and ProviderFailure). A launch
+// refused at staging ran no child: failed with the kind `staging refused` and the stage's
+// reason, the member's failure and never the card's (StageRefused).
 func Judge(r Result, pu Push) (fin Finish, why string) {
 	defer func() {
 		// a budget or a deadline names how the run ended first; the provider's kind is
 		// the provider case's own (below), never a prefix on another reason
-		if fin == FinishFailed && r.End != "" && r.End != EndProvider {
+		if fin == FinishFailed && r.End != "" && r.End != EndProvider && r.End != EndStaging {
 			why = r.End + ": " + why
 		}
 	}()
 	switch {
+	case r.End == EndStaging:
+		// the member's machine refused the launch before any child ran: the kind and the
+		// stage's reason; the sprint deals the card to another member (StageRefused)
+		return FinishFailed, EndStaging + ": " + r.Staging
 	case pu.Refused != "":
 		return FinishFailed, "push refused: " + pu.Refused
 	case r.End == EndProvider && r.Provider != "" && !r.Shaped:

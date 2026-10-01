@@ -253,3 +253,5 @@ MCCardContractBrokenProviderFailed.cfg	MCCardContract.tla	invariant	ProviderIsNo
 MCCardContractBrokenSameRoute.cfg	MCCardContract.tla	invariant	RedealAvoidsFailedRoute	ignore-terminal	cardcontract	required	-
 MCCardContractBrokenUnbounded.cfg	MCCardContract.tla	invariant	RedealBound	ignore-terminal	cardcontract	required	-
 MCCardContractBrokenPreviousOnly.cfg	MCCardContract.tla	invariant	NoPushedWorkUnreachable	ignore-terminal	cardcontract	required	-
+MCCardContractBrokenStagingFailed.cfg	MCCardContract.tla	invariant	StagingIsNotFailedWork	ignore-terminal	cardcontract	required	-
+MCCardContractBrokenLevelRefuser.cfg	MCCardContract.tla	invariant	NeverOnARefuser	ignore-terminal	cardcontract	required	-
