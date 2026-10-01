@@ -158,6 +158,10 @@ func Render(lib redisfn.Library) ([]User, error) {
 	if err != nil {
 		return nil, err
 	}
+	luaCommands, err := LuaCommands(lib)
+	if err != nil {
+		return nil, err
+	}
 	files := map[string]bool{}
 	for _, f := range fns {
 		files[f.File] = true
@@ -189,6 +193,19 @@ func Render(lib redisfn.Library) ([]User, error) {
 				rules = append(rules, "+fcall|"+f.Name)
 			}
 			n++
+		}
+		// The commands the role's functions run, under its ACL: each named
+		// after the categories so no removal above takes it back.
+		called := map[string]bool{}
+		for f, cmds := range luaCommands {
+			if r.All || wanted[f] {
+				for _, c := range cmds {
+					called[c] = true
+				}
+			}
+		}
+		for _, c := range sortedSet(called) {
+			rules = append(rules, "+"+c)
 		}
 		rules = append(rules, r.Extra...)
 		out = append(out, User{Role: r.Name, Name: r.User, Rules: rules, Functions: n})
@@ -370,4 +387,13 @@ func (d Drift) Fields() string {
 		fmt.Fprintf(&b, " %s=%s%s", f.name, strings.Join(shown, ","), more)
 	}
 	return b.String()
+}
+
+func sortedSet(set map[string]bool) []string {
+	out := make([]string, 0, len(set))
+	for k := range set {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }

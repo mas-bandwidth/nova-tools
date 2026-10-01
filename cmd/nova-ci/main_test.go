@@ -7,6 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // main_test.go is the red-test contract of the nova-ci command line: the
@@ -26,15 +29,9 @@ func TestBareCommandNamesTheDoor(t *testing.T) {
 	t.Parallel()
 
 	code, stdout, stderr := runCI(t, nil, "")
-	if code != 2 {
-		t.Errorf("exit = %d, want 2", code)
-	}
-	if stdout != "" {
-		t.Errorf("stdout = %q, want empty; a refusal belongs on stderr", stdout)
-	}
-	if !strings.Contains(stderr, "run: nova-ci help") {
-		t.Errorf("stderr = %q, want it to name `run: nova-ci help`", stderr)
-	}
+	assert.Equal(t, 2, code, "exit = %d, want 2", code)
+	assert.Empty(t, stdout, "stdout = %q, want empty; a refusal belongs on stderr", stdout)
+	assert.Contains(t, stderr, "run: nova-ci help", "stderr = %q, want it to name `run: nova-ci help`", stderr)
 	if n := len(strings.Split(strings.TrimSuffix(stderr, "\n"), "\n")); n > 2 {
 		t.Errorf("stderr printed %d lines, want at most 2:\n%s", n, stderr)
 	}
@@ -46,12 +43,8 @@ func TestHelpOpensTheDoor(t *testing.T) {
 	t.Parallel()
 
 	code, stdout, stderr := runCI(t, []string{"help"}, "")
-	if code != 0 {
-		t.Fatalf("exit = %d, want 0; stderr: %s", code, stderr)
-	}
-	if !strings.Contains(stdout, "\nexample:\n") {
-		t.Errorf("help has no example: block:\n%s", stdout)
-	}
+	require.Equal(t, 0, code, "exit = %d, want 0; stderr: %s", code, stderr)
+	assert.Contains(t, stdout, "\nexample:\n", "help has no example: block:\n%s", stdout)
 }
 
 // slowtests under budget prints the OK line on stdout and exits 0.
@@ -62,13 +55,9 @@ func TestSlowtestsUnderBudgetIsOK(t *testing.T) {
 {"Action":"pass","Package":"example.com/pkg","Elapsed":3.2}
 `
 	code, stdout, stderr := runCI(t, []string{"slowtests", "--budget", "60", "--load", "1", "--cpus", "2"}, stdin)
-	if code != 0 {
-		t.Fatalf("exit = %d, want 0; stderr: %s", code, stderr)
-	}
+	require.Equal(t, 0, code, "exit = %d, want 0; stderr: %s", code, stderr)
 	want := "CI-SLOW OK packages=1 slowest=example.com/pkg:3.2s\n" + loadLine1of2
-	if stdout != want {
-		t.Errorf("stdout = %q, want %q", stdout, want)
-	}
+	assert.Equal(t, want, stdout, "stdout = %q, want %q", stdout, want)
 }
 
 // loadLine1of2 is the CI-LOAD line of a run handed --load 1 --cpus 2.
@@ -99,21 +88,11 @@ func TestSlowtestsMalformedLineRefuses(t *testing.T) {
 	t.Parallel()
 
 	code, stdout, stderr := runCI(t, []string{"slowtests", "--budget", "60"}, "not json\n")
-	if code != 2 {
-		t.Errorf("exit = %d, want 2", code)
-	}
-	if stdout != "" {
-		t.Errorf("stdout = %q, want empty on a refusal", stdout)
-	}
-	if !strings.Contains(stderr, "nova-ci slowtests") {
-		t.Errorf("stderr = %q, want the refusal to name the verb", stderr)
-	}
-	if !strings.Contains(stderr, "line 1") {
-		t.Errorf("stderr = %q, want it to name the offending line", stderr)
-	}
-	if !strings.Contains(stderr, "run: nova-ci help") {
-		t.Errorf("stderr = %q, want it to name the door", stderr)
-	}
+	assert.Equal(t, 2, code, "exit = %d, want 2", code)
+	assert.Empty(t, stdout, "stdout = %q, want empty on a refusal", stdout)
+	assert.Contains(t, stderr, "nova-ci slowtests", "stderr = %q, want the refusal to name the verb", stderr)
+	assert.Contains(t, stderr, "line 1", "stderr = %q, want it to name the offending line", stderr)
+	assert.Contains(t, stderr, "run: nova-ci help", "stderr = %q, want it to name the door", stderr)
 }
 
 // A budget of zero or less is refused rather than read as unlimited.
@@ -122,12 +101,8 @@ func TestSlowtestsRefusesANonPositiveBudget(t *testing.T) {
 
 	for _, budget := range []string{"0", "-1"} {
 		code, _, stderr := runCI(t, []string{"slowtests", "--budget", budget}, "")
-		if code != 2 {
-			t.Errorf("--budget %s: exit = %d, want 2", budget, code)
-		}
-		if !strings.Contains(stderr, "budget") {
-			t.Errorf("--budget %s: stderr = %q, want it to name the budget", budget, stderr)
-		}
+		assert.Equal(t, 2, code, "--budget %s: exit = %d, want 2", budget, code)
+		assert.Contains(t, stderr, "budget", "--budget %s: stderr = %q, want it to name the budget", budget, stderr)
 	}
 }
 
@@ -137,22 +112,16 @@ func TestSlowtestsUnitTierBudgetsReadTheAllowlist(t *testing.T) {
 	t.Parallel()
 
 	allow := filepath.Join(t.TempDir(), "allow.txt")
-	if err := os.WriteFile(allow, []byte("pkg\tTestA\t4.5\t3s@run1\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(allow, []byte("pkg\tTestA\t4.5\t3s@run1\n"), 0o644))
 	stdin := `{"Action":"pass","Package":"example.com/pkg","Test":"TestA","Elapsed":3.2}
 {"Action":"pass","Package":"example.com/pkg","Test":"TestB","Elapsed":1.3}
 {"Action":"pass","Package":"example.com/pkg","Elapsed":4.6}
 `
 	code, stdout, stderr := runCI(t, []string{"slowtests", "--package-budget", "2", "--test-budget", "1", "--allowlist", allow, "--enforce", "--load", "1", "--cpus", "2"}, stdin)
-	if code != 2 {
-		t.Fatalf("exit = %d, want 2; stderr: %s", code, stderr)
-	}
+	require.Equal(t, 2, code, "exit = %d, want 2; stderr: %s", code, stderr)
 	want := "CI-SLOW package=example.com/pkg seconds=4.6s budget=2s slowest=TestA:3.2s,TestB:1.3s\n" +
 		"CI-SLOW test=TestB package=example.com/pkg seconds=1.3s budget=1s\n" + loadLine1of2
-	if stdout != want {
-		t.Errorf("stdout = %q, want %q", stdout, want)
-	}
+	assert.Equal(t, want, stdout, "stdout = %q, want %q", stdout, want)
 
 	code, _, stderr = runCI(t, []string{"slowtests", "--package-budget", "2", "--allowlist", filepath.Join(t.TempDir(), "absent")}, "")
 	if code != 2 || !strings.Contains(stderr, "--allowlist") {
@@ -172,20 +141,12 @@ func TestSlowtestsVerdictIsTheSameAtAnyLoadEndToEnd(t *testing.T) {
 
 	dir := t.TempDir()
 	ledger := filepath.Join(dir, "sleeps.txt")
-	if err := os.WriteFile(ledger, []byte("pkg\tTestKnown\t#4221\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(ledger, []byte("pkg\tTestKnown\t#4221\n"), 0o644))
 	allow := filepath.Join(dir, "allow.txt")
 	repoRows, err := os.ReadFile(filepath.Join("..", "..", "internal", "ci", "slow-tests_allowlist.txt"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(repoRows), "cmd/nova-bus\t") {
-		t.Fatalf("internal/ci/slow-tests_allowlist.txt has a cmd/nova-bus row; probe 6 wants none")
-	}
-	if err := os.WriteFile(allow, append(repoRows, []byte("pkg\tTestA\t1.2\t0.4s@run36264290984\n")...), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	require.NotContains(t, string(repoRows), "cmd/nova-bus\t", "internal/ci/slow-tests_allowlist.txt has a cmd/nova-bus row; probe 6 wants none")
+	require.NoError(t, os.WriteFile(allow, append(repoRows, []byte("pkg\tTestA\t1.2\t0.4s@run36264290984\n")...), 0o644))
 	slow := `{"Action":"pass","Package":"example.com/pkg","Test":"TestA","Elapsed":1.4}
 {"Action":"pass","Package":"example.com/pkg","Elapsed":1.5}
 {"Action":"pass","Package":"github.com/mas-bandwidth/nova-tools/cmd/nova-bus","Test":"TestWait","Elapsed":0.9}
