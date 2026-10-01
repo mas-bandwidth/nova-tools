@@ -62,7 +62,9 @@ clone URL in the body names nothing.
 card works from (a pull request body to rewrite, a long table) can be larger than the brief's
 16 KiB, and the wall gives the child no forge to fetch it from. A path that is not a relative
 path inside the recipes directory, a link, or a missing file refuses the launch, which the
-finish reports failed; JOB.md lists what was staged.
+finish reports failed; JOB.md lists what was staged. Each source opens through an `os.Root` of the
+recipes directory, so no path component leaves it, a symlinked directory included; the refusal
+names the `Stage:` path and the reason.
 
 ## 3. The result shape
 
@@ -149,7 +151,8 @@ result and no provider error that ends with a final assistant message stays `no-
 
 The head the member pushes is the result's `head`, else the last head the git shim recorded in
 `<job>/.sprint/pushed.tsv`. The member pushes from its own bare repository, fetching every
-branch and the `HEAD` of the staged checkout, so a commit on any branch the child made, in the
+branch and the `HEAD` of the staged checkout, after dropping any ref this launch's namespace kept
+from an interrupted push, so a commit on any branch the child made, in the
 checkout or in a clone the shim linked to it, is found. The head must be on one of those
 fetched refs (the push repository keeps every launch's objects, so a commit being there is no
 evidence it is this launch's) and must descend from the staged commit, else the push is
@@ -179,7 +182,7 @@ A profile is keyed by model family, derived from the model id the member runs th
 | profile | git | gh | JOB.md asks for |
 |---|---|---|---|
 | `plain` | `push` recorded and answered as a push; everything else passes through | refused, one line | commit on the branch, write RESULT.md in the shape |
-| `claude` | `push` recorded and answered as a push (a delete, prune, mirror, `--all`, `--tags` or push option is refused, one line, and recorded as nothing; an option's value is never read as an operand); `clone` of the card's repository (https, ssh, scp form, the scheme's default port, `.git` or not) becomes a link to the staged checkout, any other clone is refused; `checkout -b`, `switch -c`, `branch`, `fetch` and `pull` pass through | `pr create` writes a work card's result and finishes; `pr review --approve` / `--request-changes` writes a read's verdict (each refused on the other kind); `pr diff`, `pr view` and `pr checks` answer from the staged checkout against the base; everything else is refused, one line, with the reason: the wall holds no forge credential and no network | work as on any pull request: branch, commit, push, `gh pr create`, and nothing else to write; a read reviews with `gh pr review` |
+| `claude` | `push` recorded and answered as a push (a delete, prune, mirror, `--all`, `--branches`, `--tags` or push option is refused, one line naming the flag as typed, and recorded as nothing, a long flag at every prefix of those names too, since git accepts an unambiguous prefix (an ambiguous prefix is refused as well: git rejects it anyway); an option's value is never read as an operand); `clone` of the card's repository (https, ssh, scp form, the scheme's default port, `.git` or not) becomes a link to the staged checkout, any other clone is refused; `checkout -b`, `switch -c`, `branch`, `fetch` and `pull` pass through | `pr create` writes a work card's result and finishes; `pr review --approve` / `--request-changes` writes a read's verdict (each refused on the other kind); `pr diff`, `pr view` and `pr checks` answer from the staged checkout against the base; everything else is refused, one line, with the reason: the wall holds no forge credential and no network | work as on any pull request: branch, commit, push, `gh pr create`, and nothing else to write; a read reviews with `gh pr review` |
 
 ### Writing a profile
 
