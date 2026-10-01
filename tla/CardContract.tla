@@ -35,6 +35,7 @@
 \*   mem       the member the take is dealt to (the up members are Members)
 \*   refused   the members that refused the card at staging
 \*   sj        the staging-bound judgments the sprint opened for the card
+\*   lvd       the card was levelled onto another member since it was last dealt
 \*
 \* THE PROVIDER FAILURE. A run that ended with no result and whose provider
 \* failed it (prov) is finished `provider`, after a refused push (which is
@@ -63,6 +64,11 @@
 \* ended take ran a child), while a refusal costs nothing and is bounded by the
 \* fleet already, so counting it in rds would retire a sound card for its members'
 \* machines (the fleet store, 2026-10-01: three refusals spent the bound).
+\* Level (internal/sprint level, round.levelTo) moves a dealt card that is not yet
+\* taken to another member to even the queues; it too skips the card's refusers
+\* (the reader's probe on #5000: the level moved a card back onto its refuser every
+\* tick, without end). Levelling is bounded here to once per deal: the code moves a
+\* card only while queues differ by more than one, which one card cannot express.
 \*
 \* BROKEN names a reversed witness, a rule as it was or as it could be
 \* written wrong, that TLC must break: "today" (ok unless the push was
@@ -76,7 +82,8 @@
 \* the work pushed before it), "providerfailed" (a provider failure judged as
 \* failed work), "sameroute" (a redeal on the route that failed though another
 \* remains), "unbounded" (a redeal past MaxRedeals), "stagingfailed" (a staging
-\* refusal judged as failed work). "none" is the design.
+\* refusal judged as failed work), "levelrefuser" (the level moves a card onto a
+\* member that refused it). "none" is the design.
 \*
 \* ONE CARD IS THE INSTANCE. Every action touches one card and no invariant relates
 \* two, so the cards are independent: an invariant of the form "for every card"
@@ -93,13 +100,13 @@ EXTENDS Integers, FiniteSets
 CONSTANTS Cards, Broken, Routes, MaxRedeals, Members
 
 VARIABLES ph, att, earlier, from, commit, shape, verdict, push, claim, fin, rep,
-          prov, rt, tried, rds, fw, bj, stg, mem, refused, sj
+          prov, rt, tried, rds, fw, bj, stg, mem, refused, sj, lvd
 
 vars == <<ph, att, earlier, from, commit, shape, verdict, push, claim, fin, rep,
-          prov, rt, tried, rds, fw, bj, stg, mem, refused, sj>>
+          prov, rt, tried, rds, fw, bj, stg, mem, refused, sj, lvd>>
 
 \* The variables the staging refusal adds, for the actions that leave them.
-svars == <<stg, mem, refused, sj>>
+svars == <<stg, mem, refused, sj, lvd>>
 
 \* The variables the provider failure and the staging refusal add, for the actions that
 \* leave them.
@@ -128,6 +135,7 @@ Init ==
   /\ mem \in [Cards -> Members]
   /\ refused = [c \in Cards |-> {}]
   /\ sj = [c \in Cards |-> 0]
+  /\ lvd = [c \in Cards |-> FALSE]
 
 MaxOf(S) == CHOOSE m \in S : \A n \in S : n <= m
 
@@ -156,7 +164,7 @@ StageRefused(c) ==
   /\ ph' = [ph EXCEPT ![c] = "ended"]
   /\ stg' = [stg EXCEPT ![c] = TRUE]
   /\ UNCHANGED <<att, earlier, from, commit, shape, verdict, push, claim, fin, rep,
-                 prov, rt, tried, rds, fw, bj, mem, refused, sj>>
+                 prov, rt, tried, rds, fw, bj, mem, refused, sj, lvd>>
 
 \* The child ends: any commit, any result, any verdict, and the provider's
 \* failure or not.
@@ -244,6 +252,7 @@ Redeal(c) ==
   /\ rds' = [rds EXCEPT ![c] = @ + 1]
   /\ \E r \in RedealRoutes(c) : rt' = [rt EXCEPT ![c] = r]
   /\ \E m \in Members \ refused[c] : mem' = [mem EXCEPT ![c] = m]
+  /\ lvd' = [lvd EXCEPT ![c] = FALSE]
   /\ UNCHANGED <<att, earlier, tried, fw, bj, stg, refused, sj>>
 
 \* The take that ends with the bound reached retires the card: one judgment, the
@@ -271,6 +280,7 @@ Restage(c) ==
   /\ stg' = [stg EXCEPT ![c] = FALSE]
   /\ refused' = [refused EXCEPT ![c] = @ \cup {mem[c]}]
   /\ \E m \in Members \ (refused[c] \cup {mem[c]}) : mem' = [mem EXCEPT ![c] = m]
+  /\ lvd' = [lvd EXCEPT ![c] = FALSE]
   /\ UNCHANGED <<att, earlier, commit, shape, verdict, prov, rt, tried, rds, fw, bj, sj>>
 
 \* Every member has refused the card at staging: one judgment, the bound's, naming the
@@ -281,10 +291,23 @@ StagingAll(c) ==
   /\ rep' = [rep EXCEPT ![c] = "stagingall"]
   /\ refused' = [refused EXCEPT ![c] = @ \cup {mem[c]}]
   /\ sj' = [sj EXCEPT ![c] = @ + 1]
-  /\ UNCHANGED <<ph, att, earlier, from, commit, shape, verdict, push, claim, prov, rt, tried, rds, fw, bj, stg, mem>>
+  /\ UNCHANGED <<ph, att, earlier, from, commit, shape, verdict, push, claim, prov, rt, tried, rds, fw, bj, stg, mem, lvd>>
+
+\* THE LEVEL (internal/sprint level): a card dealt and not yet taken moves to another
+\* member, never one that refused it at staging; once per deal here.
+LevelTargets(c) ==
+  IF Broken = "levelrefuser" THEN Members \ {mem[c]}
+  ELSE Members \ (refused[c] \cup {mem[c]})
+
+Level(c) ==
+  /\ ph[c] = "new" /\ claim[c] = "held" /\ ~lvd[c]
+  /\ \E m \in LevelTargets(c) : mem' = [mem EXCEPT ![c] = m]
+  /\ lvd' = [lvd EXCEPT ![c] = TRUE]
+  /\ UNCHANGED <<ph, att, earlier, from, commit, shape, verdict, push, claim, fin, rep,
+                 prov, rt, tried, rds, fw, bj, stg, refused, sj>>
 
 Next == \E c \in Cards : Stage(c) \/ ChildEnds(c) \/ Push(c) \/ Judge(c) \/ Move(c) \/ Reap(c)
-                          \/ Redeal(c) \/ Retire(c) \/ StageRefused(c) \/ Restage(c) \/ StagingAll(c)
+                          \/ Redeal(c) \/ Retire(c) \/ StageRefused(c) \/ Restage(c) \/ StagingAll(c) \/ Level(c)
 
 Spec == Init /\ [][Next]_vars /\ WF_vars(Next)
 
@@ -303,6 +326,7 @@ TypeOK ==
   /\ mem \in [Cards -> Members]
   /\ refused \in [Cards -> SUBSET Members]
   /\ sj \in [Cards -> 0..1]
+  /\ lvd \in [Cards -> BOOLEAN]
 
 \* Ok => PushedHead /\ Shape: an ok finish is a commit the child made, on
 \* origin by the member's push, with the result's shape and verdict ok.

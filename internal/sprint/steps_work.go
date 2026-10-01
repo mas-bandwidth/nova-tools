@@ -1122,20 +1122,26 @@ func IsStagingRefusal(report string) bool { return strings.HasPrefix(report, car
 // member that has not refused it (StagingRefusers), spending none of the redeal bound: the
 // member's failure, never the card's. No failed-work judgment is written; the inbox is told
 // what happened, the member and the reason; the card keeps the refusal's record
-// (FieldStagingTake at the generation refused).
+// (FieldStagingTake at the generation refused). A member refuses a card once: a
+// refusal by a member already among its refusers writes no second record and no
+// second note (tla/CardContract.tla, NeverOnARefuser).
 func stagingRefused(s *Snapshot, c, pr *Card, r FinishReq) Unit {
 	set := nextGen(c, "", s.Now)
 	set["withdrawn"] = stamp(s.Now)
 	line := cutText(strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(r.Report, cardhdr.EndStaging), ":")), MaxProviderErrorBytes)
-	set[FieldStagingTake+itoa(c.Int("gen"))] = ProviderTake{Route: c.F(FieldRoute), Model: c.F(FieldModel), Member: c.Row,
-		Finished: stamp(s.Now), Usage: r.Usage, Error: line}.String()
-	n := happened(NStagingRefused, pr.Row, s.Now, pr.ID)
-	n.Who, n.Attempt = c.Row, c.Int("attempt")
-	n.What = cardhdr.EndStaging + " on " + c.Row + ": " + line
+	var notes []Note
+	if !contains(StagingRefusers(c), c.Row) {
+		set[FieldStagingTake+itoa(c.Int("gen"))] = ProviderTake{Route: c.F(FieldRoute), Model: c.F(FieldModel), Member: c.Row,
+			Finished: stamp(s.Now), Usage: r.Usage, Error: line}.String()
+		n := happened(NStagingRefused, pr.Row, s.Now, pr.ID)
+		n.Who, n.Attempt = c.Row, c.Int("attempt")
+		n.What = cardhdr.EndStaging + " on " + c.Row + ": " + line
+		notes = append(notes, n)
+	}
 	return Unit{Key: c.ID, Stream: pr.Row, Changes: []Change{
 		change(Fleet, moveEntry(c, c.Row, Withdrawn, set, "taken", "dealt")),
 		change(Work, moveEntry(pr, pr.Row, Ready, nil, "work")),
-	}, Notes: []Note{n}, Moved: fmt.Sprintf("%s working -> withdrawn gen=%d, %s refused it at staging; %s working -> ready", c.ID, c.Int("gen")+1, c.Row, pr.ID)}
+	}, Notes: notes, Moved: fmt.Sprintf("%s working -> withdrawn gen=%d, %s refused it at staging; %s working -> ready", c.ID, c.Int("gen")+1, c.Row, pr.ID)}
 }
 
 // FleetReq is a fleet move: a member up or down, or the ready queues
@@ -1426,15 +1432,21 @@ func level(s *Snapshot, p *Plan, up []string, rr *round, moves roundMoves) {
 		if short == "" || len(queues[long])-len(queues[short]) <= 1 {
 			return
 		}
-		to := rr.levelTo(up, n, held, widths)
+		// the newest card of the longest queue that has a target, never a member that
+		// refused it at staging (StagingRefusers; tla/CardContract.tla, Level)
+		q := queues[long]
+		i, to := len(q)-1, ""
+		for ; i >= 0 && to == ""; i-- {
+			to = rr.levelTo(up, n, held, widths, StagingRefusers(q[i]))
+		}
 		if to == "" {
 			return
 		}
+		i++
 		held[long]--
 		held[to]++
-		q := queues[long]
-		c := q[len(q)-1]
-		queues[long] = q[:len(q)-1]
+		c := q[i]
+		queues[long] = append(q[:i:i], q[i+1:]...)
 		queues[to] = append(queues[to], c)
 		moves[c.ID] = to
 		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, to, Ready, nextGen(c, to, s.Now)))},

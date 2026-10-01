@@ -136,8 +136,9 @@ card WITHOUT take_ended, so it spends none of the redeal bound, returns its
 primary to ready with no failed-work judgment, tells the inbox "staging
 refused on <member>: <reason>", and keeps a record, staging_take_<gen> (its
 route, model, member, end and reason), which `card` prints as one ATTEMPT line
-(`end=staging refused: <reason>`, `gen=<g>`) before the card's own; the deal
-never places the attempt's card on a member that refused it, and when every
+(`end=staging refused: <reason>`, `gen=<g>`) before the card's own; the deal,
+the level and a down member's redeal never place the attempt's card on a
+member that refused it, which refuses it once (one record, one note), and when every
 member up has refused it the judgment "a card reached its bound" names the
 members and the reason, once, and it is dealt no more until a member that has
 not refused it is up, a rework or a drop; tla/CardContract.tla, StageRefused

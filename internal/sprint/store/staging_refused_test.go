@@ -136,3 +136,40 @@ func TestEveryMemberUpRefusingAtStagingIsOneJudgment(t *testing.T) {
 	assert.Empty(t, h.openOf(sprint.NWorkFailed))
 	h.clean("refused at staging by every member up")
 }
+
+// The level step never moves a card back onto a member that refused it at staging (the
+// reader's probe on #5000: two members, four cards, m1 refusing every card; the level moved
+// s1-3.w1 back onto m1 every tick, 12 records at gen 37, 24 notes and no end). A member with no
+// mirror for a repo refuses every card of it, so this is the fleet's case, not a corner. Each
+// member refuses a card at most once: one record and one note per member per card.
+func TestTheLevelNeverMovesACardBackOntoItsRefuser(t *testing.T) {
+	t.Parallel()
+	h := routeHarness(t, route("pro-a", "pro", 1))
+	h.addReady("s1", 4, briefOf("pro", ""))
+	h.startMachine()
+	h.machine()
+	for round := 0; round < 12; round++ {
+		for _, c := range h.snap().Fleet.Cell("m1", sprint.Ready) {
+			h.failTake(c.ID, stagingLine)
+		}
+		h.machine()
+	}
+	s := h.snap()
+	for _, c := range s.Fleet.Column(sprint.Ready, sprint.Working, sprint.Withdrawn) {
+		takes, _ := sprint.StagingTakes(c)
+		per := map[string]int{}
+		for _, x := range takes {
+			per[x.Member]++
+		}
+		for m, n := range per {
+			assert.LessOrEqual(t, n, 1, "%s: %s refused it %d times", c.ID, m, n)
+		}
+		if contains(sprint.StagingRefusers(c), "m1") {
+			assert.NotEqual(t, "m1", c.Row, "%s is back on its refuser m1", c.ID)
+		}
+	}
+	assert.LessOrEqual(t, len(h.stagingNotes()), 4, "one note per card m1 refused")
+	assert.Empty(t, s.Fleet.Cell("m1", sprint.Ready), "m1 holds none of the cards it refused")
+	assert.Len(t, s.Fleet.Cell("m2", sprint.Ready), 4, "m2, which never refused, holds them all")
+	h.clean("levelled around a refuser")
+}
