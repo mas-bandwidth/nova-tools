@@ -67,6 +67,7 @@ var (
 	ErrNotFound   = errors.New("not found")
 	ErrNoRef      = errors.New("names no row")
 	ErrReferenced = errors.New("is named by")
+	ErrInvalid    = errors.New("invalid")
 )
 
 // RefusedError is a store refusal with the words for the line: Err is one of
@@ -86,9 +87,16 @@ func Refused(err error) bool {
 	return errors.As(err, &r)
 }
 
-// checkRefs is the cross-row validation every store runs before a write:
-// a ref field must name a row of its kind (an optional one may be empty).
+// checkRefs is the validation every store runs before an add or a set: the
+// kind's Check on the row the write would leave (ErrInvalid), then the
+// cross-row rule that a ref field must name a row of its kind (an optional
+// one may be empty).
 func checkRefs(ctx context.Context, st Store, k *Kind, row Row) error {
+	if k.Check != nil {
+		if err := k.Check(row); err != nil {
+			return &RefusedError{Err: ErrInvalid, Detail: err.Error()}
+		}
+	}
 	for _, f := range k.Fields {
 		if f.Type != TypeRef || (row.Fields[f.Name] == "" && !f.Required) {
 			continue
