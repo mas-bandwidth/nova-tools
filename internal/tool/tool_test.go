@@ -174,9 +174,7 @@ func TestRender(t *testing.T) {
 			assert.Equal(t, 1, strings.Count(js.String(), "\n"), "JSON is not one line: %q", js.String())
 			got, want := fromLines(t, "DEMO", text.String()), fromJSON(t, js.String())
 			got.Verb, got.Exit = want.Verb, tc.out.Exit
-			if want.Verb != "demo" || want.Exit != tc.out.Exit {
-				t.Errorf("JSON result is %s exit %d, want demo exit %d", want.Verb, want.Exit, tc.out.Exit)
-			}
+			assert.True(t, want.Verb == "demo" && want.Exit == tc.out.Exit, "JSON result is %s exit %d, want demo exit %d", want.Verb, want.Exit, tc.out.Exit)
 			// The text escapes what JSON carries raw; compare the escaped form.
 			for i, n := range want.Notes {
 				want.Notes[i] = strings.ReplaceAll(n, "\n", `\x0a`)
@@ -322,30 +320,26 @@ func TestRun(t *testing.T) {
 			t.Parallel()
 			var out, errs bytes.Buffer
 			code := demo().Run(tc.args, strings.NewReader(""), &out, &errs)
-			if code != tc.code {
-				t.Errorf("exit %d, want %d\nstdout: %s\nstderr: %s", code, tc.code, out.String(), errs.String())
-			}
+			assert.Equal(t, tc.code, code, "exit %d, want %d\nstdout: %s\nstderr: %s", code, tc.code, out.String(), errs.String())
 			for _, w := range []struct {
 				name  string
 				got   string
 				want  []string
 				empty bool
 			}{{"stdout", out.String(), tc.stdout, tc.emptyStdout}, {"stderr", errs.String(), tc.stderr, tc.emptyStderr}} {
-				if w.empty && w.got != "" {
-					t.Errorf("%s is not empty: %q", w.name, w.got)
-				}
+				assert.False(t, w.empty && w.got != "", "%s is not empty: %q", w.name, w.got)
 				rest := w.got
 				for _, s := range w.want {
 					i := strings.Index(rest, s)
-					if i < 0 {
-						t.Errorf("%s lacks %q (in order):\n%s", w.name, s, w.got)
+					if !assert.GreaterOrEqual(t, i, 0, "%s lacks %q (in order):\n%s", w.name, s, w.got) {
 						break
 					}
 					rest = rest[i+len(s):]
 				}
 			}
-			if tc.stderrLines > 0 && strings.Count(errs.String(), "\n") != tc.stderrLines {
-				t.Errorf("stderr has %d lines, want %d:\n%s", strings.Count(errs.String(), "\n"), tc.stderrLines, errs.String())
+			if tc.stderrLines > 0 {
+				n := strings.Count(errs.String(), "\n")
+				assert.Equal(t, tc.stderrLines, n, "stderr has %d lines, want %d:\n%s", n, tc.stderrLines, errs.String())
 			}
 		})
 	}
@@ -358,17 +352,14 @@ func TestBannerMeetsTheOnboardingStandard(t *testing.T) {
 	t.Parallel()
 	banner := demo().Banner()
 	examples, err := onboarding.ExampleLines(banner, "nova-demo")
-	if err != nil || len(examples) != 1 || examples[0] != "nova-demo put --store ./s --key k" {
-		t.Fatalf("example lines %q (%v) from:\n%s", examples, err, banner)
-	}
+	require.True(t, err == nil && len(examples) == 1 && examples[0] == "nova-demo put --store ./s --key k", "example lines %q (%v) from:\n%s", examples, err, banner)
 	for _, verb := range []string{"put", "who", "deny", "forget", "raw", "version"} {
 		t.Run(verb, func(t *testing.T) {
 			t.Parallel()
 			var out, errs bytes.Buffer
-			if code := demo().Run([]string{verb, "-h"}, strings.NewReader(""), &out, &errs); code != 0 || errs.Len() != 0 ||
-				!strings.HasPrefix(out.String(), "usage: nova-demo "+verb) || !strings.Contains(out.String(), "exit codes: 0 done") {
-				t.Errorf("%s -h: exit %d stderr %q stdout:\n%s", verb, code, errs.String(), out.String())
-			}
+			code := demo().Run([]string{verb, "-h"}, strings.NewReader(""), &out, &errs)
+			assert.True(t, code == 0 && errs.Len() == 0 && strings.HasPrefix(out.String(), "usage: nova-demo "+verb) && strings.Contains(out.String(), "exit codes: 0 done"),
+				"%s -h: exit %d stderr %q stdout:\n%s", verb, code, errs.String(), out.String())
 		})
 	}
 }
@@ -414,8 +405,8 @@ func TestProblems(t *testing.T) {
 			d := demo()
 			tc.edit(d)
 			got := strings.Join(d.Problems(), "\n")
-			if len(tc.want) == 0 && got != "" {
-				t.Errorf("problems: %s", got)
+			if len(tc.want) == 0 {
+				assert.Empty(t, got, "problems: %s", got)
 			}
 			for _, w := range tc.want {
 				assert.Contains(t, got, w, "problems lack %q:\n%s", w, got)
