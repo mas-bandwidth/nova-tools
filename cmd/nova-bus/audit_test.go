@@ -80,6 +80,7 @@ var messageBusAudit = audit.Config{
 			"opened the terminal to read. Escaping it is what this change removes -- a forty-line rebase transcript rendered as " +
 			"one line of \\x0d\\x0a, which nobody could read and which taught nobody anything. " +
 			"TestARebaseConflictPrintsOneActionableLineAndTheTranscriptRaw is the behavioural test for this site.",
+		"quickstart.go|step|commandLine(argv)": "the command line echoed above its output so a reader can paste it back into their shell: every argument in argv has already been through shellArg, escaping or quoting whatever a shell would act on; escaping it here would fold the command line into an unpasteable token, the same as waitLoop's next command",
 	},
 	Escapers: []string{
 		// Quote is oneline's third rendering: a double-quoted Go string literal, which
@@ -129,6 +130,15 @@ var messageBusAudit = audit.Config{
 		// every byte still goes through fmt.Fprintf at the emit site, where the elapsed
 		// duration is rendered through oneline.Field like every other line here.
 		`"sync"`,
+
+		// context carries deadlines and cancellations for subprocess execution during
+		// quickstart initialization; it holds no writer of its own and reaches no stream.
+		`"context"`,
+
+		// gitrun initializes the temporary demonstration git repository during quickstart;
+		// it invokes git subcommands with captured buffers and holds no direct unescaped
+		// writers to stdout or stderr.
+		`"github.com/mas-bandwidth/nova-tools/internal/gitrun"`,
 
 		`"github.com/mas-bandwidth/nova-tools/internal/bus"`,
 		// errors is reply.go's: errors.Is over the two sentinel refusals a no-replace

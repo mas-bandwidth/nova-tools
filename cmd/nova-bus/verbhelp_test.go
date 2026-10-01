@@ -18,8 +18,9 @@ func TestEveryVerbAnswersHelpAndTouchesNothing(t *testing.T) {
 		cases = append(cases, testverbhelp.Case{Verb: v, Flags: bus})
 	}
 	cases = append(cases, testverbhelp.Case{Verb: "version"})
+	cases = append(cases, testverbhelp.Case{Verb: "quickstart", Flags: []string{"--dir", "{dir}"}})
 	testverbhelp.Check(t, busRun, cases)
-	testverbhelp.HelpVerb(t, busRun, "nova-bus", "send", "inbox", "version")
+	testverbhelp.HelpVerb(t, busRun, "nova-bus", "send", "inbox", "version", "quickstart")
 }
 
 func busRun(args []string, stdout, stderr io.Writer) int {

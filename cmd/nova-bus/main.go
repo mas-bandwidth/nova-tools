@@ -8,6 +8,7 @@
 // was retyped; and a bare receipt and a note carrying a finding looked identical until
 // opened. Every verb here is one of those failures closed:
 //
+//	quickstart creates a temporary bus and demonstrates the full note lifecycle
 //	draft     prints the header a note needs, with the names checked against the roster,
 //	          so that a line's first send is not a header written from memory
 //	send      assigns an id that cannot collide, pastes the date, and pushes with fetch,
@@ -65,10 +66,13 @@ each participant and, for each one who sends, a directory: that sender's lane.
 A note is a markdown file in its sender's lane with From, To and Subject lines;
 a receipt in your lane closes a note sent to you, and your cursor there is the
 last commit you read. git fetch and push carry it all; nothing lives elsewhere.
-first run: copy the example bus (the cp line above example:), then run the lines
-under example: in order; reading needs no remote, sending needs one.
+first run: nova-bus quickstart [--dir <path>] builds a temporary bus and runs a
+demonstration of send, inbox, reply and close; or copy the example bus (the cp line
+above example:), then run the lines under example: in order; reading needs no remote,
+sending needs one.
 
 usage:
+  nova-bus quickstart [--dir <path>]
   nova-bus draft --bus <dir> --as <name> --to <names> [--cc <names>] [--subject <text>] [--re <id-or-path-or-subject>] [--out <path> [--overwrite] | > <file>]
   nova-bus draft --bus <dir> --as <name> --reply-to <id-or-path-or-subject> --body-file <path> --draft-dir <dir> --remote <name> --branch <name>
         [--to <names>] [--cc <names>] [--subject <text>] [--max-body-bytes <n>]
@@ -369,6 +373,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer, now time.Time
 		return cmdCheck(rest, stdout, stderr, now)
 	case "names":
 		return cmdNames(rest, stdout, stderr)
+	case "quickstart":
+		return cmdQuickstart(rest, stdout, stderr, now)
 	case "version", "--version":
 		return cmdVersion(rest, stdout, stderr)
 	}
