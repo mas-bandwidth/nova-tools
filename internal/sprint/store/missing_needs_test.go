@@ -174,23 +174,27 @@ func TestRestoredMissingNeedIsNotWaivedAndItsJudgmentCloses(t *testing.T) {
 	}
 }
 
-func TestMissingNeedJudgmentsDrainPastTheTickBound(t *testing.T) {
+// Every missing-need judgment is written in the one tick that finds it: a
+// tick has no bound on its notes but the step's (the owner's rule, never a
+// row at a time), and none is written twice.
+func TestMissingNeedJudgmentsAllInOneTick(t *testing.T) {
 	t.Parallel()
+	const n = 51
 	h := newHarness(t)
 	h.setup(1)
-	h.must(AddStep(sprint.AddReq{Stream: "s2", Count: sprint.TickMaxNotes + 1, Needs: []string{"s1-1"}}))
-	for i := 1; i <= sprint.TickMaxNotes+1; i++ {
+	h.must(AddStep(sprint.AddReq{Stream: "s2", Count: n, Needs: []string{"s1-1"}}))
+	for i := 1; i <= n; i++ {
 		seedMissingNeeds(h, fmt.Sprintf("s2-%d", i), "bad.id")
 	}
 	h.startMachine()
 	h.machine()
-	if got := len(h.nOpenOf(sprint.NMissingNeed, "")); got != sprint.TickMaxNotes {
+	if got := len(h.nOpenOf(sprint.NMissingNeed, "")); got != n {
 		t.Fatalf("first tick: %d", got)
 	}
 	h.machine()
 	h.machine()
-	if got := len(h.nAllNotes(sprint.NMissingNeed)); got != sprint.TickMaxNotes+1 {
-		t.Fatalf("did not drain once each: %d", got)
+	if got := len(h.nAllNotes(sprint.NMissingNeed)); got != n {
+		t.Fatalf("not written once each: %d", got)
 	}
 	h.clean("missing judgments drained")
 }

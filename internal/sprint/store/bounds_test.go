@@ -106,9 +106,10 @@ func TestAStepIsSplitByBytes(t *testing.T) {
 }
 
 // refusing is a store whose apply refuses a table's manifests on a bound the
-// sprint's own validation does not know (a store of another build).
+// sprint's own validation does not know (a store of another build). It is over
+// the Mem itself, which keeps the machine's records a tick reads.
 type refusing struct {
-	Backend
+	*Mem
 	table string
 	calls int
 }
@@ -118,7 +119,7 @@ func (r *refusing) Apply(ctx context.Context, m ntable.BatchManifest) (ntable.Re
 		r.calls++
 		return ntable.Receipt{}, &ntable.Refusal{Code: "LIMIT", Location: "store", Sentence: "limit exceeded: changed entries: bound 1, observed 2", Guarded: true}
 	}
-	return r.Backend.Apply(ctx, m)
+	return r.Mem.Apply(ctx, m)
 }
 
 // S2. A first manifest the store refuses on a bound is refused whole at once
@@ -128,7 +129,7 @@ func TestAFirstManifestRefusedOnABoundIsNotRetried(t *testing.T) {
 	h := newHarness(t)
 	h.setup(2)
 	st := *h.st
-	r := &refusing{Backend: h.m, table: "t-fleet"}
+	r := &refusing{Mem: h.m, table: "t-fleet"}
 	st.B = r
 	before := h.revisions()
 	res, err := st.Run(h.ctx, DealStep(sprint.DealReq{Sel: sprint.Sel{Limit: 2}}))

@@ -165,6 +165,7 @@ func lockFile(path string, wait time.Duration, try func(f *os.File) (ok bool, re
 			}
 			lastErr = lockErr
 		} else {
+			// ignored: a try that did not fail clears the last failure; the loop reports the last real one at its deadline
 			lastErr = nil
 		}
 		if ok {
@@ -207,13 +208,17 @@ func jitter(d time.Duration) time.Duration {
 // stampLockHolder writes the current PID to the lock file.
 func stampLockHolder(f *os.File) {
 	line := fmt.Sprintf("pid=%d at=%s\n", os.Getpid(), time.Now().UTC().Format(time.RFC3339))
+	// ignored: the pid stamp is advice for a reader of a held lock; the flock itself is the lock
 	if err := f.Truncate(0); err != nil {
 		return
 	}
+	// ignored: the pid stamp is advice for a reader of a held lock; the flock itself is the lock
 	if _, err := f.Seek(0, 0); err != nil {
 		return
 	}
+	// ignored: the pid stamp is advice for a reader of a held lock; the flock itself is the lock
 	_, _ = f.WriteString(line)
+	// ignored: the pid stamp is advice for a reader of a held lock; the flock itself is the lock
 	_ = f.Sync()
 }
 

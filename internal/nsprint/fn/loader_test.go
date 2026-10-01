@@ -1,6 +1,7 @@
 package fn
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 	"testing"
@@ -83,27 +84,17 @@ func TestLibraryLocalsUnderLimit(t *testing.T) {
 	}
 }
 
-// TestCountLocalsSeesTheOldShape is the guard's own control: the same files
-// concatenated with no blocks (the shape that broke dev) count over the limit.
+// TestCountLocalsSeesTheOldShape is the guard's own control: a chunk with
+// more active locals than MaxLocals (the shape that broke dev, when every
+// file's locals shared the main function) counts over the limit.
 func TestCountLocalsSeesTheOldShape(t *testing.T) {
 	t.Parallel()
 
-	source, err := Source()
-	if err != nil {
-		t.Fatal(err)
+	var flat strings.Builder
+	for i := 0; i <= MaxLocals; i++ {
+		fmt.Fprintf(&flat, "local v%d = %d\n", i, i)
 	}
-	var flat []string
-	lines := strings.Split(source, "\n")
-	for i, line := range lines {
-		if line == blockOpen && i > 0 && strings.HasPrefix(lines[i-1], fileHeader+"lua/") {
-			continue
-		}
-		if strings.HasPrefix(line, blockClose+"lua/") {
-			continue
-		}
-		flat = append(flat, line)
-	}
-	active, _, _ := countLocals(t, strings.Join(flat, "\n"))
+	active, _, _ := countLocals(t, flat.String())
 	if active <= MaxLocals {
 		t.Fatalf("unblocked chunk counts %d locals, want > %d (the guard must see the pre-fix shape)", active, MaxLocals)
 	}

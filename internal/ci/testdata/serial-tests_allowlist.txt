@@ -22,7 +22,7 @@
 # TestReadCopyDealtToBenchRendersALintedCard), then by nine more from the redis
 # stream (seat and #3277 tests on t.Setenv); each owes a per-test seam. Moved
 # from the serialTestsCeiling constant into this file at 876, the count that day.
-# ceiling: 291
+# ceiling: 253
 cmd/nova-bus/issue1451_test.go:TestIssue1451EveryBareVerbRefusalNamesTheDoor serial: t.Setenv
 cmd/nova-bus/main_functional_test.go:TestReceiptMaxWordsDefaultsFromBusFileThenEnv serial: t.Setenv
 cmd/nova-bus/reply_functional_test.go:TestAFilesystemWithNoCreateExclusivePublishIsRefused serial: swaps package var main.publishDraft
@@ -156,11 +156,6 @@ internal/bus/replydraft_test.go:TestNoCreateExclusivePublishQuotesWhatEachCallSa
 internal/bus/replydraft_test.go:TestTheSecondPublishIsUsedWhenTheFirstIsNotAvailable serial: swaps package var bus.linkFile, swaps package var bus.noReplacePublish
 internal/bus/timeout_test.go:TestAGitThatHangsIsKilledAndNamed serial: t.Setenv
 internal/check/corpus_test.go:TestARelativeRootIsNotReadAsASymlinkEscape serial: t.Chdir
-internal/decide/answers_test.go:TestChoiceAnswerOutsideTheCriteriaIsAProviderError serial: t.Setenv
-internal/decide/answers_test.go:TestEmptyChoiceAboveTheFloorIsAProviderError serial: t.Setenv
-internal/decide/decide_test.go:TestDecideSendsBodyAndParses serial: t.Setenv
-internal/decide/decide_test.go:TestNewRefusesWhenEnvUnset serial: t.Setenv
-internal/decide/decide_test.go:TestRequestSendsDocumentedBody serial: t.Setenv
 internal/nsprint/store/store_test.go:TestOpenAuthenticatesFromEnv serial: t.Setenv
 internal/nsprint/testutil/github_test.go:TestGitHubStubInterceptsHTTPCalls serial: t.Setenv
 internal/nsprint/testutil/github_test.go:TestGitHubStubStartsCleanly serial: t.Setenv
@@ -169,23 +164,7 @@ internal/release/certify_test.go:TestScriptRemoteWithAFakeSSHRunsUnderTheHostGua
 internal/scaffold/scaffold_test.go:TestScaffoldNeverOverwritesACollisionRacedInAfterThePreflight serial: swaps package var scaffold.BeforeCreate
 internal/secrets/place_test.go:TestPlaceSSHSeamPanicsUnderTheGuard serial: os.Unsetenv, t.Setenv
 internal/secrets/storepull_test.go:TestStorePullUsesBenchOwnedKey serial: t.Setenv
-internal/swarm/admitrepo_test.go:TestAdmitAcceptsPublicRepo serial: swaps package var swarm.probeClient
-internal/swarm/admitrepo_test.go:TestAdmitRefusesPrivateRepo serial: swaps package var swarm.probeClient
-internal/swarm/admitrepo_test.go:TestAdmitRefusesWhenProbeFails serial: swaps package var swarm.probeClient
-internal/swarm/batch_functional_test.go:TestBatchRelativeRootIsAbsolutized serial: os.Chdir
-internal/swarm/batch_tokens_13d_functional_test.go:TestBatchCardsPutsTheWordInTheRemoteNativeArgv serial: t.Setenv
-internal/swarm/bench_functional_test.go:TestBatchCopiesCardOnly serial: t.Setenv
-internal/swarm/bench_functional_test.go:TestBatchPinsSlotToCore serial: t.Setenv
-internal/swarm/bench_test.go:TestBatchRefusesMoreSlotsThanCores serial: t.Setenv
-internal/swarm/bench_functional_test.go:TestRemoteRunSlotIsTheSlotDir serial: t.Setenv
-internal/swarm/benchpull_functional_test.go:TestPullCopiesResultUpFromRepo serial: t.Setenv
-internal/swarm/benchpull_functional_test.go:TestPullScoresBenchUnreachable serial: t.Setenv
-internal/swarm/benchpull_functional_test.go:TestPullWaitsForResult serial: t.Setenv
-internal/swarm/hostguard_test.go:TestCopyCardToBenchPanicsUnderTheGuard serial: t.Setenv
 internal/swarm/hostguard_test.go:TestHostGuardCleanupRestoresCachedState serial: t.Setenv
-internal/swarm/hostguard_test.go:TestSCPFilePanicsUnderTheGuard serial: t.Setenv
-internal/swarm/hostguard_test.go:TestSSHOutputPanicsUnderTheGuard serial: t.Setenv
-internal/swarm/hostguard_test.go:TestSSHRunPanicsUnderTheGuard serial: t.Setenv
 internal/swarm/launchfail_test.go:TestProviderRetryDelayBands serial: os.Unsetenv
 internal/swarm/opencode_numeric_functional_test.go:TestOpenCodeInvalidNumericUsageIsAReadFailure serial: t.Setenv
 internal/swarm/opencode_numeric_functional_test.go:TestOpenCodeNumericBoundsPreserveZeroAndAbsence serial: t.Setenv
@@ -196,21 +175,10 @@ internal/swarm/opencode_functional_test.go:TestOpenCodeSourceFindsTheLocalShareS
 internal/swarm/opencode_functional_test.go:TestOpenCodeSourceWaitsOutAWriteAheadLog serial: t.Setenv
 internal/swarm/opencode_test.go:TestOpenCodeSourceWithoutSQLiteIsANamedRefusal serial: t.Setenv
 internal/swarm/opencode_functional_test.go:TestTheOpenCodeSourceSumsTheMessageRows serial: t.Setenv
-internal/swarm/prewarm_functional_test.go:TestPrewarmGitChildrenDropSecrets serial: t.Setenv
-internal/swarm/publicbatch_functional_test.go:TestBatchPublicGateListedRunsUnlistedRefused serial: swaps package var swarm.probeClient
-internal/swarm/queue_test.go:TestStealWaitsOutAReplaceCollision serial: swaps package var swarm.forceTransientIO
-internal/swarm/queue_test.go:TestTakeCardWaitsOutAReplaceCollision serial: swaps package var swarm.forceTransientIO
 internal/swarm/result_collision_test.go:TestTheCollisionSeamCountsOnlyReadsOfThePathItArmed serial: swaps package var swarm.forceTransientIO
-internal/swarm/routeladder_test.go:TestRouteCardBelowTheFloorKeepsTodaysModel serial: t.Setenv
-internal/swarm/routeladder_test.go:TestRouteCardFollowsTheAnswer serial: t.Setenv
-internal/swarm/routeladder_test.go:TestRouteCardKeepsTodaysModelWhenTheProviderRefuses serial: t.Setenv
 internal/swarm/stage_functional_test.go:TestStageUsesTheBenchMirrorAndTimesOut serial: t.Setenv
-internal/swarm/staging_functional_test.go:TestWorkerClonesAfterLaunchCarriesPoolIdentity serial: t.Setenv
 internal/swarm/toolchain_test.go:TestToolchainVersionDirReadsTheVersionOffTheLauncher serial: t.Setenv
-internal/swarm/usagecard_functional_test.go:TestUsageRowWithoutSqlite serial: t.Setenv
-internal/swarm/warm_functional_test.go:TestAClipResetsTheWorktreeToBase serial: t.Setenv
 internal/testbin/testbin_test.go:TestPlaceFallsBackToCopyWhenLinkFails serial: swaps package var testbin.link
-internal/tokens/package_test.go:TestTC_VAL_11_DurabilityFsyncAncestorDirectoriesTrace serial: swaps package var tokens.FsyncHook
 internal/update/adopt_test.go:TestWatchAdoptRunsPassEscalatesAndPostsReceipt serial: t.Setenv
 internal/update/ahead_test.go:TestDevBuildAheadOfReleaseReportsAhead serial: t.Setenv
 internal/update/delivery_test.go:TestALineOutsideTheBusGrammarIsNotRelayed serial: t.Setenv
@@ -270,7 +238,6 @@ cmd/nova-swarm/native_budget_stop_test.go:TestNativeAFastLaunchAtTheBudgetIsNotR
 cmd/nova-swarm/native_budget_stop_test.go:TestNativeALaunchThatReachedTheBudgetAloneIsNeverLaunchedAgain serial: t.Setenv
 cmd/nova-swarm/native_budget_stop_test.go:TestNativeCardBudgetStopsAndPrintsThePromptDefect serial: t.Setenv
 cmd/nova-swarm/native_budget_stop_test.go:TestNativeTwoLaunchAccounting serial: t.Setenv
-cmd/nova-swarm/native_cardout_test.go:TestNativeHandsCardRepoToCardOut serial: t.Setenv
 cmd/nova-swarm/native_deadline_test.go:TestNativeDeadlineControlALeaderOnlyKillLeavesTheGrandchild serial: swaps package var main.nativeDeadline, swaps package var main.nativeKillGroup
 cmd/nova-swarm/native_deadline_test.go:TestNativeDeadlineKillsTheWholeTree serial: swaps package var main.nativeDeadline
 cmd/nova-swarm/native_idle_test.go:TestNativeIdleIsDecidedByTheWatchsEventNotByAClock serial: swaps package var main.nativeKillGroup, swaps package var main.nativeReap, swaps package var main.nativeWatchIdle
@@ -303,14 +270,9 @@ cmd/nova-swarm/native_test.go:TestNativeWalledJobPathWithSpace serial: t.Setenv
 cmd/nova-swarm/native_test.go:TestNativeWalledJobPathWithSpacesCompletes serial: t.Setenv
 cmd/nova-swarm/native_test.go:TestNativeWorkerModelGateComparesQualifiedName serial: t.Setenv
 cmd/nova-swarm/provider_retry_test.go:TestUnrecordedUnknownIsStillAHarvestHold serial: swaps package var main.persistUnknownFn
-cmd/nova-swarm/route_test.go:TestRouteBelowFloorExits3 serial: t.Setenv
-cmd/nova-swarm/route_test.go:TestRouteFallsToLowerComplexity serial: t.Setenv
-cmd/nova-swarm/route_test.go:TestRouteFixComplexity1PicksMuse serial: t.Setenv
-cmd/nova-swarm/route_test.go:TestRoutePrivateSkipsPublic serial: t.Setenv
 cmd/nova-swarm/shellshim_test.go:TestTheChildEnvIsUnchangedWithoutAShim serial: t.Setenv
 cmd/nova-swarm/slow_test.go:TestNativeSamplerNeverOverlapsAndNeverDelaysTheDeadline serial: t.Setenv
 cmd/nova-swarm/slow_test.go:TestNativeThreeFailedReadsEndTheCardUnverifiable serial: t.Setenv
 cmd/nova-swarm/version_test.go:TestVersionIdentityIsTheStampWhenThereIsOne serial: swaps package var main.version
 cmd/nova-swarm/version_test.go:TestVersionLineHoldsWhateverTheStampContains serial: swaps package var main.version
 cmd/nova-swarm/workercheck_test.go:TestWorkerCheckAnAbsentSecretWithEnvNamesTheVariableNotTheValue serial: t.Setenv
-cmd/nova-swarm/seat_event_test.go:TestSeatGivesTheCardEndWriterItsLogin serial: t.Setenv

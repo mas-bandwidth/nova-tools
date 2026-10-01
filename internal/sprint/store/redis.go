@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
@@ -25,6 +27,9 @@ type Redis struct {
 	// as it was, not the active one.
 	Pinned uint64
 	Old    bool
+	// trips counts the client's round trips, once CountTrips is called
+	// (stats.go); the backend's pinned copies share it.
+	trips *atomic.Int64
 }
 
 func (r *Redis) key(name string) string { return r.Names.KeyAt(name, r.Pinned) }
@@ -210,6 +215,14 @@ func (r *Redis) Apply(ctx context.Context, m ntable.BatchManifest) (ntable.Recei
 	return ntable.ApplyBatch(ctx, r.C, m)
 }
 
+// ApplyAll applies manifests of one table in one round trip (one
+// MULTI/EXEC): each its own batch, as Apply applies it.
+func (r *Redis) ApplyAll(ctx context.Context, ms []ntable.BatchManifest) ([]ntable.Receipt, []error) {
+	return ntable.ApplyBatches(ctx, r.C, ms)
+}
+
+var _ BatchApplier = (*Redis)(nil)
+
 func (r *Redis) Create(ctx context.Context, t ntable.Table) error {
 	now := time.Now
 	if r.Now != nil {
@@ -256,16 +269,41 @@ const (
 	keyCursor   = "cursor"   // STRING, the coordinator's last read stream id
 	keyProgress = "progress" // HASH stream -> RFC3339 time of its last progress
 	keyDone     = "done"     // HASH caller operation id -> result
+	keyQueue    = "queue"    // LIST of the work table's queued changes (sprint.QueuedChange, JSON), oldest first
 )
 
 func (r *Redis) ReadFence(ctx context.Context) (Fence, error) {
-	vals, err := r.C.MGet(ctx, r.key(keyFence), r.key(keyGen)).Result()
+	p := r.C.Pipeline()
+	mget, llen := r.queueFence(ctx, p)
+	if _, err := p.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) {
+		return Fence{}, err
+	}
+	return fenceOf(mget, llen)
+}
+
+// queueFence queues the fence's read on a pipeline: the fence, its
+// generation and the machine's state, and the queue's length.
+func (r *Redis) queueFence(ctx context.Context, p redis.Pipeliner) (*redis.SliceCmd, *redis.IntCmd) {
+	return p.MGet(ctx, r.key(keyFence), r.key(keyGen), r.Names.Key(keyMachine), r.Names.Key(keyStuck)), p.LLen(ctx, r.key(keyQueue))
+}
+
+// fenceOf is the fence a pipeline read.
+func fenceOf(mget *redis.SliceCmd, llen *redis.IntCmd) (Fence, error) {
+	vals, err := mget.Result()
 	if err != nil {
 		return Fence{}, err
 	}
 	var f Fence
+	f.Queued = int(llen.Val())
+	if s, ok := vals[2].(string); ok {
+		var m Machine
+		f.Running = json.Unmarshal([]byte(s), &m) == nil && m.Running()
+	}
 	if s, ok := vals[1].(string); ok {
 		f.Gen, _ = strconv.ParseUint(s, 10, 64)
+	}
+	if len(vals) > 3 {
+		f.Stuck, _ = vals[3].(string)
 	}
 	if s, ok := vals[0].(string); ok {
 		var op OpRecord
@@ -323,19 +361,22 @@ func (r *Redis) Acquire(ctx context.Context, gen uint64, op OpRecord) (bool, err
 // the streams' progress, the caller's result, and the fence emptied.
 func (r *Redis) Release(ctx context.Context, op OpRecord, commit bool) error {
 	fence := r.key(keyFence)
-	var err error
+	// The fence holds this operation when its record begins with this
+	// operation's id (json.Marshal writes OpRecord's id first): read that
+	// much of it, not the whole record, which carries every manifest.
+	id, err := json.Marshal(op.ID)
+	if err != nil {
+		return err
+	}
+	prefix := `{"id":` + string(id) + `,`
 	for i := 0; i < 8; i++ {
 		err = r.C.Watch(ctx, func(tx *redis.Tx) error {
-			cur, err := tx.Get(ctx, fence).Result()
-			if errors.Is(err, redis.Nil) {
-				return nil
-			}
+			cur, err := tx.GetRange(ctx, fence, 0, int64(len(prefix)-1)).Result()
 			if err != nil {
 				return err
 			}
-			var held OpRecord
-			if json.Unmarshal([]byte(cur), &held) != nil || held.ID != op.ID {
-				return nil
+			if cur != prefix {
+				return nil // empty (released) or another operation's
 			}
 			_, err = tx.TxPipelined(ctx, func(p redis.Pipeliner) error {
 				if commit {
@@ -405,6 +446,16 @@ func released(op OpRecord, commit bool, held string, recorded bool) bool {
 }
 
 func (r *Redis) commit(ctx context.Context, p redis.Pipeliner, op OpRecord) error {
+	if op.Drain > 0 {
+		p.LTrim(ctx, r.key(keyQueue), int64(op.Drain), -1)
+	}
+	for _, x := range op.Queue {
+		body, err := json.Marshal(x)
+		if err != nil {
+			return err
+		}
+		p.RPush(ctx, r.key(keyQueue), string(body))
+	}
 	for _, line := range op.Log {
 		body, err := json.Marshal(line)
 		if err != nil {
@@ -457,6 +508,21 @@ func (r *Redis) commit(ctx context.Context, p redis.Pipeliner, op OpRecord) erro
 		p.HSet(ctx, r.key(keyDone), op.CallerOp, op.Result)
 	}
 	return nil
+}
+
+// QueueRead is LRANGE over the whole queue: one exchange.
+func (r *Redis) QueueRead(ctx context.Context) ([]sprint.QueuedChange, error) {
+	raw, err := r.C.LRange(ctx, r.key(keyQueue), 0, -1).Result()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]sprint.QueuedChange, len(raw))
+	for i, b := range raw {
+		if err := json.Unmarshal([]byte(b), &out[i]); err != nil {
+			return nil, fmt.Errorf("the work table's queue holds an unreadable entry: %w", err)
+		}
+	}
+	return out, nil
 }
 
 func (r *Redis) Done(ctx context.Context, callerOp string) (string, bool, error) {
@@ -523,8 +589,17 @@ func (r *Redis) Progress(ctx context.Context) (map[string]time.Time, error) {
 
 func (r *Redis) OpenNotes(ctx context.Context) ([]sprint.Open, error) {
 	open, err := r.C.HGetAll(ctx, r.key(keyOpen)).Result()
-	if err != nil || len(open) == 0 {
+	if err != nil {
 		return nil, err
+	}
+	return r.openOf(ctx, open)
+}
+
+// openOf is the open judgments of the open index read: the notes it names,
+// read in one exchange.
+func (r *Redis) openOf(ctx context.Context, open map[string]string) ([]sprint.Open, error) {
+	if len(open) == 0 {
+		return nil, nil
 	}
 	var ids []string
 	seen := map[string]bool{}
@@ -643,3 +718,179 @@ func (r *Redis) Coordinator(ctx context.Context) (string, error) {
 func (r *Redis) SetCoordinator(ctx context.Context, name string) error {
 	return r.C.Set(ctx, r.Names.Key(keyCoordinator), name, 0).Err()
 }
+
+// changeEvent is the part of a table change stream's event the twin reads
+// (twin.go): the revisions it moved the table between, the epoch, the verb,
+// and the records it names.
+type changeEvent struct {
+	epoch, verb         string
+	before, after       uint64
+	members, batchDelta string
+}
+
+// changePage is how many events one read of a change stream takes.
+const changePage = 64
+
+// twinVerbs are the table writes whose events name every record they changed
+// (a batch's account names each of its entries; a row's texts and rows name
+// none): any other write in the span makes the twin read the table whole.
+var twinVerbs = map[string]bool{"apply": true, "row_set": true, "rows_add": true, "row_add": true}
+
+// TableChanges reads the table's change stream from its newest event back to
+// the one that left revision from, and says the records the writes between
+// from and to named (twin.go). ok is false when the events do not chain from
+// from to to at the pinned epoch, or one is a write that does not name its
+// records.
+func (r *Redis) TableChanges(ctx context.Context, table string, from, to uint64) ([]string, bool, error) {
+	gap := func(why string) ([]string, bool, error) {
+		return nil, false, &GapError{Table: table, From: from, To: to, Why: why}
+	}
+	if to < from {
+		return gap("the twin is ahead of the table")
+	}
+	if to == from {
+		return nil, true, nil
+	}
+	key := ntable.DefKey(table) + ":changes"
+	epoch := strconv.FormatUint(r.Pinned, 10)
+	need := to
+	var ids []string
+	end := "+"
+	for page := 0; page < 64; page++ {
+		evs, err := r.C.XRevRangeN(ctx, key, end, "-", changePage).Result()
+		if err != nil && strings.Contains(err.Error(), "NOPERM") {
+			// a user not granted the stream's read: said, and the twin reads
+			// the table whole
+			return nil, false, &GrantError{Command: "XREVRANGE", Key: key, Cause: err}
+		}
+		if err != nil {
+			return nil, false, err
+		}
+		if len(evs) == 0 {
+			return gap(fmt.Sprintf("the stream ends before revision %d", need))
+		}
+		for _, x := range evs {
+			ev := readChange(x.Values)
+			if ev.epoch != epoch || ev.after > to {
+				// another epoch's, or written after the shape was read (the
+				// read of the records sees it, and refuses the revision)
+				continue
+			}
+			if ev.after != need {
+				return gap(fmt.Sprintf("the event before revision %d leaves revision %d", need, ev.after))
+			}
+			if !twinVerbs[ev.verb] {
+				return gap(fmt.Sprintf("a write %q at revision %d names no records", ev.verb, ev.after))
+			}
+			named, err := changeIDs(ev)
+			if err != nil {
+				return gap(fmt.Sprintf("the event at revision %d is unreadable: %v", ev.after, err))
+			}
+			ids = append(ids, named...)
+			need = ev.before
+			if need == from {
+				return ids, true, nil
+			}
+			if need < from {
+				return gap(fmt.Sprintf("the events skip revision %d", from))
+			}
+		}
+		end = "(" + evs[len(evs)-1].ID
+	}
+	return gap("more than 64 pages of events")
+}
+
+func readChange(v map[string]any) changeEvent {
+	str := func(k string) string { s, _ := v[k].(string); return s }
+	ev := changeEvent{epoch: str("epoch"), verb: str("verb"), members: str("members"), batchDelta: str("batch_delta")}
+	ev.before, _ = strconv.ParseUint(str("rev_before"), 10, 64)
+	ev.after, _ = strconv.ParseUint(str("rev_after"), 10, 64)
+	return ev
+}
+
+// changeIDs is the records an event names: the members it moved and every
+// entry of its batch's account.
+func changeIDs(ev changeEvent) ([]string, error) {
+	var out []string
+	var moved []struct {
+		ID string `json:"id"`
+	}
+	if ev.members != "" && ev.members != "[]" {
+		if err := json.Unmarshal([]byte(ev.members), &moved); err != nil {
+			return nil, err
+		}
+	}
+	for _, m := range moved {
+		out = append(out, m.ID)
+	}
+	if ev.batchDelta != "" {
+		var d struct {
+			Members []struct {
+				ID string `json:"id"`
+			} `json:"members"`
+		}
+		if err := json.Unmarshal([]byte(ev.batchDelta), &d); err != nil {
+			return nil, err
+		}
+		for _, m := range d.Members {
+			out = append(out, m.ID)
+		}
+	} else if ev.verb == "apply" {
+		return nil, fmt.Errorf("a batch event without its account")
+	}
+	return out, nil
+}
+
+var _ TableChanger = (*Redis)(nil)
+
+// RowsSet writes the display cells of many rows in one round trip.
+func (r *Redis) RowsSet(ctx context.Context, table string, rows map[string]map[string]string) error {
+	return ntable.RowSetMany(ctx, r.C, table, rows, r.writeOpts())
+}
+
+var _ RowsSetter = (*Redis)(nil)
+
+// ReadView reads, in one exchange, what a read of the twin reads first (the
+// fence, the tables' shapes, the open judgments' index and the coordinator),
+// then the notes the index names in a second: two round trips where one each
+// took five (twin.go).
+func (r *Redis) ReadView(ctx context.Context, tables []string) (View, error) {
+	if r.Old {
+		return View{}, errors.New("a read of an earlier epoch reads no view")
+	}
+	p := r.C.Pipeline()
+	mget, llen := r.queueFence(ctx, p)
+	shapes := make([]*ntable.ReadCmd, len(tables))
+	for i, t := range tables {
+		shapes[i] = ntable.NewReader(t).Queue(ctx, p)
+	}
+	open := p.HGetAll(ctx, r.key(keyOpen))
+	coord := p.Get(ctx, r.Names.Key(keyCoordinator))
+	if _, err := p.Exec(ctx); err != nil && !errors.Is(err, redis.Nil) && !isReply(err) {
+		return View{}, err
+	}
+	var v View
+	var err error
+	if v.Fence, err = fenceOf(mget, llen); err != nil {
+		return View{}, err
+	}
+	v.Shapes = make([]ntable.Table, len(tables))
+	for i, cmd := range shapes {
+		if v.Shapes[i], _, err = cmd.Result(); err != nil {
+			return View{}, err
+		}
+	}
+	idx, err := open.Result()
+	if err != nil {
+		return View{}, err
+	}
+	if v.Coordinator, err = coord.Result(); err != nil && !errors.Is(err, redis.Nil) {
+		return View{}, err
+	}
+	if v.Open, err = r.openOf(ctx, idx); err != nil {
+		return View{}, err
+	}
+	return v, nil
+}
+
+var _ ViewReader = (*Redis)(nil)

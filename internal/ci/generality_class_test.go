@@ -3,14 +3,11 @@ package ci
 import (
 	"bytes"
 	"fmt"
-	"go/ast"
 	"go/parser"
 	"go/token"
 	"os"
 	"path/filepath"
-	"reflect"
 	"regexp"
-	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -51,8 +48,7 @@ import (
 //   "example:", "for example", "example.com") are excluded; code contracts, defaults,
 //   and refusals are always scanned.
 // - Raw string literals (e.g. `...`) are executable code data and are scanned,
-//   even when their content contains example labels or import blocks; the exact
-//   tset JSON namespace tag is the sole syntax-specific exception.
+//   even when their content contains example labels or import blocks.
 //
 // Existing occurrences are tracked in internal/ci/testdata/generality_allowlist.txt,
 // formatted as "<path/to/file.go>:<token> <count>".
@@ -166,160 +162,6 @@ func mayContainDocExample(src []byte) bool {
 	return bytes.Contains(lower, []byte("example")) || bytes.Contains(lower, []byte("e.g."))
 }
 
-// Only the tset namespace contract may use space as a Go identifier. A file
-// outside this package qualifies only when it directly imports that contract.
-func tsetNamespaceScope(rel string, file *ast.File) bool {
-	if strings.HasPrefix(filepath.ToSlash(rel), "internal/tset/") {
-		return true
-	}
-	for _, imp := range file.Imports {
-		path, err := strconv.Unquote(imp.Path.Value)
-		if err == nil && path == "github.com/mas-bandwidth/nova-tools/internal/tset" {
-			return true
-		}
-	}
-	return false
-}
-
-func blankGeneralitySpan(clean []byte, start, end int) {
-	if start < 0 {
-		start = 0
-	}
-	if end > len(clean) {
-		end = len(clean)
-	}
-	for i := start; i < end; i++ {
-		if clean[i] != '\n' {
-			clean[i] = ' '
-		}
-	}
-}
-
-func isSpaceLiteral(expr ast.Expr) (*ast.BasicLit, bool) {
-	lit, ok := expr.(*ast.BasicLit)
-	if !ok || lit.Kind != token.STRING {
-		return nil, false
-	}
-	value, err := strconv.Unquote(lit.Value)
-	return lit, err == nil && value == "space"
-}
-
-func isSpaceSelector(expr ast.Expr) bool {
-	sel, ok := expr.(*ast.SelectorExpr)
-	return ok && sel.Sel.Name == "Space"
-}
-
-func tsetJSONSpaceTagOffset(lit *ast.BasicLit) int {
-	if lit.Kind != token.STRING {
-		return -1
-	}
-	decoded, err := strconv.Unquote(lit.Value)
-	if err != nil {
-		return -1
-	}
-	value, ok := reflect.StructTag(decoded).Lookup("json")
-	if !ok || strings.SplitN(value, ",", 2)[0] != "space" {
-		return -1
-	}
-	spelling := `json:"space`
-	if lit.Value[0] == '"' {
-		spelling = `json:\"space`
-	}
-	for from := 0; from < len(lit.Value); {
-		found := strings.Index(lit.Value[from:], spelling)
-		if found < 0 {
-			return -1
-		}
-		at := from + found
-		end := at + len(spelling)
-		before := at > 0 && (lit.Value[at-1] == '`' || lit.Value[at-1] == '"' ||
-			lit.Value[at-1] == ' ' || lit.Value[at-1] == '\t')
-		after := end < len(lit.Value) && (lit.Value[end] == '"' || lit.Value[end] == ',' ||
-			strings.HasPrefix(lit.Value[end:], `\"`))
-		if before && after {
-			return end - len("space")
-		}
-		from = end
-	}
-	return -1
-}
-
-// These are the required JSON schema keys in the tset wire codec. Other
-// quoted "space" values, including machine names, remain scanned.
-func tsetWireSchemaLiteral(node ast.Node) *ast.BasicLit {
-	switch node := node.(type) {
-	case *ast.KeyValueExpr:
-		if lit, ok := isSpaceLiteral(node.Key); ok && isSpaceSelector(node.Value) {
-			return lit
-		}
-	case *ast.CallExpr:
-		fn, ok := node.Fun.(*ast.Ident)
-		if !ok {
-			return nil
-		}
-		if fn.Name == "strictObject" && len(node.Args) > 1 {
-			data, ok := node.Args[0].(*ast.Ident)
-			if !ok || data.Name != "data" {
-				return nil
-			}
-			var keys []string
-			for _, arg := range node.Args[1:] {
-				lit, ok := arg.(*ast.BasicLit)
-				if !ok || lit.Kind != token.STRING {
-					return nil
-				}
-				key, err := strconv.Unquote(lit.Value)
-				if err != nil {
-					return nil
-				}
-				keys = append(keys, key)
-			}
-			stepSchema := []string{"epoch", "space", "op", "intent", "result", "entries", "notes", "fence"}
-			readSchema := []string{"epoch", "space", "mode", "queries"}
-			if slices.Equal(keys, stepSchema) || slices.Equal(keys, readSchema) {
-				lit, _ := isSpaceLiteral(node.Args[2])
-				return lit
-			}
-		}
-		if fn.Name == "unmarshalRequired" && len(node.Args) >= 3 {
-			lit, ok := isSpaceLiteral(node.Args[1])
-			address, addressed := node.Args[2].(*ast.UnaryExpr)
-			if ok && addressed && address.Op == token.AND && isSpaceSelector(address.X) {
-				return lit
-			}
-		}
-	}
-	return nil
-}
-
-func blankTSetNamespaceSyntax(clean []byte, rel string, fset *token.FileSet, file *ast.File, offsetShift int) {
-	ast.Inspect(file, func(node ast.Node) bool {
-		switch node := node.(type) {
-		case *ast.Ident:
-			if node.Name == "space" || node.Name == "Space" {
-				start := fset.Position(node.Pos()).Offset - offsetShift
-				blankGeneralitySpan(clean, start, start+len(node.Name))
-			}
-		case *ast.Field:
-			if node.Tag != nil {
-				// A struct tag is a string literal, so exempt only the named
-				// JSON field's bytes, leaving any other tag text visible.
-				if offset := tsetJSONSpaceTagOffset(node.Tag); offset >= 0 {
-					start := fset.Position(node.Tag.Pos()).Offset - offsetShift + offset
-					blankGeneralitySpan(clean, start, start+len("space"))
-				}
-			}
-		}
-		if filepath.ToSlash(rel) == "internal/tset/wire.go" {
-			if lit := tsetWireSchemaLiteral(node); lit != nil {
-				start := fset.Position(lit.Pos()).Offset - offsetShift
-				blankGeneralitySpan(clean, start, start+len(lit.Value))
-			}
-		}
-		return true
-	})
-}
-
 // cleanSourceForGenerality returns a copy of src where real AST import specs and
 // real AST comments with marked documentation examples have been replaced with spaces.
 // Newline characters are preserved to ensure 1-based line numbers remain exact.
@@ -337,13 +179,12 @@ func cleanSourceForGenerality(rel string, src []byte) []byte {
 
 	hasDocExample := mayContainDocExample(src)
 	fset := token.NewFileSet()
-	file, parseErr := parser.ParseFile(fset, rel, parseSrc, parser.ImportsOnly)
+	file, _ := parser.ParseFile(fset, rel, parseSrc, parser.ImportsOnly)
 	if file == nil {
 		return clean
 	}
-	scope := tsetNamespaceScope(rel, file)
-	if hasDocExample || scope {
-		file, parseErr = parser.ParseFile(fset, rel, parseSrc, parser.ParseComments)
+	if hasDocExample {
+		file, _ = parser.ParseFile(fset, rel, parseSrc, parser.ParseComments)
 		if file == nil {
 			return clean
 		}
@@ -392,10 +233,6 @@ func cleanSourceForGenerality(rel string, src []byte) []byte {
 			}
 		}
 	}
-	if scope && parseErr == nil {
-		blankTSetNamespaceSyntax(clean, rel, fset, file, offsetShift)
-	}
-
 	return clean
 }
 
@@ -709,7 +546,7 @@ func writeGeneralityAllowlist(path string, measuredCounts map[string]int) error 
 	return os.WriteFile(path, []byte(sb.String()), mode)
 }
 
-// TestGeneralityGuardrail holds living Go code in cmd/ and internal/ to Glenn's
+// TestGeneralityGuardrail holds living Go code in cmd/, internal/ and tools/ to Glenn's
 // generality instruction (Rule 1): no hostnames or friend/person names in code,
 // contracts, defaults or refusals.
 func TestGeneralityGuardrail(t *testing.T) {
@@ -718,7 +555,7 @@ func TestGeneralityGuardrail(t *testing.T) {
 	tree := repoTree(t)
 
 	var files []GeneralitySourceFile
-	for _, f := range tree.GoFilesUnder(false, "cmd", "internal") {
+	for _, f := range tree.GoFilesUnder(false, "cmd", "internal", "tools") {
 		if f.HasDirNamed("testdata") || f.HasDirNamed("vendor") || f.HasDirNamed("deprecated") {
 			continue
 		}
@@ -796,9 +633,9 @@ func TestGeneralityTokenExtraction(t *testing.T) {
 	}
 }
 
-// TestTSetNamespaceGeneralityBoundary keeps the namespace exception tied to
-// Go syntax and to the tset contract. Machine references in text still count.
-func TestTSetNamespaceGeneralityBoundary(t *testing.T) {
+// TestGeneralitySpaceHasNoSyntaxException: the machine name counts wherever
+// it appears in Go syntax, as an identifier, a struct tag or a string.
+func TestGeneralitySpaceHasNoSyntaxException(t *testing.T) {
 	t.Parallel()
 
 	backtick := string(rune(96))
@@ -808,27 +645,9 @@ func TestTSetNamespaceGeneralityBoundary(t *testing.T) {
 		src  string
 		want int
 	}{
-		{"tset-identifiers", "internal/tset/types.go", "package tset\ntype Step struct { Space string }; func use(space string, s Step) { _ = space; _ = s.Space; _ = Step{Space: space} }\n", 0},
-		{"direct-importer", "internal/client/use.go", "package client\nimport \"github.com/mas-bandwidth/nova-tools/internal/tset\"\nfunc use(space string, s tset.Step) { _ = space; _ = s.Space }\n", 0},
-		{"unrelated-package", "internal/client/use.go", "package client\nfunc use(space string) { _ = space }\n", 2},
-		{"compound-identifier", "internal/tset/mem.go", "package tset\ntype memSpace struct{}\n", 1},
-		{"machine-comment", "internal/tset/host.go", "package tset\n// run on space machine\n", 1},
-		{"machine-literal", "internal/tset/host.go", "package tset\nconst host = \"space\"\n", 1},
-		{"other-machine-literal", "internal/tset/host.go", "package tset\nconst host = \"hulk\"\n", 0},
-		{"raw-json-tag", "internal/tset/types.go", "package tset\ntype R struct { Space string " + backtick + "json:\"space\"" + backtick + " }\n", 0},
-		{"interpreted-json-tag", "internal/tset/types.go", "package tset\ntype R struct { Space string " + strconv.Quote("json:\"space\"") + " }\n", 0},
-		{"non-json-tag", "internal/tset/types.go", "package tset\ntype R struct { Name string " + backtick + "notjson:\"space\"" + backtick + " }\n", 1},
-		{"embedded-json-text", "internal/tset/types.go", "package tset\ntype R struct { Name string " + backtick + "xml:\"json:\\\"space\\\"\"" + backtick + " }\n", 1},
-		{"embedded-before-real-json-tag", "internal/tset/types.go", "package tset\ntype R struct { Space string " + backtick + "xml:\"json:\\\"space\\\"\" json:\"space\"" + backtick + " }\n", 1},
-		{"mixed-tags", "internal/tset/types.go", "package tset\ntype R struct { Space string " + backtick + "json:\"space\" yaml:\"hulk\"" + backtick + " }\n", 0},
-		{"wire-map-key", "internal/tset/wire.go", "package tset\nfunc f(s Step) { _ = map[string]any{\"space\": s.Space} }\n", 0},
-		{"wire-strict-object-step", "internal/tset/wire.go", "package tset\nfunc f(data []byte) { strictObject(data, \"epoch\", \"space\", \"op\", \"intent\", \"result\", \"entries\", \"notes\", \"fence\") }\n", 0},
-		{"wire-strict-object-read", "internal/tset/wire.go", "package tset\nfunc f(data []byte) { strictObject(data, \"epoch\", \"space\", \"mode\", \"queries\") }\n", 0},
-		{"wire-comma-collision", "internal/tset/wire.go", "package tset\nfunc f(data []byte) { strictObject(data, \"epoch\", \"space\", \"op,intent,result,entries,notes,fence\") }\n", 1},
-		{"wire-other-strict-object", "internal/tset/wire.go", "package tset\nfunc f(data []byte) { strictObject(data, \"space\") }\n", 1},
-		{"wire-unmarshal-required", "internal/tset/wire.go", "package tset\nfunc f(m map[string]any, s *Step) { unmarshalRequired(m, \"space\", &s.Space) }\n", 0},
-		{"wire-arbitrary-literal", "internal/tset/wire.go", "package tset\nconst host = \"space\"\n", 1},
-		{"wire-zero-arg-call", "internal/tset/wire.go", "package tset\nfunc f() { strictObject(); _ = \"space\" }\n", 1},
+		{"identifiers", "internal/client/use.go", "package client\nfunc use(space string) { _ = space }\n", 2},
+		{"json-tag", "internal/client/types.go", "package client\ntype R struct { Name string " + backtick + "json:\"space\"" + backtick + " }\n", 1},
+		{"literal", "internal/client/host.go", "package client\nconst host = \"space\"\n", 1},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -836,11 +655,6 @@ func TestTSetNamespaceGeneralityBoundary(t *testing.T) {
 			counts, _, _ := measureGeneralityCounts([]GeneralitySourceFile{{Rel: tc.rel, Src: []byte(tc.src)}})
 			if got := counts[tc.rel+":space"]; got != tc.want {
 				t.Errorf("space count = %d, want %d; cleaned source = %q", got, tc.want, cleanSourceForGenerality(tc.rel, []byte(tc.src)))
-			}
-			if tc.name == "mixed-tags" || tc.name == "other-machine-literal" {
-				if got := counts[tc.rel+":hulk"]; got != 1 {
-					t.Errorf("hulk count = %d, want 1", got)
-				}
 			}
 		})
 	}

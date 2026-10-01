@@ -31,6 +31,21 @@ func (s *screen) Write(p []byte) (int, error) {
 	return n, err
 }
 
+type brokenWatchOutput struct{}
+
+func (brokenWatchOutput) Write([]byte) (int, error) { return 0, errors.New("broken pipe") }
+
+type cancelWatchStderr struct {
+	bytes.Buffer
+	cancel context.CancelFunc
+}
+
+func (w *cancelWatchStderr) Write(p []byte) (int, error) {
+	n, err := w.Buffer.Write(p)
+	w.cancel()
+	return n, err
+}
+
 // demoTable is a rendered table for the watch tests, its cells filled in
 // memory: the loop is tested with an injected read, ticker and clock, no
 // store and no wall clock.
@@ -174,6 +189,51 @@ func TestWatchPublishesToAFileByRename(t *testing.T) {
 	if stdout.Len() != 0 || errOut.Len() != 0 {
 		t.Fatalf("stdout %q stderr %q; --out draws nothing on the terminal", stdout.String(), errOut.String())
 	}
+}
+
+// An output sink failure is terminal on the first frame. No timer, Redis
+// service, or cancellation can turn a failed publication into exit 0.
+func TestWatchOutputFailureStopsWithSinkRemedy(t *testing.T) {
+	t.Parallel()
+	read := func(context.Context) (string, error) { return "frame\n", nil }
+	ticks := make(chan time.Time)
+	now := func() time.Time { return time.Time{} }
+
+	t.Run("stdout", func(t *testing.T) {
+		var stderr bytes.Buffer
+		code := watchLoop(context.Background(), brokenWatchOutput{}, &stderr, read, ticks, now, "")
+		if code != 1 {
+			t.Fatalf("exit %d, want 1", code)
+		}
+		for _, want := range []string{"stdout: broken pipe", "next: repair or replace the stdout consumer"} {
+			if !strings.Contains(stderr.String(), want) {
+				t.Fatalf("stderr %q lacks %q", stderr.String(), want)
+			}
+		}
+	})
+
+	t.Run("out file", func(t *testing.T) {
+		out := filepath.Join(t.TempDir(), "missing-directory", "table.txt")
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		var stdout bytes.Buffer
+		stderr := &cancelWatchStderr{cancel: cancel}
+		code := watchLoop(ctx, &stdout, stderr, read, ticks, now, out)
+		if code != 1 {
+			t.Fatalf("exit %d, want 1", code)
+		}
+		if stdout.Len() != 0 {
+			t.Fatalf("--out wrote to stdout: %q", stdout.String())
+		}
+		for _, want := range []string{"--out:", out, "next: make --out", "parent directory present and writable"} {
+			if !strings.Contains(stderr.String(), want) {
+				t.Fatalf("stderr %q lacks %q", stderr.String(), want)
+			}
+		}
+		if _, err := os.Stat(out); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("failed publication left target: %v", err)
+		}
+	})
 }
 
 // TestRenderAllJoinsTablesWithOneBlankLine: the view's title first, every

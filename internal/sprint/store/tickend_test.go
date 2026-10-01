@@ -11,8 +11,8 @@ import (
 // The tick-end note (errata 3 amendment 8): a tick that addressed the
 // coordinator nothing writes none; the tick that says the sprint is done
 // writes one, addressed to the coordinator, counting every note for the
-// coordinator since the last tick end (the two "ready to accept" the verbs
-// opened between ticks, and the done), and a wait from before it wakes on it;
+// coordinator since the last tick end (the done: a RUNNING machine's reads
+// open no "ready to accept", the pump accepts), and a wait from before it wakes on it;
 // the inbox does not list it; a start of the done sprint says done again and
 // wakes once more; a wait from the tail runs out its time.
 func TestTheTickEndWakesTheCoordinatorOnce(t *testing.T) {
@@ -28,7 +28,7 @@ func TestTheTickEndWakesTheCoordinatorOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	h.landThrough("s1", "s1-1", "s1-2")
-	if res := h.machine(); res.Done == "" || res.TickEnd != 3 || h.written(sprint.NTickEnd) != 1 {
+	if res := h.machine(); res.Done == "" || res.TickEnd != 1 || h.written(sprint.NTickEnd) != 1 {
 		t.Fatalf("the done tick: done %q, tick end %d, written %d", res.Done, res.TickEnd, h.written(sprint.NTickEnd))
 	}
 	notes, _, err := h.m.NotesSince(h.ctx, from, 1000)
@@ -36,7 +36,7 @@ func TestTheTickEndWakesTheCoordinatorOnce(t *testing.T) {
 		t.Fatal(err)
 	}
 	last := notes[len(notes)-1]
-	if last.Type != sprint.NTickEnd || last.Kind != sprint.Happened || last.To != h.st.Actor || last.What != "judgments=3" {
+	if last.Type != sprint.NTickEnd || last.Kind != sprint.Happened || last.To != h.st.Actor || last.What != "judgments=1" {
 		t.Fatalf("the tick end: %+v", last)
 	}
 	if woke, err := h.st.WaitTickEnd(h.ctx, from, time.Minute); err != nil || !woke {

@@ -4,7 +4,6 @@ import (
 	"errors"
 	"go/ast"
 	"go/token"
-	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
@@ -13,8 +12,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/mas-bandwidth/nova-tools/internal/ci/slowtests"
+	"github.com/stretchr/testify/assert"
 	"gopkg.in/yaml.v3"
+
+	"github.com/mas-bandwidth/nova-tools/internal/ci/slowtests"
+	"github.com/mas-bandwidth/nova-tools/internal/pkgselect"
 )
 
 // unit_tier_class_test.go holds the two CI tiers of nova-tools#4328 to the
@@ -92,7 +94,7 @@ const unitShimStep = "the unit tier refuses redis-server"
 // ci_gosetup_functional_test.go's goSetupMarker reads, which the unit build
 // does not compile).
 const unitGoStepMarker = `sdk=$(ls -d "$HOME"/sdk/go*/bin`
-const unitShimMessage = "unit tier: redis-server is functional-only (build tag functional)"
+const unitShimMessage = pkgselect.UnitShimMessage
 
 // TestUnitTierRefusesRedisServer: the unit legs put a redis-server FIRST on
 // PATH that prints why and exits 86 and install no real one, so a redis-backed
@@ -112,7 +114,7 @@ func TestUnitTierRefusesRedisServer(t *testing.T) {
 		if strings.Contains(s.Run, unitGoStepMarker) {
 			goSetup = i
 		}
-		if strings.Contains(s.Run, "install-redis-server.sh") {
+		if strings.Contains(s.Run, redisInstallCall) {
 			t.Errorf("ci.yml job test step %q installs redis-server; the unit tier refuses one", s.Name)
 		}
 	}
@@ -121,8 +123,15 @@ func TestUnitTierRefusesRedisServer(t *testing.T) {
 	if !(goSetup >= 0 && goSetup < shim && shim < testStep) {
 		t.Errorf("ci.yml job test: the shim step is step %d, the Go step %d, the test step %d; want Go < shim < test", shim, goSetup, testStep)
 	}
-	if !strings.Contains(test.Steps[testStep].Run, "unit-tier-bin/redis-server") {
-		t.Error("ci.yml job test's test step does not check that redis-server on PATH is the shim")
+	if !strings.Contains(test.Steps[shim].Run, ciRunner+" unit-tier-shim") {
+		t.Errorf("ci.yml job test's shim step does not write the shim through `ci unit-tier-shim`: %q", test.Steps[shim].Run)
+	}
+	if !strings.Contains(test.Steps[testStep].Run, ciRunner+" unit-test") {
+		t.Errorf("ci.yml job test's test step does not run `ci unit-test`, which checks that redis-server on PATH is the shim: %q", test.Steps[testStep].Run)
+	}
+	root := repoRoot(t)
+	if verb := readFile(t, filepath.Join(root, "tools", "ci", "sel_unittest.go")); !strings.Contains(verb, `h.r.LookPath("redis-server")`) || !strings.Contains(verb, "pkgselect.UnitShimDir") || !strings.Contains(verb, "not the refusing shim") {
+		t.Error("tools/ci/sel_unittest.go does not check that redis-server on PATH is the shim before it runs make test")
 	}
 
 	dir := unitTierShim(t)
@@ -136,23 +145,18 @@ func TestUnitTierRefusesRedisServer(t *testing.T) {
 	// redis_ci_test.go: a file that calls Start is functional.
 }
 
-// unitTierShim runs ci.yml's shim step and returns the directory it put on
-// GITHUB_PATH.
+// unitTierShim writes the shim the way `ci unit-tier-shim` does and returns
+// the directory it is in.
 func unitTierShim(t *testing.T) string {
 	t.Helper()
-	test := ciJobs(t)["test"]
-	i := stepIndex(test, unitShimStep)
-	if i < 0 {
-		t.Fatalf("ci.yml job test has no step %q", unitShimStep)
-	}
-	tmp := t.TempDir()
-	ghPath := filepath.Join(tmp, "github_path")
-	runStep(t, test.Steps[i].Run, "RUNNER_TEMP="+tmp, "GITHUB_PATH="+ghPath)
-	added, err := os.ReadFile(ghPath)
+	shim, err := pkgselect.WriteUnitShim(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	return strings.TrimSpace(string(added))
+	if filepath.Base(filepath.Dir(shim)) != "unit-tier-bin" {
+		t.Fatalf("the shim is at %s, want it under unit-tier-bin", shim)
+	}
+	return filepath.Dir(shim)
 }
 
 // TestUnitLegTakesAtMostTwoCores: a leg's GOMAXPROCS share is min(share, 2)
@@ -171,23 +175,24 @@ func TestUnitLegTakesAtMostTwoCores(t *testing.T) {
 			t.Errorf("ci.yml job %s has no step %q", name, share)
 			continue
 		}
-		env := filepath.Join(t.TempDir(), "github_env")
-		runStep(t, job.Steps[i].Run, "NOVA_RUNNERS_PER_MACHINE=1", "GITHUB_ENV="+env)
-		raw, err := os.ReadFile(env)
-		if err != nil {
-			t.Fatal(err)
-		}
-		want := "GOMAXPROCS=2"
-		if runtime.NumCPU() < 2 {
-			want = "GOMAXPROCS=1"
-		}
-		if got := strings.TrimSpace(string(raw)); got != want {
-			t.Errorf("ci.yml job %s, one runner on a %d-core box: %q, want %q (at most two cores a leg)", name, runtime.NumCPU(), got, want)
+		if got := strings.TrimSpace(job.Steps[i].Run); got != ciRunner+" runner-share" {
+			t.Errorf("ci.yml job %s step %q runs %q, want `%s runner-share`", name, share, got, ciRunner)
 		}
 		for _, s := range job.Steps {
 			if strings.Contains(s.Run, "GOTEST_P=") {
 				t.Errorf("ci.yml job %s step %q sets GOTEST_P; the leg's cores are the Makefile's two", name, s.Name)
 			}
+		}
+	}
+	// The verb's number: one runner on a box of any size takes at most two
+	// cores, and never fewer than one.
+	for _, cores := range []int{1, 2, 3, 8, 64, runtime.NumCPU()} {
+		want := 2
+		if cores < 2 {
+			want = 1
+		}
+		if _, got := pkgselect.RunnerShare(cores, "1"); got != want {
+			t.Errorf("one runner on a %d-core box: a leg takes %d cores, want %d (at most two cores a leg)", cores, got, want)
 		}
 	}
 
@@ -198,8 +203,8 @@ func TestUnitLegTakesAtMostTwoCores(t *testing.T) {
 	if recipe := strings.Join(mk.recipeFor("test"), "\n"); !strings.Contains(recipe, " -p 2 -parallel 2 ") {
 		t.Errorf("make test does not pass -p 2 -parallel 2 (GOTEST_P):\n%s", recipe)
 	}
-	if recipe := strings.Join(mk.recipeFor("test-functional"), "\n"); !strings.Contains(recipe, " -p 2 ") {
-		t.Errorf("make test-functional does not pass -p 2 (GOTEST_P):\n%s", recipe)
+	if recipe := strings.Join(mk.recipeFor("test-functional"), "\n"); !strings.Contains(recipe, " --p 2 ") {
+		t.Errorf("make test-functional does not pass --p 2 (GOTEST_P) to tools/ci functional-run:\n%s", recipe)
 	}
 }
 
@@ -243,16 +248,22 @@ func TestFunctionalTierRunsOnlyAsStreamsMerge(t *testing.T) {
 		t.Error("ci-ok does not need functional")
 	}
 	ciOK := jobBody(readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml")), "ci-ok")
-	if !strings.Contains(ciOK, `"functional:${{ needs.functional.result }}"`) {
+	if !strings.Contains(ciOK, `functional=${{ needs.functional.result }}`) {
 		t.Error("ci-ok does not read functional's result")
 	}
 
 	mk := parseMakefile(t, filepath.Join(repoRoot(t), "Makefile"))
 	recipe := strings.Join(mk.recipeFor("test-functional"), "\n")
-	for _, want := range []string{"nova-ci functional", "-tags functional", "-count=1", "-timeout 100s"} {
+	// The recipe is one call into tools/ci functional-run, with the tier's timeout; the verb
+	// holds the selection (nova-ci functional) and the go test flags.
+	for _, want := range []string{"tools/ci functional-run", "--timeout 100s"} {
 		if !strings.Contains(recipe, want) {
 			t.Errorf("make test-functional lacks %q:\n%s", want, recipe)
 		}
+	}
+	verb := readFile(t, filepath.Join(repoRoot(t), "tools", "ci", "functionalrun.go"))
+	for _, want := range []string{`"./cmd/nova-ci", "functional"`, `"-tags", "functional"`, `"-count=1"`} {
+		assert.Contains(t, verb, want, "tools/ci/functionalrun.go lacks %s: the functional tier's selection and go test flags live there", want)
 	}
 }
 
@@ -463,14 +474,44 @@ func TestNightlySpaceLegIsTheOnlyEnforcingLeg(t *testing.T) {
 			code = append(code, line)
 		}
 	}
-	if n := strings.Count(strings.Join(code, "\n"), "SLOWTESTS_ENFORCE=1"); n != 1 || !strings.Contains(test, `elif [ "$NIGHTLY_ENFORCE" = 1 ]; then`) {
-		t.Errorf("ci.yml passes SLOWTESTS_ENFORCE=1 %d times; want once, from the test step's NIGHTLY_ENFORCE branch", n)
+	// The workflow never spells either value: `ci unit-test` passes
+	// SLOWTESTS_ENFORCE=1 from its nightly branch alone (pkgselect.UnitMakeArgs).
+	if strings.Contains(strings.Join(code, "\n"), "SLOWTESTS_ENFORCE") {
+		t.Error("ci.yml spells SLOWTESTS_ENFORCE; the one place it is passed is the nightly branch of pkgselect.UnitMakeArgs")
 	}
-	if strings.Contains(strings.Join(code, "\n"), "SLOWTESTS_ENFORCE=0") {
-		t.Error("ci.yml passes SLOWTESTS_ENFORCE=0; the push leg's CI-SLEEPS exit is red and nothing spells the old swallow")
+	if verb := readFile(t, filepath.Join(root, "tools", "ci", "sel_unittest.go")); !strings.Contains(verb, `e.getenv("NIGHTLY_ENFORCE") == "1"`) {
+		t.Error("tools/ci/sel_unittest.go does not turn NIGHTLY_ENFORCE=1 into the nightly run")
 	}
-	if !strings.Contains(jobBody(src, "test-packages"), `if [ "${{ github.event_name }}" = "schedule" ]; then`) {
-		t.Error("test-packages has no schedule branch dealing the nightly tree onto the space shards")
+	enforcing := 0
+	for name, args := range map[string][]string{
+		"the default leg":  pkgselect.UnitMakeArgs("./cmd/a", "", false),
+		"a whole-tree run": pkgselect.UnitMakeArgs("./cmd/a", "--budget 60", false),
+		"the nightly leg":  pkgselect.UnitMakeArgs("./cmd/a", "", true),
+	} {
+		joined := strings.Join(args, " ")
+		if strings.Contains(joined, "SLOWTESTS_ENFORCE=0") {
+			t.Errorf("%s passes SLOWTESTS_ENFORCE=0; the push leg's CI-SLEEPS exit is red and nothing spells the old swallow", name)
+		}
+		if strings.Contains(joined, "SLOWTESTS_ENFORCE=1") {
+			enforcing++
+			if name != "the nightly leg" {
+				t.Errorf("%s enforces the budgets; only the nightly whole-tree run on the Linux shards does", name)
+			}
+		}
+	}
+	if enforcing != 1 {
+		t.Errorf("%d runs pass SLOWTESTS_ENFORCE=1, want exactly the nightly leg", enforcing)
+	}
+	// The nightly run deals the whole tree onto the Linux legs alone, where the
+	// budgets are enforced.
+	nightly := pkgselect.Fanout("schedule", []string{"./cmd/a", "./cmd/nova-sandbox", "./internal/b"}, pkgselect.DarwinSensitive{}, pkgselect.Groups{Linux: "linux-legs", Mac: "mac-legs"}, true)
+	if len(nightly) == 0 {
+		t.Error("the nightly fan-out is empty")
+	}
+	for _, leg := range nightly {
+		if leg.Group != "linux-legs" || strings.Contains(leg.Packages, "nova-sandbox") {
+			t.Errorf("the nightly fan-out has a leg off the Linux group, or one holding a darwin-only package: %+v", leg)
+		}
 	}
 
 	mk := parseMakefile(t, filepath.Join(root, "Makefile"))

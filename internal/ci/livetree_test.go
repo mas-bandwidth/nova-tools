@@ -7,14 +7,14 @@ import (
 	"testing"
 )
 
-// liveTree is deprecated/PACKAGES read the way .github/scripts/live-packages.sh
-// reads it, for the class tests that walk source rather than a package list: a
-// class rule over deprecated code is a test of deprecated code, which is never
-// run (Glenn 2026-09-27), so a rule walks the packages CI selects and no
-// others. A path names that package and everything under it; `keep <path>`
-// names one package under such a path that stays live. The script is the
-// selection's own reading; TestDeprecatedPackagesAreNeverSelected holds the
-// two to the same answer.
+// liveTree is deprecated/PACKAGES read the way pkgselect.Deprecated reads it,
+// for the class tests that walk source rather than a package list: a class
+// rule over deprecated code is a test of deprecated code, which is never run
+// (Glenn 2026-09-27), so a rule walks the packages CI selects and no others. A
+// path names that package and everything under it; `keep <path>` names one
+// package under such a path that stays live. The package is the selection's
+// own reading; TestDeprecatedPackagesAreNeverSelected holds the two to the
+// same answer.
 type liveTree struct {
 	root string
 	drop []string

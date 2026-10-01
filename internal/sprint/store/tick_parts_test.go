@@ -50,10 +50,20 @@ func (h *harness) written(typ string) int {
 	return n
 }
 
-// quiet is a tick that must move nothing and write nothing.
+// quiet is the ticks after a change, which must move nothing and write
+// nothing but the drain of the work table's queue: the changes the last tick's
+// steps queued are the next tick's pump's to apply (the owner's tick, errata 3
+// amendment 12), so the first tick may move the drain's lines and no other
+// part's, and the tick after it moves nothing at all.
 func (h *harness) quiet(when string) {
 	h.t.Helper()
 	res := h.machine()
+	for _, p := range res.Parts {
+		if p.Name != sprint.PartDrain && (len(p.Moved) > 0 || p.Notes > 0) {
+			h.t.Fatalf("%s: the tick after moved %v and wrote %d notes in %s", when, p.Moved, p.Notes, p.Name)
+		}
+	}
+	res = h.machine()
 	if len(res.Moved()) > 0 || res.Notes() > 0 {
 		h.t.Fatalf("%s: a second tick moved %v and wrote %d notes", when, res.Moved(), res.Notes())
 	}

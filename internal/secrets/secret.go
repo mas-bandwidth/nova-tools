@@ -65,6 +65,7 @@ func (s Secret) GoString() string { return "secrets.Secret(" + Redacted + ")" }
 
 // Format closes every fmt verb at once. String() alone is not enough: %#v goes to
 // GoStringer, %x and %d bypass Stringer entirely.
+// ignored: fmt.State's write has no caller to report to; the redacted word is all it would print
 func (s Secret) Format(f fmt.State, verb rune) { _, _ = io.WriteString(f, Redacted) }
 
 func (s Secret) MarshalText() ([]byte, error) { return []byte(Redacted), nil }

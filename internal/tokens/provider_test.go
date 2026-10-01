@@ -9,7 +9,7 @@ import (
 
 // TestXaiUsageJSONShapeParses pins the second accepted shape for --provider xai: a
 // `grok usage` export is JSON, not CSV, and the parser folds its turns into the same rows
-// the CSV shape produces. The fixture is the sanitized turn from docs/MAPPING-TOKENS-GROK.md.
+// the CSV shape produces. The fixture is a synthetic, sanitized turn.
 func TestXaiUsageJSONShapeParses(t *testing.T) {
 	t.Parallel()
 

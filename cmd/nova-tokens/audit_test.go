@@ -52,6 +52,9 @@ var tokensAudit = audit.Config{
 		// returns strings and an error this package prints through oneline.Err.
 		`"github.com/mas-bandwidth/nova-tools/internal/nsprint/redisauth"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/bounded"`,
+		// atomicfile writes one FILE whole (the report note and the ledger): it takes a path
+		// and the bytes of the file and puts no byte on any stream of this binary.
+		`"github.com/mas-bandwidth/nova-tools/internal/atomicfile"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/oneline"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/tokens"`,
 	},

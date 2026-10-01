@@ -55,8 +55,12 @@ type Backend interface {
 	AtEpoch(epoch uint64, old bool) Backend
 
 	// ReadFence reads the sprint-wide fence: its generation and the pending
-	// operation, if any, in one exchange.
+	// operation, if any, with whether the machine is RUNNING and the length of
+	// the work table's queue, in one exchange.
 	ReadFence(ctx context.Context) (Fence, error)
+	// QueueRead is the work table's queue, oldest first (sprint.QueuedChange): the
+	// changes steps queued while the machine ran, which the pump drains.
+	QueueRead(ctx context.Context) ([]sprint.QueuedChange, error)
 	// Acquire puts the operation in the fence and advances the generation,
 	// only when the fence is empty at the generation the caller read; false
 	// when it was not.
@@ -116,6 +120,15 @@ type EpochState struct {
 type Fence struct {
 	Gen     uint64
 	Pending *OpRecord
+	// Running says the machine's record is RUNNING, and Queued is the length
+	// of the work table's queue: while either holds, a step other than the
+	// pump queues its work-table changes (queue.go).
+	Running bool
+	Queued  int
+	// Stuck is the stuck record (stuck.go) as it was read with the fence, ""
+	// for none: the step that writes next carries its judgment, and reads no
+	// record of its own for it.
+	Stuck string
 }
 
 // OpRecord is a step's operation, held in the fence while it applies: its
@@ -123,7 +136,10 @@ type Fence struct {
 // logical commit, the release: the notifications, the answers, the streams it
 // moved, and its result under the caller's operation id.
 type OpRecord struct {
-	ID        string                 `json:"id"`
+	ID string `json:"id"`
+	// Lock says the operation is a part's lock (lock.go): no manifests, in
+	// flight within its grace, released unwritten past it.
+	Lock      bool                   `json:"lock,omitempty"`
 	Verb      string                 `json:"verb"`
 	At        time.Time              `json:"at"`
 	Manifests []ntable.BatchManifest `json:"manifests"`
@@ -138,6 +154,12 @@ type OpRecord struct {
 	// Stuck is the stuck operation this one reports (its judgment is among
 	// Notes): its commit deletes the stuck record.
 	Stuck string `json:"stuck,omitempty"`
+	// Queue is the work-table changes the step queued for the pump, appended
+	// to the queue by its commit; Drain is how many entries of the queue the
+	// pump's drain consumed, taken off its head by its commit, so that each
+	// entry is applied once (sprint.Drain).
+	Queue []sprint.QueuedChange `json:"queue,omitempty"`
+	Drain int                   `json:"drain,omitempty"`
 }
 
 // Tables is the stored table names of the record's manifests, in order.

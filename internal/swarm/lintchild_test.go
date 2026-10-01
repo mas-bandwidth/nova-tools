@@ -4,23 +4,62 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
-// THE CHILD RULES ARE ONE TABLE, AND EVERY ROW IS HELD (lintchild.go).
+// THE CHILD RULES ARE A RULE SET, AND EVERY ROW OF IT IS HELD (lintchild.go).
 //
-// The rules the coordinator gives every child are rows of CardChildRules. The tests below
-// are class tests over the table, so a row added tomorrow is held without a new test: its
-// sentence is required, a card without it is refused naming it, the template quotes it, the
-// listing carries its remedy; and every scan is held against a violating line and the
-// clean line beside it.
+// The general rules every project shares are the rows of DefaultChildRules; one
+// repository's own are the sentences of a rules file (fleet/child-rules.txt holds this
+// repository's). The tests below are class tests over both sets, so a row added tomorrow is
+// held without a new test: its sentence is required, a card without it is refused naming
+// it, the template quotes it (the default set), the listing carries its remedy; and every
+// scan is held against a violating line and the clean line beside it.
 
-func childTemplate(t *testing.T) string {
+// ourRulesPath is this repository's own rules file, read relative to this package.
+const ourRulesPath = "../../fleet/child-rules.txt"
+
+// ourRules is this repository's rule set, read from its file.
+func ourRules(t *testing.T) []ChildRule {
+	t.Helper()
+	rules, err := ReadChildRules(ourRulesPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return rules
+}
+
+// ourCard is the card template with this repository's RULES paragraph in place of the
+// general one.
+func ourCard(t *testing.T) string {
+	t.Helper()
+	return strings.Replace(childTemplate(t), ChildRulesParagraph(), RulesParagraph(ourRules(t)), 1)
+}
+
+// childTemplateRaw is the card template as printed: its Libraries considered line still
+// carries the writer's placeholder.
+func childTemplateRaw(t *testing.T) string {
 	t.Helper()
 	body, err := Template("card")
 	if err != nil {
 		t.Fatal(err)
 	}
 	return body
+}
+
+const childLibrariesFilledLine = "Libraries considered: testify for the asserts, used; nothing else found for this work\n"
+
+// childTemplate is the card template with its Libraries considered line filled, the state
+// a card is in when a writer has finished with it.
+func childTemplate(t *testing.T) string {
+	t.Helper()
+	body := childTemplateRaw(t)
+	start := strings.Index(body, "Libraries considered:")
+	require.GreaterOrEqual(t, start, 0, "the card template carries a Libraries considered line")
+	end := start + strings.Index(body[start:], "\n") + 1
+	return body[:start] + childLibrariesFilledLine + body[end:]
 }
 
 func childChecks(fs []CardHeaderFinding) []string {
@@ -31,60 +70,101 @@ func childChecks(fs []CardHeaderFinding) []string {
 	return out
 }
 
-// Every row names itself in kebab case once, carries a sentence that ends like a sentence
-// and a source, and has its remedy in the table `--rules` prints; every scan enforces a
-// row that exists and carries a remedy.
+// Every row of the default set and of this repository's file names itself in kebab case
+// once, carries a sentence that ends like a sentence and a source, and has its remedy; every
+// scan carries a remedy, and the remedy table holds one row per default rule and one per scan.
 func TestChildRulesTableIsWellFormed(t *testing.T) {
 	t.Parallel()
 	name := regexp.MustCompile(`^[a-z][a-z0-9]*(-[a-z0-9]+)*$`)
-	seen := map[string]bool{}
-	for _, r := range CardChildRules {
-		if !name.MatchString(r.Name) || seen[r.Name] {
-			t.Errorf("rule name %q is not a unique kebab-case token", r.Name)
+	for set, rules := range map[string][]ChildRule{"default": DefaultChildRules, "ours": ourRules(t)} {
+		seen := map[string]bool{}
+		for _, r := range rules {
+			if !name.MatchString(r.Name) || seen[r.Name] {
+				t.Errorf("%s: rule name %q is not a unique kebab-case token", set, r.Name)
+			}
+			seen[r.Name] = true
+			if r.Sentence != strings.TrimSpace(r.Sentence) || len(r.Sentence) < 12 {
+				t.Errorf("%s: rule %s: sentence %q is not a whole rule", set, r.Name, r.Sentence)
+			}
+			if strings.TrimSpace(r.Source) == "" {
+				t.Errorf("%s: rule %s names no source", set, r.Name)
+			}
+			remedy := ChildRemedy(rules, "rule-"+r.Name)
+			if !strings.Contains(remedy, r.Sentence) || !strings.Contains(remedy, r.Source) {
+				t.Errorf("%s: rule %s: remedy %q does not quote the sentence and its source", set, r.Name, remedy)
+			}
 		}
-		seen[r.Name] = true
-		if r.Sentence != strings.TrimSpace(r.Sentence) || len(r.Sentence) < 12 {
-			t.Errorf("rule %s: sentence %q is not a whole rule", r.Name, r.Sentence)
-		}
-		if strings.TrimSpace(r.Source) == "" {
-			t.Errorf("rule %s names no source", r.Name)
-		}
-		remedy, ok := CardChildRemedies["rule-"+r.Name]
-		if !ok || !strings.Contains(remedy, r.Sentence) || !strings.Contains(remedy, r.Source) {
-			t.Errorf("rule %s: remedy %q does not quote the sentence and its source", r.Name, remedy)
+	}
+	for _, r := range DefaultChildRules {
+		if got := CardChildRemedies["rule-"+r.Name]; got != ChildRemedy(DefaultChildRules, "rule-"+r.Name) {
+			t.Errorf("the listing's remedy for %s differs from the lint's: %q", r.Name, got)
 		}
 	}
 	for _, s := range childScans {
-		if !seen[s.Rule] {
-			t.Errorf("scan %s enforces %q, which is no rule", s.Check, s.Rule)
-		}
 		if !strings.HasPrefix(s.Check, "step-") || strings.TrimSpace(CardChildRemedies[s.Check]) == "" {
 			t.Errorf("scan %s is not a step-<what> token with a remedy", s.Check)
 		}
+		if got := ChildRemedy(nil, s.Check); got != s.Remedy {
+			t.Errorf("scan %s: ChildRemedy answers %q, want its remedy", s.Check, got)
+		}
+		if s.Needs != "" {
+			found := false
+			for _, r := range ourRules(t) {
+				found = found || r.Name == s.Needs
+			}
+			if !found {
+				t.Errorf("scan %s needs the rule %q, which this repository's file does not carry", s.Check, s.Needs)
+			}
+		}
 	}
-	if want := len(CardChildRules) + len(childScans); len(CardChildRemedies) != want {
-		t.Errorf("the remedy table holds %d tokens, want %d: one per rule and one per scan", len(CardChildRemedies), want)
+	// one per default rule, one per scan, and the libraries-considered line of the lint
+	if want := len(DefaultChildRules) + len(childScans) + 1; len(CardChildRemedies) != want {
+		t.Errorf("the remedy table holds %d tokens, want %d: one per default rule and one per scan, and the libraries-considered line", len(CardChildRemedies), want)
 	}
+	if got := ChildRemedy(DefaultChildRules, "rule-nothing"); got != "" {
+		t.Errorf("a token that is no rule has the remedy %q", got)
+	}
+	// the general set is only the general rules: nothing of one repository's
+	for _, r := range DefaultChildRules {
+		for _, project := range []string{"GOCACHE", "go test", "-timeout", "t.Parallel", "Co-Authored-By", "functionalrun", "./internal/ci", "Claude"} {
+			if strings.Contains(r.Sentence, project) {
+				t.Errorf("the default rule %s names %q: a project's rule belongs in its rules file", r.Name, project)
+			}
+		}
+	}
+	// the rules this repository's coordinator gives every child are rows of its file
+	have := map[string]bool{}
+	for _, r := range ourRules(t) {
+		have[r.Name] = true
+	}
+	assert.Contains(t, CardChildRemedies[LibrariesConsideredRule], "Libraries considered:")
 	for _, need := range []string{
 		"gocache", "no-go-clean", "no-redis-server", "no-kill", "go-test-timeout", "no-rm-rf", "no-force-push", "no-rebase",
 		"functional-in-container", "parallel", "class-tests", "no-names", "present-tense", "commit-trailer", "pr-line",
 		"never-merge", "pr-diffstat", "report-not-done", "no-stash",
 	} {
-		if !seen[need] {
-			t.Errorf("the rule %s the coordinator gives every child is not a row", need)
+		if !have[need] {
+			t.Errorf("the rule %s the coordinator gives every child is not a row of fleet/child-rules.txt", need)
 		}
 	}
 }
 
-// The template is the shape the coordinator starts from: it carries every rule sentence,
-// and it lints clean as printed.
+// The template is the shape the coordinator starts from: it carries every default rule
+// sentence, and once the writer has filled its Libraries considered line it lints clean. As
+// printed the line still carries its placeholder, and that is the one finding it draws.
 func TestChildTemplateLintsClean(t *testing.T) {
 	t.Parallel()
 	body := childTemplate(t)
 	if got := LintCardChild([]byte(body)); len(got) != 0 {
-		t.Fatalf("the card template draws findings: %v", got)
+		t.Fatalf("the filled card template draws findings: %v", got)
 	}
-	for _, r := range CardChildRules {
+	assert.Empty(t, LintCardChild([]byte(childTemplateRaw(t))), "the default rules carry no libraries check")
+	rawOurs := strings.Replace(childTemplateRaw(t), ChildRulesParagraph(), RulesParagraph(ourRules(t)), 1)
+	raw := LintCardChildWith([]byte(rawOurs), ourRules(t))
+	require.Len(t, raw, 1)
+	assert.Equal(t, LibrariesConsideredRule, raw[0].Check)
+	assert.Contains(t, raw[0].Excerpt, "unfilled: Libraries considered: <")
+	for _, r := range DefaultChildRules {
 		if !strings.Contains(body, r.Sentence) {
 			t.Errorf("the card template does not quote the rule %s: %s", r.Name, r.Sentence)
 		}
@@ -92,26 +172,122 @@ func TestChildTemplateLintsClean(t *testing.T) {
 	if !IsCardContractLine(strings.SplitN(body, "\n", 2)[0]) {
 		t.Errorf("line 1 of the template is not the contract line")
 	}
+	// this repository's own card, with its paragraph, is admitted under its own rules
+	if got := LintCardChildWith([]byte(ourCard(t)), ourRules(t)); len(got) != 0 {
+		t.Errorf("a card carrying this repository's rules draws findings under them: %v", got)
+	}
+}
+
+// A card for any other project, with no Go in it, is admitted under the default rules: the
+// rules of one repository (its caches, its test flags, its trailer) are not the tool's.
+func TestChildNonGoCardIsAdmittedUnderTheDefaultRules(t *testing.T) {
+	t.Parallel()
+	card := "RESULT: docs sha=abc\nFix the typo in README.md, then run make check.\n\n" + ChildRulesParagraph() + "\nSTEP 1. cd site && npm test\nSTEP 2. git push origin HEAD\n"
+	if got := LintCardChild([]byte(card)); len(got) != 0 {
+		t.Fatalf("a non-Go card with the default rules draws %v", got)
+	}
+	// the same card under this repository's rules is refused for what it does not carry
+	got := LintCardChildWith([]byte(card), ourRules(t))
+	if len(got) < 10 {
+		t.Errorf("the card carries none of this repository's rules and draws only %d findings", len(got))
+	}
+	// a Go project's scans run only where its rules are in the set
+	goCard := card + "STEP 3. go test ./...\nSTEP 4. go clean -cache\n"
+	if got := LintCardChild([]byte(goCard)); len(got) != 0 {
+		t.Errorf("the default set scans Go commands it has no rule for: %v", got)
+	}
+	for _, f := range LintCardChildWith([]byte(goCard), ourRules(t)) {
+		if f.Check == "step-go-test-timeout" || f.Check == "step-go-clean" {
+			return
+		}
+	}
+	t.Errorf("this repository's rules do not scan a go test without its timeout or a go clean")
+}
+
+// A card missing one rule of a file's own set is refused naming exactly that rule.
+func TestChildRulesFileNamesTheRuleAMissingSentenceBreaks(t *testing.T) {
+	t.Parallel()
+	rules, err := ParseChildRules("# ours\n[deploy-note] Say which environment the change is for.\nQuote the ticket number.\n", "rules.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	card := "RESULT: x sha=abc\n\nRULES.\nSay which environment the change is for.\nQuote the ticket number.\n\nSTEP 1. cd x\n"
+	if got := LintCardChildWith([]byte(card), rules); len(got) != 0 {
+		t.Fatalf("a card carrying both sentences draws %v", got)
+	}
+	got := LintCardChildWith([]byte(strings.Replace(card, "Quote the ticket number.\n", "", 1)), rules)
+	if len(got) != 1 || got[0].Check != "rule-line3" || !strings.Contains(got[0].Excerpt, "Quote the ticket number.") {
+		t.Fatalf("a card without the unnamed third line's sentence draws %v, want rule-line3", got)
+	}
+	got = LintCardChildWith([]byte(strings.Replace(card, "Say which environment the change is for.\n", "", 1)), rules)
+	if len(got) != 1 || got[0].Check != "rule-deploy-note" {
+		t.Fatalf("a card without the named sentence draws %v, want rule-deploy-note", got)
+	}
+	if r := ChildRemedy(rules, "rule-deploy-note"); !strings.Contains(r, "Say which environment") || !strings.Contains(r, "rules.txt:2") {
+		t.Errorf("the remedy %q does not quote the sentence and its line in the file", r)
+	}
+}
+
+// A rules file is one sentence per line; every problem of a bad file is reported together.
+func TestParseChildRules(t *testing.T) {
+	t.Parallel()
+	rules, err := ParseChildRules("# a comment\n\n[a-b] First   rule  here.\r\nSecond rule here.\n  \n", "f.txt")
+	if err != nil || len(rules) != 2 {
+		t.Fatalf("got %v, %v", rules, err)
+	}
+	if rules[0] != (ChildRule{"a-b", "First rule here.", "f.txt:3"}) || rules[1] != (ChildRule{"line4", "Second rule here.", "f.txt:4"}) {
+		t.Errorf("rules %+v", rules)
+	}
+	_, err = ParseChildRules("[Bad Name] x y z\n[ok] same sentence\n[ok] another\n[two] same sentence\n[open sentence\n[named]\n", "f.txt")
+	if err == nil {
+		t.Fatal("a file with six problems is accepted")
+	}
+	for _, want := range []string{"line 1", "line 3", "line 4", "line 5", "line 6"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the refusal %q does not name %s", err, want)
+		}
+	}
+	for _, empty := range []string{"", "\n\n", "# only a comment\n"} {
+		if _, err := ParseChildRules(empty, "f.txt"); err == nil || !strings.Contains(err.Error(), "holds no rule") {
+			t.Errorf("%q: got %v, want the empty-file refusal", empty, err)
+		}
+	}
+	if _, err := ReadChildRules("testdata/no-such-rules-file"); err == nil {
+		t.Error("an unreadable rules file is accepted")
+	}
 }
 
 // A card without one rule is refused naming exactly that rule, at line 1, with the
-// sentence in the excerpt; a card with none of them draws every rule.
+// sentence in the excerpt; a card with none of them draws every rule. Held over the default
+// set and over this repository's file.
 func TestChildRuleMissingIsRefusedNamingIt(t *testing.T) {
 	t.Parallel()
-	body := childTemplate(t)
-	for _, r := range CardChildRules {
-		without := strings.Replace(body, r.Sentence+"\n", "", 1)
-		if without == body {
-			t.Fatalf("the template does not carry %s on a line of its own", r.Name)
+	for set, c := range map[string]struct {
+		body  string
+		rules []ChildRule
+	}{
+		"default": {childTemplate(t), DefaultChildRules},
+		"ours":    {ourCard(t), ourRules(t)},
+	} {
+		presence := 0
+		for _, r := range c.rules {
+			if r.Name == LibrariesConsideredName {
+				continue // read as a filled line of a card that builds code, not as a quoted sentence
+			}
+			presence++
+			without := strings.Replace(c.body, r.Sentence+"\n", "", 1)
+			if without == c.body {
+				t.Fatalf("%s: the card does not carry %s on a line of its own", set, r.Name)
+			}
+			got := LintCardChildWith([]byte(without), c.rules)
+			if len(got) != 1 || got[0].Check != "rule-"+r.Name || got[0].Line != 1 || !strings.Contains(got[0].Excerpt, r.Sentence) {
+				t.Errorf("%s: a card without %s draws %v, want exactly rule-%s naming the sentence", set, r.Name, got, r.Name)
+			}
 		}
-		got := LintCardChild([]byte(without))
-		if len(got) != 1 || got[0].Check != "rule-"+r.Name || got[0].Line != 1 || !strings.Contains(got[0].Excerpt, r.Sentence) {
-			t.Errorf("a card without %s draws %v, want exactly rule-%s naming the sentence", r.Name, got, r.Name)
+		bare := LintCardChildWith([]byte("RESULT: x sha=abc\nfix the thing\n"), c.rules)
+		if len(bare) != presence {
+			t.Errorf("%s: a card with no rule draws %d findings, want %d", set, len(bare), presence)
 		}
-	}
-	bare := LintCardChild([]byte("RESULT: x sha=abc\nfix the thing\n"))
-	if len(bare) != len(CardChildRules) {
-		t.Errorf("a card with no rule draws %d findings, want %d", len(bare), len(CardChildRules))
 	}
 }
 
@@ -119,7 +295,7 @@ func TestChildRuleMissingIsRefusedNamingIt(t *testing.T) {
 func TestChildRuleSurvivesWrapping(t *testing.T) {
 	t.Parallel()
 	body := childTemplate(t)
-	r := CardChildRules[len(CardChildRules)-3]
+	r := DefaultChildRules[len(DefaultChildRules)-3]
 	words := strings.Fields(r.Sentence)
 	wrapped := strings.Join(words[:len(words)/2], " ") + "\n   " + strings.Join(words[len(words)/2:], " ")
 	if got := LintCardChild([]byte(strings.Replace(body, r.Sentence, wrapped, 1))); len(got) != 0 {
@@ -130,7 +306,7 @@ func TestChildRuleSurvivesWrapping(t *testing.T) {
 func scanFindings(t *testing.T, line string) []string {
 	t.Helper()
 	var out []string
-	for _, f := range LintCardChild([]byte(childTemplate(t) + line + "\n")) {
+	for _, f := range LintCardChildWith([]byte(ourCard(t)+line+"\n"), ourRules(t)) {
 		out = append(out, f.Check)
 	}
 	return out
@@ -292,7 +468,7 @@ func TestChildTimeoutMustBePositive(t *testing.T) {
 // scan: a card that quotes its rules after its last STEP is not refused for quoting them.
 func TestChildRuleSentencesAreNotViolations(t *testing.T) {
 	t.Parallel()
-	for _, r := range CardChildRules {
+	for _, r := range ourRules(t) {
 		if got := scanFindings(t, "STEP 7. "+r.Sentence); len(got) != 0 {
 			t.Errorf("the rule %s quoted in a STEP draws %v", r.Name, got)
 		}
@@ -315,4 +491,62 @@ func containsStep(xs []string) bool {
 		}
 	}
 	return false
+}
+
+// LIBRARIES CONSIDERED (docs/STANDARD.md section 7, library first): a card that builds code
+// carries the line, filled; a card that builds none is not asked for it.
+func TestChildCardThatBuildsCodeCarriesLibrariesConsidered(t *testing.T) {
+	t.Parallel()
+	raw := childTemplateRaw(t)
+	start := strings.Index(raw, "Libraries considered:")
+	require.GreaterOrEqual(t, start, 0)
+	end := start + strings.Index(raw[start:], "\n") + 1
+	with := func(line string) string { return raw[:start] + line + raw[end:] }
+	rules := ChildRulesParagraph()
+	// the libraries check is on where the rule set carries the rule; here it carries only that
+	libRules := []ChildRule{{Name: LibrariesConsideredName, Sentence: "A card that builds code carries a filled Libraries considered line.", Source: "the test"}}
+	lib := []string{LibrariesConsideredRule}
+	tests := []struct {
+		name string
+		card string
+		want []string
+	}{
+		{"template as printed, placeholder unfilled", raw, lib},
+		{"line removed", with(""), lib},
+		{"line empty", with("Libraries considered:   \n"), lib},
+		{"line empty, bulleted", with("- Libraries considered:\n"), lib},
+		{"line keeps a placeholder", with("Libraries considered: testify; <why errgroup was not used>\n"), lib},
+		{"line filled", with("Libraries considered: testify for asserts, used; errgroup, not needed\n"), nil},
+		{"line bulleted", with("- Libraries considered: none found\n"), nil},
+		{"one of two lines filled", with("Libraries considered: <x>\nLibraries considered: testify, used\n"), nil},
+		{"runs go test", "RESULT: x sha=abc\nRun go test -timeout 600s ./internal/x/\n\n" + rules, lib},
+		{"runs go build", "RESULT: x sha=abc\nThen go build ./...\n\n" + rules, lib},
+		{"runs go run", "RESULT: x sha=abc\nTry go run ./cmd/x\n\n" + rules, lib},
+		{"runs go generate", "RESULT: x sha=abc\nRun go generate ./...\n\n" + rules, lib},
+		{"writes a go file", "RESULT: x sha=abc\nWrite a helper in internal/x/y.go\n\n" + rules, lib},
+		{"adds to a go file", "RESULT: x sha=abc\nAdd a case to internal/x/y.go.\n\n" + rules, lib},
+		{"implements in a go file", "RESULT: x sha=abc\nImplement the verb in cmd/x/main.go\n\n" + rules, lib},
+		{"only reads a go file", "RESULT: x sha=abc\nRead internal/x/y.go and report what it does.\n\n" + rules, nil},
+		{"cites pkg.go.dev", "RESULT: x sha=abc\nWrite up what pkg.go.dev says about errgroup.\n\n" + rules, nil},
+		{"runs go vet only", "RESULT: x sha=abc\nRun go vet ./internal/x/\n\n" + rules, nil},
+		{"builds no code", "RESULT: x sha=abc\nRewrite the README paragraph on seats.\n\n" + rules, nil},
+		{"rules paragraph alone", rules, nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.ElementsMatch(t, tc.want, childChecks(LintCardChildWith([]byte(tc.card), libRules)))
+		})
+	}
+}
+
+// The libraries check is the rule set's switch: the default set, which names no such rule,
+// never draws it, and this repository's file does.
+func TestChildLibrariesCheckIsOnlyWhereTheRuleSetCarriesIt(t *testing.T) {
+	t.Parallel()
+	card := "RESULT: x sha=abc\nRun go test -timeout 600s ./internal/x/\n\n" + ChildRulesParagraph()
+	assert.Empty(t, childChecks(LintCardChild([]byte(card))))
+	ours := strings.Replace(card, ChildRulesParagraph(), RulesParagraph(ourRules(t)), 1)
+	assert.Contains(t, childChecks(LintCardChildWith([]byte(ours), ourRules(t))), LibrariesConsideredRule)
+	assert.Contains(t, ChildRemedy(ourRules(t), LibrariesConsideredRule), "Libraries considered:")
 }

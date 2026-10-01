@@ -135,6 +135,7 @@ func (app *application) cmdShell(args []string, stdout, stderr io.Writer) int {
 	defaults, receipts := app.writeFlags(fs)
 	// Receipt IDs are useful when driving a resident process. They can be
 	// disabled for the session or overridden by an individual write.
+	// ignored: Set on a flag writeFlags just defined, with a value its parser accepts
 	_ = fs.Set("receipt", "true")
 	in := app.in
 	if in == nil {
@@ -171,6 +172,7 @@ func (app *application) cmdShell(args []string, stdout, stderr io.Writer) int {
 		return openShellStore(*addr, getenv)
 	}), addr: *addr, defaults: *defaults, receipts: *receipts, getenv: getenv}
 	// prepare may replace the connection, so close the final owner, not the first.
+	// ignored: a deferred close after the session's last answer is printed
 	defer func() { _ = child.shared.Conn.Close() }()
 	return child.readCommands(in, stdout, stderr, *keepGoing, interactive)
 }

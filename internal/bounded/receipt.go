@@ -122,6 +122,7 @@ func (r *Receipt) Print() {
 		oneline.Field(r.equivalence),
 		formatLatency(r.latency))
 	r.failing.More()
+	// ignored: the receipt's own lines to its writer; a writer that cannot be written has no other reader
 	_, _ = r.items.WriteTo(r.w)
 }
 

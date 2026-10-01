@@ -42,13 +42,6 @@ internal/ci	TestWaitsAllowlistSurvivesShiftedLines	#4221 calls time.Sleep
 internal/ci	TestSlowWaitsRuleSeesEveryShape	#4221 calls time.Sleep
 internal/secrets	TestSealNoPRMakesNoGHCalls	#4221 measured over 5 s on the 2026-09-25 PR run
 internal/swarm	TestOSProcessTreeCPUAccrual	#4221 calls time.Sleep
-internal/swarm	TestBatchPrefixLine1WithLongerTailAccepted	#4221 waits on the wall clock, failed on a 2026-09-25 run
-internal/swarm	TestIdleWatchEndsACardThatOnlyDribblesIntoItsLog	#4221 waits on the wall clock, failed on a 2026-09-25 run
-internal/swarm	TestIdleWatchKeepsACardWhoseLogGrowsAPage	#4221 calls time.Sleep
-internal/swarm	TestABatchNeverExceedsItsRouteCap	#4221 calls time.Sleep
-internal/swarm	TestWithNoStallAfterASilentCardIsNotStalled	#4221 waits on the wall clock, failed on a 2026-09-25 run
-internal/swarm	TestBatchCardsPutsTheWordInTheLocalNativeArgv	#4221 waits on the wall clock, failed on a 2026-09-25 run
-internal/swarm	TestARouteNamesTheProfileNeverTheSecret	#4221 calls time.Sleep
 internal/swarm	TestPausePointThreadDirected	#4221 calls time.Sleep
 internal/swarm	TestJobLeaseHeartbeatsItsMtime	#4221 calls time.Sleep
 internal/swarm	TestBodyThatResumesInsideTheDeadlineIsNotUnknown	#4221 calls time.Sleep
@@ -64,17 +57,11 @@ internal/bus	TestFriendSequencePlantedIndexIsRefused	seed #4413: time.After at p
 internal/bus	TestReadLaneIndexDoesNotBlockOnAPlantedFIFO	seed #4413: time.After at fifo_test.go:41
 internal/fleet	TestRunBenchesConcurrentlyOverlapsCallbacks	seed #4413: time.NewTimer at parallel_test.go:101
 internal/sandbox	TestAncestorsTerminatesOnAWindowsPath	seed #4413: time.After at winpath_test.go:77
-internal/swarm	TestAnIdleSlotAsksOnAnEventNotAPoll	seed #4413: time.After at slotwait_test.go:37 and 1 more
 internal/swarm	TestCountRefusalsDoesNotBlockOnAFIFO	seed #4413: time.After at symlink_fifo_test.go:195
 internal/swarm	TestFriendSequencePlantedResultIsRefused	seed #4413: time.After at planted_gather_test.go:81
-internal/swarm	TestIssue1983	seed #4413: time.After at batch_clock_test.go:203
 internal/swarm	TestReadFileSteadyDoesNotBlockOnAFIFO	seed #4413: time.After at symlink_fifo_test.go:145
 internal/swarm	TestReadJSONDoesNotBlockOnAFIFO	seed #4413: time.After at symlink_fifo_test.go:169
-internal/swarm	TestTheCapIsPerRouteAndNotGlobal	seed #4413: time.After at inflight_test.go:113
 internal/swarm	idleBench.tick	seed #4413: time.After at nativeidle_test.go:76 and 1 more
-internal/swarm	manualClock.giveUpBound	seed #4413: time.After at batch_clock_test.go:133
-internal/swarm	manualClock.tick	seed #4413: time.After at batch_clock_test.go:123
-internal/swarm	waitFor	seed #4413: time.Sleep at inflight_test.go:197
 internal/update	TestHelperProcess	seed #4413: time.Sleep at update_test.go:50 and 2 more
 internal/update	TestRule25SnapshotSurvivesAReporterKilledWhileWriting	seed #4413: time.NewTimer at rules_test.go:259 and 1 more
 internal/update	fakeBus	seed #4413: time.Sleep at delivery_test.go:72

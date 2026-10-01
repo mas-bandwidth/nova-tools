@@ -43,6 +43,7 @@ func TestAcceptReadOkRefusesOneOkRead(t *testing.T) {
 	if out := ta.ok("accept --read-ok"); !strings.Contains(out, "moved=0") {
 		t.Fatalf("accept --read-ok with one ok read:\n%s", out)
 	}
+	ta.ok("tick") // the pump applies the queued finish; one ok read accepts nothing
 	if out := ta.ok("card s1-1"); !strings.Contains(out, "stream s1   review") {
 		t.Fatalf("s1-1 after accept --read-ok with one ok read:\n%s", out)
 	}

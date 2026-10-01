@@ -198,11 +198,15 @@ func (w *crWorld) round(r int) {
 	h.clean(fmt.Sprintf("round %d after the tick", r))
 	if w.running {
 		w.holders(r)
-		// E: a second tick right after changes nothing
+		// E: a second tick right after changes nothing but the drain of the
+		// work table's queue: what the first tick's steps queued is the next
+		// pump's to apply (errata 3 amendment 12).
 		before := h.revisionsAll()
 		res2 := h.machine()
-		if len(res2.Moved()) > 0 || res2.Notes() > 0 {
-			h.t.Fatalf("round %d: second tick moved %v notes %d", r, res2.Moved(), res2.Notes())
+		for _, p := range res2.Parts {
+			if p.Name != sprint.PartDrain && (len(p.Moved) > 0 || p.Notes > 0) {
+				h.t.Fatalf("round %d: second tick moved %v notes %d in %s", r, p.Moved, p.Notes, p.Name)
+			}
 		}
 		_ = before
 	} else if len(res.Parts) > 0 || len(res.Repaired) > 0 {

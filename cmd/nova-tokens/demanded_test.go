@@ -183,10 +183,7 @@ func TestRule2EveryRowNamesItsSources(t *testing.T) {
 	if row == "" {
 		t.Fatalf("no row for fable/schema:\n%s", day)
 	}
-	// The sources column is the ELEVENTH and is no longer the last: `units` sits after it.
-	// Reading it from the end was reading whichever column happened to be last, which is
-	// what made this test red on the day one was appended rather than on the day the rule
-	// it pins was broken.
+	// The sources column is the ELEVENTH, read by position.
 	cols := strings.Split(row, "\t")
 	if len(cols) != len(tokens.Columns) {
 		t.Fatalf("the row has %d columns, want %d: %q", len(cols), len(tokens.Columns), row)

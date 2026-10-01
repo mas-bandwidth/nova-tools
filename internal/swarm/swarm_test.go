@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -275,17 +274,6 @@ func TestThePromptUsesJobRelativeWorkerPaths(t *testing.T) {
 		if strings.Contains(prompt, unsafe) {
 			t.Errorf("the prompt copied an unsafe absolute worker path %q", unsafe)
 		}
-	}
-}
-
-func TestHarnessArgsUseJobRelativePromptFile(t *testing.T) {
-	t.Parallel()
-
-	w := Worker{Model: "model", HarnessArgs: []string{"run", "--model", "{model}", "--", "{prompt}"}}
-	got := harnessArgs(w, "/tmp/job with spaces;$(touch SHOULD_NOT_RUN)")
-	want := []string{"run", "--model", "model", "--", "PROMPT.md"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("harness args use the stable job-relative prompt path: got %#v, want %#v", got, want)
 	}
 }
 

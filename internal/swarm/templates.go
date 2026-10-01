@@ -94,9 +94,11 @@ const templateFixCard = `fix-card — take one card and land the fix
 `
 
 // templateCard is the card the coordinator starts from: the contract line, the RULES
-// paragraph with every rule of CardChildRules quoted verbatim (lintchild.go), the task,
-// and the steps. It passes `nova-swarm lint --card --child-rules` as printed, and it is
-// what `nova-sprint add` holds every brief to: a card without the paragraph is refused
+// paragraph with every general rule of DefaultChildRules quoted verbatim (lintchild.go), the task,
+// and the steps. It passes `nova-swarm lint --card --child-rules` as printed; under a rules file
+// carrying [libraries-considered] its Libraries considered placeholder line is the one finding until
+// the writer fills it. It is what `nova-sprint add` holds every brief to under the general rules: a
+// card without the paragraph is refused
 // before anything is written. The <angle> words are the writer's to fill.
 var templateCard = "RESULT: <label> sha=<sha12>\n" +
 	"You are a child of the coordinator: one task, one worktree, one branch, unattended. This card is the whole of the task and it stands alone in front of a stranger; nothing outside it is owed to you.\n" +
@@ -105,6 +107,7 @@ var templateCard = "RESULT: <label> sha=<sha12>\n" +
 	ChildRulesParagraph() +
 	"\n" +
 	"THE TASK. <What is wrong or wanted, in a paragraph a stranger can act on, and the file or package the work lives in: internal/<package>/<file>.go. Name the worktree path, the branch, the base branch, the private GOCACHE path, and every file you may touch.>\n" +
+	"Libraries considered: <what the standard library and the adopted modules offer for this work, and why each is used or not; the search comes before any helper of more than about thirty lines is written>\n" +
 	"\n" +
 	"STEP 1. Enter your worktree with cd <worktree path> && git log --oneline -1; it is a NEW worktree on the branch this card names. Export GOCACHE=<private cache path> GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 before any go command.\n" +
 	"STEP 2. Write the red test first, named TestSomething, in <file>_test.go, opening with t.Parallel(). Run go test -count=1 -timeout 600s ./internal/<package>/ -run TestSomething and keep the failing line.\n" +

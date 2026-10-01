@@ -14,6 +14,8 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 )
 
 // Name is the file the shim is written as.
@@ -40,26 +42,9 @@ func Install(dir string) (string, error) {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", fmt.Errorf("the gh shim directory %s: %w", dir, err)
 	}
-	f, err := os.CreateTemp(dir, ".gh-*")
-	if err != nil {
-		return "", fmt.Errorf("the gh shim in %s: %w", dir, err)
-	}
-	tmp := f.Name()
-	_, werr := f.WriteString(Script())
-	cerr := f.Close()
-	if werr == nil {
-		werr = cerr
-	}
-	if werr == nil {
-		werr = os.Chmod(tmp, 0o755)
-	}
 	path := filepath.Join(dir, Name)
-	if werr == nil {
-		werr = os.Rename(tmp, path)
-	}
-	if werr != nil {
-		_ = os.Remove(tmp)
-		return "", fmt.Errorf("the gh shim %s: %w", path, werr)
+	if err := atomicfile.Write(path, []byte(Script()), 0o755, atomicfile.ExactMode()); err != nil {
+		return "", fmt.Errorf("the gh shim %s: %w", path, err)
 	}
 	return path, nil
 }

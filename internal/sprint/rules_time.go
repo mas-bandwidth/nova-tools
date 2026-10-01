@@ -479,7 +479,7 @@ type ClockSet struct {
 
 // ParkKey is a key to park: its text, the rule that planned it and the code
 // its step was refused with (1.3.5: the park names "the rule, the key, the
-// code"), which the sprint part records in {p}parked@e (sprintfn.ParkedKey).
+// code").
 type ParkKey struct{ Key, Rule, Code string }
 
 // Empty says the plan writes nothing to the sprint's keys.
@@ -583,7 +583,7 @@ func (b *timeBuilder) unit(u Unit) int {
 }
 
 // DueAbsent is the score a due guard carries for an entry the read found
-// absent (sprintfn.XGuardAbsent): the pop takes an entry, so the rule the pop
+// absent: the pop takes an entry, so the rule the pop
 // delivered reads its own entry absent.
 const DueAbsent int64 = -1
 
@@ -1511,7 +1511,7 @@ func planBehind(s *Snapshot, keys []AgendaKey, now Now) RulePlan {
 		}
 	default:
 		// Armed again with the new backlog: behind_n cleared, and the next
-		// tick end (sprintfn.TickEnd), its one writer, arms the entry at R + 5
+		// tick end, its one writer, arms the entry at R + 5
 		// min and behind_n at the backlog it finds. A behind_n left as it was
 		// would hold the first backlog for ever, and a backlog that shrank once
 		// and then stalled would never be judged.

@@ -425,7 +425,8 @@ func TestFunctionalImageRunsAsTheTierExpects(t *testing.T) {
 }
 
 // execNames is every program name a Go file under cmd, internal or tools gives
-// to exec.Command, exec.CommandContext or exec.LookPath as a string literal or
+// to exec.Command, exec.CommandContext, exec.LookPath or internal/subproc's Command,
+// CommandFor, Context and Long as a string literal or
 // as a package-level constant or variable initialised with one. The value is
 // the base name, and the sites that give it, as file:line.
 func execNames(t *testing.T) map[string][]string {
@@ -475,14 +476,21 @@ func execNames(t *testing.T) map[string][]string {
 				return true
 			}
 			pkg, ok := sel.X.(*ast.Ident)
-			if !ok || pkg.Name != "exec" {
+			if !ok || (pkg.Name != "exec" && pkg.Name != "subproc") {
 				return true
 			}
 			arg := -1
-			switch sel.Sel.Name {
-			case "Command", "LookPath":
+			switch {
+			case pkg.Name == "exec" && (sel.Sel.Name == "Command" || sel.Sel.Name == "LookPath"):
 				arg = 0
-			case "CommandContext":
+			case pkg.Name == "exec" && sel.Sel.Name == "CommandContext":
+				arg = 1
+			// internal/subproc is the door every child now goes through: Command and
+			// CommandFor take (ctx, kind-or-budget, name, ...), Context and Long take
+			// (ctx, name, ...).
+			case pkg.Name == "subproc" && (sel.Sel.Name == "Command" || sel.Sel.Name == "CommandFor"):
+				arg = 2
+			case pkg.Name == "subproc" && (sel.Sel.Name == "Context" || sel.Sel.Name == "Long"):
 				arg = 1
 			}
 			if arg < 0 || arg >= len(call.Args) {
