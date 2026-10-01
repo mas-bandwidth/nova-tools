@@ -141,6 +141,9 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	if f.refused(stderr) {
 		return 2
 	}
+	// the beat writes from its own goroutine (memberLoop), so what this verb writes to stderr
+	// is one line at a time
+	stderr = &lockedWriter{w: stderr}
 	// CI over work (nova-tools#4293): native refuses every card on an OS with no
 	// setpriority, so a member there would take and fail every card it is dealt
 	if why := yieldRefusal(yield.Supported, runtime.GOOS); why != "" {
@@ -245,6 +248,18 @@ func loopTicks(once, ticksGiven bool, ticks int) int {
 // ends, and stops when the last is reported. replaced is true when it stopped so.
 func memberLoop(m *member.Member, every time.Duration, limit int, stamp func() string, stdout, stderr io.Writer) (n int, replaced bool) {
 	began := stamp()
+	// the beat goes on its own clock, apart from the work pass (internal/member BeatLoop): one
+	// now, so the member is up before its first pass, then one every interval while the pass
+	// goes on, ending with this loop
+	if err := m.Beat(); err != nil {
+		fmt.Fprintf(stderr, "nova-swarm member: %s\n", oneline.Escape(err.Error()))
+	}
+	beatCtx, stopBeats := context.WithCancel(context.Background())
+	beatTicker := time.NewTicker(every)
+	beatsEnded := make(chan struct{})
+	go func() { defer close(beatsEnded); m.BeatLoop(beatCtx, beatTicker.C, stderr) }()
+	// the beat ends before the loop does: nothing it writes comes after the member's last line
+	defer func() { stopBeats(); beatTicker.Stop(); <-beatsEnded }()
 	draining := false
 	for {
 		if began != "" && stamp() != began {
@@ -834,4 +849,17 @@ func yieldRefusal(supported bool, goos string) string {
 		return ""
 	}
 	return "no setpriority on " + goos + ": native would refuse every card this member takes rather than run it at CI's priority (nova-tools#4293); run members on darwin or Linux"
+}
+
+// lockedWriter is a writer two goroutines share, one Write at a time: the member's loop and
+// its beat (memberLoop).
+type lockedWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (l *lockedWriter) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return fmt.Fprint(l.w, string(p))
 }

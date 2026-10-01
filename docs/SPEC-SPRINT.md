@@ -36,10 +36,9 @@ consumer with neither adding nothing. It is in US dollars to four places
 sum over the streams, in exact decimals end to end. A stream with some unpriced
 landed cards shows the sum of the priced ones; `nova-sprint card <id>` and its
 JSON carry the detail. The merge that lands a primary writes its total on it
-(`cost`), from every one of its consumers' records, read with the step (the
-fleet and readers tables and the kept records of the consumers of the stream's
-merging primaries), and sets the stream's sum over all its landed primaries on
-the stream's control card; `SyncMirrors` shows it in the cell. The sum is set
+(`cost`), the charged figure of the total the card carries (section 2, What a
+card cost), and sets the stream's sum over all its landed primaries on the
+stream's control card; `SyncMirrors` shows it in the cell. The sum is set
 from the cards, never added to: a replayed merge writes the same, and `clear`
 empties it with the tables.
 
@@ -217,15 +216,33 @@ card's `usage` holds the run that gave the verdict, and each run returned
 without one is kept as read_take_<n> (1 for the first), so a read asked again
 of a reader keeps every run it had (asked again in place at most
 `MaxReadReasks` times, a read card holds at most three such records, far
-under the 64 a reader looks for). `card <id>` prints a COST line for each
-consumer run that ended (kind, card, attempt, take, member or reader, route,
-model, end, the tokens, wait, run, predicted, actual and `actual_by`) and a
-COST TOTAL line, computed when it is printed from the consumers' records
-(`sprint.CardCost`): each class summed over the records that reported it, the
-times summed, and each cost summed over the records that hold it with how many
-did (`predicted_of=<n>/<consumers>`) and who reported the actual
-(`actual_by=harness`); `--json` carries the same value as `cost`. A figure not
-known prints `-`, never 0.
+under the 64 a reader looks for).
+
+The cost is tracked in the card (the owner, 2026-10-01: "The cost needs to be
+tracked IN THE CARD"). In the same step that ends a consumer (a take finished ok
+or failed, a take the provider failed, a launch refused at staging when it
+reported a cost, a read ok or broken, a read returned without a verdict), the
+primary gets one record of it, `cost_record:<card>#<run>` (`#g<gen>` a work
+card's take, `#v` a read's verdict run, `#r<n>` a read's returned run n): its
+kind, card, attempt, take, generation, member or reader, route, model, end and
+time, and its usage record with the prices used. The same step updates the
+primary's total, `cost_total`: each class summed over the records that reported
+it, the times summed, each cost summed over the records that hold it with how
+many did, who reported the actual, and `charged_usd`, each record's actual cost
+where reported, else its predicted one. A record is set once per key, so a step
+planned again or replayed adds nothing twice. The history is bounded at 64
+records (`MaxCostRecords`): a record past it is still added to the total, and
+`cost_cut` counts the records the list left out. A read's records reach the
+primary from the read step, a change of the work table: while the machine runs,
+it waits in the work table's queue for the next tick's pump with the read's
+words, as a finish's change of its primary does. `card <id>` prints, from the
+primary alone, a COST line for each record (kind, card, attempt, take, member
+or reader, route, model, end, the tokens, wait, run, predicted, actual and
+`actual_by`) and a COST TOTAL line (`predicted_of=<n>/<consumers>`,
+`actual_by=harness`, `charged_usd`, and `cut=<n>` when the list was cut);
+`--json` carries the same value as `cost`. No reader or member removed, no read
+card retired and no consumer record cleaned up can lose cost: the record is
+already in the card. A figure not known prints `-`, never 0.
 
 ## 3. The lifecycle of a primary
 
@@ -466,14 +483,18 @@ id (`--op`) returns the original result, with no second counter or notification.
   at the attempt (the returned card retired, by `returned`), or, when none is
   free, of the same reader again, in place, so a reader whose launches failed
   is not counted as having read the attempt (tla/DirtyTick.tla,
-  JudgedOnlyAfterTheBound). A read card is asked again in place at most
-  `MaxReadReasks` (2) times at its attempt (its `reasked` field); a return
-  after that is counted as a read: the card is retired (by `returned`), and a
-  primary no reader is left to read is the ask's `cannot ask` judgment, for the
-  coordinator (reader add, rework, drop; tla/DirtyTick.tla, ReasksBounded and
-  StrandingIsJudged). Its member does not begin a read it returned
-  again before `member.ReadStageRetry`. A return of a read the caller does not
-  hold is refused. With fewer than two readers up the tick
+  JudgedOnlyAfterTheBound). Each return counts itself on the read card (its
+  `reasked` field, moved by `read --return`, whatever the tick does and
+  however many readers are up), and a read card goes back to asked at most
+  `MaxReadReasks` (2) times at its attempt; the return after that is counted
+  as a read: the card is retired (by `returned`), and a primary no reader is
+  left to read is the ask's `cannot ask` judgment (or, with fewer than two
+  readers up, `fewer than two readers up`), for the coordinator (reader add,
+  rework, drop; tla/DirtyTick.tla, ReasksBounded and StrandingIsJudged). Its
+  member does not begin a read it returned again before
+  `member.ReadStageRetry`. A return of a read the caller does not hold is
+  refused, and so is a second return of a read returned and not begun since:
+  a return is counted once. With fewer than two readers up the tick
   asks none: it raises one judgment, `fewer than two readers up: <readers and
   their states>`, for the sprint (not one for each primary), closed when two
   are up or no primary waits; `reader up` and `reader add` answer it.
@@ -574,6 +595,11 @@ accepts.
 and is given its facts by the caller (what merged, what conflicted, ci result);
 it never decides. Causes of a stop: conflict on a card; stream branch red; a
 card needs a card of another stream first; the merge queue rejected.
+
+`land` is the coordinator's landing step as one command (section 11): it
+merges each batch's heads in work order onto a branch cut from the base, checks
+and pushes it, and reports it through this merge step, with the facts above
+when it cannot; it adds no state of its own.
 
 A cross-stream need is recorded as data on the stuck card (the needed card and
 its stream); it is resolved when that card has landed, and ranking the needed
@@ -908,7 +934,7 @@ result; recorded for another verb or other arguments it is a conflict and is
 refused), `--json` and `--max`. `--actor` has no default: it is `--actor`, else
 NOVA_SPRINT_ACTOR, and a verb that writes with neither is refused. Every verb
 has one class of who may run it. The coordinator's verbs (init, add, quack, release,
-resolve, start, stop, ask, accept, rework, return, drop, rank, resume, fleet
+resolve, start, stop, ask, accept, rework, return, drop, rank, resume, land, fleet
 up, fleet down, fleet level, reader add, reader away, reader up, reader remove, wait, ack, clear, teardown, repair,
 goal set, goal drop, play) are the sprint's coordinator's alone: the first
 init names the coordinator (`--coordinator`, else the actor), a later init is
@@ -956,6 +982,7 @@ command that loads it.
 | drop | off the table with the reason |
 | rank | changes a score and every copy |
 | merge | one mechanical merge step for a stream: `--batch n`, given facts; `--red [--suspect <id>...]` |
+| land | the coordinator's landing step as one command, an external delivery (a git push) and a store write (the merge step): for each stream named (`--stream`, again for more; default every stream with cards queued and not stopped), in stream order, the merge queue up to its first stuck card, in work order, cut into batches of consecutive cards whose briefs name one repository and one base (`REPO:` and `BASE:`, read as staging reads them; `--base` for a card naming none); each batch's heads merged `--no-ff` with the message `land <id> (sprint stream <s>)` onto a branch cut from the base's tip on origin, in a clone (`--repo-dir`, else a clone kept under the directory each line names, its name the readable repository and a hash of it; every clone reused has its origin's fetch URL and its one push URL held to the repository the cards name before any git, the host compared without case and the path with it); a caller's `--epoch` the sprint has left refused before any git; `--check <command>` run once per batch in the clone before the push; the queue head, its heads and attempts, and the epoch read again just before each push; the push plain, never forced, and on a rejection the base fetched and the batch rebuilt on its new tip once; then the batch reported by the merge step `merge --stream s --batch n` runs, fenced to the epoch land read and guarded in the same store step to plan only while the queue still starts with the batch's cards at the heads and attempts land read and pushed (a rework keeps a card's id and epoch, not its head); the pins are the step's arguments, so an `--op` replay returns only that batch's receipt. A head that is not a commit on origin or whose merge stops on unmerged paths ends its batch before it, the cards before it land, and it is reported with `--conflict` and git's words as the note; git failing for any other reason (an identity, a hook, the disk, the network) blames no card: nothing is pushed or reported and the batch is refused; a check that fails, with `--red`, nothing pushed; a second rejected push, with `--rejected`. A push that landed and a report that did not (a clear, a card accepted ahead of the batch, a return, between the two) is `LAND FAILED`, exit 2, and the one remedy named is to run land again, which rereads the queue and lets its own checks decide: a card as it was is recorded with no new push (its merges and push are no-ops), a card reworked since is merged at its new head or meets a real conflict, and after a clear there is nothing to report (tla/Land.tla). A bare `merge --batch n` is never offered: after a rework the queue starts with the same ids at a head the base does not hold, and the merge step alone would record it. One line per batch, `LAND OK|REFUSED|FAILED stream= cards= base= tip= ids=<first>..<last>`, then `LAND DONE batches= cards= refused=`; `--dry-run` reads the store only and changes nothing; `--json` |
 | resume | a stopped stream moves again, with what was done; refused while a cause is unresolved |
 | fleet | `up|down <member>`, `level` |
 | reader add | declares readers |

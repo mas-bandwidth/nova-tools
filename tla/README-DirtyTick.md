@@ -120,10 +120,10 @@ Each witness turns on one broken rule (`Broken`); its control is the unbroken co
 | W21 | the ask has no guard on the reader being up: a read is placed on a reader away (the readers row with no reader process) | `ReadsStandOnReadersUp` | 30 |
 | W22 | a reader that goes away keeps its reads (a read sat asked of it) | `ReadsStandOnReadersUp` | 66 |
 | W24 | a read returned is asked again and kept by its reader (the read that sat held for two hours) | `NothingLost` | 49 |
-| W25 | a read returned is counted as a read: the reader that returned it, the only one, is judged "cannot ask" with no re-ask (93 cards stranded in review on 2026-10-01) | `JudgedOnlyAfterTheBound` | not yet run |
-| W26 | a returned read is asked again in place with no bound (a reader that never launches returns it every few seconds for ever, no judgment) | `ReasksBounded` | not yet run |
-| W27 | a card no reader may be asked of is left waiting with no judgment | `StrandingIsJudged` | not yet run |
-| W28 | a read once returned is judged only when every reader is in `seen` of it: r1 returns it, is asked it again in place, its machine lapses, and the read waits with no reader up, silently | `StrandingIsJudged` | not yet run |
+| W25 | a read returned is counted as a read: the reader that returned it, the only one, is judged "cannot ask" with no re-ask (93 cards stranded in review on 2026-10-01) | `JudgedOnlyAfterTheBound` | 25 |
+| W26 | a returned read is asked again in place with no bound (a reader that never launches returns it every few seconds for ever, no judgment) | `ReasksBounded` | 589 |
+| W27 | a card no reader may be asked of is left waiting with no judgment | `StrandingIsJudged` | 680 |
+| W28 | a read once returned is judged only when every reader is in `seen` of it: r1 returns it, is asked it again in place, its machine lapses, and the read waits with no reader up, silently | `StrandingIsJudged` | 2,295 |
 
 The control of W24: `MCDirtyTickHandBack` (a read r1 holds, r1 returns it, and it is asked of r2 in the same update: 3,835 states before `seen` and `hb`), with one outside event (`MaxActs = 1`) for the reason given below for `MCDirtyTickReaderAway`: with two, m1's lapse after r1's return queues an `unread` from the host's stale count of reads, which the code's reads (no host) have no counterpart of.
 
