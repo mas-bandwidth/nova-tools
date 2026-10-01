@@ -23,6 +23,8 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/secrets"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const fakeRedisServer = "/opt/fake/bin/redis-server"
@@ -379,9 +381,8 @@ func TestServeFailuresHaveRemedies(t *testing.T) {
 		h.d.lookPath = func(string) (string, error) { return "", errors.New("not found") }
 		code, out, errb := h.run("serve", "--bind", "127.0.0.1", "--port", "6380", "--dir", h.dir)
 		const want = "SERVE FAIL err=redis-server not found on PATH: not found remedy=\"install redis-server or make its executable available on PATH for this process\"\n"
-		if code != 1 || out != "" || errb != want || len(h.launches) != 0 {
-			t.Fatalf("missing executable: exit %d stdout %q stderr %q launches %d", code, out, errb, len(h.launches))
-		}
+		require.True(t, code == 1 && out == "" && errb == want && len(h.launches) == 0,
+			"missing executable: exit %d stdout %q stderr %q launches %d", code, out, errb, len(h.launches))
 	})
 
 	t.Run("child failure", func(t *testing.T) {
@@ -393,14 +394,13 @@ func TestServeFailuresHaveRemedies(t *testing.T) {
 		code, out, errb := h.run("serve", "--bind", "127.0.0.1", "--port", "6380", "--dir", h.dir)
 		remedy := "run: ls -ld -- '" + strings.ReplaceAll(storeRoot, "'", "'\\''") + string(os.PathSeparator) + "store'\\''s space'; compare directory access and the explicit --bind/--port with the launch error and any redis-server output"
 		want := fmt.Sprintf("SERVE FAIL err=exit status 1 remedy=%q\n", remedy)
-		if code != 1 || errb != want || len(h.launches) != 1 {
-			t.Fatalf("child failure: exit %d stderr %q launches %d", code, errb, len(h.launches))
-		}
-		if h.launches[0].Dir != h.dir {
-			t.Errorf("launch directory %q differs from diagnostic directory %q", h.launches[0].Dir, h.dir)
-		}
-		if !strings.HasPrefix(out, "SERVE START bind=127.0.0.1 port=6380 ") || strings.Count(out, "\n") != 1 || strings.Contains(out, "SERVE STOP") || strings.Contains(out, "fixture-secret-only") {
-			t.Errorf("failed launch must report only START, without a success STOP or password: %q", out)
-		}
+		require.True(t, code == 1 && errb == want && len(h.launches) == 1,
+			"child failure: exit %d stderr %q launches %d", code, errb, len(h.launches))
+		assert.Equal(t, h.dir, h.launches[0].Dir,
+			"launch directory must match the diagnostic directory")
+		assert.True(t, strings.HasPrefix(out, "SERVE START bind=127.0.0.1 port=6380 ") &&
+			strings.Count(out, "\n") == 1 && !strings.Contains(out, "SERVE STOP") &&
+			!strings.Contains(out, "fixture-secret-only"),
+			"failed launch must report only START, without a success STOP or password: %q", out)
 	})
 }
