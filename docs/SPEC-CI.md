@@ -2763,6 +2763,15 @@ the original failed measurement.
 **Its remedy line.** each finding names the play or template, the task and what it reads or runs.
 **Its narrowings.** Variables are found by their prefixes (`nova_`, `loop_`, `ansible_`, `l.`) in the plays' uncommented text and the templates' Jinja blocks; a variable of another spelling is not read.
 
+### `sprint-tables-locked` — the four sprint tables change only with their lock file
+
+**The rule.** `internal/sprint/TABLES.lock` pins the work, readers, merge and fleet tables as `schema.go` defines them (one line per column: `table.column projection fold hidden`, with `label=` where the column has a header label, in table order) and the order the sprint view shows the tables in. A PR that changes any table's shape turns the test red until the lock file changes in the same PR, where a read sees it.
+**The mistake it prevents.** A `provider` column added to the fleet table that nobody asked for (PR 4986); the installed build then failed every tick on the real store. The maintainer, 2026-10-01: "i never want new things unless i ask for them" and "i dislike this drift from the design of nova sprint tables that is *complete and locked*."
+**The test.** `TestSprintTablesAreLocked` (`internal/ci/sprint_tables_lock_class_test.go`): renders the lock's text from `sprint.Names{}.Definitions()` and `sprint.ViewOrder` and compares it, line by line, to the lock file's lines (comments and blanks aside).
+**Its allowlist.** None.
+**Its remedy line.** `schema.go no longer matches internal/sprint/TABLES.lock; a PR that changes a table's shape changes the lock file in the same PR, where a read sees it`, then each differing line, the lock's and the schema's.
+**Its narrowings.** Column width (always 0 here) is not in the lock; a change to what a table holds that is not in its definition (a card's fields, a hidden column's contents) is not seen.
+
 ## How the class tests read the tree: one walk, one parse, in parallel
 
 Every rule above is a sweep of this repository's own source. A rule that pays

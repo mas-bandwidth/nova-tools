@@ -9,6 +9,11 @@
 // line (a process of its own, so at most once every TopEvery) and reads
 // vm.loadavg with sysctl, in Go. Elsewhere only a given value is known.
 //
+// A member does not measure at its beat: a Sampler takes the busy percent once a
+// second (Linux: /proc/stat counters, a read of a file; darwin: iostat, which takes
+// its own second at about 4 ms of CPU, where top costs 300) and a Ring keeps
+// the last ten, so the beat can carry the highest of them.
+//
 // Every read of the machine is a Source function, so a caller measures with
 // Local and a test with its own inputs; Measure is a pure function of the
 // source, the state the previous measurement left, and the clock.
@@ -61,6 +66,9 @@ type Source struct {
 	ProcStat func() (string, error)
 	// Top is the output of top's one-sample header (darwin).
 	Top func() (string, error)
+	// CPUSecond is the busy percent over the next second, taking that second
+	// (darwin: iostat). The Sampler's source where there is no ProcStat.
+	CPUSecond func() (float64, error)
 	// Load1 is the one-minute load average.
 	Load1 func() (float64, bool)
 }
@@ -172,8 +180,8 @@ func ParseTopCPU(s string) (float64, bool) {
 		for _, part := range strings.Split(strings.TrimPrefix(line, "CPU usage:"), ",") {
 			f := strings.Fields(part)
 			if len(f) == 2 && f[1] == "idle" {
-				idle, err := strconv.ParseFloat(strings.TrimSuffix(f[0], "%"), 64)
-				if err != nil || idle < 0 || idle > 100 {
+				idle, good := topPercent(f[0])
+				if !good || idle > 100 {
 					return 0, false
 				}
 				return 100 - idle, true
@@ -181,6 +189,26 @@ func ParseTopCPU(s string) (float64, bool) {
 		}
 	}
 	return 0, false
+}
+
+// topPercent is one of top's percents, "86.3%": top prints the hundredths as a
+// bare integer, so a leading zero is lost: 86.3 is 86.03, and 86.30 prints as
+// 86.30. The digits after the point are always the hundredths.
+func topPercent(w string) (float64, bool) {
+	whole, frac, _ := strings.Cut(strings.TrimSuffix(w, "%"), ".")
+	n, err := strconv.ParseUint(whole, 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	v := float64(n)
+	if frac != "" {
+		h, err := strconv.ParseUint(frac, 10, 64)
+		if err != nil || len(frac) > 2 {
+			return 0, false
+		}
+		v += float64(h) / 100
+	}
+	return v, true
 }
 
 // ParseProcLoadavg is the one-minute load average, the first field of
