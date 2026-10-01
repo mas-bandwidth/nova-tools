@@ -68,13 +68,10 @@ const FieldTakeEnded = "take_ended"
 // tla/DirtyTick.tla, RedealsAreEndedTakes). The work card keeps the last failure's line
 // (FieldProviderError, for the bound's judgment, cleared when it is dealt again) and a
 // record of every take the provider failed (FieldProviderTake, ProviderTake: the record
-// of that take, which `card` prints and the route stats count); the
-// member's control card counts the failures it reported (FieldProviderFailures, the
-// fleet table's provider column).
+// of that take, which `card` prints and the route stats count).
 const (
-	FieldProviderError    = "provider_error"
-	FieldProviderTake     = "provider_take_" // + the take's number, redeals + 1 when it ended
-	FieldProviderFailures = "provider_failures"
+	FieldProviderError = "provider_error"
+	FieldProviderTake  = "provider_take_" // + the take's number, redeals + 1 when it ended
 )
 
 // MaxProviderErrorBytes bounds the line FieldProviderError keeps.
