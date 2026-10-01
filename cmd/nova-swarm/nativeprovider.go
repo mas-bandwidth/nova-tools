@@ -192,3 +192,26 @@ func providerLine(label string, wall float64, model string, cause swarm.Provider
 	return fmt.Sprintf("NATIVE %s label=%s wall=%.2fs route=%s reason=%s",
 		providerClass, oneline.Field(label), wall, oneline.Field(model), oneline.Escape(cause.Reason()))
 }
+
+// printedHarnessError is the harness's own printed ERROR line about why the launch failed,
+// from its capture (OPENCODE_PRINT_LOGS): the catalog refusing the model first, else a
+// provider error line, trimmed to the line's own message; "" when there is none.
+func printedHarnessError(capture []byte) string {
+	var provider string
+	for _, line := range strings.Split(string(capture), "\n") {
+		if !strings.Contains(line, "level=ERROR") {
+			continue
+		}
+		if i := strings.Index(line, "message="); i >= 0 {
+			line = line[i:]
+		}
+		line = strings.TrimSpace(line)
+		if strings.Contains(line, "ProviderModelNotFoundError") && strings.Contains(line, "error=") {
+			return line
+		}
+		if provider == "" && providerErrorRE.MatchString(line) {
+			provider = line
+		}
+	}
+	return provider
+}

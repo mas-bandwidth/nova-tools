@@ -194,7 +194,7 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	if *diskFloor > 0 {
 		room = diskRoom(*slots, *diskFloor, diskFree)
 	}
-	m := member.New(member.Config{As: *as, Width: *width, Reader: *reader, Meter: meter, Room: room}, sp, rn, pu, stdout)
+	m := member.New(member.Config{As: *as, Width: *width, Reader: *reader, Meter: meter, Room: room, Sleep: time.Sleep}, sp, rn, pu, stdout) // Sleep: harness starts StartGap apart
 	kind := "member"
 	if *reader {
 		kind = "reader"
@@ -208,6 +208,8 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 		modelWord = "card,override:" + *model
 	}
 	fmt.Fprintf(stdout, "MEMBER %s as=%s width=%s every=%s sprint=%s harness=%s model=%s\n", oneline.Field(kind), oneline.Field(*as), oneline.Field(widthWord), oneline.Field(every.d.String()), oneline.Field(*sprintBin), oneline.Field(*harness), oneline.Field(modelWord))
+	// the machine's one model catalog, refreshed once here and never per launch (catalog.go)
+	fmt.Fprintf(stdout, "CATALOG %s\n", oneline.Escape(refreshCatalog(*harness, *root)))
 	if note := passNote(*model, pass, *auth); note != "" {
 		fmt.Fprintln(stdout, note)
 	}
