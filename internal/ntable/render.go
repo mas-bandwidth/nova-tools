@@ -367,7 +367,8 @@ func countValue(cols []Column, r Row, j int) (int64, bool) {
 }
 
 // formulaText prints a formula cell: a sum as a count; a percentage with one
-// decimal ("33.3%"), "0.0%" when its denominator is known to be zero, "?"
+// decimal ("33.3%"), "-" when its denominator is known to be zero (nothing to
+// measure: the owner, 2026-10-01, "It is noise to show 0.0%"), "?"
 // when a count it reads did not come back (Stella's read of #4456: an unread
 // dependency propagates; pct(<col>) reads every count column of the row).
 func formulaText(cols []Column, c Column, r Row, j int) string {
@@ -377,6 +378,9 @@ func formulaText(cols []Column, c Column, r Row, j int) string {
 			return "?"
 		}
 		return strconv.FormatInt(v, 10)
+	}
+	if _, total, ok := shareCounts(cols, c, r); ok && total == 0 {
+		return "-"
 	}
 	v, ok := formulaValue(cols, c, r)
 	if !ok {

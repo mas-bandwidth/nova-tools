@@ -905,3 +905,12 @@ func (r *Redis) ReadView(ctx context.Context, tables []string) (View, error) {
 }
 
 var _ ViewReader = (*Redis)(nil)
+
+// RowsOrder puts the named rows first, in that order, through the table
+// layer's row order.
+func (r *Redis) RowsOrder(ctx context.Context, table string, rows []string) error {
+	_, err := ntable.Set(ctx, r.C, table, ntable.SetOpts{RowOrder: rows}, r.writeOpts())
+	return err
+}
+
+var _ RowsOrderer = (*Redis)(nil)
