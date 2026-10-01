@@ -12,7 +12,7 @@ SPRINT TABLE
 
 3011/33011 9.1% -> ETA
 
-work  | waiting | ready | working | review | merging | landed
+work  | waiting | ready | working | review | merging | landed | cost
 readers | asked | reading | ok | broken
 merge | queued | merged | stuck | ci | state
 fleet | ready | working | width | done | ok% | status | load
@@ -24,6 +24,24 @@ fleet | ready | working | width | done | ok% | status | load
 | readers | readers | read cards | the reads of primaries in review |
 | merge | streams | primaries | merging, made visible |
 | fleet | fleet members | work cards | the swarm across machines |
+
+The work table's last column, `cost` (the owner, 2026-10-01: "can you please
+add a final column to the work stream table, which is "cost". This is the sum of
+each landed card's total cost for that work stream, and then a total at the
+bottom."), is a stream's landed cards' cost: the sum, over its landed primaries,
+of each one's total, which is, over its consumers (section 2, What a card cost),
+each one's actual cost where one was reported, else its predicted one, a
+consumer with neither adding nothing. It is in US dollars to four places
+(`$1.2345`), `-` for a stream with no priced landed card, and the footer is the
+sum over the streams, in exact decimals end to end. A stream with some unpriced
+landed cards shows the sum of the priced ones; `nova-sprint card <id>` and its
+JSON carry the detail. The merge that lands a primary writes its total on it
+(`cost`), from every one of its consumers' records, read with the step (the
+fleet and readers tables and the kept records of the consumers of the stream's
+merging primaries), and sets the stream's sum over all its landed primaries on
+the stream's control card; `SyncMirrors` shows it in the cell. The sum is set
+from the cards, never added to: a replayed merge writes the same, and `clear`
+empties it with the tables.
 
 The view shows work, readers, merge, fleet in that order. The one line under
 the title is the word `STOPPED` when the machine is stopped, and the summary
@@ -197,7 +215,9 @@ own ended take (finish), and a take the provider failed is in its
 provider_take_<n> record alone, so a redealt card never counts it twice; a read
 card's `usage` holds the run that gave the verdict, and each run returned
 without one is kept as read_take_<n> (1 for the first), so a read asked again
-of a reader keeps every run it had. `card <id>` prints a COST line for each
+of a reader keeps every run it had (asked again in place at most
+`MaxReadReasks` times, a read card holds at most three such records, far
+under the 64 a reader looks for). `card <id>` prints a COST line for each
 consumer run that ended (kind, card, attempt, take, member or reader, route,
 model, end, the tokens, wait, run, predicted, actual and `actual_by`) and a
 COST TOTAL line, computed when it is printed from the consumers' records
@@ -438,11 +458,22 @@ id (`--op`) returns the original result, with no second counter or notification.
   owed, and the next reader up that has no read card at that attempt is asked.
   A read begun stays with its reader, except one its reader returns with no
   verdict (`read --as <reader> --return <card> --reason <text>`: its launch
-  did not run, or it gave no verdict): the read card is retired (by
-  `returned`) as one taken back is, one happened note `a reader returned a
-  read` carries the reader, the card and the reason, no finding counts against
-  the work, and the next tick asks it of another reader up at the same
-  attempt; a return of a read the caller does not hold is refused. With fewer than two readers up the tick
+  did not run, or it gave no verdict). A return is not a read: the read card
+  goes back to asked on its reader's row, stamped `returned`, one happened
+  note `a reader returned a read` carries the reader, the card and the
+  reason, no finding counts against the work and no bound of the primary is
+  spent, and the next tick asks it of another reader up that has no read card
+  at the attempt (the returned card retired, by `returned`), or, when none is
+  free, of the same reader again, in place, so a reader whose launches failed
+  is not counted as having read the attempt (tla/DirtyTick.tla,
+  JudgedOnlyAfterTheBound). A read card is asked again in place at most
+  `MaxReadReasks` (2) times at its attempt (its `reasked` field); a return
+  after that is counted as a read: the card is retired (by `returned`), and a
+  primary no reader is left to read is the ask's `cannot ask` judgment, for the
+  coordinator (reader add, rework, drop; tla/DirtyTick.tla, ReasksBounded and
+  StrandingIsJudged). Its member does not begin a read it returned
+  again before `member.ReadStageRetry`. A return of a read the caller does not
+  hold is refused. With fewer than two readers up the tick
   asks none: it raises one judgment, `fewer than two readers up: <readers and
   their states>`, for the sprint (not one for each primary), closed when two
   are up or no primary waits; `reader up` and `reader add` answer it.
@@ -468,7 +499,7 @@ id (`--op`) returns the original result, with no second counter or notification.
   A read whose stage fails (the head could not be checked out) is never a verdict: its member
   runs the read again once, after `member.ReadStageRetry`; a second stage failure is returned
   (`read --as <reader> --return <card> --reason <the stage's reason>`), and the next tick asks
-  another reader.
+  it again as above.
 - The read that completes two different readers' ok at a primary's head writes
   the judgment ready to accept; accept, rework and drop close it.
 - The machine's tick accepts every acceptable primary in review whose work did
@@ -938,7 +969,7 @@ command that loads it.
 | ack | closes a judgment the coordinator looked at, with the reason |
 | inbox | every open judgment and the notifications since the cursor, grouped, judgment first; `--open <id>`, `--read`; `--json` carries `judgments` (each with `id`, `kind`, `type`, `what`, `stream`, `size`, `cards` whole, `notes`, and `answers`: every decision with the exact command lines that make it, in order), `happened` (the notifications since the cursor, grouped), `done` (the machine has stopped because the sprint is done) and `groups`, every group in the order the text prints; `--wait --timeout <d>` blocks for the next tick end, and `--json` then also carries `woke` (false when the timeout ended the wait, with `inbox --wait: no tick end in <d>` on stderr and stdout still one JSON object; the plain rendering prints that line on stdout) |
 | card | one primary's story, told from the log: for a card in flight, first what holds it now (each open judgment with the commands that answer it, or the actor and its deadline); its place in its stream's line; its brief, and the fix its attempt was given; its timeline in local time, an attempt at a time ("attempt 2, because attempt 1 failed"), one line per event a person would name (two readers asked, a merge and its batch, a step and its answer are one line each), a finish and a read with the first line of their words; the reports, findings and fixes whole as paragraphs; a card that has ended says so in one line; a COST line per consumer that ended and the COST TOTAL (section 2, What a card cost); `--fields` prints every field of the primary and its cards instead; `--json` carries both, the timeline's events with the log lines each tells, and the cost |
-| queue --as, take | a member's or a reader's cards (a reader's `queue --as` is its beat), each with its packet: what it is handed so that it needs no other read to learn its task (the card, its epoch and generation, the brief, this attempt's fix, the notes on it, for a rework the finding of the read that found the attempt before broken and why that attempt ended (the work card's own words: the primary's are written at the next tick's drain, after a member may have taken the card), and for a work card the branch to work on, `sprint/<card>.e<epoch>` (the epoch makes it one per epoch: a card id comes back after a clear), and the one to start from, the attempt before's branch for a rework, with `base_head`, the head that attempt finished ok at, which a rework is staged from (docs/SPEC-CARD-CONTRACT.md: never a branch name alone, which may never have reached origin); for a read card the work it reads: the worker, its head, branch and base, and the worker's report), and the command that reports it; take prints the packets of the cards it took, `--json` as `packets`; finish takes `--branch` and `--base`, which the work card keeps and the reader's packet and card show; a fleet member (`nova-swarm member`) pushes the child's commit to origin's `sprint/<card>.e<epoch>` before its finish, so the finish's `--head` is the pushed sha the merge queue carries and the merge reads the work from origin; a finish is ok only with the result's shape, its verdict ok and a pushed commit, and every other is a `--failed` finish naming no head and no branch, its report starting with the reason (`no RESULT.md shape`, `nothing to do: <why>`, `verdict <word>`, `no commit: <why>`, `push refused: <git's line>`), so it opens the failed-work judgment and never goes to review with nothing to read (docs/SPEC-CARD-CONTRACT.md section 4) |
+| queue --as, take | a member's or a reader's cards (a reader's `queue --as` is its beat), each with its packet: what it is handed so that it needs no other read to learn its task (the card, its epoch and generation, the brief, this attempt's fix, the notes on it, for a rework the finding of the read that found the attempt before broken and why that attempt ended (the work card's own words: the primary's are written at the next tick's drain, after a member may have taken the card), and for a work card the branch to work on, `sprint/<card>.g<gen>.e<epoch>` (the epoch makes it one per epoch, a card id coming back after a clear, and the generation one per launch, a card dealt again within an epoch, withdrawn from a member or redealt after a staging or provider failure, being another launch whose push must not meet the first's), and the one to start from, the attempt before's branch for a rework, with `base_head`, the head that attempt finished ok at, which a rework is staged from (docs/SPEC-CARD-CONTRACT.md: never a branch name alone, which may never have reached origin); for a read card the work it reads: the worker, its head, branch and base, and the worker's report), and the command that reports it; take prints the packets of the cards it took, `--json` as `packets`; finish takes `--branch` and `--base`, which the work card keeps and the reader's packet and card show; a fleet member (`nova-swarm member`) pushes the child's commit to origin's `sprint/<card>.g<gen>.e<epoch>` before its finish, so the finish's `--head` is the pushed sha the merge queue carries and the merge reads the work from origin; a finish is ok only with the result's shape, its verdict ok and a pushed commit, and every other is a `--failed` finish naming no head and no branch, its report starting with the reason (`no RESULT.md shape`, `nothing to do: <why>`, `verdict <word>`, `no commit: <why>`, `push refused: <git's line>`), so it opens the failed-work judgment and never goes to review with nothing to read (docs/SPEC-CARD-CONTRACT.md section 4) |
 | log | the epoch's log, every line in order: --card (a primary with its work, read and merge cards), --stream, --member, --since, --at-epoch, --json (section 17) |
 | check, repair | section 9 and section 10 |
 | where | the view, once or `--watch` (redrawn in place, section 1); `--json` also carries the pending operation, the stalled streams, the people and the coordinator |

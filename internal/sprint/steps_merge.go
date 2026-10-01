@@ -3,6 +3,8 @@ package sprint
 import (
 	"fmt"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 )
 
 // MergeReq is one mechanical merge step for a stream, given its facts by the
@@ -245,6 +247,26 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 				ctlSet["state"], ctlSet["since"] = StreamWaiting, now
 			}
 		}
+		// What each card cost, written on it as it lands (cost.go, FieldCost), and the
+		// stream's sum over every landed card, set on its control card, which the work
+		// table's cost column shows (Cost): a sum of the cards, set, never added to, so
+		// a replay writes the same and a clear empties it with the tables.
+		costs := map[string]string{}
+		sum := []string{}
+		for _, pr := range s.Work.Cell(r.Stream, Landed) {
+			if v := pr.F(FieldCost); v != "" {
+				sum = append(sum, v)
+			}
+		}
+		for _, c := range landing {
+			if v := landingCost(s, s.Work.Placed(c.ID)); v != "" {
+				costs[c.ID] = v
+				sum = append(sum, v)
+			}
+		}
+		if total, ok := cardcost.Sum(sum...); ok && len(sum) > 0 && total != ctl.F(FieldCost) {
+			ctlSet[FieldCost] = total
+		}
 		for i, c := range landing {
 			u := Unit{Key: c.ID, Stream: r.Stream}
 			if i == 0 {
@@ -252,7 +274,11 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 				u.Notes = notes
 			}
 			u.Changes = append(u.Changes, change(Merge, moveEntry(c, r.Stream, Merged, map[string]string{"merged": now})))
-			u.Changes = append(u.Changes, change(Work, moveEntry(s.Work.Placed(c.ID), r.Stream, Landed, map[string]string{"ci": "green", "landed": now})))
+			set := map[string]string{"ci": "green", "landed": now}
+			if v := costs[c.ID]; v != "" {
+				set[FieldCost] = v
+			}
+			u.Changes = append(u.Changes, change(Work, moveEntry(s.Work.Placed(c.ID), r.Stream, Landed, set)))
 			u.Moved = c.ID + " merging -> landed"
 			p.Units = append(p.Units, u)
 		}
