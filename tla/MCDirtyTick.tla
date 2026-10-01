@@ -29,7 +29,7 @@ Queues(w, r, g, f) == [t \in Tables |-> CASE t = "work" -> w [] t = "readers" ->
 NoReads == [c \in Cards |-> NoR]
 Empty == [m \in Machines |-> {}]
 Base == [col |-> [c \in Cards |-> "none"], rd |-> NoReads, mq |-> {}, up |-> Machines \cup Readers,
-         live |-> Machines \cup Readers, away |-> FALSE,
+         live |-> Machines \cup Readers, away |-> FALSE, misses |-> FALSE,
          mc |-> Empty, mr |-> Empty, q |-> Queues(Adds, <<>>, <<>>, <<>>), served |-> Cards]
 
 \* Every card added (its add queued), every machine up: the whole life.
@@ -59,6 +59,11 @@ ScnLapse == [Base EXCEPT !.live = {}, !.col = [c \in Cards |-> "review"], !.rd =
                          !.mr = [m \in Machines |-> IF m = "m1" THEN {"c1"} ELSE {}],
                          !.q = Queues(<<>>, <<>>, <<>>, <<E("lapse", "-", "m1")>>)]
 
+\* c1 dealt to m1; m1 beats, may miss beat windows and beat again, and lapses
+\* only after Misses of them in a row (the missed beats).
+ScnMiss == [Base EXCEPT !.misses = TRUE, !.col = [c \in Cards |-> "working"],
+                        !.mc = [m \in Machines |-> IF m = "m1" THEN {"c1"} ELSE {}],
+                        !.q = Queues(<<>>, <<>>, <<>>, <<>>)]
 \* c1 dealt to m1 and not taken; its worker may take it, and the machines
 \* may lapse and beat again: the redeals.
 ScnTake == [Base EXCEPT !.col = [c \in Cards |-> "working"],

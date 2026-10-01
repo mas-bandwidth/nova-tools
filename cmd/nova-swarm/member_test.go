@@ -15,6 +15,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
 	"github.com/mas-bandwidth/nova-tools/internal/member"
+	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
@@ -586,4 +587,15 @@ func TestAMemberWithNoPassSaysSo(t *testing.T) {
 	assert.Empty(t, passNote("anthropic/claude-x", []string{"ANTHROPIC_API_KEY"}, ""))
 	assert.Empty(t, passNote("anthropic/claude-x", nil, "/auth.json"))
 	assert.Empty(t, passNote("ollama/qwen3", nil, ""))
+}
+
+// The member's sprint verbs (beat, queue) run as nova-sprint, whose store
+// client bounds each command by redisconn's read and write timeouts: at least
+// five seconds, the least a tailnet round trip with jitter needs
+// (docs/SPEC-SPRINT.md section 5, the rule that one timed-out round trip is
+// one missed beat and never a down member). Shortening either fails this.
+func TestAMemberVerbsStoreDeadlineIsAtLeastFiveSeconds(t *testing.T) {
+	t.Parallel()
+	assert.GreaterOrEqual(t, redisconn.ReadTimeout, 5*time.Second)
+	assert.GreaterOrEqual(t, redisconn.WriteTimeout, 5*time.Second)
 }
