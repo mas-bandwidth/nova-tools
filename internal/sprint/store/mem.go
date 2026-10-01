@@ -107,7 +107,7 @@ type memChange struct {
 type memEpoch struct {
 	rows  []string
 	texts map[string]map[string]string
-	props map[string]string // the table's properties (L1 contract amendment, table properties)
+	props map[string]string // the table's properties (docs/SPEC-NOVA-TABLE.md)
 }
 
 type memMember struct {

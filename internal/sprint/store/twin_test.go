@@ -160,7 +160,7 @@ func TestATwinReadCutShortLeavesNoTableHalfRead(t *testing.T) {
 	require.Equal(t, gen.Gen, at, "fresh read: %v at %d, twin at %d", err, at, gen.Gen)
 	d := TwinDiff(snap, fresh)
 	require.Empty(t, d, "the twin after a cut read: %s", d)
-	require.NotEmpty(t, snap.Merge.LoadedCards(), "the merge table is empty: the check shows nothing")
+	require.NotEmpty(t, snap.Merge.Cards(), "the merge table is empty: the check shows nothing")
 }
 
 // The exchanges of one writing part of the tick, by kind, after another
