@@ -1220,4 +1220,4 @@ internal/ci/testdata/okonfailure_allowlist.txt the zero-row ledger uses an empty
 internal/ci/testdata/remedy_allowlist.txt counted rows move without growth into per-package shards; the same class scanner and shrink-only update remain
 internal/ci/testdata/scripthide_allowlist.txt counted rows move without growth into per-package shards; the same class scanner and shrink-only update remain
 internal/ci/testdata/testify_allowlist.txt counted rows move without growth into per-package shards; the same class scanner and shrink-only update remain
-internal/sprint/route_test.go the weighted draw's salt-parity test goes with the draw and the splitmix64 mixer: the deal takes a tier's route by a rolling index modulo its array, pinned in internal/sprint/store/route_test.go
+internal/sprint/route_test.go the weighted draw's salt-parity test goes with the weighted draw and its mixer: the deal takes a tier's route by a rolling index modulo its array, pinned in internal/sprint/store/route_test.go
