@@ -335,42 +335,44 @@ stamps are set. Nothing about the fleet's configuration lives only in Redis.
 ## Ansible inventory
 
 ```
-export NOVA_PG_DSN=postgres://nova_config@127.0.0.1:5432/nova
+nova-config inventory --fixture fleet/testdata/inventory-fixture.yml
+export NOVA_SPRINT_REDIS=127.0.0.1:6379
 nova-config inventory
 ```
 
-`inventory` reads Postgres and prints an Ansible dynamic JSON inventory: the
-groups `all` and `benches` (every machine row), `coordinator` and `store`
-(the machines the fleet row names; empty when it names none) and `runners`
-(every machine with at least one runner), and every host's variables under
-`_meta.hostvars`. On a store that is not migrated, or is at an older schema,
-the verb exits 1 with `run: nova-config migrate`. On a store
-migrated ahead of the binary it exits 1 with
-`this nova-config is older than the store` and names the schema version a
-`nova-config` must reach. The machine rows are the one machine list;
-there is no second one. Each host's variables are `ansible_host`,
-`ansible_user` (the row's user, the name ansible reads for the login),
-`nova_seat` (the row's seat), `slots`, `runners` and `kind=machine`; each value
-has one name, and a user or seat that is empty is left out. A deployment maps
-`nova_seat` to its own variable name in its `group_vars`. The machine rows and
-the fleet row are read in one transaction.
+`inventory` reads the applied state, the Redis view `apply` writes, and
+never Postgres: the machines (`machines`, `machine:<m>`, its ceiling), the
+fleet row, the loops (`loops`, `loop:<name>`), each machine's beat and
+`config:decl`'s revisions, in two round trips. It prints an Ansible dynamic
+JSON inventory: the groups `all` and `benches` (every machine),
+`coordinator`, `store` and `store_deployer` (the machines the fleet row names;
+`store_deployer` is the coordinator machine) and `runners` (every machine with
+at least one runner), and every host's variables under `_meta.hostvars`. The
+machine rows are the one machine list; there is no second one. Each host's
+variables are `ansible_host`, `ansible_user` (the row's user, the name ansible
+reads for the login), `nova_seat` (the row's seat), `slots`, `runners`,
+`kind=machine`, `nova_os` and `nova_arch` from its beat when it has one, and
+`nova_loops`, its loop records, once the loop kind has been applied; each
+value has one name, and a user or seat that is empty is left out. A deployment
+that wants another name for `nova_seat` maps it in its `group_vars`.
+`all.vars` holds `nova_store` and `nova_config_rev`. `--fixture <file>` reads
+the same rows from a YAML or JSON file and opens no store.
 
-The machine the command runs on is named by the env `NOVA_MACHINE` (an empty value counts as unset), matched by
-exact machine name; when no machine row has that name the verb exits 1 with
-the known names. When `NOVA_MACHINE` is unset, the lower-cased first label of
-the hostname (machine names are lower-case) is matched the same way, and nothing is marked local when no row has it. The
+The machine the command runs on is named by the env `NOVA_MACHINE` (an empty
+value counts as unset), matched by exact machine name; when no machine row has
+that name the verb exits 1 with the known names. When `NOVA_MACHINE` is unset,
+the lower-cased first label of the hostname (machine names are lower-case) is
+matched the same way, and nothing is marked local when no row has it. The
 matched row gets `ansible_connection=local`, so ansible reaches it without
 ssh.
 
 `--list` prints all of it and is the default when no flag is given. `--host
 <name>` prints one machine's variables; a name with no machine row exits 1 with
-the known names, and `--list` with `--host` is refused.
-`--timeout` (a Go duration, default `10s`) bounds the wait for the store, so an
-unattended ansible run never blocks on a locked table: on expiry, at the connection,
-the schema check or the read, the verb exits 2 with `timed out after <d>
-waiting for the store while <stage>`, what to check, and the command to repeat
-with a longer timeout; a connection the store refuses outright keeps the
-generic refusal.
+the known names, and `--list` with `--host` is refused. `--timeout` (a Go
+duration, default `10s`) bounds the wait for the store, so an unattended
+ansible run never blocks: on expiry the verb exits 2 with `timed out after <d>
+waiting for the store at <addr> while <stage>` and the command to repeat with a
+longer timeout.
 
 Ansible's `-i` wants an executable file whose first line, `#!/bin/sh`, is at
 column one. These two commands write the two-line wrapper and make it
@@ -385,16 +387,14 @@ ANSIBLE_INVENTORY_UNPARSED_FAILED=true ansible-inventory -i ./nova-inventory --l
 The variable matters: without it, ansible hides a failing inventory script.
 When the wrapper exits non-zero (`nova-config` missing from the PATH, a
 `nova-config` without the verb, an unknown `NOVA_MACHINE`, a store that is
-down, a timeout, an unmigrated schema), `ansible-inventory` and
-`ansible-playbook` log a warning, use an empty inventory and exit 0, so a
-playbook does nothing. `ANSIBLE_INVENTORY_UNPARSED_FAILED=true` in the
-environment, or `[inventory] unparsed_is_failed = True` in `ansible.cfg`, makes
-the same run exit non-zero.
-
-Ansible starts the script with `--list`. Every host's variables are in the
-`_meta.hostvars` of that output, so ansible does not call `--host <name>`. The
-script reads `NOVA_PG_DSN` and `NOVA_PG_PASSWORD_ENV` from the environment
-ansible passes it, and `NOVA_MACHINE`.
+down, a timeout), `ansible-inventory` and `ansible-playbook` log a warning,
+use an empty inventory and exit 0, so a playbook does nothing.
+`ANSIBLE_INVENTORY_UNPARSED_FAILED=true` in the environment, or `[inventory]
+unparsed_is_failed = True` in `ansible.cfg`, makes the same run exit non-zero.
+Ansible starts the script with `--list`; every host's variables are in its
+`_meta.hostvars`, so ansible does not call `--host <name>`. The script reads
+`NOVA_SPRINT_REDIS` and `NOVA_MACHINE` from the environment ansible passes it.
+The plays that read it are [FLEET.md](../FLEET.md)'s.
 
 ## What is deliberately not here
 
