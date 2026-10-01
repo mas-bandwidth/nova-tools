@@ -32,7 +32,5 @@ func TestToCIStepsThisProcessDownToNice(t *testing.T) {
 // change of policy, made on purpose with the class test that reads it.
 func TestNiceIsFifteen(t *testing.T) {
 	t.Parallel()
-	if Nice != 15 {
-		t.Fatalf("Nice = %d, want 15 (nova-tools#4293)", Nice)
-	}
+	require.Equal(t, 15, Nice, "Nice = %d, want 15 (nova-tools#4293)", Nice)
 }

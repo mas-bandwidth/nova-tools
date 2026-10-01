@@ -22,10 +22,10 @@ import (
 // nice (`ps -o ni=`), the same on darwin and Linux.
 func TestChildrenFromEveryGoroutineInheritNice(t *testing.T) {
 	t.Parallel()
-	if n, err := currentNice(); err != nil {
-		t.Fatal(err)
-	} else if n > Nice {
-		t.Skipf("already at nice %d, above %d", n, Nice)
+	before, err := currentNice()
+	require.NoError(t, err)
+	if before > Nice {
+		t.Skipf("already at nice %d, above %d", before, Nice)
 	}
 	require.NoError(t, ToCI(), "ToCI")
 	const goroutines = 16
@@ -44,9 +44,7 @@ func TestChildrenFromEveryGoroutineInheritNice(t *testing.T) {
 	for i := range got {
 		require.NoError(t, errs[i], "child %d: nice: %v", i, errs[i])
 		n, err := strconv.Atoi(got[i])
-		if err != nil {
-			t.Fatalf("child %d printed %q, not a nice value", i, got[i])
-		}
+		require.NoError(t, err, "child %d printed %q, not a nice value", i, got[i])
 		assert.Equal(t, Nice, n, "child %d runs at nice %d, want %d: a thread of this process was not niced", i, n, Nice)
 	}
 }
