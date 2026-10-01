@@ -98,6 +98,14 @@ func ReadModel(brief string) (m Model, why string) {
 // run: the member writes it (member.Judge) and the sprint's route stats count it.
 const EndProvider = "provider failure"
 
+// EndNoResult is how a member's failed finish begins when its child ended, by itself and
+// within its budget and deadline, having written no result at all (no RESULT.md shape):
+// no work came back, so the sprint deals the card again on another route, within the
+// redeal bound, as it does a take the provider failed, and judges nothing (the owner,
+// 2026-10-01, on six such judgments in one pass: "that's fine with me."). Work that came
+// back and is wrong is still the coordinator's to judge.
+const EndNoResult = "no result"
+
 // IsModelID says id is `<provider>/<model>`: a provider word with no slash, then a
 // model name that may hold slashes of its own, neither empty, no blank or tab.
 func IsModelID(id string) bool {

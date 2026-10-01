@@ -1033,7 +1033,11 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		}
 		pr := s.Work.Placed(c.F("primary"))
 		if r.Failed && IsProviderFailure(r.Report) {
-			p.Units = append(p.Units, providerEnded(s, c, pr, r))
+			p.Units = append(p.Units, takeEnded(s, c, pr, r, cardhdr.EndProvider))
+			continue
+		}
+		if r.Failed && IsNoResult(r.Report) {
+			p.Units = append(p.Units, takeEnded(s, c, pr, r, cardhdr.EndNoResult))
 			continue
 		}
 		if r.Failed && IsStagingRefusal(r.Report) {
@@ -1116,18 +1120,31 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 // section 4).
 func IsProviderFailure(report string) bool { return strings.HasPrefix(report, cardhdr.EndProvider) }
 
-// providerEnded is the unit of a take the provider failed (tla/CardContract.tla,
-// ProviderFailure): the take ended, so the work card is withdrawn with FieldTakeEnded
-// and its primary goes back to ready, exactly as a member that went down leaves a
-// working card (downPlan); the tick's deal places it again, counting the take against
-// the redeal bound, on a route the card has not been drawn when another remains
-// (routeOf). No failed-work judgment is written and the primary's failed count does
-// not move: a provider failure is never the card's. The card keeps a record of the
-// take that failed (ProviderTake: the route, the member, the line).
-func providerEnded(s *Snapshot, c, pr *Card, r FinishReq) Unit {
+// IsNoResult says a failed finish's report names no result as the cause: it begins with
+// the finish kind `no result` (cardhdr.EndNoResult), the member's word when its child
+// ended by itself having written no result at all.
+func IsNoResult(report string) bool { return strings.HasPrefix(report, cardhdr.EndNoResult+":") }
+
+// takeEnded is the unit of a take that ended with no work to judge: the provider failed
+// it (tla/CardContract.tla, ProviderFailure), or its child left no result at all (kind
+// is which: cardhdr.EndProvider or cardhdr.EndNoResult). The take ended, so the work
+// card is withdrawn with FieldTakeEnded and its primary goes back to ready, exactly as a
+// member that went down leaves a working card (downPlan); the tick's deal places it
+// again, counting the take against the redeal bound, on a route the card has not been
+// drawn when another remains (routeOf). No failed-work judgment is written and the
+// primary's failed count does not move: such a take is never the card's. At the redeal
+// bound the card stays withdrawn and the bound's judgment names it. The card keeps a
+// record of the take that ended (ProviderTake: the route, the member, the line).
+func takeEnded(s *Snapshot, c, pr *Card, r FinishReq, kind string) Unit {
 	set := nextGen(c, "", s.Now)
 	set["withdrawn"], set[FieldTakeEnded] = stamp(s.Now), stamp(s.Now)
-	line := cutText(strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(r.Report, cardhdr.EndProvider), ":")), MaxProviderErrorBytes)
+	line := cutText(strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(r.Report, kind), ":")), MaxProviderErrorBytes)
+	why := "the provider failed the take"
+	if kind == cardhdr.EndNoResult {
+		// the record's line says which kind it was: the routes' count of a route's ended
+		// takes holds both, and a reader of the card tells them apart
+		line, why = cutText(kind+": "+line, MaxProviderErrorBytes), "the child left no result"
+	}
 	set[FieldProviderError] = line
 	// what the take cost, timed and priced before its stamps go (cost.go): it still cost
 	// tokens and time. The take's record is its one place: the card's usage field is
@@ -1139,17 +1156,17 @@ func providerEnded(s *Snapshot, c, pr *Card, r FinishReq) Unit {
 	if r.Usage != "" {
 		usage = rec
 	}
-	// the failed take's own record, kept through the redeals: its route, member, usage and line
+	// the ended take's own record, kept through the redeals: its route, member, usage and line
 	take := c.Int("redeals") + 1
 	set[FieldProviderTake+itoa(take)] = ProviderTake{Route: c.F(FieldRoute), Model: c.F(FieldModel), Member: c.Row,
 		Finished: stamp(s.Now), Usage: usage, Error: line}.String()
 	// and the producer's record of it (cost.go): it still cost tokens and time
 	prSet := map[string]string{}
-	addConsumer(pr, prSet, workConsumer(s, c, take, "provider failure", rec))
+	addConsumer(pr, prSet, workConsumer(s, c, take, kind, rec))
 	return Unit{Key: c.ID, Stream: pr.Row, Changes: []Change{
 		change(Fleet, moveEntry(c, c.Row, Withdrawn, set, "taken", "dealt")),
 		change(Work, moveEntry(pr, pr.Row, Ready, prSet, "work")),
-	}, Moved: fmt.Sprintf("%s working -> withdrawn gen=%d, the provider failed the take; %s working -> ready", c.ID, c.Int("gen")+1, pr.ID)}
+	}, Moved: fmt.Sprintf("%s working -> withdrawn gen=%d, %s; %s working -> ready", c.ID, c.Int("gen")+1, why, pr.ID)}
 }
 
 // IsStagingRefusal says a failed finish's report names its member's staging as the cause:

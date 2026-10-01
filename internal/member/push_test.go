@@ -262,7 +262,7 @@ func TestJudgeIsTheFinishRule(t *testing.T) {
 		why  string
 	}{
 		{"shaped, ok, pushed", shaped, Push{Sha: fullSha}, FinishOK, ""},
-		{"no shape", Result{Verdict: "ok", Head: fullSha}, Push{Sha: fullSha}, FinishFailed, "no RESULT.md shape"},
+		{"no shape", Result{Verdict: "ok", Head: fullSha}, Push{Sha: fullSha}, FinishFailed, "no result: no RESULT.md shape"},
 		{"not done", Result{Shaped: true, Verdict: "not-done", Report: "r"}, Push{Sha: fullSha}, FinishFailed, "verdict not-done"},
 		{"no commit", shaped, Push{None: "nothing new"}, FinishFailed, "no commit: nothing new"},
 		{"push refused", shaped, Push{Refused: "! [rejected]"}, FinishFailed, "push refused: ! [rejected]"},
