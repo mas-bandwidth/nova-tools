@@ -608,9 +608,14 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			ok, err = st.B.Acquire(ctx, gen, op)
 		}
 		if err != nil {
-			// A write the store did not take leaves the fence without this
-			// operation: nothing was changed, and the store's reason says why.
-			if f, ferr := st.B.ReadFence(ctx); ferr == nil && (f.Pending == nil || f.Pending.ID != op.ID) {
+			if rec, confirmed := st.committed(ctx, step, op); confirmed {
+				return st.after(ctx, step, rec)
+			}
+			// An ordinary acquire that did not advance the generation wrote
+			// nothing. A moved or empty fence alone is ambiguous: another
+			// writer may already have committed this operation. Relock does
+			// not advance the generation and needs its exact receipt.
+			if f, ferr := st.B.ReadFence(ctx); ferr == nil && lock == nil && f.Gen == gen && f.Pending == nil {
 				res.Op = ""
 				return refuseWhole(res, plan, fmt.Sprintf("the store did not take the step's record (%d bytes): %v; nothing was changed", recordSize(op), err))
 			}
@@ -633,12 +638,10 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		}
 		applied, receipts, err := st.apply(ctx, op)
 		var bound *boundError
-		var cut *CutError
-		if (errors.As(err, &cut) || err == nil && !applied) && st.finishedElsewhere(ctx, op) {
+		if err != nil || !applied {
 			// Another writer (the tick, another verb, repair) finished this
 			// operation: its recorded result is this step's, as a replay.
-			raw, _, _ := st.B.Done(ctx, op.CallerOp)
-			if rec, rerr := replay(step, raw); rerr == nil {
+			if rec, confirmed := st.committed(ctx, step, op); confirmed {
 				return st.after(ctx, step, rec)
 			}
 		}
@@ -660,6 +663,9 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			continue
 		}
 		if err := st.B.Release(ctx, op, true); err != nil {
+			if rec, confirmed := st.committed(ctx, step, op); confirmed {
+				return st.after(ctx, step, rec)
+			}
 			res.Pending = op.ID
 			return res, fmt.Errorf("%w: the commit of %s: %v; run: nova-sprint repair", ErrUnknown, op.ID, err)
 		}
@@ -798,16 +804,17 @@ func (st *Store) callerOp(ctx context.Context, step Step, res Result) (Result, b
 	return res, true, nil
 }
 
-// finishedElsewhere says the fence no longer holds the operation and its
-// result is recorded: another writer finished it. An operation released
-// without a record was abandoned: nothing of it happened.
-func (st *Store) finishedElsewhere(ctx context.Context, op OpRecord) bool {
-	f, err := st.B.ReadFence(ctx)
-	if err != nil || f.Pending != nil && f.Pending.ID == op.ID {
-		return false
+// committed confirms this exact operation from the receipt written atomically
+// with its release (Redis.commit). A planned move or another operation's
+// receipt cannot confirm a lost reply; unreadable proof leaves it unknown.
+func (st *Store) committed(ctx context.Context, step Step, op OpRecord) (Result, bool) {
+	raw, ok, err := st.B.Done(ctx, op.CallerOp)
+	if err != nil || !ok {
+		return Result{}, false
 	}
-	_, ok, err := st.B.Done(ctx, op.CallerOp)
-	return err == nil && ok
+	step.CallerOp = op.CallerOp
+	rec, err := replay(step, raw)
+	return rec, err == nil && rec.Op == op.ID
 }
 
 // after brings the display cells up to date after a step. A step finished at
