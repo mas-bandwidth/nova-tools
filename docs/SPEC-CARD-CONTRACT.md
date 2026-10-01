@@ -16,7 +16,7 @@ and opens the pull request). The model is `tla/CardContract.tla`.
 
 | layer | what it guarantees | checked by |
 |---|---|---|
-| 1. the frame | the member writes `<slot>.frame.json` from the packet and the brief's header lines: the repository, the base ref, the commit to stage (the base, or for attempt 2 and later the previous attempt's pushed head, `base_head` in the packet, or for a read the head under read), the branch, the attempt, the previous head, why the attempt exists (`why`), the readers' finding and the coordinator's fix, the tier, the model | `TestTheFrameIsThePackets`, `TestALaterAttemptStartsFromThePreviousPushedHead` |
+| 1. the frame | the member writes `<slot>.frame.json` from the packet and the brief's header lines: the repository, the base ref, the commit to stage (the base, or for a rework the last pushed head of any earlier attempt, `base_head` and its attempt `base_attempt` in the packet, or for a read the head under read), the branch, the attempt, the head it continues and that head's attempt, why the attempt exists (`why`), the readers' finding and the coordinator's fix, the tier, the model | `TestTheFrameIsThePackets`, `TestALaterAttemptStartsFromTheLastPushedHeadOfAnyEarlierAttempt`, `TestAReworkStagesAtTheLastPushedHeadOfAnyEarlierAttempt` |
 | 2. staging | `native --frame` stages that commit on that branch (never the brief's prose, never a branch name that never reached origin) and writes `JOB.md` into the job directory | `TestStageCardStagesTheFramesCommitOnItsBranch` (functional tier) |
 | 3. the profile | the child's model family picks a profile; the profile writes the shims first on the child's `PATH` and the text of `JOB.md` | `internal/cardcontract`: unit tests of the text and the shape, functional tests of every shim verb form |
 | 4. the finish | the member reads the result shape, pushes the head, opens the pull request, and judges the finish: ok, failed with its reason, or reaped | `TestJudgeIsTheFinishRule` and the push tests of `internal/member`, the twin tests of `cmd/nova-sprint`, `tla/CardContract.tla` |
@@ -29,7 +29,10 @@ first.` and then carries the card. It says, in the profile's words: the reposito
 and the commit the checkout is at, the base it came from, that the child works there and
 commits as usual, how its commit and its pull request leave (the sprint does both), the test
 environment (`GOCACHE=<job>/gocache`, niced, `-count=1 -timeout`), the attempt, and for attempt
-2 and later the previous head and, right after the attempt line, why the attempt exists. A rework
+2 and later the attempt it continues and its head (`This checkout continues attempt <n>: its head,
+<sha>, is the last pushed by any attempt before this one, and the checkout starts from it.`; left
+out when no earlier attempt pushed, and the checkout is the base) and, right after the attempt
+line, why the attempt exists. A rework
 says three lines, each left out when its value is empty: `This attempt exists because: <how the
 attempt before ended>`, `A reader found: <the finding of its broken read>`, `The coordinator
 asks: <the --fix text>` (left out too when it is the finding, or already in how the attempt
@@ -40,6 +43,15 @@ packet's `why`, `finding` and `fix`, which the rework wrote on the attempt's wor
 change on the branch against its base as a pull request is reviewed. JOB.md repeats no rules:
 the card's own RULES paragraph is in the brief, where the add lint holds it, and the child
 reads it once.
+
+**Where a rework starts.** `sprint.BaseOf` is the one place that decides it: the packet's `base_head`
+is the head of the latest earlier attempt whose finish was ok at a full sha, with `base_attempt` its
+number, whatever happened to the attempts after it (an attempt that failed, or ended with no commit,
+changes nothing); with no such attempt both are empty and the base is staged
+(`tla/CardContract.tla`, `NoPushedWorkUnreachable`, with the reversed witness `previousonly`, a
+rework staged from the immediately previous attempt only). `nova-sprint card <id>` prints each
+attempt's pushed head (`head=`, `-` when none) and one `NEXT` line: the attempt whose head the next
+attempt starts from, or the base (`TestCardShowsTheHeadTheNextAttemptStartsFrom`).
 
 The frame reads the brief's **header only**: line 1 and the `key: value` lines that follow it,
 up to the first blank line or line of prose (`swarm.ReadCardBase`). A `base-repo:`, `BASE:` or
@@ -100,7 +112,16 @@ A work card's finish is judged in one place, `member.Judge`, cited from the mode
   `--failed` and opens the failed-work judgment, never review, and passes `--head` and
   `--branch` only when a push landed;
 - **reaped** when the claim moved under the child (a clear, a redeal) or the card left the
-  member's queue (a drop, a return): nothing is reported, because the result is nobody's.
+  member's queue (a drop, a return): nothing is reported, because the result is nobody's. A
+  moved claim is reaped whatever column the queue lists the card in: a redeal, and a withdrawn
+  card dealt again, list it in the member's own ready (a read: asked) column at a later
+  generation (attempt), and the ended launch is reaped within one tick and its place of the
+  width taken again.
+
+The child has ended when native's process has. Native's output goes to a file in the slot,
+never a pipe back to the member, so what a harness left running cannot hold the finish; and
+native, which runs the harness as the leader of its own process group, ends what the harness
+left in that group before it exits and names it on its line (docs/SPEC-SWARM.md, `native`).
 
 The head the member pushes is the result's `head`, else the last head the git shim recorded in
 `<job>/.sprint/pushed.tsv`. The member pushes from its own bare repository, fetching every

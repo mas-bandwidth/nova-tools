@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/binstamp"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
@@ -283,11 +284,7 @@ func (a *app) binaryStamp() string {
 	if err != nil {
 		return ""
 	}
-	fi, err := os.Stat(path)
-	if err != nil {
-		return ""
-	}
-	return fmt.Sprintf("%s %d %d", path, fi.Size(), fi.ModTime().UnixNano())
+	return binstamp.Of(path)
 }
 
 // startProfile begins a CPU profile to the file; its stop, which may be
