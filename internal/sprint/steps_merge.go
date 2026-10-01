@@ -11,8 +11,14 @@ import (
 // caller. The step never decides: what merged, what conflicted and the CI
 // result are facts.
 type MergeReq struct {
-	Stream   string
-	Batch    int
+	Stream string
+	Batch  int
+	// Cards, when given, is the batch by name: exactly these cards of the stream's
+	// queue, wherever they stand in it, and Batch is not read. A landing reports the
+	// cards it pushed, never "the first n": the tick's accepts put cards in the queue
+	// by their order of work, often ahead of the ones a landing is building, and a
+	// report by place would then record cards that were not pushed (nova-sprint land).
+	Cards    []string
 	Conflict string   // a card of the batch that did not merge
 	Cross    string   // "<card>=<other>": a card that needs a card of another stream first
 	Red      bool     // the stream branch went red on the batch
@@ -111,6 +117,19 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		n = len(queued)
 	}
 	batch := queued[:n]
+	if len(r.Cards) > 0 {
+		// the batch by name: every named card queued here, in the queue's order
+		batch = nil
+		for _, c := range queued {
+			if contains(r.Cards, c.ID) {
+				batch = append(batch, c)
+			}
+		}
+		if len(batch) != len(r.Cards) {
+			p.refuse(r.Stream, fmt.Sprintf("the batch names %d cards and %d of them are queued in stream %s now; nothing was changed", len(r.Cards), len(batch), r.Stream))
+			return p
+		}
+	}
 	var ids []string
 	for _, c := range batch {
 		ids = append(ids, c.ID)
@@ -123,7 +142,8 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 		m.Who = r.Who
 		notes = append(notes, m)
 	}
-	// A card named by a fact is a card of the batch: the first n queued.
+	// A card named by a fact is a card of the batch: the first n queued, or the
+	// cards the batch names.
 	notInBatch := func(id string) bool {
 		if contains(ids, id) {
 			return false
