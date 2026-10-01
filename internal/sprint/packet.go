@@ -117,9 +117,11 @@ func PacketOf(prefix string, epoch uint64, c, primary *Card, earlier []*Card, wo
 			p.Fix = primary.F("fix")
 		}
 	}
+	// a work card's route, or a read card's: the ask draws a read's as the deal
+	// draws a work card's (route.go), so a reader needs no --model
+	p.Route, p.Model, p.Tokens, p.Deadline = c.F(FieldRoute), c.F(FieldModel), c.F(FieldTokens), c.Int(FieldDeadline)
 	if p.Kind == "work" {
 		p.Branch = BranchOf(prefix, epoch, c.ID, c.Int("gen"))
-		p.Route, p.Model, p.Tokens, p.Deadline = c.F(FieldRoute), c.F(FieldModel), c.F(FieldTokens), c.Int(FieldDeadline)
 		p.Finding, p.Why = c.F("finding"), c.F("why")
 		// the attempt's own words, written with its card: the primary's are queued for the next
 		// tick's drain, so a take before it sees the primary at the attempt before

@@ -701,6 +701,9 @@ type cardView struct {
 	Needs    []sprint.NeedState `json:"needs,omitempty"`
 	NeededBy []string           `json:"needed_by,omitempty"`
 	Held     *sprint.Hold       `json:"held,omitempty"` // what holds it now (check rule 12)
+	// What it cost: each consumer (a work card's take, a read) with its record, and
+	// the totals, computed from the consumers' records (sprint.CardCost).
+	Cost sprint.CardCostView `json:"cost"`
 	// The story: its timeline from the log, and the words given (reports,
 	// findings, fixes, reasons) whole.
 	Timeline []storyLine `json:"timeline"`
@@ -750,7 +753,7 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 			texts = []storyText{}
 		}
 		b, _ := json.Marshal(cardView{Primary: v.Primary, Work: v.Work, Reads: v.Reads, Merge: v.Merge, Open: v.Open, Needs: v.Needs, NeededBy: v.NeededBy, Held: held,
-			Timeline: events, Texts: texts})
+			Cost: sprint.CardCost(v.Work, v.Reads), Timeline: events, Texts: texts})
 		fmt.Fprintln(stdout, string(b))
 		return 0
 	}
@@ -767,6 +770,10 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 		}
 		if len(v.Work) > 0 {
 			fmt.Fprintln(stdout, sprint.NextLine(v.Work))
+		}
+		// what it cost: a line per consumer that ended, and the totals
+		for _, line := range sprint.CardCost(v.Work, v.Reads).CostLines() {
+			fmt.Fprintln(stdout, oneline.Escape(line))
 		}
 		epoch := uint64(0)
 		if pinned, err := st.Pinned(ctx); err == nil {

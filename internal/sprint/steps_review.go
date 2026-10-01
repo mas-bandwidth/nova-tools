@@ -1,6 +1,7 @@
 package sprint
 
 import (
+	"cmp"
 	"fmt"
 	"strings"
 	"unicode/utf8"
@@ -62,6 +63,14 @@ func Ask(s *Snapshot, r AskReq) Plan {
 	chosen := pick(&p, r.Sel, eligibleTurns(s.Work.Column(Review), eligible, srr), rowOf, eligible, s.primaryCard)
 	rr := askRound(s)
 	moves := roundMoves{}
+	// a read card's route is drawn as a work card's is, from the reader tier at
+	// its rolling index on the fleet table (route.go, readRouteOf;
+	// tla/RouteIndex.tla, THE READS); a step that read no fleet table or no
+	// route asks with none
+	var ri routeIndexes
+	if s.Fleet != nil && len(s.Routes) > 0 {
+		ri = routeIndexesOf(s)
+	}
 	for _, c := range chosen {
 		attempt := c.Int("attempt")
 		have := map[string]bool{}
@@ -110,8 +119,11 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			moves[c.ID] = joinMoves(moves[c.ID], rd)
 		}
 		for _, rd := range chosenReaders {
-			u.Changes = append(u.Changes, change(Readers, createEntry(ReadCardID(c.ID, attempt, rd), rd, Asked, c.Score,
-				map[string]string{"kind": "read", "primary": c.ID, "stream": c.Row, "reader": rd, "attempt": itoa(attempt), "head": c.F("head"), "asked": stamp(s.Now)})))
+			fields := map[string]string{"kind": "read", "primary": c.ID, "stream": c.Row, "reader": rd, "attempt": itoa(attempt), "head": c.F("head"), "asked": stamp(s.Now)}
+			for k, v := range s.readRouteOf(ri, c.ID) {
+				fields[k] = v
+			}
+			u.Changes = append(u.Changes, change(Readers, createEntry(ReadCardID(c.ID, attempt, rd), rd, Asked, c.Score, fields)))
 		}
 		all = append(all, chosenReaders...)
 		if !r.Another {
@@ -138,6 +150,9 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		p.Units = append(p.Units, u)
 	}
 	roundWrites(&p, rr, moves)
+	if ri != nil {
+		ri.write(&p)
+	}
 	if !r.Another {
 		// one more reader of a primary named is not a turn round the streams:
 		// the ask's stream index moves with the asks of the streams' cards
@@ -178,6 +193,9 @@ type ReadReq struct {
 	// finding against the work; the tick asks it of another reader.
 	Return bool   `json:",omitempty"`
 	Reason string `json:",omitempty"`
+	// Usage is what the read spent, as the reader read it from its child
+	// (cardcost.Usage): kept on the read card, timed and priced (cost.go).
+	Usage string `json:",omitempty"`
 }
 
 // Read moves a reader's read cards: asked -> reading, or asked|reading -> ok|broken
@@ -259,8 +277,12 @@ func Read(s *Snapshot, r ReadReq) Plan {
 			n := happened(NReadReturned, c.F("stream"), s.Now, c.F("primary"))
 			n.What = c.Row + " returned " + c.ID + ": " + r.Reason
 			n.Who = r.Who
+			set := map[string]string{"retired": stamp(s.Now), "retired_by": "returned"}
+			// a read handed back still cost tokens and time: the run's own numbered
+			// record (cost.go, FieldReadTake), so a later run of the same card keeps it
+			set[FieldReadTake+itoa(nextTake(c, FieldReadTake))] = costRecord(s, r.Usage, "", "", true, c.F("asked"), cmp.Or(c.F("begun"), stamp(s.Now)))
 			p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"),
-				Changes: []Change{change(Readers, removeEntry(c, map[string]string{"retired": stamp(s.Now), "retired_by": "returned"}))},
+				Changes: []Change{change(Readers, removeEntry(c, set))},
 				Moved:   c.ID + " " + c.Col + " -> returned", Notes: []Note{n}})
 			continue
 		}
@@ -270,6 +292,10 @@ func Read(s *Snapshot, r ReadReq) Plan {
 		}
 		if r.Finding != "" {
 			set["finding"] = r.Finding
+		}
+		if r.Usage != "" {
+			// what the read cost, timed and priced (cost.go)
+			set[FieldUsage] = costRecord(s, r.Usage, "", "", true, c.F("asked"), cmp.Or(c.F("begun"), stamp(s.Now)))
 		}
 		u := Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Readers, moveEntry(c, c.Row, col, set))},
 			Moved: fmt.Sprintf("%s %s -> %s", c.ID, c.Col, col)}

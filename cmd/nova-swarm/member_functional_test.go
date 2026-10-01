@@ -167,7 +167,7 @@ func (d *memberDrive) startMember(as, harness string, reader bool) *lockedBuf {
 	write(d.t, filepath.Join(root, "identity.tsv"), "owner\tname\temail\ntest-owner\tPool Worker\tpool@example.com\n")
 	args := []string{"member", "--as", as, "--width", "2", "--harness", harness, "--model", "fake/fake-model",
 		"--root", root, "--tokens", "unmetered", "--deadline", "60s", "--every", "200ms", "--ticks", "1500",
-		"--no-wall", "--sprint", d.bin}
+		"--no-wall", "--sprint", d.bin, "--disk-floor", "0"}
 	if reader {
 		args = append(args, "--reader")
 	}
