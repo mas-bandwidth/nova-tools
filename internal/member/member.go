@@ -473,11 +473,27 @@ func (m *Member) BeatLoop(ctx context.Context, every <-chan time.Time, out io.Wr
 
 // Tick is one pass of the loop: read the queue, report every child
 // that ended, take (begin) up to the width, start each card taken. It returns
-// the number of cards it acted on (reports plus starts), and the first error
-// that stopped a step; a refused verb is not an error here (it is printed and
-// the card is left for the next pass), a store that does not answer is.
+// the number of cards it acted on (reports plus starts), and an error naming
+// the verbs the store did not answer; a refused verb is not an error here (it
+// is printed and the card is left for the next pass). A verb the store did not
+// answer never ends the pass: it is said, its card is left as it was for the
+// next pass, and the pass goes on to every other ended child and to the take
+// (a member 100 ms from the store lost one finish to the sprint's fence and
+// left seven finished cards unreported behind it, pass after pass: the fleet
+// pass of 2026-10-01 16:32 ET). Only the pass's first read, the queue, ends it.
 func (m *Member) Tick(now time.Time) (acted int, err error) {
 	m.advanced()
+	// unanswered collects the verbs the store did not answer in this pass
+	var unanswered []string
+	noAnswer := func(what string, out []byte) {
+		unanswered = append(unanswered, what)
+		fmt.Fprintf(m.out, "NOTE %s: the store did not answer; the pass goes on, and it is tried again next pass: %s\n", what, oneLine(strings.TrimSpace(string(out))))
+	}
+	defer func() {
+		if err == nil && len(unanswered) > 0 {
+			err = fmt.Errorf("the store did not answer %d of this pass's verbs (%s); each is tried again next pass", len(unanswered), strings.Join(unanswered, ", "))
+		}
+	}()
 	// the beat is not this pass's: it goes on its own clock (BeatLoop), so a pass held for
 	// minutes by its pushes and finishes never lets the machine go down while it works
 	code, out := m.readCall("queue", "--as", m.cfg.As, "--json")
@@ -528,10 +544,10 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 	if !m.drain {
 		// a working card with no child of ours first (recovery, below), then the take
 		acted += m.recoverWorking(ids, byID, nil, nil, launch)
-		n, err := m.take(q, held, now, launch)
+		n, out := m.take(q, held, now, launch)
 		acted += n
-		if err != nil {
-			return acted, err
+		if out != nil {
+			noAnswer(m.takeVerb(), out)
 		}
 		early = m.alive()
 	}
@@ -616,7 +632,8 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 				code, out := m.run(args...)
 				fmt.Fprintf(m.out, "read %s: returned exit=%d: %s\n", id, code, reason)
 				if code == 2 {
-					return acted, fmt.Errorf("read --return %s: the store did not answer: %s", id, strings.TrimSpace(string(out)))
+					noAnswer("read --return "+id, out)
+					continue
 				}
 				if code != 0 {
 					l.spent = true
@@ -676,7 +693,8 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 		code, out := m.run(args...)
 		fmt.Fprintf(m.out, "%s %s ok=%t exit=%d%s\n", args[0], id, ok, code, routeWords(l.packet))
 		if code == 2 {
-			return acted, fmt.Errorf("%s %s: the store did not answer: %s", args[0], id, strings.TrimSpace(string(out)))
+			noAnswer(args[0]+" "+id, out)
+			continue
 		}
 		m.forget(id, !m.cfg.Reader && !ok) // refused (1) too: the card is no longer ours to report
 		acted++
@@ -710,8 +728,19 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 	// subsequent passes.
 	acted += m.recoverWorking(ids, byID, wasOurs, claimMoved, launch)
 	// 3. Take (begin) again for the lanes that freed during the reports.
-	n, err := m.take(q, held, now, launch)
-	return acted + n, err
+	n, out := m.take(q, held, now, launch)
+	if out != nil {
+		noAnswer(m.takeVerb(), out)
+	}
+	return acted + n, nil
+}
+
+// takeVerb is the verb a take is: a reader's is read --begin.
+func (m *Member) takeVerb() string {
+	if m.cfg.Reader {
+		return "read --begin"
+	}
+	return "take"
 }
 
 // alive is the cards whose children are alive (Live counts them).
@@ -730,8 +759,10 @@ func (m *Member) alive() map[string]bool {
 // frees its lane at once, reported or not, and the live children never exceed
 // the width. The cards counted are the queue's ready (asked) cards this member
 // runs no child for: a card taken earlier in the pass is listed ready still, and
-// is neither counted nor begun again. It returns the starts.
-func (m *Member) take(q queueOut, held []string, now time.Time, launch func(Packet) bool) (acted int, err error) {
+// is neither counted nor begun again. It returns the starts, and, when the store
+// did not answer the verb, what the verb printed (nil otherwise): nothing was
+// taken, and the pass goes on.
+func (m *Member) take(q queueOut, held []string, now time.Time, launch func(Packet) bool) (acted int, unanswered []byte) {
 	room := m.width - m.Live()
 	if room <= 0 {
 		return 0, nil
@@ -773,7 +804,7 @@ func (m *Member) take(q queueOut, held []string, now time.Time, launch func(Pack
 		args := append(append([]string{"read", "--as", m.cfg.As, "--begin"}, ids...), held...)
 		code, out := m.run(args...)
 		if code == 2 {
-			return 0, fmt.Errorf("read --begin: the store did not answer: %s", strings.TrimSpace(string(out)))
+			return 0, orWords(out)
 		}
 		if code != 0 {
 			fmt.Fprintf(m.out, "read --begin refused: %s\n", strings.TrimSpace(string(out)))
@@ -783,7 +814,7 @@ func (m *Member) take(q queueOut, held []string, now time.Time, launch func(Pack
 		args := append([]string{"take", "--as", m.cfg.As, "--limit", strconv.Itoa(room), "--json"}, held...)
 		code, out := m.run(args...)
 		if code == 2 {
-			return 0, fmt.Errorf("take: the store did not answer: %s", strings.TrimSpace(string(out)))
+			return 0, orWords(out)
 		}
 		if code != 0 {
 			fmt.Fprintf(m.out, "take refused: %s\n", strings.TrimSpace(string(out)))
@@ -791,7 +822,8 @@ func (m *Member) take(q queueOut, held []string, now time.Time, launch func(Pack
 		}
 		var t takeOut
 		if err := json.Unmarshal(out, &t); err != nil {
-			return 0, fmt.Errorf("take: not JSON: %w", err)
+			// an answer that is not the take's JSON is no answer: nothing is started
+			return 0, []byte(fmt.Sprintf("take: not JSON: %v", err))
 		}
 		packets = t.Packets
 	}
@@ -801,6 +833,15 @@ func (m *Member) take(q queueOut, held []string, now time.Time, launch func(Pack
 		}
 	}
 	return acted, nil
+}
+
+// orWords is what a verb printed, never nil: the mark of a verb the store did
+// not answer (take).
+func orWords(out []byte) []byte {
+	if out == nil {
+		return []byte{}
+	}
+	return out
 }
 
 // card is the queue's card of the id.
