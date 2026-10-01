@@ -1,7 +1,6 @@
 package store
 
 import (
-	"strconv"
 	"strings"
 	"testing"
 
@@ -21,11 +20,6 @@ import (
 // providerLine is a member's report of a take the provider failed.
 const providerLine = cardhdr.EndProvider + ": stream error: server_error h2 protocol error"
 
-func atoi(s string) int {
-	n, _ := strconv.Atoi(s)
-	return n
-}
-
 // failTake takes the work card and finishes it failed with the report, as the member
 // does when its child ends.
 func (h *harness) failTake(card, report string) *sprint.Card {
@@ -41,7 +35,7 @@ func (h *harness) failTake(card, report string) *sprint.Card {
 
 // A provider failure withdraws the card with the take ended and puts no failed-work
 // judgment in the inbox; the next deal places it again on another route, counting the
-// take; the member's fleet cell and the route's stats count it.
+// take; the route's stats count it.
 func TestAProviderFailureRedealsTheCardAndIsNeverAFailedWorkJudgment(t *testing.T) {
 	t.Parallel()
 	h := routeHarness(t, route("pro-a", "pro", 1), route("pro-b", "pro", 1))
@@ -66,7 +60,6 @@ func TestAProviderFailureRedealsTheCardAndIsNeverAFailedWorkJudgment(t *testing.
 	assert.Equal(t, 0, pr.Int("failed"), "the card's failure count does not move")
 	assert.Empty(t, h.openOf(sprint.NWorkFailed), "no failed-work judgment")
 	assert.Zero(t, h.notesOf(sprint.NWorkFailed))
-	assert.Equal(t, "1", h.fleetRow(member)[sprint.Provider], "the fleet table counts it for the member")
 
 	h.machine()
 	w = h.snap().Fleet.Card("s1-1.w1")
@@ -136,7 +129,6 @@ func TestAFourthProviderFailureRetiresTheCardWithOneJudgmentNamingTheProvider(t 
 	assert.Contains(t, what, "stream error: the last one", "and the last error line")
 	assert.Empty(t, h.openOf(sprint.NWorkFailed), "never a failed-work judgment")
 	assert.Zero(t, h.notesOf(sprint.NWorkFailed))
-	assert.Equal(t, 4, atoi(h.fleetRow("m1")[sprint.Provider])+atoi(h.fleetRow("m2")[sprint.Provider]), "the members' cells add up to the failures reported")
 	h.clean("retired by provider failures")
 }
 
@@ -150,10 +142,9 @@ func TestAFailedFinishWithoutTheProviderKindStaysFailedWork(t *testing.T) {
 		h := routeHarness(t, route("pro-a", "pro", 1))
 		h.addReady("s1", 1, briefOf("pro", ""))
 		h.must(DealStep(sprint.DealReq{}))
-		wc := h.failTake("s1-1.w1", report)
+		h.failTake("s1-1.w1", report)
 		assert.Equal(t, sprint.DoneFailed, h.snap().Fleet.Card("s1-1.w1").Col, report)
 		assert.Equal(t, sprint.Review, h.snap().Work.Card("s1-1").Col, report)
 		assert.Equal(t, 1, h.notesOf(sprint.NWorkFailed), report)
-		assert.Equal(t, "0", h.fleetRow(wc.Row)[sprint.Provider], report)
 	}
 }
