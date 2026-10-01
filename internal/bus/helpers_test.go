@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
 	"testing"
@@ -49,12 +50,8 @@ func writeBus(t *testing.T, files map[string]string) string {
 func write(t *testing.T, root, path, content string) {
 	t.Helper()
 	full := filepath.Join(root, filepath.FromSlash(path))
-	if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Dir(full), 0o755))
+	require.NoError(t, os.WriteFile(full, []byte(content), 0o644))
 }
 
 // loadTable is the two calls every verb makes, for a test that only cares about the
@@ -62,13 +59,9 @@ func write(t *testing.T, root, path, content string) {
 func loadBus(t *testing.T, root string) *Bus {
 	t.Helper()
 	c, err := LoadConfig(root)
-	if err != nil {
-		t.Fatalf("LoadConfig: %v", err)
-	}
+	require.NoError(t, err, "LoadConfig: %v", err)
 	tab, err := ReadBus(root, c)
-	if err != nil {
-		t.Fatalf("ReadTable: %v", err)
-	}
+	require.NoError(t, err, "ReadTable: %v", err)
 	return tab
 }
 
@@ -89,13 +82,9 @@ func mustParticipant(t *testing.T, c *Config, name string) Participant {
 func identityOf(t *testing.T, path string) os.FileInfo {
 	t.Helper()
 	f, err := os.Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	defer f.Close()
 	fi, err := f.Stat()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return fi
 }

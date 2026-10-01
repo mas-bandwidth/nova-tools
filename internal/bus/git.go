@@ -779,9 +779,9 @@ func pushBackoff(attempt int) time.Duration {
 	return d
 }
 
-// sleepBetweenAttempts is time.Sleep, named so a test can take the wall clock out of the
-// retry loop and assert on the spacing instead of waiting for it. Nothing but a test ever
-// replaces it, and a test that does must not run in parallel with another that pushes.
+// sleepBetweenAttempts is time.Sleep in production. TestMain replaces it before m.Run so
+// unrelated retry fixtures do not wait on wall time; an individual test that inspects the
+// wait passes its own sleeper to commitAndPushWithSleep without changing shared state.
 var sleepBetweenAttempts = time.Sleep
 
 // CommitAndPush stages the given repo-relative paths, commits them under id, and pushes
@@ -790,6 +790,10 @@ var sleepBetweenAttempts = time.Sleep
 // The commit names its paths explicitly, so anything else that happens to be staged is not
 // swept into a note's commit.
 func CommitAndPush(dir string, id Identity, paths []string, message, remote, branch string, attempts int) (PushResult, error) {
+	return commitAndPushWithSleep(dir, id, paths, message, remote, branch, attempts, sleepBetweenAttempts)
+}
+
+func commitAndPushWithSleep(dir string, id Identity, paths []string, message, remote, branch string, attempts int, sleep func(time.Duration)) (PushResult, error) {
 	var res PushResult
 	if attempts < 1 {
 		return res, fmt.Errorf("attempts must be at least 1, got %d", attempts)
@@ -824,7 +828,7 @@ func CommitAndPush(dir string, id Identity, paths []string, message, remote, bra
 		// the machine can fetch. The wait grows with the attempt so a busy bus backs
 		// off, and the jitter is what actually breaks the step -- two benches that sleep
 		// the same 50ms are still in step.
-		sleepBetweenAttempts(pushBackoff(attempt))
+		sleep(pushBackoff(attempt))
 		// The remote moved. Take what arrived and replay our own commit on top of it.
 		if _, err := git(dir, "fetch", remote, branch); err != nil {
 			return res, fmt.Errorf("the push was refused and the fetch that would explain it failed: %w", err)

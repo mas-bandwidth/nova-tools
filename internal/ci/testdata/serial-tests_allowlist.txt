@@ -22,7 +22,7 @@
 # TestReadCopyDealtToBenchRendersALintedCard), then by nine more from the redis
 # stream (seat and #3277 tests on t.Setenv); each owes a per-test seam. Moved
 # from the serialTestsCeiling constant into this file at 876, the count that day.
-# ceiling: 251
+# ceiling: 241
 cmd/nova-bus/issue1451_test.go:TestIssue1451EveryBareVerbRefusalNamesTheDoor serial: t.Setenv
 cmd/nova-bus/main_functional_test.go:TestReceiptMaxWordsDefaultsFromBusFileThenEnv serial: t.Setenv
 cmd/nova-bus/reply_functional_test.go:TestAFilesystemWithNoCreateExclusivePublishIsRefused serial: swaps package var main.publishDraft
@@ -143,16 +143,6 @@ cmd/nova-update/firstrun_test.go:TestFirstRunTranscriptIsWhatTheToolPrintsLineFo
 cmd/nova-version/firstrun_test.go:TestExecutableFirstRun serial: t.Chdir
 cmd/nova-version/firstrun_test.go:TestFirstRunTranscriptIsWhatTheToolPrintsLineForLine serial: t.Chdir
 cmd/nova-version/friendsequence_test.go:TestFriendSequenceSnapshotReport serial: t.Setenv
-internal/bus/cursor_test.go:TestAReceiptInTheChangeSetSetsTheFlagInOpen serial: counts the process-wide NoteParses(), which every parallel test in the package adds to
-internal/bus/cursor_test.go:TestAnOpenNoteWhoseFileVanishedIsCarriedUntilAFullRead serial: counts the process-wide NoteParses(), which every parallel test in the package adds to
-internal/bus/cursor_test.go:TestAnUnreadableFileBehindTheLineIsCountedAndNotOpened serial: counts the process-wide NoteParses(), which every parallel test in the package adds to
-internal/bus/cursor_test.go:TestAnUnreadableFileIsCarriedAndReChecked serial: counts the process-wide NoteParses(), which every parallel test in the package adds to
-internal/bus/cursor_test.go:TestInboxSinceParsesTheChangeSetAndPrintsTheRestFromOpen serial: counts the process-wide NoteParses(), which every parallel test in the package adds to
-internal/bus/cursor_test.go:TestTheLegacyLineLeavesOldNotesOffTheOpenListInBothReads serial: counts the process-wide NoteParses(), which every parallel test in the package adds to
-internal/bus/git_test.go:TestThePushRetryWaitsBetweenAttempts serial: swaps package var bus.sleepBetweenAttempts
-internal/bus/replydraft_test.go:TestNoCreateExclusivePublishQuotesWhatEachCallSaid serial: swaps package var bus.linkFile, swaps package var bus.noReplacePublish
-internal/bus/replydraft_test.go:TestTheSecondPublishIsUsedWhenTheFirstIsNotAvailable serial: swaps package var bus.linkFile, swaps package var bus.noReplacePublish
-internal/bus/timeout_test.go:TestAGitThatHangsIsKilledAndNamed serial: t.Setenv
 internal/check/corpus_test.go:TestARelativeRootIsNotReadAsASymlinkEscape serial: t.Chdir
 internal/nsprint/store/store_test.go:TestOpenAuthenticatesFromEnv serial: t.Setenv
 internal/nsprint/testutil/github_test.go:TestGitHubStubInterceptsHTTPCalls serial: t.Setenv

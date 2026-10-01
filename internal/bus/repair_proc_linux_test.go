@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // The real /proc: this process's own entry is owned by its effective uid, and
@@ -26,9 +28,7 @@ func TestLinuxProcSelfOwnerIsEffectiveUID(t *testing.T) {
 	// The real status of this process: its Uid line states the effective uid, which is the
 	// account the scan compares (readProcView reads it only for a git, so here directly).
 	status, err := os.ReadFile("/proc/" + pid + "/status")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	if uid, ok := statusEffectiveUID(status); !ok || uid != self {
 		t.Fatalf("/proc/%s/status Uid: uid=%d ok=%v, want %d", pid, uid, ok, self)
 	}

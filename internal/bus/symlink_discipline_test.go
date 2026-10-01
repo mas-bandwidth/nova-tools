@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
 	"strings"
@@ -21,17 +22,13 @@ func victim(t *testing.T, dir string) string {
 func victimHolding(t *testing.T, dir, content string) string {
 	t.Helper()
 	v := filepath.Join(dir, "victim")
-	if err := os.WriteFile(v, []byte(content), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(v, []byte(content), 0o644))
 	return v
 }
 
 func plant(t *testing.T, target, link string) {
 	t.Helper()
-	if err := os.MkdirAll(filepath.Dir(link), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Dir(link), 0o755))
 	if err := os.Symlink(target, link); err != nil {
 		t.Skipf("this filesystem will not make a symlink: %v", err)
 	}
@@ -42,9 +39,7 @@ func unchanged(t *testing.T, v string) { unchangedHolding(t, v, "original victim
 func unchangedHolding(t *testing.T, v, content string) {
 	t.Helper()
 	raw, err := os.ReadFile(v)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	if string(raw) != content {
 		t.Fatalf("the file outside the bus was written through the link: %q", string(raw))
 	}
@@ -69,9 +64,7 @@ func TestAppendIndexLineRefusesASymlinkedIndex(t *testing.T) {
 	v := victim(t, dir)
 	plant(t, v, filepath.Join(root, "from-x", IndexName))
 	err := AppendIndexLine(root, IndexEntry{Lane: "from-x", ID: "deadbeef", Path: "from-x/2026-note.md", Date: "2026-09-13T00:00:00Z", To: []string{"bo"}})
-	if err == nil {
-		t.Fatal("AppendIndexLine wrote through a symlinked INDEX and raised nothing")
-	}
+	require.Error(t, err, "AppendIndexLine wrote through a symlinked INDEX and raised nothing")
 	unchanged(t, v)
 	stillLink(t, filepath.Join(root, "from-x", IndexName))
 }
@@ -102,9 +95,7 @@ func TestReadLaneIndexRefusesASymlinkedIndex(t *testing.T) {
 	v := victimHolding(t, dir, "deadbeef\tfrom-x/2026-note.md\t2026-09-13T00:00:00Z\t-\t-\n")
 	plant(t, v, filepath.Join(root, "from-x", IndexName))
 	_, err := ReadLaneIndex(root, "from-x")
-	if err == nil {
-		t.Fatal("ReadLaneIndex read through a symlinked INDEX and raised nothing")
-	}
+	require.Error(t, err, "ReadLaneIndex read through a symlinked INDEX and raised nothing")
 	if !strings.Contains(err.Error(), "symlink") {
 		t.Fatalf("the read refusal does not name the kind symlink: %v", err)
 	}
@@ -175,9 +166,7 @@ func TestReplaceLaneFileDoesNotWriteThroughAPlantedTemp(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "bus")
 	v := victim(t, dir)
-	if err := os.MkdirAll(filepath.Join(root, "from-x"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Join(root, "from-x"), 0o755))
 	plant(t, v, filepath.Join(root, "from-x", IndexName+TempSuffix))
 	if err := replaceLaneFile(root, "from-x/"+IndexName, "a line\n"); err != nil {
 		t.Fatalf("replaceLaneFile refused a correct write: %v", err)
@@ -226,17 +215,11 @@ func TestAppendIndexLineRefusesASymlinkedLaneDirectory(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "bus")
 	outside := filepath.Join(dir, "outside")
-	if err := os.MkdirAll(outside, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(root, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(outside, 0o755))
+	require.NoError(t, os.MkdirAll(root, 0o755))
 	plant(t, outside, filepath.Join(root, "from-x"))
 	err := AppendIndexLine(root, IndexEntry{Lane: "from-x", ID: "deadbeef", Path: "from-x/2026-note.md", Date: "2026-09-13T00:00:00Z", To: []string{"bo"}})
-	if err == nil {
-		t.Fatal("AppendIndexLine wrote through a symlinked LANE DIRECTORY and raised nothing")
-	}
+	require.Error(t, err, "AppendIndexLine wrote through a symlinked LANE DIRECTORY and raised nothing")
 	if _, statErr := os.Lstat(filepath.Join(outside, IndexName)); statErr == nil {
 		raw, _ := os.ReadFile(filepath.Join(outside, IndexName))
 		t.Fatalf("the line landed outside the bus: %q", string(raw))
@@ -249,12 +232,8 @@ func TestWriteLaneFileRefusesASymlinkedLaneDirectory(t *testing.T) {
 	dir := t.TempDir()
 	root := filepath.Join(dir, "bus")
 	outside := filepath.Join(dir, "outside")
-	if err := os.MkdirAll(outside, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(root, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(outside, 0o755))
+	require.NoError(t, os.MkdirAll(root, 0o755))
 	plant(t, outside, filepath.Join(root, "from-x"))
 	if err := replaceLaneFile(root, "from-x/"+CursorName, "a cursor\n"); err == nil {
 		t.Fatal("replaceLaneFile rewrote a lane file through a symlinked lane directory")

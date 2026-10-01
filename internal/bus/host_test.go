@@ -3,6 +3,8 @@ package bus
 import (
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // The Host line is the one header field that says WHICH MACHINE posted. One name can post
@@ -19,9 +21,7 @@ func TestSendWritesTheHostLineWhenHostIsGiven(t *testing.T) {
 	tab := loadBus(t, writeBus(t, nil))
 	p, err := PrepareWith(tab, "From: Ada\nTo: Bo\nSubject: the gate\n\nbody\n",
 		at("2026-09-09T12:34:56Z"), SendOptions{Host: "air"})
-	if err != nil {
-		t.Fatalf("PrepareWith: %v", err)
-	}
+	require.NoError(t, err, "PrepareWith: %v", err)
 	if p.Note.Header.Host != "air" {
 		t.Fatalf("Host = %q, want %q", p.Note.Header.Host, "air")
 	}
@@ -43,9 +43,7 @@ func TestADraftsOwnHostLineIsKept(t *testing.T) {
 	tab := loadBus(t, writeBus(t, nil))
 	p, err := Prepare(tab, "From: Ada\nHost: studio\nTo: Bo\nSubject: the gate\n\nbody\n",
 		at("2026-09-09T12:34:56Z"), "")
-	if err != nil {
-		t.Fatalf("Prepare: %v", err)
-	}
+	require.NoError(t, err, "Prepare: %v", err)
 	if p.Note.Header.Host != "studio" {
 		t.Fatalf("Host = %q, want %q", p.Note.Header.Host, "studio")
 	}
@@ -60,9 +58,7 @@ func TestHostFlagAgainstADifferentHostLineIsARefusal(t *testing.T) {
 	tab := loadBus(t, writeBus(t, nil))
 	_, err := PrepareWith(tab, "From: Ada\nHost: studio\nTo: Bo\nSubject: the gate\n\nbody\n",
 		at("2026-09-09T12:34:56Z"), SendOptions{Host: "air"})
-	if err == nil {
-		t.Fatal("send posted one machine's note as another")
-	}
+	require.Error(t, err, "send posted one machine's note as another")
 	for _, want := range []string{"--host", "air", "studio", "does not post one machine's note as another"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("the refusal does not say %q:\n%v", want, err)
@@ -79,9 +75,7 @@ func TestHostFlagAgreeingWithTheHostLineIsSilent(t *testing.T) {
 	tab := loadBus(t, writeBus(t, nil))
 	p, err := PrepareWith(tab, "From: Ada\nHost: air\nTo: Bo\nSubject: the gate\n\nbody\n",
 		at("2026-09-09T12:34:56Z"), SendOptions{Host: "air"})
-	if err != nil {
-		t.Fatalf("PrepareWith: %v", err)
-	}
+	require.NoError(t, err, "PrepareWith: %v", err)
 	if len(p.Notices) != 0 {
 		t.Fatalf("agreement is not a tolerance: %v", p.Notices)
 	}
@@ -123,9 +117,7 @@ func TestAnUnusableHostLineIsAHeaderProblem(t *testing.T) {
 	t.Parallel()
 
 	c, err := LoadConfig(writeBus(t, nil))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	n, perr := ParseNote("from-ada/x.md", "From: Ada\nHost: The Air\nTo: Bo\nSubject: s\n\nbody\n")
 	if perr != nil {
 		t.Fatalf("the note did not parse; the Host line is a header VALUE problem: %v", perr)
@@ -151,16 +143,12 @@ func TestANoteWithNoHostIsUnchanged(t *testing.T) {
 	draft := "From: Ada\nTo: Bo\nSubject: the gate\n\nbody\n"
 	tab := loadBus(t, writeBus(t, nil))
 	plain, err := Prepare(tab, draft, at("2026-09-09T12:34:56Z"), "")
-	if err != nil {
-		t.Fatalf("Prepare: %v", err)
-	}
+	require.NoError(t, err, "Prepare: %v", err)
 	if strings.Contains(plain.Note.Render(), "Host:") {
 		t.Fatalf("a note nobody gave a host carries a Host line:\n%s", plain.Note.Render())
 	}
 	hosted, err := PrepareWith(tab, draft, at("2026-09-09T12:34:56Z"), SendOptions{Host: "air"})
-	if err != nil {
-		t.Fatalf("PrepareWith: %v", err)
-	}
+	require.NoError(t, err, "PrepareWith: %v", err)
 	if hosted.Note.Header.ID != plain.Note.Header.ID {
 		t.Fatalf("the host changed the id: %q with a host, %q without; the host is not in the preimage",
 			hosted.Note.Header.ID, plain.Note.Header.ID)
@@ -195,13 +183,9 @@ func TestTheOpenListReadsBothWidths(t *testing.T) {
 	plain := hosted
 	plain.Host = ""
 	root := writeBus(t, nil)
-	if err := WriteOpen(root, "from-ada", []OpenEntry{plain, hosted}); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, WriteOpen(root, "from-ada", []OpenEntry{plain, hosted}))
 	got, err := ReadOpen(root, "from-ada")
-	if err != nil {
-		t.Fatalf("ReadOpen over a file holding both widths: %v", err)
-	}
+	require.NoError(t, err, "ReadOpen over a file holding both widths: %v", err)
 	if len(got) != 2 {
 		t.Fatalf("read %d entries, want 2", len(got))
 	}
@@ -221,9 +205,7 @@ func TestAnOpenRowOfTheWrongWidthIsStillRefused(t *testing.T) {
 	root := writeBus(t, nil)
 	write(t, root, OpenPath("from-ada"), OpenHeader+"\nada-3f9a1c2b8d40\tnote\t-\tAda\n")
 	_, err := ReadOpen(root, "from-ada")
-	if err == nil {
-		t.Fatal("a four-field row was accepted")
-	}
+	require.Error(t, err, "a four-field row was accepted")
 	for _, want := range []string{"9 tab-separated fields", "or 8 without the host", "got 4"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("the refusal does not say %q:\n%v", want, err)
@@ -246,16 +228,12 @@ func TestAReplyCarriesTheHostItIsGiven(t *testing.T) {
 		t.Fatal("the fixture note did not resolve")
 	}
 	hosted, err := PrepareReplyFrom(tab, me, original, "Yes.\n", at("2026-09-09T12:34:56Z"), "air")
-	if err != nil {
-		t.Fatalf("PrepareReplyFrom: %v", err)
-	}
+	require.NoError(t, err, "PrepareReplyFrom: %v", err)
 	if !strings.Contains(hosted.Note.Render(), "From: Ada\nHost: air\nTo: Bo\n") {
 		t.Fatalf("the reply's Host line is not under From:\n%s", hosted.Note.Render())
 	}
 	plain, err := PrepareReply(tab, me, original, "Yes.\n", at("2026-09-09T12:34:56Z"))
-	if err != nil {
-		t.Fatalf("PrepareReply: %v", err)
-	}
+	require.NoError(t, err, "PrepareReply: %v", err)
 	if strings.Contains(plain.Note.Render(), "Host:") {
 		t.Fatalf("a reply nobody gave a host carries a Host line:\n%s", plain.Note.Render())
 	}
