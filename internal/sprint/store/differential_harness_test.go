@@ -394,6 +394,10 @@ func (h *dHarness) do(a dAction) []dFinding {
 			h.t.Fatal(err)
 		}
 	}
+	// and every reader: the model holds every reader up
+	if err := h.st.BeatReaders(h.ctx); err != nil {
+		h.t.Fatal(err)
+	}
 	pre := h.observe()
 	h.cutTable, h.mid = "", nil
 	refusedWhy, cutOK := h.engine(a, pre)

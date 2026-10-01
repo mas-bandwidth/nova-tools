@@ -38,6 +38,21 @@ prints the drift and writes nothing: exit 0 none, 2 some, 3 the config cannot
 be read.`) + "\n"
 }
 
+// readerWords is how a reader's state comes about, in nova-sprint help and
+// nova-sprint help reader.
+func readerWords() string {
+	return strings.TrimSpace(`
+The readers: a reader says it is there by asking for its own queue (queue --as
+<reader> is its beat). A reader is up while its last beat is under `+sprint.ReaderBeatBound.String()+` old, away
+when it beat and has lapsed, down when it has never beaten; reader away holds
+one away whatever it beats and reader up releases the hold. The ask deals a
+read to a reader up only: a read asked of a reader that is not up is asked of
+another at the next tick, and with fewer than two readers up the tick asks none
+and raises one judgment (fewer than two readers up). where shows each reader's
+status. reader remove takes a row off the readers table, refused while the
+reader holds a read (asked, reading, ok or broken).`) + "\n"
+}
+
 // fleetStep is the coordinator's fleet verb as a step: up releases a hold
 // and brings the member up at once when its beat is fresh, and sets its
 // width when width is above zero; down holds it down; level evens the ready

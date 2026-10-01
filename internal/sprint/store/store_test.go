@@ -56,9 +56,13 @@ func newHarness(t *testing.T) *harness {
 
 func (h *harness) tick(d time.Duration) { h.mu.Lock(); h.now = h.now.Add(d); h.mu.Unlock(); h.beat() }
 
-// beat is one beat of every live member, at load 0.
+// beat is one beat of every live member, at load 0, and of every reader (the
+// readers of a harness are always there; reader away holds one away).
 func (h *harness) beat() {
 	h.t.Helper()
+	if err := h.st.BeatReaders(h.ctx); err != nil {
+		h.t.Fatal(err)
+	}
 	h.mu.Lock()
 	live := append([]string(nil), h.live...)
 	h.mu.Unlock()
@@ -130,6 +134,9 @@ func (h *harness) state(id string) string { return h.snap().StateOf(id) }
 // setup: two members up, n primaries in s1.
 func (h *harness) setup(n int) {
 	h.t.Helper()
+	if err := h.st.BeatReaders(h.ctx); err != nil { // a reader asks for its queue: it is up
+		h.t.Fatal(err)
+	}
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m2"}))
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: n}))

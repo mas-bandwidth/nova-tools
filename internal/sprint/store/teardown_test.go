@@ -35,6 +35,7 @@ func TestTeardownLeavesTheKeysAsBeforeInit(t *testing.T) {
 		if err := m.RowsAdd(h.ctx, "t-readers", []string{"reader-a", "reader-b", "reader-c"}); err != nil {
 			t.Fatal(err)
 		}
+		h.beat()
 		h.setup(3)
 		h.through("s1-1")
 		step := DropStep(sprint.DropReq{Sel: sprint.Sel{IDs: []string{"s1-2"}}})

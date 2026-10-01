@@ -236,6 +236,17 @@ func (r *Redis) RowsAdd(ctx context.Context, table string, rows []string) error 
 	return err
 }
 
+// RowsDel removes each row through the table layer's row delete, one write
+// each; the caller checked that none holds a card.
+func (r *Redis) RowsDel(ctx context.Context, table string, rows []string) error {
+	for _, row := range rows {
+		if _, err := ntable.RowDel(ctx, r.C, table, row, r.writeOpts()); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (r *Redis) RowSet(ctx context.Context, table, row string, texts map[string]string) error {
 	_, err := ntable.RowSet(ctx, r.C, table, row, texts, r.writeOpts())
 	return err

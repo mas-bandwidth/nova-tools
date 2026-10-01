@@ -56,7 +56,7 @@ The same list stands at the top of `SprintEvents.tla` and in the pull request's 
 
 - R5 (cross), R7 (level), R12 (overdue), R15 (done), R16 (held) and R18 (behind). R16's table is the invariant `NothingSilent` instead (with a row for R6's 30 s entry under `stablesince`); the held queue with its cap, and `HeldDrop`, are not kept.
 - Quarantine: a refusal naming a card is a layer-1 bug, and layer 1's model shows it does not happen.
-- Clear, epochs and remove, so `EpochSafe` is not checked; CI, return, merge stops and resume; reader add; add in parts and insertion's anchors (an insertion is an add at an odd score); `ask --another`; the coordinator's `accept` verb (R9, the machine's accept, is modelled).
+- Clear, epochs and remove, so `EpochSafe` is not checked; CI, return, merge stops and resume; reader add, reader away, reader up and reader remove (the readers are a constant set here: who is up is `DirtyTick.tla`'s, `ReaderAway` and `ReaderBack`, and a row removed holds no read, so no model action); add in parts and insertion's anchors (an insertion is an add at an odd score); `ask --another`; the coordinator's `accept` verb (R9, the machine's accept, is modelled).
 - R11's `idle:s` kind (a notice, no judgment), and R1's strangers (a beat from a member with no fleet row).
 - The `askwait` index, and I3 for it and for `fresh` above sigma: `HeadActionable` checks `elig` below sigma, deal's heads and `wait:n`.
 - `NoLostWork`'s "parked (and named)": a parked key counts as owed without the check that its judgment is open. `Named` does check a parked key per card.

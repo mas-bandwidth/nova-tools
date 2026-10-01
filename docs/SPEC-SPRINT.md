@@ -321,8 +321,27 @@ id (`--op`) returns the original result, with no second counter or notification.
 
 ## 6. The readers
 
-- ask deals every primary in review that lacks reads to TWO DIFFERENT readers,
-  each to the shortest asked queue, keeping order. One read card per reader.
+- A reader row has a state, as a fleet member has: up, away or down. A reader
+  says it is there by asking for its own queue: `queue --as <reader>` writes its
+  beat (a record outside the tables, as a member's beat is). It is up while its
+  last beat is within the beat bound (`ReaderBeatBound`, the fleet's 15 s),
+  away when it beat and has lapsed, down when it has never beaten; the
+  coordinator's `reader away <reader>` holds it away whatever it beats, and
+  `reader up <reader>` releases the hold. `where` shows each reader's state in
+  the readers table's `status` cell; the cell is shown, never stored in the
+  table. The state is read, never typed: the tick reads it once, with its first
+  read, and every part plans on that reading.
+- ask deals every primary in review that lacks reads to TWO DIFFERENT readers
+  UP, each to the shortest asked queue, keeping order. One read card per reader.
+  A reader away or down is never asked. A read asked, and not begun, of a
+  reader that is not up is taken back by the next ask (the tick's, in the same
+  step that asks the primary again): its read card is retired (by `away`), the
+  primary stays at its attempt, no redeal is spent and no `ask --another` is
+  owed, and the next reader up that has no read card at that attempt is asked.
+  A read begun stays with its reader. With fewer than two readers up the tick
+  asks none: it raises one judgment, `fewer than two readers up: <readers and
+  their states>`, for the sprint (not one for each primary), closed when two
+  are up or no primary waits; `reader up` and `reader add` answer it.
   The machine's tick asks for every such primary; `ask` is the coordinator's
   own.
   Work that came back failed is not read: it waits for the coordinator.
@@ -461,7 +480,8 @@ the tick would make, no other open judgment on it).
 | repair skipped changes the store refused as recorded | card (look), return, drop, rework, ack | yes |
 | an operation was stuck | check, ack | yes |
 | a reminder could not be delivered | goal set (a new route), goal drop, ack | yes |
-| cannot ask | reader add, rework, drop, wait | no |
+| cannot ask (two readers are up, and a primary has no two to be asked of) | reader add, rework, drop, wait | no |
+| fewer than two readers up | reader up, reader add, wait | no |
 | no fleet member is up | fleet beat (on a machine), fleet up (releases a hold), wait | no |
 | a card reached its bound (an attempt's work card redealt MaxRedeals, 3, times after takes that ended, and a take of it ended again) | rework with a fix (a new attempt), drop, wait | no |
 | a work card is past its deadline | fleet down (the member, only when it has held the card its own whole deadline: never the member a late card was just redealt to, nor one it was withdrawn from), wait, drop | no |
@@ -472,7 +492,7 @@ the tick would make, no other open judgment on it).
 | a stream has made no progress past its deadline (stale) | where, queue (look) | no |
 | stalled: nothing holds a card (rule 12) | the decisions its place allows and that would be accepted (ask --another for a primary asked already, never ask), else look at the card; drop; wait | no, while the stall stands |
 
-A condition the tick keeps (cannot ask, no member up, a deadline passed, an
+A condition the tick keeps (cannot ask, fewer than two readers up, no member up, a deadline passed, an
 invariant broken; a failing reminder too) is answered for a while by
 `wait <note> --for <duration>`: the judgment is closed and the condition held
 until that much running time has passed (STOPPED time does not count); when it
@@ -481,7 +501,7 @@ condition clears first the hold is closed. `wait` on any other judgment sets
 its review time, which counts running time from when it was set, as every
 deadline does.
 
-The machine's tick writes its own judgments (section 14): cannot ask, no fleet
+The machine's tick writes its own judgments (section 14): cannot ask, fewer than two readers up, no fleet
 member is up, a work card or a read card past its deadline, a stream with no
 merge step past its deadline, an invariant is broken, a stall (rule 12: one
 judgment for each card nothing holds, or for the stall a chain of waiting
@@ -738,7 +758,7 @@ refused), `--json` and `--max`. `--actor` has no default: it is `--actor`, else
 NOVA_SPRINT_ACTOR, and a verb that writes with neither is refused. Every verb
 has one class of who may run it. The coordinator's verbs (init, add, release,
 resolve, start, stop, ask, accept, rework, return, drop, rank, resume, fleet
-up, fleet down, fleet level, reader add, wait, ack, clear, teardown, repair,
+up, fleet down, fleet level, reader add, reader away, reader up, reader remove, wait, ack, clear, teardown, repair,
 goal set, goal drop, play) are the sprint's coordinator's alone: the first
 init names the coordinator (`--coordinator`, else the actor), a later init is
 refused unless its actor is that coordinator and never changes it, and
@@ -787,12 +807,15 @@ command that loads it.
 | resume | a stopped stream moves again, with what was done; refused while a cause is unresolved |
 | fleet | `up|down <member>`, `level` |
 | reader add | declares readers |
+| reader away | holds readers away whatever they beat: no read is asked of them, and a read asked and not begun is asked of another at the next tick |
+| reader up | releases the hold; the reader's state is then its beat's |
+| reader remove | takes readers off the readers table; refused (exit 1, nothing written) when a named reader is no row or holds a read card, asked, reading, ok or broken, naming the reader and its read cards |
 | ci | records a CI observation for primaries in any state |
 | wait | sets a judgment's next review time |
 | ack | closes a judgment the coordinator looked at, with the reason |
 | inbox | every open judgment and the notifications since the cursor, grouped, judgment first; `--open <id>`, `--read`; `--json` carries `judgments` (each with `id`, `kind`, `type`, `what`, `stream`, `size`, `cards` whole, `notes`, and `answers`: every decision with the exact command lines that make it, in order), `happened` (the notifications since the cursor, grouped), `done` (the machine has stopped because the sprint is done) and `groups`, every group in the order the text prints; `--wait --timeout <d>` blocks for the next tick end, and `--json` then also carries `woke` (false when the timeout ended the wait, with `inbox --wait: no tick end in <d>` on stderr and stdout still one JSON object; the plain rendering prints that line on stdout) |
 | card | one primary's story, told from the log: for a card in flight, first what holds it now (each open judgment with the commands that answer it, or the actor and its deadline); its place in its stream's line; its brief, and the fix its attempt was given; its timeline in local time, an attempt at a time ("attempt 2, because attempt 1 failed"), one line per event a person would name (two readers asked, a merge and its batch, a step and its answer are one line each), a finish and a read with the first line of their words; the reports, findings and fixes whole as paragraphs; a card that has ended says so in one line; `--fields` prints every field of the primary and its cards instead; `--json` carries both, the timeline's events with the log lines each tells |
-| queue --as, take | a member's or a reader's cards, each with its packet: what it is handed so that it needs no other read to learn its task (the card, its epoch and generation, the brief, this attempt's fix, the notes on it, for a rework the finding of the read that found the attempt before broken and why that attempt ended (the work card's own words: the primary's are written at the next tick's drain, after a member may have taken the card), and for a work card the branch to work on, `sprint/<card>`, and the one to start from, the attempt before's branch for a rework, with `base_head`, the head that attempt finished ok at, which a rework is staged from (docs/SPEC-CARD-CONTRACT.md: never a branch name alone, which may never have reached origin); for a read card the work it reads: the worker, its head, branch and base, and the worker's report), and the command that reports it; take prints the packets of the cards it took, `--json` as `packets`; finish takes `--branch` and `--base`, which the work card keeps and the reader's packet and card show; a fleet member (`nova-swarm member`) pushes the child's commit to origin's `sprint/<card>` before its finish, so the finish's `--head` is the pushed sha the merge queue carries and the merge reads the work from origin; a finish is ok only with the result's shape, its verdict ok and a pushed commit, and every other is a `--failed` finish naming no head and no branch, its report starting with the reason (`no RESULT.md shape`, `nothing to do: <why>`, `verdict <word>`, `no commit: <why>`, `push refused: <git's line>`), so it opens the failed-work judgment and never goes to review with nothing to read (docs/SPEC-CARD-CONTRACT.md section 4) |
+| queue --as, take | a member's or a reader's cards (a reader's `queue --as` is its beat), each with its packet: what it is handed so that it needs no other read to learn its task (the card, its epoch and generation, the brief, this attempt's fix, the notes on it, for a rework the finding of the read that found the attempt before broken and why that attempt ended (the work card's own words: the primary's are written at the next tick's drain, after a member may have taken the card), and for a work card the branch to work on, `sprint/<card>`, and the one to start from, the attempt before's branch for a rework, with `base_head`, the head that attempt finished ok at, which a rework is staged from (docs/SPEC-CARD-CONTRACT.md: never a branch name alone, which may never have reached origin); for a read card the work it reads: the worker, its head, branch and base, and the worker's report), and the command that reports it; take prints the packets of the cards it took, `--json` as `packets`; finish takes `--branch` and `--base`, which the work card keeps and the reader's packet and card show; a fleet member (`nova-swarm member`) pushes the child's commit to origin's `sprint/<card>` before its finish, so the finish's `--head` is the pushed sha the merge queue carries and the merge reads the work from origin; a finish is ok only with the result's shape, its verdict ok and a pushed commit, and every other is a `--failed` finish naming no head and no branch, its report starting with the reason (`no RESULT.md shape`, `nothing to do: <why>`, `verdict <word>`, `no commit: <why>`, `push refused: <git's line>`), so it opens the failed-work judgment and never goes to review with nothing to read (docs/SPEC-CARD-CONTRACT.md section 4) |
 | log | the epoch's log, every line in order: --card (a primary with its work, read and merge cards), --stream, --member, --since, --at-epoch, --json (section 17) |
 | check, repair | section 9 and section 10 |
 | where | the view, once or `--watch` (redrawn in place, section 1); `--json` also carries the pending operation, the stalled streams, the people and the coordinator |
@@ -960,8 +983,9 @@ stream stopped only on a cross need whose card has landed), deal (T3), accept
 (R9: every acceptable primary in review the tick does not hold, section 6,
 moves to merging and into its stream's merge queue, and the coordinator is
 told once for each stream "ready to merge"; the merge is the coordinator's),
-level (T4), ask (T2: two different readers for each primary in review with no
-read card at its attempt and work not failed), check (T6: section 9, and the
+level (T4), ask (T2: two different readers up for each primary in review with
+fewer than two read cards at its attempt and work not failed; a read asked of a
+reader that is not up is taken back first, section 6), check (T6: section 9, and the
 no-stall rule 12), deadlines, overdue, done (the sprint done: the machine
 stops). Each part is
 bounded per tick (200 moves, 50 notes): the rest are due, the next ticks
@@ -971,8 +995,11 @@ tick. Running a tick twice in a row changes nothing the second time.
 The tick writes a judgment once while its condition holds and closes it when
 the condition clears (closing a primary's last judgment in review, it writes
 the judgment the primary needs next, as every step that leaves one in review
-does): cannot ask (fewer than two different readers are free;
+does): cannot ask (two readers are up and fewer than two different readers are
+free for a primary, who has not already read its attempt;
 one condition per primary whatever its count of free readers),
+fewer than two readers up (the sprint's, one whatever the primaries waiting:
+the ask asks none while it stands, section 6),
 no fleet member is up, a work card past its deadline, by its state (not
 taken, ready or withdrawn again before a take: 15 minutes from untaken_since,
 the first deal since its last take; not finished, working or withdrawn from a

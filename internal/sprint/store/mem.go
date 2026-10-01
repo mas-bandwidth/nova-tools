@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"sort"
 	"strconv"
 	"sync"
@@ -649,6 +650,40 @@ func (m *Mem) RowsAdd(_ context.Context, table string, rows []string) error {
 	t.rev++
 	t.wrote[m.active(t)] = true
 	t.changes = append(t.changes, memChange{epoch: m.active(t), before: t.rev - 1, after: t.rev, verb: "rows_add"})
+	return nil
+}
+
+// RowsDel removes rows and unplaces the cards in them, as the table layer's row
+// delete does, under RowsAdd's epoch check.
+func (m *Mem) RowsDel(_ context.Context, table string, rows []string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.Calls["rowsdel"]++
+	t, err := m.table(table)
+	if err != nil {
+		return err
+	}
+	if err := m.writeEpoch(t); err != nil {
+		return err
+	}
+	ep := t.at(m.active(t))
+	for _, r := range rows {
+		i := slices.Index(ep.rows, r)
+		if i < 0 {
+			continue
+		}
+		ep.rows = slices.Delete(ep.rows, i, i+1)
+		delete(ep.texts, r)
+		for _, mm := range t.members {
+			if mm.placed && mm.epoch == m.active(t) && mm.row == r {
+				mm.placed, mm.row, mm.col = false, "", ""
+				mm.rev++
+			}
+		}
+	}
+	t.rev++
+	t.wrote[m.active(t)] = true
+	t.changes = append(t.changes, memChange{epoch: m.active(t), before: t.rev - 1, after: t.rev, verb: "row_del"})
 	return nil
 }
 

@@ -30,6 +30,9 @@ type testApp struct {
 	// live is the fleet members that beat before every command line and
 	// after every step of the clock: the machines alive.
 	live []string
+	// quiet is the readers that do not beat: every other reader of the readers
+	// table beats with the members (a reader's own queue is its beat).
+	quiet map[string]bool
 }
 
 func newTestApp(t *testing.T) *testApp {
@@ -61,6 +64,21 @@ func (ta *testApp) beat() {
 	zero := 0.0
 	for _, m := range live {
 		if _, err := st.Beat(context.Background(), m, &zero, hostload.Source{}); err != nil {
+			ta.t.Fatal(err)
+		}
+	}
+	rows, err := st.ReaderRows(context.Background())
+	if err != nil {
+		ta.t.Fatal(err)
+	}
+	for _, r := range rows {
+		ta.mu.Lock()
+		quiet := ta.quiet[r]
+		ta.mu.Unlock()
+		if quiet {
+			continue
+		}
+		if _, err := st.ReaderBeat(context.Background(), r); err != nil {
 			ta.t.Fatal(err)
 		}
 	}
