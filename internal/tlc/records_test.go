@@ -29,7 +29,7 @@ func TestRecordsRoundTrip(t *testing.T) {
 	}
 	out, err := ReadRecords(&b)
 	require.NoError(t, err, "round trip = %v, %v", out, err)
-	require.Equal(t, out, in, "round trip = %v, %v", out, err)
+	require.Equal(t, in, out, "round trip = %v, %v", out, err)
 }
 
 func TestRecordsRefuseWhatIsNotTheirFormat(t *testing.T) {

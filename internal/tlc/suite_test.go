@@ -444,7 +444,7 @@ func TestRunSuiteIgnoresAnEditToAModelNoChosenCaseReads(t *testing.T) {
 			o.Selection = Selection{Group: "alpha"}
 			res, err := RunSuite(o)
 			require.NoError(t, err)
-			require.Equal(t, res.Refused == "model inputs changed during execution", tc.refused, "suite = %+v", res)
+			require.Equal(t, tc.refused, res.Refused == "model inputs changed during execution", "suite = %+v", res)
 			require.Equal(t, tc.refused, res.Failed, "suite = %+v", res)
 		})
 	}
