@@ -11,6 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
@@ -404,13 +407,16 @@ func TestReworkTwice(t *testing.T) {
 	c := p.snap().Fleet.Card("s1-1.w2")
 	p.do("take w2", TakeStep(sprint.TakeReq{As: c.Row, Sel: ids(c.ID), Gens: map[string]int{c.ID: 1}}))
 	p.do("finish w2 ok h2", FinishStep(sprint.FinishReq{As: c.Row, Sel: ids(c.ID), Gens: map[string]int{c.ID: 1}, Head: "h2"}))
+	require.Empty(t, p.snap().Readers.Of("s1-1"), "the finish asked readers itself (one path asks)")
+	p.do("ask again", AskStep(sprint.AskReq{Sel: ids("s1-1")})) // the machine's ask
 	again := p.snap().Readers.Of("s1-1")
+	var who []string
 	for _, rc := range again {
 		t.Logf("asked again: %s reader=%s head=%s col=%s", rc.ID, rc.F("reader"), rc.F("head"), rc.Col)
+		assert.Equal(t, "h2", rc.F("head"), "%s not asked at h2", rc.ID)
+		who = append(who, rc.F("reader"))
 	}
-	if len(again) != 2 || again[0].F("head") != "h2" {
-		t.Errorf("not asked of the same two at h2")
-	}
+	assert.ElementsMatch(t, []string{a, b}, who, "not asked of the same two at h2")
 	p.read(b, sprint.ReadCardID("s1-1", 2, b), "broken")
 	for _, o := range p.openOn("s1-1") {
 		t.Logf("second broken: marked=%v before=%d decisions=%v", o.Note.Marked, o.Note.Before, o.Note.Decisions)
@@ -439,6 +445,7 @@ func TestReworkTwice(t *testing.T) {
 	c = p.snap().Fleet.Card("s1-1.w5")
 	p.do("take w5", TakeStep(sprint.TakeReq{As: c.Row, Sel: ids(c.ID), Gens: map[string]int{c.ID: 1}}))
 	p.do("finish w5 ok", FinishStep(sprint.FinishReq{As: c.Row, Sel: ids(c.ID), Gens: map[string]int{c.ID: 1}, Head: "h5"}))
+	p.do("ask at attempt 5", AskStep(sprint.AskReq{Sel: ids("s1-1")})) // the machine's ask
 	for _, rc := range p.snap().Readers.Of("s1-1") {
 		t.Logf("at attempt 5: %s head=%s", rc.ID, rc.F("head"))
 	}
@@ -470,6 +477,7 @@ func TestMergeOrderConflictAndCrossNeed(t *testing.T) {
 	c := p.snap().Fleet.Card("s1-3.w2")
 	p.do("take", TakeStep(sprint.TakeReq{As: c.Row, Sel: ids(c.ID), Gens: map[string]int{c.ID: 1}}))
 	p.do("finish", FinishStep(sprint.FinishReq{As: c.Row, Sel: ids(c.ID), Gens: map[string]int{c.ID: 1}, Head: "h2"}))
+	p.do("ask again", AskStep(sprint.AskReq{Sel: ids("s1-3")})) // the machine's ask: the finish asks no reader
 	for _, rc := range p.snap().Readers.Of("s1-3") {
 		if rc.Col == sprint.Asked {
 			p.read(rc.F("reader"), rc.ID, "ok")

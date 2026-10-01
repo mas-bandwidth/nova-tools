@@ -366,7 +366,8 @@ func Take(s State, m, c string, gen int) (State, error) {
 // FinishRefused (line 364) when the generation is not live: accepted only
 // for the live generation in its member's working cell (D3); the card to
 // done, its primary to review at the head the card produced; failed opens
-// the failed judgment; ok asks the readers kept on the primary again (G2).
+// the failed judgment. ok asks no reader: one path asks (the engine's commit 255180e2), the
+// machine's Ask, which asks the readers kept on the primary first (G2, D2).
 func Finish(s State, m, c string, gen int, ok bool) (State, error) {
 	if err := free(s); err != nil {
 		return s, err
@@ -394,14 +395,6 @@ func Finish(s State, m, c string, gen int, ok bool) (State, error) {
 	n.Primaries[p] = pr
 	if !ok {
 		n.open(JFailed, p)
-		return n, nil
-	}
-	for _, r := range pr.Pair {
-		id := RC(p, w.Attempt, r)
-		if _, made := n.Reads[id]; made {
-			return s, badChoice("%s cut a second time (NoCardLostOrTwice)", id)
-		}
-		n.Reads[id] = ReadCard{Primary: p, Attempt: w.Attempt, Reader: r, Place: Asked}
 	}
 	return n, nil
 }

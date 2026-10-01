@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/refmodel"
@@ -114,15 +116,14 @@ func TestAskAnotherDoesNotWidenTheReadersKept(t *testing.T) {
 	c := h.snap().Fleet.Card("s1-1.w2")
 	h.must(TakeStep(sprint.TakeReq{As: c.Row, Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: c.Int("gen")}}))
 	h.must(FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: c.Int("gen")}}))
+	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}})) // the machine's ask: the finish asks no reader
 	var asked []string
 	for _, rc := range h.snap().Readers.Of("s1-1") {
 		if rc.Int("attempt") == 2 {
 			asked = append(asked, rc.F("reader"))
 		}
 	}
-	if len(asked) != 2 {
-		t.Fatalf("readers asked at attempt 2: %v (kept %s)", asked, pair)
-	}
+	assert.ElementsMatch(t, strings.Split(pair, ","), asked, "readers asked at attempt 2: the pair kept, and no third")
 	h.clean("asked again")
 }
 
