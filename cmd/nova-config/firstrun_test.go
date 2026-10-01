@@ -57,9 +57,8 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	}
 	require.Equal(t, strings.Join(documentedExamples, "\n"), strings.Join(commands, "\n"), "the transcript's commands and the banner's examples are one list")
 	var banner bytes.Buffer
-	if code := run([]string{"help"}, &banner, &banner, newHarness().deps()); code != 0 {
-		require.FailNow(t, "help exits nonzero", "exit %d", code)
-	}
+	codeCheck60 := run([]string{"help"}, &banner, &banner, newHarness().deps())
+	require.Zero(t, codeCheck60, "help exits nonzero: exit %d", codeCheck60)
 	examples, err := onboarding.ExampleLines(banner.String(), "nova-config")
 	require.NoError(t, err)
 	require.Equal(t, strings.Join(documentedExamples, "\n"), strings.Join(examples, "\n"), "the banner's examples and this test's examples are one list")
@@ -67,12 +66,8 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	for _, s := range steps {
 		res, err := runDocumented(s)
 		require.NoError(t, err, "the documented command\n  %s\ncould not be run", s.Line)
-		if res.Code != 0 {
-			assert.Fail(t, "the documented command exits nonzero", "%s exits %d; a first run that needs no store answers 0", s.Line, res.Code)
-		}
+		assert.Zero(t, res.Code, "%s exits %d; a first run that needs no store answers 0", s.Line, res.Code)
 		got = append(got, res)
 	}
-	for _, p := range onboarding.CompareTranscript(steps, got, nil) {
-		assert.Fail(t, p.String())
-	}
+	assert.Empty(t, onboarding.CompareTranscript(steps, got, nil), "the documented transcript matches")
 }
