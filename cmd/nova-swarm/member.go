@@ -247,7 +247,7 @@ func (r *nativeRunner) Start(p member.Packet) (member.Child, error) {
 		return nil, err
 	}
 	framePath := filepath.Join(r.slots, name+cardcontract.FrameName)
-	if err := cardcontract.WriteFrame(framePath, frameOf(p, r.model)); err != nil {
+	if err := cardcontract.WriteFrame(framePath, frameOf(p, r.model, r.root)); err != nil {
 		return nil, err
 	}
 	args := []string{"native", "--harness", r.harness, "--model", r.model, "--card", cardPath, "--frame", framePath, "--slot", slot,
@@ -369,8 +369,9 @@ func (c *nativeChild) Result() member.Result {
 		cr, shimmed := cardcontract.ReadFinish(c.job)
 		if !shimmed {
 			cr = typedrec.ParseCardResult(raw)
-		} else if len(strings.TrimSpace(string(raw))) > 0 {
-			cr.Body = strings.TrimSpace(cr.Body + "\n\n## RESULT.md\n\n" + string(raw))
+		} else if own := strings.TrimSpace(string(raw)); own != "" && !cardcontract.IsFinish(c.job, raw) {
+			// native published the child's own RESULT.md beside the finish: it rides in the body
+			cr.Body = strings.TrimSpace(cr.Body + "\n\n## RESULT.md\n\n" + own)
 		}
 		head, verdict, report := cr.Head, cr.Verdict, cr.Report
 		if head == "" {
@@ -406,11 +407,14 @@ var tierRE = regexp.MustCompile(`\btier:\s*([A-Za-z0-9_-]+)`)
 // frameOf is a launch's frame (docs/SPEC-CARD-CONTRACT.md layer 1): the repository and
 // base the brief's header names, the packet's branch and attempt, and the commit to stage:
 // a read's head under read, a later attempt's previous pushed head, else the base's sha.
-func frameOf(p member.Packet, model string) cardcontract.Frame {
+func frameOf(p member.Packet, model, root string) cardcontract.Frame {
 	cb := swarm.ReadCardBase([]byte(p.Brief))
 	first, _, _ := strings.Cut(p.Brief, "\n")
 	f := cardcontract.Frame{Kind: p.Kind, Card: p.Card, Attempt: p.Attempt, Model: model,
-		Repo: cb.Repo, BaseRef: cb.Ref, StageSha: cb.Sha, Branch: p.Branch, Finding: p.Fix}
+		Repo: cb.Repo, BaseRef: cb.Ref, StageSha: cb.Sha, Branch: p.Branch, Finding: p.Fix, Stage: cb.Stage}
+	if len(cb.Stage) > 0 {
+		f.Recipes = filepath.Join(root, cardcontract.RecipesName)
+	}
 	if m := tierRE.FindStringSubmatch(first); m != nil {
 		f.Tier = m[1]
 	}

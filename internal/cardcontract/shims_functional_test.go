@@ -133,6 +133,8 @@ func TestACloneOfTheCardsRepositoryIsTheStagedCheckout(t *testing.T) {
 		"ssh://git@example.com/example-owner/example-repo.git",
 		"git@example.com:example-owner/example-repo.git",
 		"https://user@example.com/Example-Owner/Example-Repo.git",
+		"ssh://git@example.com:22/Example-Owner/example-repo.git",
+		"https://example.com:443/example-owner/example-repo",
 	} {
 		dir := filepath.Join(r.job, "c"+string(rune('a'+i)))
 		code, _, errb := r.sh(r.job, "git clone --depth 1 -b main "+url+" "+dir)
@@ -302,3 +304,43 @@ func TestEveryProfileKeepsTheContract(t *testing.T) {
 }
 
 // JOB.md carries what the attempt before left and the tier; a read's says to review.
+
+// A push the member cannot carry is refused with one line and recorded as
+// nothing: a delete, a prune, a mirror, every branch or tag, and a push option.
+// An option's value is never read as the remote or the source.
+func TestAPushTheMemberCannotCarryIsRefused(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "claude", "work")
+	head := r.commit(r.repo, "w")
+	git(t, r.repo, "branch", "feature")
+	for _, line := range []string{"git push --delete origin feature", "git push -d origin feature", "git push origin --prune", "git push --mirror origin",
+		"git push --all origin", "git push --tags origin", "git push -o ci.skip origin HEAD", "git push --push-option=ci.skip origin HEAD", "git push -oci.skip origin HEAD"} {
+		code, _, errb := r.sh(r.repo, line)
+		assert.Equal(t, 1, code, line)
+		assert.Contains(t, errb, "REFUSED", line)
+		assert.Equal(t, 1, strings.Count(strings.TrimSpace(errb), "\n")+1, "one line: %s", line)
+		_, err := os.Stat(filepath.Join(r.job, PushedName))
+		assert.True(t, os.IsNotExist(err), "a refused push records nothing: %s", line)
+	}
+	code, _, errb := r.sh(r.repo, "git push --repo origin origin HEAD")
+	require.Equal(t, 0, code, errb)
+	_, got := LastPushed(r.job)
+	assert.Equal(t, head, got, "an option's value is consumed, never read as the source")
+}
+
+// gh's finishes are scoped to the card's kind: a read never creates a pull
+// request and work never reviews one; neither writes a finish.
+func TestGhFinishesAreScopedToTheCardsKind(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ kind, line string }{
+		{"read", `gh pr create --title T --body x`},
+		{"work", `gh pr review --approve --body x`},
+	} {
+		r := newRig(t, "claude", tc.kind)
+		code, _, errb := r.sh(r.repo, tc.line)
+		assert.Equal(t, 2, code, tc.kind)
+		assert.Contains(t, errb, "REFUSED", tc.kind)
+		_, err := os.Stat(filepath.Join(r.job, FinishName))
+		assert.True(t, os.IsNotExist(err), "%s: no finish", tc.kind)
+	}
+}

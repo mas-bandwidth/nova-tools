@@ -899,9 +899,18 @@ func nativeProcessExit(childRC int) int {
 // `NATIVE OK` for a card that did nothing but ask, which is the very fault #1844 made this
 // word earn itself. The verdict is therefore unchanged by the report, and the report is
 // where the question goes.
+//
+// A FRAMED CARD'S FINISH IS ITS RESULT (docs/SPEC-CARD-CONTRACT.md). The gh shim records a
+// claude child's `gh pr create` or `gh pr review` in <job>/.sprint/finish.md, the child's
+// end, and the child writes no RESULT.md; that record, in the contract's shape, is the
+// artefact (swarm.FindCardResult reads its shape). The machinery writes no such file, so the
+// asked report's exclusion above stands.
 func nativeLeftAResult(job string) bool {
 	if strings.TrimSpace(job) == "" {
 		return false
+	}
+	if p, ok := swarm.FindCardResult(job); ok && p == filepath.Join(job, cardcontract.FinishName) {
+		return true
 	}
 	for _, p := range []string{
 		filepath.Join(job, "RESULT.md"),

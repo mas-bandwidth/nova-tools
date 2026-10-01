@@ -20,10 +20,25 @@ var ErrStageTimeout = errors.New("stage-timeout")
 
 // CardBase is what a card's header says to stage into <job>/repo (nova-tools#3711).
 type CardBase struct {
-	Repo  string // the clone URL (or a local path) to stage; "" when the card names none that can be read
-	Sha   string // base-sha: (or the sha of BASE: <ref>@<sha40>); "" when absent
-	Ref   string // BASE: <ref> without @; the ref checked out when there is no sha
-	Named string // the raw value of the card's base-repo: or REPO: line, even one Repo could not be read from
+	Repo  string   // the clone URL (or a local path) to stage; "" when the card names none that can be read
+	Sha   string   // base-sha: (or the sha of BASE: <ref>@<sha40>); "" when absent
+	Ref   string   // BASE: <ref> without @; the ref checked out when there is no sha
+	Named string   // the raw value of the card's base-repo: or REPO: line, even one Repo could not be read from
+	Stage []string // the recipe files the header's `Stage:` lines name, in order (docs/SPEC-CARD-CONTRACT.md)
+}
+
+// headerLineRE is a card header line: a key, a colon, then a value or nothing.
+var headerLineRE = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]*:(\s|$)`)
+
+// cardHeader is a card's header: line 1, then every line after it while it is a
+// `key: value` line; the first blank line or line of prose ends it.
+func cardHeader(card string) []string {
+	lines := strings.Split(card, "\n")
+	n := 1
+	for n < len(lines) && headerLineRE.MatchString(strings.TrimSpace(lines[n])) {
+		n++
+	}
+	return lines[:min(n, len(lines))]
 }
 
 // cardRepoNameRE is the owner/name a REPO: line carries.
@@ -53,15 +68,15 @@ func CardRepoURL(value string) string {
 }
 
 // ReadCardBase is THE reader of which repository a card works in, at which sha: staging
-// (StageCard) calls it, so the repo a card is staged from is the repo it names. It reads the first 40 lines. Precedence:
-// `base-repo: <url>`, then `REPO: <owner>/<name>` (the header every pushed card carries), then
-// the first github clone URL anywhere in the card (CardCloneRepos). The sha is `base-sha:`,
-// else the sha of `BASE: <ref>@<sha40>`; the ref is BASE:'s value before any @.
+// (StageCard) and the member's frame call it, so the repo a card is staged from is the repo it
+// names. It reads the card's HEADER only (docs/SPEC-CARD-CONTRACT.md: the frame is the
+// card's data, never its prose): line 1 and the `key: value` lines that follow it, up to the
+// first line of another form; a line in the body that looks like a header names nothing.
+// Precedence: `base-repo: <url>`, then `REPO: <owner>/<name>` (the header every pushed card
+// carries). The sha is `base-sha:`, else the sha of `BASE: <ref>@<sha40>`; the ref is BASE:'s
+// value before any @.
 func ReadCardBase(card []byte) CardBase {
-	lines := strings.Split(string(card), "\n")
-	if len(lines) > 40 {
-		lines = lines[:40]
-	}
+	lines := cardHeader(string(card))
 	var b CardBase
 	var baseRepo, repoLine string
 	var sawRepoLine bool
@@ -70,6 +85,8 @@ func ReadCardBase(card []byte) CardBase {
 		switch {
 		case strings.HasPrefix(trimmed, "base-repo:"):
 			baseRepo = strings.TrimSpace(strings.TrimPrefix(trimmed, "base-repo:"))
+		case strings.HasPrefix(trimmed, "Stage:"):
+			b.Stage = append(b.Stage, strings.Fields(strings.TrimPrefix(trimmed, "Stage:"))...)
 		case strings.HasPrefix(trimmed, "base-sha:"):
 			b.Sha = strings.TrimSpace(strings.TrimPrefix(trimmed, "base-sha:"))
 		case strings.HasPrefix(trimmed, "REPO:") && !sawRepoLine:
@@ -92,10 +109,7 @@ func ReadCardBase(card []byte) CardBase {
 	case CardRepoURL(repoLine) != "":
 		b.Repo, b.Named = CardRepoURL(repoLine), repoLine
 	default:
-		if repos := CardCloneRepos(string(card)); len(repos) > 0 {
-			b.Repo = defaultProbeBase + "/" + repos[0] + ".git"
-			b.Named = repos[0]
-		} else if repoLine != "-" && !strings.EqualFold(repoLine, "none") {
+		if repoLine != "-" && !strings.EqualFold(repoLine, "none") {
 			// A REPO: line no reader can resolve still NAMES a repo: staging must refuse
 			// it (no-repo-staged), never launch the model into an empty job dir.
 			b.Named = repoLine
