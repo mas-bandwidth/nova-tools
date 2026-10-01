@@ -260,7 +260,7 @@ func Read(s *Snapshot, r ReadReq) Plan {
 			n.What = c.Row + " returned " + c.ID + ": " + r.Reason
 			n.Who = r.Who
 			p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"),
-				Changes: []Change{change(Readers, removeEntry(c, map[string]string{"retired": stamp(s.Now), "retired_by": "returned", "reason": r.Reason}))},
+				Changes: []Change{change(Readers, removeEntry(c, map[string]string{"retired": stamp(s.Now), "retired_by": "returned"}))},
 				Moved:   c.ID + " " + c.Col + " -> returned", Notes: []Note{n}})
 			continue
 		}

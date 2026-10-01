@@ -1411,6 +1411,7 @@ func (a *app) cmdRead(args []string, stdout, stderr io.Writer) int {
 			return refuse(stderr, "read", "--return names its one card and wants --reason <text>")
 		}
 		ids = []string{*ret}
+		c.actor = *as // the returner is the reader, whoever runs the verb
 	}
 	verdict := "ok"
 	if *broken {
