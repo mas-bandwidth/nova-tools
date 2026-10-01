@@ -183,7 +183,7 @@ func TestRender(t *testing.T) {
 				want.Facts[k] = strings.NewReplacer(" ", `\x20`, "=", `\x3d`).Replace(v)
 			}
 			g, w := fmt.Sprintf("%+v", got), fmt.Sprintf("%+v", want)
-			assert.Equal(t, g, w, "the lines and the JSON disagree:\nlines %s\njson  %s", g, w)
+			assert.Equal(t, w, g, "the lines and the JSON disagree:\nlines %s\njson  %s", g, w)
 		})
 	}
 }
