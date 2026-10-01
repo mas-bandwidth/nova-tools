@@ -392,8 +392,13 @@ id (`--op`) returns the original result, with no second counter or notification.
   spent, and the next tick asks it of another reader up that has no read card
   at the attempt (the returned card retired, by `returned`), or, when none is
   free, of the same reader again, in place, so a reader whose launches failed
-  is never counted as having read the attempt (tla/DirtyTick.tla,
-  ReturnLeavesReaderEligible). Its member does not begin a read it returned
+  is not counted as having read the attempt (tla/DirtyTick.tla,
+  JudgedOnlyAfterTheBound). A read card is asked again in place at most
+  `MaxReadReasks` (2) times at its attempt (its `reasked` field); a return
+  after that is counted as a read: the card is retired (by `returned`), and a
+  primary no reader is left to read is the ask's `cannot ask` judgment, for the
+  coordinator (reader add, rework, drop; tla/DirtyTick.tla, ReasksBounded and
+  StrandingIsJudged). Its member does not begin a read it returned
   again before `member.ReadStageRetry`. A return of a read the caller does not
   hold is refused. With fewer than two readers up the tick
   asks none: it raises one judgment, `fewer than two readers up: <readers and

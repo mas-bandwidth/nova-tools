@@ -128,9 +128,21 @@
 \*   can take it, by the reader counter, and when none can, of the reader that
 \*   returned it again, in place, the counter not moved (the code's card goes
 \*   back to asked on its own row; internal/sprint Ask). No per-card count
-\*   moves (brk, rdl, att). The witness "returnspends" counts the return as a
-\*   read (the code before: its card retired, the reader never asked again at
-\*   the attempt), and breaks ReturnLeavesReaderEligible (W25).
+\*   moves (brk, rdl, att).
+\*   THE RE-ASK BOUND (2026-10-01, the reader's finding: a reader that can
+\*   never launch, asked again in place for ever, returned the read every few
+\*   seconds with no judgment). A card is asked again in place at most
+\*   MaxReasks times at its attempt (rea[c]); a return when the bound is
+\*   spent is counted as a read (the code retires the card): the reader joins
+\*   seen, and a card no reader may be asked of is stranded and judged at
+\*   once (cna[c], the code's "cannot ask"; the coordinator decides).
+\*   Properties: ReasksBounded, StrandingIsJudged, JudgedOnlyAfterTheBound and
+\*   the liveness ReturnSettles (a read waiting for a reader is placed or
+\*   judged). Witnesses: "returnspends" counts every return as a read (the
+\*   code before: a judgment with no re-ask, W25); "reaskforever" asks again
+\*   in place with no bound (W26); "silentstrand" leaves a stranded card
+\*   unjudged (W27); and the probes ProbeNoReask and ProbeNoJudged show the
+\*   re-ask and the judgment are reached.
 \*
 \* WHAT IS NOT MODELLED. Clear and epochs (the counters' reset); two reads
 \* per attempt (one read each); rework but by a broken read; take is
@@ -159,15 +171,20 @@ Min(a, b) == IF a < b THEN a ELSE b
 \* The beat windows a machine misses in a row before it is down
 \* (internal/sprint/presence.go MissedBeatsDown).
 Misses == 3
+\* The in-place re-asks of a returned read at its attempt (internal/sprint
+\* MaxReadReasks).
+MaxReasks == 2
 
 VARIABLES col, att, bnd, rd, askw, mq, stat, mc, mr, noUp, Q,
           mctr, rctr, sctr, live, miss, acts, ext,
           phase, pumps, sub, addr, notes, wake, act, plc,
           brk, dealt, always,
-          okd, ci, ret, tk, rdl, ended, ends, hred, seen, hb
+          okd, ci, ret, tk, rdl, ended, ends, hred, seen, hb, rea, cna
 
 \* seen, hb       the readers table: the readers c is not asked of at its
 \*                attempt; the reader that returned c's read while it waits
+\* rea, cna       the readers table: c's in-place re-asks at its attempt (the
+\*                read card's reasked); the judgment "cannot ask" open on c
 \* okd, ci, ret   the work table: a card's read said ok and stands; its CI
 \*                ("none" or "red" at its head); returned at its attempt
 \* tk             the fleet table: the card dealt to a machine is taken
@@ -182,8 +199,8 @@ vars == <<col, att, bnd, rd, askw, mq, stat, mc, mr, noUp, Q,
           mctr, rctr, sctr, live, miss, acts, ext,
           phase, pumps, sub, addr, notes, wake, act, plc,
           brk, dealt, always,
-          okd, ci, ret, tk, rdl, ended, ends, hred, seen, hb>>
-CardVars == <<okd, ci, ret, tk, rdl, ended, ends, hred, seen, hb>>
+          okd, ci, ret, tk, rdl, ended, ends, hred, seen, hb, rea, cna>>
+CardVars == <<okd, ci, ret, tk, rdl, ended, ends, hred, seen, hb, rea, cna>>
 
 -----------------------------------------------------------------------------
 \* Entries. k is the kind, c the card (or "-"), x the machine, the reader
@@ -214,7 +231,7 @@ Cur == [col |-> col, att |-> att, bnd |-> bnd, rd |-> rd, askw |-> askw,
         brk |-> brk, dealt |-> dealt, plc |-> <<>>, notes |-> notes,
         f0 |-> Len(Q["fleet"]),
         okd |-> okd, ci |-> ci, ret |-> ret, tk |-> tk, rdl |-> rdl, ended |-> ended, ends |-> ends,
-        hred |-> hred, seen |-> seen, hb |-> hb]
+        hred |-> hred, seen |-> seen, hb |-> hb, rea |-> rea, cna |-> cna]
 
 Put(S, t, e) == [S EXCEPT !.q[t] = Append(@, e)]
 
@@ -258,7 +275,7 @@ AtRB(S, c) == Broken # "redealpast" /\ S.ended[c] /\ S.rdl[c] >= MaxRedeals
 NewAttempt(S, c) ==
   [S EXCEPT !.okd[c] = FALSE, !.ci[c] = "none", !.ret[c] = FALSE,
             !.rdl[c] = 0, !.ended[c] = FALSE, !.ends[c] = 0, !.hred[c] = FALSE,
-            !.seen[c] = {}, !.hb[c] = NoR]
+            !.seen[c] = {}, !.hb[c] = NoR, !.rea[c] = 0, !.cna[c] = FALSE]
 
 -----------------------------------------------------------------------------
 \* THE WORK PUMP (1.). Applies its whole queue, lands sentinels, releases,
@@ -367,10 +384,13 @@ ApplyR(S, e) ==
     [] e.k = "handback" ->  \* the reader returns the read it holds: asked again
          IF S.rd[c] # e.x THEN S
          ELSE IF Broken = "handkeeps" THEN [S EXCEPT !.askw[c] = TRUE]   \* the witness keeps the hold
-         ELSE IF Broken = "returnspends"   \* the witness counts the return as a read
-         THEN Put([S EXCEPT !.rd[c] = NoR, !.askw[c] = TRUE, !.hb[c] = e.x, !.seen[c] = @ \cup {e.x}],
-                  "fleet", E("readoff", c, Host[e.x]))
-         ELSE Put([S EXCEPT !.rd[c] = NoR, !.askw[c] = TRUE, !.hb[c] = e.x], "fleet", E("readoff", c, Host[e.x]))
+         ELSE \* counted as a read when the re-asks are spent (the witness
+              \* "returnspends": always; "reaskforever": never)
+              LET counted == Broken = "returnspends" \/ (Broken # "reaskforever" /\ S.rea[c] >= MaxReasks)
+              IN Put([S EXCEPT !.rd[c] = NoR, !.askw[c] = TRUE,
+                               !.hb[c] = IF counted THEN NoR ELSE e.x,
+                               !.seen[c] = IF counted THEN @ \cup {e.x} ELSE @],
+                     "fleet", E("readoff", c, Host[e.x]))
     [] e.k = "unread" ->
          IF S.rd[c] # NoR THEN [S EXCEPT !.rd[c] = NoR, !.askw[c] = TRUE] ELSE S
     [] e.k = "raway" ->     \* the reader is not up: its reads are taken back and asked again
@@ -400,8 +420,17 @@ PlaceReads(S) ==
        IN IF Others(S, c) = {}
           THEN \* only the reader that returned it can take it: asked of it
                \* again, in place, the counter not moved
-               PlaceReads(Put([S EXCEPT !.askw[c] = FALSE, !.rd[c] = h, !.hb[c] = NoR],
+               PlaceReads(Put([S EXCEPT !.askw[c] = FALSE, !.rd[c] = h, !.hb[c] = NoR,
+                                        !.rea[c] = Min(@ + 1, MaxReasks + 1)],
                               "fleet", E("readon", c, Host[h])))
+
+\* STRANDED: a card waiting for a reader that no reader may be asked of (every
+\* one in seen) is judged at once, "cannot ask", for the coordinator (the
+\* witness "silentstrand" leaves it unjudged).
+Stranded(S) == {c \in Cards : S.askw[c] /\ ~S.cna[c] /\ Readers \subseteq S.seen[c]}
+JudgeStranded(S) ==
+  IF Broken = "silentstrand" \/ Stranded(S) = {} THEN S
+  ELSE Address([S EXCEPT !.cna = [c \in Cards |-> @[c] \/ c \in Stranded(S)]])
           ELSE LET rs == Others(S, c)
                    r == Pick(ROrder, rs, S.rctr)
                IN PlaceReads(Put([S EXCEPT !.askw[c] = FALSE, !.rd[c] = r, !.hb[c] = NoR,
@@ -511,7 +540,7 @@ Pump(S0) ==
 Update(t) ==
   LET S0 == [Cur EXCEPT !.q[t] = <<>>, !.f0 = IF t = "fleet" THEN 0 ELSE @]
       S1 == Fold(t, S0, Q[t])
-      S2 == IF t = "readers" THEN PlaceReads(S1) ELSE S1
+      S2 == IF t = "readers" THEN JudgeStranded(PlaceReads(S1)) ELSE S1
       \* the witness "echo": readers and fleet each tell the other they ran
       S3 == IF Broken = "echo" /\ t = "readers" THEN Put(S2, "fleet", E("echo", "-", "-"))
             ELSE IF Broken = "echo" /\ t = "fleet" THEN Put(S2, "readers", E("echo", "-", "-"))
@@ -521,6 +550,7 @@ Update(t) ==
 Commit(S) ==
   /\ okd' = S.okd /\ ci' = S.ci /\ ret' = S.ret /\ tk' = S.tk /\ rdl' = S.rdl
   /\ ended' = S.ended /\ ends' = S.ends /\ hred' = S.hred /\ seen' = S.seen /\ hb' = S.hb
+  /\ rea' = S.rea /\ cna' = S.cna
   /\ col' = S.col /\ att' = S.att /\ bnd' = S.bnd /\ rd' = S.rd /\ askw' = S.askw
   /\ mq' = S.mq /\ stat' = S.stat /\ mc' = S.mc /\ mr' = S.mr /\ noUp' = S.noUp
   /\ Q' = S.q /\ mctr' = S.mctr /\ rctr' = S.rctr /\ sctr' = S.sctr
@@ -632,7 +662,7 @@ Beat(m) ==
 \* witness "onemiss" lets it lapse on any); a scenario without the windows
 \* takes them to have passed.
 Lapse(m) ==
-  /\ live[m] /\ acts < MaxActs
+  /\ Scn.lapse /\ live[m] /\ acts < MaxActs
   /\ Broken = "onemiss" \/ ~Scn.misses \/ miss[m] >= Misses
   /\ live' = [live EXCEPT ![m] = FALSE] /\ acts' = acts + 1 /\ UNCHANGED miss
   /\ Outside("fleet", E("lapse", "-", m))
@@ -695,6 +725,7 @@ Init ==
   /\ tk = [c \in Cards |-> FALSE] /\ rdl = [c \in Cards |-> 0] /\ ended = [c \in Cards |-> FALSE]
   /\ ends = [c \in Cards |-> 0] /\ hred = [c \in Cards |-> FALSE]
   /\ seen = [c \in Cards |-> {}] /\ hb = [c \in Cards |-> NoR]
+  /\ rea = [c \in Cards |-> 0] /\ cna = [c \in Cards |-> FALSE]
 
 TickNext == TickStart \/ PumpWork \/ DrainWork \/ TickEnd \/
             \E t \in Three : Pass(t) \/ Drain(t)
@@ -721,6 +752,7 @@ TypeOK ==
   /\ tk \in [Cards -> BOOLEAN] /\ rdl \in [Cards -> 0..(MaxRedeals + 1)]
   /\ ended \in [Cards -> BOOLEAN] /\ ends \in [Cards -> 0..(MaxRedeals + 1)] /\ hred \in [Cards -> BOOLEAN]
   /\ seen \in [Cards -> SUBSET Readers] /\ hb \in [Cards -> Readers \cup {NoR}]
+  /\ rea \in [Cards -> 0..(MaxReasks + 1)] /\ cna \in [Cards -> BOOLEAN]
 
 \* THE CENTRAL PROPERTY (the owner: "nothing advances the work stream table
 \* EXCEPT on the next tick"). Only the tick's one pump writes the work table.
@@ -784,11 +816,25 @@ ReadersDone ==
      /\ \E r \in Readers \ seen[c] : stat[Host[r]] = "up" /\ RoomNow(Host[r]) > 0
                                      /\ ("readerup" \in Fixes => stat[r] = "up")
 
-\* A RETURN IS NOT A READ: a read handed back with no verdict leaves its
-\* reader eligible at the card's attempt (while the card waits for a reader,
-\* the reader that returned it is not in seen), so a card every reader
-\* returned is asked again and never stranded in review.
-ReturnLeavesReaderEligible == \A c \in Cards : hb[c] # NoR => hb[c] \notin seen[c]
+\* ReadersDone leaves out the readers in seen[c]: each gave a verdict at the
+\* card's attempt or spent its re-asks, and asking it again would break the
+\* two different readers (or loop for ever). A card no reader may be asked of
+\* is not done silently: StrandingIsJudged holds it (W27).
+
+\* THE RE-ASK BOUND: a returned read is asked again in place at most
+\* MaxReasks times at its attempt (W26).
+ReasksBounded == \A c \in Cards : rea[c] <= MaxReasks
+\* A card waiting in review that no reader may be asked of has its "cannot
+\* ask" judgment open, in the same update (W27).
+StrandingIsJudged ==
+  \A c \in Cards : (askw[c] /\ col[c] = "review" /\ Readers \subseteq seen[c]) => cna[c]
+\* A RETURN IS NOT A READ: no card is judged stranded before its reader was
+\* asked it again MaxReasks times (the code before counted the first return
+\* as a read: W25).
+JudgedOnlyAfterTheBound == \A c \in Cards : cna[c] => rea[c] >= MaxReasks
+\* A read waiting for a reader in review is placed on one, or judged.
+ReturnSettles ==
+  \A c \in Cards : (askw[c] /\ col[c] = "review") ~> (~askw[c] \/ cna[c] \/ col[c] # "review")
 
 \* THE ASK GUARD: a read is held only by a reader up, at every state (a reader
 \* away has its reads taken back by the update that applies it, and is placed

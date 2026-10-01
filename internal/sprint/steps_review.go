@@ -37,7 +37,7 @@ func readsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 // primary reworked after a read is asked of the same readers again. A read its
 // reader handed back with no verdict is not a read: it is asked of a reader
 // free at the attempt, or of the same reader again when none is
-// (tla/DirtyTick.tla, ReturnLeavesReaderEligible). With Another, a primary already asked is dealt to
+// (tla/DirtyTick.tla, JudgedOnlyAfterTheBound). With Another, a primary already asked is dealt to
 // one more reader, the next round the readers.
 func Ask(s *Snapshot, r AskReq) Plan {
 	var p Plan
@@ -110,14 +110,16 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		rotated := rr.picks(want-len(chosenReaders), chosenReaders, func(x string) bool { return contains(free, x) })
 		chosenReaders = append(chosenReaders, rotated...)
 		// A return is not a read (tla/DirtyTick.tla, PlaceReads and
-		// ReturnLeavesReaderEligible): a read handed back goes to a free
+		// JudgedOnlyAfterTheBound): a read handed back goes to a free
 		// reader when there is one, its card retired; when none is free its
 		// own reader is asked it again, in place, the round not moved and no
-		// bound of the primary spent.
+		// bound of the primary spent, its reasked counted (ReasksBounded: Read
+		// retires a return past MaxReadReasks, and the refusal below is then
+		// the "cannot ask" judgment).
 		var again, retiredFrom []string
 		for _, rc := range returned {
 			if len(chosenReaders)+len(again) < want {
-				takenBack = append(takenBack, change(Readers, setEntry(rc, map[string]string{"asked": stamp(s.Now)}, FieldReturned)))
+				takenBack = append(takenBack, change(Readers, setEntry(rc, map[string]string{"asked": stamp(s.Now), FieldReasked: itoa(rc.Int(FieldReasked) + 1)}, FieldReturned)))
 				again = append(again, rc.F("reader"))
 				continue
 			}
@@ -217,7 +219,7 @@ type ReadReq struct {
 // back: back in asked on its row, stamped returned, the reason in one happened
 // note, and the next tick's ask asks it of another reader up at the same
 // attempt, or of the same reader when none is free (tla/DirtyTick.tla,
-// ReadReturn, ReturnLeavesReaderEligible). A broken read is a judgment; the second different reader's
+// ReadReturn, JudgedOnlyAfterTheBound). A broken read is a judgment; the second different reader's
 // ok at the primary's head is the judgment ready to accept, which accept,
 // rework and drop close. As may name several readers, comma separated: every
 // card named is one of theirs, each read as its own reader's, in the one plan
@@ -287,13 +289,23 @@ func Read(s *Snapshot, r ReadReq) Plan {
 		}
 		if r.Return {
 			// A return is not a read (tla/DirtyTick.tla, handback and
-			// ReturnLeavesReaderEligible): the card goes back to asked on its
-			// own row, stamped returned, so its reader is never counted as
+			// JudgedOnlyAfterTheBound): the card goes back to asked on its
+			// own row, stamped returned, so its reader is not counted as
 			// having read the attempt; the next ask places it again (Ask) and
-			// no bound of the primary is spent
+			// no bound of the primary is spent. Once it was asked again in
+			// place MaxReadReasks times (ReasksBounded) the return is counted
+			// as a read: the card is retired, and a primary no reader is left
+			// to read is the ask's "cannot ask" judgment (StrandingIsJudged)
 			n := happened(NReadReturned, c.F("stream"), s.Now, c.F("primary"))
 			n.What = c.Row + " returned " + c.ID + ": " + r.Reason
 			n.Who = r.Who
+			if c.Int(FieldReasked) >= MaxReadReasks {
+				n.What += fmt.Sprintf("; asked again of %s %d times, the read is retired", c.Row, MaxReadReasks)
+				p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"),
+					Changes: []Change{change(Readers, removeEntry(c, map[string]string{"retired": stamp(s.Now), "retired_by": "returned"}))},
+					Moved:   c.ID + " " + c.Col + " -> returned (retired: its re-asks are spent)", Notes: []Note{n}})
+				continue
+			}
 			p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"),
 				Changes: []Change{change(Readers, moveEntry(c, c.Row, Asked, map[string]string{FieldReturned: stamp(s.Now)}, "begun"))},
 				Moved:   c.ID + " " + c.Col + " -> asked (returned)", Notes: []Note{n}})

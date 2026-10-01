@@ -239,7 +239,12 @@ MCDirtyTickW23.cfg	MCDirtyTick.tla	action	LapseNeedsMisses	ignore-terminal	dirty
 MCDirtyTickHandBack.cfg	MCDirtyTick.tla	pass	-	ignore-terminal	dirtytick-small	required	-
 MCDirtyTickW24.cfg	MCDirtyTick.tla	invariant	NothingLost	ignore-terminal	dirtytick-witnesses	required	-
 MCDirtyTickHandBackAlone.cfg	MCDirtyTick.tla	pass	-	ignore-terminal	dirtytick-small	required	-
-MCDirtyTickW25.cfg	MCDirtyTick.tla	invariant	ReturnLeavesReaderEligible	ignore-terminal	dirtytick-witnesses	required	-
+MCDirtyTickW25.cfg	MCDirtyTick.tla	invariant	JudgedOnlyAfterTheBound	ignore-terminal	dirtytick-witnesses	required	-
+MCDirtyTickHandBackBound.cfg	MCDirtyTick.tla	pass	-	ignore-terminal	dirtytick-small	required	-
+MCDirtyTickProbeReask.cfg	MCDirtyTick.tla	invariant	ProbeNoReask	ignore-terminal	dirtytick	required	-
+MCDirtyTickProbeJudged.cfg	MCDirtyTick.tla	invariant	ProbeNoJudged	ignore-terminal	dirtytick	required	-
+MCDirtyTickW26.cfg	MCDirtyTick.tla	invariant	ReasksBounded	ignore-terminal	dirtytick-witnesses	required	-
+MCDirtyTickW27.cfg	MCDirtyTick.tla	invariant	StrandingIsJudged	ignore-terminal	dirtytick-witnesses	required	-
 MCDirtyTickRead.cfg	MCDirtyTickRead.tla	pass	-	ignore-terminal	dirtytickread	required	-
 MCDirtyTickReadAcquire.cfg	MCDirtyTickRead.tla	invariant	TwinIsTheStore	ignore-terminal	dirtytickread-acquire	required	-
 MCDirtyTickReadHalt.cfg	MCDirtyTickRead.tla	invariant	BeganRunning	ignore-terminal	dirtytickread-halt	required	-

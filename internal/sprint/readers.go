@@ -97,12 +97,20 @@ func awayRead(s *Snapshot, rc *Card) bool { return rc.Col == Asked && !s.ReaderI
 // (read --return) and is not asked again yet: it is back in asked on its own
 // row, stamped returned. A return is not a read: the ask places it again, on
 // another reader free at the attempt, or on the same reader in place
-// (tla/DirtyTick.tla, A RETURN IS NOT A READ, ReturnLeavesReaderEligible).
+// (tla/DirtyTick.tla, A RETURN IS NOT A READ, JudgedOnlyAfterTheBound).
 func returnedRead(rc *Card) bool { return rc.Col == Asked && rc.F(FieldReturned) != "" }
 
 // FieldReturned is the stamp on a read card handed back with no verdict, until
 // the ask asks it again.
 const FieldReturned = "returned"
+
+// FieldReasked is how many times the ask asked a read card again in place, of
+// the reader that returned it; MaxReadReasks is the most: a return after them is
+// counted as a read (Read; tla/DirtyTick.tla, MaxReasks and ReasksBounded).
+const (
+	FieldReasked  = "reasked"
+	MaxReadReasks = 2
+)
 
 // liveReadsAt is the primary's placed read cards at an attempt less the reads
 // the ask takes back or places again: the reads that stand.

@@ -439,7 +439,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 				// reader free at the attempt, or of this reader again, which
 				// does not begin it before ReadStageRetry (docs/SPEC-SPRINT.md
 				// section 6; tla/DirtyTick.tla, ReadReturn,
-				// ReturnLeavesReaderEligible). A return refused leaves the
+				// JudgedOnlyAfterTheBound). A return refused leaves the
 				// launch spent: the read stays for the lateness rule.
 				why := oneLine(r.Report)
 				if r.End == EndStaging {

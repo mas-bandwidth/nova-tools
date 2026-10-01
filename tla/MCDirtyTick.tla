@@ -29,7 +29,7 @@ Queues(w, r, g, f) == [t \in Tables |-> CASE t = "work" -> w [] t = "readers" ->
 NoReads == [c \in Cards |-> NoR]
 Empty == [m \in Machines |-> {}]
 Base == [col |-> [c \in Cards |-> "none"], rd |-> NoReads, mq |-> {}, up |-> Machines \cup Readers,
-         live |-> Machines \cup Readers, away |-> FALSE, misses |-> FALSE, hand |-> FALSE,
+         live |-> Machines \cup Readers, away |-> FALSE, misses |-> FALSE, hand |-> FALSE, lapse |-> TRUE,
          mc |-> Empty, mr |-> Empty, q |-> Queues(Adds, <<>>, <<>>, <<>>), served |-> Cards]
 
 \* Every card added (its add queued), every machine up: the whole life.
@@ -92,8 +92,9 @@ ScnReaderAway == [Base EXCEPT !.col = [c \in Cards |-> "review"], !.away = TRUE,
                               !.q = Queues(<<>>, <<>>, <<>>, <<>>)]
 
 \* THE RETURN. c1 in review, its read on r1 (host m1): r1 may return it, and
-\* it is asked of r2.
-ScnHandBack == [Base EXCEPT !.col = [c \in Cards |-> "review"], !.hand = TRUE,
+\* it is asked of r2 (or, the only reader, of r1 again, up to the bound). No
+\* machine lapses: the outside events are the returns (and a report).
+ScnHandBack == [Base EXCEPT !.col = [c \in Cards |-> "review"], !.hand = TRUE, !.lapse = FALSE,
                             !.rd = [c \in Cards |-> "r1"],
                             !.mr = [m \in Machines |-> IF m = "m1" THEN {"c1"} ELSE {}],
                             !.q = Queues(<<>>, <<>>, <<>>, <<>>)]
@@ -106,4 +107,8 @@ ProbeNoBound == \A c \in Cards : ~bnd[c]
 ProbeNoLateDrain == ~(act = "Drain" /\ phase = "drain")
 ProbeNoRedealBound == ~\E c \in Cards : ended[c] /\ rdl[c] >= MaxRedeals
 ProbeNoHeldAccept == ~\E c \in Cards : col[c] = "merging" /\ ret[c]
+\* Reachability of the re-ask bound: a returned read asked again in place of
+\* the reader that returned it; a stranded card judged.
+ProbeNoReask == \A c \in Cards : rea[c] = 0
+ProbeNoJudged == \A c \in Cards : ~cna[c]
 =============================================================================

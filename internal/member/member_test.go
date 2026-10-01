@@ -1054,7 +1054,7 @@ func TestAWidthOneReaderReturningThreeReadsHoldsAtMostOne(t *testing.T) {
 
 // TestAReadItReturnedIsNotBegunAgainBeforeTheRetry pins the reader's side of
 // a return that is not a read: the sprint may ask the returned read of the
-// same reader again (tla/DirtyTick.tla, ReturnLeavesReaderEligible), and a
+// same reader again (tla/DirtyTick.tla, JudgedOnlyAfterTheBound), and a
 // reader that cannot launch does not begin it again before ReadStageRetry, so
 // it does not take and return the same read every pass.
 func TestAReadItReturnedIsNotBegunAgainBeforeTheRetry(t *testing.T) {

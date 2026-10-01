@@ -14,7 +14,7 @@ import (
 // reader free at the same attempt, the inbox holds one happened note naming
 // the reader, the card and the reason, and no judgment is owed
 // (docs/SPEC-SPRINT.md section 6; tla/DirtyTick.tla, ReadReturn,
-// ReturnLeavesReaderEligible).
+// JudgedOnlyAfterTheBound).
 func TestReadReturnIsAskedOfAnotherReaderByTheNextTick(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)

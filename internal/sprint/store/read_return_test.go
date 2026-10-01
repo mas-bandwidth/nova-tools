@@ -42,7 +42,7 @@ func (h *harness) returnNotes() []sprint.Note {
 // next tick asks it of another reader free at the same attempt, retiring the
 // returned card; one happened note names the reader, the card and the
 // reason, and no broken read is counted on the primary (docs/SPEC-SPRINT.md
-// section 6; tla/DirtyTick.tla, ReadReturn, ReturnLeavesReaderEligible).
+// section 6; tla/DirtyTick.tla, ReadReturn, JudgedOnlyAfterTheBound).
 func TestAReadReturnedIsAskedOfAnotherReaderAtTheSameAttempt(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
@@ -208,7 +208,7 @@ func TestAReturnOfAReadAlreadyReportedIsRefused(t *testing.T) {
 // eligible: the reads go to the reader still free, then back to the readers
 // that returned them, in place, and no "cannot ask" judgment is raised; the
 // primary stays at its attempt with nothing spent, and once the readers can
-// launch their oks accept it (tla/DirtyTick.tla, ReturnLeavesReaderEligible;
+// launch their oks accept it (tla/DirtyTick.tla, JudgedOnlyAfterTheBound;
 // before, the returned cards were retired and counted as reads, and the
 // primary was stranded: needs 1 different readers and 0 is free).
 func TestReadsEveryReaderReturnsAreNeverStranded(t *testing.T) {
@@ -277,4 +277,43 @@ func TestReadsEveryReaderReturnsAreNeverStranded(t *testing.T) {
 	h.machine()
 	assert.Equal(t, sprint.Merging, h.snap().Work.Card("s1-1").Col)
 	h.clean("read and accepted")
+}
+
+// The re-ask is bounded (tla/DirtyTick.tla, ReasksBounded, StrandingIsJudged,
+// JudgedOnlyAfterTheBound): a reader that can never launch, with no other reader
+// free, is asked its returned read again in place MaxReadReasks times; the next
+// return is counted as a read, the card retired, and the tick raises "cannot ask"
+// for the coordinator, instead of the read coming back every few seconds for ever
+// with no judgment (the reader's finding on #5019).
+func TestAReadReturnedPastItsReasksIsJudgedNotAskedAgain(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	require.NoError(t, h.st.SetReaderAway(h.ctx, "reader-c", true, "coordinator"))
+	h.asked1(1)
+	id := sprint.ReadCardID("s1-1", 1, "reader-a")
+	require.NotNil(t, h.snap().Readers.Placed(id), "asked of reader-a and reader-b")
+	ret := func() {
+		h.t.Helper()
+		h.must(ReadStep(sprint.ReadReq{As: "reader-a", Begin: true, Sel: sprint.Sel{IDs: []string{id}}, Who: "reader-a"}))
+		h.must(ReadStep(sprint.ReadReq{As: "reader-a", Return: true, Reason: `no verdict (ran=false verdict="")`, Sel: sprint.Sel{IDs: []string{id}}, Who: "reader-a"}))
+		h.machine()
+	}
+	for i := 1; i <= sprint.MaxReadReasks; i++ {
+		ret()
+		c := h.snap().Readers.Placed(id)
+		require.NotNil(t, c, "re-ask %d: still reader-a's", i)
+		assert.Equal(t, sprint.Asked, c.Col)
+		assert.Equal(t, i, c.Int(sprint.FieldReasked), "re-ask %d is counted", i)
+		assert.Empty(t, h.openOf(sprint.NCannotAsk), "no judgment while the re-asks last")
+	}
+	ret()
+	assert.Nil(t, h.snap().Readers.Placed(id), "the return past the bound is counted: the card is retired")
+	open := h.openOf(sprint.NCannotAsk)
+	require.Len(t, open, 1, "the coordinator is told: cannot ask")
+	assert.Contains(t, open[0].Note.What, "needs 1 different readers and 0 is free")
+	assert.Len(t, h.returnNotes(), sprint.MaxReadReasks+1)
+	h.machine()
+	assert.Nil(t, h.snap().Readers.Placed(id), "never asked of reader-a again at the attempt")
+	assert.Len(t, h.openOf(sprint.NCannotAsk), 1, "one judgment, not one a tick")
+	h.clean("judged cannot ask")
 }
