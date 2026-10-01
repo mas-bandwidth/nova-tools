@@ -1,12 +1,15 @@
 package main
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bus"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDraftSubjectResolutionDistinguishesMissingValidAndCorruptOpen(t *testing.T) {
@@ -120,11 +123,21 @@ func TestDraftSubjectResolutionRepairsMalformedOrUnreadableOpen(t *testing.T) {
 			if strings.Contains(r.stderr, "not an id on this bus, not a note that exists, and not the subject") {
 				t.Errorf("malformed OPEN was mislabeled as an unmatched subject: %s", r.stderr)
 			}
-			if tc.name == "old format" && strings.Contains(r.stderr, "read once with --full --advance") {
-				t.Errorf("old OPEN error duplicated its legacy recovery remedy: %s", r.stderr)
+			if tc.name == "old format" {
+				assert.NotContains(t, r.stderr, "read once with --full --advance", "old OPEN error duplicated its legacy recovery remedy")
 			}
 		})
 	}
+}
+
+func TestDraftOpenReadFailureWithoutThresholdUsesPlaceholder(t *testing.T) {
+	t.Parallel()
+
+	got := draftOpenReadFailure("/bus/path", bus.Participant{Name: "Ada Vale", Lane: "from-ada"}, 0, false, errors.New("bad OPEN"))
+	require.Error(t, got)
+	assert.ErrorContains(t, got, "<receipt-word-limit>")
+	assert.ErrorContains(t, got, "replace the receipt-word-limit placeholder with a positive word-count threshold for classifying short receipts")
+	assert.NotContains(t, got.Error(), "--receipt-max-words 0")
 }
 
 func TestDraftExplicitIDAndNewBypassCorruptOpen(t *testing.T) {
