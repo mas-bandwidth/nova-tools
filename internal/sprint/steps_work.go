@@ -1095,16 +1095,18 @@ func providerFailures(chosen []*Card, r FinishReq) map[string]int {
 // working card (downPlan); the tick's deal places it again, counting the take against
 // the redeal bound, on a route the card has not been drawn when another remains
 // (routeOf). No failed-work judgment is written and the primary's failed count does
-// not move: a provider failure is never the card's. The card keeps the route that
-// failed and the error line, the member's control card counts it. failures is
+// not move: a provider failure is never the card's. The card keeps a record of the
+// take that failed (ProviderTake: the route, the member, the line), the member's control
+// card counts it. failures is
 // providerFailures: the control card's change rides on the member's first unit.
 func providerEnded(s *Snapshot, c, pr *Card, r FinishReq, failures map[string]int) Unit {
 	set := nextGen(c, "", s.Now)
 	set["withdrawn"], set[FieldTakeEnded] = stamp(s.Now), stamp(s.Now)
-	set[FieldProviderError] = cutText(strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(r.Report, cardhdr.EndProvider), ":")), MaxProviderErrorBytes)
-	if route := c.F(FieldRoute); route != "" {
-		set[FieldProviderFailed] = strings.Join(append(Split(c.F(FieldProviderFailed)), route), ",")
-	}
+	line := cutText(strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(r.Report, cardhdr.EndProvider), ":")), MaxProviderErrorBytes)
+	set[FieldProviderError] = line
+	// the failed take's own record, kept through the redeals: its route, member, usage and line
+	set[FieldProviderTake+itoa(c.Int("redeals")+1)] = ProviderTake{Route: c.F(FieldRoute), Model: c.F(FieldModel), Member: c.Row,
+		Finished: stamp(s.Now), Usage: r.Usage, Error: line}.String()
 	if r.Usage != "" {
 		set[FieldUsage] = r.Usage
 	}

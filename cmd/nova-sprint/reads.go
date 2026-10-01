@@ -763,7 +763,9 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 		}
 		a.printStory(stdout, v, events, texts, held, place)
 		for _, w := range v.Work {
-			fmt.Fprintln(stdout, oneline.Escape(sprint.AttemptLine(w)))
+			for _, line := range sprint.AttemptLines(w) {
+				fmt.Fprintln(stdout, oneline.Escape(line))
+			}
 		}
 		epoch := uint64(0)
 		if pinned, err := st.Pinned(ctx); err == nil {

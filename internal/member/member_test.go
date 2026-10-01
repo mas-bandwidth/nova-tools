@@ -288,30 +288,64 @@ func TestAProviderFailedRunIsFinishedFailedWithTheProvidersKindAndReason(t *test
 	require.Equal(t, []string{"finish --as m c1@2 --report provider failure: provider: message=\"stream error\" server_error; the child ended without a result --failed --epoch 7"}, g.s.lines("finish"))
 }
 
-// Judge puts the provider's reason after the kind for a run with no result, leaves a
-// launch the provider never accepted (no reason) as it was, and never takes a finished
-// result from a card the provider failed after it.
-func TestJudgeNamesTheProviderForARunItFailed(t *testing.T) {
+// Judge puts the provider's kind and reason on a run with no result that the provider failed,
+// and only on that: a launch the provider never accepted (no reason), a refused push and a
+// result with the shape are the card's own failure whatever the run's end, and a finished
+// result pushed is finished work.
+func TestJudgeNamesTheProviderOnlyForTheRunItFailedWithNoResult(t *testing.T) {
 	t.Parallel()
 	fin, why := Judge(Result{End: EndProvider, Provider: "provider: ended without a final message"}, Push{None: "nothing"})
 	require.Equal(t, FinishFailed, fin)
 	require.Equal(t, "provider failure: provider: ended without a final message", why)
 
-	fin, why = Judge(Result{End: EndProvider}, Push{None: "nothing"})
-	require.Equal(t, FinishFailed, fin)
-	require.Equal(t, "provider failure: no RESULT.md shape", why, "a launch the provider never accepted names no reason")
+	for name, c := range map[string]struct {
+		r    Result
+		pu   Push
+		want string
+	}{
+		"a launch the provider never accepted names no reason": {Result{End: EndProvider}, Push{None: "nothing"}, "no RESULT.md shape"},
+		"a refused push is git's, said first":                  {Result{End: EndProvider, Provider: "provider: x"}, Push{Refused: "rejected"}, "push refused: rejected"},
+		"a result with nothing to do is the card's":            {Result{End: EndProvider, Provider: "provider: x", Shaped: true, Verdict: "nothing", Report: "nothing: done already"}, Push{None: "no commit"}, "nothing to do: done already"},
+		"a result not done is the card's":                      {Result{End: EndProvider, Provider: "provider: x", Shaped: true, Verdict: "not-done"}, Push{None: "no commit"}, "verdict not-done"},
+		"no provider end: the shape's reason":                  {Result{Provider: "provider: x"}, Push{None: "nothing"}, "no RESULT.md shape"},
+		"a budget still names itself first":                    {Result{End: EndBudget}, Push{None: "nothing"}, "budget: no RESULT.md shape"},
+	} {
+		fin, why := Judge(c.r, c.pu)
+		require.Equal(t, FinishFailed, fin, name)
+		require.Equal(t, c.want, why, name)
+		require.NotContains(t, why, EndProvider+": "+c.r.Provider+"; ", name)
+	}
 
 	fin, why = Judge(Result{End: EndProvider, Provider: "provider: x", Shaped: true, Verdict: "ok"}, Push{Sha: fullSha})
 	require.Equal(t, FinishOK, fin, "a shaped ok result pushed is finished work")
 	require.Empty(t, why)
+}
 
-	fin, why = Judge(Result{End: EndProvider, Provider: "provider: x"}, Push{Refused: "rejected"})
-	require.Equal(t, FinishFailed, fin)
-	require.Equal(t, "provider failure: push refused: rejected", why, "git's refusal is still said")
-
-	fin, why = Judge(Result{Provider: "provider: x"}, Push{None: "nothing"})
-	require.Equal(t, "no RESULT.md shape", why, "no provider end: the reason is the shape's")
-	require.Equal(t, FinishFailed, fin)
+// The finish a member reports for a provider-ended run that is the card's own failure (a
+// refused push, a shaped result) carries no `provider failure` kind: the sprint opens the
+// failed-work judgment for it, and does not deal it again.
+func TestAProviderEndedRunThatIsTheCardsOwnFailureIsReportedAsFailedWork(t *testing.T) {
+	t.Parallel()
+	for name, c := range map[string]struct {
+		r    Result
+		pu   Push
+		want string
+	}{
+		"refused push":  {Result{Report: "r", Head: fullSha, End: EndProvider, Provider: "provider: x"}, Push{Refused: "rejected"}, "push refused: rejected; r"},
+		"shaped result": {Result{Report: "r", End: EndProvider, Provider: "provider: x", Shaped: true, Verdict: "not-done"}, Push{None: "no commit"}, "verdict not-done; r"},
+	} {
+		g := newRig(Config{As: "m", Width: 1})
+		g.m.pusher = &fakePusher{def: c.pu}
+		p := pk("c1")
+		g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p)))
+		_, err := g.tick(t)
+		require.NoError(t, err)
+		g.r.child("c1").end(c.r)
+		g.s.reset()
+		_, err = g.tick(t)
+		require.NoError(t, err)
+		require.Equal(t, []string{"finish --as m c1@1 --report " + c.want + " --failed --epoch 7"}, g.s.lines("finish"), name)
+	}
 }
 
 // TestFinishWithoutABranchInThePacketCarriesNone pins that --branch is the

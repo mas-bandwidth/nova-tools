@@ -66,13 +66,14 @@ const FieldTakeEnded = "take_ended"
 // is withdrawn with FieldTakeEnded and dealt again, never judged as failed work
 // (docs/SPEC-SPRINT.md, the work card's redeals; tla/CardContract.tla, ProviderFailure;
 // tla/DirtyTick.tla, RedealsAreEndedTakes). The work card keeps the last failure's line
-// (FieldProviderError, for the bound's judgment) and every route a take of it failed on
-// (FieldProviderFailed, one name a failed take, which the route stats count); the
+// (FieldProviderError, for the bound's judgment, cleared when it is dealt again) and a
+// record of every take the provider failed (FieldProviderTake, ProviderTake: the record
+// of that take, which `card` prints and the route stats count); the
 // member's control card counts the failures it reported (FieldProviderFailures, the
 // fleet table's provider column).
 const (
 	FieldProviderError    = "provider_error"
-	FieldProviderFailed   = "provider_failed"
+	FieldProviderTake     = "provider_take_" // + the take's number, redeals + 1 when it ended
 	FieldProviderFailures = "provider_failures"
 )
 

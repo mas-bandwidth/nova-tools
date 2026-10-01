@@ -161,6 +161,24 @@ func TestTheMemberReadsAProviderFailureLineAndItsReason(t *testing.T) {
 	assert.Nil(t, nativeProviderWhy.FindSubmatch([]byte("NATIVE PROVIDER-5XX label=c1 ref=- wall=3.00s route=x next=- avoid=x\n")))
 }
 
+// The 5xx hand-back keeps its own line as the reason, so the finish and the bound's judgment
+// name what the provider answered and not the missing shape.
+func TestTheHandbackLineIsItsOwnReason(t *testing.T) {
+	t.Parallel()
+	done := make(chan struct{})
+	close(done)
+	line := "NATIVE PROVIDER-5XX label=c1 ref=err_fb35c63e wall=75.00s route=x/y next=- avoid=x/y"
+	assert.Equal(t, "provider: "+strings.TrimPrefix(line, "NATIVE "), providerReason([]byte(line+"\n")))
+	assert.Empty(t, providerReason([]byte("NATIVE OK label=c1 rc=0\n")))
+	dir := t.TempDir()
+	logPath := filepath.Join(dir, "c1.native.log")
+	write(t, logPath, line+"\nNATIVE INCOMPLETE label=c1 job=j tmp=t rc=1 wall=none harness=ok budget=10/1000 why=no-result\n")
+	c := &nativeChild{card: "c1", logPath: logPath, results: filepath.Join(dir, "results"), job: filepath.Join(dir, "job"), done: done}
+	fin, why := member.Judge(c.Result(), member.Push{None: "no commit"})
+	assert.Equal(t, member.FinishFailed, fin)
+	assert.Equal(t, "provider failure: provider: PROVIDER-5XX label=c1 ref=err_fb35c63e wall=75.00s route=x/y next=- avoid=x/y", why)
+}
+
 // From native's log to the member's finish: a child whose log carries the PROVIDER-FAIL
 // line and whose job holds no result ends with the provider's kind and reason, which Judge
 // puts first in the failed finish's reason; the same child with no such line is the

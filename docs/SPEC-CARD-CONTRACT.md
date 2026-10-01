@@ -100,9 +100,12 @@ A work card's finish is judged in one place, `member.Judge`, cited from the mode
   `--failed` and opens the failed-work judgment, never review, and passes `--head` and
   `--branch` only when a push landed;
 - **provider failure**, a failed finish of its own kind, when the run ended with no result and
-  the harness's own record says the provider failed it (below); its reason is
-  `provider failure: provider: <why>`, a refused push still named first, and the sprint treats it
-  as an ended take (docs/SPEC-SPRINT.md, the work card's redeals), never as the card's failure;
+  the harness's own record says the provider failed it (below), and its push was not
+  refused; its reason is `provider failure: provider: <why>` (for the 5xx hand-back,
+  `provider failure: provider: PROVIDER-5XX label=... ref=...`), and the sprint treats it as an ended
+  take (docs/SPEC-SPRINT.md, the work card's redeals), never as the card's failure. A refused
+  push, and a result with the shape (nothing to do, not done) whatever the run's end, are
+  failed work with their own reasons and no provider kind;
 - **reaped** when the claim moved under the child (a clear, a redeal) or the card left the
   member's queue (a drop, a return): nothing is reported, because the result is nobody's.
 

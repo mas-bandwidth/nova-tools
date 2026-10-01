@@ -56,7 +56,10 @@ func TestAProviderFailureRedealsTheCardAndIsNeverAFailedWorkJudgment(t *testing.
 	w = h.snap().Fleet.Card("s1-1.w1")
 	assert.Equal(t, sprint.Withdrawn, w.Col, "the take ended: the card is withdrawn for the deal")
 	assert.NotEmpty(t, w.F(sprint.FieldTakeEnded))
-	assert.Equal(t, first, w.F(sprint.FieldProviderFailed), "the card records the route that failed")
+	takes, _ := sprint.ProviderTakes(w)
+	require.Len(t, takes, 1)
+	assert.Equal(t, first, takes[0].Route, "the card records the route that failed")
+	assert.Equal(t, member, takes[0].Member)
 	assert.Contains(t, w.F(sprint.FieldProviderError), "server_error h2 protocol error")
 	pr := h.snap().Work.Card("s1-1")
 	assert.Equal(t, sprint.Ready, pr.Col, "its primary is ready to be dealt again, not in review")
@@ -76,6 +79,15 @@ func TestAProviderFailureRedealsTheCardAndIsNeverAFailedWorkJudgment(t *testing.
 			assert.Equal(t, [3]int{1, 1, 1}, [3]int{x.Attempts, x.Failed, x.Provider}, "the route's provider failures count apart")
 		}
 	}
+	lines := sprint.AttemptLines(w)
+	require.Len(t, lines, 2, "the failed take keeps its own line; the new take is the card's")
+	for _, want := range []string{"take=1", "route=" + first, "model=prov-" + first + "/model-" + first, "member=" + member,
+		"usage=wall=450.00s budget=1/1000", "end=provider failure: stream error: server_error h2 protocol error"} {
+		assert.Contains(t, lines[0], want)
+	}
+	assert.Contains(t, lines[1], "route="+w.F(sprint.FieldRoute), "the new take's own line")
+	assert.Contains(t, lines[1], "end=in flight (ready)")
+	assert.Empty(t, w.F(sprint.FieldProviderError), "dealt again: the current error is cleared, the take's record is not")
 	h.clean("redealt after a provider failure")
 }
 
@@ -129,15 +141,19 @@ func TestAFourthProviderFailureRetiresTheCardWithOneJudgmentNamingTheProvider(t 
 }
 
 // A failed finish that does not begin with the provider's kind is the card's own
-// failure, as before: done failed, its primary in review, a judgment open.
+// failure, as before: done failed, its primary in review, a failed-work judgment open. The
+// member's reasons for a refused push and a result with the shape are among them, whatever
+// the run's end was.
 func TestAFailedFinishWithoutTheProviderKindStaysFailedWork(t *testing.T) {
 	t.Parallel()
-	h := routeHarness(t, route("pro-a", "pro", 1))
-	h.addReady("s1", 1, briefOf("pro", ""))
-	h.must(DealStep(sprint.DealReq{}))
-	wc := h.failTake("s1-1.w1", "no RESULT.md shape; "+strings.ToUpper(cardhdr.EndProvider))
-	assert.Equal(t, sprint.DoneFailed, h.snap().Fleet.Card("s1-1.w1").Col)
-	assert.Equal(t, sprint.Review, h.snap().Work.Card("s1-1").Col)
-	assert.Equal(t, 1, h.notesOf(sprint.NWorkFailed))
-	assert.Equal(t, "0", h.fleetRow(wc.Row)[sprint.Provider])
+	for _, report := range []string{"no RESULT.md shape; " + strings.ToUpper(cardhdr.EndProvider), "push refused: rejected; r", "nothing to do: done already; r", "verdict not-done; r"} {
+		h := routeHarness(t, route("pro-a", "pro", 1))
+		h.addReady("s1", 1, briefOf("pro", ""))
+		h.must(DealStep(sprint.DealReq{}))
+		wc := h.failTake("s1-1.w1", report)
+		assert.Equal(t, sprint.DoneFailed, h.snap().Fleet.Card("s1-1.w1").Col, report)
+		assert.Equal(t, sprint.Review, h.snap().Work.Card("s1-1").Col, report)
+		assert.Equal(t, 1, h.notesOf(sprint.NWorkFailed), report)
+		assert.Equal(t, "0", h.fleetRow(wc.Row)[sprint.Provider], report)
+	}
 }

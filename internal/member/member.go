@@ -122,12 +122,15 @@ const (
 // commit the child made; otherwise failed, with the reason. Every work card
 // ends with a commit: a child with nothing to do says `verdict: nothing`, and
 // that is a failed finish, nothing to do, for the coordinator to judge. A run the
-// provider failed that left no result is failed with the provider's reason, its kind
-// `provider failure` first: the sprint deals that card again and never judges it
-// (tla/CardContract.tla, ProviderFailure).
+// provider failed that left no result, its push not refused, is failed with the kind
+// `provider failure` and the provider's reason, and only that one: the sprint deals that
+// card again and never judges it; a refused push or a result with the shape is failed work
+// whatever the run's end (tla/CardContract.tla, JudgeOf and ProviderFailure).
 func Judge(r Result, pu Push) (fin Finish, why string) {
 	defer func() {
-		if fin == FinishFailed && r.End != "" {
+		// a budget or a deadline names how the run ended first; the provider's kind is
+		// the provider case's own (below), never a prefix on another reason
+		if fin == FinishFailed && r.End != "" && r.End != EndProvider {
 			why = r.End + ": " + why
 		}
 	}()
@@ -135,9 +138,10 @@ func Judge(r Result, pu Push) (fin Finish, why string) {
 	case pu.Refused != "":
 		return FinishFailed, "push refused: " + pu.Refused
 	case r.End == EndProvider && r.Provider != "" && !r.Shaped:
-		// the provider failed the run and it left no result: the reason is the
-		// provider's, never the shape's, and the sprint deals the card again
-		return FinishFailed, r.Provider
+		// the provider failed the run and it left no result: the kind and the
+		// provider's reason, never the shape's; the sprint deals the card again. A refused
+		// push above, and a shaped result below (nothing, not done), are the card's own
+		return FinishFailed, EndProvider + ": " + r.Provider
 	case !r.Shaped:
 		return FinishFailed, "no RESULT.md shape"
 	case r.Verdict == "nothing":

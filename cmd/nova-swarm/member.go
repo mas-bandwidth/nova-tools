@@ -411,9 +411,25 @@ func nativeEnd(log []byte) string {
 }
 
 // nativeProviderWhy is the reason of a run the provider failed (nativeprovider.go's
-// PROVIDER-FAIL line): the rest of the line after reason=. The launch grace's
-// PROVIDER-5XX line names none.
-var nativeProviderWhy = regexp.MustCompile(`(?m)\bNATIVE PROVIDER-FAIL \S.* reason=(.+)$`)
+// PROVIDER-FAIL line): the rest of the line after reason=. The 5xx hand-back's own line
+// (swarm.Handback, PROVIDER-5XX) names none, and is its own reason.
+var (
+	nativeProviderWhy = regexp.MustCompile(`(?m)\bNATIVE PROVIDER-FAIL \S.* reason=(.+)$`)
+	nativeHandback    = regexp.MustCompile(`(?m)\bNATIVE (PROVIDER-5XX \S.*)$`)
+)
+
+// providerReason is why the provider failed the run, from native's log: the PROVIDER-FAIL
+// line's reason, else the 5xx hand-back's line (`provider: PROVIDER-5XX label=... ref=...`),
+// else "".
+func providerReason(log []byte) string {
+	if m := nativeProviderWhy.FindSubmatch(log); m != nil {
+		return strings.TrimSpace(string(m[1]))
+	}
+	if m := nativeHandback.FindSubmatch(log); m != nil {
+		return "provider: " + strings.TrimSpace(string(m[1]))
+	}
+	return ""
+}
 
 var (
 	nativeProvider = regexp.MustCompile(`\bNATIVE PROVIDER-`)
@@ -440,9 +456,7 @@ func (c *nativeChild) Result() member.Result {
 				usage = "wall=" + string(m[1]) + " budget=" + string(m[2])
 			}
 			end = nativeEnd(b)
-			if m := nativeProviderWhy.FindSubmatch(b); m != nil {
-				provider = strings.TrimSpace(string(m[1]))
-			}
+			provider = providerReason(b)
 		}
 		path := newestResult(c.results)
 		var raw []byte

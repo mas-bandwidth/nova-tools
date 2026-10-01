@@ -124,8 +124,10 @@ take: the member's failed finish whose report begins `provider failure`
 and returns its primary to ready, with no failed-work judgment and no count
 against the primary's failed, and the next deal places it again, counting the
 take; the work card keeps provider_error, the last such line (cut to 200
-bytes, until the card is dealt again), and provider_failed, the route each such
-take ran on, one name a take; a card retired by provider failures has the
+bytes, until the card is dealt again), and a record of each such take,
+provider_take_<n> (its route, model, member, end, usage and line), which stays
+through the redeals and which `card` prints as one ATTEMPT line for the take
+(`end=provider failure: <line>`, `take=<n>`) before the card's own; a card retired by provider failures has the
 judgment "a card reached its bound" name the provider and that last error
 line; tla/CardContract.tla, ProviderFailure), ok (set
 only when finished), head, report. It takes its primary's score. The primary
@@ -250,7 +252,8 @@ and it is the coordinator's decision, receipted.
   returns to the deal, the redeal leaves out every route drawn for the card
   while another remains and draws the same one only when none does, and
   `routes` counts the take against the route it ran on: an attempt, failed,
-  and a provider failure.
+  and a provider failure. The 5xx hand-back above is finished the same way,
+  its own line the reason (`provider: PROVIDER-5XX label=... ref=...`).
 - The machine's tick deals every ready primary the fleet has room for in one
   step, in stream turns (each stream's oldest first by score), one card at a
   time to the next up member round the fleet (the rolling index `deal_index`)
