@@ -280,12 +280,17 @@ and it is the coordinator's decision, receipted.
   CPU busy percent of all its cores, measured between beats; where that cannot
   be measured, the one-minute load average over the logical cores, capped at
   1000%. `--load <percent>` gives it instead.
-- A member's status is derived, never typed: up while its last beat is at
-  most 15 s old, down past that or when it has never beaten, and held while
-  the coordinator holds it, whatever it beats. `fleet down <member>` holds a
-  member and takes it down; `fleet up <member>` releases the hold, adding a
-  member the sprint does not know, and brings it up at once when its beat is
-  fresh.
+- A member's status is derived, never typed: up until it has missed three beat
+  windows of 15 s in a row (`MissedBeatsDown`, `BeatDeadline`; one missed beat,
+  such as a store round trip that timed out, marks nothing, and a beat resets
+  the count, which is never stored), down past that or when it has never
+  beaten, and held while the coordinator holds it, whatever it beats. A card
+  is taken back from a member only when the member is down by this rule
+  (tla/DirtyTick.tla, Lapse). The member asks its beat and its queue again
+  once when the store did not answer. `fleet down <member>` holds a
+  member and takes it down; `fleet up <member>` releases the hold, counts as a
+  beat of a member that has beaten, adds a member the sprint does not know,
+  and brings it up at once when it is alive.
 - The fleet comes from the inventory. `nova-sprint fleet sync` makes the fleet
   table match nova-config's machine rows, in one step, and types no machine name
   and no width. The inventory is read through the config package by the config

@@ -79,7 +79,7 @@ func TestFleetHelpSaysHowStatusComesAbout(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
 	out := ta.ok("help fleet")
-	for _, want := range []string{"nova-sprint fleet beat <member> [--load <percent>]", "under 15s old", "status held", "CPU busy percent", "highest of the last 10s"} {
+	for _, want := range []string{"nova-sprint fleet beat <member> [--load <percent>]", "A beat window is 15s", "missed 3 windows", "status held", "CPU busy percent", "highest of the last 10s"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("help fleet lacks %q:\n%s", want, out)
 		}

@@ -184,6 +184,33 @@ func (st *Store) Beat(ctx context.Context, member string, given *float64, src ho
 	return b, st.noteStranger(ctx, member)
 }
 
+// TouchBeat is the beat that releasing a hold gives a member that has beaten
+// (docs/SPEC-SPRINT.md section 5; the coordinator's fleet up counts as a
+// beat): its last beat becomes the store's clock now, its load and samples as
+// they were, so the tick after the release, within a beat window, finds it up
+// and takes none of its cards back. A member that never beat has no record to
+// touch: it stays down until it beats. It says whether it wrote.
+func (st *Store) TouchBeat(ctx context.Context, member string) (bool, error) {
+	kv, err := st.rootKV()
+	if err != nil {
+		return false, err
+	}
+	raw, ok, err := kv.GetKey(ctx, beatKey(member))
+	if err != nil || !ok {
+		return false, err
+	}
+	var b sprint.Beat
+	if err := json.Unmarshal([]byte(raw), &b); err != nil || !b.Beaten() {
+		return false, nil // an unreadable record is no beat: the next beat replaces it
+	}
+	b.At = st.now().UTC().Truncate(time.Second)
+	out, err := json.Marshal(b)
+	if err != nil {
+		return false, err
+	}
+	return true, kv.SetKey(ctx, beatKey(member), string(out))
+}
+
 // Beats is the beat records of the members, in one exchange where the store
 // can; a member that has never beaten has none.
 func (st *Store) Beats(ctx context.Context, members []string) (map[string]sprint.Beat, error) {
@@ -305,11 +332,13 @@ func (st *Store) fleetBeats(ctx context.Context, shapes []ntable.Table) (ntable.
 	return shape, beats, err
 }
 
-// freshOf is the members whose beat is fresh at now, in row order.
+// freshOf is the members that are alive at now (fewer than MissedBeatsDown
+// beat windows missed), in row order: the set whose change is a member
+// coming or going.
 func freshOf(shape ntable.Table, beats map[string]sprint.Beat, now time.Time) []string {
 	var out []string
 	for _, r := range shape.Rows {
-		if beats[r.Key].Fresh(now) {
+		if beats[r.Key].Alive(now) {
 			out = append(out, r.Key)
 		}
 	}
@@ -328,7 +357,7 @@ func (st *Store) showFleet(ctx context.Context, shape ntable.Table, beats map[st
 		want := map[string]string{sprint.Load: sprint.LoadText(b, now)}
 		if row.Texts[sprint.Status] != sprint.Held {
 			want[sprint.Status] = sprint.Down
-			if b.Fresh(now) {
+			if b.Alive(now) {
 				want[sprint.Status] = sprint.Up
 			}
 		}

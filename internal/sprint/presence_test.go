@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
+	"github.com/stretchr/testify/assert"
 )
 
 var p0 = time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
@@ -36,7 +37,7 @@ func TestABeatKeepsTheHighestLoadOfItsWindow(t *testing.T) {
 }
 
 // TestStatusIsDerivedFromTheBeat: never beaten is down with no load; a beat
-// is up until BeatDeadline has passed and down after; a hold is held
+// is up until MissedBeatsDown beat windows have passed and down after; a hold is held
 // whatever the beat.
 func TestStatusIsDerivedFromTheBeat(t *testing.T) {
 	t.Parallel()
@@ -48,9 +49,10 @@ func TestStatusIsDerivedFromTheBeat(t *testing.T) {
 	if s, l := MemberStatus(ctl, b, p0.Add(BeatDeadline)), LoadText(b, p0.Add(BeatDeadline)); s != Up || l != "12.3%" {
 		t.Fatalf("at the deadline: %s %q, want up 12.3%%", s, l)
 	}
-	if s, l := MemberStatus(ctl, b, p0.Add(BeatDeadline+time.Second)), LoadText(b, p0.Add(BeatDeadline+time.Second)); s != Down || l != "" {
-		t.Fatalf("past the deadline: %s %q, want down and no load", s, l)
-	}
+	past := p0.Add(BeatDeadline + time.Second)
+	assert.Equal(t, [2]string{Up, ""}, [2]string{MemberStatus(ctl, b, past), LoadText(b, past)}, "past the deadline: up with one missed beat, no load")
+	gone := p0.Add(MissedBeatsDown*BeatDeadline + time.Second)
+	assert.Equal(t, [2]string{Down, ""}, [2]string{MemberStatus(ctl, b, gone), LoadText(b, gone)}, "past the missed beats: down with no load")
 	held := &Card{Fields: map[string]string{"status": Down, "held": "2030-01-02T03:04:05Z"}}
 	if s := MemberStatus(held, b, p0); s != Held {
 		t.Fatalf("held while beating: %s, want held", s)
