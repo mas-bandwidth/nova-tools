@@ -29,7 +29,7 @@ The view shows work, readers, merge, fleet in that order. The one line under
 the title is the word `STOPPED` when the machine is stopped, and the summary
 line (landed / all primaries, percent, ETA, with no machine text) when it is
 running; a RUNNING machine that has not ticked for 5 s shows
-`STOPPED (no tick for Ns)`. Every count cell is an ordered set.
+`STOPPED`, with no count of seconds. Every count cell is an ordered set.
 
 The stored view `sprint` (`nova-table watch --view sprint`) says the same:
 its summary line is `STOPPED`, and nothing more (no counts, no percent, no
@@ -42,8 +42,8 @@ machine in that state already writes the view's state again from the record.
 The view knows no heartbeat: a RUNNING machine that has stopped ticking keeps
 its progress line there, and `where` and `inbox` say it is not ticking.
 
-A frame of the view holds the time, the words `SPRINT TABLE`, that line and the
-tables, and nothing else: no pending operation, no stalled stream, no line about
+A frame of the view holds the words `SPRINT TABLE`, that line and the
+tables, and nothing else: no time, no pending operation, no stalled stream, no line about
 the people and no coordinator (`where --json` carries them; `check`, `inbox` and
 `goal show` say the same in their own words). The merge table has no `since`
 column. Every table is shown, with its header and footer, empty or not, and every
@@ -156,7 +156,7 @@ outcome and reason are kept.
 | working -> ready | its work card was withdrawn because no fleet member is up | mechanical, notifies |
 | review -> merging | accept: two different readers said ok at this head | mechanical (the tick), unless its CI is red at its head or it was returned to review at its attempt; the coordinator's verb takes those; refused without the two |
 | review -> working | rework with a fix: the next attempt is delegated at once | the coordinator's verb |
-| review -> ready | rework with a fix when no fleet member is up | the coordinator's verb |
+| review -> ready | rework with a fix when no fleet member is up or none is below its width; the tick deals it when one has room | the coordinator's verb |
 | merging -> review | the stream's CI went red and the coordinator sent it back, or return | the coordinator's verb |
 | merging -> landed | its batch, green on the stream branch, merged to the development branch | mechanical |
 | any open state -> off the table | drop, with the reason | the coordinator's verb |
@@ -256,7 +256,10 @@ and it is the coordinator's decision, receipted.
   time to the next up member round the fleet (the rolling index `deal_index`)
   that is below its width: 150 ready over eight machines of width 64 all go to
   working in one tick, 18 or 19 a machine. A machine at its width takes no
-  more.
+  more, whoever deals: the `deal` verb refuses a card no up member has room for,
+  and a rework with no member below its width sends its primary ready with the
+  fix, for the tick to deal (`tla/DirtyTick.tla`, `Room` and `WidthRespected`;
+  `TestAReworkIsNotDealtToAMemberAtItsWidth`).
 - Every rolling index (the fleet's `deal_index`, the readers' `ask_index`, the
   work table's `stream_index`, `stream_index_ask` and `stream_index_accept`) is
   a counter: a uint64 from 0 that goes up by one with every placement and by
@@ -349,8 +352,8 @@ id (`--op`) returns the original result, with no second counter or notification.
   last beat is within the beat bound (`ReaderBeatBound`, the fleet's 15 s),
   away when it beat and has lapsed, down when it has never beaten; the
   coordinator's `reader away <reader>` holds it away whatever it beats, and
-  `reader up <reader>` releases the hold. `where` shows each reader's state in
-  the readers table's `status` cell; the cell is shown, never stored in the
+  `reader up <reader>` releases the hold. The readers table has no `status`
+  column and `where` shows no reader's state; the state is never stored in the
   table. The state is read, never typed: the tick reads it once, with its first
   read, and every part plans on that reading.
 - ask deals every primary in review that lacks reads to TWO DIFFERENT readers
@@ -505,7 +508,7 @@ the tick would make, no other open judgment on it).
 | a reminder could not be delivered | goal set (a new route), goal drop, ack | yes |
 | cannot ask (two readers are up, and a primary has no two to be asked of) | reader add, rework, drop, wait | no |
 | fewer than two readers up | reader up, reader add, wait | no |
-| no fleet member is up | fleet beat (on a machine), fleet up (releases a hold), wait | no |
+| no fleet member is up (when every member that beats is held, it says so and offers only fleet up and wait) | fleet beat (on a machine), fleet up (releases a hold), wait | no |
 | a card reached its bound (an attempt's work card redealt MaxRedeals, 3, times after takes that ended, the provider's failures among them, and a take of it ended again; the judgment names the provider and the last error line when the provider failed that take) | rework with a fix (a new attempt), drop, wait | no |
 | a work card is past its deadline | fleet down (the member, only when it has held the card its own whole deadline: never the member a late card was just redealt to, nor one it was withdrawn from), wait, drop | no |
 | a read card is past its deadline | ask --another, wait, drop | no |
@@ -965,17 +968,16 @@ began; a quiet log ticks it TickEvery (1 s) after the tick before began. It
 moves nothing while STOPPED; `tick` is one tick by hand. The state
 is read at the start of each tick and before each of its parts: after `stop`
 returns STOPPED no part begins, and the part in flight finishes. Every verb works in both states; only the tick's duties
-wait. `inbox` says `machine: running`,
-`machine: running (catching up: <n> moves due)`, `machine: STOPPED`, or
-`machine: STOPPED (no tick for Ns)` when the state is
-RUNNING and nothing has ticked for 15 s (MachineSilence). The sprint line of every
+wait. `inbox` says `machine: running`, `machine: STOPPED` or `machine: DONE`,
+and nothing after the word: `machine: STOPPED` is also what it says when the
+state is RUNNING and nothing has ticked for 15 s (MachineSilence). The sprint line of every
 verb says the same of a running machine after the progress
 (`3/10 30.0% -> ETA  machine: running`); a STOPPED machine has no ETA, so its
-line is `STOPPED` (or `STOPPED (no tick for Ns)`), followed with cards on the
+line is `STOPPED`, followed with cards on the
 table by the progress alone (`STOPPED  3/10 30.0%`); the STOPPED text is the
 one the header of `where` shows, which carries no progress; a failed tick keeps
 its error on the heartbeat, with the count of failed ticks in a row, and the
-line shows it. A tick that did nothing writes the heartbeat at most once every
+inbox judges it (the line carries no suffix). A tick that did nothing writes the heartbeat at most once every
 5 s (HeartbeatIdleEvery); a STOPPED machine's tick only records that it
 looked. `where` shows the same
 state as the one line under its title (section 1).
