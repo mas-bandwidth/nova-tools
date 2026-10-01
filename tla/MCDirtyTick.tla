@@ -29,7 +29,7 @@ Queues(w, r, g, f) == [t \in Tables |-> CASE t = "work" -> w [] t = "readers" ->
 NoReads == [c \in Cards |-> NoR]
 Empty == [m \in Machines |-> {}]
 Base == [col |-> [c \in Cards |-> "none"], rd |-> NoReads, mq |-> {}, up |-> Machines, live |-> Machines,
-         mc |-> Empty, mr |-> Empty, q |-> Queues(Adds, <<>>, <<>>, <<>>)]
+         mc |-> Empty, mr |-> Empty, q |-> Queues(Adds, <<>>, <<>>, <<>>), served |-> Cards]
 
 \* Every card added (its add queued), every machine up: the whole life.
 ScnBase == Base
@@ -68,6 +68,10 @@ ScnTake == [Base EXCEPT !.col = [c \in Cards |-> "working"],
 ScnAccept == [Base EXCEPT !.col = [c \in Cards |-> "review"], !.rd = [c \in Cards |-> "r1"],
                           !.mr = [m \in Machines |-> IF m = "m1" THEN {"c1"} ELSE {}],
                           !.q = Queues(<<>>, <<E("rep", "c1", <<"r1", "ok">>)>>, <<>>, <<>>)]
+
+\* Every card added, every machine up; no route serves c2's tier and it pins
+\* no model (THE ROUTE): c1 lives its life, c2 stays ready.
+ScnRoute == [Base EXCEPT !.served = Cards \ {"c2"}]
 
 \* Reachability probes, expected to fail: every card lands; a card reaches
 \* its bound; a tick drains a queue after the first pass; a take ends at the

@@ -1016,6 +1016,8 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 		}
 		step := TickPartStep(part.Name, fn, t.req, &t.at, nil, &due)
 		step.Pump, step.Drain, step.Twin = table == sprint.Work, drain, t.twin
+		// the deal draws from the routes, and the check asks what the next deal does
+		step.Routes = part.Name == "deal" || part.Name == "check"
 		// the machine's state is read with the step's fence: STOPPED halts the
 		// tick before the part begins
 		step.Halts = true

@@ -188,7 +188,9 @@ func memberFull(root string) []string {
 
 // TestMemberWithNoFlagsRefusesAndNamesEachMissingOne pins refusing to guess:
 // exit 2, nothing on stdout, and one line for each required flag (all of them
-// in one run, not one a run).
+// in one run, not one a run). The width, the model, the budget and the deadline
+// are not among them: the fleet row names the width and the card's route the
+// rest; the flags are an override.
 func TestMemberWithNoFlagsRefusesAndNamesEachMissingOne(t *testing.T) {
 	t.Parallel()
 	var out, errb bytes.Buffer
@@ -199,10 +201,10 @@ func TestMemberWithNoFlagsRefusesAndNamesEachMissingOne(t *testing.T) {
 		t.Fatalf("stdout %q, want empty", out.String())
 	}
 	lines := strings.Split(strings.TrimSpace(errb.String()), "\n")
-	if len(lines) != 7 {
-		t.Fatalf("%d lines, want 7 (one per missing flag):\n%s", len(lines), errb.String())
+	if len(lines) != 3 {
+		t.Fatalf("%d lines, want 3 (one per missing flag):\n%s", len(lines), errb.String())
 	}
-	for _, flag := range []string{"--as", "--width", "--harness", "--model", "--root", "--tokens", "--deadline"} {
+	for _, flag := range []string{"--as", "--harness", "--root"} {
 		n := 0
 		for _, l := range lines {
 			if strings.HasPrefix(l, "nova-swarm member: "+flag+" is required") && strings.Contains(l, "refusing to guess") {
@@ -215,18 +217,30 @@ func TestMemberWithNoFlagsRefusesAndNamesEachMissingOne(t *testing.T) {
 	}
 }
 
-// TestMemberWithAWidthOfZeroRefuses pins that zero is not "unlimited".
+// TestMemberWithAWidthOfZeroRefuses pins that zero is not "unlimited": a reader
+// names its width and is refused 0; a member's --width is an override of its
+// fleet row's and is refused below 0.
 func TestMemberWithAWidthOfZeroRefuses(t *testing.T) {
 	t.Parallel()
-	args := memberFull(t.TempDir())
-	for i, a := range args {
-		if a == "--width" {
-			args[i+1] = "0"
+	for _, c := range []struct {
+		width string
+		extra []string
+		want  string
+	}{
+		{"0", []string{"--reader"}, "--width is required and is at least 1"},
+		{"-1", nil, "--width is an override of the fleet row's width and is at least 1"},
+	} {
+		args := memberFull(t.TempDir())
+		for i, a := range args {
+			if a == "--width" {
+				args[i+1] = c.width
+			}
 		}
-	}
-	var out, errb bytes.Buffer
-	if code := run(args, strings.NewReader(""), &out, &errb, time.Now()); code != 2 || !strings.Contains(errb.String(), "--width is required and is at least 1") {
-		t.Fatalf("exit %d, stderr %q", code, errb.String())
+		args = append(args, c.extra...)
+		var out, errb bytes.Buffer
+		if code := run(args, strings.NewReader(""), &out, &errb, time.Now()); code != 2 || !strings.Contains(errb.String(), c.want) {
+			t.Fatalf("--width %s %v: exit %d, stderr %q", c.width, c.extra, code, errb.String())
+		}
 	}
 }
 

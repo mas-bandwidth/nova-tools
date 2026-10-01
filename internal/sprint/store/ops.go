@@ -165,6 +165,14 @@ func (st *Store) check(ctx context.Context, reads int, streams bool) (CheckRepor
 // state, its STOPPED spans, its last tick, and the pending operation.
 func (st *Store) heldState(ctx context.Context, s *sprint.Snapshot, pending *OpRecord) (sprint.HeldState, error) {
 	h := sprint.HeldState{Snap: s, Grace: st.grace()}
+	if s.Routes == nil {
+		// the no-stall rule asks what the next deal does: it draws from the routes
+		rs, err := st.routes(ctx)
+		if err != nil {
+			return h, err
+		}
+		s.Routes = rs
+	}
 	if pending != nil {
 		h.Pending = &sprint.PendingOp{ID: pending.ID, Verb: pending.Verb, At: pending.At}
 	}

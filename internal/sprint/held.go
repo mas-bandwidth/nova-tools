@@ -261,6 +261,10 @@ func (c *held) notes(ns []Note) {
 		case n.Kind != Judgment:
 		case n.Type == NNoMember:
 			c.noMember = true
+		case n.Type == NNoRoute:
+			for _, p := range n.Primaries {
+				c.tick[p] = "writes " + n.Type
+			}
 		case n.StreamLevel:
 			c.tickStream[n.Stream] = "writes " + n.Type
 		default:
@@ -413,6 +417,11 @@ func (c *held) judgment(pr *Card) string {
 		}
 		if pr.Col == Merging {
 			return "its stream " + pr.Row + " merging; open: " + strings.Join(j, ", ")
+		}
+	}
+	if pr.Col == Ready {
+		if tier, why := c.s.noRoute(pr); why != "" && tier != "" && len(c.judged[StreamSubject(TierSubject(tier))]) > 0 {
+			return "no route serves tier " + tier + "; open: " + strings.Join(c.judged[StreamSubject(TierSubject(tier))], ", ")
 		}
 	}
 	if pr.Col == Ready && !IsSentinel(pr) && len(c.s.UpMembers()) == 0 {

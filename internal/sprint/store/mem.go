@@ -57,7 +57,8 @@ type memState struct {
 	// when it has passed (a test's clock steps by it, or appends a line). Nil
 	// waits on the wall clock for a line or the time, whichever comes first.
 	LogWait func(d time.Duration)
-	logged  chan struct{} // closed, and replaced, by every commit that appends to a log
+	logged  chan struct{}  // closed, and replaced, by every commit that appends to a log
+	routes  []sprint.Route // the model tiers' routes (routes.go)
 }
 
 // memLog is one epoch's sprint keys.

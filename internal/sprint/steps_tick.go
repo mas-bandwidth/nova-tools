@@ -93,6 +93,7 @@ var TickDecisions = map[string][]string{
 	NBound:     {"rework with a fix", "drop", "wait"},
 	NCannotAsk: {"reader add", "rework", "drop", "wait"},
 	NNoMember:  {"fleet beat", "fleet up", "wait"},
+	NNoRoute:   {"route add", "look at the card", "drop", "wait"},
 	NInvariant: {"look at the card", "repair", "wait"},
 	NWorkLate:  {"fleet down <member>", "wait", "drop"},
 	NReadLate:  {"ask --another", "wait", "drop"},
@@ -462,15 +463,30 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	due := 0
 	var ready []*Card
 	var conds []cond
+	unserved, whyOf := map[string][]string{}, map[string]string{}
 	for _, c := range s.Work.Column(Ready) {
 		if wc := AtRedealBound(s, c); wc != nil {
 			conds = append(conds, cond{typ: NBound, stream: c.Row, card: wc.ID, primaries: []string{c.ID},
 				what: fmt.Sprintf("%s: attempt %s was redealt %d times, its bound, and is not dealt again; its history: nova-sprint log --card %s", wc.ID, wc.F("attempt"), wc.Int("redeals"), c.ID)})
 			continue
 		}
-		if !IsSentinel(c) {
-			ready = append(ready, c)
+		if IsSentinel(c) {
+			continue
 		}
+		if tier, why := s.noRoute(c); why != "" {
+			if tier == "" {
+				// a brief whose model lines are wrong: the deal refuses it, naming why
+				continue
+			}
+			unserved[tier] = append(unserved[tier], c.ID)
+			whyOf[tier] = why
+			continue
+		}
+		ready = append(ready, c)
+	}
+	for _, tier := range sortedKeys(unserved) {
+		conds = append(conds, cond{typ: NNoRoute, stream: TierSubject(tier), streamLevel: true, primaries: unserved[tier],
+			what: fmt.Sprintf("%d primaries of tier %s wait: %s", len(unserved[tier]), tier, whyOf[tier])})
 	}
 	ready = streamTurns(ready, streamRound(s, PropStreamIndex))
 	up := s.UpMembers()
@@ -490,7 +506,7 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 			p = Deal(s, DealReq{Sel: Sel{Only: ids}, Who: r.who()})
 		}
 	}
-	due += notify(&p, s, conds, []string{NNoMember, NBound}, r)
+	due += notify(&p, s, conds, []string{NNoMember, NBound, NNoRoute}, r)
 	return p, due
 }
 
@@ -768,7 +784,7 @@ type cond struct {
 // stays one condition, so they are keyed by their type and subject only.
 func condKey(typ, subject, card, what string) string {
 	switch typ {
-	case NNoMember, NCannotAsk:
+	case NNoMember, NCannotAsk, NNoRoute:
 		what = ""
 	case NWorkLate, NReadLate:
 		// a lateness is one per attempt's card and kind (not taken, not

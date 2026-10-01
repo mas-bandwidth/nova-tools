@@ -30,6 +30,14 @@ type Packet struct {
 	// finished ok at (pushed by its member), never a branch name that may not have reached
 	// origin (docs/SPEC-CARD-CONTRACT.md layer 1).
 	BaseHead string `json:"base_head,omitempty"`
+	// A work card's route (route.go): the route drawn ("pin" for a pinned card),
+	// the model id the member launches with (provider/model), its token budget
+	// (a count or unmetered) and its deadline in seconds; empty when the store
+	// has no route, and the member runs its own.
+	Route    string `json:"route,omitempty"`
+	Model    string `json:"model,omitempty"`
+	Tokens   string `json:"tokens,omitempty"`
+	Deadline int    `json:"deadline,omitempty"`
 	// A read's: the work it reads.
 	Worker     string `json:"worker,omitempty"`
 	Head       string `json:"head,omitempty"`
@@ -57,6 +65,7 @@ func PacketOf(prefix string, epoch uint64, c, primary, prevWork, work *Card) Pac
 	}
 	if p.Kind == "work" {
 		p.Branch = BranchOf(prefix, c.ID)
+		p.Route, p.Model, p.Tokens, p.Deadline = c.F(FieldRoute), c.F(FieldModel), c.F(FieldTokens), c.Int(FieldDeadline)
 		if prevWork != nil {
 			p.Base = prevWork.F("branch")
 			if p.Base == "" {

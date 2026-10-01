@@ -135,6 +135,9 @@ type Step struct {
 	// tables plans on it while the fence is at its generation, instead of
 	// reading them, and applies its receipts to it when it commits.
 	Twin *Twin
+	// Routes says the step deals: it reads the model tiers' routes with its
+	// tables (routes.go), and its plan draws from them (sprint.Snapshot.Routes).
+	Routes bool
 	// DrainMax, above zero, is the most entries of the queue's head a drain
 	// takes: the pump's second drain takes only what its first requeued.
 	DrainMax int
@@ -452,6 +455,11 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 				// pump will leave it: its changes queue after the ones before
 				// it, each where they leave the card (sprint.Drain).
 				snap = sprint.WithQueue(snap, q)
+			}
+		}
+		if step.Routes {
+			if snap.Routes, err = st.routes(ctx); err != nil {
+				return res, err
 			}
 		}
 		// Every plan is held to the lifecycle here, whatever step built it.

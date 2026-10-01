@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"io"
 	"path/filepath"
 	"strconv"
@@ -70,6 +71,7 @@ func init() {
 		{"check", "", "check", (*app).cmdCheck},
 		{"repair", "", "repair", (*app).cmdRepair},
 		{"where", "[--watch] [--every <duration>]", "where", (*app).cmdWhere},
+		{"routes", "", "routes", (*app).cmdRoutes},
 		{"play", "[--simulation] [--seed <n>] [--every <duration>] [--broken <p>] [--fail <p>] [--stuck <p>] [--cross <p>] [--down <p>] [--up <p>] [--red <p>] [--flap <p>] [--batch <n>] [--hold] [--silent <member>@<from>+<for>]... [--ticks <n>]", "play --seed 7 --every 1s", (*app).cmdPlay},
 		{"clear", "--confirm sprint", "clear --confirm sprint", (*app).cmdClear},
 		{"teardown", "--confirm sprint", "teardown --confirm sprint", (*app).cmdTeardown},
@@ -881,6 +883,12 @@ func (a *app) briefRules(file string, c *common, st **store.Store, stderr io.Wri
 // findings print on stderr in the lint's own grammar, at most max of them (0 is all)
 // before a MORE line, and a brief with any is refused, exit 2.
 func lintBrief(brief string, rules []swarm.ChildRule, max int, stderr io.Writer) int {
+	// the model lines the deal reads (line 1's tier, a model: pin) are read by the
+	// one parser the deal and the frame use: a brief the deal would refuse is
+	// refused here, before it is admitted
+	if _, why := cardhdr.ReadModel(brief); why != "" {
+		return refuse(stderr, "add", "the brief's model lines: "+why+"; line 1 names `tier: flash|pro|frontier`, and a pinned card carries `model: <provider>/<model>` (with `tokens: <n>|unmetered` and `deadline: <seconds>`) under it")
+	}
 	findings := swarm.LintCardChildWith([]byte(brief), rules)
 	if len(findings) == 0 {
 		return 0
@@ -1094,6 +1102,7 @@ func (a *app) cmdFinish(args []string, stdout, stderr io.Writer) int {
 	report := fs.String("report", "", "the worker's report")
 	branch := fs.String("branch", "", "the branch the work is on (its packet names the one to use)")
 	baseBranch := fs.String("base", "", "the branch the work started from")
+	usage := fs.String("usage", "", "what the run spent, one line (the member passes its child's budget and wall): kept on the attempt's record")
 	words, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "finish", err.Error())
@@ -1111,7 +1120,7 @@ func (a *app) cmdFinish(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "finish", err.Error())
 	}
 	return a.runStep("finish", *c, st, store.FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: ids}, As: *as, Gens: gens, Failed: *failed,
-		Head: *head, Report: *report, Branch: *branch, Base: *baseBranch, Who: *as}), stdout, stderr)
+		Head: *head, Report: *report, Branch: *branch, Base: *baseBranch, Usage: *usage, Who: *as}), stdout, stderr)
 }
 
 func (a *app) cmdAsk(args []string, stdout, stderr io.Writer) int {

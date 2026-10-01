@@ -621,7 +621,7 @@ func TestAckAnswersOnlyTheTypesThatListIt(t *testing.T) {
 // judgment the coordinator's answer closes is none of them.
 func TestTickKeptList(t *testing.T) {
 	t.Parallel()
-	keeps := []string{NBound, NCannotAsk, NNoMember, NInvariant, NWorkLate, NReadLate, NMergeLate, NStalled, NRemindFailed}
+	keeps := []string{NBound, NCannotAsk, NNoMember, NNoRoute, NInvariant, NWorkLate, NReadLate, NMergeLate, NStalled, NRemindFailed}
 	got := []string{NRemindFailed}
 	for typ := range TickDecisions {
 		got = append(got, typ)
