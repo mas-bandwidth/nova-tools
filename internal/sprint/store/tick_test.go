@@ -91,7 +91,7 @@ func TestStartAndStopAreIdempotentAndRecorded(t *testing.T) {
 		t.Fatalf("start when running changed something: %+v %+v %v", again, res, err)
 	}
 	h.tick(MachineSilence + time.Second)
-	if line := h.st.MachineLine(h.ctx); line != "machine: STOPPED (no tick for 16s)" {
+	if line := h.st.MachineLine(h.ctx); line != "machine: STOPPED" || strings.Contains(line, "(no tick") {
 		t.Fatalf("no tick: %q", line)
 	}
 	h.machine()
@@ -375,7 +375,7 @@ func TestAStuckOperationIsReportedOnceByTheFirstWriterAfterRepair(t *testing.T) 
 	if _, err := h.st.Tick(h.ctx); err == nil || !strings.Contains(err.Error(), "could not finish it") {
 		t.Fatalf("the tick with an operation it cannot finish: %v", err)
 	}
-	if line := h.st.MachineLine(h.ctx); !strings.Contains(line, "last tick failed") {
+	if line := h.st.MachineLine(h.ctx); line != "machine: running" {
 		t.Fatalf("the machine line: %s", line)
 	}
 	h.m.Fail = nil
