@@ -45,9 +45,12 @@ func TestAPinnedCardOnTheTwinIsReadBackByCardAndRoutes(t *testing.T) {
 
 	_, story, _ := run("nova-sprint card s1-1")
 	assert.Contains(t, story, "ATTEMPT 1 card=s1-1.w1 gen=2 route=pin model=x/y member=m1")
-	assert.Contains(t, story, "usage=wall=3.00s budget=10/5000 end=withdrawn")
+	// the take's cost record: what the member reported, timed at the finish; it reported
+	// no token, so it is not priced
+	assert.Contains(t, story, "usage=wall=3.00s budget=10/5000 wait=0s run=0s unpriced=no-tokens cost=none end=withdrawn")
 	assert.Contains(t, story, "ATTEMPT 1 card=s1-1.w1 take=1 route=pin model=x/y member=m1 finished=", "the failed take keeps its own record")
-	assert.Contains(t, story, "usage=wall=3.00s budget=10/5000 end=provider failure: 529")
+	assert.Contains(t, story, "usage=wall=3.00s budget=10/5000 wait=0s run=0s unpriced=no-tokens cost=none end=provider failure: 529")
+	assert.Contains(t, story, "COST kind=work card=s1-1.w1 attempt=1 take=1 who=m1 route=pin model=x/y end=provider-failure input=-", "the failed take is a consumer of the card")
 	assert.NotContains(t, story, "came back failed", "a provider failure is never the card's")
 	_, plain, _ := run("nova-sprint card s4-1")
 	assert.Contains(t, plain, "ATTEMPT 1 card=s4-1.w1 gen=1 route=- model=-", "a card on a twin with no route runs on the member's override")

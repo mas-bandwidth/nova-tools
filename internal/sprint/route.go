@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 )
 
@@ -43,6 +44,9 @@ type Route struct {
 	Tokens   int    `json:"tokens"`   // 0 is unmetered
 	Deadline int    `json:"deadline"` // seconds
 	Enabled  bool   `json:"enabled"`
+	// Prices is the route's price sheet (cardcost.PricesOf), what a card that ran on it
+	// is priced by (cost.go); every price "" when the route has none.
+	Prices cardcost.Prices `json:"prices"`
 }
 
 // The work card's route fields, written at each deal and redeal: the route taken

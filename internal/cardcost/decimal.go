@@ -1,7 +1,10 @@
 // Package cardcost is what a card cost: a route's price sheet as nova-config holds it
-// (the route kind's price fields, docs/SPEC-CONFIG.md, "route"), in exact decimal
-// arithmetic. Every amount is a decimal string end to end, never a float: a price is
-// typed as a decimal, kept as one in Postgres and Redis, and read back as a rational.
+// (the route kind's price fields, docs/SPEC-CONFIG.md, "route"), the tokens one run
+// spent by class, the predicted cost of the one priced by the other, and the usage
+// record a consumer card keeps (docs/SPEC-SPRINT.md, "What a card cost"), in exact
+// decimal arithmetic. Every amount is a decimal string end to end, never a float: a
+// price is typed as a decimal, kept as one in Postgres and Redis, and multiplied as a
+// rational.
 //
 // Libraries considered: math/big's Rat (the standard library) does exact decimal
 // arithmetic on strings of any length; no adopted module does decimals, and
