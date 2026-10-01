@@ -153,6 +153,11 @@ var swarmAudit = audit.Config{
 		// and the two lines this binary prints whole are the two exempted verbatim sites
 		// above.
 		`"github.com/mas-bandwidth/nova-tools/internal/swarm"`,
+		// cardlimits holds two integer constants (the card lint's size advice and the bound
+		// nova-sprint add refuses a brief over) and no code: it prints nothing and holds no
+		// writer; the numbers reach a line only through numeric verbs of the size note and
+		// the LINT OK and LINT SIZE lines.
+		`"github.com/mas-bandwidth/nova-tools/internal/cardlimits"`,
 		// safepath (issue #1923) answers ONE question about a string -- NameOK, is this a
 		// name and not a path -- and returns a bool. It holds no writer of any kind and
 		// prints nothing; the label it judges is rendered by this package through
