@@ -507,10 +507,10 @@ func TestAFlappingMemberCannotHideALateCard(t *testing.T) {
 	if first == "" {
 		t.Fatalf("no first_dealt on the card")
 	}
-	// m1 beats for 10 s and falls silent for 20 s, over and over, for three
-	// hours; its card goes withdrawn and back
+	// m1 beats for 10 s and falls silent for 50 s (past the beat windows it may
+	// miss), over and over, for three hours; its card goes withdrawn and back
 	for elapsed := time.Duration(0); elapsed < 3*time.Hour; elapsed += 10 * time.Second {
-		if (elapsed/(30*time.Second))%3 == 0 {
+		if elapsed%(60*time.Second) < 10*time.Second {
 			h.live = []string{"m1"}
 		} else {
 			h.live = nil
@@ -545,7 +545,7 @@ func TestAFlappingMemberIsLateFromTheFirstDealAndTheFirstTake(t *testing.T) {
 	lap := func() {
 		h.live = nil // silent past the beat deadline: withdrawn
 		for i := 0; i < 3; i++ {
-			h.tick(10 * time.Second)
+			h.tick(pastDown / 3)
 			h.machine()
 		}
 		h.live = []string{"m1"} // back: dealt again
@@ -581,7 +581,7 @@ func TestAFlappingMemberIsLateFromTheFirstDealAndTheFirstTake(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		h2.live = nil
 		for j := 0; j < 3; j++ {
-			h2.tick(10 * time.Second)
+			h2.tick(pastDown / 3)
 			h2.machine()
 		}
 		h2.live = []string{"m1"}
@@ -635,7 +635,7 @@ func TestARedealtCardAfterATakeIsLateNotTaken(t *testing.T) {
 	}
 	h.live = []string{other} // the taker goes silent
 	for i := 0; i < 3; i++ {
-		h.tick(10 * time.Second)
+		h.tick(pastDown / 3)
 		h.machine()
 	}
 	c := h.snap().Fleet.Card(card)

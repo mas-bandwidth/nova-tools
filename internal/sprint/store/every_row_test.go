@@ -56,7 +56,7 @@ func TestEveryMemberWhoseBeatLapsedGoesDownInOneTick(t *testing.T) {
 	// those two cards go to them, the other twelve are withdrawn for the next
 	// deal, and no member is past its width (the owner's rule is width)
 	h.setLive("m3", "m4")
-	h.tick(sprint.BeatDeadline + time.Second)
+	h.tick(pastDown)
 	res := h.machine()
 	s := h.snap()
 	for _, m := range []string{"m1", "m2"} {
@@ -86,7 +86,7 @@ func TestAMemberUpAndAMemberDownInTheSameTick(t *testing.T) {
 	t.Parallel()
 	h, _ := fleetOf(t, 3, 8)
 	h.setLive("m1", "m2")
-	h.tick(sprint.BeatDeadline + time.Second)
+	h.tick(pastDown)
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 12}))
 	h.startMachine()
 	h.machine() // m3 down, the deal over m1 and m2
@@ -94,7 +94,7 @@ func TestAMemberUpAndAMemberDownInTheSameTick(t *testing.T) {
 		t.Fatalf("m3 is %s", st)
 	}
 	h.setLive("m1", "m3")
-	h.tick(sprint.BeatDeadline + time.Second)
+	h.tick(pastDown)
 	h.machine()
 	s := h.snap()
 	if s.MemberCtl("m2").F("status") != sprint.Down || s.MemberCtl("m3").F("status") != sprint.Up {
@@ -112,7 +112,7 @@ func TestTheLevelEvensEveryQueueInOneTick(t *testing.T) {
 	t.Parallel()
 	h, ms := fleetOf(t, 8, 64)
 	h.setLive("m1")
-	h.tick(sprint.BeatDeadline + time.Second)
+	h.tick(pastDown)
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 64}))
 	h.startMachine()
 	h.machine()
