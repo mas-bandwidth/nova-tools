@@ -297,6 +297,8 @@ func (r *nativeRunner) Start(p member.Packet) (member.Child, error) {
 		release()
 		return nil, err
 	}
+	// a file in the slot, never a pipe back to the member: the wait below is on native's
+	// process alone, so a process native left cannot hold the finish (docs/SPEC-CARD-CONTRACT.md, the finish)
 	cmd.Stdout, cmd.Stderr = logf, logf
 	if err := cmd.Start(); err != nil {
 		release()

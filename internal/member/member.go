@@ -297,23 +297,26 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 	m.pushEnded(ids, byID)
 	for _, id := range ids {
 		c := byID[id]
-		inFlight := c.Col == "working" || c.Col == "reading"
-		if !inFlight {
-			continue
-		}
 		l, ours := m.running[id]
 		if !ours {
 			continue
 		}
 		if m.moved(l, c) {
 			// the claim moved under the child (a clear, a redeal): its result
-			// is nobody's; it is reaped when it ends and the new claim is run
+			// is nobody's; it is reaped when it ends and the new claim is run.
+			// Whatever the card's column: a redeal or a withdrawn card dealt
+			// again lists it in this member's ready (asked) column, and an
+			// ended launch kept there holds the width with nothing reported
+			// (tla/CardContract.tla, Reap and EveryLaunchEnds)
 			if !l.child.Done() {
 				continue
 			}
 			fmt.Fprintf(m.out, "%s %s: the claim moved (epoch %d gen %d attempt %d, now epoch %d gen %d attempt %d)\n", FinishReaped, id, l.epoch, l.gen, l.attempt, c.Packet.Epoch, c.Packet.Gen, c.Packet.Attempt)
 			delete(m.running, id)
 			claimMoved[id] = true
+			continue
+		}
+		if c.Col != "working" && c.Col != "reading" {
 			continue
 		}
 		if l.spent || !l.child.Done() || (!m.cfg.Reader && l.push == nil) {

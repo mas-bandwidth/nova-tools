@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -153,6 +154,7 @@ type nativeRunResult struct {
 	lost         bool              // the provider read died after the request may have been accepted
 	unrecorded   bool              // the unknown could not be written anywhere the next reader looks
 	terminated   bool              // a TERM from outside ended the run mid-flight, not the deadline
+	survivors    string            // what the harness left in its group when it exited on its own: "", <pgid>:reaped or <pgid>:alive
 	// THE JOB'S OWN FIGURE (rule 13d, "Two numbers, kept apart: the row is the launch's and
 	// the line is the job's"). These three are the JOB's -- the sum over every launch of
 	// this one invocation of `native` -- and they are what the NATIVE OK line's `budget=`
@@ -216,6 +218,23 @@ var (
 		return t.C, t.Stop
 	}
 )
+
+// nativeEndLeftovers ends what a harness that exited on its own left in its process
+// group (docs/SPEC-CARD-CONTRACT.md, the finish; docs/SPEC-SWARM.md, `native` and rule 9): a
+// grandchild that kept running (a language server, a watcher, a shell's `&`) holds the
+// harness's pipes and outlives the card. The harness leads its own group from its start
+// (ownChildGroup), so the group is signalled whole: a terminate, swarm.TerminateGrace, then
+// a kill. It returns "" when the group was already empty, else the group and how it ended,
+// <pgid>:reaped or <pgid>:alive (something outlived the kill), for the NATIVE line.
+func nativeEndLeftovers(pgid int, started string) string {
+	if !swarm.GroupAlive(pgid, started) {
+		return ""
+	}
+	if nativeReap(pgid, started, swarm.TerminateGrace) {
+		return strconv.Itoa(pgid) + ":alive"
+	}
+	return strconv.Itoa(pgid) + ":reaped"
+}
 
 // nativeRun executes one frozen configuration and returns the recorded result and
 // the command's exit code: 0 the child ran, 2 a refusal (one REFUSED line on
@@ -969,7 +988,13 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 				res.rc = ee.ExitCode()
 			default:
 				res.rc = -1
+				if errors.Is(runErr, exec.ErrWaitDelay) {
+					// a harness that exited 0 while something it left held its pipes past
+					// subproc.WaitDelay: its own exit, not a kill (docs/SPEC-CARD-CONTRACT.md, the finish)
+					res.rc = 0
+				}
 			}
+			res.survivors = nativeEndLeftovers(pgid, started)
 		case <-deadlineC:
 			nativeKillGroup(pgid, started)
 			<-done
