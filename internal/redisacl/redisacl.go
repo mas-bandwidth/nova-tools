@@ -234,10 +234,10 @@ func (c Catalog) Commands(rules []string) map[string]bool {
 
 // Drift is how a live user differs from its rendering; zero is none.
 type Drift struct {
-	Missing, Off, Selectors      bool
-	KeysAdd, KeysDel             []string
-	ChannelsAdd, ChannelsDel     []string
-	CommandsAdd, CommandsDel     []string
+	Missing, Off, Selectors  bool
+	KeysAdd, KeysDel         []string
+	ChannelsAdd, ChannelsDel []string
+	CommandsAdd, CommandsDel []string
 }
 
 // None reports whether the live user is the rendering.

@@ -11,7 +11,7 @@ StartLimitIntervalSec=0
 
 [Service]
 Type=simple
-{% if loop_become %}
+{% if loop_system %}
 User={{ ansible_user_id }}
 {% endif %}
 WorkingDirectory={{ nova_home }}
@@ -31,4 +31,4 @@ StandardOutput=append:{{ loop_log }}
 StandardError=append:{{ loop_log }}
 
 [Install]
-WantedBy={{ 'multi-user.target' if loop_become else 'default.target' }}
+WantedBy={{ 'multi-user.target' if loop_system else 'default.target' }}

@@ -7,7 +7,7 @@
 <dict>
 <key>Label</key>
 <string>com.nova.loop.{{ l.name | e }}</string>
-{% if loop_become %}
+{% if loop_system %}
 <key>UserName</key>
 <string>{{ ansible_user_id | e }}</string>
 {% endif %}
