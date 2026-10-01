@@ -198,12 +198,13 @@ func TestLintAdvisesAnOversizeCardAndDoesNotRefuseIt(t *testing.T) {
 	assert.Contains(t, stdout, "nova-sprint add refuses a brief over 16384 bytes")
 }
 
-// The lint's two numbers agree with the sprint's: 12000 is the advice, and the bound the
-// note names is the one nova-sprint add enforces (store.MaxBriefBytes), above the advice.
+// The lint's two numbers are internal/cardlimits': 12000 is the advice, and the bound the
+// note names is the one nova-sprint add enforces (the store reads it there too), above the
+// advice.
 func TestTheSizeNoteAgreesWithTheSprintsBriefBound(t *testing.T) {
 	t.Parallel()
-	assert.Equal(t, 16384, cardRefusedBytes, "the note names the bound the sprint enforces, read from the store")
-	assert.Equal(t, 12000, cardMaxBytes, "the advice is the store's")
+	assert.Equal(t, 16384, cardRefusedBytes, "the note names the bound the sprint enforces")
+	assert.Equal(t, 12000, cardMaxBytes, "the advice")
 	assert.Less(t, cardMaxBytes, cardRefusedBytes, "the advice sits under the bound")
 }
 

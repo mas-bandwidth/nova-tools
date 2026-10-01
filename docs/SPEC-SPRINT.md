@@ -681,8 +681,8 @@ control card's text fields
 (brief, fix, finding, report, reason, note, return reason, ci note, did) are
 at most 8 KiB, except the brief: a brief is a child's whole brief, so it is at
 most 16 KiB (16384 bytes; the card lint advises at most 12000, and
-`store.MaxBriefBytes` is the bound, a constant of the model that does not
-change the model). A field over its bound refuses the step whole, nothing
+`internal/cardlimits` holds both numbers, which the store and the lint read; the
+bound is a constant of the model and does not change the model). A field over its bound refuses the step whole, nothing
 written, naming the field, its size and the bound. Every manifest is checked against
 the table layer's bounds before anything is written, split by entries and by
 bytes, so no step can wedge the sprint. Every command checks first that the

@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/cardlimits"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
@@ -804,18 +805,13 @@ const manifestBudget = ntable.LimitManifestBytes - 64
 // refused before anything is written.
 const MaxCardTextBytes = 8 << 10
 
-// MaxBriefBytes bounds the brief field. A brief is a child's whole brief, so it
-// carries every detail the child needs, and the card lint advises at most
-// BriefAdvisoryBytes of it; the bound sits above that
-// advice so a brief the lint passes is never refused for size, and well under
-// the table layer's field bound (ntable.LimitFieldValueBytes, 64 KiB, which
-// the table function library enforces too). A bound is a constant of the
-// model (tla/SprintEvents.tla), which does not change with it.
-const MaxBriefBytes = 16 << 10
-
-// BriefAdvisoryBytes is the size the card lint advises a brief stays under
-// (nova-swarm lint --card, its size note); MaxBriefBytes sits above it.
-const BriefAdvisoryBytes = 12000
+// MaxBriefBytes bounds the brief field: cardlimits.MaxBriefBytes, the number the card
+// lint names too and read from the one package that holds it (nothing behind it, so the lint
+// reads it without the store). A brief is a child's whole brief; the bound sits above the
+// lint's advice (cardlimits.BriefAdvisoryBytes) and under the table layer's field bound
+// (ntable.LimitFieldValueBytes, 64 KiB, which the table function library enforces too). A
+// bound is a constant of the model (tla/SprintEvents.tla), which does not change with it.
+const MaxBriefBytes = cardlimits.MaxBriefBytes
 
 // TextBound is the bound of one card text field, in bytes.
 func TextBound(field string) int {
@@ -838,7 +834,7 @@ func unwritable(plan sprint.Plan, op OpRecord) string {
 				if v, ok := c.Entry.Set[f]; ok && len(v) > TextBound(f) {
 					why := "shorten it, or point to a file or a comment"
 					if f == "brief" {
-						why = fmt.Sprintf("a brief is a child's whole brief, up to %d KiB, and the card lint advises at most %d bytes; %s", MaxBriefBytes>>10, BriefAdvisoryBytes, why)
+						why = fmt.Sprintf("a brief is a child's whole brief, up to %d KiB, and the card lint advises at most %d bytes; %s", MaxBriefBytes>>10, cardlimits.BriefAdvisoryBytes, why)
 					}
 					return fmt.Sprintf("card %s: field %s is %d bytes, over the bound of %d bytes; %s", c.Entry.ID, f, len(v), TextBound(f), why)
 				}
