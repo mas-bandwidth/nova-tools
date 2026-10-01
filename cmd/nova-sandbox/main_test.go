@@ -20,7 +20,9 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
 	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
+	"github.com/mas-bandwidth/nova-tools/internal/sandbox/darwincheck"
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
+	"github.com/mas-bandwidth/nova-tools/profiles"
 )
 
 // Every test here runs the REAL thing on this Mac: a real sandbox-exec, a real profile
@@ -317,7 +319,7 @@ func TestTheAgentSocketIsUnreachable(t *testing.T) {
 	// Test 16: no test reaches outside t.TempDir(). The socket therefore lives in this
 	// job's own outside directory, which is under t.TempDir() and in NEITHER list — and
 	// it is bound and dialled by RELATIVE name, with the process's cwd in that directory,
-	// exactly as profiles/darwin-check.sh does it. sun_path is 104 bytes and the absolute
+	// exactly as tools/sandboxcheck does it. sun_path is 104 bytes and the absolute
 	// path of a t.TempDir() is longer, so an absolute bind fails silently and the one
 	// test this build's network fix exists for would pass for the wrong reason.
 	lines := startUnixListener(t, j.outside, "agent.sock")
@@ -733,10 +735,10 @@ func mustOutput(t *testing.T, name string, args ...string) string {
 	return string(out)
 }
 
-// profiles/darwin-check.sh, run against the profile THIS TOOL generates rather than the
-// one the script fills for itself. One text, filled two ways: if the generator and the
-// script ever disagree, this is where it shows, and it shows as a named check rather
-// than as a job that dies in its first second.
+// The darwin check (internal/sandbox/darwincheck, run by tools/sandboxcheck), run against
+// the profile THIS TOOL generates rather than the one the check fills for itself. One text,
+// filled two ways: if the generator and the check ever disagree, this is where it shows, and
+// it shows as a named check rather than as a job that dies in its first second.
 func TestTheCheckScriptPassesAgainstTheToolsProfile(t *testing.T) {
 	t.Parallel()
 	// SLEEPS: this test waits on the wall clock (measured over 5 s on the 2026-09-25 PR run). Skipped 2026-09-25
@@ -745,50 +747,47 @@ func TestTheCheckScriptPassesAgainstTheToolsProfile(t *testing.T) {
 	t.Skip("SLEEPS: needs a mocked clock or a functional test (nova-tools #4221)")
 
 	needDarwin(t)
-	root := repoRoot(t)
-	script := filepath.Join(root, "profiles", "darwin-check.sh")
-	if _, err := os.Stat(script); err != nil {
-		t.Skipf("skipped: %s is not in this checkout", script)
-	}
 	bin := filepath.Join(t.TempDir(), "nova-sandbox")
 	build := exec.Command("go", "build", "-o", bin, "./cmd/nova-sandbox")
-	build.Dir = root
+	build.Dir = repoRoot(t)
 	build.Env = goenv.Clean(os.Environ())
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("building the tool: %v\n%s", err, out)
 	}
-	cmd := exec.Command("bash", script)
-	cmd.Dir = root
 	// Test 16 is absolute: no test reaches outside t.TempDir() or touches the network.
-	// The script's own scratch lives beside it, in the repo working tree, and its two DNS
-	// checks curl a third-party host — right for the operator run and for the mac CI job,
-	// where the spec's work list puts them, and wrong for a Go test on a machine with an
-	// egress policy, where they would go red for a reason that is not about the wall.
-	cmd.Env = append(os.Environ(),
-		"NOVA_SANDBOX_FILL="+bin,
-		"NOVA_CHECK_SCRATCH="+filepath.Join(t.TempDir(), "check"),
-		"NOVA_CHECK_NO_NETWORK=1")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("darwin-check.sh against the tool's generated profile failed: %v\n%s", err, out)
+	// The check's own scratch is handed to it, and its two DNS checks curl a third-party
+	// host -- right for the operator run and for the mac CI job, where the spec's work list
+	// puts them, and wrong for a Go test on a machine with an egress policy, where they
+	// would go red for a reason that is not about the wall.
+	var out, errOut bytes.Buffer
+	code := darwincheck.Run(darwincheck.Options{
+		Template:  profiles.DarwinTemplate,
+		Scratch:   filepath.Join(t.TempDir(), "check"),
+		NoNetwork: true,
+		Fill:      bin,
+		Stdout:    &out,
+		Stderr:    &errOut,
+	}, darwincheck.OSSystem{})
+	if code != 0 {
+		t.Fatalf("the darwin check against the tool's generated profile failed: exit %d\n%s%s", code, out.String(), errOut.String())
 	}
-	// The count is the SCRIPT's, and no number here or in the spec states it: a test that
+	// The count is the CHECK's, and no number here or in the spec states it: a test that
 	// named one would go red every time a check was added. What is asserted is that the
-	// script ran a real suite and that none of it failed.
-	if n := strings.Count(string(out), "CHECK OK name="); n < 20 {
-		t.Fatalf("only %d checks passed; the script's own count is higher than that:\n%s", n, out)
+	// check ran a real suite and that none of it failed.
+	if n := strings.Count(out.String(), "CHECK OK name="); n < 20 {
+		t.Fatalf("only %d checks passed; the check's own count is higher than that:\n%s", n, out.String())
 	}
-	if n := strings.Count(string(out), "CHECK SKIP name="); n != 2 {
-		t.Fatalf("want the two DNS checks skipped under NOVA_CHECK_NO_NETWORK, got %d SKIP lines:\n%s", n, out)
+	if n := strings.Count(out.String(), "CHECK SKIP name="); n != 2 {
+		t.Fatalf("want the two DNS checks skipped under NoNetwork, got %d SKIP lines:\n%s", n, out.String())
 	}
-	if strings.Contains(string(out), "CHECK FAIL") {
-		t.Fatalf("a check failed against the tool's profile:\n%s", out)
+	if strings.Contains(out.String(), "CHECK FAIL") {
+		t.Fatalf("a check failed against the tool's profile:\n%s", out.String())
 	}
 }
 
-// #1557 HOLD: darwin-check.sh fills the template two ways. The tool generator
+// #1557 HOLD: the darwin check fills the template two ways. The tool generator
 // follows xcode_select_link into OptionalRoots; the hand filler did not, so a
-// reader running the script without NOVA_SANDBOX_FILL got the link literal
+// reader running the check without the generator got the link literal
 // without the selected Xcode root, while cxx_compile required that root.
 func TestDarwinCheckHandFillerGrantsTheSameXcodeRoot(t *testing.T) {
 	t.Parallel()
@@ -819,19 +818,19 @@ func TestDarwinCheckHandFillerGrantsTheSameXcodeRoot(t *testing.T) {
 		t.Fatalf("generated profile: %v", err)
 	}
 
-	root := repoRoot(t)
-	script := filepath.Join(root, "profiles", "darwin-check.sh")
-	cmd := exec.Command("bash", script)
-	cmd.Dir = root
-	cmd.Env = append(os.Environ(),
-		"NOVA_CHECK_SCRATCH="+filepath.Join(t.TempDir(), "check"),
-		"NOVA_CHECK_DUMP_PROFILE=1",
-		"NOVA_CHECK_NO_NETWORK=1")
-	hand, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("hand-filling darwin-check.sh: %v\n%s", err, hand)
+	var hand, errOut bytes.Buffer
+	code := darwincheck.Run(darwincheck.Options{
+		Template:    profiles.DarwinTemplate,
+		Scratch:     filepath.Join(t.TempDir(), "check"),
+		NoNetwork:   true,
+		DumpProfile: true,
+		Stdout:      &hand,
+		Stderr:      &errOut,
+	}, darwincheck.OSSystem{})
+	if code != 0 {
+		t.Fatalf("hand-filling the profile: exit %d\n%s%s", code, hand.String(), errOut.String())
 	}
-	handText := string(hand)
+	handText := hand.String()
 
 	for _, r := range xcode {
 		grant := `(allow file-read* (subpath "` + r + `"))`
@@ -1561,7 +1560,7 @@ func TestPolicyVerbPrintsAndRunsNothing(t *testing.T) {
 		if code == 0 {
 			t.Fatalf("%s was accepted by the policy verb", flag)
 		}
-		if !strings.Contains(errOut, "is not a flag this tool has") {
+		if !strings.Contains(errOut, "unknown flag "+flag+"; run: nova-sandbox help policy") {
 			t.Fatalf("%s was refused for the wrong reason: %s", flag, errOut)
 		}
 	}
@@ -2155,25 +2154,25 @@ func TestCheckFlagParsing(t *testing.T) {
 			name:     "check with max flag refused",
 			args:     []string{"check", "--max", "10"},
 			wantCode: sandbox.ExitCannotRun,
-			wantErr:  "CHECK REFUSED reason=bad_flag: flag \"--max\"; run: nova-sandbox check -h",
+			wantErr:  "CHECK REFUSED reason=bad_flag: unknown flag --max; run: nova-sandbox help check",
 		},
 		{
 			name:     "unrecognized double-dash flag",
 			args:     []string{"check", "--bogus"},
 			wantCode: sandbox.ExitCannotRun,
-			wantErr:  "CHECK REFUSED reason=bad_flag: flag \"--bogus\"; run: nova-sandbox check -h",
+			wantErr:  "CHECK REFUSED reason=bad_flag: unknown flag --bogus; run: nova-sandbox help check",
 		},
 		{
 			name:     "unrecognized single-dash flag",
 			args:     []string{"check", "-bogus"},
 			wantCode: sandbox.ExitCannotRun,
-			wantErr:  "CHECK REFUSED reason=bad_flag: flag \"-bogus\"; run: nova-sandbox check -h",
+			wantErr:  "CHECK REFUSED reason=bad_flag: unknown flag -bogus; run: nova-sandbox help check",
 		},
 		{
 			name:     "unexpected positional argument",
 			args:     []string{"check", "extra"},
 			wantCode: sandbox.ExitCannotRun,
-			wantErr:  "CHECK REFUSED reason=bad_flag: unexpected argument \"extra\"; run: nova-sandbox check -h",
+			wantErr:  "CHECK REFUSED reason=bad_flag: unexpected argument extra; run: nova-sandbox help check",
 		},
 		{
 			name:     "check -h",
@@ -2199,8 +2198,8 @@ func TestCheckFlagParsing(t *testing.T) {
 			if tc.wantErr != "" && !strings.Contains(errOut, tc.wantErr) {
 				t.Errorf("stderr %q does not contain %q", errOut, tc.wantErr)
 			}
-			if tc.wantCode == sandbox.ExitCannotRun && !strings.Contains(errOut, "run: nova-sandbox check -h") {
-				t.Errorf("stderr %q does not contain door 'run: nova-sandbox check -h'", errOut)
+			if tc.wantCode == sandbox.ExitCannotRun && !strings.Contains(errOut, "run: nova-sandbox help check") {
+				t.Errorf("stderr %q does not contain door 'run: nova-sandbox help check'", errOut)
 			}
 		})
 	}

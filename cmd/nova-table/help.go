@@ -122,10 +122,24 @@ func (app *application) dispatch(args []string, out, errout io.Writer) int {
 	}
 	return refuse(errout, "", "unknown verb "+strings.Join(args, " ")+"; available: "+rootNames())
 }
+
+// opening is the banner's first three answers: what the tool does (line 1,
+// the README's sentence), how it works, and the first run (ONBOARDING.md
+// point 6).
+const opening = `nova-table: tables whose cells are ordered sets, kept in Redis and drawn as text
+
+how it works: a table is rows and columns in one Redis store; each cell is an
+ordered set of members (a card, a job, any id). A column's projection prints
+the set's count, its members, a text or a percentage, and the footer folds each
+column. Every write names the epoch it read and prints a receipt; a view stacks
+tables into one frame that watch redraws in place.
+first run: needs a Redis you may write to: export NOVA_REDIS_ADDR=127.0.0.1:6379
+(or pass --redis), then run the lines under example: in order.`
+
 func helpCommand(path []string, out, errout io.Writer) int {
 	name := strings.Join(path, " ")
 	if name == "" {
-		fmt.Fprintln(out, "nova-table: tables of ordered sets, text and percentages over Redis\n\nusage:\n  nova-table help [<verb> [<subverb>]]")
+		fmt.Fprintln(out, opening+"\n\nusage:\n  nova-table help [<verb> [<subverb>]]")
 		for _, c := range commands {
 			fmt.Fprintln(out, "  nova-table "+strings.TrimSpace(c.name+" "+c.syntax))
 		}

@@ -9,9 +9,9 @@
 //
 // The registry exists because a bench name reached a machine as a bare string: `--bench
 // batman` was a hostname the fill loop would happily ssh to, and nothing in the tools knew
-// that batman is six CI runners and not a card bench. Now a bench name is RESOLVED -- every
-// verb that puts work on a machine asks the registry first, and a name whose roles lack
-// `bench` is refused by name, with the reason and the remedy on the line.
+// that batman is six CI runners and not a card bench. Now a machine name is RESOLVED: a verb
+// asks the registry for the row, and a name the registry does not carry is refused by name,
+// with the reason and the remedy on the line.
 //
 // The file is data, tab separated, kept in git beside the lanes file:
 //
@@ -58,27 +58,15 @@ var knownRoles = map[string]bool{
 	RoleServices:     true,
 }
 
-// The reasons a machine may not take work. They are tokens, not prose, so a loop reading
-// the line can branch on one and a person reading it learns the same thing.
-const (
-	ReasonRunnerHost        = "runner-host"         // it serves the merge group's shards
-	ReasonCoordinationHost  = "coordination-host"   // a friend's window lives there
-	ReasonServicesHost      = "services-host"       // the stack lives there and nothing else may
-	ReasonNotABench         = "not-a-bench"         // it carries no role that permits work
-	ReasonUnknown           = "unknown-machine"     // the registry does not carry the name
-	ReasonSharedWithoutNote = "shared-without-note" // bench+runner with no dated allow-shared note
-)
+// ReasonUnknown is the reason token a refusal carries when the registry does not carry the
+// name. It is a token, not prose, so a loop reading the line can branch on it and a person
+// reading it learns the same thing.
+const ReasonUnknown = "unknown-machine"
 
 // allowSharedPrefix is how a machine that is BOTH runner and bench says why. The exception
 // is dated because it is meant to end: when the pull worker runs cards in containers, the
 // runner role comes off hulk and vision and the note goes with it.
 const allowSharedPrefix = "allow-shared="
-
-// certifiedPrefix is how a machine's notes say it has been through certification: the
-// machine was provisioned, probed and proven to carry a real card end to end, and the day
-// it was is on the line. It is the field the fill pool is derived from -- an uncertified
-// bench may be named by hand, but no tick puts a card on it by default.
-const certifiedPrefix = "certified="
 
 // Machine is one line of the registry.
 type Machine struct {
@@ -126,25 +114,6 @@ func (m Machine) AllowShared() (date, why string, ok bool) {
 	return date, why, true
 }
 
-// Certified reads the certification out of the notes: `certified=<YYYY-MM-DD>`, with
-// anything after the date free text (the report it was written from, usually). It answers
-// the date and whether the machine carries one at all.
-func (m Machine) Certified() (date string, ok bool) {
-	i := strings.Index(m.Notes, certifiedPrefix)
-	if i < 0 {
-		return "", false
-	}
-	rest := strings.TrimSpace(m.Notes[i+len(certifiedPrefix):])
-	date = rest
-	if j := strings.IndexAny(rest, " \t"); j >= 0 {
-		date = rest[:j]
-	}
-	if !isDate(date) {
-		return "", false
-	}
-	return date, true
-}
-
 // isDate reads YYYY-MM-DD and nothing else. The exception must carry the day it was made,
 // so a reader can ask how long it has stood.
 func isDate(s string) bool {
@@ -171,13 +140,9 @@ type Refusal struct {
 	Remedy string
 }
 
-func (e *Refusal) Error() string {
-	return fmt.Sprintf("%s: %s (%s)", e.Name, e.Reason, e.Remedy)
-}
-
 // Line is the one line a verb prints, under its own event token:
 //
-//	FILL REFUSED bench=batman reason=runner-host remedy="..."
+//	CERTIFY REFUSED bench=nobody reason=unknown-machine remedy="..."
 func (e *Refusal) Line(token string) string {
 	return fmt.Sprintf("%s REFUSED bench=%s reason=%s remedy=%s",
 		token, oneline.Field(e.Name), oneline.Field(e.Reason), oneline.Quote(e.Remedy))
@@ -197,18 +162,6 @@ func (r *Registry) Path() string { return r.path }
 // Machines is every machine, in file order.
 func (r *Registry) Machines() []Machine { return r.machines }
 
-// WithRole is every machine carrying one role, in file order. An unknown role lists
-// nothing, which is the honest answer: no machine carries it.
-func (r *Registry) WithRole(role string) []Machine {
-	var out []Machine
-	for _, m := range r.machines {
-		if m.HasRole(role) {
-			out = append(out, m)
-		}
-	}
-	return out
-}
-
 // Lookup finds one machine by name.
 func (r *Registry) Lookup(name string) (Machine, bool) {
 	i, ok := r.byName[strings.TrimSpace(name)]
@@ -216,76 +169,6 @@ func (r *Registry) Lookup(name string) (Machine, bool) {
 		return Machine{}, false
 	}
 	return r.machines[i], true
-}
-
-// BenchNames is every name a verb may put work on, in file order.
-func (r *Registry) BenchNames() []string {
-	out := make([]string, 0, len(r.machines))
-	for _, m := range r.WithRole(RoleBench) {
-		out = append(out, m.Name)
-	}
-	return out
-}
-
-// CertifiedBenchNames is THE POOL: every machine that may take work AND has been certified,
-// in file order. It is what a verb fills when the caller names no bench, so a bench joins
-// the fleet's work by its registry row and by nothing else -- no list in any Go file, no
-// edit to any tool, no release.
-func (r *Registry) CertifiedBenchNames() []string {
-	out := make([]string, 0, len(r.machines))
-	for _, m := range r.WithRole(RoleBench) {
-		if _, ok := m.Certified(); ok {
-			out = append(out, m.Name)
-		}
-	}
-	return out
-}
-
-// LockFailed is every well-formed row that fails the runner/bench lock, in file order.
-// Those machines are not benches: fill disables them by name and their neighbours keep
-// dealing.
-func (r *Registry) LockFailed() []Machine { return r.lockFailed }
-
-// SharedLockRefusal is the named refusal for a row that is both runner and bench with no
-// dated allow-shared note.
-func (r *Registry) SharedLockRefusal(m Machine) *Refusal {
-	return &Refusal{
-		Name:   m.Name,
-		Reason: ReasonSharedWithoutNote,
-		Remedy: fmt.Sprintf("%s is both %s and %s in %s; add `%s<YYYY-MM-DD> <why it is shared and what ends it>` to its notes, or drop one role",
-			m.Name, RoleRunner, RoleBench, r.path, allowSharedPrefix),
-	}
-}
-
-// RequireBench is THE guard. It answers nil when the named machine may take work, and a
-// *Refusal naming the reason and the remedy when it may not -- an unknown name, a CI runner
-// host, the coordination bench, a services host, or a shared machine without the dated note.
-//
-// Every verb that reaches a machine calls this before it reaches one. The check is on the
-// NAME, before any ssh, so a refused machine is never even connected to.
-func (r *Registry) RequireBench(name string) error {
-	name = strings.TrimSpace(name)
-	if m, ok := r.lockFailedNamed(name); ok {
-		return r.SharedLockRefusal(m)
-	}
-	m, ok := r.Lookup(name)
-	if !ok {
-		return &Refusal{
-			Name:   name,
-			Reason: ReasonUnknown,
-			Remedy: fmt.Sprintf("%s does not carry %s; add it, or name a bench: %s",
-				r.path, dash(name), r.benchList()),
-		}
-	}
-	if m.HasRole(RoleBench) {
-		return nil
-	}
-	return &Refusal{
-		Name:   name,
-		Reason: notBenchReason(m),
-		Remedy: fmt.Sprintf("%s is %s in %s and may take no card, probe or load; name a bench: %s",
-			m.Name, m.RoleList(), r.path, r.benchList()),
-	}
 }
 
 func (r *Registry) lockFailedNamed(name string) (Machine, bool) {
@@ -303,30 +186,6 @@ func (r *Registry) seenName(name string) bool {
 	}
 	_, ok := r.lockFailedNamed(name)
 	return ok
-}
-
-// notBenchReason names what the machine is instead of a bench. A runner host is named first
-// whatever else it carries, because the lock is about the merge group's shards: the Studio
-// coordinates AND serves the lisp leg, and it is the leg that makes a card on it a red gate.
-func notBenchReason(m Machine) string {
-	switch {
-	case m.HasRole(RoleRunner):
-		return ReasonRunnerHost
-	case m.HasRole(RoleCoordination):
-		return ReasonCoordinationHost
-	case m.HasRole(RoleServices):
-		return ReasonServicesHost
-	}
-	return ReasonNotABench
-}
-
-// benchList is the benches, as a remedy prints them.
-func (r *Registry) benchList() string {
-	names := r.BenchNames()
-	if len(names) == 0 {
-		return "(the registry names no bench at all)"
-	}
-	return strings.Join(names, ", ")
 }
 
 func dash(s string) string {

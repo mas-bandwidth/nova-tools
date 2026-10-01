@@ -187,6 +187,7 @@ func RunSteps(steps []Step, o StepOptions) ([]StepResult, error) {
 			Config:  s.Name + ".cfg",
 			Module:  s.Module,
 		}, log)
+		// ignored: a cleanup of this step's own scratch directory; the log read below is the report
 		_ = safepath.RemoveUnder(dir, scratch)
 		raw, err := os.ReadFile(log)
 		if err != nil {

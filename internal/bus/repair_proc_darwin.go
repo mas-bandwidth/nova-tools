@@ -3,6 +3,7 @@
 package bus
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -10,6 +11,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // gitProcesses lists live git processes. ps -ww is the command line, wide enough that a
@@ -19,7 +22,9 @@ import (
 // unknown, and the lock stays. ps names each process's effective uid; a git of another
 // account that nothing places is out of sight (see ownershipUnknown in repair.go).
 func gitProcesses() ([]gitProc, error) {
-	out, err := exec.Command("ps", "-axww", "-o", "uid=", "-o", "pid=", "-o", "command=").Output()
+	ps, stopPS := subproc.Command(context.Background(), subproc.Tool, "ps", "-axww", "-o", "uid=", "-o", "pid=", "-o", "command=")
+	defer stopPS()
+	out, err := ps.Output()
 	if err != nil {
 		return nil, ownershipUnknownErr("ps failed")
 	}
@@ -120,7 +125,8 @@ func looksLikeGit(cmd string) bool {
 // an empty map: an empty map is a successful lsof that saw no git cwd.
 func darwinGitCwd() (map[string]string, error) {
 	var stdout, stderr strings.Builder
-	cmd := exec.Command("lsof", "-n", "-P", "-a", "-d", "cwd", "-c", "git", "-F", "pcn")
+	cmd, cancel := subproc.Command(context.Background(), subproc.Tool, "lsof", "-n", "-P", "-a", "-d", "cwd", "-c", "git", "-F", "pcn")
+	defer cancel()
 	cmd.Stdout = &stdout
 	cmd.Stderr = &stderr
 	err := cmd.Run()
@@ -166,7 +172,9 @@ func lsofCwds(stdout, stderr string, code int, runErr error) (map[string]string,
 // parent to reap it, and lsof has no cwd for it (#3029). Any other failure is an
 // inspection error.
 func darwinPIDAlive(pid string) (bool, error) {
-	out, err := exec.Command("ps", "-p", pid, "-o", "stat=").Output()
+	ps, stopPS := subproc.Command(context.Background(), subproc.Tool, "ps", "-p", pid, "-o", "stat=")
+	defer stopPS()
+	out, err := ps.Output()
 	if err != nil {
 		var exit *exec.ExitError
 		if errors.As(err, &exit) && exit.ExitCode() == 1 {

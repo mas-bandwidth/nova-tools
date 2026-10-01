@@ -37,22 +37,21 @@ The wall grants the platform toolchain roots where a reader looks for them:
 
 ## The living verbs
 
-The tool exposes eleven living verbs, dispatched directly from `cmd/nova-swarm/main.go`:
+The tool exposes ten living verbs, dispatched directly from `cmd/nova-swarm/main.go`:
 
 ```
 usage:
   nova-swarm version    print this build identity (--version also accepted)
   nova-swarm doctor    [--path <file>] [--local <file>]   refuse a launch under a shadowed nova-swarm (PATH vs ~/.local/bin build stamp)
-  nova-swarm batch     --id <id> --cards <file> --deadline <seconds> --root <dir> --tokens <n>|unmetered (--runner <cmd> | --harness <path> --slots-store <dir> --owner <name>) [--idle <seconds>] [--slots <lo>-<hi>] [--then <command>] [--benches <file> --bench <name>[,<name>...]]
-                       (without --runner, batch requires --slots-store <dir> --owner <name> and runs each card through nova-swarm native)
   nova-swarm verify    --result <file> --contract <line> --label <text> [--card <file>] [--max <n>] [--run-record <file>] [--usage <file>]
   nova-swarm lint      --card <file> [--typed] [--child-rules] [--trust <file>] [--lineup <file>] [--max <n>] | --fleet <file> [--max <n>] | --rules
                        (--fleet lints a launcher script against the coordinator's /bin/bash 3.2: shebang, bash-4 builtins, unquoted expansions)
                        (--child-rules holds the card to every rule the coordinator gives a child: one rule-<name> per required sentence, one step-<what> per forbidden command; template --name card prints a card that passes)
   nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|card|read|fix|text|replay|drift|tone|models.tsv
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
-  nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--events-store <host:port>]
-  nova-swarm route     --card <file> --routes <routes.tsv> [--floor 0.9] [--default <worker json>] [--key-env <name>] [--base-url <url>]
+  nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now]
+  nova-swarm member    --as <name> --width <n> --harness <path> --model <provider/model> --root <dir> --deadline <duration> --tokens <n>|unmetered [--sprint <nova-sprint>] [--reader] [--every <duration>] [--once | --ticks <n>] [--auth <file>] [--config <file>] [--worker <file>] [--no-wall]
+                       (this machine as one member of a sprint's fleet: beat, queue, finish what ended, take to --width, each card one native child; --reader runs the readers-table loop; the store is nova-sprint's, from NOVA_SPRINT_REDIS)
   nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
   nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>] [--kind <kind>]
   nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all) [--force]
@@ -67,38 +66,29 @@ usage:
 
 1. **`version`**: Prints build identity: `nova-swarm <identity> <os>/<arch> <go-version>`. Accepts `--version`.
 2. **`doctor`**: Compares `PATH` binary stamp against local build stamp (`~/.local/bin/nova-swarm`). Refuses launch if shadowed or if a compared binary cannot be read; see "The doctor".
-3. **`batch`** (`--id --cards ...`): executes a batch of cards across slots, enforcing token budgets and deadlines. Without `--runner`, batch requires `--slots-store` and `--owner` and starts `native` itself; these are compatibility inputs to `native`, not capacity leases.
-4. **`verify`**: Mechanically verifies `RESULT.md` line 1 against the contract line, checks against failure signatures, and writes a `.receipt` file.
-5. **`lint`**: Validates card mechanical structure before any spend, validates fleet scripts against bash 3.2, or displays linting rules. Under `--child-rules` the card is also held to every rule the coordinator gives a child: one `rule-<name>` per required sentence and one `step-<what>` per forbidden command (`internal/swarm/lintchild.go`), the rules `nova-sprint add` holds every brief to.
-6. **`template`**: Prints standard templates (`read-pr`, `probe-row`, `fix-card`, `worker`, etc.) verbatim without escaping. `card` is a whole card: the contract line, the RULES paragraph with every child rule quoted, and the steps; it lints clean as printed.
-7. **`profile`**: Aggregates per-turn timeline TSV files into execution phase durations.
-8. **`native`**: Executes a single card through the harness under sandbox containment with external deadline, idle timer, and token tracking. Takes job and slot directory leases (`.lease`, `.slot-lease`).
-9. **`route`**: Classifies card complexity and kind against a routes table to select an appropriate worker description.
-10. **`slots`**: Bench slot lease broker (`init`, `take`, `release`, `list`) managing shared bench capacity.
-11. **`worker`**: Validates worker description JSON structure, environment variables, and readable roots.
+3. **`verify`**: Mechanically verifies `RESULT.md` line 1 against the contract line, checks against failure signatures, and writes a `.receipt` file.
+4. **`lint`**: Validates card mechanical structure before any spend, validates fleet scripts against bash 3.2, or displays linting rules. Under `--child-rules` the card is also held to every rule the coordinator gives a child: one `rule-<name>` per required sentence and one `step-<what>` per forbidden command (`internal/swarm/lintchild.go`), the rules `nova-sprint add` holds every brief to.
+5. **`template`**: Prints standard templates (`read-pr`, `probe-row`, `fix-card`, `worker`, etc.) verbatim without escaping. `card` is a whole card: the contract line, the RULES paragraph with every child rule quoted, and the steps; it lints clean as printed.
+6. **`profile`**: Aggregates per-turn timeline TSV files into execution phase durations.
+7. **`native`**: Executes a single card through the harness under sandbox containment with external deadline, idle timer, and token tracking. Takes job and slot directory leases (`.lease`, `.slot-lease`).
+8. **`member`**: This machine as one member of a sprint's fleet: it beats, finishes the cards whose children ended, takes from the fleet table to `--width`, and runs each card as one `native` child; `--reader` runs the readers-table loop.
+9. **`slots`**: Bench slot lease broker (`init`, `take`, `release`, `list`) managing shared bench capacity.
+10. **`worker`**: Validates worker description JSON structure, environment variables, and readable roots.
 
 ## Exit codes
 
 | code | meaning |
 |---|---|
-| 0 | the verb ran and passed: a batch completed, a card executed, a receipt written |
+| 0 | the verb ran and passed: a card executed, a receipt written |
 | 1 | the verb ran and said **NO**: a `verify` whose contract line mismatched or whose run carries a failure signature, a `native` whose card was ended by its token budget or by a budget it could no longer verify |
-| 2 | could not run: missing flag (`--tokens` on `native` and on `batch --cards`), a numeric `--tokens` on a `native` whose usage source is `none` or whose bench has no `sqlite3` on `PATH`, unreadable worker description, a key file that is absent or empty, bad invocation |
+| 2 | could not run: missing flag (`--tokens` on `native` and on `member`), a numeric `--tokens` on a `native` whose usage source is `none` or whose bench has no `sqlite3` on `PATH`, unreadable worker description, a key file that is absent or empty, bad invocation |
 
 ## Output grammar
 
 ```
-BATCH REFUSED: <reason>
-BATCH <id> n=<n> done=<n> abstain=<n> in=<n> out=<n> usd=<sum> idle=<n> stalled=<n> [partial=<n>] [benches=<n>] [uniform-abstain=<reason>]
-BATCH THEN rc=<n>
-BATCH THEN SKIPPED done=<d> n=<n> abstain=<a> stalled=<s> stopped=<b>
-BATCH NOTE slot=<n> stale-lock id=<id> taken
-BATCH NOTE <label> RESULT.md copied up from <path>
 NATIVE OK label=<id> job=<id> tmp=<path> rc=<n> wall=<n>s sandbox=<path|-> card_sha256=<sha> binary_sha256=<sha> config=<sha8|-> harness=<ok|silent> budget=<spent|n+|->/<n>|unmetered [fence=rejected path=<p>] [usage=none reason=<r> path=<p>] [reason=terminated] [stopped=<tokens|max_turns|max_cache_read|unverifiable>]
 NATIVE INCOMPLETE label=<id> job=<id> tmp=<path> rc=<n> wall=<n>s sandbox=<path|-> card_sha256=<sha> binary_sha256=<sha> config=<sha8|-> harness=<ok|silent> budget=<spent|n+|->/<n>|unmetered [fence=rejected path=<p>] [usage=none reason=<r> path=<p>] [reason=terminated] [stopped=<tokens|max_turns|max_cache_read|unverifiable>] why=<harness-silent|no-result|rc>
 NATIVE REFUSED: <reason>
-ROUTE OK card=<path> model=<model> ...
-ROUTE REFUSED: <reason>
 SLOTS OK store=<dir> capacity=<n> share=<n>
 SLOTS GRANTED store=<dir> owner=<owner> n=<n> ...
 SLOTS REFUSED store=<dir> owner=<owner> ...
@@ -126,7 +116,7 @@ The harness configuration written by the machinery carries the variable's NAME, 
 ## The doctor
 
 The doctor compares the `version` line of the `nova-swarm` first on PATH with the one at
-`~/.local/bin/nova-swarm`, and `batch` and `native` run the same check before they start
+`~/.local/bin/nova-swarm`, and `native` runs the same check before it starts
 anything (`-h` never does). Each binary is asked for `version` under a 5-second deadline,
 both at the same time; the first line it prints, at most 4096 bytes, is its stamp, and a
 stamp is printed as a bounded, escaped excerpt.
@@ -162,11 +152,9 @@ The seven rules:
 
 1. A bench carries ONE slot store shared by every owner, at <bench store>/slots,
    a directory of atomic mkdir leases each holding owner, pid, card label, until=.
-2. `batch` without `--runner` requires `--slots-store` and `--owner` and refuses
-   without them; it forwards both to each card's `native`, which accepts them and
-   reads neither. Neither verb takes a bench capacity lease: `native` takes only job
-   and slot directory leases (.lease, .slot-lease) and reads and writes no bench
-   capacity store, and a lease on the store is held only through the broker verbs (rule 3).
+2. `native` takes no bench capacity lease: it takes only job and slot directory
+   leases (.lease, .slot-lease) and reads and writes no bench capacity store, and a
+   lease on the store is held only through the broker verbs (rule 3).
 3. The broker verbs are the only way to hold a slot:
 
    ```
@@ -196,7 +184,6 @@ Red tests (each seen red before it is trusted):
 - two owners at their shares cannot exceed capacity;
 - an expired lease with a dead pid frees its slot;
 - an expired lease with a live pid is DRIFT and stays;
-- `batch` without `--runner` refuses a launch that names no `--slots-store` and `--owner`;
 - a schema card is refused at take when the remaining share fits only a read;
 - a live-until lease whose pid is gone is stranded with its label.
 
@@ -374,8 +361,8 @@ re-deriving a tree that is byte-identical for every job on the same head.
 `bin/child-clone.sh:111` already answers it for the schema repo:
 `--reference-if-able` off an on-disk checkout makes a large clone cheap, and
 `--dissociate` copies the objects in. So the rule is **one reference checkout
-per batch**, and every job's clone is built from it: a per-job clone under the
-job directory passes `--reference` off the batch's reference checkout and then `--dissociate`, so the object graph
+per bench**, and every job's clone is built from it: a per-job clone under the
+job directory passes `--reference` off the bench's mirror (`~/nova-bench/mirror/<name>.git`) and then `--dissociate`, so the object graph
 is read once and the per-job clone is small.
 
 ### The prompt text is the tool's
@@ -414,28 +401,6 @@ widest, and each has one rule.
    held by the machinery; the usage budget is read by the sampler at
    `--usage-interval` and never by a second poll; and a verdict waits on a
    person, never on a scan.
-
-## Sparse checkout of PATHS packages (#2498 S10)
-
-Staging for a card that declares `PATHS:` checks out the **minimal tree**:
-those packages and their in-module dependencies only. A package the card did
-not name is not materialized. The named package's tests still run. `PATHS:
-none`, or no `PATHS:` line, stays a full checkout. `prepare` does this into
-`<job>/repo` when it is given the reference checkout.
-
-A lookup that finds no in-module directories is a valid empty set: the PATHS
-and TEST cones are still checked out. An import that cannot be resolved is
-not empty. Staging refuses, and does not hand the worker a sparse tree that
-omits that dependency.
-
-**Red tests.** `TestSparseCheckoutDoesNotMaterializeAnUnrelatedPackage`: a
-fixture PATHS list does not materialize an unrelated package; the named
-package's tests still run. `TestPrepareStagesASparseJobClone`: prepare with
-`CloneFrom` stages that sparse tree under the job root.
-`TestSparseCheckoutRefusesAMissingInModuleImport`: a named package that
-imports an in-module package that is not there makes staging refuse.
-`TestSparseCheckoutEmptyInModuleSetStillChecksOutPATHS`: a PATHS list that
-names no Go package still checks out that path.
 
 ## The rules, numbered
 
@@ -480,66 +445,72 @@ Every rule here is normative. Only living verbs are retained.
 ## Card lint
 
 `nova-swarm lint --card <file>` checks a card's shape before any spend. `--child-rules` also
-holds the card to every rule the coordinator gives a child, and `nova-sprint add` holds every
+holds the card to the rules the coordinator gives a child, and `nova-sprint add` holds every
 brief (`--brief` and `--brief-file`) to them before it writes anything, exit 2; a card with
 no brief (a `--count` card, an id card) and a sentinel carry none to check. `nova-swarm
-template --name card` prints a card with every rule in place, which lints clean as printed.
-`nova-swarm lint --rules` prints every token below with its remedy. A card written for a
-bench worker under the shape rules carries none of the child rules and is linted without the
-flag exactly as before.
+template --name card` prints a card with every general rule in place, which lints clean as
+printed. `nova-swarm lint --rules` prints every token below with its remedy. A card written
+for a bench worker under the shape rules carries none of the child rules and is linted without
+the flag exactly as before.
 
-The child rules are the rows of `CardChildRules` in `internal/swarm/lintchild.go`, one row per
-rule. Two kinds of check read the card's text:
+**The rule set is the coordinator's, and the tool is general.** The required sentences are not
+one repository's. They come from a rules file, one required sentence per line:
 
-- **Presence.** One `rule-<name>` token per required sentence; the card quotes the sentence
-  verbatim (blanks and line breaks folded, so a wrapped line still matches), conventionally in
-  a `RULES.` paragraph. A card without it draws the token at line 1 with the sentence in the
-  excerpt, and the remedy quotes the sentence and the file it came from.
+- `nova-sprint add --rules <file>` holds that add's brief to the file;
+- `nova-sprint init --rules <file>` records the file's absolute path for the sprint (the key
+  `sprint:rules`, kept by a clear and removed by teardown), and every later `add` without
+  `--rules` reads it;
+- `nova-swarm lint --card <card> --child-rules-file <file>` holds a card to the file, and
+  implies `--child-rules`;
+- with no file the set is the built-in general rules, below.
+
+A rules file line is a sentence; a blank line and a line starting `#` are skipped. A line may
+open with `[name]`, the token its finding carries (`rule-<name>`, kebab case); a line with no
+name is `line<n>` after its line number. A repeated name, a repeated sentence, a bad name, a
+`[name]` with no sentence, and a file with no rule at all are each refused with the line, and
+every problem of a file is reported in one run. A card quotes each sentence verbatim (blanks and
+line breaks folded), conventionally in a `RULES.` paragraph; a card without one draws
+`rule-<name>` at line 1 with the sentence in the excerpt, and the remedy quotes the sentence and
+the file and line it came from. This repository's own file is `fleet/child-rules.txt`, cited by
+its sprint's init: `nova-sprint init --rules fleet/child-rules.txt`; it holds the repository's
+rules (its Go caches, its `-timeout`, `t.Parallel()`, the class tests, the commit trailer, the
+container tier) and is configuration, not the tool.
+
+The built-in general rules are the rows of `DefaultChildRules` in
+`internal/swarm/lintchild.go`, and only the rules that hold for any project:
+
+| rule token | the sentence the card quotes |
+| --- | --- |
+| `rule-worktree` | Work only in the job directory this card names. |
+| `rule-no-force-push` | Never force-push or rebase a shared branch. |
+| `rule-no-kill` | Never kill a process you did not start. |
+| `rule-no-server` | Never start a server on this machine. |
+| `rule-no-rm-rf` | No `rm -rf` outside the job directory. |
+| `rule-report-not-done` | Report what was not done. |
+
+Two kinds of check read the card's text:
+
+- **Presence.** One `rule-<name>` token per required sentence, as above.
 - **Scan.** One `step-<what>` token per forbidden command, read off every line outside the
   `RULES.` paragraph, which runs from its `RULES` line to the first blank line. A clause (the
   text back to the last `;`, `,`, `&&`, `||` or `. `) that says `never`, `not`, `no` or
-  `without` before the command is prose about the rule and is not read as a command.
-
-| rule token | the sentence the card quotes | from |
-| --- | --- | --- |
-| `rule-worktree` | Work only in the NEW worktree this card names. | SAFETY.md |
-| `rule-own-branch` | Touch only your own branch. | SAFETY.md |
-| `rule-gocache` | Export a private GOCACHE (the path this card names) and GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 before any go command. | SAFETY.md |
-| `rule-no-go-clean` | Never `go clean`, and never clean a shared cache. | SAFETY.md |
-| `rule-no-redis-server` | NEVER start a redis-server on this machine. | SAFETY.md |
-| `rule-no-kill` | Never kill a process you did not start. | SAFETY.md |
-| `rule-go-test-timeout` | Every `go test` gets `-timeout 600s`. | SAFETY.md, DIRTY-TICK-SLICES.md |
-| `rule-no-rm-rf` | No `rm -rf` outside the job directory. | SAFETY.md |
-| `rule-no-force-push` | Never force-push. | SAFETY.md, DIRTY-TICK-SLICES.md |
-| `rule-no-rebase` | Never rebase. | DIRTY-TICK-SLICES.md |
-| `rule-no-stash` | Do not use git stash (the stash list is shared by every worktree). | DIRTY-TICK-SLICES.md |
-| `rule-functional-in-container` | Functional tests (any test that needs Redis) run ONLY inside the container through `tools/functionalrun` (`--fresh-gocache --deadline 15m`), never against any other store. | SAFETY.md |
-| `rule-parallel` | Every new test opens with `t.Parallel()`. | SAFETY.md, DIRTY-TICK-SLICES.md |
-| `rule-class-tests` | Run `go test -count=1 -timeout 600s ./internal/ci/` before each push. | SAFETY.md, DIRTY-TICK-SLICES.md |
-| `rule-no-names` | No names of people, machines or friends in code, comments or docs. | SAFETY.md |
-| `rule-present-tense` | Docs and comments in the present tense. | SAFETY.md |
-| `rule-cite` | Cite the model or the design section from every function that implements a rule. | SAFETY.md, VERBS-COMMON.md |
-| `rule-only-named-files` | Touch only the files this card names; a fix that needs another file goes into your report as a proposed diff, not a commit. | DIRTY-TICK-SLICES.md |
-| `rule-minimal-diff` | Keep the diff minimal: every added line traceable to one sentence of this card. | DIRTY-TICK-SLICES.md |
-| `rule-commit-trailer` | Commit messages end with `Co-Authored-By: Claude <your model> <noreply@anthropic.com>`. | SAFETY.md |
-| `rule-pr-line` | PR bodies end with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`. | SAFETY.md |
-| `rule-never-merge` | Open PRs against the base this card names; never merge. | SAFETY.md, DIRTY-TICK-SLICES.md |
-| `rule-pr-diffstat` | The PR body states the diff stat and what was deleted. | the owner's list |
-| `rule-pr-tests` | The PR body lists the tests, each with what it pins, and every local helper added. | VERBS-COMMON.md |
-| `rule-report-shape` | Report under 80 lines: PR number and sha, every test package line, what you could not do and why. | SAFETY.md, DIRTY-TICK-SLICES.md |
-| `rule-report-not-done` | "Not done" is a welcome report; a green claim you did not run is not. | SAFETY.md |
+  `without` before the command is prose about the rule and is not read as a command. The
+  scans for a redis-server, `kill`, a recursive `rm`, a force-push, a rebase, `git stash` and
+  `gh pr merge` are built in and run over every card. The scans for `go clean` and for a `go
+  test` with no `-timeout` of a positive duration are a Go project's and run only where the
+  rule set carries a rule named `no-go-clean` or `go-test-timeout`.
 
 | scan token | what it wants |
 | --- | --- |
-| `step-redis-server` | no line starts a redis-server: a test that needs Redis is a functional test and runs only in the container through `tools/functionalrun`; a unit test opens no store (the machine's Redis belongs to whoever runs it) |
-| `step-go-clean` | no line runs `go clean`: a cache clean breaks every build that shares the cache; give the child a private GOCACHE (a path of its own) and let it be |
+| `step-redis-server` | no line starts a redis-server: a server a child starts belongs to nobody who will stop it, and the machine's own servers belong to whoever runs them; a test that needs one runs where the card says, never by starting it here |
+| `step-go-clean` | no line runs `go clean`: a cache clean breaks every build that shares the cache; give the child a private GOCACHE (a path of its own) and let it be (runs with a rule named `no-go-clean`) |
 | `step-kill` | no line kills a process: a child stops only a process it started itself, and says so as `kill $!` or `kill %<n>`; `pkill` and `killall` name processes by pattern and reach another child's |
 | `step-rm-rf` | a recursive `rm` names a path inside the job: a relative path without `..`, or one under `$PWD` or `<job>`; never `/`, `~`, `$HOME`, `.`, `*` or a path above the job, and never a variable the card cannot show the value of |
 | `step-force-push` | no line force-pushes (`--force`, `--force-with-lease`, `-f`, a `+` refspec): a child pushes its own branch with a plain `git push`, and a rewrite of a shared branch is the coordinator's act alone |
 | `step-rebase` | no line rebases: merge the base forward with `git merge --no-edit`; a rebase rewrites the history another worktree shares |
 | `step-stash` | no line stashes: the stash list is shared by every worktree of the repository, so a stash taken here is popped there; commit to the child's own branch instead |
 | `step-merge` | no line merges a pull request: the child opens it against the base the card names and stops; the coordinator lands it |
-| `step-go-test-timeout` | every `go test` carries `-timeout 600s` on the same command, so a hung test ends at ten minutes and not at the card's deadline |
+| `step-go-test-timeout` | every `go test` carries `-timeout 600s` on the same command, so a hung test ends at ten minutes and not at the card's deadline (runs with a rule named `go-test-timeout`) |
 
 ## Test inventory
 

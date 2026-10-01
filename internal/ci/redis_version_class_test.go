@@ -68,7 +68,7 @@ import (
 
 const (
 	redisVersionRef       = "infra/functional-image/Containerfile"
-	redisVersionInstaller = ".github/scripts/install-redis-server.sh"
+	redisVersionInstaller = "tools/ci/installredis.go"
 	redisVersionSelf      = "internal/ci/redis_version_class_test.go"
 )
 
@@ -101,8 +101,9 @@ var (
 	// optional apt epoch (`6:`), then a three-part version. Case-insensitive, so
 	// REDIS_VERSION= and redis_version: read too. \x60 is the backtick.
 	redisVersionRe = regexp.MustCompile(`(?i)\bredis(?:[-_ ]?(?:server|cli|tools|version)["'\x60]?|\x60)?(?:[ =:@v-]{1,2}|[ ]v=|[ \t]*(?::=|\?=|=|:)[ \t]*)["'\x60(]?(?:\d+:)?(\d+\.\d+\.\d+)`)
-	// redisInstallerPinRe: the installer's `ver=8.10.2`, read only in that file.
-	redisInstallerPinRe = regexp.MustCompile(`^\s*ver=["']?(\d+\.\d+\.\d+)["']?\s*$`)
+	// redisInstallerPinRe: the installer's `const redisSourceVersion = "8.10.2"`, read only in
+	// that file.
+	redisInstallerPinRe = regexp.MustCompile(`^\s*const redisSourceVersion\s*=\s*"(\d+\.\d+\.\d+)"\s*$`)
 	// redisVersionTextExts are the extensions of the files the sweep reads.
 	redisVersionTextExts = map[string]bool{
 		".go": true, ".md": true, ".yml": true, ".yaml": true, ".sh": true, ".txt": true,
@@ -131,7 +132,7 @@ func redisVersionIsWordByte(b byte) bool {
 }
 
 // redisVersionSites reads the versions one file names, by line. rel is the
-// repo-relative path: the installer's `ver=` pin is read only in the installer.
+// repo-relative path: the installer's redisSourceVersion pin is read only in the installer.
 func redisVersionSites(rel, text string) []redisVersionSite {
 	var out []redisVersionSite
 	for i, line := range strings.Split(text, "\n") {
@@ -270,7 +271,7 @@ func TestRedisIsOneVersionEverywhere(t *testing.T) {
 	// A sweep that found nothing checked nothing: each named place is there.
 	for _, rel := range redisVersionNamedFiles {
 		if perFile[rel] == 0 {
-			t.Errorf("%s names no Redis version (a `Redis <major.minor.patch>` phrase, or the installer's `ver=`); this file is one of the places the rule holds to the one version", rel)
+			t.Errorf("%s names no Redis version (a `Redis <major.minor.patch>` phrase, or the installer's redisSourceVersion pin); this file is one of the places the rule holds to the one version", rel)
 		}
 	}
 	for _, p := range redisVersionProblems(ref, sites) {
@@ -295,7 +296,7 @@ func TestRedisVersionRuleSeesEachShape(t *testing.T) {
 		{"a.yml", "image: docker.io/library/redis:7.4.11", "7.4.11"},
 		{"a.md", "install Redis v8.0.5 first", "8.0.5"},
 		{"a.md", "brew install redis@8.0.5", "8.0.5"},
-		{redisVersionInstaller, "\tver=8.10.2", "8.10.2"},
+		{redisVersionInstaller, `const redisSourceVersion = "8.10.2"`, "8.10.2"},
 		// a quoted pin, double and single
 		{"a.sh", `REDIS_VERSION="8.0.5"`, "8.0.5"},
 		{"a.sh", `export REDIS_VERSION='8.0.5'`, "8.0.5"},
@@ -366,6 +367,7 @@ func TestRedisVersionRuleSeesEachShape(t *testing.T) {
 		{"a.txt", "260 1 02-00:00:00 0.0 501 redis-server 127.0.0.1:26491"},
 		{"a.go", "miniredis v2.35.0"},
 		{"a.sh", "ver=8.10.2"},
+		{"a.go", `const redisSourceVersion = "8.10.2"`},
 		{"a.md", "`go-redis` v9.22.0 is the client"},
 		{"a.md", "`nova-redis` 1.0.0 is the tool"},
 		{"a.md", "install Redis `7` or later"},

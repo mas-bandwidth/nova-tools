@@ -333,3 +333,54 @@ func TestExitCodesAreTheToolsOwn(t *testing.T) {
 		}
 	}
 }
+
+func TestBoolAskedReadsTheFlagBeforeTheParse(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{"double dash", []string{"x", "--json"}, true},
+		{"single dash", []string{"-json"}, true},
+		{"explicit true", []string{"--json=true"}, true},
+		{"explicit false", []string{"--json=false"}, false},
+		{"after the terminator", []string{"--", "--json"}, false},
+		{"absent", []string{"--jsonx"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := BoolAsked(tc.args, "json"); got != tc.want {
+				t.Errorf("BoolAsked(%q) = %v, want %v", tc.args, got, tc.want)
+			}
+		})
+	}
+}
+
+// RecoverWith prints the lines the tool gives for the verb above its flags, and
+// Insert falls back to the exit codes, then the end, when a help has no flags.
+func TestRecoverWithShowsTheToolsLinesAboveTheFlags(t *testing.T) {
+	t.Parallel()
+	fs := New("go")
+	fs.String("to", "", "where")
+	var out bytes.Buffer
+	code := 9
+	func() {
+		defer RecoverWith(&out, "tool", "", &code, func(verb string) string { return "example:\n  tool " + verb + " --to x\n" })
+		_ = Parse(fs, []string{"-h"})
+	}()
+	got := out.String()
+	ex, fl := strings.Index(got, "example:\n  tool go --to x\n"), strings.Index(got, "flags:\n")
+	if code != 0 || ex < 0 || fl < 0 || ex > fl {
+		t.Errorf("code %d; the example is not above the flags:\n%s", code, got)
+	}
+	if got := Insert("usage: t\nexit codes: 0\n", "x\n"); got != "usage: t\nx\nexit codes: 0\n" {
+		t.Errorf("Insert without flags: %q", got)
+	}
+	if got := Insert("usage: t\n", "x\n"); got != "usage: t\nx\n" {
+		t.Errorf("Insert at the end: %q", got)
+	}
+	if got := Insert("usage: t\n", ""); got != "usage: t\n" {
+		t.Errorf("Insert of nothing: %q", got)
+	}
+}

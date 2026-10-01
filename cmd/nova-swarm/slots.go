@@ -80,7 +80,7 @@ func cmdSlotsInit(args []string, stdout, stderr io.Writer) int {
 	}
 	path := filepath.Join(*store, "shares.tsv")
 	if err := os.MkdirAll(slotsSubdir(*store), 0o755); err != nil {
-		fmt.Fprintf(stderr, "nova-swarm slots init: %s\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "nova-swarm slots init: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-swarm slots init -h"))
 		return 2
 	}
 	// O_EXCL, not a Stat first: two inits racing on the same path must not both believe
@@ -88,22 +88,22 @@ func cmdSlotsInit(args []string, stdout, stderr io.Writer) int {
 	fh, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
 	if err != nil {
 		if os.IsExist(err) {
-			fmt.Fprintf(stderr, "SLOTS REFUSED reason=store_exists store=%s: %s is already there and init never overwrites a store, because the leases under it are other processes'; edit shares.tsv by hand to change a capacity, a reserve or a share\n",
+			fmt.Fprintf(stderr, "SLOTS REFUSED reason=store_exists store=%s: %s is already there and init never overwrites a store, because the leases under it are other processes'; edit shares.tsv by hand to change a capacity, a reserve or a share; run: nova-swarm slots -h\n",
 				oneline.Field(*store), oneline.Field(path))
 			return 2
 		}
-		fmt.Fprintf(stderr, "nova-swarm slots init: %s\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "nova-swarm slots init: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-swarm slots init -h"))
 		return 2
 	}
 	// reserve is 0: a reserve is a bench-wide holdback somebody decides on later, and a
 	// store that invented one would be quietly narrower than the capacity it prints.
 	if _, werr := fmt.Fprintf(fh, "capacity\t%d\nreserve\t0\n%s\t%d\n", *capacity, oneline.Field(*owner), *share); werr != nil {
 		fh.Close()
-		fmt.Fprintf(stderr, "nova-swarm slots init: %s\n", oneline.Err(werr))
+		fmt.Fprintf(stderr, "nova-swarm slots init: %s\n", oneline.WithRemedy(oneline.Err(werr), "nova-swarm slots init -h"))
 		return 2
 	}
 	if cerr := fh.Close(); cerr != nil {
-		fmt.Fprintf(stderr, "nova-swarm slots init: %s\n", oneline.Err(cerr))
+		fmt.Fprintf(stderr, "nova-swarm slots init: %s\n", oneline.WithRemedy(oneline.Err(cerr), "nova-swarm slots init -h"))
 		return 2
 	}
 	fmt.Fprintf(stdout, "SLOTS INIT OK store=%s owner=%s capacity=%d reserve=%d share=%d\n",
@@ -140,7 +140,7 @@ func cmdSlotsTake(args []string, stdout, stderr io.Writer) int {
 	ids, held, share, free, holders, ok, terr := swarm.TakeSlotLeasesKind(
 		*store, *owner, *n, *kind, dur, *label, time.Now().UTC(), os.Getpid())
 	if terr != nil {
-		fmt.Fprintf(stderr, "nova-swarm slots take: %s\n", oneline.Err(terr))
+		fmt.Fprintf(stderr, "nova-swarm slots take: %s\n", oneline.WithRemedy(oneline.Err(terr), "nova-swarm slots take -h"))
 		return 2
 	}
 	want := *n * swarm.SlotAdmissionWeight(*kind)
@@ -152,8 +152,8 @@ func cmdSlotsTake(args []string, stdout, stderr io.Writer) int {
 	if holders == "" {
 		holders = "-"
 	}
-	fmt.Fprintf(stderr, "SLOTS REFUSED owner=%s want=%d held=%d share=%d free=%d holders=%s\n",
-		oneline.Field(*owner), want, held, share, free, oneline.Escape(holders))
+	fmt.Fprintf(stderr, "SLOTS REFUSED owner=%s want=%d held=%d share=%d free=%d holders=%s remedy=%q\n",
+		oneline.Field(*owner), want, held, share, free, oneline.Escape(holders), "nova-swarm slots list --store "+*store)
 	return 2
 }
 
@@ -185,7 +185,7 @@ func cmdSlotsRelease(args []string, stdout, stderr io.Writer) int {
 	}
 	released, held, live, err := swarm.ReleaseSlotLeasesForcing(*store, *owner, *label, *all, *force)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-swarm slots release: %s\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "nova-swarm slots release: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-swarm slots release -h"))
 		return 2
 	}
 	fmt.Fprintf(stdout, "SLOTS RELEASED owner=%s released=%d held=%d live=%d\n",
@@ -211,7 +211,7 @@ func cmdSlotsList(args []string, stdout, stderr io.Writer) int {
 	now := time.Now().UTC()
 	leases, err := swarm.ListSlotLeases(*store, now)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-swarm slots list: %s\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "nova-swarm slots list: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-swarm slots list -h"))
 		return 2
 	}
 	for _, l := range leases {

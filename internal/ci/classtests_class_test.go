@@ -71,7 +71,8 @@ type mergeDeletions struct {
 
 // devHistoryFetch completes the second parent's ancestry in a depth-2
 // checkout: commits and trees only (blob:none), the whole history
-// (--unshallow). The main-run steps of ci.yml and certification.yml run it.
+// (--unshallow). The main-run steps of ci.yml and certification.yml run it
+// through `ci fetch-ancestry dev` (TestAncestryFetchesAreOneVerb).
 const devHistoryFetch = "git fetch --no-tags --filter=blob:none --unshallow origin +dev:refs/remotes/origin/dev"
 
 // readMergeDeletions compares HEAD's tree with its first parent's, through
@@ -245,8 +246,9 @@ type landing struct {
 
 // foundationHistoryFetch completes sprint/foundation's ancestry in a depth-2
 // checkout, as devHistoryFetch does dev's. The promotion steps of ci.yml and
-// certification.yml run it on a merge-queue group and a push to dev whose
-// HEAD is a merge commit, and on the promotion pull request itself.
+// certification.yml run it, through `ci fetch-ancestry --promotion
+// sprint/foundation`, on a merge-queue group and a push to dev whose HEAD is a
+// merge commit, and on the promotion pull request itself.
 const foundationHistoryFetch = "git fetch --no-tags --filter=blob:none --unshallow origin +sprint/foundation:refs/remotes/origin/sprint/foundation"
 
 // landingRun reports the landing a run audits, if any: a main run (mainRun)

@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"flag"
 	"fmt"
 	"io"
@@ -19,6 +20,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/member"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // cmdMember is `nova-swarm member`: this machine as one member of a sprint's
@@ -129,8 +131,14 @@ type execSprint struct {
 	bin, actor string
 }
 
+// sprintVerbBudget is how long one sprint verb may run before the member stops waiting
+// for it: a verb is one store round trip or one planned batch, and a stuck one is a
+// tick that never ends.
+const sprintVerbBudget = 120 * time.Second
+
 func (s *execSprint) Run(args ...string) (int, []byte) {
-	cmd := exec.Command(s.bin, args...)
+	cmd, cancel := subproc.CommandFor(context.Background(), sprintVerbBudget, s.bin, args...)
+	defer cancel()
 	cmd.Env = append(os.Environ(), "NOVA_SPRINT_ACTOR="+s.actor)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
@@ -203,13 +211,18 @@ func (r *nativeRunner) Start(p member.Packet) (member.Child, error) {
 	if r.noWall {
 		args = append(args, "--no-wall")
 	}
-	cmd := exec.Command(r.self, args...)
+	// A long-lived child: its own cancellable context and no deadline (its own --deadline
+	// ends it), released when the wait returns.
+	ctx, release := context.WithCancel(context.Background())
+	cmd := subproc.Long(ctx, r.self, args...)
 	logf, err := os.Create(logPath)
 	if err != nil {
+		release()
 		return nil, err
 	}
 	cmd.Stdout, cmd.Stderr = logf, logf
 	if err := cmd.Start(); err != nil {
+		release()
 		logf.Close()
 		return nil, err
 	}
@@ -217,7 +230,9 @@ func (r *nativeRunner) Start(p member.Packet) (member.Child, error) {
 	c := &nativeChild{card: p.Card, logPath: logPath, results: results, done: make(chan struct{})}
 	go func() {
 		c.err = cmd.Wait()
+		release()
 		logf.Close()
+		// ignored: the pid file of a child that has ended; a leftover names a dead pid, which the next start overwrites
 		_ = safepath.RemoveUnder(r.slots, pidPath)
 		close(c.done)
 	}()

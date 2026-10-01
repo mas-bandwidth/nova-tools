@@ -49,14 +49,44 @@ func (t *Table) openLine(row string) []*Card {
 // the last one before it that has not landed (landing: this step lands it).
 // nil when none.
 func StopBefore(s *Snapshot, stream string, score float64, landing map[string]bool) *Card {
-	line := s.Work.openLine(stream)
+	line, stops := s.Work.lineStops(stream)
 	k := sort.Search(len(line), func(i int) bool { return line[i].Score >= score })
-	for i := k - 1; i >= 0; i-- {
-		if c := line[i]; IsSentinel(c) && !landing[c.ID] {
+	// the last sentinel before the place, found by the line's index of its
+	// sentinels, not by a walk back over every card of the line for each
+	// card (the owner's rule: never a row at a time)
+	for i := k - 1; i >= 0; {
+		j := stops[i]
+		if j < 0 {
+			return nil
+		}
+		if c := line[j]; !landing[c.ID] {
 			return c
 		}
+		i = j - 1
 	}
 	return nil
+}
+
+// lineStops is the row's open line and, for each place in it, the place of
+// the last sentinel at or before it (-1 for none): built once with the line.
+func (t *Table) lineStops(row string) ([]*Card, []int) {
+	line := t.openLine(row)
+	if t.stops == nil {
+		t.stops = map[string][]int{}
+	}
+	if st, ok := t.stops[row]; ok && len(st) == len(line) {
+		return line, st
+	}
+	st := make([]int, len(line))
+	last := -1
+	for i, c := range line {
+		if IsSentinel(c) {
+			last = i
+		}
+		st[i] = last
+	}
+	t.stops[row] = st
+	return line, st
 }
 
 // PositionWaits is what a primary waits for by its place in line: for a

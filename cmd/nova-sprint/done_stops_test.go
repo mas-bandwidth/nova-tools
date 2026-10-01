@@ -10,21 +10,23 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
-// playToLanded plays rounds of the machine, the world and the coordinator
-// until every stream has landed, with no failure drawn; it stops before the
-// tick that finds the sprint done.
-func (ta *testApp) playToLanded(from int) int {
+// playToDone plays rounds of the machine, the world and the coordinator until
+// a tick finds the sprint done, with no failure drawn, and returns that tick's
+// output. The merge queues the last landings for the next tick's pump, which
+// drains them, and the same tick's done part finds the sprint done and stops
+// the machine: the driver, which plays only while a machine runs, is not run
+// after it.
+func (ta *testApp) playToDone(from int) (int, string) {
 	ta.t.Helper()
 	for round := from; round < from+200; round++ {
-		ta.ok("tick")
-		out := ta.ok(fmt.Sprintf("play --seed %d --ticks 1 --every 1s --fail 0 --broken 0 --stuck 0 --cross 0 --batch 10 --take 20 --reads 20", round))
-		if strings.Contains(out, "every stream has landed") {
-			return round + 1
+		if out := ta.ok("tick"); strings.Contains(out, "the sprint is done") {
+			return round + 1, out
 		}
+		ta.ok(fmt.Sprintf("play --seed %d --ticks 1 --every 1s --fail 0 --broken 0 --stuck 0 --cross 0 --batch 10 --take 20 --reads 20", round))
 		ta.coordinate()
 	}
-	ta.t.Fatalf("not landed: %s", ta.ok("where"))
-	return 0
+	ta.t.Fatalf("not done: %s", ta.ok("where"))
+	return 0, ""
 }
 
 // A sprint of 3 x 3 on the twin driven to done (errata 3 amendment 6): the tick
@@ -42,11 +44,7 @@ func TestADoneSprintStopsItsMachineAndTellsTheCoordinator(t *testing.T) {
 		ta.ok("add --stream " + s + " --count 3")
 	}
 	ta.ok("start")
-	next := ta.playToLanded(1)
-	if out := ta.ok("start"); !strings.Contains(out, "\n9/9 100.0% done in ") || strings.Contains(out, "-> ETA") {
-		t.Fatalf("the sprint line at 100%% while running:\n%s", out)
-	}
-	out := ta.ok("tick")
+	next, out := ta.playToDone(1)
 	for _, want := range []string{"HAPPENED the sprint is done: 9 landed, 0 dropped, took ", " from the first start; the machine is STOPPED; " + sprint.DoneHint,
 		"TICK OK state=STOPPED", "\nSTOPPED  9/9 100.0% done\n"} {
 		if !strings.Contains(out, want) {
@@ -61,6 +59,7 @@ func TestADoneSprintStopsItsMachineAndTellsTheCoordinator(t *testing.T) {
 		t.Fatalf("where's header:\n%s", where)
 	}
 	inbox := ta.ok("inbox")
+	// the sprint done is the first thing the coordinator reads
 	lines := strings.Split(inbox, "\n")
 	if !strings.HasPrefix(lines[0], "HAPPENED ") || !strings.Contains(lines[0], "the sprint is done  x1  for=coordinator  9 landed, 0 dropped, took ") ||
 		lines[1] != "  "+sprint.DoneHint || strings.Contains(inbox, "JUDGMENT") || !strings.Contains(inbox, "\nmachine: DONE\n") {
@@ -103,8 +102,7 @@ func TestADoneSprintStopsItsMachineAndTellsTheCoordinator(t *testing.T) {
 	// Started: it lands the card and stops again.
 	ta.a.sleep(time.Minute)
 	ta.ok("start")
-	ta.playToLanded(next)
-	out = ta.ok("tick")
+	_, out = ta.playToDone(next)
 	if !strings.Contains(out, "HAPPENED the sprint is done: 10 landed, 0 dropped, took ") || !strings.Contains(out, "\nSTOPPED  10/10 100.0% done\n") ||
 		ta.viewLine() != "DONE" {
 		t.Fatalf("the second done:\n%s", out)

@@ -47,7 +47,7 @@ const namedPathMetaRunes = "*?{}<>$%[|…"
 // typo, it is a dead end that costs a friend a search.
 //
 // The hurt: `cmd/nova-pulse/fleet_verbs.go:6` and `internal/pulse/fleetstandard.go:6` both
-// named `scripts/bench-standard.sh`. The file is `tools/bench-standard.sh` and has been
+// named `scripts/bench-standard.sh`. The file was under `tools/` and had been
 // since it moved; a friend following either comment finds nothing, and neither the
 // compiler nor any test had an opinion, because a path inside a comment or a string is
 // just text to Go.
@@ -393,8 +393,8 @@ func TestTheNamedPathHeuristicReadsWhatItClaims(t *testing.T) {
 	}{
 		{
 			name: "a path in a comment",
-			text: "// `fleet standard` is tools/bench-standard.sh and the Mac bench's standard",
-			want: []string{"tools/bench-standard.sh"},
+			text: "// `fleet standard` is tools/benchstandard/main.go and the Mac bench's standard",
+			want: []string{"tools/benchstandard/main.go"},
 		},
 		{
 			name: "a path in a string literal",
@@ -403,8 +403,8 @@ func TestTheNamedPathHeuristicReadsWhatItClaims(t *testing.T) {
 		},
 		{
 			name: "two paths on one line",
-			text: "// internal/ci/doc.go -> tools/bench-standard.sh",
-			want: []string{"internal/ci/doc.go", "tools/bench-standard.sh"},
+			text: "// internal/ci/doc.go -> tools/benchstandard/main.go",
+			want: []string{"internal/ci/doc.go", "tools/benchstandard/main.go"},
 		},
 		{
 			name: "a sentence's full stop is not part of the path",

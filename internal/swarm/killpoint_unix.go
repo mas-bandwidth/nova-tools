@@ -51,9 +51,11 @@ func CheckKillPoint(point string) {
 		if point == "between-exit-and-exit-json" || point == "supervisor-after-release" {
 			ppid := os.Getppid()
 			if ppid > 1 {
+				// ignored: a test-only kill point; the parent may already be gone
 				_ = syscall.Kill(ppid, syscall.SIGKILL)
 			}
 		}
+		// ignored: a test-only kill point; os.Exit below ends the process if the signal did not
 		_ = syscall.Kill(os.Getpid(), syscall.SIGKILL)
 		os.Exit(137)
 	}

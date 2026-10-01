@@ -4,14 +4,16 @@ import (
 	"bufio"
 	"bytes"
 	"compress/zlib"
+	"context"
 	"encoding/hex"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 )
 
 // GitRefStatus holds the result of verifying invariant 8 against a git working copy.
@@ -229,8 +231,8 @@ func ReadHEADTreeBlobs(storeDir string) (map[string]string, error) {
 	}
 
 	// Fallback to git ls-tree -r if available
-	cmd := exec.Command("git", "-C", storeDir, "ls-tree", "-r", commitSHA)
-	out, kErr := cmd.Output()
+	lsTree, kErr := gitrun.Run(context.Background(), gitrun.Options{C: storeDir}, "ls-tree", "-r", commitSHA)
+	out := lsTree.Stdout
 	if kErr == nil {
 		res := make(map[string]string)
 		scanner := bufio.NewScanner(bytes.NewReader(out))

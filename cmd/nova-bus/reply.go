@@ -163,20 +163,20 @@ func cmdDraftReply(o replyOpts, f *flags, stdout, stderr io.Writer, now time.Tim
 	defer release()
 	before, err := bus.HeadCommit(o.busDir)
 	if err != nil {
-		fmt.Fprintf(stderr, "DRAFT REFUSED: %s\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "DRAFT REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus draft -h"))
 		return 1
 	}
 	moved, err := refreshCheckout(o.busDir, o.remote, o.branch)
 	if err != nil {
 		// Never a fall back to the checkout. A refusal costs the caller one turn; a wrong
 		// Re: line costs a thread, and is wrong exactly when nobody is watching.
-		fmt.Fprintf(stderr, "DRAFT REFUSED: %s\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "DRAFT REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus draft -h"))
 		printTranscript(stderr, err)
 		return 1
 	}
 	at, err := bus.HeadCommit(o.busDir)
 	if err != nil {
-		fmt.Fprintf(stderr, "DRAFT REFUSED: %s\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "DRAFT REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus draft -h"))
 		return 1
 	}
 
@@ -189,7 +189,7 @@ func cmdDraftReply(o replyOpts, f *flags, stdout, stderr io.Writer, now time.Tim
 	}
 	t, err := bus.ReadBus(o.busDir, c)
 	if err != nil {
-		fmt.Fprintf(stderr, "nova-bus draft: %s\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "nova-bus draft: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus draft -h"))
 		return 2
 	}
 
@@ -199,11 +199,11 @@ func cmdDraftReply(o replyOpts, f *flags, stdout, stderr io.Writer, now time.Tim
 	if !found {
 		matches := bus.MatchOpenSubject(listing, o.replyTo)
 		if len(matches) == 0 {
-			fmt.Fprintf(stderr, "DRAFT REFUSED: --reply-to %q is not an id on this bus, not a note that exists, and not the subject of a note on your listing; threads are named by id, and a slug is not a thread\n", oneline.Cap(o.replyTo, oneline.TailBytes))
+			fmt.Fprintf(stderr, "DRAFT REFUSED: --reply-to %q is not an id on this bus, not a note that exists, and not the subject of a note on your listing; threads are named by id, and a slug is not a thread; run: nova-bus draft -h\n", oneline.Cap(o.replyTo, oneline.TailBytes))
 			return 1
 		}
 		if target, found = t.Resolve(matches[0].Target()); !found {
-			fmt.Fprintf(stderr, "DRAFT REFUSED: --reply-to %q names a note on your listing that is not on the bus this run read\n", oneline.Cap(o.replyTo, oneline.TailBytes))
+			fmt.Fprintf(stderr, "DRAFT REFUSED: --reply-to %q names a note on your listing that is not on the bus this run read; run: nova-bus draft -h\n", oneline.Cap(o.replyTo, oneline.TailBytes))
 			return 1
 		}
 		if len(matches) > 1 {
@@ -220,7 +220,7 @@ func cmdDraftReply(o replyOpts, f *flags, stdout, stderr io.Writer, now time.Tim
 		sender = p.Name
 	}
 	if !o.toGiven && sender == me.Name {
-		fmt.Fprintf(stderr, "DRAFT REFUSED: --reply-to %s is your own note, so the default To: would be you; a reply to your own note needs an explicit --to\n", oneline.Field(replyTargetName(target)))
+		fmt.Fprintf(stderr, "DRAFT REFUSED: --reply-to %s is your own note, so the default To: would be you; a reply to your own note needs an explicit --to; run: nova-bus draft -h\n", oneline.Field(replyTargetName(target)))
 		return 1
 	}
 	// THE LISTING IS MATCHED BY PATH, and the name the draft writes comes from the entry it
@@ -235,7 +235,7 @@ func cmdDraftReply(o replyOpts, f *flags, stdout, stderr io.Writer, now time.Tim
 	// whole of what closes the note.
 	entry, onList := listingEntry(listing, target.Path)
 	if !onList {
-		fmt.Fprintf(stderr, "DRAFT REFUSED: %s\n", offTheListingReason(c, t, target, me, legacy, hasCursor, replyTargetName(target)))
+		fmt.Fprintf(stderr, "DRAFT REFUSED: %s; run: nova-bus draft -h\n", offTheListingReason(c, t, target, me, legacy, hasCursor, replyTargetName(target)))
 		return 1
 	}
 	re := entry.Target()
@@ -276,14 +276,14 @@ func cmdDraftReply(o replyOpts, f *flags, stdout, stderr io.Writer, now time.Tim
 	path, err := publishDraft(o.draftDir, now.UTC().Format(bus.FileTimeLayout)+"-re-"+name+".md", []byte(content))
 	switch {
 	case errors.Is(err, bus.ErrDraftExists):
-		fmt.Fprintf(stderr, "DRAFT REFUSED: a draft already exists at %s; this tool never overwrites a draft\n",
+		fmt.Fprintf(stderr, "DRAFT REFUSED: a draft already exists at %s; this tool never overwrites a draft; run: nova-bus draft -h\n",
 			oneline.Field(filepath.Join(o.draftDir, now.UTC().Format(bus.FileTimeLayout)+"-re-"+name+".md")))
 		return 1
 	case errors.Is(err, bus.ErrNoExclusivePublish):
 		fmt.Fprintf(stderr, "DRAFT REFUSED: %s; name a --draft-dir on a filesystem that has a create-exclusive publish\n", oneline.Err(err))
 		return 2
 	case err != nil:
-		fmt.Fprintf(stderr, "DRAFT REFUSED: %s\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "DRAFT REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus draft -h"))
 		return 1
 	}
 
@@ -304,7 +304,7 @@ func cmdDraftReply(o replyOpts, f *flags, stdout, stderr io.Writer, now time.Tim
 // refuseDraft prints every problem in one run, one line each, and is exit 2's door.
 func refuseDraft(stderr io.Writer, problems []error) int {
 	for _, reason := range problems {
-		fmt.Fprintf(stderr, "DRAFT REFUSED: %s\n", oneline.Err(reason))
+		fmt.Fprintf(stderr, "DRAFT REFUSED: %s\n", oneline.WithRemedy(oneline.Err(reason), "nova-bus draft -h"))
 	}
 	return 2
 }
@@ -392,28 +392,28 @@ func replyBodyFileProblems(path string) []error {
 func replyBody(path string, budget int, stderr io.Writer) ([]byte, int) {
 	f, err := os.Open(path)
 	if err != nil {
-		fmt.Fprintf(stderr, "DRAFT REFUSED: --body-file %s cannot be read: %s\n", oneline.Field(path), oneline.Err(err))
+		fmt.Fprintf(stderr, "DRAFT REFUSED: --body-file %s cannot be read: %s\n", oneline.Field(path), oneline.WithRemedy(oneline.Err(err), "nova-bus draft -h"))
 		return nil, 2
 	}
 	defer f.Close()
 	buf := make([]byte, budget+1)
 	n, err := io.ReadFull(f, buf)
 	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
-		fmt.Fprintf(stderr, "DRAFT REFUSED: --body-file %s cannot be read: %s\n", oneline.Field(path), oneline.Err(err))
+		fmt.Fprintf(stderr, "DRAFT REFUSED: --body-file %s cannot be read: %s\n", oneline.Field(path), oneline.WithRemedy(oneline.Err(err), "nova-bus draft -h"))
 		return nil, 2
 	}
 	bodyStr := string(buf[:n])
 	trimmed := strings.TrimSpace(bodyStr)
 	if trimmed == "" {
-		fmt.Fprintf(stderr, "DRAFT REFUSED: --body-file %s is empty; a reply with no body is not a reply\n", oneline.Field(path))
+		fmt.Fprintf(stderr, "DRAFT REFUSED: --body-file %s is empty; a reply with no body is not a reply; run: nova-bus draft -h\n", oneline.Field(path))
 		return nil, 1
 	}
 	if trimmed == bus.PlaceholderBody || bus.ContainsPlaceholderBody(bodyStr) {
-		fmt.Fprintf(stderr, "DRAFT REFUSED: --body-file %s is the unedited template placeholder (<the note goes here>)\n", oneline.Field(path))
+		fmt.Fprintf(stderr, "DRAFT REFUSED: --body-file %s is the unedited template placeholder (<the note goes here>); run: nova-bus draft -h\n", oneline.Field(path))
 		return nil, 1
 	}
 	if n > budget {
-		fmt.Fprintf(stderr, "DRAFT REFUSED: --body-file %s is over --max-body-bytes %d; name a larger budget or a smaller body\n", oneline.Field(path), budget)
+		fmt.Fprintf(stderr, "DRAFT REFUSED: --body-file %s is over --max-body-bytes %d; name a larger budget or a smaller body; run: nova-bus draft -h\n", oneline.Field(path), budget)
 		return nil, 1
 	}
 	return buf[:n], 0
@@ -428,7 +428,7 @@ func replyBody(path string, budget int, stderr io.Writer) ([]byte, int) {
 func replyListing(busDir string, c *bus.Config, me bus.Participant, stderr io.Writer) ([]bus.OpenEntry, bus.LegacyLine, bool, int) {
 	cursor, err := bus.ReadCursor(busDir, me.Lane)
 	if err != nil {
-		fmt.Fprintf(stderr, "DRAFT REFUSED: %s\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "DRAFT REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus draft -h"))
 		return nil, bus.LegacyLine{}, false, 1
 	}
 	if cursor.Commit == "" {
@@ -437,21 +437,21 @@ func replyListing(busDir string, c *bus.Config, me bus.Participant, stderr io.Wr
 	legacy := effectiveLegacy(bus.LegacyLine{}, cursor)
 	ok, err := bus.IsAncestor(busDir, cursor.Commit)
 	if err != nil {
-		fmt.Fprintf(stderr, "DRAFT REFUSED: %s\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "DRAFT REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus draft -h"))
 		return nil, legacy, false, 1
 	}
 	if !ok {
-		fmt.Fprintf(stderr, "DRAFT REFUSED: the cursor %s is not an ancestor of HEAD, so there is no listing to answer from; read once with inbox --full --advance\n", oneline.Field(cursor.Commit))
+		fmt.Fprintf(stderr, "DRAFT REFUSED: the cursor %s is not an ancestor of HEAD, so there is no listing to answer from; read once with inbox --full --advance; run: nova-bus draft -h\n", oneline.Field(cursor.Commit))
 		return nil, legacy, false, 1
 	}
 	changed, err := bus.ChangedSince(busDir, cursor.Commit)
 	if err != nil {
-		fmt.Fprintf(stderr, "DRAFT REFUSED: %s\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "DRAFT REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus draft -h"))
 		return nil, legacy, false, 1
 	}
 	open, err := bus.ReadOpen(busDir, me.Lane)
 	if err != nil {
-		fmt.Fprintf(stderr, "DRAFT REFUSED: %s\n", oneline.Err(err))
+		fmt.Fprintf(stderr, "DRAFT REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-bus draft -h"))
 		return nil, legacy, false, 1
 	}
 	// The receipt word count decides note-from-receipt on a LISTING, and this verb prints

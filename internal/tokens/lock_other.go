@@ -30,6 +30,7 @@ func tryLockFile(f *os.File) (bool, error) {
 	return true, held.Close()
 }
 
+// ignored: unlock has no caller to report to; a leftover sentinel is read and named by the next lock
 func unlockFile(f *os.File) { _ = os.Remove(sentinel(f)) }
 
 func sentinel(f *os.File) string { return filepath.Clean(f.Name()) + ".held" }

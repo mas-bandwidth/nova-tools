@@ -15,11 +15,13 @@ package swarm
 //     this before the first worker starts and refuses by path.
 
 import (
+	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 )
 
 // StagingIdentity is the pool's one identity row: the name and email every
@@ -111,10 +113,9 @@ func StageCloneIdentity(repoDir string, id StagingIdentity) error {
 		{"commit.gpgsign", "false"},
 		{"core.hooksPath", "/dev/null"},
 	} {
-		cmd := exec.Command("git", "config", "--local", kv[0], kv[1])
-		cmd.Dir = repoDir
-		cmd.Env = append(os.Environ(), StagingGitEnv(id)...)
-		if out, err := cmd.CombinedOutput(); err != nil {
+		out, err := gitrun.Combined(context.Background(), gitrun.Options{Dir: repoDir, Env: append(os.Environ(), StagingGitEnv(id)...)},
+			"config", "--local", "--", kv[0], kv[1])
+		if err != nil {
 			return fmt.Errorf("staging %s local %s: %v: %s", repoDir, kv[0], err, strings.TrimSpace(string(out)))
 		}
 	}

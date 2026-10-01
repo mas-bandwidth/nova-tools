@@ -10,6 +10,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/config"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // The machine kind's two queries beside its six verbs: self, the machine's
@@ -48,18 +49,18 @@ func runMachineSelf(ctx context.Context, args []string, stdout, stderr io.Writer
 		// under --check exit 2 is "no such row" alone: no store to read is 3
 		dsn, err := pgDSN(*pg, d.getenv)
 		if err != nil {
-			fmt.Fprintf(stderr, "%s %s: the config cannot be read: %s\n", tool, verb, oneLine(err))
+			fmt.Fprintf(stderr, "%s %s: the config cannot be read: %s\n", tool, verb, oneline.WithRemedy(oneLine(err), tool+" "+verb+" -h"))
 			return exitCannotRead
 		}
 		st, err := d.openStore(ctx, dsn)
 		if err != nil {
-			fmt.Fprintf(stderr, "%s %s: the config cannot be read: %s\n", tool, verb, oneLine(err))
+			fmt.Fprintf(stderr, "%s %s: the config cannot be read: %s\n", tool, verb, oneline.WithRemedy(oneLine(err), tool+" "+verb+" -h"))
 			return exitCannotRead
 		}
 		defer st.Close()
 		_, found, err := st.Get(ctx, config.KindMachine, name)
 		if err != nil {
-			fmt.Fprintf(stderr, "%s %s: the config cannot be read: %s\n", tool, verb, oneLine(err))
+			fmt.Fprintf(stderr, "%s %s: the config cannot be read: %s\n", tool, verb, oneline.WithRemedy(oneLine(err), tool+" "+verb+" -h"))
 			return exitCannotRead
 		}
 		if !found {

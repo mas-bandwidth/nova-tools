@@ -100,6 +100,7 @@ func whereFixture(t *testing.T) *testApp {
 	ta.ok("read --as reader-a --ok --limit 10")
 	ta.ok("read --as reader-b --ok --limit 10")
 	ta.ok("accept --read-ok")
+	ta.ok("tick") // the pump drains the accept the machine queued
 	return ta
 }
 

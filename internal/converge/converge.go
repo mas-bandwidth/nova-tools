@@ -22,6 +22,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -287,26 +288,7 @@ func (s State) Save(path string) error {
 		return err
 	}
 	raw = append(raw, '\n')
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, ".convergence-state-*")
-	if err != nil {
-		return err
-	}
-	name := tmp.Name()
-	if _, err := tmp.Write(raw); err != nil {
-		tmp.Close()
-		os.Remove(name)
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		os.Remove(name)
-		return err
-	}
-	if err := os.Rename(name, path); err != nil {
-		os.Remove(name)
-		return err
-	}
-	return nil
+	return atomicfile.Write(filepath.Clean(path), raw, 0o600, atomicfile.ExactMode())
 }
 
 // Apply folds the remembered tick into this one and returns the report with its

@@ -5,9 +5,10 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // ParseAuthors reads a verb→author mapping. One verb per line:
@@ -64,7 +65,7 @@ type Runner func(ctx context.Context, dir string, args ...string) (string, error
 
 // GitRunner runs git in a directory, with the context's deadline.
 func GitRunner(ctx context.Context, dir string, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd := subproc.Context(ctx, "git", args...)
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {
