@@ -61,7 +61,7 @@ type Profile interface {
 var Families = []string{"claude", "openai", "gemini", "grok", "deepseek", "plain"}
 
 // profiles are the built profiles by family; a family with none here serves plain.
-var profiles = map[string]Profile{"claude": claude{}, "plain": plain{family: "plain"}}
+var profiles = map[string]Profile{"claude": claude{}, "openai": openai{}, "plain": plain{family: "plain"}}
 
 // For is the profile of a family: its own, else plain under the family's name.
 func For(family string) Profile {
