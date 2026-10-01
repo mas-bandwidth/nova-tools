@@ -107,7 +107,7 @@ func TestNotHeldWhenTheTickCannotDealIt(t *testing.T) {
 	// sprint): deal refuses it, and with room in the queues it waits for
 	// nothing.
 	w.s.Fleet.Put(&Card{ID: "s1-1.w1", Row: "m1", Col: Done, Score: 1, Rev: 1, Fields: map[string]string{"kind": "work", "primary": "s1-1"}})
-	mustStall(t, running(w), "s1-1", "a member is below its width, and nothing deals it")
+	mustStall(t, running(w), "s1-1", "a member is below its room (DealAhead times its width), and nothing deals it")
 }
 
 func TestHeldByAnOpenJudgment(t *testing.T) {

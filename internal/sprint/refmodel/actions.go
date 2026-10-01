@@ -1030,7 +1030,7 @@ func Level(s State, moves map[string]string) (State, error) {
 	return s.level(moves)
 }
 
-// level levels the queues by levelRound; moves, when given, is the engine's
+// level levels the backlogs by levelRound; moves, when given, is the engine's
 // choice, card to the member it ended on, and must be the round's.
 func (s State) level(moves map[string]string) (State, error) {
 	n := s.Clone()
@@ -1046,33 +1046,48 @@ func (s State) level(moves map[string]string) (State, error) {
 			return s, badChoice("level moves %v, not round the fleet: the round (past %q) moves %v", moves, s.DealLast, want)
 		}
 	}
-	// after levelling no two queues differ by more than one, save where every
-	// member below its Width at or below the mean is gone: the rest are at
-	// their Width and take no more (amendment 9)
-	lo, hi, total := -1, -1, 0
+	// after levelling no two backlogs differ by more than one, of a member
+	// with a ready card and a member below its Room at or below the mean
+	lo, hi, total, any := 0, 0, 0, false
+	loSet := false
 	up := n.Up()
 	for _, x := range up {
-		l := n.RL(x)
-		total += l
-		if n.Held(x) < Width && (lo < 0 || l < lo) {
-			lo = l
+		b := n.Backlog(x)
+		total += b
+		if n.Held(x) < Room && (!loSet || b < lo) {
+			lo, loSet = b, true
 		}
-		if l > hi {
-			hi = l
+		if n.RL(x) > 0 && (!any || b > hi) {
+			hi, any = b, true
 		}
 	}
-	if len(up) > 1 && lo >= 0 && lo <= total/len(up) && hi-lo > 1 {
-		return s, badChoice("the ready queues differ by %d after levelling", hi-lo)
+	if len(up) > 1 && loSet && any && lo <= floorDiv(total, len(up)) && hi-lo > 1 {
+		return s, badChoice("the backlogs differ by %d after levelling", hi-lo)
 	}
 	return n, nil
 }
 
-// levelRound levels (spec section 14, T4, with errata 3 amendment 5: the
-// levelling goes round the fleet and moves the index; amendment 9: a member
-// at its Width takes no more): while the first longest up queue and the
-// shortest of the up members below their Width differ by more than one, the
-// newest ready card of the longest goes to the next member round the fleet
-// past DealLast below its Width whose queue is below the up members' mean
+// Backlog is a member's work cards held, ready and working, less its Width:
+// below zero it has lanes its ready cards do not fill, above zero it holds
+// ready cards it cannot start.
+func (s State) Backlog(m string) int { return s.Held(m) - Width }
+
+// floorDiv is a / b rounded down, below zero too.
+func floorDiv(a, b int) int {
+	q := a / b
+	if a%b != 0 && (a < 0) != (b < 0) {
+		q--
+	}
+	return q
+}
+
+// levelRound levels, once at the start of every tick (the owner, 2026-10-01:
+// "just once before tick, rebalance each table"; spec section 14, T4, with
+// errata 3 amendment 5: the levelling goes round the fleet and moves the
+// index): while the largest backlog of an up member with a ready card and the
+// smallest of the up members below their Room differ by more than one, the
+// newest ready card of the largest goes to the next member round the fleet
+// past DealLast below its Room whose backlog is below the up members' mean
 // rounded down, or, when none such is below, at it, at a new generation, and
 // DealLast moves past it. It returns the member each card it moved ended on.
 func (n *State) levelRound() map[string]string {
@@ -1082,29 +1097,29 @@ func (n *State) levelRound() map[string]string {
 		if len(up) < 2 {
 			return out
 		}
-		lo, hi, total := "", up[0], 0
+		lo, hi, total := "", "", 0
 		for _, x := range up {
-			total += n.RL(x)
-			if n.Held(x) < Width && (lo == "" || n.RL(x) < n.RL(lo)) {
+			total += n.Backlog(x)
+			if n.Held(x) < Room && (lo == "" || n.Backlog(x) < n.Backlog(lo)) {
 				lo = x
 			}
-			if n.RL(x) > n.RL(hi) {
+			if n.RL(x) > 0 && (hi == "" || n.Backlog(x) > n.Backlog(hi)) {
 				hi = x
 			}
 		}
-		if lo == "" || n.RL(hi)-n.RL(lo) <= 1 {
+		if lo == "" || hi == "" || n.Backlog(hi)-n.Backlog(lo) <= 1 {
 			return out
 		}
-		mean := total / len(up)
+		mean := floorDiv(total, len(up))
 		var below, at []string
 		for _, x := range up {
-			if n.Held(x) >= Width {
+			if n.Held(x) >= Room || x == hi {
 				continue
 			}
-			if n.RL(x) < mean {
+			if n.Backlog(x) < mean {
 				below = append(below, x)
 			}
-			if n.RL(x) <= mean {
+			if n.Backlog(x) <= mean {
 				at = append(at, x)
 			}
 		}
@@ -1128,6 +1143,121 @@ func (n *State) levelRound() map[string]string {
 		n.DealLast = roundPast(sorted(n.Order), n.DealLast, to)
 		out[newest] = to
 	}
+}
+
+// ReaderLoad is a reader's reads asked and reading.
+func (s State) ReaderLoad(r string) int {
+	n := 0
+	for _, c := range s.Reads {
+		if c.Reader == r && (c.Place == Asked || c.Place == Reading) {
+			n++
+		}
+	}
+	return n
+}
+
+// levelReads is the readers' rebalance, once at the start of every tick, the
+// fleet's level in the readers' shape (sprint.TickLevelReads; from the
+// owner's ruling of 2026-10-01, not yet in the model): while the largest load
+// of a reader with an asked read and the smallest load of a reader differ by
+// more than one, the newest asked read of the largest (by its primary's score,
+// then its id) that has a reader to go to moves to the next reader round the
+// readers past AskLast, other than the largest and with no card of the
+// primary at that attempt, whose load is below the readers' mean rounded down,
+// or, when none such is below, at it: its card retired, the read asked of that
+// reader at the same attempt, and AskLast moved past it. No reader width is
+// known, so none bounds it.
+func (n *State) levelReads() {
+	for {
+		rs := n.Readers
+		if len(rs) < 2 {
+			return
+		}
+		lo, hi, total := "", "", 0
+		for _, x := range rs {
+			total += n.ReaderLoad(x)
+			if lo == "" || n.ReaderLoad(x) < n.ReaderLoad(lo) {
+				lo = x
+			}
+			if n.readerHasAsked(x) && (hi == "" || n.ReaderLoad(x) > n.ReaderLoad(hi)) {
+				hi = x
+			}
+		}
+		if hi == "" || n.ReaderLoad(hi)-n.ReaderLoad(lo) <= 1 {
+			return
+		}
+		mean := floorDiv(total, len(rs))
+		var asked []string
+		for _, id := range Keys(n.Reads) {
+			if c := n.Reads[id]; c.Reader == hi && c.Place == Asked {
+				asked = append(asked, id)
+			}
+		}
+		sort.SliceStable(asked, func(i, j int) bool {
+			a, b := n.Primaries[n.Reads[asked[i]].Primary].Score, n.Primaries[n.Reads[asked[j]].Primary].Score
+			if a != b {
+				return a < b
+			}
+			return asked[i] < asked[j]
+		})
+		moved := false
+		for i := len(asked) - 1; i >= 0 && !moved; i-- {
+			c := n.Reads[asked[i]]
+			var below, at []string
+			for _, x := range rs {
+				if x == hi {
+					continue
+				}
+				if _, made := n.Reads[RC(c.Primary, c.Attempt, x)]; made {
+					continue
+				}
+				if n.ReaderLoad(x) < mean {
+					below = append(below, x)
+				}
+				if n.ReaderLoad(x) <= mean {
+					at = append(at, x)
+				}
+			}
+			to := n.nextReader(below)
+			if to == "" {
+				to = n.nextReader(at)
+			}
+			if to == "" {
+				continue
+			}
+			c.Place = Retired
+			n.Reads[asked[i]] = c
+			n.Reads[RC(c.Primary, c.Attempt, to)] = ReadCard{Primary: c.Primary, Attempt: c.Attempt, Reader: to, Place: Asked}
+			n.AskLast = roundPast(sorted(n.Readers), n.AskLast, to)
+			moved = true
+		}
+		if !moved {
+			return
+		}
+	}
+}
+
+// readerHasAsked says the reader holds a read asked and not begun.
+func (s State) readerHasAsked(r string) bool {
+	for _, c := range s.Reads {
+		if c.Reader == r && c.Place == Asked {
+			return true
+		}
+	}
+	return false
+}
+
+// nextReader is the first of set round the readers in name order from just
+// past AskLast, wrapping; "" when set is empty.
+func (s State) nextReader(set []string) string {
+	order := sorted(s.Readers)
+	at := roundFrom(order, s.AskLast)
+	for i := range order {
+		if r := order[(at+i)%len(order)]; has(set, r) {
+			return r
+		}
+	}
+	return ""
 }
 
 func sameMap(a, b map[string]string) bool {

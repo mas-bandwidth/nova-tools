@@ -443,7 +443,7 @@ func TestFleetSyncAddsANewMemberDownUntilItBeats(t *testing.T) {
 
 // TestFleetSyncRedealsToTheWidthsItSets: the cards of a member the sync holds
 // go to the members that stay at the widths the same sync gives them (the
-// receivers' room), not the widths the table held.
+// receivers' room, DealAhead times the width), not the widths the table held.
 func TestFleetSyncRedealsToTheWidthsItSets(t *testing.T) {
 	t.Parallel()
 	ta, inv := syncApp(t)
@@ -452,7 +452,7 @@ func TestFleetSyncRedealsToTheWidthsItSets(t *testing.T) {
 	inv.set("m2", 4)
 	inv.set("m3", 1)
 	ta.ok("fleet sync")
-	ta.ok("add --stream s1 --count 6")
+	ta.ok("add --stream s1 --count 12")
 	ta.ok("start")
 	ta.ok("tick") // the fleet update, last in the tick, brings the members up
 	ta.ok("tick") // the pump deals to them
@@ -462,15 +462,15 @@ func TestFleetSyncRedealsToTheWidthsItSets(t *testing.T) {
 		b, _ := strconv.Atoi(rows[m]["working"])
 		return a + b
 	}
-	if held("m1") != 1 || held("m2") != 4 || held("m3") != 1 {
+	if held("m1") != sprint.DealAhead*1 || held("m2") != sprint.DealAhead*4 || held("m3") != sprint.DealAhead*1 {
 		t.Fatalf("the deal: %v", rows)
 	}
 	inv.set("m1", 10)
 	inv.remove("m2")
 	ta.ok("fleet sync")
 	rows = ta.fleetRows()
-	if held("m1") != 5 || held("m3") != 1 || held("m2") != 0 {
-		t.Fatalf("m2's four cards go to m1, which the sync widened to 10, and none to m3, full at 1: m1=%d m2=%d m3=%d", held("m1"), held("m2"), held("m3"))
+	if held("m1") != sprint.DealAhead*1+sprint.DealAhead*4 || held("m3") != sprint.DealAhead*1 || held("m2") != 0 {
+		t.Fatalf("m2's eight cards go to m1, which the sync widened to 10, and none to m3, full at DealAhead times 1: m1=%d m2=%d m3=%d", held("m1"), held("m2"), held("m3"))
 	}
 }
 
