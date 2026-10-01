@@ -311,7 +311,7 @@ type Snapshot struct {
 	Routes []Route
 	// Tiers are the tiers' route arrays nova-config applied (the tier kind), by
 	// tier, read with the routes; a tier with none deals from its enabled routes
-	// in name order (TierArray).
+	// in name order (tierArray).
 	Tiers map[string][]string
 	// ReaderStates is each reader's state as the store derives it (ReaderState:
 	// up, away or down), read by a step that asks (docs/SPEC-SPRINT.md section

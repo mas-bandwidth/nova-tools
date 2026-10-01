@@ -77,14 +77,14 @@ func TierSubject(tier string) string { return "tier:" + tier }
 // noRoute is why a primary has no route: "" when it has one (or the store has no
 // route at all), else the tier it is judged under and the sentence. It moves no index.
 func (s *Snapshot) noRoute(c *Card) (tier, why string) {
-	_, tier, why, _ = s.routeOf(c, nil, nil)
+	_, tier, why = s.routeOf(c, nil, nil)
 	return tier, why
 }
 
-// TierArray is the tier's route array as the deal reads it: the tier kind's list
+// tierArray is the tier's route array as the deal reads it: the tier kind's list
 // when nova-config applied one, else the tier's enabled routes in name order, each once
 // (tla/RouteIndex.tla, Arr).
-func (s *Snapshot) TierArray(tier string) []string {
+func (s *Snapshot) tierArray(tier string) []string {
 	if a := s.Tiers[tier]; len(a) > 0 {
 		return a
 	}
@@ -130,9 +130,9 @@ func (ri routeIndexes) write(p *Plan) {
 // again (nil for a new attempt), whose own route is left out too. With ri the tier's
 // index moves past the entry taken and every entry skipped before it, recorded under
 // c's unit; nil reads the index and moves nothing (tla/RouteIndex.tla: Deal, Redeal, Pin).
-// skipped is the note of the entries passed over that name no enabled route of the
-// tier (a route removed or disabled since the array was set), for the deal's line.
-func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string, tier, why, skipped string) {
+// An entry that names no enabled route of the tier (a route disabled or removed since
+// the array was set) is skipped as an excluded one is.
+func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string, tier, why string) {
 	m, bad := cardhdr.ReadModel(c.F("brief"))
 	if bad != "" {
 		// a card admitted before the lint read its lines: judged under the tier it
@@ -141,20 +141,20 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 		if tier == "" {
 			tier = cardhdr.RouteFlash
 		}
-		return nil, tier, "its brief's model lines: " + bad, ""
+		return nil, tier, "its brief's model lines: " + bad
 	}
 	if m.Pin != "" {
-		return map[string]string{FieldRoute: RoutePin, FieldModel: m.Pin, FieldTokens: m.Tokens, FieldDeadline: strconv.Itoa(m.Deadline)}, "", "", ""
+		return map[string]string{FieldRoute: RoutePin, FieldModel: m.Pin, FieldTokens: m.Tokens, FieldDeadline: strconv.Itoa(m.Deadline)}, "", ""
 	}
 	if len(s.Routes) == 0 {
-		return nil, "", "", ""
+		return nil, "", ""
 	}
 	tier = m.Tier
 	if tier == "" {
 		tier = cardhdr.RouteFlash
 	}
 	if tier == cardhdr.RouteFrontier {
-		return nil, tier, "a frontier card waits for the coordinator: run it, or pin it with a model: <provider>/<model> line", ""
+		return nil, tier, "a frontier card waits for the coordinator: run it, or pin it with a model: <provider>/<model> line"
 	}
 	served := map[string]Route{}
 	for _, r := range s.Routes {
@@ -162,7 +162,7 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 			served[r.Name] = r
 		}
 	}
-	arr := s.TierArray(tier)
+	arr := s.tierArray(tier)
 	drawn := Split(c.F(FieldRoutes))
 	if wc != nil && wc.F(FieldRoute) != "" {
 		drawn = append(drawn, wc.F(FieldRoute))
@@ -181,27 +181,19 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 		at, _ = strconv.ParseUint(v, 10, 64)
 	}
 	n := uint64(len(arr))
-	var gone []string
 	for i := uint64(0); i < n; i++ {
-		name := arr[(at+i)%n]
-		r, ok := served[name]
-		if !ok && !contains(gone, name) {
-			gone = append(gone, name)
-		}
+		r, ok := served[arr[(at+i)%n]]
 		if !ok || fresh && contains(drawn, r.Name) {
 			continue
-		}
-		if len(gone) > 0 {
-			skipped = "; skipped " + strings.Join(gone, ",") + " in tier " + tier + "'s array: no enabled route of the tier"
 		}
 		if ri != nil {
 			ri[tier].r.count += i + 1
 			ri[tier].moves[c.ID] = strconv.FormatUint(i+1, 10)
 		}
 		return map[string]string{FieldRoute: r.Name, FieldModel: r.Provider + "/" + r.Model, FieldTokens: tokensWord(r.Tokens),
-			FieldDeadline: strconv.Itoa(r.Deadline), FieldRoutes: strings.Join(append(Split(c.F(FieldRoutes)), r.Name), ",")}, tier, "", skipped
+			FieldDeadline: strconv.Itoa(r.Deadline), FieldRoutes: strings.Join(append(Split(c.F(FieldRoutes)), r.Name), ",")}, tier, ""
 	}
-	return nil, tier, "no enabled route serves tier " + tier + ": run nova-config route add <name> --tier " + tier + " ..., name it in nova-config tier set " + tier + " --routes <name,...>, then nova-config apply; or pin the card with a model: <provider>/<model> line", ""
+	return nil, tier, "no enabled route serves tier " + tier + ": run nova-config route add <name> --tier " + tier + " ..., name it in nova-config tier set " + tier + " --routes <name,...>, then nova-config apply; or pin the card with a model: <provider>/<model> line"
 }
 
 // tokensWord is a route's budget as native's --tokens takes it.

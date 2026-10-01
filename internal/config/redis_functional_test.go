@@ -628,13 +628,13 @@ func TestRemoveFriendDoesNotTouchSprintKeys(t *testing.T) {
 // loop and route kinds' one read trip each on a store with none of their
 // rows (readHashes), and the tier kind's two read trips (its flash and pro rows
 // are made by migrate), added to every apply of all kinds:
-// - first run: 38 trips (32 before the tier kind, whose first apply also writes
-//   its two rows and its stamp; 30 before the loop and route kinds; 42 before
-//   Cuts 2, 3, 4)
-// - steady apply: 10 trips (8 before the tier kind; 6 before the loop and route
-//   kinds; 18 before Cut 1)
-// - two changes: 15 trips (13 before the tier kind; 11 before the loop and route
-//   kinds; 25 before Cut 2)
+//   - first run: 38 trips (32 before the tier kind, whose first apply also writes
+//     its two rows and its stamp; 30 before the loop and route kinds; 42 before
+//     Cuts 2, 3, 4)
+//   - steady apply: 10 trips (8 before the tier kind; 6 before the loop and route
+//     kinds; 18 before Cut 1)
+//   - two changes: 15 trips (13 before the tier kind; 11 before the loop and route
+//     kinds; 25 before Cut 2)
 func TestApplyRedisTripsReducedFromAuditBaseline(t *testing.T) {
 	t.Parallel()
 

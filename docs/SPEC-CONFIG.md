@@ -262,9 +262,9 @@ two turns: the array is how a route gets more of the tier's cards.
 | `routes` | ordered comma list of route names, a name repeated as given | (empty) | the deal: the tier's array, read with the routes in one round trip; empty takes the tier's enabled routes in name order | `tier:<t>` |
 
 `set` refuses a name that is no route row, a disabled route, or a route of
-another tier (the store's check beside the kind's). A route disabled or
-removed after the array is set is skipped by the deal, which names it on
-its line.
+another tier (the store's check beside the kind's), and `remove` refuses
+both rows: the deal reads them. A route disabled or removed after the array
+is set is skipped by the deal. `tier list` prints the arrays.
 
 ## The schema
 

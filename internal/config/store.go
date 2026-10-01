@@ -136,8 +136,12 @@ func checkTierRoutes(ctx context.Context, st Store, row Row) error {
 }
 
 // checkReferenced refuses removing a row that a ref field of another kind
-// names.
+// names, and a row the kind's migration made (Kind.Seed: the tiers, which the
+// deal reads).
 func checkReferenced(ctx context.Context, st Store, kind, name string) error {
+	if k, ok := Lookup(kind); ok && hasWord(strings.Join(k.Seed, ","), name) {
+		return &RefusedError{Err: ErrInvalid, Detail: fmt.Sprintf("%s %s is made by migrate and the deal reads it; it is never removed: set its fields instead (%s set %s --<field> <value>)", kind, name, kind, name)}
+	}
 	for _, other := range Kinds {
 		for _, f := range other.Fields {
 			if f.Type != TypeRef || f.Ref != kind {

@@ -760,7 +760,7 @@ func deal(s *Snapshot, c *Card, fix, m string, q map[string]int, ri routeIndexes
 	if s.Fleet.Card(card) != nil {
 		return Unit{}, "work card " + card + " exists already"
 	}
-	route, _, why, skipped := s.routeOf(c, nil, ri)
+	route, _, why := s.routeOf(c, nil, ri)
 	if why != "" {
 		return Unit{}, why
 	}
@@ -791,7 +791,7 @@ func deal(s *Snapshot, c *Card, fix, m string, q map[string]int, ri routeIndexes
 	return Unit{Key: c.ID, Stream: c.Row, Changes: []Change{
 		change(Fleet, createEntry(card, m, Ready, c.Score, fields)),
 		change(Work, moveEntry(c, c.Row, Working, set, append(unset, "result")...)),
-	}, Moved: fmt.Sprintf("%s %s -> working card=%s member=%s%s", c.ID, c.Col, card, m, skipped)}, ""
+	}, Moved: fmt.Sprintf("%s %s -> working card=%s member=%s", c.ID, c.Col, card, m)}, ""
 }
 
 // redeal deals a withdrawn work card again, into the ready queue of the up
@@ -803,7 +803,7 @@ func deal(s *Snapshot, c *Card, fix, m string, q map[string]int, ri routeIndexes
 // (tla/DirtyTick.tla DealOne). Its route is the next at its tier's index that the
 // card was not dealt on (ri, moved past it and the entries skipped: route.go).
 func redeal(s *Snapshot, c, wc *Card, m string, q map[string]int, ri routeIndexes) (Unit, string) {
-	route, _, why, skipped := s.routeOf(c, wc, ri)
+	route, _, why := s.routeOf(c, wc, ri)
 	if why != "" {
 		return Unit{}, why
 	}
@@ -825,7 +825,7 @@ func redeal(s *Snapshot, c, wc *Card, m string, q map[string]int, ri routeIndexe
 	return Unit{Key: c.ID, Stream: c.Row, Changes: []Change{
 		change(Fleet, moveEntry(wc, m, Ready, set, unset...)),
 		change(Work, moveEntry(c, c.Row, Working, primary, "result")),
-	}, Moved: fmt.Sprintf("%s %s -> working card=%s member=%s gen=%d (dealt again)%s", c.ID, c.Col, wc.ID, m, wc.Int("gen")+1, skipped)}, ""
+	}, Moved: fmt.Sprintf("%s %s -> working card=%s member=%s gen=%d (dealt again)", c.ID, c.Col, wc.ID, m, wc.Int("gen")+1)}, ""
 }
 
 // TakeReq is a worker taking its work cards. Gens names the generation the

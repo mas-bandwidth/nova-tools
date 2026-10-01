@@ -403,18 +403,17 @@ func TestATierOfOneRouteTakesItAndTheIndexMoves(t *testing.T) {
 }
 
 // An entry that names no enabled route of the tier (disabled since the array was
-// set) is skipped, the deal's line says so, and the index moves past it.
-func TestAnEntryNamingNoEnabledRouteIsSkippedWithANote(t *testing.T) {
+// set, or removed) is skipped, and the index moves past it.
+func TestAnEntryNamingNoEnabledRouteIsSkipped(t *testing.T) {
 	t.Parallel()
 	h := tierHarness(t, map[string][]string{"flash": {"a", "b", "gone"}})
 	off := route("b", "flash")
 	off.Enabled = false
 	h.m.SetRoutes([]sprint.Route{route("a", "flash"), off})
 	h.addReady("s1", 2, briefOf("flash", ""))
-	res := h.must(DealStep(sprint.DealReq{}))
+	h.must(DealStep(sprint.DealReq{}))
 	assert.Equal(t, []string{"a", "a"}, h.dealtRoutes("s1", 2))
 	assert.Equal(t, "4", h.routeIndexOf("flash"), "1 for the first card, then past b and gone to a: 3 more")
-	assert.Contains(t, fmt.Sprint(res.Moved), "skipped b,gone in tier flash's array: no enabled route of the tier")
 }
 
 // A tick of 1000 cards over the arrays makes the round trips a tick of 1000 cards

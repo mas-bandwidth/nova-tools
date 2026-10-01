@@ -154,6 +154,8 @@ func TestTheTierArrayRoundTripsAndApplyWritesIt(t *testing.T) {
 	assert.Equal(t, "flash-a,flash-a", got.Fields["routes"], "the order and the repeat are kept")
 	_, err = st.db.ExecContext(ctx, `INSERT INTO config.tiers (name) VALUES ('frontier')`)
 	assert.Error(t, err, "the schema holds no other tier")
+	_, err = st.Delete(ctx, KindTier, "pro", "t")
+	require.ErrorIs(t, err, ErrInvalid, "a tier migrate made is never removed")
 
 	applyKinds(t, st, ap, "t")
 	assert.Equal(t, "flash-a,flash-a", c.HGet(ctx, TierKey("flash"), "routes").Val())

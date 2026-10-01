@@ -220,7 +220,7 @@ and it is the coordinator's decision, receipted.
   redeal or a later attempt takes the next entry whose route was not taken for
   the card while another remains, the index moved past the entries it skipped
   (ExcludedNeverDrawn), and an entry that names no enabled route of the tier is
-  skipped the same way, the deal's line naming it. The work card keeps `route`, `model`, `tokens` and `deadline` (its
+  skipped the same way. The work card keeps `route`, `model`, `tokens` and `deadline` (its
   packet hands them to the member) and the primary `routes`, every route taken
   for it. A card no route serves stays ready: the deal refuses it naming the
   tier, and the tick writes one judgment, `no route serves the tier`, per tier
@@ -228,8 +228,7 @@ and it is the coordinator's decision, receipted.
   card, closed when the tier is served (tla/DirtyTick.tla, RouteGuard; witness
   W20). The failed-work judgment names the route and model; `card <id>` prints
   an `ATTEMPT` line per attempt (route, model, member, dealt, taken, finished,
-  usage, end); `routes` prints the tiers, each tier's array and index (`TIER
-  <tier> routes=<a,b,...> index=<n>`), and each route with its attempts, ok, failed,
+  usage, end); `routes` prints the tiers and each route with its attempts, ok, failed,
   provider failures and mean wall, each pinned model a row of its own
   (`pin:<provider>/<model>`). The routes are read once a tick, by its first
   part that deals or checks, before that part's read of the tables (one round

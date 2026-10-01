@@ -271,8 +271,9 @@ for each card, the index a counter on the fleet table moved by one a card
 dealt, and a redeal moves past the routes already taken for that card when
 another remains; a card's `model:` header pins it instead and moves no index.
 `tier set` refuses a route that is not a row, is disabled or is of another
-tier; a tier with an empty array takes its enabled routes in name order;
-`nova-sprint routes` prints each array and its index. The tier is `flash` or
+tier, and `tier remove` is refused (migrate made both rows and the deal reads
+them); a tier with an empty array takes its enabled routes in name order;
+`nova-config tier list` prints the arrays. The tier is `flash` or
 `pro`: frontier cards are never dealt from routes, they escalate to the
 coordinator. apply writes the hashes `route:<name>` and `tier:<name>` and the
 sets `routes` and `tiers`, which the deal reads.

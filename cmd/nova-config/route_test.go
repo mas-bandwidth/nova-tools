@@ -150,8 +150,9 @@ func TestApplyKindRouteWritesTheViewAndStatusShowsParity(t *testing.T) {
 
 // The tier kind through the one grammar: migrate made the flash and pro rows, so
 // set writes a tier's route array on a new store, in order and with a name
-// repeated; a route that is no row or is disabled is refused; list prints both
-// tiers; apply writes tier:<name> (docs/SPEC-CONFIG.md, "tier").
+// repeated; a route that is no row or is disabled is refused; remove is refused
+// for both tiers (the deal reads them); list prints both tiers; apply writes
+// tier:<name> (docs/SPEC-CONFIG.md, "tier").
 func TestTierVerbsEndToEndOnTheFake(t *testing.T) {
 	t.Parallel()
 
@@ -171,6 +172,11 @@ func TestTierVerbsEndToEndOnTheFake(t *testing.T) {
 		code, _, errs = h.run(t, "tier", "set", "flash", "--routes", routes)
 		assert.Equal(t, 1, code, routes)
 		assert.Contains(t, errs, refusal)
+	}
+	for _, tier := range []string{"flash", "pro"} {
+		code, _, errs = h.run(t, "tier", "remove", tier)
+		assert.Equal(t, 1, code, "tier remove %s", tier)
+		assert.Contains(t, errs, "tier "+tier+" is made by migrate and the deal reads it; it is never removed")
 	}
 	code, out, _ = h.run(t, "tier", "list")
 	require.Equal(t, 0, code)
