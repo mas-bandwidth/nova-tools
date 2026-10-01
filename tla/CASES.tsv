@@ -221,6 +221,7 @@ MCDirtyTickG1Live.cfg	MCDirtyTick.tla	temporal	Terminates	ignore-terminal	dirtyt
 MCDirtyTickG2.cfg	MCDirtyTick.tla	invariant	WidthRespected	ignore-terminal	dirtytick-goals	required	-
 MCDirtyTickG3.cfg	MCDirtyTick.tla	action	WorkChangesOnlyInPump	ignore-terminal	dirtytick-goals	required	-
 MCDirtyTickTake.cfg	MCDirtyTick.tla	pass	-	ignore-terminal	dirtytick-small	required	-
+MCDirtyTickMiss.cfg	MCDirtyTick.tla	pass	-	ignore-terminal	dirtytick-small	required	-
 MCDirtyTickAccept.cfg	MCDirtyTick.tla	pass	-	ignore-terminal	dirtytick-small	required	-
 MCDirtyTickProbeRedealBound.cfg	MCDirtyTick.tla	invariant	ProbeNoRedealBound	ignore-terminal	dirtytick	required	-
 MCDirtyTickProbeHeldAccept.cfg	MCDirtyTick.tla	invariant	ProbeNoHeldAccept	ignore-terminal	dirtytick	required	-
@@ -234,8 +235,9 @@ MCDirtyTickReader.cfg	MCDirtyTick.tla	pass	-	ignore-terminal	dirtytick-small	req
 MCDirtyTickReaderAway.cfg	MCDirtyTick.tla	pass	-	ignore-terminal	dirtytick-small	required	-
 MCDirtyTickW21.cfg	MCDirtyTick.tla	invariant	ReadsStandOnReadersUp	ignore-terminal	dirtytick-witnesses	required	-
 MCDirtyTickW22.cfg	MCDirtyTick.tla	invariant	ReadsStandOnReadersUp	ignore-terminal	dirtytick-witnesses	required	-
+MCDirtyTickW23.cfg	MCDirtyTick.tla	action	LapseNeedsMisses	ignore-terminal	dirtytick-witnesses	required	-
 MCDirtyTickHandBack.cfg	MCDirtyTick.tla	pass	-	ignore-terminal	dirtytick-small	required	-
-MCDirtyTickW23.cfg	MCDirtyTick.tla	invariant	NothingLost	ignore-terminal	dirtytick-witnesses	required	-
+MCDirtyTickW24.cfg	MCDirtyTick.tla	invariant	NothingLost	ignore-terminal	dirtytick-witnesses	required	-
 MCDirtyTickRead.cfg	MCDirtyTickRead.tla	pass	-	ignore-terminal	dirtytickread	required	-
 MCDirtyTickReadAcquire.cfg	MCDirtyTickRead.tla	invariant	TwinIsTheStore	ignore-terminal	dirtytickread-acquire	required	-
 MCDirtyTickReadHalt.cfg	MCDirtyTickRead.tla	invariant	BeganRunning	ignore-terminal	dirtytickread-halt	required	-

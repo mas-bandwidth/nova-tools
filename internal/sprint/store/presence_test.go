@@ -9,6 +9,14 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
+// downAfter is how long a member goes without a beat and is still up: the
+// beat windows it may miss (sprint.MissedBeatsDown); pastDown is the first
+// time after it that the member is down.
+const (
+	downAfter = sprint.MissedBeatsDown * sprint.BeatDeadline
+	pastDown  = downAfter + time.Second
+)
+
 // fleetRow is a fleet row's display cells.
 func (h *harness) fleetRow(member string) map[string]string {
 	h.t.Helper()
@@ -129,7 +137,7 @@ func TestASilentMemberGoesDownAndItsCardsAreDealt(t *testing.T) {
 		t.Fatalf("dealt %v, want two each", d)
 	}
 	h.setLive("m2")
-	h.tick(sprint.BeatDeadline)
+	h.tick(downAfter)
 	h.machine()
 	if d := h.dealtTo(); d["m1"] != 2 || h.snap().MemberCtl("m1").F("status") != sprint.Up {
 		t.Fatalf("at the deadline m1 is still up with its cards: %v", d)
@@ -142,7 +150,7 @@ func TestASilentMemberGoesDownAndItsCardsAreDealt(t *testing.T) {
 	if st := h.snap().MemberCtl("m1").F("status"); st != sprint.Down {
 		t.Fatalf("m1 %s, want down", st)
 	}
-	if n := h.memberNotes(sprint.NMemberDown, "m1"); len(n) != 1 || !strings.Contains(n[0], "no beat for 15s") {
+	if n := h.memberNotes(sprint.NMemberDown, "m1"); len(n) != 1 || !strings.Contains(n[0], "no beat for 45s") {
 		t.Fatalf("down notifications: %q, want one saying why", n)
 	}
 	if row := h.fleetRow("m1"); row[sprint.Status] != sprint.Down || row[sprint.Load] != "" {
@@ -180,7 +188,7 @@ func TestNoMemberUpWithdrawsTheCards(t *testing.T) {
 	h.startMachine()
 	h.machine()
 	h.setLive()
-	h.tick(sprint.BeatDeadline + time.Second)
+	h.tick(pastDown)
 	h.machine()
 	h.machine()
 	s := h.snap()
@@ -275,7 +283,7 @@ func TestAStoppedMachineTakesBeatsAndMovesNothing(t *testing.T) {
 	h.machine()
 	h.stopMachine()
 	h.setLive("m2")
-	h.tick(sprint.BeatDeadline + 5*time.Second)
+	h.tick(pastDown + 5*time.Second)
 	h.beatAt("m2", 64)
 	res := h.machine()
 	if res.State != Stopped || len(res.Parts) > 0 {

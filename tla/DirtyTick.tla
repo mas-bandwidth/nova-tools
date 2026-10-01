@@ -46,8 +46,10 @@
 \*   mctr, rctr, sctr    the placement counters of machines, readers and
 \*                       streams (uint64, modelled mod CtrMod, which divides
 \*                       2^64 and every count a small instance has)
-\*   live, acts, ext     outside: a machine beating; outside actions used;
-\*                       an outside entry since the last tick began
+\*   live, miss, acts, ext
+\*                       outside: a machine beating; the beat windows it has
+\*                       missed in a row; outside actions used; an outside
+\*                       entry since the last tick began
 \*   phase, pumps, sub   the tick: where it is, work pumps this tick, steps
 \*                       this tick (capped at MaxSub + 1)
 \*   addr, notes, wake   what this tick addressed to the coordinator; notes
@@ -95,6 +97,18 @@
 \*   reader that went away where they are. The scenario turns the events on
 \*   (Scn.away).
 \*
+\* THE MISSED BEATS (2026-10-01, the owner: one store timeout on a member's
+\*   beat downed a working member, took its card back and lost the child's
+\*   finish; internal/sprint/presence.go MissedBeatsDown). A machine that
+\*   beats is down only after Misses beat windows in a row with no beat. Miss(m)
+\*   is one such window (miss[m], derived from the last beat in the code,
+\*   never stored); a beat between misses resets the count (BeatReset); Lapse(m),
+\*   the machine going down, needs miss[m] >= Misses, and the action property
+\*   LapseNeedsMisses says no machine stops beating before. The witness
+\*   "onemiss" lets a machine lapse on the first miss (what the code did). A
+\*   scenario that turns Scn.misses on models the windows; one that does not
+\*   takes a lapse to come after them, as it always did.
+\*
 \* THE RETURN (2026-10-01, the owner's ask: a reader whose launch was refused
 \*   held the read for the whole two-hour deadline, and took the next). The
 \*   outside's ReadReturn(c) is the reader that holds c's read handing it back
@@ -103,7 +117,7 @@
 \*   away, for the one read: off the reader, its readoff to the fleet, and
 \*   asked again in the same update (askw), no broken report counted; a return
 \*   of a read the reader no longer holds changes nothing. The witness
-\*   "handkeeps" asks it again and keeps the hold (NothingLost). The scenario
+\*   "handkeeps" asks it again and keeps the hold (W24, NothingLost). The scenario
 \*   turns the event on (Scn.hand).
 \*
 \* WHAT IS NOT MODELLED. Clear and epochs (the counters' reset); two reads
@@ -130,9 +144,12 @@ Three == {"readers", "merge", "fleet"}
 Cols == {"none", "waiting", "ready", "working", "review", "merging", "landed"}
 NoR == "none"
 Min(a, b) == IF a < b THEN a ELSE b
+\* The beat windows a machine misses in a row before it is down
+\* (internal/sprint/presence.go MissedBeatsDown).
+Misses == 3
 
 VARIABLES col, att, bnd, rd, askw, mq, stat, mc, mr, noUp, Q,
-          mctr, rctr, sctr, live, acts, ext,
+          mctr, rctr, sctr, live, miss, acts, ext,
           phase, pumps, sub, addr, notes, wake, act, plc,
           brk, dealt, always,
           okd, ci, ret, tk, rdl, ended, ends, hred
@@ -148,7 +165,7 @@ VARIABLES col, att, bnd, rd, askw, mq, stat, mc, mr, noUp, Q,
 \*                leaves both as they are)
 
 vars == <<col, att, bnd, rd, askw, mq, stat, mc, mr, noUp, Q,
-          mctr, rctr, sctr, live, acts, ext,
+          mctr, rctr, sctr, live, miss, acts, ext,
           phase, pumps, sub, addr, notes, wake, act, plc,
           brk, dealt, always,
           okd, ci, ret, tk, rdl, ended, ends, hred>>
@@ -490,7 +507,7 @@ TickStart ==
   /\ IF Broken = "reset" THEN mctr' = 0 /\ rctr' = 0 /\ sctr' = 0
      ELSE UNCHANGED <<mctr, rctr, sctr>>
   /\ UNCHANGED <<col, att, bnd, rd, askw, mq, stat, mc, mr, noUp, Q,
-                 live, acts, wake, brk, dealt, always, CardVars>>
+                 live, miss, acts, wake, brk, dealt, always, CardVars>>
 
 \* The first pass's first update: the one pump of the tick.
 PumpWork ==
@@ -499,7 +516,7 @@ PumpWork ==
        /\ Commit(S)
        /\ always' = [s \in Streams |-> always[s] /\ \E c \in Dealable(S, Cards) : StreamOf[c] = s]
   /\ phase' = "readers" /\ pumps' = pumps + 1 /\ act' = "PumpWork" /\ Step
-  /\ UNCHANGED <<live, acts, ext, wake>>
+  /\ UNCHANGED <<live, miss, acts, ext, wake>>
 
 NextPhase(t) == CASE t = "readers" -> "merge" [] t = "merge" -> "fleet" [] t = "fleet" -> "drain"
 
@@ -508,7 +525,7 @@ Pass(t) ==
   /\ phase = t
   /\ Commit(Update(t))
   /\ phase' = NextPhase(t) /\ act' = "Pass" /\ Step
-  /\ UNCHANGED <<live, acts, ext, pumps, wake, always>>
+  /\ UNCHANGED <<live, miss, acts, ext, pumps, wake, always>>
 
 \* A queue not empty is acted on at once, at any point after the pump.
 Drain(t) ==
@@ -516,7 +533,7 @@ Drain(t) ==
   /\ Q[t] # <<>>
   /\ Commit(Update(t))
   /\ act' = "Drain" /\ Step
-  /\ UNCHANGED <<live, acts, ext, phase, pumps, wake, always>>
+  /\ UNCHANGED <<live, miss, acts, ext, phase, pumps, wake, always>>
 
 \* The witness "twopumps": the work queue drained again inside the tick.
 DrainWork ==
@@ -525,7 +542,7 @@ DrainWork ==
   /\ Q["work"] # <<>>
   /\ LET S == Pump(Cur) IN Commit(S)
   /\ pumps' = Min(pumps + 1, 2) /\ act' = "DrainWork" /\ Step
-  /\ UNCHANGED <<live, acts, ext, phase, wake, always>>
+  /\ UNCHANGED <<live, miss, acts, ext, phase, wake, always>>
 
 TickEnd ==
   /\ phase = "drain"
@@ -535,7 +552,7 @@ TickEnd ==
      ELSE UNCHANGED <<notes, wake>>
   /\ phase' = "idle" /\ act' = "TickEnd" /\ plc' = <<>>
   /\ UNCHANGED <<col, att, bnd, rd, askw, mq, stat, mc, mr, noUp, Q,
-                 mctr, rctr, sctr, live, acts, ext, pumps, sub, addr,
+                 mctr, rctr, sctr, live, miss, acts, ext, pumps, sub, addr,
                  brk, dealt, always, CardVars>>
 
 -----------------------------------------------------------------------------
@@ -550,60 +567,83 @@ Outside(t, e) ==
 
 Add(c) ==
   /\ c \in Addable /\ col[c] = "none" /\ Pend("work", "add", c) = 0
-  /\ Outside("work", E("add", c, "-")) /\ UNCHANGED <<live, acts>>
+  /\ Outside("work", E("add", c, "-")) /\ UNCHANGED <<live, miss, acts>>
 Finish(c, m) ==
   /\ c \in mc[m] /\ live[m] /\ Pend("fleet", "fin", c) = 0
-  /\ Outside("fleet", E("fin", c, m)) /\ UNCHANGED <<live, acts>>
+  /\ Outside("fleet", E("fin", c, m)) /\ UNCHANGED <<live, miss, acts>>
 Report(c, v) ==
   /\ rd[c] # NoR /\ live[Host[rd[c]]] /\ Pend("readers", "rep", c) = 0
-  /\ Outside("readers", E("rep", c, <<rd[c], v>>)) /\ UNCHANGED <<live, acts>>
+  /\ Outside("readers", E("rep", c, <<rd[c], v>>)) /\ UNCHANGED <<live, miss, acts>>
 Merge(c) ==
   /\ c \in mq /\ Pend("merge", "merged", c) = 0
-  /\ Outside("merge", E("merged", c, "-")) /\ UNCHANGED <<live, acts>>
+  /\ Outside("merge", E("merged", c, "-")) /\ UNCHANGED <<live, miss, acts>>
 \* A reader stops asking for its queue (or is held away), and asks again.
 ReaderAway(r) ==
   /\ Scn.away /\ live[r] /\ acts < MaxActs
-  /\ live' = [live EXCEPT ![r] = FALSE] /\ acts' = acts + 1
+  /\ live' = [live EXCEPT ![r] = FALSE] /\ acts' = acts + 1 /\ UNCHANGED miss
   /\ Outside("readers", E("raway", "-", r))
 \* The reader that holds a read returns it with no verdict (read --return).
 ReadReturn(c) ==
   /\ Scn.hand /\ rd[c] # NoR /\ live[rd[c]] /\ acts < MaxActs /\ Pend("readers", "handback", c) = 0
-  /\ acts' = acts + 1 /\ Outside("readers", E("handback", c, rd[c])) /\ UNCHANGED live
+  /\ acts' = acts + 1 /\ Outside("readers", E("handback", c, rd[c])) /\ UNCHANGED <<live, miss>>
 ReaderBack(r) ==
   /\ Scn.away /\ ~live[r] /\ acts < MaxActs
-  /\ live' = [live EXCEPT ![r] = TRUE] /\ acts' = acts + 1
+  /\ live' = [live EXCEPT ![r] = TRUE] /\ acts' = acts + 1 /\ UNCHANGED miss
   /\ Outside("readers", E("raback", "-", r))
 Beat(m) ==
   /\ ~live[m] /\ acts < MaxActs
   /\ live' = [live EXCEPT ![m] = TRUE] /\ acts' = acts + 1
+  /\ miss' = [miss EXCEPT ![m] = 0]
   /\ Outside("fleet", E("beat", "-", m))
+\* A machine that beats is down only after Misses windows with no beat (the
+\* witness "onemiss" lets it lapse on any); a scenario without the windows
+\* takes them to have passed.
 Lapse(m) ==
   /\ live[m] /\ acts < MaxActs
-  /\ live' = [live EXCEPT ![m] = FALSE] /\ acts' = acts + 1
+  /\ Broken = "onemiss" \/ ~Scn.misses \/ miss[m] >= Misses
+  /\ live' = [live EXCEPT ![m] = FALSE] /\ acts' = acts + 1 /\ UNCHANGED miss
   /\ Outside("fleet", E("lapse", "-", m))
+\* One beat window passes with no beat from a machine that still beats; it
+\* writes nothing and queues nothing (the member is seen late, not down).
+Miss(m) ==
+  /\ Scn.misses /\ phase = "idle" /\ live[m] /\ miss[m] < Misses /\ acts < MaxActs
+  /\ miss' = [miss EXCEPT ![m] = miss[m] + 1]
+  /\ act' = "Miss" /\ plc' = <<>>
+  /\ UNCHANGED <<col, att, bnd, rd, askw, mq, stat, mc, mr, noUp, Q,
+                 mctr, rctr, sctr, live, acts, ext, phase, pumps, sub, addr,
+                 notes, wake, brk, dealt, always, CardVars>>
+\* A beat between misses resets the count; the machine was up and stays up, so
+\* nothing is queued.
+BeatReset(m) ==
+  /\ Scn.misses /\ phase = "idle" /\ live[m] /\ miss[m] > 0 /\ acts < MaxActs
+  /\ miss' = [miss EXCEPT ![m] = 0]
+  /\ act' = "BeatReset" /\ plc' = <<>>
+  /\ UNCHANGED <<col, att, bnd, rd, askw, mq, stat, mc, mr, noUp, Q,
+                 mctr, rctr, sctr, live, acts, ext, phase, pumps, sub, addr,
+                 notes, wake, brk, dealt, always, CardVars>>
 \* The worker takes a card dealt to its machine.
 Take(c, m) ==
   /\ Takes /\ c \in mc[m] /\ live[m] /\ ~tk[c] /\ Pend("fleet", "take", c) = 0
-  /\ Outside("fleet", E("take", c, m)) /\ UNCHANGED <<live, acts>>
+  /\ Outside("fleet", E("take", c, m)) /\ UNCHANGED <<live, miss, acts>>
 \* The coordinator's verbs: a CI result on a card in review (red at its head,
 \* or green), a return of a card queued to merge, an accept of a card the
 \* pump holds.
 CIRed(c) ==
   /\ Coord /\ col[c] = "review" /\ ci[c] # "red" /\ Pend("work", "ci", c) = 0 /\ acts < MaxActs
-  /\ acts' = acts + 1 /\ Outside("work", E("ci", c, "red")) /\ UNCHANGED live
+  /\ acts' = acts + 1 /\ Outside("work", E("ci", c, "red")) /\ UNCHANGED <<live, miss>>
 \* A late result, green, for a head the card has moved past.
 CIOld(c) ==
   /\ Coord /\ col[c] = "review" /\ Pend("work", "ciold", c) = 0 /\ acts < MaxActs
-  /\ acts' = acts + 1 /\ Outside("work", E("ciold", c, "none")) /\ UNCHANGED live
+  /\ acts' = acts + 1 /\ Outside("work", E("ciold", c, "none")) /\ UNCHANGED <<live, miss>>
 CIGreen(c) ==
   /\ Coord /\ ci[c] = "red" /\ Pend("work", "ci", c) = 0
-  /\ Outside("work", E("ci", c, "none")) /\ UNCHANGED <<live, acts>>
+  /\ Outside("work", E("ci", c, "none")) /\ UNCHANGED <<live, miss, acts>>
 Return(c) ==
   /\ Coord /\ c \in mq /\ Pend("merge", "return", c) = 0 /\ Pend("merge", "merged", c) = 0 /\ acts < MaxActs
-  /\ acts' = acts + 1 /\ Outside("merge", E("return", c, "-")) /\ UNCHANGED live
+  /\ acts' = acts + 1 /\ Outside("merge", E("return", c, "-")) /\ UNCHANGED <<live, miss>>
 CoordAccept(c) ==
   /\ Coord /\ col[c] = "review" /\ okd[c] /\ (ci[c] = "red" \/ ret[c]) /\ Pend("work", "accept", c) = 0
-  /\ Outside("work", E("accept", c, "-")) /\ UNCHANGED <<live, acts>>
+  /\ Outside("work", E("accept", c, "-")) /\ UNCHANGED <<live, miss, acts>>
 
 -----------------------------------------------------------------------------
 Init ==
@@ -613,6 +653,7 @@ Init ==
   /\ mc = Scn.mc /\ mr = Scn.mr /\ noUp = FALSE /\ Q = Scn.q
   /\ mctr = 0 /\ rctr = 0 /\ sctr = 0
   /\ live = [m \in Machines \cup Readers |-> m \in Scn.live] /\ acts = 0 /\ ext = TRUE
+  /\ miss = [m \in Machines |-> 0]
   /\ phase = "idle" /\ pumps = 0 /\ sub = 0 /\ addr = 0 /\ notes = 0 /\ wake = -1
   /\ act = "Init" /\ plc = <<>>
   /\ brk = [c \in Cards |-> 0] /\ dealt = [s \in Streams |-> 0]
@@ -627,7 +668,7 @@ OutsideNext ==
   \/ \E c \in Cards : Add(c) \/ Merge(c) \/ \E v \in {"ok", "broken"} : Report(c, v)
   \/ \E c \in Cards, m \in Machines : Finish(c, m) \/ Take(c, m)
   \/ \E c \in Cards : CIRed(c) \/ CIGreen(c) \/ CIOld(c) \/ Return(c) \/ CoordAccept(c) \/ ReadReturn(c)
-  \/ \E m \in Machines : Beat(m) \/ Lapse(m)
+  \/ \E m \in Machines : Beat(m) \/ Lapse(m) \/ Miss(m) \/ BeatReset(m)
   \/ \E r \in Readers : ReaderAway(r) \/ ReaderBack(r)
 Next == TickNext \/ OutsideNext
 Spec == Init /\ [][Next]_vars /\ WF_vars(TickNext)
@@ -637,6 +678,7 @@ Spec == Init /\ [][Next]_vars /\ WF_vars(TickNext)
 TypeOK ==
   /\ col \in [Cards -> Cols] /\ att \in [Cards -> 1..MaxAttempts] /\ bnd \in [Cards -> BOOLEAN]
   /\ rd \in [Cards -> Readers \cup {NoR}] /\ askw \in [Cards -> BOOLEAN] /\ mq \subseteq Cards
+  /\ miss \in [Machines -> 0..Misses]
   /\ stat \in [Machines \cup Readers -> {"up", "down"}] /\ mc \in [Machines -> SUBSET Cards]
   /\ mr \in [Machines -> SUBSET Cards] /\ noUp \in BOOLEAN
   /\ phase \in {"idle", "work", "drain"} \cup Three
@@ -747,6 +789,12 @@ WidthRespected == \A m \in Machines : Cardinality(mc[m]) + Cardinality(mr[m]) <=
 \* pump so far were dealt within one of each other.
 StreamFairness ==
   [][\A s, t \in Streams : always[s] /\ always[t] => dealt'[s] - dealt'[t] \in -1..1]_vars
+
+\* NO LAPSE BEFORE THE MISSES: a machine stops beating (and so is down, and
+\* its cards are taken back) only after Misses beat windows in a row with no
+\* beat. A scenario that does not turn the windows on takes them to have passed.
+LapseNeedsMisses ==
+  [][\A m \in Machines : (live[m] /\ ~live'[m] /\ Scn.misses) => miss[m] >= Misses]_vars
 
 \* THE ACCEPT HOLDS: a card in review whose last CI result for its head is
 \* red (hred: a late result for an older head changes nothing), or that the
