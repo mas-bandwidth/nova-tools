@@ -13,6 +13,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/config"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -133,7 +134,7 @@ func TestFleetSyncFollowsTheInventoryOnTheStore(t *testing.T) {
 		t.Fatalf("the sync after it:\n%s", out)
 	}
 
-	// the deal fills the synced member to its width and no further
+	// the deal fills the synced member to DealAhead times its width and no further
 	run(0, "add", "--stream", "s1", "--count", "20")
 	run(0, "fleet", "beat", "m1")
 	run(0, "start")
@@ -145,7 +146,7 @@ func TestFleetSyncFollowsTheInventoryOnTheStore(t *testing.T) {
 		n, _ := strconv.Atoi(got["m1"][col])
 		held += n
 	}
-	if held != 6 {
-		t.Fatalf("m1 holds %d cards after the deal, want its width 6: %v", held, got["m1"])
+	if held != sprint.DealAhead*6 {
+		t.Fatalf("m1 holds %d cards after the deal, want DealAhead times its width 6: %v", held, got["m1"])
 	}
 }

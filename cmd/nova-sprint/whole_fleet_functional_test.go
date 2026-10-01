@@ -170,11 +170,11 @@ func TestTheWholeFleetMovesInOneTickOnTheStore(t *testing.T) {
 		if !dealt {
 			continue
 		}
-		// the tick dealt: the world's tick took every member's ready cards,
-		// none left behind for a tick after
+		// the tick dealt DealAhead times the width: the world's tick took every
+		// member's width of it, at most the width left ready behind its lanes
 		for _, m := range members {
-			if n := fleetReady(t, do, m); n != 0 {
-				t.Fatalf("round %d: %s has %d ready cards after the tick that followed the deal: every member up takes in that tick\n%s", i+1, m, n, out.String())
+			if n := fleetReady(t, do, m); n > (sprint.DealAhead-1)*64 {
+				t.Fatalf("round %d: %s has %d ready cards after the tick that followed the deal, more than its width behind its lanes: every member up takes in that tick\n%s", i+1, m, n, out.String())
 			}
 		}
 	}

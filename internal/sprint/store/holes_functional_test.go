@@ -19,11 +19,12 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
-// G2 on a store, over a whole sprint: no machine is over its width before any
-// step of any tick or after it, and the fleet holds exactly the work cards the
+// G2 on a store, over a whole sprint: no machine holds more than DealAhead
+// times its width nor works more than its width (heldOK) before any step of
+// any tick or after it, and the fleet holds exactly the work cards the
 // working primaries hold at every step after the pump: the deal's fleet write
 // is in the pump's step.
-func TestG2OnAStoreNoMachineIsOverItsWidthAtAnyStep(t *testing.T) {
+func TestG2OnAStoreNoMachineIsOverDealAheadTimesItsWidthAtAnyStep(t *testing.T) {
 	t.Parallel()
 	h, _ := liveHarness(t)
 	holesUp(h, 4)
@@ -86,8 +87,8 @@ func TestG2AndG3OnAStoreOverASprintWithALapse(t *testing.T) {
 		}
 		for m, n := range made {
 			dealt += n
-			room := max(0, 2-held[m])
-			require.LessOrEqual(t, n, room, "round %d: the deal gave %s %d cards, its room was %d", round, m, n, room)
+			room := max(0, sprint.DealAhead*2-held[m])
+			require.LessOrEqual(t, n, room, "round %d: the deal gave %s %d cards, its room (DealAhead times the width 2) was %d", round, m, n, room)
 		}
 		clear(held)
 		for _, st := range x.seen {

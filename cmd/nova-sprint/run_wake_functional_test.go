@@ -15,6 +15,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 	"github.com/redis/go-redis/v9"
 )
@@ -74,7 +75,7 @@ func TestTheLoopWakesOnTheLogOnTheStore(t *testing.T) {
 		spec = append(spec, members[i]+":4")
 	}
 	do("init", "--readers", "reader-a,reader-b", "--members", strings.Join(spec, ","))
-	do("add", "--stream", "a,b,c", "--count", "20")
+	do("add", "--stream", "a,b,c", "--count", "40") // more than the fleet's room, DealAhead x 4 x 8: the finish is dealt back
 	beat := func() {
 		for _, m := range members {
 			do("fleet", "beat", m)
@@ -155,14 +156,16 @@ func TestTheLoopWakesOnTheLogOnTheStore(t *testing.T) {
 	quiet()
 	for round := 1; round <= 3; round++ {
 		beat()
-		if n := len(m1()); n != 4 {
-			t.Fatalf("round %d: m1 holds %d cards before its take, want its width 4", round, n)
+		if n := len(m1()); n != sprint.DealAhead*4 {
+			t.Fatalf("round %d: m1 holds %d cards before its take, want DealAhead times its width 4", round, n)
 		}
 		do("take", "--as", "m1", "--limit", "4")
 		quiet()
 		var ids []string
 		for _, x := range m1() {
-			ids = append(ids, x.ID+"@"+strconv.Itoa(x.Gen))
+			if x.Col == "working" {
+				ids = append(ids, x.ID+"@"+strconv.Itoa(x.Gen))
+			}
 		}
 		do(append([]string{"finish", "--as", "m1", "--epoch", "0"}, ids...)...)
 		finished := time.Now()
@@ -176,13 +179,13 @@ func TestTheLoopWakesOnTheLogOnTheStore(t *testing.T) {
 				if k.why != tickLog {
 					t.Fatalf("round %d: the tick after the finish was woken by %s, want the log", round, k.why)
 				}
-				if n := len(m1()); n == 4 {
+				if n := len(m1()); n == sprint.DealAhead*4 {
 					t.Logf("round %d: finish to deal %s (tick #%d began %s after the finish; the floor is %s)",
 						round, k.ended.Sub(finished).Round(time.Millisecond), k.n, k.began.Sub(finished).Round(time.Millisecond), store.TickFloor)
 					dealt = true
 				}
 			case <-ceiling:
-				t.Fatalf("round %d: m1 was not dealt back to its width in 60s", round)
+				t.Fatalf("round %d: m1 was not dealt back to DealAhead times its width in 60s", round)
 			}
 		}
 		quiet()
