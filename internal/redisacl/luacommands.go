@@ -51,7 +51,6 @@ func wordSet(words string) map[string]bool {
 var (
 	reLuaComment = regexp.MustCompile(`(?m)--.*$`)
 	reLuaWord    = regexp.MustCompile(`'([A-Z][A-Z_]*)'(\s*,\s*'([A-Za-z-]+)')?`)
-	reLuaCall    = regexp.MustCompile(`redis\.p?call\(\s*'([A-Za-z_]+)'`)
 )
 
 // commandsOf is the commands a Lua text names, as ACL rules spell them:
@@ -92,15 +91,4 @@ func LuaCommands(lib redisfn.Library) (map[string][]string, error) {
 		out[f] = commandsOf(string(b))
 	}
 	return out, nil
-}
-
-// directCalls is every command name a Lua text passes to redis.call or
-// redis.pcall as a literal, upper-cased.
-func directCalls(src string) []string {
-	src = reLuaComment.ReplaceAllString(src, "")
-	var out []string
-	for _, m := range reLuaCall.FindAllStringSubmatch(src, -1) {
-		out = append(out, strings.ToUpper(m[1]))
-	}
-	return out
 }

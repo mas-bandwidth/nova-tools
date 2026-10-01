@@ -30,14 +30,27 @@ and the commit the checkout is at, the base it came from, that the child works t
 commits as usual, how its commit and its pull request leave (the sprint does both), the test
 environment (`GOCACHE=<job>/gocache`, niced, `-count=1 -timeout`), the attempt, and for attempt
 2 and later the previous head and the reader's finding. A read's `JOB.md` says to review the
-change on the branch against its base as a pull request is reviewed. A frame that carries a
-RULES paragraph ends JOB.md with it; the card's own RULES paragraph stays in the brief, where
-the add lint holds it.
+change on the branch against its base as a pull request is reviewed. JOB.md repeats no rules:
+the card's own RULES paragraph is in the brief, where the add lint holds it, and the child
+reads it once.
+
+The frame reads the brief's **header only**: line 1 and the `key: value` lines that follow it,
+up to the first blank line or line of prose (`swarm.ReadCardBase`). A `base-repo:`, `BASE:` or
+clone URL in the body names nothing.
+
+**Staged recipes.** A header line `Stage: <path> [<path>...]` names files the member stages into
+`<job>/recipes/<path>` before the child starts, from its own `<root>/recipes/<path>`: a recipe a
+card works from (a pull request body to rewrite, a long table) can be larger than the brief's
+16 KiB, and the wall gives the child no forge to fetch it from. A path that is not a relative
+path inside the recipes directory, a link, or a missing file refuses the launch, which the
+finish reports failed; JOB.md lists what was staged.
 
 ## 3. The result shape
 
 The child's end is one shape, one `key: value` per line, then free text. `typedrec.ParseCardResult`
-is its one reader (the one-typed-parser rule):
+is its one reader (the one-typed-parser rule). Native counts the gh shim's record as the card's
+published result (`swarm.FindCardResult`), so a child whose `gh pr create` or `gh pr review` is
+its whole end earns `NATIVE OK`, and a reader's review alone reaches the sprint as its verdict:
 
 ```
 head: <the commit, full sha>
@@ -85,7 +98,10 @@ A work card's finish is judged in one place, `member.Judge`, cited from the mode
 The head the member pushes is the result's `head`, else the last head the git shim recorded in
 `<job>/.sprint/pushed.tsv`. The member pushes from its own bare repository, fetching every
 branch and the `HEAD` of the staged checkout, so a commit on any branch the child made, in the
-checkout or in a clone the shim linked to it, is found. Whether the child committed is counted
+checkout or in a clone the shim linked to it, is found. The head must be on one of those
+fetched refs (the push repository keeps every launch's objects, so a commit being there is no
+evidence it is this launch's) and must descend from the staged commit, else the push is
+refused. Whether the child committed is counted
 there, `rev-list <head> ^<staged>`, from the commit native recorded in `<slot>/staged` when it
 staged the checkout: never from the checkout's own refs, which a stale bench mirror leaves
 behind and the child can edit (`git remote remove`).
@@ -111,7 +127,7 @@ A profile is keyed by model family, derived from the model id the member runs th
 | profile | git | gh | JOB.md asks for |
 |---|---|---|---|
 | `plain` | `push` recorded and answered as a push; everything else passes through | refused, one line | commit on the branch, write RESULT.md in the shape |
-| `claude` | `push` recorded and answered as a push; `clone` of the card's repository (https, ssh, scp form, `.git` or not) becomes a link to the staged checkout, any other clone is refused; `checkout -b`, `switch -c`, `branch`, `fetch` and `pull` pass through | `pr create` writes the result and finishes; `pr review --approve` / `--request-changes` writes a read's verdict; `pr diff`, `pr view` and `pr checks` answer from the staged checkout against the base; everything else is refused, one line, with the reason: the wall holds no forge credential and no network | work as on any pull request: branch, commit, push, `gh pr create`, and nothing else to write; a read reviews with `gh pr review` |
+| `claude` | `push` recorded and answered as a push (a delete, prune, mirror, `--all`, `--tags` or push option is refused, one line, and recorded as nothing; an option's value is never read as an operand); `clone` of the card's repository (https, ssh, scp form, the scheme's default port, `.git` or not) becomes a link to the staged checkout, any other clone is refused; `checkout -b`, `switch -c`, `branch`, `fetch` and `pull` pass through | `pr create` writes a work card's result and finishes; `pr review --approve` / `--request-changes` writes a read's verdict (each refused on the other kind); `pr diff`, `pr view` and `pr checks` answer from the staged checkout against the base; everything else is refused, one line, with the reason: the wall holds no forge credential and no network | work as on any pull request: branch, commit, push, `gh pr create`, and nothing else to write; a read reviews with `gh pr review` |
 | `openai` | `-C`, linked worktree, branch and commit use real Git; `push` and `push origin [HEAD\|branch]` record a source commit, with optional `-u`; deletion, force and other push options are refused | `pr create --title ... --body-file ...` records a work finish from the current checkout or linked worktree; `pr review --approve\|--request-changes --body-file ...` records a read verdict; `pr diff [--name-only]`, `pr view` and `pr checks` read the staged checkout; target-changing, draft and unknown forms are refused | use the staged checkout or its linked worktree, commit and record a push, then create a pull request from the commit-owning directory; a read records a review with a body file |
 
 ### Writing a profile
@@ -148,6 +164,6 @@ The card template (`nova-swarm template --name card`) ends with STEP 6, "End as 
 under a profile whose JOB.md ends the card with its pull request, there is nothing else to write;
 under one that asks for RESULT.md, the shape above.
 
-The end-to-end test runs once more for the claude child with the wall on
-(`TestTheScriptedChildEndToEndInsideTheWall`) on a machine whose PATH holds the wall binary; the
-functional image holds none, so there it says so and skips.
+`TestTheScriptedChildEndToEndInsideTheWall` runs the claude and openai children again on
+Darwin or Linux with the wall binary built by TestMain. It skips when that binary reports
+no supported backend; otherwise it asserts the named real backend and the child's job cwd.

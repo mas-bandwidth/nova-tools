@@ -40,16 +40,16 @@ This is the standard every tool and module in this repository is built to, and t
 
 These hold for every worker, AI or person. A card is the whole brief one worker is handed (section 2), and the coordinator is the one that hands cards out. The rule set is a file the coordinator names (this repository's is `fleet/child-rules.txt`, which these bullets state); the card lint refuses a card missing any rule in it, and with no file it holds the built-in set of six general rules:
 
-- Work only in the new worktree the card names; touch only your own branch; a worktree goes with `git worktree remove`.
+- Work only in the staged checkout `JOB.md` names, and do not clone; commit on the checkout's own branch, as usual, and touch no other branch (docs/SPEC-CARD-CONTRACT.md).
 - Export a private `GOCACHE` (the path the card names) and `GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1` before any go command. Never `go clean`, and never clean a shared cache.
 - Never start a redis-server on this machine, and never kill a process you did not start. Functional tests (any test that needs Redis) run only inside the container through `tools/functionalrun` (`--fresh-gocache --deadline 15m`), never against any other store.
-- Every `go test` gets `-timeout 600s`. Every new test opens with `t.Parallel()`. Run `go test -count=1 -timeout 600s ./internal/ci/` before each push.
+- Every `go test` gets `-timeout 600s`. Every new test opens with `t.Parallel()`. Run `go test -count=1 -timeout 600s ./internal/ci/` before you finish.
 - No `rm -rf` outside the job directory.
-- Never force-push, never rebase, do not use git stash (the stash list is shared by every worktree), never merge: open pull requests against the base the card names.
+- Never force-push, never rebase, do not use git stash (the stash list is shared by every worktree), never merge: finish as `JOB.md` says, with `gh pr create` against the base the card names.
 - Touch only the files the card names, and keep the diff minimal: every added line traceable to one sentence of the card. A fix that needs another file goes into the report as a proposed diff, not a commit.
 - No names of people, machines or friends in code, comments or docs; docs and comments in the present tense. Cite the model or the design section from every function that implements a rule.
 - Commit messages end with `Co-Authored-By: Claude <your model> <noreply@anthropic.com>`; PR bodies end with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`, state the diff stat and what was deleted, and list the tests, each with what it pins, and every local helper added.
-- Report under 80 lines: PR number and sha, every test package line, what you could not do and why. "Not done" is a welcome report; a green claim you did not run is not.
+- The report is the pull request: its title is the one-line report, its body every test package line and what you could not do and why. "Not done" is a welcome report; a green claim you did not run is not.
 - A new verb or class rule starts from its scaffold: `nova-ci new-verb <tool> <verb>` or `nova-ci new-rule <name>` lays down the file, test, fixture and make target.
 
 ### 2. A tool is for an AI

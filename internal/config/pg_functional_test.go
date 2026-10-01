@@ -4,14 +4,14 @@ package config
 
 import (
 	"context"
-	"errors"
 	"net"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil/pg"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // One throwaway Postgres for the package, one database per test
@@ -39,13 +39,10 @@ func migrated(t *testing.T) *PG {
 	t.Helper()
 	ctx := context.Background()
 	st, err := OpenPG(ctx, server.Database(t))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	t.Cleanup(func() { _ = st.Close() })
-	if _, _, _, err := st.Migrate(ctx); err != nil {
-		t.Fatal(err)
-	}
+	_, _, _, setupErr952 := st.Migrate(ctx)
+	require.NoError(t, setupErr952)
 	return st
 }
 
@@ -54,45 +51,57 @@ func TestMigrateOnAnEmptyDatabaseTwice(t *testing.T) {
 
 	ctx := context.Background()
 	st, err := OpenPG(ctx, server.Database(t))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	defer st.Close()
-	if v, err := st.Version(ctx); err != nil || v != 0 {
-		t.Fatalf("version before migrate: %d %v", v, err)
+	{
+		v, err := st.Version(ctx)
+		assertionMsg62 := []any{"version before migrate: %d %v", v, err}
+		require.NoError(t, err, assertionMsg62...)
+		require.Equal(t, 0, v, assertionMsg62...)
 	}
 	all, err := Migrations()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	from, to, applied, err := st.Migrate(ctx)
-	if err != nil || from != 0 || to != len(all) || len(applied) != len(all) {
-		t.Fatalf("first migrate: from %d to %d applied %v err %v", from, to, applied, err)
-	}
+	assertionMsg67 := []any{"first migrate: from %d to %d applied %v err %v", from, to, applied, err}
+	require.NoError(t, err, assertionMsg67...)
+	require.Equal(t, 0, from, assertionMsg67...)
+	require.Equal(t, len(all), to, assertionMsg67...)
+	require.Len(t, applied, len(all), assertionMsg67...)
 	from, to, applied, err = st.Migrate(ctx)
-	if err != nil || from != len(all) || to != len(all) || len(applied) != 0 {
-		t.Fatalf("second migrate: from %d to %d applied %v err %v (idempotent: nothing applied twice)", from, to, applied, err)
-	}
-	if v, err := st.Version(ctx); err != nil || v != len(all) {
-		t.Fatalf("version after: %d %v", v, err)
+	assertionMsg69 := []any{"second migrate: from %d to %d applied %v err %v (idempotent: nothing applied twice)", from, to, applied, err}
+	require.NoError(t, err, assertionMsg69...)
+	require.Equal(t, len(all), from, assertionMsg69...)
+	require.Equal(t, len(all), to, assertionMsg69...)
+	require.Empty(t, applied, assertionMsg69...)
+	{
+		v, err := st.Version(ctx)
+		assertionMsg72 := []any{"version after: %d %v", v, err}
+		require.NoError(t, err, assertionMsg72...)
+		require.Equal(t, len(all), v, assertionMsg72...)
 	}
 	counts, err := st.Counts(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	for _, k := range Kinds {
 		if k.Singleton {
-			if _, found, err := st.Get(ctx, k.Name, k.Name); err != nil || !found {
-				t.Errorf("fresh schema lacks the %s row migrate creates: %v %v", k.Name, found, err)
+			{
+				_, found, err := st.Get(ctx, k.Name, k.Name)
+				assertionMsg92 := []any{"fresh schema lacks the %s row migrate creates: %v %v", k.Name, found, err}
+				func() {
+					if !assert.NoError(t, err, assertionMsg92...) {
+						return
+					}
+					assert.True(t, found, assertionMsg92...)
+				}()
 			}
 			continue
 		}
-		if counts[k.Name] != 0 {
-			t.Errorf("fresh schema counts %d %s rows", counts[k.Name], k.Name)
-		}
+		assert.Equal(t, 0, counts[k.Name], "fresh schema counts %d %s rows", counts[k.Name], k.Name)
 	}
-	if rev, err := st.Rev(ctx, KindFriend); err != nil || rev != 0 {
-		t.Fatalf("rev of an empty history: %d %v", rev, err)
+	{
+		rev, err := st.Rev(ctx, KindFriend)
+		assertionMsg88 := []any{"rev of an empty history: %d %v", rev, err}
+		require.NoError(t, err, assertionMsg88...)
+		require.Equal(t, int64(0), rev, assertionMsg88...)
 	}
 }
 
@@ -107,12 +116,9 @@ func TestOpenPGRefusesAClosedPort(t *testing.T) {
 	t.Parallel()
 
 	_, err := OpenPG(context.Background(), "postgres://postgres@127.0.0.1:1/nova?sslmode=disable&connect_timeout=2")
-	if err == nil {
-		t.Fatal("a closed port opened")
-	}
-	if got := err.Error(); !strings.Contains(got, "postgres at postgres@127.0.0.1:1/nova") {
-		t.Fatalf("refusal %q does not name the store", got)
-	}
+	require.Error(t, err, "a closed port opened")
+	scopedGot120 := err.Error()
+	require.Contains(t, scopedGot120, "postgres at postgres@127.0.0.1:1/nova", "refusal %q does not name the store", scopedGot120)
 }
 
 // Without a deadline of its own the connection check is bounded by the
@@ -127,9 +133,7 @@ func TestOpenPGBoundsByTheFallbackOnlyWithoutADeadline(t *testing.T) {
 	// gets one value per connection.
 	stall := func() (dsn string, accepted chan struct{}) {
 		l, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		t.Cleanup(func() { _ = l.Close() })
 		accepted = make(chan struct{}, 8)
 		go func() {
@@ -149,9 +153,8 @@ func TestOpenPGBoundsByTheFallbackOnlyWithoutADeadline(t *testing.T) {
 	dsn, _ := stall()
 	ctx := context.Background()
 	_, err := openPGWithin(ctx, dsn, 100*time.Millisecond)
-	if !errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
-		t.Fatalf("no deadline: err %v, ctx %v; want the fallback's deadline error on an open context", err, ctx.Err())
-	}
+	require.ErrorIs(t, err, context.DeadlineExceeded, "the fallback deadline should govern an open context")
+	require.NoError(t, ctx.Err(), "the caller's context should remain open")
 
 	// A deadline (a distant one, so nothing here waits on it): it governs, so
 	// a 1ns fallback is not applied and the call is still waiting when the
@@ -165,7 +168,6 @@ func TestOpenPGBoundsByTheFallbackOnlyWithoutADeadline(t *testing.T) {
 		cancel()
 	}()
 	_, err = openPGWithin(dctx, dsn, time.Nanosecond)
-	if err == nil || dctx.Err() == nil {
-		t.Fatalf("a deadline: err %v, ctx %v; want the caller's context to have governed", err, dctx.Err())
-	}
+	require.Error(t, err, "the caller's deadline should govern")
+	require.Error(t, dctx.Err(), "the caller's context should be done")
 }

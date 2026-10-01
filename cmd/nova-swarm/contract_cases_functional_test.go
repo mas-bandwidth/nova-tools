@@ -28,6 +28,7 @@ import (
 type caseEnv struct {
 	dir, origin, repoURL, logs, gh string
 	env                            []string
+	briefOverride                  string // the brief, when a case writes its own
 }
 
 // newCaseEnv makes a bare origin at one commit. remote names it by an https
@@ -61,6 +62,9 @@ func newCaseEnv(t *testing.T, remote bool) *caseEnv {
 }
 
 func (e *caseEnv) brief() string {
+	if e.briefOverride != "" {
+		return e.briefOverride
+	}
 	first, rest, _ := strings.Cut(memberCard, "\n")
 	return first + "\nbase-repo: " + e.repoURL + "\nBASE: main\n" + rest
 }
@@ -287,7 +291,8 @@ func TestAReworkIsOkOnlyWithACommitOfItsOwn(t *testing.T) {
 			h := e.script(t, `echo "STAGED $(git -C repo rev-parse HEAD) on $(git -C repo branch --show-current)" >&2; `+tc.body+`gh pr create --title T2 --body B2 >&2`)
 			p := member.Packet{Card: "a-1.w2", Kind: "work", As: "m1", Primary: "a-1", Stream: "a", Attempt: 2, Gen: 2, Epoch: 1,
 				Brief: e.brief(), Branch: "sprint/a-1.w2", Base: "sprint/a-1.w1", BaseHead: h1, Fix: "fix the thing"}
-			_, push, fin, why := e.directRun(t, p, h, "anthropic/claude-x")
+			r, push, fin, why := e.directRun(t, p, h, "anthropic/claude-x")
+			assert.True(t, r.Ran, "the shim's finish alone is a published result: native says OK")
 			assert.Contains(t, e.log(), "STAGED "+h1+" on sprint/a-1.w2")
 			assert.Equal(t, tc.fin, fin, "push %+v: %s", push, why)
 		})
@@ -370,5 +375,91 @@ gh pr create --title T --body B >&2`)
 	}
 	for _, kept := range []string{"PROBE_API_KEY", "LANG", "PATH", "HOME"} {
 		assert.Contains(t, names, " "+kept+" ")
+	}
+}
+
+// A claude reader's review is its read: with no RESULT.md of its own, its gh pr
+// review alone reaches the sprint as ok or broken (native counts the shim's
+// finish as the published result; red when it did not, and the read was left
+// with no verdict).
+func TestAClaudeReadersReviewAloneIsItsVerdict(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ name, review, col string }{
+		{"approve", `gh pr review --approve --body "the gate is green"`, "ok"},
+		{"request changes", `gh pr review --request-changes --body "f:2 the line is wrong"`, "broken"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newCaseEnv(t, false)
+			bin := builtSprint(t)
+			d := &memberDrive{t: t, addr: "mem:" + filepath.Join(e.dir, "sprint.twin"), bin: bin}
+			d.must("init", "--members", "m1:1", "--readers", "reader-a,reader-b") // a read asks two readers; reader-a's is the one run here
+			d.must("add", "--stream", "a", "--count", "1", "--brief", e.brief())
+			d.must("start")
+			e.member(t)
+			work := e.script(t, `set -e
+cd repo
+echo change >> f
+git commit -q -am "the change"
+git push
+gh pr create --title T --body B >&2`)
+			rn := e.runner(bin, work, "fake/claude-x")
+			wm := member.New(member.Config{As: "m1", Width: 1}, &execSprint{bin: bin, actor: "m1", env: []string{"NOVA_SPRINT_REDIS=" + d.addr}}, rn, e.pusher(rn, bin), &lockedBuf{})
+
+			readerRoot := filepath.Join(e.dir, "reader-a")
+			require.NoError(t, os.MkdirAll(filepath.Join(readerRoot, "slots"), 0o755))
+			write(t, filepath.Join(readerRoot, "identity.tsv"), "owner\tname\temail\ntest-owner\tPool Reader\treader@example.com\n")
+			readHarness := filepath.Join(e.dir, "reader.sh")
+			require.NoError(t, testbin.WriteExecutable(readHarness, []byte("#!/bin/sh\ngh pr diff | grep -q '^+change' || exit 1\n"+tc.review+"\n"), 0o755))
+			rr := &nativeRunner{self: builtTool, sprintBin: bin, harness: readHarness, model: "fake/claude-reader", root: readerRoot,
+				slots: filepath.Join(readerRoot, "slots"), resultsRoot: filepath.Join(readerRoot, "results"), deadline: time.Minute,
+				tokens: "unmetered", noWall: true, stderr: io.Discard, env: e.env}
+			rout := &lockedBuf{}
+			reader := member.New(member.Config{As: "reader-a", Width: 1, Reader: true}, &execSprint{bin: bin, actor: "reader-a", env: []string{"NOVA_SPRINT_REDIS=" + d.addr}}, rr, nil, rout)
+
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+			defer cancel()
+			for cellInt(d.where(), "readers", "reader-a", tc.col) == 0 {
+				require.NoError(t, ctx.Err(), "the read did not reach %s:\n%s\nreader:\n%s", tc.col, d.must("card", "a-1"), rout.String())
+				require.NotContains(t, rout.String(), "no verdict", "the review alone is the verdict")
+				d.must("tick")
+				_, err := wm.Tick(time.Now())
+				require.NoError(t, err)
+				_, err = reader.Tick(time.Now())
+				require.NoError(t, err)
+				time.Sleep(100 * time.Millisecond)
+			}
+			assert.Contains(t, rout.String(), "read a-1.r1.reader-a ok=")
+		})
+	}
+}
+
+// A recipe the brief's Stage: header names is in the job when the child starts,
+// and a recipe the member does not have refuses the launch, which the finish
+// reports failed (docs/SPEC-CARD-CONTRACT.md, staged recipes).
+func TestAStagedRecipeIsInTheJob(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name   string
+		have   bool
+		failed bool
+	}{{"present", true, false}, {"missing", false, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			e := newCaseEnv(t, false)
+			if tc.have {
+				write(t, filepath.Join(e.dir, "m1", "recipes", "pr", "4926.md"), "the rewriter recipe\n")
+			}
+			first, rest, _ := strings.Cut(e.brief(), "\n")
+			e.briefOverride = first + "\nStage: pr/4926.md\n" + rest
+			story, _ := e.sprintRun(t, e.script(t, `set -e
+cp recipes/pr/4926.md repo/recipe.md
+cd repo
+git add recipe.md
+git commit -q -m "from the recipe"
+git push
+gh pr create --title T --body B >&2`), "fake/claude-x")
+			assert.Equal(t, tc.failed, strings.Contains(story, "FAILED"), story)
+		})
 	}
 }
