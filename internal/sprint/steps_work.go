@@ -293,8 +293,8 @@ func Add(s *Snapshot, r AddReq) Plan {
 		roots = append(roots, a.id)
 	}
 	var changed []string
-	for id, m := range mods {
-		edges[id] = m.needs
+	for id := range mods {
+		edges[id] = Split(s.Work.Card(id).F("needs"))
 		changed = append(changed, id)
 	}
 	sort.Strings(changed)

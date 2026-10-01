@@ -613,19 +613,6 @@ func (s State) LiveReadsOf(p string) []string {
 	return out
 }
 
-// Unfinished is p's work cards on a member's ready or working cell
-// (SprintTables.tla Unfinished restricted to p).
-func (s State) UnfinishedOf(p string) []string {
-	var out []string
-	for id, w := range s.Work {
-		if w.Primary == p && (w.Place == FReady || w.Place == FWorking) {
-			out = append(out, id)
-		}
-	}
-	sort.Strings(out)
-	return out
-}
-
 // OkReaders is SprintTables.tla OkReaders(p): the readers with an ok read
 // card at p's head.
 func (s State) OkReaders(p string) []string {
