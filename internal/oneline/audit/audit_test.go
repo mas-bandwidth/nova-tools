@@ -1,8 +1,9 @@
 package audit
 
 import (
-	"reflect"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // verbsOf must model Go's explicit argument indexes: %[2]s reads the second
@@ -25,8 +26,6 @@ func TestVerbsOfModelsIndexedArguments(t *testing.T) {
 	}
 	for _, tc := range cases {
 		got, _ := verbsOf(t, tc.format)
-		if !reflect.DeepEqual(got, tc.want) {
-			t.Errorf("verbsOf(%q) = %q, want %q", tc.format, got, tc.want)
-		}
+		assert.Equal(t, tc.want, got, "verbsOf(%q)", tc.format)
 	}
 }

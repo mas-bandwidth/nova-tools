@@ -91,8 +91,10 @@ written with the moves.
 **Primary.** One unit of work, between an issue and a pull request. One stream
 for life. Fields: stream, score, brief, needs, head, attempt, fix, work (its live
 work card), asked (its readers), readers (the two whose ok it was accepted on),
-counters (failed, reworks, broken_reads, stuck, returns), and the last CI
-observation (ci, ci_head, ci_run, ci_source).
+counters (failed, reworks, broken_reads, stuck, returns), returned_attempt (its
+attempt when it was last returned to review, by any return, an orphan merge
+card's included), and the last CI observation for its current head (ci,
+ci_head) and of any head (ci_run, ci_run_status, ci_source).
 
 **Work card** (consumer). What a child with a worktree is handed: the brief and
 the place to work, and on a later attempt the fix. Identity `<primary>.w<attempt>`.
@@ -103,10 +105,18 @@ through every redeal and withdrawal), untaken_since (the first deal since its la
 no redeal or withdrawal rewrites it, so a member handed the card after
 someone else's take gets its own 15 minutes and a flapping member cannot
 reset the clock), redeals (how many times this attempt's card was dealt
-again after its member went down or away; a take never resets it; at
-MaxRedeals, 3, the card stays withdrawn, its primary ready and dealt no more,
-and the judgment "a card reached its bound" names it until a rework with a fix
-or a drop; each redeal's line in the log says "redeal n of 3"), ok (set
+again after a take of it ended without a finish, its member down or away
+while the card was working; a take never resets it; a card dealt and not
+taken whose member goes down is dealt again with its count kept, so a card is
+retired for repeated failure at members, never for members flapping while it
+sat ready; a take that ended is counted when the card is dealt again, at once
+or, withdrawn because no member had room, by the deal that places it later,
+and until then take_ended marks it; a working card whose member goes down
+with its count at MaxRedeals, 3, stays withdrawn, its primary ready and dealt
+no more, and the judgment "a card reached its bound" names it until a rework
+with a fix or a drop; so the card is dealt again after each of its first three
+ended takes and retired when a fourth ends; each counted redeal's
+line in the log says "redeal n of 3"), ok (set
 only when finished), head, report. It takes its primary's score. The primary
 names its live work card.
 
@@ -131,7 +141,7 @@ outcome and reason are kept.
 | ready -> working | deal: the machine's tick cuts and deals a work card | mechanical |
 | working -> review | its work card finished, ok or failed | mechanical; failed notifies for judgment |
 | working -> ready | its work card was withdrawn because no fleet member is up | mechanical, notifies |
-| review -> merging | accept: two different readers said ok at this head | the coordinator's verb; refused without the two |
+| review -> merging | accept: two different readers said ok at this head | mechanical (the tick), unless its CI is red at its head or it was returned to review at its attempt; the coordinator's verb takes those; refused without the two |
 | review -> working | rework with a fix: the next attempt is delegated at once | the coordinator's verb |
 | review -> ready | rework with a fix when no fleet member is up | the coordinator's verb |
 | merging -> review | the stream's CI went red and the coordinator sent it back, or return | the coordinator's verb |
@@ -272,6 +282,14 @@ id (`--op`) returns the original result, with no second counter or notification.
   one step, and `begun` is stamped with it.
 - The read that completes two different readers' ok at a primary's head writes
   the judgment ready to accept; accept, rework and drop close it.
+- The machine's tick accepts every acceptable primary in review whose work did
+  not fail, except one whose CI is red at its head ("ci red on a primary" is
+  the coordinator's: a green at its head, or the coordinator's accept, takes
+  it) and one the coordinator returned to review at its attempt ("returned to
+  review" decides it: accept, rework, drop; its reads stand, and a rework's new
+  attempt with its own two reads is the tick's to accept again). An
+  acceptable primary the tick does not accept is told as ready to accept when
+  no open judgment on it offers accept.
 - A primary is acceptable when two different readers have an ok read card at
   its current attempt and head. One reader's ok alone is never enough, whoever
   the reader. A reader counts once, and a read card counts only when the row it
@@ -391,7 +409,7 @@ the tick would make, no other open judgment on it).
 | a reminder could not be delivered | goal set (a new route), goal drop, ack | yes |
 | cannot ask | reader add, rework, drop, wait | no |
 | no fleet member is up | fleet beat (on a machine), fleet up (releases a hold), wait | no |
-| a card reached its bound (an attempt's work card redealt MaxRedeals, 3, times) | rework with a fix (a new attempt), drop, wait | no |
+| a card reached its bound (an attempt's work card redealt MaxRedeals, 3, times after takes that ended, and a take of it ended again) | rework with a fix (a new attempt), drop, wait | no |
 | a work card is past its deadline | fleet down (the member, only when it has held the card its own whole deadline: never the member a late card was just redealt to, nor one it was withdrawn from), wait, drop | no |
 | a read card is past its deadline | ask --another, wait, drop | no |
 | a stream has had no merge step past its deadline | merge --stream, card (look), wait | no |
@@ -449,9 +467,11 @@ judgment does not write it again.
 
 A CI result, red or green, recorded for a primary in any state is always a
 notification (red: judgment; green: happened). `ci` records the observation
-(primary, head, run, status, source) and moves no card; a result for a head that
-is not the primary's current one is labelled as such; a retried report of the
-same run is recorded once. Stream-batch CI in merging is the merge step's fact.
+(primary, head, run, status, source) and moves no card; ci and ci_head hold the
+last result for the primary's current head, which the tick's accept reads; a
+result for a head that is not the primary's current one is labelled as such
+and leaves ci and ci_head as they are; a retried report of the same run
+(ci_run and ci_run_status, whatever its head) is recorded once. Stream-batch CI in merging is the merge step's fact.
 
 Each carries: id, kind, type, stream, the primaries (a set, bounded, with the
 count), what happened, who reported it, attempt, how many times before, the
@@ -881,9 +901,12 @@ else. Otherwise it runs its parts in order, each one operation of the
 engine on a fresh read, sharing the fence with every verb: resolve (T1:
 every stream's waiting cards in score order; a card whose needs have all landed moves to ready; a sentinel is never
 moved, and is marked reached when all it needs has landed), resume (T7: a
-stream stopped only on a cross need whose card has landed), deal (T3), level
-(T4), ask (T2: two different readers for each primary in review with no read
-card at its attempt and work not failed), check (T6: section 9, and the
+stream stopped only on a cross need whose card has landed), deal (T3), accept
+(R9: every acceptable primary in review the tick does not hold, section 6,
+moves to merging and into its stream's merge queue, and the coordinator is
+told once for each stream "ready to merge"; the merge is the coordinator's),
+level (T4), ask (T2: two different readers for each primary in review with no
+read card at its attempt and work not failed), check (T6: section 9, and the
 no-stall rule 12), deadlines, overdue, done (the sprint done: the machine
 stops). Each part is
 bounded per tick (200 moves, 50 notes): the rest are due, the next ticks
