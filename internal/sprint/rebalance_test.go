@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -166,5 +167,44 @@ func TestTheReadersRebalanceTakesTheReadsOfAReaderAway(t *testing.T) {
 		if rc := w.s.Readers.Card(ReadCardID(p, 1, "r1")); rc != nil {
 			assert.False(t, rc.Placed(), "%s's read on r1 is retired", p)
 		}
+	}
+}
+
+// A read returned by its reader and then moved by the rebalance is a fresh ask
+// on the reader it goes to: not returned, reasked 0, no run of the reader it
+// left (no read_take_<n>, no usage); the card it leaves is retired with what it
+// had.
+func TestAReturnedReadMovedByTheRebalanceIsAFreshAsk(t *testing.T) {
+	t.Parallel()
+	w := readsWorld(t, 24)
+	from := ReadCardID("p24", 1, "r1") // r1's newest: the first the rebalance moves
+	w.must(Read(w.s, ReadReq{As: "r1", Begin: true, Sel: Sel{IDs: []string{from}}}))
+	w.must(Read(w.s, ReadReq{As: "r1", Return: true, Reason: "no verdict", Usage: "input=10", Sel: Sel{IDs: []string{from}}}))
+	left := w.s.Readers.Card(from)
+	require.True(t, left.Placed(), "a return puts the read back in asked on its reader")
+	require.Equal(t, 1, left.Int(FieldReasked))
+	w.part(TickLevelReads, TickReq{})
+	left = w.s.Readers.Card(from)
+	require.False(t, left.Placed(), "the rebalance moved it")
+	assert.Equal(t, RetiredByLevel, left.F("retired_by"))
+	assert.Equal(t, 1, left.Int(FieldReasked), "the card it left keeps what it had")
+	hadTake := false
+	for k := range left.Fields {
+		hadTake = hadTake || strings.HasPrefix(k, FieldReadTake)
+	}
+	assert.True(t, hadTake, "the returned run's record stays on the card it left")
+	var moved *Card
+	for _, c := range w.s.Readers.Of("p24") {
+		if c.Placed() && c.Row != "r1" && c.Row != "r2" {
+			moved = c
+		}
+	}
+	require.NotNil(t, moved, "p24's read is on another reader")
+	assert.Equal(t, Asked, moved.Col)
+	assert.Equal(t, 0, moved.Int(FieldReasked), "a fresh ask: the new reader's bound starts at zero")
+	assert.Empty(t, moved.F(FieldReturned))
+	assert.Empty(t, moved.F(FieldUsage))
+	for k := range moved.Fields {
+		assert.False(t, strings.HasPrefix(k, FieldReadTake), "no run of the reader it left: %s", k)
 	}
 }

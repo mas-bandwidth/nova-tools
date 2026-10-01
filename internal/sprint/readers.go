@@ -251,8 +251,7 @@ func levelReads(s *Snapshot, p *Plan) {
 		held[to]++
 		queues[long] = append(q[:i:i], q[i+1:]...)
 		moves[c.ID] = to
-		fields := maps.Clone(c.Fields)
-		fields["reader"], fields["asked"] = to, stamp(s.Now)
+		fields := movedReadFields(c, to, s.Now)
 		id := ReadCardID(c.F("primary"), c.Int("attempt"), to)
 		p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{
 			change(Readers, removeEntry(c, map[string]string{"retired": stamp(s.Now), "retired_by": RetiredByLevel})),
@@ -260,4 +259,24 @@ func levelReads(s *Snapshot, p *Plan) {
 		}, Moved: fmt.Sprintf("%s %s:asked -> %s:asked (%s)", c.ID, long, to, id)})
 	}
 	roundWrites(p, rr, moves)
+}
+
+// movedReadFields is the fields of the card a read moved by the level is asked
+// on: the read's own (its primary, stream, attempt, head and route) for the
+// reader it goes to, asked now, and none of its run on the reader it left: not
+// returned, not reasked (the new reader's bound starts at zero), no
+// read_take_<n> and no usage. The card it leaves is retired with every field it
+// had, and a returned run's cost is the primary's (cost_record:<card>#r<n>,
+// cost.go): the move loses none of it.
+func movedReadFields(c *Card, to string, now time.Time) map[string]string {
+	fields := map[string]string{}
+	for k, v := range c.Fields {
+		switch {
+		case k == FieldReturned, k == FieldReasked, k == FieldUsage, strings.HasPrefix(k, FieldReadTake):
+			continue
+		}
+		fields[k] = v
+	}
+	fields["reader"], fields["asked"] = to, stamp(now)
+	return fields
 }
