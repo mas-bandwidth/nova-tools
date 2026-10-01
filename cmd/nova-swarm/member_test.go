@@ -563,3 +563,13 @@ func TestTheChildEnvironmentIsAnAllowlist(t *testing.T) {
 	require.Equal(t, []string{"OPENCODE_API_KEY=o", "PATH=/bin", "HOME=/h", "TMPDIR=/t", "LANG=C.UTF-8", "LC_ALL=C",
 		"GOFLAGS=-mod=readonly", "XDG_DATA_HOME=/x", "NOVA_SWARM_JOB=/j"}, got)
 }
+
+// A member whose children would start with no provider key says so once at its
+// start, unless the model is local or a key is handed some other way.
+func TestAMemberWithNoPassSaysSo(t *testing.T) {
+	t.Parallel()
+	assert.Contains(t, passNote("anthropic/claude-x", nil, ""), "NOTE member --pass names no secret")
+	assert.Empty(t, passNote("anthropic/claude-x", []string{"ANTHROPIC_API_KEY"}, ""))
+	assert.Empty(t, passNote("anthropic/claude-x", nil, "/auth.json"))
+	assert.Empty(t, passNote("ollama/qwen3", nil, ""))
+}

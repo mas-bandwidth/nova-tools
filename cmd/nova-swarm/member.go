@@ -147,6 +147,9 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 		kind = "reader"
 	}
 	fmt.Fprintf(stdout, "MEMBER %s as=%s width=%d every=%s sprint=%s harness=%s model=%s\n", oneline.Field(kind), oneline.Field(*as), *width, oneline.Field(every.d.String()), oneline.Field(*sprintBin), oneline.Field(*harness), oneline.Field(*model))
+	if note := passNote(*model, pass, *auth); note != "" {
+		fmt.Fprintln(stdout, note)
+	}
 	n := 0
 	for {
 		n++
@@ -440,9 +443,15 @@ func newestResult(dir string) string {
 	return best
 }
 
-// readResult reads a RESULT.md: the head from a `rev: <sha>` line, a read's
-// verdict from a `verdict: ok|broken` line, the report from the "## One line"
-// section (else the first prose line with no colon).
+// readResult reads a RESULT.md in the shape before the card contract: the head
+// from a `rev: <sha>` line, a read's verdict from a `verdict: ok|broken` line,
+// the report from the "## One line" section (else the first prose line with no
+// colon). It stays because briefs still say that shape: a read brief tells its
+// reader "`## Head` with `verdict: ok` or `verdict: broken`, `## One line`", and
+// a card whose brief names no repository is never framed, so its child writes
+// what its brief says. A work card's finish never rests on it (member.Judge
+// wants the contract's shape); a read's verdict and report do, until the briefs
+// that say the old shape are gone.
 func readResult(path string) (head, verdict, report string) {
 	if path == "" {
 		return "", "", ""
@@ -535,4 +544,20 @@ func childEnviron(env, pass []string) []string {
 		}
 	}
 	return out
+}
+
+// localProviders are the providers a harness reaches with no key: a model on
+// this machine.
+var localProviders = map[string]bool{"ollama": true, "lmstudio": true, "llamacpp": true, "local": true}
+
+// passNote is the one NOTE line a member prints at its start when no secret is
+// handed to its children (--pass empty, no worker secret, no --auth file) and
+// its model is not a local one: the children start with no provider key and
+// fail at the provider (docs/SPEC-CARD-CONTRACT.md, the child's environment).
+func passNote(model string, pass []string, auth string) string {
+	provider, _, _ := strings.Cut(model, "/")
+	if len(pass) > 0 || auth != "" || localProviders[strings.ToLower(provider)] {
+		return ""
+	}
+	return "NOTE member --pass names no secret: a child's harness that reads its provider key from the environment starts without it and fails at the provider; run: nova-swarm member ... --pass <KEY> (the loop record's nova-secrets keys)"
 }

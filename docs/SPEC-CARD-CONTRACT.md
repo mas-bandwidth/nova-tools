@@ -97,7 +97,7 @@ data home), `TMPDIR`, `LANG`, `LC_*`, `TERM`, `USER`, `LOGNAME`, the `GO*`, `NOV
 and the secrets `--pass` names (the loop record's nova-secrets keys) with the worker
 description's secret; everything else is dropped. A name matching
 `TOKEN|SECRET|PASSWORD|PASSWD|KEY|CREDENTIAL|AUTH` is dropped unless `--pass` names it, even in
-an allowed family. The member keeps the forge credentials for its own push and pull request. When the result carries a `title`, the member opens the pull
+an allowed family. The member keeps the forge credentials for its own push and pull request. A loop record whose harness reads its provider key from the environment carries `--pass <KEY>`; without it the children start with no provider key and fail at the provider, and a member started with no `--pass`, no worker secret and no `--auth` file for a model that is not a local one (`ollama`, `lmstudio`, `llamacpp`, `local`) says so in one `NOTE` line. When the result carries a `title`, the member opens the pull
 request after the push, as itself, from the card's branch into the base ref, with the title and
 the body, and the finish's report carries its address.
 
