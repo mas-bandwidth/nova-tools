@@ -1,8 +1,9 @@
 package typedrec_test
 
 import (
-	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
 func TestParseTableCheck(t *testing.T) {

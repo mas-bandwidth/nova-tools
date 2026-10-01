@@ -41,6 +41,7 @@ func killPid(pid int) {
 		return
 	}
 	if p, err := os.FindProcess(pid); err == nil {
+		// ignored: a kill of a process that may already have exited; the caller reads liveness afterwards
 		_ = p.Kill()
 	}
 }

@@ -9,6 +9,7 @@
 package main
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
@@ -24,9 +25,11 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 	"github.com/mas-bandwidth/nova-tools/internal/sandbox"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // worktreeRemedy is the one remedy line a bad flag carries.
@@ -48,17 +51,11 @@ var worktreeGit gitRunner = runGit
 
 // runGit is the production seam: a real git, its stderr folded into the error.
 func runGit(dir string, args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
-	if dir != "" {
-		cmd.Dir = dir
+	res, err := gitrun.Run(context.Background(), gitrun.Options{Dir: dir}, args...)
+	if err != nil {
+		return string(res.Stdout), fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(res.Stderr)))
 	}
-	var out, errb strings.Builder
-	cmd.Stdout = &out
-	cmd.Stderr = &errb
-	if err := cmd.Run(); err != nil {
-		return out.String(), fmt.Errorf("git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(errb.String()))
-	}
-	return out.String(), nil
+	return string(res.Stdout), nil
 }
 
 // worktreePR is what the forge seam answers for one pull request.
@@ -229,6 +226,7 @@ func worktreeOne(f worktreeFlags, stdout, stderr io.Writer, env []string) int {
 				return 0
 			}
 		}
+		// ignored: a removal that failed shows as the add below failing on the same path, which is refused
 		_ = removeWorktree(f.repo, f.scratch, path)
 	}
 	if guid == "" {
@@ -291,15 +289,30 @@ func treeClean(path string) bool {
 }
 
 func addWorktree(repo, path, head string) error {
-	_, _ = worktreeGit(repo, "fetch", "origin", head)
+	if err := fetchHead(worktreeGit, repo, head); err != nil {
+		return err
+	}
 	_, err := worktreeGit(repo, "worktree", "add", "--detach", path, head)
 	return err
+}
+
+// fetchHead is the best-effort fetch before a worktree is added (the head may already be
+// here), except that a fetch that hit its deadline is reported: the add would otherwise
+// fail with only an "invalid reference" and no word that the network was the cause.
+func fetchHead(run gitRunner, repo, head string) error {
+	_, err := run(repo, "fetch", "origin", head)
+	var timedOut *subproc.TimeoutError
+	if errors.As(err, &timedOut) {
+		return fmt.Errorf("fetching %s from origin: %w", head, err)
+	}
+	return nil
 }
 
 // removeWorktree takes the registration and the directory out, in that order,
 // and the directory only through safepath so a computed path can never reach
 // outside the scratch root the caller named.
 func removeWorktree(repo, scratch, path string) error {
+	// ignored: a stale git record is pruned by the next worktree prune; the directory removal below is the one returned
 	_, _ = worktreeGit(repo, "worktree", "remove", "--force", path)
 	return safepath.RemoveUnder(scratch, path)
 }
@@ -492,8 +505,9 @@ func (g ghForge) PR(id int) (worktreePR, error) {
 	if ownerRepo == "" {
 		return worktreePR{}, badOrigin(strings.TrimSpace(url))
 	}
-	cmd := exec.Command("gh", "pr", "view", strconv.Itoa(id), "--repo", ownerRepo,
+	cmd, cancel := subproc.Command(context.Background(), subproc.GH, "gh", "pr", "view", strconv.Itoa(id), "--repo", ownerRepo,
 		"--json", "headRefOid,baseRefName,state")
+	defer cancel()
 	cmd.Env = g.env
 	out, err := cmd.Output()
 	if err != nil {

@@ -20,20 +20,13 @@ import (
 // hand timing scripts. A doc or a card that spells `go test ./...` teaches the
 // next child to do it again, on a bench shared with the work it tests. The
 // door is `nova-ci local`: exactly the unit tier CI runs for the diff (the
-// packages select-packages.sh picks, `make test` at -p 2 with the budgets).
+// packages CI's selection picks, `make test` at -p 2 with the budgets).
 //
 // The rule reads, as text: every Markdown file in the tree outside testdata
 // (the docs, AGENTS.md, TESTING.md, READMEs), every card template
-// (CardTemplateDirs), every brief source the no-gh rule reads (briefSources),
-// and the Go files that write a harness card's standard lines. No allowlist:
+// (CardTemplateDirs) and every brief source the no-gh rule reads
+// (briefSources). No allowlist:
 // the offenders in the tree when it landed were rewritten.
-
-// wholeTreeCardSources are the Go files whose string constants are a card's
-// text: the harness card's standard lines and the copy cards built from them.
-var wholeTreeCardSources = []string{
-	"internal/nsprint/taskcard/complete.go",
-	"internal/nsprint/card/copy.go",
-}
 
 // wholeTreeGoTestRe is `go test`, any flags (a flag may take one value that is
 // not a path), then `./...` or one of the three trees that are most of it
@@ -43,7 +36,7 @@ var wholeTreeCardSources = []string{
 var wholeTreeGoTestRe = regexp.MustCompile(`\bgo test(?:\s+-\S+(?:\s+[^\s\-./` + "`" + `|][^\s` + "`" + `|]*)?)*\s+\./(?:(?:cmd|internal|tools)/)?\.\.\.(?:[^\w/]|$)`)
 
 // wholeTreeRemedy is the one thing to do instead.
-const wholeTreeRemedy = "run `nova-ci local` (the unit tier CI runs for this diff: select-packages.sh, make test at -p 2, the budgets) or name the packages you touched: nice -n 15 go test -p 2 -count=1 ./cmd/<tool>"
+const wholeTreeRemedy = "run `nova-ci local` (the unit tier CI runs for this diff: its package selection, make test at -p 2, the budgets) or name the packages you touched: nice -n 15 go test -p 2 -count=1 ./cmd/<tool>"
 
 // wholeTreeViolations returns "line: text" for every whole-tree go test in src.
 func wholeTreeViolations(src []byte) []string {
@@ -87,12 +80,6 @@ func wholeTreeSources(t *testing.T) []string {
 			}
 			seen[filepath.ToSlash(rel)] = true
 		}
-	}
-	for _, rel := range wholeTreeCardSources {
-		if tree.ByRel(rel) == nil {
-			t.Fatalf("card source %s is not in the tree; a file that moves must move here too", rel)
-		}
-		seen[rel] = true
 	}
 	out := make([]string, 0, len(seen))
 	for rel := range seen {

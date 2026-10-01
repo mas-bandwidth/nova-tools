@@ -6,6 +6,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // #2636, THE BASE CHECKS. Four rules the 2026-09-22 sprint's failed cards taught
@@ -264,5 +267,18 @@ func TestLintDeadlineAtKindP95(t *testing.T) {
 	}
 	if _, err := ReadKindP95(bad); err == nil {
 		t.Fatal("a row after the first whose seconds are not a number is an error, not a skipped row")
+	}
+}
+
+// TestTestDefinedAtRefusesATreeThatIsNotAFullSha holds the shape git grep is given: no
+// separator keeps a tree-ish an operand on git 2.43, so the function takes only the 40 hex
+// digits rev-parse prints, and never runs git for anything else.
+func TestTestDefinedAtRefusesATreeThatIsNotAFullSha(t *testing.T) {
+	t.Parallel()
+
+	for _, tree := range []string{"--bogus", "-e", "", "HEAD", "abc123"} {
+		_, err := testDefinedAt(t.TempDir(), tree, doneTest{runner: "go", name: "TestX"})
+		require.Error(t, err, tree)
+		assert.Contains(t, err.Error(), "not a full commit sha", tree)
 	}
 }

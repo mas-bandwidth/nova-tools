@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -326,58 +325,6 @@ func isWordRune(b byte) bool {
 	return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9'
 }
 
-// RetriableRateLimit is the question `finish` asks before it holds a slot and spends a
-// second attempt: a 429 the dispatcher should wait out, and NOT an input that did not fit.
-// The input limit is the more specific truth about a log that says both, and it is the one
-// that decides, because the retry a 429 earns is the one thing an oversized task must not
-// get.
-func RetriableRateLimit(log []byte, extra []string) bool {
-	if _, tooBig := InputLimited(log, extra); tooBig {
-		return false
-	}
-	return RateLimited(log)
-}
-
-// InputLimitEnd is the ONE place a job's end becomes `input-limit`, so that the dispatcher's
-// own `finish`, the start-up pass that recovers a dead dispatcher's job (rule 17) and the
-// supervisor all name it the same way. It returns the end and the provider's words.
-//
-// WHICH ENDS IT MAY REWRITE is the D5 question asked of the input limit (finish.go,
-// rateLimitedOutcome): a limit the harness met, backed off from and then answered past is
-// HISTORY -- the completion evidence the supervisor wrote is the outcome -- and a reap's own
-// end (the deadline, the budget ceiling, an unreadable usage source) is the supervisor's
-// verdict from inside the job and is never written over.
-// AND THE SENTENCE HAS TWO SOURCES, IN THIS ORDER: the harness log, and the supervisor's own
-// `exit.json` record (`recorded`) when the log gives nothing. The supervisor classified this
-// job from inside it and wrote the words down; a log that cannot be read at finish -- a
-// Windows replace window, a directory already reclaimed, a disk that moved -- left the class
-// standing with `sc.Limit` empty and `TRIAGE INPUT-LIMIT … : -`, which is the one line this
-// class exists to print (Fable's read of #150, finding 2).
-func InputLimitEnd(jobDir, end string, rc int, recorded string, extra []string) (string, string) {
-	if !inputLimitedOutcome(end, rc) {
-		return end, ""
-	}
-	if raw, err := readRegular(filepath.Join(jobDir, "harness.log")); err == nil {
-		// THE STRUCTURED SIGNAL IS A FIELD (#163), read before the heuristic: the harness
-		// adapter wrote `INPUT LIMIT class=… value=… limit=…`, and it names the class with no
-		// mark, bare-word bound, list marker or event-prefix rule asked to decide it. It is
-		// the field finish and rule 17's recovery pass trust when the supervisor died before
-		// it could classify and there is no exit.json to name the class.
-		if sig, ok := ReadInputLimitSignal(raw); ok {
-			return EndInputLimit, InputLimitSignalLine(sig)
-		}
-		if said, tooBig := InputLimited(raw, extra); tooBig {
-			return EndInputLimit, said
-		}
-	}
-	// The log said nothing, or could not be read. The CLASS may still stand, because the
-	// supervisor named it on the exit record; then its own sentence is the quote.
-	if end == EndInputLimit && strings.TrimSpace(recorded) != "" {
-		return EndInputLimit, oneline.Cap(strings.TrimSpace(stripPaint(recorded)), oneline.TailBytes)
-	}
-	return end, ""
-}
-
 // inputLimitedOutcome is rateLimitedOutcome's question, in its own words and for its own
 // class: what the log SAYS is this job's outcome only when the job did not finish and its
 // end is not one the supervisor reaped it with.
@@ -481,58 +428,10 @@ type InputLimitSignal struct {
 	Limit int
 }
 
-// validInputLimitClass reports whether c is one of the three classes, so a stray word on the
-// line cannot mint a class a reader was told to trust.
-func validInputLimitClass(c InputLimitClass) bool {
-	return c == LimitToken || c == LimitBytes || c == LimitFiles
-}
-
-// ReadInputLimitSignal reads the adapter's structured line from the harness log. It is the
-// field issue #163 asks a reader to trust: the class, value and limit are named, so no prose
-// rule is asked to decide them. It reports the signal and whether one was there at all.
-func ReadInputLimitSignal(log []byte) (InputLimitSignal, bool) {
-	for _, raw := range strings.Split(string(log), "\n") {
-		line := strings.TrimSpace(stripPaint(raw))
-		rest, ok := strings.CutPrefix(line, "INPUT LIMIT ")
-		if !ok {
-			continue
-		}
-		var sig InputLimitSignal
-		for _, f := range strings.Fields(rest) {
-			k, v, ok := strings.Cut(f, "=")
-			if !ok {
-				continue
-			}
-			switch k {
-			case "class":
-				sig.Class = InputLimitClass(v)
-			case "value":
-				sig.Value, _ = strconv.Atoi(v)
-			case "limit":
-				sig.Limit, _ = strconv.Atoi(v)
-			}
-		}
-		if validInputLimitClass(sig.Class) {
-			return sig, true
-		}
-	}
-	return InputLimitSignal{}, false
-}
-
 // InputLimitSignalLine is the structured line the supervisor emits from a signal it read: the
 // one line the next reader trusts, `class`, the measured `value` and the `limit` it hit.
 func InputLimitSignalLine(sig InputLimitSignal) string {
 	return fmt.Sprintf("INPUT LIMIT class=%s value=%d limit=%d", sig.Class, sig.Value, sig.Limit)
-}
-
-// inputLimitSignalFromJob reads the adapter's structured line from the harness log, if there
-// is a log to read.
-func inputLimitSignalFromJob(jobDir string) (InputLimitSignal, bool) {
-	raw, err := readRegular(filepath.Join(jobDir, "harness.log"))
-	if err != nil {
-		return InputLimitSignal{}, false
-	}
-	return ReadInputLimitSignal(raw)
 }
 
 // stripPaint removes the ANSI escape sequences a harness writes to a terminal, so the
@@ -559,4 +458,34 @@ func stripPaint(s string) string {
 		i = j
 	}
 	return b.String()
+}
+
+// rateLimitedOutcome is whether a 429 in the harness log is this job's OUTCOME or its
+// HISTORY. A harness that was rate-limited mid-run, backed off, retried itself and then
+// answered leaves "429" in its log AND a zero exit status beside a finished RESULT.md; the
+// completion evidence the supervisor wrote is the outcome. `finish` rewrote the job from
+// the log alone, and a done job with exit.json rc=0 was filed in failed/ with rc=429
+// (dogfood D5, 2026-09-11) -- and then re-queued, spending the tokens a second time.
+// A REAP'S OWN END IS THE SUPERVISOR'S VERDICT, and a 429 beside it is history too. The
+// deadline, the budget ceiling and three unreadable usage samples are ends the supervisor
+// wrote from INSIDE the job; rewriting one of them to `rc=429 end=failed` took it off
+// `violationWord`'s exemption list, so a budget kill whose reap left a process behind was
+// quarantined with `violation=background` and `Jobs()` dropped it -- the loss c070fbe
+// closed, arriving by the other road (delta read 2, finding 1). Rule 13, verbatim
+// (SPEC-SWARM.md:232-233): "a job that ends this way keeps the findings it appended so far".
+func rateLimitedOutcome(inLog bool, end string, rc int) bool {
+	return inLog && !(end == EndDone && rc == 0) && !reapEnd(end)
+}
+
+// reapEnd is the ONE list of ends the supervisor wrote by reaping the job's own group: the
+// deadline (rule 7), the budget ceiling and the unreadable usage source (rule 13). It is
+// one function because two places ask the same question of it -- what the 429 in a log may
+// rewrite, and what rule 11's word may be written over -- and an end word exempt in one and
+// not the other is how a job's findings go missing.
+func reapEnd(end string) bool {
+	switch end {
+	case EndKilled, EndBudget, EndUnverifiable:
+		return true
+	}
+	return false
 }

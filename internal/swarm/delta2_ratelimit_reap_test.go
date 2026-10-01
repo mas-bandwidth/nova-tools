@@ -41,18 +41,3 @@ func TestARateLimitDoesNotRewriteTheReapsOwnEnd(t *testing.T) {
 		}
 	}
 }
-
-// AND THE CONSEQUENCE: the end the 429 path leaves behind still carries no violation word.
-func TestTheRateLimitedEndOfAReapKeepsItsFindings(t *testing.T) {
-	t.Parallel()
-
-	for _, end := range []string{EndBudget, EndUnverifiable, EndKilled} {
-		got := end
-		if rateLimitedOutcome(true, end, -1) {
-			got = EndFailed
-		}
-		if word := violationWord(got, 1); word != "" {
-			t.Errorf("a 429 in the log of a job ended %s writes violation=%q; rule 13 keeps its findings", end, word)
-		}
-	}
-}

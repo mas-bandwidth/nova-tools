@@ -3,6 +3,7 @@ package swarm
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -12,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/hygiene"
 )
 
@@ -62,7 +64,7 @@ type KindP95 map[string]int
 // CardHeaderRemedies, so `nova-swarm lint --rules` prints them beside the rest.
 var CardBaseRemedies = map[string]string{
 	"paths-at-base":      "every PATHS entry names a file, directory or glob that exists at the card's base-sha (or is a new `_test` file); cut the card from the tree at that sha, not from the issue's words, and hand the lint a repository holding the sha with `--repo <dir>` (failed-cards-2026-09-22 class 9, nx-f19)",
-	"no-push-steps":      "a card ends at a local commit: no STEP runs `git push` or `gh`, because the wall holds no credential and the harvest pushes and comments; say `no gh, no push` in RULES, never as a STEP command (failed-cards-2026-09-22 class 8, holdfix and nx-r repair cards)",
+	"no-push-steps":      "a card ends at a local commit: no STEP runs `git push` or `gh`, because the wall holds no credential and the member pushes the card's commit at its finish; say `no gh, no push` in RULES, never as a STEP command (failed-cards-2026-09-22 class 8, holdfix and nx-r repair cards)",
 	"leg-in-fleet":       "LEG: (or each LEGS: entry) is a leg the fleet's leg table carries -- `sbcl`, not `lisp` -- and the table is handed over with `--legs <file>` (failed-cards-2026-09-22 LEG row, #2728)",
 	"donewhen-test-name": "DONE-WHEN: names the runner and a literal test that does not exist at the card's base-sha -- `go test ./<pkg> -run <TestName>`, `pytest <file>::<test_name>` (or `-k <test_name>`), `cargo test <name>` -- so the test can be red on base and green at head; an English outcome (\"applied cleanly\", \"make preflight\") or a runner with no test named is not a control, and the repository holding base-sha is handed over with `--repo <dir>` (#3083, the-control-is-the-sentence)",
 	"deadline-p95":       "DEADLINE: is at or above the measured p95 wall of the card's KIND, in seconds (or `finish within <n> minutes`), and the p95 table is handed over with `--p95 <file>`; a kind with no row needs a `*` row or a measurement first (failed-cards-2026-09-22 class 11)",
@@ -92,7 +94,7 @@ func LintCardBase(raw []byte, bc BaseCheck) []CardHeaderFinding {
 		case base == "":
 			add("paths-at-base", paths.line, "MISSING: the card names no base-sha (no `base-sha:` line, no `sha=` on the contract line), so PATHS was not resolved")
 		default:
-			full, err := baseGit(bc.Repo, "rev-parse", "--verify", "--quiet", base+"^{commit}")
+			full, err := baseGit(bc.Repo, "rev-parse", "--verify", "--quiet", "--end-of-options", base+"^{commit}")
 			if err != nil || full == "" {
 				add("paths-at-base", baseLine, fmt.Sprintf("MISSING: base-sha %s is not a commit in %s; fetch it, then lint again", base, bc.Repo))
 				break
@@ -108,7 +110,7 @@ func LintCardBase(raw []byte, bc BaseCheck) []CardHeaderFinding {
 			// PR-HEAD the repository does not hold is MISSING, never a pass.
 			if len(miss) > 0 && h["PR-HEAD"].found && h["PR-HEAD"].value != "" {
 				prh := h["PR-HEAD"]
-				prFull, perr := baseGit(bc.Repo, "rev-parse", "--verify", "--quiet", prh.value+"^{commit}")
+				prFull, perr := baseGit(bc.Repo, "rev-parse", "--verify", "--quiet", "--end-of-options", prh.value+"^{commit}")
 				if perr != nil || prFull == "" {
 					add("paths-at-base", prh.line, fmt.Sprintf("MISSING: PR-HEAD %s is not a commit in %s, and PATHS %s is not at base-sha %s; fetch the PR head, then lint again", prh.value, bc.Repo, quoteDepends(miss), short12(full)))
 					break
@@ -214,7 +216,7 @@ func LintCardBase(raw []byte, bc BaseCheck) []CardHeaderFinding {
 		case base == "":
 			add("donewhen-test-name", dwLine, "MISSING: the card names no base-sha (no `base-sha:` line, no `sha=` on the contract line), so the DONE-WHEN test was not looked up")
 		default:
-			full, err := baseGit(bc.Repo, "rev-parse", "--verify", "--quiet", base+"^{commit}")
+			full, err := baseGit(bc.Repo, "rev-parse", "--verify", "--quiet", "--end-of-options", base+"^{commit}")
 			if err != nil || full == "" {
 				add("donewhen-test-name", baseLine, fmt.Sprintf("MISSING: base-sha %s is not a commit in %s; fetch it, then lint again", base, bc.Repo))
 				break
@@ -334,6 +336,13 @@ func doneWhenTests(v string) ([]doneTest, string) {
 // `fn name(` in a Rust file. `git grep` exits 1 on no match, which is an answer
 // (absent), not an error.
 func testDefinedAt(repo, sha string, tn doneTest) (bool, error) {
+	// `git grep` has no separator that keeps a tree-ish an operand on every git the benches
+	// carry (2.43 reads `--end-of-options` there as a revision), so the tree-ish is held to
+	// the shape git itself printed, never a value a card wrote: the 40 hex digits of
+	// rev-parse, which cannot start with `-`. The class test allows this one site for that.
+	if !fullHexSHA(sha) {
+		return false, fmt.Errorf("the tree %q is not a full commit sha", sha)
+	}
 	var pat string
 	var specs []string
 	switch tn.runner {
@@ -344,18 +353,15 @@ func testDefinedAt(repo, sha string, tn doneTest) (bool, error) {
 	default:
 		pat, specs = `fn[ \t]+`+tn.name+`[ \t]*[(<]`, []string{"*.rs"}
 	}
-	args := append([]string{"-C", repo, "grep", "-q", "-E", "-e", pat, sha, "--"}, specs...)
-	cmd := exec.Command("git", args...)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	err := cmd.Run()
+	args := append([]string{"grep", "-q", "-E", "-e", pat, sha, "--"}, specs...)
+	res, err := gitrun.Run(context.Background(), gitrun.Options{C: repo}, args...)
 	if err == nil {
 		return true, nil
 	}
-	if ee, ok := err.(*exec.ExitError); ok && ee.ExitCode() == 1 && strings.TrimSpace(stderr.String()) == "" {
+	if ee, ok := err.(*exec.ExitError); ok && ee.ExitCode() == 1 && strings.TrimSpace(string(res.Stderr)) == "" {
 		return false, nil
 	}
-	if msg := strings.TrimSpace(stderr.String()); msg != "" {
+	if msg := strings.TrimSpace(string(res.Stderr)); msg != "" {
 		return false, fmt.Errorf("%v: %s", err, msg)
 	}
 	return false, err
@@ -444,7 +450,7 @@ func pytestTargets(seg string) []string {
 func goTestPathspecs(repo, sha string, scope []string) []string {
 	module := ""
 	if len(scope) > 0 {
-		if gm, err := baseGit(repo, "show", sha+":go.mod"); err == nil {
+		if gm, err := baseGit(repo, "show", "--end-of-options", sha+":go.mod"); err == nil {
 			for _, l := range strings.Split(gm, "\n") {
 				if v, ok := strings.CutPrefix(strings.TrimSpace(l), "module "); ok {
 					module = strings.Trim(strings.TrimSpace(v), `"`)
@@ -490,7 +496,7 @@ func pytestPathspecs(repo, sha string, scope []string) []string {
 			specs = append(specs, ":(literal)"+t)
 			continue
 		}
-		if typ, err := baseGit(repo, "cat-file", "-t", sha+":"+t); err == nil && strings.TrimSpace(typ) == "tree" {
+		if typ, err := baseGit(repo, "cat-file", "-t", "--end-of-options", sha+":"+t); err == nil && strings.TrimSpace(typ) == "tree" {
 			specs = append(specs, globSpec(t, true, "*.py"))
 		}
 	}
@@ -571,16 +577,7 @@ func sortedLegs(l FleetLegs) []string {
 
 // baseGit runs one git command in repo and returns its trimmed stdout.
 func baseGit(repo string, args ...string) (string, error) {
-	cmd := exec.Command("git", append([]string{"-C", repo}, args...)...)
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	if err := cmd.Run(); err != nil {
-		if msg := strings.TrimSpace(stderr.String()); msg != "" {
-			return "", fmt.Errorf("%v: %s", err, msg)
-		}
-		return "", err
-	}
-	return strings.TrimSpace(stdout.String()), nil
+	return gitrun.Output(context.Background(), gitrun.Options{C: repo}, args...)
 }
 
 // pathsMissingAt lists the tree at sha once, and returns every entry that names
@@ -589,7 +586,7 @@ func baseGit(repo string, args ...string) (string, error) {
 // NEW `_test` file is the one entry allowed to be absent: a card that writes the
 // red test first creates it.
 func pathsMissingAt(repo, sha string, entries []string) ([]string, error) {
-	list, err := baseGit(repo, "ls-tree", "-r", "--name-only", "-z", sha)
+	list, err := baseGit(repo, "ls-tree", "-r", "--name-only", "-z", "--end-of-options", sha)
 	if err != nil {
 		return nil, err
 	}

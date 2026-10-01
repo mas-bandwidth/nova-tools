@@ -9,6 +9,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/stretchr/testify/require"
 )
 
 func safeRenderedRows(text string, lines int) bool {
@@ -43,11 +44,7 @@ func TestRenderEscapesEveryDisplayValueWithoutChangingTheSnapshot(t *testing.T) 
 		return safeRenderedRows(text, 5) && tab.FooterLabel == raw && tab.Columns[0].Label == raw && tab.Rows[0].Label == raw && tab.Rows[0].Texts["note"] == raw && tab.Rows[0].Cells[1].Members[0].Member == raw
 	}
 	for _, raw := range []string{"first\nsecond", "\x1b[2Jclear", "\x00\r\t\x7f", "bad\xffutf8", "a\u2028b\u2029c\u202ed\u2066e", "ordinary \\ text", ""} {
-		if !property(raw) {
-			t.Fatalf("unsafe or mutated display for %q", raw)
-		}
+		require.True(t, property(raw), "unsafe or mutated display for %q", raw)
 	}
-	if err := quick.Check(property, &quick.Config{MaxCount: 500, Rand: rand.New(rand.NewSource(4457))}); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, quick.Check(property, &quick.Config{MaxCount: 500, Rand: rand.New(rand.NewSource(4457))}))
 }

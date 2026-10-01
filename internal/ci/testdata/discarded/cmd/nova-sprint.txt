@@ -1,0 +1,3 @@
+# Migrated counted package ledger; original row keys preserved.
+# ceiling: 1
+cmd/nova-sprint/goal.go:app.goalsView:bare-return 1 a failed goals read leaves the view without its people and says nothing; the frame does not show them, but --json does

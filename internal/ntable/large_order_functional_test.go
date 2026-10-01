@@ -6,33 +6,27 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"reflect"
 	"slices"
-	"strings"
 	"testing"
 
 	nsstore "github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/require"
 )
 
 func largeOrderFixture(t *testing.T, n int) (*redis.Client, []string) {
 	t.Helper()
 	_, c := live(t)
 	cols, err := ntable.ParseColumns("a")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := ntable.Create(context.Background(), c, ntable.Table{Name: "large", Columns: cols}, now); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	require.NoError(t, ntable.Create(context.Background(), c, ntable.Table{Name: "large", Columns: cols}, now))
 	rows := make([]string, n)
 	for i := range rows {
 		rows[i] = fmt.Sprintf("r%05d", i)
 	}
-	if _, err := ntable.RowsAdd(context.Background(), c, "large", rows); err != nil {
-		t.Fatal(err)
-	}
+	_, err = ntable.RowsAdd(context.Background(), c, "large", rows)
+	require.NoError(t, err)
 	return c, rows
 }
 
@@ -47,48 +41,32 @@ func TestLargeRowOrdersKeepRanksTripsAndReceipts(t *testing.T) {
 			check := func(name string, want []string, write func(*ntable.Receipt) error) {
 				t.Helper()
 				events, err := c.XLen(ctx, ntable.ChangesKey("large")).Result()
-				if err != nil {
-					t.Fatal(err)
-				}
+				require.NoError(t, err)
 				before := trips.N()
 				var receipt ntable.Receipt
-				if err := write(&receipt); err != nil {
-					t.Fatalf("%s: %v", name, err)
-				}
-				if got := trips.N() - before; got != 1 {
-					t.Fatalf("%s took %d trips", name, got)
-				}
-				if receipt.After != receipt.Before+1 || receipt.Outcome != "changed" {
-					t.Fatalf("%s receipt = %#v", name, receipt)
-				}
-				if got := c.XLen(ctx, ntable.ChangesKey("large")).Val(); got != events+1 {
-					t.Fatalf("%s emitted %d events", name, got-events)
-				}
+				err = write(&receipt)
+				require.NoError(t, err, "%s: %v", name, err)
+				require.Equal(t, int64(1), trips.N()-before, "%s trips", name)
+				require.Equal(t, receipt.Before+1, receipt.After, "%s receipt = %#v", name, receipt)
+				require.Equal(t, "changed", receipt.Outcome, "%s receipt = %#v", name, receipt)
+				require.Equal(t, events+1, c.XLen(ctx, ntable.ChangesKey("large")).Val(), "%s events", name)
 				got, err := c.ZRangeWithScores(ctx, "table:large:rows", 0, -1).Result()
-				if err != nil || len(got) != len(want) {
-					t.Fatalf("%s: %d rows, want %d: %v", name, len(got), len(want), err)
-				}
+				require.NoError(t, err, "%s: %d rows, want %d: %v", name, len(got), len(want), err)
+				require.Len(t, got, len(want), "%s: %d rows, want %d: %v", name, len(got), len(want), err)
 				for i, row := range got {
-					if row.Member != want[i] || row.Score != float64(i+1) {
-						t.Fatalf("%s row %d = %#v, want %s at rank %d", name, i, row, want[i], i+1)
-					}
+					require.Equal(t, redis.Z{Score: float64(i + 1), Member: want[i]}, row, "%s row %d", name, i)
 				}
 				last, err := c.XRevRangeN(ctx, ntable.ChangesKey("large"), "+", "-", 1).Result()
-				if err != nil || len(last) != 1 {
-					t.Fatalf("%s last receipt: %v", name, err)
-				}
+				require.NoError(t, err, "%s last receipt: %v", name, err)
+				require.Len(t, last, 1, "%s last receipt: %v", name, err)
 				var cells []string
-				if err := json.Unmarshal([]byte(last[0].Values["cells"].(string)), &cells); err != nil {
-					t.Fatal(err)
-				}
+				require.NoError(t, json.Unmarshal([]byte(last[0].Values["cells"].(string)), &cells))
 				wantCells := make([]string, len(want))
 				for i, row := range want {
 					wantCells[i] = row + ":a"
 				}
 				slices.Sort(wantCells)
-				if !slices.Equal(cells, wantCells) {
-					t.Fatalf("%s receipt misses ranked cells: got %d, want %d", name, len(cells), len(wantCells))
-				}
+				require.Equal(t, wantCells, cells, "%s receipt misses ranked cells", name)
 			}
 			set := func(change ntable.SetOpts) func(*ntable.Receipt) error {
 				return func(r *ntable.Receipt) error {
@@ -118,17 +96,11 @@ func TestLargeRankChunksAllPreflightBeforeWrites(t *testing.T) {
 	t.Parallel()
 	c, rows := largeOrderFixture(t, 4100)
 	ctx := context.Background()
-	if err := c.Do(ctx, "ACL", "SETUSER", "rank-writer", "on", ">rank-test-only", "+@all", "~*", "-xadd").Err(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, c.Do(ctx, "ACL", "SETUSER", "rank-writer", "on", ">rank-test-only", "+@all", "~*", "-xadd").Err())
 	writer := redis.NewClient(&redis.Options{Addr: c.Options().Addr, Username: "rank-writer", Password: "rank-test-only"})
 	t.Cleanup(func() { _ = writer.Close() })
-	before := memberStoreImage(t, c)
+	before := storeImage(t, c)
 	_, err := ntable.Set(ctx, writer, "large", ntable.SetOpts{RowMove: &ntable.Reorder{Item: rows[len(rows)-1], Place: at("first", "")}})
-	if err == nil || !strings.Contains(err.Error(), "NOPERM") {
-		t.Fatalf("rank write without receipt permission = %v; want NOPERM", err)
-	}
-	if !reflect.DeepEqual(before, memberStoreImage(t, c)) {
-		t.Fatal("late receipt permission refusal wrote rank chunks or other state")
-	}
+	require.ErrorContains(t, err, "NOPERM", "rank write without receipt permission = %v; want NOPERM", err)
+	require.Equal(t, before, storeImage(t, c), "late receipt permission refusal wrote rank chunks or other state")
 }

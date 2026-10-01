@@ -21,6 +21,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
 // Run is the tool, in process: args after the tool's name, the two streams,
@@ -57,7 +59,84 @@ func Check(t *testing.T, run Run, cases []Case) {
 				One(t, run, c, spelling)
 			})
 		}
+		c := c
+		t.Run(c.Verb+" "+UnknownFlag, func(t *testing.T) {
+			t.Parallel()
+			for _, p := range RefusalProblems(run, c, t.TempDir()) {
+				t.Error(p)
+			}
+		})
 	}
+}
+
+// UnknownFlag is a flag no verb defines. Every verb that is handed it refuses.
+const UnknownFlag = "--no-such-flag-breadcrumb"
+
+// RefusalProblems runs one case with UnknownFlag and returns every way the
+// refusal broke the owner's rule (2026-09-30: every tool and verb "should never
+// fail silently, and they should always provide helpful breadcrumbs how to fix
+// anything going wrong"). It is the runtime half of internal/ci's remedy and
+// no-ok-on-failure rules, run through the same seam every verb parses its flags
+// with:
+//
+//   - the exit is not 0: an invocation the verb cannot parse did not succeed;
+//   - something is said on stderr, and it names the flag or the usage, or a
+//     remedy in the house form (oneline.HasRemedy): never silent, and a
+//     breadcrumb to the fix;
+//   - no line on stdout closes with OK: the last word of a failed run is never
+//     OK;
+//   - nothing is written under {dir} and nothing dials: the refusal comes
+//     before the work.
+func RefusalProblems(run Run, c Case, dir string) []string {
+	var problems []string
+	fail := func(format string, a ...any) { problems = append(problems, fmt.Sprintf(format, a...)) }
+	args := strings.Fields(c.Verb)
+	for _, f := range c.Flags {
+		f = strings.ReplaceAll(f, "{dir}", dir)
+		f = strings.ReplaceAll(f, "{addr}", RefusedAddr)
+		args = append(args, f)
+	}
+	args = append(args, UnknownFlag)
+	var stdout, stderr bytes.Buffer
+	code := run(args, &stdout, &stderr)
+	said := stderr.String()
+	if code == 0 {
+		fail("%q exited 0 on a flag it does not define; an invocation that cannot be parsed is refused, exit 2", args)
+	}
+	if strings.TrimSpace(said) == "" {
+		fail("%q exited %d and said nothing on stderr; a refusal names what is wrong and how to fix it", args, code)
+	} else if !breadcrumb(said) {
+		fail("%q refused with no breadcrumb: stderr %q names neither the flag, the usage nor a remedy (run: <tool> <verb> -h)", args, said)
+	}
+	if okClosing(stdout.String()) {
+		fail("%q exited %d and its last stdout line says OK: %q", args, code, stdout.String())
+	}
+	if entries, err := os.ReadDir(dir); err != nil || len(entries) != 0 {
+		fail("%q left entries under its temp dir (err %v); a refusal writes nothing", args, err)
+	}
+	return problems
+}
+
+// breadcrumb reports a refusal that points somewhere: the unknown flag named,
+// the verb's usage printed, or a remedy in the house form.
+func breadcrumb(said string) bool {
+	flagName := strings.TrimLeft(UnknownFlag, "-")
+	return strings.Contains(said, flagName) || strings.Contains(strings.ToLower(said), "usage") || oneline.HasRemedy(said)
+}
+
+// okClosing reports output whose last non-empty line is an OK event line.
+func okClosing(out string) bool {
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	last := strings.Fields(lines[len(lines)-1])
+	for _, w := range last {
+		if w == "OK" {
+			return true
+		}
+		if strings.ToUpper(w) != w || strings.Contains(w, "=") {
+			return false
+		}
+	}
+	return false
 }
 
 // One runs one case with one spelling of help and asserts the rule.

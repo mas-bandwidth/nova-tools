@@ -56,7 +56,16 @@ const (
 	envMachine     = "NOVA_MACHINE"
 )
 
-const usageTop = `nova-config: the fleet's permanent configuration, in Postgres, applied into Redis (see docs/CLI.md)
+const usageTop = `nova-config: a fleet's machines and AI friends as rows in PostgreSQL, applied into Redis
+
+how it works: PostgreSQL holds the rows, in the schema migrate makes: a machine
+row per host ssh reaches (its login, the nova-secrets seat it opens secrets as,
+its card slots), a friend row per AI (slots, tiers, roles), one fleet row and
+one sprint row; every write adds a history row naming who made it. apply copies
+the rows into Redis, where running tools read them; inventory feeds Ansible.
+first run: the lines under example: need no database; the rest needs PostgreSQL:
+export NOVA_PG_DSN=postgres://user@127.0.0.1:5432/db (a database you own), then
+run migrate.
 
 usage:
   nova-config help
@@ -123,6 +132,7 @@ const usageExamples = `
 example:
   nova-config kinds
   nova-config migrate --print
+  nova-config machine add -h
 `
 
 // kindsUsage is the per-kind part of the banner, from the descriptors.
@@ -469,6 +479,11 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 		next := tool + " " + k.Name + " add " + name + " --<field> <value> ..."
 		if k.Singleton {
 			next = tool + " " + k.Name + " show"
+			if errors.Is(err, config.ErrNoRef) {
+				if remedy := singletonRefRemedy(k); remedy != "" {
+					next = remedy
+				}
+			}
 		}
 		return storeErr(stderr, verb, err, next)
 	}
@@ -479,6 +494,27 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 	sort.Strings(fields)
 	fmt.Fprintf(stdout, "CONFIG SET kind=%s name=%s rev=%d changed=%s\n", k.Name, config.Value(name), id, config.Value(strings.Join(fields, ",")))
 	return 0
+}
+
+// singletonRefRemedy uses the descriptor, not the store's human error text.
+// A singleton whose ref fields all point to one kind can safely direct an
+// ErrNoRef refusal to that kind's list, even when an unchanged field failed.
+// A future singleton with mixed ref kinds keeps its existing generic remedy.
+func singletonRefRemedy(k *config.Kind) string {
+	ref := ""
+	for _, f := range k.Fields {
+		if f.Type != config.TypeRef {
+			continue
+		}
+		if ref != "" && ref != f.Ref {
+			return ""
+		}
+		ref = f.Ref
+	}
+	if ref == "" {
+		return ""
+	}
+	return tool + " " + ref + " list"
 }
 
 func runKindRemove(ctx context.Context, k *config.Kind, args []string, stdout, stderr io.Writer, d deps) int {

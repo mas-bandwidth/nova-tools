@@ -146,8 +146,8 @@ func TestLintStillRefusesCargoRunNotCargoTest(t *testing.T) {
 	t.Parallel()
 
 	stdout, exit, _ := lintCmdCard(t, "cargorun.card", "cargo run --quiet")
-	if exit != 2 {
-		t.Fatalf("`cargo run` is not a gate, the card drifts at exit 2, got %d\n%s", exit, stdout)
+	if exit != 1 {
+		t.Fatalf("`cargo run` is not a gate, the card drifts at exit 1, got %d\n%s", exit, stdout)
 	}
 	if !strings.Contains(stdout, "LINT DRIFT card=cargorun.card test-command:") {
 		t.Fatalf("the drift is test-command, named by token:\n%s", stdout)
@@ -165,8 +165,8 @@ func TestLintTestCommandRemedyNamesTheAcceptedSet(t *testing.T) {
 	t.Parallel()
 
 	stdout, exit, _ := lintCmdCard(t, "remedy.card", "node test/x.mjs")
-	if exit != 2 {
-		t.Fatalf("`node test/x.mjs` is not on the accepted list, drifts at exit 2, got %d\n%s", exit, stdout)
+	if exit != 1 {
+		t.Fatalf("`node test/x.mjs` is not on the accepted list, drifts at exit 1, got %d\n%s", exit, stdout)
 	}
 	drift := ""
 	for _, line := range strings.Split(strings.TrimSuffix(stdout, "\n"), "\n") {
@@ -212,7 +212,7 @@ func TestLintTestCommandRefusesSubstringsAndFalsePositives(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			_, exit, _ := lintCmdCard(t, tc.name+".card", tc.verb)
-			if exit != 2 {
+			if exit != 1 {
 				t.Fatalf("`%s` is not a test command and stays a drift, got exit %d", tc.verb, exit)
 			}
 		})

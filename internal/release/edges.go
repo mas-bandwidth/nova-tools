@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path"
 	"path/filepath"
 	"strings"
@@ -16,13 +15,14 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
 // childCap is the ceiling on one child's captured output, the same 64 KiB the
-// rest of this repository holds a child to (internal/update.ChildCap,
-// internal/merge's execOutputCap). A gh or ssh that writes without end must not
-// be a way to exhaust this process's memory.
+// rest of this repository holds a child to (internal/update.ChildCap). A gh or
+// ssh that writes without end must not be a way to exhaust this process's
+// memory.
 const childCap = 64 * 1024
 
 // forgeCap is the ceiling on ONE forge read, and it is far above childCap for a
@@ -64,7 +64,7 @@ func runCommandCapped(ctx context.Context, cap int, stdin io.Reader, dir, name s
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	out := bounded.NewCapture(cap, cancel)
-	cmd := exec.CommandContext(runCtx, name, args...)
+	cmd := subproc.Context(runCtx, name, args...)
 	cmd.Dir = dir
 	cmd.Stdin = stdin
 	cmd.Stdout = out
@@ -285,7 +285,7 @@ func (GoBuild) Build(ctx context.Context, source, pkg, out, goos, goarch string,
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	capture := bounded.NewCapture(childCap, cancel)
-	cmd := exec.CommandContext(runCtx, "go", argv...)
+	cmd := subproc.Context(runCtx, "go", argv...)
 	cmd.Dir = source
 	cmd.Stdout = capture
 	cmd.Stderr = capture
@@ -307,7 +307,7 @@ func (GoBuild) Platforms(ctx context.Context) ([]string, error) {
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	capture := bounded.NewCapture(childCap, cancel)
-	cmd := exec.CommandContext(runCtx, "go", "tool", "dist", "list")
+	cmd := subproc.Context(runCtx, "go", "tool", "dist", "list")
 	cmd.Stdout = capture
 	cmd.Stderr = capture
 	cmd.Env = goenv.Clean(os.Environ())
@@ -337,7 +337,7 @@ func (ExecGit) DiffNames(ctx context.Context, dir, base, head string) ([]string,
 	defer cancel()
 	stdout := &diffCapture{Capture: bounded.NewCapture(localDiffCap, cancel)}
 	stderr := &diffCapture{Capture: bounded.NewCapture(childCap, cancel)}
-	cmd := exec.CommandContext(runCtx, "git", "-C", dir, "diff", "--name-only", base+"..."+head)
+	cmd := subproc.Context(runCtx, "git", "-C", dir, "diff", "--name-only", base+"..."+head)
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	return diffNamesResult(stdout, stderr, cmd.Run())
@@ -469,7 +469,7 @@ func (s ExecSSH) Fetch(ctx context.Context, machine, dir, dest string) (string, 
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	stderr := bounded.NewCapture(childCap, cancel)
-	cmd := exec.CommandContext(runCtx, s.Path, args...)
+	cmd := subproc.Context(runCtx, s.Path, args...)
 	cmd.Stderr = stderr
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -482,6 +482,7 @@ func (s ExecSSH) Fetch(ctx context.Context, machine, dir, dest string) (string, 
 	// Drain what is left so the child never blocks on a full pipe, then wait.
 	// A fetch that failed halfway must not read as a success just because this
 	// side stopped listening.
+	// ignored: a drain so the child never blocks (see the comment above); the wait error below is the one returned
 	_, _ = io.Copy(io.Discard, stdout)
 	waitErr := cmd.Wait()
 	if unpackErr != nil {

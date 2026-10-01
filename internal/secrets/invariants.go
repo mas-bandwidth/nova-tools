@@ -262,16 +262,39 @@ func CheckInvariant4(storeDir, sopsPath, keyPath, seatPubKey string, files []str
 	return failures, mineCount, foreignCount
 }
 
+// resolveLoose is the absolute path of p with symlinks resolved, where p need not exist:
+// the deepest existing ancestor is resolved and the missing tail is appended to it.
+func resolveLoose(p string) (string, error) {
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return "", err
+	}
+	tail := ""
+	for cur := abs; ; cur = filepath.Dir(cur) {
+		if real, err := filepath.EvalSymlinks(cur); err == nil {
+			return filepath.Join(real, tail), nil
+		}
+		if filepath.Dir(cur) == cur {
+			return abs, nil
+		}
+		tail = filepath.Join(filepath.Base(cur), tail)
+	}
+}
+
 // CheckInvariant5 verifies that no private key is stored under storeDir.
 func CheckInvariant5(storeDir, keyPath string) []CheckFailure {
 	var failures []CheckFailure
 
 	// Check if keyPath is inside storeDir
-	absStore, errStore := filepath.Abs(storeDir)
-	absKey, errKey := filepath.Abs(keyPath)
+	// Both paths are resolved through symlinks first: a key reached through a link, or a
+	// store named through one, is inside the store by where it lands, not by how it is spelled.
+	absStore, errStore := resolveLoose(storeDir)
+	absKey, errKey := resolveLoose(keyPath)
 	if errStore == nil && errKey == nil {
 		rel, err := filepath.Rel(absStore, absKey)
-		if err == nil && !strings.HasPrefix(rel, "..") && rel != "." {
+		// filepath.IsLocal, not a ".." prefix test: a key file under a
+		// directory named "..cache" is inside the store.
+		if err == nil && rel != "." && filepath.IsLocal(rel) {
 			failures = append(failures, CheckFailure{
 				Kind:   "store-private-key",
 				File:   keyPath,
@@ -280,8 +303,12 @@ func CheckInvariant5(storeDir, keyPath string) []CheckFailure {
 		}
 	}
 
+	// ignored: the callback returns nil for every path, and records what it cannot read as a failure
 	_ = filepath.WalkDir(storeDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
+			// Never silent: a path the walk cannot read was not checked, and a
+			// pass over it would read as "no private key here".
+			failures = append(failures, unreadableFailure("store-private-key", storeDir, path, err))
 			return nil
 		}
 		if d.IsDir() {
@@ -291,7 +318,11 @@ func CheckInvariant5(storeDir, keyPath string) []CheckFailure {
 			return nil
 		}
 		data, err := os.ReadFile(path)
-		if err == nil && bytes.Contains(data, []byte("AGE-SECRET-KEY-1")) {
+		if err != nil {
+			failures = append(failures, unreadableFailure("store-private-key", storeDir, path, err))
+			return nil
+		}
+		if bytes.Contains(data, []byte("AGE-SECRET-KEY-1")) {
 			rel, _ := filepath.Rel(storeDir, path)
 			failures = append(failures, CheckFailure{
 				Kind:   "store-private-key",
@@ -303,6 +334,20 @@ func CheckInvariant5(storeDir, keyPath string) []CheckFailure {
 	})
 
 	return failures
+}
+
+// unreadableFailure is a path an invariant could not read, as a failure of that
+// invariant: a check that skipped a file has not cleared it.
+func unreadableFailure(kind, storeDir, path string, err error) CheckFailure {
+	rel, relErr := filepath.Rel(storeDir, path)
+	if relErr != nil {
+		rel = path
+	}
+	return CheckFailure{
+		Kind:   kind,
+		File:   rel,
+		Reason: fmt.Sprintf("could not be read, so it was not checked: %v; fix its permissions and rerun the check", err),
+	}
 }
 
 // CheckInvariant6 verifies that the key file mode is 0600 and directory is 0700.
@@ -332,8 +377,10 @@ func CheckInvariant7(storeDir string, trackedFiles map[string]bool) []CheckFailu
 
 	envLineRegex := regexp.MustCompile(`^[A-Z][A-Z0-9_]*:\s*(.*)$`)
 
+	// ignored: the callback returns nil for every path, and records what it cannot read as a failure
 	_ = filepath.WalkDir(storeDir, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
+			failures = append(failures, unreadableFailure("untracked-plaintext", storeDir, path, err))
 			return nil
 		}
 		if d.IsDir() {
@@ -355,6 +402,7 @@ func CheckInvariant7(storeDir string, trackedFiles map[string]bool) []CheckFailu
 
 		f, err := os.Open(path)
 		if err != nil {
+			failures = append(failures, unreadableFailure("untracked-plaintext", storeDir, path, err))
 			return nil
 		}
 		defer f.Close()

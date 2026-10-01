@@ -1,0 +1,11 @@
+# Migrated counted package ledger; original row keys preserved.
+# ceiling: 9
+internal/fleet/certify.go:glenn 3
+internal/fleet/certify.go:hulk 6
+internal/fleet/certify.go:space 3
+internal/fleet/certify.go:stella 3
+internal/fleet/certify.go:vision 1
+internal/fleet/registry.go:batman 2
+internal/fleet/registry.go:glenn 1
+internal/fleet/registry.go:hulk 1
+internal/fleet/registry.go:vision 1

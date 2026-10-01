@@ -86,6 +86,10 @@ var checkAudit = audit.Config{
 		// writing them. It writes to the stream the caller hands it and to nothing else.
 		`"github.com/mas-bandwidth/nova-tools/internal/bounded"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/check"`,
+		// gitrun starts one bounded git child and hands back its stdout and stderr as bytes
+		// to this package (stagedGit, the cat-file batch); it prints to no stream, and what
+		// comes back is read, never printed, except through the escaped error line.
+		`"github.com/mas-bandwidth/nova-tools/internal/gitrun"`,
 		// dogfood.go's three, and why none of them can write past the escape:
 		// internal/dogfood holds no writer at all -- it reads a command
 		// reference and a directory of receipts, returns values, and renders

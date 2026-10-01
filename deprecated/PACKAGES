@@ -1,6 +1,6 @@
 # Packages that are deprecated and still in the tree, because living tools
 # import them. CI never selects a package named here or under a prefix named
-# here (.github/scripts/select-packages.sh). One path per line, from the
+# here (internal/pkgselect). One path per line, from the
 # repository root. A line "keep <path>" names one package under a prefix that
 # living tools stand on today: it stays tested until it is lifted out into a
 # shared module, and then its line goes. This list only shrinks: a package
@@ -10,43 +10,11 @@
 # does not use it; the deprecated copy of the old tool was deleted on
 # 2026-09-30. These packages stay here until nothing living imports them.
 internal/nsprint
-internal/sprinttable
-internal/sprintline
 
 # what nova-table, nova-config and others stand on until it is lifted out
 keep internal/nsprint/store
 keep internal/nsprint/redisauth
-keep internal/nsprint/pipeerr
 keep internal/nsprint/fn
 keep internal/nsprint/testutil
 keep internal/nsprint/testutil/pg
 keep internal/nsprint/verbflag
-
-# nova-decide (parked as not proven; the tool was deleted on 2026-09-30, its
-# Jev client returns on its own when its value is measured). Living tools
-# stand on the rest, so it stays tested until it is lifted out.
-internal/decide
-keep internal/decide
-# internal/decide
-keep internal/decide/questions
-
-# Jev's gate line: imported in the root module only by
-# internal/nsprint/land/stream, deprecated and still here; it moves under
-# deprecated/internal/ when that package does.
-internal/jev
-
-# nova-merge (the tool was deleted on 2026-09-30; landing goes through the
-# nova-sprint lander and the GitHub merge queue). internal/merge stays and
-# stays tested: internal/typedrec's functional consumers_test reads
-# merge.ParseComment and merge.ParseReviewers (and internal/nsprint/land and
-# internal/nsprint/disposition import it).
-internal/merge
-keep internal/merge
-
-# nova-wake (the tool was deleted on 2026-09-30; the tick-end wake of
-# nova-sprint replaces its serve loop). internal/wake stays and stays tested
-# until it is lifted out: internal/update's cli.go calls wake.AcceptBus
-# (nova-update, nova-version) and internal/redisq's issue2277_test reads
-# wake.Reports.
-internal/wake
-keep internal/wake

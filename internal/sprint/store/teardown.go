@@ -17,11 +17,11 @@ import (
 // (Names.Key): the fence and its generation, the notification stream, the
 // judgments, the open subjects, the coordinator's cursor, the streams'
 // progress and the callers' results. Each epoch has its own.
-var sprintKeys = []string{keyFence, keyGen, keyInbox, keyLog, keyNotes, keyOpen, keyCursor, keyProgress, keyDone}
+var sprintKeys = []string{keyFence, keyGen, keyInbox, keyLog, keyNotes, keyOpen, keyCursor, keyProgress, keyDone, keyQueue}
 
 // machineKeys are the machine's records and the people's goals: one for the
 // whole sprint, under its prefix, never per epoch, so a clear keeps them.
-var machineKeys = []string{keyMachine, keyHeartbeat, keyStuck, keyCoordinator, keyGoals, keyStrangers, keyTickEnd}
+var machineKeys = []string{keyMachine, keyHeartbeat, keyStuck, keyCoordinator, keyGoals, keyStrangers, keyTickEnd, keyRules}
 
 // residueSuffixes are the keys of a table the table layer's drop keeps: its
 // identity, revision, definition record and change log; and its operation
@@ -437,6 +437,11 @@ func sprintKey(l *memLog, s string, del bool) bool {
 		held = l.cursor != ""
 		if del {
 			l.cursor = ""
+		}
+	case keyQueue:
+		held = len(l.queue) > 0
+		if del {
+			l.queue = nil
 		}
 	case keyProgress:
 		held = len(l.progress) > 0

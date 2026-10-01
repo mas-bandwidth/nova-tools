@@ -9,7 +9,7 @@ import (
 
 // CARD #87, cross-tool: efficiency card, 2026-09-12. The card is a measurement
 // of the same work paid for once per tool, and its contract lives in the spec:
-// one reference checkout per batch behind a per-job `--reference`/`--dissociate`
+// one reference checkout per bench behind a per-job `--reference`/`--dissociate`
 // clone, and the prompt text the workers run owned by the tool's templates
 // rather than a shell script. This doc test reads the section out of the spec
 // the way TestBenchSlotLeasesSectionNamesItsRules reads the Bench slot leases
@@ -31,9 +31,9 @@ func TestCrossToolEfficiencyCardNamesItsRules(t *testing.T) {
 		"307 MB",
 		"3.6M cache-read tokens",
 		"21 jobs",
-		// the clone rule: one reference checkout per batch, a per-job clone that
+		// the clone rule: one reference checkout per bench, a per-job clone that
 		// points at it and then dissociates.
-		"one reference checkout per batch",
+		"one reference checkout",
 		"`--reference`",
 		"`--dissociate`",
 		"bin/child-clone.sh:111",

@@ -15,15 +15,13 @@ import (
 const benchRunnerBaseSHA = "ce8631be6"
 
 // benchRunnerAtBase is the site set derived at benchRunnerBaseSHA (the 18
-// rows of the #2932 rev 4 inventory plus cmd/nova-sprint/expire.go, which
-// landed after it; harvest.SSHPusher moved onto internal/benchsh in the same
+// rows of the #2932 rev 4 inventory, less the sites since deleted;
+// harvest.SSHPusher moved onto internal/benchsh in the same
 // build and has no row). It is the allow file's ceiling: every row and every
 // site the rule finds is one of these, so nothing is added after the base. A
 // site retired by #3350 or #3291 leaves the allow file (NOVA_CI_UPDATE=1 drops
 // the row); it may stay here, where it allows nothing.
 var benchRunnerAtBase = []string{
-	"cmd/nova-sprint/expire.go sshProber.Probe",
-	"internal/nsprint/deal/ssh.go remoteSession.Run",
 	"internal/release/edges.go ExecSSH.Fetch",
 	"internal/release/edges.go ExecSSH.Run",
 	"internal/release/edges.go ExecSSH.Send",

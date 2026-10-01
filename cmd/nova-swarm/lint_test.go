@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
@@ -73,8 +75,8 @@ func TestLintNamesTheParentPathLine(t *testing.T) {
 	}, "\n")
 	card := writeLintCard(t, "parent.card", body)
 	exit, stdout, _ := runSwarm(t, "lint", "--card", card)
-	if exit != 2 {
-		t.Fatalf("a card with a ../ path drifts at exit 2, got %d\nstdout: %s", exit, stdout)
+	if exit != 1 {
+		t.Fatalf("a card with a ../ path drifts at exit 1, got %d\nstdout: %s", exit, stdout)
 	}
 	if !strings.Contains(stdout, "LINT DRIFT card=parent.card no-parent-path: 3:") {
 		t.Fatalf("the no-parent-path finding names check, line and card: %q", stdout)
@@ -100,8 +102,8 @@ func TestLintNamesTheMissingRedTest(t *testing.T) {
 	}, "\n")
 	card := writeLintCard(t, "nored.card", body)
 	exit, stdout, _ := runSwarm(t, "lint", "--card", card)
-	if exit != 2 {
-		t.Fatalf("a card with no red test drifts at exit 2, got %d\nstdout: %s", exit, stdout)
+	if exit != 1 {
+		t.Fatalf("a card with no red test drifts at exit 1, got %d\nstdout: %s", exit, stdout)
 	}
 	if !strings.Contains(stdout, "LINT DRIFT card=nored.card red-test:") {
 		t.Fatalf("the red-test finding names the check: %q", stdout)
@@ -117,8 +119,8 @@ func TestLintRefusesNovaSandbox(t *testing.T) {
 		"STEP 2. nova-sandbox probe --secret /root/.ssh/id_rsa", 1)
 	card := writeLintCard(t, "sandbox.card", body)
 	exit, stdout, _ := runSwarm(t, "lint", "--card", card)
-	if exit != 2 {
-		t.Fatalf("a card invoking nova-sandbox drifts at exit 2, got %d\nstdout: %s", exit, stdout)
+	if exit != 1 {
+		t.Fatalf("a card invoking nova-sandbox drifts at exit 1, got %d\nstdout: %s", exit, stdout)
 	}
 	if !strings.Contains(stdout, "LINT DRIFT card=sandbox.card no-sandbox: 4:") {
 		t.Fatalf("the no-sandbox finding names check and line: %q", stdout)
@@ -192,6 +194,18 @@ func TestLintAdvisesAnOversizeCardAndDoesNotRefuseIt(t *testing.T) {
 	if !strings.Contains(stdout, "bytes=") || !strings.Contains(stdout, "cap=12000") {
 		t.Fatalf("a clean card still carries its size and the cap: %q", stdout)
 	}
+	// the note says where the refusal is: nova-sprint add holds a brief to 16384 bytes
+	assert.Contains(t, stdout, "nova-sprint add refuses a brief over 16384 bytes")
+}
+
+// The lint's two numbers are internal/cardlimits': 12000 is the advice, and the bound the
+// note names is the one nova-sprint add enforces (the store reads it there too), above the
+// advice.
+func TestTheSizeNoteAgreesWithTheSprintsBriefBound(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, 16384, cardRefusedBytes, "the note names the bound the sprint enforces")
+	assert.Equal(t, 12000, cardMaxBytes, "the advice")
+	assert.Less(t, cardMaxBytes, cardRefusedBytes, "the advice sits under the bound")
 }
 
 // A card that is BOTH over the ceiling and drifting is refused for the drift alone, and the
@@ -202,7 +216,7 @@ func TestAnOversizeDriftingCardIsRefusedForTheDriftAndSaysTheCeilingIsAdvisory(t
 	body := lintGoodCard() + "STEP 6. cd ../elsewhere\n" + "RESULT: padding " + strings.Repeat("x", 12000) + "\n"
 	card := writeLintCard(t, "bigdrift.card", body)
 	exit, stdout, _ := runSwarm(t, "lint", "--card", card)
-	if exit != 2 {
+	if exit != 1 {
 		t.Fatalf("a card that walks above the job is refused, got %d\nstdout: %s", exit, stdout)
 	}
 	if !strings.Contains(stdout, "LINT DRIFT card=bigdrift.card no-parent-path:") {

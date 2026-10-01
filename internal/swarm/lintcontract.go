@@ -24,7 +24,7 @@ import "strings"
 // RULED: THE COLON FORM WINS (Rowan, 2026-09-19, on the cold read of PR #1759;
 // docs/SPEC-TOOLWORK.md §5 rule 7). It is SPEC-SWARM's own law and it is what the
 // majority of writers already write -- `cut --kind` (internal/pulse/cutkind.go),
-// `internal/pulse/manager.go`, `internal/worklang/expand.go`. `RESULT: <label>
+// `internal/pulse/manager.go`. `RESULT: <label>
 // sha=<sha12>` is the form to WRITE.
 //
 // THE NO-COLON FORM IS ACCEPTED AS A STOPGAP, NOT AS A SECOND RULE. The one renderer

@@ -16,6 +16,13 @@
 // A `# ceiling: N` line caps a list's row count; the update lowers N to the new count
 // and never raises it.
 //
+// A counted list carries a site count after the key (`key 3 reason`): the number of
+// sites the row covers. A row that covers sites alone is not a shrink-only list, because
+// a new site under an existing key reads as already listed; the count closes that. The
+// measured count of a key must equal its row's count, a higher one is a new site (red),
+// a lower one is a count to lower (red, and NOVA_CI_UPDATE=1 lowers it), and an update
+// never raises one.
+//
 // No script edits a list file: a removal regenerates every list with one env var.
 package allowlist
 
@@ -28,6 +35,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 )
 
 // UpdateEnv is the variable that turns Check into a rewrite. Only the value "1" does.
@@ -64,6 +73,13 @@ type Options struct {
 	// MissingIsEmpty loads a missing file as an empty list instead of an error: a
 	// tree with nothing parked in it is the goal.
 	MissingIsEmpty bool
+	// Counted marks a list whose rows carry a site count as the second field
+	// (`key N reason`, N a positive integer); use CheckCounted with it.
+	Counted bool
+	// PackageKeys makes LoadPackages interpret a counted key as
+	// `<repo-relative-package>:<kind>` instead of a file-qualified key.
+	// The row key itself remains unchanged; this only selects its shard.
+	PackageKeys bool
 }
 
 // FirstField is the default key: the row's first whitespace-separated field.
@@ -99,6 +115,7 @@ type Row struct {
 // List is a loaded allowlist.
 type List struct {
 	Path    string
+	counts  map[string]int // key -> the row's site count (Counted lists)
 	opt     Options
 	lines   []string // the file, split on "\n"; the last element is "" when it ends in one
 	rows    []Row
@@ -124,7 +141,7 @@ func Parse(path, raw string, opt Options) (*List, error) {
 	if opt.Key == nil {
 		opt.Key = FirstField
 	}
-	l := &List{Path: path, opt: opt, keys: map[string]bool{}, ceiling: -1, ceilAt: -1}
+	l := &List{Path: path, opt: opt, keys: map[string]bool{}, counts: map[string]int{}, ceiling: -1, ceilAt: -1}
 	if raw != "" {
 		l.lines = strings.Split(raw, "\n")
 	}
@@ -145,6 +162,17 @@ func Parse(path, raw string, opt Options) (*List, error) {
 			continue
 		}
 		key := opt.Key(text)
+		if opt.Counted {
+			f := strings.Fields(text)
+			n := 0
+			if len(f) > 1 {
+				n, _ = strconv.Atoi(f[1])
+			}
+			if n < 1 {
+				return nil, fmt.Errorf("%s:%d: %q is not `<key> <sites> <reason>`; the second field is the row's site count, a positive integer", path, i+1, text)
+			}
+			l.counts[key] = n
+		}
 		l.rows = append(l.rows, Row{Line: i + 1, Text: text, Key: key})
 		l.keys[key] = true
 	}
@@ -153,6 +181,9 @@ func Parse(path, raw string, opt Options) (*List, error) {
 
 // Has reports whether a row carries this key.
 func (l *List) Has(key string) bool { return l.keys[key] }
+
+// Count is a counted row's site count, 0 for a key no row carries.
+func (l *List) Count(key string) int { return l.counts[key] }
 
 // Rows returns the rows in file order.
 func (l *List) Rows() []Row { return append([]Row(nil), l.rows...) }
@@ -175,8 +206,23 @@ type Result struct {
 	// update on a list that may grow adds them and returns none, and a ceiling list
 	// keeps them (it refuses to grow).
 	Unlisted []string
+	// Over are the keys of a counted list measured at more sites than their row
+	// allows: a new site under an existing row. Each is a red run, and an update
+	// refuses to raise the count.
+	Over []CountRow
+	// Lowered are the keys of a counted list measured at fewer sites than their
+	// row says. Each is a red run outside an update; an update lowers the count and
+	// returns none.
+	Lowered []CountRow
 	// Updated is true when this run rewrote the file.
 	Updated bool
+}
+
+// CountRow is one counted key: the sites its row lists and the sites measured.
+type CountRow struct {
+	Key      string
+	Listed   int
+	Measured int
 }
 
 // IsStale reports whether a row with this key is stale.
@@ -237,7 +283,7 @@ func CheckMode(r Reporter, l *List, measured map[string]bool, update bool) Resul
 		drop[row.Line-1] = true
 	}
 	kept := len(l.rows) - len(res.Stale) + len(grow)
-	out := l.render(drop, grow, kept)
+	out := l.render(drop, nil, grow, kept)
 	if n, ok := l.Ceiling(); ok && kept > n {
 		r.Errorf("%s would hold %d rows, over its ceiling of %d; an update never raises a ceiling", l.Path, kept, n)
 	}
@@ -246,7 +292,7 @@ func CheckMode(r Reporter, l *List, measured map[string]bool, update bool) Resul
 	if out == l.Text() {
 		return res
 	}
-	if err := writeAtomic(l.Path, out); err != nil {
+	if err := WriteAtomic(l.Path, out); err != nil {
 		r.Errorf("%s: the update could not write the list: %v", l.Path, err)
 		return res
 	}
@@ -255,14 +301,103 @@ func CheckMode(r Reporter, l *List, measured map[string]bool, update bool) Resul
 	return res
 }
 
+// CheckCounted is Check for a counted list: measured is the number of sites found
+// per key. See CheckCountedMode.
+func CheckCounted(r Reporter, l *List, measured map[string]int) Result {
+	r.Helper()
+	return CheckCountedMode(r, l, measured, Updating())
+}
+
+// CheckCountedMode compares the measured site counts with a counted list. Stale rows
+// (a key measured at none) and Unlisted keys are as in CheckMode; Over holds the keys
+// measured above their row's count and Lowered those below it. Outside an update it
+// only reports. Under an update it drops the stale rows, lowers the lowered counts
+// and refuses, one line per key, to add a row or raise a count: the list only shrinks.
+func CheckCountedMode(r Reporter, l *List, measured map[string]int, update bool) Result {
+	r.Helper()
+	if !l.opt.Counted {
+		r.Errorf("%s: CheckCounted needs a list loaded with Options.Counted", l.Path)
+		return Result{}
+	}
+	keys := make(map[string]bool, len(measured))
+	for k, n := range measured {
+		if n > 0 {
+			keys[k] = true
+		}
+	}
+	res := CheckMode(r, l, keys, false)
+	for _, row := range l.rows {
+		listed, n := l.counts[row.Key], measured[row.Key]
+		switch {
+		case n == 0:
+		case n > listed:
+			res.Over = append(res.Over, CountRow{Key: row.Key, Listed: listed, Measured: n})
+		case n < listed:
+			res.Lowered = append(res.Lowered, CountRow{Key: row.Key, Listed: listed, Measured: n})
+		}
+	}
+	if !update {
+		return res
+	}
+	for _, k := range res.Unlisted {
+		r.Errorf("%s is ceiling-only and refuses to grow under %s=1: %s is not listed, and the update adds no row for it (fix the finding; the list only shrinks)", l.Path, UpdateEnv, k)
+	}
+	for _, c := range res.Over {
+		r.Errorf("%s refuses to raise a count under %s=1: %s is listed at %d sites and measured at %d (fix the new site; the list only shrinks)", l.Path, UpdateEnv, c.Key, c.Listed, c.Measured)
+	}
+	drop := map[int]bool{}
+	for _, row := range res.Stale {
+		drop[row.Line-1] = true
+	}
+	lower := map[int]int{}
+	for _, row := range l.rows {
+		for _, c := range res.Lowered {
+			if c.Key == row.Key {
+				lower[row.Line-1] = c.Measured
+			}
+		}
+	}
+	kept := len(l.rows) - len(res.Stale)
+	out := l.render(drop, lower, nil, kept)
+	if n, ok := l.Ceiling(); ok && kept > n {
+		r.Errorf("%s would hold %d rows, over its ceiling of %d; an update never raises a ceiling", l.Path, kept, n)
+	}
+	stale, lowered := len(res.Stale), len(res.Lowered)
+	res.Stale, res.Lowered = nil, nil
+	if out == l.Text() {
+		return res
+	}
+	if err := WriteAtomic(l.Path, out); err != nil {
+		r.Errorf("%s: the update could not write the list: %v", l.Path, err)
+		return res
+	}
+	res.Updated = true
+	r.Errorf("%s: %s (%d stale rows dropped, %d counts lowered, %d rows now)", l.Path, UpdatedRerun, stale, lowered, kept)
+	return res
+}
+
+// withCount replaces only the second field in a validated counted row. Keep
+// every separator and the trailing reason exactly as the author wrote them.
+func withCount(line string, n int) string {
+	fields := strings.Fields(line)
+	if len(fields) < 2 {
+		return line // Parse refuses a counted row without a positive count.
+	}
+	afterKey := strings.Index(line, fields[0]) + len(fields[0])
+	start := afterKey + strings.Index(line[afterKey:], fields[1])
+	return line[:start] + strconv.Itoa(n) + line[start+len(fields[1]):]
+}
+
 // render is the file with the dropped lines gone, the grown rows appended and a
 // ceiling lowered to the kept count (never raised).
-func (l *List) render(drop map[int]bool, grow []string, kept int) string {
+func (l *List) render(drop map[int]bool, lower map[int]int, grow []string, kept int) string {
 	var out []string
 	for i, line := range l.lines {
 		switch {
 		case drop[i]:
 			continue
+		case lower[i] > 0:
+			out = append(out, withCount(line, lower[i]))
 		case i == l.ceilAt && kept < l.ceiling:
 			out = append(out, fmt.Sprintf("%s %d", ceilingPrefix, kept))
 		default:
@@ -286,30 +421,8 @@ func (l *List) render(drop map[int]bool, grow []string, kept int) string {
 	return strings.Join(out, "\n") + "\n"
 }
 
-// writeAtomic replaces path through a temp file in its own directory, so a reader
+// WriteAtomic replaces path through a temp file in its own directory, so a reader
 // never sees half a list.
-func writeAtomic(path, text string) error {
-	f, err := os.CreateTemp(filepath.Dir(path), "."+filepath.Base(path)+".*")
-	if err != nil {
-		return err
-	}
-	tmp := f.Name()
-	if _, err := f.WriteString(text); err != nil {
-		_ = f.Close()
-		_ = os.Remove(tmp)
-		return err
-	}
-	if err := f.Close(); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	if err := os.Chmod(tmp, 0o644); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
-		return err
-	}
-	return nil
+func WriteAtomic(path, text string) error {
+	return atomicfile.Write(filepath.Clean(path), []byte(text), 0o644, atomicfile.ExactMode())
 }

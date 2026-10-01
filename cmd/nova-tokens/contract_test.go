@@ -84,7 +84,7 @@ func TestNothingInThisToolRemovesAFile(t *testing.T) {
 	// Rule 9 says "deletes, truncates or trims", and a tripwire that searches only for the
 	// three removal names is hollow for the middle word: `f.Truncate(0)` on the lock and
 	// `os.Create` on the scratch copy both truncate and both walked past it. Every call
-	// that can empty a file is searched for, and the four the tool is allowed are carved
+	// that can empty a file is searched for, and the ones the tool is allowed are carved
 	// out here BY FILE, with the reason -- each one a file THIS RUN makes, never a file the
 	// tool was given.
 	allowed := map[string][]string{
@@ -99,27 +99,6 @@ func TestNothingInThisToolRemovesAFile(t *testing.T) {
 		// The temporary file atomicfile writes through before rename; on error or
 		// cleanup, atomicfile removes the temporary file this run created.
 		"internal/atomicfile/atomicfile.go": {"os.Remove"},
-		// The report `report` writes.
-		"cmd/nova-tokens/main.go": {"os.WriteFile("},
-		// The ledger's own `<ledger>.tsv.tmp`, written through before the one rename that
-		// lands the day's rows; the ledger the caller names is the file this verb maintains.
-		"cmd/nova-tokens/sumswarm.go": {"os.WriteFile("},
-		// ExpandDir, nova-work's card writer: it makes a card directory and writes the
-		// card INSIDE it, and returns early on a directory that already exists, so it
-		// never truncates a file this tool or anybody else was given. nova-tokens imports
-		// internal/worklang for ParseWorkSet alone -- `fold --units` reads a work set and
-		// writes nothing -- and reaches ExpandDir from no code path in this binary. The
-		// carve-out is by FILE and by NAME, so a second writer appearing in that package
-		// is still a red run here.
-		"internal/worklang/expand.go": {"os.WriteFile("},
-		// AcceptFile, nova-work accept --graph's writer (#1796/#3229): it rewrites the job graph
-		// file the caller named, after reading and validating it. nova-tokens reaches
-		// internal/jobs only through internal/worklang's imports and calls AcceptFile from no
-		// code path in this binary; the carve-out is by FILE and by NAME, as for expand.go.
-		"internal/jobs/jobs.go": {"os.WriteFile("},
-		// In package staging, the publisher's own-run temporary marker batch.json.tmp
-		// unlinked via syscall.Unlink after successful atomic no-replace link to batch.json.
-		"internal/tokens/package.go": {"syscall.Unlink("},
 	}
 	used := map[string]bool{}
 	// Every package of the binary, walked from its imports and from the directories this

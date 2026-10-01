@@ -11,8 +11,8 @@ nova-ci local --base origin/main
 It runs exactly what the unit tier of `.github/workflows/ci.yml` runs for your
 change (nova-tools#4336), so your answer is CI's answer before the push:
 
-- **the packages** are `.github/scripts/select-packages.sh`'s answer against the
-  merge base of `--base` (default `origin/dev`) and `HEAD`: the Go packages the
+- **the packages** are `go run ./tools/ci select-packages`'s answer (the same
+  selection, `internal/pkgselect`) against the merge base of `--base` (default `origin/dev`) and `HEAD`: the Go packages the
   committed diff touches, every package that imports one of them, and the class
   test packages every run carries;
 - **the run** is the Makefile's `test` target, the one entry CI's legs call:

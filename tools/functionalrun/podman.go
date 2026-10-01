@@ -9,6 +9,8 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // engine is the container runtime as this tool uses it. The podman type below
@@ -57,7 +59,7 @@ func runtimeEnv(environ []string) []string {
 }
 
 func (p *podman) Output(ctx context.Context, args ...string) (string, error) {
-	cmd := exec.CommandContext(ctx, p.bin, args...)
+	cmd := subproc.Context(ctx, p.bin, args...)
 	cmd.Env = p.env
 	var out, errb bytes.Buffer
 	cmd.Stdout = &out
@@ -73,22 +75,30 @@ func (p *podman) Output(ctx context.Context, args ...string) (string, error) {
 }
 
 func (p *podman) Start(args []string, stdout, stderr io.Writer) (process, error) {
-	cmd := exec.Command(p.bin, args...)
+	// A long-lived child (the container run): a cancellable context and no deadline,
+	// released when the wait returns; the run's own deadline kills it through Kill.
+	ctx, release := context.WithCancel(context.Background())
+	cmd := subproc.Long(ctx, p.bin, args...)
 	cmd.Env = p.env
 	cmd.Stdin = nil
 	cmd.Stdout = stdout
 	cmd.Stderr = stderr
 	setOwnProcessGroup(cmd)
 	if err := cmd.Start(); err != nil {
+		release()
 		return nil, fmt.Errorf("%s %s: %v", p.bin, firstWords(args, 2), err)
 	}
-	return &started{cmd: cmd}, nil
+	return &started{cmd: cmd, release: release}, nil
 }
 
-type started struct{ cmd *exec.Cmd }
+type started struct {
+	cmd     *exec.Cmd
+	release context.CancelFunc
+}
 
 func (s *started) Wait() (int, error) {
 	err := s.cmd.Wait()
+	s.release()
 	if err == nil {
 		return 0, nil
 	}

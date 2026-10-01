@@ -270,6 +270,7 @@ func (p *Pool) Claim(id, from, to string) error {
 	}
 	// The sidecar follows its task. A failure here leaves the claim standing, which is
 	// right: the task is this dispatcher's, and a sidecar it can rewrite.
+	// ignored: the claim stands without its sidecar, which this dispatcher can rewrite (see the comment above)
 	_ = os.Rename(p.sidecarFile(from, id), p.sidecarFile(to, id))
 	return nil
 }

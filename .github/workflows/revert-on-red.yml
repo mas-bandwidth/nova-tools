@@ -1,15 +1,14 @@
 # revert-on-red.yml: the mechanical revert of the push that turned main red.
 #
-# No person in the loop. When `ci` concludes FAILURE on a push to main whose
-# parent ci run on main was green, this workflow re-runs the failed jobs once
-# (flake guard) and waits for that rerun. Only if the rerun is red too does it
-# revert that push -- `git revert -m 1` for a merge commit, a plain revert
-# otherwise -- push the revert to main, and post ONE comment on the merged
-# pull request naming the revert. If the repository ruleset refuses the direct
-# push by the github-actions app, it opens a `revert/<sha>` pull request with
-# opened and LEFT OPEN instead, with a notice naming it; the comment is posted
-# either way. This workflow enables no auto-merge and lands nothing itself
-# (Glenn, 2026-09-18: nothing reaches the dev merge queue but a batch).
+# When `ci` concludes FAILURE on a push to main whose parent ci run on main was green, this
+# workflow re-runs the failed jobs once (flake guard) and waits for that rerun. Only if the
+# rerun is red too does it revert that push -- `git revert -m 1` for a merge commit, a plain
+# revert otherwise -- and open a `revert/<sha>` pull request against main, LEFT OPEN, with
+# one issue naming it, and post ONE comment on the merged pull request naming
+# the revert. It pushes nothing to main: the verb's `--push-revert` (the direct push) is NOT
+# set here, and turns on only after this pull request form has fired correctly once on a
+# real red push. This workflow enables no auto-merge and lands nothing itself (Glenn,
+# 2026-09-18: nothing reaches the dev merge queue but a batch); a person merges the revert.
 #
 # The guards that keep it from ever fighting itself, all a skip with a notice
 # and exit 0 rather than a failure:
@@ -18,12 +17,17 @@
 #   * the parent commit's ci run was not green -> the red predates this push
 #   * main has moved past this commit          -> the newer run decides
 #
+# A GitHub API call that fails (the parent's run, the failed run's jobs, the merged pull
+# request, the comment, the rerun) is NEVER one of those skips: the verb exits red and files
+# one issue naming the call, so a person decides what the verb could not ask. This workflow
+# has `issues: write` for that issue.
+#
 # Everything else is the plain "stop the red" path. The repository ruleset is
 # the one manual step this may need: it must let the github-actions app push
-# to main or open a revert/<sha> pull request (see docs/CONTRIBUTING.md).
+# to open a revert/<sha> pull request and an issue (see docs/CONTRIBUTING.md).
 #
-# Actions are pinned by sha, and the script is one file so the workflow stays
-# a list of steps rather than a program.
+# Actions are pinned by sha, and the logic is one Go verb (tools/ci,
+# revert-on-red) so the workflow stays a list of steps rather than a program.
 
 name: revert-on-red
 
@@ -58,22 +62,56 @@ jobs:
           ref: ${{ github.event.workflow_run.head_sha }}
           fetch-depth: 50
 
-      - name: re-run the failed jobs once on the first red (flake guard)
+      # THE TOOL IS NEVER BUILT FROM THE RED TREE. The push being reverted may be the one that
+      # broke tools/ci, and a revert that cannot build cannot revert it. The verb is built
+      # from dev's tip, the last green source of main (every push to main is a promotion
+      # from dev), checked out beside the red tree; it runs in the red tree, which it reverts.
+      # internal/ci: TestRevertOnRedRunsAToolBuiltFromDevNotFromTheRedTree.
+      - name: the revert tool, from dev's tip
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          ref: dev
+          path: .revert-tool
+          fetch-depth: 1
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: .revert-tool/go.mod
+          cache: false
+
+      - name: restore the go build and module cache
+        id: gocache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-gorevert-${{ hashFiles('.revert-tool/go.mod') }}
+          restore-keys: |
+            ${{ runner.os }}-gorevert-
+
+      - name: build the revert tool once
+        # Built ONCE, from dev's tip, before the verb runs; the step after calls the binary.
         shell: bash
-        env:
-          RUN_ID: ${{ github.event.workflow_run.id }}
-          RUN_ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
-        run: |
-          if [ "$RUN_ATTEMPT" = "1" ]; then
-            gh run rerun "$RUN_ID" --failed
-            echo "::notice::run $RUN_ID failed on attempt 1; re-ran its failed jobs once (flake guard). The rerun's own workflow_run completion re-enters this workflow with run_attempt 2, and only a rerun that is red too is reverted."
-            exit 0
-          fi
-          echo "run $RUN_ID is red on attempt $RUN_ATTEMPT; the rerun is red too, proceeding to the revert."
+        run: go -C .revert-tool build -o "$RUNNER_TEMP/ci" ./tools/ci
+
+      - name: save the go build and module cache
+        # On a miss or a restore-keys fallback only, before the verb, as ci.yml's test-hosted does.
+        if: steps.gocache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ steps.gocache.outputs.cache-primary-key }}
 
       - name: revert the push that turned main red
+        # On the first attempt of the run it re-runs the failed jobs once and stops (the flake
+        # guard); on the rerun's own completion (run_attempt 2) it reverts.
         shell: bash
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
           RUN_ID: ${{ github.event.workflow_run.id }}
-        run: .github/scripts/revert-on-red.sh
+        run: |
+          "$RUNNER_TEMP/ci" revert-on-red --run-attempt "${{ github.event.workflow_run.run_attempt }}"

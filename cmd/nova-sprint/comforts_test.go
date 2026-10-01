@@ -290,8 +290,7 @@ func TestInboxJSONSaysWhenTheSprintIsDone(t *testing.T) {
 	ta.ok("init --readers reader-a,reader-b,reader-c --members m1,m2")
 	ta.ok("add --stream s1 --count 3")
 	ta.ok("start")
-	ta.playToLanded(1)
-	ta.ok("tick")
+	ta.playToDone(1)
 	if out := ta.ok("inbox --json"); !strings.Contains(out, `"judgments":[]`) || !strings.Contains(out, `"done":true`) {
 		t.Fatalf("an empty judgments array and the done flag are printed:\n%s", out)
 	}

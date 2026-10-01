@@ -18,6 +18,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 	"github.com/redis/go-redis/v9"
 )
@@ -180,15 +181,32 @@ func (d *memberDrive) startMember(as, harness string, reader bool) *lockedBuf {
 	return out
 }
 
-// TestMemberDrivesASprintFromReadyToLandedOnAStore is the member loop against
+// memberCard is the brief of the test's cards: a card that passes the card lint
+// (`add` holds every brief to it), cut from `nova-swarm template --name card` to the
+// fake harness's job: the task in place of the placeholder, the RULES paragraph
+// with every rule sentence as the template prints it (swarm.ChildRulesParagraph),
+// and the steps the harness stands for.
+var memberCard = "RESULT: <label> sha=<sha12>\n" +
+	"You are a child of the coordinator: one task, one worktree, one branch, unattended. This card is the whole of the task and it stands alone in front of a stranger; nothing outside it is owed to you.\n" +
+	"Deadline: finish within 5 minutes.\n\n" +
+	swarm.ChildRulesParagraph() + "\n" +
+	"THE TASK. Check the member loop: do nothing to the tree and write RESULT.md, line 1 of this card, then the head, the branch and the report that the member loop carries to the card.\n\n" +
+	"STEP 1. Enter your worktree and read this card.\n" +
+	"STEP 2. Write RESULT.md: line 1 is line 1 of this card; under it the head and the report, in under 80 lines."
+
+// TestMemberFunctionalDriveWithFakeHarness is the member loop against
 // the real sprint: one member of width 2, two readers, three cards; every
 // process is the built binary and the store is a real redis-server in the
 // container. The member takes the work (never more than 2 working at once),
 // finishes it with the head and report the child's RESULT.md holds; the two
 // readers read every card; the coordinator accepts the reads and the merge
 // lands all three.
-func TestMemberDrivesASprintFromReadyToLandedOnAStore(t *testing.T) {
+func TestMemberFunctionalDriveWithFakeHarness(t *testing.T) {
 	t.Parallel()
+	testMemberFunctionalDrive(t)
+}
+
+func testMemberFunctionalDrive(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	addr := testutil.Start(t)
@@ -204,7 +222,7 @@ func TestMemberDrivesASprintFromReadyToLandedOnAStore(t *testing.T) {
 	}
 
 	d.must("init", "--members", "m1:2", "--readers", "reader-a,reader-b")
-	d.must("add", "--stream", "a", "--count", "3", "--brief", "check the member loop")
+	d.must("add", "--stream", "a", "--count", "3", "--brief", memberCard)
 	d.must("start")
 	mOut := d.startMember("m1", harness, false)
 	aOut := d.startMember("reader-a", harness, true)

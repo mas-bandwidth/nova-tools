@@ -13,7 +13,6 @@
 # --- 1. A specification's plan: a file the spec says will exist, not yet written. ---
 
 docs/templates SPEC-CI cardtemplates: one of CardTemplateDirs, skipped until a template is written there
-internal/pkgvalid PROPOSAL-TOKENS-RECORDS-185's plan: the package the proposal would add
 internal/pulse/cardheader.go the typed-header grammar that lands with #1721; lintheader.go names it as the parser not yet in this tree
 internal/pulse/kinds.go SPEC-TOOLWORK §5's kinds-table file; the six kinds live in cutkind.go until the accept gate's table is one file of its own
 internal/tokens/message.go SPEC-TOKENS' plan: the message record
@@ -31,32 +30,21 @@ internal/secretsanta/ SPEC-RELEASE.md's example of what prefix matching on `inte
 
 # --- 3. A path in another tree: another repository, another branch, or a retired file. ---
 
-cmd/nova-merge/queue.go retired with the per-PR lander on 2026-09-24; internal/merge/queuegh.go names it as where its caller was
 docs/nova-lessons.md the lessons file lives in the self repository; internal/pulse/watch.go cites it as the source of its rules
-fleet/group_vars/all.yml rowan-tools' Ansible inventory, named by internal/nsprint/life/wakehealth.go as the friends: declaration; not this tree
 scripts/coordination/ a prefix in SPEC-RELEASE.md's sensitive-path list, kept in the list though the directory is retired
 docs/SPEC-PULSE.md deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
 internal/pulse/fleetstandard.go deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
-internal/pulse/queue.go deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
-internal/pulse/queue_test.go deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
-internal/sprintci deleted with the frozen nova-pulse (2026-09-24); the line naming it is history
 cmd/nova-pulse/testdata deleted by #3801 (card cut in nova-sprint, #3789); the line naming it is history
 
 # internal/pulse (nova-pulse's package, frozen 2026-09-23 #3439) was deleted on 2026-09-25 (#3969, Glenn: "Yes it's dead. remove."); the specs cite its files at named commits as history.
 internal/pulse internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
 internal/pulse/cardheader.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
 internal/pulse/cut.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
-internal/pulse/cut_test.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
 internal/pulse/cutkind.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
 internal/pulse/fleetstandard.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
 internal/pulse/harvest.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
 internal/pulse/harvest_working.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
 internal/pulse/kinds.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
 internal/pulse/manager.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
-internal/pulse/queue.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
-internal/pulse/queue_test.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
-internal/pulse/recut.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
 internal/pulse/statushtmlrows.go internal/pulse deleted 2026-09-25 (#3969); cited as history at a named commit
-docs/roadmaps/nova-work.sexp a path in the repository the parked nova-sprint lander classifies (internal/nsprint/land); this tree holds none
-docs/LESSONS-ARCHIVE.md the archive the parked nova-sprint lesson verb writes into the repository it is run on (internal/nsprint/lessons)
 cmd/nova-swarm/testdata/templates SPEC-CI cardtemplates: one of CardTemplateDirs, skipped until a template is written there

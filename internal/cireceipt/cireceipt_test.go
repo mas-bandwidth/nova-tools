@@ -18,10 +18,10 @@ func full() Receipt {
 		Now: func() time.Time { return time.Date(2026, 9, 27, 22, 0, 0, 0, time.FixedZone("EDT", -4*3600)) }}
 }
 
-// TestReceiptFieldsAreTheRowNovaWakeReads pins the XADD's field set, exactly:
+// TestReceiptFieldsAreTheRowTheReaderReads pins the XADD's field set, exactly:
 // the workflow_run row `nova-sprint ci github --from-runner` appended, so
-// nova-wake's reader (internal/wake.EvGithub) is unchanged by the move.
-func TestReceiptFieldsAreTheRowNovaWakeReads(t *testing.T) {
+// ghevent's reader (ghevent.Reader) is unchanged by the move.
+func TestReceiptFieldsAreTheRowTheReaderReads(t *testing.T) {
 	t.Parallel()
 	r := full()
 	if err := r.Validate(); err != nil {

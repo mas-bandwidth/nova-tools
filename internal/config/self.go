@@ -8,6 +8,8 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // A machine's name is its tailnet host (docs/SPEC-CONFIG.md, "The machine
@@ -120,5 +122,5 @@ func TailscaleStatus(ctx context.Context) ([]byte, error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
-	return exec.CommandContext(ctx, path, "status", "--json", "--peers=false").Output()
+	return subproc.Context(ctx, path, "status", "--json", "--peers=false").Output()
 }

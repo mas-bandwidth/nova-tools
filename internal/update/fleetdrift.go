@@ -25,8 +25,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 )
 
-// fleetRegistry is the set of registered benches (ns_bench_register), the same
-// key internal/fleet/state reads.
+// fleetRegistry is the set of registered benches (ns_bench_register).
 const fleetRegistry = "benches"
 
 func fleetBeatKey(bench string) string { return "bench:" + bench + ":beat" }
