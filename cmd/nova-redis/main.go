@@ -82,6 +82,9 @@ usage:
   nova-redis recall --addr <host:port> [--user <name>] [--password-env <NAME>] --owner <owner> --name <name>
   nova-redis fn load  --addr <host:port> [--user <name>] [--password-env <NAME>]
   nova-redis fn check --addr <host:port> [--user <name>] [--password-env <NAME>]
+  nova-redis acl render
+  nova-redis acl check --addr <host:port> [--user <name>] [--password-env <NAME>]
+  nova-redis acl apply --addr <host:port> [--user <name>] [--password-env <NAME>] [--dry-run]
   nova-redis version
   nova-redis help
 
@@ -109,6 +112,15 @@ line on stderr with the remedy for its cause: exit 1 when the store answered
 with a refusal (NOPERM, a library it would not take), exit 2 when no answer
 came or the login was refused. fn load is for the one place that deploys: it
 replaces other code under the library's name.
+acl render prints, with no store, one ACL SETUSER line per role of the fleet
+store (coordinator, member, table, friend): its key families, its command
+categories and FCALL of exactly the functions this binary's library registers
+in the role's files, FCALL_RO of the no-writes ones. acl check (an
+inspection) compares the store's live ACL with them: ACL OK, ACL DRIFT with
+what apply would add and remove, or ACL MISSING per user, exit 1 on any.
+acl apply (a store write) sets the users that differ and saves the ACL file
+when the store keeps one; --dry-run writes nothing. No acl verb sets or reads
+a password: log in as a user that may run ACL.
 serve runs redis-server in the foreground, bound only to loopback and tailnet
 addresses (100.64.0.0/10, fd7a:115c:a1e0::/48); --bind has no default and a
 wildcard, public or LAN address is refused (exit 2). The password reaches
@@ -168,7 +180,7 @@ func run(args []string, stdout, stderr io.Writer, d deps) (code int) {
 	// before anything is dialed, launched or written (the CLI style's rule (b), #4505).
 	defer verbflag.Recover(stdout, "nova-redis", usage, &code)
 	if len(args) == 0 {
-		return refuse(stderr, "", "no verb given; serve runs the instance, spill writes scratch, recall reads it, fn loads or checks the function library")
+		return refuse(stderr, "", "no verb given; serve runs the instance, spill writes scratch, recall reads it, fn loads or checks the function library, acl renders, checks or applies the store's users")
 	}
 	switch args[0] {
 	case "spill":
@@ -179,6 +191,8 @@ func run(args []string, stdout, stderr io.Writer, d deps) (code int) {
 		return cmdServe(args[1:], stdout, stderr, d)
 	case "fn":
 		return cmdFn(args[1:], stdout, stderr, d)
+	case "acl":
+		return cmdACL(args[1:], stdout, stderr, d)
 	case "version", "--version":
 		verbflag.HelpIfAsked(args[1:], "version")
 		if len(args) > 1 {

@@ -5,6 +5,9 @@ import (
 	"math/rand/v2"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestStripQuotedAndCode(t *testing.T) {
@@ -21,15 +24,10 @@ HOLD in code
 After code`
 
 	got := StripQuotedAndCode(input)
-	if strings.Contains(got, "quoted line") {
-		t.Errorf("quoted lines were not stripped: %s", got)
-	}
-	if strings.Contains(got, "HOLD in code") {
-		t.Errorf("code block was not stripped: %s", got)
-	}
-	if !strings.Contains(got, "Real text here") || !strings.Contains(got, "After code") {
-		t.Errorf("real text was lost: %s", got)
-	}
+	assert.NotContains(t, got, "quoted line", "quoted lines were not stripped: %s", got)
+	assert.NotContains(t, got, "HOLD in code", "code block was not stripped: %s", got)
+	assert.Contains(t, got, "Real text here", "real text was lost: %s", got)
+	assert.Contains(t, got, "After code", "real text was lost: %s", got)
 }
 
 func TestLineFilterEdges(t *testing.T) {
@@ -56,9 +54,8 @@ func TestLineFilterEdges(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()
-			if got := StripQuotedAndCode(c.in); got != c.want {
-				t.Fatalf("got %q want %q", got, c.want)
-			}
+			got := StripQuotedAndCode(c.in)
+			require.Equal(t, c.want, got, "got %q want %q", got, c.want)
 		})
 	}
 }
@@ -89,8 +86,7 @@ func TestGeneratedBodiesKeepExactlyTheirVisibleLines(t *testing.T) {
 		if n%2 == 0 {
 			body = strings.ReplaceAll(body, "\n", "\r\n")
 		}
-		if got := StripQuotedAndCode(body); got != strings.Join(want, "\n") {
-			t.Fatalf("case %d: got %q want %q", n, got, strings.Join(want, "\n"))
-		}
+		got := StripQuotedAndCode(body)
+		require.Equal(t, strings.Join(want, "\n"), got, "case %d: got %q want %q", n, got, strings.Join(want, "\n"))
 	}
 }

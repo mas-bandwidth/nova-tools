@@ -51,6 +51,15 @@ func (c *rig) path(elem ...string) string {
 	return filepath.Join(append([]string{c.store}, elem...)...)
 }
 
+// printed requires out to hold every one of wants. A failure names the
+// missing text and the whole output, and t.Helper puts the caller's line on it.
+func printed(t *testing.T, out string, wants ...string) {
+	t.Helper()
+	for _, w := range wants {
+		require.Contains(t, out, w)
+	}
+}
+
 // wroteNothing is the "nothing written" half of the two provenance refusals:
 // no entry file for the id and no pointer line in the session file.
 func (c *rig) wroteNothing(session, entry string) {
@@ -65,12 +74,10 @@ func TestOpenAppendIndexReceiptRoundTrip(t *testing.T) {
 
 	c := newRig(t)
 	out := c.ok("open", "--session", "s1", "--source", "bench/session-3", "--publish", "manual")
-	require.Contains(t, out, "OPEN OK", "open printed %q", out)
-	require.Contains(t, out, "session=s1", "open printed %q", out)
+	printed(t, out, "OPEN OK", "session=s1")
 	prose := "the friend's chosen words — café, \"as above\" nowhere, byte-exact"
 	out = c.ok("append", "--session", "s1", "--entry", "e1", "--text", prose, "--source", "bench/session-3#L9", "--publish", "manual")
-	require.Contains(t, out, "APPEND OK", "append printed %q", out)
-	require.Contains(t, out, "persisted=true published=false", "append printed %q", out)
+	printed(t, out, "APPEND OK", "persisted=true published=false")
 	// The duplicate request succeeds without a duplicate entry.
 	out = c.ok("append", "--session", "s1", "--entry", "e1", "--text", prose, "--publish", "manual")
 	require.Contains(t, out, "duplicate=true", "retry printed %q, want duplicate=true", out)
@@ -78,11 +85,8 @@ func TestOpenAppendIndexReceiptRoundTrip(t *testing.T) {
 	code := c.run("append", "--session", "s1", "--entry", "e1", "--text", "other words", "--publish", "manual").Code
 	require.Equal(t, 1, code, "conflicting append exited %d, want 1", code)
 	out = c.ok("receipt", "--session", "s1", "--entry", "e1")
-	require.Contains(t, out, "RECEIPT OK", "receipt printed %q", out)
-	require.Contains(t, out, "persisted=true published=false", "receipt printed %q", out)
-	out = c.ok("index")
-	require.Contains(t, out, "INDEX ENTRY session=s1 entry=e1", "index printed %q", out)
-	require.Contains(t, out, "INDEX OK sessions=1 entries=1", "coverage printed %q", out)
+	printed(t, out, "RECEIPT OK", "persisted=true published=false")
+	printed(t, c.ok("index"), "INDEX ENTRY session=s1 entry=e1", "INDEX OK sessions=1 entries=1")
 	require.Equal(t, prose, testkit.ReadJSON[entry](t, c.path("entries", "s1", "e1.json")).Text, "the stored entry is not the exact prose")
 }
 
@@ -121,10 +125,7 @@ func TestInterruptedAppendRecoversAtCLI(t *testing.T) {
 	testkit.WriteFile(t, c.path("entries", "s", "mine.json.tmp"), "{partial")
 	out := c.ok("append", "--session", "s", "--entry", "mine", "--text", "my note after the crash", "--publish", "manual")
 	require.Contains(t, out, "APPEND OK", "recovery printed %q", out)
-	out = c.ok("index")
-	require.Contains(t, out, "entries=2", "index after recovery printed %q", out)
-	require.Contains(t, out, "INDEX ENTRY session=s entry=other", "other writer lost or partial indexed: %q", out)
-	require.Contains(t, out, "INDEX ENTRY session=s entry=mine", "other writer lost or partial indexed: %q", out)
+	printed(t, c.ok("index"), "entries=2", "INDEX ENTRY session=s entry=other", "INDEX ENTRY session=s entry=mine")
 }
 
 func TestExistingDirtyWorkIsUntouched(t *testing.T) {
@@ -211,9 +212,7 @@ func TestSourcePointerIsRecordedNeverOpened(t *testing.T) {
 	out = c.ok("append", "--session", "s1", "--entry", "own", "--text", "words with a pointer", "--source", "bench-a/session-7#L3", "--publish", "manual")
 	require.Contains(t, out, " source=bench-a/session-7#L3 ", "append --source printed %q, want its own source", out)
 	out = c.ok("index")
-	for _, want := range []string{"entry=inherits stamp=", "entry=own stamp="} {
-		require.Contains(t, out, want, "index printed %q, missing %q", out, want)
-	}
+	printed(t, out, "entry=inherits stamp=", "entry=own stamp=")
 	for _, line := range strings.Split(out, "\n") {
 		switch {
 		case strings.Contains(line, "entry=inherits "):
@@ -344,7 +343,5 @@ func TestEveryProblemIsNamedAtOnce(t *testing.T) {
 // by construction: every verb's effect, and a how text of five short lines.
 func TestCairnToolMeetsTheStandard(t *testing.T) {
 	t.Parallel()
-	for _, p := range cairnTool().Problems() {
-		t.Error(p)
-	}
+	assert.Empty(t, cairnTool().Problems())
 }
