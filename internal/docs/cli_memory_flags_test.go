@@ -5,6 +5,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // docs/CLI.md is the command reference a stranger copies from AND the list
@@ -42,14 +44,10 @@ func TestTheCLIReferenceNamesEveryMemoryFlag(t *testing.T) {
 			if !strings.HasPrefix(line, prefix) {
 				continue
 			}
-			if found >= 0 {
-				t.Fatalf("docs/CLI.md carries more than one line beginning %q", prefix)
-			}
+			require.Less(t, found, 0, "docs/CLI.md carries more than one line beginning %q", prefix)
 			found = i
 		}
-		if found < 0 {
-			t.Fatalf("docs/CLI.md carries no line beginning %q, but cmd/nova-memory/main.go defines the %s verb", prefix, v.name)
-		}
+		require.GreaterOrEqual(t, found, 0, "docs/CLI.md carries no line beginning %q, but cmd/nova-memory/main.go defines the %s verb", prefix, v.name)
 		refLine[v.name] = found
 	}
 
@@ -74,9 +72,7 @@ func TestTheCLIReferenceNamesEveryMemoryFlag(t *testing.T) {
 func readTextLines(t *testing.T, path string) []string {
 	t.Helper()
 	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("reading %s: %v", path, err)
-	}
+	require.NoError(t, err, "reading %s: %v", path, err)
 	return strings.Split(string(raw), "\n")
 }
 
@@ -97,9 +93,7 @@ func helperFlagsRead(t *testing.T, lines []string) map[string]int {
 				flags[name] = i + j + 2
 			}
 		}
-		if len(flags) < 2 {
-			t.Fatalf("addRootFlags registers %d flags, want at least two (root and exclude)", len(flags))
-		}
+		require.GreaterOrEqual(t, len(flags), 2, "addRootFlags registers %d flags, want at least two (root and exclude)", len(flags))
 		return flags
 	}
 	t.Fatalf("%s carries no func addRootFlags", cliMainPath)

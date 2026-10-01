@@ -70,10 +70,36 @@
 \*   RedealBoundHolds). The coordinator's verbs (ci, return, accept) and
 \*   take run only where the instance turns them on (Coord, Takes).
 \*
+\* THE ROUTE (2026-10-01, the owner: "the card should determine the model
+\*   used"). A card is dealt only when a route serves its tier or it pins a
+\*   model (Served, the scenario's: internal/sprint/route.go resolves it from
+\*   the store's routes and the card's brief); a card no route serves stays
+\*   ready, its tier's judgment the Go tick's (NNoRoute, one per tier, tested
+\*   on the twin), and is never dealt (RouteGuard; the witness "noroute"
+\*   deals it). Which route is drawn is not modelled: the draw only fills the
+\*   work card's fields.
+\*
+\* THE READERS' PRESENCE (2026-10-01, the owner: a readers row with no reader
+\*   process was asked every card's second read, and sat). A reader has a state
+\*   as a machine has: up or away (stat, live: a reader is a name of the same
+\*   two functions; the readers update applies it). The outside's
+\*   ReaderAway(r) and ReaderBack(r) are a reader that stops asking for its
+\*   queue or is held away, and one that asks again: an entry to the readers
+\*   queue, as Lapse and Beat are to the fleet's. The readers update applies
+\*   "raway": the reader is not up, the reads it holds are taken back and
+\*   asked again in the same update, at the card's attempt (askw, as a lapse's
+\*   unread), each with its readoff to the fleet; "raback": the reader is up.
+\*   THE ASK GUARD: with "readerup" in Fixes a read is placed only on a reader
+\*   up (AbleReaders); the witness without it places a read on a reader away
+\*   (ReadsStandOnReadersUp), and the witness "keepaway" leaves the reads of a
+\*   reader that went away where they are. The scenario turns the events on
+\*   (Scn.away).
+\*
 \* WHAT IS NOT MODELLED. Clear and epochs (the counters' reset); two reads
 \* per attempt (one read each); rework but by a broken read; take is
 \* modelled only for the redeals (a finish needs no take); verbs other than
-\* add, take, finish, report, merge, ci, return, accept, beat and lapse;
+\* add, take, finish, report, merge, ci, return, accept, beat and lapse (and a
+\* reader's away and back);
 \* outside actions during a tick (they run between ticks); byte and step
 \* budgets; two sentinels in one stream (the pump lands at most one per
 \* stream per tick); the log itself (a queue entry is its line).
@@ -87,6 +113,8 @@ CONSTANTS
   MaxRedeals, Takes, Coord
 
 Tables == {"work", "readers", "merge", "fleet"}
+\* The cards a route serves, or that pin a model: the scenario's (THE ROUTE).
+Served == Scn.served
 Three == {"readers", "merge", "fleet"}
 Cols == {"none", "waiting", "ready", "working", "review", "merging", "landed"}
 NoR == "none"
@@ -133,6 +161,8 @@ Pick(ord, S, ctr) ==
 
 Before(c, d) == StreamOf[c] = StreamOf[d] /\ Pos[d] < Pos[c]
 Lowest(S) == CHOOSE x \in S : \A y \in S : Idx(COrder, x) <= Idx(COrder, y)
+\* The i-th card of a set, in card order.
+Nth(cs, i) == CHOOSE c \in cs : Cardinality({d \in cs : Idx(COrder, d) < Idx(COrder, c)}) = i - 1
 
 -----------------------------------------------------------------------------
 \* A plan works on a record of the tables, S, and commits it at its end.
@@ -243,7 +273,7 @@ Release(S, C) ==
 \* The deal: the streams take turns by the stream counter over the streams
 \* with a dealable card; within a stream the lowest position; the machine by
 \* the machine counter over the up machines with room.
-Dealable(S, cand) == {c \in cand : S.col[c] = "ready" /\ ~AtRB(S, c)}
+Dealable(S, cand) == {c \in cand : S.col[c] = "ready" /\ ~AtRB(S, c) /\ (c \in Served \/ Broken = "noroute")}
 UpRoom(S) == {m \in Machines : S.stat[m] = "up" /\
                 (Broken = "nowidth" \/ Room(S, m) > 0)}
 DealOne(S, cand) ==
@@ -291,9 +321,19 @@ ApplyR(S, e) ==
                  ELSE Put([S1 EXCEPT !.brk[c] = Min(@ + 1, MaxAttempts)], "work", E("broken", c, "-"))
     [] e.k = "unread" ->
          IF S.rd[c] # NoR THEN [S EXCEPT !.rd[c] = NoR, !.askw[c] = TRUE] ELSE S
+    [] e.k = "raway" ->     \* the reader is not up: its reads are taken back and asked again
+         IF S.stat[e.x] = "down" THEN S
+         ELSE IF Broken = "keepaway" THEN [S EXCEPT !.stat[e.x] = "down"]    \* the witness keeps them
+         ELSE LET H == {d \in Cards : S.rd[d] = e.x}
+              IN [S EXCEPT !.stat[e.x] = "down",
+                           !.rd = [d \in Cards |-> IF d \in H THEN NoR ELSE @[d]],
+                           !.askw = [d \in Cards |-> IF d \in H THEN TRUE ELSE @[d]],
+                           !.q["fleet"] = @ \o [i \in 1..Cardinality(H) |-> E("readoff", Nth(H, i), Host[e.x])]]
+    [] e.k = "raback" -> [S EXCEPT !.stat[e.x] = "up"]
     [] OTHER -> S    \* room, echo
 
 AbleReaders(S) == {r \in Readers : ("seefleet" \in Fixes => S.stat[Host[r]] = "up") /\
+                                    ("readerup" \in Fixes => S.stat[r] = "up") /\
                                     Room(S, Host[r]) > 0}
 RECURSIVE PlaceReads(_)
 PlaceReads(S) ==
@@ -335,7 +375,6 @@ ApplyM(S, e) ==
 RoomNews(S, m) ==
   LET S1 == Put(S, "work", E("room", "-", m)) IN
   IF \E c \in Cards : S1.askw[c] THEN Put(S1, "readers", E("room", "-", m)) ELSE S1
-Nth(cs, i) == CHOOSE c \in cs : Cardinality({d \in cs : Idx(COrder, d) < Idx(COrder, c)}) = i - 1
 \* x is "taken" when the card was taken (the witness "countall" marks every
 \* card so).
 TakenMark(S, c) == IF S.tk[c] \/ Broken = "countall" THEN "taken" ELSE "-"
@@ -506,6 +545,15 @@ Report(c, v) ==
 Merge(c) ==
   /\ c \in mq /\ Pend("merge", "merged", c) = 0
   /\ Outside("merge", E("merged", c, "-")) /\ UNCHANGED <<live, acts>>
+\* A reader stops asking for its queue (or is held away), and asks again.
+ReaderAway(r) ==
+  /\ Scn.away /\ live[r] /\ acts < MaxActs
+  /\ live' = [live EXCEPT ![r] = FALSE] /\ acts' = acts + 1
+  /\ Outside("readers", E("raway", "-", r))
+ReaderBack(r) ==
+  /\ Scn.away /\ ~live[r] /\ acts < MaxActs
+  /\ live' = [live EXCEPT ![r] = TRUE] /\ acts' = acts + 1
+  /\ Outside("readers", E("raback", "-", r))
 Beat(m) ==
   /\ ~live[m] /\ acts < MaxActs
   /\ live' = [live EXCEPT ![m] = TRUE] /\ acts' = acts + 1
@@ -542,10 +590,10 @@ CoordAccept(c) ==
 Init ==
   /\ col = Scn.col /\ att = [c \in Cards |-> 1] /\ bnd = [c \in Cards |-> FALSE]
   /\ rd = Scn.rd /\ askw = [c \in Cards |-> FALSE] /\ mq = Scn.mq
-  /\ stat = [m \in Machines |-> IF m \in Scn.up THEN "up" ELSE "down"]
+  /\ stat = [m \in Machines \cup Readers |-> IF m \in Scn.up THEN "up" ELSE "down"]
   /\ mc = Scn.mc /\ mr = Scn.mr /\ noUp = FALSE /\ Q = Scn.q
   /\ mctr = 0 /\ rctr = 0 /\ sctr = 0
-  /\ live = [m \in Machines |-> m \in Scn.live] /\ acts = 0 /\ ext = TRUE
+  /\ live = [m \in Machines \cup Readers |-> m \in Scn.live] /\ acts = 0 /\ ext = TRUE
   /\ phase = "idle" /\ pumps = 0 /\ sub = 0 /\ addr = 0 /\ notes = 0 /\ wake = -1
   /\ act = "Init" /\ plc = <<>>
   /\ brk = [c \in Cards |-> 0] /\ dealt = [s \in Streams |-> 0]
@@ -561,6 +609,7 @@ OutsideNext ==
   \/ \E c \in Cards, m \in Machines : Finish(c, m) \/ Take(c, m)
   \/ \E c \in Cards : CIRed(c) \/ CIGreen(c) \/ CIOld(c) \/ Return(c) \/ CoordAccept(c)
   \/ \E m \in Machines : Beat(m) \/ Lapse(m)
+  \/ \E r \in Readers : ReaderAway(r) \/ ReaderBack(r)
 Next == TickNext \/ OutsideNext
 Spec == Init /\ [][Next]_vars /\ WF_vars(TickNext)
 
@@ -569,7 +618,7 @@ Spec == Init /\ [][Next]_vars /\ WF_vars(TickNext)
 TypeOK ==
   /\ col \in [Cards -> Cols] /\ att \in [Cards -> 1..MaxAttempts] /\ bnd \in [Cards -> BOOLEAN]
   /\ rd \in [Cards -> Readers \cup {NoR}] /\ askw \in [Cards -> BOOLEAN] /\ mq \subseteq Cards
-  /\ stat \in [Machines -> {"up", "down"}] /\ mc \in [Machines -> SUBSET Cards]
+  /\ stat \in [Machines \cup Readers -> {"up", "down"}] /\ mc \in [Machines -> SUBSET Cards]
   /\ mr \in [Machines -> SUBSET Cards] /\ noUp \in BOOLEAN
   /\ phase \in {"idle", "work", "drain"} \cup Three
   /\ pumps \in 0..2 /\ sub \in 0..(MaxSub + 1) /\ addr \in 0..3 /\ notes \in 0..2
@@ -605,8 +654,11 @@ ReadTok(c) == Pend("readers", "ask", c) + (IF askw[c] THEN 1 ELSE 0) + (IF rd[c]
               + Pend("work", "readok", c) + Pend("work", "broken", c) + (IF okd[c] THEN 1 ELSE 0)
 MergeTok(c) == Pend("merge", "queue", c) + (IF c \in mq THEN 1 ELSE 0) + Pend("work", "landed", c)
                + Pend("work", "back", c)
+\* The host of the reader that holds the read holds it, or its readon is on the
+\* way (or the read is on its way back); a host that held it before holds it
+\* only until its readoff (a reader that went away: its read is on another).
 ReadHome(c) ==
-  /\ rd[c] # NoR => Cardinality({m \in Machines : c \in mr[m]}) + Pend("fleet", "readon", c)
+  /\ rd[c] # NoR => (IF c \in mr[Host[rd[c]]] THEN 1 ELSE 0) + Pend("fleet", "readon", c)
                     + Pend("readers", "unread", c) = 1
   /\ \A m \in Machines : c \in mr[m] =>
        (rd[c] # NoR /\ Host[rd[c]] = m) \/ Pend("fleet", "readoff", c) = 1
@@ -627,12 +679,18 @@ RoomNow(m) == Width[m] - Cardinality(mc[m]) - Cardinality(mr[m])
 PumpDone ==
   /\ Q["work"] = <<>>
   /\ Landable(col) = {} /\ Releasable(col) = {}
-  /\ ~(/\ \E c \in Cards : col[c] = "ready" /\ ~(ended[c] /\ rdl[c] >= MaxRedeals)
+  /\ ~(/\ \E c \in Served : col[c] = "ready" /\ ~(ended[c] /\ rdl[c] >= MaxRedeals)
        /\ \E m \in Machines : stat[m] = "up" /\ RoomNow(m) > 0)
   /\ ~\E c \in Cards : col[c] = "review" /\ okd[c] /\ ci[c] # "red" /\ ~ret[c]
 ReadersDone ==
   ~(/\ \E c \in Cards : askw[c]
-    /\ \E r \in Readers : stat[Host[r]] = "up" /\ RoomNow(Host[r]) > 0)
+    /\ \E r \in Readers : stat[Host[r]] = "up" /\ RoomNow(Host[r]) > 0
+                          /\ ("readerup" \in Fixes => stat[r] = "up"))
+
+\* THE ASK GUARD: a read is held only by a reader up, at every state (a reader
+\* away has its reads taken back by the update that applies it, and is placed
+\* none; the witness without "readerup" places one).
+ReadsStandOnReadersUp == \A c \in Cards : rd[c] # NoR => stat[rd[c]] = "up"
 EveryRowWithWorkMoves ==
   [][/\ act' = "PumpWork" => PumpDone'
      /\ act' = "TickEnd" => ReadersDone]_vars
@@ -658,6 +716,10 @@ PlacementsRound ==
           LET ks == SelectSeq(plc', LAMBDA p : p.k = k) IN
           /\ \A j \in 1..Len(ks) : ks[j].ctr = (CtrOf(k) + j - 1) % CtrMod
           /\ CtrOfP(k) = (CtrOf(k) + Len(ks)) % CtrMod]_vars
+
+\* THE ROUTE GUARD: a card no route serves, and that pins no model, is never
+\* dealt (it stays ready for the coordinator).
+RouteGuard == \A c \in Cards \ Served : col[c] \in {"none", "waiting", "ready"}
 
 \* WIDTH: a machine never holds more cards and reads than its width.
 WidthRespected == \A m \in Machines : Cardinality(mc[m]) + Cardinality(mr[m]) <= Width[m]

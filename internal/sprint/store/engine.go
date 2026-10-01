@@ -135,6 +135,19 @@ type Step struct {
 	// tables plans on it while the fence is at its generation, instead of
 	// reading them, and applies its receipts to it when it commits.
 	Twin *Twin
+	// Routes says the step deals (or asks what the next deal does): it plans
+	// with the model tiers' routes (routes.go, sprint.Snapshot.Routes), read
+	// before its first read of the tables, never between that read and its
+	// Acquire; through RouteCache when one is given (a tick's, read once).
+	Routes     bool
+	RouteCache *RouteCache
+	// Readers says the step asks, or reads what the ask would do: it plans
+	// with the readers' states (sprint.Snapshot.ReaderStates), read after its
+	// tables, or ReaderStates when given: a tick reads them once and every
+	// part plans on that reading (tla/DirtyTick.tla holds who is up constant
+	// within a tick).
+	Readers      bool
+	ReaderStates map[string]string
 	// DrainMax, above zero, is the most entries of the queue's head a drain
 	// takes: the pump's second drain takes only what its first requeued.
 	DrainMax int
@@ -365,6 +378,12 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			_ = st.B.Release(context.WithoutCancel(ctx), *lock, false)
 		}
 	}()
+	var routes []sprint.Route
+	if step.Routes {
+		if routes, err = st.cached(ctx, step.RouteCache); err != nil {
+			return res, err
+		}
+	}
 	for res.Attempts < st.attempts() {
 		res.Attempts++
 		if wantLock && lock == nil && !locked {
@@ -452,6 +471,16 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 				// pump will leave it: its changes queue after the ones before
 				// it, each where they leave the card (sprint.Drain).
 				snap = sprint.WithQueue(snap, q)
+			}
+		}
+		if step.Routes {
+			snap.Routes = routes
+		}
+		if step.Readers && step.ReaderStates != nil {
+			snap.ReaderStates = step.ReaderStates
+		} else if step.Readers {
+			if err := st.readerStatesInto(ctx, snap); err != nil {
+				return res, err
 			}
 		}
 		// Every plan is held to the lifecycle here, whatever step built it.
@@ -804,7 +833,7 @@ const manifestBudget = ntable.LimitManifestBytes - 64
 // MaxCardTextBytes bounds each text field a card carries (CardTextFields),
 // the brief excepted (MaxBriefBytes): a step that would write a longer one is
 // refused before anything is written.
-const MaxCardTextBytes = 8 << 10
+const MaxCardTextBytes = sprint.MaxCardTextBytes
 
 // MaxBriefBytes bounds the brief field: cardlimits.MaxBriefBytes, the number the card
 // lint names too and read from the one package that holds it (nothing behind it, so the lint
@@ -823,7 +852,7 @@ func TextBound(field string) int {
 }
 
 // CardTextFields are the text fields a card carries.
-var CardTextFields = []string{"brief", "fix", "finding", "report", "reason", "note", "return_reason", "ci_note", "did"}
+var CardTextFields = []string{"brief", "fix", "finding", "report", "reason", "note", "return_reason", "ci_note", "did", "why"}
 
 // unwritable is why a step's plan cannot be written, before anything is: a
 // card text field over MaxCardTextBytes, or a manifest the table layer's own

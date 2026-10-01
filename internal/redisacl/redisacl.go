@@ -51,6 +51,7 @@ var Families = []Family{
 	{"friends", []string{"friend:*", "friends", "friends:*"}, "internal/config FriendBeatKey, FriendsKey: a friend's beat, desired slots and roles"},
 	{"fleet", []string{"fleet:*"}, "internal/config FleetKey"},
 	{"loops", []string{"loops", "loop:*"}, "internal/config LoopsKey, LoopKey"},
+	{"routes", []string{"routes", "route:*"}, "internal/config RoutesKey, RouteKey"},
 	{"config", []string{"config:decl"}, "internal/config DeclKey"},
 	{"tokens", []string{"tokens:ledger:*"}, "internal/record LedgerPrefix: nova-tokens ledger and report, logged in as the seat's user"},
 	{"events", []string{"ev:github"}, "internal/ghevent/wire Stream: the CI run receipt (nova-ci github receipt, tools/ci/reportrun.go) XADDs it as the bench user"},
@@ -116,7 +117,7 @@ func Roles() []Role {
 	// Every store verb lists the library before it calls it (fn.LoadMissing,
 	// the sprint store's open): FUNCTION LIST is every role's.
 	list := []string{"+function|list"}
-	read := map[string]string{"tables": "r", "views": "r", "sprint": "r", "machines": "r", "beats": "r", "friends": "r", "fleet": "r", "loops": "r", "config": "r", "tokens": "r", "events": "r"}
+	read := map[string]string{"tables": "r", "views": "r", "sprint": "r", "machines": "r", "beats": "r", "friends": "r", "fleet": "r", "loops": "r", "routes": "r", "config": "r", "tokens": "r", "events": "r"}
 	with := func(over map[string]string) map[string]string {
 		out := map[string]string{}
 		for k, v := range read {

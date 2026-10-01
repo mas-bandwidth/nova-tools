@@ -228,6 +228,12 @@ MCDirtyTickW16.cfg	MCDirtyTick.tla	action	AcceptHolds	ignore-terminal	dirtytick-
 MCDirtyTickW17.cfg	MCDirtyTick.tla	invariant	RedealsAreEndedTakes	ignore-terminal	dirtytick-witnesses	required	-
 MCDirtyTickW18.cfg	MCDirtyTick.tla	action	RedealBoundHolds	ignore-terminal	dirtytick-witnesses	required	-
 MCDirtyTickW19.cfg	MCDirtyTick.tla	action	AcceptHolds	ignore-terminal	dirtytick-witnesses	required	-
+MCDirtyTickRoute.cfg	MCDirtyTick.tla	pass	-	ignore-terminal	dirtytick-small	required	-
+MCDirtyTickW20.cfg	MCDirtyTick.tla	invariant	RouteGuard	ignore-terminal	dirtytick-witnesses	required	-
+MCDirtyTickReader.cfg	MCDirtyTick.tla	pass	-	ignore-terminal	dirtytick-small	required	-
+MCDirtyTickReaderAway.cfg	MCDirtyTick.tla	pass	-	ignore-terminal	dirtytick-small	required	-
+MCDirtyTickW21.cfg	MCDirtyTick.tla	invariant	ReadsStandOnReadersUp	ignore-terminal	dirtytick-witnesses	required	-
+MCDirtyTickW22.cfg	MCDirtyTick.tla	invariant	ReadsStandOnReadersUp	ignore-terminal	dirtytick-witnesses	required	-
 MCDirtyTickRead.cfg	MCDirtyTickRead.tla	pass	-	ignore-terminal	dirtytickread	required	-
 MCDirtyTickReadAcquire.cfg	MCDirtyTickRead.tla	invariant	TwinIsTheStore	ignore-terminal	dirtytickread-acquire	required	-
 MCDirtyTickReadHalt.cfg	MCDirtyTickRead.tla	invariant	BeganRunning	ignore-terminal	dirtytickread-halt	required	-
@@ -239,3 +245,4 @@ MCCardContractBrokenNoShape.cfg	MCCardContract.tla	invariant	OkIsPushedWork	igno
 MCCardContractBrokenPushIgnored.cfg	MCCardContract.tla	invariant	OkIsPushedWork	ignore-terminal	cardcontract	required	-
 MCCardContractBrokenReapReported.cfg	MCCardContract.tla	invariant	ReapedIsNotReported	ignore-terminal	cardcontract	required	-
 MCCardContractBrokenBranchName.cfg	MCCardContract.tla	invariant	StagedFromOrigin	ignore-terminal	cardcontract	required	-
+MCCardContractBrokenPreviousOnly.cfg	MCCardContract.tla	invariant	NoPushedWorkUnreachable	ignore-terminal	cardcontract	required	-

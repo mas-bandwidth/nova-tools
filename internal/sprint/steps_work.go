@@ -16,6 +16,18 @@ import (
 
 func stamp(t time.Time) string { return t.UTC().Format(time.RFC3339) }
 
+// CardAdd is one card of the many-brief add form: its id, brief and needs.
+// File names the brief file the card came from, for a refusal that names it.
+type CardAdd struct {
+	ID    string
+	Brief string
+	Needs []string
+	File  string
+	// Sentinel marks this card a sentinel (a stop), not a primary: the
+	// many-brief form's --sentinel <id>, admitted after the brief cards.
+	Sentinel bool
+}
+
 // AddReq admits primaries into a stream.
 type AddReq struct {
 	Stream string
@@ -23,7 +35,12 @@ type AddReq struct {
 	Count  int // generate this many ids, <stream>-<n>
 	Needs  []string
 	Brief  string
-	Score  *float64 // the first primary's score; the rest follow it
+	// Cards, when set, is the many-brief form: one card per entry, in order,
+	// each with its own brief and needs (a need names a primary already on
+	// the table or one of this add). IDs, Count, Brief and Needs are then
+	// empty.
+	Cards []CardAdd
+	Score *float64 // the first primary's score; the rest follow it
 	// Sentinel admits one sentinel (IDs names it): a stop in the stream that
 	// the coordinator releases (docs/SPEC-SPRINT.md, sentinel cards).
 	Sentinel bool
@@ -51,6 +68,13 @@ func (r AddReq) IsGate(id string) bool {
 func AddIDs(s *Snapshot, r AddReq) []string {
 	if r.Only != nil {
 		return r.Only
+	}
+	if len(r.Cards) > 0 {
+		out := make([]string, len(r.Cards))
+		for i, c := range r.Cards {
+			out[i] = c.ID
+		}
+		return out
 	}
 	if len(r.IDs) > 0 || r.Count <= 0 {
 		return r.IDs
@@ -130,24 +154,51 @@ func Add(s *Snapshot, r AddReq) Plan {
 			adding[id] = true
 		}
 	}
-	var missing []string
-	for _, n := range r.Needs {
-		if s.Work.Card(n) == nil && !adding[n] {
-			missing = append(missing, n)
+	// needsOf and briefOf are the needs and brief of the i'th card admitted:
+	// its own in the many-brief form, else the add's one for every card.
+	needsOf := func(i int) []string {
+		if len(r.Cards) > 0 {
+			return r.Cards[i].Needs
 		}
+		return r.Needs
 	}
-	// The cards admitted, each with its score and needs.
+	briefOf := func(i int) string {
+		if len(r.Cards) > 0 {
+			return r.Cards[i].Brief
+		}
+		return r.Brief
+	}
+	// isSent says the i'th card admitted is a sentinel: the one --sentinel form,
+	// or a card of the many-brief form marked one (its --sentinel <id>).
+	isSent := func(i int) bool {
+		if r.Sentinel {
+			return true
+		}
+		return len(r.Cards) > 0 && r.Cards[i].Sentinel
+	}
+	// The cards admitted, each with its score, needs and brief.
 	type admit struct {
 		id     string
 		score  float64
 		needs  []string
+		brief  string
 		behind string // the sentinel it waits behind by position
 		gate   bool   // a stop of --sentinel-every
+		sent   bool   // a stop: --sentinel or a many-brief card marked one
 	}
 	var in []admit
 	lastGate := ""
 	seen := map[string]bool{}
 	for i, id := range ids {
+		needs := append([]string(nil), needsOf(i)...)
+		// missing is the needs that name no primary they may name: one on the
+		// table or one of this add (a cycle is refused below).
+		var missing []string
+		for _, n := range needs {
+			if s.Work.Card(n) == nil && !adding[n] {
+				missing = append(missing, n)
+			}
+		}
 		switch {
 		case seen[id]:
 			p.refuse(id, "named twice")
@@ -159,12 +210,16 @@ func Add(s *Snapshot, r AddReq) Plan {
 			p.refuse(id, "exists already ("+placeWord(s.Work.Card(id))+")")
 			continue
 		case len(missing) > 0:
-			p.refuse(id, "needs "+strings.Join(missing, ",")+", which is no primary on the table or in this add")
+			if len(r.Cards) > 0 {
+				p.refuse(id, fmt.Sprintf("%s: needs %s, which is no primary on the table or in this add", r.Cards[i].File, strings.Join(missing, ",")))
+			} else {
+				p.refuse(id, "needs "+strings.Join(missing, ",")+", which is no primary on the table or in this add")
+			}
 			continue
 		}
 		seen[id] = true
-		a := admit{id: id, score: scores[i], needs: append([]string(nil), r.Needs...), gate: r.IsGate(id)}
-		if st := sentinelBefore(s, r.Stream, a.score); st != nil && !r.Sentinel {
+		a := admit{id: id, score: scores[i], needs: needs, brief: briefOf(i), gate: r.IsGate(id), sent: isSent(i)}
+		if st := sentinelBefore(s, r.Stream, a.score); st != nil && !a.sent {
 			a.behind = st.ID // it waits behind the stop by its place; nothing is written of it
 		}
 		if lastGate != "" && !a.gate {
@@ -219,7 +274,7 @@ func Add(s *Snapshot, r AddReq) Plan {
 	for _, a := range in {
 		edges[a.id] = a.needs
 		col := Ready
-		if a.behind != "" || a.gate || r.Sentinel {
+		if a.behind != "" || a.gate || a.sent {
 			col = Waiting
 		}
 		for _, n := range a.needs {
@@ -228,7 +283,7 @@ func Add(s *Snapshot, r AddReq) Plan {
 			}
 		}
 		fields := map[string]string{"kind": "primary"}
-		if a.gate || r.Sentinel {
+		if a.gate || a.sent {
 			fields["kind"] = "sentinel"
 		}
 		placed = append(placed, &Card{ID: a.id, Row: r.Stream, Col: col, Score: a.score, Fields: fields})
@@ -262,12 +317,12 @@ func Add(s *Snapshot, r AddReq) Plan {
 			col = Waiting
 		}
 		kind := "primary"
-		if r.Sentinel || a.gate {
+		if a.sent || a.gate {
 			kind, col = "sentinel", Waiting
 		}
 		fields := map[string]string{"kind": kind, "stream": r.Stream, "attempt": "0", "admitted": stamp(s.Now)}
-		if r.Brief != "" && !a.gate {
-			fields["brief"] = r.Brief
+		if a.brief != "" && !a.gate {
+			fields["brief"] = a.brief
 		}
 		if len(a.needs) > 0 {
 			fields["needs"] = strings.Join(a.needs, ",")
@@ -300,6 +355,10 @@ func Add(s *Snapshot, r AddReq) Plan {
 			if len(past) > 0 {
 				u.Moved += "; already past the stop: " + strings.Join(past, ",")
 			}
+		} else if a.sent {
+			// the many-brief form's sentinel: a stop after the cards, marked
+			// reached by the tick once what sorts before it has landed.
+			u.Moved = "sentinel " + u.Moved
 		}
 		if a.behind != "" {
 			u.Moved += "; waits behind sentinel " + a.behind
@@ -654,14 +713,27 @@ func dealPlan(s *Snapshot, r DealReq, rr *round) (Plan, roundMoves) {
 				p.refuse(c.ID, fmt.Sprintf("%s was redealt %d times, its bound: rework it with a fix, or drop it", wc.ID, wc.Int("redeals")))
 				continue
 			}
+			if _, why := s.noRoute(c); why != "" {
+				p.refuse(c.ID, why)
+				continue
+			}
 			m := next()
+			u, why := redeal(s, c, wc, m, q)
+			if why != "" {
+				p.refuse(c.ID, why)
+				continue
+			}
 			rr.moved(m)
 			moves[c.ID] = m
-			p.Units = append(p.Units, redeal(s, c, wc, m, q))
+			p.Units = append(p.Units, u)
+			continue
+		}
+		if _, why := s.noRoute(c); why != "" {
+			p.refuse(c.ID, why)
 			continue
 		}
 		m := next()
-		u, why := deal(s, c, c.F("fix"), m, q, nil)
+		u, why := deal(s, c, c.F("fix"), m, q, nil, map[string]string{"finding": c.F("finding"), "why": c.F("why")})
 		if why != "" {
 			p.refuse(c.ID, why)
 			continue
@@ -676,12 +748,16 @@ func dealPlan(s *Snapshot, r DealReq, rr *round) (Plan, roundMoves) {
 // deal cuts the primary's next attempt's work card, carrying the fix and the
 // primary's score, into the ready queue of the up member m (the next round the
 // fleet, a deal's or a rework's), at generation 1, and moves
-// the primary to working with set.
-func deal(s *Snapshot, c *Card, fix, m string, q map[string]int, set map[string]string, unset ...string) (Unit, string) {
+// the primary to working with set; given is more fields of the work card.
+func deal(s *Snapshot, c *Card, fix, m string, q map[string]int, set, given map[string]string, unset ...string) (Unit, string) {
 	attempt := c.Int("attempt") + 1
 	card := WorkCardID(c.ID, attempt)
 	if s.Fleet.Card(card) != nil {
 		return Unit{}, "work card " + card + " exists already"
+	}
+	route, _, why := s.routeOf(c, nil)
+	if why != "" {
+		return Unit{}, why
 	}
 	q[m]++
 	fields := map[string]string{"kind": "work", "primary": c.ID, "stream": c.Row, "attempt": itoa(attempt), "gen": "1", "member": m,
@@ -689,8 +765,22 @@ func deal(s *Snapshot, c *Card, fix, m string, q map[string]int, set map[string]
 	if fix != "" {
 		fields["fix"] = fix
 	}
+	for k, v := range given { // what a rework adds on the attempt's work card: its finding and why
+		if v != "" {
+			fields[k] = v
+		}
+	}
 	if set == nil {
 		set = map[string]string{}
+	}
+	work, primary := splitRoute(route)
+	for k, v := range work {
+		if v != "" {
+			fields[k] = v
+		}
+	}
+	for k, v := range primary {
+		set[k] = v
 	}
 	set["attempt"], set["work"] = itoa(attempt), card
 	return Unit{Key: c.ID, Stream: c.Row, Changes: []Change{
@@ -706,16 +796,30 @@ func deal(s *Snapshot, c *Card, fix, m string, q map[string]int, set map[string]
 // the card's own, unchanged. The redeal counts only when a take of the card
 // ended (FieldTakeEnded): a card withdrawn while ready keeps its count
 // (tla/DirtyTick.tla DealOne).
-func redeal(s *Snapshot, c, wc *Card, m string, q map[string]int) Unit {
+func redeal(s *Snapshot, c, wc *Card, m string, q map[string]int) (Unit, string) {
+	route, _, why := s.routeOf(c, wc)
+	if why != "" {
+		return Unit{}, why
+	}
 	q[m]++
 	set := nextGen(wc, m, s.Now)
 	if wc.F(FieldTakeEnded) != "" {
 		set["redeals"] = itoa(wc.Int("redeals") + 1)
 	}
+	unset := []string{"withdrawn", FieldTakeEnded}
+	work, primary := splitRoute(route)
+	for k, v := range work {
+		if v == "" {
+			unset = append(unset, k)
+			continue
+		}
+		set[k] = v
+	}
+	primary["work"] = wc.ID
 	return Unit{Key: c.ID, Stream: c.Row, Changes: []Change{
-		change(Fleet, moveEntry(wc, m, Ready, set, "withdrawn", FieldTakeEnded)),
-		change(Work, moveEntry(c, c.Row, Working, map[string]string{"work": wc.ID}, "result")),
-	}, Moved: fmt.Sprintf("%s %s -> working card=%s member=%s gen=%d (dealt again)", c.ID, c.Col, wc.ID, m, wc.Int("gen")+1)}
+		change(Fleet, moveEntry(wc, m, Ready, set, unset...)),
+		change(Work, moveEntry(c, c.Row, Working, primary, "result")),
+	}, Moved: fmt.Sprintf("%s %s -> working card=%s member=%s gen=%d (dealt again)", c.ID, c.Col, wc.ID, m, wc.Int("gen")+1)}, ""
 }
 
 // TakeReq is a worker taking its work cards. Gens names the generation the
@@ -827,7 +931,10 @@ type FinishReq struct {
 	// Branch and Base are the branch the work is on and the one it started
 	// from, as the worker reports them.
 	Branch, Base string
-	Who          string
+	// Usage is what the run spent, as the member read it from its child (its
+	// budget word and wall): kept on the work card, the attempt's record.
+	Usage string
+	Who   string
 }
 
 // Finish moves work cards working -> done and their primaries working ->
@@ -909,6 +1016,9 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		if r.Base != "" {
 			cardSet["base"] = r.Base
 		}
+		if r.Usage != "" {
+			cardSet[FieldUsage] = r.Usage
+		}
 		set := map[string]string{"head": head, "result": result}
 		if r.Failed {
 			set["failed"] = itoa(pr.Int("failed") + 1)
@@ -938,6 +1048,10 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		} else {
 			n := judgment(NWorkFailed, pr.Row, s.Now, pr.Int("failed"), pr.ID)
 			n.Who, n.Attempt, n.What = who, attempt, r.Report
+			if c.F(FieldRoute) != "" {
+				// which route failed it: a bad route is seen in the inbox
+				n.What = "route=" + c.F(FieldRoute) + " model=" + c.F(FieldModel) + ": " + r.Report
+			}
 			u.Notes = append(u.Notes, n)
 		}
 		u.Changes = append(u.Changes, change(Work, moveEntry(pr, pr.Row, Review, set)))

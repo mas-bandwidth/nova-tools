@@ -3,6 +3,7 @@ package sprint
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 // The steps of review: ask and read (mechanical, and the readers' own), and
@@ -28,8 +29,8 @@ func readsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 	return out
 }
 
-// Ask deals every primary in review that lacks reads to TWO DIFFERENT readers,
-// in work order, the readers it names first and then the next readers round
+// Ask deals every primary in review that lacks reads to TWO DIFFERENT readers
+// up (readers.go), in work order, the readers it names first and then the next readers round
 // the readers (round.go, errata 3 amendment 5: from the rolling index,
 // wrapping, each the first that has no read card at the attempt, the index
 // moved past it: the readers table's ask_index, written with the ask); a
@@ -48,11 +49,12 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		if c.F("result") == "failed" {
 			return "its work came back failed: rework or drop it"
 		}
-		have := len(readsAt(s, c, c.Int("attempt")))
-		if r.Another && have == 0 {
+		asked := len(readsAt(s, c, c.Int("attempt")))
+		have := len(liveReadsAt(s, c, c.Int("attempt")))
+		if r.Another && asked == 0 {
 			return "not asked yet at attempt " + itoa(c.Int("attempt")) + ": the machine's tick asks it, or run: nova-sprint ask " + c.ID + "; --another adds a reader to one already asked"
 		}
-		if !r.Another && have > 0 {
+		if !r.Another && have >= 2 {
 			return "asked already"
 		}
 		return ""
@@ -64,18 +66,27 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		attempt := c.Int("attempt")
 		have := map[string]bool{}
 		var all []string
+		var takenBack []Change
+		var away []string
 		for _, rc := range readsAt(s, c, attempt) {
+			if awayRead(s, rc) {
+				// asked of a reader that is not up: taken back, and asked again below
+				takenBack = append(takenBack, change(Readers, removeEntry(rc, map[string]string{"retired": stamp(s.Now), "retired_by": "away"})))
+				away = append(away, rc.F("reader"))
+				continue
+			}
 			have[rc.F("reader")] = true
 			all = append(all, rc.F("reader"))
 		}
 		var free []string
 		for _, rd := range s.Readers.Rows() {
 			// a reader with a card at this attempt, even retired, has read it
-			if !have[rd] && s.Readers.Card(ReadCardID(c.ID, attempt, rd)) == nil {
+			// and a reader not up is not asked (reader away, reader up)
+			if !have[rd] && s.Readers.Card(ReadCardID(c.ID, attempt, rd)) == nil && s.ReaderIsUp(rd) {
 				free = append(free, rd)
 			}
 		}
-		want := 2
+		want := 2 - len(all) // a read taken back from a reader away leaves one to ask
 		if r.Another {
 			want = 1
 		}
@@ -90,10 +101,10 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		rotated := rr.picks(want-len(chosenReaders), chosenReaders, func(x string) bool { return contains(free, x) })
 		chosenReaders = append(chosenReaders, rotated...)
 		if len(chosenReaders) < want {
-			p.refuse(c.ID, fmt.Sprintf("needs %d different readers and %d is free who has not already read attempt %d of %s; run: nova-sprint reader add <name>", want, len(chosenReaders), attempt, c.ID))
+			p.refuse(c.ID, fmt.Sprintf("needs %d different readers and %d is free who has not already read attempt %d of %s; a reader away or down is not asked (readers: %s); run: nova-sprint reader add <name>, or nova-sprint reader up <name>", want, len(chosenReaders), attempt, c.ID, readersText(s)))
 			continue
 		}
-		u := Unit{Key: c.ID, Stream: c.Row}
+		u := Unit{Key: c.ID, Stream: c.Row, Changes: takenBack}
 		for _, rd := range rotated {
 			rr.moved(rd)
 			moves[c.ID] = joinMoves(moves[c.ID], rd)
@@ -109,6 +120,9 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			u.Changes = append(u.Changes, change(Work, setEntry(c, map[string]string{"asked": strings.Join(all, ",")})))
 		}
 		u.Moved = c.ID + " asked of " + strings.Join(chosenReaders, ", ")
+		if len(away) > 0 {
+			u.Moved += "; its read taken back from " + strings.Join(away, ", ") + " (not up)"
+		}
 		if r.Another {
 			u.Closes = closesFor(s.Open, []string{NReadBroken, NReadsExhausted, NStranded, NStalled}, c.ID)
 		} else {
@@ -193,6 +207,9 @@ func Read(s *Snapshot, r ReadReq) Plan {
 	SortCards(all)
 	chosen := pick(&p, sel, all, fieldStream, func(c *Card) string {
 		if !c.Placed() && c.F("retired") != "" {
+			if c.F("retired_by") == "away" {
+				return "retired at " + c.F("retired") + ": the reader was away; the read was asked of another reader"
+			}
 			return "retired at " + c.F("retired") + " by " + orDash(c.F("retired_by")) + ": the primary was sent back; its next attempt is read on a new card"
 		}
 		if !c.Placed() || !contains(readers, c.Row) {
@@ -617,7 +634,7 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		}
 		fix := r.Fix
 		if fix == "" {
-			if fix = ownFix(s, c); fix == "" {
+			if fix = cutText(ownFix(s, c), MaxCardTextBytes); fix == "" {
 				p.refuse(c.ID, "no --fix, and no finding of a broken read or report of failed work to take as its fix; give --fix <text>")
 				stays()
 				continue
@@ -645,7 +662,11 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		if askedField == "" && len(asked) > 0 {
 			askedField = strings.Join(orderLike(s.Readers.Rows(), asked, ""), ",")
 		}
-		set := map[string]string{"fix": fix, "reworks": itoa(c.Int("reworks") + 1), "broken_reads": itoa(c.Int("broken_reads") + broken)}
+		// the finding and why ride on the primary too: a rework with no member up deals later
+		// (start), from the primary, and its child is told all the same
+		given := reworkGiven(s, c)
+		set := map[string]string{"fix": fix, "finding": given["finding"], "why": given["why"],
+			"reworks": itoa(c.Int("reworks") + 1), "broken_reads": itoa(c.Int("broken_reads") + broken)}
 		if askedField != "" {
 			set["asked"] = askedField
 		}
@@ -653,7 +674,7 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		if len(up) > 0 {
 			var why string
 			m := rr.next(up, q, room, reworkAvoid(s, c), true)
-			u, why = deal(s, c, fix, m, q, set, "readers")
+			u, why = deal(s, c, fix, m, q, set, given, "readers")
 			if why != "" {
 				p.refuse(c.ID, why)
 				stays()
@@ -714,14 +735,8 @@ func orphanMerge(s *Snapshot, c *Card) *Card {
 // broken reads at its attempt, else the report of its failed work; "" when it
 // has neither.
 func ownFix(s *Snapshot, c *Card) string {
-	var found []string
-	for _, rc := range s.Readers.Of(c.ID) {
-		if rc.Col == Broken && rc.Int("attempt") == c.Int("attempt") && rc.F("finding") != "" && !contains(found, rc.F("finding")) {
-			found = append(found, rc.F("finding"))
-		}
-	}
-	if len(found) > 0 {
-		return strings.Join(found, "; ")
+	if found := brokenFindings(s, c); found != "" {
+		return found
 	}
 	if c.F("result") == "failed" {
 		if wc := s.Fleet.Card(c.F("work")); wc != nil {
@@ -729,6 +744,53 @@ func ownFix(s *Snapshot, c *Card) string {
 		}
 	}
 	return ""
+}
+
+// brokenFindings is the findings of the primary's broken reads at its attempt,
+// each once, joined; "" when no read of it is broken.
+func brokenFindings(s *Snapshot, c *Card) string {
+	var found []string
+	for _, rc := range s.Readers.Of(c.ID) {
+		if rc.Col == Broken && rc.Int("attempt") == c.Int("attempt") && rc.F("finding") != "" && !contains(found, rc.F("finding")) {
+			found = append(found, rc.F("finding"))
+		}
+	}
+	return strings.Join(found, "; ")
+}
+
+// MaxCardTextBytes bounds each text field a card carries, the brief excepted (the store
+// refuses a step that would write a longer one); a rework's own derived words (the finding,
+// why and the fix it takes from a finding) are cut to it, never refused for it.
+const MaxCardTextBytes = 8 << 10
+
+// cutText is s cut to at most n bytes, at a rune boundary, ending "..." when it was cut.
+func cutText(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	cut := n - len("...")
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "..."
+}
+
+// reworkGiven is what a rework writes on the next attempt's work card besides
+// the fix, so the child learns why it exists (docs/SPEC-SPRINT.md, rework):
+// finding, the broken reads' words, and why, how the attempt before ended.
+func reworkGiven(s *Snapshot, c *Card) map[string]string {
+	attempt := c.Int("attempt")
+	finding := cutText(brokenFindings(s, c), MaxCardTextBytes)
+	why := fmt.Sprintf("attempt %d was sent back by the coordinator", attempt)
+	switch wc := s.Fleet.Card(c.F("work")); {
+	case c.F("result") == "failed" && wc != nil && strings.TrimSpace(wc.F("report")) != "":
+		why = fmt.Sprintf("attempt %d failed: %s", attempt, strings.TrimSpace(wc.F("report")))
+	case c.F("result") == "failed":
+		why = fmt.Sprintf("attempt %d failed", attempt)
+	case finding != "":
+		why = fmt.Sprintf("attempt %d finished and a reader found it broken", attempt)
+	}
+	return map[string]string{"finding": finding, "why": cutText(why, MaxCardTextBytes)}
 }
 
 // ReturnReq is the coordinator sending merging primaries back to review.

@@ -89,7 +89,8 @@ written with the moves.
 ## 2. The cards
 
 **Primary.** One unit of work, between an issue and a pull request. One stream
-for life. Fields: stream, score, brief, needs, head, attempt, fix, work (its live
+for life. Fields: stream, score, brief, needs, head, attempt, fix, finding and why (a rework's, kept
+for the attempt a rework with no member up deals later), work (its live
 work card), asked (its readers), readers (the two whose ok it was accepted on),
 counters (failed, reworks, broken_reads, stuck, returns), returned_attempt (its
 attempt when it was last returned to review, by any return, an orphan merge
@@ -97,8 +98,9 @@ card's included), and the last CI observation for its current head (ci,
 ci_head) and of any head (ci_run, ci_run_status, ci_source).
 
 **Work card** (consumer). What a child with a worktree is handed: the brief and
-the place to work, and on a later attempt the fix. Identity `<primary>.w<attempt>`.
-Fields: primary, stream, kind=work, attempt, fix, member, gen (its assignment
+the place to work, and on a later attempt the fix, the finding of the broken read that
+caused it and why the attempt before ended. Identity `<primary>.w<attempt>`.
+Fields: primary, stream, kind=work, attempt, fix, finding, why, member, gen (its assignment
 generation), dealt and taken (the clock times it was dealt and taken),
 first_dealt and first_taken (the attempt's first deal and first take, kept
 through every redeal and withdrawal), untaken_since (the first deal since its last take: a take unsets it, and
@@ -179,7 +181,59 @@ and it is the coordinator's decision, receipted.
   once, ready and working together (its child cap; `init --members m1:64` or
   `fleet up m1 --width 64`; default 64). The fleet table shows it in the width
   column beside working; the footer row sums the widths, the fleet's total
-  width (eight machines of 64 total 512).
+  width (eight machines of 64 total 512). The row is the truth: the member's
+  loop (`nova-swarm member`) reads its width with its queue every tick
+  (`queue --as <m> --json` carries `width`) and runs that many; its `--width`
+  is a twin's override.
+- The card decides its model (the owner, 2026-10-01). A brief's line 1 names
+  its tier, `tier: flash|pro|frontier` (none is flash), and a `model:
+  <provider>/<model>` header line under it pins the card, with its `tokens:
+  <n>|unmetered` and `deadline: <seconds>|<duration>` lines (a pin without
+  either is refused: a member with no override could not launch it);
+  `cardhdr.ReadModel` is the one parser, and `add` refuses a brief whose model
+  lines it cannot read. A card admitted before (an unknown tier, a pin short
+  of a line) is not dealt and is judged under the tier its line 1 names. The routes are nova-config's `route` kind, applied to
+  the store (`routes`, `route:<name>`): each a tier, a provider and model, a
+  budget, a deadline, a weight and enabled. The deal (and a redeal, and a
+  rework's next attempt) resolves the card at deal time: a pin is its route
+  (`pin`); a store with no route deals as before (the member runs its
+  override); a frontier card with no pin is the coordinator's and is not
+  dealt; otherwise one enabled route of the tier is drawn, weighted, leaving
+  out the routes already drawn for the card while another remains. The draw is
+  seeded from the card, its attempt, its generation (a redeal) and the deal's
+  snapshot time, not from the tick's operation id (a plan is a function of its
+  read, made before the operation has an id): FNV-1a of those, run through
+  splitmix64's finaliser, modulo the weights' sum; the same read draws the same
+  route, and a test's clock draws the same routes every run. The work card keeps `route`, `model`, `tokens` and `deadline` (its
+  packet hands them to the member) and the primary `routes`, every route drawn
+  for it. A card no route serves stays ready: the deal refuses it naming the
+  tier, and the tick writes one judgment, `no route serves the tier`, per tier
+  (its subject `stream:tier:<tier>`, the primaries listed), never one per
+  card, closed when the tier is served (tla/DirtyTick.tla, RouteGuard; witness
+  W20). The failed-work judgment names the route and model; `card <id>` prints
+  an `ATTEMPT` line per attempt (route, model, member, dealt, taken, finished,
+  usage, end); `where` prints `routes: flash=<n> pro=<n>` (and `--json`
+  `routes`); `routes` prints each route with its attempts, ok, failed,
+  provider failures and mean wall, each pinned model a row of its own
+  (`pin:<provider>/<model>`). The routes are read once a tick, by its first
+  part that deals or checks, before that part's read of the tables (one round
+  trip with no route, two with routes; `TickResult.RouteTrips`), and shared by
+  the tick's later parts. A member that cannot launch a taken card (no model,
+  budget or deadline from its packet or its override) reports it at once as a
+  `--failed` finish, `launch refused: <why>`, never leaving it working.
+- The twin (`mem:<file>`) holds no routes: routes are config, nova-config's
+  rows applied to a store's Redis, and a twin has no config store to apply
+  from. A twin deals as a store with no route does (the member's override);
+  the route paths are driven on the in-memory store in the tests
+  (`Mem.SetRoutes`) and on a real store.
+- Two things are called routes. The `route` kind is the sprint's: what a card
+  runs on, drawn at the deal. `NOVA_SWARM_ROUTES` is native's own list for a
+  launcher outside the sprint: on a provider's 5xx it names, on its
+  `NATIVE PROVIDER-5XX` line, the route after the one that failed. Under the
+  sprint the member sets no such list (the line names `next=-`); the member
+  reads the line as `provider failure`, and the redeal or rework that follows
+  leaves the failed route out from the kind's own history. The list stays for
+  native run by hand.
 - The machine's tick deals every ready primary the fleet has room for in one
   step, in stream turns (each stream's oldest first by score), one card at a
   time to the next up member round the fleet (the rolling index `deal_index`)
@@ -267,8 +321,27 @@ id (`--op`) returns the original result, with no second counter or notification.
 
 ## 6. The readers
 
-- ask deals every primary in review that lacks reads to TWO DIFFERENT readers,
-  each to the shortest asked queue, keeping order. One read card per reader.
+- A reader row has a state, as a fleet member has: up, away or down. A reader
+  says it is there by asking for its own queue: `queue --as <reader>` writes its
+  beat (a record outside the tables, as a member's beat is). It is up while its
+  last beat is within the beat bound (`ReaderBeatBound`, the fleet's 15 s),
+  away when it beat and has lapsed, down when it has never beaten; the
+  coordinator's `reader away <reader>` holds it away whatever it beats, and
+  `reader up <reader>` releases the hold. `where` shows each reader's state in
+  the readers table's `status` cell; the cell is shown, never stored in the
+  table. The state is read, never typed: the tick reads it once, with its first
+  read, and every part plans on that reading.
+- ask deals every primary in review that lacks reads to TWO DIFFERENT readers
+  UP, each to the shortest asked queue, keeping order. One read card per reader.
+  A reader away or down is never asked. A read asked, and not begun, of a
+  reader that is not up is taken back by the next ask (the tick's, in the same
+  step that asks the primary again): its read card is retired (by `away`), the
+  primary stays at its attempt, no redeal is spent and no `ask --another` is
+  owed, and the next reader up that has no read card at that attempt is asked.
+  A read begun stays with its reader. With fewer than two readers up the tick
+  asks none: it raises one judgment, `fewer than two readers up: <readers and
+  their states>`, for the sprint (not one for each primary), closed when two
+  are up or no primary waits; `reader up` and `reader add` answer it.
   The machine's tick asks for every such primary; `ask` is the coordinator's
   own.
   Work that came back failed is not read: it waits for the coordinator.
@@ -407,7 +480,8 @@ the tick would make, no other open judgment on it).
 | repair skipped changes the store refused as recorded | card (look), return, drop, rework, ack | yes |
 | an operation was stuck | check, ack | yes |
 | a reminder could not be delivered | goal set (a new route), goal drop, ack | yes |
-| cannot ask | reader add, rework, drop, wait | no |
+| cannot ask (two readers are up, and a primary has no two to be asked of) | reader add, rework, drop, wait | no |
+| fewer than two readers up | reader up, reader add, wait | no |
 | no fleet member is up | fleet beat (on a machine), fleet up (releases a hold), wait | no |
 | a card reached its bound (an attempt's work card redealt MaxRedeals, 3, times after takes that ended, and a take of it ended again) | rework with a fix (a new attempt), drop, wait | no |
 | a work card is past its deadline | fleet down (the member, only when it has held the card its own whole deadline: never the member a late card was just redealt to, nor one it was withdrawn from), wait, drop | no |
@@ -418,7 +492,7 @@ the tick would make, no other open judgment on it).
 | a stream has made no progress past its deadline (stale) | where, queue (look) | no |
 | stalled: nothing holds a card (rule 12) | the decisions its place allows and that would be accepted (ask --another for a primary asked already, never ask), else look at the card; drop; wait | no, while the stall stands |
 
-A condition the tick keeps (cannot ask, no member up, a deadline passed, an
+A condition the tick keeps (cannot ask, fewer than two readers up, no member up, a deadline passed, an
 invariant broken; a failing reminder too) is answered for a while by
 `wait <note> --for <duration>`: the judgment is closed and the condition held
 until that much running time has passed (STOPPED time does not count); when it
@@ -427,7 +501,7 @@ condition clears first the hold is closed. `wait` on any other judgment sets
 its review time, which counts running time from when it was set, as every
 deadline does.
 
-The machine's tick writes its own judgments (section 14): cannot ask, no fleet
+The machine's tick writes its own judgments (section 14): cannot ask, fewer than two readers up, no fleet
 member is up, a work card or a read card past its deadline, a stream with no
 merge step past its deadline, an invariant is broken, a stall (rule 12: one
 judgment for each card nothing holds, or for the stall a chain of waiting
@@ -684,7 +758,7 @@ refused), `--json` and `--max`. `--actor` has no default: it is `--actor`, else
 NOVA_SPRINT_ACTOR, and a verb that writes with neither is refused. Every verb
 has one class of who may run it. The coordinator's verbs (init, add, release,
 resolve, start, stop, ask, accept, rework, return, drop, rank, resume, fleet
-up, fleet down, fleet level, reader add, wait, ack, clear, teardown, repair,
+up, fleet down, fleet level, reader add, reader away, reader up, reader remove, wait, ack, clear, teardown, repair,
 goal set, goal drop, play) are the sprint's coordinator's alone: the first
 init names the coordinator (`--coordinator`, else the actor), a later init is
 refused unless its actor is that coordinator and never changes it, and
@@ -712,19 +786,20 @@ command that loads it.
 | verb | does |
 |---|---|
 | init | creates the four tables and the view; `--readers`, `--members`, `--coordinator` (the one actor who releases sentinels; default the actor), `--rules <file>` (the child rules file every brief is held to, one required sentence per line; its absolute path is recorded as the key `sprint:rules`, kept by a clear and removed by teardown; refused at once when the file cannot be read or holds no rule; this repository's is `fleet/child-rules.txt`) |
-| add | admits primaries into a stream: waiting if they need something, else ready; `--count n` generates ids; `--sentinel <id>`, `--before`/`--after <id>` (section 16); `--brief <text>` or `--brief-file <path>` gives the brief (the file's bytes as they are, its one trailing newline cut, the whole file read so the lint and the size refusal see all of it, a file over 1 MiB refused naming that cap and its true size; both together, or a file that cannot be read, is refused with exit 2), and every packet carries it whole; a brief is a child's whole brief, so `add` holds every brief to the card lint's child rules (`swarm.LintCardChildWith`, in process, the rules of `nova-swarm lint --card --child-rules`) and refuses one that fails with the lint's own `LINT DRIFT brief <check>: <line>: <excerpt> remedy=...` lines on stderr, exit 2, nothing written; a `--count` card and a sentinel with no brief are not linted, and `--rules <file>` names the rule file for this add (over the one `init --rules` recorded, over the built-in general rules; a `--rules` with no brief is refused); `nova-swarm template --name card` prints a card that passes the general rules |
+| add | admits primaries into a stream: waiting if they need something, else ready; `--count n` generates ids; `--sentinel <id>`, `--before`/`--after <id>` (section 16); `--brief <text>` or `--brief-file <path>` gives the brief (the file's bytes as they are, its one trailing newline cut, the whole file read so the lint and the size refusal see all of it, a file over 1 MiB refused naming that cap and its true size; both together, or a file that cannot be read, is refused with exit 2), and every packet carries it whole; a brief is a child's whole brief, so `add` holds every brief to the card lint's child rules (`swarm.LintCardChildWith`, in process, the rules of `nova-swarm lint --card --child-rules`) and refuses one that fails with the lint's own `LINT DRIFT brief <check>: <line>: <excerpt> remedy=...` lines on stderr, exit 2, nothing written; a `--count` card and a sentinel with no brief are not linted, and `--rules <file>` names the rule file for this add (over the one `init --rules` recorded, over the built-in general rules; a `--rules` with no brief is refused); `nova-swarm template --name card` prints a card that passes the general rules; `--brief-dir <dir>` adds one card per `*.md` file in the directory in byte order of file name, and `--brief-file <path>` given again adds one card per named file in the order given (with either form no positional id; the card id is the file's base name without `.md`, refused naming the file when not one); each brief's `Needs:` line (the first `Needs:` header line; ids comma separated, text after an opening parenthesis cut, so `none` or `-` is no needs) becomes that card's needs, a need naming no primary on the table or in this add refused naming the file and the id, `--needs <a,b>` on the line adds to every card's (a need named by both is stored once), and `--sentinel <id>` with either form admits one stop after the cards, `--before`/`--after`/`--score` applying to every card; one failing brief refuses the whole call, every failing file named with its findings, exit 2, nothing written |
 | release | lands reached sentinels, the coordinator's alone, with `--reason` |
 | resolve | waiting -> ready where needs have landed (the tick does it; by hand for a stuck case) |
 | start, stop | set the machine RUNNING or STOPPED (section 14) |
-| run | ticks on every line of the log (at most every 100 ms) and once a second while the log is quiet |
+| run | ticks on every line of the log (at most every 100 ms) and once a second while the log is quiet; before each tick it reads its own binary's file, and when a new build was installed under it since it began it stops (`RUN STOP the binary this loop runs was replaced ...`, exit 3) so its supervisor starts the new one: a loop never ticks the store with older code than the verbs run |
 | tick | one tick by hand |
 | take | a worker moves work cards fleet ready -> working; `--as <member>`, `<card>@<gen>` |
-| finish | work cards done ok or failed; primaries to review; `--as <member>`, `<card>@<gen>` |
+| finish | work cards done ok or failed; primaries to review; `--as <member>`, `<card>@<gen>`; `--usage <text>` (what the run spent) is kept on the attempt's record |
 | ask | deals primaries in review to two different readers; `--another` |
-| queue | a reader's read cards or a member's work cards, oldest first (`--as`), or a stream's merge queue (`--stream`) |
+| queue | a reader's read cards or a member's work cards, oldest first (`--as`; a member's `--json` carries its fleet row's `width`), or a stream's merge queue (`--stream`) |
+| routes | each route of the store (nova-config's `route` kind) with what its attempts did: attempts, ok, failed, provider failures, mean wall from take to finish; `TIERS flash=<n> pro=<n>` first, the enabled routes per tier; `--json` |
 | read | a reader records ok or broken with the finding; `--as <reader>`, `--begin` |
 | accept | review -> merging and into merge queued; refused without two readers; named ids all or nothing, a selection moves the eligible |
-| rework | delegates the next attempt at once with a fix; ready when no member is up; a primary at its redeal bound (ready, its work card withdrawn) is reworked too, with `--fix`, its withdrawn card taken off; without `--fix` each primary's fix is the finding of its broken read, else the report of its failed work, and a primary with neither is refused by name |
+| rework | delegates the next attempt at once with a fix, and writes on that attempt's work card `fix`, `finding` (its broken reads' findings, each once) and `why` (how the attempt before ended: failed with its report, finished and found broken, or sent back), each cut to MaxCardTextBytes with a trailing `...` and never refused for its size, and kept on the primary too for a rework that deals later; its packet carries them to the child's JOB.md and `card` prints per attempt; ready when no member is up; a primary at its redeal bound (ready, its work card withdrawn) is reworked too, with `--fix`, its withdrawn card taken off; without `--fix` each primary's fix is the finding of its broken read, else the report of its failed work, and a primary with neither is refused by name |
 | return | merging -> review, off the merge queue |
 | drop | off the table with the reason |
 | rank | changes a score and every copy |
@@ -732,12 +807,15 @@ command that loads it.
 | resume | a stopped stream moves again, with what was done; refused while a cause is unresolved |
 | fleet | `up|down <member>`, `level` |
 | reader add | declares readers |
+| reader away | holds readers away whatever they beat: no read is asked of them, and a read asked and not begun is asked of another at the next tick |
+| reader up | releases the hold; the reader's state is then its beat's |
+| reader remove | takes readers off the readers table; refused (exit 1, nothing written) when a named reader is no row or holds a read card, asked, reading, ok or broken, naming the reader and its read cards |
 | ci | records a CI observation for primaries in any state |
 | wait | sets a judgment's next review time |
 | ack | closes a judgment the coordinator looked at, with the reason |
 | inbox | every open judgment and the notifications since the cursor, grouped, judgment first; `--open <id>`, `--read`; `--json` carries `judgments` (each with `id`, `kind`, `type`, `what`, `stream`, `size`, `cards` whole, `notes`, and `answers`: every decision with the exact command lines that make it, in order), `happened` (the notifications since the cursor, grouped), `done` (the machine has stopped because the sprint is done) and `groups`, every group in the order the text prints; `--wait --timeout <d>` blocks for the next tick end, and `--json` then also carries `woke` (false when the timeout ended the wait, with `inbox --wait: no tick end in <d>` on stderr and stdout still one JSON object; the plain rendering prints that line on stdout) |
 | card | one primary's story, told from the log: for a card in flight, first what holds it now (each open judgment with the commands that answer it, or the actor and its deadline); its place in its stream's line; its brief, and the fix its attempt was given; its timeline in local time, an attempt at a time ("attempt 2, because attempt 1 failed"), one line per event a person would name (two readers asked, a merge and its batch, a step and its answer are one line each), a finish and a read with the first line of their words; the reports, findings and fixes whole as paragraphs; a card that has ended says so in one line; `--fields` prints every field of the primary and its cards instead; `--json` carries both, the timeline's events with the log lines each tells |
-| queue --as, take | a member's or a reader's cards, each with its packet: what it is handed so that it needs no other read to learn its task (the card, its epoch and generation, the brief, this attempt's fix, the notes on it, and for a work card the branch to work on, `sprint/<card>`, and the one to start from, the attempt before's branch for a rework, with `base_head`, the head that attempt finished ok at, which a rework is staged from (docs/SPEC-CARD-CONTRACT.md: never a branch name alone, which may never have reached origin); for a read card the work it reads: the worker, its head, branch and base, and the worker's report), and the command that reports it; take prints the packets of the cards it took, `--json` as `packets`; finish takes `--branch` and `--base`, which the work card keeps and the reader's packet and card show; a fleet member (`nova-swarm member`) pushes the child's commit to origin's `sprint/<card>` before its finish, so the finish's `--head` is the pushed sha the merge queue carries and the merge reads the work from origin; a finish is ok only with the result's shape, its verdict ok and a pushed commit, and every other is a `--failed` finish naming no head and no branch, its report starting with the reason (`no RESULT.md shape`, `nothing to do: <why>`, `verdict <word>`, `no commit: <why>`, `push refused: <git's line>`), so it opens the failed-work judgment and never goes to review with nothing to read (docs/SPEC-CARD-CONTRACT.md section 4) |
+| queue --as, take | a member's or a reader's cards (a reader's `queue --as` is its beat), each with its packet: what it is handed so that it needs no other read to learn its task (the card, its epoch and generation, the brief, this attempt's fix, the notes on it, for a rework the finding of the read that found the attempt before broken and why that attempt ended (the work card's own words: the primary's are written at the next tick's drain, after a member may have taken the card), and for a work card the branch to work on, `sprint/<card>`, and the one to start from, the attempt before's branch for a rework, with `base_head`, the head that attempt finished ok at, which a rework is staged from (docs/SPEC-CARD-CONTRACT.md: never a branch name alone, which may never have reached origin); for a read card the work it reads: the worker, its head, branch and base, and the worker's report), and the command that reports it; take prints the packets of the cards it took, `--json` as `packets`; finish takes `--branch` and `--base`, which the work card keeps and the reader's packet and card show; a fleet member (`nova-swarm member`) pushes the child's commit to origin's `sprint/<card>` before its finish, so the finish's `--head` is the pushed sha the merge queue carries and the merge reads the work from origin; a finish is ok only with the result's shape, its verdict ok and a pushed commit, and every other is a `--failed` finish naming no head and no branch, its report starting with the reason (`no RESULT.md shape`, `nothing to do: <why>`, `verdict <word>`, `no commit: <why>`, `push refused: <git's line>`), so it opens the failed-work judgment and never goes to review with nothing to read (docs/SPEC-CARD-CONTRACT.md section 4) |
 | log | the epoch's log, every line in order: --card (a primary with its work, read and merge cards), --stream, --member, --since, --at-epoch, --json (section 17) |
 | check, repair | section 9 and section 10 |
 | where | the view, once or `--watch` (redrawn in place, section 1); `--json` also carries the pending operation, the stalled streams, the people and the coordinator |
@@ -905,8 +983,9 @@ stream stopped only on a cross need whose card has landed), deal (T3), accept
 (R9: every acceptable primary in review the tick does not hold, section 6,
 moves to merging and into its stream's merge queue, and the coordinator is
 told once for each stream "ready to merge"; the merge is the coordinator's),
-level (T4), ask (T2: two different readers for each primary in review with no
-read card at its attempt and work not failed), check (T6: section 9, and the
+level (T4), ask (T2: two different readers up for each primary in review with
+fewer than two read cards at its attempt and work not failed; a read asked of a
+reader that is not up is taken back first, section 6), check (T6: section 9, and the
 no-stall rule 12), deadlines, overdue, done (the sprint done: the machine
 stops). Each part is
 bounded per tick (200 moves, 50 notes): the rest are due, the next ticks
@@ -916,8 +995,11 @@ tick. Running a tick twice in a row changes nothing the second time.
 The tick writes a judgment once while its condition holds and closes it when
 the condition clears (closing a primary's last judgment in review, it writes
 the judgment the primary needs next, as every step that leaves one in review
-does): cannot ask (fewer than two different readers are free;
+does): cannot ask (two readers are up and fewer than two different readers are
+free for a primary, who has not already read its attempt;
 one condition per primary whatever its count of free readers),
+fewer than two readers up (the sprint's, one whatever the primaries waiting:
+the ask asks none while it stands, section 6),
 no fleet member is up, a work card past its deadline, by its state (not
 taken, ready or withdrawn again before a take: 15 minutes from untaken_since,
 the first deal since its last take; not finished, working or withdrawn from a

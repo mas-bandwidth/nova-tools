@@ -174,6 +174,9 @@ var swarmAudit = audit.Config{
 		// pushed.tsv into values. It prints nothing to any stream of this binary; the lines
 		// the shims print are their own, in the card's shell, never nova-swarm's.
 		`"github.com/mas-bandwidth/nova-tools/internal/cardcontract"`,
+		// cardhdr reads a card's header lines (its tier, a model: pin) into a value: the
+		// one parser the frame and the deal share. It holds no writer and prints nothing.
+		`"github.com/mas-bandwidth/nova-tools/internal/cardhdr"`,
 		// typedrec (the one-typed-parser rule, #2506) reads a card's RESULT.md into a value
 		// and says whether a string is a commit id; it holds no writer and prints nothing.
 		`"github.com/mas-bandwidth/nova-tools/internal/typedrec"`,
@@ -184,6 +187,9 @@ var swarmAudit = audit.Config{
 		// subproc starts one child under a deadline (Command) or a cancellable context
 		// (Long) and returns the *exec.Cmd to this package, which wires the streams. It
 		// holds no writer of this package's stream and prints nothing itself.
+		// binstamp (member.go) reads one file's size and modification time and returns a
+		// string to this package, which compares it and prints nothing of it.
+		`"github.com/mas-bandwidth/nova-tools/internal/binstamp"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/subproc"`,
 		// gitrun (memberpush.go) runs one git under its budget and returns its two streams
 		// as bytes to this package; it holds no writer of this package's stream and prints

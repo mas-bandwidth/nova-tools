@@ -27,7 +27,9 @@ handles".
 ```
 nova-config machine add bench-a --user nova --seat bench-a --slots 2 --as ada
 nova-config fleet set --store bench-a --coordinator bench-a --as ada
-nova-config loop add member-bench-a --machine bench-a --argv '["nova-swarm","member","--as","bench-a","--width","2"]' --keepalive true --seat bench-a --keys NOVA_REDIS_BENCH_PASSWORD --width 2 --as ada
+nova-config loop add member-bench-a --machine bench-a --argv '["nova-swarm","member","--as","bench-a","--harness","opencode","--root","nova-bench/member"]' --keepalive true --seat bench-a --keys NOVA_REDIS_BENCH_PASSWORD --width 2 --as ada
+nova-config route add flash-a --tier flash --provider deepseek --model deepseek-v4-flash --tokens 200000 --deadline 900 --as ada
+nova-config route add pro-a --tier pro --provider openrouter --model x-ai/grok-4 --tokens 400000 --deadline 1800 --as ada
 nova-config apply --as ada
 printf '#!/bin/sh\nexec nova-config inventory "$@"\n' > nova-inventory
 chmod +x nova-inventory
@@ -41,6 +43,15 @@ ansible-playbook -i ./nova-inventory fleet/loops.yml </dev/null 2>&1 | cat
 nova-sprint fleet sync --check --actor ada
 nova-sprint fleet sync --actor ada
 ```
+
+The member loop names no width and no model. Its width is its fleet row's
+(`nova-config machine` slots, made the row by `fleet sync`; `nova-sprint fleet
+up <m> --width n` changes it live), read every tick; each card's model, budget
+and deadline are the route the deal drew for it from the routes `apply` writes
+(here one flash and one pro: a pro card runs on `openrouter/x-ai/grok-4`, a
+flash card on `deepseek/deepseek-v4-flash`, on the same machine), or the
+card's own `model:` line. `nova-sprint routes` shows what each route's attempts
+did.
 
 The inventory reads the store `NOVA_SPRINT_REDIS` names (or `--redis`); export
 it, and `NOVA_MACHINE` when the machine running the play is a row, before the

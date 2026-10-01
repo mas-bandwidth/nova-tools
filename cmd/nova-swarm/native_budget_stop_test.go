@@ -41,36 +41,6 @@ import (
 //	 `PROMPT-DEFECT` line on `native`'s stdout after `NATIVE OK`, and a published
 //	 `RESULT.md` unchanged by a byte"
 
-// usageRows reads a card's usage.tsv into a header and its rows, split on tabs.
-func usageRows(t *testing.T, jobDir string) ([]string, [][]string) {
-	t.Helper()
-	raw, err := os.ReadFile(filepath.Join(jobDir, "usage.tsv"))
-	if err != nil {
-		t.Fatalf("the card wrote no usage.tsv under %s: %v", jobDir, err)
-	}
-	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
-	if len(lines) < 2 {
-		t.Fatalf("usage.tsv holds a header and at least one row:\n%s", raw)
-	}
-	var rows [][]string
-	for _, l := range lines[1:] {
-		rows = append(rows, strings.Split(l, "\t"))
-	}
-	return strings.Split(lines[0], "\t"), rows
-}
-
-// cell is one named column of one usage row.
-func cell(t *testing.T, head []string, row []string, name string) string {
-	t.Helper()
-	for i, h := range head {
-		if h == name && i < len(row) {
-			return row[i]
-		}
-	}
-	t.Fatalf("usage.tsv has no column %q in %v", name, head)
-	return ""
-}
-
 // TestNativeBudgetStopsTheCardAndKeepsWhatItPublished is the heart of demanded test 13d.
 func TestNativeBudgetStopsTheCardAndKeepsWhatItPublished(t *testing.T) {
 	t.Parallel()

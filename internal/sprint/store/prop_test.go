@@ -405,6 +405,9 @@ func (r *propRun) act(a pAct) {
 // beat is one beat of every member's machine: they beat while time passes
 // (status follows the beat, and fleet down is the coordinator's hold).
 func (r *propRun) beat() {
+	if err := r.st.BeatReaders(r.ctx); err != nil {
+		r.errs = append(r.errs, err)
+	}
 	zero := 0.0
 	for _, m := range r.cfg.members {
 		if _, err := r.st.Beat(r.ctx, m, &zero, hostload.Source{}); err != nil {

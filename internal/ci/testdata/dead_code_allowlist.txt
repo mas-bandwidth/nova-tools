@@ -12,7 +12,7 @@ internal/bounded 9
 internal/buildinfo 1
 internal/bus 30
 internal/cairn 1
-internal/cardhdr 14
+internal/cardhdr 13
 internal/check 3
 internal/ci/slowtests 2
 internal/config 14

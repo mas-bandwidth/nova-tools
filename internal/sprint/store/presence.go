@@ -199,20 +199,9 @@ func (st *Store) Beats(ctx context.Context, members []string) (map[string]sprint
 	for i, m := range members {
 		names[i] = beatKey(m)
 	}
-	var vals []string
-	var oks []bool
-	if kg, ok := kv.(KeysGetter); ok {
-		if vals, oks, err = kg.GetKeys(ctx, names); err != nil {
-			return nil, err
-		}
-	} else {
-		for _, n := range names {
-			v, ok, err := kv.GetKey(ctx, n)
-			if err != nil {
-				return nil, err
-			}
-			vals, oks = append(vals, v), append(oks, ok)
-		}
+	vals, oks, err := getKeys(ctx, kv, names)
+	if err != nil {
+		return nil, err
 	}
 	for i, m := range members {
 		var b sprint.Beat
@@ -221,6 +210,23 @@ func (st *Store) Beats(ctx context.Context, members []string) (map[string]sprint
 		}
 	}
 	return out, nil
+}
+
+// getKeys reads machine records, in one exchange where the store can.
+func getKeys(ctx context.Context, kv KV, names []string) ([]string, []bool, error) {
+	if kg, ok := kv.(KeysGetter); ok {
+		return kg.GetKeys(ctx, names)
+	}
+	var vals []string
+	var oks []bool
+	for _, n := range names {
+		v, ok, err := kv.GetKey(ctx, n)
+		if err != nil {
+			return nil, nil, err
+		}
+		vals, oks = append(vals, v), append(oks, ok)
+	}
+	return vals, oks, nil
 }
 
 // SyncFleet brings every display cell of the fleet up to date, reading the

@@ -28,8 +28,9 @@ Queues(w, r, g, f) == [t \in Tables |-> CASE t = "work" -> w [] t = "readers" ->
                                           [] t = "merge" -> g [] t = "fleet" -> f]
 NoReads == [c \in Cards |-> NoR]
 Empty == [m \in Machines |-> {}]
-Base == [col |-> [c \in Cards |-> "none"], rd |-> NoReads, mq |-> {}, up |-> Machines, live |-> Machines,
-         mc |-> Empty, mr |-> Empty, q |-> Queues(Adds, <<>>, <<>>, <<>>)]
+Base == [col |-> [c \in Cards |-> "none"], rd |-> NoReads, mq |-> {}, up |-> Machines \cup Readers,
+         live |-> Machines \cup Readers, away |-> FALSE,
+         mc |-> Empty, mr |-> Empty, q |-> Queues(Adds, <<>>, <<>>, <<>>), served |-> Cards]
 
 \* Every card added (its add queued), every machine up: the whole life.
 ScnBase == Base
@@ -68,6 +69,22 @@ ScnTake == [Base EXCEPT !.col = [c \in Cards |-> "working"],
 ScnAccept == [Base EXCEPT !.col = [c \in Cards |-> "review"], !.rd = [c \in Cards |-> "r1"],
                           !.mr = [m \in Machines |-> IF m = "m1" THEN {"c1"} ELSE {}],
                           !.q = Queues(<<>>, <<E("rep", "c1", <<"r1", "ok">>)>>, <<>>, <<>>)]
+
+\* Every card added, every machine up; no route serves c2's tier and it pins
+\* no model (THE ROUTE): c1 lives its life, c2 stays ready.
+ScnRoute == [Base EXCEPT !.served = Cards \ {"c2"}]
+
+\* THE READERS' PRESENCE. c1 in review waiting for a read, r1 away: the read is
+\* asked of r2, and r1 may come back or go away again.
+ScnReader == [Base EXCEPT !.col = [c \in Cards |-> "review"], !.away = TRUE,
+                          !.up = Machines \cup {"r2"}, !.live = Machines \cup {"r2"},
+                          !.q = Queues(<<>>, <<E("ask", "c1", "-")>>, <<>>, <<>>)]
+\* c1 in review, its read on r1 (host m1) asked: r1 may go away, and the read is
+\* taken back and asked of r2.
+ScnReaderAway == [Base EXCEPT !.col = [c \in Cards |-> "review"], !.away = TRUE,
+                              !.rd = [c \in Cards |-> "r1"],
+                              !.mr = [m \in Machines |-> IF m = "m1" THEN {"c1"} ELSE {}],
+                              !.q = Queues(<<>>, <<>>, <<>>, <<>>)]
 
 \* Reachability probes, expected to fail: every card lands; a card reaches
 \* its bound; a tick drains a queue after the first pass; a take ends at the

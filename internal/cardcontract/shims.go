@@ -295,15 +295,33 @@ func writeCommon(b *strings.Builder, f Frame, s Staged) {
 	if f.Attempt > 1 {
 		fmt.Fprintf(b, "\nAttempt %d of this card.", f.Attempt)
 		if f.PrevHead != "" {
-			fmt.Fprintf(b, " The previous attempt's head is %s; this checkout starts from it.", f.PrevHead)
+			fmt.Fprintf(b, " This checkout continues attempt %d: its head, %s, is the last pushed by any attempt before this one, and the checkout starts from it.", f.PrevFrom, f.PrevHead)
 		}
-		if strings.TrimSpace(f.Finding) != "" {
-			fmt.Fprintf(b, " The readers found:\n\n%s\n", strings.TrimSpace(f.Finding))
-		} else {
-			b.WriteString("\n")
+		b.WriteString("\n")
+		writeWhy(b, f)
+	}
+}
+
+// writeWhy is what a rework's JOB.md says right after the attempt line, so the child learns
+// why the attempt exists and what to do first (docs/SPEC-CARD-CONTRACT.md, JOB.md): how the
+// attempt before ended, what a reader found, what the coordinator asks; a line whose value is
+// empty is left out, and the coordinator's line too when its words are the finding's or
+// already in how the attempt ended (a rework with no --fix takes the finding as its fix).
+func writeWhy(b *strings.Builder, f Frame) {
+	why, finding, fix := strings.TrimSpace(f.Why), strings.TrimSpace(f.Finding), strings.TrimSpace(f.Fix)
+	if fix == finding || fix != "" && strings.Contains(why, fix) {
+		fix = ""
+	}
+	n := 0
+	for _, l := range []struct{ label, text string }{{"This attempt exists because: ", why}, {"A reader found: ", finding}, {"The coordinator asks: ", fix}} {
+		if l.text != "" {
+			fmt.Fprintf(b, "%s%s\n", l.label, l.text)
+			n++
 		}
 	}
-
+	if n > 0 {
+		b.WriteString("Do that first; a finish with no new commit is refused.\n")
+	}
 }
 
 func orDash(s string) string {

@@ -77,7 +77,7 @@ DARWIN_TIMEOUT ?= 110s
 # `?=` is what makes that environment value win.
 MERGE_TIMEOUT ?= 100s
 
-.PHONY: help build fmt vet vet-functional vet-laws vet-windows lint preflight test test-full test-short test-slow test-functional test-functional-container test-merge test-race test-e2e test-prewarm-done compile-lisp test-lisp check clean darwin-timeout map new-rule new-verb
+.PHONY: help build fmt vet vet-functional vet-slow vet-shippedsmoke vet-novadisk vet-laws vet-windows lint preflight test test-full test-short test-slow test-functional test-functional-container test-merge test-race test-e2e test-prewarm-done compile-lisp test-lisp check clean darwin-timeout map new-rule new-verb
 
 help:
 	@echo "make tlc         bounded Linux TLC group (TLC_JAR, TLC_OUT, TLC_GROUP)"
@@ -89,6 +89,9 @@ help:
 	@echo "make fmt         report files that are not gofmt-clean"
 	@echo "make vet         go vet PKGS (default ./...)"
 	@echo "make vet-functional go vet -tags functional PKGS (the redis-backed test files compiled too)"
+	@echo "make vet-slow go vet -tags slow PKGS (the nightly tier's test files compiled on every change)"
+	@echo "make vet-shippedsmoke go vet -tags shippedsmoke ./internal/shippedsmoke (the shipped binary's smoke tests compiled on every change)"
+	@echo "make vet-novadisk GOOS=darwin go vet -tags novadisk ./cmd/nova-sandbox (the one real-disk e2e test compiled on every change)"
 	@echo "make vet-laws    build tools/analyzers/cmd/vetlaw and vet ./cmd/... with it"
 	@echo "make vet-windows GOOS=windows go vet ./... (the one Windows guard on the CL path)"
 	@echo "make lint        fmt and vet"
@@ -163,6 +166,26 @@ vet:
 vet-functional:
 	$(GO) vet -tags functional $(PKGS)
 
+# THE SLOW TIER (#516), the mirror of vet-functional: a test behind `//go:build
+# slow` is compiled by no plain `go vet` and runs only in the nightly job, so a
+# PR that breaks one stayed green until the morning. vet-slow compiles them on
+# every change; internal/ci's TestEveryTestBuildTagIsVettedByCIVetSteps keeps
+# the tag on.
+vet-slow:
+	$(GO) vet -tags slow $(PKGS)
+
+# The shippedsmoke and novadisk tags are the two opt-in tags left, both compiled
+# only by a scheduled job: shippedsmoke by certification.yml, novadisk (a darwin
+# file, `//go:build darwin && novadisk`) by nightly-slow.yml on a mac. vet-shippedsmoke
+# compiles the one package on every change; vet-novadisk is a GOOS=darwin cross-vet
+# like vet-windows, because the file it guards is darwin-only and the lint job is
+# linux.
+vet-shippedsmoke:
+	$(GO) vet -tags shippedsmoke ./internal/shippedsmoke
+
+vet-novadisk:
+	GOOS=darwin GOARCH=amd64 CGO_ENABLED=0 $(GO) vet -tags novadisk ./cmd/nova-sandbox
+
 # THE VERB-LAW GUARD, its own target rather than folded into `vet` because
 # `vet` is also the SHARDED per-package leg (ci.yml's test-packages job calls
 # `make vet PKGS=<shard>` once per shard): vetlaw's checks are a whole-tree
@@ -197,7 +220,7 @@ vet-laws:
 vet-windows:
 	GOOS=windows GOARCH=amd64 CGO_ENABLED=0 $(GO) vet ./...
 
-lint: fmt vet vet-functional vet-laws
+lint: fmt vet vet-functional vet-slow vet-laws
 
 # preflight is the standard check for swarm cards and developers (#2498 S4):
 # gofmt + go vet + go test -count=1, run by tools/preflight. The tool is built into

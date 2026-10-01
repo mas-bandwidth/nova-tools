@@ -154,6 +154,7 @@ func TestFamiliesAreTheOwnersKeys(t *testing.T) {
 		"friends":  {config.FriendBeatKey("f"), config.FriendsKey, "friend:f:roles", "friend:f:desired"},
 		"fleet":    {config.FleetKey("store"), config.FleetKey("coordinator")},
 		"loops":    {config.LoopsKey, config.LoopKey("member-a")},
+		"routes":   {config.RoutesKey, config.RouteKey("pro-a")},
 		"config":   {config.DeclKey},
 		"tokens":   {record.LedgerPrefix + "2026-09-30"},
 		"events":   {wire.Stream},

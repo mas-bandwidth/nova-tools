@@ -315,20 +315,22 @@ func TestCROneReaderThenTwo(t *testing.T) {
 	h.machine()
 	h.work("m1")
 	h.crTicks(3, "no readers")
-	if got := len(h.openOf(sprint.NCannotAsk)); got != 3 {
-		t.Fatalf("cannot ask open %d, want 3 (the three dealt in one tick, at m1's width)", got)
+	if got := len(h.openOf(sprint.NFewReaders)); got != 1 {
+		t.Fatalf("fewer than two readers up: open %d, want 1 (one judgment for the three dealt in one tick, at m1's width)", got)
 	}
-	w := h.written(sprint.NCannotAsk)
+	w := h.written(sprint.NFewReaders)
 	if err := h.m.RowsAdd(h.ctx, "t-readers", []string{"reader-a"}); err != nil {
 		t.Fatal(err)
 	}
+	h.beat()
 	h.crTicks(3, "one reader")
-	t.Logf("cannot-ask written %d then %d after the first reader (the why text changes 0 free -> 1 free)", w, h.written(sprint.NCannotAsk))
+	t.Logf("few-readers written %d then %d after the first reader (the why text changes 0 free -> 1 free)", w, h.written(sprint.NFewReaders))
 	if err := h.m.RowsAdd(h.ctx, "t-readers", []string{"reader-b"}); err != nil {
 		t.Fatal(err)
 	}
+	h.beat()
 	h.crTicks(2, "two readers")
-	if got := len(h.openOf(sprint.NCannotAsk)); got != 0 {
+	if got := len(h.openOf(sprint.NFewReaders)); got != 0 {
 		t.Fatalf("still open %d", got)
 	}
 	s := h.snap()

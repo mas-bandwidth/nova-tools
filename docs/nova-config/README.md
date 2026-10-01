@@ -48,7 +48,7 @@ The executable transcript is in [TESTS.md](../TESTS.md#nova-config).
 
 ```
 nova-config migrate --pg postgres://nova_config@space:5432/nova
-CONFIG MIGRATE pg=nova_config@space:5432/nova from=0 to=6 applied=6
+CONFIG MIGRATE pg=nova_config@space:5432/nova from=0 to=7 applied=7
 ```
 
 `migrate` creates or upgrades schema `config` from the numbered migrations in
@@ -61,7 +61,7 @@ the `nova_read` role, when it exists, is granted read on every table.
 
 ```
 nova-config status
-CONFIG STATUS pg=nova_config@space:5432/nova schema=6 machine=9 machine_rev=9 friend=4 friend_rev=13 redis=space:6380 machine_applied=9 friend_applied=13
+CONFIG STATUS pg=nova_config@space:5432/nova schema=7 machine=9 machine_rev=9 friend=4 friend_rev=13 redis=space:6380 machine_applied=9 friend_applied=13
 ```
 
 It exits 1 with the next step on stderr when the schema is not there yet
@@ -74,8 +74,9 @@ The placement rule: per-machine facts belong to machines, and global fleet
 facts belong to the fleet. So a machine's row holds what varies per machine, the
 fleet's one row holds what has one value for the whole fleet, a friend's row
 holds what someone decides for her, the sprint's one row holds who
-coordinates, and a loop's row holds a process someone decides runs on one
-machine. Anything else is invented and is not a field.
+coordinates, a loop's row holds a process someone decides runs on one
+machine, and a route's row holds one way someone decides to run a model tier.
+Anything else is invented and is not a field.
 
 Every kind has the same six verbs, generated from its descriptor, so what is
 true of one is true of all:
@@ -245,6 +246,31 @@ does not start it. `--keys` needs a `--seat`. Its log is
 `~/nova-bench/loops/<name>.log`, derived from the name and never typed. A
 machine a loop names cannot be removed until the loop is.
 
+### route
+
+One way to run a model tier: the provider and model a card of that tier runs
+on, its token budget per card, its deadline in seconds, and its weight in the
+tier's draw. A tier with several routes spreads its cards across providers and
+models. Three pro routes, then the apply that hands them to the deal:
+
+```
+nova-config route add pro-deepseek-opencode --tier pro --provider opencode --model deepseek-v4 --tokens 400000 --deadline 1800
+nova-config route add pro-deepseek-direct --tier pro --provider deepseek --model deepseek-v4 --tokens 400000 --deadline 1800 --weight 2
+nova-config route add pro-grok-openrouter --tier pro --provider openrouter --model x-ai/grok-4 --tokens 300000 --deadline 1800
+nova-config apply
+```
+
+The harness is launched with `<provider>/<model>`: `--provider` is one word
+with no slash, and `--model` is the rest, which may hold slashes
+(`x-ai/grok-4`). `--tokens 0` (the default) is unmetered, the deadline the only
+stop; `--deadline` is required and above 0. The deal draws one enabled route of
+the card's tier per deal, weighted by `--weight` (1 by default; 0 takes a route
+out of the draw as `--enabled false` does), excluding routes already drawn for
+that card when another remains; a card's `model:` header pins it instead. The
+tier is `flash` or `pro`: frontier cards are never drawn from routes, they
+escalate to the coordinator. apply writes the hash `route:<name>` and the set
+`routes`, which the deal reads.
+
 ### Refusals
 
 One stderr line each, naming the next step:
@@ -277,6 +303,7 @@ CONFIG CHECK kind=friend add=1 set=0 remove=0 rev=5 applied=0
 CHECK SET kind=sprint name=sprint changed=coordinator
 CONFIG CHECK kind=sprint add=0 set=1 remove=0 rev=6 applied=0
 CONFIG CHECK kind=loop add=0 set=0 remove=0 rev=0 applied=0
+CONFIG CHECK kind=route add=0 set=0 remove=0 rev=0 applied=0
 nova-config apply --as rowan
 APPLY ADD kind=machine name=hulk
 APPLY ADD kind=machine name=studio
@@ -288,10 +315,11 @@ CONFIG APPLY kind=friend add=1 set=0 remove=0 rev=5 ms=6
 APPLY SET kind=sprint name=sprint changed=coordinator
 CONFIG APPLY kind=sprint add=0 set=1 remove=0 rev=6 ms=1
 CONFIG APPLY kind=loop add=0 set=0 remove=0 rev=0 ms=0
+CONFIG APPLY kind=route add=0 set=0 remove=0 rev=0 ms=0
 ```
 
 `apply` reads Postgres and writes Redis, one kind at a time: machines, the
-fleet row, friends, the sprint row, loops. For a machine it writes its machine ceiling
+fleet row, friends, the sprint row, loops, routes. For a machine it writes its machine ceiling
 (`ns_capacity_machine`, the ceiling from `--slots`; cores and memory are never
 declared, so none are passed) and its registry hash `machine:<m>`. For the
 fleet row, `fleet:store` and `fleet:coordinator`, plain keys. For a friend it
@@ -303,7 +331,9 @@ role in Redis on top of her row's roles, so a handover (`sprint set
 first. It never touches her logins or wake path: they are her presence's.
 For the sprint row, `sprint:coordinator`. For a loop, the hash `loop:<l>`
 with every field, its log path, `rev` and `at`, and its name in the set
-`loops`: what the plays read to render one unit per loop. A name in Redis that Postgres has
+`loops`: what the plays read to render one unit per loop. For a route, the
+hash `route:<r>` with every field, `rev` and `at`, and its name in the set
+`routes`: what the deal reads. A name in Redis that Postgres has
 not is removed. `--check` prints the plan and writes nothing. `--kind friend`
 applies one kind.
 

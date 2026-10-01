@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
+	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
@@ -637,7 +638,7 @@ func sealGit(run execCommand, dir, gitPath string, args ...string) error {
 }
 
 func sealGitOutput(run execCommand, dir, gitPath string, args ...string) (string, error) {
-	out, err := run(nil, append(os.Environ(), "GIT_TERMINAL_PROMPT=0"), dir, gitPath, args...)
+	out, err := run(nil, append(gitrun.WithoutRepoVars(os.Environ()), "GIT_TERMINAL_PROMPT=0"), dir, gitPath, args...)
 	if err != nil {
 		return "", fmt.Errorf("git %s failed: %s (transcript withheld)", args[0], oneline.Err(err))
 	}

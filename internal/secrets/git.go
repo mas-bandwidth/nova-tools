@@ -16,6 +16,13 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 )
 
+// storeGit is how every git against the store runs: in the store, and never in the
+// repository the caller's environment names (a git that runs a credential helper exports
+// GIT_DIR, and the helper's nova-secrets would otherwise read that repository).
+func storeGit(storeDir string) gitrun.Options {
+	return gitrun.Options{C: storeDir, OwnRepo: true}
+}
+
 // GitRefStatus holds the result of verifying invariant 8 against a git working copy.
 type GitRefStatus struct {
 	HeadSHA   string
@@ -231,7 +238,7 @@ func ReadHEADTreeBlobs(storeDir string) (map[string]string, error) {
 	}
 
 	// Fallback to git ls-tree -r if available
-	lsTree, kErr := gitrun.Run(context.Background(), gitrun.Options{C: storeDir}, "ls-tree", "-r", commitSHA)
+	lsTree, kErr := gitrun.Run(context.Background(), storeGit(storeDir), "ls-tree", "-r", commitSHA)
 	out := lsTree.Stdout
 	if kErr == nil {
 		res := make(map[string]string)
@@ -252,7 +259,7 @@ func ReadHEADTreeBlobs(storeDir string) (map[string]string, error) {
 		return res, nil
 	}
 
-	return nil, fmt.Errorf("unable to read HEAD tree objects: %w", err)
+	return nil, fmt.Errorf("unable to read HEAD tree objects: %w; git ls-tree: %v", err, kErr)
 }
 
 func readLooseObject(gitDir, sha string) (string, []byte, error) {

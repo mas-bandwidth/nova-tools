@@ -114,7 +114,7 @@ func TestTheTickAsksTwoReadersAndSaysWhenItCannot(t *testing.T) {
 	}
 	h.quiet("asked")
 
-	// a sprint with one reader: the tick cannot ask, and says so once
+	// a sprint with one reader up: the tick asks none, and says so once (one judgment, the sprint's)
 	h2 := newHarness(t)
 	h2.m = NewMem()
 	h2.st.B = h2.m
@@ -125,27 +125,29 @@ func TestTheTickAsksTwoReadersAndSaysWhenItCannot(t *testing.T) {
 		t.Fatal(err)
 	}
 	h2.beat()
+	h2.beat()
 	h2.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
 	h2.must(AddStep(sprint.AddReq{Stream: "s1", Count: 1}))
 	h2.startMachine()
 	h2.machine()
 	h2.work("m1")
 	h2.machine()
-	if len(h2.openOf(sprint.NCannotAsk)) != 1 || h2.written(sprint.NCannotAsk) != 1 {
-		t.Fatalf("cannot ask: open %d written %d", len(h2.openOf(sprint.NCannotAsk)), h2.written(sprint.NCannotAsk))
+	if len(h2.openOf(sprint.NFewReaders)) != 1 || h2.written(sprint.NFewReaders) != 1 {
+		t.Fatalf("few readers: open %d written %d", len(h2.openOf(sprint.NFewReaders)), h2.written(sprint.NFewReaders))
 	}
 	h2.machine()
 	h2.tick(2 * time.Minute)
 	h2.machine()
-	if h2.written(sprint.NCannotAsk) != 1 {
-		t.Fatalf("written again: %d", h2.written(sprint.NCannotAsk))
+	if h2.written(sprint.NFewReaders) != 1 {
+		t.Fatalf("written again: %d", h2.written(sprint.NFewReaders))
 	}
 	if err := h2.m.RowsAdd(h2.ctx, "t-readers", []string{"reader-b"}); err != nil {
 		t.Fatal(err)
 	}
+	h2.beat()
 	h2.machine()
-	if len(h2.snap().Readers.Of("s1-1")) != 2 || len(h2.openOf(sprint.NCannotAsk)) != 0 {
-		t.Fatalf("after a reader was added: reads %d, open %d", len(h2.snap().Readers.Of("s1-1")), len(h2.openOf(sprint.NCannotAsk)))
+	if len(h2.snap().Readers.Of("s1-1")) != 2 || len(h2.openOf(sprint.NFewReaders)) != 0 {
+		t.Fatalf("after a reader was added: reads %d, open %d", len(h2.snap().Readers.Of("s1-1")), len(h2.openOf(sprint.NFewReaders)))
 	}
 }
 

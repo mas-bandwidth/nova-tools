@@ -691,7 +691,8 @@ CONFIG KIND name=fleet table=config.fleet fields=store,coordinator required=- ro
 CONFIG KIND name=friend table=config.friends fields=slots,tiers,roles required=slots,tiers rows=many
 CONFIG KIND name=sprint table=config.sprint fields=coordinator required=- rows=one
 CONFIG KIND name=loop table=config.loops fields=machine,argv,seat,keys,every,keepalive,width,enabled required=machine,argv rows=many
-CONFIG KINDS count=5
+CONFIG KIND name=route table=config.routes fields=tier,provider,model,tokens,deadline,weight,enabled required=tier,provider,model,deadline rows=many
+CONFIG KINDS count=6
 
 $ nova-config migrate --print
 MIGRATION version=1 file=0001_schema.sql lines=23
@@ -700,7 +701,8 @@ MIGRATION version=3 file=0003_friend.sql lines=13
 MIGRATION version=4 file=0004_fleet.sql lines=14
 MIGRATION version=5 file=0005_sprint.sql lines=12
 MIGRATION version=6 file=0006_loop.sql lines=27
-CONFIG MIGRATE print=6 pg=-
+MIGRATION version=7 file=0007_route.sql lines=24
+CONFIG MIGRATE print=7 pg=-
 
 $ nova-config machine add -h
 usage: nova-config machine add [flags]

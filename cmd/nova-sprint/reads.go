@@ -103,7 +103,15 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 		return a.readFailed("queue", err, stderr)
 	}
 	epoch := st.PinnedEpoch()
+	if *as != "" {
+		// the reader's own queue is its beat (docs/SPEC-SPRINT.md section 6):
+		// a name that is no reader's row writes none
+		if _, err := st.ReaderBeat(ctx, *as); err != nil {
+			return a.readFailed("queue", err, stderr)
+		}
+	}
 	var cards []queueCard
+	width := 0 // a fleet member's width, from its row (0: not a member, or none read)
 	add := func(table string, cs []*sprint.Card) {
 		for _, x := range cs {
 			cards = append(cards, queueCard{ID: x.ID, Table: table, Row: x.Row, Col: x.Col, Primary: x.F("primary"), Stream: x.F("stream"),
@@ -132,12 +140,24 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 	} else {
 		var mine []*sprint.Card
 		for _, t := range []struct{ table, a, b string }{{sprint.Readers, sprint.Asked, sprint.Reading}, {sprint.Fleet, sprint.Ready, sprint.Working}} {
-			cs, err := st.ReadCells(ctx, t.table, *as, t.a, t.b)
+			cols := []string{t.a, t.b}
+			if t.table == sprint.Fleet {
+				cols = append(cols, sprint.Ctl) // the member's control card: its width, read with its cards
+			}
+			cs, err := st.ReadCells(ctx, t.table, *as, cols...)
 			if err != nil {
 				return a.readFailed("queue", err, stderr)
 			}
-			add(t.table, cs)
-			mine = append(mine, cs...)
+			var own []*sprint.Card
+			for _, x := range cs {
+				if x.Col == sprint.Ctl {
+					width = sprint.MemberWidth(x)
+					continue
+				}
+				own = append(own, x)
+			}
+			add(t.table, own)
+			mine = append(mine, own...)
 		}
 		ps, err := st.Packets(ctx, mine)
 		if err != nil {
@@ -151,7 +171,11 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 		if cards == nil {
 			cards = []queueCard{}
 		}
-		b, _ := json.Marshal(map[string]any{"as": *as, "stream": *stream, "epoch": epoch, "cards": cards})
+		out := map[string]any{"as": *as, "stream": *stream, "epoch": epoch, "cards": cards}
+		if width > 0 {
+			out["width"] = width // the member runs this many: the fleet row is the truth
+		}
+		b, _ := json.Marshal(out)
 		fmt.Fprintln(stdout, string(b))
 		return 0
 	}
@@ -216,6 +240,9 @@ type whereView struct {
 	Cleared     time.Time                               `json:"cleared,omitempty"` // when the epoch began
 	Machine     string                                  `json:"machine,omitempty"`
 	Goals       []goalView                              `json:"goals,omitempty"`
+	// Routes is how many enabled routes each tier has ("flash=1 pro=3"), ""
+	// when the store holds none (docs/SPEC-SPRINT.md, the deal's route).
+	Routes string `json:"routes,omitempty"`
 }
 
 // whereRun is what one where was asked, its flags read.
@@ -341,8 +368,14 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 		v.Pending = f.Pending.ID
 	}
 	v.Machine = st.MachineLine(ctx)
+	if rs, err := st.Routes(ctx); err == nil {
+		v.Routes = sprint.TierRoutes(rs)
+	}
 	var b strings.Builder
 	b.WriteString(now.Format("2006-01-02 15:04:05 MST") + "\n\nSPRINT TABLE\n\n" + whereHeader(v.Summary, v.Machine) + "\n\n")
+	if v.Routes != "" {
+		b.WriteString("routes: " + v.Routes + "\n\n")
+	}
 	var parts []string
 	for i, t := range shapes {
 		logical := sprint.ViewOrder[i]
@@ -353,6 +386,20 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 				cells[col.Name] = ntable.CellText(t.Columns, r, j)
 			}
 			rows[r.Key] = cells
+		}
+		if logical == sprint.Readers {
+			// the view shows each reader's state beside its cards, derived from
+			// its beat and the coordinator's hold, never written to the table
+			var err error
+			if t, err = readersWithState(ctx, st, t, now); err != nil {
+				return whereView{}, "", err
+			}
+			for _, r := range t.Rows {
+				rows[r.Key] = map[string]string{}
+				for j, col := range t.Columns {
+					rows[r.Key][col.Name] = ntable.CellText(t.Columns, r, j)
+				}
+			}
 		}
 		v.Tables[logical] = rows
 		if logical == sprint.Merge && !slices.Contains(t.Hidden, sprint.Since) {
@@ -370,6 +417,31 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 		}
 	}
 	return v, b.String(), nil
+}
+
+// readersWithState is the readers table with a text column status: each
+// reader's state, up, away or down (sprint.ReaderState). A store that keeps no
+// reader records shows no column.
+func readersWithState(ctx context.Context, st *store.Store, t ntable.Table, now time.Time) (ntable.Table, error) {
+	keys := make([]string, len(t.Rows))
+	for i, r := range t.Rows {
+		keys[i] = r.Key
+	}
+	states, err := st.ReaderStates(ctx, keys, now)
+	if err != nil || states == nil {
+		return t, err
+	}
+	t.Columns = append(append([]ntable.Column(nil), t.Columns...), ntable.Column{Name: sprint.Status, Projection: ntable.Text})
+	t.Rows = append([]ntable.Row(nil), t.Rows...)
+	for i, r := range t.Rows {
+		texts := map[string]string{}
+		for k, v := range r.Texts {
+			texts[k] = v
+		}
+		texts[sprint.Status] = states[r.Key]
+		t.Rows[i].Texts = texts
+	}
+	return t, nil
 }
 
 // whereHeader is the one line under the title of the where view: STOPPED when
@@ -736,6 +808,12 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 			place = linePlace(v.Primary, ws.Work.Column(sprint.States...))
 		}
 		a.printStory(stdout, v, events, texts, held, place)
+		for _, w := range v.Work {
+			fmt.Fprintln(stdout, oneline.Escape(sprint.AttemptLine(w)))
+		}
+		if len(v.Work) > 0 {
+			fmt.Fprintln(stdout, sprint.NextLine(v.Work))
+		}
 		epoch := uint64(0)
 		if pinned, err := st.Pinned(ctx); err == nil {
 			epoch = pinned.PinnedEpoch()
@@ -846,4 +924,54 @@ func (a *app) cmdCheck(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(out, "CHECK %s violations=%d pending=%s%s\n", status, len(rep.Violations), dashed(rep.Pending), inFlight)
 	return code
+}
+
+// cmdRoutes is each route of the store with what its attempts did: the work
+// cards dealt on it, finished ok, failed, failed by the provider, and the mean
+// wall from take to finish, so a bad route shows (docs/SPEC-SPRINT.md, the
+// deal's route).
+func (a *app) cmdRoutes(args []string, stdout, stderr io.Writer) int {
+	fs, c := a.verbSetup("routes")
+	if pos, err := parse(fs, args); err != nil || len(pos) > 0 {
+		return refuse(stderr, "routes", argErr("takes no words ", err))
+	}
+	st, err := a.store(*c)
+	if err != nil {
+		return refuse(stderr, "routes", err.Error())
+	}
+	ctx := context.Background()
+	rs, err := st.Routes(ctx)
+	if err != nil {
+		return a.readFailed("routes", err, stderr)
+	}
+	s, err := st.Load(ctx, []string{sprint.Fleet}, nil)
+	if err != nil {
+		return a.readFailed("routes", err, stderr)
+	}
+	stats := sprint.RouteStats(rs, s.Fleet)
+	if c.json {
+		b, _ := json.Marshal(map[string]any{"tiers": sprint.TierRoutes(rs), "routes": stats})
+		fmt.Fprintln(stdout, string(b))
+		return 0
+	}
+	if t := sprint.TierRoutes(rs); t != "" {
+		fmt.Fprintln(stdout, "TIERS "+t)
+	}
+	for _, x := range stats {
+		r := x.Route
+		model := "-"
+		if r.Provider != "" {
+			model = r.Provider + "/" + r.Model
+		}
+		how := fmt.Sprintf("tier=%s weight=%d enabled=%t", oneline.Field(orDashStr(r.Tier, "-")), r.Weight, r.Enabled)
+		if x.Pinned {
+			how = "pinned"
+		} else if r.Tier == "" {
+			how = "gone" // a route the cards name that the store no longer holds
+		}
+		fmt.Fprintf(stdout, "ROUTE %s model=%s %s attempts=%d ok=%d failed=%d provider_failures=%d mean_wall=%s\n",
+			oneline.Field(r.Name), oneline.Field(model), how, x.Attempts, x.OK, x.Failed, x.Provider, x.MeanWall)
+	}
+	fmt.Fprintf(stdout, "ROUTES OK routes=%d\n", len(stats))
+	return 0
 }
