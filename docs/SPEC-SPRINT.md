@@ -12,7 +12,7 @@ SPRINT TABLE
 
 3011/33011 9.1% -> ETA
 
-work  | waiting | ready | working | review | merging | landed
+work  | waiting | ready | working | review | merging | landed | cost
 readers | asked | reading | ok | broken
 merge | queued | merged | stuck | ci | state
 fleet | ready | working | width | done | ok% | status | load
@@ -24,6 +24,24 @@ fleet | ready | working | width | done | ok% | status | load
 | readers | readers | read cards | the reads of primaries in review |
 | merge | streams | primaries | merging, made visible |
 | fleet | fleet members | work cards | the swarm across machines |
+
+The work table's last column, `cost` (the owner, 2026-10-01: "can you please
+add a final column to the work stream table, which is "cost". This is the sum of
+each landed card's total cost for that work stream, and then a total at the
+bottom."), is a stream's landed cards' cost: the sum, over its landed primaries,
+of each one's total, which is, over its consumers (section 2, What a card cost),
+each one's actual cost where one was reported, else its predicted one, a
+consumer with neither adding nothing. It is in US dollars to four places
+(`$1.2345`), `-` for a stream with no priced landed card, and the footer is the
+sum over the streams, in exact decimals end to end. A stream with some unpriced
+landed cards shows the sum of the priced ones; `nova-sprint card <id>` and its
+JSON carry the detail. The merge that lands a primary writes its total on it
+(`cost`), from every one of its consumers' records, read with the step (the
+fleet and readers tables and the kept records of the consumers of the stream's
+merging primaries), and sets the stream's sum over all its landed primaries on
+the stream's control card; `SyncMirrors` shows it in the cell. The sum is set
+from the cards, never added to: a replayed merge writes the same, and `clear`
+empties it with the tables.
 
 The view shows work, readers, merge, fleet in that order. The one line under
 the title is the word `STOPPED` when the machine is stopped, and the summary
@@ -197,7 +215,9 @@ own ended take (finish), and a take the provider failed is in its
 provider_take_<n> record alone, so a redealt card never counts it twice; a read
 card's `usage` holds the run that gave the verdict, and each run returned
 without one is kept as read_take_<n> (1 for the first), so a read asked again
-of a reader keeps every run it had. `card <id>` prints a COST line for each
+of a reader keeps every run it had (asked again in place at most
+`MaxReadReasks` times, a read card holds at most three such records, far
+under the 64 a reader looks for). `card <id>` prints a COST line for each
 consumer run that ended (kind, card, attempt, take, member or reader, route,
 model, end, the tokens, wait, run, predicted, actual and `actual_by`) and a
 COST TOTAL line, computed when it is printed from the consumers' records
@@ -438,11 +458,22 @@ id (`--op`) returns the original result, with no second counter or notification.
   owed, and the next reader up that has no read card at that attempt is asked.
   A read begun stays with its reader, except one its reader returns with no
   verdict (`read --as <reader> --return <card> --reason <text>`: its launch
-  did not run, or it gave no verdict): the read card is retired (by
-  `returned`) as one taken back is, one happened note `a reader returned a
-  read` carries the reader, the card and the reason, no finding counts against
-  the work, and the next tick asks it of another reader up at the same
-  attempt; a return of a read the caller does not hold is refused. With fewer than two readers up the tick
+  did not run, or it gave no verdict). A return is not a read: the read card
+  goes back to asked on its reader's row, stamped `returned`, one happened
+  note `a reader returned a read` carries the reader, the card and the
+  reason, no finding counts against the work and no bound of the primary is
+  spent, and the next tick asks it of another reader up that has no read card
+  at the attempt (the returned card retired, by `returned`), or, when none is
+  free, of the same reader again, in place, so a reader whose launches failed
+  is not counted as having read the attempt (tla/DirtyTick.tla,
+  JudgedOnlyAfterTheBound). A read card is asked again in place at most
+  `MaxReadReasks` (2) times at its attempt (its `reasked` field); a return
+  after that is counted as a read: the card is retired (by `returned`), and a
+  primary no reader is left to read is the ask's `cannot ask` judgment, for the
+  coordinator (reader add, rework, drop; tla/DirtyTick.tla, ReasksBounded and
+  StrandingIsJudged). Its member does not begin a read it returned
+  again before `member.ReadStageRetry`. A return of a read the caller does not
+  hold is refused. With fewer than two readers up the tick
   asks none: it raises one judgment, `fewer than two readers up: <readers and
   their states>`, for the sprint (not one for each primary), closed when two
   are up or no primary waits; `reader up` and `reader add` answer it.
@@ -468,7 +499,7 @@ id (`--op`) returns the original result, with no second counter or notification.
   A read whose stage fails (the head could not be checked out) is never a verdict: its member
   runs the read again once, after `member.ReadStageRetry`; a second stage failure is returned
   (`read --as <reader> --return <card> --reason <the stage's reason>`), and the next tick asks
-  another reader.
+  it again as above.
 - The read that completes two different readers' ok at a primary's head writes
   the judgment ready to accept; accept, rework and drop close it.
 - The machine's tick accepts every acceptable primary in review whose work did

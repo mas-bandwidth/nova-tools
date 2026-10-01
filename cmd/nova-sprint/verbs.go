@@ -138,7 +138,10 @@ done in <time from the first start> while it runs, and STOPPED ... done once
 the machine has stopped itself).
 
 The tables are work, merge, readers and fleet, and the view is sprint; a store
-holds one sprint (a second sprint is a second store). clear and teardown want
+holds one sprint (a second sprint is a second store). The work table's cost
+column is, per stream, the sum of its landed cards' total cost in US dollars
+(each consumer's actual cost, else its predicted one; - when none was priced),
+with the sum over the streams at the bottom; card <id> shows the detail. clear and teardown want
 --confirm sprint, the name of the view, and refuse anything else.
 
 A work card is named with its generation, <card>@<gen>: the generation the
@@ -1395,7 +1398,7 @@ func (a *app) cmdRead(args []string, stdout, stderr io.Writer) int {
 	broken := fs.Bool("broken", false, "the read found it broken")
 	finding := fs.String("finding", "", "what the read found")
 	limit := fs.Int("limit", 0, "the first n of the reader's queue (default 1)")
-	ret := fs.String("return", "", "hand back a read the reader holds and has no verdict on: the next tick asks it of another reader up; no finding against the work")
+	ret := fs.String("return", "", "hand back a read the reader holds and has no verdict on: not a read; the next tick asks it of another reader free at the attempt, or of this reader again; no finding against the work")
 	reason := fs.String("reason", "", "with --return: why the read has no verdict (it reaches the inbox)")
 	usage := fs.String("usage", "", "with --ok, --broken or --return: what the read spent, one line (the reader passes its child's tokens, wall and cost): kept on the read card, timed and priced")
 	ids, err := parse(fs, args)
