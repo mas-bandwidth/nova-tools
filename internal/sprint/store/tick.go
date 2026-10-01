@@ -585,7 +585,9 @@ func staleRefusal(refused []sprint.Refusal, at uint64) bool {
 // ticks in a row; when the machine is STOPPED it moves nothing and only says
 // it looked, and shows each fleet member's status and load as their beats
 // say. A tick that did nothing writes the heartbeat at most once every
-// HeartbeatIdleEvery. The tick holds the epoch it reads before the machine's
+// HeartbeatIdleEvery. A tick that fails with an error text the last one did
+// not fail with writes one note to the coordinator, and the first tick that
+// works after failures writes one more, with the count (section 14). The tick holds the epoch it reads before the machine's
 // state: every step it runs carries that epoch, and a clear since (which sets
 // the machine STOPPED first) stops the tick without writing anything at the
 // new epoch.
@@ -635,6 +637,12 @@ func (st *Store) Tick(ctx context.Context) (res TickResult, err error) {
 		}
 		res.Times = append(res.Times, mt.part("", "remind"))
 	}
+	if err == nil && res.Stale == "" && hb.Failures > 0 {
+		// the tick works again after failing: one note, with the count
+		if nerr := st.tellTick(ctx, "tick recovered", sprint.NTickRecovered, fmt.Sprintf("failed=%d; the last error: %s", hb.Failures, hb.Error), ""); nerr != nil {
+			err = fmt.Errorf("tick recovered: %w", nerr)
+		}
+	}
 	if err == nil && res.Stale == "" {
 		// the coordinator's one wake of the tick, last (tickend.go); a tick the
 		// clear overtook writes nothing more
@@ -648,7 +656,17 @@ func (st *Store) Tick(ctx context.Context) (res TickResult, err error) {
 		seen.Revisions == hb.Revisions && slices.Equal(seen.Fresh, hb.Fresh) {
 		return res, nil
 	}
+	failingSame := hb.Error != "" && !hb.At.Before(m.Since)
+	prevError := hb.Error
 	hb.At, hb.Ticks = now, hb.Ticks+1
+	if err != nil && res.Stale == "" && !(failingSame && prevError == err.Error()) {
+		// a failure with an error text the tick was not already failing with
+		// in this run: one note, and the wake (best effort: the store that
+		// failed the tick may refuse it)
+		if st.tellTick(ctx, "tick failed", sprint.NTickFailed, fmt.Sprintf("tick %d failed at %s: %s", hb.Ticks, now.UTC().Format(time.RFC3339), err), "nova-sprint tick; nova-sprint check") == nil {
+			_, _ = st.tickEnd(ctx) // ignored: the wake is best effort; the note is written, and the next tick end counts it
+		}
+	}
 	if err != nil {
 		// A failed tick leaves a full read due: what it did not finish is
 		// read from the state by the next tick.
@@ -662,6 +680,21 @@ func (st *Store) Tick(ctx context.Context) (res TickResult, err error) {
 		err = werr
 	}
 	return res, err
+}
+
+// tellTick writes one happened note addressed to the coordinator about the
+// tick itself, in a notes-only step of the machine's (docs/SPEC-SPRINT.md
+// section 14, the inbox paragraph): the tick-end note
+// counts it, so inbox --wait wakes on it.
+func (st *Store) tellTick(ctx context.Context, verb, typ, what, hint string) error {
+	to, err := st.B.Coordinator(ctx)
+	if err != nil {
+		return err
+	}
+	_, err = st.Run(ctx, Step{Verb: verb, Actor: sprint.MachineActor, Plan: func(s *sprint.Snapshot) sprint.Plan {
+		return sprint.Plan{Notes: []sprint.Note{{Kind: sprint.Happened, Type: typ, Who: sprint.MachineActor, At: s.Now, To: to, What: what, Hint: hint}}}
+	}})
+	return err
 }
 
 // halted reads the machine's state before a part of a tick begins: STOPPED

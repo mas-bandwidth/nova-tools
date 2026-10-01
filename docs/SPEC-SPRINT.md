@@ -1049,7 +1049,10 @@ commands start the loop or stop the machine), the tick keeps failing (three
 failed ticks in a row, with the last error), and the machine is STOPPED and
 moves are due (primaries ready, work cards withdrawn, waiters whose needs have
 landed, primaries in review never asked at their attempt; the command is
-`start`). `init` writes the machine STOPPED from the
+`start`). A tick that fails writes one happened note to the coordinator for each
+error text it fails with (the error, the tick's number and the time) and one when
+it works again (the count of failed ticks); the tick end wakes `inbox --wait`
+on them. `init` writes the machine STOPPED from the
 start, so the time before the first `start` is a STOPPED span and counts
 toward no deadline. `clear` writes, at the new epoch, the happened line that
 the machine is STOPPED by the clear.

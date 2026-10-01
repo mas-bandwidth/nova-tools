@@ -43,6 +43,13 @@ const (
 	NMemberDown     = "fleet member down"
 	NUnknownMachine = "an unknown machine is beating"
 
+	// The tick's own failure, noted once for each distinct error text it
+	// keeps failing with, and its recovery, noted once with the count of
+	// failed ticks (docs/SPEC-SPRINT.md section 14): both are happened notes
+	// addressed to the coordinator, so the tick end wakes it.
+	NTickFailed    = "the tick failed"
+	NTickRecovered = "the tick recovered"
+
 	// Computed by inbox from the machine's record, as the stale line is: no
 	// notification holds them.
 	NMachineSilent  = "the machine is not ticking"
