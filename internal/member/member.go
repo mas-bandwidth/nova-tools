@@ -161,6 +161,7 @@ type Packet struct {
 	Branch     string   `json:"branch,omitempty"`
 	Base       string   `json:"base,omitempty"`
 	BaseHead   string   `json:"base_head,omitempty"`
+	BaseFrom   int      `json:"base_attempt,omitempty"` // the attempt BaseHead is the head of
 	Worker     string   `json:"worker,omitempty"`
 	Head       string   `json:"head,omitempty"`
 	WorkBranch string   `json:"work_branch,omitempty"`

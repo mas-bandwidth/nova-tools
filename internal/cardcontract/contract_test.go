@@ -16,11 +16,11 @@ const cardURL = "https://example.com/Example-Owner/example-repo.git"
 func TestJobTextCarriesTheAttemptBefore(t *testing.T) {
 	t.Parallel()
 	f := Frame{Kind: "work", Card: "c1.w2", Attempt: 2, Tier: "pro", Repo: cardURL, BaseRef: "main", Branch: "sprint/c1.w2",
-		PrevHead: "0123456789abcdef0123456789abcdef01234567", Finding: "f.go:12 the bound is not asserted"}
+		PrevHead: "0123456789abcdef0123456789abcdef01234567", PrevFrom: 1, Finding: "f.go:12 the bound is not asserted"}
 	s := Staged{Job: "/j", Repo: "/j/repo", Head: "0123456789abcdef0123456789abcdef01234567"}
 	for _, family := range []string{"claude", "plain"} {
 		text := For(family).JobText(f, s)
-		for _, want := range []string{"Attempt 2", "previous attempt's head is 0123456789abcdef0123456789abcdef01234567", "f.go:12 the bound is not asserted", "Tier: pro."} {
+		for _, want := range []string{"Attempt 2", "continues attempt 1: its head, 0123456789abcdef0123456789abcdef01234567, is the last pushed by any attempt before this one", "f.go:12 the bound is not asserted", "Tier: pro."} {
 			assert.Contains(t, text, want, family)
 		}
 	}
@@ -38,8 +38,8 @@ func TestJobTextCarriesTheAttemptBefore(t *testing.T) {
 func TestJobTextOfAReworkSaysWhyAndWhatToDoFirst(t *testing.T) {
 	t.Parallel()
 	s := Staged{Job: "/j", Repo: "/j/repo", Head: "0123456789abcdef0123456789abcdef01234567"}
-	base := Frame{Kind: "work", Card: "c1.w8", Attempt: 8, Repo: cardURL, BaseRef: "main", Branch: "sprint/c1.w8", PrevHead: s.Head}
-	const attempt = "Attempt 8 of this card. The previous attempt's head is " + "0123456789abcdef0123456789abcdef01234567; this checkout starts from it.\n"
+	base := Frame{Kind: "work", Card: "c1.w8", Attempt: 8, Repo: cardURL, BaseRef: "main", Branch: "sprint/c1.w8", PrevHead: s.Head, PrevFrom: 6}
+	const attempt = "Attempt 8 of this card. This checkout continues attempt 6: its head, " + "0123456789abcdef0123456789abcdef01234567, is the last pushed by any attempt before this one, and the checkout starts from it.\n"
 	for _, tc := range []struct {
 		name          string
 		why, find, fx string

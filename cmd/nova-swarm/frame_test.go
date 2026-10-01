@@ -38,10 +38,11 @@ func TestTheFrameIsThePackets(t *testing.T) {
 	f = frameOf(again, "m", "/root")
 	assert.Equal(t, fullSha, f.StageSha, "a branch name the attempt before never pushed is not staged")
 	assert.Empty(t, f.PrevHead)
-	again.BaseHead = pushedSha
+	again.BaseHead, again.BaseFrom = pushedSha, 1
 	f = frameOf(again, "m", "/root")
 	assert.Equal(t, pushedSha, f.StageSha, "the attempt starts from the previous pushed head")
 	assert.Equal(t, pushedSha, f.PrevHead)
+	assert.Equal(t, 1, f.PrevFrom, "the frame names the attempt whose head it stages")
 	assert.Equal(t, "f.go:3 the bound", f.Fix)
 	again.Why, again.Finding = "attempt 1 finished and a reader found it broken", "the test is missing"
 	f = frameOf(again, "m", "/root")

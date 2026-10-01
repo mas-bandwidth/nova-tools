@@ -295,7 +295,7 @@ func writeCommon(b *strings.Builder, f Frame, s Staged) {
 	if f.Attempt > 1 {
 		fmt.Fprintf(b, "\nAttempt %d of this card.", f.Attempt)
 		if f.PrevHead != "" {
-			fmt.Fprintf(b, " The previous attempt's head is %s; this checkout starts from it.", f.PrevHead)
+			fmt.Fprintf(b, " This checkout continues attempt %d: its head, %s, is the last pushed by any attempt before this one, and the checkout starts from it.", f.PrevFrom, f.PrevHead)
 		}
 		b.WriteString("\n")
 		writeWhy(b, f)
