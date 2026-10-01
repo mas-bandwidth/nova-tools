@@ -53,3 +53,21 @@ func TestNextTakeIsOnePastTheLastRecord(t *testing.T) {
 	assert.Equal(t, 1, nextTake(&Card{Fields: map[string]string{}}, FieldReadTake))
 	assert.Equal(t, 3, nextTake(&Card{Fields: map[string]string{FieldReadTake + "1": "x", FieldReadTake + "2": "y"}}, FieldReadTake))
 }
+
+// LandingExtras names the kept records over the placed ones only, as a fresh
+// read does: a retired read card or work card an earlier merge step of the
+// same process showed in the twin's table (there, but not placed) is named
+// again, so the twin keeps it and plans the cost with it.
+func TestLandingExtrasNamesAKeptRecordAnEarlierStepShowed(t *testing.T) {
+	t.Parallel()
+	s := &Snapshot{Work: NewTable(Work), Merge: NewTable(Merge), Fleet: NewTable(Fleet), Readers: NewTable(Readers)}
+	s.Readers.SetRows([]string{"reader-a"})
+	s.Merge.Put(&Card{ID: "s1-1", Row: "s1", Col: Queued})
+	s.Work.Put(&Card{ID: "s1-1", Row: "s1", Col: Merging, Fields: map[string]string{"attempt": "2"}})
+	s.Fleet.Put(&Card{ID: "s1-1.w1"})            // kept, shown by an earlier step
+	s.Readers.Put(&Card{ID: "s1-1.r1.reader-a"}) // kept, shown by an earlier step
+	s.Readers.Put(&Card{ID: "s1-1.r2.reader-a", Row: "reader-a", Col: OK})
+	got := LandingExtras("s1")(s)
+	assert.ElementsMatch(t, []string{"s1-1.w1", "s1-1.w2"}, got[Fleet])
+	assert.ElementsMatch(t, []string{"s1-1.r1.reader-a"}, got[Readers])
+}
