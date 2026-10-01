@@ -15,6 +15,7 @@ import (
 
 	"github.com/redis/go-redis/v9"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
@@ -93,8 +94,9 @@ func fleetReady(t *testing.T, do func(args ...string) string, member string) int
 // update."): eight machines of width 64, three streams of 1,000. The machine
 // ticks and the world plays in turn, so every deal sees every member's room
 // freed by the world's whole batch before it: the tick deals, the world takes
-// what was dealt (every member up takes, in the one step, in the tick after
-// the deal reaches it), the world finishes it, the tick deals again. Every
+// up to its running width (every member up takes in the one step after the
+// deal reaches it), retaining the dealt-ahead backlog. The world finishes
+// its running batch, and the tick deals again. Every
 // tick that deals reaches every machine (the whole fleet in one update), never
 // part of the fleet one tick and the rest the next; over the run no member is
 // dealt more than one card more than another (the rolling index, errata 3
@@ -154,8 +156,8 @@ func TestTheWholeFleetMovesInOneTickOnTheStore(t *testing.T) {
 	}
 	var out, errb lockedBuffer
 	// Each round is one machine tick and one world tick; the world takes
-	// (and, the round after, finishes) every card the tick dealt, so the next
-	// deal that has cards to give has the whole fleet's room. A round is
+	// its width (and, the round after, finishes it), so the next deal that
+	// has cards to give has room across the whole fleet. A round is
 	// 1 ms of world time, and the rounds are bounded, never timed.
 	const rounds = 16
 	dealing := 0
@@ -163,6 +165,12 @@ func TestTheWholeFleetMovesInOneTickOnTheStore(t *testing.T) {
 		loop.runLoop(ctx, st, 0, 1, &out, &errb)
 		dealt := len(loopDeals(out.String())) > dealing
 		dealing = len(loopDeals(out.String()))
+		beforeReady := map[string]int{}
+		if dealt {
+			for _, m := range members {
+				beforeReady[m] = fleetReady(t, do, m)
+			}
+		}
 		var pout, perr bytes.Buffer
 		if code := world.run([]string{"play", "--every", "1ms", "--ticks", "1"}, &pout, &perr); code != 0 {
 			t.Fatalf("play: %d %s%s", code, pout.String(), perr.String())
@@ -170,12 +178,13 @@ func TestTheWholeFleetMovesInOneTickOnTheStore(t *testing.T) {
 		if !dealt {
 			continue
 		}
-		// the tick dealt: the world's tick took every member's ready cards,
-		// none left behind for a tick after
+		// Every member takes its running width; the dealt-ahead remainder
+		// stays ready. The world finishes the previous batch before taking.
+		snap, err := st.Load(ctx, store.All, nil)
+		require.NoError(t, err)
 		for _, m := range members {
-			if n := fleetReady(t, do, m); n != 0 {
-				t.Fatalf("round %d: %s has %d ready cards after the tick that followed the deal: every member up takes in that tick\n%s", i+1, m, n, out.String())
-			}
+			assert.Equal(t, max(0, beforeReady[m]-64), fleetReady(t, do, m), "round %d: %s takes its width in this tick", i+1, m)
+			assert.Equal(t, min(64, beforeReady[m]), snap.Fleet.Count(m, sprint.Working), "round %d: %s fills its running width", i+1, m)
 		}
 	}
 

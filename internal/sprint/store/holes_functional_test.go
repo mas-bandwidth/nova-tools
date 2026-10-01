@@ -86,7 +86,7 @@ func TestG2AndG3OnAStoreOverASprintWithALapse(t *testing.T) {
 		}
 		for m, n := range made {
 			dealt += n
-			room := max(0, 2-held[m])
+			room := max(0, sprint.DealAhead*2-held[m])
 			require.LessOrEqual(t, n, room, "round %d: the deal gave %s %d cards, its room was %d", round, m, n, room)
 		}
 		clear(held)
