@@ -113,6 +113,27 @@ func (a *app) cmdQuack(args []string, stdout, stderr io.Writer) int {
 		}
 		reqs = append(reqs, r)
 	}
+	// every card of every stream is checked before anything is written, and the
+	// step adds every stream's cards or none (AddEachStep is named): one refusal
+	// names every problem (ONBOARDING point 2)
+	for _, r := range reqs {
+		for _, card := range r.Cards {
+			if !sprint.ValidID(card.ID) {
+				over := len(card.ID) - sprint.MaxIDLen
+				problems = append(problems, fmt.Sprintf("stream %s makes card ids of %d characters (%s), over the %d a card id may be: give a stream of at most %d characters",
+					r.Stream, len(card.ID), card.ID, sprint.MaxIDLen, len(r.Stream)-over))
+				break
+			}
+		}
+		for _, card := range r.Cards {
+			if len(card.Brief) > store.MaxBriefBytes {
+				problems = append(problems, fmt.Sprintf("card %s: the brief is %d bytes, over the %d a brief may be", card.ID, len(card.Brief), store.MaxBriefBytes))
+			}
+		}
+	}
+	if len(problems) > 0 {
+		return refuse(stderr, "quack", strings.Join(problems, "; "))
+	}
 	if code := lintBriefFiles(all, rs, c.max, stderr); code != 0 {
 		return code
 	}

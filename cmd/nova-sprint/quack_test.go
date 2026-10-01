@@ -113,3 +113,22 @@ func TestQuackReviewRetriesTheSameOperation(t *testing.T) {
 		assert.False(t, slices.Contains(first, id), "%s: a fresh op is a new pass", id)
 	}
 }
+
+// A multi-stream quack is all or none: a legal 128-character stream beside a
+// short one makes card ids over the 128 a card id may be, and the call writes
+// nothing, refusing once with the stream and the id length (the reader's case).
+func TestQuackIsAllOrNoneAcrossItsStreams(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	long := strings.Repeat("s", sprint.MaxIDLen)
+	require.True(t, sprint.ValidID(long), "the stream itself is legal")
+	before := ta.applies()
+	code, out, errs := ta.do("quack --streams a," + long + " --count 1 --repo https://example.com/quack.git")
+	assert.NotEqual(t, 0, code)
+	assert.Contains(t, errs, "stream "+long)
+	assert.Contains(t, errs, "151 characters")
+	assert.NotContains(t, out, "MOVED")
+	assert.Equal(t, before, ta.applies(), "nothing is written")
+	assert.Empty(t, quackID.FindAllString(out, -1), "no card was added")
+}
