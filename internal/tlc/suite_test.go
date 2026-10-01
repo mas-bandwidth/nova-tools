@@ -82,7 +82,7 @@ func TestRunSuiteRecordsEachCaseAndKeepsTheCheckoutClean(t *testing.T) {
 	if err != nil || res.Failed || res.Refused != "" {
 		t.Fatalf("suite = %+v, %v", res, err)
 	}
-	require.Equal(t, res.Records, reported, "reported %d records, kept %d", len(reported), len(res.Records))
+	require.Equal(t, reported, res.Records, "reported %d records, kept %d", len(reported), len(res.Records))
 	require.Len(t, res.Records, 3, "reported %d records, kept %d", len(reported), len(res.Records))
 	src, err := SourceAt(root)
 	require.NoError(t, err)
@@ -132,7 +132,7 @@ func TestRunSuiteRecordsEachCaseAndKeepsTheCheckoutClean(t *testing.T) {
 
 	recs, err := ReadRecordsFile(filepath.Join(out, RunsFile))
 	require.NoError(t, err, "RUNS.tsv = %v, %v", recs, err)
-	require.Equal(t, res.Records, recs, "RUNS.tsv = %v, %v", recs, err)
+	require.Equal(t, recs, res.Records, "RUNS.tsv = %v, %v", recs, err)
 	if raw, err := os.ReadFile(filepath.Join(out, "MCA.cfg.log")); err != nil || string(raw) != fixture(t, "pass.log") {
 		t.Fatalf("the case's log was not kept: %v", err)
 	}
