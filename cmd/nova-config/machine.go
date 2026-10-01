@@ -72,6 +72,23 @@ func runMachineSelf(ctx context.Context, args []string, stdout, stderr io.Writer
 	return 0
 }
 
+// machineLoops names the loop rows that run on the machine, by name: what
+// machine show lists after the machine's own fields (loops=<a,b>, - for
+// none).
+func machineLoops(ctx context.Context, st config.Store, machine string) ([]string, error) {
+	rows, err := st.List(ctx, config.KindLoop)
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, r := range rows {
+		if r.Fields["machine"] == machine {
+			out = append(out, r.Name)
+		}
+	}
+	return out, nil
+}
+
 func oneLine(err error) string { return strings.Join(strings.Fields(err.Error()), " ") }
 
 // widths reads every machine row's width: the rows from the store, and the

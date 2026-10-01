@@ -6,10 +6,8 @@ import (
 	"context"
 	"crypto/sha1"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strconv"
-	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
@@ -24,20 +22,14 @@ func TestBatchApplyAndReadSetContract(t *testing.T) {
 	ctx := context.Background()
 
 	tb := demo()
-	newTable(t, c, tb)
-	if _, err := ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ntable.RowAdd(ctx, c, "demo", "test", ntable.RowSpec{}); err != nil {
-		t.Fatal(err)
-	}
+	newTable(t, c, tb).rows("build", "test")
 
 	// 1. Initial ReadSet on empty table
 	rs, err := ntable.ReadSetMembers(ctx, c, "demo", []string{"m1", "m2"})
 	require.NoError(t, err, "initial ReadSetMembers")
-	if rs.Table != "demo" || len(rs.Members) != 0 || len(rs.Missing) != 2 {
-		t.Fatalf("unexpected initial ReadSet: %+v", rs)
-	}
+	require.Equal(t, "demo", rs.Table, "unexpected initial ReadSet: %+v", rs)
+	require.Empty(t, rs.Members, "unexpected initial ReadSet: %+v", rs)
+	require.Len(t, rs.Missing, 2, "unexpected initial ReadSet: %+v", rs)
 	require.True(t, rs.IsMissing("m1"), "expected m1 and m2 to be missing: %+v", rs)
 	require.True(t, rs.IsMissing("m2"), "expected m1 and m2 to be missing: %+v", rs)
 
@@ -85,26 +77,22 @@ func TestBatchApplyAndReadSetContract(t *testing.T) {
 	rcpt1, err := ntable.ApplyBatch(ctx, c, manifest1)
 	require.NoError(t, err, "ApplyBatch create")
 	require.Equal(t, "changed", rcpt1.Outcome, "expected outcome changed, got %q", rcpt1.Outcome)
-	if rcpt1.BatchDelta == nil || rcpt1.BatchDelta.ChangedCount != 2 || rcpt1.BatchDelta.GuardCount != 0 {
-		t.Fatalf("unexpected delta: %+v", rcpt1.BatchDelta)
-	}
+	require.NotNil(t, rcpt1.BatchDelta, "unexpected delta: %+v", rcpt1.BatchDelta)
+	require.Equal(t, 2, rcpt1.BatchDelta.ChangedCount, "unexpected delta: %+v", rcpt1.BatchDelta)
+	require.Equal(t, 0, rcpt1.BatchDelta.GuardCount, "unexpected delta: %+v", rcpt1.BatchDelta)
 
 	// 3. Verify ReadSet sees m1 and m2 placed with revision 1
 	rs2, err := ntable.ReadSet(ctx, c, "demo", ntable.ReadSetScope{
 		Members: []string{"m1", "m2", "m3"},
 	})
 	require.NoError(t, err, "ReadSet after create")
-	if len(rs2.Members) != 2 || len(rs2.Missing) != 1 || rs2.Missing[0] != "m3" {
-		t.Fatalf("unexpected ReadSet result: %+v", rs2)
-	}
-	m1, found1 := rs2.Member("m1")
-	if !found1 || !m1.Placed || m1.Row != "build" || m1.Col != "ready" || m1.Score != 10 || m1.Revision != 1 || m1.Fields["definition"] != "job-1" {
-		t.Fatalf("unexpected m1: %+v", m1)
-	}
-	m2, found2 := rs2.Member("m2")
-	if !found2 || !m2.Placed || m2.Row != "build" || m2.Col != "ready" || m2.Score != 20 || m2.Revision != 1 || m2.Fields["definition"] != "job-2" {
-		t.Fatalf("unexpected m2: %+v", m2)
-	}
+	require.Len(t, rs2.Members, 2, "unexpected ReadSet result: %+v", rs2)
+	require.Len(t, rs2.Missing, 1, "unexpected ReadSet result: %+v", rs2)
+	require.Equal(t, "m3", rs2.Missing[0], "unexpected ReadSet result: %+v", rs2)
+	m1 := requirePlacedMember(t, rs2, "m1", "build", "ready", 10, 1)
+	require.Equal(t, "job-1", m1.Fields["definition"], "unexpected m1: %+v", m1)
+	m2 := requirePlacedMember(t, rs2, "m2", "build", "ready", 20, 1)
+	require.Equal(t, "job-2", m2.Fields["definition"], "unexpected m2: %+v", m2)
 
 	// ReadSet by selection
 	rsSel, err := ntable.ReadSet(ctx, c, "demo", ntable.ReadSetScope{
@@ -280,16 +268,11 @@ func TestBatchApplyAndReadSetContract(t *testing.T) {
 	// Verify post-state via ReadSet
 	rs3, err := ntable.ReadSetMembers(ctx, c, "demo", []string{"m1", "m2"})
 	require.NoError(t, err, "ReadSet after move")
-	m1After, _ := rs3.Member("m1")
-	if m1After.Revision != 2 || m1After.Row != "build" || m1After.Col != "working" || m1After.Score != 15 {
-		t.Fatalf("unexpected m1 after move: %+v", m1After)
-	}
+	m1After := requirePlacedMember(t, rs3, "m1", "build", "working", 15, 2)
 	require.Equal(t, "in-progress", m1After.Fields["status"], "unexpected m1 fields: %+v", m1After.Fields)
 	require.Empty(t, m1After.Fields["definition"], "unexpected m1 fields: %+v", m1After.Fields)
 	m2After, _ := rs3.Member("m2")
-	if m2After.Revision != 1 { // Guard-only was not modified
-		t.Fatalf("m2 revision changed unexpectedly: %d", m2After.Revision)
-	}
+	require.Equal(t, uint64(1), m2After.Revision, "m2 revision changed unexpectedly") // Guard-only was not modified
 
 	// 10. Reserved field write refusal
 	currentTableRev = c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
@@ -326,9 +309,9 @@ func TestBatchApplyAndReadSetContract(t *testing.T) {
 		},
 	}
 	_, err = ntable.ApplyBatch(ctx, c, duplicateManifest)
-	if !errors.Is(err, ntable.ErrDuplicateMember) || !strings.Contains(err.Error(), "TWICE") || !strings.Contains(err.Error(), "changed=no") {
-		t.Fatalf("expected ErrDuplicateMember with TWICE and changed=no, got: %v", err)
-	}
+	require.ErrorIs(t, err, ntable.ErrDuplicateMember, "expected ErrDuplicateMember with TWICE and changed=no")
+	require.ErrorContains(t, err, "TWICE", "expected ErrDuplicateMember with TWICE and changed=no")
+	require.ErrorContains(t, err, "changed=no", "expected ErrDuplicateMember with TWICE and changed=no")
 
 	// 12. Incompatible mutation refusal
 	incompatibleManifest := ntable.BatchManifest{
@@ -386,13 +369,7 @@ func TestBatchReceiptReplayExhaustive(t *testing.T) {
 	ctx := context.Background()
 
 	tb := demo()
-	newTable(t, c, tb)
-	if _, err := ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ntable.RowAdd(ctx, c, "demo", "test", ntable.RowSpec{}); err != nil {
-		t.Fatal(err)
-	}
+	newTable(t, c, tb).rows("build", "test")
 
 	initTableRev := c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
 
@@ -427,9 +404,9 @@ func TestBatchReceiptReplayExhaustive(t *testing.T) {
 	rcpt1, err := ntable.ApplyBatch(ctx, c, manifest1)
 	require.NoError(t, err, "ApplyBatch manifest1")
 	require.Equal(t, "changed", rcpt1.Outcome, "expected outcome changed, got %q", rcpt1.Outcome)
-	if rcpt1.BatchDelta == nil || rcpt1.BatchDelta.ChangedCount != 2 || rcpt1.BatchDelta.GuardCount != 0 {
-		t.Fatalf("unexpected delta in rcpt1: %+v", rcpt1.BatchDelta)
-	}
+	require.NotNil(t, rcpt1.BatchDelta, "unexpected delta in rcpt1: %+v", rcpt1.BatchDelta)
+	require.Equal(t, 2, rcpt1.BatchDelta.ChangedCount, "unexpected delta in rcpt1: %+v", rcpt1.BatchDelta)
+	require.Equal(t, 0, rcpt1.BatchDelta.GuardCount, "unexpected delta in rcpt1: %+v", rcpt1.BatchDelta)
 
 	// 4. Verify the stored operation record fields
 	opRecord1 := operationRecord(t, c, "demo", "0", "op-create-m1-m2")
@@ -449,20 +426,15 @@ func TestBatchReceiptReplayExhaustive(t *testing.T) {
 	require.NoError(t, err, "XRange for rcpt1.ID: %v, count=%d", err, len(events))
 	require.Len(t, events, 1, "XRange for rcpt1.ID: %v, count=%d", err, len(events))
 	ev1 := events[0].Values
-	if ev1["verb"] != "apply" {
-		t.Errorf("ev1 verb = %v, want apply", ev1["verb"])
-	}
-	if ev1["outcome"] != "changed" {
-		t.Errorf("ev1 outcome = %v, want changed", ev1["outcome"])
-	}
-	if fmt.Sprint(ev1["rev_before"]) != strconv.FormatUint(rcpt1.Before, 10) || fmt.Sprint(ev1["rev_after"]) != strconv.FormatUint(rcpt1.After, 10) {
-		t.Errorf("ev1 revs = (%v, %v), want (%d, %d)", ev1["rev_before"], ev1["rev_after"], rcpt1.Before, rcpt1.After)
-	}
+	assert.Equal(t, "apply", ev1["verb"], "ev1 verb")
+	assert.Equal(t, "changed", ev1["outcome"], "ev1 outcome")
+	assert.Equal(t, strconv.FormatUint(rcpt1.Before, 10), fmt.Sprint(ev1["rev_before"]), "ev1 revs = (%v, %v), want (%d, %d)", ev1["rev_before"], ev1["rev_after"], rcpt1.Before, rcpt1.After)
+	assert.Equal(t, strconv.FormatUint(rcpt1.After, 10), fmt.Sprint(ev1["rev_after"]), "ev1 revs = (%v, %v), want (%d, %d)", ev1["rev_before"], ev1["rev_after"], rcpt1.Before, rcpt1.After)
 	var streamDelta1 ntable.BatchDelta
 	require.NoError(t, json.Unmarshal([]byte(fmt.Sprint(ev1["batch_delta"])), &streamDelta1), "unmarshal stream batch_delta")
-	if streamDelta1.OperationID != "op-create-m1-m2" || streamDelta1.ChangedCount != 2 || streamDelta1.GuardCount != 0 {
-		t.Errorf("streamDelta1 mismatch: %+v", streamDelta1)
-	}
+	assert.Equal(t, "op-create-m1-m2", streamDelta1.OperationID, "streamDelta1 mismatch: %+v", streamDelta1)
+	assert.Equal(t, 2, streamDelta1.ChangedCount, "streamDelta1 mismatch: %+v", streamDelta1)
+	assert.Equal(t, 0, streamDelta1.GuardCount, "streamDelta1 mismatch: %+v", streamDelta1)
 	require.Len(t, streamDelta1.Members, 2, "streamDelta1 members len = %d, want 2", len(streamDelta1.Members))
 
 	// 2. Second batch: No-op batch receipt (outcome: "noop", guard_count > 0, changed_count: 0)
@@ -496,9 +468,9 @@ func TestBatchReceiptReplayExhaustive(t *testing.T) {
 	rcptNoop, err := ntable.ApplyBatch(ctx, c, manifestNoop)
 	require.NoError(t, err, "ApplyBatch manifestNoop")
 	require.Equal(t, "noop", rcptNoop.Outcome, "expected outcome noop, got %q", rcptNoop.Outcome)
-	if rcptNoop.BatchDelta == nil || rcptNoop.BatchDelta.GuardCount != 2 || rcptNoop.BatchDelta.ChangedCount != 0 {
-		t.Fatalf("expected guard_count=2, changed_count=0: %+v", rcptNoop.BatchDelta)
-	}
+	require.NotNil(t, rcptNoop.BatchDelta, "expected guard_count=2, changed_count=0: %+v", rcptNoop.BatchDelta)
+	require.Equal(t, 2, rcptNoop.BatchDelta.GuardCount, "expected guard_count=2, changed_count=0: %+v", rcptNoop.BatchDelta)
+	require.Equal(t, 0, rcptNoop.BatchDelta.ChangedCount, "expected guard_count=2, changed_count=0: %+v", rcptNoop.BatchDelta)
 
 	// Verify no-op op record outcome
 	opRecordNoop := operationRecord(t, c, "demo", "0", "op-noop-guards")
@@ -509,9 +481,7 @@ func TestBatchReceiptReplayExhaustive(t *testing.T) {
 	require.NoError(t, err, "XRange for rcptNoop.ID: %v, count=%d", err, len(eventsNoop))
 	require.Len(t, eventsNoop, 1, "XRange for rcptNoop.ID: %v, count=%d", err, len(eventsNoop))
 	evNoop := eventsNoop[0].Values
-	if evNoop["outcome"] != "noop" {
-		t.Errorf("evNoop outcome = %v, want noop", evNoop["outcome"])
-	}
+	assert.Equal(t, "noop", evNoop["outcome"], "evNoop outcome")
 
 	// Advance the table revision further with a third batch (move m1)
 	manifestMove := ntable.BatchManifest{
@@ -550,9 +520,10 @@ func TestBatchReceiptReplayExhaustive(t *testing.T) {
 	// (manifest1.ExpectedTableRevision is stale, but replay succeeds unconditionally!)
 	rcpt1Replay, err := ntable.ApplyBatch(ctx, c, manifest1)
 	require.NoError(t, err, "replay manifest1 failed")
-	if rcpt1Replay.ID != rcpt1.ID || rcpt1Replay.Before != rcpt1.Before || rcpt1Replay.After != rcpt1.After || rcpt1Replay.Outcome != rcpt1.Outcome {
-		t.Fatalf("rcpt1Replay mismatch: got %+v, want %+v", rcpt1Replay, rcpt1)
-	}
+	require.Equal(t, rcpt1.ID, rcpt1Replay.ID, "rcpt1Replay mismatch: got %+v, want %+v", rcpt1Replay, rcpt1)
+	require.Equal(t, rcpt1.Before, rcpt1Replay.Before, "rcpt1Replay mismatch: got %+v, want %+v", rcpt1Replay, rcpt1)
+	require.Equal(t, rcpt1.After, rcpt1Replay.After, "rcpt1Replay mismatch: got %+v, want %+v", rcpt1Replay, rcpt1)
+	require.Equal(t, rcpt1.Outcome, rcpt1Replay.Outcome, "rcpt1Replay mismatch: got %+v, want %+v", rcpt1Replay, rcpt1)
 	require.Equal(t, rcpt1.BatchDelta, rcpt1Replay.BatchDelta, "rcpt1Replay delta mismatch: got %+v, want %+v", rcpt1Replay.BatchDelta, rcpt1.BatchDelta)
 
 	// Assert zero new stream entries and table revision did not bump
@@ -564,9 +535,9 @@ func TestBatchReceiptReplayExhaustive(t *testing.T) {
 	// Replay no-op batch after table revision has advanced
 	rcptNoopReplay, err := ntable.ApplyBatch(ctx, c, manifestNoop)
 	require.NoError(t, err, "replay manifestNoop failed")
-	if rcptNoopReplay.ID != rcptNoop.ID || rcptNoopReplay.Outcome != rcptNoop.Outcome || rcptNoopReplay.After != rcptNoop.After {
-		t.Fatalf("rcptNoopReplay mismatch: got %+v, want %+v", rcptNoopReplay, rcptNoop)
-	}
+	require.Equal(t, rcptNoop.ID, rcptNoopReplay.ID, "rcptNoopReplay mismatch: got %+v, want %+v", rcptNoopReplay, rcptNoop)
+	require.Equal(t, rcptNoop.Outcome, rcptNoopReplay.Outcome, "rcptNoopReplay mismatch: got %+v, want %+v", rcptNoopReplay, rcptNoop)
+	require.Equal(t, rcptNoop.After, rcptNoopReplay.After, "rcptNoopReplay mismatch: got %+v, want %+v", rcptNoopReplay, rcptNoop)
 	streamLenAfterNoop, _ := c.XLen(ctx, changesKey).Result()
 	assert.Equal(t, streamLenBeforeReplays, streamLenAfterNoop, "replay of manifestNoop appended stream entry: len %d, want %d", streamLenAfterNoop, streamLenBeforeReplays)
 
@@ -595,16 +566,8 @@ func TestBatchDualStoreReplayFromStream(t *testing.T) {
 	ctx := context.Background()
 
 	tb := demo()
-	newTable(t, c1, tb)
-	newTable(t, c2, tb)
-	for _, row := range []string{"build", "test"} {
-		if _, err := ntable.RowAdd(ctx, c1, "demo", row, ntable.RowSpec{}); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := ntable.RowAdd(ctx, c2, "demo", row, ntable.RowSpec{}); err != nil {
-			t.Fatal(err)
-		}
-	}
+	newTable(t, c1, tb).rows("build", "test")
+	newTable(t, c2, tb).rows("build", "test")
 
 	// Sequence of batches applied on store 1:
 	// Batch 1: Create m1 and m2
@@ -631,9 +594,8 @@ func TestBatchDualStoreReplayFromStream(t *testing.T) {
 			},
 		},
 	}
-	if _, err := ntable.ApplyBatch(ctx, c1, m1); err != nil {
-		t.Fatalf("batch 1 on c1: %v", err)
-	}
+	_, err := ntable.ApplyBatch(ctx, c1, m1)
+	require.NoError(t, err, "batch 1 on c1")
 
 	// Batch 2: Move m1 to working, update fields on m2
 	rev2 := c1.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
@@ -664,9 +626,8 @@ func TestBatchDualStoreReplayFromStream(t *testing.T) {
 			},
 		},
 	}
-	if _, err := ntable.ApplyBatch(ctx, c1, m2); err != nil {
-		t.Fatalf("batch 2 on c1: %v", err)
-	}
+	_, err = ntable.ApplyBatch(ctx, c1, m2)
+	require.NoError(t, err, "batch 2 on c1")
 
 	// Batch 3: No-op batch (guards only)
 	rev3 := c1.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
@@ -694,9 +655,8 @@ func TestBatchDualStoreReplayFromStream(t *testing.T) {
 			},
 		},
 	}
-	if _, err := ntable.ApplyBatch(ctx, c1, m3); err != nil {
-		t.Fatalf("batch 3 on c1: %v", err)
-	}
+	_, err = ntable.ApplyBatch(ctx, c1, m3)
+	require.NoError(t, err, "batch 3 on c1")
 
 	// Batch 4: Remove m1, move m2 to test:ready
 	rev4 := c1.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
@@ -724,9 +684,8 @@ func TestBatchDualStoreReplayFromStream(t *testing.T) {
 			},
 		},
 	}
-	if _, err := ntable.ApplyBatch(ctx, c1, m4); err != nil {
-		t.Fatalf("batch 4 on c1: %v", err)
-	}
+	_, err = ntable.ApplyBatch(ctx, c1, m4)
+	require.NoError(t, err, "batch 4 on c1")
 
 	// Read all stream events from store 1:
 	streamEvents1, err := c1.XRange(ctx, ntable.ChangesKey("demo"), "-", "+").Result()
@@ -798,82 +757,71 @@ func TestBatchDualStoreReplayFromStream(t *testing.T) {
 	assert.Equal(t, m2Hash2, m2Hash1, "member m2 hash mismatch: c1=%v, c2=%v", m2Hash1, m2Hash2)
 }
 
-func TestReviewWrongTypeDestinationPartialWrite(t *testing.T) {
+// TestBatchRefusalsLeaveTheStoreUnchanged: a batch that trips on a key of the
+// wrong type where it would write, or on a member's hidden second placement, is
+// refused naming changed=no, and the store is as it was, byte for byte (so the
+// source cell keeps its member and score, nothing is placed, the revision holds).
+func TestBatchRefusalsLeaveTheStoreUnchanged(t *testing.T) {
 	t.Parallel()
-	c, _ := store(t)
-	ctx := context.Background()
-	newTable(t, c, demo()).rows("build").cell("build", "ready", "m1", 7)
-	dest := ntable.CellKey("demo", "build", "working")
-	require.NoError(t, c.Set(ctx, dest, "wrong-type", 0).Err())
-	before := storeImage(t, c)
-	rev := c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
-	manifest := ntable.BatchManifest{
-		Schema:                1,
-		Table:                 "demo",
-		Epoch:                 "0",
-		ExpectedTableRevision: rev,
-		OperationID:           "review-wrongtype",
-		Actor:                 "review",
-		Members: []ntable.BatchMemberEntry{
-			{
-				ID: "m1",
-				Expect: &ntable.MemberExpect{
-					Place: &ntable.PlaceExpect{Row: "build", Col: "ready"},
-				},
-				Move: &ntable.MemberMoveOp{
-					Row: "build",
-					Col: "working",
-				},
-			},
-		},
+	inReady := &ntable.MemberExpect{Place: &ntable.PlaceExpect{Row: "build", Col: "ready"}}
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T, c *redis.Client) // the table, then the key the batch trips on
+		entry ntable.BatchMemberEntry
+		want  error
+	}{
+		{"move into a destination of the wrong type", func(t *testing.T, c *redis.Client) {
+			newTable(t, c, demo()).rows("build").cell("build", "ready", "m1", 7)
+			require.NoError(t, c.Set(context.Background(), ntable.CellKey("demo", "build", "working"), "wrong-type", 0).Err())
+		}, ntable.BatchMemberEntry{ID: "m1", Expect: inReady, Move: &ntable.MemberMoveOp{Row: "build", Col: "working"}}, ntable.ErrWrongType},
+		{"create with a changes stream of the wrong type", func(t *testing.T, c *redis.Client) {
+			newTable(t, c, demo()).rows("build")
+			require.NoError(t, c.Set(context.Background(), ntable.DefKey("demo")+":changes", "wrong-type", 0).Err())
+		}, ntable.BatchMemberEntry{ID: "m1", Expect: &ntable.MemberExpect{Absent: true}, Create: &ntable.MemberCreateOp{Row: "build", Col: "ready", Score: 3}}, ntable.ErrWrongType},
+		{"create over a member key of the wrong type", func(t *testing.T, c *redis.Client) {
+			newTable(t, c, demo())
+			require.NoError(t, c.Set(context.Background(), ntable.MemberKey("m_bad"), "string-not-hash", 0).Err())
+		}, ntable.BatchMemberEntry{ID: "m_bad", Expect: &ntable.MemberExpect{Absent: true}, Create: &ntable.MemberCreateOp{Row: "build", Col: "ready", Score: 10}}, ntable.ErrWrongType},
+		{"move of a member with a hidden second placement", func(t *testing.T, c *redis.Client) {
+			newTable(t, c, demo()).rows("build").cell("build", "ready", "m1", 7)
+			require.NoError(t, c.ZAdd(context.Background(), ntable.CellKey("demo", "build", "working"), redis.Z{Score: 9, Member: "m1"}).Err())
+		}, ntable.BatchMemberEntry{ID: "m1", Expect: inReady, Move: &ntable.MemberMoveOp{Row: "build", Col: "done"}}, ntable.ErrDrift},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c, _ := store(t)
+			ctx := context.Background()
+			tc.setup(t, c)
+			before := storeImage(t, c)
+			rev := c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
+			_, err := ntable.ApplyBatch(ctx, c, ntable.BatchManifest{Schema: 1, Table: "demo", Epoch: "0", ExpectedTableRevision: rev,
+				OperationID: "refused", Actor: "review", Members: []ntable.BatchMemberEntry{tc.entry}})
+			require.ErrorIs(t, err, tc.want)
+			require.ErrorContains(t, err, "changed=no")
+			require.Equal(t, before, storeImage(t, c), "a refused batch changed the store")
+		})
 	}
-	_, err := ntable.ApplyBatch(ctx, c, manifest)
-	after := storeImage(t, c)
-	require.Error(t, err, "expected error on destination WRONGTYPE, got nil")
-	require.ErrorIs(t, err, ntable.ErrWrongType, "expected ErrWrongType, got")
-	require.ErrorContains(t, err, "changed=no", "expected changed=no, got")
-	require.Equal(t, before, after, "expected store unchanged on destination WRONGTYPE refusal")
-	score := c.ZScore(ctx, ntable.CellKey("demo", "build", "ready"), "m1").Val()
-	require.Equal(t, float64(7), score, "expected m1 score 7 in source, got %v", score)
 }
 
-func TestReviewBatchStreamWrongTypePartialWrite(t *testing.T) {
+// TestReviewUnknownAndDuplicateJSONAccepted: an unknown or a repeated key, at the
+// top or inside expect, is REFUSED MANIFEST and writes nothing.
+func TestReviewUnknownAndDuplicateJSONAccepted(t *testing.T) {
 	t.Parallel()
 	c, _ := store(t)
 	ctx := context.Background()
-	newTable(t, c, demo()).rows("build")
-	require.NoError(t, c.Set(ctx, ntable.DefKey("demo")+":changes", "wrong-type", 0).Err())
-	before := storeImage(t, c)
-	rev := c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
-	manifest := ntable.BatchManifest{
-		Schema:                1,
-		Table:                 "demo",
-		Epoch:                 "0",
-		ExpectedTableRevision: rev,
-		OperationID:           "review-stream",
-		Actor:                 "review",
-		Members: []ntable.BatchMemberEntry{
-			{
-				ID:     "m1",
-				Expect: &ntable.MemberExpect{Absent: true},
-				Create: &ntable.MemberCreateOp{
-					Row:   "build",
-					Col:   "ready",
-					Score: 3,
-				},
-			},
-		},
+	newTable(t, c, demo())
+	head := fmt.Sprintf(`{"schema":1,"table":"demo","epoch":"0","expected_table_revision":%q,`, c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val())
+	for name, tail := range map[string]string{
+		"an unknown top-level field":       `"operation_id":"review-unknown","actor":"review","members":[],"unknown":true}`,
+		"a duplicate top-level key":        `"operation_id":"review-duplicate","actor":"first","actor":"second","members":[]}`,
+		"a nested unknown key in expect":   `"operation_id":"review-nested-unknown","actor":"review","members":[{"id":"m1","expect":{"revision":"1","unknown":true}}]}`,
+		"a nested duplicate key in expect": `"operation_id":"review-nested-duplicate","actor":"review","members":[{"id":"m1","expect":{"revision":"1","revision":"2"}}]}`,
+	} {
+		before := storeImage(t, c)
+		ans, err := c.FCall(ctx, ntable.FnApply, []string{ntable.DefKey("demo")}, "demo", head+tail).Slice()
+		require.True(t, replyOpens(ans, err, "REFUSED", "MANIFEST"), "%s: want REFUSED MANIFEST, got %v %v", name, ans, err)
+		require.Equal(t, before, storeImage(t, c), "%s: the refusal changed the store", name)
 	}
-	_, err := ntable.ApplyBatch(ctx, c, manifest)
-	after := storeImage(t, c)
-	require.Error(t, err, "expected error on changes stream WRONGTYPE, got nil")
-	require.ErrorIs(t, err, ntable.ErrWrongType, "expected ErrWrongType, got")
-	require.ErrorContains(t, err, "changed=no", "expected changed=no, got")
-	require.Equal(t, before, after, "expected store unchanged on stream WRONGTYPE refusal")
-	placed := c.ZScore(ctx, ntable.CellKey("demo", "build", "ready"), "m1").Val()
-	require.Equal(t, float64(0), placed, "expected m1 not placed, got %v", placed)
-	revAfter := c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
-	require.Equal(t, rev, revAfter, "expected revision unchanged (%s), got %s", rev, revAfter)
 }
 
 func TestReviewReadSetHidesPlacementDrift(t *testing.T) {
@@ -885,124 +833,6 @@ func TestReviewReadSetHidesPlacementDrift(t *testing.T) {
 	_, err := ntable.ReadSetMembers(ctx, c, "demo", []string{"m1"})
 	require.Error(t, err, "expected ReadSetMembers to refuse placement drift, got nil")
 	require.ErrorIs(t, err, ntable.ErrDrift, "expected ErrDrift, got")
-}
-
-func TestReviewHiddenDuplicatePlacementAccepted(t *testing.T) {
-	t.Parallel()
-	c, _ := store(t)
-	ctx := context.Background()
-	newTable(t, c, demo()).rows("build").cell("build", "ready", "m1", 7)
-	hidden := ntable.CellKey("demo", "build", "working")
-	require.NoError(t, c.ZAdd(ctx, hidden, redis.Z{Score: 9, Member: "m1"}).Err())
-	before := storeImage(t, c)
-	rev := c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
-	manifest := ntable.BatchManifest{
-		Schema:                1,
-		Table:                 "demo",
-		Epoch:                 "0",
-		ExpectedTableRevision: rev,
-		OperationID:           "review-hidden",
-		Actor:                 "review",
-		Members: []ntable.BatchMemberEntry{
-			{
-				ID: "m1",
-				Expect: &ntable.MemberExpect{
-					Place: &ntable.PlaceExpect{Row: "build", Col: "ready"},
-				},
-				Move: &ntable.MemberMoveOp{
-					Row: "build",
-					Col: "done",
-				},
-			},
-		},
-	}
-	_, err := ntable.ApplyBatch(ctx, c, manifest)
-	after := storeImage(t, c)
-	require.Error(t, err, "expected ApplyBatch to refuse hidden duplicate placement, got nil")
-	require.ErrorIs(t, err, ntable.ErrDrift, "expected ErrDrift, got")
-	require.ErrorContains(t, err, "changed=no", "expected changed=no, got")
-	require.Equal(t, before, after, "expected store unchanged on hidden duplicate refusal")
-	destScore := c.ZScore(ctx, ntable.CellKey("demo", "build", "done"), "m1").Val()
-	require.Equal(t, float64(0), destScore, "expected dest score 0, got %v", destScore)
-}
-
-func TestReviewUnknownAndDuplicateJSONAccepted(t *testing.T) {
-	t.Parallel()
-	c, _ := store(t)
-	ctx := context.Background()
-	newTable(t, c, demo())
-	rev := c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
-
-	// 1. Unknown top-level field rejected with REFUSED MANIFEST and zero mutation
-	rawUnknown := fmt.Sprintf(`{"schema":1,"table":"demo","epoch":"0","expected_table_revision":%q,"operation_id":"review-unknown","actor":"review","members":[],"unknown":true}`, rev)
-	before := storeImage(t, c)
-	ans, err := c.FCall(ctx, ntable.FnApply, []string{ntable.DefKey("demo")}, "demo", rawUnknown).Slice()
-	after := storeImage(t, c)
-	require.NoError(t, err, "FCall err")
-	require.True(t, replyOpens(ans, nil, "REFUSED", "MANIFEST"), "expected REFUSED MANIFEST for unknown top-level field, got: %v", ans)
-	require.Equal(t, before, after, "expected store unchanged after unknown field refusal")
-
-	// 2. Duplicate top-level key rejected with REFUSED MANIFEST and zero mutation
-	rawDuplicate := fmt.Sprintf(`{"schema":1,"table":"demo","epoch":"0","expected_table_revision":%q,"operation_id":"review-duplicate","actor":"first","actor":"second","members":[]}`, rev)
-	before2 := storeImage(t, c)
-	ans, err = c.FCall(ctx, ntable.FnApply, []string{ntable.DefKey("demo")}, "demo", rawDuplicate).Slice()
-	after2 := storeImage(t, c)
-	require.NoError(t, err, "FCall err")
-	require.True(t, replyOpens(ans, nil, "REFUSED", "MANIFEST"), "expected REFUSED MANIFEST for duplicate top-level key, got: %v", ans)
-	require.Equal(t, before2, after2, "expected store unchanged after duplicate key refusal")
-
-	// 3. Nested unknown key inside expect rejected
-	rawNestedUnknown := fmt.Sprintf(`{"schema":1,"table":"demo","epoch":"0","expected_table_revision":%q,"operation_id":"review-nested-unknown","actor":"review","members":[{"id":"m1","expect":{"revision":"1","unknown":true}}]}`, rev)
-	ans, err = c.FCall(ctx, ntable.FnApply, []string{ntable.DefKey("demo")}, "demo", rawNestedUnknown).Slice()
-	require.NoError(t, err, "FCall err")
-	require.True(t, replyOpens(ans, nil, "REFUSED", "MANIFEST"), "expected REFUSED MANIFEST for nested unknown key, got: %v", ans)
-
-	// 4. Nested duplicate key inside expect rejected
-	rawNestedDuplicate := fmt.Sprintf(`{"schema":1,"table":"demo","epoch":"0","expected_table_revision":%q,"operation_id":"review-nested-duplicate","actor":"review","members":[{"id":"m1","expect":{"revision":"1","revision":"2"}}]}`, rev)
-	ans, err = c.FCall(ctx, ntable.FnApply, []string{ntable.DefKey("demo")}, "demo", rawNestedDuplicate).Slice()
-	require.NoError(t, err, "FCall err")
-	require.True(t, replyOpens(ans, nil, "REFUSED", "MANIFEST"), "expected REFUSED MANIFEST for nested duplicate key, got: %v", ans)
-}
-
-func TestBatchContractWrongTypeMemberRefusal(t *testing.T) {
-	t.Parallel()
-	c, _ := store(t)
-	ctx := context.Background()
-	newTable(t, c, demo())
-	rev := c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
-
-	// Pre-populate member key as a Redis string instead of hash
-	mkey := ntable.MemberKey("m_bad")
-	require.NoError(t, c.Set(ctx, mkey, "string-not-hash", 0).Err())
-
-	before := storeImage(t, c)
-	manifest := ntable.BatchManifest{
-		Schema:                1,
-		Table:                 "demo",
-		Epoch:                 "0",
-		ExpectedTableRevision: rev,
-		OperationID:           "op-bad-mkey-type",
-		Actor:                 "tester",
-		Members: []ntable.BatchMemberEntry{
-			{
-				ID: "m_bad",
-				Expect: &ntable.MemberExpect{
-					Absent: true,
-				},
-				Create: &ntable.MemberCreateOp{
-					Row:   "build",
-					Col:   "ready",
-					Score: 10,
-				},
-			},
-		},
-	}
-	_, err := ntable.ApplyBatch(ctx, c, manifest)
-	after := storeImage(t, c)
-	require.Error(t, err, "expected ApplyBatch to fail on wrong type member key")
-	require.ErrorIs(t, err, ntable.ErrWrongType, "expected ErrWrongType, got")
-	require.ErrorContains(t, err, "changed=no", "expected changed=no, got")
-	require.Equal(t, before, after, "store changed on wrong type member key refusal")
 }
 
 func TestBatchContractRemoveAndOverlapValidation(t *testing.T) {
@@ -1173,9 +1003,9 @@ func TestBatchContractMoveNoopAndScoreSemantics(t *testing.T) {
 	rsScore, err := ntable.ReadSetMembers(ctx, c, "demo", []string{"m1"})
 	require.NoError(t, err, "ReadSet")
 	m1Score, ok := rsScore.Member("m1")
-	if !ok || m1Score.Revision != 2 || m1Score.Score != 25 {
-		t.Fatalf("expected m1 revision 2 and score 25, got rev=%d score=%g", m1Score.Revision, m1Score.Score)
-	}
+	require.True(t, ok, "expected m1 revision 2 and score 25, got %+v", m1Score)
+	require.Equal(t, uint64(2), m1Score.Revision, "expected m1 revision 2 and score 25, got %+v", m1Score)
+	require.Equal(t, float64(25), m1Score.Score, "expected m1 revision 2 and score 25, got %+v", m1Score)
 }
 
 func TestBatchContractReceiptBeforeAfterDeltas(t *testing.T) {
@@ -1260,22 +1090,23 @@ func TestBatchContractReceiptBeforeAfterDeltas(t *testing.T) {
 	require.True(t, ok, "missing m1 delta")
 	require.Equal(t, "build:ready", d1.BeforePlace, "m1 place before=%q after=%q", d1.BeforePlace, d1.AfterPlace)
 	require.Equal(t, "build:done", d1.AfterPlace, "m1 place before=%q after=%q", d1.BeforePlace, d1.AfterPlace)
-	require.NotNil(t, d1.BeforeScore, "m1 before_score want 10, got %v", d1.BeforeScore)
-	require.Equal(t, float64(10), *d1.BeforeScore, "m1 before_score want 10, got %v", d1.BeforeScore)
-	require.NotNil(t, d1.AfterScore, "m1 after_score want 15, got %v", d1.AfterScore)
-	require.Equal(t, float64(15), *d1.AfterScore, "m1 after_score want 15, got %v", d1.AfterScore)
+	require.Equal(t, new(float64(10)), d1.BeforeScore, "m1 before_score want 10, got %v", d1.BeforeScore)
+	require.Equal(t, new(float64(15)), d1.AfterScore, "m1 after_score want 15, got %v", d1.AfterScore)
 	// m1 fields: role before="dev" after="lead"
-	if fRole, ok := d1.Fields["role"]; !ok || fRole.Before == nil || *fRole.Before != "dev" || fRole.After == nil || *fRole.After != "lead" {
-		t.Fatalf("m1 role field delta mismatch: %+v", fRole)
-	}
+	fRole, ok := d1.Fields["role"]
+	require.True(t, ok, "m1 role field delta mismatch: %+v", fRole)
+	require.Equal(t, new("dev"), fRole.Before, "m1 role field delta mismatch: %+v", fRole)
+	require.Equal(t, new("lead"), fRole.After, "m1 role field delta mismatch: %+v", fRole)
 	// m1 fields: team before=nil after="core"
-	if fTeam, ok := d1.Fields["team"]; !ok || fTeam.Before != nil || fTeam.After == nil || *fTeam.After != "core" {
-		t.Fatalf("m1 team field delta mismatch (want nil before): %+v", fTeam)
-	}
+	fTeam, ok := d1.Fields["team"]
+	require.True(t, ok, "m1 team field delta mismatch (want nil before): %+v", fTeam)
+	require.Nil(t, fTeam.Before, "m1 team field delta mismatch (want nil before): %+v", fTeam)
+	require.Equal(t, new("core"), fTeam.After, "m1 team field delta mismatch (want nil before): %+v", fTeam)
 	// m1 fields: notes before="" after=nil (empty string distinct from absent!)
-	if fNotes, ok := d1.Fields["notes"]; !ok || fNotes.Before == nil || *fNotes.Before != "" || fNotes.After != nil {
-		t.Fatalf("m1 notes field delta mismatch (want \"\" before, nil after): %+v", fNotes)
-	}
+	fNotes, ok := d1.Fields["notes"]
+	require.True(t, ok, "m1 notes field delta mismatch (want \"\" before, nil after): %+v", fNotes)
+	require.Equal(t, new(""), fNotes.Before, "m1 notes field delta mismatch (want \"\" before, nil after): %+v", fNotes)
+	require.Nil(t, fNotes.After, "m1 notes field delta mismatch (want \"\" before, nil after): %+v", fNotes)
 
 	// Verify m2 deltas (create)
 	d2, ok := deltas["m2"]
@@ -1283,19 +1114,18 @@ func TestBatchContractReceiptBeforeAfterDeltas(t *testing.T) {
 	require.Empty(t, d2.BeforePlace, "m2 place before=%q after=%q", d2.BeforePlace, d2.AfterPlace)
 	require.Equal(t, "build:ready", d2.AfterPlace, "m2 place before=%q after=%q", d2.BeforePlace, d2.AfterPlace)
 	require.Nil(t, d2.BeforeScore, "m2 created before_score should be nil, got %v", d2.BeforeScore)
-	require.NotNil(t, d2.AfterScore, "m2 after_score want 5, got %v", d2.AfterScore)
-	require.Equal(t, float64(5), *d2.AfterScore, "m2 after_score want 5, got %v", d2.AfterScore)
-	if fRole, ok := d2.Fields["role"]; !ok || fRole.Before != nil || fRole.After == nil || *fRole.After != "intern" {
-		t.Fatalf("m2 role field delta mismatch (want nil before): %+v", fRole)
-	}
+	require.Equal(t, new(float64(5)), d2.AfterScore, "m2 after_score want 5, got %v", d2.AfterScore)
+	fRole2, ok := d2.Fields["role"]
+	require.True(t, ok, "m2 role field delta mismatch (want nil before): %+v", fRole2)
+	require.Nil(t, fRole2.Before, "m2 role field delta mismatch (want nil before): %+v", fRole2)
+	require.Equal(t, new("intern"), fRole2.After, "m2 role field delta mismatch (want nil before): %+v", fRole2)
 
 	// Verify m3 deltas (remove)
 	d3, ok := deltas["m3"]
 	require.True(t, ok, "missing m3 delta")
 	require.Equal(t, "build:ready", d3.BeforePlace, "m3 place before=%q after=%q", d3.BeforePlace, d3.AfterPlace)
 	require.Empty(t, d3.AfterPlace, "m3 place before=%q after=%q", d3.BeforePlace, d3.AfterPlace)
-	require.NotNil(t, d3.BeforeScore, "m3 before_score want 30, got %v", d3.BeforeScore)
-	require.Equal(t, float64(30), *d3.BeforeScore, "m3 before_score want 30, got %v", d3.BeforeScore)
+	require.Equal(t, new(float64(30)), d3.BeforeScore, "m3 before_score want 30, got %v", d3.BeforeScore)
 	require.Nil(t, d3.AfterScore, "m3 removed after_score should be nil, got %v", d3.AfterScore)
 }
 
@@ -1654,14 +1484,8 @@ func TestBatchAcceptedInteractingCrossRowMultiMemberWitness(t *testing.T) {
 	// Verify prestate via ReadSet
 	rsPre, err := ntable.ReadSetMembers(ctx, c, "demo", []string{"m1", "m2"})
 	require.NoError(t, err, "ReadSet prestate")
-	m1Pre, ok1 := rsPre.Member("m1")
-	m2Pre, ok2 := rsPre.Member("m2")
-	if !ok1 || !m1Pre.Placed || m1Pre.Row != "row1" || m1Pre.Col != "col1" || m1Pre.Score != 10 || m1Pre.Revision != 1 {
-		t.Fatalf("unexpected m1 prestate: %+v", m1Pre)
-	}
-	if !ok2 || !m2Pre.Placed || m2Pre.Row != "row2" || m2Pre.Col != "col2" || m2Pre.Score != 20 || m2Pre.Revision != 1 {
-		t.Fatalf("unexpected m2 prestate: %+v", m2Pre)
-	}
+	requirePlacedMember(t, rsPre, "m1", "row1", "col1", 10, 1)
+	requirePlacedMember(t, rsPre, "m2", "row2", "col2", 20, 1)
 
 	// Batch: In a single atomic batch manifest:
 	// - Move m1 to row2:col2 with score 30 and field/place guard evaluating prestate
@@ -1741,24 +1565,26 @@ func TestBatchAcceptedInteractingCrossRowMultiMemberWitness(t *testing.T) {
 	d2, ok2 := deltaMembers["m2"]
 	require.True(t, ok1, "missing member delta: m1=%v, m2=%v", ok1, ok2)
 	require.True(t, ok2, "missing member delta: m1=%v, m2=%v", ok1, ok2)
-	if d1.BeforePlace != "row1:col1" || d1.AfterPlace != "row2:col2" || d1.BeforeScore == nil || *d1.BeforeScore != 10 || d1.AfterScore == nil || *d1.AfterScore != 30 || d1.BeforeRev != "1" || d1.AfterRev != "2" {
-		t.Fatalf("unexpected m1 delta: %+v", d1)
-	}
-	if d2.BeforePlace != "row2:col2" || d2.AfterPlace != "row1:col1" || d2.BeforeScore == nil || *d2.BeforeScore != 20 || d2.AfterScore == nil || *d2.AfterScore != 40 || d2.BeforeRev != "1" || d2.AfterRev != "2" {
-		t.Fatalf("unexpected m2 delta: %+v", d2)
-	}
+	require.Equal(t, "row1:col1", d1.BeforePlace, "unexpected m1 delta: %+v", d1)
+	require.Equal(t, "row2:col2", d1.AfterPlace, "unexpected m1 delta: %+v", d1)
+	require.Equal(t, new(float64(10)), d1.BeforeScore, "unexpected m1 delta: %+v", d1)
+	require.Equal(t, new(float64(30)), d1.AfterScore, "unexpected m1 delta: %+v", d1)
+	require.Equal(t, "1", d1.BeforeRev, "unexpected m1 delta: %+v", d1)
+	require.Equal(t, "2", d1.AfterRev, "unexpected m1 delta: %+v", d1)
+	require.Equal(t, "row2:col2", d2.BeforePlace, "unexpected m2 delta: %+v", d2)
+	require.Equal(t, "row1:col1", d2.AfterPlace, "unexpected m2 delta: %+v", d2)
+	require.Equal(t, new(float64(20)), d2.BeforeScore, "unexpected m2 delta: %+v", d2)
+	require.Equal(t, new(float64(40)), d2.AfterScore, "unexpected m2 delta: %+v", d2)
+	require.Equal(t, "1", d2.BeforeRev, "unexpected m2 delta: %+v", d2)
+	require.Equal(t, "2", d2.AfterRev, "unexpected m2 delta: %+v", d2)
 
 	// Verify full poststate
 	rsPost, err := ntable.ReadSetMembers(ctx, c, "demo", []string{"m1", "m2"})
 	require.NoError(t, err, "ReadSet poststate")
-	m1Post, _ := rsPost.Member("m1")
-	m2Post, _ := rsPost.Member("m2")
-	if !m1Post.Placed || m1Post.Row != "row2" || m1Post.Col != "col2" || m1Post.Score != 30 || m1Post.Revision != 2 || m1Post.Fields["phase"] != "post" {
-		t.Fatalf("unexpected m1 poststate: %+v", m1Post)
-	}
-	if !m2Post.Placed || m2Post.Row != "row1" || m2Post.Col != "col1" || m2Post.Score != 40 || m2Post.Revision != 2 || m2Post.Fields["phase"] != "post" {
-		t.Fatalf("unexpected m2 poststate: %+v", m2Post)
-	}
+	m1Post := requirePlacedMember(t, rsPost, "m1", "row2", "col2", 30, 2)
+	require.Equal(t, "post", m1Post.Fields["phase"], "unexpected m1 poststate: %+v", m1Post)
+	m2Post := requirePlacedMember(t, rsPost, "m2", "row1", "col1", 40, 2)
+	require.Equal(t, "post", m2Post.Fields["phase"], "unexpected m2 poststate: %+v", m2Post)
 
 	// Verify physical Redis cell zsets
 	sc := c.ZScore(ctx, ntable.CellKey("demo", "row2", "col2"), "m1").Val()
@@ -1985,12 +1811,11 @@ func TestBatchRetainedUnplacedMemberRemovalWitness(t *testing.T) {
 	require.Equal(t, 1, rcptRemove.BatchDelta.ChangedCount, "unexpected remove delta: %+v", rcptRemove.BatchDelta)
 	require.Len(t, rcptRemove.BatchDelta.Members, 1, "expected 1 member delta, got %d", len(rcptRemove.BatchDelta.Members))
 	remDelta := rcptRemove.BatchDelta.Members[0]
-	if remDelta.ID != "m_unplaced" || remDelta.BeforePlace != "build:ready" || remDelta.AfterPlace != "" {
-		t.Fatalf("unexpected remDelta places: %+v", remDelta)
-	}
-	if remDelta.BeforeScore == nil || *remDelta.BeforeScore != 10 || remDelta.AfterScore != nil {
-		t.Fatalf("unexpected remDelta scores: %+v", remDelta)
-	}
+	require.Equal(t, "m_unplaced", remDelta.ID, "unexpected remDelta places: %+v", remDelta)
+	require.Equal(t, "build:ready", remDelta.BeforePlace, "unexpected remDelta places: %+v", remDelta)
+	require.Equal(t, "", remDelta.AfterPlace, "unexpected remDelta places: %+v", remDelta)
+	require.Equal(t, new(float64(10)), remDelta.BeforeScore, "unexpected remDelta scores: %+v", remDelta)
+	require.Nil(t, remDelta.AfterScore, "unexpected remDelta scores: %+v", remDelta)
 	require.Equal(t, "1", remDelta.BeforeRev, "unexpected remDelta revs: %+v", remDelta)
 	require.Equal(t, "2", remDelta.AfterRev, "unexpected remDelta revs: %+v", remDelta)
 
@@ -2010,9 +1835,10 @@ func TestBatchRetainedUnplacedMemberRemovalWitness(t *testing.T) {
 	rsUnplaced, err := ntable.ReadSetMembers(ctx, c, "demo", []string{"m_unplaced"})
 	require.NoError(t, err, "ReadSet unplaced")
 	mUnplaced, ok := rsUnplaced.Member("m_unplaced")
-	if !ok || mUnplaced.Placed || mUnplaced.Revision != 2 || mUnplaced.Fields["role"] != "tester" {
-		t.Fatalf("ReadSet unplaced record mismatch: %+v", mUnplaced)
-	}
+	require.True(t, ok, "ReadSet unplaced record mismatch: %+v", mUnplaced)
+	require.False(t, mUnplaced.Placed, "ReadSet unplaced record mismatch: %+v", mUnplaced)
+	require.Equal(t, uint64(2), mUnplaced.Revision, "ReadSet unplaced record mismatch: %+v", mUnplaced)
+	require.Equal(t, "tester", mUnplaced.Fields["role"], "ReadSet unplaced record mismatch: %+v", mUnplaced)
 
 	// 3. Now, a batch attempts remove: true on this retained already-unplaced member.
 	// Contract: Removal requires existing owned placement; an already-unplaced member refuses
@@ -2152,9 +1978,7 @@ func TestBatchNoopGuardCountAndCardinalityWitness(t *testing.T) {
 	events, err := c.XRange(ctx, changesKey, rcptNoop.ID, rcptNoop.ID).Result()
 	require.NoError(t, err, "expected exactly 1 stream event for rcptNoop.ID %s, got %d (err: %v)", rcptNoop.ID, len(events), err)
 	require.Len(t, events, 1, "expected exactly 1 stream event for rcptNoop.ID %s, got %d (err: %v)", rcptNoop.ID, len(events), err)
-	if events[0].Values["outcome"] != "noop" {
-		t.Fatalf("expected stream event outcome noop, got %v", events[0].Values["outcome"])
-	}
+	require.Equal(t, "noop", events[0].Values["outcome"], "expected stream event outcome noop")
 
 	// Assert operation-record cardinality is exactly 1 record
 	opRecord := operationRecord(t, c, "demo", "0", "op-move-noop-witness")
@@ -2235,9 +2059,10 @@ func TestBatchAcceptedOmittedRevisionAfterWriterAdvanceWitness(t *testing.T) {
 	rsW1, err := ntable.ReadSetMembers(ctx, c, "demo", []string{"m1"})
 	require.NoError(t, err, "ReadSet after writer1")
 	m1W1, ok := rsW1.Member("m1")
-	if !ok || m1W1.Revision != 2 || m1W1.Fields["status"] != "step1" || m1W1.Col != "working" {
-		t.Fatalf("expected m1 at revision 2, col=working, got %+v", m1W1)
-	}
+	require.True(t, ok, "expected m1 at revision 2, col=working, got %+v", m1W1)
+	require.Equal(t, uint64(2), m1W1.Revision, "expected m1 at revision 2, col=working, got %+v", m1W1)
+	require.Equal(t, "step1", m1W1.Fields["status"], "expected m1 at revision 2, col=working, got %+v", m1W1)
+	require.Equal(t, "working", m1W1.Col, "expected m1 at revision 2, col=working, got %+v", m1W1)
 
 	// Writer 2 submits a batch modifying m1 with Revision omitted (empty string)
 	// and only explicit field guards.
@@ -2275,9 +2100,10 @@ func TestBatchAcceptedOmittedRevisionAfterWriterAdvanceWitness(t *testing.T) {
 	rsW2, err := ntable.ReadSetMembers(ctx, c, "demo", []string{"m1"})
 	require.NoError(t, err, "ReadSet after writer2")
 	m1W2, ok := rsW2.Member("m1")
-	if !ok || m1W2.Revision != 3 || m1W2.Fields["status"] != "step2" || m1W2.Fields["writer2"] != "applied" {
-		t.Fatalf("expected m1 at revision 3 after writer2, got %+v", m1W2)
-	}
+	require.True(t, ok, "expected m1 at revision 3 after writer2, got %+v", m1W2)
+	require.Equal(t, uint64(3), m1W2.Revision, "expected m1 at revision 3 after writer2, got %+v", m1W2)
+	require.Equal(t, "step2", m1W2.Fields["status"], "expected m1 at revision 3 after writer2, got %+v", m1W2)
+	require.Equal(t, "applied", m1W2.Fields["writer2"], "expected m1 at revision 3 after writer2, got %+v", m1W2)
 
 	// Writer 3 submits a batch modifying m1 with raw JSON expect without revision
 	// confirming omitted revision in wire format is accepted after revision advance.
@@ -2291,7 +2117,23 @@ func TestBatchAcceptedOmittedRevisionAfterWriterAdvanceWitness(t *testing.T) {
 	rsW3, err := ntable.ReadSetMembers(ctx, c, "demo", []string{"m1"})
 	require.NoError(t, err, "ReadSet after writer3")
 	m1W3, ok := rsW3.Member("m1")
-	if !ok || m1W3.Revision != 4 || m1W3.Fields["status"] != "step3" || m1W3.Fields["wire"] != "accepted" {
-		t.Fatalf("expected m1 at revision 4 after writer3, got %+v", m1W3)
-	}
+	require.True(t, ok, "expected m1 at revision 4 after writer3, got %+v", m1W3)
+	require.Equal(t, uint64(4), m1W3.Revision, "expected m1 at revision 4 after writer3, got %+v", m1W3)
+	require.Equal(t, "step3", m1W3.Fields["status"], "expected m1 at revision 4 after writer3, got %+v", m1W3)
+	require.Equal(t, "accepted", m1W3.Fields["wire"], "expected m1 at revision 4 after writer3, got %+v", m1W3)
+}
+
+// requirePlacedMember reads the member id from rs and requires it to be placed
+// at row:col with the score and revision; it returns the member for further
+// checks.
+func requirePlacedMember(t *testing.T, rs ntable.ReadSetResult, id, row, col string, score float64, rev uint64) ntable.ReadSetMember {
+	t.Helper()
+	m, found := rs.Member(id)
+	require.True(t, found, "member %s is not in the read set: %+v", id, rs)
+	require.True(t, m.Placed, "unexpected %s: %+v", id, m)
+	require.Equal(t, row, m.Row, "unexpected %s: %+v", id, m)
+	require.Equal(t, col, m.Col, "unexpected %s: %+v", id, m)
+	require.Equal(t, score, m.Score, "unexpected %s: %+v", id, m)
+	require.Equal(t, rev, m.Revision, "unexpected %s: %+v", id, m)
+	return m
 }

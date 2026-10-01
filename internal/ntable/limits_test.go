@@ -31,11 +31,8 @@ func luaLimits(t *testing.T) map[string]int {
 	}
 	out := map[string]int{}
 	for _, m := range regexp.MustCompile(`(\w+)\s*=\s*'([^']+)'`).FindAllStringSubmatch(block("T.limit_names = {"), -1) {
-		v, ok := values[m[1]]
-		if !ok {
-			t.Fatalf("table.lua names a limit %s that has no value", m[1])
-		}
-		out[m[2]] = v
+		require.Contains(t, values, m[1], "table.lua names a limit %s that has no value", m[1])
+		out[m[2]] = values[m[1]]
 	}
 	require.Len(t, out, len(values), "table.lua: %d limit values, %d names", len(values), len(out))
 	return out
@@ -77,9 +74,8 @@ func TestBatchBoundsAgreeAcrossServerValidatorAndSpec(t *testing.T) {
 	for label, side := range map[string]map[string]int{"table.lua": luaLimits(t), "SPEC-NOVA-TABLE.md": specLimits(t)} {
 		assert.Len(t, side, len(goSide), "%s states %d bounds, the validator %d: %v", label, len(side), len(goSide), side)
 		for name, want := range goSide {
-			if got, ok := side[name]; !ok || got != want {
-				t.Errorf("%s: %s = %d (present %v), the validator holds %d", label, name, got, ok, want)
-			}
+			assert.Contains(t, side, name, "%s: %s is absent, the validator holds %d", label, name, want)
+			assert.Equal(t, want, side[name], "%s: %s, the validator holds %d", label, name, want)
 		}
 	}
 }
@@ -93,9 +89,7 @@ func TestReceiptValueBoundAgreesBetweenServerAndLibrary(t *testing.T) {
 	require.NotNil(t, m, "table.lua has no T.receipt_value_bytes")
 	got, _ := strconv.Atoi(string(m[1]))
 	assert.Equal(t, ReceiptValueBytes, got, "table.lua %d, limits.go %d", got, ReceiptValueBytes)
-	if ReceiptValueBytes != 64 {
-		t.Errorf("a receipt holds a value of at most 64 bytes in full, limits.go says %d", ReceiptValueBytes)
-	}
+	assert.Equal(t, 64, ReceiptValueBytes, "a receipt holds a value of at most 64 bytes in full")
 }
 
 // The batch section of the specification says what is: no process, no gate, no
@@ -156,9 +150,7 @@ none = T.receipt_size(function() return string.rep('.', 7) end, {})
 	want := 100 + 3*scoreTextBytes(t)
 	got := int(L.GetGlobal("size").(lua.LNumber))
 	assert.Equal(t, want, got, "size %d, want %d", got, want)
-	if L.GetGlobal("restored") != lua.LTrue {
-		t.Errorf("a score was not put back")
-	}
+	assert.Equal(t, lua.LTrue, L.GetGlobal("restored"), "a score was not put back")
 	got = int(L.GetGlobal("none").(lua.LNumber))
 	assert.Equal(t, 7, got, "a delta with no late score is its own length: %d", got)
 }
@@ -192,9 +184,7 @@ func TestScoreTextBoundHoldsEveryScoreTheStorePrints(t *testing.T) {
 // the three); a batch that fits its manifest bound can still exceed it.
 func TestReceiptBoundIsTheManifestBound(t *testing.T) {
 	t.Parallel()
-	if LimitReceiptBytes != 1<<20 {
-		t.Errorf("receipt bound %d, manifest bound %d", LimitReceiptBytes, LimitManifestBytes)
-	}
+	assert.Equal(t, 1<<20, LimitReceiptBytes, "receipt bound %d, manifest bound %d", LimitReceiptBytes, LimitManifestBytes)
 }
 
 // A count that stopped where it passed its bound says its size is at least that.
@@ -202,8 +192,7 @@ func TestLimitErrorSaysAtLeastForAStoppedCount(t *testing.T) {
 	t.Parallel()
 	exact := (&LimitError{Name: "receipt bytes", Bound: 10, Observed: 12}).Error()
 	least := (&LimitError{Name: "receipt bytes", Bound: 10, Observed: 12, AtLeast: true}).Error()
-	if !strings.Contains(exact, "observed 12") || strings.Contains(exact, "at least") {
-		t.Errorf("exact: %s", exact)
-	}
+	assert.Contains(t, exact, "observed 12")
+	assert.NotContains(t, exact, "at least")
 	assert.Contains(t, least, "observed at least 12", "stopped count: %s", least)
 }

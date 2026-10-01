@@ -25,9 +25,10 @@ import (
 
 // cmdMember is `nova-swarm member`: this machine as one member of a sprint's
 // fleet (or one of its readers). Every few seconds it beats, reads its queue
-// from the sprint, reports every card whose child ended, takes up to its width
-// and starts each card taken as one child through `nova-swarm native`. The
-// fleet table is the dispatcher; the loop is internal/member.
+// from the sprint, pushes the commit of every work card whose child ended and
+// reports it, takes up to its width and starts each card taken as one child
+// through `nova-swarm native`. The fleet table is the dispatcher; the loop is
+// internal/member.
 func cmdMember(args []string, stdout, stderr io.Writer) int {
 	fs := flag.NewFlagSet("member", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
@@ -99,7 +100,13 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 		resultsRoot: *resultsRoot, deadline: deadline.d, tokens: *tokensWord, auth: *auth, config: *config,
 		worker: *workerFile, noWall: *noWall, stderr: stderr,
 	}
-	m := member.New(member.Config{As: *as, Width: *width, Reader: *reader}, sp, rn, stdout)
+	// a work card's commit is pushed by the member, outside the wall, at its
+	// finish (memberpush.go); a read pushes nothing
+	var pu member.Pusher
+	if !*reader {
+		pu = newGitPusher(*root, *slots, *sprintBin)
+	}
+	m := member.New(member.Config{As: *as, Width: *width, Reader: *reader}, sp, rn, pu, stdout)
 	kind := "member"
 	if *reader {
 		kind = "reader"

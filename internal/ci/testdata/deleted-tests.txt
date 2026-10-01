@@ -1213,3 +1213,10 @@ internal/sprint/rule_test.go the deleted rule registry's priorities; the tick's 
 internal/sprint/steps_remove_test.go Remove had no verb (deadcode lists it); the stream's drop and clear keep their own tests
 internal/sprint/needall_test.go NeedAll guarded the Cards scan of a snapshot loaded from a read plan and goes with the partial loads; every snapshot is whole, so Cards answers every card (the dependency-needs tests, needs_test.go and cycle_test.go, never went through it)
 internal/sprint/store/ingest_lines_test.go its test moves to store/ack_line_test.go without the deleted ingest: the decided line of an ack names its subjects
+internal/ci/testdata/discarded_allowlist.txt counted rows move without growth into per-package shards; the same class scanner and shrink-only update remain
+internal/ci/testdata/generality_allowlist.txt counted rows move without growth into per-package shards; the same class scanner and shrink-only update remain
+internal/ci/testdata/generality_text_allowlist.txt counted rows move without growth into per-package shards; the same class scanner and shrink-only update remain
+internal/ci/testdata/okonfailure_allowlist.txt the zero-row ledger uses an empty package-shard set; any new finding remains unlisted and fails
+internal/ci/testdata/remedy_allowlist.txt counted rows move without growth into per-package shards; the same class scanner and shrink-only update remain
+internal/ci/testdata/scripthide_allowlist.txt counted rows move without growth into per-package shards; the same class scanner and shrink-only update remain
+internal/ci/testdata/testify_allowlist.txt counted rows move without growth into per-package shards; the same class scanner and shrink-only update remain

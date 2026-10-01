@@ -4,9 +4,6 @@ package ntable_test
 
 import (
 	"context"
-	"encoding/json"
-	"errors"
-	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
@@ -33,9 +30,10 @@ func TestEpochTransitionKeepsHistoryAndRejectsEveryStaleWrite(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, c.HSet(ctx, tb.EpochKey, "n", 1).Err())
 	fresh, err := ntable.Read(ctx, c, tb.Name)
-	if err != nil || fresh.Epoch != 1 || len(fresh.Rows) != 0 || !ntable.SameDefinition(old, fresh) {
-		t.Fatalf("fresh epoch = %#v, %v", fresh, err)
-	}
+	require.NoError(t, err, "fresh epoch = %#v", fresh)
+	require.Equal(t, uint64(1), fresh.Epoch, "fresh epoch = %#v", fresh)
+	require.Empty(t, fresh.Rows, "fresh epoch = %#v", fresh)
+	require.True(t, ntable.SameDefinition(old, fresh), "fresh epoch = %#v", fresh)
 	calls := map[string]func() error{
 		"create":          func() error { return ntable.Create(ctx, c, tb, now) },
 		"bind":            func() error { return ntable.Bind(ctx, c, tb, now) },
@@ -51,9 +49,7 @@ func TestEpochTransitionKeepsHistoryAndRejectsEveryStaleWrite(t *testing.T) {
 	}
 	before := storeImage(t, c)
 	for name, call := range calls {
-		if err := call(); !errors.Is(err, ntable.ErrStale) {
-			t.Fatalf("%s = %v, want stale", name, err)
-		}
+		require.ErrorIs(t, call(), ntable.ErrStale, "%s, want stale", name)
 		require.Equal(t, before, storeImage(t, c), "%s stale write changed store", name)
 	}
 	opts := ntable.WriteOptions{Epoch: 1}
@@ -125,13 +121,14 @@ func TestEpochCustomRecordsAndExactLargeEpoch(t *testing.T) {
 	_, err = ntable.CellAdd(ctx, c, tb.Name, "build", "ready", "m1", 3, opts)
 	require.NoError(t, err)
 	got, err := ntable.Read(ctx, c, tb.Name)
-	if err != nil || got.Epoch != epoch || got.Rows[0].Cells[0].Key != ntable.CellKeyAt(tb.Name, "build", "ready", epoch) {
-		t.Fatalf("large epoch = %#v, %v", got, err)
-	}
+	require.NoError(t, err, "large epoch = %#v", got)
+	require.Equal(t, epoch, got.Epoch, "large epoch = %#v", got)
+	require.Equal(t, ntable.CellKeyAt(tb.Name, "build", "ready", epoch), got.Rows[0].Cells[0].Key, "large epoch = %#v", got)
 	record, err := c.HGetAll(ctx, "task:m1").Result()
-	if err != nil || record["title"] != "existing task" || record["place:"+tb.Name] != "build:ready" || c.Exists(ctx, ntable.MemberKey("m1")).Val() != 0 {
-		t.Fatalf("record binding = %v %v", record, err)
-	}
+	require.NoError(t, err, "record binding = %v", record)
+	require.Equal(t, "existing task", record["title"], "record binding = %v", record)
+	require.Equal(t, "build:ready", record["place:"+tb.Name], "record binding = %v", record)
+	require.Equal(t, int64(0), c.Exists(ctx, ntable.MemberKey("m1")).Val(), "record binding = %v", record)
 }
 
 func TestTableChangeReceiptAndRefusalAreAtomic(t *testing.T) {
@@ -141,21 +138,20 @@ func TestTableChangeReceiptAndRefusalAreAtomic(t *testing.T) {
 	var receipt ntable.Receipt
 	opts := ntable.WriteOptions{Actor: "Stella", Fence: "fence-7", Idem: "attempt-9", Receipt: &receipt}
 	before := c.HGet(ctx, ntable.RevisionKey(tb.Name), "n").Val()
-	if _, err := ntable.CellMove(ctx, c, tb.Name, "build", "ready", "working", "m1", opts); err != nil {
-		t.Fatal(err)
-	}
+	_, err := ntable.CellMove(ctx, c, tb.Name, "build", "ready", "working", "m1", opts)
+	require.NoError(t, err)
 	events, err := c.XRangeN(ctx, ntable.ChangesKey(tb.Name), receipt.ID, receipt.ID, 1).Result()
 	require.NoError(t, err, "receipt event = %v %v", events, err)
 	require.Len(t, events, 1, "receipt event = %v %v", events, err)
 	event := events[0].Values
-	if event["rev_before"] != before || receipt.After != receipt.Before+1 || event["actor"] != "Stella" || event["fence"] != "fence-7" || event["idem"] != "attempt-9" || event["verb"] != "cell_move" || receipt.Outcome != "changed" {
-		t.Fatalf("receipt = %#v event=%v", receipt, event)
-	}
-	var members []struct{ ID, From, To, Score string }
-	require.NoError(t, json.Unmarshal([]byte(event["members"].(string)), &members))
-	if len(members) != 1 || members[0].ID != "m1" || members[0].From != "build:ready" || members[0].To != "build:working" || members[0].Score != "7" {
-		t.Fatalf("member change = %v", members)
-	}
+	require.Equal(t, before, event["rev_before"], "receipt = %#v event=%v", receipt, event)
+	require.Equal(t, receipt.Before+1, receipt.After, "receipt = %#v event=%v", receipt, event)
+	require.Equal(t, "Stella", event["actor"], "receipt = %#v event=%v", receipt, event)
+	require.Equal(t, "fence-7", event["fence"], "receipt = %#v event=%v", receipt, event)
+	require.Equal(t, "attempt-9", event["idem"], "receipt = %#v event=%v", receipt, event)
+	require.Equal(t, "cell_move", event["verb"], "receipt = %#v event=%v", receipt, event)
+	require.Equal(t, "changed", receipt.Outcome, "receipt = %#v event=%v", receipt, event)
+	require.JSONEq(t, `[{"id":"m1","from":"build:ready","to":"build:working","score":"7"}]`, event["members"].(string), "member change")
 	n := c.XLen(ctx, ntable.ChangesKey(tb.Name)).Val()
 	image := storeImage(t, c)
 	_, err = ntable.CellAdd(ctx, c, tb.Name, "build", "ready", "m1", 9, opts)
@@ -204,9 +200,9 @@ func TestTableReceiptPreflightPreventsPartialMoves(t *testing.T) {
 				})
 			}
 			before := storeImage(t, c)
-			if _, err := ntable.CellMove(ctx, writer, tb.Name, "build", "ready", "working", "m1"); err == nil || strings.Contains(err.Error(), "unknown function") {
-				t.Fatalf("preflight = %v", err)
-			}
+			_, err := ntable.CellMove(ctx, writer, tb.Name, "build", "ready", "working", "m1")
+			require.Error(t, err, "preflight")
+			require.NotContains(t, err.Error(), "unknown function", "preflight = %v", err)
 			require.Equal(t, before, storeImage(t, c), "receipt failure partially moved the member")
 		})
 	}

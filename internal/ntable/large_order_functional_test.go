@@ -46,21 +46,15 @@ func TestLargeRowOrdersKeepRanksTripsAndReceipts(t *testing.T) {
 				var receipt ntable.Receipt
 				err = write(&receipt)
 				require.NoError(t, err, "%s: %v", name, err)
-				if got := trips.N() - before; got != 1 {
-					t.Fatalf("%s took %d trips", name, got)
-				}
+				require.Equal(t, int64(1), trips.N()-before, "%s trips", name)
 				require.Equal(t, receipt.Before+1, receipt.After, "%s receipt = %#v", name, receipt)
 				require.Equal(t, "changed", receipt.Outcome, "%s receipt = %#v", name, receipt)
-				if got := c.XLen(ctx, ntable.ChangesKey("large")).Val(); got != events+1 {
-					t.Fatalf("%s emitted %d events", name, got-events)
-				}
+				require.Equal(t, events+1, c.XLen(ctx, ntable.ChangesKey("large")).Val(), "%s events", name)
 				got, err := c.ZRangeWithScores(ctx, "table:large:rows", 0, -1).Result()
 				require.NoError(t, err, "%s: %d rows, want %d: %v", name, len(got), len(want), err)
 				require.Len(t, got, len(want), "%s: %d rows, want %d: %v", name, len(got), len(want), err)
 				for i, row := range got {
-					if row.Member != want[i] || row.Score != float64(i+1) {
-						t.Fatalf("%s row %d = %#v, want %s at rank %d", name, i, row, want[i], i+1)
-					}
+					require.Equal(t, redis.Z{Score: float64(i + 1), Member: want[i]}, row, "%s row %d", name, i)
 				}
 				last, err := c.XRevRangeN(ctx, ntable.ChangesKey("large"), "+", "-", 1).Result()
 				require.NoError(t, err, "%s last receipt: %v", name, err)
@@ -72,7 +66,7 @@ func TestLargeRowOrdersKeepRanksTripsAndReceipts(t *testing.T) {
 					wantCells[i] = row + ":a"
 				}
 				slices.Sort(wantCells)
-				require.True(t, slices.Equal(cells, wantCells), "%s receipt misses ranked cells: got %d, want %d", name, len(cells), len(wantCells))
+				require.Equal(t, wantCells, cells, "%s receipt misses ranked cells", name)
 			}
 			set := func(change ntable.SetOpts) func(*ntable.Receipt) error {
 				return func(r *ntable.Receipt) error {
