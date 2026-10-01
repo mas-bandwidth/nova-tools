@@ -905,10 +905,10 @@ TICK OK state=RUNNING idle=no moved=1 notes=1
 $ nova-sprint take --as m1 --epoch 0
 MOVED s1-1.w1 ready -> working member=m1 gen=1
 PACKET s1-1.w1 attempt=1 gen=1 epoch=0
-  branch: sprint/s1-1.w1.e0
+  branch: sprint/s1-1.w1.g1.e0
   base: the stream's base
   notes: none
-  report it: nova-sprint finish --as m1 s1-1.w1@1 --epoch 0 --branch sprint/s1-1.w1.e0 --report '<what you did>' [--failed]
+  report it: nova-sprint finish --as m1 s1-1.w1@1 --epoch 0 --branch sprint/s1-1.w1.g1.e0 --report '<what you did>' [--failed]
 TAKE OK moved=1 refused=0 notes=0 op=take-t25-1
 0/1 0.0% -> ETA  machine: running
 
