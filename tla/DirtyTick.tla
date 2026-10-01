@@ -70,6 +70,15 @@
 \*   RedealBoundHolds). The coordinator's verbs (ci, return, accept) and
 \*   take run only where the instance turns them on (Coord, Takes).
 \*
+\* THE ROUTE (2026-10-01, the owner: "the card should determine the model
+\*   used"). A card is dealt only when a route serves its tier or it pins a
+\*   model (Served, the scenario's: internal/sprint/route.go resolves it from
+\*   the store's routes and the card's brief); a card no route serves stays
+\*   ready, its tier's judgment the Go tick's (NNoRoute, one per tier, tested
+\*   on the twin), and is never dealt (RouteGuard; the witness "noroute"
+\*   deals it). Which route is drawn is not modelled: the draw only fills the
+\*   work card's fields.
+\*
 \* WHAT IS NOT MODELLED. Clear and epochs (the counters' reset); two reads
 \* per attempt (one read each); rework but by a broken read; take is
 \* modelled only for the redeals (a finish needs no take); verbs other than
@@ -87,6 +96,8 @@ CONSTANTS
   MaxRedeals, Takes, Coord
 
 Tables == {"work", "readers", "merge", "fleet"}
+\* The cards a route serves, or that pin a model: the scenario's (THE ROUTE).
+Served == Scn.served
 Three == {"readers", "merge", "fleet"}
 Cols == {"none", "waiting", "ready", "working", "review", "merging", "landed"}
 NoR == "none"
@@ -243,7 +254,7 @@ Release(S, C) ==
 \* The deal: the streams take turns by the stream counter over the streams
 \* with a dealable card; within a stream the lowest position; the machine by
 \* the machine counter over the up machines with room.
-Dealable(S, cand) == {c \in cand : S.col[c] = "ready" /\ ~AtRB(S, c)}
+Dealable(S, cand) == {c \in cand : S.col[c] = "ready" /\ ~AtRB(S, c) /\ (c \in Served \/ Broken = "noroute")}
 UpRoom(S) == {m \in Machines : S.stat[m] = "up" /\
                 (Broken = "nowidth" \/ Room(S, m) > 0)}
 DealOne(S, cand) ==
@@ -627,7 +638,7 @@ RoomNow(m) == Width[m] - Cardinality(mc[m]) - Cardinality(mr[m])
 PumpDone ==
   /\ Q["work"] = <<>>
   /\ Landable(col) = {} /\ Releasable(col) = {}
-  /\ ~(/\ \E c \in Cards : col[c] = "ready" /\ ~(ended[c] /\ rdl[c] >= MaxRedeals)
+  /\ ~(/\ \E c \in Served : col[c] = "ready" /\ ~(ended[c] /\ rdl[c] >= MaxRedeals)
        /\ \E m \in Machines : stat[m] = "up" /\ RoomNow(m) > 0)
   /\ ~\E c \in Cards : col[c] = "review" /\ okd[c] /\ ci[c] # "red" /\ ~ret[c]
 ReadersDone ==
@@ -658,6 +669,10 @@ PlacementsRound ==
           LET ks == SelectSeq(plc', LAMBDA p : p.k = k) IN
           /\ \A j \in 1..Len(ks) : ks[j].ctr = (CtrOf(k) + j - 1) % CtrMod
           /\ CtrOfP(k) = (CtrOf(k) + Len(ks)) % CtrMod]_vars
+
+\* THE ROUTE GUARD: a card no route serves, and that pins no model, is never
+\* dealt (it stays ready for the coordinator).
+RouteGuard == \A c \in Cards \ Served : col[c] \in {"none", "waiting", "ready"}
 
 \* WIDTH: a machine never holds more cards and reads than its width.
 WidthRespected == \A m \in Machines : Cardinality(mc[m]) + Cardinality(mr[m]) <= Width[m]

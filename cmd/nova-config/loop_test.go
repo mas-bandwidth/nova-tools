@@ -191,5 +191,5 @@ func TestApplyKindLoopWritesTheViewAndStatusShowsParity(t *testing.T) {
 	require.Equal(t, 0, code, out)
 	code, out, errs = h.run(t, "status")
 	assert.Equal(t, 0, code, errs)
-	assert.True(t, strings.HasSuffix(out, " loop_applied=2\n"), out)
+	assert.Contains(t, out, " loop_applied=2 ")
 }

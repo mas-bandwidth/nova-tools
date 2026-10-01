@@ -20,6 +20,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 // Type is a field's type. It decides the SQL column, the flag's parsing and
@@ -137,6 +138,7 @@ const (
 	KindFriend  = "friend"
 	KindSprint  = "sprint"
 	KindLoop    = "loop"
+	KindRoute   = "route"
 )
 
 // FriendRoles are the roles someone decides for a friend. The coordinator
@@ -149,6 +151,10 @@ var FriendRoles = []string{"builder", "may-hold", "reader"}
 // spelling (frontier, pro, flash).
 var Tiers = []string{"flash", "frontier", "pro"}
 
+// RouteTiers are the tiers a route serves: Tiers less frontier, whose cards
+// are never drawn from routes and escalate to the coordinator.
+var RouteTiers = []string{"flash", "pro"}
+
 // CoordinatorRole is the Redis role ns_friend_roles and the deal read
 // (friend:<f>:roles), derived at apply from the sprint row.
 const CoordinatorRole = "coordinator"
@@ -156,7 +162,8 @@ const CoordinatorRole = "coordinator"
 // Kinds is the registry, in apply order: machines first, the fleet row next
 // (it names machines, and a friend's desired slots are charged to the
 // fleet's coordinator machine when her beat names none), friends, the
-// sprint row (it names a friend), and loops last (each names a machine).
+// sprint row (it names a friend), loops (each names a machine), and routes
+// last (each names no row).
 //
 // A machine's record is exactly the declared facts something reads, one
 // reader each, and nothing invented (Glenn 2026-09-27: "I only want the
@@ -242,6 +249,46 @@ var Kinds = []*Kind{
 		},
 		Check: checkLoop,
 	},
+	{
+		// A route is one way to run a model tier: the provider and model a
+		// card of that tier runs on, its budget and deadline, and its
+		// weight in the tier's draw. The deal draws one enabled route of a
+		// card's tier per deal, weighted (docs/SPEC-CONFIG.md, "route").
+		Name:  KindRoute,
+		Table: "routes",
+		Doc:   "a route of a model tier: the provider and model a card of that tier runs on, its token budget and deadline, and its weight in the tier's draw; frontier cards are never drawn from routes, they escalate to the coordinator",
+		Fields: []Field{
+			{Name: "tier", Type: TypeEnum, Enum: RouteTiers, Required: true, Help: "the tier it serves: one of " + strings.Join(RouteTiers, ", ") + " (frontier cards are never drawn from routes, they escalate to the coordinator)"},
+			{Name: "provider", Type: TypeText, Required: true, Help: "the provider word of the model id <provider>/<model> the harness is launched with: one word, no slash"},
+			{Name: "model", Type: TypeText, Required: true, Help: "the model name after the provider, which may hold slashes (x-ai/grok-4); no blank"},
+			{Name: "tokens", Type: TypeInt, Help: "the token budget per card; 0 (the default) is unmetered and the deadline is the only stop"},
+			{Name: "deadline", Type: TypeInt, Required: true, Help: "the seconds a card on this route may run, above 0"},
+			{Name: "weight", Type: TypeInt, Default: "1", Help: "its weight in the tier's draw; 1 (the default), and 0 takes it out of the draw as --enabled false does"},
+			{Name: "enabled", Type: TypeBool, Default: "true", Help: "false takes it out of the draw; true (the default) keeps it in"},
+		},
+		Check: checkRoute,
+	},
+}
+
+// checkRoute is the route kind's Check: the provider is one word with no
+// slash or blank, the model has no blank, and the deadline is above 0. A
+// field absent from the row (refused on its own, or a required one not
+// given) is skipped, so its own refusal stands alone.
+func checkRoute(r Row) error {
+	var problems []string
+	if p, ok := r.Fields["provider"]; ok && (p == "" || strings.ContainsFunc(p, func(c rune) bool { return c == '/' || unicode.IsSpace(c) })) {
+		problems = append(problems, fmt.Sprintf("route %s has --provider %q; want the provider word of the model id <provider>/<model>: one word, no slash, no blank", r.Name, p))
+	}
+	if m, ok := r.Fields["model"]; ok && (m == "" || strings.ContainsFunc(m, unicode.IsSpace)) {
+		problems = append(problems, fmt.Sprintf("route %s has --model %q; want the model name after the provider, not empty and with no blank", r.Name, m))
+	}
+	if _, ok := r.Fields["deadline"]; ok && r.Int("deadline") <= 0 {
+		problems = append(problems, fmt.Sprintf("route %s has --deadline 0; want the seconds a card on it may run, above 0", r.Name))
+	}
+	if len(problems) > 0 {
+		return fmt.Errorf("%s", strings.Join(problems, "; "))
+	}
+	return nil
 }
 
 // LoopLog is where a loop's unit writes its output on its machine, derived
@@ -566,7 +613,9 @@ func (k *Kind) NewRow(name string, raw map[string]string) (Row, error) {
 		v, given := raw[f.Name]
 		if !given {
 			if f.Required {
+				// Absent from the row, so a Check rule that reads it waits.
 				problems = append(problems, fmt.Sprintf("--%s is required: %s", f.Name, f.Help))
+				continue
 			}
 			row.Fields[f.Name] = f.zero()
 			continue

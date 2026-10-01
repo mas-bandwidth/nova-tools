@@ -179,7 +179,59 @@ and it is the coordinator's decision, receipted.
   once, ready and working together (its child cap; `init --members m1:64` or
   `fleet up m1 --width 64`; default 64). The fleet table shows it in the width
   column beside working; the footer row sums the widths, the fleet's total
-  width (eight machines of 64 total 512).
+  width (eight machines of 64 total 512). The row is the truth: the member's
+  loop (`nova-swarm member`) reads its width with its queue every tick
+  (`queue --as <m> --json` carries `width`) and runs that many; its `--width`
+  is a twin's override.
+- The card decides its model (the owner, 2026-10-01). A brief's line 1 names
+  its tier, `tier: flash|pro|frontier` (none is flash), and a `model:
+  <provider>/<model>` header line under it pins the card, with its `tokens:
+  <n>|unmetered` and `deadline: <seconds>|<duration>` lines (a pin without
+  either is refused: a member with no override could not launch it);
+  `cardhdr.ReadModel` is the one parser, and `add` refuses a brief whose model
+  lines it cannot read. A card admitted before (an unknown tier, a pin short
+  of a line) is not dealt and is judged under the tier its line 1 names. The routes are nova-config's `route` kind, applied to
+  the store (`routes`, `route:<name>`): each a tier, a provider and model, a
+  budget, a deadline, a weight and enabled. The deal (and a redeal, and a
+  rework's next attempt) resolves the card at deal time: a pin is its route
+  (`pin`); a store with no route deals as before (the member runs its
+  override); a frontier card with no pin is the coordinator's and is not
+  dealt; otherwise one enabled route of the tier is drawn, weighted, leaving
+  out the routes already drawn for the card while another remains. The draw is
+  seeded from the card, its attempt, its generation (a redeal) and the deal's
+  snapshot time, not from the tick's operation id (a plan is a function of its
+  read, made before the operation has an id): FNV-1a of those, run through
+  splitmix64's finaliser, modulo the weights' sum; the same read draws the same
+  route, and a test's clock draws the same routes every run. The work card keeps `route`, `model`, `tokens` and `deadline` (its
+  packet hands them to the member) and the primary `routes`, every route drawn
+  for it. A card no route serves stays ready: the deal refuses it naming the
+  tier, and the tick writes one judgment, `no route serves the tier`, per tier
+  (its subject `stream:tier:<tier>`, the primaries listed), never one per
+  card, closed when the tier is served (tla/DirtyTick.tla, RouteGuard; witness
+  W20). The failed-work judgment names the route and model; `card <id>` prints
+  an `ATTEMPT` line per attempt (route, model, member, dealt, taken, finished,
+  usage, end); `where` prints `routes: flash=<n> pro=<n>` (and `--json`
+  `routes`); `routes` prints each route with its attempts, ok, failed,
+  provider failures and mean wall, each pinned model a row of its own
+  (`pin:<provider>/<model>`). The routes are read once a tick, by its first
+  part that deals or checks, before that part's read of the tables (one round
+  trip with no route, two with routes; `TickResult.RouteTrips`), and shared by
+  the tick's later parts. A member that cannot launch a taken card (no model,
+  budget or deadline from its packet or its override) reports it at once as a
+  `--failed` finish, `launch refused: <why>`, never leaving it working.
+- The twin (`mem:<file>`) holds no routes: routes are config, nova-config's
+  rows applied to a store's Redis, and a twin has no config store to apply
+  from. A twin deals as a store with no route does (the member's override);
+  the route paths are driven on the in-memory store in the tests
+  (`Mem.SetRoutes`) and on a real store.
+- Two things are called routes. The `route` kind is the sprint's: what a card
+  runs on, drawn at the deal. `NOVA_SWARM_ROUTES` is native's own list for a
+  launcher outside the sprint: on a provider's 5xx it names, on its
+  `NATIVE PROVIDER-5XX` line, the route after the one that failed. Under the
+  sprint the member sets no such list (the line names `next=-`); the member
+  reads the line as `provider failure`, and the redeal or rework that follows
+  leaves the failed route out from the kind's own history. The list stays for
+  native run by hand.
 - The machine's tick deals every ready primary the fleet has room for in one
   step, in stream turns (each stream's oldest first by score), one card at a
   time to the next up member round the fleet (the rolling index `deal_index`)
@@ -719,9 +771,10 @@ command that loads it.
 | run | ticks on every line of the log (at most every 100 ms) and once a second while the log is quiet |
 | tick | one tick by hand |
 | take | a worker moves work cards fleet ready -> working; `--as <member>`, `<card>@<gen>` |
-| finish | work cards done ok or failed; primaries to review; `--as <member>`, `<card>@<gen>` |
+| finish | work cards done ok or failed; primaries to review; `--as <member>`, `<card>@<gen>`; `--usage <text>` (what the run spent) is kept on the attempt's record |
 | ask | deals primaries in review to two different readers; `--another` |
-| queue | a reader's read cards or a member's work cards, oldest first (`--as`), or a stream's merge queue (`--stream`) |
+| queue | a reader's read cards or a member's work cards, oldest first (`--as`; a member's `--json` carries its fleet row's `width`), or a stream's merge queue (`--stream`) |
+| routes | each route of the store (nova-config's `route` kind) with what its attempts did: attempts, ok, failed, provider failures, mean wall from take to finish; `TIERS flash=<n> pro=<n>` first, the enabled routes per tier; `--json` |
 | read | a reader records ok or broken with the finding; `--as <reader>`, `--begin` |
 | accept | review -> merging and into merge queued; refused without two readers; named ids all or nothing, a selection moves the eligible |
 | rework | delegates the next attempt at once with a fix; ready when no member is up; a primary at its redeal bound (ready, its work card withdrawn) is reworked too, with `--fix`, its withdrawn card taken off; without `--fix` each primary's fix is the finding of its broken read, else the report of its failed work, and a primary with neither is refused by name |

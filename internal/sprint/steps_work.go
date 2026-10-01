@@ -654,10 +654,23 @@ func dealPlan(s *Snapshot, r DealReq, rr *round) (Plan, roundMoves) {
 				p.refuse(c.ID, fmt.Sprintf("%s was redealt %d times, its bound: rework it with a fix, or drop it", wc.ID, wc.Int("redeals")))
 				continue
 			}
+			if _, why := s.noRoute(c); why != "" {
+				p.refuse(c.ID, why)
+				continue
+			}
 			m := next()
+			u, why := redeal(s, c, wc, m, q)
+			if why != "" {
+				p.refuse(c.ID, why)
+				continue
+			}
 			rr.moved(m)
 			moves[c.ID] = m
-			p.Units = append(p.Units, redeal(s, c, wc, m, q))
+			p.Units = append(p.Units, u)
+			continue
+		}
+		if _, why := s.noRoute(c); why != "" {
+			p.refuse(c.ID, why)
 			continue
 		}
 		m := next()
@@ -683,6 +696,10 @@ func deal(s *Snapshot, c *Card, fix, m string, q map[string]int, set map[string]
 	if s.Fleet.Card(card) != nil {
 		return Unit{}, "work card " + card + " exists already"
 	}
+	route, _, why := s.routeOf(c, nil)
+	if why != "" {
+		return Unit{}, why
+	}
 	q[m]++
 	fields := map[string]string{"kind": "work", "primary": c.ID, "stream": c.Row, "attempt": itoa(attempt), "gen": "1", "member": m,
 		"dealt": stamp(s.Now), "first_dealt": stamp(s.Now), "untaken_since": stamp(s.Now)}
@@ -691,6 +708,15 @@ func deal(s *Snapshot, c *Card, fix, m string, q map[string]int, set map[string]
 	}
 	if set == nil {
 		set = map[string]string{}
+	}
+	work, primary := splitRoute(route)
+	for k, v := range work {
+		if v != "" {
+			fields[k] = v
+		}
+	}
+	for k, v := range primary {
+		set[k] = v
 	}
 	set["attempt"], set["work"] = itoa(attempt), card
 	return Unit{Key: c.ID, Stream: c.Row, Changes: []Change{
@@ -706,16 +732,30 @@ func deal(s *Snapshot, c *Card, fix, m string, q map[string]int, set map[string]
 // the card's own, unchanged. The redeal counts only when a take of the card
 // ended (FieldTakeEnded): a card withdrawn while ready keeps its count
 // (tla/DirtyTick.tla DealOne).
-func redeal(s *Snapshot, c, wc *Card, m string, q map[string]int) Unit {
+func redeal(s *Snapshot, c, wc *Card, m string, q map[string]int) (Unit, string) {
+	route, _, why := s.routeOf(c, wc)
+	if why != "" {
+		return Unit{}, why
+	}
 	q[m]++
 	set := nextGen(wc, m, s.Now)
 	if wc.F(FieldTakeEnded) != "" {
 		set["redeals"] = itoa(wc.Int("redeals") + 1)
 	}
+	unset := []string{"withdrawn", FieldTakeEnded}
+	work, primary := splitRoute(route)
+	for k, v := range work {
+		if v == "" {
+			unset = append(unset, k)
+			continue
+		}
+		set[k] = v
+	}
+	primary["work"] = wc.ID
 	return Unit{Key: c.ID, Stream: c.Row, Changes: []Change{
-		change(Fleet, moveEntry(wc, m, Ready, set, "withdrawn", FieldTakeEnded)),
-		change(Work, moveEntry(c, c.Row, Working, map[string]string{"work": wc.ID}, "result")),
-	}, Moved: fmt.Sprintf("%s %s -> working card=%s member=%s gen=%d (dealt again)", c.ID, c.Col, wc.ID, m, wc.Int("gen")+1)}
+		change(Fleet, moveEntry(wc, m, Ready, set, unset...)),
+		change(Work, moveEntry(c, c.Row, Working, primary, "result")),
+	}, Moved: fmt.Sprintf("%s %s -> working card=%s member=%s gen=%d (dealt again)", c.ID, c.Col, wc.ID, m, wc.Int("gen")+1)}, ""
 }
 
 // TakeReq is a worker taking its work cards. Gens names the generation the
@@ -827,7 +867,10 @@ type FinishReq struct {
 	// Branch and Base are the branch the work is on and the one it started
 	// from, as the worker reports them.
 	Branch, Base string
-	Who          string
+	// Usage is what the run spent, as the member read it from its child (its
+	// budget word and wall): kept on the work card, the attempt's record.
+	Usage string
+	Who   string
 }
 
 // Finish moves work cards working -> done and their primaries working ->
@@ -909,6 +952,9 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		if r.Base != "" {
 			cardSet["base"] = r.Base
 		}
+		if r.Usage != "" {
+			cardSet[FieldUsage] = r.Usage
+		}
 		set := map[string]string{"head": head, "result": result}
 		if r.Failed {
 			set["failed"] = itoa(pr.Int("failed") + 1)
@@ -938,6 +984,10 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		} else {
 			n := judgment(NWorkFailed, pr.Row, s.Now, pr.Int("failed"), pr.ID)
 			n.Who, n.Attempt, n.What = who, attempt, r.Report
+			if c.F(FieldRoute) != "" {
+				// which route failed it: a bad route is seen in the inbox
+				n.What = "route=" + c.F(FieldRoute) + " model=" + c.F(FieldModel) + ": " + r.Report
+			}
 			u.Notes = append(u.Notes, n)
 		}
 		u.Changes = append(u.Changes, change(Work, moveEntry(pr, pr.Row, Review, set)))

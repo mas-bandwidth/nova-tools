@@ -23,6 +23,9 @@ func printPacket(w io.Writer, p sprint.Packet) {
 	if p.Kind == "work" {
 		kv("branch", p.Branch)
 		kv("base", orDashStr(p.Base, "the stream's base"))
+		if p.Route != "" {
+			kv("route", fmt.Sprintf("%s model=%s tokens=%s deadline=%ds", p.Route, p.Model, orDashStr(p.Tokens, "-"), p.Deadline))
+		}
 	} else {
 		kv("work", fmt.Sprintf("attempt %d by %s", p.Attempt, orDashStr(p.Worker, "-")))
 		kv("head", p.Head)

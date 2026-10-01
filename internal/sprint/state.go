@@ -306,6 +306,9 @@ type Snapshot struct {
 	// plan none for them (TickAccept), so its notes and its stream's state
 	// are planned for the cards it moves only. nil is none.
 	Held map[string]bool
+	// Routes are the model tiers' routes nova-config applied to the store,
+	// read by a step that deals (route.go); nil is none.
+	Routes []Route
 	// Running says the machine was RUNNING as the step read the sprint: its
 	// pump accepts a primary with two ok reads, so no step opens a "ready to
 	// accept" judgment for it ("accept is mechanical").

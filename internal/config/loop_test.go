@@ -68,8 +68,8 @@ func TestTheLoopRowIsTheRecordThePlaysRead(t *testing.T) {
 		assert.False(t, has, "loop has a field %s: the log is derived, the user is the machine's, the rest is not a fact anything reads", invented)
 	}
 	assert.Equal(t, "~/nova-bench/loops/l1.log", LoopLog("l1"))
-	names := KindNames()
-	assert.Equal(t, KindLoop, names[len(names)-1], "loops apply last: each names a machine")
+	names := strings.Join(KindNames(), ",")
+	assert.Less(t, strings.Index(names, KindMachine), strings.Index(names, KindLoop), "loops apply after machines: each names one")
 }
 
 func TestLoopNewRowCanonicalisesAndRefusesEveryProblemAtOnce(t *testing.T) {

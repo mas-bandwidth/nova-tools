@@ -7,6 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
@@ -205,5 +208,25 @@ func TestInitRulesIsTheSprintsRuleSet(t *testing.T) {
 	// a rules file with no brief to hold is a mistake, not a silent no-op
 	if code, _, errs := ta.do("add --stream s4 --count 1 --rules " + other); code != 2 || !strings.Contains(errs, "gives no brief") {
 		t.Fatalf("--rules with no brief: exit %d, %q", code, errs)
+	}
+}
+
+// The model lines are part of the brief's lint: a brief that pins its model under line 1
+// (model:, tokens:, deadline:) is admitted, and one whose model lines the deal could not
+// read (an unknown tier, a pin that is not provider/model) is refused, exit 2, nothing
+// written, naming the line.
+func TestAddReadsTheBriefsModelLines(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a --members m1")
+	code, _, errs := ta.do("add --stream s1 c1 --brief-file " + writeBrief(t, "c1: the work (s1) tier: pro\nmodel: anthropic/claude-x\ntokens: 5000\ndeadline: 600"))
+	require.Equal(t, 0, code, "a pinned brief: %s", errs)
+	for lead, want := range map[string]string{
+		"c2: the work (s1) tier: medium":               "line 1 names tier medium",
+		"c3: the work (s1) tier: pro\nmodel: claude-x": "model: claude-x is not <provider>/<model>",
+	} {
+		code, _, errs := ta.do("add --stream s1 --count 1 --brief-file " + writeBrief(t, lead))
+		assert.Equal(t, 2, code, lead)
+		assert.Contains(t, errs, want, lead)
 	}
 }

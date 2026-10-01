@@ -45,7 +45,7 @@ func ResolveStep(r sprint.ResolveReq) Step {
 
 // DealStep cuts and deals work cards.
 func DealStep(r sprint.DealReq) Step {
-	return Step{Args: ArgsOf(r), Verb: "deal", Load: tables(sprint.Work, sprint.Fleet, sprint.Merge), Mirrors: true,
+	return Step{Args: ArgsOf(r), Verb: "deal", Load: tables(sprint.Work, sprint.Fleet, sprint.Merge), Mirrors: true, Routes: true,
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Deal(s, r) }}
 }
 
@@ -93,7 +93,7 @@ func AcceptStep(r sprint.AcceptReq) Step {
 
 // ReworkStep is the coordinator sending work back with a fix.
 func ReworkStep(r sprint.ReworkReq) Step {
-	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "rework", Load: tables(sprint.Work, sprint.Readers, sprint.Fleet, sprint.Merge), Mirrors: true,
+	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "rework", Load: tables(sprint.Work, sprint.Readers, sprint.Fleet, sprint.Merge), Mirrors: true, Routes: true,
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Rework(s, r) }}
 }
 
@@ -156,7 +156,7 @@ func SentinelsDueStep(who string) Step {
 // AckStep is the coordinator closing judgments it looked at.
 func AckStep(r sprint.AckReq) Step {
 	// every table: ack is judged by the no-stall rule on the state after it
-	return Step{Named: len(r.Notes) > 0, Args: ArgsOf(r), Verb: "ack", Load: All, Extras: tickExtras,
+	return Step{Named: len(r.Notes) > 0, Args: ArgsOf(r), Verb: "ack", Load: All, Extras: tickExtras, Routes: true,
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Ack(s, r) }}
 }
 

@@ -344,8 +344,8 @@ func TestApplyStopsAtARefusalAndNamesIt(t *testing.T) {
 func TestApplyRefusesAnUnknownKind(t *testing.T) {
 	t.Parallel()
 
-	_, err := Apply(context.Background(), NewMem(), newFake(), "route", "rowan", false, func(Op) {})
+	_, err := Apply(context.Background(), NewMem(), newFake(), "lane", "rowan", false, func(Op) {})
 	assertionMsg324 := []any{"unknown kind: %v", err}
 	require.Error(t, err, assertionMsg324...)
-	require.ErrorContains(t, err, "unknown kind \"route\"; the kinds are machine, fleet, friend, sprint, loop", assertionMsg324...)
+	require.ErrorContains(t, err, "unknown kind \"lane\"; the kinds are machine, fleet, friend, sprint, loop, route", assertionMsg324...)
 }

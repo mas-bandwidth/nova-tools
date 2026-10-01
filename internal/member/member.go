@@ -26,6 +26,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 )
 
 // Sprint runs one sprint verb and returns its exit code and stdout.
@@ -85,7 +87,20 @@ type Result struct {
 	Report  string
 	Title   string // the pull request the child asked for (gh pr create), "" when none
 	Body    string
+	// End is how a run that did not finish ended, as the child's harness said it:
+	// EndProvider, EndBudget, EndDeadline, or "" (Judge puts it first in a failed
+	// finish's reason). Usage is what it spent, one line (its budget and wall),
+	// reported with the finish onto the attempt's record.
+	End   string
+	Usage string
 }
+
+// The ends Judge names first in a failed finish.
+const (
+	EndProvider = cardhdr.EndProvider // the sprint's route stats count it apart
+	EndBudget   = "budget"
+	EndDeadline = "deadline"
+)
 
 // Finish is how a work launch ended, as the member judges it (tla/CardContract.tla).
 type Finish string
@@ -102,7 +117,12 @@ const (
 // commit the child made; otherwise failed, with the reason. Every work card
 // ends with a commit: a child with nothing to do says `verdict: nothing`, and
 // that is a failed finish, nothing to do, for the coordinator to judge.
-func Judge(r Result, pu Push) (Finish, string) {
+func Judge(r Result, pu Push) (fin Finish, why string) {
+	defer func() {
+		if fin == FinishFailed && r.End != "" {
+			why = r.End + ": " + why
+		}
+	}()
 	switch {
 	case pu.Refused != "":
 		return FinishFailed, "push refused: " + pu.Refused
@@ -144,6 +164,13 @@ type Packet struct {
 	WorkBranch string   `json:"work_branch,omitempty"`
 	WorkBase   string   `json:"work_base,omitempty"`
 	Report     string   `json:"report,omitempty"`
+	// A work card's route, as the deal drew it (docs/SPEC-SPRINT.md, the deal's
+	// route): the model the child runs on, its budget and deadline (seconds);
+	// empty when the store has no route, and the member's own run.
+	Route    string `json:"route,omitempty"`
+	Model    string `json:"model,omitempty"`
+	Tokens   string `json:"tokens,omitempty"`
+	Deadline int    `json:"deadline,omitempty"`
 }
 
 // queueCard is one card of `nova-sprint queue --as <me> --json`.
@@ -159,6 +186,7 @@ type queueCard struct {
 type queueOut struct {
 	As    string      `json:"as"`
 	Epoch uint64      `json:"epoch"`
+	Width int         `json:"width"` // the member's width, from its fleet row (0 for a reader)
 	Cards []queueCard `json:"cards"`
 }
 
@@ -168,9 +196,12 @@ type takeOut struct {
 
 // Config is one member's or reader's standing.
 type Config struct {
-	As     string // the member's (reader's) name in the fleet (readers) table
-	Width  int    // the most cards it runs at once
-	Reader bool   // run the readers-table loop instead of the fleet's
+	As string // the member's (reader's) name in the fleet (readers) table
+	// Width is an override of the most cards it runs at once: a reader's
+	// width, or a twin's. A member with none runs the width its fleet row
+	// names, read with its queue every tick (the fleet row is the truth).
+	Width  int
+	Reader bool // run the readers-table loop instead of the fleet's
 }
 
 // launch is one child and the claim it was started for: the card at the
@@ -197,12 +228,13 @@ type Member struct {
 	out     io.Writer
 	running map[string]launch // by card id (a work card's id, a read card's id)
 	epoch   uint64
+	width   int // the width this tick runs to: the override, else the fleet row's
 }
 
 // New is a member with nothing running. A reader pushes nothing, and its
 // pusher may be nil; a work member's pusher pushes every work card's commit.
 func New(cfg Config, s Sprint, r Runner, pu Pusher, out io.Writer) *Member {
-	return &Member{cfg: cfg, sprint: s, runner: r, pusher: pu, out: out, running: map[string]launch{}}
+	return &Member{cfg: cfg, sprint: s, runner: r, pusher: pu, out: out, running: map[string]launch{}, width: cfg.Width}
 }
 
 // Running is how many children are running (a spent launch holds no place).
@@ -223,8 +255,8 @@ func (m *Member) Running() int {
 // the card is left for the next pass), a store that does not answer is.
 func (m *Member) Tick(now time.Time) (acted int, err error) {
 	load := 0
-	if m.cfg.Width > 0 {
-		load = m.Running() * 100 / m.cfg.Width
+	if m.width > 0 {
+		load = m.Running() * 100 / m.width
 	}
 	if !m.cfg.Reader {
 		if code, out := m.sprint.Run("fleet", "beat", m.cfg.As, "--load", strconv.Itoa(load)); code == 2 {
@@ -240,6 +272,11 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 		return 0, fmt.Errorf("queue: not JSON: %w", err)
 	}
 	m.epoch = q.Epoch
+	if m.cfg.Width == 0 && q.Width != m.width {
+		// the fleet row changed (fleet up --width, fleet sync): said once, run from now
+		fmt.Fprintf(m.out, "width %d -> %d (the fleet row)\n", m.width, q.Width)
+		m.width = q.Width
+	}
 	held := []string{"--epoch", strconv.FormatUint(q.Epoch, 10)}
 	// 1. Report every child that ended, one verb per card (each report is its
 	// own words).
@@ -336,11 +373,14 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 			if fin != FinishOK {
 				args = append(args, "--failed")
 			}
+			if r.Usage != "" {
+				args = append(args, "--usage", r.Usage)
+			}
 			ok = fin == FinishOK
 			args = append(args, launched...)
 		}
 		code, out := m.sprint.Run(args...)
-		fmt.Fprintf(m.out, "%s %s ok=%t exit=%d\n", args[0], id, ok, code)
+		fmt.Fprintf(m.out, "%s %s ok=%t exit=%d%s\n", args[0], id, ok, code, routeWords(l.packet))
 		if code == 2 {
 			return acted, fmt.Errorf("%s %s: the store did not answer: %s", args[0], id, strings.TrimSpace(string(out)))
 		}
@@ -365,7 +405,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 	// subsequent passes.
 	acted += m.recoverWorking(ids, byID, wasOurs, claimMoved)
 	// 3. Take (begin) up to the width, in one verb, and start each.
-	room := m.cfg.Width - m.Running()
+	room := m.width - m.Running()
 	if room <= 0 {
 		return acted, nil
 	}
@@ -442,8 +482,8 @@ func (m *Member) recoverWorking(ids []string, byID map[string]queueCard, wasOurs
 		if c.Packet == nil {
 			continue
 		}
-		if m.Running() >= m.cfg.Width {
-			fmt.Fprintf(m.out, "recover %s deferred: width %d full\n", id, m.cfg.Width)
+		if m.Running() >= m.width {
+			fmt.Fprintf(m.out, "recover %s deferred: width %d full\n", id, m.width)
 			continue
 		}
 		if m.start(*c.Packet) {
@@ -459,18 +499,35 @@ func (m *Member) start(p Packet) bool {
 		fmt.Fprintf(m.out, "start %s: already running\n", p.Card)
 		return false
 	}
-	if m.Running() >= m.cfg.Width {
-		fmt.Fprintf(m.out, "start %s: width %d full\n", p.Card, m.cfg.Width)
+	if m.Running() >= m.width {
+		fmt.Fprintf(m.out, "start %s: width %d full\n", p.Card, m.width)
 		return false
 	}
 	ch, err := m.runner.Start(p)
 	if err != nil {
 		fmt.Fprintf(m.out, "start %s: %v\n", p.Card, err)
+		if p.Kind != "read" {
+			m.failLaunch(p, err)
+		}
 		return false
 	}
 	m.running[p.Card] = launch{child: ch, gen: p.Gen, attempt: p.Attempt, epoch: p.Epoch, branch: p.Branch, packet: p}
-	fmt.Fprintf(m.out, "start %s attempt=%d gen=%d running=%d/%d\n", p.Card, p.Attempt, p.Gen, m.Running(), m.cfg.Width)
+	fmt.Fprintf(m.out, "start %s attempt=%d gen=%d running=%d/%d%s\n", p.Card, p.Attempt, p.Gen, m.Running(), m.width, routeWords(p))
 	return true
+}
+
+// failLaunch reports a taken work card this member cannot launch (no model, a
+// slot it cannot make) as a failed finish with the reason, so the store sees it
+// at once and opens the failed-work judgment; a card left working would be
+// started again every tick, the refusal only in this log, until judged late.
+func (m *Member) failLaunch(p Packet, why error) {
+	args := []string{"finish", "--as", m.cfg.As, p.Card + "@" + strconv.Itoa(p.Gen), "--failed",
+		"--report", cut("launch refused: " + oneLine(why.Error())), "--epoch", strconv.FormatUint(p.Epoch, 10)}
+	code, out := m.sprint.Run(args...)
+	fmt.Fprintf(m.out, "finish %s ok=false exit=%d launch refused%s\n", p.Card, code, routeWords(p))
+	if code != 0 {
+		fmt.Fprintf(m.out, "NOTE finish %s refused: %s\n", p.Card, strings.TrimSpace(string(out)))
+	}
 }
 
 // moved says the claim moved under a launch: the queue's card is at another
@@ -605,4 +662,17 @@ func CardText(p Packet, sprintBin string) string {
 		fmt.Fprintf(&b, "    %s finish --as %s %s@%d --epoch %d --branch %s --head <sha> --report '<one line>' [--failed]\n", sprintBin, p.As, p.Card, p.Gen, p.Epoch, p.Branch)
 	}
 	return b.String()
+}
+
+// routeWords is a work card's route as the member's start and finish lines name
+// it: " route=<r> model=<m>", "" when the packet names none (the member's
+// override, said on its MEMBER line) and for a read.
+func routeWords(p Packet) string {
+	switch {
+	case p.Kind == "read":
+		return ""
+	case p.Route == "":
+		return "" // the member's override, said once on its MEMBER line
+	}
+	return " route=" + p.Route + " model=" + p.Model
 }
