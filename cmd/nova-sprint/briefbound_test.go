@@ -1,16 +1,21 @@
 package main
 
 import (
+	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 )
 
@@ -125,4 +130,131 @@ func TestEveryVerbThatPrintsFailExitsNonZero(t *testing.T) {
 		}
 		require.Equal(t, 1, code, "%s: a refused step exits 1 (out %q err %q)", c.line, out, errs)
 	}
+}
+
+// A file longer than the read cap is refused naming the cap and its true size, never cut:
+// the file is read one byte past the cap, and a file of exactly the cap is read whole.
+func TestAFileOverTheReadCapIsRefusedWithItsTrueSize(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	write := func(name string, n int) string {
+		p := filepath.Join(dir, name)
+		require.NoError(t, os.WriteFile(p, []byte(strings.Repeat("x", n)), 0o600))
+		return p
+	}
+	text, err := readTextFile(write("at.txt", briefReadCap), briefReadCap)
+	require.NoError(t, err)
+	require.Len(t, text, briefReadCap, "a file of exactly the cap is read whole")
+	_, err = readTextFile(write("over.txt", briefReadCap+350), briefReadCap)
+	require.ErrorContains(t, err, fmt.Sprintf("the file is %d bytes, over the %d bytes a file of this kind may be", briefReadCap+350, briefReadCap))
+
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	before := ta.applies()
+	code, _, errs := ta.do("add --stream s1 --count 1 --brief-file " + write("brief.txt", briefReadCap+350))
+	require.Equal(t, 2, code, errs)
+	require.Contains(t, errs, fmt.Sprintf("the file is %d bytes, over the %d bytes", briefReadCap+350, briefReadCap))
+	require.Equal(t, before, ta.applies())
+	code, _, errs = ta.do("goal set friend-a --file " + write("goal.txt", store.MaxCardTextBytes+1))
+	require.Equal(t, 2, code)
+	require.Contains(t, errs, fmt.Sprintf("the file is %d bytes, over the %d bytes", store.MaxCardTextBytes+1, store.MaxCardTextBytes))
+}
+
+// run is one command line with no beat before it, for a test that has set a fault in the
+// store the beat would meet.
+func (ta *testApp) bare(line string) (int, string, string) {
+	var out, errb bytes.Buffer
+	code := ta.a.run(split(line), &out, &errb)
+	return code, out.String(), errb.String()
+}
+
+// requireFailExit holds the one rule: a line `<token> FAIL` on the output is an exit that
+// is not 0, and the line is the verb's own.
+func requireFailExit(t *testing.T, line, token string, code int, out, errs string) {
+	t.Helper()
+	got := failLine.FindAllStringSubmatch(out+errs, -1)
+	require.NotEmpty(t, got, "%s: no FAIL line: out %q err %q", line, out, errs)
+	require.Equal(t, token, got[0][1], line)
+	require.NotZero(t, code, "%s: printed %s FAIL and exited 0 (out %q err %q)", line, token, out, errs)
+}
+
+// The verbs that print their own FAIL line, not the step report's: check (a rule broken),
+// repair (an operation it cannot finish), tick (the store failed under it) and an
+// accept --group the group's size changed under. Each is driven to its FAIL here, and
+// exits non-zero.
+func TestCheckRepairTickAndGroupFailsExitNonZero(t *testing.T) {
+	t.Parallel()
+
+	t.Run("check", func(t *testing.T) {
+		t.Parallel()
+		ta := newTestApp(t)
+		ta.ok("init --readers reader-a,reader-b --members m1")
+		ta.ok("add --stream s1 --count 1")
+		ta.deal(1)
+		// an outside writer moves a fleet card: a move no log line records (rule 13)
+		st, err := ta.a.store(common{redis: "mem:0", actor: "tester"})
+		require.NoError(t, err)
+		snap, err := st.Load(context.Background(), store.All, nil)
+		require.NoError(t, err)
+		wc := snap.Fleet.Card("s1-1.w1")
+		require.NotNil(t, wc)
+		_, err = ta.m.Apply(context.Background(), ntable.BatchManifest{Schema: 1, Table: st.Names.Table(sprint.Fleet), Epoch: "0",
+			ExpectedTableRevision: fmt.Sprint(snap.Fleet.Revision), OperationID: "outside-move",
+			Members: []ntable.BatchMemberEntry{{ID: wc.ID, Expect: &ntable.MemberExpect{Revision: fmt.Sprint(wc.Rev)},
+				Move: &ntable.MemberMoveOp{Row: wc.Row, Col: sprint.Withdrawn}}}})
+		require.NoError(t, err)
+		code, out, errs := ta.do("check")
+		requireFailExit(t, "check", "CHECK", code, out, errs)
+		require.Contains(t, out+errs, "CHECK FAIL violations=")
+	})
+
+	t.Run("repair", func(t *testing.T) {
+		t.Parallel()
+		ta := newTestApp(t)
+		ta.ok("init --readers reader-a,reader-b --members m1")
+		// a step cut after its first manifest applied leaves its operation open, and the
+		// store still failing, repair cannot finish it
+		ta.m.Fail = func(p string) error {
+			if strings.HasPrefix(p, "apply ") && strings.HasSuffix(p, " after") {
+				return errors.New("cut")
+			}
+			return nil
+		}
+		code, out, errs := ta.bare("add --stream s1 --count 1")
+		require.NotZero(t, code, "the cut add: %s%s", out, errs)
+		ta.a.sleep(2 * time.Minute) // past the writer's grace
+		ta.m.Fail = func(p string) error {
+			if strings.HasPrefix(p, "apply ") {
+				return errors.New("still cut")
+			}
+			return nil
+		}
+		code, out, errs = ta.bare("repair")
+		requireFailExit(t, "repair", "REPAIR", code, out, errs)
+	})
+
+	t.Run("tick", func(t *testing.T) {
+		t.Parallel()
+		ta := newTestApp(t)
+		ta.ok("init --readers reader-a,reader-b --members m1")
+		ta.ok("add --stream s1 --count 1")
+		ta.ok("start")
+		ta.m.Fail = func(p string) error { return errors.New("the store went away") }
+		code, out, errs := ta.bare("tick")
+		requireFailExit(t, "tick", "TICK", code, out, errs)
+	})
+
+	t.Run("accept --group", func(t *testing.T) {
+		t.Parallel()
+		ta := newTestApp(t)
+		ta.ok("init --readers reader-a,reader-b --members m1")
+		ta.ok("add --stream s1 --count 3")
+		ta.deal(3)
+		ta.failOnce("m1", "s1-1.w1@1", "tests red")
+		g := ta.group(sprint.NWorkFailed, "s1")
+		ta.failOnce("m1", "s1-2.w1@1", "tests red")
+		line := "accept --group " + g.ID + " --expect 1"
+		code, out, errs := ta.do(line)
+		requireFailExit(t, line, "ACCEPT", code, out, errs)
+	})
 }

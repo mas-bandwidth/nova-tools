@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
@@ -31,16 +32,16 @@ import (
 // through the harness untruncated (#1494). So a card over it draws a `LINT NOTE`, never a
 // `LINT DRIFT`; the note never changes the verdict; and the size rides on every lint,
 // clean or not, with `advisory=true` said in the bytes so nobody has to ask again.
-//
+const cardMaxBytes = store.BriefAdvisoryBytes
+
 // A card that is a sprint brief has one bound above the advice: `nova-sprint add` refuses a
-// brief over cardRefusedBytes (16 KiB, the sprint's store.MaxBriefBytes, which a test in
-// cmd/nova-sprint holds equal), because a brief is a child's whole brief and the advice
-// leaves room for it. The lint says so on the note, so a writer at 12000 knows how much
-// room is left.
-const cardMaxBytes = 12000
+// brief over cardRefusedBytes, because a brief is a child's whole brief and the advice leaves
+// room for it. Both numbers are the sprint store's (BriefAdvisoryBytes, MaxBriefBytes), read
+// from there and never typed here, so the lint and the refusal cannot disagree. The lint says
+// so on the note, so a writer at 12000 knows how much room is left.
 
 // cardRefusedBytes is the size `nova-sprint add` refuses a brief over.
-const cardRefusedBytes = 16384
+const cardRefusedBytes = store.MaxBriefBytes
 
 // cardLintAdvisory is every check whose finding is advice rather than a defect. An advisory
 // finding is printed on a `LINT NOTE` line and is not in the verdict: a card whose only

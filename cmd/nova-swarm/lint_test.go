@@ -7,7 +7,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
@@ -203,8 +202,8 @@ func TestLintAdvisesAnOversizeCardAndDoesNotRefuseIt(t *testing.T) {
 // note names is the one nova-sprint add enforces (store.MaxBriefBytes), above the advice.
 func TestTheSizeNoteAgreesWithTheSprintsBriefBound(t *testing.T) {
 	t.Parallel()
-	assert.Equal(t, store.MaxBriefBytes, cardRefusedBytes, "the note names the bound the sprint enforces")
-	assert.Equal(t, 12000, cardMaxBytes)
+	assert.Equal(t, 16384, cardRefusedBytes, "the note names the bound the sprint enforces, read from the store")
+	assert.Equal(t, 12000, cardMaxBytes, "the advice is the store's")
 	assert.Less(t, cardMaxBytes, cardRefusedBytes, "the advice sits under the bound")
 }
 
