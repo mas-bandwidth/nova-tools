@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -13,25 +12,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/member"
+	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
 )
-
-// twinSprint is member.Sprint over a twin file: each verb one process of
-// nova-sprint, as the member's execSprint runs it, with the member's actor.
-type twinSprint struct {
-	file, actor string
-}
-
-func (s twinSprint) Run(args ...string) (int, []byte) {
-	env := map[string]string{"NOVA_SPRINT_REDIS": "mem:" + s.file, "NOVA_SPRINT_ACTOR": s.actor}
-	a := newApp(func(k string) string { return env[k] })
-	defer a.close()
-	var out, errb bytes.Buffer
-	code := a.run(args, &out, &errb)
-	if code != 0 && out.Len() == 0 {
-		return code, errb.Bytes()
-	}
-	return code, out.Bytes()
-}
 
 // twinChild is a child the test ends by hand; twinRunner hands one per card.
 type twinChild struct {
@@ -71,25 +53,21 @@ func (p *twinPusher) Push(pk member.Packet, _ member.Result) member.Push {
 	return p.push
 }
 
-// twinMemberFlow runs one card through the twin with the member loop doing
-// the take and the finish, the push answered by pu; it returns the twin file,
+// twinMemberFlow runs one card through the sprint's server with the member loop
+// doing the take and the finish, the push answered by pu; it returns the server,
 // the card's work branch and the member's output.
-func twinMemberFlow(t *testing.T, pu *twinPusher) (file, branch, out string) {
+func twinMemberFlow(t *testing.T, pu *twinPusher) (r *serverRig, branch, out string) {
 	t.Helper()
-	file = filepath.Join(t.TempDir(), "sprint.twin")
-	for _, line := range []string{
+	r = newServerRig(t,
 		"nova-sprint init --readers reader-a,reader-b --members m1",
 		"nova-sprint add --stream s1 --count 1",
 		"nova-sprint start",
 		"nova-sprint tick",
 		"nova-sprint tick",
-	} {
-		code, o, e := twinProcess(t, file, line)
-		require.Equal(t, 0, code, "%s\n%s%s", line, o, e)
-	}
+	)
 	rn := &twinRunner{children: map[string]*twinChild{}}
 	var log bytes.Buffer
-	m := member.New(member.Config{As: "m1", Width: 1}, twinSprint{file: file, actor: "m1"}, rn, pu, &log)
+	m := member.New(member.Config{As: "m1", Width: 1}, &sprintwire.Worker{Send: r.send}, rn, pu, &log)
 	_, err := m.Tick(time.Unix(0, 0))
 	require.NoError(t, err, log.String())
 	require.Len(t, rn.packets, 1, "the member took the card: %s", log.String())
@@ -103,10 +81,10 @@ func twinMemberFlow(t *testing.T, pu *twinPusher) (file, branch, out string) {
 	require.NoError(t, err, log.String())
 	require.Len(t, pu.asked, 1, "the ended card was pushed once: %s", log.String())
 	assert.Equal(t, p.Branch, pu.asked[0].Branch)
-	return file, p.Branch, log.String()
+	return r, p.Branch, log.String()
 }
 
-// The member's push on the twin: the finish records the pushed sha as the
+// The member's push through the server: the finish records the pushed sha as the
 // card's head and the work branch as its branch; once read and queued, the
 // merge queue lists the primary and its card (what the landing reads) names
 // that head and branch, so the coordinator finds the commit on origin's
@@ -114,11 +92,10 @@ func twinMemberFlow(t *testing.T, pu *twinPusher) (file, branch, out string) {
 func TestTheMembersPushIsWhatTheLandingReads(t *testing.T) {
 	t.Parallel()
 	const sha = "0123456789abcdef0123456789abcdef01234567"
-	file, branch, out := twinMemberFlow(t, &twinPusher{push: member.Push{Sha: sha}})
+	r, branch, out := twinMemberFlow(t, &twinPusher{push: member.Push{Sha: sha}})
 	assert.Contains(t, out, "push s1-1.w1 pushed="+sha+" branch="+branch)
 
-	code, story, e := twinProcess(t, file, "nova-sprint card s1-1")
-	require.Equal(t, 0, code, e)
+	story := r.boss("nova-sprint card s1-1")
 	assert.Contains(t, story, "head "+sha)
 	assert.Contains(t, story, "branch "+branch)
 	assert.Contains(t, story, "pushed="+sha+" to "+branch+": did the work")
@@ -131,11 +108,9 @@ func TestTheMembersPushIsWhatTheLandingReads(t *testing.T) {
 		"nova-sprint read --as reader-b --ok --epoch 0",
 		"nova-sprint tick",
 	} {
-		code, o, e := twinProcess(t, file, line)
-		require.Equal(t, 0, code, "%s\n%s%s", line, o, e)
+		r.boss(line)
 	}
-	code, q, e := twinProcess(t, file, "nova-sprint queue --stream s1 --json")
-	require.Equal(t, 0, code, e)
+	q := r.boss("nova-sprint queue --stream s1 --json")
 	var got struct {
 		Cards []struct {
 			ID, Col string
@@ -146,39 +121,36 @@ func TestTheMembersPushIsWhatTheLandingReads(t *testing.T) {
 	assert.Equal(t, "s1-1", got.Cards[0].ID, "the merge queue lists the primary")
 	// the landing reads the queued primary's card: its head is the pushed sha
 	// and its branch the one origin holds it on
-	code, story, e = twinProcess(t, file, "nova-sprint card s1-1")
-	require.Equal(t, 0, code, e)
+	story = r.boss("nova-sprint card s1-1")
 	first, _, _ := strings.Cut(story, "\n")
 	assert.Contains(t, first, "merging")
 	assert.Contains(t, first, "head "+sha)
 	assert.Contains(t, first, "branch "+branch)
 }
 
-// A push the member could not make is a failed finish on the twin: the card
+// A push the member could not make is a failed finish through the server: the card
 // is in review as failed, with git's line first in its report, never done.
-func TestARefusedPushIsAFailedCardOnTheTwin(t *testing.T) {
+func TestARefusedPushIsAFailedCard(t *testing.T) {
 	t.Parallel()
 	line := "fatal: could not read Username for the origin: terminal prompts disabled"
-	file, _, out := twinMemberFlow(t, &twinPusher{push: member.Push{Refused: line}})
+	r, _, out := twinMemberFlow(t, &twinPusher{push: member.Push{Refused: line}})
 	assert.Contains(t, out, "NOTE push s1-1.w1 refused: "+line)
 	assert.Contains(t, out, "finish s1-1.w1 ok=false exit=0")
-	code, story, e := twinProcess(t, file, "nova-sprint card s1-1")
-	require.Equal(t, 0, code, e)
+	story := r.boss("nova-sprint card s1-1")
 	assert.Contains(t, story, "push refused: "+line+"; did the work")
 	assert.True(t, strings.Contains(story, "failed"), "the card's story says it failed:\n%s", story)
 }
 
-// A child that committed nothing is a failed card on the twin: the finish
+// A child that committed nothing is a failed card through the server: the finish
 // names no head and no branch, and the card waits on the failed-work
 // judgment, never on review with nothing to read (docs/SPEC-CARD-CONTRACT.md
 // section 4).
-func TestAChildThatCommittedNothingIsAFailedCardOnTheTwin(t *testing.T) {
+func TestAChildThatCommittedNothingIsAFailedCard(t *testing.T) {
 	t.Parallel()
-	file, _, out := twinMemberFlow(t, &twinPusher{push: member.Push{None: "the child committed nothing"}})
+	r, _, out := twinMemberFlow(t, &twinPusher{push: member.Push{None: "the child committed nothing"}})
 	assert.Contains(t, out, "NOTE finish s1-1.w1 failed: no commit: the child committed nothing")
 	assert.Contains(t, out, "finish s1-1.w1 ok=false exit=0")
-	code, story, e := twinProcess(t, file, "nova-sprint card s1-1")
-	require.Equal(t, 0, code, e)
+	story := r.boss("nova-sprint card s1-1")
 	assert.Contains(t, story, "work came back failed")
 	assert.Contains(t, story, "no commit: the child committed nothing; did the work")
 }

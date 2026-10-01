@@ -37,7 +37,7 @@ import (
 // that origin holds at another commit refuses the push, and the finish says so.
 // The rule is docs/SPEC-SWARM.md's `member`.
 type gitPusher struct {
-	root, slots, sprintBin string
+	root, slots string
 	// gh is the GitHub CLI the member opens a card's pull request with, as itself,
 	// outside the wall, when the child's result asks for one (gh pr create inside it).
 	gh string
@@ -59,8 +59,8 @@ type gitPusher struct {
 // forward) is refused at once, as before, and never forced.
 var pushWaits = []time.Duration{time.Second, 2 * time.Second, 4 * time.Second}
 
-func newGitPusher(root, slots, sprintBin string) *gitPusher {
-	return &gitPusher{root: root, slots: slots, sprintBin: sprintBin, gh: "gh", git: gitrun.Run}
+func newGitPusher(root, slots string) *gitPusher {
+	return &gitPusher{root: root, slots: slots, gh: "gh", git: gitrun.Run}
 }
 
 // pushBranchRE is a branch a push names: a ref name with no refspec character

@@ -61,7 +61,7 @@ func TestACardsLaunchRunsBehindCI(t *testing.T) {
 	require.NoError(t, os.MkdirAll(slots, 0o755))
 	write(t, filepath.Join(dir, "identity.tsv"), "owner\tname\temail\ntest-owner\tPool Worker\tpool@example.com\n")
 	r := &nativeRunner{
-		self: tool, sprintBin: "nova-sprint", harness: builtHarness, model: "fake/fake-model", root: dir, slots: slots,
+		self: tool, harness: builtHarness, model: "fake/fake-model", root: dir, slots: slots,
 		resultsRoot: filepath.Join(dir, "results"), deadline: 30 * time.Second, tokens: "unmetered", stderr: &bytes.Buffer{},
 		env: []string{"PATH=" + path},
 	}

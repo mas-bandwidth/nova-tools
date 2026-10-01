@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -11,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/member"
+	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
 )
 
 // heldPusher is a pusher whose push is held in flight until the test lets it go, as a push
@@ -36,26 +36,11 @@ func (p *heldPusher) Push(member.Packet, member.Result) member.Push {
 // the lane. No card is started twice.
 func TestALaneIsHeldUntilItsCardIsReportedAndThePassNeverWaitsOnAPush(t *testing.T) {
 	t.Parallel()
-	file := filepath.Join(t.TempDir(), "sprint.twin")
-	twin := func(line string) string {
-		t.Helper()
-		code, o, e := twinProcess(t, file, line)
-		require.Equal(t, 0, code, "%s\n%s%s", line, o, e)
-		return o
-	}
-	for _, line := range []string{
-		"nova-sprint init --readers reader-a,reader-b --members m1:2",
-		"nova-sprint add --stream s1 --count 6",
-		"nova-sprint start",
-		"nova-sprint tick",
-		"nova-sprint tick",
-	} {
-		twin(line)
-	}
+	r := newServerRig(t, twoLanes()...)
 	rn := &twinRunner{children: map[string]*twinChild{}}
 	pu := &heldPusher{began: make(chan struct{}, 1), release: make(chan struct{}), push: member.Push{Sha: "0123456789abcdef0123456789abcdef01234567"}}
 	var log bytes.Buffer
-	m := member.New(member.Config{As: "m1", Background: true}, twinSprint{file: file, actor: "m1"}, rn, pu, &log)
+	m := member.New(member.Config{As: "m1", Background: true}, &sprintwire.Worker{Send: r.send}, rn, pu, &log)
 	tick := func() {
 		t.Helper()
 		_, err := m.Tick(time.Unix(0, 0))
@@ -74,7 +59,7 @@ func TestALaneIsHeldUntilItsCardIsReportedAndThePassNeverWaitsOnAPush(t *testing
 	assert.Len(t, rn.packets, 2, "the lane is held until the report: no third card is started: %s", log.String())
 	assert.Equal(t, 2, m.Running())
 	// the sprint holds the width itself: a take past it moves nothing, whatever is asked
-	assert.Contains(t, twin("nova-sprint take --as m1 --limit 5 --json"), `"moved":[]`, "m1 has two working of a width of two")
+	assert.Contains(t, r.boss("nova-sprint take --as m1 --limit 5 --json"), `"moved":[]`, "m1 has two working of a width of two")
 	tick()
 	assert.NotContains(t, log.String(), "finish ", "still in flight: still nothing to report")
 

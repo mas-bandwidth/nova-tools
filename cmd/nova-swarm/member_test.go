@@ -2,6 +2,8 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -16,7 +18,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
 	"github.com/mas-bandwidth/nova-tools/internal/member"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
+	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
@@ -184,15 +186,23 @@ func TestNativeChildReadsHowItEnded(t *testing.T) {
 
 // memberFull is every flag of `member` the verb requires, valid.
 func memberFull(root string) []string {
-	return []string{"member", "--as", "m1", "--width", "2", "--harness", "/bin/true", "--model", "p/m",
+	return []string{"member", "--as", "m1", "--server", "sprint.test:6390", "--width", "2", "--harness", "/bin/true", "--model", "p/m",
 		"--root", root, "--tokens", "unmetered", "--deadline", "30s", "--once"}
+}
+
+// noServer is a sprint server that never answers, handed to cmdMember as its send: a
+// member run in a test sends no verb anywhere (no socket), and each verb of its tick
+// fails as it does when the server is down.
+func noServer(context.Context, ...[]string) ([]sprintwire.Result, error) {
+	return nil, errors.New("no sprint server in this test")
 }
 
 // TestMemberWithNoFlagsRefusesAndNamesEachMissingOne pins refusing to guess:
 // exit 2, nothing on stdout, and one line for each required flag (all of them
 // in one run, not one a run). The width, the model, the budget and the deadline
 // are not among them: the fleet row names the width and the card's route the
-// rest; the flags are an override.
+// rest; the flags are an override. --server is among them, naming the server's own
+// verb: a member has no sprint but the server.
 func TestMemberWithNoFlagsRefusesAndNamesEachMissingOne(t *testing.T) {
 	t.Parallel()
 	var out, errb bytes.Buffer
@@ -203,10 +213,11 @@ func TestMemberWithNoFlagsRefusesAndNamesEachMissingOne(t *testing.T) {
 		t.Fatalf("stdout %q, want empty", out.String())
 	}
 	lines := strings.Split(strings.TrimSpace(errb.String()), "\n")
-	if len(lines) != 3 {
-		t.Fatalf("%d lines, want 3 (one per missing flag):\n%s", len(lines), errb.String())
+	if len(lines) != 4 {
+		t.Fatalf("%d lines, want 4 (one per missing flag):\n%s", len(lines), errb.String())
 	}
-	for _, flag := range []string{"--as", "--harness", "--root"} {
+	assert.Contains(t, errb.String(), "nova-swarm member: --server is required; it wants the sprint server's host:port, the run loop started with nova-sprint run --listen")
+	for _, flag := range []string{"--as", "--server", "--harness", "--root"} {
 		n := 0
 		for _, l := range lines {
 			if strings.HasPrefix(l, "nova-swarm member: "+flag+" is required") && strings.Contains(l, "refusing to guess") {
@@ -276,26 +287,30 @@ func TestMemberRefusesANameWithASlashBeforeItMakesAnything(t *testing.T) {
 	}
 }
 
-// TestExecSprintReturnsTheVerbsExitAndBody pins the seam to nova-sprint: the
-// actor rides in the environment, stdout is the success body, a failed verb
-// keeps both its stderr and any stdout receipt, diagnostics are redacted and
-// bounded, and a binary that will not start is exit 2.
-func TestExecSprintReturnsTheVerbsExitAndBody(t *testing.T) {
+// A verb the server ran and that did not exit 0 reaches the member's log as one bounded
+// line: stderr first, then any stdout receipt, secret-shaped values redacted, each half
+// keeping room for the other (sprintFailureOutput, the member's sprintwire.Worker Failed);
+// a verb that succeeded hands its stdout back whole.
+func TestAFailedVerbsWordsAreOneRedactedBoundedLine(t *testing.T) {
 	t.Parallel()
-	windowsIsNotABench(t)
-	bin := filepath.Join(t.TempDir(), "sprint")
 	secret := "sk-" + strings.Repeat("Ab1", 8)
-	script := "#!/bin/sh\ncase \"$1\" in\nok) echo \"actor=$NOVA_SPRINT_ACTOR args=$*\";;\nrefuse) echo \"refused: $2\" >&2; exit 1;;\nmixed) echo body; echo noise >&2; exit 1;;\nsecret) echo receipt; echo \"token=" + secret + "\" >&2; exit 2;;\nlarge) printf '%0600d\\n' 0; echo 'actual failure' >&2; exit 2;;\ncontrol) printf 'receipt\\nsecond\\tline\\n'; printf 'store\\nfailed\\tbad\\n' >&2; exit 2;;\nesac\n"
-	if err := testbin.WriteExecutable(bin, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
+	answers := map[string]sprintwire.Result{
+		"ok":      {Stdout: "body\n"},
+		"refuse":  {Code: 1, Stderr: "refused: why\n"},
+		"mixed":   {Code: 1, Stdout: "body\n", Stderr: "noise\n"},
+		"secret":  {Code: 2, Stdout: "receipt\n", Stderr: "token=" + secret + "\n"},
+		"large":   {Code: 2, Stdout: strings.Repeat("0", 600) + "\n", Stderr: "actual failure\n"},
+		"control": {Code: 2, Stdout: "receipt\nsecond\tline\n", Stderr: "store\nfailed\tbad\n"},
 	}
-	s := &execSprint{bin: bin, actor: "m1"}
-	if code, out := s.Run("ok", "--json"); code != 0 || strings.TrimSpace(string(out)) != "actor=m1 args=ok --json" {
-		t.Fatalf("ok: (%d, %q)", code, out)
-	}
-	if code, out := s.Run("refuse", "why"); code != 1 || strings.TrimSpace(string(out)) != "refused: why" {
-		t.Fatalf("refuse: (%d, %q)", code, out)
-	}
+	w := &sprintwire.Worker{Failed: sprintFailureOutput, Send: func(_ context.Context, verbs ...[]string) ([]sprintwire.Result, error) {
+		return []sprintwire.Result{answers[verbs[0][0]]}, nil
+	}}
+	code, out := w.Run("ok")
+	require.Equal(t, 0, code)
+	require.Equal(t, "body\n", string(out))
+	code, out = w.Run("refuse")
+	require.Equal(t, 1, code)
+	require.Equal(t, "refused: why", string(out))
 	for _, c := range []struct {
 		name, want string
 		code       int
@@ -309,7 +324,8 @@ func TestExecSprintReturnsTheVerbsExitAndBody(t *testing.T) {
 		{name: "control", code: 2, want: `stderr: store\x0afailed\x09bad; stdout: receipt\x0asecond\x09line`, excludes: []string{"\n", "\t"}, bounded: true},
 	} {
 		t.Run(c.name, func(t *testing.T) {
-			code, out := s.Run(c.name)
+			t.Parallel()
+			code, out := w.Run(c.name)
 			assert.Equal(t, c.code, code, c.name)
 			if c.want != "" {
 				assert.Equal(t, c.want, string(out), c.name)
@@ -328,10 +344,6 @@ func TestExecSprintReturnsTheVerbsExitAndBody(t *testing.T) {
 	controlHeavy := sprintFailureOutput([]byte(strings.Repeat("a\n", oneline.TailBytes)), []byte("actual failure"))
 	assert.LessOrEqual(t, len(controlHeavy), oneline.TailBytes, "escaping many controls stays inside the final bound")
 	assert.Contains(t, string(controlHeavy), "stderr: actual failure", "bounding stdout keeps the failure")
-	gone := &execSprint{bin: filepath.Join(t.TempDir(), "absent"), actor: "m1"}
-	if code, _ := gone.Run("queue"); code != 2 {
-		t.Fatalf("a binary that will not start: exit %d, want 2 (the store did not answer)", code)
-	}
 }
 
 // TestMemberRefusesAModelAndATokenBudgetThatEveryCardWouldRefuse pins that
@@ -426,7 +438,7 @@ func markerRunner(t *testing.T) (r *nativeRunner, slots, marker string) {
 		t.Fatal(err)
 	}
 	r = &nativeRunner{
-		self: self, sprintBin: "nova-sprint", harness: "/bin/true", model: "p/m", root: dir, slots: slots,
+		self: self, harness: "/bin/true", model: "p/m", root: dir, slots: slots,
 		resultsRoot: filepath.Join(dir, "results"), deadline: 30 * time.Second, tokens: "unmetered", stderr: &bytes.Buffer{},
 	}
 	return r, slots, marker
@@ -501,12 +513,12 @@ func TestADeadPidFileIsIgnored(t *testing.T) {
 
 // TestEveryIsBoundedUnderTheBeatDeadline pins --every at 5s, under the beat's
 // 15s deadline in the fleet: 6s is refused with exit 2 naming 5s and nothing
-// is made; 5s is accepted. The sprint binary is a path that does not exist,
-// so a run that gets past the refusal asks no store anything.
+// is made; 5s is accepted. Its sprint server never answers (noServer), so a run
+// that gets past the refusal sends nothing anywhere.
 func TestEveryIsBoundedUnderTheBeatDeadline(t *testing.T) {
 	t.Parallel()
 	with := func(root, every string) []string {
-		return append(memberFull(root), "--every", every, "--sprint", filepath.Join(root, "absent-sprint"))
+		return append(memberFull(root), "--every", every)
 	}
 	root := t.TempDir()
 	var out, errb bytes.Buffer
@@ -522,7 +534,7 @@ func TestEveryIsBoundedUnderTheBeatDeadline(t *testing.T) {
 	}
 	out.Reset()
 	errb.Reset()
-	if code := run(with(t.TempDir(), "5s"), strings.NewReader(""), &out, &errb, time.Now()); code != 0 {
+	if code := cmdMember(with(t.TempDir(), "5s")[1:], &out, &errb, noServer); code != 0 {
 		t.Fatalf("--every 5s: exit %d, stderr %q, want it accepted", code, errb.String())
 	}
 }
@@ -591,9 +603,9 @@ func TestMemberRefusesBothOnceAndNonPositiveTicksNamesBothPins(t *testing.T) {
 func TestMemberAcceptsPositiveTicks(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	args := append(memberWithoutOnce(root), "--ticks", "2", "--every", "1ms", "--sprint", filepath.Join(root, "absent-sprint"))
+	args := append(memberWithoutOnce(root), "--ticks", "2", "--every", "1ms")
 	var out, errb bytes.Buffer
-	require.Equal(t, 0, run(args, strings.NewReader(""), &out, &errb, time.Now()), "stderr %q", errb.String())
+	require.Equal(t, 0, cmdMember(args[1:], &out, &errb, noServer), "stderr %q", errb.String())
 	require.Contains(t, out.String(), "MEMBER OK as=m1 ticks=2 running=0")
 }
 
@@ -619,15 +631,4 @@ func TestAMemberWithNoPassSaysSo(t *testing.T) {
 	assert.Empty(t, passNote("anthropic/claude-x", []string{"ANTHROPIC_API_KEY"}, ""))
 	assert.Empty(t, passNote("anthropic/claude-x", nil, "/auth.json"))
 	assert.Empty(t, passNote("ollama/qwen3", nil, ""))
-}
-
-// The member's sprint verbs (beat, queue) run as nova-sprint, whose store
-// client bounds each command by redisconn's read and write timeouts: at least
-// five seconds, the least a tailnet round trip with jitter needs
-// (docs/SPEC-SPRINT.md section 5, the rule that one timed-out round trip is
-// one missed beat and never a down member). Shortening either fails this.
-func TestAMemberVerbsStoreDeadlineIsAtLeastFiveSeconds(t *testing.T) {
-	t.Parallel()
-	assert.GreaterOrEqual(t, redisconn.ReadTimeout, 5*time.Second)
-	assert.GreaterOrEqual(t, redisconn.WriteTimeout, 5*time.Second)
 }

@@ -2,13 +2,11 @@ package main
 
 import (
 	"bufio"
-	"bytes"
 	"context"
 	"flag"
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
@@ -39,15 +37,16 @@ import (
 // from the sprint, pushes the commit of every work card whose child ended and
 // reports it, takes up to its width and starts each card taken as one child
 // through `nova-swarm native`. The fleet table is the dispatcher; the loop is
-// internal/member.
-func cmdMember(args []string, stdout, stderr io.Writer) int {
+// internal/member. Every sprint verb goes to the sprint's server (--server, `nova-sprint
+// run --listen`), the one writer; this machine opens no store. send delivers them: nil is
+// the server's client (sprintwire.Client.Do), a test's is the server's own step.
+func cmdMember(args []string, stdout, stderr io.Writer, send func(context.Context, ...[]string) ([]sprintwire.Result, error)) int {
 	fs := flag.NewFlagSet("member", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	f := &flags{verb: "member", fs: fs}
 	as := fs.String("as", "", "")
 	width := fs.Int("width", 0, "")
 	reader := fs.Bool("reader", false, "")
-	sprintBin := fs.String("sprint", "nova-sprint", "")
 	harness := fs.String("harness", "", "")
 	model := fs.String("model", "", "")
 	root := fs.String("root", "", "")
@@ -78,6 +77,7 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	} else if *width < 0 {
 		f.add("--width is an override of the fleet row's width and is at least 1; leave it out to run the row's")
 	}
+	f.want(*server, "server", "the sprint server's host:port, the run loop started with nova-sprint run --listen on the coordinator's machine: the member sends every sprint verb there and opens no store")
 	f.want(*harness, "harness", "the harness binary path a card runs under (nova-swarm native --harness)")
 	// the card decides its model: the deal (a read: the ask) writes the route it drew
 	// into the packet (provider/model, tokens, deadline); --model, --tokens and
@@ -98,8 +98,6 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	if every.d <= 0 || every.d > 5*time.Second {
 		f.add("--every is between 1ms and 5s: the beat it carries has a 15s deadline in the fleet")
 	}
-	// The store is nova-sprint's to know: the member passes its environment
-	// through (NOVA_SPRINT_REDIS, or a seat) and names no address itself.
 	if *as != "" && !safepath.NameOK(*as) {
 		f.add(fmt.Sprintf("--as %q is not a name (letters, digits, - _ .)", *as))
 	}
@@ -167,14 +165,13 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, " member", "own executable: "+err.Error())
 	}
-	// the sprint's verbs: the nova-sprint binary against the store, or, with --server, the
-	// sprint's server, which runs them beside the store (internal/sprintwire)
-	var sp member.Sprint = &execSprint{bin: *sprintBin, actor: *as}
-	if *server != "" {
-		sp = &sprintwire.Worker{Send: sprintwire.Client{Addr: *server}.Do, Failed: sprintFailureOutput, Budget: sprintVerbBudget}
+	// the sprint's verbs go to its server, which runs them beside the store (internal/sprintwire)
+	if send == nil {
+		send = sprintwire.Client{Addr: *server}.Do
 	}
+	sp := &sprintwire.Worker{Send: send, Failed: sprintFailureOutput}
 	rn := &nativeRunner{
-		self: self, sprintBin: *sprintBin, harness: *harness, model: *model, root: *root, slots: *slots,
+		self: self, harness: *harness, model: *model, root: *root, slots: *slots,
 		resultsRoot: *resultsRoot, deadline: deadline.d, tokens: *tokensWord, auth: *auth, config: *config,
 		worker: *workerFile, noWall: *noWall, stderr: stderr, pass: pass, identity: *identity,
 	}
@@ -182,7 +179,7 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	// finish (memberpush.go); a read pushes nothing
 	var pu member.Pusher
 	if !*reader {
-		gp := newGitPusher(*root, *slots, *sprintBin)
+		gp := newGitPusher(*root, *slots)
 		gp.gh = *ghBin
 		pu = gp
 	}
@@ -214,7 +211,7 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	if *model != "" {
 		modelWord = "card,override:" + *model
 	}
-	fmt.Fprintf(stdout, "MEMBER %s as=%s width=%s every=%s sprint=%s harness=%s model=%s\n", oneline.Field(kind), oneline.Field(*as), oneline.Field(widthWord), oneline.Field(every.d.String()), oneline.Field(*sprintBin), oneline.Field(*harness), oneline.Field(modelWord))
+	fmt.Fprintf(stdout, "MEMBER %s as=%s width=%s every=%s server=%s harness=%s model=%s\n", oneline.Field(kind), oneline.Field(*as), oneline.Field(widthWord), oneline.Field(every.d.String()), oneline.Field(*server), oneline.Field(*harness), oneline.Field(modelWord))
 	// the machine's one model catalog, refreshed once here and never per launch (catalog.go)
 	fmt.Fprintf(stdout, "CATALOG %s\n", oneline.Escape(refreshCatalog(*harness, *root)))
 	if note := passNote(*model, pass, *auth); note != "" {
@@ -308,39 +305,7 @@ func memberLoop(m *member.Member, every time.Duration, limit int, stamp func() s
 	}
 }
 
-// execSprint runs the sprint's verbs as the nova-sprint binary, with this
-// process's environment (the store address is nova-sprint's own flag or
-// environment, never the member's).
-type execSprint struct {
-	bin, actor string
-	env        []string // added to this process's environment: none in production, a test's store address
-}
-
-// sprintVerbBudget is how long one sprint verb may run before the member stops waiting
-// for it: a verb is one store round trip or one planned batch, and a stuck one is a
-// tick that never ends.
-const sprintVerbBudget = 120 * time.Second
-
-func (s *execSprint) Run(args ...string) (int, []byte) {
-	cmd, cancel := subproc.CommandFor(context.Background(), sprintVerbBudget, s.bin, args...)
-	defer cancel()
-	cmd.Env = append(append(os.Environ(), s.env...), "NOVA_SPRINT_ACTOR="+s.actor)
-	var out, errb bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &out, &errb
-	err := cmd.Run()
-	code := 0
-	if ee, ok := err.(*exec.ExitError); ok {
-		code = ee.ExitCode()
-	} else if err != nil {
-		return 2, sprintFailureOutput(nil, []byte(err.Error()))
-	}
-	if code != 0 {
-		return code, sprintFailureOutput(out.Bytes(), errb.Bytes())
-	}
-	return code, out.Bytes()
-}
-
-// sprintFailureOutput is one bounded diagnostic from a failed nova-sprint verb.
+// sprintFailureOutput is one bounded diagnostic from a failed sprint verb (sprintwire.Worker's Failed).
 // stderr leads because it holds the refusal or store error; stdout follows because a
 // verb can print a repair or move receipt before a later store operation fails. Each
 // half keeps room for the other, and secret-shaped values never reach the member log.
@@ -362,13 +327,13 @@ func sprintFailureOutput(stdout, stderr []byte) []byte {
 // nativeRunner runs one packet as one `nova-swarm native` child in its own
 // slot directory, its results under <results-root>/<card>/.
 type nativeRunner struct {
-	self, sprintBin, harness, model, root, slots, resultsRoot string
-	deadline                                                  time.Duration
-	tokens, auth, config, worker, identity                    string
-	noWall                                                    bool
-	stderr                                                    io.Writer
-	env                                                       []string // added to this process's environment: none in production, a test's
-	pass                                                      []string // the secret names handed to native (--pass, the worker's secret)
+	self, harness, model, root, slots, resultsRoot string
+	deadline                                       time.Duration
+	tokens, auth, config, worker, identity         string
+	noWall                                         bool
+	stderr                                         io.Writer
+	env                                            []string // added to this process's environment: none in production, a test's
+	pass                                           []string // the secret names handed to native (--pass, the worker's secret)
 
 	// launches started and not yet ended; failed ones ended and kept (slotclean.go). mu
 	// guards both: the member's pass tags a launch ended while the cleaner prunes. tagged
@@ -420,7 +385,7 @@ func (r *nativeRunner) Start(p member.Packet) (member.Child, error) {
 		return nil, err
 	}
 	cardPath := filepath.Join(r.slots, name+".card.md")
-	if err := os.WriteFile(cardPath, []byte(member.CardText(p, r.sprintBin)), 0o644); err != nil {
+	if err := os.WriteFile(cardPath, []byte(member.CardText(p)), 0o644); err != nil {
 		return nil, err
 	}
 	model, tokens, deadline, err := r.route(p)

@@ -725,7 +725,7 @@ usage:
   nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|card|read|fix|text|replay|drift|tone|models.tsv
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
   nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--frame <file>] [--identity <owner>,<name>,<email>]
-  nova-swarm member    --as <name> --harness <path> --root <dir> [--width <n>] [--model <provider/model>] [--deadline <duration>] [--tokens <n>|unmetered] [--sprint <nova-sprint>] [--server <host:port>] [--reader] [--every <duration>] [--once | --ticks <n>] [--auth <file>] [--config <file>] [--worker <file>] [--no-wall] [--gh <path>] [--pass <NAME,...>] [--disk-floor <GiB>] [--identity <owner>,<name>,<email>]
+  nova-swarm member    --as <name> --server <host:port> --harness <path> --root <dir> [--width <n>] [--model <provider/model>] [--deadline <duration>] [--tokens <n>|unmetered] [--reader] [--every <duration>] [--once | --ticks <n>] [--auth <file>] [--config <file>] [--worker <file>] [--no-wall] [--gh <path>] [--pass <NAME,...>] [--disk-floor <GiB>] [--identity <owner>,<name>,<email>]
                        (the width is the member's fleet row's, read every tick; each card runs on the route its packet names, the entry at its tier's
                         route index in the tier's array (nova-config tier) or its model: pin; --width, --model, --tokens, --deadline are a twin's override)
   nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
