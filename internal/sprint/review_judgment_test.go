@@ -232,13 +232,16 @@ func reworkCards(ids ...string) func(w *world) {
 }
 
 // atRedealBound takes every member down, so that the card in working is
-// withdrawn and back in ready, and sets the redeals its work card has had.
+// withdrawn and back in ready, and sets the redeals its work card has had,
+// with the mark of a take that ended.
 func atRedealBound(id string, redeals int) func(w *world) {
 	return func(w *world) {
 		w.t.Helper()
 		w.must(FleetStep(w.s, FleetReq{Op: "down", Member: "m1"}))
 		w.must(FleetStep(w.s, FleetReq{Op: "down", Member: "m2"}))
-		w.s.Fleet.Card(WorkCardID(id, w.s.Work.Card(id).Int("attempt"))).Fields["redeals"] = itoa(redeals)
+		wc := w.s.Fleet.Card(WorkCardID(id, w.s.Work.Card(id).Int("attempt")))
+		wc.Fields["redeals"] = itoa(redeals)
+		wc.Fields[FieldTakeEnded] = stamp(w.s.Now)
 	}
 }
 
