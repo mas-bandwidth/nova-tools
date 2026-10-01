@@ -4,7 +4,6 @@ package ntable_test
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"sync"
 	"testing"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -119,18 +119,14 @@ func TestCreateRowAddCellAddReadRender(t *testing.T) {
 	require.NoError(t, ntable.Create(ctx, c, demo(), now), "second identical create")
 	other := demo()
 	other.Columns = other.Columns[:2]
-	if err := ntable.Create(ctx, c, other, now); !errors.Is(err, ntable.ErrExists) {
-		t.Fatalf("create with another definition: %v, want ErrExists", err)
-	}
-	if names, err := ntable.List(ctx, c); err != nil || strings.Join(names, ",") != "demo" {
-		t.Fatalf("List = %v %v", names, err)
-	}
-	if _, err := ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{Binds: map[string]string{"who": "people:build"}}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ntable.RowAdd(ctx, c, "demo", "test", ntable.RowSpec{Label: "test suite", Binds: map[string]string{"who": "people:test"}}); err != nil {
-		t.Fatal(err)
-	}
+	require.ErrorIs(t, ntable.Create(ctx, c, other, now), ntable.ErrExists, "create with another definition")
+	names, err := ntable.List(ctx, c)
+	require.NoError(t, err)
+	require.Equal(t, "demo", strings.Join(names, ","), "List = %v", names)
+	_, err = ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{Binds: map[string]string{"who": "people:build"}})
+	require.NoError(t, err)
+	_, err = ntable.RowAdd(ctx, c, "demo", "test", ntable.RowSpec{Label: "test suite", Binds: map[string]string{"who": "people:test"}})
+	require.NoError(t, err)
 	for _, add := range []struct {
 		row, col, member string
 		score            float64
@@ -147,9 +143,9 @@ func TestCreateRowAddCellAddReadRender(t *testing.T) {
 		}
 		require.NoError(t, err, "cell add %+v: %v", add, err)
 	}
-	if n, err := ntable.CellRemove(ctx, c, "demo", "build", "ready", "b2"); err != nil || n != 1 {
-		t.Fatalf("cell remove: n=%d err=%v", n, err)
-	}
+	n, err := ntable.CellRemove(ctx, c, "demo", "build", "ready", "b2")
+	require.NoError(t, err, "cell remove")
+	require.Equal(t, int64(1), n, "cell remove")
 	tb, err := ntable.Read(ctx, c, "demo")
 	require.NoError(t, err)
 	want := "row        | ready | working | done | who\n" +
@@ -161,14 +157,12 @@ func TestCreateRowAddCellAddReadRender(t *testing.T) {
 	got := ntable.Render(tb, ntable.RenderOpts{})
 	require.Equal(t, want, got, "rendered:\n%s\nwant:\n%s", got, want)
 	ms, err := ntable.CellMembers(ctx, c, "demo", "test", "who")
-	if err != nil || len(ms) != 2 || ms[0].Member != "bo" || ms[1].Member != "ann" || ms[1].Score != 2 {
-		t.Fatalf("CellMembers = %+v %v", ms, err)
-	}
+	require.NoError(t, err)
+	require.Equal(t, []ntable.Member{{Member: "bo", Score: 1}, {Member: "ann", Score: 2}}, ms, "CellMembers")
 	// a cell of a row or column the table lacks refuses (a text column's: TestReview4456RefusalsAreAtomic, the CLI sitting)
 	for _, bad := range [][3]string{{"nope", "ready", "x"}, {"build", "nope", "x"}} {
-		if _, err := ntable.CellAdd(ctx, c, "demo", bad[0], bad[1], bad[2], 1); err == nil {
-			t.Errorf("cell add %v accepted", bad)
-		}
+		_, err := ntable.CellAdd(ctx, c, "demo", bad[0], bad[1], bad[2], 1)
+		assert.Error(t, err, "cell add %v accepted", bad)
 	}
 	_, err = ntable.Read(ctx, c, "nope")
 	require.ErrorIs(t, err, ntable.ErrNoTable, "read of no table: %v, want ErrNoTable", err)
@@ -183,38 +177,38 @@ func TestRowOrderIsStableAcrossReAdds(t *testing.T) {
 	c, _ := store(t)
 	ctx := context.Background()
 	newTable(t, c, demo()).rows("c", "a", "b").cell("a", "ready", "m", 1)
-	if _, err := ntable.RowAdd(ctx, c, "demo", "a", ntable.RowSpec{Label: "A"}); err != nil {
-		t.Fatal(err)
-	}
+	_, err := ntable.RowAdd(ctx, c, "demo", "a", ntable.RowSpec{Label: "A"})
+	require.NoError(t, err)
 	tb, err := ntable.Read(ctx, c, "demo")
 	require.NoError(t, err)
 	keys := []string{}
 	for _, r := range tb.Rows {
 		keys = append(keys, r.Key)
 	}
-	if strings.Join(keys, ",") != "c,a,b" || tb.Rows[1].Label != "A" || tb.Rows[1].Cells[0].Count != 1 {
-		t.Fatalf("rows after re-add: %v label=%q ready=%d", keys, tb.Rows[1].Label, tb.Rows[1].Cells[0].Count)
-	}
-	if ok, err := ntable.RowDel(ctx, c, "demo", "a"); err != nil || !ok {
-		t.Fatalf("RowDel: %v %v", ok, err)
-	}
-	if ok, err := ntable.RowDel(ctx, c, "demo", "a"); err != nil || ok {
-		t.Fatalf("second RowDel: %v %v, want false", ok, err)
-	}
-	if n, err := c.Exists(ctx, ntable.CellKey("demo", "a", "ready"), ntable.RowKey("demo", "a")).Result(); err != nil || n != 0 {
-		t.Fatalf("a deleted row left keys: %d %v", n, err)
-	}
+	require.Equal(t, []string{"c", "a", "b"}, keys, "rows after re-add")
+	require.Equal(t, "A", tb.Rows[1].Label, "rows after re-add")
+	require.Equal(t, int64(1), tb.Rows[1].Cells[0].Count, "rows after re-add: ready")
+	ok, err := ntable.RowDel(ctx, c, "demo", "a")
+	require.NoError(t, err)
+	require.True(t, ok, "RowDel")
+	ok, err = ntable.RowDel(ctx, c, "demo", "a")
+	require.NoError(t, err)
+	require.False(t, ok, "second RowDel")
+	left, err := c.Exists(ctx, ntable.CellKey("demo", "a", "ready"), ntable.RowKey("demo", "a")).Result()
+	require.NoError(t, err)
+	require.Zero(t, left, "a deleted row left keys")
 	tb, err = ntable.Read(ctx, c, "demo")
-	if err != nil || len(tb.Rows) != 2 || tb.Rows[0].Key != "c" || tb.Rows[1].Key != "b" {
-		t.Fatalf("rows after delete: %+v %v", tb.Rows, err)
-	}
-	if n, err := ntable.Drop(ctx, c, "demo"); err != nil || n != 2 {
-		t.Fatalf("Drop: %d %v", n, err)
-	}
+	require.NoError(t, err)
+	require.Len(t, tb.Rows, 2, "rows after delete: %+v", tb.Rows)
+	require.Equal(t, "c", tb.Rows[0].Key, "rows after delete")
+	require.Equal(t, "b", tb.Rows[1].Key, "rows after delete")
+	dropped, err := ntable.Drop(ctx, c, "demo")
+	require.NoError(t, err)
+	require.Equal(t, 2, dropped, "Drop")
 	for _, pattern := range []string{"table:demo:row:*", "table:demo:cell:*"} {
-		if keys, err := c.Keys(ctx, pattern).Result(); err != nil || len(keys) != 0 {
-			t.Fatalf("Drop left owned keys %v: %v", keys, err)
-		}
+		keys, err := c.Keys(ctx, pattern).Result()
+		require.NoError(t, err)
+		require.Empty(t, keys, "Drop left owned keys")
 	}
 	_, err = ntable.Read(ctx, c, "demo")
 	require.ErrorIs(t, err, ntable.ErrNoTable, "dropped presence")
@@ -232,25 +226,21 @@ func TestReaderTakesOnePipelineInTheSteadyState(t *testing.T) {
 	newTable(t, c, demo()).rows("a", "b")
 	r := ntable.NewReader("demo")
 	log.reset()
-	if _, err := r.Read(ctx, c); err != nil {
-		t.Fatal(err)
-	}
+	_, err := r.Read(ctx, c)
+	require.NoError(t, err)
 	// The cold read includes its shape and values in the same snapshot.
-	if trips, _ := log.reset(); trips != 1 {
-		t.Fatalf("cold read took %d round trips, want 1", trips)
-	}
-	if _, err := r.Read(ctx, c); err != nil {
-		t.Fatal(err)
-	}
+	trips, _ := log.reset()
+	require.Equal(t, 1, trips, "cold read took %d round trips, want 1", trips)
+	_, err = r.Read(ctx, c)
+	require.NoError(t, err)
 	trips, names := log.reset()
 	require.Equal(t, 1, trips, "steady read took %d round trips, want 1: %v", trips, names)
 	for _, n := range names {
 		require.NotEqual(t, "KEYS", n, "the read sent %s", n)
 		require.NotEqual(t, "SCAN", n, "the read sent %s", n)
 	}
-	if _, err := ntable.RowAdd(ctx, c, "demo", "c", ntable.RowSpec{Binds: map[string]string{"ready": "elsewhere:ready"}, Owner: "other-tool put"}); err != nil {
-		t.Fatal(err)
-	}
+	_, err = ntable.RowAdd(ctx, c, "demo", "c", ntable.RowSpec{Binds: map[string]string{"ready": "elsewhere:ready"}, Owner: "other-tool put"})
+	require.NoError(t, err)
 	require.NoError(t, c.ZAdd(ctx, "elsewhere:ready", redis.Z{Score: 1, Member: "e1"}).Err())
 	log.reset()
 	tb, err := r.Read(ctx, c)
@@ -258,31 +248,33 @@ func TestReaderTakesOnePipelineInTheSteadyState(t *testing.T) {
 	// The changed shape and its bound values still arrive in one read.
 	trips, _ = log.reset()
 	require.Equal(t, 1, trips, "read after a bound row add took %d round trips, want 1", trips)
-	if len(tb.Rows) != 3 || !tb.Rows[2].Cells[0].Bound || tb.Rows[2].Cells[0].Count != 1 || tb.Rows[2].Owner != "other-tool put" {
-		t.Fatalf("bound row read: %+v", tb.Rows[2])
-	}
+	require.Len(t, tb.Rows, 3, "bound row read")
+	require.True(t, tb.Rows[2].Cells[0].Bound, "bound row read: %+v", tb.Rows[2])
+	require.Equal(t, int64(1), tb.Rows[2].Cells[0].Count, "bound row read: %+v", tb.Rows[2])
+	require.Equal(t, "other-tool put", tb.Rows[2].Owner, "bound row read: %+v", tb.Rows[2])
 	// a write to the bound cell is refused, naming the owner
 	_, err = ntable.CellAdd(ctx, c, "demo", "c", "ready", "x", 1)
 	var bound *ntable.BoundError
-	if !errors.As(err, &bound) || bound.Key != "elsewhere:ready" || bound.Owner != "other-tool put" {
-		t.Fatalf("cell add on a bound cell: %v", err)
-	}
+	require.ErrorAs(t, err, &bound, "cell add on a bound cell")
+	require.Equal(t, "elsewhere:ready", bound.Key, "cell add on a bound cell: %v", err)
+	require.Equal(t, "other-tool put", bound.Owner, "cell add on a bound cell: %v", err)
 	require.ErrorContains(t, err, "demo.c.ready is bound to elsewhere:ready, owned elsewhere; run: other-tool put", "bound refusal reads")
 	_, err = ntable.CellRemove(ctx, c, "demo", "c", "ready", "e1")
 	require.ErrorAs(t, err, &bound, "cell remove on a bound cell")
-	if n, err := c.ZCard(ctx, "elsewhere:ready").Result(); err != nil || n != 1 {
-		t.Fatalf("the bound set was written: %d %v", n, err)
-	}
+	n, err := c.ZCard(ctx, "elsewhere:ready").Result()
+	require.NoError(t, err)
+	require.Equal(t, int64(1), n, "the bound set was written")
 	// the bound set is read freely
-	if ms, err := ntable.CellMembers(ctx, c, "demo", "c", "ready"); err != nil || len(ms) != 1 || ms[0].Member != "e1" {
-		t.Fatalf("CellMembers of a bound cell = %+v %v", ms, err)
-	}
+	ms, err := ntable.CellMembers(ctx, c, "demo", "c", "ready")
+	require.NoError(t, err)
+	require.Len(t, ms, 1, "CellMembers of a bound cell = %+v", ms)
+	require.Equal(t, "e1", ms[0].Member, "CellMembers of a bound cell")
 	// a drop leaves the bound set where it is
 	_, err = ntable.Drop(ctx, c, "demo")
 	require.NoError(t, err)
-	if n, err := c.ZCard(ctx, "elsewhere:ready").Result(); err != nil || n != 1 {
-		t.Fatalf("drop touched the bound set: %d %v", n, err)
-	}
+	n, err = c.ZCard(ctx, "elsewhere:ready").Result()
+	require.NoError(t, err)
+	require.Equal(t, int64(1), n, "drop touched the bound set")
 }
 
 // TestBindMakesTheStoreTheCallersTable: Bind creates the definition, writes
@@ -325,12 +317,13 @@ func TestBindMakesTheStoreTheCallersTable(t *testing.T) {
 		"total |       1 |      2\n"
 	rendered := ntable.Render(got, ntable.RenderOpts{})
 	require.Equal(t, want, rendered, "bound render:\n%s\nwant:\n%s", rendered, want)
-	if n, err := c.Exists(ctx, ntable.RowKey("streams", "gone")).Result(); err != nil || n != 0 {
-		t.Fatalf("the row Bind no longer names is still there: %d %v", n, err)
-	}
-	if ms, err := ntable.CellMembers(ctx, c, "streams", "a", "waiting"); err != nil || len(ms) != 1 || ms[0].Member != "a1" {
-		t.Fatalf("members with the exclude left out = %+v %v", ms, err)
-	}
+	n, err := c.Exists(ctx, ntable.RowKey("streams", "gone")).Result()
+	require.NoError(t, err)
+	require.Zero(t, n, "the row Bind no longer names is still there")
+	ms, err := ntable.CellMembers(ctx, c, "streams", "a", "waiting")
+	require.NoError(t, err)
+	require.Len(t, ms, 1, "members with the exclude left out = %+v", ms)
+	require.Equal(t, "a1", ms[0].Member, "members with the exclude left out")
 	require.True(t, ntable.SameShape(got, bind("b", "a")), "SameShape does not tell the bound order")
 	require.False(t, ntable.SameShape(got, bind("a", "b")), "SameShape does not tell the bound order")
 }
@@ -362,9 +355,9 @@ func TestQueueCellsFillsAnInMemoryTable(t *testing.T) {
 	require.Equal(t, int64(2), tb.Rows[0].Cells[0].Count, "count cell = %+v", tb.Rows[0].Cells[0])
 	require.False(t, tb.Rows[0].Cells[0].Unread, "count cell = %+v", tb.Rows[0].Cells[0])
 	require.True(t, tb.Rows[0].Cells[1].Unread, "a set of the wrong type read as %+v, want Unread", tb.Rows[0].Cells[1])
-	if got := ntable.Render(tb, ntable.RenderOpts{}); !strings.Contains(got, "x   | 2 | ?\n") || !strings.Contains(got, "    | 2 | ?\n") {
-		t.Fatalf("unread cell render:\n%s", got)
-	}
+	got := ntable.Render(tb, ntable.RenderOpts{})
+	require.Contains(t, got, "x   | 2 | ?\n", "unread cell render")
+	require.Contains(t, got, "    | 2 | ?\n", "unread cell render")
 }
 
 func TestBatchApplyMoveDestinationWrongTypePreservesSource(t *testing.T) {

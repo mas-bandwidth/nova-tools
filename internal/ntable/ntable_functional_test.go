@@ -4,7 +4,6 @@ package ntable_test
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -52,45 +51,40 @@ func TestMoveAndClearAreOneCallEach(t *testing.T) {
 	_, c := live(t)
 	ctx := context.Background()
 	require.NoError(t, ntable.Create(ctx, c, demo(), time.Now()))
-	if _, err := ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ntable.CellAdd(ctx, c, "demo", "build", "ready", "b1", 7); err != nil {
-		t.Fatal(err)
-	}
-	if n, err := ntable.CellMove(ctx, c, "demo", "build", "ready", "working", "b1"); err != nil || n != 1 {
-		t.Fatalf("cell move: n=%d err=%v", n, err)
-	}
-	if score, err := c.ZScore(ctx, ntable.CellKey("demo", "build", "working"), "b1").Result(); err != nil || score != 7 {
-		t.Fatalf("the moved member's score = %v %v, want 7 kept", score, err)
-	}
-	if n, err := c.ZCard(ctx, ntable.CellKey("demo", "build", "ready")).Result(); err != nil || n != 0 {
-		t.Fatalf("the member is still in ready: %d %v", n, err)
-	}
-	if _, err := ntable.CellMove(ctx, c, "demo", "build", "ready", "working", "b1"); !errors.Is(err, ntable.ErrNotMember) {
-		t.Fatalf("second move: %v, want ErrNotMember", err)
-	}
-	if n, err := c.ZCard(ctx, ntable.CellKey("demo", "build", "working")).Result(); err != nil || n != 1 {
-		t.Fatalf("a refused move wrote: %d %v", n, err)
-	}
-	if _, err := ntable.RowAdd(ctx, c, "demo", "test", ntable.RowSpec{}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ntable.CellAdd(ctx, c, "demo", "test", "done", "t1", 1); err != nil {
-		t.Fatal(err)
-	}
-	if n, err := ntable.Clear(ctx, c, "demo"); err != nil || n != 2 {
-		t.Fatalf("clear: rows=%d err=%v", n, err)
-	}
+	_, err := ntable.RowAdd(ctx, c, "demo", "build", ntable.RowSpec{})
+	require.NoError(t, err)
+	_, err = ntable.CellAdd(ctx, c, "demo", "build", "ready", "b1", 7)
+	require.NoError(t, err)
+	n, err := ntable.CellMove(ctx, c, "demo", "build", "ready", "working", "b1")
+	require.NoError(t, err, "cell move")
+	require.Equal(t, int64(1), n, "cell move")
+	score, err := c.ZScore(ctx, ntable.CellKey("demo", "build", "working"), "b1").Result()
+	require.NoError(t, err, "the moved member's score")
+	require.Equal(t, float64(7), score, "the moved member's score is kept")
+	n, err = c.ZCard(ctx, ntable.CellKey("demo", "build", "ready")).Result()
+	require.NoError(t, err)
+	require.Equal(t, int64(0), n, "the member is still in ready")
+	_, err = ntable.CellMove(ctx, c, "demo", "build", "ready", "working", "b1")
+	require.ErrorIs(t, err, ntable.ErrNotMember, "second move")
+	n, err = c.ZCard(ctx, ntable.CellKey("demo", "build", "working")).Result()
+	require.NoError(t, err)
+	require.Equal(t, int64(1), n, "a refused move wrote")
+	_, err = ntable.RowAdd(ctx, c, "demo", "test", ntable.RowSpec{})
+	require.NoError(t, err)
+	_, err = ntable.CellAdd(ctx, c, "demo", "test", "done", "t1", 1)
+	require.NoError(t, err)
+	n, err = ntable.Clear(ctx, c, "demo")
+	require.NoError(t, err, "clear")
+	require.Equal(t, int64(2), n, "clear: rows")
 	for _, pattern := range []string{"table:demo:row:*", "table:demo:cell:*"} {
-		if keys, err := c.Keys(ctx, pattern).Result(); err != nil || len(keys) != 0 {
-			t.Fatalf("clear left owned keys %v: %v", keys, err)
-		}
+		keys, err := c.Keys(ctx, pattern).Result()
+		require.NoError(t, err, "clear left owned keys")
+		require.Empty(t, keys, "clear left owned keys")
 	}
 	tb, err := ntable.Read(ctx, c, "demo")
-	if err != nil || len(tb.Rows) != 0 || len(tb.Columns) != 4 {
-		t.Fatalf("read after clear: %+v %v", tb, err)
-	}
+	require.NoError(t, err, "read after clear")
+	require.Empty(t, tb.Rows, "read after clear: %+v", tb)
+	require.Len(t, tb.Columns, 4, "read after clear: %+v", tb)
 	_, err = ntable.Clear(ctx, c, "nope")
 	require.ErrorIs(t, err, ntable.ErrNoTable, "clear of no table: %v, want ErrNoTable", err)
 	// a bound cell refuses the whole clear, naming the owner, and nothing
@@ -103,16 +97,18 @@ func TestMoveAndClearAreOneCallEach(t *testing.T) {
 	require.NoError(t, err)
 	_, err = ntable.Clear(ctx, c, "demo")
 	var bound *ntable.BoundError
-	if !errors.As(err, &bound) || bound.Row != "view" || bound.Col != "ready" || bound.Key != "ws:s:ready" || bound.Owner != "nova-sprint task move" {
-		t.Fatalf("clear over a bound cell: %v", err)
-	}
+	require.ErrorAs(t, err, &bound, "clear over a bound cell")
+	require.Equal(t, "view", bound.Row)
+	require.Equal(t, "ready", bound.Col)
+	require.Equal(t, "ws:s:ready", bound.Key)
+	require.Equal(t, "nova-sprint task move", bound.Owner)
 	require.True(t, strings.HasSuffix(err.Error(), "demo.view.ready is bound to ws:s:ready, owned elsewhere; run: nova-sprint task move"), "bound refusal reads %q", err)
-	if n, err := c.ZCard(ctx, ntable.CellKey("demo", "owned", "ready")).Result(); err != nil || n != 1 {
-		t.Fatalf("a refused clear cleared the owned cell: %d %v", n, err)
-	}
-	if n, err := c.ZCard(ctx, ntable.RowsKey("demo")).Result(); err != nil || n != 2 {
-		t.Fatalf("a refused clear removed rows: %d %v", n, err)
-	}
+	n, err = c.ZCard(ctx, ntable.CellKey("demo", "owned", "ready")).Result()
+	require.NoError(t, err)
+	require.Equal(t, int64(1), n, "a refused clear cleared the owned cell")
+	n, err = c.ZCard(ctx, ntable.RowsKey("demo")).Result()
+	require.NoError(t, err)
+	require.Equal(t, int64(2), n, "a refused clear removed rows")
 	_, err = ntable.CellMove(ctx, c, "demo", "view", "ready", "working", "x")
 	require.ErrorAs(t, err, &bound, "cell move out of a bound cell: %v, want BoundError", err)
 }
@@ -158,21 +154,17 @@ func TestTableGrantsAreExactlyWhatTheWriterNeeds(t *testing.T) {
 	}
 	w := as("ns-writer")
 	require.NoError(t, ntable.Create(ctx, w, demo(), time.Now()), "create as the writer")
-	if _, err := ntable.RowAdd(ctx, w, "demo", "build", ntable.RowSpec{Label: "the build"}); err != nil {
-		t.Fatalf("row add as the writer: %v", err)
-	}
-	if _, err := ntable.CellAdd(ctx, w, "demo", "build", "ready", "b1", 1); err != nil {
-		t.Fatalf("cell add as the writer: %v", err)
-	}
-	if _, err := ntable.CellMove(ctx, w, "demo", "build", "ready", "working", "b1"); err != nil {
-		t.Fatalf("cell move as the writer: %v", err)
-	}
-	if _, err := ntable.CellMembers(ctx, w, "demo", "build", "working"); err != nil {
-		t.Fatalf("cell members as the writer: %v", err)
-	}
-	if names, err := ntable.List(ctx, w); err != nil || len(names) != 1 {
-		t.Fatalf("list as the writer: %v %v", names, err)
-	}
+	_, err := ntable.RowAdd(ctx, w, "demo", "build", ntable.RowSpec{Label: "the build"})
+	require.NoError(t, err, "row add as the writer")
+	_, err = ntable.CellAdd(ctx, w, "demo", "build", "ready", "b1", 1)
+	require.NoError(t, err, "cell add as the writer")
+	_, err = ntable.CellMove(ctx, w, "demo", "build", "ready", "working", "b1")
+	require.NoError(t, err, "cell move as the writer")
+	_, err = ntable.CellMembers(ctx, w, "demo", "build", "working")
+	require.NoError(t, err, "cell members as the writer")
+	names, err := ntable.List(ctx, w)
+	require.NoError(t, err, "list as the writer")
+	require.Len(t, names, 1, "list as the writer: %v", names)
 	tb, err := ntable.Read(ctx, w, "demo")
 	require.NoError(t, err, "read as the writer")
 	got := ntable.Render(tb, ntable.RenderOpts{})

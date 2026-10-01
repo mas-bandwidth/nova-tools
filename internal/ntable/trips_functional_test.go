@@ -85,8 +85,8 @@ func TestEveryTableOperationCountsOneTrip(t *testing.T) {
 	})
 	one("reader changed", func() error {
 		tb, err := reader.Read(ctx, c)
-		if err == nil && !tb.Rows[1].Cells[0].Bound {
-			t.Fatal("new binding missing")
+		if err == nil {
+			require.True(t, tb.Rows[1].Cells[0].Bound, "new binding missing")
 		}
 		return err
 	})
@@ -119,11 +119,8 @@ func TestRefusedMoveIsAtomicAndNamesItsRepair(t *testing.T) {
 	_, c := live(t)
 	ctx := context.Background()
 	tb := demo()
-	newTable(t, c, tb)
 	row, member := "a row's name", "job ' ; echo wrong"
-	if _, err := ntable.RowAdd(ctx, c, "demo", row, ntable.RowSpec{}); err != nil {
-		t.Fatal(err)
-	}
+	newTable(t, c, tb).rows(row)
 	_, err := ntable.CellMove(ctx, c, "demo", row, "ready", "working", member)
 	require.ErrorIs(t, err, ntable.ErrNotMember, "missing member")
 	for _, word := range []string{"demo", row, "ready", member, "run: nova-table cell members", "'a row'\\''s name'"} {
@@ -135,9 +132,9 @@ func TestRefusedMoveIsAtomicAndNamesItsRepair(t *testing.T) {
 	require.NoError(t, c.Set(ctx, dst, "wrong type", 0).Err())
 	_, err = ntable.CellMove(ctx, c, "demo", row, "ready", "working", member)
 	require.ErrorContains(t, err, "WRONGTYPE", "destination corruption")
-	if score, err := c.ZScore(ctx, ntable.CellKey("demo", row, "ready"), member).Result(); err != nil || score != 7 {
-		t.Fatalf("refused move lost its source: %v %v", score, err)
-	}
+	score, err := c.ZScore(ctx, ntable.CellKey("demo", row, "ready"), member).Result()
+	require.NoError(t, err, "refused move lost its source")
+	require.Equal(t, float64(7), score, "refused move lost its source: %v", score)
 }
 
 func TestCreateDeniedRegistryWriteDoesNotLeaveDefinition(t *testing.T) {
@@ -148,9 +145,9 @@ func TestCreateDeniedRegistryWriteDoesNotLeaveDefinition(t *testing.T) {
 	c := redis.NewClient(&redis.Options{Addr: addr, Username: "no-registry", Password: "pw"})
 	t.Cleanup(func() { _ = c.Close() })
 	require.ErrorContains(t, ntable.Create(ctx, c, demo(), now), "NOPERM", "create without registry write")
-	if n, err := admin.Exists(ctx, ntable.DefKey("demo")).Result(); err != nil || n != 0 {
-		t.Fatalf("refused create left definition: %d %v", n, err)
-	}
+	n, err := admin.Exists(ctx, ntable.DefKey("demo")).Result()
+	require.NoError(t, err, "refused create left definition")
+	require.Equal(t, int64(0), n, "refused create left definition")
 }
 
 func TestNewRowFollowsLastRankAfterDeletion(t *testing.T) {
@@ -158,17 +155,15 @@ func TestNewRowFollowsLastRankAfterDeletion(t *testing.T) {
 	_, c := live(t)
 	ctx := context.Background()
 	newTable(t, c, demo()).rows("a", "b", "z")
-	if _, err := ntable.RowDel(ctx, c, "demo", "b"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ntable.RowAdd(ctx, c, "demo", "c", ntable.RowSpec{}); err != nil {
-		t.Fatal(err)
-	}
+	_, err := ntable.RowDel(ctx, c, "demo", "b")
+	require.NoError(t, err)
+	_, err = ntable.RowAdd(ctx, c, "demo", "c", ntable.RowSpec{})
+	require.NoError(t, err)
 	tb, err := ntable.Read(ctx, c, "demo")
 	require.NoError(t, err)
-	if len(tb.Rows) != 3 || tb.Rows[1].Key != "z" || tb.Rows[2].Key != "c" {
-		t.Fatalf("new row reordered an existing one: %+v", tb.Rows)
-	}
+	require.Len(t, tb.Rows, 3, "new row reordered an existing one: %+v", tb.Rows)
+	require.Equal(t, "z", tb.Rows[1].Key, "new row reordered an existing one: %+v", tb.Rows)
+	require.Equal(t, "c", tb.Rows[2].Key, "new row reordered an existing one: %+v", tb.Rows)
 }
 
 // The deployed reader role must keep its existing table-read capability
@@ -198,18 +193,21 @@ func TestSourceACLTableReaderKeepsReadOnlyAccess(t *testing.T) {
 	_, err := ntable.ApplyBatch(ctx, writer, batch)
 	require.NoError(t, err, "batch as ns-coordinator")
 	batch.OperationID = "acl-2"
-	if _, err := ntable.ApplyBatch(ctx, reader, batch); err == nil || !strings.Contains(err.Error(), "NOPERM") && !strings.Contains(err.Error(), "no permissions") {
-		t.Fatalf("batch as the reader: %v", err)
-	}
-	if tb, err := ntable.Read(ctx, reader, "demo"); err != nil || len(tb.Rows) != 1 || tb.Rows[0].Cells[0].Unread || tb.Rows[0].Cells[0].Count != 1 {
-		t.Fatalf("reader snapshot: %+v %v", tb, err)
-	}
-	if names, err := ntable.List(ctx, reader); err != nil || len(names) != 1 {
-		t.Fatalf("reader list: %v %v", names, err)
-	}
-	if ms, err := ntable.CellMembers(ctx, reader, "demo", "r", "ready"); err != nil || len(ms) != 1 || ms[0].Member != "job" {
-		t.Fatalf("reader members: %v %v", ms, err)
-	}
+	_, err = ntable.ApplyBatch(ctx, reader, batch)
+	require.Error(t, err, "batch as the reader")
+	require.Regexp(t, "NOPERM|no permissions", err.Error(), "batch as the reader: %v", err)
+	tb, err := ntable.Read(ctx, reader, "demo")
+	require.NoError(t, err, "reader snapshot: %+v", tb)
+	require.Len(t, tb.Rows, 1, "reader snapshot: %+v", tb)
+	require.False(t, tb.Rows[0].Cells[0].Unread, "reader snapshot: %+v", tb)
+	require.Equal(t, int64(1), tb.Rows[0].Cells[0].Count, "reader snapshot: %+v", tb)
+	names, err := ntable.List(ctx, reader)
+	require.NoError(t, err, "reader list: %v", names)
+	require.Len(t, names, 1, "reader list: %v", names)
+	ms, err := ntable.CellMembers(ctx, reader, "demo", "r", "ready")
+	require.NoError(t, err, "reader members: %v", ms)
+	require.Len(t, ms, 1, "reader members: %v", ms)
+	require.Equal(t, "job", ms[0].Member, "reader members: %v", ms)
 	_, err = ntable.CellAdd(ctx, reader, "demo", "r", "ready", "forbidden", 1)
 	require.ErrorContains(t, err, "NOPERM", "reader wrote")
 }

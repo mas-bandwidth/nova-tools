@@ -763,8 +763,7 @@ func TestTableEpochActionsAndReceiptReplay(t *testing.T) {
 			assert.NotEqual(t, 0, coverage[verb+":"+outcome], "generator missed %s:%s", verb, outcome)
 		}
 	}
-	if coverage["cell_add:member-epoch"] == 0 || coverage["advance"] != 16 {
-		t.Errorf("generator missed epoch boundaries: %v", coverage)
-	}
+	assert.NotZero(t, coverage["cell_add:member-epoch"], "generator missed epoch boundaries: %v", coverage)
+	assert.Equal(t, 16, coverage["advance"], "generator missed epoch boundaries: %v", coverage)
 	t.Logf("model-action coverage: %v", coverage)
 }

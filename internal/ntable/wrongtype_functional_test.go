@@ -8,9 +8,7 @@ package ntable_test
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
@@ -37,19 +35,13 @@ func plant(t *testing.T, ctx context.Context, c *redis.Client, key, kind string)
 
 func requireWrongType(t *testing.T, what string, err error, key, kind string) {
 	t.Helper()
-	if err == nil {
-		t.Errorf("%s: accepted", what)
-		return
-	}
-	if !errors.Is(err, ntable.ErrWrongType) {
-		t.Errorf("%s: not a WRONGTYPE refusal: %v", what, err)
+	if !assert.Error(t, err, "%s: accepted", what) || !assert.ErrorIs(t, err, ntable.ErrWrongType, "%s: not a WRONGTYPE refusal: %v", what, err) {
 		return
 	}
 	want := fmt.Sprintf("key %s is %s, expected hash", key, kind)
 	assert.ErrorContains(t, err, want, "%s: refusal does not say %q: %v", what, want, err)
-	if strings.Contains(err.Error(), "ERR ") || strings.Contains(err.Error(), "user_function") {
-		t.Errorf("%s: a raw script error: %v", what, err)
-	}
+	assert.NotContains(t, err.Error(), "ERR ", "%s: a raw script error: %v", what, err)
+	assert.NotContains(t, err.Error(), "user_function", "%s: a raw script error: %v", what, err)
 }
 
 func TestWrongTypeAtAMemberKeyIsANamedRefusal(t *testing.T) {
@@ -75,14 +67,12 @@ func TestWrongTypeAtAMemberKeyIsANamedRefusal(t *testing.T) {
 
 			raw := manifestWith(probeRev(ctx, c), "wt", `{"id":"junk","expect":{}}`)
 			ans, rerr := rawApply(ctx, c, raw)
-			if rerr != nil || len(ans) < 5 || ans[0] != "REFUSED" || ans[1] != "WRONGTYPE" || ans[2] != key || ans[3] != kind || ans[4] != "hash" {
-				t.Errorf("apply: %v %v; want REFUSED WRONGTYPE %s %s hash", trunc(ans), rerr, key, kind)
-			}
+			assert.True(t, replyOpens(ans, rerr, "REFUSED", "WRONGTYPE", key, kind, "hash"), "apply: %v %v; want REFUSED WRONGTYPE %s %s hash", trunc(ans), rerr, key, kind)
 			_, err = ntable.ApplyBatch(ctx, c, ntable.BatchManifest{Schema: 1, Table: "demo", Epoch: "0", ExpectedTableRevision: probeRev(ctx, c), OperationID: "wt2",
 				Members: []ntable.BatchMemberEntry{{ID: "junk", Expect: &ntable.MemberExpect{}}}})
 			requireWrongType(t, "apply (library)", err, key, kind)
-			if err != nil && !strings.Contains(err.Error(), "changed=no") {
-				t.Errorf("apply refusal does not say changed=no: %v", err)
+			if err != nil {
+				assert.Contains(t, err.Error(), "changed=no", "apply refusal does not say changed=no: %v", err)
 			}
 
 			assert.Equal(t, before, storeImage(t, c), "a refusal changed the store")
@@ -128,9 +118,9 @@ func TestWrongTypeAtACellKeyIsANamedRefusal(t *testing.T) {
 	_, berr := ntable.ApplyBatch(ctx, c, ntable.BatchManifest{Schema: 1, Table: "demo", Epoch: "0", ExpectedTableRevision: probeRev(ctx, c), OperationID: "cell",
 		Members: []ntable.BatchMemberEntry{{ID: "q", Expect: &ntable.MemberExpect{Absent: true}, Create: &ntable.MemberCreateOp{Row: "build", Col: "working", Score: 1}}}})
 	for what, e := range map[string]error{"check": cerr, "cell add": aerr, "read set": serr, "apply": berr} {
-		if e == nil || !errors.Is(e, ntable.ErrWrongType) || !strings.Contains(e.Error(), want) || strings.Contains(e.Error(), "user_function") {
-			t.Errorf("%s: %v; want a WRONGTYPE refusal saying %q", what, e, want)
-		}
+		require.ErrorIs(t, e, ntable.ErrWrongType, "%s: %v; want a WRONGTYPE refusal saying %q", what, e, want)
+		assert.Contains(t, e.Error(), want, "%s: %v; want a WRONGTYPE refusal saying %q", what, e, want)
+		assert.NotContains(t, e.Error(), "user_function", "%s: %v; want a WRONGTYPE refusal saying %q", what, e, want)
 	}
 	assert.Equal(t, before, storeImage(t, c), "a refusal changed the store")
 }

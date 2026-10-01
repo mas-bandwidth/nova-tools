@@ -30,9 +30,9 @@ func holdMembers(t *testing.T, ctx context.Context, c *redis.Client, prefix stri
 			creates = append(creates, fmt.Sprintf(`{"id":"%s%d","expect":{"absent":true},"create":{"row":"build","col":"ready","score":1}}`, prefix, i))
 		}
 		op := fmt.Sprintf("seed-%s-%d", prefix, from)
-		if ans, err := rawApply(ctx, c, manifestWith(probeRev(ctx, c), op, strings.Join(creates, ","))); err != nil || ans[0] != "OK" {
-			t.Fatalf("seed: %.200v %v", ans, err)
-		}
+		ans, err := rawApply(ctx, c, manifestWith(probeRev(ctx, c), op, strings.Join(creates, ",")))
+		require.NoError(t, err, "seed: %.200v", ans)
+		require.Equal(t, "OK", ans[0], "seed: %.200v", ans)
 	}
 }
 
@@ -86,13 +86,16 @@ func holdWords(ans []any) string {
 
 func requireRefusedLimit(t *testing.T, name string, ans []any, limit string, bound int) {
 	t.Helper()
-	if len(ans) < 5 || ans[0] != "REFUSED" || ans[1] != "LIMIT" || ans[2] != limit || fmt.Sprint(ans[3]) != fmt.Sprint(bound) {
-		t.Fatalf("%s: %.200v; want LIMIT %s, bound %d", name, ans, limit, bound)
-	}
+	want := fmt.Sprintf("%s: %.200v; want LIMIT %s, bound %d", name, ans, limit, bound)
+	require.GreaterOrEqual(t, len(ans), 5, want)
+	require.Equal(t, "REFUSED", ans[0], want)
+	require.Equal(t, "LIMIT", ans[1], want)
+	require.Equal(t, limit, ans[2], want)
+	require.Equal(t, fmt.Sprint(bound), fmt.Sprint(ans[3]), want)
 	var size int
-	if _, err := fmt.Sscan(fmt.Sprint(ans[4]), &size); err != nil || size <= bound {
-		t.Errorf("%s: the refusal names the size %v, want more than %d", name, ans[4], bound)
-	}
+	_, err := fmt.Sscan(fmt.Sprint(ans[4]), &size)
+	require.NoError(t, err, "%s: the refusal names the size %v, want more than %d", name, ans[4], bound)
+	assert.Greater(t, size, bound, "%s: the refusal names the size %v, want more than %d", name, ans[4], bound)
 }
 
 // The values a batch touches are bounded: 16 MiB of before-values is taken, one

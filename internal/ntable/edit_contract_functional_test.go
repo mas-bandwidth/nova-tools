@@ -5,8 +5,6 @@ package ntable_test
 import (
 	"context"
 	"encoding/json"
-	"errors"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -33,12 +31,10 @@ func TestTableEditsPreserveEpochHistoryAndRenameLedger(t *testing.T) {
 	t.Parallel()
 	c, tb := editFixture(t)
 	ctx := context.Background()
-	if _, err := ntable.CellAdd(ctx, c, tb.Name, "r", "a", "old", 7); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ntable.RowSet(ctx, c, tb.Name, "r", map[string]string{"status": "old status"}); err != nil {
-		t.Fatal(err)
-	}
+	_, err := ntable.CellAdd(ctx, c, tb.Name, "r", "a", "old", 7)
+	require.NoError(t, err)
+	_, err = ntable.RowSet(ctx, c, tb.Name, "r", map[string]string{"status": "old status"})
+	require.NoError(t, err)
 	old, err := ntable.ReadAt(ctx, c, tb.Name, 0)
 	require.NoError(t, err)
 	require.NoError(t, c.XGroupCreate(ctx, ntable.ChangesKey(tb.Name), "reader", "0").Err())
@@ -50,21 +46,20 @@ func TestTableEditsPreserveEpochHistoryAndRenameLedger(t *testing.T) {
 		t.Helper()
 		before := c.XLen(ctx, ntable.ChangesKey(table)).Val()
 		n := trips.N()
-		if err := call(); err != nil {
-			t.Fatalf("%s: %v", name, err)
-		}
+		require.NoError(t, call(), "%s", name)
 		require.Equal(t, int64(1), trips.N()-n, "%s took %d trips", name, trips.N()-n)
-		if receipt.ID == "" || receipt.Epoch != 1 || receipt.After != receipt.Before+1 {
-			t.Fatalf("%s receipt=%+v", name, receipt)
-		}
+		require.NotEmpty(t, receipt.ID, "%s receipt=%+v", name, receipt)
+		require.Equal(t, uint64(1), receipt.Epoch, "%s receipt=%+v", name, receipt)
+		require.Equal(t, receipt.Before+1, receipt.After, "%s receipt=%+v", name, receipt)
 		events, err := c.XRangeN(ctx, ntable.ChangesKey(table), receipt.ID, receipt.ID, 1).Result()
-		if err != nil || len(events) != 1 || c.XLen(ctx, ntable.ChangesKey(table)).Val() != before+1 {
-			t.Fatalf("%s events=%v err=%v", name, events, err)
-		}
+		require.NoError(t, err, "%s events=%v", name, events)
+		require.Len(t, events, 1, "%s events=%v", name, events)
+		require.Equal(t, before+1, c.XLen(ctx, ntable.ChangesKey(table)).Val(), "%s events=%v", name, events)
 		e := events[0].Values
-		if e["actor"] != "edit-test" || e["fence"] != "f7" || e["idem"] != "i9" || e["epoch"] != "1" {
-			t.Fatalf("metadata=%v", e)
-		}
+		require.Equal(t, "edit-test", e["actor"], "metadata=%v", e)
+		require.Equal(t, "f7", e["fence"], "metadata=%v", e)
+		require.Equal(t, "i9", e["idem"], "metadata=%v", e)
+		require.Equal(t, "1", e["epoch"], "metadata=%v", e)
 	}
 	one("rows add", tb.Name, func() error { _, e := ntable.RowsAdd(ctx, c, tb.Name, []string{"r", "s"}, opts); return e })
 	one("text", tb.Name, func() error {
@@ -101,29 +96,31 @@ func TestTableEditsPreserveEpochHistoryAndRenameLedger(t *testing.T) {
 	require.NoError(t, err)
 	n := trips.N()
 	moved, err := ntable.Set(ctx, c, tb.Name, ntable.SetOpts{Rename: "renamed", Columns: cols}, opts)
-	if err != nil || moved < 8 || trips.N()-n != 1 {
-		t.Fatalf("rename=%d err=%v trips=%d", moved, err, trips.N()-n)
-	}
+	renameTrips := trips.N() - n
+	require.NoError(t, err, "rename=%d trips=%d", moved, renameTrips)
+	require.GreaterOrEqual(t, moved, 8, "rename=%d trips=%d", moved, renameTrips)
+	require.Equal(t, int64(1), renameTrips, "rename=%d trips=%d", moved, renameTrips)
 	keys, err := c.Keys(ctx, "table:"+tb.Name+"*").Result()
 	require.NoError(t, err, "old keys=%v err=%v", keys, err)
 	require.Empty(t, keys, "old keys=%v err=%v", keys, err)
 	afterEvents, err := c.XRange(ctx, ntable.ChangesKey("renamed"), "-", "+").Result()
-	if err != nil || len(afterEvents) != len(beforeEvents)+1 || !reflect.DeepEqual(beforeEvents, afterEvents[:len(beforeEvents)]) {
-		t.Fatalf("rename changed prior ledger: %v", err)
-	}
+	require.NoError(t, err, "rename changed prior ledger")
+	require.Len(t, afterEvents, len(beforeEvents)+1, "rename changed prior ledger")
+	require.Equal(t, beforeEvents, afterEvents[:len(beforeEvents)], "rename changed prior ledger")
 	var moves []map[string]string
-	if err := json.Unmarshal([]byte(afterEvents[len(afterEvents)-1].Values["renamed_keys"].(string)), &moves); err != nil || len(moves) != moved {
-		t.Fatalf("rename receipt keys=%v err=%v", moves, err)
-	}
+	err = json.Unmarshal([]byte(afterEvents[len(afterEvents)-1].Values["renamed_keys"].(string)), &moves)
+	require.NoError(t, err, "rename receipt keys=%v", moves)
+	require.Len(t, moves, moved, "rename receipt keys=%v", moves)
 	groups, err := c.XInfoGroups(ctx, ntable.ChangesKey("renamed")).Result()
-	if err != nil || len(groups) != 1 || groups[0].Name != "reader" {
-		t.Fatalf("lost stream group: %v %v", groups, err)
-	}
+	require.NoError(t, err, "lost stream group: %v", groups)
+	require.Len(t, groups, 1, "lost stream group: %v", groups)
+	require.Equal(t, "reader", groups[0].Name, "lost stream group: %v", groups)
 	for id, epoch := range map[string]string{"old": "0", "new1": "1", "new2": "1"} {
 		record, err := c.HGetAll(ctx, ntable.MemberKey(id)).Result()
-		if err != nil || record["epoch"] != epoch || record["place:renamed"] != "r:a" || record["place:"+tb.Name] != "" {
-			t.Fatalf("%s record=%v err=%v", id, record, err)
-		}
+		require.NoError(t, err, "%s record=%v", id, record)
+		require.Equal(t, epoch, record["epoch"], "%s record=%v", id, record)
+		require.Equal(t, "r:a", record["place:renamed"], "%s record=%v", id, record)
+		require.Equal(t, "", record["place:"+tb.Name], "%s record=%v", id, record)
 	}
 	historical, err := ntable.ReadAt(ctx, c, "renamed", 0)
 	require.NoError(t, err)
@@ -136,13 +133,14 @@ func TestTableEditsPreserveEpochHistoryAndRenameLedger(t *testing.T) {
 	require.Equal(t, historical, old, "historical snapshot changed:\n%#v\n%#v", old, historical)
 	active, err := ntable.Read(ctx, c, "renamed")
 	require.NoError(t, err)
-	if active.Rows[0].Texts["status"] != "active" || !active.Rows[0].Hidden || active.FooterLabel != "all" || !active.IsHidden("b") {
-		t.Fatalf("lost current metadata: %#v", active)
-	}
+	require.Equal(t, "active", active.Rows[0].Texts["status"], "lost current metadata: %#v", active)
+	require.True(t, active.Rows[0].Hidden, "lost current metadata: %#v", active)
+	require.Equal(t, "all", active.FooterLabel, "lost current metadata: %#v", active)
+	require.True(t, active.IsHidden("b"), "lost current metadata: %#v", active)
 	require.Equal(t, int64(1), c.ZCard(ctx, "external:x").Val(), "rename/reshape wrote external set")
-	if report, err := ntable.Check(ctx, c, "renamed"); err != nil || report.Members != 2 {
-		t.Fatalf("check=%+v %v", report, err)
-	}
+	report, err := ntable.Check(ctx, c, "renamed")
+	require.NoError(t, err, "check=%+v", report)
+	require.Equal(t, uint64(2), report.Members, "check=%+v", report)
 }
 
 func TestTableEditRefusalsDoNotChangeAnything(t *testing.T) {
@@ -153,9 +151,8 @@ func TestTableEditRefusalsDoNotChangeAnything(t *testing.T) {
 			c, tb := editFixture(t)
 			ctx := context.Background()
 			writer := c
-			if _, err := ntable.CellsAdd(ctx, c, tb.Name, "r", "a", 4, []string{"m1", "m2"}); err != nil {
-				t.Fatal(err)
-			}
+			_, err := ntable.CellsAdd(ctx, c, tb.Name, "r", "a", 4, []string{"m1", "m2"})
+			require.NoError(t, err)
 			var call func() error
 			switch mode {
 			case "stale-set", "stale-text", "stale-rows-add", "stale-rows-hide", "stale-members":
@@ -195,9 +192,8 @@ func TestTableEditRefusalsDoNotChangeAnything(t *testing.T) {
 				}
 				call = func() error { _, e := ntable.Set(ctx, writer, tb.Name, ntable.SetOpts{Rename: "new"}); return e }
 			case "shape-text":
-				if _, err := ntable.RowSet(ctx, c, tb.Name, "r", map[string]string{"status": "keep"}); err != nil {
-					t.Fatal(err)
-				}
+				_, err := ntable.RowSet(ctx, c, tb.Name, "r", map[string]string{"status": "keep"})
+				require.NoError(t, err)
 				cols, err := ntable.ParseColumns("a,b,x")
 				require.NoError(t, err)
 				call = func() error { _, e := ntable.Set(ctx, c, tb.Name, ntable.SetOpts{Columns: cols}); return e }
@@ -232,10 +228,10 @@ func TestTableEditRefusalsDoNotChangeAnything(t *testing.T) {
 				}
 			}
 			before := review4456Image(t, c)
-			err := call()
+			err = call()
 			require.Error(t, err, "unsafe edit accepted")
-			if strings.HasPrefix(mode, "stale-") && !errors.Is(err, ntable.ErrStale) {
-				t.Fatalf("stale call=%v", err)
+			if strings.HasPrefix(mode, "stale-") {
+				require.ErrorIs(t, err, ntable.ErrStale, "stale call=%v", err)
 			}
 			require.Equal(t, before, review4456Image(t, c), "refusal partially changed store: %v", err)
 		})
@@ -246,15 +242,15 @@ func TestBatchedMembersAndShapeRepair(t *testing.T) {
 	t.Parallel()
 	c, tb := editFixture(t)
 	ctx := context.Background()
-	if n, e := ntable.CellsAdd(ctx, c, tb.Name, "r", "a", 7, []string{"a", "b", "c"}); e != nil || n != 3 {
-		t.Fatalf("add=%d %v", n, e)
-	}
-	if n, e := ntable.CellsMove(ctx, c, tb.Name, "r", "a", "b", []string{"b", "c"}); e != nil || n != 2 {
-		t.Fatalf("move=%d %v", n, e)
-	}
-	if n, e := ntable.CellsRemove(ctx, c, tb.Name, "r", "b", []string{"missing", "b", "c"}); e != nil || n != 0 {
-		t.Fatalf("remove=%d %v", n, e)
-	}
+	n, e := ntable.CellsAdd(ctx, c, tb.Name, "r", "a", 7, []string{"a", "b", "c"})
+	require.NoError(t, e, "add=%d", n)
+	require.Equal(t, int64(3), n, "add=%d", n)
+	n, e = ntable.CellsMove(ctx, c, tb.Name, "r", "a", "b", []string{"b", "c"})
+	require.NoError(t, e, "move=%d", n)
+	require.Equal(t, int64(2), n, "move=%d", n)
+	n, e = ntable.CellsRemove(ctx, c, tb.Name, "r", "b", []string{"missing", "b", "c"})
+	require.NoError(t, e, "remove=%d", n)
+	require.Equal(t, int64(0), n, "remove=%d", n)
 	for _, id := range []string{"b", "c"} {
 		require.False(t, c.HExists(ctx, ntable.MemberKey(id), "place:"+tb.Name).Val(), "lost immutable identity for %s", id)
 		require.Equal(t, "0", c.HGet(ctx, ntable.MemberKey(id), "epoch").Val(), "lost immutable identity for %s", id)
@@ -268,9 +264,9 @@ func TestBatchedMembersAndShapeRepair(t *testing.T) {
 	_, err = ntable.Set(ctx, c, tb.Name, ntable.SetOpts{Show: []string{"a"}, Hide: []string{"x"}})
 	require.NoError(t, err)
 	got, err := ntable.Read(ctx, c, tb.Name)
-	if err != nil || !reflect.DeepEqual(got.Hidden, []string{"b", "x"}) || got.Rows[0].Cells[1].Count != 1 {
-		t.Fatalf("repair/deltas=%#v %v", got, err)
-	}
+	require.NoError(t, err, "repair/deltas=%#v", got)
+	require.Equal(t, []string{"b", "x"}, got.Hidden, "repair/deltas=%#v", got)
+	require.Equal(t, int64(1), got.Rows[0].Cells[1].Count, "repair/deltas=%#v", got)
 	_, err = ntable.Check(ctx, c, tb.Name)
 	require.NoError(t, err)
 }

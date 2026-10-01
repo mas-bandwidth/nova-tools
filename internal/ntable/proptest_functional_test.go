@@ -18,6 +18,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"pgregory.net/rapid"
 )
@@ -704,9 +705,7 @@ func TestTableVerbsAgainstModel(t *testing.T) {
 		t.Logf("actions=%d (ok=%d refused=%d)", tally.steps, tally.ok, tally.refused)
 		if candidate {
 			t.Logf("candidate mode: the accepted contract is the oracle (SPEC-COORDINATOR section 7, MemberTable.tla)")
-			if len(tally.gapOrder) > 0 {
-				t.Errorf("candidate mode cannot pass: the store lacks pieces of the contract:\n  %s", strings.Join(tally.gapOrder, "\n  "))
-			}
+			assert.Empty(t, tally.gapOrder, "candidate mode cannot pass: the store lacks pieces of the contract")
 			return
 		}
 		t.Logf("desired-contract violations observed: onePlace=%d losslessBind=%d, expected under today's table.lua", tally.onePlace, tally.lossless)
@@ -714,9 +713,9 @@ func TestTableVerbsAgainstModel(t *testing.T) {
 			t.Logf("first witness: %s", tally.first)
 		}
 		t.Logf("owned sets left behind a bound column by a row removal: %d; rows added again showing one: %d", tally.orphaned, tally.ghosts)
-		if tally.onePlace == 0 || tally.lossless == 0 {
-			t.Errorf("the run reached no ONE PLACE or lossless-bind violation (onePlace=%d losslessBind=%d): today's table.lua permits both, so either the generator no longer reaches the gap or the Lua changed; if the corrected contract landed, run with NOVA_TABLE_CONTRACT=1 and make that the gate", tally.onePlace, tally.lossless)
-		}
+		const why = "today's table.lua permits both ONE PLACE and lossless-bind violations, so either the generator no longer reaches the gap or the Lua changed; if the corrected contract landed, run with NOVA_TABLE_CONTRACT=1 and make that the gate"
+		assert.NotZero(t, tally.onePlace, "the run reached no ONE PLACE violation: %s", why)
+		assert.NotZero(t, tally.lossless, "the run reached no lossless-bind violation: %s", why)
 	}()
 	checkPresent := false
 	if candidate {

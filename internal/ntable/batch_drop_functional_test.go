@@ -9,7 +9,6 @@ package ntable_test
 // original receipt.
 
 import (
-	"reflect"
 	"strings"
 	"testing"
 
@@ -35,9 +34,9 @@ func TestBatchDropRemovesTheOperationRecordsAndTheNameStartsAgain(t *testing.T) 
 			first, err := rawApply(ctx, c, old)
 			require.True(t, replyOpens(first, err, "OK"), "first apply: %v %v", trunc(first), err)
 			// within the table's life the replay returns the original receipt
-			if again, err := rawApply(ctx, c, old); err != nil || !reflect.DeepEqual(asReplayed(again), first) {
-				t.Fatalf("replay: %v %v", trunc(again), err)
-			}
+			again, err := rawApply(ctx, c, old)
+			require.NoError(t, err, "replay: %v", trunc(again))
+			require.Equal(t, first, asReplayed(again), "replay: %v", trunc(again))
 
 			var derr error
 			if verb == "drop" {
@@ -47,34 +46,30 @@ func TestBatchDropRemovesTheOperationRecordsAndTheNameStartsAgain(t *testing.T) 
 			}
 			require.NoError(t, derr)
 			for _, k := range c.Keys(ctx, "*").Val() {
-				if strings.Contains(k, ":op:") || strings.HasSuffix(k, ":ops") {
-					t.Errorf("after %s the store holds the operation key %s", verb, k)
-				}
+				assert.NotContains(t, k, ":op:", "after %s the store holds the operation key %s", verb, k)
+				assert.False(t, strings.HasSuffix(k, ":ops"), "after %s the store holds the operation key %s", verb, k)
 			}
 			newTable(t, c, demo()).rows("build")
 
 			// the old bytes are a new request of a new table: judged on their merits, never answered from the old receipt
 			ans, err := rawApply(ctx, c, old)
 			require.NoError(t, err)
-			if reflect.DeepEqual(asReplayed(ans), first) {
-				t.Fatalf("a request after drop and create returned the old receipt: %v", trunc(ans))
-			}
-			if _, marked := asReplay(ans); marked {
-				t.Errorf("a request after drop and create is marked a replay: %v", trunc(ans))
-			}
+			require.NotEqual(t, first, asReplayed(ans), "a request after drop and create returned the old receipt: %v", trunc(ans))
+			_, marked := asReplay(ans)
+			assert.False(t, marked, "a request after drop and create is marked a replay: %v", trunc(ans))
 			assert.True(t, replyOpens(ans, nil, "REFUSED", "REVISION"), "the old bytes against the new table: %v; want a refusal on the table revision", trunc(ans))
 
 			// the same operation id with a request that fits applies freshly
 			fresh := manifestWith(probeRev(ctx, c), "op-1", `{"id":"b","expect":{"absent":true},"create":{"row":"build","col":"ready","score":1}}`)
 			ans, err = rawApply(ctx, c, fresh)
-			if err != nil || ans[0] != "OK" || reflect.DeepEqual(asReplayed(ans), first) {
-				t.Fatalf("a fresh request under a reused operation id: %v %v", trunc(ans), err)
-			}
-			_, marked := asReplay(ans)
+			require.NoError(t, err, "a fresh request under a reused operation id: %v", trunc(ans))
+			require.Equal(t, "OK", ans[0], "a fresh request under a reused operation id: %v", trunc(ans))
+			require.NotEqual(t, first, asReplayed(ans), "a fresh request under a reused operation id: %v", trunc(ans))
+			_, marked = asReplay(ans)
 			assert.False(t, marked, "a fresh application is marked a replay")
-			if again, err := rawApply(ctx, c, fresh); err != nil || !reflect.DeepEqual(asReplayed(again), ans) {
-				t.Errorf("replay of the fresh request: %v %v", trunc(again), err)
-			}
+			freshAgain, err := rawApply(ctx, c, fresh)
+			assert.NoError(t, err, "replay of the fresh request: %v", trunc(freshAgain))
+			assert.Equal(t, ans, asReplayed(freshAgain), "replay of the fresh request: %v", trunc(freshAgain))
 		})
 	}
 }
@@ -98,24 +93,20 @@ func TestBatchOperationsOfEarlierEpochsReplayAndAllGoWithTheDrop(t *testing.T) {
 	zero := raw("0", "op-e0")
 	first := call(zero)
 	require.True(t, replyOpens(first, nil, "OK"), "epoch 0: %v", trunc(first))
-	if err := c.HSet(ctx, tb.EpochKey, "n", 1).Err(); err != nil { // the epoch advances
-		t.Fatal(err)
-	}
+	require.NoError(t, c.HSet(ctx, tb.EpochKey, "n", 1).Err()) // the epoch advances
 	_, err := ntable.Clear(ctx, c, tb.Name, ntable.WriteOptions{Epoch: 1})
 	require.NoError(t, err)
 	one := raw("1", "op-e1")
-	if second := call(one); second[0] != "OK" {
-		t.Fatalf("epoch 1: %v", trunc(second))
-	}
+	second := call(one)
+	require.Equal(t, "OK", second[0], "epoch 1: %v", trunc(second))
 
 	// the operation of epoch 0 replays: its epoch and revisions are unchanged
 	again := call(zero)
-	if got, marked := asReplay(again); !marked || !reflect.DeepEqual(got, first) {
-		t.Errorf("replay of an earlier epoch's operation: %v; want the original receipt %v", trunc(again), trunc(first))
-	}
-	if receipt := first[1].([]any); receipt[2] != "0" {
-		t.Errorf("the original receipt names epoch %v, want 0", receipt[2])
-	}
+	got, marked := asReplay(again)
+	assert.True(t, marked, "replay of an earlier epoch's operation: %v; want the original receipt %v", trunc(again), trunc(first))
+	assert.Equal(t, first, got, "replay of an earlier epoch's operation: %v; want the original receipt %v", trunc(again), trunc(first))
+	receipt := first[1].([]any)
+	assert.Equal(t, "0", receipt[2], "the original receipt names the wrong epoch")
 
 	// every epoch's records are one key, and the drop removes it
 	n := c.HLen(ctx, ntable.DefKey(tb.Name)+":ops").Val()
@@ -123,12 +114,9 @@ func TestBatchOperationsOfEarlierEpochsReplayAndAllGoWithTheDrop(t *testing.T) {
 	_, err = ntable.Drop(ctx, c, tb.Name, ntable.WriteOptions{Epoch: 1})
 	require.NoError(t, err)
 	for _, k := range c.Keys(ctx, "*").Val() {
-		if strings.Contains(k, ":op:") || strings.HasSuffix(k, ":ops") {
-			t.Errorf("after drop the store holds the operation key %s", k)
-		}
+		assert.NotContains(t, k, ":op:", "after drop the store holds the operation key %s", k)
+		assert.False(t, strings.HasSuffix(k, ":ops"), "after drop the store holds the operation key %s", k)
 	}
 	// the epoch snapshots stay readable
-	if !(c.Exists(ctx, "table:"+tb.Name+":1:definition").Val() == 1) && !(c.Exists(ctx, "table:"+tb.Name+":definition").Val() == 1) {
-		t.Errorf("a drop removed the epoch snapshots")
-	}
+	assert.True(t, c.Exists(ctx, "table:"+tb.Name+":1:definition").Val() == 1 || c.Exists(ctx, "table:"+tb.Name+":definition").Val() == 1, "a drop removed the epoch snapshots")
 }
