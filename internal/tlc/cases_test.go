@@ -3,9 +3,11 @@ package tlc
 import (
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const header = "config\tmodule\texpected\tproperty\tdeadlock\tgroup\tgate\tdebt\n"
@@ -21,20 +23,15 @@ func TestParseCasesReadsAValidPlan(t *testing.T) {
 		row("MCABroken.cfg", "MCA.tla", "invariant", "Safe|Other", "ignore-terminal", "alpha", "required", "-") +
 		row("MCB.cfg", "MCB.tla", "temporal", "Ends", "check", "beta", "bench", "slow")
 	cases, err := ParseCases(strings.NewReader(plan))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	want := []Case{
 		{"MCA.cfg", "MCA.tla", "pass", "-", "check", "alpha", "required", "-"},
 		{"MCABroken.cfg", "MCA.tla", "invariant", "Safe|Other", "ignore-terminal", "alpha", "required", "-"},
 		{"MCB.cfg", "MCB.tla", "temporal", "Ends", "check", "beta", "bench", "slow"},
 	}
-	if !reflect.DeepEqual(cases, want) {
-		t.Fatalf("cases = %v, want %v", cases, want)
-	}
-	if got := RequiredGroups(cases); !reflect.DeepEqual(got, []string{"alpha"}) {
-		t.Fatalf("required groups = %v, want [alpha]", got)
-	}
+	require.Equal(t, want, cases, "cases = %v, want %v", cases, want)
+	got := RequiredGroups(cases)
+	require.Equal(t, []string{"alpha"}, got, "required groups = %v, want [alpha]", got)
 }
 
 func TestParseCasesRefusesEachMalformedRow(t *testing.T) {
@@ -59,23 +56,19 @@ func TestParseCasesRefusesEachMalformedRow(t *testing.T) {
 		fields := append([]string(nil), good...)
 		fields[tc.field] = tc.value
 		_, err := ParseCases(strings.NewReader(header + strings.Join(fields, "\t") + "\n"))
-		if err == nil || !strings.Contains(err.Error(), tc.reason) {
-			t.Errorf("%s: error = %v, want %q", tc.name, err, tc.reason)
-		}
+		assert.ErrorContains(t, err, tc.reason, "%s: error = %v, want %q", tc.name, err, tc.reason)
 	}
 	noProperty := append([]string(nil), good...)
 	noProperty[2] = "invariant"
-	if _, err := ParseCases(strings.NewReader(header + strings.Join(noProperty, "\t") + "\n")); err == nil {
-		t.Error("a counterexample case with property - was accepted")
-	}
+	_, err := ParseCases(strings.NewReader(header + strings.Join(noProperty, "\t") + "\n"))
+	assert.Error(t, err, "a counterexample case with property - was accepted")
 	for name, text := range map[string]string{
 		"empty":            "",
 		"a missing column": "config\tmodule\n",
 		"a short row":      header + "MCA.cfg\tMCA.tla\n",
 	} {
-		if _, err := ParseCases(strings.NewReader(text)); err == nil {
-			t.Errorf("%s was accepted", name)
-		}
+		_, err := ParseCases(strings.NewReader(text))
+		assert.Error(t, err, "%s was accepted", name)
 	}
 }
 
@@ -85,12 +78,8 @@ func tree(t *testing.T, files map[string]string) string {
 	root := t.TempDir()
 	for name, contents := range files {
 		path := filepath.Join(root, "tla", name)
-		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(path, []byte(contents), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		require.NoError(t, os.WriteFile(path, []byte(contents), 0o644))
 	}
 	return root
 }
@@ -99,9 +88,8 @@ func TestLoadCasesHoldsThePlanToTheFiles(t *testing.T) {
 	t.Parallel()
 	plan := header + row("MCA.cfg", "MCA.tla", "pass", "-", "check", "alpha", "required", "-")
 	base := map[string]string{"CASES.tsv": plan, "MCA.tla": "m\n", "MCA.cfg": "c\n"}
-	if _, err := LoadCases(tree(t, base)); err != nil {
-		t.Fatalf("a matching tree was refused: %v", err)
-	}
+	_, err := LoadCases(tree(t, base))
+	require.NoError(t, err, "a matching tree was refused")
 	with := func(edit func(map[string]string)) map[string]string {
 		m := map[string]string{}
 		for k, v := range base {
@@ -121,9 +109,8 @@ func TestLoadCasesHoldsThePlanToTheFiles(t *testing.T) {
 		"a missing module": with(func(m map[string]string) { delete(m, "MCA.tla") }),
 		"no plan":          with(func(m map[string]string) { delete(m, "CASES.tsv") }),
 	} {
-		if _, err := LoadCases(tree(t, files)); err == nil {
-			t.Errorf("%s was accepted", name)
-		}
+		_, err := LoadCases(tree(t, files))
+		assert.Error(t, err, "%s was accepted", name)
 	}
 }
 
@@ -157,9 +144,8 @@ func TestSelectPicksAGroupOrAShard(t *testing.T) {
 		{"", 5, 0, "error: shard count exceeds the number of declared cases"},
 	}
 	for _, tc := range tests {
-		if got := names(Select(cases, tc.group, tc.shards, tc.shard)); got != tc.want {
-			t.Errorf("Select(group=%q shards=%d shard=%d) = %s, want %s", tc.group, tc.shards, tc.shard, got, tc.want)
-		}
+		got := names(Select(cases, tc.group, tc.shards, tc.shard))
+		assert.Equal(t, tc.want, got, "Select(group=%q shards=%d shard=%d) = %s, want %s", tc.group, tc.shards, tc.shard, got, tc.want)
 	}
 }
 
@@ -168,10 +154,7 @@ func TestSelectPicksAGroupOrAShard(t *testing.T) {
 func TestTheRepositoryPlanLoads(t *testing.T) {
 	t.Parallel()
 	cases, err := LoadCases(filepath.Join("..", ".."))
-	if err != nil {
-		t.Fatalf("tla/CASES.tsv is refused: %v", err)
-	}
-	if len(cases) == 0 || len(RequiredGroups(cases)) == 0 {
-		t.Fatal("the plan declares no case or no required group")
-	}
+	require.NoError(t, err, "tla/CASES.tsv is refused")
+	require.NotEmpty(t, cases, "the plan declares no case or no required group")
+	require.NotEmpty(t, RequiredGroups(cases), "the plan declares no case or no required group")
 }
