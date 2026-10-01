@@ -6,6 +6,7 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -18,7 +19,7 @@ import (
 // living Go still carries without a reason: one `file:function:shape` per row,
 // a reason after it. A site leaves the ledger by gaining its `// ignored:`
 // comment, by being fixed, or by going away; it never enters it again.
-const discardedAllowlistPath = "testdata/discarded_allowlist.txt"
+const discardedAllowlistPath = "testdata/discarded"
 
 // discardedDirs are the directories of the living, non-test Go this rule reads.
 // deprecated/ is never walked (the shared tree skips it) and testdata/ holds
@@ -261,14 +262,30 @@ func exprText(e ast.Expr) string {
 // fixed asks for its count to be lowered (NOVA_CI_UPDATE=1 lowers it).
 var countedLedger = allowlist.Options{Ceiling: true, Counted: true}
 
-// requireReasons refuses a counted ledger row that carries no reason after its
-// site count: a row with no reason is a parking place, not a judgement.
-func requireReasons(t *testing.T, path string, allow *allowlist.List) {
-	t.Helper()
-	for _, row := range allow.Rows() {
-		if f := strings.Fields(row.Text); len(f) < 3 {
-			t.Errorf("%s: %q carries no reason after its site count; a row says why the sites are left as they are", path, row.Text)
+// missingReasons names counted rows that carry no reason after their site
+// count: a row with no reason is a parking place, not a judgement.
+func missingReasons(allow *allowlist.Packages) []string {
+	var missing []string
+	for _, list := range allow.Lists() {
+		for _, row := range list.Rows() {
+			if f := strings.Fields(row.Text); len(f) < 3 {
+				missing = append(missing, fmt.Sprintf("%s:%d: %q carries no reason after its site count; a row says why the sites are left as they are", list.Path, row.Line, row.Text))
+			}
 		}
+	}
+	return missing
+}
+
+// requireReasons stops this class test before any ledger update when a shard
+// contains a reasonless row.
+func requireReasons(t *testing.T, allow *allowlist.Packages) {
+	t.Helper()
+	missing := missingReasons(allow)
+	for _, problem := range missing {
+		t.Error(problem)
+	}
+	if len(missing) > 0 {
+		t.FailNow()
 	}
 }
 
@@ -276,14 +293,17 @@ func requireReasons(t *testing.T, path string, allow *allowlist.List) {
 // measured, each under its key, and what the ledger makes of them.
 type siteLedger struct {
 	path  string
-	allow *allowlist.List
+	allow *allowlist.Packages
 	sites map[string][]string // key -> "file:line: text", in the order found
 }
 
 func newSiteLedger(t *testing.T, path string) *siteLedger {
 	t.Helper()
-	allow := loadAllowlist(t, path, countedLedger)
-	requireReasons(t, path, allow)
+	allow, err := allowlist.LoadPackages(path, countedLedger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	requireReasons(t, allow)
 	return &siteLedger{path: path, allow: allow, sites: map[string][]string{}}
 }
 
@@ -298,12 +318,19 @@ func (l *siteLedger) add(key, where string) { l.sites[key] = append(l.sites[key]
 // shrink the row.
 func (l *siteLedger) violations(t *testing.T, remedy string) []string {
 	t.Helper()
+	return l.violationsMode(t, remedy, allowlist.Updating())
+}
+
+// violationsMode fixes update mode for the temporary package-sharded fixture
+// so its shrink-only assertions run even when the suite updates ledgers.
+func (l *siteLedger) violationsMode(t *testing.T, remedy string, update bool) []string {
+	t.Helper()
 	measured := map[string]int{}
 	for k, w := range l.sites {
 		measured[k] = len(w)
 	}
 	var out []string
-	res := allowlist.CheckCounted(t, l.allow, measured)
+	res := allowlist.CheckPackagesCountedMode(t, l.allow, measured, update)
 	for _, k := range res.Unlisted {
 		for _, w := range l.sites[k] {
 			out = append(out, fmt.Sprintf("%s: %s (no row in %s): %s", w, k, l.path, remedy))
@@ -380,7 +407,7 @@ func f2() error { return nil }
 // throw a failure's words or exit away: one `file:shape` per row, a reason after
 // it. fleet/ is being reworked, so its rows wait for that; a script row leaves
 // when each of its lines carries `# ignored: <reason>` or is fixed.
-const scriptHideAllowlistPath = "testdata/scripthide_allowlist.txt"
+const scriptHideAllowlistPath = "testdata/scripthide"
 
 // scriptHideDirs are where the fleet plays, the scripts and the bench tools
 // live; scriptHideExts the files there that run.
@@ -501,38 +528,66 @@ func TestScriptHideRuleReadsTheShapes(t *testing.T) {
 // no row is red at each site, and a count that matches is quiet.
 func TestSiteLedgerShrinksBySiteNotByRow(t *testing.T) {
 	t.Parallel()
-	if allowlist.Updating() {
-		t.Skip("an update run rewrites lists; this test reads one from memory")
+	dir := t.TempDir()
+	for name, contents := range map[string]string{
+		"a.txt": "# ceiling: 1\na/a.go:f:blank 2 two sites\n",
+		"b.txt": "# ceiling: 1\nb/b.sh:or-true 1 one site\n",
+	} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(contents), 0600); err != nil {
+			t.Fatal(err)
+		}
 	}
-	allow, err := allowlist.Parse("test_allowlist.txt", "# ceiling: 2\na.go:f:blank 2 two sites\nb.sh:or-true 1 one site\n", countedLedger)
+	allow, err := allowlist.LoadPackages(dir, countedLedger)
 	if err != nil {
 		t.Fatal(err)
 	}
 	run := func(sites map[string]int) []string {
-		l := &siteLedger{path: "test_allowlist.txt", allow: allow, sites: map[string][]string{}}
+		l := &siteLedger{path: dir, allow: allow, sites: map[string][]string{}}
 		for k, n := range sites {
 			for i := 0; i < n; i++ {
 				l.add(k, fmt.Sprintf("%s#%d", k, i+1))
 			}
 		}
-		return l.violations(t, "REMEDY")
+		return l.violationsMode(t, "REMEDY", false)
 	}
-	if got := run(map[string]int{"a.go:f:blank": 2, "b.sh:or-true": 1}); len(got) != 0 {
+	if got := run(map[string]int{"a/a.go:f:blank": 2, "b/b.sh:or-true": 1}); len(got) != 0 {
 		t.Errorf("a ledger that matches is quiet, got %q", got)
 	}
-	if got := run(map[string]int{"a.go:f:blank": 3, "b.sh:or-true": 1}); len(got) != 1 || !strings.Contains(got[0], "lists a.go:f:blank at 2 sites, but 3 are there now") || !strings.Contains(got[0], "REMEDY") {
+	if got := run(map[string]int{"a/a.go:f:blank": 3, "b/b.sh:or-true": 1}); len(got) != 1 || !strings.Contains(got[0], "lists a/a.go:f:blank at 2 sites, but 3 are there now") || !strings.Contains(got[0], "REMEDY") {
 		t.Errorf("a new site under a listed key must be red with the remedy, got %q", got)
 	}
-	if got := run(map[string]int{"a.go:f:blank": 2, "b.sh:or-true": 2}); len(got) != 1 || !strings.Contains(got[0], "b.sh:or-true at 1 sites, but 2") {
+	if got := run(map[string]int{"a/a.go:f:blank": 2, "b/b.sh:or-true": 2}); len(got) != 1 || !strings.Contains(got[0], "b/b.sh:or-true at 1 sites, but 2") {
 		t.Errorf("a second site under a one-site row must be red, got %q", got)
 	}
-	if got := run(map[string]int{"a.go:f:blank": 1, "b.sh:or-true": 1}); len(got) != 1 || !strings.Contains(got[0], "lower the row's count to 1") {
+	if got := run(map[string]int{"a/a.go:f:blank": 1, "b/b.sh:or-true": 1}); len(got) != 1 || !strings.Contains(got[0], "lower the row's count to 1") {
 		t.Errorf("a fixed site must ask for a lower count, got %q", got)
 	}
-	if got := run(map[string]int{"a.go:f:blank": 2, "b.sh:or-true": 1, "c.go:g:blank": 2}); len(got) != 2 || !strings.Contains(got[0], "c.go:g:blank#") {
+	if got := run(map[string]int{"a/a.go:f:blank": 2, "b/b.sh:or-true": 1, "c/c.go:g:blank": 2}); len(got) != 2 || !strings.Contains(got[0], "c/c.go:g:blank#") {
 		t.Errorf("a key with no row must be red at each of its sites, got %q", got)
 	}
-	if got := run(map[string]int{"a.go:f:blank": 2}); len(got) != 1 || !strings.Contains(got[0], "b.sh:or-true, but no site") {
+	if got := run(map[string]int{"a/a.go:f:blank": 2}); len(got) != 1 || !strings.Contains(got[0], "b/b.sh:or-true, but no site") {
 		t.Errorf("a row with no site left is stale, got %q", got)
+	}
+}
+
+// TestSiteLedgerNamesReasonlessShard proves a missing reason identifies its
+// shard and line.
+func TestSiteLedgerNamesReasonlessShard(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	file := filepath.Join(dir, "cmd", "nova-test.txt")
+	if err := os.MkdirAll(filepath.Dir(file), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(file, []byte("# ceiling: 1\ncmd/nova-test/main.go:f:blank 1\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	allow, err := allowlist.LoadPackages(dir, countedLedger)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := missingReasons(allow)
+	if len(got) != 1 || !strings.Contains(got[0], file+":2:") || !strings.Contains(got[0], "carries no reason") {
+		t.Errorf("reasonless row must name its shard and line, got %q", got)
 	}
 }

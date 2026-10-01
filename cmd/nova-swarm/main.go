@@ -61,7 +61,7 @@ usage:
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
   nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now]
   nova-swarm member    --as <name> --width <n> --harness <path> --model <provider/model> --root <dir> --deadline <duration> --tokens <n>|unmetered [--sprint <nova-sprint>] [--reader] [--every <duration>] [--once | --ticks <n>] [--auth <file>] [--config <file>] [--worker <file>] [--no-wall]
-                       (this machine as one member of a sprint's fleet: beat, queue, finish what ended, take to --width, each card one native child; --reader runs the readers-table loop; the store is nova-sprint's, from NOVA_SPRINT_REDIS)
+                       (this machine as one member of a sprint's fleet: beat, queue, push and finish what ended (the child's commit to origin's sprint branch, from outside the wall, never forced), take to --width, each card one native child; --reader runs the readers-table loop; the store is nova-sprint's, from NOVA_SPRINT_REDIS)
   nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
   nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>] [--kind <kind>]
   nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all) [--force]

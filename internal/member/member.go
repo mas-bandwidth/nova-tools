@@ -2,7 +2,7 @@
 // against the sprint's fleet table (the machine's queue) and the sprint's
 // verbs, with each card run as one child through a runner. The fleet table
 // is the dispatcher; the member only replays, for real, the sequence the
-// world driver plays in simulation: beat, queue, finish what ended, take to
+// world driver plays in simulation: beat, queue, push and finish what ended, take to
 // its width, start each card taken as a child. A reader runs the same loop
 // against the readers table: begin what was asked, report what ended.
 //
@@ -10,6 +10,11 @@
 // (Sprint), and runs a card only through a Runner, so the harness underneath
 // (a Claude Code child, an OpenCode child, a test double) is replaceable and
 // the loop is testable without a store or a process.
+//
+// A work card ends at a local commit inside the wall, which holds no
+// credential; the member, outside the wall, pushes that commit to origin's
+// branch the sprint named (Pusher) before it reports the finish, so the merge
+// finds the work on origin from any machine.
 package member
 
 import (
@@ -19,6 +24,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -41,6 +47,24 @@ type Child interface {
 	// "" when unknown), and the report (one paragraph, the child's own words).
 	Result() Result
 }
+
+// Pusher puts a work card's commit on origin, outside the wall: the commit
+// the child's result names (Result.Head) pushed to the branch the packet
+// names (Packet.Branch), never forced. It is asked once per ended launch.
+type Pusher interface {
+	Push(p Packet, r Result) Push
+}
+
+// Push is how a push ended: exactly one of the three is set.
+type Push struct {
+	Sha     string // pushed: the full sha origin's branch now holds
+	None    string // not pushed, and not a failure: why (the child committed nothing)
+	Refused string // the push failed: git's own line; the finish is a failure
+}
+
+// pushWidth is the most pushes one tick runs at once: each is one git to
+// origin, and a tick whose children ended together pushes them together.
+const pushWidth = 8
 
 // Result is how a child ended. Ran is whether the child ran to its end (its
 // harness answered); OK is its verdict: a work card's, that the work is done,
@@ -115,7 +139,9 @@ type launch struct {
 	attempt int
 	epoch   uint64
 	branch  string
-	spent   bool // a read whose child ended with no verdict: not ours to report, not run again until the sprint moves the card
+	packet  Packet
+	push    *Push // the push at its end, once made (a finish the store did not answer is reported again, never pushed again)
+	spent   bool  // a read whose child ended with no verdict: not ours to report, not run again until the sprint moves the card
 }
 
 // Member is the loop's state: the children running, by card id.
@@ -123,14 +149,16 @@ type Member struct {
 	cfg     Config
 	sprint  Sprint
 	runner  Runner
+	pusher  Pusher
 	out     io.Writer
 	running map[string]launch // by card id (a work card's id, a read card's id)
 	epoch   uint64
 }
 
-// New is a member with nothing running.
-func New(cfg Config, s Sprint, r Runner, out io.Writer) *Member {
-	return &Member{cfg: cfg, sprint: s, runner: r, out: out, running: map[string]launch{}}
+// New is a member with nothing running. A reader pushes nothing, and its
+// pusher may be nil; a work member's pusher pushes every work card's commit.
+func New(cfg Config, s Sprint, r Runner, pu Pusher, out io.Writer) *Member {
+	return &Member{cfg: cfg, sprint: s, runner: r, pusher: pu, out: out, running: map[string]launch{}}
 }
 
 // Running is how many children are running (a spent launch holds no place).
@@ -180,6 +208,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 		byID[c.ID] = c
 	}
 	sort.Strings(ids)
+	m.pushEnded(ids, byID)
 	for _, id := range ids {
 		c := byID[id]
 		inFlight := c.Col == "working" || c.Col == "reading"
@@ -187,7 +216,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 			continue
 		}
 		l, ours := m.running[id]
-		if ours && c.Packet != nil && (l.epoch != c.Packet.Epoch || (!m.cfg.Reader && l.gen != c.Packet.Gen) || (m.cfg.Reader && l.attempt != c.Packet.Attempt)) {
+		if ours && m.moved(l, c) {
 			// the claim moved under the child (a clear, a redeal): its result
 			// is nobody's; it is reaped when it ends and the new claim is run
 			if !l.child.Done() {
@@ -206,12 +235,15 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 			}
 			continue
 		}
-		if l.spent || !l.child.Done() {
+		if l.spent || !l.child.Done() || (!m.cfg.Reader && l.push == nil) {
+			// a work child that ended after this tick's pushes is pushed and
+			// reported next tick
 			continue
 		}
 		r := l.child.Result()
 		launched := []string{"--epoch", strconv.FormatUint(l.epoch, 10)}
 		var args []string
+		ok := r.OK // as reported: a work card whose push was refused is reported failed
 		if m.cfg.Reader {
 			if !r.Ran || (r.Verdict != "ok" && r.Verdict != "broken") {
 				// no verdict is no finding: the read stays reading for the
@@ -227,20 +259,33 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 			}
 			args = append([]string{"read", "--as", m.cfg.As, word, id, "--finding", oneLine(r.Report)}, launched...)
 		} else {
-			args = []string{"finish", "--as", m.cfg.As, id + "@" + strconv.Itoa(l.gen), "--report", oneLine(r.Report)}
-			if r.Head != "" {
-				args = append(args, "--head", r.Head)
+			report, head, failed := oneLine(r.Report), r.Head, !r.OK
+			switch pu := *l.push; {
+			case pu.Sha != "":
+				// the report carries the push first, so the 500-byte cut never takes it
+				report, head = cut("pushed="+pu.Sha+" to "+l.branch+": "+report), pu.Sha
+				fmt.Fprintf(m.out, "push %s pushed=%s branch=%s\n", id, pu.Sha, l.branch)
+			case pu.Refused != "":
+				report, failed = cut("push refused: "+pu.Refused+"; "+report), true
+				fmt.Fprintf(m.out, "NOTE push %s refused: %s\n", id, pu.Refused)
+			default:
+				fmt.Fprintf(m.out, "push %s: not pushed: %s\n", id, pu.None)
+			}
+			args = []string{"finish", "--as", m.cfg.As, id + "@" + strconv.Itoa(l.gen), "--report", report}
+			if head != "" {
+				args = append(args, "--head", head)
 			}
 			if l.branch != "" {
 				args = append(args, "--branch", l.branch)
 			}
-			if !r.OK {
+			if failed {
 				args = append(args, "--failed")
 			}
+			ok = !failed
 			args = append(args, launched...)
 		}
 		code, out := m.sprint.Run(args...)
-		fmt.Fprintf(m.out, "%s %s ok=%t exit=%d\n", args[0], id, r.OK, code)
+		fmt.Fprintf(m.out, "%s %s ok=%t exit=%d\n", args[0], id, ok, code)
 		if code == 2 {
 			return acted, fmt.Errorf("%s %s: the store did not answer: %s", args[0], id, strings.TrimSpace(string(out)))
 		}
@@ -325,9 +370,77 @@ func (m *Member) start(p Packet) bool {
 		fmt.Fprintf(m.out, "start %s: %v\n", p.Card, err)
 		return false
 	}
-	m.running[p.Card] = launch{child: ch, gen: p.Gen, attempt: p.Attempt, epoch: p.Epoch, branch: p.Branch}
+	m.running[p.Card] = launch{child: ch, gen: p.Gen, attempt: p.Attempt, epoch: p.Epoch, branch: p.Branch, packet: p}
 	fmt.Fprintf(m.out, "start %s attempt=%d gen=%d running=%d/%d\n", p.Card, p.Attempt, p.Gen, m.Running(), m.cfg.Width)
 	return true
+}
+
+// moved says the claim moved under a launch: the queue's card is at another
+// epoch, generation (a read: attempt) than the one the child was started for.
+func (m *Member) moved(l launch, c queueCard) bool {
+	return c.Packet != nil && (l.epoch != c.Packet.Epoch || (!m.cfg.Reader && l.gen != c.Packet.Gen) || (m.cfg.Reader && l.attempt != c.Packet.Attempt))
+}
+
+// pushEnded pushes, before any finish is reported, the commit of every work
+// launch whose child ended and whose claim the queue still holds, pushWidth
+// at a time; each launch keeps its push, so the finish (and a finish the
+// store did not answer, reported again next tick) reads it and never pushes
+// twice. The rule is docs/SPEC-SWARM.md's `member` (the push at a work card's
+// finish) and docs/SPEC-SPRINT.md's finish row (the head the merge reads).
+func (m *Member) pushEnded(ids []string, byID map[string]queueCard) {
+	if m.cfg.Reader {
+		return
+	}
+	var due []string
+	for _, id := range ids {
+		c := byID[id]
+		l, ours := m.running[id]
+		if !ours || l.push != nil || c.Col != "working" || m.moved(l, c) || !l.child.Done() {
+			continue
+		}
+		due = append(due, id)
+	}
+	pushes := make([]Push, len(due))
+	var wg sync.WaitGroup
+	gate := make(chan struct{}, pushWidth)
+	for i, id := range due {
+		l := m.running[id]
+		r := l.child.Result()
+		switch {
+		case r.Head == "":
+			pushes[i] = Push{None: "the child's result names no commit (no rev: line)"}
+		case l.branch == "":
+			pushes[i] = Push{None: "the packet names no branch to push to"}
+		case m.pusher == nil:
+			pushes[i] = Push{None: "this member has no pusher"}
+		default:
+			wg.Add(1)
+			go func(i int, p Packet, r Result) {
+				defer wg.Done()
+				gate <- struct{}{}
+				defer func() { <-gate }()
+				pushes[i] = m.pusher.Push(p, r)
+			}(i, l.packet, r)
+		}
+	}
+	wg.Wait()
+	for i, id := range due {
+		l := m.running[id]
+		pu := pushes[i]
+		if pu.Sha == "" && pu.Refused == "" && pu.None == "" {
+			pu.Refused = "the pusher said nothing"
+		}
+		l.push = &pu
+		m.running[id] = l
+	}
+}
+
+// cut is a report cut at 500 bytes, the bound oneLine keeps.
+func cut(s string) string {
+	if len(s) > 500 {
+		return s[:500]
+	}
+	return s
 }
 
 // oneLine is a report as one line for a verb's flag: the first non-empty
@@ -374,7 +487,10 @@ func CardText(p Packet, sprintBin string) string {
 		if p.Base != "" {
 			fmt.Fprintf(&b, " The work is branch %s from %s; commit there and put the head you finished at in RESULT.md's Head as `rev: <sha>`.", p.Branch, p.Base)
 		} else {
-			b.WriteString(" Work in the directory you start in and nowhere else.")
+			b.WriteString(" Work in the directory you start in and nowhere else; when the work is a commit, put the head you finished at in RESULT.md's Head as `rev: <sha>`.")
+		}
+		if p.Branch != "" {
+			fmt.Fprintf(&b, " When you end, the member pushes that commit to origin's branch %s; push nothing yourself (the wall holds no credential).", p.Branch)
 		}
 		b.WriteString("\n\n")
 	}

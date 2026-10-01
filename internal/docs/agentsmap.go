@@ -100,7 +100,8 @@ func IndexCatalog(cat []Entry) (CatalogIndex, []string) {
 	return idx, issues
 }
 
-// Render builds every AGENTS.md page from the live tree and the catalog.
+// Render builds STANDARD's class-rule list and every AGENTS.md page from the
+// spec, live tree and catalog.
 // Uncatalogued children still appear (as "-" rows) so a committed page goes
 // stale the moment a mapped directory grows a child. Completeness issues are
 // returned beside the pages; make map refuses to write when any are present.
@@ -109,15 +110,18 @@ func Render(root string, cat []Entry) (map[string]string, []string) {
 	issues = append(issues, treeIssues(root, cat, idx)...)
 
 	pages := make(map[string]string)
-	pages[RootAgents] = renderPage(root, "", idx)
-	if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(StandardDoc))); err != nil {
-		issues = append(issues, fmt.Sprintf("%s is missing; the root %s embeds it", StandardDoc, RootAgents))
+	standard, err := readClassRuleStandard(root)
+	if err != nil {
+		issues = append(issues, err.Error())
+	} else {
+		pages[StandardDoc] = standard
 	}
+	pages[RootAgents] = renderPage(root, "", idx, standard)
 	for _, e := range cat {
 		if !e.Page {
 			continue
 		}
-		pages[e.Path+"/"+RootAgents] = renderPage(root, e.Path, idx)
+		pages[e.Path+"/"+RootAgents] = renderPage(root, e.Path, idx, standard)
 	}
 	if n := len(pages[RootAgents]); n >= MaxRootBytes {
 		issues = append(issues, fmt.Sprintf("%s is %d bytes, over the %d-byte cap; shorten the catalog rows or the standard", RootAgents, n, MaxRootBytes))
@@ -171,14 +175,14 @@ func treeIssues(root string, cat []Entry, idx CatalogIndex) []string {
 	return issues
 }
 
-func renderPage(root, dir string, idx CatalogIndex) string {
+func renderPage(root, dir string, idx CatalogIndex, standard string) string {
 	var b strings.Builder
 	if dir == "" {
 		b.WriteString("# AGENTS.md — generated map\n\n")
 		b.WriteString("Do not edit. `make map` regenerates this file. AGENTS.md alone: no `CLAUDE.md`, no pointer, no symlink.\n\n")
 		b.WriteString("Nova Tools is machinery: command-line tools that AI friends and people run against their own records, on their own machines, with their own identities. Adoption is a choice — one tool is a fine number. The standard is below; how review goes: [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).\n\n")
 		b.WriteString("```\nmake build          # go build ./...\nmake test           # the fast tier, plus the per-package time budget\nmake map            # regenerate AGENTS.md and per-directory maps\n```\n\n")
-		b.WriteString(embedStandard(root))
+		b.WriteString(embedStandard(standard))
 	} else {
 		depth := strings.Count(dir, "/") + 1
 		up := strings.Repeat("../", depth)
@@ -218,18 +222,16 @@ func renderPage(root, dir string, idx CatalogIndex) string {
 	return b.String()
 }
 
-// embedStandard returns docs/STANDARD.md whole, each heading one level down so
-// the page keeps its one title. A missing file yields a pointer line; Render
-// reports the absence as an issue.
-func embedStandard(root string) string {
-	raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(StandardDoc)))
-	if err != nil {
+// embedStandard returns the generated STANDARD whole, each heading one level
+// down so the page keeps its one title. Render reports unavailable text.
+func embedStandard(standard string) string {
+	if standard == "" {
 		return "The standard: [" + StandardDoc + "](" + StandardDoc + ").\n\n"
 	}
 	var b strings.Builder
 	b.WriteString("The standard below is [" + StandardDoc + "](" + StandardDoc + "), embedded whole; every PR meets it.\n\n")
 	inFence := false
-	for _, line := range strings.Split(strings.TrimRight(string(raw), "\n"), "\n") {
+	for _, line := range strings.Split(strings.TrimRight(standard, "\n"), "\n") {
 		if strings.HasPrefix(line, "```") {
 			inFence = !inFence
 		}
@@ -413,6 +415,6 @@ func RunAgentsMap(args []string) error {
 	if err := Write(root, pages); err != nil {
 		return err
 	}
-	fmt.Printf("wrote %d AGENTS.md pages\n", len(pages))
+	fmt.Printf("wrote %d AGENTS.md pages and %s\n", len(pages)-1, StandardDoc)
 	return nil
 }

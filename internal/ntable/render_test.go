@@ -175,21 +175,15 @@ func TestParseColumnsAndWidths(t *testing.T) {
 		{Name: "ready", Projection: ntable.Count, Fold: ntable.Max, Label: "Ready"},
 		{Name: "who", Projection: ntable.Members, Fold: ntable.Union},
 	}
-	require.Len(t, cols, len(want), "parsed %d columns, want %d", len(cols), len(want))
-	for i := range want {
-		if cols[i] != want[i] {
-			t.Errorf("column %d = %+v, want %+v", i, cols[i], want[i])
-		}
-	}
+	assert.Equal(t, want, cols, "parsed columns")
 	for _, bad := range []string{"", "a b", "a:rows", "a:count:union", "a:text:avg", "a:members:sum", "a,a", "-a"} {
-		if _, err := ntable.ParseColumns(bad); err == nil {
-			t.Errorf("ParseColumns(%q) accepted", bad)
-		}
+		_, err := ntable.ParseColumns(bad)
+		assert.Error(t, err, "ParseColumns(%q) accepted", bad)
 	}
 	w, err := ntable.ParseWidths("stream=25, n=3")
-	if err != nil || w["stream"] != 25 || w["n"] != 3 {
-		t.Fatalf("ParseWidths = %v %v", w, err)
-	}
+	require.NoError(t, err)
+	require.Equal(t, 25, w["stream"], "ParseWidths = %v", w)
+	require.Equal(t, 3, w["n"], "ParseWidths = %v", w)
 	_, err = ntable.ParseWidths("stream=x")
 	assert.Error(t, err, "ParseWidths(stream=x) accepted")
 }
@@ -258,9 +252,9 @@ func TestRenderFormulaAndTextCells(t *testing.T) {
 	// the mean of percentages is refused; the pooled share is the fold (Glenn 2026-09-27)
 	_, err = ntable.ParseColumns("waiting,wpct:pct(waiting):avg")
 	require.ErrorContains(t, err, "not accurate", "avg over a pct column")
-	if c, err := ntable.ParseColumn("wpct:pct(waiting)"); err != nil || c.Fold != ntable.Pooled {
-		t.Fatalf("the default fold of a pct column: %+v %v", c, err)
-	}
+	c, err := ntable.ParseColumn("wpct:pct(waiting)")
+	require.NoError(t, err)
+	require.Equal(t, ntable.Pooled, c.Fold, "the default fold of a pct column: %+v", c)
 }
 
 // TestRenderHidesAColumnButKeepsIt (Glenn 2026-09-27: "I no longer wish to
@@ -354,8 +348,8 @@ func TestRenderTablesShowsEveryTableAndEveryRow(t *testing.T) {
 	readers := counts([]string{"asked"}, map[string][]int64{"r": {0}}, []string{"r"})
 	readers.Name = "readers"
 	got := ntable.RenderTables("", []ntable.Table{work, readers}, ntable.RenderOpts{})
-	if !strings.Contains(got, "\na ") || !strings.Contains(got, "\nb ") || !strings.Contains(got, "\nr ") {
-		t.Fatalf("a, b and r all show:\n%s", got)
+	for _, row := range []string{"\na ", "\nb ", "\nr "} {
+		require.Contains(t, got, row, "a, b and r all show")
 	}
 	work.Rows = nil
 	got = ntable.RenderTables("", []ntable.Table{work, readers}, ntable.RenderOpts{})
@@ -385,9 +379,8 @@ func TestATextColumnOfWholeNumbersFoldsSumAndMax(t *testing.T) {
 		lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
 		last := lines[len(lines)-1]
 		assert.True(t, strings.HasSuffix(last, "| "+tc.want), "fold %s: footer %q wants %s", tc.fold, last, tc.want)
-		if !strings.Contains(out, "| 64\n") || !strings.Contains(out, "|  8\n") {
-			t.Errorf("fold %s: cells are not right-aligned:\n%s", tc.fold, out)
-		}
+		assert.Contains(t, out, "| 64\n", "fold %s: cells are not right-aligned", tc.fold)
+		assert.Contains(t, out, "|  8\n", "fold %s: cells are not right-aligned", tc.fold)
 		tab.Rows[0].Texts["w"] = "many"
 		out = ntable.Render(tab, ntable.RenderOpts{})
 		assert.Contains(t, out, "?", "fold %s: a cell that is no number leaves the fold known:\n%s", tc.fold, out)
@@ -410,9 +403,7 @@ func TestRenderCellsAlignByTerminalColumns(t *testing.T) {
 		"-------+---+---\n" +
 		"       | 9 | 12\n"
 	got := ntable.Render(tbl, ntable.RenderOpts{})
-	if got != want {
-		t.Fatalf("wide and combining rows rendered:\n%s\nwant:\n%s", got, want)
-	}
+	require.Equal(t, want, got, "wide and combining rows rendered:\n%s\nwant:\n%s", got, want)
 }
 
 // A union footer is the members of every row together, "-" for none, and "?"
@@ -438,9 +429,8 @@ func TestRenderUnionFooterIsUnknownWhenARowIsUnread(t *testing.T) {
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			tb.Rows = c.rows()
-			if got := ntable.Render(tb, ntable.RenderOpts{}); !strings.HasSuffix(got, c.want) {
-				t.Errorf("%s: footer of\n%s\nwant it to end %q", c.name, got, c.want)
-			}
+			got := ntable.Render(tb, ntable.RenderOpts{})
+			assert.True(t, strings.HasSuffix(got, c.want), "%s: footer of\n%s\nwant it to end %q", c.name, got, c.want)
 		})
 	}
 }
@@ -453,9 +443,9 @@ func TestParseColumnEmptyProjectionIsTheCount(t *testing.T) {
 	for _, spec := range []string{"n", "n:", "n::sum", "n::sum:Label"} {
 		t.Run(spec, func(t *testing.T) {
 			c, err := ntable.ParseColumn(spec)
-			if err != nil || c.Projection != ntable.Count || c.Fold != ntable.Sum {
-				t.Errorf("ParseColumn(%q) = %+v, %v; want the count folded by sum", spec, c, err)
-			}
+			require.NoError(t, err, "ParseColumn(%q)", spec)
+			assert.Equal(t, ntable.Count, c.Projection, "ParseColumn(%q) = %+v; want the count folded by sum", spec, c)
+			assert.Equal(t, ntable.Sum, c.Fold, "ParseColumn(%q) = %+v; want the count folded by sum", spec, c)
 		})
 	}
 }

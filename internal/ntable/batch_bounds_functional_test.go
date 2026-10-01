@@ -9,7 +9,6 @@ package ntable_test
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -102,9 +101,8 @@ func TestBatchBoundsAreOneSet(t *testing.T) {
 
 			// At the bound: the server accepts, the validator accepts.
 			raw := boundsManifest(probeRev(ctx, c), "at", bc.build(bc.bound), "p")
-			if _, err := ntable.ValidateBatchManifestRaw([]byte(raw)); err != nil {
-				t.Fatalf("at the bound %d the Go validator refuses: %v", bc.bound, err)
-			}
+			_, err := ntable.ValidateBatchManifestRaw([]byte(raw))
+			require.NoError(t, err, "at the bound %d the Go validator refuses", bc.bound)
 			ans, err := rawApply(ctx, c, raw)
 			require.True(t, replyOpens(ans, err, "OK"), "at the bound %d the server refuses: %v %v", bc.bound, trunc(ans), err)
 
@@ -115,23 +113,21 @@ func TestBatchBoundsAreOneSet(t *testing.T) {
 			ans, err = rawApply(ctx, c, raw)
 			require.NoError(t, err, "raw FCALL")
 			require.True(t, replyOpens(ans, nil, "REFUSED", "LIMIT"), "raw FCALL one over the bound: %v", trunc(ans))
-			if ans[2] != bc.limit || replyNumber(ans[3]) != fmt.Sprint(bc.bound) || replyNumber(ans[4]) != fmt.Sprint(bc.bound+1) {
-				t.Errorf("raw FCALL refusal %v; want %s, bound %d, observed %d", trunc(ans), bc.limit, bc.bound, bc.bound+1)
-			}
-			if bc.member != "" && (len(ans) < 6 || ans[5] != bc.member) {
-				t.Errorf("raw FCALL refusal does not name member %q: %v", bc.member, trunc(ans))
-			}
-			if bc.member == "" && len(ans) > 5 {
-				t.Errorf("raw FCALL refusal names a member for a whole-manifest bound: %v", trunc(ans))
+			assert.Equal(t, bc.limit, ans[2], "raw FCALL refusal %v; want %s, bound %d, observed %d", trunc(ans), bc.limit, bc.bound, bc.bound+1)
+			assert.Equal(t, fmt.Sprint(bc.bound), replyNumber(ans[3]), "raw FCALL refusal %v; want %s, bound %d, observed %d", trunc(ans), bc.limit, bc.bound, bc.bound+1)
+			assert.Equal(t, fmt.Sprint(bc.bound+1), replyNumber(ans[4]), "raw FCALL refusal %v; want %s, bound %d, observed %d", trunc(ans), bc.limit, bc.bound, bc.bound+1)
+			if bc.member != "" {
+				require.GreaterOrEqual(t, len(ans), 6, "raw FCALL refusal does not name member %q: %v", bc.member, trunc(ans))
+				assert.Equal(t, bc.member, ans[5], "raw FCALL refusal does not name member %q: %v", bc.member, trunc(ans))
+			} else {
+				assert.LessOrEqual(t, len(ans), 5, "raw FCALL refusal names a member for a whole-manifest bound: %v", trunc(ans))
 			}
 
 			_, verr := ntable.ValidateBatchManifestRaw([]byte(raw))
 			var le *ntable.LimitError
 			require.ErrorAs(t, verr, &le, "Go validator one over the bound: %v", verr)
 			require.ErrorIs(t, verr, ntable.ErrLimit, "Go validator one over the bound: %v", verr)
-			if le.Name != bc.limit || le.Bound != bc.bound || le.Observed != bc.bound+1 || le.Member != bc.member {
-				t.Errorf("Go validator refusal %+v; want %s, bound %d, observed %d, member %q", le, bc.limit, bc.bound, bc.bound+1, bc.member)
-			}
+			assert.Equal(t, ntable.LimitError{Name: bc.limit, Bound: bc.bound, Observed: bc.bound + 1, Member: bc.member}, ntable.LimitError{Name: le.Name, Bound: le.Bound, Observed: le.Observed, Member: le.Member}, "Go validator refusal %+v", le)
 
 			var m ntable.BatchManifest
 			require.NoError(t, json.Unmarshal([]byte(raw), &m))
@@ -141,9 +137,11 @@ func TestBatchBoundsAreOneSet(t *testing.T) {
 				assert.ErrorContains(t, aerr, w, "ApplyBatch refusal lacks %q: %s", w, aerr)
 			}
 			for _, e := range []error{verr, aerr} {
-				if strings.Contains(e.Error(), echoMarker) || (bc.name == "member id bytes" && strings.Contains(e.Error(), "iiii")) || strings.Contains(e.Error(), "vvvv") {
-					t.Errorf("a refusal echoes the input: %.200s", e)
+				assert.NotContains(t, e.Error(), echoMarker, "a refusal echoes the input: %.200s", e)
+				if bc.name == "member id bytes" {
+					assert.NotContains(t, e.Error(), "iiii", "a refusal echoes the input: %.200s", e)
 				}
+				assert.NotContains(t, e.Error(), "vvvv", "a refusal echoes the input: %.200s", e)
 			}
 			assert.NotContains(t, fmt.Sprint(ans), echoMarker, "the server refusal echoes the input: %.200s", fmt.Sprint(ans))
 			assert.Equal(t, before, storeImage(t, c), "a refused over-bound manifest changed the store")
@@ -180,36 +178,32 @@ func TestBatchManifestBytesBound(t *testing.T) {
 	rev := probeRev(ctx, c)
 	at := build(rev, "at", ntable.LimitManifestBytes)
 	require.Len(t, at, ntable.LimitManifestBytes, "built %d bytes", len(at))
-	if _, err := ntable.ValidateBatchManifestRaw([]byte(at)); err != nil {
-		t.Fatalf("Go validator at the bound: %v", err)
-	}
-	if ans, err := rawApply(ctx, c, at); err != nil || ans[0] != "OK" {
-		t.Fatalf("server at the bound: %v %v", trunc(ans), err)
-	}
+	_, err := ntable.ValidateBatchManifestRaw([]byte(at))
+	require.NoError(t, err, "Go validator at the bound")
+	ans, err := rawApply(ctx, c, at)
+	require.True(t, replyOpens(ans, err, "OK"), "server at the bound: %v: %v", trunc(ans), err)
 
 	over := build(probeRev(ctx, c), "over", ntable.LimitManifestBytes+1)
 	before := storeImage(t, c)
-	ans, err := rawApply(ctx, c, over)
-	if err != nil || len(ans) < 5 || ans[0] != "REFUSED" || ans[1] != "LIMIT" || ans[2] != "manifest bytes" ||
-		replyNumber(ans[3]) != fmt.Sprint(ntable.LimitManifestBytes) || replyNumber(ans[4]) != fmt.Sprint(ntable.LimitManifestBytes+1) {
-		t.Fatalf("server one over the bound: %v %v", trunc(ans), err)
-	}
+	ans, err = rawApply(ctx, c, over)
+	require.True(t, replyOpens(ans, err, "REFUSED", "LIMIT"), "server one over the bound: %v: %v", trunc(ans), err)
+	require.GreaterOrEqual(t, len(ans), 5, "server one over the bound: %v", trunc(ans))
+	require.Equal(t, "manifest bytes", ans[2], "server one over the bound: %v", trunc(ans))
+	require.Equal(t, fmt.Sprint(ntable.LimitManifestBytes), replyNumber(ans[3]), "server one over the bound: %v", trunc(ans))
+	require.Equal(t, fmt.Sprint(ntable.LimitManifestBytes+1), replyNumber(ans[4]), "server one over the bound: %v", trunc(ans))
 	_, verr := ntable.ValidateBatchManifestRaw([]byte(over))
-	var le *ntable.LimitError
-	if !errors.As(verr, &le) || le.Name != "manifest bytes" || le.Bound != ntable.LimitManifestBytes || le.Observed != ntable.LimitManifestBytes+1 {
-		t.Fatalf("Go validator one over the bound: %v", verr)
-	}
+	requireLimit(t, "Go validator one over the bound", verr, "manifest bytes", ntable.LimitManifestBytes, ntable.LimitManifestBytes+1)
 	var m ntable.BatchManifest
 	require.NoError(t, json.Unmarshal([]byte(over), &m))
 	// The encoded request ApplyBatch sends is the canonical one; pad past the bound.
 	m.Actor += strings.Repeat("p", 2*1024)
 	_, aerr := ntable.ApplyBatch(ctx, c, m)
-	if !errors.Is(aerr, ntable.ErrLimit) || !strings.Contains(aerr.Error(), "manifest bytes") || !strings.Contains(aerr.Error(), "changed=no") {
-		t.Errorf("ApplyBatch one over the bound: %v", aerr)
-	}
-	if strings.Contains(fmt.Sprint(ans), "pppp") || strings.Contains(verr.Error(), "pppp") || strings.Contains(aerr.Error(), "pppp") {
-		t.Errorf("a refusal echoes the input")
-	}
+	require.ErrorIs(t, aerr, ntable.ErrLimit, "ApplyBatch one over the bound: %v", aerr)
+	assert.ErrorContains(t, aerr, "manifest bytes", "ApplyBatch one over the bound")
+	assert.ErrorContains(t, aerr, "changed=no", "ApplyBatch one over the bound")
+	assert.NotContains(t, fmt.Sprint(ans), "pppp", "the server refusal echoes the input")
+	assert.NotContains(t, verr.Error(), "pppp", "the validator refusal echoes the input")
+	assert.NotContains(t, aerr.Error(), "pppp", "the ApplyBatch refusal echoes the input")
 	assert.Equal(t, before, storeImage(t, c), "a refused over-bound manifest changed the store")
 }
 
@@ -225,14 +219,10 @@ func TestReadSetMembersBound(t *testing.T) {
 		}
 		return out
 	}
-	if _, err := ntable.ReadSetMembers(ctx, c, "demo", ids(ntable.LimitReadSetMembers)); err != nil {
-		t.Fatalf("at the bound: %v", err)
-	}
-	_, err := ntable.ReadSetMembers(ctx, c, "demo", ids(ntable.LimitReadSetMembers+1))
-	var le *ntable.LimitError
-	if !errors.As(err, &le) || le.Name != "read set members" || le.Bound != ntable.LimitReadSetMembers || le.Observed != ntable.LimitReadSetMembers+1 {
-		t.Fatalf("one over the bound: %v", err)
-	}
+	_, err := ntable.ReadSetMembers(ctx, c, "demo", ids(ntable.LimitReadSetMembers))
+	require.NoError(t, err, "at the bound")
+	_, err = ntable.ReadSetMembers(ctx, c, "demo", ids(ntable.LimitReadSetMembers+1))
+	requireLimit(t, "one over the bound", err, "read set members", ntable.LimitReadSetMembers, ntable.LimitReadSetMembers+1)
 	for _, w := range []string{`table "demo" read set`, "changed=no", "; run: nova-table show 'demo'"} {
 		assert.ErrorContains(t, err, w, "refusal lacks %q: %s", w, err)
 	}
