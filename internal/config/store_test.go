@@ -2,9 +2,10 @@ package config
 
 import (
 	"context"
-	"errors"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // storeTests is the contract every Store keeps, run against Mem here and
@@ -18,9 +19,7 @@ func storeTests(t *testing.T, open func(t *testing.T) Store) {
 	mk := func(k *Kind, name string, raw map[string]string) Row {
 		t.Helper()
 		row, err := k.NewRow(name, raw)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		return row
 	}
 
@@ -28,98 +27,156 @@ func storeTests(t *testing.T, open func(t *testing.T) Store) {
 		t.Parallel()
 		st := open(t)
 		machines, fleet, err := st.MachinesAndFleet(ctx)
-		if err != nil || len(machines) != 0 || fleet.Fields["store"] != "" || fleet.Fields["coordinator"] != "" {
-			t.Fatalf("empty store: %+v %+v %v", machines, fleet, err)
-		}
+		assertionMsg32 := []any{"empty store: %+v %+v %v", machines, fleet, err}
+		require.NoError(t, err, assertionMsg32...)
+		require.Empty(t, machines, assertionMsg32...)
+		require.Equal(t, "", fleet.Fields["store"], assertionMsg32...)
+		require.Equal(t, "", fleet.Fields["coordinator"], assertionMsg32...)
 		for _, n := range []string{"bench-b", "bench-a"} {
-			if _, err := st.Insert(ctx, KindMachine, mk(machine, n, map[string]string{"user": "user-x", "seat": "seat-x", "slots": "4"}), "operator"); err != nil {
-				t.Fatal(err)
-			}
+			_, setupErr1192 := st.Insert(ctx, KindMachine, mk(machine, n, map[string]string{"user": "user-x", "seat": "seat-x", "slots": "4"}), "operator")
+			require.NoError(t, setupErr1192)
 		}
-		if _, _, err := st.Update(ctx, KindFleet, KindFleet, map[string]string{"store": "bench-b", "coordinator": "bench-a"}, "operator"); err != nil {
-			t.Fatal(err)
-		}
+		_, _, setupErr1373 := st.Update(ctx, KindFleet, KindFleet, map[string]string{"store": "bench-b", "coordinator": "bench-a"}, "operator")
+		require.NoError(t, setupErr1373)
 		machines, fleet, err = st.MachinesAndFleet(ctx)
-		if err != nil || len(machines) != 2 || machines[0].Name != "bench-a" || machines[1].Name != "bench-b" || machines[0].Fields["slots"] != "4" {
-			t.Fatalf("machines: %+v %v", machines, err)
-		}
-		if fleet.Fields["store"] != "bench-b" || fleet.Fields["coordinator"] != "bench-a" {
-			t.Fatalf("fleet row: %+v", fleet)
-		}
+		assertionMsg44 := []any{"machines: %+v %v", machines, err}
+		require.NoError(t, err, assertionMsg44...)
+		require.Len(t, machines, 2, assertionMsg44...)
+		require.Equal(t, "bench-a", machines[0].Name, assertionMsg44...)
+		require.Equal(t, "bench-b", machines[1].Name, assertionMsg44...)
+		require.Equal(t, "4", machines[0].Fields["slots"], assertionMsg44...)
+		assertionMsg45 := []any{"fleet row: %+v", fleet}
+		require.Equal(t, "bench-b", fleet.Fields["store"], assertionMsg45...)
+		require.Equal(t, "bench-a", fleet.Fields["coordinator"], assertionMsg45...)
 		listed, _ := st.List(ctx, KindMachine)
-		if len(listed) != len(machines) {
-			t.Fatalf("List sees %d machines, MachinesAndFleet %d", len(listed), len(machines))
-		}
+		require.Len(t, listed, len(machines), "List sees %d machines, MachinesAndFleet %d", len(listed), len(machines))
 	})
 
 	t.Run("add, get, list, set, history, remove", func(t *testing.T) {
 		t.Parallel()
 		st := open(t)
 		id, err := st.Insert(ctx, KindMachine, mk(machine, "studio", map[string]string{"user": "glenn", "seat": "studio", "slots": "64"}), "rowan")
-		if err != nil || id != 1 {
-			t.Fatalf("add machine: id %d err %v", id, err)
-		}
+		assertionMsg54 := []any{"add machine: id %d err %v", id, err}
+		require.NoError(t, err, assertionMsg54...)
+		require.Equal(t, int64(1), id, assertionMsg54...)
 		id, err = st.Insert(ctx, KindFriend, mk(friend, "rowan", map[string]string{"slots": "32", "tiers": "frontier,pro", "roles": "builder"}), "rowan")
-		if err != nil || id != 2 {
-			t.Fatalf("add friend: id %d err %v", id, err)
-		}
+		assertionMsg56 := []any{"add friend: id %d err %v", id, err}
+		require.NoError(t, err, assertionMsg56...)
+		require.Equal(t, int64(2), id, assertionMsg56...)
 		row, found, err := st.Get(ctx, KindFriend, "rowan")
-		if err != nil || !found || row.Fields["slots"] != "32" || row.Fields["tiers"] != "frontier,pro" || row.Fields["roles"] != "builder" || row.CreatedAt == "" || row.UpdatedAt == "" {
-			t.Fatalf("get: %+v %v %v", row, found, err)
-		}
-		if _, found, err := st.Get(ctx, KindFriend, "nobody"); err != nil || found {
-			t.Fatalf("get nobody: %v %v", found, err)
+		assertionMsg58 := []any{"get: %+v %v %v", row, found, err}
+		require.NoError(t, err, assertionMsg58...)
+		require.True(t, found, assertionMsg58...)
+		require.Equal(t, "32", row.Fields["slots"], assertionMsg58...)
+		require.Equal(t, "frontier,pro", row.Fields["tiers"], assertionMsg58...)
+		require.Equal(t, "builder", row.Fields["roles"], assertionMsg58...)
+		require.NotEqual(t, "", row.CreatedAt, assertionMsg58...)
+		require.NotEqual(t, "", row.UpdatedAt, assertionMsg58...)
+		{
+			_, found, err := st.Get(ctx, KindFriend, "nobody")
+			assertionMsg61 := []any{"get nobody: %v %v", found, err}
+			require.NoError(t, err, assertionMsg61...)
+			require.False(t, found, assertionMsg61...)
 		}
 		rows, err := st.List(ctx, KindFriend)
-		if err != nil || len(rows) != 1 || rows[0].Name != "rowan" {
-			t.Fatalf("list: %+v %v", rows, err)
-		}
+		assertionMsg64 := []any{"list: %+v %v", rows, err}
+		require.NoError(t, err, assertionMsg64...)
+		require.Len(t, rows, 1, assertionMsg64...)
+		require.Equal(t, "rowan", rows[0].Name, assertionMsg64...)
 		after, id, err := st.Update(ctx, KindFriend, "rowan", map[string]string{"slots": "64", "roles": "builder,reader"}, "stella")
-		if err != nil || id != 3 || after.Fields["slots"] != "64" || after.Fields["roles"] != "builder,reader" || after.Fields["tiers"] != "frontier,pro" {
-			t.Fatalf("set: %+v id %d err %v", after, id, err)
-		}
+		assertionMsg66 := []any{"set: %+v id %d err %v", after, id, err}
+		require.NoError(t, err, assertionMsg66...)
+		require.Equal(t, int64(3), id, assertionMsg66...)
+		require.Equal(t, "64", after.Fields["slots"], assertionMsg66...)
+		require.Equal(t, "builder,reader", after.Fields["roles"], assertionMsg66...)
+		require.Equal(t, "frontier,pro", after.Fields["tiers"], assertionMsg66...)
 		rev, err := st.Rev(ctx, KindFriend)
-		if err != nil || rev != 3 {
-			t.Fatalf("rev friend: %d %v", rev, err)
-		}
+		assertionMsg68 := []any{"rev friend: %d %v", rev, err}
+		require.NoError(t, err, assertionMsg68...)
+		require.Equal(t, int64(3), rev, assertionMsg68...)
 		rev, err = st.Rev(ctx, KindMachine)
-		if err != nil || rev != 1 {
-			t.Fatalf("rev machine: %d %v", rev, err)
-		}
-		if rev, err := st.Rev(ctx, "nothing"); err != nil || rev != 0 {
-			t.Fatalf("rev of an unknown kind: %d %v", rev, err)
+		assertionMsg70 := []any{"rev machine: %d %v", rev, err}
+		require.NoError(t, err, assertionMsg70...)
+		require.Equal(t, int64(1), rev, assertionMsg70...)
+		{
+			rev, err := st.Rev(ctx, "nothing")
+			assertionMsg73 := []any{"rev of an unknown kind: %d %v", rev, err}
+			require.NoError(t, err, assertionMsg73...)
+			require.Equal(t, int64(0), rev, assertionMsg73...)
 		}
 		counts, err := st.Counts(ctx)
-		if err != nil || counts[KindFriend] != 1 || counts[KindMachine] != 1 {
-			t.Fatalf("counts %v %v", counts, err)
-		}
+		assertionMsg76 := []any{"counts %v %v", counts, err}
+		require.NoError(t, err, assertionMsg76...)
+		require.Equal(t, 1, counts[KindFriend], assertionMsg76...)
+		require.Equal(t, 1, counts[KindMachine], assertionMsg76...)
 		for _, one := range []string{KindFleet, KindSprint} {
-			if _, counted := counts[one]; counted {
-				t.Fatalf("counts %v: %s is one row and is not counted", counts, one)
-			}
+			_, scopedCounted113 := counts[one]
+			require.False(t, scopedCounted113, "counts %v: %s is one row and is not counted", counts, one)
 		}
 		id, err = st.Delete(ctx, KindFriend, "rowan", "rowan")
-		if err != nil || id != 4 {
-			t.Fatalf("remove: id %d err %v", id, err)
-		}
-		if _, found, _ := st.Get(ctx, KindFriend, "rowan"); found {
-			t.Fatal("removed row is still there")
-		}
+		assertionMsg84 := []any{"remove: id %d err %v", id, err}
+		require.NoError(t, err, assertionMsg84...)
+		require.Equal(t, int64(4), id, assertionMsg84...)
+		_, scopedFound122, _ := st.Get(ctx, KindFriend, "rowan")
+		require.False(t, scopedFound122, "removed row is still there")
 		hist, err := st.History(ctx, KindFriend, "rowan")
-		if err != nil || len(hist) != 3 {
-			t.Fatalf("history: %+v %v", hist, err)
-		}
-		if hist[0].Op != OpAdd || hist[0].Before != nil || hist[0].After["slots"] != "32" || hist[0].Actor != "rowan" || hist[0].At == "" || hist[0].ID != 2 {
-			t.Errorf("history add row %+v", hist[0])
-		}
-		if hist[1].Op != OpSet || hist[1].Before["slots"] != "32" || hist[1].After["slots"] != "64" || hist[1].After["roles"] != "builder,reader" || hist[1].Actor != "stella" {
-			t.Errorf("history set row %+v", hist[1])
-		}
-		if hist[2].Op != OpRemove || hist[2].Before["slots"] != "64" || hist[2].After != nil {
-			t.Errorf("history remove row %+v", hist[2])
-		}
-		if hist, err := st.History(ctx, KindFriend, "nobody"); err != nil || len(hist) != 0 {
-			t.Errorf("history of nobody: %v %v", hist, err)
+		assertionMsg90 := []any{"history: %+v %v", hist, err}
+		require.NoError(t, err, assertionMsg90...)
+		require.Len(t, hist, 3, assertionMsg90...)
+		assertionMsg136 := []any{"history add row %+v", hist[0]}
+		func() {
+			if !assert.Equal(t, OpAdd, hist[0].Op, assertionMsg136...) {
+				return
+			}
+			if !assert.Nil(t, hist[0].Before, assertionMsg136...) {
+				return
+			}
+			if !assert.Equal(t, "32", hist[0].After["slots"], assertionMsg136...) {
+				return
+			}
+			if !assert.Equal(t, "rowan", hist[0].Actor, assertionMsg136...) {
+				return
+			}
+			if !assert.NotEqual(t, "", hist[0].At, assertionMsg136...) {
+				return
+			}
+			assert.Equal(t, int64(2), hist[0].ID, assertionMsg136...)
+		}()
+		assertionMsg137 := []any{"history set row %+v", hist[1]}
+		func() {
+			if !assert.Equal(t, OpSet, hist[1].Op, assertionMsg137...) {
+				return
+			}
+			if !assert.Equal(t, "32", hist[1].Before["slots"], assertionMsg137...) {
+				return
+			}
+			if !assert.Equal(t, "64", hist[1].After["slots"], assertionMsg137...) {
+				return
+			}
+			if !assert.Equal(t, "builder,reader", hist[1].After["roles"], assertionMsg137...) {
+				return
+			}
+			assert.Equal(t, "stella", hist[1].Actor, assertionMsg137...)
+		}()
+		assertionMsg138 := []any{"history remove row %+v", hist[2]}
+		func() {
+			if !assert.Equal(t, OpRemove, hist[2].Op, assertionMsg138...) {
+				return
+			}
+			if !assert.Equal(t, "64", hist[2].Before["slots"], assertionMsg138...) {
+				return
+			}
+			assert.Nil(t, hist[2].After, assertionMsg138...)
+		}()
+		{
+			hist, err := st.History(ctx, KindFriend, "nobody")
+			assertionMsg141 := []any{"history of nobody: %v %v", hist, err}
+			func() {
+				if !assert.NoError(t, err, assertionMsg141...) {
+					return
+				}
+				assert.Empty(t, hist, assertionMsg141...)
+			}()
 		}
 	})
 
@@ -128,51 +185,40 @@ func storeTests(t *testing.T, open func(t *testing.T) Store) {
 		st := open(t)
 		refusal := func(err error, want error, detail string) {
 			t.Helper()
-			if err == nil {
-				t.Fatalf("accepted; want a refusal %v saying %q", want, detail)
-			}
-			if !Refused(err) || !errors.Is(err, want) {
-				t.Fatalf("error %v is not the refusal %v", err, want)
-			}
-			if !strings.Contains(err.Error(), detail) {
-				t.Fatalf("refusal %q does not say %q", err, detail)
-			}
+			require.Error(t, err, "accepted; want a refusal %v saying %q", want, detail)
+			assertionMsg106 := []any{"error %v is not the refusal %v", err, want}
+			require.True(t, Refused(err), assertionMsg106...)
+			require.ErrorIs(t, err, want, assertionMsg106...)
+			require.ErrorContains(t, err, detail, "refusal %q does not say %q", err, detail)
 		}
-		if _, err := st.Insert(ctx, KindMachine, mk(machine, "studio", map[string]string{"user": "glenn", "seat": "studio", "slots": "64"}), "rowan"); err != nil {
-			t.Fatal(err)
-		}
+		_, setupErr8221 := st.Insert(ctx, KindMachine, mk(machine, "studio", map[string]string{"user": "glenn", "seat": "studio", "slots": "64"}), "rowan")
+		require.NoError(t, setupErr8221)
 		_, err := st.Insert(ctx, KindMachine, mk(machine, "studio", map[string]string{"user": "glenn", "seat": "studio", "slots": "64"}), "rowan")
 		refusal(err, ErrExists, "machine studio exists")
-		if _, err := st.Insert(ctx, KindFriend, mk(friend, "rowan", map[string]string{"slots": "1", "tiers": "frontier"}), "rowan"); err != nil {
-			t.Fatal(err)
-		}
+		_, setupErr8590 := st.Insert(ctx, KindFriend, mk(friend, "rowan", map[string]string{"slots": "1", "tiers": "frontier"}), "rowan")
+		require.NoError(t, setupErr8590)
 		_, err = st.Insert(ctx, KindFriend, mk(friend, "rowan", map[string]string{"slots": "1", "tiers": "frontier"}), "rowan")
 		refusal(err, ErrExists, "friend rowan exists")
 		_, _, err = st.Update(ctx, KindFriend, "nobody", map[string]string{"slots": "2"}, "rowan")
 		refusal(err, ErrNotFound, "friend nobody not found")
 		_, _, err = st.Update(ctx, KindSprint, KindSprint, map[string]string{"coordinator": "nobody"}, "rowan")
 		refusal(err, ErrNoRef, "--coordinator nobody names no friend row")
-		if _, _, err := st.Update(ctx, KindSprint, KindSprint, map[string]string{"coordinator": "rowan"}, "rowan"); err != nil {
-			t.Fatal(err)
-		}
+		_, _, setupErr9243 := st.Update(ctx, KindSprint, KindSprint, map[string]string{"coordinator": "rowan"}, "rowan")
+		require.NoError(t, setupErr9243)
 		_, err = st.Delete(ctx, KindFriend, "rowan", "rowan")
 		refusal(err, ErrReferenced, "friend rowan is the --coordinator of the sprint")
 		_, err = st.Delete(ctx, KindFriend, "nobody", "rowan")
 		refusal(err, ErrNotFound, "friend nobody not found")
 		// A refused write leaves no history and moves no revision.
-		if rev, _ := st.Rev(ctx, KindFriend); rev != 2 {
-			t.Fatalf("rev after refusals %d, want 2", rev)
-		}
-		if hist, _ := st.History(ctx, KindFriend, "nobody"); len(hist) != 0 {
-			t.Fatalf("a refused write left history: %+v", hist)
-		}
+		scopedRev217, _ := st.Rev(ctx, KindFriend)
+		require.Equal(t, int64(2), scopedRev217, "rev after refusals %d, want 2", scopedRev217)
+		scopedHist221, _ := st.History(ctx, KindFriend, "nobody")
+		require.Empty(t, scopedHist221, "a refused write left history: %+v", scopedHist221)
 		// The handover frees the old coordinator's row.
-		if _, _, err := st.Update(ctx, KindSprint, KindSprint, map[string]string{"coordinator": ""}, "rowan"); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := st.Delete(ctx, KindFriend, "rowan", "rowan"); err != nil {
-			t.Fatalf("remove the freed friend: %v", err)
-		}
+		_, _, setupErr9994 := st.Update(ctx, KindSprint, KindSprint, map[string]string{"coordinator": ""}, "rowan")
+		require.NoError(t, setupErr9994)
+		_, scopedErr228 := st.Delete(ctx, KindFriend, "rowan", "rowan")
+		require.NoError(t, scopedErr228, "remove the freed friend: %v", scopedErr228)
 	})
 
 	t.Run("the fleet row", func(t *testing.T) {
@@ -181,55 +227,70 @@ func storeTests(t *testing.T, open func(t *testing.T) Store) {
 		// The row is there before anything is set, both fields empty, and
 		// has no history yet: migrate made it, nobody added it.
 		row, found, err := st.Get(ctx, KindFleet, KindFleet)
-		if err != nil || !found || row.Fields["store"] != "" || row.Fields["coordinator"] != "" || row.CreatedAt == "" {
-			t.Fatalf("fresh fleet row: %+v %v %v", row, found, err)
+		assertionMsg159 := []any{"fresh fleet row: %+v %v %v", row, found, err}
+		require.NoError(t, err, assertionMsg159...)
+		require.True(t, found, assertionMsg159...)
+		require.Equal(t, "", row.Fields["store"], assertionMsg159...)
+		require.Equal(t, "", row.Fields["coordinator"], assertionMsg159...)
+		require.NotEqual(t, "", row.CreatedAt, assertionMsg159...)
+		{
+			hist, err := st.History(ctx, KindFleet, KindFleet)
+			assertionMsg162 := []any{"fresh fleet history %v %v", hist, err}
+			require.NoError(t, err, assertionMsg162...)
+			require.Empty(t, hist, assertionMsg162...)
 		}
-		if hist, err := st.History(ctx, KindFleet, KindFleet); err != nil || len(hist) != 0 {
-			t.Fatalf("fresh fleet history %v %v", hist, err)
-		}
-		if rev, err := st.Rev(ctx, KindFleet); err != nil || rev != 0 {
-			t.Fatalf("fresh fleet rev %d %v", rev, err)
+		{
+			rev, err := st.Rev(ctx, KindFleet)
+			assertionMsg166 := []any{"fresh fleet rev %d %v", rev, err}
+			require.NoError(t, err, assertionMsg166...)
+			require.Equal(t, int64(0), rev, assertionMsg166...)
 		}
 		rows, err := st.List(ctx, KindFleet)
-		if err != nil || len(rows) != 1 || rows[0].Name != KindFleet {
-			t.Fatalf("list fleet: %+v %v", rows, err)
-		}
+		assertionMsg169 := []any{"list fleet: %+v %v", rows, err}
+		require.NoError(t, err, assertionMsg169...)
+		require.Len(t, rows, 1, assertionMsg169...)
+		require.Equal(t, KindFleet, rows[0].Name, assertionMsg169...)
 		// A store or coordinator must be a machine row.
 		_, _, err = st.Update(ctx, KindFleet, KindFleet, map[string]string{"store": "space"}, "rowan")
-		if err == nil || !errors.Is(err, ErrNoRef) || !strings.Contains(err.Error(), "--store space names no machine row") {
-			t.Fatalf("store naming no machine: %v", err)
-		}
-		if _, err := st.Insert(ctx, KindMachine, mk(machine, "space", map[string]string{"user": "nova", "seat": "space", "slots": "0"}), "rowan"); err != nil {
-			t.Fatal(err)
-		}
-		if _, err := st.Insert(ctx, KindMachine, mk(machine, "studio", map[string]string{"user": "glenn", "seat": "studio", "slots": "64"}), "rowan"); err != nil {
-			t.Fatal(err)
-		}
+		assertionMsg172 := []any{"store naming no machine: %v", err}
+		require.Error(t, err, assertionMsg172...)
+		require.ErrorIs(t, err, ErrNoRef, assertionMsg172...)
+		require.ErrorContains(t, err, "--store space names no machine row", assertionMsg172...)
+		_, setupErr11974 := st.Insert(ctx, KindMachine, mk(machine, "space", map[string]string{"user": "nova", "seat": "space", "slots": "0"}), "rowan")
+		require.NoError(t, setupErr11974)
+		_, setupErr12147 := st.Insert(ctx, KindMachine, mk(machine, "studio", map[string]string{"user": "glenn", "seat": "studio", "slots": "64"}), "rowan")
+		require.NoError(t, setupErr12147)
 		after, id, err := st.Update(ctx, KindFleet, KindFleet, map[string]string{"store": "space", "coordinator": "studio"}, "rowan")
-		if err != nil || id != 3 || after.Fields["store"] != "space" || after.Fields["coordinator"] != "studio" {
-			t.Fatalf("set the fleet: %+v id %d err %v", after.Fields, id, err)
-		}
-		if rev, _ := st.Rev(ctx, KindFleet); rev != 3 {
-			t.Fatalf("fleet rev %d, want 3", rev)
-		}
+		assertionMsg182 := []any{"set the fleet: %+v id %d err %v", after.Fields, id, err}
+		require.NoError(t, err, assertionMsg182...)
+		require.Equal(t, int64(3), id, assertionMsg182...)
+		require.Equal(t, "space", after.Fields["store"], assertionMsg182...)
+		require.Equal(t, "studio", after.Fields["coordinator"], assertionMsg182...)
+		scopedRev279, _ := st.Rev(ctx, KindFleet)
+		require.Equal(t, int64(3), scopedRev279, "fleet rev %d, want 3", scopedRev279)
 		// A machine the fleet names cannot be removed (a foreign key; the
 		// tool names it).
 		_, err = st.Delete(ctx, KindMachine, "space", "rowan")
-		if err == nil || !errors.Is(err, ErrReferenced) || !strings.Contains(err.Error(), "machine space is the --store of the fleet") {
-			t.Fatalf("remove the store machine: %v", err)
-		}
+		assertionMsg190 := []any{"remove the store machine: %v", err}
+		require.Error(t, err, assertionMsg190...)
+		require.ErrorIs(t, err, ErrReferenced, assertionMsg190...)
+		require.ErrorContains(t, err, "machine space is the --store of the fleet", assertionMsg190...)
 		// Clearing a field is an empty value; the machine is then free.
 		after, _, err = st.Update(ctx, KindFleet, KindFleet, map[string]string{"store": ""}, "rowan")
-		if err != nil || after.Fields["store"] != "" || after.Fields["coordinator"] != "studio" {
-			t.Fatalf("clear the store: %+v %v", after.Fields, err)
-		}
-		if _, err := st.Delete(ctx, KindMachine, "space", "rowan"); err != nil {
-			t.Fatalf("remove the freed machine: %v", err)
-		}
+		assertionMsg193 := []any{"clear the store: %+v %v", after.Fields, err}
+		require.NoError(t, err, assertionMsg193...)
+		require.Equal(t, "", after.Fields["store"], assertionMsg193...)
+		require.Equal(t, "studio", after.Fields["coordinator"], assertionMsg193...)
+		_, scopedErr296 := st.Delete(ctx, KindMachine, "space", "rowan")
+		require.NoError(t, scopedErr296, "remove the freed machine: %v", scopedErr296)
 		hist, err := st.History(ctx, KindFleet, KindFleet)
-		if err != nil || len(hist) != 2 || hist[0].Op != OpSet || hist[0].Before["store"] != "" || hist[0].After["store"] != "space" || hist[1].After["store"] != "" {
-			t.Fatalf("fleet history %+v %v", hist, err)
-		}
+		assertionMsg199 := []any{"fleet history %+v %v", hist, err}
+		require.NoError(t, err, assertionMsg199...)
+		require.Len(t, hist, 2, assertionMsg199...)
+		require.Equal(t, OpSet, hist[0].Op, assertionMsg199...)
+		require.Equal(t, "", hist[0].Before["store"], assertionMsg199...)
+		require.Equal(t, "space", hist[0].After["store"], assertionMsg199...)
+		require.Equal(t, "", hist[1].After["store"], assertionMsg199...)
 	})
 }
 
@@ -245,17 +306,12 @@ func TestMemStoreHandsOutCopies(t *testing.T) {
 	st := NewMem()
 	machine, _ := Lookup(KindMachine)
 	row, _ := machine.NewRow("studio", map[string]string{"user": "glenn", "seat": "studio", "slots": "64"})
-	if _, err := st.Insert(ctx, KindMachine, row, "rowan"); err != nil {
-		t.Fatal(err)
-	}
+	_, setupErr14718 := st.Insert(ctx, KindMachine, row, "rowan")
+	require.NoError(t, setupErr14718)
 	row.Fields["slots"] = "1"
 	got, _, _ := st.Get(ctx, KindMachine, "studio")
-	if got.Fields["slots"] != "64" {
-		t.Fatal("the store shares its row with the caller")
-	}
+	require.Equal(t, "64", got.Fields["slots"], "the store shares its row with the caller")
 	got.Fields["slots"] = "2"
 	again, _, _ := st.Get(ctx, KindMachine, "studio")
-	if again.Fields["slots"] != "64" {
-		t.Fatal("a row read from the store is the store's own")
-	}
+	require.Equal(t, "64", again.Fields["slots"], "a row read from the store is the store's own")
 }
