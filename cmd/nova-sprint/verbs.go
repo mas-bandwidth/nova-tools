@@ -827,13 +827,10 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 		if *count != 0 {
 			return refuse(stderr, "add", "--count names the cards by number, and --brief-dir or a repeated --brief-file names them by file: give one")
 		}
-		if *sentinel != "" {
-			return refuse(stderr, "add", "--sentinel admits one sentinel, not a card per brief file")
-		}
 		if *every != 0 || *last {
 			return refuse(stderr, "add", "--sentinel-every goes with --count, not a card per brief file")
 		}
-		return a.cmdAddMany(*stream, *needs, *briefDir, briefFiles, *rules, *score, *before, *after, c, stdout, stderr)
+		return a.cmdAddMany(*stream, *needs, *briefDir, briefFiles, *sentinel, *rules, *score, *before, *after, c, stdout, stderr)
 	}
 	if len(briefFiles) == 1 {
 		if *brief != "" {
@@ -909,7 +906,7 @@ func (a *app) cmdAdd(args []string, stdout, stderr io.Writer) int {
 // the order the files were named. Every brief is read and linted first (one
 // failing brief refuses the whole call, exit 2, nothing written), and one
 // store write adds every card.
-func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, rules, score, before, after string, c *common, stdout, stderr io.Writer) int {
+func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, sentinel, rules, score, before, after string, c *common, stdout, stderr io.Writer) int {
 	if stream == "" {
 		return refuse(stderr, "add", "wants --stream and --brief-dir <dir> or a repeated --brief-file")
 	}
@@ -940,12 +937,17 @@ func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, ru
 		if len(briefText) > store.MaxBriefBytes {
 			return refuse(stderr, "add", fmt.Sprintf("%s: the brief is %d bytes, over the %d bytes a brief may be; a brief is a child's whole brief; shorten it", path, len(briefText), store.MaxBriefBytes))
 		}
-		cards = append(cards, sprint.CardAdd{ID: id, Brief: briefText, Needs: append(briefNeeds(briefText), extra...), File: path})
+		cards = append(cards, sprint.CardAdd{ID: id, Brief: briefText, Needs: uniquify(append(briefNeeds(briefText), extra...)), File: path})
 	}
 	// Every brief is linted first: one failing brief refuses the whole call,
 	// nothing written, every failing file named with its findings.
 	if code := lintBriefFiles(cards, rs, c.max, stderr); code != 0 {
 		return code
+	}
+	// --sentinel <id> admits a stop after every card of the call: the sentinel
+	// sorts after the cards, and what sorts after it waits for it.
+	if sentinel != "" {
+		cards = append(cards, sprint.CardAdd{ID: sentinel, Sentinel: true})
 	}
 	if st == nil {
 		s, err := a.store(*c)
@@ -989,37 +991,69 @@ func (a *app) briefFiles(dir string, files []string, stderr io.Writer) ([]string
 	return out, 0
 }
 
-// briefNeeds is the needs a brief names: the first line that starts "Needs:",
-// its ids comma separated, each cut at an opening parenthesis. "none", "-" or
+// briefNeeds is the needs a brief names: the first `Needs:` header line (read
+// by cardhdr.KeyValue), its ids comma separated, each cut at an opening
+// parenthesis. "none" or "-" (also after the cut, so "none (first card)") or
 // no such line is no needs.
 func briefNeeds(brief string) []string {
 	for _, line := range strings.Split(brief, "\n") {
-		rest, ok := strings.CutPrefix(line, "Needs:")
-		if !ok {
+		key, value, ok := cardhdr.KeyValue(line)
+		if !ok || key != "Needs" {
 			continue
 		}
-		rest = strings.TrimSpace(rest)
-		if rest == "" || rest == "none" || rest == "-" {
-			return nil
-		}
 		var out []string
-		for _, id := range strings.Split(rest, ",") {
+		for _, id := range strings.Split(value, ",") {
 			if cut, _, ok := strings.Cut(id, "("); ok {
 				id = cut
 			}
-			if id = strings.TrimSpace(id); id != "" {
-				out = append(out, id)
+			switch id = strings.TrimSpace(id); id {
+			case "", "-", "none":
+				continue
 			}
+			out = append(out, id)
 		}
 		return out
 	}
 	return nil
 }
 
+// uniquify keeps the first of each id, in order: a need named by a brief and
+// again by --needs is stored once.
+func uniquify(ids []string) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, id := range ids {
+		if !seen[id] {
+			seen[id] = true
+			out = append(out, id)
+		}
+	}
+	return out
+}
+
+// modelLinesWhy is the refusal a brief's model lines get, the same whether the
+// brief came in as one or among many: the model lines the deal reads (line 1's
+// tier, a model: pin) are read by the one parser the deal and the frame use, so
+// a brief the deal would refuse is refused here, before it is admitted.
+func modelLinesWhy(why string) string {
+	return "the brief's model lines: " + why + "; line 1 names `tier: flash|pro|frontier`, and a pinned card carries `model: <provider>/<model>` (with `tokens: <n>|unmetered` and `deadline: <seconds>`) under it"
+}
+
+// lintBriefReads holds one brief to the card lint's child rules and to its
+// model lines: it returns the model-line why ("" when the lines read) and the
+// lint findings. The single-brief and many-brief paths both call it, so one
+// brief is held the same however it is given.
+func lintBriefReads(brief string, rules []swarm.ChildRule) (modelWhy string, findings []swarm.CardHeaderFinding) {
+	if _, why := cardhdr.ReadModel(brief); why != "" {
+		return why, nil
+	}
+	return "", swarm.LintCardChildWith([]byte(brief), rules)
+}
+
 // lintBriefFiles holds every brief of a many-brief add to the card lint's
-// child rules: one failing brief refuses the whole call, exit 2, nothing
-// written, every failing file named with its findings, at most max of them (0
-// is all) before the one MORE line.
+// child rules and its model lines: one failing brief refuses the whole call,
+// exit 2, nothing written, every failing file named with its findings, at most
+// max of them (0 is all) before the one MORE line.
 func lintBriefFiles(cards []sprint.CardAdd, rules []swarm.ChildRule, max int, stderr io.Writer) int {
 	type finding struct {
 		file string
@@ -1028,7 +1062,10 @@ func lintBriefFiles(cards []sprint.CardAdd, rules []swarm.ChildRule, max int, st
 	var all []finding
 	var failed []string
 	for _, c := range cards {
-		findings := swarm.LintCardChildWith([]byte(c.Brief), rules)
+		modelWhy, findings := lintBriefReads(c.Brief, rules)
+		if modelWhy != "" {
+			return refuse(stderr, "add", c.File+": "+modelLinesWhy(modelWhy))
+		}
 		if len(findings) == 0 {
 			continue
 		}
@@ -1085,17 +1122,15 @@ func (a *app) briefRules(file string, c *common, st **store.Store, stderr io.Wri
 	return rs, 0
 }
 
-// lintBrief holds one brief to the card lint's child rules (swarm.LintCardChildWith): the
-// findings print on stderr in the lint's own grammar, at most max of them (0 is all)
-// before a MORE line, and a brief with any is refused, exit 2.
+// lintBrief holds one brief to the card lint's child rules and its model lines
+// (lintBriefReads): the findings print on stderr in the lint's own grammar, at
+// most max of them (0 is all) before a MORE line, and a brief with any is
+// refused, exit 2.
 func lintBrief(brief string, rules []swarm.ChildRule, max int, stderr io.Writer) int {
-	// the model lines the deal reads (line 1's tier, a model: pin) are read by the
-	// one parser the deal and the frame use: a brief the deal would refuse is
-	// refused here, before it is admitted
-	if _, why := cardhdr.ReadModel(brief); why != "" {
-		return refuse(stderr, "add", "the brief's model lines: "+why+"; line 1 names `tier: flash|pro|frontier`, and a pinned card carries `model: <provider>/<model>` (with `tokens: <n>|unmetered` and `deadline: <seconds>`) under it")
+	modelWhy, findings := lintBriefReads(brief, rules)
+	if modelWhy != "" {
+		return refuse(stderr, "add", modelLinesWhy(modelWhy))
 	}
-	findings := swarm.LintCardChildWith([]byte(brief), rules)
 	if len(findings) == 0 {
 		return 0
 	}

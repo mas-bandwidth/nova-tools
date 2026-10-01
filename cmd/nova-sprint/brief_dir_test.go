@@ -211,3 +211,66 @@ func TestAddBriefDirWithNoMarkdownRefuses(t *testing.T) {
 	require.NotContains(t, out, "MOVED")
 	require.Contains(t, errs, dir)
 }
+
+// A brief whose line 1 tier is no route is refused by --brief-dir with the
+// same model-lines line a single --brief-file prints, and nothing is written.
+func TestAddBriefDirReadsTheBriefsModelLines(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	lead := "a: the work (s1) tier: ultra"
+	dir := t.TempDir()
+	bad := filepath.Join(dir, "a.md")
+	require.NoError(t, os.WriteFile(bad, []byte(needsBrief(lead, "")), 0o600))
+	before := ta.applies()
+	_, _, single := ta.do("add --stream s1 --count 1 --brief-file " + writeBrief(t, lead))
+	code, out, errs := ta.do("add --stream s1 --brief-dir " + dir)
+	require.Equal(t, 2, code)
+	require.NotContains(t, out, "MOVED")
+	require.Contains(t, errs, bad)
+	// the model-lines line the single --brief-file form prints, verbatim
+	require.Contains(t, single, "the brief's model lines: line 1 names tier ultra")
+	require.Contains(t, errs, "the brief's model lines: line 1 names tier ultra")
+	require.Equal(t, before, ta.applies(), "a refused add wrote")
+}
+
+// "Needs: none (first card)" names no needs: the text after the opening
+// parenthesis is cut, and none means none.
+func TestAddBriefDirNeedsNoneIsNoNeeds(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	dir := t.TempDir()
+	writeNeedsBrief(t, dir, "a", "Fix a.", "none (first card)")
+	ta.ok("add --stream s1 --brief-dir " + dir)
+	require.NotContains(t, ta.ok("card --fields a"), "NEEDS")
+}
+
+// A need named by the brief and again by --needs is stored once, not twice.
+func TestAddBriefDirNeedsNamedTwiceIsStoredOnce(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	ta.ok("add --stream s1 x")
+	dir := t.TempDir()
+	writeNeedsBrief(t, dir, "a", "Fix a.", "x")
+	ta.ok("add --stream s2 --brief-dir " + dir + " --needs x")
+	require.Equal(t, 1, strings.Count(ta.ok("card --fields a"), "NEEDS x"))
+}
+
+// --sentinel <id> with --brief-dir admits a stop after the cards: every card
+// of the call sorts before it, and the sentinel waits for them.
+func TestAddBriefDirSentinelStopsEveryCard(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	dir := t.TempDir()
+	writeNeedsBrief(t, dir, "a", "Fix a.", "")
+	writeNeedsBrief(t, dir, "b", "Fix b.", "")
+	out := ta.ok("add --stream s1 --brief-dir " + dir + " --sentinel gate")
+	require.Contains(t, out, "MOVED sentinel gate -> waiting")
+	fields := ta.ok("card --fields gate")
+	require.Contains(t, fields, "NEEDS a")
+	require.Contains(t, fields, "NEEDS b")
+	ta.clean()
+}
