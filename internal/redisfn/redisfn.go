@@ -248,6 +248,34 @@ func (l Library) Functions() ([]string, error) {
 	return names, nil
 }
 
+// Function is one function the library registers, as Registered reads it.
+type Function struct {
+	// Name is the name as its file spells it.
+	Name string
+	// File is the file that registers it, as the glob matched it.
+	File string
+	// NoWrites is true when its registration names the flag no-writes, so
+	// FCALL_RO may call it.
+	NoWrites bool
+}
+
+// Registered returns every function Functions names, with the file that
+// registers it and its no-writes flag, sorted by name. The flag is read from
+// the table form's flags; the string form registers no flags. Its error is
+// Source's.
+func (l Library) Registered() ([]Function, error) {
+	b, err := l.build()
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Function, 0, len(b.regs))
+	for _, r := range b.regs {
+		out = append(out, Function{Name: r.name, File: r.file, NoWrites: r.noWrites})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out, nil
+}
+
 // Locate maps a line of Source, counted from 1 as Redis counts it in
 // user_function:<n>, to the file and the line it came from. Every line of
 // Source has an origin; a line outside Source is an error, and so is a
@@ -306,6 +334,7 @@ type built struct {
 	locals  int               // the most locals the library's main function holds at once
 	files   []span            // the files, in the order of the source
 	names   map[string]string // every function name read from the files, by its lower-case spelling
+	regs    []registration    // every registration read from the files, in the order of the source
 }
 
 // span is one file's place in the source.
@@ -373,6 +402,7 @@ func (l Library) build() (*built, error) {
 			}
 			first[key] = reg
 			b.names[key] = reg.name
+			b.regs = append(b.regs, reg)
 		}
 		return nil
 	}

@@ -6,9 +6,11 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func parseDuration(s string) (time.Duration, error) { return time.ParseDuration(s) }
@@ -19,9 +21,7 @@ func TestFindJarPrefersTheFlagThenTheEnvironment(t *testing.T) {
 	flagJar := filepath.Join(dir, "flag.jar")
 	envJar := filepath.Join(dir, "env.jar")
 	for _, p := range []string{flagJar, envJar} {
-		if err := os.WriteFile(p, []byte(filepath.Base(p)), 0o644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(p, []byte(filepath.Base(p)), 0o644))
 	}
 	env := func(k string) string {
 		if k == JarEnv {
@@ -34,9 +34,7 @@ func TestFindJarPrefersTheFlagThenTheEnvironment(t *testing.T) {
 		t.Fatalf("flag: %+v, %v", got, err)
 	}
 	sum := sha256.Sum256([]byte("flag.jar"))
-	if got.SHA256 != hex.EncodeToString(sum[:]) {
-		t.Fatalf("digest %s is not the jar's", got.SHA256)
-	}
+	require.Equal(t, hex.EncodeToString(sum[:]), got.SHA256, "digest %s is not the jar's", got.SHA256)
 	got, err = FindJar("", env)
 	if err != nil || got.Path != envJar || got.Source != "env:TLC_JAR" {
 		t.Fatalf("env: %+v, %v", got, err)
@@ -47,13 +45,11 @@ func TestFindJarRefusesWhatIsNotAFile(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	none := func(string) string { return "" }
-	if _, err := FindJar("", none); err == nil || !strings.Contains(err.Error(), "neither --jar nor TLC_JAR") {
-		t.Errorf("no jar named: %v", err)
-	}
+	_, err := FindJar("", none)
+	assert.ErrorContains(t, err, "neither --jar nor TLC_JAR", "no jar named")
 	for name, path := range map[string]string{"a directory": dir, "a missing file": filepath.Join(dir, "gone.jar")} {
-		if _, err := FindJar(path, none); err == nil {
-			t.Errorf("%s was accepted", name)
-		}
+		_, err := FindJar(path, none)
+		assert.Error(t, err, "%s was accepted", name)
 	}
 }
 
@@ -61,9 +57,7 @@ func TestFindHelperUsesTheOverrideThenPATH(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 	override := filepath.Join(dir, "java")
-	if err := os.WriteFile(override, nil, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(override, nil, 0o755))
 	onPath := func(name string) (string, error) { return "/usr/bin/" + name, nil }
 	offPath := func(string) (string, error) { return "", errors.New("not found") }
 	if got, err := FindHelper("java", override, offPath); err != nil || got != override {
@@ -72,12 +66,10 @@ func TestFindHelperUsesTheOverrideThenPATH(t *testing.T) {
 	if got, err := FindHelper("java", "", onPath); err != nil || got != "/usr/bin/java" {
 		t.Errorf("PATH: %q, %v", got, err)
 	}
-	if _, err := FindHelper("java", "", offPath); err == nil || !strings.Contains(err.Error(), "java is not on PATH") {
-		t.Errorf("absent: %v", err)
-	}
-	if _, err := FindHelper("java", filepath.Join(dir, "gone"), onPath); err == nil {
-		t.Error("a missing override fell back to PATH")
-	}
+	_, err := FindHelper("java", "", offPath)
+	assert.ErrorContains(t, err, "java is not on PATH", "absent")
+	_, err = FindHelper("java", filepath.Join(dir, "gone"), onPath)
+	assert.Error(t, err, "a missing override fell back to PATH")
 }
 
 func TestJavaVersionReadsTheQuotedTokenOfTheVersionLine(t *testing.T) {
@@ -97,8 +89,7 @@ func TestJavaVersionReadsTheQuotedTokenOfTheVersionLine(t *testing.T) {
 		}
 	}
 	for _, out := range []string{"", "no version here\n", "openjdk version \"\"\n", "openjdk version \"21 x\"\n", "Picked up JAVA_TOOL_OPTIONS: -Dfoo=version \"evil\"\n", "NOTE: Picked up JDK_JAVA_OPTIONS: --version \"x\"\n", "openjdk version \"-\"\n", "openjdk version \"21,0\"\n", "java version \"x21\"\n", "openjdk version 21\nsecond \"22\"\n", "Picked up JAVA_TOOL_OPTIONS: -Xmx2g\nno version line\n", "Picked up JAVA_TOOL_OPTIONS: -Xmx2g\nopenjdk version \"\"\n"} {
-		if got, err := JavaVersion(out); err == nil {
-			t.Errorf("%q gave version %q", out, got)
-		}
+		got, err := JavaVersion(out)
+		assert.Error(t, err, "%q gave version %q", out, got)
 	}
 }
