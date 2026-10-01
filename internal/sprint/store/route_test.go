@@ -502,3 +502,30 @@ func TestAReadIsDrawnFromTheReaderTierAtTheIndexTheDealMoves(t *testing.T) {
 		})
 	}
 }
+
+// A primary in review waiting for reads while no enabled route serves the reader
+// tier is held by the tier's "no route serves the tier" judgment at once, the
+// deal's own (route.go, readRouteMissing; TickDeal), not at the unreported
+// deadline; a route of the tier closes it.
+func TestReadsTheReaderTierCannotServeAreJudgedAtOnce(t *testing.T) {
+	t.Parallel()
+	h := routeHarness(t, route("flash-a", "flash"))
+	require.NoError(t, h.st.BeatReaders(h.ctx))
+	h.addReady("s1", 1, briefOf("flash", ""))
+	h.startMachine()
+	h.machine()
+	h.work("m1")
+	h.work("m2")
+	h.machine()
+	open := h.a2Open(sprint.NNoRoute)
+	require.Len(t, open, 1, "the reader tier, pro by default, has no route")
+	assert.Equal(t, sprint.StreamSubject(sprint.TierSubject("pro")), open[0].Subject())
+	assert.Contains(t, open[0].Note.What, "reader tier")
+	assert.Contains(t, open[0].Note.Primaries, "s1-1")
+	h.machine()
+	assert.Len(t, h.a2Open(sprint.NNoRoute), 1, "written once, not every tick")
+	assert.Equal(t, 1, h.notesOf(sprint.NNoRoute))
+	h.m.SetRoutes([]sprint.Route{route("flash-a", "flash"), route("pro-a", "pro")})
+	h.machine()
+	assert.Empty(t, h.a2Open(sprint.NNoRoute), "a route of the reader tier closes it")
+}
