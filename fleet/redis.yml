@@ -11,8 +11,10 @@
 # opens no store). The store_deployer machine (the fleet's coordinator) then
 # compares them with the live ACL (`acl check`: ACL OK, DRIFT or MISSING per
 # user; --check stops there) and writes the users that differ (`acl apply`),
-# logged in as the admin user under the seat that holds its password. Passwords
-# are never set here: a user keeps the one it has.
+# logged in as the admin user under the seat that holds its password. A user
+# keeps the password it has; a user the store lacks is created with the password
+# in the seat's secret nova_redis_user_password_keys names, and refused when it
+# names none.
 - name: the rules this build renders
   hosts: localhost
   gather_facts: false
@@ -34,7 +36,8 @@
     redis_login: >-
       {{ [nova_bin_dir ~ '/nova-secrets', 'exec', '--store', nova_secrets_store, '--as', nova_seat,
           '--key', nova_secrets_key_dir ~ '/' ~ nova_seat ~ '.key', '--sops', nova_sops,
-          '--only', nova_redis_admin_password_key, '--require=' ~ nova_redis_admin_password_key, '--'] }}
+          '--only', ([nova_redis_admin_password_key] + (nova_redis_user_password_keys.values() | list)) | unique | join(','),
+          '--require=' ~ nova_redis_admin_password_key, '--'] }}
     redis_flags: [--addr, "{{ nova_redis_addr }}", --user, "{{ nova_redis_admin_user }}", --password-env, "{{ nova_redis_admin_password_key }}"]
   tasks:
     - name: the sops binary (nova_sops, else the first of nova_sops_candidates on the machine)
@@ -68,7 +71,10 @@
 
     - name: acl apply (the users that differ)
       ansible.builtin.command:
-        argv: "{{ redis_login + [nova_bin_dir ~ '/nova-redis', 'acl', 'apply'] + redis_flags }}"
+        argv: >-
+          {{ redis_login + [nova_bin_dir ~ '/nova-redis', 'acl', 'apply'] + redis_flags
+             + (nova_redis_user_password_keys | dict2items | map(attribute='key') | zip(nova_redis_user_password_keys | dict2items | map(attribute='value'))
+                | map('join', '=') | map('regex_replace', '^', '--password-env-for=') | list) }}
       register: redis_apply
       changed_when: redis_apply.stdout is search('^ACL SET ', multiline=True)
       when: redis_check.rc == 1

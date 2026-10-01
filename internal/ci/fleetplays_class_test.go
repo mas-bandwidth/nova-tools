@@ -107,6 +107,11 @@ func fleetPlayProblems(src fleetSource, groups map[string]bool) []string {
 				playVars[k] = true
 			}
 			for _, t := range fleetList(p["tasks"]) {
+				for k := range fleetMap(t["ansible.builtin.set_fact"]) {
+					playVars[k] = true
+				}
+			}
+			for _, t := range fleetList(p["tasks"]) {
 				task := fmt.Sprint(t["name"])
 				for _, bad := range []string{"ansible.builtin.shell", "ansible.builtin.script", "ansible.builtin.raw", "shell", "script", "raw"} {
 					if _, ok := t[bad]; ok {
@@ -241,7 +246,7 @@ func readFleetSource(t *testing.T, root string, invs map[string]*config.AnsibleI
 	}
 	tmpls, err := filepath.Glob(filepath.Join(root, "fleet", "templates", "nova-loop.*.j2"))
 	require.NoError(t, err)
-	require.Len(t, tmpls, 2, "one loop template per service manager")
+	require.Len(t, tmpls, 3, "launchd's plist, systemd's service and its timer")
 	for _, f := range tmpls {
 		b, err := os.ReadFile(f)
 		require.NoError(t, err)

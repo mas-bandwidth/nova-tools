@@ -27,15 +27,19 @@ type fakeACL struct {
 	setRules map[string][]string
 }
 
-func (f *fakeACL) Read(_ context.Context, users []string) (map[string]redisacl.Live, redisacl.Catalog, error) {
+func (f *fakeACL) Read(_ context.Context, users []string) (map[string]redisacl.Live, []string, redisacl.Catalog, error) {
 	if f.readErr != nil {
-		return nil, nil, f.readErr
+		return nil, nil, nil, f.readErr
 	}
 	out := map[string]redisacl.Live{}
-	for _, u := range users {
+	for _, u := range append(users, "default") {
 		out[u] = f.live[u]
 	}
-	return out, f.cat, nil
+	var all []string
+	for u := range f.live {
+		all = append(all, u)
+	}
+	return out, all, f.cat, nil
 }
 
 func (f *fakeACL) SetUser(_ context.Context, name string, rules []string) error {
@@ -70,8 +74,11 @@ func aclRun(t *testing.T, f *fakeACL, args ...string) (int, string, string) {
 	t.Helper()
 	var out, errb bytes.Buffer
 	d := deps{getenv: func(k string) string {
-		if k == "ADMIN_PW" {
+		switch k {
+		case "ADMIN_PW":
 			return "secret"
+		case "NEW_PW":
+			return "new-secret"
 		}
 		return ""
 	}}
@@ -84,6 +91,10 @@ func aclRun(t *testing.T, f *fakeACL, args ...string) (int, string, string) {
 
 var login4 = []string{"--addr", "127.0.0.1:6379", "--user", "admin", "--password-env", "ADMIN_PW"}
 
+// sourced is every rendered user's password source, for an apply that
+// creates them.
+var sourced = []string{"--password-env-for", "coordinator=NEW_PW", "--password-env-for", "bench=NEW_PW", "--password-env-for", "ns-table=NEW_PW", "--password-env-for", "ns-friend=NEW_PW"}
+
 // render opens no store and prints one pasteable line per role, then the
 // summary with this binary's library digest.
 func TestACLRenderOpensNoStore(t *testing.T) {
@@ -92,11 +103,16 @@ func TestACLRenderOpensNoStore(t *testing.T) {
 	code, out, errs := aclRun(t, f, "render")
 	require.Equal(t, 0, code, errs)
 	lines := strings.Split(strings.TrimSpace(out), "\n")
-	require.Len(t, lines, 5)
-	for i, user := range []string{"coordinator", "bench", "ns-table", "ns-friend"} {
-		assert.True(t, strings.HasPrefix(lines[i], "ACL SETUSER "+user+" on "), lines[i])
+	n := len(redisacl.Families)
+	require.Len(t, lines, n+5)
+	for i, f := range redisacl.Families {
+		assert.True(t, strings.HasPrefix(lines[i], "ACL FAMILY name="+f.Name+" keys="), lines[i])
+		assert.Contains(t, lines[i], "from=")
 	}
-	assert.Regexp(t, `^ACL RENDER OK users=4 functions=[1-9][0-9]* library=[0-9a-f]{16}$`, lines[4])
+	for i, user := range []string{"coordinator", "bench", "ns-table", "ns-friend"} {
+		assert.True(t, strings.HasPrefix(lines[n+i], "ACL SETUSER "+user+" on "), lines[n+i])
+	}
+	assert.Regexp(t, `^ACL RENDER OK users=4 functions=[1-9][0-9]* library=[0-9a-f]{16}$`, lines[n+4])
 	assert.Equal(t, 0, f.opened)
 }
 
@@ -112,14 +128,21 @@ func TestACLCheckApplyConverge(t *testing.T) {
 	assert.Contains(t, out, `remedy="nova-redis acl apply --addr 127.0.0.1:6379 --user admin --password-env ADMIN_PW sets the users that differ"`)
 	assert.Empty(t, f.set, "check wrote")
 
-	code, out, _ = aclRun(t, f, append([]string{"apply", "--dry-run"}, login4...)...)
+	code, out, _ = aclRun(t, f, append(append([]string{"apply", "--dry-run"}, login4...), sourced...)...)
 	assert.Equal(t, 0, code)
 	assert.Equal(t, 4, strings.Count(out, "ACL WOULD-SET "))
 	assert.Empty(t, f.set, "--dry-run wrote")
 
-	code, out, errs := aclRun(t, f, append([]string{"apply"}, login4...)...)
+	code, out, _ = aclRun(t, f, append([]string{"apply"}, login4...)...)
+	assert.Equal(t, 1, code)
+	assert.Contains(t, out, "ACL APPLY REFUSED users=4 missing=coordinator,bench,ns-table,ns-friend: a user the store lacks is created only with a password")
+	assert.Empty(t, f.set, "a refused apply wrote")
+
+	code, out, errs := aclRun(t, f, append(append([]string{"apply"}, login4...), sourced...)...)
 	require.Equal(t, 0, code, errs)
 	assert.Equal(t, []string{"coordinator", "bench", "ns-table", "ns-friend"}, f.set)
+	assert.Equal(t, ">new-secret", f.setRules["bench"][0], "a created user gets its password from the named variable")
+	assert.NotContains(t, out, "new-secret")
 	assert.Contains(t, out, "ACL APPLY OK users=4 set=4 saved=acl-file ")
 	assert.Equal(t, 1, f.saves)
 
@@ -136,8 +159,8 @@ func TestACLCheckApplyConverge(t *testing.T) {
 // a store with no ACL file says so.
 func TestACLApplySetsOnlyTheUsersThatDiffer(t *testing.T) {
 	t.Parallel()
-	f := &fakeACL{live: map[string]redisacl.Live{}, cat: redisacl.Catalog{}, noFile: true}
-	_, _, _ = aclRun(t, f, append([]string{"apply"}, login4...)...)
+	f := &fakeACL{live: map[string]redisacl.Live{"legacy": {Exists: true, On: true}, "default": {Exists: true, On: false}}, cat: redisacl.Catalog{}, noFile: true}
+	_, _, _ = aclRun(t, f, append(append([]string{"apply"}, login4...), sourced...)...)
 	f.set = nil
 	l := f.live["bench"]
 	l.Keys += " ~legacy:*"
@@ -145,6 +168,8 @@ func TestACLApplySetsOnlyTheUsersThatDiffer(t *testing.T) {
 	code, out, _ := aclRun(t, f, append([]string{"check"}, login4...)...)
 	assert.Equal(t, 1, code)
 	assert.Contains(t, out, "ACL DRIFT user=bench role=member keys-=~legacy:*")
+	assert.Contains(t, out, "NOTE ACL EXTRA user=legacy: no role renders it")
+	assert.Contains(t, out, "NOTE ACL DEFAULT on=false nopass=false")
 	code, out, _ = aclRun(t, f, append([]string{"apply"}, login4...)...)
 	assert.Equal(t, 0, code)
 	assert.Equal(t, []string{"bench"}, f.set)
@@ -166,6 +191,7 @@ func TestACLRefusals(t *testing.T) {
 		{"no addr", []string{"check"}, 2, "--addr is required"},
 		{"empty password", []string{"check", "--addr", "127.0.0.1:6379", "--user", "admin", "--password-env", "NOT_SET"}, 2, "NOT_SET is empty"},
 		{"render takes no addr", []string{"render", "--addr", "x:1"}, 2, "flag provided but not defined"},
+		{"bad password source", []string{"apply", "--addr", "127.0.0.1:6379", "--password-env-for", "bench"}, 2, "--password-env-for wants <user>=<VARIABLE>"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -191,6 +217,7 @@ func TestParseGetUser(t *testing.T) {
 	resp3 := map[any]any{"flags": []any{"on"}, "passwords": []any{"hash"}, "commands": "-@all +get", "keys": "~a:*", "channels": "", "selectors": []any{}}
 	resp2 := []any{"flags", []any{"off"}, "passwords", []any{}, "commands", "-@all", "keys", "", "channels", "&*", "selectors", []any{[]any{"x"}}}
 	assert.Equal(t, redisacl.Live{Exists: true, On: true, Commands: "-@all +get", Keys: "~a:*"}, parseGetUser(resp3))
+	assert.True(t, parseGetUser(map[any]any{"flags": []any{"on", "nopass"}}).NoPass)
 	assert.Equal(t, redisacl.Live{Exists: true, Commands: "-@all", Channels: "&*", Selectors: 1}, parseGetUser(resp2))
 	assert.Equal(t, redisacl.Live{}, parseGetUser(nil))
 }

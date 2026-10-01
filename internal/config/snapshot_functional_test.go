@@ -49,15 +49,16 @@ func TestSnapshotIsTheAppliedStateInTwoRoundTrips(t *testing.T) {
 		assert.Equal(t, m.Fields["user"], snap.Machines[m.Name]["user"], m.Name)
 	}
 	assert.Equal(t, &Beat{OS: "linux", Arch: "amd64", Cores: "8"}, snap.Beats[beatOf])
-	assert.Nil(t, snap.Loops, "no rev:loop: the loop kind was never applied")
+	_, applied := snap.Revs[KindLoop]
+	assert.Equal(t, applied, snap.Loops != nil, "loops are read exactly when rev:loop is stamped")
 	assert.NotZero(t, snap.Revs[KindMachine])
 
-	require.NoError(t, c.SAdd(ctx, loopsSet, "member-a").Err())
-	require.NoError(t, c.HSet(ctx, loopKey("member-a"), map[string]any{
+	require.NoError(t, c.SAdd(ctx, LoopsKey, "member-a").Err())
+	require.NoError(t, c.HSet(ctx, LoopKey("member-a"), map[string]any{
 		"name": "member-a", "machine": beatOf, "argv": `["nova-swarm","member"]`, "seat": "s", "keys": "",
 		"every": "0", "keepalive": "true", "width": "2", "enabled": "true", "log": "~/nova-bench/loops/member-a.log",
 	}).Err())
-	require.NoError(t, c.HSet(ctx, DeclKey, "rev:"+loopKind, "1").Err())
+	require.NoError(t, c.HSet(ctx, DeclKey, "rev:"+KindLoop, "1").Err())
 	snap, err = ap.Snapshot(ctx)
 	require.NoError(t, err)
 	require.Contains(t, snap.Loops, "member-a")

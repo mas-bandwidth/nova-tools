@@ -38,7 +38,7 @@ func snapshot(loops map[string]View) *Snapshot {
 		Revs:  map[string]int64{KindMachine: 3, KindFleet: 2},
 	}
 	if loops != nil {
-		s.Revs[loopKind] = 4
+		s.Revs[KindLoop] = 4
 	}
 	return s
 }
@@ -61,7 +61,7 @@ func TestBuildInventoryFromTheAppliedState(t *testing.T) {
 	assert.Equal(t, []string{"bench-beta"}, inv.Store.Hosts)
 	assert.Equal(t, []string{"bench-alpha"}, inv.Runners.Hosts)
 	assert.Equal(t, "bench-beta", inv.All.Vars["nova_store"])
-	assert.Equal(t, map[string]int64{KindMachine: 3, KindFleet: 2, loopKind: 4}, inv.All.Vars["nova_config_rev"])
+	assert.Equal(t, map[string]int64{KindMachine: 3, KindFleet: 2, KindLoop: 4}, inv.All.Vars["nova_config_rev"])
 
 	alpha, beta := inv.Meta.Hostvars["bench-alpha"], inv.Meta.Hostvars["bench-beta"]
 	assert.Equal(t, map[string]any{

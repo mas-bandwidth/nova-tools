@@ -16,11 +16,12 @@ nova_build_file: "{{ nova_home }}/.config/nova/build"
 # The PATH a loop unit runs with.
 nova_loop_path: "{{ nova_bin_dir }}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 # A darwin machine's loops are LaunchAgents in the login's GUI domain (gui) or
-# LaunchDaemons dropped to the login (system: set it in host_vars for a login
-# that is never the console user, which has no GUI domain; it needs sudo); a
-# linux machine's are systemd user units (user, with linger) or system units
-# dropped to the login (system).
-nova_launchd_domain: gui
+# LaunchDaemons dropped to the login (system, which needs sudo); auto asks
+# launchd whether the login has a GUI domain (a login that is never the
+# console user has none) and takes system when it has not. A linux machine's
+# are systemd user units (user, with linger) or system units dropped to the
+# login (system).
+nova_launchd_domain: auto
 nova_systemd_scope: user
 # Units of another tool's (com.nova.loop.<name>.plist, nova-loop-<name>.service
 # not written by loops.yml) to retire by name; every other such unit is left
@@ -45,6 +46,12 @@ nova_redis_deploy_user: coordinator
 nova_redis_deploy_password_key: NOVA_REDIS_COORDINATOR_PASSWORD
 nova_redis_admin_user: admin
 nova_redis_admin_password_key: NOVA_REDIS_ADMIN_PASSWORD
+# The secret, in the store_deployer machine's seat, that holds the password a
+# user acl apply creates gets; a user the store lacks and this map does not
+# name is refused, never created without a password.
+nova_redis_user_password_keys:
+  coordinator: NOVA_REDIS_COORDINATOR_PASSWORD
+  bench: NOVA_REDIS_BENCH_PASSWORD
 
 # The configuration store tools.yml migrates before anything reads a kind the
 # build adds: Postgres on the fleet row's store machine, as this user, its

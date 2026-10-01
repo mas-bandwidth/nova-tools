@@ -5,6 +5,10 @@
 <!-- {{ loop_dir }}/com.nova.loop.{{ l.name }}.plist: written by fleet/loops.yml from the loop record {{ l.name }} -->
 <plist version="1.0">
 <dict>
+{% if not l.enabled %}
+<key>Disabled</key>
+<true/>
+{% endif %}
 <key>Label</key>
 <string>com.nova.loop.{{ l.name | e }}</string>
 {% if loop_system %}

@@ -30,16 +30,46 @@ const (
 	Friend      = "friend"
 )
 
-// The key families the tools use: the tables and their registry
-// (internal/ntable: table:<t>... and tables), the views and theirs (view:<v>,
-// views), and the sprint's own keys (internal/sprint's Names.Key: sprint:...,
-// the epoch and every member's beat among them). TestFamiliesAreTheOwnersKeys
-// holds each to its owner's key function.
-var (
-	tablesFamily = []string{"table:*", "tables"}
-	viewsFamily  = []string{"view:*", "views"}
-	sprintFamily = []string{"sprint:*"}
-)
+// Family is one family of keys the tools use, with the code that names
+// them; render prints each with its source (ACL FAMILY lines).
+type Family struct {
+	Name     string
+	Patterns []string
+	From     string
+}
+
+// Families are the key families of the fleet store, each held to its
+// owner's key functions by TestFamiliesAreTheOwnersKeys. A key a table cell
+// is bound to (a binding may name any key outside table:) is in none of
+// them unless it falls in one: only the coordinator reads such a key.
+var Families = []Family{
+	{"tables", []string{"table:*", "tables"}, "internal/ntable DefKey, ChangesKey, RowsKeyAt, Registry"},
+	{"views", []string{"view:*", "views"}, "internal/ntable: a view's key and the views registry"},
+	{"sprint", []string{"sprint:*"}, "internal/sprint Names.Key: the epoch, the beats, the tick's keys"},
+	{"machines", []string{"machine:*", "machines"}, "internal/config MachineKey, MachineCeilingKey, MachinesKey"},
+	{"beats", []string{"bench:*"}, "internal/config BeatKey: a machine's measured facts"},
+	{"friends", []string{"friend:*", "friends", "friends:*"}, "internal/config FriendBeatKey, FriendsKey: a friend's beat, desired slots and roles"},
+	{"fleet", []string{"fleet:*"}, "internal/config FleetKey"},
+	{"loops", []string{"loops", "loop:*"}, "internal/config LoopsKey, LoopKey"},
+	{"config", []string{"config:decl"}, "internal/config DeclKey"},
+}
+
+// keys is the key rules for families by access: "rw" families as ~<pattern>,
+// "r" families as %R~<pattern>, in the order of Families.
+func keys(access map[string]string) []string {
+	var out []string
+	for _, f := range Families {
+		for _, p := range f.Patterns {
+			switch access[f.Name] {
+			case "rw":
+				out = append(out, "~"+p)
+			case "r":
+				out = append(out, "%R~"+p)
+			}
+		}
+	}
+	return out
+}
 
 // The command rules, applied in order. A writer holds the data categories
 // and loses every dangerous command and all of scripting (EVAL, SCRIPT,
@@ -75,38 +105,34 @@ type Role struct {
 	Extra []string
 }
 
-func rw(families ...[]string) []string {
-	var out []string
-	for _, f := range families {
-		for _, p := range f {
-			out = append(out, "~"+p)
-		}
-	}
-	return out
-}
-
-func ro(families ...[]string) []string {
-	var out []string
-	for _, f := range families {
-		for _, p := range f {
-			out = append(out, "%R~"+p)
-		}
-	}
-	return out
-}
-
 // Roles are the four roles, in the order they render. The users are the
 // tools' own defaults: the member's is the bench user every member loop
 // logs in as (redisauth.NoUserHint), the table reader's and the friend's the
 // ns- users the tools already name.
 func Roles() []Role {
 	member := []string{"lua/00_ping.lua", "lua/table.lua"}
+	// Every store verb lists the library before it calls it (fn.LoadMissing,
+	// the sprint store's open): FUNCTION LIST is every role's.
+	list := []string{"+function|list"}
+	read := map[string]string{"tables": "r", "views": "r", "sprint": "r", "machines": "r", "beats": "r", "friends": "r", "fleet": "r", "loops": "r", "config": "r"}
+	with := func(over map[string]string) map[string]string {
+		out := map[string]string{}
+		for k, v := range read {
+			out[k] = v
+		}
+		for k, v := range over {
+			out[k] = v
+		}
+		return out
+	}
 	return []Role{
 		{Name: Coordinator, User: "coordinator", Keys: []string{"~*"}, Commands: writerCommands, All: true,
 			Extra: []string{"+function|load", "+function|list"}},
-		{Name: Member, User: "bench", Keys: rw(tablesFamily, viewsFamily, sprintFamily), Commands: writerCommands, Files: member},
-		{Name: Table, User: "ns-table", Keys: ro(tablesFamily, viewsFamily, sprintFamily), Commands: readerCommands, Files: []string{"lua/table.lua"}, ReadOnly: true},
-		{Name: Friend, User: "ns-friend", Keys: rw(tablesFamily, viewsFamily, sprintFamily), Commands: writerCommands, Files: member},
+		{Name: Member, User: "bench", Keys: keys(with(map[string]string{"tables": "rw", "views": "rw", "sprint": "rw", "beats": "rw"})),
+			Commands: writerCommands, Files: member, Extra: list},
+		{Name: Table, User: "ns-table", Keys: keys(read), Commands: readerCommands, Files: []string{"lua/table.lua"}, ReadOnly: true, Extra: list},
+		{Name: Friend, User: "ns-friend", Keys: keys(with(map[string]string{"tables": "rw", "views": "rw", "sprint": "rw", "friends": "rw"})),
+			Commands: writerCommands, Files: member, Extra: list},
 	}
 }
 
@@ -172,6 +198,8 @@ func Render(lib redisfn.Library) ([]User, error) {
 type Live struct {
 	Exists bool
 	On     bool
+	// NoPass is the nopass flag: the user logs in with any password.
+	NoPass bool
 	// Keys, Channels and Commands are the reply's fields as the store
 	// prints them; Selectors counts the user's selectors.
 	Keys, Channels, Commands string

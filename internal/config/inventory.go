@@ -13,25 +13,14 @@ import (
 
 // The inventory is the applied state, read from Redis: the machine rows
 // apply wrote (machines, machine:<m>, machine:<m>:ceiling), the fleet row
-// (fleet:store, fleet:coordinator), the loop rows (loops, loop:<name>), each
+// (fleet:store, fleet:coordinator), the loop rows (LoopsKey, LoopKey), each
 // machine's measured facts (BeatKey) and config:decl's revisions. It reads
 // no Postgres: what the plays converge a fleet to is what apply put where the
 // running tools read it (docs/SPEC-CONFIG.md, "Declared and measured";
-// docs/FLEET.md).
-//
-// The loop kind's Redis view: the set loopsSet holds the names, the hash
-// loopKey(<name>) the fields name, machine, argv, seat, keys, every,
-// keepalive, width, enabled, log, rev and at. The loop kind's apply writes
-// it; config:decl's rev:loop is present once it has run, and only then does
-// the inventory carry nova_loops (a fleet whose loops were never applied is
-// not a fleet with no loops).
-const (
-	loopsSet  = "loops"
-	loopKind  = "loop"
-	loopField = "nova_loops"
-)
-
-func loopKey(name string) string { return "loop:" + name }
+// docs/FLEET.md). config:decl's rev:loop is present once the loop kind's
+// apply has run, and only then does the inventory carry nova_loops (a fleet
+// whose loops were never applied is not a fleet with no loops).
+const loopField = "nova_loops"
 
 // Snapshot is the applied state the inventory is built from: one read of
 // the Redis view (RedisApplier.Snapshot), or a fixture file (LoadFixture).
@@ -216,6 +205,10 @@ func parseLoop(name string, v View) (InventoryLoop, error) {
 	bad := func(field, why string) (InventoryLoop, error) {
 		return InventoryLoop{}, fmt.Errorf("loop %s: %s %q %s; run: nova-config loop show %s", name, field, v[field], why, name)
 	}
+	// The name becomes a unit's file name and label: only a row name passes.
+	if !NamePattern.MatchString(name) {
+		return InventoryLoop{}, fmt.Errorf("loop %q is not a row name (lower-case letters, digits and dashes); run: nova-config loop list", name)
+	}
 	l := InventoryLoop{Name: name, Seat: v["seat"], Log: v["log"], Keys: []string{}}
 	if l.Log == "" {
 		return bad("log", "is empty; the loop kind's apply writes it")
@@ -334,10 +327,6 @@ type fixture struct {
 	} `yaml:"loops"`
 }
 
-// fixtureLoopLog is the log a fixture's loop carries: the path the loop
-// kind's apply derives from the name.
-func fixtureLoopLog(name string) string { return "~/nova-bench/loops/" + name + ".log" }
-
 // MaxFixtureBytes bounds a fixture file, read whole before it is parsed.
 const MaxFixtureBytes = 1 << 20
 
@@ -376,7 +365,7 @@ func LoadFixture(path string) (*Snapshot, error) {
 	snap.Revs[KindMachine], snap.Revs[KindFleet] = 1, 1
 	if f.Loops != nil {
 		snap.Loops = map[string]View{}
-		snap.Revs[loopKind] = 1
+		snap.Revs[KindLoop] = 1
 		for n, l := range *f.Loops {
 			argv, err := json.Marshal(l.Argv)
 			if err != nil {
@@ -389,7 +378,7 @@ func LoadFixture(path string) (*Snapshot, error) {
 				"name": n, "machine": l.Machine, "argv": string(argv), "seat": l.Seat,
 				"keys": strings.Join(keys, ","), "every": strconv.Itoa(l.Every),
 				"keepalive": strconv.FormatBool(l.Keepalive), "width": strconv.Itoa(l.Width),
-				"enabled": strconv.FormatBool(enabled), "log": fixtureLoopLog(n),
+				"enabled": strconv.FormatBool(enabled), "log": LoopLog(n),
 			}
 		}
 	}

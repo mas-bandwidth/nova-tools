@@ -31,8 +31,11 @@ func TestACLVerbsOnARedisServer(t *testing.T) {
 	addr := testredis.Start(t, "--requirepass", pw)
 	d := realDeps()
 	d.getenv = func(k string) string {
-		if k == PasswordEnv {
+		switch k {
+		case PasswordEnv:
 			return pw
+		case "SEAT_PW":
+			return "seat-pw"
 		}
 		return ""
 	}
@@ -51,17 +54,24 @@ func TestACLVerbsOnARedisServer(t *testing.T) {
 	require.Equal(t, 1, code, out)
 	assert.Equal(t, 4, strings.Count(out, "ACL MISSING "), out)
 	code, out = acl("apply")
+	require.Equal(t, 1, code, out)
+	assert.Contains(t, out, "ACL APPLY REFUSED users=4 missing=coordinator,bench,ns-table,ns-friend")
+	sources := []string{"apply"}
+	for _, u := range []string{"coordinator", "bench", "ns-table", "ns-friend"} {
+		sources = append(sources, "--password-env-for", u+"=SEAT_PW")
+	}
+	code, out = acl(sources...)
 	require.Equal(t, 0, code, out)
 	assert.Contains(t, out, "ACL APPLY OK users=4 set=4 saved=no-acl-file")
+	assert.NotContains(t, out, "seat-pw")
+	assert.Contains(t, out, "NOTE ACL DEFAULT on=true nopass=false")
 	code, out = acl("check")
 	require.Equal(t, 0, code, out)
 	assert.Equal(t, 4, strings.Count(out, "ACL OK "), out)
 
-	// The tools' users get their seats' passwords by hand here; the plays
-	// never set one.
+	// Each user logs in with the password apply created it with.
 	as := func(user string) *redis.Client {
-		require.NoError(t, admin.Do(ctx, "ACL", "SETUSER", user, ">"+user+"-pw").Err())
-		c := redis.NewClient(&redis.Options{Addr: addr, Username: user, Password: user + "-pw"})
+		c := redis.NewClient(&redis.Options{Addr: addr, Username: user, Password: "seat-pw"})
 		t.Cleanup(func() { _ = c.Close() })
 		return c
 	}

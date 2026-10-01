@@ -1,16 +1,23 @@
 {# fleet/loops.yml renders this for one loop record l on a linux machine:
    every value is the record's (l) or the host layout's (group_vars/all.yml).
    A word of ExecStart is double-quoted, with systemd's specifiers (%) and
-   variables ($) doubled so the record's text reaches the program as written. #}
+   variables ($) doubled so the record's text reaches the program as written.
+   A kept-alive loop is this service, restarted whenever it ends; a loop that
+   runs every n seconds is a oneshot started by nova-loop-<name>.timer. #}
 # {{ loop_dir }}/nova-loop-{{ l.name }}.service: written by fleet/loops.yml from the loop record {{ l.name }}
 [Unit]
 Description=nova loop {{ l.name }}
 After=network-online.target
-# A loop restarts however often it ends; the record decides how soon.
 StartLimitIntervalSec=0
 
 [Service]
+{% if l.keepalive %}
 Type=simple
+Restart=always
+RestartSec=10
+{% else %}
+Type=oneshot
+{% endif %}
 {% if loop_system %}
 User={{ ansible_user_id }}
 {% endif %}
@@ -19,16 +26,10 @@ Environment="HOME={{ nova_home }}"
 Environment="PATH={{ nova_loop_path }}"
 ExecStart={% for w in loop_exec %}"{{ w | replace('\\', '\\\\') | replace('"', '\\"') | replace('%', '%%') | replace('$', '$$') }}"{{ ' ' if not loop.last else '' }}{% endfor %}
 
-{% if l.keepalive %}
-Restart=always
-RestartSec=10
-{% else %}
-# A periodic loop runs once and exits; systemd starts it again {{ l.every }} s later.
-Restart=always
-RestartSec={{ l.every }}
-{% endif %}
 StandardOutput=append:{{ loop_log }}
 StandardError=append:{{ loop_log }}
+{% if l.keepalive %}
 
 [Install]
 WantedBy={{ 'multi-user.target' if loop_system else 'default.target' }}
+{% endif %}

@@ -78,18 +78,35 @@ func TestFleetPlaysPassSyntaxAndCheckOnTheFixture(t *testing.T) {
 		assert.Contains(t, redis, "ACL SETUSER "+u+" on ")
 	}
 
+	// Three units already in the place: one this play wrote whose record is
+	// gone (retired), one of another tool's (left, with a NOTE), and one of
+	// another tool's that a record now names (taken over, not retired).
+	units := filepath.Join(home, ".config", "systemd", "user")
+	require.NoError(t, os.MkdirAll(units, 0o755))
+	for name, text := range map[string]string{
+		"nova-loop-old.service":          "# written by fleet/loops.yml from the loop record old\n[Service]\n",
+		"nova-loop-mirror.service":       "[Service]\nExecStart=/bin/true\n",
+		"nova-loop-member-local.service": "[Service]\nExecStart=/bin/true\n",
+	} {
+		require.NoError(t, os.WriteFile(filepath.Join(units, name), []byte(text), 0o644))
+	}
 	loops := play("loops.yml", append(check, "-e", "ansible_system=Linux")...)
 	for _, w := range []string{
 		`ExecStart="` + home + `/.local/bin/nova-secrets" "exec" "--store" "` + home + `/nova-bench/secrets" "--as" "seat-local"`,
 		`"--only" "API_KEY" "--require=API_KEY" "--" "` + home + `/.local/bin/nova-swarm" "member"`,
 		`ExecStart="` + home + `/bin/tick" "--once" "50%%"`,
-		"RestartSec=30",
+		"Type=oneshot",
+		"OnUnitActiveSec=30",
 		"StandardOutput=append:" + home + "/nova-bench/loops/member-local.log",
-		"LOOPS host=localhost records=2 enabled=1 written=2 retired=0 (check: nothing changed)",
+		"WOULD-RETIRE old on localhost (" + filepath.Join(units, "nova-loop-old.service") + ")",
+		"NOTE localhost " + filepath.Join(units, "nova-loop-mirror.service") + ": not written by this play",
+		"retired=1 (check: nothing changed)",
 	} {
 		assert.Contains(t, loops, w)
 	}
-	plist := play("loops.yml", append(check, "-e", "ansible_system=Darwin")...)
+	assert.NotContains(t, loops, "WOULD-RETIRE member-local")
+	assert.NotContains(t, loops, `\u0001`)
+	plist := play("loops.yml", append(check, "-e", "ansible_system=Darwin", "-e", "nova_launchd_domain=gui")...)
 	for _, w := range []string{
 		"<string>com.nova.loop.member-local</string>",
 		"<string>" + home + "/.local/bin/nova-secrets</string>",
@@ -98,10 +115,13 @@ func TestFleetPlaysPassSyntaxAndCheckOnTheFixture(t *testing.T) {
 		"<integer>30</integer>",
 		"<key>KeepAlive</key>",
 		"<string>50%</string>",
+		"<key>Disabled</key>",
 	} {
 		assert.Contains(t, plist, w)
 	}
-	_, err = os.Stat(filepath.Join(home, ".config"))
-	assert.True(t, os.IsNotExist(err), "--check wrote under the home")
+	_, err = os.Stat(filepath.Join(home, ".config", "nova"))
+	assert.True(t, os.IsNotExist(err), "--check wrote the build fact")
+	_, err = os.Stat(filepath.Join(units, "nova-loop-old.service"))
+	assert.NoError(t, err, "--check removed a unit")
 	assert.False(t, strings.Contains(loops+plist, "FAILED!"), "a task failed")
 }

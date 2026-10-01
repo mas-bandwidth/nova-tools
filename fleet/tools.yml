@@ -79,6 +79,14 @@
       # ignored: a machine never installed by this play has no fact file; the receipt says was=none
       failed_when: false
 
+    - name: the build installed now (what --check compares)
+      ansible.builtin.command: "{{ nova_bin_dir }}/nova-update version"
+      register: tools_now
+      changed_when: false
+      # ignored: a machine with no nova-update has no build; the receipt says WOULD-INSTALL
+      failed_when: false
+      check_mode: false
+
     - name: the release directory
       ansible.builtin.file: { path: "{{ tools_stage }}", state: directory, mode: "0755" }
 
@@ -125,7 +133,8 @@
         msg: >-
           TOOLS host={{ inventory_hostname }} platform={{ nova_platform }} version={{ nova_version }}
           was={{ (tools_was.content | default('') | b64decode | trim) or 'none' }} removed={{ tools_retire | length }}
-          {{ 'WOULD-INSTALL' if ansible_check_mode else (tools_install.stdout | default('')) }}
+          {{ (('UP-TO-DATE' if nova_version in (tools_now.stdout | default('')).split() else 'WOULD-INSTALL') if ansible_check_mode
+              else (tools_install.stdout | default(''))) }}
 
 - name: the build's schema and function library on the store
   hosts: store_deployer

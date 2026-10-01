@@ -507,7 +507,7 @@ func machineView(reg map[string]string, ceiling string) View {
 func (a *RedisApplier) Snapshot(ctx context.Context) (*Snapshot, error) {
 	pipe := a.Client.Pipeline()
 	machines := pipe.SMembers(ctx, MachinesKey)
-	loops := pipe.SMembers(ctx, loopsSet)
+	loops := pipe.SMembers(ctx, LoopsKey)
 	store := pipe.Get(ctx, FleetKey("store"))
 	coord := pipe.Get(ctx, FleetKey("coordinator"))
 	decl := pipe.HGetAll(ctx, DeclKey)
@@ -535,7 +535,7 @@ func (a *RedisApplier) Snapshot(ctx context.Context) (*Snapshot, error) {
 	}
 	lv := make([]*redis.MapStringStringCmd, len(lnames))
 	for i, n := range lnames {
-		lv[i] = pipe.HGetAll(ctx, loopKey(n))
+		lv[i] = pipe.HGetAll(ctx, LoopKey(n))
 	}
 	if len(mnames)+len(lnames) > 0 {
 		if err := redisconn.Exec(ctx, pipe); err != nil {
@@ -548,7 +548,7 @@ func (a *RedisApplier) Snapshot(ctx context.Context) (*Snapshot, error) {
 			snap.Beats[m] = &Beat{OS: h["os"], Arch: h["arch"], Cores: h["ncpu"], MemoryGB: h["memory_gb"]}
 		}
 	}
-	if _, applied := snap.Revs[loopKind]; applied {
+	if _, applied := snap.Revs[KindLoop]; applied {
 		snap.Loops = make(map[string]View, len(lnames))
 		for i, n := range lnames {
 			snap.Loops[n] = View(lv[i].Val())

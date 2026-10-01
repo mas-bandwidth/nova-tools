@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mas-bandwidth/nova-tools/internal/config"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/redisfn"
@@ -51,10 +52,10 @@ func TestRenderGrantsEachRoleItsFilesFunctions(t *testing.T) {
 		has, lacks []string
 	}{
 		{Coordinator, []string{"~*", "+fcall|ns_capacity_machine", "+fcall|ns_friend_roles", "+fcall|ns_table_set", "+fcall_ro|ns_table_read", "+function|load"}, nil},
-		{Member, []string{"~table:*", "~sprint:*", "+fcall|ns_ping", "+fcall|ns_table_set", "+fcall|ns_table_read", "+fcall_ro|ns_table_read"},
+		{Member, []string{"~table:*", "~sprint:*", "~bench:*", "%R~machine:*", "%R~loop:*", "%R~config:decl", "+function|list", "+fcall|ns_ping", "+fcall|ns_table_set", "+fcall|ns_table_read", "+fcall_ro|ns_table_read"},
 			[]string{"~*", "+fcall|ns_capacity_machine", "+function|load"}},
-		{Friend, []string{"~view:*", "+fcall|ns_table_set"}, []string{"+fcall|ns_friend_roles", "+function|load"}},
-		{Table, []string{"%R~table:*", "%R~sprint:*", "+fcall_ro|ns_table_read"},
+		{Friend, []string{"~view:*", "~friend:*", "%R~bench:*", "+function|list", "+fcall|ns_table_set"}, []string{"+fcall|ns_friend_roles", "+function|load", "~bench:*"}},
+		{Table, []string{"%R~table:*", "%R~sprint:*", "%R~bench:*", "+function|list", "+fcall_ro|ns_table_read"},
 			[]string{"~table:*", "+fcall|ns_table_set", "+fcall|ns_table_read", "+@write", "+fcall|ns_ping"}},
 	}
 	for _, tc := range cases {
@@ -138,14 +139,24 @@ func TestFamiliesAreTheOwnersKeys(t *testing.T) {
 		return false
 	}
 	names := sprint.Names{}
-	for _, k := range []string{ntable.DefKey("work"), ntable.ChangesKey("work"), ntable.RowsKeyAt("work", 3), ntable.Registry} {
-		assert.True(t, match(tablesFamily, k), k)
+	family := map[string][]string{}
+	for _, f := range Families {
+		family[f.Name] = f.Patterns
 	}
-	for _, k := range []string{"view:sprint", "views"} {
-		assert.True(t, match(viewsFamily, k), k)
-	}
-	for _, k := range []string{names.EpochKey(), names.Key("beat:bench-a"), names.KeyAt("tick", 2)} {
-		assert.True(t, match(sprintFamily, k), k)
+	for name, ks := range map[string][]string{
+		"tables":   {ntable.DefKey("work"), ntable.ChangesKey("work"), ntable.RowsKeyAt("work", 3), ntable.Registry},
+		"views":    {"view:sprint", "views"},
+		"sprint":   {names.EpochKey(), names.Key("beat:bench-a"), names.KeyAt("tick", 2)},
+		"machines": {config.MachineKey("m"), config.MachineCeilingKey("m"), config.MachinesKey},
+		"beats":    {config.BeatKey("m")},
+		"friends":  {config.FriendBeatKey("f"), config.FriendsKey, "friend:f:roles", "friend:f:desired"},
+		"fleet":    {config.FleetKey("store"), config.FleetKey("coordinator")},
+		"loops":    {config.LoopsKey, config.LoopKey("member-a")},
+		"config":   {config.DeclKey},
+	} {
+		for _, k := range ks {
+			assert.True(t, match(family[name], k), "%s: %s", name, k)
+		}
 	}
 }
 
