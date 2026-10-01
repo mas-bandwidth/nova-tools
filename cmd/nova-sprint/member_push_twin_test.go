@@ -107,10 +107,11 @@ func twinMemberFlow(t *testing.T, pu *twinPusher) (file, branch, out string) {
 }
 
 // The member's push on the twin: the finish records the pushed sha as the
-// card's head and the work branch as its branch, and the merge queue the
-// landing reads carries that head, so the coordinator finds the commit on
-// origin's branch from any machine.
-func TestTheMembersPushIsWhatTheMergeQueueCarries(t *testing.T) {
+// card's head and the work branch as its branch; once read and queued, the
+// merge queue lists the primary and its card (what the landing reads) names
+// that head and branch, so the coordinator finds the commit on origin's
+// branch from any machine.
+func TestTheMembersPushIsWhatTheLandingReads(t *testing.T) {
 	t.Parallel()
 	const sha = "0123456789abcdef0123456789abcdef01234567"
 	file, branch, out := twinMemberFlow(t, &twinPusher{push: member.Push{Sha: sha}})
@@ -137,12 +138,20 @@ func TestTheMembersPushIsWhatTheMergeQueueCarries(t *testing.T) {
 	require.Equal(t, 0, code, e)
 	var got struct {
 		Cards []struct {
-			ID, Head string
+			ID, Col string
 		} `json:"cards"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(q), &got), q)
 	require.Len(t, got.Cards, 1, q)
-	assert.Equal(t, sha, got.Cards[0].Head, "the merge queue carries the pushed head")
+	assert.Equal(t, "s1-1", got.Cards[0].ID, "the merge queue lists the primary")
+	// the landing reads the queued primary's card: its head is the pushed sha
+	// and its branch the one origin holds it on
+	code, story, e = twinProcess(t, file, "nova-sprint card s1-1")
+	require.Equal(t, 0, code, e)
+	first, _, _ := strings.Cut(story, "\n")
+	assert.Contains(t, first, "merging")
+	assert.Contains(t, first, "head "+sha)
+	assert.Contains(t, first, "branch "+branch)
 }
 
 // A push the member could not make is a failed finish on the twin: the card
