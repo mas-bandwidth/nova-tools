@@ -597,8 +597,11 @@ func (a *app) report(ctx context.Context, verbName string, c common, st *store.S
 	var pe *store.PendingError
 	var cut *store.CutError
 	var cleared *store.ClearedError
+	var synced *store.SyncError
 	switch {
 	case err == nil:
+	case errors.As(err, &synced):
+		// the write committed: the cards are in the table, and the report says so
 	case errors.Is(err, store.ErrUnknown):
 		code = 2
 	case errors.As(err, &pe), errors.As(err, &cut), errors.As(err, &cleared):
@@ -651,7 +654,7 @@ func (a *app) report(ctx context.Context, verbName string, c common, st *store.S
 	if res.Pending != "" {
 		fields += " pending=" + oneline.Escape(res.Pending)
 	}
-	if err != nil {
+	if err != nil && synced == nil {
 		changed := "no"
 		if errors.Is(err, store.ErrUnknown) {
 			changed = "unknown"
@@ -935,15 +938,15 @@ func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, se
 	for _, path := range files {
 		id := strings.TrimSuffix(filepath.Base(path), ".md")
 		if !sprint.ValidID(id) {
-			return refuse(stderr, "add", fmt.Sprintf("%s: the card id is the file's base name without .md, and %q is not one (letters, digits, _ and -)", path, id))
+			return refuseFile(stderr, path, fmt.Sprintf("the card id is the file's base name without .md, and %q is not one (letters, digits, _ and -)", id))
 		}
 		text, err := readTextFile(path, briefReadCap)
 		if err != nil {
-			return refuse(stderr, "add", fmt.Sprintf("%s: %v", path, err))
+			return refuseFile(stderr, path, err.Error())
 		}
 		briefText := strings.TrimSuffix(text, "\n")
 		if len(briefText) > store.MaxBriefBytes {
-			return refuse(stderr, "add", fmt.Sprintf("%s: the brief is %d bytes, over the %d bytes a brief may be; a brief is a child's whole brief; shorten it", path, len(briefText), store.MaxBriefBytes))
+			return refuseFile(stderr, path, fmt.Sprintf("the brief is %d bytes, over the %d bytes a brief may be; a brief is a child's whole brief; shorten it", len(briefText), store.MaxBriefBytes))
 		}
 		cards = append(cards, sprint.CardAdd{ID: id, Brief: briefText, Needs: uniquify(append(briefNeeds(briefText), extra...)), File: path})
 	}
@@ -972,7 +975,39 @@ func (a *app) cmdAddMany(stream, needs, briefDir string, briefFiles []string, se
 		}
 		r.Score = &f
 	}
-	return a.runStep("add", *c, st, store.AddStep(r), stdout, stderr)
+	return a.runAddMany(*c, st, store.AddStep(r), cards, stdout, stderr)
+}
+
+// runAddMany runs the many-brief add's one step. The store applies the cards
+// all or none: a card it refuses refuses the call, and the result line is one
+// ADD REFUSED line per refused card, naming its file, never a FAIL.
+func (a *app) runAddMany(c common, st *store.Store, step store.Step, cards []sprint.CardAdd, stdout, stderr io.Writer) int {
+	step.CallerOp = c.op
+	if c.epoch >= 0 {
+		e := uint64(c.epoch)
+		step.Epoch = &e
+	}
+	res, err := st.Run(context.Background(), step)
+	if err != nil || len(res.Refused) == 0 || c.json {
+		return a.report(context.Background(), "add", c, st, res, err, stdout, stderr)
+	}
+	files := map[string]string{}
+	for _, card := range cards {
+		files[card.ID] = card.File
+	}
+	for i, r := range res.Refused {
+		if c.max > 0 && i == c.max {
+			fmt.Fprintf(stderr, "MORE kind=refused shown=%d total=%d run: nova-sprint add ... --max 0\n", c.max, len(res.Refused))
+			break
+		}
+		file := files[r.Key]
+		if file == "" {
+			file = r.Key
+		}
+		why := strings.TrimPrefix(r.Why, file+": ")
+		refuseFile(stderr, file, why)
+	}
+	return 1
 }
 
 // briefFiles is the brief files of a many-brief add, in order: the *.md files
@@ -1069,15 +1104,17 @@ func lintBriefFiles(cards []sprint.CardAdd, rules []swarm.ChildRule, max int, st
 	}
 	var all []finding
 	var failed []string
+	count := map[string]int{}
 	for _, c := range cards {
 		modelWhy, findings := lintBriefReads(c.Brief, rules)
 		if modelWhy != "" {
-			return refuse(stderr, "add", c.File+": "+modelLinesWhy(modelWhy))
+			return refuseFile(stderr, c.File, modelLinesWhy(modelWhy))
 		}
 		if len(findings) == 0 {
 			continue
 		}
 		failed = append(failed, c.File)
+		count[c.File] = len(findings)
 		for _, f := range findings {
 			all = append(all, finding{c.File, f})
 		}
@@ -1096,7 +1133,20 @@ func lintBriefFiles(cards []sprint.CardAdd, rules []swarm.ChildRule, max int, st
 	if more {
 		fmt.Fprintf(stderr, "LINT MORE brief findings=%d remedy=add --max 0\n", len(all))
 	}
-	return refuse(stderr, "add", fmt.Sprintf("the brief of %s fails the card lint (%d findings); a brief is a child's whole brief and carries every rule of its rule set (--rules, else the file init --rules recorded, else the general rules); run: nova-swarm template --name card", strings.Join(failed, ", "), len(all)))
+	for _, f := range failed {
+		refuseFile(stderr, f, fmt.Sprintf("the brief fails the card lint (%d findings, listed above); a brief is a child's whole brief and carries every rule of its rule set (--rules, else the file init --rules recorded, else the general rules); run: nova-swarm template --name card", count[f]))
+	}
+	return 2
+}
+
+// refuseFile is the result line of a many-brief add refused whole on one
+// brief file: nothing was written, and the line names the file and why.
+func refuseFile(stderr io.Writer, file, why string) int {
+	if !strings.Contains(why, "; run: ") {
+		why += "; run: nova-sprint add -h"
+	}
+	fmt.Fprintf(stderr, "ADD REFUSED %s: %s\n", oneline.Escape(file), oneline.Escape(why))
+	return 2
 }
 
 // briefRules is the rule set an add holds its brief to: the file --rules names, else the

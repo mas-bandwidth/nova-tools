@@ -254,6 +254,17 @@ func (e *CutError) Error() string {
 
 func (e *CutError) Unwrap() error { return e.Cause }
 
+// SyncError is a step whose write committed and whose display cells then did
+// not sync: the step's cards are in the table, so it is not a failed step; the
+// error says what the sync met.
+type SyncError struct{ Cause error }
+
+func (e *SyncError) Error() string {
+	return fmt.Sprintf("the step's write committed, and the display cells did not sync: %v; run: nova-sprint check", e.Cause)
+}
+
+func (e *SyncError) Unwrap() error { return e.Cause }
+
 func (st *Store) attempts() int {
 	if st.Attempts > 0 {
 		return st.Attempts
@@ -792,7 +803,7 @@ func (st *Store) after(ctx context.Context, step Step, res Result) (Result, erro
 		// work added to a done sprint: the machine stays STOPPED, no longer
 		// done (errata 3 amendment 6)
 		if err := st.undone(ctx); err != nil {
-			return res, err
+			return res, &SyncError{Cause: err}
 		}
 	}
 	if step.Mirrors {
@@ -800,7 +811,7 @@ func (st *Store) after(ctx context.Context, step Step, res Result) (Result, erro
 			if es, left, lerr := st.left(ctx); lerr == nil && left {
 				return res, &ClearedError{Held: st.epoch, Now: es.N, At: es.Cleared, Finished: true}
 			}
-			return res, err
+			return res, &SyncError{Cause: err}
 		}
 	}
 	return res, nil

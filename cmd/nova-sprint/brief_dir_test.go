@@ -118,7 +118,7 @@ func TestAddBriefDirExistingIDRefusesAll(t *testing.T) {
 	code, out, errs := ta.do("add --stream s1 --brief-dir " + dir)
 	require.Equal(t, 1, code)
 	require.NotContains(t, out, "MOVED")
-	require.Contains(t, errs, "b: exists already")
+	require.Contains(t, errs, "ADD REFUSED "+filepath.Join(dir, "b.md")+": exists already")
 	require.Equal(t, before, ta.applies(), "a refused add wrote")
 	var w whereView
 	ta.json("where", &w)
