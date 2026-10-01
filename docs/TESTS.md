@@ -691,7 +691,7 @@ CONFIG KIND name=fleet table=config.fleet fields=store,coordinator required=- ro
 CONFIG KIND name=friend table=config.friends fields=slots,tiers,roles required=slots,tiers rows=many
 CONFIG KIND name=sprint table=config.sprint fields=coordinator required=- rows=one
 CONFIG KIND name=loop table=config.loops fields=machine,argv,seat,keys,every,keepalive,width,enabled required=machine,argv rows=many
-CONFIG KIND name=route table=config.routes fields=tier,provider,model,tokens,deadline,enabled required=tier,provider,model,deadline rows=many
+CONFIG KIND name=route table=config.routes fields=tier,provider,model,tokens,deadline,enabled,price_input,price_cache_read,price_cache_write,price_output,reasoning_as_output,long_context,price_input_long,price_output_long,price_request,billing,gateway_percent,price_source,price_as_of required=tier,provider,model,deadline rows=many
 CONFIG KIND name=tier table=config.tiers fields=routes required=- rows=many
 CONFIG KINDS count=7
 
@@ -704,7 +704,8 @@ MIGRATION version=5 file=0005_sprint.sql lines=12
 MIGRATION version=6 file=0006_loop.sql lines=27
 MIGRATION version=7 file=0007_route.sql lines=24
 MIGRATION version=8 file=0008_tier.sql lines=18
-CONFIG MIGRATE print=8 pg=-
+MIGRATION version=9 file=0009_route_prices.sql lines=23
+CONFIG MIGRATE print=9 pg=-
 
 $ nova-config machine add -h
 usage: nova-config machine add [flags]
