@@ -380,11 +380,25 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 				continue
 			}
 			if !r.Ran || (r.Verdict != "ok" && r.Verdict != "broken") {
-				// no verdict is no finding: the read stays reading for the
-				// sprint's lateness rule to re-ask; the child is let go
-				fmt.Fprintf(m.out, "read %s: no verdict (ran=%t verdict=%q); left for the sprint to re-ask\n", id, r.Ran, r.Verdict)
-				l.spent = true
-				m.running[id] = l
+				// no verdict is no finding: the read is returned, so the
+				// sprint's next tick asks it of another reader up, before
+				// this reader takes its next read (docs/SPEC-SPRINT.md
+				// section 6; tla/DirtyTick.tla, ReadReturn). A return refused
+				// leaves the launch spent: the read stays for the lateness rule.
+				reason := cut(fmt.Sprintf("no verdict (ran=%t verdict=%q): %s", r.Ran, r.Verdict, oneLine(r.Report)))
+				args := append([]string{"read", "--as", m.cfg.As, "--return", id, "--reason", reason}, launched...)
+				code, out := m.sprint.Run(args...)
+				fmt.Fprintf(m.out, "read %s: returned exit=%d: %s\n", id, code, reason)
+				if code == 2 {
+					return acted, fmt.Errorf("read --return %s: the store did not answer: %s", id, strings.TrimSpace(string(out)))
+				}
+				if code != 0 {
+					l.spent = true
+					m.running[id] = l
+					continue
+				}
+				delete(m.running, id)
+				acted++
 				continue
 			}
 			word := "--ok"

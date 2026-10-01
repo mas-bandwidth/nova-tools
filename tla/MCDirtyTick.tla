@@ -29,7 +29,7 @@ Queues(w, r, g, f) == [t \in Tables |-> CASE t = "work" -> w [] t = "readers" ->
 NoReads == [c \in Cards |-> NoR]
 Empty == [m \in Machines |-> {}]
 Base == [col |-> [c \in Cards |-> "none"], rd |-> NoReads, mq |-> {}, up |-> Machines \cup Readers,
-         live |-> Machines \cup Readers, away |-> FALSE,
+         live |-> Machines \cup Readers, away |-> FALSE, hand |-> FALSE,
          mc |-> Empty, mr |-> Empty, q |-> Queues(Adds, <<>>, <<>>, <<>>), served |-> Cards]
 
 \* Every card added (its add queued), every machine up: the whole life.
@@ -85,6 +85,13 @@ ScnReaderAway == [Base EXCEPT !.col = [c \in Cards |-> "review"], !.away = TRUE,
                               !.rd = [c \in Cards |-> "r1"],
                               !.mr = [m \in Machines |-> IF m = "m1" THEN {"c1"} ELSE {}],
                               !.q = Queues(<<>>, <<>>, <<>>, <<>>)]
+
+\* THE RETURN. c1 in review, its read on r1 (host m1): r1 may return it, and
+\* it is asked of r2.
+ScnHandBack == [Base EXCEPT !.col = [c \in Cards |-> "review"], !.hand = TRUE,
+                            !.rd = [c \in Cards |-> "r1"],
+                            !.mr = [m \in Machines |-> IF m = "m1" THEN {"c1"} ELSE {}],
+                            !.q = Queues(<<>>, <<>>, <<>>, <<>>)]
 
 \* Reachability probes, expected to fail: every card lands; a card reaches
 \* its bound; a tick drains a queue after the first pass; a take ends at the
