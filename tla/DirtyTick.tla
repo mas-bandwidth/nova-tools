@@ -141,8 +141,9 @@
 \*   judged). Witnesses: "returnspends" counts every return as a read (the
 \*   code before: a judgment with no re-ask, W25); "reaskforever" asks again
 \*   in place with no bound (W26); "silentstrand" leaves a stranded card
-\*   unjudged (W27); "seenonly" judges only a card every reader is in seen
-\*   of, so a returned read whose only reader went down waits silently (W28);
+\*   unjudged (W27); "seenonly" judges a returned read only when every reader
+\*   is in seen of it, so one whose only reader's machine went down waits
+\*   silently (W28);
 \*   and the probes ProbeNoReask and ProbeNoJudged show the re-ask and the
 \*   judgment are reached. A card judged is placed when a reader it may be
 \*   asked of is up again, and the placement closes the judgment.
@@ -441,14 +442,14 @@ PlaceReads(S) ==
 \* is up (every reader in seen, or every other one away or on a machine down:
 \* room aside, which a tick frees) is judged at once, for the coordinator (the
 \* code's "cannot ask", or "fewer than two readers up"); a placement closes it.
-\* The witness "silentstrand" judges none; "seenonly" judges only a card every
-\* reader is in seen of (a returned read whose reader went down then waits
-\* silently).
+\* The witness "silentstrand" judges none; "seenonly" judges a read once
+\* returned and asked again in place only when every reader is in seen of it (a
+\* returned read whose reader's machine went down then waits silently).
 Eligible(S, c) == {r \in Readers \ S.seen[c] : /\ ("seefleet" \in Fixes => S.stat[Host[r]] = "up")
                                                /\ ("readerup" \in Fixes => S.stat[r] = "up")}
 Stranded(S) ==
   {c \in Cards : /\ S.askw[c] /\ ~S.cna[c]
-                 /\ IF Broken = "seenonly" THEN Readers \subseteq S.seen[c] ELSE Eligible(S, c) = {}}
+                 /\ IF Broken = "seenonly" /\ S.rea[c] > 0 THEN Readers \subseteq S.seen[c] ELSE Eligible(S, c) = {}}
 JudgeStranded(S) ==
   IF Broken = "silentstrand" \/ Stranded(S) = {} THEN S
   ELSE Address([S EXCEPT !.cna = [d \in Cards |-> S.cna[d] \/ d \in Stranded(S)]])
