@@ -46,8 +46,8 @@ func TestKindsApplyInDependencyOrder(t *testing.T) {
 	t.Parallel()
 
 	names := KindNames()
-	if strings.Join(names, ",") != "machine,fleet,friend,sprint" {
-		t.Fatalf("kinds %v: machines first (ceilings), the fleet next (a friend's slots are charged to its coordinator machine when her beat names none), friends, the sprint row last (it names a friend)", names)
+	if strings.Join(names, ",") != "machine,fleet,friend,sprint,loop" {
+		t.Fatalf("kinds %v: machines first (ceilings), the fleet next (a friend's slots are charged to its coordinator machine when her beat names none), friends, the sprint row (it names a friend), loops last (each names a machine)", names)
 	}
 }
 

@@ -679,7 +679,11 @@ anyone reads the inbox, and nothing another actor does hides anything from
 the coordinator. A card's and a
 control card's text fields
 (brief, fix, finding, report, reason, note, return reason, ci note, did) are
-at most 8 KiB, and every manifest is checked against
+at most 8 KiB, except the brief: a brief is a child's whole brief, so it is at
+most 16 KiB (16384 bytes; the card lint advises at most 12000, and
+`internal/cardlimits` holds both numbers, which the store and the lint read; the
+bound is a constant of the model and does not change the model). A field over its bound refuses the step whole, nothing
+written, naming the field, its size and the bound. Every manifest is checked against
 the table layer's bounds before anything is written, split by entries and by
 bytes, so no step can wedge the sprint. Every command checks first that the
 store's table function library is this build's, and refuses (exit 2) with the
@@ -688,7 +692,7 @@ command that loads it.
 | verb | does |
 |---|---|
 | init | creates the four tables and the view; `--readers`, `--members`, `--coordinator` (the one actor who releases sentinels; default the actor), `--rules <file>` (the child rules file every brief is held to, one required sentence per line; its absolute path is recorded as the key `sprint:rules`, kept by a clear and removed by teardown; refused at once when the file cannot be read or holds no rule; this repository's is `fleet/child-rules.txt`) |
-| add | admits primaries into a stream: waiting if they need something, else ready; `--count n` generates ids; `--sentinel <id>`, `--before`/`--after <id>` (section 16); `--brief <text>` or `--brief-file <path>` gives the brief (the file's bytes as they are, its one trailing newline cut; both together, or a file that cannot be read, is refused with exit 2), and every packet carries it whole; a brief is a child's whole brief, so `add` holds every brief to the card lint's child rules (`swarm.LintCardChildWith`, in process, the rules of `nova-swarm lint --card --child-rules`) and refuses one that fails with the lint's own `LINT DRIFT brief <check>: <line>: <excerpt> remedy=...` lines on stderr, exit 2, nothing written; a `--count` card and a sentinel with no brief are not linted, and `--rules <file>` names the rule file for this add (over the one `init --rules` recorded, over the built-in general rules; a `--rules` with no brief is refused); `nova-swarm template --name card` prints a card that passes the general rules |
+| add | admits primaries into a stream: waiting if they need something, else ready; `--count n` generates ids; `--sentinel <id>`, `--before`/`--after <id>` (section 16); `--brief <text>` or `--brief-file <path>` gives the brief (the file's bytes as they are, its one trailing newline cut, the whole file read so the lint and the size refusal see all of it, a file over 1 MiB refused naming that cap and its true size; both together, or a file that cannot be read, is refused with exit 2), and every packet carries it whole; a brief is a child's whole brief, so `add` holds every brief to the card lint's child rules (`swarm.LintCardChildWith`, in process, the rules of `nova-swarm lint --card --child-rules`) and refuses one that fails with the lint's own `LINT DRIFT brief <check>: <line>: <excerpt> remedy=...` lines on stderr, exit 2, nothing written; a `--count` card and a sentinel with no brief are not linted, and `--rules <file>` names the rule file for this add (over the one `init --rules` recorded, over the built-in general rules; a `--rules` with no brief is refused); `nova-swarm template --name card` prints a card that passes the general rules |
 | release | lands reached sentinels, the coordinator's alone, with `--reason` |
 | resolve | waiting -> ready where needs have landed (the tick does it; by hand for a stuck case) |
 | start, stop | set the machine RUNNING or STOPPED (section 14) |
