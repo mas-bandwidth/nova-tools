@@ -42,7 +42,7 @@ func TestLoopThroughTheGrammarOnARealStore(t *testing.T) {
 	assert.Equal(t, "2", h["rev"])
 	out, errs = r.run(t, 0, "status")
 	assert.Contains(t, out, " loop=1 loop_rev=2 ")
-	assert.True(t, strings.HasSuffix(out, " loop_applied=2\n"), out)
+	assert.Contains(t, out, " loop_applied=2 ")
 	assert.Empty(t, errs)
 
 	r.run(t, 0, "loop", "remove", "member-m1")

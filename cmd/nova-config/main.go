@@ -6,7 +6,7 @@
 // write it. The contract is docs/SPEC-CONFIG.md; the guide is
 // docs/nova-config/README.md.
 //
-// Every kind (machine, fleet, friend, sprint, loop) has the same six verbs -- add, remove,
+// Every kind (machine, fleet, friend, sprint, loop, route) has the same six verbs -- add, remove,
 // set, list, show, history -- generated from its descriptor in
 // internal/config, so every kind has identical flags, help and refusals; a
 // singleton kind (fleet: one row the migration creates) has set, show and
@@ -61,10 +61,10 @@ const usageTop = `nova-config: a fleet's machines and AI friends as rows in Post
 how it works: PostgreSQL holds the rows, in the schema migrate makes: a machine
 row per host ssh reaches (its login, the nova-secrets seat it opens secrets as,
 its card slots), a friend row per AI (slots, tiers, roles), one fleet row,
-one sprint row, and a loop row per supervised process on a machine (its
-command, its seat and secret names, every n seconds or kept alive); every
-write adds a history row naming who made it. apply copies the rows into
-Redis, where running tools and the plays read them; inventory feeds Ansible.
+one sprint row, a loop row per supervised process on a machine, and a route
+row per way to run a model tier (provider, model, budget, deadline, weight);
+every write adds a history row naming who made it. apply copies the rows
+into Redis, where running tools and the plays read them; inventory feeds Ansible.
 first run: the lines under example: need no database; the rest needs PostgreSQL:
 export NOVA_PG_DSN=postgres://user@127.0.0.1:5432/db (a database you own), then
 run migrate.
@@ -102,6 +102,8 @@ usage:
   nova-config fleet|sprint history
   nova-config loop add <name> --machine <m> --argv '["/path/prog","--flag","v"]' (--every <seconds> | --keepalive true) [--seat <seat> --keys <NAME,...>] [--width <n>] [--enabled false] --as <friend>
       a supervised loop on one machine; the secrets it needs go by NAME in --keys, opened from --seat, never on the command; apply writes loop:<name> (its fields and its log path ~/nova-bench/loops/<name>.log) and the set loops, which the plays read
+  nova-config route add <name> --tier flash|pro --provider <p> --model <m> --deadline <seconds> [--tokens <n>] [--weight <n>] [--enabled false] --as <friend>
+      one way to run a model tier: the harness is launched with <provider>/<model>; the deal draws one enabled route of a card's tier per deal, weighted, and a card's model: header pins it instead; frontier cards are never drawn from routes, they escalate to the coordinator; apply writes route:<name> (its fields) and the set routes, which the deal reads
 
 Postgres is the permanent store; Redis is a copy of it that apply rebuilds.
 Connect with export NOVA_PG_DSN=postgres://user@host:5432/db (or --pg) with NO
@@ -475,9 +477,7 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 		return refuse(stderr, verb, err.Error())
 	}
 	defer st.Close()
-	// The loop kind reads the loops table, which a store older than this
-	// binary's migrations does not have.
-	if k.Name == config.KindLoop {
+	if laterKind(k) {
 		if code, stale := behindSchema(ctx, st, stderr, verb, *pg); stale {
 			return code
 		}
@@ -570,9 +570,7 @@ func runKindRemove(ctx context.Context, k *config.Kind, args []string, stdout, s
 		return refuse(stderr, verb, err.Error())
 	}
 	defer st.Close()
-	// The loop kind reads the loops table, which a store older than this
-	// binary's migrations does not have.
-	if k.Name == config.KindLoop {
+	if laterKind(k) {
 		if code, stale := behindSchema(ctx, st, stderr, verb, *pg); stale {
 			return code
 		}
@@ -638,9 +636,7 @@ func runKindList(ctx context.Context, k *config.Kind, args []string, stdout, std
 		return refuse(stderr, verb, err.Error())
 	}
 	defer st.Close()
-	// The loop kind reads the loops table, which a store older than this
-	// binary's migrations does not have.
-	if k.Name == config.KindLoop {
+	if laterKind(k) {
 		if code, stale := behindSchema(ctx, st, stderr, verb, *pg); stale {
 			return code
 		}
@@ -702,9 +698,8 @@ func runKindRead(ctx context.Context, k *config.Kind, which string, args []strin
 		return refuse(stderr, verb, err.Error())
 	}
 	defer st.Close()
-	// machine show reads the loops table beside the machine row; every loop
-	// verb reads it.
-	if k.Name == config.KindLoop || (k.Name == config.KindMachine && which == "show") {
+	// machine show reads the loops table beside the machine row.
+	if laterKind(k) || (k.Name == config.KindMachine && which == "show") {
 		if code, stale := behindSchema(ctx, st, stderr, verb, *pg); stale {
 			return code
 		}
@@ -790,8 +785,15 @@ func runMigrate(ctx context.Context, args []string, stdout, stderr io.Writer, d 
 	return 0
 }
 
+// laterKind is a kind whose table a later migration made (loops since
+// version 6, routes since 7): each of its verbs refuses on a store older
+// than this binary's migrations (behindSchema), which does not have it.
+func laterKind(k *config.Kind) bool {
+	return k.Name == config.KindLoop || k.Name == config.KindRoute
+}
+
 // behindSchema is the refusal for a store whose schema is older than this
-// binary's migrations: a table a newer kind reads (loops, since version 6) is
+// binary's migrations: a table a newer kind reads (laterKind) is
 // not there, and the store's own "relation does not exist" says nothing about
 // the cause. It returns the exit code and true when it refused, and writes
 // nothing and returns false when the store is at (or past) this binary's

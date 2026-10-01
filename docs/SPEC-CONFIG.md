@@ -36,7 +36,9 @@ person coordinating is sprint-global configuration: the
 fleet row holds machines only (the store, the coordinator machine); the
 sprint row holds who coordinates; a friend's roles are what the deal reads.
 A loop's row is a process someone decides runs on one machine: its command,
-the seat and secret names it opens, and how it runs.
+the seat and secret names it opens, and how it runs. A route's row is one way
+someone decides to run a model tier: the provider and model, the budget and
+deadline, and its weight in the tier's draw.
 
 Where each field of this cut sits:
 
@@ -47,6 +49,7 @@ Where each field of this cut sits:
 | friend (decided for her) | `slots`, `tiers`, `roles` |
 | sprint (one value for the whole sprint) | `coordinator` (a friend) |
 | loop (decided per supervised process) | `machine`, `argv`, `seat`, `keys`, `every`, `keepalive`, `width`, `enabled` |
+| route (decided per way to run a tier) | `tier`, `provider`, `model`, `tokens`, `deadline`, `weight`, `enabled` |
 
 A kind is one registry: one table under schema `config`, one Go descriptor
 (`internal/config/kind.go`: `Kind`), one migration, one Redis writer. The
@@ -221,6 +224,30 @@ The log path is derived from the name, `~/nova-bench/loops/<name>.log`
 (`machine m1 is the --machine of loop member-m1`); `machine show <m>` names
 the machine's loops (`loops=<a,b>`, `-` for none).
 
+**`route`** (`config.routes`): one way to run a model tier, the provider
+and model a card of that tier runs on, its token budget and deadline, and
+its weight in the tier's draw. A tier has several routes so the deal
+spreads its cards across providers and models. The deal draws one enabled
+route of a card's tier per deal, weighted, excluding routes already drawn
+for that card when another remains; a card's `model:` header pins it
+instead. Frontier cards are never drawn from routes: they escalate to the
+coordinator, so `frontier` is no route's tier. Every value is data in the
+row: the code names no provider or model.
+
+| field | type | required | who reads it | Redis |
+| --- | --- | --- | --- | --- |
+| `tier` | enum `flash`, `pro` | yes | the deal: the cards of this tier draw from it | `route:<r>` |
+| `provider` | text | yes | the deal: the provider word of the model id `<provider>/<model>` the harness is launched with; one word, no slash | `route:<r>` |
+| `model` | text | yes | the deal: the model name after the provider; it may hold slashes (`x-ai/grok-4`) | `route:<r>` |
+| `tokens` | int | (0) | the deal: the token budget per card; 0 is unmetered and the deadline is the only stop | `route:<r>` |
+| `deadline` | int | yes | the deal: the seconds a card on this route may run, above 0 | `route:<r>` |
+| `weight` | int | (1) | the deal: its weight in the tier's draw; 0 takes it out of the draw | `route:<r>` |
+| `enabled` | bool | (true) | the deal: false takes it out of the draw | `route:<r>` |
+
+The kind's `Check`: `provider` is one word with no slash or blank, `model`
+is not empty and has no blank, and `deadline` is above 0. A route names no
+row of another kind.
+
 ## The schema
 
 Migrations are numbered SQL files compiled into the binary
@@ -253,6 +280,11 @@ config.loops             (name PK, machine -> machines.name, argv, seat, keys,
                           every > 0 and keepalive, keys only with a seat,
                           argv a JSON array: the kind's Check again, as a
                           wall behind the tool)
+config.routes            (name PK, tier flash|pro, provider, model, tokens,
+                          deadline, weight, enabled boolean, created_at,
+                          updated_at; CHECK provider one word with no slash,
+                          model with no blank, deadline > 0, tokens and
+                          weight >= 0: the kind's Check again)
 ```
 
 No database has applied `0002_machine.sql` or `0003_friend.sql` in their
@@ -279,7 +311,7 @@ global ids, so they rise across kinds and never repeat.
 `nova-config apply [--kind <k>] [--check]` runs per kind, in kind order:
 machines (the ceilings), the fleet row (a friend with no beat is charged to
 its coordinator machine), friends, the sprint row, loops (each names a
-machine):
+machine), routes:
 
 1. read the kind's rows and revision from Postgres, then the kind's
    `Derive` when it has one (the friend kind adds the `coordinator` word to
@@ -313,10 +345,10 @@ machine):
    `CONFLICT`.
 
 A second apply of the same Postgres is a no-op: no `APPLY` line, the counts
-zero, the revision unchanged (steady apply is 7 Redis round trips down from 18, one of them the loop
-kind's read of a store with no loop: its set and stamp in one trip, its
-hashes in a second only when it has loops;
-first run across the seed kinds takes 31 trips down from the 42 baseline, with
+zero, the revision unchanged (steady apply is 8 Redis round trips down from 18, two of them the loop
+and route kinds' reads of a store with none of their rows: each kind's set
+and stamp in one trip, its hashes in a second only when it has rows;
+first run across the seed kinds takes 32 trips down from the 42 baseline, with
 each machine running its ceiling check before its write transaction).
 
 ### What apply writes, per kind
@@ -363,9 +395,14 @@ hash changed by hand is put back by the next apply. Remove: the hash and the
 name in `loops` go in one transaction, with a `config-remove` receipt in
 `cap:log`.
 
-`machine:<m>`, `machines`, `fleet:*`, `sprint:coordinator`, `loop:<l>` and
-`loops` are nova-config's own keys: no function in the library reads or
-writes them.
+**route:** the hash `route:<r>` with every field of the row, `name`, `rev`
+and `at`, written whole in one transaction with the name added to the set
+`routes`; this is the view the deal reads. It reads, writes and removes as
+a loop does (one code path, `hashKinds`), with no derived field.
+
+`machine:<m>`, `machines`, `fleet:*`, `sprint:coordinator`, `loop:<l>`,
+`loops`, `route:<r>` and `routes` are nova-config's own keys: no function in
+the library reads or writes them.
 
 ## Lines
 
