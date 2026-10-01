@@ -1,6 +1,7 @@
 package sprint
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -467,5 +468,22 @@ func TestMergeNotesListsASubjectOnce(t *testing.T) {
 	got := MergeNotes([]Note{a, a, happened(NWorkOK, "s1", t0, "p2")})
 	if len(got) != 1 || got[0].Count != 2 || len(got[0].Primaries) != 2 {
 		t.Fatalf("merged: %+v", got)
+	}
+}
+
+// No field of a table gives its cards or its rows: a read of either goes
+// through the methods (Cards, Rows, Cell, Column), and a card is written
+// through Put and Drop, which reset the table's index of cells and primaries.
+func TestNoExportedFieldOfATableGivesItsCardsOrRows(t *testing.T) {
+	t.Parallel()
+	typ := reflect.TypeOf(Table{})
+	var exported []string
+	for i := 0; i < typ.NumField(); i++ {
+		if f := typ.Field(i); f.IsExported() {
+			exported = append(exported, f.Name)
+		}
+	}
+	if want := []string{"Name", "Epoch", "Revision", "Texts"}; !reflect.DeepEqual(exported, want) {
+		t.Fatalf("the exported fields of a table are %v, want %v: a card or a row would be read past the index", exported, want)
 	}
 }

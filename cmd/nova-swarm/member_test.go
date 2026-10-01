@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
 	"github.com/mas-bandwidth/nova-tools/internal/member"
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
@@ -469,4 +471,74 @@ func TestEveryIsBoundedUnderTheBeatDeadline(t *testing.T) {
 	if code := run(with(t.TempDir(), "5s"), strings.NewReader(""), &out, &errb, time.Now()); code != 0 {
 		t.Fatalf("--every 5s: exit %d, stderr %q, want it accepted", code, errb.String())
 	}
+}
+
+// memberWithoutOnce returns the required member flags without --once.
+func memberWithoutOnce(root string) []string {
+	var args []string
+	for _, a := range memberFull(root) {
+		if a != "--once" {
+			args = append(args, a)
+		}
+	}
+	return args
+}
+
+// TestMemberRefusesCombiningOnceWithTicks pins the mutual exclusion between
+// --once and --ticks: specifying both is refused with exit 2 before anything
+// is made or asked.
+func TestMemberRefusesCombiningOnceWithTicks(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	args := append(memberFull(root), "--ticks", "3")
+	var out, errb bytes.Buffer
+	code := run(args, strings.NewReader(""), &out, &errb, time.Now())
+	require.Equal(t, 2, code, "stderr %q", errb.String())
+	require.Contains(t, errb.String(), "give --once or --ticks <n>, not both")
+	require.Empty(t, out.String())
+	_, err := os.Stat(filepath.Join(root, "slots"))
+	require.True(t, os.IsNotExist(err), "directories made before refusal: %v", err)
+}
+
+// TestMemberRefusesZeroOrNegativeTicks pins that --ticks requires a positive count:
+// 0, -1, and negative values are refused with exit 2 and not read as unbounded.
+func TestMemberRefusesZeroOrNegativeTicks(t *testing.T) {
+	t.Parallel()
+	for _, val := range []string{"0", "-1", "-5"} {
+		t.Run(val, func(t *testing.T) {
+			t.Parallel()
+			root := t.TempDir()
+			args := append(memberWithoutOnce(root), "--ticks", val)
+			var out, errb bytes.Buffer
+			code := run(args, strings.NewReader(""), &out, &errb, time.Now())
+			require.Equal(t, 2, code, "stderr %q", errb.String())
+			require.Contains(t, errb.String(), "give --ticks 1 or more, or leave it out to run until stopped")
+			require.Empty(t, out.String())
+			_, err := os.Stat(filepath.Join(root, "slots"))
+			require.True(t, os.IsNotExist(err), "directories made before refusal: %v", err)
+		})
+	}
+}
+
+// TestMemberRefusesBothOnceAndNonPositiveTicksNamesBothPins pins collecting all
+// problems on one run: combining --once with --ticks 0 reports both faults.
+func TestMemberRefusesBothOnceAndNonPositiveTicksNamesBothPins(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	args := append(memberFull(root), "--ticks", "0")
+	var out, errb bytes.Buffer
+	require.Equal(t, 2, run(args, strings.NewReader(""), &out, &errb, time.Now()))
+	require.Contains(t, errb.String(), "give --once or --ticks <n>, not both")
+	require.Contains(t, errb.String(), "give --ticks 1 or more, or leave it out to run until stopped")
+}
+
+// TestMemberAcceptsPositiveTicks pins that valid positive --ticks runs for the
+// specified tick count and terminates cleanly.
+func TestMemberAcceptsPositiveTicks(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	args := append(memberWithoutOnce(root), "--ticks", "2", "--every", "1ms", "--sprint", filepath.Join(root, "absent-sprint"))
+	var out, errb bytes.Buffer
+	require.Equal(t, 0, run(args, strings.NewReader(""), &out, &errb, time.Now()), "stderr %q", errb.String())
+	require.Contains(t, out.String(), "MEMBER OK as=m1 ticks=2 running=0")
 }

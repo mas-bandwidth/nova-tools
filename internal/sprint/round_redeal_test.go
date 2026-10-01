@@ -9,11 +9,10 @@ import (
 // Every placement of a card on a member goes round the fleet (errata 3,
 // amendment 5: every placement, first attempts and redeals and levelling alike,
 // moves the index; round.go): the rework of failed work and of work a read
-// found broken (the coordinator's rework and R10), the cards of a member that
-// goes down (fleet down and R2), the levelling (fleet level and R7), and the
-// replacement of a late card (R11, rules_time_test.go). The shortest queue with
-// its ties broken by name, which this replaces, gave the redeals of an idle
-// fleet to its first members.
+// found broken (the coordinator's rework), the cards of a member that goes
+// down (fleet down and the tick's presence), and the levelling (fleet level
+// and the tick's level). The shortest queue with its ties broken by name,
+// which this replaces, gave the redeals of an idle fleet to its first members.
 
 // reworkIt sends one primary back with a fix, by the engine under test.
 type reworkIt func(w *world, id string)
@@ -22,16 +21,6 @@ type reworkIt func(w *world, id string)
 func stepRework(w *world, id string) {
 	w.t.Helper()
 	w.must(Rework(w.s, ReworkReq{Sel: Sel{IDs: []string{id}}, Fix: "make the test pass"}))
-}
-
-// ruleReworkOf is R10 on the key rework:<p>, read and planned as the tick does.
-func ruleReworkOf(w *world, id string) {
-	w.t.Helper()
-	rp := rvPlan(w, ruleRework, "rework:"+id)
-	if len(rp.Plan.Units) != 1 || len(rp.Plan.Refused) != 0 {
-		w.t.Fatalf("R10 on %s: %d units, refused %v", id, len(rp.Plan.Units), rp.Plan.Refused)
-	}
-	w.rvApply(rp)
 }
 
 // failedOnce is 8 idle members and 30 primaries whose first attempts were
@@ -54,7 +43,7 @@ func failedOnce(t *testing.T, broken bool) (*world, map[string]string) {
 		w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{wc.ID}}, Gens: gensOf(w.s, wc.ID)}))
 		// a reader found it broken: its read card at the attempt, named on the
 		// primary (rcards), as the ask and the read leave it
-		rvPutRead(w, id, 1, "reader-a", Broken).Fields["finding"] = "the test is red"
+		putRead(w, id, 1, "reader-a", Broken).Fields["finding"] = "the test is red"
 	}
 	return w, first
 }
@@ -113,28 +102,16 @@ func TestTheReworksOfFailedWorkGoRoundTheFleet(t *testing.T) {
 	reworksGoRound(t, w, first, stepRework)
 }
 
-func TestR10ReworksOfFailedWorkGoRoundTheFleet(t *testing.T) {
-	t.Parallel()
-	w, first := failedOnce(t, false)
-	reworksGoRound(t, w, first, ruleReworkOf)
-}
-
 func TestTheReworksOfBrokenReadsGoRoundTheFleet(t *testing.T) {
 	t.Parallel()
 	w, first := failedOnce(t, true)
 	reworksGoRound(t, w, first, stepRework)
 }
 
-func TestR10ReworksOfBrokenReadsGoRoundTheFleet(t *testing.T) {
-	t.Parallel()
-	w, first := failedOnce(t, true)
-	reworksGoRound(t, w, first, ruleReworkOf)
-}
-
 // The avoid member takes the rework only when no other up member has room.
 func TestTheReworkAvoidsTheMemberThatFailedItWhileAnotherHasRoom(t *testing.T) {
 	t.Parallel()
-	for _, rework := range []reworkIt{stepRework, ruleReworkOf} {
+	for _, rework := range []reworkIt{stepRework} {
 		w := newWorld(t, "reader-a")
 		for _, m := range []string{"m1", "m2"} { // each at width 2 (width.go)
 			w.must(FleetStep(w.s, FleetReq{Op: "up", Member: m, Width: 2}))
@@ -197,18 +174,22 @@ func TestADownMembersCardsGoRoundTheFleet(t *testing.T) {
 	w.must(FleetStep(w.s, FleetReq{Op: "down", Member: "m1"}))
 	check(t, w.s, "fleet down")
 
-	// R2
-	f := newFleetT(t, 0, members...)
+	// the tick's presence: m1 has no beat, the others beat now
+	w = fleetWorld(t, 0, 0, members...)
 	for i := 1; i <= 6; i++ {
 		col := Working
 		if i > 4 {
 			col = Ready
 		}
-		putWorkCard(f, fmt.Sprintf("s1-%d", i), "m1", col, float64(10+i), nil)
+		putWorkCard(w, fmt.Sprintf("s1-%d", i), "m1", col, float64(10+i), nil)
 	}
-	f.snap().Fleet.SetProps(map[string]string{PropDealIndex: "m4"})
-	f.run(ruleDown, "down:m1")
-	check(t, f.snap(), "R2")
+	w.s.Fleet.SetProps(map[string]string{PropDealIndex: "m4"})
+	beats := map[string]Beat{}
+	for _, m := range members[1:] {
+		beats[m] = Beat{At: w.s.Now}
+	}
+	w.part(TickPresence, TickReq{Beats: beats})
+	check(t, w.s, "presence")
 }
 
 // The level goes round the fleet: twelve cards on m1 and seven members idle,
@@ -255,17 +236,14 @@ func TestTheLevelGoesRoundTheFleet(t *testing.T) {
 	w.must(FleetStep(w.s, FleetReq{Op: "level"}))
 	check(t, w.s, "fleet level")
 
-	// R7: it moves what its read loaded of the longest queue, and runs again
-	f := newFleetT(t, 0, members...)
-	f.partialOnly = true // the whole sprint's plan moves the newest cards, a read's the newest it loaded
+	// the tick's level (T4), on cards put on m1 as a store holds them
+	w = fleetWorld(t, 0, 0, members...)
 	for i := 1; i <= 12; i++ {
-		putWorkCard(f, fmt.Sprintf("s1-%d", i), "m1", Ready, float64(10+i), nil)
+		putWorkCard(w, fmt.Sprintf("s1-%d", i), "m1", Ready, float64(10+i), nil)
 	}
-	upAll(f.snap())
-	for i := 0; i < 12 && f.snap().Fleet.Count("m1", Ready) > 2; i++ {
-		f.run(ruleLevel, "level")
-	}
-	check(t, f.snap(), "R7")
+	upAll(w.s)
+	w.part(TickLevel, TickReq{})
+	check(t, w.s, "the tick's level")
 }
 
 func mapsEqual(a, b map[string]int) bool {

@@ -427,6 +427,7 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 	if *wait && a.twinOpen(c.redis) {
 		return refuse(stderr, "inbox", twinMachine)
 	}
+	woke := false
 	if *wait {
 		// the coordinator's one wake a tick (errata 3 amendment 8): the next
 		// tick-end note after the notes as they stand now
@@ -437,12 +438,19 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 		if err != nil {
 			return a.readFailed("inbox", err, stderr)
 		}
-		woke, err := st.WaitTickEnd(ctx, from, *timeout)
+		woke, err = st.WaitTickEnd(ctx, from, *timeout)
 		if err != nil {
 			return a.readFailed("inbox", err, stderr)
 		}
 		if !woke {
-			fmt.Fprintf(stdout, "inbox --wait: no tick end in %s\n", *timeout)
+			// the timeout is said to the person on the stream that is theirs:
+			// stdout in the plain rendering, stderr under --json (stdout stays
+			// one JSON object, which carries woke=false as well)
+			w := stdout
+			if c.json {
+				w = stderr
+			}
+			fmt.Fprintf(w, "inbox --wait: no tick end in %s\n", *timeout)
 		}
 	}
 	v, err := st.Inbox(ctx, *deadline, *stale, 10000)
@@ -473,6 +481,11 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 		judgments, happened := inboxActs(groups, a.now())
 		out := map[string]any{"groups": groups, "judgments": judgments, "happened": happened, "done": mach.Done(),
 			"last": v.Last, "cursor": v.Cursor, "at": a.now(), "machine": machine}
+		if *wait {
+			// the timeout is in both renderings: the line above, and woke=false
+			// here (the one-value rule)
+			out["woke"] = woke
+		}
 		if opened != nil {
 			out["open"] = nonNil(opened.Members)
 			if len(opened.Needs) > 0 {
