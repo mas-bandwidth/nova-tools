@@ -34,9 +34,11 @@
 \*             lander holds (a clear between the check and the push)
 \*   stalerec  a ghost: a report recorded a landing at an epoch other than
 \*             the one the lander holds
-\*   lpushed   a ghost: the heads this lander itself pushed in the store's
-\*             epoch (a clear empties it), so the stranded witness names the
-\*             lander's own push and not another lander's landing re-queued
+\*   lpushed   a ghost: the heads this lander itself pushed for the store's
+\*             epoch (a clear empties it, and a push made for an epoch the
+\*             store has left adds nothing), so the stranded witness names the
+\*             lander's own push in this epoch and not another lander's
+\*             landing re-queued, nor a stale push
 \*
 \* THE ACTIONS. The lander's, each a call in land.go: Read (the queue with its
 \* heads, the epoch and the tip; a caller's epoch the store is not at is
@@ -95,6 +97,9 @@
 \*   "idguard" guards with the cards' ids and not their heads (LandedInBase
 \*     fails: a card reworked between the check and the report lands at the
 \*     new head while the base holds the old one).
+\*   "noepoch" reports with the heads guarded and no fence on the epoch
+\*     (ReportHoldsTheEpoch fails: a push, a clear, the same head accepted
+\*     again in the new epoch, and the old run's report records it there).
 \*
 \* WHAT IS NOT MODELLED. The check (--check), the facts that stop a stream
 \* (conflict, red, rejected) and resume: a refusal is the lander going idle
@@ -134,6 +139,9 @@ Fresh(b) == epoch = lep /\ Len(queue) >= Len(b) /\ SubSeq(QHeads, 1, Len(b)) = b
 FreshIds(b) == epoch = lep /\ Len(queue) >= Len(b) /\ SubSeq(queue, 1, Len(b)) = Ids(b)
 
 Guard(b) == IF Broken = "idguard" THEN FreshIds(b) ELSE Fresh(b)
+
+\* noepoch's report guard: the heads, no epoch fence.
+FreshAnyEpoch(b) == Len(queue) >= Len(b) /\ SubSeq(QHeads, 1, Len(b)) = b
 
 \* The lander's steps in the order the variant takes them.
 PushFrom == IF Broken = "reportfirst" THEN "reported" ELSE "checked"
@@ -214,7 +222,7 @@ Push ==
           /\ ltip' = tip'
           /\ badcaller' = (badcaller \/ lep # lrep)
           /\ stalepush' = (stalepush \/ lep # epoch)
-          /\ lpushed' = lpushed \cup Range(lbatch)
+          /\ lpushed' = IF lep = epoch THEN lpushed \cup Range(lbatch) ELSE lpushed
           /\ lphase' = PushTo
           /\ UNCHANGED tries
 
@@ -222,11 +230,14 @@ Push ==
 \* the batch only while the queue starts with exactly the heads pushed; the
 \* store records each card at its current head. Refused, it writes nothing and
 \* the lander says LAND FAILED. noguard lands the first Len(lbatch) queued,
-\* whatever they are (merge --batch n alone); idguard compares ids.
+\* whatever they are (merge --batch n alone); idguard compares ids; noepoch
+\* compares heads with no epoch fence.
 Report ==
   /\ lphase = ReportFrom
   /\ LET n == Len(lbatch)
-         ok == IF Broken = "noguard" THEN epoch = lep /\ Len(queue) >= n ELSE Guard(lbatch)
+         ok == CASE Broken = "noguard" -> epoch = lep /\ Len(queue) >= n
+                 [] Broken = "noepoch" -> FreshAnyEpoch(lbatch)
+                 [] OTHER -> Guard(lbatch)
      IN /\ IF ok
            THEN /\ landed' = landed \cup {Current(queue[i]) : i \in 1..n}
                 /\ queue' = SubSeq(queue, n + 1, Len(queue))
