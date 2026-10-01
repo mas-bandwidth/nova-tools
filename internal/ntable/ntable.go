@@ -356,6 +356,10 @@ func MemberKey(id string) string      { return "table::member:" + id }
 func ChangesKey(table string) string  { return DefKey(table) + ":changes" }
 func RevisionKey(table string) string { return DefKey(table) + ":revision" }
 
+// IdentityKey is the table's identity hash: its epoch_key, epoch_field and
+// member_prefix, written with the table and removed by drop --definition.
+func IdentityKey(table string) string { return DefKey(table) + ":identity" }
+
 var (
 	nameRE = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_.-]*$`)
 )

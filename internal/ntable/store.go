@@ -63,6 +63,9 @@ var (
 	ErrMutation          = errors.New("incompatible mutation")
 	ErrWrongType         = errors.New("WRONGTYPE")
 	ErrMalformedManifest = errors.New("malformed manifest")
+	// ErrOrphan is a table that is gone while its identity record is left: a
+	// verb on it refuses, and drop --definition removes the record.
+	ErrOrphan = errors.New("orphan table identity")
 	// ErrUnknownOutcome is a transport failure: the store did not answer, so the
 	// batch may or may not have been applied (changed=unknown). Send the same
 	// manifest again with the same operation id.
@@ -319,6 +322,9 @@ func (o operation) refused(reply []any) error {
 		if o.guarded() {
 			remedy = "nova-table list"
 		}
+	case typedrec.TableRefusalOrphan:
+		cause = say(ErrOrphan, "no such table, but %s is left behind by a dropped definition", IdentityKey(o.table))
+		remedy = "nova-table drop " + shellWord(o.table) + " --definition"
 	case typedrec.TableRefusalExists:
 		cause = ErrExists
 		remedy = "nova-table set " + shellWord(o.table) + " --columns <columns>"

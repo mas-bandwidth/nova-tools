@@ -93,7 +93,7 @@ backed by Redis data structures.
 | Key Pattern | Redis Type | Purpose |
 | --- | --- | --- |
 | `table:<name>` | Hash | Table schema, epoch, revision, column definitions, footer, hidden attributes |
-| `table:<name>:identity` | Hash | Immutable table identity: `epoch_key`, `epoch_field`, `member_prefix` |
+| `table:<name>:identity` | Hash | Table identity: `epoch_key`, `epoch_field`, `member_prefix`; fixed while the table exists, removed by `drop --definition` |
 | `table:<name>:revision` | Hash | Revision counter tracking mutations |
 | `table:<name>:changes` | Stream | Audit stream of table mutations |
 | `table:<name>:ops` | Hash | Batch operation records across epochs, keyed by epoch and operation id |

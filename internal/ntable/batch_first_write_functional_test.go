@@ -108,12 +108,12 @@ func TestBatchRestoresAMissingIdentity(t *testing.T) {
 	assert.Equal(t, images[1], images[0], "identity after ordinary write %v, after batch %v", images[0], images[1])
 }
 
-// A missing template and its catalog entry are met by a batch exactly as by an
-// ordinary write: the same refusal, and nothing written.
+// A missing template, identity and catalog entry are met by a batch exactly as
+// by an ordinary write: the same refusal, and nothing written.
 func TestBatchMissingTemplateMatchesOrdinaryWrite(t *testing.T) {
 	t.Parallel()
 	c, ctx := probeTable(t)
-	require.NoError(t, c.Del(ctx, ntable.DefKey("demo")).Err())
+	require.NoError(t, c.Del(ctx, ntable.DefKey("demo"), ntable.IdentityKey("demo")).Err())
 	require.NoError(t, c.SRem(ctx, "tables", "demo").Err())
 	before := storeImage(t, c)
 	_, ordinary := ntable.CellAdd(ctx, c, "demo", "build", "ready", "q", 1)

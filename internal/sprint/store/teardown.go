@@ -24,10 +24,10 @@ var sprintKeys = []string{keyFence, keyGen, keyInbox, keyLog, keyNotes, keyOpen,
 var machineKeys = []string{keyMachine, keyHeartbeat, keyStuck, keyCoordinator, keyGoals, keyStrangers, keyTickEnd, keyRules}
 
 // residueSuffixes are the keys of a table the table layer's drop keeps: its
-// identity, revision, definition record and change log; and its operation
-// records, which a drop by this build removes and one by an older build
-// keeps.
-var residueSuffixes = []string{":identity", ":revision", ":definition", ":changes", ":ops"}
+// revision, definition record and change log; and its operation records,
+// which a drop by this build removes and one by an older build keeps. The
+// identity hash is not residue: drop --definition removes it.
+var residueSuffixes = []string{":revision", ":definition", ":changes", ":ops"}
 
 // Epochs is what teardown names of a sprint's epochs: the last (active) one,
 // and each earlier one's shape as it was, whose rows, text cells and owned
@@ -244,7 +244,7 @@ func (m *Mem) keepResidue(table string) {
 		return
 	}
 	r := &memResidue{keys: map[string]bool{}, table: t}
-	for _, s := range residueSuffixes[:4] {
+	for _, s := range residueSuffixes[:3] {
 		r.keys[ntable.DefKey(table)+s] = true
 	}
 	a := m.active(t)
@@ -468,8 +468,8 @@ func (m *Mem) Keys(names sprint.Names) []string {
 	var keys []string
 	for name, t := range m.tables {
 		def := ntable.DefKey(name)
-		keys = append(keys, def)
-		for _, s := range residueSuffixes[:4] {
+		keys = append(keys, def, ntable.IdentityKey(name))
+		for _, s := range residueSuffixes[:3] {
 			keys = append(keys, def+s)
 		}
 		if len(t.ops) > 0 {

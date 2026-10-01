@@ -479,7 +479,12 @@ do
   function T.prefix(name, epoch)
     return 'table:' .. name .. (epoch == '0' and '' or ':' .. epoch)
   end
-  function T.open(name, fields, historical, repair)
+  -- T.open(name, fields, historical, repair, orphan): the table's definition
+  -- as the store holds it. A table that is gone while its identity hash is
+  -- left (the orphan: an earlier build's drop --definition kept the identity)
+  -- is refused ORPHAN, and opens, empty, only for the verb that removes it
+  -- (orphan true: drop --definition).
+  function T.open(name, fields, historical, repair, orphan)
     if not T.name(name) then return nil, T.refuse('NAME') end
     local key = 'table:' .. name
     local template = T.hash(key)
@@ -514,15 +519,22 @@ do
       if next(template) and T.uintgt(epoch, active) then return nil, T.refuse('EPOCHAHEAD', epoch, active) end
       return nil, T.refuse('NOTABLE')
     end
-    if not h then return nil, T.refuse('NOTABLE') end
-    local cols, err = T.shape(h, repair)
-    if not cols then return nil, err end
+    local cols, err
+    local orphaned = not h and next(identity) ~= nil
+    if orphaned then
+      if not orphan then return nil, T.refuse('ORPHAN') end
+      h, cols = {}, {}
+    else
+      if not h then return nil, T.refuse('NOTABLE') end
+      cols, err = T.shape(h, repair)
+      if not cols then return nil, err end
+    end
     local revision = historical and snap._revision or redis.call('HGET', key .. ':revision', 'n')
     revision = revision or '0'
     if not T.uint(revision) then return nil, T.refuse('REVISION', revision) end
     return {name=name, key=key, prefix=prefix, epoch=epoch, active=active, revision=revision,
       h=h, cols=cols, ncols=#cols, cfg=cfg, snap=snap, present=snap._present ~= '0',
-      newtemplate=not next(template), newidentity=not next(identity), commands={}, cells={}, members={}}
+      newtemplate=not next(template) and not orphaned, newidentity=not next(identity), commands={}, cells={}, members={}}
   end
   function T.def(name, historical)
     local d, err = T.open(name, nil, historical)
@@ -1083,7 +1095,7 @@ do
         if type(fields) ~= 'table' then return T.refuse('DEFINITION') end
       end
       local edit = verb == 'set' and T.decode(args[2])
-      local d, err = T.open(args[1], fields, nil, edit and edit.columns ~= nil)
+      local d, err = T.open(args[1], fields, nil, edit and edit.columns ~= nil, verb == 'drop_definition')
       if not d then return err end
       local missing = not d.present and not declaration and verb ~= 'drop_definition'
       if opts.epoch ~= d.active then
@@ -1468,6 +1480,12 @@ do
     if op == 'drop_definition' then
       redis.call('SCARD', 'tables')
       T.stage(d, 'DEL', d.key)
+      -- the table's identity goes with its template, so a table created again
+      -- under the name is a new table with its own configuration (the orphan
+      -- an earlier build left is removed here, too); T.finish does not write
+      -- it back
+      T.stage(d, 'DEL', d.key .. ':identity')
+      d.newidentity = false
       T.stage(d, 'SREM', 'tables', d.name)
     end
     return {'OK', #rows}
