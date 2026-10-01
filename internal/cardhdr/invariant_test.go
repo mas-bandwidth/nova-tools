@@ -168,9 +168,8 @@ func TestLintOneInvariantReadsLetteredBuildList(t *testing.T) {
 	}
 	for _, one := range []string{"BUILD:\nA. the parser.", "BUILD: the parser.\nA good test names the rule.",
 		"BUILD:\na. the parser.", "BUILD:\n(i) the parser.\ne.g. the linter reads it.\nivory is no numeral."} {
-		if got := LintOneInvariant(Card{Text: cardWith("BUILD:", one)}); got != nil {
-			t.Errorf("%q: refused %q, want accepted (one item)", one, got.Rules())
-		}
+		got := LintOneInvariant(Card{Text: cardWith("BUILD:", one)})
+		assert.Nil(t, got, "%q: refused %q, want accepted (one item)", one, got.Rules())
 	}
 }
 
@@ -283,9 +282,8 @@ func TestPackagesTreeDirWithNoGoFileIsNoPackage(t *testing.T) {
 	card := cardWith("PATHS:", "PATHS: pkg/a/a.go, pkg/b/, pkg/c/, pkg/d/")
 	got := LintOneInvariant(Card{Text: card, Files: tree})
 	assert.Equal(t, RulePathsPackages, got.Rules(), "four packages, two new: rules %q, want paths-packages", got.Rules())
-	if got := LintOneInvariant(Card{Text: cardWith("PATHS:", "PATHS: pkg/a/a.go, pkg/b/, pkg/c/, docs/"), Files: tree}); got != nil {
-		t.Errorf("three packages and docs/: refused %q", got.Rules())
-	}
+	got = LintOneInvariant(Card{Text: cardWith("PATHS:", "PATHS: pkg/a/a.go, pkg/b/, pkg/c/, docs/"), Files: tree})
+	assert.Nil(t, got, "three packages and docs/: refused %q", got.Rules())
 }
 
 func TestParseTypedLines(t *testing.T) {
@@ -416,14 +414,12 @@ func TestLintOneInvariantReadsBuildListAnyForm(t *testing.T) {
 		assert.Equal(t, RuleBuildList, got.Rules(), "%s: rules %q, want build-list", name, got.Rules())
 	}
 	for _, one := range []string{"Build: the parser, go 1.27.", "BUILD: 1. the parser", "```\nBuild:\n- the parser\n```"} {
-		if got := LintOneInvariant(Card{Text: cardWith("BUILD:", one)}); got != nil {
-			t.Errorf("%q: refused %q, want accepted (one item)", one, got.Rules())
-		}
+		got := LintOneInvariant(Card{Text: cardWith("BUILD:", one)})
+		assert.Nil(t, got, "%q: refused %q, want accepted (one item)", one, got.Rules())
 	}
 	// a plan's children may sit on its BUILD: line
-	if got := LintOneInvariant(Card{Text: "KIND: plan\nINVARIANT: x holds.\n\nBuild: 1. child-a 2. child-b\n"}); got != nil {
-		t.Errorf("plan with inline children: refused %q", got.Rules())
-	}
+	got := LintOneInvariant(Card{Text: "KIND: plan\nINVARIANT: x holds.\n\nBuild: 1. child-a 2. child-b\n"})
+	assert.Nil(t, got, "plan with inline children: refused %q", got.Rules())
 }
 
 // TestLintTitleKind (#4396, the third read's task push probes): KIND stitch
