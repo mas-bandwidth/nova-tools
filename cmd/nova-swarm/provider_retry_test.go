@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -17,69 +16,6 @@ import (
 // inherited grace path: the retry keeps the task, the usage rows carry attempt=1,2,3, and a
 // slow failure is not retried. The tail text is not evidence the provider never accepted
 // the request.
-
-// poolUsageRow reads one pool usage row by job id.
-func poolUsageRow(t *testing.T, pool, id string) map[string]string {
-	t.Helper()
-	raw, err := os.ReadFile(filepath.Join(pool, "usage", id+".tsv"))
-	if err != nil {
-		t.Fatalf("no usage row for %s: %v", id, err)
-	}
-	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
-	if len(lines) < 2 {
-		t.Fatalf("the usage row for %s holds no row:\n%s", id, raw)
-	}
-	head := strings.Split(lines[0], "\t")
-	values := strings.Split(lines[1], "\t")
-	row := map[string]string{}
-	for i, name := range head {
-		if i < len(values) {
-			row[name] = values[i]
-		}
-	}
-	return row
-}
-
-// sidecarIn reads the sidecar a task landed with under one of the pool's directories.
-func sidecarIn(t *testing.T, pool, dir, id string) map[string]any {
-	t.Helper()
-	raw, err := os.ReadFile(filepath.Join(pool, dir, id+".json"))
-	if err != nil {
-		t.Fatalf("no sidecar for %s under %s: %v", id, dir, err)
-	}
-	var sc map[string]any
-	if err := json.Unmarshal(raw, &sc); err != nil {
-		t.Fatal(err)
-	}
-	return sc
-}
-
-// findRetry returns the id of the task that names from=id, under failed/ or done/.
-func findRetry(t *testing.T, pool, id string) string {
-	t.Helper()
-	for _, dir := range []string{"failed", "done"} {
-		entries, err := os.ReadDir(filepath.Join(pool, dir))
-		if err != nil {
-			continue
-		}
-		for _, e := range entries {
-			if !strings.HasSuffix(e.Name(), ".json") {
-				continue
-			}
-			raw, err := os.ReadFile(filepath.Join(pool, dir, e.Name()))
-			if err != nil {
-				continue
-			}
-			var sc struct {
-				From string `json:"from"`
-			}
-			if json.Unmarshal(raw, &sc) == nil && sc.From == id {
-				return strings.TrimSuffix(e.Name(), ".json")
-			}
-		}
-	}
-	return ""
-}
 
 // TestNativeRetriesAProvider5xxLaunch: the native path retries a launch that dies inside the
 // grace on a provider server error, keeps the same job, harvests the second attempt's result

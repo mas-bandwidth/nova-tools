@@ -131,16 +131,6 @@ func (s *liveSampler) fire(word string) {
 	s.firedOnce.Do(func() { s.fired <- word })
 }
 
-// StopWord is the word a budget that has ALREADY been reached would fire, or "" when none
-// has. It is the "once more before any relaunch" test of rule 13d, asked between launches
-// where there is no select to read a channel: "The stop is rule 13's `spent >= n`, tested at
-// every sample and once more before any relaunch."
-func (s *liveSampler) StopWord() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.reached
-}
-
 // StopWordAtFinal is the "once more before any relaunch" test of rule 13d asked of the
 // job's FINAL reads as well as the samples: "The stop is rule 13's `spent >= n`, tested at
 // every sample and once more before any relaunch." A launch that dies fast, before any
