@@ -38,7 +38,8 @@ sprint row holds who coordinates; a friend's roles are what the deal reads.
 A loop's row is a process someone decides runs on one machine: its command,
 the seat and secret names it opens, and how it runs. A route's row is one way
 someone decides to run a model tier: the provider and model, the budget and
-deadline, and its weight in the tier's draw.
+deadline. A tier's row is the order someone decides the deal takes a tier's
+routes in.
 
 Where each field of this cut sits:
 
@@ -49,7 +50,8 @@ Where each field of this cut sits:
 | friend (decided for her) | `slots`, `tiers`, `roles` |
 | sprint (one value for the whole sprint) | `coordinator` (a friend) |
 | loop (decided per supervised process) | `machine`, `argv`, `seat`, `keys`, `every`, `keepalive`, `width`, `enabled` |
-| route (decided per way to run a tier) | `tier`, `provider`, `model`, `tokens`, `deadline`, `weight`, `enabled` |
+| route (decided per way to run a tier) | `tier`, `provider`, `model`, `tokens`, `deadline`, `enabled` |
+| tier (decided per tier) | `routes` |
 
 A kind is one registry: one table under schema `config`, one Go descriptor
 (`internal/config/kind.go`: `Kind`), one migration, one Redis writer. The
@@ -225,28 +227,44 @@ The log path is derived from the name, `~/nova-bench/loops/<name>.log`
 the machine's loops (`loops=<a,b>`, `-` for none).
 
 **`route`** (`config.routes`): one way to run a model tier, the provider
-and model a card of that tier runs on, its token budget and deadline, and
-its weight in the tier's draw. A tier has several routes so the deal
-spreads its cards across providers and models. The deal draws one enabled
-route of a card's tier per deal, weighted, excluding routes already drawn
-for that card when another remains; a card's `model:` header pins it
-instead. Frontier cards are never drawn from routes: they escalate to the
-coordinator, so `frontier` is no route's tier. Every value is data in the
+and model a card of that tier runs on, its token budget and deadline. A
+tier has several routes so the deal spreads its cards across providers and
+models, in the order of the tier's array (the `tier` kind below); a card's
+`model:` header pins it instead. Frontier cards are never dealt from
+routes: they escalate to the coordinator, so `frontier` is no route's tier. Every value is data in the
 row: the code names no provider or model.
 
 | field | type | required | who reads it | Redis |
 | --- | --- | --- | --- | --- |
-| `tier` | enum `flash`, `pro` | yes | the deal: the cards of this tier draw from it | `route:<r>` |
+| `tier` | enum `flash`, `pro` | yes | the deal: the cards of this tier are dealt on it | `route:<r>` |
 | `provider` | text | yes | the deal: the provider word of the model id `<provider>/<model>` the harness is launched with; one word, no slash | `route:<r>` |
 | `model` | text | yes | the deal: the model name after the provider; it may hold slashes (`x-ai/grok-4`) | `route:<r>` |
 | `tokens` | int | (0) | the deal: the token budget per card; 0 is unmetered and the deadline is the only stop | `route:<r>` |
 | `deadline` | int | yes | the deal: the seconds a card on this route may run, above 0 | `route:<r>` |
-| `weight` | int | (1) | the deal: its weight in the tier's draw; 0 takes it out of the draw | `route:<r>` |
-| `enabled` | bool | (true) | the deal: false takes it out of the draw | `route:<r>` |
+| `enabled` | bool | (true) | the deal: false takes it out of the deal | `route:<r>` |
 
 The kind's `Check`: `provider` is one word with no slash or blank, `model`
 is not empty and has no blank, and `deadline` is above 0. A route names no
 row of another kind.
+
+**`tier`** (`config.tiers`): a model tier's route array (the owner,
+2026-10-01: "the per-tier provider/model array should be specified in
+nova-config"). It has two rows, `flash` and `pro`, made by migrate, so `set`
+takes them on a new store and there is nothing to add. The deal takes
+`routes[index mod len]` for each card of the tier, the index a uint64
+counter on the fleet table (`route_index_flash`, `route_index_pro`), moved
+by one a card dealt; a redeal moves past the entries it leaves out
+(internal/sprint/route.go, tla/RouteIndex.tla). A route named twice takes
+two turns: the array is how a route gets more of the tier's cards.
+
+| field | type | required | who reads it | Redis |
+| --- | --- | --- | --- | --- |
+| `routes` | ordered comma list of route names, a name repeated as given | (empty) | the deal: the tier's array, read with the routes in one round trip; empty takes the tier's enabled routes in name order | `tier:<t>` |
+
+`set` refuses a name that is no route row, a disabled route, or a route of
+another tier (the store's check beside the kind's). A route disabled or
+removed after the array is set is skipped by the deal, which names it on
+its line.
 
 ## The schema
 
@@ -281,10 +299,13 @@ config.loops             (name PK, machine -> machines.name, argv, seat, keys,
                           argv a JSON array: the kind's Check again, as a
                           wall behind the tool)
 config.routes            (name PK, tier flash|pro, provider, model, tokens,
-                          deadline, weight, enabled boolean, created_at,
+                          deadline, enabled boolean, created_at,
                           updated_at; CHECK provider one word with no slash,
-                          model with no blank, deadline > 0, tokens and
-                          weight >= 0: the kind's Check again)
+                          model with no blank, deadline > 0, tokens >= 0:
+                          the kind's Check again; weight dropped by 0008)
+config.tiers             (name PK flash|pro, routes, created_at, updated_at;
+                          CHECK routes a comma list of names; the two rows
+                          inserted by the migration)
 ```
 
 No database has applied `0002_machine.sql` or `0003_friend.sql` in their
