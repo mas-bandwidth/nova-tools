@@ -2731,6 +2731,15 @@ the original failed measurement.
 **Its remedy line.** `"<line>" throws a failure away; let it show, or say why it is safe with `# ignored: <reason>` on this line or the one above`.
 **Its narrowings.** Keyed by file and shape and counted by line: each unreasoned line of a listed shape in a listed file is a site. A Go string literal holding a script (`tools/functionalrun`) is the `silent` rule's, on the live path only.
 
+### `deadcode` — no unreachable functions from production roots
+
+**The rule.** Production reachability is analyzed by `deadcode` from the `cmd/` mains as roots (`./cmd/...`), without `-test` (code reached only by tests is the next contraction's target). The analysis runs across three operating systems (GOOS `linux`, `darwin`, `windows`) and holds the union of dead functions to a per-package shrink-only ledger.
+**The mistake it prevents.** Unused, unreachable functions and methods accumulating across the codebase; maintainer directive 2026-09-30 contraction phase ("dead code to zero with a class test holding it").
+**The test.** `TestDeadCode` (`internal/ci/dead_code_class_test.go`), with its allowlist mechanics witness `TestDeadCodeWitness`. Runs in the functional tier behind `//go:build functional`.
+**Its allowlist.** `internal/ci/testdata/dead_code_allowlist.txt`, the shrink-only per-package ledger (`<package> <count>`); `NOVA_CI_UPDATE=1 go test -tags functional -run '^TestDeadCode$' ./internal/ci/` lowers counts and drops zero-count rows (the rule is functional-tier only, so `NOVA_CI_UPDATE=1 make test PKGS=./internal/ci` never reaches it, and the functional container mounts the source read-only). The list refuses to grow or raise any count.
+**Its remedy line.** `remedy="delete the unreachable function(s) or wire them into cmd/...; the dead code ledger only shrinks and refuses to raise counts or add rows"`.
+**Its narrowings.** Analyzes static reachability from main executables in `cmd/...` without `-test` flags using `golang.org/x/tools/cmd/deadcode` across `linux`, `darwin`, and `windows`.
+
 ### `fleet-plays` — the fleet plays read only the inventory and work through the Go tools
 
 **The rule.** The plays under `fleet/` that converge a fleet (`tools.yml`, `redis.yml`, `loops.yml`) and their templates read their values from the inventory `nova-config inventory` prints and from `fleet/group_vars/all.yml`, and do their work through the Go tools: no task uses ansible's `shell`, `script` or `raw`; every play runs on a group the inventory prints, or `localhost`; every command task says how its change is read (`changed_when`); every template a task names exists and every template is rendered by a task; every `nova_*` a play or template reads is defined by group_vars, by the inventory (a host variable or `all.vars`), by a `set_fact`, or named by an `assert` as the operator's `-e`; every `loop_*` a template reads is a variable of its play or task, every `l.<field>` a field of the inventory's loop record, every `ansible_*` a fact the plays gather; and `fleet/retired-tools.txt` names no tool `cmd/` ships.
