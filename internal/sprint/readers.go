@@ -104,9 +104,12 @@ func returnedRead(rc *Card) bool { return rc.Col == Asked && rc.F(FieldReturned)
 // the ask asks it again.
 const FieldReturned = "returned"
 
-// FieldReasked is how many times the ask asked a read card again in place, of
-// the reader that returned it; MaxReadReasks is the most: a return after them is
-// counted as a read (Read; tla/DirtyTick.tla, MaxReasks and ReasksBounded).
+// FieldReasked is how many times a read card's reader returned it and it went
+// back to asked on the reader's row, counted by Read itself at each return, so
+// the bound holds whatever the tick does and however many readers are up (the
+// ask need not run for the count to move); MaxReadReasks is the most: the
+// return after them retires the card, counted as a read (tla/DirtyTick.tla,
+// MaxReasks and ReasksBounded).
 const (
 	FieldReasked  = "reasked"
 	MaxReadReasks = 2
