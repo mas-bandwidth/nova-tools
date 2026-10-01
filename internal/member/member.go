@@ -322,6 +322,7 @@ type Member struct {
 
 	// lastStart is when this member last started a harness, for StartGap.
 	lastStart time.Time
+	passNow   time.Time // the pass's own time (Tick's), for what a start records
 
 	// the pushes that ended and no pass has collected yet, by launch (pushKey); pushGate
 	// bounds the pushes running at once (pushWidth); wake holds one word for the loop: a
@@ -519,6 +520,7 @@ func (m *Member) BeatLoop(ctx context.Context, every <-chan time.Time, out io.Wr
 // pass of 2026-10-01 16:32 ET). Only the pass's first read, the queue, ends it.
 func (m *Member) Tick(now time.Time) (acted int, err error) {
 	m.advanced()
+	m.passNow = now
 	m.spent = PassTimes{}
 	lap := m.clock()
 	// since is the time since the last lap, which it begins anew
@@ -913,6 +915,8 @@ func (m *Member) start(p Packet) bool {
 		fmt.Fprintf(m.out, "start %s: %v\n", p.Card, err)
 		if p.Kind != "read" {
 			m.failLaunch(p, err)
+		} else {
+			m.returnUnstarted(p, err)
 		}
 		return false
 	}
@@ -992,6 +996,23 @@ func (m *Member) failLaunch(p Packet, why error) {
 	if code != 0 {
 		fmt.Fprintf(m.out, "NOTE finish %s refused: %s\n", p.Card, strings.TrimSpace(string(out)))
 	}
+}
+
+// returnUnstarted hands back a read this reader cannot start (no route, a slot it cannot
+// make) with the reason, so the sprint asks it of another reader at once, or of this one
+// again at most MaxReadReasks times and then judges it; this reader does not begin it again
+// before ReadStageRetry. A read left reading with no child was started again every pass,
+// the refusal only in this log, for the read's whole deadline (fleet pass 7, 2026-10-01:
+// two reads with no route held a card twelve minutes of a two-hour deadline).
+func (m *Member) returnUnstarted(p Packet, why error) {
+	reason := cut("launch refused: " + oneLine(why.Error()))
+	code, out := m.run("read", "--as", m.cfg.As, "--return", p.Card, "--reason", reason, "--epoch", strconv.FormatUint(p.Epoch, 10))
+	fmt.Fprintf(m.out, "read %s: returned exit=%d: %s\n", p.Card, code, reason)
+	if code != 0 {
+		fmt.Fprintf(m.out, "NOTE read --return %s refused: %s\n", p.Card, strings.TrimSpace(string(out)))
+		return
+	}
+	m.returnedAt[p.Card] = m.passNow
 }
 
 // moved says the claim moved under a launch: the queue's card is at another

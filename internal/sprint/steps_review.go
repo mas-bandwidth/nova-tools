@@ -154,10 +154,11 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			u.Changes = append(u.Changes, change(Readers, createEntry(ReadCardID(c.ID, attempt, rd), rd, Asked, c.Score, fields)))
 		}
 		all = append(append(all, chosenReaders...), again...)
-		if !r.Another {
+		if pair := strings.Join(all, ","); !r.Another && pair != c.F("asked") {
 			// the readers kept on the primary are the pair; --another's reader
-			// is for this attempt only
-			u.Changes = append(u.Changes, change(Work, setEntry(c, map[string]string{"asked": strings.Join(all, ",")})))
+			// is for this attempt only. Fixed work asked of the pair it has kept
+			// writes nothing here: the pair is the same
+			u.Changes = append(u.Changes, change(Work, setEntry(c, map[string]string{"asked": pair})))
 		}
 		named := append([]string{}, chosenReaders...)
 		for _, rd := range again {

@@ -75,9 +75,14 @@ func TestD2ReworkDelegatesAtOnce(t *testing.T) {
 	if len(late.Refused) != 1 || !strings.Contains(late.Refused[0].Why, "retired") {
 		t.Fatalf("the refusal does not name the retirement: %+v", late.Refused)
 	}
-	// The fixed work returns: both readers asked again at the new head.
+	// The fixed work returns: the finish asks no reader (one path asks), and the machine's
+	// ask asks both readers again at the new head.
 	w.must(Take(w.s, TakeReq{As: card.Row, Sel: Sel{IDs: []string{card.ID}}, Gens: gensOf(w.s, card.ID)}))
 	w.must(Finish(w.s, FinishReq{Sel: Sel{IDs: []string{card.ID}}, Gens: gensOf(w.s, card.ID), Head: "h2"}))
+	if early := readsAt(w.s, w.s.Work.Card("s1-1"), 2); len(early) != 0 {
+		t.Fatalf("the finish asked readers itself: %v", early)
+	}
+	w.must(Ask(w.s, AskReq{}))
 	again := readsAt(w.s, w.s.Work.Card("s1-1"), 2)
 	if len(again) != 2 || again[0].F("head") != "h2" || again[1].F("head") != "h2" {
 		t.Fatalf("not asked again at the new head: %v", again)

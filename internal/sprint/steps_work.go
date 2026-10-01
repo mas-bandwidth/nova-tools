@@ -1094,22 +1094,13 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		u := Unit{Key: c.ID, Stream: pr.Row, Changes: []Change{change(Fleet, moveEntry(c, c.Row, into, cardSet))},
 			Moved: fmt.Sprintf("%s working -> done %s; %s working -> review", c.ID, result, pr.ID)}
 		attempt := pr.Int("attempt")
+		// ONE PATH ASKS: the finish asks no reader. The machine's ask does, in the tick the
+		// finish wakes, the earlier pair first (Ask, the primary's asked field), each read
+		// with the route it draws. A read the finish created itself carried no route (a
+		// finish loads none) and no reader could start it (fleet pass 7, 2026-10-01: two
+		// such reads held a card twelve minutes)
 		asked := map[string]string{}
 		if !r.Failed {
-			var again []string
-			for _, reader := range Split(pr.F("asked")) {
-				id := ReadCardID(pr.ID, attempt, reader)
-				if !s.Readers.HasRow(reader) || s.Readers.Card(id) != nil {
-					continue
-				}
-				u.Changes = append(u.Changes, change(Readers, createEntry(id, reader, Asked, pr.Score,
-					map[string]string{"kind": "read", "primary": pr.ID, "stream": pr.Row, "reader": reader, "attempt": itoa(attempt), "head": head, "asked": stamp(s.Now)})))
-				again = append(again, reader)
-				asked[id] = Asked
-			}
-			if len(again) > 0 {
-				u.Moved += "; asked again of " + strings.Join(again, ", ")
-			}
 			n := happened(NWorkOK, pr.Row, s.Now, pr.ID)
 			n.Who, n.Attempt = who, attempt
 			u.Notes = append(u.Notes, n)

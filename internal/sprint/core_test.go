@@ -136,6 +136,7 @@ func TestTheWholeLifeOfAPrimary(t *testing.T) {
 	member := w.s.Fleet.Card(card).Row
 	w.must(Take(w.s, TakeReq{As: member, Sel: Sel{IDs: []string{card}}, Gens: gensOf(w.s, card)}))
 	w.must(Finish(w.s, FinishReq{As: member, Sel: Sel{IDs: []string{card}}, Gens: gensOf(w.s, card)}))
+	w.must(Ask(w.s, AskReq{})) // the machine's ask: the pair the primary kept
 	again := readsAt(w.s, w.s.Work.Card("s1-2"), 2)
 	if len(again) != 2 || again[0].F("reader") != second[0].F("reader") && again[1].F("reader") != second[0].F("reader") {
 		t.Fatalf("fixed work not asked of the same readers: %v", again)
