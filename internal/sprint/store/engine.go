@@ -389,10 +389,9 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			_ = st.B.Release(context.WithoutCancel(ctx), *lock, false)
 		}
 	}()
-	var routes []sprint.Route
-	var tiers map[string][]string
+	var routes RouteSet
 	if step.Routes {
-		if routes, tiers, err = st.cached(ctx, step.RouteCache); err != nil {
+		if routes, err = st.cached(ctx, step.RouteCache); err != nil {
 			return res, err
 		}
 	}
@@ -486,7 +485,7 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			}
 		}
 		if step.Routes {
-			snap.Routes, snap.Tiers = routes, tiers
+			routes.into(snap)
 		}
 		if step.Readers && step.ReaderStates != nil {
 			snap.ReaderStates = step.ReaderStates
