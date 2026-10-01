@@ -42,6 +42,7 @@ const (
 	NMemberUp       = "fleet member up"
 	NMemberDown     = "fleet member down"
 	NUnknownMachine = "an unknown machine is beating"
+	NStagingRefused = "a member refused a card at staging" // dealt to another member
 
 	// Computed by inbox from the machine's record, as the stale line is: no
 	// notification holds them.

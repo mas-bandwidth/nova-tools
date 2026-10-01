@@ -74,6 +74,13 @@ const (
 	FieldProviderTake  = "provider_take_" // + the take's number, redeals + 1 when it ended
 )
 
+// FieldStagingTake is the record of a launch its member refused at staging, keyed by the
+// generation refused (ProviderTake's shape: the route, the member, when, the reason). A
+// staging refusal spends none of the redeal bound: its own bound is the fleet, each member
+// refusing an attempt's card at most once, the deal never placing it on a member that
+// refused it (tla/CardContract.tla, StageRefused, Restage and StagingBound).
+const FieldStagingTake = "staging_take_"
+
 // MaxProviderErrorBytes bounds the line FieldProviderError keeps.
 const MaxProviderErrorBytes = 200
 
@@ -480,10 +487,21 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	var ready []*Card
 	var conds []cond
 	unserved, whyOf := map[string][]string{}, map[string]string{}
+	up := s.UpMembers()
 	for _, c := range s.Work.Column(Ready) {
 		if wc := AtRedealBound(s, c); wc != nil {
 			conds = append(conds, cond{typ: NBound, stream: c.Row, card: wc.ID, primaries: []string{c.ID},
 				what: fmt.Sprintf("%s: attempt %s was redealt %d times, its bound, and is not dealt again%s; its history: nova-sprint log --card %s", wc.ID, wc.F("attempt"), wc.Int("redeals"), providerWhy(wc), c.ID)})
+			continue
+		}
+		if wc, takes := AtStagingBound(s, c, up); wc != nil {
+			// every member up refused it at staging: the coordinator's, once, never dealt again
+			var who []string
+			for _, t := range takes {
+				who = append(who, t.Member)
+			}
+			conds = append(conds, cond{typ: NBound, stream: c.Row, card: wc.ID, primaries: []string{c.ID},
+				what: fmt.Sprintf("%s: attempt %s was refused at staging by every member up (%s) and is not dealt again; last: %s; its history: nova-sprint log --card %s", wc.ID, wc.F("attempt"), strings.Join(who, ", "), takes[len(takes)-1].Error, c.ID)})
 			continue
 		}
 		if IsSentinel(c) {
@@ -503,7 +521,6 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 			what: fmt.Sprintf("%d primaries of tier %s wait: %s", len(unserved[tier]), tier, whyOf[tier])})
 	}
 	ready = streamTurns(ready, streamRound(s, PropStreamIndex))
-	up := s.UpMembers()
 	if len(up) == 0 && len(ready) > 0 {
 		conds = append(conds, cond{typ: NNoMember, streamLevel: true,
 			what: fmt.Sprintf("%d primaries wait to be dealt and no member is up: start nova-sprint fleet beat <member> on a machine, or release a hold with nova-sprint fleet up <member>", len(ready))})
@@ -538,6 +555,47 @@ func AtRedealBound(s *Snapshot, pr *Card) *Card {
 		return wc
 	}
 	return nil
+}
+
+// StagingTakes is the work card's launches refused at staging, in the order of their
+// generations (FieldStagingTake).
+func StagingTakes(wc *Card) (takes []ProviderTake, gens []int) {
+	for g := 1; g <= wc.Int("gen"); g++ {
+		if v := wc.F(FieldStagingTake + itoa(g)); v != "" {
+			f := append(strings.SplitN(v, "\t", 6), "", "", "", "", "", "")
+			takes, gens = append(takes, ProviderTake{Route: f[0], Model: f[1], Member: f[2], Finished: f[3], Usage: f[4], Error: f[5]}), append(gens, g)
+		}
+	}
+	return takes, gens
+}
+
+// StagingRefusers is the members that refused the work card at staging, each once, in the
+// order they refused: the deal places it on none of them.
+func StagingRefusers(wc *Card) []string {
+	takes, _ := StagingTakes(wc)
+	var out []string
+	for _, t := range takes {
+		if !contains(out, t.Member) {
+			out = append(out, t.Member)
+		}
+	}
+	return out
+}
+
+// AtStagingBound is the primary's withdrawn work card when every member up (up, at least
+// one) refused it at staging, and the refusals: the deal has no member to place it on, and
+// the tick deals it no more until a member that has not refused it is up, or the coordinator
+// reworks or drops it. nil when it is not.
+func AtStagingBound(s *Snapshot, pr *Card, up []string) (*Card, []ProviderTake) {
+	if pr == nil || pr.Col != Ready || len(up) == 0 {
+		return nil, nil
+	}
+	wc := s.Fleet.Placed(WorkCardID(pr.ID, pr.Int("attempt")))
+	if wc == nil || wc.Col != Withdrawn || len(without(up, StagingRefusers(wc))) > 0 {
+		return nil, nil
+	}
+	takes, _ := StagingTakes(wc)
+	return wc, takes
 }
 
 // providerWhy is what a bound's judgment adds when the take that ended last was the

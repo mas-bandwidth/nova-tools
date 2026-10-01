@@ -719,7 +719,14 @@ func dealPlan(s *Snapshot, r DealReq, rr *round) (Plan, roundMoves) {
 				p.refuse(c.ID, why)
 				continue
 			}
+			// a member that refused it at staging is not dealt it again (StagingRefusers)
 			m := next()
+			if refused := StagingRefusers(wc); len(refused) > 0 {
+				if m = rr.next(without(up, refused), q, widths, "", true); m == "" {
+					p.refuse(c.ID, fmt.Sprintf("%s was refused at staging by every member up (%s): rework it with a fix, or drop it", wc.ID, strings.Join(refused, ", ")))
+					continue
+				}
+			}
 			u, why := redeal(s, c, wc, m, q)
 			if why != "" {
 				p.refuse(c.ID, why)
@@ -1004,6 +1011,10 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 			p.Units = append(p.Units, providerEnded(s, c, pr, r))
 			continue
 		}
+		if r.Failed && IsStagingRefusal(r.Report) {
+			p.Units = append(p.Units, stagingRefused(s, c, pr, r))
+			continue
+		}
 		head := r.Head
 		if head == "" {
 			head = c.ID
@@ -1098,6 +1109,33 @@ func providerEnded(s *Snapshot, c, pr *Card, r FinishReq) Unit {
 		change(Fleet, moveEntry(c, c.Row, Withdrawn, set, "taken", "dealt")),
 		change(Work, moveEntry(pr, pr.Row, Ready, nil, "work")),
 	}, Moved: fmt.Sprintf("%s working -> withdrawn gen=%d, the provider failed the take; %s working -> ready", c.ID, c.Int("gen")+1, pr.ID)}
+}
+
+// IsStagingRefusal says a failed finish's report names its member's staging as the cause:
+// it begins with the finish kind `staging refused` (cardhdr.EndStaging), the member's word
+// when its machine refused the launch before any child ran.
+func IsStagingRefusal(report string) bool { return strings.HasPrefix(report, cardhdr.EndStaging) }
+
+// stagingRefused is the unit of a launch its member refused at staging (tla/CardContract.tla,
+// StageRefused and Restage): no child ran, so the work card is withdrawn WITHOUT
+// FieldTakeEnded and its primary goes back to ready, and the deal places it again on a
+// member that has not refused it (StagingRefusers), spending none of the redeal bound: the
+// member's failure, never the card's. No failed-work judgment is written; the inbox is told
+// what happened, the member and the reason; the card keeps the refusal's record
+// (FieldStagingTake at the generation refused).
+func stagingRefused(s *Snapshot, c, pr *Card, r FinishReq) Unit {
+	set := nextGen(c, "", s.Now)
+	set["withdrawn"] = stamp(s.Now)
+	line := cutText(strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(r.Report, cardhdr.EndStaging), ":")), MaxProviderErrorBytes)
+	set[FieldStagingTake+itoa(c.Int("gen"))] = ProviderTake{Route: c.F(FieldRoute), Model: c.F(FieldModel), Member: c.Row,
+		Finished: stamp(s.Now), Usage: r.Usage, Error: line}.String()
+	n := happened(NStagingRefused, pr.Row, s.Now, pr.ID)
+	n.Who, n.Attempt = c.Row, c.Int("attempt")
+	n.What = cardhdr.EndStaging + " on " + c.Row + ": " + line
+	return Unit{Key: c.ID, Stream: pr.Row, Changes: []Change{
+		change(Fleet, moveEntry(c, c.Row, Withdrawn, set, "taken", "dealt")),
+		change(Work, moveEntry(pr, pr.Row, Ready, nil, "work")),
+	}, Notes: []Note{n}, Moved: fmt.Sprintf("%s working -> withdrawn gen=%d, %s refused it at staging; %s working -> ready", c.ID, c.Int("gen")+1, c.Row, pr.ID)}
 }
 
 // FleetReq is a fleet move: a member up or down, or the ready queues
@@ -1325,7 +1363,7 @@ func downPlan(s *Snapshot, r FleetReq, up []string, rr *round, moves roundMoves,
 			// index moved past it; with none below its width the card is
 			// withdrawn, and the next deal places it where there is room: a
 			// member at its width takes no more (errata 3 amendment 9)
-			if m := rr.next(up, q, widths, "", false); m != "" {
+			if m := rr.next(without(up, StagingRefusers(c)), q, widths, "", false); m != "" {
 				rr.moved(m)
 				moves[c.ID] = m
 				q[m]++
@@ -1417,6 +1455,17 @@ func nextGen(c *Card, member string, now time.Time) map[string]string {
 		}
 	}
 	return set
+}
+
+// without is xs less every one of out, in xs's order.
+func without(xs, out []string) []string {
+	var keep []string
+	for _, x := range xs {
+		if !contains(out, x) {
+			keep = append(keep, x)
+		}
+	}
+	return keep
 }
 
 func contains(xs []string, x string) bool {
