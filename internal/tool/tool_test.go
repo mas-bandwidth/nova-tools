@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // parsed is one rendering read back into the parts of Out, for comparing the
@@ -98,9 +100,8 @@ func fromJSON(t *testing.T, raw string) parsed {
 		Notes   []string
 		Payload string
 	}
-	if err := json.Unmarshal([]byte(raw), &j); err != nil {
-		t.Fatalf("not one JSON object: %v: %s", err, raw)
-	}
+	err := json.Unmarshal([]byte(raw), &j)
+	require.NoError(t, err, "not one JSON object: %v: %s", err, raw)
 	p := parsed{Verb: j.Result.Verb, Status: j.Result.Status, Remedy: j.Result.Remedy, Exit: j.Result.Exit,
 		Why: j.Result.Why, Facts: map[string]string{}, Notes: j.Notes, Payload: j.Payload}
 	for k, v := range j.Facts {
@@ -110,15 +111,12 @@ func fromJSON(t *testing.T, raw string) parsed {
 		// The fields are an object in insertion order; decode them in order.
 		dec := json.NewDecoder(bytes.NewReader(it.Fields))
 		kv := []string{strings.ToLower(it.Kind)}
-		if _, err := dec.Token(); err != nil {
-			t.Fatal(err)
-		}
+		_, err := dec.Token()
+		require.NoError(t, err)
 		for dec.More() {
 			k, _ := dec.Token()
 			var v any
-			if err := dec.Decode(&v); err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, dec.Decode(&v))
 			kv = append(kv, fmt.Sprint(k)+"="+fmt.Sprint(v))
 		}
 		p.Items = append(p.Items, strings.Join(kv, " "))
@@ -172,12 +170,8 @@ func TestRender(t *testing.T) {
 			var text, js bytes.Buffer
 			tc.out.Render(&text, false)
 			tc.out.Render(&js, true)
-			if text.String() != tc.lines {
-				t.Errorf("lines:\n%s\nwant:\n%s", text.String(), tc.lines)
-			}
-			if strings.Count(js.String(), "\n") != 1 {
-				t.Errorf("JSON is not one line: %q", js.String())
-			}
+			assert.Equal(t, tc.lines, text.String(), "lines:\n%s\nwant:\n%s", text.String(), tc.lines)
+			assert.Equal(t, 1, strings.Count(js.String(), "\n"), "JSON is not one line: %q", js.String())
 			got, want := fromLines(t, "DEMO", text.String()), fromJSON(t, js.String())
 			got.Verb, got.Exit = want.Verb, tc.out.Exit
 			if want.Verb != "demo" || want.Exit != tc.out.Exit {
@@ -190,9 +184,8 @@ func TestRender(t *testing.T) {
 			for k, v := range want.Facts {
 				want.Facts[k] = strings.NewReplacer(" ", `\x20`, "=", `\x3d`).Replace(v)
 			}
-			if g, w := fmt.Sprintf("%+v", got), fmt.Sprintf("%+v", want); g != w {
-				t.Errorf("the lines and the JSON disagree:\nlines %s\njson  %s", g, w)
-			}
+			g, w := fmt.Sprintf("%+v", got), fmt.Sprintf("%+v", want)
+			assert.Equal(t, g, w, "the lines and the JSON disagree:\nlines %s\njson  %s", g, w)
 		})
 	}
 }
@@ -425,13 +418,10 @@ func TestProblems(t *testing.T) {
 				t.Errorf("problems: %s", got)
 			}
 			for _, w := range tc.want {
-				if !strings.Contains(got, w) {
-					t.Errorf("problems lack %q:\n%s", w, got)
-				}
+				assert.Contains(t, got, w, "problems lack %q:\n%s", w, got)
 			}
-			if n := len(d.Problems()); n != len(tc.want) {
-				t.Errorf("%d problems, want %d:\n%s", n, len(tc.want), got)
-			}
+			n := len(d.Problems())
+			assert.Equal(t, len(tc.want), n, "%d problems, want %d:\n%s", n, len(tc.want), got)
 		})
 	}
 }
