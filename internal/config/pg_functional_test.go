@@ -4,10 +4,8 @@ package config
 
 import (
 	"context"
-	"errors"
 	"net"
 	"os"
-	"strings"
 	"testing"
 	"time"
 
@@ -43,10 +41,8 @@ func migrated(t *testing.T) *PG {
 	st, err := OpenPG(ctx, server.Database(t))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = st.Close() })
-	{
-		_, _, _, err := st.Migrate(ctx)
-		require.NoError(t, err)
-	}
+	_, _, _, setupErr952 := st.Migrate(ctx)
+	require.NoError(t, setupErr952)
 	return st
 }
 
@@ -59,17 +55,29 @@ func TestMigrateOnAnEmptyDatabaseTwice(t *testing.T) {
 	defer st.Close()
 	{
 		v, err := st.Version(ctx)
-		require.False(t, err != nil || v != 0, "version before migrate: %d %v", v, err)
+		assertionMsg62 := []any{"version before migrate: %d %v", v, err}
+		require.NoError(t, err, assertionMsg62...)
+		require.Equal(t, 0, v, assertionMsg62...)
 	}
 	all, err := Migrations()
 	require.NoError(t, err)
 	from, to, applied, err := st.Migrate(ctx)
-	require.False(t, err != nil || from != 0 || to != len(all) || len(applied) != len(all), "first migrate: from %d to %d applied %v err %v", from, to, applied, err)
+	assertionMsg67 := []any{"first migrate: from %d to %d applied %v err %v", from, to, applied, err}
+	require.NoError(t, err, assertionMsg67...)
+	require.Equal(t, 0, from, assertionMsg67...)
+	require.Equal(t, len(all), to, assertionMsg67...)
+	require.Len(t, applied, len(all), assertionMsg67...)
 	from, to, applied, err = st.Migrate(ctx)
-	require.False(t, err != nil || from != len(all) || to != len(all) || len(applied) != 0, "second migrate: from %d to %d applied %v err %v (idempotent: nothing applied twice)", from, to, applied, err)
+	assertionMsg69 := []any{"second migrate: from %d to %d applied %v err %v (idempotent: nothing applied twice)", from, to, applied, err}
+	require.NoError(t, err, assertionMsg69...)
+	require.Equal(t, len(all), from, assertionMsg69...)
+	require.Equal(t, len(all), to, assertionMsg69...)
+	require.Empty(t, applied, assertionMsg69...)
 	{
 		v, err := st.Version(ctx)
-		require.False(t, err != nil || v != len(all), "version after: %d %v", v, err)
+		assertionMsg72 := []any{"version after: %d %v", v, err}
+		require.NoError(t, err, assertionMsg72...)
+		require.Equal(t, len(all), v, assertionMsg72...)
 	}
 	counts, err := st.Counts(ctx)
 	require.NoError(t, err)
@@ -77,15 +85,23 @@ func TestMigrateOnAnEmptyDatabaseTwice(t *testing.T) {
 		if k.Singleton {
 			{
 				_, found, err := st.Get(ctx, k.Name, k.Name)
-				assert.False(t, err != nil || !found, "fresh schema lacks the %s row migrate creates: %v %v", k.Name, found, err)
+				assertionMsg92 := []any{"fresh schema lacks the %s row migrate creates: %v %v", k.Name, found, err}
+				func() {
+					if !assert.NoError(t, err, assertionMsg92...) {
+						return
+					}
+					assert.True(t, found, assertionMsg92...)
+				}()
 			}
 			continue
 		}
-		assert.False(t, counts[k.Name] != 0, "fresh schema counts %d %s rows", counts[k.Name], k.Name)
+		assert.Equal(t, 0, counts[k.Name], "fresh schema counts %d %s rows", counts[k.Name], k.Name)
 	}
 	{
 		rev, err := st.Rev(ctx, KindFriend)
-		require.False(t, err != nil || rev != 0, "rev of an empty history: %d %v", rev, err)
+		assertionMsg88 := []any{"rev of an empty history: %d %v", rev, err}
+		require.NoError(t, err, assertionMsg88...)
+		require.Equal(t, int64(0), rev, assertionMsg88...)
 	}
 }
 
@@ -101,10 +117,8 @@ func TestOpenPGRefusesAClosedPort(t *testing.T) {
 
 	_, err := OpenPG(context.Background(), "postgres://postgres@127.0.0.1:1/nova?sslmode=disable&connect_timeout=2")
 	require.Error(t, err, "a closed port opened")
-	{
-		got := err.Error()
-		require.False(t, !strings.Contains(got, "postgres at postgres@127.0.0.1:1/nova"), "refusal %q does not name the store", got)
-	}
+	scopedGot120 := err.Error()
+	require.Contains(t, scopedGot120, "postgres at postgres@127.0.0.1:1/nova", "refusal %q does not name the store", scopedGot120)
 }
 
 // Without a deadline of its own the connection check is bounded by the
@@ -139,9 +153,8 @@ func TestOpenPGBoundsByTheFallbackOnlyWithoutADeadline(t *testing.T) {
 	dsn, _ := stall()
 	ctx := context.Background()
 	_, err := openPGWithin(ctx, dsn, 100*time.Millisecond)
-	if !errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
-		require.Failf(t, "unexpected result", "no deadline: err %v, ctx %v; want the fallback's deadline error on an open context", err, ctx.Err())
-	}
+	require.ErrorIs(t, err, context.DeadlineExceeded, "the fallback deadline should govern an open context")
+	require.NoError(t, ctx.Err(), "the caller's context should remain open")
 
 	// A deadline (a distant one, so nothing here waits on it): it governs, so
 	// a 1ns fallback is not applied and the call is still waiting when the
@@ -155,7 +168,6 @@ func TestOpenPGBoundsByTheFallbackOnlyWithoutADeadline(t *testing.T) {
 		cancel()
 	}()
 	_, err = openPGWithin(dctx, dsn, time.Nanosecond)
-	if err == nil || dctx.Err() == nil {
-		require.Failf(t, "unexpected result", "a deadline: err %v, ctx %v; want the caller's context to have governed", err, dctx.Err())
-	}
+	require.Error(t, err, "the caller's deadline should govern")
+	require.Error(t, dctx.Err(), "the caller's context should be done")
 }

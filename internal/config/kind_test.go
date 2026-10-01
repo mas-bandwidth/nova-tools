@@ -14,34 +14,47 @@ func TestEveryKindHasATableAndUniqueFields(t *testing.T) {
 
 	seen := map[string]bool{}
 	for _, k := range Kinds {
-		assert.False(t, k.Name == "" || k.Table == "" || k.Doc == "", "kind %+v: name, table and doc are required", k)
+		assertionMsg17 := []any{"kind %+v: name, table and doc are required", k}
+		func() {
+			if !assert.NotEqual(t, "", k.Name, assertionMsg17...) {
+				return
+			}
+			if !assert.NotEqual(t, "", k.Table, assertionMsg17...) {
+				return
+			}
+			assert.NotEqual(t, "", k.Doc, assertionMsg17...)
+		}()
 		assert.False(t, seen[k.Name], "kind %s is declared twice", k.Name)
 		seen[k.Name] = true
 		fields := map[string]bool{}
 		for _, f := range k.Fields {
-			assert.False(t, f.Name == "name" || fields[f.Name], "kind %s: field %q is the row key or repeated", k.Name, f.Name)
-			fields[f.Name] = true
-			assert.False(t, f.Help == "", "kind %s: field %s has no help line", k.Name, f.Name)
-			assert.False(t, (f.Type == TypeEnum || f.Type == TypeList) && len(f.Enum) == 0, "kind %s: field %s is an enum with no words", k.Name, f.Name)
-			if f.Type == TypeRef {
-				{
-					_, ok := Lookup(f.Ref)
-					assert.True(t, ok, "kind %s: field %s refers to unknown kind %q", k.Name, f.Name, f.Ref)
+			assertionMsg22 := []any{"kind %s: field %q is the row key or repeated", k.Name, f.Name}
+			func() {
+				if !assert.NotEqual(t, "name", f.Name, assertionMsg22...) {
+					return
 				}
+				assert.False(t, fields[f.Name], assertionMsg22...)
+			}()
+			fields[f.Name] = true
+			assert.NotEqual(t, "", f.Help, "kind %s: field %s has no help line", k.Name, f.Name)
+			if f.Type == TypeEnum || f.Type == TypeList {
+				assert.NotEmpty(t, f.Enum, "kind %s: field %s is an enum with no words", k.Name, f.Name)
+			}
+			if f.Type == TypeRef {
+				_, scopedOk42 := Lookup(f.Ref)
+				assert.True(t, scopedOk42, "kind %s: field %s refers to unknown kind %q", k.Name, f.Name, f.Ref)
 			}
 		}
 	}
-	{
-		_, ok := Lookup("nothing")
-		assert.False(t, ok, "Lookup found a kind that is not declared")
-	}
+	_, scopedOk49 := Lookup("nothing")
+	assert.False(t, scopedOk49, "Lookup found a kind that is not declared")
 }
 
 func TestKindsApplyInDependencyOrder(t *testing.T) {
 	t.Parallel()
 
 	names := KindNames()
-	require.False(t, strings.Join(names, ",") != "machine,fleet,friend,sprint,loop", "kinds %v: machines first (ceilings), the fleet next (a friend's slots are charged to its coordinator machine when her beat names none), friends, the sprint row (it names a friend), loops last (each names a machine)", names)
+	require.Equal(t, "machine,fleet,friend,sprint,loop", strings.Join(names, ","), "kinds %v: machines first (ceilings), the fleet next (a friend's slots are charged to its coordinator machine when her beat names none), friends, the sprint row (it names a friend), loops last (each names a machine)", names)
 }
 
 // TestTheMachineRowIsTheDeclaredFactsSomethingReads: Glenn 2026-09-27, "I
@@ -52,21 +65,15 @@ func TestTheMachineRowIsTheDeclaredFactsSomethingReads(t *testing.T) {
 	t.Parallel()
 
 	machine, _ := Lookup(KindMachine)
-	{
-		got := strings.Join(machine.FieldNames(), ",")
-		require.False(t, got != "user,seat,slots,runners", "machine fields %s, want user,seat,slots,runners", got)
-	}
+	scopedGot70 := strings.Join(machine.FieldNames(), ",")
+	require.Equal(t, "user,seat,slots,runners", scopedGot70, "machine fields %s, want user,seat,slots,runners", scopedGot70)
 	for _, f := range machine.Fields {
-		{
-			want := f.Name != "runners"
-			assert.False(t, f.Required != want, "--%s required=%v, want %v (runners defaults to 0; the rest are typed on add)", f.Name, f.Required, want)
-		}
+		scopedWant75 := f.Name != "runners"
+		assert.Equal(t, scopedWant75, f.Required, "--%s required=%v, want %v (runners defaults to 0; the rest are typed on add)", f.Name, f.Required, scopedWant75)
 	}
 	for _, invented := range []string{"ssh", "address", "os_arch", "os", "arch", "cores", "memory_gb", "roles", "note", "store", "coordinator", "machine", "harness", "logins", "wake"} {
-		{
-			_, ok := machine.Field(invented)
-			assert.False(t, ok, "machine has a field %s: an address is the name, a measured fact comes live from the beat, a fleet fact is the fleet's, a note is history", invented)
-		}
+		_, scopedOk81 := machine.Field(invented)
+		assert.False(t, scopedOk81, "machine has a field %s: an address is the name, a measured fact comes live from the beat, a fleet fact is the fleet's, a note is history", invented)
 	}
 	assert.False(t, machine.Singleton, "machine is many rows")
 }
@@ -79,25 +86,31 @@ func TestTheFriendRowIsWhatSomeoneDecidesForHer(t *testing.T) {
 	t.Parallel()
 
 	friend, _ := Lookup(KindFriend)
-	{
-		got := strings.Join(friend.FieldNames(), ",")
-		require.False(t, got != "slots,tiers,roles", "friend fields %s, want slots,tiers,roles", got)
-	}
+	scopedGot97 := strings.Join(friend.FieldNames(), ",")
+	require.Equal(t, "slots,tiers,roles", scopedGot97, "friend fields %s, want slots,tiers,roles", scopedGot97)
 	for _, f := range friend.Fields {
-		{
-			want := f.Name != "roles"
-			assert.False(t, f.Required != want, "--%s required=%v, want %v", f.Name, f.Required, want)
-		}
+		scopedWant102 := f.Name != "roles"
+		assert.Equal(t, scopedWant102, f.Required, "--%s required=%v, want %v", f.Name, f.Required, scopedWant102)
 	}
 	for _, invented := range []string{"machine", "harness", "logins", "wake", "note", "coordinator"} {
-		{
-			_, ok := friend.Field(invented)
-			assert.False(t, ok, "friend has a field %s: what she would just know is runtime data, who coordinates is the sprint's", invented)
-		}
+		_, scopedOk108 := friend.Field(invented)
+		assert.False(t, scopedOk108, "friend has a field %s: what she would just know is runtime data, who coordinates is the sprint's", invented)
 	}
-	assert.False(t, strings.Join(FriendRoles, ",") != "builder,may-hold,reader" || strings.Join(Tiers, ",") != "flash,frontier,pro", "roles %v tiers %v", FriendRoles, Tiers)
+	assertionMsg98 := []any{"roles %v tiers %v", FriendRoles, Tiers}
+	func() {
+		if !assert.Equal(t, "builder,may-hold,reader", strings.Join(FriendRoles, ","), assertionMsg98...) {
+			return
+		}
+		assert.Equal(t, "flash,frontier,pro", strings.Join(Tiers, ","), assertionMsg98...)
+	}()
 	sprint, _ := Lookup(KindSprint)
-	require.False(t, !sprint.Singleton || len(sprint.Fields) != 1 || sprint.Fields[0].Name != "coordinator" || sprint.Fields[0].Type != TypeRef || sprint.Fields[0].Ref != KindFriend || sprint.Fields[0].Required, "sprint %+v: one row, one optional ref to a friend", sprint)
+	assertionMsg100 := []any{"sprint %+v: one row, one optional ref to a friend", sprint}
+	require.True(t, sprint.Singleton, assertionMsg100...)
+	require.Len(t, sprint.Fields, 1, assertionMsg100...)
+	require.Equal(t, "coordinator", sprint.Fields[0].Name, assertionMsg100...)
+	require.Equal(t, TypeRef, sprint.Fields[0].Type, assertionMsg100...)
+	require.Equal(t, KindFriend, sprint.Fields[0].Ref, assertionMsg100...)
+	require.False(t, sprint.Fields[0].Required, assertionMsg100...)
 }
 
 // TestDeriveGivesTheSprintCoordinatorTheRole: the rows apply plans carry
@@ -120,18 +133,13 @@ func TestDeriveGivesTheSprintCoordinatorTheRole(t *testing.T) {
 		}
 		return "?"
 	}
-	if byName(derived, "rowan") != "builder,coordinator" || byName(derived, "stella") != "builder,reader" {
-		require.Failf(t, "unexpected result", "derived roles rowan=%s stella=%s", byName(derived, "rowan"), byName(derived, "stella"))
-	}
-	require.False(t, byName(rows, "rowan") != "builder", "Derive changed its input")
-	{
-		_, _, err := st.Update(ctx, KindSprint, KindSprint, map[string]string{"coordinator": ""}, "rowan")
-		require.NoError(t, err)
-	}
+	require.Equal(t, "builder,coordinator", byName(derived, "rowan"), "derived rowan roles")
+	require.Equal(t, "builder,reader", byName(derived, "stella"), "derived stella roles")
+	require.Equal(t, "builder", byName(rows, "rowan"), "Derive changed its input")
+	_, _, setupErr5775 := st.Update(ctx, KindSprint, KindSprint, map[string]string{"coordinator": ""}, "rowan")
+	require.NoError(t, setupErr5775)
 	derived, _ = friend.Derive(ctx, st, rows)
-	if byName(derived, "rowan") != "builder" {
-		require.Failf(t, "unexpected result", "no coordinator named and rowan still derives %s", byName(derived, "rowan"))
-	}
+	require.Equal(t, "builder", byName(derived, "rowan"), "no coordinator is named")
 }
 
 // TestTheFleetIsOneRowOfTwoMachineRefs: Glenn 2026-09-27, "in the fleet
@@ -141,23 +149,39 @@ func TestTheFleetIsOneRowOfTwoMachineRefs(t *testing.T) {
 	t.Parallel()
 
 	fleet, _ := Lookup(KindFleet)
-	require.False(t, !fleet.Singleton || fleet.Table != "fleet", "fleet %+v: one row in config.fleet", fleet)
-	{
-		got := strings.Join(fleet.FieldNames(), ",")
-		require.False(t, got != "store,coordinator", "fleet fields %s, want store,coordinator", got)
-	}
+	assertionMsg144 := []any{"fleet %+v: one row in config.fleet", fleet}
+	require.True(t, fleet.Singleton, assertionMsg144...)
+	require.Equal(t, "fleet", fleet.Table, assertionMsg144...)
+	scopedGot169 := strings.Join(fleet.FieldNames(), ",")
+	require.Equal(t, "store,coordinator", scopedGot169, "fleet fields %s, want store,coordinator", scopedGot169)
 	for _, f := range fleet.Fields {
-		assert.False(t, f.Type != TypeRef || f.Ref != KindMachine || f.Required, "--%s %+v: an optional ref to a machine row", f.Name, f)
+		assertionMsg158 := []any{"--%s %+v: an optional ref to a machine row", f.Name, f}
+		func() {
+			if !assert.Equal(t, TypeRef, f.Type, assertionMsg158...) {
+				return
+			}
+			if !assert.Equal(t, KindMachine, f.Ref, assertionMsg158...) {
+				return
+			}
+			assert.False(t, f.Required, assertionMsg158...)
+		}()
 	}
 	row, err := fleet.NewRow(KindFleet, map[string]string{"store": "hulk"})
-	require.False(t, err != nil || row.Fields["store"] != "hulk" || row.Fields["coordinator"] != "", "fleet row %+v %v", row.Fields, err)
+	assertionMsg153 := []any{"fleet row %+v %v", row.Fields, err}
+	require.NoError(t, err, assertionMsg153...)
+	require.Equal(t, "hulk", row.Fields["store"], assertionMsg153...)
+	require.Equal(t, "", row.Fields["coordinator"], assertionMsg153...)
 	{
 		_, err := fleet.NewRow(KindFleet, map[string]string{"store": "Hulk"})
-		require.False(t, err == nil || !strings.Contains(err.Error(), "--store: name \"Hulk\": want lower-case"), "a ref that is not a name: %v", err)
+		assertionMsg156 := []any{"a ref that is not a name: %v", err}
+		require.Error(t, err, assertionMsg156...)
+		require.ErrorContains(t, err, "--store: name \"Hulk\": want lower-case", assertionMsg156...)
 	}
 	{
 		got, err := fleet.Changes(map[string]string{"coordinator": ""})
-		require.False(t, err != nil || got["coordinator"] != "", "clearing a fleet field: %v %v", got, err)
+		assertionMsg160 := []any{"clearing a fleet field: %v %v", got, err}
+		require.NoError(t, err, assertionMsg160...)
+		require.Equal(t, "", got["coordinator"], assertionMsg160...)
 	}
 }
 
@@ -212,7 +236,9 @@ func TestCanonicalValidatesEveryType(t *testing.T) {
 		} else if assert.Error(t, err, "--%s %q: accepted as %q, want a refusal saying %q", c.f.Name, c.raw, got, c.refused) {
 			assert.Contains(t, err.Error(), c.refused, "--%s %q", c.f.Name, c.raw)
 		}
-		assert.False(t, c.refused != "" && err != nil && !strings.HasPrefix(err.Error(), "--"+c.f.Name), "--%s: refusal %q does not name the flag first", c.f.Name, err)
+		if c.refused != "" && err != nil {
+			assert.True(t, strings.HasPrefix(err.Error(), "--"+c.f.Name), "--%s: refusal %q does not name the flag first", c.f.Name, err)
+		}
 	}
 }
 
@@ -223,23 +249,30 @@ func TestNewRowNamesEveryProblemAtOnce(t *testing.T) {
 	_, err := friend.NewRow("Rowan", map[string]string{"slots": "x", "roles": "king", "colour": "red"})
 	require.Error(t, err, "a row with four problems was accepted")
 	for _, want := range []string{"lower-case", "--tiers is required", "--slots \"x\"", "--roles \"king\"", "--colour is not a friend field"} {
-		assert.False(t, !strings.Contains(err.Error(), want), "the refusal does not name %q:\n%s", want, err)
+		assert.ErrorContains(t, err, want, "the refusal does not name %q:\n%s", want, err)
 	}
 	machine, _ := Lookup(KindMachine)
 	_, err = machine.NewRow("hulk", map[string]string{"slots": "40", "ssh": "hulk", "os_arch": "linux/x64"})
 	require.Error(t, err, "a machine row with no user, no seat and two invented fields was accepted")
 	for _, want := range []string{"--user is required", "--seat is required", "--ssh is not a machine field; the fields are user, seat, slots, runners", "--os_arch is not a machine field"} {
-		assert.False(t, !strings.Contains(err.Error(), want), "the machine refusal does not name %q:\n%s", want, err)
+		assert.ErrorContains(t, err, want, "the machine refusal does not name %q:\n%s", want, err)
 	}
 	row, err := friend.NewRow("rowan", map[string]string{"tiers": "frontier", "slots": "64"})
 	require.NoError(t, err)
 	for _, f := range friend.Fields {
-		{
-			_, ok := row.Fields[f.Name]
-			assert.True(t, ok, "a new row lacks field %s; every field is present, empty when not given", f.Name)
-		}
+		_, scopedOk277 := row.Fields[f.Name]
+		assert.True(t, scopedOk277, "a new row lacks field %s; every field is present, empty when not given", f.Name)
 	}
-	assert.False(t, row.Fields["roles"] != "" || row.Fields["slots"] != "64" || row.Int("slots") != 64, "row %+v", row.Fields)
+	assertionMsg257 := []any{"row %+v", row.Fields}
+	func() {
+		if !assert.Equal(t, "", row.Fields["roles"], assertionMsg257...) {
+			return
+		}
+		if !assert.Equal(t, "64", row.Fields["slots"], assertionMsg257...) {
+			return
+		}
+		assert.Equal(t, 64, row.Int("slots"), assertionMsg257...)
+	}()
 }
 
 func TestChangesRefusesNoFieldAndUnknownField(t *testing.T) {
@@ -248,14 +281,35 @@ func TestChangesRefusesNoFieldAndUnknownField(t *testing.T) {
 	friend, _ := Lookup(KindFriend)
 	{
 		_, err := friend.Changes(map[string]string{})
-		assert.False(t, err == nil || !strings.Contains(err.Error(), "names no field"), "set with no field: %v", err)
+		assertionMsg266 := []any{"set with no field: %v", err}
+		func() {
+			if !assert.Error(t, err, assertionMsg266...) {
+				return
+			}
+			assert.ErrorContains(t, err, "names no field", assertionMsg266...)
+		}()
 	}
 	{
 		_, err := friend.Changes(map[string]string{"colour": "red"})
-		assert.False(t, err == nil || !strings.Contains(err.Error(), "--colour is not a friend field"), "set with an unknown field: %v", err)
+		assertionMsg270 := []any{"set with an unknown field: %v", err}
+		func() {
+			if !assert.Error(t, err, assertionMsg270...) {
+				return
+			}
+			assert.ErrorContains(t, err, "--colour is not a friend field", assertionMsg270...)
+		}()
 	}
 	got, err := friend.Changes(map[string]string{"roles": "reader,builder", "tiers": ""})
-	assert.False(t, err != nil || got["roles"] != "builder,reader" || got["tiers"] != "", "changes %v %v", got, err)
+	assertionMsg273 := []any{"changes %v %v", got, err}
+	func() {
+		if !assert.NoError(t, err, assertionMsg273...) {
+			return
+		}
+		if !assert.Equal(t, "builder,reader", got["roles"], assertionMsg273...) {
+			return
+		}
+		assert.Equal(t, "", got["tiers"], assertionMsg273...)
+	}()
 }
 
 func TestSortedPutsTheCoordinatorFirst(t *testing.T) {
@@ -271,9 +325,7 @@ func TestSortedPutsTheCoordinatorFirst(t *testing.T) {
 	for _, r := range friend.Sorted(rows) {
 		got = append(got, r.Name)
 	}
-	{
-		want := "rowan,emma,stella"
-		require.False(t, strings.Join(got, ",") != want, "apply order %v, want %s (coordinator first, then by name)", got, want)
-	}
-	require.False(t, rows[0].Name != "stella", "Sorted reordered its input")
+	scopedWant344 := "rowan,emma,stella"
+	require.Equal(t, scopedWant344, strings.Join(got, ","), "apply order %v, want %s (coordinator first, then by name)", got, scopedWant344)
+	require.Equal(t, "stella", rows[0].Name, "Sorted reordered its input")
 }

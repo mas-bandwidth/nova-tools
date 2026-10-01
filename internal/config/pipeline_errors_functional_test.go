@@ -4,8 +4,6 @@ package config
 
 import (
 	"context"
-	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/redis/go-redis/v9"
@@ -20,33 +18,48 @@ func TestFriendApplyRefusesMalformedBeatAfterMissingBeat(t *testing.T) {
 	ap, c := redisApplier(t)
 	st := seed(t)
 	applyKinds(t, st, ap, "rowan")
-	{
-		err := c.Set(ctx, FriendBeatKey("stella"), "not a hash", 0).Err()
-		require.NoError(t, err)
-	}
-	{
-		_, _, err := st.Update(ctx, KindFriend, "stella", map[string]string{"slots": "24"}, "rowan")
-		require.NoError(t, err)
-	}
+	scopedErr21 := c.Set(ctx, FriendBeatKey("stella"), "not a hash", 0).Err()
+	require.NoError(t, scopedErr21)
+	_, _, setupErr552 := st.Update(ctx, KindFriend, "stella", map[string]string{"slots": "24"}, "rowan")
+	require.NoError(t, setupErr552)
 	before := pipelineStoreImage(t, c)
 	_, err := Apply(ctx, st, ap, KindFriend, "rowan", false, func(Op) {})
-	assert.False(t, err == nil || !strings.Contains(err.Error(), "WRONGTYPE"), "apply with malformed beat: %v; want WRONGTYPE", err)
-	assert.False(t, !reflect.DeepEqual(before, pipelineStoreImage(t, c)), "failed friend read changed Redis")
+	assertionMsg33 := []any{"apply with malformed beat: %v; want WRONGTYPE", err}
+	func() {
+		if !assert.Error(t, err, assertionMsg33...) {
+			return
+		}
+		assert.ErrorContains(t, err, "WRONGTYPE", assertionMsg33...)
+	}()
+	assert.Equal(t, before, pipelineStoreImage(t, c), "failed friend read changed Redis")
 }
 
 func TestFriendPrefetchRefusesLaterErrorWithoutPublishingCache(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	ap, c := redisApplier(t)
-	{
-		err := c.Set(ctx, FriendBeatKey("broken"), "not a hash", 0).Err()
-		require.NoError(t, err)
-	}
+	scopedErr43 := c.Set(ctx, FriendBeatKey("broken"), "not a hash", 0).Err()
+	require.NoError(t, scopedErr43)
 	ap.friendHosts = map[string]string{"cached": "original"}
 	ap.coordinator = "original"
 	err := ap.PrefetchFriends(ctx, []string{"missing", "broken"})
-	assert.False(t, err == nil || !strings.Contains(err.Error(), "WRONGTYPE"), "prefetch: %v; want WRONGTYPE", err)
-	assert.False(t, !reflect.DeepEqual(ap.friendHosts, map[string]string{"cached": "original"}) || ap.coordinator != "original" || ap.coordinatorRead, "failed prefetch published cache: hosts=%v coordinator=%s read=%v", ap.friendHosts, ap.coordinator, ap.coordinatorRead)
+	assertionMsg48 := []any{"prefetch: %v; want WRONGTYPE", err}
+	func() {
+		if !assert.Error(t, err, assertionMsg48...) {
+			return
+		}
+		assert.ErrorContains(t, err, "WRONGTYPE", assertionMsg48...)
+	}()
+	assertionMsg49 := []any{"failed prefetch published cache: hosts=%v coordinator=%s read=%v", ap.friendHosts, ap.coordinator, ap.coordinatorRead}
+	func() {
+		if !assert.Equal(t, map[string]string{"cached": "original"}, ap.friendHosts, assertionMsg49...) {
+			return
+		}
+		if !assert.Equal(t, "original", ap.coordinator, assertionMsg49...) {
+			return
+		}
+		assert.False(t, ap.coordinatorRead, assertionMsg49...)
+	}()
 }
 
 func TestMachineRemovalRefusesLaterDependencyReadError(t *testing.T) {
@@ -63,22 +76,26 @@ func TestMachineRemovalRefusesLaterDependencyReadError(t *testing.T) {
 				c.HSet(ctx, "machine:fixture:budget", "slots", "8"),
 				c.SAdd(ctx, kind+"s", "one", "two"),
 			} {
-				{
-					err := cmd.Err()
-					require.NoError(t, err)
-				}
+				scopedErr83 := cmd.Err()
+				require.NoError(t, scopedErr83)
 			}
 			// Use this server's set order; the set is unchanged until Remove reads it.
 			names, err := c.SMembers(ctx, kind+"s").Result()
-			require.False(t, err != nil || len(names) != 2, "members %v: %v", names, err)
-			{
-				err := c.Set(ctx, kind+":"+names[1]+":desired", "not a hash", 0).Err()
-				require.NoError(t, err)
-			}
+			assertionMsg73 := []any{"members %v: %v", names, err}
+			require.NoError(t, err, assertionMsg73...)
+			require.Len(t, names, 2, assertionMsg73...)
+			scopedErr93 := c.Set(ctx, kind+":"+names[1]+":desired", "not a hash", 0).Err()
+			require.NoError(t, scopedErr93)
 			before := pipelineStoreImage(t, c)
 			err = ap.Remove(ctx, KindMachine, "fixture", "actor", "config:machine:1")
-			assert.False(t, err == nil || !strings.Contains(err.Error(), "WRONGTYPE"), "remove after failed dependency read: %v; want WRONGTYPE", err)
-			assert.False(t, !reflect.DeepEqual(before, pipelineStoreImage(t, c)), "failed dependency read deleted machine state or wrote a receipt")
+			assertionMsg82 := []any{"remove after failed dependency read: %v; want WRONGTYPE", err}
+			func() {
+				if !assert.Error(t, err, assertionMsg82...) {
+					return
+				}
+				assert.ErrorContains(t, err, "WRONGTYPE", assertionMsg82...)
+			}()
+			assert.Equal(t, before, pipelineStoreImage(t, c), "failed dependency read deleted machine state or wrote a receipt")
 		})
 	}
 }
@@ -128,10 +145,8 @@ func TestBatchedReadRefusesErrorAfterAbsentValue(t *testing.T) {
 				setup = []redis.Cmder{c.Set(ctx, BeatKey("broken"), "not a hash", 0)}
 			}
 			for _, cmd := range setup {
-				{
-					err := cmd.Err()
-					require.NoError(t, err)
-				}
+				scopedErr156 := cmd.Err()
+				require.NoError(t, scopedErr156)
 			}
 			before := pipelineStoreImage(t, c)
 			var err error
@@ -140,9 +155,21 @@ func TestBatchedReadRefusesErrorAfterAbsentValue(t *testing.T) {
 			} else {
 				_, _, err = ap.Read(ctx, kind)
 			}
-			assert.False(t, err == nil || !strings.Contains(err.Error(), "WRONGTYPE"), "read: %v; want WRONGTYPE", err)
-			assert.False(t, !reflect.DeepEqual(before, pipelineStoreImage(t, c)), "read modified Redis")
-			assert.False(t, ap.friendHosts != nil || ap.coordinatorRead, "failed read published a friend cache")
+			assertionMsg145 := []any{"read: %v; want WRONGTYPE", err}
+			func() {
+				if !assert.Error(t, err, assertionMsg145...) {
+					return
+				}
+				assert.ErrorContains(t, err, "WRONGTYPE", assertionMsg145...)
+			}()
+			assert.Equal(t, before, pipelineStoreImage(t, c), "read modified Redis")
+			assertionMsg147 := []any{"failed read published a friend cache"}
+			func() {
+				if !assert.Nil(t, ap.friendHosts, assertionMsg147...) {
+					return
+				}
+				assert.False(t, ap.coordinatorRead, assertionMsg147...)
+			}()
 		})
 	}
 }
@@ -151,10 +178,8 @@ func TestFriendReadDoesNotHideDeniedBeatAfterMissingBeat(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	_, c := redisApplier(t)
-	{
-		err := c.SAdd(ctx, FriendsKey, "rowan", "stella").Err()
-		require.NoError(t, err)
-	}
+	scopedErr191 := c.SAdd(ctx, FriendsKey, "rowan", "stella").Err()
+	require.NoError(t, scopedErr191)
 	// Only Stella's beat is outside this reader's allowed key set. An absent
 	// role/beat earlier in the pipeline must not convert NOPERM into absence.
 	require.NoError(t, c.Do(ctx, "ACL", "SETUSER", "fixture-reader", "on", ">fixture-password", "+@read",
@@ -166,12 +191,26 @@ func TestFriendReadDoesNotHideDeniedBeatAfterMissingBeat(t *testing.T) {
 	// Prove this connection uses the restricted identity before testing the batch.
 	{
 		err := reader.HGet(ctx, FriendBeatKey("stella"), "host").Err()
-		require.False(t, err == nil || !strings.Contains(err.Error(), "NOPERM"), "fixture did not deny the beat: %v", err)
+		assertionMsg169 := []any{"fixture did not deny the beat: %v", err}
+		require.Error(t, err, assertionMsg169...)
+		require.ErrorContains(t, err, "NOPERM", assertionMsg169...)
 	}
 	ap := &RedisApplier{Client: reader}
 	before := pipelineStoreImage(t, c)
 	_, _, err := ap.Read(ctx, KindFriend)
-	assert.False(t, err == nil || !strings.Contains(err.Error(), "NOPERM"), "read: %v; want NOPERM", err)
-	assert.False(t, ap.friendHosts != nil || ap.coordinatorRead, "denied read published a cache")
-	assert.False(t, !reflect.DeepEqual(before, pipelineStoreImage(t, c)), "denied read changed Redis")
+	assertionMsg178 := []any{"read: %v; want NOPERM", err}
+	func() {
+		if !assert.Error(t, err, assertionMsg178...) {
+			return
+		}
+		assert.ErrorContains(t, err, "NOPERM", assertionMsg178...)
+	}()
+	assertionMsg179 := []any{"denied read published a cache"}
+	func() {
+		if !assert.Nil(t, ap.friendHosts, assertionMsg179...) {
+			return
+		}
+		assert.False(t, ap.coordinatorRead, assertionMsg179...)
+	}()
+	assert.Equal(t, before, pipelineStoreImage(t, c), "denied read changed Redis")
 }
