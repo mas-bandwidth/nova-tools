@@ -240,9 +240,6 @@ type whereView struct {
 	Cleared     time.Time                               `json:"cleared,omitempty"` // when the epoch began
 	Machine     string                                  `json:"machine,omitempty"`
 	Goals       []goalView                              `json:"goals,omitempty"`
-	// Routes is how many enabled routes each tier has ("flash=1 pro=3"), ""
-	// when the store holds none (docs/SPEC-SPRINT.md, the deal's route).
-	Routes string `json:"routes,omitempty"`
 	// RoundTrip is the store round trip the last ticks measured: the last and
 	// the greatest of the last ten ("" when no tick has measured one).
 	RoundTrip string `json:"round_trip,omitempty"`
@@ -371,14 +368,8 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 		v.Pending = f.Pending.ID
 	}
 	v.Machine, v.RoundTrip = st.MachineViews(ctx)
-	if rs, err := st.Routes(ctx); err == nil {
-		v.Routes = sprint.TierRoutes(rs)
-	}
 	var b strings.Builder
 	b.WriteString(now.Format("2006-01-02 15:04:05 MST") + "\n\nSPRINT TABLE\n\n" + whereHeader(v.Summary, v.Machine) + "\n\n")
-	if v.Routes != "" {
-		b.WriteString("routes: " + v.Routes + "\n\n")
-	}
 	if v.RoundTrip != "" {
 		b.WriteString(v.RoundTrip + "\n\n")
 	}

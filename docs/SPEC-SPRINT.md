@@ -223,8 +223,7 @@ and it is the coordinator's decision, receipted.
   card, closed when the tier is served (tla/DirtyTick.tla, RouteGuard; witness
   W20). The failed-work judgment names the route and model; `card <id>` prints
   an `ATTEMPT` line per attempt (route, model, member, dealt, taken, finished,
-  usage, end); `where` prints `routes: flash=<n> pro=<n>` (and `--json`
-  `routes`); `routes` prints each route with its attempts, ok, failed,
+  usage, end); `routes` prints the tiers and each route with its attempts, ok, failed,
   provider failures and mean wall, each pinned model a row of its own
   (`pin:<provider>/<model>`). The routes are read once a tick, by its first
   part that deals or checks, before that part's read of the tables (one round

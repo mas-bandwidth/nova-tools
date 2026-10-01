@@ -638,13 +638,13 @@ func TestARefusedTakeIsPrintedAndTheTickContinues(t *testing.T) {
 	}
 }
 
-// TestBeatCarriesLoadAsRunningOverWidth pins --load as running*100/width,
-// integer, taken before the tick's own reports and starts.
-func TestBeatCarriesLoadAsRunningOverWidth(t *testing.T) {
+// TestBeatCarriesNoLoadOfItsOwn pins the beat as `fleet beat <member>` alone, however
+// many cards are running: the load is the machine's CPU use, which nova-sprint fleet beat
+// measures and keeps the ten-second peak of (docs/SPEC-SPRINT.md, the fleet), never the
+// member's running over its width.
+func TestBeatCarriesNoLoadOfItsOwn(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct{ running, width, load int }{
-		{0, 4, 0}, {1, 3, 33}, {2, 3, 66}, {2, 2, 100}, {3, 8, 37},
-	} {
+	for _, tc := range []struct{ running, width int }{{0, 4}, {1, 3}, {2, 2}} {
 		t.Run(fmt.Sprintf("%dof%d", tc.running, tc.width), func(t *testing.T) {
 			t.Parallel()
 			g := newRig(Config{As: "m", Width: tc.width})
@@ -657,17 +657,12 @@ func TestBeatCarriesLoadAsRunningOverWidth(t *testing.T) {
 			if _, err := g.tick(t); err != nil { // restarts: running is now tc.running
 				t.Fatal(err)
 			}
-			if g.m.Running() != tc.running {
-				t.Fatalf("running=%d, want %d", g.m.Running(), tc.running)
-			}
+			require.Equal(t, tc.running, g.m.Running())
 			g.s.reset()
 			if _, err := g.tick(t); err != nil {
 				t.Fatal(err)
 			}
-			want := "fleet beat m --load " + strconv.Itoa(tc.load)
-			if got := g.s.lines("beat"); !slices.Equal(got, []string{want}) {
-				t.Fatalf("beat lines: %q, want %q", got, want)
-			}
+			require.Equal(t, []string{"fleet beat m"}, g.s.lines("beat"))
 		})
 	}
 }
