@@ -464,7 +464,13 @@ and it is the coordinator's decision, receipted.
 - The status cell shows held, up or down. The load cell shows the highest load
   of the last 10 s with one decimal while the beat is fresh, and is empty
   otherwise, never a zero.
-- A beat from a machine the sprint does not know writes one happened
+- The fleet table's rows are ordered by status, up first, then held, then
+  down, and by machine name within each (the owner, 2026-10-01: "Please sort
+  the fleet table such that we sort first alphabetically by machine name (as
+  is current), then stable sort by status, such that "up" is first, then
+  "held" then "down""). The display step that writes the status cells puts the
+  rows in that order when they are not (the table layer's row order); the
+  footer row stays last.- A beat from a machine the sprint does not know writes one happened
   notification, "an unknown machine is beating: <name>; add it with nova-sprint
   fleet up <name>". Teardown removes every beat record.
 

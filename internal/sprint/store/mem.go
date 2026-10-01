@@ -1151,3 +1151,37 @@ func (m *Mem) Trips() int64 {
 }
 
 var _ Tripper = (*Mem)(nil)
+
+// RowsOrder puts the named rows first, in that order, the rest after them as
+// they stood: the table layer's row order, under RowsAdd's epoch check.
+func (m *Mem) RowsOrder(_ context.Context, table string, rows []string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.Calls["roworder"]++
+	t, err := m.table(table)
+	if err != nil {
+		return err
+	}
+	if err := m.writeEpoch(t); err != nil {
+		return err
+	}
+	ep := t.at(m.active(t))
+	var order []string
+	for _, r := range rows {
+		if containsStr(ep.rows, r) && !containsStr(order, r) {
+			order = append(order, r)
+		}
+	}
+	for _, r := range ep.rows {
+		if !containsStr(order, r) {
+			order = append(order, r)
+		}
+	}
+	ep.rows = order
+	t.rev++
+	t.wrote[m.active(t)] = true
+	t.changes = append(t.changes, memChange{epoch: m.active(t), before: t.rev - 1, after: t.rev, verb: "row_order"})
+	return nil
+}
+
+var _ RowsOrderer = (*Mem)(nil)
