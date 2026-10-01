@@ -48,7 +48,7 @@ The executable transcript is in [TESTS.md](../TESTS.md#nova-config).
 
 ```
 nova-config migrate --pg postgres://nova_config@space:5432/nova
-CONFIG MIGRATE pg=nova_config@space:5432/nova from=0 to=5 applied=5
+CONFIG MIGRATE pg=nova_config@space:5432/nova from=0 to=6 applied=6
 ```
 
 `migrate` creates or upgrades schema `config` from the numbered migrations in
@@ -61,7 +61,7 @@ the `nova_read` role, when it exists, is granted read on every table.
 
 ```
 nova-config status
-CONFIG STATUS pg=nova_config@space:5432/nova schema=5 machine=9 machine_rev=9 friend=4 friend_rev=13 redis=space:6380 machine_applied=9 friend_applied=13
+CONFIG STATUS pg=nova_config@space:5432/nova schema=6 machine=9 machine_rev=9 friend=4 friend_rev=13 redis=space:6380 machine_applied=9 friend_applied=13
 ```
 
 It exits 1 with the next step on stderr when the schema is not there yet
@@ -73,8 +73,9 @@ It exits 1 with the next step on stderr when the schema is not there yet
 The placement rule: per-machine facts belong to machines, and global fleet
 facts belong to the fleet. So a machine's row holds what varies per machine, the
 fleet's one row holds what has one value for the whole fleet, a friend's row
-holds what someone decides for her, and the sprint's one row holds who
-coordinates. Anything else is invented and is not a field.
+holds what someone decides for her, the sprint's one row holds who
+coordinates, and a loop's row holds a process someone decides runs on one
+machine. Anything else is invented and is not a field.
 
 Every kind has the same six verbs, generated from its descriptor, so what is
 true of one is true of all:
@@ -217,6 +218,33 @@ nova-config sprint show
 SPRINT name=sprint coordinator=rowan created=2026-09-27T02:00:00Z updated=2026-09-27T02:12:00Z
 ```
 
+### loop
+
+A supervised process on one machine: the command, the seat it opens its
+secrets from and the names of those secrets, and how it runs. The command is
+a JSON array, the program first, so a word may hold a space and nothing is
+split by a shell; a secret is never in it, it goes by name in `--keys`:
+
+```
+nova-config loop add member-m1 --machine m1 --argv '["/opt/bin/nova-swarm","member","--width","2"]' --keepalive true --seat s-m1 --keys A_KEY,B_KEY --width 2 --as a1
+CONFIG ADD kind=loop name=member-m1 rev=12
+nova-config loop add refresh-m1 --machine m1 --argv '["/opt/bin/refresh","--once"]' --every 60 --as a1
+CONFIG ADD kind=loop name=refresh-m1 rev=13
+nova-config loop list
+LOOP name=member-m1 machine=m1 argv=["/opt/bin/nova-swarm","member","--width","2"] seat=s-m1 keys=A_KEY,B_KEY every=0 keepalive=true width=2 enabled=true
+LOOP name=refresh-m1 machine=m1 argv=["/opt/bin/refresh","--once"] seat=- keys=- every=60 keepalive=false width=0 enabled=true
+CONFIG LIST kind=loop rows=2
+nova-config machine show m1
+MACHINE name=m1 user=u1 seat=s-m1 slots=4 runners=0 created=2026-09-30T02:00:00Z updated=2026-09-30T02:00:00Z loops=member-m1,refresh-m1
+```
+
+`--every <seconds>` runs it periodically and `--keepalive true` keeps a
+long-running one up; a loop has exactly one of the two. `--width` is a member
+loop's child cap (0 for any other). `--enabled false` writes the unit and
+does not start it. `--keys` needs a `--seat`. Its log is
+`~/nova-bench/loops/<name>.log`, derived from the name and never typed. A
+machine a loop names cannot be removed until the loop is.
+
 ### Refusals
 
 One stderr line each, naming the next step:
@@ -228,6 +256,7 @@ nova-config friend set: friend nobody not found; run: nova-config friend add nob
 nova-config machine remove: machine studio is the --coordinator of the fleet; run: nova-config machine list
 nova-config friend remove: friend rowan is the --coordinator of the sprint; run: nova-config friend list
 nova-config fleet set: fleet takes no name: it is one row; want fleet set --<field> <value> ...; run: nova-config help
+nova-config loop set: loop refresh-m1 has --every 60 and --keepalive true; a loop runs every n seconds or is kept alive, so set one: --every 0 or --keepalive false; run: nova-config loop show refresh-m1
 ```
 
 Exit 1 is the store saying no; exit 2 is an invocation that could not run
@@ -247,6 +276,7 @@ CHECK ADD kind=friend name=rowan
 CONFIG CHECK kind=friend add=1 set=0 remove=0 rev=5 applied=0
 CHECK SET kind=sprint name=sprint changed=coordinator
 CONFIG CHECK kind=sprint add=0 set=1 remove=0 rev=6 applied=0
+CONFIG CHECK kind=loop add=0 set=0 remove=0 rev=0 applied=0
 nova-config apply --as rowan
 APPLY ADD kind=machine name=hulk
 APPLY ADD kind=machine name=studio
@@ -257,10 +287,11 @@ APPLY ADD kind=friend name=rowan
 CONFIG APPLY kind=friend add=1 set=0 remove=0 rev=5 ms=6
 APPLY SET kind=sprint name=sprint changed=coordinator
 CONFIG APPLY kind=sprint add=0 set=1 remove=0 rev=6 ms=1
+CONFIG APPLY kind=loop add=0 set=0 remove=0 rev=0 ms=0
 ```
 
 `apply` reads Postgres and writes Redis, one kind at a time: machines, the
-fleet row, friends, the sprint row. For a machine it writes its machine ceiling
+fleet row, friends, the sprint row, loops. For a machine it writes its machine ceiling
 (`ns_capacity_machine`, the ceiling from `--slots`; cores and memory are never
 declared, so none are passed) and its registry hash `machine:<m>`. For the
 fleet row, `fleet:store` and `fleet:coordinator`, plain keys. For a friend it
@@ -270,7 +301,9 @@ coordinator machine; the friend the sprint row names gets the `coordinator`
 role in Redis on top of her row's roles, so a handover (`sprint set
 --coordinator stella`, then `apply`) is two `SET ... changed=roles`, hers
 first. It never touches her logins or wake path: they are her presence's.
-For the sprint row, `sprint:coordinator`. A name in Redis that Postgres has
+For the sprint row, `sprint:coordinator`. For a loop, the hash `loop:<l>`
+with every field, its log path, `rev` and `at`, and its name in the set
+`loops`: what the plays read to render one unit per loop. A name in Redis that Postgres has
 not is removed. `--check` prints the plan and writes nothing. `--kind friend`
 applies one kind.
 
@@ -370,6 +403,4 @@ would just know (her machine, harness, logins, wake path: her presence's),
 measured facts (a machine's os, arch, cores, memory: its beat's), history
 other than the configuration's own (scores, receipts, ledgers, `cap:log`),
 secrets (the store holds the name of a variable, never a password), and the
-sprint plan. What is still to come (more fleet and sprint fields, loops,
-routes, and the wake path "later, when we know what we are doing") is listed
-in [SPEC-CONFIG.md](../SPEC-CONFIG.md) as planned, not built.
+sprint plan.

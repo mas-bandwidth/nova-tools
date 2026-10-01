@@ -35,6 +35,8 @@ configuration; what she would just know is runtime data in Redis. And the
 person coordinating is sprint-global configuration: the
 fleet row holds machines only (the store, the coordinator machine); the
 sprint row holds who coordinates; a friend's roles are what the deal reads.
+A loop's row is a process someone decides runs on one machine: its command,
+the seat and secret names it opens, and how it runs.
 
 Where each field of this cut sits:
 
@@ -44,6 +46,7 @@ Where each field of this cut sits:
 | fleet (one value for the whole fleet) | `store`, `coordinator` (both machines) |
 | friend (decided for her) | `slots`, `tiers`, `roles` |
 | sprint (one value for the whole sprint) | `coordinator` (a friend) |
+| loop (decided per supervised process) | `machine`, `argv`, `seat`, `keys`, `every`, `keepalive`, `width`, `enabled` |
 
 A kind is one registry: one table under schema `config`, one Go descriptor
 (`internal/config/kind.go`: `Kind`), one migration, one Redis writer. The
@@ -95,9 +98,17 @@ never an `ADD` or a `REMOVE`.
 | `list` | a comma list of words from the field's list, deduplicated and sorted | `text` |
 | `names` | a comma list of names (letters, digits, dashes), deduplicated and sorted | `text` |
 | `ref` | the name of a row of another kind; an optional one may be empty | `text` with a foreign key, `NULL` for empty |
+| `bool` | `true` or `false` (any spelling `strconv.ParseBool` reads, stored in that one) | `boolean` |
+| `keys` | a comma list of environment variable names (letters, digits, underscores, not starting with a digit), deduplicated and sorted: the names of secrets, never a value | `text` |
+| `argv` | a command as a JSON array of strings, the program first and not empty, no line break or NUL in a word, at most 64 words and 4096 bytes; stored in its compact JSON spelling | `text` |
 
 A value is canonicalised before it is stored (`Field.Canonical`), so a row
-compares equal to its Redis view field by field. `add` refuses a row missing
+compares equal to its Redis view field by field. A field add is not given is
+stored as its `Default` when the descriptor declares one, else its type's
+zero (0, false, empty). A rule across a row's fields that no one field can
+say is the kind's `Check`: `add` runs it on the new row before any store is
+opened (exit 2), and every store runs it on the row a `set` would leave and
+refuses the set (exit 1, `ErrInvalid`), writing nothing. `add` refuses a row missing
 a required field, a value outside its type, or a flag the kind has not, and
 names every problem in one line. `set` changes the fields named and no
 other. A `ref` field naming no row is refused (`--store space names no
@@ -185,6 +196,31 @@ facts.
 | --- | --- | --- | --- | --- |
 | `coordinator` | ref friend | | the deal and the routing: who holds the coordinator role; `sprint set --coordinator <friend>` is the handover | `sprint:coordinator`, and the `coordinator` word in that friend's `friend:<f>:roles` |
 
+**`loop`** (`config.loops`): a supervised process on one machine. Every
+value is data in the row: the code names no machine, seat, secret or
+program. A secret is never part of the command; the loop names the secrets
+it needs in `keys`, and the unit opens them from `seat` on that machine
+(`nova-secrets exec --only <keys>`), so they reach the process's environment
+only. The plays render one unit per row from the Redis view apply writes.
+
+| field | type | required | who reads it | Redis |
+| --- | --- | --- | --- | --- |
+| `machine` | ref machine | yes | the plays: the machine the unit is installed on | `loop:<l>` |
+| `argv` | argv | yes | the plays: the unit's command, word for word | `loop:<l>` |
+| `seat` | text | | the plays: the nova-secrets seat on that machine the unit opens its secrets from; empty when it needs none | `loop:<l>` |
+| `keys` | keys | | the plays: the names of the secrets the unit opens from the seat; empty when none, and a non-empty list needs a seat | `loop:<l>` |
+| `every` | int | (0) | the plays: seconds between runs of a periodic unit | `loop:<l>` |
+| `keepalive` | bool | (false) | the plays: a long-running unit, restarted when it exits | `loop:<l>` |
+| `width` | int | (0) | the member loop: its child cap; 0 for any other loop | `loop:<l>` |
+| `enabled` | bool | (true) | the plays: false writes the unit and does not start it | `loop:<l>` |
+
+The kind's `Check`: exactly one of `every` above 0 and `keepalive` true (a
+loop runs every n seconds or is kept alive), and `keys` only with a `seat`.
+The log path is derived from the name, `~/nova-bench/loops/<name>.log`
+(`LoopLog`), and is never typed. A machine a loop names cannot be removed
+(`machine m1 is the --machine of loop member-m1`); `machine show <m>` names
+the machine's loops (`loops=<a,b>`, `-` for none).
+
 ## The schema
 
 Migrations are numbered SQL files compiled into the binary
@@ -211,6 +247,12 @@ config.friends           (name PK, slots, tiers, roles, created_at, updated_at)
 config.sprint            (name PK = 'sprint', coordinator -> friends.name,
                           created_at, updated_at; the one row inserted by
                           the migration)
+config.loops             (name PK, machine -> machines.name, argv, seat, keys,
+                          every, keepalive boolean, width, enabled boolean,
+                          created_at, updated_at; CHECK exactly one of
+                          every > 0 and keepalive, keys only with a seat,
+                          argv a JSON array: the kind's Check again, as a
+                          wall behind the tool)
 ```
 
 No database has applied `0002_machine.sql` or `0003_friend.sql` in their
@@ -236,7 +278,8 @@ global ids, so they rise across kinds and never repeat.
 
 `nova-config apply [--kind <k>] [--check]` runs per kind, in kind order:
 machines (the ceilings), the fleet row (a friend with no beat is charged to
-its coordinator machine), friends, the sprint row:
+its coordinator machine), friends, the sprint row, loops (each names a
+machine):
 
 1. read the kind's rows and revision from Postgres, then the kind's
    `Derive` when it has one (the friend kind adds the `coordinator` word to
@@ -310,8 +353,17 @@ Never removed. The handover is `nova-config sprint set --coordinator
 stella --as rowan` then `apply`: the sprint kind's own revision moves and
 the friend kind's plan is two `SET ... changed=roles`, stella's first.
 
-`machine:<m>`, `machines`, `fleet:*` and `sprint:coordinator` are
-nova-config's own keys: no function in the library reads or writes them.
+**loop:** the hash `loop:<l>` with every field of the row, `name`, `log`
+(the derived path), `rev` and `at`, written whole in one transaction with
+the name added to the set `loops`; this is the view the plays read. A field
+the hash lacks or holds out of shape reads back as the type's zero, so a
+hash changed by hand is put back by the next apply. Remove: the hash and the
+name in `loops` go in one transaction, with a `config-remove` receipt in
+`cap:log`.
+
+`machine:<m>`, `machines`, `fleet:*`, `sprint:coordinator`, `loop:<l>` and
+`loops` are nova-config's own keys: no function in the library reads or
+writes them.
 
 ## Lines
 
@@ -325,6 +377,7 @@ CONFIG REMOVE kind=<k> name=<n> rev=<id>
 <KIND> name=<n> <field>=<v> ...                          (list: one per row)
 MACHINE name=<n> <field>=<v> ... os=<v> arch=<v> cores=<n> memory_gb=<n> beat=<t>   (list and show with a Redis: the live facts, - each when the beat lacks it)
 MACHINE name=<n> <field>=<v> ... beat=none                (with a Redis: no beat)
+MACHINE name=<n> <field>=<v> ... created=<t> updated=<t> loops=<l,...> [live facts]   (show: the machine's loops, - for none)
 CONFIG LIST kind=<k> rows=<n>
 <KIND> name=<n> <field>=<v> ... created=<t> updated=<t>  (show)
 HISTORY id=<id> kind=<k> name=<n> op=<op> actor=<a> at=<t> <field>=<before>><after> ...
@@ -342,8 +395,8 @@ CONFIG KINDS count=<n>
 ```
 
 Exit codes: 0 done; 1 refused (the store or Redis said no: a duplicate, a
-missing row, a ref naming no row, a row another names, a ceiling, working
-copies, `CONFLICT`, a status behind); 2 usage (a flag, a value, a name on a
+missing row, a ref naming no row, a row another names, a set that breaks
+the kind's `Check`, a ceiling, working copies, `CONFLICT`, a status behind); 2 usage (a flag, a value, a name on a
 singleton, a store that did not answer). A refusal is
 one stderr line, `nova-config <verb>: <why>; run: <next step>`.
 
