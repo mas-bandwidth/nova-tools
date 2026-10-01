@@ -574,7 +574,6 @@ func (k *Kind) NewRow(name string, raw map[string]string) (Row, error) {
 		c, err := f.Canonical(v)
 		if err != nil {
 			problems = append(problems, err.Error())
-			delete(row.Fields, f.Name)
 			continue
 		}
 		row.Fields[f.Name] = c

@@ -472,6 +472,13 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 		return refuse(stderr, verb, err.Error())
 	}
 	defer st.Close()
+	// The loop kind reads the loops table, which a store older than this
+	// binary's migrations does not have.
+	if k.Name == config.KindLoop {
+		if code, stale := behindSchema(ctx, st, stderr, verb, *pg); stale {
+			return code
+		}
+	}
 	if add {
 		id, err := st.Insert(ctx, k.Name, row, actor)
 		if err != nil {
@@ -560,6 +567,13 @@ func runKindRemove(ctx context.Context, k *config.Kind, args []string, stdout, s
 		return refuse(stderr, verb, err.Error())
 	}
 	defer st.Close()
+	// The loop kind reads the loops table, which a store older than this
+	// binary's migrations does not have.
+	if k.Name == config.KindLoop {
+		if code, stale := behindSchema(ctx, st, stderr, verb, *pg); stale {
+			return code
+		}
+	}
 	id, err := st.Delete(ctx, k.Name, name, actor)
 	if err != nil {
 		return storeErr(stderr, verb, err, tool+" "+k.Name+" list")
@@ -621,6 +635,13 @@ func runKindList(ctx context.Context, k *config.Kind, args []string, stdout, std
 		return refuse(stderr, verb, err.Error())
 	}
 	defer st.Close()
+	// The loop kind reads the loops table, which a store older than this
+	// binary's migrations does not have.
+	if k.Name == config.KindLoop {
+		if code, stale := behindSchema(ctx, st, stderr, verb, *pg); stale {
+			return code
+		}
+	}
 	rows, err := st.List(ctx, k.Name)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
@@ -678,13 +699,14 @@ func runKindRead(ctx context.Context, k *config.Kind, which string, args []strin
 		return refuse(stderr, verb, err.Error())
 	}
 	defer st.Close()
-	if which == "show" {
-		if k.Name == config.KindMachine {
-			// show reads the loops table beside the machine row.
-			if code, stale := behindSchema(ctx, st, stderr, verb, *pg); stale {
-				return code
-			}
+	// machine show reads the loops table beside the machine row; every loop
+	// verb reads it.
+	if k.Name == config.KindLoop || (k.Name == config.KindMachine && which == "show") {
+		if code, stale := behindSchema(ctx, st, stderr, verb, *pg); stale {
+			return code
 		}
+	}
+	if which == "show" {
 		row, found, err := st.Get(ctx, k.Name, name)
 		if err != nil {
 			return refuse(stderr, verb, err.Error())

@@ -1271,7 +1271,14 @@ func TestVerbsOnAnOlderSchemaRefuseWithMigrate(t *testing.T) {
 	all, err := config.Migrations()
 	require.NoError(t, err)
 	for _, have := range []int{1, len(all) - 1} {
-		for _, args := range [][]string{{"status"}, {"apply"}, {"apply", "--kind", "loop"}, {"apply", "--check"}, {"machine", "show", "studio"}} {
+		for _, args := range [][]string{{"status"}, {"apply"}, {"apply", "--kind", "loop"}, {"apply", "--check"}, {"machine", "show", "studio"},
+			{"loop", "add", "l1", "--machine", "studio", "--argv", `["/bin/prog"]`, "--every", "5"},
+			{"loop", "set", "l1", "--every", "6"},
+			{"loop", "remove", "l1"},
+			{"loop", "list"},
+			{"loop", "show", "l1"},
+			{"loop", "history", "l1"},
+		} {
 			h := newHarness()
 			h.env["NOVA_PG_DSN"] = dsn
 			h.env["NOVA_SPRINT_REDIS"] = "127.0.0.1:6379"
@@ -1279,8 +1286,8 @@ func TestVerbsOnAnOlderSchemaRefuseWithMigrate(t *testing.T) {
 			h.store.version = have
 			code, _, errs := h.run(t, args...)
 			verb := args[0]
-			if args[0] == "machine" {
-				verb = "machine show"
+			if args[0] == "machine" || args[0] == "loop" {
+				verb = args[0] + " " + args[1]
 			}
 			want := fmt.Sprintf("nova-config %s: schema config is at version %d and this binary carries %d; run: nova-config migrate\n", verb, have, len(all))
 			assert.Equal(t, 1, code, "%v at version %d", args, have)
