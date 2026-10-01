@@ -152,7 +152,7 @@ func presence(s *Snapshot, r TickReq) (Plan, int) {
 		if ctl == nil {
 			continue
 		}
-		want := MemberStatus(ctl, r.Beats[m], s.Now) == Up
+		want := MemberStatus(ctl, r.Beats[m], r.beatsNow(s)) == Up
 		have := ctl.F("status") == Up
 		switch {
 		case want && have:
