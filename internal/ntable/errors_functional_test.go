@@ -37,13 +37,12 @@ func isACLPermissionError(err error) bool {
 // ACL error exactly once, without converting it into a malformed reply.
 func assertACLPassThrough(t *testing.T, action string, wrapped, raw error) {
 	t.Helper()
-	if !isACLPermissionError(raw) || !isACLPermissionError(wrapped) {
-		t.Errorf("%s: raw=%v wrapped=%v; want store ACL denials", action, raw, wrapped)
+	if !assert.True(t, isACLPermissionError(raw), "%s: raw=%v wrapped=%v; want store ACL denials", action, raw, wrapped) || !assert.True(t, isACLPermissionError(wrapped), "%s: raw=%v wrapped=%v; want store ACL denials", action, raw, wrapped) {
 		return
 	}
-	if strings.Contains(wrapped.Error(), "malformed") || strings.Contains(wrapped.Error(), "ERR ERR") || strings.Count(wrapped.Error(), raw.Error()) != 1 {
-		t.Errorf("%s: raw=%v wrapped=%v; want the store error once, not a malformed reply", action, raw, wrapped)
-	}
+	assert.NotContains(t, wrapped.Error(), "malformed", "%s: raw=%v wrapped=%v; want the store error once, not a malformed reply", action, raw, wrapped)
+	assert.NotContains(t, wrapped.Error(), "ERR ERR", "%s: raw=%v wrapped=%v; want the store error once, not a malformed reply", action, raw, wrapped)
+	assert.Equal(t, 1, strings.Count(wrapped.Error(), raw.Error()), "%s: raw=%v wrapped=%v; want the store error once, not a malformed reply", action, raw, wrapped)
 }
 
 func TestKeyACLDenialOnCellKeysIsAnErrorNotAMalformedReply(t *testing.T) {
@@ -62,17 +61,15 @@ func TestKeyACLDenialOnCellKeysIsAnErrorNotAMalformedReply(t *testing.T) {
 	m := ntable.BatchManifest{Schema: 1, Table: "demo", Epoch: "0", ExpectedTableRevision: rev, OperationID: "acl", Members: []ntable.BatchMemberEntry{
 		{ID: "q", Expect: &ntable.MemberExpect{}, Move: &ntable.MemberMoveOp{Row: "build", Col: "ready"}}}}
 	before := storeImage(t, admin)
-	if err := nc.ZCard(ctx, ntable.CellKey("demo", "build", "ready")).Err(); !isACLPermissionError(err) {
-		t.Fatalf("the cell key must be denied directly: %v", err)
-	}
+	err := nc.ZCard(ctx, ntable.CellKey("demo", "build", "ready")).Err()
+	require.True(t, isACLPermissionError(err), "the cell key must be denied directly: %v", err)
 	body, err := json.Marshal(m)
 	require.NoError(t, err)
 	raw := nc.FCall(ctx, ntable.FnApply, []string{ntable.DefKey("demo")}, "demo", string(body)).Err()
 	_, err = ntable.ApplyBatch(ctx, nc, m)
 	assertACLPassThrough(t, "ApplyBatch", err, raw)
-	if !errors.Is(err, ntable.ErrUnknownOutcome) || ntable.IsRefusal(err) {
-		t.Errorf("ApplyBatch ACL error must be an unknown outcome, not a refusal: %v", err)
-	}
+	assert.ErrorIs(t, err, ntable.ErrUnknownOutcome, "ApplyBatch ACL error must be an unknown outcome, not a refusal: %v", err)
+	assert.False(t, ntable.IsRefusal(err), "ApplyBatch ACL error must be an unknown outcome, not a refusal: %v", err)
 	raw = nc.FCallRO(ctx, ntable.FnReadSet, []string{ntable.DefKey("demo")}, "demo", `{"members":["q"]}`).Err()
 	_, err = ntable.ReadSetMembers(ctx, nc, "demo", []string{"q"})
 	assertACLPassThrough(t, "ReadSet", err, raw)
@@ -106,8 +103,8 @@ func TestStoreErrorsPassThroughTheScriptUnchanged(t *testing.T) {
 	require.NoError(t, admin.ConfigSet(ctx, "maxmemory-policy", "noeviction").Err())
 	require.NoError(t, admin.ConfigSet(ctx, "maxmemory", "1").Err())
 	_, err = ntable.RowAdd(ctx, admin, "demo", "r9", ntable.RowSpec{})
-	if err == nil || !strings.Contains(err.Error(), "OOM command not allowed") || strings.Contains(err.Error(), "ERR ERR") {
-		t.Errorf("out of memory: %v", err)
-	}
+	require.Error(t, err, "out of memory")
+	assert.Contains(t, err.Error(), "OOM command not allowed", "out of memory: %v", err)
+	assert.NotContains(t, err.Error(), "ERR ERR", "out of memory: %v", err)
 	require.NoError(t, admin.ConfigSet(ctx, "maxmemory", "0").Err())
 }

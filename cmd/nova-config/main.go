@@ -6,7 +6,7 @@
 // write it. The contract is docs/SPEC-CONFIG.md; the guide is
 // docs/nova-config/README.md.
 //
-// Every kind (machine, friend, fleet) has the same six verbs -- add, remove,
+// Every kind (machine, fleet, friend, sprint, loop) has the same six verbs -- add, remove,
 // set, list, show, history -- generated from its descriptor in
 // internal/config, so every kind has identical flags, help and refusals; a
 // singleton kind (fleet: one row the migration creates) has set, show and
@@ -60,9 +60,11 @@ const usageTop = `nova-config: a fleet's machines and AI friends as rows in Post
 
 how it works: PostgreSQL holds the rows, in the schema migrate makes: a machine
 row per host ssh reaches (its login, the nova-secrets seat it opens secrets as,
-its card slots), a friend row per AI (slots, tiers, roles), one fleet row and
-one sprint row; every write adds a history row naming who made it. apply copies
-the rows into Redis, where running tools read them; inventory feeds Ansible.
+its card slots), a friend row per AI (slots, tiers, roles), one fleet row,
+one sprint row, and a loop row per supervised process on a machine (its
+command, its seat and secret names, every n seconds or kept alive); every
+write adds a history row naming who made it. apply copies the rows into
+Redis, where running tools and the plays read them; inventory feeds Ansible.
 first run: the lines under example: need no database; the rest needs PostgreSQL:
 export NOVA_PG_DSN=postgres://user@127.0.0.1:5432/db (a database you own), then
 run migrate.
@@ -90,13 +92,15 @@ usage:
   nova-config <kind> show <name>
   nova-config <kind> history <name>
   nova-config <kind> <verb> -h        prints the verb's usage line and every flag it takes
-  nova-config machine list|show <name> [--redis <addr>]   with Redis, each line ends in the machine's live measured facts (its beat)
+  nova-config machine list|show <name> [--redis <addr>]   with Redis, each line ends in the machine's live measured facts (its beat); show names the machine's loops (loops=<a,b>)
   nova-config machine width <name> [--pg <dsn>] [--redis <addr>] [--json]   the room the sprint's member on the machine has: its slots less the slots of the friends charged to it; a machine with width above 0 is a member. The friends' machines come from their beats, so a Redis is needed when a friend row carries slots
   nova-config machine self [--check] [--pg <dsn>]          prints this machine's own name as the config keys it (NOVA_MACHINE, else the tailnet's name for the host when a tailnet is running, else the hostname's first label) and opens no store; --check reads the machine rows and exits 2 when the name is none of them, 3 when the name or the rows cannot be read (exit codes of this verb: 0 printed, 2 not a row or usage, 3 unreadable)
   nova-config fleet set --<field> <value> ... --as <friend>    the one fleet row (store, coordinator machine): no name, no add, remove or list
   nova-config sprint set --coordinator <friend> --as <friend>  the one sprint row: who coordinates; set it to hand over
   nova-config fleet|sprint show
   nova-config fleet|sprint history
+  nova-config loop add <name> --machine <m> --argv '["/path/prog","--flag","v"]' (--every <seconds> | --keepalive true) [--seat <seat> --keys <NAME,...>] [--width <n>] [--enabled false] --as <friend>
+      a supervised loop on one machine; the secrets it needs go by NAME in --keys, opened from --seat, never on the command; apply writes loop:<name> (its fields and its log path ~/nova-bench/loops/<name>.log) and the set loops, which the plays read
 
 Postgres is the permanent store; Redis is a copy of it that apply rebuilds.
 Connect with export NOVA_PG_DSN=postgres://user@host:5432/db (or --pg) with NO
@@ -112,7 +116,9 @@ cores, memory) are never typed: machine list and show print them live from
 the machine's beat when --redis (or NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR) is
 given, beat=none when it has none. A friend's row is what someone decides
 for her (slots, tiers, roles); what she would just know is runtime data her
-own presence reports. Who coordinates is the sprint row's one field.
+own presence reports. Who coordinates is the sprint row's one field. A
+loop's row names its machine, its command and the names of its secrets as
+data; the code names none of them.
 
 migrate creates or upgrades schema config from the migrations in this binary
 and applies nothing twice. apply reads Postgres and writes Redis, one kind at
@@ -476,9 +482,18 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 	}
 	_, id, err := st.Update(ctx, k.Name, name, changes, actor)
 	if err != nil {
+		// A row that is not there is added; a set the row refuses (a ref
+		// naming no row, a rule across its fields) starts from the row.
 		next := tool + " " + k.Name + " add " + name + " --<field> <value> ..."
 		if k.Singleton {
 			next = tool + " " + k.Name + " show"
+			if errors.Is(err, config.ErrNoRef) {
+				if remedy := singletonRefRemedy(k); remedy != "" {
+					next = remedy
+				}
+			}
+		} else if !errors.Is(err, config.ErrNotFound) {
+			next = tool + " " + k.Name + " show " + name
 		}
 		return storeErr(stderr, verb, err, next)
 	}
@@ -489,6 +504,27 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 	sort.Strings(fields)
 	fmt.Fprintf(stdout, "CONFIG SET kind=%s name=%s rev=%d changed=%s\n", k.Name, config.Value(name), id, config.Value(strings.Join(fields, ",")))
 	return 0
+}
+
+// singletonRefRemedy uses the descriptor, not the store's human error text.
+// A singleton whose ref fields all point to one kind can safely direct an
+// ErrNoRef refusal to that kind's list, even when an unchanged field failed.
+// A future singleton with mixed ref kinds keeps its existing generic remedy.
+func singletonRefRemedy(k *config.Kind) string {
+	ref := ""
+	for _, f := range k.Fields {
+		if f.Type != config.TypeRef {
+			continue
+		}
+		if ref != "" && ref != f.Ref {
+			return ""
+		}
+		ref = f.Ref
+	}
+	if ref == "" {
+		return ""
+	}
+	return tool + " " + ref + " list"
 }
 
 func runKindRemove(ctx context.Context, k *config.Kind, args []string, stdout, stderr io.Writer, d deps) int {
@@ -651,12 +687,19 @@ func runKindRead(ctx context.Context, k *config.Kind, which string, args []strin
 			return refused(stderr, verb, k.Name+" "+name+" not found", tool+" "+k.Name+" list")
 		}
 		suffix := ""
+		if k.Name == config.KindMachine {
+			loops, err := machineLoops(ctx, st, name)
+			if err != nil {
+				return refuse(stderr, verb, err.Error())
+			}
+			suffix = " loops=" + config.Value(strings.Join(loops, ","))
+		}
 		if live(k) {
 			bs, err := beats(ctx, liveRedisAddress(*redisFlag, d.getenv), []string{name}, d)
 			if err != nil {
 				return refuse(stderr, verb, err.Error())
 			}
-			suffix = liveSuffix(bs, name)
+			suffix += liveSuffix(bs, name)
 		}
 		fmt.Fprintln(stdout, config.ShowLine(k, row)+suffix)
 		return 0

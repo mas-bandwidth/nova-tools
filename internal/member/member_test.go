@@ -169,7 +169,7 @@ type rig struct {
 
 func newRig(cfg Config) *rig {
 	s, r, out := newScript(), newRunner(), &bytes.Buffer{}
-	return &rig{m: New(cfg, s, r, out), s: s, r: r, out: out}
+	return &rig{m: New(cfg, s, r, &fakePusher{}, out), s: s, r: r, out: out}
 }
 
 func (g *rig) tick(t *testing.T) (int, error) {
@@ -606,7 +606,7 @@ func TestCardTextForAWorkPacketWithNoBaseWorksInPlace(t *testing.T) {
 	if !strings.HasPrefix(got, "## From the sprint\n\n") {
 		t.Fatalf("a packet with no brief starts at the sprint's part:\n%s", got)
 	}
-	for _, want := range []string{"Work in the directory you start in and nowhere else.", "finish --as m1 c2@1 --epoch 3 --branch work/c2 "} {
+	for _, want := range []string{"Work in the directory you start in and nowhere else;", "finish --as m1 c2@1 --epoch 3 --branch work/c2 "} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("the card lacks %q:\n%s", want, got)
 		}

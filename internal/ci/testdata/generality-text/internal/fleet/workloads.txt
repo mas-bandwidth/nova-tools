@@ -1,0 +1,14 @@
+# Migrated counted package ledger; original row keys preserved.
+# ceiling: 12
+internal/fleet/workloads/diag-size.card:hulk 1
+internal/fleet/workloads/go-on-path.card:mini 1
+internal/fleet/workloads/go-on-path.card:space 1
+internal/fleet/workloads/go-on-path.card:vision 1
+internal/fleet/workloads/go-test.card:hulk 2
+internal/fleet/workloads/registry-truth.card:space 2
+internal/fleet/workloads/runner-path.card:batman 1
+internal/fleet/workloads/runner-path.card:space 2
+internal/fleet/workloads/services-reach.card:space 2
+internal/fleet/workloads/services-reach.card:studio 1
+internal/fleet/workloads/wall-toolchain.card:hulk 1
+internal/fleet/workloads/wall-toolchain.card:vision 1

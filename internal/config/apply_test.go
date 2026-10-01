@@ -370,8 +370,8 @@ func TestApplyStopsAtARefusalAndNamesIt(t *testing.T) {
 func TestApplyRefusesAnUnknownKind(t *testing.T) {
 	t.Parallel()
 
-	_, err := Apply(context.Background(), NewMem(), newFake(), "loop", "rowan", false, func(Op) {})
-	if err == nil || !strings.Contains(err.Error(), "unknown kind \"loop\"; the kinds are machine, fleet, friend, sprint") {
+	_, err := Apply(context.Background(), NewMem(), newFake(), "route", "rowan", false, func(Op) {})
+	if err == nil || !strings.Contains(err.Error(), "unknown kind \"route\"; the kinds are machine, fleet, friend, sprint, loop") {
 		t.Fatalf("unknown kind: %v", err)
 	}
 }

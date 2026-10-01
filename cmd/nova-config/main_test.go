@@ -125,7 +125,7 @@ type harness struct {
 }
 
 func newHarness() *harness {
-	return &harness{hostname: "elsewhere.example", store: &memStore{Mem: config.NewMem(), version: 5}, redis: newFakeRedis(), env: map[string]string{}}
+	return &harness{hostname: "elsewhere.example", store: &memStore{Mem: config.NewMem(), version: 6}, redis: newFakeRedis(), env: map[string]string{}}
 }
 
 func (h *harness) deps() deps {
@@ -205,11 +205,11 @@ func TestKindsAndMigratePrintNeedNoStore(t *testing.T) {
 
 	h := newHarness()
 	code, out, errs := h.run(t, "kinds")
-	if code != 0 || errs != "" || !strings.HasPrefix(out, "CONFIG KIND name=machine ") || !strings.HasSuffix(out, "CONFIG KINDS count=4\n") {
+	if code != 0 || errs != "" || !strings.HasPrefix(out, "CONFIG KIND name=machine ") || !strings.HasSuffix(out, "CONFIG KINDS count=5\n") {
 		t.Fatalf("kinds: %d %q %q", code, out, errs)
 	}
 	code, out, errs = h.run(t, "migrate", "--print")
-	if code != 0 || errs != "" || !strings.HasPrefix(out, "MIGRATION version=1 file=0001_schema.sql ") || !strings.HasSuffix(out, "CONFIG MIGRATE print=5 pg=-\n") {
+	if code != 0 || errs != "" || !strings.HasPrefix(out, "MIGRATION version=1 file=0001_schema.sql ") || !strings.HasSuffix(out, "CONFIG MIGRATE print=6 pg=-\n") {
 		t.Fatalf("migrate --print: %d %q %q", code, out, errs)
 	}
 	if h.opens != 0 {
@@ -245,9 +245,9 @@ func TestARefusalNamesEveryMissingFlagAtOnce(t *testing.T) {
 	if code != 2 || !strings.Contains(errs, "list takes no name") {
 		t.Fatalf("list with a name: %d %q", code, errs)
 	}
-	code, _, errs = h.run(t, "apply", "--kind", "loop", "--pg", dsn, "--redis", "127.0.0.1:6379", "--as", "rowan")
-	if code != 2 || !strings.Contains(errs, "--kind loop: want one of machine, fleet, friend, sprint") {
-		t.Fatalf("apply --kind loop: %d %q", code, errs)
+	code, _, errs = h.run(t, "apply", "--kind", "route", "--pg", dsn, "--redis", "127.0.0.1:6379", "--as", "rowan")
+	if code != 2 || !strings.Contains(errs, "--kind route: want one of machine, fleet, friend, sprint, loop") {
+		t.Fatalf("apply --kind route: %d %q", code, errs)
 	}
 	// The machine kind has no invented flag: an address is the name, a
 	// measured fact is the beat's, a note is history.
@@ -400,7 +400,7 @@ func TestTheSixVerbsEndToEndOnTheFake(t *testing.T) {
 	}
 	// The sprint row: who coordinates; a friend it names stays.
 	_, errs = step(1, "sprint", "set", "--coordinator", "nobody")
-	if errs != "nova-config sprint set: --coordinator nobody names no friend row; run: nova-config sprint show\n" {
+	if errs != "nova-config sprint set: --coordinator nobody names no friend row; run: nova-config friend list\n" {
 		t.Fatalf("sprint set naming no friend: %q", errs)
 	}
 	out, _ = step(0, "sprint", "set", "--coordinator", "rowan")
@@ -442,12 +442,12 @@ func TestTheSixVerbsEndToEndOnTheFake(t *testing.T) {
 	}
 	h.env["NOVA_SPRINT_REDIS"] = "127.0.0.1:6379"
 	out, _ = step(0, "machine", "show", "hulk")
-	if !strings.HasPrefix(out, "MACHINE name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0 created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z os=- arch=- cores=64 memory_gb=- beat=2026-09-27T03:00:00Z\n") {
+	if !strings.HasPrefix(out, "MACHINE name=hulk user=gaffer seat=swarm-hulk slots=40 runners=0 created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z loops=- os=- arch=- cores=64 memory_gb=- beat=2026-09-27T03:00:00Z\n") {
 		t.Fatalf("machine show with NOVA_SPRINT_REDIS: %q", out)
 	}
 	delete(h.env, "NOVA_SPRINT_REDIS")
 	out, _ = step(0, "machine", "show", "studio")
-	if out != "MACHINE name=studio user=glenn seat=studio slots=64 runners=1 created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z\n" {
+	if out != "MACHINE name=studio user=glenn seat=studio slots=64 runners=1 created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z loops=-\n" {
 		t.Fatalf("machine show without a Redis: %q", out)
 	}
 
@@ -462,7 +462,7 @@ func TestTheSixVerbsEndToEndOnTheFake(t *testing.T) {
 		t.Fatalf("fleet history before a set: %q", out)
 	}
 	_, errs = step(1, "fleet", "set", "--store", "space")
-	if errs != "nova-config fleet set: --store space names no machine row; run: nova-config fleet show\n" {
+	if errs != "nova-config fleet set: --store space names no machine row; run: nova-config machine list\n" {
 		t.Fatalf("fleet set naming no machine: %q", errs)
 	}
 	out, _ = step(0, "fleet", "set", "--store", "hulk", "--coordinator", "studio")
@@ -516,11 +516,11 @@ func TestApplyStatusAndMigrateOnTheFakes(t *testing.T) {
 		t.Fatalf("status before migrate: %q %q", out, errs)
 	}
 	out, _ = step(0, "migrate")
-	if out != "CONFIG MIGRATE pg=nova_config@127.0.0.1:5432/nova from=0 to=5 applied=5\n" {
+	if out != "CONFIG MIGRATE pg=nova_config@127.0.0.1:5432/nova from=0 to=6 applied=6\n" {
 		t.Fatalf("migrate: %q", out)
 	}
 	out, _ = step(0, "migrate")
-	if out != "CONFIG MIGRATE pg=nova_config@127.0.0.1:5432/nova from=5 to=5 applied=0\n" {
+	if out != "CONFIG MIGRATE pg=nova_config@127.0.0.1:5432/nova from=6 to=6 applied=0\n" {
 		t.Fatalf("migrate twice: %q", out)
 	}
 	step(0, "machine", "add", "studio", "--user", "glenn", "--seat", "studio", "--slots", "64")
@@ -529,12 +529,12 @@ func TestApplyStatusAndMigrateOnTheFakes(t *testing.T) {
 	step(0, "fleet", "set", "--coordinator", "studio")
 	step(0, "sprint", "set", "--coordinator", "rowan")
 	out, errs = step(1, "status")
-	if out != "CONFIG STATUS pg=nova_config@127.0.0.1:5432/nova schema=5 machine=1 machine_rev=1 fleet_rev=4 friend=2 friend_rev=3 sprint_rev=5 redis=127.0.0.1:6379 machine_applied=0 fleet_applied=0 friend_applied=0 sprint_applied=0\n" || !strings.Contains(errs, "Redis is not at Postgres's revision for 4 kind(s); run: nova-config apply") {
+	if out != "CONFIG STATUS pg=nova_config@127.0.0.1:5432/nova schema=6 machine=1 machine_rev=1 fleet_rev=4 friend=2 friend_rev=3 sprint_rev=5 loop=0 loop_rev=0 redis=127.0.0.1:6379 machine_applied=0 fleet_applied=0 friend_applied=0 sprint_applied=0 loop_applied=0\n" || !strings.Contains(errs, "Redis is not at Postgres's revision for 4 kind(s); run: nova-config apply") {
 		t.Fatalf("status behind: %q %q", out, errs)
 	}
 	delete(h.env, "NOVA_FRIEND")
 	out, _ = step(0, "apply", "--check")
-	want := "CHECK ADD kind=machine name=studio\nCONFIG CHECK kind=machine add=1 set=0 remove=0 rev=1 applied=0\nCHECK SET kind=fleet name=fleet changed=coordinator\nCONFIG CHECK kind=fleet add=0 set=1 remove=0 rev=4 applied=0\nCHECK ADD kind=friend name=rowan\nCHECK ADD kind=friend name=stella\nCONFIG CHECK kind=friend add=2 set=0 remove=0 rev=3 applied=0\nCHECK SET kind=sprint name=sprint changed=coordinator\nCONFIG CHECK kind=sprint add=0 set=1 remove=0 rev=5 applied=0\n"
+	want := "CHECK ADD kind=machine name=studio\nCONFIG CHECK kind=machine add=1 set=0 remove=0 rev=1 applied=0\nCHECK SET kind=fleet name=fleet changed=coordinator\nCONFIG CHECK kind=fleet add=0 set=1 remove=0 rev=4 applied=0\nCHECK ADD kind=friend name=rowan\nCHECK ADD kind=friend name=stella\nCONFIG CHECK kind=friend add=2 set=0 remove=0 rev=3 applied=0\nCHECK SET kind=sprint name=sprint changed=coordinator\nCONFIG CHECK kind=sprint add=0 set=1 remove=0 rev=5 applied=0\nCONFIG CHECK kind=loop add=0 set=0 remove=0 rev=0 applied=0\n"
 	if out != want {
 		t.Fatalf("apply --check without --as:\n%s\nwant:\n%s", out, want)
 	}
@@ -552,7 +552,7 @@ func TestApplyStatusAndMigrateOnTheFakes(t *testing.T) {
 	}
 	h.env["NOVA_FRIEND"] = "rowan"
 	out, _ = step(0, "apply")
-	want = "APPLY ADD kind=machine name=studio\nCONFIG APPLY kind=machine add=1 set=0 remove=0 rev=1 ms=0\nAPPLY SET kind=fleet name=fleet changed=coordinator\nCONFIG APPLY kind=fleet add=0 set=1 remove=0 rev=4 ms=0\nAPPLY ADD kind=friend name=rowan\nAPPLY ADD kind=friend name=stella\nCONFIG APPLY kind=friend add=2 set=0 remove=0 rev=3 ms=0\nAPPLY SET kind=sprint name=sprint changed=coordinator\nCONFIG APPLY kind=sprint add=0 set=1 remove=0 rev=5 ms=0\n"
+	want = "APPLY ADD kind=machine name=studio\nCONFIG APPLY kind=machine add=1 set=0 remove=0 rev=1 ms=0\nAPPLY SET kind=fleet name=fleet changed=coordinator\nCONFIG APPLY kind=fleet add=0 set=1 remove=0 rev=4 ms=0\nAPPLY ADD kind=friend name=rowan\nAPPLY ADD kind=friend name=stella\nCONFIG APPLY kind=friend add=2 set=0 remove=0 rev=3 ms=0\nAPPLY SET kind=sprint name=sprint changed=coordinator\nCONFIG APPLY kind=sprint add=0 set=1 remove=0 rev=5 ms=0\nCONFIG APPLY kind=loop add=0 set=0 remove=0 rev=0 ms=0\n"
 	if out != want {
 		t.Fatalf("apply:\n%s\nwant:\n%s", out, want)
 	}
@@ -569,7 +569,7 @@ func TestApplyStatusAndMigrateOnTheFakes(t *testing.T) {
 		t.Fatalf("rowan's stored row: %q", out)
 	}
 	out, _ = step(0, "status")
-	if !strings.HasSuffix(out, " machine_applied=1 fleet_applied=4 friend_applied=3 sprint_applied=5\n") {
+	if !strings.HasSuffix(out, " machine_applied=1 fleet_applied=4 friend_applied=3 sprint_applied=5 loop_applied=0\n") {
 		t.Fatalf("status after apply: %q", out)
 	}
 	out, _ = step(0, "apply", "--kind", "friend")

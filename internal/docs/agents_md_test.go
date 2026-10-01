@@ -3,10 +3,11 @@ package docs
 import (
 	"os"
 	"path/filepath"
-	"regexp"
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // agents_md_test.go holds AGENTS.md — the ONE page a friend's harness reads
@@ -55,10 +56,6 @@ const agentsLineCap = 170
 // today; a symlink counts, because what a harness opens is the contents.
 var harnessFiles = []string{"CLAUDE.md"}
 
-// classRuleRe reads the rule NAME out of a `### `name` — description` heading
-// in SPEC-CI.md's index.
-var classRuleRe = regexp.MustCompile("(?m)^### `([^`]+)` — ")
-
 // TestStandardNamesEveryClassRule holds the contract: docs/STANDARD.md, which
 // the root AGENTS.md embeds whole, names every class rule docs/SPEC-CI.md
 // indexes, by rule name.
@@ -91,7 +88,7 @@ func standardNamesEveryClassRule(t *testing.T) {
 	}
 	sort.Strings(missing)
 	for _, name := range missing {
-		t.Errorf("%s does not name the class rule `%s`; a friend meets that rule as a red and reads its name off the refusal, so docs/STANDARD.md must list it — add it to the ten, or to the by-name index beside them, run: make map, and keep the full entry in %s",
+		t.Errorf("%s does not name the class rule `%s`; a friend meets that rule as a red and reads its name off the refusal, so docs/STANDARD.md must list it — run: make map, and keep the full entry in %s",
 			standardPath, name, specCIPath)
 	}
 }
@@ -138,13 +135,13 @@ func TestNoPerHarnessFileStandsBesideAgents(t *testing.T) {
 }
 
 // classRuleNames returns the rule names SPEC-CI.md's index declares, in the
-// order the section prints them.
+// deterministic order used by make map.
 func classRuleNames(t *testing.T) []string {
 	t.Helper()
-	var names []string
-	for _, m := range classRuleRe.FindAllStringSubmatch(classTestsSection(t), -1) {
-		names = append(names, m[1])
-	}
+	spec, err := os.ReadFile(specCIPath)
+	require.NoError(t, err)
+	names, err := classRules(string(spec))
+	require.NoError(t, err)
 	return names
 }
 

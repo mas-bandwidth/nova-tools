@@ -13,7 +13,7 @@ import (
 // okOnFailureAllowlistPath is the shrink-only ledger of the print-then-exit
 // pairs in cmd/ whose word and code disagree: one `file:function:kind` per row,
 // a reason after it.
-const okOnFailureAllowlistPath = "testdata/okonfailure_allowlist.txt"
+const okOnFailureAllowlistPath = "testdata/okonfailure"
 
 // okWordRe is the OK word of an event line: a line that starts with OK or with
 // upper-case tokens and then OK (`<TOKEN> OK key=value`, docs/CLI-STYLE.md (e)),
