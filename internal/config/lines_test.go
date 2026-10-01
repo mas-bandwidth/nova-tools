@@ -101,7 +101,9 @@ func TestEveryKindHasAMigrationDeclaringItsColumns(t *testing.T) {
 			if f.Name == "user" {
 				col = `"user"`
 			}
-			assert.True(t, strings.Contains(joined, "\n    "+col+" ") || strings.Contains(joined, "\n    "+col+"\t"), "kind %s: field %s has no column in any migration", k.Name, f.Name)
+			// a column of the CREATE TABLE, or one a later migration adds to it
+			assert.True(t, strings.Contains(joined, "\n    "+col+" ") || strings.Contains(joined, "\n    "+col+"\t") ||
+				strings.Contains(joined, "\n    ADD COLUMN IF NOT EXISTS "+col+" "), "kind %s: field %s has no column in any migration", k.Name, f.Name)
 		}
 	}
 }
