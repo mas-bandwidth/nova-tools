@@ -1,0 +1,20 @@
+# A fixture of the applied state: what `nova-config inventory --fixture` reads in
+# place of the store. Two machines, the fleet row, and their loops: a member kept
+# alive with two secrets from its seat, and a periodic loop written disabled.
+machines:
+  bench-a: {user: nova, seat: bench-a, slots: 2, runners: 0, os: darwin, arch: arm64}
+  bench-b: {user: nova, seat: bench-b, slots: 4, runners: 1, os: linux, arch: amd64}
+fleet: {store: bench-b, coordinator: bench-a}
+loops:
+  member-bench-b:
+    machine: bench-b
+    argv: [nova-swarm, member, --as, bench-b, --width, "4"]
+    seat: bench-b
+    keys: [API_KEY, REDIS_PASSWORD]
+    keepalive: true
+    width: 4
+  tick-bench-a:
+    machine: bench-a
+    argv: ["~/bin/tick", --once]
+    every: 30
+    enabled: false

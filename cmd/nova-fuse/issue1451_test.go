@@ -3,6 +3,9 @@ package main
 import (
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestIssue1451EveryMissingFlagRefusalNamesTheDoor enforces docs/ONBOARDING.md
@@ -19,9 +22,7 @@ func TestIssue1451EveryMissingFlagRefusalNamesTheDoor(t *testing.T) {
 	t.Parallel()
 
 	code, help, helpErr := capture(t, []string{"help"}, nowish())
-	if code != 0 {
-		t.Fatalf("`nova-fuse help` exits %d, want 0; stderr: %s", code, helpErr)
-	}
+	require.Equal(t, 0, code, "`nova-fuse help` exits %d, want 0; stderr: %s", code, helpErr)
 
 	// Enumerate the verbs from the banner's usage lines rather than typing a list
 	// from memory. `version` is skipped on purpose: with no flags it prints the
@@ -40,19 +41,14 @@ func TestIssue1451EveryMissingFlagRefusalNamesTheDoor(t *testing.T) {
 		seen[fields[0]] = true
 		verbs = append(verbs, fields[0])
 	}
-	if len(verbs) == 0 {
-		t.Fatal("no verbs parsed from `nova-fuse help`; the test would pass by checking nothing")
-	}
+	require.NotEmpty(t, verbs, "no verbs parsed from `nova-fuse help`; the test would pass by checking nothing")
 
 	for _, verb := range verbs {
 		code, out, errOut := capture(t, []string{verb}, nowish())
-		if code != 2 {
-			t.Errorf("bare `nova-fuse %s`: exit = %d, want 2 (could not run); stderr: %q", verb, code, errOut)
+		if !assert.Equal(t, 2, code, "bare `nova-fuse %s`: exit = %d, want 2 (could not run); stderr: %q", verb, code, errOut) {
 			continue
 		}
-		if out != "" {
-			t.Errorf("bare `nova-fuse %s`: a refusal wrote to stdout: %q", verb, out)
-		}
+		assert.Empty(t, out, "bare `nova-fuse %s`: a refusal wrote to stdout: %q", verb, out)
 		refusals := 0
 		for _, line := range strings.Split(strings.TrimSuffix(errOut, "\n"), "\n") {
 			if strings.HasPrefix(line, "  ") {
@@ -61,15 +57,9 @@ func TestIssue1451EveryMissingFlagRefusalNamesTheDoor(t *testing.T) {
 				continue
 			}
 			refusals++
-			if !strings.HasSuffix(line, "; run: nova-fuse help") {
-				t.Errorf("bare `nova-fuse %s`: a refusal does not name the door: %q", verb, line)
-			}
+			assert.True(t, strings.HasSuffix(line, "; run: nova-fuse help"), "bare `nova-fuse %s`: a refusal does not name the door: %q", verb, line)
 		}
-		if refusals == 0 {
-			t.Errorf("bare `nova-fuse %s`: no refusal line at all; stderr: %q", verb, errOut)
-		}
-		if strings.Contains(errOut, "usage:") {
-			t.Errorf("bare `nova-fuse %s`: the refusal dumps the banner instead of naming the door: %q", verb, errOut)
-		}
+		assert.NotEqual(t, 0, refusals, "bare `nova-fuse %s`: no refusal line at all; stderr: %q", verb, errOut)
+		assert.NotContains(t, errOut, "usage:", "bare `nova-fuse %s`: the refusal dumps the banner instead of naming the door: %q", verb, errOut)
 	}
 }

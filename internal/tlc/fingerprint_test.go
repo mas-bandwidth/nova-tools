@@ -10,6 +10,9 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // Every non-test Go file of the package says whether it decides how a result is
@@ -19,9 +22,7 @@ import (
 func TestEveryRunnerFileIsClassified(t *testing.T) {
 	t.Parallel()
 	entries, err := os.ReadDir(".")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	var dir []string
 	for _, e := range entries {
 		if n := e.Name(); strings.HasSuffix(n, ".go") && !strings.HasSuffix(n, "_test.go") {
@@ -36,14 +37,10 @@ func TestEveryRunnerFileIsClassified(t *testing.T) {
 		listed[n]++
 	}
 	for n, times := range listed {
-		if times != 1 {
-			t.Errorf("%s is in ResultFiles and BookkeepingFiles %d times, want exactly one list once", n, times)
-		}
+		assert.Equal(t, 1, times, "%s is in ResultFiles and BookkeepingFiles %d times, want exactly one list once", n, times)
 	}
 	for _, n := range dir {
-		if listed[n] == 0 {
-			t.Errorf("%s is in neither ResultFiles nor BookkeepingFiles: say in fingerprint.go whether it decides how a result is produced and read", n)
-		}
+		assert.NotEqual(t, 0, listed[n], "%s is in neither ResultFiles nor BookkeepingFiles: say in fingerprint.go whether it decides how a result is produced and read", n)
 		delete(listed, n)
 	}
 	for n := range listed {
@@ -57,9 +54,7 @@ func TestEveryRunnerFileIsClassified(t *testing.T) {
 func TestEmbeddedSourcesAreTheCheckedFiles(t *testing.T) {
 	t.Parallel()
 	files, err := CheckedSources()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	if runner, err := RunnerFiles(); err != nil || len(runner) != len(ResultFiles) {
 		t.Fatalf("the fingerprint takes %d runner files, %d are result files (%v)", len(runner), len(ResultFiles), err)
 	}
@@ -81,66 +76,38 @@ func TestEmbeddedSourcesAreTheCheckedFiles(t *testing.T) {
 	}
 	sort.Strings(got)
 	sort.Strings(want)
-	if strings.Join(got, ",") != strings.Join(want, ",") {
-		t.Fatalf("embedded %v, CheckedFiles names %v: fix the go:embed line", got, want)
-	}
+	require.Equal(t, strings.Join(want, ","), strings.Join(got, ","), "embedded %v, CheckedFiles names %v: fix the go:embed line", got, want)
 	entries, _ := sources.ReadDir(".")
-	if len(entries) != len(CheckedFiles()) {
-		t.Fatalf("the embedded directory holds %d files, CheckedFiles %d", len(entries), len(CheckedFiles()))
-	}
+	require.Len(t, entries, len(CheckedFiles()), "the embedded directory holds %d files, CheckedFiles %d", len(entries), len(CheckedFiles()))
 }
 
 func TestCheckRunnerComparesTheEmbeddedCheckedFilesWithTheRoot(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
-	if err := CheckRunner(root); err != nil {
-		t.Fatalf("a root with no runner sources: %v", err)
-	}
-	if err := CheckRunner(filepath.Join("..", "..")); err != nil {
-		t.Fatalf("this repository: %v", err)
-	}
+	require.NoError(t, CheckRunner(root), "a root with no runner sources")
+	require.NoError(t, CheckRunner(filepath.Join("..", "..")), "this repository")
 	dir := filepath.Join(root, RunnerDir)
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(dir, 0o755))
 	built, _ := CheckedSources()
 	for path, raw := range built {
-		if err := os.WriteFile(filepath.Join(root, path), raw, 0o644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(filepath.Join(root, path), raw, 0o644))
 	}
-	if err := CheckRunner(root); err != nil {
-		t.Fatalf("the same files: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "suite.go"), []byte("other\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, CheckRunner(root), "the same files")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "suite.go"), []byte("other\n"), 0o644))
 	err := CheckRunner(root)
-	if err == nil || !strings.Contains(err.Error(), "internal/tlc/suite.go differ") || !strings.Contains(err.Error(), "build tlacheck from this tree") {
-		t.Fatalf("an edited result file: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "suite.go"), built[RunnerDir+"/suite.go"], 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.ErrorContains(t, err, "internal/tlc/suite.go differ", "an edited result file: %v", err)
+	require.ErrorContains(t, err, "build tlacheck from this tree", "an edited result file: %v", err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "suite.go"), built[RunnerDir+"/suite.go"], 0o644))
 	// inputs.go computes the list of files a case reads: a binary built from
 	// another one computes other inputs than the checkout does.
-	if err := os.WriteFile(filepath.Join(dir, "inputs.go"), []byte("another input list\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "inputs.go"), []byte("another input list\n"), 0o644))
 	err = CheckRunner(root)
-	if err == nil || !strings.Contains(err.Error(), "internal/tlc/inputs.go differ") || strings.Contains(err.Error(), "suite.go") {
-		t.Fatalf("an edited input-list file: %v", err)
-	}
+	require.ErrorContains(t, err, "internal/tlc/inputs.go differ", "an edited input-list file: %v", err)
+	require.NotContains(t, err.Error(), "suite.go", "an edited input-list file: %v", err)
 	// Any other bookkeeping file decides nothing about the inputs.
-	if err := os.WriteFile(filepath.Join(dir, "inputs.go"), built[RunnerDir+"/inputs.go"], 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "records.go"), []byte("another bookkeeping file\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	if err := CheckRunner(root); err != nil {
-		t.Fatalf("an edited bookkeeping file: %v", err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "inputs.go"), built[RunnerDir+"/inputs.go"], 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "records.go"), []byte("another bookkeeping file\n"), 0o644))
+	require.NoError(t, CheckRunner(root), "an edited bookkeeping file")
 }
 
 // The file that turns a row of CASES.tsv into a Case (its columns, its defaults,
@@ -151,9 +118,7 @@ func TestTheFileThatReadsAPlanRowIsAResultFile(t *testing.T) {
 	t.Parallel()
 	fset := token.NewFileSet()
 	pkgs, err := parser.ParseDir(fset, ".", func(fi os.FileInfo) bool { return !strings.HasSuffix(fi.Name(), "_test.go") }, 0)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	where := map[string]string{}
 	for _, pkg := range pkgs {
 		for name, file := range pkg.Files {
@@ -182,8 +147,6 @@ func TestTheFileThatReadsAPlanRowIsAResultFile(t *testing.T) {
 			t.Errorf("%s is not declared in the package", what)
 			continue
 		}
-		if !slices.Contains(ResultFiles, file) {
-			t.Errorf("%s is declared in %s, which is not a result file: it reads a plan row into the case a run is judged by", what, file)
-		}
+		assert.True(t, slices.Contains(ResultFiles, file), "%s is declared in %s, which is not a result file: it reads a plan row into the case a run is judged by", what, file)
 	}
 }

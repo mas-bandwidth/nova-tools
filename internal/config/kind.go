@@ -12,6 +12,7 @@
 package config
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -103,7 +104,11 @@ type Kind struct {
 	// can say (a loop runs every n seconds or is kept alive, never both).
 	// add runs it on the new row before any store is opened; every store
 	// runs it on the row a set would leave, and refuses the set with
-	// ErrInvalid. nil checks nothing.
+	// ErrInvalid. nil checks nothing. add also runs it when some other
+	// field is already refused, so one refusal names every problem; a
+	// field that failed its own validation is then absent from r.Fields,
+	// and a rule that needs it is skipped (the field's own refusal says
+	// what is wrong).
 	Check func(r Row) error
 }
 
@@ -229,7 +234,7 @@ var Kinds = []*Kind{
 			{Name: "machine", Type: TypeRef, Ref: KindMachine, Required: true, Help: "the machine it runs on (a machine row)"},
 			{Name: "argv", Type: TypeArgv, Required: true, Help: `the command as a JSON array of strings, the program first: '["/path/prog","--flag","v"]'; never a secret, which goes by name in --keys`},
 			{Name: "seat", Type: TypeText, Help: "the nova-secrets seat on that machine it opens its secrets from, or empty when it needs none"},
-			{Name: "keys", Type: TypeKeys, Help: "comma list of the names of the secrets it needs from the seat (OPENCODE_API_KEY,...), never a value; empty when none"},
+			{Name: "keys", Type: TypeKeys, Help: "comma list of the names of the secrets it needs from the seat (API_KEY,...), never a value; empty when none"},
 			{Name: "every", Type: TypeInt, Help: "seconds between runs of a periodic loop; 0 (the default) when it is kept alive"},
 			{Name: "keepalive", Type: TypeBool, Help: "true for a long-running unit restarted when it exits; false (the default) when it runs --every n"},
 			{Name: "width", Type: TypeInt, Help: "the child cap of a member loop; 0 (the default) for any other loop"},
@@ -248,15 +253,23 @@ func LoopLog(name string) string { return "~/nova-bench/loops/" + name + ".log" 
 // says how it runs, and secret names need a seat to open them from.
 func checkLoop(r Row) error {
 	var problems []string
-	periodic := r.Int("every") > 0
-	kept := r.Fields["keepalive"] == "true"
-	switch {
-	case periodic && kept:
-		problems = append(problems, fmt.Sprintf("loop %s has --every %s and --keepalive true; a loop runs every n seconds or is kept alive, so set one: --every 0 or --keepalive false", r.Name, r.Fields["every"]))
-	case !periodic && !kept:
-		problems = append(problems, fmt.Sprintf("loop %s has neither --every nor --keepalive; want --every <seconds> for a periodic loop or --keepalive true for a long-running one", r.Name))
+	// A field absent from the row failed its own validation in add; a rule
+	// that needs it is skipped and the field's refusal stands alone.
+	_, everyOK := r.Fields["every"]
+	_, keepOK := r.Fields["keepalive"]
+	if everyOK && keepOK {
+		periodic := r.Int("every") > 0
+		kept := r.Fields["keepalive"] == "true"
+		switch {
+		case periodic && kept:
+			problems = append(problems, fmt.Sprintf("loop %s has --every %s and --keepalive true; a loop runs every n seconds or is kept alive, so set one: --every 0 or --keepalive false", r.Name, r.Fields["every"]))
+		case !periodic && !kept:
+			problems = append(problems, fmt.Sprintf("loop %s has neither --every nor --keepalive; want --every <seconds> for a periodic loop or --keepalive true for a long-running one", r.Name))
+		}
 	}
-	if r.Fields["keys"] != "" && r.Fields["seat"] == "" {
+	_, keysOK := r.Fields["keys"]
+	_, seatOK := r.Fields["seat"]
+	if keysOK && seatOK && r.Fields["keys"] != "" && r.Fields["seat"] == "" {
 		problems = append(problems, fmt.Sprintf("loop %s names secrets (--keys %s) and no --seat to open them from; want --seat <seat>", r.Name, r.Fields["keys"]))
 	}
 	if len(problems) > 0 {
@@ -472,7 +485,7 @@ func canonicalArgv(field, raw string) (string, error) {
 			return "", fmt.Errorf("--%s: word %d holds a line break or a NUL; want one line per word", field, i)
 		}
 	}
-	out, err := json.Marshal(words)
+	out, err := marshalArgv(words)
 	if err != nil {
 		return "", fmt.Errorf("--%s: %v", field, err)
 	}
@@ -480,6 +493,19 @@ func canonicalArgv(field, raw string) (string, error) {
 		return "", fmt.Errorf("--%s: %d bytes, over the maximum of %d", field, len(out), MaxArgvBytes)
 	}
 	return string(out), nil
+}
+
+// marshalArgv is the compact JSON spelling of the words with & < > written as
+// themselves: json.Marshal turns them into \u0026 \u003c \u003e, which makes
+// a command like '["sh","-c","a && b > c"]' unreadable in list and show.
+func marshalArgv(words []string) ([]byte, error) {
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(words); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(b.Bytes(), []byte("\n")), nil
 }
 
 // Argv decodes a canonical TypeArgv value ("" is none).
@@ -557,7 +583,7 @@ func (k *Kind) NewRow(name string, raw map[string]string) (Row, error) {
 			problems = append(problems, fmt.Sprintf("--%s is not a %s field; the fields are %s", name, k.Name, strings.Join(k.FieldNames(), ", ")))
 		}
 	}
-	if len(problems) == 0 && k.Check != nil {
+	if k.Check != nil {
 		if err := k.Check(row); err != nil {
 			problems = append(problems, err.Error())
 		}
