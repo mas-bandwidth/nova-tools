@@ -1056,3 +1056,36 @@ func TestASpentReadStaysSpentAcrossTicks(t *testing.T) {
 		t.Fatalf("a spent read holds a place: running=%d", g.m.Running())
 	}
 }
+
+// A member told to drain (its binary was replaced) reports what ended and takes
+// nothing new, though room is left and cards are ready; it starts no child for an
+// in-flight card of no child of ours either.
+func TestADrainingMemberTakesNothingNewButReportsWhatEnded(t *testing.T) {
+	t.Parallel()
+	g := newRig(Config{As: "m", Width: 2})
+	g.s.set("queue", 0, queueJSON(t, 7, ready("c1")))
+	g.s.set("take", 0, takeJSON(t, pk("c1")))
+	if _, err := g.tick(t); err != nil {
+		t.Fatal(err)
+	}
+	if g.m.Running() != 1 {
+		t.Fatalf("running=%d, want 1", g.m.Running())
+	}
+	g.m.Drain()
+	p := pk("c1")
+	g.r.child("c1").end(Result{Ran: true, OK: true, Shaped: true, Verdict: "ok", Report: "done"})
+	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p), ready("c2"), working("c3", 1, &Packet{Card: "c3", Kind: "work", Gen: 1, Epoch: 7})))
+	g.s.reset()
+	if _, err := g.tick(t); err != nil {
+		t.Fatal(err)
+	}
+	if got := g.s.lines("finish"); len(got) != 1 {
+		t.Fatalf("what ended is reported: %q", got)
+	}
+	if got := g.s.lines("take"); len(got) != 0 {
+		t.Fatalf("nothing new is taken: %q", got)
+	}
+	if got := g.r.started(); !slices.Equal(got, []string{"c1"}) {
+		t.Fatalf("no child is started, taken or recovered: %v", got)
+	}
+}

@@ -74,7 +74,9 @@ usage:
 
 exit codes: 0 the verb ran and passed; 1 the verb ran and said NO -- a verification that failed, a lint that found a defect; 2 could not run:
 a missing flag, an unreadable worker description, a key file that is
-absent or empty, a bad invocation.
+absent or empty, a bad invocation; 3 member: its binary was replaced on disk
+(MEMBER STOP: its supervisor starts the new one; with children running it first
+takes no new card and stops when the last is reported).
 
 NO GUESSED ANYTHING. There is no default pool, no default worker description, no
 default number of workers, no default deadline, and no default token budget.
