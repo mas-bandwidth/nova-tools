@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -44,7 +45,7 @@ func (app *application) cmdWatch(args []string, stdout, stderr io.Writer) int {
 	fs := verbflag.New(verb)
 	addr := app.redisFlag(fs)
 	every := fs.Duration("every", time.Second, "the tick, a duration (1s)")
-	out := fs.String("out", "", "publish to this file by atomic rename instead of drawing in place")
+	out := fs.String("out", "", "publish to this file by atomic rename instead of drawing in place (the file and its directory must not be symlinks)")
 	title := fs.String("title", "", "a title line above the tables")
 	view := fs.String("view", "", "a stored view: its tables and title, read every frame (view set <name> --tables ...)")
 	once := fs.Bool("once", false, "render once and exit, with no clear")
@@ -348,31 +349,7 @@ func publish(out, text string, stdout, stderr io.Writer, verb string) int {
 // (deprecated/cmd/nova-sprint/table_live.go): a reader sees the old text or
 // the new one, never half of one.
 func writeAtomic(path, body string) error {
-	dir, base := filepath.Split(path)
-	if dir == "" {
-		dir = "."
-	}
-	tmp := filepath.Join(dir, fmt.Sprintf("%s.tmp.%d", base, os.Getpid()))
-	f, err := os.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
-	if err != nil {
-		return fmt.Errorf("--out: %w", err)
-	}
-	if _, err := io.WriteString(f, body); err != nil {
-		_ = f.Close()
-		_ = os.Remove(tmp)
-		return fmt.Errorf("--out: %w", err)
-	}
-	if err := f.Sync(); err != nil {
-		_ = f.Close()
-		_ = os.Remove(tmp)
-		return fmt.Errorf("--out: %w", err)
-	}
-	if err := f.Close(); err != nil {
-		_ = os.Remove(tmp)
-		return fmt.Errorf("--out: %w", err)
-	}
-	if err := os.Rename(tmp, path); err != nil {
-		_ = os.Remove(tmp)
+	if err := atomicfile.Write(filepath.Clean(path), []byte(body), 0o644); err != nil {
 		return fmt.Errorf("--out: %w", err)
 	}
 	return nil

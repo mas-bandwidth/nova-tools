@@ -196,7 +196,7 @@ func refuse(remedy, format string, a ...any) error {
 	return &refusalErr{reason: fmt.Sprintf(format, a...), remedy: remedy}
 }
 
-// ValidVersion holds a release version to the same shape .github/scripts/release-ldflags.sh
+// ValidVersion holds a release version to the same shape tools/ghrelease's ldflags verb
 // refuses at, and for the same reasons: the string travels into `-X main.version=`,
 // into a printf format, and into a one-line field. Whitespace splits the linker
 // flag, `%` reads a directive that was never supplied, and `=` is what both the
@@ -246,6 +246,6 @@ func ValidVersion(v string) error {
 }
 
 // Ldflags is the stamp a release build carries, the same string
-// .github/scripts/release-ldflags.sh composes: one place, so the -X cannot be
+// tools/ghrelease's ldflags verb composes: one place, so the -X cannot be
 // dropped by an edit to a long build line nobody rereads.
 func Ldflags(version string) string { return "-s -w -X main.version=" + version }

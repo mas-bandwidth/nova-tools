@@ -2,6 +2,7 @@ package secrets
 
 import (
 	"bytes"
+	"context"
 	"crypto"
 	"crypto/ecdh"
 	"crypto/ecdsa"
@@ -15,10 +16,10 @@ import (
 	"fmt"
 	"math/big"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/testguard"
 )
 
@@ -150,14 +151,12 @@ func PullStore(o StorePullOptions) (string, error) {
 	}
 	env = append(env, "GIT_SSH_COMMAND="+sshCmd, "GIT_TERMINAL_PROMPT=0")
 	run := func(args ...string) (string, error) {
-		cmd := exec.Command(gitBin, append([]string{"-C", o.StoreDir, "-c", "core.sshCommand=" + sshCmd}, args...)...)
-		cmd.Env = env
-		var out, errb bytes.Buffer
-		cmd.Stdout, cmd.Stderr = &out, &errb
-		if err := cmd.Run(); err != nil {
-			return "", fmt.Errorf("store pull: git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(errb.String()))
+		res, err := gitrun.Run(context.Background(), gitrun.Options{Bin: gitBin, C: o.StoreDir, Env: env},
+			append([]string{"-c", "core.sshCommand=" + sshCmd}, args...)...)
+		if err != nil {
+			return "", fmt.Errorf("store pull: git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(res.Stderr)))
 		}
-		return strings.TrimSpace(out.String()), nil
+		return strings.TrimSpace(string(res.Stdout)), nil
 	}
 	if _, err := run("pull", "--ff-only", "-q"); err != nil {
 		return "", err

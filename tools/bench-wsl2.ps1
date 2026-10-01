@@ -9,7 +9,7 @@
 # minted once in the admin console -- reusable, tagged, pre-approved. After that
 # the keeper does everything else over ssh: the machine row (`nova-config machine
 # add`), `nova-update release adopt --platform linux-amd64`, the Linux runners and
-# tools/bench-standard.sh. Not twenty hands.
+# the standard's witness, tools/benchstandard. Not twenty hands.
 #
 # The fleet's public keys -- the half of an ssh keypair that is meant to be
 # published -- are carried beside this script in fleet/authorized_keys. They are

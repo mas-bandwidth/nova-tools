@@ -11,9 +11,28 @@ import (
 )
 
 // MaxRootBytes is the ceiling on the root AGENTS.md. A harness reads that
-// page at the start of every session, so a map that grows without a cap
-// stops being read.
-const MaxRootBytes = 3 * 1024
+// page at the start of every session, so a page that grows without a cap stops
+// being read. The page carries the whole of docs/STANDARD.md (StandardDoc)
+// beside the directory map, because everything someone needs to know while
+// building or working on a tool is meant to be in the one file a harness
+// loads; the ceiling is sized for the standard plus the map with headroom for
+// catalog rows, and a growth past it is shortened at the standard's words or
+// the catalog rows, never by raising the number unread. It is 32 KiB because
+// the standard carries the whole of what a builder meets: the ten rules never
+// to break, the onboarding points and every class rule by name, folded in
+// from CONTRIBUTING.md and ONBOARDING.md so there is one standard, not three.
+// The owner's rule: everything somebody should need to know while building or
+// working on nova-tools goes into AGENTS.md. It rose from 24 KiB for two rules
+// the standard states as a goal and its checks (every Go test uses testify,
+// section 8; the standard library and the adopted modules are searched before a
+// helper is written, section 7) and for the section "Doing it right the first
+// time", which says which wrong turn each rule prevents; the page measures
+// 30.2 KiB with all three.
+const MaxRootBytes = 32 * 1024
+
+// StandardDoc is the one source of the standard every tool is built to. The
+// root page embeds it whole, headings one level down.
+const StandardDoc = "docs/STANDARD.md"
 
 const RootAgents = "AGENTS.md"
 
@@ -91,6 +110,9 @@ func Render(root string, cat []Entry) (map[string]string, []string) {
 
 	pages := make(map[string]string)
 	pages[RootAgents] = renderPage(root, "", idx)
+	if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(StandardDoc))); err != nil {
+		issues = append(issues, fmt.Sprintf("%s is missing; the root %s embeds it", StandardDoc, RootAgents))
+	}
 	for _, e := range cat {
 		if !e.Page {
 			continue
@@ -98,7 +120,7 @@ func Render(root string, cat []Entry) (map[string]string, []string) {
 		pages[e.Path+"/"+RootAgents] = renderPage(root, e.Path, idx)
 	}
 	if n := len(pages[RootAgents]); n >= MaxRootBytes {
-		issues = append(issues, fmt.Sprintf("%s is %d bytes, over the %d-byte cap; shorten the catalog rows", RootAgents, n, MaxRootBytes))
+		issues = append(issues, fmt.Sprintf("%s is %d bytes, over the %d-byte cap; shorten the catalog rows or the standard", RootAgents, n, MaxRootBytes))
 	}
 	return pages, issues
 }
@@ -153,22 +175,23 @@ func renderPage(root, dir string, idx CatalogIndex) string {
 	var b strings.Builder
 	if dir == "" {
 		b.WriteString("# AGENTS.md — generated map\n\n")
-		b.WriteString("Do not edit. `make map` regenerates this file. Rules: [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md). Glenn, 2026-09-18: AGENTS.md alone — no `CLAUDE.md`, no pointer, no symlink.\n\n")
-		b.WriteString("Nova Tools is machinery: command-line tools that AI friends and people run against their own records, on their own machines, with their own identities. Adoption is a choice — one tool is a fine number. Rules: [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).\n\n")
+		b.WriteString("Do not edit. `make map` regenerates this file. AGENTS.md alone: no `CLAUDE.md`, no pointer, no symlink.\n\n")
+		b.WriteString("Nova Tools is machinery: command-line tools that AI friends and people run against their own records, on their own machines, with their own identities. Adoption is a choice — one tool is a fine number. The standard is below; how review goes: [docs/CONTRIBUTING.md](docs/CONTRIBUTING.md).\n\n")
 		b.WriteString("```\nmake build          # go build ./...\nmake test           # the fast tier, plus the per-package time budget\nmake map            # regenerate AGENTS.md and per-directory maps\n```\n\n")
+		b.WriteString(embedStandard(root))
 	} else {
 		depth := strings.Count(dir, "/") + 1
 		up := strings.Repeat("../", depth)
-		rulesRel := up + "docs/CONTRIBUTING.md"
+		rulesRel := up + StandardDoc
 		if dir == "docs" {
-			rulesRel = "CONTRIBUTING.md"
+			rulesRel = "STANDARD.md"
 		}
 		b.WriteString("# AGENTS.md — generated map of ")
 		b.WriteString(dir)
 		b.WriteString("/\n\n")
 		b.WriteString("Do not edit. `make map` regenerates this file. Root: [AGENTS.md](")
 		b.WriteString(up)
-		b.WriteString("AGENTS.md). Rules: [CONTRIBUTING.md](")
+		b.WriteString("AGENTS.md). Rules: [STANDARD.md](")
 		b.WriteString(rulesRel)
 		b.WriteString(").\n\n")
 	}
@@ -192,6 +215,31 @@ func renderPage(root, dir string, idx CatalogIndex) string {
 		}
 		b.WriteString(renderRow(e))
 	}
+	return b.String()
+}
+
+// embedStandard returns docs/STANDARD.md whole, each heading one level down so
+// the page keeps its one title. A missing file yields a pointer line; Render
+// reports the absence as an issue.
+func embedStandard(root string) string {
+	raw, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(StandardDoc)))
+	if err != nil {
+		return "The standard: [" + StandardDoc + "](" + StandardDoc + ").\n\n"
+	}
+	var b strings.Builder
+	b.WriteString("The standard below is [" + StandardDoc + "](" + StandardDoc + "), embedded whole; every PR meets it.\n\n")
+	inFence := false
+	for _, line := range strings.Split(strings.TrimRight(string(raw), "\n"), "\n") {
+		if strings.HasPrefix(line, "```") {
+			inFence = !inFence
+		}
+		if !inFence && strings.HasPrefix(line, "#") {
+			line = "#" + line
+		}
+		b.WriteString(line)
+		b.WriteString("\n")
+	}
+	b.WriteString("\n")
 	return b.String()
 }
 

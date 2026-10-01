@@ -6,9 +6,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 
+	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/nogh"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
@@ -145,13 +145,8 @@ func writeNativeShellShims(slotDir string) (dir, shell string, err error) {
 			return "", "", fmt.Errorf("the path of %s holds a quote or a newline, which no wrapper can spell safely", oneline.Field(name))
 		}
 		path := filepath.Join(dir, name)
-		tmp := path + ".tmp" + strconv.Itoa(os.Getpid())
-		if writeErr := os.WriteFile(tmp, []byte(shellShimScript(real)), 0o755); writeErr != nil {
+		if writeErr := atomicfile.Write(path, []byte(shellShimScript(real)), 0o755, atomicfile.ExactMode()); writeErr != nil {
 			return "", "", fmt.Errorf("the shell shim %s could not be written: %w", oneline.Field(path), writeErr)
-		}
-		if renameErr := os.Rename(tmp, path); renameErr != nil {
-			_ = os.Remove(tmp)
-			return "", "", fmt.Errorf("the shell shim %s could not be put in place: %w", oneline.Field(path), renameErr)
 		}
 		written[name] = path
 	}

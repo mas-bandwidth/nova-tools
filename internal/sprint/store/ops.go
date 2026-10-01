@@ -111,6 +111,18 @@ func (st *Store) check(ctx context.Context, reads int, streams bool) (CheckRepor
 			rep.InFlight = s.Now.Sub(pending.At) < st.grace()
 			ops = pendingOf(*pending, st.Names)
 		}
+		// What is always true holds of the sprint as the pump will leave its
+		// work table: the tables with the work table's queue applied. The
+		// log's rules hold of the tables as stored: the log's move lines
+		// are the pump's.
+		stored := s
+		if f2.Queued > 0 {
+			q, err := st.B.QueueRead(ctx)
+			if err != nil {
+				return rep, nil, err
+			}
+			s = sprint.WithQueue(s, q)
+		}
 		rep.Violations = sprint.Check(s, ops)
 		if pending == nil && streams {
 			lines, err := st.logUpTo(ctx, logTail)
@@ -121,7 +133,7 @@ func (st *Store) check(ctx context.Context, reads int, streams bool) (CheckRepor
 			if err != nil {
 				return rep, nil, err
 			}
-			rep.Violations = append(rep.Violations, sprint.LogViolations(s, lines)...)
+			rep.Violations = append(rep.Violations, sprint.LogViolations(stored, lines)...)
 			rep.Violations = append(rep.Violations, sprint.StreamViolations(lines, inbox)...)
 		}
 		held, err := st.heldState(ctx, s, pending)
@@ -217,10 +229,11 @@ func (st *Store) SyncMirrors(ctx context.Context) error {
 		if len(ids) == 0 {
 			continue
 		}
-		rs, err := st.B.ReadSet(ctx, shape.Name, ids)
+		rs, err := st.readSet(ctx, shape.Name, ids)
 		if err != nil {
 			return err
 		}
+		diffs := map[string]map[string]string{}
 		for _, row := range shape.Rows {
 			ctl, _ := rs.Member(st.sid(sprint.CtlID(row.Key)))
 			want := map[string]string{
@@ -228,9 +241,12 @@ func (st *Store) SyncMirrors(ctx context.Context) error {
 				sprint.StateCol: dash(ctl.Fields["state"]),
 				sprint.Since:    clock(ctl.Fields["since"]),
 			}
-			if _, err := syncRow(ctx, st, shape, row, want); err != nil {
-				return err
+			if d := rowDiff(row, want); len(d) > 0 {
+				diffs[row.Key] = d
 			}
+		}
+		if err := st.setRows(ctx, shape.Name, diffs); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -448,7 +464,7 @@ func (st *Store) StreamClocks(ctx context.Context) ([]sprint.StreamClock, error)
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	rs, err := st.B.ReadSet(ctx, name, ids)
+	rs, err := st.readSet(ctx, name, ids)
 	if err != nil {
 		return nil, err
 	}

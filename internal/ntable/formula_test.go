@@ -1,11 +1,12 @@
 package ntable_test
 
 import (
-	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // shareTable is a fleet-shaped table: ready drawn, ok and failed hidden
@@ -13,9 +14,7 @@ import (
 func shareTable(t *testing.T, spec string, rows map[string][]int64, order []string) ntable.Table {
 	t.Helper()
 	cols, err := ntable.ParseColumns(spec)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	tb := ntable.Table{Name: "fleet", Columns: cols, FooterLabel: "total", Hidden: []string{"ok", "failed"}}
 	for _, key := range order {
 		r := ntable.NewRow(tb, key)
@@ -48,16 +47,13 @@ func TestNamedShareAndSum(t *testing.T) {
 		"m3    |     5 |    1 | 100.0%\n" +
 		"------+-------+------+-------\n" +
 		"total |     7 |    5 | 80.0%\n"
-	if got := ntable.Render(tb, ntable.RenderOpts{Title: "fleet"}); got != want {
-		t.Fatalf("named share and sum:\n%s\nwant:\n%s", got, want)
-	}
+	got := ntable.Render(tb, ntable.RenderOpts{Title: "fleet"})
+	require.Equal(t, want, got, "named share and sum:\n%s\nwant:\n%s", got, want)
 	done, okpct := tb.Column("done"), tb.Column("okpct")
-	if got := ntable.CellText(tb.Columns, tb.Rows[0], done); got != "4" {
-		t.Fatalf("done cell text %q", got)
-	}
-	if got := ntable.CellText(tb.Columns, tb.Rows[1], okpct); got != "0.0%" {
-		t.Fatalf("zero denominator %q, want the known-empty 0.0%%", got)
-	}
+	got = ntable.CellText(tb.Columns, tb.Rows[0], done)
+	require.Equal(t, "4", got, "done cell text %q", got)
+	got = ntable.CellText(tb.Columns, tb.Rows[1], okpct)
+	require.Equal(t, "0.0%", got, "zero denominator %q, want the known-empty 0.0%%", got)
 }
 
 // TestNamedShareFixedWidths: a fixed width pads a sum column on the left, as
@@ -71,9 +67,7 @@ func TestNamedShareFixedWidths(t *testing.T) {
 		"m1    |     2 |      4 | 75.0%\n" +
 		"------+-------+--------+---------\n" +
 		"total |     2 |      4 | 75.0%\n"
-	if got != want {
-		t.Fatalf("fixed widths:\n%s\nwant:\n%s", got, want)
-	}
+	require.Equal(t, want, got, "fixed widths:\n%s\nwant:\n%s", got, want)
 }
 
 // TestPctOfOneColumnKeepsItsMeaning: pct(<col>) still divides by every count
@@ -82,9 +76,8 @@ func TestNamedShareFixedWidths(t *testing.T) {
 func TestPctOfOneColumnKeepsItsMeaning(t *testing.T) {
 	t.Parallel()
 	tb := shareTable(t, shareSpec+",all:pct(ok)", map[string][]int64{"m1": {2, 3, 1}}, []string{"m1"})
-	if got := ntable.CellText(tb.Columns, tb.Rows[0], tb.Column("all")); got != "50.0%" {
-		t.Fatalf("pct(ok) over ready+ok+failed = %q, want 50.0%%", got)
-	}
+	got := ntable.CellText(tb.Columns, tb.Rows[0], tb.Column("all"))
+	require.Equal(t, "50.0%", got, "pct(ok) over ready+ok+failed = %q, want 50.0%%", got)
 }
 
 // TestBarePctDeadSourceIsUnknown: a bare pct keeps its all-count denominator,
@@ -95,9 +88,7 @@ func TestBarePctDeadSourceIsUnknown(t *testing.T) {
 	newTable := func(t *testing.T) ntable.Table {
 		t.Helper()
 		cols, err := ntable.ParseColumns("ok,other,extra,bare:pct(ok):pooled,named:pct(ok/ok+other):pooled,total:sum(ok+other)")
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		tb := ntable.Table{Name: "fleet", Columns: cols, FooterLabel: "total"}
 		for _, key := range []string{"m1", "m2"} {
 			tb.Rows = append(tb.Rows, ntable.NewRow(tb, key))
@@ -126,9 +117,8 @@ func TestBarePctDeadSourceIsUnknown(t *testing.T) {
 		"total": {"20.0%", "40.0%", "5"},
 	} {
 		for i, v := range want {
-			if got := cell(t, valid, row, len(tb.Columns)-2+i); got != v {
-				t.Errorf("valid %s formula %d = %q, want %q", row, i, got, v)
-			}
+			got := cell(t, valid, row, len(tb.Columns)-2+i)
+			assert.Equal(t, v, got, "valid %s formula %d = %q, want %q", row, i, got, v)
 		}
 	}
 	for _, tc := range []struct {
@@ -156,9 +146,8 @@ func TestBarePctDeadSourceIsUnknown(t *testing.T) {
 			got := ntable.Render(tb, ntable.RenderOpts{Title: "fleet"})
 			for _, row := range []string{"m1", "m2", "total"} {
 				for i := range 3 {
-					if v := cell(t, got, row, len(tb.Columns)-2+i); v != "?" {
-						t.Errorf("%s %s formula %d = %q, want ?\n%s", tc.name, row, i, v, got)
-					}
+					v := cell(t, got, row, len(tb.Columns)-2+i)
+					assert.Equal(t, "?", v, "%s %s formula %d = %q, want ?\n%s", tc.name, row, i, v, got)
 				}
 			}
 		})
@@ -173,18 +162,14 @@ func TestNamedShareUnread(t *testing.T) {
 	tb := shareTable(t, shareSpec, map[string][]int64{"m1": {2, 3, 1}, "m2": {1, 1, 1}}, []string{"m1", "m2"})
 	tb.Rows[0].Cells[tb.Column("ready")].Unread = true
 	got := ntable.Render(tb, ntable.RenderOpts{Title: "fleet"})
-	if !strings.Contains(got, "m1    |     ? |    4 | 75.0%\n") || !strings.Contains(got, "total |     ? |    6 | 66.7%\n") {
-		t.Fatalf("an unread count the formulas do not read:\n%s", got)
-	}
+	require.Contains(t, got, "m1    |     ? |    4 | 75.0%\n", "an unread count the formulas do not read:\n%s", got)
+	require.Contains(t, got, "total |     ? |    6 | 66.7%\n", "an unread count the formulas do not read:\n%s", got)
 	tb.Rows[0].Cells[tb.Column("ready")].Unread = false
 	tb.Rows[0].Cells[tb.Column("failed")].Unread = true
 	got = ntable.Render(tb, ntable.RenderOpts{Title: "fleet"})
-	if !strings.Contains(got, "m1    |     2 |    ? | ?\n") || !strings.Contains(got, "total |     3 |    ? | ?\n") {
-		t.Fatalf("an unread input:\n%s", got)
-	}
-	if !strings.Contains(got, "m2    |     1 |    2 | 50.0%\n") {
-		t.Fatalf("a read row beside an unread one:\n%s", got)
-	}
+	require.Contains(t, got, "m1    |     2 |    ? | ?\n", "an unread input:\n%s", got)
+	require.Contains(t, got, "total |     3 |    ? | ?\n", "an unread input:\n%s", got)
+	require.Contains(t, got, "m2    |     1 |    2 | 50.0%\n", "a read row beside an unread one:\n%s", got)
 }
 
 // TestNamedFormulaFolds: a sum column folds sum (the default), max or avg;
@@ -197,25 +182,22 @@ func TestNamedFormulaFolds(t *testing.T) {
 		"ok,failed,done:sum(ok+failed):avg": "total |  4 |      1 |  2.5\n",
 	} {
 		cols, err := ntable.ParseColumns(spec)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		tb := ntable.Table{Name: "t", Columns: cols, FooterLabel: "total"}
 		for _, n := range [][]int64{{3, 1}, {1, 0}} {
 			r := ntable.NewRow(tb, "r")
 			r.Cells[0].Count, r.Cells[1].Count = n[0], n[1]
 			tb.Rows = append(tb.Rows, r)
 		}
-		if got := ntable.Render(tb, ntable.RenderOpts{}); !strings.HasSuffix(got, want) {
-			t.Fatalf("%s:\n%s\nwant the footer %q", spec, got, want)
-		}
+		got := ntable.Render(tb, ntable.RenderOpts{})
+		require.True(t, strings.HasSuffix(got, want), "%s:\n%s\nwant the footer %q", spec, got, want)
 	}
-	if c, err := ntable.ParseColumn("done:sum(ok+failed)"); err != nil || c.Fold != ntable.Sum {
-		t.Fatalf("the default fold of a sum column: %+v %v", c, err)
-	}
-	if c, err := ntable.ParseColumn("okpct:pct(ok/ok+failed)"); err != nil || c.Fold != ntable.Pooled {
-		t.Fatalf("the default fold of a named percentage: %+v %v", c, err)
-	}
+	c, err := ntable.ParseColumn("done:sum(ok+failed)")
+	require.NoError(t, err)
+	require.Equal(t, ntable.Sum, c.Fold, "the default fold of a sum column: %+v", c)
+	c, err = ntable.ParseColumn("okpct:pct(ok/ok+failed)")
+	require.NoError(t, err)
+	require.Equal(t, ntable.Pooled, c.Fold, "the default fold of a named percentage: %+v", c)
 }
 
 // TestFormulaRefusals: every named column must be a count column of the same
@@ -242,14 +224,12 @@ func TestFormulaRefusals(t *testing.T) {
 		"ok,failed,p:pct(ok/ok+failed):sum":            "folds sum, which wants the count projection or sum(...)",
 		"ok,failed,p:ratio(ok/failed)":                 "wants a projection of count, members, first, last, text, pct(",
 	} {
-		if _, err := ntable.ParseColumns(spec); err == nil || !strings.Contains(err.Error(), want) {
-			t.Errorf("%s: %v, want %q", spec, err, want)
-		}
+		_, err := ntable.ParseColumns(spec)
+		assert.ErrorContains(t, err, want, "%s: %v, want %q", spec, err, want)
 	}
 	// the numerator need not be in the denominator
-	if _, err := ntable.ParseColumns("ok,failed,okpct:pct(ok/failed)"); err != nil {
-		t.Fatalf("a numerator outside its denominator is allowed: %v", err)
-	}
+	_, err := ntable.ParseColumns("ok,failed,okpct:pct(ok/failed)")
+	require.NoError(t, err, "a numerator outside its denominator is allowed")
 }
 
 // TestParseFormula: the three forms read into their parts.
@@ -263,18 +243,16 @@ func TestParseFormula(t *testing.T) {
 		"sum(ok)":           {Sum: true, Over: []string{"ok"}},
 	} {
 		got, err := ntable.ParseFormula(proj)
-		if err != nil || !reflect.DeepEqual(got, want) {
-			t.Errorf("%s: %+v %v, want %+v", proj, got, err, want)
-		}
+		assert.NoError(t, err, proj)
+		assert.Equal(t, want, got, proj)
 	}
 	f, _ := ntable.ParseFormula("pct(ok/ok+failed)")
-	if got := f.Inputs(); !reflect.DeepEqual(got, []string{"ok", "failed"}) {
-		t.Fatalf("inputs %v", got)
-	}
-	if ntable.IsSum("pct(ok)") || !ntable.IsSum("sum(ok)") || !ntable.IsPct("pct(ok/ok)") || ntable.IsPct("sum(ok)") {
-		t.Fatal("IsSum/IsPct")
-	}
-	if (ntable.Column{Projection: "sum(ok)"}).HasSet() || (ntable.Column{Projection: "pct(ok/ok)"}).HasSet() {
-		t.Fatal("a formula column holds no set")
-	}
+	got := f.Inputs()
+	require.Equal(t, []string{"ok", "failed"}, got, "inputs %v", got)
+	require.False(t, ntable.IsSum("pct(ok)"), "IsSum/IsPct")
+	require.True(t, ntable.IsSum("sum(ok)"), "IsSum/IsPct")
+	require.True(t, ntable.IsPct("pct(ok/ok)"), "IsSum/IsPct")
+	require.False(t, ntable.IsPct("sum(ok)"), "IsSum/IsPct")
+	require.False(t, (ntable.Column{Projection: "sum(ok)"}).HasSet(), "a formula column holds no set")
+	require.False(t, (ntable.Column{Projection: "pct(ok/ok)"}).HasSet(), "a formula column holds no set")
 }

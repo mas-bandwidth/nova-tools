@@ -1,0 +1,34 @@
+# The child rules this repository's coordinator holds every card to: one required sentence per line.
+# `nova-sprint init --rules fleet/child-rules.txt` records the path, `nova-sprint add --rules <file>` names it
+# for one add, and `nova-swarm lint --card <file> --child-rules-file fleet/child-rules.txt` checks a card against it.
+# A `[name]` opens a line to name the token its finding carries (rule-<name>); the rules named no-go-clean and
+# go-test-timeout also switch on the scans for `go clean` and for a `go test` with no -timeout, and the rule named
+# libraries-considered switches on the check that a card that builds code carries a filled `Libraries considered:` line.
+
+[worktree] Work only in the NEW worktree this card names.
+[own-branch] Touch only your own branch.
+[gocache] Export a private GOCACHE (the path this card names) and GOFLAGS=-mod=readonly NOVA_TEST_NO_HOST=1 before any go command.
+[no-go-clean] Never `go clean`, and never clean a shared cache.
+[no-redis-server] NEVER start a redis-server on this machine.
+[no-kill] Never kill a process you did not start.
+[go-test-timeout] Every `go test` gets `-timeout 600s`.
+[no-rm-rf] No `rm -rf` outside the job directory.
+[no-force-push] Never force-push.
+[no-rebase] Never rebase.
+[no-stash] Do not use git stash (the stash list is shared by every worktree).
+[functional-in-container] Functional tests (any test that needs Redis) run ONLY inside the container through `tools/functionalrun` (`--fresh-gocache --deadline 15m`), never against any other store.
+[parallel] Every new test opens with `t.Parallel()`.
+[class-tests] Run `go test -count=1 -timeout 600s ./internal/ci/` before each push.
+[no-names] No names of people, machines or friends in code, comments or docs.
+[present-tense] Docs and comments in the present tense.
+[cite] Cite the model or the design section from every function that implements a rule.
+[only-named-files] Touch only the files this card names; a fix that needs another file goes into your report as a proposed diff, not a commit.
+[minimal-diff] Keep the diff minimal: every added line traceable to one sentence of this card.
+[commit-trailer] Commit messages end with `Co-Authored-By: Claude <your model> <noreply@anthropic.com>`.
+[pr-line] PR bodies end with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
+[never-merge] Open PRs against the base this card names; never merge.
+[pr-diffstat] The PR body states the diff stat and what was deleted.
+[pr-tests] The PR body lists the tests, each with what it pins, and every local helper added.
+[report-shape] Report under 80 lines: PR number and sha, every test package line, what you could not do and why.
+[report-not-done] "Not done" is a welcome report; a green claim you did not run is not.
+[libraries-considered] A card that builds code carries a filled line `Libraries considered: <what the standard library and the adopted modules offered, and why each was used or not>` (docs/STANDARD.md section 7).

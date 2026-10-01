@@ -34,7 +34,7 @@ func TestFunctionLibraryLoadsFromFiles(t *testing.T) {
 	}
 	if !strings.HasPrefix(source, "#!lua name=nova_sprint\n") ||
 		!strings.Contains(source, "redis.register_function('ns_ping'") ||
-		!strings.Contains(source, "redis.register_function('ns_health'") {
+		!strings.Contains(source, "redis.register_function('ns_oset_move'") {
 		t.Fatalf("library did not concatenate embedded verb files: %q", source)
 	}
 	if err := fn.Load(ctx, client); err != nil {
@@ -43,10 +43,6 @@ func TestFunctionLibraryLoadsFromFiles(t *testing.T) {
 	result, err := client.FCall(ctx, "ns_ping", []string{}).Text()
 	if err != nil || result != "PONG" {
 		t.Fatalf("loaded ns_ping = %q, %v; want PONG", result, err)
-	}
-	health, err := client.FCall(ctx, "ns_health", []string{"a"}, "b").Int()
-	if err != nil || health != 2 {
-		t.Fatalf("loaded ns_health = %d, %v; want 2", health, err)
 	}
 	// An updated binary may load the same library again without a gap.
 	if err := fn.Load(ctx, client); err != nil {

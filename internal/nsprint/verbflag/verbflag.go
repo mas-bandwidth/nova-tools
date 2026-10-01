@@ -69,6 +69,7 @@ func Parse(fs *flag.FlagSet, args []string) error {
 		panic(Help{FS: fs})
 	}
 	if err != nil {
+		// ignored: the flag package's own message to the set's output; the parse error is the one returned
 		_, _ = out.Write(held.Bytes())
 		if asked {
 			usage()
@@ -92,6 +93,44 @@ func Recover(out io.Writer, prog, banner string, code *int) {
 	}
 	Print(out, prog, banner, h.FS)
 	*code = 0
+}
+
+// RecoverWith is Recover for a tool that adds lines of its own to a verb's
+// help: extra is given the verb's name (as Verb gives it) and returns the
+// lines to print above the flags, each line ending in a newline ("" for none).
+// It is what a tool defers in place of Recover to show a worked example per
+// verb. It is deferred directly, as Recover is.
+func RecoverWith(out io.Writer, prog, banner string, code *int, extra func(verb string) string) {
+	r := recover()
+	if r == nil {
+		return
+	}
+	h, ok := r.(Help)
+	if !ok {
+		panic(r)
+	}
+	var b strings.Builder
+	Print(&b, prog, banner, h.FS)
+	*code = 0
+	if _, err := io.WriteString(out, Insert(b.String(), extra(Verb(prog, h.FS)))); err != nil {
+		// the help did not reach its reader (a closed stdout): the exit code says so
+		*code = 1
+	}
+}
+
+// Insert puts lines into a printed verb help above its flags (above its
+// exit codes when it lists none, at its end when it has neither).
+func Insert(help, lines string) string {
+	if lines == "" {
+		return help
+	}
+	if i := strings.Index(help, "\nflags:\n"); i >= 0 {
+		return help[:i+1] + lines + help[i+1:]
+	}
+	if i := strings.Index(help, "\nexit codes:"); i >= 0 {
+		return help[:i+1] + lines + help[i+1:]
+	}
+	return help + lines
 }
 
 // IsHelp reports whether one argument asks for help.
@@ -142,6 +181,7 @@ func Print(out io.Writer, prog, banner string, fs *flag.FlagSet) {
 	for _, l := range exitCodes(banner, prog) {
 		b.WriteString(l + "\n")
 	}
+	// ignored: help written to stdout; a closed stdout has no reader to tell
 	_, _ = io.WriteString(out, b.String())
 }
 
@@ -267,4 +307,20 @@ func HelpIfAsked(args []string, name string, flags ...string) {
 		fs.String(f, "", "")
 	}
 	panic(Help{FS: fs})
+}
+
+// BoolAsked reports whether args set the boolean flag name (-name, --name,
+// or =true) before any --: the question a dispatcher asks of a flag it must
+// honour before a flag set has parsed, such as --json on a refusal.
+func BoolAsked(args []string, name string) bool {
+	for _, a := range args {
+		if a == "--" {
+			return false
+		}
+		switch a {
+		case "-" + name, "--" + name, "-" + name + "=true", "--" + name + "=true":
+			return true
+		}
+	}
+	return false
 }

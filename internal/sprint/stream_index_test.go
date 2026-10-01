@@ -116,7 +116,7 @@ func TestTheAskTakesTheStreamsInTurnFromItsOwnIndex(t *testing.T) {
 	if got, want := streamOfTaken(s, p), []string{"s1", "s2", "s3", "s1"}; !slices.Equal(got, want) {
 		t.Fatalf("the ask takes %v, want %v", got, want)
 	}
-	if idx, _ := f.snap().Work.Prop(PropAskStreamIndex); indexPast(f.snap().Work.Rows(), idx) != "s1" {
+	if idx, _ := f.snap().Readers.Prop(PropAskStreamIndex); indexPast(f.snap().Work.Rows(), idx) != "s1" {
 		t.Fatalf("the ask's index is %q, want s1", idx)
 	}
 	// the tick's ask asks every primary left, in turns past s1

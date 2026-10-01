@@ -134,7 +134,7 @@ func TestThereIsNoQuickstartVerbAndTheCommandReferenceSaysWhy(t *testing.T) {
 	wantContains(t, r.stderr, "unknown subcommand")
 	cli := readRepoFile(t, filepath.Join("docs", "CLI.md"))
 	if !strings.Contains(cli, "no `quickstart`") {
-		t.Error("docs/CLI.md does not say why there is no quickstart verb (docs/ONBOARDING.md point 4)")
+		t.Error("docs/CLI.md does not say why there is no quickstart verb (docs/STANDARD.md, onboarding point 4)")
 	}
 }
 

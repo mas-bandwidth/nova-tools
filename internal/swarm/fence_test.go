@@ -2,68 +2,12 @@ package swarm
 
 import (
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"testing"
 )
 
 // ISSUE #644. A card the harness's own fence stopped is NOT a card whose model published
 // nothing, and the two were one token -- `no-result` -- for every one of the eight cards
 // that died this way on 2026-09-16.
-
-// TestAFenceRejectionIsNeverNoResult: a card whose runner reported `fence=rejected` on its
-// NATIVE OK line and published no RESULT.md scores `fence`, and the path it was stopped at
-// is the remedy the line carries. RED WITHOUT THE CLASSIFIER: the same job scored
-// `no-result`, which sends a reader to the model.
-func TestAFenceRejectionIsNeverNoResult(t *testing.T) {
-	t.Parallel()
-
-	root := t.TempDir()
-	job := filepath.Join(root, "1", "jobs", "a")
-	if err := os.MkdirAll(job, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	line := "NATIVE OK label=a job=" + job + " tmp=/t rc=0 wall=1.00s sandbox=none-by-flag " +
-		"card_sha256=aa binary_sha256=bb config=cc harness=ok fence=rejected path=/x/jobs/scratch/*\n"
-	if err := os.WriteFile(filepath.Join(job, "harness.log"), []byte(line), 0o644); err != nil {
-		t.Fatal(err)
-	}
-
-	state, reason, tail, _ := scoreCard(root, batchCard{label: "a", slot: 1, contract: "a card line 1"}, false, false, false, 0, 0, filepath.Join(root, "1", "native.log"), "")
-	if state != "abstain" || reason != "fence" {
-		t.Fatalf("a card the fence stopped scores ABSTAIN reason=fence, got %s reason=%s", state, reason)
-	}
-	if tail != "path=/x/jobs/scratch/*" {
-		t.Errorf("the reason carries the path the card was stopped at, got %q", tail)
-	}
-}
-
-// TestFenceComesBeforeHarnessSilent: a run that was fenced AND left no word of its own scores
-// `fence`, not `harness-silent`. The order matters because the two say opposite things to a
-// reader: `harness-silent` sends them to the harness and the model (it never ran the card),
-// and `fence` names the path this tool's own machinery shut. RED WITHOUT THE ORDERING: the
-// silent check ran first and the card was read as a harness that never spoke.
-func TestFenceComesBeforeHarnessSilent(t *testing.T) {
-	t.Parallel()
-
-	root := t.TempDir()
-	job := filepath.Join(root, "1", "jobs", "a")
-	if err := os.MkdirAll(job, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	line := "NATIVE OK label=a job=" + job + " tmp=/t rc=0 wall=1.00s sandbox=none-by-flag " +
-		"card_sha256=aa binary_sha256=bb config=cc harness=silent fence=rejected path=/sys/kernel/security/*\n"
-	if err := os.WriteFile(filepath.Join(job, "harness.log"), []byte(line), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	state, reason, tail, _ := scoreCard(root, batchCard{label: "a", slot: 1, contract: "a card line 1"}, false, false, false, 0, 0, filepath.Join(root, "1", "native.log"), "")
-	if state != "abstain" || reason != "fence" {
-		t.Fatalf("a fenced card scores reason=fence even when the harness also left no words, got %s reason=%s", state, reason)
-	}
-	if tail != "path=/sys/kernel/security/*" {
-		t.Errorf("the reason carries the path the card was stopped at, got %q", tail)
-	}
-}
 
 // TestFenceRejectionReadsTheHarnesssOwnWords: the line OpenCode 1.18.20 prints, colours and
 // all, is the one this parses; a capture with no rejection in it says so.

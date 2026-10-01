@@ -8,10 +8,11 @@ package ntable_test
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func refusalFixtureBatch(rev, op string, m ...ntable.BatchMemberEntry) ntable.BatchManifest {
@@ -87,7 +88,7 @@ func TestBatchRefusalsNameOperationMemberStateAndNextCommand(t *testing.T) {
 		},
 		{
 			"field guard",
-			refusalFixtureBatch(rev, "r-fg", ntable.BatchMemberEntry{ID: "a", Expect: &ntable.MemberExpect{Fields: map[string]ntable.FieldGuard{"role": {Absent: boolPtr(true)}}}}),
+			refusalFixtureBatch(rev, "r-fg", ntable.BatchMemberEntry{ID: "a", Expect: &ntable.MemberExpect{Fields: map[string]ntable.FieldGuard{"role": {Absent: new(true)}}}}),
 			[]string{`member "a"`, `field "role"`, "expected absent", `observed "x"`, "changed=no", "; run: nova-table member read 'demo' 'a'"},
 			nil,
 		},
@@ -106,20 +107,15 @@ func TestBatchRefusalsNameOperationMemberStateAndNextCommand(t *testing.T) {
 	}
 	for _, tc := range cases {
 		_, err := ntable.ApplyBatch(ctx, c, tc.manifest)
-		if err == nil {
-			t.Errorf("%s: accepted", tc.name)
+		if !assert.Error(t, err, "%s: accepted", tc.name) {
 			continue
 		}
 		got := err.Error()
 		for _, w := range tc.want {
-			if !strings.Contains(got, w) {
-				t.Errorf("%s: refusal lacks %q:\n  %s", tc.name, w, got)
-			}
+			assert.Contains(t, got, w, "%s: refusal lacks %q:\n  %s", tc.name, w, got)
 		}
 		for _, w := range tc.never {
-			if strings.Contains(got, w) {
-				t.Errorf("%s: refusal holds %q:\n  %s", tc.name, w, got)
-			}
+			assert.NotContains(t, got, w, "%s: refusal holds %q:\n  %s", tc.name, w, got)
 		}
 	}
 }
@@ -130,17 +126,11 @@ func TestBatchOnAMissingTableNamesTheNextCommand(t *testing.T) {
 	m := refusalFixtureBatch("0", "r-none", ntable.BatchMemberEntry{ID: "a", Expect: &ntable.MemberExpect{}})
 	m.Table = "ghost"
 	_, err := ntable.ApplyBatch(ctx, c, m)
-	if err == nil {
-		t.Fatal("accepted")
-	}
+	require.Error(t, err, "accepted")
 	for _, w := range []string{`table "ghost" batch "r-none"`, "no such table", "changed=no", "; run: nova-table list"} {
-		if !strings.Contains(err.Error(), w) {
-			t.Errorf("refusal lacks %q: %v", w, err)
-		}
+		assert.ErrorContains(t, err, w, "refusal lacks %q: %v", w, err)
 	}
-	if strings.Contains(err.Error(), "<") {
-		t.Errorf("the suggested command holds a placeholder: %v", err)
-	}
+	assert.NotContains(t, err.Error(), "<", "the suggested command holds a placeholder: %v", err)
 }
 
 func TestReadSetRefusalsNameOperationStateAndNextCommand(t *testing.T) {
@@ -175,20 +165,15 @@ func TestReadSetRefusalsNameOperationStateAndNextCommand(t *testing.T) {
 	}
 	for _, tc := range cases {
 		_, err := ntable.ReadSet(context.Background(), c, "demo", tc.scope, tc.epoch...)
-		if err == nil {
-			t.Errorf("%s: accepted", tc.name)
+		if !assert.Error(t, err, "%s: accepted", tc.name) {
 			continue
 		}
 		got := err.Error()
 		for _, w := range tc.want {
-			if !strings.Contains(got, w) {
-				t.Errorf("%s: refusal lacks %q:\n  %s", tc.name, w, got)
-			}
+			assert.Contains(t, got, w, "%s: refusal lacks %q:\n  %s", tc.name, w, got)
 		}
 		for _, w := range tc.never {
-			if strings.Contains(got, w) {
-				t.Errorf("%s: refusal holds %q:\n  %s", tc.name, w, got)
-			}
+			assert.NotContains(t, got, w, "%s: refusal holds %q:\n  %s", tc.name, w, got)
 		}
 	}
 }
@@ -204,12 +189,11 @@ func TestEpochAheadIsSaidOnlyOfATableThatExists(t *testing.T) {
 	_, rerr := ntable.ReadSet(ctx, c, "ghost", ntable.ReadSetScope{Members: []string{"a"}}, 5)
 	_, gerr := ntable.ReadAt(ctx, c, "ghost", 7)
 	for what, err := range map[string]error{"apply": aerr, "read set": rerr, "read at": gerr} {
-		if err == nil || !strings.Contains(err.Error(), "no such table") || strings.Contains(err.Error(), "ahead") {
-			t.Errorf("%s of a missing table at a later epoch: %v; want no such table", what, err)
-		}
+		require.Error(t, err, "%s of a missing table at a later epoch; want no such table", what)
+		assert.Contains(t, err.Error(), "no such table", "%s of a missing table at a later epoch: %v; want no such table", what, err)
+		assert.NotContains(t, err.Error(), "ahead", "%s of a missing table at a later epoch: %v; want no such table", what, err)
 	}
 	// and of a table that exists it is still said
-	if _, err := ntable.ReadAt(ctx, c, "demo", 7); err == nil || !strings.Contains(err.Error(), "ahead of the active epoch") {
-		t.Errorf("read at a later epoch of a table that exists: %v", err)
-	}
+	_, err := ntable.ReadAt(ctx, c, "demo", 7)
+	assert.ErrorContains(t, err, "ahead of the active epoch", "read at a later epoch of a table that exists")
 }

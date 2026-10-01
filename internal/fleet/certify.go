@@ -770,6 +770,7 @@ func (in CertifyInput) event(c Certificate) {
 	case VerdictWarn:
 		l.Level = "WARN"
 	}
+	// ignored: a log line; a log writer that cannot be written has no other reader
 	_ = l.Write(in.Log)
 }
 

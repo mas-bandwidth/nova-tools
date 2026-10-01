@@ -38,6 +38,7 @@ func Write(root string, outs []Planned) (written []string, err error) {
 	if err != nil {
 		return nil, err
 	}
+	// ignored: a deferred close of the root handle; every write through it was checked
 	defer func() { _ = r.Close() }()
 
 	for _, o := range outs {
@@ -52,9 +53,11 @@ func Write(root string, outs []Planned) (written []string, err error) {
 			return
 		}
 		for _, w := range slices.Backward(written) {
+			// ignored: the rollback of a failed scaffold; the write error is the one returned
 			_ = r.Remove(filepath.FromSlash(w))
 		}
 		for _, d := range slices.Backward(made) {
+			// ignored: the rollback of a failed scaffold; a non-empty directory stays by design (see the comment on the line)
 			_ = r.Remove(filepath.FromSlash(d)) // fails harmlessly if non-empty
 		}
 		written = nil

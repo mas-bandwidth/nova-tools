@@ -24,7 +24,15 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/selftalk"
 )
 
-const usage = `nova-self-talk: the self-talk register, classified (see docs/SPEC.md)
+const usage = `nova-self-talk: flags sentences where a writer passes a standing verdict on themselves
+
+how it works: each file is read sentence by sentence (line numbers kept) and
+matched against known shapes: a first-person claim built on a negative word
+(cannot, bad at, worst) or a neutral-worded verdict (a self-superlative, a door
+stated shut, a habit). A dated sentence is a record, counted and never flagged.
+It prefers a miss to a false alarm, so a clean run clears these shapes only.
+first run: copy the example pages (the cp line above example:), then run the
+lines under example:; each exits 1 because the pages hold findings.
 
 usage:
   nova-self-talk version    print this build identity (--version also accepted)
@@ -76,11 +84,13 @@ are.
 example:
   nova-self-talk ./pages/journal.md
   nova-self-talk --rule-doc RULES.md ./pages/RULES.md ./pages/journal.md
+  nova-self-talk --skip RULES.md ./pages/RULES.md ./pages/journal.md
 
-Both exit 1, and that is the tool working: a finding is a sentence to date,
+All three exit 1, and that is the tool working: a finding is a sentence to date,
 cut, relocate or keep on purpose, never a failure. ./pages is a directory of
 yours; cmd/nova-self-talk/testdata/example-pages in this repo is one the size
-of a first run, and both lines are run against it by the tests.
+of a first run, and every line is run against it by the tests. --skip leaves
+a file unscanned and says so on one SELFTALK SKIP line.
 `
 
 // The hints below turn this binary's two most-hit refusals into a next step.

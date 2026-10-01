@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -43,6 +44,19 @@ func (st *Store) stuck(ctx context.Context) (Stuck, bool, error) {
 	}
 	if err := st.getJSON(ctx, keyStuck, &s); err != nil {
 		return s, false, err
+	}
+	return s, s.Op != "", nil
+}
+
+// stuckOf is the stuck record the fence was read with (Fence.Stuck); ok is
+// false when there is none.
+func stuckOf(f Fence) (Stuck, bool, error) {
+	var s Stuck
+	if f.Stuck == "" {
+		return s, false, nil
+	}
+	if err := json.Unmarshal([]byte(f.Stuck), &s); err != nil {
+		return s, false, fmt.Errorf("the machine's %s record is unreadable: %w", keyStuck, err)
 	}
 	return s, s.Op != "", nil
 }

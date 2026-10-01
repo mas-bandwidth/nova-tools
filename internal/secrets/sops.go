@@ -2,12 +2,15 @@ package secrets
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
 	"regexp"
 	"strconv"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 const MinSopsVersion = "3.13.3"
@@ -22,7 +25,8 @@ func CheckSopsVersion(sopsPath string) (string, error) {
 		return "", fmt.Errorf("sops binary %s is absent or not executable; run: brew install sops", sopsPath)
 	}
 
-	cmd := exec.Command(sopsPath, "--version", "--disable-version-check")
+	cmd, cancel := subproc.Command(context.Background(), subproc.Tool, sopsPath, "--version", "--disable-version-check")
+	defer cancel()
 	cmd.Env = []string{"PATH=/usr/bin:/bin"} // Isolated environment with no proxies or egress helpers
 	out, err := cmd.Output()
 	if err != nil {
@@ -56,7 +60,8 @@ func CheckAgeKeygenVersion(ageKeygenPath string) (string, error) {
 		return "", fmt.Errorf("age-keygen binary %s is absent or not executable; run: brew install age", ageKeygenPath)
 	}
 
-	cmd := exec.Command(ageKeygenPath, "--version")
+	cmd, cancel := subproc.Command(context.Background(), subproc.Tool, ageKeygenPath, "--version")
+	defer cancel()
 	cmd.Env = []string{"PATH=/usr/bin:/bin"}
 	out, err := cmd.Output()
 	if err != nil {
@@ -101,7 +106,8 @@ func DecryptFile(sopsPath, keyPath, filePath string) ([]byte, error) {
 	}
 	defer os.RemoveAll(tmpDir)
 
-	cmd := exec.Command(sopsPath, "-d", filePath)
+	cmd, cancel := subproc.Command(context.Background(), subproc.Tool, sopsPath, "-d", filePath)
+	defer cancel()
 
 	// Build isolated environment: do not inherit caller's AWS_*, VAULT_*, GNUPGHOME, etc.
 	cleanEnv := []string{

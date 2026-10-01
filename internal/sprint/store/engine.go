@@ -69,12 +69,28 @@ type Store struct {
 	Resends  int                 // sends of one manifest after a lost reply; default 3
 	// Grace is how long an operation is taken as in flight (its writer alive)
 	// before a writer that finds its first manifest unapplied abandons it.
-	Grace   time.Duration
-	root    Backend   // the backend before pinning
-	epoch   uint64    // the epoch the store is pinned to
-	cleared time.Time // when the pinned epoch began
-	pinned  bool
-	old     bool // pinned to an earlier epoch, for reading
+	Grace time.Duration
+	// Updates is the tick's table updates, in order; nil is the tick's own
+	// (sprint.TickTables). A test gives its own.
+	Updates []sprint.TableUpdate
+	// Stats is what the store's reads cost (stats.go); nil is made on the
+	// first tick. Its pinned copies share it.
+	Stats *Stats
+	// CheckTwin, when set (a test), is given every snapshot a step planned on
+	// from the tick's twin with a fresh read of the same generation: an error
+	// fails the step (twin.go).
+	CheckTwin func(twin, fresh *sprint.Snapshot) error
+	tw        *Twin // the store's twin (twin.go): kept from one tick to the next
+	// LockAfterLoss has a part of the tick that lost a try take the fence
+	// before its next read (lock.go). The program's stores set it; a test
+	// harness whose other writers write from inside a part's plan (a writer
+	// that would wait on the lock its own caller holds) leaves it off.
+	LockAfterLoss bool
+	root          Backend   // the backend before pinning
+	epoch         uint64    // the epoch the store is pinned to
+	cleared       time.Time // when the pinned epoch began
+	pinned        bool
+	old           bool // pinned to an earlier epoch, for reading
 }
 
 // Step is one verb's step: the tables its plan reads, any records it reads
@@ -101,6 +117,26 @@ type Step struct {
 	// an ack's notes): it applies all or none, and one refusal refuses the
 	// whole step, naming every one.
 	Named bool
+	// Pump says the step is the work pump's (the tick's first update): it
+	// writes the work table itself. Every other step, while the machine is
+	// RUNNING or the queue holds anything, queues its work-table changes for
+	// the next pump (sprint.QueueOf). Drain says the step is the pump's
+	// drain: it reads the queue with its tables and its commit takes what it
+	// read off the queue (sprint.Drain).
+	Pump, Drain bool
+	// Halts, when set (a part of the tick), makes the step begin nothing when
+	// (tla/DirtyTickRead.tla, Begin and BeganRunning)
+	// the machine's state, read with its first fence, is STOPPED: its result
+	// says Halted, and it writes nothing (the stop's rule: the part in flight
+	// finishes, and no part begins after the flag says STOPPED).
+	Halts bool
+	// Twin, when set, is the tick's twin (twin.go): a step that loads the four
+	// tables plans on it while the fence is at its generation, instead of
+	// reading them, and applies its receipts to it when it commits.
+	Twin *Twin
+	// DrainMax, above zero, is the most entries of the queue's head a drain
+	// takes: the pump's second drain takes only what its first requeued.
+	DrainMax int
 }
 
 // ArgsOf is a request's arguments in one canonical form: a digest of its JSON
@@ -164,6 +200,18 @@ type Result struct {
 	// Lost says the step lost every attempt to other writers and applied
 	// nothing: what it had to do is still to do.
 	Lost bool `json:"lost,omitempty"`
+	// Tables is the entries the step wrote to each table (logical name), the
+	// work table's queued changes counted as the work table's: a table
+	// another step of a tick wrote is that table's queue in the tick
+	// (store.tick).
+	Tables map[string]int `json:"tables,omitempty"`
+	// Drained is the drains of the work table's queue the step made before
+	// it planned (a STOPPED machine's queue, or one a step left after a
+	// pump's first read): each is a move of the work table, and said.
+	Drained []Result `json:"drained,omitempty"`
+	// Halted says a step that Halts found the machine STOPPED as it read the
+	// sprint, and began nothing.
+	Halted bool `json:"-"`
 }
 
 // ErrUnknown is a write the store did not confirm: changed=unknown.
@@ -217,42 +265,56 @@ func (st *Store) grace() time.Duration {
 // pending operation first: the snapshot is no partial state of any operation,
 // and gen is the fence's generation it was read at.
 func (st *Store) Fenced(ctx context.Context, tables []string, extras func(*sprint.Snapshot) map[string][]string, repaired *[]string) (*sprint.Snapshot, uint64, error) {
+	snap, f, err := st.fenced(ctx, tables, extras, repaired)
+	return snap, f.Gen, err
+}
+
+// fenced is Fenced with the fence it read: the machine's state and the
+// queue's length with the generation. The snapshot carries the queue's
+// length (Snapshot.Queued).
+func (st *Store) fenced(ctx context.Context, tables []string, extras func(*sprint.Snapshot) map[string][]string, repaired *[]string) (*sprint.Snapshot, Fence, error) {
+	snap, gen, f2, err := st.fencedRead(ctx, tables, extras, repaired)
+	if err != nil {
+		return snap, Fence{Gen: gen}, err
+	}
+	snap.QueueLen, snap.Running = f2.Queued, f2.Running
+	f2.Gen = gen
+	return snap, f2, nil
+}
+
+func (st *Store) fencedRead(ctx context.Context, tables []string, extras func(*sprint.Snapshot) map[string][]string, repaired *[]string) (*sprint.Snapshot, uint64, Fence, error) {
 	r := st.retry(ctx)
 	for r.next(st.attempts()) {
 		f, err := st.B.ReadFence(ctx)
 		if err != nil {
-			return nil, 0, err
+			return nil, 0, Fence{}, err
 		}
 		if f.Pending != nil {
 			r, err := st.finish(ctx, *f.Pending)
 			if err != nil {
-				return nil, 0, err
+				return nil, 0, Fence{}, err
 			}
 			if r.Done == "open" {
 				if st.now().Sub(f.Pending.At) < st.grace() {
 					continue // in flight: its writer is at it
 				}
-				return nil, 0, &PendingError{Op: r.Op, Why: r.Detail}
+				return nil, 0, Fence{}, &PendingError{Op: r.Op, Why: r.Detail}
 			}
 			if repaired != nil {
 				*repaired = append(*repaired, r.Op+" "+r.Done)
 			}
 			continue
 		}
-		snap, err := st.Load(ctx, tables, extras)
+		snap, f2, err := st.PipelinedLoadWithFence(ctx, tables, extras)
 		if err != nil {
-			return nil, 0, err
-		}
-		f2, err := st.B.ReadFence(ctx)
-		if err != nil {
-			return nil, 0, err
+			return nil, 0, Fence{}, err
 		}
 		if f2.Pending != nil || f2.Gen != f.Gen {
 			continue
 		}
-		return snap, f.Gen, nil
+		return snap, f.Gen, f2, nil
 	}
-	return nil, 0, fmt.Errorf("the sprint is busy: other operations kept the fence moving, %d reads in %s; nothing was changed; run the verb again", r.tries, r.slept().Round(time.Millisecond))
+	return nil, 0, Fence{}, fmt.Errorf("the sprint is busy: other operations kept the fence moving, %d reads in %s; nothing was changed; run the verb again", r.tries, r.slept().Round(time.Millisecond))
 }
 
 // Run plans and applies a step as one operation.
@@ -278,10 +340,44 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		family = strings.ReplaceAll(step.Verb, " ", "-") + "-" + st.newID()
 	}
 	rowsAdded := false
+	drains := 0
 	plans := st.retry(ctx)
+	// a twin the step does not leave as the state it committed is dropped:
+	// the next step reads the store (twin.go; tla/DirtyTickRead.tla, Commit
+	// and Drop: the Acquire at the generation read is the one guard)
+	tw, release := st.stepTwin(step)
+	defer release()
+	twinKept := true
+	defer func() {
+		if tw != nil && !twinKept {
+			tw.drop("the step " + step.Verb + " ended without knowing what its write did")
+		}
+	}()
+	// A part of the tick that lost a try to another writer takes the fence
+	// before its next read (lock.go): held across that read, its plan and its
+	// write, released on any other end.
+	var lock *OpRecord
+	wantLock, locked := false, false
+	defer func() {
+		if lock != nil {
+			// ignored: a lock left behind is released unwritten past its grace (finishOp)
+			_ = st.B.Release(context.WithoutCancel(ctx), *lock, false)
+		}
+	}()
 	for res.Attempts < st.attempts() {
 		res.Attempts++
-		snap, gen, err := st.Fenced(ctx, step.Load, step.Extras, &res.Repaired)
+		if wantLock && lock == nil && !locked {
+			if lock, err = st.takeLock(ctx, step, family); err != nil {
+				return res, err
+			}
+			locked = lock != nil
+		}
+		mine := ""
+		if lock != nil {
+			mine = lock.ID
+		}
+		snap, fence, err := st.fencedStep(ctx, tw, step, &res.Repaired, mine)
+		gen := fence.Gen
 		if errors.Is(err, errCleared) && step.Epoch == nil {
 			// The sprint was cleared while this step read it: read the new
 			// epoch.
@@ -309,14 +405,75 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 				return r, err
 			}
 		}
+		if step.Halts && !fence.Running && res.Attempts == 1 {
+			// a part that began (its first read found the machine RUNNING)
+			// finishes: only its first read halts it
+			res.Halted = true
+			return res, nil
+		}
+		if fence.Queued > 0 && !step.Pump && !fence.Running && drains < MaxDrains {
+			// A STOPPED machine has no next tick: the queue it left is drained
+			// before any step, which then writes the work table itself. Past
+			// MaxDrains (a world that keeps queueing) the step plans on the
+			// queued view and queues on top, as while RUNNING.
+			drains++
+			dr, err := st.Run(ctx, DrainStep())
+			if err != nil {
+				return res, fmt.Errorf("draining the work table's queue: %w", err)
+			}
+			if len(dr.Moved) > 0 || len(dr.Refused) > 0 || dr.Notes > 0 {
+				res.Drained = append(res.Drained, dr)
+			}
+			res.Attempts--
+			continue
+		}
+		var held map[string]bool // work cards a queued change names: a pump part leaves them
+		if step.Drain || fence.Queued > 0 {
+			q, err := st.twinQueue(ctx, tw, fence.Queued)
+			if err != nil {
+				return res, err
+			}
+			switch {
+			case step.Drain:
+				if step.DrainMax > 0 && len(q) > step.DrainMax {
+					q = q[:step.DrainMax]
+				}
+				snap.Queue = q
+			case step.Pump:
+				// "changes queued after the pump's drain wait for the next
+				// tick": a pump part plans on the table as the drain left it
+				// and moves no card a later queued change names, so that
+				// change still finds the card where it expects it
+				held = sprint.QueuedCards(q)
+			default:
+				// A step other than the pump plans on the work table as the
+				// pump will leave it: its changes queue after the ones before
+				// it, each where they leave the card (sprint.Drain).
+				snap = sprint.WithQueue(snap, q)
+			}
+		}
 		// Every plan is held to the lifecycle here, whatever step built it.
 		plan := sprint.Applied(snap, step.Plan(snap))
+		if len(held) > 0 {
+			plan = sprint.LeaveQueued(plan, held)
+		}
 		if step.Named && len(plan.Refused) > 0 && len(plan.Units)+len(plan.Notes)+len(plan.Closes)+len(plan.Rows) > 0 {
 			return allOrNone(res, plan), nil
 		}
+		actor := st.Actor
+		if step.Actor != "" {
+			actor = step.Actor
+		}
+		// Only the pump writes the work table while the machine runs: every
+		// other step queues its changes of it for the next tick's pump (the
+		// owner's tick, errata 3 amendment 12; sprint.QueueOf).
+		var queued []sprint.QueuedChange
+		if !step.Pump && (fence.Running || fence.Queued > 0) {
+			plan, queued = sprint.QueueOf(plan, step.Verb, actor)
+		}
 		// The fence is free: a stuck operation's judgment rides with this
 		// step, once.
-		stuck, isStuck, err := st.stuck(ctx)
+		stuck, isStuck, err := stuckOf(fence)
 		if err != nil {
 			return res, err
 		}
@@ -330,10 +487,6 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 				res.Moved = append(res.Moved, u.Moved)
 			}
 		}
-		actor := st.Actor
-		if step.Actor != "" {
-			actor = step.Actor
-		}
 		op, err := st.operation(step.Verb, actor, sprint.OpFamily(family, st.epoch)+"-"+strconv.Itoa(res.Attempts), plan, snap)
 		var twice *twiceError
 		if errors.As(err, &twice) {
@@ -344,6 +497,12 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		}
 		if isStuck {
 			op.Stuck = stuck.Op
+		}
+		op.Queue = queued
+		op.Log = append(op.Log, queuedLines(queued, snap, op.ID)...)
+		if step.Drain {
+			op.Drain = len(snap.Queue)
+			op.Queue = plan.Requeue
 		}
 		if why := unwritable(plan, op); why != "" {
 			return refuseWhole(res, plan, why)
@@ -358,10 +517,11 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			res.Attempts--
 			continue
 		}
-		if len(op.Manifests) == 0 && len(op.Notes)+len(op.Decided)+len(op.Closes)+len(op.Updates) == 0 {
+		if len(op.Manifests) == 0 && len(op.Notes)+len(op.Decided)+len(op.Closes)+len(op.Updates)+len(op.Queue)+op.Drain == 0 {
 			res.Moved = nil
 			return st.after(ctx, step, res)
 		}
+		res.Tables = opCounts(op)
 		// Every operation's result is recorded at its commit, under the
 		// caller's operation id or its own: a writer whose operation another
 		// writer finished reads it there.
@@ -376,7 +536,20 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		if n := recordSize(op); n > MaxOpRecord {
 			return refuseWhole(res, plan, fmt.Sprintf("the step's record is %d bytes, over the bound of %d bytes one write to the store takes; nothing was changed; do it in parts (fewer cards at once)", n, MaxOpRecord))
 		}
-		ok, err := st.B.Acquire(ctx, gen, op)
+		twinKept = false
+		var ok bool
+		commitGen := gen + 1
+		if lock != nil {
+			// the fence is the step's since its lock: the operation takes it
+			// over, and the generation is the one the lock set
+			ok, err = st.B.(Relocker).Relock(ctx, lock.ID, op)
+			if ok {
+				lock = nil
+			}
+			commitGen = gen
+		} else {
+			ok, err = st.B.Acquire(ctx, gen, op)
+		}
 		if err != nil {
 			// A write the store did not take leaves the fence without this
 			// operation: nothing was changed, and the store's reason says why.
@@ -387,12 +560,21 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			return res, fmt.Errorf("%w: acquiring the fence for %s: %v; run: nova-sprint repair", ErrUnknown, op.ID, err)
 		}
 		if !ok {
+			// nothing of this try was written: the twin is still the state it
+			// read, only older (the next read catches it up)
+			twinKept = true
+			// lost to another writer: a part of the tick with a twin takes
+			// the fence before its next read, once (tla/DirtyTickRead.tla, Lock)
+			if _, can := st.B.(Relocker); can && st.LockAfterLoss && tw != nil && step.Halts {
+				wantLock = true
+				continue
+			}
 			if !plans.wait() {
 				break
 			}
 			continue
 		}
-		applied, err := st.apply(ctx, op)
+		applied, receipts, err := st.apply(ctx, op)
 		var bound *boundError
 		var cut *CutError
 		if (errors.As(err, &cut) || err == nil && !applied) && st.finishedElsewhere(ctx, op) {
@@ -408,6 +590,8 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			return res, err
 		}
 		if !applied {
+			// the first manifest was refused: nothing of the step applied
+			twinKept = true
 			if err := st.B.Release(ctx, op, false); err != nil {
 				res.Pending = op.ID
 				return res, fmt.Errorf("%w: releasing %s after its first manifest was refused: %v; run: nova-sprint repair", ErrUnknown, op.ID, err)
@@ -422,6 +606,10 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			res.Pending = op.ID
 			return res, fmt.Errorf("%w: the commit of %s: %v; run: nova-sprint repair", ErrUnknown, op.ID, err)
 		}
+		// the twin is the state this plan read with the operation applied, at
+		// the generation its Acquire set
+		st.twinCommitted(tw, op, receipts, commitGen)
+		twinKept = true
 		return st.after(ctx, step, res)
 	}
 	var keys []string
@@ -438,6 +626,90 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		res.Refused = append(res.Refused, sprint.Refusal{Key: k, Why: fmt.Sprintf("the sprint kept changing under this step (%d attempts); run it again", res.Attempts)})
 	}
 	return res, nil
+}
+
+// MaxDrains bounds the drains a step makes of a STOPPED machine's queue
+// before it runs (a drain leaves at most a card's removal after its creation
+// for the next, so two take a queue no one adds to), and the pump's drains
+// of its own requeued removals.
+const MaxDrains = 4
+
+// DrainStep is the pump's drain: the work table's whole queue applied in one
+// update (sprint.Drain), and taken off the queue by its commit.
+func DrainStep() Step {
+	return Step{Verb: sprint.DrainVerb, Actor: sprint.MachineActor, Load: All, Pump: true, Drain: true,
+		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Drain(s, s.Queue, sprint.MachineActor) }}
+}
+
+// queuedLines are the log's lines of a step's queued changes: each says
+// what the step asked of the work table, and wakes the run loop as any line
+// does; the pump's move line of the change is the one the log replays.
+func queuedLines(q []sprint.QueuedChange, snap *sprint.Snapshot, op string) []sprint.Line {
+	var out []sprint.Line
+	for _, x := range q {
+		if x.Entry == nil {
+			continue
+		}
+		l := sprint.Line{Kind: sprint.LineQueued, At: snap.Now, Epoch: snap.Epoch, Op: op, Card: x.Entry.ID, Primary: x.Entry.ID,
+			Table: sprint.Work, Verb: x.Verb, Actor: x.Actor, Cause: x.Moved}
+		if c := snap.Work.Card(x.Entry.ID); c.Placed() {
+			l.From, l.Stream = c.Row+":"+c.Col, c.Row
+		}
+		switch {
+		case x.Entry.Create != nil:
+			l.To, l.Stream = x.Entry.Create.Row+":"+x.Entry.Create.Col, x.Entry.Create.Row
+		case x.Entry.Move != nil:
+			l.To = x.Entry.Move.Row + ":" + x.Entry.Move.Col
+		case x.Entry.Remove:
+			l.Removed = true
+		default:
+			l.To = l.From
+		}
+		// the words and fields the change sets are the line's, as a move
+		// line carries them (moveLine): a queued rework says its attempt.
+		for f, v := range x.Entry.Set {
+			if slices.Contains(sprint.TextFields, f) {
+				if l.Text == nil {
+					l.Text = map[string]string{}
+				}
+				l.Text[f] = v
+				continue
+			}
+			if l.Set == nil {
+				l.Set = map[string]string{}
+			}
+			l.Set[f] = v
+		}
+		if len(l.Cause) > sprint.MaxCause {
+			l.Cause = l.Cause[:sprint.MaxCause-3] + "..."
+		}
+		out = append(out, l)
+	}
+	return out
+}
+
+// opCounts is the entries an operation writes to each table, its queued
+// changes the work table's.
+func opCounts(op OpRecord) map[string]int {
+	tables := map[string]int{}
+	for _, m := range op.Manifests {
+		for _, t := range All {
+			if !strings.HasSuffix(m.Table, t) {
+				continue
+			}
+			// a table is written by the entries that change a row: one that
+			// only guards a card writes nothing (W13, tla/DirtyTick.tla)
+			for _, e := range m.Members {
+				if changesRow(e) {
+					tables[t]++
+				}
+			}
+		}
+	}
+	if len(op.Queue) > 0 {
+		tables[sprint.Work] += len(op.Queue)
+	}
+	return tables
 }
 
 // callerOp is the recorded result of the step's caller operation id, when
@@ -1040,29 +1312,85 @@ func (e *boundError) Error() string {
 
 // apply sends the operation's manifests in order. applied is false when the
 // first manifest was refused: nothing of the operation applied.
-func (st *Store) apply(ctx context.Context, op OpRecord) (bool, error) {
+// The receipts are each manifest's, in order, when the store gave one with
+// its account of the batch (a manifest another writer had applied gives
+// none): the tick's twin applies them (twin.go).
+func (st *Store) apply(ctx context.Context, op OpRecord) (bool, []receipt, error) {
+	var receipts []receipt
+	sent := 0 // the manifests applied in one exchange (BatchApplier) so far
 	for i, man := range op.Manifests {
-		_, err := st.send(ctx, man)
-		if err == nil || refusalCode(err) == "OPCONFLICT" {
+		if i < sent {
+			continue
+		}
+		if n := st.applyTogether(ctx, op.Manifests, i, &receipts); n > 0 {
+			sent = i + n
+			continue
+		}
+		rc, err := st.send(ctx, man)
+		if err == nil {
+			if rc.BatchDelta != nil {
+				receipts = append(receipts, receipt{man: man, rc: rc})
+			}
+			continue
+		}
+		if refusalCode(err) == "OPCONFLICT" {
 			continue
 		}
 		if errors.Is(err, ErrUnknown) {
-			return false, fmt.Errorf("%w: %s at table %s: %v; run: nova-sprint repair, then nova-sprint check", ErrUnknown, man.OperationID, man.Table, err)
+			return false, nil, fmt.Errorf("%w: %s at table %s: %v; run: nova-sprint repair, then nova-sprint check", ErrUnknown, man.OperationID, man.Table, err)
 		}
 		if refusalCode(err) == "REVISION" {
-			if _, err = st.resendFresh(ctx, man, err); err == nil {
+			if rc, err = st.resendFresh(ctx, man, err); err == nil {
+				if rc.BatchDelta != nil {
+					receipts = append(receipts, receipt{man: man, rc: rc})
+				}
 				continue
 			}
 		}
 		if i == 0 && (ntable.IsRefusal(err) || errors.Is(err, ntable.ErrMalformedManifest)) {
 			if !curable(err, man) {
-				return false, &boundError{Table: man.Table, Cause: err}
+				return false, nil, &boundError{Table: man.Table, Cause: err}
 			}
-			return false, nil
+			return false, nil, nil
 		}
-		return false, &CutError{Op: op.ID, Table: man.Table, Cause: err}
+		return false, nil, &CutError{Op: op.ID, Table: man.Table, Cause: err}
 	}
-	return true, nil
+	return true, receipts, nil
+}
+
+// BatchApplier is a store that applies several manifests of one table in
+// one round trip, each its own batch, none between them (Redis's
+// MULTI/EXEC).
+type BatchApplier interface {
+	ApplyAll(ctx context.Context, ms []ntable.BatchManifest) ([]ntable.Receipt, []error)
+}
+
+// applyTogether applies the run of manifests of one table from index i in one
+// exchange, where the store can and the run holds more than one: it returns
+// how many applied, their receipts appended. A manifest the store refused, or
+// did not confirm, is sent again one at a time (apply's own handling, which
+// sends the same bytes: the table layer applies a batch once); every one
+// after it in the run was refused on the table revision it expected, and is
+// sent again after it.
+func (st *Store) applyTogether(ctx context.Context, ms []ntable.BatchManifest, i int, receipts *[]receipt) int {
+	ba, ok := st.B.(BatchApplier)
+	if !ok {
+		return 0
+	}
+	j := i + 1
+	for j < len(ms) && ms[j].Table == ms[i].Table {
+		j++
+	}
+	if j-i < 2 {
+		return 0
+	}
+	rcs, errs := ba.ApplyAll(ctx, ms[i:j])
+	n := 0
+	for n < len(rcs) && errs[n] == nil && rcs[n].BatchDelta != nil {
+		*receipts = append(*receipts, receipt{man: ms[i+n], rc: rcs[n]})
+		n++
+	}
+	return n
 }
 
 // unreadableReceipt says the store answered with a receipt this build cannot
@@ -1142,7 +1470,7 @@ func (st *Store) stillExpected(ctx context.Context, man ntable.BatchManifest) (u
 	found := map[string]ntable.ReadSetMember{}
 	for start := 0; start < len(ids); start += ntable.LimitReadSetMembers {
 		end := min(start+ntable.LimitReadSetMembers, len(ids))
-		rs, err := st.B.ReadSet(ctx, man.Table, ids[start:end])
+		rs, err := st.readSet(ctx, man.Table, ids[start:end])
 		if err != nil {
 			return 0, err
 		}
@@ -1239,6 +1567,18 @@ func (st *Store) finish(ctx context.Context, op OpRecord) (RepairResult, error) 
 
 func (st *Store) finishOp(ctx context.Context, op OpRecord) (RepairResult, error) {
 	r := RepairResult{Op: op.ID, Verb: op.Verb, Done: RepairFinished}
+	if op.Lock {
+		// a part's lock (lock.go): its writer holds the fence within the
+		// grace, as any operation in flight; past it the lock is a dead
+		// writer's, released unwritten
+		if st.now().Sub(op.At) < st.grace() {
+			return RepairResult{Op: op.ID, Verb: op.Verb, Done: RepairOpen, Detail: "a part of the tick holds the fence"}, nil
+		}
+		if err := st.B.Release(ctx, op, false); err != nil {
+			return r, err
+		}
+		return RepairResult{Op: op.ID, Verb: op.Verb, Done: RepairAbandoned, Detail: "a lock past its grace, released unwritten"}, nil
+	}
 	var skips []Skip
 	// barred is the work-table entries the lifecycle refuses, judged once,
 	// when the first manifest goes entry by entry: a later manifest holding
@@ -1355,7 +1695,7 @@ func (st *Store) applyEntries(ctx context.Context, man ntable.BatchManifest, bar
 		one.OperationID = fmt.Sprintf("%s.e%d", man.OperationID, j+1)
 		outcome := ""
 		for a := 0; a < st.attempts() && outcome == ""; a++ {
-			rs, err := st.B.ReadSet(ctx, man.Table, []string{e.ID})
+			rs, err := st.readSet(ctx, man.Table, []string{e.ID})
 			if err != nil {
 				return nil, err
 			}

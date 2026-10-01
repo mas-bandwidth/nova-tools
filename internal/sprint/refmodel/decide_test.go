@@ -7,6 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/refmodel"
 )
@@ -306,10 +309,36 @@ func TestAskAsksTwoReadersOfAPrimaryInReview(t *testing.T) {
 	got := refmodel.AskMoves(w.snapshot(w.fresh()), later(0))
 	expect(t, got,
 		"set work s1-1 asked=reader-a,reader-b",
-		"prop work stream_index_ask=1",
 		"prop readers ask_index=2",
 		"create readers s1-1.r1.reader-a >reader-a:asked",
-		"create readers s1-1.r1.reader-b >reader-b:asked")
+		"create readers s1-1.r1.reader-b >reader-b:asked",
+		"prop readers stream_index_ask=1")
+}
+
+func TestAcceptMovesAPrimaryWithTwoOkReadsToMergingAndTellsTheCoordinatorOnce(t *testing.T) {
+	t.Parallel()
+	w := sprintOf(t, "m1")
+	w.add(t, "s1", 2)
+	for _, id := range []string{"s1-1", "s1-2"} {
+		w.deal(t, id)
+		w.take(t, id)
+		w.finish(t, id, false)
+		w.ask(t, id)
+	}
+	w.report(t, "s1-1", "ok")
+	w.report(t, "s1-2", "broken") // a broken read is not two ok reads
+	got := refmodel.AcceptMoves(w.snapshot(w.fresh()), later(0))
+	require.NotEmpty(t, got, "a primary in review with two ok reads is accepted by the tick")
+	for _, m := range got {
+		assert.NotEqual(t, "s1-2", m.Card, "a primary with a broken read is accepted:%s", show(got))
+	}
+	notices := 0
+	for _, m := range got {
+		if m.Kind == refmodel.KindNotice && m.Type == sprint.NReadyToMerge {
+			notices++
+		}
+	}
+	assert.Equal(t, 1, notices, "the coordinator is told %d times that a stream is ready to merge, want once:%s", notices, show(got))
 }
 
 func TestAskTellsOnceWhenFewerThanTwoReadersAreFree(t *testing.T) {
@@ -559,8 +588,8 @@ func TestEveryPartOfTheTickIsADutyAndEveryDutyIsNamedInOrder(t *testing.T) {
 			t.Errorf("the tick's part %s is no duty: Decide would leave it out", p.Name)
 		}
 	}
-	want := []string{refmodel.DutyStrangers, refmodel.DutyPresence, refmodel.DutyResolve, refmodel.DutyResume, refmodel.DutyDeal,
-		refmodel.DutyLevel, refmodel.DutyAsk, refmodel.DutyCheck, refmodel.DutyDeadlines, refmodel.DutyOverdue, refmodel.DutyDone, refmodel.DutyRemind}
+	want := []string{refmodel.DutyResolve, refmodel.DutyDeal, refmodel.DutyAccept, refmodel.DutyAsk, refmodel.DutyResume,
+		refmodel.DutyStrangers, refmodel.DutyPresence, refmodel.DutyLevel, refmodel.DutyCheck, refmodel.DutyDeadlines, refmodel.DutyOverdue, refmodel.DutyDone, refmodel.DutyRemind}
 	var got []string
 	for _, d := range refmodel.Duties {
 		got = append(got, d.Name)

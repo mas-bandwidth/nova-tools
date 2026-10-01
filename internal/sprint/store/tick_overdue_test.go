@@ -45,6 +45,11 @@ func TestASilentCoordinatorIsVisible(t *testing.T) {
 				h.tick(5 * time.Minute)
 			}
 		}
+		// the work of the last round reaches review a tick later (the pump applies
+		// its queue), so its judgments are a round younger than the rest: one
+		// more quiet round, then the tick that marks them.
+		h.machine()
+		h.tick(5 * time.Minute)
 		h.machine()
 		open, err := h.m.OpenNotes(h.ctx)
 		if err != nil {

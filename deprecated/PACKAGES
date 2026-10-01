@@ -1,6 +1,6 @@
 # Packages that are deprecated and still in the tree, because living tools
 # import them. CI never selects a package named here or under a prefix named
-# here (.github/scripts/select-packages.sh). One path per line, from the
+# here (internal/pkgselect). One path per line, from the
 # repository root. A line "keep <path>" names one package under a prefix that
 # living tools stand on today: it stays tested until it is lifted out into a
 # shared module, and then its line goes. This list only shrinks: a package
@@ -18,9 +18,3 @@ keep internal/nsprint/fn
 keep internal/nsprint/testutil
 keep internal/nsprint/testutil/pg
 keep internal/nsprint/verbflag
-
-# nova-decide (parked as not proven; the tool was deleted on 2026-09-30, its
-# Jev client returns on its own when its value is measured). Living tools
-# stand on the rest, so it stays tested until it is lifted out.
-internal/decide
-keep internal/decide

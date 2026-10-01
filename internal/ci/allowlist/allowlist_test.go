@@ -233,3 +233,65 @@ func TestUpdateNeedsTheValueOne(t *testing.T) {
 		}
 	}
 }
+
+// TestCountedListHoldsSitesNotJustKeys: a counted row says how many sites it covers.
+// A new site under a listed key is Over (it used to read as already listed), a site
+// fixed is Lowered, a key with no site left is Stale, and a count that is not a
+// positive integer is a list that cannot be read.
+func TestCountedListHoldsSitesNotJustKeys(t *testing.T) {
+	t.Parallel()
+	const text = "# ceiling: 3\na:f 2 two sites, a reason\nb:g 1 one site\nc:h 3 three\n"
+	path := writeList(t, text)
+	l := load(t, path, Options{Ceiling: true, Counted: true})
+	if l.Count("a:f") != 2 || l.Count("zz") != 0 {
+		t.Fatalf("counts = %d, %d", l.Count("a:f"), l.Count("zz"))
+	}
+	rec := &recorder{}
+	res := CheckCountedMode(rec, l, map[string]int{"a:f": 3, "b:g": 1, "c:h": 1, "d:i": 1}, false)
+	if len(res.Over) != 1 || res.Over[0] != (CountRow{"a:f", 2, 3}) {
+		t.Errorf("Over = %+v, want a:f 2 -> 3", res.Over)
+	}
+	if len(res.Lowered) != 1 || res.Lowered[0] != (CountRow{"c:h", 3, 1}) {
+		t.Errorf("Lowered = %+v, want c:h 3 -> 1", res.Lowered)
+	}
+	if len(res.Unlisted) != 1 || res.Unlisted[0] != "d:i" {
+		t.Errorf("Unlisted = %v", res.Unlisted)
+	}
+	res = CheckCountedMode(rec, l, map[string]int{"a:f": 2, "b:g": 1}, false)
+	if len(res.Stale) != 1 || res.Stale[0].Key != "c:h" || len(res.Over)+len(res.Lowered)+len(res.Unlisted) != 0 {
+		t.Errorf("a key with no site left is stale: %+v", res)
+	}
+	for _, bad := range []string{"a:f reason without a count\n", "a:f 0 zero\n", "a:f\n"} {
+		if _, err := Parse("x", bad, Options{Counted: true}); err == nil {
+			t.Errorf("Parse(%q) accepted a row with no positive count", bad)
+		}
+	}
+}
+
+// TestCountedUpdateLowersCountsAndNeverRaisesThem: under the update a count falls to
+// the measured number with the row's reason kept byte for byte, a stale row goes, and a
+// count that would have to rise is refused with a line, the file left as it was.
+func TestCountedUpdateLowersCountsAndNeverRaisesThem(t *testing.T) {
+	t.Parallel()
+	path := writeList(t, "# ceiling: 3\na:f 4 why a\nb:g 2 why b\nc:h 1 why c\n")
+	l := load(t, path, Options{Ceiling: true, Counted: true})
+	rec := &recorder{}
+	res := CheckCountedMode(rec, l, map[string]int{"a:f": 2, "b:g": 2}, true)
+	if !res.Updated || rec.count(UpdatedRerun) != 1 {
+		t.Fatalf("update did not report: %+v %v", res, rec.lines)
+	}
+	if got, want := readBack(t, path), "# ceiling: 2\na:f 2 why a\nb:g 2 why b\n"; got != want {
+		t.Errorf("after the update:\n%s\nwant:\n%s", got, want)
+	}
+
+	path = writeList(t, "# ceiling: 1\na:f 1 why a\n")
+	l = load(t, path, Options{Ceiling: true, Counted: true})
+	rec = &recorder{}
+	CheckCountedMode(rec, l, map[string]int{"a:f": 2, "z:z": 1}, true)
+	if rec.count("refuses to raise a count") != 1 || rec.count("refuses to grow") != 1 {
+		t.Errorf("the update did not refuse both raises: %v", rec.lines)
+	}
+	if got := readBack(t, path); got != "# ceiling: 1\na:f 1 why a\n" {
+		t.Errorf("a refused update changed the file: %q", got)
+	}
+}
