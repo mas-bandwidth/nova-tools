@@ -138,7 +138,7 @@ func TestMigrateTwiceThenTheSixVerbs(t *testing.T) {
 		t.Fatalf("fleet show: %q", out)
 	}
 	_, errs = r.run(t, 1, "fleet", "set", "--store", "space")
-	if errs != "nova-config fleet set: --store space names no machine row; run: nova-config fleet show\n" {
+	if errs != "nova-config fleet set: --store space names no machine row; run: nova-config machine list\n" {
 		t.Fatalf("fleet set naming no machine: %q", errs)
 	}
 	out, _ = r.run(t, 0, "fleet", "set", "--coordinator", "studio")
@@ -147,7 +147,7 @@ func TestMigrateTwiceThenTheSixVerbs(t *testing.T) {
 	}
 	// The sprint row: who coordinates; the friend it names cannot go.
 	_, errs = r.run(t, 1, "sprint", "set", "--coordinator", "nobody")
-	if errs != "nova-config sprint set: --coordinator nobody names no friend row; run: nova-config sprint show\n" {
+	if errs != "nova-config sprint set: --coordinator nobody names no friend row; run: nova-config friend list\n" {
 		t.Fatalf("sprint set naming no friend: %q", errs)
 	}
 	out, _ = r.run(t, 0, "sprint", "set", "--coordinator", "rowan")

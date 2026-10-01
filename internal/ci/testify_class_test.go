@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"go/ast"
 	"go/token"
+	"os"
 	"path"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -34,13 +36,13 @@ import (
 //	          `if !strings.Contains(...) { t.Errorf }`, a reflect.DeepEqual guard
 //	env       a call of t.Setenv, t.Chdir or os.Chdir
 //
-// testdata/testify_allowlist.txt is the ledger: one `<package>:<kind> <sites> <reason>`
-// row per package and kind still short, and the count only falls. A package that
+// testdata/testify/ holds one shard per package: each row is
+// `<package>:<kind> <sites> <reason>`, and the count only falls. A package that
 // measures more sites than its row is red, a package with no row and a site is red,
 // and a row above what the package measures is red, so the change that converts a
 // test lowers its row in the same commit. NOVA_CI_UPDATE=1 lowers the counts and
 // drops the rows at zero, and never raises one or adds one.
-const testifyLedgerPath = "testdata/testify_allowlist.txt"
+const testifyLedgerPath = "testdata/testify"
 
 // testifyKinds are the two kinds of site, in the order the ledger lists them.
 var testifyKinds = []string{"assert", "env"}
@@ -89,12 +91,13 @@ func TestTestsUseTestify(t *testing.T) {
 		byKey[s.key()] = append(byKey[s.key()], s)
 	}
 
-	l := loadAllowlist(t, testifyLedgerPath, shrinkOnly)
+	l, err := allowlist.LoadPackages(testifyLedgerPath, allowlist.Options{Ceiling: true, Counted: true, PackageKeys: true})
+	require.NoError(t, err)
 	rows, err := testifyLedgerRows(l)
 	require.NoError(t, err)
 
 	update := allowlist.Updating()
-	problems, kindsSeen, lowered := testifyJudge(counts, byKey, rows, update)
+	problems, kindsSeen, _ := testifyJudge(counts, byKey, rows, update)
 	if len(problems) > 0 {
 		var remedies []string
 		for _, kind := range testifyKinds {
@@ -103,16 +106,9 @@ func TestTestsUseTestify(t *testing.T) {
 			}
 		}
 		assert.Failf(t, "the testing rule", "%s\n%s\n(docs/STANDARD.md section 8; the ledger is %s)", strings.Join(problems, "\n"), strings.Join(remedies, "\n"), testifyLedgerPath)
-	}
-	if !update || len(lowered) == 0 {
 		return
 	}
-	out, changed := testifyRewrite(l.Text(), lowered)
-	if !changed {
-		return
-	}
-	require.NoError(t, allowlist.WriteAtomic(l.Path, out))
-	assert.Fail(t, allowlist.UpdatedRerun, fmt.Sprintf("%s: %d rows lowered or dropped", l.Path, len(lowered)))
+	allowlist.CheckPackagesCountedMode(t, l, counts, update)
 }
 
 // testifyJudge compares the measured counts with the ledger: the problems to print,
@@ -150,54 +146,54 @@ func testifyJudge(counts map[string]int, byKey map[string][]testifySite, rows ma
 
 // testifyLedgerRows reads the `key sites reason` rows: the key is the first field,
 // the count the second, and a row with no reason is refused so every package says why.
-func testifyLedgerRows(l *allowlist.List) (map[string]int, error) {
+func testifyLedgerRows(l *allowlist.Packages) (map[string]int, error) {
 	rows := map[string]int{}
-	for _, r := range l.Rows() {
-		f := strings.Fields(r.Text)
-		if len(f) < 3 {
-			return nil, fmt.Errorf("%s:%d: %q is not `<package>:<kind> <sites> <reason>`", l.Path, r.Line, r.Text)
+	for _, shard := range l.Lists() {
+		for _, r := range shard.Rows() {
+			f := strings.Fields(r.Text)
+			if len(f) < 3 {
+				return nil, fmt.Errorf("%s:%d: %q is not `<package>:<kind> <sites> <reason>`", shard.Path, r.Line, r.Text)
+			}
+			n, err := strconv.Atoi(f[1])
+			if err != nil || n <= 0 {
+				return nil, fmt.Errorf("%s:%d: %q: the sites are a positive number", shard.Path, r.Line, r.Text)
+			}
+			kind := f[0][strings.LastIndex(f[0], ":")+1:]
+			if _, ok := testifyRemedy[kind]; !ok || !strings.Contains(f[0], ":") {
+				return nil, fmt.Errorf("%s:%d: %q: the kind is one of %v", shard.Path, r.Line, f[0], testifyKinds)
+			}
+			if _, dup := rows[f[0]]; dup {
+				return nil, fmt.Errorf("%s:%d: %s is listed twice", shard.Path, r.Line, f[0])
+			}
+			rows[f[0]] = n
 		}
-		n, err := strconv.Atoi(f[1])
-		if err != nil || n <= 0 {
-			return nil, fmt.Errorf("%s:%d: %q: the sites are a positive number", l.Path, r.Line, r.Text)
-		}
-		kind := f[0][strings.LastIndex(f[0], ":")+1:]
-		if _, ok := testifyRemedy[kind]; !ok || !strings.Contains(f[0], ":") {
-			return nil, fmt.Errorf("%s:%d: %q: the kind is one of %v", l.Path, r.Line, f[0], testifyKinds)
-		}
-		if _, dup := rows[f[0]]; dup {
-			return nil, fmt.Errorf("%s:%d: %s is listed twice", l.Path, r.Line, f[0])
-		}
-		rows[f[0]] = n
 	}
 	return rows, nil
 }
 
-// testifyRewrite lowers the counts and drops the rows the map names (0 drops), every
-// other line byte for byte; it never raises a count.
-func testifyRewrite(text string, lowered map[string]int) (string, bool) {
-	lines := strings.Split(text, "\n")
-	var out []string
-	changed := false
-	for _, line := range lines {
-		f := strings.Fields(line)
-		if len(f) < 3 || strings.HasPrefix(f[0], "#") {
-			out = append(out, line)
-			continue
-		}
-		n, ok := lowered[f[0]]
-		old, err := strconv.Atoi(f[1])
-		if !ok || err != nil || n >= old {
-			out = append(out, line)
-			continue
-		}
-		changed = true
-		if n == 0 {
-			continue
-		}
-		out = append(out, strings.Replace(line, " "+f[1]+" ", " "+strconv.Itoa(n)+" ", 1))
+// TestTestifyLedgerReadsPackageShards keeps the full package-kind key and
+// requires a reason in the originating shard before the updater can run.
+func TestTestifyLedgerReadsPackageShards(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	cmdShard := filepath.Join(dir, "cmd", "nova-ci.txt")
+	internalShard := filepath.Join(dir, "internal", "foo.txt")
+	for _, file := range []string{cmdShard, internalShard} {
+		require.NoError(t, os.MkdirAll(filepath.Dir(file), 0700))
 	}
-	return strings.Join(out, "\n"), changed
+	require.NoError(t, os.WriteFile(cmdShard, []byte("# ceiling: 1\ncmd/nova-ci:assert 2 bare assertions to convert\n"), 0600))
+	require.NoError(t, os.WriteFile(internalShard, []byte("# ceiling: 1\ninternal/foo:env 1\n"), 0600))
+	ledger, err := allowlist.LoadPackages(dir, allowlist.Options{Ceiling: true, Counted: true, PackageKeys: true})
+	require.NoError(t, err)
+	_, err = testifyLedgerRows(ledger)
+	require.ErrorContains(t, err, internalShard+":2:")
+
+	require.NoError(t, os.WriteFile(internalShard, []byte("# ceiling: 1\ninternal/foo:env 1 inject config\n"), 0600))
+	ledger, err = allowlist.LoadPackages(dir, allowlist.Options{Ceiling: true, Counted: true, PackageKeys: true})
+	require.NoError(t, err)
+	rows, err := testifyLedgerRows(ledger)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]int{"cmd/nova-ci:assert": 2, "internal/foo:env": 1}, rows)
 }
 
 // testifyExamples lists up to max sites with the testify call each shape wants.

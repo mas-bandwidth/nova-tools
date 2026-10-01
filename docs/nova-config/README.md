@@ -251,7 +251,7 @@ One stderr line each, naming the next step:
 
 ```
 nova-config machine add: machine studio exists; run: nova-config machine set studio --<field> <value>
-nova-config fleet set: --store space names no machine row; run: nova-config fleet show
+nova-config fleet set: --store space names no machine row; run: nova-config machine list
 nova-config friend set: friend nobody not found; run: nova-config friend add nobody --<field> <value> ...
 nova-config machine remove: machine studio is the --coordinator of the fleet; run: nova-config machine list
 nova-config friend remove: friend rowan is the --coordinator of the sprint; run: nova-config friend list

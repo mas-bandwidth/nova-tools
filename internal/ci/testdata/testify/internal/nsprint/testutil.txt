@@ -1,0 +1,3 @@
+# Migrated counted package ledger; original row keys preserved.
+# ceiling: 1
+internal/nsprint/testutil:assert 18 bare assertions to convert to testify
