@@ -31,11 +31,11 @@ usage:
   nova-secrets check  --store <dir> --as <name> --key <path> --sops <path> [--max <n>]
   nova-secrets gate   --store <dir> --base <git ref> --head <git ref> [--machines <registry>]
   nova-secrets keygen --as <name> --key <path> --age-keygen <path> [--store <dir>]
-  nova-secrets place  --store <dir> --as <name> --key <path> --sops <path> --machine <name> --secret <name> [--path <remote path>] [--machines <file>] [--receipts <dir>] [--ssh <path>] [--dry-run]
+  nova-secrets place  --store <dir> --as <name> --key <path> --sops <path> --machine <name> --secret <name> [--path <remote path>] [--machines <file>] [--receipts <dir>] [--ssh <path>] [--op <id>] [--dry-run]
   nova-secrets placed --machine <name> [--receipts <dir>]
-  nova-secrets seal   --store <dir> --as <seat> --key <path> --sops <path> --name NAME [--stdin] [--no-pr] [--dry-run] [--gh <path>] [--git <path>]
+  nova-secrets seal   --store <dir> --as <seat> --key <path> --sops <path> --name NAME [--stdin] [--no-pr] [--op <id>] [--dry-run] [--gh <path>] [--git <path>]
   nova-secrets seat add --store <dir> --as <seat> --pub <age1…> --from <source seat> --only <NAME,...> --key <path> --sops <path>
-  nova-secrets seat inject --store <dir> --as <seat> --from <source seat> --only <NAME,...> --key <path> --sops <path> [--no-pr] [--dry-run] [--gh <path>] [--git <path>]
+  nova-secrets seat inject --store <dir> --as <seat> --from <source seat> --only <NAME,...> --key <path> --sops <path> [--no-pr] [--op <id>] [--dry-run] [--gh <path>] [--git <path>]
   nova-secrets help
 
 flags:
@@ -62,6 +62,8 @@ flags:
   --from <seat>        a seat this machine can open, whose values are re-sealed (seat add, seat inject)
   --stdin              read the value from stdin instead of the terminal (seal only)
   --no-pr              stop after the commit; make no gh call; return the store to its starting branch (seal, seat inject)
+  --op <id>            operation id for idempotent retry: the same id again returns the recorded
+                       result and changes nothing (place, seal, seat inject)
   --dry-run            prints the plan and writes nothing (place, seal, seat inject): the file, the
                        recipients, the machine and remote path, the branch and the pull request the
                        real run would take, as PLAN lines ending in DRY-RUN OK, exit 0; no ssh, no
@@ -629,6 +631,7 @@ func runSeatInjectCLI(args []string) {
 	sopsFlag := fs.String("sops", "", "sops path")
 	ghFlag := fs.String("gh", "gh", "gh path")
 	gitFlag := fs.String("git", "git", "git path")
+	opFlag := fs.String("op", "", "operation id for idempotent retry: the same id again returns the recorded result and changes nothing")
 	noPRFlag := fs.Bool("no-pr", false, "stop after commit; return the store to its starting branch")
 	dryRunFlag := fs.Bool("dry-run", false, dryRunHelp)
 
@@ -644,7 +647,34 @@ func runSeatInjectCLI(args []string) {
 		os.Exit(2)
 	}
 
-	line, err := secrets.RunSeatInject(secrets.SeatInjectOptions{
+	opProvided := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "op" {
+			opProvided = true
+		}
+	})
+	var line string
+	if opProvided {
+		if err := secrets.ValidateOpID(*opFlag); err != nil {
+			fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-secrets seat inject -h"))
+			os.Exit(2)
+		}
+		if *storeFlag != "" && !*dryRunFlag {
+			rec, err := secrets.LoadOpRecord(*storeFlag, "seat inject", *opFlag)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-secrets seat inject -h"))
+				os.Exit(2)
+			}
+			if rec != nil {
+				line = rec.Stdout
+				fmt.Println(line)
+				os.Exit(rec.ExitCode)
+			}
+		}
+	}
+
+	var err error
+	line, err = secrets.RunSeatInject(secrets.SeatInjectOptions{
 		StoreDir: *storeFlag,
 		AsName:   *asFlag,
 		From:     *fromFlag,
@@ -660,6 +690,12 @@ func runSeatInjectCLI(args []string) {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "SECRETS SEAT INJECT FAIL %s\n", oneline.WithRemedy(oneline.Err(err), "nova-secrets seat inject -h"))
 		os.Exit(2)
+	}
+	if opProvided && !*dryRunFlag {
+		if err := secrets.SaveOpRecord(*storeFlag, "seat inject", *opFlag, line, 0); err != nil {
+			fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-secrets seat inject -h"))
+			os.Exit(2)
+		}
 	}
 	fmt.Println(line)
 	os.Exit(0)
@@ -724,6 +760,7 @@ func runPlaceCLI(args []string) {
 	machinesFlag := fs.String("machines", "", "fleet registry file")
 	receiptsFlag := fs.String("receipts", "", "receipts dir")
 	sshFlag := fs.String("ssh", "ssh", "ssh executable")
+	opFlag := fs.String("op", "", "operation id for idempotent retry: the same id again returns the recorded result and changes nothing")
 	dryRunFlag := fs.Bool("dry-run", false, dryRunHelp)
 
 	if err := verbflag.Parse(fs, args); err != nil {
@@ -735,7 +772,34 @@ func runPlaceCLI(args []string) {
 		os.Exit(2)
 	}
 
-	okLine, err := secrets.RunPlace(secrets.PlaceInput{
+	opProvided := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "op" {
+			opProvided = true
+		}
+	})
+	var okLine string
+	if opProvided {
+		if err := secrets.ValidateOpID(*opFlag); err != nil {
+			fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-secrets place -h"))
+			os.Exit(2)
+		}
+		if *storeFlag != "" && !*dryRunFlag {
+			rec, err := secrets.LoadOpRecord(*storeFlag, "place", *opFlag)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-secrets place -h"))
+				os.Exit(2)
+			}
+			if rec != nil {
+				okLine = rec.Stdout
+				fmt.Println(okLine)
+				os.Exit(rec.ExitCode)
+			}
+		}
+	}
+
+	var err error
+	okLine, err = secrets.RunPlace(secrets.PlaceInput{
 		StoreDir:   *storeFlag,
 		AsName:     *asFlag,
 		KeyPath:    *keyFlag,
@@ -751,6 +815,12 @@ func runPlaceCLI(args []string) {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-secrets place -h"))
 		os.Exit(2)
+	}
+	if opProvided && !*dryRunFlag {
+		if err := secrets.SaveOpRecord(*storeFlag, "place", *opFlag, okLine, 0); err != nil {
+			fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-secrets place -h"))
+			os.Exit(2)
+		}
 	}
 	fmt.Println(okLine)
 	os.Exit(0)
@@ -798,6 +868,7 @@ func runSealCLI(args []string) {
 	nameFlag := fs.String("name", "", "key to seal")
 	ghFlag := fs.String("gh", "gh", "gh path")
 	gitFlag := fs.String("git", "git", "git path")
+	opFlag := fs.String("op", "", "operation id for idempotent retry: the same id again returns the recorded result and changes nothing")
 	stdinFlag := fs.Bool("stdin", false, "read value from stdin")
 	noPRFlag := fs.Bool("no-pr", false, "stop after commit; return the store to its starting branch")
 	dryRunFlag := fs.Bool("dry-run", false, dryRunHelp)
@@ -811,10 +882,37 @@ func runSealCLI(args []string) {
 		os.Exit(2)
 	}
 
+	opProvided := false
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "op" {
+			opProvided = true
+		}
+	})
+	var line string
+	if opProvided {
+		if err := secrets.ValidateOpID(*opFlag); err != nil {
+			fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-secrets seal -h"))
+			os.Exit(2)
+		}
+		if *storeFlag != "" && !*dryRunFlag {
+			rec, err := secrets.LoadOpRecord(*storeFlag, "seal", *opFlag)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-secrets seal -h"))
+				os.Exit(2)
+			}
+			if rec != nil {
+				line = rec.Stdout
+				fmt.Println(line)
+				os.Exit(rec.ExitCode)
+			}
+		}
+	}
+
 	fi, statErr := os.Stdin.Stat()
 	stdinIsTerminal := statErr == nil && fi.Mode()&os.ModeCharDevice != 0
 
-	line, err := secrets.RunSeal(secrets.SealOptions{
+	var err error
+	line, err = secrets.RunSeal(secrets.SealOptions{
 		StoreDir:        *storeFlag,
 		AsName:          *asFlag,
 		KeyPath:         *keyFlag,
@@ -832,6 +930,12 @@ func runSealCLI(args []string) {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "SECRETS SEAL FAIL %s\n", oneline.WithRemedy(oneline.Err(err), "nova-secrets seal -h"))
 		os.Exit(2)
+	}
+	if opProvided && !*dryRunFlag {
+		if err := secrets.SaveOpRecord(*storeFlag, "seal", *opFlag, line, 0); err != nil {
+			fmt.Fprintf(os.Stderr, "SECRETS REFUSED: %s\n", oneline.WithRemedy(oneline.Err(err), "nova-secrets seal -h"))
+			os.Exit(2)
+		}
 	}
 
 	fmt.Println(line)
