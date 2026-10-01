@@ -41,10 +41,15 @@ const (
 	MachinesKey = "machines"
 	CapLogKey   = "cap:log"
 	LoopsKey    = "loops"
+	RoutesKey   = "routes"
 )
 
 // LoopKey is a loop's hash: its fields, log, rev and at.
 func LoopKey(name string) string { return "loop:" + name }
+
+// RouteKey is a route's hash: its fields, name, rev and at. The deal reads
+// every route of the set RoutesKey (internal/sprint/store, the routes read).
+func RouteKey(name string) string { return "route:" + name }
 
 // FleetKey is the plain key one fleet field is written to: fleet:store,
 // fleet:coordinator.
