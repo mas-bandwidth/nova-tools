@@ -23,6 +23,16 @@ import (
 )
 
 func main() {
+	// THE NICE CHILD (FAKE-NICE below): prints its own nice and nothing else.
+	if os.Getenv("FAKE_NICE_CHILD") == "1" {
+		n, err := ownNice()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "fake harness: nice:", err)
+			os.Exit(2)
+		}
+		fmt.Println(n)
+		return
+	}
 	// THE BACKGROUND CHILD, and nothing else: rule 11's violation is a process that OUTLIVES
 	// its parent, so this one does no work, reads no prompt, writes nothing but its own pid
 	// and sleeps. Before 2026-09-11 it fell through into the harness's own path, read
@@ -529,6 +539,34 @@ func main() {
 		fmt.Println(spoofedErrorLine)
 	}
 	if _, ok := directive(prompt, "FAKE-NORESULT"); ok {
+		os.Exit(0)
+	}
+	// FAKE-NICE writes the nice of the harness and of a process a shell under the harness
+	// starts into RESULT.md (`harness=<n>`, `grandchild=<n>`) and exits clean: it is how a
+	// card's launch proves the harness and what it runs inherit the step behind CI. Both
+	// are read with getpriority, by this binary (the wall denies /bin/ps on darwin).
+	if _, ok := directive(prompt, "FAKE-NICE"); ok {
+		own, err := ownNice()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "fake harness: nice:", err)
+			os.Exit(2)
+		}
+		self, err := os.Executable()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "fake harness: own executable:", err)
+			os.Exit(2)
+		}
+		sub := exec.Command("sh", "-c", `"$0"; true`, self) // the shell forks it: a grandchild
+		sub.Env = append(os.Environ(), "FAKE_NICE_CHILD=1")
+		out, err := sub.Output()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "fake harness: nice child:", err)
+			os.Exit(2)
+		}
+		if job != "" {
+			body := "harness=" + strconv.Itoa(own) + "\ngrandchild=" + strings.TrimSpace(string(out)) + "\n"
+			writeRecorded(filepath.Join(job, "RESULT.md"), []byte(body), 0o644)
+		}
 		os.Exit(0)
 	}
 	// FAKE-PWD writes the child's own working directory into RESULT.md and exits clean: it

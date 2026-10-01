@@ -34,6 +34,9 @@ var swarmAudit = audit.Config{
 		"main.go|refused|f.verb":   "the verb's own name, the value newFlags stored from that literal",
 		"main.go|cmdTemplate|body": "the named verbatim site: a template is a DOCUMENT a person redirects into a file, not an event line, so escaping it would fold it into one unusable line. Every byte of it is an embedded constant in package swarm. TestTemplatesCarryTheirConditions is the behavioural test for this site.",
 		"native.go|nativeRun|line": "the line NewWallReader announces a refusal on: swarm.WallRefusedLine builds the whole line and puts the kind, the path, the task and the step through oneline.Field inside itself, so what arrives at this closure is already one safe token, and escaping it a second time would fold it into one unreadable form. TestNativeIdleZeroWatchesNothing asserts the line this site prints byte for byte.",
+
+		// the stderr the member's loop and its beat share (memberLoop)
+		"member.go|Write|string(p)": "lockedWriter only orders whole writes from two goroutines (the member's loop and its beat, memberLoop): every byte it carries was already printed through fmt.Fprintf with escaped arguments by its caller, and it adds none of its own",
 	},
 	// buildinfo.Line is the `version` verb's whole line and the fifth escaper: it renders
 	// every one of its four fields through oneline.Field inside internal/buildinfo, where
@@ -177,6 +180,10 @@ var swarmAudit = audit.Config{
 		// cardhdr reads a card's header lines (its tier, a model: pin) into a value: the
 		// one parser the frame and the deal share. It holds no writer and prints nothing.
 		`"github.com/mas-bandwidth/nova-tools/internal/cardhdr"`,
+		// cardcost (native.go, member.go) folds what a run spent into a value and spells it
+		// as one word (SpendWord) or one record line (Usage.String); it holds no writer and
+		// prints nothing. The spend word reaches the NATIVE line only through oneline.Field.
+		`"github.com/mas-bandwidth/nova-tools/internal/cardcost"`,
 		// typedrec (the one-typed-parser rule, #2506) reads a card's RESULT.md into a value
 		// and says whether a string is a commit id; it holds no writer and prints nothing.
 		`"github.com/mas-bandwidth/nova-tools/internal/typedrec"`,
@@ -193,6 +200,10 @@ var swarmAudit = audit.Config{
 		// hostload (member.go) samples the machine's CPU percent once a second into a
 		// ring the member's beat reads; it returns numbers and prints nothing.
 		`"github.com/mas-bandwidth/nova-tools/internal/hostload"`,
+		// yield (native.go, member.go) calls setpriority on this process and returns an error,
+		// or is a constant (Supported); it holds no writer and prints nothing. Its error
+		// reaches a stream only through refuseNative, which escapes it.
+		`"github.com/mas-bandwidth/nova-tools/internal/yield"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/subproc"`,
 		// gitrun (memberpush.go) runs one git under its budget and returns its two streams
 		// as bytes to this package; it holds no writer of this package's stream and prints

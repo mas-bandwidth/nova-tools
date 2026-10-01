@@ -37,6 +37,7 @@ func init() {
 	verbs = []verb{
 		{"init", "[--readers <a,b,...>] [--members <m1[:<width>],m2,...>] [--coordinator <name>] [--rules <file>]", "init --readers reader-a,reader-b,reader-c --members m1:64,m2:64", (*app).cmdInit},
 		{"add", "--stream <s> (<id>... | --count <n> | --sentinel <id> | --brief-dir <dir> | --brief-file <f> --brief-file <g>...) [--needs <a,b>] [--before <id> | --after <id> | --score <n>] [--brief <text> | --brief-file <path>] [--rules <file>]", "add --stream s1 --count 100", (*app).cmdAdd},
+		{"quack", "--streams <a,b,...> --count <n> --repo <clone url> [--tiers <t,...>] [--base <branch>]", "quack --streams a,b --count 2 --repo https://example.com/quack.git", (*app).cmdQuack},
 		{"release", "<sentinel>... --reason <text> [--answers <note>]", "release s1-stop --reason 'the layer is green and read'", (*app).cmdRelease},
 		{"resolve", "[<id>...] [--stream <s>] [--limit <n>]", "resolve", (*app).cmdResolve},
 		{"start", "", "start", (*app).cmdMachineStart},
@@ -47,16 +48,17 @@ func init() {
 		{"goal show", "[<name>]", "goal show friend-a", (*app).cmdGoalShow},
 		{"goal drop", "<name>", "goal drop friend-a", (*app).cmdGoalDrop},
 		{"take", "--as <member> [<card>@<gen>...] [--epoch <n>] [--limit <n>]", "take --as m1 s1-1.w1@1 --epoch 0", (*app).cmdTake},
-		{"finish", "--as <member> <card>@<gen>... --epoch <n> [--failed] [--head <h>] [--report <text>]", "finish --as m1 s1-1.w1@1 --epoch 0 --report 'tests green'", (*app).cmdFinish},
+		{"finish", "--as <member> <card>@<gen>... --epoch <n> [--failed] [--head <h>] [--report <text>] [--usage <text>]", "finish --as m1 s1-1.w1@1 --epoch 0 --report 'tests green'", (*app).cmdFinish},
 		{"ask", "[<id>... | --group <id> [--expect <n>]] [--stream <s>] [--limit <n>] [--another] [--answers <note>]", "ask", (*app).cmdAsk},
 		{"queue", "--as <reader|member> | --stream <s>", "queue --as reader-a", (*app).cmdQueue},
-		{"read", "--as <reader> (--begin | --ok | --broken) [<card>...] --epoch <n> [--limit <n>] [--finding <text>] | --as <reader> --return <card> --reason <text> --epoch <n>", "read --as reader-a --ok --limit 5 --epoch 0", (*app).cmdRead},
+		{"read", "--as <reader> (--begin | --ok | --broken) [<card>...] --epoch <n> [--limit <n>] [--finding <text>] [--usage <text>] | --as <reader> --return <card> --reason <text> --epoch <n> [--usage <text>]", "read --as reader-a --ok --limit 5 --epoch 0", (*app).cmdRead},
 		{"accept", "(<id>... | --stream <s> | --read-ok | --group <id> [--expect <n>]) [--answers <note>]", "accept --read-ok", (*app).cmdAccept},
 		{"rework", "(<id>... | --group <id> [--expect <n>]) [--fix <text>] [--answers <note>]", "rework s1-4 --fix 'handle the empty case'", (*app).cmdRework},
 		{"return", "(<id>... | --group <id> [--expect <n>]) [--reason <text>] [--answers <note>]", "return s1-7 --reason 'suspect of the red batch'", (*app).cmdReturn},
 		{"drop", "(<id>... | --stream <s> --col <state> | --group <id> [--expect <n>]) --reason <text> [--answers <note>]", "drop s1-9 --reason obsolete", (*app).cmdDrop},
 		{"rank", "<id>... (--score <n> | --first) [--answers <note>]", "rank s2-3 --first", (*app).cmdRank},
 		{"merge", "--stream <s> [--batch <n>] [--conflict <id> | --cross <id>=<other> | --red [--suspect <id>...] | --rejected] [--note <text>]", "merge --stream s1 --batch 100", (*app).cmdMerge},
+		{"land", "[--stream <s>...] [--repo-dir <clone>] [--base <branch>] [--check <command>] [--dry-run]", "land --stream s1 --dry-run", (*app).cmdLand},
 		{"resume", "--stream <s> [--did <text>] [--answers <note>]", "resume --stream s1 --did 'rebased s1-4'", (*app).cmdResume},
 		{"fleet beat", "<member> [--load <percent>]", "fleet beat m1", (*app).cmdFleetBeat},
 		{"fleet up", "<member> [--width <n>]", "fleet up m1 --width 64", func(a *app, args []string, o, e io.Writer) int { return a.cmdFleet("up", args, o, e) }},
@@ -137,7 +139,10 @@ done in <time from the first start> while it runs, and STOPPED ... done once
 the machine has stopped itself).
 
 The tables are work, merge, readers and fleet, and the view is sprint; a store
-holds one sprint (a second sprint is a second store). clear and teardown want
+holds one sprint (a second sprint is a second store). The work table's cost
+column is, per stream, the sum of its landed cards' total cost in US dollars
+(each consumer's actual cost, else its predicted one; - when none was priced),
+with the sum over the streams at the bottom; card <id> shows the detail. clear and teardown want
 --confirm sprint, the name of the view, and refuse anything else.
 
 A work card is named with its generation, <card>@<gen>: the generation the
@@ -153,6 +158,7 @@ and prints each one's generation.
 ` + readerWords() + `
 ` + goalWords() + `
 ` + twinWords() + `
+` + landWords() + `
 exit codes: 0 done, 1 refused, 2 usage or a store that did not answer (fleet sync --check: there is drift), 3 fleet sync could not read the config, or run: its binary was replaced (its supervisor starts the new one)
 
 the coordinator's day, in five lines (NOVA_SPRINT_REDIS and NOVA_SPRINT_ACTOR set; brief.txt is a card that passes the lint, from nova-swarm template --name card):
@@ -589,7 +595,9 @@ func (g groupReport) line() string {
 	return l
 }
 
-func (a *app) report(ctx context.Context, verbName string, c common, st *store.Store, res store.Result, err error, stdout, stderr io.Writer) int {
+// stepExit is a step's exit code: 0 when everything named moved, 1 when a card
+// was refused or the step was cut, 2 when the store did not confirm.
+func stepExit(res store.Result, err error) int {
 	code := 0
 	if len(res.Refused) > 0 {
 		code = 1
@@ -609,6 +617,12 @@ func (a *app) report(ctx context.Context, verbName string, c common, st *store.S
 	default:
 		code = 2
 	}
+	return code
+}
+
+func (a *app) report(ctx context.Context, verbName string, c common, st *store.Store, res store.Result, err error, stdout, stderr io.Writer) int {
+	code := stepExit(res, err)
+	var synced *store.SyncError
 	line := sprintLine(ctx, st)
 	if c.json {
 		o := output{Result: res, Sprint: line, Unknown: errors.Is(err, store.ErrUnknown), Group: c.group.ID, ActedOn: c.group.ActedOn, Expected: c.group.Expected, Packets: c.handed}
@@ -654,7 +668,7 @@ func (a *app) report(ctx context.Context, verbName string, c common, st *store.S
 	if res.Pending != "" {
 		fields += " pending=" + oneline.Escape(res.Pending)
 	}
-	if err != nil && synced == nil {
+	if err != nil && !errors.As(err, &synced) {
 		changed := "no"
 		if errors.Is(err, store.ErrUnknown) {
 			changed = "unknown"
@@ -1354,7 +1368,7 @@ func (a *app) cmdFinish(args []string, stdout, stderr io.Writer) int {
 	report := fs.String("report", "", "the worker's report")
 	branch := fs.String("branch", "", "the branch the work is on (its packet names the one to use)")
 	baseBranch := fs.String("base", "", "the branch the work started from")
-	usage := fs.String("usage", "", "what the run spent, one line (the member passes its child's budget and wall): kept on the attempt's record")
+	usage := fs.String("usage", "", "what the run spent, one line (the member passes its child's budget, wall, tokens by class and cost): kept on the attempt's record, timed and priced")
 	words, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "finish", err.Error())
@@ -1394,8 +1408,9 @@ func (a *app) cmdRead(args []string, stdout, stderr io.Writer) int {
 	broken := fs.Bool("broken", false, "the read found it broken")
 	finding := fs.String("finding", "", "what the read found")
 	limit := fs.Int("limit", 0, "the first n of the reader's queue (default 1)")
-	ret := fs.String("return", "", "hand back a read the reader holds and has no verdict on: the next tick asks it of another reader up; no finding against the work")
+	ret := fs.String("return", "", "hand back a read the reader holds and has no verdict on: not a read; the next tick asks it of another reader free at the attempt, or of this reader again; no finding against the work")
 	reason := fs.String("reason", "", "with --return: why the read has no verdict (it reaches the inbox)")
+	usage := fs.String("usage", "", "with --ok, --broken or --return: what the read spent, one line (the reader passes its child's tokens, wall and cost): kept on the read card, timed and priced")
 	ids, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "read", err.Error())
@@ -1426,7 +1441,7 @@ func (a *app) cmdRead(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "read", err.Error())
 	}
 	return a.runStep("read", *c, st, store.ReadStep(sprint.ReadReq{Sel: sprint.Sel{IDs: ids, Limit: *limit}, As: *as, Begin: *begin,
-		Verdict: verdict, Finding: *finding, Return: *ret != "", Reason: *reason, Who: *as}), stdout, stderr)
+		Verdict: verdict, Finding: *finding, Return: *ret != "", Reason: *reason, Usage: *usage, Who: *as}), stdout, stderr)
 }
 
 func (a *app) cmdAccept(args []string, stdout, stderr io.Writer) int {

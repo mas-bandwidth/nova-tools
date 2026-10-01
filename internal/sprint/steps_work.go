@@ -960,7 +960,8 @@ type FinishReq struct {
 	// from, as the worker reports them.
 	Branch, Base string
 	// Usage is what the run spent, as the member read it from its child (its
-	// budget word and wall): kept on the work card, the attempt's record.
+	// budget word and wall, the tokens by class, the harness's cost: cardcost.Usage):
+	// kept on the work card, the attempt's record, timed and priced (cost.go).
 	Usage string
 	Who   string
 }
@@ -1052,13 +1053,18 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		if r.Base != "" {
 			cardSet["base"] = r.Base
 		}
+		// what the take cost, timed and priced (cost.go): kept on the work card when the
+		// member reported it, and recorded on the primary, the producer, in this step
+		dealt, taken := takeStamps(c)
+		rec := costRecord(s, r.Usage, c.F(FieldRoute), c.F(FieldModel), false, dealt, taken)
 		if r.Usage != "" {
-			cardSet[FieldUsage] = r.Usage
+			cardSet[FieldUsage] = rec
 		}
 		set := map[string]string{"head": head, "result": result}
 		if r.Failed {
 			set["failed"] = itoa(pr.Int("failed") + 1)
 		}
+		addConsumer(pr, set, workConsumer(s, c, 0, result, rec))
 		u := Unit{Key: c.ID, Stream: pr.Row, Changes: []Change{change(Fleet, moveEntry(c, c.Row, into, cardSet))},
 			Moved: fmt.Sprintf("%s working -> done %s; %s working -> review", c.ID, result, pr.ID)}
 		attempt := pr.Int("attempt")
@@ -1118,15 +1124,26 @@ func providerEnded(s *Snapshot, c, pr *Card, r FinishReq) Unit {
 	set["withdrawn"], set[FieldTakeEnded] = stamp(s.Now), stamp(s.Now)
 	line := cutText(strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(r.Report, cardhdr.EndProvider), ":")), MaxProviderErrorBytes)
 	set[FieldProviderError] = line
-	// the failed take's own record, kept through the redeals: its route, member, usage and line
-	set[FieldProviderTake+itoa(c.Int("redeals")+1)] = ProviderTake{Route: c.F(FieldRoute), Model: c.F(FieldModel), Member: c.Row,
-		Finished: stamp(s.Now), Usage: r.Usage, Error: line}.String()
+	// what the take cost, timed and priced before its stamps go (cost.go): it still cost
+	// tokens and time. The take's record is its one place: the card's usage field is
+	// left alone, so it only ever holds the card's own ended take (finishPlan), and a
+	// redealt card never shows, or counts, this take's usage again
+	dealt, taken := takeStamps(c)
+	rec := costRecord(s, r.Usage, c.F(FieldRoute), c.F(FieldModel), false, dealt, taken)
+	usage := ""
 	if r.Usage != "" {
-		set[FieldUsage] = r.Usage
+		usage = rec
 	}
+	// the failed take's own record, kept through the redeals: its route, member, usage and line
+	take := c.Int("redeals") + 1
+	set[FieldProviderTake+itoa(take)] = ProviderTake{Route: c.F(FieldRoute), Model: c.F(FieldModel), Member: c.Row,
+		Finished: stamp(s.Now), Usage: usage, Error: line}.String()
+	// and the producer's record of it (cost.go): it still cost tokens and time
+	prSet := map[string]string{}
+	addConsumer(pr, prSet, workConsumer(s, c, take, "provider failure", rec))
 	return Unit{Key: c.ID, Stream: pr.Row, Changes: []Change{
 		change(Fleet, moveEntry(c, c.Row, Withdrawn, set, "taken", "dealt")),
-		change(Work, moveEntry(pr, pr.Row, Ready, nil, "work")),
+		change(Work, moveEntry(pr, pr.Row, Ready, prSet, "work")),
 	}, Moved: fmt.Sprintf("%s working -> withdrawn gen=%d, the provider failed the take; %s working -> ready", c.ID, c.Int("gen")+1, pr.ID)}
 }
 
@@ -1157,9 +1174,15 @@ func stagingRefused(s *Snapshot, c, pr *Card, r FinishReq) Unit {
 		n.What = cardhdr.EndStaging + " on " + c.Row + ": " + line
 		notes = append(notes, n)
 	}
+	// no child ran: the producer records the launch only when it cost something
+	prSet := map[string]string{}
+	if r.Usage != "" {
+		dealt, taken := takeStamps(c)
+		addConsumer(pr, prSet, workConsumer(s, c, 0, "staging refused", costRecord(s, r.Usage, c.F(FieldRoute), c.F(FieldModel), false, dealt, taken)))
+	}
 	return Unit{Key: c.ID, Stream: pr.Row, Changes: []Change{
 		change(Fleet, moveEntry(c, c.Row, Withdrawn, set, "taken", "dealt")),
-		change(Work, moveEntry(pr, pr.Row, Ready, nil, "work")),
+		change(Work, moveEntry(pr, pr.Row, Ready, prSet, "work")),
 	}, Notes: notes, Moved: fmt.Sprintf("%s working -> withdrawn gen=%d, %s refused it at staging; %s working -> ready", c.ID, c.Int("gen")+1, c.Row, pr.ID)}
 }
 

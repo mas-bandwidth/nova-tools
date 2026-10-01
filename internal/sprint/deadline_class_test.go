@@ -24,6 +24,7 @@ func TestTheWorkStampsAreReadOnlyByWorkDeadline(t *testing.T) {
 		"nextGen":      true, // writes untaken_since once per take
 		"AttemptLine":  true, // prints an attempt's stamps, judges nothing
 		"RouteStats":   true, // a route's mean wall, shown, judges nothing
+		"takeStamps":   true, // a take's waiting and running time, recorded and shown, judges nothing (cost.go)
 	}
 	var dirs []string
 	err := filepath.WalkDir(".", func(p string, d os.DirEntry, err error) error {

@@ -93,12 +93,34 @@ func fewReaders(s *Snapshot) string {
 // ReaderAway). A read begun stays with its reader.
 func awayRead(s *Snapshot, rc *Card) bool { return rc.Col == Asked && !s.ReaderIsUp(rc.Row) }
 
+// returnedRead says a read card was handed back by its reader with no verdict
+// (read --return) and is not asked again yet: it is back in asked on its own
+// row, stamped returned. A return is not a read: the ask places it again, on
+// another reader free at the attempt, or on the same reader in place
+// (tla/DirtyTick.tla, A RETURN IS NOT A READ, JudgedOnlyAfterTheBound).
+func returnedRead(rc *Card) bool { return rc.Col == Asked && rc.F(FieldReturned) != "" }
+
+// FieldReturned is the stamp on a read card handed back with no verdict, until
+// the ask asks it again.
+const FieldReturned = "returned"
+
+// FieldReasked is how many times a read card's reader returned it and it went
+// back to asked on the reader's row, counted by Read itself at each return, so
+// the bound holds whatever the tick does and however many readers are up (the
+// ask need not run for the count to move); MaxReadReasks is the most: the
+// return after them retires the card, counted as a read (tla/DirtyTick.tla,
+// MaxReasks and ReasksBounded).
+const (
+	FieldReasked  = "reasked"
+	MaxReadReasks = 2
+)
+
 // liveReadsAt is the primary's placed read cards at an attempt less the reads
-// the ask takes back: the reads that stand.
+// the ask takes back or places again: the reads that stand.
 func liveReadsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 	var out []*Card
 	for _, rc := range readsAt(s, pr, attempt) {
-		if !awayRead(s, rc) {
+		if !awayRead(s, rc) && !returnedRead(rc) {
 			out = append(out, rc)
 		}
 	}

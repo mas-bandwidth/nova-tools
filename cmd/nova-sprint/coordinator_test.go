@@ -79,6 +79,7 @@ func TestEveryCoordinatorVerbIsTheCoordinators(t *testing.T) {
 	ta.ok("add --stream s1 --sentinel s1-stop")
 	lines := map[string]string{
 		"add":           "add --stream s1 --count 1",
+		"quack":         "quack --streams q --count 1 --repo https://example.com/quack.git",
 		"release":       "release s1-stop --reason r",
 		"resolve":       "resolve",
 		"start":         "start",
@@ -90,6 +91,7 @@ func TestEveryCoordinatorVerbIsTheCoordinators(t *testing.T) {
 		"drop":          "drop s1-1 --reason r",
 		"rank":          "rank s1-1 --first",
 		"resume":        "resume --stream s1",
+		"land":          "land --dry-run",
 		"fleet up":      "fleet up m3",
 		"fleet down":    "fleet down m1",
 		"fleet level":   "fleet level",

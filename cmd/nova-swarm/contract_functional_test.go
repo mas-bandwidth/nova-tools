@@ -183,10 +183,10 @@ func scriptedChild(t *testing.T, family string, walled bool) {
 		time.Sleep(100 * time.Millisecond)
 	}
 	assert.NotContains(t, story, "FAILED", story)
-	pushed := strings.TrimSpace(runGit(t, origin, "rev-parse", "--verify", "-q", "refs/heads/sprint/a-1.w1.e0"))
+	pushed := strings.TrimSpace(runGit(t, origin, "rev-parse", "--verify", "-q", "refs/heads/sprint/a-1.w1.g1.e0"))
 	require.Len(t, pushed, 40, "the card's branch is on origin:\n%s", story)
 	assert.Equal(t, "the change", strings.TrimSpace(runGit(t, origin, "log", "-1", "--format=%s", pushed)), "origin holds the child's commit")
-	assert.Contains(t, story, "pushed="+pushed+" to sprint/a-1.w1.e0")
+	assert.Contains(t, story, "pushed="+pushed+" to sprint/a-1.w1.g1.e0")
 	if walled {
 		logs, err := filepath.Glob(filepath.Join(root, "slots", "*.native.log"))
 		require.NoError(t, err)
@@ -208,7 +208,7 @@ func scriptedChild(t *testing.T, family string, walled bool) {
 		return
 	}
 	require.NoError(t, err, "the member opened the pull request")
-	assert.Equal(t, []string{"pr", "create", "--repo", origin, "--head", "sprint/a-1.w1.e0", "--title", "The change", "--body-file", "-", "--base", "main"},
+	assert.Equal(t, []string{"pr", "create", "--repo", origin, "--head", "sprint/a-1.w1.g1.e0", "--title", "The change", "--body-file", "-", "--base", "main"},
 		strings.Split(strings.TrimSpace(string(args)), "\n"))
 	body, err := os.ReadFile(filepath.Join(dir, "gh.body"))
 	require.NoError(t, err)

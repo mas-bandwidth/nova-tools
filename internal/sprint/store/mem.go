@@ -57,10 +57,11 @@ type memState struct {
 	// after its cursor: it is handed the time the wait may take and returns
 	// when it has passed (a test's clock steps by it, or appends a line). Nil
 	// waits on the wall clock for a line or the time, whichever comes first.
-	LogWait func(d time.Duration)
-	logged  chan struct{}       // closed, and replaced, by every commit that appends to a log
-	routes  []sprint.Route      // the model tiers' routes (routes.go)
-	tiers   map[string][]string // the tiers' route arrays (routes.go)
+	LogWait    func(d time.Duration)
+	logged     chan struct{}       // closed, and replaced, by every commit that appends to a log
+	routes     []sprint.Route      // the model tiers' routes (routes.go)
+	tiers      map[string][]string // the tiers' route arrays (routes.go)
+	readerTier string              // the sprint row's reader tier (routes.go)
 }
 
 // memLog is one epoch's sprint keys.
@@ -716,6 +717,17 @@ func (m *Mem) RowSet(_ context.Context, table, row string, texts map[string]stri
 	ep := t.at(m.active(t))
 	if !containsStr(ep.rows, row) {
 		return refusal("NOROW", "no row "+row)
+	}
+	// as the store's ns_table_row_set: a column the table lacks, or one that is no
+	// text column, is refused
+	for k := range texts {
+		j := t.def.Column(k)
+		if j < 0 {
+			return refusal("NOCOL", "row "+row+": no column "+k)
+		}
+		if t.def.Columns[j].Projection != ntable.Text {
+			return refusal("NOTTEXT", "row "+row+": column "+k+" is not text")
+		}
 	}
 	if ep.texts[row] == nil {
 		ep.texts[row] = map[string]string{}

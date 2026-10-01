@@ -21,11 +21,12 @@ func AddStep(r sprint.AddReq) Step {
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Add(s, r) }}
 }
 
-// AddEachStep admits primaries into several streams in one step.
+// AddEachStep admits primaries into several streams in one step; named cards
+// (ids, or cards with their briefs) are all or none across every stream.
 func AddEachStep(rs []sprint.AddReq) Step {
 	named := false
 	for _, r := range rs {
-		named = named || len(r.IDs) > 0
+		named = named || len(r.IDs) > 0 || len(r.Cards) > 0
 	}
 	return Step{Named: named, Args: ArgsOf(rs), Verb: "add", Load: tables(sprint.Work, sprint.Merge, sprint.Fleet), Mirrors: true,
 		Extras: func(s *sprint.Snapshot) map[string][]string {
@@ -61,14 +62,16 @@ func TakeStep(r sprint.TakeReq) Step {
 
 // FinishStep is a worker finishing work cards.
 func FinishStep(r sprint.FinishReq) Step {
-	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "finish", Load: tables(sprint.Fleet, sprint.Readers, sprint.Work), Mirrors: true,
+	// a finish that reports what the run spent prices it with the routes alone, the keys
+	// a member may read (sprint's cost.go; Step.Prices)
+	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "finish", Load: tables(sprint.Fleet, sprint.Readers, sprint.Work), Mirrors: true, Prices: r.Usage != "",
 		Extras: sprint.NamedExtras(sprint.Fleet, r.IDs),
 		Plan:   func(s *sprint.Snapshot) sprint.Plan { return sprint.Finish(s, r) }}
 }
 
 // AskStep deals primaries in review to readers.
 func AskStep(r sprint.AskReq) Step {
-	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "ask", Load: tables(sprint.Work, sprint.Readers, sprint.Merge), Readers: true,
+	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "ask", Load: tables(sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet), Readers: true, Routes: true,
 		// Every read card id each reader could get at the primaries' attempts,
 		// placed or retired: a reader who already has one is not free.
 		Extras: func(s *sprint.Snapshot) map[string][]string {
@@ -85,7 +88,9 @@ func AskStep(r sprint.AskReq) Step {
 
 // ReadStep is a reader recording its reads.
 func ReadStep(r sprint.ReadReq) Step {
-	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "read", Load: tables(sprint.Readers, sprint.Work), Extras: sprint.NamedExtras(sprint.Readers, r.IDs),
+	// a read that reports what it spent prices it with the routes alone, the keys a
+	// reader may read (sprint's cost.go; Step.Prices)
+	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "read", Load: tables(sprint.Readers, sprint.Work), Extras: sprint.NamedExtras(sprint.Readers, r.IDs), Prices: r.Usage != "",
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Read(s, r) }}
 }
 
@@ -121,6 +126,7 @@ func RankStep(r sprint.RankReq) Step {
 
 // MergeStep is one mechanical merge step of a stream.
 func MergeStep(r sprint.MergeReq) Step {
+	// a landing takes each card's total from the card itself (sprint's cost.go)
 	return Step{Args: ArgsOf(r), Verb: "merge", Load: tables(sprint.Merge, sprint.Work), Mirrors: true,
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.MergeStep(s, r) }}
 }

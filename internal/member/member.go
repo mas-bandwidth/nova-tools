@@ -18,13 +18,16 @@
 package member
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
@@ -40,6 +43,14 @@ type Sprint interface {
 type Runner interface {
 	// Start runs the packet as one child and returns a handle for it.
 	Start(p Packet) (Child, error)
+}
+
+// Ender is a Runner told when the member is done with a launch whose child ended: reported,
+// returned or reaped, so nothing reads its working tree again. failed is whether it ended in
+// a way a person may want to inspect (a failed finish, a read returned with no verdict); the
+// runner removes or keeps what the launch staged (docs/SPEC-SWARM.md, `member`).
+type Ender interface {
+	Ended(p Packet, failed bool)
 }
 
 // Child is one running card.
@@ -236,6 +247,12 @@ type Config struct {
 	// names, read with its queue every tick (the fleet row is the truth).
 	Width  int
 	Reader bool // run the readers-table loop instead of the fleet's
+	// Room is asked once a tick before any child is started (a recovered card or a taken
+	// one): ok false starts none that tick, with why said once when it begins and once when
+	// it ends. nil asks nothing (docs/SPEC-SWARM.md, `member`, the disk floor).
+	Room func() (ok bool, why string)
+	// Now is the clock the work pass's progress is read on (BeatLoop); nil is time.Now.
+	Now func() time.Time
 	// Meter is the machine's one-second CPU samples, taken by a goroutine of the caller
 	// (hostload.Sampler.Run); nil, or with no sample since the last beat, the beat
 	// measures the machine itself.
@@ -267,6 +284,10 @@ type Member struct {
 	pusher  Pusher
 	out     io.Writer
 	running map[string]launch // by card id (a work card's id, a read card's id)
+	// returnedAt is when this reader returned a read with no verdict, by card id: a read
+	// asked of it again is not begun before ReadStageRetry has passed, so a reader that
+	// cannot launch does not take and return the same read every pass
+	returnedAt map[string]time.Time
 	// stageRetried is the reads run again once after a stage failure, by card id: a second
 	// stage failure of the card is returned, whichever path launches it
 	stageRetried map[string]bool
@@ -274,12 +295,20 @@ type Member struct {
 	width        int // the width this tick runs to: the override, else the fleet row's
 	drain        bool
 	beaten       uint64 // the Meter's samples the last written beat has carried
+	noRoom       bool   // Room said no on the last tick it was asked
+
+	// the beat's own clock (BeatLoop): beatMu guards beaten; progress is when the work pass
+	// last advanced, in unix nanoseconds
+	beatMu   sync.Mutex
+	progress atomic.Int64
 }
 
 // New is a member with nothing running. A reader pushes nothing, and its
 // pusher may be nil; a work member's pusher pushes every work card's commit.
 func New(cfg Config, s Sprint, r Runner, pu Pusher, out io.Writer) *Member {
-	return &Member{cfg: cfg, sprint: s, runner: r, pusher: pu, out: out, running: map[string]launch{}, stageRetried: map[string]bool{}, width: cfg.Width}
+	m := &Member{cfg: cfg, sprint: s, runner: r, pusher: pu, out: out, running: map[string]launch{}, stageRetried: map[string]bool{}, returnedAt: map[string]time.Time{}, width: cfg.Width}
+	m.advanced() // a member begins with its pass going on
+	return m
 }
 
 // Drain stops the member taking new cards: from the next tick it beats, reads
@@ -307,26 +336,70 @@ func (m *Member) Running() int {
 // store client's deadline, five seconds (internal/redisconn ReadTimeout), the
 // least a tailnet round trip with jitter needs.
 func (m *Member) readCall(args ...string) (int, []byte) {
-	code, out := m.sprint.Run(args...)
+	code, out := m.run(args...)
 	if code == 2 {
-		code, out = m.sprint.Run(args...)
+		code, out = m.run(args...)
 	}
 	return code, out
 }
 
-// Tick is one pass of the loop: beat, read the queue, report every child
-// that ended, take (begin) up to the width, start each card taken. It returns
-// the number of cards it acted on (reports plus starts), and the first error
-// that stopped a step; a refused verb is not an error here (it is printed and
-// the card is left for the next pass), a store that does not answer is.
-func (m *Member) Tick(now time.Time) (acted int, err error) {
+// THE BEAT GOES ON ITS OWN CLOCK (the fleet pass of 2026-10-01: a machine alive, pushing and
+// finishing, marked `down: no beat for 45s`). The work pass is serial: the queue, then for each
+// ended card a push to the forge and a finish, then the take and the starts; from a machine
+// 100 ms from the store a verb takes seconds, and sixteen lanes ending together hold one pass
+// longer than MissedBeatsDown beat windows (docs/SPEC-SPRINT.md section 5). A machine that is
+// busy is never down, so the beat is not the pass's: BeatLoop sends it every interval, apart
+// from the pass, for as long as the pass is going on. A pass that has not advanced for
+// BeatStall (a verb or a push that never returns) stops the beat, so a hung member still goes
+// down and its cards are dealt elsewhere.
+
+// BeatStall is how long the work pass may go without advancing before the member stops
+// beating. A pass advances at every sprint verb it gets an answer to, every push that ends
+// and every pass it begins; each verb is bounded (two minutes, the member's own budget), so
+// five minutes without one is a pass that is stuck, not slow.
+const BeatStall = 5 * time.Minute
+
+// run is one sprint verb of the work pass: its answer is the pass advancing.
+func (m *Member) run(args ...string) (int, []byte) {
+	code, out := m.sprint.Run(args...)
+	m.advanced()
+	return code, out
+}
+
+// advanced records that the work pass went on, now.
+func (m *Member) advanced() { m.progress.Store(m.clock().UnixNano()) }
+
+func (m *Member) clock() time.Time {
+	if m.cfg.Now != nil {
+		return m.cfg.Now()
+	}
+	return time.Now()
+}
+
+// Stalled is how long the work pass has gone without advancing, when that is past
+// BeatStall; 0 while it is going on.
+func (m *Member) Stalled() time.Duration {
+	since := m.clock().Sub(time.Unix(0, m.progress.Load()))
+	if since <= BeatStall {
+		return 0
+	}
+	return since
+}
+
+// Beat is one beat of this member's presence, apart from the work pass. A member's is
+// `fleet beat <member>`, naming the highest one-second load sample since the last beat
+// written, so the ten-second highest nova-sprint keeps over its beats (docs/SPEC-SPRINT.md,
+// the fleet) is the highest of the last ten seconds; with no sample it names none and
+// nova-sprint fleet beat measures the machine itself. A reader's is its queue, the verb that
+// is a reader's beat (docs/SPEC-SPRINT.md, the readers), its answer not read. A store that
+// does not answer is asked again once (readCall's rule), and then the error.
+func (m *Member) Beat() error {
+	m.beatMu.Lock()
+	defer m.beatMu.Unlock()
+	args := []string{"queue", "--as", m.cfg.As, "--json"}
+	var total uint64
 	if !m.cfg.Reader {
-		// the beat names the highest one-second sample since the last beat written, so the
-		// ten-second highest nova-sprint keeps over its beats (docs/SPEC-SPRINT.md, the
-		// fleet) is the highest of the last ten seconds; with no sample it names none and
-		// nova-sprint fleet beat measures the machine itself
-		args := []string{"fleet", "beat", m.cfg.As}
-		var total uint64
+		args = []string{"fleet", "beat", m.cfg.As}
 		if m.cfg.Meter != nil {
 			var pct float64
 			var ok bool
@@ -334,14 +407,58 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 				args = append(args, "--load", strconv.FormatFloat(pct, 'f', 1, 64))
 			}
 		}
-		code, out := m.readCall(args...)
-		if code == 0 && m.cfg.Meter != nil {
-			m.beaten = total
+	}
+	code, out := m.sprint.Run(args...)
+	if code == 2 {
+		code, out = m.sprint.Run(args...)
+	}
+	if code == 0 && !m.cfg.Reader && m.cfg.Meter != nil {
+		m.beaten = total
+	}
+	if code != 0 {
+		return fmt.Errorf("beat: exit %d: %s", code, strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
+// BeatLoop beats at every tick of every until ctx ends, while the work pass is going on:
+// once it has gone BeatStall without advancing, the beat stops, said once, and starts again,
+// said once, when the pass goes on. A beat that fails is said and the next is sent at the
+// next tick.
+func (m *Member) BeatLoop(ctx context.Context, every <-chan time.Time, out io.Writer) {
+	stopped := false
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-every:
 		}
-		if code == 2 {
-			return 0, fmt.Errorf("beat: the store did not answer: %s", strings.TrimSpace(string(out)))
+		if d := m.Stalled(); d > 0 {
+			if !stopped {
+				stopped = true
+				fmt.Fprintf(out, "MEMBER BEAT STOPPED: the work pass has not advanced for %s (the bound is %s); the sprint marks this member down and deals its cards elsewhere\n", d.Round(time.Second), BeatStall)
+			}
+			continue
+		}
+		if stopped {
+			stopped = false
+			fmt.Fprintf(out, "NOTE beat resumed: the work pass advanced\n")
+		}
+		if err := m.Beat(); err != nil {
+			fmt.Fprintf(out, "NOTE %s\n", err)
 		}
 	}
+}
+
+// Tick is one pass of the loop: read the queue, report every child
+// that ended, take (begin) up to the width, start each card taken. It returns
+// the number of cards it acted on (reports plus starts), and the first error
+// that stopped a step; a refused verb is not an error here (it is printed and
+// the card is left for the next pass), a store that does not answer is.
+func (m *Member) Tick(now time.Time) (acted int, err error) {
+	m.advanced()
+	// the beat is not this pass's: it goes on its own clock (BeatLoop), so a pass held for
+	// minutes by its pushes and finishes never lets the machine go down while it works
 	code, out := m.readCall("queue", "--as", m.cfg.As, "--json")
 	if code != 0 {
 		return 0, fmt.Errorf("queue: exit %d: %s", code, strings.TrimSpace(string(out)))
@@ -389,7 +506,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 				continue
 			}
 			fmt.Fprintf(m.out, "%s %s: the claim moved (epoch %d gen %d attempt %d, now epoch %d gen %d attempt %d)\n", FinishReaped, id, l.epoch, l.gen, l.attempt, c.Packet.Epoch, c.Packet.Gen, c.Packet.Attempt)
-			m.forget(id)
+			m.forget(id, false) // reaped: the result is nobody's
 			claimMoved[id] = true
 			continue
 		}
@@ -429,18 +546,20 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 				continue
 			}
 			if !r.Ran || (r.Verdict != "ok" && r.Verdict != "broken") {
-				// no verdict is no finding: the read is returned, so the
-				// sprint's next tick asks it of another reader up, before
-				// this reader takes its next read (docs/SPEC-SPRINT.md
-				// section 6; tla/DirtyTick.tla, ReadReturn). A return refused
-				// leaves the launch spent: the read stays for the lateness rule.
+				// no verdict is no finding, and not a read: the read is
+				// returned, and the sprint's next tick asks it of another
+				// reader free at the attempt, or of this reader again, which
+				// does not begin it before ReadStageRetry (docs/SPEC-SPRINT.md
+				// section 6; tla/DirtyTick.tla, ReadReturn,
+				// JudgedOnlyAfterTheBound). A return refused leaves the
+				// launch spent: the read stays for the lateness rule.
 				why := oneLine(r.Report)
 				if r.End == EndStaging {
 					why = EndStaging + ": " + oneLine(r.Staging) // the stage's reason, to the inbox
 				}
 				reason := cut(fmt.Sprintf("no verdict (ran=%t verdict=%q): %s", r.Ran, r.Verdict, why))
-				args := append([]string{"read", "--as", m.cfg.As, "--return", id, "--reason", reason}, launched...)
-				code, out := m.sprint.Run(args...)
+				args := append(append([]string{"read", "--as", m.cfg.As, "--return", id, "--reason", reason}, usageArgs(r)...), launched...)
+				code, out := m.run(args...)
 				fmt.Fprintf(m.out, "read %s: returned exit=%d: %s\n", id, code, reason)
 				if code == 2 {
 					return acted, fmt.Errorf("read --return %s: the store did not answer: %s", id, strings.TrimSpace(string(out)))
@@ -450,7 +569,8 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 					m.running[id] = l
 					continue
 				}
-				m.forget(id)
+				m.forget(id, true) // returned with no verdict
+				m.returnedAt[id] = now
 				acted++
 				continue
 			}
@@ -458,7 +578,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 			if r.Verdict == "broken" {
 				word = "--broken"
 			}
-			args = append([]string{"read", "--as", m.cfg.As, word, id, "--finding", oneLine(r.Report)}, launched...)
+			args = append(append([]string{"read", "--as", m.cfg.As, word, id, "--finding", oneLine(r.Report)}, usageArgs(r)...), launched...)
 		} else {
 			pu := *l.push
 			fin, why := Judge(r, pu)
@@ -495,18 +615,16 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 			if fin != FinishOK {
 				args = append(args, "--failed")
 			}
-			if r.Usage != "" {
-				args = append(args, "--usage", r.Usage)
-			}
+			args = append(args, usageArgs(r)...)
 			ok = fin == FinishOK
 			args = append(args, launched...)
 		}
-		code, out := m.sprint.Run(args...)
+		code, out := m.run(args...)
 		fmt.Fprintf(m.out, "%s %s ok=%t exit=%d%s\n", args[0], id, ok, code, routeWords(l.packet))
 		if code == 2 {
 			return acted, fmt.Errorf("%s %s: the store did not answer: %s", args[0], id, strings.TrimSpace(string(out)))
 		}
-		m.forget(id) // refused (1) too: the card is no longer ours to report
+		m.forget(id, !m.cfg.Reader && !ok) // refused (1) too: the card is no longer ours to report
 		acted++
 	}
 	// A child whose card the queue no longer lists (the sprint was cleared, the
@@ -514,12 +632,29 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 	// ended it is forgotten, so it does not hold a place of the width for ever.
 	for id, l := range m.running {
 		if _, listed := byID[id]; !listed && l.child.Done() {
-			m.forget(id)
+			m.forget(id, false)
 			fmt.Fprintf(m.out, "%s %s: no longer in the queue (dropped or returned)\n", FinishReaped, id)
 		}
 	}
 	if m.drain {
 		return acted, nil
+	}
+	// every card this tick would start is started, or, when Config.Room says no, finished as
+	// refused at staging with its reason, so the sprint deals it to another member and says why
+	// (refuseStaging)
+	launch := m.start
+	if ok, why := m.room(); !ok {
+		launch = func(p Packet) bool {
+			returned := m.refuseStaging(p, why)
+			if returned && p.Kind == "read" {
+				// a read handed back under the floor is a return like any other: the
+				// sprint asks it again in place at most twice, then judges it
+				// (internal/sprint MaxReadReasks; tla/DirtyTick.tla, ReasksBounded),
+				// and this reader waits ReadStageRetry before it begins it again
+				m.returnedAt[p.Card] = now
+			}
+			return returned
+		}
 	}
 	// 2. Recover in-flight (working/reading) cards that have no child of ours,
 	// clamped to width. A card in the queue as working (reading) with no child
@@ -528,7 +663,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 	// generation, so a member restart loses nothing. Clamped to width so
 	// recovery never overflows capacity; excess cards remain in the queue for
 	// subsequent passes.
-	acted += m.recoverWorking(ids, byID, wasOurs, claimMoved)
+	acted += m.recoverWorking(ids, byID, wasOurs, claimMoved, launch)
 	// 3. Take (begin) up to the width, in one verb, and start each.
 	room := m.width - m.Running()
 	if room <= 0 {
@@ -549,13 +684,24 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 		// is started is exactly what was claimed
 		var ids []string
 		for _, c := range q.Cards {
+			if at, ok := m.returnedAt[c.ID]; ok && now.Before(at.Add(ReadStageRetry)) {
+				continue // returned by this reader a moment ago: asked of it again later
+			}
 			if c.Col == "asked" && c.Packet != nil && len(ids) < room {
 				ids = append(ids, c.ID)
 				packets = append(packets, *c.Packet)
 			}
 		}
+		for id := range m.returnedAt {
+			if _, listed := byID[id]; !listed || slices.Contains(ids, id) {
+				delete(m.returnedAt, id)
+			}
+		}
+		if len(ids) == 0 {
+			return acted, nil
+		}
 		args := append(append([]string{"read", "--as", m.cfg.As, "--begin"}, ids...), held...)
-		code, out := m.sprint.Run(args...)
+		code, out := m.run(args...)
 		if code == 2 {
 			return acted, fmt.Errorf("read --begin: the store did not answer: %s", strings.TrimSpace(string(out)))
 		}
@@ -565,7 +711,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 		}
 	} else {
 		args := append([]string{"take", "--as", m.cfg.As, "--limit", strconv.Itoa(room), "--json"}, held...)
-		code, out := m.sprint.Run(args...)
+		code, out := m.run(args...)
 		if code == 2 {
 			return acted, fmt.Errorf("take: the store did not answer: %s", strings.TrimSpace(string(out)))
 		}
@@ -580,7 +726,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 		packets = t.Packets
 	}
 	for _, p := range packets {
-		if m.start(p) {
+		if launch(p) {
 			acted++
 		}
 	}
@@ -590,7 +736,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 // recoverWorking starts children for in-flight (working/reading) cards that
 // have no child of ours, up to member width. Each card it leaves for want of
 // room is said, one line, and stays in the queue for a later pass.
-func (m *Member) recoverWorking(ids []string, byID map[string]queueCard, wasOurs, claimMoved map[string]bool) int {
+func (m *Member) recoverWorking(ids []string, byID map[string]queueCard, wasOurs, claimMoved map[string]bool, launch func(Packet) bool) int {
 	acted := 0
 	for _, id := range ids {
 		c := byID[id]
@@ -611,7 +757,7 @@ func (m *Member) recoverWorking(ids []string, byID map[string]queueCard, wasOurs
 			fmt.Fprintf(m.out, "recover %s deferred: width %d full\n", id, m.width)
 			continue
 		}
-		if m.start(*c.Packet) {
+		if launch(*c.Packet) {
 			acted++
 		}
 	}
@@ -641,10 +787,54 @@ func (m *Member) start(p Packet) bool {
 	return true
 }
 
-// forget drops a launch and what is remembered of its card.
-func (m *Member) forget(id string) {
+// forget drops a launch and what is remembered of its card, and tells a runner that is an
+// Ender the launch is done with (failed: a person may want to inspect it).
+func (m *Member) forget(id string, failed bool) {
+	if l, ok := m.running[id]; ok {
+		if e, ok := m.runner.(Ender); ok {
+			e.Ended(l.packet, failed)
+		}
+	}
 	delete(m.running, id)
 	delete(m.stageRetried, id)
+}
+
+// room is whether a child may be started this tick (Config.Room) and why, saying so when
+// the answer changes: the refusal once when it begins, and once when it ends.
+func (m *Member) room() (bool, string) {
+	if m.cfg.Room == nil {
+		return true, ""
+	}
+	ok, why := m.cfg.Room()
+	switch {
+	case !ok && !m.noRoom:
+		fmt.Fprintf(m.out, "take REFUSED: %s\n", why)
+	case ok && m.noRoom:
+		fmt.Fprintf(m.out, "NOTE take resumed: %s\n", why)
+	}
+	m.noRoom = !ok
+	return ok, why
+}
+
+// refuseStaging ends a card this member will not start (Config.Room said no) on the staging
+// refusal path, with the reason, so the sprint sees it at once: a work card is finished
+// failed `staging refused: <why>`, which the sprint withdraws and deals to another member
+// without spending its redeal bound and notes in the inbox (docs/SPEC-CARD-CONTRACT.md
+// section 4; tla/CardContract.tla, StageRefused); a read is returned with the same reason,
+// for another reader. It returns whether the sprint took the word.
+func (m *Member) refuseStaging(p Packet, why string) bool {
+	reason := cut(EndStaging + ": " + oneLine(why))
+	epoch := strconv.FormatUint(p.Epoch, 10)
+	args := []string{"finish", "--as", m.cfg.As, p.Card + "@" + strconv.Itoa(p.Gen), "--failed", "--report", reason, "--epoch", epoch}
+	if p.Kind == "read" {
+		args = []string{"read", "--as", m.cfg.As, "--return", p.Card, "--reason", reason, "--epoch", epoch}
+	}
+	code, out := m.run(args...)
+	fmt.Fprintf(m.out, "%s %s ok=false exit=%d %s%s\n", args[0], p.Card, code, EndStaging, routeWords(p))
+	if code != 0 {
+		fmt.Fprintf(m.out, "NOTE %s %s refused: %s\n", args[0], p.Card, strings.TrimSpace(string(out)))
+	}
+	return code == 0
 }
 
 // failLaunch reports a taken work card this member cannot launch (no model, a
@@ -654,7 +844,7 @@ func (m *Member) forget(id string) {
 func (m *Member) failLaunch(p Packet, why error) {
 	args := []string{"finish", "--as", m.cfg.As, p.Card + "@" + strconv.Itoa(p.Gen), "--failed",
 		"--report", cut("launch refused: " + oneLine(why.Error())), "--epoch", strconv.FormatUint(p.Epoch, 10)}
-	code, out := m.sprint.Run(args...)
+	code, out := m.run(args...)
 	fmt.Fprintf(m.out, "finish %s ok=false exit=%d launch refused%s\n", p.Card, code, routeWords(p))
 	if code != 0 {
 		fmt.Fprintf(m.out, "NOTE finish %s refused: %s\n", p.Card, strings.TrimSpace(string(out)))
@@ -706,6 +896,7 @@ func (m *Member) pushEnded(ids []string, byID map[string]queueCard) {
 				gate <- struct{}{}
 				defer func() { <-gate }()
 				pushes[i] = m.pusher.Push(p, r)
+				m.advanced() // a push that ended is the pass going on
 			}(i, l.packet, r)
 		}
 	}
@@ -806,4 +997,13 @@ func routeWords(p Packet) string {
 		return "" // the member's override, said once on its MEMBER line
 	}
 	return " route=" + p.Route + " model=" + p.Model
+}
+
+// usageArgs is the --usage a finish or a read reports: what the run spent, the card's
+// cost record (internal/cardcost), kept on the card; none when the child reported nothing.
+func usageArgs(r Result) []string {
+	if r.Usage == "" {
+		return nil
+	}
+	return []string{"--usage", r.Usage}
 }

@@ -54,13 +54,15 @@ type Packet struct {
 	Report     string `json:"report,omitempty"`
 }
 
-// BranchOf is the branch a work card's attempt is worked on: one per attempt
-// of one sprint, named by the sprint (its prefix, the card) and its epoch, as the
-// slot and job names are: sprint/<prefix><card>.e<epoch>. A card id comes back
-// after a clear, and a branch named by the card alone holds the last epoch's
-// push, so every push of the next would be refused non-fast-forward.
-func BranchOf(prefix string, epoch uint64, workCard string) string {
-	return "sprint/" + prefix + workCard + ".e" + strconv.FormatUint(epoch, 10)
+// BranchOf is the branch one launch of a work card's attempt is worked on: one per launch,
+// named by the sprint (its prefix, the card), the launch's generation and its epoch, as the
+// slot and job names are: sprint/<prefix><card>.g<gen>.e<epoch>. A card id comes back after a
+// clear, and a branch named by the card alone holds the last epoch's push, so every push of the
+// next would be refused non-fast-forward; and a card dealt again within one epoch (withdrawn
+// from a member, or redealt after a staging or provider failure) is another generation, whose
+// push would collide with the first launch's on a branch named by the epoch alone.
+func BranchOf(prefix string, epoch uint64, workCard string, gen int) string {
+	return "sprint/" + prefix + workCard + ".g" + strconv.Itoa(gen) + ".e" + strconv.FormatUint(epoch, 10)
 }
 
 // Base is where a later attempt of a card starts: the attempt whose pushed head it is, and
@@ -115,9 +117,11 @@ func PacketOf(prefix string, epoch uint64, c, primary *Card, earlier []*Card, wo
 			p.Fix = primary.F("fix")
 		}
 	}
+	// a work card's route, or a read card's: the ask draws a read's as the deal
+	// draws a work card's (route.go), so a reader needs no --model
+	p.Route, p.Model, p.Tokens, p.Deadline = c.F(FieldRoute), c.F(FieldModel), c.F(FieldTokens), c.Int(FieldDeadline)
 	if p.Kind == "work" {
-		p.Branch = BranchOf(prefix, epoch, c.ID)
-		p.Route, p.Model, p.Tokens, p.Deadline = c.F(FieldRoute), c.F(FieldModel), c.F(FieldTokens), c.Int(FieldDeadline)
+		p.Branch = BranchOf(prefix, epoch, c.ID, c.Int("gen"))
 		p.Finding, p.Why = c.F("finding"), c.F("why")
 		// the attempt's own words, written with its card: the primary's are queued for the next
 		// tick's drain, so a take before it sees the primary at the attempt before
@@ -127,7 +131,7 @@ func PacketOf(prefix string, epoch uint64, c, primary *Card, earlier []*Card, wo
 		if prevWork := latestOf(earlier); prevWork != nil {
 			p.Base = prevWork.F("branch")
 			if p.Base == "" {
-				p.Base = BranchOf(prefix, epoch, prevWork.ID)
+				p.Base = BranchOf(prefix, epoch, prevWork.ID, prevWork.Int("gen"))
 			}
 		}
 		b := BaseOf(earlier)
@@ -139,7 +143,7 @@ func PacketOf(prefix string, epoch uint64, c, primary *Card, earlier []*Card, wo
 		p.Head = work.F("head")
 		p.WorkBranch = work.F("branch")
 		if p.WorkBranch == "" {
-			p.WorkBranch = BranchOf(prefix, epoch, work.ID)
+			p.WorkBranch = BranchOf(prefix, epoch, work.ID, work.Int("gen"))
 		}
 		p.WorkBase = work.F("base")
 		p.Report = work.F("report")

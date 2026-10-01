@@ -173,11 +173,11 @@ func (st *Store) heldState(ctx context.Context, s *sprint.Snapshot, pending *OpR
 	}
 	if s.Routes == nil {
 		// the no-stall rule asks what the next deal does: it draws from the routes
-		rs, tiers, err := st.routes(ctx)
+		set, err := st.routes(ctx)
 		if err != nil {
 			return h, err
 		}
-		s.Routes, s.Tiers = rs, tiers
+		set.into(s)
 	}
 	if pending != nil {
 		h.Pending = &sprint.PendingOp{ID: pending.ID, Verb: pending.Verb, At: pending.At}
@@ -219,8 +219,9 @@ func (st *Store) Held(ctx context.Context, id string) (sprint.Hold, error) {
 }
 
 // SyncMirrors brings the display cells up to date: the fleet's (SyncFleet:
-// a member's derived status and measured load), and a stream's ci, state and
-// since. They are display only: the state is the control cards', written with
+// a member's derived status and measured load), a stream's ci, state and
+// since, and the work table's cost: a stream's landed cost, from the same control
+// card (sprint.FieldCost). They are display only: the state is the control cards', written with
 // the moves. A fleet member's done and ok% are the table's own formulas over
 // its finished cells, never written here.
 func (st *Store) SyncMirrors(ctx context.Context) error {
@@ -231,11 +232,16 @@ func (st *Store) SyncMirrors(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	shapes, err := st.B.Shapes(ctx, []string{st.Names.Table(sprint.Merge)})
+	shapes, err := st.B.Shapes(ctx, []string{st.Names.Table(sprint.Merge), st.Names.Table(sprint.Work)})
 	if err != nil {
 		return err
 	}
+	// a stream's landed cost, from its control card, for the work table's cost column
+	costs := map[string]string{}
 	for _, shape := range shapes {
+		if shape.Name != st.Names.Table(sprint.Merge) {
+			continue
+		}
 		var ids []string
 		for _, r := range shape.Rows {
 			ids = append(ids, st.sid(sprint.CtlID(r.Key)))
@@ -250,12 +256,29 @@ func (st *Store) SyncMirrors(ctx context.Context) error {
 		diffs := map[string]map[string]string{}
 		for _, row := range shape.Rows {
 			ctl, _ := rs.Member(st.sid(sprint.CtlID(row.Key)))
+			costs[row.Key] = ctl.Fields[sprint.FieldCost]
 			want := map[string]string{
 				sprint.CI:       dash(ctl.Fields["ci"]),
 				sprint.StateCol: dash(ctl.Fields["state"]),
 				sprint.Since:    clock(ctl.Fields["since"]),
 			}
 			if d := rowDiff(row, want); len(d) > 0 {
+				diffs[row.Key] = d
+			}
+		}
+		if err := st.setRows(ctx, shape.Name, diffs); err != nil {
+			return err
+		}
+	}
+	// the work table's cost column: each stream's landed cost, "-" when none was priced
+	for _, shape := range shapes {
+		if shape.Name != st.Names.Table(sprint.Work) || shape.Column(sprint.Cost) < 0 {
+			// a work table made before the cost column (nova-table col add) has no cell to show
+			continue
+		}
+		diffs := map[string]map[string]string{}
+		for _, row := range shape.Rows {
+			if d := rowDiff(row, map[string]string{sprint.Cost: sprint.MoneyText(costs[row.Key])}); len(d) > 0 {
 				diffs[row.Key] = d
 			}
 		}

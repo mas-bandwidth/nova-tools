@@ -950,6 +950,10 @@ func (st *Store) tick(ctx context.Context, m Machine, last Heartbeat, res *TickR
 	return seen, nil
 }
 
+// routesPart says a tick part plans with the routes: the deal and the ask draw
+// from them, and the check asks what the next deal does.
+func routesPart(name string) bool { return name == "deal" || name == "ask" || name == "check" }
+
 // MaxSettle bounds the updates a tick makes past its first pass while the
 // readers', merge's and fleet's updates write each other's tables: a tick
 // past it fails, naming the tables still written, so it never spins. Only
@@ -1021,6 +1025,20 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 			v.ReaderStates = t.readers
 			view = &v
 		}
+		if view != nil && view.Routes == nil && routesPart(part.Name) {
+			// a part that plans with the routes asks what it would do with them: the
+			// deal's judgment of a reader tier no route serves (route.go,
+			// readRouteMissing) has nothing else to show it; read once a tick, the
+			// cache the parts share
+			set, err := t.st.cached(t.ctx, &t.routes)
+			if err != nil {
+				t.err = fmt.Errorf("tick %s: %w", part.Name, err)
+				return tickFailed
+			}
+			v := *view
+			set.into(&v)
+			view = &v
+		}
 		if view != nil {
 			if drain && view.QueueLen == 0 {
 				continue
@@ -1056,8 +1074,9 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 		}
 		step := TickPartStep(part.Name, fn, t.req, &t.at, nil, &due)
 		step.Pump, step.Drain, step.Twin = table == sprint.Work, drain, t.twin
-		// the deal draws from the routes, and the check asks what the next deal does
-		step.Routes, step.RouteCache = part.Name == "deal" || part.Name == "check", &t.routes
+		// the deal and the ask draw from the routes (a read card's route,
+		// route.go readRouteOf), and the check asks what the next deal does
+		step.Routes, step.RouteCache = routesPart(part.Name), &t.routes
 		// the ask, and the parts that ask what the ask does, plan with the readers' states
 		step.Readers = part.Name == "ask" || part.Name == "check"
 		step.ReaderStates = t.readers
