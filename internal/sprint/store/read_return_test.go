@@ -38,10 +38,11 @@ func (h *harness) returnNotes() []sprint.Note {
 }
 
 // A read returned by the reader that holds it (its launch was refused, so it
-// has no verdict) is retired, and the same tick asks it of another reader up
-// at the same attempt; the reader holds nothing, one happened note names the
-// reader, the card and the reason, and no broken read is counted on the
-// primary (docs/SPEC-SPRINT.md section 6; tla/DirtyTick.tla, ReadReturn).
+// has no verdict) goes back to asked on its row, stamped returned, and the
+// next tick asks it of another reader free at the same attempt, retiring the
+// returned card; one happened note names the reader, the card and the
+// reason, and no broken read is counted on the primary (docs/SPEC-SPRINT.md
+// section 6; tla/DirtyTick.tla, ReadReturn, ReturnLeavesReaderEligible).
 func TestAReadReturnedIsAskedOfAnotherReaderAtTheSameAttempt(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
@@ -53,8 +54,12 @@ func TestAReadReturnedIsAskedOfAnotherReaderAtTheSameAttempt(t *testing.T) {
 	h.must(ReadStep(sprint.ReadReq{As: from, Begin: true, Sel: sprint.Sel{IDs: []string{rc.ID}}, Who: from}))
 	h.must(ReadStep(sprint.ReadReq{As: from, Return: true, Reason: "STAGE FAIL no bench mirror", Sel: sprint.Sel{IDs: []string{rc.ID}}, Who: from}))
 	s := h.snap()
-	assert.Nil(t, s.Readers.Placed(rc.ID), "the returned read is retired")
-	assert.Zero(t, s.Readers.Count(from, sprint.Reading)+s.Readers.Count(from, sprint.Asked), "the reader holds nothing")
+	back := s.Readers.Placed(rc.ID)
+	require.NotNil(t, back, "a return is not a read: the card stays on its row")
+	assert.Equal(t, sprint.Asked, back.Col)
+	assert.NotEmpty(t, back.F(sprint.FieldReturned), "stamped returned")
+	assert.Empty(t, back.F("begun"), "no longer begun")
+	assert.Zero(t, s.Readers.Count(from, sprint.Reading), "the reader is reading nothing")
 	notes := h.returnNotes()
 	require.Len(t, notes, 1)
 	assert.Equal(t, sprint.Happened, notes[0].Kind)
@@ -63,6 +68,7 @@ func TestAReadReturnedIsAskedOfAnotherReaderAtTheSameAttempt(t *testing.T) {
 	}
 	h.machine()
 	s = h.snap()
+	assert.Nil(t, s.Readers.Placed(rc.ID), "a free reader took the returned read: its card retired")
 	var readers []string
 	for _, c := range s.Readers.Of("s1-1") {
 		assert.Equal(t, "1", c.F("attempt"), "the same attempt")
@@ -168,7 +174,7 @@ func TestAReturnedReadWhoseNextReaderGoesAwayIsAskedOrJudgedNeverSilent(t *testi
 		}
 	}
 	asked := readersOf()
-	assert.NotContains(t, asked, "reader-a", "the reader that returned it is never asked again at the attempt")
+	assert.NotContains(t, asked, "reader-a", "a reader whose returned read another reader took is not asked again at the attempt")
 	// asked again of two readers up, or the primary's "cannot ask" judgment
 	// is open: a read left on reader-c, away, with nothing said is the silence
 	if slices.Contains(asked, "reader-c") || len(asked) < 2 {
@@ -195,4 +201,80 @@ func TestAReturnOfAReadAlreadyReportedIsRefused(t *testing.T) {
 			assert.Empty(t, h.returnNotes())
 		})
 	}
+}
+
+// The stranding of 2026-10-01: every reader's launch failed and each returned
+// every read with no verdict. A return is not a read, so the readers stay
+// eligible: the reads go to the reader still free, then back to the readers
+// that returned them, in place, and no "cannot ask" judgment is raised; the
+// primary stays at its attempt with nothing spent, and once the readers can
+// launch their oks accept it (tla/DirtyTick.tla, ReturnLeavesReaderEligible;
+// before, the returned cards were retired and counted as reads, and the
+// primary was stranded: needs 1 different readers and 0 is free).
+func TestReadsEveryReaderReturnsAreNeverStranded(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.asked1(1)
+	readersOf := func() map[string]string {
+		out := map[string]string{}
+		for _, c := range h.snap().Readers.Of("s1-1") {
+			out[c.Row] = c.Col
+		}
+		return out
+	}
+	pr0 := h.snap().Work.Card("s1-1")
+	counters := []string{"attempt", "failed", "reworks", "broken_reads", "stuck", "returns", "redeals"}
+	ret := func(reader string) {
+		h.t.Helper()
+		id := sprint.ReadCardID("s1-1", 1, reader)
+		h.must(ReadStep(sprint.ReadReq{As: reader, Begin: true, Sel: sprint.Sel{IDs: []string{id}}, Who: reader}))
+		h.must(ReadStep(sprint.ReadReq{As: reader, Return: true, Reason: `no verdict (ran=false verdict=""): NATIVE REFUSED`, Sel: sprint.Sel{IDs: []string{id}}, Who: reader}))
+		h.machine()
+	}
+	first := readersOf()
+	require.Len(t, first, 2)
+	var pair []string
+	for r := range first {
+		pair = append(pair, r)
+	}
+	slices.Sort(pair)
+	// the first return goes to the third reader, free at the attempt
+	ret(pair[0])
+	got := readersOf()
+	require.Len(t, got, 2)
+	assert.NotContains(t, got, pair[0])
+	var third string
+	for r := range got {
+		if r != pair[1] {
+			third = r
+		}
+	}
+	require.NotEmpty(t, third)
+	// the next two have no free reader: asked again of the readers that
+	// returned them, in place
+	ret(pair[1])
+	ret(third)
+	s := h.snap()
+	for _, r := range []string{pair[1], third} {
+		c := s.Readers.Placed(sprint.ReadCardID("s1-1", 1, r))
+		require.NotNil(t, c, "%s is asked again", r)
+		assert.Equal(t, sprint.Asked, c.Col, r)
+		assert.Empty(t, c.F(sprint.FieldReturned), "%s: asked again, the stamp cleared", r)
+	}
+	assert.Empty(t, h.openOf(sprint.NCannotAsk), "never stranded in review")
+	pr := s.Work.Card("s1-1")
+	assert.Equal(t, sprint.Review, pr.Col)
+	for _, k := range counters {
+		assert.Equal(t, pr0.F(k), pr.F(k), "a return spends no bound of the primary: %s", k)
+	}
+	assert.Len(t, h.returnNotes(), 3)
+	h.clean("every reader returned")
+	// the fault fixed: both readers read it, and the tick accepts
+	for _, r := range []string{pair[1], third} {
+		id := sprint.ReadCardID("s1-1", 1, r)
+		h.must(ReadStep(sprint.ReadReq{As: r, Verdict: "ok", Finding: "clean", Sel: sprint.Sel{IDs: []string{id}}, Who: r}))
+	}
+	h.machine()
+	assert.Equal(t, sprint.Merging, h.snap().Work.Card("s1-1").Col)
+	h.clean("read and accepted")
 }

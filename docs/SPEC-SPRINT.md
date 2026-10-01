@@ -385,11 +385,17 @@ id (`--op`) returns the original result, with no second counter or notification.
   owed, and the next reader up that has no read card at that attempt is asked.
   A read begun stays with its reader, except one its reader returns with no
   verdict (`read --as <reader> --return <card> --reason <text>`: its launch
-  did not run, or it gave no verdict): the read card is retired (by
-  `returned`) as one taken back is, one happened note `a reader returned a
-  read` carries the reader, the card and the reason, no finding counts against
-  the work, and the next tick asks it of another reader up at the same
-  attempt; a return of a read the caller does not hold is refused. With fewer than two readers up the tick
+  did not run, or it gave no verdict). A return is not a read: the read card
+  goes back to asked on its reader's row, stamped `returned`, one happened
+  note `a reader returned a read` carries the reader, the card and the
+  reason, no finding counts against the work and no bound of the primary is
+  spent, and the next tick asks it of another reader up that has no read card
+  at the attempt (the returned card retired, by `returned`), or, when none is
+  free, of the same reader again, in place, so a reader whose launches failed
+  is never counted as having read the attempt (tla/DirtyTick.tla,
+  ReturnLeavesReaderEligible). Its member does not begin a read it returned
+  again before `member.ReadStageRetry`. A return of a read the caller does not
+  hold is refused. With fewer than two readers up the tick
   asks none: it raises one judgment, `fewer than two readers up: <readers and
   their states>`, for the sprint (not one for each primary), closed when two
   are up or no primary waits; `reader up` and `reader add` answer it.
@@ -407,7 +413,7 @@ id (`--op`) returns the original result, with no second counter or notification.
   A read whose stage fails (the head could not be checked out) is never a verdict: its member
   runs the read again once, after `member.ReadStageRetry`; a second stage failure is returned
   (`read --as <reader> --return <card> --reason <the stage's reason>`), and the next tick asks
-  another reader.
+  it again as above.
 - The read that completes two different readers' ok at a primary's head writes
   the judgment ready to accept; accept, rework and drop close it.
 - The machine's tick accepts every acceptable primary in review whose work did

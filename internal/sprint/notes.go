@@ -65,7 +65,7 @@ const (
 	NReturned        = "returned to review" // sent back from merging: the coordinator decides again
 	NWorkFailed      = "work came back failed"
 	NReadBroken      = "a reader found it broken"
-	NReadReturned    = "a reader returned a read" // no verdict: asked of another reader
+	NReadReturned    = "a reader returned a read" // no verdict, not a read: asked again
 	NConflict        = "stream stopped: conflict on a card"
 	NRed             = "stream stopped: stream branch red"
 	NCross           = "stream stopped: needs a card of another stream first"

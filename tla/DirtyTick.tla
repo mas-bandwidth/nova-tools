@@ -119,6 +119,18 @@
 \*   of a read the reader no longer holds changes nothing. The witness
 \*   "handkeeps" asks it again and keeps the hold (W24, NothingLost). The scenario
 \*   turns the event on (Scn.hand).
+\*   A RETURN IS NOT A READ (2026-10-01, the owner's ask: three readers that
+\*   could not launch returned every read, and 93 cards were stranded in review,
+\*   no reader eligible). The ask never asks a card of a reader in seen[c]: a
+\*   reader that gave a verdict at c's attempt (rep), or whose returned read
+\*   another reader took. A read handed back leaves its reader out of seen
+\*   (hb[c] names it while the card waits): it is asked of another reader that
+\*   can take it, by the reader counter, and when none can, of the reader that
+\*   returned it again, in place, the counter not moved (the code's card goes
+\*   back to asked on its own row; internal/sprint Ask). No per-card count
+\*   moves (brk, rdl, att). The witness "returnspends" counts the return as a
+\*   read (the code before: its card retired, the reader never asked again at
+\*   the attempt), and breaks ReturnLeavesReaderEligible (W25).
 \*
 \* WHAT IS NOT MODELLED. Clear and epochs (the counters' reset); two reads
 \* per attempt (one read each); rework but by a broken read; take is
@@ -152,8 +164,10 @@ VARIABLES col, att, bnd, rd, askw, mq, stat, mc, mr, noUp, Q,
           mctr, rctr, sctr, live, miss, acts, ext,
           phase, pumps, sub, addr, notes, wake, act, plc,
           brk, dealt, always,
-          okd, ci, ret, tk, rdl, ended, ends, hred
+          okd, ci, ret, tk, rdl, ended, ends, hred, seen, hb
 
+\* seen, hb       the readers table: the readers c is not asked of at its
+\*                attempt; the reader that returned c's read while it waits
 \* okd, ci, ret   the work table: a card's read said ok and stands; its CI
 \*                ("none" or "red" at its head); returned at its attempt
 \* tk             the fleet table: the card dealt to a machine is taken
@@ -168,8 +182,8 @@ vars == <<col, att, bnd, rd, askw, mq, stat, mc, mr, noUp, Q,
           mctr, rctr, sctr, live, miss, acts, ext,
           phase, pumps, sub, addr, notes, wake, act, plc,
           brk, dealt, always,
-          okd, ci, ret, tk, rdl, ended, ends, hred>>
-CardVars == <<okd, ci, ret, tk, rdl, ended, ends, hred>>
+          okd, ci, ret, tk, rdl, ended, ends, hred, seen, hb>>
+CardVars == <<okd, ci, ret, tk, rdl, ended, ends, hred, seen, hb>>
 
 -----------------------------------------------------------------------------
 \* Entries. k is the kind, c the card (or "-"), x the machine, the reader
@@ -200,7 +214,7 @@ Cur == [col |-> col, att |-> att, bnd |-> bnd, rd |-> rd, askw |-> askw,
         brk |-> brk, dealt |-> dealt, plc |-> <<>>, notes |-> notes,
         f0 |-> Len(Q["fleet"]),
         okd |-> okd, ci |-> ci, ret |-> ret, tk |-> tk, rdl |-> rdl, ended |-> ended, ends |-> ends,
-        hred |-> hred]
+        hred |-> hred, seen |-> seen, hb |-> hb]
 
 Put(S, t, e) == [S EXCEPT !.q[t] = Append(@, e)]
 
@@ -239,10 +253,12 @@ AcceptAll(S) ==
 \* not dealt again (the witness "redealpast" deals it).
 AtRB(S, c) == Broken # "redealpast" /\ S.ended[c] /\ S.rdl[c] >= MaxRedeals
 
-\* A new attempt: a new card, a new head, nothing returned at it.
+\* A new attempt: a new card, a new head, nothing returned at it, no reader
+\* has read it.
 NewAttempt(S, c) ==
   [S EXCEPT !.okd[c] = FALSE, !.ci[c] = "none", !.ret[c] = FALSE,
-            !.rdl[c] = 0, !.ended[c] = FALSE, !.ends[c] = 0, !.hred[c] = FALSE]
+            !.rdl[c] = 0, !.ended[c] = FALSE, !.ends[c] = 0, !.hred[c] = FALSE,
+            !.seen[c] = {}, !.hb[c] = NoR]
 
 -----------------------------------------------------------------------------
 \* THE WORK PUMP (1.). Applies its whole queue, lands sentinels, releases,
@@ -340,7 +356,8 @@ ApplyR(S, e) ==
          IF S.rd[c] = NoR THEN [S EXCEPT !.askw[c] = TRUE] ELSE S
     [] e.k = "rep" ->
          IF S.rd[c] # e.x[1] THEN S   \* a report of a read since taken back
-         ELSE LET S1 == Put([S EXCEPT !.rd[c] = NoR], "fleet", E("readoff", c, Host[e.x[1]]))
+         ELSE LET S1 == Put([S EXCEPT !.rd[c] = NoR, !.seen[c] = @ \cup {e.x[1]}],
+                            "fleet", E("readoff", c, Host[e.x[1]]))
               IN IF e.x[2] = "ok" THEN Put(S1, "work", E("readok", c, "-"))
                  ELSE IF Broken = "r10"
                  THEN \* R10 as v2.1 writes it: the next attempt dealt at once
@@ -350,7 +367,10 @@ ApplyR(S, e) ==
     [] e.k = "handback" ->  \* the reader returns the read it holds: asked again
          IF S.rd[c] # e.x THEN S
          ELSE IF Broken = "handkeeps" THEN [S EXCEPT !.askw[c] = TRUE]   \* the witness keeps the hold
-         ELSE Put([S EXCEPT !.rd[c] = NoR, !.askw[c] = TRUE], "fleet", E("readoff", c, Host[e.x]))
+         ELSE IF Broken = "returnspends"   \* the witness counts the return as a read
+         THEN Put([S EXCEPT !.rd[c] = NoR, !.askw[c] = TRUE, !.hb[c] = e.x, !.seen[c] = @ \cup {e.x}],
+                  "fleet", E("readoff", c, Host[e.x]))
+         ELSE Put([S EXCEPT !.rd[c] = NoR, !.askw[c] = TRUE, !.hb[c] = e.x], "fleet", E("readoff", c, Host[e.x]))
     [] e.k = "unread" ->
          IF S.rd[c] # NoR THEN [S EXCEPT !.rd[c] = NoR, !.askw[c] = TRUE] ELSE S
     [] e.k = "raway" ->     \* the reader is not up: its reads are taken back and asked again
@@ -367,17 +387,30 @@ ApplyR(S, e) ==
 AbleReaders(S) == {r \in Readers : ("seefleet" \in Fixes => S.stat[Host[r]] = "up") /\
                                     ("readerup" \in Fixes => S.stat[r] = "up") /\
                                     Room(S, Host[r]) > 0}
+\* The readers c may be asked of now: able, and not in seen[c] (A RETURN IS
+\* NOT A READ); Others leaves out the reader that returned it.
+Cands(S, c) == AbleReaders(S) \ S.seen[c]
+Others(S, c) == Cands(S, c) \ {S.hb[c]}
 RECURSIVE PlaceReads(_)
 PlaceReads(S) ==
-  LET W == {c \in Cards : S.askw[c]} IN
-  IF W = {} \/ AbleReaders(S) = {} THEN S
+  LET W == {c \in Cards : S.askw[c] /\ Cands(S, c) # {}} IN
+  IF W = {} THEN S
   ELSE LET c == Lowest(W)
-           rs == AbleReaders(S)
-           r == Pick(ROrder, rs, S.rctr)
-       IN PlaceReads(Put([S EXCEPT !.askw[c] = FALSE, !.rd[c] = r,
-                                   !.rctr = (@ + 1) % CtrMod,
-                                   !.plc = Append(@, [k |-> "r", ctr |-> S.rctr, el |-> rs, pick |-> r])],
-                         "fleet", E("readon", c, Host[r])))
+           h == S.hb[c]
+       IN IF Others(S, c) = {}
+          THEN \* only the reader that returned it can take it: asked of it
+               \* again, in place, the counter not moved
+               PlaceReads(Put([S EXCEPT !.askw[c] = FALSE, !.rd[c] = h, !.hb[c] = NoR],
+                              "fleet", E("readon", c, Host[h])))
+          ELSE LET rs == Others(S, c)
+                   r == Pick(ROrder, rs, S.rctr)
+               IN PlaceReads(Put([S EXCEPT !.askw[c] = FALSE, !.rd[c] = r, !.hb[c] = NoR,
+                                           \* the returned read taken by another
+                                           \* reader: its reader is not asked again
+                                           !.seen[c] = IF h # NoR THEN @ \cup {h} ELSE @,
+                                           !.rctr = (@ + 1) % CtrMod,
+                                           !.plc = Append(@, [k |-> "r", ctr |-> S.rctr, el |-> rs, pick |-> r])],
+                                 "fleet", E("readon", c, Host[r])))
 
 -----------------------------------------------------------------------------
 \* THE MERGE UPDATE (3.). A merge recorded lands the card: an entry to the
@@ -487,7 +520,7 @@ Update(t) ==
 
 Commit(S) ==
   /\ okd' = S.okd /\ ci' = S.ci /\ ret' = S.ret /\ tk' = S.tk /\ rdl' = S.rdl
-  /\ ended' = S.ended /\ ends' = S.ends /\ hred' = S.hred
+  /\ ended' = S.ended /\ ends' = S.ends /\ hred' = S.hred /\ seen' = S.seen /\ hb' = S.hb
   /\ col' = S.col /\ att' = S.att /\ bnd' = S.bnd /\ rd' = S.rd /\ askw' = S.askw
   /\ mq' = S.mq /\ stat' = S.stat /\ mc' = S.mc /\ mr' = S.mr /\ noUp' = S.noUp
   /\ Q' = S.q /\ mctr' = S.mctr /\ rctr' = S.rctr /\ sctr' = S.sctr
@@ -661,6 +694,7 @@ Init ==
   /\ okd = [c \in Cards |-> FALSE] /\ ci = [c \in Cards |-> "none"] /\ ret = [c \in Cards |-> FALSE]
   /\ tk = [c \in Cards |-> FALSE] /\ rdl = [c \in Cards |-> 0] /\ ended = [c \in Cards |-> FALSE]
   /\ ends = [c \in Cards |-> 0] /\ hred = [c \in Cards |-> FALSE]
+  /\ seen = [c \in Cards |-> {}] /\ hb = [c \in Cards |-> NoR]
 
 TickNext == TickStart \/ PumpWork \/ DrainWork \/ TickEnd \/
             \E t \in Three : Pass(t) \/ Drain(t)
@@ -686,6 +720,7 @@ TypeOK ==
   /\ okd \in [Cards -> BOOLEAN] /\ ci \in [Cards -> {"none", "red"}] /\ ret \in [Cards -> BOOLEAN]
   /\ tk \in [Cards -> BOOLEAN] /\ rdl \in [Cards -> 0..(MaxRedeals + 1)]
   /\ ended \in [Cards -> BOOLEAN] /\ ends \in [Cards -> 0..(MaxRedeals + 1)] /\ hred \in [Cards -> BOOLEAN]
+  /\ seen \in [Cards -> SUBSET Readers] /\ hb \in [Cards -> Readers \cup {NoR}]
 
 \* THE CENTRAL PROPERTY (the owner: "nothing advances the work stream table
 \* EXCEPT on the next tick"). Only the tick's one pump writes the work table.
@@ -744,9 +779,16 @@ PumpDone ==
        /\ \E m \in Machines : stat[m] = "up" /\ RoomNow(m) > 0)
   /\ ~\E c \in Cards : col[c] = "review" /\ okd[c] /\ ci[c] # "red" /\ ~ret[c]
 ReadersDone ==
-  ~(/\ \E c \in Cards : askw[c]
-    /\ \E r \in Readers : stat[Host[r]] = "up" /\ RoomNow(Host[r]) > 0
-                          /\ ("readerup" \in Fixes => stat[r] = "up"))
+  ~\E c \in Cards :
+     /\ askw[c]
+     /\ \E r \in Readers \ seen[c] : stat[Host[r]] = "up" /\ RoomNow(Host[r]) > 0
+                                     /\ ("readerup" \in Fixes => stat[r] = "up")
+
+\* A RETURN IS NOT A READ: a read handed back with no verdict leaves its
+\* reader eligible at the card's attempt (while the card waits for a reader,
+\* the reader that returned it is not in seen), so a card every reader
+\* returned is asked again and never stranded in review.
+ReturnLeavesReaderEligible == \A c \in Cards : hb[c] # NoR => hb[c] \notin seen[c]
 
 \* THE ASK GUARD: a read is held only by a reader up, at every state (a reader
 \* away has its reads taken back by the update that applies it, and is placed

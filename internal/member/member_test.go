@@ -1052,6 +1052,34 @@ func TestAWidthOneReaderReturningThreeReadsHoldsAtMostOne(t *testing.T) {
 	assert.Empty(t, g.s.lines("report"))
 }
 
+// TestAReadItReturnedIsNotBegunAgainBeforeTheRetry pins the reader's side of
+// a return that is not a read: the sprint may ask the returned read of the
+// same reader again (tla/DirtyTick.tla, ReturnLeavesReaderEligible), and a
+// reader that cannot launch does not begin it again before ReadStageRetry, so
+// it does not take and return the same read every pass.
+func TestAReadItReturnedIsNotBegunAgainBeforeTheRetry(t *testing.T) {
+	t.Parallel()
+	g := newRig(Config{As: "r", Width: 1, Reader: true})
+	p := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7}
+	g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &p)))
+	_, err := g.tick(t)
+	require.NoError(t, err)
+	g.r.child("r1").end(Result{Ran: false, Report: "NATIVE REFUSED: no identity"})
+	_, err = g.tick(t)
+	require.NoError(t, err)
+	require.Len(t, g.s.lines("return"), 1)
+	// the sprint asked it of this reader again, in place
+	g.s.set("queue", 0, queueJSON(t, 7, asked("r1", &p)))
+	g.s.reset()
+	_, err = g.m.Tick(time.Unix(0, 0).Add(ReadStageRetry - time.Second))
+	require.NoError(t, err)
+	assert.Empty(t, g.s.lines("begin"), "begun again inside the retry")
+	assert.Equal(t, 0, g.m.Running())
+	_, err = g.m.Tick(time.Unix(0, 0).Add(ReadStageRetry))
+	require.NoError(t, err)
+	assert.Equal(t, []string{"read --as r --begin r1 --epoch 7"}, g.s.lines("begin"), "begun once the retry has passed")
+}
+
 // TestAReadReportsOnlyItsVerdict pins that the verdict flag is the reader's
 // own word, never the harness's ok: `broken` files --broken even when the
 // child ran ok, and `ok` files --ok even when OK is false.

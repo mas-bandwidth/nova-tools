@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -267,6 +268,10 @@ type Member struct {
 	pusher  Pusher
 	out     io.Writer
 	running map[string]launch // by card id (a work card's id, a read card's id)
+	// returnedAt is when this reader returned a read with no verdict, by card id: a read
+	// asked of it again is not begun before ReadStageRetry has passed, so a reader that
+	// cannot launch does not take and return the same read every pass
+	returnedAt map[string]time.Time
 	// stageRetried is the reads run again once after a stage failure, by card id: a second
 	// stage failure of the card is returned, whichever path launches it
 	stageRetried map[string]bool
@@ -279,7 +284,7 @@ type Member struct {
 // New is a member with nothing running. A reader pushes nothing, and its
 // pusher may be nil; a work member's pusher pushes every work card's commit.
 func New(cfg Config, s Sprint, r Runner, pu Pusher, out io.Writer) *Member {
-	return &Member{cfg: cfg, sprint: s, runner: r, pusher: pu, out: out, running: map[string]launch{}, stageRetried: map[string]bool{}, width: cfg.Width}
+	return &Member{cfg: cfg, sprint: s, runner: r, pusher: pu, out: out, running: map[string]launch{}, stageRetried: map[string]bool{}, returnedAt: map[string]time.Time{}, width: cfg.Width}
 }
 
 // Drain stops the member taking new cards: from the next tick it beats, reads
@@ -429,11 +434,13 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 				continue
 			}
 			if !r.Ran || (r.Verdict != "ok" && r.Verdict != "broken") {
-				// no verdict is no finding: the read is returned, so the
-				// sprint's next tick asks it of another reader up, before
-				// this reader takes its next read (docs/SPEC-SPRINT.md
-				// section 6; tla/DirtyTick.tla, ReadReturn). A return refused
-				// leaves the launch spent: the read stays for the lateness rule.
+				// no verdict is no finding, and not a read: the read is
+				// returned, and the sprint's next tick asks it of another
+				// reader free at the attempt, or of this reader again, which
+				// does not begin it before ReadStageRetry (docs/SPEC-SPRINT.md
+				// section 6; tla/DirtyTick.tla, ReadReturn,
+				// ReturnLeavesReaderEligible). A return refused leaves the
+				// launch spent: the read stays for the lateness rule.
 				why := oneLine(r.Report)
 				if r.End == EndStaging {
 					why = EndStaging + ": " + oneLine(r.Staging) // the stage's reason, to the inbox
@@ -451,6 +458,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 					continue
 				}
 				m.forget(id)
+				m.returnedAt[id] = now
 				acted++
 				continue
 			}
@@ -549,10 +557,21 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 		// is started is exactly what was claimed
 		var ids []string
 		for _, c := range q.Cards {
+			if at, ok := m.returnedAt[c.ID]; ok && now.Before(at.Add(ReadStageRetry)) {
+				continue // returned by this reader a moment ago: asked of it again later
+			}
 			if c.Col == "asked" && c.Packet != nil && len(ids) < room {
 				ids = append(ids, c.ID)
 				packets = append(packets, *c.Packet)
 			}
+		}
+		for id := range m.returnedAt {
+			if _, listed := byID[id]; !listed || slices.Contains(ids, id) {
+				delete(m.returnedAt, id)
+			}
+		}
+		if len(ids) == 0 {
+			return acted, nil
 		}
 		args := append(append([]string{"read", "--as", m.cfg.As, "--begin"}, ids...), held...)
 		code, out := m.sprint.Run(args...)
