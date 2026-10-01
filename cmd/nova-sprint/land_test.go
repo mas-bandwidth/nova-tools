@@ -438,7 +438,7 @@ func TestLandReviewAGitEnvironmentFailureBlamesNoCard(t *testing.T) {
 // epoch but not its head: the report, guarded on the head and attempt land
 // pinned, refuses it, and the new attempt stays queued while the base holds
 // the old one (tla/Land.tla, idguard).
-func TestLandReviewReportPinsTheHeadItPushed(t *testing.T) {
+func TestLandRefusesAReworkedHeadAndLandsItOnTheNextRun(t *testing.T) {
 	t.Parallel()
 	r := newLandRig(t)
 	r.ok("add --stream s1 --count 1")
@@ -484,7 +484,7 @@ func TestLandReviewReportPinsTheHeadItPushed(t *testing.T) {
 // An --op given again names another operation for another batch: its op id
 // is the op and the batch's pinned heads, so the receipt of the first batch
 // never stands for the second, which lands for real.
-func TestLandReviewReusedOperationCannotClaimAnotherBatchLanded(t *testing.T) {
+func TestLandAReusedOpLandsTheNewBatchForReal(t *testing.T) {
 	t.Parallel()
 	r := newLandRig(t)
 	r.ok("add --stream s1 first")
@@ -503,7 +503,7 @@ func TestLandReviewReusedOperationCannotClaimAnotherBatchLanded(t *testing.T) {
 // Every URL git push would write to is held to the repository: a clone whose
 // origin fetches from the card's repository and pushes to another is refused
 // before either repository changes; so is one with two push URLs.
-func TestLandRereadRefusesAnotherOriginPushURLBeforeChangingEitherRepository(t *testing.T) {
+func TestLandHoldsEveryPushURLToTheRepository(t *testing.T) {
 	t.Parallel()
 	for _, tc := range []struct {
 		name string
