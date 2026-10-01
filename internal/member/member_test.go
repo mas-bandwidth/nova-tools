@@ -301,7 +301,7 @@ func TestEndedNotOkCardIsFinishedFailed(t *testing.T) {
 	if _, err := g.tick(t); err != nil {
 		t.Fatal(err)
 	}
-	want := "finish --as m c1@2 --report no RESULT.md shape; the harness fell over --failed --epoch 7"
+	want := "finish --as m c1@2 --report no result: no RESULT.md shape; the harness fell over --failed --epoch 7"
 	if got := g.s.lines("finish"); !slices.Equal(got, []string{want}) {
 		t.Fatalf("finish lines: %q, want %q", got, want)
 	}
@@ -344,7 +344,7 @@ func TestJudgeNamesTheProviderOnlyForTheRunItFailedWithNoResult(t *testing.T) {
 		"a refused push is git's, said first":                  {Result{End: EndProvider, Provider: "provider: x"}, Push{Refused: "rejected"}, "push refused: rejected"},
 		"a result with nothing to do is the card's":            {Result{End: EndProvider, Provider: "provider: x", Shaped: true, Verdict: "nothing", Report: "nothing: done already"}, Push{None: "no commit"}, "nothing to do: done already"},
 		"a result not done is the card's":                      {Result{End: EndProvider, Provider: "provider: x", Shaped: true, Verdict: "not-done"}, Push{None: "no commit"}, "verdict not-done"},
-		"no provider end: the shape's reason":                  {Result{Provider: "provider: x"}, Push{None: "nothing"}, "no RESULT.md shape"},
+		"no provider end: the child left no result":            {Result{Provider: "provider: x"}, Push{None: "nothing"}, "no result: no RESULT.md shape"},
 		"a budget still names itself first":                    {Result{End: EndBudget}, Push{None: "nothing"}, "budget: no RESULT.md shape"},
 	} {
 		fin, why := Judge(c.r, c.pu)

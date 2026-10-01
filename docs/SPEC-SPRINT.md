@@ -146,7 +146,12 @@ take; the work card keeps provider_error, the last such line (cut to 200
 bytes, until the card is dealt again), and a record of each such take,
 provider_take_<n> (its route, model, member, end, usage and line), which stays
 through the redeals and which `card` prints as one ATTEMPT line for the take
-(`end=provider failure: <line>`, `take=<n>`) before the card's own; a card retired by provider failures has the
+(`end=provider failure: <line>`, `take=<n>`) before the card's own; a take whose child left no
+result at all is an ended take in the same way: the member's failed finish whose report
+begins `no result:` (docs/SPEC-CARD-CONTRACT.md, section 4) is withdrawn, redealt on a
+route the card has not been drawn when another remains, counted against the same bound and
+never judged as failed work, its record's line beginning `no result:` and its ATTEMPT line
+`end=no result: <line>`; a card retired by provider failures has the
 judgment "a card reached its bound" name the provider and that last error
 line; tla/CardContract.tla, ProviderFailure; a launch its member refused at
 staging, before any child ran, is the member's failure and never the card's:

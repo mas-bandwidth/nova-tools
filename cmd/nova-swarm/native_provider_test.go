@@ -210,7 +210,7 @@ func TestAChildTheProviderFailedIsJudgedProviderFailure(t *testing.T) {
 		{"the provider failed it", "NATIVE PROVIDER-FAIL label=c1 wall=450.00s route=x reason=provider: ended without a final message\n" +
 			"NATIVE INCOMPLETE label=c1 job=j tmp=t rc=0 wall=none harness=ok budget=10/1000 why=no-result\n",
 			"provider failure: provider: ended without a final message"},
-		{"no line", "NATIVE INCOMPLETE label=c1 job=j tmp=t rc=0 wall=none harness=ok budget=10/1000 why=no-result\n", "no RESULT.md shape"},
+		{"no line", "NATIVE INCOMPLETE label=c1 job=j tmp=t rc=0 wall=none harness=ok budget=10/1000 why=no-result\n", "no result: no RESULT.md shape"},
 	} {
 		dir := t.TempDir()
 		logPath := filepath.Join(dir, "c1.native.log")

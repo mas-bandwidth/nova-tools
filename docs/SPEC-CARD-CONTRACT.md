@@ -123,7 +123,14 @@ A work card's finish is judged in one place, `member.Judge`, cited from the mode
 - **ok** only when the result has the shape, its verdict is `ok`, its head has a commit the
   staged commit does not (the child committed), and the member's push of it to the card's
   branch succeeded;
-- **failed** otherwise, with the reason: `no RESULT.md shape`, `nothing to do: <why>`,
+- **no result**, a failed finish of its own kind, when the child ended by itself, within its
+  budget and its deadline, having written no result at all and its push was not refused; its
+  reason is `no result: no RESULT.md shape`, and the sprint treats it as an ended take
+  (docs/SPEC-SPRINT.md, the work card's redeals), never as the card's failure: no work came
+  back, so there is nothing to judge (the owner, 2026-10-01: "that's fine with me."). A run
+  its budget or its deadline ended with no result is failed work, the end said first
+  (`budget: no RESULT.md shape`);
+- **failed** otherwise, with the reason: `<end>: no RESULT.md shape`, `nothing to do: <why>`,
   `verdict <word>`, `no commit: <why>`, `push refused: <git's line>`; a failed finish passes
   `--failed` and opens the failed-work judgment, never review, and passes `--head` and
   `--branch` only when a push landed;
