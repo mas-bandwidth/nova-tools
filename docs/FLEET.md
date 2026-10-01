@@ -58,8 +58,8 @@ A reader is a loop record the same as a member: `nova-swarm member --reader`
 under the readers row of its `--as` name (`nova-sprint init --readers reader-1`,
 or `nova-sprint reader add reader-1`), with its width, the most reads it runs at
 once. It names no model either: the ask draws each read card's route from the
-reader tier, the sprint row's `reader_tier` (`nova-config sprint set
---reader_tier flash|pro --as <friend>`, then `apply`, pro unless set), at that tier's rolling index, and
+tier of the card it reads, the tier its work was dealt on (flash when line 1
+names none), at that tier's rolling index, and
 the packet hands the reader its model, budget and deadline; a reader started
 with `--model`, `--tokens` and `--deadline` runs its reads on those instead.
 Both loops name the identity every child commits under, `--identity

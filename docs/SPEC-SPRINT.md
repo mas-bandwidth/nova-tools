@@ -552,15 +552,19 @@ id (`--op`) returns the original result, with no second counter or notification.
   are up or no primary waits; `reader up` and `reader add` answer it.
   The machine's tick asks for every such primary; `ask` is the coordinator's
   own. Each read card the ask creates carries a route as a work card does
-  (`route`, `model`, `tokens`, `deadline`), drawn from the reader tier, the
-  sprint row's `reader_tier` in nova-config (pro unless set), at that tier's
-  rolling index on the fleet table, which the deal and the reads share and the
-  ask moves once a read (`internal/sprint/route.go`, readRouteOf;
+  (`route`, `model`, `tokens`, `deadline`), drawn from the tier of the card
+  it reads, the tier the deal draws that card's work from (line 1's tier,
+  flash when it names none, so a card that pins a model and names no tier is
+  read on flash; a frontier card, a tier no route serves, is read on pro; the
+  owner, 2026-10-01: "i think readers being conservatively the same tier as
+  the work being done seems fine?"), at that tier's rolling index on the
+  fleet table, which the deal and the reads share and the ask moves once a
+  read (`internal/sprint/route.go`, readRouteOf;
   tla/RouteIndex.tla, THE READS); its packet hands the reader that route, so a
   reader loop needs no `--model`, and a reader started with `--model`,
   `--tokens` and `--deadline` runs its reads on those. A store with no route
-  asks with none, and the reader runs its own; a store whose reader tier no
-  enabled route serves asks with none too, and the deal's tick raises that
+  asks with none, and the reader runs its own; a read whose tier no enabled
+  route serves is asked with none too, and the deal's tick raises that
   tier's judgment, `no route serves the tier`, at once for every primary in
   review whose reads wait or were asked with no route (`route.go`,
   readRouteMissing), closed when a route serves the tier.

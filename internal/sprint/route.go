@@ -138,13 +138,10 @@ func (ri routeIndexes) write(p *Plan) {
 // the array was set) is skipped as an excluded one is.
 func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string, tier, why string) {
 	m, bad := cardhdr.ReadModel(c.F("brief"))
+	tier = tierOf(m)
 	if bad != "" {
 		// a card admitted before the lint read its lines: judged under the tier it
 		// names (an unknown word too), else flash's
-		tier = m.Tier
-		if tier == "" {
-			tier = cardhdr.RouteFlash
-		}
 		return nil, tier, "its brief's model lines: " + bad
 	}
 	if m.Pin != "" {
@@ -152,10 +149,6 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 	}
 	if len(s.Routes) == 0 {
 		return nil, "", ""
-	}
-	tier = m.Tier
-	if tier == "" {
-		tier = cardhdr.RouteFlash
 	}
 	if tier == cardhdr.RouteFrontier {
 		return nil, tier, "a frontier card waits for the coordinator: run it, or pin it with a model: <provider>/<model> line"
@@ -200,29 +193,38 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 	return nil, tier, "no enabled route serves tier " + tier + ": run nova-config route add <name> --tier " + tier + " ..., name it in nova-config tier set " + tier + " --routes <name,...>, then nova-config apply; or pin the card with a model: <provider>/<model> line"
 }
 
-// DefaultReaderTier is the tier a read card's route is drawn from when the
-// sprint row names none.
-const DefaultReaderTier = cardhdr.RoutePro
-
-// ReadTier is the tier the ask draws read cards' routes from: the sprint row's
-// reader_tier, else DefaultReaderTier.
-func (s *Snapshot) ReadTier() string {
-	if s.ReaderTier != "" {
-		return s.ReaderTier
+// tierOf is the tier the deal draws a card's route from: the tier its brief's
+// line 1 names, flash when it names none.
+func tierOf(m cardhdr.Model) string {
+	if m.Tier == "" {
+		return cardhdr.RouteFlash
 	}
-	return DefaultReaderTier
+	return m.Tier
+}
+
+// readTierOf is the tier a primary's reads are drawn from: the tier of the work
+// being read, as the deal draws it (tierOf; the owner, 2026-10-01: "i think
+// readers being conservatively the same tier as the work being done seems
+// fine?"). A card that pins a model and names no tier is read on flash; a
+// frontier card, a tier no route serves, is read on pro.
+func readTierOf(pr *Card) string {
+	m, _ := cardhdr.ReadModel(pr.F("brief"))
+	if t := tierOf(m); t != cardhdr.RouteFrontier {
+		return t
+	}
+	return cardhdr.RoutePro
 }
 
 // readRouteOf is the route fields of one read card the ask creates for the
-// unit key: the read is drawn as a work card is, from the reader tier's array
-// at that tier's rolling index, the index moved past the entry taken and every
-// entry skipped (an entry naming no enabled route), the moves summed under the
-// unit's key, so the deal and the reads of a tier share one rotation
-// (tla/RouteIndex.tla, THE READS). nil when the store holds no route or none
-// serves the reader tier: the read carries no route and its reader runs its
+// primary pr: the read is drawn as a work card is, from the array of pr's tier
+// (readTierOf) at that tier's rolling index, the index moved past the entry
+// taken and every entry skipped (an entry naming no enabled route), the moves
+// summed under pr's unit, so the deal and the reads of a tier share one
+// rotation (tla/RouteIndex.tla, THE READS). nil when the store holds no route
+// or none serves the tier: the read carries no route and its reader runs its
 // own --model.
-func (s *Snapshot) readRouteOf(ri routeIndexes, key string) map[string]string {
-	tier := s.ReadTier()
+func (s *Snapshot) readRouteOf(ri routeIndexes, pr *Card) map[string]string {
+	tier, key := readTierOf(pr), pr.ID
 	if len(s.Routes) == 0 || ri[tier] == nil {
 		return nil
 	}
@@ -249,13 +251,13 @@ func (s *Snapshot) readRouteOf(ri routeIndexes, key string) map[string]string {
 	return nil
 }
 
-// readRouteMissing is the reader tier, and why no read card can be drawn a route
-// of it: "" when the store holds no route at all (reads run on the reader's own
-// model) or an enabled route of the tier is in its array. The deal's tick raises
-// the tier's judgment for the reads waiting (TickDeal, NNoRoute), as it does for
-// work cards.
-func (s *Snapshot) readRouteMissing() (tier, why string) {
-	tier = s.ReadTier()
+// readRouteMissing is the tier of the primary pr's reads (readTierOf), and why
+// no read card of it can be drawn a route of that tier: "" when the store holds
+// no route at all (reads run on the reader's own model) or an enabled route of
+// the tier is in its array. The deal's tick raises the tier's judgment for the
+// reads waiting (TickDeal, NNoRoute), as it does for work cards.
+func (s *Snapshot) readRouteMissing(pr *Card) (tier, why string) {
+	tier = readTierOf(pr)
 	if len(s.Routes) == 0 {
 		return tier, ""
 	}
@@ -266,7 +268,7 @@ func (s *Snapshot) readRouteMissing() (tier, why string) {
 			}
 		}
 	}
-	return tier, "no enabled route serves tier " + tier + ", the reader tier (the sprint row's reader_tier), so its reads have no route: run nova-config route add <name> --tier " + tier + " ..., name it in nova-config tier set " + tier + " --routes <name,...>, then nova-config apply; or nova-config sprint set --reader_tier <tier>"
+	return tier, "no enabled route serves tier " + tier + ", the tier of the work its reads read, so its reads have no route: run nova-config route add <name> --tier " + tier + " ..., name it in nova-config tier set " + tier + " --routes <name,...>, then nova-config apply"
 }
 
 // tokensWord is a route's budget as native's --tokens takes it.

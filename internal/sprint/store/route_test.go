@@ -451,83 +451,75 @@ func TestATickOf1000CardsKeepsTheTripPin(t *testing.T) {
 	assert.Equal(t, map[string]int{"a": 250, "b": 250, "c": 500}, n, "exactly the array's share, every route")
 }
 
-// A read card's route is drawn as a work card's is (route.go, readRouteOf;
-// tla/RouteIndex.tla, THE READS): from the reader tier, pro unless the sprint
-// row names another, at that tier's rolling index, which the deal and the
-// reads share; the route, model, budget and deadline are on the read card and
-// in its packet, so a reader loop needs no --model.
-func TestAReadIsDrawnFromTheReaderTierAtTheIndexTheDealMoves(t *testing.T) {
+// A read runs on its card's tier (the owner, 2026-10-01: "i think readers being
+// conservatively the same tier as the work being done seems fine?"; route.go,
+// readRouteOf; tla/RouteIndex.tla, THE READS): in one sprint a flash card's reads
+// carry flash routes and a pro card's reads pro routes, each drawn at its tier's
+// rolling index, which the deal and the reads share; the route, model, budget and
+// deadline are on the read card and in its packet, so a reader loop needs no --model.
+func TestAReadRunsOnItsCardsTierAtThatTiersIndex(t *testing.T) {
 	t.Parallel()
-	for _, tc := range []struct {
-		name, readerTier string
-		want             []string // the routes of the two reads, in reader order
-		index            map[string]string
-	}{
-		// the deal took pro-a at index 0; the reads take pro-b and pro-a
-		{"pro by default", "", []string{"pro-b", "pro-a"}, map[string]string{"pro": "3"}},
-		{"the sprint row's tier", "flash", []string{"flash-a", "flash-a"}, map[string]string{"pro": "1", "flash": "2"}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			h := routeHarness(t, route("pro-a", "pro"), route("pro-b", "pro"), route("flash-a", "flash"))
-			h.m.SetReaderTier(tc.readerTier)
-			require.NoError(t, h.st.BeatReaders(h.ctx))
-			h.addReady("s1", 1, briefOf("pro", ""))
-			h.startMachine()
-			h.machine()
-			require.Equal(t, "pro-a", h.workCards()["s1-1.w1"].F(sprint.FieldRoute))
-			h.work("m1")
-			h.work("m2")
-			h.machine()
-			s := h.snap()
-			reads := s.Readers.Of("s1-1")
-			require.Len(t, reads, 2, "asked of two readers")
-			var got []string
-			for _, rc := range reads {
-				name := rc.F(sprint.FieldRoute)
-				got = append(got, name)
-				assert.Equal(t, "prov-"+name+"/model-"+name, rc.F(sprint.FieldModel), rc.ID)
-				assert.Equal(t, "1000", rc.F(sprint.FieldTokens), rc.ID)
-				assert.Equal(t, fmt.Sprint(routeSeconds), rc.F(sprint.FieldDeadline), rc.ID)
-				p := sprint.PacketOf("", 0, rc, s.Work.Card("s1-1"), nil, nil)
-				assert.Equal(t, "prov-"+name+"/model-"+name, p.Model, "the read's packet carries its model")
-				assert.Equal(t, routeSeconds, p.Deadline)
-			}
-			assert.Equal(t, tc.want, got)
-			for tier, want := range tc.index {
-				v, _ := s.Fleet.Prop(sprint.PropRouteIndex(tier))
-				assert.Equal(t, want, v, "the %s index moves once a card, work or read", tier)
-			}
-			h.clean("reads drawn")
-		})
+	h := routeHarness(t, route("pro-a", "pro"), route("pro-b", "pro"), route("flash-a", "flash"), route("flash-b", "flash"))
+	require.NoError(t, h.st.BeatReaders(h.ctx))
+	h.addReady("s1", 1, briefOf("pro", ""))
+	h.addReady("s2", 1, briefOf("flash", ""))
+	h.startMachine()
+	h.machine()
+	// each deal took its tier's entry at index 0
+	require.Equal(t, "pro-a", h.workCards()["s1-1.w1"].F(sprint.FieldRoute))
+	require.Equal(t, "flash-a", h.workCards()["s2-1.w1"].F(sprint.FieldRoute))
+	h.work("m1")
+	h.work("m2")
+	h.machine()
+	s := h.snap()
+	for id, tier := range map[string]string{"s1-1": "pro", "s2-1": "flash"} {
+		reads := s.Readers.Of(id)
+		require.Len(t, reads, 2, "%s asked of two readers", id)
+		var got []string
+		for _, rc := range reads {
+			name := rc.F(sprint.FieldRoute)
+			got = append(got, name)
+			assert.Equal(t, "prov-"+name+"/model-"+name, rc.F(sprint.FieldModel), rc.ID)
+			assert.Equal(t, "1000", rc.F(sprint.FieldTokens), rc.ID)
+			assert.Equal(t, fmt.Sprint(routeSeconds), rc.F(sprint.FieldDeadline), rc.ID)
+			p := sprint.PacketOf("", 0, rc, s.Work.Card(id), nil, nil)
+			assert.Equal(t, "prov-"+name+"/model-"+name, p.Model, "the read's packet carries its model")
+			assert.Equal(t, routeSeconds, p.Deadline)
+		}
+		// the tier's index stood at 1 after the deal: the reads take entries 1 and 2
+		assert.ElementsMatch(t, []string{tier + "-a", tier + "-b"}, got, "%s, a %s card, is read on %s routes", id, tier, tier)
+		v, _ := s.Fleet.Prop(sprint.PropRouteIndex(tier))
+		assert.Equal(t, "3", v, "the %s index moves once a card, work or read", tier)
 	}
+	h.clean("reads drawn")
 }
 
-// A primary in review waiting for reads while no enabled route serves the reader
-// tier is held by the tier's "no route serves the tier" judgment at once, the
-// deal's own (route.go, readRouteMissing; TickDeal), not at the unreported
-// deadline; a route of the tier closes it.
-func TestReadsTheReaderTierCannotServeAreJudgedAtOnce(t *testing.T) {
+// A primary in review waiting for reads while no enabled route serves its tier
+// is held by the tier's "no route serves the tier" judgment at once, the deal's
+// own (route.go, readRouteMissing; TickDeal), not at the unreported deadline; a
+// route of the tier closes it. The card pins its model, so its work is dealt on
+// the pin while its reads, on its tier, pro, have no route.
+func TestReadsTheirCardsTierCannotServeAreJudgedAtOnce(t *testing.T) {
 	t.Parallel()
 	h := routeHarness(t, route("flash-a", "flash"))
 	require.NoError(t, h.st.BeatReaders(h.ctx))
-	h.addReady("s1", 1, briefOf("flash", ""))
+	h.addReady("s1", 1, briefOf("pro", "model: x/y\ntokens: 100\ndeadline: 60"))
 	h.startMachine()
 	h.machine()
 	h.work("m1")
 	h.work("m2")
 	h.machine()
 	open := h.a2Open(sprint.NNoRoute)
-	require.Len(t, open, 1, "the reader tier, pro by default, has no route")
+	require.Len(t, open, 1, "the card's tier, pro, has no route")
 	assert.Equal(t, sprint.StreamSubject(sprint.TierSubject("pro")), open[0].Subject())
-	assert.Contains(t, open[0].Note.What, "reader tier")
+	assert.Contains(t, open[0].Note.What, "the tier of the work its reads read")
 	assert.Contains(t, open[0].Note.Primaries, "s1-1")
 	h.machine()
 	assert.Len(t, h.a2Open(sprint.NNoRoute), 1, "written once, not every tick")
 	assert.Equal(t, 1, h.notesOf(sprint.NNoRoute))
 	h.m.SetRoutes([]sprint.Route{route("flash-a", "flash"), route("pro-a", "pro")})
 	h.machine()
-	assert.Empty(t, h.a2Open(sprint.NNoRoute), "a route of the reader tier closes it")
+	assert.Empty(t, h.a2Open(sprint.NNoRoute), "a route of the card's tier closes it")
 }
 
 // One path asks (commit 255180e2; fleet pass 7, 2026-10-01): the finish of reworked work

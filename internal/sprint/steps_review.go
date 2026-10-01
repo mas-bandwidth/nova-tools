@@ -69,8 +69,8 @@ func Ask(s *Snapshot, r AskReq) Plan {
 	chosen := pick(&p, r.Sel, eligibleTurns(s.Work.Column(Review), eligible, srr), rowOf, eligible, s.primaryCard)
 	rr := askRound(s)
 	moves := roundMoves{}
-	// a read card's route is drawn as a work card's is, from the reader tier at
-	// its rolling index on the fleet table (route.go, readRouteOf;
+	// a read card's route is drawn as a work card's is, from its primary's tier
+	// at that tier's rolling index on the fleet table (route.go, readRouteOf;
 	// tla/RouteIndex.tla, THE READS); a step that read no fleet table or no
 	// route asks with none
 	var ri routeIndexes
@@ -140,7 +140,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		}
 		for _, rd := range chosenReaders {
 			fields := map[string]string{"kind": "read", "primary": c.ID, "stream": c.Row, "reader": rd, "attempt": itoa(attempt), "head": c.F("head"), "asked": stamp(s.Now)}
-			for k, v := range s.readRouteOf(ri, c.ID) {
+			for k, v := range s.readRouteOf(ri, c) {
 				fields[k] = v
 			}
 			u.Changes = append(u.Changes, change(Readers, createEntry(ReadCardID(c.ID, attempt, rd), rd, Asked, c.Score, fields)))
