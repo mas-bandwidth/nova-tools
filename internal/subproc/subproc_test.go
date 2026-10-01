@@ -67,10 +67,9 @@ func TestBudgetsAreTheNamedDefaults(t *testing.T) {
 		{subproc.Go, 300 * time.Second},
 		{subproc.Tool, 60 * time.Second},
 	} {
-		got := c.kind.Budget()
-		assert.Equal(t, c.want, got, "%s budget is %s, want %s", c.kind, got, c.want)
+		assert.Equal(t, c.want, c.kind.Budget(), "%s budget", c.kind)
 	}
-	assert.Equal(t, time.Duration(5*time.Second), subproc.WaitDelay, "WaitDelay is %s, want 5s", subproc.WaitDelay)
+	assert.Equal(t, 5*time.Second, subproc.WaitDelay, "WaitDelay")
 }
 
 func TestKindOfNamesTheProgram(t *testing.T) {
@@ -81,8 +80,7 @@ func TestKindOfNamesTheProgram(t *testing.T) {
 		"gh": subproc.GH, "ssh": subproc.SSH, "scp": subproc.SSH, "rsync": subproc.SSH,
 		"go": subproc.Go, "sops": subproc.Tool, "tailscale": subproc.Tool, "": subproc.Tool,
 	} {
-		got := subproc.KindOf(name)
-		assert.Equal(t, want, got, "KindOf(%q) = %s, want %s", name, got, want)
+		assert.Equal(t, want, subproc.KindOf(name), "KindOf(%q)", name)
 	}
 }
 
@@ -94,9 +92,9 @@ func TestBoundForIsTheBudgetUnlessTheCallerIsSooner(t *testing.T) {
 		d, ok := ctx.Deadline()
 		cancel()
 		require.True(t, ok, "%s: a background caller got no deadline", k)
-		if left := time.Until(d); left > k.Budget() || left < k.Budget()-30*time.Second {
-			t.Errorf("%s: deadline is %s away, want about %s", k, left, k.Budget())
-		}
+		left := time.Until(d)
+		assert.LessOrEqual(t, left, k.Budget(), "%s: deadline is %s away, want about %s", k, left, k.Budget())
+		assert.GreaterOrEqual(t, left, k.Budget()-30*time.Second, "%s: deadline is %s away, want about %s", k, left, k.Budget())
 
 		// A caller whose own deadline is sooner than the budget keeps it.
 		sooner := time.Now().Add(k.Budget() / 2)
@@ -133,7 +131,7 @@ func TestEveryKindEndsASlowChildAndDoesNotHangOnItsPipe(t *testing.T) {
 
 			cmd, cancel := subproc.Command(context.Background(), k, script)
 			defer cancel()
-			require.Equal(t, subproc.WaitDelay, cmd.WaitDelay, "Command left WaitDelay at %s, want %s", cmd.WaitDelay, subproc.WaitDelay)
+			require.Equal(t, subproc.WaitDelay, cmd.WaitDelay, "Command left WaitDelay")
 			cmd.WaitDelay = 100 * time.Millisecond
 			out := newStanding()
 			cmd.Stdout = out
@@ -152,19 +150,17 @@ func TestBoundedWrapNamesADeadlineKillAndLeavesOtherErrorsAlone(t *testing.T) {
 	defer stop()
 	boom := errors.New("signal: killed")
 	var te *subproc.TimeoutError
-	if err := (subproc.Bounded{Ctx: expired, Budget: time.Minute}).Wrap("git status", boom); !errors.As(err, &te) || !errors.Is(err, boom) {
-		t.Fatalf("a deadline kill was reported as %v", err)
-	}
+	err := (subproc.Bounded{Ctx: expired, Budget: time.Minute}).Wrap("git status", boom)
+	require.ErrorAs(t, err, &te, "a deadline kill was reported as %v", err)
+	require.ErrorIs(t, err, boom, "a deadline kill was reported as %v", err)
 	require.Contains(t, te.Error(), "git status did not finish within 1m0s and was killed", "the message is %q", te.Error())
-	if err := (subproc.Bounded{Ctx: context.Background(), Budget: time.Minute}).Wrap("git status", boom); err != boom {
-		t.Fatalf("an error with no deadline was changed to %v", err)
-	}
+	err = (subproc.Bounded{Ctx: context.Background(), Budget: time.Minute}).Wrap("git status", boom)
+	require.Same(t, boom, err, "an error with no deadline was changed to %v", err)
 	cancelled, cancel := context.WithCancel(context.Background())
 	cancel()
-	if err := (subproc.Bounded{Ctx: cancelled, Budget: time.Minute}).Wrap("git status", boom); err != boom {
-		t.Fatalf("a cancellation was reported as a deadline: %v", err)
-	}
-	require.NoError(t, (subproc.Bounded{Ctx: expired, Budget: time.Minute}).Wrap("git status", nil), "nil became")
+	err = (subproc.Bounded{Ctx: cancelled, Budget: time.Minute}).Wrap("git status", boom)
+	require.Same(t, boom, err, "a cancellation was reported as a deadline: %v", err)
+	require.NoError(t, (subproc.Bounded{Ctx: expired, Budget: time.Minute}).Wrap("git status", nil), "nil became an error")
 }
 
 // TestLongHasNoDeadlineAndIsCancellable: a long-lived child is not given a budget, and
@@ -176,7 +172,7 @@ func TestLongHasNoDeadlineAndIsCancellable(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	cmd := subproc.Long(ctx, script)
-	require.Equal(t, subproc.WaitDelay, cmd.WaitDelay, "Long left WaitDelay at %s", cmd.WaitDelay)
+	require.Equal(t, subproc.WaitDelay, cmd.WaitDelay, "Long left WaitDelay")
 	_, ok := ctx.Deadline()
 	require.False(t, ok, "the caller's context gained a deadline")
 	cmd.WaitDelay = 100 * time.Millisecond
@@ -188,9 +184,7 @@ func TestLongHasNoDeadlineAndIsCancellable(t *testing.T) {
 	cancel()
 	err := cmd.Wait()
 	var ee *exec.ExitError
-	if !errors.As(err, &ee) && !errors.Is(err, exec.ErrWaitDelay) && !errors.Is(err, context.Canceled) {
-		t.Fatalf("the cancelled child ended with %v", err)
-	}
+	require.True(t, errors.As(err, &ee) || errors.Is(err, exec.ErrWaitDelay) || errors.Is(err, context.Canceled), "the cancelled child ended with %v", err)
 }
 
 // Context keeps the caller's own context and adds WaitDelay.
@@ -198,7 +192,7 @@ func TestContextKeepsTheCallersContextAndSetsWaitDelay(t *testing.T) {
 	t.Parallel()
 
 	cmd := subproc.Context(context.Background(), "git")
-	require.Equal(t, subproc.WaitDelay, cmd.WaitDelay, "WaitDelay is %s", cmd.WaitDelay)
+	require.Equal(t, subproc.WaitDelay, cmd.WaitDelay, "Context left WaitDelay")
 }
 
 // Any git that goes to the network, or moves a whole repository, gets the long budget;
@@ -220,13 +214,10 @@ func TestGitBudgetForTheCommandLine(t *testing.T) {
 		{[]string{"ls-files", "-z"}, subproc.GitBudget},
 		{nil, subproc.GitBudget},
 	} {
-		got := subproc.GitBudgetFor(c.args)
-		assert.Equal(t, c.want, got, "GitBudgetFor(%v) = %s, want %s", c.args, got, c.want)
+		assert.Equal(t, c.want, subproc.GitBudgetFor(c.args), "GitBudgetFor(%v)", c.args)
 	}
-	got := subproc.BudgetOf("/usr/bin/git", []string{"push"})
-	assert.Equal(t, subproc.GitLongBudget, got, "BudgetOf(git push) = %s", got)
-	got = subproc.BudgetOf("sops", []string{"-d", "x"})
-	assert.Equal(t, subproc.ToolBudget, got, "BudgetOf(sops) = %s", got)
+	assert.Equal(t, subproc.GitLongBudget, subproc.BudgetOf("/usr/bin/git", []string{"push"}), "BudgetOf(git push)")
+	assert.Equal(t, subproc.ToolBudget, subproc.BudgetOf("sops", []string{"-d", "x"}), "BudgetOf(sops)")
 }
 
 // Prepare names the budget it gave, and names none when the caller's own deadline was the
@@ -236,11 +227,11 @@ func TestPrepareNamesTheBudgetOnlyWhenItApplied(t *testing.T) {
 
 	b := subproc.Prepare(context.Background(), time.Minute, "git", "status")
 	defer b.Cancel()
-	require.Equal(t, time.Minute, b.Budget, "budget %s, WaitDelay %s", b.Budget, b.Cmd.WaitDelay)
-	require.Equal(t, subproc.WaitDelay, b.Cmd.WaitDelay, "budget %s, WaitDelay %s", b.Budget, b.Cmd.WaitDelay)
+	require.Equal(t, time.Minute, b.Budget, "budget")
+	require.Equal(t, subproc.WaitDelay, b.Cmd.WaitDelay, "WaitDelay")
 	parent, stop := context.WithDeadline(context.Background(), time.Now().Add(time.Hour))
 	defer stop()
 	sooner := subproc.Prepare(parent, 2*time.Hour, "git", "status")
 	defer sooner.Cancel()
-	require.Equal(t, time.Duration(0), sooner.Budget, "the caller's sooner deadline still named a budget: %s", sooner.Budget)
+	require.Equal(t, time.Duration(0), sooner.Budget, "the caller's sooner deadline still named a budget")
 }
