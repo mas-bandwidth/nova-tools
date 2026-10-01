@@ -31,7 +31,6 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -197,30 +196,22 @@ func run(args []string, stdout, stderr io.Writer, d deps) (code int) {
 	}
 }
 
-// parse runs a verb's flag set and reports every required flag that was not
-// GIVEN, not only the first, so one run teaches the whole invocation.
-func parse(fs *flag.FlagSet, args []string, stderr io.Writer, required ...string) bool {
+// parse runs a verb's flag set and returns the set of flags given on the CLI.
+// Flag syntax errors and unexpected arguments are refused immediately.
+func parse(fs *flag.FlagSet, args []string, stderr io.Writer) (map[string]bool, bool) {
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
 	if err := verbflag.Parse(fs, args); err != nil {
 		refuse(stderr, " "+fs.Name(), err.Error())
-		return false
+		return nil, false
 	}
 	if fs.NArg() > 0 {
 		refuse(stderr, " "+fs.Name(), fmt.Sprintf("unexpected argument %q", fs.Arg(0)))
-		return false
+		return nil, false
 	}
 	given := map[string]bool{}
 	fs.Visit(func(f *flag.Flag) { given[f.Name] = true })
-	sort.Strings(required)
-	ok := true
-	for _, name := range required {
-		if !given[name] {
-			refuse(stderr, " "+fs.Name(), fmt.Sprintf("--%s is required; refusing to guess", name))
-			ok = false
-		}
-	}
-	return ok
+	return given, true
 }
 
 func cmdSpill(args []string, stdout, stderr io.Writer, d deps) int {
@@ -230,23 +221,42 @@ func cmdSpill(args []string, stdout, stderr io.Writer, d deps) int {
 	name := fs.String("name", "", "key name")
 	ttlText := fs.String("ttl", "", "time to live")
 	value := fs.String("value", "", "value to spill")
-	if !parse(fs, args, stderr, "addr", "owner", "name", "ttl", "value") {
+	given, ok := parse(fs, args, stderr)
+	if !ok {
 		return 2
 	}
-	if err := validAddr(*store.addr); err != nil {
-		return refuse(stderr, " spill", err.Error())
+	var errs []string
+	for _, req := range []string{"addr", "name", "owner", "ttl", "value"} {
+		if !given[req] {
+			errs = append(errs, fmt.Sprintf("--%s is required; refusing to guess", req))
+		}
 	}
-	ttl, err := time.ParseDuration(*ttlText)
-	if err != nil {
-		return refuse(stderr, " spill", fmt.Sprintf("--ttl %q is not a duration (try 10m)", *ttlText))
+	errs = append(errs, store.validateFlags()...)
+	if given["owner"] {
+		if *owner == "" || strings.ContainsAny(*owner, ": \t\r\n") {
+			errs = append(errs, errNoOwner.Error())
+		}
 	}
-	// Refused before the dial: a write with no owner or no TTL never reaches
-	// the instance.
-	if err := validKey(*owner, *name, ttl); err != nil {
-		return refuse(stderr, " spill", err.Error())
+	if given["name"] {
+		if *name == "" || strings.ContainsAny(*name, " \t\r\n") {
+			errs = append(errs, errNoName.Error())
+		}
 	}
-	if err := store.check(d); err != nil {
-		return refuse(stderr, " spill", err.Error())
+	var ttl time.Duration
+	if given["ttl"] {
+		var err error
+		ttl, err = time.ParseDuration(*ttlText)
+		if err != nil {
+			errs = append(errs, fmt.Sprintf("--ttl %q is not a duration (try 10m)", *ttlText))
+		} else if ttl <= 0 {
+			errs = append(errs, errNoTTL.Error())
+		}
+	}
+	if len(errs) > 0 {
+		return refuse(stderr, " spill", strings.Join(errs, "; "))
+	}
+	if envErrs := store.validateEnv(d); len(envErrs) > 0 {
+		return refuse(stderr, " spill", strings.Join(envErrs, "; "))
 	}
 	ctx := context.Background()
 	conn, err := connect(ctx, store, d)
@@ -277,17 +287,32 @@ func cmdRecall(args []string, stdout, stderr io.Writer, d deps) int {
 	store := loginFlags(fs)
 	owner := fs.String("owner", "", "owner prefix")
 	name := fs.String("name", "", "key name")
-	if !parse(fs, args, stderr, "addr", "owner", "name") {
+	given, ok := parse(fs, args, stderr)
+	if !ok {
 		return 2
 	}
-	if err := validAddr(*store.addr); err != nil {
-		return refuse(stderr, " recall", err.Error())
+	var errs []string
+	for _, req := range []string{"addr", "name", "owner"} {
+		if !given[req] {
+			errs = append(errs, fmt.Sprintf("--%s is required; refusing to guess", req))
+		}
 	}
-	if err := validKey(*owner, *name, time.Hour); err != nil {
-		return refuse(stderr, " recall", err.Error())
+	errs = append(errs, store.validateFlags()...)
+	if given["owner"] {
+		if *owner == "" || strings.ContainsAny(*owner, ": \t\r\n") {
+			errs = append(errs, errNoOwner.Error())
+		}
 	}
-	if err := store.check(d); err != nil {
-		return refuse(stderr, " recall", err.Error())
+	if given["name"] {
+		if *name == "" || strings.ContainsAny(*name, " \t\r\n") {
+			errs = append(errs, errNoName.Error())
+		}
+	}
+	if len(errs) > 0 {
+		return refuse(stderr, " recall", strings.Join(errs, "; "))
+	}
+	if envErrs := store.validateEnv(d); len(envErrs) > 0 {
+		return refuse(stderr, " recall", strings.Join(envErrs, "; "))
 	}
 	key := *owner + ":" + *name
 	ctx := context.Background()
@@ -368,15 +393,27 @@ func (l login) from(flagName, env string) string {
 // letters, digits and underscores, not starting with a digit.
 var envName = regexp.MustCompile(`^[A-Z_][A-Z0-9_]*$`)
 
-// check fills in the login flags that were not given from the environment
-// (--user from UserEnv; --password-env from PasswordEnvEnv, else
-// PasswordEnv) and refuses, before anything is dialled, a login the verb
-// could not make. Each refusal names where the bad value came from. It is
-// the first read of the environment a verb makes.
-func (l login) check(d deps) error {
-	if err := validAddr(*l.addr); err != nil {
-		return err
+// validateFlags checks login flags given directly on the CLI without touching the environment.
+func (l login) validateFlags() []string {
+	var errs []string
+	if l.given("addr") {
+		if err := validAddr(*l.addr); err != nil {
+			errs = append(errs, err.Error())
+		}
 	}
+	if l.given("password-env") && !envName.MatchString(*l.passwordEnv) {
+		errs = append(errs, fmt.Sprintf("--password-env %q is not a variable name; name the variable that holds the password (default %s)", *l.passwordEnv, PasswordEnv))
+	}
+	if l.given("user") && strings.ContainsAny(*l.user, " \t\r\n") {
+		errs = append(errs, fmt.Sprintf("--user %q holds whitespace; give the ACL user's name", *l.user))
+	}
+	return errs
+}
+
+// validateEnv checks the environment defaults and credentials.
+// It is called only after CLI flags are valid, so a refused invocation reads no login.
+func (l login) validateEnv(d deps) []string {
+	var errs []string
 	if !l.given("user") {
 		*l.user = d.getenv(UserEnv)
 	}
@@ -386,16 +423,33 @@ func (l login) check(d deps) error {
 			*l.passwordEnv = PasswordEnv
 		}
 	}
+	badEnv := false
 	if !envName.MatchString(*l.passwordEnv) {
-		return fmt.Errorf("%s %q is not a variable name; name the variable that holds the password (default %s)", l.from("password-env", PasswordEnvEnv), *l.passwordEnv, PasswordEnv)
+		errs = append(errs, fmt.Sprintf("%s %q is not a variable name; name the variable that holds the password (default %s)", l.from("password-env", PasswordEnvEnv), *l.passwordEnv, PasswordEnv))
+		badEnv = true
 	}
-	switch {
-	case *l.user == "":
-		return nil
-	case strings.ContainsAny(*l.user, " \t\r\n"):
-		return fmt.Errorf("%s %q holds whitespace; give the ACL user's name", l.from("user", UserEnv), *l.user)
-	case d.getenv(*l.passwordEnv) == "":
-		return fmt.Errorf("user %s (from %s) but %s is empty; run under nova-secrets exec --only %s, refusing to log in without a password", *l.user, l.from("user", UserEnv), *l.passwordEnv, *l.passwordEnv)
+	if strings.ContainsAny(*l.user, " \t\r\n") {
+		errs = append(errs, fmt.Sprintf("%s %q holds whitespace; give the ACL user's name", l.from("user", UserEnv), *l.user))
+	} else if *l.user != "" && !badEnv && d.getenv(*l.passwordEnv) == "" {
+		errs = append(errs, fmt.Sprintf("user %s (from %s) but %s is empty; run under nova-secrets exec --only %s, refusing to log in without a password", *l.user, l.from("user", UserEnv), *l.passwordEnv, *l.passwordEnv))
+	}
+	return errs
+}
+
+// check fills in the login flags that were not given from the environment
+// (--user from UserEnv; --password-env from PasswordEnvEnv, else
+// PasswordEnv) and refuses, before anything is dialled, a login the verb
+// could not make. Each refusal names where the bad value came from. It is
+// the first read of the environment a verb makes.
+func (l login) check(d deps) error {
+	if err := validAddr(*l.addr); err != nil {
+		return err
+	}
+	if errs := l.validateFlags(); len(errs) > 0 {
+		return errors.New(errs[0])
+	}
+	if errs := l.validateEnv(d); len(errs) > 0 {
+		return errors.New(errs[0])
 	}
 	return nil
 }

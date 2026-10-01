@@ -77,29 +77,69 @@ func launchRedis(ctx context.Context, spec launchSpec, stdout, stderr io.Writer)
 	return err
 }
 
+func checkStoreDir(dir string) error {
+	if strings.TrimSpace(dir) == "" {
+		return errors.New("--dir is empty; name the store directory, refusing to guess")
+	}
+	if !filepath.IsAbs(dir) {
+		return fmt.Errorf("--dir %q is not absolute; name the store directory in full", dir)
+	}
+	if fi, err := os.Stat(dir); err == nil {
+		if !fi.IsDir() {
+			return fmt.Errorf("--dir %q is not a directory", dir)
+		}
+	} else if !errors.Is(err, fs.ErrNotExist) {
+		return fmt.Errorf("--dir %q: %v", dir, err)
+	}
+	return nil
+}
+
 func cmdServe(args []string, stdout, stderr io.Writer, d deps) int {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	bindText := fs.String("bind", "", "comma-separated loopback or tailnet addresses")
 	portText := fs.String("port", "", "port")
 	dirText := fs.String("dir", "", "absolute store directory, created 0700 when missing")
-	if !parse(fs, args, stderr, "bind", "port", "dir") {
+	given, ok := parse(fs, args, stderr)
+	if !ok {
 		return 2
 	}
-	binds, err := validBinds(*bindText)
-	if err != nil {
-		return refuse(stderr, " serve", err.Error())
+	var errs []string
+	for _, req := range []string{"bind", "dir", "port"} {
+		if !given[req] {
+			errs = append(errs, fmt.Sprintf("--%s is required; refusing to guess", req))
+		}
 	}
-	port, err := strconv.Atoi(*portText)
-	if err != nil || port < 1 || port > 65535 {
-		return refuse(stderr, " serve", fmt.Sprintf("--port %q needs a port from 1 to 65535", *portText))
+	var binds []string
+	if given["bind"] {
+		var err error
+		binds, err = validBinds(*bindText)
+		if err != nil {
+			errs = append(errs, err.Error())
+		}
 	}
-	dir, err := storeDir(*dirText)
-	if err != nil {
-		return refuse(stderr, " serve", err.Error())
+	if given["dir"] {
+		if err := checkStoreDir(*dirText); err != nil {
+			errs = append(errs, err.Error())
+		}
+	}
+	var port int
+	if given["port"] {
+		var err error
+		port, err = strconv.Atoi(*portText)
+		if err != nil || port < 1 || port > 65535 {
+			errs = append(errs, fmt.Sprintf("--port %q needs a port from 1 to 65535", *portText))
+		}
+	}
+	if len(errs) > 0 {
+		return refuse(stderr, " serve", strings.Join(errs, "; "))
 	}
 	password := d.getenv(PasswordEnv)
 	if password == "" {
 		return refuse(stderr, " serve", fmt.Sprintf("%s is empty; run under `nova-secrets exec --only %s -- nova-redis serve ...` so auth comes from nova-secrets at run time, never an argument", PasswordEnv, PasswordEnv))
+	}
+	dir, err := storeDir(*dirText)
+	if err != nil {
+		return refuse(stderr, " serve", err.Error())
 	}
 	program, err := d.lookPath(redisServerProgram)
 	if err != nil {

@@ -76,11 +76,20 @@ func fnVerb(args []string, stdout, stderr io.Writer, d deps, open opener) int {
 	}
 	fs := flag.NewFlagSet("fn "+sub, flag.ContinueOnError)
 	store := loginFlags(fs)
-	if !parse(fs, args[1:], stderr, "addr") {
+	given, ok := parse(fs, args[1:], stderr)
+	if !ok {
 		return 2
 	}
-	if err := store.check(d); err != nil {
-		return refuse(stderr, " fn "+sub, err.Error())
+	var errs []string
+	if !given["addr"] {
+		errs = append(errs, "--addr is required; refusing to guess")
+	}
+	errs = append(errs, store.validateFlags()...)
+	if len(errs) > 0 {
+		return refuse(stderr, " fn "+sub, strings.Join(errs, "; "))
+	}
+	if envErrs := store.validateEnv(d); len(envErrs) > 0 {
+		return refuse(stderr, " fn "+sub, strings.Join(envErrs, "; "))
 	}
 	lib := library()
 	want, err := lib.Digest()
