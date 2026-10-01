@@ -45,7 +45,7 @@ func newGitPusher(root, slots, sprintBin string) *gitPusher {
 var pushHeadRE = regexp.MustCompile(`^[0-9a-f]{7,64}$`)
 
 // pushBranchRE is a branch a push names: a ref name with no refspec character
-// (no `:`, `+`, `^`, `~`, `*`, space), so the branch can only name itself.
+// (no `:`, `+`, `^`, `~`, `*`, no blank), so the branch can only name itself.
 var pushBranchRE = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_./-]*$`)
 
 // Push pushes the child's commit, or says why it did not (member.Push).
@@ -164,7 +164,7 @@ func addAlternate(repo, objects string) error {
 	if err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintln(f, objects); err != nil {
+	if _, err := f.WriteString(objects + "\n"); err != nil {
 		f.Close()
 		return err
 	}
@@ -220,5 +220,5 @@ func gitLine(res gitrun.Result, err error) string {
 	return "git failed and said nothing"
 }
 
-// oneLineOf is text as one line: its blanks (tabs, newlines) each one space.
+// oneLineOf is text as one line: each run of blanks (tabs, newlines) one blank.
 func oneLineOf(s string) string { return strings.Join(strings.Fields(s), " ") }

@@ -136,7 +136,7 @@ func TestAPushOriginRefusesIsRefusedWithGitsLineAndNeverForced(t *testing.T) {
 
 	assert.Empty(t, got.Sha)
 	assert.Contains(t, got.Refused, "[rejected]")
-	assert.NotContains(t, got.Refused, "\t", "git's line is one line of spaces")
+	assert.NotContains(t, got.Refused, "\t", "git's line is one line, no tab")
 	assert.Equal(t, theirs, b.originHas(t, "sprint/c1"), "the branch is never forced")
 }
 
@@ -193,7 +193,7 @@ func TestAGitThatRefusesThePushIsRefused(t *testing.T) {
 	t.Parallel()
 	b := newPushBench(t)
 	head := b.commit(t, "the work\n")
-	line := "fatal: could not read Username for 'https://forge.example': terminal prompts disabled"
+	line := "fatal: could not read Username for the origin: terminal prompts disabled"
 	g := b.pusher()
 	g.git = (&recordGit{refusePush: line}).run
 	assert.Equal(t, member.Push{Refused: line}, g.Push(b.p, member.Result{Head: head}))

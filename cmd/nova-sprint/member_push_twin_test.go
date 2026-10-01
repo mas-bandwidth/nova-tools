@@ -158,7 +158,7 @@ func TestTheMembersPushIsWhatTheLandingReads(t *testing.T) {
 // is in review as failed, with git's line first in its report, never done.
 func TestARefusedPushIsAFailedCardOnTheTwin(t *testing.T) {
 	t.Parallel()
-	line := "fatal: could not read Username for 'https://forge.example': terminal prompts disabled"
+	line := "fatal: could not read Username for the origin: terminal prompts disabled"
 	file, _, out := twinMemberFlow(t, &twinPusher{push: member.Push{Refused: line}})
 	assert.Contains(t, out, "NOTE push s1-1.w1 refused: "+line)
 	assert.Contains(t, out, "finish s1-1.w1 ok=false exit=0")
