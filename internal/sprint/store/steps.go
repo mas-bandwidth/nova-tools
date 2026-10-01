@@ -9,10 +9,14 @@ func tables(ts ...string) []string { return ts }
 
 // AddStep admits primaries; it reads the named needs as well, placed or not.
 func AddStep(r sprint.AddReq) Step {
-	return Step{Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: "add", Load: tables(sprint.Work, sprint.Merge, sprint.Fleet), Mirrors: true,
+	return Step{Named: len(r.IDs) > 0 || len(r.Cards) > 0, Args: ArgsOf(r), Verb: "add", Load: tables(sprint.Work, sprint.Merge, sprint.Fleet), Mirrors: true,
 		Extras: func(s *sprint.Snapshot) map[string][]string {
 			ids := append([]string(nil), sprint.AddIDs(s, r)...)
-			return map[string][]string{sprint.Work: append(ids, r.Needs...)}
+			needs := append([]string(nil), r.Needs...)
+			for _, c := range r.Cards {
+				needs = append(needs, c.Needs...)
+			}
+			return map[string][]string{sprint.Work: append(ids, needs...)}
 		},
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Add(s, r) }}
 }
