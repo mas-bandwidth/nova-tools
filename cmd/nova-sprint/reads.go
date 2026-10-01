@@ -436,8 +436,7 @@ func readersWithState(ctx context.Context, st *store.Store, t ntable.Table, now 
 }
 
 // whereHeader is the one line under the title of the where view: STOPPED when
-// the machine is stopped (with its silence, when a RUNNING machine has not
-// ticked), DONE when it stopped because the sprint is done (the view's state
+// the machine is stopped (or a RUNNING machine has not ticked), DONE when it stopped because the sprint is done (the view's state
 // text, errata 3 amendment 6), and the progress line, with no machine text,
 // when it is running. A failed last tick stays on the line.
 func whereHeader(summary, machine string) string {
