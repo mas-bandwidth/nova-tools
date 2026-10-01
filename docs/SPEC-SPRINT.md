@@ -452,8 +452,12 @@ id (`--op`) returns the original result, with no second counter or notification.
   ask moves once a read (`internal/sprint/route.go`, readRouteOf;
   tla/RouteIndex.tla, THE READS); its packet hands the reader that route, so a
   reader loop needs no `--model`, and a reader started with `--model`,
-  `--tokens` and `--deadline` runs its reads on those. A store with no route,
-  or none for the reader tier, asks with none, and the reader runs its own.
+  `--tokens` and `--deadline` runs its reads on those. A store with no route
+  asks with none, and the reader runs its own; a store whose reader tier no
+  enabled route serves asks with none too, and the deal's tick raises that
+  tier's judgment, `no route serves the tier`, at once for every primary in
+  review whose reads wait or were asked with no route (`route.go`,
+  readRouteMissing), closed when a route serves the tier.
   Work that came back failed is not read: it waits for the coordinator.
   `ask --another` deals a primary already asked to one more reader, for that
   attempt only (the readers kept on the primary stay the pair it was asked

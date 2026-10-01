@@ -516,6 +516,20 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 		}
 		ready = append(ready, c)
 	}
+	// the reads too: a primary in review waiting for reads while no enabled route
+	// serves the reader tier is held by the same judgment of that tier, the deal's,
+	// at once, not at the unreported deadline (route.go, readRouteMissing); one
+	// owner of the judgment, so it is written once and closed once
+	if tier, why := s.readRouteMissing(); why != "" && s.Readers != nil {
+		for _, c := range s.Work.Column(Review) {
+			if c.F("result") != "failed" && readsWithoutRoute(s, c) {
+				unserved[tier] = append(unserved[tier], c.ID)
+				if whyOf[tier] == "" {
+					whyOf[tier] = why
+				}
+			}
+		}
+	}
 	for _, tier := range sortedKeys(unserved) {
 		conds = append(conds, cond{typ: NNoRoute, stream: TierSubject(tier), streamLevel: true, primaries: unserved[tier],
 			what: fmt.Sprintf("%d primaries of tier %s wait: %s", len(unserved[tier]), tier, whyOf[tier])})
@@ -545,6 +559,22 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 	}
 	due += notify(&p, s, conds, []string{NNoMember, NBound, NNoRoute}, r)
 	return p, due
+}
+
+// readsWithoutRoute says a primary in review waits for reads, or holds a read
+// asked or begun with no route (asked while no route served the reader tier):
+// what the reader tier's no-route judgment holds (TickDeal).
+func readsWithoutRoute(s *Snapshot, pr *Card) bool {
+	live := liveReadsAt(s, pr, pr.Int("attempt"))
+	if len(live) < 2 {
+		return true
+	}
+	for _, rc := range live {
+		if (rc.Col == Asked || rc.Col == Reading) && rc.F(FieldRoute) == "" {
+			return true
+		}
+	}
+	return false
 }
 
 // beatingHeld says some fleet member beats and every member that beats is
