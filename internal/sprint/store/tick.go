@@ -470,17 +470,19 @@ func (r TickResult) Notes() int {
 // of waiting primaries that are off the table, which may have been dropped.
 func tickExtras(s *sprint.Snapshot) map[string][]string {
 	// and the read card ids the ask part could create for primaries in review
-	// with no read card placed at their attempt: one retired there means that
-	// reader already read it.
+	// with fewer than two read cards placed at their attempt: one retired there
+	// (read, taken back or returned) means that reader already had it.
 	var reads []string
 	if s.Readers != nil {
 		for _, c := range s.Work.Column(sprint.Review) {
 			attempt := c.Int("attempt")
-			placed := false
+			placed := 0
 			for _, rd := range s.Readers.Rows() {
-				placed = placed || s.Readers.Placed(sprint.ReadCardID(c.ID, attempt, rd)) != nil
+				if s.Readers.Placed(sprint.ReadCardID(c.ID, attempt, rd)) != nil {
+					placed++
+				}
 			}
-			if placed {
+			if placed >= 2 {
 				continue
 			}
 			for _, rd := range s.Readers.Rows() {

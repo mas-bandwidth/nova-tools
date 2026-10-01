@@ -50,7 +50,7 @@ func init() {
 		{"finish", "--as <member> <card>@<gen>... --epoch <n> [--failed] [--head <h>] [--report <text>]", "finish --as m1 s1-1.w1@1 --epoch 0 --report 'tests green'", (*app).cmdFinish},
 		{"ask", "[<id>... | --group <id> [--expect <n>]] [--stream <s>] [--limit <n>] [--another] [--answers <note>]", "ask", (*app).cmdAsk},
 		{"queue", "--as <reader|member> | --stream <s>", "queue --as reader-a", (*app).cmdQueue},
-		{"read", "--as <reader> (--begin | --ok | --broken) [<card>...] --epoch <n> [--limit <n>] [--finding <text>]", "read --as reader-a --ok --limit 5 --epoch 0", (*app).cmdRead},
+		{"read", "--as <reader> (--begin | --ok | --broken) [<card>...] --epoch <n> [--limit <n>] [--finding <text>] | --as <reader> --return <card> --reason <text> --epoch <n>", "read --as reader-a --ok --limit 5 --epoch 0", (*app).cmdRead},
 		{"accept", "(<id>... | --stream <s> | --read-ok | --group <id> [--expect <n>]) [--answers <note>]", "accept --read-ok", (*app).cmdAccept},
 		{"rework", "(<id>... | --group <id> [--expect <n>]) [--fix <text>] [--answers <note>]", "rework s1-4 --fix 'handle the empty case'", (*app).cmdRework},
 		{"return", "(<id>... | --group <id> [--expect <n>]) [--reason <text>] [--answers <note>]", "return s1-7 --reason 'suspect of the red batch'", (*app).cmdReturn},
@@ -1391,18 +1391,26 @@ func (a *app) cmdRead(args []string, stdout, stderr io.Writer) int {
 	broken := fs.Bool("broken", false, "the read found it broken")
 	finding := fs.String("finding", "", "what the read found")
 	limit := fs.Int("limit", 0, "the first n of the reader's queue (default 1)")
+	ret := fs.String("return", "", "hand back a read the reader holds and has no verdict on: the next tick asks it of another reader up; no finding against the work")
+	reason := fs.String("reason", "", "with --return: why the read has no verdict (it reaches the inbox)")
 	ids, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "read", err.Error())
 	}
 	n := 0
-	for _, b := range []bool{*begin, *ok, *broken} {
+	for _, b := range []bool{*begin, *ok, *broken, *ret != ""} {
 		if b {
 			n++
 		}
 	}
 	if *as == "" || n != 1 {
-		return refuse(stderr, "read", "wants --as <reader> and one of --begin, --ok, --broken")
+		return refuse(stderr, "read", "wants --as <reader> and one of --begin, --ok, --broken, --return <card> --reason <text>")
+	}
+	if *ret != "" {
+		if len(ids) > 0 || *reason == "" {
+			return refuse(stderr, "read", "--return names its one card and wants --reason <text>")
+		}
+		ids = []string{*ret}
 	}
 	verdict := "ok"
 	if *broken {
@@ -1414,7 +1422,7 @@ func (a *app) cmdRead(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "read", err.Error())
 	}
 	return a.runStep("read", *c, st, store.ReadStep(sprint.ReadReq{Sel: sprint.Sel{IDs: ids, Limit: *limit}, As: *as, Begin: *begin,
-		Verdict: verdict, Finding: *finding, Who: *as}), stdout, stderr)
+		Verdict: verdict, Finding: *finding, Return: *ret != "", Reason: *reason, Who: *as}), stdout, stderr)
 }
 
 func (a *app) cmdAccept(args []string, stdout, stderr io.Writer) int {

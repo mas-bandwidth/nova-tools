@@ -355,7 +355,13 @@ id (`--op`) returns the original result, with no second counter or notification.
   step that asks the primary again): its read card is retired (by `away`), the
   primary stays at its attempt, no redeal is spent and no `ask --another` is
   owed, and the next reader up that has no read card at that attempt is asked.
-  A read begun stays with its reader. With fewer than two readers up the tick
+  A read begun stays with its reader, except one its reader returns with no
+  verdict (`read --as <reader> --return <card> --reason <text>`: its launch
+  did not run, or it gave no verdict): the read card is retired (by
+  `returned`) as one taken back is, one happened note `a reader returned a
+  read` carries the reader, the card and the reason, no finding counts against
+  the work, and the next tick asks it of another reader up at the same
+  attempt; a return of a read the caller does not hold is refused. With fewer than two readers up the tick
   asks none: it raises one judgment, `fewer than two readers up: <readers and
   their states>`, for the sprint (not one for each primary), closed when two
   are up or no primary waits; `reader up` and `reader add` answer it.
