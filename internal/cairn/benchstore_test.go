@@ -21,12 +21,16 @@
 package cairn
 
 import (
-	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/testkit"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // benchFixture is today's real cairn, copied into testdata. A test that proves
@@ -38,14 +42,10 @@ const benchFixture = "testdata/bench-b9395d11.md"
 func benchStore(t *testing.T, session string) (store, file string, before []byte) {
 	t.Helper()
 	raw, err := os.ReadFile(benchFixture)
-	if err != nil {
-		t.Fatalf("read fixture: %v", err)
-	}
+	require.NoError(t, err, "read fixture")
 	store = t.TempDir()
 	file = filepath.Join(store, session+".md")
-	if err := os.WriteFile(file, raw, 0o644); err != nil {
-		t.Fatalf("write bench file: %v", err)
-	}
+	require.NoError(t, os.WriteFile(file, raw, 0o644), "write bench file")
 	return store, file, raw
 }
 
@@ -58,36 +58,21 @@ func TestAppendLandsInTheBenchFileStore(t *testing.T) {
 	prose := "## 14:05Z beat: the lane class landed\n- two PRs, red first; the tails on the card."
 
 	res, err := Append(store, session, "beat-1405", prose, "transcript#L1", now, "manual")
-	if err != nil {
-		t.Fatalf("Append into the bench store: %v", err)
-	}
-	if !res.Persisted || res.Published {
-		t.Fatalf("append must report persisted=true published=false, got %+v", res)
-	}
+	require.NoError(t, err, "Append into the bench store")
+	persistedNotPublished(t, res.Persisted, res.Published, "append must report persisted=true published=false, got %+v", res)
 
-	raw, err := os.ReadFile(file)
-	if err != nil {
-		t.Fatalf("read back: %v", err)
-	}
-	got := string(raw)
-	if !strings.HasPrefix(got, string(before)) {
-		t.Fatalf("the hand-kept record was rewritten; an append only adds to the end")
-	}
+	got := testkit.ReadFile(t, file)
+	require.True(t, strings.HasPrefix(got, string(before)), "the hand-kept record was rewritten; an append only adds to the end")
+	// strings.Contains under True, not require.Contains: a failure names the
+	// record's tail, never the whole hand-kept record.
 	head := "## " + now.Format(time.RFC3339) + " — beat-1405"
-	if !strings.Contains(got, head) {
-		t.Fatalf("no dated section %q in the file; the append must land in the file's own shape:\n%s", head, tail(got, 400))
-	}
-	if !strings.Contains(got, prose) {
-		t.Fatalf("the friend's words are not in the record byte-for-byte:\n%s", tail(got, 400))
-	}
-	if strings.Contains(got[strings.Index(got, head):], "\n\n\n") {
-		t.Fatalf("the appended section is not in the file's shape (one blank line between sections):\n%q", tail(got, 200))
-	}
+	require.True(t, strings.Contains(got, head), "no dated section %q in the file; the append must land in the file's own shape:\n%s", head, tail(got, 400))
+	require.True(t, strings.Contains(got, prose), "the friend's words are not in the record byte-for-byte:\n%s", tail(got, 400))
+	require.NotContains(t, got[strings.Index(got, head):], "\n\n\n", "the appended section is not in the file's shape (one blank line between sections)")
 	// Nothing else appears beside a hand-kept store: no sessions/, no entries/.
 	for _, unwanted := range []string{"sessions", "entries", "log.jsonl"} {
-		if _, err := os.Stat(filepath.Join(store, unwanted)); err == nil {
-			t.Errorf("append created %s/ beside a hand-kept store; the file IS the record", unwanted)
-		}
+		_, err := os.Stat(filepath.Join(store, unwanted))
+		assert.ErrorIs(t, err, fs.ErrNotExist, "append created %s/ beside a hand-kept store; the file IS the record", unwanted)
 	}
 }
 
@@ -99,27 +84,13 @@ func TestAppendToTheBenchFileRetriesAsADuplicate(t *testing.T) {
 	now := time.Date(2026, 9, 18, 14, 5, 0, 0, time.UTC)
 	prose := "the same words, twice"
 
-	if _, err := Append(store, session, "e-1", prose, "src", now, "manual"); err != nil {
-		t.Fatalf("first Append: %v", err)
-	}
-	once, err := os.ReadFile(file)
-	if err != nil {
-		t.Fatal(err)
-	}
+	_, err := Append(store, session, "e-1", prose, "src", now, "manual")
+	require.NoError(t, err, "first Append")
+	once := testkit.ReadFile(t, file)
 	res, err := Append(store, session, "e-1", prose, "src", now.Add(time.Minute), "manual")
-	if err != nil {
-		t.Fatalf("retry Append: %v", err)
-	}
-	if !res.Duplicate {
-		t.Errorf("a retry of the same id and the same words is duplicate=true, got %+v", res)
-	}
-	twice, err := os.ReadFile(file)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(once) != string(twice) {
-		t.Errorf("the retry wrote a second section; a retry adds nothing")
-	}
+	require.NoError(t, err, "retry Append")
+	assert.True(t, res.Duplicate, "a retry of the same id and the same words is duplicate=true, got %+v", res)
+	assert.Equal(t, once, testkit.ReadFile(t, file), "the retry wrote a second section; a retry adds nothing")
 }
 
 func TestAppendToTheBenchFileRefusesDifferentProseUnderTheSameID(t *testing.T) {
@@ -128,14 +99,11 @@ func TestAppendToTheBenchFileRefusesDifferentProseUnderTheSameID(t *testing.T) {
 	const session = "b9395d11"
 	store, _, _ := benchStore(t, session)
 	now := time.Date(2026, 9, 18, 14, 5, 0, 0, time.UTC)
-	if _, err := Append(store, session, "e-1", "the first words", "src", now, "manual"); err != nil {
-		t.Fatalf("first Append: %v", err)
-	}
-	_, err := Append(store, session, "e-1", "different words", "src", now, "manual")
+	_, err := Append(store, session, "e-1", "the first words", "src", now, "manual")
+	require.NoError(t, err, "first Append")
+	_, err = Append(store, session, "e-1", "different words", "src", now, "manual")
 	var conflict *ConflictError
-	if !errors.As(err, &conflict) {
-		t.Fatalf("different prose under a used id must be a conflict, got %v", err)
-	}
+	require.ErrorAs(t, err, &conflict, "different prose under a used id must be a conflict")
 }
 
 func TestOpenOnABenchFileIsANoOpAndNeverSplitsTheRecord(t *testing.T) {
@@ -145,19 +113,10 @@ func TestOpenOnABenchFileIsANoOpAndNeverSplitsTheRecord(t *testing.T) {
 	store, file, before := benchStore(t, session)
 	now := time.Date(2026, 9, 18, 14, 5, 0, 0, time.UTC)
 
-	if err := Open(store, session, "src", now, "manual"); err != nil {
-		t.Fatalf("Open on an existing bench record: %v", err)
-	}
-	if _, err := os.Stat(filepath.Join(store, "sessions", session+".md")); err == nil {
-		t.Fatalf("open wrote a second record under sessions/; the session would be split in two")
-	}
-	raw, err := os.ReadFile(file)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(raw) != string(before) {
-		t.Fatalf("open rewrote the hand-kept record; re-opening an open session is a no-op")
-	}
+	require.NoError(t, Open(store, session, "src", now, "manual"), "Open on an existing bench record")
+	_, err := os.Stat(filepath.Join(store, "sessions", session+".md"))
+	require.ErrorIs(t, err, fs.ErrNotExist, "open wrote a second record under sessions/; the session would be split in two")
+	require.Equal(t, string(before), testkit.ReadFile(t, file), "open rewrote the hand-kept record; re-opening an open session is a no-op")
 }
 
 func TestAppendWithNoRecordAnywhereNamesTheOpenVerb(t *testing.T) {
@@ -166,14 +125,9 @@ func TestAppendWithNoRecordAnywhereNamesTheOpenVerb(t *testing.T) {
 	store := t.TempDir()
 	now := time.Date(2026, 9, 18, 14, 5, 0, 0, time.UTC)
 	_, err := Append(store, "nosuch", "e-1", "words", "src", now, "manual")
-	if err == nil {
-		t.Fatal("append into a store with no record must refuse")
-	}
-	msg := err.Error()
+	require.Error(t, err, "append into a store with no record must refuse")
 	for _, want := range []string{"nova-cairn open", "--store", "--session 'nosuch'", "--publish"} {
-		if !strings.Contains(msg, want) {
-			t.Errorf("the refusal must name the remedy verb whole; %q is missing from %q", want, msg)
-		}
+		assert.ErrorContains(t, err, want, "the refusal must name the remedy verb whole")
 	}
 }
 
@@ -181,9 +135,7 @@ func TestCoverageCountsTheBenchSessionFiles(t *testing.T) {
 	t.Parallel()
 
 	store, _, _ := benchStore(t, "b9395d11")
-	if got := Coverage(store).Sessions; got != 1 {
-		t.Fatalf("Coverage counted %d sessions in a bench store holding one record; the ledger must not read zero over a store it can append to", got)
-	}
+	require.Equal(t, 1, Coverage(store).Sessions, "a bench store holding one record; the ledger must not read zero over a store it can append to")
 }
 
 // tail is the last n bytes of s, for a failure that names what it saw without
