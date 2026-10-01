@@ -701,7 +701,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		// STAGE FAIL (issue #3050): see the timeout branch above for why this line has
 		// to be printed here rather than left to the caller's own NATIVE line.
 		fmt.Fprintf(os.Stdout, "STAGE FAIL bench=%s repo=%s base=%s reason=%s\n",
-			oneline.Field(bench), oneline.Field(stageRes.BaseRepo), oneline.Field(swarm.Version8(stageRes.BaseSha)), oneline.Escape(stageErr.Error()))
+			oneline.Field(bench), oneline.Field(stageRes.BaseRepo), oneline.Field(stageFailBase(stageRes)), oneline.Escape(stageErr.Error()))
 		refuseNative(errOut, stageErr.Error())
 		return nativeRunResult{}, 2
 	}
@@ -1510,6 +1510,15 @@ func harnessSpoke(path string) bool {
 func wroteBytes(path string) bool {
 	fi, err := os.Lstat(path)
 	return err == nil && fi.Mode().IsRegular() && fi.Size() > 0
+}
+
+// stageFailBase is the base a STAGE FAIL line names: the card's sha, else the ref it names
+// (a refusal stages nothing, so the result's sha is empty for a card staged at its ref).
+func stageFailBase(r swarm.StageResult) string {
+	if r.BaseSha != "" {
+		return swarm.Version8(r.BaseSha)
+	}
+	return r.Ref
 }
 
 // refuseNative writes the one REFUSED line the run owes its caller.

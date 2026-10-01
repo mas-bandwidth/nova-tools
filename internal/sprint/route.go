@@ -288,13 +288,21 @@ func ProviderTakes(wc *Card) (takes []ProviderTake, numbers []int) {
 
 // AttemptLines is the work card's lines as `card <id>` prints them: one for each take of it
 // the provider failed (end=provider failure: the line, with the route, model, member and
-// usage of that take), then the card's own (AttemptLine), the take it is on or ended.
+// usage of that take), one for each launch refused at staging (end=staging refused: the
+// reason, with its generation and member), then the card's own (AttemptLine), the take it is
+// on or ended.
 func AttemptLines(wc *Card) []string {
 	var out []string
 	takes, numbers := ProviderTakes(wc)
 	for i, t := range takes {
 		out = append(out, fmt.Sprintf("ATTEMPT %s card=%s take=%d route=%s model=%s member=%s finished=%s usage=%s end=%s: %s",
 			orDash(wc.F("attempt")), wc.ID, numbers[i], orDash(t.Route), orDash(t.Model), orDash(t.Member), orDash(t.Finished), orDash(t.Usage), cardhdr.EndProvider, t.Error))
+	}
+	// each launch refused at staging (StagingTakes), at the generation it was dealt
+	staged, gens := StagingTakes(wc)
+	for i, t := range staged {
+		out = append(out, fmt.Sprintf("ATTEMPT %s card=%s gen=%d route=%s model=%s member=%s finished=%s usage=%s end=%s: %s",
+			orDash(wc.F("attempt")), wc.ID, gens[i], orDash(t.Route), orDash(t.Model), orDash(t.Member), orDash(t.Finished), orDash(t.Usage), cardhdr.EndStaging, t.Error))
 	}
 	return append(out, AttemptLine(wc))
 }
