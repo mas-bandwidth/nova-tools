@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -39,6 +42,13 @@ func newTestApp(t *testing.T) *testApp {
 	// run's wait on a quiet log steps the clock by the time it may take
 	ta.m.LogWait = func(d time.Duration) { ta.a.sleep(d) }
 	ta.a.meter = hostload.Source{NCPU: 4, Load1: func() (float64, bool) { return 1, true }}
+	// every part a tick plans on its twin is checked against a fresh read
+	ta.a.checkTwin = func(twin, fresh *sprint.Snapshot) error {
+		if d := store.TwinDiff(twin, fresh); d != "" {
+			return errors.New(d)
+		}
+		return nil
+	}
 	return ta
 }
 
@@ -193,8 +203,11 @@ func TestTheCommandDrivesAStreamToLanded(t *testing.T) {
 		t.Fatalf("accept: %s", out)
 	}
 	ta.ok("merge --stream s1 --batch 10")
+	// the landings are queued for the next tick's pump, which drains them, and
+	// the tick's done part stops the machine of a sprint that is done
+	ta.ok("tick")
 	out = ta.ok("where")
-	for _, want := range []string{"SPRINT TABLE", "4/4 100.0% done", "work ", "merge ", "fleet "} {
+	for _, want := range []string{"SPRINT TABLE", "DONE", "work ", "merge ", "fleet "} {
 		if !strings.Contains(out, want) {
 			t.Errorf("where lacks %q:\n%s", want, out)
 		}
@@ -281,6 +294,7 @@ func TestAStoppedStreamWaitsForResume(t *testing.T) {
 	}
 	ta.ok("resume --stream s1 --did 'rebased s1-2'")
 	ta.ok("merge --stream s1")
+	ta.ok("tick") // the pump drains the landings the merge queued
 	var w whereView
 	ta.json("where", &w)
 	if w.Landed != 2 {
@@ -415,9 +429,14 @@ func TestVerbLineOnAStoppedMachineHasNoETA(t *testing.T) {
 	}
 	ta.ok("start")
 	out = ta.ok("add --stream s2 --count 1")
-	if last := lastLine(out); last != "0/4 0.0% -> ETA  machine: running" {
+	// the added card is queued for the next tick's pump: the table counts it
+	// once the pump has drained the queue
+	if last := lastLine(out); last != "0/3 0.0% -> ETA  machine: running" {
 		t.Fatalf("add on a running machine: last line %q in %s", last, out)
 	}
+	out = ta.ok("tick")
+	last := lastLine(out)
+	require.True(t, strings.HasPrefix(last, "0/4 0.0% -> ETA"), "the tick after an add on a running machine: last line %q in %s", last, out)
 }
 
 func lastLine(out string) string {

@@ -5,7 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"os/signal"
+	"runtime/pprof"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -97,8 +102,11 @@ func (a *app) setMachine(name string, running bool, args []string, stdout, stder
 
 // machineVerb is the store of tick and run, acting as the machine unless
 // --actor names another.
-func (a *app) machineVerb(name string, args []string, stderr io.Writer) (*store.Store, *common, int) {
+func (a *app) machineVerb(name string, args []string, stderr io.Writer, extra ...func(flagSet)) (*store.Store, *common, int) {
 	fs, c := a.verbSetup(name)
+	for _, x := range extra {
+		x(fs)
+	}
 	pos, err := parse(fs, args)
 	if err != nil {
 		return nil, nil, refuse(stderr, name, err.Error())
@@ -189,6 +197,9 @@ func (a *app) printTick(res store.TickResult, err error, max int, stdout, stderr
 	if res.Due > 0 {
 		fmt.Fprintf(stdout, "DUE %d moves past the tick's bounds: the next ticks catch up\n", res.Due)
 	}
+	for _, n := range res.Said {
+		fmt.Fprintf(stdout, "NOTE %s\n", oneline.Escape(n))
+	}
 	if res.Done != "" {
 		// the sprint is done: the machine stopped itself (errata 3 amendment 6)
 		fmt.Fprintf(stdout, "HAPPENED %s: %s; the machine is STOPPED; %s\n", sprint.NSprintDone, oneline.Escape(res.Done), oneline.Escape(res.Hint))
@@ -208,16 +219,74 @@ func (a *app) printTick(res store.TickResult, err error, max int, stdout, stderr
 }
 
 func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
-	st, c, code := a.machineVerb("run", args, stderr)
+	var profile string
+	var profileTicks int
+	st, c, code := a.machineVerb("run", args, stderr, func(fs flagSet) {
+		fs.StringVar(&profile, "cpuprofile", "", "write a CPU profile of the loop's first ticks to this file (see --profile-ticks)")
+		fs.IntVar(&profileTicks, "profile-ticks", 10, "the ticks --cpuprofile covers; the profile is written after the last of them")
+	})
 	if st == nil {
 		return code
 	}
 	if a.twinOpen(c.redis) {
 		return refuse(stderr, "run", twinMachine)
 	}
+	if profile != "" {
+		stop, err := startProfile(profile)
+		if err != nil {
+			return refuse(stderr, "run", "--cpuprofile: "+err.Error())
+		}
+		stopped := func() {
+			if err := stop(); err != nil {
+				fmt.Fprintf(stderr, "PROFILE not written whole to %s: %v; run again with --cpuprofile\n", profile, err)
+			}
+		}
+		defer stopped()
+		// a run stopped before its last profiled tick (a signal) still
+		// writes the profile of the ticks it made
+		sigs := make(chan os.Signal, 1)
+		signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT)
+		go func() {
+			<-sigs
+			stopped()
+			os.Exit(0)
+		}()
+		a.profiled = func(n int) {
+			if n == profileTicks {
+				if err := stop(); err != nil {
+					fmt.Fprintf(stderr, "PROFILE not written whole to %s: %v; run again with --cpuprofile\n", profile, err)
+					return
+				}
+				fmt.Fprintf(stdout, "PROFILE %d ticks written to %s; run: go tool pprof -top %s\n", n, profile, profile)
+			}
+		}
+	}
 	fmt.Fprintf(stdout, "RUN ticking on every line of the log (at most every %s) and every %s while it is quiet; %s\n", store.TickFloor, store.TickEvery, st.MachineLine(context.Background()))
 	a.runLoop(context.Background(), st, c.max, 0, stdout, stderr)
 	return 0
+}
+
+// startProfile begins a CPU profile to the file; its stop, which may be
+// called more than once, ends it and closes the file, and says (once) if the
+// file was not closed whole.
+func startProfile(path string) (func() error, error) {
+	f, err := os.Create(path)
+	if err != nil {
+		return nil, err
+	}
+	if err := pprof.StartCPUProfile(f); err != nil {
+		_ = f.Close() // ignored: nothing was written to it, and the start's error is the one returned
+		return nil, err
+	}
+	var once sync.Once
+	return func() error {
+		var err error
+		once.Do(func() {
+			pprof.StopCPUProfile()
+			err = f.Close()
+		})
+		return err
+	}, nil
 }
 
 // Why a tick of run began: the loop's start, a line on the log, the clock of
@@ -252,6 +321,9 @@ func (a *app) runLoop(ctx context.Context, st *store.Store, max, n int, stdout, 
 		if a.ticked != nil {
 			a.ticked(i+1, began, why)
 		}
+		if a.profiled != nil {
+			a.profiled(i + 1)
+		}
 		if res.State != was && res.State != "" {
 			fmt.Fprintf(stdout, "%s machine %s\n", a.now().Format("15:04:05"), res.State)
 			was = res.State
@@ -259,6 +331,11 @@ func (a *app) runLoop(ctx context.Context, st *store.Store, max, n int, stdout, 
 		if err != nil || res.State == store.Running || len(res.Parts) > 0 || len(res.Repaired) > 0 || res.Stale != "" || res.Halted != "" {
 			fmt.Fprintf(stdout, "%s tick\n", a.now().Format("15:04:05"))
 			a.printTick(res, err, max, stdout, stderr)
+			if res.State == store.Running || err != nil {
+				// what the tick cost, part by part: its time, round trips,
+				// whole-table reads and records read (store/stats.go)
+				fmt.Fprintln(stdout, res.TimesLine())
+			}
 			if line := sprintLine(ctx, st); line != "" {
 				fmt.Fprintln(stdout, line)
 			}

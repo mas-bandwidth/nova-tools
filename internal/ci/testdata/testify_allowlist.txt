@@ -28,7 +28,7 @@ cmd/nova-sandbox:assert 773 bare assertions to convert to testify
 cmd/nova-secrets:assert 411 bare assertions to convert to testify
 cmd/nova-self-talk:assert 143 bare assertions to convert to testify
 cmd/nova-self-talk:env 1 t.Setenv and Chdir sites to inject through config
-cmd/nova-sprint:assert 606 bare assertions to convert to testify
+cmd/nova-sprint:assert 605 bare assertions to convert to testify
 cmd/nova-swarm:assert 1387 bare assertions to convert to testify
 cmd/nova-swarm:env 54 t.Setenv and Chdir sites to inject through config
 cmd/nova-table:assert 495 bare assertions to convert to testify
@@ -96,7 +96,7 @@ internal/selftalk:assert 48 bare assertions to convert to testify
 internal/sprint:assert 2353 bare assertions to convert to testify
 internal/sprint/driver:assert 89 bare assertions to convert to testify
 internal/sprint/refmodel:assert 115 bare assertions to convert to testify
-internal/sprint/store:assert 1237 bare assertions to convert to testify
+internal/sprint/store:assert 1236 bare assertions to convert to testify
 internal/subproc:assert 30 bare assertions to convert to testify
 internal/swarm:assert 1306 bare assertions to convert to testify
 internal/swarm:env 9 t.Setenv and Chdir sites to inject through config

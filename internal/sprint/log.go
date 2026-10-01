@@ -21,6 +21,11 @@ import (
 // a card, when there is one, will be a line of kind "note".
 const LineMove = "move"
 
+// LineQueued is the kind of a change a step queued for the work table while
+// the machine ran (queue.go): what it asked, which the next tick's pump
+// applies and writes a move line of. A replay of the move lines passes it by.
+const LineQueued = "queued"
+
 // Line is one line of the log.
 type Line struct {
 	Kind  string    `json:"kind"`

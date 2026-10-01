@@ -45,7 +45,7 @@ func Abstract(o Observed) State {
 	a.DealLast, _ = s.Fleet.Prop(sprint.PropDealIndex)
 	a.AskLast, _ = s.Readers.Prop(sprint.PropAskIndex)
 	a.StreamLast, _ = s.Work.Prop(sprint.PropStreamIndex)
-	a.AskStreamLast, _ = s.Work.Prop(sprint.PropAskStreamIndex)
+	a.AskStreamLast, _ = s.Readers.Prop(sprint.PropAskStreamIndex)
 	a.AcceptStreamLast, _ = s.Work.Prop(sprint.PropAcceptStreamIndex)
 	for _, st := range s.Work.Rows() {
 		x := Stream{State: SWaiting}
