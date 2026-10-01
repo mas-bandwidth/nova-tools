@@ -38,7 +38,7 @@ func TestRedisTheDealReadsTheRoutesApplyWrites(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, rs, 2)
 	want := sprint.Route{Name: "flash-a", Tier: "flash", Provider: "deepseek", Model: "v4-flash", Enabled: true}
-	want.Deadline = 900 // seconds, as the route row holds it
+	want.Deadline = 900                  // seconds, as the route row holds it
 	want.Prices.ReasoningAsOutput = true // an absent price flag uses PricesOf's default
 	assert.Equal(t, want, rs[0])
 	assert.Equal(t, "x-ai/grok-4", rs[1].Model)
