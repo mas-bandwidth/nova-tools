@@ -169,7 +169,7 @@ type rig struct {
 
 func newRig(cfg Config) *rig {
 	s, r, out := newScript(), newRunner(), &bytes.Buffer{}
-	return &rig{m: New(cfg, s, r, out), s: s, r: r, out: out}
+	return &rig{m: New(cfg, s, r, &fakePusher{}, out), s: s, r: r, out: out}
 }
 
 func (g *rig) tick(t *testing.T) (int, error) {
