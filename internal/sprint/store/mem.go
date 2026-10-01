@@ -718,6 +718,17 @@ func (m *Mem) RowSet(_ context.Context, table, row string, texts map[string]stri
 	if !containsStr(ep.rows, row) {
 		return refusal("NOROW", "no row "+row)
 	}
+	// as the store's ns_table_row_set: a column the table lacks, or one that is no
+	// text column, is refused
+	for k := range texts {
+		j := t.def.Column(k)
+		if j < 0 {
+			return refusal("NOCOL", "row "+row+": no column "+k)
+		}
+		if t.def.Columns[j].Projection != ntable.Text {
+			return refusal("NOTTEXT", "row "+row+": column "+k+" is not text")
+		}
+	}
 	if ep.texts[row] == nil {
 		ep.texts[row] = map[string]string{}
 	}

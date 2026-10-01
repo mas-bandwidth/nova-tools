@@ -190,12 +190,12 @@ git push -u origin feat
 gh pr create --title T --body B >&2`)
 	story, _ := e.sprintRun(t, h, "anthropic/claude-sonnet-5-5")
 	assert.NotContains(t, story, "FAILED")
-	pushed := strings.TrimSpace(runGit(t, e.origin, "rev-parse", "refs/heads/sprint/a-1.w1.e0"))
+	pushed := strings.TrimSpace(runGit(t, e.origin, "rev-parse", "refs/heads/sprint/a-1.w1.g1.e0"))
 	assert.Equal(t, "the change", strings.TrimSpace(runGit(t, e.origin, "log", "-1", "--format=%s", pushed)))
-	assert.Contains(t, e.log(), "feat -> sprint/a-1.w1.e0", "the push answer names the branch the sprint pushes")
+	assert.Contains(t, e.log(), "feat -> sprint/a-1.w1.g1.e0", "the push answer names the branch the sprint pushes")
 	args, err := os.ReadFile(filepath.Join(e.dir, "gh.args"))
 	require.NoError(t, err)
-	assert.Contains(t, string(args), "--head\nsprint/a-1.w1.e0\n")
+	assert.Contains(t, string(args), "--head\nsprint/a-1.w1.g1.e0\n")
 }
 
 // A child that opens a pull request and committed nothing is failed, no commit.

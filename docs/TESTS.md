@@ -905,10 +905,10 @@ TICK OK state=RUNNING idle=no moved=1 notes=1
 $ nova-sprint take --as m1 --epoch 0
 MOVED s1-1.w1 ready -> working member=m1 gen=1
 PACKET s1-1.w1 attempt=1 gen=1 epoch=0
-  branch: sprint/s1-1.w1.e0
+  branch: sprint/s1-1.w1.g1.e0
   base: the stream's base
   notes: none
-  report it: nova-sprint finish --as m1 s1-1.w1@1 --epoch 0 --branch sprint/s1-1.w1.e0 --report '<what you did>' [--failed]
+  report it: nova-sprint finish --as m1 s1-1.w1@1 --epoch 0 --branch sprint/s1-1.w1.g1.e0 --report '<what you did>' [--failed]
 TAKE OK moved=1 refused=0 notes=0 op=take-t23-1
 0/1 0.0% -> ETA  machine: running
 
@@ -945,7 +945,7 @@ READ OK moved=1 refused=0 notes=0 op=read-t30-1
 0/1 0.0% -> ETA  machine: running
 
 $ nova-sprint tick
-MOVED drain: s1-1 asked of reader-a, reader-b (tick ask by machine)
+MOVED drain: s1-1 asked of reader-a, reader-b (tick ask by machine); s1-1.r1.reader-a reading -> ok (read by boss); s1-1.r1.reader-b reading -> ok (read by boss)
 MOVED accept: s1-1 review -> merging queued (ok from reader-a, reader-b)
 TABLES rows changed: work=1 readers=0 merge=1 fleet=0
 TICK OK state=RUNNING idle=no moved=2 notes=2

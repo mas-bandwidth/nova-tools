@@ -249,6 +249,26 @@ func (s *Snapshot) readRouteOf(ri routeIndexes, key string) map[string]string {
 	return nil
 }
 
+// readRouteMissing is the reader tier, and why no read card can be drawn a route
+// of it: "" when the store holds no route at all (reads run on the reader's own
+// model) or an enabled route of the tier is in its array. The deal's tick raises
+// the tier's judgment for the reads waiting (TickDeal, NNoRoute), as it does for
+// work cards.
+func (s *Snapshot) readRouteMissing() (tier, why string) {
+	tier = s.ReadTier()
+	if len(s.Routes) == 0 {
+		return tier, ""
+	}
+	for _, name := range s.tierArray(tier) {
+		for _, r := range s.Routes {
+			if r.Name == name && r.Tier == tier && r.Enabled {
+				return tier, ""
+			}
+		}
+	}
+	return tier, "no enabled route serves tier " + tier + ", the reader tier (the sprint row's reader_tier), so its reads have no route: run nova-config route add <name> --tier " + tier + " ..., name it in nova-config tier set " + tier + " --routes <name,...>, then nova-config apply; or nova-config sprint set --reader_tier <tier>"
+}
+
 // tokensWord is a route's budget as native's --tokens takes it.
 func tokensWord(n int) string {
 	if n <= 0 {
