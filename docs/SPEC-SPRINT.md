@@ -84,7 +84,9 @@ member with no finished card shows `0` and `0.0%`; the footer pools ok% over
 the members (every ok over every finished card, never a mean of the members'
 percentages). The text cells (ci, state, since, status, load) are display
 copies of the control cards, written after each step; the control cards are
-written with the moves.
+written with the moves. A step whose write committed and whose display copies
+then failed to sync reports OK, for every verb, with the sync's error on its own
+line, never FAIL: the table holds what the step wrote.
 
 ## 2. The cards
 
