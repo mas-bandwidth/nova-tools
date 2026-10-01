@@ -146,3 +146,61 @@ func TestAFileNamedToTheServerIsAbsolute(t *testing.T) {
 	assert.Equal(t, "/abs/dir", got[7])
 	assert.Equal(t, "--brief-file", got[9], "a flag's word that is another flag's value is left alone when nothing follows it")
 }
+
+// A verb from this machine that names no actor acts as no one on the server: the
+// server's own environment (here NOVA_SPRINT_ACTOR=boss, the coordinator) is never who
+// acts. A --actor the caller gave is who acts.
+func TestTheServerNeverActsAsItsOwnEnvironment(t *testing.T) {
+	t.Parallel()
+	r := newServerRig(t, twoLanes()...)
+	before := r.queue("m1")
+	res := r.a.serveFrom(sprintwire.Request{Verbs: [][]string{
+		{"clear", "--confirm", "sprint"},
+		{"inbox", "--read"},
+		{"fleet", "up", "m1", "--width", "3", "--actor", "boss"},
+	}}, true).Results
+	require.Len(t, res, 3)
+	assert.Equal(t, 2, res[0].Code, "%s%s", res[0].Stdout, res[0].Stderr)
+	assert.Contains(t, res[0].Stderr, "--actor <name> is required")
+	assert.Equal(t, before, r.queue("m1"), "nothing was cleared")
+	assert.NotEqual(t, 0, res[1].Code, "the coordinator's cursor is not moved by no one: %s%s", res[1].Stdout, res[1].Stderr)
+	assert.Equal(t, 0, res[2].Code, "the caller's own actor: %s%s", res[2].Stdout, res[2].Stderr)
+}
+
+// A read that waits for the sprint to move (where --watch, inbox --wait) is never run by
+// the server, whose line of control the tick it waits for needs: the server refuses it,
+// and the coordinator's command runs it where it is typed, never sending it, even with
+// --read.
+func TestAWaitingReadIsNeverRunByTheServer(t *testing.T) {
+	t.Parallel()
+	r := newServerRig(t, twoLanes()...)
+	for _, argv := range [][]string{{"where", "--watch"}, {"inbox", "--wait"}, {"inbox", "--read", "--wait=true", "--actor", "boss"}} {
+		res := r.a.serveFrom(sprintwire.Request{Verbs: [][]string{argv}}, true).Results
+		require.Len(t, res, 1)
+		assert.Equal(t, 2, res[0].Code, "%v", argv)
+		assert.Contains(t, res[0].Stderr, "waits for the sprint to move", "%v: refused by the server before the verb runs", argv)
+		assert.Contains(t, res[0].Stderr, "nothing was changed", "%v", argv)
+	}
+	var sent [][]string
+	boss := coordinatorAt(t, r, "boss", &sent)
+	boss("inbox", "--read", "--wait", "--timeout", "1ms")
+	boss("where", "--watch")
+	assert.Empty(t, sent, "a waiting read runs where it is typed")
+}
+
+// Which word is a flag is the verb's flags' to say: a value after a flag that takes one
+// is a value whatever it looks like, a boolean flag takes no word, and nothing after --
+// is a flag.
+func TestAFileFlagIsFoundAsTheVerbParsesIt(t *testing.T) {
+	t.Parallel()
+	rules, _ := filepath.Abs("r.txt")
+	for _, c := range []struct{ in, want []string }{
+		{[]string{"init", "--json", "--rules", "r.txt"}, []string{"init", "--json", "--rules", rules}},
+		{[]string{"add", "--stream", "--rules", "--rules", "r.txt"}, []string{"add", "--stream", "--rules", "--rules", rules}},
+		{[]string{"add", "--stream", "s1", "--", "--rules", "r.txt"}, []string{"add", "--stream", "s1", "--", "--rules", "r.txt"}},
+		{[]string{"add", "--stream", "s1", "-rules=r.txt"}, []string{"add", "--stream", "s1", "-rules=" + rules}},
+		{[]string{"add", "--no-such-flag", "--rules", "r.txt"}, []string{"add", "--no-such-flag", "--rules", "r.txt"}},
+	} {
+		assert.Equal(t, c.want, absolutePaths(append([]string(nil), c.in...)), "%v", c.in)
+	}
+}

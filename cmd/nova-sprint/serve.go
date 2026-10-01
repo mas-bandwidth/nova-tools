@@ -90,32 +90,6 @@ func workerVerb(argv []string) (as string, words int, why string) {
 // which reads the config store with its caller's own credentials.
 var notServed = []string{"run", "tick", "land", "play", "fleet sync"}
 
-// localVerb is how many words the verb of an argument list from this machine is, or why
-// the server does not run it. The coordinator works on the server's machine, and its
-// verbs come over the loopback listener: any verb of the command but the ones no one is
-// served (notServed), naming no store (the server's is the store). Who acts is the
-// caller's --actor, as when the verb runs by itself.
-func localVerb(argv []string) (name string, words int, why string) {
-	for _, v := range verbs {
-		w := strings.Fields(v.name)
-		if len(argv) >= len(w) && slices.Equal(argv[:len(w)], w) && len(w) > words {
-			name, words = v.name, len(w)
-		}
-	}
-	switch {
-	case words == 0:
-		return "", 0, "not a verb of nova-sprint; run: nova-sprint help"
-	case slices.Contains(notServed, name):
-		return name, 0, name + " is not run by the server; run it by itself"
-	}
-	for _, w := range argv[words:] {
-		if n, _, _ := strings.Cut(strings.TrimLeft(w, "-"), "="); strings.HasPrefix(w, "-") && n == "redis" {
-			return name, 0, "--redis is not given to the server: its store is the sprint's"
-		}
-	}
-	return name, words, ""
-}
-
 // serve is the server's one step: the batch's verbs run in order, each through
 // the verb's own code with its worker as the actor, and each answered. The
 // server's own words (the store, the actor) go between the verb and what the
@@ -127,7 +101,8 @@ func localVerb(argv []string) (name string, words int, why string) {
 func (a *app) serve(req sprintwire.Request) sprintwire.Response { return a.serveFrom(req, false) }
 
 // serveFrom is serve for a batch from this machine (local: the coordinator's, any verb
-// the server runs, localVerb) or from the fleet (a worker's verbs only, workerVerb).
+// the server runs, verbArgs.unserved) or from the fleet (a worker's verbs only,
+// workerVerb).
 func (a *app) serveFrom(req sprintwire.Request, local bool) sprintwire.Response {
 	a.serial.Lock()
 	defer a.serial.Unlock()
@@ -142,9 +117,13 @@ func (a *app) serveFrom(req sprintwire.Request, local bool) sprintwire.Response 
 			a.serving = true
 			args = slices.Concat(argv[:words], []string{"--redis", a.serveAddr, "--actor", as}, argv[words:])
 		case local:
-			if _, words, why = localVerb(argv); why == "" {
-				a.serving = false
-				args = slices.Concat(argv[:words], []string{"--redis", a.serveAddr}, argv[words:])
+			v := readVerb(argv)
+			if why = v.unserved(); why == "" {
+				// a worker's verb is held to the epoch its worker holds whatever its words
+				// (runStep); who acts is the caller's --actor, and no one when it gave none,
+				// never whoever the server's own environment names
+				a.serving = verbClasses[v.name] == classWorker
+				args = slices.Concat(argv[:v.words], []string{"--redis", a.serveAddr, "--actor", ""}, argv[v.words:])
 			}
 		}
 		if why != "" {
