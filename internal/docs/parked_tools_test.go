@@ -10,6 +10,9 @@ import (
 	"strings"
 	"testing"
 	"testing/fstest"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 var documentedToolName = regexp.MustCompile(`(?i)\bnova-[a-z][a-z0-9]*(?:-[a-z0-9]+)*\b`)
@@ -71,9 +74,7 @@ func parkedDocumentationReferences(tree fs.FS) ([]string, error) {
 func TestActiveDocumentationOmitsParkedTools(t *testing.T) {
 	t.Parallel()
 	findings, err := parkedDocumentationReferences(os.DirFS(testRoot(t)))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	for _, finding := range findings {
 		t.Error(finding)
 	}
@@ -112,13 +113,10 @@ func TestParkedDocumentationReferences(t *testing.T) {
 			tree := fixture()
 			tree[tc.page] = &fstest.MapFile{Data: []byte(tc.text)}
 			findings, err := parkedDocumentationReferences(tree)
-			if err != nil || len(findings) != tc.want {
-				t.Fatalf("findings=%v err=%v; want %d", findings, err, tc.want)
-			}
+			require.NoError(t, err)
+			require.Len(t, findings, tc.want, "findings=%v err=%v; want %d", findings, err, tc.want)
 			for _, finding := range findings {
-				if !strings.HasPrefix(finding, tc.page+":") {
-					t.Errorf("finding lost page location: %s", finding)
-				}
+				assert.True(t, strings.HasPrefix(finding, tc.page+":"), "finding lost page location: %s", finding)
 			}
 		})
 	}
@@ -128,8 +126,7 @@ func TestParkedDocumentationReferences(t *testing.T) {
 		tree["cmd/nova-retired"] = &fstest.MapFile{Mode: fs.ModeDir}
 		tree["docs/CLI.md"] = &fstest.MapFile{Data: []byte("nova-retired help")}
 		findings, err := parkedDocumentationReferences(tree)
-		if err != nil || len(findings) != 0 {
-			t.Fatalf("returned tool refused: %v / %v", findings, err)
-		}
+		require.NoError(t, err)
+		require.Empty(t, findings, "returned tool refused: %v / %v", findings, err)
 	})
 }

@@ -4,6 +4,9 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestIssue2000StudioYamlNaming keeps the seat-file naming rule from
@@ -13,17 +16,13 @@ func TestIssue2000StudioYamlNaming(t *testing.T) {
 	t.Parallel()
 
 	body, err := os.ReadFile("../../docs/TESTS.md")
-	if err != nil {
-		t.Fatalf("docs/TESTS.md: %v", err)
-	}
+	require.NoError(t, err, "docs/TESTS.md: %v", err)
 	content := strings.Join(strings.Fields(string(body)), " ")
 
 	for _, want := range []string{
 		"`swarm-` prefix",
 		"must be asked for under that file's name",
 	} {
-		if !strings.Contains(content, want) {
-			t.Errorf("docs/TESTS.md missing %q (nova-tools #2000)", want)
-		}
+		assert.Contains(t, content, want, "docs/TESTS.md missing %q (nova-tools #2000)", want)
 	}
 }
