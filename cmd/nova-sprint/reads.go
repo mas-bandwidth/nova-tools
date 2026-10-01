@@ -914,8 +914,14 @@ func (a *app) cmdRoutes(args []string, stdout, stderr io.Writer) int {
 		if r.Provider != "" {
 			model = r.Provider + "/" + r.Model
 		}
-		fmt.Fprintf(stdout, "ROUTE %s tier=%s model=%s weight=%d enabled=%t attempts=%d ok=%d failed=%d provider_failures=%d mean_wall=%s\n",
-			oneline.Field(r.Name), oneline.Field(orDashStr(r.Tier, "-")), oneline.Field(model), r.Weight, r.Enabled, x.Attempts, x.OK, x.Failed, x.Provider, x.MeanWall)
+		how := fmt.Sprintf("tier=%s weight=%d enabled=%t", oneline.Field(orDashStr(r.Tier, "-")), r.Weight, r.Enabled)
+		if x.Pinned {
+			how = "pinned"
+		} else if r.Tier == "" {
+			how = "gone" // a route the cards name that the store no longer holds
+		}
+		fmt.Fprintf(stdout, "ROUTE %s model=%s %s attempts=%d ok=%d failed=%d provider_failures=%d mean_wall=%s\n",
+			oneline.Field(r.Name), oneline.Field(model), how, x.Attempts, x.OK, x.Failed, x.Provider, x.MeanWall)
 	}
 	fmt.Fprintf(stdout, "ROUTES OK routes=%d\n", len(stats))
 	return 0

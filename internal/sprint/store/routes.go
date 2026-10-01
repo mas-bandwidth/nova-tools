@@ -19,19 +19,49 @@ type RouteReader interface {
 	Routes(ctx context.Context) ([]sprint.Route, error)
 }
 
-// routes is the routes a dealing step plans with, by name; none when the store
-// holds none.
+// routes is the routes a dealing step plans with, by name; an empty, non-nil
+// list when the store holds none (read: the no-stall rule reads none again).
 func (st *Store) routes(ctx context.Context) ([]sprint.Route, error) {
 	rr, ok := st.B.(RouteReader)
 	if !ok {
-		return nil, nil
+		return []sprint.Route{}, nil
 	}
 	rs, err := rr.Routes(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("the routes (%s): %w", config.RoutesKey, err)
 	}
+	if rs == nil {
+		rs = []sprint.Route{}
+	}
 	sort.Slice(rs, func(i, j int) bool { return rs[i].Name < rs[j].Name })
 	return rs, nil
+}
+
+// RouteCache is the routes read once and shared: a tick's, read by its first part
+// that deals or checks and handed to every later one (the routes are config, read
+// once a tick; tla/DirtyTick.tla holds them constant). Trips is the round trips
+// the one read made.
+type RouteCache struct {
+	read  bool
+	rs    []sprint.Route
+	Trips int64
+}
+
+// cached is the routes from the cache, read through it the first time; a nil cache
+// reads them for this step alone.
+func (st *Store) cached(ctx context.Context, c *RouteCache) ([]sprint.Route, error) {
+	if c == nil {
+		return st.routes(ctx)
+	}
+	if !c.read {
+		before := st.trips()
+		rs, err := st.routes(ctx)
+		if err != nil {
+			return nil, err
+		}
+		c.read, c.rs, c.Trips = true, rs, st.trips()-before
+	}
+	return c.rs, nil
 }
 
 // Routes reads the set and every route's hash: two round trips, the second
@@ -73,6 +103,9 @@ func RouteOf(name string, h map[string]string) sprint.Route {
 func (m *Mem) Routes(context.Context) ([]sprint.Route, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.fail("routes"); err != nil {
+		return nil, err
+	}
 	return append([]sprint.Route(nil), m.routes...), nil
 }
 

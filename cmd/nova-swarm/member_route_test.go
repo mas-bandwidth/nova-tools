@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -115,5 +116,72 @@ func TestTheEndOfALaunchIsReadFromNativesLog(t *testing.T) {
 		"NATIVE OK label=c1 job=j tmp=t rc=0 wall=none harness=ok budget=10/1000\n":                     "",
 	} {
 		assert.Equal(t, want, nativeEnd([]byte(log)), log)
+	}
+}
+
+// oneCardSprint is a sprint of one work card for a member m1 of width 2: ready
+// until taken, working after, every verb recorded.
+type oneCardSprint struct {
+	taken bool
+	calls []string
+	pkt   member.Packet
+}
+
+func (f *oneCardSprint) Run(args ...string) (int, []byte) {
+	f.calls = append(f.calls, strings.Join(args, " "))
+	switch args[0] {
+	case "queue":
+		col := "ready"
+		if f.taken {
+			col = "working"
+		}
+		b, _ := json.Marshal(map[string]any{"as": "m1", "epoch": 1, "width": 2,
+			"cards": []map[string]any{{"id": f.pkt.Card, "table": "fleet", "row": "m1", "col": col, "gen": 1, "packet": f.pkt}}})
+		return 0, b
+	case "take":
+		f.taken = true
+		b, _ := json.Marshal(map[string]any{"packets": []member.Packet{f.pkt}})
+		return 0, b
+	}
+	return 0, nil
+}
+
+// A taken card the member cannot launch (here a pin with no budget or deadline,
+// admitted before the lint refused it, on a member with no override) is reported at
+// once as a failed finish naming why, never left working to be refused every tick;
+// the refusal names the pin, not "no route".
+func TestATakenCardTheMemberCannotLaunchIsFinishedFailed(t *testing.T) {
+	t.Parallel()
+	r := argsRunner(t, "", "", 0)
+	fs := &oneCardSprint{pkt: member.Packet{Card: "s1-1.w1", Kind: "work", Attempt: 1, Gen: 1, Epoch: 1, Branch: "work/s1-1",
+		Brief: "c: x (s1) tier: pro\nmodel: x/y\n\nThe task.", Route: "pin", Model: "x/y"}}
+	var log bytes.Buffer
+	m := member.New(member.Config{As: "m1"}, fs, r, nil, &log)
+	_, err := m.Tick(time.Unix(0, 0))
+	require.NoError(t, err)
+	var finishes []string
+	for _, c := range fs.calls {
+		if strings.HasPrefix(c, "finish ") {
+			finishes = append(finishes, c)
+		}
+	}
+	require.Len(t, finishes, 1, "one failed finish: %v\n%s", fs.calls, log.String())
+	assert.Contains(t, finishes[0], "finish --as m1 s1-1.w1@1 --failed --report launch refused: card s1-1.w1's route pin (model \"x/y\") names no tokens or deadline")
+	assert.Contains(t, finishes[0], "--epoch 1")
+	assert.NotContains(t, finishes[0], "has no route")
+	assert.Contains(t, log.String(), "finish s1-1.w1 ok=false exit=0 launch refused route=pin model=x/y")
+}
+
+// The MEMBER line says what the member runs on: the card's route, its own model
+// only as an override, and the width as its fleet row's or an override.
+func TestTheMemberLineSaysTheOverride(t *testing.T) {
+	t.Parallel()
+	for args, want := range map[string]string{
+		"--model ov/m --tokens 5 --deadline 9s": "width=row every=3s sprint=/usr/bin/false harness=/bin/true model=card,override:ov/m",
+		"--width 3":                             "width=override:3 every=3s sprint=/usr/bin/false harness=/bin/true model=card",
+	} {
+		var out, errb bytes.Buffer
+		cmdMember(append([]string{"--as", "m1", "--harness", "/bin/true", "--root", t.TempDir(), "--once", "--sprint", "/usr/bin/false"}, strings.Fields(args)...), &out, &errb)
+		assert.Contains(t, out.String(), "MEMBER member as=m1 "+want, args)
 	}
 }

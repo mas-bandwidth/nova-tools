@@ -135,9 +135,12 @@ type Step struct {
 	// tables plans on it while the fence is at its generation, instead of
 	// reading them, and applies its receipts to it when it commits.
 	Twin *Twin
-	// Routes says the step deals: it reads the model tiers' routes with its
-	// tables (routes.go), and its plan draws from them (sprint.Snapshot.Routes).
-	Routes bool
+	// Routes says the step deals (or asks what the next deal does): it plans
+	// with the model tiers' routes (routes.go, sprint.Snapshot.Routes), read
+	// before its first read of the tables, never between that read and its
+	// Acquire; through RouteCache when one is given (a tick's, read once).
+	Routes     bool
+	RouteCache *RouteCache
 	// DrainMax, above zero, is the most entries of the queue's head a drain
 	// takes: the pump's second drain takes only what its first requeued.
 	DrainMax int
@@ -368,6 +371,12 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			_ = st.B.Release(context.WithoutCancel(ctx), *lock, false)
 		}
 	}()
+	var routes []sprint.Route
+	if step.Routes {
+		if routes, err = st.cached(ctx, step.RouteCache); err != nil {
+			return res, err
+		}
+	}
 	for res.Attempts < st.attempts() {
 		res.Attempts++
 		if wantLock && lock == nil && !locked {
@@ -458,9 +467,7 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			}
 		}
 		if step.Routes {
-			if snap.Routes, err = st.routes(ctx); err != nil {
-				return res, err
-			}
+			snap.Routes = routes
 		}
 		// Every plan is held to the lifecycle here, whatever step built it.
 		plan := sprint.Applied(snap, step.Plan(snap))

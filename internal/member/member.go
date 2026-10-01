@@ -509,11 +509,28 @@ func (m *Member) start(p Packet) bool {
 	ch, err := m.runner.Start(p)
 	if err != nil {
 		fmt.Fprintf(m.out, "start %s: %v\n", p.Card, err)
+		if p.Kind != "read" {
+			m.failLaunch(p, err)
+		}
 		return false
 	}
 	m.running[p.Card] = launch{child: ch, gen: p.Gen, attempt: p.Attempt, epoch: p.Epoch, branch: p.Branch, packet: p}
 	fmt.Fprintf(m.out, "start %s attempt=%d gen=%d running=%d/%d%s\n", p.Card, p.Attempt, p.Gen, m.Running(), m.width, routeWords(p))
 	return true
+}
+
+// failLaunch reports a taken work card this member cannot launch (no model, a
+// slot it cannot make) as a failed finish with the reason, so the store sees it
+// at once and opens the failed-work judgment; a card left working would be
+// started again every tick, the refusal only in this log, until judged late.
+func (m *Member) failLaunch(p Packet, why error) {
+	args := []string{"finish", "--as", m.cfg.As, p.Card + "@" + strconv.Itoa(p.Gen), "--failed",
+		"--report", cut("launch refused: " + oneLine(why.Error())), "--epoch", strconv.FormatUint(p.Epoch, 10)}
+	code, out := m.sprint.Run(args...)
+	fmt.Fprintf(m.out, "finish %s ok=false exit=%d launch refused%s\n", p.Card, code, routeWords(p))
+	if code != 0 {
+		fmt.Fprintf(m.out, "NOTE finish %s refused: %s\n", p.Card, strings.TrimSpace(string(out)))
+	}
 }
 
 // moved says the claim moved under a launch: the queue's card is at another

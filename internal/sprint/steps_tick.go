@@ -474,10 +474,8 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 			continue
 		}
 		if tier, why := s.noRoute(c); why != "" {
-			if tier == "" {
-				// a brief whose model lines are wrong: the deal refuses it, naming why
-				continue
-			}
+			// no route serves its tier, or its model lines cannot be read (a card
+			// admitted before the lint): one judgment per tier either way
 			unserved[tier] = append(unserved[tier], c.ID)
 			whyOf[tier] = why
 			continue

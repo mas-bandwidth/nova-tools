@@ -32,11 +32,14 @@ import (
 
 // Route is one route of a model tier as the store holds it (config.RouteKey).
 type Route struct {
-	Name, Tier, Provider, Model string
-	Tokens                      int // 0 is unmetered
-	Deadline                    int // seconds
-	Weight                      int
-	Enabled                     bool
+	Name     string `json:"name"`
+	Tier     string `json:"tier"`
+	Provider string `json:"provider"`
+	Model    string `json:"model"`
+	Tokens   int    `json:"tokens"`   // 0 is unmetered
+	Deadline int    `json:"deadline"` // seconds
+	Weight   int    `json:"weight"`
+	Enabled  bool   `json:"enabled"`
 }
 
 // The work card's route fields, written at each deal and redeal: the route drawn
@@ -63,7 +66,7 @@ const NNoRoute = "no route serves the tier"
 func TierSubject(tier string) string { return "tier:" + tier }
 
 // noRoute is why a primary has no route: "" when it has one (or the store has no
-// route at all), else the tier and the sentence.
+// route at all), else the tier it is judged under and the sentence.
 func (s *Snapshot) noRoute(c *Card) (tier, why string) {
 	_, tier, why = s.routeOf(c, nil)
 	return tier, why
@@ -74,14 +77,16 @@ func (s *Snapshot) noRoute(c *Card) (tier, why string) {
 func (s *Snapshot) routeOf(c, wc *Card) (set map[string]string, tier, why string) {
 	m, bad := cardhdr.ReadModel(c.F("brief"))
 	if bad != "" {
-		return nil, "", "its brief's model lines: " + bad
+		// a card admitted before the lint read its lines: judged under the tier it
+		// names (an unknown word too), else flash's
+		tier = m.Tier
+		if tier == "" {
+			tier = cardhdr.RouteFlash
+		}
+		return nil, tier, "its brief's model lines: " + bad
 	}
 	if m.Pin != "" {
-		set = map[string]string{FieldRoute: RoutePin, FieldModel: m.Pin, FieldTokens: m.Tokens, FieldDeadline: ""}
-		if m.Deadline > 0 {
-			set[FieldDeadline] = strconv.Itoa(m.Deadline)
-		}
-		return set, "", ""
+		return map[string]string{FieldRoute: RoutePin, FieldModel: m.Pin, FieldTokens: m.Tokens, FieldDeadline: strconv.Itoa(m.Deadline)}, "", ""
 	}
 	if len(s.Routes) == 0 {
 		return nil, "", ""
@@ -126,7 +131,9 @@ func (s *Snapshot) routeOf(c, wc *Card) (set map[string]string, tier, why string
 
 // draw is one route of the served, weighted, from a hash of the salt: the same
 // snapshot and card draw the same route, every time (a plan is a function of its
-// read).
+// read). The salt's FNV-1a is run through splitmix64's finaliser before the
+// modulo: FNV-1a's low bits depend only on the low bits of the salt's bytes, so a
+// modulo of a power of two would draw by their parity.
 func draw(served []Route, salt string) Route {
 	sort.Slice(served, func(i, j int) bool { return served[i].Name < served[j].Name })
 	total := 0
@@ -135,7 +142,7 @@ func draw(served []Route, salt string) Route {
 	}
 	h := fnv.New64a()
 	h.Write([]byte(salt))
-	at := int(h.Sum64() % uint64(total))
+	at := int(mix(h.Sum64()) % uint64(total))
 	for _, r := range served {
 		if at < r.Weight {
 			return r
@@ -143,6 +150,15 @@ func draw(served []Route, salt string) Route {
 		at -= r.Weight
 	}
 	return served[len(served)-1]
+}
+
+// mix is splitmix64's finaliser: every bit of x moves every bit of the result.
+func mix(x uint64) uint64 {
+	x ^= x >> 30
+	x *= 0xbf58476d1ce4e5b9
+	x ^= x >> 27
+	x *= 0x94d049bb133111eb
+	return x ^ x>>31
 }
 
 // tokensWord is a route's budget as native's --tokens takes it.
@@ -209,9 +225,11 @@ func AttemptLine(wc *Card) string {
 		orDash(wc.F("dealt")), orDash(wc.F("taken")), orDash(wc.F("finished")), orDash(wc.F(FieldUsage)), end)
 }
 
-// RouteStat is one route's record over the work cards finished on it.
+// RouteStat is one route's record over the work cards dealt on it. A pinned
+// model is a row of its own, Pinned, named pin:<model>.
 type RouteStat struct {
 	Route    Route  `json:"route"`
+	Pinned   bool   `json:"pinned,omitempty"`
 	Attempts int    `json:"attempts"`
 	OK       int    `json:"ok"`
 	Failed   int    `json:"failed"`
@@ -220,8 +238,8 @@ type RouteStat struct {
 }
 
 // RouteStats is every route's record over the fleet table's work cards, the
-// routes in name order, then a card's route the store no longer holds (a pin,
-// a removed route) under its name alone.
+// routes in name order, then each pinned model (pin:<model>) and each route the
+// store no longer holds, as the cards name them, in the order first met.
 func RouteStats(routes []Route, fleet *Table) []RouteStat {
 	at := map[string]int{}
 	out := make([]RouteStat, 0, len(routes))
@@ -235,11 +253,16 @@ func RouteStats(routes []Route, fleet *Table) []RouteStat {
 		if name == "" {
 			continue
 		}
+		pinned := name == RoutePin
+		if pinned {
+			name = RoutePin + ":" + c.F(FieldModel)
+		}
 		i, ok := at[name]
 		if !ok {
 			i = len(out)
 			at[name] = i
-			out = append(out, RouteStat{Route: Route{Name: name}})
+			provider, model, _ := strings.Cut(c.F(FieldModel), "/")
+			out = append(out, RouteStat{Route: Route{Name: name, Provider: provider, Model: model}, Pinned: pinned})
 		}
 		st := &out[i]
 		st.Attempts++

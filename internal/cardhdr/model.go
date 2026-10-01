@@ -9,8 +9,8 @@ import (
 
 // Model is what a card's brief says of the model it runs on: the tier its line 1
 // names (`... tier: flash|pro|frontier`), and a pin, the header lines under line 1
-// `model: <provider>/<model>` with an optional `tokens: <n>|unmetered` and
-// `deadline: <seconds>|<duration>` (read only beside a model: line). A pin bypasses the deal's draw among the tier's
+// `model: <provider>/<model>` with its `tokens: <n>|unmetered` and
+// `deadline: <seconds>|<duration>` (both required with a pin, read only beside it). A pin bypasses the deal's draw among the tier's
 // routes (docs/SPEC-SPRINT.md, the deal's route); the frame and the deal read the
 // brief through ReadModel only, the one parser of these lines.
 type Model struct {
@@ -25,7 +25,8 @@ var tierRE = regexp.MustCompile(`\btier:\s*([A-Za-z0-9_-]+)`)
 
 // ReadModel reads a brief's model lines: the tier from line 1, the pin from the header
 // block under it (the `key: value` lines up to the first blank line or line of prose,
-// keys in any case). why is "" or the one line naming what is wrong and what to write.
+// keys in any case). why is "" or the one line naming what is wrong and what to write;
+// with a why, m is what could be read (its Tier as line 1 names it, known or not).
 func ReadModel(brief string) (m Model, why string) {
 	first, rest, _ := strings.Cut(brief, "\n")
 	if t := tierRE.FindStringSubmatch(first); t != nil {
@@ -76,8 +77,19 @@ func ReadModel(brief string) (m Model, why string) {
 		}
 		m.Deadline = n
 	}
+	if m.Pin != "" && (tokens == "" || deadline == "") {
+		// a pin is the whole route: a member with no override could not launch it
+		var missing []string
+		if tokens == "" {
+			missing = append(missing, "tokens: <n>|unmetered")
+		}
+		if deadline == "" {
+			missing = append(missing, "deadline: <seconds>")
+		}
+		problems = append(problems, "model: "+m.Pin+" pins the card without "+strings.Join(missing, " and ")+"; a pin carries its budget and deadline on the lines under it")
+	}
 	if len(problems) > 0 {
-		return Model{}, strings.Join(problems, "; ")
+		return m, strings.Join(problems, "; ")
 	}
 	return m, ""
 }

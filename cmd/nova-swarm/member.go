@@ -330,7 +330,11 @@ func (r *nativeRunner) route(p member.Packet) (model, tokens string, deadline ti
 	if deadline <= 0 {
 		deadline = r.deadline
 	}
-	if model == "" || tokens == "" || deadline <= 0 {
+	switch {
+	case model != "" && tokens != "" && deadline > 0:
+	case p.Route != "":
+		return "", "", 0, fmt.Errorf("card %s's route %s (model %q) names no tokens or deadline and this member has no override for them: give the card's model: pin its tokens: and deadline: lines, or start the member with --tokens and --deadline", p.Card, p.Route, p.Model)
+	default:
 		return "", "", 0, fmt.Errorf("card %s has no route (model %q tokens %q deadline %s) and this member no override for what is missing: add the tier's route with nova-config route add, or start the member with --model, --tokens and --deadline", p.Card, model, tokens, deadline)
 	}
 	return model, tokens, deadline, nil

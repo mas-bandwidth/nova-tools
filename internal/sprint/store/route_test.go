@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -146,26 +147,156 @@ func TestACardWithNoRouteIsNotDealtAndJudgedOncePerTier(t *testing.T) {
 	assert.Equal(t, sprint.StreamSubject(sprint.TierSubject("frontier")), open[0].Subject())
 }
 
-// The draw over many deals on the twin: weights 1:1 split near half and half,
-// 3:1 near three quarters, every card of the tier drawn from its routes.
+// The draw over many deals on the twin: weights 1:1:2 within four standard
+// deviations of their binomial means over 400 deals; the same clock and the same
+// cards draw the same routes, and another clock (another tick) draws others.
 func TestTheDrawFollowsTheRoutesWeights(t *testing.T) {
 	t.Parallel()
-	for _, c := range []struct {
-		a, b   int
-		lo, hi float64 // the share of route a
-	}{{1, 1, 0.40, 0.60}, {3, 1, 0.65, 0.85}} {
-		h := routeHarness(t, route("pro-a", "pro", c.a), route("pro-b", "pro", c.b))
-		const n = 400
-		h.addReady("s1", n, briefOf("pro", ""))
+	rs := []sprint.Route{route("pro-a", "pro", 1), route("pro-b", "pro", 1), route("pro-c", "pro", 2)}
+	draws := func(later time.Duration) map[string]string {
+		h := routeHarness(t, rs...)
+		h.tick(later)
+		h.addReady("s1", 400, briefOf("pro", ""))
 		h.must(DealStep(sprint.DealReq{}))
-		got := map[string]int{}
-		for _, wc := range h.workCards() {
-			got[wc.F(sprint.FieldRoute)]++
+		out := map[string]string{}
+		for id, wc := range h.workCards() {
+			out[id] = wc.F(sprint.FieldRoute)
 		}
-		require.Equal(t, n, got["pro-a"]+got["pro-b"], "every card drew a pro route: %v", got)
-		share := float64(got["pro-a"]) / n
-		assert.True(t, share >= c.lo && share <= c.hi, "weights %d:%d gave pro-a %.2f of %d deals, want %.2f..%.2f", c.a, c.b, share, n, c.lo, c.hi)
+		return out
 	}
+	a := draws(0)
+	got := map[string]int{}
+	for _, r := range a {
+		got[r]++
+	}
+	require.Equal(t, 400, got["pro-a"]+got["pro-b"]+got["pro-c"], "every card drew a pro route: %v", got)
+	assert.InDelta(t, 100, got["pro-a"], 35, "weight 1 of 4 over 400: %v", got)
+	assert.InDelta(t, 100, got["pro-b"], 35, "weight 1 of 4 over 400: %v", got)
+	assert.InDelta(t, 200, got["pro-c"], 40, "weight 2 of 4 over 400: %v", got)
+	assert.Equal(t, a, draws(0), "the same clock and cards draw the same routes")
+	diff := 0
+	for id, r := range draws(time.Second) {
+		if a[id] != r {
+			diff++
+		}
+	}
+	assert.Greater(t, diff, 100, "another tick's clock draws other routes for many cards")
+}
+
+// A work card withdrawn by its member going down is dealt again leaving out the
+// route it was dealt on while another remains; with one route, the same one.
+func TestARedealLeavesOutTheRouteItWasDealtOn(t *testing.T) {
+	t.Parallel()
+	for _, two := range []bool{true, false} {
+		rs := []sprint.Route{route("pro-a", "pro", 1)}
+		if two {
+			rs = append(rs, route("pro-b", "pro", 1))
+		}
+		h := newHarness(t)
+		h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
+		h.m.SetRoutes(rs)
+		h.addReady("s1", 1, briefOf("pro", ""))
+		h.must(DealStep(sprint.DealReq{}))
+		w1 := h.workCards()["s1-1.w1"]
+		require.NotNil(t, w1)
+		first := w1.F(sprint.FieldRoute)
+		gens := map[string]int{w1.ID: w1.Int("gen")}
+		h.must(TakeStep(sprint.TakeReq{As: "m1", Sel: sprint.Sel{IDs: []string{w1.ID}}, Gens: gens, Who: "m1"}))
+		h.run(FleetStep(sprint.FleetReq{Op: "down", Member: "m1"}))
+		h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m2"}))
+		h.run(DealStep(sprint.DealReq{}))
+		wc := h.workCards()["s1-1.w1"]
+		require.NotNil(t, wc)
+		require.Equal(t, "m2", wc.Row, "dealt again to the member up")
+		if two {
+			assert.NotEqual(t, first, wc.F(sprint.FieldRoute), "the redeal leaves out %s", first)
+		} else {
+			assert.Equal(t, first, wc.F(sprint.FieldRoute), "one route: the redeal runs on it again")
+		}
+	}
+}
+
+// Three routes, three attempts each failed by the provider: every attempt leaves out
+// every route drawn before, so the three attempts run on the three routes.
+func TestTheExclusionCoversEveryAttempt(t *testing.T) {
+	t.Parallel()
+	h := routeHarness(t, route("pro-a", "pro", 1), route("pro-b", "pro", 1), route("pro-c", "pro", 1))
+	h.addReady("s1", 1, briefOf("pro", ""))
+	h.must(DealStep(sprint.DealReq{}))
+	var seen []string
+	for a := 1; a <= 3; a++ {
+		wc := h.workCards()[fmt.Sprintf("s1-1.w%d", a)]
+		require.NotNil(t, wc, "attempt %d", a)
+		seen = append(seen, wc.F(sprint.FieldRoute))
+		if a == 3 {
+			break
+		}
+		gens := map[string]int{wc.ID: wc.Int("gen")}
+		h.must(TakeStep(sprint.TakeReq{As: wc.Row, Sel: sprint.Sel{IDs: []string{wc.ID}}, Gens: gens, Who: wc.Row}))
+		h.must(FinishStep(sprint.FinishReq{As: wc.Row, Sel: sprint.Sel{IDs: []string{wc.ID}}, Gens: gens, Failed: true,
+			Report: cardhdr.EndProvider + ": 529", Who: wc.Row}))
+		h.must(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Fix: "again", Who: "tester"}))
+	}
+	assert.ElementsMatch(t, []string{"pro-a", "pro-b", "pro-c"}, seen)
+}
+
+// A card admitted before the lint whose model lines the deal cannot read (a pin
+// with no budget, an unknown tier) is not dealt, and is judged once under the tier
+// its line 1 names: never skipped in silence.
+func TestACardWhoseModelLinesCannotBeReadIsJudgedUnderItsTier(t *testing.T) {
+	t.Parallel()
+	h := routeHarness(t, route("pro-a", "pro", 1))
+	h.addReady("s1", 1, briefOf("pro", "model: x/y"))
+	h.addReady("s2", 2, briefOf("medium", ""))
+	res := h.run(DealStep(sprint.DealReq{}))
+	assert.Contains(t, fmt.Sprint(res.Refused), "model: x/y pins the card without tokens: <n>|unmetered and deadline: <seconds>")
+	assert.Contains(t, fmt.Sprint(res.Refused), "line 1 names tier medium")
+	assert.Empty(t, h.workCards(), "neither is dealt")
+	h.startMachine()
+	h.machine()
+	h.machine()
+	var subjects []string
+	for _, o := range h.a2Open(sprint.NNoRoute) {
+		subjects = append(subjects, o.Subject())
+	}
+	assert.ElementsMatch(t, []string{sprint.StreamSubject(sprint.TierSubject("pro")), sprint.StreamSubject(sprint.TierSubject("medium"))}, subjects)
+	h.clean("held by their tier's judgment")
+}
+
+// A route disabled by an apply is out of the draw from the next tick.
+func TestADisabledRouteIsOutOfTheNextTicksDraw(t *testing.T) {
+	t.Parallel()
+	h := routeHarness(t, route("pro-a", "pro", 1), route("pro-b", "pro", 1))
+	h.startMachine()
+	off := route("pro-a", "pro", 1)
+	off.Enabled = false
+	h.m.SetRoutes([]sprint.Route{off, route("pro-b", "pro", 1)})
+	h.addReady("s1", 40, briefOf("pro", ""))
+	h.machine()
+	cards := h.workCards()
+	require.NotEmpty(t, cards)
+	for _, wc := range cards {
+		assert.Equal(t, "pro-b", wc.F(sprint.FieldRoute), wc.ID)
+	}
+}
+
+// A tick reads the routes once, shared by the deal and the check: the deal and
+// the check of one tick plan on the same read (a Mem store makes no round trips;
+// the count is the drive's, cmd/nova-sprint's dirty-tick drive).
+func TestATickReadsTheRoutesOnce(t *testing.T) {
+	t.Parallel()
+	h := routeHarness(t, route("pro-a", "pro", 1))
+	reads := 0
+	h.m.Fail = func(point string) error {
+		if point == "routes" {
+			reads++
+		}
+		return nil
+	}
+	h.addReady("s1", 3, briefOf("pro", ""))
+	h.startMachine()
+	h.machine()
+	assert.Equal(t, 1, reads, "one read of the routes in the tick")
 }
 
 // A later attempt draws again leaving out the routes already drawn for the card
