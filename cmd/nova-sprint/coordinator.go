@@ -27,7 +27,7 @@ const (
 )
 
 var verbClasses = map[string]string{
-	"init": classCoordinator, "add": classCoordinator, "release": classCoordinator, "resolve": classCoordinator,
+	"init": classCoordinator, "add": classCoordinator, "quack": classCoordinator, "release": classCoordinator, "resolve": classCoordinator,
 	"start": classCoordinator, "stop": classCoordinator, "ask": classCoordinator, "accept": classCoordinator,
 	"rework": classCoordinator, "return": classCoordinator, "drop": classCoordinator, "rank": classCoordinator,
 	"resume": classCoordinator, "fleet up": classCoordinator, "fleet down": classCoordinator,
