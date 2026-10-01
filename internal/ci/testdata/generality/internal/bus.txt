@@ -1,4 +1,4 @@
-# Migrated counted package ledger; original row keys preserved.
+# Counted package ledger; full row keys are preserved.
 # ceiling: 15
 internal/bus/address.go:space 2
 internal/bus/bus.go:space 1

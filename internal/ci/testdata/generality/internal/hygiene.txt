@@ -1,4 +1,4 @@
-# Migrated counted package ledger; original row keys preserved.
+# Counted package ledger; full row keys are preserved.
 # ceiling: 2
 internal/hygiene/glob.go:emma 1
 internal/hygiene/hygiene.go:space 1

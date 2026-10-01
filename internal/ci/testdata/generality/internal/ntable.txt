@@ -1,4 +1,4 @@
-# Migrated counted package ledger; original row keys preserved.
+# Counted package ledger; full row keys are preserved.
 # ceiling: 4
 internal/ntable/ntable.go:glenn 6
 internal/ntable/render.go:glenn 6

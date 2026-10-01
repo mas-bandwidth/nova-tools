@@ -1,4 +1,4 @@
-# Migrated counted package ledger; original row keys preserved.
+# Counted package ledger; full row keys are preserved.
 # ceiling: 6
 docs/nova-table/README.md:glenn 2
 docs/nova-table/README.md:hetzner 2

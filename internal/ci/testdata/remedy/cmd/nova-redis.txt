@@ -1,3 +1,3 @@
-# Migrated counted package ledger; original row keys preserved.
+# Counted package ledger; full row keys are preserved.
 # ceiling: 1
 cmd/nova-redis/main.go:failed:exit-2 1 the line is built into a variable first: err= carries redisconn's own next step, and remedy= is added for an unset password variable

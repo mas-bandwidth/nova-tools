@@ -1,4 +1,4 @@
-# Migrated counted package ledger; original row keys preserved.
+# Counted package ledger; full row keys are preserved.
 # ceiling: 2
 cmd/nova-swarm/testdata/cards/tools11-c1-links-specpulse.md:space 1
 cmd/nova-swarm/testdata/cards/tools11-c2-links-toplevel.md:space 1

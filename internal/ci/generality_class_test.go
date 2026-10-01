@@ -370,6 +370,40 @@ type generalityCountedLedger interface {
 	Ceiling() (int, bool)
 }
 
+func generalityLedgerShardPath(allow generalityCountedLedger, key string) string {
+	switch ledger := allow.(type) {
+	case *allowlist.List:
+		return repositoryLedgerPath(ledger.Path)
+	case *allowlist.Packages:
+		file, err := ledger.ShardPath(key)
+		if err == nil {
+			return repositoryLedgerPath(file)
+		}
+		return repositoryLedgerPath(ledger.Path)
+	default:
+		return "ledger"
+	}
+}
+
+func repoRelativeMessage(root, message string) string {
+	slashRoot := strings.TrimRight(strings.ReplaceAll(root, "\\", "/"), "/")
+	nativeRoot := strings.TrimRight(strings.ReplaceAll(root, "/", "\\"), "\\")
+	if strings.HasPrefix(message, slashRoot+"/") {
+		return strings.ReplaceAll(strings.TrimPrefix(message, slashRoot+"/"), "\\", "/")
+	}
+	if strings.HasPrefix(message, nativeRoot+"\\") {
+		return strings.ReplaceAll(strings.TrimPrefix(message, nativeRoot+"\\"), "\\", "/")
+	}
+	return message
+}
+
+func repositoryLedgerPath(file string) string {
+	if filepath.IsAbs(file) {
+		return filepath.ToSlash(file)
+	}
+	return filepath.ToSlash(filepath.Join("internal", "ci", file))
+}
+
 func generalitySortedViolations(allow generalityCountedLedger) []string {
 	var lists []*allowlist.List
 	switch ledger := allow.(type) {
@@ -399,15 +433,12 @@ func checkGenerality(files []GeneralitySourceFile, allow generalityCountedLedger
 		allowedCounts[row.Key] = allow.Count(row.Key)
 	}
 
-	var ledgerPath string
 	var result allowlist.Result
 	reporter := &generalityMessageReporter{}
 	switch ledger := allow.(type) {
 	case *allowlist.List:
-		ledgerPath = ledger.Path
 		result = allowlist.CheckCountedMode(reporter, ledger, measuredCounts, false)
 	case *allowlist.Packages:
-		ledgerPath = ledger.Path
 		result = allowlist.CheckPackagesCountedMode(reporter, ledger, measuredCounts, false)
 	}
 	violations = append(violations, reporter.messages...)
@@ -443,12 +474,12 @@ func checkGenerality(files []GeneralitySourceFile, allow generalityCountedLedger
 		rel, tok, _ := strings.Cut(c.Key, ":")
 		violations = append(violations, fmt.Sprintf(
 			"%s: %d occurrences of forbidden token %q is below allowed count %d; shrink the count in %s (Rule 1: generality guardrail; the list only shrinks)",
-			rel, c.Measured, tok, c.Listed, ledgerPath))
+			rel, c.Measured, tok, c.Listed, generalityLedgerShardPath(allow, c.Key)))
 	}
 	for _, row := range result.Stale {
 		violations = append(violations, fmt.Sprintf(
 			"%s lists %s, but no reference is in the living tree any more; delete the stale entry (the list only shrinks)",
-			ledgerPath, row.Key))
+			generalityLedgerShardPath(allow, row.Key), row.Key))
 	}
 
 	// The shared checker holds each shard's row ceiling; the occurrence ceiling
@@ -498,13 +529,17 @@ func TestGeneralityGuardrail(t *testing.T) {
 			return
 		}
 		measuredCounts, _, _ := measureGeneralityCounts(files)
-		allowlist.CheckPackagesCounted(t, allow, measuredCounts)
+		reporter := &generalityMessageReporter{}
+		allowlist.CheckPackagesCounted(reporter, allow, measuredCounts)
+		for _, message := range reporter.messages {
+			assert.Fail(t, repoRelativeMessage(tree.Root, message))
+		}
 		return
 	}
 
 	violations := checkGenerality(files, allow)
 	for _, v := range violations {
-		t.Error(v)
+		t.Error(repoRelativeMessage(tree.Root, v))
 	}
 }
 
@@ -716,6 +751,15 @@ func TestGeneralityOccurrenceWitness(t *testing.T) {
 // removals are cleanly written.
 func TestGeneralityAllowlistUpdate(t *testing.T) {
 	t.Parallel()
+
+	t.Run("diagnostic-shard-paths-are-repository-relative", func(t *testing.T) {
+		assert.Equal(t, "internal/ci/testdata/generality/internal/ci.txt", repositoryLedgerPath("testdata/generality/internal/ci.txt"))
+		fixture := filepath.Join(t.TempDir(), "ledger.txt")
+		assert.Equal(t, filepath.ToSlash(fixture), repositoryLedgerPath(fixture))
+		assert.Equal(t, "internal/ci/testdata/generality/internal/ci.txt: stale", repoRelativeMessage("/tmp/repo", "/tmp/repo/internal/ci/testdata/generality/internal/ci.txt: stale"))
+		assert.Equal(t, "internal/ci/testdata/generality/internal/ci.txt: stale", repoRelativeMessage(`C:\repo`, `C:\repo\internal\ci\testdata\generality\internal\ci.txt: stale`))
+		assert.Equal(t, "internal/ci/testdata/generality/internal/ci.txt: stale", repoRelativeMessage(`C:\repo`, "C:/repo/internal/ci/testdata/generality/internal/ci.txt: stale"))
+	})
 
 	// Exercise the shared sharded updater directly, recording its refusal instead
 	// of mutating a global list through a separate writer.

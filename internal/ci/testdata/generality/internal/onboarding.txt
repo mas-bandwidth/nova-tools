@@ -1,4 +1,4 @@
-# Migrated counted package ledger; original row keys preserved.
+# Counted package ledger; full row keys are preserved.
 # ceiling: 3
 internal/onboarding/transcript.go:rowan 1
 internal/onboarding/transcript.go:space 1

@@ -1,4 +1,4 @@
-# Migrated counted package ledger; original row keys preserved.
+# Counted package ledger; full row keys are preserved.
 # ceiling: 3
 internal/config/kind.go:glenn 4
 internal/config/kind.go:space 1

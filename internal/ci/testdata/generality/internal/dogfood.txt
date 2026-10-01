@@ -1,4 +1,4 @@
-# Migrated counted package ledger; original row keys preserved.
+# Counted package ledger; full row keys are preserved.
 # ceiling: 5
 internal/dogfood/authors.go:rowan 1
 internal/dogfood/authors.go:stella 1

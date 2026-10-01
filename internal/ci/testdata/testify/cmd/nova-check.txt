@@ -1,4 +1,4 @@
-# Migrated counted package ledger; original row keys preserved.
+# Counted package ledger; full row keys are preserved.
 # ceiling: 2
 cmd/nova-check:assert 623 bare assertions to convert to testify
 cmd/nova-check:env 1 t.Setenv and Chdir sites to inject through config

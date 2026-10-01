@@ -1,4 +1,4 @@
-# Migrated counted package ledger; original row keys preserved.
+# Counted package ledger; full row keys are preserved.
 # ceiling: 19
 tla/CardMachine.tla:glenn 1
 tla/MEMBER-TABLE-MODEL.md:rowan 3

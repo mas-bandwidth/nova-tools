@@ -1,4 +1,4 @@
-# Migrated counted package ledger; original row keys preserved.
+# Counted package ledger; full row keys are preserved.
 # ceiling: 17
 CHANGELOG.md:batman 4
 CHANGELOG.md:emma 8

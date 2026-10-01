@@ -1,4 +1,4 @@
-# Migrated counted package ledger; original row keys preserved.
+# Counted package ledger; full row keys are preserved.
 # ceiling: 7
 cmd/nova-check/convergence.go:glenn 1
 cmd/nova-check/convergence.go:mas-bandwidth 1

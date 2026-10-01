@@ -1,4 +1,4 @@
-# Migrated counted package ledger; original row keys preserved.
+# Counted package ledger; full row keys are preserved.
 # ceiling: 13
 cmd/nova-sandbox/denied.go:studio 1
 cmd/nova-sandbox/denied_darwin.go:studio 1

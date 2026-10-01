@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
+	"github.com/stretchr/testify/require"
 )
 
 // discardedAllowlistPath is the shrink-only ledger of the discarded errors the
@@ -310,6 +311,13 @@ func newSiteLedger(t *testing.T, path string) *siteLedger {
 // add records one unremedied site under its key.
 func (l *siteLedger) add(key, where string) { l.sites[key] = append(l.sites[key], where) }
 
+func (l *siteLedger) shardPath(t *testing.T, key string) string {
+	t.Helper()
+	file, err := l.allow.ShardPath(key)
+	require.NoError(t, err, "package shard for %q", key)
+	return repositoryLedgerPath(file)
+}
+
 // violations checks the measured sites against the ledger: a key with no row is red
 // at each of its sites (remedy says how to fix one); a key with more sites than its
 // row lists is red with every site named, because the new one cannot be told from the
@@ -333,17 +341,17 @@ func (l *siteLedger) violationsMode(t *testing.T, remedy string, update bool) []
 	res := allowlist.CheckPackagesCountedMode(t, l.allow, measured, update)
 	for _, k := range res.Unlisted {
 		for _, w := range l.sites[k] {
-			out = append(out, fmt.Sprintf("%s: %s (no row in %s): %s", w, k, l.path, remedy))
+			out = append(out, fmt.Sprintf("%s: %s (no row in %s): %s", w, k, l.shardPath(t, k), remedy))
 		}
 	}
 	for _, c := range res.Over {
-		out = append(out, fmt.Sprintf("%s lists %s at %d sites, but %d are there now (%s); a new site is not covered by a row that was written for fewer: %s", l.path, c.Key, c.Listed, c.Measured, strings.Join(l.sites[c.Key], "; "), remedy))
+		out = append(out, fmt.Sprintf("%s lists %s at %d sites, but %d are there now (%s); a new site is not covered by a row that was written for fewer: %s", l.shardPath(t, c.Key), c.Key, c.Listed, c.Measured, strings.Join(l.sites[c.Key], "; "), remedy))
 	}
 	for _, c := range res.Lowered {
-		out = append(out, fmt.Sprintf("%s lists %s at %d sites, but only %d are there now; lower the row's count to %d (the list only shrinks; NOVA_CI_UPDATE=1 lowers it)", l.path, c.Key, c.Listed, c.Measured, c.Measured))
+		out = append(out, fmt.Sprintf("%s lists %s at %d sites, but only %d are there now; lower the row's count to %d (the list only shrinks; NOVA_CI_UPDATE=1 lowers it)", l.shardPath(t, c.Key), c.Key, c.Listed, c.Measured, c.Measured))
 	}
 	for _, row := range res.Stale {
-		out = append(out, fmt.Sprintf("%s lists %s, but no site of that key is there any more; delete the stale row (the list only shrinks; NOVA_CI_UPDATE=1 drops it)", l.path, row.Key))
+		out = append(out, fmt.Sprintf("%s lists %s, but no site of that key is there any more; delete the stale row (the list only shrinks; NOVA_CI_UPDATE=1 drops it)", l.shardPath(t, row.Key), row.Key))
 	}
 	sort.Strings(out)
 	return out
@@ -553,19 +561,19 @@ func TestSiteLedgerShrinksBySiteNotByRow(t *testing.T) {
 	if got := run(map[string]int{"a/a.go:f:blank": 2, "b/b.sh:or-true": 1}); len(got) != 0 {
 		t.Errorf("a ledger that matches is quiet, got %q", got)
 	}
-	if got := run(map[string]int{"a/a.go:f:blank": 3, "b/b.sh:or-true": 1}); len(got) != 1 || !strings.Contains(got[0], "lists a/a.go:f:blank at 2 sites, but 3 are there now") || !strings.Contains(got[0], "REMEDY") {
+	if got := run(map[string]int{"a/a.go:f:blank": 3, "b/b.sh:or-true": 1}); len(got) != 1 || !strings.Contains(got[0], filepath.Join(dir, "a.txt")) || !strings.Contains(got[0], "lists a/a.go:f:blank at 2 sites, but 3 are there now") || !strings.Contains(got[0], "REMEDY") {
 		t.Errorf("a new site under a listed key must be red with the remedy, got %q", got)
 	}
 	if got := run(map[string]int{"a/a.go:f:blank": 2, "b/b.sh:or-true": 2}); len(got) != 1 || !strings.Contains(got[0], "b/b.sh:or-true at 1 sites, but 2") {
 		t.Errorf("a second site under a one-site row must be red, got %q", got)
 	}
-	if got := run(map[string]int{"a/a.go:f:blank": 1, "b/b.sh:or-true": 1}); len(got) != 1 || !strings.Contains(got[0], "lower the row's count to 1") {
+	if got := run(map[string]int{"a/a.go:f:blank": 1, "b/b.sh:or-true": 1}); len(got) != 1 || !strings.Contains(got[0], filepath.Join(dir, "a.txt")) || !strings.Contains(got[0], "lower the row's count to 1") {
 		t.Errorf("a fixed site must ask for a lower count, got %q", got)
 	}
-	if got := run(map[string]int{"a/a.go:f:blank": 2, "b/b.sh:or-true": 1, "c/c.go:g:blank": 2}); len(got) != 2 || !strings.Contains(got[0], "c/c.go:g:blank#") {
+	if got := run(map[string]int{"a/a.go:f:blank": 2, "b/b.sh:or-true": 1, "c/c.go:g:blank": 2}); len(got) != 2 || !strings.Contains(strings.Join(got, "\n"), filepath.Join(dir, "c.txt")) || !strings.Contains(got[0], "c/c.go:g:blank#") {
 		t.Errorf("a key with no row must be red at each of its sites, got %q", got)
 	}
-	if got := run(map[string]int{"a/a.go:f:blank": 2}); len(got) != 1 || !strings.Contains(got[0], "b/b.sh:or-true, but no site") {
+	if got := run(map[string]int{"a/a.go:f:blank": 2}); len(got) != 1 || !strings.Contains(got[0], filepath.Join(dir, "b.txt")) || !strings.Contains(got[0], "b/b.sh:or-true, but no site") {
 		t.Errorf("a row with no site left is stale, got %q", got)
 	}
 }
