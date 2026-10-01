@@ -135,21 +135,48 @@ func ParseIostat(s string) (float64, bool) {
 	var idle float64
 	n := 0
 	for _, line := range strings.Split(s, "\n") {
-		f := strings.Fields(line)
-		if len(f) < 3 {
+		id, ok := iostatIdle(line)
+		if !ok {
 			continue
 		}
-		us, e1 := strconv.Atoi(f[0])
-		sy, e2 := strconv.Atoi(f[1])
-		id, e3 := strconv.Atoi(f[2])
-		if e1 != nil || e2 != nil || e3 != nil || us < 0 || sy < 0 || id < 0 || id > 100 {
-			continue
-		}
-		idle = float64(id)
+		idle = id
 		n++
 	}
 	if n < 2 {
 		return 0, false
 	}
 	return 100 - idle, true
+}
+
+// iostatIdle is the id column of one data row. iostat prints us, sy and id each
+// %3.0f, so an idle of 100 runs into the column before it ("  0  0100") and the row
+// does not split on spaces; the first nine characters are cut in threes, and a row
+// that is not so laid out is split on spaces.
+func iostatIdle(line string) (float64, bool) {
+	cols := make([]string, 0, 3)
+	if len(line) >= 9 {
+		for i := 0; i < 9; i += 3 {
+			cols = append(cols, strings.TrimSpace(line[i:i+3]))
+		}
+	}
+	if !iostatCols(cols) {
+		if cols = strings.Fields(line); len(cols) < 3 || !iostatCols(cols[:3]) {
+			return 0, false
+		}
+	}
+	id, _ := strconv.Atoi(cols[2])
+	return float64(id), true
+}
+
+// iostatCols says three words are the us, sy and id of a row: whole percents, id at most 100.
+func iostatCols(c []string) bool {
+	if len(c) < 3 {
+		return false
+	}
+	for _, w := range c[:3] {
+		if v, err := strconv.Atoi(w); err != nil || v < 0 || v > 100 {
+			return false
+		}
+	}
+	return true
 }
