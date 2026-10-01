@@ -12,9 +12,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"gopkg.in/yaml.v3"
+
 	"github.com/mas-bandwidth/nova-tools/internal/ci/slowtests"
 	"github.com/mas-bandwidth/nova-tools/internal/pkgselect"
-	"gopkg.in/yaml.v3"
 )
 
 // unit_tier_class_test.go holds the two CI tiers of nova-tools#4328 to the
@@ -112,7 +114,7 @@ func TestUnitTierRefusesRedisServer(t *testing.T) {
 		if strings.Contains(s.Run, unitGoStepMarker) {
 			goSetup = i
 		}
-		if strings.Contains(s.Run, "install-redis-server.sh") {
+		if strings.Contains(s.Run, redisInstallCall) {
 			t.Errorf("ci.yml job test step %q installs redis-server; the unit tier refuses one", s.Name)
 		}
 	}
@@ -201,8 +203,8 @@ func TestUnitLegTakesAtMostTwoCores(t *testing.T) {
 	if recipe := strings.Join(mk.recipeFor("test"), "\n"); !strings.Contains(recipe, " -p 2 -parallel 2 ") {
 		t.Errorf("make test does not pass -p 2 -parallel 2 (GOTEST_P):\n%s", recipe)
 	}
-	if recipe := strings.Join(mk.recipeFor("test-functional"), "\n"); !strings.Contains(recipe, " -p 2 ") {
-		t.Errorf("make test-functional does not pass -p 2 (GOTEST_P):\n%s", recipe)
+	if recipe := strings.Join(mk.recipeFor("test-functional"), "\n"); !strings.Contains(recipe, " --p 2 ") {
+		t.Errorf("make test-functional does not pass --p 2 (GOTEST_P) to tools/ci functional-run:\n%s", recipe)
 	}
 }
 
@@ -246,16 +248,22 @@ func TestFunctionalTierRunsOnlyAsStreamsMerge(t *testing.T) {
 		t.Error("ci-ok does not need functional")
 	}
 	ciOK := jobBody(readFile(t, filepath.Join(repoRoot(t), ".github", "workflows", "ci.yml")), "ci-ok")
-	if !strings.Contains(ciOK, `"functional:${{ needs.functional.result }}"`) {
+	if !strings.Contains(ciOK, `functional=${{ needs.functional.result }}`) {
 		t.Error("ci-ok does not read functional's result")
 	}
 
 	mk := parseMakefile(t, filepath.Join(repoRoot(t), "Makefile"))
 	recipe := strings.Join(mk.recipeFor("test-functional"), "\n")
-	for _, want := range []string{"nova-ci functional", "-tags functional", "-count=1", "-timeout 100s"} {
+	// The recipe is one call into tools/ci functional-run, with the tier's timeout; the verb
+	// holds the selection (nova-ci functional) and the go test flags.
+	for _, want := range []string{"tools/ci functional-run", "--timeout 100s"} {
 		if !strings.Contains(recipe, want) {
 			t.Errorf("make test-functional lacks %q:\n%s", want, recipe)
 		}
+	}
+	verb := readFile(t, filepath.Join(repoRoot(t), "tools", "ci", "functionalrun.go"))
+	for _, want := range []string{`"./cmd/nova-ci", "functional"`, `"-tags", "functional"`, `"-count=1"`} {
+		assert.Contains(t, verb, want, "tools/ci/functionalrun.go lacks %s: the functional tier's selection and go test flags live there", want)
 	}
 }
 

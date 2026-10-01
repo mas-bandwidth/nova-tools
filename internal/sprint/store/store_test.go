@@ -38,6 +38,8 @@ func newHarness(t *testing.T) *harness {
 		Now:   func() time.Time { h.mu.Lock(); defer h.mu.Unlock(); return h.now },
 		NewID: func() string { h.mu.Lock(); defer h.mu.Unlock(); n++; return fmt.Sprint(n) },
 		Sleep: func(time.Duration) {}}
+	// every part a tick plans on its twin is checked against a fresh read
+	h.st.CheckTwin = checkTwin
 	if err := h.st.Init(h.ctx); err != nil {
 		t.Fatal(err)
 	}
@@ -97,7 +99,24 @@ func (h *harness) clean(when string) {
 	}
 }
 
+// snap is the sprint as the next pump leaves its work table: the tables with
+// the work table's queue applied (sprint.WithQueue), the state every step but
+// the pump plans on. table is the tables as stored.
 func (h *harness) snap() *sprint.Snapshot {
+	h.t.Helper()
+	s := h.table()
+	pinned, err := h.st.pin(h.ctx)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	q, err := pinned.B.QueueRead(h.ctx)
+	if err != nil {
+		h.t.Fatal(err)
+	}
+	return sprint.WithQueue(s, q)
+}
+
+func (h *harness) table() *sprint.Snapshot {
 	h.t.Helper()
 	s, err := h.st.Load(h.ctx, All, nil)
 	if err != nil {
@@ -610,6 +629,15 @@ func TestAckWritesOneDecidedNote(t *testing.T) {
 	if len(decided) != 1 || decided[0].What != "ack: a flaky runner" || decided[0].Answers != open[0].Note.ID {
 		t.Fatalf("decided notes: %+v", decided)
 	}
+}
+
+// checkTwin is every harness's CheckTwin: the twin a part planned on is the
+// state a fresh read of the same generation gives.
+func checkTwin(twin, fresh *sprint.Snapshot) error {
+	if d := TwinDiff(twin, fresh); d != "" {
+		return errors.New(d)
+	}
+	return nil
 }
 
 // A decided note names the primaries it answers in order, whatever order the

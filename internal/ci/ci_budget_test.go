@@ -52,8 +52,8 @@ var usesRe = regexp.MustCompile(`uses:\s*([^/\s]+/[^@\s]+)@([0-9a-fA-F]{40})`)
 // usesDirectiveRe matches a line that IS a `uses:` step key — either a list
 // item (`- uses:`) or a map key (`uses:`), at any indentation. It deliberately
 // will not match a string that merely CONTAINS "uses:" in the middle of a word
-// (the smoke gate lists an "unreadable deny-list refuses:" step, whose
-// "refuses:" is not an action reference).
+// (a label such as "an unreadable deny-list refuses:" ends in "refuses:", which
+// is not an action reference).
 var usesDirectiveRe = regexp.MustCompile(`^\s*(-\s*)?uses:\s*\S`)
 
 func TestEveryCIJobIsCappedAtTwoMinutes(t *testing.T) {

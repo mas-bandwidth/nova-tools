@@ -20,7 +20,7 @@
 
 # ubuntu:24.04, the multi-arch index digest. Its Postgres is 16, which the
 # fixtures search first (/usr/lib/postgresql/16/bin) and which the CI installer
-# (.github/scripts/install-postgres.sh) installs; no NOVA_PG_BIN is needed.
+# (go run ./tools/ci install-postgres) installs; no NOVA_PG_BIN is needed.
 ARG BASE=docker.io/library/ubuntu@sha256:008173c23f95b170204355c12626cb5a965d779a7e1283b09e9cffbb1bf33ca3
 
 # ---- apt-base: the archive pinned to a snapshot, and TLS roots ----
@@ -101,7 +101,7 @@ RUN arch="$(dpkg --print-architecture)" \
 # ---- redis-build: redis-server and redis-cli from the pinned source release ----
 # Redis 8, the wording the tests expect (internal/redisfn's test texts are
 # Redis 8's); Redis 8.10.2 is also
-# the release .github/scripts/install-redis-server.sh builds where the
+# the release `go run ./tools/ci install-redis-server` builds where the
 # distribution has none. This ARG is the repository's one Redis version:
 # internal/ci's TestRedisIsOneVersionEverywhere holds every other place that
 # names one to it.

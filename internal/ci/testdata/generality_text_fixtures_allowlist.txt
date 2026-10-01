@@ -12,8 +12,6 @@
 #
 # ceiling: 15
 internal/cairn/testdata/bench-b9395d11.md a captured cairn of one recorded session, including its transcript path
-internal/ci/testdata/failed/merge-darwin-timeout.log captured CI job output of a failed run
-internal/ci/testdata/failed/windows-sandbox.log captured CI job output of a failed run
 internal/ci/testdata/generality_allowlist.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/ci/testdata/generality_text_allowlist.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
 internal/tlc/testdata/temporal-new.log captured TLC model checker output

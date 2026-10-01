@@ -87,6 +87,7 @@ var DefaultCatalog = []Entry{
 	E("internal/secrets", "zero-leak memory and file vault", "go test ./internal/secrets", "go test ./internal/secrets"),
 	E("internal/seatcred", "a seat's Redis login read through the secrets library (--seat, NOVA_SEAT)", "go test ./internal/seatcred/...", "go test ./internal/seatcred/..."),
 	E("internal/selftalk", "agent self-talk journal stream", "go test ./internal/selftalk", "go test ./internal/selftalk"),
+	E("internal/shippedsmoke", "the smoke test of a shipped nova-check binary, behind the shippedsmoke build tag, run by the certification workflow", "go test -tags shippedsmoke ./internal/shippedsmoke", "NOVA_SHIPPED_BIN=<binary> go test -tags shippedsmoke -v ./internal/shippedsmoke"),
 	E("internal/sprint", "the sprint table's pure core (lifecycle, steps, check, inbox) and its binding to the table layer (store) and its driver (play)", "go test ./internal/sprint/...", "go test ./internal/sprint/..."),
 	E("internal/member", "a sprint fleet member's loop: beat, queue, finish, take to width, each card a child", "go test ./internal/member", "go test ./internal/member"),
 	E("internal/subproc", "the one door a child process goes through: a named deadline per kind, WaitDelay, and a cancellable context for long-lived children", "go test ./internal/subproc", "go test ./internal/subproc"),

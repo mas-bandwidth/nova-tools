@@ -78,7 +78,7 @@ func repoCommits(jobDir string) (string, int, bool) {
 	if base == "" {
 		return "", 0, false
 	}
-	n, err := strconv.Atoi(gitOut(dir, "rev-list", "--count", base+"..HEAD"))
+	n, err := strconv.Atoi(gitOut(dir, "rev-list", "--count", "--end-of-options", base+"..HEAD"))
 	if err != nil || n <= 0 {
 		return "", 0, false
 	}
@@ -89,7 +89,7 @@ func repoCommits(jobDir string) (string, int, bool) {
 // the remote's default branch under the names a clone writes.
 func repoBase(dir string) string {
 	for _, ref := range []string{"@{upstream}", "origin/HEAD", "origin/main", "origin/master", "origin/dev"} {
-		if gitOut(dir, "rev-parse", "--verify", "--quiet", ref) != "" {
+		if gitOut(dir, "rev-parse", "--verify", "--quiet", "--end-of-options", ref) != "" {
 			return ref
 		}
 	}
@@ -278,7 +278,7 @@ func WallCommits(repoDir string) (branch string, commits int, ok bool) {
 	if base != "" {
 		count = base + "..HEAD"
 	}
-	n, err := strconv.Atoi(gitOut(repoDir, "rev-list", "--count", count))
+	n, err := strconv.Atoi(gitOut(repoDir, "rev-list", "--count", "--end-of-options", count))
 	if err != nil || n < 0 {
 		return "", 0, false
 	}
