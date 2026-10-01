@@ -7,6 +7,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // scratch_tracked_test.go holds the 2026-09-18 junk-file incident as a rule.
@@ -41,9 +43,7 @@ func TestNoTrackedScratchPathOrOversizedFile(t *testing.T) {
 
 	root := filepath.Join("..", "..")
 	out, err := exec.Command("git", "-C", root, "ls-files", "-z").Output()
-	if err != nil {
-		t.Fatalf("git ls-files from the repository root: %v", err)
-	}
+	require.NoError(t, err, "git ls-files from the repository root: %v", err)
 
 	var scratch []string
 	var oversized []oversizedFile

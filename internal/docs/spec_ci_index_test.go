@@ -10,6 +10,9 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // spec_ci_index_test.go holds docs/SPEC-CI.md's "The class tests" section
@@ -81,9 +84,7 @@ func TestSpecCIIndexesEveryClassTest(t *testing.T) {
 	for _, m := range specTestNameRe.FindAllStringSubmatch(section, -1) {
 		named[m[1]] = true
 	}
-	if len(named) == 0 {
-		t.Fatalf("%s: the %q section names no test; the index is the point of the section", specCIPath, classTestSection)
-	}
+	require.NotEmpty(t, named, "%s: the %q section names no test; the index is the point of the section", specCIPath, classTestSection)
 
 	declared := declaredTests(t)
 
@@ -117,10 +118,8 @@ func TestSpecCIIndexesEveryClassTest(t *testing.T) {
 	// (c) The parked section, if there is one, is exempt from (b) and buys that
 	// exemption: it may name a deleted test, and it may NOT name a live one.
 	parked := sectionBody(t, parkedSection)
-	if strings.Contains(section, parkedSection) {
-		t.Errorf("%s: the %q section swallowed %q; the parked entries would be read as the index and their deleted tests reported as rot — the parked heading must be a top-level `## ` heading of its own",
-			specCIPath, classTestSection, parkedSection)
-	}
+	assert.NotContains(t, section, parkedSection, "%s: the %q section swallowed %q; the parked entries would be read as the index and their deleted tests reported as rot — the parked heading must be a top-level `## ` heading of its own",
+		specCIPath, classTestSection, parkedSection)
 	var live []string
 	for _, m := range specTestNameRe.FindAllStringSubmatch(parked, -1) {
 		if file, ok := declared[m[1]]; ok {
@@ -139,9 +138,7 @@ func TestSpecCIIndexesEveryClassTest(t *testing.T) {
 func classTestsSection(t *testing.T) string {
 	t.Helper()
 	section := sectionBody(t, classTestSection)
-	if section == "" {
-		t.Fatalf("%s carries no %q section; the index of the class tests is part of this specification", specCIPath, classTestSection)
-	}
+	require.NotEmpty(t, section, "%s carries no %q section; the index of the class tests is part of this specification", specCIPath, classTestSection)
 	return section
 }
 
@@ -152,9 +149,7 @@ func classTestsSection(t *testing.T) string {
 func sectionBody(t *testing.T, heading string) string {
 	t.Helper()
 	body, err := os.ReadFile(specCIPath)
-	if err != nil {
-		t.Fatalf("%s: %v", specCIPath, err)
-	}
+	require.NoError(t, err, "%s: %v", specCIPath, err)
 	content := string(body)
 	i := strings.Index(content, "\n"+heading+"\n")
 	if i < 0 {
@@ -210,8 +205,7 @@ func declaredTests(t *testing.T) map[string]string {
 			}
 			fset := token.NewFileSet()
 			f, err := parser.ParseFile(fset, path, nil, 0)
-			if err != nil {
-				t.Errorf("cannot parse %s: %v", rel, err)
+			if !assert.NoError(t, err, "cannot parse %s: %v", rel, err) {
 				return nil
 			}
 			for _, decl := range f.Decls {
@@ -225,12 +219,8 @@ func declaredTests(t *testing.T) map[string]string {
 			}
 			return nil
 		})
-		if err != nil {
-			t.Fatalf("walking %s: %v", dir, err)
-		}
+		require.NoError(t, err, "walking %s: %v", dir, err)
 	}
-	if len(found) == 0 {
-		t.Fatal("no test functions found under cmd/ or internal/; this test is looking in the wrong place")
-	}
+	require.NotEmpty(t, found, "no test functions found under cmd/ or internal/; this test is looking in the wrong place")
 	return found
 }

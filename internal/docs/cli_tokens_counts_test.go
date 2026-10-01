@@ -4,6 +4,9 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // numberWords spells the counts this test expects a document sentence to carry.
@@ -29,9 +32,7 @@ func TestTheCLIReferenceCountsNovaTokensHelpCorrectly(t *testing.T) {
 
 	const source = "../../cmd/nova-tokens/main.go"
 	raw, err := os.ReadFile(source)
-	if err != nil {
-		t.Fatalf("%s: %v; the banner printed by `nova-tokens help` lives in this file", source, err)
-	}
+	require.NoError(t, err, "%s: %v; the banner printed by `nova-tokens help` lives in this file", source, err)
 	lines := strings.Split(string(raw), "\n")
 
 	start, end := -1, -1
@@ -45,12 +46,8 @@ func TestTheCLIReferenceCountsNovaTokensHelpCorrectly(t *testing.T) {
 			break
 		}
 	}
-	if start == -1 {
-		t.Fatalf("%s: no line beginning \"const usage = `\"; the banner this test cuts is not there", source)
-	}
-	if end == -1 {
-		t.Fatalf("%s: the banner opened at line %d never closes with a lone backtick at column one", source, start+1)
-	}
+	require.NotEqual(t, -1, start, "%s: no line beginning \"const usage = `\"; the banner this test cuts is not there", source)
+	require.NotEqual(t, -1, end, "%s: the banner opened at line %d never closes with a lone backtick at column one", source, start+1)
 	banner := lines[start+1 : end]
 
 	usageAt := -1
@@ -60,9 +57,7 @@ func TestTheCLIReferenceCountsNovaTokensHelpCorrectly(t *testing.T) {
 			break
 		}
 	}
-	if usageAt == -1 {
-		t.Fatalf("%s: the banner carries no line exactly \"usage:\"", source)
-	}
+	require.NotEqual(t, -1, usageAt, "%s: the banner carries no line exactly \"usage:\"", source)
 	verbs := map[string]bool{}
 	for _, line := range banner[usageAt+1:] {
 		if line == "" {
@@ -75,9 +70,7 @@ func TestTheCLIReferenceCountsNovaTokensHelpCorrectly(t *testing.T) {
 			}
 		}
 	}
-	if len(verbs) < 5 {
-		t.Fatalf("%s: the usage block names %d distinct verbs; a scan that finds almost none would pass by asking nothing", source, len(verbs))
-	}
+	require.GreaterOrEqual(t, len(verbs), 5, "%s: the usage block names %d distinct verbs; a scan that finds almost none would pass by asking nothing", source, len(verbs))
 
 	var blockCounts []int
 	for i, line := range banner {
@@ -101,28 +94,18 @@ func TestTheCLIReferenceCountsNovaTokensHelpCorrectly(t *testing.T) {
 	}
 
 	ref, err := os.ReadFile("../../docs/CLI.md")
-	if err != nil {
-		t.Fatalf("../../docs/CLI.md: %v", err)
-	}
+	require.NoError(t, err, "../../docs/CLI.md: %v", err)
 	doc := string(ref)
 
 	verbWord, ok := numberWords[len(verbs)]
-	if !ok {
-		t.Fatalf("%s: the usage block names %d distinct verbs, outside the 1..12 this test can spell; widen numberWords", source, len(verbs))
-	}
+	require.True(t, ok, "%s: the usage block names %d distinct verbs, outside the 1..12 this test can spell; widen numberWords", source, len(verbs))
 	verbClaim := "`nova-tokens help` lists all " + verbWord + " verbs."
-	if !strings.Contains(doc, verbClaim) {
-		t.Errorf("docs/CLI.md makes a counted claim about the tool's own help that is wrong: it should say %q, where the usage block in %s names %d distinct verbs (report has two usage lines and one name, which is why a line count and a verb count differ) -- correct the sentence",
-			verbClaim, source, len(verbs))
-	}
+	assert.Contains(t, doc, verbClaim, "docs/CLI.md makes a counted claim about the tool's own help that is wrong: it should say %q, where the usage block in %s names %d distinct verbs (report has two usage lines and one name, which is why a line count and a verb count differ) -- correct the sentence",
+		verbClaim, source, len(verbs))
 
 	exampleWord, ok := numberWords[total]
-	if !ok {
-		t.Fatalf("%s: the banner carries %d pasteable example lines, outside the 1..12 this test can spell; widen numberWords", source, total)
-	}
+	require.True(t, ok, "%s: the banner carries %d pasteable example lines, outside the 1..12 this test can spell; widen numberWords", source, total)
 	exampleClaim := "`nova-tokens help` carries " + exampleWord + " example lines"
-	if !strings.Contains(doc, exampleClaim) {
-		t.Errorf("docs/CLI.md makes a counted claim about the tool's own help that is wrong: it should say %q, where the banner in %s carries %d pasteable `nova-tokens ...` lines across %d example blocks -- correct the sentence",
-			exampleClaim, source, total, len(blockCounts))
-	}
+	assert.Contains(t, doc, exampleClaim, "docs/CLI.md makes a counted claim about the tool's own help that is wrong: it should say %q, where the banner in %s carries %d pasteable `nova-tokens ...` lines across %d example blocks -- correct the sentence",
+		exampleClaim, source, total, len(blockCounts))
 }

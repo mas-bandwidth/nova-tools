@@ -4,6 +4,9 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // cli_spelling_flags_test.go pins the reference line in docs/CLI.md against the flag set
@@ -12,9 +15,7 @@ func TestTheCLIReferenceNamesEverySpellingFlag(t *testing.T) {
 	t.Parallel()
 
 	src, err := os.ReadFile("../../cmd/nova-check/spelling.go")
-	if err != nil {
-		t.Fatalf("cmd/nova-check/spelling.go: %v", err)
-	}
+	require.NoError(t, err, "cmd/nova-check/spelling.go: %v", err)
 	lines := strings.Split(string(src), "\n")
 
 	start := -1
@@ -24,9 +25,7 @@ func TestTheCLIReferenceNamesEverySpellingFlag(t *testing.T) {
 			break
 		}
 	}
-	if start < 0 {
-		t.Fatal("cmd/nova-check/spelling.go: func cmdSpelling not found")
-	}
+	require.GreaterOrEqual(t, start, 0, "cmd/nova-check/spelling.go: func cmdSpelling not found")
 	end := -1
 	for i := start + 1; i < len(lines); i++ {
 		if lines[i] == "}" {
@@ -34,9 +33,7 @@ func TestTheCLIReferenceNamesEverySpellingFlag(t *testing.T) {
 			break
 		}
 	}
-	if end < 0 {
-		t.Fatal("cmd/nova-check/spelling.go: closing brace of func cmdSpelling not found")
-	}
+	require.GreaterOrEqual(t, end, 0, "cmd/nova-check/spelling.go: closing brace of func cmdSpelling not found")
 
 	type registration struct {
 		name string
@@ -80,14 +77,10 @@ func TestTheCLIReferenceNamesEverySpellingFlag(t *testing.T) {
 		}
 	}
 
-	if len(regs) < 6 {
-		t.Fatalf("cmd/nova-check/spelling.go: found %d registered flags in cmdSpelling, want at least 6; the scan has missed a registration form", len(regs))
-	}
+	require.GreaterOrEqual(t, len(regs), 6, "cmd/nova-check/spelling.go: found %d registered flags in cmdSpelling, want at least 6; the scan has missed a registration form", len(regs))
 
 	cli, err := os.ReadFile("../../docs/CLI.md")
-	if err != nil {
-		t.Fatalf("docs/CLI.md: %v", err)
-	}
+	require.NoError(t, err, "docs/CLI.md: %v", err)
 	ref := ""
 	seen := 0
 	for _, line := range strings.Split(string(cli), "\n") {
@@ -96,12 +89,8 @@ func TestTheCLIReferenceNamesEverySpellingFlag(t *testing.T) {
 			ref = line
 		}
 	}
-	if seen == 0 {
-		t.Fatal("docs/CLI.md: no line begins `nova-check spelling `")
-	}
-	if seen > 1 {
-		t.Fatalf("docs/CLI.md: %d lines begin `nova-check spelling `, want exactly one", seen)
-	}
+	require.NotZero(t, seen, "docs/CLI.md: no line begins `nova-check spelling `")
+	require.LessOrEqual(t, seen, 1, "docs/CLI.md: %d lines begin `nova-check spelling `, want exactly one", seen)
 
 	usage := ref
 	if j := strings.Index(usage, "#"); j >= 0 {
@@ -109,9 +98,7 @@ func TestTheCLIReferenceNamesEverySpellingFlag(t *testing.T) {
 	}
 
 	for _, reg := range regs {
-		if !strings.Contains(usage, "--"+reg.name) {
-			t.Errorf("docs/CLI.md reference line does not name --%s, registered at cmd/nova-check/spelling.go:%d",
-				reg.name, reg.line)
-		}
+		assert.Contains(t, usage, "--"+reg.name, "docs/CLI.md reference line does not name --%s, registered at cmd/nova-check/spelling.go:%d",
+			reg.name, reg.line)
 	}
 }

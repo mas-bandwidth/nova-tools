@@ -2,8 +2,10 @@ package docs
 
 import (
 	"os"
-	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestNovaRedisSpecFirstSlice pins the nova-redis specification's contract
@@ -15,9 +17,7 @@ func TestNovaRedisSpecFirstSlice(t *testing.T) {
 	t.Parallel()
 
 	body, err := os.ReadFile("../../docs/SPEC-REDIS.md")
-	if err != nil {
-		t.Fatalf("docs/SPEC-REDIS.md: %v", err)
-	}
+	require.NoError(t, err, "docs/SPEC-REDIS.md: %v", err)
 	content := string(body)
 
 	for _, want := range []string{
@@ -34,8 +34,6 @@ func TestNovaRedisSpecFirstSlice(t *testing.T) {
 		"Persistence",
 		"Git stays the record",
 	} {
-		if !strings.Contains(content, want) {
-			t.Errorf("docs/SPEC-REDIS.md missing %q", want)
-		}
+		assert.Contains(t, content, want, "docs/SPEC-REDIS.md missing %q", want)
 	}
 }
