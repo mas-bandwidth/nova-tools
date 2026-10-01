@@ -57,20 +57,34 @@
 \*                       stream (capped at 3); a stream with a dealable card
 \*                       left after every pump so far
 \*
+\* THE ACCEPT AND THE REDEALS (2026-09-30, the laws the event-driven rules
+\* held and the first dirty tick lost; docs/SPEC-SPRINT.md sections 2 and 6).
+\*   The pump accepts a card in review whose read said ok (R9), unless its
+\*   CI is red at its head or the coordinator returned it at its attempt:
+\*   those are the coordinator's, whose own accept still takes them
+\*   (AcceptHolds). A card's redeals count only takes that ended without a
+\*   finish: a machine lost while the card was dealt and not taken returns
+\*   it with its count kept; a take that ended marks it (ended), and the deal
+\*   that places it again counts that take; a card whose take ends with its
+\*   count at MaxRedeals is not dealt again (RedealsAreEndedTakes,
+\*   RedealBoundHolds). The coordinator's verbs (ci, return, accept) and
+\*   take run only where the instance turns them on (Coord, Takes).
+\*
 \* WHAT IS NOT MODELLED. Clear and epochs (the counters' reset); two reads
-\* per attempt (one read each); the coordinator's accept (a read ok is the
-\* machine's accept, R9); take (a finish needs no take); verbs other than
-\* add, finish, report, merge, beat and lapse; outside actions during a
-\* tick (they run between ticks); byte and step budgets; two sentinels in
-\* one stream (the pump lands at most one per stream per tick); the log
-\* itself (a queue entry is its line).
+\* per attempt (one read each); rework but by a broken read; take is
+\* modelled only for the redeals (a finish needs no take); verbs other than
+\* add, take, finish, report, merge, ci, return, accept, beat and lapse;
+\* outside actions during a tick (they run between ticks); byte and step
+\* budgets; two sentinels in one stream (the pump lands at most one per
+\* stream per tick); the log itself (a queue entry is its line).
 EXTENDS Integers, Sequences, FiniteSets, TLC
 
 CONSTANTS
   Streams, Cards, StreamOf, Pos, Sents, COrder,
   Machines, Width, MOrder, Readers, ROrder, Host, SOrder,
   MaxAttempts, MaxActs, MaxSub, CtrMod,
-  Addable, Scn, Fixes, Broken
+  Addable, Scn, Fixes, Broken,
+  MaxRedeals, Takes, Coord
 
 Tables == {"work", "readers", "merge", "fleet"}
 Three == {"readers", "merge", "fleet"}
@@ -81,12 +95,22 @@ Min(a, b) == IF a < b THEN a ELSE b
 VARIABLES col, att, bnd, rd, askw, mq, stat, mc, mr, noUp, Q,
           mctr, rctr, sctr, live, acts, ext,
           phase, pumps, sub, addr, notes, wake, act, plc,
-          brk, dealt, always
+          brk, dealt, always,
+          okd, ci, ret, tk, rdl, ended, ends
+
+\* okd, ci, ret   the work table: a card's read said ok and stands; its CI
+\*                ("none" or "red" at its head); returned at its attempt
+\* tk             the fleet table: the card dealt to a machine is taken
+\* rdl, ended     the work card: its redeals; a take of it ended and the
+\*                deal that places it again has not counted it
+\* ends           ghost: takes of the card that ended, this attempt
 
 vars == <<col, att, bnd, rd, askw, mq, stat, mc, mr, noUp, Q,
           mctr, rctr, sctr, live, acts, ext,
           phase, pumps, sub, addr, notes, wake, act, plc,
-          brk, dealt, always>>
+          brk, dealt, always,
+          okd, ci, ret, tk, rdl, ended, ends>>
+CardVars == <<okd, ci, ret, tk, rdl, ended, ends>>
 
 -----------------------------------------------------------------------------
 \* Entries. k is the kind, c the card (or "-"), x the machine, the reader
@@ -113,7 +137,8 @@ Cur == [col |-> col, att |-> att, bnd |-> bnd, rd |-> rd, askw |-> askw,
         mq |-> mq, stat |-> stat, mc |-> mc, mr |-> mr, noUp |-> noUp,
         q |-> Q, mctr |-> mctr, rctr |-> rctr, sctr |-> sctr, addr |-> addr,
         brk |-> brk, dealt |-> dealt, plc |-> <<>>, notes |-> notes,
-        f0 |-> Len(Q["fleet"])]
+        f0 |-> Len(Q["fleet"]),
+        okd |-> okd, ci |-> ci, ret |-> ret, tk |-> tk, rdl |-> rdl, ended |-> ended, ends |-> ends]
 
 Put(S, t, e) == [S EXCEPT !.q[t] = Append(@, e)]
 
@@ -134,8 +159,32 @@ Address(S) ==
             !.notes = IF Broken = "percard" THEN Min(@ + 1, 2) ELSE @]
 
 -----------------------------------------------------------------------------
+\* THE ACCEPT (R9). A card whose read said ok moves to merging and into the
+\* merge queue; the pump holds one whose CI is red at its head or that the
+\* coordinator returned at its attempt (the witness "acceptheld" holds
+\* neither).
+AcceptOne(S, c) == Put([S EXCEPT !.col[c] = "merging", !.okd[c] = FALSE], "merge", E("queue", c, "-"))
+Held(S, c) == Broken # "acceptheld" /\ (S.ci[c] = "red" \/ S.ret[c])
+Acceptable(S) == {c \in Cards : S.col[c] = "review" /\ S.okd[c] /\ ~Held(S, c)}
+AcceptAll(S) ==
+  LET A == Acceptable(S) IN
+  [S EXCEPT !.col = [c \in Cards |-> IF c \in A THEN "merging" ELSE @[c]],
+            !.okd = [c \in Cards |-> IF c \in A THEN FALSE ELSE @[c]],
+            !.q["merge"] = @ \o [i \in 1..Cardinality(A) |->
+               E("queue", CHOOSE x \in A : Cardinality({d \in A : Idx(COrder, d) < Idx(COrder, x)}) = i - 1, "-")]]
+
+\* THE REDEAL BOUND. A card whose take ended with its count at MaxRedeals is
+\* not dealt again (the witness "redealpast" deals it).
+AtRB(S, c) == Broken # "redealpast" /\ S.ended[c] /\ S.rdl[c] >= MaxRedeals
+
+\* A new attempt: a new card, a new head, nothing returned at it.
+NewAttempt(S, c) ==
+  [S EXCEPT !.okd[c] = FALSE, !.ci[c] = "none", !.ret[c] = FALSE,
+            !.rdl[c] = 0, !.ended[c] = FALSE, !.ends[c] = 0]
+
+-----------------------------------------------------------------------------
 \* THE WORK PUMP (1.). Applies its whole queue, lands sentinels, releases,
-\* deals. The only writer of col, att and bnd.
+\* deals, accepts. The only writer of col, att and bnd.
 ApplyW(S, e) ==
   LET c == e.c IN
   CASE e.k = "add" ->
@@ -144,21 +193,26 @@ ApplyW(S, e) ==
          IF S.col[c] = "working"
          THEN Put([S EXCEPT !.col[c] = "review"], "readers", E("ask", c, "-"))
          ELSE S
-    [] e.k = "readok" ->
-         IF S.col[c] = "review"
-         THEN Put([S EXCEPT !.col[c] = "merging"], "merge", E("queue", c, "-"))
-         ELSE S
+    [] e.k = "readok" ->    \* the read stands; the pump's accept moves it
+         IF S.col[c] = "review" THEN [S EXCEPT !.okd[c] = TRUE] ELSE S
     [] e.k = "broken" ->
          IF S.col[c] # "review" THEN S
          ELSE IF Broken = "twice"
-         THEN [S EXCEPT !.col[c] = "ready", !.att[c] = Min(@ + 2, MaxAttempts)]
+         THEN NewAttempt([S EXCEPT !.col[c] = "ready", !.att[c] = Min(@ + 2, MaxAttempts)], c)
          ELSE IF S.att[c] < MaxAttempts
-         THEN [S EXCEPT !.col[c] = "ready", !.att[c] = @ + 1]
+         THEN NewAttempt([S EXCEPT !.col[c] = "ready", !.att[c] = @ + 1], c)
          ELSE Address([S EXCEPT !.bnd[c] = TRUE])
     [] e.k = "landed" ->
          IF S.col[c] = "merging" THEN [S EXCEPT !.col[c] = "landed"] ELSE S
-    [] e.k = "returned" ->
-         IF S.col[c] = "working" THEN [S EXCEPT !.col[c] = "ready"] ELSE S
+    [] e.k = "returned" ->  \* x: "taken" when a take of it ended
+         IF S.col[c] # "working" THEN S
+         ELSE LET S1 == [S EXCEPT !.col[c] = "ready", !.ended[c] = @ \/ e.x = "taken"]
+              IN IF e.x = "taken" /\ S.rdl[c] >= MaxRedeals THEN Address(S1) ELSE S1
+    [] e.k = "ci" -> [S EXCEPT !.ci[c] = e.x]
+    [] e.k = "back" ->      \* returned to review: its read stands
+         IF S.col[c] = "merging" THEN [S EXCEPT !.col[c] = "review", !.ret[c] = TRUE, !.okd[c] = TRUE] ELSE S
+    [] e.k = "accept" ->    \* the coordinator's accept, held or not
+         IF S.col[c] = "review" /\ S.okd[c] THEN AcceptOne(S, c) ELSE S
     [] OTHER -> S    \* room: a reason to tick, nothing to apply
 
 \* A sentinel lands when every card before it in its stream has landed; a
@@ -183,7 +237,7 @@ Release(S, C) ==
 \* The deal: the streams take turns by the stream counter over the streams
 \* with a dealable card; within a stream the lowest position; the machine by
 \* the machine counter over the up machines with room.
-Dealable(S, cand) == {c \in cand : S.col[c] = "ready"}
+Dealable(S, cand) == {c \in cand : S.col[c] = "ready" /\ ~AtRB(S, c)}
 UpRoom(S) == {m \in Machines : S.stat[m] = "up" /\
                 (Broken = "nowidth" \/ Room(S, m) > 0)}
 DealOne(S, cand) ==
@@ -195,6 +249,8 @@ DealOne(S, cand) ==
       ms == UpRoom(S)
       m == Pick(MOrder, ms, S.mctr)
   IN Put([S EXCEPT !.col[c] = "working",
+                   !.rdl[c] = IF S.ended[c] THEN Min(@ + 1, MaxRedeals + 1) ELSE @,
+                   !.ended[c] = FALSE,
                    !.sctr = (@ + 1) % CtrMod, !.mctr = (@ + 1) % CtrMod,
                    !.dealt[st] = Min(@ + 1, 3),
                    !.plc = @ \o <<[k |-> "s", ctr |-> S.sctr, el |-> ss, pick |-> st],
@@ -252,6 +308,8 @@ PlaceReads(S) ==
 ApplyM(S, e) ==
   LET c == e.c IN
   CASE e.k = "queue" -> [S EXCEPT !.mq = @ \cup {c}]
+    [] e.k = "return" ->    \* the coordinator's return: off the queue, back to review
+         IF c \notin S.mq THEN S ELSE Put([S EXCEPT !.mq = @ \ {c}], "work", E("back", c, "-"))
     [] e.k = "merged" ->
          IF c \notin S.mq THEN S
          ELSE IF Broken = "mergewrites"
@@ -271,9 +329,15 @@ ApplyM(S, e) ==
 RoomNews(S, m) ==
   LET S1 == Put(S, "work", E("room", "-", m)) IN
   IF \E c \in Cards : S1.askw[c] THEN Put(S1, "readers", E("room", "-", m)) ELSE S1
+Nth(cs, i) == CHOOSE c \in cs : Cardinality({d \in cs : Idx(COrder, d) < Idx(COrder, c)}) = i - 1
+\* x is "taken" when the card was taken (the witness "countall" marks every
+\* card so).
+TakenMark(S, c) == IF S.tk[c] \/ Broken = "countall" THEN "taken" ELSE "-"
 ReturnAll(S, cs) ==
   [S EXCEPT !.q["work"] = @ \o [i \in 1..Cardinality(cs) |->
-     E("returned", CHOOSE c \in cs : Cardinality({d \in cs : Idx(COrder, d) < Idx(COrder, c)}) = i - 1, "-")]]
+     E("returned", Nth(cs, i), TakenMark(S, Nth(cs, i)))],
+            !.tk = [c \in Cards |-> IF c \in cs THEN FALSE ELSE @[c]],
+            !.ends = [c \in Cards |-> IF c \in cs /\ S.tk[c] THEN Min(S.ends[c] + 1, MaxRedeals + 1) ELSE @[c]]]
 UnreadAll(S, cs) ==
   [S EXCEPT !.q["readers"] = @ \o [i \in 1..Cardinality(cs) |->
      E("unread", CHOOSE c \in cs : Cardinality({d \in cs : Idx(COrder, d) < Idx(COrder, c)}) = i - 1, "-")]]
@@ -298,10 +362,12 @@ ApplyF(S, e) ==
     [] e.k = "dealt" ->
          IF S.stat[m] = "up" THEN [S EXCEPT !.mc[m] = @ \cup {c}]
          ELSE Put(S, "work", E("returned", c, "-"))
+    [] e.k = "take" ->
+         IF c \in S.mc[m] THEN [S EXCEPT !.tk[c] = TRUE] ELSE S
     [] e.k = "fin" ->
          IF c \notin S.mc[m] THEN S    \* a finish of a card since returned
-         ELSE IF Broken = "drop" THEN RoomNews([S EXCEPT !.mc[m] = @ \ {c}], m)
-         ELSE RoomNews(Put([S EXCEPT !.mc[m] = @ \ {c}], "work", E("finished", c, "-")), m)
+         ELSE IF Broken = "drop" THEN RoomNews([S EXCEPT !.mc[m] = @ \ {c}, !.tk[c] = FALSE], m)
+         ELSE RoomNews(Put([S EXCEPT !.mc[m] = @ \ {c}, !.tk[c] = FALSE], "work", E("finished", c, "-")), m)
     [] e.k = "readon" ->
          IF S.stat[m] = "up" THEN [S EXCEPT !.mr[m] = @ \cup {c}]
          ELSE Put(S, "readers", E("unread", c, "-"))
@@ -328,7 +394,7 @@ Pump(S0) ==
       S3 == Release(S2, C2)
       cand == IF Broken = "onread" THEN {c \in Cards : S0.col[c] = "ready"} ELSE Cards
       S4 == Deal(S3, cand)
-  IN NoUpJudge(S4, cand)
+  IN AcceptAll(NoUpJudge(S4, cand))
 
 -----------------------------------------------------------------------------
 \* An update of one of the three: drain the whole queue in one plan.
@@ -343,6 +409,8 @@ Update(t) ==
   IN S3
 
 Commit(S) ==
+  /\ okd' = S.okd /\ ci' = S.ci /\ ret' = S.ret /\ tk' = S.tk /\ rdl' = S.rdl
+  /\ ended' = S.ended /\ ends' = S.ends
   /\ col' = S.col /\ att' = S.att /\ bnd' = S.bnd /\ rd' = S.rd /\ askw' = S.askw
   /\ mq' = S.mq /\ stat' = S.stat /\ mc' = S.mc /\ mr' = S.mr /\ noUp' = S.noUp
   /\ Q' = S.q /\ mctr' = S.mctr /\ rctr' = S.rctr /\ sctr' = S.sctr
@@ -362,14 +430,14 @@ TickStart ==
   /\ IF Broken = "reset" THEN mctr' = 0 /\ rctr' = 0 /\ sctr' = 0
      ELSE UNCHANGED <<mctr, rctr, sctr>>
   /\ UNCHANGED <<col, att, bnd, rd, askw, mq, stat, mc, mr, noUp, Q,
-                 live, acts, wake, brk, dealt, always>>
+                 live, acts, wake, brk, dealt, always, CardVars>>
 
 \* The first pass's first update: the one pump of the tick.
 PumpWork ==
   /\ phase = "work"
   /\ LET S == Pump(Cur) IN
        /\ Commit(S)
-       /\ always' = [s \in Streams |-> always[s] /\ \E c \in Cards : StreamOf[c] = s /\ S.col[c] = "ready"]
+       /\ always' = [s \in Streams |-> always[s] /\ \E c \in Dealable(S, Cards) : StreamOf[c] = s]
   /\ phase' = "readers" /\ pumps' = pumps + 1 /\ act' = "PumpWork" /\ Step
   /\ UNCHANGED <<live, acts, ext, wake>>
 
@@ -408,7 +476,7 @@ TickEnd ==
   /\ phase' = "idle" /\ act' = "TickEnd" /\ plc' = <<>>
   /\ UNCHANGED <<col, att, bnd, rd, askw, mq, stat, mc, mr, noUp, Q,
                  mctr, rctr, sctr, live, acts, ext, pumps, sub, addr,
-                 brk, dealt, always>>
+                 brk, dealt, always, CardVars>>
 
 -----------------------------------------------------------------------------
 \* THE OUTSIDE, between ticks: each appends to one queue and writes no table.
@@ -418,7 +486,7 @@ Outside(t, e) ==
   /\ ext' = TRUE /\ act' = "Outside" /\ plc' = <<>>
   /\ UNCHANGED <<col, att, bnd, rd, askw, mq, stat, mc, mr, noUp,
                  mctr, rctr, sctr, phase, pumps, sub, addr, notes, wake,
-                 brk, dealt, always>>
+                 brk, dealt, always, CardVars>>
 
 Add(c) ==
   /\ c \in Addable /\ col[c] = "none" /\ Pend("work", "add", c) = 0
@@ -440,6 +508,25 @@ Lapse(m) ==
   /\ live[m] /\ acts < MaxActs
   /\ live' = [live EXCEPT ![m] = FALSE] /\ acts' = acts + 1
   /\ Outside("fleet", E("lapse", "-", m))
+\* The worker takes a card dealt to its machine.
+Take(c, m) ==
+  /\ Takes /\ c \in mc[m] /\ live[m] /\ ~tk[c] /\ Pend("fleet", "take", c) = 0
+  /\ Outside("fleet", E("take", c, m)) /\ UNCHANGED <<live, acts>>
+\* The coordinator's verbs: a CI result on a card in review (red at its head,
+\* or green), a return of a card queued to merge, an accept of a card the
+\* pump holds.
+CIRed(c) ==
+  /\ Coord /\ col[c] = "review" /\ ci[c] # "red" /\ Pend("work", "ci", c) = 0 /\ acts < MaxActs
+  /\ acts' = acts + 1 /\ Outside("work", E("ci", c, "red")) /\ UNCHANGED live
+CIGreen(c) ==
+  /\ Coord /\ ci[c] = "red" /\ Pend("work", "ci", c) = 0
+  /\ Outside("work", E("ci", c, "none")) /\ UNCHANGED <<live, acts>>
+Return(c) ==
+  /\ Coord /\ c \in mq /\ Pend("merge", "return", c) = 0 /\ Pend("merge", "merged", c) = 0 /\ acts < MaxActs
+  /\ acts' = acts + 1 /\ Outside("merge", E("return", c, "-")) /\ UNCHANGED live
+CoordAccept(c) ==
+  /\ Coord /\ col[c] = "review" /\ okd[c] /\ (ci[c] = "red" \/ ret[c]) /\ Pend("work", "accept", c) = 0
+  /\ Outside("work", E("accept", c, "-")) /\ UNCHANGED <<live, acts>>
 
 -----------------------------------------------------------------------------
 Init ==
@@ -453,12 +540,16 @@ Init ==
   /\ act = "Init" /\ plc = <<>>
   /\ brk = [c \in Cards |-> 0] /\ dealt = [s \in Streams |-> 0]
   /\ always = [s \in Streams |-> TRUE]
+  /\ okd = [c \in Cards |-> FALSE] /\ ci = [c \in Cards |-> "none"] /\ ret = [c \in Cards |-> FALSE]
+  /\ tk = [c \in Cards |-> FALSE] /\ rdl = [c \in Cards |-> 0] /\ ended = [c \in Cards |-> FALSE]
+  /\ ends = [c \in Cards |-> 0]
 
 TickNext == TickStart \/ PumpWork \/ DrainWork \/ TickEnd \/
             \E t \in Three : Pass(t) \/ Drain(t)
 OutsideNext ==
   \/ \E c \in Cards : Add(c) \/ Merge(c) \/ \E v \in {"ok", "broken"} : Report(c, v)
-  \/ \E c \in Cards, m \in Machines : Finish(c, m)
+  \/ \E c \in Cards, m \in Machines : Finish(c, m) \/ Take(c, m)
+  \/ \E c \in Cards : CIRed(c) \/ CIGreen(c) \/ Return(c) \/ CoordAccept(c)
   \/ \E m \in Machines : Beat(m) \/ Lapse(m)
 Next == TickNext \/ OutsideNext
 Spec == Init /\ [][Next]_vars /\ WF_vars(TickNext)
@@ -472,10 +563,13 @@ TypeOK ==
   /\ mr \in [Machines -> SUBSET Cards] /\ noUp \in BOOLEAN
   /\ phase \in {"idle", "work", "drain"} \cup Three
   /\ pumps \in 0..2 /\ sub \in 0..(MaxSub + 1) /\ addr \in 0..3 /\ notes \in 0..2
+  /\ okd \in [Cards -> BOOLEAN] /\ ci \in [Cards -> {"none", "red"}] /\ ret \in [Cards -> BOOLEAN]
+  /\ tk \in [Cards -> BOOLEAN] /\ rdl \in [Cards -> 0..(MaxRedeals + 1)]
+  /\ ended \in [Cards -> BOOLEAN] /\ ends \in [Cards -> 0..(MaxRedeals + 1)]
 
 \* THE CENTRAL PROPERTY (the owner: "nothing advances the work stream table
 \* EXCEPT on the next tick"). Only the tick's one pump writes the work table.
-WorkChangesOnlyInPump == [][act' # "PumpWork" => UNCHANGED <<col, att, bnd>>]_vars
+WorkChangesOnlyInPump == [][act' # "PumpWork" => UNCHANGED <<col, att, bnd, okd, ci, ret>>]_vars
 \* No card leaves waiting or ready, and none enters working, but in the pump.
 WorkAdvancesOnlyInThePump ==
   [][act' # "PumpWork" =>
@@ -498,8 +592,9 @@ ThreeQueuesEmptyAtTickEnd == [][act' = "TickEnd" => \A t \in Three : Q'[t] = <<>
 Holds(c) == Cardinality({m \in Machines : c \in mc[m]}) + Pend("fleet", "dealt", c)
             + Pend("work", "finished", c) + Pend("work", "returned", c)
 ReadTok(c) == Pend("readers", "ask", c) + (IF askw[c] THEN 1 ELSE 0) + (IF rd[c] # NoR THEN 1 ELSE 0)
-              + Pend("work", "readok", c) + Pend("work", "broken", c)
+              + Pend("work", "readok", c) + Pend("work", "broken", c) + (IF okd[c] THEN 1 ELSE 0)
 MergeTok(c) == Pend("merge", "queue", c) + (IF c \in mq THEN 1 ELSE 0) + Pend("work", "landed", c)
+               + Pend("work", "back", c)
 ReadHome(c) ==
   /\ rd[c] # NoR => Cardinality({m \in Machines : c \in mr[m]}) + Pend("fleet", "readon", c)
                     + Pend("readers", "unread", c) = 1
@@ -522,8 +617,9 @@ RoomNow(m) == Width[m] - Cardinality(mc[m]) - Cardinality(mr[m])
 PumpDone ==
   /\ Q["work"] = <<>>
   /\ Landable(col) = {} /\ Releasable(col) = {}
-  /\ ~(/\ \E c \in Cards : col[c] = "ready"
+  /\ ~(/\ \E c \in Cards : col[c] = "ready" /\ ~(ended[c] /\ rdl[c] >= MaxRedeals)
        /\ \E m \in Machines : stat[m] = "up" /\ RoomNow(m) > 0)
+  /\ ~\E c \in Cards : col[c] = "review" /\ okd[c] /\ ci[c] # "red" /\ ~ret[c]
 ReadersDone ==
   ~(/\ \E c \in Cards : askw[c]
     /\ \E r \in Readers : stat[Host[r]] = "up" /\ RoomNow(Host[r]) > 0)
@@ -560,6 +656,25 @@ WidthRespected == \A m \in Machines : Cardinality(mc[m]) + Cardinality(mr[m]) <=
 \* pump so far were dealt within one of each other.
 StreamFairness ==
   [][\A s, t \in Streams : always[s] /\ always[t] => dealt'[s] - dealt'[t] \in -1..1]_vars
+
+\* THE ACCEPT HOLDS: a card in review whose CI is red at its head, or that
+\* the coordinator returned at its attempt, moves to merging only by the
+\* coordinator's accept.
+AcceptHolds ==
+  [][\A c \in Cards : col[c] = "review" /\ col'[c] = "merging" /\ (ci'[c] = "red" \/ ret'[c])
+                      => Pend("work", "accept", c) > 0]_vars
+
+\* REDEALS ARE ENDED TAKES: a card's redeals, with the take that ended and
+\* is not yet counted (ended, or on its way to the work queue), are the takes
+\* of it that ended, this attempt; a card returned untaken keeps its count.
+EndedOnTheWay(c) == Count(Q["work"], LAMBDA e : e.k = "returned" /\ e.c = c /\ e.x = "taken")
+RedealsAreEndedTakes ==
+  \A c \in Cards : rdl[c] + (IF ended[c] THEN 1 ELSE 0) + EndedOnTheWay(c) = ends[c]
+RedealsBounded == \A c \in Cards : rdl[c] <= MaxRedeals
+\* THE REDEAL BOUND HOLDS: a card whose take ended at the bound is never
+\* dealt again.
+RedealBoundHolds ==
+  [][\A c \in Cards : col[c] = "ready" /\ ended[c] /\ rdl[c] >= MaxRedeals => col'[c] # "working"]_vars
 
 \* TERMINATION: a tick's steps are bounded (safety form, MaxSub) and every
 \* tick ends (liveness form).

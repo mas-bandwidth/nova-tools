@@ -11,6 +11,8 @@
 - A placement on a machine, a reader or a stream takes a uint64 counter modulo the count of the candidates, in their order; the counters persist across ticks.
 - A machine has a width; a read takes room on its reader's host.
 - The coordinator is woken once, at the tick's end, with the count of what the tick addressed to it (a sentinel landed, a card at its bound, no fleet member up, a machine lost with work on it), and not at all when the count is 0.
+- The pump accepts a card whose read said ok (R9), after its deal, and holds one whose CI is red at its head or that the coordinator returned at its attempt: those are the coordinator's, whose own accept still takes them.
+- A card's redeals count only takes that ended without a finish. A machine lost while the card was dealt and not taken returns it with its count kept; a take that ended marks the card, and the deal that places it again counts that take; a card whose take ends with its count at `MaxRedeals` is not dealt again, and the coordinator is told.
 
 ## What is modelled
 
@@ -25,6 +27,9 @@
 | `mctr`, `rctr`, `sctr` | the placement counters, modelled mod 2 (2 divides 2^64 and every candidate count an instance has) |
 | `live`, `acts`, `ext` | the outside: a machine beating, outside actions used, an outside entry since the last tick began |
 | `phase`, `pumps`, `sub`, `addr`, `notes`, `wake`, `act`, `plc`, `brk`, `dealt`, `always` | the tick and its ghosts |
+| `okd`, `ci`, `ret` | the work table: a card's read said ok and stands; its CI at its head (`none` or `red`); returned at its attempt |
+| `tk` | the fleet table: the card dealt to a machine is taken |
+| `rdl`, `ended`, `ends` | the work card: its redeals; a take of it ended and is not yet counted; the ghost count of the takes of it that ended, this attempt |
 
 | action | what it is |
 |---|---|
@@ -33,15 +38,16 @@
 | `Pass(t)` | the first pass's update of readers, merge, fleet, in turn |
 | `Drain(t)` | a queue of readers, merge or fleet not empty, drained at once |
 | `TickEnd` | the three queues empty; one note iff the tick addressed anything |
-| `Add`, `Finish`, `Report`, `Merge`, `Beat`, `Lapse` | the outside, between ticks; each appends one entry to one queue and writes no table |
+| `Add`, `Take`, `Finish`, `Report`, `Merge`, `Beat`, `Lapse` | the outside, between ticks; each appends one entry to one queue and writes no table (`Take` only where `Takes` is on) |
+| `CIRed`, `CIGreen`, `Return`, `CoordAccept` | the coordinator's verbs, between ticks, only where `Coord` is on: a CI result on a card in review (an entry to work), a return of a card queued to merge (to merge, which queues `back` to work), an accept of a card the pump holds (to work) |
 
-The updates: readers take `ask` (from the pump), `rep` (a reader's report) and `unread` (from the fleet), then place every card in askwait by the reader counter over the readers whose host is up and has room. Merge takes `queue` (from the pump) and `merged` (the merger's verb), and queues `landed` to work and to fleet. Fleet takes `beat`, `lapse`, `dealt`, `fin`, `readon`, `readoff` and `landed`: a lapse returns the machine's cards to the work queue and its reads to the readers queue; room freed or a machine up is a `room` entry to work (and to readers when a card waits for one).
+The updates: readers take `ask` (from the pump), `rep` (a reader's report) and `unread` (from the fleet), then place every card in askwait by the reader counter over the readers whose host is up and has room. Merge takes `queue` (from the pump), `merged` (the merger's verb) and `return` (the coordinator's), and queues `landed` to work and to fleet, or `back` to work. Fleet takes `beat`, `lapse`, `dealt`, `take`, `fin`, `readon`, `readoff` and `landed`: a lapse returns the machine's cards to the work queue, each marked `taken` when it was, and its reads to the readers queue; room freed or a machine up is a `room` entry to work (and to readers when a card waits for one). The pump applies `readok` as a read that stands, `ci`, `back` (the card in review, returned at its attempt, its read standing) and `accept` (the coordinator's, held or not), and accepts after the deal.
 
 ## Properties
 
 | property | kind | holds on the shape with both repairs |
 |---|---|---|
-| `WorkChangesOnlyInPump` | action | yes: no step but the pump changes `col`, `att` or `bnd` |
+| `WorkChangesOnlyInPump` | action | yes: no step but the pump changes `col`, `att`, `bnd`, `okd`, `ci` or `ret` |
 | `WorkAdvancesOnlyInThePump` | action | yes: no card leaves waiting or ready, or enters working, but in the pump |
 | `WorkPumpedOnce`, `WorkPumpedEveryTick` | invariant, action | yes |
 | `QueueDrainedByPump`, `WorkQueueDrainedOnlyByPump` | action | yes: the pump empties the work queue; every other step only appends to it |
@@ -54,6 +60,9 @@ The updates: readers take `ask` (from the pump), `rep` (a reader's report) and `
 | `StreamFairness` | action | yes: two streams with a dealable card left after every pump so far are dealt within one of each other |
 | `TickBounded` | invariant | yes (at most 12 steps a tick), only with `seefleet` (G1); the longest tick in the full instance is 11 steps |
 | `Terminates` | temporal | yes on the small scenarios, only with `seefleet` (G1Live) |
+| `AcceptHolds` | action | yes: a card in review whose CI is red at its head, or returned at its attempt, moves to merging only by the coordinator's accept |
+| `RedealsAreEndedTakes`, `RedealsBounded` | invariant | yes: a card's redeals, with the take that ended and is not yet counted, are the takes of it that ended this attempt; a card returned untaken keeps its count; the count stays within `MaxRedeals` |
+| `RedealBoundHolds` | action | yes: a card whose take ended at the bound is never dealt again |
 | `WorkNotStranded` | temporal | yes on the small scenarios: work queued at a tick's end is pumped by a later tick |
 
 Why the tick ends: only the pump writes the work table, and it runs once, so nothing the other updates queue to work is acted on inside the tick. Among readers, merge and fleet, merge's entries go to work and fleet only, and fleet's to work and readers; the one cycle is readers and fleet (`readon`, `unread`, `room`). It ends because a read is placed only on a host the fleet table says is up with room, and the fleet table's statuses change only on outside entries, which arrive between ticks. `TickBounded` checks the bound; in every non-idle state a tick step is enabled by construction (a pass needs only its phase; at `drain`, a queue not empty enables `Drain`, all empty enable `TickEnd`), so the bound gives termination under the fairness of the tick's steps. `Terminates` checks the liveness form directly on the small scenarios. The liveness properties need ENABLED of the whole tick action, which costs about 30 s on 3,407 states, so the larger instances check safety only.
@@ -99,11 +108,14 @@ Each witness turns on one broken rule (`Broken`); its control is the unbroken co
 | G1, G1Live | the shape without `seefleet` | `TickBounded`, `Terminates` | 115, 140 |
 | G2 | the shape without `pendingroom` | `WidthRespected` | 8 |
 | G3 | R10 as v2.1 writes it | `WorkChangesOnlyInPump` | 4 |
+| W16 | the pump accepts a card whose CI is red or that was returned | `AcceptHolds` | 311 |
+| W17 | every card a lapse returns counts a redeal, taken or not | `RedealsAreEndedTakes` | 127 |
+| W18 | the deal places a card whose take ended at the bound | `RedealBoundHolds` | 15,820 |
 
-The controls: `MCDirtyTick` (two cards in two streams, two machines, two readers, one beat or lapse, the whole life with rework to the bound: 173,228 states), `MCDirtyTickThree` (three cards, no beat or lapse: 490,973), and nine small scenarios (sentinels, turns, a blind reader, width, a cold fleet, a landing, a rework, a finish, a lapse), the six smallest with the liveness properties. The probes, expected to fail, show the base reaches what the properties speak of: every card landed (`ProbeLanded`), a card at its bound (`ProbeBound`), a queue drained after the first pass (`ProbeLateDrain`).
+The controls: `MCDirtyTick` (two cards in two streams, two machines, two readers, one beat or lapse, the whole life with rework to the bound: 173,164 states), `MCDirtyTickThree` (three cards, no beat or lapse: 490,473), nine small scenarios (sentinels, turns, a blind reader, width, a cold fleet, a landing, a rework, a finish, a lapse), the six smallest with the liveness properties, and two for the laws of the accept and the redeals: `MCDirtyTickTake` (a card dealt and not taken, its worker taking it, its machines lapsing and beating three times, `MaxRedeals` 1: 25,786) and `MCDirtyTickAccept` (a card read ok, the coordinator recording its CI red and green, returning it and accepting it: 2,900). Every control checks every property its scenario reaches. The accept runs after the deal and queues its cards to merge in card order, so the controls of the first shape have a few fewer states than when a read ok queued its card at once (173,228 and 490,973). The probes, expected to fail, show the base reaches what the properties speak of: every card landed (`ProbeLanded`), a card at its bound (`ProbeBound`), a queue drained after the first pass (`ProbeLateDrain`), a take ended at the redeal bound (`ProbeRedealBound`), a returned card accepted by the coordinator (`ProbeHeldAccept`).
 
 The bench run, outside the plan: `dirtytick-bench/MCDirtyTickFull.cfg` (three cards, two machines, two readers, one beat or lapse), every invariant and action property: 4,084,923 states, no error, 99 s at 2 workers. The same instance with `MaxSub` lowered: 10 fails `TickBounded`, 11 holds over every state.
 
 ## What is not modelled
 
-Clear and epochs (the counters' reset); two reads per attempt (one read each); the coordinator's accept (a read ok is the machine's accept, R9); take (a finish needs none); verbs other than add, finish, report, merge, beat and lapse; outside actions during a tick (they run between ticks: a verb's entry mid-tick lengthens the drain but is bounded by the verbs); byte and step budgets; two sentinels in one stream; the fleet redealing a working card itself (a lost machine's cards go back to the work queue, and the next pump deals them); the log (a queue entry stands for its line).
+Clear and epochs (the counters' reset); two reads per attempt (one read each); rework but by a broken read; take beyond the redeals (a finish needs none); verbs other than add, take, finish, report, merge, ci, return, accept, beat and lapse; outside actions during a tick (they run between ticks: a verb's entry mid-tick lengthens the drain but is bounded by the verbs); byte and step budgets; two sentinels in one stream; the fleet redealing a working card itself (a lost machine's cards go back to the work queue, and the next pump deals them); the log (a queue entry stands for its line).

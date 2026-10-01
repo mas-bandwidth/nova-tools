@@ -301,7 +301,9 @@ func inReview(pr *Card, set map[string]string) *Card {
 //   - ready to accept, when ok reads from two different readers stand at its
 //     head, no judgment open on it after the step offers accept (ready to
 //     accept, or returned to review with its reads standing), and the
-//     machine is STOPPED: a RUNNING machine's pump accepts it (TickAccept);
+//     machine is STOPPED or its pump holds it (AcceptHeld: its CI red at its
+//     head, or returned at its attempt): a RUNNING machine's pump accepts the
+//     rest (TickAccept);
 //   - else, when nothing is open on it after the step and no read is
 //     outstanding: stranded in review when its work came back failed, or when
 //     it was never asked at its attempt and the step closes the last judgment
@@ -356,7 +358,7 @@ func reviewJudgment(s *Snapshot, pr *Card, st reviewStep) (Note, bool) {
 	var typ, why string
 	switch {
 	case len(oks) >= 2:
-		if offers || s.Running {
+		if offers || s.Running && AcceptHeld(pr) == "" {
 			// a RUNNING machine's pump accepts it: "accept is mechanical"
 			return Note{}, false
 		}
@@ -752,7 +754,10 @@ func answeredIn(notes []Note, id string) bool {
 }
 
 // Return moves merging -> review: off the merge queue (or stuck), into the
-// merge table's hidden returned column, so a later accept moves it back.
+// merge table's hidden returned column, so a later accept moves it back. The
+// primary is marked returned at its attempt (FieldReturnedAttempt): the
+// coordinator decides it, by accept, rework or drop, and the pump accepts it
+// again only at a new attempt with its own two reads.
 func Return(s *Snapshot, r ReturnReq) Plan {
 	var p Plan
 	chosen := pick(&p, r.Sel, s.Work.Column(Merging), rowOf, func(c *Card) string {
@@ -780,7 +785,9 @@ func Return(s *Snapshot, r ReturnReq) Plan {
 			p.Units = append(p.Units, u)
 			continue
 		}
-		set := map[string]string{"returns": itoa(c.Int("returns") + 1)}
+		// marked returned at its attempt: the pump does not accept it again on
+		// the reads that stand (AcceptHeld); the returned judgment decides it
+		set := map[string]string{"returns": itoa(c.Int("returns") + 1), FieldReturnedAttempt: itoa(c.Int("attempt"))}
 		if r.Reason != "" {
 			set["return_reason"] = r.Reason
 		}

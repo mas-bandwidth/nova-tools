@@ -325,10 +325,14 @@ func Start(s State, p, m string, limit int) (State, error) {
 		if w.Place != FWithdrawn {
 			return s, badChoice("%s cut a second time (NoCardLostOrTwice)", id)
 		}
-		if w.Redeals >= MaxRedeals {
+		if w.TakeEnded && w.Redeals >= MaxRedeals {
 			return s, refuse("%s was redealt %d times, its bound", id, w.Redeals)
 		}
-		w.Place, w.Member, w.Gen, w.Redeals = FReady, m, w.Gen+1, w.Redeals+1
+		if w.TakeEnded {
+			// the take that ended is counted by the deal that places it again
+			w.Redeals++
+		}
+		w.Place, w.Member, w.Gen, w.TakeEnded = FReady, m, w.Gen+1, false
 		n.Work[id] = w
 	} else {
 		n.Work[id] = WorkCard{Primary: p, Attempt: pr.Attempt, Member: m, Place: FReady, Gen: 1}
@@ -532,9 +536,10 @@ func Read(s State, r, c string, ok bool) (State, error) {
 	n.Reads[c] = rc
 	if !ok {
 		n.open(JBroken, p)
-	} else if before < 2 && len(n.OkReaders(p)) >= 2 && n.InWork(p, Review) && n.Machine != Running {
-		// a RUNNING machine's pump accepts it: "accept is mechanical"
-		n.open(JAccept, p)
+	} else if before < 2 {
+		// a RUNNING machine's pump accepts it unless it holds it: "accept is
+		// mechanical"
+		n.acceptNote(p)
 	}
 	n.exhaust(p)
 	return n, nil
@@ -768,7 +773,8 @@ func Rank(s State, p string, score float64) (State, error) {
 // card leaves merge queued or stuck, into returned (spec section 7), with its
 // need; the stream's state follows (G4); it answers the card's red CI and a
 // skipped repair (F3), and opens returned to review (spec section 7, not in
-// the model).
+// the model); the primary is marked returned at its attempt, which the
+// machine's accept holds (AcceptHeld).
 func Return(s State, p string) (State, error) {
 	if err := free(s); err != nil {
 		return s, err
@@ -783,7 +789,7 @@ func Return(s State, p string) (State, error) {
 	x.State = n.streamAfter(st, x.State, nil, nil)
 	n.Streams[st] = x
 	n.closeOn(p)
-	n.setPrimary(p, func(x *Primary) { x.State = Review })
+	n.setPrimary(p, func(x *Primary) { x.State, x.ReturnedAt = Review, x.Attempt })
 	n.open(JReturned, p)
 	return n, nil
 }
@@ -972,8 +978,11 @@ func FleetDown(s State, m string, dest map[string]string) (State, error) {
 	others := n.Up()
 	for _, id := range cs {
 		w := n.Work[id]
-		if len(others) == 0 || w.Redeals >= MaxRedeals {
-			w.Place, w.Gen = FWithdrawn, w.Gen+1
+		// a working card's take ended without a finish: its redeal counts; a
+		// ready card was never taken and keeps its count
+		taken := w.Place == FWorking
+		if len(others) == 0 || taken && w.Redeals >= MaxRedeals {
+			w.Place, w.Gen, w.TakeEnded = FWithdrawn, w.Gen+1, taken
 			n.Work[id] = w
 			n.setPrimary(w.Primary, func(x *Primary) { x.State = Ready })
 			continue
@@ -982,7 +991,10 @@ func FleetDown(s State, m string, dest map[string]string) (State, error) {
 		if next := n.PlaceOn(others, ""); t != next {
 			return s, badChoice("%s dealt from %s to %s, not the next member round the fleet, %s (past %q) of %v", id, m, t, next, n.DealLast, others)
 		}
-		w.Member, w.Place, w.Gen, w.Redeals = t, FReady, w.Gen+1, w.Redeals+1
+		if taken {
+			w.Redeals++
+		}
+		w.Member, w.Place, w.Gen = t, FReady, w.Gen+1
 		n.Work[id] = w
 		n.DealLast = roundPast(sorted(n.Order), n.DealLast, t)
 	}
@@ -1142,6 +1154,7 @@ func CiRed(s State, p string) (State, error) {
 		return s, refuse("%s is not on the table", p)
 	}
 	n := s.Clone()
+	n.setPrimary(p, func(x *Primary) { x.CI, x.CIHead = "red", x.Head })
 	n.open(JCI, p)
 	return n, nil
 }
@@ -1158,8 +1171,10 @@ func CiGreen(s State, p string) (State, error) {
 		return s, refuse("%s is not on the table", p)
 	}
 	n := s.Clone()
+	n.setPrimary(p, func(x *Primary) { x.CI, x.CIHead = "green", x.Head })
 	if n.Open[Judgment{JCI, p}] {
 		delete(n.Open, Judgment{JCI, p})
+		n.acceptNote(p)
 		n.exhaust(p)
 	}
 	return n, nil
@@ -1218,6 +1233,7 @@ func Ack(s State, typ string, subjects []string, waive []string) (State, error) 
 	if typ != JReads && typ != JStranded {
 		for _, sub := range subjects {
 			if _, ok := n.Primaries[sub]; ok {
+				n.acceptNote(sub)
 				n.exhaust(sub)
 			}
 		}
