@@ -450,3 +450,55 @@ func TestATickOf1000CardsKeepsTheTripPin(t *testing.T) {
 	}
 	assert.Equal(t, map[string]int{"a": 250, "b": 250, "c": 500}, n, "exactly the array's share, every route")
 }
+
+// A read card's route is drawn as a work card's is (route.go, readRouteOf;
+// tla/RouteIndex.tla, THE READS): from the reader tier, pro unless the sprint
+// row names another, at that tier's rolling index, which the deal and the
+// reads share; the route, model, budget and deadline are on the read card and
+// in its packet, so a reader loop needs no --model.
+func TestAReadIsDrawnFromTheReaderTierAtTheIndexTheDealMoves(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, readerTier string
+		want             []string // the routes of the two reads, in reader order
+		index            map[string]string
+	}{
+		// the deal took pro-a at index 0; the reads take pro-b and pro-a
+		{"pro by default", "", []string{"pro-b", "pro-a"}, map[string]string{"pro": "3"}},
+		{"the sprint row's tier", "flash", []string{"flash-a", "flash-a"}, map[string]string{"pro": "1", "flash": "2"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			h := routeHarness(t, route("pro-a", "pro"), route("pro-b", "pro"), route("flash-a", "flash"))
+			h.m.SetReaderTier(tc.readerTier)
+			require.NoError(t, h.st.BeatReaders(h.ctx))
+			h.addReady("s1", 1, briefOf("pro", ""))
+			h.startMachine()
+			h.machine()
+			require.Equal(t, "pro-a", h.workCards()["s1-1.w1"].F(sprint.FieldRoute))
+			h.work("m1")
+			h.work("m2")
+			h.machine()
+			s := h.snap()
+			reads := s.Readers.Of("s1-1")
+			require.Len(t, reads, 2, "asked of two readers")
+			var got []string
+			for _, rc := range reads {
+				name := rc.F(sprint.FieldRoute)
+				got = append(got, name)
+				assert.Equal(t, "prov-"+name+"/model-"+name, rc.F(sprint.FieldModel), rc.ID)
+				assert.Equal(t, "1000", rc.F(sprint.FieldTokens), rc.ID)
+				assert.Equal(t, fmt.Sprint(routeSeconds), rc.F(sprint.FieldDeadline), rc.ID)
+				p := sprint.PacketOf("", 0, rc, s.Work.Card("s1-1"), nil, nil)
+				assert.Equal(t, "prov-"+name+"/model-"+name, p.Model, "the read's packet carries its model")
+				assert.Equal(t, routeSeconds, p.Deadline)
+			}
+			assert.Equal(t, tc.want, got)
+			for tier, want := range tc.index {
+				v, _ := s.Fleet.Prop(sprint.PropRouteIndex(tier))
+				assert.Equal(t, want, v, "the %s index moves once a card, work or read", tier)
+			}
+			h.clean("reads drawn")
+		})
+	}
+}

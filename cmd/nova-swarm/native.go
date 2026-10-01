@@ -23,6 +23,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
+	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
@@ -75,6 +76,10 @@ type nativeRunConfig struct {
 	// the key, taken from the environment and passed through by name, with no auth file
 	// ever written. nil means native keeps --model and --auth as today.
 	worker *swarm.Worker
+	// identity is the pool identity the loop's argv names (--identity, a nova-config
+	// loop record), the name and email every commit carries; nil reads the pool's
+	// <root>/identity.tsv (swarm.LoadPoolIdentity).
+	identity *swarm.StagingIdentity
 	// netAllow is the provider's loopback host:port, passed to the wall as --net-allow
 	// (issue #591).
 	netAllow string
@@ -166,6 +171,10 @@ type nativeRunResult struct {
 	spent    int  // the observed sum over the whole job at the final read
 	observed bool // any budget column was a number at all
 	partial  bool // some budget column was a dash: the plus on the line
+	// spend is the job's `spend=` word (cardcost.SpendWord): its tokens by class, requests,
+	// largest prompt, the harness's own cost and its model, folded over every launch's final
+	// read, so a card's cost record carries what the run spent; "" when no read answered.
+	spend string
 	// stopped is the `stopped=<tokens|max_turns|max_cache_read|unverifiable>` field of rule
 	// 13d, and "" for a card the machinery did not stop under that rule. It is a KEY OF ITS
 	// OWN (decision 17): `reason=terminated` stays what a TERM from outside prints, and the
@@ -785,10 +794,15 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	}
 	childEnv := nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell)
 	if cfg.root != "" {
-		id, err := swarm.LoadPoolIdentity(cfg.root)
-		if err != nil {
-			refuseNative(errOut, err.Error())
-			return nativeRunResult{}, 2
+		var id swarm.StagingIdentity
+		if cfg.identity != nil {
+			id = *cfg.identity
+		} else {
+			var err error
+			if id, err = swarm.LoadPoolIdentity(cfg.root); err != nil {
+				refuseNative(errOut, err.Error()+"; or give the loop --identity <owner>,<name>,<email> in its nova-config argv")
+				return nativeRunResult{}, 2
+			}
 		}
 		for _, kv := range swarm.StagingGitEnv(id) {
 			name, _, _ := strings.Cut(kv, "=")
@@ -942,6 +956,8 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// nothing was ever observed for prints `budget=-/<n>` and is never reported as under
 	// budget.
 	jobSpent, jobObserved, jobPartial := 0, false, false
+	// launchSpends are the launches' final reads that answered, for the line's spend=.
+	var launchSpends []cardcost.Usage
 	// previousLaunchEnd is the floor under the NEXT launch's usage window. The zero time is
 	// no floor, which is what the first launch has.
 	var previousLaunchEnd time.Time
@@ -1104,6 +1120,9 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			jobObserved = true
 			jobPartial = jobPartial || part
 		}
+		if launchUsage.Observed {
+			launchSpends = append(launchSpends, launchSpend(launchUsage.Values))
+		}
 		// A TERM FROM OUTSIDE ENDS THE RUN, NEVER RETRIES IT: the spend is folded once and
 		// the terminated reason is carried out on the OK line.
 		if res.terminated {
@@ -1163,6 +1182,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// could not be made, that launch contributed nothing to it and the plus below says the
 	// figure is not the whole story.
 	res.spent, res.observed, res.partial = jobSpent, jobObserved, jobPartial
+	res.spend = spendWord(launchSpends)
 	// AND WHERE NO FINAL READ ANSWERED AT ALL, the last sum a SAMPLE saw stands in, with
 	// the plus (rule 13d: "a final read that cannot be made leaves a dash in every column
 	// of the row it could not fill, the line then prints the last sum a sample saw with the
@@ -2005,6 +2025,51 @@ func writeNativeUsage(cfg nativeRunConfig, dataHome, provider, model string, sta
 		storePath = filepath.Join(dataHome, filepath.FromSlash(swarm.OpenCodeDB))
 	}
 	return usage, rr, storePath, row
+}
+
+// launchSpend is one launch's final read as a cost record (internal/cardcost): the five
+// token classes (a dash stays unreported, never 0), its requests and largest prompt, the
+// harness's own cost and the provider/model it reported.
+func launchSpend(v map[string]string) cardcost.Usage {
+	line := []string{}
+	for col, key := range map[string]string{"tokens_in": "input", "cache_read": "cache_read", "cache_write": "cache_write",
+		"tokens_out": "output", "reasoning": "reasoning", "requests": "requests", "max_prompt": "max_prompt"} {
+		if v[col] != "" && v[col] != swarm.Dash {
+			line = append(line, key+"="+v[col])
+		}
+	}
+	u := cardcost.ParseUsage(strings.Join(line, " "))
+	if v["cost"] != "" {
+		u.Actual, u.ActualBy = v["cost"], cardcost.ActualByHarness
+	}
+	if v["provider"] != "" && v["provider"] != swarm.Dash && v["model"] != "" && v["model"] != swarm.Dash {
+		u.Model = v["provider"] + "/" + v["model"]
+	}
+	return u
+}
+
+// spendWord is the job's spend= word over its launches' records: their sum, the model the
+// last one reported, and the harness's cost only when every launch that reported tokens
+// reported one (a cost for part of the job is not the job's).
+func spendWord(launches []cardcost.Usage) string {
+	if len(launches) == 0 {
+		return ""
+	}
+	total := cardcost.SumUsage(launches)
+	model, priced := "", 0
+	for _, u := range launches {
+		if u.Model != "" {
+			model = u.Model
+		}
+		if u.Actual != "" || !u.Tokens.Reported() {
+			priced++
+		}
+	}
+	cost := total.Actual
+	if priced < len(launches) {
+		cost = ""
+	}
+	return cardcost.SpendWord(total.Tokens, cost, model)
 }
 
 // nativeRunSeq distinguishes invocations that share a process, which is what a

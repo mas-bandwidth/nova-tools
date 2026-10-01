@@ -104,13 +104,18 @@ func TestTheFriendRowIsWhatSomeoneDecidesForHer(t *testing.T) {
 		assert.Equal(t, "flash,frontier,pro", strings.Join(Tiers, ","), assertionMsg98...)
 	}()
 	sprint, _ := Lookup(KindSprint)
-	assertionMsg100 := []any{"sprint %+v: one row, one optional ref to a friend", sprint}
+	assertionMsg100 := []any{"sprint %+v: one row, one optional ref to a friend and the reader tier", sprint}
 	require.True(t, sprint.Singleton, assertionMsg100...)
-	require.Len(t, sprint.Fields, 1, assertionMsg100...)
+	require.Len(t, sprint.Fields, 2, assertionMsg100...)
 	require.Equal(t, "coordinator", sprint.Fields[0].Name, assertionMsg100...)
 	require.Equal(t, TypeRef, sprint.Fields[0].Type, assertionMsg100...)
 	require.Equal(t, KindFriend, sprint.Fields[0].Ref, assertionMsg100...)
 	require.False(t, sprint.Fields[0].Required, assertionMsg100...)
+	// the tier a read card's route is drawn from (internal/sprint/route.go, readRouteOf)
+	require.Equal(t, FieldReaderTier, sprint.Fields[1].Name, assertionMsg100...)
+	require.Equal(t, TypeEnum, sprint.Fields[1].Type, assertionMsg100...)
+	require.Equal(t, RouteTiers, sprint.Fields[1].Enum, assertionMsg100...)
+	require.Equal(t, "pro", sprint.Fields[1].Default, assertionMsg100...)
 }
 
 // TestDeriveGivesTheSprintCoordinatorTheRole: the rows apply plans carry

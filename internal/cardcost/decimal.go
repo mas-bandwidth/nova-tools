@@ -1,7 +1,10 @@
 // Package cardcost is what a card cost: a route's price sheet as nova-config holds it
-// (the route kind's price fields, docs/SPEC-CONFIG.md, "route"), in exact decimal
-// arithmetic. Every amount is a decimal string end to end, never a float: a price is
-// typed as a decimal, kept as one in Postgres and Redis, and read back as a rational.
+// (the route kind's price fields, docs/SPEC-CONFIG.md, "route"), the tokens one run
+// spent by class, the predicted cost of the one priced by the other, and the usage
+// record a consumer card keeps (docs/SPEC-SPRINT.md, "What a card cost"), in exact
+// decimal arithmetic. Every amount is a decimal string end to end, never a float: a
+// price is typed as a decimal, kept as one in Postgres and Redis, and multiplied as a
+// rational.
 //
 // Libraries considered: math/big's Rat (the standard library) does exact decimal
 // arithmetic on strings of any length; no adopted module does decimals, and
@@ -49,8 +52,23 @@ var Billings = []string{BillingMetered, BillingPlan}
 // one point; no sign, no exponent, no thousands separator.
 var decimalPattern = regexp.MustCompile(`^[0-9]+(\.[0-9]+)?$`)
 
-// Decimal reads a non-negative decimal ("0.30", "15", "0.0000125") exactly.
+// MaxFraction is the most digits after the point a typed decimal may have: a price
+// or a percent past it is refused at input, so every amount this package makes from
+// one terminates inside maxDigits and is written exactly.
+const MaxFraction = 30
+
+// Decimal reads a non-negative decimal as add and set take it ("0.30", "15",
+// "0.0000125") exactly, refusing more than MaxFraction digits after the point.
 func Decimal(s string) (*big.Rat, error) {
+	if _, frac, _ := strings.Cut(s, "."); len(frac) > MaxFraction {
+		return nil, fmt.Errorf("%q: want at most %d digits after the point", s, MaxFraction)
+	}
+	return amount(s)
+}
+
+// amount reads a non-negative decimal this package wrote (a cost, a sum) exactly,
+// of any length.
+func amount(s string) (*big.Rat, error) {
 	if !decimalPattern.MatchString(s) {
 		return nil, fmt.Errorf("%q: want a non-negative decimal like 0.30 (digits, one point, no sign or exponent)", s)
 	}
@@ -75,9 +93,11 @@ func Canonical(s string) (string, error) {
 	return Text(r), nil
 }
 
-// maxDigits bounds the digits after the point Text looks for: a sum of decimals
-// times integers over powers of ten terminates far inside it.
-const maxDigits = 60
+// maxDigits bounds the digits after the point Text looks for. The longest amount
+// this package makes is a prediction: a price of MaxFraction digits over a million
+// (MaxFraction+6) times one plus a gateway percent of MaxFraction digits over a
+// hundred (MaxFraction+2 more), 68 digits; sums add none.
+const maxDigits = 100
 
 // Text is a rational whose decimal terminates, written exactly, with no trailing
 // zero after the point (a value that does not terminate within maxDigits is cut
