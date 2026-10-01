@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 )
 
@@ -83,10 +84,11 @@ func (w *wakeApp) cardsOf(m string) []queueCard {
 	return q.Cards
 }
 
-// 8 machines of width 4, 3 streams of 20 ready: the first deal fills every
-// machine to 4. m1 takes its 4 and finishes them; the finish's line wakes the
-// loop, and the tick it wakes deals 4 new cards to m1 within TickFloor of the
-// finish, with no tick of the clock between: m1 is at its width again.
+// 8 machines of width 4, 3 streams of 30 ready: the first deal fills every
+// machine to DealAhead times 4, 8. m1 takes its width, 4, and finishes them,
+// its other 4 ready behind; the finish's line wakes the loop, and the tick it
+// wakes refills m1 within TickFloor of the finish, with no tick of the clock
+// between: m1 holds DealAhead times its width again.
 func TestAFinishWakesTheLoopAndItsRoomIsDealtWithinTheFloor(t *testing.T) {
 	t.Parallel()
 	w := newWakeApp(t)
@@ -100,14 +102,14 @@ func TestAFinishWakesTheLoopAndItsRoomIsDealtWithinTheFloor(t *testing.T) {
 		spec = append(spec, m+":4")
 	}
 	w.ok("init --readers reader-a,reader-b --members " + strings.Join(spec, ","))
-	w.ok("add --stream a,b,c --count 20")
+	w.ok("add --stream a,b,c --count 30")
 	w.ok("start")
 	var finished time.Time
 	atFinish := -1
 	w.world = []func(time.Duration){
 		func(time.Duration) {
-			if n := len(w.cardsOf("m1")); n != 4 {
-				t.Fatalf("the first deal gave m1 %d cards, want its width 4", n)
+			if n := len(w.cardsOf("m1")); n != sprint.DealAhead*4 {
+				t.Fatalf("the first deal gave m1 %d cards, want DealAhead times its width 4", n)
 			}
 			w.a.sleep(30 * time.Millisecond)
 			w.ok("take --as m1 --limit 4")
@@ -116,15 +118,17 @@ func TestAFinishWakesTheLoopAndItsRoomIsDealtWithinTheFloor(t *testing.T) {
 			w.a.sleep(250 * time.Millisecond)
 			var ids []string
 			for _, c := range w.cardsOf("m1") {
-				if c.Col != "working" {
-					t.Fatalf("m1's card %s is %s, want working", c.ID, c.Col)
+				if c.Col == "working" {
+					ids = append(ids, c.ID+"@"+strconv.Itoa(c.Gen))
 				}
-				ids = append(ids, c.ID+"@"+strconv.Itoa(c.Gen))
+			}
+			if len(ids) != 4 {
+				t.Fatalf("m1 works %d cards, want its width 4", len(ids))
 			}
 			w.ok("finish --as m1 " + strings.Join(ids, " "))
 			finished, atFinish = w.a.now(), len(w.ticks)
-			if n := len(w.cardsOf("m1")); n != 0 {
-				t.Fatalf("after the finish m1 holds %d cards, want 0", n)
+			if n := len(w.cardsOf("m1")); n != sprint.DealAhead*4-4 {
+				t.Fatalf("after the finish m1 holds %d cards, want the %d ready behind its lanes", n, sprint.DealAhead*4-4)
 			}
 		},
 	}
@@ -143,8 +147,8 @@ func TestAFinishWakesTheLoopAndItsRoomIsDealtWithinTheFloor(t *testing.T) {
 		t.Fatalf("the finish waited %s for its tick, over the floor %s", gap, store.TickFloor)
 	}
 	cs := w.cardsOf("m1")
-	if len(cs) != 4 {
-		t.Fatalf("m1 holds %d cards after the finish's tick, want its width 4: %+v", len(cs), cs)
+	if len(cs) != sprint.DealAhead*4 {
+		t.Fatalf("m1 holds %d cards after the finish's tick, want DealAhead times its width 4: %+v", len(cs), cs)
 	}
 }
 

@@ -747,7 +747,7 @@ func tookSince(ctx context.Context, st *store.Store) string {
 func (a *app) cmdInit(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("init")
 	readers := fs.String("readers", "", "the readers' rows, comma separated")
-	members := fs.String("members", "", fmt.Sprintf("fleet members to bring up, comma separated, each <name> or <name>:<width>, its width the most work cards it holds at once, ready and working (default %d)", sprint.DefaultWidth))
+	members := fs.String("members", "", fmt.Sprintf("fleet members to bring up, comma separated, each <name> or <name>:<width>, its width the most work cards it runs at once; it holds %d times that, ready and working (default %d)", sprint.DealAhead, sprint.DefaultWidth))
 	coordinator := fs.String("coordinator", "", "the sprint's coordinator, the one actor who releases sentinels (default: the actor)")
 	rules := fs.String("rules", "", "the child rules file every brief is held to: one required sentence per line, its path recorded for the sprint (default: the built-in general rules; add --rules <file> overrides it for one add)")
 	pos, err := parse(fs, args)
@@ -1598,7 +1598,7 @@ func (a *app) cmdFleet(op string, args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup(name)
 	var width *string
 	if op == "up" {
-		width = fs.String("width", "", fmt.Sprintf("the member's width: the most work cards it holds at once, ready and working, 1 to %d (default: as it is, %d for a new member)", sprint.MaxWidth, sprint.DefaultWidth))
+		width = fs.String("width", "", fmt.Sprintf("the member's width: the most work cards it runs at once; the deal holds it at %d times that, ready and working; 1 to %d (default: as it is, %d for a new member)", sprint.DealAhead, sprint.MaxWidth, sprint.DefaultWidth))
 	}
 	pos, err := parse(fs, args)
 	if err != nil {

@@ -23,6 +23,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
+	"github.com/mas-bandwidth/nova-tools/internal/log"
 	"github.com/mas-bandwidth/nova-tools/internal/member"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
@@ -193,7 +194,7 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	if *diskFloor > 0 {
 		room = diskRoom(*slots, *diskFloor, diskFree)
 	}
-	m := member.New(member.Config{As: *as, Width: *width, Reader: *reader, Meter: meter, Room: room}, sp, rn, pu, stdout)
+	m := member.New(member.Config{As: *as, Width: *width, Reader: *reader, Meter: meter, Room: room, Sleep: time.Sleep}, sp, rn, pu, stdout) // Sleep: harness starts StartGap apart
 	kind := "member"
 	if *reader {
 		kind = "reader"
@@ -207,6 +208,8 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 		modelWord = "card,override:" + *model
 	}
 	fmt.Fprintf(stdout, "MEMBER %s as=%s width=%s every=%s sprint=%s harness=%s model=%s\n", oneline.Field(kind), oneline.Field(*as), oneline.Field(widthWord), oneline.Field(every.d.String()), oneline.Field(*sprintBin), oneline.Field(*harness), oneline.Field(modelWord))
+	// the machine's one model catalog, refreshed once here and never per launch (catalog.go)
+	fmt.Fprintf(stdout, "CATALOG %s\n", oneline.Escape(refreshCatalog(*harness, *root)))
 	if note := passNote(*model, pass, *auth); note != "" {
 		fmt.Fprintln(stdout, note)
 	}
@@ -312,12 +315,31 @@ func (s *execSprint) Run(args ...string) (int, []byte) {
 	if ee, ok := err.(*exec.ExitError); ok {
 		code = ee.ExitCode()
 	} else if err != nil {
-		return 2, []byte(err.Error())
+		return 2, sprintFailureOutput(nil, []byte(err.Error()))
 	}
-	if code != 0 && out.Len() == 0 {
-		return code, errb.Bytes()
+	if code != 0 {
+		return code, sprintFailureOutput(out.Bytes(), errb.Bytes())
 	}
 	return code, out.Bytes()
+}
+
+// sprintFailureOutput is one bounded diagnostic from a failed nova-sprint verb.
+// stderr leads because it holds the refusal or store error; stdout follows because a
+// verb can print a repair or move receipt before a later store operation fails. Each
+// half keeps room for the other, and secret-shaped values never reach the member log.
+func sprintFailureOutput(stdout, stderr []byte) []byte {
+	clean := func(raw []byte, n int) string {
+		return oneline.Cap(oneline.Escape(log.Redact(strings.TrimSpace(string(raw)))), n)
+	}
+	if len(strings.TrimSpace(string(stdout))) == 0 {
+		return []byte(clean(stderr, oneline.TailBytes))
+	}
+	if len(strings.TrimSpace(string(stderr))) == 0 {
+		return []byte(clean(stdout, oneline.TailBytes))
+	}
+	const labels = "stderr: ; stdout: "
+	each := (oneline.TailBytes - len(labels)) / 2
+	return []byte("stderr: " + clean(stderr, each) + "; stdout: " + clean(stdout, each))
 }
 
 // nativeRunner runs one packet as one `nova-swarm native` child in its own

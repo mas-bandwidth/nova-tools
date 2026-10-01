@@ -1620,6 +1620,32 @@ func TestNoRoomRefusesAtStagingWithTheReason(t *testing.T) {
 	assert.Contains(t, g.out.String(), "NOTE take resumed: "+why+"\n")
 }
 
+// TestAMemberSpacesItsHarnessStarts: N cards started in one pass start their harnesses
+// StartGap apart (the clock does not move between them here, so each start after the
+// first waits the whole gap); a start after the gap has passed waits nothing; a member
+// with no Sleep starts back to back.
+func TestAMemberSpacesItsHarnessStarts(t *testing.T) {
+	t.Parallel()
+	now := time.Unix(1000, 0)
+	var waits []time.Duration
+	r := &fakeRunner{children: map[string]*fakeChild{}}
+	m := New(Config{As: "m1", Width: 8, Clock: func() time.Time { return now }, Sleep: func(d time.Duration) { waits = append(waits, d); now = now.Add(d) }}, nil, r, nil, &bytes.Buffer{})
+	for _, id := range []string{"c1", "c2", "c3", "c4"} {
+		require.True(t, m.start(Packet{Card: id, Kind: "work", Gen: 1, Attempt: 1, Epoch: 1}))
+	}
+	assert.Len(t, r.packets, 4, "every card is started")
+	assert.Equal(t, []time.Duration{StartGap, StartGap, StartGap}, waits, "a gap between consecutive starts")
+	now = now.Add(time.Second)
+	require.True(t, m.start(Packet{Card: "c5", Kind: "read", Attempt: 1, Epoch: 1}))
+	assert.Len(t, waits, 3, "a start after the gap has passed waits nothing")
+
+	quick := New(Config{As: "m2", Width: 8}, nil, &fakeRunner{children: map[string]*fakeChild{}}, nil, &bytes.Buffer{})
+	for _, id := range []string{"c1", "c2"} {
+		require.True(t, quick.start(Packet{Card: id, Kind: "work", Gen: 1, Attempt: 1, Epoch: 1}))
+	}
+	assert.Equal(t, 300*time.Millisecond, StartGap, "the owner's gap")
+}
+
 // blockingSprint is a script whose one verb holds until released: a pass held by a slow
 // store, the way sixteen finishes from a machine far from the store hold one.
 type blockingSprint struct {
@@ -1734,4 +1760,33 @@ func TestAMemberWhosePassIsHungStopsBeating(t *testing.T) {
 	stop()
 	assert.NotEmpty(t, bs.lines("beat"), "the beat goes on once the pass does")
 	assert.Contains(t, out.String(), "NOTE beat resumed: the work pass advanced\n")
+}
+
+// TestALaneThatFinishesIsRefilledInTheSamePass pins the member's side of
+// DealAhead (internal/sprint/width.go): a member at its width with a card
+// ready behind it reports the child that ended and takes the ready card in
+// the one pass, so the lane is refilled at once and never waits for the
+// sprint's next tick: finish, then take --limit 1, then the start.
+func TestALaneThatFinishesIsRefilledInTheSamePass(t *testing.T) {
+	t.Parallel()
+	g := newRig(Config{As: "m", Width: 1})
+	g.m.pusher = &fakePusher{def: Push{Sha: fullSha}}
+	p1 := pk("c1")
+	g.s.set("queue", 0, queueJSON(t, 7, ready("c1")))
+	g.s.set("take", 0, takeJSON(t, p1))
+	_, err := g.tick(t)
+	require.NoError(t, err)
+	require.Equal(t, 1, g.m.Running(), "the width is full")
+	g.r.child("c1").end(Result{Ran: true, OK: true, Shaped: true, Verdict: "ok", Head: "abc123", Report: "# Result\n\ndone"})
+	p2 := pk("c2")
+	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p1), ready("c2")))
+	g.s.set("take", 0, takeJSON(t, p2))
+	g.s.reset()
+	acted, err := g.tick(t)
+	require.NoError(t, err)
+	assert.Len(t, g.s.lines("finish"), 1, "the ended child is reported")
+	assert.Equal(t, []string{"take --as m --limit 1 --json --epoch 7"}, g.s.lines("take"), "the freed lane is taken in the same pass")
+	assert.Equal(t, []string{"c1", "c2"}, g.r.started(), "the ready card is started in the same pass")
+	assert.Equal(t, 1, g.m.Running(), "the member runs at most its width")
+	assert.Equal(t, 2, acted, "one report and one start")
 }

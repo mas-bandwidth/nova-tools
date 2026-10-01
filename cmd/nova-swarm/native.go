@@ -97,6 +97,9 @@ type nativeRunConfig struct {
 	// onProxy receives the proxy once it is listening, before the child starts.
 	// Nil in production.
 	onProxy func(*swarm.ProviderProxy)
+	// startSleep is the wait before a failed start is launched again (harnessStartWaits);
+	// nil is the real wait (startSleep). A test records the schedule through it.
+	startSleep func(time.Duration)
 	// resultsRoot is where RESULT.md, usage.tsv and the report are published,
 	// outside the job directory a sweep deletes (issue #2632). Empty means the
 	// caller did not ask: the direct tests keep the files in the job directory.
@@ -161,6 +164,7 @@ type nativeRunResult struct {
 	unrecorded   bool              // the unknown could not be written anywhere the next reader looks
 	terminated   bool              // a TERM from outside ended the run mid-flight, not the deadline
 	survivors    string            // what the harness left in its group when it exited on its own: "", <pgid>:reaped or <pgid>:alive
+	starts       int               // the harness starts tried when every one failed (harnessStartFailed), else 0
 	// THE JOB'S OWN FIGURE (rule 13d, "Two numbers, kept apart: the row is the launch's and
 	// the line is the job's"). These three are the JOB's -- the sum over every launch of
 	// this one invocation of `native` -- and they are what the NATIVE OK line's `budget=`
@@ -808,6 +812,15 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			name, _, _ := strings.Cut(kv, "=")
 			childEnv = append(environWithoutName(childEnv, name), kv)
 		}
+		// the machine's one catalog, the harness's own fetch off (catalog.go: the race)
+		seeded, note := seedCatalog(cfg.root, dataHome)
+		if note != "" {
+			fmt.Fprintf(errOut, "NATIVE NOTE catalog: %s\n", oneline.Escape(note))
+		}
+		for _, kv := range seeded {
+			name, _, _ := strings.Cut(kv, "=")
+			childEnv = append(environWithoutName(childEnv, name), kv)
+		}
 	} else {
 		refuseNative(errOut, "missing configured root for pool identity; refusing to launch under nobody's name")
 		return nativeRunResult{}, 2
@@ -927,6 +940,8 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		}
 	}
 	lastAttempt := 0
+	// startRetries is how many times a failed start has been launched again (harnessStartWaits)
+	startRetries := 0
 
 	// THE LIVE SAMPLER (SPEC-SWARM rule 13d, issue #1545). It is started HERE, once for the
 	// whole job and not once per launch, because the budget it watches is the job's: "the
@@ -1145,6 +1160,36 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		if res.stopped != "" {
 			break
 		}
+		// A START THAT FAILED IS LAUNCHED AGAIN IN PLACE (the owner, 2026-10-01: "Yes on
+		// retry ... simple stuff"): no tokens, no result, and the harness's own refusal or
+		// an exit inside harnessStartWindow (harnessStartFailed). Same job, same route,
+		// after harnessStartWaits in turn; the dead harness's group was ended above
+		// (nativeEndLeftovers), and this launch's usage row is written and folded once.
+		// Only when the waits are spent does the run go on to hand back, naming the starts.
+		launchTokens := 0
+		if sum, seen, _ := launchUsage.Budget(); seen > 0 {
+			launchTokens = sum
+		}
+		_, published := swarm.FindCardResult(jobDir)
+		if cause, failed := harnessStartFailed(tail, elapsed, launchTokens, published); failed {
+			if startRetries < len(harnessStartWaits) {
+				if word := sampler.StopWordAtFinal(jobSpent, jobObserved); word != "" {
+					res.stopped = word
+					break
+				}
+				wait := harnessStartWaits[startRetries]
+				startRetries++
+				fmt.Fprintf(errOut, "NATIVE RETRY start=%d wait=%ds cause=%s\n", attempt+1, int(wait/time.Second), oneline.Field(cause))
+				sleep := cfg.startSleep
+				if sleep == nil {
+					sleep = startSleep
+				}
+				sleep(wait)
+				continue
+			}
+			res.starts = attempt
+			break
+		}
 		// Inherited grace retry. The tail and the elapsed time do not prove the
 		// provider never accepted the request. A lost response does not take
 		// this path.
@@ -1299,10 +1344,21 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 			if h, ok := swarm.ProviderHandback(swarm.ProviderExit{Tail: raw, Job: jobDir, RC: res.rc, Wall: time.Duration(res.wallSeconds * float64(time.Second)), Route: cfg.model, Routes: swarm.ParseRouteList(os.Getenv(swarm.RoutesEnv))}); ok {
 				// the cause: the session's record of the failed message, else the log's error
 				// line, else the harness's own last words (nativeprovider.go)
-				if c, ok := sessionProviderError(dataHome, runStart); ok {
+				// the harness's printed refusal of the model comes first: no request was made,
+				// so no session or log names it (OPENCODE_PRINT_LOGS, printedHarnessError)
+				printed := printedHarnessError(raw)
+				if strings.Contains(printed, "ProviderModelNotFoundError") {
+					h.Cause = swarm.CauseFromText(printed)
+				} else if c, ok := sessionProviderError(dataHome, runStart); ok {
 					h.Cause = c
 				} else if line := providerLogError(dataHome, providerMark); line != "" {
 					h.Cause = swarm.CauseFromText(line)
+				} else if printed != "" {
+					h.Cause = swarm.CauseFromText(printed)
+				}
+				// a run whose every start failed says how many it tried (harnessStartWaits)
+				if res.starts > 0 {
+					h.Cause.Message = strings.TrimSpace(h.Cause.Message + " (harness starts tried: " + strconv.Itoa(res.starts) + ")")
 				}
 				fmt.Fprintln(errOut, oneline.Escape(h.Line(cfg.label)))
 				handedBack = true
@@ -1753,6 +1809,10 @@ func nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shim
 		"XDG_DATA_HOME="+dataHome,
 		"NOVA_SWARM_JOB="+jobDir,
 		"TMPDIR="+tmpDir,
+		// the harness prints its ERROR lines into the capture, so a start it refuses names
+		// why (`error="ProviderModelNotFoundError: ..."`), not only its UnknownError envelope
+		"OPENCODE_PRINT_LOGS=1",
+		"OPENCODE_LOG_LEVEL=ERROR",
 	)
 	if cacheDir != "" {
 		out = append(out,
@@ -2401,6 +2461,15 @@ func writeJobConfig(cfg nativeRunConfig, provider, dataHome, jobDir string, read
 		raw = body
 	}
 	body, merged := swarm.MergeFencePermission(raw, jobDir, reads)
+	// the route's model is declared in the config, so the harness knows it whatever
+	// catalog it starts with (swarm.DeclareRouteModel: the fresh-home catalog race)
+	if merged && strings.HasPrefix(cfg.model, provider+"/") {
+		if declared, ok := swarm.DeclareRouteModel(body, provider, cfg.model[len(provider)+1:]); ok {
+			body = declared
+		} else if notes != nil {
+			fmt.Fprintf(notes, "NATIVE NOTE: the model %s could not be declared in the config %s (its provider entry is not an object); the launch falls back to the harness's own catalog\n", oneline.Field(cfg.model), oneline.Field(dash(configPath)))
+		}
+	}
 	var proxy *swarm.ProviderProxy
 	if merged {
 		// headerTimeout and chunkTimeout are written for a harness that honors

@@ -104,6 +104,16 @@ const (
 // tick deals a member.
 const Width = 64
 
+// DealAhead is how many widths of work cards a member holds, ready and working
+// together: its width working and as many again ready behind them (the owner,
+// 2026-10-01: "deal at most 2X width ahead per-machine in fleet"; the engine's
+// sprint.DealAhead).
+const DealAhead = 2
+
+// Room is the most work cards a placement leaves on a member, ready and
+// working together: DealAhead times its Width.
+const Room = DealAhead * Width
+
 // MaxRedeals is the spec's redeal bound (section 2): an attempt's work card
 // is dealt again at most this many times after a take of it ended without a
 // finish, its member down while it was working; a card that was ready keeps
@@ -500,13 +510,13 @@ func (s State) NextMember(set []string) string {
 // amendment 5: every placement, first attempts and redeals and levelling
 // alike, goes round the fleet and moves the index; the engine's round.next):
 // the next member round the fleet among set holding fewer work cards, ready
-// and working, than its Width (errata 3 amendment 9), avoid only when no
+// and working, than its Room (errata 3 amendment 9; DealAhead), avoid only when no
 // other has room; with none having room, the next of set, avoid only when it
 // is the only one. "" when set is empty.
 func (s State) PlaceOn(set []string, avoid string) string {
 	var room []string
 	for _, m := range set {
-		if s.Held(m) < Width {
+		if s.Held(m) < Room {
 			room = append(room, m)
 		}
 	}

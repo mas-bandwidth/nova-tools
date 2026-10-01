@@ -8,6 +8,7 @@
 package main
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -319,6 +320,29 @@ func main() {
 			os.Exit(1)
 		}
 		publish(job, prompt, 0, notesRead(job, prompt))
+		os.Exit(0)
+	}
+	// FAKE-START-FAIL <k> is a harness whose first k starts die at start the way opencode's
+	// did when its catalog lacked the model (2026-10-01, verbatim shape): its printed ERROR
+	// line, then the UnknownError envelope, exit 1, no tokens. Later starts run on. k is
+	// counted from FAKE-LAUNCHES, which the card must also carry.
+	if n, ok := number(prompt, "FAKE-START-FAIL"); ok && launchCount(job) <= n {
+		fmt.Fprintln(os.Stderr, `timestamp=2026-10-01T20:02:53.818Z level=ERROR run=5c22c68d message=failed ref=err_1ad647ee error="ProviderModelNotFoundError: Model not found: openrouter/x-ai/grok-4.7. Did you mean: x-ai/grok-4.20, x-ai/grok-4.3?"`)
+		fmt.Fprintln(os.Stderr, `Error: {"name":"UnknownError","data":{"message":"Unexpected server error. Check server logs for details.","ref":"err_1ad647ee"}}`)
+		os.Exit(1)
+	}
+	// FAKE-CATALOG records the catalog this start was handed: OPENCODE_MODELS_PATH, the
+	// fetch switch, and the sha256 of the file the path names, into RESULT.md.
+	if _, ok := directive(prompt, "FAKE-CATALOG"); ok {
+		path := os.Getenv("OPENCODE_MODELS_PATH")
+		raw, err := os.ReadFile(path)
+		sum := "unreadable"
+		if err == nil {
+			sum = fmt.Sprintf("%x", sha256.Sum256(raw))
+		}
+		if job != "" {
+			writeRecorded(filepath.Join(job, "RESULT.md"), []byte("models_path="+path+"\nfetch_disabled="+os.Getenv("OPENCODE_DISABLE_MODELS_FETCH")+"\nsha256="+sum+"\nprint_logs="+os.Getenv("OPENCODE_PRINT_LOGS")+"\n"), 0o644)
+		}
 		os.Exit(0)
 	}
 	if _, ok := directive(prompt, "FAKE-5XX-FIRST"); ok {

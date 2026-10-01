@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
@@ -233,8 +235,8 @@ func TestAnIdleTickReadsEveryTableAndChangesNothing(t *testing.T) {
 	}
 }
 
-// At width 2 the deal is today's short queues: two cards a member, the oldest
-// first, the rest left in ready.
+// At width 2 the deal keeps every queue short: DealAhead times two cards a
+// member, the oldest first, the rest left in ready.
 func TestTheDealingKeepsEveryReadyQueueShortInScoreOrder(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
@@ -242,17 +244,17 @@ func TestTheDealingKeepsEveryReadyQueueShortInScoreOrder(t *testing.T) {
 	for _, m := range []string{"m1", "m2"} {
 		h.must(FleetStep(sprint.FleetReq{Op: "up", Member: m, Width: width}))
 	}
-	h.setup(7)
+	h.setup(10)
 	h.startMachine()
 	h.machine()
 	s := h.snap()
 	for _, m := range []string{"m1", "m2"} {
-		if n := s.Fleet.Count(m, sprint.Ready); n != width || s.Width(m) != width {
-			t.Fatalf("%s holds %d ready", m, n)
+		if n := s.Fleet.Count(m, sprint.Ready); n != sprint.DealAhead*width || s.Width(m) != width {
+			t.Fatalf("%s holds %d ready, want DealAhead times its width %d", m, n, width)
 		}
 	}
 	for i, c := range s.Work.Column(sprint.Ready) {
-		if want := []string{"s1-5", "s1-6", "s1-7"}[i]; c.ID != want {
+		if want := []string{"s1-9", "s1-10"}[i]; c.ID != want {
 			t.Fatalf("left in ready: %s, want %s (the oldest are dealt first)", c.ID, want)
 		}
 	}
@@ -261,8 +263,15 @@ func TestTheDealingKeepsEveryReadyQueueShortInScoreOrder(t *testing.T) {
 	}
 	h.work("m1")
 	h.machine()
-	if n := h.snap().Fleet.Count("m1", sprint.Ready); n != 2 || h.state("s1-5") != sprint.Working || h.state("s1-6") != sprint.Working {
-		t.Fatalf("after m1 took its queue: ready %d, s1-5 %s, s1-6 %s", n, h.state("s1-5"), h.state("s1-6"))
+	// m1 took and finished its queue: the level gives it m2's ready cards past
+	// m2's lanes and the deal the two left, none past DealAhead times a width
+	s = h.snap()
+	if n := s.Fleet.Count("m1", sprint.Ready); n < 2 || h.state("s1-9") != sprint.Working || h.state("s1-10") != sprint.Working {
+		t.Fatalf("after m1 took its queue: ready %d, s1-9 %s, s1-10 %s", n, h.state("s1-9"), h.state("s1-10"))
+	}
+	for _, m := range []string{"m1", "m2"} {
+		held := s.Fleet.Count(m, sprint.Ready) + s.Fleet.Count(m, sprint.Working)
+		require.LessOrEqual(t, held, sprint.DealAhead*width, "%s holds %d, past DealAhead times its width %d", m, held, width)
 	}
 	h.clean("dealt")
 }
