@@ -45,7 +45,7 @@ func TestALaterAttemptStartsFromTheLastPushedHeadOfAnyEarlierAttempt(t *testing.
 		p := PacketOf("", 3, work, primary, tc.earlier, nil)
 		assert.Equal(t, tc.head, p.BaseHead, tc.name)
 		assert.Equal(t, tc.attempt, p.BaseAttempt, tc.name)
-		assert.Equal(t, "sprint/p1.w9", p.Branch, tc.name)
+		assert.Equal(t, "sprint/p1.w9.e3", p.Branch, tc.name)
 		assert.Equal(t, "f.go:3 the bound", p.Fix, tc.name)
 	}
 }
