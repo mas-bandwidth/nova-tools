@@ -156,7 +156,7 @@ outcome and reason are kept.
 | working -> ready | its work card was withdrawn because no fleet member is up | mechanical, notifies |
 | review -> merging | accept: two different readers said ok at this head | mechanical (the tick), unless its CI is red at its head or it was returned to review at its attempt; the coordinator's verb takes those; refused without the two |
 | review -> working | rework with a fix: the next attempt is delegated at once | the coordinator's verb |
-| review -> ready | rework with a fix when no fleet member is up | the coordinator's verb |
+| review -> ready | rework with a fix when no fleet member is up or none is below its width; the tick deals it when one has room | the coordinator's verb |
 | merging -> review | the stream's CI went red and the coordinator sent it back, or return | the coordinator's verb |
 | merging -> landed | its batch, green on the stream branch, merged to the development branch | mechanical |
 | any open state -> off the table | drop, with the reason | the coordinator's verb |
@@ -256,7 +256,10 @@ and it is the coordinator's decision, receipted.
   time to the next up member round the fleet (the rolling index `deal_index`)
   that is below its width: 150 ready over eight machines of width 64 all go to
   working in one tick, 18 or 19 a machine. A machine at its width takes no
-  more.
+  more, whoever deals: the `deal` verb refuses a card no up member has room for,
+  and a rework with no member below its width sends its primary ready with the
+  fix, for the tick to deal (`tla/DirtyTick.tla`, `Room` and `WidthRespected`;
+  `TestAReworkIsNotDealtToAMemberAtItsWidth`).
 - Every rolling index (the fleet's `deal_index`, the readers' `ask_index`, the
   work table's `stream_index`, `stream_index_ask` and `stream_index_accept`) is
   a counter: a uint64 from 0 that goes up by one with every placement and by
