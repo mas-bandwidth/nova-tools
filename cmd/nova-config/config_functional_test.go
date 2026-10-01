@@ -365,7 +365,7 @@ func TestInventoryWrapperFromTheHelpRunsWithTheBuiltBinary(t *testing.T) {
 	printf, chmod := helpCommands(t, help)
 
 	dir := t.TempDir()
-	build := exec.Command("go", "build", "-o", filepath.Join(dir, "nova-config"), ".")
+	build := exec.Command("go", "build", "-buildvcs=false", "-o", filepath.Join(dir, "nova-config"), ".")
 	build.Env = goenv.Clean(os.Environ())
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("go build: %v\n%s", err, out)
@@ -425,7 +425,8 @@ func stallingListener(t *testing.T) string {
 
 // The flag governs the wait for the store: a Redis that accepts and never
 // answers is given up at the verb's own deadline, with the timed-out refusal
-// naming the address and the stage.
+// naming the address and the stage (the connection is made by the first
+// read, so the stage is the read).
 func TestInventoryTimeoutFlagGovernsTheConnection(t *testing.T) {
 	t.Parallel()
 
@@ -435,7 +436,7 @@ func TestInventoryTimeoutFlagGovernsTheConnection(t *testing.T) {
 	for flag, again := range map[string]string{"100ms": "300ms", "250ms": "750ms"} {
 		var out, errb bytes.Buffer
 		code := run([]string{"inventory", "--timeout", flag}, &out, &errb, r.deps())
-		want := "nova-config inventory: timed out after " + flag + " waiting for the store at " + addr + " while connecting; check that Redis answers there; run: nova-config inventory --timeout " + again + "\n"
+		want := "nova-config inventory: timed out after " + flag + " waiting for the store at " + addr + " while reading the applied state; check that Redis answers there; run: nova-config inventory --timeout " + again + "\n"
 		if code != 2 || out.String() != "" || errb.String() != want {
 			t.Fatalf("--timeout %s: exit %d stdout %q stderr %q\nwant 2, nothing, %q", flag, code, out.String(), errb.String(), want)
 		}

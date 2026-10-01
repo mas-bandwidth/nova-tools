@@ -35,7 +35,7 @@ func TestFleetPlaysPassSyntaxAndCheckOnTheFixture(t *testing.T) {
 	root := repoRoot(t)
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "bin")
-	build := exec.Command("go", "build", "-o", bin+string(filepath.Separator), "./cmd/nova-config", "./cmd/nova-redis")
+	build := exec.Command("go", "build", "-buildvcs=false", "-o", bin+string(filepath.Separator), "./cmd/nova-config", "./cmd/nova-redis")
 	build.Dir = root
 	build.Env = goenv.Clean(os.Environ())
 	out, err := build.CombinedOutput()

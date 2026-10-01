@@ -32,7 +32,9 @@ func TestSnapshotIsTheAppliedStateInTwoRoundTrips(t *testing.T) {
 	ctx := context.Background()
 	ap, c := redisApplier(t)
 	st := seed(t)
-	applyKinds(t, st, ap, "operator")
+	sprintRow, _, sprintErr := st.Get(ctx, KindSprint, KindSprint)
+	require.NoError(t, sprintErr)
+	applyKinds(t, st, ap, sprintRow.Fields["coordinator"])
 	machines, _, err := st.MachinesAndFleet(ctx)
 	require.NoError(t, err)
 	beatOf := machines[0].Name
