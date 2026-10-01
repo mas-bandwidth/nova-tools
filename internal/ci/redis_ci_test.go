@@ -142,6 +142,35 @@ func redisCIChild(t *testing.T, mode string) (string, int) {
 	return string(out), -1
 }
 
+// redisServerExemption is one reasoned site the walk reads past: a Go file
+// that names the redis-server binary or its lookup without going through the
+// seam, and the one-line reason it may. The path is what the walk skips; the
+// reason is read by a reviewer (STANDARD.md section 10: a class test is never
+// exempted without a written reason).
+type redisServerExemption struct {
+	path   string
+	reason string
+}
+
+// redisServerExemptions is the reasoned list beside the helper, lifted and
+// self consts. Each reason is one line. A site moves behind the seam, or it is
+// the CI tier's own installer or selection, or it only pins another site's
+// text; a new row is a written reason, never a parking place.
+var redisServerExemptions = []redisServerExemption{
+	{
+		path:   "tools/ci/installredis.go",
+		reason: "the CI tier's own installer verb: it puts redis-server on PATH for the tests that start a private server, and it is not a test",
+	},
+	{
+		path:   "tools/ci/sel_unittest.go",
+		reason: "the CI tier's own unit selection verb: it only checks that the refusing shim is first on PATH and launches nothing",
+	},
+	{
+		path:   "internal/ci/unit_tier_class_test.go",
+		reason: "a class test pinning the selection guard's text: the LookPath literal is an assertion of sel_unittest.go's content, not a lookup, launch or skip",
+	},
+}
+
 // redisServerGates reports Go files other than the helper that look up
 // redis-server themselves or skip because of it. Those skips are how a CI
 // runner without the binary used to go green.
@@ -179,6 +208,11 @@ func redisServerGates(t *testing.T, root string) []string {
 		rel = filepath.ToSlash(rel)
 		if rel == helper || rel == lifted || rel == self {
 			return nil
+		}
+		for _, e := range redisServerExemptions {
+			if rel == e.path {
+				return nil
+			}
 		}
 		body, err := os.ReadFile(path)
 		if err != nil {
