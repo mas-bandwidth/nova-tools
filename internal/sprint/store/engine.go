@@ -803,7 +803,7 @@ func (st *Store) after(ctx context.Context, step Step, res Result) (Result, erro
 		// work added to a done sprint: the machine stays STOPPED, no longer
 		// done (errata 3 amendment 6)
 		if err := st.undone(ctx); err != nil {
-			return res, &SyncError{Cause: err}
+			return res, err
 		}
 	}
 	if step.Mirrors {
