@@ -15,7 +15,7 @@ SPRINT TABLE
 work  | waiting | ready | working | review | merging | landed
 readers | asked | reading | ok | broken
 merge | queued | merged | stuck | ci | state
-fleet | ready | working | width | done | ok% | status | load
+fleet | ready | working | width | done | ok% | status | load | provider
 ```
 
 | table | rows | members | bookkeeping for |
@@ -118,7 +118,18 @@ with its count at MaxRedeals, 3, stays withdrawn, its primary ready and dealt
 no more, and the judgment "a card reached its bound" names it until a rework
 with a fix or a drop; so the card is dealt again after each of its first three
 ended takes and retired when a fourth ends; each counted redeal's
-line in the log says "redeal n of 3"), ok (set
+line in the log says "redeal n of 3"; a take the provider failed is an ended
+take: the member's failed finish whose report begins `provider failure`
+(docs/SPEC-CARD-CONTRACT.md, section 4) withdraws the card with take_ended
+and returns its primary to ready, with no failed-work judgment and no count
+against the primary's failed, and the next deal places it again, counting the
+take; the work card keeps provider_error, the last such line (cut to 200
+bytes, until the card is dealt again), and a record of each such take,
+provider_take_<n> (its route, model, member, end, usage and line), which stays
+through the redeals and which `card` prints as one ATTEMPT line for the take
+(`end=provider failure: <line>`, `take=<n>`) before the card's own; a card retired by provider failures has the
+judgment "a card reached its bound" name the provider and that last error
+line; tla/CardContract.tla, ProviderFailure), ok (set
 only when finished), head, report. It takes its primary's score. The primary
 names its live work card.
 
@@ -184,7 +195,9 @@ and it is the coordinator's decision, receipted.
   width (eight machines of 64 total 512). The row is the truth: the member's
   loop (`nova-swarm member`) reads its width with its queue every tick
   (`queue --as <m> --json` carries `width`) and runs that many; its `--width`
-  is a twin's override.
+  is a twin's override. The provider column counts the provider failures the
+  member has reported (its control card's provider_failures, the footer sums
+  them): each takes the card back for the deal and is never failed work.
 - The card decides its model (the owner, 2026-10-01). A brief's line 1 names
   its tier, `tier: flash|pro|frontier` (none is flash), and a `model:
   <provider>/<model>` header line under it pins the card, with its `tokens:
@@ -233,7 +246,14 @@ and it is the coordinator's decision, receipted.
   sprint the member sets no such list (the line names `next=-`); the member
   reads the line as `provider failure`, and the redeal or rework that follows
   leaves the failed route out from the kind's own history. The list stays for
-  native run by hand.
+  native run by hand. A run the provider failed with no 5xx line, read from
+  the harness's own log and transcript (`NATIVE PROVIDER-FAIL`,
+  docs/SPEC-CARD-CONTRACT.md section 4), is finished the same way: the card
+  returns to the deal, the redeal leaves out every route drawn for the card
+  while another remains and draws the same one only when none does, and
+  `routes` counts the take against the route it ran on: an attempt, failed,
+  and a provider failure. The 5xx hand-back above is finished the same way,
+  its own line the reason (`provider: PROVIDER-5XX label=... ref=...`).
 - The machine's tick deals every ready primary the fleet has room for in one
   step, in stream turns (each stream's oldest first by score), one card at a
   time to the next up member round the fleet (the rolling index `deal_index`)
@@ -483,7 +503,7 @@ the tick would make, no other open judgment on it).
 | cannot ask (two readers are up, and a primary has no two to be asked of) | reader add, rework, drop, wait | no |
 | fewer than two readers up | reader up, reader add, wait | no |
 | no fleet member is up | fleet beat (on a machine), fleet up (releases a hold), wait | no |
-| a card reached its bound (an attempt's work card redealt MaxRedeals, 3, times after takes that ended, and a take of it ended again) | rework with a fix (a new attempt), drop, wait | no |
+| a card reached its bound (an attempt's work card redealt MaxRedeals, 3, times after takes that ended, the provider's failures among them, and a take of it ended again; the judgment names the provider and the last error line when the provider failed that take) | rework with a fix (a new attempt), drop, wait | no |
 | a work card is past its deadline | fleet down (the member, only when it has held the card its own whole deadline: never the member a late card was just redealt to, nor one it was withdrawn from), wait, drop | no |
 | a read card is past its deadline | ask --another, wait, drop | no |
 | a stream has had no merge step past its deadline | merge --stream, card (look), wait | no |

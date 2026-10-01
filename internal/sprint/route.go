@@ -225,6 +225,45 @@ func AttemptLine(wc *Card) string {
 		orDash(wc.F("dealt")), orDash(wc.F("taken")), orDash(wc.F("finished")), orDash(PushedHead(wc)), orDash(wc.F(FieldUsage)), end)
 }
 
+// ProviderTake is the record of one take of a work card the provider failed, kept on the
+// card beside the takes after it (FieldProviderTake plus the take's number, the card's
+// redeals when it ended plus one): the route and model it ran on, the member, when it
+// ended, what it spent and the error line. `card <id>` prints one ATTEMPT line for each,
+// and the route stats count it against its route.
+type ProviderTake struct{ Route, Model, Member, Finished, Usage, Error string }
+
+// String is the take as the card's field holds it: tab separated, the line last.
+func (t ProviderTake) String() string {
+	return strings.Join([]string{t.Route, t.Model, t.Member, t.Finished, t.Usage, strings.ReplaceAll(t.Error, "\t", " ")}, "\t")
+}
+
+// ProviderTakes is the takes of the work card the provider failed, in the order they ended,
+// each with its number.
+func ProviderTakes(wc *Card) (takes []ProviderTake, numbers []int) {
+	for n := 1; n <= MaxRedeals+1; n++ {
+		v := wc.F(FieldProviderTake + itoa(n))
+		if v == "" {
+			continue
+		}
+		f := append(strings.SplitN(v, "\t", 6), "", "", "", "", "", "")
+		takes, numbers = append(takes, ProviderTake{Route: f[0], Model: f[1], Member: f[2], Finished: f[3], Usage: f[4], Error: f[5]}), append(numbers, n)
+	}
+	return takes, numbers
+}
+
+// AttemptLines is the work card's lines as `card <id>` prints them: one for each take of it
+// the provider failed (end=provider failure: the line, with the route, model, member and
+// usage of that take), then the card's own (AttemptLine), the take it is on or ended.
+func AttemptLines(wc *Card) []string {
+	var out []string
+	takes, numbers := ProviderTakes(wc)
+	for i, t := range takes {
+		out = append(out, fmt.Sprintf("ATTEMPT %s card=%s take=%d route=%s model=%s member=%s finished=%s usage=%s end=%s: %s",
+			orDash(wc.F("attempt")), wc.ID, numbers[i], orDash(t.Route), orDash(t.Model), orDash(t.Member), orDash(t.Finished), orDash(t.Usage), cardhdr.EndProvider, t.Error))
+	}
+	return append(out, AttemptLine(wc))
+}
+
 // RouteStat is one route's record over the work cards dealt on it. A pinned
 // model is a row of its own, Pinned, named pin:<model>.
 type RouteStat struct {
@@ -248,6 +287,17 @@ func RouteStats(routes []Route, fleet *Table) []RouteStat {
 		out = append(out, RouteStat{Route: r})
 	}
 	walls := map[string][]time.Duration{}
+	// statOf is the row of a route's name, made on first meeting.
+	statOf := func(name string, pinned bool, model string) *RouteStat {
+		i, ok := at[name]
+		if !ok {
+			i = len(out)
+			at[name] = i
+			provider, m, _ := strings.Cut(model, "/")
+			out = append(out, RouteStat{Route: Route{Name: name, Provider: provider, Model: m}, Pinned: pinned})
+		}
+		return &out[i]
+	}
 	for _, c := range fleet.Column(Ready, Working, DoneOK, DoneFailed, Withdrawn) {
 		name := c.F(FieldRoute)
 		if name == "" {
@@ -257,23 +307,35 @@ func RouteStats(routes []Route, fleet *Table) []RouteStat {
 		if pinned {
 			name = RoutePin + ":" + c.F(FieldModel)
 		}
-		i, ok := at[name]
-		if !ok {
-			i = len(out)
-			at[name] = i
-			provider, model, _ := strings.Cut(c.F(FieldModel), "/")
-			out = append(out, RouteStat{Route: Route{Name: name, Provider: provider, Model: model}, Pinned: pinned})
+		// each take of the card the provider failed is an attempt of the route it ran on,
+		// failed, and counted apart (ProviderTake; the card was dealt again after it)
+		takes, _ := ProviderTakes(c)
+		for _, t := range takes {
+			if t.Route == "" {
+				continue
+			}
+			f, model := name, c.F(FieldModel)
+			if t.Route != RoutePin {
+				f = t.Route
+				if f != name {
+					model = "" // a route the card was drawn before: its row is the store's
+				}
+			}
+			st := statOf(f, pinned && t.Route == RoutePin, model)
+			st.Attempts++
+			st.Failed++
+			st.Provider++
 		}
-		st := &out[i]
+		if c.Col == Withdrawn && c.F(FieldProviderError) != "" {
+			continue // dealt again at the next deal: no take of it is on this route now
+		}
+		st := statOf(name, pinned, c.F(FieldModel))
 		st.Attempts++
 		switch c.F("ok") {
 		case "yes":
 			st.OK++
 		case "no":
 			st.Failed++
-			if strings.HasPrefix(c.F("report"), cardhdr.EndProvider) {
-				st.Provider++
-			}
 		}
 		t0, e0 := time.Parse(time.RFC3339, c.F("taken"))
 		t1, e1 := time.Parse(time.RFC3339, c.F("finished"))

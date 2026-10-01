@@ -457,6 +457,27 @@ func nativeEnd(log []byte) string {
 	return ""
 }
 
+// nativeProviderWhy is the reason of a run the provider failed (nativeprovider.go's
+// PROVIDER-FAIL line): the rest of the line after reason=. The 5xx hand-back's own line
+// (swarm.Handback, PROVIDER-5XX) names none, and is its own reason.
+var (
+	nativeProviderWhy = regexp.MustCompile(`(?m)\bNATIVE PROVIDER-FAIL \S.* reason=(.+)$`)
+	nativeHandback    = regexp.MustCompile(`(?m)\bNATIVE (PROVIDER-5XX \S.*)$`)
+)
+
+// providerReason is why the provider failed the run, from native's log: the PROVIDER-FAIL
+// line's reason, else the 5xx hand-back's line (`provider: PROVIDER-5XX label=... ref=...`),
+// else "".
+func providerReason(log []byte) string {
+	if m := nativeProviderWhy.FindSubmatch(log); m != nil {
+		return strings.TrimSpace(string(m[1]))
+	}
+	if m := nativeHandback.FindSubmatch(log); m != nil {
+		return "provider: " + strings.TrimSpace(string(m[1]))
+	}
+	return ""
+}
+
 var (
 	nativeProvider = regexp.MustCompile(`\bNATIVE PROVIDER-`)
 	nativeStopped  = regexp.MustCompile(`\bNATIVE \S+ .*\bstopped=`)
@@ -473,7 +494,7 @@ var (
 func (c *nativeChild) Result() member.Result {
 	c.once.Do(func() {
 		ran := false
-		var end, usage string
+		var end, usage, provider string
 		if b, err := os.ReadFile(c.logPath); err == nil {
 			if m := nativeRC.FindSubmatch(b); m != nil {
 				ran = string(m[1]) == "OK" && string(m[2]) == "0" && string(m[3]) == "ok"
@@ -482,6 +503,7 @@ func (c *nativeChild) Result() member.Result {
 				usage = "wall=" + string(m[1]) + " budget=" + string(m[2])
 			}
 			end = nativeEnd(b)
+			provider = providerReason(b)
 		}
 		path := newestResult(c.results)
 		var raw []byte
@@ -520,7 +542,7 @@ func (c *nativeChild) Result() member.Result {
 				report = "the child ended without a result (see " + c.logPath + ")"
 			}
 		}
-		c.result = member.Result{Ran: ran, OK: ran, Shaped: cr.Shaped, Verdict: verdict, Head: head, Report: report, Title: cr.Title, Body: cr.Body, End: end, Usage: usage}
+		c.result = member.Result{Ran: ran, OK: ran, Shaped: cr.Shaped, Verdict: verdict, Head: head, Report: report, Title: cr.Title, Body: cr.Body, End: end, Usage: usage, Provider: provider}
 	})
 	return c.result
 }

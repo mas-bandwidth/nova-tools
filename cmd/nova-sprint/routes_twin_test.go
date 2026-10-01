@@ -10,8 +10,9 @@ import (
 )
 
 // A pinned card's life on the twin, read back: add refuses model lines the deal
-// could not read; the pin is dealt with its model, budget and deadline; its failed
-// attempt is one ATTEMPT line on card <id>; routes shows the pinned model as a row
+// could not read; the pin is dealt with its model, budget and deadline; its take,
+// ended by the provider, leaves the card withdrawn for the deal (one ATTEMPT
+// line on card <id>, no failed-work judgment); routes shows the pinned model as a row
 // of its own, its provider failure counted, and its --json speaks the repository's
 // lowercase field names; the member's queue carries its fleet row's width.
 func TestAPinnedCardOnTheTwinIsReadBackByCardAndRoutes(t *testing.T) {
@@ -43,8 +44,11 @@ func TestAPinnedCardOnTheTwinIsReadBackByCardAndRoutes(t *testing.T) {
 	assert.Contains(t, e, "model: nope is not <provider>/<model>")
 
 	_, story, _ := run("nova-sprint card s1-1")
-	assert.Contains(t, story, "ATTEMPT 1 card=s1-1.w1 gen=1 route=pin model=x/y member=m1")
-	assert.Contains(t, story, "usage=wall=3.00s budget=10/5000 end=failed: provider failure: 529")
+	assert.Contains(t, story, "ATTEMPT 1 card=s1-1.w1 gen=2 route=pin model=x/y member=m1")
+	assert.Contains(t, story, "usage=wall=3.00s budget=10/5000 end=withdrawn")
+	assert.Contains(t, story, "ATTEMPT 1 card=s1-1.w1 take=1 route=pin model=x/y member=m1 finished=", "the failed take keeps its own record")
+	assert.Contains(t, story, "usage=wall=3.00s budget=10/5000 end=provider failure: 529")
+	assert.NotContains(t, story, "came back failed", "a provider failure is never the card's")
 	_, plain, _ := run("nova-sprint card s4-1")
 	assert.Contains(t, plain, "ATTEMPT 1 card=s4-1.w1 gen=1 route=- model=-", "a card on a twin with no route runs on the member's override")
 

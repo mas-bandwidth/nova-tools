@@ -809,7 +809,9 @@ func (a *app) cmdCard(args []string, stdout, stderr io.Writer) int {
 		}
 		a.printStory(stdout, v, events, texts, held, place)
 		for _, w := range v.Work {
-			fmt.Fprintln(stdout, oneline.Escape(sprint.AttemptLine(w)))
+			for _, line := range sprint.AttemptLines(w) {
+				fmt.Fprintln(stdout, oneline.Escape(line))
+			}
 		}
 		if len(v.Work) > 0 {
 			fmt.Fprintln(stdout, sprint.NextLine(v.Work))
