@@ -1622,7 +1622,7 @@ build the image.
 the repository's one Redis version, the one the functional image builds, the
 image `make test-functional-container` runs the functional tier in. Every other
 place that names a Redis version equals it: the CI installer's source build
-(`.github/scripts/install-redis-server.sh`), the image's README,
+(`tools/ci/installredis.go`), the image's README,
 `docs/nova-table/README.md`, and every phrase of the living tree that writes a
 three-part version right after the word Redis (`Redis <v>`, `Redis (<v>)`,
 `redis-server <v>`, `--redis-version <v>`, `redis-<v>.tar.gz`,

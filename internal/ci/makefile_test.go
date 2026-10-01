@@ -25,11 +25,12 @@ import (
 // ci_budget_test.go takes for the job names and timeouts.
 
 // buildTestLintRe matches a build, test or lint COMMAND at the start of a shell
-// statement: `go build`, `go vet`, `go test`, `gofmt`, or CI's lisp script
-// (tools/ci/lisp-test.sh). `go version`, `go list` and `go env` are setup and are
+// statement: `go build`, `go vet`, `go test`, `gofmt`, or one of CI's own test
+// verbs (`go run ./tools/ci lisp-test`, `go run ./tools/ci functional-run`).
+// `go version`, `go list` and `go env` are setup and are
 // deliberately not matched. The command may follow a shell separator — `;`,
 // `&&`, `||`, `|` or `$(` — so a command substitution is caught too.
-var buildTestLintRe = regexp.MustCompile(`(^|[;&|($])\s*(go\s+(build|vet|test)\b|gofmt\b|(sh\s+)?tools/ci/lisp-test\.sh\b)`)
+var buildTestLintRe = regexp.MustCompile(`(^|[;&|($])\s*(go\s+(build|vet|test)\b|gofmt\b|go\s+run\s+\./tools/ci\s+(lisp-test|functional-run)\b)`)
 
 // commandAllowlist names the setup and shard-loop lines that are allowed not to
 // be a make invocation. They run no test and check no formatting: they discover
@@ -45,6 +46,9 @@ var commandAllowlist = []string{
 	"command -v go",
 	"GOMAXPROCS",
 	"go build ./cmd/nova-sandbox",
+	// the one build of CI's own verbs, once per job, before the steps that call the binary
+	// (TestToolsCIIsBuiltOnceAndNeverRun holds the shape)
+	`go build -o "$RUNNER_TEMP/ci" ./tools/ci`,
 	"go build ./... && go test -count=1 ./internal/oneline/",
 }
 
@@ -140,17 +144,15 @@ func TestMakefileIsTheOneEntry(t *testing.T) {
 	for _, d := range mk.deps["check"] {
 		checkDeps[d] = true
 	}
-	// The lisp gate is test-lisp, CI's own lisp script. It was verify-roadmap
-	// (cmd/nova-work's verification verb over the suite, #3459) until nova-work
-	// was parked under deprecated/ on 2026-09-27; the script now prints "nothing
-	// to test" while lisp/ holds no system.
+	// The lisp gate is test-lisp, CI's own lisp verb (tools/ci lisp-test), which
+	// prints "nothing to test" while lisp/ holds no system.
 	for _, want := range []string{"build", "lint", "test", "test-e2e", "test-lisp"} {
 		if !checkDeps[want] {
 			t.Errorf("Makefile check does not run %q; the contract is build, lint, test, test-e2e and test-lisp", want)
 		}
 	}
-	if got := strings.TrimSpace(strings.Join(mk.recipeFor("test-lisp"), "\n")); got != "sh tools/ci/lisp-test.sh" {
-		t.Errorf("Makefile test-lisp is %q, want CI's lisp script sh tools/ci/lisp-test.sh (CI's lisp job and the merge gate's lisp step both run it)", got)
+	if got := strings.TrimSpace(strings.Join(mk.recipeFor("test-lisp"), "\n")); got != "go run ./tools/ci lisp-test" {
+		t.Errorf("Makefile test-lisp is %q, want CI's lisp verb go run ./tools/ci lisp-test (CI's lisp job and the merge gate's lisp step both run it)", got)
 	}
 
 	// And the gates themselves: every command `make check` would run, gathered
@@ -164,7 +166,7 @@ func TestMakefileIsTheOneEntry(t *testing.T) {
 		"go vet ./...",
 		"go test -count=1 $(shell bash .github/scripts/select-packages.sh --all)",
 		"go test -count=1 -run TestFriendSequence ./cmd/...",
-		"sh tools/ci/lisp-test.sh",
+		"go run ./tools/ci lisp-test",
 	} {
 		if !strings.Contains(recipes, gate) {
 			t.Errorf("`make check` does not reach %q; the recipes it runs are:\n%s", gate, recipes)

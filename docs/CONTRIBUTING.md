@@ -170,20 +170,26 @@ standard-library rule as a rule. Nothing mechanical reads intent.
 
 ### revert-on-red: the mechanical revert of a red main
 
-`.github/workflows/revert-on-red.yml` runs with no person in the loop. When
+`.github/workflows/revert-on-red.yml` runs on its own. When
 `ci` concludes failure on a push to `main` whose parent ci run on `main` was
 green, it first re-runs the failed jobs once (flake guard) and waits for that
 rerun — the rerun's own `workflow_run` completion re-enters the workflow with
 `run_attempt` 2. Only if the rerun is red too does it revert that push —
 `git revert -m 1` for a merge commit, a plain revert otherwise — with the
 message `revert <sha>: main red on <failing jobs> (mechanical revert-on-red;
-fix forward on a branch)`, and pushes it to `main`.
-If the repository ruleset refuses the direct push, it opens a `revert/<sha>`
-pull request with auto-merge enabled instead. In both cases it posts one
-comment on the merged pull request, naming the revert. Three guards stop it
-with a skip (never a red): a head commit that is itself a revert (no revert
-loops), a parent run that was not green (the red predates this push), or a
-`main` that has already moved on (the newer run decides).
+fix forward on a branch)` — and opens a `revert/<sha>` pull request against
+`main` with that message as its title, leaves it open, and files one issue naming
+it: CI lands nothing by itself, so a person or a batch merges the revert. It pushes
+nothing to `main`: the verb's `--push-revert` flag (the direct push, which falls
+back to the pull request when the ruleset refuses it) is not set by the workflow,
+and turns on only after the pull request form has fired correctly once on a real
+red push. In both forms it posts one comment on the merged pull request, naming
+the revert. Three guards stop it with a skip (never a red): a head commit that is
+itself a revert (no revert loops), a parent run that was not green (the red
+predates this push), or a `main` that has already moved on (the newer run
+decides). A GitHub API call that fails is never a skip: the verb exits red and
+files one issue naming the call, before anything is opened, so a person decides.
+The logic is one Go verb, `tools/ci revert-on-red`, built from dev's tip.
 
 **The rule:** the repository ruleset lets the github-actions app push to
 `main` or auto-merge a `revert/<sha>` pull request; without that, the

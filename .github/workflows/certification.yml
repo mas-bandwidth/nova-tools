@@ -165,15 +165,6 @@ jobs:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
-      - name: start installing redis-server in the background
-        # The install is 3-45 s of apt or brew on a hosted runner (45 s on ubuntu-latest shard 3
-        # of run 36377703562, the leg's longest step). Started here, it overlaps the cache
-        # restore, the toolchain and the deal; the `install redis-server` step below runs the
-        # same script, which waits on the first one's lock, finds the binary and publishes its
-        # directory to PATH for the steps after it. The runner reaps the process at job end.
-        shell: bash
-        run: nohup bash .github/scripts/install-redis-server.sh > "${RUNNER_TEMP}/redis-install.log" 2>&1 &
-
       - name: name the Go toolchain's tool-cache directory
         # The toolchain rides in the race cache entry below. setup-go downloads, extracts and
         # then copies it into the runner's tool cache: 26-27 s on macos-latest, 16 s of it the
@@ -201,6 +192,21 @@ jobs:
           # This job manages its cache above and below; setup-go's own saves in a post step,
           # which a cancelled job never reaches.
           cache: false
+
+      - name: build tools/ci once
+        # The verbs are built ONCE here and every later step calls the binary: `go run` compiles
+        # and links the tool again on every step that names it. internal/ci: TestToolsCIIsBuiltOnceAndNeverRun.
+        shell: bash
+        run: go build -o "$RUNNER_TEMP/ci" ./tools/ci
+
+      - name: start installing redis-server in the background
+        # The install is 3-45 s of apt or brew on a hosted runner (45 s on ubuntu-latest shard 3
+        # of run 36377703562, the leg's longest step). Started here, it overlaps the gofmt, the
+        # deal and the race-instrumented dependency build; the `install redis-server` step below
+        # runs the same verb, which waits on the first one's lock, finds the binary and publishes
+        # its directory to PATH for the steps after it. The runner reaps the process at job end.
+        shell: bash
+        run: nohup "$RUNNER_TEMP/ci" install-redis-server > "${RUNNER_TEMP}/redis-install.log" 2>&1 &
 
       - name: gofmt
         # gofmt -l prints unformatted files and exits 0 either way, so the exit
@@ -310,10 +316,10 @@ jobs:
       - name: install redis-server
         # #3113. This job is the hosted full suite, ubuntu-latest and
         # macos-latest. The controls spawn redis-server; they do not dial a bench.
-        # Finishes (or waits on) the background install started at the top of the job.
+        # Finishes (or waits on) the background install started earlier in the job.
         shell: bash
         run: |
-          bash .github/scripts/install-redis-server.sh || { cat "${RUNNER_TEMP}/redis-install.log"; exit 1; }
+          "$RUNNER_TEMP/ci" install-redis-server || { cat "${RUNNER_TEMP}/redis-install.log"; exit 1; }
 
       - name: test (shard ${{ matrix.shard }} of ${{ matrix.shards }})
         # -count=1: the restored cache must never answer for a test. -timeout 75s: this step
@@ -371,236 +377,91 @@ jobs:
           name: ${{ startsWith(matrix.os, 'ubuntu') && 'release-linux-amd64' || startsWith(matrix.os, 'macos') && 'release-darwin-arm64' || 'release-windows-amd64' }}
           path: dist
 
+      - name: set up Go, to run the smoke assertions
+        id: setup_go
+        # The assertions are a Go test against the shipped executable
+        # (internal/shippedsmoke), whose one dependency beyond the standard library is testify; the
+        # binary under test is the artifact's, never one this toolchain builds.
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: name the Go caches under the runner's temp directory
+        # One spelling on all three operating systems (Windows keeps Go's cache under
+        # %LocalAppData%, the others under ~/.cache or ~/Library/Caches), so the cache steps
+        # below take one path. The value is the runner's own temp path, as bash prints it.
+        shell: bash
+        run: |
+          echo "GOCACHE=${RUNNER_TEMP}/gocache" >> "$GITHUB_ENV"
+          echo "GOMODCACHE=${RUNNER_TEMP}/gomodcache" >> "$GITHUB_ENV"
+
+      - name: restore the go build and module cache
+        id: gocache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ${{ env.GOCACHE }}
+            ${{ env.GOMODCACHE }}
+          key: ${{ runner.os }}-gosmoke-${{ hashFiles('go.mod') }}
+          restore-keys: |
+            ${{ runner.os }}-gosmoke-
+
+      - name: build tools/ci once
+        id: build_ci
+        # The verbs are built ONCE here and every later step calls the binary: `go run` compiles
+        # and links the tool again on every step that names it. internal/ci: TestToolsCIIsBuiltOnceAndNeverRun.
+        shell: bash
+        run: go build -o "$RUNNER_TEMP/ci${{ runner.os == 'Windows' && '.exe' || '' }}" ./tools/ci
+
+      - name: save the go build and module cache
+        # On a miss or a restore-keys fallback only, and before the tests, as ci.yml's
+        # test-hosted does: a cancelled job never reaches a post-step save.
+        if: steps.gocache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ${{ env.GOCACHE }}
+            ${{ env.GOMODCACHE }}
+          key: ${{ steps.gocache.outputs.cache-primary-key }}
+
       - name: take this runner's shipped binary
         id: take_binary
-        # THE BINARY THAT WOULD SHIP, not one built here. This step used to be `go build -o
-        # "$BIN" ./cmd/nova-check`, which is a different binary from the released one --
-        # different flags, no -trimpath, CGO as the host has it -- so the job whose whole
-        # argument is "what a release ships is the executable" was smoking an executable no
-        # release ships. There is no Go toolchain in this job any more: if the binary is not
-        # in the artifact, this job cannot paper over it by compiling one.
+        # THE BINARY THAT WOULD SHIP, not one built here: a binary built in this job is a
+        # different binary from the released one (different flags, no -trimpath, CGO as the
+        # host has it), and this job's whole argument is that what a release ships is the
+        # executable. If it is not in the artifact the verb lists the artifact and fails.
         shell: bash
         run: |
-          set -euo pipefail
-          case "${{ matrix.os }}" in
-            ubuntu-latest)  target=linux_amd64 ;;
-            macos-latest)   target=darwin_arm64 ;;
-            windows-latest) target=windows_amd64 ;;
-            *) echo "no shipped target mapped for ${{ matrix.os }}"; exit 1 ;;
-          esac
-          # The release name, <tool>_<stamp>_<goos>_<goarch>[.exe] (`ghrelease build`).
-          src="dist/nova-check_v0.0.0-dry-run_$target"
-          [ "$target" = "windows_amd64" ] && src="$src.exe"
-          [ -f "$src" ] || { echo "$src is not in the artifact: ls -R dist"; ls -R dist; exit 1; }
-          mkdir -p "$(dirname "$BIN")"
-          cp "$src" "$BIN"
-          chmod +x "$BIN"
-          "$BIN" version || true
+          "$RUNNER_TEMP/ci${{ runner.os == 'Windows' && '.exe' || '' }}" take-shipped --os "${{ matrix.os }}" --tool nova-check --stamp v0.0.0-dry-run --dist dist --out "$BIN"
 
-      - name: a clean prose tree passes, and is actually walked
-        id: clean_tree
+      - name: smoke the shipped binary
+        id: smoke_test
+        # Seven assertions, each a subtest, so every one runs and reports even when an earlier
+        # one fails. The four that need an executable bit, chmod refusing a read, mkfifo or
+        # symlinks skip on Windows; the other three run there. `!cancelled()`: a red
+        # prerequisite must not hide what the assertions say, and a real cancellation still
+        # stops the job.
         if: ${{ !cancelled() }}
         shell: bash
-        run: |
-          tree="$(mktemp -d)"
-          printf '# notes\n' > "$tree/NOTES.md"
-          printf 'plain text\n' > "$tree/plain.txt"
-          set +e; out=$("$BIN" nocode --dir "$tree" 2>&1); rc=$?; set -e
-          [ "$rc" -eq 0 ] || { echo "want exit 0, got $rc: $out"; exit 1; }
-          # files=2 is the load-bearing half. `nocode` prints NOCODE OK and
-          # exits 0 for a tree it never opened, so exit 0 alone cannot tell a
-          # pass from a walk that scanned nothing.
-          case "$out" in
-            *"files=2 clean"*) ;;
-            *) echo "want files=2 clean, got: $out"; exit 1 ;;
-          esac
-
-      - name: a symlinked --dir is resolved, not passed over
-        id: symlink_nocode
-        # POSIX only: needs an executable bit, chmod refusing a read, mkfifo or symlinks.
-        if: ${{ !cancelled() && (runner.os != 'Windows') }}
-        shell: bash
-        run: |
-          # The fail-open the assertion above was WRONGLY credited with
-          # catching. os.Stat follows a link, so --dir naming a symlink to the
-          # tree was seen as a single non-directory entry and returned
-          # NOCODE OK files=0, exit 0: a clean pass over a tree never opened.
-          # A reviewer removed filepath.EvalSymlinks and every other step here
-          # stayed green, because none of their fixtures is itself a link.
-          # This one is.
-          real="$(mktemp -d)"; printf '# n\n' > "$real/NOTES.md"; printf 'print(1)\n' > "$real/tool.py"
-          link="$(mktemp -d)/link"; ln -s "$real" "$link"
-          set +e; out=$("$BIN" nocode --dir "$link" 2>&1); rc=$?; set -e
-          [ "$rc" -eq 1 ] || { echo "symlinked --dir: want exit 1, got $rc: $out"; exit 1; }
-          case "$out" in
-            *"tool.py"*) echo "ok: a symlinked --dir is walked" ;;
-            *) echo "symlinked --dir: the tree was not walked: $out"; exit 1 ;;
-          esac
-
-      - name: a symlinked --dir is resolved, not passed over (links)
-        id: symlink_links
-        # POSIX only: needs an executable bit, chmod refusing a read, mkfifo or symlinks.
-        if: ${{ !cancelled() && (runner.os != 'Windows') }}
-        shell: bash
-        run: |
-          # The same fail-open, in the other checker. os.Stat follows a link,
-          # so --dir naming a symlink to the tree was seen as a single
-          # non-directory entry and returned LINKS OK files=0 links=0, exit 0
-          # — a clean pass over a tree never walked, while the same tree by its
-          # real path reported the broken link and exited 1. No other step in
-          # this job hands `links` a --dir that is itself a link, so nothing
-          # else here would catch it coming back.
-          real="$(mktemp -d)"; printf 'fine\n\n[gone](gone.md)\n' > "$real/a.md"
-          link="$(mktemp -d)/link"; ln -s "$real" "$link"
-          set +e; out=$("$BIN" links --dir "$link" 2>&1); rc=$?; set -e
-          [ "$rc" -eq 1 ] || { echo "symlinked --dir: want exit 1, got $rc: $out"; exit 1; }
-          case "$out" in
-            *"a.md:3: gone.md (does not exist)"*) echo "ok: a symlinked --dir is walked" ;;
-            *) echo "symlinked --dir: the tree was not walked: $out"; exit 1 ;;
-          esac
-
-      - name: a tree that classified nothing says so
-        id: classified_nothing
-        if: ${{ !cancelled() }}
-        shell: bash
-        run: |
-          # The scanned==0 warning is the only remaining backstop for the
-          # fail-open above in a real repository, and deleting it left every
-          # other step green. Exit 0 is correct here: an empty tree genuinely
-          # holds no machinery. What must not vanish is the sentence telling
-          # an operator that nothing was classified.
-          empty="$(mktemp -d)"
-          set +e; out=$("$BIN" nocode --dir "$empty" 2>&1); rc=$?; set -e
-          [ "$rc" -eq 0 ] || { echo "empty tree: want exit 0, got $rc: $out"; exit 1; }
-          case "$out" in
-            *"classified NOTHING"*) echo "ok: an unwalked tree is reported" ;;
-            *) echo "empty tree: the scanned==0 warning is gone: $out"; exit 1 ;;
-          esac
-
-      - name: each condition refuses separately, with the right code and reason
-        id: each_condition
-        # POSIX only: needs an executable bit, chmod refusing a read, mkfifo or symlinks.
-        if: ${{ !cancelled() && (runner.os != 'Windows') }}
-        shell: bash
-        run: |
-          # One fixture per condition AND an assertion on which reason fired.
-          # One fixture per condition alone would still go green if a
-          # regression collapsed every case into one spurious finding.
-          check() {
-            desc="$1"; tree="$2"; want_reason="$3"
-            set +e; out=$("$BIN" nocode --dir "$tree" 2>&1); rc=$?; set -e
-            [ "$rc" -eq 1 ] || { echo "$desc: want exit 1, got $rc: $out"; exit 1; }
-            case "$out" in
-              *"$want_reason"*) echo "ok: $desc" ;;
-              *) echo "$desc: want reason '$want_reason', got: $out"; exit 1 ;;
-            esac
-          }
-
-          t="$(mktemp -d)"; printf '# n\n' > "$t/NOTES.md"; printf 'print(1)\n' > "$t/tool.py"
-          check "extension" "$t" "code extension .py (floor-list)"
-
-          t="$(mktemp -d)"; printf '# n\n' > "$t/NOTES.md"; printf 'not a script\n' > "$t/thing"; chmod +x "$t/thing"
-          check "executable bit" "$t" "executable (mode"
-
-          t="$(mktemp -d)"; printf '# n\n' > "$t/NOTES.md"; printf '#!/bin/sh\necho hi\n' > "$t/thing"
-          check "shebang" "$t" "executable script (shebang)"
-
-      - name: the fail-opens this CI exists for stay closed
-        id: fail_opens
-        # POSIX only: needs an executable bit, chmod refusing a read, mkfifo or symlinks.
-        if: ${{ !cancelled() && (runner.os != 'Windows') }}
-        shell: bash
-        run: |
-          # These are the regressions that motivated the file. Each was a real
-          # fail-open in a released check: a file nobody can open, and a file
-          # that is not a regular file at all, must be FINDINGS rather than
-          # passes. Making a file less readable must never make this gate
-          # greener.
-          if [ "$(id -u)" = "0" ]; then
-            # FAIL rather than skip. The hosted runners are non-root, so this
-            # branch firing means the environment changed under us — and a
-            # silent skip would turn this job's headline fail-open assertion
-            # into a no-op behind a green check.
-            echo "running as root: chmod cannot refuse a read, so this assertion cannot run"
-            exit 1
-          else
-            t="$(mktemp -d)"; printf '# n\n' > "$t/NOTES.md"; printf 'x\n' > "$t/secret"; chmod 000 "$t/secret"
-            set +e; out=$("$BIN" nocode --dir "$t" 2>&1); rc=$?; set -e
-            chmod 644 "$t/secret" || true
-            [ "$rc" -eq 1 ] || { echo "unreadable: want exit 1, got $rc: $out"; exit 1; }
-            case "$out" in
-              *"cannot rule out machinery"*) echo "ok: unreadable file is a finding" ;;
-              *) echo "unreadable: wrong reason: $out"; exit 1 ;;
-            esac
-          fi
-
-          t="$(mktemp -d)"; printf '# n\n' > "$t/NOTES.md"; mkfifo "$t/pipe.sh"
-          set +e; out=$("$BIN" nocode --dir "$t" 2>&1); rc=$?; set -e
-          [ "$rc" -eq 1 ] || { echo "fifo: want exit 1, got $rc: $out"; exit 1; }
-          case "$out" in
-            *"not a regular file"*) echo "ok: non-regular file is a finding" ;;
-            *) echo "fifo: wrong reason: $out"; exit 1 ;;
-          esac
-
-      - name: a guard that cannot read its own list refuses, and says so
-        id: unreadable_list
-        if: ${{ !cancelled() }}
-        shell: bash
-        run: |
-          # Exit 2, not merely non-zero: `flag` also exits non-zero on an
-          # unknown flag, so "non-zero" would pass with --deny-ext misspelled
-          # and the flag under test never exercised. The message is asserted
-          # for the same reason.
-          # The @path is RELATIVE on purpose. An absolute POSIX path here is
-          # rewritten by git-bash on Windows — "@/nonexistent/list.txt" reached
-          # the binary as "C:/Program Files/Git/nonexistent/list.txt" — so the
-          # exit code held and the message assertion failed on a spelling this
-          # step never chose. A relative name is passed through unchanged by
-          # every shell in the matrix.
-          t="$(mktemp -d)"; printf '# n\n' > "$t/NOTES.md"
-          set +e; out=$("$BIN" nocode --dir "$t" --deny-ext "@no-such-deny-list.txt" 2>&1); rc=$?; set -e
-          [ "$rc" -eq 2 ] || { echo "want exit 2, got $rc: $out"; exit 1; }
-          case "$out" in
-            *"deny-list file: open no-such-deny-list.txt"*) echo "ok: unreadable deny-list refused" ;;
-            *) echo "wrong message: $out"; exit 1 ;;
-          esac
+        env:
+          NOVA_SHIPPED_BIN: ${{ env.BIN }}
+        run: go test -tags shippedsmoke -count=1 -v -timeout 90s ./internal/shippedsmoke
 
       - name: every assertion above reported
-        # THE GATE, and the reason every step above carries `if: ${{ !cancelled() }}`.
-        #
-        # A step that fails stops the ones after it from running by default, so a broken
-        # second assertion used to hide assertions three to seven: the job went red,
-        # somebody fixed the one failure it named, and the next run found the next one.
-        # Seven red steps in one run is seven facts; one red step and six skipped is one
-        # fact and a queue.
-        # `!cancelled()` runs them all anyway -- and keeps honouring a real cancellation --
-        # and this step is where the job's verdict is stated in one place, naming every
-        # outcome rather than only the first bad one.
+        # THE GATE: where the job's verdict is stated in one place, naming every outcome and
+        # not only the first bad one. A step that fails stops the ones after it from running
+        # by default, so the steps that can run after a failure carry `if: ${{ !cancelled() }}`
+        # (and keep honouring a real cancellation), and this step names each outcome. The
+        # prerequisites are in the list as well as the assertions' test: a gate that states
+        # every outcome and omits the steps that produce the binary has a blind spot exactly
+        # where a green would be most misleading.
         if: ${{ !cancelled() }}
         shell: bash
         run: |
-          set -uo pipefail
-          bad=0
-          # The two PREREQUISITE steps are in this list as well as the seven assertions: a
-          # gate that claims to state every outcome and silently omits the two steps that
-          # produce the binary is a gate with a blind spot exactly where a green would be
-          # most misleading.
-          for pair in \
-            "download the shipped binaries:${{ steps.download.outcome }}" \
-            "take this runner's binary:${{ steps.take_binary.outcome }}" \
-            "a clean prose tree passes:${{ steps.clean_tree.outcome }}" \
-            "a symlinked --dir (nocode):${{ steps.symlink_nocode.outcome }}" \
-            "a symlinked --dir (links):${{ steps.symlink_links.outcome }}" \
-            "a tree that classified nothing:${{ steps.classified_nothing.outcome }}" \
-            "each condition refuses separately:${{ steps.each_condition.outcome }}" \
-            "the fail-opens stay closed:${{ steps.fail_opens.outcome }}" \
-            "an unreadable deny-list refuses:${{ steps.unreadable_list.outcome }}"
-          do
-            what="${pair%:*}"; outcome="${pair##*:}"
-            echo "$outcome	$what"
-            case "$outcome" in success|skipped) ;; *) bad=$((bad + 1)) ;; esac
-          done
-          [ "$bad" -eq 0 ] || { echo "$bad smoke assertion(s) failed"; exit 1; }
+          "$RUNNER_TEMP/ci${{ runner.os == 'Windows' && '.exe' || '' }}" aggregate --skip-ok '*' --what "smoke assertion(s) failed" \
+            "download the shipped binaries=${{ steps.download.outcome }}" "set up Go=${{ steps.setup_go.outcome }}" "build tools/ci=${{ steps.build_ci.outcome }}" \
+            "take this runner's binary=${{ steps.take_binary.outcome }}" "smoke the shipped binary=${{ steps.smoke_test.outcome }}"
 
   release-build:
     # THE RELEASE BUILD, run on every certification with nothing attached to a release. It
@@ -829,6 +690,12 @@ jobs:
           restore-keys: |
             perf-
 
+      - name: build tools/ci once
+        # The verbs are built ONCE here and every later step calls the binary: `go run` compiles
+        # and links the tool again on every step that names it. internal/ci: TestToolsCIIsBuiltOnceAndNeverRun.
+        shell: bash
+        run: go build -o "$RUNNER_TEMP/ci" ./tools/ci
+
       - name: find the perf-tagged tests
         # Writes `<import path> <run regexp>`, one line per package, to $RUNNER_TEMP/perf-runs.
         # A perf-tagged package with no test behind the tag is reported and skipped; a tree
@@ -874,7 +741,8 @@ jobs:
       - name: install redis-server
         # #3113: NOVA_CI fails a control that wants redis-server and cannot find it. The
         # binary is not the fleet store.
-        run: bash .github/scripts/install-redis-server.sh
+        run: |
+          "$RUNNER_TEMP/ci" install-redis-server
 
       - name: the wall-clock tests, one at a time
         # `-p 1 -parallel 1` because these are wall clocks: a bound in seconds measured while
@@ -958,23 +826,50 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
+      # The verdict runs from this tree's own Go, so the job checks the tree out and sets Go up
+      # first. A checkout or setup that fails fails the job before any verdict is stated (fail
+      # closed: certification-ok is red), and the verdict step is always() so a red need is
+      # named even when an earlier step went wrong.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 1
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: restore the go build and module cache
+        id: gocache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ runner.os }}-gotools-${{ hashFiles('go.mod') }}
+          restore-keys: |
+            ${{ runner.os }}-gotools-
+
+      - name: build tools/ci once
+        # The verbs are built ONCE here and every later step calls the binary: `go run` compiles
+        # and links the tool again on every step that names it. internal/ci: TestToolsCIIsBuiltOnceAndNeverRun.
+        shell: bash
+        run: go build -o "$RUNNER_TEMP/ci" ./tools/ci
+
+      - name: save the go build and module cache
+        if: steps.gocache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ steps.gocache.outputs.cache-primary-key }}
+
       - name: every job succeeded
+        if: always()
         shell: bash
         run: |
-          set -uo pipefail
-          bad=0
-          for pair in \
-            "race-cache:${{ needs.race-cache.result }}" \
-            "test:${{ needs.test.result }}" \
-            "smoke:${{ needs.smoke.result }}" \
-            "release-build:${{ needs.release-build.result }}" \
-            "release-dry-run:${{ needs.release-dry-run.result }}" \
-            "release-checks:${{ needs.release-checks.result }}" \
-            "perf:${{ needs.perf.result }}" \
-            "tick-gate:${{ needs.tick-gate.result }}"
-          do
-            job="${pair%:*}"; result="${pair##*:}"
-            echo "$result	$job"
-            [ "$result" = "success" ] || bad=$((bad + 1))
-          done
-          [ "$bad" -eq 0 ] || { echo "$bad job(s) did not succeed"; exit 1; }
+          "$RUNNER_TEMP/ci" aggregate \
+            race-cache=${{ needs.race-cache.result }} test=${{ needs.test.result }} smoke=${{ needs.smoke.result }} \
+            release-build=${{ needs.release-build.result }} release-dry-run=${{ needs.release-dry-run.result }} \
+            release-checks=${{ needs.release-checks.result }} perf=${{ needs.perf.result }} \
+            tick-gate=${{ needs.tick-gate.result }}
