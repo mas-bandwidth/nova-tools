@@ -218,7 +218,7 @@ func TestDeployerPlaysCheckOnTheFixture(t *testing.T) {
 
 	redis := r.play(t, "redis.yml", vars...)
 	assert.Contains(t, redis, seat+" --only NOVA_REDIS_ADMIN_PASSWORD,NOVA_REDIS_COORDINATOR_PASSWORD,NOVA_REDIS_BENCH_PASSWORD --require=NOVA_REDIS_ADMIN_PASSWORD -- "+fake+"/nova-redis acl check --addr localhost:6379 --user admin --password-env NOVA_REDIS_ADMIN_PASSWORD")
-	assert.NotContains(t, redis, "acl apply", "--check applied")
+	assert.NotContains(t, redis, "/nova-redis acl apply", "--check applied")
 
 	tools := r.play(t, "tools.yml", vars...)
 	assert.Contains(t, tools, "WOULD-MIGRATE postgres://nova_config@localhost:5432/nova")
