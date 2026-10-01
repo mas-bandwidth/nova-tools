@@ -107,7 +107,7 @@ type Result struct {
 	End   string
 	Usage string
 	// Provider is why End is EndProvider, as native read it from the harness's own log
-	// or transcript: the first error line, or `ended without a final message`
+	// or transcript: the cause, `provider: class=<c> status=<n|-> msg=<words>`
 	// (docs/SPEC-CARD-CONTRACT.md section 4; tla/CardContract.tla, ProviderFailure).
 	// "" when the end was a launch the provider never accepted, which names no reason.
 	Provider string
