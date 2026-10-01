@@ -86,7 +86,9 @@ var failLine = regexp.MustCompile(`(?m)^([A-Z][A-Z-]*) FAIL\b`)
 
 // A verb whose work was refused is a failure, and a verb that prints `<TOKEN> FAIL` exits
 // non-zero: no FAIL line with exit 0 (the mirror of TestNoOKOnFailure, over the verbs'
-// real fail paths, which the source scan cannot see where the status is a variable).
+// real fail paths, which the source scan cannot see where the status is a variable). The
+// verbs with a printer of their own (check, repair, tick, accept --group) are driven in
+// TestCheckRepairTickAndGroupFailsExitNonZero.
 // Every row names a verb refused whole; its line says FAIL on stderr, with its own token,
 // and the exit is 1. A refusal in --json says it in the exit alone.
 func TestEveryVerbThatPrintsFailExitsNonZero(t *testing.T) {
