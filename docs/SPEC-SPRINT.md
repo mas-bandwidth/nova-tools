@@ -1319,7 +1319,8 @@ it, so a tick or a worker's batch never waits on a push. A `land` run by itself 
 server is a second writer of the merge queue, and is what `--land` replaces. A round prints
 what landed and everything land said was wrong (a refused or failed batch, a refusal before any
 batch, its remedy); a round that could not read the merge queue prints `LAND FAILED` with why,
-since an unreadable queue is not an empty one, and the next round tries again.
+since an unreadable queue is not an empty one, and the next round tries again. A failure is
+printed once, when it begins: the same failure again prints nothing until it changes or clears.
 
 The address is one address of the coordinator's machine on the fleet's private network; an
 address every network can reach is refused. The server checks no credential (the owner: "I am OK

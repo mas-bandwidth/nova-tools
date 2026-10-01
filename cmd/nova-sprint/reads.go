@@ -412,7 +412,7 @@ func whereHeader(summary, machine string) string {
 func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("inbox")
 	open := fs.String("open", "", "list every member, need and notification of the group of this id")
-	read := fs.Bool("read", false, "move the cursor past what is shown: happened notifications before it are not shown again (open judgments always are); with NOVA_SPRINT_SERVER set, not with --wait (the server moves the cursor, and never runs a wait): run inbox --wait, then inbox --read")
+	read := fs.Bool("read", false, "move the cursor past what is shown: happened notifications before it are not shown again (open judgments always are)")
 	deadline := fs.Duration("deadline", defaultDeadline, "a judgment open longer is overdue")
 	stale := fs.Duration("stale", defaultStale, "a stream with no progress for longer is shown stalled")
 	atEpoch := fs.Int64("at-epoch", -1, "the inbox as it was at an earlier epoch (before a clear)")
