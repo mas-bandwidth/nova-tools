@@ -45,3 +45,53 @@ func TestRedisTheDealReadsTheRoutesApplyWrites(t *testing.T) {
 	assert.Equal(t, "400000", wc.F(sprint.FieldTokens))
 	assert.Equal(t, "1800", wc.F(sprint.FieldDeadline))
 }
+
+// The owner's store, 2026-10-01, by the current code: the machine running, five
+// routes applied as nova-config writes them (three flash, two pro), then a fresh
+// card whose line 1 names flash added and dealt by the tick (not by the deal verb,
+// not by a rework): it draws a flash route; and a fresh pro card while no pro
+// route is enabled stays ready, held by its tier's one judgment.
+func TestRedisTheTickDealsAFreshCardOnARouteOfItsTier(t *testing.T) {
+	t.Parallel()
+	st, c := liveStore(t)
+	ctx := context.Background()
+	h := &harness{t: t, st: st, ctx: ctx, now: time.Now(), live: []string{"m1", "m2"}}
+	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
+	h.beat()
+	h.startMachine()
+	h.machine()
+	put := func(name, tier, enabled string) {
+		require.NoError(t, c.SAdd(ctx, config.RoutesKey, name).Err())
+		require.NoError(t, c.HSet(ctx, config.RouteKey(name), "name", name, "tier", tier, "provider", "p-"+name, "model", "m",
+			"tokens", "100000", "deadline", "900", "weight", "1", "enabled", enabled).Err())
+	}
+	for _, n := range []string{"flash-a", "flash-b", "flash-c"} {
+		put(n, "flash", "true")
+	}
+	put("pro-a", "pro", "false")
+	put("pro-b", "pro", "false")
+	h.must(AddStep(sprint.AddReq{Stream: "testify", IDs: []string{"testify-docs"},
+		Brief: "testify-docs: internal/docs tests to testify by the PR 4926 recipe (testify) tier: flash\nBASE: sprint/foundation\n\nThe task.\n"}))
+	h.must(AddStep(sprint.AddReq{Stream: "tools", IDs: []string{"pro-card"}, Brief: "pro-card: the work (tools) tier: pro\n\nThe task.\n"}))
+	for i := 0; i < 3; i++ {
+		h.tick(time.Second)
+		h.machine()
+	}
+	s := h.snap()
+	wc := s.Fleet.Card("testify-docs.w1")
+	require.NotNil(t, wc, "the fresh flash card is dealt: it is %s, m1 is %s", s.Work.Card("testify-docs").Col, s.MemberCtl("m1").F("status"))
+	assert.Contains(t, []string{"flash-a", "flash-b", "flash-c"}, wc.F(sprint.FieldRoute))
+	assert.Equal(t, "p-"+wc.F(sprint.FieldRoute)+"/m", wc.F(sprint.FieldModel))
+	assert.Nil(t, s.Fleet.Card("pro-card.w1"), "no enabled pro route: not dealt")
+	assert.Equal(t, sprint.Ready, s.Work.Card("pro-card").Col)
+	v, err := st.Inbox(ctx, time.Hour, time.Hour, 1000)
+	require.NoError(t, err)
+	n := 0
+	for _, o := range v.Open {
+		if o.Note.Type == sprint.NNoRoute {
+			n++
+			assert.Equal(t, sprint.StreamSubject(sprint.TierSubject("pro")), o.Subject())
+		}
+	}
+	assert.Equal(t, 1, n, "one judgment for the tier")
+}
