@@ -839,8 +839,6 @@ internal/testpg/recorder_test.go dead: no living importer, the owner 2026-09-30
 internal/testpg/testpg_functional_test.go dead: no living importer, the owner 2026-09-30
 internal/testpg/testpg_test.go dead: no living importer, the owner 2026-09-30
 internal/docs/issue2282_test.go dead: its only subject is internal/presence, which has no living importer, the owner 2026-09-30
-cmd/nova-sprint/tick_profile_test.go a flag-gated bench that asserted nothing; the gate is TestTheDirtyTickDriveOnAStore (MaxTickWall), PR 4906
-internal/sprint/store/first_read_profile_functional_test.go a timing log that asserted nothing; the gate is TestTheDirtyTickDriveOnAStore (MaxTickWall) and the whole read it measured is kept in pipeline_load.go, PR 4906
 internal/wake/busprogress_test.go internal/wake is deleted (dead code: the retired nova-wake tool's package, nothing living called it but one string comparison, inlined in internal/update); the progress-line rule keeps TestProgressNeverEntersTheProtocolStream in cmd/nova-bus and TestEveryNovaBusConsumerDropsProgressLines in internal/ci
 internal/wake/daemon_test.go internal/wake is deleted (dead code; the tick-end wake of cmd/nova-sprint replaced the serve loop)
 internal/wake/evgithub_test.go the ev:github reader moved to internal/ghevent (Reader, opened through redisconn); its cases are exercised by the receipt functional tests in internal/cireceipt and cmd/nova-ci
