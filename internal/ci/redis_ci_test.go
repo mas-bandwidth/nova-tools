@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/redis/go-redis/v9"
 )
@@ -143,30 +145,37 @@ func redisCIChild(t *testing.T, mode string) (string, int) {
 }
 
 // redisServerExemption is one reasoned site the walk reads past: a Go file
-// that names the redis-server binary or its lookup without going through the
-// seam, and the one-line reason it may. The path is what the walk skips; the
-// reason is read by a reviewer (STANDARD.md section 10: a class test is never
-// exempted without a written reason).
+// line that names the redis-server binary or its lookup without going through
+// the seam, keyed by its path and the exact matched line text (a stable
+// substring), and the one-line reason it may. The path and line together are
+// what the walk skips, never the whole file; the reason is read by a reviewer
+// (STANDARD.md section 10: a class test is never exempted without a written
+// reason).
 type redisServerExemption struct {
 	path   string
+	line   string
 	reason string
 }
 
 // redisServerExemptions is the reasoned list beside the helper, lifted and
 // self consts. Each reason is one line. A site moves behind the seam, or it is
 // the CI tier's own installer or selection, or it only pins another site's
-// text; a new row is a written reason, never a parking place.
+// text; a new row is a written reason, never a parking place. The line is the
+// matched text, so a new skip line in an exempted file is not covered.
 var redisServerExemptions = []redisServerExemption{
 	{
 		path:   "tools/ci/installredis.go",
+		line:   `h.run.LookPath("redis-server")`,
 		reason: "the CI tier's own installer verb: it puts redis-server on PATH for the tests that start a private server, and it is not a test",
 	},
 	{
 		path:   "tools/ci/sel_unittest.go",
+		line:   `h.r.LookPath("redis-server")`,
 		reason: "the CI tier's own unit selection verb: it only checks that the refusing shim is first on PATH and launches nothing",
 	},
 	{
 		path:   "internal/ci/unit_tier_class_test.go",
+		line:   `h.r.LookPath("redis-server")`,
 		reason: "a class test pinning the selection guard's text: the LookPath literal is an assertion of sel_unittest.go's content, not a lookup, launch or skip",
 	},
 }
@@ -181,8 +190,6 @@ func redisServerGates(t *testing.T, root string) []string {
 	// importers are re-pointed.
 	const lifted = "internal/testredis/testredis.go"
 	const self = "internal/ci/redis_ci_test.go"
-	look := "LookPath(" + `"redis-server"` + ")"
-	spawn := "exec.Command(" + `"redis-server"`
 	var bad []string
 	err := filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
@@ -209,27 +216,106 @@ func redisServerGates(t *testing.T, root string) []string {
 		if rel == helper || rel == lifted || rel == self {
 			return nil
 		}
-		for _, e := range redisServerExemptions {
-			if rel == e.path {
-				return nil
-			}
-		}
 		body, err := os.ReadFile(path)
 		if err != nil {
 			return err
 		}
-		for i, line := range strings.Split(string(body), "\n") {
-			if strings.Contains(line, look) || strings.Contains(line, spawn) ||
-				(strings.Contains(line, "t.Skip") && strings.Contains(line, "redis-server")) {
-				bad = append(bad, rel+":"+itoa(i+1))
-			}
-		}
+		bad = append(bad, redisServerOffenders(rel, string(body))...)
 		return nil
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	return bad
+}
+
+// redisServerLineMatches reports whether a line looks up, launches or skips on
+// the redis-server binary: the three shapes the walk refuses outside the seam.
+func redisServerLineMatches(line string) bool {
+	look := "LookPath(" + `"redis-server"` + ")"
+	spawn := "exec.Command(" + `"redis-server"`
+	return strings.Contains(line, look) || strings.Contains(line, spawn) ||
+		(strings.Contains(line, "t.Skip") && strings.Contains(line, "redis-server"))
+}
+
+// redisServerLineExempt reports whether a matched line is a reasoned exemption
+// row: the path matches and the row's line text is a stable substring of the
+// line. A new line in an exempted file is not covered, so it is flagged.
+func redisServerLineExempt(rel, line string) bool {
+	for _, e := range redisServerExemptions {
+		if rel == e.path && strings.Contains(line, e.line) {
+			return true
+		}
+	}
+	return false
+}
+
+// redisServerOffenders reports the offenders (rel:line) in one Go file body: a
+// line that matches the lookup, launch or skip shape and is not a reasoned
+// exemption row.
+func redisServerOffenders(rel, body string) []string {
+	var bad []string
+	for i, line := range strings.Split(body, "\n") {
+		if redisServerLineMatches(line) && !redisServerLineExempt(rel, line) {
+			bad = append(bad, rel+":"+itoa(i+1))
+		}
+	}
+	return bad
+}
+
+// TestRedisServerExemptionIsKeyedByLine is the mutation check of the walk's
+// exemption list: each row is keyed by its path and the matched line's text,
+// never by the file. The four named sites stay green, and a new skip line in
+// internal/ci/unit_tier_class_test.go (or a new LookPath of redis-server in
+// tools/ci/sel_shim.go) turns the class test red, because the row's line text
+// does not cover it.
+func TestRedisServerExemptionIsKeyedByLine(t *testing.T) {
+	t.Parallel()
+	root := repoRoot(t)
+	// The four named sites stay green: the walk over the whole tree flags no
+	// redis-server site outside the seam and the reasoned exemption rows. Delete
+	// a row and this turns red, naming the matched line.
+	assert.Empty(t, redisServerGates(t, root), "the walk flags a redis-server site outside the seam and the exemption rows")
+	// Each row is keyed by its path and a live line text: a stable substring of
+	// a line the file actually matches, so the row covers those lines and a dead
+	// row is caught here rather than as a mystery offender.
+	for _, e := range redisServerExemptions {
+		body := readFile(t, filepath.Join(root, filepath.FromSlash(e.path)))
+		matched := false
+		for _, line := range strings.Split(body, "\n") {
+			if redisServerLineMatches(line) && strings.Contains(line, e.line) {
+				matched = true
+				break
+			}
+		}
+		assert.True(t, matched, "%s: the exemption line %q matches no line the walk sees; the row is dead", e.path, e.line)
+	}
+	// A mutation turns the class test red: a matching line the exemption rows
+	// do not name is an offender.
+	for _, tc := range []struct {
+		name string
+		path string
+		body string
+		want []string
+	}{
+		{
+			name: "a new skip line in the class test file",
+			path: "internal/ci/unit_tier_class_test.go",
+			body: "func TestUnitTierSkips(t *testing.T) {\n\tt.Skip(\"no redis-server\")\n}\n",
+			want: []string{"internal/ci/unit_tier_class_test.go:2"},
+		},
+		{
+			name: "a new lookup in sel_shim",
+			path: "tools/ci/sel_shim.go",
+			body: "func shim() { _, _ = exec.LookPath(\"redis-server\") }\n",
+			want: []string{"tools/ci/sel_shim.go:1"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, tc.want, redisServerOffenders(tc.path, tc.body))
+		})
+	}
 }
 
 func itoa(n int) string {
