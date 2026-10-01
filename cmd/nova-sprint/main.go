@@ -16,6 +16,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
@@ -89,6 +90,15 @@ type app struct {
 	// beforePush, when set (a test), runs before each push land makes, with
 	// the attempt (1, then 2 after the base moved).
 	beforePush func(attempt int)
+	// serial is the server's one line of control (serve.go): a worker's batch
+	// and a tick of the run loop each hold it, so neither runs during the other.
+	// serveAddr is the store the server runs the workers' verbs on.
+	serial    sync.Mutex
+	serveAddr string
+	// serving says the verb running is one a worker sent to the server (set and
+	// cleared under serial): its step names the epoch its worker holds, or is
+	// refused (runStep).
+	serving bool
 }
 
 func newApp(getenv func(string) string) *app {

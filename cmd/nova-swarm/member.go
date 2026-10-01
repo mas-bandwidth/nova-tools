@@ -27,6 +27,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/member"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
+	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
@@ -65,6 +66,7 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	passFlag := fs.String("pass", "", "")
 	diskFloor := fs.Int("disk-floor", 10, "")
 	identity := fs.String("identity", "", "")
+	server := fs.String("server", "", "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -165,7 +167,12 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, " member", "own executable: "+err.Error())
 	}
-	sp := &execSprint{bin: *sprintBin, actor: *as}
+	// the sprint's verbs: the nova-sprint binary against the store, or, with --server, the
+	// sprint's server, which runs them beside the store (internal/sprintwire)
+	var sp member.Sprint = &execSprint{bin: *sprintBin, actor: *as}
+	if *server != "" {
+		sp = &sprintwire.Worker{Send: sprintwire.Client{Addr: *server}.Do, Failed: sprintFailureOutput, Budget: sprintVerbBudget}
+	}
 	rn := &nativeRunner{
 		self: self, sprintBin: *sprintBin, harness: *harness, model: *model, root: *root, slots: *slots,
 		resultsRoot: *resultsRoot, deadline: deadline.d, tokens: *tokensWord, auth: *auth, config: *config,

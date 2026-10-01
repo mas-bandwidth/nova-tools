@@ -1256,6 +1256,43 @@ start, so the time before the first `start` is a STOPPED span and counts
 toward no deadline. `clear` writes, at the new epoch, the happened line that
 the machine is STOPPED by the clear.
 
+### The server
+
+The owner, 2026-10-01: "single threaded server, pipelined batches like redis." / "I think we
+should not use redis as the transport, but have a client/server" / "so we have our own
+redis-like thing that the distributed things talk to." / "simple client/server always wins."
+
+`nova-sprint run --listen <host:port>` makes the run loop the sprint's server as well as its
+tick: the one writer of the sprint, beside the store. A worker started with `nova-swarm member
+--server <host:port>` sends its verbs there and reads and writes nothing of the store from its
+own machine. A request is a batch: the worker's verbs, each the argument list it would give
+`nova-sprint`, in the order to run them. The server runs each through the verb's own code, in
+its own process, and answers with each verb's exit code and what it printed, one answer a verb,
+in order. One batch, and one tick, at a time: neither runs during the other. The server keeps
+nothing between requests.
+
+The server runs the workers' verbs only: `take`, `finish`, `read` and `queue`, each beginning
+`<verb> --as <worker>` with one worker's name, and `fleet beat <member> --load <percent>` and
+nothing more. No later word of a verb, wherever it stands, is a flag named `as`, `redis` or
+`actor`: the server gives the store and the actor, and puts them before the worker's words. A
+`take`, a `finish` and a `read` name the epoch their worker holds (`--epoch`). A verb the server
+does not run is answered exit 2, saying nothing was changed, and the batch goes on.
+
+The address is one address of the coordinator's machine on the fleet's private network; an
+address every network can reach is refused. The server checks no credential (the owner: "I am OK
+with relying on tailnet as secure"): what can reach the address can run a worker's verb as any
+worker, and nothing else.
+
+A worker whose answer was lost sends the verb again with the same operation id (`--op`): a
+committed operation returns its recorded result and changes nothing twice; a refusal, or a take
+that found nothing, left no operation and is run again. A server that does not answer is, to the
+worker, a store that did not answer.
+
+The server is `serve` in cmd/nova-sprint/serve.go, a step with no network in it; the listener is
+a shell around it; the wire and the worker's client are internal/sprintwire. Each rule here has a
+test in cmd/nova-sprint/serve_test.go and internal/sprintwire/worker_test.go, and none opens a
+socket.
+
 ## 15. Reminders
 
 The people who work on a sprint each have a goal: a text of what to keep doing,
