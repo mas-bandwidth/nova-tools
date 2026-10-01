@@ -132,6 +132,13 @@ A work card's finish is judged in one place, `member.Judge`, cited from the mode
   take (docs/SPEC-SPRINT.md, the work card's redeals), never as the card's failure. A refused
   push, and a result with the shape (nothing to do, not done) whatever the run's end, are
   failed work with their own reasons and no provider kind;
+- **staging refused**, a failed finish of its own kind, when native refused the launch at
+  staging before any child ran (its `STAGE FAIL ... base=<the card's base> reason=<why>` line:
+  no bench mirror, the pushed head missing, the stage's timeout): the member reads nothing else
+  of the launch, its reason is `staging refused: <why>`, and the sprint deals the card to
+  another member, the member's failure and never the card's (docs/SPEC-SPRINT.md, the work
+  card's redeals; `tla/CardContract.tla`, `StageRefused`, its invariant
+  `StagingIsNotFailedWork` with a reversed witness);
 - **reaped** when the claim moved under the child (a clear, a redeal) or the card left the
   member's queue (a drop, a return): nothing is reported, because the result is nobody's. A
   moved claim is reaped whatever column the queue lists the card in: a redeal, and a withdrawn

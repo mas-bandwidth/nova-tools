@@ -1277,7 +1277,7 @@ func TestAReadWhoseStageFailedOnceIsRunAgainThenReads(t *testing.T) {
 	_, err := g.tickAt(t, 0)
 	require.NoError(t, err)
 	require.Equal(t, []string{"r1"}, g.r.started())
-	g.r.child("r1").end(Result{Ran: false, StageFailed: true, Report: "STAGE FAIL bench=b reason=git checkout failed"})
+	g.r.child("r1").end(Result{End: EndStaging, Staging: "git checkout failed", Report: "no child ran"})
 	g.s.reset()
 
 	acted, err := g.tickAt(t, 1)
@@ -1313,7 +1313,7 @@ func TestAReadWhoseStageFailedTwiceIsReturned(t *testing.T) {
 	g := newRig(Config{As: "r", Width: 1, Reader: true})
 	p := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7, Head: "h1"}
 	g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &p)))
-	fail := Result{Ran: false, StageFailed: true, Report: "STAGE FAIL bench=b reason=staging refused: head h1 is in neither the mirror nor origin"}
+	fail := Result{End: EndStaging, Staging: "staging refused: head h1 is in neither the mirror nor origin", Report: "no child ran"}
 	retry := int64(ReadStageRetry/time.Second) + 1
 	_, err := g.tickAt(t, 0)
 	require.NoError(t, err)
@@ -1339,6 +1339,38 @@ func TestAReadWhoseStageFailedTwiceIsReturned(t *testing.T) {
 	assert.Equal(t, []string{"r1", "r1"}, g.r.started(), "not run a third time")
 }
 
+// TestTheStageRetryIsRememberedAcrossAStartThatFails pins that the once is once: when the start
+// of the retry fails and the recovery path later launches the read, that launch is the retry,
+// and its stage failure is returned. Forgetting the retry at the failed start fails it: the
+// recovered launch gets a retry of its own.
+func TestTheStageRetryIsRememberedAcrossAStartThatFails(t *testing.T) {
+	t.Parallel()
+	g := newRig(Config{As: "r", Width: 1, Reader: true})
+	p := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7, Head: "h1"}
+	g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &p)))
+	fail := Result{End: EndStaging, Staging: "git checkout failed", Report: "no child ran"}
+	retry := int64(ReadStageRetry/time.Second) + 1
+	_, err := g.tickAt(t, 0)
+	require.NoError(t, err)
+	g.r.child("r1").end(fail)
+	_, err = g.tickAt(t, 1)
+	require.NoError(t, err)
+	g.r.failFor["r1"] = true
+	_, err = g.tickAt(t, retry+1) // the retry's start fails
+	require.NoError(t, err)
+	g.r.failFor["r1"] = false
+	_, err = g.tickAt(t, retry+2) // the recovery path launches the read
+	require.NoError(t, err)
+	require.Equal(t, []string{"r1", "r1"}, g.r.started())
+	g.s.reset()
+	g.r.child("r1").end(fail)
+	_, err = g.tickAt(t, retry+3)
+	require.NoError(t, err)
+	got := g.s.lines("return")
+	require.Len(t, got, 1, "the recovered launch is the retry: its stage failure is returned")
+	assert.Contains(t, got[0], "staging refused: git checkout failed")
+}
+
 // TestAWorkCardWhoseStageFailedIsFinishedFailedAsBefore pins that rule 2 is a read's: a work
 // card whose launch ended at staging is judged as every other ended work card (a failed
 // finish), never run again by the member.
@@ -1349,7 +1381,7 @@ func TestAWorkCardWhoseStageFailedIsFinishedFailedAsBefore(t *testing.T) {
 	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p)))
 	_, err := g.tickAt(t, 0)
 	require.NoError(t, err)
-	g.r.child("c1").end(Result{Ran: false, StageFailed: true, Report: "STAGE FAIL bench=b reason=git checkout failed"})
+	g.r.child("c1").end(Result{End: EndStaging, Staging: "git checkout failed", Report: "no child ran"})
 	g.s.reset()
 	_, err = g.tickAt(t, 1) // pushes (none: no head), then finishes
 	require.NoError(t, err)

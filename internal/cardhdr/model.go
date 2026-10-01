@@ -104,3 +104,9 @@ func IsModelID(id string) bool {
 	p, rest, ok := strings.Cut(id, "/")
 	return ok && p != "" && rest != "" && !strings.ContainsAny(id, " \t")
 }
+
+// EndStaging is how a member's failed finish begins when its machine refused the launch at
+// staging, before any child ran (no bench mirror, the pushed head missing): the member's
+// failure, never the card's; the sprint deals the card to another member
+// (tla/CardContract.tla, StageRefused).
+const EndStaging = "staging refused"

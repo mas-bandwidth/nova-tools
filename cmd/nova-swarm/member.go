@@ -478,14 +478,15 @@ func providerReason(log []byte) string {
 	return ""
 }
 
+// nativeStageFail is native's STAGE FAIL line's reason: the launch refused at staging,
+// before any child ran (native.go; tla/CardContract.tla, StageRefused).
+var nativeStageFail = regexp.MustCompile(`(?m)^STAGE FAIL .*\breason=(.+)$`)
+
 var (
 	nativeProvider = regexp.MustCompile(`\bNATIVE PROVIDER-`)
 	nativeStopped  = regexp.MustCompile(`\bNATIVE \S+ .*\bstopped=`)
 	nativeKilled   = regexp.MustCompile(`\bNATIVE \S+ .*\brc=-1\b`)
 	nativeTermed   = regexp.MustCompile(`\breason=terminated\b`)
-	// nativeStageFail is the line native prints when staging ended the launch (cmd/nova-swarm's
-	// STAGE FAIL, issue #3050): the card's end is the stage's, no child ran.
-	nativeStageFail = regexp.MustCompile(`(?m)^STAGE FAIL .*$`)
 )
 
 // Result reads how the child ended: the NATIVE line's rc and harness word, and
@@ -493,12 +494,19 @@ var (
 // the card's results, in the contract's shape (docs/SPEC-CARD-CONTRACT.md
 // section 3). The head is the result's, else the last push the git shim
 // recorded in the job, else an older result's `rev:` line; a read's verdict and
-// report fall back to the older shape too.
+// report fall back to the older shape too. A launch refused at staging (its STAGE FAIL
+// line) ran no child: it ends EndStaging with the line's reason, and nothing else is read.
 func (c *nativeChild) Result() member.Result {
 	c.once.Do(func() {
 		ran := false
-		var end, usage, provider, stageFail string
+		var end, usage, provider string
 		if b, err := os.ReadFile(c.logPath); err == nil {
+			if m := nativeStageFail.FindSubmatch(b); m != nil {
+				// refused at staging: no child ran, so no result of this launch exists to read
+				why := strings.TrimPrefix(strings.TrimSpace(string(m[1])), member.EndStaging+": ")
+				c.result = member.Result{End: member.EndStaging, Staging: why, Report: "no child ran (see " + c.logPath + ")"}
+				return
+			}
 			if m := nativeRC.FindSubmatch(b); m != nil {
 				ran = string(m[1]) == "OK" && string(m[2]) == "0" && string(m[3]) == "ok"
 			}
@@ -507,7 +515,6 @@ func (c *nativeChild) Result() member.Result {
 			}
 			end = nativeEnd(b)
 			provider = providerReason(b)
-			stageFail = string(nativeStageFail.Find(b))
 		}
 		path := newestResult(c.results)
 		var raw []byte
@@ -542,13 +549,11 @@ func (c *nativeChild) Result() member.Result {
 		if report == "" {
 			if ran {
 				report = "finished; the child published no one-line report"
-			} else if stageFail != "" {
-				report = stageFail
 			} else {
 				report = "the child ended without a result (see " + c.logPath + ")"
 			}
 		}
-		c.result = member.Result{Ran: ran, OK: ran, Shaped: cr.Shaped, Verdict: verdict, Head: head, Report: report, Title: cr.Title, Body: cr.Body, End: end, Usage: usage, Provider: provider, StageFailed: stageFail != ""}
+		c.result = member.Result{Ran: ran, OK: ran, Shaped: cr.Shaped, Verdict: verdict, Head: head, Report: report, Title: cr.Title, Body: cr.Body, End: end, Usage: usage, Provider: provider}
 	})
 	return c.result
 }

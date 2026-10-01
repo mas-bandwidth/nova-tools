@@ -214,8 +214,9 @@ func (r *round) next(up []string, q, room map[string]int, avoid string) string {
 // down, or, when none such is below it, at it. A member that receives is
 // never the longest while two queues differ by more than one, so no card is
 // moved twice, and every move takes a card from a queue at least two longer
-// than the one it joins. "" when none.
-func (r *round) levelTo(up []string, n, held, widths map[string]int) string {
+// than the one it joins. A member of avoid (the card's StagingRefusers) is never the
+// target. "" when none.
+func (r *round) levelTo(up []string, n, held, widths map[string]int, avoid []string) string {
 	if len(up) == 0 {
 		return ""
 	}
@@ -228,7 +229,7 @@ func (r *round) levelTo(up []string, n, held, widths map[string]int) string {
 	for _, x := range up {
 		isUp[x] = true
 	}
-	open := func(x string) bool { return isUp[x] && held[x] < widths[x] }
+	open := func(x string) bool { return isUp[x] && held[x] < widths[x] && !contains(avoid, x) }
 	to := r.scan(func(x string) bool { return open(x) && n[x] < mean })
 	if to == "" {
 		to = r.scan(func(x string) bool { return open(x) && n[x] <= mean })
