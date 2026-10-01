@@ -259,9 +259,10 @@ func TestNoPartBeginsAfterStop(t *testing.T) {
 	}
 }
 
-// The cannot-ask judgment is one condition per primary, whatever its wording:
-// "0 free" becoming "1 free" writes nothing again.
-func TestCannotAskIsWrittenOncePerPrimary(t *testing.T) {
+// With fewer than two readers up the tick asks none and writes one judgment
+// for the sprint, whatever its wording: "none up" becoming "one up" writes
+// nothing again, and it closes when two are up.
+func TestFewReadersIsWrittenOncePerSprint(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.m = NewMem()
@@ -276,26 +277,28 @@ func TestCannotAskIsWrittenOncePerPrimary(t *testing.T) {
 	h.machine()
 	h.work("m1")
 	h.machine()
-	if got := len(h.openOf(sprint.NCannotAsk)); got != 2 {
-		t.Fatalf("cannot ask open %d, want 2", got)
+	if got := len(h.openOf(sprint.NFewReaders)); got != 1 {
+		t.Fatalf("fewer than two readers up: open %d, want 1 for the two primaries", got)
 	}
-	was := h.written(sprint.NCannotAsk)
+	was := h.written(sprint.NFewReaders)
 	if err := h.m.RowsAdd(h.ctx, "t-readers", []string{"reader-a"}); err != nil {
 		t.Fatal(err)
 	}
+	h.beat()
 	h.tick(time.Second)
 	h.machine()
 	h.tick(time.Minute + time.Second)
 	h.machine()
-	if n := h.written(sprint.NCannotAsk); n != was || len(h.openOf(sprint.NCannotAsk)) != 2 {
-		t.Fatalf("cannot ask written %d times (was %d), open %d, after one reader came", n, was, len(h.openOf(sprint.NCannotAsk)))
+	if n := h.written(sprint.NFewReaders); n != was || len(h.openOf(sprint.NFewReaders)) != 1 {
+		t.Fatalf("few readers written %d times (was %d), open %d, after one reader came", n, was, len(h.openOf(sprint.NFewReaders)))
 	}
 	if err := h.m.RowsAdd(h.ctx, "t-readers", []string{"reader-b"}); err != nil {
 		t.Fatal(err)
 	}
+	h.beat()
 	h.tick(time.Second)
 	h.machine()
-	if got := len(h.openOf(sprint.NCannotAsk)); got != 0 {
+	if got := len(h.openOf(sprint.NFewReaders)); got != 0 {
 		t.Fatalf("still open %d with two readers", got)
 	}
 }

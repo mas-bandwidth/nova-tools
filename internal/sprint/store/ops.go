@@ -165,6 +165,12 @@ func (st *Store) check(ctx context.Context, reads int, streams bool) (CheckRepor
 // state, its STOPPED spans, its last tick, and the pending operation.
 func (st *Store) heldState(ctx context.Context, s *sprint.Snapshot, pending *OpRecord) (sprint.HeldState, error) {
 	h := sprint.HeldState{Snap: s, Grace: st.grace()}
+	if s.ReaderStates == nil {
+		// the no-stall rule asks what the next ask does: it asks readers up
+		if err := st.readerStatesInto(ctx, s); err != nil {
+			return h, err
+		}
+	}
 	if s.Routes == nil {
 		// the no-stall rule asks what the next deal does: it draws from the routes
 		rs, err := st.routes(ctx)
@@ -368,6 +374,9 @@ func (st *Store) machineGroups(ctx context.Context, m Machine, hb Heartbeat) ([]
 	}
 	s, err := st.Load(ctx, tables(sprint.Work, sprint.Fleet, sprint.Readers), nil)
 	if err != nil {
+		return out, err
+	}
+	if err := st.readerStatesInto(ctx, s); err != nil {
 		return out, err
 	}
 	if n := sprint.MovesDue(s); n > 0 {

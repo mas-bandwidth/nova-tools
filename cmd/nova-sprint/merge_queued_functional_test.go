@@ -41,6 +41,7 @@ func TestAMergeBeforeThePumpOnTheStore(t *testing.T) {
 	for _, l := range []string{"init --readers reader-a,reader-b --members m1", "add --stream s1 --count 2", "fleet beat m1", "start",
 		"tick", "tick", // the fleet update brings m1 up; the next pump deals
 		"take --as m1 --limit 5 --epoch 0", "finish --as m1 s1-1.w1@1 s1-2.w1@1 --epoch 0",
+		"queue --as reader-a", "queue --as reader-b", // the readers ask for their queues: they are up
 		"tick", // the pump moves both to review; the readers are asked
 		"read --as reader-a --begin --limit 10 --epoch 0", "read --as reader-a --ok --limit 10 --epoch 0",
 		"read --as reader-b --begin --limit 10 --epoch 0", "read --as reader-b --ok --limit 10 --epoch 0"} {

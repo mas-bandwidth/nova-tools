@@ -103,6 +103,13 @@ func (a *app) cmdQueue(args []string, stdout, stderr io.Writer) int {
 		return a.readFailed("queue", err, stderr)
 	}
 	epoch := st.PinnedEpoch()
+	if *as != "" {
+		// the reader's own queue is its beat (docs/SPEC-SPRINT.md section 6):
+		// a name that is no reader's row writes none
+		if _, err := st.ReaderBeat(ctx, *as); err != nil {
+			return a.readFailed("queue", err, stderr)
+		}
+	}
 	var cards []queueCard
 	width := 0 // a fleet member's width, from its row (0: not a member, or none read)
 	add := func(table string, cs []*sprint.Card) {
@@ -380,6 +387,20 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 			}
 			rows[r.Key] = cells
 		}
+		if logical == sprint.Readers {
+			// the view shows each reader's state beside its cards, derived from
+			// its beat and the coordinator's hold, never written to the table
+			var err error
+			if t, err = readersWithState(ctx, st, t, now); err != nil {
+				return whereView{}, "", err
+			}
+			for _, r := range t.Rows {
+				rows[r.Key] = map[string]string{}
+				for j, col := range t.Columns {
+					rows[r.Key][col.Name] = ntable.CellText(t.Columns, r, j)
+				}
+			}
+		}
 		v.Tables[logical] = rows
 		if logical == sprint.Merge && !slices.Contains(t.Hidden, sprint.Since) {
 			// the machine keeps a stream's since; the view does not show it
@@ -396,6 +417,31 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 		}
 	}
 	return v, b.String(), nil
+}
+
+// readersWithState is the readers table with a text column status: each
+// reader's state, up, away or down (sprint.ReaderState). A store that keeps no
+// reader records shows no column.
+func readersWithState(ctx context.Context, st *store.Store, t ntable.Table, now time.Time) (ntable.Table, error) {
+	keys := make([]string, len(t.Rows))
+	for i, r := range t.Rows {
+		keys[i] = r.Key
+	}
+	states, err := st.ReaderStates(ctx, keys, now)
+	if err != nil || states == nil {
+		return t, err
+	}
+	t.Columns = append(append([]ntable.Column(nil), t.Columns...), ntable.Column{Name: sprint.Status, Projection: ntable.Text})
+	t.Rows = append([]ntable.Row(nil), t.Rows...)
+	for i, r := range t.Rows {
+		texts := map[string]string{}
+		for k, v := range r.Texts {
+			texts[k] = v
+		}
+		texts[sprint.Status] = states[r.Key]
+		t.Rows[i].Texts = texts
+	}
+	return t, nil
 }
 
 // whereHeader is the one line under the title of the where view: STOPPED when

@@ -205,7 +205,8 @@ func writeAtomic(path string, doc []byte) error {
 
 // beatTwin says every member of the twin's fleet is alive: the machines of a
 // twin are this one process's, so each verb begins with a beat of each member
-// the fleet table names, at load 0 (fleet down still holds a member down).
+// the fleet table names, at load 0 (fleet down still holds a member down),
+// and of each reader the readers table names (reader away still holds one away).
 // A twin with no fleet table yet (before init) has none to beat.
 func (a *app) beatTwin(ctx context.Context, st *store.Store) error {
 	shapes, err := st.B.Shapes(ctx, []string{st.Names.Table(sprint.Fleet)})
@@ -218,5 +219,6 @@ func (a *app) beatTwin(ctx context.Context, st *store.Store) error {
 			return err
 		}
 	}
-	return nil
+	// the readers of a twin are this process's too (a hold away stands)
+	return st.BeatReaders(ctx)
 }

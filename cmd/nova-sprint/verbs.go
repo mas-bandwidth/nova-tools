@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -63,6 +64,9 @@ func init() {
 		{"fleet sync", "[--check] [--pg <dsn>]", "fleet sync --check", (*app).cmdFleetSync},
 		{"fleet level", "", "fleet level", func(a *app, args []string, o, e io.Writer) int { return a.cmdFleet("level", args, o, e) }},
 		{"reader add", "<reader>...", "reader add reader-d", (*app).cmdReaderAdd},
+		{"reader away", "<reader>...", "reader away reader-d", func(a *app, args []string, o, e io.Writer) int { return a.cmdReaderHold(true, args, o, e) }},
+		{"reader up", "<reader>...", "reader up reader-d", func(a *app, args []string, o, e io.Writer) int { return a.cmdReaderHold(false, args, o, e) }},
+		{"reader remove", "<reader>...", "reader remove reader-d", (*app).cmdReaderRemove},
 		{"ci", "<id>... (--red | --green) --epoch <n> [--head <h>] [--run <id>] [--source <s>] [--note <text>]", "ci s1-3 --red --run 812 --source ci --epoch 0", (*app).cmdCI},
 		{"wait", "<note> (--for <duration> | --until <RFC3339>)", "wait tick-ask-x-1.2 --for 30m", (*app).cmdWait},
 		{"ack", "<note>... --reason <text>", "ack ci-x-1.1 --reason 'a flaky runner; the rerun is green'", (*app).cmdAck},
@@ -146,6 +150,7 @@ and prints each one's generation.
 ` + inboxExample + `
 ` + machineWords() + `
 ` + fleetWords() + `
+` + readerWords() + `
 ` + goalWords() + `
 ` + twinWords() + `
 exit codes: 0 done, 1 refused, 2 usage or a store that did not answer (fleet sync --check: there is drift), 3 fleet sync could not read the config, or run: its binary was replaced (its supervisor starts the new one)
@@ -277,6 +282,9 @@ func helpCommand(path []string, stdout, stderr io.Writer) int {
 		}
 		if name == "fleet" {
 			fmt.Fprint(stdout, "\n"+fleetWords())
+		}
+		if name == "reader" {
+			fmt.Fprint(stdout, "\n"+readerWords())
 		}
 		return 0
 	}
@@ -1612,6 +1620,126 @@ func (a *app) cmdReaderAdd(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	fmt.Fprintf(stdout, "READER-ADD OK readers=%s\n", strings.Join(names, ","))
+	return 0
+}
+
+// readerNames are the readers a reader verb names: at least one, each a name
+// sprint.ValidID accepts.
+func readerNames(verbName string, args []string, stderr io.Writer, fs flagSet) ([]string, int) {
+	names, err := parse(fs, args)
+	if err != nil {
+		return nil, refuse(stderr, verbName, err.Error())
+	}
+	if len(names) == 0 {
+		return nil, refuse(stderr, verbName, "wants at least one reader")
+	}
+	for _, n := range names {
+		if !sprint.ValidID(n) {
+			return nil, refuse(stderr, verbName, "a reader name wants letters, digits, _ and -: "+n)
+		}
+	}
+	return names, 0
+}
+
+// unknownReaders is the named readers the readers table has no row for.
+func unknownReaders(rows, names []string) []string {
+	var out []string
+	for _, n := range names {
+		if !slices.Contains(rows, n) {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// cmdReaderHold is reader away (away) and reader up: the coordinator holds the
+// named readers away, whatever they beat, or releases the hold (the state is
+// then the beat's). A named reader with no row refuses the whole call, and
+// nothing is written (docs/SPEC-SPRINT.md section 6).
+func (a *app) cmdReaderHold(away bool, args []string, stdout, stderr io.Writer) int {
+	verbName := map[bool]string{true: "reader away", false: "reader up"}[away]
+	fs, c := a.verbSetup(verbName)
+	names, code := readerNames(verbName, args, stderr, fs)
+	if code != 0 {
+		return code
+	}
+	st, err := a.store(*c)
+	if err != nil {
+		return refuse(stderr, verbName, err.Error())
+	}
+	ctx := context.Background()
+	rows, err := st.ReaderRows(ctx)
+	if err != nil {
+		return a.readFailed(verbName, err, stderr)
+	}
+	if bad := unknownReaders(rows, names); len(bad) > 0 {
+		fmt.Fprintf(stderr, "%s %s: no reader %s on the readers table (readers: %s); nothing was changed; run: nova-sprint reader add <name>\n", prog, verbName, strings.Join(bad, ","), strings.Join(rows, ","))
+		return 1
+	}
+	for _, n := range names {
+		if err := st.SetReaderAway(ctx, n, away, c.actor); err != nil {
+			fmt.Fprintf(stderr, "%s %s: %s\n", prog, verbName, oneline.Escape(err.Error()))
+			return 1
+		}
+	}
+	fmt.Fprintf(stdout, "%s OK readers=%s\n", token(verbName), strings.Join(names, ","))
+	return 0
+}
+
+// cmdReaderRemove takes the named readers off the readers table (the mirror of
+// reader add), in one write: refused, exit 1 and nothing written, when a named
+// reader is no row of the table or holds a read card (asked, reading, ok or
+// broken: the row delete would take the card's place with it), naming the
+// reader and the read cards it holds. The model tla/SprintEvents.tla holds
+// the readers as a constant set with no add or remove action; the presence of
+// a reader is tla/DirtyTick.tla's.
+func (a *app) cmdReaderRemove(args []string, stdout, stderr io.Writer) int {
+	fs, c := a.verbSetup("reader remove")
+	names, code := readerNames("reader remove", args, stderr, fs)
+	if code != 0 {
+		return code
+	}
+	st, err := a.store(*c)
+	if err != nil {
+		return refuse(stderr, "reader remove", err.Error())
+	}
+	ctx := context.Background()
+	rows, err := st.ReaderRows(ctx)
+	if err != nil {
+		return a.readFailed("reader remove", err, stderr)
+	}
+	if bad := unknownReaders(rows, names); len(bad) > 0 {
+		fmt.Fprintf(stderr, "%s reader remove: no reader %s on the readers table (readers: %s); nothing was changed\n", prog, strings.Join(bad, ","), strings.Join(rows, ","))
+		return 1
+	}
+	var holds []string
+	for _, n := range names {
+		cs, err := st.ReadCells(ctx, sprint.Readers, n, sprint.Asked, sprint.Reading, sprint.OK, sprint.Broken)
+		if err != nil {
+			return a.readFailed("reader remove", err, stderr)
+		}
+		var ids []string
+		for _, x := range cs {
+			ids = append(ids, x.ID+" ("+x.Col+")")
+		}
+		if len(ids) > 0 {
+			holds = append(holds, n+" holds "+sprint.Preview(ids, ", "))
+		}
+	}
+	if len(holds) > 0 {
+		fmt.Fprintf(stderr, "%s reader remove: %s; nothing was changed; a read moves on (read --as <reader>), is sent to another reader (ask --another), or leaves with its primary (rework, drop)\n", prog, oneline.Escape(strings.Join(holds, "; ")))
+		return 1
+	}
+	if err := st.B.RowsDel(ctx, st.Names.Table(sprint.Readers), names); err != nil {
+		fmt.Fprintf(stderr, "%s reader remove: %s\n", prog, oneline.Escape(err.Error()))
+		return 1
+	}
+	// the rows are gone: their beats and holds go with them
+	if err := st.ForgetReaders(ctx, names); err != nil {
+		fmt.Fprintf(stderr, "%s reader remove: the rows were removed, their records were not: %s\n", prog, oneline.Escape(err.Error()))
+		return 1
+	}
+	fmt.Fprintf(stdout, "READER-REMOVE OK readers=%s\n", strings.Join(names, ","))
 	return 0
 }
 

@@ -230,7 +230,8 @@ func TestATicksPartsTripsArePinned(t *testing.T) {
 	}
 	// each part: its read of the twin (the view, the fence last, the queue),
 	// its acquire, one apply for each table it writes, its release; the ask
-	// also catches the readers table up from its change stream
+	// also catches the readers table up from its change stream; the readers'
+	// beats and holds are read once by the tick, before its parts (first read)
 	want := map[string]int64{"work/drain": 8, "readers/ask": 9}
 	require.Equal(t, fmt.Sprint(want), fmt.Sprint(got), "the busy tick's parts made %v round trips, want %v: %s", got, want, busy.TimesLine())
 }

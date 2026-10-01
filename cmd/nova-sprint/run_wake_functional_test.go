@@ -79,6 +79,9 @@ func TestTheLoopWakesOnTheLogOnTheStore(t *testing.T) {
 		for _, m := range members {
 			do("fleet", "beat", m)
 		}
+		for _, r := range []string{"reader-a", "reader-b"} {
+			do("queue", "--as", r) // a reader's queue is its beat
+		}
 	}
 	beat()
 	do("start")

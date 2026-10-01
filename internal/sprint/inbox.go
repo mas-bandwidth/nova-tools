@@ -454,6 +454,8 @@ func commands(g Group, first Note, prefix string) []Command {
 			add(d, cmd+"repair")
 		case d == "reader add":
 			add(d, cmd+"reader add '<reader>'")
+		case d == "reader up":
+			add(d, cmd+"reader up '<reader>'")
 		case d == "route add":
 			// the tier's route is config: nova-config's, applied to the store
 			tier := strings.TrimPrefix(g.Stream, "tier:")
