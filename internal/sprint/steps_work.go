@@ -937,7 +937,10 @@ func takeOne(s *Snapshot, r TakeReq) Plan {
 		if room == 0 {
 			return p
 		}
-		sel.Limit = min(sel.Limit, room)
+		// a limit under zero asks for every ready card (pick): that too is the room
+		if sel.Limit < 0 || sel.Limit > room {
+			sel.Limit = room
+		}
 	}
 	// the member's ready cards in stream turns (takeTurns), as the deal dealt
 	// them: a member holding DealAhead times its width takes its width of them
