@@ -13,6 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
@@ -2482,4 +2485,46 @@ func TestRemoveAuthCopyNamesACopyItCannotRemove(t *testing.T) {
 		t.Errorf("the removable copy was left beside the stuck one")
 	}
 	mustContain(t, "the cleanup's NOTE", errOut.String(), "could not be removed")
+}
+
+// TestNativeRunTakesThePoolIdentityFromTheLoopsArgv: a loop's nova-config argv names
+// the pool identity (--identity <owner>,<name>,<email>), so a pool with no
+// identity.tsv launches under it and a pool with one launches under the argv's;
+// with neither the launch is refused naming both ways (swarm.ParseIdentity).
+func TestNativeRunTakesThePoolIdentityFromTheLoopsArgv(t *testing.T) {
+	t.Parallel()
+	bin := nativeHarness(t)
+	argv, err := swarm.ParseIdentity("loop-owner,Loop Worker,loop@example.com")
+	require.NoError(t, err)
+	for _, tc := range []struct {
+		name     string
+		tsv      bool
+		identity *swarm.StagingIdentity
+		want     string // GIT_AUTHOR_NAME, or "" for a refusal
+	}{
+		{"argv, no file", false, &argv, "Loop Worker"},
+		{"argv over the file", true, &argv, "Loop Worker"},
+		{"the file alone", true, nil, "Pool Worker"},
+		{"neither", false, nil, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			root, slot := aSlot(t)
+			if !tc.tsv {
+				require.NoError(t, os.Remove(filepath.Join(root, "identity.tsv")))
+			}
+			var errOut bytes.Buffer
+			_, code := nativeRun(nativeRunConfig{binary: bin, model: "fake/fake-model", label: "id", card: []byte("a card\n"),
+				slotDir: slot, root: root, deadline: 30 * time.Second, noWall: true, identity: tc.identity}, &errOut)
+			if tc.want == "" {
+				assert.Equal(t, 2, code)
+				assert.Contains(t, errOut.String(), "--identity <owner>,<name>,<email>")
+				return
+			}
+			require.Equal(t, 0, code, errOut.String())
+			raw, err := os.ReadFile(filepath.Join(slot, "native-argv.log"))
+			require.NoError(t, err)
+			assert.Equal(t, []string{tc.want}, nativeLoggedEnv(t, string(raw))["GIT_AUTHOR_NAME"])
+		})
+	}
 }

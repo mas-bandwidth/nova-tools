@@ -278,6 +278,37 @@ them); a tier with an empty array takes its enabled routes in name order;
 coordinator. apply writes the hashes `route:<name>` and `tier:<name>` and the
 sets `routes` and `tiers`, which the deal reads.
 
+A route also holds its price sheet, so what a card cost on it is known and
+looked up in one place. Every field is optional, and every price is a
+decimal, kept exactly as typed in its one spelling (`0.30` is `0.3`), never a
+float; a price not set is empty, and a card on a route with no price has no
+predicted cost, never a zero:
+
+```
+nova-config route set pro-deepseek-opencode --price_input 0.27 --price_cache_read 0.07 --price_cache_write 0 --price_output 1.10 --price_source https://example.com/pricing --price_as_of 2026-10-01
+nova-config route set pro-grok-openrouter --price_input 3 --price_output 15 --long_context 128000 --price_input_long 6 --price_output_long 30 --gateway_percent 5.5
+nova-config apply
+```
+
+| flag | what it is |
+| --- | --- |
+| `--price_input` | USD per million uncached input tokens |
+| `--price_cache_read` | USD per million cached input tokens read |
+| `--price_cache_write` | USD per million tokens written to the cache |
+| `--price_output` | USD per million output tokens |
+| `--reasoning_as_output` | `true` (the default) bills reasoning tokens at the output price; `false` when the provider does not bill them apart |
+| `--long_context` | the prompt size in tokens above which a request is priced at the long prices; `0` (the default) is none |
+| `--price_input_long`, `--price_output_long` | USD per million input and output tokens above `--long_context`; given with it, or not at all |
+| `--price_request` | USD per request, on top of the tokens |
+| `--billing` | `metered` (the default: paid per token) or `plan` (a subscription: the predicted cost is the metered price of the same tokens) |
+| `--gateway_percent` | the percent a gateway adds on top, a decimal like `5.5` |
+| `--price_source` | where the prices were read, free text (a URL) |
+| `--price_as_of` | the date they were read, `YYYY-MM-DD` |
+
+A change of prices is a row in the route's history like any other set
+(`nova-config route history <name>`), and apply writes the fields into
+`route:<name>` beside the rest.
+
 ### Refusals
 
 One stderr line each, naming the next step:
@@ -307,7 +338,7 @@ CHECK SET kind=fleet name=fleet changed=store,coordinator
 CONFIG CHECK kind=fleet add=0 set=1 remove=0 rev=3 applied=0
 CHECK ADD kind=friend name=rowan
 CONFIG CHECK kind=friend add=1 set=0 remove=0 rev=5 applied=0
-CHECK SET kind=sprint name=sprint changed=coordinator
+CHECK SET kind=sprint name=sprint changed=coordinator,reader_tier
 CONFIG CHECK kind=sprint add=0 set=1 remove=0 rev=6 applied=0
 CONFIG CHECK kind=loop add=0 set=0 remove=0 rev=0 applied=0
 CONFIG CHECK kind=route add=0 set=0 remove=0 rev=0 applied=0
@@ -319,7 +350,7 @@ APPLY SET kind=fleet name=fleet changed=store,coordinator
 CONFIG APPLY kind=fleet add=0 set=1 remove=0 rev=3 ms=1
 APPLY ADD kind=friend name=rowan
 CONFIG APPLY kind=friend add=1 set=0 remove=0 rev=5 ms=6
-APPLY SET kind=sprint name=sprint changed=coordinator
+APPLY SET kind=sprint name=sprint changed=coordinator,reader_tier
 CONFIG APPLY kind=sprint add=0 set=1 remove=0 rev=6 ms=1
 CONFIG APPLY kind=loop add=0 set=0 remove=0 rev=0 ms=0
 CONFIG APPLY kind=route add=0 set=0 remove=0 rev=0 ms=0
@@ -336,7 +367,7 @@ coordinator machine; the friend the sprint row names gets the `coordinator`
 role in Redis on top of her row's roles, so a handover (`sprint set
 --coordinator stella`, then `apply`) is two `SET ... changed=roles`, hers
 first. It never touches her logins or wake path: they are her presence's.
-For the sprint row, `sprint:coordinator`. For a loop, the hash `loop:<l>`
+For the sprint row, `sprint:coordinator` and `sprint:reader_tier` (the tier read cards' routes are drawn from, pro unless set). For a loop, the hash `loop:<l>`
 with every field, its log path, `rev` and `at`, and its name in the set
 `loops`: what the plays read to render one unit per loop. For a route, the
 hash `route:<r>` with every field, `rev` and `at`, and its name in the set

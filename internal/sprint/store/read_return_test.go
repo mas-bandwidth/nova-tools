@@ -1,6 +1,7 @@
 package store
 
 import (
+	"fmt"
 	"slices"
 	"strings"
 	"testing"
@@ -292,10 +293,13 @@ func TestAReadReturnedPastItsReasksIsJudgedNotAskedAgain(t *testing.T) {
 	h.asked1(1)
 	id := sprint.ReadCardID("s1-1", 1, "reader-a")
 	require.NotNil(t, h.snap().Readers.Placed(id), "asked of reader-a and reader-b")
+	runs := 0
 	ret := func() {
 		h.t.Helper()
+		runs++
 		h.must(ReadStep(sprint.ReadReq{As: "reader-a", Begin: true, Sel: sprint.Sel{IDs: []string{id}}, Who: "reader-a"}))
-		h.must(ReadStep(sprint.ReadReq{As: "reader-a", Return: true, Reason: `no verdict (ran=false verdict="")`, Sel: sprint.Sel{IDs: []string{id}}, Who: "reader-a"}))
+		h.must(ReadStep(sprint.ReadReq{As: "reader-a", Return: true, Reason: `no verdict (ran=false verdict="")`, Usage: fmt.Sprintf("input=%d", 10*runs),
+			Sel: sprint.Sel{IDs: []string{id}}, Who: "reader-a"}))
 		h.machine()
 	}
 	for i := 1; i <= sprint.MaxReadReasks; i++ {
@@ -315,6 +319,18 @@ func TestAReadReturnedPastItsReasksIsJudgedNotAskedAgain(t *testing.T) {
 	h.machine()
 	assert.Nil(t, h.snap().Readers.Placed(id), "never asked of reader-a again at the attempt")
 	assert.Len(t, h.openOf(sprint.NCannotAsk), 1, "one judgment, not one a tick")
+	// every returned run keeps its own cost record on the one card (cost.go,
+	// FieldReadTake): two re-asks, three returned runs, three records, all in the
+	// producer's total; the bound keeps the card far under MaxTakes
+	_, _, _, f, ok := h.m.Record("t-readers", id)
+	require.True(t, ok)
+	for n := 1; n <= sprint.MaxReadReasks+1; n++ {
+		assert.NotEmpty(t, f[sprint.FieldReadTake+fmt.Sprint(n)], "run %d's record is kept", n)
+	}
+	assert.Empty(t, f[sprint.FieldReadTake+fmt.Sprint(sprint.MaxReadReasks+2)])
+	v := sprint.CardCost(nil, []*sprint.Card{{ID: id, Fields: f}})
+	assert.Len(t, v.Consumers, sprint.MaxReadReasks+1)
+	assert.Equal(t, int64(10+20+30), v.Total.Tokens.Input, "every returned run counts in the producer's total")
 	h.clean("judged cannot ask")
 }
 

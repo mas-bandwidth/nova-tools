@@ -129,6 +129,7 @@ type fakeRunner struct {
 	packets  []Packet
 	children map[string]*fakeChild
 	failFor  map[string]bool
+	ended    []string
 }
 
 func newRunner() *fakeRunner {
@@ -145,6 +146,19 @@ func (r *fakeRunner) Start(p Packet) (Child, error) {
 	r.packets = append(r.packets, p)
 	r.children[p.Card] = c
 	return c, nil
+}
+
+// Ended records each launch the member is done with, `<card>:<failed>` (Ender).
+func (r *fakeRunner) Ended(p Packet, failed bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.ended = append(r.ended, p.Card+":"+strconv.FormatBool(failed))
+}
+
+func (r *fakeRunner) endedLaunches() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return slices.Clone(r.ended)
 }
 
 func (r *fakeRunner) started() []string {
@@ -1503,4 +1517,99 @@ func TestAStoreThatTimesOutOnceIsAskedAgain(t *testing.T) {
 			require.Len(t, g.s.lines(verb), 2, "the verb is asked again once")
 		})
 	}
+}
+
+// TestTheRunnerIsToldWhenTheMemberIsDoneWithALaunch pins Ender: each launch the member is
+// done with is told to the runner once, failed when its finish failed or a read was returned
+// with no verdict, so the runner removes or keeps what the launch staged; a launch still
+// running, or ended and not yet reported, is told nothing.
+func TestTheRunnerIsToldWhenTheMemberIsDoneWithALaunch(t *testing.T) {
+	t.Parallel()
+	ok := Result{Ran: true, OK: true, Shaped: true, Verdict: "ok", Head: "abc123", Report: "done"}
+	for _, tc := range []struct {
+		name   string
+		reader bool
+		res    Result
+		drop   bool // the queue stops listing the card: reaped
+		want   []string
+	}{
+		{"a work card finished ok", false, ok, false, []string{"c1:false"}},
+		{"a work card finished failed", false, Result{Ran: true, Report: "the harness fell over"}, false, []string{"c1:true"}},
+		{"a work card reaped", false, ok, true, []string{"c1:false"}},
+		{"a read with its verdict", true, Result{Ran: true, OK: true, Verdict: "broken", Report: "a bug"}, false, []string{"c1:false"}},
+		{"a read returned with no verdict", true, Result{Ran: true, Report: "no verdict"}, false, []string{"c1:true"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			g := newRig(Config{As: "m", Width: 1, Reader: tc.reader})
+			g.m.pusher = &fakePusher{def: Push{Sha: fullSha}}
+			p := pk("c1")
+			card := working("c1", 1, &p)
+			if tc.reader {
+				p = Packet{Card: "c1", Kind: "read", As: "m", Attempt: 1, Epoch: 7}
+				card = reading("c1", &p)
+			}
+			g.s.set("queue", 0, queueJSON(t, 7, card))
+			_, err := g.tick(t)
+			require.NoError(t, err)
+			_, err = g.tick(t)
+			require.NoError(t, err)
+			assert.Empty(t, g.r.endedLaunches(), "a launch still running is told nothing")
+			g.r.child("c1").end(tc.res)
+			if tc.drop {
+				g.s.set("queue", 0, queueJSON(t, 7))
+			}
+			_, err = g.tick(t)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, g.r.endedLaunches())
+			assert.Equal(t, 0, g.m.Running())
+		})
+	}
+}
+
+// TestNoRoomRefusesAtStagingWithTheReason pins Config.Room: while it says no, no child is
+// started, and every card the tick would start (a taken one, a recovered one, a read begun)
+// is ended on the staging refusal path with the reason, so the sprint deals it elsewhere and
+// says why; the refusal and the resume are each said once in the member's log.
+func TestNoRoomRefusesAtStagingWithTheReason(t *testing.T) {
+	t.Parallel()
+	room, why := false, "free disk 3.0 GiB under the floor of 10 GiB"
+	g := newRig(Config{As: "m", Width: 2, Room: func() (bool, string) { return room, why }})
+	p := pk("c2")
+	g.s.set("queue", 0, queueJSON(t, 7, ready("c1"), working("c2", 1, &p)))
+	g.s.set("take", 0, takeJSON(t, pk("c1")))
+	_, err := g.tick(t)
+	require.NoError(t, err)
+	assert.Empty(t, g.r.started(), "neither a taken card nor a recovered one is started")
+	assert.Equal(t, []string{
+		"finish --as m c2@1 --failed --report staging refused: " + why + " --epoch 7",
+		"finish --as m c1@1 --failed --report staging refused: " + why + " --epoch 7",
+	}, g.s.lines("finish"))
+	_, err = g.tick(t)
+	require.NoError(t, err)
+	assert.Equal(t, 1, strings.Count(g.out.String(), "take REFUSED: "+why+"\n"), "said once, with the reason")
+
+	r := newRig(Config{As: "r", Width: 1, Reader: true, Room: func() (bool, string) { return false, why }})
+	a := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7}
+	r.s.set("queue", 0, queueJSON(t, 7, asked("r1", &a)))
+	_, err = r.tick(t)
+	require.NoError(t, err)
+	assert.Empty(t, r.r.started())
+	assert.Equal(t, []string{"read --as r --return r1 --reason staging refused: " + why + " --epoch 7"}, r.s.lines("return"))
+	// a read handed back under the floor is a return like any other: asked again of
+	// this reader, it is not begun again before ReadStageRetry (the sprint's re-ask
+	// bound then judges it, internal/sprint MaxReadReasks)
+	r.s.reset()
+	_, err = r.tick(t)
+	require.NoError(t, err)
+	assert.Empty(t, r.s.lines("begin"), "begun again inside the retry")
+	assert.Empty(t, r.s.lines("return"))
+
+	room, why = true, "free disk 120.0 GiB above the floor of 10 GiB"
+	g.s.reset()
+	_, err = g.tick(t)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"c2", "c1"}, g.r.started())
+	assert.Empty(t, g.s.lines("finish"))
+	assert.Contains(t, g.out.String(), "NOTE take resumed: "+why+"\n")
 }
