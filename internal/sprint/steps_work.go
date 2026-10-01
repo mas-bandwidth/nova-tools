@@ -674,7 +674,7 @@ func dealPlan(s *Snapshot, r DealReq, rr *round) (Plan, roundMoves) {
 			continue
 		}
 		m := next()
-		u, why := deal(s, c, c.F("fix"), m, q, nil)
+		u, why := deal(s, c, c.F("fix"), m, q, nil, nil)
 		if why != "" {
 			p.refuse(c.ID, why)
 			continue
@@ -689,8 +689,8 @@ func dealPlan(s *Snapshot, r DealReq, rr *round) (Plan, roundMoves) {
 // deal cuts the primary's next attempt's work card, carrying the fix and the
 // primary's score, into the ready queue of the up member m (the next round the
 // fleet, a deal's or a rework's), at generation 1, and moves
-// the primary to working with set.
-func deal(s *Snapshot, c *Card, fix, m string, q map[string]int, set map[string]string, unset ...string) (Unit, string) {
+// the primary to working with set; given is more fields of the work card.
+func deal(s *Snapshot, c *Card, fix, m string, q map[string]int, set, given map[string]string, unset ...string) (Unit, string) {
 	attempt := c.Int("attempt") + 1
 	card := WorkCardID(c.ID, attempt)
 	if s.Fleet.Card(card) != nil {
@@ -705,6 +705,11 @@ func deal(s *Snapshot, c *Card, fix, m string, q map[string]int, set map[string]
 		"dealt": stamp(s.Now), "first_dealt": stamp(s.Now), "untaken_since": stamp(s.Now)}
 	if fix != "" {
 		fields["fix"] = fix
+	}
+	for k, v := range given { // what a rework adds on the attempt's work card: its finding and why
+		if v != "" {
+			fields[k] = v
+		}
 	}
 	if set == nil {
 		set = map[string]string{}

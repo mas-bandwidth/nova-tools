@@ -33,6 +33,43 @@ func TestJobTextCarriesTheAttemptBefore(t *testing.T) {
 	assert.Contains(t, For("plain").JobText(f, s), "verdict: ok | broken")
 }
 
+// A rework's JOB.md says, right after the attempt line, why the attempt exists, what a reader
+// found and what the coordinator asks, then to do that first; a line with no value is left out.
+func TestJobTextOfAReworkSaysWhyAndWhatToDoFirst(t *testing.T) {
+	t.Parallel()
+	s := Staged{Job: "/j", Repo: "/j/repo", Head: "0123456789abcdef0123456789abcdef01234567"}
+	base := Frame{Kind: "work", Card: "c1.w8", Attempt: 8, Repo: cardURL, BaseRef: "main", Branch: "sprint/c1.w8", PrevHead: s.Head}
+	const attempt = "Attempt 8 of this card. The previous attempt's head is " + "0123456789abcdef0123456789abcdef01234567; this checkout starts from it.\n"
+	for _, tc := range []struct {
+		name          string
+		why, find, fx string
+		want          string
+		absent        []string
+	}{
+		{"all three", "attempt 7 finished and a reader found it broken", "fix correct, the required test is missing", "add the required test",
+			"This attempt exists because: attempt 7 finished and a reader found it broken\nA reader found: fix correct, the required test is missing\nThe coordinator asks: add the required test\nDo that first; a finish with no new commit is refused.\n", nil},
+		{"only the coordinator", "", "", "add the required test",
+			"The coordinator asks: add the required test\nDo that first; a finish with no new commit is refused.\n", []string{"This attempt exists", "A reader found"}},
+		{"a fix that is the finding is said once", "", "the test is missing", "the test is missing",
+			"A reader found: the test is missing\nDo that first;", []string{"The coordinator asks"}},
+		{"none", "", "", "", "", []string{"This attempt exists", "A reader found", "The coordinator asks", "Do that first"}},
+	} {
+		f := base
+		f.Why, f.Finding, f.Fix = tc.why, tc.find, tc.fx
+		for _, family := range []string{"claude", "plain"} {
+			text := For(family).JobText(f, s)
+			require.Contains(t, text, attempt, tc.name+" "+family)
+			assert.Contains(t, text, attempt+tc.want, tc.name+" "+family)
+			for _, no := range tc.absent {
+				assert.NotContains(t, text, no, tc.name+" "+family)
+			}
+		}
+	}
+	first := base
+	first.Attempt, first.Why, first.Fix = 1, "x", "y"
+	assert.NotContains(t, For("plain").JobText(first, s), "Do that first", "a first attempt has no rework lines")
+}
+
 func TestFamilyOfAModelId(t *testing.T) {
 	t.Parallel()
 	for model, family := range map[string]string{

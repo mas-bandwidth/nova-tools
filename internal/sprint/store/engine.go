@@ -838,7 +838,7 @@ func TextBound(field string) int {
 }
 
 // CardTextFields are the text fields a card carries.
-var CardTextFields = []string{"brief", "fix", "finding", "report", "reason", "note", "return_reason", "ci_note", "did"}
+var CardTextFields = []string{"brief", "fix", "finding", "report", "reason", "note", "return_reason", "ci_note", "did", "why"}
 
 // unwritable is why a step's plan cannot be written, before anything is: a
 // card text field over MaxCardTextBytes, or a manifest the table layer's own

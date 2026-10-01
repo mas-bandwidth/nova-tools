@@ -653,7 +653,7 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		if len(up) > 0 {
 			var why string
 			m := rr.next(up, q, room, reworkAvoid(s, c), true)
-			u, why = deal(s, c, fix, m, q, set, "readers")
+			u, why = deal(s, c, fix, m, q, set, reworkGiven(s, c), "readers")
 			if why != "" {
 				p.refuse(c.ID, why)
 				stays()
@@ -714,14 +714,8 @@ func orphanMerge(s *Snapshot, c *Card) *Card {
 // broken reads at its attempt, else the report of its failed work; "" when it
 // has neither.
 func ownFix(s *Snapshot, c *Card) string {
-	var found []string
-	for _, rc := range s.Readers.Of(c.ID) {
-		if rc.Col == Broken && rc.Int("attempt") == c.Int("attempt") && rc.F("finding") != "" && !contains(found, rc.F("finding")) {
-			found = append(found, rc.F("finding"))
-		}
-	}
-	if len(found) > 0 {
-		return strings.Join(found, "; ")
+	if found := brokenFindings(s, c); found != "" {
+		return found
 	}
 	if c.F("result") == "failed" {
 		if wc := s.Fleet.Card(c.F("work")); wc != nil {
@@ -729,6 +723,36 @@ func ownFix(s *Snapshot, c *Card) string {
 		}
 	}
 	return ""
+}
+
+// brokenFindings is the findings of the primary's broken reads at its attempt,
+// each once, joined; "" when no read of it is broken.
+func brokenFindings(s *Snapshot, c *Card) string {
+	var found []string
+	for _, rc := range s.Readers.Of(c.ID) {
+		if rc.Col == Broken && rc.Int("attempt") == c.Int("attempt") && rc.F("finding") != "" && !contains(found, rc.F("finding")) {
+			found = append(found, rc.F("finding"))
+		}
+	}
+	return strings.Join(found, "; ")
+}
+
+// reworkGiven is what a rework writes on the next attempt's work card besides
+// the fix, so the child learns why it exists (docs/SPEC-SPRINT.md, rework):
+// finding, the broken reads' words, and why, how the attempt before ended.
+func reworkGiven(s *Snapshot, c *Card) map[string]string {
+	attempt := c.Int("attempt")
+	finding := brokenFindings(s, c)
+	why := fmt.Sprintf("attempt %d was sent back by the coordinator", attempt)
+	switch wc := s.Fleet.Card(c.F("work")); {
+	case c.F("result") == "failed" && wc != nil && strings.TrimSpace(wc.F("report")) != "":
+		why = fmt.Sprintf("attempt %d failed: %s", attempt, strings.TrimSpace(wc.F("report")))
+	case c.F("result") == "failed":
+		why = fmt.Sprintf("attempt %d failed", attempt)
+	case finding != "":
+		why = fmt.Sprintf("attempt %d finished and a reader found it broken", attempt)
+	}
+	return map[string]string{"finding": finding, "why": why}
 }
 
 // ReturnReq is the coordinator sending merging primaries back to review.

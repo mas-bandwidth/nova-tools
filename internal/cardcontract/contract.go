@@ -30,7 +30,9 @@ type Frame struct {
 	StageSha   string   `json:"stage_sha,omitempty"`   // the commit staged: a previous attempt's pushed head, a read's head under read, else the card's base sha
 	Branch     string   `json:"branch"`                // the branch the checkout is on: the card's sprint branch, a read's work branch
 	PrevHead   string   `json:"prev_head,omitempty"`   // the previous attempt's pushed head
-	Finding    string   `json:"finding,omitempty"`     // the fix the reads of the attempt before asked for
+	Why        string   `json:"why,omitempty"`         // a rework: how the attempt before ended
+	Finding    string   `json:"finding,omitempty"`     // a rework: what the readers of the attempt before found
+	Fix        string   `json:"fix,omitempty"`         // a rework: what the coordinator asks of this attempt
 	ReviewBase string   `json:"review_base,omitempty"` // a read: the ref the change is reviewed against
 	Stage      []string `json:"stage,omitempty"`       // the recipe files the brief's Stage: header lines name, relative to Recipes
 	Recipes    string   `json:"recipes,omitempty"`     // the member's recipes directory, <root>/recipes

@@ -40,6 +40,8 @@ func printPacket(w io.Writer, p sprint.Packet) {
 		paragraph(w, v)
 	}
 	para("brief", p.Brief)
+	para("why this attempt exists", p.Why)
+	para("a reader found", p.Finding)
 	para("fix (this attempt)", p.Fix)
 	para("report", p.Report)
 	if len(p.Notes) == 0 {

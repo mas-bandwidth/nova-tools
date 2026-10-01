@@ -13,16 +13,21 @@ import (
 // carries the work it reads: who did it, its head and branches, and the
 // worker's report.
 type Packet struct {
-	Card    string   `json:"card"`
-	Kind    string   `json:"kind"` // work or read
-	As      string   `json:"as"`   // the member or the reader it is handed to
-	Primary string   `json:"primary"`
-	Stream  string   `json:"stream"`
-	Attempt int      `json:"attempt"`
-	Gen     int      `json:"gen,omitempty"`
-	Epoch   uint64   `json:"epoch"`
-	Brief   string   `json:"brief,omitempty"`
-	Fix     string   `json:"fix,omitempty"`
+	Card    string `json:"card"`
+	Kind    string `json:"kind"` // work or read
+	As      string `json:"as"`   // the member or the reader it is handed to
+	Primary string `json:"primary"`
+	Stream  string `json:"stream"`
+	Attempt int    `json:"attempt"`
+	Gen     int    `json:"gen,omitempty"`
+	Epoch   uint64 `json:"epoch"`
+	Brief   string `json:"brief,omitempty"`
+	Fix     string `json:"fix,omitempty"`
+	// A rework's: the words of the readers that found the attempt before broken, and how
+	// that attempt ended (steps_review.go reworkGiven); the member's frame writes both
+	// into JOB.md, so the child learns why its attempt exists.
+	Finding string   `json:"finding,omitempty"`
+	Why     string   `json:"why,omitempty"`
 	Notes   []string `json:"notes"`
 	Branch  string   `json:"branch,omitempty"`
 	Base    string   `json:"base,omitempty"`
@@ -66,6 +71,10 @@ func PacketOf(prefix string, epoch uint64, c, primary, prevWork, work *Card) Pac
 	if p.Kind == "work" {
 		p.Branch = BranchOf(prefix, c.ID)
 		p.Route, p.Model, p.Tokens, p.Deadline = c.F(FieldRoute), c.F(FieldModel), c.F(FieldTokens), c.Int(FieldDeadline)
+		p.Finding, p.Why = c.F("finding"), c.F("why")
+		if p.Fix == "" {
+			p.Fix = c.F("fix")
+		}
 		if prevWork != nil {
 			p.Base = prevWork.F("branch")
 			if p.Base == "" {

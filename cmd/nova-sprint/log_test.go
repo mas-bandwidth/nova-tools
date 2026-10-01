@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // log prints every line of the epoch in local time, filtered by card,
@@ -150,6 +152,9 @@ func TestTakeAndQueueHandTheirPackets(t *testing.T) {
 	if out := ta.ok("queue --as m1"); !strings.Contains(out, "  fix (this attempt):\n    check the nil slice too") || !strings.Contains(out, "  base: feature/empty") {
 		t.Fatalf("queue --as m1:\n%s", out)
 	}
+	// the packet says why the attempt exists, and card tells it per attempt
+	assert.Contains(t, ta.ok("queue --as m1"), "  why this attempt exists:\n    attempt 1 failed: the tests went red")
+	assert.Contains(t, ta.ok("card s1-1"), "attempt 2 was given:\n  because:\n    attempt 1 failed: the tests went red\n  the fix:\n    check the nil slice too")
 	ta.ok("finish --as m1 s1-1.w2@1 --head h2 --branch feature/empty-2 --base feature/empty --report 'handled; tests green'")
 	ta.ok("ask")
 	out = ta.ok("queue --as reader-a")

@@ -297,6 +297,19 @@ func (a *app) printStory(w io.Writer, v store.CardInfo, events []storyLine, text
 		fmt.Fprintln(w, "\nthe fix this attempt was given:")
 		paragraph(w, f)
 	}
+	for _, wc := range v.Work { // each attempt's start: why it exists, what a reader found, the fix it was given
+		var head bool
+		for _, f := range []struct{ field, label string }{{"why", "because"}, {"finding", "a reader found"}, {"fix", "the fix"}} {
+			if t := strings.TrimSpace(wc.F(f.field)); t != "" {
+				if !head {
+					fmt.Fprintf(w, "\nattempt %s was given:\n", orDashStr(wc.F("attempt"), "-"))
+					head = true
+				}
+				fmt.Fprintf(w, "  %s:\n", f.label)
+				paragraph(w, t)
+			}
+		}
+	}
 	fmt.Fprintln(w, "\ntimeline:")
 	last := -1
 	why := map[int]string{}

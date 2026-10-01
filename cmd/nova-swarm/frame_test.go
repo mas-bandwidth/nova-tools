@@ -41,7 +41,11 @@ func TestTheFrameIsThePackets(t *testing.T) {
 	f = frameOf(again, "m", "/root")
 	assert.Equal(t, pushedSha, f.StageSha, "the attempt starts from the previous pushed head")
 	assert.Equal(t, pushedSha, f.PrevHead)
-	assert.Equal(t, "f.go:3 the bound", f.Finding)
+	assert.Equal(t, "f.go:3 the bound", f.Fix)
+	again.Why, again.Finding = "attempt 1 finished and a reader found it broken", "the test is missing"
+	f = frameOf(again, "m", "/root")
+	assert.Equal(t, "attempt 1 finished and a reader found it broken", f.Why)
+	assert.Equal(t, "the test is missing", f.Finding, "the readers' words are the frame's finding, the coordinator's the fix")
 	assert.Equal(t, "sprint/c1.w2", f.Branch)
 
 	read := member.Packet{Card: "c1.r1", Kind: "read", Attempt: 1, Brief: brief, Head: pushedSha, WorkBranch: "sprint/c1.w1"}
