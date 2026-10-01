@@ -5,6 +5,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
@@ -116,4 +119,19 @@ func TestAStopInsertedIntoTheMiddleOfALine(t *testing.T) {
 		t.Fatalf("the insert wrote %d work lines (%v)", len(sets), sets)
 	}
 	h.clean("inserted")
+}
+
+// Cards named with their briefs in several streams are all or none: one stream's
+// card refused (its id already on the table) refuses every stream's, and nothing
+// is written (AddEachStep is named, as AddStep is).
+func TestAddEachOfNamedCardsIsAllOrNone(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.must(AddStep(sprint.AddReq{Stream: "s2", Cards: []sprint.CardAdd{{ID: "b-1", Brief: "b-1: x (s2)"}}}))
+	res := h.run(AddEachStep([]sprint.AddReq{
+		{Stream: "s1", Cards: []sprint.CardAdd{{ID: "a-1", Brief: "a-1: x (s1)"}}},
+		{Stream: "s2", Cards: []sprint.CardAdd{{ID: "b-1", Brief: "b-1: again (s2)"}}},
+	}))
+	require.NotEmpty(t, res.Refused, "b-1 is on the table")
+	assert.Nil(t, h.snap().Work.Card("a-1"), "the other stream's card is not written")
 }

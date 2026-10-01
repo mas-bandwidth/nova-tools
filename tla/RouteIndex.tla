@@ -31,10 +31,22 @@
 \* every entry is left out the exclusion lapses and the entry at the place is
 \* taken. A pinned card bypasses the array and moves no index.
 \*
+\* THE READS (2026-10-01, the owner: a read card carried no route and every
+\* reader loop was started by hand with its model). A read card (Reads) is
+\* drawn as a work card is, from the reader tier's array (TierOf names it: the
+\* sprint row's reader_tier in nova-config, pro by default) at the same index:
+\* the ask that creates it takes the entry at the place and moves the index by
+\* one, so the work deal and the reads of a tier share one rotation
+\* (RouteFair over every pick of the tier). A read is never withdrawn and dealt
+\* again: a read handed back is asked again on its own card or on a new one,
+\* each a deal of its own (internal/sprint Ask).
+\*
 \* Broken: "none" is the design; "random" takes any entry of the array (the
 \* weighted draw this replaces: RouteFair fails); "noadvance" is a redeal that
 \* takes the entry at the place without moving past the excluded one
-\* (ExcludedNeverDrawn fails).
+\* (ExcludedNeverDrawn fails); "readapart" is a read that takes the entry at
+\* the place and leaves the index where it is, a read kept apart from the
+\* tier's rotation (RouteIndexAdvancesOncePerCard fails).
 \*
 \* WHAT IS NOT MODELLED. Members, widths and the tick (DirtyTick.tla); an entry
 \* that names no enabled route (the deal skips it as it skips an excluded one,
@@ -44,7 +56,7 @@
 \* takes an entry does not change what the index does.
 EXTENDS Integers, Sequences, FiniteSets, TLC
 
-CONSTANTS Tiers, Arr, Cards, TierOf, Pinned, MaxRedeals, Broken
+CONSTANTS Tiers, Arr, Cards, TierOf, Pinned, Reads, MaxRedeals, Broken
 
 VARIABLES ridx, st, route, drawn, rdl, deals, skipped, hist, last
 
@@ -109,6 +121,8 @@ Deal(c) ==
   /\ UNCHANGED rdl
   /\ IF Broken = "random"
      THEN \E k \in 1..Len(Arr[TierOf[c]]) : Take(c, Arr[TierOf[c]][k], 1, 1)
+     ELSE IF Broken = "readapart" /\ c \in Reads
+     THEN Take(c, At(TierOf[c], ridx[TierOf[c]]), 0, 1)
      ELSE Take(c, At(TierOf[c], ridx[TierOf[c]]), 1, 1)
 
 \* A pinned card is dealt on its pin: the array and the index untouched.
@@ -122,7 +136,7 @@ Pin(c) ==
 \* The card's take ends without a finish (its member lost, the provider failed):
 \* withdrawn, to be dealt again, while its redeals are under the bound.
 Withdraw(c) ==
-  /\ c \notin Pinned
+  /\ c \notin Pinned \cup Reads
   /\ st[c] = "dealt"
   /\ rdl[c] < MaxRedeals
   /\ st' = [st EXCEPT ![c] = "withdrawn"]

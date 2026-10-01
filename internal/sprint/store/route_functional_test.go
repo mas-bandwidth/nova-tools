@@ -28,11 +28,13 @@ func TestRedisTheDealReadsTheRoutesApplyWrites(t *testing.T) {
 	require.NoError(t, c.HSet(ctx, config.RouteKey("flash-a"), "tier", "flash", "provider", "deepseek", "model", "v4-flash",
 		"tokens", "0", "deadline", "900", "enabled", "true").Err())
 	require.NoError(t, c.HSet(ctx, config.TierKey("flash"), "name", "flash", "routes", "flash-a,flash-a", "rev", "8", "at", "0").Err())
-	rs, tiers, trips, err := st.B.(RouteReader).Routes(ctx)
+	require.NoError(t, c.Set(ctx, config.SprintKey(config.FieldReaderTier), "flash", 0).Err())
+	set, trips, err := st.B.(RouteReader).Routes(ctx)
 	require.NoError(t, err)
-	assert.Equal(t, int64(2), trips, "the arrays ride in the routes' second trip")
-	assert.Equal(t, map[string][]string{"flash": {"flash-a", "flash-a"}}, tiers, "pro has no array: it takes its routes in name order")
-	rs, _, err = st.Routes(ctx)
+	assert.Equal(t, int64(2), trips, "the arrays and the reader tier ride in the routes' second trip")
+	assert.Equal(t, map[string][]string{"flash": {"flash-a", "flash-a"}}, set.Tiers, "pro has no array: it takes its routes in name order")
+	assert.Equal(t, "flash", set.ReaderTier, "the sprint row's reader tier, as apply writes it")
+	rs, _, err := st.Routes(ctx)
 	require.NoError(t, err)
 	require.Len(t, rs, 2)
 	want := sprint.Route{Name: "flash-a", Tier: "flash", Provider: "deepseek", Model: "v4-flash", Enabled: true}

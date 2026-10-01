@@ -91,6 +91,39 @@ func TestACardWithNoRouteRunsOnTheMembersOverride(t *testing.T) {
 	assert.Equal(t, "override/model", f.Model)
 }
 
+// A read's route is drawn by the ask from the reader tier and handed in its packet,
+// so a reader loop needs no --model; a reader started with --model, --tokens and
+// --deadline runs its reads on them over the read's route.
+func TestAReadRunsOnItsRouteUnlessTheReaderNamesAModel(t *testing.T) {
+	t.Parallel()
+	seconds := 900 // the route's deadline, in seconds as the read card holds it
+	p := member.Packet{Card: "c1.r1.reader-1", Kind: "read", Attempt: 1, Head: "abc", Brief: "c1: do it (s1) tier: flash\n\nThe task.",
+		Route: "pro-a", Model: "deepseek/v4-pro", Tokens: "400000", Deadline: seconds}
+	for _, c := range []struct {
+		name                   string
+		r                      *nativeRunner
+		model, tokens, wallStr string
+	}{
+		{"no override: the read's route", argsRunner(t, "", "", 0), "deepseek/v4-pro", "400000", "15m0s"},
+		{"the reader's --model, --tokens and --deadline", argsRunner(t, "override/model", "999", 9*time.Second), "override/model", "999", "9s"},
+	} {
+		args, _ := launched(t, c.r, p)
+		assert.Equal(t, c.model, args["--model"], c.name)
+		assert.Equal(t, c.tokens, args["--tokens"], c.name)
+		assert.Equal(t, c.wallStr, args["--deadline"], c.name)
+	}
+}
+
+// The pool identity the loop's nova-config argv names (--identity) is handed to
+// every native launch, so no identity.tsv is written into the pool by hand.
+func TestAMemberHandsItsIdentityToEveryLaunch(t *testing.T) {
+	t.Parallel()
+	r := argsRunner(t, "override/model", "999", 9*time.Second)
+	r.identity = "pool-owner,Pool Worker,pool@example.com"
+	args, _ := launched(t, r, member.Packet{Card: "c1", Kind: "work", Attempt: 1, Gen: 1, Branch: "work/c1"})
+	assert.Equal(t, "pool-owner,Pool Worker,pool@example.com", args["--identity"])
+}
+
 // A card with no route on a member with no override is refused at its launch,
 // naming what is missing and the two ways to give it; nothing is started.
 func TestACardWithNoRouteAndNoOverrideIsRefused(t *testing.T) {
