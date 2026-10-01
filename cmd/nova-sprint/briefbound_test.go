@@ -160,11 +160,11 @@ func TestAFileOverTheReadCapIsRefusedWithItsTrueSize(t *testing.T) {
 	require.Contains(t, errs, fmt.Sprintf("the file is %d bytes, over the %d bytes", store.MaxCardTextBytes+1, store.MaxCardTextBytes))
 }
 
-// run is one command line with no beat before it, for a test that has set a fault in the
+// bare is one command line with no beat before it, for a test that has set a fault in the
 // store the beat would meet.
 func (ta *testApp) bare(line string) (int, string, string) {
 	var out, errb bytes.Buffer
-	code := ta.a.run(split(line), &out, &errb)
+	code := ta.a.run(ta.withEpoch(split(line)), &out, &errb)
 	return code, out.String(), errb.String()
 }
 
@@ -212,16 +212,23 @@ func TestCheckRepairTickAndGroupFailsExitNonZero(t *testing.T) {
 		t.Parallel()
 		ta := newTestApp(t)
 		ta.ok("init --readers reader-a,reader-b --members m1")
-		// a step cut after its first manifest applied leaves its operation open, and the
+		ta.ok("add --stream s1 --count 1")
+		ta.deal(1)
+		ta.ok("take --as m1 s1-1.w1@1")
+		// a finish cut after its first manifest applied leaves its operation open; the
 		// store still failing, repair cannot finish it
+		applied := 0
 		ta.m.Fail = func(p string) error {
-			if strings.HasPrefix(p, "apply ") && strings.HasSuffix(p, " after") {
-				return errors.New("cut")
+			if strings.HasPrefix(p, "apply ") && strings.HasSuffix(p, " before") {
+				if applied++; applied > 1 {
+					return errors.New("cut")
+				}
 			}
 			return nil
 		}
-		code, out, errs := ta.bare("add --stream s1 --count 1")
-		require.NotZero(t, code, "the cut add: %s%s", out, errs)
+		code, out, errs := ta.bare("finish --as m1 s1-1.w1@1 --failed --report x")
+		require.NotZero(t, code, "the cut finish: %s%s", out, errs)
+		require.NotNil(t, ta.m.Pending(), "the cut left no operation open")
 		ta.a.sleep(2 * time.Minute) // past the writer's grace
 		ta.m.Fail = func(p string) error {
 			if strings.HasPrefix(p, "apply ") {
