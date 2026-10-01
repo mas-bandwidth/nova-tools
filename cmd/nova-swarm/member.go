@@ -127,6 +127,11 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	if f.refused(stderr) {
 		return 2
 	}
+	// CI over work (nova-tools#4293): native refuses every card on an OS with no
+	// setpriority, so a member there would take and fail every card it is dealt
+	if why := yieldRefusal(yield.Supported, runtime.GOOS); why != "" {
+		return refuse(stderr, " member", why)
+	}
 	if *slots == "" {
 		*slots = filepath.Join(*root, "slots")
 	}
@@ -180,9 +185,6 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "MEMBER %s as=%s width=%s every=%s sprint=%s harness=%s model=%s\n", oneline.Field(kind), oneline.Field(*as), oneline.Field(widthWord), oneline.Field(every.d.String()), oneline.Field(*sprintBin), oneline.Field(*harness), oneline.Field(modelWord))
 	if note := passNote(*model, pass, *auth); note != "" {
-		fmt.Fprintln(stdout, note)
-	}
-	if note := yieldNote(yield.Supported, runtime.GOOS); note != "" {
 		fmt.Fprintln(stdout, note)
 	}
 	n, replaced := memberLoop(m, every.d, loopTicks(*once, ticksGiven, *ticks), func() string { return binstamp.Of(self) }, stdout, stderr)
@@ -504,6 +506,11 @@ var nativeStageFail = regexp.MustCompile(`(?m)^STAGE FAIL .*\breason=(.+)$`)
 // card's finish instead of "ended without a result".
 var nativeRefusedWhy = regexp.MustCompile(`(?m)^NATIVE REFUSED: (.+)$`)
 
+// nativeYieldRefused is the one NATIVE REFUSED line that is the machine's and not the
+// card's: native could not step behind CI (yieldNative). Only this refusal ends a launch
+// as a staging refusal; every other one is the card's and stays a failed finish.
+var nativeYieldRefused = regexp.MustCompile(`(?m)^NATIVE REFUSED: (yield to CI: .+)$`)
+
 var (
 	nativeProvider = regexp.MustCompile(`\bNATIVE PROVIDER-`)
 	nativeStopped  = regexp.MustCompile(`\bNATIVE \S+ .*\bstopped=`)
@@ -530,6 +537,13 @@ func (c *nativeChild) Result() member.Result {
 				// refused at staging: no child ran, so no result of this launch exists to read
 				why := strings.TrimPrefix(strings.TrimSpace(string(m[1])), member.EndStaging+": ")
 				c.result = member.Result{End: member.EndStaging, Staging: why, Report: "no child ran (see " + c.logPath + ")"}
+				return
+			}
+			if m := nativeYieldRefused.FindSubmatch(b); m != nil && !nativeRC.Match(b) {
+				// refused before any child ran because this machine could not step behind CI:
+				// the machine's fault, never the card's, so it ends as a staging refusal does
+				// and the sprint deals the card to another member (StageRefused)
+				c.result = member.Result{End: member.EndStaging, Staging: strings.TrimSpace(string(m[1])), Report: "no child ran (see " + c.logPath + ")"}
 				return
 			}
 			if m := nativeRC.FindSubmatch(b); m != nil {
@@ -747,13 +761,13 @@ func passNote(model string, pass []string, auth string) string {
 	return "NOTE member --pass names no secret: a child's harness that reads its provider key from the environment starts without it and fails at the provider; run: nova-swarm member ... --pass <KEY> (the loop record's nova-secrets keys)"
 }
 
-// yieldNote is the one NOTE line a member prints at its start on an OS with no
-// setpriority (yield.Supported false): every card it takes is refused by native, which
-// will not run a card at the priority of the CI legs beside it (nova-tools#4293, as
-// nova-ci local refuses there too). "" where the launch can step behind CI.
-func yieldNote(supported bool, goos string) string {
+// yieldRefusal is why a member will not start on an OS with no setpriority
+// (yield.Supported false): native refuses every card there rather than run it at the
+// priority of the CI legs beside it (nova-tools#4293, as nova-ci local refuses), so a
+// member would take and fail every card it is dealt. "" where a launch can step behind CI.
+func yieldRefusal(supported bool, goos string) string {
 	if supported {
 		return ""
 	}
-	return "NOTE member: no setpriority on " + goos + ": native refuses every card this member takes rather than run it at CI's priority (nova-tools#4293); run members on darwin or Linux"
+	return "no setpriority on " + goos + ": native would refuse every card this member takes rather than run it at CI's priority (nova-tools#4293); run members on darwin or Linux"
 }

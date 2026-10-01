@@ -36,7 +36,11 @@ func setNice(n int) error {
 				if err == syscall.ESRCH {
 					continue // the thread ended between the read and the set
 				}
-				return fmt.Errorf("thread %d: %w", tid, err)
+				// a refusal to raise THIS thread is fine only when THIS thread is
+				// already at n or more; the others are each judged on their own
+				if now, err2 := threadNice(tid); err2 != nil || !alreadyBehind(err, now, n) {
+					return fmt.Errorf("thread %d: %w", tid, err)
+				}
 			}
 			done[tid] = true
 			fresh++
@@ -63,12 +67,15 @@ func threads() ([]int, error) {
 	return tids, nil
 }
 
-// currentNice is getpriority(PRIO_PROCESS, 0) for the calling thread. The
-// raw Linux system call answers 20 minus the nice value (so it never
+// currentNice is the calling thread's nice.
+func currentNice() (int, error) { return threadNice(0) }
+
+// threadNice is getpriority(PRIO_PROCESS, tid) for one thread (0: the calling
+// one). The raw Linux system call answers 20 minus the nice value (so it never
 // returns a negative), and Go's syscall.Getpriority hands that back
 // untouched; this undoes it.
-func currentNice() (int, error) {
-	raw, err := syscall.Getpriority(syscall.PRIO_PROCESS, 0)
+func threadNice(tid int) (int, error) {
+	raw, err := syscall.Getpriority(syscall.PRIO_PROCESS, tid)
 	if err != nil {
 		return 0, err
 	}

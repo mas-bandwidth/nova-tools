@@ -26,7 +26,7 @@ var swarmAudit = audit.Config{
 	// text in the same function share an entry. Each is a claim a reader can check.
 	Exempt: map[string]string{
 		"main.go|parse|f.verb":     "the verb's own name, a literal at every newFlags call site in this file",
-		"member.go|cmdMember|note": "passNote's and yieldNote's one line each, literals with nothing interpolated but runtime.GOOS, a compile-time word",
+		"member.go|cmdMember|note": "passNote's one line, a literal with no argument interpolated",
 		"main.go|want|name":        "a required flag's name, a literal at every call site in this file",
 		"main.go|want|wants":       "the guidance that flag wants, a literal at every call site in this file",
 		"main.go|wantCount|name":   "a required count flag's name, a literal at every call site in this file",

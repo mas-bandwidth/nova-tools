@@ -25,13 +25,13 @@ const Nice = 15
 // ToCI puts this process at Nice. A process already at Nice or below it
 // (a child started under `nice -n 19`, say) is left where it is: raising
 // priority is what an unprivileged process may not do, and the point is
-// already made. Any other failure is an error the caller prints, never
-// swallows; on an OS with no setpriority the error says so.
+// already made. That is judged inside setNice, per process on darwin and per
+// thread on Linux, and only for the kernel's refusal to raise
+// (alreadyBehind): one thread's reading never vouches for the others. Any
+// other failure is an error the caller prints, never swallows; on an OS with
+// no setpriority the error says so.
 func ToCI() error {
 	if err := setNice(Nice); err != nil {
-		if n, err2 := currentNice(); err2 == nil && n >= Nice {
-			return nil
-		}
 		return fmt.Errorf("nice %d: %w", Nice, err)
 	}
 	return nil
