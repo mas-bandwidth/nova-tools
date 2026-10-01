@@ -27,7 +27,6 @@ var swarmAudit = audit.Config{
 	Exempt: map[string]string{
 		"main.go|parse|f.verb":     "the verb's own name, a literal at every newFlags call site in this file",
 		"member.go|cmdMember|note": "passNote's one line, a literal with no argument interpolated",
-		"member.go|Write|string(p)": "lockedWriter only orders whole writes from two goroutines (the member's loop and its beat, memberLoop): every byte it carries was already printed through fmt.Fprintf with escaped arguments by its caller, and it adds none of its own",
 		"main.go|want|name":        "a required flag's name, a literal at every call site in this file",
 		"main.go|want|wants":       "the guidance that flag wants, a literal at every call site in this file",
 		"main.go|wantCount|name":   "a required count flag's name, a literal at every call site in this file",
@@ -35,6 +34,9 @@ var swarmAudit = audit.Config{
 		"main.go|refused|f.verb":   "the verb's own name, the value newFlags stored from that literal",
 		"main.go|cmdTemplate|body": "the named verbatim site: a template is a DOCUMENT a person redirects into a file, not an event line, so escaping it would fold it into one unusable line. Every byte of it is an embedded constant in package swarm. TestTemplatesCarryTheirConditions is the behavioural test for this site.",
 		"native.go|nativeRun|line": "the line NewWallReader announces a refusal on: swarm.WallRefusedLine builds the whole line and puts the kind, the path, the task and the step through oneline.Field inside itself, so what arrives at this closure is already one safe token, and escaping it a second time would fold it into one unreadable form. TestNativeIdleZeroWatchesNothing asserts the line this site prints byte for byte.",
+
+		// the stderr the member's loop and its beat share (memberLoop)
+		"member.go|Write|string(p)": "lockedWriter only orders whole writes from two goroutines (the member's loop and its beat, memberLoop): every byte it carries was already printed through fmt.Fprintf with escaped arguments by its caller, and it adds none of its own",
 	},
 	// buildinfo.Line is the `version` verb's whole line and the fifth escaper: it renders
 	// every one of its four fields through oneline.Field inside internal/buildinfo, where
