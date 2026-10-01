@@ -335,6 +335,8 @@ func TestRecoveryWithExcessInFlightPacketsDoesNotExceedWidth(t *testing.T) {
 	require.Equal(t, 2, g.m.Running())
 	require.Equal(t, []string{"c1", "c2"}, g.r.started(), "c3 is left for a subsequent pass")
 	require.Empty(t, g.s.lines("take"))
+	require.Equal(t, 1, strings.Count(g.out.String(), "recover "), "one line for the one card left:\n%s", g.out)
+	require.Contains(t, g.out.String(), "recover c3 deferred: width 2 full\n")
 
 	// When c1 finishes and is reported, the freed slot allows c3 to be recovered.
 	g.r.child("c1").end(Result{Ran: true, OK: true, Head: "head-1", Report: "done c1"})

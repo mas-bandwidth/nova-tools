@@ -366,13 +366,11 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 }
 
 // recoverWorking starts children for in-flight (working/reading) cards that
-// have no child of ours, up to member width.
+// have no child of ours, up to member width. Each card it leaves for want of
+// room is said, one line, and stays in the queue for a later pass.
 func (m *Member) recoverWorking(ids []string, byID map[string]queueCard, wasOurs, claimMoved map[string]bool) int {
 	acted := 0
 	for _, id := range ids {
-		if m.Running() >= m.cfg.Width {
-			break
-		}
 		c := byID[id]
 		inFlight := c.Col == "working" || c.Col == "reading"
 		if !inFlight {
@@ -385,6 +383,10 @@ func (m *Member) recoverWorking(ids []string, byID map[string]queueCard, wasOurs
 			continue
 		}
 		if c.Packet == nil {
+			continue
+		}
+		if m.Running() >= m.cfg.Width {
+			fmt.Fprintf(m.out, "recover %s deferred: width %d full\n", id, m.cfg.Width)
 			continue
 		}
 		if m.start(*c.Packet) {
