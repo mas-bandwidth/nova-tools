@@ -306,6 +306,8 @@ type Member struct {
 	drain        bool
 	beaten       uint64 // the Meter's samples the last written beat has carried
 	noRoom       bool   // Room said no on the last tick it was asked
+	// spent is where the last pass's time went, by part (PassTimes)
+	spent PassTimes
 
 	// the beat's own clock (BeatLoop): beatMu guards beaten; progress is when the work pass
 	// last advanced, in unix nanoseconds
@@ -385,6 +387,17 @@ func (m *Member) readCall(args ...string) (int, []byte) {
 // and every pass it begins; each verb is bounded (two minutes, the member's own budget), so
 // five minutes without one is a pass that is stuck, not slow.
 const BeatStall = 5 * time.Minute
+
+// PassTimes is where one pass's time went: reading the queue, pushing the ended
+// children's commits, reporting them, and filling the lanes (the take and the starts,
+// their stagger with them). A pass is the member's one line of control, so a lane freed
+// while it runs waits for what is left of it: these four say what it waits on.
+type PassTimes struct {
+	Queue, Push, Report, Fill time.Duration
+}
+
+// LastPass is where the last pass's time went.
+func (m *Member) LastPass() PassTimes { return m.spent }
 
 // run is one sprint verb of the work pass: its answer is the pass advancing.
 func (m *Member) run(args ...string) (int, []byte) {
@@ -489,6 +502,14 @@ func (m *Member) BeatLoop(ctx context.Context, every <-chan time.Time, out io.Wr
 // pass of 2026-10-01 16:32 ET). Only the pass's first read, the queue, ends it.
 func (m *Member) Tick(now time.Time) (acted int, err error) {
 	m.advanced()
+	m.spent = PassTimes{}
+	lap := m.clock()
+	// since is the time since the last lap, which it begins anew
+	since := func() time.Duration {
+		was := lap
+		lap = m.clock()
+		return lap.Sub(was)
+	}
 	// unanswered collects the verbs the store did not answer in this pass
 	var unanswered []string
 	noAnswer := func(what string, out []byte) {
@@ -510,6 +531,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 	if err := json.Unmarshal(out, &q); err != nil {
 		return 0, fmt.Errorf("queue: not JSON: %w", err)
 	}
+	m.spent.Queue = since()
 	m.epoch = q.Epoch
 	if m.cfg.Width == 0 && q.Width != m.width {
 		// the fleet row changed (fleet up --width, fleet sync): said once, run from now
@@ -557,6 +579,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 		}
 		early = m.alive()
 	}
+	m.spent.Fill = since()
 	// 1. Report every child that ended, one verb per card (each report is its
 	// own words).
 	wasOurs := map[string]bool{}
@@ -565,6 +588,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 	}
 	claimMoved := map[string]bool{}
 	m.pushEnded(ids, byID)
+	m.spent.Push = since()
 	for _, id := range ids {
 		c := byID[id]
 		l, ours := m.running[id]
@@ -717,6 +741,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 	// the lanes filled again only when one freed since the first fill: a child
 	// alive then has exited or been reported, or a moved claim was reaped; so a
 	// pass whose first fill found nothing more asks the store once
+	m.spent.Report = since()
 	now2 := m.alive()
 	freed := len(claimMoved) > 0
 	for id := range early {
@@ -738,6 +763,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 	if out != nil {
 		noAnswer(m.takeVerb(), out)
 	}
+	m.spent.Fill += since()
 	return acted + n, nil
 }
 
