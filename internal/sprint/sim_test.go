@@ -54,7 +54,7 @@ func (w *world) do(p Plan) Plan {
 	w.closeAll(p.Closes)
 	w.note(p.Notes...)
 	// the table properties, each guarded on the value its plan read, as the
-	// table layer applies them (L1 contract amendment, table properties)
+	// table layer applies them (docs/SPEC-NOVA-TABLE.md, table properties)
 	for _, pw := range p.Props {
 		tb := w.s.T(pw.Table)
 		cur, ok := tb.props[pw.Name]

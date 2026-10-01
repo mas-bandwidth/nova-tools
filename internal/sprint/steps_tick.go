@@ -24,7 +24,7 @@ const MachineActor = "machine"
 const (
 	// TickMaxMoves bounds the units one part of a tick applies; the rest are
 	// due, and the next tick moves them. It is the deal's bound, TickMaxDeal
-	// (width.go): one Layer 1 write's member candidates, which the step
+	// (width.go): one table-layer write's member candidates, which the step
 	// builder cuts into parts under the table layer's entry bounds, so a
 	// part plans every row that needs it in the one tick and never lags its
 	// own work (the owner's rule, errata 3 amendment 10: every row of every

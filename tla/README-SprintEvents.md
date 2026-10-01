@@ -2,7 +2,7 @@
 
 `SprintEvents.tla` is the state machine of layers 3 to 8 of nova-sprint, written from section 5 of `design/EVENT-DRIVEN-TICK-v2.1.md` ("the design" below, cited by section), with sections 1.1 to 1.6 and 2 as the text it models. It is item IT24 of the design. `MCSprintEvents.tla` holds the small instances (the scenarios), and each `MCSprintEvents*.cfg` is one configuration. The larger runs are in `tla/sprintevents-bench/`. The repairs are the decisions of errata 3 to version 2.1 (`design/EVENT-DRIVEN-TICK-v2.1-ERRATA-3.md`, as amended at 03:20 and by its amendment 2 at 04:35), each behind the `Fixes` constant.
 
-The model stands on layers 1 and 2 as their own models prove them (`tla/SetTable.tla` and `tla/SetTableLog.tla`, on their own branches): one call at a time, a step all or nothing, guards checked at apply, one place per card and table, a revision that moves with every change of a record, a receipt that makes a part identity apply once, one line per change in the step's own commit, and a function that errors keeping the writes it made before the error. So a step here is one atomic action, a revision guard is "the record is as read", and a refusal writes nothing.
+The model stands on the guarantees of the layers below it: one call at a time, a step all or nothing, guards checked at apply, one place per card and table, a revision that moves with every change of a record, a receipt that makes a part identity apply once, one line per change in the step's own commit, and a function that errors keeping the writes it made before the error. So a step here is one atomic action, a revision guard is "the record is as read", and a refusal writes nothing.
 
 ## What is modelled
 

@@ -89,7 +89,7 @@ type Plan struct {
 	drained bool
 }
 
-// PropWrite is a table property a step writes (L1 contract amendment, table
+// PropWrite is a table property a step writes (docs/SPEC-NOVA-TABLE.md, table
 // properties): the table (logical name), the property and its new value,
 // guarded on the value the plan read (Was, or WasAbsent when it read none),
 // applied in the same atomic batch as the step's changes of that table.
@@ -182,10 +182,7 @@ func nonEmpty(m map[string]string) map[string]string {
 }
 
 // unsetPresent keeps the unset names the card has: unsetting an absent field
-// is a no-op the manifest need not carry. The card is asked through Has, as
-// every read of a field is, so that on a card loaded from a read plan a field
-// the plan did not load is refused and never taken for an absent one (which
-// would drop the unset): a rule that unsets a field projects it.
+// is a no-op the manifest need not carry.
 func unsetPresent(c *Card, names []string) []string {
 	var out []string
 	for _, n := range names {

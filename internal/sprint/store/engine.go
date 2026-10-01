@@ -1739,8 +1739,8 @@ func (st *Store) applyEntries(ctx context.Context, man ntable.BatchManifest, bar
 // entry: only when one of its member changes applied, in a manifest of its own
 // holding the properties and their expectations, which refuses them all
 // when an expectation no longer holds. Otherwise they are skipped: a deal none
-// of whose cards applied leaves its index where it was (L1 contract
-// amendment, table properties, section 4).
+// of whose cards applied leaves its index where it was (docs/SPEC-NOVA-TABLE.md,
+// table properties).
 func (st *Store) applyProps(ctx context.Context, man ntable.BatchManifest, changedOne bool) ([]Skip, error) {
 	if len(man.Props)+len(man.PropExpect)+len(man.PropAbsent) == 0 {
 		return nil, nil

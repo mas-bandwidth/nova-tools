@@ -294,10 +294,6 @@ type Snapshot struct {
 	// Acked is the tick's conditions the coordinator acknowledged, held
 	// while they hold (Acknowledged).
 	Acked []Open
-	// Dropping maps a stream being dropped or removed to the op that drops it
-	// ({p}dropping@e): what Printed and Answerable leave out the decisions
-	// DROPPING refuses by (errata 3, H8). nil says no stream is dropping.
-	Dropping map[string]string
 	// QueueLen is the length of the work table's queue as the step read it
 	// (queue.go): changes steps planned while the machine ran, which the next
 	// tick's pump applies. Queue is the queue itself, read only by the pump
