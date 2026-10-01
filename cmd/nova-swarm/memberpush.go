@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"context"
 	"fmt"
 	"os"
@@ -11,6 +10,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/member"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
@@ -141,34 +141,29 @@ func (g *gitPusher) repo(url string) (string, error) {
 	return repo, nil
 }
 
-// addAlternate lists an object directory in the repository's alternates once.
+// addAlternate lists an object directory in the repository's alternates once
+// (the file written whole, beside the lines it held).
 func addAlternate(repo, objects string) error {
 	if _, err := os.Stat(objects); err != nil {
 		return nil // a mirror with no object directory lends nothing; the fetch copies what it needs
 	}
 	path := filepath.Join(repo, "objects", "info", "alternates")
-	if f, err := os.Open(path); err == nil {
-		sc := bufio.NewScanner(f)
-		for sc.Scan() {
-			if strings.TrimSpace(sc.Text()) == objects {
-				f.Close()
-				return nil
-			}
+	held, err := os.ReadFile(path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	for _, l := range strings.Split(string(held), "\n") {
+		if strings.TrimSpace(l) == objects {
+			return nil
 		}
-		f.Close()
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
-	if err != nil {
-		return err
+	if len(held) > 0 && !strings.HasSuffix(string(held), "\n") {
+		held = append(held, '\n')
 	}
-	if _, err := f.WriteString(objects + "\n"); err != nil {
-		f.Close()
-		return err
-	}
-	return f.Close()
+	return atomicfile.Write(path, append(held, []byte(objects+"\n")...), 0o644)
 }
 
 // drop deletes a launch's refs from the push repository once its push is
