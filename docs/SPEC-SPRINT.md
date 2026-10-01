@@ -12,7 +12,7 @@ SPRINT TABLE
 
 3011/33011 9.1% -> ETA
 
-work  | waiting | ready | working | review | merging | landed
+work  | waiting | ready | working | review | merging | landed | cost
 readers | asked | reading | ok | broken
 merge | queued | merged | stuck | ci | state
 fleet | ready | working | width | done | ok% | status | load
@@ -24,6 +24,24 @@ fleet | ready | working | width | done | ok% | status | load
 | readers | readers | read cards | the reads of primaries in review |
 | merge | streams | primaries | merging, made visible |
 | fleet | fleet members | work cards | the swarm across machines |
+
+The work table's last column, `cost` (the owner, 2026-10-01: "can you please
+add a final column to the work stream table, which is "cost". This is the sum of
+each landed card's total cost for that work stream, and then a total at the
+bottom."), is a stream's landed cards' cost: the sum, over its landed primaries,
+of each one's total, which is, over its consumers (section 2, What a card cost),
+each one's actual cost where one was reported, else its predicted one, a
+consumer with neither adding nothing. It is in US dollars to four places
+(`$1.2345`), `-` for a stream with no priced landed card, and the footer is the
+sum over the streams, in exact decimals end to end. A stream with some unpriced
+landed cards shows the sum of the priced ones; `nova-sprint card <id>` and its
+JSON carry the detail. The merge that lands a primary writes its total on it
+(`cost`), from every one of its consumers' records, read with the step (the
+fleet and readers tables and the kept records of the consumers of the stream's
+merging primaries), and sets the stream's sum over all its landed primaries on
+the stream's control card; `SyncMirrors` shows it in the cell. The sum is set
+from the cards, never added to: a replayed merge writes the same, and `clear`
+empties it with the tables.
 
 The view shows work, readers, merge, fleet in that order. The one line under
 the title is the word `STOPPED` when the machine is stopped, and the summary
