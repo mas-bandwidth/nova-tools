@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
@@ -191,6 +192,22 @@ func TestLintAdvisesAnOversizeCardAndDoesNotRefuseIt(t *testing.T) {
 	}
 	if !strings.Contains(stdout, "bytes=") || !strings.Contains(stdout, "cap=12000") {
 		t.Fatalf("a clean card still carries its size and the cap: %q", stdout)
+	}
+	// the note says where the refusal is: nova-sprint add holds a brief to 16384 bytes
+	if !strings.Contains(stdout, "nova-sprint add refuses a brief over 16384 bytes") {
+		t.Fatalf("the size note names the sprint's refusal bound: %q", stdout)
+	}
+}
+
+// The lint's two numbers agree with the sprint's: 12000 is the advice, and the bound the
+// note names is the one nova-sprint add enforces (store.MaxBriefBytes), above the advice.
+func TestTheSizeNoteAgreesWithTheSprintsBriefBound(t *testing.T) {
+	t.Parallel()
+	if cardRefusedBytes != store.MaxBriefBytes {
+		t.Fatalf("the note names %d, the sprint refuses over %d", cardRefusedBytes, store.MaxBriefBytes)
+	}
+	if cardMaxBytes != 12000 || cardMaxBytes >= cardRefusedBytes {
+		t.Fatalf("the advice %d sits under the bound %d", cardMaxBytes, cardRefusedBytes)
 	}
 }
 

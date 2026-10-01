@@ -32,23 +32,35 @@ func (h *harness) revisions() map[string]uint64 {
 	return out
 }
 
-// S2 (c). A card text field over MaxCardTextBytes refuses the step whole
-// before anything is written, naming the field and its size.
+// S2 (c). A card text field over its bound (TextBound: the brief 16 KiB, the
+// rest 8 KiB) refuses the step whole before anything is written, naming the
+// field, its size, the bound and the remedy.
 func TestACardTextOverTheBoundRefusesTheStepWhole(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setup(1)
 	before := h.revisions()
-	res, err := h.st.Run(h.ctx, AddStep(sprint.AddReq{Stream: "s2", Count: 2, Brief: strings.Repeat("b", MaxCardTextBytes+1)}))
+	res, err := h.st.Run(h.ctx, AddStep(sprint.AddReq{Stream: "s2", Count: 2, Brief: strings.Repeat("b", MaxBriefBytes+1)}))
 	if err != nil || len(res.Moved) != 0 || len(res.Refused) != 2 || res.Attempts != 1 {
 		t.Fatalf("an over-long brief: %+v %v", res, err)
 	}
 	why := res.Refused[0].Why
-	if !strings.Contains(why, "field brief") || !strings.Contains(why, fmt.Sprint(MaxCardTextBytes+1)) || strings.Contains(why, "kept changing") {
+	for _, want := range []string{"field brief", fmt.Sprintf("is %d bytes, over the bound of 16384 bytes", MaxBriefBytes+1), "a child's whole brief", "shorten it, or point to a file or a comment"} {
+		if !strings.Contains(why, want) {
+			t.Fatalf("the refusal has no %q: %s", want, why)
+		}
+	}
+	if strings.Contains(why, "kept changing") {
 		t.Fatalf("the refusal: %s", why)
 	}
 	h.nothingWritten(before)
-	h.must(AddStep(sprint.AddReq{Stream: "s2", Count: 2, Brief: strings.Repeat("b", MaxCardTextBytes)}))
+	// a brief of 12000 bytes (the card lint's advice) and one at the bound are admitted whole
+	h.must(AddStep(sprint.AddReq{Stream: "s2", Count: 2, Brief: strings.Repeat("b", 12000)}))
+	h.must(AddStep(sprint.AddReq{Stream: "s3", Count: 2, Brief: strings.Repeat("b", MaxBriefBytes)}))
+	// every other text field keeps 8 KiB: the brief's room is the brief's alone
+	if TextBound("fix") != MaxCardTextBytes || TextBound("did") != MaxCardTextBytes || TextBound("brief") != 16<<10 {
+		t.Fatalf("the bounds: brief %d fix %d did %d", TextBound("brief"), TextBound("fix"), TextBound("did"))
+	}
 }
 
 // S2 (a). A step the table layer's own validation refuses (a field value
@@ -89,7 +101,7 @@ func TestAStepIsSplitByBytes(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setup(1)
-	res := h.must(AddStep(sprint.AddReq{Stream: "s2", Count: 128, Brief: strings.Repeat("b", MaxCardTextBytes)}))
+	res := h.must(AddStep(sprint.AddReq{Stream: "s2", Count: 128, Brief: strings.Repeat("b", MaxBriefBytes)}))
 	if len(res.Moved) != 128 {
 		t.Fatalf("moved %d", len(res.Moved))
 	}
