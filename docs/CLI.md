@@ -1694,9 +1694,11 @@ nova-config machine self [--check] [--pg <dsn>]                          # this 
 nova-config fleet set --store <m> --coordinator <m> --as <friend>       # the one fleet row: no name, no add, remove or list
 nova-config sprint set --coordinator <friend> --as <friend>              # the one sprint row: who coordinates; set it to hand over
 nova-config fleet|sprint show|history                                    # the one row, its stamps, its changes
+nova-config loop add <name> --machine <m> --argv '["/path/prog","--flag","v"]' (--every <seconds> | --keepalive true) [--seat <seat> --keys <NAME,...>] [--width <n>] [--enabled false] --as <friend>   # a supervised loop on one machine: the command as a JSON array, the secrets by name from the seat, every n seconds or kept alive
+nova-config loop set|remove|list|show|history                             # the one grammar, as for every kind; machine show <m> names the machine's loops (loops=<a,b>)
 ```
 
-`nova-config` is the one tool for the fleet's permanent, non-ephemeral configuration: Postgres (schema `config`) is the permanent store, and `apply` writes it into Redis so Redis is always a rebuildable copy. The kinds are `machine` (user, seat, slots, runners; the name is the tailnet host), `fleet` (one row: the store and coordinator machines), `friend` (slots, tiers, roles) and `sprint` (one row: the coordinating friend); the contract is [SPEC-CONFIG.md](SPEC-CONFIG.md) and the guide is [nova-config/README.md](nova-config/README.md).
+`nova-config` is the one tool for the fleet's permanent, non-ephemeral configuration: Postgres (schema `config`) is the permanent store, and `apply` writes it into Redis so Redis is always a rebuildable copy. The kinds are `machine` (user, seat, slots, runners; the name is the tailnet host), `fleet` (one row: the store and coordinator machines), `friend` (slots, tiers, roles), `sprint` (one row: the coordinating friend) and `loop` (a supervised process on one machine: machine, argv, seat, keys, every or keepalive, width, enabled; apply writes `loop:<name>` and the set `loops`, which the plays read); the contract is [SPEC-CONFIG.md](SPEC-CONFIG.md) and the guide is [nova-config/README.md](nova-config/README.md).
 
 ### First run
 
