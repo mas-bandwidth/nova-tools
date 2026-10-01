@@ -182,12 +182,11 @@ func TestAGroupHandsBackEachKindsList(t *testing.T) {
 	g.Line("bus", "WAKE BUS id=a")
 	g.Line("bus", "WAKE BUS id=b")
 	g.Line("entry", "WAKE ENTRY one")
-	if l := g.List("bus"); l == nil || l.Shown() != 1 || l.Total() != 2 || l.Elided() != 1 {
-		t.Errorf("the bus list is %+v; a caller needs its own kind's numbers to write its own summary line", l)
-	}
-	if l := g.List("entry"); l == nil || l.Elided() != 0 {
-		t.Errorf("the entry list elided something it should not have: %+v", l)
-	}
+	bus, entry := g.List("bus"), g.List("entry")
+	require.NotNil(t, bus, "the bus list is missing; a caller needs its own kind's numbers to write its own summary line")
+	assert.Equal(t, [3]int{1, 2, 1}, [3]int{bus.Shown(), bus.Total(), bus.Elided()}, "the bus list is %+v; a caller needs its own kind's numbers to write its own summary line", bus)
+	require.NotNil(t, entry, "the entry list is missing")
+	assert.Equal(t, 0, entry.Elided(), "the entry list elided something it should not have: %+v", entry)
 	assert.Nil(t, g.List("report"), "a kind this group never saw must not be invented")
 }
 

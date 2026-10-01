@@ -56,12 +56,11 @@ func TestIssue2209(t *testing.T) {
 	// The header is the first line: Failure buffers its items until Print,
 	// so calling Failure before Print cannot put RECEIPT FAIL lines ahead
 	// of RECEIPT identity=... (emma's hold on #2830 at c8ece28a).
-	if lines := strings.Split(strings.TrimSpace(text), "\n"); len(lines) != 3 ||
-		!strings.HasPrefix(lines[0], "RECEIPT identity=") ||
-		!strings.Contains(lines[1], "step=verify") ||
-		!strings.Contains(lines[2], "step=lint") {
-		t.Errorf("receipt order: want header, verify, lint:\n%s", text)
-	}
+	order := strings.Split(strings.TrimSpace(text), "\n")
+	require.Len(t, order, 3, "receipt order: want header, verify, lint:\n%s", text)
+	assert.True(t, strings.HasPrefix(order[0], "RECEIPT identity="), "receipt order: want header first:\n%s", text)
+	assert.Contains(t, order[1], "step=verify", "receipt order: want verify second:\n%s", text)
+	assert.Contains(t, order[2], "step=lint", "receipt order: want lint third:\n%s", text)
 
 	for _, want := range []string{
 		"identity=" + identity,
@@ -111,12 +110,9 @@ func TestIssue2209(t *testing.T) {
 	//    line, never the same "fail" the verifier saw above).
 	require.NotContains(t, []string{ReceiptKindTimeout, ReceiptKindMissing, ReceiptKindSuperseded}, ReceiptKindFail,
 		"a non-fail outcome shares the fail kind: %q", ReceiptKindFail)
-	if ReceiptKindTimeout == ReceiptKindMissing ||
-		ReceiptKindTimeout == ReceiptKindSuperseded ||
-		ReceiptKindMissing == ReceiptKindSuperseded {
-		t.Fatalf("two non-fail outcomes share a kind: %s %s %s",
-			ReceiptKindTimeout, ReceiptKindMissing, ReceiptKindSuperseded)
-	}
+	require.NotEqual(t, ReceiptKindTimeout, ReceiptKindMissing, "two non-fail outcomes share a kind")
+	require.NotEqual(t, ReceiptKindTimeout, ReceiptKindSuperseded, "two non-fail outcomes share a kind")
+	require.NotEqual(t, ReceiptKindMissing, ReceiptKindSuperseded, "two non-fail outcomes share a kind")
 
 	// The four outcomes must produce four different headers — distinct
 	// from each other and from a plain fail.
