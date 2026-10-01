@@ -187,6 +187,9 @@ var swarmAudit = audit.Config{
 		// subproc starts one child under a deadline (Command) or a cancellable context
 		// (Long) and returns the *exec.Cmd to this package, which wires the streams. It
 		// holds no writer of this package's stream and prints nothing itself.
+		// binstamp (member.go) reads one file's size and modification time and returns a
+		// string to this package, which compares it and prints nothing of it.
+		`"github.com/mas-bandwidth/nova-tools/internal/binstamp"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/subproc"`,
 		// gitrun (memberpush.go) runs one git under its budget and returns its two streams
 		// as bytes to this package; it holds no writer of this package's stream and prints
