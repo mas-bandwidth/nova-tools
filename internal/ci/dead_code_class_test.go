@@ -33,7 +33,11 @@ import (
 // it never raises a count and never adds a row.
 const (
 	deadCodeLedgerPath = "testdata/dead_code_allowlist.txt"
-	deadCodeRemedy     = "delete the unreachable function(s) or wire them into cmd/...; the dead code ledger only shrinks and refuses to raise counts or add rows"
+	// deadCodeUpdateCommand is the one run that rewrites the ledger: the rule is
+	// functional-tier only, so the unit-tier update (make test PKGS=./internal/ci)
+	// never reaches it, and the functional container mounts the source read-only.
+	deadCodeUpdateCommand = "go test -tags functional -run '^TestDeadCode$' ./internal/ci/"
+	deadCodeRemedy        = "delete the unreachable function(s) or wire them into cmd/...; the dead code ledger only shrinks and refuses to raise counts or add rows"
 )
 
 // deadcodePackage represents one package in deadcode -json output.
@@ -185,13 +189,13 @@ func TestDeadCode(t *testing.T) {
 		}
 		for _, row := range res.Lowered {
 			problems = append(problems, fmt.Sprintf(
-				"%s: has %d unreachable functions, below ledger count of %d; lower the row with %s=1",
-				row.Key, row.Measured, row.Listed, allowlist.UpdateEnv))
+				"%s: has %d unreachable functions, below ledger count of %d; lower the row; run: %s=1 %s",
+				row.Key, row.Measured, row.Listed, allowlist.UpdateEnv, deadCodeUpdateCommand))
 		}
 		for _, row := range res.Stale {
 			problems = append(problems, fmt.Sprintf(
-				"%s: 0 unreachable functions in tree, but listed in ledger; drop the stale row with %s=1",
-				row.Key, allowlist.UpdateEnv))
+				"%s: 0 unreachable functions in tree, but listed in ledger; drop the stale row; run: %s=1 %s",
+				row.Key, allowlist.UpdateEnv, deadCodeUpdateCommand))
 		}
 		if len(problems) > 0 {
 			sort.Strings(problems)
