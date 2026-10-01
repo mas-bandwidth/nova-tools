@@ -1056,8 +1056,9 @@ func (t *tickRun) parts(table string, parts []sprint.TickPartDef) tickOutcome {
 		}
 		step := TickPartStep(part.Name, fn, t.req, &t.at, nil, &due)
 		step.Pump, step.Drain, step.Twin = table == sprint.Work, drain, t.twin
-		// the deal draws from the routes, and the check asks what the next deal does
-		step.Routes, step.RouteCache = part.Name == "deal" || part.Name == "check", &t.routes
+		// the deal and the ask draw from the routes (a read card's route,
+		// route.go readRouteOf), and the check asks what the next deal does
+		step.Routes, step.RouteCache = part.Name == "deal" || part.Name == "ask" || part.Name == "check", &t.routes
 		// the ask, and the parts that ask what the ask does, plan with the readers' states
 		step.Readers = part.Name == "ask" || part.Name == "check"
 		step.ReaderStates = t.readers

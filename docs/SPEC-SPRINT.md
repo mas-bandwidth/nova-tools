@@ -445,7 +445,15 @@ id (`--op`) returns the original result, with no second counter or notification.
   their states>`, for the sprint (not one for each primary), closed when two
   are up or no primary waits; `reader up` and `reader add` answer it.
   The machine's tick asks for every such primary; `ask` is the coordinator's
-  own.
+  own. Each read card the ask creates carries a route as a work card does
+  (`route`, `model`, `tokens`, `deadline`), drawn from the reader tier, the
+  sprint row's `reader_tier` in nova-config (pro unless set), at that tier's
+  rolling index on the fleet table, which the deal and the reads share and the
+  ask moves once a read (`internal/sprint/route.go`, readRouteOf;
+  tla/RouteIndex.tla, THE READS); its packet hands the reader that route, so a
+  reader loop needs no `--model`, and a reader started with `--model`,
+  `--tokens` and `--deadline` runs its reads on those. A store with no route,
+  or none for the reader tier, asks with none, and the reader runs its own.
   Work that came back failed is not read: it waits for the coordinator.
   `ask --another` deals a primary already asked to one more reader, for that
   attempt only (the readers kept on the primary stay the pair it was asked

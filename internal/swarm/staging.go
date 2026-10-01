@@ -79,6 +79,23 @@ func LoadPoolIdentity(poolDir string) (StagingIdentity, error) {
 	return id, nil
 }
 
+// ParseIdentity reads a pool identity given on the command line, as a loop's
+// argv in nova-config carries it (`--identity <owner>,<name>,<email>`), so no
+// identity.tsv has to be written into a pool by hand: the owner is the text
+// before the first comma, the email the text after the last, the name what lies
+// between (a name may hold a comma). Each is required, and the email holds an @.
+func ParseIdentity(s string) (StagingIdentity, error) {
+	first, last := strings.Index(s, ","), strings.LastIndex(s, ",")
+	if first < 0 || first == last {
+		return StagingIdentity{}, fmt.Errorf("--identity %q: wants <owner>,<name>,<email>, the three columns of a pool's identity.tsv", s)
+	}
+	id := StagingIdentity{Owner: strings.TrimSpace(s[:first]), Name: strings.TrimSpace(s[first+1 : last]), Email: strings.TrimSpace(s[last+1:])}
+	if id.Owner == "" || id.Name == "" || !strings.Contains(id.Email, "@") {
+		return StagingIdentity{}, fmt.Errorf("--identity %q: owner, name and an email with an @ are all required: <owner>,<name>,<email>", s)
+	}
+	return id, nil
+}
+
 // StagingGitEnv is the environment the launcher exports with every job: the
 // bench's own git config cannot leak into what the worker commits or what the
 // machinery reads, and the pool's identity row is exported as author and
