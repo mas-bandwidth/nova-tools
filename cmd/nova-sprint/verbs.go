@@ -311,25 +311,45 @@ func helpCommand(path []string, stdout, stderr io.Writer) int {
 
 // parse is the verb's flags anywhere among its words; words after -- are
 // taken as they are.
-func parse(fs *flag.FlagSet, args []string) ([]string, error) {
+func parse(fs *flag.FlagSet, args []string) ([]string, error) { return parseEach(fs, args, nil) }
+
+// parseEach is parse, telling each (when set) where each flag the words give
+// begins and how many words it is: 1, or 2 with its value. It hands the flag
+// package one flag at a time, its value with it, so the flag package never sees
+// the -- that ends the flags (it would end its parse there, and the words after
+// it would be read as flags again): every word after a -- is taken as it is, and
+// a -- that is a flag's value is that value.
+func parseEach(fs *flag.FlagSet, args []string, each func(at, n int)) ([]string, error) {
 	var pos []string
-	for {
-		if err := verbflag.Parse(fs, args); err != nil {
+	for i := 0; i < len(args); {
+		w := args[i]
+		switch {
+		case w == "--":
+			return append(pos, args[i+1:]...), nil
+		case len(w) < 2 || w[0] != '-':
+			pos = append(pos, w)
+			i++
+			continue
+		}
+		n := 1
+		name, _, inline := strings.Cut(strings.TrimPrefix(w[1:], "-"), "=")
+		if f := fs.Lookup(name); f != nil && !inline && i+1 < len(args) {
+			if b, ok := f.Value.(interface{ IsBoolFlag() bool }); !ok || !b.IsBoolFlag() {
+				n = 2
+			}
+		}
+		if err := verbflag.Parse(fs, args[i:i+n]); err != nil {
 			if strings.Contains(err.Error(), "flag provided but not defined: -prefix") {
 				return nil, errNoPrefix
 			}
 			return nil, flagRefusal(fs, err)
 		}
-		args = fs.Args()
-		if len(args) == 0 {
-			return pos, nil
+		if each != nil {
+			each(i, n)
 		}
-		if args[0] == "--" {
-			return append(pos, args[1:]...), nil
-		}
-		pos = append(pos, args[0])
-		args = args[1:]
+		i += n
 	}
+	return pos, nil
 }
 
 // flagError is a flag-parse refusal already worded as the verb's whole line, `unknown flag

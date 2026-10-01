@@ -174,10 +174,10 @@ func (a *app) forwarded(args []string, stdout, stderr io.Writer) (code int, sent
 
 // absolutePaths is the arguments with each file flag's value made absolute from this
 // directory (`--flag value` and `--flag=value`). Which word is a flag and which is a
-// flag's value is as the verb's flags parse them: a value that looks like a flag is a
-// value, a boolean flag takes no word, and nothing after -- is a flag. Arguments whose
-// flags do not parse are left as they are, for the verb to refuse; so is a value that
-// cannot be made absolute.
+// flag's value is the verb's own parse's to say (parseEach): a value that looks like a
+// flag is a value, a boolean flag takes no word, and nothing after -- is a flag.
+// Arguments whose flags do not parse are left as they are, for the verb to refuse; so
+// is a value that cannot be made absolute.
 func absolutePaths(argv []string) []string {
 	v := readVerb(argv)
 	if v.fs == nil || v.err != nil || v.help {
@@ -189,32 +189,18 @@ func absolutePaths(argv []string) []string {
 		}
 		return p
 	}
-	for i := v.words; i < len(argv); i++ {
-		w := argv[i]
-		if w == "--" {
-			break
-		}
-		if len(w) < 2 || w[0] != '-' {
-			continue // a word the verb takes as it is
-		}
-		name, value, has := strings.Cut(strings.TrimPrefix(w[1:], "-"), "=")
-		f := v.fs.Lookup(name)
-		if f == nil {
-			continue
-		}
-		if b, ok := f.Value.(interface{ IsBoolFlag() bool }); ok && b.IsBoolFlag() {
-			continue
-		}
-		file := slices.Contains(fileFlags, name)
+	words := argv[v.words:]
+	// ignored: the words parsed above (readVerb), and parse the same again
+	_, _ = parseEach(verbFlags(v.name), words, func(at, n int) {
+		w := words[at]
+		name, value, inline := strings.Cut(strings.TrimPrefix(w[1:], "-"), "=")
 		switch {
-		case has && file:
-			argv[i] = w[:len(w)-len(value)] + abs(value)
-		case !has && i+1 < len(argv):
-			i++ // the flag's value, whatever it looks like
-			if file {
-				argv[i] = abs(argv[i])
-			}
+		case !slices.Contains(fileFlags, name):
+		case inline:
+			words[at] = w[:len(w)-len(value)] + abs(value)
+		case n == 2:
+			words[at+1] = abs(words[at+1])
 		}
-	}
+	})
 	return argv
 }
