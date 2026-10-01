@@ -280,6 +280,21 @@ func (m *Member) Running() int {
 	return n
 }
 
+// readCall is the member's beat or queue verb, asked again once when the store
+// did not answer (exit 2): a round trip that timed out is one miss of a beat
+// window, never a down member (docs/SPEC-SPRINT.md section 5, a member's
+// presence; tla/DirtyTick.tla, Lapse needs MissedBeatsDown misses), and the
+// second ask is the member's own before it reports the miss. Each ask has the
+// store client's deadline, five seconds (internal/redisconn ReadTimeout), the
+// least a tailnet round trip with jitter needs.
+func (m *Member) readCall(args ...string) (int, []byte) {
+	code, out := m.sprint.Run(args...)
+	if code == 2 {
+		code, out = m.sprint.Run(args...)
+	}
+	return code, out
+}
+
 // Tick is one pass of the loop: beat, read the queue, report every child
 // that ended, take (begin) up to the width, start each card taken. It returns
 // the number of cards it acted on (reports plus starts), and the first error
@@ -300,7 +315,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 				args = append(args, "--load", strconv.FormatFloat(pct, 'f', 1, 64))
 			}
 		}
-		code, out := m.sprint.Run(args...)
+		code, out := m.readCall(args...)
 		if code == 0 && m.cfg.Meter != nil {
 			m.beaten = total
 		}
@@ -308,7 +323,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 			return 0, fmt.Errorf("beat: the store did not answer: %s", strings.TrimSpace(string(out)))
 		}
 	}
-	code, out := m.sprint.Run("queue", "--as", m.cfg.As, "--json")
+	code, out := m.readCall("queue", "--as", m.cfg.As, "--json")
 	if code != 0 {
 		return 0, fmt.Errorf("queue: exit %d: %s", code, strings.TrimSpace(string(out)))
 	}

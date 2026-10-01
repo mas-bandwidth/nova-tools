@@ -137,8 +137,17 @@ func (h *harness) setup(n int) {
 	if err := h.st.BeatReaders(h.ctx); err != nil { // a reader asks for its queue: it is up
 		h.t.Fatal(err)
 	}
-	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
-	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m2"}))
+	// a member brought up here is as wide as the set is large: the deal holds a member to its
+	// width (tla/DirtyTick.tla, WidthRespected), so a verb that deals all n needs the room; a
+	// member the test brought up before keeps its width
+	width := min(max(n, sprint.DefaultWidth), sprint.MaxWidth)
+	for _, m := range []string{"m1", "m2"} {
+		w := width
+		if h.snap().Fleet.HasRow(m) {
+			w = 0
+		}
+		h.must(FleetStep(sprint.FleetReq{Op: "up", Member: m, Width: w}))
+	}
 	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: n}))
 	h.clean("setup")
 }

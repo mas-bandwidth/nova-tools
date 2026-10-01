@@ -31,8 +31,9 @@ func briefOf(tier, extra string) string {
 // routeHarness is the harness with its two members up and the store's routes.
 func routeHarness(t *testing.T, routes ...sprint.Route) *harness {
 	h := newHarness(t)
-	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
-	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m2"}))
+	// wide members: a test deals hundreds of cards, and the deal holds a member to its width
+	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1", Width: sprint.MaxWidth}))
+	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m2", Width: sprint.MaxWidth}))
 	h.m.SetRoutes(routes)
 	return h
 }

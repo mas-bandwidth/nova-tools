@@ -24,7 +24,7 @@ func localSource() Source {
 			return string(out), err
 		},
 		// The busy percent of the next second: iostat's own two readings a second
-		// apart (about a millisecond of CPU), where top costs about 300.
+		// apart (about 4 ms of CPU), where top costs about 300.
 		CPUSecond: func() (float64, error) {
 			ctx, cancel := context.WithTimeout(context.Background(), topTimeout)
 			defer cancel()

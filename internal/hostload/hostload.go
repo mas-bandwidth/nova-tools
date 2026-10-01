@@ -11,7 +11,7 @@
 //
 // A member does not measure at its beat: a Sampler takes the busy percent once a
 // second (Linux: /proc/stat counters, a read of a file; darwin: iostat, which takes
-// its own second at about a millisecond of CPU, where top costs 300) and a Ring keeps
+// its own second at about 4 ms of CPU, where top costs 300) and a Ring keeps
 // the last ten, so the beat can carry the highest of them.
 //
 // Every read of the machine is a Source function, so a caller measures with
