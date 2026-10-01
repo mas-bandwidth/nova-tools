@@ -150,6 +150,11 @@ var swarmAudit = audit.Config{
 		// It holds no writer here; the transformed value is escaped and bounded by
 		// sprintFailureOutput before internal/member can print it.
 		`"github.com/mas-bandwidth/nova-tools/internal/log"`,
+		// member.go hands internal/sprintwire's Worker to the member as its sprint (--server):
+		// it sends a verb's arguments to the sprint's server and returns the answer as a
+		// value. It holds no writer and prints nothing; a failed verb's words go through
+		// sprintFailureOutput, as execSprint's do, before internal/member can print them.
+		`"github.com/mas-bandwidth/nova-tools/internal/sprintwire"`,
 		// bounded prints the capped listings and the one MORE line that stands for what
 		// they did not print. Every line reaching it is rendered by a fmt.Sprintf in THIS
 		// package, which the classifier walks like any other print site, and bounded puts

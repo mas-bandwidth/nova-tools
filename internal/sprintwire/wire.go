@@ -1,0 +1,91 @@
+// Package sprintwire is how a worker talks to the sprint's server: the run
+// loop on the coordinator's machine, the one writer of the sprint, which runs a
+// worker's verbs for it, one at a time, beside the store (the owner, 2026-10-01:
+// "single threaded server, pipelined batches like redis." / "I think we should
+// not use redis as the transport, but have a client/server" / "and then stick
+// with golang for client and server."). A request is the worker's verbs, each
+// the argument list it would give nova-sprint, in the order to run them; the
+// reply is each verb's exit code and what it printed. One request is one
+// exchange whatever it carries, from beside the server or from 100 ms away.
+package sprintwire
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"time"
+)
+
+// Path is the server's one endpoint.
+const Path = "/verbs"
+
+// MaxRequest bounds a request's body, and MaxVerbs the verbs of one batch.
+const (
+	MaxRequest = 1 << 20
+	MaxVerbs   = 256
+)
+
+// Request is a worker's verbs, in the order to run them.
+type Request struct {
+	Verbs [][]string `json:"verbs"`
+}
+
+// Result is one verb's answer: nova-sprint's exit code, and what it printed.
+type Result struct {
+	Code   int    `json:"code"`
+	Stdout string `json:"stdout"`
+	Stderr string `json:"stderr"`
+}
+
+// Response is the answers, one a verb, in the request's order.
+type Response struct {
+	Results []Result `json:"results"`
+}
+
+// Client sends verbs to a sprint server.
+type Client struct {
+	Addr string       // host:port
+	HTTP *http.Client // nil is a client that waits Timeout for an answer
+}
+
+// Timeout is how long a client waits for the server's answer by default.
+const Timeout = 2 * time.Minute
+
+// Do sends the verbs in one request and returns their answers, one a verb. An
+// error is a server that did not answer, or answered something else: nothing
+// is known of what ran.
+func (c Client) Do(ctx context.Context, verbs ...[]string) ([]Result, error) {
+	body, err := json.Marshal(Request{Verbs: verbs})
+	if err != nil {
+		return nil, err
+	}
+	hc := c.HTTP
+	if hc == nil {
+		hc = &http.Client{Timeout: Timeout}
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "http://"+c.Addr+Path, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := hc.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("the sprint server at %s did not answer: %w", c.Addr, err)
+	}
+	defer func() { _ = resp.Body.Close() }() // ignored: the answer is read whole below, or not at all
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 64<<20))
+	if err != nil {
+		return nil, fmt.Errorf("the sprint server at %s: its answer was cut: %w", c.Addr, err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("the sprint server at %s refused the request (%s): %s", c.Addr, resp.Status, bytes.TrimSpace(raw))
+	}
+	var out Response
+	if err := json.Unmarshal(raw, &out); err != nil || len(out.Results) != len(verbs) {
+		return nil, fmt.Errorf("the sprint server at %s answered %d results for %d verbs", c.Addr, len(out.Results), len(verbs))
+	}
+	return out.Results, nil
+}
