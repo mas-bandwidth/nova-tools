@@ -973,6 +973,7 @@ func TestReworkAtRedealBoundInReady(t *testing.T) {
 	last := wc.Row
 	wc.Col = Withdrawn
 	wc.Fields["redeals"] = itoa(reviewMaxRedeals)
+	wc.Fields[FieldTakeEnded] = stamp(t0)
 	wc.Fields["member"] = last
 	w.s.Fleet.Put(wc)
 	pr.Col = Ready

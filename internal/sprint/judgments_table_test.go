@@ -430,6 +430,7 @@ var seeds = []seeded{
 		w.must(FleetStep(w.s, FleetReq{Op: "down", Member: "m1"}))
 		w.must(FleetStep(w.s, FleetReq{Op: "down", Member: "m2"}))
 		w.s.Fleet.Card("s1-1.w1").Fields["redeals"] = itoa(MaxRedeals)
+		w.s.Fleet.Card("s1-1.w1").Fields[FieldTakeEnded] = stamp(w.s.Now) // its take ended
 		return w, raise(w, "a card reached its bound", "s1-1", nil)
 	}, []string{"rework --fix", "drop", "wait"}},
 
