@@ -2,6 +2,8 @@ package redisacl
 
 import (
 	"io/fs"
+	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -9,6 +11,21 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 )
+
+var reLuaCall = regexp.MustCompile(`redis\.p?call\(\s*'([A-Za-z_]+)'`)
+
+// directCalls is every command name a Lua text passes to redis.call or
+// redis.pcall as a literal, upper-cased. Only the tests below read it, so it
+// lives here and the shipped package carries no function the commands never
+// reach (the deadcode class test).
+func directCalls(src string) []string {
+	src = reLuaComment.ReplaceAllString(src, "")
+	var out []string
+	for _, m := range reLuaCall.FindAllStringSubmatch(src, -1) {
+		out = append(out, strings.ToUpper(m[1]))
+	}
+	return out
+}
 
 // Every command an embedded Lua file runs is allowed, by the rendered rules
 // alone, to every role that may FCALL a function of that file: a function
