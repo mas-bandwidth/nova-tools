@@ -93,13 +93,15 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 	defer stop()
 	err := fn.Load(ctx, c)
 	require.NoError(t, err)
-	// three routes of the tier the cards are (a brief naming none is flash), as
-	// nova-config's apply writes them: every deal draws, and the gate holds with it
+	// three routes of the tier the cards are (a brief naming none is flash) and the
+	// tier's array, as nova-config's apply writes them: every deal takes the array
+	// at the route index, and the gate holds with it
 	for i, name := range []string{"flash-a", "flash-b", "flash-c"} {
 		require.NoError(t, c.SAdd(ctx, config.RoutesKey, name).Err())
 		require.NoError(t, c.HSet(ctx, config.RouteKey(name), "name", name, "tier", "flash", "provider", "prov"+strconv.Itoa(i),
-			"model", "m"+strconv.Itoa(i), "tokens", "100000", "deadline", "900", "weight", strconv.Itoa(i+1), "enabled", "true").Err())
+			"model", "m"+strconv.Itoa(i), "tokens", "100000", "deadline", "900", "enabled", "true").Err())
 	}
+	require.NoError(t, c.HSet(ctx, config.TierKey("flash"), "name", "flash", "routes", "flash-a,flash-b,flash-c,flash-c").Err())
 	env := map[string]string{"NOVA_SPRINT_REDIS": addr, "NOVA_SPRINT_ACTOR": "coordinator"}
 	getenv := func(k string) string { return env[k] }
 	world, coord, loop, machines := newApp(getenv), newApp(getenv), newApp(getenv), newApp(getenv)

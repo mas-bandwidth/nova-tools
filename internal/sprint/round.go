@@ -1,7 +1,6 @@
 package sprint
 
 import (
-	"math"
 	"slices"
 	"strconv"
 	"strings"
@@ -88,6 +87,7 @@ type round struct {
 	name  string // the property
 	read  string // the value the step read
 	had   bool   // whether the table had the property
+	steps bool   // a unit's moves are the steps it took, a decimal (a route index, route.go)
 }
 
 // newRound is the index over names at the counter a table's property holds.
@@ -199,26 +199,12 @@ func (r *round) member(up []string, q, room map[string]int, avoid string) string
 // next is the member a card placed on the fleet goes to (errata 3 amendment
 // 5: every placement, first attempts and redeals and levelling alike, goes
 // round the fleet and moves the index): the first from the index that is up
-// and below its room, the avoid member only when no other has room; with
-// spill, when none has room, the first up from the index, the avoid member
-// only when it is the one up. "" when none. It neither moves the index nor
-// counts the card: the caller that places it moves the index past it (moved)
-// and counts it (q).
-func (r *round) next(up []string, q, room map[string]int, avoid string, spill bool) string {
-	m := r.member(up, q, room, avoid)
-	if m == "" && spill {
-		m = r.member(up, q, roomOf(up, math.MaxInt), avoid)
-	}
-	return m
-}
-
-// roomOf is the same room, most, for every member of up.
-func roomOf(up []string, most int) map[string]int {
-	out := make(map[string]int, len(up))
-	for _, x := range up {
-		out[x] = most
-	}
-	return out
+// and below its room, the avoid member only when no other has room; "" when
+// none has room (a card is never placed past a width: tla/DirtyTick.tla,
+// WidthRespected). It neither moves the index nor counts the card: the caller
+// that places it moves the index past it (moved) and counts it (q).
+func (r *round) next(up []string, q, room map[string]int, avoid string) string {
+	return r.member(up, q, room, avoid)
 }
 
 // levelTo is where the level moves the newest card of the longest queue, and
@@ -451,8 +437,13 @@ func roundWrite(p *Plan, r *round, moves roundMoves) {
 		if m == "" {
 			continue
 		}
-		for _, x := range strings.Split(m, ",") {
-			w.moved(x)
+		if r.steps {
+			n, _ := strconv.ParseUint(m, 10, 64)
+			w.count += n
+		} else {
+			for _, x := range strings.Split(m, ",") {
+				w.moved(x)
+			}
 		}
 		moved = true
 	}

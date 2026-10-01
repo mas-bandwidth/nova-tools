@@ -23,7 +23,7 @@ const stagingLine = cardhdr.EndStaging + ": " + stagingReason + "; no child ran"
 
 // fourMembers is the route harness with m3 and m4 up and beating beside m1 and m2.
 func fourMembers(t *testing.T) *harness {
-	h := routeHarness(t, route("pro-a", "pro", 1))
+	h := routeHarness(t, route("pro-a", "pro"))
 	h.mu.Lock()
 	h.live = append(h.live, "m3", "m4")
 	h.mu.Unlock()
@@ -116,7 +116,7 @@ func TestThreeStagingRefusalsThenAnOkOnTheFourthLandsTheAttempt(t *testing.T) {
 // members and the reason, and the card is not dealt again.
 func TestEveryMemberUpRefusingAtStagingIsOneJudgment(t *testing.T) {
 	t.Parallel()
-	h := routeHarness(t, route("pro-a", "pro", 1))
+	h := routeHarness(t, route("pro-a", "pro"))
 	h.addReady("s1", 1, briefOf("pro", ""))
 	h.startMachine()
 	h.machine()
@@ -144,7 +144,7 @@ func TestEveryMemberUpRefusingAtStagingIsOneJudgment(t *testing.T) {
 // member refuses a card at most once: one record and one note per member per card.
 func TestTheLevelNeverMovesACardBackOntoItsRefuser(t *testing.T) {
 	t.Parallel()
-	h := routeHarness(t, route("pro-a", "pro", 1))
+	h := routeHarness(t, route("pro-a", "pro"))
 	h.addReady("s1", 4, briefOf("pro", ""))
 	h.startMachine()
 	h.machine()
