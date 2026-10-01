@@ -267,6 +267,11 @@ type Config struct {
 	// (the tests' member). Clock is the time it measures the gap by; nil is time.Now.
 	Sleep func(time.Duration)
 	Clock func() time.Time
+	// Background takes the heavy work out of the pass (the owner, 2026-10-01: "You must
+	// not do heavy work in-line."): a push runs apart from the pass that began it and is
+	// reported by the pass after it ends, and Wake says when one ended or a child exited.
+	// false (the tests' member) waits for the pass's pushes, so a pass is one step.
+	Background bool
 }
 
 // launch is one child and the claim it was started for: the card at the
@@ -281,6 +286,7 @@ type launch struct {
 	branch  string
 	packet  Packet
 	push    *Push     // the push at its end, once made (a finish the store did not answer is reported again, never pushed again)
+	pushing bool      // the push has begun and has not been collected (pushEnded)
 	spent   bool      // a read whose child ended with no verdict: not ours to report, not run again until the sprint moves the card
 	retryAt time.Time // a read whose stage failed: when this reader runs it again; zero before the failure is seen
 	retried bool      // a read run again after a stage failure: a second one is returned
@@ -316,12 +322,21 @@ type Member struct {
 
 	// lastStart is when this member last started a harness, for StartGap.
 	lastStart time.Time
+
+	// the pushes that ended and no pass has collected yet, by launch (pushKey); pushGate
+	// bounds the pushes running at once (pushWidth); wake holds one word for the loop: a
+	// push ended or a child exited, so the next pass is due now (Wake)
+	pushMu   sync.Mutex
+	pushed   map[string]Push
+	pushGate chan struct{}
+	wake     chan struct{}
 }
 
 // New is a member with nothing running. A reader pushes nothing, and its
 // pusher may be nil; a work member's pusher pushes every work card's commit.
 func New(cfg Config, s Sprint, r Runner, pu Pusher, out io.Writer) *Member {
-	m := &Member{cfg: cfg, sprint: s, runner: r, pusher: pu, out: out, running: map[string]launch{}, stageRetried: map[string]bool{}, returnedAt: map[string]time.Time{}, width: cfg.Width}
+	m := &Member{cfg: cfg, sprint: s, runner: r, pusher: pu, out: out, running: map[string]launch{}, stageRetried: map[string]bool{}, returnedAt: map[string]time.Time{}, width: cfg.Width,
+		pushed: map[string]Push{}, pushGate: make(chan struct{}, pushWidth), wake: make(chan struct{}, 1)}
 	m.advanced() // a member begins with its pass going on
 	return m
 }
@@ -332,7 +347,11 @@ func New(cfg Config, s Sprint, r Runner, pu Pusher, out io.Writer) *Member {
 // stops when Running is 0.
 func (m *Member) Drain() { m.drain = true }
 
-// Running is how many children are running (a spent launch holds no place).
+// Running is how many lanes the member holds: one for every launch from its start until
+// its card is reported (a spent launch holds none). A child that has exited holds its lane
+// until the report, so the cards a member has working never pass its width (the owner,
+// 2026-10-01: "this \"squishiness\" of having > width in the working set has me
+// concerned."); the sprint's take holds the same bound (internal/sprint, takeOne).
 func (m *Member) Running() int {
 	n := 0
 	for _, l := range m.running {
@@ -343,18 +362,16 @@ func (m *Member) Running() int {
 	return n
 }
 
-// Live is how many children are alive: running and not yet exited (a spent launch
-// holds no place). A child that has exited frees its lane at once, before its
-// report: the lanes the member fills are the width less Live, and Live never
-// passes the width.
-func (m *Member) Live() int {
-	n := 0
-	for _, l := range m.running {
-		if !l.spent && !l.child.Done() {
-			n++
-		}
+// Wake is the word that the next pass is due before the loop's interval: a push ended, or
+// a child exited (a Background member). It holds at most one word.
+func (m *Member) Wake() <-chan struct{} { return m.wake }
+
+// woken leaves the word for the loop, once.
+func (m *Member) woken() {
+	select {
+	case m.wake <- struct{}{}:
+	default:
 	}
-	return n
 }
 
 // readCall is the member's beat or queue verb, asked again once when the store
@@ -390,8 +407,8 @@ const BeatStall = 5 * time.Minute
 
 // PassTimes is where one pass's time went: reading the queue, pushing the ended
 // children's commits, reporting them, and filling the lanes (the take and the starts,
-// their stagger with them). A pass is the member's one line of control, so a lane freed
-// while it runs waits for what is left of it: these four say what it waits on.
+// their stagger with them). A pass is the member's one line of control, so a child that
+// exits while it runs waits for what is left of it: these four say what it waits on.
 type PassTimes struct {
 	Queue, Push, Report, Fill time.Duration
 }
@@ -524,6 +541,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 	// the beat is not this pass's: it goes on its own clock (BeatLoop), so a pass held for
 	// minutes by its pushes and finishes never lets the machine go down while it works
 	code, out := m.readCall("queue", "--as", m.cfg.As, "--json")
+	m.spent.Queue = since()
 	if code != 0 {
 		return 0, fmt.Errorf("queue: exit %d: %s", code, strings.TrimSpace(string(out)))
 	}
@@ -531,7 +549,6 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 	if err := json.Unmarshal(out, &q); err != nil {
 		return 0, fmt.Errorf("queue: not JSON: %w", err)
 	}
-	m.spent.Queue = since()
 	m.epoch = q.Epoch
 	if m.cfg.Width == 0 && q.Width != m.width {
 		// the fleet row changed (fleet up --width, fleet sync): said once, run from now
@@ -556,11 +573,6 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 			return returned
 		}
 	}
-	// 0. Fill every free lane first, before the reports (the owner, 2026-10-01:
-	// "Do the minimal change that would keep working at maximum."): a lane is
-	// free the moment its child exits (Live), so a pass held for seconds by its
-	// pushes and finishes never leaves it empty behind them; the take after the
-	// reports fills what freed during them.
 	ids := make([]string, 0, len(q.Cards))
 	byID := map[string]queueCard{}
 	for _, c := range q.Cards {
@@ -568,18 +580,6 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 		byID[c.ID] = c
 	}
 	sort.Strings(ids)
-	var early map[string]bool // the children alive after the first fill
-	if !m.drain {
-		// a working card with no child of ours first (recovery, below), then the take
-		acted += m.recoverWorking(ids, byID, nil, nil, launch)
-		n, out := m.take(q, held, now, launch)
-		acted += n
-		if out != nil {
-			noAnswer(m.takeVerb(), out)
-		}
-		early = m.alive()
-	}
-	m.spent.Fill = since()
 	// 1. Report every child that ended, one verb per card (each report is its
 	// own words).
 	wasOurs := map[string]bool{}
@@ -738,16 +738,8 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 			fmt.Fprintf(m.out, "%s %s: no longer in the queue (dropped or returned)\n", FinishReaped, id)
 		}
 	}
-	// the lanes filled again only when one freed since the first fill: a child
-	// alive then has exited or been reported, or a moved claim was reaped; so a
-	// pass whose first fill found nothing more asks the store once
 	m.spent.Report = since()
-	now2 := m.alive()
-	freed := len(claimMoved) > 0
-	for id := range early {
-		freed = freed || !now2[id]
-	}
-	if m.drain || !freed {
+	if m.drain {
 		return acted, nil
 	}
 	// 2. Recover in-flight (working/reading) cards that have no child of ours,
@@ -758,12 +750,12 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 	// recovery never overflows capacity; excess cards remain in the queue for
 	// subsequent passes.
 	acted += m.recoverWorking(ids, byID, wasOurs, claimMoved, launch)
-	// 3. Take (begin) again for the lanes that freed during the reports.
+	// 3. Take (begin) for the lanes the reports freed.
 	n, out := m.take(q, held, now, launch)
 	if out != nil {
 		noAnswer(m.takeVerb(), out)
 	}
-	m.spent.Fill += since()
+	m.spent.Fill = since()
 	return acted + n, nil
 }
 
@@ -775,27 +767,15 @@ func (m *Member) takeVerb() string {
 	return "take"
 }
 
-// alive is the cards whose children are alive (Live counts them).
-func (m *Member) alive() map[string]bool {
-	out := map[string]bool{}
-	for id, l := range m.running {
-		if !l.spent && !l.child.Done() {
-			out[id] = true
-		}
-	}
-	return out
-}
-
 // take takes (begins) a card for every free lane in one verb and starts each:
-// a lane is free when no live child holds it (Live), so a child that has exited
-// frees its lane at once, reported or not, and the live children never exceed
-// the width. The cards counted are the queue's ready (asked) cards this member
+// a lane is free when no launch holds it (Running), and a launch holds its lane
+// until its card is reported. The cards counted are the queue's ready (asked) cards this member
 // runs no child for: a card taken earlier in the pass is listed ready still, and
 // is neither counted nor begun again. It returns the starts, and, when the store
 // did not answer the verb, what the verb printed (nil otherwise): nothing was
 // taken, and the pass goes on.
 func (m *Member) take(q queueOut, held []string, now time.Time, launch func(Packet) bool) (acted int, unanswered []byte) {
-	room := m.width - m.Live()
+	room := m.width - m.Running()
 	if room <= 0 {
 		return 0, nil
 	}
@@ -906,7 +886,7 @@ func (m *Member) recoverWorking(ids []string, byID map[string]queueCard, wasOurs
 		if c.Packet == nil {
 			continue
 		}
-		if m.Live() >= m.width {
+		if m.Running() >= m.width {
 			fmt.Fprintf(m.out, "recover %s deferred: width %d full\n", id, m.width)
 			continue
 		}
@@ -923,7 +903,7 @@ func (m *Member) start(p Packet) bool {
 		fmt.Fprintf(m.out, "start %s: already running\n", p.Card)
 		return false
 	}
-	if m.Live() >= m.width {
+	if m.Running() >= m.width {
 		fmt.Fprintf(m.out, "start %s: width %d full\n", p.Card, m.width)
 		return false
 	}
@@ -936,8 +916,11 @@ func (m *Member) start(p Packet) bool {
 		}
 		return false
 	}
+	if w, ok := ch.(Waiter); ok && m.cfg.Background {
+		go func() { <-w.Wait(); m.woken() }()
+	}
 	m.running[p.Card] = launch{child: ch, gen: p.Gen, attempt: p.Attempt, epoch: p.Epoch, branch: p.Branch, packet: p, retried: m.stageRetried[p.Card]}
-	fmt.Fprintf(m.out, "start %s attempt=%d gen=%d running=%d/%d%s\n", p.Card, p.Attempt, p.Gen, m.Live(), m.width, routeWords(p))
+	fmt.Fprintf(m.out, "start %s attempt=%d gen=%d running=%d/%d%s\n", p.Card, p.Attempt, p.Gen, m.Running(), m.width, routeWords(p))
 	return true
 }
 
@@ -951,6 +934,12 @@ func (m *Member) forget(id string, failed bool) {
 	}
 	delete(m.running, id)
 	delete(m.stageRetried, id)
+}
+
+// Waiter is a child that says when it has ended: a Background member's loop is woken then
+// (Wake), so the child's push begins at once and not at the loop's next interval.
+type Waiter interface {
+	Wait() <-chan struct{}
 }
 
 // room is whether a child may be started this tick (Config.Room) and why, saying so when
@@ -1011,59 +1000,81 @@ func (m *Member) moved(l launch, c queueCard) bool {
 	return c.Packet != nil && (l.epoch != c.Packet.Epoch || (!m.cfg.Reader && l.gen != c.Packet.Gen) || (m.cfg.Reader && l.attempt != c.Packet.Attempt))
 }
 
-// pushEnded pushes, before any finish is reported, the commit of every work
-// launch whose child ended and whose claim the queue still holds, pushWidth
-// at a time; each launch keeps its push, so the finish (and a finish the
-// store did not answer, reported again next tick) reads it and never pushes
-// twice. The rule is docs/SPEC-SWARM.md's `member` (the push at a work card's
-// finish) and docs/SPEC-SPRINT.md's finish row (the head the merge reads).
+// pushKey names one launch's push: the card at the claim the child was started for, so a
+// push that ends after its claim moved is never read as the new claim's.
+func pushKey(id string, l launch) string {
+	return fmt.Sprintf("%s %d %d %d", id, l.epoch, l.gen, l.attempt)
+}
+
+// pushEnded begins the push of every work launch whose child ended and whose claim the
+// queue still holds, pushWidth at a time, and gives each launch whose push has ended its
+// push; each launch keeps it, so the finish (and a finish the store did not answer,
+// reported again next tick) reads it and never pushes twice. A push is a fetch and one
+// exchange with the forge: it runs apart from the pass (Config.Background), which never
+// waits on it, and its launch is reported by the pass after it ends; a member that is not
+// Background waits for the pushes it began. The rule is docs/SPEC-SWARM.md's `member` (the
+// push at a work card's finish) and docs/SPEC-SPRINT.md's finish row (the head the merge
+// reads).
 func (m *Member) pushEnded(ids []string, byID map[string]queueCard) {
 	if m.cfg.Reader {
 		return
 	}
-	var due []string
+	var wg sync.WaitGroup
 	for _, id := range ids {
 		c := byID[id]
 		l, ours := m.running[id]
-		if !ours || l.push != nil || c.Col != "working" || m.moved(l, c) || !l.child.Done() {
+		if !ours || l.push != nil || l.pushing || c.Col != "working" || m.moved(l, c) || !l.child.Done() {
 			continue
 		}
-		due = append(due, id)
-	}
-	pushes := make([]Push, len(due))
-	var wg sync.WaitGroup
-	gate := make(chan struct{}, pushWidth)
-	for i, id := range due {
-		l := m.running[id]
-		r := l.child.Result()
+		key, r := pushKey(id, l), l.child.Result()
+		none := ""
 		switch {
 		case r.Head == "":
-			pushes[i] = Push{None: "the child's result names no commit (no head: line, no push recorded)"}
+			none = "the child's result names no commit (no head: line, no push recorded)"
 		case l.branch == "":
-			pushes[i] = Push{None: "the packet names no branch to push to"}
+			none = "the packet names no branch to push to"
 		case m.pusher == nil:
-			pushes[i] = Push{None: "this member has no pusher"}
-		default:
-			wg.Add(1)
-			go func(i int, p Packet, r Result) {
-				defer wg.Done()
-				gate <- struct{}{}
-				defer func() { <-gate }()
-				pushes[i] = m.pusher.Push(p, r)
-				m.advanced() // a push that ended is the pass going on
-			}(i, l.packet, r)
+			none = "this member has no pusher"
 		}
+		l.pushing = true
+		m.running[id] = l
+		if none != "" {
+			m.pushMu.Lock()
+			m.pushed[key] = Push{None: none}
+			m.pushMu.Unlock()
+			continue
+		}
+		wg.Add(1)
+		go func(p Packet) {
+			defer wg.Done()
+			m.pushGate <- struct{}{}
+			pu := m.pusher.Push(p, r)
+			<-m.pushGate
+			m.advanced() // a push that ended is the pass going on
+			m.pushMu.Lock()
+			m.pushed[key] = pu
+			m.pushMu.Unlock()
+			m.woken()
+		}(l.packet)
 	}
-	wg.Wait()
-	for i, id := range due {
-		l := m.running[id]
-		pu := pushes[i]
+	if !m.cfg.Background {
+		wg.Wait()
+	}
+	m.pushMu.Lock()
+	defer m.pushMu.Unlock()
+	for id, l := range m.running {
+		pu, ended := m.pushed[pushKey(id, l)]
+		if !l.pushing || !ended {
+			continue
+		}
 		if pu.Sha == "" && pu.Refused == "" && pu.None == "" {
 			pu.Refused = "the pusher said nothing"
 		}
-		l.push = &pu
+		l.push, l.pushing = &pu, false
 		m.running[id] = l
 	}
+	// collected, or its launch was forgotten while it ran (the claim moved): nobody's
+	clear(m.pushed)
 }
 
 // cut is a report cut at 500 bytes, the bound oneLine keeps.

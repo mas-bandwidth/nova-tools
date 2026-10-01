@@ -201,7 +201,7 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	if *diskFloor > 0 {
 		room = diskRoom(*slots, *diskFloor, diskFree)
 	}
-	m := member.New(member.Config{As: *as, Width: *width, Reader: *reader, Meter: meter, Room: room, Sleep: time.Sleep}, sp, rn, pu, stdout) // Sleep: harness starts StartGap apart
+	m := member.New(member.Config{As: *as, Width: *width, Reader: *reader, Meter: meter, Room: room, Sleep: time.Sleep, Background: true}, sp, rn, pu, stdout) // Sleep: harness starts StartGap apart
 	kind := "member"
 	if *reader {
 		kind = "reader"
@@ -223,6 +223,7 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	if removed, kept := rn.prune(time.Now()); removed > 0 {
 		fmt.Fprintf(stdout, "NOTE sweep: removed %d ended launch directories under %s, kept the newest %d\n", removed, oneline.Field(*slots), kept)
 	}
+	rn.cleaner() // from here a launch the member ends is tagged, and removed apart from its pass
 	n, replaced := memberLoop(m, every.d, loopTicks(*once, ticksGiven, *ticks), func() string { return binstamp.Of(self) }, stdout, stderr)
 	if replaced {
 		return exitReplaced
@@ -291,13 +292,19 @@ func memberLoop(m *member.Member, every time.Duration, limit int, stamp func() s
 		if acted > 0 || err != nil {
 			// where the pass's time went, by part: a lane freed during a pass waits for the rest of it
 			spent := m.LastPass()
-			fmt.Fprintf(stdout, "tick %d acted=%d running=%d live=%d %s queue=%.1fs push=%.1fs report=%.1fs fill=%.1fs\n", n, acted, m.Running(), m.Live(), oneline.Field(time.Now().Format("15:04:05")),
+			fmt.Fprintf(stdout, "tick %d acted=%d running=%d %s queue=%.1fs push=%.1fs report=%.1fs fill=%.1fs\n", n, acted, m.Running(), oneline.Field(time.Now().Format("15:04:05")),
 				spent.Queue.Seconds(), spent.Push.Seconds(), spent.Report.Seconds(), spent.Fill.Seconds())
 		}
 		if limit > 0 && n >= limit {
 			return n, false
 		}
-		time.Sleep(every)
+		// the next pass at the interval, or at once when a push ended or a child exited
+		wait := time.NewTimer(every)
+		select {
+		case <-wait.C:
+		case <-m.Wake():
+			wait.Stop()
+		}
 	}
 }
 
@@ -363,12 +370,19 @@ type nativeRunner struct {
 	env                                                       []string // added to this process's environment: none in production, a test's
 	pass                                                      []string // the secret names handed to native (--pass, the worker's secret)
 
-	live, kept map[string]bool // launches started and not yet ended; failed ones ended and kept (slotclean.go)
+	// launches started and not yet ended; failed ones ended and kept (slotclean.go). mu
+	// guards both: the member's pass tags a launch ended while the cleaner prunes. tagged
+	// is the cleaner's queue; nil cleans in Ended
+	mu         sync.Mutex
+	live, kept map[string]bool
+	tagged     chan ended
 }
 
 // started marks a launch running, so no prune of the pool touches its directory until the
 // member ends it (slotclean.go).
 func (r *nativeRunner) started(name string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	if r.live == nil {
 		r.live = map[string]bool{}
 	}
@@ -544,6 +558,9 @@ type nativeChild struct {
 	once                        sync.Once
 	result                      member.Result
 }
+
+// Wait is closed when the child has ended (member.Waiter).
+func (c *nativeChild) Wait() <-chan struct{} { return c.done }
 
 func (c *nativeChild) Done() bool {
 	select {

@@ -1016,7 +1016,7 @@ command that loads it.
 | start, stop | set the machine RUNNING or STOPPED (section 14) |
 | run | ticks on every line of the log (at most every 100 ms) and once a second while the log is quiet; before each tick it reads its own binary's file, and when a new build was installed under it since it began it stops (`RUN STOP the binary this loop runs was replaced ...`, exit 3) so its supervisor starts the new one: a loop never ticks the store with older code than the verbs run |
 | tick | one tick by hand |
-| take | a worker moves work cards fleet ready -> working; `--as <member>`, `<card>@<gen>` |
+| take | a worker moves work cards fleet ready -> working; `--as <member>`, `<card>@<gen>`. The width is hard: a member's working cards never pass its fleet row's width, held here whatever is asked; a take by count is cut to the room, a take by id past it is refused |
 | finish | work cards done ok or failed; primaries to review; `--as <member>`, `<card>@<gen>`; `--usage <text>` (what the run spent) is kept on the attempt's record, timed and priced (section 2, What a card cost) |
 | ask | deals primaries in review to two different readers; `--another` |
 | queue | a reader's read cards or a member's work cards, oldest first (`--as`; a member's `--json` carries its fleet row's `width`), or a stream's merge queue (`--stream`) |

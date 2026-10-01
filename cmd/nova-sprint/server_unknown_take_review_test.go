@@ -53,7 +53,7 @@ func TestServerReviewMemberRecoversATakeWhenEveryReplyWasLost(t *testing.T) {
 			require.NoError(t, err, log.String())
 			require.Len(t, runner.packets, 2, "recover the two existing claims")
 			assert.NotEqual(t, runner.packets[0].Card, runner.packets[1].Card)
-			assert.Equal(t, 2, m.Live())
+			assert.Equal(t, 2, m.Running())
 			q := r.queue("m1")
 			assert.Len(t, q["working"], 2)
 			assert.Len(t, q["ready"], 2, "no new take on the recovery pass")

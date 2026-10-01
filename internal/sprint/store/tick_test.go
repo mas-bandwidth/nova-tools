@@ -39,15 +39,20 @@ func (h *harness) stopMachine() {
 // every card it holds, ok.
 func (h *harness) work(member string) {
 	h.t.Helper()
-	h.run(TakeStep(sprint.TakeReq{As: member, Sel: sprint.Sel{Limit: 100}, Who: member}))
-	s := h.snap()
-	var ids []string
-	gens := map[string]int{}
-	for _, c := range s.Fleet.Cell(member, sprint.Working) {
-		ids = append(ids, c.ID)
-		gens[c.ID] = c.Int("gen")
-	}
-	if len(ids) > 0 {
+	// a take is cut to the member's width (the width is hard, sprint.takeOne): it takes its
+	// width, finishes it, and takes again until it holds nothing ready
+	for {
+		h.run(TakeStep(sprint.TakeReq{As: member, Sel: sprint.Sel{Limit: 100}, Who: member}))
+		s := h.snap()
+		var ids []string
+		gens := map[string]int{}
+		for _, c := range s.Fleet.Cell(member, sprint.Working) {
+			ids = append(ids, c.ID)
+			gens[c.ID] = c.Int("gen")
+		}
+		if len(ids) == 0 {
+			return
+		}
 		h.must(FinishStep(sprint.FinishReq{As: member, Sel: sprint.Sel{IDs: ids}, Gens: gens, Who: member}))
 	}
 }

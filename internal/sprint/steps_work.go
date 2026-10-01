@@ -928,6 +928,17 @@ func takeOne(s *Snapshot, r TakeReq) Plan {
 		return p
 	}
 	byID := named(sel)
+	// THE WIDTH IS HARD: a member's working cards never pass its width, held here, at the
+	// sprint's one writer, whatever the member asks (the owner, 2026-10-01: "this
+	// \"squishiness\" of having > width in the working set has me concerned."). A take by
+	// count is cut to the room; a take by id past it is refused.
+	room := max(s.Width(r.As)-len(s.Fleet.Cell(r.As, Working)), 0)
+	if !byID {
+		if room == 0 {
+			return p
+		}
+		sel.Limit = min(sel.Limit, room)
+	}
 	// the member's ready cards in stream turns (takeTurns), as the deal dealt
 	// them: a member holding DealAhead times its width takes its width of them
 	// from every stream alike, never one stream's lowest scores first (errata 3
@@ -940,6 +951,12 @@ func takeOne(s *Snapshot, r TakeReq) Plan {
 		}
 		if !c.Placed() || c.Row != r.As || c.Col != Ready {
 			return "not in " + r.As + " ready (it is " + placeWord(c) + ")"
+		}
+		if byID {
+			if room == 0 {
+				return fmt.Sprintf("member %s is at its width (%d working of %d): a card is taken when one is reported", r.As, len(s.Fleet.Cell(r.As, Working)), s.Width(r.As))
+			}
+			room--
 		}
 		return ""
 	}, s.Fleet.Card)

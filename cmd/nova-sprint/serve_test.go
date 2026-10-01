@@ -331,7 +331,7 @@ func TestAMemberWorksThroughTheServer(t *testing.T) {
 		pass()
 		r.boss("nova-sprint tick")
 		assert.Len(t, rn.packets, 2*(round+2), "the freed lanes are filled again: %s", log.String())
-		assert.LessOrEqual(t, m.Live(), 2, "never over its width")
+		assert.LessOrEqual(t, m.Running(), 2, "never over its width")
 	}
 	// a member with no load sampled yet does not beat a load it did not measure
 	require.ErrorContains(t, m.Beat(), "no sample yet")
