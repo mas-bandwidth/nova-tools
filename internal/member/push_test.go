@@ -90,7 +90,7 @@ const fullSha = "0123456789abcdef0123456789abcdef01234567"
 func TestAnEndedCardIsPushedBeforeItIsFinished(t *testing.T) {
 	t.Parallel()
 	pu := &fakePusher{def: Push{Sha: fullSha}}
-	g, _ := pushRig(t, pu, Result{Ran: true, OK: true, Head: "0123456", Report: "landed the thing"})
+	g, _ := pushRig(t, pu, Result{Ran: true, OK: true, Shaped: true, Verdict: "ok", Head: "0123456", Report: "landed the thing"})
 	acted, err := g.tick(t)
 	require.NoError(t, err)
 	assert.Equal(t, 1, acted)
@@ -102,8 +102,9 @@ func TestAnEndedCardIsPushedBeforeItIsFinished(t *testing.T) {
 }
 
 // A push that git refuses is a NOTE on the member's output and a failed
-// finish whose report starts with git's line: the sprint shows a failed card,
-// never a done one whose work is not on origin.
+// finish whose report starts with git's line, naming no head and no branch:
+// the sprint shows a failed card, never one whose work is not on origin
+// (docs/SPEC-CARD-CONTRACT.md section 4).
 func TestARefusedPushIsANoteAndAFailedFinish(t *testing.T) {
 	t.Parallel()
 	line := "!\t" + fullSha + ":refs/heads/work/c1\t[rejected] (non-fast-forward)"
@@ -113,33 +114,35 @@ func TestARefusedPushIsANoteAndAFailedFinish(t *testing.T) {
 	require.NoError(t, err)
 	finish := g.s.lines("finish")
 	require.Len(t, finish, 1)
-	assert.Contains(t, finish[0], "--report push refused: "+line+"; landed --head "+fullSha+" --branch work/c1 --failed --epoch 7")
+	assert.Equal(t, "finish --as m c1@1 --report push refused: "+line+"; landed --failed --epoch 7", finish[0])
 	assert.Contains(t, g.out.String(), "NOTE push c1 refused: "+line+"\n")
 	assert.Contains(t, g.out.String(), "finish c1 ok=false exit=0\n", "the line printed says what was reported")
 }
 
-// A child that named no commit is not pushed, and says so; the finish is the
-// one it always was.
+// A child that named no commit is not pushed, says so, and is finished
+// failed, no commit, naming no branch.
 func TestAChildWithNoCommitIsNotPushed(t *testing.T) {
 	t.Parallel()
 	pu := &fakePusher{def: Push{Sha: fullSha}}
-	g, _ := pushRig(t, pu, Result{Ran: true, OK: true, Report: "nothing to commit"})
+	g, _ := pushRig(t, pu, Result{Ran: true, OK: true, Shaped: true, Verdict: "ok", Report: "nothing to commit"})
 	_, err := g.tick(t)
 	require.NoError(t, err)
 	assert.Empty(t, pu.cards(), "a result with no head is never pushed")
-	assert.Equal(t, []string{"finish --as m c1@1 --report nothing to commit --branch work/c1 --epoch 7"}, g.s.lines("finish"))
+	assert.Equal(t, []string{"finish --as m c1@1 --report no commit: the child's result names no commit (no head: line, no push recorded); nothing to commit --failed --epoch 7"}, g.s.lines("finish"))
 	assert.Contains(t, g.out.String(), "push c1: not pushed: the child's result names no commit")
 }
 
-// A pusher that finds nothing of the child's to push (None) leaves the finish
-// as the child said it, and the member's output says why.
-func TestAPushOfNothingIsSaidAndTheFinishStands(t *testing.T) {
+// A pusher that finds nothing of the child's to push (None) is a failed
+// finish, no commit: a card with nothing on origin never goes to review
+// (docs/SPEC-CARD-CONTRACT.md section 4), and the member's output says why.
+func TestAPushOfNothingIsAFailedFinishNoCommit(t *testing.T) {
 	t.Parallel()
 	pu := &fakePusher{def: Push{None: "the child committed nothing"}}
-	g, _ := pushRig(t, pu, Result{Ran: true, OK: true, Head: fullSha, Report: "done"})
+	g, _ := pushRig(t, pu, Result{Ran: true, OK: true, Shaped: true, Verdict: "ok", Head: fullSha, Report: "done"})
 	_, err := g.tick(t)
 	require.NoError(t, err)
-	assert.Equal(t, []string{"finish --as m c1@1 --report done --head " + fullSha + " --branch work/c1 --epoch 7"}, g.s.lines("finish"))
+	assert.Equal(t, []string{"finish --as m c1@1 --report no commit: the child committed nothing; done --failed --epoch 7"}, g.s.lines("finish"))
+	assert.Contains(t, g.out.String(), "NOTE finish c1 failed: no commit: the child committed nothing\n")
 	assert.Contains(t, g.out.String(), "push c1: not pushed: the child committed nothing\n")
 }
 
@@ -239,7 +242,67 @@ func TestCardTextSaysTheMemberPushes(t *testing.T) {
 		p := pk("c1")
 		p.Base = base
 		got := CardText(p, "nova-sprint")
-		assert.Contains(t, got, "When you end, the member pushes that commit to origin's branch work/c1; push nothing yourself (the wall holds no credential).", "base %q", base)
-		assert.Contains(t, got, "`rev: <sha>`", "base %q", base)
+		assert.Contains(t, got, "When you end, the member pushes your commit to origin's branch work/c1 from outside the wall.", "base %q", base)
+		assert.Contains(t, got, "JOB.md, which the prompt names first", "base %q", base)
+		assert.NotContains(t, got, "rev:", "base %q", base)
 	}
+}
+
+// Judge is the finish rule in one place (tla/CardContract.tla, Judge): ok
+// only with the shape, the verdict ok and a pushed commit; every other end is
+// failed with its reason.
+func TestJudgeIsTheFinishRule(t *testing.T) {
+	t.Parallel()
+	shaped := Result{Shaped: true, Verdict: "ok", Head: fullSha, Report: "r"}
+	for _, tc := range []struct {
+		name string
+		r    Result
+		pu   Push
+		fin  Finish
+		why  string
+	}{
+		{"shaped, ok, pushed", shaped, Push{Sha: fullSha}, FinishOK, ""},
+		{"no shape", Result{Verdict: "ok", Head: fullSha}, Push{Sha: fullSha}, FinishFailed, "no RESULT.md shape"},
+		{"not done", Result{Shaped: true, Verdict: "not-done", Report: "r"}, Push{Sha: fullSha}, FinishFailed, "verdict not-done"},
+		{"no commit", shaped, Push{None: "nothing new"}, FinishFailed, "no commit: nothing new"},
+		{"push refused", shaped, Push{Refused: "! [rejected]"}, FinishFailed, "push refused: ! [rejected]"},
+		{"nothing to do", Result{Shaped: true, Verdict: "nothing", Report: "nothing: the check holds"}, Push{None: "nothing new"}, FinishFailed, "nothing to do: the check holds"},
+		{"nothing to do, said plainly", Result{Shaped: true, Verdict: "nothing", Report: "the check holds"}, Push{None: "nothing new"}, FinishFailed, "nothing to do: the check holds"},
+	} {
+		fin, why := Judge(tc.r, tc.pu)
+		assert.Equal(t, tc.fin, fin, tc.name)
+		assert.Equal(t, tc.why, why, tc.name)
+	}
+}
+
+// A work child that wrote `verdict: broken` and committed nothing is failed,
+// never ok: it goes to the failed-work judgment, not to review with nothing to
+// read (docs/SPEC-CARD-CONTRACT.md section 4; red on the base before it).
+func TestAWorkChildWithNoCommitAndNoShapeIsFailed(t *testing.T) {
+	t.Parallel()
+	pu := &fakePusher{}
+	g, _ := pushRig(t, pu, Result{Ran: true, OK: true, Verdict: "broken", Report: "could not build"})
+	_, err := g.tick(t)
+	require.NoError(t, err)
+	finish := g.s.lines("finish")
+	require.Len(t, finish, 1)
+	assert.Contains(t, finish[0], "--failed")
+	assert.NotContains(t, finish[0], "--branch", "a finish names only a branch a push landed on")
+	assert.Contains(t, g.out.String(), "finish c1 ok=false exit=0\n")
+}
+
+// A pushed head whose result asked for a pull request carries its address in
+// the report; one the pusher could not open is a NOTE and the finish stands.
+func TestThePullRequestRidesOnTheFinish(t *testing.T) {
+	t.Parallel()
+	r := Result{Ran: true, OK: true, Shaped: true, Verdict: "ok", Head: fullSha, Report: "r", Title: "T"}
+	g, _ := pushRig(t, &fakePusher{def: Push{Sha: fullSha, PR: "https://example.com/o/n/pull/7"}}, r)
+	_, err := g.tick(t)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"finish --as m c1@1 --report pushed=" + fullSha + " to work/c1 pr=https://example.com/o/n/pull/7: r --head " + fullSha + " --branch work/c1 --epoch 7"}, g.s.lines("finish"))
+	g, _ = pushRig(t, &fakePusher{def: Push{Sha: fullSha, PRNote: "no gh"}}, r)
+	_, err = g.tick(t)
+	require.NoError(t, err)
+	assert.NotContains(t, g.s.lines("finish")[0], "--failed")
+	assert.Contains(t, g.out.String(), "NOTE pr c1 not opened: no gh\n")
 }

@@ -26,6 +26,7 @@ var swarmAudit = audit.Config{
 	// text in the same function share an entry. Each is a claim a reader can check.
 	Exempt: map[string]string{
 		"main.go|parse|f.verb":     "the verb's own name, a literal at every newFlags call site in this file",
+		"member.go|cmdMember|note": "passNote's one line, a literal with no argument interpolated",
 		"main.go|want|name":        "a required flag's name, a literal at every call site in this file",
 		"main.go|want|wants":       "the guidance that flag wants, a literal at every call site in this file",
 		"main.go|wantCount|name":   "a required count flag's name, a literal at every call site in this file",
@@ -168,6 +169,14 @@ var swarmAudit = audit.Config{
 		// of this binary: the one line it holds is the gh script's own stderr, written by
 		// that script in the card's shell, never by nova-swarm.
 		`"github.com/mas-bandwidth/nova-tools/internal/nogh"`,
+		// cardcontract (docs/SPEC-CARD-CONTRACT.md) writes FILES -- the frame, JOB.md and the
+		// profile's shims into <slot>/shim -- through atomicfile, and reads RESULT.md and
+		// pushed.tsv into values. It prints nothing to any stream of this binary; the lines
+		// the shims print are their own, in the card's shell, never nova-swarm's.
+		`"github.com/mas-bandwidth/nova-tools/internal/cardcontract"`,
+		// typedrec (the one-typed-parser rule, #2506) reads a card's RESULT.md into a value
+		// and says whether a string is a commit id; it holds no writer and prints nothing.
+		`"github.com/mas-bandwidth/nova-tools/internal/typedrec"`,
 		// atomicfile writes one FILE whole (a temporary beside it, fsync, rename): it takes a
 		// path and the bytes of the file and puts no byte on any stream of this binary. The
 		// audit's Write check lets atomicfile.Write by its package name for that reason.

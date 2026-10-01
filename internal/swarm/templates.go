@@ -114,7 +114,7 @@ var templateCard = "RESULT: <label> sha=<sha12>\n" +
 	"STEP 3. Make it pass in the files this card names, and only those. Cite the model or the design section from each function that implements a rule.\n" +
 	"STEP 4. Run the gate: go test -count=1 -timeout 600s ./internal/<package>/ ./internal/ci/ and read the last line of each.\n" +
 	"STEP 5. Commit on your own branch with the trailer, push it with a plain git push, and open the pull request against <base>. The body states the diff stat, what was deleted, the tests with what each pins, and what was not done.\n" +
-	"STEP 6. Write RESULT.md: line 1 is line 1 of this card; under it the PR number and sha, every test package line, and what you could not do and why, in under 80 lines.\n"
+	"STEP 6. End as JOB.md says (docs/SPEC-CARD-CONTRACT.md): where JOB.md ends the card with its pull request, that is the end and there is nothing else to write, the gate's lines in the pull request body; where it asks for RESULT.md, write it in JOB.md's shape (head, branch, verdict, gate, output, report).\n"
 
 // templateResult is the ONE shape a report has, so the fold is mechanical and a person
 // reads counts. The parser in result.go parses exactly this and nothing else.

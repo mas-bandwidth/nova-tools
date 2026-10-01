@@ -10,8 +10,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
 	"github.com/mas-bandwidth/nova-tools/internal/member"
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
@@ -120,6 +122,12 @@ func TestNewestResultPicksTheNewestOfTwo(t *testing.T) {
 	}
 }
 
+// fullSha and pushedSha are two commits a result or the git shim names.
+const (
+	fullSha   = "0123456789abcdef0123456789abcdef01234567"
+	pushedSha = "89abcdef0123456789abcdef0123456789abcdef"
+)
+
 // TestNativeChildReadsHowItEnded pins Result: the verdict word, rc and
 // harness word of the NATIVE line decide ok, and the report falls back to a
 // sentence that names the log when the child published none.
@@ -135,12 +143,17 @@ func TestNativeChildReadsHowItEnded(t *testing.T) {
 		name, log, result string
 		ok                bool
 		head, report      string
+		pushed            string // what the git shim recorded in the job
+		finish            string // what the gh shim recorded in the job
 	}{
-		{"ok with a result", native("OK", 0, "ok"), "rev: abc\n## One line\nall good\n", true, "abc", "all good"},
-		{"ok without a one-line report", native("OK", 0, "ok"), "", true, "", "finished; the child published no one-line report"},
-		{"incomplete", native("INCOMPLETE", 0, "silent"), "", false, "", "the child ended without a result (see LOG)"},
-		{"ok word with rc 1", native("OK", 1, "ok"), "## One line\nhalf\n", false, "", "half"},
-		{"no NATIVE line", "the child died\n", "", false, "", "the child ended without a result (see LOG)"},
+		{"ok with a result", native("OK", 0, "ok"), "rev: abc\n## One line\nall good\n", true, "abc", "all good", "", ""},
+		{"ok without a one-line report", native("OK", 0, "ok"), "", true, "", "finished; the child published no one-line report", "", ""},
+		{"incomplete", native("INCOMPLETE", 0, "silent"), "", false, "", "the child ended without a result (see LOG)", "", ""},
+		{"ok word with rc 1", native("OK", 1, "ok"), "## One line\nhalf\n", false, "", "half", "", ""},
+		{"no NATIVE line", "the child died\n", "", false, "", "the child ended without a result (see LOG)", "", ""},
+		{"the contract's shape", native("OK", 0, "ok"), "head: " + fullSha + "\nbranch: b\nverdict: ok\ngate: -\noutput: -\nreport: shaped\ntitle: T\n\n## Body\n\nB\n", true, fullSha, "shaped", "", ""},
+		{"the shim's finish, the child's own RESULT.md riding in its body", native("OK", 0, "ok"), "RESULT: c1 sha=0123\n## One line\ngate green\n", true, fullSha, "The change", "", "head: " + fullSha + "\nbranch: sprint/c1\nverdict: ok\ngate: -\noutput: -\nreport: The change\ntitle: The change\n\n## Body\n\nthe body\n"},
+		{"a shape naming no head, a push recorded", native("OK", 0, "ok"), "head: -\nbranch: b\nverdict: not-done\ngate: -\noutput: -\nreport: stuck\n", true, pushedSha, "stuck", "sprint/c1\t" + pushedSha + "\t/j/repo\n", ""},
 	} {
 		dir := t.TempDir()
 		logPath := filepath.Join(dir, "c1.native.log")
@@ -149,12 +162,18 @@ func TestNativeChildReadsHowItEnded(t *testing.T) {
 		if tc.result != "" {
 			write(t, filepath.Join(results, "run", "1", "RESULT.md"), tc.result)
 		}
-		c := &nativeChild{card: "c1", logPath: logPath, results: results, done: done}
+		job := filepath.Join(dir, "job")
+		write(t, filepath.Join(job, cardcontract.PushedName), tc.pushed)
+		write(t, filepath.Join(job, cardcontract.FinishName), tc.finish)
+		c := &nativeChild{card: "c1", logPath: logPath, results: results, job: job, done: done}
 		if !c.Done() {
 			t.Fatalf("%s: a child whose done channel is closed is done", tc.name)
 		}
 		r := c.Result()
 		wantReport := strings.ReplaceAll(tc.report, "LOG", logPath)
+		if tc.finish != "" {
+			assert.Equal(t, "the body\n\n## RESULT.md\n\nRESULT: c1 sha=0123\n## One line\ngate green", r.Body, "the child's RESULT.md rides in the body")
+		}
 		if r.OK != tc.ok || r.Head != tc.head || r.Report != wantReport {
 			t.Errorf("%s: Result = %+v, want ok=%t head=%q report=%q", tc.name, r, tc.ok, tc.head, wantReport)
 		}
@@ -529,4 +548,28 @@ func TestMemberAcceptsPositiveTicks(t *testing.T) {
 	var out, errb bytes.Buffer
 	require.Equal(t, 0, run(args, strings.NewReader(""), &out, &errb, time.Now()), "stderr %q", errb.String())
 	require.Contains(t, out.String(), "MEMBER OK as=m1 ticks=2 running=0")
+}
+
+// A card's native child starts with an allowlist environment
+// (docs/SPEC-CARD-CONTRACT.md): what native, git and the harness need, the
+// secrets --pass names, and nothing else; a name that carries a credential is
+// dropped unless --pass names it, even in an allowed family.
+func TestTheChildEnvironmentIsAnAllowlist(t *testing.T) {
+	t.Parallel()
+	got := childEnviron([]string{"GH_TOKEN=t", "GITHUB_TOKEN=t", "SSH_AUTH_SOCK=/s", "GIT_ASKPASS=/a", "CLAUDE_CODE_MESSAGING_TOKEN=m",
+		"AWS_SECRET_ACCESS_KEY=a", "FOO_PASSWORD=p", "FOO=bar", "ANTHROPIC_API_KEY=k", "OPENCODE_API_KEY=o", "GOAUTH=g",
+		"PATH=/bin", "HOME=/h", "TMPDIR=/t", "LANG=C.UTF-8", "LC_ALL=C", "GOFLAGS=-mod=readonly", "XDG_DATA_HOME=/x", "NOVA_SWARM_JOB=/j"},
+		[]string{"OPENCODE_API_KEY"})
+	require.Equal(t, []string{"OPENCODE_API_KEY=o", "PATH=/bin", "HOME=/h", "TMPDIR=/t", "LANG=C.UTF-8", "LC_ALL=C",
+		"GOFLAGS=-mod=readonly", "XDG_DATA_HOME=/x", "NOVA_SWARM_JOB=/j"}, got)
+}
+
+// A member whose children would start with no provider key says so once at its
+// start, unless the model is local or a key is handed some other way.
+func TestAMemberWithNoPassSaysSo(t *testing.T) {
+	t.Parallel()
+	assert.Contains(t, passNote("anthropic/claude-x", nil, ""), "NOTE member --pass names no secret")
+	assert.Empty(t, passNote("anthropic/claude-x", []string{"ANTHROPIC_API_KEY"}, ""))
+	assert.Empty(t, passNote("anthropic/claude-x", nil, "/auth.json"))
+	assert.Empty(t, passNote("ollama/qwen3", nil, ""))
 }

@@ -233,3 +233,9 @@ MCDirtyTickReadAcquire.cfg	MCDirtyTickRead.tla	invariant	TwinIsTheStore	ignore-t
 MCDirtyTickReadHalt.cfg	MCDirtyTickRead.tla	invariant	BeganRunning	ignore-terminal	dirtytickread-halt	required	-
 MCDirtyTickReadCatchup.cfg	MCDirtyTickRead.tla	invariant	ViewIsSnapshot	ignore-terminal	dirtytickread-catchup	required	-
 MCDirtyTickReadLock.cfg	MCDirtyTickRead.tla	invariant	LockedApplyNotLost	ignore-terminal	dirtytickread-lock	required	-
+MCCardContract.cfg	MCCardContract.tla	pass	-	ignore-terminal	cardcontract	required	-
+MCCardContractBrokenToday.cfg	MCCardContract.tla	invariant	OkIsPushedWork	ignore-terminal	cardcontract	required	-
+MCCardContractBrokenNoShape.cfg	MCCardContract.tla	invariant	OkIsPushedWork	ignore-terminal	cardcontract	required	-
+MCCardContractBrokenPushIgnored.cfg	MCCardContract.tla	invariant	OkIsPushedWork	ignore-terminal	cardcontract	required	-
+MCCardContractBrokenReapReported.cfg	MCCardContract.tla	invariant	ReapedIsNotReported	ignore-terminal	cardcontract	required	-
+MCCardContractBrokenBranchName.cfg	MCCardContract.tla	invariant	StagedFromOrigin	ignore-terminal	cardcontract	required	-
