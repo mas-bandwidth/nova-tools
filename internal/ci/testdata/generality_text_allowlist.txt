@@ -16,7 +16,7 @@
 # - A count that falls, or a row with no finding, fails until the row shrinks.
 # - NOVA_CI_UPDATE=1 removes such rows and never adds one.
 #
-# ceiling: 229
+# ceiling: 225
 .github/scripts/live-packages.sh:glenn 1
 .github/scripts/plan-merge-shards.sh:rowan 1
 .github/scripts/select-packages.sh:glenn 1
