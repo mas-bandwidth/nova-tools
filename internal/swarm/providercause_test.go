@@ -39,8 +39,8 @@ func TestCauseFromTheHarnessLogAndOutput(t *testing.T) {
 			`message="stream error" providerID=openrouter modelID=qwen/qwen3.7-flash error.error="ProviderHeaderTimeoutError: Provider response headers timed out after 45000ms"`,
 			ProviderCause{CauseTimeout, 0, "ProviderHeaderTimeoutError: Provider response headers timed out after 45000ms"}},
 		{"captured: rate limited upstream",
-			`message="stream error" providerID=openrouter modelID=qwen/qwen3.7-flash error.error="AI_APICallError: [Alibaba] qwen/qwen3.7-flash is temporarily rate-limited upstream. Please retry shortly, or add your own key to accumulate your rate limits: https://provider.example.com/settings"`,
-			ProviderCause{CauseRateLimited, 0, "[Alibaba] qwen/qwen3.7-flash is temporarily rate-limited upstream. Please retry shortly, or add your own key to ...+66B"}},
+			`message="stream error" providerID=openrouter modelID=qwen/qwen3.7-flash error.error="AI_APICallError: [Alibaba] qwen/qwen3.7-flash is temporarily rate-limited upstream. Please retry shortly, or add your own key to accumulate your rate limits: https://example.com/settings"`,
+			ProviderCause{CauseRateLimited, 0, "[Alibaba] qwen/qwen3.7-flash is temporarily rate-limited upstream. Please retry shortly, or add your own key to ...+57B"}},
 		{"captured: the harness's own UnknownError, which names no cause",
 			"}\n}\n    \"ref\": \"err_6d7eea8c\"\n    \"message\": \"Unexpected server error. Check server logs for details.\",\n  \"data\": {\n  \"name\": \"UnknownError\",",
 			ProviderCause{CauseOther, 0, "UnknownError: Unexpected server error. Check server logs for details."}},
@@ -86,7 +86,7 @@ func TestCauseFromTheSessionsRecord(t *testing.T) {
 		ok        bool
 	}{
 		{"captured: a 410 whose body is the provider's server error",
-			`{"name":"APIError","data":{"message":"Upstream request failed: Endpoint is unavailable.","statusCode":410,"isRetryable":false,"responseHeaders":{"server":"cloudflare"},"responseBody":"{\"error\":{\"type\":\"server_error\",\"message\":\"Upstream request failed: Endpoint is unavailable.\"}}","metadata":{"url":"https://provider.example.com/v1/chat/completions"}}}`,
+			`{"name":"APIError","data":{"message":"Upstream request failed: Endpoint is unavailable.","statusCode":410,"isRetryable":false,"responseHeaders":{"server":"cloudflare"},"responseBody":"{\"error\":{\"type\":\"server_error\",\"message\":\"Upstream request failed: Endpoint is unavailable.\"}}","metadata":{"url":"https://example.com/v1/chat/completions"}}}`,
 			ProviderCause{Cause5xx, 410, "Upstream request failed: Endpoint is unavailable."}, true},
 		{"documented: an unknown model (400 with the model's words)",
 			`{"name":"APIError","data":{"message":"acme/not-a-model is not a valid model ID","statusCode":400,"responseBody":"{\"error\":{\"message\":\"acme/not-a-model is not a valid model ID\",\"code\":400}}"}}`,
