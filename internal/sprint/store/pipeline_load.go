@@ -44,8 +44,8 @@ func (st *Store) PipelinedLoadWithFence(ctx context.Context, tables []string, ex
 		}
 		return s, f2, err
 	}
-	return nil, Fence{}, fmt.Errorf("the tables are busy: table %s kept changing while it was read, %d reads in %s; nothing was changed; run the verb again",
-		last.table, r.tries, r.slept().Round(time.Millisecond))
+	return nil, Fence{}, &busyReadError{fmt.Errorf("the tables are busy: table %s kept changing while it was read, %d reads in %s; nothing was changed; run the verb again",
+		last.table, r.tries, r.slept().Round(time.Millisecond))}
 }
 
 func (st *Store) pipelinedLoadOnceWithFence(ctx context.Context, tables []string, extras func(*sprint.Snapshot) map[string][]string) (*sprint.Snapshot, Fence, error) {

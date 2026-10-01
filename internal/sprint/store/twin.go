@@ -269,7 +269,7 @@ func (st *Store) twinRead(ctx context.Context, tw *Twin, load []string, extras f
 		}
 		return snap, f2, nil
 	}
-	return nil, Fence{}, fmt.Errorf("the sprint is busy: other operations kept the fence moving, %d reads in %s; nothing was changed; run the verb again", r.tries, r.slept().Round(time.Millisecond))
+	return nil, Fence{}, &busyReadError{fmt.Errorf("the sprint is busy: other operations kept the fence moving, %d reads in %s; nothing was changed; run the verb again", r.tries, r.slept().Round(time.Millisecond))}
 }
 
 // checkTwin gives CheckTwin the twin's snapshot with a fresh read of the
@@ -719,10 +719,18 @@ func (tw *Twin) apply(table string, man ntable.BatchManifest, rc ntable.Receipt)
 // fencedStep is the step's read: from the twin when the step has one and
 // loads the four tables (twinRead), else fenced.
 func (st *Store) fencedStep(ctx context.Context, tw *Twin, step Step, repaired *[]string, mine string) (*sprint.Snapshot, Fence, error) {
-	if tw == nil || len(step.Load) == 0 || !twinTables(step.Load) {
-		return st.fenced(ctx, step.Load, step.Extras, repaired)
+	reader := st
+	if mine == "" && st.workerLock(step) {
+		// A worker's first collision takes the existing lock on its next
+		// try, rather than spending its retry budget on changing snapshots.
+		probe := st.clone()
+		probe.Attempts = 1
+		reader = &probe
 	}
-	return st.twinRead(ctx, tw, step.Load, step.Extras, repaired, mine)
+	if tw == nil || len(step.Load) == 0 || !twinTables(step.Load) {
+		return reader.fenced(ctx, step.Load, step.Extras, repaired, mine)
+	}
+	return reader.twinRead(ctx, tw, step.Load, step.Extras, repaired, mine)
 }
 
 // twinTables says the tables are the sprint's, each once.

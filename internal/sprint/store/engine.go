@@ -82,7 +82,7 @@ type Store struct {
 	// fails the step (twin.go).
 	CheckTwin func(twin, fresh *sprint.Snapshot) error
 	tw        *Twin // the store's twin (twin.go): kept from one tick to the next
-	// LockAfterLoss has a part of the tick that lost a try take the fence
+	// LockAfterLoss has a tick part or worker step that lost a try take the fence
 	// before its next read (lock.go). The program's stores set it; a test
 	// harness whose other writers write from inside a part's plan (a writer
 	// that would wait on the lock its own caller holds) leaves it off.
@@ -303,8 +303,8 @@ func (st *Store) Fenced(ctx context.Context, tables []string, extras func(*sprin
 // fenced is Fenced with the fence it read: the machine's state and the
 // queue's length with the generation. The snapshot carries the queue's
 // length (Snapshot.Queued).
-func (st *Store) fenced(ctx context.Context, tables []string, extras func(*sprint.Snapshot) map[string][]string, repaired *[]string) (*sprint.Snapshot, Fence, error) {
-	snap, gen, f2, err := st.fencedRead(ctx, tables, extras, repaired)
+func (st *Store) fenced(ctx context.Context, tables []string, extras func(*sprint.Snapshot) map[string][]string, repaired *[]string, mine ...string) (*sprint.Snapshot, Fence, error) {
+	snap, gen, f2, err := st.fencedRead(ctx, tables, extras, repaired, mine...)
 	if err != nil {
 		return snap, Fence{Gen: gen}, err
 	}
@@ -313,12 +313,19 @@ func (st *Store) fenced(ctx context.Context, tables []string, extras func(*sprin
 	return snap, f2, nil
 }
 
-func (st *Store) fencedRead(ctx context.Context, tables []string, extras func(*sprint.Snapshot) map[string][]string, repaired *[]string) (*sprint.Snapshot, uint64, Fence, error) {
+func (st *Store) fencedRead(ctx context.Context, tables []string, extras func(*sprint.Snapshot) map[string][]string, repaired *[]string, mine ...string) (*sprint.Snapshot, uint64, Fence, error) {
+	held := ""
+	if len(mine) > 0 {
+		held = mine[0]
+	}
 	r := st.retry(ctx)
 	for r.next(st.attempts()) {
 		f, err := st.B.ReadFence(ctx)
 		if err != nil {
 			return nil, 0, Fence{}, err
+		}
+		if f.Pending != nil && f.Pending.ID == held {
+			f.Pending = nil
 		}
 		if f.Pending != nil {
 			r, err := st.finish(ctx, *f.Pending)
@@ -340,12 +347,15 @@ func (st *Store) fencedRead(ctx context.Context, tables []string, extras func(*s
 		if err != nil {
 			return nil, 0, Fence{}, err
 		}
+		if f2.Pending != nil && f2.Pending.ID == held {
+			f2.Pending = nil
+		}
 		if f2.Pending != nil || f2.Gen != f.Gen {
 			continue
 		}
 		return snap, f.Gen, f2, nil
 	}
-	return nil, 0, Fence{}, fmt.Errorf("the sprint is busy: other operations kept the fence moving, %d reads in %s; nothing was changed; run the verb again", r.tries, r.slept().Round(time.Millisecond))
+	return nil, 0, Fence{}, &busyReadError{fmt.Errorf("the sprint is busy: other operations kept the fence moving, %d reads in %s; nothing was changed; run the verb again", r.tries, r.slept().Round(time.Millisecond))}
 }
 
 // Run plans and applies a step as one operation.
@@ -421,9 +431,20 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		}
 		snap, fence, err := st.fencedStep(ctx, tw, step, &res.Repaired, mine)
 		gen := fence.Gen
+		var busy *busyReadError
+		if !locked && st.workerLock(step) && errors.As(err, &busy) {
+			wantLock = true
+			continue
+		}
 		if errors.Is(err, errCleared) && step.Epoch == nil {
 			// The sprint was cleared while this step read it: read the new
 			// epoch.
+			if lock != nil {
+				if err := st.B.Release(ctx, *lock, false); err != nil {
+					return res, err
+				}
+				lock, locked = nil, false
+			}
 			if st, err = st.repin(ctx); err != nil {
 				return res, err
 			}
@@ -455,6 +476,13 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			return res, nil
 		}
 		if fence.Queued > 0 && !step.Pump && !fence.Running && drains < MaxDrains {
+			if lock != nil {
+				// A recursive drain is another writer; release before it reads.
+				if err := st.B.Release(ctx, *lock, false); err != nil {
+					return res, fmt.Errorf("%w: releasing the worker lock before draining: %v", ErrUnknown, err)
+				}
+				lock, locked, wantLock = nil, false, true
+			}
 			// A STOPPED machine has no next tick: the queue it left is drained
 			// before any step, which then writes the work table itself. Past
 			// MaxDrains (a world that keeps queueing) the step plans on the
@@ -627,7 +655,10 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			twinKept = true
 			// lost to another writer: a part of the tick with a twin takes
 			// the fence before its next read, once (tla/DirtyTickRead.tla, Lock)
-			if _, can := st.B.(Relocker); can && st.LockAfterLoss && tw != nil && step.Halts {
+			if _, can := st.B.(Relocker); can && st.LockAfterLoss && (tw != nil && step.Halts || st.workerLock(step)) {
+				if lock != nil {
+					lock, locked = nil, false // its lock was abandoned before Relock
+				}
 				wantLock = true
 				continue
 			}
@@ -656,6 +687,7 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 				res.Pending = op.ID
 				return res, fmt.Errorf("%w: releasing %s after its first manifest was refused: %v; run: nova-sprint repair", ErrUnknown, op.ID, err)
 			}
+			locked = false // an unwritten relocked operation no longer holds the fence
 			if bound != nil {
 				res.Op = ""
 				return refuseWhole(res, plan, bound.Error())
@@ -1653,11 +1685,11 @@ func (st *Store) finish(ctx context.Context, op OpRecord) (RepairResult, error) 
 func (st *Store) finishOp(ctx context.Context, op OpRecord) (RepairResult, error) {
 	r := RepairResult{Op: op.ID, Verb: op.Verb, Done: RepairFinished}
 	if op.Lock {
-		// a part's lock (lock.go): its writer holds the fence within the
+		// a step's lock (lock.go): its writer holds the fence within the
 		// grace, as any operation in flight; past it the lock is a dead
 		// writer's, released unwritten
 		if st.now().Sub(op.At) < st.grace() {
-			return RepairResult{Op: op.ID, Verb: op.Verb, Done: RepairOpen, Detail: "a part of the tick holds the fence"}, nil
+			return RepairResult{Op: op.ID, Verb: op.Verb, Done: RepairOpen, Detail: "a step holds the fence"}, nil
 		}
 		if err := st.B.Release(ctx, op, false); err != nil {
 			return r, err

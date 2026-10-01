@@ -16,6 +16,9 @@ var errMoved = errors.New("a table changed while it was read")
 // movedError is errMoved in a load, naming the table.
 type movedError struct{ table string }
 
+// busyReadError distinguishes contention from a store that did not answer.
+type busyReadError struct{ error }
+
 func (e *movedError) Unwrap() error { return errMoved }
 
 func (e *movedError) Error() string { return "table " + e.table + " changed while it was read" }
