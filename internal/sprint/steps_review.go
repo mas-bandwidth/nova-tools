@@ -700,7 +700,7 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		// none up, or none below its width, and the primary waits ready for the tick's deal
 		m := ""
 		if len(up) > 0 {
-			m = rr.next(up, q, room, reworkAvoid(s, c), false)
+			m = rr.next(up, q, room, reworkAvoid(s, c))
 		}
 		if m != "" {
 			var why string

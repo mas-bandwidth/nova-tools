@@ -68,6 +68,10 @@ type Push struct {
 	PRNote  string // why a pull request the result asked for was not opened, "" when none was asked or it opened
 }
 
+// ReadStageRetry is how long a read whose stage failed waits before it is run again once by the
+// same reader (docs/SPEC-SPRINT.md, the readers; docs/SPEC-CARD-CONTRACT.md, staging).
+const ReadStageRetry = 15 * time.Second
+
 // pushWidth is the most pushes one tick runs at once: each is one git to
 // origin, and a tick whose children ended together pushes them together.
 const pushWidth = 8
@@ -249,8 +253,10 @@ type launch struct {
 	epoch   uint64
 	branch  string
 	packet  Packet
-	push    *Push // the push at its end, once made (a finish the store did not answer is reported again, never pushed again)
-	spent   bool  // a read whose child ended with no verdict: not ours to report, not run again until the sprint moves the card
+	push    *Push     // the push at its end, once made (a finish the store did not answer is reported again, never pushed again)
+	spent   bool      // a read whose child ended with no verdict: not ours to report, not run again until the sprint moves the card
+	retryAt time.Time // a read whose stage failed: when this reader runs it again; zero before the failure is seen
+	retried bool      // a read run again after a stage failure: a second one is returned
 }
 
 // Member is the loop's state: the children running, by card id.
@@ -261,16 +267,19 @@ type Member struct {
 	pusher  Pusher
 	out     io.Writer
 	running map[string]launch // by card id (a work card's id, a read card's id)
-	epoch   uint64
-	width   int // the width this tick runs to: the override, else the fleet row's
-	drain   bool
-	beaten  uint64 // the Meter's samples the last written beat has carried
+	// stageRetried is the reads run again once after a stage failure, by card id: a second
+	// stage failure of the card is returned, whichever path launches it
+	stageRetried map[string]bool
+	epoch        uint64
+	width        int // the width this tick runs to: the override, else the fleet row's
+	drain        bool
+	beaten       uint64 // the Meter's samples the last written beat has carried
 }
 
 // New is a member with nothing running. A reader pushes nothing, and its
 // pusher may be nil; a work member's pusher pushes every work card's commit.
 func New(cfg Config, s Sprint, r Runner, pu Pusher, out io.Writer) *Member {
-	return &Member{cfg: cfg, sprint: s, runner: r, pusher: pu, out: out, running: map[string]launch{}, width: cfg.Width}
+	return &Member{cfg: cfg, sprint: s, runner: r, pusher: pu, out: out, running: map[string]launch{}, stageRetried: map[string]bool{}, width: cfg.Width}
 }
 
 // Drain stops the member taking new cards: from the next tick it beats, reads
@@ -380,7 +389,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 				continue
 			}
 			fmt.Fprintf(m.out, "%s %s: the claim moved (epoch %d gen %d attempt %d, now epoch %d gen %d attempt %d)\n", FinishReaped, id, l.epoch, l.gen, l.attempt, c.Packet.Epoch, c.Packet.Gen, c.Packet.Attempt)
-			delete(m.running, id)
+			m.forget(id)
 			claimMoved[id] = true
 			continue
 		}
@@ -397,13 +406,39 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 		var args []string
 		ok := r.OK // as reported: a work card whose push was refused is reported failed
 		if m.cfg.Reader {
+			if r.End == EndStaging && !l.retried {
+				// RULE (docs/SPEC-SPRINT.md, the readers): a read's stage failure is never a
+				// verdict. The stage is tried once more here after ReadStageRetry; a second
+				// failure falls to the return below, which hands the read to another reader.
+				if l.retryAt.IsZero() {
+					l.retryAt = now.Add(ReadStageRetry)
+					m.running[id] = l
+					fmt.Fprintf(m.out, "read %s: stage failed (%s); no verdict recorded; run again in %s\n", id, oneLine(r.Staging), ReadStageRetry)
+					continue
+				}
+				if now.Before(l.retryAt) {
+					continue
+				}
+				// the retry is owed once per card: it is remembered across a start that fails and
+				// across a launch the recovery path makes (start gives it to the launch)
+				delete(m.running, id)
+				m.stageRetried[id] = true
+				if c.Packet != nil && m.start(*c.Packet) {
+					acted++
+				}
+				continue
+			}
 			if !r.Ran || (r.Verdict != "ok" && r.Verdict != "broken") {
 				// no verdict is no finding: the read is returned, so the
 				// sprint's next tick asks it of another reader up, before
 				// this reader takes its next read (docs/SPEC-SPRINT.md
 				// section 6; tla/DirtyTick.tla, ReadReturn). A return refused
 				// leaves the launch spent: the read stays for the lateness rule.
-				reason := cut(fmt.Sprintf("no verdict (ran=%t verdict=%q): %s", r.Ran, r.Verdict, oneLine(r.Report)))
+				why := oneLine(r.Report)
+				if r.End == EndStaging {
+					why = EndStaging + ": " + oneLine(r.Staging) // the stage's reason, to the inbox
+				}
+				reason := cut(fmt.Sprintf("no verdict (ran=%t verdict=%q): %s", r.Ran, r.Verdict, why))
 				args := append([]string{"read", "--as", m.cfg.As, "--return", id, "--reason", reason}, launched...)
 				code, out := m.sprint.Run(args...)
 				fmt.Fprintf(m.out, "read %s: returned exit=%d: %s\n", id, code, reason)
@@ -415,7 +450,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 					m.running[id] = l
 					continue
 				}
-				delete(m.running, id)
+				m.forget(id)
 				acted++
 				continue
 			}
@@ -471,7 +506,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 		if code == 2 {
 			return acted, fmt.Errorf("%s %s: the store did not answer: %s", args[0], id, strings.TrimSpace(string(out)))
 		}
-		delete(m.running, id) // refused (1) too: the card is no longer ours to report
+		m.forget(id) // refused (1) too: the card is no longer ours to report
 		acted++
 	}
 	// A child whose card the queue no longer lists (the sprint was cleared, the
@@ -479,7 +514,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 	// ended it is forgotten, so it does not hold a place of the width for ever.
 	for id, l := range m.running {
 		if _, listed := byID[id]; !listed && l.child.Done() {
-			delete(m.running, id)
+			m.forget(id)
 			fmt.Fprintf(m.out, "%s %s: no longer in the queue (dropped or returned)\n", FinishReaped, id)
 		}
 	}
@@ -601,9 +636,15 @@ func (m *Member) start(p Packet) bool {
 		}
 		return false
 	}
-	m.running[p.Card] = launch{child: ch, gen: p.Gen, attempt: p.Attempt, epoch: p.Epoch, branch: p.Branch, packet: p}
+	m.running[p.Card] = launch{child: ch, gen: p.Gen, attempt: p.Attempt, epoch: p.Epoch, branch: p.Branch, packet: p, retried: m.stageRetried[p.Card]}
 	fmt.Fprintf(m.out, "start %s attempt=%d gen=%d running=%d/%d%s\n", p.Card, p.Attempt, p.Gen, m.Running(), m.width, routeWords(p))
 	return true
+}
+
+// forget drops a launch and what is remembered of its card.
+func (m *Member) forget(id string) {
+	delete(m.running, id)
+	delete(m.stageRetried, id)
 }
 
 // failLaunch reports a taken work card this member cannot launch (no model, a

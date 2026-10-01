@@ -713,7 +713,7 @@ func dealPlan(s *Snapshot, r DealReq, rr *round) (Plan, roundMoves) {
 		return p, moves
 	}
 	q, widths := memberLoads(s, up), memberWidths(s, up)
-	next := func() string { return rr.next(up, q, widths, "", false) }
+	next := func() string { return rr.next(up, q, widths, "") }
 	for _, c := range chosen {
 		if wc := s.Fleet.Placed(WorkCardID(c.ID, c.Int("attempt"))); wc != nil && wc.Col == Withdrawn {
 			if redealBound(wc) {
@@ -732,7 +732,7 @@ func dealPlan(s *Snapshot, r DealReq, rr *round) (Plan, roundMoves) {
 					p.refuse(c.ID, fmt.Sprintf("%s was refused at staging by every member up (%s): rework it with a fix, or drop it", wc.ID, strings.Join(refused, ", ")))
 					continue
 				}
-				m = rr.next(others, q, widths, "", false)
+				m = rr.next(others, q, widths, "")
 			}
 			if m == "" {
 				p.refuse(c.ID, noRoomWhy)
@@ -1384,7 +1384,7 @@ func downPlan(s *Snapshot, r FleetReq, up []string, rr *round, moves roundMoves,
 			// index moved past it; with none below its width the card is
 			// withdrawn, and the next deal places it where there is room: a
 			// member at its width takes no more (errata 3 amendment 9)
-			if m := rr.next(without(up, StagingRefusers(c)), q, widths, "", false); m != "" {
+			if m := rr.next(without(up, StagingRefusers(c)), q, widths, ""); m != "" {
 				rr.moved(m)
 				moves[c.ID] = m
 				q[m]++

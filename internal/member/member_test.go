@@ -1260,6 +1260,140 @@ func TestADrainingMemberTakesNothingNewButReportsWhatEnded(t *testing.T) {
 	require.Equal(t, []string{"c1"}, g.r.started(), "no child is started, taken or recovered")
 }
 
+// tickAt is one tick at the given second.
+func (g *rig) tickAt(t *testing.T, sec int64) (int, error) {
+	t.Helper()
+	return g.m.Tick(time.Unix(sec, 0))
+}
+
+// TestAReadWhoseStageFailedOnceIsRunAgainThenReads pins the rule of docs/SPEC-SPRINT.md's
+// readers: a read's stage failure is never a verdict. No verb is sent and the reader keeps its
+// place until ReadStageRetry has passed, then runs the same card again, with no other verb;
+// if that run stages, its verdict is reported as any verdict is. Treating the stage failure
+// like any no-verdict end fails it: the read is returned at the first failure.
+func TestAReadWhoseStageFailedOnceIsRunAgainThenReads(t *testing.T) {
+	t.Parallel()
+	g := newRig(Config{As: "r", Width: 1, Reader: true})
+	p := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7, Head: "h1"}
+	g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &p)))
+	_, err := g.tickAt(t, 0)
+	require.NoError(t, err)
+	require.Equal(t, []string{"r1"}, g.r.started())
+	g.r.child("r1").end(Result{End: EndStaging, Staging: "git checkout failed", Report: "no child ran"})
+	g.s.reset()
+
+	acted, err := g.tickAt(t, 1)
+	require.NoError(t, err)
+	assert.Zero(t, acted)
+	assert.Empty(t, g.s.lines("report"), "a first stage failure sends no verb")
+	assert.Equal(t, 1, g.m.Running(), "the reader keeps its place while the read waits to run again")
+	assert.Contains(t, g.out.String(), "stage failed")
+
+	acted, err = g.tickAt(t, int64(ReadStageRetry/time.Second)-1)
+	require.NoError(t, err)
+	assert.Zero(t, acted, "before ReadStageRetry the read is not run again")
+	assert.Equal(t, []string{"r1"}, g.r.started())
+
+	acted, err = g.tickAt(t, int64(ReadStageRetry/time.Second)+1)
+	require.NoError(t, err)
+	assert.Equal(t, 1, acted)
+	assert.Equal(t, []string{"r1", "r1"}, g.r.started(), "the same read, run again by the same reader")
+	assert.Empty(t, g.s.lines("report"))
+	assert.Empty(t, g.s.lines("begin"), "no other read is begun ahead of the retry")
+
+	g.r.child("r1").end(Result{Ran: true, OK: true, Verdict: "ok", Report: "clean"})
+	_, err = g.tickAt(t, int64(ReadStageRetry/time.Second)+2)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"read --as r --ok r1 --finding clean --epoch 7"}, g.s.lines("report"))
+}
+
+// TestAReadWhoseStageFailedTwiceIsReturned pins that the retry is once: a second stage failure
+// hands the read back with its reason (`read --return`), so the sprint asks another reader, and
+// the reader holds no place for it. Retrying in place for ever fails it.
+func TestAReadWhoseStageFailedTwiceIsReturned(t *testing.T) {
+	t.Parallel()
+	g := newRig(Config{As: "r", Width: 1, Reader: true})
+	p := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7, Head: "h1"}
+	g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &p)))
+	fail := Result{End: EndStaging, Staging: "staging refused: head h1 is in neither the mirror nor origin", Report: "no child ran"}
+	retry := int64(ReadStageRetry/time.Second) + 1
+	_, err := g.tickAt(t, 0)
+	require.NoError(t, err)
+	g.r.child("r1").end(fail)
+	_, err = g.tickAt(t, 1)
+	require.NoError(t, err)
+	_, err = g.tickAt(t, retry+1)
+	require.NoError(t, err)
+	require.Equal(t, []string{"r1", "r1"}, g.r.started())
+	g.s.reset()
+	g.r.child("r1").end(fail)
+
+	acted, err := g.tickAt(t, retry+2)
+	require.NoError(t, err)
+	assert.Equal(t, 1, acted)
+	assert.Empty(t, g.s.lines("report"), "no verdict is reported")
+	got := g.s.lines("return")
+	require.Len(t, got, 1)
+	assert.Contains(t, got[0], "read --as r --return r1 --reason ")
+	assert.Contains(t, got[0], "staging refused: head h1", "the reason is the stage's")
+	assert.Contains(t, got[0], "--epoch 7")
+	assert.Zero(t, g.m.Running())
+	assert.Equal(t, []string{"r1", "r1"}, g.r.started(), "not run a third time")
+}
+
+// TestTheStageRetryIsRememberedAcrossAStartThatFails pins that the once is once: when the start
+// of the retry fails and the recovery path later launches the read, that launch is the retry,
+// and its stage failure is returned. Forgetting the retry at the failed start fails it: the
+// recovered launch gets a retry of its own.
+func TestTheStageRetryIsRememberedAcrossAStartThatFails(t *testing.T) {
+	t.Parallel()
+	g := newRig(Config{As: "r", Width: 1, Reader: true})
+	p := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7, Head: "h1"}
+	g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &p)))
+	fail := Result{End: EndStaging, Staging: "git checkout failed", Report: "no child ran"}
+	retry := int64(ReadStageRetry/time.Second) + 1
+	_, err := g.tickAt(t, 0)
+	require.NoError(t, err)
+	g.r.child("r1").end(fail)
+	_, err = g.tickAt(t, 1)
+	require.NoError(t, err)
+	g.r.failFor["r1"] = true
+	_, err = g.tickAt(t, retry+1) // the retry's start fails
+	require.NoError(t, err)
+	g.r.failFor["r1"] = false
+	_, err = g.tickAt(t, retry+2) // the recovery path launches the read
+	require.NoError(t, err)
+	require.Equal(t, []string{"r1", "r1"}, g.r.started())
+	g.s.reset()
+	g.r.child("r1").end(fail)
+	_, err = g.tickAt(t, retry+3)
+	require.NoError(t, err)
+	got := g.s.lines("return")
+	require.Len(t, got, 1, "the recovered launch is the retry: its stage failure is returned")
+	assert.Contains(t, got[0], "staging refused: git checkout failed")
+}
+
+// TestAWorkCardWhoseStageFailedIsFinishedFailedAsBefore pins that rule 2 is a read's: a work
+// card whose launch ended at staging is judged as every other ended work card (a failed
+// finish), never run again by the member.
+func TestAWorkCardWhoseStageFailedIsFinishedFailedAsBefore(t *testing.T) {
+	t.Parallel()
+	g := newRig(Config{As: "m", Width: 1})
+	p := pk("c1")
+	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p)))
+	_, err := g.tickAt(t, 0)
+	require.NoError(t, err)
+	g.r.child("c1").end(Result{End: EndStaging, Staging: "git checkout failed", Report: "no child ran"})
+	g.s.reset()
+	_, err = g.tickAt(t, 1) // pushes (none: no head), then finishes
+	require.NoError(t, err)
+	_, err = g.tickAt(t, 2)
+	require.NoError(t, err)
+	fin := g.s.lines("finish")
+	require.Len(t, fin, 1)
+	assert.Contains(t, fin[0], "--failed")
+}
+
 // secondsOfLoad is a Sampler whose seconds are the percents it is fed: each Step takes
 // the next.
 func secondsOfLoad(pcts ...float64) (s *hostload.Sampler, feed func(...float64)) {

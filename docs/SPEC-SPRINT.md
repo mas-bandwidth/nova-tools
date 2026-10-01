@@ -399,6 +399,10 @@ id (`--op`) returns the original result, with no second counter or notification.
 - A reader moves its own read cards: asked -> reading -> ok | broken, with the finding.
   A report on a card still asked is accepted: it is the begin and the report in
   one step, and `begun` is stamped with it.
+  A read whose stage fails (the head could not be checked out) is never a verdict: its member
+  runs the read again once, after `member.ReadStageRetry`; a second stage failure is returned
+  (`read --as <reader> --return <card> --reason <the stage's reason>`), and the next tick asks
+  another reader.
 - The read that completes two different readers' ok at a primary's head writes
   the judgment ready to accept; accept, rework and drop close it.
 - The machine's tick accepts every acceptable primary in review whose work did

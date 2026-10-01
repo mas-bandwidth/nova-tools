@@ -38,7 +38,7 @@ func failedFirst(t *testing.T) *world {
 
 // TestAReworkIsNotDealtToAMemberAtItsWidth pins that a rework with every up member at its width
 // cuts no work card: the primary goes ready with its fix, and the tick deals it when a member
-// has room. Passing the width (the spill of the first up when none has room) fails it: a
+// has room. Passing the width (dealing to the first up when none has room) fails it: a
 // width-1 member working one card is handed a second.
 func TestAReworkIsNotDealtToAMemberAtItsWidth(t *testing.T) {
 	t.Parallel()
