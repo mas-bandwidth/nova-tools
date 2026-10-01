@@ -237,9 +237,6 @@ func New(cfg Config, s Sprint, r Runner, pu Pusher, out io.Writer) *Member {
 	return &Member{cfg: cfg, sprint: s, runner: r, pusher: pu, out: out, running: map[string]launch{}, width: cfg.Width}
 }
 
-// Width is the width the last tick ran to.
-func (m *Member) Width() int { return m.width }
-
 // Running is how many children are running (a spent launch holds no place).
 func (m *Member) Running() int {
 	n := 0

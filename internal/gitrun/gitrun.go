@@ -7,7 +7,9 @@
 // pager) holds open, and it reports a kill as a *subproc.TimeoutError. The environment is
 // the caller's choice: a caller that scrubs it passes the scrubbed list in Options.Env,
 // and a caller that must leave it intact (a hook that was handed GIT_INDEX_FILE) leaves
-// Env nil.
+// Env nil. A caller whose repository is the one it names with C (a tool reading its own
+// store while a git that called it exported GIT_DIR) sets OwnRepo, which drops the
+// variables that say where a repository is.
 package gitrun
 
 import (
@@ -15,7 +17,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"time"
 
@@ -37,6 +41,10 @@ type Options struct {
 	Dir string
 	// Env is the child's whole environment; nil inherits the caller's.
 	Env []string
+	// OwnRepo says the repository is the one C names, whatever the caller's environment
+	// says: the variables in RepoVars are dropped from the child's environment (Env, or the
+	// caller's when Env is nil) and every other variable is kept.
+	OwnRepo bool
 	// Stdin, when set, is the child's standard input.
 	Stdin io.Reader
 	// Timeout overrides the default budget when positive.
@@ -77,13 +85,42 @@ func build(ctx context.Context, o Options, args []string) subproc.Bounded {
 		b.Cmd.WaitDelay = o.WaitDelay
 	}
 	b.Cmd.Dir = o.Dir
-	if o.Env != nil {
+	switch {
+	case o.OwnRepo:
+		env := o.Env
+		if env == nil {
+			env = os.Environ()
+		}
+		b.Cmd.Env = WithoutRepoVars(env)
+	case o.Env != nil:
 		b.Cmd.Env = o.Env
 	}
 	if o.Stdin != nil {
 		b.Cmd.Stdin = o.Stdin
 	}
 	return b
+}
+
+// RepoVars are the variables with which git is told where a repository, its objects, its
+// index or its work tree are. A git that starts a helper (a credential helper, a hook)
+// exports them, and a git the helper starts reads the helper's repository, not its own.
+var RepoVars = []string{
+	"GIT_DIR", "GIT_WORK_TREE", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES",
+	"GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_NAMESPACE", "GIT_PREFIX", "GIT_CEILING_DIRECTORIES",
+}
+
+// WithoutRepoVars returns env without the RepoVars; every other entry, GIT_TERMINAL_PROMPT
+// among them, is kept in order. The argument is not changed.
+func WithoutRepoVars(env []string) []string {
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		if slices.Contains(RepoVars, name) {
+			continue
+		}
+		out = append(out, kv)
+	}
+	return out
 }
 
 // Result is the two streams of one finished git.

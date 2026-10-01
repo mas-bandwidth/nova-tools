@@ -42,7 +42,7 @@ func TestAMemberRunsTheWidthOfItsFleetRow(t *testing.T) {
 		require.NoError(t, err, log.String())
 	}
 	tick()
-	require.Equal(t, 2, m.Width(), "the row's width: %s", log.String())
+	require.Contains(t, log.String(), "width 0 -> 2 (the fleet row)", "the row's width is read with the queue")
 	require.Len(t, rn.packets, 2, "two children at width 2: %s", log.String())
 
 	twin("nova-sprint fleet up m1 --width 1")
@@ -56,7 +56,6 @@ func TestAMemberRunsTheWidthOfItsFleetRow(t *testing.T) {
 	end(rn.packets[0].Card)
 	tick() // the ended child is pushed
 	tick() // and reported; one still runs at width 1: nothing new is taken
-	assert.Equal(t, 1, m.Width(), "the lowered row is read: %s", log.String())
 	assert.Equal(t, 1, m.Running())
 	assert.Len(t, rn.packets, 2, "no new take while the running fill the lowered width: %s", log.String())
 	assert.Contains(t, log.String(), "width 2 -> 1 (the fleet row)")
