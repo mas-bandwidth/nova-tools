@@ -42,9 +42,8 @@ func TestBatchFirstWriteSnapshotMatchesOrdinaryWrite(t *testing.T) {
 			require.NoError(t, ntable.MemberCreate(ctx, c, tb.Name, "f", ntable.WriteOptions{Epoch: 1}))
 		case "batch-noop":
 			raw := `{"schema":1,"table":"epoch-test","epoch":"1","expected_table_revision":"` + rev + `","operation_id":"e1","actor":"p","members":[{"id":"f","expect":{"absent":true}}]}`
-			if ans, err := c.FCall(ctx, ntable.FnApply, []string{ntable.DefKey(tb.Name)}, tb.Name, raw).Slice(); err != nil || len(ans) == 0 || ans[0] != "OK" {
-				t.Fatalf("%s: %v %v", mode, trunc(ans), err)
-			}
+			ans, err := c.FCall(ctx, ntable.FnApply, []string{ntable.DefKey(tb.Name)}, tb.Name, raw).Slice()
+			require.True(t, replyOpens(ans, err, "OK"), "%s: %v: %v", mode, trunc(ans), err)
 		}
 		snap := hashOf(t, c, "table:epoch-test:1:definition")
 		require.NoError(t, c.HSet(ctx, tb.EpochKey, "n", 2).Err())
@@ -53,9 +52,8 @@ func TestBatchFirstWriteSnapshotMatchesOrdinaryWrite(t *testing.T) {
 	}
 	o, b := run("ordinary"), run("batch-noop")
 	assert.Equal(t, b.snap, o.snap, "epoch-1 definition snapshots differ")
-	if o.read != nil || b.read != nil {
-		t.Errorf("ReadAt(1) after the epoch advanced: ordinary %v, batch %v", o.read, b.read)
-	}
+	assert.NoError(t, o.read, "ReadAt(1) after the epoch advanced: ordinary %v, batch %v", o.read, b.read)
+	assert.NoError(t, b.read, "ReadAt(1) after the epoch advanced: ordinary %v, batch %v", o.read, b.read)
 }
 
 // A batch as the first write of epoch 2, after an ordinary epoch 1, snapshots
@@ -71,9 +69,8 @@ func TestBatchFirstWriteOfALaterEpochKeepsBothHistories(t *testing.T) {
 	require.NoError(t, c.HSet(ctx, tb.EpochKey, "n", 2).Err())
 	rev := c.HGet(ctx, ntable.DefKey(tb.Name)+":revision", "n").Val()
 	raw := `{"schema":1,"table":"epoch-test","epoch":"2","expected_table_revision":"` + rev + `","operation_id":"e2","actor":"p","members":[{"id":"g","expect":{"absent":true}}]}`
-	if ans, err := c.FCall(ctx, ntable.FnApply, []string{ntable.DefKey(tb.Name)}, tb.Name, raw).Slice(); err != nil || len(ans) == 0 || ans[0] != "OK" {
-		t.Fatalf("apply at epoch 2: %v %v", trunc(ans), err)
-	}
+	ans, err := c.FCall(ctx, ntable.FnApply, []string{ntable.DefKey(tb.Name)}, tb.Name, raw).Slice()
+	require.True(t, replyOpens(ans, err, "OK"), "apply at epoch 2: %v: %v", trunc(ans), err)
 	s2 := hashOf(t, c, "table:epoch-test:2:definition")
 	delete(s1, "_revision")
 	delete(s2, "_revision")
@@ -101,8 +98,9 @@ func TestBatchRestoresAMissingIdentity(t *testing.T) {
 		if viaApply {
 			ans, err := batchRaw(ctx, c, probeRev(ctx, c), "id", `{"id":"q","expect":{"absent":true},"create":{"row":"build","col":"ready","score":1}}`)
 			require.True(t, replyOpens(ans, err, "OK"), "apply: %v %v", trunc(ans), err)
-		} else if _, err := ntable.CellAdd(ctx, c, "demo", "build", "ready", "q", 1); err != nil {
-			t.Fatal(err)
+		} else {
+			_, err := ntable.CellAdd(ctx, c, "demo", "build", "ready", "q", 1)
+			require.NoError(t, err)
 		}
 		images[i] = c.HGetAll(ctx, ntable.DefKey("demo")+":identity").Val()
 		assert.NotEmpty(t, images[i], "viaApply=%v: identity not restored", viaApply)
@@ -145,9 +143,8 @@ func TestBatchUnsetOfAThousandFieldsIsOneCommit(t *testing.T) {
 	}
 	ans, err := batchRaw(ctx, c, rev, "chunk", `{"id":"a","expect":{},"unset":[`+strings.Join(names, ",")+`]}`)
 	require.True(t, replyOpens(ans, err, "OK"), "unset: %v %v", trunc(ans), err)
-	if left := c.HLen(ctx, ntable.MemberKey("a")).Val(); left != 4 { // epoch, place:demo, revision, role
-		t.Errorf("fields left = %d, want 4", left)
-	}
+	left := c.HLen(ctx, ntable.MemberKey("a")).Val()
+	assert.Equal(t, int64(4), left, "fields left, want 4 (epoch, place:demo, revision, role)")
 	after := probeRev(ctx, c)
 	n, m := mustUint(t, rev), mustUint(t, after)
 	assert.Equal(t, n+1, m, "table revision %s -> %s, want one step", rev, after)

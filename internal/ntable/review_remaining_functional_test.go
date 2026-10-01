@@ -4,8 +4,6 @@ package ntable_test
 
 import (
 	"context"
-	"encoding/json"
-	"reflect"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
@@ -46,17 +44,15 @@ func TestReviewRemainingRefusalsAtomic(t *testing.T) {
 					return e
 				}
 			case "repair-occupied":
-				if _, err := ntable.CellAdd(ctx, c, "t", "r", "a", "member", 7); err != nil {
-					t.Fatal(err)
-				}
+				_, err := ntable.CellAdd(ctx, c, "t", "r", "a", "member", 7)
+				require.NoError(t, err)
 				require.NoError(t, c.HSet(ctx, ntable.DefKey("t"), "col:p", "pct(a):avg:0:").Err())
 				next, err := ntable.ParseColumns("b")
 				require.NoError(t, err)
 				call = func() error { _, e := ntable.Set(ctx, c, "t", ntable.SetOpts{Columns: next}); return e }
 			case "shape-text":
-				if _, err := ntable.RowSet(ctx, c, "t", "r", map[string]string{"status": "keep me"}); err != nil {
-					t.Fatal(err)
-				}
+				_, err := ntable.RowSet(ctx, c, "t", "r", map[string]string{"status": "keep me"})
+				require.NoError(t, err)
 				next, err := ntable.ParseColumns("a,b")
 				require.NoError(t, err)
 				call = func() error { _, e := ntable.Set(ctx, c, "t", ntable.SetOpts{Columns: next}); return e }
@@ -76,21 +72,8 @@ func TestReviewRemainingRefusalsAtomic(t *testing.T) {
 			before := image()
 			err = call()
 			after := image()
-			if err == nil || !reflect.DeepEqual(before, after) {
-				changed := []string{}
-				for k, v := range after {
-					if before[k] != v {
-						changed = append(changed, k)
-					}
-				}
-				for k := range before {
-					if _, ok := after[k]; !ok {
-						changed = append(changed, k)
-					}
-				}
-				wire, _ := json.Marshal(changed)
-				t.Fatalf("unsafe result err=%v changed keys=%s", err, wire)
-			}
+			require.Error(t, err, "unsafe result: the call was accepted")
+			require.Equal(t, before, after, "unsafe result err=%v: the refused call changed keys", err)
 		})
 	}
 }

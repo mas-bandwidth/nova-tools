@@ -9,13 +9,14 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"testing"
 	"unicode"
 	"unicode/utf8"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // generality_class_test.go enforces Glenn's standing instruction (Rule 1):
@@ -50,8 +51,8 @@ import (
 // - Raw string literals (e.g. `...`) are executable code data and are scanned,
 //   even when their content contains example labels or import blocks.
 //
-// Existing occurrences are tracked in internal/ci/testdata/generality_allowlist.txt,
-// formatted as "<path/to/file.go>:<token> <count>".
+// Existing occurrences are tracked in internal/ci/testdata/generality/ by
+// source directory, with rows "<path/to/file.go>:<token> <count>".
 // The allowlist only shrinks (shrink-only ceiling):
 // - An unlisted occurrence or file:token fails the test.
 // - An allowed file:token that increases its count fails the test.
@@ -59,7 +60,7 @@ import (
 // - A stale entry with 0 occurrences fails the test, requiring row deletion.
 // - Allowlist entries must remain sorted alphabetically.
 
-const generalityAllowlistPath = "testdata/generality_allowlist.txt"
+const generalityAllowlistPath = "testdata/generality"
 
 // forbiddenTokens is the curated inventory of friend/person names, hostnames,
 // tailnet nodes, and GitHub accounts.
@@ -313,10 +314,23 @@ type GeneralitySourceFile struct {
 	Src []byte
 }
 
-type allowlistDiscardReporter struct{}
+func generalityFixtureLedger(t *testing.T, shard, content string) *allowlist.Packages {
+	t.Helper()
+	dir := t.TempDir()
+	path := filepath.Join(dir, shard)
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0700))
+	require.NoError(t, os.WriteFile(path, []byte(content), 0600))
+	ledger, err := allowlist.LoadPackages(dir, allowlist.Options{Ceiling: true, Counted: true})
+	require.NoError(t, err)
+	return ledger
+}
 
-func (allowlistDiscardReporter) Helper()                           {}
-func (allowlistDiscardReporter) Errorf(format string, args ...any) {}
+type generalityMessageReporter struct{ messages []string }
+
+func (*generalityMessageReporter) Helper() {}
+func (r *generalityMessageReporter) Errorf(format string, args ...any) {
+	r.messages = append(r.messages, fmt.Sprintf(format, args...))
+}
 
 // measureGeneralityCounts scans files and returns per-key occurrence counts and keys.
 func measureGeneralityCounts(files []GeneralitySourceFile) (map[string]int, map[string]bool, []string) {
@@ -347,53 +361,70 @@ func measureGeneralityCounts(files []GeneralitySourceFile) (map[string]int, map[
 	return measuredCounts, measuredKeys, rawViolations
 }
 
-// checkGenerality scans the given source files against the allowlist and returns all violations.
-func checkGenerality(files []GeneralitySourceFile, allow *allowlist.List) []string {
+// generalityCountedLedger is the counted debt surface shared by a flat fixture
+// and the living package-sharded ledger (docs/SPEC-CI.md#generality).
+type generalityCountedLedger interface {
+	Has(string) bool
+	Count(string) int
+	Rows() []allowlist.Row
+	Ceiling() (int, bool)
+}
+
+func generalitySortedViolations(allow generalityCountedLedger) []string {
+	var lists []*allowlist.List
+	switch ledger := allow.(type) {
+	case *allowlist.List:
+		lists = []*allowlist.List{ledger}
+	case *allowlist.Packages:
+		lists = ledger.Lists()
+	}
 	var violations []string
-
-	// Parse allowed per-key counts from allowlist rows.
-	allowedCounts := make(map[string]int)
-	rows := allow.Rows()
-	for i, row := range rows {
-		fields := strings.Fields(row.Text)
-		if len(fields) < 2 {
-			violations = append(violations, fmt.Sprintf("%s:%d: malformed row %q: expected <file:token> <count>", allow.Path, row.Line, row.Text))
-			continue
-		}
-		count, err := strconv.Atoi(fields[1])
-		if err != nil || count <= 0 {
-			violations = append(violations, fmt.Sprintf("%s:%d: invalid count in row %q: expected positive integer", allow.Path, row.Line, row.Text))
-			continue
-		}
-		allowedCounts[fields[0]] = count
-
-		// Enforce that allowlist rows are sorted alphabetically by key.
-		if i > 0 && rows[i].Key < rows[i-1].Key {
-			violations = append(violations, fmt.Sprintf("%s:%d: allowlist not sorted: %q should appear before %q", allow.Path, row.Line, rows[i].Key, rows[i-1].Key))
+	for _, list := range lists {
+		rows := list.Rows()
+		for i := 1; i < len(rows); i++ {
+			if rows[i].Key < rows[i-1].Key {
+				violations = append(violations, fmt.Sprintf("%s:%d: allowlist not sorted: %q should appear before %q", list.Path, rows[i].Line, rows[i].Key, rows[i-1].Key))
+			}
 		}
 	}
+	return violations
+}
 
-	measuredCounts := make(map[string]int)
-	measuredKeys := make(map[string]bool)
+// checkGenerality scans the given source files against the counted ledger.
+func checkGenerality(files []GeneralitySourceFile, allow generalityCountedLedger) []string {
+	violations := generalitySortedViolations(allow)
+	measuredCounts, _, _ := measureGeneralityCounts(files)
+	allowedCounts := make(map[string]int)
+	for _, row := range allow.Rows() {
+		allowedCounts[row.Key] = allow.Count(row.Key)
+	}
 
+	var ledgerPath string
+	var result allowlist.Result
+	reporter := &generalityMessageReporter{}
+	switch ledger := allow.(type) {
+	case *allowlist.List:
+		ledgerPath = ledger.Path
+		result = allowlist.CheckCountedMode(reporter, ledger, measuredCounts, false)
+	case *allowlist.Packages:
+		ledgerPath = ledger.Path
+		result = allowlist.CheckPackagesCountedMode(reporter, ledger, measuredCounts, false)
+	}
+	violations = append(violations, reporter.messages...)
+
+	// A new token still names its exact source line, not just the ledger key.
 	for _, f := range files {
 		rel := f.Rel
 		cleanSrc := cleanSourceForGenerality(rel, f.Src)
 		if !fileMayContainGenerality(cleanSrc) {
 			continue
 		}
-		lines := strings.Split(string(cleanSrc), "\n")
-		for lineNum, line := range lines {
+		for lineNum, line := range strings.Split(string(cleanSrc), "\n") {
 			if !lineMayContainGenerality(line) {
 				continue
 			}
-			tokens := extractTokensFromText(line)
-			for _, tok := range tokens {
-				key := rel + ":" + tok
-				measuredKeys[key] = true
-				measuredCounts[key]++
-
-				if !allow.Has(key) {
+			for _, tok := range extractTokensFromText(line) {
+				if !allow.Has(rel + ":" + tok) {
 					violations = append(violations, fmt.Sprintf(
 						"%s:%d: forbidden reference to %q (Rule 1: generality guardrail; see docs/SPEC-CI.md#generality); no host, machine, tailnet, friend or person name in living code",
 						rel, lineNum+1, tok))
@@ -402,42 +433,26 @@ func checkGenerality(files []GeneralitySourceFile, allow *allowlist.List) []stri
 		}
 	}
 
-	// Per-key count checks: shrink-only ceiling per file:token key.
-	for key, allowed := range allowedCounts {
-		actual := measuredCounts[key]
-		colon := strings.LastIndex(key, ":")
-		tok := key
-		rel := key
-		if colon >= 0 {
-			rel = key[:colon]
-			tok = key[colon+1:]
-		}
-
-		if actual > allowed {
-			violations = append(violations, fmt.Sprintf(
-				"%s: %d occurrences of forbidden token %q exceeds allowed count %d (Rule 1: generality guardrail; see docs/SPEC-CI.md#generality)",
-				rel, actual, tok, allowed))
-		} else if actual < allowed && actual > 0 {
-			violations = append(violations, fmt.Sprintf(
-				"%s: %d occurrences of forbidden token %q is below allowed count %d; shrink the count in %s (Rule 1: generality guardrail; the list only shrinks)",
-				rel, actual, tok, allowed, allow.Path))
-		}
+	for _, c := range result.Over {
+		rel, tok, _ := strings.Cut(c.Key, ":")
+		violations = append(violations, fmt.Sprintf(
+			"%s: %d occurrences of forbidden token %q exceeds allowed count %d (Rule 1: generality guardrail; see docs/SPEC-CI.md#generality)",
+			rel, c.Measured, tok, c.Listed))
 	}
-
-	// Check for stale rows (keys in allowlist with 0 occurrences in living code).
-	checkRes := allowlist.CheckMode(allowlistDiscardReporter{}, allow, measuredKeys, false)
-	for _, row := range checkRes.Stale {
+	for _, c := range result.Lowered {
+		rel, tok, _ := strings.Cut(c.Key, ":")
+		violations = append(violations, fmt.Sprintf(
+			"%s: %d occurrences of forbidden token %q is below allowed count %d; shrink the count in %s (Rule 1: generality guardrail; the list only shrinks)",
+			rel, c.Measured, tok, c.Listed, ledgerPath))
+	}
+	for _, row := range result.Stale {
 		violations = append(violations, fmt.Sprintf(
 			"%s lists %s, but no reference is in the living tree any more; delete the stale entry (the list only shrinks)",
-			allow.Path, row.Key))
+			ledgerPath, row.Key))
 	}
 
-	// Enforce row count ceiling.
-	if n, ok := allow.Ceiling(); ok && len(allow.Rows()) > n {
-		violations = append(violations, fmt.Sprintf("%s has %d rows, over its ceiling of %d; the list only shrinks", allow.Path, len(allow.Rows()), n))
-	}
-
-	// Enforce total occurrence ceiling.
+	// The shared checker holds each shard's row ceiling; the occurrence ceiling
+	// remains aggregate across packages.
 	totalMeasured := 0
 	for _, c := range measuredCounts {
 		totalMeasured += c
@@ -456,96 +471,6 @@ func checkGenerality(files []GeneralitySourceFile, allow *allowlist.List) []stri
 	return violations
 }
 
-func writeGeneralityAllowlist(path string, measuredCounts map[string]int) error {
-	existingList, err := allowlist.Load(path, allowlist.Options{Ceiling: true})
-	if err != nil {
-		return fmt.Errorf("failed to read existing allowlist at %s: %w", path, err)
-	}
-
-	lines := strings.Split(existingList.Text(), "\n")
-	existingCounts := make(map[string]int)
-	var headerLines []string
-	hasCeiling := false
-
-	for lineNum, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "# ceiling:") {
-			hasCeiling = true
-			continue
-		}
-		if !hasCeiling {
-			if strings.HasPrefix(trimmed, "#") || trimmed == "" {
-				headerLines = append(headerLines, line)
-				continue
-			}
-		}
-		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
-			continue
-		}
-		fields := strings.Fields(trimmed)
-		if len(fields) < 2 {
-			return fmt.Errorf("%s:%d: malformed allowlist row %q: expected <file:token> <count>", path, lineNum+1, trimmed)
-		}
-		count, err := strconv.Atoi(fields[1])
-		if err != nil || count <= 0 {
-			return fmt.Errorf("%s:%d: invalid count in allowlist row %q: expected positive integer", path, lineNum+1, trimmed)
-		}
-		existingCounts[fields[0]] = count
-	}
-
-	// Refuse new keys and increased counts: an allowlist only ever shrinks.
-	// (see CONTRIBUTING.md: "an allowlist only ever shrinks: a new row is a refusal, not a parking place").
-	var growthErrors []string
-	for k, count := range measuredCounts {
-		if count <= 0 {
-			continue
-		}
-		existingCount, ok := existingCounts[k]
-		if !ok {
-			growthErrors = append(growthErrors, fmt.Sprintf(
-				"%s is not listed, and the update adds no row for it (fix the finding; the list only shrinks: a new row is a refusal, not a parking place)",
-				k))
-		} else if count > existingCount {
-			growthErrors = append(growthErrors, fmt.Sprintf(
-				"%s count %d exceeds existing count %d (the list only shrinks)",
-				k, count, existingCount))
-		}
-	}
-
-	if len(growthErrors) > 0 {
-		sort.Strings(growthErrors)
-		return fmt.Errorf("%s refuses to grow under %s=1:\n%s", path, allowlist.UpdateEnv, strings.Join(growthErrors, "\n"))
-	}
-
-	// Only permit key removals (counts dropping to 0) or count decreases.
-	var keptKeys []string
-	for k, count := range measuredCounts {
-		if count > 0 {
-			keptKeys = append(keptKeys, k)
-		}
-	}
-	sort.Strings(keptKeys)
-	if ceiling, ok := existingList.Ceiling(); ok && len(keptKeys) > ceiling {
-		return fmt.Errorf("%s retains %d rows, over its existing ceiling of %d; the update never raises a ceiling", path, len(keptKeys), ceiling)
-	}
-
-	var sb strings.Builder
-	if len(headerLines) > 0 {
-		sb.WriteString(strings.Join(headerLines, "\n"))
-		sb.WriteString("\n")
-	}
-	sb.WriteString(fmt.Sprintf("# ceiling: %d\n", len(keptKeys)))
-	for _, k := range keptKeys {
-		sb.WriteString(fmt.Sprintf("%s %d\n", k, measuredCounts[k]))
-	}
-
-	mode := os.FileMode(0644)
-	if fi, err := os.Stat(path); err == nil {
-		mode = fi.Mode().Perm()
-	}
-	return os.WriteFile(path, []byte(sb.String()), mode)
-}
-
 // TestGeneralityGuardrail holds living Go code in cmd/, internal/ and tools/ to Glenn's
 // generality instruction (Rule 1): no hostnames or friend/person names in code,
 // contracts, defaults or refusals.
@@ -562,16 +487,21 @@ func TestGeneralityGuardrail(t *testing.T) {
 		files = append(files, GeneralitySourceFile{Rel: f.Rel, Src: f.Src})
 	}
 
+	allowPath := filepath.Join(tree.Root, "internal/ci", generalityAllowlistPath)
+	allow, err := allowlist.LoadPackages(allowPath, allowlist.Options{Ceiling: true, Counted: true})
+	require.NoError(t, err)
 	if allowlist.Updating() {
-		measuredCounts, _, _ := measureGeneralityCounts(files)
-		allowPath := filepath.Join(tree.Root, "internal/ci", generalityAllowlistPath)
-		if err := writeGeneralityAllowlist(allowPath, measuredCounts); err != nil {
-			t.Fatalf("failed to rewrite generality allowlist: %v", err)
+		for _, v := range generalitySortedViolations(allow) {
+			t.Error(v)
 		}
-		t.Fatal(allowlist.UpdatedRerun)
+		if t.Failed() {
+			return
+		}
+		measuredCounts, _, _ := measureGeneralityCounts(files)
+		allowlist.CheckPackagesCounted(t, allow, measuredCounts)
+		return
 	}
 
-	allow := loadAllowlist(t, generalityAllowlistPath, shrinkOnly)
 	violations := checkGenerality(files, allow)
 	for _, v := range violations {
 		t.Error(v)
@@ -668,12 +598,25 @@ func TestGeneralitySpaceHasNoSyntaxException(t *testing.T) {
 func TestGeneralityOccurrenceWitness(t *testing.T) {
 	t.Parallel()
 
+	t.Run("one-shard-over-ceiling-with-another-spare", func(t *testing.T) {
+		t.Parallel()
+		dir := t.TempDir()
+		for name, content := range map[string]string{
+			"a.txt": "# ceiling: 1\na/file.go:glenn 1\na/file.go:hulk 1\n",
+			"b.txt": "# ceiling: 1\n",
+		} {
+			require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(content), 0600))
+		}
+		ledger, err := allowlist.LoadPackages(dir, allowlist.Options{Ceiling: true, Counted: true})
+		require.NoError(t, err)
+		files := []GeneralitySourceFile{{Rel: "a/file.go", Src: []byte("package a\nconst label = \"glenn hulk\"\n")}}
+		violations := checkGenerality(files, ledger)
+		require.Contains(t, strings.Join(violations, "\n"), "a.txt has 2 rows, over its ceiling of 1")
+	})
+
 	t.Run("second-occurrence-fails", func(t *testing.T) {
 		allowContent := "# Format: path/to/file.go:token count\n# ceiling: 1\ntest/file.go:glenn 1\n"
-		allow, err := allowlist.Parse("testdata/generality_allowlist.txt", allowContent, allowlist.Options{Ceiling: true})
-		if err != nil {
-			t.Fatal(err)
-		}
+		allow := generalityFixtureLedger(t, "test.txt", allowContent)
 
 		// 1 occurrence: must pass with zero violations.
 		oneOccurrence := []GeneralitySourceFile{
@@ -705,10 +648,7 @@ func TestGeneralityOccurrenceWitness(t *testing.T) {
 	})
 
 	t.Run("adjacent-account-count", func(t *testing.T) {
-		a, err := allowlist.Parse("fixture", "# ceiling: 1\nfixture.go:mas-bandwidth 1\n", allowlist.Options{Ceiling: true})
-		if err != nil {
-			t.Fatal(err)
-		}
+		a := generalityFixtureLedger(t, "@root.txt", "# ceiling: 1\nfixture.go:mas-bandwidth 1\n")
 		one := []GeneralitySourceFile{{Rel: "fixture.go", Src: []byte("package fixture\nconst owner = \"mas-bandwidth\"\n")}}
 		if v := checkGenerality(one, a); len(v) != 0 {
 			t.Fatalf("control: %v", v)
@@ -728,10 +668,7 @@ func TestGeneralityOccurrenceWitness(t *testing.T) {
 		{"raw-string-import", "package fixture\nconst refusal = `\nimport (\nhulk\n)\n`\n"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			a, err := allowlist.Parse("fixture", "# ceiling: 0\n", allowlist.Options{Ceiling: true})
-			if err != nil {
-				t.Fatal(err)
-			}
+			a := generalityFixtureLedger(t, "@root.txt", "# ceiling: 0\n")
 			v := checkGenerality([]GeneralitySourceFile{{Rel: "fixture.go", Src: []byte(tc.src)}}, a)
 			t.Logf("runtime string violations: %v", v)
 			if len(v) == 0 {
@@ -741,10 +678,7 @@ func TestGeneralityOccurrenceWitness(t *testing.T) {
 	}
 
 	t.Run("legitimate-controls", func(t *testing.T) {
-		a, err := allowlist.Parse("fixture", "# ceiling: 0\n", allowlist.Options{Ceiling: true})
-		if err != nil {
-			t.Fatal(err)
-		}
+		a := generalityFixtureLedger(t, "@root.txt", "# ceiling: 0\n")
 		// Real AST comment with marked example must be exempt
 		commentPass := []GeneralitySourceFile{{Rel: "fixture.go", Src: []byte("package fixture\n// bench name (e.g. \"hulk\", \"space\")\nfunc foo() {}\n")}}
 		if v := checkGenerality(commentPass, a); len(v) != 0 {
@@ -783,6 +717,27 @@ func TestGeneralityOccurrenceWitness(t *testing.T) {
 func TestGeneralityAllowlistUpdate(t *testing.T) {
 	t.Parallel()
 
+	// Exercise the shared sharded updater directly, recording its refusal instead
+	// of mutating a global list through a separate writer.
+	update := func(path string, measured map[string]int) error {
+		ledger, err := allowlist.LoadPackages(filepath.Dir(path), allowlist.Options{Ceiling: true, Counted: true})
+		if err != nil {
+			return err
+		}
+		reporter := &generalityMessageReporter{}
+		allowlist.CheckPackagesCountedMode(reporter, ledger, measured, true)
+		var refusals []string
+		for _, message := range reporter.messages {
+			if !strings.Contains(message, allowlist.UpdatedRerun) {
+				refusals = append(refusals, message)
+			}
+		}
+		if len(refusals) > 0 {
+			return fmt.Errorf("%s", strings.Join(refusals, "\n"))
+		}
+		return nil
+	}
+
 	t.Run("original-row-ceiling", func(t *testing.T) {
 		for _, tc := range []struct {
 			name     string
@@ -794,12 +749,12 @@ func TestGeneralityAllowlistUpdate(t *testing.T) {
 			{name: "remove-row-to-fit", measured: map[string]int{"fixture.go:glenn": 1}, want: "# ceiling: 1\nfixture.go:glenn 1\n"},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
-				p := filepath.Join(t.TempDir(), "ledger.txt")
+				p := filepath.Join(t.TempDir(), "@root.txt")
 				old := "# ceiling: 1\nfixture.go:glenn 2\nfixture.go:hulk 2\n"
 				if err := os.WriteFile(p, []byte(old), 0600); err != nil {
 					t.Fatal(err)
 				}
-				err := writeGeneralityAllowlist(p, tc.measured)
+				err := update(p, tc.measured)
 				want := tc.want
 				if want == "" {
 					want = old
@@ -818,13 +773,13 @@ func TestGeneralityAllowlistUpdate(t *testing.T) {
 	})
 
 	t.Run("refuses-growth-new-key", func(t *testing.T) {
-		p := filepath.Join(t.TempDir(), "ledger.txt")
+		p := filepath.Join(t.TempDir(), "@root.txt")
 		old := "# ceiling: 1\nfixture.go:glenn 1\n"
 		if err := os.WriteFile(p, []byte(old), 0600); err != nil {
 			t.Fatal(err)
 		}
 		measured := map[string]int{"fixture.go:glenn": 1, "fixture.go:hulk": 1}
-		err := writeGeneralityAllowlist(p, measured)
+		err := update(p, measured)
 		if err == nil {
 			t.Fatal("expected error on attempted growth with new key, got nil")
 		}
@@ -842,17 +797,17 @@ func TestGeneralityAllowlistUpdate(t *testing.T) {
 	})
 
 	t.Run("refuses-growth-increased-count", func(t *testing.T) {
-		p := filepath.Join(t.TempDir(), "ledger.txt")
+		p := filepath.Join(t.TempDir(), "@root.txt")
 		old := "# ceiling: 1\nfixture.go:glenn 1\n"
 		if err := os.WriteFile(p, []byte(old), 0600); err != nil {
 			t.Fatal(err)
 		}
 		measured := map[string]int{"fixture.go:glenn": 2}
-		err := writeGeneralityAllowlist(p, measured)
+		err := update(p, measured)
 		if err == nil {
 			t.Fatal("expected error on attempted growth with increased count, got nil")
 		}
-		if !strings.Contains(err.Error(), "refuses to grow") || !strings.Contains(err.Error(), "exceeds existing count 1") {
+		if !strings.Contains(err.Error(), "refuses to raise a count") || !strings.Contains(err.Error(), "measured at 2") {
 			t.Fatalf("expected error mentioning refusal to grow and count exceed, got: %v", err)
 		}
 		// Ledger on disk must remain untouched
@@ -866,7 +821,7 @@ func TestGeneralityAllowlistUpdate(t *testing.T) {
 	})
 
 	t.Run("clean-write-on-shrinking", func(t *testing.T) {
-		p := filepath.Join(t.TempDir(), "ledger.txt")
+		p := filepath.Join(t.TempDir(), "@root.txt")
 		old := "# comment\n# ceiling: 3\nfixture.go:emma 2\nfixture.go:glenn 3\nfixture.go:rowan 1\n"
 		if err := os.WriteFile(p, []byte(old), 0600); err != nil {
 			t.Fatal(err)
@@ -877,7 +832,7 @@ func TestGeneralityAllowlistUpdate(t *testing.T) {
 			"fixture.go:glenn": 3,
 			"fixture.go:rowan": 0,
 		}
-		err := writeGeneralityAllowlist(p, measured)
+		err := update(p, measured)
 		if err != nil {
 			t.Fatalf("clean shrinking should succeed, got: %v", err)
 		}
@@ -885,7 +840,7 @@ func TestGeneralityAllowlistUpdate(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		parsed, err := allowlist.Parse(p, string(raw), allowlist.Options{Ceiling: true})
+		parsed, err := allowlist.Parse(p, string(raw), allowlist.Options{Ceiling: true, Counted: true})
 		if err != nil {
 			t.Fatalf("failed to parse updated allowlist: %v", err)
 		}
@@ -905,6 +860,44 @@ func TestGeneralityAllowlistUpdate(t *testing.T) {
 		expected := "# comment\n# ceiling: 2\nfixture.go:emma 1\nfixture.go:glenn 3\n"
 		if string(raw) != expected {
 			t.Fatalf("unexpected content:\ngot:\n%s\nwant:\n%s", string(raw), expected)
+		}
+	})
+
+	t.Run("reason-and-comments-survive-count-lowering", func(t *testing.T) {
+		t.Parallel()
+		for _, tc := range []struct {
+			name, separator string
+		}{
+			{"tab", "\t"},
+			{"unicode-space", "\u2003"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				t.Parallel()
+				dir := t.TempDir()
+				p := filepath.Join(dir, "@root.txt")
+				neighbor := filepath.Join(dir, "other.txt")
+				prefix := "# ledger heading\n# ceiling: 1\nfixture.go:glenn" + tc.separator
+				suffix := tc.separator + "reason with words # keep this text\n# adjacent comment\n"
+				other := "# ceiling: 1\nother/file.go:hulk 1 unrelated reason\n"
+				require.NoError(t, os.WriteFile(p, []byte(prefix+"3"+suffix), 0600))
+				require.NoError(t, os.WriteFile(neighbor, []byte(other), 0600))
+				beforeNeighbor, err := os.Stat(neighbor)
+				require.NoError(t, err)
+
+				require.NoError(t, update(p, map[string]int{
+					"fixture.go:glenn":   2,
+					"other/file.go:hulk": 1,
+				}))
+				got, err := os.ReadFile(p)
+				require.NoError(t, err)
+				assert.Equal(t, prefix+"2"+suffix, string(got))
+				gotOther, err := os.ReadFile(neighbor)
+				require.NoError(t, err)
+				assert.Equal(t, other, string(gotOther))
+				afterNeighbor, err := os.Stat(neighbor)
+				require.NoError(t, err)
+				assert.True(t, os.SameFile(beforeNeighbor, afterNeighbor), "unrelated shard was rewritten")
+			})
 		}
 	})
 }

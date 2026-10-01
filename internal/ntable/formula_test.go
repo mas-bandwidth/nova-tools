@@ -1,7 +1,6 @@
 package ntable_test
 
 import (
-	"reflect"
 	"strings"
 	"testing"
 
@@ -193,12 +192,12 @@ func TestNamedFormulaFolds(t *testing.T) {
 		got := ntable.Render(tb, ntable.RenderOpts{})
 		require.True(t, strings.HasSuffix(got, want), "%s:\n%s\nwant the footer %q", spec, got, want)
 	}
-	if c, err := ntable.ParseColumn("done:sum(ok+failed)"); err != nil || c.Fold != ntable.Sum {
-		t.Fatalf("the default fold of a sum column: %+v %v", c, err)
-	}
-	if c, err := ntable.ParseColumn("okpct:pct(ok/ok+failed)"); err != nil || c.Fold != ntable.Pooled {
-		t.Fatalf("the default fold of a named percentage: %+v %v", c, err)
-	}
+	c, err := ntable.ParseColumn("done:sum(ok+failed)")
+	require.NoError(t, err)
+	require.Equal(t, ntable.Sum, c.Fold, "the default fold of a sum column: %+v", c)
+	c, err = ntable.ParseColumn("okpct:pct(ok/ok+failed)")
+	require.NoError(t, err)
+	require.Equal(t, ntable.Pooled, c.Fold, "the default fold of a named percentage: %+v", c)
 }
 
 // TestFormulaRefusals: every named column must be a count column of the same
@@ -244,16 +243,16 @@ func TestParseFormula(t *testing.T) {
 		"sum(ok)":           {Sum: true, Over: []string{"ok"}},
 	} {
 		got, err := ntable.ParseFormula(proj)
-		if err != nil || !reflect.DeepEqual(got, want) {
-			t.Errorf("%s: %+v %v, want %+v", proj, got, err, want)
-		}
+		assert.NoError(t, err, proj)
+		assert.Equal(t, want, got, proj)
 	}
 	f, _ := ntable.ParseFormula("pct(ok/ok+failed)")
 	got := f.Inputs()
 	require.Equal(t, []string{"ok", "failed"}, got, "inputs %v", got)
-	if ntable.IsSum("pct(ok)") || !ntable.IsSum("sum(ok)") || !ntable.IsPct("pct(ok/ok)") || ntable.IsPct("sum(ok)") {
-		t.Fatal("IsSum/IsPct")
-	}
+	require.False(t, ntable.IsSum("pct(ok)"), "IsSum/IsPct")
+	require.True(t, ntable.IsSum("sum(ok)"), "IsSum/IsPct")
+	require.True(t, ntable.IsPct("pct(ok/ok)"), "IsSum/IsPct")
+	require.False(t, ntable.IsPct("sum(ok)"), "IsSum/IsPct")
 	require.False(t, (ntable.Column{Projection: "sum(ok)"}).HasSet(), "a formula column holds no set")
 	require.False(t, (ntable.Column{Projection: "pct(ok/ok)"}).HasSet(), "a formula column holds no set")
 }

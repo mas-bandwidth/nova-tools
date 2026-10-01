@@ -521,10 +521,12 @@ func TestRemoveFriendDoesNotTouchSprintKeys(t *testing.T) {
 }
 
 // TestApplyRedisTripsReducedFromAuditBaseline measures round trips against the
-// REDIS-TRIPS.md baseline from Rowan's audit (rowan-7fbdefecf56e):
-// - first run: 28 trips (down from 42 before Cuts 2, 3, 4)
-// - steady apply: 6 trips (down from 18 before Cut 1)
-// - two changes: 11 trips (down from 25 before Cut 2)
+// REDIS-TRIPS.md baseline from Rowan's audit (rowan-7fbdefecf56e), with the
+// loop kind's one read trip on a store with no loop (readLoops) added to
+// every apply of all kinds:
+// - first run: 31 trips (30 before the loop kind; 42 before Cuts 2, 3, 4)
+// - steady apply: 7 trips (6 before the loop kind; 18 before Cut 1)
+// - two changes: 12 trips (11 before the loop kind; 25 before Cut 2)
 func TestApplyRedisTripsReducedFromAuditBaseline(t *testing.T) {
 	t.Parallel()
 
@@ -539,8 +541,8 @@ func TestApplyRedisTripsReducedFromAuditBaseline(t *testing.T) {
 	applyKinds(t, st, ap, "rowan")
 	firstRunTrips := trips.N() - before
 	t.Logf("first run trips = %d (baseline was 42)", firstRunTrips)
-	if firstRunTrips > 30 {
-		t.Fatalf("first run took %d trips, want <= 30 (was 42 before batching cuts)", firstRunTrips)
+	if firstRunTrips > 31 {
+		t.Fatalf("first run took %d trips, want <= 31: 30 for the four first kinds and 1 for the loop kind with no loop (was 42 before batching cuts)", firstRunTrips)
 	}
 
 	// 2. Steady apply: nothing changed; Cut 1 skips the stamps (18 -> 6)
@@ -548,8 +550,8 @@ func TestApplyRedisTripsReducedFromAuditBaseline(t *testing.T) {
 	applyKinds(t, st, ap, "rowan")
 	steadyTrips := trips.N() - before
 	t.Logf("steady apply trips = %d (baseline was 18)", steadyTrips)
-	if steadyTrips != 6 {
-		t.Fatalf("steady apply took %d trips, want 6 (was 18 before Cut 1)", steadyTrips)
+	if steadyTrips != 7 {
+		t.Fatalf("steady apply took %d trips, want 7: 6 for the four first kinds and 1 for the loop kind with no loop (was 18 before Cut 1)", steadyTrips)
 	}
 
 	// 3. Two changes: update two friends (slots on stella, slots on rowan) (25 -> 11)
@@ -563,8 +565,8 @@ func TestApplyRedisTripsReducedFromAuditBaseline(t *testing.T) {
 	applyKinds(t, st, ap, "rowan")
 	twoChangesTrips := trips.N() - before
 	t.Logf("two changes trips = %d (baseline was 25)", twoChangesTrips)
-	if twoChangesTrips > 11 {
-		t.Fatalf("two changes took %d trips, want <= 11 (was 25 before Cut 2)", twoChangesTrips)
+	if twoChangesTrips > 12 {
+		t.Fatalf("two changes took %d trips, want <= 12: 11 and the loop kind's one (was 25 before Cut 2)", twoChangesTrips)
 	}
 
 	// 4. Machine removal: add third machine "air" to store and apply, then delete "air" and measure apply trips.
@@ -585,8 +587,8 @@ func TestApplyRedisTripsReducedFromAuditBaseline(t *testing.T) {
 	applyKinds(t, st, ap, "rowan")
 	machineRemovalTrips := trips.N() - before
 	t.Logf("machine removal trips = %d", machineRemovalTrips)
-	if machineRemovalTrips > 15 {
-		t.Fatalf("machine removal took %d trips, want <= 15 (was 25 before Cut 5)", machineRemovalTrips)
+	if machineRemovalTrips > 16 {
+		t.Fatalf("machine removal took %d trips, want <= 16: 15 and the loop kind's one (was 25 before Cut 5)", machineRemovalTrips)
 	}
 }
 

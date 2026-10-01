@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
+	"github.com/stretchr/testify/assert"
 )
 
 // TestParseTestIsTheOneGrammar is nova-tools#4313's TEST line: build tags
@@ -50,20 +51,16 @@ func TestParseTestIsTheOneGrammar(t *testing.T) {
 			t.Errorf("ParseTest(%q) = %+v %q, want a refusal with %q and the remedy", v, got, why, wantWhy)
 		}
 	}
-	if s := (cardhdr.TestLine{Package: "./x", Name: "TestY"}).String(); s != "./x TestY" {
-		t.Errorf("String() = %q", s)
-	}
-	if s := (cardhdr.TestLine{Package: "./x", Name: "TestY", Tags: "functional"}).String(); s != "-tags functional ./x TestY" {
-		t.Errorf("String() = %q", s)
-	}
+	s := (cardhdr.TestLine{Package: "./x", Name: "TestY"}).String()
+	assert.Equal(t, "./x TestY", s, "String() = %q", s)
+	s = (cardhdr.TestLine{Package: "./x", Name: "TestY", Tags: "functional"}).String()
+	assert.Equal(t, "-tags functional ./x TestY", s, "String() = %q", s)
 	for pkg, want := range map[string]string{"internal/x": "./internal/x", "./x": "./x", ".": "."} {
-		if got := (cardhdr.TestLine{Package: pkg}).GoPackage(); got != want {
-			t.Errorf("GoPackage(%q) = %q, want %q", pkg, got, want)
-		}
+		got := (cardhdr.TestLine{Package: pkg}).GoPackage()
+		assert.Equal(t, want, got, "GoPackage(%q) = %q, want %q", pkg, got, want)
 	}
-	if s := (cardhdr.TestLine{None: true, Why: "why"}).String(); s != "none why" {
-		t.Errorf("String() = %q", s)
-	}
+	s = (cardhdr.TestLine{None: true, Why: "why"}).String()
+	assert.Equal(t, "none why", s, "String() = %q", s)
 }
 
 // TestParseTestRefusesAPackagePattern is the nova-tools#4401 read's item 2:

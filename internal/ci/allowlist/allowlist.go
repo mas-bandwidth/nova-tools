@@ -76,6 +76,10 @@ type Options struct {
 	// Counted marks a list whose rows carry a site count as the second field
 	// (`key N reason`, N a positive integer); use CheckCounted with it.
 	Counted bool
+	// PackageKeys makes LoadPackages interpret a counted key as
+	// `<repo-relative-package>:<kind>` instead of a file-qualified key.
+	// The row key itself remains unchanged; this only selects its shard.
+	PackageKeys bool
 }
 
 // FirstField is the default key: the row's first whitespace-separated field.
@@ -372,17 +376,16 @@ func CheckCountedMode(r Reporter, l *List, measured map[string]int, update bool)
 	return res
 }
 
-// withCount is a row with its second field set to n, the rest of the row as it was.
+// withCount replaces only the second field in a validated counted row. Keep
+// every separator and the trailing reason exactly as the author wrote them.
 func withCount(line string, n int) string {
-	i := len(line) - len(strings.TrimLeft(line, " \t"))
-	rest := line[i:]
-	key, after, _ := strings.Cut(rest, " ")
-	after = strings.TrimLeft(after, " ")
-	_, reason, _ := strings.Cut(after, " ")
-	if reason != "" {
-		return fmt.Sprintf("%s%s %d %s", line[:i], key, n, reason)
+	fields := strings.Fields(line)
+	if len(fields) < 2 {
+		return line // Parse refuses a counted row without a positive count.
 	}
-	return fmt.Sprintf("%s%s %d", line[:i], key, n)
+	afterKey := strings.Index(line, fields[0]) + len(fields[0])
+	start := afterKey + strings.Index(line[afterKey:], fields[1])
+	return line[:start] + strconv.Itoa(n) + line[start+len(fields[1]):]
 }
 
 // render is the file with the dropped lines gone, the grown rows appended and a
