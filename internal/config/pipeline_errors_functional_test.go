@@ -9,6 +9,8 @@ import (
 	"testing"
 
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // A missing field is normal; it must not hide a later error in the same batch.
@@ -18,38 +20,33 @@ func TestFriendApplyRefusesMalformedBeatAfterMissingBeat(t *testing.T) {
 	ap, c := redisApplier(t)
 	st := seed(t)
 	applyKinds(t, st, ap, "rowan")
-	if err := c.Set(ctx, FriendBeatKey("stella"), "not a hash", 0).Err(); err != nil {
-		t.Fatal(err)
+	{
+		err := c.Set(ctx, FriendBeatKey("stella"), "not a hash", 0).Err()
+		require.NoError(t, err)
 	}
-	if _, _, err := st.Update(ctx, KindFriend, "stella", map[string]string{"slots": "24"}, "rowan"); err != nil {
-		t.Fatal(err)
+	{
+		_, _, err := st.Update(ctx, KindFriend, "stella", map[string]string{"slots": "24"}, "rowan")
+		require.NoError(t, err)
 	}
 	before := pipelineStoreImage(t, c)
 	_, err := Apply(ctx, st, ap, KindFriend, "rowan", false, func(Op) {})
-	if err == nil || !strings.Contains(err.Error(), "WRONGTYPE") {
-		t.Errorf("apply with malformed beat: %v; want WRONGTYPE", err)
-	}
-	if !reflect.DeepEqual(before, pipelineStoreImage(t, c)) {
-		t.Error("failed friend read changed Redis")
-	}
+	assert.False(t, err == nil || !strings.Contains(err.Error(), "WRONGTYPE"), "apply with malformed beat: %v; want WRONGTYPE", err)
+	assert.False(t, !reflect.DeepEqual(before, pipelineStoreImage(t, c)), "failed friend read changed Redis")
 }
 
 func TestFriendPrefetchRefusesLaterErrorWithoutPublishingCache(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	ap, c := redisApplier(t)
-	if err := c.Set(ctx, FriendBeatKey("broken"), "not a hash", 0).Err(); err != nil {
-		t.Fatal(err)
+	{
+		err := c.Set(ctx, FriendBeatKey("broken"), "not a hash", 0).Err()
+		require.NoError(t, err)
 	}
 	ap.friendHosts = map[string]string{"cached": "original"}
 	ap.coordinator = "original"
 	err := ap.PrefetchFriends(ctx, []string{"missing", "broken"})
-	if err == nil || !strings.Contains(err.Error(), "WRONGTYPE") {
-		t.Errorf("prefetch: %v; want WRONGTYPE", err)
-	}
-	if !reflect.DeepEqual(ap.friendHosts, map[string]string{"cached": "original"}) || ap.coordinator != "original" || ap.coordinatorRead {
-		t.Errorf("failed prefetch published cache: hosts=%v coordinator=%s read=%v", ap.friendHosts, ap.coordinator, ap.coordinatorRead)
-	}
+	assert.False(t, err == nil || !strings.Contains(err.Error(), "WRONGTYPE"), "prefetch: %v; want WRONGTYPE", err)
+	assert.False(t, !reflect.DeepEqual(ap.friendHosts, map[string]string{"cached": "original"}) || ap.coordinator != "original" || ap.coordinatorRead, "failed prefetch published cache: hosts=%v coordinator=%s read=%v", ap.friendHosts, ap.coordinator, ap.coordinatorRead)
 }
 
 func TestMachineRemovalRefusesLaterDependencyReadError(t *testing.T) {
@@ -66,26 +63,22 @@ func TestMachineRemovalRefusesLaterDependencyReadError(t *testing.T) {
 				c.HSet(ctx, "machine:fixture:budget", "slots", "8"),
 				c.SAdd(ctx, kind+"s", "one", "two"),
 			} {
-				if err := cmd.Err(); err != nil {
-					t.Fatal(err)
+				{
+					err := cmd.Err()
+					require.NoError(t, err)
 				}
 			}
 			// Use this server's set order; the set is unchanged until Remove reads it.
 			names, err := c.SMembers(ctx, kind+"s").Result()
-			if err != nil || len(names) != 2 {
-				t.Fatalf("members %v: %v", names, err)
-			}
-			if err := c.Set(ctx, kind+":"+names[1]+":desired", "not a hash", 0).Err(); err != nil {
-				t.Fatal(err)
+			require.False(t, err != nil || len(names) != 2, "members %v: %v", names, err)
+			{
+				err := c.Set(ctx, kind+":"+names[1]+":desired", "not a hash", 0).Err()
+				require.NoError(t, err)
 			}
 			before := pipelineStoreImage(t, c)
 			err = ap.Remove(ctx, KindMachine, "fixture", "actor", "config:machine:1")
-			if err == nil || !strings.Contains(err.Error(), "WRONGTYPE") {
-				t.Errorf("remove after failed dependency read: %v; want WRONGTYPE", err)
-			}
-			if !reflect.DeepEqual(before, pipelineStoreImage(t, c)) {
-				t.Error("failed dependency read deleted machine state or wrote a receipt")
-			}
+			assert.False(t, err == nil || !strings.Contains(err.Error(), "WRONGTYPE"), "remove after failed dependency read: %v; want WRONGTYPE", err)
+			assert.False(t, !reflect.DeepEqual(before, pipelineStoreImage(t, c)), "failed dependency read deleted machine state or wrote a receipt")
 		})
 	}
 }
@@ -94,15 +87,11 @@ func pipelineStoreImage(t *testing.T, c *redis.Client) map[string]string {
 	t.Helper()
 	ctx := context.Background()
 	keys, err := c.Keys(ctx, "*").Result()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	image := make(map[string]string, len(keys))
 	for _, key := range keys {
 		value, err := c.Dump(ctx, key).Result()
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		image[key] = value
 	}
 	return image
@@ -139,8 +128,9 @@ func TestBatchedReadRefusesErrorAfterAbsentValue(t *testing.T) {
 				setup = []redis.Cmder{c.Set(ctx, BeatKey("broken"), "not a hash", 0)}
 			}
 			for _, cmd := range setup {
-				if err := cmd.Err(); err != nil {
-					t.Fatal(err)
+				{
+					err := cmd.Err()
+					require.NoError(t, err)
 				}
 			}
 			before := pipelineStoreImage(t, c)
@@ -150,15 +140,9 @@ func TestBatchedReadRefusesErrorAfterAbsentValue(t *testing.T) {
 			} else {
 				_, _, err = ap.Read(ctx, kind)
 			}
-			if err == nil || !strings.Contains(err.Error(), "WRONGTYPE") {
-				t.Errorf("read: %v; want WRONGTYPE", err)
-			}
-			if !reflect.DeepEqual(before, pipelineStoreImage(t, c)) {
-				t.Error("read modified Redis")
-			}
-			if ap.friendHosts != nil || ap.coordinatorRead {
-				t.Error("failed read published a friend cache")
-			}
+			assert.False(t, err == nil || !strings.Contains(err.Error(), "WRONGTYPE"), "read: %v; want WRONGTYPE", err)
+			assert.False(t, !reflect.DeepEqual(before, pipelineStoreImage(t, c)), "read modified Redis")
+			assert.False(t, ap.friendHosts != nil || ap.coordinatorRead, "failed read published a friend cache")
 		})
 	}
 }
@@ -167,35 +151,27 @@ func TestFriendReadDoesNotHideDeniedBeatAfterMissingBeat(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()
 	_, c := redisApplier(t)
-	if err := c.SAdd(ctx, FriendsKey, "rowan", "stella").Err(); err != nil {
-		t.Fatal(err)
+	{
+		err := c.SAdd(ctx, FriendsKey, "rowan", "stella").Err()
+		require.NoError(t, err)
 	}
 	// Only Stella's beat is outside this reader's allowed key set. An absent
 	// role/beat earlier in the pipeline must not convert NOPERM into absence.
-	if err := c.Do(ctx, "ACL", "SETUSER", "fixture-reader", "on", ">fixture-password", "+@read",
-		"~friends", "~friend:rowan:*", "~friend:stella:desired", "~friend:stella:roles", "~fleet:*", "~config:decl").Err(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, c.Do(ctx, "ACL", "SETUSER", "fixture-reader", "on", ">fixture-password", "+@read",
+		"~friends", "~friend:rowan:*", "~friend:stella:desired", "~friend:stella:roles", "~fleet:*", "~config:decl").Err())
 	reader := redis.NewClient(&redis.Options{Addr: c.Options().Addr, Username: "fixture-reader", Password: "fixture-password"})
 	t.Cleanup(func() {
-		if err := reader.Close(); err != nil {
-			t.Error(err)
-		}
+		assert.NoError(t, reader.Close())
 	})
 	// Prove this connection uses the restricted identity before testing the batch.
-	if err := reader.HGet(ctx, FriendBeatKey("stella"), "host").Err(); err == nil || !strings.Contains(err.Error(), "NOPERM") {
-		t.Fatalf("fixture did not deny the beat: %v", err)
+	{
+		err := reader.HGet(ctx, FriendBeatKey("stella"), "host").Err()
+		require.False(t, err == nil || !strings.Contains(err.Error(), "NOPERM"), "fixture did not deny the beat: %v", err)
 	}
 	ap := &RedisApplier{Client: reader}
 	before := pipelineStoreImage(t, c)
 	_, _, err := ap.Read(ctx, KindFriend)
-	if err == nil || !strings.Contains(err.Error(), "NOPERM") {
-		t.Errorf("read: %v; want NOPERM", err)
-	}
-	if ap.friendHosts != nil || ap.coordinatorRead {
-		t.Error("denied read published a cache")
-	}
-	if !reflect.DeepEqual(before, pipelineStoreImage(t, c)) {
-		t.Error("denied read changed Redis")
-	}
+	assert.False(t, err == nil || !strings.Contains(err.Error(), "NOPERM"), "read: %v; want NOPERM", err)
+	assert.False(t, ap.friendHosts != nil || ap.coordinatorRead, "denied read published a cache")
+	assert.False(t, !reflect.DeepEqual(before, pipelineStoreImage(t, c)), "denied read changed Redis")
 }

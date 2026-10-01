@@ -5,6 +5,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // hostsFake is a HostReader over a map: where each friend's beat says she runs.
@@ -32,8 +34,9 @@ func seedWidths(t *testing.T) *Mem {
 		name  string
 		slots string
 	}{{"m1", "8"}, {"m2", "4"}, {"m3", "0"}, {"m4", "2"}} {
-		if _, err := m.Insert(ctx, KindMachine, Row{Name: r.name, Fields: map[string]string{"user": "u", "seat": "s", "slots": r.slots, "runners": "0"}}, "t"); err != nil {
-			t.Fatal(err)
+		{
+			_, err := m.Insert(ctx, KindMachine, Row{Name: r.name, Fields: map[string]string{"user": "u", "seat": "s", "slots": r.slots, "runners": "0"}}, "t")
+			require.NoError(t, err)
 		}
 	}
 	return m
@@ -41,8 +44,9 @@ func seedWidths(t *testing.T) *Mem {
 
 func addFriend(t *testing.T, m *Mem, name, slots string) {
 	t.Helper()
-	if _, err := m.Insert(context.Background(), KindFriend, Row{Name: name, Fields: map[string]string{"slots": slots, "tiers": "flash", "roles": "builder"}}, "t"); err != nil {
-		t.Fatal(err)
+	{
+		_, err := m.Insert(context.Background(), KindFriend, Row{Name: name, Fields: map[string]string{"slots": slots, "tiers": "flash", "roles": "builder"}}, "t")
+		require.NoError(t, err)
 	}
 }
 
@@ -55,20 +59,14 @@ func TestWidthIsSlotsLessTheFriendsChargedThere(t *testing.T) {
 	m := seedWidths(t)
 	// no friend: the width is the ceiling, and no Redis is needed
 	ws, err := Widths(ctx, m, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	got := map[string]MachineWidth{}
 	for _, w := range ws {
 		got[w.Machine] = w
 	}
-	if got["m1"].Width != 8 || !got["m1"].Member() || got["m3"].Width != 0 || got["m3"].Member() {
-		t.Fatalf("no friends: %+v", ws)
-	}
+	require.False(t, got["m1"].Width != 8 || !got["m1"].Member() || got["m3"].Width != 0 || got["m3"].Member(), "no friends: %+v", ws)
 	for i := 1; i < len(ws); i++ {
-		if ws[i-1].Machine >= ws[i].Machine {
-			t.Fatalf("widths not in name order: %+v", ws)
-		}
+		require.False(t, ws[i-1].Machine >= ws[i].Machine, "widths not in name order: %+v", ws)
 	}
 
 	// two friends on m1 by their beats, one on m4 taking all of it, one with
@@ -78,21 +76,22 @@ func TestWidthIsSlotsLessTheFriendsChargedThere(t *testing.T) {
 	addFriend(t, m, "f3", "2")
 	addFriend(t, m, "f4", "0")
 	ws, err = Widths(ctx, m, hostsFake{"f1": "m1", "f2": "m1", "f3": "m4"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	got = map[string]MachineWidth{}
 	for _, w := range ws {
 		got[w.Machine] = w
 	}
-	if w := got["m1"]; w.Slots != 8 || w.Charged != 5 || w.Width != 3 || !w.Member() {
-		t.Fatalf("m1: %+v", w)
+	{
+		w := got["m1"]
+		require.False(t, w.Slots != 8 || w.Charged != 5 || w.Width != 3 || !w.Member(), "m1: %+v", w)
 	}
-	if w := got["m2"]; w.Charged != 0 || w.Width != 4 {
-		t.Fatalf("m2: %+v", w)
+	{
+		w := got["m2"]
+		require.False(t, w.Charged != 0 || w.Width != 4, "m2: %+v", w)
 	}
-	if w := got["m4"]; w.Charged != 2 || w.Width != 0 || w.Member() {
-		t.Fatalf("m4 is full of its friend and is no member: %+v", w)
+	{
+		w := got["m4"]
+		require.False(t, w.Charged != 2 || w.Width != 0 || w.Member(), "m4 is full of its friend and is no member: %+v", w)
 	}
 }
 
@@ -104,18 +103,19 @@ func TestAFriendWithNoBeatIsChargedToTheCoordinatorMachine(t *testing.T) {
 	ctx := context.Background()
 	m := seedWidths(t)
 	addFriend(t, m, "f1", "3")
-	if _, err := Widths(ctx, m, hostsFake{}); err == nil || !strings.Contains(err.Error(), "nova-config fleet set --coordinator") {
-		t.Fatalf("no beat, no coordinator: %v", err)
+	{
+		_, err := Widths(ctx, m, hostsFake{})
+		require.False(t, err == nil || !strings.Contains(err.Error(), "nova-config fleet set --coordinator"), "no beat, no coordinator: %v", err)
 	}
-	if _, _, err := m.Update(ctx, KindFleet, KindFleet, map[string]string{"coordinator": "m2"}, "t"); err != nil {
-		t.Fatal(err)
+	{
+		_, _, err := m.Update(ctx, KindFleet, KindFleet, map[string]string{"coordinator": "m2"}, "t")
+		require.NoError(t, err)
 	}
 	ws, err := Widths(ctx, m, hostsFake{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if w, _ := WidthOf(ws, "m2"); w.Charged != 3 || w.Width != 1 {
-		t.Fatalf("m2 carries the friend: %+v", w)
+	require.NoError(t, err)
+	{
+		w, _ := WidthOf(ws, "m2")
+		require.False(t, w.Charged != 3 || w.Width != 1, "m2 carries the friend: %+v", w)
 	}
 }
 
@@ -127,15 +127,18 @@ func TestWidthsNeedARedisOnlyWhenAFriendCarriesSlots(t *testing.T) {
 	ctx := context.Background()
 	m := seedWidths(t)
 	addFriend(t, m, "f1", "0")
-	if _, err := Widths(ctx, m, nil); err != nil {
-		t.Fatalf("a friend with no slots needs no Redis: %v", err)
+	{
+		_, err := Widths(ctx, m, nil)
+		require.NoError(t, err, "a friend with no slots needs no Redis: %v", err)
 	}
 	addFriend(t, m, "f2", "1")
-	if _, err := Widths(ctx, m, nil); err == nil || !strings.Contains(err.Error(), "Redis address is needed") {
-		t.Fatalf("no host reader: %v", err)
+	{
+		_, err := Widths(ctx, m, nil)
+		require.False(t, err == nil || !strings.Contains(err.Error(), "Redis address is needed"), "no host reader: %v", err)
 	}
-	if _, err := Widths(ctx, m, hostsErr{}); err == nil || !strings.Contains(err.Error(), "store down") {
-		t.Fatalf("host reader down: %v", err)
+	{
+		_, err := Widths(ctx, m, hostsErr{})
+		require.False(t, err == nil || !strings.Contains(err.Error(), "store down"), "host reader down: %v", err)
 	}
 }
 
@@ -145,8 +148,6 @@ func TestWidthIsDerivedNotStored(t *testing.T) {
 	t.Parallel()
 	k, _ := Lookup(KindMachine)
 	for _, f := range k.Fields {
-		if f.Name == "width" || f.Name == "member" {
-			t.Fatalf("the machine kind declares %s; the width is derived from slots and the friends' charges", f.Name)
-		}
+		require.False(t, f.Name == "width" || f.Name == "member", "the machine kind declares %s; the width is derived from slots and the friends' charges", f.Name)
 	}
 }

@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil/pg"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // One throwaway Postgres for the package, one database per test
@@ -39,12 +41,11 @@ func migrated(t *testing.T) *PG {
 	t.Helper()
 	ctx := context.Background()
 	st, err := OpenPG(ctx, server.Database(t))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	t.Cleanup(func() { _ = st.Close() })
-	if _, _, _, err := st.Migrate(ctx); err != nil {
-		t.Fatal(err)
+	{
+		_, _, _, err := st.Migrate(ctx)
+		require.NoError(t, err)
 	}
 	return st
 }
@@ -54,45 +55,37 @@ func TestMigrateOnAnEmptyDatabaseTwice(t *testing.T) {
 
 	ctx := context.Background()
 	st, err := OpenPG(ctx, server.Database(t))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	defer st.Close()
-	if v, err := st.Version(ctx); err != nil || v != 0 {
-		t.Fatalf("version before migrate: %d %v", v, err)
+	{
+		v, err := st.Version(ctx)
+		require.False(t, err != nil || v != 0, "version before migrate: %d %v", v, err)
 	}
 	all, err := Migrations()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	from, to, applied, err := st.Migrate(ctx)
-	if err != nil || from != 0 || to != len(all) || len(applied) != len(all) {
-		t.Fatalf("first migrate: from %d to %d applied %v err %v", from, to, applied, err)
-	}
+	require.False(t, err != nil || from != 0 || to != len(all) || len(applied) != len(all), "first migrate: from %d to %d applied %v err %v", from, to, applied, err)
 	from, to, applied, err = st.Migrate(ctx)
-	if err != nil || from != len(all) || to != len(all) || len(applied) != 0 {
-		t.Fatalf("second migrate: from %d to %d applied %v err %v (idempotent: nothing applied twice)", from, to, applied, err)
-	}
-	if v, err := st.Version(ctx); err != nil || v != len(all) {
-		t.Fatalf("version after: %d %v", v, err)
+	require.False(t, err != nil || from != len(all) || to != len(all) || len(applied) != 0, "second migrate: from %d to %d applied %v err %v (idempotent: nothing applied twice)", from, to, applied, err)
+	{
+		v, err := st.Version(ctx)
+		require.False(t, err != nil || v != len(all), "version after: %d %v", v, err)
 	}
 	counts, err := st.Counts(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	for _, k := range Kinds {
 		if k.Singleton {
-			if _, found, err := st.Get(ctx, k.Name, k.Name); err != nil || !found {
-				t.Errorf("fresh schema lacks the %s row migrate creates: %v %v", k.Name, found, err)
+			{
+				_, found, err := st.Get(ctx, k.Name, k.Name)
+				assert.False(t, err != nil || !found, "fresh schema lacks the %s row migrate creates: %v %v", k.Name, found, err)
 			}
 			continue
 		}
-		if counts[k.Name] != 0 {
-			t.Errorf("fresh schema counts %d %s rows", counts[k.Name], k.Name)
-		}
+		assert.False(t, counts[k.Name] != 0, "fresh schema counts %d %s rows", counts[k.Name], k.Name)
 	}
-	if rev, err := st.Rev(ctx, KindFriend); err != nil || rev != 0 {
-		t.Fatalf("rev of an empty history: %d %v", rev, err)
+	{
+		rev, err := st.Rev(ctx, KindFriend)
+		require.False(t, err != nil || rev != 0, "rev of an empty history: %d %v", rev, err)
 	}
 }
 
@@ -107,11 +100,10 @@ func TestOpenPGRefusesAClosedPort(t *testing.T) {
 	t.Parallel()
 
 	_, err := OpenPG(context.Background(), "postgres://postgres@127.0.0.1:1/nova?sslmode=disable&connect_timeout=2")
-	if err == nil {
-		t.Fatal("a closed port opened")
-	}
-	if got := err.Error(); !strings.Contains(got, "postgres at postgres@127.0.0.1:1/nova") {
-		t.Fatalf("refusal %q does not name the store", got)
+	require.Error(t, err, "a closed port opened")
+	{
+		got := err.Error()
+		require.False(t, !strings.Contains(got, "postgres at postgres@127.0.0.1:1/nova"), "refusal %q does not name the store", got)
 	}
 }
 
@@ -127,9 +119,7 @@ func TestOpenPGBoundsByTheFallbackOnlyWithoutADeadline(t *testing.T) {
 	// gets one value per connection.
 	stall := func() (dsn string, accepted chan struct{}) {
 		l, err := net.Listen("tcp", "127.0.0.1:0")
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		t.Cleanup(func() { _ = l.Close() })
 		accepted = make(chan struct{}, 8)
 		go func() {
@@ -150,7 +140,7 @@ func TestOpenPGBoundsByTheFallbackOnlyWithoutADeadline(t *testing.T) {
 	ctx := context.Background()
 	_, err := openPGWithin(ctx, dsn, 100*time.Millisecond)
 	if !errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
-		t.Fatalf("no deadline: err %v, ctx %v; want the fallback's deadline error on an open context", err, ctx.Err())
+		require.Failf(t, "unexpected result", "no deadline: err %v, ctx %v; want the fallback's deadline error on an open context", err, ctx.Err())
 	}
 
 	// A deadline (a distant one, so nothing here waits on it): it governs, so
@@ -166,6 +156,6 @@ func TestOpenPGBoundsByTheFallbackOnlyWithoutADeadline(t *testing.T) {
 	}()
 	_, err = openPGWithin(dctx, dsn, time.Nanosecond)
 	if err == nil || dctx.Err() == nil {
-		t.Fatalf("a deadline: err %v, ctx %v; want the caller's context to have governed", err, dctx.Err())
+		require.Failf(t, "unexpected result", "a deadline: err %v, ctx %v; want the caller's context to have governed", err, dctx.Err())
 	}
 }

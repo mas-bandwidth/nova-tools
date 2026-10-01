@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // fakeApplier is the unit tests' Redis: views per kind, a stamp per kind
@@ -100,20 +102,21 @@ func seed(t *testing.T) *Mem {
 		{friend, "rowan", map[string]string{"slots": "32", "tiers": "frontier", "roles": "builder"}},
 	} {
 		row, err := r.k.NewRow(r.n, r.raw)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if _, err := st.Insert(ctx, r.k.Name, row, "rowan"); err != nil {
-			t.Fatal(err)
+		require.NoError(t, err)
+		{
+			_, err := st.Insert(ctx, r.k.Name, row, "rowan")
+			require.NoError(t, err)
 		}
 	}
 	// rev 5: the fleet's coordinator machine; rev 6: the sprint's
 	// coordinator friend.
-	if _, _, err := st.Update(ctx, KindFleet, KindFleet, map[string]string{"coordinator": "studio"}, "rowan"); err != nil {
-		t.Fatal(err)
+	{
+		_, _, err := st.Update(ctx, KindFleet, KindFleet, map[string]string{"coordinator": "studio"}, "rowan")
+		require.NoError(t, err)
 	}
-	if _, _, err := st.Update(ctx, KindSprint, KindSprint, map[string]string{"coordinator": "rowan"}, "rowan"); err != nil {
-		t.Fatal(err)
+	{
+		_, _, err := st.Update(ctx, KindSprint, KindSprint, map[string]string{"coordinator": "rowan"}, "rowan")
+		require.NoError(t, err)
 	}
 	return st
 }
@@ -137,9 +140,7 @@ func TestPlanDiffsRowsAgainstRedis(t *testing.T) {
 		got = append(got, op.Op+":"+op.Name+":"+strings.Join(op.Changed, ","))
 	}
 	want := []string{"set:rowan:slots,tiers", "add:emma:", "remove:gone:"}
-	if strings.Join(got, " ") != strings.Join(want, " ") {
-		t.Fatalf("plan %v, want %v (coordinator first, adds and sets before removes, an unchanged row absent)", got, want)
-	}
+	require.False(t, strings.Join(got, " ") != strings.Join(want, " "), "plan %v, want %v (coordinator first, adds and sets before removes, an unchanged row absent)", got, want)
 }
 
 func TestApplyWritesEveryDifferenceThenStamps(t *testing.T) {
@@ -152,19 +153,11 @@ func TestApplyWritesEveryDifferenceThenStamps(t *testing.T) {
 	report := func(op Op) { reported = append(reported, op.Op+":"+op.Name) }
 
 	res, err := Apply(ctx, st, ap, KindMachine, "rowan", false, report)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Add != 2 || res.Set != 0 || res.Remove != 0 || res.Rev != 2 || res.RedisRev != 0 {
-		t.Fatalf("machine result %+v", res)
-	}
+	require.NoError(t, err)
+	require.False(t, res.Add != 2 || res.Set != 0 || res.Remove != 0 || res.Rev != 2 || res.RedisRev != 0, "machine result %+v", res)
 	res, err = Apply(ctx, st, ap, KindFriend, "rowan", false, report)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if res.Add != 2 || res.Rev != 4 {
-		t.Fatalf("friend result %+v", res)
-	}
+	require.NoError(t, err)
+	require.False(t, res.Add != 2 || res.Rev != 4, "friend result %+v", res)
 	wantLog := []string{
 		"add machine hulk as=rowan idem=config:machine:2",
 		"add machine studio as=rowan idem=config:machine:2",
@@ -174,50 +167,45 @@ func TestApplyWritesEveryDifferenceThenStamps(t *testing.T) {
 		"stamp friend 4",
 	}
 	if strings.Join(ap.log, "\n") != strings.Join(wantLog, "\n") {
-		t.Fatalf("writes:\n%s\nwant:\n%s", strings.Join(ap.log, "\n"), strings.Join(wantLog, "\n"))
+		require.Failf(t, "unexpected result", "writes:\n%s\nwant:\n%s", strings.Join(ap.log, "\n"), strings.Join(wantLog, "\n"))
 	}
-	if strings.Join(reported, " ") != "add:hulk add:studio add:rowan add:stella" {
-		t.Fatalf("reported %v: the sprint's coordinator first", reported)
-	}
-	if ap.prepared != 2 {
-		t.Fatalf("prepared %d times, want once per kind with writes", ap.prepared)
-	}
+	require.False(t, strings.Join(reported, " ") != "add:hulk add:studio add:rowan add:stella", "reported %v: the sprint's coordinator first", reported)
+	require.False(t, ap.prepared != 2, "prepared %d times, want once per kind with writes", ap.prepared)
 	// The row written for the sprint's coordinator carries the role; the
 	// stored row does not.
-	if got := ap.views[KindFriend]["rowan"]["roles"]; got != "builder,coordinator" {
-		t.Fatalf("rowan's roles in Redis %q, want builder,coordinator (derived from the sprint row)", got)
+	{
+		got := ap.views[KindFriend]["rowan"]["roles"]
+		require.False(t, got != "builder,coordinator", "rowan's roles in Redis %q, want builder,coordinator (derived from the sprint row)", got)
 	}
-	if stored, _, _ := st.Get(ctx, KindFriend, "rowan"); stored.Fields["roles"] != "builder" {
-		t.Fatalf("rowan's stored roles %q changed", stored.Fields["roles"])
+	{
+		stored, _, _ := st.Get(ctx, KindFriend, "rowan")
+		require.False(t, stored.Fields["roles"] != "builder", "rowan's stored roles %q changed", stored.Fields["roles"])
 	}
 
 	// A second apply is a no-op: nothing written, the stamp unchanged.
 	ap.log = nil
 	res, err = Apply(ctx, st, ap, KindFriend, "rowan", false, report)
-	if err != nil || res.Add+res.Set+res.Remove != 0 || len(ap.log) != 0 || ap.revs[KindFriend] != 4 {
-		t.Fatalf("second apply: %+v %v log %v", res, err, ap.log)
-	}
-	if ap.prepared != 2 {
-		t.Fatal("a no-op apply still prepared the library")
-	}
+	require.False(t, err != nil || res.Add+res.Set+res.Remove != 0 || len(ap.log) != 0 || ap.revs[KindFriend] != 4, "second apply: %+v %v log %v", res, err, ap.log)
+	require.False(t, ap.prepared != 2, "a no-op apply still prepared the library")
 
 	// A change in Postgres is one set; a removal is one remove.
-	if _, _, err := st.Update(ctx, KindFriend, "stella", map[string]string{"slots": "48"}, "rowan"); err != nil {
-		t.Fatal(err)
+	{
+		_, _, err := st.Update(ctx, KindFriend, "stella", map[string]string{"slots": "48"}, "rowan")
+		require.NoError(t, err)
 	}
-	if _, _, err := st.Update(ctx, KindSprint, KindSprint, map[string]string{"coordinator": ""}, "rowan"); err != nil {
-		t.Fatal(err)
+	{
+		_, _, err := st.Update(ctx, KindSprint, KindSprint, map[string]string{"coordinator": ""}, "rowan")
+		require.NoError(t, err)
 	}
-	if _, err := st.Delete(ctx, KindFriend, "rowan", "rowan"); err != nil {
-		t.Fatal(err)
+	{
+		_, err := st.Delete(ctx, KindFriend, "rowan", "rowan")
+		require.NoError(t, err)
 	}
 	ap.log = nil
 	res, err = Apply(ctx, st, ap, KindFriend, "rowan", false, report)
-	if err != nil || res.Set != 1 || res.Remove != 1 || res.Rev != 9 {
-		t.Fatalf("third apply: %+v %v", res, err)
-	}
+	require.False(t, err != nil || res.Set != 1 || res.Remove != 1 || res.Rev != 9, "third apply: %+v %v", res, err)
 	if strings.Join(ap.log, "\n") != "set friend stella as=rowan idem=config:friend:9\nremove friend rowan as=rowan idem=config:friend:9\nstamp friend 9" {
-		t.Fatalf("third apply writes:\n%s", strings.Join(ap.log, "\n"))
+		require.Failf(t, "unexpected result", "third apply writes:\n%s", strings.Join(ap.log, "\n"))
 	}
 }
 
@@ -230,23 +218,19 @@ func TestAHandoverIsTwoRoleSetsNewCoordinatorFirst(t *testing.T) {
 	ctx := context.Background()
 	st := seed(t)
 	ap := newFake()
-	if _, err := Apply(ctx, st, ap, KindFriend, "rowan", false, func(Op) {}); err != nil {
-		t.Fatal(err)
+	{
+		_, err := Apply(ctx, st, ap, KindFriend, "rowan", false, func(Op) {})
+		require.NoError(t, err)
 	}
-	if _, _, err := st.Update(ctx, KindSprint, KindSprint, map[string]string{"coordinator": "stella"}, "rowan"); err != nil {
-		t.Fatal(err)
+	{
+		_, _, err := st.Update(ctx, KindSprint, KindSprint, map[string]string{"coordinator": "stella"}, "rowan")
+		require.NoError(t, err)
 	}
 	var reported []string
 	res, err := Apply(ctx, st, ap, KindFriend, "rowan", false, func(op Op) { reported = append(reported, op.Op+":"+op.Name+":"+strings.Join(op.Changed, ",")) })
-	if err != nil || res.Set != 2 || res.Add+res.Remove != 0 {
-		t.Fatalf("handover apply: %+v %v", res, err)
-	}
-	if strings.Join(reported, " ") != "set:stella:roles set:rowan:roles" {
-		t.Fatalf("handover reported %v", reported)
-	}
-	if ap.views[KindFriend]["stella"]["roles"] != "builder,coordinator,reader" || ap.views[KindFriend]["rowan"]["roles"] != "builder" {
-		t.Fatalf("roles after the handover %v", ap.views[KindFriend])
-	}
+	require.False(t, err != nil || res.Set != 2 || res.Add+res.Remove != 0, "handover apply: %+v %v", res, err)
+	require.False(t, strings.Join(reported, " ") != "set:stella:roles set:rowan:roles", "handover reported %v", reported)
+	require.False(t, ap.views[KindFriend]["stella"]["roles"] != "builder,coordinator,reader" || ap.views[KindFriend]["rowan"]["roles"] != "builder", "roles after the handover %v", ap.views[KindFriend])
 }
 
 // TestApplyOfASingletonIsASetNeverAnAdd: the fleet and sprint rows exist
@@ -262,39 +246,27 @@ func TestApplyOfASingletonIsASetNeverAnAdd(t *testing.T) {
 	var reported []string
 	report := func(op Op) { reported = append(reported, op.Op+":"+op.Name+":"+strings.Join(op.Changed, ",")) }
 	res, err := Apply(ctx, st, ap, KindSprint, "rowan", false, report)
-	if err != nil || res.Set != 1 || res.Rev != 6 || strings.Join(reported, " ") != "set:sprint:coordinator" {
-		t.Fatalf("sprint: %+v %v reported %v", res, err, reported)
-	}
-	if ap.views[KindSprint][KindSprint]["coordinator"] != "rowan" {
-		t.Fatalf("sprint view %v", ap.views[KindSprint])
-	}
+	require.False(t, err != nil || res.Set != 1 || res.Rev != 6 || strings.Join(reported, " ") != "set:sprint:coordinator", "sprint: %+v %v reported %v", res, err, reported)
+	require.False(t, ap.views[KindSprint][KindSprint]["coordinator"] != "rowan", "sprint view %v", ap.views[KindSprint])
 	reported = nil
-	if _, _, err := st.Update(ctx, KindFleet, KindFleet, map[string]string{"coordinator": ""}, "rowan"); err != nil {
-		t.Fatal(err)
+	{
+		_, _, err := st.Update(ctx, KindFleet, KindFleet, map[string]string{"coordinator": ""}, "rowan")
+		require.NoError(t, err)
 	}
 	empty := NewMem()
 	res, err = Apply(ctx, empty, ap, KindFleet, "rowan", false, report)
-	if err != nil || res.Add+res.Set+res.Remove != 0 || res.Rev != 0 || len(reported) != 0 {
-		t.Fatalf("empty fleet: %+v %v reported %v", res, err, reported)
-	}
-	if strings.Join(ap.log, " ") != "set sprint sprint as=rowan idem=config:sprint:6 stamp sprint 6" {
-		t.Fatalf("empty fleet wrote %v", ap.log)
-	}
+	require.False(t, err != nil || res.Add+res.Set+res.Remove != 0 || res.Rev != 0 || len(reported) != 0, "empty fleet: %+v %v reported %v", res, err, reported)
+	require.False(t, strings.Join(ap.log, " ") != "set sprint sprint as=rowan idem=config:sprint:6 stamp sprint 6", "empty fleet wrote %v", ap.log)
 	ap.log = nil
-	if _, _, err := st.Update(ctx, KindFleet, KindFleet, map[string]string{"store": "hulk", "coordinator": "studio"}, "rowan"); err != nil {
-		t.Fatal(err)
+	{
+		_, _, err := st.Update(ctx, KindFleet, KindFleet, map[string]string{"store": "hulk", "coordinator": "studio"}, "rowan")
+		require.NoError(t, err)
 	}
 	ap.log = nil
 	res, err = Apply(ctx, st, ap, KindFleet, "rowan", false, report)
-	if err != nil || res.Set != 1 || res.Add != 0 || res.Rev != 8 {
-		t.Fatalf("fleet set: %+v %v", res, err)
-	}
-	if strings.Join(reported, " ") != "set:fleet:store,coordinator" || strings.Join(ap.log, " ") != "set fleet fleet as=rowan idem=config:fleet:8 stamp fleet 8" {
-		t.Fatalf("fleet set reported %v wrote %v", reported, ap.log)
-	}
-	if ap.views[KindFleet][KindFleet]["store"] != "hulk" {
-		t.Fatalf("fleet view %v", ap.views[KindFleet])
-	}
+	require.False(t, err != nil || res.Set != 1 || res.Add != 0 || res.Rev != 8, "fleet set: %+v %v", res, err)
+	require.False(t, strings.Join(reported, " ") != "set:fleet:store,coordinator" || strings.Join(ap.log, " ") != "set fleet fleet as=rowan idem=config:fleet:8 stamp fleet 8", "fleet set reported %v wrote %v", reported, ap.log)
+	require.False(t, ap.views[KindFleet][KindFleet]["store"] != "hulk", "fleet view %v", ap.views[KindFleet])
 }
 
 func TestApplyCheckWritesNothing(t *testing.T) {
@@ -305,15 +277,9 @@ func TestApplyCheckWritesNothing(t *testing.T) {
 	ap := newFake()
 	var reported []string
 	res, err := Apply(ctx, st, ap, KindFriend, "rowan", true, func(op Op) { reported = append(reported, op.Op+":"+op.Name) })
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !res.Check || res.Add != 2 || len(ap.log) != 0 || ap.prepared != 0 || ap.revs[KindFriend] != 0 {
-		t.Fatalf("check wrote: %+v log %v prepared %d revs %v", res, ap.log, ap.prepared, ap.revs)
-	}
-	if strings.Join(reported, " ") != "add:rowan add:stella" {
-		t.Fatalf("check reported %v", reported)
-	}
+	require.NoError(t, err)
+	require.False(t, !res.Check || res.Add != 2 || len(ap.log) != 0 || ap.prepared != 0 || ap.revs[KindFriend] != 0, "check wrote: %+v log %v prepared %d revs %v", res, ap.log, ap.prepared, ap.revs)
+	require.False(t, strings.Join(reported, " ") != "add:rowan add:stella", "check reported %v", reported)
 }
 
 func TestApplyRefusesConflictWhenRedisIsAhead(t *testing.T) {
@@ -324,23 +290,15 @@ func TestApplyRefusesConflictWhenRedisIsAhead(t *testing.T) {
 	ap := newFake()
 	ap.revs[KindFriend] = 9
 	_, err := Apply(ctx, st, ap, KindFriend, "rowan", false, func(Op) {})
-	if err == nil || !IsConflict(err) || !Refused(err) {
-		t.Fatalf("Redis at rev 9, Postgres at 4: %v", err)
-	}
-	if !strings.Contains(err.Error(), "CONFLICT friend") || !strings.Contains(err.Error(), "rev 9") || !strings.Contains(err.Error(), "rev 4") {
-		t.Fatalf("conflict line %q names neither revision", err)
-	}
-	if len(ap.log) != 0 {
-		t.Fatalf("a conflict wrote: %v", ap.log)
-	}
+	require.False(t, err == nil || !IsConflict(err) || !Refused(err), "Redis at rev 9, Postgres at 4: %v", err)
+	require.False(t, !strings.Contains(err.Error(), "CONFLICT friend") || !strings.Contains(err.Error(), "rev 9") || !strings.Contains(err.Error(), "rev 4"), "conflict line %q names neither revision", err)
+	require.False(t, len(ap.log) != 0, "a conflict wrote: %v", ap.log)
 	// The stamp itself is compare-and-set: a stamp that moved under the
 	// apply is the same refusal, after the writes.
 	ap = newFake()
 	ap.stampErr = Conflict(KindFriend, 5, 4)
 	_, err = Apply(ctx, st, ap, KindFriend, "rowan", false, func(Op) {})
-	if err == nil || !IsConflict(err) {
-		t.Fatalf("moved stamp: %v", err)
-	}
+	require.False(t, err == nil || !IsConflict(err), "moved stamp: %v", err)
 }
 
 func TestApplyStopsAtARefusalAndNamesIt(t *testing.T) {
@@ -353,25 +311,15 @@ func TestApplyStopsAtARefusalAndNamesIt(t *testing.T) {
 	ap.refuse["stella"] = ceiling
 	var reported []string
 	_, err := Apply(ctx, st, ap, KindFriend, "rowan", false, func(op Op) { reported = append(reported, op.Name) })
-	if !errors.Is(err, ErrCeiling) || !Refused(err) {
-		t.Fatalf("ceiling: %v", err)
-	}
-	if strings.Join(ap.log, " ") != "add friend rowan as=rowan idem=config:friend:4" {
-		t.Fatalf("writes before the refusal %v: rowan is written, stella refused, nothing after and no stamp", ap.log)
-	}
-	if ap.revs[KindFriend] != 0 {
-		t.Fatal("a refused apply stamped the revision")
-	}
-	if strings.Join(reported, " ") != "rowan stella" {
-		t.Fatalf("reported %v: the refused op is reported before it is tried", reported)
-	}
+	require.False(t, !errors.Is(err, ErrCeiling) || !Refused(err), "ceiling: %v", err)
+	require.False(t, strings.Join(ap.log, " ") != "add friend rowan as=rowan idem=config:friend:4", "writes before the refusal %v: rowan is written, stella refused, nothing after and no stamp", ap.log)
+	require.False(t, ap.revs[KindFriend] != 0, "a refused apply stamped the revision")
+	require.False(t, strings.Join(reported, " ") != "rowan stella", "reported %v: the refused op is reported before it is tried", reported)
 }
 
 func TestApplyRefusesAnUnknownKind(t *testing.T) {
 	t.Parallel()
 
 	_, err := Apply(context.Background(), NewMem(), newFake(), "route", "rowan", false, func(Op) {})
-	if err == nil || !strings.Contains(err.Error(), "unknown kind \"route\"; the kinds are machine, fleet, friend, sprint, loop") {
-		t.Fatalf("unknown kind: %v", err)
-	}
+	require.False(t, err == nil || !strings.Contains(err.Error(), "unknown kind \"route\"; the kinds are machine, fleet, friend, sprint, loop"), "unknown kind: %v", err)
 }
