@@ -20,19 +20,20 @@ import (
 // attempt, what the attempt before left, the tier and the model. It is the packet's, never
 // the brief's prose.
 type Frame struct {
-	Kind       string `json:"kind"` // work or read
-	Card       string `json:"card"`
-	Attempt    int    `json:"attempt"`
-	Tier       string `json:"tier,omitempty"`
-	Model      string `json:"model"`
-	Repo       string `json:"repo"`                  // the clone URL or local path the card works in; "" when it names none
-	BaseRef    string `json:"base_ref,omitempty"`    // the ref the card's work is based on (a pull request's base)
-	StageSha   string `json:"stage_sha,omitempty"`   // the commit staged: a previous attempt's pushed head, a read's head under read, else the card's base sha
-	Branch     string `json:"branch"`                // the branch the checkout is on: the card's sprint branch, a read's work branch
-	PrevHead   string `json:"prev_head,omitempty"`   // the previous attempt's pushed head
-	Finding    string `json:"finding,omitempty"`     // the fix the reads of the attempt before asked for
-	ReviewBase string `json:"review_base,omitempty"` // a read: the ref the change is reviewed against
-	Rules      string `json:"rules,omitempty"`       // the RULES paragraph of the sprint's rules file, carried into JOB.md
+	Kind       string   `json:"kind"` // work or read
+	Card       string   `json:"card"`
+	Attempt    int      `json:"attempt"`
+	Tier       string   `json:"tier,omitempty"`
+	Model      string   `json:"model"`
+	Repo       string   `json:"repo"`                  // the clone URL or local path the card works in; "" when it names none
+	BaseRef    string   `json:"base_ref,omitempty"`    // the ref the card's work is based on (a pull request's base)
+	StageSha   string   `json:"stage_sha,omitempty"`   // the commit staged: a previous attempt's pushed head, a read's head under read, else the card's base sha
+	Branch     string   `json:"branch"`                // the branch the checkout is on: the card's sprint branch, a read's work branch
+	PrevHead   string   `json:"prev_head,omitempty"`   // the previous attempt's pushed head
+	Finding    string   `json:"finding,omitempty"`     // the fix the reads of the attempt before asked for
+	ReviewBase string   `json:"review_base,omitempty"` // a read: the ref the change is reviewed against
+	Stage      []string `json:"stage,omitempty"`       // the recipe files the brief's Stage: header lines name, relative to Recipes
+	Recipes    string   `json:"recipes,omitempty"`     // the member's recipes directory, <root>/recipes
 }
 
 // Staged is what native knows once the checkout is staged: the job directory, the checkout,
@@ -136,6 +137,13 @@ const FinishName = ".sprint/finish.md"
 // member counts the child's commits from.
 const StagedName = "staged"
 
+// IsFinish is whether raw is the finish the gh shim recorded in the job, byte for byte:
+// native publishes that record as the card's result when the child wrote no RESULT.md.
+func IsFinish(job string, raw []byte) bool {
+	b, err := os.ReadFile(filepath.Join(job, FinishName))
+	return err == nil && string(b) == string(raw)
+}
+
 // ReadFinish is the finish the gh shim recorded in the job directory, and whether
 // there is one (an empty file is none).
 func ReadFinish(job string) (typedrec.CardResult, bool) {
@@ -157,6 +165,40 @@ func Install(p Profile, f Frame, s Staged, shimDir string) error {
 	for _, sh := range p.Shims(f, s) {
 		if err := atomicfile.Write(filepath.Join(shimDir, sh.Name), []byte(sh.Script), 0o755, atomicfile.ExactMode()); err != nil {
 			return fmt.Errorf("the %s shim: %w", sh.Name, err)
+		}
+	}
+	return nil
+}
+
+// RecipesName is the directory recipes are kept in, in the member's root, and staged into,
+// in the job directory.
+const RecipesName = "recipes"
+
+// StageRecipes copies the recipe files a frame names from the member's recipes directory
+// into <job>/recipes, each at its own relative path (docs/SPEC-CARD-CONTRACT.md, staged
+// recipes): a brief holds 16 KiB, a recipe a card works from can be larger, and the wall
+// gives the child no forge to fetch one from. A name that is not a local relative path, or
+// is not a regular file in the recipes directory, refuses the whole staging.
+func StageRecipes(f Frame, job string) error {
+	for _, rel := range f.Stage {
+		if !filepath.IsLocal(rel) {
+			return fmt.Errorf("Stage: %q is not a path inside the recipes directory", rel)
+		}
+		from := filepath.Join(f.Recipes, rel)
+		fi, err := os.Lstat(from)
+		if err != nil || !fi.Mode().IsRegular() {
+			return fmt.Errorf("Stage: %s is not a file in %s (put it there, or drop the Stage: line)", rel, f.Recipes)
+		}
+		b, err := os.ReadFile(from)
+		if err != nil {
+			return err
+		}
+		to := filepath.Join(job, RecipesName, rel)
+		if err := os.MkdirAll(filepath.Dir(to), 0o755); err != nil {
+			return err
+		}
+		if err := atomicfile.Write(to, b, 0o644); err != nil {
+			return err
 		}
 	}
 	return nil

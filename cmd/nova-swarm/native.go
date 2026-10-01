@@ -1298,7 +1298,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// open exits 0 silently, leaving no report and no log. The run records that as a
 	// harness-silent note, never a NATIVE OK.
 	if res.rc == 0 {
-		if _, err := os.Stat(filepath.Join(jobDir, "RESULT.md")); err != nil {
+		if _, published := swarm.FindCardResult(jobDir); !published {
 			res.reason = "harness-silent"
 		}
 	}
@@ -2087,6 +2087,9 @@ func installFrame(cfg nativeRunConfig, jobDir, head string) error {
 	// member counts the child's commits from it, never from the checkout's own refs
 	if err := atomicfile.Write(filepath.Join(cfg.slotDir, cardcontract.StagedName), []byte(head+"\n"), 0o644); err != nil {
 		return fmt.Errorf("recording the staged commit: %w", err)
+	}
+	if err := cardcontract.StageRecipes(*cfg.frame, jobDir); err != nil {
+		return err
 	}
 	st := cardcontract.Staged{Job: jobDir, Repo: filepath.Join(jobDir, swarm.JobRepo), Head: head, Git: git}
 	return cardcontract.Install(cardcontract.For(cardcontract.FamilyOf(cfg.model)), *cfg.frame, st, nativeShellShimDir(cfg.slotDir))
