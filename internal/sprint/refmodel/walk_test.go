@@ -52,10 +52,10 @@ type walk struct {
 }
 
 // newWalk is the sprint of a seed: two or three streams, two or three members
-// up, two or three readers, the machine RUNNING since t0.
+// up, two to four readers, the machine RUNNING since t0.
 func newWalk(seed uint64) *walk {
 	rng := rand.New(rand.NewPCG(seed, 0x5eed))
-	readers := []string{"reader-a", "reader-b", "reader-c"}[:2+rng.IntN(2)]
+	readers := []string{"reader-a", "reader-b", "reader-c", "reader-d"}[:2+rng.IntN(3)]
 	k := &walk{world: newWorld(readers...), rng: rng, now: t0, beats: map[string]sprint.Beat{}, silent: map[string]bool{}, running: true, since: t0}
 	for i := range walkMaxStreams - 1 + rng.IntN(2) {
 		k.streams = append(k.streams, fmt.Sprintf("s%d", i+1))
@@ -139,6 +139,8 @@ var walkActions = []struct {
 	{2, (*walk).landNeed, true},
 	{1, (*walk).lose, true},
 	{5, (*walk).unlevel, true},
+	{8, (*walk).emptyLanes, true},
+	{10, (*walk).readAll, true},
 }
 
 // step is one random action of one of the actors. It says whether a snapshot is
@@ -537,4 +539,57 @@ func samples(n int) []sample {
 		}
 	}
 	return out
+}
+
+// emptyLanes has a member with working cards and the fewest ready finish all
+// its working cards, ok, while another member holds ready cards: its lanes
+// free beside a ready backlog, the level's case.
+func (k *walk) emptyLanes() bool {
+	most, fewest, readyAll := "", 0, 0
+	for _, m := range k.members {
+		n := k.s.Fleet.Count(m, sprint.Ready)
+		readyAll += n
+		if k.s.Fleet.Count(m, sprint.Working) > 0 && (most == "" || n < fewest) {
+			most, fewest = m, n
+		}
+	}
+	if most == "" || readyAll == fewest {
+		return false
+	}
+	gens := map[string]int{}
+	var ids []string
+	for _, c := range k.s.Fleet.Cell(most, sprint.Working) {
+		ids, gens[c.ID] = append(ids, c.ID), c.Int("gen")
+	}
+	return k.try(sprint.Finish(k.s, sprint.FinishReq{As: most, Sel: sprint.Sel{IDs: ids}, Gens: gens, Head: "h-" + most, Report: "done", Who: most}))
+}
+
+// readAll has a reader with reads asked or reading report all of them ok: the
+// one that leaves the most asked reads of other readers it could take (none of
+// its own at their attempt), so it is idle beside a backlog it may be given:
+// the readers' level's case.
+func (k *walk) readAll() bool {
+	best, most := "", 0
+	for _, rd := range k.s.Readers.Rows() {
+		if k.s.Readers.Count(rd, sprint.Asked)+k.s.Readers.Count(rd, sprint.Reading) == 0 {
+			continue
+		}
+		n := 0
+		for _, c := range k.s.Readers.Column(sprint.Asked) {
+			if c.Row != rd && k.s.Readers.Card(sprint.ReadCardID(c.F("primary"), c.Int("attempt"), rd)) == nil {
+				n++
+			}
+		}
+		if n > most {
+			best, most = rd, n
+		}
+	}
+	if best == "" {
+		return false
+	}
+	var ids []string
+	for _, c := range append(k.s.Readers.Cell(best, sprint.Asked), k.s.Readers.Cell(best, sprint.Reading)...) {
+		ids = append(ids, c.ID)
+	}
+	return k.try(sprint.Read(k.s, sprint.ReadReq{As: best, Sel: sprint.Sel{IDs: ids}, Verdict: "ok", Finding: "f", Who: best}))
 }

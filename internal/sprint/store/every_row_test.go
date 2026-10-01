@@ -46,15 +46,16 @@ func tableRows(res TickResult, table string) []string {
 func TestEveryMemberWhoseBeatLapsedGoesDownInOneTick(t *testing.T) {
 	t.Parallel()
 	h, ms := fleetOf(t, 4, 8)
-	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 28}))
+	h.must(AddStep(sprint.AddReq{Stream: "s1", Count: 36}))
 	h.startMachine()
 	h.machine()
-	if d := h.dealtTo(); d["m1"] != 7 || d["m2"] != 7 || d["m3"] != 7 || d["m4"] != 7 {
-		t.Fatalf("dealt %v, want seven each", d)
+	if d := h.dealtTo(); d["m1"] != 9 || d["m2"] != 9 || d["m3"] != 9 || d["m4"] != 9 {
+		t.Fatalf("dealt %v, want nine each", d)
 	}
-	// m1 and m2 fall silent together; m3 and m4 have room for one card each:
-	// those two cards go to them, the other twelve are withdrawn for the next
-	// deal, and no member is past its width (the owner's rule is width)
+	// m1 and m2 fall silent together, holding 18; m3 and m4 have room for
+	// seven cards each (DealAhead times the width of 8, less the 9 they hold):
+	// fourteen go to them, the other four are withdrawn for the next deal, and
+	// no member is past DealAhead times its width
 	h.setLive("m3", "m4")
 	h.tick(pastDown)
 	res := h.machine()
@@ -68,11 +69,11 @@ func TestEveryMemberWhoseBeatLapsedGoesDownInOneTick(t *testing.T) {
 		}
 	}
 	d := h.dealtTo()
-	for m, want := range map[string]int{"m1": 0, "m2": 0, "m3": 8, "m4": 8} {
-		require.Equal(t, want, d[m], "after one tick: dealt %v, want m3 and m4 at their width of 8 and nothing on m1 and m2", d)
+	for m, want := range map[string]int{"m1": 0, "m2": 0, "m3": sprint.DealAhead * 8, "m4": sprint.DealAhead * 8} {
+		require.Equal(t, want, d[m], "after one tick: dealt %v, want m3 and m4 at DealAhead times their width of 8 and nothing on m1 and m2", d)
 	}
-	require.Len(t, s.Fleet.Column(sprint.Withdrawn), 12, "%d cards withdrawn, want 12", len(s.Fleet.Column(sprint.Withdrawn)))
-	require.Len(t, s.Work.Column(sprint.Ready), 12, "%d primaries ready again, want the 12 withdrawn cards' primaries", len(s.Work.Column(sprint.Ready)))
+	require.Len(t, s.Fleet.Column(sprint.Withdrawn), 4, "%d cards withdrawn, want 4", len(s.Fleet.Column(sprint.Withdrawn)))
+	require.Len(t, s.Work.Column(sprint.Ready), 4, "%d primaries ready again, want the 4 withdrawn cards' primaries", len(s.Work.Column(sprint.Ready)))
 	if got := tableRows(res, sprint.Fleet); !slices.Equal(got, ms) {
 		t.Fatalf("the tick names the fleet rows %v, want every member's", got)
 	}
@@ -146,9 +147,10 @@ func TestTheStreamIndexIsReadBackAfterAStop(t *testing.T) {
 		idx, _ := h.snap().Work.Prop(sprint.PropStreamIndex)
 		served = append(served, indexPast(h.snap().Work.Rows(), idx))
 		counts = append(counts, idx)
-		// the member finishes its one card, so the next tick deals one more
+		// the member finishes its oldest card, so the next tick deals one more
+		// (the first deals two: DealAhead times its width of one)
 		s := h.snap()
-		for _, c := range s.Fleet.Column(sprint.Ready) {
+		for _, c := range s.Fleet.Column(sprint.Ready)[:1] {
 			h.must(TakeStep(sprint.TakeReq{As: c.Row, Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: c.Int("gen")}}))
 			h.must(FinishStep(sprint.FinishReq{Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: c.Int("gen")}}))
 		}
@@ -161,12 +163,12 @@ func TestTheStreamIndexIsReadBackAfterAStop(t *testing.T) {
 		}
 		_ = res
 	}
-	if want := []string{"s1", "s2", "s3", "s1", "s2"}; !slices.Equal(served, want) {
+	if want := []string{"s2", "s3", "s1", "s2", "s3"}; !slices.Equal(served, want) {
 		t.Fatalf("the streams served one a tick, across a stop: %v, want %v", served, want)
 	}
 	// the index is a counter, up by one with every card dealt (errata 3
 	// amendment 5, the owner's form)
-	if want := []string{"1", "2", "3", "4", "5"}; !slices.Equal(counts, want) {
+	if want := []string{"2", "3", "4", "5", "6"}; !slices.Equal(counts, want) {
 		t.Fatalf("the stream index's counter a tick, across a stop: %v, want %v", counts, want)
 	}
 }

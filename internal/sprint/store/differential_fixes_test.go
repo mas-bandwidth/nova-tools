@@ -229,8 +229,8 @@ func TestResumeWaitsForANeedOnlyAfterACross(t *testing.T) {
 // The reference model's redeal bound is the engine's.
 func TestTheModelsRedealBoundIsTheEngines(t *testing.T) {
 	t.Parallel()
-	if refmodel.MaxRedeals != sprint.MaxRedeals || refmodel.Width != sprint.DefaultWidth {
-		t.Fatalf("the model's bounds (%d, %d) are not the engine's (%d, %d)", refmodel.MaxRedeals, refmodel.Width, sprint.MaxRedeals, sprint.DefaultWidth)
+	if refmodel.MaxRedeals != sprint.MaxRedeals || refmodel.Width != sprint.DefaultWidth || refmodel.DealAhead != sprint.DealAhead {
+		t.Fatalf("the model's bounds (%d, %d, %d) are not the engine's (%d, %d, %d)", refmodel.MaxRedeals, refmodel.Width, refmodel.DealAhead, sprint.MaxRedeals, sprint.DefaultWidth, sprint.DealAhead)
 	}
 }
 
@@ -366,18 +366,24 @@ func TestTheRedealsAndTheLevelGoRoundAsTheModelDoes(t *testing.T) {
 			dAction{Kind: "take", Member: "m2", Card: "a2.w1", Gen: 1},
 			dAction{Kind: "fleet", Op: "down", Member: "m3"}),
 			"a3.w1", "m1"},
-		// a1..a5 dealt m1 m2 m3 m1 m2, the index past m2; m1 takes both its
-		// cards and m3 its one: the queues are 0 2 0, and the level moves a5
-		// from m2 to m3, where the shortest queue gives m1
+		// a1..a6 dealt m1 m2 m3 m1 m2 m3, the index past m3; m2 and m3 take
+		// and finish all theirs: the backlogs (held less the width) are -62
+		// -64 -64, and the level moves m1's newest, a4, round the fleet from
+		// the index past m3 to m2 (m1 is the one it leaves)
 		{"level", append(up("m1", "m2", "m3"),
 			dAction{Kind: "start"},
-			dAction{Kind: "add", Stream: "s1", IDs: []string{"a1", "a2", "a3", "a4", "a5"}},
+			dAction{Kind: "add", Stream: "s1", IDs: []string{"a1", "a2", "a3", "a4", "a5", "a6"}},
 			dAction{Kind: "tick"},
-			dAction{Kind: "take", Member: "m1", Card: "a1.w1", Gen: 1},
-			dAction{Kind: "take", Member: "m1", Card: "a4.w1", Gen: 1},
+			dAction{Kind: "take", Member: "m2", Card: "a2.w1", Gen: 1},
+			dAction{Kind: "take", Member: "m2", Card: "a5.w1", Gen: 1},
 			dAction{Kind: "take", Member: "m3", Card: "a3.w1", Gen: 1},
+			dAction{Kind: "take", Member: "m3", Card: "a6.w1", Gen: 1},
+			dAction{Kind: "finish", Member: "m2", Card: "a2.w1", Gen: 1, OK: true},
+			dAction{Kind: "finish", Member: "m2", Card: "a5.w1", Gen: 1, OK: true},
+			dAction{Kind: "finish", Member: "m3", Card: "a3.w1", Gen: 1, OK: true},
+			dAction{Kind: "finish", Member: "m3", Card: "a6.w1", Gen: 1, OK: true},
 			dAction{Kind: "fleet", Op: "level"}),
-			"a5.w1", "m3"},
+			"a4.w1", "m2"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			t.Parallel()

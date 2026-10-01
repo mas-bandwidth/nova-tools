@@ -116,7 +116,7 @@ func TestW12AndW13OnAStore(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		h.tick(time.Second)
 		res := x.tick()
-		want := []string{sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet, "end"}
+		want := []string{"start", sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet, "end"}
 		require.Equal(t, want, res.Order, "idle tick %d updated %v", i+1, res.Order)
 		ws := x.rec.take()
 		require.True(t, res.Idle, "idle tick %d: idle %v, tick-end %d, %d batches, queue %d", i+1, res.Idle, res.TickEnd, len(ws), h.queueLen())

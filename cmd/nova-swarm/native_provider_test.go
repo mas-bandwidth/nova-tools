@@ -223,14 +223,17 @@ func TestAChildTheProviderFailedIsJudgedProviderFailure(t *testing.T) {
 	}
 }
 
-// The harness's own UnknownError names no cause; with its logs printed into the capture
-// (the providers table's --print-logs --log-level ERROR) the error line it printed is the
-// cause on the hand-back line, not the envelope's words.
+// The harness's own UnknownError names no cause; with its logs printed on its stderr (the
+// providers table's --print-logs --log-level ERROR) the error line it printed is the cause on
+// the hand-back line, not the envelope's words, here a cause that is not the model (the
+// model's refusal is #5042's start retry). Every start fails the same way, so the line ends
+// with the starts tried.
 func TestAnUnknownErrorCarriesTheErrorLineTheHarnessPrinted(t *testing.T) {
 	t.Parallel()
 	_, errb := providerRun(t, "pf7", "FAKE-UNKNOWN-ERROR\n", nil)
 	assert.Contains(t, errb, "NATIVE PROVIDER-5XX label=pf7 ")
-	assert.Contains(t, errb, " reason=provider: class=unknown-model status=- msg=ProviderModelNotFoundError: Model not found: fake/no-such-model\n")
+	assert.Contains(t, errb, " reason=provider: class=other status=- msg=ProviderInitError: the provider fake could not be loaded (harness starts tried: ")
+	assert.NotContains(t, errb, "Unexpected server error", "the envelope's words are not the cause")
 }
 
 // The parent keeps the harness's last stderr lines itself (harnessErrTail): only the last
