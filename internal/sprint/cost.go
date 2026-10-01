@@ -272,12 +272,15 @@ func LandingExtras(stream string) func(*Snapshot) map[string][]string {
 			if pr == nil {
 				continue
 			}
+			// named over the placed records only, as a fresh read names them: a
+			// kept record an earlier step of the process showed in its twin's
+			// table is still named, or the twin drops it and plans without it
 			for k := 1; k <= pr.Int("attempt"); k++ {
-				if id := WorkCardID(pr.ID, k); s.Fleet.Card(id) == nil {
+				if id := WorkCardID(pr.ID, k); s.Fleet.Placed(id) == nil {
 					work = append(work, id)
 				}
 				for _, rd := range s.Readers.Rows() {
-					if id := ReadCardID(pr.ID, k, rd); s.Readers.Card(id) == nil {
+					if id := ReadCardID(pr.ID, k, rd); s.Readers.Placed(id) == nil {
 						reads = append(reads, id)
 					}
 				}
