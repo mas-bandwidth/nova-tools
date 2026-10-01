@@ -3,6 +3,8 @@ package bus
 import (
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // Each tolerance, by the two things that can be checked about it: the BYTES the note is
@@ -85,26 +87,17 @@ func TestSendTolerancesStoreTheNoteAndSayWhatTheyDid(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			tab := loadBus(t, writeBus(t, fixture()))
 			p, err := PrepareDraft(tab, tc.text, at("2026-09-09T12:34:56Z"), "", tc.as)
-			if err != nil {
-				t.Fatalf("the draft was refused: %v", err)
-			}
+			require.NoError(t, err, "the draft was refused: %v", err)
 			stored := p.Note.Render()
 			for _, line := range tc.wantHeader {
-				if !strings.Contains(stored, line+"\n") {
-					t.Fatalf("the stored note has no %q line:\n%s", line, stored)
-				}
+				require.Contains(t, stored, line+"\n", "the stored note has no %q line:\n%s", line, stored)
 			}
 			body := stored[strings.Index(stored, "\n\n")+2:]
-			if strings.TrimRight(body, "\n") != tc.wantBody {
-				t.Fatalf("body = %q, want %q", strings.TrimRight(body, "\n"), tc.wantBody)
-			}
-			if strings.Contains(body, "# ") {
-				t.Fatalf("the heading is still in the body:\n%s", body)
-			}
+			trimmed := strings.TrimRight(body, "\n")
+			require.Equal(t, tc.wantBody, trimmed, "body = %q, want %q", trimmed, tc.wantBody)
+			require.NotContains(t, body, "# ", "the heading is still in the body:\n%s", body)
 			notices := strings.Join(p.Notices, "\n")
-			if !strings.Contains(notices, tc.wantNotice) {
-				t.Fatalf("no notice said %q; the run said:\n%s", tc.wantNotice, notices)
-			}
+			require.Contains(t, notices, tc.wantNotice, "no notice said %q; the run said:\n%s", tc.wantNotice, notices)
 			if tc.wantNoNotice != "" && strings.Contains(notices, tc.wantNoNotice) {
 				t.Fatalf("a notice said %q, which is not what happened:\n%s", tc.wantNoNotice, notices)
 			}
@@ -118,9 +111,7 @@ func TestAToleratedNoteParsesStrictly(t *testing.T) {
 	t.Parallel()
 	tab := loadBus(t, writeBus(t, fixture()))
 	p, err := PrepareDraft(tab, "# The subject\n\nDate: whenever\n**To**: Bo\n\nbody\n", at("2026-09-09T12:34:56Z"), "", "Ada")
-	if err != nil {
-		t.Fatalf("refused: %v", err)
-	}
+	require.NoError(t, err, "refused: %v", err)
 	n, err := ParseNote(p.Path, p.Note.Render())
 	if err != nil {
 		t.Fatalf("the note send stored will not parse: %v\n%s", err, p.Note.Render())
@@ -150,9 +141,7 @@ func TestSendStillRefusesWhatItCannotGuess(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			tab := loadBus(t, writeBus(t, fixture()))
 			_, err := PrepareDraft(tab, tc.text, at("2026-09-09T12:34:56Z"), "", tc.as)
-			if err == nil {
-				t.Fatal("want a refusal, got none")
-			}
+			require.Error(t, err, "want a refusal, got none")
 			if !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("refusal %q does not name %q", err, tc.want)
 			}
@@ -166,9 +155,7 @@ func TestARefusalReportsEveryProblemInTheDraft(t *testing.T) {
 	t.Parallel()
 	tab := loadBus(t, writeBus(t, fixture()))
 	_, err := PrepareDraft(tab, "From: Ada\nTo: Boe\nRe: bo-deadbeefcafe\nSubject:\n\n\n", at("2026-09-09T12:34:56Z"), "", "")
-	if err == nil {
-		t.Fatal("want a refusal, got none")
-	}
+	require.Error(t, err, "want a refusal, got none")
 	reasons := Reasons(err)
 	if len(reasons) != 4 {
 		t.Fatalf("the run reported %d problems, want 4:\n%v", len(reasons), reasons)
@@ -196,9 +183,7 @@ func TestALineNumberInARefusalIsTheWritersOwnLine(t *testing.T) {
 	//        1        2   3          4              5             6            7
 	text := "\n\n# Title\nFrom: Ada\nDate: whenever\nBranch: main\nTo: Bo\n\nbody\n"
 	_, err := PrepareDraft(tab, text, at("2026-09-09T12:34:56Z"), "", "")
-	if err == nil {
-		t.Fatal("want a refusal, got none")
-	}
+	require.Error(t, err, "want a refusal, got none")
 	if !strings.Contains(err.Error(), "line 6: unknown header key") {
 		t.Fatalf("the refusal names the wrong line: %q", err)
 	}
@@ -231,7 +216,7 @@ func TestTheSkeletonIsADraftThisToolSends(t *testing.T) {
 	}
 	withBody := strings.Replace(s, PlaceholderBody, "Here is the body of the note.", 1)
 	if _, err := Prepare(tab, withBody, at("2026-09-09T12:34:56Z"), ""); err != nil {
-		t.Fatalf("the skeleton with body was refused by send: %v", err)
+		require.NoError(t, err, "the skeleton with body was refused by send: %v", err)
 	}
 	// With no subject given, the placeholder is what stands there, and it is visibly a
 	// placeholder rather than a plausible subject somebody would send by accident.

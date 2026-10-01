@@ -4,6 +4,8 @@ import (
 	"errors"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 const (
@@ -21,9 +23,7 @@ func TestBodyPaginatorEmitsAnExactFitInsteadOfDeferringItForever(t *testing.T) {
 
 	items := []BodyItem{{Commit: paginationOne, Path: "from-bo/a.md", Entry: OpenEntry{Path: "from-bo/a.md"}, Body: []byte("exact")}}
 	page, err := BodyPageFor(items, paginationRequest("", paginationBase, 1, 5))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	if len(page.Items) != 1 || page.PrintedBytes != 5 || !page.Drained || !page.Complete || page.Next != "" {
 		t.Fatalf("exact-fit body was not terminally emitted: %+v", page)
 	}
@@ -37,18 +37,14 @@ func TestBodyPaginatorCarriesEarlierGapAcrossChangedBudgetAndLaterPages(t *testi
 		{Commit: paginationTwo, Path: "from-bo/b.md", Entry: OpenEntry{Path: "from-bo/b.md"}, Body: []byte("ok")},
 	}
 	first, err := BodyPageFor(items, paginationRequest("", paginationBase, 1, 3))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	if len(first.Gaps) != 1 || first.GapCount != 1 || first.Next == "" || first.SafeFrontier != "" {
 		t.Fatalf("first page did not record the named gap: %+v", first)
 	}
 	// Raising a later page's budget never rewrites the historical gap.  The token's
 	// last identity resumes after it; a fresh chain is the explicit way to retry it.
 	second, err := BodyPageFor(items, paginationRequest(first.Next, paginationBase, 1, 100))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	if len(second.Items) != 1 || second.Items[0].Path != "from-bo/b.md" || second.GapCount != 1 || !second.Drained || second.Complete || second.SafeFrontier != "" || second.Next != "" {
 		t.Fatalf("later page forgot or crossed the earlier gap: %+v", second)
 	}
@@ -64,9 +60,7 @@ func TestBodyPaginatorAdvancesToWholePrefixBeforeLaterGap(t *testing.T) {
 	request := paginationRequest("", paginationBase, 2, 1)
 	request.Advance = true
 	page, err := BodyPageFor(items, request)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	if page.SafeFrontier != paginationOne || len(page.Items) != 1 || len(page.Gaps) != 1 {
 		t.Fatalf("did not retain the complete prefix before the gap: %+v", page)
 	}
@@ -80,9 +74,7 @@ func TestBodyPaginatorRefusesExternalCursorChange(t *testing.T) {
 		{Commit: paginationTwo, Path: "from-bo/b.md", Entry: OpenEntry{Path: "from-bo/b.md"}, Body: []byte("b")},
 	}
 	first, err := BodyPageFor(items, paginationRequest("", paginationBase, 1, 10))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	// The refusal is a TYPE and not a sentence, because the command layer prints both
 	// commits in the shape docs/SPEC-BUS-REPLY.md fixes -- `--after names cursor <sha> and
 	// this reader's cursor is <other>` -- and a caller that had to match prose to tell this
@@ -107,18 +99,14 @@ func TestBodyPaginatorContinuationSurvivesItsOwnWholeCommitAdvance(t *testing.T)
 	firstRequest := paginationRequest("", paginationBase, 1, 10)
 	firstRequest.Advance = true
 	first, err := BodyPageFor(items, firstRequest)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	if first.SafeFrontier != paginationOne || first.Next == "" {
 		t.Fatalf("first page did not produce an advanceable frontier: %+v", first)
 	}
 	secondRequest := paginationRequest(first.Next, paginationOne, 1, 10)
 	secondRequest.Advance = true
 	second, err := BodyPageFor(items, secondRequest)
-	if err != nil {
-		t.Fatalf("ordinary cursor advance invalidated its token: %v", err)
-	}
+	require.NoError(t, err, "ordinary cursor advance invalidated its token: %v", err)
 	if len(second.Items) != 1 || second.Items[0].Path != "from-bo/b.md" || !second.Complete {
 		t.Fatalf("continuation did not deliver the second item: %+v", second)
 	}
@@ -131,23 +119,17 @@ func TestBodyItemsAtSnapshotReadsPinnedCommitNotChangedWorktree(t *testing.T) {
 	bare := bareBus(t)
 	clone := cloneBus(t, bare)
 	base, err := HeadCommit(clone)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	path := "from-bo/pinned.md"
 	write(t, clone, path, "From: Bo\nTo: Ada\nDate: Mon Sep  7 00:00:00 UTC 2026\nSubject: pinned\n\noriginal")
 	commitByHand(t, clone, path, "add pinned note")
 	head, err := HeadCommit(clone)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	// The body source must be git show <commit>:<path>.  Reading the worktree here
 	// would return this mutation and make a continuation change under the reader.
 	write(t, clone, path, "From: Bo\nTo: Ada\nDate: Mon Sep  7 00:00:00 UTC 2026\nSubject: pinned\n\nworktree mutation")
 	items, err := BodyItemsAtSnapshot(clone, BodySnapshot{Base: base, Head: head, Reader: "Ada", Selector: "inbox-new"}, []OpenEntry{{Path: path}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	if len(items) != 1 || items[0].Commit != head || string(items[0].Body) != "original" {
 		t.Fatalf("snapshot item read worktree or lost identity: %+v", items)
 	}
@@ -160,25 +142,19 @@ func TestBodyRecordsAtSnapshotKeepsTwoReceiptOffsetsInOnePath(t *testing.T) {
 	bare := bareBus(t)
 	clone := cloneBus(t, bare)
 	base, err := HeadCommit(clone)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	path := "from-bo/RECEIPTS"
 	write(t, clone, path, "2026-09-09T12:34:56Z bo-aaaaaaaaaaaa\n2026-09-09T12:35:56Z bo-bbbbbbbbbbbb\n")
 	commitByHand(t, clone, path, "append two receipts")
 	head, err := HeadCommit(clone)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	// A real RECEIPTS source has multiple appended timestamp/target records in one path.
 	// A path-keyed paginator would keep just one and let the cursor pass the other forever.
 	records, err := BodyRecordsAtSnapshot(clone, BodySnapshot{Base: base, Head: head, Reader: "Ada", Selector: "inbox-new"}, []BodyItem{
 		{Path: path, Offset: 0, Entry: OpenEntry{ID: "bo-aaaaaaaaaaaa", Kind: OpenReceipt, Path: path}},
 		{Path: path, Offset: 1, Entry: OpenEntry{ID: "bo-bbbbbbbbbbbb", Kind: OpenReceipt, Path: path}},
 	})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	if len(records) != 2 || records[0].Offset != 0 || records[1].Offset != 1 || records[0].Commit != head || records[1].Commit != head {
 		t.Fatalf("receipt offsets collapsed in snapshot: %+v", records)
 	}
@@ -195,20 +171,20 @@ func TestBodySnapshotReadsFirstParentMergeDelta(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := git(clone, "branch", "side", base); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 	write(t, clone, "from-bo/main.md", "From: Bo\nTo: Ada\nDate: Mon Sep  7 00:00:00 UTC 2026\nSubject: main\n\nmain")
 	commitByHand(t, clone, "from-bo/main.md", "main body")
 	if _, err := git(clone, "checkout", "-q", "side"); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 	write(t, clone, "from-bo/side.md", "From: Bo\nTo: Ada\nDate: Mon Sep  7 00:00:00 UTC 2026\nSubject: side\n\nside")
 	commitByHand(t, clone, "from-bo/side.md", "side body")
 	if _, err := git(clone, "checkout", "-q", "main"); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 	if _, err := git(clone, "-c", "user.name=Merge", "-c", "user.email=merge@example.com", "merge", "--no-ff", "--no-edit", "side"); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 	head, err := HeadCommit(clone)
 	if err != nil {
@@ -277,10 +253,10 @@ func TestBodySnapshotAllowsHardCeilingBodyAndNamesLargerBlobAsGap(t *testing.T) 
 	write(t, clone, "from-bo/too-large.md", "From: Bo\nTo: Ada\nDate: Mon Sep  7 00:00:00 UTC 2026\nSubject: large\n\n"+strings.Repeat("y", largeBytes))
 	commitByHand(t, clone, "from-bo/exact.md", "exact and large bodies")
 	if _, err := git(clone, "add", "--", "from-bo/crlf.md", "from-bo/too-large.md"); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 	if _, err := git(clone, "-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "-q", "-m", "large body"); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 	head, err := HeadCommit(clone)
 	if err != nil {

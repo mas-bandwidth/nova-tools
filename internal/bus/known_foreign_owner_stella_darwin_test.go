@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 // Process snapshots are supplied; no foreign process is started. A known
@@ -27,12 +29,9 @@ func TestStellaKnownForeignGitKeepsItsLock(t *testing.T) {
 				return gitProcsFromPS(row, "501", map[string]string{}, nil, func(string) (bool, error) { return true, nil })
 			}
 			cleared, err := clearStaleIndexLock(dir, time.Now(), scan)
-			if cleared {
-				t.Fatalf("darwin UID %d: removed lock despite a live Git snapshot naming this exact checkout (err=%v)", uid, err)
-			}
-			if _, err := os.Lstat(lock); err != nil {
-				t.Fatalf("lock lost: %v", err)
-			}
+			require.False(t, cleared, "darwin UID %d: removed lock despite a live Git snapshot naming this exact checkout (err=%v)", uid, err)
+			_, err = os.Lstat(lock)
+			require.NoError(t, err, "lock lost: %v", err)
 		})
 	}
 }

@@ -2,6 +2,7 @@ package bus
 
 import (
 	"errors"
+	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -23,9 +24,7 @@ func TestASecondRunOnOneCheckoutWaitsThenRefuses(t *testing.T) {
 	clone := cloneBus(t, bare)
 
 	release, err := LockCheckout(clone, 200*time.Millisecond)
-	if err != nil {
-		t.Fatalf("the first run could not take the lock: %v", err)
-	}
+	require.NoError(t, err, "the first run could not take the lock: %v", err)
 
 	clk := newLockStepClock()
 	if _, err := lockCheckoutAt(clone, 200*time.Millisecond, clk); err == nil {
@@ -50,9 +49,7 @@ func TestASecondRunOnOneCheckoutWaitsThenRefuses(t *testing.T) {
 	// The other way: once the first lets go, the second takes it.
 	release()
 	second, err := LockCheckout(clone, time.Second)
-	if err != nil {
-		t.Fatalf("the lock was not released: %v", err)
-	}
+	require.NoError(t, err, "the lock was not released: %v", err)
 	second()
 	// Releasing twice is not an error, because a run releases through a defer and may also
 	// have released on its own path out.
@@ -62,21 +59,15 @@ func TestASecondRunOnOneCheckoutWaitsThenRefuses(t *testing.T) {
 	// second checkout and must not be blocked by the first.
 	other := cloneBus(t, bare)
 	held, err := LockCheckout(clone, time.Second)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	defer held()
 	elsewhere, err := LockCheckout(other, 200*time.Millisecond)
-	if err != nil {
-		t.Fatalf("a second checkout of the same bus was blocked by the first: %v", err)
-	}
+	require.NoError(t, err, "a second checkout of the same bus was blocked by the first: %v", err)
 	elsewhere()
 	// And it lives in the git directory, where it is not a file on the bus that every
 	// reader would have to know is not a note.
 	gd, err := GitDir(clone)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	if _, statErr := os.Stat(filepath.Join(gd, LockName)); statErr != nil {
 		t.Fatalf("the lock is not at %s: %v", filepath.Join(gd, LockName), statErr)
 	}
@@ -140,9 +131,7 @@ func TestLockFileNonBlockingAndHolderStamping(t *testing.T) {
 	lockPath := filepath.Join(dir, "test.lock")
 
 	release, err := LockFile(lockPath, 0)
-	if err != nil {
-		t.Fatalf("first LockFile failed: %v", err)
-	}
+	require.NoError(t, err, "first LockFile failed: %v", err)
 	defer release()
 
 	// Verify holder was stamped with our PID
@@ -187,27 +176,21 @@ func TestReadLockHolderFormats(t *testing.T) {
 
 	// Empty file returns "-"
 	emptyPath := filepath.Join(dir, "empty.lock")
-	if err := os.WriteFile(emptyPath, []byte("  \n"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(emptyPath, []byte("  \n"), 0644))
 	if h := ReadLockHolder(emptyPath); h != "-" {
 		t.Fatalf("empty file holder = %q, want \"-\"", h)
 	}
 
 	// Bare PID returns the PID
 	barePath := filepath.Join(dir, "bare.lock")
-	if err := os.WriteFile(barePath, []byte("12345\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(barePath, []byte("12345\n"), 0644))
 	if h := ReadLockHolder(barePath); h != "12345" {
 		t.Fatalf("bare PID holder = %q, want \"12345\"", h)
 	}
 
 	// "pid=<n> at=<stamp>" format returns the PID
 	mergePath := filepath.Join(dir, "merge.lock")
-	if err := os.WriteFile(mergePath, []byte("pid=67890 at=2026-09-11T12:00:00Z\n"), 0644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(mergePath, []byte("pid=67890 at=2026-09-11T12:00:00Z\n"), 0644))
 	if h := ReadLockHolder(mergePath); h != "67890" {
 		t.Fatalf("merge format holder = %q, want \"67890\"", h)
 	}

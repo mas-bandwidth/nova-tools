@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func stellaIndependentPrepared(t *testing.T) (string, string, Prepared, PreparedArtifact) {
@@ -48,20 +50,14 @@ func TestStellaPreparedAttributePrefixesPublishExactBytes(t *testing.T) {
 				t.Fatalf("prefix %d exceeds expected %d", tc.prefix, len(full))
 			}
 			attrsPath := filepath.Join(clone, AttributesName)
-			if err := os.WriteFile(attrsPath, []byte(full[:tc.prefix]), 0o644); err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, os.WriteFile(attrsPath, []byte(full[:tc.prefix]), 0o644))
 			res, err := SendPreparedArtifact(clone, "origin", "main", p, a, 1)
-			if err != nil {
-				t.Fatalf("SendPreparedArtifact: %v", err)
-			}
+			require.NoError(t, err, "SendPreparedArtifact: %v", err)
 			if !res.Pushed {
 				t.Fatal("expected the note to be pushed")
 			}
 			remote, err := git(bare, "show", "main:"+AttributesName)
-			if err != nil {
-				t.Fatalf("remote .gitattributes missing: %v", err)
-			}
+			require.NoError(t, err, "remote .gitattributes missing: %v", err)
 			if remote != full {
 				t.Fatalf("remote .gitattributes bytes wrong:\n got %q\nwant %q", remote, full)
 			}

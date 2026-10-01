@@ -28,7 +28,7 @@ func TestHelpExplainsColumnDefaultsAndDeletion(t *testing.T) {
 	}{
 		{[]string{"help", "create"}, "pct defaults to the pooled fold, sum to the sum fold"},
 		{[]string{"help"}, "pct(<count-column>/<a>+<b>) (the share of the named count columns a, b of the\nrow), or sum(<a>+<b>)"},
-		{[]string{"help", "drop"}, "saved column definition; keep snapshots from earlier epochs"},
+		{[]string{"help", "drop"}, "the identity hash and the rows of every epoch; keep the definition snapshots of earlier epochs"},
 		{[]string{"help", "row", "del"}, "missing row succeeds with existed=0"},
 		{[]string{"help", "render"}, "--view"},
 	} {

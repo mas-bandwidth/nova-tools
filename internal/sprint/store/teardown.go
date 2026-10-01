@@ -24,10 +24,10 @@ var sprintKeys = []string{keyFence, keyGen, keyInbox, keyLog, keyNotes, keyOpen,
 var machineKeys = []string{keyMachine, keyHeartbeat, keyStuck, keyCoordinator, keyGoals, keyStrangers, keyTickEnd, keyRules}
 
 // residueSuffixes are the keys of a table the table layer's drop keeps: its
-// identity, revision, definition record and change log; and its operation
-// records, which a drop by this build removes and one by an older build
-// keeps.
-var residueSuffixes = []string{":identity", ":revision", ":definition", ":changes", ":ops"}
+// revision, definition record and change log; and its operation records,
+// which a drop by this build removes and one by an older build keeps. The
+// identity hash is not residue: drop --definition removes it.
+var residueSuffixes = []string{":revision", ":definition", ":changes", ":ops"}
 
 // Epochs is what teardown names of a sprint's epochs: the last (active) one,
 // and each earlier one's shape as it was, whose rows, text cells and owned
@@ -228,15 +228,14 @@ func (r *Redis) DeleteKeys(ctx context.Context, keys []string) (int, error) {
 }
 
 // memResidue is what the table layer's drop keeps of a table: the residue
-// keys not yet deleted, and the table itself: its earlier epochs' rows and
-// cells, and its member records (those of the dropped epoch unplaced).
+// keys not yet deleted, and the table itself: its member records, unplaced.
 type memResidue struct {
 	keys  map[string]bool
 	table *memTable
 }
 
 // keepResidue keeps a dropped table's residue as a drop in the store does:
-// the active epoch's rows and cells go, its members unplaced. The caller
+// the rows and cells of every epoch go, the members unplaced. The caller
 // holds m.mu.
 func (m *Mem) keepResidue(table string) {
 	t := m.tables[table]
@@ -244,21 +243,18 @@ func (m *Mem) keepResidue(table string) {
 		return
 	}
 	r := &memResidue{keys: map[string]bool{}, table: t}
-	for _, s := range residueSuffixes[:4] {
+	for _, s := range residueSuffixes[:3] {
 		r.keys[ntable.DefKey(table)+s] = true
 	}
-	a := m.active(t)
 	for _, mm := range t.members {
-		if mm.epoch == a {
-			mm.placed, mm.row, mm.col = false, "", ""
-		}
+		mm.placed, mm.row, mm.col = false, "", ""
 	}
-	delete(t.epochs, a)
+	clear(t.epochs)
 	m.dropped[table] = r
 }
 
 // takeResidue gives a table created again under a dropped name what its drop
-// kept, as the store does: its records and earlier epochs, and its revision.
+// kept, as the store does: its records and its revision.
 // The caller holds m.mu.
 func (m *Mem) takeResidue(t *memTable) {
 	r := m.dropped[t.def.Name]
@@ -468,8 +464,8 @@ func (m *Mem) Keys(names sprint.Names) []string {
 	var keys []string
 	for name, t := range m.tables {
 		def := ntable.DefKey(name)
-		keys = append(keys, def)
-		for _, s := range residueSuffixes[:4] {
+		keys = append(keys, def, ntable.IdentityKey(name))
+		for _, s := range residueSuffixes[:3] {
 			keys = append(keys, def+s)
 		}
 		if len(t.ops) > 0 {
