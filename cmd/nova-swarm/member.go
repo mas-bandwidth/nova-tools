@@ -480,7 +480,8 @@ func (c *nativeChild) Result() member.Result {
 
 // frameOf is a launch's frame (docs/SPEC-CARD-CONTRACT.md layer 1): the repository and
 // base the brief's header names, the packet's branch and attempt, and the commit to stage:
-// a read's head under read, a later attempt's previous pushed head, else the base's sha.
+// a read's head under read, a later attempt's last pushed head of any earlier attempt
+// (sprint.BaseOf, the packet's base_head and base_attempt), else the base's sha.
 func frameOf(p member.Packet, model, root string) cardcontract.Frame {
 	cb := swarm.ReadCardBase([]byte(p.Brief))
 	first, _, _ := strings.Cut(p.Brief, "\n")
@@ -502,7 +503,7 @@ func frameOf(p member.Packet, model, root string) cardcontract.Frame {
 		return f
 	}
 	if p.BaseHead != "" {
-		f.StageSha, f.PrevHead = p.BaseHead, p.BaseHead
+		f.StageSha, f.PrevHead, f.PrevFrom = p.BaseHead, p.BaseHead, p.BaseFrom
 	}
 	return f
 }
