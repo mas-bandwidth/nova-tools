@@ -35,15 +35,6 @@ import (
 // and folds JSON out of a `data` column, and a fixture that short-circuited either would
 // prove nothing about either.
 
-// needsSQLite skips a case on a bench with no reader, naming it. On such a bench a numeric
-// budget is a NATIVE REFUSED (rule 13d, slice 2), which is the rule working.
-func needsSQLite(t *testing.T) {
-	t.Helper()
-	if !swarm.SQLiteOnPath() {
-		t.Skipf("%s is not on PATH, and a numeric budget is refused without it (rule 13d)", swarm.SQLiteBinary)
-	}
-}
-
 // budgetOf is the `budget=` field of a NATIVE OK line.
 func budgetOf(t *testing.T, out string) string {
 	t.Helper()
