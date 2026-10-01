@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -100,7 +101,7 @@ func TestFleetPlaysPassSyntaxAndCheckOnTheFixture(t *testing.T) {
 	assert.Contains(t, tools, "TOOLS host=localhost platform=")
 	assert.Contains(t, tools, "WOULD-INSTALL")
 	assert.Contains(t, tools, "+v0.0.0-check", "the build fact's diff")
-	assert.Contains(t, tools, `"path": "`+filepath.Join(home, ".config", "nova")+`",`, "the build fact's directory is created before the fact is written")
+	assert.Contains(t, tools, `"path": `+strconv.Quote(filepath.Join(home, ".config", "nova"))+`,`, "the build fact's directory is created before the fact is written")
 
 	redis := play("redis.yml", check...)
 	assert.Contains(t, redis, "ACL RENDER OK users=4 ")
@@ -204,17 +205,19 @@ func TestToolsPlayAppliesAndReappliesOnTheFixture(t *testing.T) {
 // TestDeployerPlaysCheckOnTheFixture runs the store_deployer plays of
 // tools.yml and redis.yml with --check on a machine that is the store and the
 // coordinator, with a nova-secrets that prints its arguments: the plays'
-// variables resolve on that host (its home from the gathered facts), and the
-// commands they would run name the seat, the secrets by name and the store.
+// variables resolve on that host (its home, read-only here, from the facts
+// the plays gather: no nova_home is handed in), and the commands they would
+// run name the seat, the secrets by name and the store.
 func TestDeployerPlaysCheckOnTheFixture(t *testing.T) {
 	t.Parallel()
 	r := newFleetPlayRig(t, "deployer-fixture.yml")
 	fake := filepath.Join(r.dir, "fake-bin")
 	require.NoError(t, os.MkdirAll(fake, 0o755))
 	require.NoError(t, os.WriteFile(filepath.Join(fake, "nova-secrets"), []byte("#!/bin/sh\necho \"FAKE-SECRETS $*\"\n"), 0o755))
-	vars := []string{"--check", "-e", "nova_home=" + r.home, "-e", "nova_bin_dir=" + fake, "-e", "nova_sops=/usr/bin/sops-of-the-fixture",
+	home := os.Getenv("HOME")
+	vars := []string{"--check", "-e", "nova_bin_dir=" + fake, "-e", "nova_sops=/usr/bin/sops-of-the-fixture",
 		"-e", "nova_version=v0.0.0-check", "-e", "nova_source=" + r.root, "-e", "nova_release_out=" + filepath.Join(r.dir, "release")}
-	seat := "FAKE-SECRETS exec --store " + r.home + "/nova-bench/secrets --as seat-local --key " + r.home + "/.config/nova-secrets/seat-local.key --sops /usr/bin/sops-of-the-fixture"
+	seat := "FAKE-SECRETS exec --store " + filepath.Join(home, "nova-bench", "secrets") + " --as seat-local --key " + filepath.Join(home, ".config", "nova-secrets", "seat-local.key") + " --sops /usr/bin/sops-of-the-fixture"
 
 	redis := r.play(t, "redis.yml", vars...)
 	assert.Contains(t, redis, seat+" --only NOVA_REDIS_ADMIN_PASSWORD,NOVA_REDIS_COORDINATOR_PASSWORD,NOVA_REDIS_BENCH_PASSWORD --require=NOVA_REDIS_ADMIN_PASSWORD -- "+fake+"/nova-redis acl check --addr localhost:6379 --user admin --password-env NOVA_REDIS_ADMIN_PASSWORD")
