@@ -1,6 +1,7 @@
 package oneline
 
 import (
+	"fmt"
 	"math/rand/v2"
 	"strconv"
 	"strings"
@@ -87,14 +88,8 @@ func TestPropertyEscapeIsOneLineAndLeavesCleanTextAlone(t *testing.T) {
 		out := Escape(s)
 		oneLine(t, "Escape", out)
 		assert.Equal(t, Escape(s), out, "Escape is not deterministic on %q", s)
-		clean := utf8.ValidString(s)
-		for _, r := range s {
-			if mustBeEscaped(r) {
-				clean = false
-			}
-		}
-		if clean && out != s {
-			t.Errorf("Escape changed text that needed nothing: %q -> %q", s, out)
+		if utf8.ValidString(s) && !strings.ContainsFunc(s, mustBeEscaped) {
+			assert.Equal(t, s, out, "Escape changed text that needed nothing")
 		}
 		got := Err(errString(s))
 		assert.Equal(t, out, got, "Err(%q) = %q, Escape gives %q", s, got, out)
@@ -106,13 +101,10 @@ func TestPropertyFieldIsOneToken(t *testing.T) {
 	propertyCases(t, 2, func(t *testing.T, s string) {
 		out := Field(s)
 		oneLine(t, "Field", out)
-		for _, r := range out {
-			if unicode.IsSpace(r) || r == '=' {
-				t.Errorf("Field holds %U: %q", r, out)
-			}
-		}
-		if s != "" && len(strings.Fields("k="+out)) != 1 {
-			t.Errorf("k=%s is not one token", out)
+		assert.False(t, strings.ContainsFunc(out, unicode.IsSpace), "Field holds a space: %q", out)
+		assert.NotContains(t, out, "=", "Field holds an equals sign")
+		if s != "" {
+			assert.Len(t, strings.Fields("k="+out), 1, "k=%s is not one token", out)
 		}
 	})
 }
@@ -139,8 +131,8 @@ func TestPropertyCapKeepsAPrefixSaysWhatItDroppedAndHoldsTheCeiling(t *testing.T
 			assert.Equal(t, s, out, "Cap(%q, %d) changed a value under the ceiling: %q", s, n, out)
 			return
 		}
-		if s != "" && out == "" {
-			t.Errorf("Cap(%q, %d) returned nothing", s, n)
+		if s != "" {
+			assert.NotEmpty(t, out, "Cap(%q, %d) returned nothing", s, n)
 		}
 		if out == s {
 			// Over the ceiling and unchanged: only when the value is one rune,
@@ -151,32 +143,36 @@ func TestPropertyCapKeepsAPrefixSaysWhatItDroppedAndHoldsTheCeiling(t *testing.T
 			return
 		}
 		at := strings.LastIndex(out, "...+")
-		if at < 0 || !strings.HasSuffix(out, "B") {
-			t.Errorf("Cap(%q, %d) = %q carries no mark", s, n, out)
+		if !assert.GreaterOrEqual(t, at, 0, "Cap(%q, %d) = %q carries no mark", s, n, out) ||
+			!assert.True(t, strings.HasSuffix(out, "B"), "Cap(%q, %d) = %q carries no mark", s, n, out) {
 			return
 		}
 		kept := out[:at]
 		dropped, err := strconv.Atoi(out[at+len("...+") : len(out)-1])
-		if err != nil || !strings.HasPrefix(s, kept) || kept == "" || len(kept)+dropped != len(s) {
-			t.Errorf("Cap(%q, %d) = %q: kept %q dropped %d of %d bytes", s, n, out, kept, dropped, len(s))
-		}
+		msg := []any{"Cap(%q, %d) = %q: kept %q dropped %d of %d bytes", s, n, out, kept, dropped, len(s)}
+		assert.NoError(t, err, msg...)
+		assert.True(t, strings.HasPrefix(s, kept), msg...)
+		assert.NotEmpty(t, kept, msg...)
+		assert.Equal(t, len(s), len(kept)+dropped, msg...)
 		// No cut inside a rune: what was kept escapes to the start of what the
 		// whole value escapes to. (A stray continuation byte after the cut is
 		// not the inside of a rune; a byte-level check calls it one.)
 		assert.True(t, strings.HasPrefix(Escape(s), Escape(kept)), "Cap(%q, %d) cut inside a rune: %q", s, n, out)
-		if utf8.ValidString(s) && !utf8.ValidString(kept) {
-			t.Errorf("Cap(%q, %d) kept a broken prefix: %q", s, n, kept)
+		if utf8.ValidString(s) {
+			assert.True(t, utf8.ValidString(kept), "Cap(%q, %d) kept a broken prefix: %q", s, n, kept)
 		}
-		if n >= len(mark(len(s)))+utf8.UTFMax && len(out) > n {
-			t.Errorf("Cap(%q, %d) is %d bytes, over the ceiling", s, n, len(out))
+		if n >= len(mark(len(s)))+utf8.UTFMax {
+			assert.LessOrEqual(t, len(out), n, "Cap(%q, %d) is over the ceiling", s, n)
 		}
 		oneLine(t, "Escape(Cap)", Escape(out))
 	})
 }
 
-// The one case where a value over its ceiling comes back whole, and its
-// neighbours, as examples beside the property.
-func TestCapKeepsOneRuneWholeAndCutsTwo(t *testing.T) {
+// The one case where a value over its ceiling comes back whole, its
+// neighbours, and the cuts security#30 L13 pinned, as examples beside the
+// property: the mark stays truthful, so a value that loses nothing comes back
+// unchanged with no zero-dropped mark.
+func TestCapExamples(t *testing.T) {
 	t.Parallel()
 	one, two := u(0x65e5), u(0x65e5)+u(0x672c) // three bytes, six bytes
 	for _, c := range []struct {
@@ -184,6 +180,11 @@ func TestCapKeepsOneRuneWholeAndCutsTwo(t *testing.T) {
 		n    int
 		want string
 	}{
+		{"hello", 5, "hello"},
+		{"hello", 1000, "hello"},
+		{u(0x4e2d), 0, u(0x4e2d)},      // too small for the mark and a rune: the first rune is the whole input
+		{"hello world", 5, "h...+10B"}, // the mark for 11 bytes is seven, so the budget clamps to one
+		{"hello world hello", 12, "hello...+12B"},
 		{one, 1, one},
 		{one, 0, one},
 		{one, -5, one},
@@ -195,8 +196,10 @@ func TestCapKeepsOneRuneWholeAndCutsTwo(t *testing.T) {
 		{"abcdefghij", 9, "ab...+8B"}, // the mark is sized for the whole length, seven bytes
 		{string([]byte{0xff, 0x80, 0x80}), 1, string([]byte{0xff}) + "...+2B"},
 	} {
-		got := Cap(c.in, c.n)
-		assert.Equal(t, c.want, got, "Cap(%q, %d) = %q, want %q", c.in, c.n, got, c.want)
+		t.Run(fmt.Sprintf("%q,%d", c.in, c.n), func(t *testing.T) {
+			t.Parallel()
+			assert.Equal(t, c.want, Cap(c.in, c.n))
+		})
 	}
 }
 

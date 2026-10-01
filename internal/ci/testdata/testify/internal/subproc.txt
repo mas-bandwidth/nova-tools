@@ -1,3 +1,2 @@
 # Counted package ledger; full row keys are preserved.
-# ceiling: 1
-internal/subproc:assert 30 bare assertions to convert to testify
+# ceiling: 0

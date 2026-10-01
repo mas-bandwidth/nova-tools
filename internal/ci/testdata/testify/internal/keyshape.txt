@@ -1,3 +1,2 @@
 # Counted package ledger; full row keys are preserved.
-# ceiling: 1
-internal/keyshape:assert 22 bare assertions to convert to testify
+# ceiling: 0

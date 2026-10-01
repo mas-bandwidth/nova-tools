@@ -2728,6 +2728,15 @@ the original failed measurement.
 **Its remedy line.** `"<line>" throws a failure away; let it show, or say why it is safe with `# ignored: <reason>` on this line or the one above`.
 **Its narrowings.** Keyed by file and shape and counted by line: each unreasoned line of a listed shape in a listed file is a site. A Go string literal holding a script (`tools/functionalrun`) is the `silent` rule's, on the live path only.
 
+### `fleet-plays` — the fleet plays read only the inventory and work through the Go tools
+
+**The rule.** The plays under `fleet/` that converge a fleet (`tools.yml`, `redis.yml`, `loops.yml`) and their templates read their values from the inventory `nova-config inventory` prints and from `fleet/group_vars/all.yml`, and do their work through the Go tools: no task uses ansible's `shell`, `script` or `raw`; every play runs on a group the inventory prints, or `localhost`; every command task says how its change is read (`changed_when`); every template a task names exists and every template is rendered by a task; every `nova_*` a play or template reads is defined by group_vars, by the inventory (a host variable or `all.vars`), by a `set_fact`, or named by an `assert` as the operator's `-e`; every `loop_*` a template reads is a variable of its play or task, every `l.<field>` a field of the inventory's loop record, every `ansible_*` a fact the plays gather; and `fleet/retired-tools.txt` names no tool `cmd/` ships.
+**The mistake it prevents.** A template reading a variable its play renamed, which ansible finds only on a machine; a play that hides its work in a shell line; a retirement list that removes a tool the same run installs.
+**The test.** `TestFleetPlaysReadOnlyTheInventory` (`internal/ci/fleetplays_class_test.go`), which also renders both fixtures' inventories through `config.LoadFixture` and `config.BuildInventory` and asserts the groups and the typed loop records, with `TestFleetPlaysRuleReadsTheShapes`, which plants each offence in a copy of the real source. The functional half, `TestFleetPlaysPassSyntaxAndCheckOnTheFixture` (`internal/ci/fleetplays_functional_test.go`), runs the three plays with `--syntax-check` and `--check --diff` against `fleet/testdata/check-fixture.yml` and asserts the rendered units; it skips where `ansible-playbook` is not installed.
+**Its allowlist.** None.
+**Its remedy line.** each finding names the play or template, the task and what it reads or runs.
+**Its narrowings.** Variables are found by their prefixes (`nova_`, `loop_`, `ansible_`, `l.`) in the plays' uncommented text and the templates' Jinja blocks; a variable of another spelling is not read.
+
 ## How the class tests read the tree: one walk, one parse, in parallel
 
 Every rule above is a sweep of this repository's own source. A rule that pays

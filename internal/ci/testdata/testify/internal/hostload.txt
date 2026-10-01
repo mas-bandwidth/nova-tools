@@ -1,3 +1,2 @@
 # Counted package ledger; full row keys are preserved.
-# ceiling: 1
-internal/hostload:assert 25 bare assertions to convert to testify
+# ceiling: 0
