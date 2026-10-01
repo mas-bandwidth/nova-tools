@@ -485,7 +485,7 @@ func frameOf(p member.Packet, model, root string) cardcontract.Frame {
 	cb := swarm.ReadCardBase([]byte(p.Brief))
 	first, _, _ := strings.Cut(p.Brief, "\n")
 	f := cardcontract.Frame{Kind: p.Kind, Card: p.Card, Attempt: p.Attempt, Model: model,
-		Repo: cb.Repo, BaseRef: cb.Ref, StageSha: cb.Sha, Branch: p.Branch, Finding: p.Fix, Stage: cb.Stage}
+		Repo: cb.Repo, BaseRef: cb.Ref, StageSha: cb.Sha, Branch: p.Branch, Why: p.Why, Finding: p.Finding, Fix: p.Fix, Stage: cb.Stage}
 	if len(cb.Stage) > 0 {
 		f.Recipes = filepath.Join(root, cardcontract.RecipesName)
 	}
