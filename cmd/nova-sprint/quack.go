@@ -1,12 +1,10 @@
 package main
 
 import (
-	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
 	"io"
-	"regexp"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
@@ -27,12 +25,13 @@ const quackBase = "dev"
 // writes: twelve hex digits, so two passes share an id or a file name with a
 // chance of about one in 2^48 per pair, and no card's diff is empty unless
 // they do. The briefs are held to the card lint as add holds them, and one
-// step adds every card. A call with --op whose operation this store has
-// recorded takes the recorded call's stamp (quackStamp), so the same call
-// retried makes the same cards and replays the recorded result (the --op
-// contract, docs/SPEC-SPRINT.md section 11), and other arguments under that op
-// are refused as add refuses them; an op this store has no record of (a new
-// store, one torn down, another sprint) draws a fresh random stamp.
+// step adds every card. The step's arguments, which a retry under the same
+// --op is held to, are the caller's (quackArgs), never the cards the stamp
+// makes: the same call retried, or two of it overlapping, replays this
+// store's recorded result whatever stamp it drew (the --op contract,
+// docs/SPEC-SPRINT.md section 11), other arguments under that op are refused as
+// add refuses them, and a store with no record of the op (a new store, one torn
+// down, another sprint) adds new cards under a fresh random stamp.
 func (a *app) cmdQuack(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("quack")
 	streams := fs.String("streams", "", "the streams to cut quack cards into, comma separated (a stream new to the sprint is made)")
@@ -89,7 +88,7 @@ func (a *app) cmdQuack(args []string, stdout, stderr io.Writer) int {
 			return refuse(stderr, "quack", err.Error())
 		}
 	}
-	stamp, err := quackStamp(context.Background(), st, c.op)
+	stamp, err := quackStamp()
 	if err != nil {
 		return refuse(stderr, "quack", "no run stamp: "+err.Error())
 	}
@@ -129,10 +128,12 @@ func (a *app) cmdQuack(args []string, stdout, stderr io.Writer) int {
 	if code := lintBriefFiles(all, rs, c.max, stderr); code != 0 {
 		return code
 	}
+	step := store.AddEachStep(reqs)
 	if len(reqs) == 1 {
-		return a.runStep("quack", *c, st, store.AddStep(reqs[0]), stdout, stderr)
+		step = store.AddStep(reqs[0])
 	}
-	return a.runStep("quack", *c, st, store.AddEachStep(reqs), stdout, stderr)
+	step.Args = store.ArgsOf(quackArgs{Verb: "quack", Streams: ss, Count: *count, Tiers: ts, Repo: *repo, Base: *base})
+	return a.runStep("quack", *c, st, step, stdout, stderr)
 }
 
 // quackStampBytes is the stamp's length: six bytes, twelve hex digits. A
@@ -140,26 +141,20 @@ func (a *app) cmdQuack(args []string, stdout, stderr io.Writer) int {
 // their files, so the stamp alone keeps a new pass's files new.
 const quackStampBytes = 6
 
-// recordedStamp is a quack stamp in an operation's recorded result: the
-// recorded call's card ids carry it.
-var recordedStamp = regexp.MustCompile(`quack-([0-9a-f]{12})-`)
+// quackArgs is what a quack call is held to under its --op: the caller's
+// arguments, the stamp left out, so a retry that drew another stamp is the same
+// call.
+type quackArgs struct {
+	Verb    string `json:"verb"`
+	Streams []string
+	Count   int
+	Tiers   []string
+	Repo    string
+	Base    string
+}
 
-// quackStamp is a run's stamp: the stamp of the call this store recorded under
-// the op id, when it recorded one (the store's own record of the operation,
-// read with the store's replay, Backend.Done, so a retry makes the same cards
-// and the step replays); else bytes from the system's random source. An op id
-// and an epoch do not name a sprint's incarnation: a store torn down, or
-// another store, holds no record and the call draws a new stamp.
-func quackStamp(ctx context.Context, st *store.Store, op string) (string, error) {
-	if op != "" {
-		raw, ok, err := st.B.Done(ctx, op)
-		if err != nil {
-			return "", err
-		}
-		if m := recordedStamp.FindStringSubmatch(raw); ok && m != nil {
-			return m[1], nil
-		}
-	}
+// quackStamp is a run's stamp: bytes from the system's random source.
+func quackStamp() (string, error) {
 	b := make([]byte, quackStampBytes)
 	if _, err := rand.Read(b); err != nil {
 		return "", err
