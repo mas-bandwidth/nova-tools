@@ -23,6 +23,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
+	novalog "github.com/mas-bandwidth/nova-tools/internal/log"
 	"github.com/mas-bandwidth/nova-tools/internal/member"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
@@ -297,12 +298,31 @@ func (s *execSprint) Run(args ...string) (int, []byte) {
 	if ee, ok := err.(*exec.ExitError); ok {
 		code = ee.ExitCode()
 	} else if err != nil {
-		return 2, []byte(err.Error())
+		return 2, sprintFailureOutput(nil, []byte(err.Error()))
 	}
-	if code != 0 && out.Len() == 0 {
-		return code, errb.Bytes()
+	if code != 0 {
+		return code, sprintFailureOutput(out.Bytes(), errb.Bytes())
 	}
 	return code, out.Bytes()
+}
+
+// sprintFailureOutput is one bounded diagnostic from a failed nova-sprint verb.
+// stderr leads because it holds the refusal or store error; stdout follows because a
+// verb can print a repair or move receipt before a later store operation fails. Each
+// half keeps room for the other, and secret-shaped values never reach the member log.
+func sprintFailureOutput(stdout, stderr []byte) []byte {
+	clean := func(raw []byte, n int) string {
+		return oneline.Cap(oneline.Escape(novalog.Redact(strings.TrimSpace(string(raw)))), n)
+	}
+	if len(strings.TrimSpace(string(stdout))) == 0 {
+		return []byte(clean(stderr, oneline.TailBytes))
+	}
+	if len(strings.TrimSpace(string(stderr))) == 0 {
+		return []byte(clean(stdout, oneline.TailBytes))
+	}
+	const labels = "stderr: ; stdout: "
+	each := (oneline.TailBytes - len(labels)) / 2
+	return []byte("stderr: " + clean(stderr, each) + "; stdout: " + clean(stdout, each))
 }
 
 // nativeRunner runs one packet as one `nova-swarm native` child in its own
