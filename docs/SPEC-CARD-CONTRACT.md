@@ -88,9 +88,16 @@ branch and the `HEAD` of the staged checkout, so a commit on any branch the chil
 checkout or in a clone the shim linked to it, is found. Whether the child committed is counted
 there, `rev-list <head> ^<staged>`, from the commit native recorded in `<slot>/staged` when it
 staged the checkout: never from the checkout's own refs, which a stale bench mirror leaves
-behind and the child can edit (`git remote remove`). A card's native child starts with no forge
-credential: the member strips `GH_*`, `GITHUB_*`, `SSH_AUTH_SOCK` and the askpass helpers from
-its environment and keeps them for its own push and pull request. When the result carries a `title`, the member opens the pull
+behind and the child can edit (`git remote remove`).
+
+**The child's environment is an allowlist.** The member starts each native child with `PATH`,
+`HOME` (native's own, which it needs for the bench mirror; native hands the child the slot's
+data home), `TMPDIR`, `LANG`, `LC_*`, `TERM`, `USER`, `LOGNAME`, the `GO*`, `NOVA_SWARM_*`,
+`NOVA_TEST_*`, `XDG_*` and `OPENCODE_*` families, `GIT_CONFIG_GLOBAL` and `GIT_CONFIG_NOSYSTEM`,
+and the secrets `--pass` names (the loop record's nova-secrets keys) with the worker
+description's secret; everything else is dropped. A name matching
+`TOKEN|SECRET|PASSWORD|PASSWD|KEY|CREDENTIAL|AUTH` is dropped unless `--pass` names it, even in
+an allowed family. The member keeps the forge credentials for its own push and pull request. When the result carries a `title`, the member opens the pull
 request after the push, as itself, from the card's branch into the base ref, with the title and
 the body, and the finish's report carries its address.
 

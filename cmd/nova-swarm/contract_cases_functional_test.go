@@ -333,3 +333,42 @@ func TestNothingToDoIsAFailedFinishForTheCoordinator(t *testing.T) {
 		})
 	}
 }
+
+// The child of a member started in a polluted environment sees none of it: the
+// member starts native with an allowlist, and only the secret --pass names
+// reaches the harness (docs/SPEC-CARD-CONTRACT.md; red when the member handed
+// its whole environment on).
+func TestTheChildSeesOnlyTheAllowlist(t *testing.T) {
+	t.Parallel()
+	e := newCaseEnv(t, false)
+	e.env = append(e.env, "CLAUDE_CODE_MESSAGING_TOKEN=m", "AWS_SECRET_ACCESS_KEY=a", "FOO_PASSWORD=p", "FOO=bar",
+		"PROBE_API_KEY=passed", "LANG=C.UTF-8")
+	h := e.script(t, `echo "ENV: $(env | cut -d= -f1 | sort | tr '\n' ' ')" >&2
+set -e
+cd repo
+echo change >> f
+git commit -q -am "the change"
+git push
+gh pr create --title T --body B >&2`)
+	bin := builtSprint(t)
+	e.member(t)
+	rn := e.runner(bin, h, "fake/claude-x")
+	rn.pass = []string{"PROBE_API_KEY"}
+	p := member.Packet{Card: "a-1.w1", Kind: "work", As: "m1", Primary: "a-1", Stream: "a", Attempt: 1, Gen: 1, Epoch: 1,
+		Brief: e.brief(), Branch: "sprint/a-1.w1"}
+	c, err := rn.Start(p)
+	require.NoError(t, err)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	for !c.Done() {
+		require.NoError(t, ctx.Err(), "the child did not end in time:\n%s", e.log())
+		time.Sleep(100 * time.Millisecond)
+	}
+	names := " " + strings.TrimSpace(strings.SplitN(strings.SplitN(e.log(), "ENV: ", 2)[1], "\n", 2)[0]) + " "
+	for _, gone := range []string{"GH_TOKEN", "CLAUDE_CODE_MESSAGING_TOKEN", "AWS_SECRET_ACCESS_KEY", "FOO_PASSWORD", "FOO"} {
+		assert.NotContains(t, names, " "+gone+" ")
+	}
+	for _, kept := range []string{"PROBE_API_KEY", "LANG", "PATH", "HOME"} {
+		assert.Contains(t, names, " "+kept+" ")
+	}
+}

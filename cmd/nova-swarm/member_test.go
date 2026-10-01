@@ -550,12 +550,16 @@ func TestMemberAcceptsPositiveTicks(t *testing.T) {
 	require.Contains(t, out.String(), "MEMBER OK as=m1 ticks=2 running=0")
 }
 
-// A card's native child starts with no forge credential: the member keeps the
-// GitHub tokens and the ssh agent for its own push and pull request, and native
-// would pass any *TOKEN* name on to the harness (docs/SPEC-CARD-CONTRACT.md).
-func TestTheChildStartsWithNoForgeCredential(t *testing.T) {
+// A card's native child starts with an allowlist environment
+// (docs/SPEC-CARD-CONTRACT.md): what native, git and the harness need, the
+// secrets --pass names, and nothing else; a name that carries a credential is
+// dropped unless --pass names it, even in an allowed family.
+func TestTheChildEnvironmentIsAnAllowlist(t *testing.T) {
 	t.Parallel()
-	got := childEnviron([]string{"GH_TOKEN=t", "GITHUB_TOKEN=t", "GH_ENTERPRISE_TOKEN=t", "SSH_AUTH_SOCK=/s", "GIT_ASKPASS=/a",
-		"ANTHROPIC_API_KEY=k", "PATH=/bin", "HOME=/h"})
-	require.Equal(t, []string{"ANTHROPIC_API_KEY=k", "PATH=/bin", "HOME=/h"}, got)
+	got := childEnviron([]string{"GH_TOKEN=t", "GITHUB_TOKEN=t", "SSH_AUTH_SOCK=/s", "GIT_ASKPASS=/a", "CLAUDE_CODE_MESSAGING_TOKEN=m",
+		"AWS_SECRET_ACCESS_KEY=a", "FOO_PASSWORD=p", "FOO=bar", "ANTHROPIC_API_KEY=k", "OPENCODE_API_KEY=o", "GOAUTH=g",
+		"PATH=/bin", "HOME=/h", "TMPDIR=/t", "LANG=C.UTF-8", "LC_ALL=C", "GOFLAGS=-mod=readonly", "XDG_DATA_HOME=/x", "NOVA_SWARM_JOB=/j"},
+		[]string{"OPENCODE_API_KEY"})
+	require.Equal(t, []string{"OPENCODE_API_KEY=o", "PATH=/bin", "HOME=/h", "TMPDIR=/t", "LANG=C.UTF-8", "LC_ALL=C",
+		"GOFLAGS=-mod=readonly", "XDG_DATA_HOME=/x", "NOVA_SWARM_JOB=/j"}, got)
 }

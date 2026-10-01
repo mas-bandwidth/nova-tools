@@ -55,6 +55,7 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	workerFile := fs.String("worker", "", "")
 	noWall := fs.Bool("no-wall", false, "")
 	ghBin := fs.String("gh", "gh", "")
+	passFlag := fs.String("pass", "", "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -95,6 +96,19 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	if ticksGiven && *ticks <= 0 {
 		f.add("give --ticks 1 or more, or leave it out to run until stopped")
 	}
+	pass := splitNames(*passFlag)
+	for _, n := range pass {
+		if !envNameRE.MatchString(n) {
+			f.add(fmt.Sprintf("--pass %q is not an environment name (letters, digits, _)", n))
+		}
+	}
+	if *workerFile != "" {
+		// the worker description names the secret its harness reads: that one name is
+		// handed through too (docs/SPEC-CARD-CONTRACT.md, the child's environment)
+		if w, problems := swarm.LoadWorker(*workerFile); len(problems) == 0 && w.Secret != "" {
+			pass = append(pass, w.Secret)
+		}
+	}
 	if f.refused(stderr) {
 		return 2
 	}
@@ -117,7 +131,7 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	rn := &nativeRunner{
 		self: self, sprintBin: *sprintBin, harness: *harness, model: *model, root: *root, slots: *slots,
 		resultsRoot: *resultsRoot, deadline: deadline.d, tokens: *tokensWord, auth: *auth, config: *config,
-		worker: *workerFile, noWall: *noWall, stderr: stderr,
+		worker: *workerFile, noWall: *noWall, stderr: stderr, pass: pass,
 	}
 	// a work card's commit is pushed by the member, outside the wall, at its
 	// finish (memberpush.go); a read pushes nothing
@@ -193,6 +207,7 @@ type nativeRunner struct {
 	noWall                                                    bool
 	stderr                                                    io.Writer
 	env                                                       []string // added to this process's environment: none in production, a test's
+	pass                                                      []string // the secret names handed to native (--pass, the worker's secret)
 }
 
 func (r *nativeRunner) Start(p member.Packet) (member.Child, error) {
@@ -250,7 +265,7 @@ func (r *nativeRunner) Start(p member.Packet) (member.Child, error) {
 	// ends it), released when the wait returns.
 	ctx, release := context.WithCancel(context.Background())
 	cmd := subproc.Long(ctx, r.self, args...)
-	cmd.Env = childEnviron(append(os.Environ(), r.env...))
+	cmd.Env = childEnviron(append(os.Environ(), r.env...), r.pass)
 	logf, err := os.Create(logPath)
 	if err != nil {
 		release()
@@ -469,21 +484,53 @@ func readResult(path string) (head, verdict, report string) {
 	return head, verdict, report
 }
 
-// forgeCredential is an environment name that carries a forge credential: the
-// GitHub CLI's and git's tokens, and the ssh agent that would push as this
-// machine. The member keeps them for its own push and pull request.
-func forgeCredential(name string) bool {
-	up := strings.ToUpper(name)
-	return strings.HasPrefix(up, "GH_") || strings.HasPrefix(up, "GITHUB_") || up == "SSH_AUTH_SOCK" || up == "GIT_ASKPASS" || up == "SSH_ASKPASS"
+// envNameRE is an environment variable's name.
+var envNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// splitNames is a comma list of names, blanks dropped.
+func splitNames(s string) []string {
+	var out []string
+	for _, n := range strings.Split(s, ",") {
+		if n = strings.TrimSpace(n); n != "" {
+			out = append(out, n)
+		}
+	}
+	return out
 }
 
-// childEnviron is the environment a card's native child starts with: the
-// member's, less every forge credential (native passes any *TOKEN* name on to
-// the harness, docs/SPEC-CARD-CONTRACT.md: nothing reaches a forge from a card).
-func childEnviron(env []string) []string {
+// childKept are the names a card's native child is started with, besides the
+// prefixes in childKeptPrefixes and the secrets --pass names: what native, git
+// and the harness need, and nothing that carries a credential.
+var childKept = map[string]bool{"PATH": true, "HOME": true, "TMPDIR": true, "LANG": true, "TERM": true, "USER": true, "LOGNAME": true,
+	"GIT_CONFIG_GLOBAL": true, "GIT_CONFIG_NOSYSTEM": true}
+
+// childKeptPrefixes are the families of names a native child is started with:
+// the locale, the Go toolchain's settings, nova-swarm's own, the XDG
+// directories and the opencode harness's settings.
+var childKeptPrefixes = []string{"LC_", "GO", "NOVA_SWARM_", "NOVA_TEST_", "XDG_", "OPENCODE_"}
+
+// secretNameRE is a name that carries a credential: never handed to a child
+// unless --pass names it, whatever the lists above say.
+var secretNameRE = regexp.MustCompile(`(?i)TOKEN|SECRET|PASSWORD|PASSWD|KEY|CREDENTIAL|AUTH`)
+
+// childEnviron is the environment a card's native child starts with
+// (docs/SPEC-CARD-CONTRACT.md, the child's environment): an allowlist, never a
+// denylist. A name is kept when it is one of childKept or of a family in
+// childKeptPrefixes and carries no credential, or when it is a secret pass
+// names (the loop record's nova-secrets keys); everything else is dropped.
+func childEnviron(env, pass []string) []string {
+	passed := map[string]bool{}
+	for _, n := range pass {
+		passed[n] = true
+	}
 	out := make([]string, 0, len(env))
 	for _, kv := range env {
-		if name, _, _ := strings.Cut(kv, "="); !forgeCredential(name) {
+		name, _, _ := strings.Cut(kv, "=")
+		kept := childKept[name]
+		for _, p := range childKeptPrefixes {
+			kept = kept || strings.HasPrefix(name, p)
+		}
+		if passed[name] || (kept && !secretNameRE.MatchString(name)) {
 			out = append(out, kv)
 		}
 	}
