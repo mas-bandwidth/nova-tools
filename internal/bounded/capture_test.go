@@ -3,6 +3,8 @@ package bounded
 import (
 	"context"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 func TestCaptureCancelsAtExactLimitWithoutKeepingACompletePrefix(t *testing.T) {
@@ -17,7 +19,6 @@ func TestCaptureCancelsAtExactLimitWithoutKeepingACompletePrefix(t *testing.T) {
 	if n, e := b.Write([]byte("defgh")); n != 5 || e != nil || !b.Hit() {
 		t.Fatal(n, e, b.Hit())
 	}
-	if string(b.Bytes()) != "abcd" || ctx.Err() == nil {
-		t.Fatal("capture not capped/cancelled")
-	}
+	require.Equal(t, "abcd", string(b.Bytes()), "capture not capped/cancelled")
+	require.Error(t, ctx.Err(), "capture not capped/cancelled")
 }

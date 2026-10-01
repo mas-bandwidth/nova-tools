@@ -66,11 +66,10 @@ func TestEscapeEveryControlCharacter(t *testing.T) {
 			got := Escape(tc.in)
 			assert.Equal(t, tc.want, got, "Escape(%q) = %q, want %q", tc.in, got, tc.want)
 			assert.False(t, strings.ContainsFunc(got, unicode.IsControl), "Escape(%q) = %q still holds a control character", tc.in, got)
-			if strings.ContainsFunc(got, reordersALine) || strings.ContainsFunc(got, breaksALine) {
-				t.Errorf("Escape(%q) = %q still holds a separator or a bidi control", tc.in, got)
-			}
-			if tc.in != "" && got == "" {
-				t.Errorf("Escape(%q) emptied the text; a reason must never vanish", tc.in)
+			assert.False(t, strings.ContainsFunc(got, reordersALine), "Escape(%q) = %q still holds a separator or a bidi control", tc.in, got)
+			assert.False(t, strings.ContainsFunc(got, breaksALine), "Escape(%q) = %q still holds a separator or a bidi control", tc.in, got)
+			if tc.in != "" {
+				assert.NotEmpty(t, got, "Escape(%q) emptied the text; a reason must never vanish", tc.in)
 			}
 			assert.Equal(t, got, Escape(tc.in), "Escape(%q) is not deterministic", tc.in)
 		})
@@ -94,12 +93,10 @@ func TestEveryBidiControlIsEscapedAndNoOtherFormatCharacterIs(t *testing.T) {
 		if unicode.IsControl(r) || r == 0x2028 || r == 0x2029 {
 			continue
 		}
-		got := Escape(u(r))
-		if escaped[r] && got == u(r) {
-			t.Errorf("U+%04X is a bidi control and passed through", r)
-		}
-		if !escaped[r] && got != u(r) {
-			t.Errorf("U+%04X is not a bidi control and was escaped to %q", r, got)
+		if escaped[r] {
+			assert.NotEqual(t, u(r), Escape(u(r)), "U+%04X is a bidi control and passed through", r)
+		} else {
+			assert.Equal(t, u(r), Escape(u(r)), "U+%04X is not a bidi control and was escaped", r)
 		}
 	}
 }
@@ -134,12 +131,11 @@ func TestFieldIsOneTokenHoldingNoEquals(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			got := Field(tc.in)
 			assert.Equal(t, tc.want, got, "Field(%q) = %q, want %q", tc.in, got, tc.want)
-			if strings.ContainsFunc(got, unicode.IsSpace) || strings.ContainsFunc(got, unicode.IsControl) {
-				t.Errorf("Field(%q) = %q is not one token", tc.in, got)
-			}
+			assert.False(t, strings.ContainsFunc(got, unicode.IsSpace), "Field(%q) = %q is not one token", tc.in, got)
+			assert.False(t, strings.ContainsFunc(got, unicode.IsControl), "Field(%q) = %q is not one token", tc.in, got)
 			assert.False(t, strings.ContainsRune(got, '='), "Field(%q) = %q still holds an equals sign, so a key=value search could match inside it", tc.in, got)
-			if tc.in != "" && got == "" {
-				t.Errorf("Field(%q) emptied the text", tc.in)
+			if tc.in != "" {
+				assert.NotEmpty(t, got, "Field(%q) emptied the text", tc.in)
 			}
 			assert.Equal(t, got, Field(tc.in), "Field(%q) is not deterministic", tc.in)
 		})
@@ -156,9 +152,8 @@ func TestFieldAgreesWithEscapeOnEverythingEscapeTouches(t *testing.T) {
 		if r == 0xfffd {
 			continue
 		}
-		e, f := Escape(u(r)), Field(u(r))
-		if e != u(r) && f != e {
-			t.Errorf("U+%04X: Escape = %q but Field = %q", r, e, f)
+		if e := Escape(u(r)); e != u(r) {
+			assert.Equal(t, e, Field(u(r)), "U+%04X: Field spells it unlike Escape", r)
 		}
 	}
 }
@@ -232,9 +227,7 @@ func TestCapMarksWhatItDropped(t *testing.T) {
 	s := strings.Repeat("x", 1000)
 	got := Cap(s, 100)
 	assert.LessOrEqual(t, len(got), 100, "Cap(1000, 100) returned %d bytes", len(got))
-	if !strings.HasPrefix(got, "xxxx") {
-		t.Errorf("the head of the tail is gone: %q", got[:20])
-	}
+	assert.True(t, strings.HasPrefix(got, "xxxx"), "the head of the tail is gone: %q", got)
 	i := strings.Index(got, "...+")
 	require.GreaterOrEqual(t, i, 0, "no mark in %q", got)
 	var n int
