@@ -11,7 +11,6 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -51,16 +50,19 @@ func TestBatchReceiptRecordsLongValuesByLengthAndDigest(t *testing.T) {
 	require.NoError(t, err)
 	ch := r.BatchDelta.Members[0].Fields["k"]
 	sum := sha1.Sum([]byte(strings.Repeat("z", 64<<10)))
-	if ch.Before != nil || ch.After != nil || ch.AfterBytes != 64<<10 || ch.AfterSHA1 != hex.EncodeToString(sum[:]) || ch.BeforeBytes != 0 {
-		t.Errorf("a long set value is recorded as %+v", ch)
-	}
+	assert.Nil(t, ch.Before, "a long set value is recorded as %+v", ch)
+	assert.Nil(t, ch.After, "a long set value is recorded as %+v", ch)
+	assert.Equal(t, 64<<10, ch.AfterBytes, "a long set value is recorded as %+v", ch)
+	assert.Equal(t, hex.EncodeToString(sum[:]), ch.AfterSHA1, "a long set value is recorded as %+v", ch)
+	assert.Equal(t, 0, ch.BeforeBytes, "a long set value is recorded as %+v", ch)
 	assert.Empty(t, r.BatchDelta.Members[0].FieldsSet, "fields_set carries a long value: %d entries", len(r.BatchDelta.Members[0].FieldsSet))
 
 	// replay returns the identical receipt
 	again, err := rawApply(ctx, c, raw)
-	if got, marked := asReplay(again); err != nil || !marked || !reflect.DeepEqual(got, ans) {
-		t.Errorf("replay of the big receipt: %v", err)
-	}
+	got, marked := asReplay(again)
+	assert.NoError(t, err, "replay of the big receipt")
+	assert.True(t, marked, "replay of the big receipt is not marked a replay")
+	assert.Equal(t, ans, got, "replay of the big receipt")
 }
 
 func TestBatchReceiptKeepsValuesUpToTheBoundInFull(t *testing.T) {
@@ -74,16 +76,13 @@ func TestBatchReceiptKeepsValuesUpToTheBoundInFull(t *testing.T) {
 		{ID: "a", Expect: &ntable.MemberExpect{}, Unset: []string{"at", "over", "role", "none"}}}})
 	require.NoError(t, err)
 	f := r.BatchDelta.Members[0].Fields
-	if f["at"].Before == nil || *f["at"].Before != full || f["at"].BeforeBytes != 0 {
-		t.Errorf("a value at the bound: %+v", f["at"])
-	}
-	if f["over"].Before != nil || f["over"].BeforeBytes != len(over) || f["over"].BeforeSHA1 == "" {
-		t.Errorf("a value one over the bound: %+v", f["over"])
-	}
-	if f["role"].Before == nil || *f["role"].Before != "x" {
-		t.Errorf("a short value: %+v", f["role"])
-	}
-	if f["none"].Before != nil || f["none"].BeforeBytes != 0 || f["none"].After != nil {
-		t.Errorf("an absent field is null with no length: %+v", f["none"])
-	}
+	require.Equal(t, new(full), f["at"].Before, "a value at the bound: %+v", f["at"])
+	assert.Equal(t, 0, f["at"].BeforeBytes, "a value at the bound: %+v", f["at"])
+	assert.Nil(t, f["over"].Before, "a value one over the bound: %+v", f["over"])
+	assert.Equal(t, len(over), f["over"].BeforeBytes, "a value one over the bound: %+v", f["over"])
+	assert.NotEmpty(t, f["over"].BeforeSHA1, "a value one over the bound: %+v", f["over"])
+	require.Equal(t, new("x"), f["role"].Before, "a short value: %+v", f["role"])
+	assert.Nil(t, f["none"].Before, "an absent field is null with no length: %+v", f["none"])
+	assert.Equal(t, 0, f["none"].BeforeBytes, "an absent field is null with no length: %+v", f["none"])
+	assert.Nil(t, f["none"].After, "an absent field is null with no length: %+v", f["none"])
 }

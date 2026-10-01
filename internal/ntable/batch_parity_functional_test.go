@@ -117,11 +117,8 @@ func TestBatchFurtherMalformedManifestsRefusedByServerAndValidator(t *testing.T)
 		before := storeImage(t, c)
 		ans, err := rawApply(ctx, c, raw)
 		_, verr := ntable.ValidateBatchManifestRaw([]byte(raw))
-		if err != nil {
-			t.Errorf("%s: a raw error reply leaves the script: %v", name, err)
-		} else if len(ans) < 2 || ans[0] != "REFUSED" {
-			t.Errorf("%s: the server accepts: %v", name, trunc(ans))
-		}
+		require.True(t, replyOpens(ans, err, "REFUSED"), "%s: the server accepts: %v: %v", name, trunc(ans), err)
+		require.GreaterOrEqual(t, len(ans), 2, "%s: the server accepts: %v", name, trunc(ans))
 		assert.Error(t, verr, "%s: the Go validator accepts", name)
 		assert.Equal(t, before, storeImage(t, c), "%s: the store changed", name)
 	}
@@ -139,9 +136,8 @@ func TestBatchSurrogateEscapesAreRefusedAlikeByServerAndValidator(t *testing.T) 
 	m, err := ntable.ValidateBatchManifestRaw([]byte(pair))
 	require.NoError(t, err, "a valid pair is refused by the validator")
 	assert.Equal(t, "\U0001F600", m.Members[0].Set["k"], "the validator decoded the pair as %q", m.Members[0].Set["k"])
-	if ans, err := rawApply(ctx, c, pair); err != nil || ans[0] != "OK" {
-		t.Fatalf("a valid pair is refused by the server: %v %v", trunc(ans), err)
-	}
+	ans, err := rawApply(ctx, c, pair)
+	require.True(t, replyOpens(ans, err, "OK"), "a valid pair is refused by the server: %v: %v", trunc(ans), err)
 	got := c.HGet(ctx, ntable.MemberKey("a"), "k").Val()
 	assert.Equal(t, "\U0001F600", got, "the pair was stored as %q", got)
 

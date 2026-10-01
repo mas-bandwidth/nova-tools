@@ -4,8 +4,6 @@ package ntable_test
 
 import (
 	"context"
-	"errors"
-	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
@@ -23,11 +21,8 @@ func memberFixture(t *testing.T) (*redis.Client, ntable.Table) {
 	cols, err := ntable.ParseColumns("ready,working")
 	require.NoError(t, err)
 	tb := ntable.Table{Name: "placement", Columns: cols}
-	newTable(t, c, tb)
+	newTable(t, c, tb).rows("build", "test")
 	for _, row := range []string{"build", "test"} {
-		if _, err := ntable.RowAdd(ctx, c, tb.Name, row, ntable.RowSpec{}); err != nil {
-			t.Fatal(err)
-		}
 		tb.Rows = append(tb.Rows, ntable.NewRow(tb, row))
 	}
 	_, err = ntable.CellAdd(ctx, c, tb.Name, "build", "ready", "m1", 7)
@@ -127,9 +122,9 @@ func TestMemberRecordFollowsEveryDestructivePath(t *testing.T) {
 	_, err := ntable.CellMove(ctx, c, tb.Name, "build", "ready", "working", "m1")
 	require.NoError(t, err)
 	place(tb.Name, "build:working")
-	if score, err := c.ZScore(ctx, ntable.CellKey(tb.Name, "build", "working"), "m1").Result(); err != nil || score != 7 {
-		t.Fatalf("move changed score: %v %v", score, err)
-	}
+	score, err := c.ZScore(ctx, ntable.CellKey(tb.Name, "build", "working"), "m1").Result()
+	require.NoError(t, err, "move changed score: %v", score)
+	require.Equal(t, float64(7), score, "move changed score")
 	_, err = ntable.CellRemove(ctx, c, other.Name, "build", "ready", "m1")
 	require.NoError(t, err)
 	place(other.Name, "")
@@ -149,9 +144,9 @@ func TestMemberRecordFollowsEveryDestructivePath(t *testing.T) {
 	_, err = ntable.Drop(ctx, c, other.Name)
 	require.NoError(t, err)
 	place(other.Name, "")
-	if epoch, err := c.HGet(ctx, ntable.MemberKey("m1"), "epoch").Result(); err != nil || epoch != "0" {
-		t.Fatalf("destruction lost immutable identity: epoch=%q err=%v", epoch, err)
-	}
+	epoch, err := c.HGet(ctx, ntable.MemberKey("m1"), "epoch").Result()
+	require.NoError(t, err, "destruction lost immutable identity: epoch=%q", epoch)
+	require.Equal(t, "0", epoch, "destruction lost immutable identity")
 }
 
 func TestMemberRecordFailureDoesNotPartiallyWrite(t *testing.T) {
@@ -239,9 +234,9 @@ func TestBoundRefusalPreservesStoredKey(t *testing.T) {
 				_, err = ntable.Clear(ctx, c, tb.Name)
 			}
 			var bound *ntable.BoundError
-			if !errors.As(err, &bound) || bound.Key != key || !strings.Contains(err.Error(), key) {
-				t.Fatalf("%s lost bound key %q: %v", verb, key, err)
-			}
+			require.ErrorAs(t, err, &bound, "%s lost bound key %q: %v", verb, key, err)
+			require.Equal(t, key, bound.Key, "%s lost bound key %q: %v", verb, key, err)
+			require.Contains(t, err.Error(), key, "%s lost bound key %q: %v", verb, key, err)
 			require.Equal(t, before, storeImage(t, c), "%s changed store on bound refusal", verb)
 		}
 	}
@@ -298,11 +293,11 @@ func TestRuntimeCheckFindsBothDirectionsAndHiddenCells(t *testing.T) {
 			before := storeImage(t, c)
 			report, err := ntable.Check(ctx, c, tb.Name)
 			if mode == "valid" {
-				if err != nil || report.Members != 1 || report.Cells != 4 {
-					t.Fatalf("valid check = %#v %v", report, err)
-				}
-			} else if !errors.Is(err, ntable.ErrDrift) {
-				t.Fatalf("%s = %v", mode, err)
+				require.NoError(t, err, "valid check = %#v", report)
+				require.Equal(t, uint64(1), report.Members, "valid check = %#v", report)
+				require.Equal(t, uint64(4), report.Cells, "valid check = %#v", report)
+			} else {
+				require.ErrorIs(t, err, ntable.ErrDrift, "%s = %v", mode, err)
 			}
 			require.Equal(t, before, storeImage(t, c), "read-only check changed store")
 		})

@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // TestCommittedMapMatchesTree is the docs-guard: a mapped directory that
@@ -96,9 +98,8 @@ func TestStaleMapFailsUntilRegenerate(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(dir, "docs"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(StandardDoc)), []byte("# The standard\n\nA rule.\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(dir, filepath.FromSlash(StandardDoc)), []byte("# The standard\n\nA rule.\n\n"+classRulesStart+"\n\nold names\n\n"+classRulesEnd+"\n"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, filepath.FromSlash(classRulesDoc)), []byte("## The class tests\n### `first` — first rule\n"), 0o644))
 	cat := []Entry{
 		E("docs", "the standard", "go test", "go test"),
 		Page("alpha", "the mapped tree", "go test", "go test"),
@@ -113,6 +114,30 @@ func TestStaleMapFailsUntilRegenerate(t *testing.T) {
 	if issues := Check(dir, cat); len(issues) != 0 {
 		t.Fatalf("committed map should be green: %s", strings.Join(issues, "; "))
 	}
+
+	// Adding and then removing an indexed rule stales both generated copies.
+	for _, spec := range []string{
+		"## The class tests\n### `second` — second rule\n### `first` — first rule\n",
+		"## The class tests\n### `second` — second rule\n",
+	} {
+		require.NoError(t, os.WriteFile(filepath.Join(dir, filepath.FromSlash(classRulesDoc)), []byte(spec), 0o644))
+		issues := Check(dir, cat)
+		for _, path := range []string{StandardDoc, RootAgents} {
+			require.True(t, hasIssue(issues, path+" is stale; run: make map"), "changed rule must stale %s: %v", path, issues)
+		}
+		pages, issues := Render(dir, cat)
+		require.Empty(t, issues, "render changed rules")
+		require.NoError(t, Write(dir, pages))
+		require.Empty(t, Check(dir, cat), "one generation must repair both rule lists")
+	}
+
+	standard, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(StandardDoc)))
+	require.NoError(t, err)
+	handList := strings.Replace(string(standard), "`second`.", "`hand-edited`.", 1)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, filepath.FromSlash(StandardDoc)), []byte(handList), 0o644))
+	issues = Check(dir, cat)
+	require.True(t, hasIssue(issues, StandardDoc+" is stale; run: make map"), "hand-edited list must be stale: %v", issues)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, filepath.FromSlash(StandardDoc)), standard, 0o644))
 
 	if err := os.Mkdir(filepath.Join(dir, "alpha", "beta"), 0o755); err != nil {
 		t.Fatal(err)

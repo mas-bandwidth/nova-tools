@@ -6,7 +6,7 @@
 // write it. The contract is docs/SPEC-CONFIG.md; the guide is
 // docs/nova-config/README.md.
 //
-// Every kind (machine, friend, fleet) has the same six verbs -- add, remove,
+// Every kind (machine, fleet, friend, sprint, loop) has the same six verbs -- add, remove,
 // set, list, show, history -- generated from its descriptor in
 // internal/config, so every kind has identical flags, help and refusals; a
 // singleton kind (fleet: one row the migration creates) has set, show and
@@ -60,9 +60,11 @@ const usageTop = `nova-config: a fleet's machines and AI friends as rows in Post
 
 how it works: PostgreSQL holds the rows, in the schema migrate makes: a machine
 row per host ssh reaches (its login, the nova-secrets seat it opens secrets as,
-its card slots), a friend row per AI (slots, tiers, roles), one fleet row and
-one sprint row; every write adds a history row naming who made it. apply copies
-the rows into Redis, where running tools read them; inventory feeds Ansible.
+its card slots), a friend row per AI (slots, tiers, roles), one fleet row,
+one sprint row, and a loop row per supervised process on a machine (its
+command, its seat and secret names, every n seconds or kept alive); every
+write adds a history row naming who made it. apply copies the rows into
+Redis, where running tools and the plays read them; inventory feeds Ansible.
 first run: the lines under example: need no database; the rest needs PostgreSQL:
 export NOVA_PG_DSN=postgres://user@127.0.0.1:5432/db (a database you own), then
 run migrate.
@@ -74,15 +76,16 @@ usage:
   nova-config migrate [--pg <dsn>] [--print]
   nova-config status [--pg <dsn>] [--redis <addr>]
   nova-config apply [--pg <dsn>] [--redis <addr>] [--as <friend>] [--kind <kind>] [--check]
-  nova-config inventory [--pg <dsn>] [--list | --host <name>] [--timeout <duration>]
-      prints an Ansible dynamic JSON inventory from the store; groups: all and benches are every machine row, coordinator and store come from the fleet row, runners is every machine with at least one runner; every host's variables are under _meta.hostvars
-      first run, against a migrated store: export NOVA_PG_DSN=postgres://nova_config@127.0.0.1:5432/nova; nova-config inventory
+  nova-config inventory [--redis <addr> | --fixture <file>] [--list | --host <name>] [--timeout <duration>]
+      prints an Ansible dynamic JSON inventory of the applied state (the Redis view apply writes, never Postgres): groups all and benches are every machine, coordinator, store and store_deployer (the coordinator machine) come from the fleet row, runners is every machine with at least one runner; every host's variables are under _meta.hostvars: ansible_user, nova_seat, slots, runners, nova_os and nova_arch from the machine's beat when it has one, and nova_loops, its loop records, once the loop kind has been applied; all.vars holds nova_store and nova_config_rev
+      first run, with no store: nova-config inventory --fixture fleet/testdata/inventory-fixture.yml
+      against the store: export NOVA_SPRINT_REDIS=127.0.0.1:6379; nova-config inventory
       ansible's -i wants an executable file whose first line is #!/bin/sh at column one; write it with these two commands, then run ansible with ANSIBLE_INVENTORY_UNPARSED_FAILED=true, because without it a failed inventory is an empty inventory and the play does nothing (ansible.cfg: [inventory] unparsed_is_failed = True):
       printf '#!/bin/sh\nexec nova-config inventory "$@"\n' > nova-inventory
       chmod +x nova-inventory
       ANSIBLE_INVENTORY_UNPARSED_FAILED=true ansible-inventory -i ./nova-inventory --list
-      env: NOVA_PG_DSN and NOVA_PG_PASSWORD_ENV as for every verb; NOVA_MACHINE names the machine row this process runs on (an empty value counts as unset), matched by exact machine name and refused with the known names when it names no row; when it is unset the lower-cased first label of the hostname is matched, and nothing is marked local when that matches no row
-      this verb exits 0 when it printed, 1 when the store's state or an unknown machine refused it, 2 when it could not run (usage, connection, timeout)
+      env: NOVA_SPRINT_REDIS (then NOVA_REDIS_ADDR, then the seat's address) names the store; NOVA_MACHINE names the machine row this process runs on (an empty value counts as unset), matched by exact machine name and refused with the known names when it names no row; when it is unset the lower-cased first label of the hostname is matched, and nothing is marked local when that matches no row
+      this verb exits 0 when it printed, 1 when the applied state or an unknown machine refused it, 2 when it could not run (usage, connection, timeout)
   nova-config <kind> add <name> --<field> <value> ... --as <friend>
   nova-config <kind> set <name> --<field> <value> ... --as <friend>
   nova-config <kind> remove <name> --as <friend>
@@ -90,13 +93,15 @@ usage:
   nova-config <kind> show <name>
   nova-config <kind> history <name>
   nova-config <kind> <verb> -h        prints the verb's usage line and every flag it takes
-  nova-config machine list|show <name> [--redis <addr>]   with Redis, each line ends in the machine's live measured facts (its beat)
+  nova-config machine list|show <name> [--redis <addr>]   with Redis, each line ends in the machine's live measured facts (its beat); show names the machine's loops (loops=<a,b>)
   nova-config machine width <name> [--pg <dsn>] [--redis <addr>] [--json]   the room the sprint's member on the machine has: its slots less the slots of the friends charged to it; a machine with width above 0 is a member. The friends' machines come from their beats, so a Redis is needed when a friend row carries slots
   nova-config machine self [--check] [--pg <dsn>]          prints this machine's own name as the config keys it (NOVA_MACHINE, else the tailnet's name for the host when a tailnet is running, else the hostname's first label) and opens no store; --check reads the machine rows and exits 2 when the name is none of them, 3 when the name or the rows cannot be read (exit codes of this verb: 0 printed, 2 not a row or usage, 3 unreadable)
   nova-config fleet set --<field> <value> ... --as <friend>    the one fleet row (store, coordinator machine): no name, no add, remove or list
   nova-config sprint set --coordinator <friend> --as <friend>  the one sprint row: who coordinates; set it to hand over
   nova-config fleet|sprint show
   nova-config fleet|sprint history
+  nova-config loop add <name> --machine <m> --argv '["/path/prog","--flag","v"]' (--every <seconds> | --keepalive true) [--seat <seat> --keys <NAME,...>] [--width <n>] [--enabled false] --as <friend>
+      a supervised loop on one machine; the secrets it needs go by NAME in --keys, opened from --seat, never on the command; apply writes loop:<name> (its fields and its log path ~/nova-bench/loops/<name>.log) and the set loops, which the plays read
 
 Postgres is the permanent store; Redis is a copy of it that apply rebuilds.
 Connect with export NOVA_PG_DSN=postgres://user@host:5432/db (or --pg) with NO
@@ -112,14 +117,16 @@ cores, memory) are never typed: machine list and show print them live from
 the machine's beat when --redis (or NOVA_SPRINT_REDIS, NOVA_REDIS_ADDR) is
 given, beat=none when it has none. A friend's row is what someone decides
 for her (slots, tiers, roles); what she would just know is runtime data her
-own presence reports. Who coordinates is the sprint row's one field.
+own presence reports. Who coordinates is the sprint row's one field. A
+loop's row names its machine, its command and the names of its secrets as
+data; the code names none of them.
 
 migrate creates or upgrades schema config from the migrations in this binary
 and applies nothing twice. apply reads Postgres and writes Redis, one kind at
 a time, through the runtime's own Redis Functions, and refuses CONFLICT when
 Redis holds a newer revision; --check prints the ADD, SET and REMOVE lines
-and writes nothing. inventory prints an Ansible dynamic JSON inventory from
-the machine rows and reads only Postgres. Lose Redis: run nova-config apply.
+and writes nothing. inventory prints an Ansible dynamic JSON inventory of
+the applied state and reads only Redis. Lose Redis: run nova-config apply.
 
 exit codes: 0 done, 1 refused, 2 usage
 
@@ -171,6 +178,8 @@ type redisSide interface {
 	config.Applier
 	config.BeatReader
 	config.HostReader
+	// Snapshot is the applied state inventory prints.
+	Snapshot(ctx context.Context) (*config.Snapshot, error)
 	Close() error
 }
 
@@ -466,6 +475,13 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 		return refuse(stderr, verb, err.Error())
 	}
 	defer st.Close()
+	// The loop kind reads the loops table, which a store older than this
+	// binary's migrations does not have.
+	if k.Name == config.KindLoop {
+		if code, stale := behindSchema(ctx, st, stderr, verb, *pg); stale {
+			return code
+		}
+	}
 	if add {
 		id, err := st.Insert(ctx, k.Name, row, actor)
 		if err != nil {
@@ -476,9 +492,18 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 	}
 	_, id, err := st.Update(ctx, k.Name, name, changes, actor)
 	if err != nil {
+		// A row that is not there is added; a set the row refuses (a ref
+		// naming no row, a rule across its fields) starts from the row.
 		next := tool + " " + k.Name + " add " + name + " --<field> <value> ..."
 		if k.Singleton {
 			next = tool + " " + k.Name + " show"
+			if errors.Is(err, config.ErrNoRef) {
+				if remedy := singletonRefRemedy(k); remedy != "" {
+					next = remedy
+				}
+			}
+		} else if !errors.Is(err, config.ErrNotFound) {
+			next = tool + " " + k.Name + " show " + name
 		}
 		return storeErr(stderr, verb, err, next)
 	}
@@ -489,6 +514,27 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 	sort.Strings(fields)
 	fmt.Fprintf(stdout, "CONFIG SET kind=%s name=%s rev=%d changed=%s\n", k.Name, config.Value(name), id, config.Value(strings.Join(fields, ",")))
 	return 0
+}
+
+// singletonRefRemedy uses the descriptor, not the store's human error text.
+// A singleton whose ref fields all point to one kind can safely direct an
+// ErrNoRef refusal to that kind's list, even when an unchanged field failed.
+// A future singleton with mixed ref kinds keeps its existing generic remedy.
+func singletonRefRemedy(k *config.Kind) string {
+	ref := ""
+	for _, f := range k.Fields {
+		if f.Type != config.TypeRef {
+			continue
+		}
+		if ref != "" && ref != f.Ref {
+			return ""
+		}
+		ref = f.Ref
+	}
+	if ref == "" {
+		return ""
+	}
+	return tool + " " + ref + " list"
 }
 
 func runKindRemove(ctx context.Context, k *config.Kind, args []string, stdout, stderr io.Writer, d deps) int {
@@ -524,6 +570,13 @@ func runKindRemove(ctx context.Context, k *config.Kind, args []string, stdout, s
 		return refuse(stderr, verb, err.Error())
 	}
 	defer st.Close()
+	// The loop kind reads the loops table, which a store older than this
+	// binary's migrations does not have.
+	if k.Name == config.KindLoop {
+		if code, stale := behindSchema(ctx, st, stderr, verb, *pg); stale {
+			return code
+		}
+	}
 	id, err := st.Delete(ctx, k.Name, name, actor)
 	if err != nil {
 		return storeErr(stderr, verb, err, tool+" "+k.Name+" list")
@@ -585,6 +638,13 @@ func runKindList(ctx context.Context, k *config.Kind, args []string, stdout, std
 		return refuse(stderr, verb, err.Error())
 	}
 	defer st.Close()
+	// The loop kind reads the loops table, which a store older than this
+	// binary's migrations does not have.
+	if k.Name == config.KindLoop {
+		if code, stale := behindSchema(ctx, st, stderr, verb, *pg); stale {
+			return code
+		}
+	}
 	rows, err := st.List(ctx, k.Name)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
@@ -642,6 +702,13 @@ func runKindRead(ctx context.Context, k *config.Kind, which string, args []strin
 		return refuse(stderr, verb, err.Error())
 	}
 	defer st.Close()
+	// machine show reads the loops table beside the machine row; every loop
+	// verb reads it.
+	if k.Name == config.KindLoop || (k.Name == config.KindMachine && which == "show") {
+		if code, stale := behindSchema(ctx, st, stderr, verb, *pg); stale {
+			return code
+		}
+	}
 	if which == "show" {
 		row, found, err := st.Get(ctx, k.Name, name)
 		if err != nil {
@@ -651,12 +718,19 @@ func runKindRead(ctx context.Context, k *config.Kind, which string, args []strin
 			return refused(stderr, verb, k.Name+" "+name+" not found", tool+" "+k.Name+" list")
 		}
 		suffix := ""
+		if k.Name == config.KindMachine {
+			loops, err := machineLoops(ctx, st, name)
+			if err != nil {
+				return refuse(stderr, verb, err.Error())
+			}
+			suffix = " loops=" + config.Value(strings.Join(loops, ","))
+		}
 		if live(k) {
 			bs, err := beats(ctx, liveRedisAddress(*redisFlag, d.getenv), []string{name}, d)
 			if err != nil {
 				return refuse(stderr, verb, err.Error())
 			}
-			suffix = liveSuffix(bs, name)
+			suffix += liveSuffix(bs, name)
 		}
 		fmt.Fprintln(stdout, config.ShowLine(k, row)+suffix)
 		return 0
@@ -716,6 +790,33 @@ func runMigrate(ctx context.Context, args []string, stdout, stderr io.Writer, d 
 	return 0
 }
 
+// behindSchema is the refusal for a store whose schema is older than this
+// binary's migrations: a table a newer kind reads (loops, since version 6) is
+// not there, and the store's own "relation does not exist" says nothing about
+// the cause. It returns the exit code and true when it refused, and writes
+// nothing and returns false when the store is at (or past) this binary's
+// version. pg is the --pg flag, repeated in the command it names.
+func behindSchema(ctx context.Context, st pgStore, stderr io.Writer, verb, pg string) (int, bool) {
+	have, err := st.Version(ctx)
+	if err != nil {
+		return refuse(stderr, verb, err.Error()), true
+	}
+	return behindVersion(have, stderr, verb, pg)
+}
+
+// behindVersion is behindSchema for a version already read.
+func behindVersion(have int, stderr io.Writer, verb, pg string) (int, bool) {
+	all, err := config.Migrations()
+	if err != nil || have >= len(all) {
+		return 0, false
+	}
+	migrate := tool + " migrate"
+	if pg != "" {
+		migrate += " --pg " + shq(pg)
+	}
+	return refused(stderr, verb, fmt.Sprintf("schema config is at version %d and this binary carries %d", have, len(all)), migrate), true
+}
+
 func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer, d deps) int {
 	const verb = "status"
 	fs := verbflag.New(verb)
@@ -744,6 +845,9 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer, d d
 		fmt.Fprintln(stdout, line+" redis=-")
 		fmt.Fprintf(stderr, "%s status: schema config is not there yet; run: %s migrate\n", tool, tool)
 		return 1
+	}
+	if code, stale := behindVersion(schema, stderr, verb, *pg); stale {
+		return code
 	}
 	counts, err := st.Counts(ctx)
 	if err != nil {
@@ -840,6 +944,9 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 		return refuse(stderr, verb, err.Error())
 	}
 	defer st.Close()
+	if code, stale := behindSchema(ctx, st, stderr, verb, *pg); stale {
+		return code
+	}
 	rs, err := d.openRedis(ctx, addr)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
@@ -885,111 +992,112 @@ func localHost(getenv func(string) string, hostname func() (string, error)) (nam
 }
 
 // inventoryTimeout is --timeout's default, 10 s: how long inventory waits
-// for the store in all, the connection check, the schema check and the read.
+// for the store in all, the connection and the two reads.
 const inventoryTimeout = 10 * time.Second
 
+// runInventory prints the Ansible inventory of the applied state: the
+// Redis view apply wrote (machines, the fleet row, loops, the machines'
+// beats), never Postgres, or a fixture file in its place (docs/FLEET.md).
 func runInventory(ctx context.Context, args []string, stdout, stderr io.Writer, d deps) int {
 	const verb = "inventory"
 	fs := verbflag.New(verb)
-	pg, _, _ := connFlags(fs, false, false)
+	redisFlag := fs.String("redis", "", "Redis address host:port of the applied state (env NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the seat's address); exclusive with --fixture")
+	fixture := fs.String("fixture", "", "a YAML or JSON file of machines, the fleet row, loops and each machine's os and arch, read in place of the store (docs/FLEET.md, \"A fixture inventory\"); opens no store")
 	list := fs.Bool("list", false, "print the whole inventory (hosts, groups and every host's variables under _meta.hostvars, so ansible never calls --host); the default when neither --list nor --host is given; exclusive with --host")
 	host := fs.String("host", "", "print the variables of one machine as a JSON object; exits 1 when no machine row has that name")
 	timeout := fs.Duration("timeout", inventoryTimeout, "a Go duration, above 0: how long to wait for the store before refusing; ansible runs the verb unattended, so it never waits forever")
 	if err := fs.Parse(args); err != nil {
 		return refuse(stderr, verb, err.Error())
 	}
+	given := map[string]bool{}
+	fs.Visit(func(f *stdflag.Flag) { given[f.Name] = true })
+	var problems []string
 	if fs.NArg() > 0 {
-		return refuse(stderr, verb, "inventory takes no arguments; flags only")
+		problems = append(problems, "inventory takes no arguments; flags only")
 	}
-	hostGiven := false
-	fs.Visit(func(f *stdflag.Flag) {
-		if f.Name == "host" {
-			hostGiven = true
-		}
-	})
-	if hostGiven && *host == "" {
-		return refuse(stderr, verb, "--host wants a machine name and got an empty value")
+	if given["host"] && *host == "" {
+		problems = append(problems, "--host wants a machine name and got an empty value")
 	}
-	if *list && hostGiven {
-		return refuse(stderr, verb, "--list and --host are exclusive: --list prints every host, --host prints one")
+	if *list && given["host"] {
+		problems = append(problems, "--list and --host are exclusive: --list prints every host, --host prints one")
 	}
 	if *timeout <= 0 {
-		return refuse(stderr, verb, "--timeout wants a Go duration above 0, like 10s")
+		problems = append(problems, "--timeout wants a Go duration above 0, like 10s")
 	}
-	dsn, err := pgDSN(*pg, d.getenv)
-	if err != nil {
-		return refuse(stderr, verb, err.Error())
+	if given["fixture"] && *fixture == "" {
+		problems = append(problems, "--fixture wants a file and got an empty value")
+	}
+	if *fixture != "" && *redisFlag != "" {
+		problems = append(problems, "--fixture and --redis are exclusive: the fixture stands in for the store")
+	}
+	var addr string
+	if *fixture == "" {
+		var err error
+		if addr, err = redisAddress(*redisFlag, d.getenv); err != nil {
+			problems = append(problems, err.Error())
+		}
+	}
+	if len(problems) > 0 {
+		return refuse(stderr, verb, strings.Join(problems, "; "))
 	}
 	// again is the command that repeats this run with every input kept.
 	again := func(extra ...string) string {
 		parts := []string{tool, verb}
-		if *pg != "" {
-			parts = append(parts, "--pg", shq(*pg))
+		if *redisFlag != "" {
+			parts = append(parts, "--redis", shq(*redisFlag))
+		}
+		if *fixture != "" {
+			parts = append(parts, "--fixture", shq(*fixture))
 		}
 		if *list {
 			parts = append(parts, "--list")
 		}
-		if hostGiven {
+		if given["host"] {
 			parts = append(parts, "--host", shq(*host))
 		}
 		return strings.Join(append(parts, extra...), " ")
 	}
-	ctx, cancel := context.WithTimeout(ctx, *timeout)
-	defer cancel()
-	// stage is what the verb is waiting for, and check what to look at when it
-	// does not come; both are named in the timeout refusal.
-	stage, check := "connecting", "check that the store answers on its host and port"
-	// fail is a store failure: the deadline, or the store's own words.
-	fail := func(err error) int {
-		if ctx.Err() != nil {
-			fmt.Fprintf(stderr, "%s %s: timed out after %s waiting for the store while %s; %s; run: %s\n", tool, verb, *timeout, stage, check, again("--timeout", (*timeout*3).String()))
-			return 2
+	var snap *config.Snapshot
+	if *fixture != "" {
+		var err error
+		if snap, err = config.LoadFixture(*fixture); err != nil {
+			return refuse(stderr, verb, err.Error())
 		}
-		return refuse(stderr, verb, err.Error())
-	}
-	st, err := d.openStore(ctx, dsn)
-	if err != nil {
-		return fail(err)
-	}
-	defer st.Close()
-	stage, check = "checking the schema version", "check that nothing holds a lock on schema config"
-	have, err := st.Version(ctx)
-	if err != nil {
-		return fail(err)
-	}
-	if all, err := config.Migrations(); err == nil && have < len(all) {
-		migrate := tool + " migrate"
-		if *pg != "" {
-			migrate += " --pg " + shq(*pg)
+	} else {
+		ctx, cancel := context.WithTimeout(ctx, *timeout)
+		defer cancel()
+		stage := "connecting"
+		// fail is a store failure: the deadline, or the store's own words.
+		fail := func(err error) int {
+			if ctx.Err() != nil {
+				fmt.Fprintf(stderr, "%s %s: timed out after %s waiting for the store at %s while %s; check that Redis answers there; run: %s\n", tool, verb, *timeout, addr, stage, again("--timeout", (*timeout*3).String()))
+				return 2
+			}
+			return refuse(stderr, verb, err.Error())
 		}
-		return refused(stderr, verb, fmt.Sprintf("schema config is at version %d and this binary carries %d", have, len(all)), migrate)
-	}
-	stage, check = "reading the machines and the fleet row", "check that nothing holds a lock on config.machines or config.fleet"
-	if all, err := config.Migrations(); err == nil && have > len(all) {
-		fmt.Fprintf(stderr, "%s %s: schema config is at version %d and this binary carries %d; this %s is older than the store; install a %s whose migrations reach version %d\n", tool, verb, have, len(all), tool, tool, have)
-		return 1
+		rs, err := d.openRedis(ctx, addr)
+		if err != nil {
+			return fail(err)
+		}
+		defer rs.Close()
+		stage = "reading the applied state"
+		if snap, err = rs.Snapshot(ctx); err != nil {
+			return fail(err)
+		}
 	}
 	self, explicit := localHost(d.getenv, d.hostname)
-	inv, err := config.BuildInventory(ctx, st, self)
+	inv, err := config.BuildInventory(snap, self)
 	if err != nil {
-		return fail(err)
+		return refused(stderr, verb, err.Error(), again())
 	}
 	if explicit && !inv.Has(self) {
-		next := tool + " machine list"
-		if *pg != "" {
-			next += " --pg " + shq(*pg)
-		}
-		return refused(stderr, verb, fmt.Sprintf("%s=%q names no machine row (the name is matched exactly); known machines: %s", envMachine, self, boundedNames(inv.All.Hosts, maxKnownNames)), next)
+		return refused(stderr, verb, fmt.Sprintf("%s=%q names no machine row (the name is matched exactly); known machines: %s", envMachine, self, boundedNames(inv.All.Hosts, maxKnownNames)), tool+" machine list")
 	}
-	if hostGiven {
+	if given["host"] {
 		data, err := inv.HostJSON(*host)
 		var unknown *config.UnknownHostError
 		if errors.As(err, &unknown) {
-			next := tool + " machine list"
-			if *pg != "" {
-				next += " --pg " + shq(*pg)
-			}
-			return refused(stderr, verb, fmt.Sprintf("--host %q names no machine row; known machines: %s", unknown.Name, boundedNames(unknown.Known, maxKnownNames)), next)
+			return refused(stderr, verb, fmt.Sprintf("--host %q names no machine row; known machines: %s", unknown.Name, boundedNames(unknown.Known, maxKnownNames)), tool+" machine list")
 		}
 		if err != nil {
 			return refuse(stderr, verb, err.Error())

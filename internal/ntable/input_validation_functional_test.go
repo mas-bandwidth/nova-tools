@@ -25,9 +25,8 @@ func TestBindRequiresAnActualJSONArray(t *testing.T) {
 			ctx := context.Background()
 			cols, _ := ntable.ParseColumns("a")
 			require.NoError(t, ntable.Create(ctx, c, ntable.Table{Name: "t", Columns: cols}, now))
-			if _, err := ntable.RowAdd(ctx, c, "t", "keep", ntable.RowSpec{}); err != nil {
-				t.Fatal(err)
-			}
+			_, err := ntable.RowAdd(ctx, c, "t", "keep", ntable.RowSpec{})
+			require.NoError(t, err)
 			before := storeImage(t, c)
 			body := `{"fields":{"order":"a","col:a":"count:sum:0:","footer":""},"rows":` + rows + `}`
 			got, err := c.FCall(ctx, ntable.FnBind, nil, "t", body, `{"epoch":"0"}`).Slice()
@@ -130,16 +129,16 @@ func TestRawAndGoRowKeysAgreeOnBytes(t *testing.T) {
 				valid = false
 			}
 		}
-		if got := ntable.ValidRowKey(key); got != valid {
-			t.Fatalf("Go row key %q = %v want %v", key, got, valid)
-		}
+		require.Equal(t, valid, ntable.ValidRowKey(key), "Go row key %q", key)
 		revision := c.HGet(ctx, ntable.RevisionKey("t"), "n").Val()
 		got, err := c.FCall(ctx, ntable.FnRowAdd, nil, "t", key, `{}`, `{"epoch":"0"}`).Slice()
 		require.NoError(t, err, "raw row key %q: %v", key, err)
 		accepted := len(got) > 0 && got[0] == "ROW"
 		require.Equal(t, valid, accepted, "raw row key %q: %v want accepted=%v", key, got, valid)
-		if !valid && (c.HGet(ctx, ntable.RevisionKey("t"), "n").Val() != revision || len(got) < 2 || got[1] != "ROW") {
-			t.Fatalf("invalid %q did not refuse cleanly: %v", key, got)
+		if !valid {
+			require.Equal(t, revision, c.HGet(ctx, ntable.RevisionKey("t"), "n").Val(), "invalid %q did not refuse cleanly: %v", key, got)
+			require.GreaterOrEqual(t, len(got), 2, "invalid %q did not refuse cleanly: %v", key, got)
+			require.Equal(t, "ROW", got[1], "invalid %q did not refuse cleanly: %v", key, got)
 		}
 	}
 }

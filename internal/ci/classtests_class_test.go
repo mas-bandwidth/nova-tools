@@ -71,7 +71,8 @@ type mergeDeletions struct {
 
 // devHistoryFetch completes the second parent's ancestry in a depth-2
 // checkout: commits and trees only (blob:none), the whole history
-// (--unshallow). The main-run steps of ci.yml and certification.yml run it.
+// (--unshallow). The main-run steps of ci.yml and certification.yml run it
+// through `ci fetch-ancestry dev` (TestAncestryFetchesAreOneVerb).
 const devHistoryFetch = "git fetch --no-tags --filter=blob:none --unshallow origin +dev:refs/remotes/origin/dev"
 
 // readMergeDeletions compares HEAD's tree with its first parent's, through
@@ -245,8 +246,9 @@ type landing struct {
 
 // foundationHistoryFetch completes sprint/foundation's ancestry in a depth-2
 // checkout, as devHistoryFetch does dev's. The promotion steps of ci.yml and
-// certification.yml run it on a merge-queue group and a push to dev whose
-// HEAD is a merge commit, and on the promotion pull request itself.
+// certification.yml run it, through `ci fetch-ancestry --promotion
+// sprint/foundation`, on a merge-queue group and a push to dev whose HEAD is a
+// merge commit, and on the promotion pull request itself.
 const foundationHistoryFetch = "git fetch --no-tags --filter=blob:none --unshallow origin +sprint/foundation:refs/remotes/origin/sprint/foundation"
 
 // landingRun reports the landing a run audits, if any: a main run (mainRun)
@@ -575,6 +577,21 @@ func declaredRowsAdded(diff string) map[string]string {
 	return rows
 }
 
+// distinctRows drops a row whose text an earlier row repeats. The log merges by
+// union (.gitattributes), so two changes that each add the same row leave it
+// twice; a row is read once, in any order.
+func distinctRows(rows []allowlist.Row) []allowlist.Row {
+	seen := map[string]bool{}
+	var out []allowlist.Row
+	for _, row := range rows {
+		if !seen[row.Text] {
+			seen[row.Text] = true
+			out = append(out, row)
+		}
+	}
+	return out
+}
+
 // findings are the rule's red lines: a guarded file deleted with no row of
 // this change declaring it, and a row declaring a deletion this change does
 // not make; on a main run, the second-parent comparison's own (Beyond), and
@@ -635,7 +652,7 @@ func TestNoMergeDeletesATestFileUndeclared(t *testing.T) {
 	t.Parallel()
 
 	log := loadAllowlist(t, "testdata/deleted-tests.txt", allowlist.Options{})
-	for _, row := range log.Rows() {
+	for _, row := range distinctRows(log.Rows()) {
 		if _, why, _ := strings.Cut(row.Text, " "); strings.TrimSpace(why) == "" {
 			t.Errorf("%s: %q carries no why", deletedTestsLogPath, row.Text)
 		}

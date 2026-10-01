@@ -8,7 +8,6 @@ package ntable_test
 
 import (
 	"context"
-	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
@@ -108,8 +107,7 @@ func TestBatchRefusalsNameOperationMemberStateAndNextCommand(t *testing.T) {
 	}
 	for _, tc := range cases {
 		_, err := ntable.ApplyBatch(ctx, c, tc.manifest)
-		if err == nil {
-			t.Errorf("%s: accepted", tc.name)
+		if !assert.Error(t, err, "%s: accepted", tc.name) {
 			continue
 		}
 		got := err.Error()
@@ -167,8 +165,7 @@ func TestReadSetRefusalsNameOperationStateAndNextCommand(t *testing.T) {
 	}
 	for _, tc := range cases {
 		_, err := ntable.ReadSet(context.Background(), c, "demo", tc.scope, tc.epoch...)
-		if err == nil {
-			t.Errorf("%s: accepted", tc.name)
+		if !assert.Error(t, err, "%s: accepted", tc.name) {
 			continue
 		}
 		got := err.Error()
@@ -192,9 +189,9 @@ func TestEpochAheadIsSaidOnlyOfATableThatExists(t *testing.T) {
 	_, rerr := ntable.ReadSet(ctx, c, "ghost", ntable.ReadSetScope{Members: []string{"a"}}, 5)
 	_, gerr := ntable.ReadAt(ctx, c, "ghost", 7)
 	for what, err := range map[string]error{"apply": aerr, "read set": rerr, "read at": gerr} {
-		if err == nil || !strings.Contains(err.Error(), "no such table") || strings.Contains(err.Error(), "ahead") {
-			t.Errorf("%s of a missing table at a later epoch: %v; want no such table", what, err)
-		}
+		require.Error(t, err, "%s of a missing table at a later epoch; want no such table", what)
+		assert.Contains(t, err.Error(), "no such table", "%s of a missing table at a later epoch: %v; want no such table", what, err)
+		assert.NotContains(t, err.Error(), "ahead", "%s of a missing table at a later epoch: %v; want no such table", what, err)
 	}
 	// and of a table that exists it is still said
 	_, err := ntable.ReadAt(ctx, c, "demo", 7)
