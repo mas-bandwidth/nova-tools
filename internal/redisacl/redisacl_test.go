@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/config"
+	"github.com/mas-bandwidth/nova-tools/internal/ghevent/wire"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/record"
@@ -53,7 +54,7 @@ func TestRenderGrantsEachRoleItsFilesFunctions(t *testing.T) {
 		has, lacks []string
 	}{
 		{Coordinator, []string{"~*", "+fcall|ns_capacity_machine", "+fcall|ns_friend_roles", "+fcall|ns_table_set", "+fcall_ro|ns_table_read", "+function|load"}, nil},
-		{Member, []string{"~table:*", "~sprint:*", "~bench:*", "~tokens:ledger:*", "%R~machine:*", "%R~loop:*", "%R~config:decl", "+function|list", "+fcall|ns_ping", "+fcall|ns_table_set", "+fcall|ns_table_read", "+fcall_ro|ns_table_read"},
+		{Member, []string{"~table:*", "~sprint:*", "~bench:*", "~tokens:ledger:*", "~ev:github", "%R~machine:*", "%R~loop:*", "%R~config:decl", "+function|list", "+fcall|ns_ping", "+fcall|ns_table_set", "+fcall|ns_table_read", "+fcall_ro|ns_table_read"},
 			[]string{"~*", "+fcall|ns_capacity_machine", "+function|load"}},
 		{Friend, []string{"~view:*", "~friend:*", "%R~bench:*", "+function|list", "+fcall|ns_table_set"}, []string{"+fcall|ns_friend_roles", "+function|load", "~bench:*"}},
 		{Table, []string{"%R~table:*", "%R~sprint:*", "%R~bench:*", "+function|list", "+fcall_ro|ns_table_read"},
@@ -155,6 +156,7 @@ func TestFamiliesAreTheOwnersKeys(t *testing.T) {
 		"loops":    {config.LoopsKey, config.LoopKey("member-a")},
 		"config":   {config.DeclKey},
 		"tokens":   {record.LedgerPrefix + "2026-09-30"},
+		"events":   {wire.Stream},
 	} {
 		for _, k := range ks {
 			assert.True(t, match(family[name], k), "%s: %s", name, k)

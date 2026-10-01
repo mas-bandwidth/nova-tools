@@ -163,6 +163,26 @@ func TestLoopNewRowCanonicalisesAndRefusesEveryProblemAtOnce(t *testing.T) {
 			errs: []string{fmt.Sprintf("over the maximum of %d", MaxArgvBytes)},
 		},
 		{
+			name: "a bad every and secrets with no seat, all at once",
+			raw:  map[string]string{"machine": "m1", "argv": `["/bin/prog"]`, "every": "soon", "keys": "A_KEY"},
+			errs: []string{`--every "soon"`, "no --seat to open them from"},
+		},
+		{
+			name: "a bad keepalive and secrets with no seat, all at once",
+			raw:  map[string]string{"machine": "m1", "argv": `["/bin/prog"]`, "every": "5", "keepalive": "perhaps", "keys": "A_KEY"},
+			errs: []string{`--keepalive "perhaps"`, "no --seat to open them from"},
+		},
+		{
+			name: "both every and keepalive and secrets with no seat, all at once",
+			raw:  map[string]string{"machine": "m1", "argv": `["/bin/prog"]`, "every": "5", "keepalive": "true", "keys": "A_KEY"},
+			errs: []string{"a loop runs every n seconds or is kept alive", "no --seat to open them from"},
+		},
+		{
+			name: "a bad argv and neither every nor keepalive, all at once",
+			raw:  map[string]string{"machine": "m1", "argv": "/bin/prog --loop"},
+			errs: []string{"--argv: want the command as a JSON array of strings", "has neither --every nor --keepalive"},
+		},
+		{
 			name: "a bool that is not one, a negative width, and no machine, all at once",
 			raw:  map[string]string{"argv": `["/bin/prog"]`, "every": "5", "enabled": "maybe", "width": "-1"},
 			errs: []string{"--machine is required", `--enabled "maybe": want true or false`, `--width "-1": want a non-negative integer`},
@@ -287,4 +307,46 @@ func TestApplyWritesLoopsAfterMachinesAndReachesParity(t *testing.T) {
 	assert.Equal(t, []string{"APPLY SET kind=loop name=l1 changed=enabled", "APPLY REMOVE kind=loop name=l2"}, lines)
 	rev, _ = r.st.Rev(r.ctx, KindLoop)
 	assert.Equal(t, rev, ap.revs[KindLoop])
+}
+
+// A field that is refused on its own does not also trip the rule that reads
+// it: the refusal says what is wrong with the field and nothing spurious
+// about the pair it belongs to.
+func TestLoopAddNamesEachProblemOnceAndNoSpuriousRule(t *testing.T) {
+	t.Parallel()
+
+	k, _ := Lookup(KindLoop)
+	_, err := k.NewRow("l1", map[string]string{"machine": "m1", "argv": `["/bin/prog"]`, "every": "soon", "keys": "A_KEY"})
+	require.Error(t, err)
+	msg := err.Error()
+	assert.Contains(t, msg, `--every "soon": want a non-negative integer`)
+	assert.Contains(t, msg, "no --seat to open them from")
+	assert.Equal(t, 1, strings.Count(msg, "--every"), "each problem once: %s", msg)
+	assert.NotContains(t, msg, "neither --every nor --keepalive", "every is refused on its own; the pair rule waits for a valid every")
+	assert.NotContains(t, msg, "\n")
+}
+
+// argv is stored as JSON with & < > as themselves, so list and show read as
+// the command was typed, and the value decodes to the same words.
+func TestLoopArgvKeepsHTMLCharactersReadable(t *testing.T) {
+	t.Parallel()
+
+	k, _ := Lookup(KindLoop)
+	want := []string{"/bin/sh", "-c", "a && b > out.txt < in.txt; echo '<&>'"}
+	raw, err := marshalArgv(want)
+	require.NoError(t, err)
+	row, err := k.NewRow("l1", map[string]string{"machine": "m1", "argv": string(raw), "every": "5"})
+	require.NoError(t, err)
+	got := row.Fields["argv"]
+	assert.Equal(t, string(raw), got)
+	for _, c := range []string{"&&", ">", "<"} {
+		assert.Contains(t, got, c)
+	}
+	assert.NotContains(t, got, `\u00`, "no escape for & < >")
+	assert.Equal(t, want, Argv(got), "the round trip keeps every word")
+
+	// An escaped spelling given on the command line is stored readable.
+	row, err = k.NewRow("l2", map[string]string{"machine": "m1", "argv": `["/bin/sh","-c","a \u0026\u0026 b \u003e c"]`, "every": "5"})
+	require.NoError(t, err)
+	assert.Equal(t, `["/bin/sh","-c","a && b > c"]`, row.Fields["argv"])
 }

@@ -1,4 +1,3 @@
 # Counted package ledger; full row keys are preserved.
-# ceiling: 2
-cmd/nova-fuse:assert 338 bare assertions to convert to testify
+# ceiling: 1
 cmd/nova-fuse:env 3 t.Setenv and Chdir sites to inject through config
