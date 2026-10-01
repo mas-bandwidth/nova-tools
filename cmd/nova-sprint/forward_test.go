@@ -169,8 +169,9 @@ func TestTheServerNeverActsAsItsOwnEnvironment(t *testing.T) {
 
 // A read that waits for the sprint to move (where --watch, inbox --wait) is never run by
 // the server, whose line of control the tick it waits for needs: the server refuses it,
-// and the coordinator's command runs it where it is typed, never sending it, even with
-// --read.
+// and the coordinator's command runs it where it is typed, never sending it. inbox
+// --wait --read would also move the cursor, which is the server's to move: with a server
+// named it is refused, and the remedy is the wait, then the read.
 func TestAWaitingReadIsNeverRunByTheServer(t *testing.T) {
 	t.Parallel()
 	r := newServerRig(t, twoLanes()...)
@@ -183,9 +184,11 @@ func TestAWaitingReadIsNeverRunByTheServer(t *testing.T) {
 	}
 	var sent [][]string
 	boss := coordinatorAt(t, r, "boss", &sent)
-	boss("inbox", "--read", "--wait", "--timeout", "1ms")
+	code, out, errs := boss("inbox", "--read", "--wait", "--timeout", "1ms")
+	assert.Equal(t, 2, code, "%s%s", out, errs)
+	assert.Contains(t, errs, "run nova-sprint inbox --wait, then nova-sprint inbox --read; nothing was changed")
 	boss("where", "--watch")
-	assert.Empty(t, sent, "a waiting read runs where it is typed")
+	assert.Empty(t, sent, "a waiting read runs where it is typed, and a waiting cursor write is refused here")
 }
 
 // Which word is a flag is the verb's flags' to say: a value after a flag that takes one

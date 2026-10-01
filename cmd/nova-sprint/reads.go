@@ -412,7 +412,7 @@ func whereHeader(summary, machine string) string {
 func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("inbox")
 	open := fs.String("open", "", "list every member, need and notification of the group of this id")
-	read := fs.Bool("read", false, "move the cursor past what is shown: happened notifications before it are not shown again (open judgments always are)")
+	read := fs.Bool("read", false, "move the cursor past what is shown: happened notifications before it are not shown again (open judgments always are); with NOVA_SPRINT_SERVER set, not with --wait (the server moves the cursor, and never runs a wait): run inbox --wait, then inbox --read")
 	deadline := fs.Duration("deadline", defaultDeadline, "a judgment open longer is overdue")
 	stale := fs.Duration("stale", defaultStale, "a stream with no progress for longer is shown stalled")
 	atEpoch := fs.Int64("at-epoch", -1, "the inbox as it was at an earlier epoch (before a clear)")
@@ -424,6 +424,10 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 	}
 	if *read && *atEpoch >= 0 {
 		return refuse(stderr, "inbox", "--read moves the cursor of the sprint's epoch, and --at-epoch reads an earlier one as it was: give one of them")
+	}
+	if *read && *wait && a.getenv(ServerEnv) != "" {
+		// the cursor is the server's to move, and a wait never runs on the server (waits)
+		return refuse(stderr, "inbox", "--read moves the cursor, which the sprint's server (NOVA_SPRINT_SERVER) moves, and --wait waits where it is typed, never on the server: run nova-sprint inbox --wait, then nova-sprint inbox --read; nothing was changed")
 	}
 	st, err := a.storeAt(*c, *atEpoch)
 	if err != nil {

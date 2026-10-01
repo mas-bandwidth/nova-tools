@@ -1300,7 +1300,9 @@ writes the sprint (a coordinator's, a report's, a worker's, and `inbox --read`, 
 coordinator's cursor) is not run where it is typed: its arguments are sent to the server, with
 the caller's actor and each file it names as an absolute path, and what the server's run of it
 printed is printed there, with its exit code. The reads, the verbs not served, a waiting read, a
-verb given its own `--redis`, a verb's help and flags the verb refuses run where they are typed.
+verb given its own `--redis`, a verb's help and flags the verb refuses run where they are typed;
+`inbox --wait --read`, which would wait here and move the cursor the server moves, is refused
+with a server named (exit 2, nothing changed): run `inbox --wait`, then `inbox --read`.
 What the arguments say (a help flag, which word is a flag's value, a file flag, a `--`) is read
 by the verb's own flags, never by a scan of the words: `add --stream help` is a stream named
 help, and in `--brief --rules` the brief is the text `--rules`. Who acts is the caller's actor
