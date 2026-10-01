@@ -23,6 +23,64 @@ type RouteReader interface {
 	Routes(ctx context.Context) (RouteSet, int64, error)
 }
 
+// PriceReader is a store that holds the routes a worker's step prices with: the
+// routes set and each route's record, and nothing else (Step.Prices). A store that
+// is not one has no route, and nothing is priced.
+type PriceReader interface {
+	// PriceRoutes is every route, read from the set and the routes' records alone,
+	// and the round trips the read made.
+	PriceRoutes(ctx context.Context) ([]sprint.Route, int64, error)
+}
+
+// priceRoutes is the routes a worker's step prices with, by name; an empty list when
+// the store holds none.
+func (st *Store) priceRoutes(ctx context.Context) ([]sprint.Route, error) {
+	pr, ok := st.B.(PriceReader)
+	if !ok {
+		return []sprint.Route{}, nil
+	}
+	rs, _, err := pr.PriceRoutes(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("the routes to price with (%s, %s): %w", config.RoutesKey, config.RouteKey("<name>"), err)
+	}
+	sort.Slice(rs, func(i, j int) bool { return rs[i].Name < rs[j].Name })
+	return append([]sprint.Route{}, rs...), nil
+}
+
+// PriceRoutes reads the set, then every route's record in one pipeline: two round
+// trips, the second only when the set names a route. It touches the keys
+// config.RoutesKey and config.RouteKey alone, which every role reads
+// (internal/redisacl, the routes family): never a tier's array or the sprint row.
+func (r *Redis) PriceRoutes(ctx context.Context) ([]sprint.Route, int64, error) {
+	names, err := r.C.SMembers(ctx, config.RoutesKey).Result()
+	if err != nil || len(names) == 0 {
+		return nil, 1, err
+	}
+	pipe := r.C.Pipeline()
+	hs := make(map[string]interface{ Val() map[string]string }, len(names))
+	for _, n := range names {
+		hs[n] = pipe.HGetAll(ctx, config.RouteKey(n))
+	}
+	if err := redisconn.Exec(ctx, pipe); err != nil {
+		return nil, 2, err
+	}
+	out := make([]sprint.Route, 0, len(names))
+	for _, n := range names {
+		out = append(out, RouteOf(n, hs[n].Val()))
+	}
+	return out, 2, nil
+}
+
+// PriceRoutes is the routes SetRoutes gave the store.
+func (m *Mem) PriceRoutes(context.Context) ([]sprint.Route, int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if err := m.fail("routes"); err != nil {
+		return nil, 0, err
+	}
+	return append([]sprint.Route(nil), m.routes...), 0, nil
+}
+
 // RouteSet is what a step that deals or asks plans with: the routes, the tiers'
 // arrays, and the tier a read card's route is drawn from ("" is the default).
 type RouteSet struct {
