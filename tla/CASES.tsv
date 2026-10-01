@@ -259,3 +259,9 @@ MCRouteIndex.cfg	MCRouteIndex.tla	pass	-	ignore-terminal	routeindex	required	-
 MCRouteIndexBrokenRandom.cfg	MCRouteIndex.tla	invariant	RouteFair	ignore-terminal	routeindex	required	-
 MCRouteIndexBrokenNoAdvance.cfg	MCRouteIndex.tla	invariant	ExcludedNeverDrawn	ignore-terminal	routeindex	required	-
 MCRouteIndexReachSkip.cfg	MCRouteIndex.tla	invariant	ReachSkip	ignore-terminal	routeindex	required	-
+MCLand.cfg	MCLand.tla	pass	-	ignore-terminal	land	required	-
+MCLandRecovers.cfg	MCLand.tla	pass	-	ignore-terminal	land	required	-
+MCLandBrokenReportFirst.cfg	MCLand.tla	invariant	LandedInBase	ignore-terminal	land	required	-
+MCLandBrokenLateEpoch.cfg	MCLand.tla	invariant	PushHoldsTheEpoch	ignore-terminal	land	required	-
+MCLandBrokenNoGuard.cfg	MCLand.tla	invariant	LandedInBase	ignore-terminal	land	required	-
+MCLandReachStranded.cfg	MCLand.tla	invariant	ReachStranded	ignore-terminal	land	required	-
