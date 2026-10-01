@@ -52,6 +52,7 @@ var DefaultCatalog = []Entry{
 	E("internal/bus", "append-only coordination bus", "go test ./internal/bus", "go test ./internal/bus"),
 	E("internal/cairn", "memory distillation and cairn builder", "go test ./internal/cairn", "go test ./internal/cairn"),
 	E("internal/cardcontract", "the frame around a card's task: the frame file, JOB.md, the result shape, and the shims of each model family's profile", "go test ./internal/cardcontract", "go test -tags functional ./internal/cardcontract"),
+	E("internal/cardcost", "what a card cost: a route's price sheet in exact decimal arithmetic, never a float", "go test ./internal/cardcost", "go test ./internal/cardcost"),
 	E("internal/cardlimits", "a card brief's refusal bound and the lint's size advice: two constants, no dependencies", "go test ./internal/cardlimits", "go test ./internal/cardlimits"),
 	E("internal/cardhdr", "card header vocabulary and one-invariant lint", "go test ./internal/cardhdr", "go test ./internal/cardhdr"),
 	E("internal/check", "hygiene rules and tree checkers", "go test ./internal/check", "go test ./internal/check"),
