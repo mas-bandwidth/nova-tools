@@ -749,6 +749,12 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 	if workerGiven {
 		cfg.worker = &w
 	}
+	// CI over work (nova-tools#4293): this run, the wall, the harness and everything
+	// the card's child runs, before anything starts. The member that launched it stays
+	// at its own priority, so a busy machine still beats.
+	if !yieldNative(nativeToCI, stderr) {
+		return 2
+	}
 	res, code := nativeRun(cfg, stderr)
 	if code != 0 && !res.lost && !res.unrecorded {
 		return code

@@ -197,6 +197,10 @@ var swarmAudit = audit.Config{
 		// hostload (member.go) samples the machine's CPU percent once a second into a
 		// ring the member's beat reads; it returns numbers and prints nothing.
 		`"github.com/mas-bandwidth/nova-tools/internal/hostload"`,
+		// yield (native.go, member.go) calls setpriority on this process and returns an error,
+		// or is a constant (Supported); it holds no writer and prints nothing. Its error
+		// reaches a stream only through refuseNative, which escapes it.
+		`"github.com/mas-bandwidth/nova-tools/internal/yield"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/subproc"`,
 		// gitrun (memberpush.go) runs one git under its budget and returns its two streams
 		// as bytes to this package; it holds no writer of this package's stream and prints

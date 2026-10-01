@@ -28,6 +28,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/mas-bandwidth/nova-tools/internal/yield"
 )
 
 // THE NATIVE OPENCODE EXECUTION PATH (issue #296, slice 2). A frozen run
@@ -1546,6 +1547,28 @@ func stageFailBase(r swarm.StageResult) string {
 		return swarm.Version8(r.BaseSha)
 	}
 	return r.Ref
+}
+
+// nativeToCI is the step behind CI cmdNative takes: yield.ToCI, and never anything else
+// in production (internal/ci TestCopiesRunNiced). The one other value is the test
+// binary's: its TestMain makes it a no-op, because that binary is CI's own process and
+// runs cmdNative in-process, and stepping it would put a CI leg behind the very
+// children it must beat. The real step is read through the built binary
+// (TestACardsLaunchRunsBehindCI).
+var nativeToCI = yield.ToCI
+
+// yieldNative steps this native run behind CI through toCI (nativeToCI in production)
+// before it starts anything, so the wall, the harness and every process the card's
+// child runs inherit yield.Nice. A run that cannot step down is refused, never run at
+// CI's priority: the same answer nova-ci local gives, on every OS (one with no
+// setpriority included; a member says so once at its start). The NATIVE REFUSED line
+// is in the launch's log, where the member's finish report reads it (nativeRefusedWhy).
+func yieldNative(toCI func() error, stderr io.Writer) bool {
+	if err := toCI(); err != nil {
+		refuseNative(stderr, "yield to CI: "+oneline.Err(err)+"; a card never runs at the priority of the CI legs beside it")
+		return false
+	}
+	return true
 }
 
 // refuseNative writes the one REFUSED line the run owes its caller.
