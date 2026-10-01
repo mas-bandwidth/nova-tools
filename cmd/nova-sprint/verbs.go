@@ -1408,7 +1408,7 @@ func (a *app) cmdRead(args []string, stdout, stderr io.Writer) int {
 	broken := fs.Bool("broken", false, "the read found it broken")
 	finding := fs.String("finding", "", "what the read found")
 	limit := fs.Int("limit", 0, "the first n of the reader's queue (default 1)")
-	ret := fs.String("return", "", "hand back a read the reader holds and has no verdict on: the next tick asks it of another reader up; no finding against the work")
+	ret := fs.String("return", "", "hand back a read the reader holds and has no verdict on: not a read; the next tick asks it of another reader free at the attempt, or of this reader again; no finding against the work")
 	reason := fs.String("reason", "", "with --return: why the read has no verdict (it reaches the inbox)")
 	usage := fs.String("usage", "", "with --ok, --broken or --return: what the read spent, one line (the reader passes its child's tokens, wall and cost): kept on the read card, timed and priced")
 	ids, err := parse(fs, args)
