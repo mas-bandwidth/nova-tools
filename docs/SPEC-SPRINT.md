@@ -170,9 +170,11 @@ provider_take_<n> record), one line of key=value words (`internal/cardcost`,
   them (`input` uncached, `cache_read`, `cache_write`, `output`, `reasoning`),
   `requests`, `max_prompt` (the largest prompt of one request), `model` (the
   provider/model the harness ran) and `actual_usd` with `actual_by=harness` when
-  the harness reported its own cost (opencode prices each message from its model
-  table); a class not reported is left out, never written as 0, and a cost is
-  never guessed;
+  the harness reported its own cost: opencode prices each message from its own
+  model table and keeps it as a float, and the figure is the decimal of the
+  store's float sum of those, the harness's computation and never an invoice; a
+  class not reported is left out, never written as 0, and a cost is never
+  guessed;
 - added by the step when the card ends: `wait` (dealt to taken; a read's asked to
   begun) and `run` (taken to the end; begun to the end), in seconds; and the
   prediction: `price_route` (a work card's route by name, a pinned card's by its
@@ -188,13 +190,20 @@ provider_take_<n> record), one line of key=value words (`internal/cardcost`,
 
 A finish or a read that reports usage reads the routes with its tables to price
 it. A failed take and a returned read record the same: they still cost tokens
-and time. `card <id>` prints a COST line for each consumer that ended (kind,
-card, attempt, take, member or reader, route, model, end, the tokens, wait, run,
-predicted and actual) and a COST TOTAL line, computed when it is printed from the
-consumers' records (`sprint.CardCost`): each class summed over the records that
-reported it, the times summed, and each cost summed over the records that hold
-it with how many did (`predicted_of=<n>/<consumers>`); `--json` carries the same
-value as `cost`. A figure not known prints `-`, never 0.
+and time. Each run has one record and one only: a work card's `usage` holds its
+own ended take (finish), and a take the provider failed is in its
+provider_take_<n> record alone, so a redealt card never counts it twice; a read
+card's `usage` holds the run that gave the verdict, and each run returned
+without one is kept as read_take_<n> (1 for the first), so a read asked again
+of a reader keeps every run it had. `card <id>` prints a COST line for each
+consumer run that ended (kind, card, attempt, take, member or reader, route,
+model, end, the tokens, wait, run, predicted, actual and `actual_by`) and a
+COST TOTAL line, computed when it is printed from the consumers' records
+(`sprint.CardCost`): each class summed over the records that reported it, the
+times summed, and each cost summed over the records that hold it with how many
+did (`predicted_of=<n>/<consumers>`) and who reported the actual
+(`actual_by=harness`); `--json` carries the same value as `cost`. A figure not
+known prints `-`, never 0.
 
 ## 3. The lifecycle of a primary
 

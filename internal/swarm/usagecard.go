@@ -181,9 +181,10 @@ func queryCardMessages(path string, startedMs, endedMs int64) ([][]string, error
 // foldCardMessages sums the grouped assistant rows into the columns the usage row carries.
 // A field some message reported is the sum of the messages that did; one no message reported
 // stays a dash, never a zero. Beside the row's columns it keeps what a card's cost record
-// reads (internal/cardcost): the harness's cost as the exact decimal of what the store
-// summed ("cost", where the row's usd is cut to four places), the requests and the largest
-// prompt; none of the three reaches the usage file.
+// reads (internal/cardcost): the harness's cost as the decimal the store printed for its
+// float sum of opencode's per-message float costs, uncut ("cost", where the row's usd is
+// cut to four places): the harness's own computation, not an invoice; the requests and
+// the largest prompt; none of the three reaches the usage file.
 func foldCardMessages(rows [][]string) (ProviderUsage, string) {
 	values := map[string]string{}
 	sums := make([]int64, len(TokenColumns))

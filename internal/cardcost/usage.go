@@ -1,6 +1,8 @@
 package cardcost
 
 import (
+	"cmp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -48,7 +50,9 @@ type Usage struct {
 }
 
 // ActualByHarness says the harness reported the cost: opencode prices each message
-// from its own model table and keeps the cost beside its tokens.
+// from its own model table and keeps the cost, a float, beside its tokens; the
+// figure is the decimal of their float sum, the harness's computation and never an
+// invoice.
 const ActualByHarness = "harness"
 
 // The record's presence words (cost=).
@@ -228,7 +232,7 @@ func ParseSpend(w string) Usage {
 		}
 		switch k {
 		case "cost":
-			if _, err := Decimal(v); err == nil {
+			if _, err := amount(v); err == nil {
 				u.Actual, u.ActualBy = v, ActualByHarness
 			}
 		case "model":
@@ -254,6 +258,11 @@ type Total struct {
 	PredOf    int    `json:"predicted_records"`
 	Actual    string `json:"actual_usd"`
 	ActualOf  int    `json:"actual_records"`
+	// ActualBy is who reported the actual costs summed: one word when every record's
+	// came from the same reporter, the words joined with + when they differ, "" when
+	// none did. The harness's figure is its own (opencode prices each message from
+	// its model table), never an invoice.
+	ActualBy string `json:"actual_by"`
 }
 
 // SumUsage is the total of the records.
@@ -264,7 +273,7 @@ func SumUsage(us []Usage) Total {
 			*to = max(*to, 0) + n
 		}
 	}
-	var pred, act []string
+	var pred, act, bys []string
 	for _, u := range us {
 		add(&t.Tokens.Input, u.Tokens.Input)
 		add(&t.Tokens.CacheRead, u.Tokens.CacheRead)
@@ -282,6 +291,9 @@ func SumUsage(us []Usage) Total {
 		}
 		if u.Actual != "" {
 			act = append(act, u.Actual)
+			if by := cmp.Or(u.ActualBy, "-"); !slices.Contains(bys, by) {
+				bys = append(bys, by)
+			}
 		}
 	}
 	if len(pred) > 0 {
@@ -291,6 +303,7 @@ func SumUsage(us []Usage) Total {
 	if len(act) > 0 {
 		t.Actual, _ = Sum(act...)
 		t.ActualOf = len(act)
+		t.ActualBy = strings.Join(bys, "+")
 	}
 	return t
 }

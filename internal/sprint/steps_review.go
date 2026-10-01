@@ -264,10 +264,9 @@ func Read(s *Snapshot, r ReadReq) Plan {
 			n.What = c.Row + " returned " + c.ID + ": " + r.Reason
 			n.Who = r.Who
 			set := map[string]string{"retired": stamp(s.Now), "retired_by": "returned"}
-			if r.Usage != "" {
-				// a read handed back still cost tokens and time (cost.go)
-				set[FieldUsage] = costRecord(s, r.Usage, "", "", true, c.F("asked"), cmp.Or(c.F("begun"), stamp(s.Now)))
-			}
+			// a read handed back still cost tokens and time: the run's own numbered
+			// record (cost.go, FieldReadTake), so a later run of the same card keeps it
+			set[FieldReadTake+itoa(nextTake(c, FieldReadTake))] = costRecord(s, r.Usage, "", "", true, c.F("asked"), cmp.Or(c.F("begun"), stamp(s.Now)))
 			p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"),
 				Changes: []Change{change(Readers, removeEntry(c, set))},
 				Moved:   c.ID + " " + c.Col + " -> returned", Notes: []Note{n}})

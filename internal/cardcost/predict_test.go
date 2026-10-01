@@ -58,6 +58,11 @@ func TestPredictPricesEachClassExactly(t *testing.T) {
 		{name: "the gateway percent on the whole", t: withTokens(run(0, 0, 0, 1_000_000, 0), func(t *Tokens) { t.Requests = 1 }),
 			p: with(func(p *Prices) { p.Request, p.GatewayPercent = "0.8", "5.5" }), want: Prediction{USD: "2.11"}},
 		{name: "a price that is not a decimal", t: run(10, 0, 0, 0, 0), p: with(func(p *Prices) { p.Input = "1e-6" }), want: Prediction{Why: WhyBadPrice + "input"}},
+		{name: "the longest prediction a sheet can make is written whole", t: run(1, 0, 0, 0, 0),
+			p: with(func(p *Prices) {
+				p.Input, p.GatewayPercent = "0.000000000000000000000000000001", "0.000000000000000000000000000001"
+			}),
+			want: Prediction{USD: "0.00000000000000000000000000000000000100000000000000000000000000000001"}},
 		{name: "a plan is priced at the metered prices", t: run(1_000_000, 0, 0, 0, 0), p: with(func(p *Prices) { p.Billing = BillingPlan }), want: Prediction{USD: "0.3"}},
 	}
 	for _, tc := range cases {

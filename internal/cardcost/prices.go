@@ -88,7 +88,7 @@ func Sum(vals ...string) (sum string, ok bool) {
 		if v == "" {
 			continue
 		}
-		r, err := Decimal(v)
+		r, err := amount(v)
 		if err != nil {
 			return "", false
 		}

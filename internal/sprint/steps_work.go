@@ -1122,12 +1122,13 @@ func providerEnded(s *Snapshot, c, pr *Card, r FinishReq) Unit {
 	line := cutText(strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(r.Report, cardhdr.EndProvider), ":")), MaxProviderErrorBytes)
 	set[FieldProviderError] = line
 	// what the take cost, timed and priced before its stamps go (cost.go): it still cost
-	// tokens and time
+	// tokens and time. The take's record is its one place: the card's usage field is
+	// left alone, so it only ever holds the card's own ended take (finishPlan), and a
+	// redealt card never shows, or counts, this take's usage again
 	usage := r.Usage
 	if usage != "" {
 		dealt, taken := takeStamps(c)
 		usage = costRecord(s, usage, c.F(FieldRoute), c.F(FieldModel), false, dealt, taken)
-		set[FieldUsage] = usage
 	}
 	// the failed take's own record, kept through the redeals: its route, member, usage and line
 	set[FieldProviderTake+itoa(c.Int("redeals")+1)] = ProviderTake{Route: c.F(FieldRoute), Model: c.F(FieldModel), Member: c.Row,
