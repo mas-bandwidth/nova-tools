@@ -328,9 +328,20 @@ func TestAReadReturnedPastItsReasksIsJudgedNotAskedAgain(t *testing.T) {
 		assert.NotEmpty(t, f[sprint.FieldReadTake+fmt.Sprint(n)], "run %d's record is kept", n)
 	}
 	assert.Empty(t, f[sprint.FieldReadTake+fmt.Sprint(sprint.MaxReadReasks+2)])
-	v := sprint.CardCost(nil, []*sprint.Card{{ID: id, Fields: f}})
-	assert.Len(t, v.Consumers, sprint.MaxReadReasks+1)
-	assert.Equal(t, int64(10+20+30), v.Total.Tokens.Input, "every returned run counts in the producer's total")
+	// and the producer card carries every one of them (cost.go: the cost is in the card)
+	var runsOf []sprint.Consumer
+	for _, c := range sprint.CardCostOf(h.snap().Work.Card("s1-1")).Consumers {
+		if c.Card == id {
+			runsOf = append(runsOf, c)
+		}
+	}
+	require.Len(t, runsOf, sprint.MaxReadReasks+1)
+	var input int64
+	for _, c := range runsOf {
+		assert.Equal(t, "returned", c.End)
+		input += c.Usage.Tokens.Input
+	}
+	assert.Equal(t, int64(10+20+30), input, "every returned run counts in the producer's total")
 	h.clean("judged cannot ask")
 }
 

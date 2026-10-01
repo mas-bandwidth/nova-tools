@@ -3,6 +3,8 @@ package sprint
 import (
 	"cmp"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"unicode/utf8"
 )
@@ -298,6 +300,20 @@ func Read(s *Snapshot, r ReadReq) Plan {
 	lastReader := map[string]string{}
 	written := map[string][]Note{}
 	broken := map[string]int{}
+	// the producer's records of the reads that end (cost.go): one change of each
+	// primary in the plan
+	costs := map[string]map[string]string{}
+	costUnit := map[string]int{}
+	record := func(pr *Card, con Consumer) {
+		if !pr.Placed() {
+			return
+		}
+		if costs[pr.ID] == nil {
+			costs[pr.ID] = map[string]string{}
+		}
+		addConsumer(pr, costs[pr.ID], con)
+		costUnit[pr.ID] = len(p.Units) // the read's unit, appended next
+	}
 	for _, c := range chosen {
 		pr := s.Work.Card(c.F("primary"))
 		if r.Begin {
@@ -322,7 +338,10 @@ func Read(s *Snapshot, r ReadReq) Plan {
 			// it. The card is asked again in place at most MaxReadReasks times, so it
 			// holds at most MaxReadReasks+1 of these records, far under MaxTakes:
 			// the cap is unreachable here
-			set := map[string]string{FieldReadTake + itoa(nextTake(c, FieldReadTake)): costRecord(s, r.Usage, "", "", true, c.F("asked"), cmp.Or(c.F("begun"), stamp(s.Now)))}
+			run := nextTake(c, FieldReadTake)
+			rec := costRecord(s, r.Usage, "", "", true, c.F("asked"), cmp.Or(c.F("begun"), stamp(s.Now)))
+			set := map[string]string{FieldReadTake + itoa(run): rec}
+			record(pr, readConsumer(s, c, run, "returned", rec))
 			if c.Int(FieldReasked) >= MaxReadReasks {
 				n.What += fmt.Sprintf("; asked again of %s %d times, the read is retired", c.Row, MaxReadReasks)
 				set["retired"], set["retired_by"] = stamp(s.Now), "returned"
@@ -344,9 +363,14 @@ func Read(s *Snapshot, r ReadReq) Plan {
 		if r.Finding != "" {
 			set["finding"] = r.Finding
 		}
+		// what the read cost, timed and priced (cost.go): kept on the read card when the
+		// reader reported it, and recorded on the primary in this step
+		rec := costRecord(s, r.Usage, "", "", true, c.F("asked"), cmp.Or(c.F("begun"), stamp(s.Now)))
 		if r.Usage != "" {
-			// what the read cost, timed and priced (cost.go)
-			set[FieldUsage] = costRecord(s, r.Usage, "", "", true, c.F("asked"), cmp.Or(c.F("begun"), stamp(s.Now)))
+			set[FieldUsage] = rec
+		}
+		if pr != nil {
+			record(pr, readConsumer(s, c, 0, r.Verdict, rec))
 		}
 		u := Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Readers, moveEntry(c, c.Row, col, set, FieldReturned))},
 			Moved: fmt.Sprintf("%s %s -> %s", c.ID, c.Col, col)}
@@ -376,6 +400,14 @@ func Read(s *Snapshot, r ReadReq) Plan {
 		pr := s.Work.Card(id)
 		if j, ok := reviewJudgment(s, pr, reviewStep{moved: moved[id], writes: written[id], who: lastReader[id]}); ok {
 			p.Units[i].Notes = append(p.Units[i].Notes, j)
+		}
+	}
+	// each primary's records ride on the unit of its last read in the plan: a running
+	// machine queues the work-table change for the pump, under that read's words
+	for _, id := range slices.Sorted(maps.Keys(costs)) {
+		if set := costs[id]; len(set) > 0 {
+			i := costUnit[id]
+			p.Units[i].Changes = append(p.Units[i].Changes, change(Work, setEntry(s.Work.Card(id), set)))
 		}
 	}
 	return p

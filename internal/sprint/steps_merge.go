@@ -247,7 +247,8 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 				ctlSet["state"], ctlSet["since"] = StreamWaiting, now
 			}
 		}
-		// What each card cost, written on it as it lands (cost.go, FieldCost), and the
+		// What each card cost, its total's charged figure as the card carries it
+		// (cost.go, FieldCostTotal), written on it as it lands (FieldCost), and the
 		// stream's sum over every landed card, set on its control card, which the work
 		// table's cost column shows (Cost): a sum of the cards, set, never added to, so
 		// a replay writes the same and a clear empties it with the tables.
@@ -259,7 +260,7 @@ func mergeStep(s *Snapshot, r MergeReq) Plan {
 			}
 		}
 		for _, c := range landing {
-			if v := landingCost(s, s.Work.Placed(c.ID)); v != "" {
+			if v := cardcost.ParseTotal(s.Work.Placed(c.ID).F(FieldCostTotal)).Charged; v != "" {
 				costs[c.ID] = v
 				sum = append(sum, v)
 			}

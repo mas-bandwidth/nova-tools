@@ -36,10 +36,9 @@ consumer with neither adding nothing. It is in US dollars to four places
 sum over the streams, in exact decimals end to end. A stream with some unpriced
 landed cards shows the sum of the priced ones; `nova-sprint card <id>` and its
 JSON carry the detail. The merge that lands a primary writes its total on it
-(`cost`), from every one of its consumers' records, read with the step (the
-fleet and readers tables and the kept records of the consumers of the stream's
-merging primaries), and sets the stream's sum over all its landed primaries on
-the stream's control card; `SyncMirrors` shows it in the cell. The sum is set
+(`cost`), the charged figure of the total the card carries (section 2, What a
+card cost), and sets the stream's sum over all its landed primaries on the
+stream's control card; `SyncMirrors` shows it in the cell. The sum is set
 from the cards, never added to: a replayed merge writes the same, and `clear`
 empties it with the tables.
 
@@ -217,15 +216,33 @@ card's `usage` holds the run that gave the verdict, and each run returned
 without one is kept as read_take_<n> (1 for the first), so a read asked again
 of a reader keeps every run it had (asked again in place at most
 `MaxReadReasks` times, a read card holds at most three such records, far
-under the 64 a reader looks for). `card <id>` prints a COST line for each
-consumer run that ended (kind, card, attempt, take, member or reader, route,
-model, end, the tokens, wait, run, predicted, actual and `actual_by`) and a
-COST TOTAL line, computed when it is printed from the consumers' records
-(`sprint.CardCost`): each class summed over the records that reported it, the
-times summed, and each cost summed over the records that hold it with how many
-did (`predicted_of=<n>/<consumers>`) and who reported the actual
-(`actual_by=harness`); `--json` carries the same value as `cost`. A figure not
-known prints `-`, never 0.
+under the 64 a reader looks for).
+
+The cost is tracked in the card (the owner, 2026-10-01: "The cost needs to be
+tracked IN THE CARD"). In the same step that ends a consumer (a take finished ok
+or failed, a take the provider failed, a launch refused at staging when it
+reported a cost, a read ok or broken, a read returned without a verdict), the
+primary gets one record of it, `cost_record:<card>#<run>` (`#g<gen>` a work
+card's take, `#v` a read's verdict run, `#r<n>` a read's returned run n): its
+kind, card, attempt, take, generation, member or reader, route, model, end and
+time, and its usage record with the prices used. The same step updates the
+primary's total, `cost_total`: each class summed over the records that reported
+it, the times summed, each cost summed over the records that hold it with how
+many did, who reported the actual, and `charged_usd`, each record's actual cost
+where reported, else its predicted one. A record is set once per key, so a step
+planned again or replayed adds nothing twice. The history is bounded at 64
+records (`MaxCostRecords`): a record past it is still added to the total, and
+`cost_cut` counts the records the list left out. A read's records reach the
+primary from the read step, a change of the work table: while the machine runs,
+it waits in the work table's queue for the next tick's pump with the read's
+words, as a finish's change of its primary does. `card <id>` prints, from the
+primary alone, a COST line for each record (kind, card, attempt, take, member
+or reader, route, model, end, the tokens, wait, run, predicted, actual and
+`actual_by`) and a COST TOTAL line (`predicted_of=<n>/<consumers>`,
+`actual_by=harness`, `charged_usd`, and `cut=<n>` when the list was cut);
+`--json` carries the same value as `cost`. No reader or member removed, no read
+card retired and no consumer record cleaned up can lose cost: the record is
+already in the card. A figure not known prints `-`, never 0.
 
 ## 3. The lifecycle of a primary
 
