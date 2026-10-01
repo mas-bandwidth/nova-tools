@@ -284,7 +284,7 @@ budgets makes the verdict depend on the load instead. So:
   reason when it cannot be read) are printed, and the exit is 0 on them.
 - **Enforced only on the nightly whole-tree run on the space legs:** ci.yml's
   `test` job runs on `schedule` too, test-packages deals that tree onto the
-  space shards only, and the test step's schedule branch runs `make test
+  space shards only, and `ci unit-test` on the nightly leg runs `make test
   GOTEST_COUNT_FLAG=-count=1 SLOWTESTS_ENFORCE=1`, which passes `--enforce`: a
   CI-SLOW line is exit 2 there and nowhere else. A red schedule run blocks
   nothing (ci-ok does not run on schedule); it is evidence, and its raw times
@@ -1108,19 +1108,20 @@ what is enforced on every leg is static (`unitwaits`).
 real blocker for merging: when every PR's shards each take the whole of a box,
 every test file starts its own redis-server, and tests run over a second, the
 queue waits on CI.
-**The test.** `TestUnitTierRefusesRedisServer` (runs the shim step: exit 86
-and its line), `TestStartFailsClosedOnTheUnitTierShim` (functional-tagged, in
+**The test.** `TestUnitTierRefusesRedisServer` (writes the shim the way `ci unit-tier-shim`
+does and runs it: exit 86 and its line), `TestStartFailsClosedOnTheUnitTierShim` (functional-tagged, in
 `internal/ci/redis_ci_test.go`: `testutil.Start` against that shim fails
-closed), `TestUnitLegTakesAtMostTwoCores` (runs the share
-step with one runner on the box), `TestFunctionalTierRunsOnlyAsStreamsMerge` and
+closed), `TestUnitLegTakesAtMostTwoCores` (the share
+function, `pkgselect.RunnerShare`, with one runner on any box), `TestFunctionalTierRunsOnlyAsStreamsMerge` and
 `TestSlowAllowlistRowsNameTheirMeasurement`,
 `TestSlowAllowlistRatchetRefusesAnUnmeasuredRow`,
 `TestUnitBudgetsJudgeTheTestNotTheLoad` (a 1.4 s test is exit 0 with its
 CI-SLOW and CI-LOAD lines at load 2, at load 20 and unread, and exit 2 at all
 three under enforce; an unledgered SLEEPS skip is red at all three on both
 legs), `TestNightlySpaceLegIsTheOnlyEnforcingLeg` (ci.yml's test job runs on
-schedule, deals it onto space only and passes SLOWTESTS_ENFORCE=1 only from
-that branch; nothing spells SLOWTESTS_ENFORCE=0; the Makefile reads it only to
+schedule, the fan-out deals it onto the Linux legs only and
+`pkgselect.UnitMakeArgs` passes SLOWTESTS_ENFORCE=1 only for that leg; nothing
+spells SLOWTESTS_ENFORCE=0; the Makefile reads it only to
 pass --enforce and carries slowtests' exit through) and
 `TestMeasuredBenchesAreCIRunners` (every bench a row may name is one ci.yml
 names) (`internal/ci/unit_tier_class_test.go`); through make itself,
@@ -1180,34 +1181,38 @@ per-package timing.
 
 ### `darwin-gate` — the darwin unit shards run only where the target branch is dev or main
 
-**The rule.** ci.yml's `test-packages` deals the unit matrix, and its `list` step
-deals the darwin shards only when `DARWIN_BRANCHES` (`main dev`, the integration
-list of the concurrency group in short form) holds the event's target branch: a
-pull_request's `github.base_ref`, the merge queue's `github.event.merge_group.base_ref`
-(its `refs/heads/` prefix cut), a push's `github.ref_name`. `schedule` and
-`workflow_dispatch` keep the shape they have. With the gate off every selected
-package rides the Linux shards, the darwin-only packages (`cmd/nova-sandbox`,
-`internal/sandbox`) have no leg, the darwin-sensitivity analysis does not run, and
-a change that selected only darwin-only packages gets the one leg that prints
-"nothing to test for this change". Linux shards are unchanged, `ci-ok` reads the
-`test` job whose matrix has no darwin entry on a working branch, and
-certification.yml (which runs on pushes to dev, nightly and on dispatch, and certifies on darwin) is untouched. A change that touches only darwin-only packages gets no test run until it reaches dev. No ruleset
-applies to a working branch, so no darwin check is required there.
+**The rule.** ci.yml's `test-packages` deals the unit matrix with `ci test-matrix`,
+and the darwin shards are dealt only when `pkgselect.DarwinOn(event, target)` says
+so: always on `schedule` and `workflow_dispatch`; otherwise only when `--target-branch`
+(a pull_request's `github.base_ref`, the merge queue's `github.event.merge_group.base_ref`,
+a push's `github.ref_name`; a `refs/heads/` prefix is cut) is one of
+`pkgselect.DarwinBranches` (`main`, `dev`, the integration list of the concurrency
+group in short form). With the gate off every selected package rides the Linux
+shards, the darwin-only packages (`cmd/nova-sandbox`, `internal/sandbox`) are dropped
+before the nothing-to-test check and have no leg, the darwin-sensitivity analysis
+does not run, and a change that selected only darwin-only packages gets the one leg
+that prints "nothing to test for this change". Linux shards are unchanged, `ci-ok`
+reads the `test` job whose matrix has no darwin entry on a working branch, and
+certification.yml (which runs on pushes to dev, nightly and on dispatch, and certifies
+on darwin) is untouched. A change that touches only darwin-only packages gets no test
+run until it reaches dev. No ruleset applies to a working branch, so no darwin check
+is required there.
 **The mistake it prevents.** The Go is the same Go on both OSes and the darwin legs
 are the slowest and the scarcest: cancelled at the two-minute cap whenever their
 host is loaded, they turned a working-branch pull request red for a reason the
 change did not cause and held the queue behind them.
-**The test.** `TestDarwinShardsRunOnlyForIntegrationBranches`
-(`internal/ci/darwin_gate_class_test.go`) reads ci.yml's list step: the branch list
-equals the integration list, each event reads its own target branch, the deal loop
-sends every package to a Linux shard before it can append to the darwin group
-while the gate is off, the darwin-only-only change falls back to the empty leg, and
-no other job carries a macOS label on a `runs-on` list (any position, quoted or
-block form, any case) or runs macos-latest on a pull_request or merge_group.
-`TestMacOSRunnerMatchCatchesEveryPosition` holds that label match itself.
+**The test.** `TestDarwinOn` and `TestFanoutWithTheDarwinLegsOffIsLinuxOnly`
+(`internal/pkgselect`) hold the gate over the events and the targets, prefixed and
+bare; the `test-matrix` tests in `tools/ci/sel_test.go` hold the verb with the gate off.
+`TestDarwinShardsRunOnlyForIntegrationBranches` (`internal/ci/darwin_gate_class_test.go`)
+reads ci.yml: `pkgselect.DarwinBranches` equals the integration list, the list step
+hands the verb each event's own target branch, and no other job carries a macOS label
+on a `runs-on` list (any position, quoted or block form, any case) or runs macos-latest
+on a pull_request or merge_group. `TestMacOSRunnerMatchCatchesEveryPosition` holds that
+label match itself.
 **Its allowlist.** None.
-**Its remedy line.** Put the darwin leg behind `darwin_on`, or add the branch to the
-integration list and to `DARWIN_BRANCHES` together.
+**Its remedy line.** Add the branch to the integration list and to
+`pkgselect.DarwinBranches` together.
 **Its narrowings.** It reads the workflow as text and does not run the step; the
 branch expressions are GitHub's.
 
@@ -1216,7 +1221,7 @@ branch expressions are GitHub's.
 **The rule.** certification.yml's `test` job keeps `timeout-minutes: 2` and meets
 it by shard count: ubuntu-latest and macos-latest each run shards 1..8, every leg
 carrying its OS's `shards`. Its `deal this shard's packages` step is test-hosted's
-deal over the live packages (`live-packages.sh`), with the measured heavy list
+deal over the live packages (`go run ./tools/ci deal`), with the measured heavy list
 (`internal/ci`, `cmd/nova-tokens`, `cmd/nova-sandbox`,
 `cmd/nova-self-talk`, `internal/update`, `cmd/nova-secrets`, `internal/bus`) dealt
 first, one per shard. Every shard
@@ -1722,24 +1727,23 @@ about commands it does not run.
 ### `selection` — `internal/ci` is always in the selected packages
 
 **The rule.** `./internal/ci` is added to the package set on every selection —
-by `.github/scripts/select-packages.sh` — never only as a fallback when the diff
-selected nothing.
+by `internal/pkgselect`'s `Select` (`go run ./tools/ci select-packages`) — never
+only as a fallback when the diff selected nothing.
 **The mistake it prevents.** `internal/ci` scans the tree instead of importing
 what it guards, so nothing in a diff ever "touches" it: an edit to any package
 selects no shard that would run the class tests unless the selection adds it.
 Every rule in this document is worth exactly as much as this line. The other
-edge: when the diff has ALREADY selected `internal/ci`, a bare append runs it
-twice in every shard of every leg, so the append sits in a `case` arm — a guard
-that prevents a DUPLICATE keeps the rule.
+edge: when the diff has ALREADY selected `internal/ci`, the package is in the
+set once, never twice in every shard of every leg.
 **The test.** `TestSelectPackagesAlwaysAddsInternalCI`
 (`internal/ci/ci_selection_test.go`).
 **Its allowlist.** None.
-**Its remedy line.** `select-packages.sh does not add ./internal/ci to want
+**Its remedy line.** `pkgselect.Select does not add ./internal/ci to want
 unconditionally; internal/ci scans the tree instead of importing what it guards,
 so an edit elsewhere selects no shard to run its class tests`.
-**Its narrowings.** The selection is pinned by a regular expression over
-`select-packages.sh`; another path into the package set would need its own row
-here, and the test cannot know it exists.
+**Its narrowings.** The selection is run over a fixture and pinned by a regular
+expression over `internal/pkgselect/select.go`; another path into the package set
+would need its own row here, and the test cannot know it exists.
 
 ### `toolchainroots` — the bench standard and the wall name one list per OS, with one kind each
 
@@ -2186,7 +2190,7 @@ does not land, and nothing else stops the test creep.
 reads every workflow file, `.yml` and `.yaml`, and refuses a job over the cap, a
 job with no literal job-level cap (a step-level timeout does not count), or a
 `timeout-minutes` expression. `TestShardGoTestTimeoutIsUnderTheJobCap`
-keeps `go test -timeout` (the workflow's `GOTEST_TIMEOUT` and the Makefile's
+keeps `go test -timeout` (`pkgselect.ShardGoTestTimeout` and the Makefile's
 `GOTEST_TIMEOUT`, `MERGE_TIMEOUT`, `DARWIN_TIMEOUT`, `SHORT_TIMEOUT`) under the
 cap, and `TestEveryMakeTimeoutIsUnderTheJobCap` reads every `-timeout` in every
 Makefile recipe, expanded, and refuses one at or over the cap (test-short, the
@@ -2213,7 +2217,7 @@ and no brief source (the `briefSources` the no-gh rule reads) spells `go test`, 
 or over one of the three trees that are most of it (`./cmd/...`,
 `./internal/...`, `./tools/...`).
 The door is `nova-ci local`: the packages
-`.github/scripts/select-packages.sh` picks against the merge base of the base
+`go run ./tools/ci select-packages` picks against the merge base of the base
 and `HEAD`, run through the Makefile's `test` target under `nice -n 15` at
 `-p 2`, with the unit budgets, exiting as CI would ([TESTING.md](../TESTING.md)).
 **The mistake it prevents.** CPU is for real work: children test the packages

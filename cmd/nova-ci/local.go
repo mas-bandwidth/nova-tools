@@ -12,9 +12,9 @@ package main
 // ONE IMPLEMENTATION, NOT A COPY. The verb owns no selection rule, no go test
 // flag and no budget of its own:
 //
-//   - the packages are .github/scripts/select-packages.sh's answer against the
-//     merge base of --base and HEAD, the script CI's `test` matrix runs against
-//     the event's base;
+//   - the packages are internal/pkgselect's answer against the merge base of
+//     --base and HEAD, the selection CI's `test` matrix runs against the
+//     event's base;
 //   - the run is the Makefile's `test` target, the one entry CI's legs call:
 //     its go test flags, its -timeout, its `nova-ci slowtests` budgets and
 //     allowlist and its exit status are whatever that target holds today;
@@ -46,6 +46,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/ci/slowtests"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/pkgselect"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/yield"
@@ -57,8 +58,6 @@ var _ = [1]struct{}{}[yield.Nice-15] // compile-time: localNice == yield.Nice
 const (
 	// localDefaultBase is the branch every card and stream lands on.
 	localDefaultBase = "origin/dev"
-	// localSelectScript is CI's package selection, relative to the checkout.
-	localSelectScript = ".github/scripts/select-packages.sh"
 	// localNice is the niceness of everything the verb starts: the tests share
 	// the bench with the work they test. It is yield.Nice, the copies' own
 	// (nova-tools#4293), and the verb steps itself down to it before it
@@ -120,12 +119,33 @@ func localCapture(runner localRunner, dir string, env []string, argv ...string) 
 	return strings.TrimSpace(out.String()), code, strings.TrimSpace(errb.String()), err
 }
 
+// localSelector is CI's package selection: the packages the change between
+// base and HEAD touches in the checkout at root, as ./<dir>.
+type localSelector func(root, base string) ([]string, error)
+
+// localSelectThrough is internal/pkgselect's selection, its git and go commands
+// started through the verb's own runner: niced, at two cores.
+func localSelectThrough(runner localRunner) localSelector {
+	return func(root, base string) ([]string, error) {
+		run := func(dir string, env []string, argv ...string) (pkgselect.Result, error) {
+			var out, errb bytes.Buffer
+			code, err := runner(localCmd{Dir: dir, Env: append([]string{"GOMAXPROCS=" + localCores}, env...), Argv: append([]string{"nice", "-n", localNice}, argv...), Stdout: &out, Stderr: &errb})
+			return pkgselect.Result{Stdout: out.String(), Stderr: errb.String(), Code: code}, err
+		}
+		res, err := pkgselect.Select(run, pkgselect.Options{Root: root, Base: base})
+		return res.Packages, err
+	}
+}
+
 // cmdLocal is `nova-ci local [--base <ref>] [--functional]`. Exit 0 is CI's
 // green; 1 a red test or a package that did not build; 2 a CI-SLEEPS line (a
 // SLEEPS skip off the ledger), a step that could not run, or a refusal. A
 // CI-SLOW line is printed and, as on every CI leg but the nightly one, is not
 // a verdict.
-func cmdLocal(args []string, stdout, stderr io.Writer, runner localRunner) int {
+//
+// The package selection is a parameter: main passes localSelectThrough over the
+// same runner, a test passes a table.
+func cmdLocal(args []string, stdout, stderr io.Writer, runner localRunner, selectPackages localSelector) int {
 	fs := flag.NewFlagSet("local", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 	fs.Usage = func() {}
@@ -135,7 +155,7 @@ func cmdLocal(args []string, stdout, stderr io.Writer, runner localRunner) int {
 		return refuse(stderr, " local", oneline.Cap(err.Error(), oneline.TailBytes))
 	}
 	if fs.NArg() > 0 {
-		return refuse(stderr, " local", fmt.Sprintf("unexpected argument %q; the packages are select-packages.sh's answer, never named by hand", fs.Arg(0)))
+		return refuse(stderr, " local", fmt.Sprintf("unexpected argument %q; the packages are CI's selection, never named by hand", fs.Arg(0)))
 	}
 	if strings.TrimSpace(*base) == "" {
 		return refuse(stderr, " local", "--base wants the ref the change lands on (origin/dev)")
@@ -151,8 +171,8 @@ func cmdLocal(args []string, stdout, stderr io.Writer, runner localRunner) int {
 	if err != nil || code != 0 || root == "" {
 		return refuse(stderr, " local", fmt.Sprintf("not inside a git checkout (git rev-parse --show-toplevel: %s); run it from the repository you changed", localWhy(code, errText, err)))
 	}
-	if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(localSelectScript))); err != nil {
-		return refuse(stderr, " local", fmt.Sprintf("%s has no %s, so there is no CI selection to match; test only the packages you touched: nice -n %s go test -p %s -count=1 <packages>", oneline.Field(root), localSelectScript, localNice, localCores))
+	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
+		return refuse(stderr, " local", fmt.Sprintf("%s has no go.mod, so there is no CI selection to match; test only the packages you touched: nice -n %s go test -p %s -count=1 <packages>", oneline.Field(root), localNice, localCores))
 	}
 	makefile, err := os.ReadFile(filepath.Join(root, "Makefile"))
 	if err != nil {
@@ -185,11 +205,10 @@ func cmdLocal(args []string, stdout, stderr io.Writer, runner localRunner) int {
 		fmt.Fprintf(stderr, "nova-ci local: NOTE %d uncommitted Go file(s): go test reads them, but the selection reads only committed history, as CI does; commit them so the packages chosen are CI's\n", n)
 	}
 
-	selected, code, errText, err := localCapture(runner, root, cores, append(nice, "bash", localSelectScript, mergeBase)...)
-	if err != nil || code != 0 {
-		return refuse(stderr, " local", fmt.Sprintf("%s %s failed (%s)", localSelectScript, mergeBase, localWhy(code, errText, err)))
+	pkgs, err := selectPackages(root, mergeBase)
+	if err != nil {
+		return refuse(stderr, " local", fmt.Sprintf("the package selection against %s failed (%s)", mergeBase, oneline.Cap(strings.TrimSpace(err.Error()), oneline.TailBytes)))
 	}
-	pkgs := strings.Fields(selected)
 	fmt.Fprintf(stdout, "nova-ci local: base=%s merge-base=%s packages=%d %s\n", oneline.Field(*base), localShort(mergeBase), len(pkgs), strings.Join(pkgs, " "))
 	if len(pkgs) == 0 {
 		// CI's own words for the same answer, and its exit.

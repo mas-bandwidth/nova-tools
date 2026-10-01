@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/mas-bandwidth/nova-tools/internal/pkgselect"
 )
 
 // ci_branches_test.go pins the per-event job set: what each trigger runs, and
@@ -40,13 +42,28 @@ func TestSelfHostedShardsSelectThePackagesAChangeTouches(t *testing.T) {
 	if runsOnHosted(block) {
 		t.Fatal("test-packages is not the self-hosted fan-out; the test is looking at the wrong job")
 	}
+	// The step hands the event's own bases to the verb that selects and deals;
+	// the verb holds the rest of the law.
 	for _, want := range []string{
-		"github.event.pull_request.base.sha",
-		"github.event.merge_group.base_sha",
-		"nothing to test for this change",
+		ciRunner + " test-matrix",
+		`--event "${{ github.event_name }}"`,
+		`--pull-request-base "${{ github.event.pull_request.base.sha }}"`,
+		`--merge-group-base "${{ github.event.merge_group.base_sha }}"`,
 	} {
 		if !strings.Contains(block, want) {
-			t.Errorf("test-packages does not carry %q: the self-hosted shards must select the packages a change touches on pull_request and merge_group and run nothing for a change that touches no Go package", want)
+			t.Errorf("test-packages does not carry %q: the self-hosted shards must select the packages a change touches on pull_request and merge_group, against the event's own base", want)
+		}
+	}
+	verb := readFile(t, filepath.Join(root, "tools", "ci", "sel_matrix.go"))
+	for _, want := range []string{
+		`"nothing to test for this change"`,
+		`pkgselect.Select(`,
+		`WholeTreeOnError: *event != "pull_request"`,
+		`base = *prBase`,
+		`base = *mgBase`,
+	} {
+		if !strings.Contains(verb, want) {
+			t.Errorf("tools/ci/sel_matrix.go does not carry %q: a change that touches no Go package runs nothing, and the selection reads the diff against the event's own base", want)
 		}
 	}
 }
@@ -163,6 +180,10 @@ func jobUsesShort(block string) bool {
 // branch added to the list and nowhere else is a red test that names the lines
 // to change, never a silent half-rule.
 
+// ciRunner is how a workflow step runs tools/ci: the binary its job built once
+// into $RUNNER_TEMP, never `go run`, which would compile it again in each step.
+const ciRunner = `"$RUNNER_TEMP/ci"`
+
 // integrationListRe matches THE list definition: a fromJSON of a JSON array of
 // refs, single-quoted inside the concurrency expression.
 var integrationListRe = regexp.MustCompile(`fromJSON\('(\[[^']*refs/heads/[^']*\])'\)`)
@@ -271,17 +292,30 @@ func TestRunnersPerMachineIsOneNumber(t *testing.T) {
 	if step == "" {
 		t.Fatal("no fair-share step in ci.yml (a step whose name says it takes this runner's share of the machine); GOMAXPROCS per leg is what row 9 of #828 got wrong")
 	}
-	if !strings.Contains(step, "NOVA_RUNNERS_PER_MACHINE:-8") {
-		t.Error("the fair-share step does not read ${NOVA_RUNNERS_PER_MACHINE:-8}: the runner count is the runner service's fact, and 8 is today's fleet as the default when a machine does not say")
+	if !strings.Contains(step, ciRunner+" runner-share") {
+		t.Error("the fair-share step does not call `ci runner-share`, which holds the division")
 	}
-	// The count it used is printed, so a leg's log answers "how many runners
-	// did this machine claim" without a trip to the machine.
-	if !strings.Contains(step, "runners per machine") {
-		t.Error("the fair-share step does not print the runner count it used; the number a leg divided by must be readable in the leg's own log")
+	// The divisor is the runner service's fact, and 8 is today's fleet as the
+	// default when a machine does not say.
+	if pkgselect.RunnersEnv != "NOVA_RUNNERS_PER_MACHINE" || pkgselect.DefaultRunners != 8 {
+		t.Errorf("the runner count is %s with default %d, want NOVA_RUNNERS_PER_MACHINE with default 8: the runner count is the runner service's fact", pkgselect.RunnersEnv, pkgselect.DefaultRunners)
 	}
-	// No other literal: the divisor is the variable, nothing else.
-	if m := regexp.MustCompile(`cores\s*/\s*[0-9]`).FindString(step); m != "" {
-		t.Errorf("the fair-share step still divides the core count by a literal (%q); the divisor is $runners, read from NOVA_RUNNERS_PER_MACHINE", m)
+	// The number a leg divided by is printed, so a leg's own log answers "how
+	// many runners did this machine claim" without a trip to the machine.
+	verb := readFile(t, filepath.Join(root, "tools", "ci", "sel_share.go"))
+	if !strings.Contains(verb, "runners per machine") {
+		t.Error("`ci runner-share` does not print the runner count it used; the number a leg divided by must be readable in the leg's own log")
+	}
+	// The divisor is what the machine says: 6 cores over 3 runners is 2, over 4
+	// runners is 1, and a machine that says nothing divides by 8.
+	for _, tc := range []struct {
+		cores             int
+		says              string
+		wantRunners, want int
+	}{{6, "3", 3, 2}, {6, "4", 4, 1}, {6, "", 8, 1}, {64, "", 8, 2}} {
+		if runners, got := pkgselect.RunnerShare(tc.cores, tc.says); runners != tc.wantRunners || got != tc.want {
+			t.Errorf("%d cores, NOVA_RUNNERS_PER_MACHINE=%q: %d runners, a share of %d; want %d and %d", tc.cores, tc.says, runners, got, tc.wantRunners, tc.want)
+		}
 	}
 	for _, stale := range []string{"4 runners", "four runners", "FOUR runners"} {
 		if strings.Contains(step, stale) {
