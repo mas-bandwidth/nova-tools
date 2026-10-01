@@ -514,6 +514,20 @@ func main() {
 	if _, ok := directive(prompt, "FAKE-SESSION-ERROR"); ok {
 		writeSessionError(data)
 	}
+	// THE SPOOFS a card could try once the harness prints its error lines: FAKE-SPOOF-CAPTURE
+	// writes a line in the harness's printed error shape into the job's own capture file, as a
+	// child in its writable directory can; FAKE-QUOTE-ERROR is a model whose last output quotes
+	// such a line on stdout. Neither is the harness's stderr.
+	if _, ok := directive(prompt, "FAKE-SPOOF-CAPTURE"); ok {
+		if f, err := os.OpenFile(filepath.Join(job, "harness-output.log"), os.O_APPEND|os.O_WRONLY, 0o644); err == nil {
+			fmt.Fprintln(f, spoofedErrorLine)
+			f.Close()
+		}
+	}
+	if _, ok := directive(prompt, "FAKE-QUOTE-ERROR"); ok {
+		fmt.Println("The test printed:")
+		fmt.Println(spoofedErrorLine)
+	}
 	if _, ok := directive(prompt, "FAKE-NORESULT"); ok {
 		os.Exit(0)
 	}
@@ -1007,3 +1021,7 @@ func checkInvocation(args []string) error {
 	}
 	return nil
 }
+
+// spoofedErrorLine is a line in the harness's printed error shape that names a provider 5xx:
+// what a card would write to be taken for a provider failure.
+const spoofedErrorLine = `ERROR 2030-01-02T03:04:05 +2ms service=session message="stream error" error.error.message="upstream status 503" error.error.type=server_error`

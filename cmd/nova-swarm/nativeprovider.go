@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -71,68 +72,131 @@ var providerErrorRE = regexp.MustCompile(`(?i)message="?stream error|server_erro
 // providerLogError is the first provider error line in what the run appended to the
 // harness's log after offset (bounded to its tail), trimmed to the line's own message;
 // "" when there is none. The cause read from it (swarm.CauseFromText) is what is bounded.
-// The harness prints its error lines into the run's capture too (`--print-logs --log-level
-// ERROR` in the providers table), so a log that holds none is followed by the capture.
-func providerLogError(dataHome string, offset int64, capture string) string {
-	if line := errorLineIn(filepath.Join(dataHome, filepath.FromSlash(harnessLogFile)), offset, 0, true, isProviderError); line != "" {
-		return line
-	}
-	return errorLineIn(capture, 0, captureTailLines, true, isProviderError)
-}
-
-// captureErrorLine is the last error line the harness printed into the run's capture
-// (bounded to its tail), whatever it says: the harness's own cause of a failure it reports
-// only as `UnknownError`. "" when there is none.
-func captureErrorLine(capture string) string {
-	return errorLineIn(capture, 0, captureTailLines, false, func(string) bool { return true })
-}
-
-// captureTailLines is how far back from its end the capture is read for the harness's error
-// lines: the harness prints them last, and the card's own output before them (a log it
-// printed that says level=ERROR) is not the harness's.
-const captureTailLines = 20
-
-// isProviderError is whether an error line is the provider's (providerErrorRE).
-func isProviderError(line string) bool { return providerErrorRE.MatchString(line) }
-
-// errorLineIn is the first (first true) or last error line of the harness in what path holds
-// after offset, bounded to its last providerLogTailBytes and, when tail is above 0, to its
-// last tail lines, that match accepts, from its message on; "" when there is none. An error
-// line is the log's `level=ERROR`, or a printed line that begins with `ERROR`.
-func errorLineIn(path string, offset int64, tail int, first bool, match func(string) bool) string {
-	f, err := os.Open(path)
+// The harness prints its error lines on its stderr too (`--print-logs --log-level ERROR` in
+// the providers table), so a log that holds none is followed by the parent's own tail of
+// that stderr (harnessErrTail), and only by a line in the harness's printed shape.
+func providerLogError(dataHome string, offset int64, errTail []string) string {
+	f, err := os.Open(filepath.Join(dataHome, filepath.FromSlash(harnessLogFile)))
 	if err != nil {
-		return ""
+		return printedErrorLine(errTail, true, isProviderError)
 	}
 	defer f.Close()
 	end, err := f.Seek(0, io.SeekEnd)
 	if err != nil || end <= offset {
-		return ""
+		return printedErrorLine(errTail, true, isProviderError)
 	}
 	from := max(offset, end-providerLogTailBytes)
 	raw := make([]byte, end-from)
 	if _, err := f.ReadAt(raw, from); err != nil {
-		return ""
+		return printedErrorLine(errTail, true, isProviderError)
 	}
-	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
-	if tail > 0 && len(lines) > tail {
-		lines = lines[len(lines)-tail:]
+	for _, line := range strings.Split(string(raw), "\n") {
+		if strings.Contains(line, "level=ERROR") && isProviderError(line) {
+			return errorMessage(line)
+		}
 	}
+	return printedErrorLine(errTail, true, isProviderError)
+}
+
+// captureErrorLine is the last error line the harness printed on its stderr (the parent's
+// tail of it), whatever it says: the harness's own cause of a failure it reports only as
+// `UnknownError`. "" when there is none.
+func captureErrorLine(errTail []string) string {
+	return printedErrorLine(errTail, false, func(string) bool { return true })
+}
+
+// isProviderError is whether an error line is the provider's (providerErrorRE).
+func isProviderError(line string) bool { return providerErrorRE.MatchString(line) }
+
+// harnessPrintedErrorRE is THE ONE PLACE the shape of an error line the harness prints with
+// --print-logs is written: its level word and its timestamp first, then its own fields. A
+// line that only begins `ERROR`, or says level=ERROR somewhere inside it, is not one: a model
+// quoting test output is not the harness. The two forms are the harness log's own line
+// (`timestamp=<RFC 3339> level=ERROR run=<8 hex> ...`, as its log file holds it) and the
+// printed one (`ERROR <timestamp> +<n>ms service=<name> ...`). The printed form is not yet
+// verified against a real launch; its test rows are TestTheHarnessPrintedErrorShape.
+var harnessPrintedErrorRE = regexp.MustCompile(`^(?:timestamp=\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z? level=ERROR run=[0-9a-f]{8} |ERROR +\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z? \+\d+ms service=\S+ )`)
+
+// printedErrorLine is the first (first true) or last line of the tail in the harness's
+// printed error shape that match accepts, from its message on; "" when there is none.
+func printedErrorLine(tail []string, first bool, match func(string) bool) string {
 	found := ""
-	for _, line := range lines {
-		errLine := strings.Contains(line, "level=ERROR") || strings.HasPrefix(strings.TrimSpace(line), "ERROR")
-		if !errLine || !match(line) {
+	for _, line := range tail {
+		line = strings.TrimSpace(line)
+		if !harnessPrintedErrorRE.MatchString(line) || !match(line) {
 			continue
 		}
-		if i := strings.Index(line, "message="); i >= 0 {
-			line = line[i:] // what the error says, without its timestamp and run id
-		}
-		found = strings.TrimSpace(line)
+		found = errorMessage(line)
 		if first {
 			break
 		}
 	}
 	return found
+}
+
+// errorMessage is an error line from its message on, without its timestamp and run id.
+func errorMessage(line string) string {
+	if i := strings.Index(line, "message="); i >= 0 {
+		line = line[i:]
+	}
+	return strings.TrimSpace(line)
+}
+
+// captureTailLines is how many of the harness's last non-empty stderr lines the parent keeps
+// (harnessErrTail): the harness prints its error lines last.
+const captureTailLines = 20
+
+// harnessErrTail is the parent's own copy of the last captureTailLines non-empty lines the
+// harness wrote on its stderr, kept in memory as the bytes arrive (the #1892 class, as the
+// shell-denial reader is): `<job>/harness-output.log` is in the card's write directory and
+// its cwd, so a card could write a line there that a read after the run would take for the
+// harness's. Blank lines are not counted, as swarm's lastLines does not count them.
+type harnessErrTail struct {
+	mu      sync.Mutex
+	lines   []string
+	partial []byte
+}
+
+func (t *harnessErrTail) Write(p []byte) (int, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.partial = append(t.partial, p...)
+	for {
+		i := bytes.IndexByte(t.partial, '\n')
+		if i < 0 {
+			break
+		}
+		t.keep(string(t.partial[:i]))
+		t.partial = t.partial[i+1:]
+	}
+	if len(t.partial) > providerLogTailBytes {
+		t.partial = t.partial[len(t.partial)-providerLogTailBytes:] // one runaway line stays bounded
+	}
+	return len(p), nil
+}
+
+func (t *harnessErrTail) keep(line string) {
+	if strings.TrimSpace(line) == "" {
+		return
+	}
+	t.lines = append(t.lines, line)
+	if len(t.lines) > captureTailLines {
+		t.lines = t.lines[len(t.lines)-captureTailLines:]
+	}
+}
+
+// Lines is the tail, oldest first, with a last line that ended without a newline.
+func (t *harnessErrTail) Lines() []string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	out := append([]string(nil), t.lines...)
+	if strings.TrimSpace(string(t.partial)) != "" {
+		out = append(out, string(t.partial))
+		if len(out) > captureTailLines {
+			out = out[1:]
+		}
+	}
+	return out
 }
 
 // endedOnATool is whether the run's last message in the session database is not a final
@@ -202,12 +266,12 @@ func sessionQuery(dataHome, query string) (string, bool) {
 // message`, class other); the cause is then the session's own record of the failed message
 // when it has one, which keeps the provider's status, else what the log line says.
 // offset is the harness log's size when the run began, since is when it began.
-func providerEnd(dataHome, capture string, offset int64, since time.Time, rc int) (swarm.ProviderCause, bool) {
+func providerEnd(dataHome string, errTail []string, offset int64, since time.Time, rc int) (swarm.ProviderCause, bool) {
 	if rc < 0 {
 		return swarm.ProviderCause{}, false // killed: the deadline's end, whatever the log says
 	}
 	var found swarm.ProviderCause
-	if line := providerLogError(dataHome, offset, capture); line != "" {
+	if line := providerLogError(dataHome, offset, errTail); line != "" {
 		found = swarm.CauseFromText(line)
 	} else if rc == 0 && endedOnATool(dataHome, since) {
 		found = swarm.ProviderCause{Class: swarm.CauseOther, Message: providerEndedNoMessage}

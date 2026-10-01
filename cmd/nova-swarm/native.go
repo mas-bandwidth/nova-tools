@@ -862,6 +862,10 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// rewrite, unlink or read error of that file can turn a denial into an OK.
 	denials := swarm.NewShellDenialReader()
 	capture := io.MultiWriter(log, harnessOut, timeline, reader, denials)
+	// the harness's own stderr, its last lines kept in this process (nativeprovider.go,
+	// harnessErrTail): the error lines it prints are read from here, never from the file
+	// in the card's directory
+	errTail := &harnessErrTail{}
 
 	res := nativeRunResult{
 		rc:           -1,
@@ -958,7 +962,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		cmd.Dir = jobDir
 		cmd.Stdin = devNull
 		cmd.Stdout = capture
-		cmd.Stderr = io.MultiWriter(capture, &wallOut)
+		cmd.Stderr = io.MultiWriter(capture, &wallOut, errTail)
 		attemptStart := time.Now()
 		if err := cmd.Start(); err != nil {
 			log.Close()
@@ -1281,9 +1285,9 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 				// own cause of an UnknownError), else its last words (nativeprovider.go)
 				if c, ok := sessionProviderError(dataHome, runStart); ok {
 					h.Cause = c
-				} else if line := providerLogError(dataHome, providerMark, outLog); line != "" {
+				} else if line := providerLogError(dataHome, providerMark, errTail.Lines()); line != "" {
 					h.Cause = swarm.CauseFromText(line)
-				} else if line := captureErrorLine(outLog); line != "" {
+				} else if line := captureErrorLine(errTail.Lines()); line != "" {
 					h.Cause = swarm.CauseFromText(line)
 				}
 				fmt.Fprintln(errOut, oneline.Escape(h.Line(cfg.label)))
@@ -1322,7 +1326,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	if !res.lost && !res.idled && !res.terminated && !handedBack && res.stopped == "" && res.wallReport == "" &&
 		(res.wallRefusal == swarm.WallRefusal{}) && (res.shellDenial == swarm.ShellDenial{}) {
 		if _, published := swarm.FindCardResult(jobDir); !published {
-			if cause, ok := providerEnd(dataHome, outLog, providerMark, runStart, res.rc); ok {
+			if cause, ok := providerEnd(dataHome, errTail.Lines(), providerMark, runStart, res.rc); ok {
 				fmt.Fprintln(errOut, oneline.Escape(providerLine(cfg.label, res.wallSeconds, cfg.model, cause)))
 			}
 		}

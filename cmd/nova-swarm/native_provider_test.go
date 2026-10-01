@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -124,14 +125,14 @@ func TestTheHarnessLogIsReadFromItsTailAndFromTheRunsOffset(t *testing.T) {
 	filler := strings.Repeat("timestamp=t level=INFO run=r message=chatter\n", providerLogTailBytes/40)
 
 	require.NoError(t, os.WriteFile(path, []byte(errLine+filler), 0o644))
-	assert.Empty(t, providerLogError(data, 0, ""), "an error before the tail's cap is not read")
+	assert.Empty(t, providerLogError(data, 0, nil), "an error before the tail's cap is not read")
 
 	require.NoError(t, os.WriteFile(path, []byte(filler+errLine), 0o644))
-	assert.Equal(t, `message="stream error" error.error="HTTP 503 overloaded"`, providerLogError(data, 0, ""))
+	assert.Equal(t, `message="stream error" error.error="HTTP 503 overloaded"`, providerLogError(data, 0, nil))
 
 	require.NoError(t, os.WriteFile(path, []byte(errLine), 0o644))
-	assert.Empty(t, providerLogError(data, int64(len(errLine)), ""), "an earlier run's line, before the offset, is not this run's")
-	assert.Empty(t, providerLogError(t.TempDir(), 0, ""), "no log is no error")
+	assert.Empty(t, providerLogError(data, int64(len(errLine)), nil), "an earlier run's line, before the offset, is not this run's")
+	assert.Empty(t, providerLogError(t.TempDir(), 0, nil), "no log is no error")
 }
 
 // Each provider error the rule names is one, on an ERROR line only, and a line of
@@ -153,7 +154,7 @@ func TestTheProviderErrorPatterns(t *testing.T) {
 		path := filepath.Join(data, "opencode", "log", "opencode.log")
 		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
 		require.NoError(t, os.WriteFile(path, []byte("timestamp=t "+line+"\n"), 0o644))
-		assert.Equal(t, want, providerLogError(data, 0, "") != "", line)
+		assert.Equal(t, want, providerLogError(data, 0, nil) != "", line)
 	}
 }
 
@@ -232,16 +233,70 @@ func TestAnUnknownErrorCarriesTheErrorLineTheHarnessPrinted(t *testing.T) {
 	assert.Contains(t, errb, " reason=provider: class=unknown-model status=- msg=Model not found: fake/no-such-model\n")
 }
 
-// A log line the card printed earlier in the capture is never read as the harness's error:
-// only the capture's last lines are.
-func TestTheCaptureIsReadOnlyFromItsLastLines(t *testing.T) {
+// The parent keeps the harness's last stderr lines itself (harnessErrTail): only the last
+// captureTailLines non-empty lines, blank lines not counted, a line split across writes
+// joined, and a last line with no newline kept.
+func TestTheHarnessErrTailKeepsTheLastNonEmptyLines(t *testing.T) {
 	t.Parallel()
-	capture := filepath.Join(t.TempDir(), "harness-output.log")
-	early := `level=ERROR message="stream error" error.error.type=server_error` + "\n"
-	write(t, capture, early+strings.Repeat("the card's own output\n", captureTailLines))
-	assert.Empty(t, providerLogError(t.TempDir(), 0, capture))
-	assert.Empty(t, captureErrorLine(capture))
-	write(t, capture, "the card's own output\n"+early)
-	assert.Equal(t, `message="stream error" error.error.type=server_error`, providerLogError(t.TempDir(), 0, capture))
-	assert.Equal(t, `message="stream error" error.error.type=server_error`, captureErrorLine(capture))
+	var tail harnessErrTail
+	for i := range captureTailLines + 5 {
+		_, _ = tail.Write([]byte("line " + strconv.Itoa(i) + "\n\n   \n")) // ignored: the tail's Write never fails
+	}
+	_, _ = tail.Write([]byte("split ")) // ignored: as above
+	_, _ = tail.Write([]byte("across writes"))
+	got := tail.Lines()
+	require.Len(t, got, captureTailLines)
+	assert.Equal(t, "line 6", got[0], "blank lines count for nothing")
+	assert.Equal(t, "split across writes", got[len(got)-1])
+}
+
+// THE HARNESS'S PRINTED ERROR SHAPE is one named pattern (harnessPrintedErrorRE); these
+// rows are the place to correct when a real launch shows its verbatim lines.
+func TestTheHarnessPrintedErrorShape(t *testing.T) {
+	t.Parallel()
+	for line, want := range map[string]bool{
+		`ERROR 2030-01-02T03:04:05 +2ms service=server error=ProviderModelNotFoundError message="Model not found: x/y"`: true,
+		`ERROR  2030-01-02T03:04:05.123Z +0ms service=session message="stream error" error.error.type=server_error`:     true,
+		`timestamp=2026-10-01T17:51:42.310Z level=ERROR run=6bc9e82f message="stream error" providerID=x`:               true,
+		`ERROR: status 503 server_error`: false,
+		`ERROR the test said rate limit`: false,
+		`the log said: timestamp=2026-10-01T17:51:42.310Z level=ERROR run=6bc9e82f message="stream error"`: false,
+		`level=ERROR message="stream error" error.error.type=server_error`:                                 false,
+		`INFO  2030-01-02T03:04:05 +2ms service=server message="started"`:                                  false,
+	} {
+		assert.Equal(t, want, harnessPrintedErrorRE.MatchString(line), line)
+	}
+}
+
+// A CARD CANNOT MAKE ITS OWN FAILURE THE PROVIDER'S. A child that writes a line in the
+// harness's printed error shape, naming a 503, into its job's capture file, and a model whose
+// last output quotes such a line, both end with no result and stay the card's: the parent
+// reads only the harness's stderr, from its own copy.
+func TestACardCannotSpoofAProviderFailure(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct{ name, card string }{
+		{"a line written into the job's capture file", "FAKE-SPOOF-CAPTURE\nFAKE-NORESULT\n"},
+		{"a line the model quotes on its output", "FAKE-QUOTE-ERROR\nFAKE-NORESULT\n"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			out, errb := providerRun(t, "spoof", tc.card, nil)
+			assert.NotContains(t, errb, "PROVIDER-", "the card's own end stays its own")
+			assert.Contains(t, out, "NATIVE INCOMPLETE ")
+		})
+	}
+}
+
+// The harness's printed error lines are read from the parent's tail of its stderr, first
+// the provider's for the failure, last any for the cause; nothing outside the shape counts.
+func TestPrintedErrorLinesAreReadFromTheParentsTail(t *testing.T) {
+	t.Parallel()
+	tail := []string{
+		`ERROR: status 503 server_error`,
+		`ERROR 2030-01-02T03:04:05 +2ms service=session message="stream error" error.error.type=server_error`,
+		`ERROR 2030-01-02T03:04:06 +9ms service=server message="Model not found: x/y"`,
+	}
+	assert.Equal(t, `message="stream error" error.error.type=server_error`, providerLogError(t.TempDir(), 0, tail))
+	assert.Equal(t, `message="Model not found: x/y"`, captureErrorLine(tail))
+	assert.Empty(t, providerLogError(t.TempDir(), 0, tail[:1]), "a line outside the harness's shape is not its error")
 }
