@@ -499,6 +499,12 @@ func main() {
 	if _, ok := directive(prompt, "FAKE-ENDS-ON-FINAL"); ok {
 		writeSession(data, "stop")
 	}
+	// FAKE-SESSION-ERROR writes a session whose last assistant message carries the error the
+	// harness records for a provider's API answer: an out-of-credit 402, in the provider's
+	// documented shape, with a key-shaped value in its words.
+	if _, ok := directive(prompt, "FAKE-SESSION-ERROR"); ok {
+		writeSessionError(data)
+	}
 	if _, ok := directive(prompt, "FAKE-NORESULT"); ok {
 		os.Exit(0)
 	}
@@ -739,7 +745,7 @@ func writeProviderLog(data string) {
 	}
 	defer f.Close()
 	for i := 0; i < 2; i++ {
-		fmt.Fprintf(f, "timestamp=2030-01-02T03:04:0%d.000Z level=ERROR run=ab12cd34 message=\"stream error\" providerID=fake modelID=fake-model session.id=ses_x error.error.type=server_error \"Streaming response failed: [internal_error] Stream error: h2 protocol error\"\n", i)
+		fmt.Fprintf(f, "timestamp=2030-01-02T03:04:0%d.000Z level=ERROR run=ab12cd34 message=\"stream error\" providerID=fake modelID=fake-model session.id=ses_x error.error.message=\"Streaming response failed: [internal_error] Stream error: h2 protocol error\" error.error.type=server_error\n", i)
 	}
 }
 
@@ -754,6 +760,23 @@ func writeSession(data, finish string) {
 		fmt.Sprintf("INSERT INTO message (data, time_created) VALUES ('{\"role\":\"user\"}', %d);\n", now) +
 		fmt.Sprintf("INSERT INTO message (data, time_created) VALUES ('{\"role\":\"assistant\",\"finish\":\"tool-calls\"}', %d);\n", now+1) +
 		fmt.Sprintf("INSERT INTO message (data, time_created) VALUES ('{\"role\":\"assistant\",\"finish\":\"%s\"}', %d);\n", finish, now+2)
+	runSQLite(path, sql)
+}
+
+// writeSessionError writes a session whose last assistant message carries an API error and
+// no finish, as the harness records a provider that refused the request.
+func writeSessionError(data string) {
+	path := openCodeDB(data)
+	_ = os.MkdirAll(filepath.Dir(path), 0o755)
+	now := time.Now().UnixMilli()
+	envelope := `{"role":"assistant","error":{"name":"APIError","data":{"message":"Insufficient credits. key sk-or-v1-abcdefghijklmnopqrstuvwxyz0123 has none left","statusCode":402,"isRetryable":false,"responseBody":"{\"error\":{\"code\":402,\"message\":\"Insufficient credits\"}}"}}}`
+	sql := "CREATE TABLE IF NOT EXISTS message (id INTEGER PRIMARY KEY, data TEXT NOT NULL, time_created INTEGER NOT NULL);\n" +
+		fmt.Sprintf("INSERT INTO message (data, time_created) VALUES ('{\"role\":\"user\"}', %d);\n", now) +
+		fmt.Sprintf("INSERT INTO message (data, time_created) VALUES ('%s', %d);\n", envelope, now+1)
+	runSQLite(path, sql)
+}
+
+func runSQLite(path, sql string) {
 	cmd := exec.Command("sqlite3", path)
 	cmd.Stdin = strings.NewReader(sql)
 	if out, err := cmd.CombinedOutput(); err != nil {
