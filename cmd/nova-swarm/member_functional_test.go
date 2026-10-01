@@ -282,8 +282,8 @@ func testMemberFunctionalDrive(t *testing.T) {
 	// The head the member pushed, the branch and the report the child's
 	// RESULT.md holds reached the card.
 	card := d.must("card", "a-1")
-	pushed := strings.TrimSpace(runGit(t, origin, "rev-parse", "refs/heads/sprint/a-1.w1.e0"))
-	for _, want := range []string{"head " + pushed, "branch sprint/a-1.w1.e0", "checked by the fake harness"} {
+	pushed := strings.TrimSpace(runGit(t, origin, "rev-parse", "refs/heads/sprint/a-1.w1.g1.e0"))
+	for _, want := range []string{"head " + pushed, "branch sprint/a-1.w1.g1.e0", "checked by the fake harness"} {
 		assert.Contains(t, card, want)
 	}
 
