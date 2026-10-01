@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -13,7 +12,6 @@ import (
 
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 
@@ -305,14 +303,6 @@ func (b *bench) swarm(args ...string) (exit int, stdout, stderr string) {
 	return exit, stdout, stderr
 }
 
-// inject switches this bench to the swarmtest build, the one whose injection functions read
-// the NOVA_SWARM_* environment variables. A test that plants a kill or a pause calls it;
-// every other test runs the release build, which ignores those variables entirely.
-func (b *bench) inject() {
-	b.t.Helper()
-	b.binary = builtTaggedTool
-}
-
 // swarmTry is swarm with the failure RETURNED rather than reported: t.Fatalf from a
 // goroutine other than the test's own ends that goroutine and not the test, and after
 // t.TempDir has been cleaned it panics (#122). Every caller off the test goroutine uses
@@ -339,45 +329,6 @@ func (b *bench) swarmTry(args ...string) (exit int, stdout, stderr string, err e
 		err = runErr
 	}
 	return exit, out.String(), errb.String(), err
-}
-
-// runWatching runs the dispatcher and hands each line of its stdout to watch as it is
-// printed, so a test can act on a RUN line (an adoption) before the run ends. It returns
-// the run's exit code and its full stdout and stderr. It carries the same environment
-// swarmTry builds, so it is compiled and usable on every platform.
-func (b *bench) runWatching(args []string, watch func(string)) (int, string, string) {
-	b.t.Helper()
-	cmd := exec.Command(b.binary, args...)
-	cmd.Dir = b.dir
-	cmd.Env = append([]string{"PATH=" + b.path, "Path=" + b.path, "HOME=" + b.dir}, b.extraEnv...)
-	if runtime.GOOS == "windows" {
-		for _, k := range []string{"SystemRoot", "SYSTEMROOT", "SystemDrive", "PATHEXT", "TEMP", "TMP", "COMSPEC"} {
-			if v := os.Getenv(k); v != "" {
-				cmd.Env = append(cmd.Env, k+"="+v)
-			}
-		}
-	}
-	var errb bytes.Buffer
-	cmd.Stderr = &errb
-	pipe, err := cmd.StdoutPipe()
-	if err != nil {
-		b.t.Fatalf("opening the run's stdout: %v", err)
-	}
-	if err := cmd.Start(); err != nil {
-		b.t.Fatalf("starting the run: %v", err)
-	}
-	var out bytes.Buffer
-	scanner := bufio.NewScanner(pipe)
-	for scanner.Scan() {
-		line := scanner.Text()
-		out.WriteString(line)
-		out.WriteString("\n")
-		if watch != nil {
-			watch(line)
-		}
-	}
-	_ = cmd.Wait()
-	return cmd.ProcessState.ExitCode(), out.String(), errb.String()
 }
 
 func (b *bench) add(task string, extra ...string) string {
@@ -479,20 +430,6 @@ func mustReadDirNames(t *testing.T, dir string) []string {
 	return names
 }
 
-// runningJobDir is the observable the note goroutine waits on: <pool>/running/<id>.json
-// with a `job` in it. `note` REFUSES a task that is not running with a job directory, so
-// this is the same question the verb asks, asked before it is asked -- not a sleep.
-func runningJobDir(pool, id string) bool {
-	raw, err := os.ReadFile(filepath.Join(pool, "running", id+".json"))
-	if err != nil {
-		return false
-	}
-	var sc struct {
-		Job string `json:"job"`
-	}
-	return json.Unmarshal(raw, &sc) == nil && sc.Job != ""
-}
-
 // grepTree reports the first file under dir holding needle, or "".
 func grepTree(t *testing.T, dir, needle string) string {
 	t.Helper()
@@ -508,38 +445,6 @@ func grepTree(t *testing.T, dir, needle string) string {
 		return nil
 	})
 	return found
-}
-
-// jobFile reads one file the child wrote under its job directory, found by the job id.
-func (b *bench) jobFile(id, name string) string {
-	b.t.Helper()
-	var found string
-	root := filepath.Join(b.dir, "worker-home-1", "jobs", id)
-	raw, err := os.ReadFile(filepath.Join(root, name))
-	if err != nil {
-		b.t.Fatalf("no %s under %s: %v", name, root, err)
-	}
-	found = string(raw)
-	return found
-}
-
-// rewriteWorker edits the worker description in place, so a test can take one field away.
-func (b *bench) rewriteWorker(edit func(map[string]any)) {
-	b.t.Helper()
-	raw, err := os.ReadFile(b.worker)
-	if err != nil {
-		b.t.Fatal(err)
-	}
-	var d map[string]any
-	if err := json.Unmarshal(raw, &d); err != nil {
-		b.t.Fatal(err)
-	}
-	edit(d)
-	out, err := json.MarshalIndent(d, "", "  ")
-	if err != nil {
-		b.t.Fatal(err)
-	}
-	write(b.t, b.worker, string(out))
 }
 
 // sidecar reads one job's sidecar wherever it is in the pool.
@@ -573,16 +478,6 @@ type swarmSidecar struct {
 	Reaped    int    `json:"reaped,omitempty"`
 	Requeued  int    `json:"requeued,omitempty"`
 	From      string `json:"from,omitempty"`
-}
-
-// processIsAlive asks the operating system about ONE pid this test was handed. It never
-// scans a process table and never matches a command line.
-func processIsAlive(pid int) bool {
-	p, err := os.FindProcess(pid)
-	if err != nil {
-		return false
-	}
-	return p.Signal(syscall.Signal(0)) == nil
 }
 
 // lineWith is the one line of an output that carries a marker.

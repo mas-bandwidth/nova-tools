@@ -76,7 +76,7 @@ func (b *pushBench) originHas(t *testing.T, branch string) string {
 	return out
 }
 
-func (b *pushBench) pusher() *gitPusher { return newGitPusher(b.root, b.slots, "nova-sprint") }
+func (b *pushBench) pusher() *gitPusher { return newGitPusher(b.root, b.slots) }
 
 // The member pushes the child's commit to origin's branch the sprint named,
 // from its own repository: the checkout's pre-push hook, credential helper and

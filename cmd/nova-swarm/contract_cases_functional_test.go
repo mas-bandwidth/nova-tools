@@ -85,21 +85,22 @@ func (e *caseEnv) log() string {
 	return string(b)
 }
 
-func (e *caseEnv) runner(bin, harness, model string) *nativeRunner {
+func (e *caseEnv) runner(harness, model string) *nativeRunner {
 	root := filepath.Join(e.dir, "m1")
-	return &nativeRunner{self: builtTool, sprintBin: bin, harness: harness, model: model, root: root,
+	return &nativeRunner{self: builtTool, harness: harness, model: model, root: root,
 		slots: filepath.Join(root, "slots"), resultsRoot: filepath.Join(root, "results"), deadline: time.Minute,
 		tokens: "unmetered", noWall: true, stderr: io.Discard, env: e.env}
 }
 
-func (e *caseEnv) pusher(rn *nativeRunner, bin string) *gitPusher {
-	pu := newGitPusher(rn.root, rn.slots, bin)
+func (e *caseEnv) pusher(rn *nativeRunner) *gitPusher {
+	pu := newGitPusher(rn.root, rn.slots)
 	pu.gh, pu.env = e.gh, e.env
 	return pu
 }
 
 func (e *caseEnv) member(t *testing.T) {
 	t.Helper()
+	require.NoError(t, buildShared(), "building the binaries these tests run")
 	root := filepath.Join(e.dir, "m1")
 	require.NoError(t, os.MkdirAll(filepath.Join(root, "slots"), 0o755))
 	write(t, filepath.Join(root, "identity.tsv"), "owner\tname\temail\ntest-owner\tPool Worker\tpool@example.com\n")
@@ -117,9 +118,9 @@ func (e *caseEnv) sprintRun(t *testing.T, harness, model string) (story, out str
 	d.must("add", "--stream", "a", "--count", "1", "--brief", e.brief())
 	d.must("start")
 	e.member(t)
-	rn := e.runner(bin, harness, model)
+	rn := e.runner(harness, model)
 	ob := &lockedBuf{}
-	m := member.New(member.Config{As: "m1", Width: 1}, &execSprint{bin: bin, actor: "m1", env: []string{"NOVA_SPRINT_REDIS=" + d.addr}}, rn, e.pusher(rn, bin), ob)
+	m := member.New(member.Config{As: "m1", Width: 1}, d.worker(), rn, e.pusher(rn), ob)
 	t.Cleanup(func() {
 		if t.Failed() {
 			t.Logf("story:\n%s\nmember:\n%s\nchild:\n%s", story, ob.String(), e.log())
@@ -140,9 +141,8 @@ func (e *caseEnv) sprintRun(t *testing.T, harness, model string) (story, out str
 // member does: the result, the push and the finish.
 func (e *caseEnv) directRun(t *testing.T, p member.Packet, harness, model string) (member.Result, member.Push, member.Finish, string) {
 	t.Helper()
-	bin := builtSprint(t)
 	e.member(t)
-	rn := e.runner(bin, harness, model)
+	rn := e.runner(harness, model)
 	c, err := rn.Start(p)
 	require.NoError(t, err)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
@@ -157,7 +157,7 @@ func (e *caseEnv) directRun(t *testing.T, p member.Packet, harness, model string
 	}
 	push := member.Push{None: "the result names no commit"}
 	if r.Head != "" {
-		push = e.pusher(rn, bin).Push(p, r)
+		push = e.pusher(rn).Push(p, r)
 	}
 	fin, why := member.Judge(r, push)
 	return r, push, fin, why
@@ -355,9 +355,8 @@ echo change >> f
 git commit -q -am "the change"
 git push
 gh pr create --title T --body B >&2`)
-	bin := builtSprint(t)
 	e.member(t)
-	rn := e.runner(bin, h, "fake/claude-x")
+	rn := e.runner(h, "fake/claude-x")
 	rn.pass = []string{"PROBE_API_KEY"}
 	p := member.Packet{Card: "a-1.w1", Kind: "work", As: "m1", Primary: "a-1", Stream: "a", Attempt: 1, Gen: 1, Epoch: 1,
 		Brief: e.brief(), Branch: "sprint/a-1.w1"}
@@ -403,19 +402,19 @@ echo change >> f
 git commit -q -am "the change"
 git push
 gh pr create --title T --body B >&2`)
-			rn := e.runner(bin, work, "fake/claude-x")
-			wm := member.New(member.Config{As: "m1", Width: 1}, &execSprint{bin: bin, actor: "m1", env: []string{"NOVA_SPRINT_REDIS=" + d.addr}}, rn, e.pusher(rn, bin), &lockedBuf{})
+			rn := e.runner(work, "fake/claude-x")
+			wm := member.New(member.Config{As: "m1", Width: 1}, d.worker(), rn, e.pusher(rn), &lockedBuf{})
 
 			readerRoot := filepath.Join(e.dir, "reader-a")
 			require.NoError(t, os.MkdirAll(filepath.Join(readerRoot, "slots"), 0o755))
 			write(t, filepath.Join(readerRoot, "identity.tsv"), "owner\tname\temail\ntest-owner\tPool Reader\treader@example.com\n")
 			readHarness := filepath.Join(e.dir, "reader.sh")
 			require.NoError(t, testbin.WriteExecutable(readHarness, []byte("#!/bin/sh\ngh pr diff | grep -q '^+change' || exit 1\n"+tc.review+"\n"), 0o755))
-			rr := &nativeRunner{self: builtTool, sprintBin: bin, harness: readHarness, model: "fake/claude-reader", root: readerRoot,
+			rr := &nativeRunner{self: builtTool, harness: readHarness, model: "fake/claude-reader", root: readerRoot,
 				slots: filepath.Join(readerRoot, "slots"), resultsRoot: filepath.Join(readerRoot, "results"), deadline: time.Minute,
 				tokens: "unmetered", noWall: true, stderr: io.Discard, env: e.env}
 			rout := &lockedBuf{}
-			reader := member.New(member.Config{As: "reader-a", Width: 1, Reader: true}, &execSprint{bin: bin, actor: "reader-a", env: []string{"NOVA_SPRINT_REDIS=" + d.addr}}, rr, nil, rout)
+			reader := member.New(member.Config{As: "reader-a", Width: 1, Reader: true}, d.worker(), rr, nil, rout)
 
 			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 			defer cancel()

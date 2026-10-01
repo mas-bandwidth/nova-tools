@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -18,11 +19,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
-	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
+	"github.com/mas-bandwidth/nova-tools/internal/member"
+	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
-	"github.com/redis/go-redis/v9"
 )
 
 // the sprint binary, built once for the package from this repository.
@@ -70,8 +70,8 @@ type sprintWhere struct {
 	Tables map[string]map[string]map[string]string `json:"tables"`
 }
 
-// memberDrive is a sprint on a throwaway store, driven through the nova-sprint
-// binary as the coordinator.
+// memberDrive is a sprint on a twin store, driven through the nova-sprint binary
+// as the coordinator.
 type memberDrive struct {
 	t    *testing.T
 	addr string
@@ -93,6 +93,25 @@ func (d *memberDrive) sprint(actor string, args ...string) (int, string, string)
 		d.t.Fatalf("nova-sprint %s: %v", strings.Join(args, " "), err)
 	}
 	return code, out.String(), errb.String()
+}
+
+// worker is a member's sprint as the sprint's server answers it, with no server: each
+// verb of a batch runs as the built nova-sprint on the drive's store, as the worker the
+// verb names (`<verb> --as <worker>`, `fleet beat <member>`), which is what `nova-sprint run
+// --listen` does with it (cmd/nova-sprint serve.go). A twin is one command at a time, so
+// the test's ticks and the members' passes take turns on the test's own goroutine.
+func (d *memberDrive) worker() *sprintwire.Worker {
+	return &sprintwire.Worker{Failed: sprintFailureOutput, Send: func(_ context.Context, verbs ...[]string) ([]sprintwire.Result, error) {
+		out := make([]sprintwire.Result, len(verbs))
+		for i, argv := range verbs {
+			if len(argv) < 3 {
+				return nil, fmt.Errorf("not a worker's verb: %q", argv)
+			}
+			code, o, e := d.sprint(argv[2], argv...)
+			out[i] = sprintwire.Result{Code: code, Stdout: o, Stderr: e}
+		}
+		return out, nil
+	}}
 }
 
 // must runs a verb that has to succeed.
@@ -155,37 +174,30 @@ printf 'head: %s\nbranch: %s\nverdict: ok\ngate: -\noutput: -\nreport: checked b
 echo "fake harness: wrote RESULT.md in $(pwd)"
 `
 
-// startMember starts `nova-swarm member` as a subprocess of the built binary
-// with its own root (the pool identity file native wants) and returns its
-// output. The process is killed when the test ends.
-func (d *memberDrive) startMember(as, harness string, reader bool) *lockedBuf {
+// member is one fleet member (a reader with reader) in this process: its verbs go
+// through worker, each card it takes is one native child of the built binary under
+// harness, in its own root (with the pool identity file native wants), and a work
+// card's commit is pushed by the member's own pusher. Its output is returned.
+func (d *memberDrive) member(as, harness string, reader bool) (*member.Member, *lockedBuf) {
 	d.t.Helper()
 	root := filepath.Join(d.t.TempDir(), as)
-	if err := os.MkdirAll(root, 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(root, "slots"), 0o755); err != nil {
 		d.t.Fatal(err)
 	}
 	write(d.t, filepath.Join(root, "identity.tsv"), "owner\tname\temail\ntest-owner\tPool Worker\tpool@example.com\n")
-	args := []string{"member", "--as", as, "--width", "2", "--harness", harness, "--model", "fake/fake-model",
-		"--root", root, "--tokens", "unmetered", "--deadline", "60s", "--every", "200ms", "--ticks", "1500",
-		"--no-wall", "--sprint", d.bin, "--disk-floor", "0"}
-	if reader {
-		args = append(args, "--reader")
+	rn := &nativeRunner{self: builtTool, harness: harness, model: "fake/fake-model", root: root, slots: filepath.Join(root, "slots"),
+		resultsRoot: filepath.Join(root, "results"), deadline: time.Minute, tokens: "unmetered", noWall: true, stderr: io.Discard}
+	var pu member.Pusher
+	if !reader {
+		pu = newGitPusher(root, rn.slots)
 	}
-	cmd := exec.Command(builtTool, args...)
-	cmd.Env = append(os.Environ(), "NOVA_SPRINT_REDIS="+d.addr)
 	out := &lockedBuf{}
-	cmd.Stdout, cmd.Stderr = out, out
-	if err := cmd.Start(); err != nil {
-		d.t.Fatalf("starting member %s: %v", as, err)
-	}
 	d.t.Cleanup(func() {
-		_ = cmd.Process.Kill()
-		_ = cmd.Wait()
 		if d.t.Failed() {
 			d.t.Logf("member %s output:\n%s", as, out.String())
 		}
 	})
-	return out
+	return member.New(member.Config{As: as, Width: 2, Reader: reader}, d.worker(), rn, pu, out), out
 }
 
 // memberCard is the brief of the test's cards: a card that passes the card lint
@@ -201,13 +213,13 @@ var memberCard = "RESULT: <label> sha=<sha12>\n" +
 	"STEP 1. Enter your worktree and read this card.\n" +
 	"STEP 2. Write RESULT.md: line 1 is line 1 of this card; under it the head and the report, in under 80 lines."
 
-// TestMemberFunctionalDriveWithFakeHarness is the member loop against
-// the real sprint: one member of width 2, two readers, three cards; every
-// process is the built binary and the store is a real redis-server in the
-// container. The member takes the work (never more than 2 working at once),
-// finishes it with the head and report the child's RESULT.md holds; the two
-// readers read every card; the coordinator accepts the reads and the merge
-// lands all three.
+// TestMemberFunctionalDriveWithFakeHarness is the member loop against the
+// real sprint: one member of width 2, two readers, three cards; every verb is
+// the built nova-sprint, as the sprint's server runs it (memberDrive.worker),
+// and every card one native child of the built nova-swarm. The member takes the
+// work (never more than 2 working at once), pushes it and finishes it with the
+// head and report the child's RESULT.md holds; the two readers read every card;
+// the coordinator accepts the reads and the merge lands all three.
 func TestMemberFunctionalDriveWithFakeHarness(t *testing.T) {
 	t.Parallel()
 	testMemberFunctionalDrive(t)
@@ -216,13 +228,7 @@ func TestMemberFunctionalDriveWithFakeHarness(t *testing.T) {
 func testMemberFunctionalDrive(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
-	addr := testutil.Start(t)
-	c := redis.NewClient(&redis.Options{Addr: addr})
-	defer c.Close()
-	if err := fn.Load(ctx, c); err != nil {
-		t.Fatal(err)
-	}
-	d := &memberDrive{t: t, addr: addr, bin: builtSprint(t)}
+	d := &memberDrive{t: t, addr: "mem:" + filepath.Join(t.TempDir(), "sprint.twin"), bin: builtSprint(t)}
 	harness := filepath.Join(t.TempDir(), "harness.sh")
 	if err := testbin.WriteExecutable(harness, []byte(fakeHarness), 0o755); err != nil {
 		t.Fatal(err)
@@ -239,9 +245,9 @@ func testMemberFunctionalDrive(t *testing.T) {
 	d.must("init", "--members", "m1:2", "--readers", "reader-a,reader-b")
 	d.must("add", "--stream", "a", "--count", "3", "--brief", first+"\nbase-repo: "+origin+"\nBASE: main\n"+rest)
 	d.must("start")
-	mOut := d.startMember("m1", harness, false)
-	aOut := d.startMember("reader-a", harness, true)
-	bOut := d.startMember("reader-b", harness, true)
+	m1, mOut := d.member("m1", harness, false)
+	ra, aOut := d.member("reader-a", harness, true)
+	rb, bOut := d.member("reader-b", harness, true)
 
 	maxWorking := 0
 	var w sprintWhere
@@ -250,6 +256,11 @@ func testMemberFunctionalDrive(t *testing.T) {
 			t.Fatalf("the sprint did not reach 3 done and 6 reads ok in time: %+v\nm1:\n%s\nreader-a:\n%s\nreader-b:\n%s", w, mOut, aOut, bOut)
 		}
 		d.must("tick")
+		for _, m := range []*member.Member{m1, ra, rb} {
+			if _, err := m.Tick(time.Now()); err != nil {
+				t.Fatalf("a member's pass: %v", err)
+			}
+		}
 		if n := d.working("m1"); n > maxWorking {
 			maxWorking = n
 		}
@@ -266,9 +277,8 @@ func testMemberFunctionalDrive(t *testing.T) {
 		t.Errorf("the most cards m1 had working at once was %d, want 2 (width 2, three ready)", maxWorking)
 	}
 	// Each card ran once, and every report was taken: a verb refused (exit 1)
-	// is a fault of the loop; one the store could not answer (exit 2, a read
-	// that raced a write) is retried, so the reports that landed are counted.
-	for _, tc := range []struct{ name, out, verb string }{{"m1", mOut.String(), "finish"}, {"reader-a", aOut.String(), "read"}, {"reader-b", bOut.String(), "read"}} {
+	// is a fault of the loop.
+	for _, tc := range []struct{ name, out, verb string }{{"m1", "\n" + mOut.String(), "finish"}, {"reader-a", "\n" + aOut.String(), "read"}, {"reader-b", "\n" + bOut.String(), "read"}} {
 		if strings.Contains(tc.out, "refused") || strings.Contains(tc.out, "exit=1") {
 			t.Errorf("%s: a verb was refused:\n%s", tc.name, tc.out)
 		}

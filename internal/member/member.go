@@ -396,21 +396,6 @@ func (m *Member) woken() {
 	}
 }
 
-// readCall is the member's beat or queue verb, asked again once when the store
-// did not answer (exit 2): a round trip that timed out is one miss of a beat
-// window, never a down member (docs/SPEC-SPRINT.md section 5, a member's
-// presence; tla/DirtyTick.tla, Lapse needs MissedBeatsDown misses), and the
-// second ask is the member's own before it reports the miss. Each ask has the
-// store client's deadline, five seconds (internal/redisconn ReadTimeout), the
-// least a tailnet round trip with jitter needs.
-func (m *Member) readCall(args ...string) (int, []byte) {
-	code, out := m.run(args...)
-	if code == 2 {
-		code, out = m.run(args...)
-	}
-	return code, out
-}
-
 // THE BEAT GOES ON ITS OWN CLOCK (the fleet pass of 2026-10-01: a machine alive, pushing and
 // finishing, marked `down: no beat for 45s`). The work pass is serial: the queue, then for each
 // ended card a push to the forge and a finish, then the take and the starts; from a machine
@@ -470,8 +455,8 @@ func (m *Member) Stalled() time.Duration {
 // written, so the ten-second highest nova-sprint keeps over its beats (docs/SPEC-SPRINT.md,
 // the fleet) is the highest of the last ten seconds; with no sample it names none and
 // nova-sprint fleet beat measures the machine itself. A reader's is its queue, the verb that
-// is a reader's beat (docs/SPEC-SPRINT.md, the readers), its answer not read. A store that
-// does not answer is asked again once (readCall's rule), and then the error.
+// is a reader's beat (docs/SPEC-SPRINT.md, the readers), its answer not read. A beat that
+// fails is the error: the next goes at the next interval.
 func (m *Member) Beat() error {
 	m.beatMu.Lock()
 	defer m.beatMu.Unlock()
@@ -488,9 +473,6 @@ func (m *Member) Beat() error {
 		}
 	}
 	code, out := m.sprint.Run(args...)
-	if code == 2 {
-		code, out = m.sprint.Run(args...)
-	}
 	if code == 0 && !m.cfg.Reader && m.cfg.Meter != nil {
 		m.beaten = total
 	}
@@ -563,7 +545,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 	}()
 	// the beat is not this pass's: it goes on its own clock (BeatLoop), so a pass held for
 	// minutes by its pushes and finishes never lets the machine go down while it works
-	code, out := m.readCall("queue", "--as", m.cfg.As, "--json")
+	code, out := m.run("queue", "--as", m.cfg.As, "--json")
 	m.spent.Queue = since()
 	if code != 0 {
 		return 0, fmt.Errorf("queue: exit %d: %s", code, strings.TrimSpace(string(out)))
@@ -1192,7 +1174,7 @@ func oneLine(s string) string {
 // mechanics the sprint adds: the attempt, the branch and base when a base
 // names a repository, the fix of this attempt, the notes, and the exact
 // command that reports it. Nothing is put in front of the brief.
-func CardText(p Packet, sprintBin string) string {
+func CardText(p Packet) string {
 	var b strings.Builder
 	brief := strings.TrimRight(p.Brief, "\n")
 	if brief != "" {
@@ -1229,9 +1211,9 @@ func CardText(p Packet, sprintBin string) string {
 	}
 	b.WriteString("Your RESULT.md's `report:` line is what the sprint records as your report; the member reports it for you as:\n\n")
 	if p.Kind == "read" {
-		fmt.Fprintf(&b, "    %s read --as %s (--ok | --broken) %s --epoch %d --finding '<one line>'\n", sprintBin, p.As, p.Card, p.Epoch)
+		fmt.Fprintf(&b, "    nova-sprint read --as %s (--ok | --broken) %s --epoch %d --finding '<one line>'\n", p.As, p.Card, p.Epoch)
 	} else {
-		fmt.Fprintf(&b, "    %s finish --as %s %s@%d --epoch %d --branch %s --head <sha> --report '<one line>' [--failed]\n", sprintBin, p.As, p.Card, p.Gen, p.Epoch, p.Branch)
+		fmt.Fprintf(&b, "    nova-sprint finish --as %s %s@%d --epoch %d --branch %s --head <sha> --report '<one line>' [--failed]\n", p.As, p.Card, p.Gen, p.Epoch, p.Branch)
 	}
 	return b.String()
 }

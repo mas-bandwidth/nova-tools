@@ -145,15 +145,15 @@ var swarmAudit = audit.Config{
 		// this verb hands it, and every argument it prints is a card id, a count or a
 		// verb name from the sprint's own JSON.
 		`"bufio"`, `"github.com/mas-bandwidth/nova-tools/internal/member"`,
-		// member.go calls only log.Redact, a pure string transformer, on a failed
-		// nova-sprint child's captured streams before they reach the member's writer.
-		// It holds no writer here; the transformed value is escaped and bounded by
+		// member.go calls only log.Redact, a pure string transformer, on what a failed
+		// sprint verb printed, as the server answered it, before it reaches the member's
+		// writer. It holds no writer here; the transformed value is escaped and bounded by
 		// sprintFailureOutput before internal/member can print it.
 		`"github.com/mas-bandwidth/nova-tools/internal/log"`,
 		// member.go hands internal/sprintwire's Worker to the member as its sprint (--server):
 		// it sends a verb's arguments to the sprint's server and returns the answer as a
 		// value. It holds no writer and prints nothing; a failed verb's words go through
-		// sprintFailureOutput, as execSprint's do, before internal/member can print them.
+		// sprintFailureOutput before internal/member can print them.
 		`"github.com/mas-bandwidth/nova-tools/internal/sprintwire"`,
 		// bounded prints the capped listings and the one MORE line that stands for what
 		// they did not print. Every line reaching it is rendered by a fmt.Sprintf in THIS
