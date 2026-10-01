@@ -427,6 +427,7 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 	if *wait && a.twinOpen(c.redis) {
 		return refuse(stderr, "inbox", twinMachine)
 	}
+	woke := false
 	if *wait {
 		// the coordinator's one wake a tick (errata 3 amendment 8): the next
 		// tick-end note after the notes as they stand now
@@ -437,7 +438,7 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 		if err != nil {
 			return a.readFailed("inbox", err, stderr)
 		}
-		woke, err := st.WaitTickEnd(ctx, from, *timeout)
+		woke, err = st.WaitTickEnd(ctx, from, *timeout)
 		if err != nil {
 			return a.readFailed("inbox", err, stderr)
 		}
@@ -473,6 +474,11 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 		judgments, happened := inboxActs(groups, a.now())
 		out := map[string]any{"groups": groups, "judgments": judgments, "happened": happened, "done": mach.Done(),
 			"last": v.Last, "cursor": v.Cursor, "at": a.now(), "machine": machine}
+		if *wait {
+			// the timeout is in both renderings: the plain line above, and
+			// woke=false here (the one-value rule)
+			out["woke"] = woke
+		}
 		if opened != nil {
 			out["open"] = nonNil(opened.Members)
 			if len(opened.Needs) > 0 {

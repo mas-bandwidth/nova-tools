@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
@@ -306,7 +308,9 @@ func TestInboxJSONSaysWhenTheSprintIsDone(t *testing.T) {
 }
 
 // inbox --wait --json on timeout emits only the clean JSON payload, with no
-// plain-text timeout banner preceding it (stella-89ad0fb7b7c4).
+// plain-text timeout banner preceding it, and the payload carries the timeout
+// as woke=false so both renderings say it (stella-89ad0fb7b7c4, the one-value
+// rule).
 func TestInboxWaitWithJSONOnTimeoutEmitsOnlyValidJSON(t *testing.T) {
 	t.Parallel()
 	ta := newTestApp(t)
@@ -316,16 +320,11 @@ func TestInboxWaitWithJSONOnTimeoutEmitsOnlyValidJSON(t *testing.T) {
 		"inbox --wait --json",
 	} {
 		out := ta.ok(cmd)
-		if strings.Contains(out, "inbox --wait:") {
-			t.Fatalf("%s: plain-text banner printed before JSON:\n%s", cmd, out)
-		}
+		require.NotContains(t, out, "inbox --wait:", "%s: plain-text banner printed before JSON", cmd)
 		var in map[string]any
-		if err := json.Unmarshal([]byte(out), &in); err != nil {
-			t.Fatalf("%s: stdout is not valid JSON (%v):\n%s", cmd, err, out)
-		}
+		require.NoError(t, json.Unmarshal([]byte(out), &in), "%s: stdout is not valid JSON:\n%s", cmd, out)
+		require.Contains(t, in, "woke", "%s: the timeout is in the JSON too", cmd)
+		require.Equal(t, false, in["woke"], "%s: no tick end arrived", cmd)
 	}
-	plain := ta.ok("inbox --wait --timeout 50ms")
-	if !strings.Contains(plain, "inbox --wait: no tick end in 50ms") {
-		t.Fatalf("inbox --wait --timeout 50ms: want timeout banner in stdout:\n%s", plain)
-	}
+	require.Contains(t, ta.ok("inbox --wait --timeout 50ms"), "inbox --wait: no tick end in 50ms")
 }
