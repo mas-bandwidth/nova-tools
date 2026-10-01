@@ -44,7 +44,6 @@ internal/bounded:assert 41 bare assertions to convert to testify
 internal/buildinfo:assert 41 bare assertions to convert to testify
 internal/bus:assert 1197 bare assertions to convert to testify
 internal/bus:env 1 t.Setenv and Chdir sites to inject through config
-internal/cairn:assert 79 bare assertions to convert to testify
 internal/cardhdr:assert 46 bare assertions to convert to testify
 internal/check:assert 419 bare assertions to convert to testify
 internal/check:env 1 t.Setenv and Chdir sites to inject through config
