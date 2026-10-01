@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
-	"strconv"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
@@ -268,7 +267,7 @@ func (st *Store) SyncFleet(ctx context.Context) (bool, error) {
 	for _, row := range shape.Rows {
 		m, _ := rs.Member(pinned.sid(sprint.CtlID(row.Key)))
 		ctl := &sprint.Card{Fields: m.Fields}
-		want := map[string]string{sprint.Status: dash(ctl.F("status")), sprint.Load: "", sprint.FieldWidth: sprint.WidthText(ctl), sprint.Provider: providerText(ctl)}
+		want := map[string]string{sprint.Status: dash(ctl.F("status")), sprint.Load: "", sprint.FieldWidth: sprint.WidthText(ctl)}
 		if beats != nil {
 			b := beats[row.Key]
 			want[sprint.Status], want[sprint.Load] = sprint.MemberStatus(ctl, b, now), sprint.LoadText(b, now)
@@ -278,12 +277,6 @@ func (st *Store) SyncFleet(ctx context.Context) (bool, error) {
 		}
 	}
 	return len(diffs) > 0, pinned.setRows(ctx, shape.Name, diffs)
-}
-
-// providerText is the provider column's cell: the provider failures the member
-// reported (sprint.FieldProviderFailures), 0 when it reported none.
-func providerText(ctl *sprint.Card) string {
-	return strconv.Itoa(ctl.Int(sprint.FieldProviderFailures))
 }
 
 // fleetBeats is the fleet's shape, from the shapes a tick read or else read
