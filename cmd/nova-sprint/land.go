@@ -72,7 +72,9 @@ Landing, the coordinator's: an external delivery (git pushes the base) and a sto
     push, and the report lands the batch only while the queue starts with those
     heads at that epoch (one store step). A clear, an accept ahead, a return,
     a rework or a crash after the check leaves the push unreported (LAND
-    FAILED, exit 2; land again recovers it); a clear there pushes for an epoch
+    FAILED, exit 2; run land again, never a bare merge, and its own checks
+    decide: an unchanged card is recorded with no new push, a reworked one
+    merged at its new head or met in conflict); a clear there pushes for an epoch
     just left: nothing is recorded for it, and the push is not undone.
   nova-sprint land --stream s1
     run again, it recovers once the outside is quiet (tla/Land.tla, Recovers),
@@ -457,25 +459,23 @@ func (l *lander) fact(b landBatch, r sprint.MergeReq, pins []landCard, fact, why
 	res, err := l.step(r, pins)
 	if code := stepExit(res, err); code != 0 {
 		b.Fact = ""
-		b.Reason = why + "; the merge step did not record it (" + stepWhy(res, err) + "); run: nova-sprint merge --stream " + r.Stream + " " + factFlag(r)
+		b.Reason = why + "; the merge step did not record it (" + stepWhy(res, err) + "); " + againRemedy(r.Stream)
 	}
 	l.out = append(l.out, b)
 	return false, true
 }
 
-// factFlag is the merge verb's flag for a request's fact.
-func factFlag(r sprint.MergeReq) string {
-	switch {
-	case r.Conflict != "":
-		return "--batch 1 --conflict " + r.Conflict
-	case r.Red:
-		return "--batch " + strconv.Itoa(r.Batch) + " --red"
-	}
-	return "--batch " + strconv.Itoa(r.Batch) + " --rejected"
+// againRemedy is the one remedy land names when a report did not go through:
+// land again, which rereads the current queue and lets its own checks decide.
+// A bare merge step is never offered: after a rework the queue starts with the
+// same ids at a head the base does not hold, and merge --batch would record it
+// past the head guard (tla/Land.tla, idguard).
+func againRemedy(stream string) string {
+	return "run land again, which rereads the queue and lets its checks decide (where the cards are as they were, their merges and push are no-ops and the report records them; a card reworked since is merged at its new head, or meets a real conflict): nova-sprint land --stream " + stream
 }
 
 // landed reports a pushed batch through the merge step; false (and the line
-// FAILED, with the merge command to run) when the store did not take it.
+// FAILED, with land again as the remedy) when the store did not take it.
 func (l *lander) landed(b landBatch, stream string, pins []landCard) bool {
 	ids := make([]string, len(pins))
 	for i, c := range pins {
@@ -485,7 +485,7 @@ func (l *lander) landed(b landBatch, stream string, pins []landCard) bool {
 	res, err := l.step(sprint.MergeReq{Stream: stream, Batch: len(ids), Who: l.c.actor}, pins)
 	if code := stepExit(res, err); code != 0 || !movedExactly(res.Moved, ids) {
 		b.Status, b.Reason = "failed", "the batch was pushed to "+b.Base+" at "+b.Tip+" and NOT reported ("+stepWhy(res, err)+
-			"); run land again to report it (its merges and push are no-ops), or by hand once the queue starts with "+idSpan(ids)+": nova-sprint merge --stream "+stream+" --batch "+strconv.Itoa(len(ids))
+			"); "+againRemedy(stream)
 		l.out = append(l.out, b)
 		return false
 	}

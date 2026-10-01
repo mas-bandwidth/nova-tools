@@ -232,7 +232,9 @@ func TestLandSaysLoudlyWhenAPushedBatchIsNotReported(t *testing.T) {
 	tip := r.git(r.remote, "rev-parse", "main")
 	assert.Contains(t, errs, "LAND FAILED stream=s1 cards=2 base=main tip="+tip+" ids=s1-1..s1-2")
 	assert.Contains(t, errs, "and NOT reported (s1: the merge queue of s1 holds 1 cards now, fewer than the batch of 2")
-	assert.Contains(t, errs, "run land again to report it (its merges and push are no-ops), or by hand once the queue starts with s1-1..s1-2: nova-sprint merge --stream s1 --batch 2")
+	assert.Contains(t, errs, "run land again, which rereads the queue and lets its checks decide")
+	assert.Contains(t, errs, ": nova-sprint land --stream s1\n")
+	assert.NotContains(t, errs, "merge --stream", "a bare merge step would pass the head guard")
 	assert.Equal(t, []string{"land s1-2 (sprint stream s1)", "land s1-1 (sprint stream s1)", "base"}, r.mainLog())
 	// the guard landed nothing it did not push: s1-1 went back to review, s1-2 is still queued
 	assert.Equal(t, map[string]string{"s1-1": "review/returned", "s1-2": "merging/queued"}, r.places("s1-1", "s1-2"))
@@ -471,6 +473,10 @@ func TestLandRefusesAReworkedHeadAndLandsItOnTheNextRun(t *testing.T) {
 	assert.Equal(t, 2, code)
 	assert.Contains(t, errs, "LAND FAILED stream=s1 cards=1")
 	assert.Contains(t, errs, "s1-1 is at attempt 2 head "+replacement+" now, not attempt 1 head "+old)
+	// the remedy is land again, never the merge step: here the queue starts
+	// with s1-1 and merge --batch 1 would record the head the base lacks
+	assert.Contains(t, errs, "a card reworked since is merged at its new head, or meets a real conflict): nova-sprint land --stream s1")
+	assert.NotContains(t, errs, "merge --stream")
 	assert.Equal(t, "attempt 1\n", r.git(r.remote, "show", "main:a.txt")+"\n")
 	assert.Equal(t, map[string]string{"s1-1": "merging/queued"}, r.places("s1-1"))
 	r.a.beforePush = nil
