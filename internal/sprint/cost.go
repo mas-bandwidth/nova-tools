@@ -3,6 +3,7 @@ package sprint
 import (
 	"cmp"
 	"fmt"
+	"math/big"
 	"strconv"
 	"strings"
 	"time"
@@ -211,4 +212,108 @@ func seconds(n int64) string {
 		return "-"
 	}
 	return strconv.FormatInt(n, 10) + "s"
+}
+
+// FieldCost is a landed primary's total cost and a stream's control card's sum over
+// its landed primaries: an exact decimal in USD, absent when nothing of it was priced.
+// The work table's cost column shows the control card's (Cost; SyncMirrors).
+const FieldCost = "cost"
+
+// Charged is what the producer cost, one figure: over its consumers, each one's actual
+// cost where one was reported, else its predicted one; a consumer with neither adds
+// nothing. usd is "" when no consumer had either; priced is how many did.
+func (v CardCostView) Charged() (usd string, priced int) {
+	var vals []string
+	for _, c := range v.Consumers {
+		if x := cmp.Or(c.Usage.Actual, c.Usage.Predicted); x != "" {
+			vals = append(vals, x)
+		}
+	}
+	if len(vals) == 0 {
+		return "", 0
+	}
+	sum, ok := cardcost.Sum(vals...)
+	if !ok {
+		return "", 0
+	}
+	return sum, len(vals)
+}
+
+// consumersOf are the work and read cards of the primary as the snapshot holds them,
+// placed or kept as records (LandingExtras reads the kept ones): every attempt's work
+// card, and every attempt's read card of every reader row.
+func consumersOf(s *Snapshot, pr *Card) (work, reads []*Card) {
+	for k := 1; k <= pr.Int("attempt"); k++ {
+		if c := s.Fleet.Card(WorkCardID(pr.ID, k)); c != nil {
+			work = append(work, c)
+		}
+		for _, rd := range s.Readers.Rows() {
+			if c := s.Readers.Card(ReadCardID(pr.ID, k, rd)); c != nil {
+				reads = append(reads, c)
+			}
+		}
+	}
+	return work, reads
+}
+
+// LandingExtras are the consumer cards a merge of the stream may land must read as
+// records when they are not placed: every work and read card of each primary queued
+// on the stream in the merge table (consumersOf), so a landing's total leaves no
+// consumer out, a read returned and retired included. The merge table names them: the
+// work table may still hold them in review under the queue the pump drains.
+func LandingExtras(stream string) func(*Snapshot) map[string][]string {
+	return func(s *Snapshot) map[string][]string {
+		if s.Work == nil || s.Fleet == nil || s.Readers == nil || s.Merge == nil {
+			return nil
+		}
+		var work, reads []string
+		for _, mc := range s.Merge.Cell(stream, Queued) {
+			pr := s.Work.Card(mc.ID)
+			if pr == nil {
+				continue
+			}
+			for k := 1; k <= pr.Int("attempt"); k++ {
+				if id := WorkCardID(pr.ID, k); s.Fleet.Card(id) == nil {
+					work = append(work, id)
+				}
+				for _, rd := range s.Readers.Rows() {
+					if id := ReadCardID(pr.ID, k, rd); s.Readers.Card(id) == nil {
+						reads = append(reads, id)
+					}
+				}
+			}
+		}
+		out := map[string][]string{}
+		if len(work) > 0 {
+			out[Fleet] = work
+		}
+		if len(reads) > 0 {
+			out[Readers] = reads
+		}
+		return out
+	}
+}
+
+// landingCost is the total of the primary as it lands (FieldCost), from every one of
+// its consumers' records; "" when none was priced.
+func landingCost(s *Snapshot, pr *Card) string {
+	if s.Fleet == nil || s.Readers == nil {
+		return ""
+	}
+	work, reads := consumersOf(s, pr)
+	usd, _ := CardCost(work, reads).Charged()
+	return usd
+}
+
+// MoneyText is a cost as the work table's cost cell shows it: US dollars to four
+// places ("$1.2345"), "-" when there is none.
+func MoneyText(usd string) string {
+	if usd == "" {
+		return "-"
+	}
+	r, ok := new(big.Rat).SetString(usd)
+	if !ok {
+		return "-"
+	}
+	return "$" + r.FloatString(4)
 }

@@ -138,7 +138,10 @@ done in <time from the first start> while it runs, and STOPPED ... done once
 the machine has stopped itself).
 
 The tables are work, merge, readers and fleet, and the view is sprint; a store
-holds one sprint (a second sprint is a second store). clear and teardown want
+holds one sprint (a second sprint is a second store). The work table's cost
+column is, per stream, the sum of its landed cards' total cost in US dollars
+(each consumer's actual cost, else its predicted one; - when none was priced),
+with the sum over the streams at the bottom; card <id> shows the detail. clear and teardown want
 --confirm sprint, the name of the view, and refuse anything else.
 
 A work card is named with its generation, <card>@<gen>: the generation the
