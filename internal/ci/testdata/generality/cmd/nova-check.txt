@@ -1,0 +1,9 @@
+# Migrated counted package ledger; original row keys preserved.
+# ceiling: 7
+cmd/nova-check/convergence.go:glenn 1
+cmd/nova-check/convergence.go:mas-bandwidth 1
+cmd/nova-check/convergence.go:rowan 1
+cmd/nova-check/dogfood.go:glenn 1
+cmd/nova-check/dogfood.go:space 1
+cmd/nova-check/hygiene.go:space 1
+cmd/nova-check/staged.go:space 1

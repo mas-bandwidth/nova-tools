@@ -126,13 +126,11 @@ func TestTESTSFirstRunIsWhatTheToolPrints(t *testing.T) {
 	// the index that shows it and the receipt that proves it. A block that has
 	// quietly lost one of the four verbs is short of a first run, and no
 	// per-line comparison would say so -- the lines that remain would match.
-	verbs := map[string]bool{}
+	var verbs []string
 	for _, s := range steps {
-		verbs[s.Args[0]] = true
+		verbs = append(verbs, s.Args[0])
 	}
-	for _, verb := range []string{"open", "append", "index", "receipt"} {
-		assert.True(t, verbs[verb], "the `### First run` block never runs `nova-cairn %s`; the first sitting is all four verbs", verb)
-	}
+	assert.Subset(t, verbs, []string{"open", "append", "index", "receipt"}, "the `### First run` block never runs one of the four verbs; the first sitting is all four")
 
 	// ONE store for the whole sitting: the transcript opens a record and then
 	// appends to it, and a fresh directory per line would unmake that.

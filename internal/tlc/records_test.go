@@ -2,12 +2,14 @@ package tlc
 
 import (
 	"bytes"
-	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func rec(config, inputs string) Record {
@@ -21,31 +23,25 @@ func TestRecordsRoundTrip(t *testing.T) {
 	in := []Record{rec("MCA.cfg", "x"), rec("MCB.cfg", "x")}
 	in[1].Exit, in[1].Result, in[1].Generated, in[1].Distinct = 124, "FAIL", "-", "-"
 	var b bytes.Buffer
-	if err := WriteRecords(&b, in); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, WriteRecords(&b, in))
 	if !strings.HasPrefix(b.String(), "config\tmodule\tinput_sha256\tinput_files\tjar_sha256\tjava_version\thost\tcpus\tstarted_utc\tworkers\tgenerated\tdistinct\tseconds\texit\tresult\texpected\tproperty\tbudget\tmode\n") {
 		t.Fatalf("header: %q", strings.SplitN(b.String(), "\n", 2)[0])
 	}
 	out, err := ReadRecords(&b)
-	if err != nil || !reflect.DeepEqual(in, out) {
-		t.Fatalf("round trip = %v, %v", out, err)
-	}
+	require.NoError(t, err, "round trip = %v, %v", out, err)
+	require.Equal(t, in, out, "round trip = %v, %v", out, err)
 }
 
 func TestRecordsRefuseWhatIsNotTheirFormat(t *testing.T) {
 	t.Parallel()
 	bad := rec("MCA.cfg", "x")
 	bad.Host = "two\twords"
-	if err := WriteRecords(&bytes.Buffer{}, []Record{bad}); err == nil {
-		t.Error("a field with a tab was written")
-	}
+	assert.Error(t, WriteRecords(&bytes.Buffer{}, []Record{bad}), "a field with a tab was written")
 	good := strings.Join(RecordsHeader, "\t") + "\n"
 	// The plain forms are read, the exit's negative sign included.
 	for _, exit := range []string{"0", "12", "124", "-1"} {
-		if _, err := ReadRecords(strings.NewReader(good + badRow("10", "2", exit))); err != nil {
-			t.Errorf("exit %s refused: %v", exit, err)
-		}
+		_, err := ReadRecords(strings.NewReader(good + badRow("10", "2", exit)))
+		assert.NoError(t, err, "exit %s refused: %v", exit, err)
 	}
 	for name, text := range map[string]string{
 		"a wrong header":         "config\tmodule\n",
@@ -66,9 +62,8 @@ func TestRecordsRefuseWhatIsNotTheirFormat(t *testing.T) {
 		"an exit with text":      good + badRow("3", "2", "12x"),
 		"an exit with a sign":    good + badRow("3", "2", "+12"),
 	} {
-		if _, err := ReadRecords(strings.NewReader(text)); err == nil {
-			t.Errorf("%s was read", name)
-		}
+		_, err := ReadRecords(strings.NewReader(text))
+		assert.Error(t, err, "%s was read", name)
 	}
 }
 
@@ -86,16 +81,12 @@ func mergeTree(t *testing.T) (Source, []Case, map[string]Record) {
 		"MCA.cfg": "c\n", "MCB.cfg": "c\n", "MCC.cfg": "c\n",
 	})
 	cases, err := LoadCases(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	src := testSource(t, root)
 	recs := map[string]Record{}
 	for _, c := range cases {
 		fp, n, err := src.Fingerprint(c.Config)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		r := rec(c.Config, fp)
 		r.Module, r.InputFiles = c.Module, n
 		recs[c.Config] = r
@@ -108,9 +99,8 @@ func TestMergeOrdersByThePlanAndRefusesWhatIsWrong(t *testing.T) {
 	src, cases, recs := mergeTree(t)
 	a, b, c := recs["MCA.cfg"], recs["MCB.cfg"], recs["MCC.cfg"]
 	got, err := Merge(src, cases, []Record{c}, []Record{a, b})
-	if err != nil || !reflect.DeepEqual(got, []Record{a, b, c}) {
-		t.Fatalf("merge = %v, %v", got, err)
-	}
+	require.NoError(t, err, "merge = %v, %v", got, err)
+	require.Equal(t, []Record{a, b, c}, got, "merge = %v, %v", got, err)
 	stale := c
 	stale.InputSHA256 = strings.Repeat("0", 64)
 	fewer := c
@@ -140,17 +130,13 @@ func TestMergeRefusesRecordsOfAnotherRunnerOrEditedModel(t *testing.T) {
 	t.Parallel()
 	src, cases, recs := mergeTree(t)
 	all := []Record{recs["MCA.cfg"], recs["MCB.cfg"], recs["MCC.cfg"]}
-	if _, err := Merge(src, cases, all); err != nil {
-		t.Fatal(err)
-	}
+	_, err := Merge(src, cases, all)
+	require.NoError(t, err)
 	otherRunner := src
 	otherRunner.Runner = map[string][]byte{"internal/tlc/run.go": []byte("another reading of the results\n")}
-	if _, err := Merge(otherRunner, cases, all); err == nil || !strings.Contains(err.Error(), "3 records were measured on other inputs") {
-		t.Errorf("records of another runner: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(src.TLADir, "Shared.tla"), []byte("edited\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	_, err = Merge(otherRunner, cases, all)
+	assert.ErrorContains(t, err, "3 records were measured on other inputs", "records of another runner")
+	require.NoError(t, os.WriteFile(filepath.Join(src.TLADir, "Shared.tla"), []byte("edited\n"), 0o644))
 	if _, err := Merge(src, cases, all); err == nil || !strings.Contains(err.Error(), "2 records were measured on other inputs than these: MCA.cfg (") || strings.Contains(err.Error(), "MCC.cfg") {
 		t.Errorf("records of a model edited since: %v", err)
 	}
@@ -168,13 +154,10 @@ func TestMergeRefusesRecordsOfMoreThanOneJar(t *testing.T) {
 	c.JarSHA256 = strings.Repeat("c", 64)
 	_, err := Merge(src, cases, []Record{a, b}, []Record{c})
 	want := "the records hold 2 jars: aaaaaaaaaaaa (2 records), cccccccccccc (1 records); one jar measures the whole file: run again, with the jar aaaaaaaaaaaa, the groups recorded under the other jars (gamma: MCC.cfg), or run every group with one jar and merge without --keep"
-	if err == nil || err.Error() != want {
-		t.Fatalf("got %v\nwant %s", err, want)
-	}
+	require.EqualError(t, err, want, "got %v\nwant %s", err, want)
 	c.JarSHA256 = a.JarSHA256
-	if _, err := Merge(src, cases, []Record{a, b, c}); err != nil {
-		t.Fatalf("one jar refused: %v", err)
-	}
+	_, err = Merge(src, cases, []Record{a, b, c})
+	require.NoError(t, err, "one jar refused")
 }
 
 func badRow(files, workers, exit string) string {
@@ -188,17 +171,12 @@ func TestReadRecordsNamesTheLayoutItFoundAndTheOneItExpects(t *testing.T) {
 	old := "config\tmodule\tinput_sha256\tjar_sha256\thost\tstarted_utc\tgenerated\tdistinct\tseconds\texit\tresult\texpected\tproperty\tbudget\tmode\n" +
 		"MCA.cfg\tMCA.tla\tx\tj\th\tt\t1\t1\t1\t0\tPASS\tpass\t-\t110\tbounded\n"
 	_, err := ReadRecords(strings.NewReader(old))
-	if err == nil {
-		t.Fatal("the old layout was read")
-	}
+	require.Error(t, err, "the old layout was read")
 	for _, want := range []string{"another layout", "found 15 columns (config,module,input_sha256,jar_sha256,", "reads and writes 19 (config,module,input_sha256,input_files,jar_sha256,java_version,"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("%q lacks %q", err, want)
-		}
+		assert.ErrorContains(t, err, want, "%q lacks %q", err, want)
 	}
-	if _, err := ReadRecords(strings.NewReader(strings.Join(RecordsHeader, "\t") + "\nMCA.cfg\tMCA.tla\n")); err == nil || !strings.Contains(err.Error(), "line 2 has 2 fields, want 19") {
-		t.Errorf("a short row: %v", err)
-	}
+	_, err = ReadRecords(strings.NewReader(strings.Join(RecordsHeader, "\t") + "\nMCA.cfg\tMCA.tla\n"))
+	assert.ErrorContains(t, err, "line 2 has 2 fields, want 19", "a short row")
 }
 
 // A kept record is dropped for one of two reasons, and each is named.
@@ -218,14 +196,11 @@ func TestCarryNamesEachRecordItDrops(t *testing.T) {
 		t.Fatalf("kept %+v, %v", kept, err)
 	}
 	want := []Dropped{{Config: "MCB.cfg", Group: "beta", Why: DroppedStale}, {Config: "MCGone.cfg", Why: DroppedGone}}
-	if !reflect.DeepEqual(dropped, want) {
-		t.Fatalf("dropped %+v, want %+v", dropped, want)
-	}
+	require.Equal(t, want, dropped, "dropped %+v, want %+v", dropped, want)
 	_, err = Merge(src, cases, kept, []Record{recs["MCC.cfg"]})
 	var missing *MissingError
-	if !errors.As(err, &missing) || !reflect.DeepEqual(missing.Cases, []string{"MCB.cfg"}) {
-		t.Fatalf("merge error %v", err)
-	}
+	require.ErrorAs(t, err, &missing, "merge error %v", err)
+	require.Equal(t, []string{"MCB.cfg"}, missing.Cases, "merge error %v", err)
 }
 
 // The host column holds a platform label, never a machine name.
@@ -239,18 +214,13 @@ func TestPlatformIsTheGoosGoarchLabelOfALinuxMachine(t *testing.T) {
 		}
 	}
 	for _, bad := range [][2]string{{"darwin", "arm64"}, {"windows", "amd64"}, {"linux", "sparc"}, {"", ""}, {"linux", ""}} {
-		if got, err := Platform(bad[0], bad[1]); err == nil {
-			t.Errorf("%v gave %q", bad, got)
-		}
+		got, err := Platform(bad[0], bad[1])
+		assert.Error(t, err, "%v gave %q", bad, got)
 	}
 	for _, name := range []string{"build-host-7.example", "bench", "linux", "linux-", "Linux-amd64", "linux-amd64 ", "-amd64", ""} {
-		if ValidPlatform(name) {
-			t.Errorf("%q is a platform label", name)
-		}
+		assert.False(t, ValidPlatform(name), "%q is a platform label", name)
 	}
-	if !ValidPlatform("linux-amd64") {
-		t.Error("linux-amd64 is not a platform label")
-	}
+	assert.True(t, ValidPlatform("linux-amd64"), "linux-amd64 is not a platform label")
 }
 
 // A record's module, expected and property cells are copies of the case's
@@ -264,9 +234,8 @@ func TestARecordThatNamesAnotherModuleExpectationOrPropertyIsNotCurrent(t *testi
 		cases[i].Group = []string{"alpha", "beta", "gamma"}[i]
 	}
 	a, b, c := recs["MCA.cfg"], recs["MCB.cfg"], recs["MCC.cfg"]
-	if _, err := Merge(src, cases, []Record{a, b, c}); err != nil {
-		t.Fatalf("the unchanged control is refused: %v", err)
-	}
+	_, err := Merge(src, cases, []Record{a, b, c})
+	require.NoError(t, err, "the unchanged control is refused")
 	if got, err := StaleGroups(src, cases, []Record{a, b, c}); err != nil || len(got) != 0 {
 		t.Fatalf("the control has stale groups %v, %v", got, err)
 	}
@@ -281,9 +250,8 @@ func TestARecordThatNamesAnotherModuleExpectationOrPropertyIsNotCurrent(t *testi
 	} {
 		tampered := a
 		tc.edit(&tampered)
-		if tampered.InputSHA256 != a.InputSHA256 || tampered.InputFiles != a.InputFiles {
-			t.Fatalf("%s: the probe changed the fingerprint columns", tc.name)
-		}
+		require.Equal(t, a.InputSHA256, tampered.InputSHA256, "%s: the probe changed the fingerprint columns", tc.name)
+		require.Equal(t, a.InputFiles, tampered.InputFiles, "%s: the probe changed the fingerprint columns", tc.name)
 		if _, err := Merge(src, cases, []Record{tampered, b, c}); err == nil || !strings.Contains(err.Error(), "record for MCA.cfg does not match the plan") || !strings.Contains(err.Error(), tc.phrase) {
 			t.Errorf("%s: merge accepted or misnamed the record: %v", tc.name, err)
 		}

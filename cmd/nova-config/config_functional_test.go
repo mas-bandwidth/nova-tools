@@ -5,7 +5,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"net"
 	"os"
@@ -96,11 +95,11 @@ func TestMigrateTwiceThenTheSixVerbs(t *testing.T) {
 		t.Fatalf("status before migrate: %q %q", out, errs)
 	}
 	out, _ = r.run(t, 0, "migrate")
-	if !strings.HasPrefix(out, "CONFIG MIGRATE pg=postgres@127.0.0.1:") || !strings.HasSuffix(out, " from=0 to=5 applied=5\n") {
+	if !strings.HasPrefix(out, "CONFIG MIGRATE pg=postgres@127.0.0.1:") || !strings.HasSuffix(out, " from=0 to=6 applied=6\n") {
 		t.Fatalf("migrate: %q", out)
 	}
 	out, _ = r.run(t, 0, "migrate")
-	if !strings.HasSuffix(out, " from=5 to=5 applied=0\n") {
+	if !strings.HasSuffix(out, " from=6 to=6 applied=0\n") {
 		t.Fatalf("migrate twice: %q", out)
 	}
 	out, _ = r.run(t, 0, "machine", "add", "studio", "--user", "glenn", "--seat", "studio", "--slots", "64", "--runners", "1")
@@ -138,7 +137,7 @@ func TestMigrateTwiceThenTheSixVerbs(t *testing.T) {
 		t.Fatalf("fleet show: %q", out)
 	}
 	_, errs = r.run(t, 1, "fleet", "set", "--store", "space")
-	if errs != "nova-config fleet set: --store space names no machine row; run: nova-config fleet show\n" {
+	if errs != "nova-config fleet set: --store space names no machine row; run: nova-config machine list\n" {
 		t.Fatalf("fleet set naming no machine: %q", errs)
 	}
 	out, _ = r.run(t, 0, "fleet", "set", "--coordinator", "studio")
@@ -147,7 +146,7 @@ func TestMigrateTwiceThenTheSixVerbs(t *testing.T) {
 	}
 	// The sprint row: who coordinates; the friend it names cannot go.
 	_, errs = r.run(t, 1, "sprint", "set", "--coordinator", "nobody")
-	if errs != "nova-config sprint set: --coordinator nobody names no friend row; run: nova-config sprint show\n" {
+	if errs != "nova-config sprint set: --coordinator nobody names no friend row; run: nova-config friend list\n" {
 		t.Fatalf("sprint set naming no friend: %q", errs)
 	}
 	out, _ = r.run(t, 0, "sprint", "set", "--coordinator", "rowan")
@@ -190,7 +189,7 @@ func TestMigrateTwiceThenTheSixVerbs(t *testing.T) {
 		t.Fatalf("machine remove: %q", out)
 	}
 	out, _ = r.run(t, 0, "status")
-	if !strings.Contains(out, " schema=5 machine=0 machine_rev=9 fleet_rev=8 friend=0 friend_rev=7 sprint_rev=6 redis=-") {
+	if !strings.Contains(out, " schema=6 machine=0 machine_rev=9 fleet_rev=8 friend=0 friend_rev=7 sprint_rev=6 loop=0 loop_rev=0 redis=-") {
 		t.Fatalf("status: %q", out)
 	}
 }
@@ -213,7 +212,7 @@ func TestApplyEndToEnd(t *testing.T) {
 
 	// --check prints the plan and writes nothing but that beat.
 	out, _ := r.run(t, 0, "apply", "--check")
-	want := "CHECK ADD kind=machine name=hulk\nCHECK ADD kind=machine name=studio\nCONFIG CHECK kind=machine add=2 set=0 remove=0 rev=2 applied=0\nCHECK SET kind=fleet name=fleet changed=store,coordinator\nCONFIG CHECK kind=fleet add=0 set=1 remove=0 rev=5 applied=0\nCHECK ADD kind=friend name=rowan\nCHECK ADD kind=friend name=stella\nCONFIG CHECK kind=friend add=2 set=0 remove=0 rev=4 applied=0\nCHECK SET kind=sprint name=sprint changed=coordinator\nCONFIG CHECK kind=sprint add=0 set=1 remove=0 rev=6 applied=0\n"
+	want := "CHECK ADD kind=machine name=hulk\nCHECK ADD kind=machine name=studio\nCONFIG CHECK kind=machine add=2 set=0 remove=0 rev=2 applied=0\nCHECK SET kind=fleet name=fleet changed=store,coordinator\nCONFIG CHECK kind=fleet add=0 set=1 remove=0 rev=5 applied=0\nCHECK ADD kind=friend name=rowan\nCHECK ADD kind=friend name=stella\nCONFIG CHECK kind=friend add=2 set=0 remove=0 rev=4 applied=0\nCHECK SET kind=sprint name=sprint changed=coordinator\nCONFIG CHECK kind=sprint add=0 set=1 remove=0 rev=6 applied=0\nCONFIG CHECK kind=loop add=0 set=0 remove=0 rev=0 applied=0\n"
 	if out != want {
 		t.Fatalf("apply --check:\n%s\nwant:\n%s", out, want)
 	}
@@ -262,7 +261,7 @@ func TestApplyEndToEnd(t *testing.T) {
 		t.Fatalf("config:decl %v", got)
 	}
 	out, _ = r.run(t, 0, "status")
-	if !strings.Contains(out, " machine_applied=2 fleet_applied=5 friend_applied=4 sprint_applied=6\n") {
+	if !strings.Contains(out, " machine_applied=2 fleet_applied=5 friend_applied=4 sprint_applied=6 loop_applied=0\n") {
 		t.Fatalf("status after apply: %q", out)
 	}
 
@@ -352,54 +351,21 @@ func TestApplyEndToEnd(t *testing.T) {
 	}
 }
 
-// A lock held on the machines table blocks the inventory read; the verb gives
-// up at its --timeout with a refusal instead of waiting for ever.
-func TestInventoryTimesOutBehindALockOnTheMachinesTable(t *testing.T) {
-	t.Parallel()
-
-	r := newReal(t, false)
-	r.run(t, 0, "migrate")
-	r.run(t, 0, "machine", "add", "bench-alpha", "--user", "user-a", "--seat", "seat-alpha", "--slots", "4", "--as", "operator")
-
-	ctx := context.Background()
-	db, err := sql.Open("pgx", r.env["NOVA_PG_DSN"])
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := tx.ExecContext(ctx, `LOCK TABLE config.machines IN ACCESS EXCLUSIVE MODE`); err != nil {
-		t.Fatal(err)
-	}
-	out, errs := r.run(t, 2, "inventory", "--timeout", "300ms")
-	_ = tx.Rollback()
-	if out != "" || !strings.HasPrefix(errs, "nova-config inventory: timed out after 300ms waiting for the store while reading the machines and the fleet row; check that nothing holds a lock on config.machines or config.fleet; run: nova-config inventory --timeout 900ms") {
-		t.Fatalf("stdout %q stderr %q", out, errs)
-	}
-	// Released, the same verb answers.
-	out, _ = r.run(t, 0, "inventory", "--timeout", "5s")
-	if !strings.Contains(out, "bench-alpha") {
-		t.Fatalf("after the lock: %q", out)
-	}
-}
-
-// The wrapper the help prints, run with the built binary against the
-// throwaway Postgres, is a working inventory script.
+// The wrapper the help prints, run with the built binary against a store
+// apply wrote, is a working inventory script.
 func TestInventoryWrapperFromTheHelpRunsWithTheBuiltBinary(t *testing.T) {
 	t.Parallel()
 
-	r := newReal(t, false)
+	r := newReal(t, true)
 	r.run(t, 0, "migrate")
 	r.run(t, 0, "machine", "add", "bench-alpha", "--user", "user-a", "--seat", "seat-alpha", "--slots", "4", "--as", "operator")
+	r.run(t, 0, "apply", "--as", "operator")
 
 	help, _ := r.run(t, 0, "inventory", "-h")
 	printf, chmod := helpCommands(t, help)
 
 	dir := t.TempDir()
-	build := exec.Command("go", "build", "-o", filepath.Join(dir, "nova-config"), ".")
+	build := exec.Command("go", "build", "-buildvcs=false", "-o", filepath.Join(dir, "nova-config"), ".")
 	build.Env = goenv.Clean(os.Environ())
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("go build: %v\n%s", err, out)
@@ -408,7 +374,7 @@ func TestInventoryWrapperFromTheHelpRunsWithTheBuiltBinary(t *testing.T) {
 		t.Helper()
 		cmd := exec.Command("/bin/sh", "-c", script)
 		cmd.Dir = dir
-		cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "NOVA_PG_DSN="+r.env["NOVA_PG_DSN"])
+		cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "NOVA_SPRINT_REDIS="+r.env["NOVA_SPRINT_REDIS"], "NOVA_PG_DSN=postgres://nobody@127.0.0.1:1/none")
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("%s: %v\n%s", script, err, out)
@@ -423,20 +389,6 @@ func TestInventoryWrapperFromTheHelpRunsWithTheBuiltBinary(t *testing.T) {
 			t.Fatalf("./nova-inventory %s: %v\n%s", args, err, out)
 		}
 	}
-}
-
-// A database nothing has migrated has no config schema: inventory names the
-// migrate command instead of the raw SQL error.
-func TestInventoryOnAnUnmigratedDatabaseRefusesWithMigrate(t *testing.T) {
-	t.Parallel()
-
-	r := newReal(t, false)
-	out, errs := r.run(t, 1, "inventory")
-	if out != "" || !strings.HasPrefix(errs, "nova-config inventory: schema config is at version 0 and this binary carries ") || !strings.HasSuffix(errs, "; run: nova-config migrate\n") {
-		t.Fatalf("stdout %q stderr %q", out, errs)
-	}
-	r.run(t, 0, "migrate")
-	r.run(t, 0, "inventory")
 }
 
 // stallingListener accepts TCP connections and never writes, like a store
@@ -471,21 +423,20 @@ func stallingListener(t *testing.T) string {
 	return l.Addr().String()
 }
 
-// The flag governs the wait for the connection: the verb waits for its own
-// deadline, and when it expires it prints the timed-out refusal naming the
-// stage, whether the flag is shorter or longer than other verbs' bound. (That
-// no fixed bound caps a longer wait is the package's own test,
-// TestOpenPGBoundsByTheFallbackOnlyWithoutADeadline.)
+// The flag governs the wait for the store: a Redis that accepts and never
+// answers is given up at the verb's own deadline, with the timed-out refusal
+// naming the address and the stage (the connection is made by the first
+// read, so the stage is the read).
 func TestInventoryTimeoutFlagGovernsTheConnection(t *testing.T) {
 	t.Parallel()
 
 	addr := stallingListener(t)
 	r := newReal(t, false)
-	r.env["NOVA_PG_DSN"] = "postgres://nova_config@" + addr + "/nova"
+	r.env["NOVA_SPRINT_REDIS"] = addr
 	for flag, again := range map[string]string{"100ms": "300ms", "250ms": "750ms"} {
 		var out, errb bytes.Buffer
 		code := run([]string{"inventory", "--timeout", flag}, &out, &errb, r.deps())
-		want := "nova-config inventory: timed out after " + flag + " waiting for the store while connecting; check that the store answers on its host and port; run: nova-config inventory --timeout " + again + "\n"
+		want := "nova-config inventory: timed out after " + flag + " waiting for the store at " + addr + " while reading the applied state; check that Redis answers there; run: nova-config inventory --timeout " + again + "\n"
 		if code != 2 || out.String() != "" || errb.String() != want {
 			t.Fatalf("--timeout %s: exit %d stdout %q stderr %q\nwant 2, nothing, %q", flag, code, out.String(), errb.String(), want)
 		}
