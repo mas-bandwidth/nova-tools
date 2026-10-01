@@ -98,6 +98,9 @@ ScnHandBack == [Base EXCEPT !.col = [c \in Cards |-> "review"], !.hand = TRUE, !
                             !.rd = [c \in Cards |-> "r1"],
                             !.mr = [m \in Machines |-> IF m = "m1" THEN {"c1"} ELSE {}],
                             !.q = Queues(<<>>, <<>>, <<>>, <<>>)]
+\* The same with the machines' lapses on: r1's host may go down after r1
+\* returns the read, leaving the card no reader up (STRANDED).
+ScnHandBackLapse == [ScnHandBack EXCEPT !.lapse = TRUE]
 
 \* Reachability probes, expected to fail: every card lands; a card reaches
 \* its bound; a tick drains a queue after the first pass; a take ends at the

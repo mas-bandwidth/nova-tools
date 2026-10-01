@@ -141,8 +141,11 @@
 \*   judged). Witnesses: "returnspends" counts every return as a read (the
 \*   code before: a judgment with no re-ask, W25); "reaskforever" asks again
 \*   in place with no bound (W26); "silentstrand" leaves a stranded card
-\*   unjudged (W27); and the probes ProbeNoReask and ProbeNoJudged show the
-\*   re-ask and the judgment are reached.
+\*   unjudged (W27); "seenonly" judges only a card every reader is in seen
+\*   of, so a returned read whose only reader went down waits silently (W28);
+\*   and the probes ProbeNoReask and ProbeNoJudged show the re-ask and the
+\*   judgment are reached. A card judged is placed when a reader it may be
+\*   asked of is up again, and the placement closes the judgment.
 \*
 \* WHAT IS NOT MODELLED. Clear and epochs (the counters' reset); two reads
 \* per attempt (one read each); rework but by a broken read; take is
@@ -421,25 +424,34 @@ PlaceReads(S) ==
           THEN \* only the reader that returned it can take it: asked of it
                \* again, in place, the counter not moved
                PlaceReads(Put([S EXCEPT !.askw[c] = FALSE, !.rd[c] = h, !.hb[c] = NoR,
-                                        !.rea[c] = Min(@ + 1, MaxReasks + 1)],
+                                        !.rea[c] = Min(@ + 1, MaxReasks + 1), !.cna[c] = FALSE],
                               "fleet", E("readon", c, Host[h])))
-
-\* STRANDED: a card waiting for a reader that no reader may be asked of (every
-\* one in seen) is judged at once, "cannot ask", for the coordinator (the
-\* witness "silentstrand" leaves it unjudged).
-Stranded(S) == {c \in Cards : S.askw[c] /\ ~S.cna[c] /\ Readers \subseteq S.seen[c]}
-JudgeStranded(S) ==
-  IF Broken = "silentstrand" \/ Stranded(S) = {} THEN S
-  ELSE Address([S EXCEPT !.cna = [c \in Cards |-> @[c] \/ c \in Stranded(S)]])
           ELSE LET rs == Others(S, c)
                    r == Pick(ROrder, rs, S.rctr)
                IN PlaceReads(Put([S EXCEPT !.askw[c] = FALSE, !.rd[c] = r, !.hb[c] = NoR,
                                            \* the returned read taken by another
                                            \* reader: its reader is not asked again
                                            !.seen[c] = IF h # NoR THEN @ \cup {h} ELSE @,
+                                           !.cna[c] = FALSE,
                                            !.rctr = (@ + 1) % CtrMod,
                                            !.plc = Append(@, [k |-> "r", ctr |-> S.rctr, el |-> rs, pick |-> r])],
                                  "fleet", E("readon", c, Host[r])))
+
+\* STRANDED: a card waiting for a reader with no reader it may be asked of that
+\* is up (every reader in seen, or every other one away or on a machine down:
+\* room aside, which a tick frees) is judged at once, for the coordinator (the
+\* code's "cannot ask", or "fewer than two readers up"); a placement closes it.
+\* The witness "silentstrand" judges none; "seenonly" judges only a card every
+\* reader is in seen of (a returned read whose reader went down then waits
+\* silently).
+Eligible(S, c) == {r \in Readers \ S.seen[c] : /\ ("seefleet" \in Fixes => S.stat[Host[r]] = "up")
+                                               /\ ("readerup" \in Fixes => S.stat[r] = "up")}
+Stranded(S) ==
+  {c \in Cards : /\ S.askw[c] /\ ~S.cna[c]
+                 /\ IF Broken = "seenonly" THEN Readers \subseteq S.seen[c] ELSE Eligible(S, c) = {}}
+JudgeStranded(S) ==
+  IF Broken = "silentstrand" \/ Stranded(S) = {} THEN S
+  ELSE Address([S EXCEPT !.cna = [d \in Cards |-> S.cna[d] \/ d \in Stranded(S)]])
 
 -----------------------------------------------------------------------------
 \* THE MERGE UPDATE (3.). A merge recorded lands the card: an entry to the
@@ -497,7 +509,10 @@ ApplyF(S, e) ==
          IF S.stat[m] = "down" THEN S
          ELSE LET S1 == UnreadAll(ReturnAll([S EXCEPT !.stat[m] = "down", !.mc[m] = {}, !.mr[m] = {}],
                                             S.mc[m]), S.mr[m])
-              IN IF S.mc[m] \cup S.mr[m] # {} THEN Address(S1) ELSE S1
+                  S2 == IF S.mc[m] \cup S.mr[m] # {} THEN Address(S1) ELSE S1
+              \* a card waiting for a reader is judged again by the readers
+              \* update: a machine down may leave it no reader (STRANDED)
+              IN IF \E d \in Cards : S2.askw[d] THEN Put(S2, "readers", E("room", "-", m)) ELSE S2
     [] e.k = "dealt" ->
          IF S.stat[m] = "up" THEN [S EXCEPT !.mc[m] = @ \cup {c}]
          ELSE Put(S, "work", E("returned", c, "-"))
@@ -824,14 +839,17 @@ ReadersDone ==
 \* THE RE-ASK BOUND: a returned read is asked again in place at most
 \* MaxReasks times at its attempt (W26).
 ReasksBounded == \A c \in Cards : rea[c] <= MaxReasks
-\* A card waiting in review that no reader may be asked of has its "cannot
-\* ask" judgment open, in the same update (W27).
+\* A card waiting in review with no reader it may be asked of that is up (all
+\* in seen, or the rest away or down) has its judgment open, in the same
+\* update (W27; W28: a returned read whose only reader went down).
+EligibleNow(c) == {r \in Readers \ seen[c] : /\ ("seefleet" \in Fixes => stat[Host[r]] = "up")
+                                             /\ ("readerup" \in Fixes => stat[r] = "up")}
 StrandingIsJudged ==
-  \A c \in Cards : (askw[c] /\ col[c] = "review" /\ Readers \subseteq seen[c]) => cna[c]
-\* A RETURN IS NOT A READ: no card is judged stranded before its reader was
-\* asked it again MaxReasks times (the code before counted the first return
-\* as a read: W25).
-JudgedOnlyAfterTheBound == \A c \in Cards : cna[c] => rea[c] >= MaxReasks
+  \A c \in Cards : (phase = "idle" /\ askw[c] /\ col[c] = "review" /\ EligibleNow(c) = {}) => cna[c]
+\* A RETURN IS NOT A READ: no card is stranded by its readers' reads before
+\* its reader was asked it again MaxReasks times (the code before counted the
+\* first return as a read: W25).
+JudgedOnlyAfterTheBound == \A c \in Cards : (cna[c] /\ Readers \subseteq seen[c]) => rea[c] >= MaxReasks
 \* A read waiting for a reader in review is placed on one, or judged.
 ReturnSettles ==
   \A c \in Cards : (askw[c] /\ col[c] = "review") ~> (~askw[c] \/ cna[c] \/ col[c] # "review")

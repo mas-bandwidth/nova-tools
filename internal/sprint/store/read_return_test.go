@@ -317,3 +317,30 @@ func TestAReadReturnedPastItsReasksIsJudgedNotAskedAgain(t *testing.T) {
 	assert.Len(t, h.openOf(sprint.NCannotAsk), 1, "one judgment, not one a tick")
 	h.clean("judged cannot ask")
 }
+
+// A read its reader returned and was asked again in place, whose reader then
+// goes away with no other reader up to take it, is a judgment at once, never a
+// silent wait (tla/DirtyTick.tla, StrandingIsJudged and the lapse control
+// MCDirtyTickHandBackLapse): the tick says fewer than two readers are up; the
+// reader back up holds its read again and the judgment closes.
+func TestAReturnedReadWhoseReaderGoesAwayIsJudgedAtOnce(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	require.NoError(t, h.st.SetReaderAway(h.ctx, "reader-c", true, "coordinator"))
+	h.asked1(1)
+	id := sprint.ReadCardID("s1-1", 1, "reader-a")
+	h.must(ReadStep(sprint.ReadReq{As: "reader-a", Begin: true, Sel: sprint.Sel{IDs: []string{id}}, Who: "reader-a"}))
+	h.must(ReadStep(sprint.ReadReq{As: "reader-a", Return: true, Reason: "NATIVE REFUSED", Sel: sprint.Sel{IDs: []string{id}}, Who: "reader-a"}))
+	h.machine()
+	require.Equal(t, 1, h.snap().Readers.Placed(id).Int(sprint.FieldReasked), "asked again of reader-a in place")
+	require.NoError(t, h.st.SetReaderAway(h.ctx, "reader-a", true, "coordinator"))
+	h.machine()
+	assert.NotEmpty(t, h.openOf(sprint.NFewReaders), "no reader up to take it: the coordinator is told at once")
+	require.NoError(t, h.st.SetReaderAway(h.ctx, "reader-a", false, "coordinator"))
+	h.machine()
+	c := h.snap().Readers.Placed(id)
+	require.NotNil(t, c)
+	assert.Equal(t, sprint.Asked, c.Col, "reader-a back up holds its read")
+	assert.Empty(t, h.openOf(sprint.NFewReaders), "and the judgment closes")
+	h.clean("judged while away, read again when back")
+}
