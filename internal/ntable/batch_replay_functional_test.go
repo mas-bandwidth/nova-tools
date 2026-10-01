@@ -8,7 +8,6 @@ package ntable_test
 
 import (
 	"encoding/json"
-	"reflect"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -40,9 +39,9 @@ func TestBatchReplayPrecedesTheStaticChecks(t *testing.T) {
 	before := storeImage(t, c)
 	ans, err := rawApply(ctx, c, recorded)
 	ans, marked := asReplay(ans)
-	if err != nil || !marked || !reflect.DeepEqual(ans, want) {
-		t.Errorf("replay of a recorded request that a newer rule refuses: %v %v; want the original result", trunc(ans), err)
-	}
+	require.NoError(t, err, "replay of a recorded request that a newer rule refuses: %v; want the original result", trunc(ans))
+	assert.True(t, marked, "replay of a recorded request that a newer rule refuses: %v; want the original result", trunc(ans))
+	assert.Equal(t, want, ans, "replay of a recorded request that a newer rule refuses: %v; want the original result", trunc(ans))
 	assert.Equal(t, before, storeImage(t, c), "a replay wrote")
 
 	// other bytes under the recorded id conflict, even when they are also invalid
@@ -63,7 +62,7 @@ func TestBatchReplayPrecedesTheStaticChecks(t *testing.T) {
 	require.NoError(t, err)
 	again, err := rawApply(ctx, c, valid)
 	again, marked = asReplay(again)
-	if err != nil || !marked || !reflect.DeepEqual(first, again) {
-		t.Errorf("replay after the table moved on: %v %v", trunc(again), err)
-	}
+	require.NoError(t, err, "replay after the table moved on: %v", trunc(again))
+	assert.True(t, marked, "replay after the table moved on: %v", trunc(again))
+	assert.Equal(t, first, again, "replay after the table moved on: %v", trunc(again))
 }

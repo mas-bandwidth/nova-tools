@@ -3,11 +3,10 @@
 package ntable_test
 
 import (
-	"errors"
-	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/stretchr/testify/assert"
 )
 
 // An ordinary write with an epoch ahead of the active one says what a batch
@@ -16,7 +15,7 @@ func TestOrdinaryWriteWithAnEpochAheadIsAheadNotStale(t *testing.T) {
 	t.Parallel()
 	c, ctx := probeTable(t)
 	_, err := ntable.CellAdd(ctx, c, "demo", "build", "ready", "m", 1, ntable.WriteOptions{Epoch: 5})
-	if !errors.Is(err, ntable.ErrEpochAhead) || errors.Is(err, ntable.ErrStale) || !strings.Contains(err.Error(), "ahead") {
-		t.Errorf("an ordinary write at epoch 5, active 0: %v; want EPOCHAHEAD", err)
-	}
+	assert.ErrorIs(t, err, ntable.ErrEpochAhead, "an ordinary write at epoch 5, active 0")
+	assert.NotErrorIs(t, err, ntable.ErrStale, "an ordinary write at epoch 5, active 0")
+	assert.ErrorContains(t, err, "ahead", "an ordinary write at epoch 5, active 0")
 }

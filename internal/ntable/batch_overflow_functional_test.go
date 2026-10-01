@@ -7,9 +7,6 @@ package ntable_test
 // untouched.
 
 import (
-	"errors"
-	"reflect"
-	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
@@ -33,9 +30,9 @@ func TestBatchMemberRevisionAtItsMaximumRefusesEveryChange(t *testing.T) {
 	for name, entry := range cases {
 		before := storeImage(t, c)
 		_, err := ntable.ApplyBatch(ctx, c, ntable.BatchManifest{Schema: 1, Table: "demo", Epoch: "0", ExpectedTableRevision: probeRev(ctx, c), OperationID: "ov-" + name, Members: []ntable.BatchMemberEntry{entry}})
-		if !errors.Is(err, ntable.ErrCounterOverflow) || !strings.Contains(err.Error(), `member "a"`) || !strings.Contains(err.Error(), "changed=no") {
-			t.Errorf("%s: %v; want OVERFLOW naming member a with changed=no", name, err)
-		}
+		assert.ErrorIs(t, err, ntable.ErrCounterOverflow, "%s: %v; want OVERFLOW naming member a with changed=no", name, err)
+		assert.ErrorContains(t, err, `member "a"`, "%s: %v; want OVERFLOW naming member a with changed=no", name, err)
+		assert.ErrorContains(t, err, "changed=no", "%s: %v; want OVERFLOW naming member a with changed=no", name, err)
 		assert.Equal(t, before, storeImage(t, c), "%s: the store changed", name)
 	}
 	// a late entry at the maximum refuses the whole batch, and an entry that changes nothing does not step it
@@ -43,13 +40,12 @@ func TestBatchMemberRevisionAtItsMaximumRefusesEveryChange(t *testing.T) {
 	_, err := ntable.ApplyBatch(ctx, c, ntable.BatchManifest{Schema: 1, Table: "demo", Epoch: "0", ExpectedTableRevision: probeRev(ctx, c), OperationID: "ov-late", Members: []ntable.BatchMemberEntry{
 		{ID: "b", Expect: &ntable.MemberExpect{}, Set: map[string]string{"k": "v"}},
 		{ID: "a", Expect: &ntable.MemberExpect{}, Set: map[string]string{"k": "v"}}}})
-	if !errors.Is(err, ntable.ErrCounterOverflow) || !reflect.DeepEqual(before, storeImage(t, c)) {
-		t.Errorf("a late entry at the maximum: %v", err)
-	}
-	if r, err := ntable.ApplyBatch(ctx, c, ntable.BatchManifest{Schema: 1, Table: "demo", Epoch: "0", ExpectedTableRevision: probeRev(ctx, c), OperationID: "ov-guard", Members: []ntable.BatchMemberEntry{
-		{ID: "a", Expect: &ntable.MemberExpect{Revision: maxCounter}, Move: &ntable.MemberMoveOp{Row: "build", Col: "ready"}}}}); err != nil || r.Outcome != "noop" {
-		t.Errorf("a move to the current cell at the maximum changes nothing: %+v %v", r, err)
-	}
+	assert.ErrorIs(t, err, ntable.ErrCounterOverflow, "a late entry at the maximum: %v", err)
+	assert.Equal(t, before, storeImage(t, c), "a late entry at the maximum: %v", err)
+	r, err := ntable.ApplyBatch(ctx, c, ntable.BatchManifest{Schema: 1, Table: "demo", Epoch: "0", ExpectedTableRevision: probeRev(ctx, c), OperationID: "ov-guard", Members: []ntable.BatchMemberEntry{
+		{ID: "a", Expect: &ntable.MemberExpect{Revision: maxCounter}, Move: &ntable.MemberMoveOp{Row: "build", Col: "ready"}}}})
+	assert.NoError(t, err, "a move to the current cell at the maximum changes nothing: %+v", r)
+	assert.Equal(t, "noop", r.Outcome, "a move to the current cell at the maximum changes nothing: %+v", r)
 }
 
 func TestBatchTableRevisionAtItsMaximumRefusesTheBatch(t *testing.T) {
@@ -63,9 +59,9 @@ func TestBatchTableRevisionAtItsMaximumRefusesTheBatch(t *testing.T) {
 		"guard":  {ID: "a", Expect: &ntable.MemberExpect{}},
 	} {
 		_, err := ntable.ApplyBatch(ctx, c, ntable.BatchManifest{Schema: 1, Table: "demo", Epoch: "0", ExpectedTableRevision: maxCounter, OperationID: "tv-" + name, Members: []ntable.BatchMemberEntry{entry}})
-		if !errors.Is(err, ntable.ErrCounterOverflow) || !strings.Contains(err.Error(), "table revision") || !strings.Contains(err.Error(), "changed=no") {
-			t.Errorf("%s: %v; want an overflow of the table revision with changed=no", name, err)
-		}
+		assert.ErrorIs(t, err, ntable.ErrCounterOverflow, "%s: %v; want an overflow of the table revision with changed=no", name, err)
+		assert.ErrorContains(t, err, "table revision", "%s: %v; want an overflow of the table revision with changed=no", name, err)
+		assert.ErrorContains(t, err, "changed=no", "%s: %v; want an overflow of the table revision with changed=no", name, err)
 		assert.Equal(t, before, storeImage(t, c), "%s: the store changed", name)
 	}
 }

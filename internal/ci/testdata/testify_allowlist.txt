@@ -77,7 +77,6 @@ internal/nsprint/store:env 9 t.Setenv and Chdir sites to inject through config
 internal/nsprint/testutil:assert 18 bare assertions to convert to testify
 internal/nsprint/testutil/pg:assert 10 bare assertions to convert to testify
 internal/nsprint/verbflag:assert 30 bare assertions to convert to testify
-internal/ntable:assert 358 bare assertions to convert to testify
 internal/onboarding:assert 160 bare assertions to convert to testify
 internal/oneline:assert 24 bare assertions to convert to testify
 internal/oneline/audit:assert 1 bare assertions to convert to testify

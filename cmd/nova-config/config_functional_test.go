@@ -95,11 +95,11 @@ func TestMigrateTwiceThenTheSixVerbs(t *testing.T) {
 		t.Fatalf("status before migrate: %q %q", out, errs)
 	}
 	out, _ = r.run(t, 0, "migrate")
-	if !strings.HasPrefix(out, "CONFIG MIGRATE pg=postgres@127.0.0.1:") || !strings.HasSuffix(out, " from=0 to=5 applied=5\n") {
+	if !strings.HasPrefix(out, "CONFIG MIGRATE pg=postgres@127.0.0.1:") || !strings.HasSuffix(out, " from=0 to=6 applied=6\n") {
 		t.Fatalf("migrate: %q", out)
 	}
 	out, _ = r.run(t, 0, "migrate")
-	if !strings.HasSuffix(out, " from=5 to=5 applied=0\n") {
+	if !strings.HasSuffix(out, " from=6 to=6 applied=0\n") {
 		t.Fatalf("migrate twice: %q", out)
 	}
 	out, _ = r.run(t, 0, "machine", "add", "studio", "--user", "glenn", "--seat", "studio", "--slots", "64", "--runners", "1")
@@ -189,7 +189,7 @@ func TestMigrateTwiceThenTheSixVerbs(t *testing.T) {
 		t.Fatalf("machine remove: %q", out)
 	}
 	out, _ = r.run(t, 0, "status")
-	if !strings.Contains(out, " schema=5 machine=0 machine_rev=9 fleet_rev=8 friend=0 friend_rev=7 sprint_rev=6 redis=-") {
+	if !strings.Contains(out, " schema=6 machine=0 machine_rev=9 fleet_rev=8 friend=0 friend_rev=7 sprint_rev=6 loop=0 loop_rev=0 redis=-") {
 		t.Fatalf("status: %q", out)
 	}
 }
@@ -212,7 +212,7 @@ func TestApplyEndToEnd(t *testing.T) {
 
 	// --check prints the plan and writes nothing but that beat.
 	out, _ := r.run(t, 0, "apply", "--check")
-	want := "CHECK ADD kind=machine name=hulk\nCHECK ADD kind=machine name=studio\nCONFIG CHECK kind=machine add=2 set=0 remove=0 rev=2 applied=0\nCHECK SET kind=fleet name=fleet changed=store,coordinator\nCONFIG CHECK kind=fleet add=0 set=1 remove=0 rev=5 applied=0\nCHECK ADD kind=friend name=rowan\nCHECK ADD kind=friend name=stella\nCONFIG CHECK kind=friend add=2 set=0 remove=0 rev=4 applied=0\nCHECK SET kind=sprint name=sprint changed=coordinator\nCONFIG CHECK kind=sprint add=0 set=1 remove=0 rev=6 applied=0\n"
+	want := "CHECK ADD kind=machine name=hulk\nCHECK ADD kind=machine name=studio\nCONFIG CHECK kind=machine add=2 set=0 remove=0 rev=2 applied=0\nCHECK SET kind=fleet name=fleet changed=store,coordinator\nCONFIG CHECK kind=fleet add=0 set=1 remove=0 rev=5 applied=0\nCHECK ADD kind=friend name=rowan\nCHECK ADD kind=friend name=stella\nCONFIG CHECK kind=friend add=2 set=0 remove=0 rev=4 applied=0\nCHECK SET kind=sprint name=sprint changed=coordinator\nCONFIG CHECK kind=sprint add=0 set=1 remove=0 rev=6 applied=0\nCONFIG CHECK kind=loop add=0 set=0 remove=0 rev=0 applied=0\n"
 	if out != want {
 		t.Fatalf("apply --check:\n%s\nwant:\n%s", out, want)
 	}
@@ -261,7 +261,7 @@ func TestApplyEndToEnd(t *testing.T) {
 		t.Fatalf("config:decl %v", got)
 	}
 	out, _ = r.run(t, 0, "status")
-	if !strings.Contains(out, " machine_applied=2 fleet_applied=5 friend_applied=4 sprint_applied=6\n") {
+	if !strings.Contains(out, " machine_applied=2 fleet_applied=5 friend_applied=4 sprint_applied=6 loop_applied=0\n") {
 		t.Fatalf("status after apply: %q", out)
 	}
 
