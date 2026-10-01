@@ -286,11 +286,8 @@ and it is the coordinator's decision, receipted.
   the count, which is never stored), down past that or when it has never
   beaten, and held while the coordinator holds it, whatever it beats. A card
   is taken back from a member only when the member is down by this rule
-  (tla/DirtyTick.tla, Lapse). The fleet row's load cell shows the machine's
-  load while the beat is fresh and `missed <n>` once a window is missed. The
-  member asks its beat and its queue again once when the store did not answer,
-  and the tick's measured store round trip (its last and its greatest of the
-  last ten ticks) is on the `where` frame. `fleet down <member>` holds a
+  (tla/DirtyTick.tla, Lapse). The member asks its beat and its queue again
+  once when the store did not answer. `fleet down <member>` holds a
   member and takes it down; `fleet up <member>` releases the hold, counts as a
   beat of a member that has beaten, adds a member the sprint does not know,
   and brings it up at once when it is alive.

@@ -21,9 +21,8 @@ func fleetWords() string {
 The fleet: each member says it is there with nova-sprint fleet beat <member>,
 run on the machine every few seconds; a beat writes the time and the
 machine's load. A beat window is `+sprint.BeatDeadline.String()+`; a member is up until it has missed `+fmt.Sprint(sprint.MissedBeatsDown)+` windows
-in a row (one missed beat marks nothing; a beat resets the count, which the load
-cell shows as "missed <n>" once a window is missed) and down past that or when it
-has never beaten; the tick applies each change
+in a row (one missed beat marks nothing; a beat resets the count) and down past
+that or when it has never beaten; the tick applies each change
 (a member down has its unfinished work cards dealt to the members up; a
 member up levels the ready queues). fleet down holds a member down whatever
 it beats (status held); fleet up releases the hold, adding a member the

@@ -115,13 +115,8 @@ func MemberStatus(ctl *Card, b Beat, now time.Time) string {
 }
 
 // LoadText is the load cell: the highest load of the last LoadWindow with
-// one decimal and a percent sign while the beat is fresh; once a beat window
-// is missed, the count of missed beats ("missed 2"); empty for a member that
-// never beat.
+// one decimal and a percent sign while the beat is fresh, else empty.
 func LoadText(b Beat, now time.Time) string {
-	if n := b.Missed(now); n > 0 {
-		return fmt.Sprintf("missed %d", n)
-	}
 	if !b.Fresh(now) {
 		return ""
 	}

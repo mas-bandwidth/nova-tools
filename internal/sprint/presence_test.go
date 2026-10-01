@@ -50,9 +50,9 @@ func TestStatusIsDerivedFromTheBeat(t *testing.T) {
 		t.Fatalf("at the deadline: %s %q, want up 12.3%%", s, l)
 	}
 	past := p0.Add(BeatDeadline + time.Second)
-	assert.Equal(t, [2]string{Up, "missed 1"}, [2]string{MemberStatus(ctl, b, past), LoadText(b, past)}, "past the deadline: up with one missed beat")
+	assert.Equal(t, [2]string{Up, ""}, [2]string{MemberStatus(ctl, b, past), LoadText(b, past)}, "past the deadline: up with one missed beat, no load")
 	gone := p0.Add(MissedBeatsDown*BeatDeadline + time.Second)
-	assert.Equal(t, [2]string{Down, "missed 3"}, [2]string{MemberStatus(ctl, b, gone), LoadText(b, gone)}, "past the missed beats: down with three missed beats")
+	assert.Equal(t, [2]string{Down, ""}, [2]string{MemberStatus(ctl, b, gone), LoadText(b, gone)}, "past the missed beats: down with no load")
 	held := &Card{Fields: map[string]string{"status": Down, "held": "2030-01-02T03:04:05Z"}}
 	if s := MemberStatus(held, b, p0); s != Held {
 		t.Fatalf("held while beating: %s, want held", s)

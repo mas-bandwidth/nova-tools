@@ -240,9 +240,6 @@ type whereView struct {
 	Cleared     time.Time                               `json:"cleared,omitempty"` // when the epoch began
 	Machine     string                                  `json:"machine,omitempty"`
 	Goals       []goalView                              `json:"goals,omitempty"`
-	// RoundTrip is the store round trip the last ticks measured: the last and
-	// the greatest of the last ten ("" when no tick has measured one).
-	RoundTrip string `json:"round_trip,omitempty"`
 }
 
 // whereRun is what one where was asked, its flags read.
@@ -367,12 +364,9 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 	if f.Pending != nil {
 		v.Pending = f.Pending.ID
 	}
-	v.Machine, v.RoundTrip = st.MachineViews(ctx)
+	v.Machine = st.MachineLine(ctx)
 	var b strings.Builder
 	b.WriteString(now.Format("2006-01-02 15:04:05 MST") + "\n\nSPRINT TABLE\n\n" + whereHeader(v.Summary, v.Machine) + "\n\n")
-	if v.RoundTrip != "" {
-		b.WriteString(v.RoundTrip + "\n\n")
-	}
 	var parts []string
 	for i, t := range shapes {
 		logical := sprint.ViewOrder[i]

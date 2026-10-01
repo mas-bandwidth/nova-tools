@@ -4,8 +4,6 @@ SPRINT TABLE
 
 0/3 0.0% -> ETA
 
-store round trip: last 0ms, max 0ms over the last 2 ticks
-
 work | waiting | ready | working | review | merging | landed
 -----+---------+-------+---------+--------+---------+-------
 s1   |       0 |     0 |       2 |      0 |       1 |      0

@@ -153,8 +153,8 @@ func TestASilentMemberGoesDownAndItsCardsAreDealt(t *testing.T) {
 	if n := h.memberNotes(sprint.NMemberDown, "m1"); len(n) != 1 || !strings.Contains(n[0], "no beat for 45s") {
 		t.Fatalf("down notifications: %q, want one saying why", n)
 	}
-	if row := h.fleetRow("m1"); row[sprint.Status] != sprint.Down || row[sprint.Load] != "missed 3" {
-		t.Fatalf("m1's row: %v, want down with its three missed beats", row)
+	if row := h.fleetRow("m1"); row[sprint.Status] != sprint.Down || row[sprint.Load] != "" {
+		t.Fatalf("m1's row: %v, want down with no load", row)
 	}
 	h.machine()
 	if n := h.memberNotes(sprint.NMemberDown, "m1"); len(n) != 1 {

@@ -57,19 +57,3 @@ func cardsOf(w whereView, member string) int {
 	working, _ := strconv.Atoi(row["working"])
 	return ready + working
 }
-
-// where prints the store round trip the last ticks measured, in its frame and
-// under --json (docs/SPEC-SPRINT.md section 14); before any tick measured one
-// it prints none.
-func TestWherePrintsTheStoreRoundTrip(t *testing.T) {
-	t.Parallel()
-	ta := newTestApp(t)
-	ta.ok("init --readers reader-a,reader-b --members m1")
-	assert.NotContains(t, ta.ok("where"), "store round trip")
-	ta.ok("start")
-	ta.ok("tick")
-	assert.Contains(t, ta.ok("where"), "\nstore round trip: last 0ms, max 0ms over the last 1 ticks\n")
-	var w whereView
-	ta.json("where", &w)
-	assert.Equal(t, "store round trip: last 0ms, max 0ms over the last 1 ticks", w.RoundTrip)
-}

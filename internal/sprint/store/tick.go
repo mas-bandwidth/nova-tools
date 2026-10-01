@@ -47,9 +47,6 @@ const (
 	// gap a live run loop leaves between two heartbeats:
 	// HeartbeatIdleEvery + TickEvery when idle, TickBackoffCap when failing.
 	MachineSilence = 15 * time.Second
-	// TripWindow is how many ticks' round trips the heartbeat keeps: the
-	// window of the maximum where prints.
-	TripWindow = 10
 	// MaxStopSpans bounds the STOPPED spans the state record keeps.
 	MaxStopSpans = 1000
 )
@@ -131,10 +128,6 @@ type Heartbeat struct {
 	// Fresh is the fleet members whose beat was fresh at the last tick: a
 	// member coming or going makes the next tick a full one.
 	Fresh []string `json:"fresh,omitempty"`
-	// Trips is the store round trip each of the last TripWindow ticks
-	// measured, in milliseconds, oldest first: the time of the tick's one read
-	// of this record. where prints the last and the greatest.
-	Trips []int64 `json:"trips,omitempty"`
 	// Looked is when a tick last read the machine's state, RUNNING or
 	// STOPPED: a run loop is alive while it is recent, whatever the state.
 	Looked time.Time `json:"looked,omitempty"`
@@ -271,40 +264,13 @@ func (st *Store) putJSON(ctx context.Context, key string, v any) error {
 
 // Machine reads the state record and the heartbeat.
 func (st *Store) Machine(ctx context.Context) (Machine, Heartbeat, error) {
-	m, hb, _, err := st.machineTimed(ctx)
-	return m, hb, err
-}
-
-// machineTimed is Machine and the store round trip it measured: the time, on
-// the store's clock, of the one read of the heartbeat record (the tick's
-// round trip, docs/SPEC-SPRINT.md section 14, `where`).
-func (st *Store) machineTimed(ctx context.Context) (m Machine, hb Heartbeat, trip time.Duration, err error) {
+	var m Machine
+	var hb Heartbeat
 	if err := st.getJSON(ctx, keyMachine, &m); err != nil {
-		return m, hb, 0, err
+		return m, hb, err
 	}
-	began := st.now()
-	err = st.getJSON(ctx, keyHeartbeat, &hb)
-	return m, hb, st.now().Sub(began), err
-}
-
-// RoundTrips is the store round trip the last ticks measured, as where prints
-// it: the last and the greatest of the heartbeat's TripWindow ticks; "" when
-// no tick has measured one.
-func (hb Heartbeat) RoundTrips() string {
-	if len(hb.Trips) == 0 {
-		return ""
-	}
-	hi := slices.Max(hb.Trips)
-	return fmt.Sprintf("store round trip: last %dms, max %dms over the last %d ticks", hb.Trips[len(hb.Trips)-1], hi, len(hb.Trips))
-}
-
-// MachineViews is the machine's line and the round trip line, read once.
-func (st *Store) MachineViews(ctx context.Context) (line, trips string) {
-	m, hb, err := st.Machine(ctx)
-	if err != nil {
-		return "", ""
-	}
-	return MachineLine(st.now(), m, hb), hb.RoundTrips()
+	err := st.getJSON(ctx, keyHeartbeat, &hb)
+	return m, hb, err
 }
 
 // MachineLine reads the machine and says its line at the clock's reading;
@@ -639,7 +605,7 @@ func (st *Store) Tick(ctx context.Context) (res TickResult, err error) {
 	if err != nil {
 		return TickResult{}, err
 	}
-	m, hb, trip, err := st.machineTimed(ctx)
+	m, hb, err := st.Machine(ctx)
 	if err != nil {
 		return TickResult{}, err
 	}
@@ -689,10 +655,6 @@ func (st *Store) Tick(ctx context.Context) (res TickResult, err error) {
 		return res, nil
 	}
 	hb.At, hb.Ticks = now, hb.Ticks+1
-	hb.Trips = append(hb.Trips, trip.Milliseconds())
-	if len(hb.Trips) > TripWindow {
-		hb.Trips = hb.Trips[len(hb.Trips)-TripWindow:]
-	}
 	if err != nil {
 		// A failed tick leaves a full read due: what it did not finish is
 		// read from the state by the next tick.

@@ -12,15 +12,13 @@ import (
 func beatAt0() Beat { return NextBeat(Beat{}, p0, 12.3, hostload.HowCPU, hostload.State{}) }
 
 // One missed beat window marks nothing (tla/DirtyTick.tla, Lapse needs
-// MissedBeatsDown misses): the member stays up, and the fleet's load cell says
-// how many beats it missed.
+// MissedBeatsDown misses): the member stays up.
 func TestOneMissedBeatKeepsAMemberUp(t *testing.T) {
 	t.Parallel()
 	b, ctl := beatAt0(), &Card{Fields: map[string]string{"status": Up}}
 	at := p0.Add(BeatDeadline + time.Second)
 	assert.Equal(t, 1, b.Missed(at))
 	assert.Equal(t, Up, MemberStatus(ctl, b, at))
-	assert.Equal(t, "missed 1", LoadText(b, at))
 }
 
 // MissedBeatsDown windows in a row is down, and not one second before.
