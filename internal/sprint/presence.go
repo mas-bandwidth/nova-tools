@@ -11,14 +11,25 @@ import (
 // A fleet member's presence (docs/SPEC-SPRINT.md, the fleet). A member says
 // it is there by beating: nova-sprint fleet beat, run on the machine every
 // few seconds, writes its last beat time and its measured load. Its status is
-// derived, never typed: up while its last beat is within BeatDeadline, down
-// past it or when it has never beaten, and held while the coordinator holds
-// it down (fleet down; fleet up releases the hold), whatever it beats. The
-// tick applies a change of status with the moves of fleet down and fleet up.
+// derived, never typed: up until it has missed MissedBeatsDown beat windows
+// of BeatDeadline each in a row, down past that or when it has never beaten,
+// and held while the coordinator holds it down (fleet down; fleet up releases
+// the hold), whatever it beats. The tick applies a change of status with the
+// moves of fleet down and fleet up. The model is tla/DirtyTick.tla (Miss and
+// Lapse: a machine lapses only after MissedBeatsDown misses).
 
 const (
-	// BeatDeadline is how long a member stays up after its last beat.
+	// BeatDeadline is how long a beat is fresh, and so the length of one beat
+	// window: a window with no beat after the last is one missed beat.
 	BeatDeadline = 15 * time.Second
+	// MissedBeatsDown is how many beat windows in a row a member misses before
+	// it is down: one missed beat is a store round trip that timed out or a
+	// slow machine, and marking a working member down on it withdrew its card
+	// and lost the child's finish (the member's beat is one store call of
+	// several seconds on a tailnet); three in a row is a member that is gone.
+	// A beat between misses resets the count: it is derived from the last
+	// beat, never stored.
+	MissedBeatsDown = 3
 	// LoadWindow is the span of beats whose highest load the load cell shows.
 	LoadWindow = 10 * time.Second
 )
@@ -55,6 +66,22 @@ func (b Beat) Fresh(now time.Time) bool {
 	return b.Beaten() && now.Sub(b.At) <= BeatDeadline
 }
 
+// Missed is how many beat windows of BeatDeadline went by after the last beat
+// with no beat: 0 while it is fresh, 1 until two windows have passed, and so
+// on; a member that never beat has missed none (it is down by never beating).
+func (b Beat) Missed(now time.Time) int {
+	if !b.Beaten() || b.Fresh(now) {
+		return 0
+	}
+	return int((now.Sub(b.At) - 1) / BeatDeadline)
+}
+
+// Alive says the member has beaten and has missed fewer than MissedBeatsDown
+// beat windows in a row: the rule of the model's Lapse.
+func (b Beat) Alive(now time.Time) bool {
+	return b.Beaten() && b.Missed(now) < MissedBeatsDown
+}
+
 // NextBeat is the record after a beat at now with the load pct: the beat at
 // the second, the samples of the last LoadWindow with this one in place of any
 // of the same second, and their highest as the load. Two beats in the same
@@ -75,20 +102,26 @@ func NextBeat(prev Beat, now time.Time, pct float64, how string, meter hostload.
 }
 
 // MemberStatus is a member's derived status at now: held while the
-// coordinator holds it, else up while its beat is fresh, else down.
+// coordinator holds it, else up while it has missed fewer than
+// MissedBeatsDown beat windows, else down.
 func MemberStatus(ctl *Card, b Beat, now time.Time) string {
 	switch {
 	case ctl.F("held") != "":
 		return Held
-	case b.Fresh(now):
+	case b.Alive(now):
 		return Up
 	}
 	return Down
 }
 
 // LoadText is the load cell: the highest load of the last LoadWindow with
-// one decimal and a percent sign while the beat is fresh, else empty.
+// one decimal and a percent sign while the beat is fresh; once a beat window
+// is missed, the count of missed beats ("missed 2"); empty for a member that
+// never beat.
 func LoadText(b Beat, now time.Time) string {
+	if n := b.Missed(now); n > 0 {
+		return fmt.Sprintf("missed %d", n)
+	}
 	if !b.Fresh(now) {
 		return ""
 	}
@@ -155,7 +188,7 @@ func presence(s *Snapshot, r TickReq) (Plan, int) {
 	receivers := orderLike(s.Fleet.Rows(), all, "")
 	q, widths := memberLoads(s, receivers), memberWidths(s, receivers)
 	for _, m := range downs {
-		why := "no beat for " + BeatDeadline.String()
+		why := fmt.Sprintf("missed %d beats: no beat for %s", MissedBeatsDown, (MissedBeatsDown * BeatDeadline).String())
 		switch {
 		case s.MemberCtl(m).F("held") != "":
 			why = "held"

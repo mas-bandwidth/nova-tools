@@ -243,6 +243,9 @@ type whereView struct {
 	// Routes is how many enabled routes each tier has ("flash=1 pro=3"), ""
 	// when the store holds none (docs/SPEC-SPRINT.md, the deal's route).
 	Routes string `json:"routes,omitempty"`
+	// RoundTrip is the store round trip the last ticks measured: the last and
+	// the greatest of the last ten ("" when no tick has measured one).
+	RoundTrip string `json:"round_trip,omitempty"`
 }
 
 // whereRun is what one where was asked, its flags read.
@@ -367,7 +370,7 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 	if f.Pending != nil {
 		v.Pending = f.Pending.ID
 	}
-	v.Machine = st.MachineLine(ctx)
+	v.Machine, v.RoundTrip = st.MachineViews(ctx)
 	if rs, err := st.Routes(ctx); err == nil {
 		v.Routes = sprint.TierRoutes(rs)
 	}
@@ -375,6 +378,9 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 	b.WriteString(now.Format("2006-01-02 15:04:05 MST") + "\n\nSPRINT TABLE\n\n" + whereHeader(v.Summary, v.Machine) + "\n\n")
 	if v.Routes != "" {
 		b.WriteString("routes: " + v.Routes + "\n\n")
+	}
+	if v.RoundTrip != "" {
+		b.WriteString(v.RoundTrip + "\n\n")
 	}
 	var parts []string
 	for i, t := range shapes {

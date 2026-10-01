@@ -20,8 +20,10 @@ func fleetWords() string {
 	return strings.TrimSpace(`
 The fleet: each member says it is there with nova-sprint fleet beat <member>,
 run on the machine every few seconds; a beat writes the time and the
-machine's load. A member is up while its last beat is under `+sprint.BeatDeadline.String()+` old and
-down past that or when it has never beaten; the tick applies each change
+machine's load. A beat window is `+sprint.BeatDeadline.String()+`; a member is up until it has missed `+fmt.Sprint(sprint.MissedBeatsDown)+` windows
+in a row (one missed beat marks nothing; a beat resets the count, which the load
+cell shows as "missed <n>" once a window is missed) and down past that or when it
+has never beaten; the tick applies each change
 (a member down has its unfinished work cards dealt to the members up; a
 member up levels the ready queues). fleet down holds a member down whatever
 it beats (status held); fleet up releases the hold, adding a member the
@@ -53,8 +55,8 @@ status. reader remove takes a row off the readers table, refused while the
 reader holds a read (asked, reading, ok or broken).`) + "\n"
 }
 
-// fleetStep is the coordinator's fleet verb as a step: up releases a hold
-// and brings the member up at once when its beat is fresh, and sets its
+// fleetStep is the coordinator's fleet verb as a step: up releases a hold,
+// counts as a beat of the member, and brings it up at once when it is alive, and sets its
 // width when width is above zero; down holds it down; level evens the ready
 // queues.
 func (a *app) fleetStep(st *store.Store, op, member, who string, width int) store.Step {
@@ -62,8 +64,13 @@ func (a *app) fleetStep(st *store.Store, op, member, who string, width int) stor
 	switch op {
 	case "up":
 		r.Op = "release"
+		// the release counts as a beat (docs/SPEC-SPRINT.md section 5): the
+		// member's last beat is now, so the next tick within the beat window
+		// finds it up
+		// ignored: a store that keeps no beats leaves the beat as it was, and the read below says so
+		_, _ = st.TouchBeat(context.Background(), member)
 		if beats, err := st.Beats(context.Background(), []string{member}); err == nil {
-			r.Fresh = beats[member].Fresh(a.now())
+			r.Fresh = beats[member].Alive(a.now())
 		}
 	case "down":
 		r.Op, r.Why = "hold", "held by "+who

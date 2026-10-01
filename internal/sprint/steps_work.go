@@ -1108,8 +1108,8 @@ type FleetReq struct {
 	Op     string // up, down, level, hold, release, sync
 	Member string
 	Who    string
-	// Fresh says the member's last beat is within BeatDeadline: release
-	// brings it up at once.
+	// Fresh says the member is alive (Beat.Alive: fewer than MissedBeatsDown
+	// beat windows missed): release brings it up at once.
 	Fresh bool
 	// Live, when set, is the other members up for this move: down deals to
 	// them and up levels with them. nil is every member whose status is up.

@@ -4,6 +4,8 @@ SPRINT TABLE[K
 [K
 0/3 0.0% -> ETA[K
 [K
+store round trip: last 0ms, max 0ms over the last 2 ticks[K
+[K
 work | waiting | ready | working | review | merging | landed[K
 -----+---------+-------+---------+--------+---------+-------[K
 s1   |       0 |     0 |       2 |      0 |       1 |      0[K

@@ -157,8 +157,8 @@ func TestWhereFrameIsTheGolden(t *testing.T) {
 	golden(t, "where_watch_frame.golden", screen.writes[1])
 }
 
-// A frame holds the time, the words SPRINT TABLE, the machine's state line
-// and the tables, and nothing else: no pending line, no stalled line, no line
+// A frame holds the time, the words SPRINT TABLE, the machine's state line,
+// the store round trip the last ticks measured, and the tables, and nothing else: no pending line, no stalled line, no line
 // about the people, no coordinator; the merge table has no since column; and a
 // row's first cell is its identity. What the frame leaves out is in --json.
 func TestWhereFrameHoldsOnlyTheHeaderAndTheTables(t *testing.T) {
@@ -189,7 +189,7 @@ func TestWhereFrameHoldsOnlyTheHeaderAndTheTables(t *testing.T) {
 		t.Fatalf("the head of the frame:\n%q\nwant\n%q", got, want)
 	}
 	for _, l := range lines[6:] {
-		if l != "" && !strings.Contains(l, " | ") && !strings.Contains(l, "-+-") {
+		if l != "" && !strings.Contains(l, " | ") && !strings.Contains(l, "-+-") && !strings.HasPrefix(l, "store round trip: ") {
 			t.Errorf("a line that is not a table's: %q\n%s", l, frame)
 		}
 	}
