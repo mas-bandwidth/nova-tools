@@ -63,6 +63,16 @@ func Migrations() ([]Migration, error) {
 	return out, nil
 }
 
+// LatestMigrationVersion returns the version of the latest embedded migration,
+// or 0 when none exist.
+func LatestMigrationVersion() int {
+	all, err := Migrations()
+	if err != nil || len(all) == 0 {
+		return 0
+	}
+	return all[len(all)-1].Version
+}
+
 // readRole is the fleet's read-only role (fleet play: nova_read). After
 // every migrate the schema's tables are readable by it, when it exists;
 // a throwaway database has no such role and skips the grant.
@@ -118,6 +128,9 @@ func (p *PG) Close() error { return p.db.Close() }
 
 // Redact returns the DSN with any password replaced, for a line.
 func Redact(dsn string) string {
+	if IsTwin(dsn) {
+		return dsn
+	}
 	cfg, err := pgconn.ParseConfig(dsn)
 	if err != nil {
 		return "(unparsed dsn)"

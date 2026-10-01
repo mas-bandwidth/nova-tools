@@ -77,9 +77,9 @@ func oneLine(err error) string { return strings.Join(strings.Fields(err.Error())
 // widths reads every machine row's width: the rows from the store, and the
 // friends' beats from Redis when a friend row carries slots (Redis is given
 // by --redis, else NOVA_SPRINT_REDIS, else NOVA_REDIS_ADDR).
-func widths(ctx context.Context, st config.Store, redisFlag string, d deps) ([]config.MachineWidth, error) {
+func widths(ctx context.Context, st config.Store, addr string, d deps) ([]config.MachineWidth, error) {
 	var hosts config.HostReader
-	if addr := liveRedisAddress(redisFlag, d.getenv); addr != "" {
+	if addr != "" {
 		rs, err := d.openRedis(ctx, addr)
 		if err != nil {
 			return nil, err
@@ -132,7 +132,13 @@ func runMachineWidth(ctx context.Context, args []string, stdout, stderr io.Write
 		return refuse(stderr, verb, err.Error())
 	}
 	defer st.Close()
-	ws, err := widths(ctx, st, *redisFlag, d)
+	redisAddr := ""
+	if *redisFlag != "" {
+		redisAddr = *redisFlag
+	} else if !isTwin(dsn) {
+		redisAddr = liveRedisAddress("", d.getenv)
+	}
+	ws, err := widths(ctx, st, redisAddr, d)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
 	}

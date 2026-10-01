@@ -1,12 +1,21 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"net/url"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgconn"
 )
+
+// TwinPrefix is what marks a DSN as a file twin.
+const TwinPrefix = "file:"
+
+// IsTwin says a DSN names a twin: "file", or "file:<path>".
+func IsTwin(dsn string) bool {
+	return dsn == "file" || strings.HasPrefix(dsn, TwinPrefix)
+}
 
 // The environment that names the config store: the DSN, the variable that
 // holds its password, and the variable read when that one is not named.
@@ -24,7 +33,8 @@ const (
 // where a ps reads it); a DSN without one takes it from the variable
 // NOVA_PG_PASSWORD_ENV names, NOVA_PG_PASSWORD when unset, and a named
 // variable that is empty is refused with its name (the shape
-// internal/nsprint/redisauth keeps for Redis).
+// internal/nsprint/redisauth keeps for Redis). When the address is a file
+// twin (file:<path>), it is returned directly with no password lookup.
 func ResolveDSN(flagValue string, getenv func(string) string) (string, error) {
 	dsn := flagValue
 	if dsn == "" {
@@ -32,6 +42,13 @@ func ResolveDSN(flagValue string, getenv func(string) string) (string, error) {
 	}
 	if dsn == "" {
 		return "", fmt.Errorf("--pg is required: postgres://user@host:5432/nova (or %s)", EnvPG)
+	}
+	if IsTwin(dsn) {
+		path := strings.TrimPrefix(dsn, TwinPrefix)
+		if dsn == "file" || strings.TrimSpace(path) == "" {
+			return "", errors.New("a twin is a file: --pg file:<path> (a store in memory alone would be gone when this command ends); the twin is for learning and tests, not for a fleet")
+		}
+		return dsn, nil
 	}
 	cfg, err := pgconn.ParseConfig(dsn)
 	if err != nil {

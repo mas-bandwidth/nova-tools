@@ -65,16 +65,18 @@ one sprint row; every write adds a history row naming who made it. apply copies
 the rows into Redis, where running tools read them; inventory feeds Ansible.
 first run: the lines under example: need no database; the rest needs PostgreSQL:
 export NOVA_PG_DSN=postgres://user@127.0.0.1:5432/db (a database you own), then
-run migrate.
+run migrate. A local file twin --pg file:<path> (or NOVA_PG_DSN=file:<path>)
+runs machine, friend, fleet and sprint verbs and status, show, apply --check
+cold without PostgreSQL or Redis.
 
 usage:
   nova-config help
   nova-config version
   nova-config kinds
-  nova-config migrate [--pg <dsn>] [--print]
-  nova-config status [--pg <dsn>] [--redis <addr>]
-  nova-config apply [--pg <dsn>] [--redis <addr>] [--as <friend>] [--kind <kind>] [--check]
-  nova-config inventory [--pg <dsn>] [--list | --host <name>] [--timeout <duration>]
+  nova-config migrate [--pg <dsn|file:<path>>] [--print]
+  nova-config status [--pg <dsn|file:<path>>] [--redis <addr>]
+  nova-config apply [--pg <dsn|file:<path>>] [--redis <addr>] [--as <friend>] [--kind <kind>] [--check]
+  nova-config inventory [--pg <dsn|file:<path>>] [--list | --host <name>] [--timeout <duration>]
       prints an Ansible dynamic JSON inventory from the store; groups: all and benches are every machine row, coordinator and store come from the fleet row, runners is every machine with at least one runner; every host's variables are under _meta.hostvars
       first run, against a migrated store: export NOVA_PG_DSN=postgres://nova_config@127.0.0.1:5432/nova; nova-config inventory
       ansible's -i wants an executable file whose first line is #!/bin/sh at column one; write it with these two commands, then run ansible with ANSIBLE_INVENTORY_UNPARSED_FAILED=true, because without it a failed inventory is an empty inventory and the play does nothing (ansible.cfg: [inventory] unparsed_is_failed = True):
@@ -83,16 +85,16 @@ usage:
       ANSIBLE_INVENTORY_UNPARSED_FAILED=true ansible-inventory -i ./nova-inventory --list
       env: NOVA_PG_DSN and NOVA_PG_PASSWORD_ENV as for every verb; NOVA_MACHINE names the machine row this process runs on (an empty value counts as unset), matched by exact machine name and refused with the known names when it names no row; when it is unset the lower-cased first label of the hostname is matched, and nothing is marked local when that matches no row
       this verb exits 0 when it printed, 1 when the store's state or an unknown machine refused it, 2 when it could not run (usage, connection, timeout)
-  nova-config <kind> add <name> --<field> <value> ... --as <friend>
-  nova-config <kind> set <name> --<field> <value> ... --as <friend>
-  nova-config <kind> remove <name> --as <friend>
-  nova-config <kind> list
-  nova-config <kind> show <name>
-  nova-config <kind> history <name>
+  nova-config <kind> add <name> --<field> <value> ... --as <friend> [--pg file:<path>]
+  nova-config <kind> set <name> --<field> <value> ... --as <friend> [--pg file:<path>]
+  nova-config <kind> remove <name> --as <friend> [--pg file:<path>]
+  nova-config <kind> list [--pg file:<path>]
+  nova-config <kind> show <name> [--pg file:<path>]
+  nova-config <kind> history <name> [--pg file:<path>]
   nova-config <kind> <verb> -h        prints the verb's usage line and every flag it takes
   nova-config machine list|show <name> [--redis <addr>]   with Redis, each line ends in the machine's live measured facts (its beat)
-  nova-config machine width <name> [--pg <dsn>] [--redis <addr>] [--json]   the room the sprint's member on the machine has: its slots less the slots of the friends charged to it; a machine with width above 0 is a member. The friends' machines come from their beats, so a Redis is needed when a friend row carries slots
-  nova-config machine self [--check] [--pg <dsn>]          prints this machine's own name as the config keys it (NOVA_MACHINE, else the tailnet's name for the host when a tailnet is running, else the hostname's first label) and opens no store; --check reads the machine rows and exits 2 when the name is none of them, 3 when the name or the rows cannot be read (exit codes of this verb: 0 printed, 2 not a row or usage, 3 unreadable)
+  nova-config machine width <name> [--pg <dsn|file:<path>>] [--redis <addr>] [--json]   the room the sprint's member on the machine has: its slots less the slots of the friends charged to it; a machine with width above 0 is a member. The friends' machines come from their beats, so a Redis is needed when a friend row carries slots
+  nova-config machine self [--check] [--pg <dsn|file:<path>>]          prints this machine's own name as the config keys it (NOVA_MACHINE, else the tailnet's name for the host when a tailnet is running, else the hostname's first label) and opens no store; --check reads the machine rows and exits 2 when the name is none of them, 3 when the name or the rows cannot be read (exit codes of this verb: 0 printed, 2 not a row or usage, 3 unreadable)
   nova-config fleet set --<field> <value> ... --as <friend>    the one fleet row (store, coordinator machine): no name, no add, remove or list
   nova-config sprint set --coordinator <friend> --as <friend>  the one sprint row: who coordinates; set it to hand over
   nova-config fleet|sprint show
@@ -101,10 +103,12 @@ usage:
 Postgres is the permanent store; Redis is a copy of it that apply rebuilds.
 Connect with export NOVA_PG_DSN=postgres://user@host:5432/db (or --pg) with NO
 password on the line: the password is read from the variable
-NOVA_PG_PASSWORD_ENV names (NOVA_PG_PASSWORD when unset). --redis is host:port
-(env NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the seat's address). --as is
-the friend making the change (env NOVA_FRIEND); every write is a row in
-config.history with it (omitted on apply --check).
+NOVA_PG_PASSWORD_ENV names (NOVA_PG_PASSWORD when unset). A local file twin
+--pg file:<path> (or NOVA_PG_DSN=file:<path>) runs without PostgreSQL or Redis:
+it reads and writes the file directly (for learning and tests, not for a fleet).
+--redis is host:port (env NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the seat's
+address). --as is the friend making the change (env NOVA_FRIEND); every write is
+a row in config.history with it (omitted on apply --check).
 
 A machine's row is the declared facts something reads (user, seat, slots,
 runners); its name is the tailnet host ssh reaches. Measured facts (os, arch,
@@ -199,6 +203,9 @@ func realDeps() deps {
 	return deps{
 		getenv: os.Getenv,
 		openStore: func(ctx context.Context, dsn string) (pgStore, error) {
+			if isTwin(dsn) {
+				return openTwin(dsn)
+			}
 			return config.OpenPG(ctx, dsn)
 		},
 		openRedis: func(ctx context.Context, addr string) (redisSide, error) {
@@ -218,6 +225,28 @@ func run(args []string, stdout, stderr io.Writer, d deps) (code int) {
 	// `<verb> -h` and `help <verb>` print that verb's help on stdout at exit 0,
 	// before anything is dialed or written (the CLI style's rule (b), #4505).
 	defer verbflag.Recover(stdout, tool, usageTop+kindsUsage()+usageExamples, &code)
+	var twins []*twinStore
+	origOpenStore := d.openStore
+	d.openStore = func(ctx context.Context, dsn string) (pgStore, error) {
+		st, err := origOpenStore(ctx, dsn)
+		if err != nil {
+			return nil, err
+		}
+		if ts, ok := st.(*twinStore); ok {
+			twins = append(twins, ts)
+		}
+		return st, nil
+	}
+	defer func() {
+		for _, t := range twins {
+			if err := t.save(); err != nil {
+				fmt.Fprintf(stderr, "%s: %s\n", tool, oneline.Escape(err.Error()))
+				if code == 0 {
+					code = 2
+				}
+			}
+		}
+	}()
 	ctx := context.Background()
 	if len(args) == 0 {
 		return refuse(stderr, "", "no verb; want kinds, migrate, status, apply, inventory, or <kind> add|set|remove|list|show|history")
@@ -294,7 +323,7 @@ func storeErr(stderr io.Writer, verb string, err error, next string) int {
 
 // connFlags adds --pg, --redis and --as to a verb's flag set.
 func connFlags(fs *stdflag.FlagSet, withRedis, withActor bool) (pg, redisAddr, actor *string) {
-	pg = fs.String("pg", "", "Postgres DSN postgres://user@host:port/db with no password (env NOVA_PG_DSN); the password comes from the variable NOVA_PG_PASSWORD_ENV names")
+	pg = fs.String("pg", "", "Postgres DSN postgres://user@host:port/db with no password (env NOVA_PG_DSN), or file:<path>; the password comes from the variable NOVA_PG_PASSWORD_ENV names")
 	if withRedis {
 		redisAddr = fs.String("redis", "", "Redis address host:port (env NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR, then the seat's address)")
 	}
@@ -595,7 +624,13 @@ func runKindList(ctx context.Context, k *config.Kind, args []string, stdout, std
 		for _, row := range rows {
 			names = append(names, row.Name)
 		}
-		if bs, err = beats(ctx, liveRedisAddress(*redisFlag, d.getenv), names, d); err != nil {
+		redisAddr := ""
+		if *redisFlag != "" {
+			redisAddr = *redisFlag
+		} else if !isTwin(dsn) {
+			redisAddr = liveRedisAddress("", d.getenv)
+		}
+		if bs, err = beats(ctx, redisAddr, names, d); err != nil {
 			return refuse(stderr, verb, err.Error())
 		}
 	}
@@ -652,7 +687,13 @@ func runKindRead(ctx context.Context, k *config.Kind, which string, args []strin
 		}
 		suffix := ""
 		if live(k) {
-			bs, err := beats(ctx, liveRedisAddress(*redisFlag, d.getenv), []string{name}, d)
+			redisAddr := ""
+			if *redisFlag != "" {
+				redisAddr = *redisFlag
+			} else if !isTwin(dsn) {
+				redisAddr = liveRedisAddress("", d.getenv)
+			}
+			bs, err := beats(ctx, redisAddr, []string{name}, d)
 			if err != nil {
 				return refuse(stderr, verb, err.Error())
 			}
@@ -762,6 +803,10 @@ func runStatus(ctx context.Context, args []string, stdout, stderr io.Writer, d d
 		}
 		line += fmt.Sprintf(" %s=%d %s_rev=%d", k.Name, counts[k.Name], k.Name, rev)
 	}
+	if isTwin(dsn) && *redisFlag == "" {
+		fmt.Fprintln(stdout, line+" redis=-")
+		return 0
+	}
 	addr, addrErr := redisAddress(*redisFlag, d.getenv)
 	if addrErr != nil {
 		fmt.Fprintln(stdout, line+" redis=-")
@@ -828,9 +873,15 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 	if err != nil {
 		problems = append(problems, err.Error())
 	}
-	addr, err := redisAddress(*redisFlag, d.getenv)
-	if err != nil {
-		problems = append(problems, err.Error())
+	var rs redisSide
+	var addr string
+	if dsn != "" && isTwin(dsn) && *check && *redisFlag == "" {
+		rs = newTwinRedis()
+	} else {
+		addr, err = redisAddress(*redisFlag, d.getenv)
+		if err != nil {
+			problems = append(problems, err.Error())
+		}
 	}
 	if len(problems) > 0 {
 		return refuse(stderr, verb, strings.Join(problems, "; "))
@@ -840,9 +891,11 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 		return refuse(stderr, verb, err.Error())
 	}
 	defer st.Close()
-	rs, err := d.openRedis(ctx, addr)
-	if err != nil {
-		return refuse(stderr, verb, err.Error())
+	if rs == nil {
+		rs, err = d.openRedis(ctx, addr)
+		if err != nil {
+			return refuse(stderr, verb, err.Error())
+		}
 	}
 	defer rs.Close()
 	word := "APPLY"

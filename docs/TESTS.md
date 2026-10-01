@@ -680,7 +680,9 @@ migrations compiled into the binary, so every value below reproduces on
 every bench. The real runs need a Postgres (`nova-config migrate`) and a
 Redis (`nova-config apply`); `docs/nova-config/README.md` walks them, and
 `cmd/nova-config/config_functional_test.go` runs them against a throwaway
-Postgres and a throwaway Redis.
+Postgres and a throwaway Redis. A local file twin (`--pg file:<path>`) runs
+every verb cold without Postgres or Redis; `cmd/nova-config/twin_test.go`
+runs the lifecycle over a twin file.
 
 ### First run
 
@@ -706,7 +708,7 @@ from `nova-config help`:
   nova-config machine add -h
 flags:
   --as <string>  the friend making the change (env NOVA_FRIEND); every write records it in config.history
-  --pg <string>  Postgres DSN postgres://user@host:port/db with no password (env NOVA_PG_DSN); the password comes from the variable NOVA_PG_PASSWORD_ENV names
+  --pg <string>  Postgres DSN postgres://user@host:port/db with no password (env NOVA_PG_DSN), or file:<path>; the password comes from the variable NOVA_PG_PASSWORD_ENV names
   --runners <string>  how many CI runners it hosts; 0 (the default) hosts none
   --seat <string>  its nova-secrets seat: the identity it opens secrets as, one <seat>.yaml in the store
   --slots <string>  how many cards it may run at once, the machine ceiling (machine:<m>:ceiling); 0 runs none
