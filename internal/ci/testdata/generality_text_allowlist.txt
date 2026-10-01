@@ -16,25 +16,19 @@
 # - A count that falls, or a row with no finding, fails until the row shrinks.
 # - NOVA_CI_UPDATE=1 removes such rows and never adds one.
 #
-# ceiling: 229
-.github/scripts/live-packages.sh:glenn 1
-.github/scripts/plan-merge-shards.sh:rowan 1
-.github/scripts/select-packages.sh:glenn 1
-.github/scripts/select-packages.sh:space 1
-.github/workflows/certification.yml:glenn 1
+# ceiling: 220
 # certification.yml:space, the third: the bench runner label for the tick-gate job; labels live in workflows
 .github/workflows/certification.yml:space 3
 .github/workflows/certification.yml:studio 4
-.github/workflows/ci.yml:batman 22
-.github/workflows/ci.yml:glenn 23
-.github/workflows/ci.yml:hulk 24
+.github/workflows/ci.yml:batman 19
+.github/workflows/ci.yml:glenn 19
+.github/workflows/ci.yml:hulk 23
 .github/workflows/ci.yml:mini 1
-.github/workflows/ci.yml:rowan 2
-.github/workflows/ci.yml:space 61
-.github/workflows/ci.yml:studio 74
-.github/workflows/ci.yml:superman 19
-.github/workflows/ci.yml:vision 10
-.github/scripts/revert-on-red.sh:glenn 1
+.github/workflows/ci.yml:rowan 1
+.github/workflows/ci.yml:space 34
+.github/workflows/ci.yml:studio 39
+.github/workflows/ci.yml:superman 16
+.github/workflows/ci.yml:vision 9
 .github/workflows/nightly-slow.yml:glenn 1
 .github/workflows/revert-on-red.yml:glenn 1
 CHANGELOG.md:batman 4
