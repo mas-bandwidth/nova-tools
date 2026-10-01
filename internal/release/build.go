@@ -166,7 +166,7 @@ func build(ctx context.Context, o options, deps Deps, out, errs io.Writer) int {
 			"%s holds no cmd/nova-* directory, so this build would ship an empty set", o.source))
 	}
 	// THE STAMP IS COMPOSED ONCE, before the first target, the way
-	// .github/scripts/release-ldflags.sh composes it once for the release
+	// tools/ghrelease's ldflags verb composes it once for the release
 	// workflow: `-X main.version=` with an empty value is a legal linker flag
 	// that stamps nothing, and nothing downstream notices (#118).
 	args := []string{"-trimpath", "-ldflags", Ldflags(o.version)}

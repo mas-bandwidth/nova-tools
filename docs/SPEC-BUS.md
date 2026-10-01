@@ -153,12 +153,12 @@ REPLY OK id=<id> re=<id> path=<path> to=<name> subject=<text> commit=<commit> pu
 ```
 
 **The refusals.** Each is exit 2 with one remedy line.
-- a hand-written `Id:` header: `nova-bus send: the tool mints the Id; delete the Id: header from <draft>`.
-- more than one id in `Re:`: `nova-bus send: Re: names one thread; name one id in <draft>`.
+- a hand-written `Id:` header: `nova-bus send: the tool mints the Id; delete the Id: header from <draft>; run: nova-bus send -h`.
+- more than one id in `Re:`: `nova-bus send: Re: names one thread; name one id in <draft>; run: nova-bus send -h`.
 - `--dry-run` with `--prepared`: `nova-bus send: --dry-run shapes an ordinary draft; drop --prepared or drop --dry-run`.
 - `reply` without `--re`: `nova-bus reply: --re is required; name the note being answered`.
 - `reply --re` naming no note: `nova-bus reply: --re <id> names no note; run nova-bus inbox --open and name one`.
-- `reply` draft carrying a header it fills: `nova-bus reply: reply fills From, To, Re and Subject; delete the <Key>: line from <draft>`.
+- `reply` draft carrying a header it fills: `nova-bus reply: reply fills From, To, Re and Subject; delete the <Key>: line from <draft>; run: nova-bus reply -h`.
 - `reply --advance` with `--dry-run`: `nova-bus reply: --advance moves the cursor and --dry-run writes nothing; drop one`.
 
 **The mistake it removes.** The mistake it removes is hand-crafted `Id:` headers in

@@ -1,0 +1,5 @@
+# Migrated counted package ledger; original row keys preserved.
+# ceiling: 3
+internal/config/kind.go:glenn 4
+internal/config/kind.go:space 1
+internal/config/redis.go:glenn 1

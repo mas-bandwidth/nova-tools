@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -34,6 +35,42 @@ import (
 // that arrives as "-h" must never be answered with exit 0.
 var helpRefusedByDesign = map[string]string{
 	"nova-fuse": "exit 0 is the fuse's CLEAR and DONE; a surface named -h must not read as permission",
+}
+
+// exitLabel is the label of an exit-codes paragraph in any case: `exit codes:`
+// anywhere in a line, or the short `exit:` where it opens one.
+var exitLabel = regexp.MustCompile(`(?i)(\bexit codes?\s*:|^\s*exit\s*:)`)
+
+// statedExitCodes is the first line of the exit-codes paragraph a banner
+// states, from the label on; "" when the banner states none. A label that
+// opens a line wins over one inside a sentence. It is the witness for
+// verbflag's own matcher, written apart from it.
+func statedExitCodes(banner string) string {
+	inSentence := ""
+	for _, l := range strings.Split(banner, "\n") {
+		loc := exitLabel.FindStringIndex(l)
+		if loc == nil {
+			continue
+		}
+		if strings.TrimSpace(l[:loc[0]]) == "" {
+			return strings.TrimSpace(l[loc[0]:])
+		}
+		if inSentence == "" {
+			inSentence = strings.TrimSpace(l[loc[0]:])
+		}
+	}
+	return inSentence
+}
+
+// helpStatesExitCodes reports whether a verb's help carries a line that opens
+// with an exit-codes label other than the `see help` pointer.
+func helpStatesExitCodes(tool, help string) bool {
+	for _, l := range strings.Split(help, "\n") {
+		if exitLabel.MatchString(l) && strings.TrimSpace(l) != "exit codes: see `"+tool+" help`" {
+			return true
+		}
+	}
+	return false
 }
 
 // usageVerbs are the verbs a banner's own usage block names: the lines above
@@ -90,6 +127,22 @@ func everyVerbAnswersHelp(t *testing.T, root, tool, bin, banner string) {
 		}
 		if code != 0 || strings.TrimSpace(out.String()) == "" || errb.Len() != 0 {
 			t.Errorf("`%s` exited %d, stdout %d bytes, stderr %q; want that verb's help on stdout at exit 0 and nothing on stderr (route the verb's flag parsing through internal/nsprint/verbflag)", line, code, out.Len(), errb.String())
+		}
+		// The exit-codes line is the onboarding standard, and it reaches every
+		// tool's verb help: the banner states the tool's codes (no exemption),
+		// and a verb's -h quotes them, never the `see help` pointer. A verb that
+		// verbflag assembles quotes the banner's own line; a tool with verb help
+		// of its own states its own. One verb per tool is enough: every verb's
+		// help is assembled by one seam or one table.
+		if verb == verbs[0] {
+			want := statedExitCodes(banner)
+			if want == "" {
+				t.Errorf("`%s help` states no exit codes; the onboarding standard wants an `exit codes: 0 ..., 1 ..., 2 ...` line in every banner", tool)
+			} else if !helpStatesExitCodes(tool, out.String()) {
+				t.Errorf("`%s` prints no exit-codes line; its banner states %q; got:\n%s", line, want, out.String())
+			} else if strings.HasPrefix(out.String(), "usage: "+tool) && !strings.Contains("\n"+out.String(), "\n"+want+"\n") {
+				t.Errorf("`%s` does not quote the exit-codes line its banner states (%q); got:\n%s", line, want, out.String())
+			}
 		}
 		if entries, _ := os.ReadDir(dir); len(entries) != 0 {
 			var names []string

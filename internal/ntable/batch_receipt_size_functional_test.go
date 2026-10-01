@@ -11,11 +11,12 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"fmt"
-	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestBatchReceiptRecordsLongValuesByLengthAndDigest(t *testing.T) {
@@ -29,49 +30,39 @@ func TestBatchReceiptRecordsLongValuesByLengthAndDigest(t *testing.T) {
 		names[i] = fmt.Sprintf("f%d", i)
 		long[names[i]] = strings.Repeat(string(rune('a'+i%26)), 64<<10)
 	}
-	if err := c.HSet(ctx, ntable.MemberKey("a"), long).Err(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, c.HSet(ctx, ntable.MemberKey("a"), long).Err())
 	quoted := make([]string, fields)
 	for i, n := range names {
 		quoted[i] = `"` + n + `"`
 	}
 	raw := manifestWith(probeRev(ctx, c), "big-unset", `{"id":"a","expect":{},"unset":[`+strings.Join(quoted, ",")+`]}`)
-	if len(raw) > 2000 {
-		t.Fatalf("the manifest is %d bytes", len(raw))
-	}
+	require.LessOrEqual(t, len(raw), 2000, "the manifest is %d bytes", len(raw))
 	ans, err := rawApply(ctx, c, raw)
-	if err != nil || ans[0] != "OK" {
-		t.Fatalf("apply: %.200v %v", ans, err)
-	}
-	if size := len(fmt.Sprint(ans)); size > 64<<10 {
-		t.Errorf("the receipt is %d bytes for a %d-byte manifest", size, len(raw))
-	}
+	require.True(t, replyOpens(ans, err, "OK"), "apply: %.200v %v", ans, err)
+	size := len(fmt.Sprint(ans))
+	assert.LessOrEqual(t, size, 64<<10, "the receipt is %d bytes for a %d-byte manifest", size, len(raw))
 	record := c.HGet(ctx, ntable.DefKey("demo")+":ops", "0:big-unset").Val()
-	if len(record) > 120<<10 {
-		t.Errorf("the stored operation record is %d bytes", len(record))
-	}
+	assert.LessOrEqual(t, len(record), 120<<10, "the stored operation record is %d bytes", len(record))
 
 	// what the receipt says of a value is its length and digest
 	r, err := ntable.ApplyBatch(ctx, c, ntable.BatchManifest{Schema: 1, Table: "demo", Epoch: "0", ExpectedTableRevision: probeRev(ctx, c), OperationID: "big-unset-2", Members: []ntable.BatchMemberEntry{
 		{ID: "b", Expect: &ntable.MemberExpect{}, Set: map[string]string{"k": strings.Repeat("z", 64<<10)}}}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	ch := r.BatchDelta.Members[0].Fields["k"]
 	sum := sha1.Sum([]byte(strings.Repeat("z", 64<<10)))
-	if ch.Before != nil || ch.After != nil || ch.AfterBytes != 64<<10 || ch.AfterSHA1 != hex.EncodeToString(sum[:]) || ch.BeforeBytes != 0 {
-		t.Errorf("a long set value is recorded as %+v", ch)
-	}
-	if len(r.BatchDelta.Members[0].FieldsSet) != 0 {
-		t.Errorf("fields_set carries a long value: %d entries", len(r.BatchDelta.Members[0].FieldsSet))
-	}
+	assert.Nil(t, ch.Before, "a long set value is recorded as %+v", ch)
+	assert.Nil(t, ch.After, "a long set value is recorded as %+v", ch)
+	assert.Equal(t, 64<<10, ch.AfterBytes, "a long set value is recorded as %+v", ch)
+	assert.Equal(t, hex.EncodeToString(sum[:]), ch.AfterSHA1, "a long set value is recorded as %+v", ch)
+	assert.Equal(t, 0, ch.BeforeBytes, "a long set value is recorded as %+v", ch)
+	assert.Empty(t, r.BatchDelta.Members[0].FieldsSet, "fields_set carries a long value: %d entries", len(r.BatchDelta.Members[0].FieldsSet))
 
 	// replay returns the identical receipt
 	again, err := rawApply(ctx, c, raw)
-	if got, marked := asReplay(again); err != nil || !marked || !reflect.DeepEqual(got, ans) {
-		t.Errorf("replay of the big receipt: %v", err)
-	}
+	got, marked := asReplay(again)
+	assert.NoError(t, err, "replay of the big receipt")
+	assert.True(t, marked, "replay of the big receipt is not marked a replay")
+	assert.Equal(t, ans, got, "replay of the big receipt")
 }
 
 func TestBatchReceiptKeepsValuesUpToTheBoundInFull(t *testing.T) {
@@ -80,25 +71,18 @@ func TestBatchReceiptKeepsValuesUpToTheBoundInFull(t *testing.T) {
 	seedTwo(t, ctx, c)
 	full := strings.Repeat("s", ntable.ReceiptValueBytes)
 	over := strings.Repeat("s", ntable.ReceiptValueBytes+1)
-	if err := c.HSet(ctx, ntable.MemberKey("a"), "at", full, "over", over).Err(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, c.HSet(ctx, ntable.MemberKey("a"), "at", full, "over", over).Err())
 	r, err := ntable.ApplyBatch(ctx, c, ntable.BatchManifest{Schema: 1, Table: "demo", Epoch: "0", ExpectedTableRevision: probeRev(ctx, c), OperationID: "edge", Members: []ntable.BatchMemberEntry{
 		{ID: "a", Expect: &ntable.MemberExpect{}, Unset: []string{"at", "over", "role", "none"}}}})
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	f := r.BatchDelta.Members[0].Fields
-	if f["at"].Before == nil || *f["at"].Before != full || f["at"].BeforeBytes != 0 {
-		t.Errorf("a value at the bound: %+v", f["at"])
-	}
-	if f["over"].Before != nil || f["over"].BeforeBytes != len(over) || f["over"].BeforeSHA1 == "" {
-		t.Errorf("a value one over the bound: %+v", f["over"])
-	}
-	if f["role"].Before == nil || *f["role"].Before != "x" {
-		t.Errorf("a short value: %+v", f["role"])
-	}
-	if f["none"].Before != nil || f["none"].BeforeBytes != 0 || f["none"].After != nil {
-		t.Errorf("an absent field is null with no length: %+v", f["none"])
-	}
+	require.Equal(t, new(full), f["at"].Before, "a value at the bound: %+v", f["at"])
+	assert.Equal(t, 0, f["at"].BeforeBytes, "a value at the bound: %+v", f["at"])
+	assert.Nil(t, f["over"].Before, "a value one over the bound: %+v", f["over"])
+	assert.Equal(t, len(over), f["over"].BeforeBytes, "a value one over the bound: %+v", f["over"])
+	assert.NotEmpty(t, f["over"].BeforeSHA1, "a value one over the bound: %+v", f["over"])
+	require.Equal(t, new("x"), f["role"].Before, "a short value: %+v", f["role"])
+	assert.Nil(t, f["none"].Before, "an absent field is null with no length: %+v", f["none"])
+	assert.Equal(t, 0, f["none"].BeforeBytes, "an absent field is null with no length: %+v", f["none"])
+	assert.Nil(t, f["none"].After, "an absent field is null with no length: %+v", f["none"])
 }

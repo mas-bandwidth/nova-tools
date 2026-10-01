@@ -1,5 +1,0 @@
-{
-  "field": "body.raw_usage.input.unit",
-  "rule": "unit_syntax",
-  "verdict": "refused"
-}

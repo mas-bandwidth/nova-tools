@@ -232,7 +232,7 @@ func install(ctx context.Context, o options, deps Deps, out, errs io.Writer) int
 	return 0
 }
 
-// hasToken is the same whole-token match .github/scripts/assert-version-stamp.sh
+// hasToken is the same whole-token match tools/ghrelease's stamp verb
 // makes, and for the same reason: v0.1 must not pass for v0.11, and `=` is a
 // separator so that no tag is matched out of the value half of a version line's
 // `key=value` extra -- the stamp is field two, alone, in every binary (#1297).

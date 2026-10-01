@@ -8,7 +8,7 @@ import (
 // TestGrokUsageFileFoldsToLedgerRow is the red test issue #626 asks for: a fixture `grok
 // usage` export (the xAI/Grok JSON shape) folds through the xAI provider parser into one
 // day-file row carrying the turn's input, output and cost columns, and check accepts the
-// day it wrote. The fixture is the sanitized turn docs/MAPPING-TOKENS-GROK.md names.
+// day it wrote. The fixture is a synthetic, sanitized turn.
 func TestGrokUsageFileFoldsToLedgerRow(t *testing.T) {
 	t.Parallel()
 
@@ -45,7 +45,7 @@ func TestGrokUsageFileFoldsToLedgerRow(t *testing.T) {
 	body := read(t, filepath.Join(out, "2026-09-12.tsv"))
 	if line := lineWith(body, "grok-model-example"); line == "" {
 		t.Fatalf("no Grok ledger row in the day file:\n%s", body)
-	} else if line != "2026-09-12\tgrok-model-example\tunattributed\t1000\t100\t0\t800\t40\t0\tutc\txai:johnny\t-" {
+	} else if line != "2026-09-12\tgrok-model-example\tunattributed\t1000\t100\t0\t800\t40\t0\tutc\txai:johnny" {
 		t.Errorf("Grok row is %q, want input/output/cost columns filled", line)
 	}
 

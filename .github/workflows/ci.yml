@@ -316,6 +316,10 @@ jobs:
     # packages run on the darwin-x64 shards only. On pull_request and merge_group it
     # selects only the packages the change touches and their in-module
     # importers; the push to dev and the nightly run keep the whole tree.
+    # The darwin shards are dealt only when the target branch is dev or main
+    # (a pull_request's base, the merge queue's base_ref, a push's ref name), on
+    # schedule and on workflow_dispatch; for a working branch the matrix is Linux
+    # only (pkgselect.DarwinOn, read by `ci test-matrix --target-branch` in the list step).
     # It runs on the nightly schedule too, for the `functional` job's list and
     # for the unit `test` job's nightly space shards (#4413).
     if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
@@ -427,242 +431,26 @@ jobs:
           go version
           echo "GO SETUP want=${want:-none} go=$(command -v go) gomodcache=$(go env GOMODCACHE) gocache=$(go env GOCACHE)"
 
+      - name: build the ci runner
+        # tools/ci is built once in this job and every later step runs the binary; `go run` would
+        # compile it again in each step. (`go run ./tools/ci help` lists its verbs.)
+        shell: bash
+        run: go build -o "$RUNNER_TEMP/ci" ./tools/ci
+
       - id: list
+        # The fan-out: the packages this event tests, dealt onto the runner
+        # groups (internal/pkgselect, `go run ./tools/ci help test-matrix`). A pull
+        # request and a merge group carry the packages the change touched and their
+        # dependents, read against the event's own base; a push and the nightly run
+        # keep the whole tree. The macOS legs are dealt only where the target branch
+        # is dev or main (--target-branch: a pull request's base_ref, a merge
+        # group's base_ref, a push's ref name), and on schedule and
+        # workflow_dispatch; a pull request's macOS legs are for the code that
+        # differs on macOS. The two group labels are the runs-on labels the legs
+        # carry.
         shell: bash
         run: |
-          set -euo pipefail
-          # Runner labels are carried as single-string fields (os/arch/group), not
-          # as a label array: a runs-on expression must resolve to a string, so the
-          # test job composes its label list per leg.
-
-          # EIGHT on space, FOUR on the darwin-x64 Macs (batman, superman; the Studio
-          # left CI 2026-09-24, nova-tools#3634), and the split is a measurement,
-          # not a preference. The Studio also carries the swarm, and at 02:48Z
-          # 2026-09-16 its legs waited forty minutes for a runner while the space
-          # legs finished in two: eight and eight was the wrong shape once the two
-          # fleets were no longer symmetric. ./cmd/* and ./internal/... go into one
-          # list; the packages that build on both platforms are dealt round-robin
-          # into 8 space shards and 4 darwin-x64 shards, so each is covered exactly
-          # once per OS; the darwin-only packages — cmd/nova-sandbox and
-          # internal/sandbox, whose sandbox backend is macOS-only today
-          # (docs/USAGE.md) — go to the darwin-x64 shards only. A leg per package
-          # instead reads like more parallelism and is not: 38 packages is 76 legs
-          # queueing on 8 machines, a serial queue wearing a matrix's clothes,
-          # measured at over eleven minutes in run 35018437149 for a tier whose
-          # budget is two.
-          SPACE_SHARDS=8
-          STUDIO_SHARDS=8 # push to dev: ONE wave on eight of the 24 darwin-x64 runners (batman 10, superman 14; the Studio left CI 2026-09-24, nova-tools#3634); was on the eight studio runners, each shard under the test job's 20-minute push cap; 2026-09-24 run 35950929169 (attempt 2, Studio load 3.5, 16 runners registered) ran all sixteen shards at once and every one was cancelled at the 12-minute cap, 1/16 still testing at 12:06 after 6,252 passes in 75 packages (139 test binaries built under 16-way contention), while 1/8 space finished its 14 packages in under two minutes; was 16 (two waves on eight runners, each inside the old 6-minute cap)
-          darwin_only=("./cmd/nova-sandbox" "./internal/sandbox")
-
-          is_darwin_only() {
-            local p="$1" d
-            for d in "${darwin_only[@]}"; do
-              [ "$p" = "$d" ] && return 0
-            done
-            return 1
-          }
-
-          # THE FAN-OUT TESTS WHAT THE CHANGE TOUCHED. Measured 15:56Z
-          # 2026-09-16: eight PRs opened in twelve minutes, each fanning 16
-          # studio shards over the whole tree onto 8 studio runners, put 128
-          # studio legs in the queue and held the merge group's own run behind
-          # them; a run that needs no runner time of its own waited sixteen
-          # minutes (35117977336). So on pull_request and merge_group the
-          # shards carry only the Go packages whose files the change touched
-          # plus every in-repo package that imports them, read from the diff
-          # against the event's own base by .github/scripts/select-packages.sh
-          # (a go.mod or go.sum change selects the whole tree). A change that
-          # touches no Go package — docs or lisp only — selects nothing and
-          # collapses to ONE leg that prints "nothing to test for this change"
-          # and exits 0, instead of the whole tree on every runner. The push to
-          # dev and the nightly schedule keep the whole tree: the full matrix
-          # is still the evidence, it is just no longer the default feedback
-          # path.
-          all=()
-          base=""
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            base="${{ github.event.pull_request.base.sha }}"
-            SPACE_SHARDS=4
-            # FOUR since 2026-09-25 (the two-minute cap, every job): at two darwin
-            # shards, shard 2/2 of PR run 36206229467 held cmd/nova-sprint,
-            # cmd/nova-wake and cmd/nova-review together and crossed the cap on
-            # the Studio; at eight, sixteen darwin jobs of one queue run shared
-            # eight runners and the merge legs crossed it. Glenn: "we cannot run
-            # CI as parallel as we are used to, and still get reliable < 2m";
-            # "reduce the number of runners". The Studio carries four runners
-            # (fleet/runners.tsv), one wave per PR. The 2026-09-24 note below is history.
-            STUDIO_SHARDS=4 # 14:55Z 2026-09-24: 16/16 Studio ARM64 runners busy, 12 runs queued, six PR runs at 4 studio shards each (24 jobs for 16 runners) held dev's push runs 10+ min; a shard's tests run 0.7-4.0 min since #3492 (run 36003142070); was 4
-          elif [ "${{ github.event_name }}" = "merge_group" ]; then
-            base="${{ github.event.merge_group.base_sha }}"
-            STUDIO_SHARDS=4
-          fi
-          # A GO LIST FAILURE NEVER YIELDS `test (nothing)`. Measured 2026-09-26
-          # ~1:00 PM ET: on PR #4370's final head the shards reported `test
-          # (nothing)` because select-packages.sh hit a shared-GOCACHE race on a
-          # space runner ("open /home/ubuntu/.cache/go-build/...: no such file or
-          # directory") inside `done < <(bash select-packages.sh ...)`, which
-          # throws the script's exit status away, and "0 package(s) touched: none"
-          # was green. The script's answer is now read by command substitution,
-          # so its exit status stops this step, and the script itself judges a
-          # go list failure: on pull_request it FAILS the job with the go list
-          # error printed (fast and cheap; the runner is broken, re-run it); on
-          # merge_group, push and schedule it prints `WARN select-packages: go
-          # list failed (...); testing the whole tree` and selects the whole tree
-          # (the landing must not stall on one runner's cache).
-          on_go_list_error=--on-go-list-error=whole-tree
-          [ "${{ github.event_name }}" = "pull_request" ] && on_go_list_error=--on-go-list-error=fail
-          if [ -n "$base" ]; then
-            selected=$(bash .github/scripts/select-packages.sh "$on_go_list_error" "$base") || { echo "select-packages.sh failed; see its error above"; exit 1; }
-          else
-            selected=$(bash .github/scripts/select-packages.sh "$on_go_list_error" --all) || { echo "select-packages.sh failed; see its error above"; exit 1; }
-          fi
-          while IFS= read -r pkg; do
-            [ -n "$pkg" ] || continue
-            all+=("$pkg")
-          done <<<"$selected"
-          if [ -n "$base" ]; then
-            echo "${{ github.event_name }}: ${#all[@]} package(s) touched: ${all[*]:-none}"
-          else
-            [ "${#all[@]}" -gt 0 ] || { echo "no packages: the fan-out would be empty and green"; exit 1; }
-          fi
-
-          # THE TWO HEAVIEST PACKAGES NEVER SHARE A SHARD. Dealt round-robin from the
-          # sorted list, cmd/nova-bus and cmd/nova-merge sat eight apart and so shared
-          # 2/8 studio on every push: dev run 36012558540 (studio-nova-15, Studio load
-          # 51) ran nova-bus for 773 s beside nova-merge, which hit the 18m go test
-          # timeout with 287 PASS and 0 FAIL. Dealt first, they take shards 1 and 2
-          # (and space shards 1 and 2); every package is still covered once per OS.
-          # cmd/nova-merge has since moved to deprecated/, so cmd/nova-bus is dealt
-          # first alone.
-          heavy=" ./cmd/nova-bus "
-          front=()
-          rest=()
-          for pkg in ${all[@]+"${all[@]}"}; do
-            case "$heavy" in *" $pkg "*) front+=("$pkg") ;; *) rest+=("$pkg") ;; esac
-          done
-          all=(${front[@]+"${front[@]}"} ${rest[@]+"${rest[@]}"})
-
-          # THE FUNCTIONAL TIER'S LIST: the same selected packages, dealt into
-          # FOUR space shards like a pull request's unit legs (the darwin-only
-          # packages have no Linux leg). The `functional` job reads it on
-          # merge_group, schedule and workflow_dispatch only; each leg's `make
-          # test-functional` runs just the tests behind the functional tag.
-          FUNCTIONAL_SHARDS=4
-          declare -a functional_grp
-          f=0
-          for pkg in ${all[@]+"${all[@]}"}; do
-            is_darwin_only "$pkg" && continue
-            functional_grp[$((f % FUNCTIONAL_SHARDS))]+=" $pkg"
-            f=$((f + 1))
-          done
-          fentries=()
-          for ((g=0; g<FUNCTIONAL_SHARDS; g++)); do
-            [ -n "${functional_grp[$g]:-}" ] || continue
-            fentries+=("{\"name\":\"$((g + 1))/$FUNCTIONAL_SHARDS space\",\"packages\":\"${functional_grp[$g]# }\"}")
-          done
-          [ "${#fentries[@]}" -gt 0 ] || fentries=('{"name":"nothing","packages":""}')
-          functional="[$(IFS=,; echo "${fentries[*]}")]"
-          echo "functional: $functional"
-          echo "functional=$functional" >> "$GITHUB_OUTPUT"
-
-          if [ "${#all[@]}" -eq 0 ]; then
-            echo "nothing to test for this change"
-            packages='[{"name":"nothing","packages":"","os":"linux","arch":"x64","group":"space"}]'
-            echo "$packages"
-            echo "packages=$packages" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          # A PULL REQUEST'S macOS LEGS ARE FOR THE CODE THAT IS DIFFERENT ON macOS.
-          # Measured 2026-09-23 02:40Z (#2795): 52 PR runs queued, and every one of
-          # their 141 waiting jobs needed `self-hosted,macOS` while 46 Linux runners
-          # sat idle; the macOS legs of the last 25 PR runs waited a median 39 min
-          # (max 51) for one of the 36-40 Mac runners the swarm also loads, the
-          # Linux legs 2 s. Yet 73 of the 78 packages compile the SAME files on
-          # darwin as on linux, and 58 of them import nothing that does not: their
-          # macOS leg ran the Go source their Linux leg had already run. So on a
-          # pull_request a touched package gets a macOS leg only when it, or a
-          # package it (or its tests) imports from this module, compiles a
-          # different file set under GOOS=darwin (today cmd/nova-sandbox,
-          # internal/bus, internal/sandbox, internal/swarm, internal/wake and the
-          # 15 packages that import them); every other package runs on Linux
-          # only, the shape the merge_group run below has used since 2026-09-16.
-          # The whole tree still runs on macOS on every push to dev (8 darwin-x64
-          # shards) and in certification's `test` job, so nothing leaves the
-          # macOS evidence; it leaves the PR feedback path. If `go list` fails,
-          # every touched package keeps its macOS leg (the old shape).
-          darwin_sensitive=" "
-          if [ "${{ github.event_name }}" = "pull_request" ] && [ "${#all[@]}" -gt 0 ]; then
-            mod=$(go list -m)
-            files='{{.ImportPath}} {{.GoFiles}} {{.CgoFiles}} {{.TestGoFiles}} {{.XTestGoFiles}}'
-            if GOOS=linux go list -f "$files" ./cmd/... ./internal/... > "$RUNNER_TEMP/files-linux" &&
-              GOOS=darwin go list -f "$files" ./cmd/... ./internal/... > "$RUNNER_TEMP/files-darwin" &&
-              GOOS=darwin go list -test -f '{{.ImportPath}} {{join .Deps " "}}' ./cmd/... ./internal/... > "$RUNNER_TEMP/deps-darwin"; then
-              differ=$(diff "$RUNNER_TEMP/files-linux" "$RUNNER_TEMP/files-darwin" | awk '/^[<>]/ {print $2}' | sort -u || true)
-              while read -r p deps; do
-                p="${p%.test}"
-                p="${p%_test}"
-                for d in $differ; do
-                  case " $p $deps " in *" $d "*) darwin_sensitive+="./${p#"$mod"/} "; break ;; esac
-                done
-              done < "$RUNNER_TEMP/deps-darwin"
-              echo "darwin-specific (own files or an import differ under GOOS=darwin): $(echo $darwin_sensitive | tr ' ' '\n' | sort -u | tr '\n' ' ')"
-            else
-              darwin_sensitive="ALL"
-              echo "go list failed: every touched package keeps its macOS leg"
-            fi
-          fi
-          needs_darwin() {
-            [ "$darwin_sensitive" = "ALL" ] && return 0
-            case "$darwin_sensitive" in *" $1 "*) return 0 ;; esac
-            return 1
-          }
-
-          declare -a space_grp studio_grp
-          s=0
-          st=0
-          for pkg in "${all[@]}"; do
-            # THE NIGHTLY REFERENCE LEG IS SPACE ONLY (#4413): on schedule every
-            # package runs on the Linux space shards, where the unit budgets are
-            # enforced, and the darwin-only packages have no leg that night (the
-            # push to dev and certification carry them).
-            if [ "${{ github.event_name }}" = "schedule" ]; then
-              is_darwin_only "$pkg" && continue
-              space_grp[$((s % SPACE_SHARDS))]+=" $pkg"; s=$((s + 1)); continue
-            fi
-            if { [ "${{ github.event_name }}" = "merge_group" ] || { [ "${{ github.event_name }}" = "pull_request" ] && ! needs_darwin "$pkg"; }; } && ! is_darwin_only "$pkg"; then
-              space_grp[$((s % SPACE_SHARDS))]+=" $pkg"; s=$((s + 1)); continue
-            fi
-            studio_grp[$((st % STUDIO_SHARDS))]+=" $pkg"
-            st=$((st + 1))
-            is_darwin_only "$pkg" && continue
-            space_grp[$((s % SPACE_SHARDS))]+=" $pkg"
-            s=$((s + 1))
-          done
-
-          # The leg name carries its platform. Two legs sharing one name is two
-          # checks GitHub reports under the same title, which is a green and a
-          # red that cannot be told apart on the PR.
-          entries=()
-          for ((g=0; g<SPACE_SHARDS; g++)); do
-            [ -n "${space_grp[$g]:-}" ] || continue
-            packages="${space_grp[$g]# }"
-            n=$((g + 1))
-            entries+=("{\"name\":\"$n/$SPACE_SHARDS space\",\"packages\":\"$packages\",\"os\":\"linux\",\"arch\":\"x64\",\"group\":\"space\"}")
-          done
-          for ((g=0; g<STUDIO_SHARDS; g++)); do
-            [ -n "${studio_grp[$g]:-}" ] || continue
-            packages="${studio_grp[$g]# }"
-            n=$((g + 1))
-            # X64, OFF THE STUDIO (Glenn 2026-09-24 7:25 PM ET, nova-tools#3634: "No CI, and no swarm on the studio. It's for friends."): the macOS shards run on the Intel Macs, batman and superman (self-hosted,macOS,X64). Dev push run 35999520176's 7/8 Intel cancellations predate #3492, when GNU make 3.81 made every shard run the whole tree; since #3492 a shard's tests take 0.7-4.0 min on the Studio (run 36003142070), about 3x that per core on Intel, inside the 20-minute push cap. internal/ci: TestMacOSShardsLeaveTheStudio.
-            # ARM64, ON THE STUDIO FOR NOW (Glenn 2026-09-25 8:40 PM ET: "let's have the darwin tests run on studio, so we can move forward"; the x64 iMac Pros took nine minutes for the merge group's darwin leg, and "running tests in under 2 minutes will require modern machines"). Temporary until an M-series machine joins the fleet for darwin CI; #3634's rule stands otherwise.
-            entries+=("{\"name\":\"$n/$STUDIO_SHARDS darwin-arm64\",\"packages\":\"$packages\",\"os\":\"macOS\",\"arch\":\"ARM64\",\"group\":\"studio\"}")
-          done
-
-          [ "${#entries[@]}" -gt 0 ] || { echo "no packages with tests: the fan-out would be empty and green"; exit 1; }
-          packages="[$(IFS=,; echo "${entries[*]}")]"
-          echo "$packages"
-          echo "packages=$packages" >> "$GITHUB_OUTPUT"
+          "$RUNNER_TEMP/ci" test-matrix --event "${{ github.event_name }}" --pull-request-base "${{ github.event.pull_request.base.sha }}" --merge-group-base "${{ github.event.merge_group.base_sha }}" --target-branch "${{ github.base_ref || github.event.merge_group.base_ref || github.ref_name }}" --linux-group space --macos-group studio
 
   test:
     # THE UNIT TESTS, SHARDED, no race detector: ./cmd/* and ./internal/... in
@@ -671,7 +459,10 @@ jobs:
     # leg does not cancel its siblings. Each leg vets and tests only its own
     # shard. Measured green end to end in run 35021822106: sixteen legs from
     # 14 s to 251 s, whole run 5 m 57 s. The whole-tree `-race` run is the
-    # certification tier's `test` job. On pull_request and merge_group the legs
+    # certification tier's `test` job. The darwin legs exist only where the
+    # target branch is dev or main (test-packages deals them); a pull request
+    # to a working branch runs the Linux legs alone, and no darwin job stands in
+    # its merge gate. On pull_request and merge_group the legs
     # carry the packages the change touched, not the whole tree; a change that
     # touched no Go package gets one leg with an empty package list that prints
     # and exits 0.
@@ -813,23 +604,6 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
-      - name: fetch dev's ancestry for a main run
-        # On main (the default branch) at a merge commit, the landed promotion,
-        # the classtests rule excuses a deletion only when the second parent's
-        # ancestry shows dev deleting it; a shallow ancestry is a red run naming
-        # this fetch. blob:none brings commits and trees only; --unshallow
-        # completes them.
-        if: matrix.entry.packages != '' && github.ref_name == github.event.repository.default_branch
-        shell: bash
-        # A complete workspace (a repeat run on a persistent runner) takes a
-        # plain fetch: --unshallow on a complete repository is fatal.
-        run: |
-          if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
-            git fetch --no-tags --filter=blob:none --unshallow origin +dev:refs/remotes/origin/dev
-          else
-            git fetch --no-tags --filter=blob:none origin +dev:refs/remotes/origin/dev
-          fi
-
       - name: use the installed Go toolchain
         if: matrix.entry.packages != ''
         # The self-hosted runners carry Go (1.26 at /usr/bin/go on Linux, under
@@ -856,43 +630,49 @@ jobs:
           go version
           echo "GO SETUP want=${want:-none} go=$(command -v go) gomodcache=$(go env GOMODCACHE) gocache=$(go env GOCACHE)"
 
+      - name: build the ci runner
+        if: matrix.entry.packages != ''
+        # tools/ci is built once in this job and every later step runs the binary; `go run` would
+        # compile it again in each step. (`go run ./tools/ci help` lists its verbs.)
+        shell: bash
+        run: go build -o "$RUNNER_TEMP/ci" ./tools/ci
+
+      - name: fetch dev's ancestry for a main run
+        # On main (the default branch) at a merge commit, the landed promotion,
+        # the classtests rule excuses a deletion only when the second parent's
+        # ancestry shows dev deleting it; a shallow ancestry is a red run naming
+        # this fetch (`go run ./tools/ci help fetch-ancestry`).
+        if: matrix.entry.packages != '' && github.ref_name == github.event.repository.default_branch
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/ci" fetch-ancestry dev
+      - name: fetch sprint/foundation's ancestry for a promotion
+        # The classtests rule reads a promotion from git: on the promotion pull request
+        # (sprint/foundation into dev) dev's tip must be an ancestor of the head, and on a
+        # dev run at a merge commit (a merge-queue group, a push to dev) the second parent
+        # must be sprint/foundation's and its history excuses what it deleted. A shallow
+        # ancestry is a red run naming this fetch (internal/ci foundationHistoryFetch).
+        # A one-parent commit on a dev run has no promotion to read, so nothing is fetched.
+        if: (matrix.entry.packages != '') && (github.event_name == 'pull_request' && github.base_ref == 'dev' && github.head_ref == 'sprint/foundation' || github.event_name == 'merge_group' || github.event_name == 'push' && github.ref_name == 'dev')
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/ci" fetch-ancestry --promotion sprint/foundation
+
       - name: take this runner's share of the machine, not all of it
         if: matrix.entry.packages != ''
         # SEVERAL runners share each of these machines, and `go test` defaults
         # GOMAXPROCS to every core it can see -- so concurrent legs each ask for
-        # the whole machine and spend the difference context-switching.
-        # Measured: the same studio legs ran 208 and 251 s in run 35021822106
-        # and 386 and 379 s in run 35023183602, the second pair cancelled at the
-        # ceiling, on identical work. A leg takes its FAIR SHARE instead: cores
-        # divided by the runners on the machine, never below 1. `go test -p`
-        # follows GOMAXPROCS, so this bounds both the package-level and the
-        # in-package parallelism with one number.
-        #
-        # HOW MANY RUNNERS is the MACHINE's fact, not this file's: the runner
-        # service exports NOVA_RUNNERS_PER_MACHINE and the leg reads it. Written
-        # here it goes stale, and did -- the divisor stayed 4 when the fleet went
-        # to 8 runners a machine and CI alone put Space at load 39 on 15 cores
-        # (row 9 of #828, PR799). The default is today's fleet (8) for a machine
-        # that says nothing, and the number used is printed, so a leg's own log
-        # answers what it divided by. internal/ci: TestRunnersPerMachineIsOneNumber.
+        # the whole machine and spend the difference context-switching. A leg
+        # takes its FAIR SHARE instead: cores divided by the runners on the
+        # machine, never below 1 and at most 2 (the Makefile's GOTEST_P). HOW MANY
+        # RUNNERS is the MACHINE's fact, not this file's: the runner service
+        # exports NOVA_RUNNERS_PER_MACHINE and the leg reads it (default 8); the
+        # number used is printed, so a leg's own log answers what it divided by.
+        # `go run ./tools/ci help runner-share`; internal/ci:
+        # TestRunnersPerMachineIsOneNumber.
         shell: bash
         run: |
-          set -euo pipefail
-          if [ "$(uname -s)" = "Darwin" ]; then
-            cores=$(sysctl -n hw.ncpu)
-          else
-            cores=$(nproc)
-          fi
-          runners="${NOVA_RUNNERS_PER_MACHINE:-8}"
-          case "$runners" in ''|*[!0-9]*|0) runners=8 ;; esac
-          share=$(( cores / runners ))
-          [ "$share" -ge 1 ] || share=1
-          # AT MOST TWO (Glenn 2026-09-26 11:20 AM ET, nova-tools#4328: unit
-          # tests "must not be so aggressive that they fill a whole machine
-          # cores"): min(share, 2), the Makefile's GOTEST_P, whatever the box.
-          [ "$share" -le 2 ] || share=2
-          echo "$cores cores on this machine, $runners runners per machine (NOVA_RUNNERS_PER_MACHINE), this leg takes $share (at most 2)"
-          echo "GOMAXPROCS=$share" >> "$GITHUB_ENV"
+          "$RUNNER_TEMP/ci" runner-share
 
       - name: the unit tier refuses redis-server
         if: matrix.entry.packages != ''
@@ -905,13 +685,7 @@ jobs:
         # installs the real one. internal/ci: TestUnitTierRefusesRedisServer.
         shell: bash
         run: |
-          set -euo pipefail
-          shim="${RUNNER_TEMP:?}/unit-tier-bin"
-          mkdir -p "$shim"
-          printf '%s\n' '#!/bin/sh' 'echo "unit tier: redis-server is functional-only (build tag functional)" >&2' 'exit 86' > "$shim/redis-server"
-          chmod +x "$shim/redis-server"
-          echo "$shim" >> "$GITHUB_PATH"
-          echo "redis-server on this leg is $shim/redis-server (exit 86)"
+          "$RUNNER_TEMP/ci" unit-tier-shim
 
       # No actions/cache here. These runners are PERSISTENT: ~/.cache/go-build
       # survives between jobs on the machine itself, so the action spends 6 s
@@ -938,13 +712,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          n=$(curl -sS --max-time 20 -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
-                "https://api.github.com/repos/${{ github.repository }}/actions/runs?event=merge_group&head_sha=${{ github.sha }}&status=success&per_page=1" \
-              | grep -o '"total_count": *[0-9]*' | grep -o '[0-9]*$' || echo 0)
-          proved=false
-          [ "${n:-0}" -gt 0 ] 2>/dev/null && proved=true
-          echo "proved=$proved" >> "$GITHUB_OUTPUT"
-          echo "PROVED sha=${{ github.sha }} merge_group_runs=${n:-0} proved=$proved"
+          "$RUNNER_TEMP/ci" proved-by-merge-group --repo "${{ github.repository }}" --sha "${{ github.sha }}"
 
       - name: vet
         if: matrix.entry.packages != '' && steps.proved.outputs.proved != 'true'
@@ -965,11 +733,15 @@ jobs:
         # The budget is 60 s (the two-minute law) except, until cards 9352 to 9354 make cmd/nova-swarm and
         # internal/swarm fast, on the Intel Mac benches (about 3x slower per core than the Studio), where the alert still
         # prints every CI-SLOW line but the budget is 300 s. Dated exception, 2026-09-18; remove with those cards.
-        # All of it now lives in the Makefile's `test` target: the Makefile is the
+        # All of it lives in the Makefile's `test` target: the Makefile is the
         # one entry for the CL test, and the shard travels in PKGS; the target tees
         # the -json stream to $RUNNER_TEMP/test.json and runs cmd/nova-ci slowtests
-        # exactly as the inline command here did.
-        # GOTEST_TIMEOUT: run 35999520176's studio-nova-13 shard failed only on Go's default 10m (cmd/nova-bus 600.3 s, cmd/nova-merge 600.5 s, 9,916 passes, 0 failing tests), so studio legs get 18m under the 20-minute push cap and 11m under the 12-minute PR/merge-group cap; space keeps Go's default 10m. internal/ci: TestShardGoTestTimeoutFitsTheJobCap.
+        # over it. `go run ./tools/ci unit-test` checks the refusing redis-server is
+        # first on PATH and runs `make test` with the arguments of
+        # pkgselect.UnitMakeArgs (the go test timeout under the job cap, the test
+        # cache and the link flags, the budgets of the run); which run it is comes
+        # from the two environment variables below. internal/ci:
+        # TestShardGoTestTimeoutIsUnderTheJobCap.
         # SLOWTESTS_FLAGS: the Makefile's default is the unit tier's 2 s package
         # and 1 s test budgets with internal/ci/slow-tests_allowlist.txt and
         # the SLEEPS ledger. A push or a manual run tests the WHOLE tree and
@@ -987,22 +759,9 @@ jobs:
         env:
           WHOLE_TREE_SLOWTESTS: ${{ (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && '--budget 60 --sleeps internal/ci/sleeps-skips_allowlist.txt' || '' }}
           NIGHTLY_ENFORCE: ${{ github.event_name == 'schedule' && matrix.entry.group == 'space' && '1' || '0' }}
-        # GOTEST_COUNT_FLAG= turns Go's test cache on (Makefile): a shard whose
-        # packages did not change since the last run on this machine is
-        # served from the cache instead of recompiled and re-executed.
-        # GOTEST_LDFLAGS=-ldflags=-w links test binaries without DWARF: no
-        # dsymutil per binary on darwin, less to scan.
+        shell: bash
         run: |
-          [ "$(command -v redis-server)" = "$RUNNER_TEMP/unit-tier-bin/redis-server" ] || { echo "unit tier: redis-server on PATH is $(command -v redis-server), not the refusing shim"; exit 1; }
-          if [ -n "$WHOLE_TREE_SLOWTESTS" ]; then
-            make test PKGS="${{ matrix.entry.packages }}" GOTEST_TIMEOUT="110s" GOTEST_COUNT_FLAG= GOTEST_LDFLAGS=-ldflags=-w SLOWTESTS_FLAGS="$WHOLE_TREE_SLOWTESTS"
-          elif [ "$NIGHTLY_ENFORCE" = 1 ]; then
-            # The nightly reference leg: -count=1, so every time is a run and
-            # none a cached pass, and the budgets enforced.
-            make test PKGS="${{ matrix.entry.packages }}" GOTEST_TIMEOUT="110s" GOTEST_COUNT_FLAG=-count=1 GOTEST_LDFLAGS=-ldflags=-w SLOWTESTS_ENFORCE=1
-          else
-            make test PKGS="${{ matrix.entry.packages }}" GOTEST_TIMEOUT="110s" GOTEST_COUNT_FLAG= GOTEST_LDFLAGS=-ldflags=-w
-          fi
+          "$RUNNER_TEMP/ci" unit-test --packages "${{ matrix.entry.packages }}"
 
   functional:
     # THE FUNCTIONAL TIER (nova-tools#4328; Glenn 2026-09-26 11:20 AM ET: "we
@@ -1099,30 +858,26 @@ jobs:
           go version
           echo "GO SETUP want=${want:-none} go=$(command -v go) gomodcache=$(go env GOMODCACHE) gocache=$(go env GOCACHE)"
 
+      - name: build tools/ci once
+        # The verbs are built ONCE here and every later step calls the binary: `go run` compiles
+        # and links the tool again on every step that names it. internal/ci: TestToolsCIIsBuiltOnceAndNeverRun.
+        if: matrix.entry.packages != ''
+        shell: bash
+        run: go build -o "$RUNNER_TEMP/ci" ./tools/ci
+
       - name: take this runner's share of the machine, not all of it
         if: matrix.entry.packages != ''
         # The unit legs' rule: cores over NOVA_RUNNERS_PER_MACHINE, at most 2.
         shell: bash
         run: |
-          set -euo pipefail
-          if [ "$(uname -s)" = "Darwin" ]; then
-            cores=$(sysctl -n hw.ncpu)
-          else
-            cores=$(nproc)
-          fi
-          runners="${NOVA_RUNNERS_PER_MACHINE:-8}"
-          case "$runners" in ''|*[!0-9]*|0) runners=8 ;; esac
-          share=$(( cores / runners ))
-          [ "$share" -ge 1 ] || share=1
-          [ "$share" -le 2 ] || share=2
-          echo "$cores cores on this machine, $runners runners per machine (NOVA_RUNNERS_PER_MACHINE), this leg takes $share (at most 2)"
-          echo "GOMAXPROCS=$share" >> "$GITHUB_ENV"
+          "$RUNNER_TEMP/ci" runner-share
 
       - name: install redis-server
         if: matrix.entry.packages != ''
         # #3113. The functional tests spawn a throwaway redis-server on
         # loopback; the unit tier refuses one. It does not dial the fleet store.
-        run: bash .github/scripts/install-redis-server.sh
+        run: |
+          "$RUNNER_TEMP/ci" install-redis-server
 
       - name: install postgres
         if: matrix.entry.packages != ''
@@ -1130,7 +885,8 @@ jobs:
         # pg_ctl) on loopback under the test's directory
         # (internal/nsprint/testutil/pg); a runner without the binaries
         # FAILS them, never skips. It does not dial the fleet store.
-        run: bash .github/scripts/install-postgres.sh
+        run: |
+          "$RUNNER_TEMP/ci" install-postgres
 
       - name: functional tests
         if: matrix.entry.packages != ''
@@ -1203,22 +959,6 @@ jobs:
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
           fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
-      - name: fetch dev's ancestry for a main run
-        # On main (the default branch) at a merge commit, the landed promotion,
-        # the classtests rule excuses a deletion only when the second parent's
-        # ancestry shows dev deleting it; a shallow ancestry is a red run naming
-        # this fetch. blob:none brings commits and trees only; --unshallow
-        # completes them.
-        if: github.ref_name == github.event.repository.default_branch
-        shell: bash
-        # A complete workspace (a repeat run on a persistent runner) takes a
-        # plain fetch: --unshallow on a complete repository is fatal.
-        run: |
-          if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
-            git fetch --no-tags --filter=blob:none --unshallow origin +dev:refs/remotes/origin/dev
-          else
-            git fetch --no-tags --filter=blob:none origin +dev:refs/remotes/origin/dev
-          fi
       - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version-file: go.mod
@@ -1245,6 +985,12 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-go-
 
+      - name: build tools/ci once
+        # The verbs are built ONCE here and every later step calls the binary: `go run` compiles
+        # and links the tool again on every step that names it. internal/ci: TestToolsCIIsBuiltOnceAndNeverRun.
+        shell: bash
+        run: go build -o "$RUNNER_TEMP/ci" ./tools/ci
+
       - name: build
         run: make build
 
@@ -1259,6 +1005,27 @@ jobs:
             ~/go/pkg/mod
           key: ${{ steps.gocache.outputs.cache-primary-key }}
 
+      - name: fetch dev's ancestry for a main run
+        # On main (the default branch) at a merge commit, the landed promotion,
+        # the classtests rule excuses a deletion only when the second parent's
+        # ancestry shows dev deleting it; a shallow ancestry is a red run naming
+        # this fetch (`go run ./tools/ci help fetch-ancestry`).
+        if: github.ref_name == github.event.repository.default_branch
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/ci" fetch-ancestry dev
+      - name: fetch sprint/foundation's ancestry for a promotion
+        # The classtests rule reads a promotion from git: on the promotion pull request
+        # (sprint/foundation into dev) dev's tip must be an ancestor of the head, and on a
+        # dev run at a merge commit (a merge-queue group, a push to dev) the second parent
+        # must be sprint/foundation's and its history excuses what it deleted. A shallow
+        # ancestry is a red run naming this fetch (internal/ci foundationHistoryFetch).
+        # A one-parent commit on a dev run has no promotion to read, so nothing is fetched.
+        if: (github.event_name == 'pull_request' && github.base_ref == 'dev' && github.head_ref == 'sprint/foundation' || github.event_name == 'merge_group' || github.event_name == 'push' && github.ref_name == 'dev')
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/ci" fetch-ancestry --promotion sprint/foundation
+
       - name: deal this shard's packages
         # The heavy packages first, one per shard: cmd/nova-bus (46 s -short on
         # the Studio) and cmd/nova-merge (28 s) shared shard 3 of 4, the ubuntu
@@ -1266,23 +1033,12 @@ jobs:
         # at eight. cmd/nova-merge is under deprecated/ and in no deal; cmd/nova-swarm
         # is the reader's other named heavy command. Then every other package
         # round-robin in go list order (stable: go list sorts), continuing after the
-        # heavy ones. One line of
-        # space-separated packages, so vet and test below read the same deal.
+        # heavy ones. One line of space-separated packages, so vet and test below
+        # read the same deal ($HOSTED_PKGS). `go run ./tools/ci help deal`;
         # internal/ci: TestHostedDealSplitsTheHeavyPackages (hostedHeavy).
         shell: bash
         run: |
-          heavy="cmd/nova-bus cmd/nova-swarm"
-          deal='
-            BEGIN { h = split(heavy, hv, " ") }
-            {
-              k = 0
-              for (j = 1; j <= h; j++) if ($0 ~ ("/" hv[j] "$")) k = j
-              if (k) s = (k - 1) % n; else { s = (h + r) % n; r++ }
-              if (s == i - 1) print
-            }'
-          pkgs=$(go list ./... | bash .github/scripts/live-packages.sh | awk -v n=${{ matrix.shards }} -v i=${{ matrix.shard }} -v heavy="$heavy" "$deal" | tr '\n' ' ')
-          echo "$pkgs"
-          echo "HOSTED_PKGS=$pkgs" >> "$GITHUB_ENV"
+          "$RUNNER_TEMP/ci" deal --shards ${{ matrix.shards }} --shard ${{ matrix.shard }} --heavy "cmd/nova-bus cmd/nova-swarm"
 
       - name: vet this shard's packages
         # The shard's packages only: every shard vetting the whole tree would be a
@@ -1293,7 +1049,8 @@ jobs:
         # #3113, the hosted row. ubuntu-latest has no redis-server until apt
         # installs it; macos-latest uses Homebrew. A service container would
         # not put the binary on PATH, and the controls spawn their own server.
-        run: bash .github/scripts/install-redis-server.sh
+        run: |
+          "$RUNNER_TEMP/ci" install-redis-server
 
       - name: test (shard ${{ matrix.shard }} of ${{ matrix.shards }})
         # Six shards on ubuntu-latest and eight on macos-latest (above), dealt by
@@ -1651,8 +1408,9 @@ jobs:
     # deprecated/lisp/nova-work (Glenn: deprecated code is not tested, not built
     # and never blocks CI), and lisp/ holds no system. The job stays, because
     # the merge gate names a lisp step. The filter above fires only on a lisp/
-    # path, so today it never runs; if it does, `make test-lisp` runs tools/ci/lisp-test.sh, which refuses a
-    # lisp/ tree it does not know. The history below is the job's.
+    # path, so today it never runs; if it does, `make test-lisp` runs
+    # `go run ./tools/ci lisp-test`, which refuses a lisp/ tree it does not
+    # know. The history below is the job's.
     # THE LISP TIER, and it is one job because it is one system. `lisp/nova-work`
     # is the engine's own tree; its
     # acceptance suite runs under SBCL non-interactively and exits non-zero on
@@ -1765,17 +1523,40 @@ jobs:
         with:
           fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
 
-      - name: install sbcl if missing
-        # The self-hosted runners need no sudo; install directly when sbcl is absent.
+      - name: use the installed Go toolchain
+        # The self-hosted runners carry Go (1.26 at /usr/bin/go on Linux, under
+        # /opt/homebrew or ~/go on macOS). Prefer it over a setup-go download.
+        shell: bash
         run: |
-          # A runner user keeps sbcl in its own ~/.local/bin (hulk, vision); a listener started
-          # before its .path file saw none of it (2026-09-16), so the step finds it itself.
-          for d in "$HOME/.local/bin"; do [ -x "$d/sbcl" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; }; done
-          if ! command -v sbcl >/dev/null 2>&1; then
-            apt-get update -qq
-            apt-get install -y --no-install-recommends sbcl
-          fi
-          sbcl --version
+          set -euo pipefail
+          # the bench's own Go wins over a distro Go on the system path, and the newest Go under
+          # ~/sdk wins over a stale one under /usr/local/go; the toolchain go.mod names wins when
+          # ~/sdk holds it (the toolchain line, else the go line, which is the toolchain a go.mod
+          # without that line implies); else as before
+          want=$(sed -n 's/^toolchain \(go[0-9][0-9a-z.]*\)$/\1/p' go.mod 2>/dev/null | head -1 || true)
+          [ -n "$want" ] || want=$(sed -n 's/^go \([0-9][0-9a-z.]*\)$/go\1/p' go.mod 2>/dev/null | head -1 || true)
+          sdk=
+          if [ -n "$want" ] && [ -x "$HOME/sdk/$want/bin/go" ]; then sdk="$HOME/sdk/$want/bin"; fi
+          [ -n "$sdk" ] || sdk=$(ls -d "$HOME"/sdk/go*/bin 2>/dev/null | sort -V | tail -1 || true) # empty on the Linux benches; under pipefail the failed ls would abort the step
+          for d in "$sdk" "$HOME/go/bin" /usr/local/go/bin /opt/homebrew/bin; do
+            [ -n "$d" ] && [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; }
+          done
+          command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
+          go version
+          echo "GO SETUP want=${want:-none} go=$(command -v go) gomodcache=$(go env GOMODCACHE) gocache=$(go env GOCACHE)"
+
+      - name: build tools/ci once
+        # The verbs are built ONCE here and every later step calls the binary: `go run` compiles
+        # and links the tool again on every step that names it. internal/ci: TestToolsCIIsBuiltOnceAndNeverRun.
+        shell: bash
+        run: go build -o "$RUNNER_TEMP/ci" ./tools/ci
+
+      - name: install sbcl if missing
+        # The self-hosted runners need no sudo; ensure-sbcl installs directly when sbcl is
+        # absent, and finds a runner user's own ~/.local/bin/sbcl that a listener started
+        # before it existed did not have on PATH.
+        run: |
+          "$RUNNER_TEMP/ci" ensure-sbcl
 
       - name: sbcl version
         # The runners carry SBCL already (2.2.9 on Linux, 2.6.8 on macOS); the
@@ -1850,6 +1631,9 @@ jobs:
           command -v sbcl >/dev/null 2>&1 || { echo "PROBE FAIL runner=$RUNNER_NAME no sbcl on PATH"; exit 1; }
           go version; sbcl --version
           echo "GO SETUP want=${want:-none} go=$(command -v go) gomodcache=$(go env GOMODCACHE) gocache=$(go env GOCACHE)"
+      - name: build the ci runner
+        if: steps.want.outputs.run == 'yes' && runner.os == 'Linux'
+        run: go build -o "$RUNNER_TEMP/ci" ./tools/ci
       - name: the network probe, inside nova-sandbox
         # rule R: nothing enters the loop untested, and the probe itself is no
         # exception. #893 is the cost of forgetting it — a probe on the host
@@ -1857,18 +1641,11 @@ jobs:
         # sees it: build the sandbox from this checkout and fetch inside it, so a
         # bench enters the loop only after the SANDBOXED probe is green. Linux
         # only, because the fleet-probe job runs on the Linux benches (the
-        # sandbox backend is landlock there, seatbelt on the studio).
+        # sandbox backend is landlock there, seatbelt on the macOS benches).
+        # `go run ./tools/ci help sandbox-probe`.
         if: steps.want.outputs.run == 'yes' && runner.os == 'Linux'
         run: |
-          set -euo pipefail
-          go build ./cmd/nova-sandbox
-          mkdir -p "$RUNNER_TEMP/np/home"
-          code="$(HOME="$RUNNER_TEMP/np/home" ./nova-sandbox --read "$PWD" --write "$RUNNER_TEMP/np" --cwd "$RUNNER_TEMP/np" -- curl -s -o /dev/null -w '%{http_code}' https://models.opencode.ai/api.json)"
-          if [ "$code" != "200" ]; then
-            echo "PROBE FAIL runner=$RUNNER_NAME slot=${{ matrix.slot }} sandboxed-net=$code"
-            exit 1
-          fi
-          echo "PROBE OK runner=$RUNNER_NAME slot=${{ matrix.slot }} sandboxed-net=$code"
+          "$RUNNER_TEMP/ci" sandbox-probe --slot "${{ matrix.slot }}"
       - name: build, one real package, write beside the repo
         if: steps.want.outputs.run == 'yes'
         run: |
@@ -1909,71 +1686,6 @@ jobs:
     runs-on: [self-hosted, linux, x64, space]
     timeout-minutes: 2
     steps:
-      - name: every CL-tier job succeeded (pull request, merge group or manual)
-        # merge_group is the queue's group commit: ci-ok on it is THE merge gate,
-        # so this step must run there too; a guard that names no event lets ci-ok
-        # report success over red needs (read of #766).
-        if: github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch'
-        shell: bash
-        run: |
-          set -uo pipefail
-          bad=0
-          for pair in \
-            "lint:${{ needs.lint.result }}" \
-            "test:${{ needs.test.result }}" \
-            "functional:${{ needs.functional.result }}" \
-            "lisp:${{ needs.lisp.result }}" \
-            "e2e:${{ needs.e2e.result }}" \
-            "test-hosted-pr:${{ needs.test-hosted-pr.result }}"
-          do
-            job="${pair%:*}"; result="${pair##*:}"
-            echo "$result	$job"
-            # A skip is ok for the legs that do not run on this event:
-            # test-hosted-pr is skipped on a fork PR (the head-repo guard) and
-            # on a manual run; its test step is skipped when the diff matches no
-            # platform path. A skip is ok — the check is that it is not red.
-            # lisp is gated on the path filter and is skipped when no lisp/
-            # path moved; a skipped lisp is a pass. A red
-            # lisp still blocks the merge.
-            # test-hosted-merge runs only on the merge group's own commit, so a
-            # skip is ok elsewhere — but on a merge_group it is NOT skipped: it
-            # is the full hosted evidence the queue's gate must see (Rule T).
-            [ "$result" = "success" ] && continue
-            [ "$job" = "lisp" ] && [ "$result" = "skipped" ] && continue
-            [ "$job" = "test-hosted-pr" ] && [ "$result" = "skipped" ] && continue
-            # functional runs on merge_group and workflow_dispatch only; on a
-            # pull request it is skipped by design. When it ran, it must pass.
-            [ "$job" = "functional" ] && [ "$result" = "skipped" ] && [ "${{ github.event_name }}" = "pull_request" ] && continue
-            # test-windows-pr was aggregated here until 2026-09-18, when the
-            # native windows runners were dropped. The Windows guard is now the
-            # lint job's `make vet-windows` step, so a GOOS=windows compile break
-            # is a red `lint`, which this loop already reads.
-            bad=$((bad + 1))
-          done
-          [ "$bad" -eq 0 ] || { echo "$bad job(s) did not succeed"; exit 1; }
-      - name: every CL-tier job succeeded (push to main)
-        if: github.event_name == 'push'
-        shell: bash
-        run: |
-          set -uo pipefail
-          bad=0
-          for pair in \
-            "lint:${{ needs.lint.result }}" \
-            "test:${{ needs.test.result }}" \
-            "e2e:${{ needs.e2e.result }}" \
-            "lisp:${{ needs.lisp.result }}" \
-            "test-hosted:${{ needs.test-hosted.result }}"
-          do
-            job="${pair%:*}"; result="${pair##*:}"
-            echo "$result	$job"
-            # lisp is gated on the path filter and is skipped when no lisp/
-            # path moved; a skipped lisp is a pass. A red
-            # lisp still blocks the merge.
-            if [ "$job" = "lisp" ] && [ "$result" = "skipped" ]; then continue; fi
-            [ "$result" = "success" ] || bad=$((bad + 1))
-          done
-          [ "$bad" -eq 0 ] || { echo "$bad job(s) did not succeed"; exit 1; }
-
       # The receipt below is written by this tree's nova-ci (`go run
       # ./cmd/nova-ci`), and these steps (clean, borrow the bench mirror,
       # checkout, the installed Go) are what it builds from. always(): they
@@ -2080,13 +1792,59 @@ jobs:
           go version
           echo "GO SETUP want=${want:-none} go=$(command -v go) gomodcache=$(go env GOMODCACHE) gocache=$(go env GOCACHE)"
 
+      - name: build tools/ci once
+        # The verbs are built ONCE here and every later step calls the binary. This step runs this
+        # tree's Go, so it carries the same-repo guard the report step below carries: a fork's
+        # pull_request never reaches it. internal/ci: TestCIOKRunsNoForkCodeAndIsRedOnAFork.
+        if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        shell: bash
+        run: go build -o "$RUNNER_TEMP/ci" ./tools/ci
+
+      # THE VERDICT, after the checkout and the Go toolchain it needs. A checkout that fails
+      # twice fails the job before any verdict is stated (fail closed: ci-ok is red), and the
+      # verdict steps are always() so a red need is reported by name even when an earlier step
+      # of this job went wrong. The skip rules are tools/ci/aggregate.go's; the arguments below
+      # are the events' own: a skip is ok for the legs that do not run on this event (lisp when
+      # no lisp/ path moved, test-hosted-pr on a fork PR, a manual run or a diff that matches no
+      # platform path; functional on a pull request only: it runs on merge_group and
+      # workflow_dispatch, and when it ran it must pass). test-windows-pr is not aggregated:
+      # the Windows guard is the lint job's `make vet-windows`, so a GOOS=windows compile break
+      # is a red `lint`, which this verdict reads.
+      - name: every CL-tier job succeeded (pull request, merge group or manual)
+        # merge_group is the queue's group commit: ci-ok on it is THE merge gate,
+        # so this step must run there too; a guard that names no event lets ci-ok
+        # report success over red needs (read of #766).
+        # The verdict is this tree's Go, so a fork's pull request never runs it on this
+        # runner: the step below states a fork's ci-ok red without running anything of
+        # the fork's (its self-hosted jobs are all skipped, so it is red either way).
+        # internal/ci: TestCIOKRunsNoForkCodeAndIsRedOnAFork.
+        if: always() && (github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/ci" aggregate --event "${{ github.event_name }}" \
+            --skip-ok lisp,test-hosted-pr --skip-ok-on pull_request=functional \
+            lint=${{ needs.lint.result }} test=${{ needs.test.result }} functional=${{ needs.functional.result }} \
+            lisp=${{ needs.lisp.result }} e2e=${{ needs.e2e.result }} test-hosted-pr=${{ needs.test-hosted-pr.result }}
+      - name: a fork's pull request is red here
+        if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
+        shell: bash
+        run: |
+          echo "a fork's pull request: the self-hosted CL-tier jobs do not run on fork code, so ci-ok is red"
+          exit 1
+      - name: every CL-tier job succeeded (push to main)
+        if: always() && github.event_name == 'push'
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/ci" aggregate --event "${{ github.event_name }}" --skip-ok lisp \
+            lint=${{ needs.lint.result }} test=${{ needs.test.result }} e2e=${{ needs.e2e.result }} \
+            lisp=${{ needs.lisp.result }} test-hosted=${{ needs.test-hosted.result }}
 
       # THE RUNNER IS THE EVENT SOURCE. The signed webhook receiver sits behind
       # a tailscale funnel kept off by design, so this job, on our own runner
       # as the bench seat, reports the run itself at the end of every run: one
       # ev:github row of the workflow_run shape, sender runner, from the run's
-      # own context, no GitHub call. Its reader is `nova-wake watch --store`,
-      # which blocks on ev:github for the PRs it names. always(): a red run is
+      # own context, no GitHub call. Its reader is ghevent.Reader,
+      # which blocks on ev:github. always(): a red run is
       # reported as red. A write that fails is loud here and reddens ci-ok: a
       # receipt that silently did not happen must never read as one that did.
       # The password never touches a flag or a file: nova-secrets exec under
@@ -2110,17 +1868,7 @@ jobs:
         if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         shell: bash
         run: |
-          set -euo pipefail
-          env_file="$HOME/nova-bench/launch/card.env"
-          [ -f "$env_file" ] || { echo "no $env_file on this runner: run the rowan-tools bench play on $(hostname) (it writes the bench seat and store address)"; exit 1; }
-          # shellcheck disable=SC1090
-          . "$env_file"
-          : "${NOVA_BENCH_SEAT:?card.env names no NOVA_BENCH_SEAT}" "${NOVA_BENCH_SOPS:?card.env names no NOVA_BENCH_SOPS}" "${NOVA_CARD_REDIS:?card.env names no NOVA_CARD_REDIS}"
-          exec "$HOME/.local/bin/nova-secrets" exec --store "$HOME/nova-bench/secrets" --as "$NOVA_BENCH_SEAT" \
-            --key "$HOME/.config/nova-secrets/$NOVA_BENCH_SEAT.key" --sops "$NOVA_BENCH_SOPS" \
-            --only NOVA_REDIS_BENCH_PASSWORD --require NOVA_REDIS_BENCH_PASSWORD -- \
-            /usr/bin/env NOVA_SPRINT_REDIS_USER=bench NOVA_SPRINT_REDIS_PASSWORD_ENV=NOVA_REDIS_BENCH_PASSWORD \
-            go run ./cmd/nova-ci github receipt --from-runner --redis "$NOVA_CARD_REDIS" \
+          "$RUNNER_TEMP/ci" report-run \
             --repo "${{ github.repository }}" \
             --sha "${{ github.event.pull_request.head.sha || github.sha }}" \
             --run-id "${{ github.run_id }}" \

@@ -23,7 +23,15 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
-const usage = `nova-ci: the checks this repository's CI runs on its own test output (see docs/SPEC-CI.md)
+const usage = `nova-ci: test-time budgets over go test -json output, and this repository's own CI steps
+
+how it works: slowtests reads go test -json events on stdin and prints a CI-SLOW
+line for each package or test over its budget, and one CI-LOAD line; it keeps no
+state and works on any Go project. local, functional, new-rule and new-verb run
+inside a nova-tools checkout (its Makefile and scripts); github receipt and cost
+write one record of a CI run to a Redis store.
+first run: in any Go module, go test -json ./... > events.jsonl, then feed that
+file on stdin to slowtests --budget 60, the last line under example:.
 
 usage:
   nova-ci help        print this banner and the verbs below
@@ -36,7 +44,7 @@ usage:
                       CI-SLOW line exit 2 (the nightly reference leg only).
   nova-ci local [--base origin/dev] [--functional]
                       the unit tier CI runs for this diff, on this machine:
-                      the packages .github/scripts/select-packages.sh picks
+                      the packages CI's selection picks
                       against the merge base of --base and HEAD, run through
                       the Makefile's test target (its go test flags and its
                       slowtests budgets) under nice -n 15 at -p 2, GOMAXPROCS=2
@@ -87,30 +95,11 @@ usage:
                       environment's seat (NOVA_SPRINT_REDIS_USER). One CI
                       RECEIPT line;
                       exit 0 written, 1 the store refused it, 2 usage.
-  nova-ci cost --repo owner/name --sha <40hex> --run-id <n> --workflow <name>
-               --conclusion success|failure|cancelled [--pr <n>] [--at <rfc3339>]
-               [--redis <addr>] < jobs.json
-                      the one COST line of a CI run: read the run's complete
-                      job listing (repos/<owner>/<name>/actions/runs/<id>/jobs:
-                      one JSON object whose jobs array holds exactly total_count
-                      jobs, one complete page or pages combined into one object;
-                      raw concatenated pages are refused) on stdin and print
-                      job-seconds per job, the total, and spin (the seconds of
-                      the failed, cancelled and rerun jobs); the flags are the
-                      run receipt's. --redis appends the same entry to the
-                      ci:cost stream first and the line ends in its id. Exit 0
-                      with the line; 1 when the store would not take the entry
-                      or closing it failed (on close failure after a successful
-                      write, stdout retains the line and event id, stderr
-                      reports the close error, with no rerun); 2 a refusal before
-                      any dial (a flag the receipt refuses, a partial or
-                      count-mismatched listing, a listing that is not the
-                      forge's).
 
 exit codes: 0 inside budget or measured, 2 a CI-SLEEPS line, a CI-SLOW
             line under --enforce, or the invocation could not run (bad flag,
-            unreadable stdin, partial listing); local adds 1 for a red test or
-            a package that did not build, and github receipt and cost add 1 for
+            unreadable stdin); local adds 1 for a red test or
+            a package that did not build, and github receipt adds 1 for
             a write the store refused or a close failure.
 
 example:
@@ -144,7 +133,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
 	case "slowtests":
 		return cmdSlowtests(args[1:], stdin, stdout, stderr)
 	case "local":
-		return cmdLocal(args[1:], stdout, stderr, execLocal)
+		return cmdLocal(args[1:], stdout, stderr, execLocal, localSelectThrough(execLocal))
 	case "functional":
 		return cmdFunctional(args[1:], stdout, stderr)
 	case "new-rule":
@@ -153,8 +142,6 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
 		return cmdNewVerb(args[1:], stdout, stderr)
 	case "github":
 		return cmdGitHub(args[1:], stdout, stderr, os.Getenv)
-	case "cost":
-		return cmdCost(args[1:], stdin, stdout, stderr, openCostStore)
 	case "help", "-h", "--help":
 		if args[0] == "help" && len(args) > 1 && args[1] != "help" && !verbflag.IsHelp(args[1]) {
 			return run(append(args[1:], "--help"), stdin, stdout, stderr)
@@ -209,6 +196,7 @@ func cmdSlowtests(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 			return refuse(stderr, " slowtests", fmt.Sprintf("--allowlist: %s", oneline.Err(err)))
 		}
 		rows, err := slowtests.ParseAllowlist(f)
+		// ignored: a close after the parse read the whole file; the parse error is judged on the next line
 		_ = f.Close()
 		if err != nil {
 			return refuse(stderr, " slowtests", fmt.Sprintf("--allowlist %s: %s", *allowlist, oneline.Err(err)))
@@ -221,6 +209,7 @@ func cmdSlowtests(args []string, stdin io.Reader, stdout, stderr io.Writer) int 
 			return refuse(stderr, " slowtests", fmt.Sprintf("--sleeps: %s", oneline.Err(err)))
 		}
 		rows, err := slowtests.ParseSleeps(f)
+		// ignored: a close after the parse read the whole file; the parse error is judged on the next line
 		_ = f.Close()
 		if err != nil {
 			return refuse(stderr, " slowtests", fmt.Sprintf("--sleeps %s: %s", *sleeps, oneline.Err(err)))

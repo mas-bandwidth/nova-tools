@@ -358,3 +358,22 @@ func TestSnapshotTakesItsBoundsFromFlags(t *testing.T) {
 		need(t, stderr, "--timeout")
 	})
 }
+
+// The lines and the JSON of diff are one value: a name absent on one side is
+// "-" in both, never "-" in the lines and "" in the JSON.
+func TestDiffLinesAndJSONAgreeOnAnAbsentSide(t *testing.T) {
+	t.Parallel()
+
+	a := specSnapshot(t, "gone\tv1.0.0\t-\tlinux/amd64")
+	b := specSnapshot(t, "new\tv2.0.0\t-\tlinux/amd64")
+	code, lines, stderr := specRun(t, Environment{}, "diff", "--from", a, "--to", b)
+	if code != 0 {
+		t.Fatalf("exit %d stderr=%s", code, stderr)
+	}
+	need(t, lines, "DIFF CHANGED name=gone from=v1.0.0 to=-", "DIFF CHANGED name=new from=- to=v2.0.0")
+	code, js, stderr := specRun(t, Environment{}, "diff", "--from", a, "--to", b, "--json")
+	if code != 0 {
+		t.Fatalf("--json exit %d stderr=%s", code, stderr)
+	}
+	need(t, js, `{"kind":"changed","fields":{"name":"gone","from":"v1.0.0","to":"-"}}`, `{"kind":"changed","fields":{"name":"new","from":"-","to":"v2.0.0"}}`)
+}

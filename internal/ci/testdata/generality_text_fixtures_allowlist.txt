@@ -1,0 +1,100 @@
+# generality_text_fixtures_allowlist.txt -- whole files whose fleet, person or host names
+# are RECORDED DATA: captured output or a verbatim excerpt of a real record, kept as it was
+# written because a test reads what the real thing looked like. Not a parking place for a
+# synthetic fixture that merely uses our names: those are in package-sharded generality-text ledger
+# as debt, to be replaced by generic names.
+#
+# Format: path reason (the reason is required and names what is recorded)
+#
+# The list only shrinks: a row for a file with no finding any more fails the test, a new
+# row is a refusal unless the file is a capture. Checked by TestGeneralityText
+# (docs/SPEC-CI.md#generality-text).
+#
+# ceiling: 93
+internal/cairn/testdata/bench-b9395d11.md a captured cairn of one recorded session, including its transcript path
+internal/ci/testdata/generality-text/.github/workflows.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality-text/@root.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality-text/cmd/nova-check/testdata/example-dogfood.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality-text/cmd/nova-check/testdata/example-dogfood/receipts.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality-text/cmd/nova-swarm/testdata/cards.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality-text/cmd/nova-tokens/testdata/example-bench/bus.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality-text/cmd/nova-tokens/testdata/example-bench/bus/from-emma.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality-text/cmd/nova-update/testdata.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality-text/cmd/nova-version/testdata.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality-text/docs.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality-text/docs/nova-config.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality-text/docs/nova-table.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality-text/fleet/roles/container-runtime/tasks.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality-text/fleet/templates.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality-text/infra/image.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality-text/internal/ci.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality-text/internal/ci/testdata.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality-text/internal/ci/testdata/testoutpath.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality-text/internal/ci/timing/testdata.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality-text/internal/config/migrations.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality-text/internal/fleet/testdata.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality-text/internal/fleet/workloads.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality-text/internal/ghevent/testdata.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality-text/internal/hygiene.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality-text/internal/nsprint/fn/lua.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality-text/internal/swarm/testdata.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality-text/internal/textbody.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality-text/testdata/ci.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality-text/tla.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality-text/tools.txt this scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/cmd/nova-bus.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/cmd/nova-check.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/cmd/nova-ci.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/cmd/nova-redis.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/cmd/nova-sandbox.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/cmd/nova-secrets.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/cmd/nova-table.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/cmd/nova-tokens.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/internal/bus.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/internal/cairn.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/internal/cardhdr.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/internal/check.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/internal/ci.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/internal/ci/allowlist.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/internal/ci/functional.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/internal/ci/slowtests.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/internal/ci/timing.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/internal/config.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/internal/converge.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/internal/docs.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/internal/dogfood.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/internal/fleet.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/internal/fuse.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/internal/hygiene.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/internal/log.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/internal/memindex.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/internal/nsprint/store.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/internal/ntable.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/internal/onboarding.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/internal/oneline.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/internal/oneline/audit.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/internal/redisconn.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/internal/redisfn.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/internal/release.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/internal/safepath.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/internal/sandbox.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/internal/scaffold.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/internal/seatcred.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/internal/secrets.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/internal/selftalk.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/internal/swarm.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/internal/testguard.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/internal/testredis.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/internal/textbody.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/internal/tokens.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/internal/typedrec.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/internal/update.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/internal/worklang.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/internal/yield.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality/tools/ghrelease.txt the Go scan's ledger: each row is a file:token count, so it names the tokens it counts
+internal/ci/testdata/generality_text_fixtures_allowlist.txt exact recorded fixture and ledger paths are identifiers, including source directory names; reasons remain required and stale entries fail
+internal/tlc/testdata/temporal-new.log captured TLC model checker output
+internal/tlc/testdata/temporal-old.log captured TLC model checker output
+internal/workgh/testdata/reliable/call-01.json recorded GitHub GraphQL reply for a public repository
+internal/workgh/testdata/reliable/call-02.json recorded GitHub GraphQL reply for a public repository
+internal/workgh/testdata/reliable/call-03.json recorded GitHub GraphQL reply for a public repository

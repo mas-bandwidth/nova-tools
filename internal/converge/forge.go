@@ -10,11 +10,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
 	"strings"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // PR is one pull request, in the four facts convergence reads.
@@ -93,7 +93,7 @@ func (g GH) list(ctx context.Context, state, search string) ([]PR, error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, g.Timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, bin, args...)
+	cmd := subproc.Context(ctx, bin, args...)
 	var out, errb strings.Builder
 	cmd.Stdout = &out
 	cmd.Stderr = &errb

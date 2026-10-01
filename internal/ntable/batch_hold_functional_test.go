@@ -11,13 +11,14 @@ package ntable_test
 import (
 	"context"
 	"fmt"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // holdMembers creates n placed members named <prefix>0.. in batches of 128.
@@ -29,9 +30,8 @@ func holdMembers(t *testing.T, ctx context.Context, c *redis.Client, prefix stri
 			creates = append(creates, fmt.Sprintf(`{"id":"%s%d","expect":{"absent":true},"create":{"row":"build","col":"ready","score":1}}`, prefix, i))
 		}
 		op := fmt.Sprintf("seed-%s-%d", prefix, from)
-		if ans, err := rawApply(ctx, c, manifestWith(probeRev(ctx, c), op, strings.Join(creates, ","))); err != nil || ans[0] != "OK" {
-			t.Fatalf("seed: %.200v %v", ans, err)
-		}
+		ans, err := rawApply(ctx, c, manifestWith(probeRev(ctx, c), op, strings.Join(creates, ",")))
+		require.True(t, replyOpens(ans, err, "OK"), "seed: %.200v: %v", ans, err)
 	}
 }
 
@@ -44,9 +44,7 @@ func holdFill(t *testing.T, ctx context.Context, c *redis.Client, prefix string,
 		for j := 0; j < fields; j++ {
 			f[fmt.Sprintf("f%d", j)] = value
 		}
-		if err := c.HSet(ctx, ntable.MemberKey(fmt.Sprintf("%s%d", prefix, i)), f).Err(); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, c.HSet(ctx, ntable.MemberKey(fmt.Sprintf("%s%d", prefix, i)), f).Err())
 	}
 }
 
@@ -72,9 +70,7 @@ func holdApply(t *testing.T, ctx context.Context, c *redis.Client, name, raw str
 	start := time.Now()
 	ans, err := rawApply(ctx, slow, raw)
 	took := time.Since(start)
-	if err != nil {
-		t.Fatalf("%s: %v", name, err)
-	}
+	require.NoError(t, err, "%s: %v", name, err)
 	t.Logf("HOLD %s: manifest %d bytes, %s, %v", name, len(raw), holdWords(ans), took)
 	return ans, took
 }
@@ -89,13 +85,16 @@ func holdWords(ans []any) string {
 
 func requireRefusedLimit(t *testing.T, name string, ans []any, limit string, bound int) {
 	t.Helper()
-	if len(ans) < 5 || ans[0] != "REFUSED" || ans[1] != "LIMIT" || ans[2] != limit || fmt.Sprint(ans[3]) != fmt.Sprint(bound) {
-		t.Fatalf("%s: %.200v; want LIMIT %s, bound %d", name, ans, limit, bound)
-	}
+	want := fmt.Sprintf("%s: %.200v; want LIMIT %s, bound %d", name, ans, limit, bound)
+	require.GreaterOrEqual(t, len(ans), 5, want)
+	require.Equal(t, "REFUSED", ans[0], want)
+	require.Equal(t, "LIMIT", ans[1], want)
+	require.Equal(t, limit, ans[2], want)
+	require.Equal(t, fmt.Sprint(bound), fmt.Sprint(ans[3]), want)
 	var size int
-	if _, err := fmt.Sscan(fmt.Sprint(ans[4]), &size); err != nil || size <= bound {
-		t.Errorf("%s: the refusal names the size %v, want more than %d", name, ans[4], bound)
-	}
+	_, err := fmt.Sscan(fmt.Sprint(ans[4]), &size)
+	require.NoError(t, err, "%s: the refusal names the size %v, want more than %d", name, ans[4], bound)
+	assert.Greater(t, size, bound, "%s: the refusal names the size %v, want more than %d", name, ans[4], bound)
 }
 
 // The values a batch touches are bounded: 16 MiB of before-values is taken, one
@@ -111,20 +110,14 @@ func TestBatchValueBytesAreBoundedAndCountedBeforeAnyRead(t *testing.T) {
 
 	// exactly the bound: two members, 128 fields each
 	ans, _ := holdApply(t, ctx, c, "16 MiB of before-values accepted", manifestWith(probeRev(ctx, c), "at", holdUnset("m", 2, perMember)))
-	if ans[0] != "OK" {
-		t.Fatalf("a batch touching exactly %d bytes: %.200v", ntable.LimitBatchValueBytes, ans)
-	}
+	require.True(t, replyOpens(ans, nil, "OK"), "a batch touching exactly %d bytes: %.200v", ntable.LimitBatchValueBytes, ans)
 	// one field more than the bound refuses, and nothing changes
 	holdFill(t, ctx, c, "m", 3, perMember, field)
 	before := storeImage(t, c)
 	ans, _ = holdApply(t, ctx, c, "16 MiB and one field refused", manifestWith(probeRev(ctx, c), "over", holdUnset("m", 2, perMember)+`,{"id":"m2","expect":{},"unset":["f0"]}`))
 	requireRefusedLimit(t, "one field over", ans, "value bytes per batch", ntable.LimitBatchValueBytes)
-	if !reflect.DeepEqual(before, storeImage(t, c)) {
-		t.Errorf("a refused batch changed the store")
-	}
-	if c.HExists(ctx, ntable.DefKey("demo")+":ops", "0:over").Val() {
-		t.Errorf("a refused batch left an operation record")
-	}
+	assert.Equal(t, before, storeImage(t, c), "a refused batch changed the store")
+	assert.False(t, c.HExists(ctx, ntable.DefKey("demo")+":ops", "0:over").Val(), "a refused batch left an operation record")
 
 	// the refusal costs what the manifest names, not what the store holds: 256 MiB
 	holdMembers(t, ctx, c, "w", 32)
@@ -146,9 +139,7 @@ func TestBatchGuardOnlyEntriesDoNotReadWholeRecords(t *testing.T) {
 		ents = append(ents, fmt.Sprintf(`{"id":"g%d","expect":{"fields":{"nope":{"absent":true}}}}`, i))
 	}
 	ans, _ := holdApply(t, ctx, c, "256 guards over 128 MiB of records", manifestWith(probeRev(ctx, c), "guards", strings.Join(ents, ",")))
-	if ans[0] != "OK" {
-		t.Fatalf("guards: %.200v", ans)
-	}
+	require.True(t, replyOpens(ans, nil, "OK"), "guards: %.200v", ans)
 }
 
 // The costliest cases the manifest bound allows: a
@@ -169,23 +160,17 @@ func TestBatchLargestManifestsHoldTheStoreUnderASecond(t *testing.T) {
 		ents = append(ents, fmt.Sprintf(`{"id":"h%d","expect":{"fields":{%s}}}`, i, strings.Join(g, ",")))
 	}
 	ans, _ := holdApply(t, ctx, c, "1 MiB of satisfied guards", manifestWith(probeRev(ctx, c), "guards", strings.Join(ents, ",")))
-	if ans[0] != "OK" {
-		t.Fatalf("guards: %.200v", ans)
-	}
+	require.True(t, replyOpens(ans, nil, "OK"), "guards: %.200v", ans)
 
 	// a receipt near its bound: 48 fields of 64 bytes unset on each of 128 members
 	holdFill(t, ctx, c, "h", 128, 48, ntable.ReceiptValueBytes)
 	ans, _ = holdApply(t, ctx, c, "receipt near its bound", manifestWith(probeRev(ctx, c), "near", holdUnset("h", 128, 48)))
-	if ans[0] != "OK" {
-		t.Fatalf("near the receipt bound: %.200v", ans)
-	}
+	require.True(t, replyOpens(ans, nil, "OK"), "near the receipt bound: %.200v", ans)
 
 	// a receipt over its bound: 1000 fields of 64 bytes unset on each of 128 members
 	holdFill(t, ctx, c, "h", 128, 1000, ntable.ReceiptValueBytes)
 	before := storeImage(t, c)
 	ans, _ = holdApply(t, ctx, c, "receipt over its bound refused", manifestWith(probeRev(ctx, c), "over", holdUnset("h", 128, 1000)))
 	requireRefusedLimit(t, "receipt over", ans, "receipt bytes", ntable.LimitReceiptBytes)
-	if !reflect.DeepEqual(before, storeImage(t, c)) {
-		t.Errorf("a refused batch changed the store")
-	}
+	assert.Equal(t, before, storeImage(t, c), "a refused batch changed the store")
 }

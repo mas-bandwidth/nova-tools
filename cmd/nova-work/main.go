@@ -21,6 +21,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/buildinfo"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/workgh"
@@ -28,7 +29,15 @@ import (
 
 var version string
 
-const banner = `nova-work: every issue of every repository in one tree file, verified field for field (docs/SPEC-WORK-V1.md)
+const banner = `nova-work: every issue of an organization's repositories in one tree file, verified field for field
+
+how it works: import reads issues through your gh login, read-only, and writes
+one tree file: a (work-tree ...) record holding each repository and every field
+of each issue. verify reads GitHub again and prints one MISSING, EXTRA or DRIFT
+line per difference; no lines is the proof. The calls are counted and checked
+against --max-calls before any issue is read.
+first run: needs gh logged in (gh auth status) and ORG and REPO set to one
+repository you can read; then the lines under example:, in order.
 
 usage:
   nova-work import --org <org> (--out <tree.lisp> | --dry-run) [--repo <owner/name>]... [--max-calls <n>] [--page-size <n>] [--gh <path>] [--timeout <d>]
@@ -45,9 +54,14 @@ tree, not on GitHub), DRIFT (a field that differs). Zero lines is the proof.
 exit: 0 done, or verify found no difference; 1 verify found differences, or
 import's own round trip through the file failed; 2 could not run.
 
-first run (a login gh can use, and a scratch directory):
-  nova-work import --org <org> --repo <org>/<repo> --out /tmp/tree.lisp
-  nova-work verify --tree /tmp/tree.lisp --repo <org>/<repo>
+In a scratch directory, export ORG=<an organization> REPO=<one of its
+repositories> first. The dry run plans the calls and writes nothing; the import
+writes ./tree.lisp; the verify reads GitHub again against it.
+
+example:
+  nova-work import --org $ORG --repo $ORG/$REPO --page-size 15 --dry-run
+  nova-work import --org $ORG --repo $ORG/$REPO --page-size 15 --out ./tree.lisp
+  nova-work verify --tree ./tree.lisp --repo $ORG/$REPO --page-size 15
 `
 
 const importHelp = `nova-work import --org <org> (--out <tree.lisp> | --dry-run) [flags]
@@ -131,7 +145,9 @@ func main() { os.Exit(run(os.Args[1:], os.Stdout, os.Stderr, nil)) }
 // run is the command; q, when not nil, replaces the GitHub seam (tests).
 func run(args []string, stdout, stderr io.Writer, q workgh.Query) int {
 	if len(args) == 0 {
-		fmt.Fprint(stderr, banner)
+		// ONBOARDING.md point 1: a bare command refuses in one line and names the
+		// door; the banner is behind help, not in front of every mistake.
+		fmt.Fprint(stderr, "nova-work: no verb; verbs: import verify help version; run: nova-work help\n")
 		return 2
 	}
 	switch args[0] {
@@ -150,7 +166,7 @@ func run(args []string, stdout, stderr io.Writer, q workgh.Query) int {
 		}
 		fmt.Fprint(stdout, banner)
 		return 0
-	case "version":
+	case "version", "--version":
 		fmt.Fprintln(stdout, buildinfo.Line("nova-work", version))
 		return 0
 	case "import":
@@ -252,22 +268,5 @@ func dirExists(path string) bool {
 // writeFile writes data to path through a temporary file in the same
 // directory and a rename, so a reader never sees half a tree.
 func writeFile(path string, data []byte) error {
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".nova-work-*")
-	if err != nil {
-		return err
-	}
-	_, werr := tmp.Write(data)
-	if werr == nil {
-		werr = tmp.Sync()
-	}
-	if cerr := tmp.Close(); werr == nil {
-		werr = cerr
-	}
-	if werr == nil {
-		werr = os.Rename(tmp.Name(), path)
-	}
-	if werr != nil {
-		os.Remove(tmp.Name())
-	}
-	return werr
+	return atomicfile.Write(filepath.Clean(path), data, 0o600, atomicfile.ExactMode())
 }

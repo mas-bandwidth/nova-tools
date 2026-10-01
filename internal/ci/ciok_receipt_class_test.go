@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"gopkg.in/yaml.v3"
 )
 
@@ -18,13 +19,19 @@ import (
 // read as one that did. The writer is this tree's nova-ci, run from the
 // checkout (`go run ./cmd/nova-ci`), so it is versioned with the commit under
 // test and no runner's installed build matters: the step names no nova-sprint
-// (deprecated, Glenn 2026-09-27), no installed receipt writer under
-// .local/bin, and probes no installed binary. This test reads the step as
-// YAML and holds it to that shape, the command text exactly, and holds the
-// two conditions exactly: the job's, with no head-repo guard, and the step's,
-// with it.
+// (deprecated), no installed receipt writer under .local/bin, and probes no
+// installed binary. The step is one call into tools/ci's report-run verb, which
+// reads the bench's card.env and runs the writer under nova-secrets. This test
+// reads the step as YAML and holds it to that shape, the call text exactly, and
+// holds the two conditions exactly: the job's, with no head-repo guard, and the
+// step's, with it; it then reads the verb's source for what the step used to
+// carry inline (the card.env names, the nova-secrets wrapper, this tree's
+// writer), and tools/ci's own tests run the verb.
 
-const runnerReceiptVerb = "github receipt --from-runner"
+const runnerReceiptVerb = `"$RUNNER_TEMP/ci" report-run`
+
+// reportRunSource is the verb the step calls.
+const reportRunSource = "tools/ci/reportrun.go"
 
 // ciokIf is the ci-ok job's condition, exactly: every event but the nightly
 // schedule, and NO head-repo guard. Every self-hosted job carries that guard,
@@ -41,21 +48,9 @@ const ciokIf = `always() && github.event_name != 'schedule'`
 // not on the job, so the fork PR's ci-ok still runs and stays red.
 const receiptStepIf = `always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)`
 
-// receiptRun is the step's whole run block, exactly: the prelude that reads
-// the bench's card.env, then the bench seat's nova-secrets wrapper around this
-// tree's writer. Nothing may stand before the exec (a cd, an export PATH) or
-// after it.
-const receiptRun = `set -euo pipefail
-env_file="$HOME/nova-bench/launch/card.env"
-[ -f "$env_file" ] || { echo "no $env_file on this runner: run the rowan-tools bench play on $(hostname) (it writes the bench seat and store address)"; exit 1; }
-# shellcheck disable=SC1090
-. "$env_file"
-: "${NOVA_BENCH_SEAT:?card.env names no NOVA_BENCH_SEAT}" "${NOVA_BENCH_SOPS:?card.env names no NOVA_BENCH_SOPS}" "${NOVA_CARD_REDIS:?card.env names no NOVA_CARD_REDIS}"
-exec "$HOME/.local/bin/nova-secrets" exec --store "$HOME/nova-bench/secrets" --as "$NOVA_BENCH_SEAT" \
-  --key "$HOME/.config/nova-secrets/$NOVA_BENCH_SEAT.key" --sops "$NOVA_BENCH_SOPS" \
-  --only NOVA_REDIS_BENCH_PASSWORD --require NOVA_REDIS_BENCH_PASSWORD -- \
-  /usr/bin/env NOVA_SPRINT_REDIS_USER=bench NOVA_SPRINT_REDIS_PASSWORD_ENV=NOVA_REDIS_BENCH_PASSWORD \
-  go run ./cmd/nova-ci github receipt --from-runner --redis "$NOVA_CARD_REDIS" \
+// receiptRun is the step's whole run block, exactly: one call into the verb with
+// the run's own context, and nothing before it or after it.
+const receiptRun = `"$RUNNER_TEMP/ci" report-run \
   --repo "${{ github.repository }}" \
   --sha "${{ github.event.pull_request.head.sha || github.sha }}" \
   --run-id "${{ github.run_id }}" \
@@ -119,13 +114,13 @@ func TestCIOKReportsEveryRunToRedisFromTheRunner(t *testing.T) {
 	if strings.TrimSpace(cond) != receiptStepIf {
 		t.Errorf("the receipt step's if is\n  %s\nwant\n  %s\n(always(): a red run is reported as red; the head-repo guard: a fork's pull_request must not run this tree's receipt writer with the bench password)", cond, receiptStepIf)
 	}
-	if !strings.Contains(run, "set -euo pipefail") || strings.Contains(run, "|| true") {
-		t.Errorf("the receipt step must fail loudly (set -euo pipefail, no `|| true`):\n%s", run)
+	if strings.Contains(run, "|| true") {
+		t.Errorf("the receipt step must fail loudly (no `|| true`):\n%s", run)
 	}
 
 	// The whole run block, exactly, with each line's indentation taken off.
 	if got, want := strings.Join(runLines(run), "\n"), strings.Join(runLines(receiptRun), "\n"); got != want {
-		t.Errorf("the receipt step's run block is not the card.env prelude and this tree's nova-ci under the bench seat:\n got:\n%s\nwant:\n%s", got, want)
+		t.Errorf("the receipt step's run block is not one call into the built tools/ci report-run with the run's own context:\n got:\n%s\nwant:\n%s", got, want)
 	}
 	if strings.Count(run, "--job") != 0 || strings.Contains(run, "--event") || strings.Contains(run, "-branch") {
 		t.Errorf("the receipt step passes a flag the row does not carry (--job, --event, --head-branch, --base-branch):\n%s", run)
@@ -133,20 +128,52 @@ func TestCIOKReportsEveryRunToRedisFromTheRunner(t *testing.T) {
 	if strings.Contains(run, "curl") || strings.Contains(run, "gh api") || strings.Contains(run, "api.github.com") {
 		t.Errorf("the receipt step calls GitHub; the run's own context has every field:\n%s", run)
 	}
+	assert.False(t, strings.Contains(run, "secrets.NOVA_REDIS") || strings.Contains(run, "--password"), "the receipt step carries the password some other way:\n%s", run)
 
-	// The writer is this tree's, never an installed build: no nova-sprint, no
-	// receipt writer under .local/bin (the nova-secrets wrapper is the one
-	// installed binary), no probe of an installed binary's version or flags.
-	for _, never := range []string{"nova-sprint", ".local/bin/nova-ci", "~/.local/bin", "installed", "RECEIPT WRITER",
-		"flag provided but not defined", "probe", "command -v nova", "which nova", "version"} {
-		if strings.Contains(run, never) {
-			t.Errorf("the receipt step names %q; the writer is this tree's nova-ci and nothing installed is probed:\n%s", never, run)
+	// What the step used to carry inline is the verb's now. The writer is this
+	// tree's, never an installed build: no nova-sprint, no receipt writer under
+	// .local/bin (the nova-secrets wrapper is the one installed binary), no probe
+	// of an installed binary's version or flags; the bench's card.env must name
+	// the three values and the verb refuses when it does not.
+	verb := readFile(t, filepath.Join(repoRoot(t), reportRunSource))
+	for _, want := range []string{
+		`"go", "run", "./cmd/nova-ci", "github", "receipt", "--from-runner", "--redis"`,
+		`filepath.Join(home, ".local", "bin", "nova-secrets")`,
+		`"--only", "NOVA_REDIS_BENCH_PASSWORD", "--require", "NOVA_REDIS_BENCH_PASSWORD"`,
+		`"NOVA_BENCH_SEAT", "NOVA_BENCH_SOPS", "NOVA_CARD_REDIS"`,
+		`card.env names no %s`,
+	} {
+		assert.Contains(t, verb, want, reportRunSource)
+	}
+	code := verbCode(verb)
+	for _, never := range []string{"nova-sprint", ".local/bin/nova-ci", "~/.local/bin", "RECEIPT WRITER",
+		"flag provided but not defined", "probe", "command -v nova", "which nova", "--password", "api.github.com"} {
+		assert.NotContains(t, code, never, "%s names %q; the writer is this tree's nova-ci and nothing installed is probed", reportRunSource, never)
+	}
+	assert.Equal(t, 1, strings.Count(code, `".local", "bin"`), "%s runs an installed binary other than the nova-secrets wrapper", reportRunSource)
+}
+
+// verbCode is a Go file's text with its comments and its verb help (the raw-string
+// block that describes what the verb does in words) taken out, so a law about what
+// the code names does not read the prose that explains it.
+func verbCode(src string) string {
+	var out []string
+	inHelp := false
+	for _, l := range strings.Split(src, "\n") {
+		t := strings.TrimSpace(l)
+		if strings.HasPrefix(t, "//") {
+			continue
 		}
+		if strings.Contains(l, "help: `") {
+			inHelp = true
+		}
+		if inHelp {
+			if strings.HasPrefix(t, "`,") || strings.Contains(l, "`,") && !strings.Contains(l, "help: `") {
+				inHelp = false
+			}
+			continue
+		}
+		out = append(out, l)
 	}
-	if strings.Count(run, ".local/bin/") != 1 || !strings.Contains(run, `"$HOME/.local/bin/nova-secrets" exec`) {
-		t.Errorf("the receipt step runs an installed binary other than the nova-secrets wrapper:\n%s", run)
-	}
-	if strings.Contains(run, "secrets.NOVA_REDIS") || strings.Contains(run, "--password") {
-		t.Errorf("the receipt step carries the password some other way:\n%s", run)
-	}
+	return strings.Join(out, "\n")
 }

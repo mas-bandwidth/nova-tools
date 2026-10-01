@@ -2,7 +2,7 @@
 
 A Windows machine joins the fleet as a **Linux bench under WSL2**: an Ubuntu
 distro on the Windows box is the bench, with Linux CI runners labelled
-`linux,X64,threadripper`, held to the Linux standard `tools/bench-standard.sh`
+`linux,X64,threadripper`, held to the Linux standard, witnessed by `tools/benchstandard`,
 like every other Linux bench. The Windows side is only the host of that distro,
 and its whole setup is one script, `tools/bench-wsl2.ps1`, run once.
 
@@ -73,5 +73,7 @@ refusal, never a green half-run.
 
 From there the bench is a Linux bench, reached over ssh on the tailnet: its
 machine row goes in with `nova-config machine add`, its tools arrive with
-`nova-update release adopt --platform linux-amd64`, and `tools/bench-standard.sh`
-is its standard.
+`nova-update release adopt --platform linux-amd64`, and `tools/benchstandard`
+is its witness: run it as a static binary built elsewhere
+(`GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o bin/benchstandard ./tools/benchstandard`),
+or with `go run ./tools/benchstandard` where the distro's Go is good.

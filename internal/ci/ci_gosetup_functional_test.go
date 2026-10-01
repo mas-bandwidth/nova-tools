@@ -69,6 +69,8 @@ func TestCIGoSetupPrefersTheGoModToolchain(t *testing.T) {
 		t.Skip("no bash")
 	}
 	runs := goSetupRuns(t)
+	// 8: the test-race-queue job, and its copy of the step, went with #4866; the lisp job
+	// carries one because its steps run tools/ci (go run), which needs Go on PATH.
 	if len(runs) != 8 {
 		t.Fatalf("ci.yml has %d Go setup steps carrying %q, want 8 (update this test with the workflow)", len(runs), goSetupMarker)
 	}

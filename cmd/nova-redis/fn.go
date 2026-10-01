@@ -110,6 +110,7 @@ func fnVerb(args []string, stdout, stderr io.Writer, d deps, open opener) int {
 	if err != nil {
 		return failed(err)
 	}
+	// ignored: a deferred close after the verb's answer is printed; the answer is the report
 	defer func() { _ = closeStore() }()
 
 	if sub == "load" {

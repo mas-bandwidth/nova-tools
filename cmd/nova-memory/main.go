@@ -37,10 +37,17 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/memindex"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
-	"github.com/mas-bandwidth/nova-tools/internal/play"
 )
 
-const usage = `nova-memory: membership is a lookup, never a scan (see docs/SPEC.md)
+const usage = `nova-memory: search your own markdown notes, and check a draft against what they already say
+
+how it works: each run reads the --root directories and builds its index in
+memory (bm25 words, trigrams); nothing is written. search prints the k best
+passages with file:line and the quoted text; check names the notes a draft
+repeats; verify gates links and frontmatter. The CAL line is the score a fixed
+unrelated probe gets here: a hit scoring at or below it is no better than noise.
+first run: quickstart --root on any folder of .md files, or copy the included
+corpus (the setup line above example:) and run the lines under example:.
 
 usage:
   nova-memory version    print this build identity (--version also accepted)
@@ -54,7 +61,6 @@ usage:
   nova-memory eval   --root <dir>... --channels <list> --k <n> --floor <f> [--exclude <glob>]...
                      [--fail-max <n>] <gold.tsv>
   nova-memory boot   --root <dir> --pin <file>
-  nova-memory view   [--exclude <glob>]... [--max <n>] <file>...
 
 quickstart is the first run and nothing else: it runs stats, then one search,
 then one check, PRINTING each command line above that command's output, so
@@ -213,8 +219,6 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
 		return cmdEval(args[1:], stdout, stderr)
 	case "boot":
 		return cmdBoot(args[1:], stdout, stderr)
-	case "view":
-		return cmdView(args[1:], stdout, stderr)
 	case "version", "--version":
 		return cmdVersion(args[1:], stdout, stderr)
 	case "help", "-h", "--help":
@@ -853,53 +857,6 @@ func readPin(name string) ([]string, error) {
 		return nil, err
 	}
 	return out, nil
-}
-
-// ---------------------------------------------------------------------------
-// view — browse shared moments without rewriting the record
-
-// excludeViewFlag is a repeatable --exclude flag. Nothing is excluded by
-// default; every exclusion is the caller's, stated per run.
-type excludeViewFlag []string
-
-func (e *excludeViewFlag) String() string     { return strings.Join(*e, ",") }
-func (e *excludeViewFlag) Set(s string) error { *e = append(*e, s); return nil }
-
-// cmdView renders an explicitly selected sample of Markdown records into a
-// static, chronological timeline, one card per record linked back to its
-// source. It is read-only by design: it opens each selected file, parses a
-// card from it, and prints text. It never writes, seals, rolls up or deletes
-// anything, and an excluded record is never even opened.
-//
-// The verb exists because nova-tools #223 asks whether the nova-play
-// companion view belongs as a viewer command in this binary, and the answer
-// is yes — the read-only posture this binary already keeps is exactly the
-// posture the issue's headline names. No flag writes anything to disk;
-// every selection is a positional argument the caller named on the command
-// line, the same way `--root` is.
-func cmdView(args []string, stdout, stderr io.Writer) int {
-	fs := flag.NewFlagSet("view", flag.ContinueOnError)
-	fs.SetOutput(io.Discard)
-	fs.Usage = func() {}
-	var excludes excludeViewFlag
-	fs.Var(&excludes, "exclude", "record to leave out of the view, repeatable")
-	max := fs.Int("max", 20, "cards to print; 0 prints every card")
-	if err := verbflag.Parse(fs, args); err != nil {
-		return refuse(stderr, " view", oneline.Cap(err.Error(), oneline.TailBytes))
-	}
-	if fs.NArg() == 0 {
-		return refuse(stderr, " view", "view requires at least one record; refusing to guess")
-	}
-	if *max < 0 {
-		return refuse(stderr, " view", fmt.Sprintf("--max must be zero or more (got %d); 0 prints every card", *max))
-	}
-
-	out, err := play.View(fs.Args(), excludes, *max)
-	if err != nil {
-		return refuse(stderr, " view", oneline.Err(err))
-	}
-	fmt.Fprint(stdout, out)
-	return 0
 }
 
 // ---------------------------------------------------------------------------

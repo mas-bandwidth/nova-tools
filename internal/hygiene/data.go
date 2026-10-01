@@ -40,6 +40,7 @@ var (
 func load() ([]strayRule, []keyShape, error) {
 	loadOnce.Do(func() {
 		strayList, loadErr = parseStray(strayData)
+		// ignored: loadErr is the package variable load returns below; the Once only stops the second parse
 		if loadErr != nil {
 			return
 		}

@@ -9,14 +9,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/ghevent"
+	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/testredis"
-	"github.com/mas-bandwidth/nova-tools/internal/wake"
 	"github.com/redis/go-redis/v9"
 )
 
 // TestReceiptVerbWritesTheRowAndARefusedWriteIsExitOne runs the verb as ci-ok
 // does against a throwaway redis-server: one CI RECEIPT line, the row read back
-// through nova-wake's reader; then, with ev:github made a string, the same
+// through ghevent's reader; then, with ev:github made a string, the same
 // verb is refused WRONGTYPE and exits 1, the red ci-ok a receipt that did not
 // happen must be.
 func TestReceiptVerbWritesTheRowAndARefusedWriteIsExitOne(t *testing.T) {
@@ -31,16 +32,19 @@ func TestReceiptVerbWritesTheRowAndARefusedWriteIsExitOne(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	ev := wake.OpenEvGithub(addr, "", "")
+	ev, err := ghevent.OpenReader(ctx, redisconn.Options{Addr: addr}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer ev.Close()
 	got, err := ev.Read(ctx, "0-0", 10, time.Second)
 	if err != nil || len(got) != 1 || got[0].Number != "7" || got[0].Head != receiptSHA || got[0].Sender != "runner" {
-		t.Fatalf("nova-wake read %+v %v", got, err)
+		t.Fatalf("the reader read %+v %v", got, err)
 	}
 
 	rdb := redis.NewClient(&redis.Options{Addr: addr})
 	defer rdb.Close()
-	if err := rdb.Set(ctx, wake.EvGithubStream, "not a stream", 0).Err(); err != nil {
+	if err := rdb.Set(ctx, ghevent.Stream, "not a stream", 0).Err(); err != nil {
 		t.Fatal(err)
 	}
 	out.Reset()

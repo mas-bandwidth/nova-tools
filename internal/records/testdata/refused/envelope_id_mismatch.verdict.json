@@ -1,5 +1,0 @@
-{
-  "field": "envelope.id",
-  "rule": "envelope_id_mismatch",
-  "verdict": "refused"
-}

@@ -4,13 +4,13 @@ package ntable_test
 
 import (
 	"context"
-	"errors"
 	"strings"
 	"testing"
 
 	nsstore "github.com/mas-bandwidth/nova-tools/internal/nsprint/store"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/require"
 )
 
 func TestEveryTableOperationCountsOneTrip(t *testing.T) {
@@ -22,20 +22,17 @@ func TestEveryTableOperationCountsOneTrip(t *testing.T) {
 		t.Helper()
 		events := c.XLen(ctx, ntable.ChangesKey("demo")).Val()
 		before := trips.N()
-		if err := f(); err != nil {
-			t.Fatalf("%s: %v", name, err)
-		}
-		if n := trips.N() - before; n != 1 {
-			t.Fatalf("%s took %d trips; want 1", name, n)
-		}
+		err := f()
+		require.NoError(t, err, "%s: %v", name, err)
+		n := trips.N() - before
+		require.Equal(t, int64(1), n, "%s took %d trips; want 1", name, n)
 		writes := map[string]bool{"create": true, "same create": true, "row add": true, "cell add": true, "cell move": true, "cell remove": true, "bound row add": true, "row del": true, "clear": true, "bind": true, "drop": true, "drop definition": true, "member create": true, "apply batch": true}
 		want := events
 		if writes[name] {
 			want++
 		}
-		if got := c.XLen(ctx, ntable.ChangesKey("demo")).Val(); got != want {
-			t.Fatalf("%s committed %d events; want %d", name, got-events, want-events)
-		}
+		got := c.XLen(ctx, ntable.ChangesKey("demo")).Val()
+		require.Equal(t, want, got, "%s committed %d events; want %d", name, got-events, want-events)
 	}
 	one("create", func() error { return ntable.Create(ctx, c, demo(), now) })
 	one("same create", func() error { return ntable.Create(ctx, c, demo(), now) })
@@ -88,8 +85,8 @@ func TestEveryTableOperationCountsOneTrip(t *testing.T) {
 	})
 	one("reader changed", func() error {
 		tb, err := reader.Read(ctx, c)
-		if err == nil && !tb.Rows[1].Cells[0].Bound {
-			t.Fatal("new binding missing")
+		if err == nil {
+			require.True(t, tb.Rows[1].Cells[0].Bound, "new binding missing")
 		}
 		return err
 	})
@@ -122,79 +119,51 @@ func TestRefusedMoveIsAtomicAndNamesItsRepair(t *testing.T) {
 	_, c := live(t)
 	ctx := context.Background()
 	tb := demo()
-	if err := ntable.Create(ctx, c, tb, now); err != nil {
-		t.Fatal(err)
-	}
 	row, member := "a row's name", "job ' ; echo wrong"
-	if _, err := ntable.RowAdd(ctx, c, "demo", row, ntable.RowSpec{}); err != nil {
-		t.Fatal(err)
-	}
+	newTable(t, c, tb).rows(row)
 	_, err := ntable.CellMove(ctx, c, "demo", row, "ready", "working", member)
-	if !errors.Is(err, ntable.ErrNotMember) {
-		t.Fatalf("missing member: %v", err)
-	}
+	require.ErrorIs(t, err, ntable.ErrNotMember, "missing member")
 	for _, word := range []string{"demo", row, "ready", member, "run: nova-table cell members", "'a row'\\''s name'"} {
-		if !strings.Contains(err.Error(), word) {
-			t.Fatalf("refusal misses %q: %v", word, err)
-		}
+		require.ErrorContains(t, err, word, "refusal misses %q: %v", word, err)
 	}
-	if _, err := ntable.CellAdd(ctx, c, "demo", row, "ready", member, 7); err != nil {
-		t.Fatal(err)
-	}
+	_, err = ntable.CellAdd(ctx, c, "demo", row, "ready", member, 7)
+	require.NoError(t, err)
 	dst := ntable.CellKey("demo", row, "working")
-	if err := c.Set(ctx, dst, "wrong type", 0).Err(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ntable.CellMove(ctx, c, "demo", row, "ready", "working", member); err == nil || !strings.Contains(err.Error(), "WRONGTYPE") {
-		t.Fatalf("destination corruption: %v", err)
-	}
-	if score, err := c.ZScore(ctx, ntable.CellKey("demo", row, "ready"), member).Result(); err != nil || score != 7 {
-		t.Fatalf("refused move lost its source: %v %v", score, err)
-	}
+	require.NoError(t, c.Set(ctx, dst, "wrong type", 0).Err())
+	_, err = ntable.CellMove(ctx, c, "demo", row, "ready", "working", member)
+	require.ErrorContains(t, err, "WRONGTYPE", "destination corruption")
+	score, err := c.ZScore(ctx, ntable.CellKey("demo", row, "ready"), member).Result()
+	require.NoError(t, err, "refused move lost its source")
+	require.Equal(t, float64(7), score, "refused move lost its source: %v", score)
 }
 
 func TestCreateDeniedRegistryWriteDoesNotLeaveDefinition(t *testing.T) {
 	t.Parallel()
 	addr, admin := live(t)
 	ctx := context.Background()
-	if err := admin.Do(ctx, "ACL", "SETUSER", "no-registry", "on", ">pw", "~table:*", "~tables", "+@all", "-sadd").Err(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, admin.Do(ctx, "ACL", "SETUSER", "no-registry", "on", ">pw", "~table:*", "~tables", "+@all", "-sadd").Err())
 	c := redis.NewClient(&redis.Options{Addr: addr, Username: "no-registry", Password: "pw"})
 	t.Cleanup(func() { _ = c.Close() })
-	if err := ntable.Create(ctx, c, demo(), now); err == nil || !strings.Contains(err.Error(), "NOPERM") {
-		t.Fatalf("create without registry write: %v", err)
-	}
-	if n, err := admin.Exists(ctx, ntable.DefKey("demo")).Result(); err != nil || n != 0 {
-		t.Fatalf("refused create left definition: %d %v", n, err)
-	}
+	require.ErrorContains(t, ntable.Create(ctx, c, demo(), now), "NOPERM", "create without registry write")
+	n, err := admin.Exists(ctx, ntable.DefKey("demo")).Result()
+	require.NoError(t, err, "refused create left definition")
+	require.Equal(t, int64(0), n, "refused create left definition")
 }
 
 func TestNewRowFollowsLastRankAfterDeletion(t *testing.T) {
 	t.Parallel()
 	_, c := live(t)
 	ctx := context.Background()
-	if err := ntable.Create(ctx, c, demo(), now); err != nil {
-		t.Fatal(err)
-	}
-	for _, row := range []string{"a", "b", "z"} {
-		if _, err := ntable.RowAdd(ctx, c, "demo", row, ntable.RowSpec{}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if _, err := ntable.RowDel(ctx, c, "demo", "b"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ntable.RowAdd(ctx, c, "demo", "c", ntable.RowSpec{}); err != nil {
-		t.Fatal(err)
-	}
+	newTable(t, c, demo()).rows("a", "b", "z")
+	_, err := ntable.RowDel(ctx, c, "demo", "b")
+	require.NoError(t, err)
+	_, err = ntable.RowAdd(ctx, c, "demo", "c", ntable.RowSpec{})
+	require.NoError(t, err)
 	tb, err := ntable.Read(ctx, c, "demo")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(tb.Rows) != 3 || tb.Rows[1].Key != "z" || tb.Rows[2].Key != "c" {
-		t.Fatalf("new row reordered an existing one: %+v", tb.Rows)
-	}
+	require.NoError(t, err)
+	require.Len(t, tb.Rows, 3, "new row reordered an existing one: %+v", tb.Rows)
+	require.Equal(t, "z", tb.Rows[1].Key, "new row reordered an existing one: %+v", tb.Rows)
+	require.Equal(t, "c", tb.Rows[2].Key, "new row reordered an existing one: %+v", tb.Rows)
 }
 
 // The deployed reader role must keep its existing table-read capability
@@ -217,35 +186,28 @@ func TestSourceACLTableReaderKeepsReadOnlyAccess(t *testing.T) {
 		return c
 	}
 	writer, reader := as("ns-coordinator"), as("ns-table")
-	if err := ntable.Create(ctx, writer, demo(), now); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ntable.RowAdd(ctx, writer, "demo", "r", ntable.RowSpec{}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ntable.CellAdd(ctx, writer, "demo", "r", "ready", "job", 7); err != nil {
-		t.Fatal(err)
-	}
+	newTable(t, writer, demo()).rows("r").cell("r", "ready", "job", 7)
 	// the coordinator row runs a batch as it is written in source; the reader row does not
 	batch := ntable.BatchManifest{Schema: 1, Table: "demo", Epoch: "0", ExpectedTableRevision: writer.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val(), OperationID: "acl-1", Members: []ntable.BatchMemberEntry{
 		{ID: "bm", Expect: &ntable.MemberExpect{Absent: true}, Create: &ntable.MemberCreateOp{Row: "r", Col: "working", Score: 1}, Set: map[string]string{"k": "v"}, Unset: []string{"gone"}}}}
-	if _, err := ntable.ApplyBatch(ctx, writer, batch); err != nil {
-		t.Fatalf("batch as ns-coordinator: %v", err)
-	}
+	_, err := ntable.ApplyBatch(ctx, writer, batch)
+	require.NoError(t, err, "batch as ns-coordinator")
 	batch.OperationID = "acl-2"
-	if _, err := ntable.ApplyBatch(ctx, reader, batch); err == nil || !strings.Contains(err.Error(), "NOPERM") && !strings.Contains(err.Error(), "no permissions") {
-		t.Fatalf("batch as the reader: %v", err)
-	}
-	if tb, err := ntable.Read(ctx, reader, "demo"); err != nil || len(tb.Rows) != 1 || tb.Rows[0].Cells[0].Unread || tb.Rows[0].Cells[0].Count != 1 {
-		t.Fatalf("reader snapshot: %+v %v", tb, err)
-	}
-	if names, err := ntable.List(ctx, reader); err != nil || len(names) != 1 {
-		t.Fatalf("reader list: %v %v", names, err)
-	}
-	if ms, err := ntable.CellMembers(ctx, reader, "demo", "r", "ready"); err != nil || len(ms) != 1 || ms[0].Member != "job" {
-		t.Fatalf("reader members: %v %v", ms, err)
-	}
-	if _, err := ntable.CellAdd(ctx, reader, "demo", "r", "ready", "forbidden", 1); err == nil || !strings.Contains(err.Error(), "NOPERM") {
-		t.Fatalf("reader wrote: %v", err)
-	}
+	_, err = ntable.ApplyBatch(ctx, reader, batch)
+	require.Error(t, err, "batch as the reader")
+	require.Regexp(t, "NOPERM|no permissions", err.Error(), "batch as the reader: %v", err)
+	tb, err := ntable.Read(ctx, reader, "demo")
+	require.NoError(t, err, "reader snapshot: %+v", tb)
+	require.Len(t, tb.Rows, 1, "reader snapshot: %+v", tb)
+	require.False(t, tb.Rows[0].Cells[0].Unread, "reader snapshot: %+v", tb)
+	require.Equal(t, int64(1), tb.Rows[0].Cells[0].Count, "reader snapshot: %+v", tb)
+	names, err := ntable.List(ctx, reader)
+	require.NoError(t, err, "reader list: %v", names)
+	require.Len(t, names, 1, "reader list: %v", names)
+	ms, err := ntable.CellMembers(ctx, reader, "demo", "r", "ready")
+	require.NoError(t, err, "reader members: %v", ms)
+	require.Len(t, ms, 1, "reader members: %v", ms)
+	require.Equal(t, "job", ms[0].Member, "reader members: %v", ms)
+	_, err = ntable.CellAdd(ctx, reader, "demo", "r", "ready", "forbidden", 1)
+	require.ErrorContains(t, err, "NOPERM", "reader wrote")
 }
