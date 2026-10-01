@@ -61,7 +61,11 @@ func TestALaneIsHeldUntilItsCardIsReportedAndThePassNeverWaitsOnAPush(t *testing
 		_, err := m.Tick(time.Unix(0, 0))
 		require.NoError(t, err, log.String())
 	}
-	tick()
+	tick() // takes its two cards and begins their starts, apart from the pass
+	for strings.Count(log.String(), "start s1-") < 2 {
+		<-m.Wake() // a start ended: the next pass collects it
+		tick()
+	}
 	require.Len(t, rn.packets, 2, "at its width of 2: %s", log.String())
 
 	c := rn.children[rn.packets[0].Card]
@@ -79,10 +83,17 @@ func TestALaneIsHeldUntilItsCardIsReportedAndThePassNeverWaitsOnAPush(t *testing
 	assert.NotContains(t, log.String(), "finish ", "still in flight: still nothing to report")
 
 	close(pu.release)
-	<-m.Wake() // the push ended: the loop is woken (a member that is not would hang here)
-	tick()
-	assert.Equal(t, 1, strings.Count(log.String(), "finish "+rn.packets[0].Card+" ok=true"), "reported once, by the pass after the push ended: %s", log.String())
-	require.Len(t, rn.packets, 3, "the lane the report freed is filled in the same pass: %s", log.String())
+	first := rn.packets[0].Card
+	for !strings.Contains(log.String(), "finish "+first+" ok=true") {
+		<-m.Wake() // the push ended: the loop is woken (a member that is not would hang here)
+		tick()
+	}
+	for strings.Count(log.String(), "start s1-") < 3 {
+		<-m.Wake() // the freed lane's start ended
+		tick()
+	}
+	assert.Equal(t, 1, strings.Count(log.String(), "finish "+first+" ok=true"), "reported once, by the pass after the push ended: %s", log.String())
+	require.Len(t, rn.packets, 3, "the lane the report freed is filled: %s", log.String())
 	assert.Equal(t, 2, m.Running(), "back at the width, never past it")
 	seen := map[string]bool{}
 	for _, p := range rn.packets {
