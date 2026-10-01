@@ -313,6 +313,10 @@ type Snapshot struct {
 	// tier, read with the routes; a tier with none deals from its enabled routes
 	// in name order (tierArray).
 	Tiers map[string][]string
+	// ReaderTier is the tier a read card's route is drawn from, the sprint
+	// row's reader_tier as nova-config applied it, read with the routes; ""
+	// is the default, pro (route.go, ReadTier).
+	ReaderTier string
 	// ReaderStates is each reader's state as the store derives it (ReaderState:
 	// up, away or down), read by a step that asks (docs/SPEC-SPRINT.md section
 	// 6); nil is none read, and every reader is held up.

@@ -61,14 +61,15 @@ func TakeStep(r sprint.TakeReq) Step {
 
 // FinishStep is a worker finishing work cards.
 func FinishStep(r sprint.FinishReq) Step {
-	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "finish", Load: tables(sprint.Fleet, sprint.Readers, sprint.Work), Mirrors: true,
+	// a finish that reports what the run spent prices it with the routes (sprint's cost.go)
+	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "finish", Load: tables(sprint.Fleet, sprint.Readers, sprint.Work), Mirrors: true, Routes: r.Usage != "",
 		Extras: sprint.NamedExtras(sprint.Fleet, r.IDs),
 		Plan:   func(s *sprint.Snapshot) sprint.Plan { return sprint.Finish(s, r) }}
 }
 
 // AskStep deals primaries in review to readers.
 func AskStep(r sprint.AskReq) Step {
-	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "ask", Load: tables(sprint.Work, sprint.Readers, sprint.Merge), Readers: true,
+	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "ask", Load: tables(sprint.Work, sprint.Readers, sprint.Merge, sprint.Fleet), Readers: true, Routes: true,
 		// Every read card id each reader could get at the primaries' attempts,
 		// placed or retired: a reader who already has one is not free.
 		Extras: func(s *sprint.Snapshot) map[string][]string {
@@ -85,7 +86,8 @@ func AskStep(r sprint.AskReq) Step {
 
 // ReadStep is a reader recording its reads.
 func ReadStep(r sprint.ReadReq) Step {
-	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "read", Load: tables(sprint.Readers, sprint.Work), Extras: sprint.NamedExtras(sprint.Readers, r.IDs),
+	// a read that reports what it spent prices it with the routes (sprint's cost.go)
+	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "read", Load: tables(sprint.Readers, sprint.Work), Extras: sprint.NamedExtras(sprint.Readers, r.IDs), Routes: r.Usage != "",
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Read(s, r) }}
 }
 

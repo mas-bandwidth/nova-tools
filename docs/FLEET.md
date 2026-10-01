@@ -27,7 +27,8 @@ handles".
 ```
 nova-config machine add bench-a --user nova --seat bench-a --slots 2 --as ada
 nova-config fleet set --store bench-a --coordinator bench-a --as ada
-nova-config loop add member-bench-a --machine bench-a --argv '["nova-swarm","member","--as","bench-a","--harness","opencode","--root","nova-bench/member"]' --keepalive true --seat bench-a --keys NOVA_REDIS_BENCH_PASSWORD --width 2 --as ada
+nova-config loop add member-bench-a --machine bench-a --argv '["nova-swarm","member","--as","bench-a","--harness","opencode","--root","nova-bench/member","--identity","ada,Ada Bench,ada@example.com"]' --keepalive true --seat bench-a --keys NOVA_REDIS_BENCH_PASSWORD --width 2 --as ada
+nova-config loop add reader-1 --machine bench-a --argv '["nova-swarm","member","--as","reader-1","--reader","--width","8","--harness","opencode","--root","nova-bench/reader-1","--identity","ada,Ada Bench,ada@example.com"]' --keepalive true --seat bench-a --keys NOVA_REDIS_BENCH_PASSWORD --as ada
 nova-config route add flash-a --tier flash --provider deepseek --model deepseek-v4-flash --tokens 200000 --deadline 900 --as ada
 nova-config route add pro-a --tier pro --provider openrouter --model x-ai/grok-4 --tokens 400000 --deadline 1800 --as ada
 nova-config apply --as ada
@@ -52,6 +53,18 @@ and deadline are the route the deal drew for it from the routes `apply` writes
 flash card on `deepseek/deepseek-v4-flash`, on the same machine), or the
 card's own `model:` line. `nova-sprint routes` shows what each route's attempts
 did.
+
+A reader is a loop record the same as a member: `nova-swarm member --reader`
+under the readers row of its `--as` name (`nova-sprint init --readers reader-1`,
+or `nova-sprint reader add reader-1`), with its width, the most reads it runs at
+once. It names no model either: the ask draws each read card's route from the
+reader tier, the sprint row's `reader_tier` (`nova-config sprint set
+--reader_tier flash|pro --as <friend>`, then `apply`, pro unless set), at that tier's rolling index, and
+the packet hands the reader its model, budget and deadline; a reader started
+with `--model`, `--tokens` and `--deadline` runs its reads on those instead.
+Both loops name the identity every child commits under, `--identity
+<owner>,<name>,<email>`, in their argv, so no file is written into a pool by
+hand; a loop without it reads the pool's `identity.tsv`.
 
 The inventory reads the store `NOVA_SPRINT_REDIS` names (or `--redis`); export
 it, and `NOVA_MACHINE` when the machine running the play is a row, before the
