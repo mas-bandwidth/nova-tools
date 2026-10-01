@@ -1,7 +1,7 @@
 package store
 
 // A step writes a table property in the same batch as its members, guarded on
-// the value its plan read (L1 contract amendment, table properties, section 4).
+// the value its plan read (docs/SPEC-NOVA-TABLE.md, table properties).
 
 import (
 	"errors"

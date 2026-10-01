@@ -673,15 +673,6 @@ func dealPlan(s *Snapshot, r DealReq, rr *round) (Plan, roundMoves) {
 	return p, moves
 }
 
-// readyQueues is the up members' ready queue lengths.
-func readyQueues(s *Snapshot, up []string) map[string]int {
-	q := map[string]int{}
-	for _, m := range up {
-		q[m] = s.Fleet.Count(m, Ready)
-	}
-	return q
-}
-
 // deal cuts the primary's next attempt's work card, carrying the fix and the
 // primary's score, into the ready queue of the up member m (the next round the
 // fleet, a deal's or a rework's), at generation 1, and moves
