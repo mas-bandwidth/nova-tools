@@ -73,7 +73,14 @@ Landing, the coordinator's: an external delivery (git pushes the base) and a sto
     an accept ahead of the batch, a return or a crash leaves the batch in the
     base and not reported: the line is LAND FAILED, exit 2, and running land
     again recovers it (its merges and its push are no-ops, the report lands
-    it); after a clear the store holds nothing to report (tla/Land.tla).`) + "\n"
+    it); after a clear the store holds nothing to report (tla/Land.tla).
+  nova-sprint land --stream s1
+    run again, it recovers once the outside is quiet (tla/Land.tla, Recovers),
+    not otherwise: a run cut short between the push and the report on every
+    try never reports; and a base that moves twice between the read and the
+    push gives up (one rebuild, then the rejected fact, the stream stopped):
+    nothing is pushed or lost and the cards stay queued; resume the stream
+    (nova-sprint resume --stream s1 --did 'the base moved') and run land again.`) + "\n"
 }
 
 // landBatch is one batch's outcome, a line of output and an item of --json.

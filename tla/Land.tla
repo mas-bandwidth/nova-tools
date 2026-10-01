@@ -21,6 +21,9 @@
 \*   tries    the rebuilds on a moved base (one is allowed)
 \*   events   the outside events so far, bounded by MaxEvents
 \*   badpush  a ghost: a push was made by a lander whose epoch is not the store's
+\*   lpushed  a ghost: the cards this lander itself pushed in the store's
+\*            epoch (a clear empties it), so the stranded witness names the
+\*            lander's own push and not another lander's landing re-queued
 \*
 \* THE ACTIONS. The lander's: Read (the queue, the epoch and the tip; a caller's
 \* epoch the store has left is refused here, before any git), Build, Push (the
@@ -39,8 +42,18 @@
 \* store has left. Recovers: a batch pushed and not reported (a crash, or a
 \* report the guard refused) is recorded by running the lander again: under
 \* fairness, once the outside is quiet, no queued card stays in the base.
-\* ReachStranded is a reversed witness: the stranded state is reached, so
-\* Recovers is not vacuous.
+\* ReachStranded is a reversed witness: the stranded state the lander's own
+\* push leaves is reached, so Recovers is not vacuous.
+\*
+\* WHAT RECOVERS DOES NOT COVER. It is proved once the outside goes quiet
+\* (the instance caps outside events at MaxEvents), so it says nothing of an
+\* outside that never stops: (a) a lander that crashes between the push and
+\* the report on every run never records the batch (its heads stay in the base
+\* and its cards stay queued, so the first run that is not cut short records
+\* it); (b) one rebuild on a moved base and then the lander gives up (tries <
+\* 1): a base that moves twice inside every read-to-push window makes every
+\* run give up, with nothing pushed and the cards still queued, so running it
+\* again loses nothing.
 \*
 \* Broken: "none" is the design. "reportfirst" reports the batch before it is
 \* pushed (LandedInBase fails). "latepoch" checks the caller's epoch only at
@@ -60,12 +73,12 @@ EXTENDS Integers, Sequences, FiniteSets, TLC
 
 CONSTANTS Cards, MaxEpoch, MaxEvents, Broken
 
-VARIABLES queue, landed, epoch, base, tip, lphase, lq, lbatch, lep, ltip, tries, events, badpush
+VARIABLES queue, landed, epoch, base, tip, lphase, lq, lbatch, lep, ltip, tries, events, badpush, lpushed
 
 store == <<queue, landed, epoch>>
 remote == <<base, tip>>
 lander == <<lphase, lq, lbatch, lep, ltip, tries>>
-vars == <<queue, landed, epoch, base, tip, lphase, lq, lbatch, lep, ltip, tries, events, badpush>>
+vars == <<queue, landed, epoch, base, tip, lphase, lq, lbatch, lep, ltip, tries, events, badpush, lpushed>>
 
 Range(s) == {s[i] : i \in 1..Len(s)}
 
@@ -89,12 +102,13 @@ TypeOK ==
   /\ tries \in 0..1
   /\ events \in 0..MaxEvents
   /\ badpush \in BOOLEAN
+  /\ lpushed \subseteq Cards
 
 Init ==
   /\ queue = <<>> /\ landed = {} /\ epoch = 0
   /\ base = {} /\ tip = 0
   /\ lphase = "idle" /\ lq = <<>> /\ lbatch = <<>> /\ lep = 0 /\ ltip = 0 /\ tries = 0
-  /\ events = 0 /\ badpush = FALSE
+  /\ events = 0 /\ badpush = FALSE /\ lpushed = {}
 
 \* ---- the lander (land.go) ----
 
@@ -106,14 +120,14 @@ Read ==
     /\ lphase = "idle" /\ Len(queue) > 0
     /\ Broken = "latepoch" \/ cep = epoch
     /\ lphase' = "read" /\ lq' = queue /\ lep' = cep /\ ltip' = tip /\ tries' = 0
-    /\ UNCHANGED <<queue, landed, epoch, base, tip, lbatch, events, badpush>>
+    /\ UNCHANGED <<queue, landed, epoch, base, tip, lbatch, events, badpush, lpushed>>
 
 \* Build: the heads merged in queue order, ended by the first card that stops it.
 Build ==
   /\ lphase = "read"
   /\ \E n \in 1..Len(lq) : lbatch' = SubSeq(lq, 1, n)
   /\ lphase' = "built"
-  /\ UNCHANGED <<queue, landed, epoch, base, tip, lq, lep, ltip, tries, events, badpush>>
+  /\ UNCHANGED <<queue, landed, epoch, base, tip, lq, lep, ltip, tries, events, badpush, lpushed>>
 
 \* Push: the queue head and the epoch read again (queueHead), refused when
 \* stale; a moved tip is rejected and the batch rebuilt on the new tip once,
@@ -124,17 +138,18 @@ Push ==
   /\ UNCHANGED <<queue, landed, epoch, lq, lep, events>>
   /\ IF Broken \notin {"latepoch", "reportfirst"} /\ ~Fresh(lbatch)
      THEN /\ lphase' = "idle"
-          /\ UNCHANGED <<base, tip, lbatch, ltip, tries, badpush>>
+          /\ UNCHANGED <<base, tip, lbatch, ltip, tries, badpush, lpushed>>
      ELSE IF ltip # tip
      THEN IF tries < 1
           THEN /\ ltip' = tip /\ tries' = tries + 1
-               /\ UNCHANGED <<lphase, base, tip, lbatch, badpush>>
+               /\ UNCHANGED <<lphase, base, tip, lbatch, badpush, lpushed>>
           ELSE /\ lphase' = "idle"
-               /\ UNCHANGED <<base, tip, lbatch, ltip, tries, badpush>>
+               /\ UNCHANGED <<base, tip, lbatch, ltip, tries, badpush, lpushed>>
      ELSE /\ base' = base \cup Range(lbatch)
           /\ tip' = IF Range(lbatch) \subseteq base THEN tip ELSE tip + 1
           /\ ltip' = tip'
           /\ badpush' = (badpush \/ lep # epoch)
+          /\ lpushed' = lpushed \cup Range(lbatch)
           /\ lphase' = PushTo
           /\ UNCHANGED <<lbatch, tries>>
 
@@ -155,7 +170,7 @@ Report ==
                  /\ queue' = SubSeq(queue, n + 1, Len(queue))
             ELSE UNCHANGED <<queue, landed>>
   /\ lphase' = ReportTo
-  /\ UNCHANGED <<epoch, base, tip, lq, lbatch, lep, ltip, tries, events, badpush>>
+  /\ UNCHANGED <<epoch, base, tip, lq, lbatch, lep, ltip, tries, events, badpush, lpushed>>
 
 Land == Read \/ Build \/ Push \/ Report
 
@@ -197,6 +212,7 @@ Outside ==
   /\ events' = events + 1
   /\ UNCHANGED badpush
   /\ (Accept \/ Return \/ OtherLand \/ Clear \/ MoveBase \/ Crash)
+  /\ lpushed' = IF epoch' # epoch THEN {} ELSE lpushed
 
 Next == Land \/ Outside
 
@@ -220,6 +236,9 @@ LandsInOrder ==
 Recovers == <>[](\A c \in Range(queue) : c \notin base)
 
 \* Reachability (a reversed witness, written to be false where the design must
-\* reach): a batch in the base and still queued, the lander idle: stranded.
-ReachStranded == ~(lphase = "idle" /\ \E c \in Range(queue) : c \in base)
+\* reach): a card this lander pushed, still queued, the lander idle: pushed and
+\* not reported (a crash between the push and the report, or a report the
+\* guard refused). Its shortest trace is the lander's own: Accept, Read,
+\* Build, Push, Crash.
+ReachStranded == ~(lphase = "idle" /\ \E c \in Range(queue) : c \in lpushed)
 =============================================================================
