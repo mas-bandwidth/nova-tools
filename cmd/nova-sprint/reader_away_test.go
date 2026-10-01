@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"testing"
@@ -10,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
+	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 )
 
 // The readers' state (docs/SPEC-SPRINT.md section 6; tla/DirtyTick.tla, the
@@ -18,14 +20,15 @@ import (
 // up is one judgment per tick-end; reader remove takes a row that holds no
 // read off the table.
 
-// readerState is the state where shows for a reader.
+// readerState is a reader's state as the store derives it, after the beat of
+// every reader that beats (the view shows none).
 func (ta *testApp) readerState(reader string) string {
 	ta.t.Helper()
-	var v struct {
-		Tables map[string]map[string]map[string]string
-	}
-	ta.json("where", &v)
-	return v.Tables[sprint.Readers][reader]["status"]
+	ta.beat()
+	st := &store.Store{B: ta.m, Names: sprint.Names{}, Now: ta.a.now}
+	states, err := st.ReaderStates(context.Background(), []string{reader}, ta.a.now())
+	require.NoError(ta.t, err)
+	return states[reader]
 }
 
 // readers is the readers' row keys, as where shows them.

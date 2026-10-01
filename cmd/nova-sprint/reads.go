@@ -366,7 +366,7 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 	}
 	v.Machine = st.MachineLine(ctx)
 	var b strings.Builder
-	b.WriteString(now.Format("2006-01-02 15:04:05 MST") + "\n\nSPRINT TABLE\n\n" + whereHeader(v.Summary, v.Machine) + "\n\n")
+	b.WriteString("SPRINT TABLE\n\n" + whereHeader(v.Summary, v.Machine) + "\n\n")
 	var parts []string
 	for i, t := range shapes {
 		logical := sprint.ViewOrder[i]
@@ -377,20 +377,6 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 				cells[col.Name] = ntable.CellText(t.Columns, r, j)
 			}
 			rows[r.Key] = cells
-		}
-		if logical == sprint.Readers {
-			// the view shows each reader's state beside its cards, derived from
-			// its beat and the coordinator's hold, never written to the table
-			var err error
-			if t, err = readersWithState(ctx, st, t, now); err != nil {
-				return whereView{}, "", err
-			}
-			for _, r := range t.Rows {
-				rows[r.Key] = map[string]string{}
-				for j, col := range t.Columns {
-					rows[r.Key][col.Name] = ntable.CellText(t.Columns, r, j)
-				}
-			}
 		}
 		v.Tables[logical] = rows
 		if logical == sprint.Merge && !slices.Contains(t.Hidden, sprint.Since) {
@@ -410,36 +396,11 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 	return v, b.String(), nil
 }
 
-// readersWithState is the readers table with a text column status: each
-// reader's state, up, away or down (sprint.ReaderState). A store that keeps no
-// reader records shows no column.
-func readersWithState(ctx context.Context, st *store.Store, t ntable.Table, now time.Time) (ntable.Table, error) {
-	keys := make([]string, len(t.Rows))
-	for i, r := range t.Rows {
-		keys[i] = r.Key
-	}
-	states, err := st.ReaderStates(ctx, keys, now)
-	if err != nil || states == nil {
-		return t, err
-	}
-	t.Columns = append(append([]ntable.Column(nil), t.Columns...), ntable.Column{Name: sprint.Status, Projection: ntable.Text})
-	t.Rows = append([]ntable.Row(nil), t.Rows...)
-	for i, r := range t.Rows {
-		texts := map[string]string{}
-		for k, v := range r.Texts {
-			texts[k] = v
-		}
-		texts[sprint.Status] = states[r.Key]
-		t.Rows[i].Texts = texts
-	}
-	return t, nil
-}
-
 // whereHeader is the one line under the title of the where view: STOPPED when
-// the machine is stopped (with its silence, when a RUNNING machine has not
-// ticked), DONE when it stopped because the sprint is done (the view's state
-// text, errata 3 amendment 6), and the progress line, with no machine text,
-// when it is running. A failed last tick stays on the line.
+// the machine is stopped (or a RUNNING machine has not ticked), DONE when it
+// stopped because the sprint is done (the view's state text, errata 3
+// amendment 6), and the progress line, with no machine text, when it is
+// running. Nothing follows any of them.
 func whereHeader(summary, machine string) string {
 	state := strings.TrimPrefix(machine, "machine: ")
 	if strings.HasPrefix(state, "STOPPED") || state == store.DoneState {
