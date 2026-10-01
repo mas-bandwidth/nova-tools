@@ -1,10 +1,12 @@
 package store
 
 import (
-	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/refmodel"
@@ -29,7 +31,7 @@ func (h *harness) driveTo(id, state string) {
 		h.readAll()
 		h.tick(time.Second)
 	}
-	h.t.Fatalf("%s is %s after twelve ticks, want %s", id, h.state(id), state)
+	require.Equal(h.t, state, h.state(id), "%s after twelve ticks", id)
 }
 
 // ticks runs the machine n times, a second apart.
@@ -53,19 +55,15 @@ func TestTheMachineDoesNotAcceptAReturnedPrimaryAgain(t *testing.T) {
 	h.driveTo("s1-1", sprint.Merging)
 	h.must(ReturnStep(sprint.ReturnReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Reason: "the stream branch went red"}))
 	h.ticks(5)
-	if st := h.state("s1-1"); st != sprint.Review || len(h.snap().Merge.Cell("s1", sprint.Queued)) != 0 {
-		t.Fatalf("five ticks after the return: s1-1 %s, queued %d", st, len(h.snap().Merge.Cell("s1", sprint.Queued)))
-	}
+	require.Equal(t, sprint.Review, h.state("s1-1"), "five ticks after the return")
+	assert.Empty(t, h.snap().Merge.Cell("s1", sprint.Queued), "five ticks after the return: queued to merge")
 	returned := h.openOf(sprint.NReturned)
-	if len(returned) != 1 || !slices.Contains(returned[0].Note.Decisions, "accept") {
-		t.Fatalf("the returned judgment: %+v", returned)
-	}
+	require.Len(t, returned, 1, "the returned judgment")
+	assert.Contains(t, returned[0].Note.Decisions, "accept")
 	h.clean("returned, held")
 	h.must(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Fix: "rebase it", Answers: []string{returned[0].Note.ID}}))
 	h.driveTo("s1-1", sprint.Merging)
-	if a := h.snap().Work.Card("s1-1").Int("attempt"); a != 2 {
-		t.Fatalf("accepted at attempt %d, want 2", a)
-	}
+	assert.Equal(t, 2, h.snap().Work.Card("s1-1").Int("attempt"), "accepted at its new attempt")
 	h.clean("accepted at attempt 2")
 }
 
@@ -82,18 +80,13 @@ func TestTheMachineDoesNotAcceptAPrimaryWhoseCIIsRed(t *testing.T) {
 	h.machine() // asks its readers
 	h.readAll()
 	h.ticks(5)
-	if st := h.state("s1-1"); st != sprint.Review {
-		t.Fatalf("five ticks with its CI red: s1-1 %s", st)
-	}
-	if n := len(h.openOf(sprint.NReadyToAccept)); n != 1 || len(h.openOf(sprint.NCIRed)) != 1 {
-		t.Fatalf("ready to accept %d, ci red %d: want one of each", n, len(h.openOf(sprint.NCIRed)))
-	}
+	require.Equal(t, sprint.Review, h.state("s1-1"), "five ticks with its CI red")
+	assert.Len(t, h.openOf(sprint.NReadyToAccept), 1, "ready to accept beside the red")
+	assert.Len(t, h.openOf(sprint.NCIRed), 1, "ci red")
 	h.clean("ci red, held")
 	h.must(CIStep(sprint.CIReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Run: "2", Source: "test"}))
 	h.ticks(1)
-	if st := h.state("s1-1"); st != sprint.Merging {
-		t.Fatalf("green at its head: s1-1 %s", st)
-	}
+	assert.Equal(t, sprint.Merging, h.state("s1-1"), "green at its head")
 	h.clean("ci green, accepted")
 }
 
@@ -115,16 +108,14 @@ func TestMembersFlappingNeverRetireAReadyCard(t *testing.T) {
 			h.tick(10 * time.Second)
 			h.machine()
 		}
-		if c := card(); c.Col != sprint.Ready || c.Row != other || c.Int("redeals") != 0 {
-			t.Fatalf("lap %d, %s silent with the card ready: %s:%s redeals %d", lap, holder, c.Row, c.Col, c.Int("redeals"))
-		}
+		c := card()
+		assert.Equal(t, [2]string{other, sprint.Ready}, [2]string{c.Row, c.Col}, "lap %d, %s silent with the card ready", lap, holder)
+		assert.Equal(t, 0, c.Int("redeals"), "lap %d, %s silent with the card ready", lap, holder)
 		h.setLive("m1", "m2")
 		h.tick(time.Second)
 		h.machine()
 	}
-	if n := len(h.openOf(sprint.NBound)); n != 0 {
-		t.Fatalf("%d bound judgments after members flapped", n)
-	}
+	assert.Empty(t, h.openOf(sprint.NBound), "bound judgments after members flapped")
 	redealLines := func() []string {
 		var out []string
 		for _, l := range h.lines() {
@@ -134,9 +125,7 @@ func TestMembersFlappingNeverRetireAReadyCard(t *testing.T) {
 		}
 		return out
 	}
-	if lines := redealLines(); len(lines) != 0 {
-		t.Fatalf("redeal lines with no take ended: %q", lines)
-	}
+	assert.Empty(t, redealLines(), "redeal lines with no take ended")
 
 	c := card()
 	holder := c.Row
@@ -146,12 +135,11 @@ func TestMembersFlappingNeverRetireAReadyCard(t *testing.T) {
 		h.tick(10 * time.Second)
 		h.machine()
 	}
-	if c := card(); c.Col != sprint.Ready || c.Int("redeals") != 1 {
-		t.Fatalf("its take ended: %s:%s redeals %d, want 1", c.Row, c.Col, c.Int("redeals"))
-	}
-	if lines := redealLines(); len(lines) != 1 || !strings.Contains(lines[0], "redeal 1 of 3") {
-		t.Fatalf("the redeal lines: %q", lines)
-	}
+	assert.Equal(t, sprint.Ready, card().Col, "its take ended")
+	assert.Equal(t, 1, card().Int("redeals"), "its take ended")
+	lines := redealLines()
+	require.Len(t, lines, 1, "the redeal lines")
+	assert.Contains(t, lines[0], "redeal 1 of 3")
 	h.clean("one take ended")
 }
 
@@ -167,9 +155,8 @@ func TestTheModelAndTheEngineAgreeOnTheAcceptAndRedealLaws(t *testing.T) {
 		t.Helper()
 		h.do(a)
 		for _, f := range h.findings {
-			if _, known := dClassify(f); !known {
-				t.Fatalf("a difference between the engine and the model:\n%s", f)
-			}
+			_, known := dClassify(f)
+			require.True(t, known, "a difference between the engine and the model:\n%s", f)
 		}
 	}
 	member := func(card string) string { return h.observe().Work[card].Member }
@@ -191,9 +178,8 @@ func TestTheModelAndTheEngineAgreeOnTheAcceptAndRedealLaws(t *testing.T) {
 	}
 	both := func(p, state, when string) {
 		t.Helper()
-		if e, m := h.observe().Primaries[p].State, h.model.Primaries[p].State; e != state || m != state {
-			t.Fatalf("%s: %s is %s in the engine and %s in the model, want %s", when, p, e, m, state)
-		}
+		require.Equal(t, state, h.observe().Primaries[p].State, "%s: %s in the engine", when, p)
+		require.Equal(t, state, h.model.Primaries[p].State, "%s: %s in the model", when, p)
 	}
 
 	do(dAction{Kind: "fleet", Op: "up", Member: "m1"})
@@ -218,9 +204,8 @@ func TestTheModelAndTheEngineAgreeOnTheAcceptAndRedealLaws(t *testing.T) {
 
 	do(dAction{Kind: "ack", Type: refmodel.JCI, Subject: "a2"})
 	accept := refmodel.Judgment{Type: refmodel.JAccept, Subject: "a2"}
-	if !h.observe().Open[accept] || !h.model.Open[accept] {
-		t.Fatalf("its CI judgment acknowledged: ready to accept open in the engine %v, in the model %v", h.observe().Open[accept], h.model.Open[accept])
-	}
+	assert.True(t, h.observe().Open[accept], "its CI judgment acknowledged: ready to accept open in the engine")
+	assert.True(t, h.model.Open[accept], "its CI judgment acknowledged: ready to accept open in the model")
 	do(dAction{Kind: "ci", IDs: []string{"a2"}, OK: true, Run: 2})
 	do(dAction{Kind: "tick"})
 	both("a2", refmodel.Merging, "green at its head")
@@ -232,13 +217,10 @@ func TestTheModelAndTheEngineAgreeOnTheAcceptAndRedealLaws(t *testing.T) {
 		do(dAction{Kind: "fleet", Op: "down", Member: from})
 		do(dAction{Kind: "fleet", Op: "up", Member: from})
 	}
-	if e, m := h.observe().Work["b1.w1"], h.model.Work["b1.w1"]; e.Redeals != 0 || m.Redeals != 0 || e.Place != refmodel.FReady {
-		t.Fatalf("members flapping with the card ready: engine %+v, model %+v", e, m)
-	}
+	assert.Equal(t, refmodel.FReady, h.observe().Work["b1.w1"].Place, "members flapping with the card ready")
+	assert.Equal(t, [2]int{0, 0}, [2]int{h.observe().Work["b1.w1"].Redeals, h.model.Work["b1.w1"].Redeals}, "members flapping with the card ready: redeals in the engine and the model")
 	c := h.observe().Work["b1.w1"]
 	do(dAction{Kind: "take", Member: c.Member, Card: "b1.w1", Gen: c.Gen})
 	do(dAction{Kind: "fleet", Op: "down", Member: c.Member})
-	if e, m := h.observe().Work["b1.w1"], h.model.Work["b1.w1"]; e.Redeals != 1 || m.Redeals != 1 {
-		t.Fatalf("its take ended: engine %+v, model %+v", e, m)
-	}
+	assert.Equal(t, [2]int{1, 1}, [2]int{h.observe().Work["b1.w1"].Redeals, h.model.Work["b1.w1"].Redeals}, "its take ended: redeals in the engine and the model")
 }
