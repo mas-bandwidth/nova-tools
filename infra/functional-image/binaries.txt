@@ -28,6 +28,7 @@ gh	absent	reaches the forge over the network, which the container has none of; t
 git	apt	git
 go	source	fetch
 icacls	absent	Windows only; a Linux container has no Windows file ACLs
+iostat	absent	macOS only; hostload's darwin sampler runs it, the Linux sampler reads /proc/stat
 java	absent	runs the TLC model checker on a bench, not in the functional tier
 log	absent	macOS unified logging; only the darwin sandbox tests read it
 lsof	apt	lsof

@@ -190,6 +190,9 @@ var swarmAudit = audit.Config{
 		// binstamp (member.go) reads one file's size and modification time and returns a
 		// string to this package, which compares it and prints nothing of it.
 		`"github.com/mas-bandwidth/nova-tools/internal/binstamp"`,
+		// hostload (member.go) samples the machine's CPU percent once a second into a
+		// ring the member's beat reads; it returns numbers and prints nothing.
+		`"github.com/mas-bandwidth/nova-tools/internal/hostload"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/subproc"`,
 		// gitrun (memberpush.go) runs one git under its budget and returns its two streams
 		// as bytes to this package; it holds no writer of this package's stream and prints
