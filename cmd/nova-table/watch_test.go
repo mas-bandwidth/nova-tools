@@ -13,6 +13,8 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // screen is the writer the in-place tests hand the loop: it keeps what was
@@ -242,32 +244,23 @@ func TestWatchOnceOutputFailureUsesWatchSinkResult(t *testing.T) {
 	t.Parallel()
 	t.Run("stdout", func(t *testing.T) {
 		var stderr bytes.Buffer
-		if code := publish("", "frame\n", brokenWatchOutput{}, &stderr, "watch"); code != 1 {
-			t.Fatalf("exit %d, want output failure 1", code)
-		}
+		code := publish("", "frame\n", brokenWatchOutput{}, &stderr, "watch")
+		require.Equal(t, 1, code, "output failure exit")
 		for _, want := range []string{"stdout: broken pipe", "--out <file>"} {
-			if !strings.Contains(stderr.String(), want) {
-				t.Fatalf("stderr %q lacks %q", stderr.String(), want)
-			}
+			assert.Contains(t, stderr.String(), want)
 		}
 	})
 	t.Run("out file", func(t *testing.T) {
 		out := filepath.Join(t.TempDir(), "missing-directory", "table.txt")
 		var stdout, stderr bytes.Buffer
-		if code := publish(out, "frame\n", &stdout, &stderr, "watch"); code != 1 {
-			t.Fatalf("exit %d, want output failure 1", code)
-		}
-		if stdout.Len() != 0 {
-			t.Fatalf("--out wrote to stdout: %q", stdout.String())
-		}
+		code := publish(out, "frame\n", &stdout, &stderr, "watch")
+		require.Equal(t, 1, code, "output failure exit")
+		assert.Empty(t, stdout.String(), "--out wrote to stdout")
 		for _, want := range []string{"--out:", out, "next: make --out"} {
-			if !strings.Contains(stderr.String(), want) {
-				t.Fatalf("stderr %q lacks %q", stderr.String(), want)
-			}
+			assert.Contains(t, stderr.String(), want)
 		}
-		if _, err := os.Stat(out); !errors.Is(err, os.ErrNotExist) {
-			t.Fatalf("failed publication left target: %v", err)
-		}
+		_, err := os.Stat(out)
+		assert.ErrorIs(t, err, os.ErrNotExist, "failed publication left target")
 	})
 }
 
