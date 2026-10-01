@@ -1,6 +1,7 @@
 package sprint
 
 import (
+	"cmp"
 	"fmt"
 	"strings"
 	"unicode/utf8"
@@ -192,6 +193,9 @@ type ReadReq struct {
 	// finding against the work; the tick asks it of another reader.
 	Return bool   `json:",omitempty"`
 	Reason string `json:",omitempty"`
+	// Usage is what the read spent, as the reader read it from its child
+	// (cardcost.Usage): kept on the read card, timed and priced (cost.go).
+	Usage string `json:",omitempty"`
 }
 
 // Read moves a reader's read cards: asked -> reading, or asked|reading -> ok|broken
@@ -273,8 +277,12 @@ func Read(s *Snapshot, r ReadReq) Plan {
 			n := happened(NReadReturned, c.F("stream"), s.Now, c.F("primary"))
 			n.What = c.Row + " returned " + c.ID + ": " + r.Reason
 			n.Who = r.Who
+			set := map[string]string{"retired": stamp(s.Now), "retired_by": "returned"}
+			// a read handed back still cost tokens and time: the run's own numbered
+			// record (cost.go, FieldReadTake), so a later run of the same card keeps it
+			set[FieldReadTake+itoa(nextTake(c, FieldReadTake))] = costRecord(s, r.Usage, "", "", true, c.F("asked"), cmp.Or(c.F("begun"), stamp(s.Now)))
 			p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"),
-				Changes: []Change{change(Readers, removeEntry(c, map[string]string{"retired": stamp(s.Now), "retired_by": "returned"}))},
+				Changes: []Change{change(Readers, removeEntry(c, set))},
 				Moved:   c.ID + " " + c.Col + " -> returned", Notes: []Note{n}})
 			continue
 		}
@@ -284,6 +292,10 @@ func Read(s *Snapshot, r ReadReq) Plan {
 		}
 		if r.Finding != "" {
 			set["finding"] = r.Finding
+		}
+		if r.Usage != "" {
+			// what the read cost, timed and priced (cost.go)
+			set[FieldUsage] = costRecord(s, r.Usage, "", "", true, c.F("asked"), cmp.Or(c.F("begun"), stamp(s.Now)))
 		}
 		u := Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Readers, moveEntry(c, c.Row, col, set))},
 			Moved: fmt.Sprintf("%s %s -> %s", c.ID, c.Col, col)}

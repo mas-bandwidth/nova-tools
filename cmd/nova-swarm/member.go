@@ -19,6 +19,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/binstamp"
 	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
+	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 	"github.com/mas-bandwidth/nova-tools/internal/member"
@@ -59,6 +60,7 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	noWall := fs.Bool("no-wall", false, "")
 	ghBin := fs.String("gh", "gh", "")
 	passFlag := fs.String("pass", "", "")
+	diskFloor := fs.Int("disk-floor", 10, "")
 	identity := fs.String("identity", "", "")
 	if !f.parse(args, stderr) {
 		return 2
@@ -110,6 +112,9 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	}
 	if ticksGiven && *ticks <= 0 {
 		f.add("give --ticks 1 or more, or leave it out to run until stopped")
+	}
+	if *diskFloor < 0 {
+		f.add("--disk-floor is the free GiB the slots' volume must keep for the member to start a card: 0 or more (0 checks nothing; default 10)")
 	}
 	// the pool identity every child commits under, from the loop's argv in nova-config;
 	// without it native reads the pool's identity.tsv
@@ -172,7 +177,13 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 		defer stop()
 		go meter.Run(ctx)
 	}
-	m := member.New(member.Config{As: *as, Width: *width, Reader: *reader, Meter: meter}, sp, rn, pu, stdout)
+	// a launch the member is done with leaves no checkout behind, and none is started on a
+	// volume under the floor (slotclean.go); what a crash or a kill left is swept first
+	var room func() (bool, string)
+	if *diskFloor > 0 {
+		room = diskRoom(*slots, *diskFloor, diskFree)
+	}
+	m := member.New(member.Config{As: *as, Width: *width, Reader: *reader, Meter: meter, Room: room}, sp, rn, pu, stdout)
 	kind := "member"
 	if *reader {
 		kind = "reader"
@@ -188,6 +199,9 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	fmt.Fprintf(stdout, "MEMBER %s as=%s width=%s every=%s sprint=%s harness=%s model=%s\n", oneline.Field(kind), oneline.Field(*as), oneline.Field(widthWord), oneline.Field(every.d.String()), oneline.Field(*sprintBin), oneline.Field(*harness), oneline.Field(modelWord))
 	if note := passNote(*model, pass, *auth); note != "" {
 		fmt.Fprintln(stdout, note)
+	}
+	if removed, kept := rn.prune(time.Now()); removed > 0 {
+		fmt.Fprintf(stdout, "NOTE sweep: removed %d ended launch directories under %s, kept the newest %d\n", removed, oneline.Field(*slots), kept)
 	}
 	n, replaced := memberLoop(m, every.d, loopTicks(*once, ticksGiven, *ticks), func() string { return binstamp.Of(self) }, stdout, stderr)
 	if replaced {
@@ -294,6 +308,17 @@ type nativeRunner struct {
 	stderr                                                    io.Writer
 	env                                                       []string // added to this process's environment: none in production, a test's
 	pass                                                      []string // the secret names handed to native (--pass, the worker's secret)
+
+	live, kept map[string]bool // launches started and not yet ended; failed ones ended and kept (slotclean.go)
+}
+
+// started marks a launch running, so no prune of the pool touches its directory until the
+// member ends it (slotclean.go).
+func (r *nativeRunner) started(name string) {
+	if r.live == nil {
+		r.live = map[string]bool{}
+	}
+	r.live[name] = true
 }
 
 func (r *nativeRunner) Start(p member.Packet) (member.Child, error) {
@@ -317,6 +342,7 @@ func (r *nativeRunner) Start(p member.Packet) (member.Child, error) {
 			}
 			close(c.done)
 		}()
+		r.started(name)
 		return c, nil
 	}
 	if err := safepath.RemoveUnder(r.slots, slot); err != nil && !os.IsNotExist(err) {
@@ -382,6 +408,7 @@ func (r *nativeRunner) Start(p member.Packet) (member.Child, error) {
 		_ = safepath.RemoveUnder(r.slots, pidPath)
 		close(c.done)
 	}()
+	r.started(name)
 	return c, nil
 }
 
@@ -478,6 +505,10 @@ var nativeRC = regexp.MustCompile(`\bNATIVE (\S+) .*\brc=(-?\d+)\b.*\bharness=(\
 // nativeSpent is the NATIVE line's wall seconds and budget word, the launch's usage.
 var nativeSpent = regexp.MustCompile(`\bNATIVE \S+ .*\bwall=([0-9.]+s)\b.*\bbudget=(\S+)`)
 
+// nativeSpend is the NATIVE line's spend= word (spendWord): the job's tokens by class,
+// requests, largest prompt, the harness's cost and model.
+var nativeSpend = regexp.MustCompile(`\bNATIVE \S+ .*\bspend=(\S+)`)
+
 // nativeEnd is how a launch that did not finish ended, from its log: the provider's
 // failure (a NATIVE PROVIDER- line), the budget (stopped=), the deadline (rc=-1 with
 // neither, and no TERM from outside), else "".
@@ -548,7 +579,14 @@ func (c *nativeChild) Result() member.Result {
 				ran = string(m[1]) == "OK" && string(m[2]) == "0" && string(m[3]) == "ok"
 			}
 			if m := nativeSpent.FindSubmatch(b); m != nil {
-				usage = "wall=" + string(m[1]) + " budget=" + string(m[2])
+				// the launch's cost record (internal/cardcost): the wall and the budget word,
+				// and what the job spent by token class with the harness's cost (spend=)
+				u := cardcost.NoUsage()
+				if s := nativeSpend.FindSubmatch(b); s != nil {
+					u = cardcost.ParseSpend(string(s[1]))
+				}
+				u.Wall, u.Budget = string(m[1]), string(m[2])
+				usage = u.String()
 			}
 			end = nativeEnd(b)
 			provider = providerReason(b)

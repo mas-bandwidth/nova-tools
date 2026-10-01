@@ -150,10 +150,60 @@ names its live work card.
 
 **Read card.** One reader's read of one primary at one attempt. Identity
 `<primary>.r<attempt>.<reader>`. Fields: primary, stream, kind=read, reader,
-attempt, head, asked and begun (clock times), verdict, finding. It takes its
+attempt, head, asked and begun (clock times), verdict, finding, usage. It takes its
 primary's score. `queue` shows each card's times. A read card
 exists because a member has one place per table and a primary has two readers
 at once.
+
+**What a card cost.** The owner, 2026-10-01: "the producer card by the time it
+gets to landed, should have the history of consumer cards that did work for it,
+and their token counts, what (provider,model) tuple did the work, how much each
+consumer card cost, total for producer"; "One is a guess/prediction. the other is
+actual"; "No changes in sprint tables at all." The primary is the producer card;
+its consumers are its work cards' takes and its read cards. Each consumer keeps
+what it cost in its own `usage` field (and a take the provider failed in its
+provider_take_<n> record), one line of key=value words (`internal/cardcost`,
+`Usage`), so no table gains a column, line or row:
+
+- what the member or reader reported from its child (`finish --usage`,
+  `read --usage`): `wall`, `budget`, the tokens by class as the harness reported
+  them (`input` uncached, `cache_read`, `cache_write`, `output`, `reasoning`),
+  `requests`, `max_prompt` (the largest prompt of one request), `model` (the
+  provider/model the harness ran) and `actual_usd` with `actual_by=harness` when
+  the harness reported its own cost: opencode prices each message from its own
+  model table and keeps it as a float, and the figure is the decimal of the
+  store's float sum of those, the harness's computation and never an invoice; a
+  class not reported is left out, never written as 0, and a cost is never
+  guessed;
+- added by the step when the card ends: `wait` (dealt to taken; a read's asked to
+  begun) and `run` (taken to the end; begun to the end), in seconds; and the
+  prediction: `price_route` (a work card's route by name, a pinned card's by its
+  model; a read's an enabled route of the provider/model its harness reported),
+  `prices` (the route's price sheet copied, `Prices.Copy`, so a later change of
+  prices rewrites nothing) and `predicted_usd` (cardcost.Predict: each class's
+  tokens times its price per million, reasoning at the output price when the
+  sheet bills it so, the per-request fee times the requests, then the gateway
+  percent; a run whose largest prompt is above the route's `long_context` is
+  priced at the long prices as a whole, `long=yes`), or `unpriced=<why>` (no
+  route, no price sheet, no token, a class with no price); `cost=` says which of
+  the two the record holds: both, predicted, actual or none.
+
+A finish or a read that reports usage reads the routes with its tables to price
+it. A failed take and a returned read record the same: they still cost tokens
+and time. Each run has one record and one only: a work card's `usage` holds its
+own ended take (finish), and a take the provider failed is in its
+provider_take_<n> record alone, so a redealt card never counts it twice; a read
+card's `usage` holds the run that gave the verdict, and each run returned
+without one is kept as read_take_<n> (1 for the first), so a read asked again
+of a reader keeps every run it had. `card <id>` prints a COST line for each
+consumer run that ended (kind, card, attempt, take, member or reader, route,
+model, end, the tokens, wait, run, predicted, actual and `actual_by`) and a
+COST TOTAL line, computed when it is printed from the consumers' records
+(`sprint.CardCost`): each class summed over the records that reported it, the
+times summed, and each cost summed over the records that hold it with how many
+did (`predicted_of=<n>/<consumers>`) and who reported the actual
+(`actual_by=harness`); `--json` carries the same value as `cost`. A figure not
+known prints `-`, never 0.
 
 ## 3. The lifecycle of a primary
 
@@ -857,11 +907,11 @@ command that loads it.
 | run | ticks on every line of the log (at most every 100 ms) and once a second while the log is quiet; before each tick it reads its own binary's file, and when a new build was installed under it since it began it stops (`RUN STOP the binary this loop runs was replaced ...`, exit 3) so its supervisor starts the new one: a loop never ticks the store with older code than the verbs run |
 | tick | one tick by hand |
 | take | a worker moves work cards fleet ready -> working; `--as <member>`, `<card>@<gen>` |
-| finish | work cards done ok or failed; primaries to review; `--as <member>`, `<card>@<gen>`; `--usage <text>` (what the run spent) is kept on the attempt's record |
+| finish | work cards done ok or failed; primaries to review; `--as <member>`, `<card>@<gen>`; `--usage <text>` (what the run spent) is kept on the attempt's record, timed and priced (section 2, What a card cost) |
 | ask | deals primaries in review to two different readers; `--another` |
 | queue | a reader's read cards or a member's work cards, oldest first (`--as`; a member's `--json` carries its fleet row's `width`), or a stream's merge queue (`--stream`) |
 | routes | each route of the store (nova-config's `route` kind) with what its attempts did: attempts, ok, failed, provider failures, mean wall from take to finish; `TIERS flash=<n> pro=<n>` first, the enabled routes per tier; `--json` |
-| read | a reader records ok or broken with the finding; `--as <reader>`, `--begin` |
+| read | a reader records ok or broken with the finding; `--as <reader>`, `--begin`; `--usage <text>` (what the read spent) is kept on the read card, timed and priced (section 2, What a card cost) |
 | accept | review -> merging and into merge queued; refused without two readers; named ids all or nothing, a selection moves the eligible |
 | rework | delegates the next attempt at once with a fix, and writes on that attempt's work card `fix`, `finding` (its broken reads' findings, each once) and `why` (how the attempt before ended: failed with its report, finished and found broken, or sent back), each cut to MaxCardTextBytes with a trailing `...` and never refused for its size, and kept on the primary too for a rework that deals later; its packet carries them to the child's JOB.md and `card` prints per attempt; ready when no member is up; a primary at its redeal bound (ready, its work card withdrawn) is reworked too, with `--fix`, its withdrawn card taken off; without `--fix` each primary's fix is the finding of its broken read, else the report of its failed work, and a primary with neither is refused by name |
 | return | merging -> review, off the merge queue |
@@ -878,7 +928,7 @@ command that loads it.
 | wait | sets a judgment's next review time |
 | ack | closes a judgment the coordinator looked at, with the reason |
 | inbox | every open judgment and the notifications since the cursor, grouped, judgment first; `--open <id>`, `--read`; `--json` carries `judgments` (each with `id`, `kind`, `type`, `what`, `stream`, `size`, `cards` whole, `notes`, and `answers`: every decision with the exact command lines that make it, in order), `happened` (the notifications since the cursor, grouped), `done` (the machine has stopped because the sprint is done) and `groups`, every group in the order the text prints; `--wait --timeout <d>` blocks for the next tick end, and `--json` then also carries `woke` (false when the timeout ended the wait, with `inbox --wait: no tick end in <d>` on stderr and stdout still one JSON object; the plain rendering prints that line on stdout) |
-| card | one primary's story, told from the log: for a card in flight, first what holds it now (each open judgment with the commands that answer it, or the actor and its deadline); its place in its stream's line; its brief, and the fix its attempt was given; its timeline in local time, an attempt at a time ("attempt 2, because attempt 1 failed"), one line per event a person would name (two readers asked, a merge and its batch, a step and its answer are one line each), a finish and a read with the first line of their words; the reports, findings and fixes whole as paragraphs; a card that has ended says so in one line; `--fields` prints every field of the primary and its cards instead; `--json` carries both, the timeline's events with the log lines each tells |
+| card | one primary's story, told from the log: for a card in flight, first what holds it now (each open judgment with the commands that answer it, or the actor and its deadline); its place in its stream's line; its brief, and the fix its attempt was given; its timeline in local time, an attempt at a time ("attempt 2, because attempt 1 failed"), one line per event a person would name (two readers asked, a merge and its batch, a step and its answer are one line each), a finish and a read with the first line of their words; the reports, findings and fixes whole as paragraphs; a card that has ended says so in one line; a COST line per consumer that ended and the COST TOTAL (section 2, What a card cost); `--fields` prints every field of the primary and its cards instead; `--json` carries both, the timeline's events with the log lines each tells, and the cost |
 | queue --as, take | a member's or a reader's cards (a reader's `queue --as` is its beat), each with its packet: what it is handed so that it needs no other read to learn its task (the card, its epoch and generation, the brief, this attempt's fix, the notes on it, for a rework the finding of the read that found the attempt before broken and why that attempt ended (the work card's own words: the primary's are written at the next tick's drain, after a member may have taken the card), and for a work card the branch to work on, `sprint/<card>.e<epoch>` (the epoch makes it one per epoch: a card id comes back after a clear), and the one to start from, the attempt before's branch for a rework, with `base_head`, the head that attempt finished ok at, which a rework is staged from (docs/SPEC-CARD-CONTRACT.md: never a branch name alone, which may never have reached origin); for a read card the work it reads: the worker, its head, branch and base, and the worker's report), and the command that reports it; take prints the packets of the cards it took, `--json` as `packets`; finish takes `--branch` and `--base`, which the work card keeps and the reader's packet and card show; a fleet member (`nova-swarm member`) pushes the child's commit to origin's `sprint/<card>.e<epoch>` before its finish, so the finish's `--head` is the pushed sha the merge queue carries and the merge reads the work from origin; a finish is ok only with the result's shape, its verdict ok and a pushed commit, and every other is a `--failed` finish naming no head and no branch, its report starting with the reason (`no RESULT.md shape`, `nothing to do: <why>`, `verdict <word>`, `no commit: <why>`, `push refused: <git's line>`), so it opens the failed-work judgment and never goes to review with nothing to read (docs/SPEC-CARD-CONTRACT.md section 4) |
 | log | the epoch's log, every line in order: --card (a primary with its work, read and merge cards), --stream, --member, --since, --at-epoch, --json (section 17) |
 | check, repair | section 9 and section 10 |
