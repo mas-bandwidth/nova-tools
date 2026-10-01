@@ -61,8 +61,9 @@ func TakeStep(r sprint.TakeReq) Step {
 
 // FinishStep is a worker finishing work cards.
 func FinishStep(r sprint.FinishReq) Step {
-	// a finish that reports what the run spent prices it with the routes (sprint's cost.go)
-	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "finish", Load: tables(sprint.Fleet, sprint.Readers, sprint.Work), Mirrors: true, Routes: r.Usage != "",
+	// a finish that reports what the run spent prices it with the routes alone, the keys
+	// a member may read (sprint's cost.go; Step.Prices)
+	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "finish", Load: tables(sprint.Fleet, sprint.Readers, sprint.Work), Mirrors: true, Prices: r.Usage != "",
 		Extras: sprint.NamedExtras(sprint.Fleet, r.IDs),
 		Plan:   func(s *sprint.Snapshot) sprint.Plan { return sprint.Finish(s, r) }}
 }
@@ -86,8 +87,9 @@ func AskStep(r sprint.AskReq) Step {
 
 // ReadStep is a reader recording its reads.
 func ReadStep(r sprint.ReadReq) Step {
-	// a read that reports what it spent prices it with the routes (sprint's cost.go)
-	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "read", Load: tables(sprint.Readers, sprint.Work), Extras: sprint.NamedExtras(sprint.Readers, r.IDs), Routes: r.Usage != "",
+	// a read that reports what it spent prices it with the routes alone, the keys a
+	// reader may read (sprint's cost.go; Step.Prices)
+	return Step{Named: len(r.Sel.IDs) > 0, Args: ArgsOf(r), Verb: "read", Load: tables(sprint.Readers, sprint.Work), Extras: sprint.NamedExtras(sprint.Readers, r.IDs), Prices: r.Usage != "",
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Read(s, r) }}
 }
 

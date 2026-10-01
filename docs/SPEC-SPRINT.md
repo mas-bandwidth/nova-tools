@@ -189,7 +189,9 @@ provider_take_<n> record), one line of key=value words (`internal/cardcost`,
   the two the record holds: both, predicted, actual or none.
 
 A finish or a read that reports usage reads the routes with its tables to price
-it. A failed take and a returned read record the same: they still cost tokens
+it: the routes set and each route's record alone (`routes`, `route:<name>`), never
+a tier's array or the sprint row, the keys a worker's ACL user may read
+(internal/redisacl, the member role; `TestEveryStepReadsOnlyKeysItsRoleMayRead`). A failed take and a returned read record the same: they still cost tokens
 and time. Each run has one record and one only: a work card's `usage` holds its
 own ended take (finish), and a take the provider failed is in its
 provider_take_<n> record alone, so a redealt card never counts it twice; a read

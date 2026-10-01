@@ -141,6 +141,12 @@ type Step struct {
 	// Acquire; through RouteCache when one is given (a tick's, read once).
 	Routes     bool
 	RouteCache *RouteCache
+	// Prices says the step prices what a worker reports (finish, read with usage:
+	// internal/sprint/cost.go): it plans with the routes alone, the routes set and
+	// each route's record (routes.go, PriceRoutes), read before its tables. It reads
+	// no tier array and no reader tier: a worker's ACL reads routes and route:*
+	// only (internal/redisacl, the member role), and pricing needs no more.
+	Prices bool
 	// Readers says the step asks, or reads what the ask would do: it plans
 	// with the readers' states (sprint.Snapshot.ReaderStates), read after its
 	// tables, or ReaderStates when given: a tick reads them once and every
@@ -395,6 +401,12 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			return res, err
 		}
 	}
+	var priced []sprint.Route
+	if step.Prices {
+		if priced, err = st.priceRoutes(ctx); err != nil {
+			return res, err
+		}
+	}
 	for res.Attempts < st.attempts() {
 		res.Attempts++
 		if wantLock && lock == nil && !locked {
@@ -486,6 +498,9 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		}
 		if step.Routes {
 			routes.into(snap)
+		}
+		if step.Prices {
+			snap.Routes = priced
 		}
 		if step.Readers && step.ReaderStates != nil {
 			snap.ReaderStates = step.ReaderStates
