@@ -2,10 +2,13 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
@@ -302,4 +305,31 @@ func TestInboxJSONSaysWhenTheSprintIsDone(t *testing.T) {
 	if !in.Done || len(in.Judgments) != 0 || len(in.Happened) == 0 || in.Happened[0].Type != sprint.NSprintDone || in.Happened[0].To != "coordinator" || in.Happened[0].Hint == "" {
 		t.Fatalf("the inbox of a done sprint: %+v", in)
 	}
+}
+
+// inbox --wait --json on timeout keeps stdout one JSON object, with no
+// plain-text banner before it, and says the timeout in both ways: woke=false in
+// the payload and the human line on stderr (stella-89ad0fb7b7c4, the one-value
+// rule). The plain rendering says it on stdout.
+func TestInboxWaitWithJSONOnTimeoutEmitsOnlyValidJSON(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	for _, cmd := range []string{
+		"inbox --wait --timeout 50ms --json",
+		"inbox --wait --json",
+	} {
+		code, out, errs := ta.do(cmd)
+		require.Zero(t, code, "%s: %s", cmd, errs)
+		require.NotContains(t, out, "inbox --wait:", "%s: plain-text banner printed before JSON", cmd)
+		var in map[string]any
+		require.NoError(t, json.Unmarshal([]byte(out), &in), "%s: stdout is not valid JSON:\n%s", cmd, out)
+		require.Contains(t, in, "woke", "%s: the timeout is in the JSON too", cmd)
+		require.Equal(t, false, in["woke"], "%s: no tick end arrived", cmd)
+		require.Contains(t, errs, "inbox --wait: no tick end in", "%s: the human timeout line is on stderr", cmd)
+	}
+	code, out, errs := ta.do("inbox --wait --timeout 50ms")
+	require.Zero(t, code, errs)
+	require.Contains(t, out, "inbox --wait: no tick end in 50ms")
+	require.Empty(t, errs)
 }
