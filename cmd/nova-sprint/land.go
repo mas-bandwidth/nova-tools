@@ -510,13 +510,18 @@ func movedExactly(moved, ids []string) bool {
 
 // step runs one merge step, as `merge --stream` runs it, fenced to the epoch
 // land read and guarded in the same store step: it plans only while the
-// stream's queue starts with exactly the pinned cards, each at the head and
-// attempt land read and pushed (tla/Land.tla, Report and Fresh), so a queue
-// changed since the push, or a card reworked to another head, refuses the
-// report and nothing is recorded that was not pushed. The pins are part of
+// stream's queue holds every pinned card, each at the head and attempt land
+// read and pushed, and the batch it records is those cards by name (MergeReq.
+// Cards), so a card gone from the queue since the push, or reworked to another
+// head, refuses the report and nothing is recorded that was not pushed. The pins are part of
 // the step's arguments, and under the caller's --op its op id is the op and
 // those arguments, so a replay returns only the receipt of this very batch.
 func (l *lander) step(r sprint.MergeReq, pins []landCard) (store.Result, error) {
+	// the batch is the pinned cards by name, never the first n of the queue
+	r.Cards = make([]string, len(pins))
+	for i, c := range pins {
+		r.Cards[i] = c.id
+	}
 	step := store.MergeStep(r)
 	plan := step.Plan
 	step.Plan = func(s *sprint.Snapshot) sprint.Plan {
@@ -567,17 +572,22 @@ func (l *lander) queueHead(ctx context.Context, stream string, pins []landCard) 
 	return headWhy(s, stream, pins)
 }
 
-// headWhy is why the stream's queue does not start with exactly the pinned
-// cards, each at the head and attempt pinned; "" when it does (tla/Land.tla,
-// Fresh: heads, not ids).
+// headWhy is why the stream's queue no longer holds every pinned card at the
+// head and attempt pinned; "" when it does. The cards are looked for by name,
+// wherever they stand: the tick's accepts put cards in the queue by their order
+// of work while a landing builds, often ahead of the batch, and that is no
+// change to the batch (the fleet pass of 2026-10-01 18:31 ET: with cards
+// accepted every second a landing was refused almost every round, 49 queued and
+// 2 landed, and one batch was pushed and could not be reported). A pinned card
+// gone from the queue, or reworked to another head, still refuses.
 func headWhy(s *sprint.Snapshot, stream string, pins []landCard) string {
-	q := landQueue(s, stream)
-	if len(q) < len(pins) {
-		return fmt.Sprintf("the merge queue of %s holds %d cards now, fewer than the batch of %d; run land again", stream, len(q), len(pins))
+	queued := map[string]bool{}
+	for _, c := range landQueue(s, stream) {
+		queued[c.ID] = true
 	}
-	for i, c := range pins {
-		if q[i].ID != c.id {
-			return fmt.Sprintf("the merge queue of %s changed since it was read (%s is now where %s was); run land again", stream, q[i].ID, c.id)
+	for _, c := range pins {
+		if !queued[c.id] {
+			return fmt.Sprintf("the merge queue of %s no longer holds %s (landed, stuck or returned since it was read); run land again", stream, c.id)
 		}
 		pr := s.Work.Placed(c.id)
 		if pr == nil || pr.F("head") != c.head || pr.F("attempt") != c.attempt {
