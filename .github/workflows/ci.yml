@@ -994,12 +994,6 @@ jobs:
       - name: build
         run: make build
 
-      - name: build the ci runner
-        # tools/ci is built once in this job and every later step runs the binary; `go run` would
-        # compile it again in each step. (`go run ./tools/ci help` lists its verbs.)
-        shell: bash
-        run: go build -o "$RUNNER_TEMP/ci" ./tools/ci
-
       - name: save go build and module cache
         # On a miss or a restore-keys fallback only: an exact hit is already the entry. Shards
         # race for the key; the first reserves it and the rest log a warning and go on.
