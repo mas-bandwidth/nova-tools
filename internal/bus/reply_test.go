@@ -1,6 +1,11 @@
 package bus
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
 
 // What "the same subject" is, at the unit that decides it. The rule is exact and
 // case-sensitive after a leading Re: comes off, and every line below is one shape a
@@ -18,9 +23,8 @@ func TestReplySubjectStripsThePrefixAndNothingElse(t *testing.T) {
 		{"Reply: the gate", "Reply: the gate"}, // only the exact prefix comes off
 		{"", ""},
 	} {
-		if got := ReplySubject(tc.in); got != tc.want {
-			t.Errorf("ReplySubject(%q) = %q, want %q", tc.in, got, tc.want)
-		}
+		got := ReplySubject(tc.in)
+		assert.Equal(t, tc.want, got, "ReplySubject(%q) = %q, want %q", tc.in, got, tc.want)
 	}
 }
 
@@ -40,9 +44,8 @@ func TestIsReplySubjectIsTheLooseHalf(t *testing.T) {
 		{"Regarding the gate", false},
 		{"", false},
 	} {
-		if got := IsReplySubject(tc.in); got != tc.want {
-			t.Errorf("IsReplySubject(%q) = %v, want %v", tc.in, got, tc.want)
-		}
+		got := IsReplySubject(tc.in)
+		assert.Equal(t, tc.want, got, "IsReplySubject(%q) = %v, want %v", tc.in, got, tc.want)
 	}
 }
 
@@ -57,21 +60,14 @@ func TestMatchOpenSubjectTakesTheNewestOfTheExactMatches(t *testing.T) {
 		{Kind: OpenUnreadable, Path: "from-bo/d.md"},
 	}
 	got := MatchOpenSubject(open, "the gate")
-	if len(got) != 2 {
-		t.Fatalf("matched %d entries, want 2: %+v", len(got), got)
-	}
-	if got[0].ID != "bo-000000000002" {
-		t.Fatalf("the newest match is %s, want bo-000000000002", got[0].ID)
-	}
-	if n := len(MatchOpenSubject(open, "The Gate")); n != 1 {
-		t.Fatalf("a subject differing by case matched %d entries, want its own 1", n)
-	}
-	if n := len(MatchOpenSubject(open, "nothing anybody wrote")); n != 0 {
-		t.Fatalf("a subject nobody wrote matched %d entries", n)
-	}
-	if n := len(MatchOpenSubject(open, "   ")); n != 0 {
-		t.Fatalf("an empty subject matched %d entries; it must match nothing", n)
-	}
+	require.Len(t, got, 2, "matched %d entries, want 2: %+v", len(got), got)
+	require.Equal(t, "bo-000000000002", got[0].ID, "the newest match is %s, want bo-000000000002", got[0].ID)
+	n := len(MatchOpenSubject(open, "The Gate"))
+	require.Equal(t, 1, n, "a subject differing by case matched %d entries, want its own 1", n)
+	n = len(MatchOpenSubject(open, "nothing anybody wrote"))
+	require.Zero(t, n, "a subject nobody wrote matched %d entries", n)
+	n = len(MatchOpenSubject(open, "   "))
+	require.Zero(t, n, "an empty subject matched %d entries; it must match nothing", n)
 }
 
 // The narrow half of the guess: one recipient, and they are holding something of yours.
@@ -79,23 +75,16 @@ func TestSingleOpenSenderIsOneRecipientWhoIsWaiting(t *testing.T) {
 	t.Parallel()
 	root := writeBus(t, nil)
 	c, err := LoadConfig(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	open := []OpenEntry{{ID: "bo-000000000001", Kind: OpenNote, From: "Bo", Path: "from-bo/a.md", Subject: "s"}}
-	if got := SingleOpenSender(c, "Bo", open); got != "Bo" {
-		t.Fatalf("SingleOpenSender(Bo) = %q, want Bo", got)
-	}
-	if got := SingleOpenSender(c, "Bo; Dana", open); got != "" {
-		t.Fatalf("two recipients say nothing about either, got %q", got)
-	}
-	if got := SingleOpenSender(c, "Dana", open); got != "" {
-		t.Fatalf("a recipient with nothing open is not waiting, got %q", got)
-	}
-	if got := SingleOpenSender(c, "nobody-by-that-name", open); got != "" {
-		t.Fatalf("an unresolvable To line resolves to nobody, got %q", got)
-	}
-	if got := SingleOpenSender(c, "Bo", nil); got != "" {
-		t.Fatalf("an empty open list has nobody waiting, got %q", got)
-	}
+	got := SingleOpenSender(c, "Bo", open)
+	require.Equal(t, "Bo", got, "SingleOpenSender(Bo) = %q, want Bo", got)
+	got = SingleOpenSender(c, "Bo; Dana", open)
+	require.Empty(t, got, "two recipients say nothing about either, got %q", got)
+	got = SingleOpenSender(c, "Dana", open)
+	require.Empty(t, got, "a recipient with nothing open is not waiting, got %q", got)
+	got = SingleOpenSender(c, "nobody-by-that-name", open)
+	require.Empty(t, got, "an unresolvable To line resolves to nobody, got %q", got)
+	got = SingleOpenSender(c, "Bo", nil)
+	require.Empty(t, got, "an empty open list has nobody waiting, got %q", got)
 }

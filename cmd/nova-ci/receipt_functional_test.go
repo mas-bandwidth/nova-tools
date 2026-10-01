@@ -13,6 +13,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/testredis"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/require"
 )
 
 // TestReceiptVerbWritesTheRowAndARefusedWriteIsExitOne runs the verb as ci-ok
@@ -33,9 +34,7 @@ func TestReceiptVerbWritesTheRowAndARefusedWriteIsExitOne(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	ev, err := ghevent.OpenReader(ctx, redisconn.Options{Addr: addr}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	defer ev.Close()
 	got, err := ev.Read(ctx, "0-0", 10, time.Second)
 	if err != nil || len(got) != 1 || got[0].Number != "7" || got[0].Head != receiptSHA || got[0].Sender != "runner" {
@@ -44,9 +43,7 @@ func TestReceiptVerbWritesTheRowAndARefusedWriteIsExitOne(t *testing.T) {
 
 	rdb := redis.NewClient(&redis.Options{Addr: addr})
 	defer rdb.Close()
-	if err := rdb.Set(ctx, ghevent.Stream, "not a stream", 0).Err(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, rdb.Set(ctx, ghevent.Stream, "not a stream", 0).Err())
 	out.Reset()
 	errOut.Reset()
 	if code := cmdGitHub(args, &out, &errOut, noEnv); code != 1 || out.Len() != 0 ||

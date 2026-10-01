@@ -52,15 +52,6 @@ var ErrDraftExists = errors.New("a draft already exists at this path")
 // replacing rename, because that is the race the rule exists to close.
 var ErrNoExclusivePublish = errors.New("this filesystem offers no create-exclusive publish")
 
-// linkFile and noReplacePublish are the two create-exclusive publishes, as vars so that a
-// test can stand in for a filesystem that offers one, the other or neither. A filesystem
-// with no hard links is not a thing a test can ask a disk for on the machines this builds
-// on, and the row of the refusal table that covers it has to be asserted somewhere.
-var (
-	linkFile         = os.Link
-	noReplacePublish = noReplaceRename
-)
-
 // PublishNoReplace writes one complete draft into dir and publishes it onto name.
 //
 // Two steps, and the second is the one that matters. First the whole file goes into a
@@ -84,6 +75,12 @@ var (
 // the create and the publish is a different thing and is not promised against: what it can
 // leave is a temporary, which is never a name `send` will read.
 func PublishNoReplace(dir, name string, content []byte) (string, error) {
+	return publishNoReplaceWith(dir, name, content, os.Link, noReplaceRename)
+}
+
+// publishNoReplaceWith keeps filesystem capability probes local to one call. The
+// production entrypoint supplies the real link and no-replace rename operations.
+func publishNoReplaceWith(dir, name string, content []byte, link, noReplace func(string, string) error) (string, error) {
 	final := filepath.Join(dir, name)
 	temp, err := draftTempPath(dir)
 	if err != nil {
@@ -107,7 +104,7 @@ func PublishNoReplace(dir, name string, content []byte) (string, error) {
 		os.Remove(temp)
 		return "", err
 	}
-	linkErr := linkFile(temp, final)
+	linkErr := link(temp, final)
 	switch {
 	case linkErr == nil:
 		os.Remove(temp)
@@ -124,7 +121,7 @@ func PublishNoReplace(dir, name string, content []byte) (string, error) {
 	// call it tried and what the call said", and the first version reported only the
 	// SECOND call's words -- so a reader was told what the fallback said about a
 	// filesystem whose actual complaint came from the call before it.
-	switch renameErr := noReplacePublish(temp, final); {
+	switch renameErr := noReplace(temp, final); {
 	case renameErr == nil:
 		return final, nil
 	case errors.Is(renameErr, os.ErrExist):

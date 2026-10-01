@@ -49,7 +49,15 @@ func newPushBench(t *testing.T) *pushBench {
 	require.NoError(t, os.MkdirAll(filepath.Dir(b.checkout), 0o755))
 	runGit(t, "", "clone", "-q", "--", b.origin, b.checkout)
 	gitAs(t, b.checkout, "switch", "-q", "-c", "rowan/c1")
+	b.staged(t, b.base)
 	return b
+}
+
+// staged records the commit native staged the launch at, in the slot, as
+// native does (cardcontract.StagedName).
+func (b *pushBench) staged(t *testing.T, sha string) {
+	t.Helper()
+	write(t, filepath.Join(b.slots, launchName(b.p), "staged"), sha+"\n")
 }
 
 // commit is a commit of the child's in the checkout; its sha.
@@ -239,4 +247,32 @@ func TestWhatIsNotPushedIsSaid(t *testing.T) {
 	}
 	assert.Empty(t, b.originHas(t, "sprint/c1"), "nothing of the refused was pushed")
 	assert.Equal(t, b.base, b.originHas(t, "main"), "origin's main is as it was")
+}
+
+// A rework staged at the attempt before's pushed head, whose checkout's
+// origin refs do not hold that head (a stale bench mirror), and whose child
+// committed nothing, is not pushed: the child's commits are counted from the
+// staged commit, never from the checkout's refs (docs/SPEC-CARD-CONTRACT.md
+// section 4; red before the count moved off the refs).
+func TestAReworkOnAStaleMirrorThatCommittedNothingIsNotPushed(t *testing.T) {
+	t.Parallel()
+	b := newPushBench(t)
+	h1 := b.commit(t, "attempt one\n") // on no origin ref the checkout knows: a stale mirror
+	b.staged(t, h1)
+	got := b.pusher().Push(b.p, member.Result{Ran: true, OK: true, Head: h1})
+	assert.Empty(t, got.Sha, "attempt one's head is not attempt two's commit")
+	assert.Contains(t, got.None, "the child committed nothing")
+	assert.Empty(t, b.originHas(t, "sprint/c1"))
+}
+
+// A child that removed the checkout's remote and committed nothing is not
+// pushed either: its refs are not the member's evidence.
+func TestAChildThatRemovedTheRemoteAndCommittedNothingIsNotPushed(t *testing.T) {
+	t.Parallel()
+	b := newPushBench(t)
+	runGit(t, b.checkout, "remote", "remove", "origin")
+	got := b.pusher().Push(b.p, member.Result{Ran: true, OK: true, Head: b.base})
+	assert.Empty(t, got.Sha)
+	assert.Contains(t, got.None, "the child committed nothing")
+	assert.Empty(t, b.originHas(t, "sprint/c1"))
 }

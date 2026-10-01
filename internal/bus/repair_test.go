@@ -3,6 +3,7 @@ package bus
 import (
 	"errors"
 	"fmt"
+	"github.com/stretchr/testify/require"
 	"io"
 	"io/fs"
 	"os"
@@ -25,16 +26,10 @@ func TestClearStaleIndexLockAgeBoundary(t *testing.T) {
 	hermetic(t)
 	dir := cloneBus(t, bareBus(t))
 	lock, err := indexLockPath(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(lock, nil, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(lock, nil, 0o644))
 	fi, err := os.Lstat(lock)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	scans := 0
 	noGit := func() ([]gitProc, error) {
 		scans++
@@ -73,26 +68,16 @@ func TestStaleIndexLockWithALiveGitIsLeftAlone(t *testing.T) {
 	hermetic(t)
 	dir := cloneBus(t, bareBus(t))
 	lock, err := indexLockPath(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(lock, nil, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(lock, nil, 0o644))
 	old := time.Now().Add(-2 * time.Minute)
-	if err := os.Chtimes(lock, old, old); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Chtimes(lock, old, old))
 	cmd := exec.Command("git", "-C", dir, "cat-file", "--batch")
 	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, cmd.Start())
 	t.Cleanup(func() {
 		_ = stdin.Close()
 		if cmd.Process != nil {
@@ -116,14 +101,12 @@ func TestStaleIndexLockWithALiveGitIsLeftAlone(t *testing.T) {
 		time.Sleep(20 * time.Millisecond)
 	}
 	rep, err := ClearStaleIndexLock(dir, time.Now())
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	if rep.Cleared {
 		t.Fatal("removed a stale index.lock while a git process still owned the checkout")
 	}
 	if _, err := os.Lstat(lock); err != nil {
-		t.Fatalf("the lock is gone while git is alive: %v", err)
+		require.NoError(t, err, "the lock is gone while git is alive: %v", err)
 	}
 	_ = stdin.Close()
 	_ = cmd.Process.Kill()
@@ -198,20 +181,14 @@ func oldIndexLock(t *testing.T) (dir, lock string) {
 	t.Helper()
 	dir = t.TempDir()
 	if _, err := git(dir, "init", "-q"); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 	var err error
 	lock, err = indexLockPath(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(lock, nil, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(lock, nil, 0o644))
 	when := time.Now().Add(-2 * time.Minute)
-	if err := os.Chtimes(lock, when, when); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Chtimes(lock, when, when))
 	return dir, lock
 }
 
@@ -247,14 +224,10 @@ func TestStaleLockStaysForCwdGitWithoutDashC(t *testing.T) {
 		t.Fatalf("the fixture git carries -C: %q", cmd.Args)
 	}
 	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	cmd.Stdout = io.Discard
 	cmd.Stderr = io.Discard
-	if err := cmd.Start(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, cmd.Start())
 	t.Cleanup(func() {
 		_ = stdin.Close()
 		if cmd.Process != nil {
@@ -441,36 +414,30 @@ func TestRecoverWaitFastForwardLeavesADirtyCursor(t *testing.T) {
 	writer := cloneBus(t, bare)
 	write(t, reader, "from-ada/CURSOR", "BASE\n")
 	if _, err := CommitAndPush(reader, testIdentity["Ada"], []string{"from-ada/CURSOR"}, "cursor", "origin", "main", 3); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 	if _, err := FetchAndFastForward(writer, "origin", "main"); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 	write(t, writer, "from-ada/CURSOR", "UPSTREAM\n")
 	if _, err := CommitAndPush(writer, testIdentity["Ada"], []string{"from-ada/CURSOR"}, "cursor moved", "origin", "main", 3); err != nil {
-		t.Fatal(err)
+		require.NoError(t, err)
 	}
 	const sentinel = "SENTINEL-LOCAL do not touch\n"
 	write(t, reader, "from-ada/CURSOR", sentinel)
 	before, err := HeadCommit(reader)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	_, err = RecoverWaitFastForward(reader, "origin", "main", []string{"from-ada/BEAT"}, time.Now())
 	if err == nil || !strings.Contains(err.Error(), "from-ada/CURSOR") || !strings.Contains(err.Error(), "not this tool's to discard") {
 		t.Fatalf("want a plain refusal naming CURSOR, got %v", err)
 	}
 	got, err := os.ReadFile(filepath.Join(reader, "from-ada", "CURSOR"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	if string(got) != sentinel {
 		t.Fatalf("CURSOR was touched: %q", got)
 	}
 	after, err := HeadCommit(reader)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	if after != before {
 		t.Fatalf("HEAD moved over a dirty CURSOR: %s -> %s", before, after)
 	}
@@ -632,9 +599,7 @@ func TestForeignGitDirKeepsItsLock(t *testing.T) {
 	for _, form := range []string{"split", "joined"} {
 		dir, lock := oldIndexLock(t)
 		gd, err := GitDir(dir)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		args := []string{"git", "--git-dir", gd, "fetch"}
 		if form == "joined" {
 			args = []string{"git", "--git-dir=" + gd, "fetch"}
@@ -686,9 +651,7 @@ func TestIndexLockAgeThenOwnerThenScan(t *testing.T) {
 
 	dir, lock := oldIndexLock(t)
 	fi, err := os.Lstat(lock)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	fresh := fi.ModTime().Add(staleIndexLockAge - time.Second)
 	for _, o := range []struct {
 		uid uint32
@@ -764,9 +727,7 @@ func TestIndexLockOwnerIsTheWriter(t *testing.T) {
 	hermetic(t)
 	_, lock := oldIndexLock(t)
 	fi, err := os.Lstat(lock)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	uid, ok := lockFileOwner(fi)
 	if !ok || uid != effectiveUID() {
 		t.Fatalf("lock owner: uid=%d ok=%v, want %d", uid, ok, effectiveUID())
@@ -807,18 +768,14 @@ func TestIndexLockRevalidatedBeforeRemove(t *testing.T) {
 
 	dir, lock := oldIndexLock(t)
 	check("(1) replaced", dir, lock, func() ([]gitProc, error) {
-		if err := os.Rename(lock, lock+".old"); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.Rename(lock, lock+".old"))
 		return nil, os.WriteFile(lock, []byte("new"), 0o600)
 	}, lockFileOwner, []byte("new"))
 
 	dir, lock = oldIndexLock(t)
 	check("(2) touched", dir, lock, func() ([]gitProc, error) {
 		fi, err := os.Lstat(lock)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		later := fi.ModTime().Add(time.Second)
 		return nil, os.Chtimes(lock, later, later)
 	}, lockFileOwner, nil)

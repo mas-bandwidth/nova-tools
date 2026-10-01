@@ -56,7 +56,8 @@ func TestCLIObservedEpochHistoryAndReceipt(t *testing.T) {
 		t.Fatalf("current check: %s", out)
 	}
 	success("drop", "epoch-cli", "--epoch", "1", "--definition")
-	if out := success("render", "epoch-cli", "--at-epoch", "0"); !strings.Contains(out, "build") {
-		t.Fatalf("template deletion lost history: %s", out)
+	// the epoch's definition stays readable; its rows go with the table
+	if out := success("render", "epoch-cli", "--at-epoch", "0"); !strings.Contains(out, "ready") || strings.Contains(out, "build") {
+		t.Fatalf("template deletion: the definition of epoch 0 or its rows: %s", out)
 	}
 }

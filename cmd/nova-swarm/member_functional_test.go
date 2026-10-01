@@ -16,6 +16,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
@@ -139,12 +141,17 @@ func cellInt(w sprintWhere, table, row, col string) int {
 	return n
 }
 
-// fakeHarness is the shell script a card runs under: it works for a second,
-// then writes a RESULT.md with a rev line, a read's verdict line and a One
-// line section in its cwd.
+// fakeHarness is the shell script a card runs under, in the plain profile's
+// frame (docs/SPEC-CARD-CONTRACT.md): it works for a second; a work card
+// commits in the staged checkout, and either kind writes RESULT.md in the
+// contract's shape in its job directory.
 const fakeHarness = `#!/bin/sh
+set -e
 sleep 1
-printf 'rev: 0123456789abcdef0123456789abcdef01234567\nverdict: ok\n\n## One line\n\nchecked by the fake harness\n' > RESULT.md
+if ! grep -q '^# JOB: read' JOB.md; then
+	(cd repo && echo "$(pwd)" >> f && git commit -q -am "the fake harness's change")
+fi
+printf 'head: %s\nbranch: %s\nverdict: ok\ngate: -\noutput: -\nreport: checked by the fake harness\n' "$(git -C repo rev-parse HEAD)" "$(git -C repo symbolic-ref --short HEAD)" > RESULT.md
 echo "fake harness: wrote RESULT.md in $(pwd)"
 `
 
@@ -221,8 +228,16 @@ func testMemberFunctionalDrive(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	origin := filepath.Join(t.TempDir(), "origin.git")
+	seed := filepath.Join(t.TempDir(), "seed")
+	runGit(t, "", "init", "-q", "-b", "main", "--", seed)
+	write(t, filepath.Join(seed, "f"), "base\n")
+	gitAs(t, seed, "add", "f")
+	gitAs(t, seed, "commit", "-q", "-m", "base")
+	runGit(t, "", "clone", "-q", "--bare", "--", seed, origin)
+	first, rest, _ := strings.Cut(memberCard, "\n")
 	d.must("init", "--members", "m1:2", "--readers", "reader-a,reader-b")
-	d.must("add", "--stream", "a", "--count", "3", "--brief", memberCard)
+	d.must("add", "--stream", "a", "--count", "3", "--brief", first+"\nbase-repo: "+origin+"\nBASE: main\n"+rest)
 	d.must("start")
 	mOut := d.startMember("m1", harness, false)
 	aOut := d.startMember("reader-a", harness, true)
@@ -264,12 +279,12 @@ func testMemberFunctionalDrive(t *testing.T) {
 			t.Errorf("%s: want %s reported 3 times with exit=0:\n%s", tc.name, tc.verb, tc.out)
 		}
 	}
-	// The head, branch and report the child's RESULT.md holds reached the card.
+	// The head the member pushed, the branch and the report the child's
+	// RESULT.md holds reached the card.
 	card := d.must("card", "a-1")
-	for _, want := range []string{"head 0123456789abcdef0123456789abcdef01234567", "branch sprint/a-1.w1", "checked by the fake harness"} {
-		if !strings.Contains(card, want) {
-			t.Errorf("card a-1 lacks %q:\n%s", want, card)
-		}
+	pushed := strings.TrimSpace(runGit(t, origin, "rev-parse", "refs/heads/sprint/a-1.w1"))
+	for _, want := range []string{"head " + pushed, "branch sprint/a-1.w1", "checked by the fake harness"} {
+		assert.Contains(t, card, want)
 	}
 
 	d.must("accept", "--read-ok")
@@ -278,6 +293,7 @@ func testMemberFunctionalDrive(t *testing.T) {
 		t.Fatalf("after accept --read-ok the merge queue holds %d, want 3: %+v", got, w.Tables["merge"])
 	}
 	d.must("merge", "--stream", "a", "--batch", "3", "--epoch", fmt.Sprint(w.Epoch))
+	d.must("tick") // the landing reaches the work table at the next tick's pump (tla/DirtyTick.tla)
 	w = d.where()
 	if w.Landed != 3 || w.All != 3 {
 		t.Fatalf("landed %d of %d, want 3 of 3: %+v", w.Landed, w.All, w.Tables)

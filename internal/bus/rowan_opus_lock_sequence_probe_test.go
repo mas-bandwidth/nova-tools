@@ -4,6 +4,7 @@ package bus
 // order and back, with the owner seam and the clock moved on the same file.
 
 import (
+	"github.com/stretchr/testify/require"
 	"io/fs"
 	"os"
 	"strings"
@@ -18,12 +19,8 @@ func TestRowanOpusLockSequenceFreshStaleOwnedAndBack(t *testing.T) {
 	const self, other = 501, 502
 	dir := cloneBus(t, bareBus(t))
 	lock, err := indexLockPath(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(lock, nil, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(lock, nil, 0o644))
 	fi, _ := os.Lstat(lock)
 	t0 := fi.ModTime()
 	ownerUID, ownerOK := uint32(other), true
@@ -84,9 +81,7 @@ func TestRowanOpusLockSequenceFreshStaleOwnedAndBack(t *testing.T) {
 	present("5")
 	// 6. back again: lock refreshed (some git touched it): waiting, whoever owns it.
 	now := time.Now()
-	if err := os.Chtimes(lock, now, now); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Chtimes(lock, now, now))
 	c, err = clearStaleIndexLockAs(dir, now.Add(time.Second), scan, seam, self)
 	if c || err != nil || scans != 2 {
 		t.Fatalf("6 refreshed foreign: c=%v err=%v", c, err)

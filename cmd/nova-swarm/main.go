@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
+	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/verbflag"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
@@ -59,9 +60,9 @@ usage:
                        (--base-check adds the four checks of a coding card: its PATHS exist at the base sha in --repo (default the working directory), no STEP pushes or calls gh, its LEG is a line of --legs, its deadline is at least --p95's figure for its kind; evidence not given is reported missing, never passed)
   nova-swarm template  --name read-pr|probe-row|fix-card|result|worker|setup|capacity|card|read|fix|text|replay|drift|tone|models.tsv
   nova-swarm profile   --jobs <glob>   (one PROFILE line per job's timeline.tsv and one mean summary)
-  nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now]
-  nova-swarm member    --as <name> --width <n> --harness <path> --model <provider/model> --root <dir> --deadline <duration> --tokens <n>|unmetered [--sprint <nova-sprint>] [--reader] [--every <duration>] [--once | --ticks <n>] [--auth <file>] [--config <file>] [--worker <file>] [--no-wall]
-                       (this machine as one member of a sprint's fleet: beat, queue, push and finish what ended (the child's commit to origin's sprint branch, from outside the wall, never forced), take to --width, each card one native child; --reader runs the readers-table loop; the store is nova-sprint's, from NOVA_SPRINT_REDIS)
+  nova-swarm native    --harness <path> --model <provider/model> --card <file> --slot <dir> --root <dir> --deadline <duration> --tokens <n>|unmetered [--label <text>] [--idle <duration>] [--auth <file>] [--config <file>] [--worker <file>] [--results-root <dir>] [--sweep-now] [--frame <file>]
+  nova-swarm member    --as <name> --width <n> --harness <path> --model <provider/model> --root <dir> --deadline <duration> --tokens <n>|unmetered [--sprint <nova-sprint>] [--reader] [--every <duration>] [--once | --ticks <n>] [--auth <file>] [--config <file>] [--worker <file>] [--no-wall] [--gh <path>] [--pass <NAME,...>]
+                       (this machine as one member of a sprint's fleet: beat, queue, push and finish what ended (the child's commit to origin's sprint branch, from outside the wall, never forced; the pull request the child's gh pr create asked for, opened with --gh), each finish judged ok, failed or reaped (docs/SPEC-CARD-CONTRACT.md), take to --width, each card one native child with its frame and an allowlist environment; --pass names the secrets a child is handed, the loop record's nova-secrets keys: a loop whose harness reads its provider key from the environment carries --pass <KEY>, else its children start without it and fail at the provider; --reader runs the readers-table loop; the store is nova-sprint's, from NOVA_SPRINT_REDIS)
   nova-swarm slots init --store <dir> --owner <name> --capacity <n> --share <n>
   nova-swarm slots take --store <dir> --owner <o> --n <k> --for <duration> [--label <text>] [--kind <kind>]
   nova-swarm slots release --store <dir> --owner <o> (--label <text> | --all) [--force]
@@ -496,6 +497,7 @@ type nativeFlags struct {
 	usageInterval   *secondsFlag
 	benchFlag       *string
 	stageTimeout    *string
+	frame           *string
 	repos           []string
 	recipients      []string
 }
@@ -539,6 +541,7 @@ func nativeFlagSet() (*flags, *nativeFlags) {
 	nf.usageInterval = newSecondsFlag(f.fs, "usage-interval", swarm.DefaultUsageInterval)
 	nf.benchFlag = f.fs.String("bench", "", "")
 	nf.stageTimeout = f.fs.String("stage-timeout", "", "")
+	nf.frame = f.fs.String("frame", "", "")
 	f.fs.Var(stringListValue{&nf.repos}, "repo", "")
 	f.fs.Var(stringListValue{&nf.recipients}, "recipient", "")
 	return f, nf
@@ -693,7 +696,19 @@ func cmdNative(args []string, stdout, stderr io.Writer) int {
 		}
 		stageDur = v
 	}
+	// THE FRAME (docs/SPEC-CARD-CONTRACT.md): a member's launch names the repository, the
+	// commit and the branch to stage, and the profile writes JOB.md and the shims from it.
+	var frame *cardcontract.Frame
+	if *nf.frame != "" {
+		fr, ferr := cardcontract.ReadFrame(*nf.frame)
+		if ferr != nil {
+			fmt.Fprintf(stderr, "nova-swarm native: --frame wants a frame file the member wrote: %s\n", oneline.Err(ferr))
+			return 2
+		}
+		frame = &fr
+	}
 	cfg := nativeRunConfig{
+		frame:          frame,
 		binary:         *harness,
 		model:          effectiveModel,
 		label:          lbl,

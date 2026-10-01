@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 // scriptSprint is a Sprint that records every argv and answers from a table,
@@ -219,6 +221,7 @@ func TestTickWithTwoReadyAndWidthTwoTakesTwoInOneVerb(t *testing.T) {
 func TestEndedOkCardIsFinishedWithItsHeadBranchAndEpoch(t *testing.T) {
 	t.Parallel()
 	g := newRig(Config{As: "m", Width: 2})
+	g.m.pusher = &fakePusher{def: Push{Sha: fullSha}}
 	g.s.set("queue", 0, queueJSON(t, 7, ready("c1")))
 	p := pk("c1")
 	p.Gen = 3 // the take hands the card at its generation; the queue says the same
@@ -226,14 +229,14 @@ func TestEndedOkCardIsFinishedWithItsHeadBranchAndEpoch(t *testing.T) {
 	if _, err := g.tick(t); err != nil {
 		t.Fatal(err)
 	}
-	g.r.child("c1").end(Result{Ran: true, OK: true, Head: "abc123", Report: "# Result\n\nlanded the thing\nsecond line"})
+	g.r.child("c1").end(Result{Ran: true, OK: true, Shaped: true, Verdict: "ok", Head: "abc123", Report: "# Result\n\nlanded the thing\nsecond line"})
 	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 3, &p)))
 	g.s.reset()
 	acted, err := g.tick(t)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := "finish --as m c1@3 --report landed the thing --head abc123 --branch work/c1 --epoch 7"
+	want := "finish --as m c1@3 --report pushed=" + fullSha + " to work/c1: landed the thing --head " + fullSha + " --branch work/c1 --epoch 7"
 	if got := g.s.lines("finish"); !slices.Equal(got, []string{want}) {
 		t.Fatalf("finish lines: %q, want %q", got, want)
 	}
@@ -246,7 +249,7 @@ func TestEndedOkCardIsFinishedWithItsHeadBranchAndEpoch(t *testing.T) {
 }
 
 // TestEndedNotOkCardIsFinishedFailed pins --failed, placed before the epoch,
-// and that an unknown head adds no --head.
+// and that a finish with nothing pushed names no --head and no --branch.
 func TestEndedNotOkCardIsFinishedFailed(t *testing.T) {
 	t.Parallel()
 	g := newRig(Config{As: "m", Width: 2})
@@ -261,14 +264,15 @@ func TestEndedNotOkCardIsFinishedFailed(t *testing.T) {
 	if _, err := g.tick(t); err != nil {
 		t.Fatal(err)
 	}
-	want := "finish --as m c1@2 --report the harness fell over --branch work/c1 --failed --epoch 7"
+	want := "finish --as m c1@2 --report no RESULT.md shape; the harness fell over --failed --epoch 7"
 	if got := g.s.lines("finish"); !slices.Equal(got, []string{want}) {
 		t.Fatalf("finish lines: %q, want %q", got, want)
 	}
 }
 
 // TestFinishWithoutABranchInThePacketCarriesNone pins that --branch is the
-// packet's and is left off when the queue's card has no packet.
+// packet's: with none there is nothing to push to, and the finish is failed,
+// no commit, naming no head and no branch.
 func TestFinishWithoutABranchInThePacketCarriesNone(t *testing.T) {
 	t.Parallel()
 	g := newRig(Config{As: "m", Width: 1})
@@ -278,13 +282,13 @@ func TestFinishWithoutABranchInThePacketCarriesNone(t *testing.T) {
 	if _, err := g.tick(t); err != nil {
 		t.Fatal(err)
 	}
-	g.r.child("c1").end(Result{Ran: true, OK: true, Head: "h1", Report: "done"})
+	g.r.child("c1").end(Result{Ran: true, OK: true, Shaped: true, Verdict: "ok", Head: "h1", Report: "done"})
 	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, nil)))
 	g.s.reset()
 	if _, err := g.tick(t); err != nil {
 		t.Fatal(err)
 	}
-	want := "finish --as m c1@1 --report done --head h1 --epoch 7"
+	want := "finish --as m c1@1 --report no commit: the packet names no branch to push to; done --failed --epoch 7"
 	if got := g.s.lines("finish"); !slices.Equal(got, []string{want}) {
 		t.Fatalf("finish lines: %q, want %q", got, want)
 	}
@@ -317,6 +321,66 @@ func TestAWorkingCardWithNoChildOfOursIsRestartedFromItsPacket(t *testing.T) {
 	if acted, _ = g.tick(t); acted != 0 || len(g.r.started()) != 1 {
 		t.Fatalf("second pass acted=%d started=%v, want 0 and one start in all", acted, g.r.started())
 	}
+}
+
+// TestRecoveryWithExcessInFlightPacketsDoesNotExceedWidth pins that recovery
+// clamps in-flight working packets to member width so a restart never oversubscribes:
+// excess cards remain queued and are recovered on subsequent passes as capacity opens.
+func TestRecoveryWithExcessInFlightPacketsDoesNotExceedWidth(t *testing.T) {
+	t.Parallel()
+	g := newRig(Config{As: "m", Width: 2})
+	p1, p2, p3 := pk("c1"), pk("c2"), pk("c3")
+	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p1), working("c2", 1, &p2), working("c3", 1, &p3)))
+	acted, err := g.tick(t)
+	require.NoError(t, err)
+	require.Equal(t, 2, acted, "clamped to width 2")
+	require.Equal(t, 2, g.m.Running())
+	require.Equal(t, []string{"c1", "c2"}, g.r.started(), "c3 is left for a subsequent pass")
+	require.Empty(t, g.s.lines("take"))
+	require.Equal(t, 1, strings.Count(g.out.String(), "recover "), "one line for the one card left:\n%s", g.out)
+	require.Contains(t, g.out.String(), "recover c3 deferred: width 2 full\n")
+
+	// When c1 finishes and is reported, the freed slot allows c3 to be recovered.
+	g.r.child("c1").end(Result{Ran: true, OK: true, Head: "head-1", Report: "done c1"})
+	g.s.reset()
+	// Next pass: queue still reports working cards until sprint processes finish.
+	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p1), working("c2", 1, &p2), working("c3", 1, &p3)))
+	acted, err = g.tick(t)
+	require.NoError(t, err)
+	require.Equal(t, 2, acted, "one finish and one start")
+	require.Equal(t, 2, g.m.Running())
+	finishes := g.s.lines("finish")
+	require.Len(t, finishes, 1)
+	require.Contains(t, finishes[0], "c1@1")
+	require.Equal(t, []string{"c1", "c2", "c3"}, g.r.started())
+}
+
+// TestReaderRecoveryWithExcessInFlightPacketsDoesNotExceedWidth pins the same
+// width clamping for a reader recovering reading packets.
+func TestReaderRecoveryWithExcessInFlightPacketsDoesNotExceedWidth(t *testing.T) {
+	t.Parallel()
+	g := newRig(Config{As: "r", Width: 1, Reader: true})
+	r1 := Packet{Card: "r1", Kind: "read", As: "r", Attempt: 1, Epoch: 7}
+	r2 := Packet{Card: "r2", Kind: "read", As: "r", Attempt: 1, Epoch: 7}
+	g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &r1), reading("r2", &r2)))
+	acted, err := g.tick(t)
+	require.NoError(t, err)
+	require.Equal(t, 1, acted, "clamped to width 1")
+	require.Equal(t, 1, g.m.Running())
+	require.Equal(t, []string{"r1"}, g.r.started())
+
+	// When r1 finishes with a verdict, reporting it frees the slot for r2.
+	g.r.child("r1").end(Result{Ran: true, OK: true, Verdict: "ok", Report: "clean"})
+	g.s.reset()
+	g.s.set("queue", 0, queueJSON(t, 7, reading("r1", &r1), reading("r2", &r2)))
+	acted, err = g.tick(t)
+	require.NoError(t, err)
+	require.Equal(t, 2, acted, "one report and one start")
+	require.Equal(t, 1, g.m.Running())
+	reports := g.s.lines("report")
+	require.Len(t, reports, 1)
+	require.Contains(t, reports[0], "r1")
+	require.Equal(t, []string{"r1", "r2"}, g.r.started())
 }
 
 // TestNoTakeWhenWidthIsFullOrNothingIsReady pins both refusals to ask.
@@ -579,7 +643,7 @@ func TestCardTextForAWorkPacket(t *testing.T) {
 	}
 	for _, want := range []string{
 		"This is c1: attempt 2 of p1 (stream a).",
-		"The work is branch work/c1 from sprint/base;",
+		"The checkout is on branch work/c1;",
 		"Fix, this attempt:\n\nMind the edge.\n",
 		"Note:\n\nfirst note\n",
 		"Note:\n\nsecond note\n",
@@ -597,16 +661,16 @@ func TestCardTextForAWorkPacket(t *testing.T) {
 	}
 }
 
-// TestCardTextForAWorkPacketWithNoBaseWorksInPlace pins the other branch of
-// the mechanics: with no base the child works where it starts, and the
-// finish line still names the branch.
-func TestCardTextForAWorkPacketWithNoBaseWorksInPlace(t *testing.T) {
+// TestCardTextForAWorkPacketWithNoBaseNamesTheJob pins the other branch of
+// the mechanics: with no base the card still points at JOB.md and names the
+// branch, and the finish line names it too.
+func TestCardTextForAWorkPacketWithNoBaseNamesTheJob(t *testing.T) {
 	t.Parallel()
 	got := CardText(Packet{Card: "c2", Kind: "work", As: "m1", Primary: "p2", Stream: "b", Attempt: 1, Gen: 1, Epoch: 3, Branch: "work/c2"}, "nova-sprint")
 	if !strings.HasPrefix(got, "## From the sprint\n\n") {
 		t.Fatalf("a packet with no brief starts at the sprint's part:\n%s", got)
 	}
-	for _, want := range []string{"Work in the directory you start in and nowhere else;", "finish --as m1 c2@1 --epoch 3 --branch work/c2 "} {
+	for _, want := range []string{"The checkout is on branch work/c2; JOB.md", "finish --as m1 c2@1 --epoch 3 --branch work/c2 "} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("the card lacks %q:\n%s", want, got)
 		}
@@ -734,7 +798,7 @@ func TestAMovedClaimIsReapedNotReported(t *testing.T) {
 		if ps := g.r.packets; len(ps) != 2 || ps[1].Gen != 2 || ps[1].Epoch != 7 {
 			t.Fatalf("started %+v, want the old launch then the gen-2 packet", ps)
 		}
-		if !strings.Contains(g.out.String(), "reap c1: the claim moved") {
+		if !strings.Contains(g.out.String(), "reaped c1: the claim moved") {
 			t.Fatalf("the reap was not printed: %q", g.out.String())
 		}
 	})

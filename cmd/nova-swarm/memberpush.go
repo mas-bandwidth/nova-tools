@@ -4,16 +4,21 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
+	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/member"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
 // gitPusher is the member's push at a work card's finish (member.Pusher): the
@@ -33,17 +38,20 @@ import (
 // The rule is docs/SPEC-SWARM.md's `member`.
 type gitPusher struct {
 	root, slots, sprintBin string
+	// gh is the GitHub CLI the member opens a card's pull request with, as itself,
+	// outside the wall, when the child's result asks for one (gh pr create inside it).
+	gh string
+	// env is added to this process's environment for every git and gh the pusher
+	// runs: none in production, a test's git configuration
+	env []string
 	// git runs one git; gitrun.Run, or a test's fake.
 	git func(ctx context.Context, o gitrun.Options, args ...string) (gitrun.Result, error)
 	mu  sync.Mutex // the push repository's creation and its alternates
 }
 
 func newGitPusher(root, slots, sprintBin string) *gitPusher {
-	return &gitPusher{root: root, slots: slots, sprintBin: sprintBin, git: gitrun.Run}
+	return &gitPusher{root: root, slots: slots, sprintBin: sprintBin, gh: "gh", git: gitrun.Run}
 }
-
-// pushHeadRE is a head a push names: a sha, as RESULT.md's `rev:` line gives it.
-var pushHeadRE = regexp.MustCompile(`^[0-9a-f]{7,64}$`)
 
 // pushBranchRE is a branch a push names: a ref name with no refspec character
 // (no `:`, `+`, `^`, `~`, `*`, no blank), so the branch can only name itself.
@@ -52,7 +60,7 @@ var pushBranchRE = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_./-]*$`)
 // Push pushes the child's commit, or says why it did not (member.Push).
 func (g *gitPusher) Push(p member.Packet, r member.Result) member.Push {
 	head := strings.ToLower(strings.TrimSpace(r.Head))
-	if !pushHeadRE.MatchString(head) {
+	if !typedrec.IsSha(head) {
 		return member.Push{Refused: fmt.Sprintf("the result's head %q is not a sha", r.Head)}
 	}
 	if !pushBranchRE.MatchString(p.Branch) || strings.Contains(p.Branch, "..") || strings.HasSuffix(p.Branch, "/") || strings.HasSuffix(p.Branch, ".lock") {
@@ -60,7 +68,8 @@ func (g *gitPusher) Push(p member.Packet, r member.Result) member.Push {
 	}
 	// the repository staging cloned: read from the card the member wrote, never
 	// from the checkout's configuration
-	url := swarm.ReadCardBase([]byte(member.CardText(p, g.sprintBin))).Repo
+	cb := swarm.ReadCardBase([]byte(member.CardText(p, g.sprintBin)))
+	url := cb.Repo
 	if url == "" {
 		return member.Push{None: "the card names no repository"}
 	}
@@ -75,7 +84,9 @@ func (g *gitPusher) Push(p member.Packet, r member.Result) member.Push {
 	ctx := context.Background()
 	ns := "refs/member/" + launchName(p)
 	defer g.drop(ctx, repo, ns)
-	fetch := []string{"fetch", "-q", "--no-tags", "--no-write-fetch-head", "--", checkout, "+refs/heads/*:" + ns + "/heads/*", "+refs/remotes/origin/*:" + ns + "/origin/*"}
+	// every branch and the HEAD of the checkout: the child's commit is on whichever branch
+	// it made, in the checkout or in a clone the git shim linked to it (docs/SPEC-CARD-CONTRACT.md)
+	fetch := []string{"fetch", "-q", "--no-tags", "--no-write-fetch-head", "--", checkout, "+HEAD:" + ns + "/HEAD", "+refs/heads/*:" + ns + "/heads/*"}
 	if res, err := g.run(ctx, repo, nil, fetch...); err != nil {
 		return member.Push{Refused: "fetch from the checkout: " + gitLine(res, err)}
 	}
@@ -85,29 +96,87 @@ func (g *gitPusher) Push(p member.Packet, r member.Result) member.Push {
 	if err != nil || len(full) < 40 {
 		return member.Push{Refused: "the result's head " + head + " is not a commit on the checkout's branches"}
 	}
-	// the child committed when its head has a commit no branch of origin's
-	// (as the clone knew them) holds
-	res, err = g.run(ctx, repo, nil, "for-each-ref", "--format=%(objectname)", ns+"/origin/")
-	if err != nil {
-		return member.Push{Refused: "reading origin's branches: " + gitLine(res, err)}
+	// the child committed when its head has a commit the staged commit does not:
+	// counted from the commit native recorded in the slot, never from the
+	// checkout's own refs, which a stale mirror or the child can move
+	// (docs/SPEC-CARD-CONTRACT.md section 4; tla/CardContract.tla Push)
+	staged, err := os.ReadFile(filepath.Join(g.slots, launchName(p), cardcontract.StagedName))
+	base := strings.TrimSpace(string(staged))
+	if err != nil || !typedrec.IsFullSha(base) {
+		return member.Push{None: "no staged commit is recorded for this launch to count the child's commits from"}
 	}
-	revs := full + "\n"
-	for _, o := range strings.Fields(string(res.Stdout)) {
-		revs += "^" + o + "\n"
-	}
-	res, err = g.run(ctx, repo, strings.NewReader(revs), "rev-list", "--count", "--stdin")
+	res, err = g.run(ctx, repo, nil, "rev-list", "--count", "--end-of-options", full, "^"+base)
 	if err != nil {
-		return member.Push{Refused: "counting the child's commits: " + gitLine(res, err)}
+		return member.Push{Refused: "counting the child's commits from the staged " + base + ": " + gitLine(res, err)}
 	}
 	if n, _ := strconv.Atoi(strings.TrimSpace(string(res.Stdout))); n == 0 {
-		return member.Push{None: "the child committed nothing: head " + full + " is on origin's branches already"}
+		return member.Push{None: "the child committed nothing: head " + full + " is the staged commit or behind it"}
 	}
 	push := []string{"push", "-q", "--porcelain", "--no-verify", "--", url, full + ":refs/heads/" + p.Branch}
 	if res, err := g.run(ctx, repo, nil, push...); err != nil {
 		return member.Push{Refused: gitLine(res, err)}
 	}
-	return member.Push{Sha: full}
+	pu := member.Push{Sha: full}
+	if strings.TrimSpace(r.Title) != "" {
+		pu.PR, pu.PRNote = g.openPR(url, cb.Ref, p.Branch, r.Title, r.Body)
+	}
+	return pu
 }
+
+// prBudget bounds the member's gh pr create: one call to the forge, and a stuck one is a
+// tick that never ends.
+const prBudget = 60 * time.Second
+
+// openPR opens the card's pull request as the member, outside the wall, from the branch the
+// push landed on into the card's base, with the title and body the child's gh pr create
+// gave (docs/SPEC-CARD-CONTRACT.md section 4). It returns the address gh prints, or why
+// none was opened: the finish stands either way, since the work is on origin.
+func (g *gitPusher) openPR(url, base, branch, title, body string) (pr, note string) {
+	bin, err := exec.LookPath(g.gh)
+	if err != nil {
+		return "", "no " + g.gh + " on this machine's PATH: " + oneLineOf(err.Error())
+	}
+	args := []string{"pr", "create", "--repo", prRepo(url), "--head", branch, "--title", title, "--body-file", "-"}
+	if base != "" {
+		args = append(args, "--base", base)
+	}
+	cmd, cancel := subproc.CommandFor(context.Background(), prBudget, bin, args...)
+	defer cancel()
+	cmd.Stdin = strings.NewReader(body)
+	cmd.Env = append(append(os.Environ(), g.env...), "GH_PROMPT_DISABLED=1")
+	var errb strings.Builder
+	cmd.Stderr = &errb
+	out, err := cmd.Output()
+	if err != nil {
+		return "", "gh pr create: " + oneLineOf(errb.String()+" "+err.Error())
+	}
+	// gh prints the pull request's address, the last word on its stdout
+	words := strings.Fields(string(out))
+	if len(words) == 0 {
+		return "", "gh pr create said nothing on stdout"
+	}
+	return words[len(words)-1], ""
+}
+
+// prRepo is the [host/]owner/name gh names a repository by: a GitHub URL's owner/name,
+// another host's host/owner/name, a local path as it is.
+func prRepo(url string) string {
+	if strings.HasPrefix(url, "/") {
+		return url
+	}
+	u := strings.TrimSuffix(strings.TrimSuffix(url, "/"), ".git")
+	if i := strings.Index(u, "://"); i >= 0 {
+		u = u[i+3:]
+	}
+	if i := strings.Index(u, "@"); i >= 0 && !strings.Contains(u[:i], "/") {
+		u = u[i+1:]
+	}
+	u = strings.Replace(u, ":", "/", 1)
+	return strings.TrimPrefix(u, githubHost+"/")
+}
+
+// githubHost is the forge whose repositories gh names by owner/name alone.
+const githubHost = "github.com"
 
 // repo is the member's push repository, made once: a bare repository with no
 // hooks, no automatic gc (pushes run side by side), and the bench mirror of
@@ -181,7 +250,7 @@ func (g *gitPusher) drop(ctx context.Context, repo, ns string) {
 // run is one git in the push repository (C, or none), with no terminal prompt:
 // a push the machine holds no credential for is refused, never left waiting.
 func (g *gitPusher) run(ctx context.Context, c string, stdin *strings.Reader, args ...string) (gitrun.Result, error) {
-	o := gitrun.Options{C: c, Env: append(os.Environ(), "GIT_TERMINAL_PROMPT=0")}
+	o := gitrun.Options{C: c, Env: append(append(os.Environ(), g.env...), "GIT_TERMINAL_PROMPT=0")}
 	if stdin != nil {
 		o.Stdin = stdin
 	}

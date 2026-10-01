@@ -117,9 +117,8 @@ var coordinatorVerbs = map[string]bool{"accept": true, "rework": true, "drop": t
 // width for it.
 const DefaultWidth = 64
 
-// Most is the cards one batched verb names: the Layer 1 step's bound of IDs
-// in an entry and in a log line (L1 contract section 6, LimitEntryIDs and
-// LimitLineIDs). A batch larger than this is cut at it; the rest wait a tick.
+// Most is the cards one batched verb names: the table layer's bound of IDs in
+// an entry and in a log line. A batch larger than this is cut at it; the rest wait a tick.
 const Most = 2000
 
 // run runs one verb, prints its command line and its summary shortened, and

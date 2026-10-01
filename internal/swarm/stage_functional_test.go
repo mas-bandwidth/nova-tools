@@ -302,3 +302,44 @@ func testWait() time.Duration {
 	}
 	return 30 * time.Second
 }
+
+// A frame's base and branch stage in place of the card's header lines
+// (docs/SPEC-CARD-CONTRACT.md layer 2): the checkout is at the frame's sha (a
+// rework's previous pushed head) on the frame's branch, whatever the card's
+// prose says, and a branch git would read as an option is refused.
+func TestStageCardStagesTheFramesCommitOnItsBranch(t *testing.T) {
+	t.Parallel()
+	root := t.TempDir()
+	src := filepath.Join(root, "src")
+	require.NoError(t, os.MkdirAll(src, 0o755))
+	execCmd(t, src, "git", "init", "-q", "-b", "main")
+	execCmd(t, src, "git", "config", "user.name", "test")
+	execCmd(t, src, "git", "config", "user.email", "test@example.com")
+	require.NoError(t, os.WriteFile(filepath.Join(src, "f"), []byte("base"), 0o644))
+	execCmd(t, src, "git", "add", "f")
+	execCmd(t, src, "git", "commit", "-q", "-m", "base")
+	origin := filepath.Join(root, "origin.git")
+	execCmd(t, root, "git", "clone", "-q", "--bare", src, origin)
+	execCmd(t, src, "git", "switch", "-q", "-c", "sprint/c1.w1")
+	require.NoError(t, os.WriteFile(filepath.Join(src, "f"), []byte("attempt 1"), 0o644))
+	execCmd(t, src, "git", "commit", "-q", "-am", "attempt 1")
+	prev := strings.TrimSpace(execCmd(t, src, "git", "rev-parse", "HEAD"))
+	execCmd(t, src, "git", "push", "-q", origin, "sprint/c1.w1")
+
+	target := filepath.Join(root, "jobs", "c1.w2", "repo")
+	card := []byte("c1: the card\nBASE: main\nThe work is branch sprint/c1.w2 from sprint/c1.w1, says the prose.\n")
+	res, err := StageCard(StageOptions{
+		Card: card, TargetDir: target, JobDir: filepath.Dir(target), BenchHome: filepath.Join(root, "home"), BenchName: "testhost",
+		Timeout: 30 * time.Second, Base: &CardBase{Repo: origin, Sha: prev, Ref: "main", Named: origin}, Branch: "sprint/c1.w2",
+	})
+	require.NoError(t, err)
+	assert.True(t, res.Staged)
+	assert.Equal(t, prev, res.BaseSha)
+	assert.Equal(t, "sprint/c1.w2", res.Branch)
+	assert.Equal(t, prev, strings.TrimSpace(execCmd(t, target, "git", "rev-parse", "HEAD")))
+	assert.Equal(t, "sprint/c1.w2", strings.TrimSpace(execCmd(t, target, "git", "symbolic-ref", "--short", "HEAD")))
+
+	_, err = StageCard(StageOptions{Card: card, TargetDir: filepath.Join(root, "jobs", "x", "repo"), BenchHome: filepath.Join(root, "home"),
+		Timeout: 30 * time.Second, Base: &CardBase{Repo: origin, Ref: "main", Named: origin}, Branch: "-x"})
+	assert.ErrorContains(t, err, "starts with '-'")
+}
