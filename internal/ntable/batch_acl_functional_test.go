@@ -64,9 +64,8 @@ func TestBatchWithAReadDeniedIsAnErrorNeverAnAcceptedBatch(t *testing.T) {
 	ans, err := rawApply(ctx, as("ns-all"), batch("all-big", "big", "gone"))
 	require.True(t, replyOpens(ans, err, "REFUSED", "LIMIT", "value bytes per batch"), "with every read granted: %.200v %v; want LIMIT value bytes per batch", ans, err)
 	// the count stopped where it passed the bound, and the refusal says so
-	if len(ans) < 7 || ans[6] != "at least" {
-		t.Errorf("the refusal from the counting pass does not say `at least`: %.200v", ans)
-	}
+	require.GreaterOrEqual(t, len(ans), 7, "the refusal from the counting pass does not say `at least`: %.200v", ans)
+	assert.Equal(t, "at least", ans[6], "the refusal from the counting pass does not say `at least`: %.200v", ans)
 	// One read denied: prove that command is forbidden directly, then require
 	// a store ACL error from the batch, never an accepted batch or a write.
 	for _, denied := range batchReads {
@@ -77,9 +76,8 @@ func TestBatchWithAReadDeniedIsAnErrorNeverAnAcceptedBatch(t *testing.T) {
 		if command != "hlen" {
 			args = append(args, "big")
 		}
-		if err := client.Do(ctx, args...).Err(); !isACLPermissionError(err) {
-			t.Fatalf("%s must directly deny %s on a member: %v", user, command, err)
-		}
+		err := client.Do(ctx, args...).Err()
+		require.True(t, isACLPermissionError(err), "%s must directly deny %s on a member: %v", user, command, err)
 		for name, fields := range map[string][]string{"big": {"big", "gone"}, "small": {"gone"}} {
 			ans, err := rawApply(ctx, client, batch("no-"+denied[1:]+"-"+name, fields...))
 			// The count stops a big batch before the head is read, so missing
@@ -87,16 +85,16 @@ func TestBatchWithAReadDeniedIsAnErrorNeverAnAcceptedBatch(t *testing.T) {
 			if name == "big" && (denied == "+hlen" || denied == "+hmget") && err == nil && len(ans) > 1 && ans[0] == "REFUSED" && ans[1] == "LIMIT" {
 				continue
 			}
-			if !isACLPermissionError(err) || strings.Contains(err.Error(), "malformed") || strings.Contains(err.Error(), "ERR ERR") {
-				t.Errorf("without %s, %s batch: %.200v %v; want a store ACL denial", denied, name, ans, err)
+			if assert.True(t, isACLPermissionError(err), "without %s, %s batch: %.200v %v; want a store ACL denial", denied, name, ans, err) {
+				assert.NotContains(t, err.Error(), "malformed", "without %s, %s batch: %.200v %v; want a store ACL denial", denied, name, ans, err)
+				assert.NotContains(t, err.Error(), "ERR ERR", "without %s, %s batch: %.200v %v; want a store ACL denial", denied, name, ans, err)
 			}
-			if len(ans) > 0 && ans[0] == "OK" {
-				t.Errorf("without %s, %s batch: accepted", denied, name)
+			if len(ans) > 0 {
+				assert.NotEqual(t, "OK", ans[0], "without %s, %s batch: accepted", denied, name)
 			}
 		}
 	}
 	assert.Equal(t, before, storeImage(t, admin), "a batch with a read denied changed the store")
-	if ans, err := rawApply(ctx, as("ns-all"), batch("all-small", "gone")); err != nil || ans[0] != "OK" {
-		t.Errorf("the small batch with every read granted: %.200v %v", ans, err)
-	}
+	ans, err = rawApply(ctx, as("ns-all"), batch("all-small", "gone"))
+	require.True(t, replyOpens(ans, err, "OK"), "the small batch with every read granted: %.200v: %v", ans, err)
 }

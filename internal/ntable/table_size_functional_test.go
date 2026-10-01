@@ -7,7 +7,6 @@ package ntable_test
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 	"testing"
@@ -29,9 +28,8 @@ func wideColumns(n int) []ntable.Column {
 func requireLimit(t *testing.T, what string, err error, name string, bound, observed int) {
 	t.Helper()
 	var le *ntable.LimitError
-	if !errors.As(err, &le) || le.Name != name || le.Bound != bound || le.Observed != observed {
-		t.Errorf("%s: %v; want LIMIT %s, bound %d, observed %d", what, err, name, bound, observed)
-	}
+	require.ErrorAs(t, err, &le, what)
+	require.Equal(t, ntable.LimitError{Name: name, Bound: bound, Observed: observed}, ntable.LimitError{Name: le.Name, Bound: le.Bound, Observed: le.Observed}, what)
 }
 
 func TestTableColumnsAreBounded(t *testing.T) {
@@ -124,9 +122,9 @@ func TestBindRowsAreBounded(t *testing.T) {
 	}
 	body := `{"fields":` + string(def) + `,"rows":[` + strings.Join(rows, ",") + `]}`
 	ans, err := c.FCall(ctx, ntable.FnBind, []string{ntable.DefKey("bound")}, "bound", body, `{"epoch":"0","actor":"","fence":"","idem":""}`).Slice()
-	if err != nil || len(ans) < 5 || ans[0] != "REFUSED" || ans[1] != "LIMIT" || ans[2] != "rows per table" ||
-		fmt.Sprint(ans[3]) != fmt.Sprint(ntable.LimitRows) || fmt.Sprint(ans[4]) != fmt.Sprint(ntable.LimitRows+1) {
-		t.Fatalf("raw bind past the bound: %v %v", trunc(ans), err)
-	}
+	require.True(t, replyOpens(ans, err, "REFUSED", "LIMIT", "rows per table"), "raw bind past the bound: %v %v", trunc(ans), err)
+	require.GreaterOrEqual(t, len(ans), 5, "raw bind past the bound: %v", trunc(ans))
+	require.Equal(t, fmt.Sprint(ntable.LimitRows), fmt.Sprint(ans[3]), "raw bind past the bound: bound")
+	require.Equal(t, fmt.Sprint(ntable.LimitRows+1), fmt.Sprint(ans[4]), "raw bind past the bound: observed")
 	assert.Equal(t, before, storeImage(t, c), "a raw bind refused for its rows changed the store")
 }

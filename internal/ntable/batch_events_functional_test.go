@@ -62,9 +62,7 @@ func TestBatchEventsMatchOrdinaryVerbsForTheSameChange(t *testing.T) {
 	a, ctx := probeTable(t)
 	b, _ := probeTable(t)
 	for i, s := range steps {
-		if err := s.plain(ctx, a); err != nil {
-			t.Fatalf("%s: %v", s.name, err)
-		}
+		require.NoError(t, s.plain(ctx, a), "%s", s.name)
 		ans, err := rawApply(ctx, b, manifestWith(probeRev(ctx, b), fmt.Sprintf("s%d", i), s.batch))
 		require.True(t, replyOpens(ans, err, "OK"), "%s: %v %v", s.name, trunc(ans), err)
 	}
@@ -126,12 +124,9 @@ func TestBatchScoresAreTheExactDecimalStringsTheStoreHolds(t *testing.T) {
 		wantFloat, err := strconv.ParseFloat(input, 64)
 		require.NoError(t, err)
 		gotFloat, err := strconv.ParseFloat(text, 64)
-		if err != nil || math.Float64bits(gotFloat) != math.Float64bits(wantFloat) {
-			t.Errorf("%s: store score %q does not round-trip input %q: %v", m.ID, text, input, err)
-		}
-		if m.AfterScoreText == nil || *m.AfterScoreText != text {
-			t.Errorf("%s: the receipt says %v, the store holds %q", m.ID, m.AfterScoreText, text)
-		}
+		assert.NoError(t, err, "%s: store score %q does not round-trip input %q", m.ID, text, input)
+		assert.Equal(t, math.Float64bits(wantFloat), math.Float64bits(gotFloat), "%s: store score %q does not round-trip input %q", m.ID, text, input)
+		require.Equal(t, new(text), m.AfterScoreText, "%s: the receipt and the store disagree on the after score", m.ID)
 		assert.Equal(t, text, byID[m.ID], "%s: the event says %q, the store holds %q", m.ID, byID[m.ID], text)
 		sm, _ := set.Member(m.ID)
 		assert.Equal(t, text, sm.ScoreText, "%s: read set says %q, the store holds %q", m.ID, sm.ScoreText, text)
