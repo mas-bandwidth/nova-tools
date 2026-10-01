@@ -133,8 +133,8 @@ func TestWhereDoesNotPrintTheRoutesLine(t *testing.T) {
 	ta := newTestApp(t)
 	ta.ok("init --readers reader-a --members m1")
 	ta.m.SetRoutes([]sprint.Route{
-		{Name: "flash-a", Tier: "flash", Provider: "p", Model: "m", Weight: 1, Enabled: true},
-		{Name: "pro-a", Tier: "pro", Provider: "p", Model: "m", Weight: 1, Enabled: true},
+		{Name: "flash-a", Tier: "flash", Provider: "p", Model: "m", Enabled: true},
+		{Name: "pro-a", Tier: "pro", Provider: "p", Model: "m", Enabled: true},
 	})
 	out := ta.ok("where")
 	require.NotContains(t, out, "routes:")

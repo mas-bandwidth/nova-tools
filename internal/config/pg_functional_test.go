@@ -95,7 +95,7 @@ func TestMigrateOnAnEmptyDatabaseTwice(t *testing.T) {
 			}
 			continue
 		}
-		assert.Equal(t, 0, counts[k.Name], "fresh schema counts %d %s rows", counts[k.Name], k.Name)
+		assert.Equal(t, len(k.Seed), counts[k.Name], "fresh schema counts %d %s rows (migrate makes the kind's Seed)", counts[k.Name], k.Name)
 	}
 	{
 		rev, err := st.Rev(ctx, KindFriend)

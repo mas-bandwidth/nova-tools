@@ -2,8 +2,6 @@ package sprint
 
 import (
 	"fmt"
-	"hash/fnv"
-	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -14,12 +12,18 @@ import (
 // The card decides the model it runs on (the owner, 2026-10-01: "the card should
 // determine the model used"). Its brief's line 1 names a tier, and the deal resolves
 // the tier through the routes nova-config applies to the store (the route kind,
-// docs/nova-config/README.md): one enabled route of the tier is drawn per deal,
-// weighted, and written on the work card, so the packet hands the member the
-// provider, model, budget and deadline it launches with. A `model:` header line pins
-// the card and bypasses the draw. A redeal or a later attempt draws again, leaving
-// out the routes already drawn for the card while another remains. The model is
-// tla/DirtyTick.tla, Deal's route guard.
+// docs/nova-config/README.md) and the tier's route array (the tier kind: an ordered
+// list of route names, a name repeated for more turns). The deal takes the array's
+// entry at the tier's rolling index, a uint64 counter modulo the array's length,
+// exactly as the deal takes a member (round.go), and moves the index by one for
+// each card dealt (the owner, 2026-10-01: "model routing to use the same uint64
+// modulo"); the route is written on the work card, so the packet hands the member
+// the provider, model, budget and deadline it launches with. A `model:` header line
+// pins the card, bypasses the array and leaves the index where it is. A redeal or a
+// later attempt leaves out the routes already taken for the card while another
+// remains: it takes the next entry that is not left out, and the index moves past
+// the entries skipped. The model is tla/RouteIndex.tla; the route guard is
+// tla/DirtyTick.tla's.
 //
 // The rules, in order:
 //   - a pinned card runs on its pin (route "pin");
@@ -27,8 +31,8 @@ import (
 //     its own --model (a twin, a one-machine test);
 //   - a frontier card with no pin is not dealt: it is the coordinator's (the owner,
 //     2026-09-30), one judgment for the tier;
-//   - a card whose tier (flash when line 1 names none) has no enabled route is not
-//     dealt, one judgment for the tier.
+//   - a card whose tier (flash when line 1 names none) has no enabled route in its
+//     array is not dealt, one judgment for the tier.
 
 // Route is one route of a model tier as the store holds it (config.RouteKey).
 type Route struct {
@@ -38,13 +42,12 @@ type Route struct {
 	Model    string `json:"model"`
 	Tokens   int    `json:"tokens"`   // 0 is unmetered
 	Deadline int    `json:"deadline"` // seconds
-	Weight   int    `json:"weight"`
 	Enabled  bool   `json:"enabled"`
 }
 
-// The work card's route fields, written at each deal and redeal: the route drawn
+// The work card's route fields, written at each deal and redeal: the route taken
 // (or RoutePin), the model id the member launches (provider/model), its budget and
-// its deadline in seconds; the primary's FieldRoutes is every route drawn for it,
+// its deadline in seconds; the primary's FieldRoutes is every route taken for it,
 // in order, the exclusion's history.
 const (
 	FieldRoute    = "route"
@@ -56,6 +59,12 @@ const (
 	RoutePin      = "pin"
 )
 
+// PropRouteIndex is the fleet table's property that holds the tier's route index
+// (route_index_flash, route_index_pro), beside deal_index: a uint64 counter read
+// with the step's tables and written in its batch, guarded on the value read
+// (round.go, roundWrites).
+func PropRouteIndex(tier string) string { return "route_index_" + tier }
+
 // NNoRoute is the tick's judgment of a tier no route serves, once per tier (its
 // subject is the tier's, StreamSubject(TierSubject(tier))), closed when the tier is
 // served or no card of it waits.
@@ -66,15 +75,64 @@ const NNoRoute = "no route serves the tier"
 func TierSubject(tier string) string { return "tier:" + tier }
 
 // noRoute is why a primary has no route: "" when it has one (or the store has no
-// route at all), else the tier it is judged under and the sentence.
+// route at all), else the tier it is judged under and the sentence. It moves no index.
 func (s *Snapshot) noRoute(c *Card) (tier, why string) {
-	_, tier, why = s.routeOf(c, nil)
+	_, tier, why = s.routeOf(c, nil, nil)
 	return tier, why
 }
 
+// tierArray is the tier's route array as the deal reads it: the tier kind's list
+// when nova-config applied one, else the tier's enabled routes in name order, each once
+// (tla/RouteIndex.tla, Arr).
+func (s *Snapshot) tierArray(tier string) []string {
+	if a := s.Tiers[tier]; len(a) > 0 {
+		return a
+	}
+	var out []string
+	for _, r := range s.Routes {
+		if r.Tier == tier && r.Enabled {
+			out = append(out, r.Name)
+		}
+	}
+	return out
+}
+
+// routeIndex is one tier's rolling index over its route array (tla/RouteIndex.tla,
+// ridx): a counter round (round.go) in steps, and the steps each unit moved it.
+type routeIndex struct {
+	r     *round
+	moves roundMoves
+}
+
+// routeIndexes are the tiers' route indexes a dealing step moves, by tier.
+type routeIndexes map[string]*routeIndex
+
+// routeIndexesOf is the route indexes at the counters the fleet table's properties hold.
+func routeIndexesOf(s *Snapshot) routeIndexes {
+	out := routeIndexes{}
+	for _, t := range []string{cardhdr.RouteFlash, cardhdr.RoutePro} {
+		r := tableRound(s.Fleet, PropRouteIndex(t), nil)
+		r.steps = true
+		out[t] = &routeIndex{r: r, moves: roundMoves{}}
+	}
+	return out
+}
+
+// write writes where the plan's kept units left each tier's index, in its batch
+// (roundWrites; tla/RouteIndex.tla, Deal and Redeal).
+func (ri routeIndexes) write(p *Plan) {
+	for _, t := range []string{cardhdr.RouteFlash, cardhdr.RoutePro} {
+		roundWrites(p, ri[t].r, ri[t].moves)
+	}
+}
+
 // routeOf is the route fields of one deal of the primary c; wc is the work card dealt
-// again (nil for a new attempt), whose own route is left out of the draw too.
-func (s *Snapshot) routeOf(c, wc *Card) (set map[string]string, tier, why string) {
+// again (nil for a new attempt), whose own route is left out too. With ri the tier's
+// index moves past the entry taken and every entry skipped before it, recorded under
+// c's unit; nil reads the index and moves nothing (tla/RouteIndex.tla: Deal, Redeal, Pin).
+// An entry that names no enabled route of the tier (a route disabled or removed since
+// the array was set) is skipped as an excluded one is.
+func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string, tier, why string) {
 	m, bad := cardhdr.ReadModel(c.F("brief"))
 	if bad != "" {
 		// a card admitted before the lint read its lines: judged under the tier it
@@ -98,67 +156,44 @@ func (s *Snapshot) routeOf(c, wc *Card) (set map[string]string, tier, why string
 	if tier == cardhdr.RouteFrontier {
 		return nil, tier, "a frontier card waits for the coordinator: run it, or pin it with a model: <provider>/<model> line"
 	}
-	var served []Route
+	served := map[string]Route{}
 	for _, r := range s.Routes {
-		if r.Tier == tier && r.Enabled && r.Weight > 0 {
-			served = append(served, r)
+		if r.Tier == tier && r.Enabled {
+			served[r.Name] = r
 		}
 	}
-	if len(served) == 0 {
-		return nil, tier, "no enabled route serves tier " + tier + ": run nova-config route add <name> --tier " + tier + " ..., then nova-config apply; or pin the card with a model: <provider>/<model> line"
-	}
+	arr := s.tierArray(tier)
 	drawn := Split(c.F(FieldRoutes))
 	if wc != nil && wc.F(FieldRoute) != "" {
 		drawn = append(drawn, wc.F(FieldRoute))
 	}
-	fresh := served[:0:0]
-	for _, r := range served {
-		if !contains(drawn, r.Name) {
-			fresh = append(fresh, r)
+	// every entry served is left out: the exclusion lapses, as when the tier has one route
+	fresh := false
+	for _, name := range arr {
+		_, ok := served[name]
+		fresh = fresh || ok && !contains(drawn, name)
+	}
+	var at uint64
+	if ri != nil {
+		at = ri[tier].r.count
+	} else {
+		v, _ := s.Fleet.Prop(PropRouteIndex(tier))
+		at, _ = strconv.ParseUint(v, 10, 64)
+	}
+	n := uint64(len(arr))
+	for i := uint64(0); i < n; i++ {
+		r, ok := served[arr[(at+i)%n]]
+		if !ok || fresh && contains(drawn, r.Name) {
+			continue
 		}
-	}
-	if len(fresh) > 0 {
-		served = fresh
-	}
-	salt := c.ID + "\x00" + c.F("attempt") + "\x00" + s.Now.UTC().Format(time.RFC3339Nano)
-	if wc != nil {
-		salt += "\x00" + wc.F("gen")
-	}
-	r := draw(served, salt)
-	return map[string]string{FieldRoute: r.Name, FieldModel: r.Provider + "/" + r.Model, FieldTokens: tokensWord(r.Tokens),
-		FieldDeadline: strconv.Itoa(r.Deadline), FieldRoutes: strings.Join(append(Split(c.F(FieldRoutes)), r.Name), ",")}, tier, ""
-}
-
-// draw is one route of the served, weighted, from a hash of the salt: the same
-// snapshot and card draw the same route, every time (a plan is a function of its
-// read). The salt's FNV-1a is run through splitmix64's finaliser before the
-// modulo: FNV-1a's low bits depend only on the low bits of the salt's bytes, so a
-// modulo of a power of two would draw by their parity.
-func draw(served []Route, salt string) Route {
-	sort.Slice(served, func(i, j int) bool { return served[i].Name < served[j].Name })
-	total := 0
-	for _, r := range served {
-		total += r.Weight
-	}
-	h := fnv.New64a()
-	h.Write([]byte(salt))
-	at := int(mix(h.Sum64()) % uint64(total))
-	for _, r := range served {
-		if at < r.Weight {
-			return r
+		if ri != nil {
+			ri[tier].r.count += i + 1
+			ri[tier].moves[c.ID] = strconv.FormatUint(i+1, 10)
 		}
-		at -= r.Weight
+		return map[string]string{FieldRoute: r.Name, FieldModel: r.Provider + "/" + r.Model, FieldTokens: tokensWord(r.Tokens),
+			FieldDeadline: strconv.Itoa(r.Deadline), FieldRoutes: strings.Join(append(Split(c.F(FieldRoutes)), r.Name), ",")}, tier, ""
 	}
-	return served[len(served)-1]
-}
-
-// mix is splitmix64's finaliser: every bit of x moves every bit of the result.
-func mix(x uint64) uint64 {
-	x ^= x >> 30
-	x *= 0xbf58476d1ce4e5b9
-	x ^= x >> 27
-	x *= 0x94d049bb133111eb
-	return x ^ x>>31
+	return nil, tier, "no enabled route serves tier " + tier + ": run nova-config route add <name> --tier " + tier + " ..., name it in nova-config tier set " + tier + " --routes <name,...>, then nova-config apply; or pin the card with a model: <provider>/<model> line"
 }
 
 // tokensWord is a route's budget as native's --tokens takes it.
@@ -188,7 +223,7 @@ func splitRoute(route map[string]string) (work, primary map[string]string) {
 func TierRoutes(routes []Route) string {
 	n := map[string]int{}
 	for _, r := range routes {
-		if r.Enabled && r.Weight > 0 {
+		if r.Enabled {
 			n[r.Tier]++
 		}
 	}

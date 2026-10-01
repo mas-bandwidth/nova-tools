@@ -87,6 +87,7 @@ type round struct {
 	name  string // the property
 	read  string // the value the step read
 	had   bool   // whether the table had the property
+	steps bool   // a unit's moves are the steps it took, a decimal (a route index, route.go)
 }
 
 // newRound is the index over names at the counter a table's property holds.
@@ -436,8 +437,13 @@ func roundWrite(p *Plan, r *round, moves roundMoves) {
 		if m == "" {
 			continue
 		}
-		for _, x := range strings.Split(m, ",") {
-			w.moved(x)
+		if r.steps {
+			n, _ := strconv.ParseUint(m, 10, 64)
+			w.count += n
+		} else {
+			for _, x := range strings.Split(m, ",") {
+				w.moved(x)
+			}
 		}
 		moved = true
 	}

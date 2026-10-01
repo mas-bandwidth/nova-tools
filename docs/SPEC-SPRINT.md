@@ -220,18 +220,23 @@ and it is the coordinator's decision, receipted.
   lines it cannot read. A card admitted before (an unknown tier, a pin short
   of a line) is not dealt and is judged under the tier its line 1 names. The routes are nova-config's `route` kind, applied to
   the store (`routes`, `route:<name>`): each a tier, a provider and model, a
-  budget, a deadline, a weight and enabled. The deal (and a redeal, and a
+  budget, a deadline and enabled; each tier's route array is nova-config's
+  `tier` kind (`tier:<name>`, read with the routes in the same round trip), an
+  ordered list of route names, a name repeated for more turns, and a tier with
+  none takes its enabled routes in name order. The deal (and a redeal, and a
   rework's next attempt) resolves the card at deal time: a pin is its route
-  (`pin`); a store with no route deals as before (the member runs its
-  override); a frontier card with no pin is the coordinator's and is not
-  dealt; otherwise one enabled route of the tier is drawn, weighted, leaving
-  out the routes already drawn for the card while another remains. The draw is
-  seeded from the card, its attempt, its generation (a redeal) and the deal's
-  snapshot time, not from the tick's operation id (a plan is a function of its
-  read, made before the operation has an id): FNV-1a of those, run through
-  splitmix64's finaliser, modulo the weights' sum; the same read draws the same
-  route, and a test's clock draws the same routes every run. The work card keeps `route`, `model`, `tokens` and `deadline` (its
-  packet hands them to the member) and the primary `routes`, every route drawn
+  (`pin`) and moves no index; a store with no route deals as before (the member
+  runs its override); a frontier card with no pin is the coordinator's and is
+  not dealt; otherwise the deal takes the array's entry at the tier's rolling
+  index, the fleet table's `route_index_flash` or `route_index_pro`, a uint64
+  counter modulo the array's length as the member rule's `deal_index` is, and
+  moves the index by one for each card dealt, written in the deal's batch with
+  its cards (tla/RouteIndex.tla, RouteIndexAdvancesOncePerCard, RouteFair); a
+  redeal or a later attempt takes the next entry whose route was not taken for
+  the card while another remains, the index moved past the entries it skipped
+  (ExcludedNeverDrawn), and an entry that names no enabled route of the tier is
+  skipped the same way. The work card keeps `route`, `model`, `tokens` and `deadline` (its
+  packet hands them to the member) and the primary `routes`, every route taken
   for it. A card no route serves stays ready: the deal refuses it naming the
   tier, and the tick writes one judgment, `no route serves the tier`, per tier
   (its subject `stream:tier:<tier>`, the primaries listed), never one per
