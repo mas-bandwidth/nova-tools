@@ -96,9 +96,8 @@ func TestReview4456FormulaUnreadStaysUnknown(t *testing.T) {
 	tb.Rows = []ntable.Row{unknown, known}
 	lines := strings.Split(strings.TrimSpace(ntable.Render(tb, ntable.RenderOpts{Title: "demo"})), "\n")
 	last := func(s string) string { parts := strings.Split(s, "|"); return strings.TrimSpace(parts[len(parts)-1]) }
-	if last(lines[2]) != "?" || last(lines[len(lines)-1]) != "?" {
-		t.Fatalf("unknown formula input became an empty value or a known average:\n%s", strings.Join(lines, "\n"))
-	}
+	require.Equal(t, "?", last(lines[2]), "unknown formula input became an empty value or a known average:\n%s", strings.Join(lines, "\n"))
+	require.Equal(t, "?", last(lines[len(lines)-1]), "unknown formula input became an empty value or a known average:\n%s", strings.Join(lines, "\n"))
 }
 
 func TestReview4456LeadingTextDoesNotHideRowIdentity(t *testing.T) {
@@ -151,23 +150,26 @@ func TestReview4456DeclaredWriterCanUseEdits(t *testing.T) {
 	t.Cleanup(func() {
 		assert.NoError(t, reader.Close())
 	})
-	if v, err := ntable.ViewGet(ctx, reader, "v"); err != nil || v.Summary != "b" {
-		t.Fatalf("declared reader view=%+v %v", v, err)
-	}
+	v, err := ntable.ViewGet(ctx, reader, "v")
+	require.NoError(t, err, "declared reader view=%+v", v)
+	require.Equal(t, "b", v.Summary, "declared reader view=%+v", v)
 	_, err = ntable.Read(ctx, reader, "renamed")
 	require.NoError(t, err)
-	if names, err := ntable.ViewList(ctx, reader); err != nil || len(names) != 1 || names[0] != "v" {
-		t.Fatalf("reader view list: %v %v", names, err)
-	}
-	if loc, err := ntable.MemberFind(ctx, reader, "renamed", "m1"); err != nil || loc.State != "placed" || loc.Row != "s" || loc.Column != "b" {
-		t.Fatalf("reader member find: %+v %v", loc, err)
-	}
+	names, err := ntable.ViewList(ctx, reader)
+	require.NoError(t, err, "reader view list: %v", names)
+	require.Len(t, names, 1, "reader view list: %v", names)
+	require.Equal(t, "v", names[0], "reader view list: %v", names)
+	loc, err := ntable.MemberFind(ctx, reader, "renamed", "m1")
+	require.NoError(t, err, "reader member find: %+v", loc)
+	require.Equal(t, "placed", loc.State, "reader member find: %+v", loc)
+	require.Equal(t, "s", loc.Row, "reader member find: %+v", loc)
+	require.Equal(t, "b", loc.Column, "reader member find: %+v", loc)
 	_, err = ntable.ViewDelete(ctx, reader, "v")
 	require.Error(t, err, "reader deleted view")
 
 	require.Error(t, ntable.ViewSet(ctx, reader, ntable.View{Name: "v", Tables: []string{"renamed"}}), "reader wrote view")
-	if n, err := ntable.ViewDelete(ctx, writer, "v"); err != nil || n != 1 {
-		t.Fatalf("writer delete: %d %v", n, err)
-	}
+	n, err := ntable.ViewDelete(ctx, writer, "v")
+	require.NoError(t, err, "writer delete: %d", n)
+	require.Equal(t, int64(1), n, "writer delete: %d", n)
 
 }

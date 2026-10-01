@@ -23,12 +23,10 @@ func TestStandingSortSurvivesBind(t *testing.T) {
 			_, c := live(t)
 			ctx := context.Background()
 			orderTable(t, c)
-			if _, err := ntable.RowsAdd(ctx, c, "t", []string{"unused"}); err != nil {
-				t.Fatal(err)
-			}
-			if _, err := ntable.Set(ctx, c, "t", ntable.SetOpts{RowSort: &ntable.Sort{By: by, Keep: true}}); err != nil {
-				t.Fatal(err)
-			}
+			_, err := ntable.RowsAdd(ctx, c, "t", []string{"unused"})
+			require.NoError(t, err)
+			_, err = ntable.Set(ctx, c, "t", ntable.SetOpts{RowSort: &ntable.Sort{By: by, Keep: true}})
+			require.NoError(t, err)
 			before := held(t, c, "t")
 			tab, err := ntable.Read(ctx, c, "t")
 			require.NoError(t, err)
@@ -160,9 +158,8 @@ func TestOrderReceiptsNameEveryRankedRow(t *testing.T) {
 			} else {
 				change.ColMove = &ntable.Reorder{Item: "note", Place: at("first", "")}
 			}
-			if _, err := ntable.Set(ctx, c, "t", change); err != nil {
-				t.Fatal(err)
-			}
+			_, err := ntable.Set(ctx, c, "t", change)
+			require.NoError(t, err)
 			events, err := c.XRevRangeN(ctx, "table:t:changes", "+", "-", 1).Result()
 			require.NoError(t, err)
 			var cells []string
@@ -195,15 +192,12 @@ func TestOrderDefinitionOnlyReceiptsReportChange(t *testing.T) {
 		{ntable.SetOpts{Footer: new("total")}, "changed"},
 	} {
 		var receipt ntable.Receipt
-		if _, err := ntable.Set(ctx, c, "t", step.change, ntable.WriteOptions{Receipt: &receipt}); err != nil {
-			t.Fatal(err)
-		}
+		_, err = ntable.Set(ctx, c, "t", step.change, ntable.WriteOptions{Receipt: &receipt})
+		require.NoError(t, err)
 		require.Equal(t, step.want, receipt.Outcome, "definition edit %+v: receipt %+v, want %s", step.change, receipt, step.want)
 		require.Equal(t, receipt.Before+1, receipt.After, "definition edit %+v: receipt %+v, want %s", step.change, receipt, step.want)
 		events, err := c.XRevRangeN(ctx, "table:t:changes", "+", "-", 1).Result()
 		require.NoError(t, err)
-		if events[0].Values["outcome"] != step.want {
-			t.Fatalf("durable receipt: %v, want %s", events[0], step.want)
-		}
+		require.Equal(t, step.want, events[0].Values["outcome"], "durable receipt: %v, want %s", events[0], step.want)
 	}
 }
