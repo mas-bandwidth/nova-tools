@@ -48,3 +48,15 @@ func TestDeclareRouteModelNamesTheModelInTheConfig(t *testing.T) {
 	require.True(t, ok)
 	assert.Contains(t, string(out), `"chunkTimeout": 45000`)
 }
+
+// TestCauseFromTextNamesTheHarnessCatalog: the harness's printed refusal of a model
+// (verbatim shape from opencode v1.18.20, 2026-10-01) is class unknown-model with the
+// message `model not found in the harness catalog: <model>`, never `other`.
+func TestCauseFromTextNamesTheHarnessCatalog(t *testing.T) {
+	t.Parallel()
+	line := `message=failed ref=err_1ad647ee error="ProviderModelNotFoundError: Model not found: openrouter/x-ai/grok-4.7. Did you mean: x-ai/grok-4.20, x-ai/grok-4.20-multi-agent, x-ai/grok-4.3?"`
+	c := CauseFromText(line)
+	assert.Equal(t, CauseUnknownModel, c.Class)
+	assert.Equal(t, "model not found in the harness catalog: openrouter/x-ai/grok-4.7", c.Message)
+	assert.Equal(t, "provider: class=unknown-model status=- msg=model not found in the harness catalog: openrouter/x-ai/grok-4.7", c.Reason())
+}

@@ -253,6 +253,10 @@ type Config struct {
 	// (hostload.Sampler.Run); nil, or with no sample since the last beat, the beat
 	// measures the machine itself.
 	Meter *hostload.Sampler
+	// Sleep waits between two harness starts (StartGap); nil starts them back to back
+	// (the tests' member). Clock is the time it measures the gap by; nil is time.Now.
+	Sleep func(time.Duration)
+	Clock func() time.Time
 }
 
 // launch is one child and the claim it was started for: the card at the
@@ -292,6 +296,9 @@ type Member struct {
 	drain        bool
 	beaten       uint64 // the Meter's samples the last written beat has carried
 	noRoom       bool   // Room said no on the last tick it was asked
+
+	// lastStart is when this member last started a harness, for StartGap.
+	lastStart time.Time
 }
 
 // New is a member with nothing running. A reader pushes nothing, and its
@@ -675,6 +682,7 @@ func (m *Member) start(p Packet) bool {
 		fmt.Fprintf(m.out, "start %s: width %d full\n", p.Card, m.width)
 		return false
 	}
+	m.staggerStart()
 	ch, err := m.runner.Start(p)
 	if err != nil {
 		fmt.Fprintf(m.out, "start %s: %v\n", p.Card, err)
@@ -906,4 +914,27 @@ func usageArgs(r Result) []string {
 		return nil
 	}
 	return []string{"--usage", r.Usage}
+}
+
+// StartGap is the least time between two harness starts on one member, so the cards a
+// pass takes do not all start their harness in the same instant (sixteen at once on one
+// machine lost their start; the owner, 2026-10-01: "Yes on staggering.").
+const StartGap = 300 * time.Millisecond
+
+// staggerStart waits, when the member has a Sleep, until StartGap has passed since its
+// last harness start, then marks this one. Work and read loops alike.
+func (m *Member) staggerStart() {
+	if m.cfg.Sleep == nil {
+		return
+	}
+	now := time.Now
+	if m.cfg.Clock != nil {
+		now = m.cfg.Clock
+	}
+	if !m.lastStart.IsZero() {
+		if wait := StartGap - now().Sub(m.lastStart); wait > 0 {
+			m.cfg.Sleep(wait)
+		}
+	}
+	m.lastStart = now()
 }
