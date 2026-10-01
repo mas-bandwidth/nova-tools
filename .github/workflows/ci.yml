@@ -290,6 +290,20 @@ jobs:
         # breaks one is red now rather than at the stream's landing.
         run: make vet-functional
 
+      - name: vet-slow
+        # The tests behind `//go:build slow` run only in the nightly job, so a
+        # slow-only build break stayed green until the morning; vet-slow
+        # compiles them on every change.
+        run: make vet-slow
+
+      - name: vet-shippedsmoke
+        run: make vet-shippedsmoke
+
+      - name: vet-novadisk
+        # vet-novadisk is a GOOS=darwin cross-vet: the one test it guards is
+        # `//go:build darwin && novadisk` and this job is linux.
+        run: make vet-novadisk
+
       - name: vet-laws
         # tools/analyzers/cmd/vetlaw as a go vet -vettool= analyzer over
         # ./cmd/..., enforcing verb laws #2573 (exit-zero-with-zero-bytes),

@@ -1519,7 +1519,7 @@ audit's --disable-auto`.
 — the rule is about what runs. A spelling assembled at run time from separate
 words is not seen.
 
-### `nightly-tags` — every tagged suite is run by a scheduled job
+### `nightly-tags` — every tagged suite is run by a scheduled job and vetted by a CI vet step
 
 **The rule.** Every opt-in build tag a `_test.go` carries is named by a
 SCHEDULED workflow, either literally on a `go test`/`go vet` line
@@ -1527,7 +1527,11 @@ SCHEDULED workflow, either literally on a `go test`/`go vet` line
 step then expands (`go test -tags ${{ matrix.tag }}` over the tree). Platform and toolchain
 constraints are not opt-ins and are out of scope: `//go:build darwin` says where
 a test runs, not whether it runs, and a negation (`!windows`) is on by default
-everywhere else.
+everywhere else. And every opt-in tag is also vetted by a CI vet step — `make
+vet-functional`, `make vet-slow`, `make vet-shippedsmoke`, `make vet-novadisk`
+in ci.yml's lint job, `go vet -tags perf` in certification.yml — so a file
+behind a tag is type-checked on every change and a tag-only build break is red
+at the PR rather than the night after.
 **The mistake it prevents.** A build tag is how this tree takes a test off the
 per-change path, and a plain `go test` over the tree compiles the file away
 silently. So a tag no scheduled job passes to `go test -tags` is not a slower
@@ -1541,8 +1545,9 @@ nightly` or `//go:build soak` from the no-real-network rule (`ci_net.go`,
 real-network test could be written, waved through by the checker, and never
 execute once.
 **The test.** `TestEveryTestBuildTagIsRunBySomeScheduledJob`,
-`TestTheNetworkExemptTagsHaveAHomeInTheSchedule` and
-`TestSomeScheduledJobRunsTheRaceDetector`
+`TestTheNetworkExemptTagsHaveAHomeInTheSchedule`,
+`TestSomeScheduledJobRunsTheRaceDetector` and
+`TestEveryTestBuildTagIsVettedByCIVetSteps`
 (`internal/ci/nightlytags_class_test.go`). The first is the class and names no
 tag: it walks every `_test.go` for the tags that HIDE a file, reads every tag
 the scheduled workflows name, and refuses the difference with the files that
@@ -1550,17 +1555,26 @@ would have gone unrun, so a tag invented tomorrow is covered the day its first
 test file lands. The second holds the net checker's two exempt tags to a leg
 whether or not a file carries one. The third holds `race` — implicit,
 because it comes from the `-race` flag rather than from `-tags` — to a scheduled
-job that actually passes `-race`.
+job that actually passes `-race`. The fourth is the vetting half: it walks the
+Makefile's `vet*` targets and every workflow `go vet` line for the tags each
+passes, and refuses a tag no vet step passes, so a tag that hides a test file is
+type-checked on a pull request.
 **Its allowlist.** None. The walk reads the tree rather than a list, so a tag
 added tomorrow is held on the day its first test file lands.
 **Its remedy line.** ``build tag "<tag>" hides <n> test file(s) and NO scheduled
 job runs it: <files> — remedy: add a `tag: <tag>` leg to nightly-slow.yml's
 matrix (or `go test -tags <tag>` to another scheduled workflow), or drop the tag
-from those files``.
-**Its narrowings.** Only SCHEDULED workflows count, and only what actually
-reaches `go test`: whole-line YAML comments are dropped first, so prose ABOUT a
-tag never stands in for a job that runs it. A tag assembled at run time, or
-passed through a variable the step does not expand inline, is not seen.
+from those files``. And for the vetting half: ``build tag "<tag>" hides <n>
+test file(s) and no CI vet step passes `-tags <tag>`: <files> — remedy: add a
+`vet-<tag>` target to the Makefile and a `make vet-<tag>` step to ci.yml's lint
+job, or drop the tag from those files``.
+**Its narrowings.** Only SCHEDULED workflows count for the run half, and only
+what actually reaches `go test`: whole-line YAML comments are dropped first, so
+prose ABOUT a tag never stands in for a job that runs it. A tag assembled at run
+time, or passed through a variable the step does not expand inline, is not seen.
+For the vetting half, only a `go vet` line's own `-tags` counts: a `go test
+-tags` run compiles but does not vet, and a matrix `${{ matrix.tag }}` names no
+vet step.
 ### `functional` — no untagged test file starts a redis-server
 
 **The rule.** Every `_test.go` that calls a helper which execs redis-server
