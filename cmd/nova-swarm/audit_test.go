@@ -27,6 +27,7 @@ var swarmAudit = audit.Config{
 	Exempt: map[string]string{
 		"main.go|parse|f.verb":     "the verb's own name, a literal at every newFlags call site in this file",
 		"member.go|cmdMember|note": "passNote's one line, a literal with no argument interpolated",
+		"member.go|Write|string(p)": "lockedWriter only orders whole writes from two goroutines (the member's loop and its beat, memberLoop): every byte it carries was already printed through fmt.Fprintf with escaped arguments by its caller, and it adds none of its own",
 		"main.go|want|name":        "a required flag's name, a literal at every call site in this file",
 		"main.go|want|wants":       "the guidance that flag wants, a literal at every call site in this file",
 		"main.go|wantCount|name":   "a required count flag's name, a literal at every call site in this file",
