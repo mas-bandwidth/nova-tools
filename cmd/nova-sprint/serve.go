@@ -85,6 +85,37 @@ func workerVerb(argv []string) (as string, words int, why string) {
 	return as, 1, ""
 }
 
+// notServed are the verbs the server runs for nobody: itself (run, tick), the ones that
+// work for seconds or minutes outside the store (land's git, the driver), and fleet sync,
+// which reads the config store with its caller's own credentials.
+var notServed = []string{"run", "tick", "land", "play", "fleet sync"}
+
+// localVerb is how many words the verb of an argument list from this machine is, or why
+// the server does not run it. The coordinator works on the server's machine, and its
+// verbs come over the loopback listener: any verb of the command but the ones no one is
+// served (notServed), naming no store (the server's is the store). Who acts is the
+// caller's --actor, as when the verb runs by itself.
+func localVerb(argv []string) (name string, words int, why string) {
+	for _, v := range verbs {
+		w := strings.Fields(v.name)
+		if len(argv) >= len(w) && slices.Equal(argv[:len(w)], w) && len(w) > words {
+			name, words = v.name, len(w)
+		}
+	}
+	switch {
+	case words == 0:
+		return "", 0, "not a verb of nova-sprint; run: nova-sprint help"
+	case slices.Contains(notServed, name):
+		return name, 0, name + " is not run by the server; run it by itself"
+	}
+	for _, w := range argv[words:] {
+		if n, _, _ := strings.Cut(strings.TrimLeft(w, "-"), "="); strings.HasPrefix(w, "-") && n == "redis" {
+			return name, 0, "--redis is not given to the server: its store is the sprint's"
+		}
+	}
+	return name, words, ""
+}
+
 // serve is the server's one step: the batch's verbs run in order, each through
 // the verb's own code with its worker as the actor, and each answered. The
 // server's own words (the store, the actor) go between the verb and what the
@@ -93,14 +124,29 @@ func workerVerb(argv []string) (as string, words int, why string) {
 // One batch, and one tick, at a time (a.serial): the lock is taken here, after
 // the request is read whole, and released before any answer is written, so a
 // slow worker never holds the tick.
-func (a *app) serve(req sprintwire.Request) sprintwire.Response {
+func (a *app) serve(req sprintwire.Request) sprintwire.Response { return a.serveFrom(req, false) }
+
+// serveFrom is serve for a batch from this machine (local: the coordinator's, any verb
+// the server runs, localVerb) or from the fleet (a worker's verbs only, workerVerb).
+func (a *app) serveFrom(req sprintwire.Request, local bool) sprintwire.Response {
 	a.serial.Lock()
 	defer a.serial.Unlock()
-	a.serving = true
 	defer func() { a.serving = false }()
 	out := sprintwire.Response{Results: make([]sprintwire.Result, len(req.Verbs))}
 	for i, argv := range req.Verbs {
+		var args []string
 		as, words, why := workerVerb(argv)
+		switch {
+		case why == "":
+			// a worker's write names the epoch its worker holds, whoever sent it (runStep)
+			a.serving = true
+			args = slices.Concat(argv[:words], []string{"--redis", a.serveAddr, "--actor", as}, argv[words:])
+		case local:
+			if _, words, why = localVerb(argv); why == "" {
+				a.serving = false
+				args = slices.Concat(argv[:words], []string{"--redis", a.serveAddr}, argv[words:])
+			}
+		}
 		if why != "" {
 			verb := ""
 			if len(argv) > 0 {
@@ -109,7 +155,6 @@ func (a *app) serve(req sprintwire.Request) sprintwire.Response {
 			out.Results[i] = sprintwire.Result{Code: 2, Stderr: fmt.Sprintf("%s server: %s: %s; nothing was changed\n", prog, oneline.Escape(verb), oneline.Escape(why))}
 			continue
 		}
-		args := slices.Concat(argv[:words], []string{"--redis", a.serveAddr, "--actor", as}, argv[words:])
 		var stdout, stderr bytes.Buffer
 		code := a.run(args, &stdout, &stderr)
 		out.Results[i] = sprintwire.Result{Code: code, Stdout: stdout.String(), Stderr: stderr.String()}
@@ -119,7 +164,14 @@ func (a *app) serve(req sprintwire.Request) sprintwire.Response {
 
 // ServeHTTP is the listener's shell around serve: one endpoint, a batch in the
 // body, its results in the answer.
-func (a *app) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+func (a *app) ServeHTTP(w http.ResponseWriter, r *http.Request) { a.serveHTTP(w, r, false) }
+
+// localHandler is the shell for the loopback listener: the coordinator's verbs.
+type localHandler struct{ a *app }
+
+func (h localHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) { h.a.serveHTTP(w, r, true) }
+
+func (a *app) serveHTTP(w http.ResponseWriter, r *http.Request, local bool) {
 	if r.URL.Path != sprintwire.Path || r.Method != http.MethodPost {
 		http.Error(w, "the sprint server takes POST "+sprintwire.Path, http.StatusNotFound)
 		return
@@ -139,7 +191,7 @@ func (a *app) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	// ignored: a worker that has gone reads no answer; what ran is in the sprint's log
-	_ = json.NewEncoder(w).Encode(a.serve(req))
+	_ = json.NewEncoder(w).Encode(a.serveFrom(req, local))
 }
 
 // listen starts the server on the address for the store the run loop ticks,
@@ -155,17 +207,31 @@ func (a *app) listen(addr, store string, stdout io.Writer) error {
 	if ip := net.ParseIP(host); host == "" || ip != nil && ip.IsUnspecified() {
 		return errors.New("--listen wants one address of this machine (its address on the fleet's private network, or 127.0.0.1): the server checks no credential, so it does not listen on every network")
 	}
-	ln, err := net.Listen("tcp", addr)
-	if err != nil {
-		return fmt.Errorf("--listen %s: %w", addr, err)
+	// the fleet's listener takes the workers' verbs; the loopback one, on the same port,
+	// takes the coordinator's (any verb the server runs). An address that is loopback
+	// itself is the one listener, the coordinator's
+	_, port, _ := net.SplitHostPort(addr)
+	loop := net.JoinHostPort("127.0.0.1", port)
+	lns := map[string]http.Handler{loop: localHandler{a}}
+	if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
+		lns[addr] = a
 	}
 	a.serveAddr = store
-	srv := &http.Server{Handler: a, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: time.Minute, WriteTimeout: 5 * time.Minute}
-	go func() {
-		if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			fmt.Fprintf(stdout, "SERVER STOPPED %s: %s; the workers' verbs are not taken until run is started again\n", addr, oneline.Escape(err.Error()))
+	for at, h := range lns {
+		ln, err := net.Listen("tcp", at)
+		if err != nil {
+			return fmt.Errorf("--listen %s: %w", at, err)
 		}
-	}()
-	fmt.Fprintf(stdout, "SERVER listening on %s: the workers' verbs (take, finish, read, queue, fleet beat) run here, one at a time, beside the store\n", ln.Addr())
+		srv := &http.Server{Handler: h, ReadHeaderTimeout: 10 * time.Second, ReadTimeout: time.Minute, WriteTimeout: 5 * time.Minute}
+		go func() {
+			if err := srv.Serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				fmt.Fprintf(stdout, "SERVER STOPPED %s: %s; its verbs are not taken until run is started again\n", at, oneline.Escape(err.Error()))
+			}
+		}()
+	}
+	if _, fleet := lns[addr]; fleet {
+		fmt.Fprintf(stdout, "SERVER listening on %s: the workers' verbs (take, finish, read, queue, fleet beat) run here, one at a time, beside the store\n", addr)
+	}
+	fmt.Fprintf(stdout, "SERVER listening on %s: the coordinator's verbs, from this machine (NOVA_SPRINT_SERVER=%s)\n", loop, loop)
 	return nil
 }

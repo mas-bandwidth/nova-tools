@@ -223,7 +223,7 @@ func (a *app) cmdRun(args []string, stdout, stderr io.Writer) int {
 	var profile, listen string
 	var profileTicks int
 	st, c, code := a.machineVerb("run", args, stderr, func(fs flagSet) {
-		fs.StringVar(&listen, "listen", "", "also serve the workers' verbs on this address, host:port (this machine's address on the fleet's private network): a worker started with nova-swarm member --server sends its verbs here and never reads or writes the store itself")
+		fs.StringVar(&listen, "listen", "", "also serve the sprint's verbs: the workers' on this address, host:port (this machine's address on the fleet's private network; a worker started with nova-swarm member --server sends its verbs here and never reads or writes the store itself), and the coordinator's on 127.0.0.1 at the same port (set NOVA_SPRINT_SERVER to it and the coordinator's verbs that write the sprint run here too)")
 		fs.StringVar(&profile, "cpuprofile", "", "write a CPU profile of the loop's first ticks to this file (see --profile-ticks)")
 		fs.IntVar(&profileTicks, "profile-ticks", 10, "the ticks --cpuprofile covers; the profile is written after the last of them")
 	})

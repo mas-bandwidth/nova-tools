@@ -27,6 +27,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
+	"github.com/mas-bandwidth/nova-tools/internal/sprintwire"
 	"github.com/redis/go-redis/v9"
 )
 
@@ -99,6 +100,10 @@ type app struct {
 	// cleared under serial): its step names the epoch its worker holds, or is
 	// refused (runStep).
 	serving bool
+	// forward sends verbs to the sprint's server named by NOVA_SPRINT_SERVER (the
+	// coordinator's verbs, forward.go): nil is sprintwire.Client's Do, a test gives the
+	// server's own step.
+	forward func(ctx context.Context, addr string, verbs ...[]string) ([]sprintwire.Result, error)
 }
 
 func newApp(getenv func(string) string) *app {
@@ -293,6 +298,9 @@ func (a *app) run(args []string, stdout, stderr io.Writer) (code int) {
 	if args[0] == "--version" || args[0] == "version" {
 		fmt.Fprintln(stdout, versionLine())
 		return 0
+	}
+	if code, sent := a.forwarded(args, stdout, stderr); sent {
+		return code
 	}
 	for _, v := range verbs {
 		words := strings.Fields(v.name)
