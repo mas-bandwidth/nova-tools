@@ -4,8 +4,6 @@ package ntable_test
 
 import (
 	"context"
-	"reflect"
-	"sort"
 	"strings"
 	"testing"
 
@@ -145,16 +143,13 @@ func TestStandingSortPlacesLaterRows(t *testing.T) {
 	ctx := context.Background()
 	_, c := live(t)
 	orderTable(t, c)
-	if _, err := ntable.Set(ctx, c, "t", ntable.SetOpts{RowSort: &ntable.Sort{By: "label", Keep: true}}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ntable.RowsAdd(ctx, c, "t", []string{"d", "a"}); err != nil {
-		t.Fatal(err)
-	}
+	_, err := ntable.Set(ctx, c, "t", ntable.SetOpts{RowSort: &ntable.Sort{By: "label", Keep: true}})
+	require.NoError(t, err)
+	_, err = ntable.RowsAdd(ctx, c, "t", []string{"d", "a"})
+	require.NoError(t, err)
 	// a label sorts the row, not its key
-	if _, err := ntable.RowAdd(ctx, c, "t", "q", ntable.RowSpec{Label: "B side"}); err != nil {
-		t.Fatal(err)
-	}
+	_, err = ntable.RowAdd(ctx, c, "t", "q", ntable.RowSpec{Label: "B side"})
+	require.NoError(t, err)
 	rows, _ := orderOf(t, c, "t")
 	got := strings.Join(rows, ",")
 	require.Equal(t, "a,q,c,d,k,m,z", got, "standing sort by label: %s", got)
@@ -245,17 +240,7 @@ func TestOrderRefusalsWriteNothing(t *testing.T) {
 			image := storeImage(t, c)
 			_, err := ntable.Set(ctx, c, "t", tc.change)
 			require.ErrorContains(t, err, tc.want, "refusal %v, want it to say %q", err, tc.want)
-			after := storeImage(t, c)
-			if !reflect.DeepEqual(image, after) {
-				var changed []string
-				for k, v := range after {
-					if image[k] != v {
-						changed = append(changed, k)
-					}
-				}
-				sort.Strings(changed)
-				t.Fatalf("the refusal wrote: %v", changed)
-			}
+			require.Equal(t, image, storeImage(t, c), "the refusal wrote")
 		})
 	}
 }

@@ -479,6 +479,11 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 		next := tool + " " + k.Name + " add " + name + " --<field> <value> ..."
 		if k.Singleton {
 			next = tool + " " + k.Name + " show"
+			if errors.Is(err, config.ErrNoRef) {
+				if remedy := singletonRefRemedy(k); remedy != "" {
+					next = remedy
+				}
+			}
 		}
 		return storeErr(stderr, verb, err, next)
 	}
@@ -489,6 +494,27 @@ func runKindWrite(ctx context.Context, k *config.Kind, add bool, args []string, 
 	sort.Strings(fields)
 	fmt.Fprintf(stdout, "CONFIG SET kind=%s name=%s rev=%d changed=%s\n", k.Name, config.Value(name), id, config.Value(strings.Join(fields, ",")))
 	return 0
+}
+
+// singletonRefRemedy uses the descriptor, not the store's human error text.
+// A singleton whose ref fields all point to one kind can safely direct an
+// ErrNoRef refusal to that kind's list, even when an unchanged field failed.
+// A future singleton with mixed ref kinds keeps its existing generic remedy.
+func singletonRefRemedy(k *config.Kind) string {
+	ref := ""
+	for _, f := range k.Fields {
+		if f.Type != config.TypeRef {
+			continue
+		}
+		if ref != "" && ref != f.Ref {
+			return ""
+		}
+		ref = f.Ref
+	}
+	if ref == "" {
+		return ""
+	}
+	return tool + " " + ref + " list"
 }
 
 func runKindRemove(ctx context.Context, k *config.Kind, args []string, stdout, stderr io.Writer, d deps) int {

@@ -40,9 +40,9 @@ func TestNamedFormulasOnAStore(t *testing.T) {
 	got := ntable.Render(tb, ntable.RenderOpts{Title: "fleet"})
 	require.Equal(t, want, got, "read back:\n%s\nwant:\n%s", got, want)
 	for _, key := range []string{ntable.CellKey("fleet", "m1", "done"), ntable.CellKey("fleet", "m1", "okpct")} {
-		if n, err := c.Exists(ctx, key).Result(); err != nil || n != 0 {
-			t.Fatalf("a formula cell has a set %s: %d %v", key, n, err)
-		}
+		n, err := c.Exists(ctx, key).Result()
+		require.NoError(t, err)
+		require.Zero(t, n, "a formula cell has a set %s", key)
 	}
 	_, err = ntable.CellAdd(ctx, c, "fleet", "m1", "done", "e", 1)
 	require.Error(t, err, "a member was added to a sum column")
