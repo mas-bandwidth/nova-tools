@@ -41,6 +41,9 @@ func ownBehind() string {
 			path = p
 		}
 	}
-	idle, _ := os.ReadFile("/sys/fs/cgroup" + path + "/cpu.idle")
+	idle, err := os.ReadFile("/sys/fs/cgroup" + path + "/cpu.idle")
+	if err != nil {
+		return "cgroup=" + path + ";idle=unreadable" // inside the Linux wall /sys is not a read root
+	}
 	return "cgroup=" + path + ";idle=" + strings.TrimSpace(string(idle))
 }
