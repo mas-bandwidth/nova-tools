@@ -8,6 +8,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestChildrenFromEveryGoroutineInheritNice is the measurement that scored
@@ -24,9 +27,7 @@ func TestChildrenFromEveryGoroutineInheritNice(t *testing.T) {
 	} else if n > Nice {
 		t.Skipf("already at nice %d, above %d", n, Nice)
 	}
-	if err := ToCI(); err != nil {
-		t.Fatalf("ToCI: %v", err)
-	}
+	require.NoError(t, ToCI(), "ToCI")
 	const goroutines = 16
 	got := make([]string, goroutines)
 	errs := make([]error, goroutines)
@@ -41,15 +42,11 @@ func TestChildrenFromEveryGoroutineInheritNice(t *testing.T) {
 	}
 	wg.Wait()
 	for i := range got {
-		if errs[i] != nil {
-			t.Fatalf("child %d: nice: %v", i, errs[i])
-		}
+		require.NoError(t, errs[i], "child %d: nice: %v", i, errs[i])
 		n, err := strconv.Atoi(got[i])
 		if err != nil {
 			t.Fatalf("child %d printed %q, not a nice value", i, got[i])
 		}
-		if n != Nice {
-			t.Errorf("child %d runs at nice %d, want %d: a thread of this process was not niced", i, n, Nice)
-		}
+		assert.Equal(t, Nice, n, "child %d runs at nice %d, want %d: a thread of this process was not niced", i, n, Nice)
 	}
 }

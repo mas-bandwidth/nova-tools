@@ -3,6 +3,8 @@ package yield
 import (
 	"runtime"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // TestToCIStepsThisProcessDownToNice: after ToCI the process is at Nice
@@ -15,25 +17,15 @@ func TestToCIStepsThisProcessDownToNice(t *testing.T) {
 		t.Skipf("no setpriority on %s", runtime.GOOS)
 	}
 	before, err := currentNice()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	if before > Nice {
 		t.Skipf("already at nice %d, above %d; an unprivileged process cannot come back up", before, Nice)
 	}
-	if err := ToCI(); err != nil {
-		t.Fatalf("ToCI: %v", err)
-	}
+	require.NoError(t, ToCI(), "ToCI")
 	n, err := currentNice()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if n != Nice {
-		t.Fatalf("nice after ToCI = %d, want %d", n, Nice)
-	}
-	if err := ToCI(); err != nil {
-		t.Fatalf("second ToCI: %v", err)
-	}
+	require.NoError(t, err)
+	require.Equal(t, Nice, n, "nice after ToCI = %d, want %d", n, Nice)
+	require.NoError(t, ToCI(), "second ToCI")
 }
 
 // TestNiceIsFifteen pins the number the issue names: a change here is a
