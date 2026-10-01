@@ -1289,6 +1289,17 @@ nothing more. No later word of a verb, wherever it stands, is a flag named `as`,
 `take`, a `finish` and a `read` name the epoch their worker holds (`--epoch`). A verb the server
 does not run is answered exit 2, saying nothing was changed, and the batch goes on.
 
+The coordinator's verbs go to the server too. The server listens a second time on the
+loopback address at the same port, and there it runs any verb of the command but the ones it
+runs for nobody: itself (`run`, `tick`), `land` and `play`, which work outside the store for
+seconds or minutes, and `fleet sync`, which reads the config store with its caller's own
+credentials. With `NOVA_SPRINT_SERVER=<host:port>` set (the loopback address `run --listen`
+prints), a verb of the coordinator's that writes the sprint is not run where it is typed: its
+arguments are sent to the server, with the caller's actor and each file it names as an absolute
+path, and what the server's run of it printed is printed there, with its exit code. The reads,
+the verbs not served, a verb given its own `--redis`, and a verb's help run where they are
+typed. So one process writes the sprint: the server.
+
 The address is one address of the coordinator's machine on the fleet's private network; an
 address every network can reach is refused. The server checks no credential (the owner: "I am OK
 with relying on tailnet as secure"): what can reach the address can run a worker's verb as any
