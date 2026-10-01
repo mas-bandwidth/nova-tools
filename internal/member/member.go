@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 )
 
 // Sprint runs one sprint verb and returns its exit code and stdout.
@@ -221,6 +222,10 @@ type Config struct {
 	// names, read with its queue every tick (the fleet row is the truth).
 	Width  int
 	Reader bool // run the readers-table loop instead of the fleet's
+	// Meter is the machine's one-second CPU samples, taken by a goroutine of the caller
+	// (hostload.Sampler.Run); nil, or with no sample since the last beat, the beat
+	// measures the machine itself.
+	Meter *hostload.Sampler
 }
 
 // launch is one child and the claim it was started for: the card at the
@@ -249,6 +254,7 @@ type Member struct {
 	epoch   uint64
 	width   int // the width this tick runs to: the override, else the fleet row's
 	drain   bool
+	beaten  uint64 // the Meter's samples the last written beat has carried
 }
 
 // New is a member with nothing running. A reader pushes nothing, and its
@@ -281,9 +287,24 @@ func (m *Member) Running() int {
 // the card is left for the next pass), a store that does not answer is.
 func (m *Member) Tick(now time.Time) (acted int, err error) {
 	if !m.cfg.Reader {
-		// the beat names no load: nova-sprint fleet beat measures the machine's CPU use and
-		// keeps the highest of the last sprint.LoadWindow (docs/SPEC-SPRINT.md, the fleet)
-		if code, out := m.sprint.Run("fleet", "beat", m.cfg.As); code == 2 {
+		// the beat names the highest one-second sample since the last beat written, so the
+		// ten-second highest nova-sprint keeps over its beats (docs/SPEC-SPRINT.md, the
+		// fleet) is the highest of the last ten seconds; with no sample it names none and
+		// nova-sprint fleet beat measures the machine itself
+		args := []string{"fleet", "beat", m.cfg.As}
+		var total uint64
+		if m.cfg.Meter != nil {
+			var pct float64
+			var ok bool
+			if pct, total, ok = m.cfg.Meter.Peak(m.beaten); ok {
+				args = append(args, "--load", strconv.FormatFloat(pct, 'f', 1, 64))
+			}
+		}
+		code, out := m.sprint.Run(args...)
+		if code == 0 && m.cfg.Meter != nil {
+			m.beaten = total
+		}
+		if code == 2 {
 			return 0, fmt.Errorf("beat: the store did not answer: %s", strings.TrimSpace(string(out)))
 		}
 	}

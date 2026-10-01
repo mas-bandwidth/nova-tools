@@ -20,6 +20,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/binstamp"
 	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
+	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 	"github.com/mas-bandwidth/nova-tools/internal/member"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
@@ -153,7 +154,16 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 		gp.gh = *ghBin
 		pu = gp
 	}
-	m := member.New(member.Config{As: *as, Width: *width, Reader: *reader}, sp, rn, pu, stdout)
+	// the machine's CPU, a sample a second, for the beat's load (hostload.Sampler); a
+	// reader beats nothing
+	var meter *hostload.Sampler
+	if !*reader {
+		meter = hostload.NewSampler(hostload.Local())
+		ctx, stop := context.WithCancel(context.Background())
+		defer stop()
+		go meter.Run(ctx)
+	}
+	m := member.New(member.Config{As: *as, Width: *width, Reader: *reader, Meter: meter}, sp, rn, pu, stdout)
 	kind := "member"
 	if *reader {
 		kind = "reader"
