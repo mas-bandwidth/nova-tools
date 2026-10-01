@@ -96,4 +96,3 @@ func Text(r *big.Rat) string {
 	}
 	return s
 }
-
