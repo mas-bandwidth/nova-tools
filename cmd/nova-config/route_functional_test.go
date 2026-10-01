@@ -26,7 +26,7 @@ func TestRouteThroughTheGrammarOnARealStore(t *testing.T) {
 	_, errs := r.run(t, 1, "route", "set", "pro-grok-openrouter", "--deadline", "0")
 	assert.Equal(t, "nova-config route set: route pro-grok-openrouter has --deadline 0; want the seconds a card on it may run, above 0; run: nova-config route show pro-grok-openrouter\n", errs)
 	out, _ = r.run(t, 0, "route", "show", "pro-grok-openrouter")
-	assert.True(t, strings.HasPrefix(out, "ROUTE name=pro-grok-openrouter tier=pro provider=openrouter model=x-ai/grok-4 tokens=300000 deadline=1800 weight=1 enabled=true created="), out)
+	assert.True(t, strings.HasPrefix(out, "ROUTE name=pro-grok-openrouter tier=pro provider=openrouter model=x-ai/grok-4 tokens=300000 deadline=1800 enabled=true created="), out)
 
 	out, _ = r.run(t, 0, "apply", "--kind", "route")
 	require.True(t, strings.HasPrefix(out, "APPLY ADD kind=route name=pro-grok-openrouter\nCONFIG APPLY kind=route add=1 set=0 remove=0 rev=1 ms="), out)

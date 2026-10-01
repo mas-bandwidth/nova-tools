@@ -29,8 +29,8 @@ func TestRouteVerbsEndToEndOnTheFake(t *testing.T) {
 			out:  "CONFIG ADD kind=route name=pro-deepseek-opencode rev=1\n",
 		},
 		{
-			name: "add the same model direct, weighted",
-			args: []string{"route", "add", "pro-deepseek-direct", "--tier", "pro", "--provider", "deepseek", "--model", "deepseek-v4", "--tokens", "400000", "--deadline", "1800", "--weight", "2"},
+			name: "add the same model direct",
+			args: []string{"route", "add", "pro-deepseek-direct", "--tier", "pro", "--provider", "deepseek", "--model", "deepseek-v4", "--tokens", "400000", "--deadline", "1800"},
 			out:  "CONFIG ADD kind=route name=pro-deepseek-direct rev=2\n",
 		},
 		{
@@ -41,15 +41,15 @@ func TestRouteVerbsEndToEndOnTheFake(t *testing.T) {
 		{
 			name: "list prints every field in declaration order",
 			args: []string{"route", "list"},
-			out: "ROUTE name=pro-deepseek-direct tier=pro provider=deepseek model=deepseek-v4 tokens=400000 deadline=1800 weight=2 enabled=true\n" +
-				"ROUTE name=pro-deepseek-opencode tier=pro provider=opencode model=deepseek-v4 tokens=400000 deadline=1800 weight=1 enabled=true\n" +
-				"ROUTE name=pro-grok-openrouter tier=pro provider=openrouter model=x-ai/grok-4 tokens=300000 deadline=1800 weight=1 enabled=true\n" +
+			out: "ROUTE name=pro-deepseek-direct tier=pro provider=deepseek model=deepseek-v4 tokens=400000 deadline=1800 enabled=true\n" +
+				"ROUTE name=pro-deepseek-opencode tier=pro provider=opencode model=deepseek-v4 tokens=400000 deadline=1800 enabled=true\n" +
+				"ROUTE name=pro-grok-openrouter tier=pro provider=openrouter model=x-ai/grok-4 tokens=300000 deadline=1800 enabled=true\n" +
 				"CONFIG LIST kind=route rows=3\n",
 		},
 		{
 			name: "show carries the stamps",
 			args: []string{"route", "show", "pro-grok-openrouter"},
-			out:  "ROUTE name=pro-grok-openrouter tier=pro provider=openrouter model=x-ai/grok-4 tokens=300000 deadline=1800 weight=1 enabled=true created=",
+			out:  "ROUTE name=pro-grok-openrouter tier=pro provider=openrouter model=x-ai/grok-4 tokens=300000 deadline=1800 enabled=true created=",
 			pre:  true,
 		},
 		{
@@ -59,7 +59,7 @@ func TestRouteVerbsEndToEndOnTheFake(t *testing.T) {
 			errs: "route pro-grok-openrouter has --deadline 0; want the seconds a card on it may run, above 0; run: nova-config route show pro-grok-openrouter",
 		},
 		{
-			name: "set takes a route out of the draw",
+			name: "set takes a route out of the deal",
 			args: []string{"route", "set", "pro-grok-openrouter", "--enabled", "false"},
 			out:  "CONFIG SET kind=route name=pro-grok-openrouter rev=4 changed=enabled\n",
 		},
@@ -140,10 +140,42 @@ func TestApplyKindRouteWritesTheViewAndStatusShowsParity(t *testing.T) {
 	require.Equal(t, 0, code)
 	assert.Equal(t, "APPLY ADD kind=route name=r1\nCONFIG APPLY kind=route add=1 set=0 remove=0 rev=1 ms=0\n", out)
 	assert.Equal(t, []string{"write route r1"}, h.redis.log)
-	assert.Equal(t, "1", h.redis.views["route"]["r1"]["weight"])
+	assert.Equal(t, "true", h.redis.views["route"]["r1"]["enabled"])
 
 	code, out, errs = h.run(t, "status")
 	assert.Equal(t, 0, code, errs)
 	assert.Contains(t, out, " route=1 route_rev=1 ")
-	assert.True(t, strings.HasSuffix(out, " route_applied=1\n"), out)
+	assert.True(t, strings.HasSuffix(out, " route_applied=1 tier_applied=0\n"), out)
+}
+
+// The tier kind through the one grammar: migrate made the flash and pro rows, so
+// set writes a tier's route array on a new store, in order and with a name
+// repeated; a route that is no row or is disabled is refused; list prints both
+// tiers; apply writes tier:<name> (docs/SPEC-CONFIG.md, "tier").
+func TestTierVerbsEndToEndOnTheFake(t *testing.T) {
+	t.Parallel()
+
+	h := loopHarness(t)
+	for _, args := range [][]string{
+		{"route", "add", "a", "--tier", "flash", "--provider", "p", "--model", "m", "--deadline", "60"},
+		{"route", "add", "b", "--tier", "flash", "--provider", "p", "--model", "m", "--deadline", "60"},
+		{"route", "add", "off", "--tier", "flash", "--provider", "p", "--model", "m", "--deadline", "60", "--enabled", "false"},
+	} {
+		code, _, errs := h.run(t, args...)
+		require.Equal(t, 0, code, errs)
+	}
+	code, out, errs := h.run(t, "tier", "set", "flash", "--routes", "a,b,b")
+	require.Equal(t, 0, code, errs)
+	assert.Equal(t, "CONFIG SET kind=tier name=flash rev=4 changed=routes\n", out)
+	for routes, refusal := range map[string]string{"a,nope": "--routes nope names no route row", "off": "--routes off names a disabled route"} {
+		code, _, errs = h.run(t, "tier", "set", "flash", "--routes", routes)
+		assert.Equal(t, 1, code, routes)
+		assert.Contains(t, errs, refusal)
+	}
+	code, out, _ = h.run(t, "tier", "list")
+	require.Equal(t, 0, code)
+	assert.Equal(t, "TIER name=flash routes=a,b,b\nTIER name=pro routes=-\nCONFIG LIST kind=tier rows=2\n", out)
+	code, _, errs = h.run(t, "apply", "--kind", "tier")
+	require.Equal(t, 0, code, errs)
+	assert.Equal(t, "a,b,b", h.redis.views["tier"]["flash"]["routes"])
 }

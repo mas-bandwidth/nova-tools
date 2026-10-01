@@ -7,6 +7,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
 // A pinned card's life on the twin, read back: add refuses model lines the deal
@@ -60,4 +62,35 @@ func TestAPinnedCardOnTheTwinIsReadBackByCardAndRoutes(t *testing.T) {
 	assert.Contains(t, js, `"pinned":true`)
 	_, q, _ := run("nova-sprint queue --as m1 --json")
 	assert.Contains(t, q, `"width":2`)
+}
+
+// routes prints each tier's array in the order the deal takes it and its index (the
+// fleet table's route_index_<tier>), a tier with no array as its routes in name
+// order, and no weight on a route's line (internal/sprint/route.go).
+func TestRoutesPrintsEachTiersArrayAndIndex(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1,m2")
+	r := func(name, tier string) sprint.Route {
+		return sprint.Route{Name: name, Tier: tier, Provider: "p", Model: name, Enabled: true}
+	}
+	ta.m.SetRoutes([]sprint.Route{r("a", "flash"), r("b", "flash"), r("c", "flash"), r("p", "pro")})
+	ta.m.SetTiers(map[string][]string{"flash": {"a", "b", "c", "c"}})
+	ta.ok("add --stream s1 --count 3")
+	ta.deal(3)
+	out := ta.ok("routes")
+	assert.Contains(t, out, "TIER flash routes=a,b,c,c index=3\n")
+	assert.Contains(t, out, "TIER pro routes=p index=0\n")
+	assert.Contains(t, out, "ROUTE c model=p/c tier=flash enabled=true attempts=1 ")
+	var js struct {
+		Arrays []struct {
+			Tier   string   `json:"tier"`
+			Routes []string `json:"routes"`
+			Index  string   `json:"index"`
+		} `json:"arrays"`
+	}
+	ta.json("routes", &js)
+	require.Len(t, js.Arrays, 2)
+	assert.Equal(t, []string{"a", "b", "c", "c"}, js.Arrays[0].Routes)
+	assert.Equal(t, "3", js.Arrays[0].Index)
 }

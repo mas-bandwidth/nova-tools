@@ -32,7 +32,9 @@ import (
 // path, rev and at, and its name in the set `loops`: nova-config's own keys,
 // which the plays read to render one unit per row. A route's row is the hash
 // route:<name> with every field, rev and at, and its name in the set
-// `routes`, which the deal reads (hashKinds).
+// `routes`, which the deal reads (hashKinds); a tier's row is the hash
+// tier:<name> and its name in the set `tiers`, read by the deal beside the
+// routes.
 //
 // config:decl is the stamp: rev:<kind> is the Postgres revision last applied
 // and at:<kind> the server time it was written (the shape of friends:decl in
@@ -44,6 +46,7 @@ const (
 	CapLogKey   = "cap:log"
 	LoopsKey    = "loops"
 	RoutesKey   = "routes"
+	TiersKey    = "tiers"
 )
 
 // LoopKey is a loop's hash: its fields, log, rev and at.
@@ -52,6 +55,10 @@ func LoopKey(name string) string { return "loop:" + name }
 // RouteKey is a route's hash: its fields, name, rev and at. The deal reads
 // every route of the set RoutesKey (internal/sprint/store, the routes read).
 func RouteKey(name string) string { return "route:" + name }
+
+// TierKey is a tier's hash: its route array (routes), name, rev and at. The deal
+// reads its routes field with the routes (internal/sprint/store, the routes read).
+func TierKey(name string) string { return "tier:" + name }
 
 // FleetKey is the plain key one fleet field is written to: fleet:store,
 // fleet:coordinator.
@@ -118,7 +125,7 @@ func (a *RedisApplier) Read(ctx context.Context, kind string) (map[string]View, 
 		return a.readSingleton(ctx, KindFleet, FleetKey)
 	case KindSprint:
 		return a.readSingleton(ctx, KindSprint, SprintKey)
-	case KindLoop, KindRoute:
+	case KindLoop, KindRoute, KindTier:
 		return a.readHashes(ctx, hashKinds[kind])
 	}
 	return nil, 0, fmt.Errorf("apply: no Redis reader for kind %q", kind)
@@ -134,7 +141,7 @@ func (a *RedisApplier) Write(ctx context.Context, kind string, row Row, prev Vie
 		return a.writeSingleton(ctx, KindFleet, FleetKey, row)
 	case KindSprint:
 		return a.writeSingleton(ctx, KindSprint, SprintKey, row)
-	case KindLoop, KindRoute:
+	case KindLoop, KindRoute, KindTier:
 		return a.writeHash(ctx, hashKinds[kind], row, idem)
 	}
 	return fmt.Errorf("apply: no Redis writer for kind %q", kind)
@@ -148,7 +155,7 @@ func (a *RedisApplier) Remove(ctx context.Context, kind, name, actor, idem strin
 		return a.removeMachine(ctx, name, actor, idem)
 	case KindFleet, KindSprint:
 		return fmt.Errorf("apply: the %s row is never removed", kind)
-	case KindLoop, KindRoute:
+	case KindLoop, KindRoute, KindTier:
 		return a.removeHash(ctx, hashKinds[kind], name, actor, idem)
 	}
 	return fmt.Errorf("apply: no Redis remover for kind %q", kind)
@@ -654,6 +661,7 @@ type hashKind struct {
 var hashKinds = map[string]hashKind{
 	KindLoop:  {kind: KindLoop, set: LoopsKey, key: LoopKey, extra: func(n string) []any { return []any{"log", LoopLog(n)} }},
 	KindRoute: {kind: KindRoute, set: RoutesKey, key: RouteKey},
+	KindTier:  {kind: KindTier, set: TiersKey, key: TierKey},
 }
 
 // readHashes reads the set and the stamp in one round trip, then every

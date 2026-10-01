@@ -379,8 +379,9 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		}
 	}()
 	var routes []sprint.Route
+	var tiers map[string][]string
 	if step.Routes {
-		if routes, err = st.cached(ctx, step.RouteCache); err != nil {
+		if routes, tiers, err = st.cached(ctx, step.RouteCache); err != nil {
 			return res, err
 		}
 	}
@@ -474,7 +475,7 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			}
 		}
 		if step.Routes {
-			snap.Routes = routes
+			snap.Routes, snap.Tiers = routes, tiers
 		}
 		if step.Readers && step.ReaderStates != nil {
 			snap.ReaderStates = step.ReaderStates

@@ -249,3 +249,7 @@ MCCardContractBrokenProviderFailed.cfg	MCCardContract.tla	invariant	ProviderIsNo
 MCCardContractBrokenSameRoute.cfg	MCCardContract.tla	invariant	RedealAvoidsFailedRoute	ignore-terminal	cardcontract	required	-
 MCCardContractBrokenUnbounded.cfg	MCCardContract.tla	invariant	RedealBound	ignore-terminal	cardcontract	required	-
 MCCardContractBrokenPreviousOnly.cfg	MCCardContract.tla	invariant	NoPushedWorkUnreachable	ignore-terminal	cardcontract	required	-
+MCRouteIndex.cfg	MCRouteIndex.tla	pass	-	ignore-terminal	routeindex	required	-
+MCRouteIndexBrokenRandom.cfg	MCRouteIndex.tla	invariant	RouteFair	ignore-terminal	routeindex	required	-
+MCRouteIndexBrokenNoAdvance.cfg	MCRouteIndex.tla	invariant	ExcludedNeverDrawn	ignore-terminal	routeindex	required	-
+MCRouteIndexReachSkip.cfg	MCRouteIndex.tla	invariant	ReachSkip	ignore-terminal	routeindex	required	-

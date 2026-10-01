@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -368,7 +369,7 @@ func (a *app) where(ctx context.Context, st *store.Store, stale time.Duration) (
 		v.Pending = f.Pending.ID
 	}
 	v.Machine = st.MachineLine(ctx)
-	if rs, err := st.Routes(ctx); err == nil {
+	if rs, _, err := st.Routes(ctx); err == nil {
 		v.Routes = sprint.TierRoutes(rs)
 	}
 	var b strings.Builder
@@ -928,10 +929,11 @@ func (a *app) cmdCheck(args []string, stdout, stderr io.Writer) int {
 	return code
 }
 
-// cmdRoutes is each route of the store with what its attempts did: the work
-// cards dealt on it, finished ok, failed, failed by the provider, and the mean
-// wall from take to finish, so a bad route shows (docs/SPEC-SPRINT.md, the
-// deal's route).
+// cmdRoutes is each tier's route array in the order the deal takes it and its
+// index (the fleet table's route_index_<tier>), then each route of the store with
+// what its attempts did: the work cards dealt on it, finished ok, failed, failed
+// by the provider, and the mean wall from take to finish, so a bad route shows
+// (docs/SPEC-SPRINT.md, the deal's route).
 func (a *app) cmdRoutes(args []string, stdout, stderr io.Writer) int {
 	fs, c := a.verbSetup("routes")
 	if pos, err := parse(fs, args); err != nil || len(pos) > 0 {
@@ -942,7 +944,7 @@ func (a *app) cmdRoutes(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "routes", err.Error())
 	}
 	ctx := context.Background()
-	rs, err := st.Routes(ctx)
+	rs, tiers, err := st.Routes(ctx)
 	if err != nil {
 		return a.readFailed("routes", err, stderr)
 	}
@@ -950,14 +952,30 @@ func (a *app) cmdRoutes(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return a.readFailed("routes", err, stderr)
 	}
+	s.Routes, s.Tiers = rs, tiers
+	type tierArray struct {
+		Tier   string   `json:"tier"`
+		Routes []string `json:"routes"`
+		Index  string   `json:"index"`
+	}
+	var arrays []tierArray
+	if len(rs) > 0 {
+		for _, t := range []string{cardhdr.RouteFlash, cardhdr.RoutePro} {
+			at, _ := s.Fleet.Prop(sprint.PropRouteIndex(t))
+			arrays = append(arrays, tierArray{Tier: t, Routes: s.TierArray(t), Index: orDashStr(at, "0")})
+		}
+	}
 	stats := sprint.RouteStats(rs, s.Fleet)
 	if c.json {
-		b, _ := json.Marshal(map[string]any{"tiers": sprint.TierRoutes(rs), "routes": stats})
+		b, _ := json.Marshal(map[string]any{"tiers": sprint.TierRoutes(rs), "arrays": arrays, "routes": stats})
 		fmt.Fprintln(stdout, string(b))
 		return 0
 	}
 	if t := sprint.TierRoutes(rs); t != "" {
 		fmt.Fprintln(stdout, "TIERS "+t)
+	}
+	for _, x := range arrays {
+		fmt.Fprintf(stdout, "TIER %s routes=%s index=%s\n", x.Tier, oneline.Field(orDashStr(strings.Join(x.Routes, ","), "-")), oneline.Field(x.Index))
 	}
 	for _, x := range stats {
 		r := x.Route
@@ -965,7 +983,7 @@ func (a *app) cmdRoutes(args []string, stdout, stderr io.Writer) int {
 		if r.Provider != "" {
 			model = r.Provider + "/" + r.Model
 		}
-		how := fmt.Sprintf("tier=%s weight=%d enabled=%t", oneline.Field(orDashStr(r.Tier, "-")), r.Weight, r.Enabled)
+		how := fmt.Sprintf("tier=%s enabled=%t", oneline.Field(orDashStr(r.Tier, "-")), r.Enabled)
 		if x.Pinned {
 			how = "pinned"
 		} else if r.Tier == "" {

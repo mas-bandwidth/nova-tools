@@ -621,7 +621,7 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 	up := s.UpMembers()
 	// the room of each member is its width (width.go, errata 3 amendment 9)
 	q, room := memberLoads(s, up), memberWidths(s, up)
-	rr := dealRound(s)
+	rr, ri := dealRound(s), routeIndexesOf(s)
 	moves := roundMoves{}
 	orphans := map[string]bool{}
 	for _, c := range chosen {
@@ -674,7 +674,7 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		if len(up) > 0 {
 			var why string
 			m := rr.next(up, q, room, reworkAvoid(s, c), true)
-			u, why = deal(s, c, fix, m, q, set, given, "readers")
+			u, why = deal(s, c, fix, m, q, ri, set, given, "readers")
 			if why != "" {
 				p.refuse(c.ID, why)
 				stays()
@@ -701,6 +701,7 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 	answered(&p, s, r.Answers, r.Who)
 	p = Lawful(p)
 	roundWrites(&p, rr, moves)
+	ri.write(&p) // a rework's attempt is a card dealt: its tier's route index moves (route.go)
 	return p
 }
 

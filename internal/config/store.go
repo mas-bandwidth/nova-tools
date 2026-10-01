@@ -107,6 +107,31 @@ func checkRefs(ctx context.Context, st Store, k *Kind, row Row) error {
 			return &RefusedError{Err: ErrNoRef, Detail: fmt.Sprintf("--%s %s names no %s row", f.Name, row.Fields[f.Name], f.Ref)}
 		}
 	}
+	if k.Name == KindTier {
+		return checkTierRoutes(ctx, st, row)
+	}
+	return nil
+}
+
+// checkTierRoutes refuses a tier's array that names a route that is not a row,
+// is disabled, or serves another tier: the deal would only skip it.
+func checkTierRoutes(ctx context.Context, st Store, row Row) error {
+	for _, name := range strings.Split(row.Fields["routes"], ",") {
+		if name == "" {
+			continue
+		}
+		r, found, err := st.Get(ctx, KindRoute, name)
+		switch {
+		case err != nil:
+			return err
+		case !found:
+			return &RefusedError{Err: ErrNoRef, Detail: fmt.Sprintf("--routes %s names no route row", name)}
+		case r.Fields["enabled"] != "true":
+			return &RefusedError{Err: ErrInvalid, Detail: fmt.Sprintf("--routes %s names a disabled route; enable it first (route set %s --enabled true)", name, name)}
+		case r.Fields["tier"] != row.Name:
+			return &RefusedError{Err: ErrInvalid, Detail: fmt.Sprintf("--routes %s names a route of tier %s, not %s", name, r.Fields["tier"], row.Name)}
+		}
+	}
 	return nil
 }
 
@@ -153,14 +178,20 @@ type Mem struct {
 func NewMem() *Mem {
 	m := &Mem{rows: map[string]map[string]Row{}, Now: func() time.Time { return time.Unix(1700000000, 0).UTC() }}
 	for _, k := range Kinds {
-		if !k.Singleton {
-			continue
+		names := k.Seed
+		if k.Singleton {
+			names = []string{k.Name}
 		}
-		row := Row{Name: k.Name, Fields: map[string]string{}, CreatedAt: m.stamp(), UpdatedAt: m.stamp()}
-		for _, f := range k.Fields {
-			row.Fields[f.Name] = ""
+		for _, name := range names {
+			row := Row{Name: name, Fields: map[string]string{}, CreatedAt: m.stamp(), UpdatedAt: m.stamp()}
+			for _, f := range k.Fields {
+				row.Fields[f.Name] = f.Default
+			}
+			if m.rows[k.Name] == nil {
+				m.rows[k.Name] = map[string]Row{}
+			}
+			m.rows[k.Name][name] = row
 		}
-		m.rows[k.Name] = map[string]Row{k.Name: row}
 	}
 	return m
 }

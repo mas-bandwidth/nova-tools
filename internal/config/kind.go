@@ -52,6 +52,10 @@ const (
 	// TypeArgv is a command as a JSON array of strings, the program first,
 	// stored as text in its compact JSON spelling.
 	TypeArgv Type = "argv"
+	// TypeSeq is a comma list of row names of another kind (Field.Ref) in the
+	// order given, a name kept as often as it is given, stored as text ("" is
+	// the empty list): a tier's route array.
+	TypeSeq Type = "seq"
 )
 
 // Field is one column of a kind: the flag `--<Name>` on add and set, the
@@ -65,7 +69,7 @@ type Field struct {
 	Required bool
 	// Enum is the word list of a TypeEnum or TypeList field.
 	Enum []string
-	// Ref is the kind a TypeRef field names.
+	// Ref is the kind a TypeRef or TypeSeq field names.
 	Ref string
 	// Help is the flag's help line, one sentence.
 	Help string
@@ -92,6 +96,9 @@ type Kind struct {
 	// remove or list and its set, show and history take no name
 	// (docs/SPEC-CONFIG.md, "Singleton kinds").
 	Singleton bool
+	// Seed are the rows the kind's migration creates, every field at its
+	// default (the tiers), so set takes them on a new store. nil is none.
+	Seed []string
 	// Derive, when set, is run by Apply on the kind's rows before they are
 	// planned: a value another kind's row decides (the sprint's coordinator
 	// as a friend's Redis role) is added here, so Redis holds it and the
@@ -139,6 +146,7 @@ const (
 	KindSprint  = "sprint"
 	KindLoop    = "loop"
 	KindRoute   = "route"
+	KindTier    = "tier"
 )
 
 // FriendRoles are the roles someone decides for a friend. The coordinator
@@ -162,8 +170,8 @@ const CoordinatorRole = "coordinator"
 // Kinds is the registry, in apply order: machines first, the fleet row next
 // (it names machines, and a friend's desired slots are charged to the
 // fleet's coordinator machine when her beat names none), friends, the
-// sprint row (it names a friend), loops (each names a machine), and routes
-// last (each names no row).
+// sprint row (it names a friend), loops (each names a machine), routes
+// (each names no row), and tiers last (each names routes).
 //
 // A machine's record is exactly the declared facts something reads, one
 // reader each, and nothing invented (Glenn 2026-09-27: "I only want the
@@ -251,23 +259,45 @@ var Kinds = []*Kind{
 	},
 	{
 		// A route is one way to run a model tier: the provider and model a
-		// card of that tier runs on, its budget and deadline, and its
-		// weight in the tier's draw. The deal draws one enabled route of a
-		// card's tier per deal, weighted (docs/SPEC-CONFIG.md, "route").
+		// card of that tier runs on, its budget and deadline. The deal takes
+		// the routes of a card's tier in the order of the tier's array (the
+		// tier kind; docs/SPEC-CONFIG.md, "route").
 		Name:  KindRoute,
 		Table: "routes",
-		Doc:   "a route of a model tier: the provider and model a card of that tier runs on, its token budget and deadline, and its weight in the tier's draw; frontier cards are never drawn from routes, they escalate to the coordinator",
+		Doc:   "a route of a model tier: the provider and model a card of that tier runs on, its token budget and deadline; the tier's array orders its routes; frontier cards are never dealt from routes, they escalate to the coordinator",
 		Fields: []Field{
 			{Name: "tier", Type: TypeEnum, Enum: RouteTiers, Required: true, Help: "the tier it serves: one of " + strings.Join(RouteTiers, ", ") + " (frontier cards are never drawn from routes, they escalate to the coordinator)"},
 			{Name: "provider", Type: TypeText, Required: true, Help: "the provider word of the model id <provider>/<model> the harness is launched with: one word, no slash"},
 			{Name: "model", Type: TypeText, Required: true, Help: "the model name after the provider, which may hold slashes (x-ai/grok-4); no blank"},
 			{Name: "tokens", Type: TypeInt, Help: "the token budget per card; 0 (the default) is unmetered and the deadline is the only stop"},
 			{Name: "deadline", Type: TypeInt, Required: true, Help: "the seconds a card on this route may run, above 0"},
-			{Name: "weight", Type: TypeInt, Default: "1", Help: "its weight in the tier's draw; 1 (the default), and 0 takes it out of the draw as --enabled false does"},
-			{Name: "enabled", Type: TypeBool, Default: "true", Help: "false takes it out of the draw; true (the default) keeps it in"},
+			{Name: "enabled", Type: TypeBool, Default: "true", Help: "false takes it out of the deal; true (the default) keeps it in"},
 		},
 		Check: checkRoute,
 	},
+	{
+		// A tier's route array: the deal takes routes[index mod len] for each
+		// card of the tier, the index a uint64 counter on the fleet table
+		// (the owner, 2026-10-01: "the per-tier provider/model array should
+		// be specified in nova-config"; internal/sprint/route.go,
+		// tla/RouteIndex.tla).
+		Name:  KindTier,
+		Table: "tiers",
+		Doc:   "a model tier's route array: the deal takes routes[index mod len] for each card of the tier, a route named twice taking two turns; one row each for " + strings.Join(RouteTiers, " and ") + ", created by migrate",
+		Fields: []Field{
+			{Name: "routes", Type: TypeSeq, Ref: KindRoute, Help: "the ordered comma list of the tier's routes, a name repeated for more turns; each an enabled route of the tier; empty takes the tier's enabled routes in name order"},
+		},
+		Seed:  RouteTiers,
+		Check: checkTier,
+	},
+}
+
+// checkTier is the tier kind's Check: the row is one of RouteTiers.
+func checkTier(r Row) error {
+	if !hasWord(strings.Join(RouteTiers, ","), r.Name) {
+		return fmt.Errorf("tier %s: want one of %s", r.Name, strings.Join(RouteTiers, ", "))
+	}
+	return nil
 }
 
 // checkRoute is the route kind's Check: the provider is one word with no
@@ -492,6 +522,16 @@ func (f Field) Canonical(raw string) (string, error) {
 		return strings.Join(words, ","), nil
 	case TypeArgv:
 		return canonicalArgv(f.Name, raw)
+	case TypeSeq:
+		var words []string
+		for _, w := range strings.Split(raw, ",") {
+			if w = strings.TrimSpace(w); w == "" && raw != "" || w != "" && !NamePattern.MatchString(w) {
+				return "", fmt.Errorf("--%s %q: want a comma list of %s names in order", f.Name, raw, f.Ref)
+			} else if w != "" {
+				words = append(words, w)
+			}
+		}
+		return strings.Join(words, ","), nil
 	case TypeRef:
 		if raw == "" {
 			if f.Required {
