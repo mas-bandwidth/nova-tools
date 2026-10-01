@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // Every fixture is BUILT here, at test time, and is a valid credential for nothing: the
@@ -18,23 +20,15 @@ func TestTheShapesLoad(t *testing.T) {
 	t.Parallel()
 
 	list, err := Shapes()
-	if err != nil {
-		t.Fatalf("keyshapes.txt: %v", err)
-	}
-	if len(list) < 10 {
-		t.Fatalf("only %d shapes loaded", len(list))
-	}
+	require.NoError(t, err, "keyshapes.txt")
+	require.GreaterOrEqual(t, len(list), 10, "only %d shapes loaded", len(list))
 	seen := map[string]bool{}
 	for _, s := range list {
-		if seen[s.Name] {
-			t.Fatalf("two rows named %s", s.Name)
-		}
+		require.False(t, seen[s.Name], "two rows named %s", s.Name)
 		seen[s.Name] = true
 	}
 	for _, want := range []string{"forge-token", "age-secret-key", "openai-api-key", "xai-api-key", "google-api-key", "pem-private-key"} {
-		if !seen[want] {
-			t.Fatalf("the shape %s is not on the list", want)
-		}
+		require.True(t, seen[want], "the shape %s is not on the list", want)
 	}
 }
 
@@ -53,18 +47,14 @@ func TestEachShapeCatchesItsOwnForm(t *testing.T) {
 	}
 	for _, c := range cases {
 		found, err := ScanText("RESULT.md", "out: "+c.text+"\n", nil)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		hit := false
 		for _, f := range found {
 			if f.Shape == c.shape {
 				hit = true
 			}
 		}
-		if !hit {
-			t.Fatalf("%s was not caught in %d findings", c.shape, len(found))
-		}
+		require.True(t, hit, "%s was not caught in %d findings", c.shape, len(found))
 	}
 }
 
@@ -75,19 +65,11 @@ func TestTheScanNeverPrintsWhatItMatched(t *testing.T) {
 
 	secret := fixture("ghp_", 30)
 	found, err := ScanText("RESULT.md", "out: "+secret+"\n", nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(found) == 0 {
-		t.Fatal("nothing was caught, so this test proves nothing")
-	}
+	require.NoError(t, err)
+	require.NotEmpty(t, found, "nothing was caught, so this test proves nothing")
 	for _, f := range found {
-		if strings.Contains(f.String(), secret) {
-			t.Fatalf("the finding quotes the key: %s", f.String())
-		}
-		if strings.Contains(f.String(), secret[:12]) {
-			t.Fatalf("the finding quotes a prefix of the key: %s", f.String())
-		}
+		require.NotContains(t, f.String(), secret, "the finding quotes the key: %s", f.String())
+		require.NotContains(t, f.String(), secret[:12], "the finding quotes a prefix of the key: %s", f.String())
 	}
 }
 
@@ -100,19 +82,13 @@ func TestASecretNamedVariablesValueIsCaughtByLengthAndName(t *testing.T) {
 	value := "zzq" + strings.Repeat("7", 29) // no published prefix; 32 characters
 	env := []string{"SEAT_PROVIDER_KEY=" + value, "PATH=/usr/bin", "HOME=/home/x"}
 	found, err := ScanText("RESULT.md", "line one\nout: "+value+"\nline three\n", env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(found) != 1 {
-		t.Fatalf("want one finding, got %d: %v", len(found), found)
-	}
+	require.NoError(t, err)
+	require.Len(t, found, 1, "want one finding, got %d: %v", len(found), found)
 	f := found[0]
 	if f.Shape != "env-value" || f.Name != "SEAT_PROVIDER_KEY" || f.Line != 2 || f.Len != len(value) {
 		t.Fatalf("finding = %+v", f)
 	}
-	if strings.Contains(f.String(), value) {
-		t.Fatalf("the finding quotes the value: %s", f.String())
-	}
+	require.NotContains(t, f.String(), value, "the finding quotes the value: %s", f.String())
 }
 
 // TestPlainProseIsNoFinding: a shape that matched prose would be switched off within a
@@ -131,12 +107,8 @@ usd=0.0013 tokens_in=6176 sha=d5666ab9 eyJ
 `
 	env := []string{"SHORT_KEY=abc", "EMPTY_TOKEN="}
 	found, err := ScanText("RESULT.md", prose, env)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(found) != 0 {
-		t.Fatalf("prose was called a secret: %v", found)
-	}
+	require.NoError(t, err)
+	require.Empty(t, found, "prose was called a secret: %v", found)
 }
 
 func TestScanFileIsQuietAboutAMissingFileAndLoudAboutAnUnreadableOne(t *testing.T) {
@@ -144,33 +116,23 @@ func TestScanFileIsQuietAboutAMissingFileAndLoudAboutAnUnreadableOne(t *testing.
 
 	dir := t.TempDir()
 	found, err := ScanFile(filepath.Join(dir, "nothing.md"), nil)
-	if err != nil || len(found) != 0 {
-		t.Fatalf("a missing file: %v %v", found, err)
-	}
-	if err := os.Mkdir(filepath.Join(dir, "adir"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ScanFile(filepath.Join(dir, "adir"), nil); err == nil {
-		t.Fatal("a directory read as a clean file; a check that could not run must not read as a check that passed")
-	}
+	require.NoError(t, err, "a missing file: %v %v", found, err)
+	require.Empty(t, found, "a missing file: %v %v", found, err)
+	require.NoError(t, os.Mkdir(filepath.Join(dir, "adir"), 0o755))
+	_, err = ScanFile(filepath.Join(dir, "adir"), nil)
+	require.Error(t, err, "a directory read as a clean file; a check that could not run must not read as a check that passed")
 }
 
 func TestSecretNameIsTheArgvLogsPredicate(t *testing.T) {
 	t.Parallel()
 
 	for _, name := range []string{"DEEPSEEK_API_KEY", "GH_TOKEN", "SOPS_AGE_SECRET", "lower_case_key", "MiXeD_ToKeN"} {
-		if !SecretName(name) {
-			t.Fatalf("%s is not recognised as a secret name", name)
-		}
+		require.True(t, SecretName(name), "%s is not recognised as a secret name", name)
 	}
 	// The predicate is deliberately blunt -- it is a substring test, so MONKEY carries
 	// KEY -- and blunt in the safe direction: it over-scrubs and never under-scrubs.
 	for _, name := range []string{"PATH", "HOME", "LANG", "TERM", "NOVA_SWARM_JOB", "XDG_DATA_HOME"} {
-		if SecretName(name) {
-			t.Fatalf("%s was called a secret name", name)
-		}
+		require.False(t, SecretName(name), "%s was called a secret name", name)
 	}
-	if !SecretName("MONKEY") {
-		t.Fatal("the predicate stopped being a substring test; cmd/nova-swarm's argv log and shell shim assume it is one")
-	}
+	require.True(t, SecretName("MONKEY"), "the predicate stopped being a substring test; cmd/nova-swarm's argv log and shell shim assume it is one")
 }
