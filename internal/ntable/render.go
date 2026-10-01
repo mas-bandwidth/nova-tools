@@ -2,6 +2,7 @@ package ntable
 
 import (
 	"fmt"
+	"math/big"
 	"strconv"
 	"strings"
 	"unicode"
@@ -428,6 +429,9 @@ func foldText(cols []Column, c Column, rows []Row, j int) string {
 		}
 		return strings.TrimSuffix(strconv.FormatFloat(sum/float64(n), 'f', 1, 64), ".0")
 	case Sum, Max:
+		if m, ok := moneyFold(c, rows); ok {
+			return m
+		}
 		var v int64
 		for _, r := range rows {
 			n, ok := countValue(cols, r, j)
@@ -529,4 +533,53 @@ func RenderTables(title string, tables []Table, opts RenderOpts) string {
 		parts = append(parts, Render(t, o))
 	}
 	return strings.Join(parts, "\n")
+}
+
+// moneyFold is the footer of a text column of money amounts (a cost: "$1.2345"), or
+// ok false for a column that holds none. A cell is an amount, "$" and a decimal, or
+// "-" or blank for none; a column whose cells are only those, one at least an amount
+// or "-", folds them exactly (math/big, never a float) to "$" and four places, "-"
+// when no cell is an amount, and "?" when an amount is not a decimal. Any other text
+// in the column leaves it to the whole-number fold.
+func moneyFold(c Column, rows []Row) (string, bool) {
+	if c.Projection != Text {
+		return "", false
+	}
+	var amounts []string
+	marked := false
+	for _, r := range rows {
+		v := r.Texts[c.Name]
+		switch {
+		case v == "":
+		case v == "-":
+			marked = true
+		case strings.HasPrefix(v, "$"):
+			marked = true
+			amounts = append(amounts, v[1:])
+		default:
+			return "", false
+		}
+	}
+	if !marked {
+		return "", false
+	}
+	if len(amounts) == 0 {
+		return "-", true
+	}
+	var acc *big.Rat
+	for _, a := range amounts {
+		x, ok := new(big.Rat).SetString(a)
+		if !ok || strings.ContainsAny(a, "eE/") {
+			return "?", true
+		}
+		switch {
+		case acc == nil:
+			acc = x
+		case c.Fold == Sum:
+			acc.Add(acc, x)
+		case x.Cmp(acc) > 0:
+			acc = x
+		}
+	}
+	return "$" + acc.FloatString(4), true
 }
