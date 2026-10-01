@@ -1,0 +1,6 @@
+# Migrated counted package ledger; original row keys preserved.
+# ceiling: 4
+internal/ntable/ntable.go:glenn 6
+internal/ntable/render.go:glenn 6
+internal/ntable/render.go:space 2
+internal/ntable/render.go:stella 2

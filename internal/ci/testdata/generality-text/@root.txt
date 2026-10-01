@@ -1,0 +1,19 @@
+# Migrated counted package ledger; original row keys preserved.
+# ceiling: 17
+CHANGELOG.md:batman 4
+CHANGELOG.md:emma 8
+CHANGELOG.md:glenn 11
+CHANGELOG.md:hetzner 5
+CHANGELOG.md:hulk 73
+CHANGELOG.md:johnny 8
+CHANGELOG.md:rowan 58
+CHANGELOG.md:space 10
+CHANGELOG.md:stella 6
+CHANGELOG.md:studio 2
+CHANGELOG.md:superman 3
+CHANGELOG.md:vision 24
+Makefile:glenn 8
+Makefile:rowan 1
+Makefile:space 1
+Makefile:studio 3
+Makefile:superman 4
