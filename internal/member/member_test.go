@@ -13,6 +13,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 )
 
 // scriptSprint is a Sprint that records every argv and answers from a table,
@@ -1390,6 +1392,69 @@ func TestAWorkCardWhoseStageFailedIsFinishedFailedAsBefore(t *testing.T) {
 	fin := g.s.lines("finish")
 	require.Len(t, fin, 1)
 	assert.Contains(t, fin[0], "--failed")
+}
+
+// secondsOfLoad is a Sampler whose seconds are the percents it is fed: each Step takes
+// the next.
+func secondsOfLoad(pcts ...float64) (s *hostload.Sampler, feed func(...float64)) {
+	var q []float64
+	s = hostload.NewSampler(hostload.Source{CPUSecond: func() (float64, error) {
+		p := q[0]
+		q = q[1:]
+		return p, nil
+	}})
+	feed = func(more ...float64) {
+		for _, p := range more {
+			q = append(q, p)
+			s.Step()
+		}
+	}
+	feed(pcts...)
+	return s, feed
+}
+
+// TestBeatCarriesTheHighestSecondSinceTheLastBeat: the beat names the highest of the
+// one-second samples taken since the last beat that was written (so nova-sprint's own
+// ten-second highest over the beats is the highest of the last ten seconds, not of
+// twenty); with no sample it names none and the beat measures; a beat the store did not
+// answer leaves its samples for the next.
+func TestBeatCarriesTheHighestSecondSinceTheLastBeat(t *testing.T) {
+	t.Parallel()
+	meter, feed := secondsOfLoad()
+	g := newRig(Config{As: "m", Width: 1, Meter: meter})
+	g.s.set("queue", 0, queueJSON(t, 7))
+	beat := func() string {
+		t.Helper()
+		g.s.reset()
+		_, err := g.tick(t)
+		require.NoError(t, err)
+		return strings.Join(g.s.lines("beat"), "|")
+	}
+	require.Equal(t, "fleet beat m", beat(), "no sample yet: the beat measures")
+	feed(10, 70, 20)
+	require.Equal(t, "fleet beat m --load 70.0", beat(), "10, 70, 20 beat 70")
+	require.Equal(t, "fleet beat m", beat(), "no sample since: the beat measures")
+	feed(5, 5, 5)
+	g.s.set("beat", 2, "no store")
+	g.s.reset()
+	_, err := g.tick(t)
+	require.Error(t, err, "a store that does not answer stops the tick")
+	g.s.set("beat", 0, "")
+	feed(5)
+	require.Equal(t, "fleet beat m --load 5.0", beat(), "the 70 went with the beat that wrote it; the lost beat's samples ride the next")
+	feed(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12)
+	require.Equal(t, "fleet beat m --load 12.0", beat(), "at most the ten seconds the ring holds")
+}
+
+// TestAReaderBeatsNothing: a reader runs no beat, so it reads no sample.
+func TestAReaderBeatsNothing(t *testing.T) {
+	t.Parallel()
+	meter, _ := secondsOfLoad(40)
+	g := newRig(Config{As: "r", Width: 1, Reader: true, Meter: meter})
+	g.s.set("queue", 0, queueJSON(t, 7))
+	_, err := g.tick(t)
+	require.NoError(t, err)
+	require.Empty(t, g.s.lines("beat"))
 }
 
 // A store that times out once on the beat or the queue is asked again once
