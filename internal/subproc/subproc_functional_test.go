@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/stretchr/testify/require"
 )
 
 // soon is the deadline the test injects: short, because it is meant to fire.
@@ -28,23 +29,18 @@ func TestEveryKindKillsASlowChildAtItsDeadline(t *testing.T) {
 		t.Skip("the fake slow child is a shell script")
 	}
 	script := filepath.Join(t.TempDir(), "slow-child")
-	if err := os.WriteFile(script, []byte("#!/bin/sh\nsleep 30 &\nsleep 30\n"), 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(script, []byte("#!/bin/sh\nsleep 30 &\nsleep 30\n"), 0o755))
 	for _, k := range []subproc.Kind{subproc.Git, subproc.GH, subproc.SSH, subproc.Go, subproc.Tool} {
 		t.Run(k.String(), func(t *testing.T) {
 			t.Parallel()
 
-			if k.Budget() <= soon {
-				t.Fatalf("%s: the named budget %s is not longer than the injected %s", k, k.Budget(), soon)
-			}
+			require.Greater(t, k.Budget(), soon, "%s: the named budget %s is not longer than the injected %s", k, k.Budget(), soon)
 			ctx := t.Context()
 			cmd, cancel := subproc.CommandFor(ctx, soon, script)
 			defer cancel()
 			cmd.WaitDelay = soon
-			if _, err := cmd.CombinedOutput(); err == nil {
-				t.Fatal("a child that sleeps 30 s returned without an error")
-			}
+			_, err := cmd.CombinedOutput()
+			require.Error(t, err, "a child that sleeps 30 s returned without an error")
 		})
 	}
 }
