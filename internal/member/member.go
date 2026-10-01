@@ -42,6 +42,14 @@ type Runner interface {
 	Start(p Packet) (Child, error)
 }
 
+// Ender is a Runner told when the member is done with a launch whose child ended: reported,
+// returned or reaped, so nothing reads its working tree again. failed is whether it ended in
+// a way a person may want to inspect (a failed finish, a read returned with no verdict); the
+// runner removes or keeps what the launch staged (docs/SPEC-SWARM.md, `member`).
+type Ender interface {
+	Ended(p Packet, failed bool)
+}
+
 // Child is one running card.
 type Child interface {
 	// Done says whether the child has ended.
@@ -236,6 +244,10 @@ type Config struct {
 	// names, read with its queue every tick (the fleet row is the truth).
 	Width  int
 	Reader bool // run the readers-table loop instead of the fleet's
+	// Room is asked once a tick before any child is started (a recovered card or a taken
+	// one): ok false starts none that tick, with why said once when it begins and once when
+	// it ends. nil asks nothing (docs/SPEC-SWARM.md, `member`, the disk floor).
+	Room func() (ok bool, why string)
 	// Meter is the machine's one-second CPU samples, taken by a goroutine of the caller
 	// (hostload.Sampler.Run); nil, or with no sample since the last beat, the beat
 	// measures the machine itself.
@@ -274,6 +286,7 @@ type Member struct {
 	width        int // the width this tick runs to: the override, else the fleet row's
 	drain        bool
 	beaten       uint64 // the Meter's samples the last written beat has carried
+	noRoom       bool   // Room said no on the last tick it was asked
 }
 
 // New is a member with nothing running. A reader pushes nothing, and its
@@ -389,7 +402,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 				continue
 			}
 			fmt.Fprintf(m.out, "%s %s: the claim moved (epoch %d gen %d attempt %d, now epoch %d gen %d attempt %d)\n", FinishReaped, id, l.epoch, l.gen, l.attempt, c.Packet.Epoch, c.Packet.Gen, c.Packet.Attempt)
-			m.forget(id)
+			m.forget(id, false) // reaped: the result is nobody's
 			claimMoved[id] = true
 			continue
 		}
@@ -450,7 +463,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 					m.running[id] = l
 					continue
 				}
-				m.forget(id)
+				m.forget(id, true) // returned with no verdict
 				acted++
 				continue
 			}
@@ -506,7 +519,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 		if code == 2 {
 			return acted, fmt.Errorf("%s %s: the store did not answer: %s", args[0], id, strings.TrimSpace(string(out)))
 		}
-		m.forget(id) // refused (1) too: the card is no longer ours to report
+		m.forget(id, !m.cfg.Reader && !ok) // refused (1) too: the card is no longer ours to report
 		acted++
 	}
 	// A child whose card the queue no longer lists (the sprint was cleared, the
@@ -514,11 +527,11 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 	// ended it is forgotten, so it does not hold a place of the width for ever.
 	for id, l := range m.running {
 		if _, listed := byID[id]; !listed && l.child.Done() {
-			m.forget(id)
+			m.forget(id, false)
 			fmt.Fprintf(m.out, "%s %s: no longer in the queue (dropped or returned)\n", FinishReaped, id)
 		}
 	}
-	if m.drain {
+	if m.drain || !m.room() {
 		return acted, nil
 	}
 	// 2. Recover in-flight (working/reading) cards that have no child of ours,
@@ -641,10 +654,33 @@ func (m *Member) start(p Packet) bool {
 	return true
 }
 
-// forget drops a launch and what is remembered of its card.
-func (m *Member) forget(id string) {
+// forget drops a launch and what is remembered of its card, and tells a runner that is an
+// Ender the launch is done with (failed: a person may want to inspect it).
+func (m *Member) forget(id string, failed bool) {
+	if l, ok := m.running[id]; ok {
+		if e, ok := m.runner.(Ender); ok {
+			e.Ended(l.packet, failed)
+		}
+	}
 	delete(m.running, id)
 	delete(m.stageRetried, id)
+}
+
+// room is whether a child may be started this tick (Config.Room), saying so when the
+// answer changes: the refusal once when it begins, and once when it ends.
+func (m *Member) room() bool {
+	if m.cfg.Room == nil {
+		return true
+	}
+	ok, why := m.cfg.Room()
+	switch {
+	case !ok && !m.noRoom:
+		fmt.Fprintf(m.out, "take REFUSED: %s\n", why)
+	case ok && m.noRoom:
+		fmt.Fprintf(m.out, "NOTE take resumed: %s\n", why)
+	}
+	m.noRoom = !ok
+	return ok
 }
 
 // failLaunch reports a taken work card this member cannot launch (no model, a
