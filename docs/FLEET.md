@@ -177,3 +177,58 @@ enabled=<n> written=<n> retired=<n>`.
 The inventory carries `nova_loops` only once the loop kind has been applied to
 the store; until then `loops.yml` refuses each machine by name instead of
 reading the absence as "no loops" and retiring every unit.
+
+### CI over cards
+
+A machine that runs CI runners and a sprint member runs both under one rule
+(nova-tools#4293, the owner: "We really need to have CI winning over children,
+or we will have failed CIs non-stop across the fleet"): under contention the
+runners' jobs get the CPU and the cards' trees get what is left, while the
+member's own loop (beats, queue, push, finish) keeps its place and beats. The
+loop units are not touched; every step is taken by `nova-swarm native` on itself
+before it starts the wall, so only the card's tree is lowered.
+
+- Nice 15 (`internal/yield` `ToCI`), always. It ranks threads inside one CPU
+  group and no further, and per thread: a wide card's many threads still take a
+  share that grows with their number.
+- Past nice, when the member asks (`--behind-ci`, which every member launch
+  carries; `yield.Behind`):
+  - Linux: native moves itself into a transient systemd scope
+    `nova-card-<label>-<pid>.scope` in the slice that holds the member's unit
+    (`StartTransientUnit` through `busctl --user`), then sets `CPUWeight=idle`
+    on it (`systemctl --user set-property --runtime`) and reads `cpu.idle` back
+    as 1. A weight ranks only siblings: in the user manager's `app.slice` the
+    siblings are the member's unit and the runners' user units, so the card's
+    scope runs only on what they leave, whatever its thread count, and the
+    member's unit keeps weight 100 beside them. The scope ends with native.
+  - darwin: native sets the background state on itself
+    (`setpriority(PRIO_DARWIN_PROCESS, 0, PRIO_DARWIN_BG)`), inherited by every
+    descendant: background QoS (on Apple silicon the efficiency cores),
+    throttled disk I/O (a card's clone, build cache and checkout writes wait
+    behind CI's), and sockets in the background traffic class (a card's calls to
+    its provider yield under a busy link; on an idle link they run as before).
+    A card that is slow on a Mac is the card's problem, never CI's.
+  - Where it cannot be had (no systemd user manager or bus, the manager
+    refuses, another OS), native writes one `NATIVE NOTE behind-ci unavailable:
+    <why>` in the launch's log and runs the card at nice 15 alone; it is never a
+    refusal and never charged to the card. A member where it cannot be had says
+    so once at its start (`NOTE member: behind-ci unavailable here`).
+
+The scope only ranks the card against the runners where they are siblings: the
+same slice of the same systemd manager. Runners installed as user units of the
+bench user sit in its user manager's `app.slice` beside the loop units. A runner
+left as a hand-installed system unit (in `system.slice`) competes one level up,
+`system.slice` against `user.slice`, both weight 100, and gets about half the CPU
+under contention however idle the card's scope is: move it to a user unit.
+
+A card's scope is not in the member's unit, so stopping the member's unit does
+not stop its cards; a restarted member adopts each card whose pid file names a
+live process, as it does after any restart.
+
+To see it on a machine while a card runs: `systemctl --user list-units
+'nova-card-*'` lists the scopes, each `.../app.slice/nova-card-*.scope/cpu.idle`
+reads 1, and each runner's `/proc/<pid>/cgroup` names
+`app.slice/nova-runner-<i>.service`. A test run by hand over ssh is in the
+login's `session-<n>.scope`, a sibling of the whole user manager, so it shares
+the CPU with the member, its cards and the runners together half and half: it
+is not a measure of CI.

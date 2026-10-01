@@ -1557,6 +1557,23 @@ func stageFailBase(r swarm.StageResult) string {
 // (TestACardsLaunchRunsBehindCI).
 var nativeToCI = yield.ToCI
 
+// nativeBehind is the step past nice cmdNative takes under --behind-ci: yield.Behind,
+// and never anything else in production (internal/ci TestCopiesRunNiced); the test
+// binary's TestMain makes it a no-op, as it does nativeToCI.
+var nativeBehind = yield.Behind
+
+// behindNative puts this native run, and everything it starts, in the idle class
+// beside the CI runners through behind (nativeBehind in production): an idle
+// systemd scope in the slice of the member's unit on Linux, the background state on
+// darwin. Where that cannot be done (no user manager, a refusal, another OS) it says
+// so once, on one NATIVE NOTE line in the launch's log, and the card runs at
+// yield.Nice alone: the machine's limit is never charged to the card.
+func behindNative(behind func(name string) string, label string, stderr io.Writer) {
+	if note := behind(label); note != "" {
+		fmt.Fprintf(stderr, "NATIVE NOTE behind-ci unavailable: %s; this card runs at nice %d only\n", oneline.Escape(note), yield.Nice)
+	}
+}
+
 // yieldNative steps this native run behind CI through toCI (nativeToCI in production)
 // before it starts anything, so the wall, the harness and every process the card's
 // child runs inherit yield.Nice. A run that cannot step down is refused, never run at

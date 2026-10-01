@@ -71,6 +71,10 @@ func TestCopiesRunNiced(t *testing.T) {
 	// strings.Contains, so a failure prints the one line wanted and not all of native.go
 	assert.True(t, strings.Contains(readFile(t, filepath.Join(root, "cmd/nova-swarm/native.go")), "\nvar nativeToCI = yield.ToCI\n"),
 		"cmd/nova-swarm/native.go: want `var nativeToCI = yield.ToCI`, the step every card's launch takes")
+	assert.True(t, strings.Contains(readFile(t, filepath.Join(root, "cmd/nova-swarm/native.go")), "\nvar nativeBehind = yield.Behind\n"),
+		"cmd/nova-swarm/native.go: want `var nativeBehind = yield.Behind`, the step past nice a member's card takes")
+	assert.True(t, strings.Contains(readFile(t, filepath.Join(root, "cmd/nova-swarm/member.go")), "\targs = append(args, \"--behind-ci\")\n"),
+		"cmd/nova-swarm/member.go: every launch a member starts carries --behind-ci")
 
 	// 2. Every exec path yields first, in the same function, before the exec.
 	for _, p := range niceExecPaths {
@@ -104,11 +108,15 @@ func TestCopiesRunNiced(t *testing.T) {
 		// Read on the parsed file, so no spelling of a write gets past a text match.
 		if f.AST != nil {
 			for _, w := range nativeToCIWrites(tree.FSet, f.AST) {
-				assert.Fail(t, "a production write to nativeToCI", "%s:%s: production never writes nova-swarm's nativeToCI; it is yield.ToCI", f.Rel, w)
+				assert.Fail(t, "a production write to a native seam", "%s:%s: production never writes nova-swarm's nativeToCI or nativeBehind; they are yield.ToCI and yield.Behind", f.Rel, w)
 			}
 		}
 	}
 }
+
+// nativeSeams are nova-swarm native's two steps behind CI, each yield's own in
+// production: nativeToCI (nice) and nativeBehind (the idle class past nice).
+var nativeSeams = map[string]bool{"nativeToCI": true, "nativeBehind": true}
 
 // nativeToCIWrites is every place in one parsed file that could change nova-swarm's
 // nativeToCI: an assignment of any shape (=, :=, op=, one name among several) whose left
@@ -118,7 +126,7 @@ func nativeToCIWrites(fset *token.FileSet, file *ast.File) []string {
 	names := func(e ast.Node) bool {
 		found := false
 		ast.Inspect(e, func(n ast.Node) bool {
-			if id, ok := n.(*ast.Ident); ok && id.Name == "nativeToCI" {
+			if id, ok := n.(*ast.Ident); ok && nativeSeams[id.Name] {
 				found = true
 			}
 			return !found
@@ -159,6 +167,7 @@ func nativeToCIWritesSeesEveryShape(t *testing.T) {
 		{"multi-assignment (the reader's)", "func init() { nativeToCI, _ = func() error { return nil }, 0 }", 1},
 		{"through a pointer", "func init() { p := &nativeToCI; *p = nil }", 1},
 		{"parenthesised", "func init() { (nativeToCI) = nil }", 1},
+		{"the step past nice", "func init() { nativeBehind = func(string) string { return \"\" } }", 1},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

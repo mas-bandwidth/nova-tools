@@ -23,7 +23,7 @@ import (
 )
 
 func main() {
-	// THE NICE CHILD (FAKE-NICE below): prints its own nice and nothing else.
+	// THE NICE CHILD (FAKE-NICE below): prints its own nice, then its class (ownBehind), and nothing else.
 	if os.Getenv("FAKE_NICE_CHILD") == "1" {
 		n, err := ownNice()
 		if err != nil {
@@ -31,6 +31,7 @@ func main() {
 			os.Exit(2)
 		}
 		fmt.Println(n)
+		fmt.Println(ownBehind())
 		return
 	}
 	// THE BACKGROUND CHILD, and nothing else: rule 11's violation is a process that OUTLIVES
@@ -541,7 +542,8 @@ func main() {
 			os.Exit(2)
 		}
 		if job != "" {
-			body := "harness=" + strconv.Itoa(own) + "\ngrandchild=" + strings.TrimSpace(string(out)) + "\n"
+			grandNice, grandBehind, _ := strings.Cut(strings.TrimSpace(string(out)), "\n")
+			body := "harness=" + strconv.Itoa(own) + "\ngrandchild=" + grandNice + "\nharness_behind=" + ownBehind() + "\ngrandchild_behind=" + grandBehind + "\n"
 			writeRecorded(filepath.Join(job, "RESULT.md"), []byte(body), 0o644)
 		}
 		os.Exit(0)

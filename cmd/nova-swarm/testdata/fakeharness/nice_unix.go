@@ -3,7 +3,10 @@
 package main
 
 import (
+	"os"
 	"runtime"
+	"strconv"
+	"strings"
 	"syscall"
 )
 
@@ -18,4 +21,26 @@ func ownNice() (int, error) {
 		return 20 - raw, nil
 	}
 	return raw, nil
+}
+
+// ownBehind is this process's reading of the class a --behind-ci launch puts it in:
+// darwin's background state (getpriority PRIO_DARWIN_PROCESS: 1 when set), or on
+// Linux its cgroup and that cgroup's cpu.idle.
+func ownBehind() string {
+	if runtime.GOOS == "darwin" {
+		v, err := syscall.Getpriority(4, 0) // PRIO_DARWIN_PROCESS
+		if err != nil {
+			return "darwin_bg=err"
+		}
+		return "darwin_bg=" + strconv.Itoa(v)
+	}
+	cg, _ := os.ReadFile("/proc/self/cgroup")
+	path := ""
+	for _, line := range strings.Split(string(cg), "\n") {
+		if p, ok := strings.CutPrefix(line, "0::"); ok {
+			path = p
+		}
+	}
+	idle, _ := os.ReadFile("/sys/fs/cgroup" + path + "/cpu.idle")
+	return "cgroup=" + path + ";idle=" + strings.TrimSpace(string(idle))
 }

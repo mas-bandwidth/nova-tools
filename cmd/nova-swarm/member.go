@@ -207,6 +207,11 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	if note := passNote(*model, pass, *auth); note != "" {
 		fmt.Fprintln(stdout, note)
 	}
+	// once, here: where a card's launch cannot go past nice (no user manager on Linux),
+	// every card runs at nice 15 only, and each launch's log says so again
+	if note := behindStartNote(yield.BehindNote()); note != "" {
+		fmt.Fprintln(stdout, note)
+	}
 	if removed, kept := rn.prune(time.Now()); removed > 0 {
 		fmt.Fprintf(stdout, "NOTE sweep: removed %d ended launch directories under %s, kept the newest %d\n", removed, oneline.Field(*slots), kept)
 	}
@@ -387,6 +392,9 @@ func (r *nativeRunner) Start(p member.Packet) (member.Child, error) {
 	if r.identity != "" {
 		args = append(args, "--identity", r.identity)
 	}
+	// every card behind the CI legs past nice: the idle scope (Linux) or the background
+	// state (darwin), for the card's tree only; this loop stays where it is and beats
+	args = append(args, "--behind-ci")
 	// A long-lived child: its own cancellable context and no deadline (its own --deadline
 	// ends it), released when the wait returns.
 	ctx, release := context.WithCancel(context.Background())
@@ -834,4 +842,14 @@ func yieldRefusal(supported bool, goos string) string {
 		return ""
 	}
 	return "no setpriority on " + goos + ": native would refuse every card this member takes rather than run it at CI's priority (nova-tools#4293); run members on darwin or Linux"
+}
+
+// behindStartNote is the one NOTE line a member prints at its start when its cards'
+// launches cannot go past nice 15 into the idle class beside the CI runners (why is
+// yield.BehindNote's reason), "" when they can.
+func behindStartNote(why string) string {
+	if why == "" {
+		return ""
+	}
+	return "NOTE member: behind-ci unavailable here: " + oneline.Escape(why) + "; every card runs at nice 15 only, beside the CI runners rather than behind them (docs/FLEET.md, CI over cards)"
 }
