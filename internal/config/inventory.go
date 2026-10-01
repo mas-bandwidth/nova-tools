@@ -179,15 +179,29 @@ func BuildInventory(snap *Snapshot, localHost string) (*AnsibleInventory, error)
 }
 
 func fleetRedisPort(fleet View) (int, error) {
-	raw := fleet["redis_port"]
-	if raw == "" {
-		raw = "6379"
+	if err := ValidateFleetEndpoints(fleet); err != nil {
+		return 0, err
 	}
-	port, err := strconv.Atoi(raw)
-	if err != nil || port < 1 || port > 65535 {
-		return 0, fmt.Errorf("fleet: redis_port is not an integer from 1 through 65535; run: nova-config fleet show")
+	return strconv.Atoi(fleet["redis_port"])
+}
+
+// ValidateFleetEndpoints refuses incomplete fleet endpoints before apply
+// writes or inventory rewrites loop argv (docs/SPEC-CONFIG.md, "Apply").
+func ValidateFleetEndpoints(fleet View) error {
+	var missing []string
+	for _, field := range []string{"redis_port", "pg_dsn"} {
+		if fleet[field] == "" {
+			missing = append(missing, field)
+		}
 	}
-	return port, nil
+	const remedy = "nova-config fleet set --redis_port <port> --pg_dsn <dsn> --as <actor>, then nova-config apply --kind fleet --as <actor>"
+	if len(missing) > 0 {
+		return fmt.Errorf("fleet: endpoints are unset: %s; run: %s", strings.Join(missing, ", "), remedy)
+	}
+	if err := checkFleet(Row{Fields: fleet}); err != nil {
+		return fmt.Errorf("fleet: %w; run: %s", err, remedy)
+	}
+	return nil
 }
 
 // hostLoops is every machine's loops, sorted by name, every machine present
@@ -361,7 +375,7 @@ type fixture struct {
 	Fleet struct {
 		Store       string `yaml:"store"`
 		Coordinator string `yaml:"coordinator"`
-		RedisPort   int    `yaml:"redis_port"`
+		RedisPort   *int   `yaml:"redis_port"`
 		PGDSN       string `yaml:"pg_dsn"`
 	} `yaml:"fleet"`
 	// Loops is a pointer so a fixture without the key is a fleet whose
@@ -412,11 +426,11 @@ func LoadFixture(path string) (*Snapshot, error) {
 			snap.Beats[m] = &Beat{OS: r.OS, Arch: r.Arch}
 		}
 	}
-	redisPort := f.Fleet.RedisPort
-	if redisPort == 0 {
-		redisPort = 6379
+	redisPort := ""
+	if f.Fleet.RedisPort != nil {
+		redisPort = strconv.Itoa(*f.Fleet.RedisPort)
 	}
-	snap.Fleet = View{"store": f.Fleet.Store, "coordinator": f.Fleet.Coordinator, "redis_port": strconv.Itoa(redisPort), "pg_dsn": f.Fleet.PGDSN}
+	snap.Fleet = View{"store": f.Fleet.Store, "coordinator": f.Fleet.Coordinator, "redis_port": redisPort, "pg_dsn": f.Fleet.PGDSN}
 	snap.Revs[KindMachine], snap.Revs[KindFleet] = 1, 1
 	if f.Loops != nil {
 		snap.Loops = map[string]View{}

@@ -99,6 +99,23 @@ func TestMemberEndpointComesFromTheFleetAndNotItsPersistedArgv(t *testing.T) {
 	}
 }
 
+func TestInventoryRefusesMissingEndpointsBeforeRewritingALegacyMember(t *testing.T) {
+	t.Parallel()
+	for _, field := range []string{"redis_port", "pg_dsn"} {
+		t.Run(field, func(t *testing.T) {
+			t.Parallel()
+			const argv = `["/usr/bin/env","NOVA_SPRINT_REDIS=bench-beta:6380","nova-swarm","member"]`
+			s := snapshot(map[string]View{"member-beta": loopView("member-beta", "bench-beta", map[string]string{"argv": argv})})
+			delete(s.Fleet, field)
+			inv, err := BuildInventory(s, "")
+			require.ErrorContains(t, err, "endpoints are unset: "+field)
+			assert.Contains(t, err.Error(), "nova-config fleet set --redis_port <port> --pg_dsn <dsn>")
+			assert.Nil(t, inv)
+			assert.Equal(t, argv, s.Loops["member-beta"]["argv"])
+		})
+	}
+}
+
 // nova_loops says what the store says: absent when the loop kind was never
 // applied (a play must not read that as "run nothing" and retire every
 // unit), an empty list on every machine when it was applied with no rows.
@@ -162,10 +179,10 @@ func TestBuildInventoryOmitsEmptyValues(t *testing.T) {
 	assert.Equal(t, 2, hv["slots"])
 }
 
-// An empty store is an inventory with no hosts and every group present.
+// A fleet with declared endpoints and no machines has every group present.
 func TestBuildInventoryOfAnEmptyStore(t *testing.T) {
 	t.Parallel()
-	inv, err := BuildInventory(&Snapshot{Fleet: View{}}, "")
+	inv, err := BuildInventory(&Snapshot{Fleet: View{"redis_port": "6380", "pg_dsn": "postgres://user@localhost:5432/nova"}}, "")
 	require.NoError(t, err)
 	raw, err := inv.JSON()
 	require.NoError(t, err)
@@ -220,6 +237,9 @@ loops:
 	bare, err := LoadFixture(write("bare.yml", "machines:\n  bench-alpha: {user: u, seat: s, slots: 1}\n"))
 	require.NoError(t, err)
 	assert.Nil(t, bare.Loops)
+	assert.Empty(t, bare.Fleet["redis_port"], "a legacy fixture never guesses a port")
+	_, err = BuildInventory(bare, "")
+	assert.ErrorContains(t, err, "endpoints are unset: redis_port, pg_dsn")
 
 	for name, text := range map[string]string{
 		"unknown field": "machines:\n  bench-alpha: {user: u, seats: s}\n",

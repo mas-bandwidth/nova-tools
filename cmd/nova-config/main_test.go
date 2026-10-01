@@ -414,7 +414,7 @@ func TestTheSixVerbsEndToEndOnTheFake(t *testing.T) {
 	// The fleet: one row, there from the start, set without a name, its
 	// history the sets alone.
 	out, _ = step(0, "fleet", "show")
-	require.Equal(t, "FLEET name=fleet store=- coordinator=- redis_port=6379 pg_dsn=- created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z\n", out, "fleet show before a set: %q", out)
+	require.Equal(t, "FLEET name=fleet store=- coordinator=- redis_port=- pg_dsn=- created=2023-11-14T22:13:20Z updated=2023-11-14T22:13:20Z\n", out, "fleet show before a set: %q", out)
 	out, _ = step(0, "fleet", "history")
 	require.Equal(t, "CONFIG HISTORY kind=fleet name=fleet changes=0\n", out, "fleet history before a set: %q", out)
 	_, errs = step(1, "fleet", "set", "--store", "space")
@@ -422,7 +422,7 @@ func TestTheSixVerbsEndToEndOnTheFake(t *testing.T) {
 	out, _ = step(0, "fleet", "set", "--store", "hulk", "--coordinator", "studio")
 	require.Equal(t, "CONFIG SET kind=fleet name=fleet rev=8 changed=coordinator,store\n", out, "fleet set: %q", out)
 	out, _ = step(0, "fleet", "show")
-	require.True(t, strings.HasPrefix(out, "FLEET name=fleet store=hulk coordinator=studio redis_port=6379 pg_dsn=- created="), "fleet show: %q", out)
+	require.True(t, strings.HasPrefix(out, "FLEET name=fleet store=hulk coordinator=studio redis_port=- pg_dsn=- created="), "fleet show: %q", out)
 	_, errs = step(1, "machine", "remove", "hulk")
 	require.Equal(t, "nova-config machine remove: machine hulk is the --store of the fleet; run: nova-config machine list\n", errs, "remove the store machine: %q", errs)
 	out, _ = step(0, "fleet", "set", "--store", "")
@@ -464,14 +464,14 @@ func TestApplyStatusAndMigrateOnTheFakes(t *testing.T) {
 	step(0, "machine", "add", "studio", "--user", "glenn", "--seat", "studio", "--slots", "64")
 	step(0, "friend", "add", "rowan", "--slots", "32", "--tiers", "frontier", "--roles", "builder")
 	step(0, "friend", "add", "stella", "--slots", "32", "--tiers", "frontier,pro")
-	step(0, "fleet", "set", "--coordinator", "studio")
+	step(0, "fleet", "set", "--coordinator", "studio", "--redis_port", "6380", "--pg_dsn", dsn)
 	step(0, "sprint", "set", "--coordinator", "rowan")
 	out, errs = step(1, "status")
 	require.Equal(t, "CONFIG STATUS pg=nova_config@127.0.0.1:5432/nova schema=11 machine=1 machine_rev=1 fleet_rev=4 friend=2 friend_rev=3 sprint_rev=5 loop=0 loop_rev=0 route=0 route_rev=0 tier=2 tier_rev=0 redis=127.0.0.1:6379 machine_applied=0 fleet_applied=0 friend_applied=0 sprint_applied=0 loop_applied=0 route_applied=0 tier_applied=0\n", out, "status behind: %q %q", out, errs)
 	require.Contains(t, errs, "Redis is not at Postgres's revision for 4 kind(s); run: nova-config apply", "status behind: %q %q", out, errs)
 	delete(h.env, "NOVA_FRIEND")
 	out, _ = step(0, "apply", "--check")
-	want := "CHECK ADD kind=machine name=studio\nCONFIG CHECK kind=machine add=1 set=0 remove=0 rev=1 applied=0\nCHECK SET kind=fleet name=fleet changed=coordinator,redis_port\nCONFIG CHECK kind=fleet add=0 set=1 remove=0 rev=4 applied=0\nCHECK ADD kind=friend name=rowan\nCHECK ADD kind=friend name=stella\nCONFIG CHECK kind=friend add=2 set=0 remove=0 rev=3 applied=0\nCHECK SET kind=sprint name=sprint changed=coordinator,reader_tier\nCONFIG CHECK kind=sprint add=0 set=1 remove=0 rev=5 applied=0\nCONFIG CHECK kind=loop add=0 set=0 remove=0 rev=0 applied=0\nCONFIG CHECK kind=route add=0 set=0 remove=0 rev=0 applied=0\nCHECK ADD kind=tier name=flash\nCHECK ADD kind=tier name=pro\nCONFIG CHECK kind=tier add=2 set=0 remove=0 rev=0 applied=0\n"
+	want := "CHECK ADD kind=machine name=studio\nCONFIG CHECK kind=machine add=1 set=0 remove=0 rev=1 applied=0\nCHECK SET kind=fleet name=fleet changed=coordinator,redis_port,pg_dsn\nCONFIG CHECK kind=fleet add=0 set=1 remove=0 rev=4 applied=0\nCHECK ADD kind=friend name=rowan\nCHECK ADD kind=friend name=stella\nCONFIG CHECK kind=friend add=2 set=0 remove=0 rev=3 applied=0\nCHECK SET kind=sprint name=sprint changed=coordinator,reader_tier\nCONFIG CHECK kind=sprint add=0 set=1 remove=0 rev=5 applied=0\nCONFIG CHECK kind=loop add=0 set=0 remove=0 rev=0 applied=0\nCONFIG CHECK kind=route add=0 set=0 remove=0 rev=0 applied=0\nCHECK ADD kind=tier name=flash\nCHECK ADD kind=tier name=pro\nCONFIG CHECK kind=tier add=2 set=0 remove=0 rev=0 applied=0\n"
 	require.Equal(t, want, out, "apply --check without --as:\n%s\nwant:\n%s", out, want)
 	require.Len(t, h.redis.log, 0, "--check wrote: %v %v", h.redis.log, h.redis.revs)
 	require.Len(t, h.redis.revs, 0, "--check wrote: %v %v", h.redis.log, h.redis.revs)
@@ -482,7 +482,7 @@ func TestApplyStatusAndMigrateOnTheFakes(t *testing.T) {
 	require.Contains(t, errs, "--as is required: the friend making the change (or NOVA_FRIEND); run: nova-config help", "apply without --as refusal: %q", errs)
 	h.env["NOVA_FRIEND"] = "rowan"
 	out, _ = step(0, "apply")
-	want = "APPLY ADD kind=machine name=studio\nCONFIG APPLY kind=machine add=1 set=0 remove=0 rev=1 ms=0\nAPPLY SET kind=fleet name=fleet changed=coordinator,redis_port\nCONFIG APPLY kind=fleet add=0 set=1 remove=0 rev=4 ms=0\nAPPLY ADD kind=friend name=rowan\nAPPLY ADD kind=friend name=stella\nCONFIG APPLY kind=friend add=2 set=0 remove=0 rev=3 ms=0\nAPPLY SET kind=sprint name=sprint changed=coordinator,reader_tier\nCONFIG APPLY kind=sprint add=0 set=1 remove=0 rev=5 ms=0\nCONFIG APPLY kind=loop add=0 set=0 remove=0 rev=0 ms=0\nCONFIG APPLY kind=route add=0 set=0 remove=0 rev=0 ms=0\nAPPLY ADD kind=tier name=flash\nAPPLY ADD kind=tier name=pro\nCONFIG APPLY kind=tier add=2 set=0 remove=0 rev=0 ms=0\n"
+	want = "APPLY ADD kind=machine name=studio\nCONFIG APPLY kind=machine add=1 set=0 remove=0 rev=1 ms=0\nAPPLY SET kind=fleet name=fleet changed=coordinator,redis_port,pg_dsn\nCONFIG APPLY kind=fleet add=0 set=1 remove=0 rev=4 ms=0\nAPPLY ADD kind=friend name=rowan\nAPPLY ADD kind=friend name=stella\nCONFIG APPLY kind=friend add=2 set=0 remove=0 rev=3 ms=0\nAPPLY SET kind=sprint name=sprint changed=coordinator,reader_tier\nCONFIG APPLY kind=sprint add=0 set=1 remove=0 rev=5 ms=0\nCONFIG APPLY kind=loop add=0 set=0 remove=0 rev=0 ms=0\nCONFIG APPLY kind=route add=0 set=0 remove=0 rev=0 ms=0\nAPPLY ADD kind=tier name=flash\nAPPLY ADD kind=tier name=pro\nCONFIG APPLY kind=tier add=2 set=0 remove=0 rev=0 ms=0\n"
 	require.Equal(t, want, out, "apply:\n%s\nwant:\n%s", out, want)
 	require.Equal(t, "write machine studio write fleet fleet write friend rowan write friend stella write sprint sprint write tier flash write tier pro", strings.Join(h.redis.log, " "), "redis after apply: %v %v", h.redis.log, h.redis.revs)
 	require.Equal(t, int64(3), h.redis.revs["friend"], "redis after apply: %v %v", h.redis.log, h.redis.revs)
@@ -522,7 +522,7 @@ func TestApplyCheckReportsDriftAgainstFleet(t *testing.T) {
 	step(0, "migrate")
 	step(0, "machine", "add", "bench-alpha", "--user", "user-a", "--seat", "seat-alpha", "--slots", "64", "--runners", "1")
 	step(0, "machine", "add", "bench-beta", "--user", "user-b", "--seat", "seat-beta", "--slots", "40", "--runners", "0")
-	step(0, "fleet", "set", "--store", "bench-beta", "--coordinator", "bench-alpha")
+	step(0, "fleet", "set", "--store", "bench-beta", "--coordinator", "bench-alpha", "--redis_port", "6380", "--pg_dsn", dsn)
 
 	// Apply so Redis and Postgres are synchronized
 	step(0, "apply", "--kind", "machine")
@@ -562,6 +562,27 @@ func TestApplyCheckReportsDriftAgainstFleet(t *testing.T) {
 	// Redis revs should still be 2 and 3
 	require.Equal(t, int64(2), h.redis.revs["machine"], "apply --check wrote to redis: %v", h.redis.revs)
 	require.Equal(t, int64(3), h.redis.revs["fleet"], "apply --check wrote to redis: %v", h.redis.revs)
+}
+
+func TestApplyRefusesMissingFleetEndpointsBeforeAnyMutation(t *testing.T) {
+	t.Parallel()
+	for _, args := range [][]string{{"apply"}, {"apply", "--check"}, {"apply", "--kind", "fleet"}} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			t.Parallel()
+			h := newHarness()
+			h.env["NOVA_PG_DSN"], h.env["NOVA_FRIEND"], h.env["NOVA_SPRINT_REDIS"] = dsn, "operator", "bench-beta:6380"
+			code, out, errs := h.run(t, args...)
+			require.Equal(t, 1, code, errs)
+			require.Empty(t, out)
+			require.Contains(t, errs, "endpoints are unset: redis_port, pg_dsn")
+			require.Contains(t, errs, "fleet set --redis_port <port> --pg_dsn <dsn>")
+			require.Equal(t, 1, strings.Count(errs, "fleet set"), errs)
+			require.Zero(t, h.redis.opens)
+			require.Empty(t, h.redis.log)
+			code, _, errs = h.run(t, "apply", "--kind", "machine", "--check")
+			require.Zero(t, code, errs)
+		})
+	}
 }
 
 // A store older than this binary has no loops or routes table: status, apply,

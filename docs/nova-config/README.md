@@ -171,6 +171,9 @@ explicit password-free Postgres URI, and which machine is the coordinator.
 The machine fields name machine rows; a machine the fleet names cannot be
 removed. The Postgres URI may explicitly name localhost and is never derived
 from the Redis machine.
+Migration leaves both endpoints unset. Fleet apply and inventory refuse an
+unset endpoint; declare both with one `nova-config fleet set --redis_port
+<port> --pg_dsn <dsn>` command before applying. There is no Redis port default.
 
 ```
 nova-config fleet set --store hulk --coordinator studio --redis_port 6380 --pg_dsn postgres://nova_config@localhost:5432/nova --as rowan
@@ -335,7 +338,7 @@ nova-config apply --check
 CHECK ADD kind=machine name=hulk
 CHECK ADD kind=machine name=studio
 CONFIG CHECK kind=machine add=2 set=0 remove=0 rev=2 applied=0
-CHECK SET kind=fleet name=fleet changed=store,coordinator,redis_port
+CHECK SET kind=fleet name=fleet changed=store,coordinator,redis_port,pg_dsn
 CONFIG CHECK kind=fleet add=0 set=1 remove=0 rev=3 applied=0
 CHECK ADD kind=friend name=rowan
 CONFIG CHECK kind=friend add=1 set=0 remove=0 rev=5 applied=0
@@ -347,7 +350,7 @@ nova-config apply --as rowan
 APPLY ADD kind=machine name=hulk
 APPLY ADD kind=machine name=studio
 CONFIG APPLY kind=machine add=2 set=0 remove=0 rev=2 ms=4
-APPLY SET kind=fleet name=fleet changed=store,coordinator,redis_port
+APPLY SET kind=fleet name=fleet changed=store,coordinator,redis_port,pg_dsn
 CONFIG APPLY kind=fleet add=0 set=1 remove=0 rev=3 ms=1
 APPLY ADD kind=friend name=rowan
 CONFIG APPLY kind=friend add=1 set=0 remove=0 rev=5 ms=6

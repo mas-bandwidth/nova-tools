@@ -131,6 +131,8 @@ a time, through the runtime's own Redis Functions, and refuses CONFLICT when
 Redis holds a newer revision; --check prints the ADD, SET and REMOVE lines
 and writes nothing. inventory prints an Ansible dynamic JSON inventory of
 the applied state and reads only Redis. Lose Redis: run nova-config apply.
+Fleet apply and inventory require explicit redis_port and pg_dsn; set both
+with nova-config fleet set --redis_port <port> --pg_dsn <dsn> --as <actor>.
 
 exit codes: 0 done, 1 refused, 2 usage
 
@@ -951,6 +953,16 @@ func runApply(ctx context.Context, args []string, stdout, stderr io.Writer, d de
 	if code, stale := behindSchema(ctx, st, stderr, verb, *pg); stale {
 		return code
 	}
+	if *kind == "" || *kind == config.KindFleet {
+		fleet, _, err := st.Get(ctx, config.KindFleet, config.KindFleet)
+		if err != nil {
+			return storeErr(stderr, verb, err, tool+" apply --check")
+		}
+		if err := config.ValidateFleetEndpoints(config.View(fleet.Fields)); err != nil {
+			what, next, _ := strings.Cut(err.Error(), "; run: ")
+			return refused(stderr, verb, what, next)
+		}
+	}
 	rs, err := d.openRedis(ctx, addr)
 	if err != nil {
 		return refuse(stderr, verb, err.Error())
@@ -1092,6 +1104,9 @@ func runInventory(ctx context.Context, args []string, stdout, stderr io.Writer, 
 	self, explicit := localHost(d.getenv, d.hostname)
 	inv, err := config.BuildInventory(snap, self)
 	if err != nil {
+		if what, next, has := strings.Cut(err.Error(), "; run: "); has && strings.HasPrefix(what, "fleet:") {
+			return refused(stderr, verb, what, next)
+		}
 		return refused(stderr, verb, err.Error(), again())
 	}
 	if explicit && !inv.Has(self) {

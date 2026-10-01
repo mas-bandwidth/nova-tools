@@ -153,7 +153,7 @@
         fail_msg: >-
           the applied fleet row has no pg_dsn; bootstrap once with nova-config migrate
           --pg postgres://user@localhost:5432/database, then nova-config fleet set
-          --pg_dsn postgres://user@localhost:5432/database --as <actor>,
+          --redis_port <port> --pg_dsn postgres://user@localhost:5432/database --as <actor>,
           then nova-config apply --kind fleet --as <actor>
         quiet: true
 

@@ -181,12 +181,16 @@ row's.
 | --- | --- | --- | --- | --- |
 | `store` | ref machine | | the plays: the machine that runs Redis | `fleet:store` |
 | `coordinator` | ref machine | | the plays: where the coordinator's loops run; apply: the machine a friend with no beat is charged to | `fleet:coordinator` |
-| `redis_port` | int (default 6379) | | the inventory and plays: Redis's TCP port, 1 through 65535 | `fleet:redis_port` |
+| `redis_port` | nullable int (no default) | | the inventory and plays: explicit Redis TCP port, 1 through 65535; unset until declared | `fleet:redis_port` |
 | `pg_dsn` | text | | the inventory and tools play: the explicit password-free Postgres URI; empty until set, never derived from `store` | `fleet:pg_dsn` |
 
 The kind's `Check` bounds `redis_port` and accepts only a password-free
 `postgres://user@host[:port]/database` URI for a nonempty `pg_dsn`. A refusal
 never reproduces a password from the input.
+Fleet apply and inventory refuse either endpoint unset, naming one
+`nova-config fleet set --redis_port <port> --pg_dsn <dsn>` command. Migration
+leaves the port NULL and the DSN empty. Full apply checks both before writing
+any kind; applying another kind alone does not require these endpoints.
 
 **`friend`** (`config.friends`): what someone decides for a friend. Anything
 a friend would just know is runtime Redis data. Where she runs, her harness, her logins and her wake path are hers: her own

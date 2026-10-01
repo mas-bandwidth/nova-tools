@@ -55,7 +55,7 @@
         that: nova_redis_addr | default('') != ''
         fail_msg: >-
           {{ inventory_hostname }} has no applied Redis endpoint; run: nova-config fleet set --store <machine>
-          --redis_port <port> --as <actor>, then nova-config apply --kind fleet --as <actor>
+          --redis_port <port> --pg_dsn <dsn> --as <actor>, then nova-config apply --kind fleet --as <actor>
         quiet: true
 
     - name: does the login have a GUI launchd domain (darwin, nova_launchd_domain auto)

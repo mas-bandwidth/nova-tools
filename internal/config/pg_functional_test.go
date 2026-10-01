@@ -81,6 +81,14 @@ func TestMigrateOnAnEmptyDatabaseTwice(t *testing.T) {
 	}
 	counts, err := st.Counts(ctx)
 	require.NoError(t, err)
+	fleet, found, err := st.Get(ctx, KindFleet, KindFleet)
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Empty(t, fleet.Fields["redis_port"], "migration leaves the Redis port unset")
+	assert.Empty(t, fleet.Fields["pg_dsn"])
+	var noPortDefault bool
+	require.NoError(t, st.db.QueryRowContext(ctx, `SELECT column_default IS NULL FROM information_schema.columns WHERE table_schema = 'config' AND table_name = 'fleet' AND column_name = 'redis_port'`).Scan(&noPortDefault))
+	assert.True(t, noPortDefault, "migration must not guess a Redis port")
 	for _, k := range Kinds {
 		if k.Singleton {
 			{

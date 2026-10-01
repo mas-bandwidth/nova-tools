@@ -30,6 +30,7 @@ func inventoryHarness(t *testing.T, n int) *harness {
 		h.redis.views[config.KindMachine][fmt.Sprintf("bench-%02d", i)] = config.View{"user": "user-a", "seat": "seat-a", "slots": "8", "runners": "0"}
 	}
 	h.redis.revs[config.KindMachine] = 1
+	h.redis.views[config.KindFleet] = map[string]config.View{config.KindFleet: {"redis_port": "6380", "pg_dsn": "postgres://nova_config@localhost:5432/nova"}}
 	return h
 }
 
@@ -101,6 +102,21 @@ func TestInventoryFromTheFixtureOpensNoStore(t *testing.T) {
 		assert.Contains(t, inv.Meta.Hostvars[m], "nova_loops", m)
 	}
 	assert.Equal(t, 0, h.redis.opens+h.opens)
+}
+
+func TestInventoryRefusesMissingPortBeforeRewritingALegacyMember(t *testing.T) {
+	t.Parallel()
+	h := inventoryHarness(t, 1)
+	delete(h.redis.views[config.KindFleet][config.KindFleet], "redis_port")
+	const argv = `["/usr/bin/env","NOVA_SPRINT_REDIS=bench-01:6380","nova-swarm","member"]`
+	h.redis.views[config.KindLoop] = map[string]config.View{"member-01": {"machine": "bench-01", "argv": argv}}
+	h.redis.revs[config.KindLoop] = 1
+	code, out, errs := h.run(t, "inventory")
+	require.Equal(t, 1, code, errs)
+	assert.Empty(t, out)
+	assert.Contains(t, errs, "endpoints are unset: redis_port")
+	assert.Contains(t, errs, "fleet set --redis_port <port> --pg_dsn <dsn>")
+	assert.Equal(t, argv, h.redis.views[config.KindLoop]["member-01"]["argv"])
 }
 
 // Every flag problem is refused in one line before any store is opened.

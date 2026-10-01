@@ -5,7 +5,7 @@
 # periodic loop written disabled.
 machines:
   localhost: {user: nova, seat: seat-local, slots: 2}
-fleet: {store: localhost, coordinator: "", redis_port: 6380, pg_dsn: ""}
+fleet: {store: localhost, coordinator: "", redis_port: 6380, pg_dsn: postgres://nova_config@localhost:5432/nova}
 loops:
   member-local:
     machine: localhost

@@ -148,8 +148,8 @@ func TestDeriveGivesTheSprintCoordinatorTheRole(t *testing.T) {
 }
 
 // TestTheFleetIsOneRowOfEndpointsAndMachineRefs: the two machine names and
-// both store endpoints are fleet-wide facts. The Redis port has its compatible
-// default; Postgres stays empty until explicitly declared and never holds a
+// both store endpoints are fleet-wide facts. Both stay unset until
+// explicitly declared; Postgres never holds a
 // password.
 func TestTheFleetIsOneRowOfEndpointsAndMachineRefs(t *testing.T) {
 	t.Parallel()
@@ -179,7 +179,7 @@ func TestTheFleetIsOneRowOfEndpointsAndMachineRefs(t *testing.T) {
 	require.NoError(t, err, assertionMsg153...)
 	require.Equal(t, "hulk", row.Fields["store"], assertionMsg153...)
 	require.Equal(t, "", row.Fields["coordinator"], assertionMsg153...)
-	require.Equal(t, "6379", row.Fields["redis_port"], assertionMsg153...)
+	require.Empty(t, row.Fields["redis_port"], assertionMsg153...)
 	require.Equal(t, "", row.Fields["pg_dsn"], assertionMsg153...)
 	{
 		_, err := fleet.NewRow(KindFleet, map[string]string{"store": "Hulk"})
@@ -199,6 +199,7 @@ func TestTheFleetIsOneRowOfEndpointsAndMachineRefs(t *testing.T) {
 		want string
 	}{
 		{"zero port", map[string]string{"redis_port": "0"}, "1 through 65535"},
+		{"empty port", map[string]string{"redis_port": ""}, "non-negative integer"},
 		{"large port", map[string]string{"redis_port": "65536"}, "1 through 65535"},
 		{"malformed dsn", map[string]string{"pg_dsn": "not a URI"}, "password-free postgres://"},
 		{"password in userinfo", map[string]string{"pg_dsn": "postgres://user:do-not-print@localhost:5432/nova"}, "carries a password"},

@@ -83,8 +83,10 @@ type Field struct {
 	Help string
 	// Default is the canonical value add stores for a field it is not
 	// given. "" means the type's zero: 0 for an int, false for a bool, the
-	// empty value for the rest.
+	// empty value for the rest, or an unset value when Nullable is true.
 	Default string
+	// Nullable leaves an omitted field unset, represented as SQL NULL.
+	Nullable bool
 }
 
 // Kind is one kind of configuration. See the package comment.
@@ -214,7 +216,7 @@ var Kinds = []*Kind{
 		Fields: []Field{
 			{Name: "store", Type: TypeRef, Ref: KindMachine, Help: "the machine that runs Redis (a machine row), or empty"},
 			{Name: "coordinator", Type: TypeRef, Ref: KindMachine, Help: "the machine the coordinator's loops run on (a machine row), or empty"},
-			{Name: "redis_port", Type: TypeInt, Default: "6379", Help: "the TCP port Redis listens on, from 1 through 65535; 6379 (the default)"},
+			{Name: "redis_port", Type: TypeInt, Nullable: true, Help: "the explicit TCP port Redis listens on, from 1 through 65535; unset until declared"},
 			{Name: "pg_dsn", Type: TypeText, Help: "the explicit password-free postgres:// URI the configuration store uses; empty until set"},
 		},
 		Check: checkFleet,
@@ -326,11 +328,10 @@ var Kinds = []*Kind{
 }
 
 // checkFleet keeps both store endpoints explicit and safe to print. The
-// Postgres URI is optional so an older fleet can migrate before an operator
-// declares it; fleet/tools.yml refuses to use an empty value with the command
-// that sets and applies it. Nothing derives it from the Redis machine.
+// endpoints may be unset so an older fleet can migrate before an operator
+// declares them; apply and inventory refuse incomplete endpoints.
 func checkFleet(r Row) error {
-	if raw, ok := r.Fields["redis_port"]; ok {
+	if raw := r.Fields["redis_port"]; raw != "" {
 		port, err := strconv.Atoi(raw)
 		if err != nil || port < 1 || port > 65535 {
 			return fmt.Errorf("--redis_port wants an integer from 1 through 65535")
@@ -777,6 +778,8 @@ func (f Field) zero() string {
 	switch {
 	case f.Default != "":
 		return f.Default
+	case f.Nullable:
+		return ""
 	case f.Type == TypeInt:
 		return "0"
 	case f.Type == TypeBool:

@@ -110,7 +110,7 @@ an explicit localhost; it is never derived from the Redis store machine.
 | `nova_launchd_domain` | `auto` | darwin: `gui` (a LaunchAgent in the login's GUI domain), `system` (a LaunchDaemon dropped to the login; sudo), or `auto`, which asks launchd whether the login has a GUI domain and takes `system` when it has not |
 | `nova_systemd_scope` | `user` | linux: a user unit (with linger) or `system` |
 | `nova_retire_units` | `[]` | units of another tool's to retire by name (below) |
-| `nova_redis_port`, `nova_redis_addr` | the applied fleet row (`6379` is the port default) | the store |
+| `nova_redis_port`, `nova_redis_addr` | the explicit applied fleet row (no port default) | the store |
 | `nova_redis_deploy_user`, `nova_redis_deploy_password_key` | `coordinator`, `NOVA_REDIS_COORDINATOR_PASSWORD` | who loads the library, and the secret holding its password in the `store_deployer` seat |
 | `nova_redis_admin_user`, `nova_redis_admin_password_key` | `admin`, `NOVA_REDIS_ADMIN_PASSWORD` | who writes the ACL, and its secret |
 | `nova_redis_user_password_keys` | `coordinator`, `bench` | the secret holding the password of a user `acl apply` creates |
@@ -118,12 +118,13 @@ an explicit localhost; it is never derived from the Redis store machine.
 | `nova_release_out`, `nova_release_gocache` | `~/nova-bench/release-build`, `~/nova-bench/release-gocache` on the machine running the play | where the build is written and its Go cache |
 | `nova_version`, `nova_source` | none: `-e` | the build to install and the checkout it is built from |
 
-An existing schema has no `pg_dsn` to apply before migration 0011 adds its
-column. Bootstrap it once with `nova-config migrate --pg
-postgres://user@localhost:5432/db`, then run `nova-config fleet set --pg_dsn
-postgres://user@localhost:5432/db --as <actor>` and `nova-config apply --kind
-fleet --as <actor>`. Later
-tools plays read the explicit applied URI and refuse an empty one.
+An existing schema has neither endpoint before migration 0011 adds their
+columns. Bootstrap once with `nova-config migrate --pg
+postgres://user@localhost:5432/db`, then run `nova-config fleet set --redis_port
+<port> --pg_dsn postgres://user@localhost:5432/db --as <actor>` and
+`nova-config apply --kind fleet --as <actor>`. Both endpoints stay unset after
+migration until declared. Inventory and fleet apply refuse an unset endpoint
+before any member argv is rewritten; inventory never guesses a Redis port.
 
 Every secret is named, never valued: a task that needs one runs its tool under
 `nova-secrets exec --only <NAME> --require=<NAME>` as the host's seat, so the

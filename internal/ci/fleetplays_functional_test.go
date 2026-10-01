@@ -245,6 +245,6 @@ func TestToolsPlayRefusesAnEmptyFleetDSN(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, out, "the applied fleet row has no pg_dsn")
 	assert.Contains(t, out, "nova-config migrate")
-	assert.Contains(t, out, "nova-config fleet set --pg_dsn")
+	assert.Contains(t, out, "nova-config fleet set --redis_port <port> --pg_dsn")
 	assert.Contains(t, out, "nova-config apply --kind fleet")
 }
