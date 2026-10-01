@@ -572,6 +572,10 @@ func providerReason(log []byte) string {
 	return ""
 }
 
+// nativeStageFail is native's STAGE FAIL line's reason: the launch refused at staging,
+// before any child ran (native.go; tla/CardContract.tla, StageRefused).
+var nativeStageFail = regexp.MustCompile(`(?m)^STAGE FAIL .*\breason=(.+)$`)
+
 var (
 	nativeProvider = regexp.MustCompile(`\bNATIVE PROVIDER-`)
 	nativeStopped  = regexp.MustCompile(`\bNATIVE \S+ .*\bstopped=`)
@@ -584,12 +588,19 @@ var (
 // the card's results, in the contract's shape (docs/SPEC-CARD-CONTRACT.md
 // section 3). The head is the result's, else the last push the git shim
 // recorded in the job, else an older result's `rev:` line; a read's verdict and
-// report fall back to the older shape too.
+// report fall back to the older shape too. A launch refused at staging (its STAGE FAIL
+// line) ran no child: it ends EndStaging with the line's reason, and nothing else is read.
 func (c *nativeChild) Result() member.Result {
 	c.once.Do(func() {
 		ran := false
 		var end, usage, provider string
 		if b, err := os.ReadFile(c.logPath); err == nil {
+			if m := nativeStageFail.FindSubmatch(b); m != nil {
+				// refused at staging: no child ran, so no result of this launch exists to read
+				why := strings.TrimPrefix(strings.TrimSpace(string(m[1])), member.EndStaging+": ")
+				c.result = member.Result{End: member.EndStaging, Staging: why, Report: "no child ran (see " + c.logPath + ")"}
+				return
+			}
 			if m := nativeRC.FindSubmatch(b); m != nil {
 				ran = string(m[1]) == "OK" && string(m[2]) == "0" && string(m[3]) == "ok"
 			}
