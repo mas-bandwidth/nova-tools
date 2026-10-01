@@ -292,9 +292,16 @@ and it is the coordinator's decision, receipted.
 
 ## 5. The fleet
 
-- A member is a fleet machine with a width: the most work cards it holds at
-  once, ready and working together (its child cap; `init --members m1:64` or
-  `fleet up m1 --width 64`; default 64). The fleet table shows it in the width
+- A member is a fleet machine with a width: the most work cards it runs at
+  once (its child cap; `init --members m1:64` or `fleet up m1 --width 64`;
+  default 64). It holds up to DealAhead (two) times its width, ready and
+  working together: its width working and as many again ready behind them, so
+  a lane that frees takes its next card at once (the owner, 2026-10-01: "The
+  WHOLE POINT of nova-sprint is to feed the fleet at width and keep it working
+  at that width until done."; "deal at most 2X width ahead per-machine in
+  fleet"). The member runs its width; the rest wait in its ready column, and
+  its loop takes a freed lane's next card in the same pass that reports the
+  finish. The fleet table shows it in the width
   column beside working; the footer row sums the widths, the fleet's total
   width (eight machines of 64 total 512). The row is the truth: the member's
   loop (`nova-swarm member`) reads its width with its queue every tick
@@ -364,12 +371,14 @@ and it is the coordinator's decision, receipted.
 - The machine's tick deals every ready primary the fleet has room for in one
   step, in stream turns (each stream's oldest first by score), one card at a
   time to the next up member round the fleet (the rolling index `deal_index`)
-  that is below its width: 150 ready over eight machines of width 64 all go to
-  working in one tick, 18 or 19 a machine. A machine at its width takes no
-  more, whoever deals: the `deal` verb refuses a card no up member has room for,
-  and a rework with no member below its width sends its primary ready with the
-  fix, for the tick to deal (`tla/DirtyTick.tla`, `Room` and `WidthRespected`;
-  `TestAReworkIsNotDealtToAMemberAtItsWidth`).
+  that is below its room, DealAhead times its width: 150 ready over eight
+  machines of width 64 all go to working in one tick, 18 or 19 a machine. A
+  machine at its room takes no more, whoever deals: the `deal` verb refuses a
+  card no up member has room for, and a rework with no member below its room
+  sends its primary ready with the fix, for the tick to deal
+  (`tla/DirtyTick.tla`, `Room` and `WidthRespected`, which bound the room;
+  `TestAReworkIsNotDealtToAMemberAtDealAheadTimesItsWidth`). A member takes
+  its ready cards in stream turns, so it starts every stream alike.
 - Every rolling index (the fleet's `deal_index`, the readers' `ask_index`, the
   work table's `stream_index`, `stream_index_ask` and `stream_index_accept`) is
   a counter: a uint64 from 0 that goes up by one with every placement and by
@@ -384,7 +393,17 @@ and it is the coordinator's decision, receipted.
   generation; the attempt advances only on rework. A primary with a withdrawn
   card is ready, never working.
 - A member coming up: ready queues are levelled in one call; the newest cards move.
-- done and ok% are computed by the table from the member's `ok` and `failed`
+- The rebalance, once at the start of every tick, before any table's update
+  (the owner, 2026-10-01: "both for readers and fleet, there needs to be a
+  rebalance step done at the start of each tick. it's simple. just once before
+  tick, rebalance each table."): the fleet's level moves ready cards (dealt,
+  not taken) from a member holding cards it cannot start to one with free
+  lanes, evening the members' backlogs (held less width) to within one, never
+  past DealAhead times a width; a working card on an up member stays. It is a
+  safety too ("and it's a safety, if ever there are cards on a held or down
+  machine, rebalance moves them away."): no card stays on a held or down
+  member; its cards, ready or working, are dealt to the members up as a member
+  going down sends them, or withdrawn when none is up.- done and ok% are computed by the table from the member's `ok` and `failed`
   cells.
 - A fleet member says it is there by beating: `nova-sprint fleet beat
   <member>`, run on the machine every few seconds, writes its last beat time
@@ -466,6 +485,22 @@ id (`--op`) returns the original result, with no second counter or notification.
   column and `where` shows no reader's state; the state is never stored in the
   table. The state is read, never typed: the tick reads it once, with its first
   read, and every part plans on that reading.
+- The readers' rebalance runs once at the start of every tick, before any
+  table's update (the owner, 2026-10-01: "just once before tick, rebalance each
+  table."): first its safety ("if ever there are cards on a held or down
+  machine, rebalance moves them away"): every read asked or reading of a reader
+  that is not up is taken back (retired by `away`) while a reader up without a
+  card at its attempt could take it, and the tick's ask asks it again; with
+  none, it stays and is judged as below. Then the level: asked reads (not
+  begun) move from the reader with the largest load (asked and reading) to the
+  next reader up round the readers at or below the mean, until no two loads
+  differ by more than one, so no reader up is idle while another holds a
+  backlog. A moved read is retired (by `level`) and asked of the other reader
+  at the same attempt and head, its route kept, as a fresh ask (not returned,
+  reasked 0); a primary's two reads stay with two different readers, and no
+  reader is asked an attempt it already had. The sprint knows no reader's width
+  (a reader loop's `--width` is its own), so readers are levelled by count and
+  none is bounded at DealAhead times a width.
 - ask deals every primary in review that lacks reads to TWO DIFFERENT readers
   UP, each to the shortest asked queue, keeping order. One read card per reader.
   A reader away or down is never asked. A read asked, and not begun, of a
@@ -1154,14 +1189,16 @@ revision changed, after `start`, after a tick that did not finish (a part that
 lost to other writers, a stale epoch, a halt, a failure, or moves left past a
 bound), and once every minute (TickFullEvery); otherwise it does nothing
 else. Otherwise it runs its parts in order, each one operation of the
-engine on a fresh read, sharing the fence with every verb: resolve (T1:
+engine on a fresh read, sharing the fence with every verb: first the start,
+once (the rebalance of the fleet table and of the readers table, section 5 and
+section 6), then resolve (T1:
 every stream's waiting cards in score order; a card whose needs have all landed moves to ready; a sentinel is never
 moved, and is marked reached when all it needs has landed), resume (T7: a
 stream stopped only on a cross need whose card has landed), deal (T3), accept
 (R9: every acceptable primary in review the tick does not hold, section 6,
 moves to merging and into its stream's merge queue, and the coordinator is
 told once for each stream "ready to merge"; the merge is the coordinator's),
-level (T4), ask (T2: two different readers up for each primary in review with
+ask (T2: two different readers up for each primary in review with
 fewer than two read cards at its attempt and work not failed; a read asked of a
 reader that is not up is taken back first, section 6), check (T6: section 9, and the
 no-stall rule 12), deadlines, overdue, done (the sprint done: the machine
