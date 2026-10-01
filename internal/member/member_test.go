@@ -606,7 +606,7 @@ func TestCardTextForAWorkPacketWithNoBaseWorksInPlace(t *testing.T) {
 	if !strings.HasPrefix(got, "## From the sprint\n\n") {
 		t.Fatalf("a packet with no brief starts at the sprint's part:\n%s", got)
 	}
-	for _, want := range []string{"Work in the directory you start in and nowhere else.", "finish --as m1 c2@1 --epoch 3 --branch work/c2 "} {
+	for _, want := range []string{"Work in the directory you start in and nowhere else;", "finish --as m1 c2@1 --epoch 3 --branch work/c2 "} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("the card lacks %q:\n%s", want, got)
 		}
