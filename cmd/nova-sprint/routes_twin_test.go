@@ -35,6 +35,9 @@ func TestAPinnedCardOnTheTwinIsReadBackByCardAndRoutes(t *testing.T) {
 		"nova-sprint tick",
 		"nova-sprint take --as m1 --epoch 0",
 		"nova-sprint finish --as m1 s1-1.w1@1 --epoch 0 --failed --report 'provider failure: 529' --usage 'wall=3.00s budget=10/5000'",
+		// the machine runs: the finish's change of the primary, its cost record with it,
+		// waits in the work table's queue for the next tick's pump
+		"nova-sprint stop",
 	} {
 		code, o, e := run(line)
 		require.Equal(t, 0, code, "%s\n%s%s", line, o, e)

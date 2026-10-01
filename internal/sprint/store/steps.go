@@ -21,11 +21,12 @@ func AddStep(r sprint.AddReq) Step {
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Add(s, r) }}
 }
 
-// AddEachStep admits primaries into several streams in one step.
+// AddEachStep admits primaries into several streams in one step; named cards
+// (ids, or cards with their briefs) are all or none across every stream.
 func AddEachStep(rs []sprint.AddReq) Step {
 	named := false
 	for _, r := range rs {
-		named = named || len(r.IDs) > 0
+		named = named || len(r.IDs) > 0 || len(r.Cards) > 0
 	}
 	return Step{Named: named, Args: ArgsOf(rs), Verb: "add", Load: tables(sprint.Work, sprint.Merge, sprint.Fleet), Mirrors: true,
 		Extras: func(s *sprint.Snapshot) map[string][]string {
@@ -125,6 +126,7 @@ func RankStep(r sprint.RankReq) Step {
 
 // MergeStep is one mechanical merge step of a stream.
 func MergeStep(r sprint.MergeReq) Step {
+	// a landing takes each card's total from the card itself (sprint's cost.go)
 	return Step{Args: ArgsOf(r), Verb: "merge", Load: tables(sprint.Merge, sprint.Work), Mirrors: true,
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.MergeStep(s, r) }}
 }
