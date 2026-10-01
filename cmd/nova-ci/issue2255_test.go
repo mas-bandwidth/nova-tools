@@ -8,16 +8,15 @@ package main
 import (
 	"os"
 	"path/filepath"
-
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // makeFlakes writes one flake table to a file inside t.TempDir and returns its path.
 func makeFlakes(t *testing.T, dir, body string) string {
 	t.Helper()
 	path := filepath.Join(dir, "flakes.tsv")
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
 	return path
 }

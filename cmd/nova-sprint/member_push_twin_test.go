@@ -97,7 +97,7 @@ func twinMemberFlow(t *testing.T, pu *twinPusher) (file, branch, out string) {
 	require.NotEmpty(t, p.Branch, "the sprint names the work's branch in the packet")
 	c := rn.children[p.Card]
 	c.mu.Lock()
-	c.done, c.res = true, member.Result{Ran: true, OK: true, Head: "0123456", Report: "did the work"}
+	c.done, c.res = true, member.Result{Ran: true, OK: true, Shaped: true, Verdict: "ok", Head: "0123456", Report: "did the work"}
 	c.mu.Unlock()
 	_, err = m.Tick(time.Unix(0, 0))
 	require.NoError(t, err, log.String())
@@ -166,4 +166,19 @@ func TestARefusedPushIsAFailedCardOnTheTwin(t *testing.T) {
 	require.Equal(t, 0, code, e)
 	assert.Contains(t, story, "push refused: "+line+"; did the work")
 	assert.True(t, strings.Contains(story, "failed"), "the card's story says it failed:\n%s", story)
+}
+
+// A child that committed nothing is a failed card on the twin: the finish
+// names no head and no branch, and the card waits on the failed-work
+// judgment, never on review with nothing to read (docs/SPEC-CARD-CONTRACT.md
+// section 4).
+func TestAChildThatCommittedNothingIsAFailedCardOnTheTwin(t *testing.T) {
+	t.Parallel()
+	file, _, out := twinMemberFlow(t, &twinPusher{push: member.Push{None: "the child committed nothing"}})
+	assert.Contains(t, out, "NOTE finish s1-1.w1 failed: no commit: the child committed nothing")
+	assert.Contains(t, out, "finish s1-1.w1 ok=false exit=0")
+	code, story, e := twinProcess(t, file, "nova-sprint card s1-1")
+	require.Equal(t, 0, code, e)
+	assert.Contains(t, story, "work came back failed")
+	assert.Contains(t, story, "no commit: the child committed nothing; did the work")
 }

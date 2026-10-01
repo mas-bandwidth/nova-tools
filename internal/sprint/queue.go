@@ -292,7 +292,7 @@ func WithQueue(s *Snapshot, q []QueuedChange) *Snapshot {
 	p := Drain(s, q, "")
 	w := NewTable(s.Work.Name)
 	w.Epoch, w.Revision, w.Texts, w.rows = s.Work.Epoch, s.Work.Revision+1, s.Work.Texts, s.Work.rows
-	w.props, w.propsRead, w.propsOf, w.part = map[string]string{}, s.Work.propsRead, s.Work.propsOf, s.Work.part
+	w.props = map[string]string{}
 	for k, v := range s.Work.props {
 		w.props[k] = v
 	}

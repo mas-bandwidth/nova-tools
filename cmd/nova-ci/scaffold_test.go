@@ -29,6 +29,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/goenv"
+	"github.com/stretchr/testify/require"
 )
 
 func TestNewVerbYieldsABuildingTestingSkeleton(t *testing.T) {
@@ -62,9 +63,7 @@ func TestNewVerbYieldsABuildingTestingSkeleton(t *testing.T) {
 	}
 	mainGo := filepath.Join(tree, "cmd", "nova-ci", "main.go")
 	src, err := os.ReadFile(mainGo)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	if strings.Contains(string(src), "cmdProbe") {
 		t.Errorf("new-verb edited the dispatch switch in %s; it must only print the case", mainGo)
 	}
@@ -88,9 +87,7 @@ func TestNewVerbYieldsABuildingTestingSkeleton(t *testing.T) {
 	if !strings.Contains(string(src), sw) {
 		t.Fatalf("%s has no %q to paste the case under", mainGo, sw)
 	}
-	if err := os.WriteFile(mainGo, []byte(strings.Replace(string(src), sw, sw+dispatch, 1)), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(mainGo, []byte(strings.Replace(string(src), sw, sw+dispatch, 1)), 0o644))
 	if got := runIn(t, tree, "go", "run", "./cmd/nova-ci", "probe"); !strings.Contains(got, "nova-ci probe: OK") {
 		t.Errorf("nova-ci probe after pasting the printed case did not run the verb:\n%s", got)
 	}
@@ -131,9 +128,7 @@ func scaffoldTree(t *testing.T, pattern string) (root, bin, tree string) {
 		}
 	}
 	root, err := filepath.Abs("../..")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	bin = buildCLI(t)
 	tree = t.TempDir()
 
@@ -162,9 +157,7 @@ func scaffoldTree(t *testing.T, pattern string) (root, bin, tree string) {
 		}
 		seen[line] = true
 		ents, err := os.ReadDir(dir)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		for _, e := range ents {
 			if e.Type().IsRegular() {
 				copyScaffoldFile(t, filepath.Join(dir, e.Name()), filepath.Join(tree, rel, e.Name()))
@@ -215,17 +208,9 @@ func runIn(t *testing.T, dir, name string, args ...string) string {
 func copyScaffoldFile(t *testing.T, from, to string) {
 	t.Helper()
 	data, err := os.ReadFile(from)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	info, err := os.Stat(from)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(filepath.Dir(to), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(to, data, info.Mode().Perm()); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(filepath.Dir(to), 0o755))
+	require.NoError(t, os.WriteFile(to, data, info.Mode().Perm()))
 }

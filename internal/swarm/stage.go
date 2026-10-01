@@ -277,6 +277,11 @@ type StageOptions struct {
 	BenchHome string
 	BenchName string
 	Timeout   time.Duration
+	// Base and Branch, when set, are the frame's (internal/cardcontract): the repository,
+	// ref and sha the member's packet names and the branch it pushes, staged in place of
+	// what the card's header lines say (docs/SPEC-CARD-CONTRACT.md layer 2).
+	Base   *CardBase
+	Branch string
 
 	// git, when set, builds every staging git call in place of stageGit: a test's seam for
 	// a step git itself would not fail.
@@ -309,10 +314,13 @@ type StageResult struct {
 //
 // and returns ErrStageTimeout.
 func StageCard(opts StageOptions) (StageResult, error) {
-	if len(opts.Card) == 0 {
+	if len(opts.Card) == 0 && opts.Base == nil {
 		return StageResult{}, nil
 	}
 	cb := ReadCardBase(opts.Card)
+	if opts.Base != nil {
+		cb = *opts.Base
+	}
 	baseRepo, baseSha := cb.Repo, cb.Sha
 	if baseRepo == "" {
 		return StageResult{}, nil
@@ -405,6 +413,12 @@ func StageCard(opts StageOptions) (StageResult, error) {
 
 	// Fetch and checkout baseSha (else the BASE: ref) on the card's branch.
 	branch := CardStageBranch(opts.Card)
+	if opts.Branch != "" {
+		if err := refuseOptionLike("branch", opts.Branch); err != nil {
+			return StageResult{BaseRepo: baseRepo, BaseSha: baseSha, Ref: cb.Ref, Mirror: mirror, Wall: time.Since(start)}, err
+		}
+		branch = opts.Branch
+	}
 	switch {
 	case baseSha != "":
 		catCmd := stageCmd(ctx, "-C", opts.TargetDir, "cat-file", "-e", "--end-of-options", baseSha+"^{commit}")

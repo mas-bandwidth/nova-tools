@@ -9,12 +9,12 @@ import (
 // width 64 and three streams of fifty ready primaries each.
 var widthMembers = []string{"m1", "m2", "m3", "m4", "m5", "m6", "m7", "m8"}
 
-func widthFleet(t *testing.T, width int) *fleetT {
+func widthFleet(t *testing.T, width int) *world {
 	t.Helper()
-	f := newFleetW(t, 50, width, widthMembers...)
-	f.w.must(Add(f.snap(), AddReq{Stream: "s2", Count: 50}))
-	f.w.must(Add(f.snap(), AddReq{Stream: "s3", Count: 50}))
-	return f
+	w := fleetWorld(t, 50, width, widthMembers...)
+	w.must(Add(w.s, AddReq{Stream: "s2", Count: 50}))
+	w.must(Add(w.s, AddReq{Stream: "s3", Count: 50}))
+	return w
 }
 
 // perMember is each member's ready and working cards.
@@ -26,16 +26,16 @@ func perMember(s *Snapshot) map[string]int {
 	return out
 }
 
-// R6 on the twin's read: one plan deals all 150, round the fleet, each machine
+// The tick's deal (T3): one plan deals all 150, round the fleet, each machine
 // 18 or 19; ready is empty and working holds 150 after the one step.
 func TestDealFillsTheFleetToWidthInOnePlan(t *testing.T) {
 	t.Parallel()
-	f := widthFleet(t, 64)
-	rp := f.run(ruleDeal, "deal")
-	if len(rp.Plan.Units) != 150 {
-		t.Fatalf("one plan dealt %d, want 150", len(rp.Plan.Units))
+	w := widthFleet(t, 64)
+	p := w.part(TickDeal, TickReq{})
+	if len(p.Units) != 150 {
+		t.Fatalf("one plan dealt %d, want 150", len(p.Units))
 	}
-	s := f.snap()
+	s := w.s
 	if r, w := len(s.Work.Column(Ready)), len(s.Work.Column(Working)); r != 0 || w != 150 {
 		t.Fatalf("after one plan: ready %d, working %d, want 0 and 150", r, w)
 	}
@@ -44,33 +44,30 @@ func TestDealFillsTheFleetToWidthInOnePlan(t *testing.T) {
 			t.Fatalf("%s holds %d, want 18 or 19 (round the fleet): %v", m, n, perMember(s))
 		}
 	}
-	if keyTexts(rp.Done) != "deal" {
-		t.Fatalf("a read that was not cut leaves nothing: done %s requeue %s", keyTexts(rp.Done), keyTexts(rp.Requeue))
-	}
 }
 
 // A machine at its width takes no more: m1 holding 64 (ready and working) is
 // skipped, and the others take the cards.
 func TestDealSkipsAMachineAtItsWidth(t *testing.T) {
 	t.Parallel()
-	f := newFleetW(t, 10, 64, "m1", "m2")
+	w := fleetWorld(t, 10, 64, "m1", "m2")
 	for i := range 64 {
 		col := Ready
 		if i%2 == 0 {
 			col = Working
 		}
-		putWorkCard(f, fmt.Sprintf("x%d", i), "m1", col, float64(100+i), nil)
+		putWorkCard(w, fmt.Sprintf("x%d", i), "m1", col, float64(100+i), nil)
 	}
-	rp := f.run(ruleDeal, "deal")
-	if len(rp.Plan.Units) != 10 {
-		t.Fatalf("dealt %d, want 10", len(rp.Plan.Units))
+	p := w.part(TickDeal, TickReq{})
+	if len(p.Units) != 10 {
+		t.Fatalf("dealt %d, want 10", len(p.Units))
 	}
-	for _, u := range rp.Plan.Units {
+	for _, u := range p.Units {
 		if c := u.Changes[0].Entry.Create; c == nil || c.Row != "m2" {
 			t.Fatalf("a card went to a member at its width: %+v", u)
 		}
 	}
-	if n := f.snap().Fleet.Count("m1", Ready) + f.snap().Fleet.Count("m1", Working); n != 64 {
+	if n := w.s.Fleet.Count("m1", Ready) + w.s.Fleet.Count("m1", Working); n != 64 {
 		t.Fatalf("m1 holds %d, its width is 64", n)
 	}
 }
@@ -78,12 +75,12 @@ func TestDealSkipsAMachineAtItsWidth(t *testing.T) {
 // At width 2 the deal is today's: two cards a member, sixteen over eight.
 func TestDealAtWidthTwoIsTodays(t *testing.T) {
 	t.Parallel()
-	f := widthFleet(t, 2)
-	rp := f.run(ruleDeal, "deal")
-	if len(rp.Plan.Units) != 16 {
-		t.Fatalf("dealt %d, want 16", len(rp.Plan.Units))
+	w := widthFleet(t, 2)
+	p := w.part(TickDeal, TickReq{})
+	if len(p.Units) != 16 {
+		t.Fatalf("dealt %d, want 16", len(p.Units))
 	}
-	for m, n := range perMember(f.snap()) {
+	for m, n := range perMember(w.s) {
 		if n != 2 {
 			t.Fatalf("%s holds %d, want 2", m, n)
 		}

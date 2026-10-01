@@ -8,6 +8,7 @@ package bus
 
 import (
 	"errors"
+	"github.com/stretchr/testify/require"
 	"os"
 	"sync"
 	"testing"
@@ -21,9 +22,7 @@ func TestRowanOpusLockReplacedDuringScanSequence(t *testing.T) {
 	other := self + 1
 	dir, lock := oldIndexLock(t)
 	fi0, err := os.Lstat(lock)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	old := fi0.ModTime()
 
 	var mu sync.Mutex
@@ -34,9 +33,7 @@ func TestRowanOpusLockReplacedDuringScanSequence(t *testing.T) {
 	var owners []owned
 	own := func(uid uint32) { // the file now at the path is owned by uid
 		fi, err := os.Lstat(lock)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		mu.Lock()
 		owners = append(owners, owned{fi, uid})
 		mu.Unlock()
@@ -57,15 +54,9 @@ func TestRowanOpusLockReplacedDuringScanSequence(t *testing.T) {
 	n := 0
 	replace := func(body string, uid uint32) {
 		n++
-		if err := os.Rename(lock, lock+".old"+string(rune('0'+n))); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(lock, []byte(body), 0o600); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.Chtimes(lock, old, old); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.Rename(lock, lock+".old"+string(rune('0'+n))))
+		require.NoError(t, os.WriteFile(lock, []byte(body), 0o600))
+		require.NoError(t, os.Chtimes(lock, old, old))
 		own(uid)
 	}
 	body := func(step, want string) {

@@ -17,10 +17,13 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
 	"github.com/mas-bandwidth/nova-tools/internal/member"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
+	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
 // cmdMember is `nova-swarm member`: this machine as one member of a sprint's
@@ -51,6 +54,8 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	config := fs.String("config", "", "")
 	workerFile := fs.String("worker", "", "")
 	noWall := fs.Bool("no-wall", false, "")
+	ghBin := fs.String("gh", "gh", "")
+	passFlag := fs.String("pass", "", "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -76,6 +81,34 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	if *as != "" && !safepath.NameOK(*as) {
 		f.add(fmt.Sprintf("--as %q is not a name (letters, digits, - _ .)", *as))
 	}
+	var onceGiven, ticksGiven bool
+	fs.Visit(func(fl *flag.Flag) {
+		switch fl.Name {
+		case "once":
+			onceGiven = true
+		case "ticks":
+			ticksGiven = true
+		}
+	})
+	if onceGiven && ticksGiven {
+		f.add("give --once or --ticks <n>, not both")
+	}
+	if ticksGiven && *ticks <= 0 {
+		f.add("give --ticks 1 or more, or leave it out to run until stopped")
+	}
+	pass := splitNames(*passFlag)
+	for _, n := range pass {
+		if !envNameRE.MatchString(n) {
+			f.add(fmt.Sprintf("--pass %q is not an environment name (letters, digits, _)", n))
+		}
+	}
+	if *workerFile != "" {
+		// the worker description names the secret its harness reads: that one name is
+		// handed through too (docs/SPEC-CARD-CONTRACT.md, the child's environment)
+		if w, problems := swarm.LoadWorker(*workerFile); len(problems) == 0 && w.Secret != "" {
+			pass = append(pass, w.Secret)
+		}
+	}
 	if f.refused(stderr) {
 		return 2
 	}
@@ -98,13 +131,15 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	rn := &nativeRunner{
 		self: self, sprintBin: *sprintBin, harness: *harness, model: *model, root: *root, slots: *slots,
 		resultsRoot: *resultsRoot, deadline: deadline.d, tokens: *tokensWord, auth: *auth, config: *config,
-		worker: *workerFile, noWall: *noWall, stderr: stderr,
+		worker: *workerFile, noWall: *noWall, stderr: stderr, pass: pass,
 	}
 	// a work card's commit is pushed by the member, outside the wall, at its
 	// finish (memberpush.go); a read pushes nothing
 	var pu member.Pusher
 	if !*reader {
-		pu = newGitPusher(*root, *slots, *sprintBin)
+		gp := newGitPusher(*root, *slots, *sprintBin)
+		gp.gh = *ghBin
+		pu = gp
 	}
 	m := member.New(member.Config{As: *as, Width: *width, Reader: *reader}, sp, rn, pu, stdout)
 	kind := "member"
@@ -112,6 +147,9 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 		kind = "reader"
 	}
 	fmt.Fprintf(stdout, "MEMBER %s as=%s width=%d every=%s sprint=%s harness=%s model=%s\n", oneline.Field(kind), oneline.Field(*as), *width, oneline.Field(every.d.String()), oneline.Field(*sprintBin), oneline.Field(*harness), oneline.Field(*model))
+	if note := passNote(*model, pass, *auth); note != "" {
+		fmt.Fprintln(stdout, note)
+	}
 	n := 0
 	for {
 		n++
@@ -122,7 +160,7 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 		if acted > 0 || err != nil {
 			fmt.Fprintf(stdout, "tick %d acted=%d running=%d %s\n", n, acted, m.Running(), oneline.Field(time.Now().Format("15:04:05")))
 		}
-		if *once || (*ticks > 0 && n >= *ticks) {
+		if *once || (ticksGiven && n >= *ticks) {
 			break
 		}
 		time.Sleep(every.d)
@@ -136,6 +174,7 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 // environment, never the member's).
 type execSprint struct {
 	bin, actor string
+	env        []string // added to this process's environment: none in production, a test's store address
 }
 
 // sprintVerbBudget is how long one sprint verb may run before the member stops waiting
@@ -146,7 +185,7 @@ const sprintVerbBudget = 120 * time.Second
 func (s *execSprint) Run(args ...string) (int, []byte) {
 	cmd, cancel := subproc.CommandFor(context.Background(), sprintVerbBudget, s.bin, args...)
 	defer cancel()
-	cmd.Env = append(os.Environ(), "NOVA_SPRINT_ACTOR="+s.actor)
+	cmd.Env = append(append(os.Environ(), s.env...), "NOVA_SPRINT_ACTOR="+s.actor)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	err := cmd.Run()
@@ -170,6 +209,8 @@ type nativeRunner struct {
 	tokens, auth, config, worker                              string
 	noWall                                                    bool
 	stderr                                                    io.Writer
+	env                                                       []string // added to this process's environment: none in production, a test's
+	pass                                                      []string // the secret names handed to native (--pass, the worker's secret)
 }
 
 func (r *nativeRunner) Start(p member.Packet) (member.Child, error) {
@@ -184,8 +225,9 @@ func (r *nativeRunner) Start(p member.Packet) (member.Child, error) {
 	results := filepath.Join(r.resultsRoot, name)
 	logPath := filepath.Join(r.slots, name+".native.log")
 	pidPath := filepath.Join(r.slots, name+".pid")
+	job := filepath.Join(slot, "jobs", p.Card)
 	if pid := livePID(pidPath); pid > 0 {
-		c := &nativeChild{card: p.Card, logPath: logPath, results: results, done: make(chan struct{})}
+		c := &nativeChild{card: p.Card, logPath: logPath, results: results, job: job, done: make(chan struct{})}
 		go func() {
 			for processAlive(pid) {
 				time.Sleep(time.Second)
@@ -204,7 +246,11 @@ func (r *nativeRunner) Start(p member.Packet) (member.Child, error) {
 	if err := os.WriteFile(cardPath, []byte(member.CardText(p, r.sprintBin)), 0o644); err != nil {
 		return nil, err
 	}
-	args := []string{"native", "--harness", r.harness, "--model", r.model, "--card", cardPath, "--slot", slot,
+	framePath := filepath.Join(r.slots, name+cardcontract.FrameName)
+	if err := cardcontract.WriteFrame(framePath, frameOf(p, r.model)); err != nil {
+		return nil, err
+	}
+	args := []string{"native", "--harness", r.harness, "--model", r.model, "--card", cardPath, "--frame", framePath, "--slot", slot,
 		"--root", r.root, "--deadline", r.deadline.String(), "--tokens", r.tokens, "--label", p.Card, "--results-root", results}
 	if r.auth != "" {
 		args = append(args, "--auth", r.auth)
@@ -222,6 +268,7 @@ func (r *nativeRunner) Start(p member.Packet) (member.Child, error) {
 	// ends it), released when the wait returns.
 	ctx, release := context.WithCancel(context.Background())
 	cmd := subproc.Long(ctx, r.self, args...)
+	cmd.Env = childEnviron(append(os.Environ(), r.env...), r.pass)
 	logf, err := os.Create(logPath)
 	if err != nil {
 		release()
@@ -234,7 +281,7 @@ func (r *nativeRunner) Start(p member.Packet) (member.Child, error) {
 		return nil, err
 	}
 	_ = os.WriteFile(pidPath, []byte(strconv.Itoa(cmd.Process.Pid)+"\n"), 0o644)
-	c := &nativeChild{card: p.Card, logPath: logPath, results: results, done: make(chan struct{})}
+	c := &nativeChild{card: p.Card, logPath: logPath, results: results, job: job, done: make(chan struct{})}
 	go func() {
 		c.err = cmd.Wait()
 		release()
@@ -280,11 +327,11 @@ func processAlive(pid int) bool {
 }
 
 type nativeChild struct {
-	card, logPath, results string
-	done                   chan struct{}
-	err                    error
-	once                   sync.Once
-	result                 member.Result
+	card, logPath, results, job string
+	done                        chan struct{}
+	err                         error
+	once                        sync.Once
+	result                      member.Result
 }
 
 func (c *nativeChild) Done() bool {
@@ -298,9 +345,12 @@ func (c *nativeChild) Done() bool {
 
 var nativeRC = regexp.MustCompile(`\bNATIVE (\S+) .*\brc=(-?\d+)\b.*\bharness=(\S+)`)
 
-// Result reads how the child ended: the NATIVE line's rc and harness word,
-// and the newest RESULT.md under the card's results (its `rev:` line is the
-// head, its "One line" section the report).
+// Result reads how the child ended: the NATIVE line's rc and harness word, and
+// the finish the gh shim recorded in the job, else the newest RESULT.md under
+// the card's results, in the contract's shape (docs/SPEC-CARD-CONTRACT.md
+// section 3). The head is the result's, else the last push the git shim
+// recorded in the job, else an older result's `rev:` line; a read's verdict and
+// report fall back to the older shape too.
 func (c *nativeChild) Result() member.Result {
 	c.once.Do(func() {
 		ran := false
@@ -309,7 +359,35 @@ func (c *nativeChild) Result() member.Result {
 				ran = string(m[1]) == "OK" && string(m[2]) == "0" && string(m[3]) == "ok"
 			}
 		}
-		head, verdict, report := readResult(newestResult(c.results))
+		path := newestResult(c.results)
+		var raw []byte
+		if path != "" {
+			raw, _ = os.ReadFile(path) // ignored: an unreadable result reads as no result, which the finish judges failed
+		}
+		// the shim's record of gh pr create or gh pr review is the finish when there is
+		// one; a RESULT.md the child wrote as well rides in its body for the readers
+		cr, shimmed := cardcontract.ReadFinish(c.job)
+		if !shimmed {
+			cr = typedrec.ParseCardResult(raw)
+		} else if len(strings.TrimSpace(string(raw))) > 0 {
+			cr.Body = strings.TrimSpace(cr.Body + "\n\n## RESULT.md\n\n" + string(raw))
+		}
+		head, verdict, report := cr.Head, cr.Verdict, cr.Report
+		if head == "" {
+			_, head = cardcontract.LastPushed(c.job)
+		}
+		if !cr.Shaped {
+			lh, lv, lr := readResult(path)
+			if head == "" {
+				head = lh
+			}
+			if verdict == "" {
+				verdict = lv
+			}
+			if report == "" {
+				report = lr
+			}
+		}
 		if report == "" {
 			if ran {
 				report = "finished; the child published no one-line report"
@@ -317,9 +395,39 @@ func (c *nativeChild) Result() member.Result {
 				report = "the child ended without a result (see " + c.logPath + ")"
 			}
 		}
-		c.result = member.Result{Ran: ran, OK: ran, Verdict: verdict, Head: head, Report: report}
+		c.result = member.Result{Ran: ran, OK: ran, Shaped: cr.Shaped, Verdict: verdict, Head: head, Report: report, Title: cr.Title, Body: cr.Body}
 	})
 	return c.result
+}
+
+// tierRE is the tier a brief's line 1 names: `tier: <word>`.
+var tierRE = regexp.MustCompile(`\btier:\s*([A-Za-z0-9_-]+)`)
+
+// frameOf is a launch's frame (docs/SPEC-CARD-CONTRACT.md layer 1): the repository and
+// base the brief's header names, the packet's branch and attempt, and the commit to stage:
+// a read's head under read, a later attempt's previous pushed head, else the base's sha.
+func frameOf(p member.Packet, model string) cardcontract.Frame {
+	cb := swarm.ReadCardBase([]byte(p.Brief))
+	first, _, _ := strings.Cut(p.Brief, "\n")
+	f := cardcontract.Frame{Kind: p.Kind, Card: p.Card, Attempt: p.Attempt, Model: model,
+		Repo: cb.Repo, BaseRef: cb.Ref, StageSha: cb.Sha, Branch: p.Branch, Finding: p.Fix}
+	if m := tierRE.FindStringSubmatch(first); m != nil {
+		f.Tier = m[1]
+	}
+	if p.Kind == "read" {
+		f.Branch, f.ReviewBase = p.WorkBranch, cb.Ref
+		if p.WorkBase != "" {
+			f.ReviewBase = p.WorkBase
+		}
+		if typedrec.IsFullSha(p.Head) {
+			f.StageSha = p.Head
+		}
+		return f
+	}
+	if p.BaseHead != "" {
+		f.StageSha, f.PrevHead = p.BaseHead, p.BaseHead
+	}
+	return f
 }
 
 // newestResult is the newest RESULT.md under dir, "" when none.
@@ -335,9 +443,15 @@ func newestResult(dir string) string {
 	return best
 }
 
-// readResult reads a RESULT.md: the head from a `rev: <sha>` line, a read's
-// verdict from a `verdict: ok|broken` line, the report from the "## One line"
-// section (else the first prose line with no colon).
+// readResult reads a RESULT.md in the shape before the card contract: the head
+// from a `rev: <sha>` line, a read's verdict from a `verdict: ok|broken` line,
+// the report from the "## One line" section (else the first prose line with no
+// colon). It stays because briefs still say that shape: a read brief tells its
+// reader "`## Head` with `verdict: ok` or `verdict: broken`, `## One line`", and
+// a card whose brief names no repository is never framed, so its child writes
+// what its brief says. A work card's finish never rests on it (member.Judge
+// wants the contract's shape); a read's verdict and report do, until the briefs
+// that say the old shape are gone.
 func readResult(path string) (head, verdict, report string) {
 	if path == "" {
 		return "", "", ""
@@ -377,4 +491,73 @@ func readResult(path string) (head, verdict, report string) {
 		head = ""
 	}
 	return head, verdict, report
+}
+
+// envNameRE is an environment variable's name.
+var envNameRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// splitNames is a comma list of names, blanks dropped.
+func splitNames(s string) []string {
+	var out []string
+	for _, n := range strings.Split(s, ",") {
+		if n = strings.TrimSpace(n); n != "" {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// childKept are the names a card's native child is started with, besides the
+// prefixes in childKeptPrefixes and the secrets --pass names: what native, git
+// and the harness need, and nothing that carries a credential.
+var childKept = map[string]bool{"PATH": true, "HOME": true, "TMPDIR": true, "LANG": true, "TERM": true, "USER": true, "LOGNAME": true,
+	"GIT_CONFIG_GLOBAL": true, "GIT_CONFIG_NOSYSTEM": true}
+
+// childKeptPrefixes are the families of names a native child is started with:
+// the locale, the Go toolchain's settings, nova-swarm's own, the XDG
+// directories and the opencode harness's settings.
+var childKeptPrefixes = []string{"LC_", "GO", "NOVA_SWARM_", "NOVA_TEST_", "XDG_", "OPENCODE_"}
+
+// secretNameRE is a name that carries a credential: never handed to a child
+// unless --pass names it, whatever the lists above say.
+var secretNameRE = regexp.MustCompile(`(?i)TOKEN|SECRET|PASSWORD|PASSWD|KEY|CREDENTIAL|AUTH`)
+
+// childEnviron is the environment a card's native child starts with
+// (docs/SPEC-CARD-CONTRACT.md, the child's environment): an allowlist, never a
+// denylist. A name is kept when it is one of childKept or of a family in
+// childKeptPrefixes and carries no credential, or when it is a secret pass
+// names (the loop record's nova-secrets keys); everything else is dropped.
+func childEnviron(env, pass []string) []string {
+	passed := map[string]bool{}
+	for _, n := range pass {
+		passed[n] = true
+	}
+	out := make([]string, 0, len(env))
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		kept := childKept[name]
+		for _, p := range childKeptPrefixes {
+			kept = kept || strings.HasPrefix(name, p)
+		}
+		if passed[name] || (kept && !secretNameRE.MatchString(name)) {
+			out = append(out, kv)
+		}
+	}
+	return out
+}
+
+// localProviders are the providers a harness reaches with no key: a model on
+// this machine.
+var localProviders = map[string]bool{"ollama": true, "lmstudio": true, "llamacpp": true, "local": true}
+
+// passNote is the one NOTE line a member prints at its start when no secret is
+// handed to its children (--pass empty, no worker secret, no --auth file) and
+// its model is not a local one: the children start with no provider key and
+// fail at the provider (docs/SPEC-CARD-CONTRACT.md, the child's environment).
+func passNote(model string, pass []string, auth string) string {
+	provider, _, _ := strings.Cut(model, "/")
+	if len(pass) > 0 || auth != "" || localProviders[strings.ToLower(provider)] {
+		return ""
+	}
+	return "NOTE member --pass names no secret: a child's harness that reads its provider key from the environment starts without it and fails at the provider; run: nova-swarm member ... --pass <KEY> (the loop record's nova-secrets keys)"
 }

@@ -779,7 +779,7 @@ func TwinDiff(twin, fresh *sprint.Snapshot) string {
 		if fmt.Sprint(a.Props()) != fmt.Sprint(b.Props()) {
 			out = append(out, fmt.Sprintf("%s: props %v, fresh %v", name, a.Props(), b.Props()))
 		}
-		ac, bc := a.LoadedCards(), b.LoadedCards()
+		ac, bc := a.Cards(), b.Cards()
 		byID := map[string]*sprint.Card{}
 		for _, c := range bc {
 			byID[c.ID] = c

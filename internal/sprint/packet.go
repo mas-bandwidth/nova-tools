@@ -1,6 +1,10 @@
 package sprint
 
-import "strconv"
+import (
+	"strconv"
+
+	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
+)
 
 // Packet is what a worker or a reader is handed with a card, so that no
 // actor needs the coordinator's view to learn what it was asked: the card,
@@ -22,6 +26,10 @@ type Packet struct {
 	Notes   []string `json:"notes"`
 	Branch  string   `json:"branch,omitempty"`
 	Base    string   `json:"base,omitempty"`
+	// BaseHead is the commit a later attempt starts from: the head the attempt before
+	// finished ok at (pushed by its member), never a branch name that may not have reached
+	// origin (docs/SPEC-CARD-CONTRACT.md layer 1).
+	BaseHead string `json:"base_head,omitempty"`
 	// A read's: the work it reads.
 	Worker     string `json:"worker,omitempty"`
 	Head       string `json:"head,omitempty"`
@@ -53,6 +61,9 @@ func PacketOf(prefix string, epoch uint64, c, primary, prevWork, work *Card) Pac
 			p.Base = prevWork.F("branch")
 			if p.Base == "" {
 				p.Base = BranchOf(prefix, prevWork.ID)
+			}
+			if prevWork.F("ok") == "yes" && typedrec.IsFullSha(prevWork.F("head")) {
+				p.BaseHead = prevWork.F("head")
 			}
 		}
 		return p

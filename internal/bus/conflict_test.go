@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // The union, both ways: it keeps every line of both sides in a stable order, and it does
@@ -14,25 +16,20 @@ func TestUnionLinesKeepsBothSidesAndDoublesNothing(t *testing.T) {
 	t.Parallel()
 	ours := "a\nb\n"
 	theirs := "a\nc\n"
-	if got, want := UnionLines(ours, theirs), "a\nb\nc\n"; got != want {
-		t.Fatalf("UnionLines = %q, want %q", got, want)
-	}
+	got, want := UnionLines(ours, theirs), "a\nb\nc\n"
+	require.Equal(t, want, got, "UnionLines = %q, want %q", got, want)
 	// Identical sides are one side.
-	if got, want := UnionLines(ours, ours), "a\nb\n"; got != want {
-		t.Fatalf("UnionLines over one content twice = %q, want %q", got, want)
-	}
+	got, want = UnionLines(ours, ours), "a\nb\n"
+	require.Equal(t, want, got, "UnionLines over one content twice = %q, want %q", got, want)
 	// A side that is missing entirely contributes nothing and loses nothing.
-	if got, want := UnionLines("", theirs), "a\nc\n"; got != want {
-		t.Fatalf("UnionLines with an empty side = %q, want %q", got, want)
-	}
-	if got := UnionLines("", ""); got != "" {
-		t.Fatalf("UnionLines over nothing = %q, want empty", got)
-	}
+	got, want = UnionLines("", theirs), "a\nc\n"
+	require.Equal(t, want, got, "UnionLines with an empty side = %q, want %q", got, want)
+	got = UnionLines("", "")
+	require.Empty(t, got, "UnionLines over nothing = %q, want empty", got)
 	// Blank lines and CRLF are folded, because every reader of these files already skips
 	// the first and this tool never writes the second.
-	if got, want := UnionLines("a\n\nb\n", "a\r\nc\r\n"), "a\nb\nc\n"; got != want {
-		t.Fatalf("UnionLines = %q, want %q", got, want)
-	}
+	got, want = UnionLines("a\n\nb\n", "a\r\nc\r\n"), "a\nb\nc\n"
+	require.Equal(t, want, got, "UnionLines = %q, want %q", got, want)
 }
 
 // The attribute file, both ways: it is written when the rules are not there, and writing it
@@ -42,16 +39,10 @@ func TestEnsureMergeAttributes(t *testing.T) {
 	t.Parallel()
 	root := t.TempDir()
 	wrote, err := EnsureMergeAttributes(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !wrote {
-		t.Fatal("the first call wrote nothing; a bus with no .gitattributes has no union rule")
-	}
+	require.NoError(t, err)
+	require.True(t, wrote, "the first call wrote nothing; a bus with no .gitattributes has no union rule")
 	first, err := os.ReadFile(filepath.Join(root, AttributesName))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	for _, want := range []string{"from-*/INDEX merge=union", "from-*/RECEIPTS merge=union"} {
 		if !strings.Contains(string(first), want) {
 			t.Fatalf("%s does not carry %q:\n%s", AttributesName, want, first)
@@ -59,32 +50,22 @@ func TestEnsureMergeAttributes(t *testing.T) {
 	}
 	// The second call is a no-op: no write, and not a second copy of the rules.
 	wrote, err = EnsureMergeAttributes(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if wrote {
-		t.Fatal("the rules were written twice; every send after the first would touch a shared file for nothing")
-	}
+	require.NoError(t, err)
+	require.False(t, wrote, "the rules were written twice; every send after the first would touch a shared file for nothing")
 	again, err := os.ReadFile(filepath.Join(root, AttributesName))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	if string(again) != string(first) {
 		t.Fatalf("the second call changed the file:\n%s\n---\n%s", first, again)
 	}
 
 	// A bus that already has a .gitattributes of its own keeps it, and gains the rules.
 	other := t.TempDir()
-	if err := os.WriteFile(filepath.Join(other, AttributesName), []byte("*.md text\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(other, AttributesName), []byte("*.md text\n"), 0o644))
 	if wrote, err := EnsureMergeAttributes(other); err != nil || !wrote {
 		t.Fatalf("EnsureMergeAttributes over an existing file = %v %v", wrote, err)
 	}
 	got, err := os.ReadFile(filepath.Join(other, AttributesName))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	for _, want := range []string{"*.md text", "from-*/INDEX merge=union", "from-*/RECEIPTS merge=union"} {
 		if !strings.Contains(string(got), want) {
 			t.Fatalf("the bus's own rule or the tool's is missing:\n%s", got)
@@ -103,15 +84,11 @@ func TestAnAbortThatFailsIsRefusedWithTheRecovery(t *testing.T) {
 	dir, where := conflictedRebase(t)
 
 	// Make the abort fail: git cannot remove the entries of a directory it cannot write.
-	if err := os.Chmod(where, 0o500); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Chmod(where, 0o500))
 	t.Cleanup(func() { os.Chmod(where, 0o700) })
 
 	err := abortRebase(dir)
-	if err == nil {
-		t.Fatal("an abort that failed reported success; the checkout is still in a rebase and every later verb will refuse for the wrong reason")
-	}
+	require.Error(t, err, "an abort that failed reported success; the checkout is still in a rebase and every later verb will refuse for the wrong reason")
 	for _, want := range []string{"could not be aborted", "STILL in a rebase", where, "git rebase --abort", "git reset --hard ORIG_HEAD"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Fatalf("the refusal does not say %q: %v", want, err)
@@ -141,7 +118,7 @@ func TestAnAbortThatFailsIsRefusedWithTheRecovery(t *testing.T) {
 		t.Fatal("the checkout is still in a rebase after a successful abort")
 	}
 	if _, err := CurrentBranch(clean); err != nil {
-		t.Fatalf("the checkout is not on a branch after the abort: %v", err)
+		require.NoError(t, err, "the checkout is not on a branch after the abort: %v", err)
 	}
 }
 

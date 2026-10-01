@@ -148,7 +148,10 @@ them — a list of test names or packages in a workflow goes stale silently: the
 live packages holding a file whose build constraint names `perf`, and in each
 the tests `go test -tags perf -list` names and `go test -list` does not. A bound
 in seconds is evidence about the machine as much as about the tool, which is why
-it gates a release and not a change.
+it gates a release and not a change. The `tick-gate` job reads its runner labels
+from the repository variable `TICK_GATE_RUNS_ON`, a JSON array of labels; when
+the variable is unset the job does not run and `certification-ok` reports it as
+not-configured.
 
 Where CI runs follows the cost of the machine, not the shape of the change.
 Pull requests run on the self-hosted runners only: one job per `./cmd/<tool>`

@@ -1,6 +1,7 @@
 package bus
 
 import (
+	"github.com/stretchr/testify/require"
 	"io/fs"
 	"os"
 	"strconv"
@@ -87,13 +88,9 @@ func TestUnplacedGitIsForeignOnlyByItsStatusUID(t *testing.T) {
 	dir, lock := oldIndexLock(t)
 	plant := func() {
 		t.Helper()
-		if err := os.WriteFile(lock, nil, 0o644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(lock, nil, 0o644))
 		when := time.Now().Add(-2 * time.Minute)
-		if err := os.Chtimes(lock, when, when); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.Chtimes(lock, when, when))
 	}
 	for _, c := range cases {
 		plant()

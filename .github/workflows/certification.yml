@@ -727,7 +727,11 @@ jobs:
     # leg's share: a wall clock measured on two cores of eight shared runners measures the
     # neighbours. The drive takes about 25 s and its build under a minute warm, inside the
     # two-minute cap; a cold cache that puts it over is read in the morning, not a CL gate.
-    runs-on: [self-hosted, linux, x64, space]
+    # The bench is configuration, not a name in the tree: the coordinator sets the
+    # repository variable TICK_GATE_RUNS_ON to a JSON array of runner labels. Unset,
+    # the job does not run on a guess and certification-ok reports it not-configured.
+    if: vars.TICK_GATE_RUNS_ON != ''
+    runs-on: ${{ fromJSON(vars.TICK_GATE_RUNS_ON) }}
     timeout-minutes: 2
     steps:
       - name: remove stale build dirs from the shared runner
@@ -823,7 +827,7 @@ jobs:
         if: always()
         shell: bash
         run: |
-          "$RUNNER_TEMP/ci" aggregate \
+          "$RUNNER_TEMP/ci" aggregate --skip-ok tick-gate \
             race-cache=${{ needs.race-cache.result }} test=${{ needs.test.result }} smoke=${{ needs.smoke.result }} \
             release-build=${{ needs.release-build.result }} release-dry-run=${{ needs.release-dry-run.result }} \
             release-checks=${{ needs.release-checks.result }} perf=${{ needs.perf.result }} \

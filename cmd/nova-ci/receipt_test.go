@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
+	"github.com/stretchr/testify/require"
 )
 
 const receiptSHA = "0123456789abcdef0123456789abcdef01234567"
@@ -72,20 +73,12 @@ func TestReceiptHelpIsTheUsageLine(t *testing.T) {
 func TestTheCommandReferenceReceiptRefusalsAreWhatTheToolPrints(t *testing.T) {
 	t.Parallel()
 	raw, err := os.ReadFile(filepath.Join(repoRoot(t), "docs", "CLI.md"))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	lines, err := onboarding.Transcript(string(raw), "nova-ci", "github receipt")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	steps, err := onboarding.Steps("nova-ci", lines)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(steps) != 2 {
-		t.Fatalf("the `### github receipt` block runs %d commands, want 2 refusals", len(steps))
-	}
+	require.NoError(t, err)
+	require.Len(t, steps, 2, "the `### github receipt` block runs %d commands, want 2 refusals", len(steps))
 	got := make([]onboarding.Result, 0, len(steps))
 	for _, s := range steps {
 		if len(s.Args) < 2 || s.Args[0] != "github" || s.Args[1] != "receipt" {

@@ -1,6 +1,7 @@
 package sprint
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -307,14 +308,15 @@ func TestD7InboxDueTimesAndStalledStreams(t *testing.T) {
 }
 
 // D8: ci records head, run, status and source on a primary in any state,
-// always notifies, moves nothing, labels an old head, and records a run once.
+// always notifies, moves nothing, labels an old head and leaves the record of
+// the current head (ci, ci_head) as it is, and records a run once.
 func TestD8CIObservation(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 1)
 	w.must(Deal(w.s, DealReq{Sel: Sel{Limit: 1}}))
 	p := w.must(RecordCI(w.s, CIReq{Sel: Sel{IDs: []string{"s1-1"}}, Red: true, Run: "run-7", Source: "ci", Head: "old"}))
 	c := w.s.Work.Card("s1-1")
-	if c.Col != Working || c.F("ci_run") != "run-7" || c.F("ci_source") != "ci" || c.F("ci_head") != "old" {
+	if c.Col != Working || c.F("ci_run") != "run-7" || c.F("ci_source") != "ci" || c.F("ci_head") != "" || c.F("ci") != "" {
 		t.Fatalf("ci fields: %+v", c.Fields)
 	}
 	if !strings.Contains(p.Units[0].Moved, "old head") || !strings.Contains(w.notesOf(NCIRed)[0].What, "old head") {
@@ -610,6 +612,36 @@ func TestAckAnswersOnlyTheTypesThatListIt(t *testing.T) {
 			t.Errorf("%s does not list ack and the ack was not refused: %+v", typ, p)
 		case !ackable[typ] && TickKept(typ) && !strings.Contains(p.Refused[0].Why, "nova-sprint wait n-x.1"):
 			t.Errorf("%s is kept by the tick and its refusal names no wait: %s", typ, p.Refused[0].Why)
+		}
+	}
+}
+
+// The conditions the tick keeps (TickKept): it writes one judgment of each
+// while its condition holds and closes it when the condition clears. A
+// judgment the coordinator's answer closes is none of them.
+func TestTickKeptList(t *testing.T) {
+	t.Parallel()
+	keeps := []string{NBound, NCannotAsk, NNoMember, NInvariant, NWorkLate, NReadLate, NMergeLate, NStalled, NRemindFailed}
+	got := []string{NRemindFailed}
+	for typ := range TickDecisions {
+		got = append(got, typ)
+	}
+	slices.Sort(got)
+	slices.Sort(keeps)
+	if !slices.Equal(got, keeps) {
+		t.Errorf("tick kept %q, want %q", got, keeps)
+	}
+	for _, typ := range keeps {
+		if !TickKept(typ) {
+			t.Errorf("%q is not tick kept", typ)
+		}
+	}
+	for _, typ := range []string{
+		NSentinelReached, NBlocked, NMissingNeed, NConflict, NRed, NCross, NRejected,
+		NCIRed, NReturned, NReadsExhausted, NStranded, NSprintDone, NReadyToAccept,
+	} {
+		if TickKept(typ) {
+			t.Errorf("%q is tick kept", typ)
 		}
 	}
 }
