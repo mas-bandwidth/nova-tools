@@ -220,7 +220,10 @@ var idRE = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9_-]*$`)
 // ValidID says a primary id, a stream, a reader or a member name is one word
 // of letters, digits, _ and -. A dot is refused: it separates the parts of a
 // card's identity.
-func ValidID(s string) bool { return len(s) <= 128 && idRE.MatchString(s) }
+func ValidID(s string) bool { return len(s) <= MaxIDLen && idRE.MatchString(s) }
+
+// MaxIDLen is the longest identity ValidID takes.
+const MaxIDLen = 128
 
 // WorkCardID is the identity of a primary's work card for one attempt.
 func WorkCardID(primary string, attempt int) string {
