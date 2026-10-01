@@ -74,6 +74,10 @@ type nativeRunConfig struct {
 	// the key, taken from the environment and passed through by name, with no auth file
 	// ever written. nil means native keeps --model and --auth as today.
 	worker *swarm.Worker
+	// identity is the pool identity the loop's argv names (--identity, a nova-config
+	// loop record), the name and email every commit carries; nil reads the pool's
+	// <root>/identity.tsv (swarm.LoadPoolIdentity).
+	identity *swarm.StagingIdentity
 	// netAllow is the provider's loopback host:port, passed to the wall as --net-allow
 	// (issue #591).
 	netAllow string
@@ -784,10 +788,15 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	}
 	childEnv := nativeChildEnv(dataHome, jobDir, tmpDir, cacheDir, secretEnv, shimDir, shimShell)
 	if cfg.root != "" {
-		id, err := swarm.LoadPoolIdentity(cfg.root)
-		if err != nil {
-			refuseNative(errOut, err.Error())
-			return nativeRunResult{}, 2
+		var id swarm.StagingIdentity
+		if cfg.identity != nil {
+			id = *cfg.identity
+		} else {
+			var err error
+			if id, err = swarm.LoadPoolIdentity(cfg.root); err != nil {
+				refuseNative(errOut, err.Error()+"; or give the loop --identity <owner>,<name>,<email> in its nova-config argv")
+				return nativeRunResult{}, 2
+			}
 		}
 		for _, kv := range swarm.StagingGitEnv(id) {
 			name, _, _ := strings.Cut(kv, "=")

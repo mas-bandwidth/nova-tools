@@ -196,6 +196,55 @@ func (s *Snapshot) routeOf(c, wc *Card, ri routeIndexes) (set map[string]string,
 	return nil, tier, "no enabled route serves tier " + tier + ": run nova-config route add <name> --tier " + tier + " ..., name it in nova-config tier set " + tier + " --routes <name,...>, then nova-config apply; or pin the card with a model: <provider>/<model> line"
 }
 
+// DefaultReaderTier is the tier a read card's route is drawn from when the
+// sprint row names none.
+const DefaultReaderTier = cardhdr.RoutePro
+
+// ReadTier is the tier the ask draws read cards' routes from: the sprint row's
+// reader_tier, else DefaultReaderTier.
+func (s *Snapshot) ReadTier() string {
+	if s.ReaderTier != "" {
+		return s.ReaderTier
+	}
+	return DefaultReaderTier
+}
+
+// readRouteOf is the route fields of one read card the ask creates for the
+// unit key: the read is drawn as a work card is, from the reader tier's array
+// at that tier's rolling index, the index moved past the entry taken and every
+// entry skipped (an entry naming no enabled route), the moves summed under the
+// unit's key, so the deal and the reads of a tier share one rotation
+// (tla/RouteIndex.tla, THE READS). nil when the store holds no route or none
+// serves the reader tier: the read carries no route and its reader runs its
+// own --model.
+func (s *Snapshot) readRouteOf(ri routeIndexes, key string) map[string]string {
+	tier := s.ReadTier()
+	if len(s.Routes) == 0 || ri[tier] == nil {
+		return nil
+	}
+	served := map[string]Route{}
+	for _, r := range s.Routes {
+		if r.Tier == tier && r.Enabled {
+			served[r.Name] = r
+		}
+	}
+	arr := s.tierArray(tier)
+	n := uint64(len(arr))
+	at := ri[tier].r.count
+	for i := uint64(0); i < n; i++ {
+		r, ok := served[arr[(at+i)%n]]
+		if !ok {
+			continue
+		}
+		ri[tier].r.count += i + 1
+		was, _ := strconv.ParseUint(ri[tier].moves[key], 10, 64)
+		ri[tier].moves[key] = strconv.FormatUint(was+i+1, 10)
+		return map[string]string{FieldRoute: r.Name, FieldModel: r.Provider + "/" + r.Model, FieldTokens: tokensWord(r.Tokens),
+			FieldDeadline: strconv.Itoa(r.Deadline)}
+	}
+	return nil
+}
+
 // tokensWord is a route's budget as native's --tokens takes it.
 func tokensWord(n int) string {
 	if n <= 0 {

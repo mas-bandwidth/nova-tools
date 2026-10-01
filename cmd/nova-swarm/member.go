@@ -59,6 +59,7 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	noWall := fs.Bool("no-wall", false, "")
 	ghBin := fs.String("gh", "gh", "")
 	passFlag := fs.String("pass", "", "")
+	identity := fs.String("identity", "", "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -71,9 +72,10 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 		f.add("--width is an override of the fleet row's width and is at least 1; leave it out to run the row's")
 	}
 	f.want(*harness, "harness", "the harness binary path a card runs under (nova-swarm native --harness)")
-	// the card decides its model: the deal writes the route it drew into the packet
-	// (provider/model, tokens, deadline); --model, --tokens and --deadline are the
-	// override a card with no route runs on (a store with no route: a twin, one machine)
+	// the card decides its model: the deal (a read: the ask) writes the route it drew
+	// into the packet (provider/model, tokens, deadline); --model, --tokens and
+	// --deadline are the override a card with no route runs on (a store with no route: a
+	// twin, one machine), and a reader's, given, run its reads over their routes
 	if *model != "" {
 		if _, ok := providerOf(*model); !ok {
 			f.add(fmt.Sprintf("--model %q is not provider/model (one slash, both sides nonempty); every card would be refused by native", *model))
@@ -108,6 +110,13 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	}
 	if ticksGiven && *ticks <= 0 {
 		f.add("give --ticks 1 or more, or leave it out to run until stopped")
+	}
+	// the pool identity every child commits under, from the loop's argv in nova-config;
+	// without it native reads the pool's identity.tsv
+	if *identity != "" {
+		if _, err := swarm.ParseIdentity(*identity); err != nil {
+			f.add(err.Error())
+		}
 	}
 	pass := splitNames(*passFlag)
 	for _, n := range pass {
@@ -144,7 +153,7 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	rn := &nativeRunner{
 		self: self, sprintBin: *sprintBin, harness: *harness, model: *model, root: *root, slots: *slots,
 		resultsRoot: *resultsRoot, deadline: deadline.d, tokens: *tokensWord, auth: *auth, config: *config,
-		worker: *workerFile, noWall: *noWall, stderr: stderr, pass: pass,
+		worker: *workerFile, noWall: *noWall, stderr: stderr, pass: pass, identity: *identity,
 	}
 	// a work card's commit is pushed by the member, outside the wall, at its
 	// finish (memberpush.go); a read pushes nothing
@@ -280,7 +289,7 @@ func (s *execSprint) Run(args ...string) (int, []byte) {
 type nativeRunner struct {
 	self, sprintBin, harness, model, root, slots, resultsRoot string
 	deadline                                                  time.Duration
-	tokens, auth, config, worker                              string
+	tokens, auth, config, worker, identity                    string
 	noWall                                                    bool
 	stderr                                                    io.Writer
 	env                                                       []string // added to this process's environment: none in production, a test's
@@ -342,6 +351,9 @@ func (r *nativeRunner) Start(p member.Packet) (member.Child, error) {
 	if r.noWall {
 		args = append(args, "--no-wall")
 	}
+	if r.identity != "" {
+		args = append(args, "--identity", r.identity)
+	}
 	// A long-lived child: its own cancellable context and no deadline (its own --deadline
 	// ends it), released when the wait returns.
 	ctx, release := context.WithCancel(context.Background())
@@ -374,10 +386,24 @@ func (r *nativeRunner) Start(p member.Packet) (member.Child, error) {
 }
 
 // route is what one launch runs on: the packet's route (the card's model, budget and
-// deadline, as the deal drew them), each part it leaves empty from the member's
-// override; a launch with no model, budget or deadline from either is refused.
+// deadline, as the deal or the ask drew them), each part it leaves empty from the
+// member's override; a launch with no model, budget or deadline from either is
+// refused. A read's route is drawn from the reader tier (internal/sprint/route.go,
+// readRouteOf), so a reader needs no --model; a reader started with --model,
+// --tokens or --deadline runs its reads on what it names over the read's route.
 func (r *nativeRunner) route(p member.Packet) (model, tokens string, deadline time.Duration, err error) {
 	model, tokens, deadline = p.Model, p.Tokens, time.Duration(p.Deadline)*time.Second
+	if p.Kind == "read" {
+		if r.model != "" {
+			model = r.model
+		}
+		if r.tokens != "" {
+			tokens = r.tokens
+		}
+		if r.deadline > 0 {
+			deadline = r.deadline
+		}
+	}
 	if model == "" {
 		model = r.model
 	}
