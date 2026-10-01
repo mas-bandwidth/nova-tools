@@ -26,7 +26,7 @@ var swarmAudit = audit.Config{
 	// text in the same function share an entry. Each is a claim a reader can check.
 	Exempt: map[string]string{
 		"main.go|parse|f.verb":     "the verb's own name, a literal at every newFlags call site in this file",
-		"member.go|cmdMember|note": "passNote's one line, a literal with no argument interpolated",
+		"member.go|cmdMember|note": "passNote's and yieldNote's one line each, literals with nothing interpolated but runtime.GOOS, a compile-time word",
 		"main.go|want|name":        "a required flag's name, a literal at every call site in this file",
 		"main.go|want|wants":       "the guidance that flag wants, a literal at every call site in this file",
 		"main.go|wantCount|name":   "a required count flag's name, a literal at every call site in this file",
@@ -193,6 +193,10 @@ var swarmAudit = audit.Config{
 		// hostload (member.go) samples the machine's CPU percent once a second into a
 		// ring the member's beat reads; it returns numbers and prints nothing.
 		`"github.com/mas-bandwidth/nova-tools/internal/hostload"`,
+		// yield (native.go, member.go) calls setpriority on this process and returns an error,
+		// or is a constant (Supported); it holds no writer and prints nothing. Its error
+		// reaches a stream only through refuseNative, which escapes it.
+		`"github.com/mas-bandwidth/nova-tools/internal/yield"`,
 		`"github.com/mas-bandwidth/nova-tools/internal/subproc"`,
 		// gitrun (memberpush.go) runs one git under its budget and returns its two streams
 		// as bytes to this package; it holds no writer of this package's stream and prints

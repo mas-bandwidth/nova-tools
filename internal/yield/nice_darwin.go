@@ -2,6 +2,9 @@ package yield
 
 import "syscall"
 
+// Supported: darwin has setpriority, and a nice belongs to the process.
+const Supported = true
+
 // setNice is setpriority(PRIO_PROCESS, 0, n) on this process.
 func setNice(n int) error { return syscall.Setpriority(syscall.PRIO_PROCESS, 0, n) }
 

@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
@@ -27,6 +28,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
+	"github.com/mas-bandwidth/nova-tools/internal/yield"
 )
 
 // cmdMember is `nova-swarm member`: this machine as one member of a sprint's
@@ -178,6 +180,9 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	}
 	fmt.Fprintf(stdout, "MEMBER %s as=%s width=%s every=%s sprint=%s harness=%s model=%s\n", oneline.Field(kind), oneline.Field(*as), oneline.Field(widthWord), oneline.Field(every.d.String()), oneline.Field(*sprintBin), oneline.Field(*harness), oneline.Field(modelWord))
 	if note := passNote(*model, pass, *auth); note != "" {
+		fmt.Fprintln(stdout, note)
+	}
+	if note := yieldNote(yield.Supported, runtime.GOOS); note != "" {
 		fmt.Fprintln(stdout, note)
 	}
 	n, replaced := memberLoop(m, every.d, loopTicks(*once, ticksGiven, *ticks), func() string { return binstamp.Of(self) }, stdout, stderr)
@@ -492,6 +497,12 @@ func providerReason(log []byte) string {
 // before any child ran (native.go; tla/CardContract.tla, StageRefused).
 var nativeStageFail = regexp.MustCompile(`(?m)^STAGE FAIL .*\breason=(.+)$`)
 
+// nativeRefusedWhy is native's NATIVE REFUSED line's reason (refuseNative): a launch
+// native would not run, such as one that could not step behind CI (yieldNative). It is
+// the report of a launch that left no result of its own, so the reason reaches the
+// card's finish instead of "ended without a result".
+var nativeRefusedWhy = regexp.MustCompile(`(?m)^NATIVE REFUSED: (.+)$`)
+
 var (
 	nativeProvider = regexp.MustCompile(`\bNATIVE PROVIDER-`)
 	nativeStopped  = regexp.MustCompile(`\bNATIVE \S+ .*\bstopped=`)
@@ -509,8 +520,11 @@ var (
 func (c *nativeChild) Result() member.Result {
 	c.once.Do(func() {
 		ran := false
-		var end, usage, provider string
+		var end, usage, provider, refused string
 		if b, err := os.ReadFile(c.logPath); err == nil {
+			if m := nativeRefusedWhy.FindSubmatch(b); m != nil {
+				refused = strings.TrimSpace(string(m[1]))
+			}
 			if m := nativeStageFail.FindSubmatch(b); m != nil {
 				// refused at staging: no child ran, so no result of this launch exists to read
 				why := strings.TrimPrefix(strings.TrimSpace(string(m[1])), member.EndStaging+": ")
@@ -559,6 +573,8 @@ func (c *nativeChild) Result() member.Result {
 		if report == "" {
 			if ran {
 				report = "finished; the child published no one-line report"
+			} else if refused != "" {
+				report = "native refused: " + refused
 			} else {
 				report = "the child ended without a result (see " + c.logPath + ")"
 			}
@@ -728,4 +744,15 @@ func passNote(model string, pass []string, auth string) string {
 		return ""
 	}
 	return "NOTE member --pass names no secret: a child's harness that reads its provider key from the environment starts without it and fails at the provider; run: nova-swarm member ... --pass <KEY> (the loop record's nova-secrets keys)"
+}
+
+// yieldNote is the one NOTE line a member prints at its start on an OS with no
+// setpriority (yield.Supported false): every card it takes is refused by native, which
+// will not run a card at the priority of the CI legs beside it (nova-tools#4293, as
+// nova-ci local refuses there too). "" where the launch can step behind CI.
+func yieldNote(supported bool, goos string) string {
+	if supported {
+		return ""
+	}
+	return "NOTE member: no setpriority on " + goos + ": native refuses every card this member takes rather than run it at CI's priority (nova-tools#4293); run members on darwin or Linux"
 }

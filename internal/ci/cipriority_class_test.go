@@ -4,6 +4,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // cipriority_class_test.go is the class rule of nova-tools#4293 (Glenn
@@ -11,10 +13,11 @@ import (
 // idea. because work creates more CI, so without this, it is unstable").
 // Two halves, both read from the tree and neither runs anything:
 //
-//   - TestCopiesRunNiced: every path that execs a copy's harness, or a
-//     coordinator child's local test run, steps its own process down to
-//     yield.Nice (15) BEFORE the exec, on darwin and on Linux, through the
-//     one package internal/yield.
+//   - TestCopiesRunNiced: every path that execs a copy's harness, a
+//     coordinator child's local test run, or a sprint card's native launch
+//     (nova-swarm native, which members and readers start), steps its own
+//     process down to yield.Nice (15) BEFORE the exec, on darwin and on
+//     Linux, through the one package internal/yield.
 //   - TestSlotsShrinkByCILegs: no bench slot computation ignores the CI
 //     legs running on it: every `slots - ...` in live Go and Lua takes the
 //     beat's ci off, and the beat writes it.
@@ -27,6 +30,9 @@ import (
 // exec call).
 var niceExecPaths = []struct{ file, fn, yield, exec string }{
 	{"cmd/nova-ci/local.go", "func cmdLocal(", "yield.ToCI()", "localCapture("},
+	// a sprint member's or reader's card: native steps itself (and so the wall, the
+	// harness and every process the card's child runs) before nativeRun starts any of it
+	{"cmd/nova-swarm/main.go", "func cmdNative(", "yieldNative(nativeToCI,", "nativeRun("},
 }
 
 func TestCopiesRunNiced(t *testing.T) {
@@ -57,6 +63,8 @@ func TestCopiesRunNiced(t *testing.T) {
 	if !strings.Contains(readFile(t, filepath.Join(root, "cmd/nova-ci/local.go")), "yield.Nice-15") {
 		t.Errorf("cmd/nova-ci/local.go: localNice must be pinned to yield.Nice")
 	}
+	assert.Contains(t, readFile(t, filepath.Join(root, "cmd/nova-swarm/native.go")), "\nvar nativeToCI = yield.ToCI\n",
+		"cmd/nova-swarm/native.go: want `var nativeToCI = yield.ToCI`, the step every card's launch takes")
 
 	// 2. Every exec path yields first, in the same function, before the exec.
 	for _, p := range niceExecPaths {
@@ -81,6 +89,11 @@ func TestCopiesRunNiced(t *testing.T) {
 			if code := strings.TrimSpace(line); strings.HasPrefix(code, "Yield:") || strings.Contains(code, ".Yield = ") {
 				t.Errorf("%s:%d: %q: production never sets a copy's Yield; the real setpriority is the default", f.Rel, i+1, code)
 			}
+			// nova-swarm native's seam is yield.ToCI in production; only its test binary's
+			// TestMain makes it a no-op (that binary is a CI leg running cmdNative in-process)
+			code := strings.TrimSpace(line)
+			assert.False(t, strings.Contains(code, "nativeToCI = ") && code != "var nativeToCI = yield.ToCI",
+				"%s:%d: %q: production never sets nova-swarm's nativeToCI; it is yield.ToCI", f.Rel, i+1, code)
 		}
 	}
 }

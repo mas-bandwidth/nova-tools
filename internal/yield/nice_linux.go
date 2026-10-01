@@ -7,6 +7,9 @@ import (
 	"syscall"
 )
 
+// Supported: Linux has setpriority, set on every thread below.
+const Supported = true
+
 // setNice is setpriority(PRIO_PROCESS, tid, n) on EVERY thread of this
 // process. On Linux a nice value belongs to a thread, not a process: the
 // 0 in setpriority(PRIO_PROCESS, 0, n) is the calling thread alone, and a
