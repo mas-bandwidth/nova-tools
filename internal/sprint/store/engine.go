@@ -446,6 +446,7 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 				// and moves no card a later queued change names, so that
 				// change still finds the card where it expects it
 				held = sprint.QueuedCards(q)
+				snap.Held = held
 			default:
 				// A step other than the pump plans on the work table as the
 				// pump will leave it: its changes queue after the ones before
