@@ -255,6 +255,22 @@ func TestIostatSecond(t *testing.T) {
 	require.False(t, ok, "no output must not report")
 }
 
+// TestIostatIdleOneHundred: iostat prints each of us, sy and id %3.0f, so an idle of 100
+// is "  0  0100" and the row does not split on spaces; it is a second 0% busy, not a
+// failed reading.
+func TestIostatIdleOneHundred(t *testing.T) {
+	t.Parallel()
+	head := "      cpu    load average\n us sy id   1m   5m   15m\n 12 20 68  8.18 8.05 7.81\n"
+	pct, ok := ParseIostat(head + "  0  0100  8.18 8.05 7.81\n")
+	require.True(t, ok && pct == 0, "idle 100 = %v %v, want 0", pct, ok)
+	pct, ok = ParseIostat(head + "  0  1 99  8.18 8.05 7.81\n")
+	require.True(t, ok && pct == 1, "idle 99 = %v %v, want 1", pct, ok)
+	pct, ok = ParseIostat(head + "100  0  0  8.18 8.05 7.81\n")
+	require.True(t, ok && pct == 100, "idle 0 = %v %v, want 100", pct, ok)
+	pct, ok = ParseIostat("12 20 68 8.18\n3 6 90 8.18\n")
+	require.True(t, ok && pct == 10, "a row split on spaces = %v %v, want 10", pct, ok)
+}
+
 // TestTopDropsAZero: top prints the hundredths of a percent without a leading zero,
 // so 86.3 is 86.03 and 5.20 is 5.20.
 func TestTopDropsAZero(t *testing.T) {
