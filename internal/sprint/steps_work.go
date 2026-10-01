@@ -674,7 +674,7 @@ func dealPlan(s *Snapshot, r DealReq, rr *round) (Plan, roundMoves) {
 			continue
 		}
 		m := next()
-		u, why := deal(s, c, c.F("fix"), m, q, nil, nil)
+		u, why := deal(s, c, c.F("fix"), m, q, nil, map[string]string{"finding": c.F("finding"), "why": c.F("why")})
 		if why != "" {
 			p.refuse(c.ID, why)
 			continue

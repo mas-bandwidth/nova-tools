@@ -55,8 +55,8 @@ type Packet struct {
 // of one sprint, named by the sprint (its prefix, the card): sprint/<prefix><card>.
 func BranchOf(prefix, workCard string) string { return "sprint/" + prefix + workCard }
 
-// PacketOf is a work or read card's packet: the primary gives the brief and
-// the fix; a work card of a later attempt starts from the attempt before's
+// PacketOf is a work or read card's packet: the primary gives the brief (and a read's
+// fix), a work card its own fix, finding and why; a work card of a later attempt starts from the attempt before's
 // branch (as reported, else as named); a read card reads its attempt's work
 // card (work, when it is known).
 func PacketOf(prefix string, epoch uint64, c, primary, prevWork, work *Card) Packet {
@@ -72,8 +72,10 @@ func PacketOf(prefix string, epoch uint64, c, primary, prevWork, work *Card) Pac
 		p.Branch = BranchOf(prefix, c.ID)
 		p.Route, p.Model, p.Tokens, p.Deadline = c.F(FieldRoute), c.F(FieldModel), c.F(FieldTokens), c.Int(FieldDeadline)
 		p.Finding, p.Why = c.F("finding"), c.F("why")
-		if p.Fix == "" {
-			p.Fix = c.F("fix")
+		// the attempt's own words, written with its card: the primary's are queued for the next
+		// tick's drain, so a take before it sees the primary at the attempt before
+		if fix := c.F("fix"); fix != "" {
+			p.Fix = fix
 		}
 		if prevWork != nil {
 			p.Base = prevWork.F("branch")

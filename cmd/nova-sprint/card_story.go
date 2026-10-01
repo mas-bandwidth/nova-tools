@@ -220,7 +220,7 @@ func texts(a *app, about []sprint.Line) []storyText {
 	var out []storyText
 	given := map[string]bool{}
 	for _, l := range about {
-		for _, f := range []string{"report", "finding", "fix", "reason", "return_reason", "did"} {
+		for _, f := range []string{"report", "finding", "reason", "return_reason", "did"} {
 			t := strings.TrimSpace(l.Text[f])
 			if t == "" {
 				continue
@@ -293,22 +293,24 @@ func (a *app) printStory(w io.Writer, v store.CardInfo, events []storyLine, text
 		fmt.Fprintln(w, "\nbrief:")
 		paragraph(w, b)
 	}
-	if f := strings.TrimSpace(p.F("fix")); f != "" && !ended {
-		fmt.Fprintln(w, "\nthe fix this attempt was given:")
-		paragraph(w, f)
-	}
-	for _, wc := range v.Work { // each attempt's start: why it exists, what a reader found, the fix it was given
-		var head bool
+	given := func(head string, c *sprint.Card) { // why an attempt exists, what a reader found, the fix: one block
+		var said bool
 		for _, f := range []struct{ field, label string }{{"why", "because"}, {"finding", "a reader found"}, {"fix", "the fix"}} {
-			if t := strings.TrimSpace(wc.F(f.field)); t != "" {
-				if !head {
-					fmt.Fprintf(w, "\nattempt %s was given:\n", orDashStr(wc.F("attempt"), "-"))
-					head = true
+			if t := strings.TrimSpace(c.F(f.field)); t != "" {
+				if !said {
+					fmt.Fprintf(w, "\n%s:\n", head)
+					said = true
 				}
 				fmt.Fprintf(w, "  %s:\n", f.label)
 				paragraph(w, t)
 			}
 		}
+	}
+	for _, wc := range v.Work {
+		given("attempt "+orDashStr(wc.F("attempt"), "-")+" was given", wc)
+	}
+	if p.Col == string(sprint.Ready) { // a rework with no member up: its attempt is dealt later, from the primary
+		given("the next attempt will be given", p)
 	}
 	fmt.Fprintln(w, "\ntimeline:")
 	last := -1

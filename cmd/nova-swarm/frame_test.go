@@ -5,6 +5,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
 	"github.com/mas-bandwidth/nova-tools/internal/member"
 )
 
@@ -46,6 +47,8 @@ func TestTheFrameIsThePackets(t *testing.T) {
 	f = frameOf(again, "m", "/root")
 	assert.Equal(t, "attempt 1 finished and a reader found it broken", f.Why)
 	assert.Equal(t, "the test is missing", f.Finding, "the readers' words are the frame's finding, the coordinator's the fix")
+	job := cardcontract.For("claude").JobText(f, cardcontract.Staged{Job: "/j", Repo: "/j/repo", Head: pushedSha})
+	assert.Contains(t, job, "This attempt exists because: attempt 1 finished and a reader found it broken\nA reader found: the test is missing\nThe coordinator asks: f.go:3 the bound\nDo that first; a finish with no new commit is refused.")
 	assert.Equal(t, "sprint/c1.w2", f.Branch)
 
 	read := member.Packet{Card: "c1.r1", Kind: "read", Attempt: 1, Brief: brief, Head: pushedSha, WorkBranch: "sprint/c1.w1"}

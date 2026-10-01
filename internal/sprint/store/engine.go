@@ -819,7 +819,7 @@ const manifestBudget = ntable.LimitManifestBytes - 64
 // MaxCardTextBytes bounds each text field a card carries (CardTextFields),
 // the brief excepted (MaxBriefBytes): a step that would write a longer one is
 // refused before anything is written.
-const MaxCardTextBytes = 8 << 10
+const MaxCardTextBytes = sprint.MaxCardTextBytes
 
 // MaxBriefBytes bounds the brief field: cardlimits.MaxBriefBytes, the number the card
 // lint names too and read from the one package that holds it (nothing behind it, so the lint

@@ -3,6 +3,7 @@ package sprint
 import (
 	"fmt"
 	"strings"
+	"unicode/utf8"
 )
 
 // The steps of review: ask and read (mechanical, and the readers' own), and
@@ -617,7 +618,7 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		}
 		fix := r.Fix
 		if fix == "" {
-			if fix = ownFix(s, c); fix == "" {
+			if fix = cutText(ownFix(s, c), MaxCardTextBytes); fix == "" {
 				p.refuse(c.ID, "no --fix, and no finding of a broken read or report of failed work to take as its fix; give --fix <text>")
 				stays()
 				continue
@@ -645,7 +646,11 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		if askedField == "" && len(asked) > 0 {
 			askedField = strings.Join(orderLike(s.Readers.Rows(), asked, ""), ",")
 		}
-		set := map[string]string{"fix": fix, "reworks": itoa(c.Int("reworks") + 1), "broken_reads": itoa(c.Int("broken_reads") + broken)}
+		// the finding and why ride on the primary too: a rework with no member up deals later
+		// (start), from the primary, and its child is told all the same
+		given := reworkGiven(s, c)
+		set := map[string]string{"fix": fix, "finding": given["finding"], "why": given["why"],
+			"reworks": itoa(c.Int("reworks") + 1), "broken_reads": itoa(c.Int("broken_reads") + broken)}
 		if askedField != "" {
 			set["asked"] = askedField
 		}
@@ -653,7 +658,7 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 		if len(up) > 0 {
 			var why string
 			m := rr.next(up, q, room, reworkAvoid(s, c), true)
-			u, why = deal(s, c, fix, m, q, set, reworkGiven(s, c), "readers")
+			u, why = deal(s, c, fix, m, q, set, given, "readers")
 			if why != "" {
 				p.refuse(c.ID, why)
 				stays()
@@ -737,12 +742,29 @@ func brokenFindings(s *Snapshot, c *Card) string {
 	return strings.Join(found, "; ")
 }
 
+// MaxCardTextBytes bounds each text field a card carries, the brief excepted (the store
+// refuses a step that would write a longer one); a rework's own derived words (the finding,
+// why and the fix it takes from a finding) are cut to it, never refused for it.
+const MaxCardTextBytes = 8 << 10
+
+// cutText is s cut to at most n bytes, at a rune boundary, ending "..." when it was cut.
+func cutText(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	cut := n - len("...")
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
+		cut--
+	}
+	return s[:cut] + "..."
+}
+
 // reworkGiven is what a rework writes on the next attempt's work card besides
 // the fix, so the child learns why it exists (docs/SPEC-SPRINT.md, rework):
 // finding, the broken reads' words, and why, how the attempt before ended.
 func reworkGiven(s *Snapshot, c *Card) map[string]string {
 	attempt := c.Int("attempt")
-	finding := brokenFindings(s, c)
+	finding := cutText(brokenFindings(s, c), MaxCardTextBytes)
 	why := fmt.Sprintf("attempt %d was sent back by the coordinator", attempt)
 	switch wc := s.Fleet.Card(c.F("work")); {
 	case c.F("result") == "failed" && wc != nil && strings.TrimSpace(wc.F("report")) != "":
@@ -752,7 +774,7 @@ func reworkGiven(s *Snapshot, c *Card) map[string]string {
 	case finding != "":
 		why = fmt.Sprintf("attempt %d finished and a reader found it broken", attempt)
 	}
-	return map[string]string{"finding": finding, "why": why}
+	return map[string]string{"finding": finding, "why": cutText(why, MaxCardTextBytes)}
 }
 
 // ReturnReq is the coordinator sending merging primaries back to review.
