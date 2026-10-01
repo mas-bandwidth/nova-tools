@@ -148,7 +148,7 @@ and prints each one's generation.
 ` + fleetWords() + `
 ` + goalWords() + `
 ` + twinWords() + `
-exit codes: 0 done, 1 refused, 2 usage or a store that did not answer (fleet sync --check: there is drift), 3 fleet sync could not read the config
+exit codes: 0 done, 1 refused, 2 usage or a store that did not answer (fleet sync --check: there is drift), 3 fleet sync could not read the config, or run: its binary was replaced (its supervisor starts the new one)
 
 the coordinator's day, in five lines (NOVA_SPRINT_REDIS and NOVA_SPRINT_ACTOR set; brief.txt is a card that passes the lint, from nova-swarm template --name card):
 

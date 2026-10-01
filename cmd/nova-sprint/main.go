@@ -67,6 +67,9 @@ type app struct {
 	// began, and why (the loop's start, a line on the log, the clock of a
 	// quiet log, a retry).
 	ticked func(n int, began time.Time, why string)
+	// executable is the path of the binary this process runs, os.Executable
+	// unless a test sets it: run stops when the file there is replaced.
+	executable func() (string, error)
 	// profiled, when set, is told of each tick run finished, by its count:
 	// run --cpuprofile ends its profile at the last tick it covers.
 	profiled func(n int)
