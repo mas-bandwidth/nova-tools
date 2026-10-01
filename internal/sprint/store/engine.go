@@ -446,6 +446,7 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 				// and moves no card a later queued change names, so that
 				// change still finds the card where it expects it
 				held = sprint.QueuedCards(q)
+				snap.Held = held
 			default:
 				// A step other than the pump plans on the work table as the
 				// pump will leave it: its changes queue after the ones before
@@ -1761,8 +1762,8 @@ func (st *Store) applyEntries(ctx context.Context, man ntable.BatchManifest, bar
 // entry: only when one of its member changes applied, in a manifest of its own
 // holding the properties and their expectations, which refuses them all
 // when an expectation no longer holds. Otherwise they are skipped: a deal none
-// of whose cards applied leaves its index where it was (L1 contract
-// amendment, table properties, section 4).
+// of whose cards applied leaves its index where it was (docs/SPEC-NOVA-TABLE.md,
+// table properties).
 func (st *Store) applyProps(ctx context.Context, man ntable.BatchManifest, changedOne bool) ([]Skip, error) {
 	if len(man.Props)+len(man.PropExpect)+len(man.PropAbsent) == 0 {
 		return nil, nil

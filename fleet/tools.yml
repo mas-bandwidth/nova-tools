@@ -122,6 +122,9 @@
       ansible.builtin.file: { path: "{{ item }}", state: absent }
       loop: "{{ tools_retire }}"
 
+    - name: the build fact's directory
+      ansible.builtin.file: { path: "{{ nova_build_file | dirname }}", state: directory, mode: "0700" }
+
     - name: the build fact
       ansible.builtin.copy:
         content: "{{ nova_version }}\n"
@@ -134,7 +137,7 @@
           TOOLS host={{ inventory_hostname }} platform={{ nova_platform }} version={{ nova_version }}
           was={{ (tools_was.content | default('') | b64decode | trim) or 'none' }} removed={{ tools_retire | length }}
           {{ (('UP-TO-DATE' if nova_version in (tools_now.stdout | default('')).split() else 'WOULD-INSTALL') if ansible_check_mode
-              else (tools_install.stdout | default(''))) }}
+              else (('UP-TO-DATE ' if tools_install.stdout is search('RELEASE INSTALLED .*tools=0 ') else 'INSTALLED ') ~ tools_install.stdout)) }}
 
 - name: the build's schema and function library on the store
   hosts: store_deployer

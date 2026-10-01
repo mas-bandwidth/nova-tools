@@ -53,6 +53,7 @@ var Families = []Family{
 	{"loops", []string{"loops", "loop:*"}, "internal/config LoopsKey, LoopKey"},
 	{"config", []string{"config:decl"}, "internal/config DeclKey"},
 	{"tokens", []string{"tokens:ledger:*"}, "internal/record LedgerPrefix: nova-tokens ledger and report, logged in as the seat's user"},
+	{"events", []string{"ev:github"}, "internal/ghevent/wire Stream: the CI run receipt (nova-ci github receipt, tools/ci/reportrun.go) XADDs it as the bench user"},
 }
 
 // keys is the key rules for families by access: "rw" families as ~<pattern>,
@@ -115,7 +116,7 @@ func Roles() []Role {
 	// Every store verb lists the library before it calls it (fn.LoadMissing,
 	// the sprint store's open): FUNCTION LIST is every role's.
 	list := []string{"+function|list"}
-	read := map[string]string{"tables": "r", "views": "r", "sprint": "r", "machines": "r", "beats": "r", "friends": "r", "fleet": "r", "loops": "r", "config": "r", "tokens": "r"}
+	read := map[string]string{"tables": "r", "views": "r", "sprint": "r", "machines": "r", "beats": "r", "friends": "r", "fleet": "r", "loops": "r", "config": "r", "tokens": "r", "events": "r"}
 	with := func(over map[string]string) map[string]string {
 		out := map[string]string{}
 		for k, v := range read {
@@ -129,7 +130,7 @@ func Roles() []Role {
 	return []Role{
 		{Name: Coordinator, User: "coordinator", Keys: []string{"~*"}, Commands: writerCommands, All: true,
 			Extra: []string{"+function|load", "+function|list"}},
-		{Name: Member, User: "bench", Keys: keys(with(map[string]string{"tables": "rw", "views": "rw", "sprint": "rw", "beats": "rw", "tokens": "rw"})),
+		{Name: Member, User: "bench", Keys: keys(with(map[string]string{"tables": "rw", "views": "rw", "sprint": "rw", "beats": "rw", "tokens": "rw", "events": "rw"})),
 			Commands: writerCommands, Files: member, Extra: list},
 		{Name: Table, User: "ns-table", Keys: keys(read), Commands: readerCommands, Files: []string{"lua/table.lua"}, ReadOnly: true, Extra: list},
 		{Name: Friend, User: "ns-friend", Keys: keys(with(map[string]string{"tables": "rw", "views": "rw", "sprint": "rw", "friends": "rw", "tokens": "rw"})),
@@ -154,6 +155,10 @@ func (u User) Line() string { return "ACL SETUSER " + u.Name + " " + strings.Joi
 // silently without its functions.
 func Render(lib redisfn.Library) ([]User, error) {
 	fns, err := lib.Registered()
+	if err != nil {
+		return nil, err
+	}
+	luaCommands, err := LuaCommands(lib)
 	if err != nil {
 		return nil, err
 	}
@@ -188,6 +193,19 @@ func Render(lib redisfn.Library) ([]User, error) {
 				rules = append(rules, "+fcall|"+f.Name)
 			}
 			n++
+		}
+		// The commands the role's functions run, under its ACL: each named
+		// after the categories so no removal above takes it back.
+		called := map[string]bool{}
+		for f, cmds := range luaCommands {
+			if r.All || wanted[f] {
+				for _, c := range cmds {
+					called[c] = true
+				}
+			}
+		}
+		for _, c := range sortedSet(called) {
+			rules = append(rules, "+"+c)
 		}
 		rules = append(rules, r.Extra...)
 		out = append(out, User{Role: r.Name, Name: r.User, Rules: rules, Functions: n})
@@ -369,4 +387,13 @@ func (d Drift) Fields() string {
 		fmt.Fprintf(&b, " %s=%s%s", f.name, strings.Join(shown, ","), more)
 	}
 	return b.String()
+}
+
+func sortedSet(set map[string]bool) []string {
+	out := make([]string, 0, len(set))
+	for k := range set {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }

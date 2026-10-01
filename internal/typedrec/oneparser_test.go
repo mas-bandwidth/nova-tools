@@ -10,6 +10,7 @@
 package typedrec_test
 
 import (
+	"context"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -19,6 +20,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
 
@@ -74,6 +79,8 @@ var specAllowlist = []allowlistEntry{
 var driftAllowlist = []allowlistEntry{
 	{file: "internal/swarm/stage.go", fn: "ReadCardBase", record: "SPEC-CARD", since: "5778de35",
 		reason: "the card's REPO: header for staging (#3711), read before any RESULT exists"},
+	{file: "tools/ci/revertonred.go", fn: "land", record: "git-refspec", since: "a1f1f62c1",
+		reason: "the git push refspec HEAD:main, not a RESULT parser"},
 }
 
 var allowlist = append(append([]allowlistEntry{}, specAllowlist...), driftAllowlist...)
@@ -673,6 +680,20 @@ func TestOneTypedParser(t *testing.T) {
 		for _, a := range driftAllowlist {
 			if a.since == "" || a.reason == "" || a.partB {
 				t.Errorf("drift allowlist entry %s %s needs since and reason and no part=B", a.file, a.fn)
+			}
+		}
+		// Every drift entry's since is a commit in this history, so a row whose
+		// commit is gone (a typo, a rewritten branch) is caught. A shallow
+		// checkout (CI fetches two commits) cannot see old commits: there the
+		// check is logged and left to a full clone.
+		shallow, err := gitrun.Output(context.Background(), gitrun.Options{C: root}, "rev-parse", "--is-shallow-repository")
+		require.NoError(t, err, "git rev-parse --is-shallow-repository")
+		if shallow == "true" {
+			t.Logf("shallow checkout: the drift rows' since commits are checked on a full clone")
+		} else {
+			for _, a := range driftAllowlist {
+				_, err := gitrun.Output(context.Background(), gitrun.Options{C: root}, "rev-parse", "--verify", "--quiet", "--end-of-options", a.since+"^{commit}")
+				assert.NoError(t, err, "drift allowlist entry %s %s names since %s, which is no commit in this history", a.file, a.fn, a.since)
 			}
 		}
 	})
