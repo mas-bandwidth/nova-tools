@@ -16,6 +16,18 @@ import (
 
 func stamp(t time.Time) string { return t.UTC().Format(time.RFC3339) }
 
+// CardAdd is one card of the many-brief add form: its id, brief and needs.
+// File names the brief file the card came from, for a refusal that names it.
+type CardAdd struct {
+	ID    string
+	Brief string
+	Needs []string
+	File  string
+	// Sentinel marks this card a sentinel (a stop), not a primary: the
+	// many-brief form's --sentinel <id>, admitted after the brief cards.
+	Sentinel bool
+}
+
 // AddReq admits primaries into a stream.
 type AddReq struct {
 	Stream string
@@ -23,7 +35,12 @@ type AddReq struct {
 	Count  int // generate this many ids, <stream>-<n>
 	Needs  []string
 	Brief  string
-	Score  *float64 // the first primary's score; the rest follow it
+	// Cards, when set, is the many-brief form: one card per entry, in order,
+	// each with its own brief and needs (a need names a primary already on
+	// the table or one of this add). IDs, Count, Brief and Needs are then
+	// empty.
+	Cards []CardAdd
+	Score *float64 // the first primary's score; the rest follow it
 	// Sentinel admits one sentinel (IDs names it): a stop in the stream that
 	// the coordinator releases (docs/SPEC-SPRINT.md, sentinel cards).
 	Sentinel bool
@@ -51,6 +68,13 @@ func (r AddReq) IsGate(id string) bool {
 func AddIDs(s *Snapshot, r AddReq) []string {
 	if r.Only != nil {
 		return r.Only
+	}
+	if len(r.Cards) > 0 {
+		out := make([]string, len(r.Cards))
+		for i, c := range r.Cards {
+			out[i] = c.ID
+		}
+		return out
 	}
 	if len(r.IDs) > 0 || r.Count <= 0 {
 		return r.IDs
@@ -130,24 +154,51 @@ func Add(s *Snapshot, r AddReq) Plan {
 			adding[id] = true
 		}
 	}
-	var missing []string
-	for _, n := range r.Needs {
-		if s.Work.Card(n) == nil && !adding[n] {
-			missing = append(missing, n)
+	// needsOf and briefOf are the needs and brief of the i'th card admitted:
+	// its own in the many-brief form, else the add's one for every card.
+	needsOf := func(i int) []string {
+		if len(r.Cards) > 0 {
+			return r.Cards[i].Needs
 		}
+		return r.Needs
 	}
-	// The cards admitted, each with its score and needs.
+	briefOf := func(i int) string {
+		if len(r.Cards) > 0 {
+			return r.Cards[i].Brief
+		}
+		return r.Brief
+	}
+	// isSent says the i'th card admitted is a sentinel: the one --sentinel form,
+	// or a card of the many-brief form marked one (its --sentinel <id>).
+	isSent := func(i int) bool {
+		if r.Sentinel {
+			return true
+		}
+		return len(r.Cards) > 0 && r.Cards[i].Sentinel
+	}
+	// The cards admitted, each with its score, needs and brief.
 	type admit struct {
 		id     string
 		score  float64
 		needs  []string
+		brief  string
 		behind string // the sentinel it waits behind by position
 		gate   bool   // a stop of --sentinel-every
+		sent   bool   // a stop: --sentinel or a many-brief card marked one
 	}
 	var in []admit
 	lastGate := ""
 	seen := map[string]bool{}
 	for i, id := range ids {
+		needs := append([]string(nil), needsOf(i)...)
+		// missing is the needs that name no primary they may name: one on the
+		// table or one of this add (a cycle is refused below).
+		var missing []string
+		for _, n := range needs {
+			if s.Work.Card(n) == nil && !adding[n] {
+				missing = append(missing, n)
+			}
+		}
 		switch {
 		case seen[id]:
 			p.refuse(id, "named twice")
@@ -159,12 +210,16 @@ func Add(s *Snapshot, r AddReq) Plan {
 			p.refuse(id, "exists already ("+placeWord(s.Work.Card(id))+")")
 			continue
 		case len(missing) > 0:
-			p.refuse(id, "needs "+strings.Join(missing, ",")+", which is no primary on the table or in this add")
+			if len(r.Cards) > 0 {
+				p.refuse(id, fmt.Sprintf("%s: needs %s, which is no primary on the table or in this add", r.Cards[i].File, strings.Join(missing, ",")))
+			} else {
+				p.refuse(id, "needs "+strings.Join(missing, ",")+", which is no primary on the table or in this add")
+			}
 			continue
 		}
 		seen[id] = true
-		a := admit{id: id, score: scores[i], needs: append([]string(nil), r.Needs...), gate: r.IsGate(id)}
-		if st := sentinelBefore(s, r.Stream, a.score); st != nil && !r.Sentinel {
+		a := admit{id: id, score: scores[i], needs: needs, brief: briefOf(i), gate: r.IsGate(id), sent: isSent(i)}
+		if st := sentinelBefore(s, r.Stream, a.score); st != nil && !a.sent {
 			a.behind = st.ID // it waits behind the stop by its place; nothing is written of it
 		}
 		if lastGate != "" && !a.gate {
@@ -219,7 +274,7 @@ func Add(s *Snapshot, r AddReq) Plan {
 	for _, a := range in {
 		edges[a.id] = a.needs
 		col := Ready
-		if a.behind != "" || a.gate || r.Sentinel {
+		if a.behind != "" || a.gate || a.sent {
 			col = Waiting
 		}
 		for _, n := range a.needs {
@@ -228,7 +283,7 @@ func Add(s *Snapshot, r AddReq) Plan {
 			}
 		}
 		fields := map[string]string{"kind": "primary"}
-		if a.gate || r.Sentinel {
+		if a.gate || a.sent {
 			fields["kind"] = "sentinel"
 		}
 		placed = append(placed, &Card{ID: a.id, Row: r.Stream, Col: col, Score: a.score, Fields: fields})
@@ -262,12 +317,12 @@ func Add(s *Snapshot, r AddReq) Plan {
 			col = Waiting
 		}
 		kind := "primary"
-		if r.Sentinel || a.gate {
+		if a.sent || a.gate {
 			kind, col = "sentinel", Waiting
 		}
 		fields := map[string]string{"kind": kind, "stream": r.Stream, "attempt": "0", "admitted": stamp(s.Now)}
-		if r.Brief != "" && !a.gate {
-			fields["brief"] = r.Brief
+		if a.brief != "" && !a.gate {
+			fields["brief"] = a.brief
 		}
 		if len(a.needs) > 0 {
 			fields["needs"] = strings.Join(a.needs, ",")
@@ -300,6 +355,10 @@ func Add(s *Snapshot, r AddReq) Plan {
 			if len(past) > 0 {
 				u.Moved += "; already past the stop: " + strings.Join(past, ",")
 			}
+		} else if a.sent {
+			// the many-brief form's sentinel: a stop after the cards, marked
+			// reached by the tick once what sorts before it has landed.
+			u.Moved = "sentinel " + u.Moved
 		}
 		if a.behind != "" {
 			u.Moved += "; waits behind sentinel " + a.behind
