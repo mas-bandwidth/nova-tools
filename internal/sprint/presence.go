@@ -183,7 +183,7 @@ func presence(s *Snapshot, r TickReq) (Plan, int) {
 	receivers := orderLike(s.Fleet.Rows(), all, "")
 	q, widths := memberLoads(s, receivers), memberWidths(s, receivers)
 	for _, m := range downs {
-		why := fmt.Sprintf("missed %d beats: no beat for %s", MissedBeatsDown, (MissedBeatsDown * BeatDeadline).String())
+		why := "no beat for " + (MissedBeatsDown * BeatDeadline).String()
 		switch {
 		case s.MemberCtl(m).F("held") != "":
 			why = "held"
