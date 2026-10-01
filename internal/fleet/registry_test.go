@@ -1,11 +1,12 @@
 package fleet
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // write puts one machines file in a temp directory and returns its path.
@@ -64,21 +65,14 @@ func TestReadRegistryRefusesAMachineThatIsBothRunnerAndBenchWithoutTheNote(t *te
 	if _, ok := reg.Lookup("hulk"); ok {
 		t.Fatal("the poisoned row was in the bench set")
 	}
-	err = reg.RequireBench("hulk")
-	var refusal *Refusal
-	if !errors.As(err, &refusal) {
-		t.Fatalf("RequireBench returned %v, want *Refusal", err)
+	if got := len(reg.Machines()); got != 0 {
+		t.Errorf("the registry carries %d machines, want none: the poisoned row is not a machine", got)
 	}
-	if refusal.Reason != ReasonSharedWithoutNote {
-		t.Errorf("reason is %q, want %q", refusal.Reason, ReasonSharedWithoutNote)
-	}
-	if got := reg.LockFailed(); len(got) != 1 || got[0].Name != "hulk" {
-		t.Errorf("LockFailed = %v, want hulk", got)
-	}
-	for _, want := range []string{"hulk", "allow-shared"} {
-		if !strings.Contains(refusal.Remedy, want) {
-			t.Errorf("remedy %q does not name %q", refusal.Remedy, want)
-		}
+	// The name stays taken: a second row under it is a duplicate, not a way round the lock.
+	twice := write(t, row("hulk", "hulk", "linux/x64", "bench,runner", "swarm-hulk", "64", "no note")+
+		row("hulk", "hulk2", "linux/x64", "bench", "swarm-hulk", "64", "-"))
+	if _, err := ReadRegistry(twice); err == nil {
+		t.Error("a second row under a lock-failed name was accepted")
 	}
 }
 
@@ -101,20 +95,12 @@ func TestReadRegistryDoesNotRefuseTheFleetForOnePoisonedSharedRow(t *testing.T) 
 		if _, ok := reg.Lookup(name); !ok {
 			t.Errorf("neighbour %s is missing", name)
 		}
-		if err := reg.RequireBench(name); err != nil {
-			t.Errorf("neighbour %s was refused as a bench: %v", name, err)
-		}
 	}
-	err = reg.RequireBench("hetzner")
-	var refusal *Refusal
-	if !errors.As(err, &refusal) {
-		t.Fatalf("RequireBench(hetzner) returned %v, want *Refusal", err)
+	if _, ok := reg.Lookup("hetzner"); ok {
+		t.Error("the poisoned row was in the bench set")
 	}
-	if refusal.Reason != ReasonSharedWithoutNote {
-		t.Errorf("reason is %q, want %q", refusal.Reason, ReasonSharedWithoutNote)
-	}
-	if got := reg.LockFailed(); len(got) != 1 || got[0].Name != "hetzner" {
-		t.Errorf("LockFailed = %v, want hetzner", got)
+	if got := len(reg.Machines()); got != 4 {
+		t.Errorf("the registry carries %d machines, want the four neighbours", got)
 	}
 }
 
@@ -132,8 +118,8 @@ func TestReadRegistryAcceptsTheSharedExceptionWithItsDateAndReason(t *testing.T)
 	if !ok || date != "2026-09-18" || why != "the pull worker does not containerise cards yet" {
 		t.Errorf("AllowShared read back %q/%q/%v", date, why, ok)
 	}
-	if err := reg.RequireBench("hulk"); err != nil {
-		t.Errorf("a shared machine is still a bench: %v", err)
+	if !m.HasRole(RoleBench) {
+		t.Errorf("a shared machine is still a bench: roles %q", m.RoleList())
 	}
 }
 
@@ -151,7 +137,7 @@ func TestReadRegistryRefusesASharedNoteWithNoDateAndOneWithNoReason(t *testing.T
 			t.Errorf("%s: the whole registry was refused: %v", name, err)
 			continue
 		}
-		if err := reg.RequireBench("hulk"); err == nil {
+		if _, ok := reg.Lookup("hulk"); ok {
 			t.Errorf("%s: %q was accepted as a bench", name, note)
 		}
 	}
@@ -190,70 +176,15 @@ func TestReadRegistryRefusesAnEmptyFileRatherThanPretendTheFleetIsEmpty(t *testi
 	}
 }
 
-func TestRequireBenchRefusesARunnerHostWithItsReasonAndItsRemedy(t *testing.T) {
-	t.Parallel()
-
-	reg := example(t)
-	err := reg.RequireBench("batman")
-	if err == nil {
-		t.Fatal("batman, a CI-only runner host, was accepted as a bench")
-	}
-	var refusal *Refusal
-	if !errors.As(err, &refusal) {
-		t.Fatalf("RequireBench returned %T, want *fleet.Refusal", err)
-	}
-	if refusal.Reason != ReasonRunnerHost {
-		t.Errorf("reason is %q, want %q", refusal.Reason, ReasonRunnerHost)
-	}
-	line := refusal.Line("FILL")
-	if !strings.HasPrefix(line, "FILL REFUSED bench=batman reason=runner-host remedy=\"") {
-		t.Errorf("the refusal line is %q", line)
-	}
-	if strings.Count(line, "\n") != 0 {
-		t.Errorf("the refusal line is more than one line: %q", line)
-	}
-	if !strings.Contains(line, "hulk") {
-		t.Errorf("the remedy names no bench to use instead: %q", line)
-	}
-}
-
-func TestRequireBenchRefusesTheCoordinationHostAndAnUnknownMachine(t *testing.T) {
-	t.Parallel()
-
-	reg := example(t)
-	for name, want := range map[string]string{
-		"studio": ReasonRunnerHost, // the Studio serves the lisp shards as well as coordinating
-		"nobody": ReasonUnknown,
-	} {
-		err := reg.RequireBench(name)
-		var refusal *Refusal
-		if !errors.As(err, &refusal) {
-			t.Fatalf("%s: RequireBench returned %v", name, err)
-		}
-		if refusal.Reason != want {
-			t.Errorf("%s: reason is %q, want %q", name, refusal.Reason, want)
-		}
-	}
-}
-
-func TestRequireBenchAcceptsEveryBenchInTheFleet(t *testing.T) {
-	t.Parallel()
-
-	reg := example(t)
-	for _, name := range []string{"hulk", "vision", "threadripper-wsl", "space"} {
-		if err := reg.RequireBench(name); err != nil {
-			t.Errorf("%s is a bench, and was refused: %v", name, err)
-		}
-	}
-}
-
-func TestWithRoleAndMachinesReadInFileOrder(t *testing.T) {
+func TestMachinesReadInFileOrder(t *testing.T) {
 	t.Parallel()
 
 	reg := example(t)
 	var names []string
-	for _, m := range reg.WithRole(RoleBench) {
-		names = append(names, m.Name)
+	for _, m := range reg.Machines() {
+		if m.HasRole(RoleBench) {
+			names = append(names, m.Name)
+		}
 	}
 	if strings.Join(names, ",") != "hulk,vision,threadripper-wsl,space" {
 		t.Errorf("the benches are %v, want hulk, vision, threadripper-wsl, space in file order", names)
@@ -261,9 +192,17 @@ func TestWithRoleAndMachinesReadInFileOrder(t *testing.T) {
 	if got := len(reg.Machines()); got != 8 {
 		t.Errorf("the fleet has %d machines, want 8", got)
 	}
-	if reg.WithRole("builder") != nil {
-		t.Error("an unknown role listed machines")
-	}
+}
+
+// TestRefusalLineIsOneLineWithItsReasonAndItsRemedy holds the line a verb prints for a
+// machine the registry does not carry.
+func TestRefusalLineIsOneLineWithItsReasonAndItsRemedy(t *testing.T) {
+	t.Parallel()
+
+	r := &Refusal{Name: "nobody", Reason: ReasonUnknown, Remedy: "add it, or name a machine the registry carries"}
+	line := r.Line("CERTIFY")
+	assert.True(t, strings.HasPrefix(line, "CERTIFY REFUSED bench=nobody reason=unknown-machine remedy=\""), "the refusal line is %q", line)
+	assert.NotContains(t, line, "\n", "the refusal line is more than one line")
 }
 
 // TestTheExampleIsTheFleetWeHave holds the shipped example against the fleet as it stands
@@ -304,7 +243,7 @@ func TestTheExampleIsTheFleetWeHave(t *testing.T) {
 		}
 	}
 	for _, name := range []string{"batman", "superman", "studio", "mini"} {
-		if err := reg.RequireBench(name); err == nil {
+		if m, _ := reg.Lookup(name); m.HasRole(RoleBench) {
 			t.Errorf("the example lets a card reach %s", name)
 		}
 	}

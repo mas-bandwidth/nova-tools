@@ -66,6 +66,9 @@ type Plan struct {
 	// Props are the table properties the step writes, each with the guard on
 	// the value its plan read.
 	Props []PropWrite
+	// Requeue is the queued changes a drain leaves for the next one (Drain):
+	// its commit puts them back at the queue's tail.
+	Requeue []QueuedChange
 	// pre is the pre-state the plan was built on, set only by the steps of
 	// this package that may admit or move a primary into ready (on): the
 	// lifecycle judges a primary's needs against it, and a plan without one
@@ -78,6 +81,15 @@ type Plan struct {
 	// removing says remove built the plan: the one step that takes a landed
 	// primary off the table.
 	removing bool
+	// rounds are the rolling indexes the plan moved and each unit's moves
+	// (roundWrites): a unit dropped after planning (LeaveQueued) moves no
+	// index, so the plan's index writes are made again from the units kept.
+	rounds []roundRecord
+	// drained says Drain built the plan: each of its changes composes changes
+	// the lifecycle already held when the steps that queued them were
+	// planned, so a composed move may pass over states (review to landed, by
+	// an accept and a merge queued in one tick) and is not judged again.
+	drained bool
 }
 
 // PropWrite is a table property a step writes (L1 contract amendment, table

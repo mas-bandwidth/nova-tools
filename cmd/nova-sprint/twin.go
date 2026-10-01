@@ -42,6 +42,7 @@ var twinSteps = []string{
 	"nova-sprint add --stream s1 --count 1",
 	"nova-sprint start",
 	"nova-sprint tick",
+	"nova-sprint tick",
 	"nova-sprint take --as m1 --epoch 0",
 	"nova-sprint finish --as m1 s1-1.w1@1 --epoch 0 --report done",
 	"nova-sprint tick",
@@ -50,8 +51,8 @@ var twinSteps = []string{
 	"nova-sprint read --as reader-a --ok --epoch 0",
 	"nova-sprint read --as reader-b --ok --epoch 0",
 	"nova-sprint tick",
-	"nova-sprint accept --read-ok",
 	"nova-sprint merge --stream s1 --batch 1",
+	"nova-sprint tick",
 	"nova-sprint where",
 }
 

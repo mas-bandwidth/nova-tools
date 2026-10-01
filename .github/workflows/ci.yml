@@ -1173,6 +1173,13 @@ jobs:
           go version
           echo "GO SETUP want=${want:-none} go=$(command -v go) gomodcache=$(go env GOMODCACHE) gocache=$(go env GOCACHE)"
 
+      - name: build tools/ci once
+        # The verbs are built ONCE here and every later step calls the binary: `go run` compiles
+        # and links the tool again on every step that names it. internal/ci: TestToolsCIIsBuiltOnceAndNeverRun.
+        if: matrix.entry.packages != ''
+        shell: bash
+        run: go build -o "$RUNNER_TEMP/ci" ./tools/ci
+
       - name: take this runner's share of the machine, not all of it
         if: matrix.entry.packages != ''
         # The unit legs' rule: cores over NOVA_RUNNERS_PER_MACHINE, at most 2.
@@ -1196,7 +1203,8 @@ jobs:
         if: matrix.entry.packages != ''
         # #3113. The functional tests spawn a throwaway redis-server on
         # loopback; the unit tier refuses one. It does not dial the fleet store.
-        run: bash .github/scripts/install-redis-server.sh
+        run: |
+          "$RUNNER_TEMP/ci" install-redis-server
 
       - name: install postgres
         if: matrix.entry.packages != ''
@@ -1204,7 +1212,8 @@ jobs:
         # pg_ctl) on loopback under the test's directory
         # (internal/nsprint/testutil/pg); a runner without the binaries
         # FAILS them, never skips. It does not dial the fleet store.
-        run: bash .github/scripts/install-postgres.sh
+        run: |
+          "$RUNNER_TEMP/ci" install-postgres
 
       - name: functional tests
         if: matrix.entry.packages != ''
@@ -1340,6 +1349,12 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-go-
 
+      - name: build tools/ci once
+        # The verbs are built ONCE here and every later step calls the binary: `go run` compiles
+        # and links the tool again on every step that names it. internal/ci: TestToolsCIIsBuiltOnceAndNeverRun.
+        shell: bash
+        run: go build -o "$RUNNER_TEMP/ci" ./tools/ci
+
       - name: build
         run: make build
 
@@ -1388,7 +1403,8 @@ jobs:
         # #3113, the hosted row. ubuntu-latest has no redis-server until apt
         # installs it; macos-latest uses Homebrew. A service container would
         # not put the binary on PATH, and the controls spawn their own server.
-        run: bash .github/scripts/install-redis-server.sh
+        run: |
+          "$RUNNER_TEMP/ci" install-redis-server
 
       - name: test (shard ${{ matrix.shard }} of ${{ matrix.shards }})
         # Six shards on ubuntu-latest and eight on macos-latest (above), dealt by
@@ -1746,8 +1762,9 @@ jobs:
     # deprecated/lisp/nova-work (Glenn: deprecated code is not tested, not built
     # and never blocks CI), and lisp/ holds no system. The job stays, because
     # the merge gate names a lisp step. The filter above fires only on a lisp/
-    # path, so today it never runs; if it does, `make test-lisp` runs tools/ci/lisp-test.sh, which refuses a
-    # lisp/ tree it does not know. The history below is the job's.
+    # path, so today it never runs; if it does, `make test-lisp` runs
+    # `go run ./tools/ci lisp-test`, which refuses a lisp/ tree it does not
+    # know. The history below is the job's.
     # THE LISP TIER, and it is one job because it is one system. `lisp/nova-work`
     # is the engine's own tree; its
     # acceptance suite runs under SBCL non-interactively and exits non-zero on
@@ -1860,17 +1877,40 @@ jobs:
         with:
           fetch-depth: 2  # the classtests rule reads what HEAD deleted from its first parent
 
-      - name: install sbcl if missing
-        # The self-hosted runners need no sudo; install directly when sbcl is absent.
+      - name: use the installed Go toolchain
+        # The self-hosted runners carry Go (1.26 at /usr/bin/go on Linux, under
+        # /opt/homebrew or ~/go on macOS). Prefer it over a setup-go download.
+        shell: bash
         run: |
-          # A runner user keeps sbcl in its own ~/.local/bin (hulk, vision); a listener started
-          # before its .path file saw none of it (2026-09-16), so the step finds it itself.
-          for d in "$HOME/.local/bin"; do [ -x "$d/sbcl" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; }; done
-          if ! command -v sbcl >/dev/null 2>&1; then
-            apt-get update -qq
-            apt-get install -y --no-install-recommends sbcl
-          fi
-          sbcl --version
+          set -euo pipefail
+          # the bench's own Go wins over a distro Go on the system path, and the newest Go under
+          # ~/sdk wins over a stale one under /usr/local/go; the toolchain go.mod names wins when
+          # ~/sdk holds it (the toolchain line, else the go line, which is the toolchain a go.mod
+          # without that line implies); else as before
+          want=$(sed -n 's/^toolchain \(go[0-9][0-9a-z.]*\)$/\1/p' go.mod 2>/dev/null | head -1 || true)
+          [ -n "$want" ] || want=$(sed -n 's/^go \([0-9][0-9a-z.]*\)$/go\1/p' go.mod 2>/dev/null | head -1 || true)
+          sdk=
+          if [ -n "$want" ] && [ -x "$HOME/sdk/$want/bin/go" ]; then sdk="$HOME/sdk/$want/bin"; fi
+          [ -n "$sdk" ] || sdk=$(ls -d "$HOME"/sdk/go*/bin 2>/dev/null | sort -V | tail -1 || true) # empty on the Linux benches; under pipefail the failed ls would abort the step
+          for d in "$sdk" "$HOME/go/bin" /usr/local/go/bin /opt/homebrew/bin; do
+            [ -n "$d" ] && [ -x "$d/go" ] && { echo "$d" >> "$GITHUB_PATH"; export PATH="$d:$PATH"; break; }
+          done
+          command -v go >/dev/null 2>&1 || { echo "no Go toolchain on PATH"; exit 1; }
+          go version
+          echo "GO SETUP want=${want:-none} go=$(command -v go) gomodcache=$(go env GOMODCACHE) gocache=$(go env GOCACHE)"
+
+      - name: build tools/ci once
+        # The verbs are built ONCE here and every later step calls the binary: `go run` compiles
+        # and links the tool again on every step that names it. internal/ci: TestToolsCIIsBuiltOnceAndNeverRun.
+        shell: bash
+        run: go build -o "$RUNNER_TEMP/ci" ./tools/ci
+
+      - name: install sbcl if missing
+        # The self-hosted runners need no sudo; ensure-sbcl installs directly when sbcl is
+        # absent, and finds a runner user's own ~/.local/bin/sbcl that a listener started
+        # before it existed did not have on PATH.
+        run: |
+          "$RUNNER_TEMP/ci" ensure-sbcl
 
       - name: sbcl version
         # The runners carry SBCL already (2.2.9 on Linux, 2.6.8 on macOS); the
@@ -2004,71 +2044,6 @@ jobs:
     runs-on: [self-hosted, linux, x64, space]
     timeout-minutes: 2
     steps:
-      - name: every CL-tier job succeeded (pull request, merge group or manual)
-        # merge_group is the queue's group commit: ci-ok on it is THE merge gate,
-        # so this step must run there too; a guard that names no event lets ci-ok
-        # report success over red needs (read of #766).
-        if: github.event_name == 'pull_request' || github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch'
-        shell: bash
-        run: |
-          set -uo pipefail
-          bad=0
-          for pair in \
-            "lint:${{ needs.lint.result }}" \
-            "test:${{ needs.test.result }}" \
-            "functional:${{ needs.functional.result }}" \
-            "lisp:${{ needs.lisp.result }}" \
-            "e2e:${{ needs.e2e.result }}" \
-            "test-hosted-pr:${{ needs.test-hosted-pr.result }}"
-          do
-            job="${pair%:*}"; result="${pair##*:}"
-            echo "$result	$job"
-            # A skip is ok for the legs that do not run on this event:
-            # test-hosted-pr is skipped on a fork PR (the head-repo guard) and
-            # on a manual run; its test step is skipped when the diff matches no
-            # platform path. A skip is ok — the check is that it is not red.
-            # lisp is gated on the path filter and is skipped when no lisp/
-            # path moved; a skipped lisp is a pass. A red
-            # lisp still blocks the merge.
-            # test-hosted-merge runs only on the merge group's own commit, so a
-            # skip is ok elsewhere — but on a merge_group it is NOT skipped: it
-            # is the full hosted evidence the queue's gate must see (Rule T).
-            [ "$result" = "success" ] && continue
-            [ "$job" = "lisp" ] && [ "$result" = "skipped" ] && continue
-            [ "$job" = "test-hosted-pr" ] && [ "$result" = "skipped" ] && continue
-            # functional runs on merge_group and workflow_dispatch only; on a
-            # pull request it is skipped by design. When it ran, it must pass.
-            [ "$job" = "functional" ] && [ "$result" = "skipped" ] && [ "${{ github.event_name }}" = "pull_request" ] && continue
-            # test-windows-pr was aggregated here until 2026-09-18, when the
-            # native windows runners were dropped. The Windows guard is now the
-            # lint job's `make vet-windows` step, so a GOOS=windows compile break
-            # is a red `lint`, which this loop already reads.
-            bad=$((bad + 1))
-          done
-          [ "$bad" -eq 0 ] || { echo "$bad job(s) did not succeed"; exit 1; }
-      - name: every CL-tier job succeeded (push to main)
-        if: github.event_name == 'push'
-        shell: bash
-        run: |
-          set -uo pipefail
-          bad=0
-          for pair in \
-            "lint:${{ needs.lint.result }}" \
-            "test:${{ needs.test.result }}" \
-            "e2e:${{ needs.e2e.result }}" \
-            "lisp:${{ needs.lisp.result }}" \
-            "test-hosted:${{ needs.test-hosted.result }}"
-          do
-            job="${pair%:*}"; result="${pair##*:}"
-            echo "$result	$job"
-            # lisp is gated on the path filter and is skipped when no lisp/
-            # path moved; a skipped lisp is a pass. A red
-            # lisp still blocks the merge.
-            if [ "$job" = "lisp" ] && [ "$result" = "skipped" ]; then continue; fi
-            [ "$result" = "success" ] || bad=$((bad + 1))
-          done
-          [ "$bad" -eq 0 ] || { echo "$bad job(s) did not succeed"; exit 1; }
-
       # The receipt below is written by this tree's nova-ci (`go run
       # ./cmd/nova-ci`), and these steps (clean, borrow the bench mirror,
       # checkout, the installed Go) are what it builds from. always(): they
@@ -2175,6 +2150,52 @@ jobs:
           go version
           echo "GO SETUP want=${want:-none} go=$(command -v go) gomodcache=$(go env GOMODCACHE) gocache=$(go env GOCACHE)"
 
+      - name: build tools/ci once
+        # The verbs are built ONCE here and every later step calls the binary. This step runs this
+        # tree's Go, so it carries the same-repo guard the report step below carries: a fork's
+        # pull_request never reaches it. internal/ci: TestCIOKRunsNoForkCodeAndIsRedOnAFork.
+        if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+        shell: bash
+        run: go build -o "$RUNNER_TEMP/ci" ./tools/ci
+
+      # THE VERDICT, after the checkout and the Go toolchain it needs. A checkout that fails
+      # twice fails the job before any verdict is stated (fail closed: ci-ok is red), and the
+      # verdict steps are always() so a red need is reported by name even when an earlier step
+      # of this job went wrong. The skip rules are tools/ci/aggregate.go's; the arguments below
+      # are the events' own: a skip is ok for the legs that do not run on this event (lisp when
+      # no lisp/ path moved, test-hosted-pr on a fork PR, a manual run or a diff that matches no
+      # platform path; functional on a pull request only: it runs on merge_group and
+      # workflow_dispatch, and when it ran it must pass). test-windows-pr is not aggregated:
+      # the Windows guard is the lint job's `make vet-windows`, so a GOOS=windows compile break
+      # is a red `lint`, which this verdict reads.
+      - name: every CL-tier job succeeded (pull request, merge group or manual)
+        # merge_group is the queue's group commit: ci-ok on it is THE merge gate,
+        # so this step must run there too; a guard that names no event lets ci-ok
+        # report success over red needs (read of #766).
+        # The verdict is this tree's Go, so a fork's pull request never runs it on this
+        # runner: the step below states a fork's ci-ok red without running anything of
+        # the fork's (its self-hosted jobs are all skipped, so it is red either way).
+        # internal/ci: TestCIOKRunsNoForkCodeAndIsRedOnAFork.
+        if: always() && (github.event_name == 'merge_group' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository))
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/ci" aggregate --event "${{ github.event_name }}" \
+            --skip-ok lisp,test-hosted-pr --skip-ok-on pull_request=functional \
+            lint=${{ needs.lint.result }} test=${{ needs.test.result }} functional=${{ needs.functional.result }} \
+            lisp=${{ needs.lisp.result }} e2e=${{ needs.e2e.result }} test-hosted-pr=${{ needs.test-hosted-pr.result }}
+      - name: a fork's pull request is red here
+        if: always() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
+        shell: bash
+        run: |
+          echo "a fork's pull request: the self-hosted CL-tier jobs do not run on fork code, so ci-ok is red"
+          exit 1
+      - name: every CL-tier job succeeded (push to main)
+        if: always() && github.event_name == 'push'
+        shell: bash
+        run: |
+          "$RUNNER_TEMP/ci" aggregate --event "${{ github.event_name }}" --skip-ok lisp \
+            lint=${{ needs.lint.result }} test=${{ needs.test.result }} e2e=${{ needs.e2e.result }} \
+            lisp=${{ needs.lisp.result }} test-hosted=${{ needs.test-hosted.result }}
 
       # THE RUNNER IS THE EVENT SOURCE. The signed webhook receiver sits behind
       # a tailscale funnel kept off by design, so this job, on our own runner
@@ -2205,17 +2226,7 @@ jobs:
         if: always() && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
         shell: bash
         run: |
-          set -euo pipefail
-          env_file="$HOME/nova-bench/launch/card.env"
-          [ -f "$env_file" ] || { echo "no $env_file on this runner: run the rowan-tools bench play on $(hostname) (it writes the bench seat and store address)"; exit 1; }
-          # shellcheck disable=SC1090
-          . "$env_file"
-          : "${NOVA_BENCH_SEAT:?card.env names no NOVA_BENCH_SEAT}" "${NOVA_BENCH_SOPS:?card.env names no NOVA_BENCH_SOPS}" "${NOVA_CARD_REDIS:?card.env names no NOVA_CARD_REDIS}"
-          exec "$HOME/.local/bin/nova-secrets" exec --store "$HOME/nova-bench/secrets" --as "$NOVA_BENCH_SEAT" \
-            --key "$HOME/.config/nova-secrets/$NOVA_BENCH_SEAT.key" --sops "$NOVA_BENCH_SOPS" \
-            --only NOVA_REDIS_BENCH_PASSWORD --require NOVA_REDIS_BENCH_PASSWORD -- \
-            /usr/bin/env NOVA_SPRINT_REDIS_USER=bench NOVA_SPRINT_REDIS_PASSWORD_ENV=NOVA_REDIS_BENCH_PASSWORD \
-            go run ./cmd/nova-ci github receipt --from-runner --redis "$NOVA_CARD_REDIS" \
+          "$RUNNER_TEMP/ci" report-run \
             --repo "${{ github.repository }}" \
             --sha "${{ github.event.pull_request.head.sha || github.sha }}" \
             --run-id "${{ github.run_id }}" \

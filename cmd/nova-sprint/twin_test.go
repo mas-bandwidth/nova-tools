@@ -38,7 +38,7 @@ func TestTheTwinRunsTheHelpsCardFlowOneProcessAtATime(t *testing.T) {
 		}
 		last = out
 	}
-	if !strings.Contains(last, "1/1 100.0% done") {
+	if !strings.Contains(last, "\nDONE\n") {
 		t.Errorf("the flow ends with the card landed; where printed:\n%s", last)
 	}
 	dir, _ := os.ReadDir(filepath.Dir(file))
@@ -133,7 +133,7 @@ func TestASnapshotRestoredIsTheStoreItWas(t *testing.T) {
 		ta.m = fresh
 	}
 	out := ta.ok("where")
-	if !strings.Contains(out, "1/1 100.0% done") {
+	if !strings.Contains(out, "\nDONE\n") {
 		t.Errorf("the flow over restored stores ends with the card landed:\n%s", out)
 	}
 	ta.clean()

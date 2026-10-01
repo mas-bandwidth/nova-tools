@@ -108,6 +108,9 @@ func IsState(s string) bool {
 // card at, and is refused when the pre-state does not hold it: no entry skips
 // the lifecycle or the needs rule by leaving its place out.
 func Lawful(p Plan) Plan {
+	if p.drained {
+		return p
+	}
 	var lawful []Unit
 	for _, u := range p.Units {
 		if why := unlawful(u, &p); why != "" {
@@ -251,7 +254,7 @@ func unlawful(u Unit, p *Plan) string {
 // operation's verb: release may land a sentinel, add may move a primary
 // ready -> waiting. It returns the entries refused, by card id, with why.
 func Rejudge(pre *Snapshot, verb string, changes []Change) []Refusal {
-	p := Plan{pre: pre, releasing: verb == "release", inserting: verb == "add"}
+	p := Plan{pre: pre, releasing: verb == "release", inserting: verb == "add", drained: verb == DrainVerb}
 	for _, c := range changes {
 		p.Units = append(p.Units, Unit{Key: c.Entry.ID, Changes: []Change{c}})
 	}

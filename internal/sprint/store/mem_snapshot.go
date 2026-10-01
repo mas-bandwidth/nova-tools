@@ -42,6 +42,9 @@ type tableSnapshot struct {
 	Rev     uint64                     `json:"rev"`
 	Members map[string]*memberSnapshot `json:"members,omitempty"`
 	Ops     map[string]opSnapshot      `json:"ops,omitempty"`
+	// Changes is the table's change stream, which a read twin catches up
+	// from (TableChanges): a restored store answers it as it did.
+	Changes []changeSnapshot `json:"changes,omitempty"`
 }
 
 type epochSnapshot struct {
@@ -58,6 +61,14 @@ type memberSnapshot struct {
 	Score  float64           `json:"score"`
 	Rev    uint64            `json:"rev"`
 	Fields map[string]string `json:"fields,omitempty"`
+}
+
+type changeSnapshot struct {
+	Epoch  uint64   `json:"epoch"`
+	Before uint64   `json:"before"`
+	After  uint64   `json:"after"`
+	Verb   string   `json:"verb"`
+	IDs    []string `json:"ids,omitempty"`
 }
 
 type opSnapshot struct {
@@ -80,6 +91,9 @@ type logSnapshot struct {
 	Notes    map[string]sprint.Note `json:"notes,omitempty"`
 	Open     map[string]string      `json:"open,omitempty"`
 	Cursor   string                 `json:"cursor,omitempty"`
+	// Queue is the work table's queue: the changes a verb queued that the
+	// next tick's pump applies (sprint.QueueOf).
+	Queue []sprint.QueuedChange `json:"queue,omitempty"`
 }
 
 type noteSnapshot struct {
@@ -106,6 +120,9 @@ func snapTable(t *memTable) *tableSnapshot {
 	for id, o := range t.ops {
 		s.Ops[id] = opSnapshot{Body: o.body, Receipt: o.receipt}
 	}
+	for _, c := range t.changes {
+		s.Changes = append(s.Changes, changeSnapshot{Epoch: c.epoch, Before: c.before, After: c.after, Verb: c.verb, IDs: c.ids})
+	}
 	return s
 }
 
@@ -127,6 +144,9 @@ func (s *tableSnapshot) table() *memTable {
 	for id, o := range s.Ops {
 		t.ops[id] = memOp{body: o.Body, receipt: o.Receipt}
 	}
+	for _, c := range s.Changes {
+		t.changes = append(t.changes, memChange{epoch: c.Epoch, before: c.Before, after: c.After, verb: c.Verb, ids: c.IDs})
+	}
 	return t
 }
 
@@ -145,7 +165,7 @@ func (m *Mem) Snapshot() ([]byte, error) {
 		s.Dropped[n] = &residueSnap{Keys: r.keys, Table: snapTable(r.table)}
 	}
 	for e, l := range m.logs {
-		ls := &logSnapshot{Fence: l.fence, Gen: l.gen, Done: l.done, Progress: l.progress, Notes: l.notes, Open: l.open, Cursor: l.cursor}
+		ls := &logSnapshot{Fence: l.fence, Gen: l.gen, Done: l.done, Progress: l.progress, Notes: l.notes, Open: l.open, Cursor: l.cursor, Queue: l.queue}
 		for _, n := range l.inbox {
 			ls.Inbox = append(ls.Inbox, noteSnapshot{ID: n.id, Note: n.note})
 		}
@@ -181,7 +201,7 @@ func (m *Mem) Restore(doc []byte) error {
 		dropped[n] = &memResidue{keys: keys, table: r.Table.table()}
 	}
 	for e, l := range s.Logs {
-		ml := &memLog{fence: l.Fence, gen: l.Gen, done: l.Done, progress: l.Progress, notes: l.Notes, open: l.Open, cursor: l.Cursor}
+		ml := &memLog{fence: l.Fence, gen: l.Gen, done: l.Done, progress: l.Progress, notes: l.Notes, open: l.Open, cursor: l.Cursor, queue: l.Queue}
 		if ml.done == nil {
 			ml.done = map[string]string{}
 		}

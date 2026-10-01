@@ -53,7 +53,8 @@ const (
 	PropAskIndex = "ask_index"
 	// PropStreamIndex is the work table's property of the deal: its counter
 	// round the streams, moved past the stream of each primary dealt
-	// (streamTurns). PropAskStreamIndex and
+	// (streamTurns). PropAskStreamIndex (the readers table's: the ask is the
+	// readers' update) and
 	// PropAcceptStreamIndex are the ask's and the accept's: each step that
 	// takes cards across the streams keeps its own, so that one step's move
 	// never resets another's rotation (a shared index moved by an ask of one
@@ -296,6 +297,16 @@ func askRound(s *Snapshot) *round { return tableRound(s.Readers, PropAskIndex, s
 // last served, so the next step starts past it. The index survives a stop and
 // a start of the machine; a clear starts the next epoch at the first stream.
 
+// askStreamRound is the ask's rolling index over the streams, a property of
+// the readers table: the ask is the readers' update, and only the pump writes
+// the work table while the machine runs (errata 3 amendment 12).
+func askStreamRound(s *Snapshot) *round {
+	if s.Work == nil || s.Readers == nil {
+		return newRound(nil, "")
+	}
+	return tableRound(s.Readers, PropAskStreamIndex, s.Work.Rows())
+}
+
 // streamRound is a step's rolling index over the streams (the work table's
 // rows), the work table's property name.
 func streamRound(s *Snapshot, name string) *round {
@@ -398,6 +409,40 @@ func roundWrites(p *Plan, r *round, moves roundMoves) {
 	if r == nil || len(moves) == 0 {
 		return
 	}
+	p.rounds = append(p.rounds, roundRecord{r, moves})
+	roundWrite(p, r, moves)
+}
+
+// roundRecord is an index a plan moved and the names each of its units moved
+// it past.
+type roundRecord struct {
+	r     *round
+	moves roundMoves
+}
+
+// rewriteRounds makes a plan's index writes again from its units: after a
+// unit is dropped, each index is up by the placements the kept units make
+// and the names they pass over, never by the dropped one's (errata 3, the
+// form of the index: one a placement made).
+func rewriteRounds(p *Plan) {
+	var props []PropWrite
+	for _, pw := range p.Props {
+		mine := false
+		for _, rr := range p.rounds {
+			mine = mine || rr.r.table == pw.Table && rr.r.name == pw.Name
+		}
+		if !mine {
+			props = append(props, pw)
+		}
+	}
+	p.Props = props
+	for _, rr := range p.rounds {
+		roundWrite(p, rr.r, rr.moves)
+	}
+}
+
+// roundWrite is roundWrites' write, from the plan's units as they stand.
+func roundWrite(p *Plan, r *round, moves roundMoves) {
 	w := &round{order: r.order, count: roundCount(r.order, r.read)}
 	moved := false
 	for _, u := range p.Units {

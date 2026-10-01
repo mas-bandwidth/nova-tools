@@ -16,26 +16,24 @@
 # - A count that falls, or a row with no finding, fails until the row shrinks.
 # - NOVA_CI_UPDATE=1 removes such rows and never adds one.
 #
-# ceiling: 250
-.github/scripts/assert-version-stamp.sh:stella 1
+# ceiling: 225
 .github/scripts/live-packages.sh:glenn 1
 .github/scripts/plan-merge-shards.sh:rowan 1
-.github/scripts/revert-on-red.sh:glenn 1
 .github/scripts/select-packages.sh:glenn 1
 .github/scripts/select-packages.sh:space 1
 .github/workflows/certification.yml:glenn 1
-.github/workflows/certification.yml:space 2
-.github/workflows/certification.yml:stella 1
+# certification.yml:space, the third: the bench runner label for the tick-gate job; labels live in workflows
+.github/workflows/certification.yml:space 3
 .github/workflows/certification.yml:studio 4
 .github/workflows/ci.yml:batman 22
 .github/workflows/ci.yml:glenn 23
-.github/workflows/ci.yml:hulk 24
+.github/workflows/ci.yml:hulk 23
 .github/workflows/ci.yml:mini 1
-.github/workflows/ci.yml:rowan 2
+.github/workflows/ci.yml:rowan 1
 .github/workflows/ci.yml:space 61
 .github/workflows/ci.yml:studio 74
 .github/workflows/ci.yml:superman 19
-.github/workflows/ci.yml:vision 10
+.github/workflows/ci.yml:vision 9
 .github/workflows/nightly-slow.yml:glenn 1
 .github/workflows/revert-on-red.yml:glenn 1
 CHANGELOG.md:batman 4
@@ -219,12 +217,6 @@ internal/nsprint/fn/lua/capacity.lua:glenn 1
 internal/nsprint/fn/lua/table.lua:glenn 1
 internal/swarm/testdata/providers.tsv:mini 1
 internal/textbody/README.md:space 2
-profiles/darwin-check.sh:emma 1
-scripts/bench-hygiene.sh:antman 1
-scripts/bench-hygiene.sh:glenn 1
-scripts/bench-hygiene.sh:rowan 2
-scripts/bench-hygiene.sh:space 1
-scripts/bench-hygiene_test.sh:rowan 2
 testdata/ci/package-sizes-darwin.tsv:batman 2
 testdata/ci/package-sizes-darwin.tsv:studio 2
 testdata/ci/package-sizes-darwin.tsv:superman 6
@@ -248,22 +240,6 @@ tla/TableEdit.tla:stella 4
 tla/TableOrder.tla:glenn 1
 tla/TableOrder.tla:stella 2
 tla/TableSession.tla:stella 4
-tools/bench-standard.sh:antman 1
-tools/bench-standard.sh:batman 1
-tools/bench-standard.sh:hetzner 1
-tools/bench-standard.sh:hulk 3
-tools/bench-standard.sh:mini 1
-tools/bench-standard.sh:rowan 3
-tools/bench-standard.sh:space 6
-tools/bench-standard.sh:studio 1
-tools/bench-standard.sh:superman 1
-tools/bench-standard.sh:vision 3
-tools/bench-standard_test.sh:glenn 1
-tools/bench-standard_test.sh:space 2
 tools/bench-wsl2.ps1:glenn 1
 tools/bench-wsl2.ps1:mas-bandwidth 1
 tools/bench-wsl2.ps1:rowan 2
-tools/ci/lisp-test.sh:glenn 1
-tools/ci/lisp-test.sh:space 1
-tools/ci/lisp-test.sh:studio 1
-tools/preflight.sh:glenn 1
