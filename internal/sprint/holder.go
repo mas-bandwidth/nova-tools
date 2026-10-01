@@ -283,7 +283,7 @@ var holdRows = []holdRow{
 			{HeldByTick, "R8, never asked at its attempt", reviewAsks},
 			{HeldByTick, "R9, two different readers said ok", reviewAccepts},
 			{HeldByTick, "R10, failed or broken", reviewReworks},
-			{HeldByJudgment, "a judgment on it, open or held", onCard(NCannotAsk, NCIRed, NReturned, NBound, NReadsExhausted, NStranded)},
+			{HeldByJudgment, "a judgment on it, open or held", onCard(NCannotAsk, NCIRed, NReturned, NReadyToAccept, NBound, NReadsExhausted, NStranded)},
 			{HeldByJudgment, "a read's lateness judgment, open or held", readJudged},
 		},
 	},
@@ -965,8 +965,10 @@ func reviewAsks(v *holdView, c *Card) string {
 }
 
 // reviewAccepts is R9's condition: ok reads from two different readers at its
-// head, its CI not red at its head, and it is not returned to review (whose
-// judgment the coordinator decides).
+// head, its CI not red at its head (CIRedAtHead), and it is not returned to
+// review, whose judgment the coordinator decides (the pump's AcceptHeld: the
+// return marks its attempt and opens that judgment, which only rework, accept
+// or drop close).
 func reviewAccepts(v *holdView, c *Card) string {
 	head := c.F("head")
 	readers := map[string]bool{}
@@ -975,7 +977,7 @@ func reviewAccepts(v *holdView, c *Card) string {
 			readers[r.Row] = true
 		}
 	}
-	if len(readers) < 2 || c.F("ci") == "red" && c.F("ci_head") == head {
+	if len(readers) < 2 || CIRedAtHead(c) {
 		return ""
 	}
 	if _, ok := v.judgment(c.ID, NReturned); ok {

@@ -227,14 +227,16 @@ func (n *State) tickAsk(choice map[string][]string) error {
 }
 
 // tickAccept is the machine's accept (sprint.TickAccept): every primary in
-// review whose work did not fail, with ok reads from two different readers, and
-// no merge record but a returned one, moves to merging and into its stream's
-// merge queue, in stream turns from the accept's stream index, in one step
-// (Accept). The merge is the coordinator's: the machine never lands a card.
+// review whose work did not fail, with ok reads from two different readers,
+// not held (AcceptHeld: its CI red at its head, or returned at its attempt),
+// and no merge record but a returned one, moves to merging and into its
+// stream's merge queue, in stream turns from the accept's stream index, in one
+// step (Accept). The merge is the coordinator's: the machine never lands a
+// card.
 func (n *State) tickAccept() error {
 	var ids []string
 	for id, p := range n.Primaries {
-		if p.State != Review || n.Failed(id) || !n.Acceptable(id) {
+		if p.State != Review || n.Failed(id) || !n.Acceptable(id) || n.AcceptHeld(id) != "" {
 			continue
 		}
 		if m, ok := n.Merge[id]; ok && m.Place != Returned {

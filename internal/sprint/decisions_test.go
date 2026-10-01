@@ -307,14 +307,15 @@ func TestD7InboxDueTimesAndStalledStreams(t *testing.T) {
 }
 
 // D8: ci records head, run, status and source on a primary in any state,
-// always notifies, moves nothing, labels an old head, and records a run once.
+// always notifies, moves nothing, labels an old head and leaves the record of
+// the current head (ci, ci_head) as it is, and records a run once.
 func TestD8CIObservation(t *testing.T) {
 	t.Parallel()
 	w := setup(t, 1)
 	w.must(Deal(w.s, DealReq{Sel: Sel{Limit: 1}}))
 	p := w.must(RecordCI(w.s, CIReq{Sel: Sel{IDs: []string{"s1-1"}}, Red: true, Run: "run-7", Source: "ci", Head: "old"}))
 	c := w.s.Work.Card("s1-1")
-	if c.Col != Working || c.F("ci_run") != "run-7" || c.F("ci_source") != "ci" || c.F("ci_head") != "old" {
+	if c.Col != Working || c.F("ci_run") != "run-7" || c.F("ci_source") != "ci" || c.F("ci_head") != "" || c.F("ci") != "" {
 		t.Fatalf("ci fields: %+v", c.Fields)
 	}
 	if !strings.Contains(p.Units[0].Moved, "old head") || !strings.Contains(w.notesOf(NCIRed)[0].What, "old head") {

@@ -72,13 +72,9 @@ func Abstract(o Observed) State {
 		if p.Attempt < 1 {
 			p.Attempt = 1
 		}
-		if h := c.F("head"); h != "" {
-			if _, n, ok := sprint.ParseWorkCard(h); ok {
-				p.Head = n
-			} else {
-				p.Head = -1
-			}
-		}
+		p.Head = headAttempt(c.F("head"))
+		p.CI, p.CIHead = c.F("ci"), headAttempt(c.F("ci_head"))
+		p.ReturnedAt = c.Int(sprint.FieldReturnedAttempt)
 		a.Primaries[id] = p
 	}
 	// A primary ready or waiting whose card at its attempt field is done
@@ -100,7 +96,8 @@ func Abstract(o Observed) State {
 		if c.F("kind") != "work" {
 			continue
 		}
-		w := WorkCard{Primary: c.F("primary"), Attempt: c.Int("attempt"), Member: c.F("member"), Place: Gone, Gen: c.Int("gen")}
+		w := WorkCard{Primary: c.F("primary"), Attempt: c.Int("attempt"), Member: c.F("member"), Place: Gone, Gen: c.Int("gen"),
+			Redeals: c.Int("redeals"), TakeEnded: c.F(sprint.FieldTakeEnded) != ""}
 		if c.Placed() {
 			w.Place, w.Member = c.Col, c.Row
 			if c.Col == sprint.DoneOK || c.Col == sprint.DoneFailed {
@@ -151,6 +148,18 @@ func Abstract(o Observed) State {
 		}
 	}
 	return a
+}
+
+// headAttempt is a head as the model holds it: the attempt of the work card
+// it names, 0 for none, -1 for a head that names no work card.
+func headAttempt(h string) int {
+	if h == "" {
+		return 0
+	}
+	if _, n, ok := sprint.ParseWorkCard(h); ok {
+		return n
+	}
+	return -1
 }
 
 // judgment is one open key as the model's judgment: its type, and its

@@ -58,9 +58,23 @@ ScnLapse == [Base EXCEPT !.live = {}, !.col = [c \in Cards |-> "review"], !.rd =
                          !.mr = [m \in Machines |-> IF m = "m1" THEN {"c1"} ELSE {}],
                          !.q = Queues(<<>>, <<>>, <<>>, <<E("lapse", "-", "m1")>>)]
 
+\* c1 dealt to m1 and not taken; its worker may take it, and the machines
+\* may lapse and beat again: the redeals.
+ScnTake == [Base EXCEPT !.col = [c \in Cards |-> "working"],
+                        !.mc = [m \in Machines |-> IF m = "m1" THEN {"c1"} ELSE {}],
+                        !.q = Queues(<<>>, <<>>, <<>>, <<>>)]
+\* c1 in review, its read on r1 (host m1) reported ok; the coordinator may
+\* record its CI, return it, and accept it: the accept's holds.
+ScnAccept == [Base EXCEPT !.col = [c \in Cards |-> "review"], !.rd = [c \in Cards |-> "r1"],
+                          !.mr = [m \in Machines |-> IF m = "m1" THEN {"c1"} ELSE {}],
+                          !.q = Queues(<<>>, <<E("rep", "c1", <<"r1", "ok">>)>>, <<>>, <<>>)]
+
 \* Reachability probes, expected to fail: every card lands; a card reaches
-\* its bound; a tick drains a queue after the first pass.
+\* its bound; a tick drains a queue after the first pass; a take ends at the
+\* redeal bound; the pump holds a card the coordinator then accepts.
 ProbeNotAllLanded == \E c \in Cards : col[c] # "landed"
 ProbeNoBound == \A c \in Cards : ~bnd[c]
 ProbeNoLateDrain == ~(act = "Drain" /\ phase = "drain")
+ProbeNoRedealBound == ~\E c \in Cards : ended[c] /\ rdl[c] >= MaxRedeals
+ProbeNoHeldAccept == ~\E c \in Cards : col[c] = "merging" /\ ret[c]
 =============================================================================
