@@ -15,7 +15,7 @@ SPRINT TABLE
 work  | waiting | ready | working | review | merging | landed
 readers | asked | reading | ok | broken
 merge | queued | merged | stuck | ci | state
-fleet | ready | working | width | done | ok% | status | load | provider
+fleet | ready | working | width | done | ok% | status | load
 ```
 
 | table | rows | members | bookkeeping for |
@@ -195,9 +195,7 @@ and it is the coordinator's decision, receipted.
   width (eight machines of 64 total 512). The row is the truth: the member's
   loop (`nova-swarm member`) reads its width with its queue every tick
   (`queue --as <m> --json` carries `width`) and runs that many; its `--width`
-  is a twin's override. The provider column counts the provider failures the
-  member has reported (its control card's provider_failures, the footer sums
-  them): each takes the card back for the deal and is never failed work.
+  is a twin's override.
 - The card decides its model (the owner, 2026-10-01). A brief's line 1 names
   its tier, `tier: flash|pro|frontier` (none is flash), and a `model:
   <provider>/<model>` header line under it pins the card, with its `tokens:
@@ -230,9 +228,8 @@ and it is the coordinator's decision, receipted.
   card, closed when the tier is served (tla/DirtyTick.tla, RouteGuard; witness
   W20). The failed-work judgment names the route and model; `card <id>` prints
   an `ATTEMPT` line per attempt (route, model, member, dealt, taken, finished,
-  usage, end); `where` prints `routes: flash=<n> pro=<n>` (and `--json`
-  `routes`); `routes` prints each tier's array and index (`TIER <tier>
-  routes=<a,b,...> index=<n>`), then each route with its attempts, ok, failed,
+  usage, end); `routes` prints the tiers, each tier's array and index (`TIER
+  <tier> routes=<a,b,...> index=<n>`), and each route with its attempts, ok, failed,
   provider failures and mean wall, each pinned model a row of its own
   (`pin:<provider>/<model>`). The routes are read once a tick, by its first
   part that deals or checks, before that part's read of the tables (one round

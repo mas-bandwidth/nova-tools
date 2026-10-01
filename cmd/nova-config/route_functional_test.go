@@ -37,7 +37,7 @@ func TestRouteThroughTheGrammarOnARealStore(t *testing.T) {
 	assert.True(t, r.client.SIsMember(ctx, config.RoutesKey, "pro-grok-openrouter").Val())
 	out, _ = r.run(t, 0, "status")
 	assert.Contains(t, out, " route=1 route_rev=1 ")
-	assert.True(t, strings.HasSuffix(out, " route_applied=1\n"), out)
+	assert.True(t, strings.HasSuffix(out, " route_applied=1 tier_applied=0\n"), out)
 
 	r.run(t, 0, "route", "remove", "pro-grok-openrouter")
 	out, _ = r.run(t, 0, "apply", "--kind", "route")

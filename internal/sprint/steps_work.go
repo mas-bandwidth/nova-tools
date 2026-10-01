@@ -993,7 +993,6 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		}
 		chosen = append(chosen, c)
 	}
-	failures := providerFailures(chosen, r)
 	for _, c := range chosen {
 		// the member that finished it: the one --as names, each card's own
 		// when it names several
@@ -1006,7 +1005,7 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 		}
 		pr := s.Work.Placed(c.F("primary"))
 		if r.Failed && IsProviderFailure(r.Report) {
-			p.Units = append(p.Units, providerEnded(s, c, pr, r, failures))
+			p.Units = append(p.Units, providerEnded(s, c, pr, r))
 			continue
 		}
 		head := r.Head
@@ -1080,19 +1079,6 @@ func finishPlan(s *Snapshot, r FinishReq) Plan {
 // section 4).
 func IsProviderFailure(report string) bool { return strings.HasPrefix(report, cardhdr.EndProvider) }
 
-// providerFailures is how many provider failures this finish reports for each member,
-// so a plan that ends several takes of one member writes its control card once, with
-// the whole count.
-func providerFailures(chosen []*Card, r FinishReq) map[string]int {
-	n := map[string]int{}
-	if r.Failed && IsProviderFailure(r.Report) {
-		for _, c := range chosen {
-			n[c.Row]++
-		}
-	}
-	return n
-}
-
 // providerEnded is the unit of a take the provider failed (tla/CardContract.tla,
 // ProviderFailure): the take ended, so the work card is withdrawn with FieldTakeEnded
 // and its primary goes back to ready, exactly as a member that went down leaves a
@@ -1100,10 +1086,8 @@ func providerFailures(chosen []*Card, r FinishReq) map[string]int {
 // the redeal bound, on a route the card has not been drawn when another remains
 // (routeOf). No failed-work judgment is written and the primary's failed count does
 // not move: a provider failure is never the card's. The card keeps a record of the
-// take that failed (ProviderTake: the route, the member, the line), the member's control
-// card counts it. failures is
-// providerFailures: the control card's change rides on the member's first unit.
-func providerEnded(s *Snapshot, c, pr *Card, r FinishReq, failures map[string]int) Unit {
+// take that failed (ProviderTake: the route, the member, the line).
+func providerEnded(s *Snapshot, c, pr *Card, r FinishReq) Unit {
 	set := nextGen(c, "", s.Now)
 	set["withdrawn"], set[FieldTakeEnded] = stamp(s.Now), stamp(s.Now)
 	line := cutText(strings.TrimSpace(strings.TrimPrefix(strings.TrimPrefix(r.Report, cardhdr.EndProvider), ":")), MaxProviderErrorBytes)
@@ -1114,15 +1098,10 @@ func providerEnded(s *Snapshot, c, pr *Card, r FinishReq, failures map[string]in
 	if r.Usage != "" {
 		set[FieldUsage] = r.Usage
 	}
-	u := Unit{Key: c.ID, Stream: pr.Row, Changes: []Change{
+	return Unit{Key: c.ID, Stream: pr.Row, Changes: []Change{
 		change(Fleet, moveEntry(c, c.Row, Withdrawn, set, "taken", "dealt")),
 		change(Work, moveEntry(pr, pr.Row, Ready, nil, "work")),
 	}, Moved: fmt.Sprintf("%s working -> withdrawn gen=%d, the provider failed the take; %s working -> ready", c.ID, c.Int("gen")+1, pr.ID)}
-	if ctl := s.MemberCtl(c.Row); ctl != nil && failures[c.Row] > 0 {
-		u.Changes = append(u.Changes, change(Fleet, setEntry(ctl, map[string]string{FieldProviderFailures: itoa(ctl.Int(FieldProviderFailures) + failures[c.Row])})))
-		failures[c.Row] = 0
-	}
-	return u
 }
 
 // FleetReq is a fleet move: a member up or down, or the ready queues

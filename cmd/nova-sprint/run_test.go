@@ -7,6 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
 )
 
@@ -119,4 +122,23 @@ func TestWhereHeaderStoppedIsExactlyTheView(t *testing.T) {
 	if i < 0 || out[:i] != "2030-01-02 03:04:05 UTC\n\nSPRINT TABLE\n\nSTOPPED\n\n" {
 		t.Fatalf("stopped view:\n%q", out)
 	}
+}
+
+// TestWhereDoesNotPrintTheRoutesLine pins the view going from the machine state line
+// to the work table with one blank line between, on a store that holds routes: no
+// `routes: flash=n pro=m` line in the text, no `routes` in the JSON (`nova-sprint
+// routes` is where the tiers are read).
+func TestWhereDoesNotPrintTheRoutesLine(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a --members m1")
+	ta.m.SetRoutes([]sprint.Route{
+		{Name: "flash-a", Tier: "flash", Provider: "p", Model: "m", Enabled: true},
+		{Name: "pro-a", Tier: "pro", Provider: "p", Model: "m", Enabled: true},
+	})
+	out := ta.ok("where")
+	require.NotContains(t, out, "routes:")
+	require.Contains(t, out, "SPRINT TABLE\n\nSTOPPED\n\nwork")
+	require.NotContains(t, ta.ok("where --json"), `"routes"`)
+	require.Contains(t, ta.ok("routes"), "flash=1 pro=1")
 }
