@@ -1065,27 +1065,17 @@ func TestADrainingMemberTakesNothingNewButReportsWhatEnded(t *testing.T) {
 	g := newRig(Config{As: "m", Width: 2})
 	g.s.set("queue", 0, queueJSON(t, 7, ready("c1")))
 	g.s.set("take", 0, takeJSON(t, pk("c1")))
-	if _, err := g.tick(t); err != nil {
-		t.Fatal(err)
-	}
-	if g.m.Running() != 1 {
-		t.Fatalf("running=%d, want 1", g.m.Running())
-	}
+	_, err := g.tick(t)
+	require.NoError(t, err)
+	require.Equal(t, 1, g.m.Running())
 	g.m.Drain()
 	p := pk("c1")
 	g.r.child("c1").end(Result{Ran: true, OK: true, Shaped: true, Verdict: "ok", Report: "done"})
 	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p), ready("c2"), working("c3", 1, &Packet{Card: "c3", Kind: "work", Gen: 1, Epoch: 7})))
 	g.s.reset()
-	if _, err := g.tick(t); err != nil {
-		t.Fatal(err)
-	}
-	if got := g.s.lines("finish"); len(got) != 1 {
-		t.Fatalf("what ended is reported: %q", got)
-	}
-	if got := g.s.lines("take"); len(got) != 0 {
-		t.Fatalf("nothing new is taken: %q", got)
-	}
-	if got := g.r.started(); !slices.Equal(got, []string{"c1"}) {
-		t.Fatalf("no child is started, taken or recovered: %v", got)
-	}
+	_, err = g.tick(t)
+	require.NoError(t, err)
+	require.Len(t, g.s.lines("finish"), 1, "what ended is reported")
+	require.Empty(t, g.s.lines("take"), "nothing new is taken")
+	require.Equal(t, []string{"c1"}, g.r.started(), "no child is started, taken or recovered")
 }
