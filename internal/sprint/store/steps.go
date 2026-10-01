@@ -12,7 +12,7 @@ func AddStep(r sprint.AddReq) Step {
 	return Step{Named: len(r.IDs) > 0, Args: ArgsOf(r), Verb: "add", Load: tables(sprint.Work, sprint.Merge, sprint.Fleet), Mirrors: true,
 		Extras: func(s *sprint.Snapshot) map[string][]string {
 			ids := append([]string(nil), sprint.AddIDs(s, r)...)
-			return map[string][]string{sprint.Work: append(ids, r.Needs...)}
+			return map[string][]string{sprint.Work: append(ids, r.AddNeeds()...)}
 		},
 		Plan: func(s *sprint.Snapshot) sprint.Plan { return sprint.Add(s, r) }}
 }

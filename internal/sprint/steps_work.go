@@ -36,6 +36,42 @@ type AddReq struct {
 	Last  bool
 	Only  []string
 	Who   string
+	// Cards is the many-brief form (add --brief-dir, repeated --brief-file):
+	// one card per entry, its id, brief and needs. When set, IDs, Brief and
+	// Needs are the cards' own, and the cards are admitted in this order.
+	Cards []AddCard
+}
+
+// AddCard is one card of the many-brief form of add: its id (the brief file's
+// base name), its brief and its needs (the brief's Needs line).
+type AddCard struct {
+	ID    string
+	Brief string
+	Needs []string
+}
+
+// cardFor is the many-brief card of the id, or nil when the add is the
+// single-brief form.
+func (r AddReq) cardFor(id string) *AddCard {
+	for i := range r.Cards {
+		if r.Cards[i].ID == id {
+			return &r.Cards[i]
+		}
+	}
+	return nil
+}
+
+// AddNeeds is every need an add names: the many-brief form's cards' needs, or
+// the single form's Needs.
+func (r AddReq) AddNeeds() []string {
+	if len(r.Cards) == 0 {
+		return r.Needs
+	}
+	var out []string
+	for _, c := range r.Cards {
+		out = append(out, c.Needs...)
+	}
+	return out
 }
 
 // gatePrefix is the prefix of the sentinels add --sentinel-every names.
@@ -51,6 +87,13 @@ func (r AddReq) IsGate(id string) bool {
 func AddIDs(s *Snapshot, r AddReq) []string {
 	if r.Only != nil {
 		return r.Only
+	}
+	if len(r.Cards) > 0 {
+		ids := make([]string, len(r.Cards))
+		for i, c := range r.Cards {
+			ids[i] = c.ID
+		}
+		return ids
 	}
 	if len(r.IDs) > 0 || r.Count <= 0 {
 		return r.IDs
@@ -130,12 +173,6 @@ func Add(s *Snapshot, r AddReq) Plan {
 			adding[id] = true
 		}
 	}
-	var missing []string
-	for _, n := range r.Needs {
-		if s.Work.Card(n) == nil && !adding[n] {
-			missing = append(missing, n)
-		}
-	}
 	// The cards admitted, each with its score and needs.
 	type admit struct {
 		id     string
@@ -148,6 +185,16 @@ func Add(s *Snapshot, r AddReq) Plan {
 	lastGate := ""
 	seen := map[string]bool{}
 	for i, id := range ids {
+		needs := r.Needs
+		if c := r.cardFor(id); c != nil {
+			needs = c.Needs
+		}
+		var missing []string
+		for _, n := range needs {
+			if s.Work.Card(n) == nil && !adding[n] {
+				missing = append(missing, n)
+			}
+		}
 		switch {
 		case seen[id]:
 			p.refuse(id, "named twice")
@@ -163,7 +210,7 @@ func Add(s *Snapshot, r AddReq) Plan {
 			continue
 		}
 		seen[id] = true
-		a := admit{id: id, score: scores[i], needs: append([]string(nil), r.Needs...), gate: r.IsGate(id)}
+		a := admit{id: id, score: scores[i], needs: needs, gate: r.IsGate(id)}
 		if st := sentinelBefore(s, r.Stream, a.score); st != nil && !r.Sentinel {
 			a.behind = st.ID // it waits behind the stop by its place; nothing is written of it
 		}
@@ -266,8 +313,12 @@ func Add(s *Snapshot, r AddReq) Plan {
 			kind, col = "sentinel", Waiting
 		}
 		fields := map[string]string{"kind": kind, "stream": r.Stream, "attempt": "0", "admitted": stamp(s.Now)}
-		if r.Brief != "" && !a.gate {
-			fields["brief"] = r.Brief
+		brief := r.Brief
+		if c := r.cardFor(a.id); c != nil {
+			brief = c.Brief
+		}
+		if brief != "" && !a.gate {
+			fields["brief"] = brief
 		}
 		if len(a.needs) > 0 {
 			fields["needs"] = strings.Join(a.needs, ",")
