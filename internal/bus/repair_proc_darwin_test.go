@@ -4,6 +4,7 @@ package bus
 
 import (
 	"errors"
+	"github.com/stretchr/testify/require"
 	"os"
 	"strconv"
 	"strings"
@@ -21,9 +22,7 @@ func TestDarwinLsofFailureLeavesOldLock(t *testing.T) {
 		t.Fatal("lsof failure was treated as a pid to re-check, not as an unreadable cwd")
 		return false, nil
 	})
-	if err == nil {
-		t.Fatal("lsof failure with a cwd git and no -C was a complete scan")
-	}
+	require.Error(t, err, "lsof failure with a cwd git and no -C was a complete scan")
 	cleared, cerr := clearStaleIndexLock(dir, time.Now(), func() ([]gitProc, error) {
 		return nil, err
 	})
@@ -202,9 +201,7 @@ func TestDarwinForeignGitDirKeepsItsLock(t *testing.T) {
 	hermetic(t)
 	dir, lock := oldIndexLock(t)
 	gd, err := GitDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	cleared, cerr := clearStaleIndexLock(dir, time.Now(), func() ([]gitProc, error) {
 		return gitProcsFromPS("502 77 git --git-dir="+gd+" fetch\n", "501", map[string]string{}, nil, func(string) (bool, error) { return true, nil })
 	})

@@ -9,6 +9,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 // lockStepClock is the lock's clock in the tests: Now stands still until Sleep moves it,
@@ -49,23 +51,17 @@ func TestLockFileTransientCollisionRecoversWhenWaitBudgetAllows(t *testing.T) {
 
 	clk := newLockStepClock()
 	release, err := lockFile(lockPath, 500*time.Millisecond, try, clk)
-	if err != nil {
-		t.Fatalf("lockFile failed to recover from transient collision: %v", err)
-	}
+	require.NoError(t, err, "lockFile failed to recover from transient collision: %v", err)
 	defer release()
 
-	if p := atomic.LoadInt32(&polls); p < 3 {
-		t.Fatalf("lockFile acquired lock after %d polls, want at least 3", p)
-	}
-	if waited := clk.waited(); waited < 30*time.Millisecond {
-		t.Fatalf("lockFile gave up after %v of virtual time, expected to wait for transient collision to clear", waited)
-	}
+	p := atomic.LoadInt32(&polls)
+	require.GreaterOrEqual(t, p, int32(3), "lockFile acquired lock after %d polls, want at least 3", p)
+	waited := clk.waited()
+	require.GreaterOrEqual(t, waited, 30*time.Millisecond, "lockFile gave up after %v of virtual time, expected to wait for transient collision to clear", waited)
 
 	// Verify lock holder was stamped
 	holder := ReadLockHolder(lockPath)
-	if holder == "-" {
-		t.Fatalf("ReadLockHolder returned %q, expected valid PID", holder)
-	}
+	require.NotEqual(t, "-", holder, "ReadLockHolder returned %q, expected valid PID", holder)
 }
 
 // TestLockFilePersistentCollisionPreservesActualErrorAndDoesNotFalselyAssertLockHeld verifies
@@ -93,23 +89,15 @@ func TestLockFilePersistentCollisionPreservesActualErrorAndDoesNotFalselyAssertL
 	}
 
 	// Must have waited out the budget, in virtual time the fake advanced.
-	if waited := clk.waited(); waited < 50*time.Millisecond {
-		t.Fatalf("lockFile aborted early after %v of virtual time, want at least 50ms budget", waited)
-	}
-	if p := atomic.LoadInt32(&polls); p < 2 {
-		t.Fatalf("lockFile polled %d times, want multiple retries over budget", p)
-	}
+	waited := clk.waited()
+	require.GreaterOrEqual(t, waited, 50*time.Millisecond, "lockFile aborted early after %v of virtual time, want at least 50ms budget", waited)
+	p := atomic.LoadInt32(&polls)
+	require.GreaterOrEqual(t, p, int32(2), "lockFile polled %d times, want multiple retries over budget", p)
 
 	// Must preserve the actual underlying error, NOT ErrLockHeld
-	if !errors.Is(err, errAccessDenied) {
-		t.Fatalf("err does not wrap expected access denied error (%v)", err)
-	}
-	if errors.Is(err, ErrLockHeld) {
-		t.Fatalf("err wraps ErrLockHeld (%v); permanent failure must not falsely report lock held", err)
-	}
-	if strings.Contains(err.Error(), "is held by process") {
-		t.Fatalf("err falsely asserts live process holder: %v", err)
-	}
+	require.True(t, errors.Is(err, errAccessDenied), "err does not wrap expected access denied error (%v)", err)
+	require.False(t, errors.Is(err, ErrLockHeld), "err wraps ErrLockHeld (%v); permanent failure must not falsely report lock held", err)
+	require.NotContains(t, err.Error(), "is held by process", "err falsely asserts live process holder: %v", err)
 	if !strings.Contains(err.Error(), "the lock at") || !strings.Contains(err.Error(), "could not be taken") {
 		t.Fatalf("err does not carry expected failure sentence: %v", err)
 	}
@@ -132,24 +120,16 @@ func TestLockFileImmediateNonblockingRejectsCollisionImmediately(t *testing.T) {
 
 	clk := newLockStepClock()
 	_, err := lockFile(lockPath, 0, try, clk)
-	if err == nil {
-		t.Fatal("lockFile with wait=0 succeeded on collision, want error")
-	}
+	require.Error(t, err, "lockFile with wait=0 succeeded on collision, want error")
 
-	if got := atomic.LoadInt32(&attempts); got != 1 {
-		t.Fatalf("lockFile with wait=0 called try %d times, want exactly 1 attempt", got)
-	}
-	if waited := clk.waited(); waited != 0 {
-		t.Fatalf("lockFile with wait=0 waited %v, want an immediate return", waited)
-	}
+	got := atomic.LoadInt32(&attempts)
+	require.Equal(t, int32(1), got, "lockFile with wait=0 called try %d times, want exactly 1 attempt", got)
+	waited := clk.waited()
+	require.Zero(t, waited, "lockFile with wait=0 waited %v, want an immediate return", waited)
 
 	// Real error preserved, not ErrLockHeld
-	if !errors.Is(err, errAccessDenied) {
-		t.Fatalf("err does not wrap expected access denied error (%v)", err)
-	}
-	if errors.Is(err, ErrLockHeld) {
-		t.Fatalf("err wraps ErrLockHeld (%v); nonblocking collision must return real error", err)
-	}
+	require.True(t, errors.Is(err, errAccessDenied), "err does not wrap expected access denied error (%v)", err)
+	require.False(t, errors.Is(err, ErrLockHeld), "err wraps ErrLockHeld (%v); nonblocking collision must return real error", err)
 }
 
 // TestLockFileImmediateNonblockingCleanContentionReturnsLockHeld verifies that with wait=0,
@@ -169,20 +149,14 @@ func TestLockFileImmediateNonblockingCleanContentionReturnsLockHeld(t *testing.T
 
 	clk := newLockStepClock()
 	_, err := lockFile(lockPath, 0, try, clk)
-	if err == nil {
-		t.Fatal("lockFile with wait=0 succeeded on clean contention, want ErrLockHeld")
-	}
+	require.Error(t, err, "lockFile with wait=0 succeeded on clean contention, want ErrLockHeld")
 
-	if got := atomic.LoadInt32(&attempts); got != 1 {
-		t.Fatalf("lockFile with wait=0 called try %d times, want exactly 1 attempt", got)
-	}
-	if waited := clk.waited(); waited != 0 {
-		t.Fatalf("lockFile with wait=0 waited %v, want an immediate return", waited)
-	}
+	got := atomic.LoadInt32(&attempts)
+	require.Equal(t, int32(1), got, "lockFile with wait=0 called try %d times, want exactly 1 attempt", got)
+	waited := clk.waited()
+	require.Zero(t, waited, "lockFile with wait=0 waited %v, want an immediate return", waited)
 
-	if !errors.Is(err, ErrLockHeld) {
-		t.Fatalf("err = %v, want ErrLockHeld", err)
-	}
+	require.True(t, errors.Is(err, ErrLockHeld), "err = %v, want ErrLockHeld", err)
 }
 
 // TestLockFileNegativeControlMissingParentFailsAtOpen verifies that when the lock file
@@ -201,13 +175,7 @@ func TestLockFileNegativeControlMissingParentFailsAtOpen(t *testing.T) {
 	}
 
 	_, err := lockFile(lockPath, 50*time.Millisecond, try, newLockStepClock())
-	if err == nil {
-		t.Fatal("lockFile on missing directory succeeded, want error")
-	}
-	if reachedTryLock {
-		t.Fatal("tryLockFile was reached despite missing parent directory")
-	}
-	if !strings.Contains(err.Error(), "could not be opened") {
-		t.Fatalf("err %v did not fail at primary OpenFile", err)
-	}
+	require.Error(t, err, "lockFile on missing directory succeeded, want error")
+	require.False(t, reachedTryLock, "tryLockFile was reached despite missing parent directory")
+	require.Contains(t, err.Error(), "could not be opened", "err %v did not fail at primary OpenFile", err)
 }

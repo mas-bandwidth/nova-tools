@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 // ProblemClass is a display rule, and the BUS CHECK line is only as good as it: every
@@ -41,9 +43,8 @@ func TestProblemClassNamesEveryClass(t *testing.T) {
 		// "line" only counts as a parse error in the one shape ParseNoteAll writes.
 		{"prose that starts with line", Problem{Where: "from-ada/a.md", Reason: "line breaks in a Subject"}, "header"},
 	} {
-		if got := ProblemClass(tc.p); got != tc.want {
-			t.Errorf("%s: ProblemClass(%+v) = %q, want %q", tc.name, tc.p, got, tc.want)
-		}
+		got := ProblemClass(tc.p)
+		assert.Equal(t, tc.want, got, "%s: ProblemClass(%+v) = %q, want %q", tc.name, tc.p, got, tc.want)
 	}
 }
 

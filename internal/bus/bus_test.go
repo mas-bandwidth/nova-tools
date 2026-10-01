@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 // The fixture bus. It carries a note with an id, a LEGACY note with none, a bare
@@ -49,18 +51,14 @@ The body.
 func TestReadBusReadsEveryLane(t *testing.T) {
 	t.Parallel()
 	tab := loadBus(t, writeBus(t, fixture()))
-	if len(tab.Notes) != 4 {
-		t.Fatalf("read %d notes, want 4", len(tab.Notes))
-	}
+	require.Len(t, tab.Notes, 4, "read %d notes, want 4", len(tab.Notes))
 	if n, ok := tab.NoteByID("bo-abcdef012345"); !ok || n.Header.Subject != "A question about the gate" {
 		t.Fatalf("NoteByID = %v %v", n, ok)
 	}
-	if _, ok := tab.NoteByPath("from-bo/2026-09-06-legacy-note.md"); !ok {
-		t.Fatal("a legacy note is not addressable by path")
-	}
-	if _, ok := tab.NoteByID(""); ok {
-		t.Fatal("the empty id resolved; a legacy note has no id and must not answer to one")
-	}
+	_, ok := tab.NoteByPath("from-bo/2026-09-06-legacy-note.md")
+	require.True(t, ok, "a legacy note is not addressable by path")
+	_, ok = tab.NoteByID("")
+	require.False(t, ok, "the empty id resolved; a legacy note has no id and must not answer to one")
 }
 
 // L5: an id whose slug names another lane must not enter the byID index. A note sitting
@@ -82,9 +80,8 @@ Its id carries a slug from-bo does not own.
 	if n, ok := tab.NoteByID("ada-abcdef012345"); ok {
 		t.Fatalf("indexed %s under an id whose slug is not its lane", n.Path)
 	}
-	if _, ok := tab.NoteByPath(forgedPath); !ok {
-		t.Fatal("the note should still be addressable by path")
-	}
+	_, ok := tab.NoteByPath(forgedPath)
+	require.True(t, ok, "the note should still be addressable by path")
 }
 
 // The answered rule: an id on a Re line, a PATH on a Re line for a legacy note, and a
