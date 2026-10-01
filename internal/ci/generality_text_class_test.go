@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ci/allowlist"
+	"github.com/stretchr/testify/require"
 )
 
 // generality_text_class_test.go is the generality rule for every living text file
@@ -47,13 +48,13 @@ import (
 //   - generality_text_fixtures_allowlist.txt: `path reason`. A whole file whose names
 //     are recorded data (a captured transcript, a fixture of a public issue), with the
 //     reason on the row. A row for a file with no finding is stale and fails.
-//   - generality_text_allowlist.txt: `path:token count`, the debt. A finding not listed
+//   - generality-text/: package-sharded `path:token count` debt. A finding not listed
 //     fails; a count that rises fails; a count that falls, or a row with no finding,
 //     fails until the row shrinks. The update run (NOVA_CI_UPDATE=1) only ever removes.
 
 const (
 	generalityTextFixturesPath = "testdata/generality_text_fixtures_allowlist.txt"
-	generalityTextDebtPath     = "testdata/generality_text_allowlist.txt"
+	generalityTextDebtPath     = "testdata/generality-text"
 )
 
 // textScanSuffixes are the file suffixes the text scan reads.
@@ -214,21 +215,53 @@ func fileOfKey(key string) string {
 	return key
 }
 
+func textFixtureFiles(fixtures *allowlist.List) (map[string]bool, []string) {
+	files := map[string]bool{}
+	var violations []string
+	for _, row := range fixtures.Rows() {
+		fields := strings.Fields(row.Text)
+		if len(fields) < 2 || len(strings.Join(fields[1:], " ")) < 12 {
+			violations = append(violations, fmt.Sprintf("%s:%d: fixture row %q names no reason; write `path reason`", fixtures.Path, row.Line, row.Text))
+			continue
+		}
+		files[fields[0]] = true
+	}
+	if n, ok := fixtures.Ceiling(); ok && len(fixtures.Rows()) > n {
+		violations = append(violations, fmt.Sprintf("%s has %d rows, over its ceiling of %d; the list only shrinks", fixtures.Path, len(fixtures.Rows()), n))
+	}
+	return files, violations
+}
+
+// Text debt has exactly two fields, unlike other counted lists that also keep
+// a reason. Check this before both ordinary comparison and an UPDATE write.
+func textDebtShapeViolations(debt generalityCountedLedger) []string {
+	var lists []*allowlist.List
+	switch ledger := debt.(type) {
+	case *allowlist.List:
+		lists = []*allowlist.List{ledger}
+	case *allowlist.Packages:
+		lists = ledger.Lists()
+	}
+	var violations []string
+	for _, list := range lists {
+		for _, row := range list.Rows() {
+			if len(strings.Fields(row.Text)) != 2 {
+				violations = append(violations, fmt.Sprintf("%s:%d: malformed row %q: expected <file:token> <count>", list.Path, row.Line, row.Text))
+			}
+		}
+	}
+	return violations
+}
+
 // checkTextGenerality returns every violation of the two lists over the files.
-func checkTextGenerality(files []textScanFile, fixtures, debt *allowlist.List) []string {
+func checkTextGenerality(files []textScanFile, fixtures *allowlist.List, debt generalityCountedLedger) []string {
 	var v []string
 	counts := measureTextGenerality(files)
 
 	// Fixture rows: a whole file, with a reason.
-	fixtureFile := map[string]bool{}
-	for _, row := range fixtures.Rows() {
-		fields := strings.Fields(row.Text)
-		if len(fields) < 2 || len(strings.Join(fields[1:], " ")) < 12 {
-			v = append(v, fmt.Sprintf("%s:%d: fixture row %q names no reason; write `path reason`", fixtures.Path, row.Line, row.Text))
-			continue
-		}
-		fixtureFile[fields[0]] = true
-	}
+	fixtureFile, fixtureProblems := textFixtureFiles(fixtures)
+	v = append(v, fixtureProblems...)
+	v = append(v, textDebtShapeViolations(debt)...)
 	hit := map[string]bool{}
 	for key := range counts {
 		hit[fileOfKey(key)] = true
@@ -239,24 +272,36 @@ func checkTextGenerality(files []textScanFile, fixtures, debt *allowlist.List) [
 		}
 	}
 
-	// Debt rows: path:token count.
+	// Debt rows: path:token count. The shared counted parser owns the row
+	// grammar and each package shard's ceiling; fixture rows remain a flat list.
 	allowed := map[string]int{}
-	for _, row := range debt.Rows() {
-		fields := strings.Fields(row.Text)
-		if len(fields) != 2 {
-			v = append(v, fmt.Sprintf("%s:%d: malformed row %q: expected <file:token> <count>", debt.Path, row.Line, row.Text))
-			continue
-		}
-		n, err := strconv.Atoi(fields[1])
-		if err != nil || n <= 0 {
-			v = append(v, fmt.Sprintf("%s:%d: invalid count in row %q: expected a positive integer", debt.Path, row.Line, row.Text))
-			continue
-		}
-		if fixtureFile[fileOfKey(fields[0])] {
-			v = append(v, fmt.Sprintf("%s:%d: %s is a fixture (%s); it has no debt row", debt.Path, row.Line, fileOfKey(fields[0]), fixtures.Path))
-		}
-		allowed[fields[0]] = n
+	var debtPath string
+	switch ledger := debt.(type) {
+	case *allowlist.List:
+		debtPath = ledger.Path
+	case *allowlist.Packages:
+		debtPath = ledger.Path
 	}
+	for _, row := range debt.Rows() {
+		if fixtureFile[fileOfKey(row.Key)] {
+			v = append(v, fmt.Sprintf("%s:%d: %s is a fixture (%s); it has no debt row", debtPath, row.Line, fileOfKey(row.Key), fixtures.Path))
+		}
+		allowed[row.Key] = debt.Count(row.Key)
+	}
+	measuredDebt := map[string]int{}
+	for key, count := range counts {
+		if !fixtureFile[fileOfKey(key)] {
+			measuredDebt[key] = count
+		}
+	}
+	reporter := &generalityMessageReporter{}
+	switch ledger := debt.(type) {
+	case *allowlist.List:
+		allowlist.CheckCountedMode(reporter, ledger, measuredDebt, false)
+	case *allowlist.Packages:
+		allowlist.CheckPackagesCountedMode(reporter, ledger, measuredDebt, false)
+	}
+	v = append(v, reporter.messages...)
 	keys := make([]string, 0, len(counts))
 	for k := range counts {
 		keys = append(keys, k)
@@ -274,19 +319,13 @@ func checkTextGenerality(files []textScanFile, fixtures, debt *allowlist.List) [
 		case n > a:
 			v = append(v, fmt.Sprintf("%s: %d occurrences of %q exceeds allowed count %d (the list only shrinks)", fileOfKey(key), n, tok, a))
 		case n < a:
-			v = append(v, fmt.Sprintf("%s: %d occurrences of %q is below allowed count %d; shrink the row in %s (the list only shrinks)", fileOfKey(key), n, tok, a, debt.Path))
+			v = append(v, fmt.Sprintf("%s: %d occurrences of %q is below allowed count %d; shrink the row in %s (the list only shrinks)", fileOfKey(key), n, tok, a, debtPath))
 		}
 	}
 	for key := range allowed {
 		if counts[key] == 0 {
-			v = append(v, fmt.Sprintf("%s lists %s, but no reference is in the living tree any more; delete the stale row (the list only shrinks)", debt.Path, key))
+			v = append(v, fmt.Sprintf("%s lists %s, but no reference is in the living tree any more; delete the stale row (the list only shrinks)", debtPath, key))
 		}
-	}
-	if n, ok := debt.Ceiling(); ok && len(debt.Rows()) > n {
-		v = append(v, fmt.Sprintf("%s has %d rows, over its ceiling of %d; the list only shrinks", debt.Path, len(debt.Rows()), n))
-	}
-	if n, ok := fixtures.Ceiling(); ok && len(fixtures.Rows()) > n {
-		v = append(v, fmt.Sprintf("%s has %d rows, over its ceiling of %d; the list only shrinks", fixtures.Path, len(fixtures.Rows()), n))
 	}
 	sort.Strings(v)
 	return v
@@ -319,10 +358,18 @@ func TestGeneralityText(t *testing.T) {
 	t.Parallel()
 
 	files := livingTextFiles(t)
+	fixtures := loadAllowlist(t, generalityTextFixturesPath, shrinkOnly)
+	debtPath := filepath.Join(repoTree(t).Root, "internal/ci", generalityTextDebtPath)
+	debt, err := allowlist.LoadPackages(debtPath, allowlist.Options{Ceiling: true, Counted: true})
+	require.NoError(t, err)
 	if allowlist.Updating() {
-		skip := map[string]bool{}
-		for _, row := range loadAllowlist(t, generalityTextFixturesPath, shrinkOnly).Rows() {
-			skip[strings.Fields(row.Text)[0]] = true
+		skip, problems := textFixtureFiles(fixtures)
+		problems = append(problems, textDebtShapeViolations(debt)...)
+		for _, problem := range problems {
+			t.Error(problem)
+		}
+		if len(problems) > 0 {
+			return
 		}
 		counts := map[string]int{}
 		for k, n := range measureTextGenerality(files) {
@@ -330,14 +377,9 @@ func TestGeneralityText(t *testing.T) {
 				counts[k] = n
 			}
 		}
-		p := filepath.Join(repoTree(t).Root, "internal/ci", generalityTextDebtPath)
-		if err := writeGeneralityAllowlist(p, counts); err != nil {
-			t.Fatalf("failed to rewrite the text generality list: %v", err)
-		}
-		t.Fatal(allowlist.UpdatedRerun)
+		allowlist.CheckPackagesCounted(t, debt, counts)
+		return
 	}
-	fixtures := loadAllowlist(t, generalityTextFixturesPath, shrinkOnly)
-	debt := loadAllowlist(t, generalityTextDebtPath, shrinkOnly)
 	for _, v := range checkTextGenerality(files, fixtures, debt) {
 		t.Error(v)
 	}
@@ -458,7 +500,7 @@ func TestGeneralityTextWitness(t *testing.T) {
 	t.Parallel()
 
 	parse := func(name, text string) *allowlist.List {
-		l, err := allowlist.Parse(name, text, allowlist.Options{Ceiling: true})
+		l, err := allowlist.Parse(name, text, allowlist.Options{Ceiling: true, Counted: name == "debt"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -495,6 +537,17 @@ func TestGeneralityTextWitness(t *testing.T) {
 			t.Errorf("violations %v", v)
 		}
 	})
+	t.Run("text-debt-row-has-exactly-two-fields", func(t *testing.T) {
+		t.Parallel()
+		src := file("fleet/a.yml", "host: studio\n")
+		valid, err := allowlist.Parse("debt", "# ceiling: 1\nfleet/a.yml:studio 1\n", allowlist.Options{Ceiling: true, Counted: true})
+		require.NoError(t, err)
+		require.Empty(t, checkTextGenerality(src, noFixtures, valid))
+		withReason, err := allowlist.Parse("debt", "# ceiling: 1\nfleet/a.yml:studio 1 extra\n", allowlist.Options{Ceiling: true, Counted: true})
+		require.NoError(t, err)
+		require.Contains(t, strings.Join(checkTextGenerality(src, noFixtures, withReason), "\n"), "expected <file:token> <count>")
+		require.Contains(t, strings.Join(textDebtShapeViolations(withReason), "\n"), "expected <file:token> <count>")
+	})
 	t.Run("a-fixture-row-needs-a-reason-and-a-finding", func(t *testing.T) {
 		src := file("testdata/t.md", "transcript of studio\n")
 		ok := parse("fixtures", "# ceiling: 1\ntestdata/t.md a captured transcript, recorded data\n")
@@ -505,6 +558,11 @@ func TestGeneralityTextWitness(t *testing.T) {
 		if v := checkTextGenerality(src, bare, empty); len(v) == 0 {
 			t.Error("a fixture row with no reason passed")
 		}
+		_, badReason := textFixtureFiles(bare)
+		require.NotEmpty(t, badReason)
+		overCeiling := parse("fixtures", "# ceiling: 0\ntestdata/t.md a captured transcript, recorded data\n")
+		_, badCeiling := textFixtureFiles(overCeiling)
+		require.NotEmpty(t, badCeiling)
 		stale := file("testdata/t.md", "nothing here\n")
 		if v := checkTextGenerality(stale, ok, empty); len(v) == 0 {
 			t.Error("a stale fixture row passed")

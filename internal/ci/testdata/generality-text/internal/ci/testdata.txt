@@ -1,0 +1,21 @@
+# Migrated counted package ledger; original row keys preserved.
+# ceiling: 19
+internal/ci/testdata/cardtemplate_allowlist.txt:hulk 1
+internal/ci/testdata/cardtemplate_allowlist.txt:mini 1
+internal/ci/testdata/cardtemplate_allowlist.txt:space 1
+internal/ci/testdata/cardtemplate_allowlist.txt:studio 1
+internal/ci/testdata/cardtemplate_allowlist.txt:vision 1
+internal/ci/testdata/deleted-tests.txt:glenn 9
+internal/ci/testdata/deleted-tests.txt:rowan 1
+internal/ci/testdata/deleted-tests.txt:space 1
+internal/ci/testdata/deleted-tests.txt:stella 1
+internal/ci/testdata/fixed-waits-allowlist.txt:stella 1
+internal/ci/testdata/namedpaths_allowlist.txt:glenn 1
+internal/ci/testdata/prmerge_allowlist.txt:glenn 1
+internal/ci/testdata/serial-tests_allowlist.txt:glenn 1
+internal/ci/testdata/serial-tests_allowlist.txt:space 1
+internal/ci/testdata/serial-tests_allowlist.txt:stella 4
+internal/ci/testdata/silent_allowlist.txt:glenn 1
+internal/ci/testdata/unexecuted_examples.txt:mas-bandwidth 3
+internal/ci/testdata/unexecuted_examples.txt:rowan 6
+internal/ci/testdata/unexecuted_examples.txt:stella 1
