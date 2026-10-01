@@ -1,0 +1,52 @@
+# The defaults of the fleet plays (tools.yml, redis.yml, loops.yml). These are
+# the lowest-precedence values ansible reads: the inventory nova-config prints
+# (its host variables and all.vars) and an adopter's own group_vars beside the
+# inventory override every one. No value here names a machine, a seat or a
+# person; those come from nova-config (docs/FLEET.md).
+
+# Where a machine keeps the tools and the fleet's files: its login's home.
+nova_home: "{{ ansible_env.HOME }}"
+nova_bin_dir: "{{ nova_home }}/.local/bin"
+nova_release_dir: "{{ nova_home }}/nova-bench/release"
+# The installed build is recorded here, one line: the version tools.yml last
+# installed (the machine's nova_build fact).
+nova_build_file: "{{ nova_home }}/.config/nova/build"
+
+# The PATH a loop unit runs with.
+nova_loop_path: "{{ nova_bin_dir }}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
+# A darwin machine's loops are LaunchAgents in the login's GUI domain (gui) or
+# LaunchDaemons dropped to the login (system), for a login that is never the
+# console user; a linux machine's are systemd user units (user) or system
+# units dropped to the login (system).
+nova_launchd_domain: gui
+nova_systemd_scope: user
+
+# The nova-secrets layout a loop with keys opens its secrets through: the
+# store, the directory of seat keys (<seat>.key) and the sops binary.
+nova_secrets_store: "{{ nova_home }}/nova-bench/secrets"
+nova_secrets_key_dir: "{{ nova_home }}/.config/nova-secrets"
+nova_sops: /usr/local/bin/sops
+
+# The store: the fleet row's store machine (all.vars nova_store) on this port.
+nova_redis_port: 6379
+nova_redis_addr: "{{ nova_store | default('') }}:{{ nova_redis_port }}"
+# Who loads the function library (fn load) and who writes the ACL (acl
+# apply), and the names of the secrets that hold their passwords in the
+# store_deployer machine's seat.
+nova_redis_deploy_user: coordinator
+nova_redis_deploy_password_key: NOVA_REDIS_COORDINATOR_PASSWORD
+nova_redis_admin_user: admin
+nova_redis_admin_password_key: NOVA_REDIS_ADMIN_PASSWORD
+
+# The configuration store tools.yml migrates before anything reads a kind the
+# build adds: Postgres on the fleet row's store machine, as this user, its
+# password the secret of this name in the store_deployer machine's seat.
+nova_pg_dsn: "postgres://nova_config@{{ nova_store | default('') }}:5432/nova"
+nova_pg_password_key: NOVA_PG_CONFIG_PASSWORD
+
+# The build tools.yml installs: nova_version (required, -e) built from the
+# nova-tools checkout nova_source on the machine that runs the play, under
+# nova_release_out. nova_release_gate_args is passed to the build as is, for
+# its definition-of-done gate (--cli <file> --receipts <dir>).
+nova_release_out: "{{ lookup('env', 'HOME') }}/nova-bench/release-build"
+nova_release_gate_args: []

@@ -461,25 +461,86 @@ func (a *RedisApplier) readMachines(ctx context.Context) (map[string]View, int64
 	if err := redisconn.Exec(ctx, pipe); err != nil {
 		return nil, 0, fmt.Errorf("redis: read machines: %w", err)
 	}
-	k, _ := Lookup(KindMachine)
 	views := make(map[string]View, len(names))
 	for i, m := range names {
-		// slots is read from the ceiling, the key the runtime guards on, so
-		// a ceiling moved by hand is put back by the next apply.
-		r := reg[i].Val()
-		v := View{"slots": intText(ceiling[i].Val())}
-		for _, f := range k.Fields {
-			switch {
-			case f.Name == "slots":
-			case f.Type == TypeInt:
-				v[f.Name] = intText(r[f.Name])
-			default:
-				v[f.Name] = r[f.Name]
-			}
-		}
-		views[m] = v
+		views[m] = machineView(reg[i].Val(), ceiling[i].Val())
 	}
 	return views, revValue(rev), nil
+}
+
+// machineView is a machine's view from its registry hash and its ceiling.
+// slots is read from the ceiling, the key the runtime guards on, so a
+// ceiling moved by hand is put back by the next apply.
+func machineView(reg map[string]string, ceiling string) View {
+	k, _ := Lookup(KindMachine)
+	v := View{"slots": intText(ceiling)}
+	for _, f := range k.Fields {
+		switch {
+		case f.Name == "slots":
+		case f.Type == TypeInt:
+			v[f.Name] = intText(reg[f.Name])
+		default:
+			v[f.Name] = reg[f.Name]
+		}
+	}
+	return v
+}
+
+// Snapshot reads the applied state the inventory is built from in two
+// round trips, whatever the fleet's size: the names (the machines and loops
+// sets), the fleet row and config:decl first, then every machine's hash,
+// ceiling and beat and every loop's hash in one pipeline. It writes nothing.
+func (a *RedisApplier) Snapshot(ctx context.Context) (*Snapshot, error) {
+	pipe := a.Client.Pipeline()
+	machines := pipe.SMembers(ctx, MachinesKey)
+	loops := pipe.SMembers(ctx, loopsSet)
+	store := pipe.Get(ctx, FleetKey("store"))
+	coord := pipe.Get(ctx, FleetKey("coordinator"))
+	decl := pipe.HGetAll(ctx, DeclKey)
+	if err := redisconn.Exec(ctx, pipe); err != nil {
+		return nil, fmt.Errorf("redis: read the applied names: %w", err)
+	}
+	snap := &Snapshot{
+		Machines: map[string]View{}, Beats: map[string]*Beat{}, Revs: map[string]int64{},
+		Fleet: View{"store": store.Val(), "coordinator": coord.Val()},
+	}
+	for f, v := range decl.Val() {
+		if kind, ok := strings.CutPrefix(f, "rev:"); ok {
+			snap.Revs[kind], _ = strconv.ParseInt(v, 10, 64)
+		}
+	}
+	mnames, lnames := machines.Val(), loops.Val()
+	pipe = a.Client.Pipeline()
+	reg := make([]*redis.MapStringStringCmd, len(mnames))
+	ceiling := make([]*redis.StringCmd, len(mnames))
+	beat := make([]*redis.MapStringStringCmd, len(mnames))
+	for i, m := range mnames {
+		reg[i] = pipe.HGetAll(ctx, MachineKey(m))
+		ceiling[i] = pipe.HGet(ctx, MachineCeilingKey(m), "slots")
+		beat[i] = pipe.HGetAll(ctx, BeatKey(m))
+	}
+	lv := make([]*redis.MapStringStringCmd, len(lnames))
+	for i, n := range lnames {
+		lv[i] = pipe.HGetAll(ctx, loopKey(n))
+	}
+	if len(mnames)+len(lnames) > 0 {
+		if err := redisconn.Exec(ctx, pipe); err != nil {
+			return nil, fmt.Errorf("redis: read the applied rows: %w", err)
+		}
+	}
+	for i, m := range mnames {
+		snap.Machines[m] = machineView(reg[i].Val(), ceiling[i].Val())
+		if h := beat[i].Val(); len(h) > 0 {
+			snap.Beats[m] = &Beat{OS: h["os"], Arch: h["arch"], Cores: h["ncpu"], MemoryGB: h["memory_gb"]}
+		}
+	}
+	if _, applied := snap.Revs[loopKind]; applied {
+		snap.Loops = make(map[string]View, len(lnames))
+		for i, n := range lnames {
+			snap.Loops[n] = View(lv[i].Val())
+		}
+	}
+	return snap, nil
 }
 
 func (a *RedisApplier) writeMachine(ctx context.Context, row Row, prev View, actor, idem string) error {
