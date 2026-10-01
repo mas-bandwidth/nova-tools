@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/config"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // memStore is config.Mem with the schema verbs a pgStore has: a fresh Mem
@@ -684,4 +686,56 @@ func TestApplyCheckReportsDriftAgainstFleet(t *testing.T) {
 	if h.redis.revs["machine"] != 2 || h.redis.revs["fleet"] != 3 {
 		t.Fatalf("apply --check wrote to redis: %v", h.redis.revs)
 	}
+}
+
+// A store still at schema 5 has no loops table: status, apply and machine
+// show refuse with the versions and the migrate command, and never reach the
+// store's own "relation does not exist".
+func TestVerbsOnAnOlderSchemaRefuseWithMigrate(t *testing.T) {
+	t.Parallel()
+
+	all, err := config.Migrations()
+	require.NoError(t, err)
+	for _, have := range []int{1, len(all) - 1} {
+		for _, args := range [][]string{{"status"}, {"apply"}, {"apply", "--kind", "loop"}, {"apply", "--check"}, {"machine", "show", "studio"},
+			{"loop", "add", "l1", "--machine", "studio", "--argv", `["/bin/prog"]`, "--every", "5"},
+			{"loop", "set", "l1", "--every", "6"},
+			{"loop", "remove", "l1"},
+			{"loop", "list"},
+			{"loop", "show", "l1"},
+			{"loop", "history", "l1"},
+		} {
+			h := newHarness()
+			h.env["NOVA_PG_DSN"] = dsn
+			h.env["NOVA_SPRINT_REDIS"] = "127.0.0.1:6379"
+			h.env["NOVA_FRIEND"] = "rowan"
+			h.store.version = have
+			code, _, errs := h.run(t, args...)
+			verb := args[0]
+			if args[0] == "machine" || args[0] == "loop" {
+				verb = args[0] + " " + args[1]
+			}
+			want := fmt.Sprintf("nova-config %s: schema config is at version %d and this binary carries %d; run: nova-config migrate\n", verb, have, len(all))
+			assert.Equal(t, 1, code, "%v at version %d", args, have)
+			assert.Equal(t, want, errs, "%v at version %d", args, have)
+			assert.NotContains(t, errs, "does not exist")
+			assert.Equal(t, 0, h.redis.opens, "%v at version %d: Redis is not opened", args, have)
+			assert.Empty(t, h.redis.log, "%v at version %d: nothing is written", args, have)
+		}
+	}
+}
+
+// --pg is repeated in the command the refusal names.
+func TestOlderSchemaRefusalRepeatsPG(t *testing.T) {
+	t.Parallel()
+
+	h := newHarness()
+	h.env["NOVA_SPRINT_REDIS"] = "127.0.0.1:6379"
+	h.env["NOVA_FRIEND"] = "rowan"
+	h.store.version = 5
+	code, _, errs := h.run(t, "machine", "show", "studio", "--pg", dsn)
+	all, err := config.Migrations()
+	require.NoError(t, err)
+	assert.Equal(t, 1, code)
+	assert.Equal(t, fmt.Sprintf("nova-config machine show: schema config is at version 5 and this binary carries %d; run: nova-config migrate --pg %s\n", len(all), dsn), errs)
 }
