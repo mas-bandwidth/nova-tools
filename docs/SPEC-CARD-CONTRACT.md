@@ -129,8 +129,8 @@ A work card's finish is judged in one place, `member.Judge`, cited from the mode
   `--branch` only when a push landed;
 - **provider failure**, a failed finish of its own kind, when the run ended with no result and
   the harness's own record says the provider failed it (below), and its push was not
-  refused; its reason is `provider failure: provider: <why>` (for the 5xx hand-back,
-  `provider failure: provider: PROVIDER-5XX label=... ref=...`), and the sprint treats it as an ended
+  refused; its reason is `provider failure: provider: class=<class> status=<status|-> msg=<words>`
+  (the cause, below; the 5xx hand-back's too), and the sprint treats it as an ended
   take (docs/SPEC-SPRINT.md, the work card's redeals), never as the card's failure. A refused
   push, and a result with the shape (nothing to do, not done) whatever the run's end, are
   failed work with their own reasons and no provider kind;
@@ -162,13 +162,25 @@ harness's own record in the job's data home, at the places the harness profile n
 with no result, by no end of the machinery's (the deadline, a TERM, the watch, the wall, the
 budget, a lost response, a question), is a provider failure when either holds: the log carries
 a provider error written by this run, an `ERROR` line that says a stream error, `server_error`,
-a rate limit, an overload or an HTTP 5xx status, and the reason is `provider: <the first such
-line from its message on, one line, cut to 200 bytes>`; or the run exited 0 and the session's
+a rate limit, an overload or an HTTP 5xx status; or the run exited 0 and the session's
 last message is not a final assistant message (the last assistant message finished
-`tool-calls`, or none finished), and the reason is `provider: ended without a final message`.
-Native prints it as `NATIVE PROVIDER-FAIL label=<l> wall=<s>s route=<model> reason=<why>`, and
-the member reads the line (`member.Result`'s `Provider`) and judges the finish. A run with no
-result and no provider error that ends with a final assistant message stays `no-result`.
+`tool-calls`, or none finished). The reason is the cause (`internal/swarm` providercause.go):
+`provider: class=<class> status=<status|-> msg=<words>`. The class is one of `unknown-model`
+(the provider does not know or serve the model id: a config error), `auth`, `out-of-credit`,
+`rate-limited`, `provider-5xx`, `timeout` and `other` (none of these, or the harness recorded
+no cause, as its own `UnknownError` does); the status is the provider's HTTP status, `-` when
+the record names none; the words are the provider's own message, one line, every
+secret-shaped value removed, cut to 120 bytes with the cut said. They come from the session's
+record of the failed message when it has one (an API error keeps the provider's status and
+body there), else the log's error line, else (a run that ended on a tool) `ended without a
+final message`, class `other`. Native prints it as `NATIVE PROVIDER-FAIL label=<l> wall=<s>s
+route=<model> reason=<cause>`, and the 5xx hand-back ends its own line with the same
+`reason=<cause>`, read from the session and the log first and from the harness's own last
+words else. The member reads either line's reason (`member.Result`'s `Provider`) and judges the
+finish (`TestCauseFromTheHarnessLogAndOutput`, `TestCauseFromTheSessionsRecord`,
+`TestTheSessionsRecordOfTheFailedMessageIsTheCause`). The class is a record: it changes no
+judgment. A run with no result and no provider error that ends with a final assistant message
+stays `no-result`.
 
 The head the member pushes is the result's `head`, else the last head the git shim recorded in
 `<job>/.sprint/pushed.tsv`. The member pushes from its own bare repository, fetching every

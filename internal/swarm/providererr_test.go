@@ -80,7 +80,7 @@ func TestProviderHandbackNeverNamesTheFailedRouteNext(t *testing.T) {
 		if !ok || h.Next != "" {
 			t.Fatalf("routes=%v: ok=%v next=%q, want ok and no next", routes, ok, h.Next)
 		}
-		if line := h.Line("x"); !strings.Contains(line, "next=- ") || !strings.HasSuffix(line, "avoid=zen/glm-5") {
+		if line := h.Line("x"); !strings.Contains(line, "next=- ") || !strings.Contains(line, " avoid=zen/glm-5 reason=provider: class=") {
 			t.Fatalf("routes=%v: %s", routes, line)
 		}
 	}
