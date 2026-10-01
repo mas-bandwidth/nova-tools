@@ -2547,7 +2547,10 @@ checkout;
 a checkout without it is a red run naming the fetch depth, never a pass.
 **Its allowlist.** `internal/ci/testdata/deleted-tests.txt`, a log: a row
 is a declaration, not an exception, and it counts only in the change that
-adds it, so old rows may be trimmed and trimming weakens nothing.
+adds it, so old rows may be trimmed and trimming weakens nothing. The file
+merges by union (`merge=union` in `.gitattributes`) and its rows are an
+unordered set, a repeated row counting once, so two changes that each delete a
+test file do not conflict on it.
 **Its remedy lines.** `<sha> (<subject>) deletes <file>, which its
 parent <sha> had, and no row of internal/ci/testdata/deleted-tests.txt added
 in the same change declares it: restore the file (git checkout <parent> --
