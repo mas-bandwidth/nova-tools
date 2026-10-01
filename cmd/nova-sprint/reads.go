@@ -442,8 +442,15 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 		if err != nil {
 			return a.readFailed("inbox", err, stderr)
 		}
-		if !woke && !c.json {
-			fmt.Fprintf(stdout, "inbox --wait: no tick end in %s\n", *timeout)
+		if !woke {
+			// the timeout is said to the person on the stream that is theirs:
+			// stdout in the plain rendering, stderr under --json (stdout stays
+			// one JSON object, which carries woke=false as well)
+			w := stdout
+			if c.json {
+				w = stderr
+			}
+			fmt.Fprintf(w, "inbox --wait: no tick end in %s\n", *timeout)
 		}
 	}
 	v, err := st.Inbox(ctx, *deadline, *stale, 10000)
@@ -475,8 +482,8 @@ func (a *app) cmdInbox(args []string, stdout, stderr io.Writer) int {
 		out := map[string]any{"groups": groups, "judgments": judgments, "happened": happened, "done": mach.Done(),
 			"last": v.Last, "cursor": v.Cursor, "at": a.now(), "machine": machine}
 		if *wait {
-			// the timeout is in both renderings: the plain line above, and
-			// woke=false here (the one-value rule)
+			// the timeout is in both renderings: the line above, and woke=false
+			// here (the one-value rule)
 			out["woke"] = woke
 		}
 		if opened != nil {
