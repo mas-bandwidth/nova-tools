@@ -46,7 +46,7 @@ func TestTheLogHoldsEveryMoveAndReplaysToTheTables(t *testing.T) {
 	h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m2"}))
 	h.live = []string{"m2"} // m1 silent: its card is taken back and redealt
 	for i := 0; i < 3; i++ {
-		h.tick(10 * time.Second)
+		h.tick(pastDown / 3)
 		h.machine()
 	}
 	h.clean("redealt")
@@ -200,7 +200,7 @@ func TestALatenessStaysRaisedUntilItsAttemptEnds(t *testing.T) {
 		}
 		h.live = nil
 		for j := 0; j < 3; j++ {
-			h.tick(10 * time.Second)
+			h.tick(pastDown / 3)
 			h.machine()
 		}
 	}
@@ -248,7 +248,7 @@ func TestTheRedealBoundEndsTheTakeAndAbandonLoop(t *testing.T) {
 		other := map[string]string{"m1": "m2", "m2": "m1"}[holder]
 		h.live = []string{other} // the taker abandons it
 		for i := 0; i < 3; i++ {
-			h.tick(10 * time.Second)
+			h.tick(pastDown / 3)
 			h.machine()
 		}
 		h.live = []string{"m1", "m2"}

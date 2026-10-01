@@ -2,6 +2,7 @@ package sprint
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/mas-bandwidth/nova-tools/internal/typedrec"
 )
@@ -54,8 +55,13 @@ type Packet struct {
 }
 
 // BranchOf is the branch a work card's attempt is worked on: one per attempt
-// of one sprint, named by the sprint (its prefix, the card): sprint/<prefix><card>.
-func BranchOf(prefix, workCard string) string { return "sprint/" + prefix + workCard }
+// of one sprint, named by the sprint (its prefix, the card) and its epoch, as the
+// slot and job names are: sprint/<prefix><card>.e<epoch>. A card id comes back
+// after a clear, and a branch named by the card alone holds the last epoch's
+// push, so every push of the next would be refused non-fast-forward.
+func BranchOf(prefix string, epoch uint64, workCard string) string {
+	return "sprint/" + prefix + workCard + ".e" + strconv.FormatUint(epoch, 10)
+}
 
 // Base is where a later attempt of a card starts: the attempt whose pushed head it is, and
 // the head; the zero Base is the card's own base.
@@ -110,7 +116,7 @@ func PacketOf(prefix string, epoch uint64, c, primary *Card, earlier []*Card, wo
 		}
 	}
 	if p.Kind == "work" {
-		p.Branch = BranchOf(prefix, c.ID)
+		p.Branch = BranchOf(prefix, epoch, c.ID)
 		p.Route, p.Model, p.Tokens, p.Deadline = c.F(FieldRoute), c.F(FieldModel), c.F(FieldTokens), c.Int(FieldDeadline)
 		p.Finding, p.Why = c.F("finding"), c.F("why")
 		// the attempt's own words, written with its card: the primary's are queued for the next
@@ -121,7 +127,7 @@ func PacketOf(prefix string, epoch uint64, c, primary *Card, earlier []*Card, wo
 		if prevWork := latestOf(earlier); prevWork != nil {
 			p.Base = prevWork.F("branch")
 			if p.Base == "" {
-				p.Base = BranchOf(prefix, prevWork.ID)
+				p.Base = BranchOf(prefix, epoch, prevWork.ID)
 			}
 		}
 		b := BaseOf(earlier)
@@ -133,7 +139,7 @@ func PacketOf(prefix string, epoch uint64, c, primary *Card, earlier []*Card, wo
 		p.Head = work.F("head")
 		p.WorkBranch = work.F("branch")
 		if p.WorkBranch == "" {
-			p.WorkBranch = BranchOf(prefix, work.ID)
+			p.WorkBranch = BranchOf(prefix, epoch, work.ID)
 		}
 		p.WorkBase = work.F("base")
 		p.Report = work.F("report")

@@ -130,8 +130,8 @@ func TestTakeAndQueueHandTheirPackets(t *testing.T) {
 	ta.ok("add --stream s1 --count 1 --brief-file " + writeBrief(t, "handle the empty case"))
 	ta.deal(1)
 	out := ta.ok("take --as m1 s1-1.w1@1")
-	for _, want := range []string{"PACKET s1-1.w1 attempt=1 gen=1 epoch=0", "  branch: sprint/s1-1.w1", "  brief:\n    handle the empty case", "  notes: none",
-		"  report it: nova-sprint finish --as m1 s1-1.w1@1 --epoch 0 --branch sprint/s1-1.w1"} {
+	for _, want := range []string{"PACKET s1-1.w1 attempt=1 gen=1 epoch=0", "  branch: sprint/s1-1.w1.e0", "  brief:\n    handle the empty case", "  notes: none",
+		"  report it: nova-sprint finish --as m1 s1-1.w1@1 --epoch 0 --branch sprint/s1-1.w1.e0"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("take has no %q:\n%s", want, out)
 		}

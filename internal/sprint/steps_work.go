@@ -677,9 +677,10 @@ type DealReq struct {
 // card is dealt to the next member round the fleet (round.go, errata 3
 // amendment 5): the first from the rolling index, wrapping, that is up and
 // holds fewer work cards, ready and working, than its width (width.go, errata
-// 3 amendment 9), or, when none has room, the first up; the index (the fleet
-// table's deal_index, a counter) moves past the member dealt to, written with
-// the deal.
+// 3 amendment 9; tla/DirtyTick.tla, Room and WidthRespected); a card no up
+// member has room for is refused, never dealt past a width; the index (the
+// fleet table's deal_index, a counter) moves past the member dealt to, written
+// with the deal.
 // Every card of the selection is dealt in the one plan, one card at a time
 // round the fleet. A card withdrawn because no member was up is the
 // same card dealt again at a new generation, its attempt unchanged; otherwise
@@ -697,6 +698,10 @@ func Deal(s *Snapshot, r DealReq) Plan {
 	return p
 }
 
+// noRoomWhy is the refusal of a card every up member is at its width for: the tick deals it
+// when one has room.
+const noRoomWhy = "every up fleet member is at its width: the tick deals it when one has room"
+
 func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMoves) {
 	var p Plan
 	moves := roundMoves{}
@@ -710,7 +715,7 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 		return p, moves
 	}
 	q, widths := memberLoads(s, up), memberWidths(s, up)
-	next := func() string { return rr.next(up, q, widths, "", true) }
+	next := func() string { return rr.next(up, q, widths, "", false) }
 	for _, c := range chosen {
 		if wc := s.Fleet.Placed(WorkCardID(c.ID, c.Int("attempt"))); wc != nil && wc.Col == Withdrawn {
 			if redealBound(wc) {
@@ -722,6 +727,10 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 				continue
 			}
 			m := next()
+			if m == "" {
+				p.refuse(c.ID, noRoomWhy)
+				continue
+			}
 			u, why := redeal(s, c, wc, m, q, ri)
 			if why != "" {
 				p.refuse(c.ID, why)
@@ -737,6 +746,10 @@ func dealPlan(s *Snapshot, r DealReq, rr *round, ri routeIndexes) (Plan, roundMo
 			continue
 		}
 		m := next()
+		if m == "" {
+			p.refuse(c.ID, noRoomWhy)
+			continue
+		}
 		u, why := deal(s, c, c.F("fix"), m, q, ri, nil, map[string]string{"finding": c.F("finding"), "why": c.F("why")})
 		if why != "" {
 			p.refuse(c.ID, why)
@@ -1112,8 +1125,8 @@ type FleetReq struct {
 	Op     string // up, down, level, hold, release, sync
 	Member string
 	Who    string
-	// Fresh says the member's last beat is within BeatDeadline: release
-	// brings it up at once.
+	// Fresh says the member is alive (Beat.Alive: fewer than MissedBeatsDown
+	// beat windows missed): release brings it up at once.
 	Fresh bool
 	// Live, when set, is the other members up for this move: down deals to
 	// them and up levels with them. nil is every member whose status is up.

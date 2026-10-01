@@ -71,7 +71,7 @@ func (st *Store) pinOnly(ctx context.Context) (*Store, EpochState, error) {
 	if err != nil {
 		return nil, es, err
 	}
-	c := *st
+	c := st.clone()
 	c.root, c.B, c.epoch, c.cleared, c.pinned = root, root, es.N, es.Cleared, true
 	if es.N != 0 {
 		// A backend is at epoch 0 until it is pinned to another: at epoch 0 the
@@ -83,14 +83,14 @@ func (st *Store) pinOnly(ctx context.Context) (*Store, EpochState, error) {
 
 // repin is the store pinned again, to the epoch the sprint is at now.
 func (st *Store) repin(ctx context.Context) (*Store, error) {
-	c := *st
+	c := st.clone()
 	c.pinned = false
 	return c.pin(ctx)
 }
 
 // repinOnly is the store pinned again, with no restore performed.
 func (st *Store) repinOnly(ctx context.Context) (*Store, EpochState, error) {
-	c := *st
+	c := st.clone()
 	c.pinned = false
 	return c.pinOnly(ctx)
 }
@@ -102,7 +102,7 @@ func (st *Store) At(epoch uint64) *Store {
 	if root == nil {
 		root = st.B
 	}
-	c := *st
+	c := st.clone()
 	c.root, c.B, c.epoch, c.pinned, c.old = root, root.AtEpoch(epoch, true), epoch, true, true
 	return &c
 }
