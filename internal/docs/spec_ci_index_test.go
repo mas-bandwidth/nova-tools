@@ -41,10 +41,6 @@ import (
 // specCIPath is the indexed document, relative to this package.
 const specCIPath = "../../docs/SPEC-CI.md"
 
-// classTestSection is the heading the index lives under. The section runs to the
-// next top-level heading or to the end of the file, so entries are ### inside it.
-const classTestSection = "## The class tests"
-
 // parkedSection is the heading a RETIRED rule is moved under, and it is the one
 // exemption from half (b) below.
 //

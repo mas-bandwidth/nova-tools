@@ -1,0 +1,3 @@
+# Migrated counted package ledger; original row keys preserved.
+# ceiling: 1
+internal/selftalk:assert 48 bare assertions to convert to testify
