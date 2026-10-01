@@ -29,7 +29,7 @@ Queues(w, r, g, f) == [t \in Tables |-> CASE t = "work" -> w [] t = "readers" ->
 NoReads == [c \in Cards |-> NoR]
 Empty == [m \in Machines |-> {}]
 Base == [col |-> [c \in Cards |-> "none"], rd |-> NoReads, mq |-> {}, up |-> Machines \cup Readers,
-         live |-> Machines \cup Readers, away |-> FALSE, hand |-> FALSE,
+         live |-> Machines \cup Readers, away |-> FALSE, misses |-> FALSE,
          mc |-> Empty, mr |-> Empty, q |-> Queues(Adds, <<>>, <<>>, <<>>), served |-> Cards]
 
 \* Every card added (its add queued), every machine up: the whole life.
@@ -59,6 +59,11 @@ ScnLapse == [Base EXCEPT !.live = {}, !.col = [c \in Cards |-> "review"], !.rd =
                          !.mr = [m \in Machines |-> IF m = "m1" THEN {"c1"} ELSE {}],
                          !.q = Queues(<<>>, <<>>, <<>>, <<E("lapse", "-", "m1")>>)]
 
+\* c1 dealt to m1; m1 beats, may miss beat windows and beat again, and lapses
+\* only after Misses of them in a row (the missed beats).
+ScnMiss == [Base EXCEPT !.misses = TRUE, !.col = [c \in Cards |-> "working"],
+                        !.mc = [m \in Machines |-> IF m = "m1" THEN {"c1"} ELSE {}],
+                        !.q = Queues(<<>>, <<>>, <<>>, <<>>)]
 \* c1 dealt to m1 and not taken; its worker may take it, and the machines
 \* may lapse and beat again: the redeals.
 ScnTake == [Base EXCEPT !.col = [c \in Cards |-> "working"],
@@ -85,13 +90,6 @@ ScnReaderAway == [Base EXCEPT !.col = [c \in Cards |-> "review"], !.away = TRUE,
                               !.rd = [c \in Cards |-> "r1"],
                               !.mr = [m \in Machines |-> IF m = "m1" THEN {"c1"} ELSE {}],
                               !.q = Queues(<<>>, <<>>, <<>>, <<>>)]
-
-\* THE RETURN. c1 in review, its read on r1 (host m1): r1 may return it, and
-\* it is asked of r2.
-ScnHandBack == [Base EXCEPT !.col = [c \in Cards |-> "review"], !.hand = TRUE,
-                            !.rd = [c \in Cards |-> "r1"],
-                            !.mr = [m \in Machines |-> IF m = "m1" THEN {"c1"} ELSE {}],
-                            !.q = Queues(<<>>, <<>>, <<>>, <<>>)]
 
 \* Reachability probes, expected to fail: every card lands; a card reaches
 \* its bound; a tick drains a queue after the first pass; a take ends at the

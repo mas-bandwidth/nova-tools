@@ -63,8 +63,24 @@ func (s *Stats) takeNotes() []string {
 	return out
 }
 
+// lazyMu guards the store's lazily made fields (Stats, tw) and every copy of
+// the store that carries them (clone): a tick makes them on the store the run
+// loop keeps while a verb on another goroutine pins a copy of it. It is held
+// for a pointer's test and set, or a struct copy, never across a backend call
+// or a step; a store pinned from the one the tick made shares the pointers.
+var lazyMu sync.Mutex
+
+// clone is a copy of the store taken while no lazy field is being made.
+func (st *Store) clone() Store {
+	lazyMu.Lock()
+	defer lazyMu.Unlock()
+	return *st
+}
+
 // stats is the store's counters, made on first use.
 func (st *Store) stats() *Stats {
+	lazyMu.Lock()
+	defer lazyMu.Unlock()
 	if st.Stats == nil {
 		st.Stats = &Stats{}
 	}

@@ -277,7 +277,7 @@ func holesRun(x *holeTick, n int, lapse bool, after func(round int, res TickResu
 			h.liveMembers("m2")
 			h.work("m2")
 			h.readAll()
-			h.tick(sprint.BeatDeadline + time.Second)
+			h.tick(pastDown)
 			continue
 		}
 		if lapse && round == 5 {

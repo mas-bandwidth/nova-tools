@@ -15,6 +15,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
 	"github.com/mas-bandwidth/nova-tools/internal/member"
+	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
 
@@ -615,4 +616,15 @@ func TestAChildThatEndedAtStagingIsStageFailed(t *testing.T) {
 			assert.Equal(t, tc.report, r.Report, tc.name)
 		}
 	}
+}
+
+// The member's sprint verbs (beat, queue) run as nova-sprint, whose store
+// client bounds each command by redisconn's read and write timeouts: at least
+// five seconds, the least a tailnet round trip with jitter needs
+// (docs/SPEC-SPRINT.md section 5, the rule that one timed-out round trip is
+// one missed beat and never a down member). Shortening either fails this.
+func TestAMemberVerbsStoreDeadlineIsAtLeastFiveSeconds(t *testing.T) {
+	t.Parallel()
+	assert.GreaterOrEqual(t, redisconn.ReadTimeout, 5*time.Second)
+	assert.GreaterOrEqual(t, redisconn.WriteTimeout, 5*time.Second)
 }

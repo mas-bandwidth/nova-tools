@@ -108,7 +108,7 @@ func TestMembersFlappingNeverRetireAReadyCard(t *testing.T) {
 		other := map[string]string{"m1": "m2", "m2": "m1"}[holder]
 		h.setLive(other)
 		for range 3 {
-			h.tick(10 * time.Second)
+			h.tick(pastDown / 3)
 			h.machine()
 		}
 		c := card()
@@ -135,7 +135,7 @@ func TestMembersFlappingNeverRetireAReadyCard(t *testing.T) {
 	h.run(TakeStep(sprint.TakeReq{As: holder, Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: c.Int("gen")}, Who: holder}))
 	h.setLive(map[string]string{"m1": "m2", "m2": "m1"}[holder])
 	for range 3 {
-		h.tick(10 * time.Second)
+		h.tick(pastDown / 3)
 		h.machine()
 	}
 	assert.Equal(t, sprint.Ready, card().Col, "its take ended")

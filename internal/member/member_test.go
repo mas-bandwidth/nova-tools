@@ -22,11 +22,23 @@ type scriptSprint struct {
 	mu      sync.Mutex
 	calls   [][]string
 	answers map[string]answer
+	first   map[string]answer // the answer of a verb's next call only (failOnce)
 }
 
 type answer struct {
 	code int
 	out  string
+}
+
+// failOnce makes the verb's next call answer code and its calls after it
+// answer as set: a store that timed out once.
+func (s *scriptSprint) failOnce(verb string, code int, out string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.first == nil {
+		s.first = map[string]answer{}
+	}
+	s.first[verb] = answer{code, out}
 }
 
 func newScript() *scriptSprint { return &scriptSprint{answers: map[string]answer{}} }
@@ -50,6 +62,10 @@ func (s *scriptSprint) Run(args ...string) (int, []byte) {
 	defer s.mu.Unlock()
 	s.calls = append(s.calls, slices.Clone(args))
 	a := s.answers[verbOf(args)]
+	if f, ok := s.first[verbOf(args)]; ok {
+		delete(s.first, verbOf(args))
+		a = f
+	}
 	return a.code, []byte(a.out)
 }
 
@@ -1342,4 +1358,24 @@ func TestAWorkCardWhoseStageFailedIsFinishedFailedAsBefore(t *testing.T) {
 	fin := g.s.lines("finish")
 	require.Len(t, fin, 1)
 	assert.Contains(t, fin[0], "--failed")
+}
+
+// A store that times out once on the beat or the queue is asked again once
+// before the member reports a miss (docs/SPEC-SPRINT.md section 5; the model's
+// Lapse needs MissedBeatsDown misses): the tick succeeds, the verb was asked
+// twice, and nothing was reported. Asked twice and failing twice is the error
+// the member already reported.
+func TestAStoreThatTimesOutOnceIsAskedAgain(t *testing.T) {
+	t.Parallel()
+	for _, verb := range []string{"beat", "queue"} {
+		t.Run(verb, func(t *testing.T) {
+			t.Parallel()
+			g := newRig(Config{As: "m", Width: 2})
+			g.s.set("queue", 0, queueJSON(t, 7))
+			g.s.failOnce(verb, 2, "i/o timeout")
+			_, err := g.tick(t)
+			require.NoError(t, err)
+			require.Len(t, g.s.lines(verb), 2, "the verb is asked again once")
+		})
+	}
 }

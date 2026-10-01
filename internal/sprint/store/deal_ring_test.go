@@ -413,7 +413,7 @@ func dealRingMemberDownAndLevel(t *testing.T, h *harness) {
 
 	// 3. m1 goes down: stop its beat and advance past BeatDeadline
 	h.setLive("m2", "m3", "m4", "m5", "m6", "m7", "m8")
-	h.tick(sprint.BeatDeadline + time.Second)
+	h.tick(pastDown)
 	h.machine()
 
 	// Verify m1 is down and its cards were redealt past deal_index (counter 12, past m4) to m5 and m6
