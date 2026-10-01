@@ -109,13 +109,12 @@ func captureErrorLine(errTail []string) string {
 func isProviderError(line string) bool { return providerErrorRE.MatchString(line) }
 
 // harnessPrintedErrorRE is THE ONE PLACE the shape of an error line the harness prints with
-// --print-logs is written: its level word and its timestamp first, then its own fields. A
-// line that only begins `ERROR`, or says level=ERROR somewhere inside it, is not one: a model
-// quoting test output is not the harness. The two forms are the harness log's own line
-// (`timestamp=<RFC 3339> level=ERROR run=<8 hex> ...`, as its log file holds it) and the
-// printed one (`ERROR <timestamp> +<n>ms service=<name> ...`). The printed form is not yet
-// verified against a real launch; its test rows are TestTheHarnessPrintedErrorShape.
-var harnessPrintedErrorRE = regexp.MustCompile(`^(?:timestamp=\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z? level=ERROR run=[0-9a-f]{8} |ERROR +\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z? \+\d+ms service=\S+ )`)
+// --print-logs is written, as a launch printed it on its stderr (opencode 1.18.20, `run
+// --print-logs --log-level ERROR`, captured 2026-10-01): key=value pairs that open
+// `timestamp=<RFC 3339> level=ERROR run=<8 hex> `, the same shape its log file holds. A line
+// that only begins `ERROR`, or says level=ERROR somewhere inside it, is not one: a model
+// quoting test output is not the harness. Its test rows are TestTheHarnessPrintedErrorShape.
+var harnessPrintedErrorRE = regexp.MustCompile(`^timestamp=\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d+)?Z level=ERROR run=[0-9a-f]{8} `)
 
 // printedErrorLine is the first (first true) or last line of the tail in the harness's
 // printed error shape that match accepts, from its message on; "" when there is none.

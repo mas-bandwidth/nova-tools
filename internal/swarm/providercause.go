@@ -128,11 +128,13 @@ var textStatusRE = regexp.MustCompile(`(?i)\b(?:status(?:code)?|code|http)\W{0,3
 var keyTailRE = regexp.MustCompile(`(?i)\bkey(?::|\s)`)
 
 // textMessageRE is the provider's own words on a harness log line, best first: the error's
-// message, the error itself, then the line's message.
+// message, the error itself (`error.error="..."`, or `error="..."` on a line of the harness's
+// own), then the line's message.
 var textMessageRE = []*regexp.Regexp{
 	regexp.MustCompile(`\berror\.error\.message="((?:[^"\\]|\\.)*)"`),
 	regexp.MustCompile(`\berror\.error="((?:[^"\\]|\\.)*)"`),
 	regexp.MustCompile(`\berror\.message="((?:[^"\\]|\\.)*)"`),
+	regexp.MustCompile(`(?:^|\s)error="((?:[^"\\]|\\.)*)"`),
 	regexp.MustCompile(`"message"\s*:\s*"((?:[^"\\]|\\.)*)"`),
 	regexp.MustCompile(`\bmessage="((?:[^"\\]|\\.)*)"`),
 }

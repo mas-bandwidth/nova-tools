@@ -230,7 +230,7 @@ func TestAnUnknownErrorCarriesTheErrorLineTheHarnessPrinted(t *testing.T) {
 	t.Parallel()
 	_, errb := providerRun(t, "pf7", "FAKE-UNKNOWN-ERROR\n", nil)
 	assert.Contains(t, errb, "NATIVE PROVIDER-5XX label=pf7 ")
-	assert.Contains(t, errb, " reason=provider: class=unknown-model status=- msg=Model not found: fake/no-such-model\n")
+	assert.Contains(t, errb, " reason=provider: class=unknown-model status=- msg=ProviderModelNotFoundError: Model not found: fake/no-such-model\n")
 }
 
 // The parent keeps the harness's last stderr lines itself (harnessErrTail): only the last
@@ -250,19 +250,20 @@ func TestTheHarnessErrTailKeepsTheLastNonEmptyLines(t *testing.T) {
 	assert.Equal(t, "split across writes", got[len(got)-1])
 }
 
-// THE HARNESS'S PRINTED ERROR SHAPE is one named pattern (harnessPrintedErrorRE); these
-// rows are the place to correct when a real launch shows its verbatim lines.
+// THE HARNESS'S PRINTED ERROR SHAPE is one named pattern (harnessPrintedErrorRE); its first
+// row is the line a launch printed on its stderr, verbatim (opencode 1.18.20, 2026-10-01).
 func TestTheHarnessPrintedErrorShape(t *testing.T) {
 	t.Parallel()
 	for line, want := range map[string]bool{
-		`ERROR 2030-01-02T03:04:05 +2ms service=server error=ProviderModelNotFoundError message="Model not found: x/y"`: true,
-		`ERROR  2030-01-02T03:04:05.123Z +0ms service=session message="stream error" error.error.type=server_error`:     true,
-		`timestamp=2026-10-01T17:51:42.310Z level=ERROR run=6bc9e82f message="stream error" providerID=x`:               true,
+		`timestamp=2026-10-01T20:03:01.112Z level=ERROR run=cfca2eb6 message="stream error" providerID=opencode modelID=kimi-k2.7-code session.id=ses_f06eff0b0ffel4NZaU2KiWmxHr small=false agent=build mode=primary error.error="AI_APICallError: Upstream request failed: Endpoint is unavailable."`: true,
+		`timestamp=2030-01-02T03:04:05.000Z level=ERROR run=0a1b2c3d message="request failed" error="Model not found: x/y"`:                                                                                                                                                                             true,
+		`timestamp=2030-01-02T03:04:05.000Z level=INFO run=0a1b2c3d message="started"`:                                                                                                                                                                                                                  false,
+		`ERROR 2030-01-02T03:04:05 +2ms service=server message="Model not found: x/y"`:                                                                                                                                                                                                                  false,
+		`timestamp=2026-10-01T17:51:42.310Z level=ERROR run=6bc9e82f message="stream error" providerID=x`:                                                                                                                                                                                               true,
 		`ERROR: status 503 server_error`: false,
 		`ERROR the test said rate limit`: false,
 		`the log said: timestamp=2026-10-01T17:51:42.310Z level=ERROR run=6bc9e82f message="stream error"`: false,
 		`level=ERROR message="stream error" error.error.type=server_error`:                                 false,
-		`INFO  2030-01-02T03:04:05 +2ms service=server message="started"`:                                  false,
 	} {
 		assert.Equal(t, want, harnessPrintedErrorRE.MatchString(line), line)
 	}
@@ -293,10 +294,10 @@ func TestPrintedErrorLinesAreReadFromTheParentsTail(t *testing.T) {
 	t.Parallel()
 	tail := []string{
 		`ERROR: status 503 server_error`,
-		`ERROR 2030-01-02T03:04:05 +2ms service=session message="stream error" error.error.type=server_error`,
-		`ERROR 2030-01-02T03:04:06 +9ms service=server message="Model not found: x/y"`,
+		`timestamp=2026-10-01T20:03:01.112Z level=ERROR run=cfca2eb6 message="stream error" providerID=opencode modelID=kimi-k2.7-code session.id=ses_f06eff0b0ffel4NZaU2KiWmxHr small=false agent=build mode=primary error.error="AI_APICallError: Upstream request failed: Endpoint is unavailable."`,
+		`timestamp=2030-01-02T03:04:06.000Z level=ERROR run=0a1b2c3d message="request failed" error="Model not found: x/y"`,
 	}
-	assert.Equal(t, `message="stream error" error.error.type=server_error`, providerLogError(t.TempDir(), 0, tail))
-	assert.Equal(t, `message="Model not found: x/y"`, captureErrorLine(tail))
+	assert.Equal(t, `message="stream error" providerID=opencode modelID=kimi-k2.7-code session.id=ses_f06eff0b0ffel4NZaU2KiWmxHr small=false agent=build mode=primary error.error="AI_APICallError: Upstream request failed: Endpoint is unavailable."`, providerLogError(t.TempDir(), 0, tail))
+	assert.Equal(t, `message="request failed" error="Model not found: x/y"`, captureErrorLine(tail))
 	assert.Empty(t, providerLogError(t.TempDir(), 0, tail[:1]), "a line outside the harness's shape is not its error")
 }

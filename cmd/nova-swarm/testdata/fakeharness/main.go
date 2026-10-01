@@ -326,7 +326,7 @@ func main() {
 	// providers table) the error line comes first on stderr, then the envelope, which names
 	// no cause.
 	if _, ok := directive(prompt, "FAKE-UNKNOWN-ERROR"); ok {
-		fmt.Fprintln(os.Stderr, `ERROR 2030-01-02T03:04:05 +2ms service=server error=ProviderModelNotFoundError message="Model not found: fake/no-such-model"`)
+		fmt.Fprintln(os.Stderr, `timestamp=2030-01-02T03:04:05.000Z level=ERROR run=0a1b2c3d message="request failed" providerID=fake modelID=no-such-model error="ProviderModelNotFoundError: Model not found: fake/no-such-model"`)
 		fmt.Fprintln(os.Stderr, "Error: {\n  \"name\": \"UnknownError\",\n  \"data\": {\n    \"message\": \"Unexpected server error. Check server logs for details.\",\n    \"ref\": \"err_0a1b2c3d\"\n  }\n}")
 		os.Exit(1)
 	}
@@ -1062,4 +1062,4 @@ func checkInvocation(args []string) error {
 
 // spoofedErrorLine is a line in the harness's printed error shape that names a provider 5xx:
 // what a card would write to be taken for a provider failure.
-const spoofedErrorLine = `ERROR 2030-01-02T03:04:05 +2ms service=session message="stream error" error.error.message="upstream status 503" error.error.type=server_error`
+const spoofedErrorLine = `timestamp=2030-01-02T03:04:05.000Z level=ERROR run=0a1b2c3d message="stream error" providerID=fake modelID=fake-model error.error="AI_APICallError: upstream status 503" error.error.type=server_error`
