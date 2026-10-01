@@ -777,9 +777,13 @@ func Return(s *Snapshot, r ReturnReq) Plan {
 		m := s.Merge.Placed(c.ID)
 		if orphanMerge(s, c) != nil {
 			leaving[c.ID] = true
-			u := Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Merge, moveEntry(m, c.Row, Returned, nil, "need_card", "need_stream"))},
+			// returned at its attempt, as any return: the tick does not take it
+			// back on its standing reads (AcceptHeld)
+			set := map[string]string{FieldReturnedAttempt: itoa(c.Int("attempt"))}
+			u := Unit{Key: c.ID, Stream: c.Row, Changes: []Change{change(Merge, moveEntry(m, c.Row, Returned, nil, "need_card", "need_stream")),
+				change(Work, setEntry(c, set))},
 				Closes: closesFor(s.Open, ReturnResolves, c.ID), Moved: fmt.Sprintf("%s review: its orphan merge card off %s", c.ID, m.Col)}
-			if j, ok := reviewJudgment(s, c, reviewStep{closing: noteIDs(u.Closes), who: r.Who}); ok {
+			if j, ok := reviewJudgment(s, inReview(c, set), reviewStep{closing: noteIDs(u.Closes), who: r.Who}); ok {
 				u.Notes = append(u.Notes, j)
 			}
 			p.Units = append(p.Units, u)
@@ -1008,6 +1012,19 @@ type CIReq struct {
 	Who    string
 }
 
+// FieldCIRunStatus is the status of the last CI run reported on a primary,
+// for its current head or another.
+const FieldCIRunStatus = "ci_run_status"
+
+// runStatus is the status of the primary's last reported run: its own field,
+// or, on a record written before it, ci.
+func runStatus(c *Card) string {
+	if v := c.F(FieldCIRunStatus); v != "" {
+		return v
+	}
+	return c.F("ci")
+}
+
 // RecordCI records the observation on the primary: status, head, run and
 // source. It always notifies (red is a judgment, green happened), and moves
 // no card. A result for a head that is not the primary's current one is
@@ -1028,7 +1045,7 @@ func RecordCI(s *Snapshot, r CIReq) Plan {
 		if !c.Placed() {
 			return "not on the table"
 		}
-		if r.Run != "" && c.F("ci_run") == r.Run && c.F("ci") == result {
+		if r.Run != "" && c.F("ci_run") == r.Run && runStatus(c) == result {
 			return "run " + r.Run + " is recorded already (" + result + ")"
 		}
 		return ""
@@ -1038,7 +1055,17 @@ func RecordCI(s *Snapshot, r CIReq) Plan {
 		if head == "" {
 			head = c.F("head")
 		}
-		set := map[string]string{"ci": result, "ci_at": stamp(s.Now), "ci_head": head}
+		old := head != c.F("head")
+		// ci and ci_head are the last result for the primary's current head,
+		// which the tick's accept reads (CIRedAtHead): a result for another
+		// head is labelled and notified and leaves them as they are; ci_run
+		// and ci_run_status are the last run reported, whatever its head, so
+		// a retried report of it is recorded once (tla/DirtyTick.tla
+		// "ciold")
+		set := map[string]string{FieldCIRunStatus: result}
+		if !old {
+			set["ci"], set["ci_at"], set["ci_head"] = result, stamp(s.Now), head
+		}
 		for k, v := range map[string]string{"ci_run": r.Run, "ci_source": r.Source, "ci_note": r.Note} {
 			if v != "" {
 				set[k] = v
@@ -1048,7 +1075,6 @@ func RecordCI(s *Snapshot, r CIReq) Plan {
 		if r.Run != "" {
 			what = strings.TrimSpace("run " + r.Run + ": " + r.Note)
 		}
-		old := head != c.F("head")
 		if old {
 			what = strings.TrimSpace("for an old head " + head + " (current " + orDash(c.F("head")) + "); " + what)
 		}

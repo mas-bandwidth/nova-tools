@@ -1,6 +1,8 @@
 package store
 
 import (
+	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -8,6 +10,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/refmodel"
 )
@@ -223,4 +226,158 @@ func TestTheModelAndTheEngineAgreeOnTheAcceptAndRedealLaws(t *testing.T) {
 	do(dAction{Kind: "take", Member: c.Member, Card: "b1.w1", Gen: c.Gen})
 	do(dAction{Kind: "fleet", Op: "down", Member: c.Member})
 	assert.Equal(t, [2]int{1, 1}, [2]int{h.observe().Work["b1.w1"].Redeals, h.model.Work["b1.w1"].Redeals}, "its take ended: redeals in the engine and the model")
+}
+
+// Primaries returned to review stay held however many more reads stand at
+// their attempt; the coordinator's accept takes one, which the running
+// machine then leaves merging; a rework's new attempt is accepted.
+func TestReturnedPrimariesStayHeldThroughMoreReads(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setup(2)
+	h.startMachine()
+	h.driveTo("s1-1", sprint.Merging)
+	h.driveTo("s1-2", sprint.Merging)
+	h.must(ReturnStep(sprint.ReturnReq{Sel: sprint.Sel{IDs: []string{"s1-1", "s1-2"}}, Reason: "the stream branch went red"}))
+	c := h.snap().Work.Card("s1-1")
+	require.Equal(t, c.F("attempt"), c.F(sprint.FieldReturnedAttempt), "marked at its attempt")
+	for range 4 {
+		h.readAll()
+		h.ticks(2)
+	}
+	assert.Equal(t, sprint.Review, h.state("s1-1"))
+	assert.Equal(t, sprint.Review, h.state("s1-2"))
+	h.must(AcceptStep(sprint.AcceptReq{Sel: sprint.Sel{IDs: []string{"s1-2"}}}))
+	h.ticks(2)
+	assert.Equal(t, sprint.Merging, h.state("s1-2"), "the coordinator's accept of a returned primary")
+	var answers []string
+	for _, o := range h.openOf(sprint.NReturned) {
+		answers = append(answers, o.Note.ID)
+	}
+	h.must(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Fix: "rebase it", Answers: answers}))
+	h.driveTo("s1-1", sprint.Merging)
+	assert.Equal(t, 2, h.snap().Work.Card("s1-1").Int("attempt"))
+	h.clean("returned, held, accepted")
+}
+
+// A late CI result for a head the primary has moved past, green or red, is
+// labelled and leaves the red at its current head standing: the running
+// machine keeps holding it (tla/DirtyTick.tla W19).
+func TestALateCIResultForAnOlderHeadKeepsTheHold(t *testing.T) {
+	t.Parallel()
+	for _, red := range []bool{false, true} {
+		h := newHarness(t)
+		h.setup(1)
+		h.startMachine()
+		h.driveTo("s1-1", sprint.Review)
+		h.must(CIStep(sprint.CIReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Red: true, Run: "1", Source: "test"}))
+		h.machine()
+		h.readAll()
+		h.ticks(3)
+		require.Equal(t, sprint.Review, h.state("s1-1"), "red at its head")
+		h.must(CIStep(sprint.CIReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Red: red, Head: "an-older-head", Run: "0", Source: "test"}))
+		h.ticks(2)
+		c := h.snap().Work.Card("s1-1")
+		assert.Equal(t, sprint.Review, h.state("s1-1"), "a late result (red %v) for an older head released the hold", red)
+		assert.Equal(t, "red", c.F("ci"), "the record of its head")
+		assert.Equal(t, c.F("head"), c.F("ci_head"), "the record of its head")
+		assert.Equal(t, "0", c.F("ci_run"), "the last run reported")
+		again := h.run(CIStep(sprint.CIReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Red: red, Head: "an-older-head", Run: "0", Source: "test"}))
+		assert.Len(t, again.Refused, 1, "a retried report of the run is recorded once")
+		h.clean("a late result for an older head")
+	}
+}
+
+// A primary in review whose accept was cut after its merge card and repaired
+// (an orphan merge card), returned by the coordinator, is held by the running
+// machine as any returned primary is.
+func TestAnOrphanReturnIsHeldByTheMachine(t *testing.T) {
+	t.Parallel()
+	p := newProbe(t)
+	p.setup(1)
+	p.toReview("h", "s1-1")
+	p.do("ask", AskStep(sprint.AskReq{Sel: ids("s1-1")}))
+	for _, rc := range p.snap().Readers.Of("s1-1") {
+		p.read(rc.F("reader"), rc.ID, "ok")
+	}
+	p.m.Fail = func(pt string) error {
+		if pt == "apply t-work before" {
+			return errors.New("cut")
+		}
+		return nil
+	}
+	_, err := p.st.Run(p.ctx, AcceptStep(sprint.AcceptReq{Sel: ids("s1-1")}))
+	require.Error(t, err, "the accept is cut before its work entry")
+	p.m.Fail = nil
+	s := p.snap()
+	pr := s.Work.Card("s1-1")
+	_, err = p.m.Apply(p.ctx, ntable.BatchManifest{Schema: 1, Table: "t-work", Epoch: "0", ExpectedTableRevision: strconv.FormatUint(s.Work.Revision, 10),
+		OperationID: "outside", Members: []ntable.BatchMemberEntry{{ID: "s1-1", Expect: &ntable.MemberExpect{Place: &ntable.PlaceExpect{Row: pr.Row, Col: pr.Col}}, Set: map[string]string{"outside": "1"}}}})
+	require.NoError(t, err)
+	_, err = p.st.Repair(p.ctx)
+	require.NoError(t, err)
+	require.Equal(t, sprint.Review, p.state("s1-1"), "the repair skipped the accept's work entry")
+	p.do("return", ReturnStep(sprint.ReturnReq{Sel: ids("s1-1")}))
+	c := p.snap().Work.Card("s1-1")
+	assert.Equal(t, c.F("attempt"), c.F(sprint.FieldReturnedAttempt), "the orphan return marks its attempt")
+	p.startMachine()
+	p.ticks(3)
+	assert.Equal(t, sprint.Review, p.state("s1-1"), "the running machine took the returned orphan back")
+	assert.NotEmpty(t, p.openOf(sprint.NReadyToAccept), "the coordinator is told it is ready to accept")
+}
+
+// Every member going down and up while the card sits ready withdraws it and
+// deals it again with its count kept, however often; then ended takes count,
+// by the direct path and by the withdrawn one alike, and the fourth ended
+// take retires it (MaxRedeals, 3: dealt again after each of the first three).
+func TestWithdrawalsWithoutATakeKeepTheCountAndTheFourthEndedTakeRetires(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setup(1)
+	h.startMachine()
+	h.machine()
+	wc := func() *sprint.Card { return h.snap().Fleet.Card("s1-1.w1") }
+	require.Equal(t, sprint.Ready, wc().Col, "dealt")
+	allDown := func() {
+		h.must(FleetStep(sprint.FleetReq{Op: "down", Member: "m1"}))
+		h.must(FleetStep(sprint.FleetReq{Op: "down", Member: "m2"}))
+		h.setLive()
+		h.machine()
+	}
+	allUp := func() {
+		h.setLive("m1", "m2")
+		h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m1"}))
+		h.must(FleetStep(sprint.FleetReq{Op: "up", Member: "m2"}))
+		h.tick(time.Second)
+		h.machine()
+	}
+	for lap := range 5 {
+		allDown()
+		assert.Equal(t, sprint.Withdrawn, wc().Col, "lap %d", lap)
+		assert.Empty(t, wc().F(sprint.FieldTakeEnded), "lap %d: withdrawn untaken", lap)
+		allUp()
+		assert.Equal(t, sprint.Ready, wc().Col, "lap %d", lap)
+		assert.Equal(t, 0, wc().Int("redeals"), "lap %d", lap)
+	}
+	assert.Empty(t, h.openOf(sprint.NBound))
+	ended := 0
+	for ended < 6 && wc().Col == sprint.Ready {
+		c := wc()
+		h.must(TakeStep(sprint.TakeReq{As: c.Row, Sel: sprint.Sel{IDs: []string{c.ID}}, Gens: map[string]int{c.ID: c.Int("gen")}, Who: c.Row}))
+		if ended%2 == 0 {
+			h.must(FleetStep(sprint.FleetReq{Op: "down", Member: c.Row}))
+			h.must(FleetStep(sprint.FleetReq{Op: "up", Member: c.Row}))
+			h.tick(time.Second)
+			h.machine()
+		} else {
+			allDown()
+			allUp()
+		}
+		ended++
+	}
+	assert.Equal(t, 4, ended, "ended takes until retired")
+	assert.Equal(t, sprint.Withdrawn, wc().Col, "retired")
+	assert.Equal(t, sprint.MaxRedeals, wc().Int("redeals"))
+	assert.Len(t, h.openOf(sprint.NBound), 1, "the bound's judgment")
+	h.clean("retired at the fourth ended take")
 }

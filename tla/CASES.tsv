@@ -282,6 +282,7 @@ MCDirtyTickProbeHeldAccept.cfg	MCDirtyTick.tla	invariant	ProbeNoHeldAccept	ignor
 MCDirtyTickW16.cfg	MCDirtyTick.tla	action	AcceptHolds	ignore-terminal	dirtytick-witnesses	required	-
 MCDirtyTickW17.cfg	MCDirtyTick.tla	invariant	RedealsAreEndedTakes	ignore-terminal	dirtytick-witnesses	required	-
 MCDirtyTickW18.cfg	MCDirtyTick.tla	action	RedealBoundHolds	ignore-terminal	dirtytick-witnesses	required	-
+MCDirtyTickW19.cfg	MCDirtyTick.tla	action	AcceptHolds	ignore-terminal	dirtytick-witnesses	required	-
 MCDirtyTickRead.cfg	MCDirtyTickRead.tla	pass	-	ignore-terminal	dirtytickread	required	-
 MCDirtyTickReadAcquire.cfg	MCDirtyTickRead.tla	invariant	TwinIsTheStore	ignore-terminal	dirtytickread-acquire	required	-
 MCDirtyTickReadHalt.cfg	MCDirtyTickRead.tla	invariant	BeganRunning	ignore-terminal	dirtytickread-halt	required	-

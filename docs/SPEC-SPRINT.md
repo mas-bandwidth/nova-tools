@@ -92,8 +92,9 @@ written with the moves.
 for life. Fields: stream, score, brief, needs, head, attempt, fix, work (its live
 work card), asked (its readers), readers (the two whose ok it was accepted on),
 counters (failed, reworks, broken_reads, stuck, returns), returned_attempt (its
-attempt when it was last returned to review), and the last CI observation (ci,
-ci_head, ci_run, ci_source).
+attempt when it was last returned to review, by any return, an orphan merge
+card's included), and the last CI observation for its current head (ci,
+ci_head) and of any head (ci_run, ci_run_status, ci_source).
 
 **Work card** (consumer). What a child with a worktree is handed: the brief and
 the place to work, and on a later attempt the fix. Identity `<primary>.w<attempt>`.
@@ -113,8 +114,9 @@ or, withdrawn because no member had room, by the deal that places it later,
 and until then take_ended marks it; a working card whose member goes down
 with its count at MaxRedeals, 3, stays withdrawn, its primary ready and dealt
 no more, and the judgment "a card reached its bound" names it until a rework
-with a fix or a drop; each counted redeal's line in the log says "redeal n of
-3"), ok (set
+with a fix or a drop; so the card is dealt again after each of its first three
+ended takes and retired when a fourth ends; each counted redeal's
+line in the log says "redeal n of 3"), ok (set
 only when finished), head, report. It takes its primary's score. The primary
 names its live work card.
 
@@ -465,9 +467,11 @@ judgment does not write it again.
 
 A CI result, red or green, recorded for a primary in any state is always a
 notification (red: judgment; green: happened). `ci` records the observation
-(primary, head, run, status, source) and moves no card; a result for a head that
-is not the primary's current one is labelled as such; a retried report of the
-same run is recorded once. Stream-batch CI in merging is the merge step's fact.
+(primary, head, run, status, source) and moves no card; ci and ci_head hold the
+last result for the primary's current head, which the tick's accept reads; a
+result for a head that is not the primary's current one is labelled as such
+and leaves ci and ci_head as they are; a retried report of the same run
+(ci_run and ci_run_status, whatever its head) is recorded once. Stream-batch CI in merging is the merge step's fact.
 
 Each carries: id, kind, type, stream, the primaries (a set, bounded, with the
 count), what happened, who reported it, attempt, how many times before, the

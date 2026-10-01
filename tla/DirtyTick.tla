@@ -96,7 +96,7 @@ VARIABLES col, att, bnd, rd, askw, mq, stat, mc, mr, noUp, Q,
           mctr, rctr, sctr, live, acts, ext,
           phase, pumps, sub, addr, notes, wake, act, plc,
           brk, dealt, always,
-          okd, ci, ret, tk, rdl, ended, ends
+          okd, ci, ret, tk, rdl, ended, ends, hred
 
 \* okd, ci, ret   the work table: a card's read said ok and stands; its CI
 \*                ("none" or "red" at its head); returned at its attempt
@@ -104,13 +104,16 @@ VARIABLES col, att, bnd, rd, askw, mq, stat, mc, mr, noUp, Q,
 \* rdl, ended     the work card: its redeals; a take of it ended and the
 \*                deal that places it again has not counted it
 \* ends           ghost: takes of the card that ended, this attempt
+\* hred           ghost: the last CI result reported for the card's current
+\*                head is red (what ci must say; a result for an older head
+\*                leaves both as they are)
 
 vars == <<col, att, bnd, rd, askw, mq, stat, mc, mr, noUp, Q,
           mctr, rctr, sctr, live, acts, ext,
           phase, pumps, sub, addr, notes, wake, act, plc,
           brk, dealt, always,
-          okd, ci, ret, tk, rdl, ended, ends>>
-CardVars == <<okd, ci, ret, tk, rdl, ended, ends>>
+          okd, ci, ret, tk, rdl, ended, ends, hred>>
+CardVars == <<okd, ci, ret, tk, rdl, ended, ends, hred>>
 
 -----------------------------------------------------------------------------
 \* Entries. k is the kind, c the card (or "-"), x the machine, the reader
@@ -138,7 +141,8 @@ Cur == [col |-> col, att |-> att, bnd |-> bnd, rd |-> rd, askw |-> askw,
         q |-> Q, mctr |-> mctr, rctr |-> rctr, sctr |-> sctr, addr |-> addr,
         brk |-> brk, dealt |-> dealt, plc |-> <<>>, notes |-> notes,
         f0 |-> Len(Q["fleet"]),
-        okd |-> okd, ci |-> ci, ret |-> ret, tk |-> tk, rdl |-> rdl, ended |-> ended, ends |-> ends]
+        okd |-> okd, ci |-> ci, ret |-> ret, tk |-> tk, rdl |-> rdl, ended |-> ended, ends |-> ends,
+        hred |-> hred]
 
 Put(S, t, e) == [S EXCEPT !.q[t] = Append(@, e)]
 
@@ -180,7 +184,7 @@ AtRB(S, c) == Broken # "redealpast" /\ S.ended[c] /\ S.rdl[c] >= MaxRedeals
 \* A new attempt: a new card, a new head, nothing returned at it.
 NewAttempt(S, c) ==
   [S EXCEPT !.okd[c] = FALSE, !.ci[c] = "none", !.ret[c] = FALSE,
-            !.rdl[c] = 0, !.ended[c] = FALSE, !.ends[c] = 0]
+            !.rdl[c] = 0, !.ended[c] = FALSE, !.ends[c] = 0, !.hred[c] = FALSE]
 
 -----------------------------------------------------------------------------
 \* THE WORK PUMP (1.). Applies its whole queue, lands sentinels, releases,
@@ -208,7 +212,9 @@ ApplyW(S, e) ==
          IF S.col[c] # "working" THEN S
          ELSE LET S1 == [S EXCEPT !.col[c] = "ready", !.ended[c] = @ \/ e.x = "taken"]
               IN IF e.x = "taken" /\ S.rdl[c] >= MaxRedeals THEN Address(S1) ELSE S1
-    [] e.k = "ci" -> [S EXCEPT !.ci[c] = e.x]
+    [] e.k = "ci" -> [S EXCEPT !.ci[c] = e.x, !.hred[c] = (e.x = "red")]
+    [] e.k = "ciold" ->     \* a result for an older head: labelled, ci kept
+         IF Broken = "ciold" THEN [S EXCEPT !.ci[c] = e.x] ELSE S
     [] e.k = "back" ->      \* returned to review: its read stands
          IF S.col[c] = "merging" THEN [S EXCEPT !.col[c] = "review", !.ret[c] = TRUE, !.okd[c] = TRUE] ELSE S
     [] e.k = "accept" ->    \* the coordinator's accept, held or not
@@ -410,7 +416,7 @@ Update(t) ==
 
 Commit(S) ==
   /\ okd' = S.okd /\ ci' = S.ci /\ ret' = S.ret /\ tk' = S.tk /\ rdl' = S.rdl
-  /\ ended' = S.ended /\ ends' = S.ends
+  /\ ended' = S.ended /\ ends' = S.ends /\ hred' = S.hred
   /\ col' = S.col /\ att' = S.att /\ bnd' = S.bnd /\ rd' = S.rd /\ askw' = S.askw
   /\ mq' = S.mq /\ stat' = S.stat /\ mc' = S.mc /\ mr' = S.mr /\ noUp' = S.noUp
   /\ Q' = S.q /\ mctr' = S.mctr /\ rctr' = S.rctr /\ sctr' = S.sctr
@@ -518,6 +524,10 @@ Take(c, m) ==
 CIRed(c) ==
   /\ Coord /\ col[c] = "review" /\ ci[c] # "red" /\ Pend("work", "ci", c) = 0 /\ acts < MaxActs
   /\ acts' = acts + 1 /\ Outside("work", E("ci", c, "red")) /\ UNCHANGED live
+\* A late result, green, for a head the card has moved past.
+CIOld(c) ==
+  /\ Coord /\ col[c] = "review" /\ Pend("work", "ciold", c) = 0 /\ acts < MaxActs
+  /\ acts' = acts + 1 /\ Outside("work", E("ciold", c, "none")) /\ UNCHANGED live
 CIGreen(c) ==
   /\ Coord /\ ci[c] = "red" /\ Pend("work", "ci", c) = 0
   /\ Outside("work", E("ci", c, "none")) /\ UNCHANGED <<live, acts>>
@@ -542,14 +552,14 @@ Init ==
   /\ always = [s \in Streams |-> TRUE]
   /\ okd = [c \in Cards |-> FALSE] /\ ci = [c \in Cards |-> "none"] /\ ret = [c \in Cards |-> FALSE]
   /\ tk = [c \in Cards |-> FALSE] /\ rdl = [c \in Cards |-> 0] /\ ended = [c \in Cards |-> FALSE]
-  /\ ends = [c \in Cards |-> 0]
+  /\ ends = [c \in Cards |-> 0] /\ hred = [c \in Cards |-> FALSE]
 
 TickNext == TickStart \/ PumpWork \/ DrainWork \/ TickEnd \/
             \E t \in Three : Pass(t) \/ Drain(t)
 OutsideNext ==
   \/ \E c \in Cards : Add(c) \/ Merge(c) \/ \E v \in {"ok", "broken"} : Report(c, v)
   \/ \E c \in Cards, m \in Machines : Finish(c, m) \/ Take(c, m)
-  \/ \E c \in Cards : CIRed(c) \/ CIGreen(c) \/ Return(c) \/ CoordAccept(c)
+  \/ \E c \in Cards : CIRed(c) \/ CIGreen(c) \/ CIOld(c) \/ Return(c) \/ CoordAccept(c)
   \/ \E m \in Machines : Beat(m) \/ Lapse(m)
 Next == TickNext \/ OutsideNext
 Spec == Init /\ [][Next]_vars /\ WF_vars(TickNext)
@@ -565,7 +575,7 @@ TypeOK ==
   /\ pumps \in 0..2 /\ sub \in 0..(MaxSub + 1) /\ addr \in 0..3 /\ notes \in 0..2
   /\ okd \in [Cards -> BOOLEAN] /\ ci \in [Cards -> {"none", "red"}] /\ ret \in [Cards -> BOOLEAN]
   /\ tk \in [Cards -> BOOLEAN] /\ rdl \in [Cards -> 0..(MaxRedeals + 1)]
-  /\ ended \in [Cards -> BOOLEAN] /\ ends \in [Cards -> 0..(MaxRedeals + 1)]
+  /\ ended \in [Cards -> BOOLEAN] /\ ends \in [Cards -> 0..(MaxRedeals + 1)] /\ hred \in [Cards -> BOOLEAN]
 
 \* THE CENTRAL PROPERTY (the owner: "nothing advances the work stream table
 \* EXCEPT on the next tick"). Only the tick's one pump writes the work table.
@@ -657,11 +667,12 @@ WidthRespected == \A m \in Machines : Cardinality(mc[m]) + Cardinality(mr[m]) <=
 StreamFairness ==
   [][\A s, t \in Streams : always[s] /\ always[t] => dealt'[s] - dealt'[t] \in -1..1]_vars
 
-\* THE ACCEPT HOLDS: a card in review whose CI is red at its head, or that
-\* the coordinator returned at its attempt, moves to merging only by the
+\* THE ACCEPT HOLDS: a card in review whose last CI result for its head is
+\* red (hred: a late result for an older head changes nothing), or that the
+\* coordinator returned at its attempt, moves to merging only by the
 \* coordinator's accept.
 AcceptHolds ==
-  [][\A c \in Cards : col[c] = "review" /\ col'[c] = "merging" /\ (ci'[c] = "red" \/ ret'[c])
+  [][\A c \in Cards : col[c] = "review" /\ col'[c] = "merging" /\ (ci'[c] = "red" \/ hred'[c] \/ ret'[c])
                       => Pend("work", "accept", c) > 0]_vars
 
 \* REDEALS ARE ENDED TAKES: a card's redeals, with the take that ended and
@@ -671,6 +682,9 @@ EndedOnTheWay(c) == Count(Q["work"], LAMBDA e : e.k = "returned" /\ e.c = c /\ e
 RedealsAreEndedTakes ==
   \A c \in Cards : rdl[c] + (IF ended[c] THEN 1 ELSE 0) + EndedOnTheWay(c) = ends[c]
 RedealsBounded == \A c \in Cards : rdl[c] <= MaxRedeals
+\* THE CI IS ITS HEAD'S: the record says red exactly when the last result
+\* reported for the card's current head is red.
+CIIsItsHeads == \A c \in Cards : (ci[c] = "red") = hred[c]
 \* THE REDEAL BOUND HOLDS: a card whose take ended at the bound is never
 \* dealt again.
 RedealBoundHolds ==
