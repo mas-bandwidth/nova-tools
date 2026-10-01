@@ -335,6 +335,20 @@ func (m *Member) Running() int {
 	return n
 }
 
+// Live is how many children are alive: running and not yet exited (a spent launch
+// holds no place). A child that has exited frees its lane at once, before its
+// report: the lanes the member fills are the width less Live, and Live never
+// passes the width.
+func (m *Member) Live() int {
+	n := 0
+	for _, l := range m.running {
+		if !l.spent && !l.child.Done() {
+			n++
+		}
+	}
+	return n
+}
+
 // readCall is the member's beat or queue verb, asked again once when the store
 // did not answer (exit 2): a round trip that timed out is one miss of a beat
 // window, never a down member (docs/SPEC-SPRINT.md section 5, a member's
@@ -459,11 +473,27 @@ func (m *Member) BeatLoop(ctx context.Context, every <-chan time.Time, out io.Wr
 
 // Tick is one pass of the loop: read the queue, report every child
 // that ended, take (begin) up to the width, start each card taken. It returns
-// the number of cards it acted on (reports plus starts), and the first error
-// that stopped a step; a refused verb is not an error here (it is printed and
-// the card is left for the next pass), a store that does not answer is.
+// the number of cards it acted on (reports plus starts), and an error naming
+// the verbs the store did not answer; a refused verb is not an error here (it
+// is printed and the card is left for the next pass). A verb the store did not
+// answer never ends the pass: it is said, its card is left as it was for the
+// next pass, and the pass goes on to every other ended child and to the take
+// (a member 100 ms from the store lost one finish to the sprint's fence and
+// left seven finished cards unreported behind it, pass after pass: the fleet
+// pass of 2026-10-01 16:32 ET). Only the pass's first read, the queue, ends it.
 func (m *Member) Tick(now time.Time) (acted int, err error) {
 	m.advanced()
+	// unanswered collects the verbs the store did not answer in this pass
+	var unanswered []string
+	noAnswer := func(what string, out []byte) {
+		unanswered = append(unanswered, what)
+		fmt.Fprintf(m.out, "NOTE %s: the store did not answer; the pass goes on, and it is tried again next pass: %s\n", what, oneLine(strings.TrimSpace(string(out))))
+	}
+	defer func() {
+		if err == nil && len(unanswered) > 0 {
+			err = fmt.Errorf("the store did not answer %d of this pass's verbs (%s); each is tried again next pass", len(unanswered), strings.Join(unanswered, ", "))
+		}
+	}()
 	// the beat is not this pass's: it goes on its own clock (BeatLoop), so a pass held for
 	// minutes by its pushes and finishes never lets the machine go down while it works
 	code, out := m.readCall("queue", "--as", m.cfg.As, "--json")
@@ -481,13 +511,28 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 		m.width = q.Width
 	}
 	held := []string{"--epoch", strconv.FormatUint(q.Epoch, 10)}
-	// 1. Report every child that ended, one verb per card (each report is its
-	// own words).
-	wasOurs := map[string]bool{}
-	for id := range m.running {
-		wasOurs[id] = true
+	// every card this tick would start is started, or, when Config.Room says no, finished as
+	// refused at staging with its reason, so the sprint deals it to another member and says why
+	// (refuseStaging)
+	launch := m.start
+	if ok, why := m.room(); !ok {
+		launch = func(p Packet) bool {
+			returned := m.refuseStaging(p, why)
+			if returned && p.Kind == "read" {
+				// a read handed back under the floor is a return like any other: the
+				// sprint asks it again in place at most twice, then judges it
+				// (internal/sprint MaxReadReasks; tla/DirtyTick.tla, ReasksBounded),
+				// and this reader waits ReadStageRetry before it begins it again
+				m.returnedAt[p.Card] = now
+			}
+			return returned
+		}
 	}
-	claimMoved := map[string]bool{}
+	// 0. Fill every free lane first, before the reports (the owner, 2026-10-01:
+	// "Do the minimal change that would keep working at maximum."): a lane is
+	// free the moment its child exits (Live), so a pass held for seconds by its
+	// pushes and finishes never leaves it empty behind them; the take after the
+	// reports fills what freed during them.
 	ids := make([]string, 0, len(q.Cards))
 	byID := map[string]queueCard{}
 	for _, c := range q.Cards {
@@ -495,6 +540,24 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 		byID[c.ID] = c
 	}
 	sort.Strings(ids)
+	var early map[string]bool // the children alive after the first fill
+	if !m.drain {
+		// a working card with no child of ours first (recovery, below), then the take
+		acted += m.recoverWorking(ids, byID, nil, nil, launch)
+		n, out := m.take(q, held, now, launch)
+		acted += n
+		if out != nil {
+			noAnswer(m.takeVerb(), out)
+		}
+		early = m.alive()
+	}
+	// 1. Report every child that ended, one verb per card (each report is its
+	// own words).
+	wasOurs := map[string]bool{}
+	for id := range m.running {
+		wasOurs[id] = true
+	}
+	claimMoved := map[string]bool{}
 	m.pushEnded(ids, byID)
 	for _, id := range ids {
 		c := byID[id]
@@ -569,7 +632,8 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 				code, out := m.run(args...)
 				fmt.Fprintf(m.out, "read %s: returned exit=%d: %s\n", id, code, reason)
 				if code == 2 {
-					return acted, fmt.Errorf("read --return %s: the store did not answer: %s", id, strings.TrimSpace(string(out)))
+					noAnswer("read --return "+id, out)
+					continue
 				}
 				if code != 0 {
 					l.spent = true
@@ -629,7 +693,8 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 		code, out := m.run(args...)
 		fmt.Fprintf(m.out, "%s %s ok=%t exit=%d%s\n", args[0], id, ok, code, routeWords(l.packet))
 		if code == 2 {
-			return acted, fmt.Errorf("%s %s: the store did not answer: %s", args[0], id, strings.TrimSpace(string(out)))
+			noAnswer(args[0]+" "+id, out)
+			continue
 		}
 		m.forget(id, !m.cfg.Reader && !ok) // refused (1) too: the card is no longer ours to report
 		acted++
@@ -643,25 +708,16 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 			fmt.Fprintf(m.out, "%s %s: no longer in the queue (dropped or returned)\n", FinishReaped, id)
 		}
 	}
-	if m.drain {
-		return acted, nil
+	// the lanes filled again only when one freed since the first fill: a child
+	// alive then has exited or been reported, or a moved claim was reaped; so a
+	// pass whose first fill found nothing more asks the store once
+	now2 := m.alive()
+	freed := len(claimMoved) > 0
+	for id := range early {
+		freed = freed || !now2[id]
 	}
-	// every card this tick would start is started, or, when Config.Room says no, finished as
-	// refused at staging with its reason, so the sprint deals it to another member and says why
-	// (refuseStaging)
-	launch := m.start
-	if ok, why := m.room(); !ok {
-		launch = func(p Packet) bool {
-			returned := m.refuseStaging(p, why)
-			if returned && p.Kind == "read" {
-				// a read handed back under the floor is a return like any other: the
-				// sprint asks it again in place at most twice, then judges it
-				// (internal/sprint MaxReadReasks; tla/DirtyTick.tla, ReasksBounded),
-				// and this reader waits ReadStageRetry before it begins it again
-				m.returnedAt[p.Card] = now
-			}
-			return returned
-		}
+	if m.drain || !freed {
+		return acted, nil
 	}
 	// 2. Recover in-flight (working/reading) cards that have no child of ours,
 	// clamped to width. A card in the queue as working (reading) with no child
@@ -671,19 +727,54 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 	// recovery never overflows capacity; excess cards remain in the queue for
 	// subsequent passes.
 	acted += m.recoverWorking(ids, byID, wasOurs, claimMoved, launch)
-	// 3. Take (begin) up to the width, in one verb, and start each.
-	room := m.width - m.Running()
+	// 3. Take (begin) again for the lanes that freed during the reports.
+	n, out := m.take(q, held, now, launch)
+	if out != nil {
+		noAnswer(m.takeVerb(), out)
+	}
+	return acted + n, nil
+}
+
+// takeVerb is the verb a take is: a reader's is read --begin.
+func (m *Member) takeVerb() string {
+	if m.cfg.Reader {
+		return "read --begin"
+	}
+	return "take"
+}
+
+// alive is the cards whose children are alive (Live counts them).
+func (m *Member) alive() map[string]bool {
+	out := map[string]bool{}
+	for id, l := range m.running {
+		if !l.spent && !l.child.Done() {
+			out[id] = true
+		}
+	}
+	return out
+}
+
+// take takes (begins) a card for every free lane in one verb and starts each:
+// a lane is free when no live child holds it (Live), so a child that has exited
+// frees its lane at once, reported or not, and the live children never exceed
+// the width. The cards counted are the queue's ready (asked) cards this member
+// runs no child for: a card taken earlier in the pass is listed ready still, and
+// is neither counted nor begun again. It returns the starts, and, when the store
+// did not answer the verb, what the verb printed (nil otherwise): nothing was
+// taken, and the pass goes on.
+func (m *Member) take(q queueOut, held []string, now time.Time, launch func(Packet) bool) (acted int, unanswered []byte) {
+	room := m.width - m.Live()
 	if room <= 0 {
-		return acted, nil
+		return 0, nil
 	}
 	ready := 0
 	for _, c := range q.Cards {
-		if c.Col == "ready" || c.Col == "asked" {
+		if _, ours := m.running[c.ID]; !ours && (c.Col == "ready" || c.Col == "asked") {
 			ready++
 		}
 	}
 	if ready == 0 {
-		return acted, nil
+		return 0, nil
 	}
 	var packets []Packet
 	if m.cfg.Reader {
@@ -691,6 +782,9 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 		// is started is exactly what was claimed
 		var ids []string
 		for _, c := range q.Cards {
+			if _, ours := m.running[c.ID]; ours {
+				continue // begun earlier in this pass
+			}
 			if at, ok := m.returnedAt[c.ID]; ok && now.Before(at.Add(ReadStageRetry)) {
 				continue // returned by this reader a moment ago: asked of it again later
 			}
@@ -700,35 +794,36 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 			}
 		}
 		for id := range m.returnedAt {
-			if _, listed := byID[id]; !listed || slices.Contains(ids, id) {
+			if _, listed := q.card(id); !listed || slices.Contains(ids, id) {
 				delete(m.returnedAt, id)
 			}
 		}
 		if len(ids) == 0 {
-			return acted, nil
+			return 0, nil
 		}
 		args := append(append([]string{"read", "--as", m.cfg.As, "--begin"}, ids...), held...)
 		code, out := m.run(args...)
 		if code == 2 {
-			return acted, fmt.Errorf("read --begin: the store did not answer: %s", strings.TrimSpace(string(out)))
+			return 0, orWords(out)
 		}
 		if code != 0 {
 			fmt.Fprintf(m.out, "read --begin refused: %s\n", strings.TrimSpace(string(out)))
-			return acted, nil
+			return 0, nil
 		}
 	} else {
 		args := append([]string{"take", "--as", m.cfg.As, "--limit", strconv.Itoa(room), "--json"}, held...)
 		code, out := m.run(args...)
 		if code == 2 {
-			return acted, fmt.Errorf("take: the store did not answer: %s", strings.TrimSpace(string(out)))
+			return 0, orWords(out)
 		}
 		if code != 0 {
 			fmt.Fprintf(m.out, "take refused: %s\n", strings.TrimSpace(string(out)))
-			return acted, nil
+			return 0, nil
 		}
 		var t takeOut
 		if err := json.Unmarshal(out, &t); err != nil {
-			return acted, fmt.Errorf("take: not JSON: %w", err)
+			// an answer that is not the take's JSON is no answer: nothing is started
+			return 0, []byte(fmt.Sprintf("take: not JSON: %v", err))
 		}
 		packets = t.Packets
 	}
@@ -738,6 +833,25 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 		}
 	}
 	return acted, nil
+}
+
+// orWords is what a verb printed, never nil: the mark of a verb the store did
+// not answer (take).
+func orWords(out []byte) []byte {
+	if out == nil {
+		return []byte{}
+	}
+	return out
+}
+
+// card is the queue's card of the id.
+func (q queueOut) card(id string) (queueCard, bool) {
+	for _, c := range q.Cards {
+		if c.ID == id {
+			return c, true
+		}
+	}
+	return queueCard{}, false
 }
 
 // recoverWorking starts children for in-flight (working/reading) cards that
@@ -760,7 +874,7 @@ func (m *Member) recoverWorking(ids []string, byID map[string]queueCard, wasOurs
 		if c.Packet == nil {
 			continue
 		}
-		if m.Running() >= m.width {
+		if m.Live() >= m.width {
 			fmt.Fprintf(m.out, "recover %s deferred: width %d full\n", id, m.width)
 			continue
 		}
@@ -777,7 +891,7 @@ func (m *Member) start(p Packet) bool {
 		fmt.Fprintf(m.out, "start %s: already running\n", p.Card)
 		return false
 	}
-	if m.Running() >= m.width {
+	if m.Live() >= m.width {
 		fmt.Fprintf(m.out, "start %s: width %d full\n", p.Card, m.width)
 		return false
 	}
@@ -791,7 +905,7 @@ func (m *Member) start(p Packet) bool {
 		return false
 	}
 	m.running[p.Card] = launch{child: ch, gen: p.Gen, attempt: p.Attempt, epoch: p.Epoch, branch: p.Branch, packet: p, retried: m.stageRetried[p.Card]}
-	fmt.Fprintf(m.out, "start %s attempt=%d gen=%d running=%d/%d%s\n", p.Card, p.Attempt, p.Gen, m.Running(), m.width, routeWords(p))
+	fmt.Fprintf(m.out, "start %s attempt=%d gen=%d running=%d/%d%s\n", p.Card, p.Attempt, p.Gen, m.Live(), m.width, routeWords(p))
 	return true
 }
 
