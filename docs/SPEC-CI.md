@@ -2772,6 +2772,15 @@ the original failed measurement.
 **Its remedy line.** `schema.go no longer matches internal/sprint/TABLES.lock; a PR that changes a table's shape changes the lock file in the same PR, where a read sees it`, then each differing line, the lock's and the schema's.
 **Its narrowings.** Column width (always 0 here) is not in the lock; a change to what a table holds that is not in its definition (a card's fields, a hidden column's contents) is not seen.
 
+### `sprint-view-locked` — the sprint view changes only with its lock file
+
+**The rule.** `internal/sprint/VIEW.lock` holds the exact frame `nova-sprint where` prints for one fixed store (`whereFixture`, `cmd/nova-sprint/watch_test.go`) and every write `where --watch` makes for it (cursor hidden, the frame drawn in place, cursor shown), control bytes escaped, with the maintainer's words and the date at the top. A PR that changes what the view shows turns the test red until the lock file changes, by hand, in the same PR, where a read sees it. It is not a golden: nothing regenerates the lock.
+**The mistake it prevents.** Drift of the sprint view from its design, visually and logically. The maintainer, 2026-10-01: "i dislike this drift from the design of nova sprint tables that is *complete and locked*", "strike everything that shows to my sprint table" and "This drift (visually) and logically away from the design is a real problem."
+**The test.** `TestSprintViewIsLocked` (`cmd/nova-sprint/view_lock_test.go`): renders the fixture through the real renderer (`app.where` and `whereLoop`, which live in package main, so the test sits beside them and `internal/ci` cannot hold it) and compares the text to the lock file's body byte for byte.
+**Its allowlist.** None.
+**Its remedy line.** `what nova-sprint where shows no longer matches internal/sprint/VIEW.lock; a PR that changes the view changes the lock file by hand in the same PR, where a read sees it`, then the first differing line of the lock body, the lock's text and the view's.
+**Its narrowings.** Only what the fixture shows is locked: a cell format or a row kind the fixture's store does not reach (a card in review or landed, a stuck merge, a loaded member) is not seen. The `--json` view is not in the lock.
+
 ## How the class tests read the tree: one walk, one parse, in parallel
 
 Every rule above is a sweep of this repository's own source. A rule that pays
