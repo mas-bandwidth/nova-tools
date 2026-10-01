@@ -83,9 +83,24 @@ func (c Client) Do(ctx context.Context, verbs ...[]string) ([]Result, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("the sprint server at %s refused the request (%s): %s", c.Addr, resp.Status, bytes.TrimSpace(raw))
 	}
-	var out Response
-	if err := json.Unmarshal(raw, &out); err != nil || len(out.Results) != len(verbs) {
-		return nil, fmt.Errorf("the sprint server at %s answered %d results for %d verbs", c.Addr, len(out.Results), len(verbs))
+	// every result is read strictly: an answer with no exit code, or one that is not a
+	// result at all, is no answer, never exit 0
+	var got struct {
+		Results []*struct {
+			Code   *int    `json:"code"`
+			Stdout *string `json:"stdout"`
+			Stderr *string `json:"stderr"`
+		} `json:"results"`
 	}
-	return out.Results, nil
+	if err := json.Unmarshal(raw, &got); err != nil || len(got.Results) != len(verbs) {
+		return nil, fmt.Errorf("the sprint server at %s answered %d results for %d verbs", c.Addr, len(got.Results), len(verbs))
+	}
+	out := make([]Result, len(got.Results))
+	for i, r := range got.Results {
+		if r == nil || r.Code == nil || r.Stdout == nil || r.Stderr == nil {
+			return nil, fmt.Errorf("the sprint server at %s: result %d of %d names no exit code or output: nothing is known of what ran", c.Addr, i+1, len(verbs))
+		}
+		out[i] = Result{Code: *r.Code, Stdout: *r.Stdout, Stderr: *r.Stderr}
+	}
+	return out, nil
 }

@@ -158,39 +158,40 @@ func TestTheServerRunsWorkersVerbsOnly(t *testing.T) {
 	log := func() string { return r.boss("nova-sprint log") }
 	before := log()
 	for name, argv := range map[string][]string{
-		"a coordinator's verb":                     {"add", "--stream", "s1", "--count", "1"},
-		"clear":                                    {"clear", "--confirm", "sprint"},
-		"another fleet verb":                       {"fleet", "up", "m1", "--width", "64"},
-		"no verb at all":                           {},
-		"no worker named":                          {"take", "--limit", "1", "--epoch", "0"},
-		"the worker not named first":               {"take", "--limit", "1", "--as", "m1", "--epoch", "0"},
-		"the worker given as --as=":                {"take", "--as=m1", "--limit", "1", "--epoch", "0"},
-		"the worker given as -as":                  {"take", "-as", "m1", "--limit", "1", "--epoch", "0"},
-		"a list of workers":                        {"take", "--as", "m1,m2", "--limit", "1", "--epoch", "0"},
-		"a flag where the name should be":          {"take", "--as", "--limit", "1", "--epoch", "0"},
-		"an empty name":                            {"take", "--as", "", "--limit", "1", "--epoch", "0"},
-		"a name with a space":                      {"take", "--as", "m1 m2", "--limit", "1", "--epoch", "0"},
-		"a store":                                  {"take", "--as", "m1", "--redis", "mem:/tmp/other.twin", "--epoch", "0"},
-		"a store, one dash":                        {"take", "--as", "m1", "-redis", "mem:/tmp/other.twin", "--epoch", "0"},
-		"a store, with =":                          {"take", "--as", "m1", "--redis=mem:/tmp/other.twin", "--epoch", "0"},
-		"a store, one dash, with =":                {"take", "--as", "m1", "-redis=mem:/tmp/other.twin", "--epoch", "0"},
-		"an actor":                                 {"finish", "--as", "m1", "s1-1.w1@1", "--actor", "boss", "--epoch", "0"},
-		"an actor, one dash, with =":               {"finish", "--as", "m1", "s1-1.w1@1", "-actor=boss", "--epoch", "0"},
-		"a second name":                            {"finish", "--as", "m1", "s1-1.w1@1", "--as", "m2", "--epoch", "0"},
-		"a second name, one dash, with =":          {"finish", "--as", "m1", "s1-1.w1@1", "-as=m2", "--epoch", "0"},
-		"a second name hidden as a flag's value":   {"finish", "--as", "m1", "s1-1.w1@1", "--report", "--as", "m2", "--epoch", "0"},
-		"a store after the -- terminator":          {"read", "--as", "reader-a", "--begin", "--epoch", "0", "--", "--redis", "mem:/tmp/x"},
-		"a take with no epoch":                     {"take", "--as", "m1", "--limit", "1"},
-		"a take whose epoch is not a number":       {"take", "--as", "m1", "--limit", "1", "--epoch", "now"},
-		"a finish with no epoch":                   {"finish", "--as", "m1", "s1-1.w1@1"},
-		"a read with no epoch":                     {"read", "--as", "reader-a", "--begin"},
-		"a beat with no load":                      {"fleet", "beat", "m1"},
-		"a beat whose load has no value":           {"fleet", "beat", "m1", "--load"},
-		"a beat whose load is not a number":        {"fleet", "beat", "m1", "--load", "high"},
-		"a beat whose load another flag swallowed": {"fleet", "beat", "m1", "--op", "--load", "5"},
-		"a beat as another actor":                  {"fleet", "beat", "m1", "--load", "5", "--actor", "boss"},
-		"a beat of no member":                      {"fleet", "beat", "--load", "5"},
-		"a beat of a list of members":              {"fleet", "beat", "m1,m2", "--load", "5"},
+		"a coordinator's verb":                      {"add", "--stream", "s1", "--count", "1"},
+		"clear":                                     {"clear", "--confirm", "sprint"},
+		"another fleet verb":                        {"fleet", "up", "m1", "--width", "64"},
+		"no verb at all":                            {},
+		"no worker named":                           {"take", "--limit", "1", "--epoch", "0"},
+		"the worker not named first":                {"take", "--limit", "1", "--as", "m1", "--epoch", "0"},
+		"the worker given as --as=":                 {"take", "--as=m1", "--limit", "1", "--epoch", "0"},
+		"the worker given as -as":                   {"take", "-as", "m1", "--limit", "1", "--epoch", "0"},
+		"a list of workers":                         {"take", "--as", "m1,m2", "--limit", "1", "--epoch", "0"},
+		"a flag where the name should be":           {"take", "--as", "--limit", "1", "--epoch", "0"},
+		"an empty name":                             {"take", "--as", "", "--limit", "1", "--epoch", "0"},
+		"a name with a space":                       {"take", "--as", "m1 m2", "--limit", "1", "--epoch", "0"},
+		"a store":                                   {"take", "--as", "m1", "--redis", "mem:/tmp/other.twin", "--epoch", "0"},
+		"a store, one dash":                         {"take", "--as", "m1", "-redis", "mem:/tmp/other.twin", "--epoch", "0"},
+		"a store, with =":                           {"take", "--as", "m1", "--redis=mem:/tmp/other.twin", "--epoch", "0"},
+		"a store, one dash, with =":                 {"take", "--as", "m1", "-redis=mem:/tmp/other.twin", "--epoch", "0"},
+		"an actor":                                  {"finish", "--as", "m1", "s1-1.w1@1", "--actor", "boss", "--epoch", "0"},
+		"an actor, one dash, with =":                {"finish", "--as", "m1", "s1-1.w1@1", "-actor=boss", "--epoch", "0"},
+		"a second name":                             {"finish", "--as", "m1", "s1-1.w1@1", "--as", "m2", "--epoch", "0"},
+		"a second name, one dash, with =":           {"finish", "--as", "m1", "s1-1.w1@1", "-as=m2", "--epoch", "0"},
+		"a second name hidden as a flag's value":    {"finish", "--as", "m1", "s1-1.w1@1", "--report", "--as", "m2", "--epoch", "0"},
+		"a store after the -- terminator":           {"read", "--as", "reader-a", "--begin", "--epoch", "0", "--", "--redis", "mem:/tmp/x"},
+		"a take with no epoch":                      {"take", "--as", "m1", "--limit", "1"},
+		"a take whose epoch a later word undid":     {"take", "--as", "m1", "--limit", "1", "--epoch", "0", "--epoch", "-1"},
+		"a take whose epoch another flag swallowed": {"take", "--as", "m1", "--limit", "1", "--op", "--epoch=0"},
+		"a finish with no epoch":                    {"finish", "--as", "m1", "s1-1.w1@1"},
+		"a read with no epoch":                      {"read", "--as", "reader-a", "--begin"},
+		"a beat with no load":                       {"fleet", "beat", "m1"},
+		"a beat whose load has no value":            {"fleet", "beat", "m1", "--load"},
+		"a beat whose load is not a number":         {"fleet", "beat", "m1", "--load", "high"},
+		"a beat whose load another flag swallowed":  {"fleet", "beat", "m1", "--op", "--load", "5"},
+		"a beat as another actor":                   {"fleet", "beat", "m1", "--load", "5", "--actor", "boss"},
+		"a beat of no member":                       {"fleet", "beat", "--load", "5"},
+		"a beat of a list of members":               {"fleet", "beat", "m1,m2", "--load", "5"},
 	} {
 		res := r.one(argv...)
 		assert.Equal(t, 2, res.Code, "%s: %v", name, argv)
@@ -212,6 +213,11 @@ func TestNothingAWorkerSendsDisplacesTheServersWords(t *testing.T) {
 	res := r.one("take", "--as", "m1", "--limit", "1", "--epoch", "0", "--json", "--")
 	cards := taken(t, res)
 	require.Len(t, cards, 1, "a trailing terminator changes nothing: %s%s", res.Stdout, res.Stderr)
+
+	// an epoch that is not a number: the verb's own parse refuses it, exit 2
+	res = r.one("take", "--as", "m1", "--limit", "1", "--epoch", "now")
+	assert.Equal(t, 2, res.Code, "%s%s", res.Stdout, res.Stderr)
+	assert.Len(t, r.queue("m1")["working"], 1, "and nothing more was taken")
 
 	// a report flag left with no value: the verb's own parse refuses it, exit 2
 	res = r.one("finish", "--as", "m1", cards[0], "--epoch", "0", "--report")

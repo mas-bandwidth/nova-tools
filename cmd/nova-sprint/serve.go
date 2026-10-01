@@ -45,11 +45,11 @@ import (
 // No later word, wherever it stands, is a flag named as, redis or actor: the
 // server gives the store and the actor (serve puts them before the worker's
 // words, where nothing the worker sent can take them as a value or end the
-// flags ahead of them). A take, a finish and a read name the epoch their worker
-// holds, so none runs in a sprint its worker has not read. The check is on the
-// words as sent, not on how the verb would parse them: a word that only looks
-// like one of those flags (a report's text) is refused too, which is the safe
-// side. A beat's load is the worker's own measure: the server cannot measure
+// flags ahead of them). The check is on the words as sent, not on how the verb
+// would parse them: a word that only looks like one of those flags (a report's
+// text) is refused too, which is the safe side. The epoch a take, a finish and
+// a read must name is checked where the verb has parsed it (runStep, a.serving):
+// what counts is the epoch the verb runs at, not a word that looks like one. A beat's load is the worker's own measure: the server cannot measure
 // another machine, and would record its own.
 func workerVerb(argv []string) (as string, words int, why string) {
 	if len(argv) >= 2 && argv[0] == "fleet" && argv[1] == "beat" {
@@ -73,26 +73,14 @@ func workerVerb(argv []string) (as string, words int, why string) {
 	if !sprint.ValidID(as) {
 		return "", 0, "a worker's verb names one worker (letters, digits, _ and -), found " + as
 	}
-	epoch := false
-	for i, w := range rest {
+	for _, w := range rest {
 		if !strings.HasPrefix(w, "-") {
 			continue
 		}
-		name, value, has := strings.Cut(strings.TrimLeft(w, "-"), "=")
-		switch name {
+		switch name, _, _ := strings.Cut(strings.TrimLeft(w, "-"), "="); name {
 		case "as", "redis", "actor":
 			return "", 0, "--" + name + " is not a worker's to give the server"
-		case "epoch":
-			if !has && i+1 < len(rest) {
-				value = rest[i+1]
-			}
-			if _, err := strconv.ParseUint(value, 10, 64); err == nil {
-				epoch = true
-			}
 		}
-	}
-	if verb != "queue" && !epoch {
-		return "", 0, "a " + verb + " sent to the server names the epoch its worker holds, --epoch <n> (queue --as " + as + " prints it)"
 	}
 	return as, 1, ""
 }
@@ -108,6 +96,8 @@ func workerVerb(argv []string) (as string, words int, why string) {
 func (a *app) serve(req sprintwire.Request) sprintwire.Response {
 	a.serial.Lock()
 	defer a.serial.Unlock()
+	a.serving = true
+	defer func() { a.serving = false }()
 	out := sprintwire.Response{Results: make([]sprintwire.Result, len(req.Verbs))}
 	for i, argv := range req.Verbs {
 		as, words, why := workerVerb(argv)

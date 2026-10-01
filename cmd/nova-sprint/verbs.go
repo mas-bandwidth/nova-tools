@@ -531,6 +531,12 @@ func needsEpoch(verbName string, coordinator bool) bool {
 // confirm.
 func (a *app) runStep(verbName string, c common, st *store.Store, step store.Step, stdout, stderr io.Writer) int {
 	ctx := context.Background()
+	if a.serving && c.epoch < 0 {
+		// a worker's write through the server runs at the epoch its worker holds, as the
+		// verb parsed it: with none (or one a later word undid) the step could run in a
+		// sprint the worker has not read, a clear later (serve.go)
+		return refuse(stderr, strings.TrimSuffix(verbName, " by id"), "a worker's verb sent to the server names the epoch its worker holds, --epoch <n> (queue prints it), and this one runs at none; nothing was changed")
+	}
 	if epochVerbs[verbName] && c.epoch < 0 {
 		coordinator := false
 		if verbName == "merge" {

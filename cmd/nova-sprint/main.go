@@ -95,6 +95,10 @@ type app struct {
 	// serveAddr is the store the server runs the workers' verbs on.
 	serial    sync.Mutex
 	serveAddr string
+	// serving says the verb running is one a worker sent to the server (set and
+	// cleared under serial): its step names the epoch its worker holds, or is
+	// refused (runStep).
+	serving bool
 }
 
 func newApp(getenv func(string) string) *app {
