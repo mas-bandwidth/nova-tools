@@ -16,9 +16,19 @@ package main
 // with its rejected fact. The verb keeps no state of its own: the store
 // changes only through those merge steps, and git and the check run as
 // programs in the caller's environment.
+//
+// The push and the report are two operations on two systems, so land fences
+// them as tla/Land.tla models: the caller's --epoch is checked before any git;
+// the queue head and the epoch are read again just before each push (Push's
+// Fresh); the report is one store step that lands the batch only while the
+// queue still starts with it at the epoch land read (Report's guard, landStep);
+// a batch pushed and not reported is left in the base and recovered by running
+// land again (Recovers).
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -54,7 +64,16 @@ Landing, the coordinator's: an external delivery (git pushes the base) and a sto
     --stream s1 --batch <n> does. A head missing or in conflict ends the batch
     before it and is reported as merge --conflict, a red check as --red, a
     second rejected push as --rejected. The clone is --repo-dir, else the dir=
-    each line names; git uses the caller's environment. --dry-run reads the store only.`) + "\n"
+    each line names; git uses the caller's environment.
+  nova-sprint land --stream s1 --dry-run
+    reads the store only: no git, no push, no report. The window: the queue
+    and the epoch are checked before any git and again just before the push,
+    and the report lands the batch only while the queue still starts with it
+    at that epoch (one store step). Between the push and the report a clear,
+    an accept ahead of the batch, a return or a crash leaves the batch in the
+    base and not reported: the line is LAND FAILED, exit 2, and running land
+    again recovers it (its merges and its push are no-ops, the report lands
+    it); after a clear the store holds nothing to report (tla/Land.tla).`) + "\n"
 }
 
 // landBatch is one batch's outcome, a line of output and an item of --json.
@@ -126,6 +145,7 @@ type lander struct {
 	dry                        bool
 	out                        []landBatch
 	steps                      int
+	epoch                      uint64 // the epoch land read: every report is fenced to it
 }
 
 func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
@@ -159,7 +179,13 @@ func (a *app) cmdLand(args []string, stdout, stderr io.Writer) int {
 	if err != nil {
 		return refuse(stderr, "land", err.Error())
 	}
-	l := &lander{a: a, c: *c, st: st, repoDir: *repoDir, base: *base, check: *check, dry: *dry}
+	// the epoch the caller holds is checked before anything is read or run
+	// (tla/Land.tla, Read: a stale caller is refused before any push)
+	if c.epoch >= 0 && uint64(c.epoch) != st.PinnedEpoch() {
+		fmt.Fprintf(stderr, "%s land: the sprint is at epoch %d, not %d (cleared since): nothing was fetched, pushed or reported; run: nova-sprint where\n", prog, st.PinnedEpoch(), c.epoch)
+		return 1
+	}
+	l := &lander{a: a, c: *c, st: st, repoDir: *repoDir, base: *base, check: *check, dry: *dry, epoch: st.PinnedEpoch()}
 	if *repoDir != "" {
 		if abs, err := filepath.Abs(*repoDir); err == nil {
 			l.repoDir = abs
@@ -373,7 +399,7 @@ func (l *lander) batch(ctx context.Context, stream string, cards []landCard) (la
 		_, err = l.git(ctx, dir, "push", "--porcelain", "origin", "HEAD:refs/heads/"+b.Base)
 		if err == nil {
 			b.Tip = tip
-			if !l.landed(ctx, b, stream, ids[:len(merged)]) {
+			if !l.landed(b, stream, ids[:len(merged)]) {
 				return false, false
 			}
 			if failed.id != "" {
@@ -413,7 +439,7 @@ func (l *lander) conflict(stream string, f conflictCard) {
 func (l *lander) fact(b landBatch, r sprint.MergeReq, fact, why string) (bool, bool) {
 	b.Status, b.Fact, b.Reason = "refused", fact, why
 	r.Who = l.c.actor
-	res, err := l.step(r)
+	res, err := l.step(r, b.IDs)
 	if code := stepExit(res, err); code != 0 {
 		b.Fact = ""
 		b.Reason = why + "; the merge step did not record it (" + stepWhy(res, err) + "); run: nova-sprint merge --stream " + r.Stream + " " + factFlag(r)
@@ -435,17 +461,12 @@ func factFlag(r sprint.MergeReq) string {
 
 // landed reports a pushed batch through the merge step; false (and the line
 // FAILED, with the merge command to run) when the store did not take it.
-func (l *lander) landed(ctx context.Context, b landBatch, stream string, ids []string) bool {
+func (l *lander) landed(b landBatch, stream string, ids []string) bool {
 	b.Cards, b.IDs = len(ids), ids
-	run := "nova-sprint merge --stream " + stream + " --batch " + strconv.Itoa(len(ids))
-	if why := l.queueHead(ctx, stream, ids); why != "" {
-		b.Status, b.Reason = "failed", "the batch was pushed to "+b.Base+" at "+b.Tip+" and NOT reported: "+why+"; land the pushed cards by hand: "+run
-		l.out = append(l.out, b)
-		return false
-	}
-	res, err := l.step(sprint.MergeReq{Stream: stream, Batch: len(ids), Who: l.c.actor})
+	res, err := l.step(sprint.MergeReq{Stream: stream, Batch: len(ids), Who: l.c.actor}, ids)
 	if code := stepExit(res, err); code != 0 || len(res.Moved) != len(ids) {
-		b.Status, b.Reason = "failed", "the batch was pushed to "+b.Base+" at "+b.Tip+" and the merge report failed ("+stepWhy(res, err)+"); run: "+run
+		b.Status, b.Reason = "failed", "the batch was pushed to "+b.Base+" at "+b.Tip+" and NOT reported ("+stepWhy(res, err)+
+			"); run land again to report it (its merges and push are no-ops), or by hand once the queue starts with "+idSpan(ids)+": nova-sprint merge --stream "+stream+" --batch "+strconv.Itoa(len(ids))
 		l.out = append(l.out, b)
 		return false
 	}
@@ -454,17 +475,25 @@ func (l *lander) landed(ctx context.Context, b landBatch, stream string, ids []s
 	return true
 }
 
-// step runs one merge step, as `merge --stream` runs it, under an op id of
-// the caller's --op when it gave one.
-func (l *lander) step(r sprint.MergeReq) (store.Result, error) {
+// step runs one merge step, as `merge --stream` runs it, fenced to the epoch
+// land read and guarded in the same store step: it plans only while the
+// stream's queue starts with ids (tla/Land.tla, Report), so a queue changed
+// since the push refuses the report and lands nothing it did not push. Under
+// the caller's --op, each step has an op id of its own.
+func (l *lander) step(r sprint.MergeReq, ids []string) (store.Result, error) {
 	step := store.MergeStep(r)
+	plan := step.Plan
+	step.Plan = func(s *sprint.Snapshot) sprint.Plan {
+		if why := headWhy(landQueue(s, r.Stream), r.Stream, ids); why != "" {
+			return sprint.Plan{Refused: []sprint.Refusal{{Key: r.Stream, Why: why}}}
+		}
+		return plan(s)
+	}
+	epoch := l.epoch
+	step.Epoch = &epoch
 	l.steps++
 	if l.c.op != "" {
 		step.CallerOp = l.c.op + "." + r.Stream + "." + strconv.Itoa(l.steps)
-	}
-	if l.c.epoch >= 0 {
-		e := uint64(l.c.epoch)
-		step.Epoch = &e
 	}
 	return l.st.Run(context.Background(), step)
 }
@@ -484,17 +513,20 @@ func stepWhy(res store.Result, err error) string {
 	return strings.Join(why, "; ")
 }
 
-// queueHead is why the stream's merge queue no longer starts with ids, ""
-// when it does: the merge step lands the first n queued, so a queue changed
-// since land read it would land other cards.
+// queueHead is why the stream's merge queue, read again at the epoch land
+// read, no longer starts with ids; "" when it does (tla/Land.tla, Fresh).
 func (l *lander) queueHead(ctx context.Context, stream string, ids []string) string {
 	s, err := l.st.Load(ctx, []string{sprint.Merge}, nil)
 	if err != nil {
-		return "the merge queue could not be read again: " + oneline.Err(err)
+		return "the merge queue could not be read again at epoch " + strconv.FormatUint(l.epoch, 10) + ": " + oneline.Err(err)
 	}
-	q := landQueue(s, stream)
+	return headWhy(landQueue(s, stream), stream, ids)
+}
+
+// headWhy is why a queue does not start with ids, "" when it does.
+func headWhy(q []*sprint.Card, stream string, ids []string) string {
 	if len(q) < len(ids) {
-		return fmt.Sprintf("the merge queue of %s holds %d cards now, fewer than the batch of %d", stream, len(q), len(ids))
+		return fmt.Sprintf("the merge queue of %s holds %d cards now, fewer than the batch of %d; run land again", stream, len(q), len(ids))
 	}
 	for i, id := range ids {
 		if q[i].ID != id {
@@ -505,9 +537,11 @@ func (l *lander) queueHead(ctx context.Context, stream string, ids []string) str
 }
 
 // build cuts the batch branch from origin's base and merges the cards' heads
-// in order, stopping at the first that is missing or conflicts: merged is
-// the cards merged, failed the card that ended the batch, why a refusal of
-// the whole batch (nothing to report).
+// in order, stopping at the first the card itself stops (a head that is not
+// a commit on origin, or a merge that left unmerged paths): merged is the
+// cards merged, failed the card that ended the batch, why a refusal of the
+// whole batch that blames no card (git's own failure: the fetch, the cut, an
+// identity, a hook, the disk), nothing to report.
 func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard) (merged []string, failed conflictCard, why string) {
 	base := cards[0].base
 	if _, err := l.git(ctx, dir, "fetch", "--no-tags", "origin"); err != nil {
@@ -517,20 +551,30 @@ func (l *lander) build(ctx context.Context, dir, stream string, cards []landCard
 		return nil, failed, "the base " + base + " could not be cut from origin in " + dir + ": " + firstLine("", err)
 	}
 	for _, c := range cards {
-		if why := l.mergeHead(ctx, dir, stream, c); why != "" {
-			return merged, conflictCard{id: c.id, why: why}, ""
+		card, env := l.mergeHead(ctx, dir, stream, c)
+		switch {
+		case env != "":
+			return nil, failed, env + "; no card is blamed and nothing was pushed or reported"
+		case card != "":
+			return merged, conflictCard{id: c.id, why: card}, ""
 		}
 		merged = append(merged, c.id)
 	}
 	return merged, failed, ""
 }
 
-// mergeHead merges one card's head onto the batch branch: "" when it merged,
-// else why it did not, the merge aborted. A head the clone lacks is fetched
-// from origin by its id once.
-func (l *lander) mergeHead(ctx context.Context, dir, stream string, c landCard) string {
+// notOnOrigin is how a remote says it holds no object of that id.
+var notOnOrigin = []string{"not our ref", "couldn't find remote ref", "no such remote ref", "unadvertised object"}
+
+// mergeHead merges one card's head onto the batch branch. card is why the
+// card itself does not merge (its head is not a commit id, origin holds no
+// such commit, or the merge stopped on unmerged paths, aborted); env is why
+// git failed for any other reason, which is not the card's (an identity, a
+// hook, the disk, the network), with any merge in progress aborted; both ""
+// when it merged. A head the clone lacks is fetched from origin by its id once.
+func (l *lander) mergeHead(ctx context.Context, dir, stream string, c landCard) (card, env string) {
 	if !shaRE.MatchString(c.head) {
-		return "the head " + dashed(c.head) + " of " + c.id + " is not a commit id; run: nova-sprint card " + c.id
+		return "the head " + dashed(c.head) + " of " + c.id + " is not a commit id; run: nova-sprint card " + c.id, ""
 	}
 	merge := func() error {
 		_, err := l.git(ctx, dir, "merge", "--no-ff", "--no-edit", "-m", "land "+c.id+" (sprint stream "+stream+")", c.head)
@@ -538,21 +582,41 @@ func (l *lander) mergeHead(ctx context.Context, dir, stream string, c landCard) 
 	}
 	err := merge()
 	if err == nil {
-		return ""
+		return "", ""
 	}
 	if _, missing := l.git(ctx, dir, "cat-file", "-e", c.head+"^{commit}"); missing != nil {
-		if _, err := l.git(ctx, dir, "fetch", "--no-tags", "origin", c.head); err != nil {
-			return "the head " + c.head + " of " + c.id + " is missing: not on origin (" + firstLine("", err) + ")"
+		_, ferr := l.git(ctx, dir, "fetch", "--no-tags", "origin", c.head)
+		switch {
+		case ferr != nil && containsAny(ferr.Error(), notOnOrigin):
+			return "the head " + c.head + " of " + c.id + " is missing: origin holds no such commit (" + firstLine("", ferr) + ")", ""
+		case ferr != nil:
+			return "", "the fetch of the head " + c.head + " of " + c.id + " failed: " + firstLine("", ferr)
 		}
 		if err = merge(); err == nil {
-			return ""
+			return "", ""
 		}
 	}
-	why := "the head " + c.head + " of " + c.id + " does not merge: " + firstLine("", err)
-	if _, abortErr := l.git(ctx, dir, "merge", "--abort"); abortErr != nil {
-		why += "; and git merge --abort failed: " + firstLine("", abortErr)
+	unmerged, uerr := l.git(ctx, dir, "ls-files", "--unmerged")
+	_, inMerge := l.git(ctx, dir, "rev-parse", "-q", "--verify", "MERGE_HEAD")
+	if inMerge == nil {
+		if _, aerr := l.git(ctx, dir, "merge", "--abort"); aerr != nil {
+			return "", "git merge --abort failed after the merge of " + c.id + " stopped: " + firstLine("", aerr)
+		}
 	}
-	return why
+	if uerr == nil && unmerged != "" {
+		return "the head " + c.head + " of " + c.id + " does not merge: " + firstLine("", err), ""
+	}
+	return "", "the merge of " + c.id + " failed in git, not on its changes: " + firstLine("", err)
+}
+
+// containsAny says s holds one of words.
+func containsAny(s string, words []string) bool {
+	for _, w := range words {
+		if strings.Contains(s, w) {
+			return true
+		}
+	}
+	return false
 }
 
 // runCheck runs --check in the clone: "" when it passed or there is none.
@@ -579,22 +643,18 @@ func checkTail(out string) string {
 	return ""
 }
 
-// clone is the directory a batch of the repository lands in: --repo-dir,
-// whose origin must be the repository a card names; else a clone kept under
-// the land root, made on first use. why is a refusal.
+// clone is the directory a batch of the repository lands in: --repo-dir, else
+// a clone kept under the land root, made on first use. Every clone reused,
+// given or kept, has its origin read and held to the repository the card
+// names before any git touches it, so a batch is never pushed to another
+// repository's remote (a card naming none takes --repo-dir's as it is). why
+// is a refusal.
 func (l *lander) clone(ctx context.Context, repo string) (dir, why string) {
 	if l.repoDir != "" {
 		if repo == "" || l.dry {
 			return l.repoDir, ""
 		}
-		origin, err := l.git(ctx, l.repoDir, "remote", "get-url", "origin")
-		if err != nil {
-			return "", "the clone " + l.repoDir + " has no origin: " + firstLine("", err)
-		}
-		if sameRepo(origin, repo) {
-			return l.repoDir, ""
-		}
-		return "", "the card names the repository " + repo + " and the clone " + l.repoDir + " is of " + origin + "; run: nova-sprint land with --repo-dir a clone of " + repo
+		return l.repoDir, l.originIs(ctx, l.repoDir, repo)
 	}
 	if repo == "" {
 		return "", "the card names no REPO: line and no --repo-dir was given; run: nova-sprint land --repo-dir <clone>"
@@ -611,7 +671,7 @@ func (l *lander) clone(ctx context.Context, repo string) (dir, why string) {
 		return dir, ""
 	}
 	if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
-		return dir, ""
+		return dir, l.originIs(ctx, dir, repo)
 	}
 	if err := os.MkdirAll(l.root, 0o755); err != nil {
 		return "", "the land directory " + l.root + " could not be made: " + oneline.Err(err)
@@ -620,6 +680,18 @@ func (l *lander) clone(ctx context.Context, repo string) (dir, why string) {
 		return "", "the clone of " + repo + " into " + dir + " failed: " + firstLine("", err)
 	}
 	return dir, ""
+}
+
+// originIs is why the clone's origin is not repo, "" when it is.
+func (l *lander) originIs(ctx context.Context, dir, repo string) string {
+	origin, err := l.git(ctx, dir, "remote", "get-url", "origin")
+	if err != nil {
+		return "the clone " + dir + " has no origin to push to: " + firstLine("", err) + "; run: nova-sprint land --repo-dir <a clone of " + repo + ">"
+	}
+	if !sameRepo(origin, repo) {
+		return "the card names the repository " + repo + " and the clone " + dir + " is of " + origin + "; nothing was fetched or pushed; run: nova-sprint land --repo-dir <a clone of " + repo + ">"
+	}
+	return ""
 }
 
 // defaultLandRoot is where land keeps its clones: nova-sprint/land in the
@@ -632,10 +704,19 @@ func defaultLandRoot() (string, error) {
 	return filepath.Join(cache, "nova-sprint", "land"), nil
 }
 
-// repoDirName is a repository's clone directory name: its URL or path, every
-// character that is not a letter, digit, dot or dash a dash.
+// repoDirName is a repository's clone directory name: its URL or path with
+// every character that is not a letter, digit, dot or dash a dash, cut to 48,
+// for a person to read, then the first 16 hex digits of the SHA-256 of the
+// repository's one spelling (normRepo), so two repositories whose readable
+// names agree (a-b/c and a/b-c) never share a clone.
 func repoDirName(repo string) string {
-	return strings.Trim(notNameRE.ReplaceAllString(normRepo(repo), "-"), "-.")
+	key := normRepo(repo)
+	sum := sha256.Sum256([]byte(key))
+	name := strings.Trim(notNameRE.ReplaceAllString(key, "-"), "-.")
+	if len(name) > 48 {
+		name = name[len(name)-48:]
+	}
+	return strings.TrimLeft(name, "-.") + "-" + hex.EncodeToString(sum[:8])
 }
 
 // notNameRE is a run of characters a clone directory's name does not keep.
@@ -664,13 +745,7 @@ func sameRepo(a, b string) bool { return normRepo(a) == normRepo(b) }
 // rejected says a failed push was refused by the remote (the base moved, or
 // a rule on it), not a push that could not reach it.
 func rejected(err error) bool {
-	msg := err.Error()
-	for _, w := range []string{"[rejected]", "[remote rejected]", "non-fast-forward", "fetch first"} {
-		if strings.Contains(msg, w) {
-			return true
-		}
-	}
-	return false
+	return containsAny(err.Error(), []string{"[rejected]", "[remote rejected]", "non-fast-forward", "fetch first"})
 }
 
 // git runs one git in dir (none: the current directory, for a clone into a

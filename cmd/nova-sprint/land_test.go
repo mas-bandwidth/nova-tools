@@ -231,9 +231,18 @@ func TestLandSaysLoudlyWhenAPushedBatchIsNotReported(t *testing.T) {
 	assert.Equal(t, 2, code)
 	tip := r.git(r.remote, "rev-parse", "main")
 	assert.Contains(t, errs, "LAND FAILED stream=s1 cards=2 base=main tip="+tip+" ids=s1-1..s1-2")
-	assert.Contains(t, errs, "and NOT reported: ")
-	assert.Contains(t, errs, "; land the pushed cards by hand: nova-sprint merge --stream s1 --batch 2")
+	assert.Contains(t, errs, "and NOT reported (s1: the merge queue of s1 holds 1 cards now, fewer than the batch of 2")
+	assert.Contains(t, errs, "run land again to report it (its merges and push are no-ops), or by hand once the queue starts with s1-1..s1-2: nova-sprint merge --stream s1 --batch 2")
 	assert.Equal(t, []string{"land s1-2 (sprint stream s1)", "land s1-1 (sprint stream s1)", "base"}, r.mainLog())
+	// the guard landed nothing it did not push: s1-1 went back to review, s1-2 is still queued
+	assert.Equal(t, map[string]string{"s1-1": "review/returned", "s1-2": "merging/queued"}, r.places("s1-1", "s1-2"))
+	// running land again recovers the pushed and unreported card (tla/Land.tla, Recovers)
+	r.a.beforePush = nil
+	out := r.ok("land --repo-dir " + r.clone + " --base main")
+	assert.Contains(t, out, "LAND OK stream=s1 cards=1 base=main tip="+tip+" ids=s1-2")
+	assert.Equal(t, tip, r.git(r.remote, "rev-parse", "main"), "the recovery pushed nothing new")
+	assert.Equal(t, "landed/merged", r.places("s1-2")["s1-2"])
+	r.clean()
 }
 
 // A check that fails pushes nothing and reports the batch red.
@@ -349,5 +358,75 @@ func TestLandNamesARepositoryOneWay(t *testing.T) {
 	} {
 		assert.Equal(t, tc.same, sameRepo(tc.a, tc.b), "%s %s", tc.a, tc.b)
 	}
-	assert.Equal(t, "forge.test-owner-name", repoDirName("https://forge.test/owner/name.git"))
+	assert.Regexp(t, `^forge\.test-owner-name-[0-9a-f]{16}$`, repoDirName("https://forge.test/owner/name.git"))
+	assert.Equal(t, repoDirName("https://forge.test/owner/name.git"), repoDirName("git@forge.test:owner/name"))
+}
+
+// The review's findings (#5020, held at e95b7961), each a property.
+
+// Two repositories never share a kept clone: names that read alike (a-b/c and
+// a/b-c) differ by their hash, and a kept clone whose origin is another
+// repository is refused before any fetch or push, both remotes untouched.
+func TestLandReviewClonesOfTwoRepositoriesNeverShareADirectory(t *testing.T) {
+	t.Parallel()
+	assert.NotEqual(t, repoDirName("https://example.invalid/a-b/c.git"), repoDirName("https://example.invalid/a/b-c.git"))
+	r := newLandRig(t)
+	other := filepath.Join(r.dir, "other.git")
+	r.git("", "init", "-q", "--bare", "-b", "main", other)
+	r.git(r.worker, "push", "-q", other, "refs/remotes/origin/main:refs/heads/main")
+	kept := filepath.Join(r.dir, "land", repoDirName(r.remote))
+	require.NoError(t, os.MkdirAll(filepath.Dir(kept), 0o755))
+	r.git("", "clone", "-q", other, kept) // a kept clone at the card repository's place, of another repository
+	briefs := t.TempDir()
+	path := filepath.Join(briefs, "a.md")
+	require.NoError(t, os.WriteFile(path, []byte(passingBrief("REPO: "+r.remote+"\nBASE: main\n\nWrite a.txt.")), 0o600))
+	r.ok("add --stream s1 a --brief-file " + path)
+	r.queued(map[string]string{"a": r.head("a", "main", "a.txt", "a\n")}, "a")
+	before, otherBefore := r.git(r.remote, "rev-parse", "main"), r.git(other, "rev-parse", "main")
+	code, _, errs := r.do("land")
+	assert.Equal(t, 1, code)
+	assert.Contains(t, errs, "the card names the repository "+r.remote+" and the clone "+kept+" is of "+other+"; nothing was fetched or pushed")
+	assert.Equal(t, before, r.git(r.remote, "rev-parse", "main"))
+	assert.Equal(t, otherBefore, r.git(other, "rev-parse", "main"))
+	assert.Equal(t, map[string]string{"a": "merging/queued"}, r.places("a"))
+}
+
+// A caller's --epoch the sprint has left is refused before any git: nothing is
+// fetched, merged, pushed or reported.
+func TestLandReviewAWrongEpochPushesNothing(t *testing.T) {
+	t.Parallel()
+	r := newLandRig(t)
+	r.ok("add --stream s1 --count 1")
+	r.queued(map[string]string{"s1-1": r.head("s1-1", "main", "a.txt", "a\n")}, "s1-1")
+	before, applies := r.git(r.remote, "rev-parse", "main"), r.applies()
+	code, _, errs := r.do("land --repo-dir " + r.clone + " --base main --epoch 999")
+	assert.Equal(t, 1, code)
+	assert.Contains(t, errs, "the sprint is at epoch 0, not 999 (cleared since): nothing was fetched, pushed or reported; run: nova-sprint where")
+	assert.Equal(t, before, r.git(r.remote, "rev-parse", "main"))
+	assert.Equal(t, applies, r.applies())
+	assert.NotContains(t, r.git(r.clone, "branch", "--list"), "land/s1")
+	assert.Equal(t, map[string]string{"s1-1": "merging/queued"}, r.places("s1-1"))
+}
+
+// A git that fails for a reason that is not the card's (here an empty
+// identity) blames no card: nothing is reported, the card stays queued, the
+// stream keeps merging, and land exits non-zero with git's reason.
+func TestLandReviewAGitEnvironmentFailureBlamesNoCard(t *testing.T) {
+	t.Parallel()
+	r := newLandRig(t)
+	r.ok("add --stream s1 --count 2")
+	r.queued(map[string]string{"s1-1": r.head("s1-1", "main", "a.txt", "a\n"), "s1-2": r.head("s1-2", "main", "b.txt", "b\n")}, "s1-1", "s1-2")
+	r.a.gitEnv = append(append([]string(nil), r.env...), "GIT_AUTHOR_NAME=", "GIT_COMMITTER_NAME=")
+	before := r.git(r.remote, "rev-parse", "main")
+	code, _, errs := r.do("land --repo-dir " + r.clone + " --base main")
+	assert.Equal(t, 1, code)
+	assert.Contains(t, errs, "LAND REFUSED stream=s1 cards=2 base=main tip=- ids=s1-1..s1-2")
+	assert.Contains(t, errs, "the merge of s1-1 failed in git, not on its changes")
+	assert.Contains(t, errs, "empty ident name")
+	assert.Contains(t, errs, "no card is blamed and nothing was pushed or reported")
+	assert.NotContains(t, errs, "fact=")
+	assert.Equal(t, before, r.git(r.remote, "rev-parse", "main"))
+	assert.Equal(t, map[string]string{"s1-1": "merging/queued", "s1-2": "merging/queued"}, r.places("s1-1", "s1-2"))
+	assert.Equal(t, "merging", r.streamState("s1"))
+	r.clean()
 }
