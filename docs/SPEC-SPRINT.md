@@ -1300,6 +1300,13 @@ path, and what the server's run of it printed is printed there, with its exit co
 the verbs not served, a verb given its own `--redis`, and a verb's help run where they are
 typed. So one process writes the sprint: the server.
 
+With `run --land` the server lands what the readers passed, itself: every two seconds, when a
+stream has cards queued to merge, it runs `land` for them as the sprint's coordinator, one
+landing at a time, in its own process. Land's reads and its report take the server's line of
+control like any other step; its git (the fetch, the merges, the check, the push) runs outside
+it, so a tick or a worker's batch never waits on a push. A `land` run by itself beside a
+server is a second writer of the merge queue, and is what `--land` replaces.
+
 The address is one address of the coordinator's machine on the fleet's private network; an
 address every network can reach is refused. The server checks no credential (the owner: "I am OK
 with relying on tailnet as secure"): what can reach the address can run a worker's verb as any
