@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/binstamp"
 	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/member"
@@ -169,8 +170,54 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	if note := passNote(*model, pass, *auth); note != "" {
 		fmt.Fprintln(stdout, note)
 	}
-	n := 0
+	n, replaced := memberLoop(m, every.d, loopTicks(*once, ticksGiven, *ticks), func() string { return binstamp.Of(self) }, stdout, stderr)
+	if replaced {
+		return exitReplaced
+	}
+	fmt.Fprintf(stdout, "MEMBER OK as=%s ticks=%d running=%d\n", oneline.Field(*as), n, m.Running())
+	return 0
+}
+
+// exitReplaced is member's exit when its binary was replaced under it: not 0, so
+// a supervisor that restarts only a failed loop restarts it too (the loop units
+// in fleet/templates restart on any exit).
+const exitReplaced = 3
+
+// loopTicks is the tick count a bounded run stops at: 1 for --once, --ticks' n,
+// 0 for a run until stopped.
+func loopTicks(once, ticksGiven bool, ticks int) int {
+	if once {
+		return 1
+	}
+	if ticksGiven {
+		return ticks
+	}
+	return 0
+}
+
+// memberLoop ticks m every `every` (limit > 0: at most limit ticks) and returns the
+// ticks it ran. A loop runs the code it was started with for as long as it runs: a
+// release installed under it would leave the fleet worked by the code before it
+// (2026-10-01: six members kept the binaries they began with until restarted by
+// hand). So before each tick it reads its binary's stamp, and when that changed
+// since it began: with no child running it stops at once, saying so; with children
+// running it drains, taking no new card (said once) and reporting each child as it
+// ends, and stops when the last is reported. replaced is true when it stopped so.
+func memberLoop(m *member.Member, every time.Duration, limit int, stamp func() string, stdout, stderr io.Writer) (n int, replaced bool) {
+	began := stamp()
+	draining := false
 	for {
+		if began != "" && stamp() != began {
+			if m.Running() == 0 {
+				fmt.Fprintf(stdout, "MEMBER STOP the binary this member runs was replaced; its supervisor starts the new one\n")
+				return n, true
+			}
+			if !draining {
+				draining = true
+				m.Drain()
+				fmt.Fprintf(stdout, "MEMBER DRAIN the binary this member runs was replaced: taking no new card, %d running; it stops when the last child is reported\n", m.Running())
+			}
+		}
 		n++
 		acted, err := m.Tick(time.Now())
 		if err != nil {
@@ -179,13 +226,11 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 		if acted > 0 || err != nil {
 			fmt.Fprintf(stdout, "tick %d acted=%d running=%d %s\n", n, acted, m.Running(), oneline.Field(time.Now().Format("15:04:05")))
 		}
-		if *once || (ticksGiven && n >= *ticks) {
-			break
+		if limit > 0 && n >= limit {
+			return n, false
 		}
-		time.Sleep(every.d)
+		time.Sleep(every)
 	}
-	fmt.Fprintf(stdout, "MEMBER OK as=%s ticks=%d running=%d\n", oneline.Field(*as), n, m.Running())
-	return 0
 }
 
 // execSprint runs the sprint's verbs as the nova-sprint binary, with this
@@ -482,7 +527,8 @@ func (c *nativeChild) Result() member.Result {
 
 // frameOf is a launch's frame (docs/SPEC-CARD-CONTRACT.md layer 1): the repository and
 // base the brief's header names, the packet's branch and attempt, and the commit to stage:
-// a read's head under read, a later attempt's previous pushed head, else the base's sha.
+// a read's head under read, a later attempt's last pushed head of any earlier attempt
+// (sprint.BaseOf, the packet's base_head and base_attempt), else the base's sha.
 func frameOf(p member.Packet, model, root string) cardcontract.Frame {
 	cb := swarm.ReadCardBase([]byte(p.Brief))
 	first, _, _ := strings.Cut(p.Brief, "\n")
@@ -504,7 +550,7 @@ func frameOf(p member.Packet, model, root string) cardcontract.Frame {
 		return f
 	}
 	if p.BaseHead != "" {
-		f.StageSha, f.PrevHead = p.BaseHead, p.BaseHead
+		f.StageSha, f.PrevHead, f.PrevFrom = p.BaseHead, p.BaseHead, p.BaseFrom
 	}
 	return f
 }

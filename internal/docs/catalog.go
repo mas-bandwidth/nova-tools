@@ -47,6 +47,7 @@ var DefaultCatalog = []Entry{
 	// internal/
 	E("internal/atomicfile", "atomic file write: standard-library rename beside the target", "go test ./internal/atomicfile", "go test ./internal/atomicfile"),
 	E("internal/bounded", "bounded readers and byte buffers", "go test ./internal/bounded", "go test ./internal/bounded"),
+	E("internal/binstamp", "a binary file's stamp: a loop stops when its own binary was replaced", "go test ./internal/binstamp", "go test ./internal/binstamp"),
 	E("internal/buildinfo", "binary identity and version info", "go test ./internal/buildinfo", "go test ./internal/buildinfo"),
 	E("internal/bus", "append-only coordination bus", "go test ./internal/bus", "go test ./internal/bus"),
 	E("internal/cairn", "memory distillation and cairn builder", "go test ./internal/cairn", "go test ./internal/cairn"),

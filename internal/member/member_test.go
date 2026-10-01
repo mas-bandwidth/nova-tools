@@ -1111,3 +1111,26 @@ func TestAnEndedLaunchWhoseCardCameBackReadyIsReapedAndTheWidthFreed(t *testing.
 		require.Equal(t, 2, g.r.packets[1].Attempt)
 	})
 }
+
+// A member told to drain (its binary was replaced) reports what ended and takes
+// nothing new, though room is left and cards are ready; it starts no child for an
+// in-flight card of no child of ours either.
+func TestADrainingMemberTakesNothingNewButReportsWhatEnded(t *testing.T) {
+	t.Parallel()
+	g := newRig(Config{As: "m", Width: 2})
+	g.s.set("queue", 0, queueJSON(t, 7, ready("c1")))
+	g.s.set("take", 0, takeJSON(t, pk("c1")))
+	_, err := g.tick(t)
+	require.NoError(t, err)
+	require.Equal(t, 1, g.m.Running())
+	g.m.Drain()
+	p := pk("c1")
+	g.r.child("c1").end(Result{Ran: true, OK: true, Shaped: true, Verdict: "ok", Report: "done"})
+	g.s.set("queue", 0, queueJSON(t, 7, working("c1", 1, &p), ready("c2"), working("c3", 1, &Packet{Card: "c3", Kind: "work", Gen: 1, Epoch: 7})))
+	g.s.reset()
+	_, err = g.tick(t)
+	require.NoError(t, err)
+	require.Len(t, g.s.lines("finish"), 1, "what ended is reported")
+	require.Empty(t, g.s.lines("take"), "nothing new is taken")
+	require.Equal(t, []string{"c1"}, g.r.started(), "no child is started, taken or recovered")
+}
