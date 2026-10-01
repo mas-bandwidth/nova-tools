@@ -743,7 +743,7 @@ func TestJSONCarriesTheSameReadingAsTheLines(t *testing.T) {
 		s := report.Streams[i]
 		assert.Equal(t, s.Name, row.Name, "%s: object says %s/%s", s.Name, row.Name, row.Trend)
 		assert.Equal(t, string(s.Trend()), row.Trend, "%s: object says %s/%s", s.Name, row.Name, row.Trend)
-		assert.Equal(t, row.Now != nil, s.HaveNow, "%s: a number the verb does not have must be null, not zero", s.Name)
+		assert.Equal(t, s.HaveNow, row.Now != nil, "%s: a number the verb does not have must be null, not zero", s.Name)
 		if row.Now != nil {
 			assert.Equal(t, s.Now, *row.Now, "%s: now %v in the object, %v on the line", s.Name, *row.Now, s.Now)
 		}
