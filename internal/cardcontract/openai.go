@@ -48,7 +48,7 @@ nova_openai_git_guard() {
 		case "$1" in
 		-C|-c|--git-dir|--work-tree|--namespace|--super-prefix)
 			[ $# -ge 2 ] || nova_openai_git_refuse; shift 2 ;;
-		-C*|-c*|--git-dir=*|--work-tree=*|--namespace=*|--super-prefix=*|--no-pager|--no-optional-locks) shift ;;
+		-C*|-c*|--git-dir=*|--work-tree=*|--namespace=*|--super-prefix=*|--no-pager|--no-optional-locks|--version|--help|-h|-p|-P|--paginate|--no-replace-objects|--literal-pathspecs|--glob-pathspecs|--noglob-pathspecs|--icase-pathspecs) shift ;;
 		-*) nova_openai_git_refuse ;;
 		push) shift; nova_openai_push_args "$@"; return ;;
 		*) return ;;

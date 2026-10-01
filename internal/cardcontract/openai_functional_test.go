@@ -166,6 +166,29 @@ func TestOpenAIRefusesWrongKindGhCommands(t *testing.T) {
 	}
 }
 
+// A read-only global option is not a push: the guard passes it to the real Git, as the
+// claude profile does (docs/SPEC-CARD-CONTRACT.md section 5).
+func TestOpenAIGitVersionIsNotRefused(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "openai", "work")
+	code, out, errb := r.sh(r.repo, "git --version")
+	require.Equal(t, 0, code, errb)
+	assert.Contains(t, out, "git version")
+	assert.NotContains(t, errb, "REFUSED")
+}
+
+func TestOpenAIGitPagerOptionsAreNotRefused(t *testing.T) {
+	t.Parallel()
+	r := newRig(t, "openai", "work")
+	r.commit(r.repo, "work")
+	for _, line := range []string{"git -P log -1", "git --no-pager log -1", "git --paginate -P log -1"} {
+		code, out, errb := r.sh(r.repo, line)
+		require.Equal(t, 0, code, "%s: %s", line, errb)
+		assert.Contains(t, out, "commit ", line)
+		assert.NotContains(t, errb, "REFUSED", line)
+	}
+}
+
 func TestOpenAIRefusesUnrepresentablePushes(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
