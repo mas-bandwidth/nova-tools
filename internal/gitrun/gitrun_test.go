@@ -3,7 +3,6 @@ package gitrun_test
 import (
 	"bytes"
 	"context"
-	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -32,7 +31,7 @@ func fakeGit(t *testing.T, body string) string {
 func TestDefaultTimeoutIsSixtySeconds(t *testing.T) {
 	t.Parallel()
 
-	require.Equal(t, time.Duration(60*time.Second), gitrun.DefaultTimeout, "DefaultTimeout is %s, want 60s", gitrun.DefaultTimeout)
+	require.Equal(t, 60*time.Second, gitrun.DefaultTimeout, "DefaultTimeout is %s, want 60s", gitrun.DefaultTimeout)
 	cmd, cancel := gitrun.Command(context.Background(), gitrun.Options{C: "/somewhere"}, "status")
 	defer cancel()
 	require.Equal(t, subproc.WaitDelay, cmd.WaitDelay, "WaitDelay is %s, want %s", cmd.WaitDelay, subproc.WaitDelay)
@@ -51,9 +50,9 @@ func TestAFinishedGitReturnsItsStreamsAndItsExitError(t *testing.T) {
 	require.Equal(t, "out\n", string(res.Stdout), "streams %q %q", res.Stdout, res.Stderr)
 	require.Equal(t, "err\n", string(res.Stderr), "streams %q %q", res.Stdout, res.Stderr)
 	out, err := gitrun.Combined(context.Background(), gitrun.Options{Bin: bin, Env: []string{"PATH=/usr/bin:/bin"}}, "x")
-	if !errors.As(err, &ee) || !strings.Contains(string(out), "out") || !strings.Contains(string(out), "err") {
-		t.Fatalf("combined %q %v", out, err)
-	}
+	require.ErrorAs(t, err, &ee, "combined %q %v", out, err)
+	require.Contains(t, string(out), "out", "combined %q %v", out, err)
+	require.Contains(t, string(out), "err", "combined %q %v", out, err)
 }
 
 // standing is a writer that closes ready when the child has said it stands, so the test
@@ -102,9 +101,9 @@ func TestACallersPassedDeadlineIsATimeoutThatNamesNoBudget(t *testing.T) {
 	defer stop()
 	_, err := gitrun.Run(passed, gitrun.Options{Bin: bin}, "fetch")
 	var te *subproc.TimeoutError
-	if !errors.As(err, &te) || te.Budget != 0 || !strings.Contains(te.Error(), "before its deadline") {
-		t.Fatalf("got %v", err)
-	}
+	require.ErrorAs(t, err, &te, "got %v", err)
+	require.Zero(t, te.Budget, "got %v", err)
+	require.Contains(t, te.Error(), "before its deadline", "got %v", err)
 }
 
 // Output trims stdout, and a failure carries the command, the cause and git's stderr, and
@@ -120,9 +119,9 @@ func TestOutputTrimsAndReportsAFailureWithStderr(t *testing.T) {
 	_, err = gitrun.Output(context.Background(), gitrun.Options{Bin: bad}, "frob", "--now")
 	var ge *gitrun.Error
 	var ee *exec.ExitError
-	if !errors.As(err, &ge) || !errors.As(err, &ee) || ee.ExitCode() != 4 {
-		t.Fatalf("got %v", err)
-	}
+	require.ErrorAs(t, err, &ge, "got %v", err)
+	require.ErrorAs(t, err, &ee, "got %v", err)
+	require.Equal(t, 4, ee.ExitCode(), "got %v", err)
 	require.True(t, strings.HasPrefix(err.Error(), "git frob --now: exit status 4: boom"), "the message is %q", err.Error())
 }
 

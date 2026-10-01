@@ -32,7 +32,7 @@ func TestASlowGitIsKilledAtItsDeadlineAndItsPipeDoesNotHang(t *testing.T) {
 			err := run.fn(gitrun.Options{Bin: bin, Timeout: 150 * time.Millisecond, WaitDelay: 150 * time.Millisecond})
 			var te *subproc.TimeoutError
 			require.ErrorAs(t, err, &te, "a killed git was reported as")
-			require.Equal(t, time.Duration(150*time.Millisecond), te.Budget, "the timeout said %q (budget %s)", te.Error(), te.Budget)
+			require.Equal(t, 150*time.Millisecond, te.Budget, "the timeout said %q (budget %s)", te.Error(), te.Budget)
 			require.Contains(t, te.Error(), "git fetch did not finish within 150ms", "the timeout said %q (budget %s)", te.Error(), te.Budget)
 		})
 	}
