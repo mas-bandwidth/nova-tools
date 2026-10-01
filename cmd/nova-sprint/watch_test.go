@@ -185,7 +185,7 @@ func TestWhereFrameHoldsOnlyTheHeaderAndTheTables(t *testing.T) {
 
 	frame := ta.ok("where")
 	lines := strings.Split(frame, "\n")
-	if got, want := lines[:6], []string{"2030-01-02 06:04:05 UTC", "", "SPRINT TABLE", "", "STOPPED (no tick for 10800s)", ""}; strings.Join(got, "\n") != strings.Join(want, "\n") {
+	if got, want := lines[:6], []string{"2030-01-02 06:04:05 UTC", "", "SPRINT TABLE", "", "STOPPED", ""}; strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("the head of the frame:\n%q\nwant\n%q", got, want)
 	}
 	for _, l := range lines[6:] {

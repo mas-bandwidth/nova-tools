@@ -381,7 +381,7 @@ func noStoredIDs(t *testing.T, v InboxView) {
 
 // GAP C (not ack, the machine). A RUNNING machine whose run loop died: a
 // ready primary is never dealt; no group or judgment names it. The inbox's
-// last line says "machine: STOPPED (no tick for 3600s)" and the stream is
+// last line says "machine: STOPPED" and the stream is
 // shown stale, naming no card; there is no judgment and no decision.
 func TestAudit2ClosedDeadRunLoopIsNoJudgment(t *testing.T) {
 	t.Parallel()

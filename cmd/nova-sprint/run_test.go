@@ -38,10 +38,10 @@ func TestStartAndStopSayTheStateBeforeAndAfter(t *testing.T) {
 		t.Fatalf("tick: %s", out)
 	}
 	ta.a.sleep(store.MachineSilence + time.Second)
-	if out := ta.ok("inbox"); !strings.Contains(out, "machine: STOPPED (no tick for 16s)") {
+	if out := ta.ok("inbox"); !strings.Contains(out, "machine: STOPPED\n") || strings.Contains(out, "(no tick") {
 		t.Fatalf("inbox with no tick: %s", out)
 	}
-	if out := ta.ok("take --as m1 --limit 1"); !strings.Contains(out, "STOPPED (no tick for 16s)  ") || strings.Contains(out, "-> ETA") {
+	if out := ta.ok("take --as m1 --limit 1"); !strings.Contains(out, "STOPPED  ") || strings.Contains(out, "(no tick") || strings.Contains(out, "-> ETA") {
 		t.Fatalf("a verb's line with no tick: %s", out)
 	}
 	ta.ok("stop")
@@ -108,7 +108,7 @@ func TestWhereHeaderIsStoppedOrTheProgressLine(t *testing.T) {
 	}
 	// running but silent: never hidden
 	ta.a.sleep(store.MachineSilence + time.Second)
-	if got := whereHead(t, ta.ok("where")); !strings.HasPrefix(got, "SPRINT TABLE\n\nSTOPPED (no tick for 16s)\n\n") {
+	if got := whereHead(t, ta.ok("where")); !strings.HasPrefix(got, "SPRINT TABLE\n\nSTOPPED\n\n") || strings.Contains(got, "(no tick") {
 		t.Fatalf("running but silent:\n%q", got)
 	}
 }

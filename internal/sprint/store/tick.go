@@ -202,7 +202,8 @@ func (st *Store) putMachine(ctx context.Context, m Machine) error {
 
 // MachineLine is the machine's part of the sprint line: running, running
 // and catching up when the last tick left moves due past its bounds, STOPPED,
-// or STOPPED because a RUNNING machine has not ticked for MachineSilence; a
+// or STOPPED because a RUNNING machine has not ticked for MachineSilence (the
+// state word alone: how long it has been silent is the inbox's judgment); a
 // last tick that failed is shown with its error.
 func MachineLine(now time.Time, m Machine, hb Heartbeat) string {
 	if m.Done() {
@@ -217,7 +218,7 @@ func MachineLine(now time.Time, m Machine, hb Heartbeat) string {
 	}
 	line := "machine: running"
 	if gap := now.Sub(last); gap > MachineSilence {
-		line = fmt.Sprintf("machine: STOPPED (no tick for %ds)", int(gap/time.Second))
+		line = "machine: STOPPED"
 	} else if hb.Due > 0 && !hb.At.Before(m.Since) {
 		line = fmt.Sprintf("machine: running (catching up: %d moves due)", hb.Due)
 	}
