@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -97,9 +98,10 @@ func TestASecondCIRedOnACardWritesNoSecondJudgment(t *testing.T) {
 	h.clean("acked")
 }
 
-// 5. ask --another's reader is for that attempt only: after rework the two
-// original readers are asked again, and no third.
-func TestAskAnotherDoesNotWidenTheReadersKept(t *testing.T) {
+// 5. ask --another's reader is for that attempt only: it leaves the primary's
+// asked field as the two of the attempt, and after rework attempt 2 is asked
+// of two different readers, and no third.
+func TestAskAnotherIsForItsAttemptOnly(t *testing.T) {
 	t.Parallel()
 	h := newHarness(t)
 	h.setup(1)
@@ -110,7 +112,7 @@ func TestAskAnotherDoesNotWidenTheReadersKept(t *testing.T) {
 	h.must(ReadStep(sprint.ReadReq{As: rc[0].Row, Verdict: "broken", Finding: "f", Sel: sprint.Sel{IDs: []string{rc[0].ID}}}))
 	h.must(AskStep(sprint.AskReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Another: true}))
 	if got := h.snap().Work.Card("s1-1").F("asked"); got != pair {
-		t.Fatalf("ask --another changed the readers kept: %s, was %s", got, pair)
+		t.Fatalf("ask --another changed the primary's asked field: %s, was %s", got, pair)
 	}
 	h.must(ReworkStep(sprint.ReworkReq{Sel: sprint.Sel{IDs: []string{"s1-1"}}, Fix: "fix"}))
 	c := h.snap().Fleet.Card("s1-1.w2")
@@ -123,7 +125,8 @@ func TestAskAnotherDoesNotWidenTheReadersKept(t *testing.T) {
 			asked = append(asked, rc.F("reader"))
 		}
 	}
-	assert.ElementsMatch(t, strings.Split(pair, ","), asked, "readers asked at attempt 2: the pair kept, and no third")
+	require.Len(t, asked, 2, "readers asked at attempt 2: two, and no third")
+	assert.NotEqual(t, asked[0], asked[1], "asked twice of one reader at attempt 2")
 	h.clean("asked again")
 }
 

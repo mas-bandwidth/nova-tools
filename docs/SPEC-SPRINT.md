@@ -513,7 +513,13 @@ id (`--op`) returns the original result, with no second counter or notification.
   (a reader loop's `--width` is its own), so readers are levelled by count and
   none is bounded at DealAhead times a width.
 - ask deals every primary in review that lacks reads to TWO DIFFERENT readers
-  UP, each to the shortest asked queue, keeping order. One read card per reader.
+  UP, in work order, each the next reader round the readers from the readers'
+  `ask_index` that has no read card at the attempt, placed or retired. One read
+  card per reader. Reworked work is asked by the same rotation: a read is a
+  fresh child on a freshly drawn route, so the readers of an earlier attempt
+  are not preferred, and a busy reader is not asked again only to have the
+  next tick's level move the read (the owner, 2026-10-01, deleting the
+  preference for the readers kept on the primary: "yes on the decision.").
   A reader away or down is never asked. A read asked, and not begun, of a
   reader that is not up is taken back by the next ask (the tick's, in the same
   step that asks the primary again): its read card is retired (by `away`), the
@@ -560,8 +566,9 @@ id (`--op`) returns the original result, with no second counter or notification.
   readRouteMissing), closed when a route serves the tier.
   Work that came back failed is not read: it waits for the coordinator.
   `ask --another` deals a primary already asked to one more reader, for that
-  attempt only (the readers kept on the primary stay the pair it was asked
-  of, and after a rework the two are asked again); before
+  attempt only (the primary's `asked` field still names the two the attempt
+  was asked of, and after a rework two readers are asked round the readers);
+  before
   the first ask of its attempt it is refused, naming `ask` and the tick as
   what asks first.
 - A reader moves its own read cards: asked -> reading -> ok | broken, with the finding.
@@ -595,11 +602,11 @@ id (`--op`) returns the original result, with no second counter or notification.
   does not write it again; ask closes stranded in review.
 - A broken read notifies the coordinator. rework sends the primary back with
   the finding as the fix and delegates the next attempt at once (section 3);
-  the primary's read cards are retired in the same step and its readers are
-  kept on it. When the fixed work returns, its finish asks no reader: the
-  machine's ask, in the tick the finish wakes, asks the two kept on it first,
-  at the new head, on new read cards of the new attempt, each with the route
-  it draws (one path asks). A report against a retired
+  the primary's read cards are retired in the same step. When the fixed work
+  returns, its finish asks no reader: the machine's ask, in the tick the
+  finish wakes, asks two different readers round the readers, at the new
+  head, on new read cards of the new attempt, each with the route it draws
+  (one path asks). A report against a retired
   read card is refused, naming the retirement.
 
 ## 7. Merging

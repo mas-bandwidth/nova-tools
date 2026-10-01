@@ -531,8 +531,8 @@ func TestReadsTheReaderTierCannotServeAreJudgedAtOnce(t *testing.T) {
 }
 
 // One path asks (commit 255180e2; fleet pass 7, 2026-10-01): the finish of reworked work
-// asks no reader; the machine's ask, in the tick the finish wakes, asks the pair kept on
-// the primary, each read with the route it draws. A read the finish asked itself carried
+// asks no reader; the machine's ask, in the tick the finish wakes, asks two different
+// readers round the readers, each read with the route it draws. A read the finish asked itself carried
 // no route, and no reader could start it.
 func TestAReadOfReworkedWorkCarriesARoute(t *testing.T) {
 	t.Parallel()
@@ -543,7 +543,6 @@ func TestAReadOfReworkedWorkCarriesARoute(t *testing.T) {
 	h.machine()
 	h.finishAttempt("s1-1", false, pushedA)
 	h.machine()
-	pair := h.snap().Work.Card("s1-1").F("asked")
 	first := h.snap().Readers.Of("s1-1")
 	require.Len(t, first, 2, "attempt 1 asked of two readers")
 	h.must(ReadStep(sprint.ReadReq{As: first[0].Row, Verdict: "ok", Sel: sprint.Sel{IDs: []string{first[0].ID}}}))
@@ -563,7 +562,7 @@ func TestAReadOfReworkedWorkCarriesARoute(t *testing.T) {
 		assert.NotEmpty(t, rc.F(sprint.FieldModel), "%s has a model", rc.ID)
 		assert.NotEmpty(t, rc.F(sprint.FieldDeadline), "%s has a deadline", rc.ID)
 	}
-	assert.ElementsMatch(t, strings.Split(pair, ","), who, "the pair kept on the primary is asked again")
-	assert.Equal(t, pair, h.snap().Work.Card("s1-1").F("asked"), "the pair kept is unchanged")
+	assert.NotEqual(t, who[0], who[1], "asked twice of one reader")
+	assert.ElementsMatch(t, sprint.Split(h.snap().Work.Card("s1-1").F("asked")), who, "the primary's asked field names the readers of attempt 2")
 	h.clean("reworked work asked with routes")
 }

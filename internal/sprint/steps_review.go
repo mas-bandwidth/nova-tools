@@ -33,12 +33,13 @@ func readsAt(s *Snapshot, pr *Card, attempt int) []*Card {
 }
 
 // Ask deals every primary in review that lacks reads to TWO DIFFERENT readers
-// up (readers.go), in work order, the readers it names first and then the next readers round
-// the readers (round.go, errata 3 amendment 5: from the rolling index,
-// wrapping, each the first that has no read card at the attempt, the index
-// moved past it: the readers table's ask_index, written with the ask); a
-// primary reworked after a read is asked of the same readers again. A read its
-// reader handed back with no verdict is not a read: it is asked of a reader
+// up (readers.go), in work order, each the next reader round the readers
+// (round.go, errata 3 amendment 5: from the rolling index, wrapping, each the
+// first that has no read card at the attempt, the index moved past it: the
+// readers table's ask_index, written with the ask). Reworked work is asked by
+// the same rotation: a read is a fresh child on a freshly drawn route, so the
+// readers of an earlier attempt are not preferred (the owner, 2026-10-01:
+// "yes on the decision."). A read its reader handed back with no verdict is not a read: it is asked of a reader
 // free at the attempt, or of the same reader again when none is
 // (tla/DirtyTick.tla, JudgedOnlyAfterTheBound). With Another, a primary already asked is dealt to
 // one more reader, the next round the readers.
@@ -110,16 +111,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		if r.Another {
 			want = 1
 		}
-		var chosenReaders []string
-		if !r.Another {
-			for _, rd := range Split(c.F("asked")) {
-				if contains(free, rd) && len(chosenReaders) < want {
-					chosenReaders = append(chosenReaders, rd)
-				}
-			}
-		}
-		rotated := rr.picks(want-len(chosenReaders), chosenReaders, func(x string) bool { return contains(free, x) })
-		chosenReaders = append(chosenReaders, rotated...)
+		chosenReaders := rr.picks(want, nil, func(x string) bool { return contains(free, x) })
 		// A return is not a read (tla/DirtyTick.tla, PlaceReads and
 		// JudgedOnlyAfterTheBound): a read handed back goes to a free
 		// reader when there is one, its card retired; when none is free its
@@ -142,7 +134,7 @@ func Ask(s *Snapshot, r AskReq) Plan {
 			continue
 		}
 		u := Unit{Key: c.ID, Stream: c.Row, Changes: takenBack}
-		for _, rd := range rotated {
+		for _, rd := range chosenReaders {
 			rr.moved(rd)
 			moves[c.ID] = joinMoves(moves[c.ID], rd)
 		}
@@ -155,9 +147,8 @@ func Ask(s *Snapshot, r AskReq) Plan {
 		}
 		all = append(append(all, chosenReaders...), again...)
 		if pair := strings.Join(all, ","); !r.Another && pair != c.F("asked") {
-			// the readers kept on the primary are the pair; --another's reader
-			// is for this attempt only. Fixed work asked of the pair it has kept
-			// writes nothing here: the pair is the same
+			// the primary's asked field names the readers of its attempt;
+			// --another's reader is one more, not one of the two
 			u.Changes = append(u.Changes, change(Work, setEntry(c, map[string]string{"asked": pair})))
 		}
 		named := append([]string{}, chosenReaders...)
@@ -740,9 +731,8 @@ var ReworkResolves = []string{NWorkFailed, NReadBroken, NCIRed, NRepairSkipped, 
 // from the deal's rolling index, the first up with room other than the member
 // of the attempt's work card, that member only when no other has room; the
 // index moved past it and written with the step) and the primary moves
-// review -> working in the same step; its read cards are retired and the
-// readers' identities kept, so the fixed work is asked of them again when it
-// returns. With no member up, or none below its width (tla/DirtyTick.tla,
+// review -> working in the same step; its read cards are retired, and the
+// fixed work is asked round the readers when it returns. With no member up, or none below its width (tla/DirtyTick.tla,
 // WidthRespected), the primary moves review -> ready with the fix and the
 // tick's deal cuts its card when a member has room.
 func Rework(s *Snapshot, r ReworkReq) Plan {
@@ -786,36 +776,22 @@ func Rework(s *Snapshot, r ReworkReq) Plan {
 				continue
 			}
 		}
-		attempt := c.Int("attempt")
-		var asked []string
 		broken := 0
 		var retire []Change
 		if wc := AtRedealBound(s, c); wc != nil {
 			retire = append(retire, change(Fleet, removeEntry(wc, map[string]string{"retired": stamp(s.Now), "retired_by": "rework"})))
 		}
 		for _, rc := range s.Readers.Of(c.ID) {
-			if rc.Int("attempt") == attempt && !contains(asked, rc.F("reader")) {
-				asked = append(asked, rc.F("reader"))
-			}
 			if rc.Col == Broken {
 				broken++
 			}
 			retire = append(retire, change(Readers, removeEntry(rc, map[string]string{"retired": stamp(s.Now), "retired_by": "rework"})))
-		}
-		// the readers kept are the pair the primary was asked of: an extra
-		// reader of ask --another is for its attempt only
-		askedField := c.F("asked")
-		if askedField == "" && len(asked) > 0 {
-			askedField = strings.Join(orderLike(s.Readers.Rows(), asked, ""), ",")
 		}
 		// the finding and why ride on the primary too: a rework with no member up deals later
 		// (start), from the primary, and its child is told all the same
 		given := reworkGiven(s, c)
 		set := map[string]string{"fix": fix, "finding": given["finding"], "why": given["why"],
 			"reworks": itoa(c.Int("reworks") + 1), "broken_reads": itoa(c.Int("broken_reads") + broken)}
-		if askedField != "" {
-			set["asked"] = askedField
-		}
 		var u Unit
 		// the next member round the fleet with room (width.go; tla/DirtyTick.tla, WidthRespected):
 		// none up, or none below its width, and the primary waits ready for the tick's deal

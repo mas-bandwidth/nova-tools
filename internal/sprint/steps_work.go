@@ -992,7 +992,8 @@ type FinishReq struct {
 }
 
 // Finish moves work cards working -> done and their primaries working ->
-// review. Fixed work that comes back ok is asked of the same readers again.
+// review. Fixed work that comes back ok is asked by the machine's ask, as
+// any work is.
 // A finish always names the generation it holds for every card it finishes:
 // a card without one is refused, naming the live generation, and a finish
 // by selection without --as is refused outright. As may name several

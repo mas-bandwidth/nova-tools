@@ -160,7 +160,7 @@ type Primary struct {
 	Score   float64
 	Attempt int      // the attempt of its current or next work card, from 1
 	Head    int      // the attempt whose finished work is its head; 0 before
-	Pair    []string // sorted: the readers kept on it (D2)
+	Pair    []string // sorted: the two readers of its latest ask (the work table's asked field)
 	Reached bool     // a sentinel whose needs have all landed or been waived
 	// CI and CIHead are its last CI observation: "", "red" or "green", and
 	// the attempt whose head it was for (0: no head yet).
