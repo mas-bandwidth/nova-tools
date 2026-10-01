@@ -52,3 +52,13 @@ func TestServerReviewPathRewritingDoesNotConsumeAnotherFlagsValue(t *testing.T) 
 	argv := []string{"add", "--brief", "--rules", "--stream", "s1", "--count", "1"}
 	assert.Equal(t, argv, absolutePaths(append([]string(nil), argv...)), "the brief is the literal string --rules; --stream is not a rules path")
 }
+
+func TestServerReviewInboxCursorWriteIsForwarded(t *testing.T) {
+	t.Parallel()
+	r := newServerRig(t, twoLanes()...)
+	var sent [][]string
+	boss := coordinatorAt(t, r, "boss", &sent)
+	code, out, errs := boss("inbox", "--read")
+	assert.Equal(t, 0, code, "%s%s", out, errs)
+	assert.Len(t, sent, 1, "moving the coordinator cursor is a write, even though plain inbox is a read")
+}
