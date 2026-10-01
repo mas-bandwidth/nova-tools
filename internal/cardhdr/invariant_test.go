@@ -90,7 +90,7 @@ func TestLintOneInvariantRefusesEachRule(t *testing.T) {
 	assert.Nil(t, got, "the good card is refused:\n%v", got)
 	line := Refusal{Rule: RuleBuildList, Line: "BUILD:", Remedy: RemedyParent}.String()
 	want := `REFUSED card-lint rule=build-list line="BUILD:" remedy="cut as a parent with children: card cut --parent"`
-	assert.Equal(t, line, want, "refusal line %q, want %q", line, want)
+	assert.Equal(t, want, line, "refusal line %q, want %q", line, want)
 }
 
 // TestLintOneInvariantReadsIssueText: a card cut from an issue quotes it under
@@ -190,7 +190,7 @@ func TestLintOneInvariantReadsBuildIssueForms(t *testing.T) {
 	} {
 		got := LintOneInvariant(Card{Text: cardWith("BUILD:", line)})
 		want := map[bool]string{true: RuleBuildIssue, false: ""}[refused]
-		assert.Equal(t, got.Rules(), want, "%q: rules %q, want %q", line, got.Rules(), want)
+		assert.Equal(t, want, got.Rules(), "%q: rules %q, want %q", line, got.Rules(), want)
 	}
 }
 
@@ -449,7 +449,7 @@ func TestLintTitleKind(t *testing.T) {
 	}
 	rs := LintTitleKind("work", "Build issue #1 as written", false)
 	want := `REFUSED card-lint rule=build-issue line="--title Build issue #1 as written" remedy="cut as a parent with children: card cut --parent"`
-	assert.Equal(t, rs.Error(), want, "line %q, want %q", rs.Error(), want)
+	assert.Equal(t, want, rs.Error(), "line %q, want %q", rs.Error(), want)
 	body := LintOneInvariant(Card{Text: cardWith("BUILD:", "Build issue #1 as written.")})
 	got := body.Merge(rs).Rules()
 	assert.Equal(t, RuleBuildIssue, got, "merge = %q, want one build-issue", got)
