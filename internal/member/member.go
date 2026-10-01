@@ -231,6 +231,7 @@ type Member struct {
 	running map[string]launch // by card id (a work card's id, a read card's id)
 	epoch   uint64
 	width   int // the width this tick runs to: the override, else the fleet row's
+	drain   bool
 }
 
 // New is a member with nothing running. A reader pushes nothing, and its
@@ -238,6 +239,12 @@ type Member struct {
 func New(cfg Config, s Sprint, r Runner, pu Pusher, out io.Writer) *Member {
 	return &Member{cfg: cfg, sprint: s, runner: r, pusher: pu, out: out, running: map[string]launch{}, width: cfg.Width}
 }
+
+// Drain stops the member taking new cards: from the next tick it beats, reads
+// its queue and reports every child as it ends, and starts nothing (not a taken
+// card, not a recovered one). A member whose binary was replaced drains, and
+// stops when Running is 0.
+func (m *Member) Drain() { m.drain = true }
 
 // Running is how many children are running (a spent launch holds no place).
 func (m *Member) Running() int {
@@ -397,6 +404,9 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 			delete(m.running, id)
 			fmt.Fprintf(m.out, "%s %s: no longer in the queue (dropped or returned)\n", FinishReaped, id)
 		}
+	}
+	if m.drain {
+		return acted, nil
 	}
 	// 2. Recover in-flight (working/reading) cards that have no child of ours,
 	// clamped to width. A card in the queue as working (reading) with no child
