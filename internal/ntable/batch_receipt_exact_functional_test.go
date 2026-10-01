@@ -10,7 +10,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"reflect"
 	"strings"
 	"testing"
 
@@ -51,9 +50,11 @@ func TestBatchReceiptSizeIsExactAtItsBound(t *testing.T) {
 	before := storeImage(t, c)
 	over := manifestWithActor(probeRev(ctx, c), "op-o", strings.Repeat("a", pad+1), body)
 	ans, err = rawApply(ctx, c, over)
-	if err != nil || len(ans) < 5 || ans[0] != "REFUSED" || ans[1] != "LIMIT" || ans[2] != "receipt bytes" || fmt.Sprint(ans[4]) != fmt.Sprint(ntable.LimitReceiptBytes+1) {
-		t.Fatalf("one byte over: %.200v %v; want LIMIT receipt bytes, size %d", ans, err, ntable.LimitReceiptBytes+1)
-	}
+	why := fmt.Sprintf("one byte over: %.200v; want LIMIT receipt bytes, size %d", ans, ntable.LimitReceiptBytes+1)
+	require.True(t, replyOpens(ans, err, "REFUSED", "LIMIT"), "%s: %v", why, err)
+	require.GreaterOrEqual(t, len(ans), 5, why)
+	require.Equal(t, "receipt bytes", ans[2], why)
+	require.Equal(t, fmt.Sprint(ntable.LimitReceiptBytes+1), fmt.Sprint(ans[4]), why)
 	assert.Equal(t, before, storeImage(t, c), "a refusal changed the store")
 	at := manifestWithActor(probeRev(ctx, c), "op-a", strings.Repeat("a", pad), body)
 	ans, err = rawApply(ctx, c, at)
@@ -96,7 +97,8 @@ func TestBatchDigestRuleIsExactInEveryRecordAndTheRequestIsKeptAsSent(t *testing
 		}
 	}
 	again, err := rawApply(ctx, c, raw)
-	if err != nil || len(again) != 3 || again[2] != "REPLAY" || !reflect.DeepEqual(ans[1], again[1]) {
-		t.Errorf("replay: %.300v %v", again, err)
-	}
+	assert.NoError(t, err, "replay: %.300v", again)
+	require.Len(t, again, 3, "replay: %.300v", again)
+	assert.Equal(t, "REPLAY", again[2], "replay: %.300v", again)
+	assert.Equal(t, ans[1], again[1], "replay: %.300v", again)
 }

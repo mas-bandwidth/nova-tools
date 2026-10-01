@@ -69,17 +69,37 @@ func (a *app) defaultGoalRoute(name string) string {
 	return "file:" + filepath.Join(dir, name+".txt")
 }
 
-// readGoalText reads the text file, refusing one over the bound without
-// reading it all.
+// readGoalText reads the goal's text file: a file over the card text bound is
+// refused here, naming the bound and the file's size, without reading it all.
 func readGoalText(path string) (string, error) {
+	return readTextFile(path, store.MaxCardTextBytes)
+}
+
+// briefReadCap is the most bytes of a brief file add reads: far over the brief's
+// bound (store.MaxBriefBytes), so the card lint reads the whole of every brief the
+// store could take and the store's refusal names the brief's real size. A file over
+// it is refused by add itself, naming the cap and the file's real size.
+const briefReadCap = 1 << 20
+
+// readTextFile reads the whole of the file, which is at most limit bytes: it reads
+// one byte past the limit, and a file that has it is refused naming the limit and
+// the file's true size, never cut and never read on.
+func readTextFile(path string, limit int64) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return "", err
 	}
 	defer f.Close()
-	b, err := io.ReadAll(io.LimitReader(f, store.MaxCardTextBytes+1))
+	b, err := io.ReadAll(io.LimitReader(f, limit+1))
 	if err != nil {
 		return "", err
+	}
+	if int64(len(b)) > limit {
+		size := int64(len(b))
+		if fi, err := f.Stat(); err == nil && fi.Size() > size {
+			size = fi.Size()
+		}
+		return "", fmt.Errorf("the file is %d bytes, over the %d bytes a file of this kind may be; shorten it", size, limit)
 	}
 	return string(b), nil
 }

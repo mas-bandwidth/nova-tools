@@ -1,8 +1,6 @@
 package ntable_test
 
 import (
-	"errors"
-	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
@@ -291,14 +289,12 @@ func TestManifestErrorsSpeakTheManifestsLanguage(t *testing.T) {
 	}
 	for _, tc := range cases {
 		_, err := ntable.ValidateBatchManifestRaw([]byte(tc.raw))
-		if err == nil || !strings.Contains(err.Error(), tc.want) {
-			t.Errorf("%s: %v; want %q", tc.name, err, tc.want)
+		if !assert.ErrorContains(t, err, tc.want, tc.name) {
 			continue
 		}
 		var me *ntable.ManifestError
-		if !errors.As(err, &me) || !errors.Is(err, ntable.ErrMalformedManifest) {
-			t.Errorf("%s: %T is not a ManifestError", tc.name, err)
-		}
+		assert.ErrorAs(t, err, &me, "%s: %T is not a ManifestError", tc.name, err)
+		assert.ErrorIs(t, err, ntable.ErrMalformedManifest, "%s: %T is not a ManifestError", tc.name, err)
 		for _, leak := range []string{"unmarshal", "Go struct", "Go value", "cannot use", "json:"} {
 			assert.NotContains(t, err.Error(), leak, "%s: %q leaks the parser: %v", tc.name, leak, err)
 		}

@@ -43,15 +43,15 @@ func TestAViewsStateIsItsSummaryLineAlone(t *testing.T) {
 	require.NoError(t, ntable.ViewState(ctx, c, "v", ""))
 	got = line()
 	require.Equal(t, "1/2 50.0% -> ETA", got, "cleared: %q", got)
-	if n, err := c.HExists(ctx, "view:v", "state").Result(); err != nil || n {
-		t.Fatalf("a cleared state is still stored: %v %v", n, err)
-	}
+	stored, err := c.HExists(ctx, "view:v", "state").Result()
+	require.NoError(t, err)
+	require.False(t, stored, "a cleared state is still stored")
 
 	// A view that is not there: refused, and nothing is created.
 	require.ErrorIs(t, ntable.ViewState(ctx, c, "gone", "STOPPED"), ntable.ErrNoView, "missing view")
-	if n, err := c.Exists(ctx, "view:gone").Result(); err != nil || n != 0 {
-		t.Fatalf("a refused state created the view: %d %v", n, err)
-	}
+	n, err := c.Exists(ctx, "view:gone").Result()
+	require.NoError(t, err)
+	require.Zero(t, n, "a refused state created the view")
 	// The store refuses a state that is not one short line, whoever calls.
 	for _, bad := range []string{"two\nlines", strings.Repeat("x", ntable.MaxViewState+1)} {
 		reply, err := c.FCall(ctx, "ns_view_state", []string{"view:v"}, "v", bad).Slice()
@@ -61,16 +61,15 @@ func TestAViewsStateIsItsSummaryLineAlone(t *testing.T) {
 
 	// In one transaction with a record of the caller's: both are written.
 	var shown *redis.Cmd
-	_, err := c.TxPipelined(ctx, func(p redis.Pipeliner) error {
+	_, err = c.TxPipelined(ctx, func(p redis.Pipeliner) error {
 		p.Set(ctx, "record", "stopped", 0)
 		shown = ntable.QueueViewState(ctx, p, "v", "STOPPED")
 		return nil
 	})
 	require.NoError(t, err)
 	require.NoError(t, ntable.ViewStateResult("v", shown))
-	if got := line(); got != "STOPPED" || c.Get(ctx, "record").Val() != "stopped" {
-		t.Fatalf("transaction: line %q record %q", got, c.Get(ctx, "record").Val())
-	}
+	require.Equal(t, "STOPPED", line(), "transaction: line")
+	require.Equal(t, "stopped", c.Get(ctx, "record").Val(), "transaction: record")
 	var missing *redis.Cmd
 	_, err = c.TxPipelined(ctx, func(p redis.Pipeliner) error {
 		missing = ntable.QueueViewState(ctx, p, "gone", "STOPPED")
