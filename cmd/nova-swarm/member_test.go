@@ -15,6 +15,7 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
 	"github.com/mas-bandwidth/nova-tools/internal/member"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/redisconn"
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
@@ -276,13 +277,15 @@ func TestMemberRefusesANameWithASlashBeforeItMakesAnything(t *testing.T) {
 }
 
 // TestExecSprintReturnsTheVerbsExitAndBody pins the seam to nova-sprint: the
-// actor rides in the environment, stdout is the body, a failing verb with no
-// stdout gives its stderr, and a binary that will not start is exit 2.
+// actor rides in the environment, stdout is the success body, a failed verb
+// keeps both its stderr and any stdout receipt, diagnostics are redacted and
+// bounded, and a binary that will not start is exit 2.
 func TestExecSprintReturnsTheVerbsExitAndBody(t *testing.T) {
 	t.Parallel()
 	windowsIsNotABench(t)
 	bin := filepath.Join(t.TempDir(), "sprint")
-	script := "#!/bin/sh\ncase \"$1\" in\nok) echo \"actor=$NOVA_SPRINT_ACTOR args=$*\";;\nrefuse) echo \"refused: $2\" >&2; exit 1;;\nmixed) echo body; echo noise >&2; exit 1;;\nesac\n"
+	secret := "sk-" + strings.Repeat("Ab1", 8)
+	script := "#!/bin/sh\ncase \"$1\" in\nok) echo \"actor=$NOVA_SPRINT_ACTOR args=$*\";;\nrefuse) echo \"refused: $2\" >&2; exit 1;;\nmixed) echo body; echo noise >&2; exit 1;;\nsecret) echo receipt; echo \"token=" + secret + "\" >&2; exit 2;;\nlarge) printf '%0600d\\n' 0; echo 'actual failure' >&2; exit 2;;\ncontrol) printf 'receipt\\nsecond\\tline\\n'; printf 'store\\nfailed\\tbad\\n' >&2; exit 2;;\nesac\n"
 	if err := testbin.WriteExecutable(bin, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -293,9 +296,38 @@ func TestExecSprintReturnsTheVerbsExitAndBody(t *testing.T) {
 	if code, out := s.Run("refuse", "why"); code != 1 || strings.TrimSpace(string(out)) != "refused: why" {
 		t.Fatalf("refuse: (%d, %q)", code, out)
 	}
-	if code, out := s.Run("mixed"); code != 1 || strings.TrimSpace(string(out)) != "body" {
-		t.Fatalf("mixed: (%d, %q), want the stdout body", code, out)
+	for _, c := range []struct {
+		name, want string
+		code       int
+		contains   []string
+		excludes   []string
+		bounded    bool
+	}{
+		{name: "mixed", code: 1, want: "stderr: noise; stdout: body"},
+		{name: "secret", code: 2, contains: []string{"stderr: token=[redacted]; stdout: receipt"}, excludes: []string{secret}},
+		{name: "large", code: 2, contains: []string{"stderr: actual failure", "+"}, bounded: true},
+		{name: "control", code: 2, want: `stderr: store\x0afailed\x09bad; stdout: receipt\x0asecond\x09line`, excludes: []string{"\n", "\t"}, bounded: true},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			code, out := s.Run(c.name)
+			assert.Equal(t, c.code, code, c.name)
+			if c.want != "" {
+				assert.Equal(t, c.want, string(out), c.name)
+			}
+			for _, want := range c.contains {
+				assert.Contains(t, string(out), want, c.name)
+			}
+			for _, unwanted := range c.excludes {
+				assert.NotContains(t, string(out), unwanted, c.name)
+			}
+			if c.bounded {
+				assert.LessOrEqual(t, len(out), oneline.TailBytes, c.name)
+			}
+		})
 	}
+	controlHeavy := sprintFailureOutput([]byte(strings.Repeat("a\n", oneline.TailBytes)), []byte("actual failure"))
+	assert.LessOrEqual(t, len(controlHeavy), oneline.TailBytes, "escaping many controls stays inside the final bound")
+	assert.Contains(t, string(controlHeavy), "stderr: actual failure", "bounding stdout keeps the failure")
 	gone := &execSprint{bin: filepath.Join(t.TempDir(), "absent"), actor: "m1"}
 	if code, _ := gone.Run("queue"); code != 2 {
 		t.Fatalf("a binary that will not start: exit %d, want 2 (the store did not answer)", code)
