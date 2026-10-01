@@ -815,6 +815,12 @@ func (h *harness) fail(format string, args ...any) {
 	h.t.Fatalf("%s\nactions so far:\n%s", msg, h.m.trace())
 }
 
+// Errorf, FailNow and Helper make the harness a require.TestingT: a failed
+// require.X(h, ...) check exits through fail, with the action trace.
+func (h *harness) Errorf(format string, args ...any) { h.t.Helper(); h.fail(format, args...) }
+func (h *harness) FailNow()                          { h.t.FailNow() }
+func (h *harness) Helper()                           { h.t.Helper() }
+
 // gap records a piece of the contract the store lacks, once.
 func (h *harness) gap(format string, args ...any) {
 	msg := fmt.Sprintf(format, args...)
@@ -831,17 +837,15 @@ func (h *harness) gap(format string, args ...any) {
 func (h *harness) snapshot() map[string]string {
 	h.t.Helper()
 	keys, err := h.c.Keys(h.ctx, "table:*").Result()
-	if err != nil {
-		h.fail("KEYS table:*: %v", err)
-	}
+	require.NoError(h, err, "KEYS table:*")
 	keys = append(keys, ntable.Registry, extKey)
 	pipe := h.c.Pipeline()
 	cmds := make([]*redis.StringCmd, len(keys))
 	for i, k := range keys {
 		cmds[i] = pipe.Dump(h.ctx, k)
 	}
-	if _, err := pipe.Exec(h.ctx); err != nil && !errors.Is(err, redis.Nil) {
-		h.fail("DUMP pipeline: %v", err)
+	if _, err := pipe.Exec(h.ctx); !errors.Is(err, redis.Nil) {
+		require.NoError(h, err, "DUMP pipeline")
 	}
 	out := map[string]string{}
 	for i, k := range keys {
@@ -849,9 +853,7 @@ func (h *harness) snapshot() map[string]string {
 		if errors.Is(err, redis.Nil) {
 			continue
 		}
-		if err != nil {
-			h.fail("DUMP %s: %v", k, err)
-		}
+		require.NoError(h, err, "DUMP %s", k)
 		out[k] = v
 	}
 	return out
@@ -878,14 +880,10 @@ func (h *harness) userSnapshot() map[string]string {
 			delete(out, key)
 		} else if strings.HasSuffix(key, ":definition") {
 			fields, err := h.c.HGetAll(h.ctx, key).Result()
-			if err != nil {
-				h.fail("read definition for no-op comparison: %v", err)
-			}
+			require.NoError(h, err, "read definition for no-op comparison")
 			delete(fields, "_revision")
 			body, err := json.Marshal(fields)
-			if err != nil {
-				h.fail("encode definition for no-op comparison: %v", err)
-			}
+			require.NoError(h, err, "encode definition for no-op comparison")
 			out[key] = string(body)
 		}
 	}
@@ -917,14 +915,10 @@ func (h *harness) expect(action string, want verdict, err error, before map[stri
 	h.t.Helper()
 	got := classify(err)
 	if want.kind == "unchanged" {
-		if !got.ok() {
-			h.fail("%s: the verb answered %s (%v); the contract says accepted no-op", action, got, err)
-		}
-		if diff := diffSnapshots(before, h.userSnapshot()); diff != "" {
-			h.fail("%s: accepted no-op changed user state: %s", action, diff)
-		}
-	} else if !want.matches(got) {
-		h.fail("%s: the verb answered %s (%v); the %s says %s", action, got, err, h.oracle(), want)
+		require.True(h, got.ok(), "%s: the verb answered %s (%v); the contract says accepted no-op", action, got, err)
+		require.Empty(h, diffSnapshots(before, h.userSnapshot()), "%s: accepted no-op changed user state", action)
+	} else {
+		require.True(h, want.matches(got), "%s: the verb answered %s (%v); the %s says %s", action, got, err, h.oracle(), want)
 	}
 	h.tally.steps++
 	if want.ok() || want.kind == "unchanged" {
@@ -932,9 +926,7 @@ func (h *harness) expect(action string, want verdict, err error, before map[stri
 		return
 	}
 	h.tally.refused++
-	if diff := diffSnapshots(before, h.snapshot()); diff != "" {
-		h.fail("%s: %s, and the store changed: %s", action, want, diff)
-	}
+	require.Empty(h, diffSnapshots(before, h.snapshot()), "%s: %s, and the store changed", action, want)
 }
 
 // checkExternal is invariants 4 and 5: the external set is what the owner
@@ -942,12 +934,9 @@ func (h *harness) expect(action string, want verdict, err error, before map[stri
 func (h *harness) checkExternal(action string) {
 	h.t.Helper()
 	zs, err := h.c.ZRangeWithScores(h.ctx, extKey, 0, -1).Result()
-	if err != nil {
-		h.fail("%s: ZRANGE %s: %v", action, extKey, err)
-	}
-	if got := zsetOf(zs); !sameZset(got, h.m.ext) {
-		h.fail("%s: the external set %s is %s; its owner wrote %s", action, extKey, got, h.m.ext)
-	}
+	require.NoError(h, err, "%s: ZRANGE %s", action, extKey)
+	got := zsetOf(zs)
+	require.True(h, sameZset(got, h.m.ext), "%s: the external set %s is %s; its owner wrote %s", action, extKey, got, h.m.ext)
 }
 
 // contractAfter is the desired contract, read after an action that can
@@ -976,9 +965,7 @@ func (h *harness) contractAfter(action, tn string, breachesBefore map[string][]s
 
 func (h *harness) violation(counter *int, kind, witness string) {
 	h.t.Helper()
-	if h.m.candidate {
-		h.fail("the candidate model let a desired-contract breach through, %s: %s", kind, witness)
-	}
+	require.False(h, h.m.candidate, "the candidate model let a desired-contract breach through, %s: %s", kind, witness)
 	*counter++
 	if h.tally.first == "" {
 		h.tally.first = kind + ": " + witness
@@ -1024,43 +1011,30 @@ func (h *harness) verify(*rapid.T) {
 	ctx, c, m := h.ctx, h.c, h.m
 	var cells []cellAt
 	names, err := ntable.List(ctx, c)
-	if err != nil {
-		h.fail("list: %v", err)
-	}
-	if want := m.liveNames(); strings.Join(names, ",") != strings.Join(want, ",") {
-		h.fail("the registry lists %v; the %s has %v", names, h.oracle(), want)
-	}
+	require.NoError(h, err, "list")
+	require.Equal(h, strings.Join(m.liveNames(), ","), strings.Join(names, ","), "the registry lists the tables the %s has", h.oracle())
 	for _, tn := range propTables {
 		tb, err := ntable.Read(ctx, c, tn)
 		mt := m.live[tn]
 		if mt == nil {
-			if !errors.Is(err, ntable.ErrNoTable) {
-				h.fail("table %s: read of a table the %s does not have: %v; want ErrNoTable", tn, h.oracle(), err)
-			}
+			require.ErrorIs(h, err, ntable.ErrNoTable, "table %s: read of a table the %s does not have", tn, h.oracle())
 			continue
 		}
-		if err != nil {
-			h.fail("table %s: read: %v; the %s has the table", tn, err, h.oracle())
-		}
-		if got := columnNames(tb); got != "a,b,c" {
-			h.fail("table %s: read gives columns %q; the definition is a,b,c", tn, got)
-		}
+		require.NoError(h, err, "table %s: read; the %s has the table", tn, h.oracle())
+		require.Equal(h, "a,b,c", columnNames(tb), "table %s: read gives other columns; the definition is a,b,c", tn)
 		order := m.rowsInOrder(tn)
-		if got := rowKeys(tb); strings.Join(got, ",") != strings.Join(order, ",") {
-			h.fail("table %s: rows read back as %v; the %s orders %v", tn, got, h.oracle(), order)
-		}
+		require.Equal(h, strings.Join(order, ","), strings.Join(rowKeys(tb), ","), "table %s: rows read back; the %s orders %v", tn, h.oracle(), order)
 		for _, r := range tb.Rows {
 			mr := mt.rows[r.Key]
-			if r.Owner != mr.owner {
-				h.fail("table %s row %s: read gives owner %q; the model has %q", tn, r.Key, r.Owner, mr.owner)
-			}
+			require.Equal(h, mr.owner, r.Owner, "table %s row %s: read gives another owner than the model has", tn, r.Key)
 			for j, col := range tb.Columns {
 				key, set := m.shown(tn, r.Key, col.Name)
 				cell := r.Cells[j]
 				bound := mr.binds[col.Name] != ""
-				if cell.Unread || cell.Bound != bound || cell.Key != key || cell.Count != int64(len(set)) {
-					h.fail("table %s row %s column %s: read gives bound=%v key=%s count=%d unread=%v; the %s shows bound=%v key=%s %s", tn, r.Key, col.Name, cell.Bound, cell.Key, cell.Count, cell.Unread, h.oracle(), bound, key, set)
-				}
+				require.False(h, cell.Unread, "table %s row %s column %s: read gives an unread cell", tn, r.Key, col.Name)
+				require.Equal(h, bound, cell.Bound, "table %s row %s column %s: read gives another bound flag than the %s shows", tn, r.Key, col.Name, h.oracle())
+				require.Equal(h, key, cell.Key, "table %s row %s column %s: read gives another key than the %s shows", tn, r.Key, col.Name, h.oracle())
+				require.Equal(h, int64(len(set)), cell.Count, "table %s row %s column %s: read gives another count than the %s shows: %s", tn, r.Key, col.Name, h.oracle(), set)
 				cells = append(cells, cellAt{tn, r.Key, col.Name})
 			}
 		}
@@ -1070,12 +1044,9 @@ func (h *harness) verify(*rapid.T) {
 		at := cells[len(m.log)%len(cells)]
 		key, set := m.shown(at.table, at.row, at.col)
 		ms, err := ntable.CellMembers(ctx, c, at.table, at.row, at.col)
-		if err != nil {
-			h.fail("table %s row %s column %s: cell members: %v", at.table, at.row, at.col, err)
-		}
-		if got := zsetOfMembers(ms); !sameZset(got, set) {
-			h.fail("table %s row %s column %s: cell members %s; the %s shows %s at %s", at.table, at.row, at.col, got, h.oracle(), set, key)
-		}
+		require.NoError(h, err, "table %s row %s column %s: cell members", at.table, at.row, at.col)
+		got := zsetOfMembers(ms)
+		require.True(h, sameZset(got, set), "table %s row %s column %s: cell members %s; the %s shows %s at %s", at.table, at.row, at.col, got, h.oracle(), set, key)
 	}
 	h.checkExternal("verify")
 	h.verifyPhysical()
@@ -1092,9 +1063,7 @@ func (h *harness) verify(*rapid.T) {
 func (h *harness) verifyPhysical() {
 	h.t.Helper()
 	keys, err := h.c.Keys(h.ctx, "table:*").Result()
-	if err != nil {
-		h.fail("KEYS table:*: %v", err)
-	}
+	require.NoError(h, err, "KEYS table:*")
 	sort.Strings(keys)
 	var cellKeys []string
 	for _, k := range keys {
@@ -1106,21 +1075,14 @@ func (h *harness) verifyPhysical() {
 		case len(parts) == 4 && parts[1] == "" && parts[2] == "member":
 			// a member record, table::member:<id>
 		case len(parts) == 3 && (parts[2] == "revision" || parts[2] == "changes" || parts[2] == "identity" || parts[2] == "definition"):
-			if h.m.candidate && h.m.mutations[tn] == 0 {
-				h.fail("metadata %s belongs to an unknown table", k)
-			}
+			require.False(h, h.m.candidate && h.m.mutations[tn] == 0, "metadata %s belongs to an unknown table", k)
 		case len(parts) == 2:
-			if h.m.live[tn] == nil && !(h.m.candidate && h.m.mutations[tn] > 0) {
-				h.fail("template %s belongs to an unknown table", k)
-			}
+			require.False(h, h.m.live[tn] == nil && !(h.m.candidate && h.m.mutations[tn] > 0), "template %s belongs to an unknown table", k)
 		case len(parts) == 3 && parts[2] == "rows":
-			if h.m.live[tn] == nil {
-				h.fail("key %s is in the store; the %s has no table %s", k, h.oracle(), tn)
-			}
+			require.NotNil(h, h.m.live[tn], "key %s is in the store; the %s has no table %s", k, h.oracle(), tn)
 		case len(parts) == 4 && parts[2] == "row":
-			if h.m.live[tn] == nil || h.m.live[tn].rows[parts[3]] == nil {
-				h.fail("key %s is in the store; the %s has no row %s in table %s", k, h.oracle(), parts[3], tn)
-			}
+			require.NotNil(h, h.m.live[tn], "key %s is in the store; the %s has no table %s", k, h.oracle(), tn)
+			require.NotNil(h, h.m.live[tn].rows[parts[3]], "key %s is in the store; the %s has no row %s in table %s", k, h.oracle(), parts[3], tn)
 		case len(parts) == 3 && parts[2] == "ops":
 			// batch operation records: table:<tn>:ops
 		default:
@@ -1132,23 +1094,18 @@ func (h *harness) verifyPhysical() {
 	for i, k := range cellKeys {
 		cmds[i] = pipe.ZRangeWithScores(h.ctx, k, 0, -1)
 	}
-	if _, err := pipe.Exec(h.ctx); err != nil {
-		h.fail("ZRANGE pipeline: %v", err)
-	}
+	_, err = pipe.Exec(h.ctx)
+	require.NoError(h, err, "ZRANGE pipeline")
 	seen := map[string]bool{}
 	for i, k := range cellKeys {
 		got, want := zsetOf(cmds[i].Val()), h.m.phys[k]
-		if len(want) == 0 {
-			h.fail("cell key %s is in the store holding %s; the %s holds no set there", k, got, h.oracle())
-		}
-		if !sameZset(got, want) {
-			h.fail("cell key %s holds %s; the %s holds %s", k, got, h.oracle(), want)
-		}
+		require.NotEmpty(h, want, "cell key %s is in the store holding %s; the %s holds no set there", k, got, h.oracle())
+		require.True(h, sameZset(got, want), "cell key %s holds %s; the %s holds %s", k, got, h.oracle(), want)
 		seen[k] = true
 	}
 	for _, k := range sortedKeys(h.m.phys) {
-		if len(h.m.phys[k]) > 0 && !seen[k] {
-			h.fail("the %s holds %s at %s; the store has no such key", h.oracle(), h.m.phys[k], k)
+		if len(h.m.phys[k]) > 0 {
+			require.True(h, seen[k], "the %s holds %s at %s; the store has no such key", h.oracle(), h.m.phys[k], k)
 		}
 	}
 }
@@ -1165,30 +1122,25 @@ func (h *harness) verifyCandidate() {
 		for _, suffix := range []string{"", ":identity", ":definition"} {
 			key := ntable.DefKey(tn) + suffix
 			hash, err := c.HGetAll(ctx, key).Result()
-			if err != nil {
-				h.fail("read retained table metadata %s: %v", key, err)
-			}
+			require.NoError(h, err, "read retained table metadata %s", key)
 			if len(hash) == 0 {
 				h.gap("retained table metadata absent: %s", key)
 				continue
 			}
 			if suffix == ":identity" {
-				if hash["epoch_key"] != "" || hash["epoch_field"] != "n" || hash["member_prefix"] != "table::member:" {
-					h.fail("table %s identity changed: %v", tn, hash)
-				}
+				require.Empty(h, hash["epoch_key"], "table %s identity changed: %v", tn, hash)
+				require.Equal(h, "n", hash["epoch_field"], "table %s identity changed: %v", tn, hash)
+				require.Equal(h, "table::member:", hash["member_prefix"], "table %s identity changed: %v", tn, hash)
 				continue
 			}
-			if hash["order"] != "a,b,c" {
-				h.fail("table %s retained definition changed: %v", tn, hash)
-			}
+			require.Equal(h, "a,b,c", hash["order"], "table %s retained definition changed: %v", tn, hash)
 			if suffix == ":definition" {
 				present := "0"
 				if m.live[tn] != nil {
 					present = "1"
 				}
-				if hash["_present"] != present || hash["_revision"] != strconv.Itoa(want) {
-					h.fail("table %s epoch snapshot=%v; model presence=%s revision=%d", tn, hash, present, want)
-				}
+				require.Equal(h, present, hash["_present"], "table %s epoch snapshot=%v; model presence=%s revision=%d", tn, hash, present, want)
+				require.Equal(h, strconv.Itoa(want), hash["_revision"], "table %s epoch snapshot=%v; model presence=%s revision=%d", tn, hash, present, want)
 			}
 		}
 		n, err := c.HGet(ctx, revisionKey(tn), "n").Result()
@@ -1200,9 +1152,9 @@ func (h *harness) verifyCandidate() {
 		case err != nil:
 			h.fail("table %s: HGET %s n: %v", tn, revisionKey(tn), err)
 		default:
-			if got, perr := strconv.Atoi(n); perr != nil || got != want {
-				h.fail("table %s: revision n=%q; the contract moves it once per accepted mutation, %d so far", tn, n, want)
-			}
+			got, perr := strconv.Atoi(n)
+			require.NoError(h, perr, "table %s: revision n=%q; the contract moves it once per accepted mutation, %d so far", tn, n, want)
+			require.Equal(h, want, got, "table %s: revision n=%q; the contract moves it once per accepted mutation, %d so far", tn, n, want)
 		}
 		kind, err := c.Type(ctx, changesKey(tn)).Result()
 		switch {
@@ -1216,17 +1168,15 @@ func (h *harness) verifyCandidate() {
 			h.fail("table %s: %s is a %s; the contract makes it a stream", tn, changesKey(tn), kind)
 		default:
 			got, err := c.XLen(ctx, changesKey(tn)).Result()
-			if err != nil || got != int64(want) {
-				h.fail("table %s: %d change events on %s (%v); the contract appends one per accepted mutation, %d so far", tn, got, changesKey(tn), err, want)
-			}
+			require.NoError(h, err, "table %s: XLEN %s", tn, changesKey(tn))
+			require.Equal(h, int64(want), got, "table %s: change events on %s; the contract appends one per accepted mutation, %d so far", tn, changesKey(tn), want)
 			events, err := c.XRevRangeN(ctx, changesKey(tn), "+", "-", 1).Result()
-			if err != nil || len(events) != 1 {
-				h.fail("table %s: latest receipt missing: %v", tn, err)
-			}
+			require.NoError(h, err, "table %s: latest receipt missing", tn)
+			require.Len(h, events, 1, "table %s: latest receipt missing", tn)
 			fields := events[0].Values
-			if fmt.Sprint(fields["epoch"]) != "0" || fmt.Sprint(fields["rev_before"]) != strconv.Itoa(want-1) || fmt.Sprint(fields["rev_after"]) != strconv.Itoa(want) {
-				h.fail("table %s: latest receipt has wrong epoch/revision: %v", tn, fields)
-			}
+			require.Equal(h, "0", fmt.Sprint(fields["epoch"]), "table %s: latest receipt has wrong epoch/revision: %v", tn, fields)
+			require.Equal(h, strconv.Itoa(want-1), fmt.Sprint(fields["rev_before"]), "table %s: latest receipt has wrong epoch/revision: %v", tn, fields)
+			require.Equal(h, strconv.Itoa(want), fmt.Sprint(fields["rev_after"]), "table %s: latest receipt has wrong epoch/revision: %v", tn, fields)
 		}
 	}
 	h.verifyRecords()
@@ -1246,14 +1196,11 @@ func (h *harness) verifyRecords() {
 	for _, mem := range propMembers {
 		cmds[mem] = pipe.HGetAll(ctx, recordKey(mem))
 	}
-	if _, err := pipe.Exec(ctx); err != nil {
-		h.fail("HGETALL records: %v", err)
-	}
+	_, err := pipe.Exec(ctx)
+	require.NoError(h, err, "HGETALL records")
 	for _, mem := range propMembers {
 		rec, err := cmds[mem].Result()
-		if err != nil {
-			h.fail("HGETALL %s: %v", recordKey(mem), err)
-		}
+		require.NoError(h, err, "HGETALL %s", recordKey(mem))
 		placed := m.place[mem]
 		if len(rec) == 0 {
 			if _, known := m.place[mem]; known {
@@ -1261,17 +1208,15 @@ func (h *harness) verifyRecords() {
 			}
 			continue
 		}
-		if e := rec["epoch"]; e != "0" {
-			h.fail("record %s epoch %q; the active epoch is 0 and the harness never advances it", recordKey(mem), e)
-		}
+		require.Equal(h, "0", rec["epoch"], "record %s epoch; the active epoch is 0 and the harness never advances it", recordKey(mem))
 		for _, tn := range propTables {
 			got, has := rec["place:"+tn]
 			p, want := placed[tn]
-			switch {
-			case want && (!has || got != p.String()):
-				h.fail("record %s place:%s=%q (present %v); the contract records %s, the owned cell whose set holds %s", recordKey(mem), tn, got, has, p, mem)
-			case !want && has && got != "":
-				h.fail("record %s place:%s=%q; %s has no place in %s", recordKey(mem), tn, got, mem, tn)
+			if want {
+				require.True(h, has, "record %s place:%s is absent; the contract records %s, the owned cell whose set holds %s", recordKey(mem), tn, p, mem)
+				require.Equal(h, p.String(), got, "record %s place:%s; the contract records %s, the owned cell whose set holds %s", recordKey(mem), tn, p, mem)
+			} else {
+				require.Empty(h, got, "record %s place:%s; %s has no place in %s", recordKey(mem), tn, mem, tn)
 			}
 		}
 	}
@@ -1312,19 +1257,11 @@ func (h *harness) verifyCheck() {
 	ctx, c, m := h.ctx, h.c, h.m
 	for _, tn := range m.liveNames() {
 		reply, err := c.FCallRO(ctx, checkFn, []string{ntable.DefKey(tn)}, tn).Slice()
-		if err != nil {
-			h.fail("table %s: %s: %v", tn, checkFn, err)
-		}
+		require.NoError(h, err, "table %s: %s", tn, checkFn)
 		got, err := decodeCheck(reply)
-		if err != nil {
-			h.fail("table %s: %s answered a shape the harness cannot read: %v; align decodeCheck with the API", tn, checkFn, err)
-		}
-		if got.epoch != 0 {
-			h.fail("table %s: check says epoch %d; the active epoch is 0", tn, got.epoch)
-		}
-		if got.revision != uint64(m.mutations[tn]) {
-			h.fail("table %s: check says revision %d; the contract counts %d accepted mutations", tn, got.revision, m.mutations[tn])
-		}
+		require.NoError(h, err, "table %s: %s answered a shape the harness cannot read; align decodeCheck with the API", tn, checkFn)
+		require.Zero(h, got.epoch, "table %s: check epoch; the active epoch is 0", tn)
+		require.Equal(h, uint64(m.mutations[tn]), got.revision, "table %s: check revision; the contract counts %d accepted mutations", tn, m.mutations[tn])
 		var cells uint64
 		for _, r := range m.rowsInOrder(tn) {
 			for _, col := range propColumns {
@@ -1334,9 +1271,8 @@ func (h *harness) verifyCheck() {
 			}
 		}
 		members := uint64(len(m.ownedMembers(tn)))
-		if got.members != members || got.cells != cells {
-			h.fail("table %s: check counts members=%d cells=%d; independent model owns members=%d cells=%d", tn, got.members, got.cells, members, cells)
-		}
+		require.Equal(h, members, got.members, "table %s: check counts members=%d cells=%d; independent model owns members=%d cells=%d", tn, got.members, got.cells, members, cells)
+		require.Equal(h, cells, got.cells, "table %s: check counts members=%d cells=%d; independent model owns members=%d cells=%d", tn, got.members, got.cells, members, cells)
 	}
 }
 
@@ -1400,9 +1336,10 @@ func (h *harness) rowAdd(rt *rapid.T) {
 		// the row the verb hands back is the row as written
 		for j, col := range propColumns {
 			key, _ := h.m.shown(tn, r, col)
-			if row.Key != r || row.Owner != spec.Owner || row.Cells[j].Bound != (mr.binds[col] != "") || row.Cells[j].Key != key {
-				h.fail("%s: the verb handed back row %+v; the model wrote owner %q and column %s showing %s", action, row, spec.Owner, col, key)
-			}
+			require.Equal(h, r, row.Key, "%s: the verb handed back row %+v; the model wrote owner %q and column %s showing %s", action, row, spec.Owner, col, key)
+			require.Equal(h, spec.Owner, row.Owner, "%s: the verb handed back row %+v; the model wrote owner %q and column %s showing %s", action, row, spec.Owner, col, key)
+			require.Equal(h, mr.binds[col] != "", row.Cells[j].Bound, "%s: the verb handed back row %+v; the model wrote owner %q and column %s showing %s", action, row, spec.Owner, col, key)
+			require.Equal(h, key, row.Cells[j].Key, "%s: the verb handed back row %+v; the model wrote owner %q and column %s showing %s", action, row, spec.Owner, col, key)
 		}
 		h.m.mutated(tn)
 		h.contractAfter(action, tn, breaches, visible)
@@ -1423,9 +1360,7 @@ func (h *harness) rowDel(*rapid.T) {
 	gone, err := ntable.RowDel(h.ctx, h.c, tn, r)
 	h.expect(action, want, err, before)
 	if want.ok() {
-		if gone != present {
-			h.fail("%s: the verb says removed=%v; the %s had the row: %v", action, gone, h.oracle(), present)
-		}
+		require.Equal(h, present, gone, "%s: the verb's removed flag; the %s had the row: %v", action, h.oracle(), present)
 		if present {
 			h.tally.orphaned += h.m.removeRow(tn, r)
 			h.m.clearPlaces(tn, r)
@@ -1522,9 +1457,7 @@ func (h *harness) cellAdd(*rapid.T) {
 			h.m.phys[key] = set
 		}
 		set[mem] = score
-		if n != int64(len(set)) {
-			h.fail("%s: the verb counts %d in the cell; the %s holds %s", action, n, h.oracle(), set)
-		}
+		require.Equal(h, int64(len(set)), n, "%s: the verb's count in the cell; the %s holds %s", action, h.oracle(), set)
 		h.m.setPlace(mem, tn, place{r, col})
 		h.m.mutated(tn)
 		h.contractAfter(action, tn, breaches, nil)
@@ -1556,15 +1489,11 @@ func (h *harness) cellRemove(*rapid.T) {
 		if len(h.m.phys[key]) == 0 {
 			delete(h.m.phys, key)
 		}
-		if n != int64(len(h.m.phys[key])) {
-			h.fail("%s: the verb counts %d in the cell; the %s holds %s", action, n, h.oracle(), h.m.phys[key])
-		}
+		require.Equal(h, int64(len(h.m.phys[key])), n, "%s: the verb's count in the cell; the %s holds %s", action, h.oracle(), h.m.phys[key])
 		delete(h.m.place[mem], tn)
 		h.m.mutated(tn)
 	case want.kind == "unchanged" && err == nil:
-		if n != int64(len(h.m.phys[key])) {
-			h.fail("%s: the verb answered OK counting %d; the cell holds %s unchanged", action, n, h.m.phys[key])
-		}
+		require.Equal(h, int64(len(h.m.phys[key])), n, "%s: the verb answered OK; the cell holds %s unchanged", action, h.m.phys[key])
 		h.m.mutated(tn)
 	}
 	h.m.note("%s -> %s", action, outcome(want))
@@ -1610,14 +1539,11 @@ func (h *harness) cellMove(*rapid.T) {
 			h.m.phys[toKey] = set
 		}
 		set[mem] = score
-		if n != int64(len(set)) {
-			h.fail("%s: the verb counts %d in the destination; the %s holds %s", action, n, h.oracle(), set)
-		}
+		require.Equal(h, int64(len(set)), n, "%s: the verb's count in the destination; the %s holds %s", action, h.oracle(), set)
 		// 3. a move keeps the member's score
 		got, err := h.c.ZScore(h.ctx, toKey, mem).Result()
-		if err != nil || got != score {
-			h.fail("%s: the moved member %s scores %g at %s (%v); it had %g", action, mem, got, toKey, err, score)
-		}
+		require.NoError(h, err, "%s: the moved member %s at %s", action, mem, toKey)
+		require.Equal(h, score, got, "%s: the moved member %s at %s keeps its score", action, mem, toKey)
 		h.m.setPlace(mem, tn, place{r, to})
 		h.m.mutated(tn)
 	}
@@ -1646,14 +1572,12 @@ func (h *harness) clear(*rapid.T) {
 		}
 		h.m.clearPlaces(tn, "")
 		h.m.mutated(tn)
-		if n != int64(len(rows)) {
-			h.fail("%s: the verb counts %d rows cleared; the %s had %d", action, n, h.oracle(), len(rows))
-		}
+		require.Equal(h, int64(len(rows)), n, "%s: the verb's count of rows cleared; the %s had %d", action, h.oracle(), len(rows))
 		// 4. the definition stays and the external set is untouched
 		tb, err := ntable.Read(h.ctx, h.c, tn)
-		if err != nil || columnNames(tb) != "a,b,c" || len(tb.Rows) != 0 {
-			h.fail("%s: read after clear gives columns %q, %d rows (%v); want a,b,c and no rows", action, columnNames(tb), len(tb.Rows), err)
-		}
+		require.NoError(h, err, "%s: read after clear", action)
+		require.Equal(h, "a,b,c", columnNames(tb), "%s: read after clear; want a,b,c and no rows", action)
+		require.Empty(h, tb.Rows, "%s: read after clear; want a,b,c and no rows", action)
 		h.checkExternal(action)
 	}
 	h.m.note("%s -> %s", action, outcome(want))
@@ -1681,14 +1605,11 @@ func (h *harness) drop(*rapid.T) {
 		if h.m.candidate {
 			h.m.clearPlaces(tn, "")
 			h.m.mutated(tn)
-			if _, err := ntable.Read(h.ctx, h.c, tn); !errors.Is(err, ntable.ErrNoTable) {
-				h.fail("%s: dropped epoch remains readable: %v", action, err)
-			}
+			_, readErr := ntable.Read(h.ctx, h.c, tn)
+			require.ErrorIs(h, readErr, ntable.ErrNoTable, "%s: dropped epoch remains readable", action)
 		}
 		delete(h.m.live, tn)
-		if n != len(rows) {
-			h.fail("%s: the verb counts %d rows dropped; the %s had %d", action, n, h.oracle(), len(rows))
-		}
+		require.Equal(h, len(rows), n, "%s: the verb's count of rows dropped; the %s had %d", action, h.oracle(), len(rows))
 		// 5. drop leaves the external set
 		h.checkExternal(action)
 	}
@@ -1700,9 +1621,7 @@ func (h *harness) drop(*rapid.T) {
 func (h *harness) externalAdd(*rapid.T) {
 	mem, score := h.member(nil), h.score()
 	action := fmt.Sprintf("externalAdd %s@%g", mem, score)
-	if err := h.c.ZAdd(h.ctx, extKey, redis.Z{Score: score, Member: mem}).Err(); err != nil {
-		h.fail("%s: %v", action, err)
-	}
+	require.NoError(h, h.c.ZAdd(h.ctx, extKey, redis.Z{Score: score, Member: mem}).Err(), "%s", action)
 	h.tally.steps, h.tally.ok = h.tally.steps+1, h.tally.ok+1
 	h.m.ext[mem] = score
 	h.m.note("%s -> OK", action)
@@ -1711,9 +1630,7 @@ func (h *harness) externalAdd(*rapid.T) {
 func (h *harness) externalRemove(*rapid.T) {
 	mem := h.member(sortedKeys(h.m.ext))
 	action := "externalRemove " + mem
-	if err := h.c.ZRem(h.ctx, extKey, mem).Err(); err != nil {
-		h.fail("%s: %v", action, err)
-	}
+	require.NoError(h, h.c.ZRem(h.ctx, extKey, mem).Err(), "%s", action)
 	h.tally.steps, h.tally.ok = h.tally.steps+1, h.tally.ok+1
 	delete(h.m.ext, mem)
 	h.m.note("%s -> OK", action)

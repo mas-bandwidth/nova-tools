@@ -197,8 +197,7 @@ func TestBatchMalformedManifestsRefusedByServerAndValidator(t *testing.T) {
 		_, err := ntable.ValidateBatchManifestRaw([]byte(raw))
 		require.NoError(t, err, "control %d: the validator refuses a valid manifest: %v", i, err)
 		ans, err := rawApply(ctx, c, raw)
-		require.NoError(t, err, "control %d: the server refuses a valid manifest: %v", i, trunc(ans))
-		require.Equal(t, "OK", ans[0], "control %d: the server refuses a valid manifest: %v", i, trunc(ans))
+		require.True(t, replyOpens(ans, err, "OK"), "control %d: the server refuses a valid manifest: %v: %v", i, trunc(ans), err)
 	}
 
 	for n, tc := range malformedManifests() {
@@ -206,9 +205,8 @@ func TestBatchMalformedManifestsRefusedByServerAndValidator(t *testing.T) {
 		before := storeImage(t, c)
 		ans, err := rawApply(ctx, c, raw)
 		_, verr := ntable.ValidateBatchManifestRaw([]byte(raw))
-		require.NoError(t, err, "%s: a raw error reply leaves the script", tc.name)
+		require.True(t, replyOpens(ans, err, "REFUSED"), "%s: the server accepts: %v: %v", tc.name, trunc(ans), err)
 		require.GreaterOrEqual(t, len(ans), 2, "%s: the server accepts: %v", tc.name, trunc(ans))
-		assert.Equal(t, "REFUSED", ans[0], "%s: the server accepts: %v", tc.name, trunc(ans))
 		assert.Error(t, verr, "%s: the Go validator accepts", tc.name)
 		assert.Equal(t, before, storeImage(t, c), "%s: the store changed", tc.name)
 	}
@@ -242,9 +240,7 @@ func TestBatchValidManifestsAcceptedByServerAndValidator(t *testing.T) {
 			continue
 		}
 		ans, err := rawApply(ctx, c, raw)
-		require.NoError(t, err, "%s: the server refuses: %v", m, trunc(ans))
-		require.NotEmpty(t, ans, "%s: the server refuses", m)
-		assert.Equal(t, "OK", ans[0], "%s: the server refuses: %v", m, trunc(ans))
+		require.True(t, replyOpens(ans, err, "OK"), "%s: the server refuses: %v: %v", m, trunc(ans), err)
 	}
 }
 
@@ -256,10 +252,8 @@ func TestBatchInvalidUTF8IsRefusedByName(t *testing.T) {
 	raw := manifestWith(probeRev(ctx, c), "u8", "{\"id\":\"n\xff\",\"expect\":{\"absent\":true},\"create\":{\"row\":\"build\",\"col\":\"ready\",\"score\":1}}")
 	before := storeImage(t, c)
 	ans, err := rawApply(ctx, c, raw)
-	require.NoError(t, err, "%v; want REFUSED MANIFEST naming UTF-8", trunc(ans))
+	require.True(t, replyOpens(ans, err, "REFUSED", "MANIFEST"), "%v; want REFUSED MANIFEST naming UTF-8: %v", trunc(ans), err)
 	require.GreaterOrEqual(t, len(ans), 3, "%v; want REFUSED MANIFEST naming UTF-8", trunc(ans))
-	require.Equal(t, "REFUSED", ans[0], "%v; want REFUSED MANIFEST naming UTF-8", trunc(ans))
-	require.Equal(t, "MANIFEST", ans[1], "%v; want REFUSED MANIFEST naming UTF-8", trunc(ans))
 	require.Contains(t, fmt.Sprint(ans[2]), "UTF-8", "%v; want REFUSED MANIFEST naming UTF-8", trunc(ans))
 	assert.Equal(t, before, storeImage(t, c), "the store changed")
 }
@@ -288,8 +282,7 @@ func TestBatchScoresAreFiniteJSONNumbers(t *testing.T) {
 		id := fmt.Sprintf("s%d", i)
 		raw := manifestWith(probeRev(ctx, c), "ok-"+id, `{"id":"`+id+`","expect":{"absent":true},"create":{"row":"build","col":"ready","score":`+v+`}}`)
 		ans, err := rawApply(ctx, c, raw)
-		require.NoError(t, err, "create score %s: %v", v, trunc(ans))
-		assert.Equal(t, "OK", ans[0], "create score %s: %v", v, trunc(ans))
+		require.True(t, replyOpens(ans, err, "OK"), "create score %s: %v: %v", v, trunc(ans), err)
 	}
 }
 
@@ -310,10 +303,7 @@ func TestReadSetRefusesRequestsOutsideItsShapes(t *testing.T) {
 	for _, scope := range refused {
 		before := storeImage(t, c)
 		rs, err := c.FCallRO(ctx, ntable.FnReadSet, []string{ntable.DefKey("demo")}, "demo", scope).Slice()
-		require.NoError(t, err, "scope %q: a raw error reply leaves the script", scope)
-		require.GreaterOrEqual(t, len(rs), 2, "scope %q: %v; want REFUSED ARGS", scope, trunc(rs))
-		assert.Equal(t, "REFUSED", rs[0], "scope %q: %v; want REFUSED ARGS", scope, trunc(rs))
-		assert.Equal(t, "ARGS", rs[1], "scope %q: %v; want REFUSED ARGS", scope, trunc(rs))
+		require.True(t, replyOpens(rs, err, "REFUSED", "ARGS"), "scope %q: %v; want REFUSED ARGS: %v", scope, trunc(rs), err)
 		assert.Equal(t, before, storeImage(t, c), "scope %q: the store changed", scope)
 	}
 	// the library refuses an empty request the same way
@@ -348,10 +338,8 @@ func TestBatchWithoutMembersIsRefusedAndAdvancesNothing(t *testing.T) {
 	before := storeImage(t, c)
 	raw := manifestWith(rev, "empty", "")
 	ans, err := rawApply(ctx, c, raw)
-	require.NoError(t, err, "the server: %v", trunc(ans))
+	require.True(t, replyOpens(ans, err, "REFUSED", "MANIFEST"), "the server: %v: %v", trunc(ans), err)
 	require.GreaterOrEqual(t, len(ans), 3, "the server: %v", trunc(ans))
-	assert.Equal(t, "REFUSED", ans[0], "the server: %v", trunc(ans))
-	assert.Equal(t, "MANIFEST", ans[1], "the server: %v", trunc(ans))
 	assert.Contains(t, fmt.Sprint(ans[2]), "at least one member", "the server: %v", trunc(ans))
 	_, err = ntable.ValidateBatchManifestRaw([]byte(raw))
 	assert.ErrorContains(t, err, "at least one member", "the validator")
@@ -376,10 +364,8 @@ func TestReadSetRefusesRepeatedKeys(t *testing.T) {
 		`{"members":["a"],"selection":[{"row":"build","col":"ready"}],"members":["a"]}`,
 	} {
 		rs, err := c.FCallRO(ctx, ntable.FnReadSet, []string{ntable.DefKey("demo")}, "demo", scope).Slice()
-		require.NoError(t, err, "%s: %v; want REFUSED ARGS naming a repeated key", scope, trunc(rs))
+		require.True(t, replyOpens(rs, err, "REFUSED", "ARGS"), "%s: %v; want REFUSED ARGS naming a repeated key: %v", scope, trunc(rs), err)
 		require.GreaterOrEqual(t, len(rs), 3, "%s: %v; want REFUSED ARGS naming a repeated key", scope, trunc(rs))
-		assert.Equal(t, "REFUSED", rs[0], "%s: %v; want REFUSED ARGS naming a repeated key", scope, trunc(rs))
-		assert.Equal(t, "ARGS", rs[1], "%s: %v; want REFUSED ARGS naming a repeated key", scope, trunc(rs))
 		assert.Contains(t, fmt.Sprint(rs[2]), "twice", "%s: %v; want REFUSED ARGS naming a repeated key", scope, trunc(rs))
 	}
 	// a name that repeats in different objects is not a repeat

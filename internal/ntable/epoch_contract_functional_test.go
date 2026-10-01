@@ -4,7 +4,6 @@ package ntable_test
 
 import (
 	"context"
-	"encoding/json"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
@@ -152,13 +151,7 @@ func TestTableChangeReceiptAndRefusalAreAtomic(t *testing.T) {
 	require.Equal(t, "attempt-9", event["idem"], "receipt = %#v event=%v", receipt, event)
 	require.Equal(t, "cell_move", event["verb"], "receipt = %#v event=%v", receipt, event)
 	require.Equal(t, "changed", receipt.Outcome, "receipt = %#v event=%v", receipt, event)
-	var members []struct{ ID, From, To, Score string }
-	require.NoError(t, json.Unmarshal([]byte(event["members"].(string)), &members))
-	require.Len(t, members, 1, "member change = %v", members)
-	require.Equal(t, "m1", members[0].ID, "member change = %v", members)
-	require.Equal(t, "build:ready", members[0].From, "member change = %v", members)
-	require.Equal(t, "build:working", members[0].To, "member change = %v", members)
-	require.Equal(t, "7", members[0].Score, "member change = %v", members)
+	require.JSONEq(t, `[{"id":"m1","from":"build:ready","to":"build:working","score":"7"}]`, event["members"].(string), "member change")
 	n := c.XLen(ctx, ntable.ChangesKey(tb.Name)).Val()
 	image := storeImage(t, c)
 	_, err = ntable.CellAdd(ctx, c, tb.Name, "build", "ready", "m1", 9, opts)

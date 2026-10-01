@@ -96,6 +96,5 @@ func TestBatchWithAReadDeniedIsAnErrorNeverAnAcceptedBatch(t *testing.T) {
 	}
 	assert.Equal(t, before, storeImage(t, admin), "a batch with a read denied changed the store")
 	ans, err = rawApply(ctx, as("ns-all"), batch("all-small", "gone"))
-	require.NoError(t, err, "the small batch with every read granted: %.200v", ans)
-	assert.Equal(t, "OK", ans[0], "the small batch with every read granted: %.200v", ans)
+	require.True(t, replyOpens(ans, err, "OK"), "the small batch with every read granted: %.200v: %v", ans, err)
 }

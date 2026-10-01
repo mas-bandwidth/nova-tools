@@ -27,8 +27,7 @@ func TestBatchReceiptOverTheBoundIsRefusedBeforeAnyWrite(t *testing.T) {
 		creates = append(creates, fmt.Sprintf(`{"id":"m%d","expect":{"absent":true},"create":{"row":"build","col":"ready","score":1}}`, i))
 	}
 	seed, err := rawApply(ctx, c, manifestWith(probeRev(ctx, c), "seed", strings.Join(creates, ",")))
-	require.NoError(t, err, "seed: %.200v", seed)
-	require.Equal(t, "OK", seed[0], "seed: %.200v", seed)
+	require.True(t, replyOpens(seed, err, "OK"), "seed: %.200v: %v", seed, err)
 	value := strings.Repeat("v", size)
 	pipe := c.Pipeline()
 	for i := 0; i < members; i++ {
@@ -58,10 +57,8 @@ func TestBatchReceiptOverTheBoundIsRefusedBeforeAnyWrite(t *testing.T) {
 	before := storeImage(t, c)
 	ans, err := rawApply(ctx, c, raw)
 	why := fmt.Sprintf("a receipt over its bound: %.200v", ans)
-	require.NoError(t, err, why)
+	require.True(t, replyOpens(ans, err, "REFUSED", "LIMIT"), "%s: %v", why, err)
 	require.GreaterOrEqual(t, len(ans), 5, why)
-	require.Equal(t, "REFUSED", ans[0], why)
-	require.Equal(t, "LIMIT", ans[1], why)
 	require.Equal(t, "receipt bytes", ans[2], why)
 	require.Equal(t, fmt.Sprint(ntable.LimitReceiptBytes), fmt.Sprint(ans[3]), why)
 	var computed int

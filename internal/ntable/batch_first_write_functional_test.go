@@ -43,9 +43,7 @@ func TestBatchFirstWriteSnapshotMatchesOrdinaryWrite(t *testing.T) {
 		case "batch-noop":
 			raw := `{"schema":1,"table":"epoch-test","epoch":"1","expected_table_revision":"` + rev + `","operation_id":"e1","actor":"p","members":[{"id":"f","expect":{"absent":true}}]}`
 			ans, err := c.FCall(ctx, ntable.FnApply, []string{ntable.DefKey(tb.Name)}, tb.Name, raw).Slice()
-			require.NoError(t, err, "%s: %v", mode, trunc(ans))
-			require.NotEmpty(t, ans, "%s", mode)
-			require.Equal(t, "OK", ans[0], "%s: %v", mode, trunc(ans))
+			require.True(t, replyOpens(ans, err, "OK"), "%s: %v: %v", mode, trunc(ans), err)
 		}
 		snap := hashOf(t, c, "table:epoch-test:1:definition")
 		require.NoError(t, c.HSet(ctx, tb.EpochKey, "n", 2).Err())
@@ -72,9 +70,7 @@ func TestBatchFirstWriteOfALaterEpochKeepsBothHistories(t *testing.T) {
 	rev := c.HGet(ctx, ntable.DefKey(tb.Name)+":revision", "n").Val()
 	raw := `{"schema":1,"table":"epoch-test","epoch":"2","expected_table_revision":"` + rev + `","operation_id":"e2","actor":"p","members":[{"id":"g","expect":{"absent":true}}]}`
 	ans, err := c.FCall(ctx, ntable.FnApply, []string{ntable.DefKey(tb.Name)}, tb.Name, raw).Slice()
-	require.NoError(t, err, "apply at epoch 2: %v", trunc(ans))
-	require.NotEmpty(t, ans, "apply at epoch 2")
-	require.Equal(t, "OK", ans[0], "apply at epoch 2: %v", trunc(ans))
+	require.True(t, replyOpens(ans, err, "OK"), "apply at epoch 2: %v: %v", trunc(ans), err)
 	s2 := hashOf(t, c, "table:epoch-test:2:definition")
 	delete(s1, "_revision")
 	delete(s2, "_revision")

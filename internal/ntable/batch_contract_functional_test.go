@@ -757,82 +757,71 @@ func TestBatchDualStoreReplayFromStream(t *testing.T) {
 	assert.Equal(t, m2Hash2, m2Hash1, "member m2 hash mismatch: c1=%v, c2=%v", m2Hash1, m2Hash2)
 }
 
-func TestReviewWrongTypeDestinationPartialWrite(t *testing.T) {
+// TestBatchRefusalsLeaveTheStoreUnchanged: a batch that trips on a key of the
+// wrong type where it would write, or on a member's hidden second placement, is
+// refused naming changed=no, and the store is as it was, byte for byte (so the
+// source cell keeps its member and score, nothing is placed, the revision holds).
+func TestBatchRefusalsLeaveTheStoreUnchanged(t *testing.T) {
 	t.Parallel()
-	c, _ := store(t)
-	ctx := context.Background()
-	newTable(t, c, demo()).rows("build").cell("build", "ready", "m1", 7)
-	dest := ntable.CellKey("demo", "build", "working")
-	require.NoError(t, c.Set(ctx, dest, "wrong-type", 0).Err())
-	before := storeImage(t, c)
-	rev := c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
-	manifest := ntable.BatchManifest{
-		Schema:                1,
-		Table:                 "demo",
-		Epoch:                 "0",
-		ExpectedTableRevision: rev,
-		OperationID:           "review-wrongtype",
-		Actor:                 "review",
-		Members: []ntable.BatchMemberEntry{
-			{
-				ID: "m1",
-				Expect: &ntable.MemberExpect{
-					Place: &ntable.PlaceExpect{Row: "build", Col: "ready"},
-				},
-				Move: &ntable.MemberMoveOp{
-					Row: "build",
-					Col: "working",
-				},
-			},
-		},
+	inReady := &ntable.MemberExpect{Place: &ntable.PlaceExpect{Row: "build", Col: "ready"}}
+	for _, tc := range []struct {
+		name  string
+		setup func(t *testing.T, c *redis.Client) // the table, then the key the batch trips on
+		entry ntable.BatchMemberEntry
+		want  error
+	}{
+		{"move into a destination of the wrong type", func(t *testing.T, c *redis.Client) {
+			newTable(t, c, demo()).rows("build").cell("build", "ready", "m1", 7)
+			require.NoError(t, c.Set(context.Background(), ntable.CellKey("demo", "build", "working"), "wrong-type", 0).Err())
+		}, ntable.BatchMemberEntry{ID: "m1", Expect: inReady, Move: &ntable.MemberMoveOp{Row: "build", Col: "working"}}, ntable.ErrWrongType},
+		{"create with a changes stream of the wrong type", func(t *testing.T, c *redis.Client) {
+			newTable(t, c, demo()).rows("build")
+			require.NoError(t, c.Set(context.Background(), ntable.DefKey("demo")+":changes", "wrong-type", 0).Err())
+		}, ntable.BatchMemberEntry{ID: "m1", Expect: &ntable.MemberExpect{Absent: true}, Create: &ntable.MemberCreateOp{Row: "build", Col: "ready", Score: 3}}, ntable.ErrWrongType},
+		{"create over a member key of the wrong type", func(t *testing.T, c *redis.Client) {
+			newTable(t, c, demo())
+			require.NoError(t, c.Set(context.Background(), ntable.MemberKey("m_bad"), "string-not-hash", 0).Err())
+		}, ntable.BatchMemberEntry{ID: "m_bad", Expect: &ntable.MemberExpect{Absent: true}, Create: &ntable.MemberCreateOp{Row: "build", Col: "ready", Score: 10}}, ntable.ErrWrongType},
+		{"move of a member with a hidden second placement", func(t *testing.T, c *redis.Client) {
+			newTable(t, c, demo()).rows("build").cell("build", "ready", "m1", 7)
+			require.NoError(t, c.ZAdd(context.Background(), ntable.CellKey("demo", "build", "working"), redis.Z{Score: 9, Member: "m1"}).Err())
+		}, ntable.BatchMemberEntry{ID: "m1", Expect: inReady, Move: &ntable.MemberMoveOp{Row: "build", Col: "done"}}, ntable.ErrDrift},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			c, _ := store(t)
+			ctx := context.Background()
+			tc.setup(t, c)
+			before := storeImage(t, c)
+			rev := c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
+			_, err := ntable.ApplyBatch(ctx, c, ntable.BatchManifest{Schema: 1, Table: "demo", Epoch: "0", ExpectedTableRevision: rev,
+				OperationID: "refused", Actor: "review", Members: []ntable.BatchMemberEntry{tc.entry}})
+			require.ErrorIs(t, err, tc.want)
+			require.ErrorContains(t, err, "changed=no")
+			require.Equal(t, before, storeImage(t, c), "a refused batch changed the store")
+		})
 	}
-	_, err := ntable.ApplyBatch(ctx, c, manifest)
-	after := storeImage(t, c)
-	require.Error(t, err, "expected error on destination WRONGTYPE, got nil")
-	require.ErrorIs(t, err, ntable.ErrWrongType, "expected ErrWrongType, got")
-	require.ErrorContains(t, err, "changed=no", "expected changed=no, got")
-	require.Equal(t, before, after, "expected store unchanged on destination WRONGTYPE refusal")
-	score := c.ZScore(ctx, ntable.CellKey("demo", "build", "ready"), "m1").Val()
-	require.Equal(t, float64(7), score, "expected m1 score 7 in source, got %v", score)
 }
 
-func TestReviewBatchStreamWrongTypePartialWrite(t *testing.T) {
+// TestReviewUnknownAndDuplicateJSONAccepted: an unknown or a repeated key, at the
+// top or inside expect, is REFUSED MANIFEST and writes nothing.
+func TestReviewUnknownAndDuplicateJSONAccepted(t *testing.T) {
 	t.Parallel()
 	c, _ := store(t)
 	ctx := context.Background()
-	newTable(t, c, demo()).rows("build")
-	require.NoError(t, c.Set(ctx, ntable.DefKey("demo")+":changes", "wrong-type", 0).Err())
-	before := storeImage(t, c)
-	rev := c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
-	manifest := ntable.BatchManifest{
-		Schema:                1,
-		Table:                 "demo",
-		Epoch:                 "0",
-		ExpectedTableRevision: rev,
-		OperationID:           "review-stream",
-		Actor:                 "review",
-		Members: []ntable.BatchMemberEntry{
-			{
-				ID:     "m1",
-				Expect: &ntable.MemberExpect{Absent: true},
-				Create: &ntable.MemberCreateOp{
-					Row:   "build",
-					Col:   "ready",
-					Score: 3,
-				},
-			},
-		},
+	newTable(t, c, demo())
+	head := fmt.Sprintf(`{"schema":1,"table":"demo","epoch":"0","expected_table_revision":%q,`, c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val())
+	for name, tail := range map[string]string{
+		"an unknown top-level field":       `"operation_id":"review-unknown","actor":"review","members":[],"unknown":true}`,
+		"a duplicate top-level key":        `"operation_id":"review-duplicate","actor":"first","actor":"second","members":[]}`,
+		"a nested unknown key in expect":   `"operation_id":"review-nested-unknown","actor":"review","members":[{"id":"m1","expect":{"revision":"1","unknown":true}}]}`,
+		"a nested duplicate key in expect": `"operation_id":"review-nested-duplicate","actor":"review","members":[{"id":"m1","expect":{"revision":"1","revision":"2"}}]}`,
+	} {
+		before := storeImage(t, c)
+		ans, err := c.FCall(ctx, ntable.FnApply, []string{ntable.DefKey("demo")}, "demo", head+tail).Slice()
+		require.True(t, replyOpens(ans, err, "REFUSED", "MANIFEST"), "%s: want REFUSED MANIFEST, got %v %v", name, ans, err)
+		require.Equal(t, before, storeImage(t, c), "%s: the refusal changed the store", name)
 	}
-	_, err := ntable.ApplyBatch(ctx, c, manifest)
-	after := storeImage(t, c)
-	require.Error(t, err, "expected error on changes stream WRONGTYPE, got nil")
-	require.ErrorIs(t, err, ntable.ErrWrongType, "expected ErrWrongType, got")
-	require.ErrorContains(t, err, "changed=no", "expected changed=no, got")
-	require.Equal(t, before, after, "expected store unchanged on stream WRONGTYPE refusal")
-	placed := c.ZScore(ctx, ntable.CellKey("demo", "build", "ready"), "m1").Val()
-	require.Equal(t, float64(0), placed, "expected m1 not placed, got %v", placed)
-	revAfter := c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
-	require.Equal(t, rev, revAfter, "expected revision unchanged (%s), got %s", rev, revAfter)
 }
 
 func TestReviewReadSetHidesPlacementDrift(t *testing.T) {
@@ -844,124 +833,6 @@ func TestReviewReadSetHidesPlacementDrift(t *testing.T) {
 	_, err := ntable.ReadSetMembers(ctx, c, "demo", []string{"m1"})
 	require.Error(t, err, "expected ReadSetMembers to refuse placement drift, got nil")
 	require.ErrorIs(t, err, ntable.ErrDrift, "expected ErrDrift, got")
-}
-
-func TestReviewHiddenDuplicatePlacementAccepted(t *testing.T) {
-	t.Parallel()
-	c, _ := store(t)
-	ctx := context.Background()
-	newTable(t, c, demo()).rows("build").cell("build", "ready", "m1", 7)
-	hidden := ntable.CellKey("demo", "build", "working")
-	require.NoError(t, c.ZAdd(ctx, hidden, redis.Z{Score: 9, Member: "m1"}).Err())
-	before := storeImage(t, c)
-	rev := c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
-	manifest := ntable.BatchManifest{
-		Schema:                1,
-		Table:                 "demo",
-		Epoch:                 "0",
-		ExpectedTableRevision: rev,
-		OperationID:           "review-hidden",
-		Actor:                 "review",
-		Members: []ntable.BatchMemberEntry{
-			{
-				ID: "m1",
-				Expect: &ntable.MemberExpect{
-					Place: &ntable.PlaceExpect{Row: "build", Col: "ready"},
-				},
-				Move: &ntable.MemberMoveOp{
-					Row: "build",
-					Col: "done",
-				},
-			},
-		},
-	}
-	_, err := ntable.ApplyBatch(ctx, c, manifest)
-	after := storeImage(t, c)
-	require.Error(t, err, "expected ApplyBatch to refuse hidden duplicate placement, got nil")
-	require.ErrorIs(t, err, ntable.ErrDrift, "expected ErrDrift, got")
-	require.ErrorContains(t, err, "changed=no", "expected changed=no, got")
-	require.Equal(t, before, after, "expected store unchanged on hidden duplicate refusal")
-	destScore := c.ZScore(ctx, ntable.CellKey("demo", "build", "done"), "m1").Val()
-	require.Equal(t, float64(0), destScore, "expected dest score 0, got %v", destScore)
-}
-
-func TestReviewUnknownAndDuplicateJSONAccepted(t *testing.T) {
-	t.Parallel()
-	c, _ := store(t)
-	ctx := context.Background()
-	newTable(t, c, demo())
-	rev := c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
-
-	// 1. Unknown top-level field rejected with REFUSED MANIFEST and zero mutation
-	rawUnknown := fmt.Sprintf(`{"schema":1,"table":"demo","epoch":"0","expected_table_revision":%q,"operation_id":"review-unknown","actor":"review","members":[],"unknown":true}`, rev)
-	before := storeImage(t, c)
-	ans, err := c.FCall(ctx, ntable.FnApply, []string{ntable.DefKey("demo")}, "demo", rawUnknown).Slice()
-	after := storeImage(t, c)
-	require.NoError(t, err, "FCall err")
-	require.True(t, replyOpens(ans, nil, "REFUSED", "MANIFEST"), "expected REFUSED MANIFEST for unknown top-level field, got: %v", ans)
-	require.Equal(t, before, after, "expected store unchanged after unknown field refusal")
-
-	// 2. Duplicate top-level key rejected with REFUSED MANIFEST and zero mutation
-	rawDuplicate := fmt.Sprintf(`{"schema":1,"table":"demo","epoch":"0","expected_table_revision":%q,"operation_id":"review-duplicate","actor":"first","actor":"second","members":[]}`, rev)
-	before2 := storeImage(t, c)
-	ans, err = c.FCall(ctx, ntable.FnApply, []string{ntable.DefKey("demo")}, "demo", rawDuplicate).Slice()
-	after2 := storeImage(t, c)
-	require.NoError(t, err, "FCall err")
-	require.True(t, replyOpens(ans, nil, "REFUSED", "MANIFEST"), "expected REFUSED MANIFEST for duplicate top-level key, got: %v", ans)
-	require.Equal(t, before2, after2, "expected store unchanged after duplicate key refusal")
-
-	// 3. Nested unknown key inside expect rejected
-	rawNestedUnknown := fmt.Sprintf(`{"schema":1,"table":"demo","epoch":"0","expected_table_revision":%q,"operation_id":"review-nested-unknown","actor":"review","members":[{"id":"m1","expect":{"revision":"1","unknown":true}}]}`, rev)
-	ans, err = c.FCall(ctx, ntable.FnApply, []string{ntable.DefKey("demo")}, "demo", rawNestedUnknown).Slice()
-	require.NoError(t, err, "FCall err")
-	require.True(t, replyOpens(ans, nil, "REFUSED", "MANIFEST"), "expected REFUSED MANIFEST for nested unknown key, got: %v", ans)
-
-	// 4. Nested duplicate key inside expect rejected
-	rawNestedDuplicate := fmt.Sprintf(`{"schema":1,"table":"demo","epoch":"0","expected_table_revision":%q,"operation_id":"review-nested-duplicate","actor":"review","members":[{"id":"m1","expect":{"revision":"1","revision":"2"}}]}`, rev)
-	ans, err = c.FCall(ctx, ntable.FnApply, []string{ntable.DefKey("demo")}, "demo", rawNestedDuplicate).Slice()
-	require.NoError(t, err, "FCall err")
-	require.True(t, replyOpens(ans, nil, "REFUSED", "MANIFEST"), "expected REFUSED MANIFEST for nested duplicate key, got: %v", ans)
-}
-
-func TestBatchContractWrongTypeMemberRefusal(t *testing.T) {
-	t.Parallel()
-	c, _ := store(t)
-	ctx := context.Background()
-	newTable(t, c, demo())
-	rev := c.HGet(ctx, ntable.DefKey("demo")+":revision", "n").Val()
-
-	// Pre-populate member key as a Redis string instead of hash
-	mkey := ntable.MemberKey("m_bad")
-	require.NoError(t, c.Set(ctx, mkey, "string-not-hash", 0).Err())
-
-	before := storeImage(t, c)
-	manifest := ntable.BatchManifest{
-		Schema:                1,
-		Table:                 "demo",
-		Epoch:                 "0",
-		ExpectedTableRevision: rev,
-		OperationID:           "op-bad-mkey-type",
-		Actor:                 "tester",
-		Members: []ntable.BatchMemberEntry{
-			{
-				ID: "m_bad",
-				Expect: &ntable.MemberExpect{
-					Absent: true,
-				},
-				Create: &ntable.MemberCreateOp{
-					Row:   "build",
-					Col:   "ready",
-					Score: 10,
-				},
-			},
-		},
-	}
-	_, err := ntable.ApplyBatch(ctx, c, manifest)
-	after := storeImage(t, c)
-	require.Error(t, err, "expected ApplyBatch to fail on wrong type member key")
-	require.ErrorIs(t, err, ntable.ErrWrongType, "expected ErrWrongType, got")
-	require.ErrorContains(t, err, "changed=no", "expected changed=no, got")
-	require.Equal(t, before, after, "store changed on wrong type member key refusal")
 }
 
 func TestBatchContractRemoveAndOverlapValidation(t *testing.T) {
@@ -1219,28 +1090,22 @@ func TestBatchContractReceiptBeforeAfterDeltas(t *testing.T) {
 	require.True(t, ok, "missing m1 delta")
 	require.Equal(t, "build:ready", d1.BeforePlace, "m1 place before=%q after=%q", d1.BeforePlace, d1.AfterPlace)
 	require.Equal(t, "build:done", d1.AfterPlace, "m1 place before=%q after=%q", d1.BeforePlace, d1.AfterPlace)
-	require.NotNil(t, d1.BeforeScore, "m1 before_score want 10, got %v", d1.BeforeScore)
-	require.Equal(t, float64(10), *d1.BeforeScore, "m1 before_score want 10, got %v", d1.BeforeScore)
-	require.NotNil(t, d1.AfterScore, "m1 after_score want 15, got %v", d1.AfterScore)
-	require.Equal(t, float64(15), *d1.AfterScore, "m1 after_score want 15, got %v", d1.AfterScore)
+	require.Equal(t, new(float64(10)), d1.BeforeScore, "m1 before_score want 10, got %v", d1.BeforeScore)
+	require.Equal(t, new(float64(15)), d1.AfterScore, "m1 after_score want 15, got %v", d1.AfterScore)
 	// m1 fields: role before="dev" after="lead"
 	fRole, ok := d1.Fields["role"]
 	require.True(t, ok, "m1 role field delta mismatch: %+v", fRole)
-	require.NotNil(t, fRole.Before, "m1 role field delta mismatch: %+v", fRole)
-	require.Equal(t, "dev", *fRole.Before, "m1 role field delta mismatch: %+v", fRole)
-	require.NotNil(t, fRole.After, "m1 role field delta mismatch: %+v", fRole)
-	require.Equal(t, "lead", *fRole.After, "m1 role field delta mismatch: %+v", fRole)
+	require.Equal(t, new("dev"), fRole.Before, "m1 role field delta mismatch: %+v", fRole)
+	require.Equal(t, new("lead"), fRole.After, "m1 role field delta mismatch: %+v", fRole)
 	// m1 fields: team before=nil after="core"
 	fTeam, ok := d1.Fields["team"]
 	require.True(t, ok, "m1 team field delta mismatch (want nil before): %+v", fTeam)
 	require.Nil(t, fTeam.Before, "m1 team field delta mismatch (want nil before): %+v", fTeam)
-	require.NotNil(t, fTeam.After, "m1 team field delta mismatch (want nil before): %+v", fTeam)
-	require.Equal(t, "core", *fTeam.After, "m1 team field delta mismatch (want nil before): %+v", fTeam)
+	require.Equal(t, new("core"), fTeam.After, "m1 team field delta mismatch (want nil before): %+v", fTeam)
 	// m1 fields: notes before="" after=nil (empty string distinct from absent!)
 	fNotes, ok := d1.Fields["notes"]
 	require.True(t, ok, "m1 notes field delta mismatch (want \"\" before, nil after): %+v", fNotes)
-	require.NotNil(t, fNotes.Before, "m1 notes field delta mismatch (want \"\" before, nil after): %+v", fNotes)
-	require.Equal(t, "", *fNotes.Before, "m1 notes field delta mismatch (want \"\" before, nil after): %+v", fNotes)
+	require.Equal(t, new(""), fNotes.Before, "m1 notes field delta mismatch (want \"\" before, nil after): %+v", fNotes)
 	require.Nil(t, fNotes.After, "m1 notes field delta mismatch (want \"\" before, nil after): %+v", fNotes)
 
 	// Verify m2 deltas (create)
@@ -1249,21 +1114,18 @@ func TestBatchContractReceiptBeforeAfterDeltas(t *testing.T) {
 	require.Empty(t, d2.BeforePlace, "m2 place before=%q after=%q", d2.BeforePlace, d2.AfterPlace)
 	require.Equal(t, "build:ready", d2.AfterPlace, "m2 place before=%q after=%q", d2.BeforePlace, d2.AfterPlace)
 	require.Nil(t, d2.BeforeScore, "m2 created before_score should be nil, got %v", d2.BeforeScore)
-	require.NotNil(t, d2.AfterScore, "m2 after_score want 5, got %v", d2.AfterScore)
-	require.Equal(t, float64(5), *d2.AfterScore, "m2 after_score want 5, got %v", d2.AfterScore)
+	require.Equal(t, new(float64(5)), d2.AfterScore, "m2 after_score want 5, got %v", d2.AfterScore)
 	fRole2, ok := d2.Fields["role"]
 	require.True(t, ok, "m2 role field delta mismatch (want nil before): %+v", fRole2)
 	require.Nil(t, fRole2.Before, "m2 role field delta mismatch (want nil before): %+v", fRole2)
-	require.NotNil(t, fRole2.After, "m2 role field delta mismatch (want nil before): %+v", fRole2)
-	require.Equal(t, "intern", *fRole2.After, "m2 role field delta mismatch (want nil before): %+v", fRole2)
+	require.Equal(t, new("intern"), fRole2.After, "m2 role field delta mismatch (want nil before): %+v", fRole2)
 
 	// Verify m3 deltas (remove)
 	d3, ok := deltas["m3"]
 	require.True(t, ok, "missing m3 delta")
 	require.Equal(t, "build:ready", d3.BeforePlace, "m3 place before=%q after=%q", d3.BeforePlace, d3.AfterPlace)
 	require.Empty(t, d3.AfterPlace, "m3 place before=%q after=%q", d3.BeforePlace, d3.AfterPlace)
-	require.NotNil(t, d3.BeforeScore, "m3 before_score want 30, got %v", d3.BeforeScore)
-	require.Equal(t, float64(30), *d3.BeforeScore, "m3 before_score want 30, got %v", d3.BeforeScore)
+	require.Equal(t, new(float64(30)), d3.BeforeScore, "m3 before_score want 30, got %v", d3.BeforeScore)
 	require.Nil(t, d3.AfterScore, "m3 removed after_score should be nil, got %v", d3.AfterScore)
 }
 
@@ -1705,18 +1567,14 @@ func TestBatchAcceptedInteractingCrossRowMultiMemberWitness(t *testing.T) {
 	require.True(t, ok2, "missing member delta: m1=%v, m2=%v", ok1, ok2)
 	require.Equal(t, "row1:col1", d1.BeforePlace, "unexpected m1 delta: %+v", d1)
 	require.Equal(t, "row2:col2", d1.AfterPlace, "unexpected m1 delta: %+v", d1)
-	require.NotNil(t, d1.BeforeScore, "unexpected m1 delta: %+v", d1)
-	require.Equal(t, float64(10), *d1.BeforeScore, "unexpected m1 delta: %+v", d1)
-	require.NotNil(t, d1.AfterScore, "unexpected m1 delta: %+v", d1)
-	require.Equal(t, float64(30), *d1.AfterScore, "unexpected m1 delta: %+v", d1)
+	require.Equal(t, new(float64(10)), d1.BeforeScore, "unexpected m1 delta: %+v", d1)
+	require.Equal(t, new(float64(30)), d1.AfterScore, "unexpected m1 delta: %+v", d1)
 	require.Equal(t, "1", d1.BeforeRev, "unexpected m1 delta: %+v", d1)
 	require.Equal(t, "2", d1.AfterRev, "unexpected m1 delta: %+v", d1)
 	require.Equal(t, "row2:col2", d2.BeforePlace, "unexpected m2 delta: %+v", d2)
 	require.Equal(t, "row1:col1", d2.AfterPlace, "unexpected m2 delta: %+v", d2)
-	require.NotNil(t, d2.BeforeScore, "unexpected m2 delta: %+v", d2)
-	require.Equal(t, float64(20), *d2.BeforeScore, "unexpected m2 delta: %+v", d2)
-	require.NotNil(t, d2.AfterScore, "unexpected m2 delta: %+v", d2)
-	require.Equal(t, float64(40), *d2.AfterScore, "unexpected m2 delta: %+v", d2)
+	require.Equal(t, new(float64(20)), d2.BeforeScore, "unexpected m2 delta: %+v", d2)
+	require.Equal(t, new(float64(40)), d2.AfterScore, "unexpected m2 delta: %+v", d2)
 	require.Equal(t, "1", d2.BeforeRev, "unexpected m2 delta: %+v", d2)
 	require.Equal(t, "2", d2.AfterRev, "unexpected m2 delta: %+v", d2)
 
@@ -1956,8 +1814,7 @@ func TestBatchRetainedUnplacedMemberRemovalWitness(t *testing.T) {
 	require.Equal(t, "m_unplaced", remDelta.ID, "unexpected remDelta places: %+v", remDelta)
 	require.Equal(t, "build:ready", remDelta.BeforePlace, "unexpected remDelta places: %+v", remDelta)
 	require.Equal(t, "", remDelta.AfterPlace, "unexpected remDelta places: %+v", remDelta)
-	require.NotNil(t, remDelta.BeforeScore, "unexpected remDelta scores: %+v", remDelta)
-	require.Equal(t, float64(10), *remDelta.BeforeScore, "unexpected remDelta scores: %+v", remDelta)
+	require.Equal(t, new(float64(10)), remDelta.BeforeScore, "unexpected remDelta scores: %+v", remDelta)
 	require.Nil(t, remDelta.AfterScore, "unexpected remDelta scores: %+v", remDelta)
 	require.Equal(t, "1", remDelta.BeforeRev, "unexpected remDelta revs: %+v", remDelta)
 	require.Equal(t, "2", remDelta.AfterRev, "unexpected remDelta revs: %+v", remDelta)

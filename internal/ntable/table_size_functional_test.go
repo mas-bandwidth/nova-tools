@@ -28,9 +28,8 @@ func wideColumns(n int) []ntable.Column {
 func requireLimit(t *testing.T, what string, err error, name string, bound, observed int) {
 	t.Helper()
 	var le *ntable.LimitError
-	if assert.ErrorAs(t, err, &le, what) {
-		assert.Equal(t, ntable.LimitError{Name: name, Bound: bound, Observed: observed}, ntable.LimitError{Name: le.Name, Bound: le.Bound, Observed: le.Observed}, what)
-	}
+	require.ErrorAs(t, err, &le, what)
+	require.Equal(t, ntable.LimitError{Name: name, Bound: bound, Observed: observed}, ntable.LimitError{Name: le.Name, Bound: le.Bound, Observed: le.Observed}, what)
 }
 
 func TestTableColumnsAreBounded(t *testing.T) {

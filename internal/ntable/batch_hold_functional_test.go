@@ -31,8 +31,7 @@ func holdMembers(t *testing.T, ctx context.Context, c *redis.Client, prefix stri
 		}
 		op := fmt.Sprintf("seed-%s-%d", prefix, from)
 		ans, err := rawApply(ctx, c, manifestWith(probeRev(ctx, c), op, strings.Join(creates, ",")))
-		require.NoError(t, err, "seed: %.200v", ans)
-		require.Equal(t, "OK", ans[0], "seed: %.200v", ans)
+		require.True(t, replyOpens(ans, err, "OK"), "seed: %.200v: %v", ans, err)
 	}
 }
 

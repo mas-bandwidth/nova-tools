@@ -83,7 +83,6 @@ func TestBatchRecordStaysWithinItsBoundAtTheLargestEscapedDelta(t *testing.T) {
 	assert.LessOrEqual(t, event, eventBound, "event %d (bound %d)", event, eventBound)
 	assert.LessOrEqual(t, record, recordBound, "record %d (bound %d)", record, recordBound)
 	over, err := rawApply(ctx, c, manifestWithActor(probeRev(ctx, c), "over", "p", entries(27)))
-	require.NoError(t, err, "27 fields on 128 members: %.200v; want a receipt refusal", over)
-	assert.Equal(t, "REFUSED", over[0], "27 fields on 128 members: %.200v; want a receipt refusal", over)
+	require.True(t, replyOpens(over, err, "REFUSED"), "27 fields on 128 members: %.200v; want a receipt refusal: %v", over, err)
 	assert.Equal(t, "receipt bytes", over[2], "27 fields on 128 members: %.200v; want a receipt refusal", over)
 }
