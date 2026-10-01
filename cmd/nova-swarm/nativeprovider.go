@@ -71,8 +71,36 @@ var providerErrorRE = regexp.MustCompile(`(?i)message="?stream error|server_erro
 // providerLogError is the first provider error line in what the run appended to the
 // harness's log after offset (bounded to its tail), trimmed to the line's own message;
 // "" when there is none. The cause read from it (swarm.CauseFromText) is what is bounded.
-func providerLogError(dataHome string, offset int64) string {
-	f, err := os.Open(filepath.Join(dataHome, filepath.FromSlash(harnessLogFile)))
+// The harness prints its error lines into the run's capture too (`--print-logs --log-level
+// ERROR` in the providers table), so a log that holds none is followed by the capture.
+func providerLogError(dataHome string, offset int64, capture string) string {
+	if line := errorLineIn(filepath.Join(dataHome, filepath.FromSlash(harnessLogFile)), offset, 0, true, isProviderError); line != "" {
+		return line
+	}
+	return errorLineIn(capture, 0, captureTailLines, true, isProviderError)
+}
+
+// captureErrorLine is the last error line the harness printed into the run's capture
+// (bounded to its tail), whatever it says: the harness's own cause of a failure it reports
+// only as `UnknownError`. "" when there is none.
+func captureErrorLine(capture string) string {
+	return errorLineIn(capture, 0, captureTailLines, false, func(string) bool { return true })
+}
+
+// captureTailLines is how far back from its end the capture is read for the harness's error
+// lines: the harness prints them last, and the card's own output before them (a log it
+// printed that says level=ERROR) is not the harness's.
+const captureTailLines = 20
+
+// isProviderError is whether an error line is the provider's (providerErrorRE).
+func isProviderError(line string) bool { return providerErrorRE.MatchString(line) }
+
+// errorLineIn is the first (first true) or last error line of the harness in what path holds
+// after offset, bounded to its last providerLogTailBytes and, when tail is above 0, to its
+// last tail lines, that match accepts, from its message on; "" when there is none. An error
+// line is the log's `level=ERROR`, or a printed line that begins with `ERROR`.
+func errorLineIn(path string, offset int64, tail int, first bool, match func(string) bool) string {
+	f, err := os.Open(path)
 	if err != nil {
 		return ""
 	}
@@ -86,16 +114,25 @@ func providerLogError(dataHome string, offset int64) string {
 	if _, err := f.ReadAt(raw, from); err != nil {
 		return ""
 	}
-	for _, line := range strings.Split(string(raw), "\n") {
-		if !strings.Contains(line, "level=ERROR") || !providerErrorRE.MatchString(line) {
+	lines := strings.Split(strings.TrimRight(string(raw), "\n"), "\n")
+	if tail > 0 && len(lines) > tail {
+		lines = lines[len(lines)-tail:]
+	}
+	found := ""
+	for _, line := range lines {
+		errLine := strings.Contains(line, "level=ERROR") || strings.HasPrefix(strings.TrimSpace(line), "ERROR")
+		if !errLine || !match(line) {
 			continue
 		}
 		if i := strings.Index(line, "message="); i >= 0 {
 			line = line[i:] // what the error says, without its timestamp and run id
 		}
-		return strings.TrimSpace(line)
+		found = strings.TrimSpace(line)
+		if first {
+			break
+		}
 	}
-	return ""
+	return found
 }
 
 // endedOnATool is whether the run's last message in the session database is not a final
@@ -165,12 +202,12 @@ func sessionQuery(dataHome, query string) (string, bool) {
 // message`, class other); the cause is then the session's own record of the failed message
 // when it has one, which keeps the provider's status, else what the log line says.
 // offset is the harness log's size when the run began, since is when it began.
-func providerEnd(dataHome string, offset int64, since time.Time, rc int) (swarm.ProviderCause, bool) {
+func providerEnd(dataHome, capture string, offset int64, since time.Time, rc int) (swarm.ProviderCause, bool) {
 	if rc < 0 {
 		return swarm.ProviderCause{}, false // killed: the deadline's end, whatever the log says
 	}
 	var found swarm.ProviderCause
-	if line := providerLogError(dataHome, offset); line != "" {
+	if line := providerLogError(dataHome, offset, capture); line != "" {
 		found = swarm.CauseFromText(line)
 	} else if rc == 0 && endedOnATool(dataHome, since) {
 		found = swarm.ProviderCause{Class: swarm.CauseOther, Message: providerEndedNoMessage}

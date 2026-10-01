@@ -124,14 +124,14 @@ func TestTheHarnessLogIsReadFromItsTailAndFromTheRunsOffset(t *testing.T) {
 	filler := strings.Repeat("timestamp=t level=INFO run=r message=chatter\n", providerLogTailBytes/40)
 
 	require.NoError(t, os.WriteFile(path, []byte(errLine+filler), 0o644))
-	assert.Empty(t, providerLogError(data, 0), "an error before the tail's cap is not read")
+	assert.Empty(t, providerLogError(data, 0, ""), "an error before the tail's cap is not read")
 
 	require.NoError(t, os.WriteFile(path, []byte(filler+errLine), 0o644))
-	assert.Equal(t, `message="stream error" error.error="HTTP 503 overloaded"`, providerLogError(data, 0))
+	assert.Equal(t, `message="stream error" error.error="HTTP 503 overloaded"`, providerLogError(data, 0, ""))
 
 	require.NoError(t, os.WriteFile(path, []byte(errLine), 0o644))
-	assert.Empty(t, providerLogError(data, int64(len(errLine))), "an earlier run's line, before the offset, is not this run's")
-	assert.Empty(t, providerLogError(t.TempDir(), 0), "no log is no error")
+	assert.Empty(t, providerLogError(data, int64(len(errLine)), ""), "an earlier run's line, before the offset, is not this run's")
+	assert.Empty(t, providerLogError(t.TempDir(), 0, ""), "no log is no error")
 }
 
 // Each provider error the rule names is one, on an ERROR line only, and a line of
@@ -153,7 +153,7 @@ func TestTheProviderErrorPatterns(t *testing.T) {
 		path := filepath.Join(data, "opencode", "log", "opencode.log")
 		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
 		require.NoError(t, os.WriteFile(path, []byte("timestamp=t "+line+"\n"), 0o644))
-		assert.Equal(t, want, providerLogError(data, 0) != "", line)
+		assert.Equal(t, want, providerLogError(data, 0, "") != "", line)
 	}
 }
 
@@ -220,4 +220,28 @@ func TestAChildTheProviderFailedIsJudgedProviderFailure(t *testing.T) {
 		assert.Equal(t, member.FinishFailed, fin, tc.name)
 		assert.Equal(t, tc.want, why, tc.name)
 	}
+}
+
+// The harness's own UnknownError names no cause; with its logs printed into the capture
+// (the providers table's --print-logs --log-level ERROR) the error line it printed is the
+// cause on the hand-back line, not the envelope's words.
+func TestAnUnknownErrorCarriesTheErrorLineTheHarnessPrinted(t *testing.T) {
+	t.Parallel()
+	_, errb := providerRun(t, "pf7", "FAKE-UNKNOWN-ERROR\n", nil)
+	assert.Contains(t, errb, "NATIVE PROVIDER-5XX label=pf7 ")
+	assert.Contains(t, errb, " reason=provider: class=unknown-model status=- msg=Model not found: fake/no-such-model\n")
+}
+
+// A log line the card printed earlier in the capture is never read as the harness's error:
+// only the capture's last lines are.
+func TestTheCaptureIsReadOnlyFromItsLastLines(t *testing.T) {
+	t.Parallel()
+	capture := filepath.Join(t.TempDir(), "harness-output.log")
+	early := `level=ERROR message="stream error" error.error.type=server_error` + "\n"
+	write(t, capture, early+strings.Repeat("the card's own output\n", captureTailLines))
+	assert.Empty(t, providerLogError(t.TempDir(), 0, capture))
+	assert.Empty(t, captureErrorLine(capture))
+	write(t, capture, "the card's own output\n"+early)
+	assert.Equal(t, `message="stream error" error.error.type=server_error`, providerLogError(t.TempDir(), 0, capture))
+	assert.Equal(t, `message="stream error" error.error.type=server_error`, captureErrorLine(capture))
 }

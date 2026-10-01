@@ -1276,11 +1276,14 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	if !res.lost && !res.idled && !res.terminated && res.wallReport == "" && (res.wallRefusal == swarm.WallRefusal{}) {
 		if raw, err := os.ReadFile(outLog); err == nil {
 			if h, ok := swarm.ProviderHandback(swarm.ProviderExit{Tail: raw, Job: jobDir, RC: res.rc, Wall: time.Duration(res.wallSeconds * float64(time.Second)), Route: cfg.model, Routes: swarm.ParseRouteList(os.Getenv(swarm.RoutesEnv))}); ok {
-				// the cause: the session's record of the failed message, else the log's error
-				// line, else the harness's own last words (nativeprovider.go)
+				// the cause: the session's record of the failed message, else the log's provider
+				// error line, else the last error line the harness printed into the capture (its
+				// own cause of an UnknownError), else its last words (nativeprovider.go)
 				if c, ok := sessionProviderError(dataHome, runStart); ok {
 					h.Cause = c
-				} else if line := providerLogError(dataHome, providerMark); line != "" {
+				} else if line := providerLogError(dataHome, providerMark, outLog); line != "" {
+					h.Cause = swarm.CauseFromText(line)
+				} else if line := captureErrorLine(outLog); line != "" {
 					h.Cause = swarm.CauseFromText(line)
 				}
 				fmt.Fprintln(errOut, oneline.Escape(h.Line(cfg.label)))
@@ -1319,7 +1322,7 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	if !res.lost && !res.idled && !res.terminated && !handedBack && res.stopped == "" && res.wallReport == "" &&
 		(res.wallRefusal == swarm.WallRefusal{}) && (res.shellDenial == swarm.ShellDenial{}) {
 		if _, published := swarm.FindCardResult(jobDir); !published {
-			if cause, ok := providerEnd(dataHome, providerMark, runStart, res.rc); ok {
+			if cause, ok := providerEnd(dataHome, outLog, providerMark, runStart, res.rc); ok {
 				fmt.Fprintln(errOut, oneline.Escape(providerLine(cfg.label, res.wallSeconds, cfg.model, cause)))
 			}
 		}

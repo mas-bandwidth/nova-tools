@@ -45,8 +45,8 @@ const usage = `nova-swarm: one-task AI workers, each run in the sandbox with a d
 how it works: a card is one task, a markdown file with a header and its RULES;
 a worker description (JSON) names the harness, the model, the key file and the
 directories it may read. native runs one card as one child inside nova-sandbox;
-batch runs many under a pool of slots (leases in a --slots-store directory);
-each result lands in the job directory under --root. Nothing has a default.
+member takes assigned work and reads from the sprint and runs them through native;
+each result lands in the job directory under --root.
 first run: the lines under example: need nothing: a card, a worker description
 and the lint's rules; running a card needs a harness, a model's key file and nova-sandbox.
 

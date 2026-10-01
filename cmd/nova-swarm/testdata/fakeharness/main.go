@@ -311,6 +311,15 @@ func main() {
 		publish(job, prompt, 0, notesRead(job, prompt))
 		os.Exit(0)
 	}
+	// FAKE-UNKNOWN-ERROR is the harness's own UnknownError, as it ends a run whose cause it
+	// knows only in its log: with its logs printed (--print-logs --log-level ERROR in the
+	// providers table) the error line comes first on stderr, then the envelope, which names
+	// no cause.
+	if _, ok := directive(prompt, "FAKE-UNKNOWN-ERROR"); ok {
+		fmt.Fprintln(os.Stderr, `ERROR 2030-01-02T03:04:05 +2ms service=server error=ProviderModelNotFoundError message="Model not found: fake/no-such-model"`)
+		fmt.Fprintln(os.Stderr, "Error: {\n  \"name\": \"UnknownError\",\n  \"data\": {\n    \"message\": \"Unexpected server error. Check server logs for details.\",\n    \"ref\": \"err_0a1b2c3d\"\n  }\n}")
+		os.Exit(1)
+	}
 	if _, ok := directive(prompt, "FAKE-5XX-FIRST"); ok {
 		if launchCount(job) <= 1 {
 			fmt.Fprintln(os.Stderr, "Unexpected server error: the provider answered 503; ref=err_fake_first")
