@@ -15,7 +15,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
-var quackID = regexp.MustCompile(`quack-[0-9a-f]{6}-[A-Za-z0-9_-]+?-[0-9]{3}`)
+var quackID = regexp.MustCompile(`quack-[0-9a-f]{12}-[A-Za-z0-9_-]+?-[0-9]{3}`)
 
 // quackCards runs one quack line and returns the ids it added, in order, with
 // each card's brief as the work table holds it.
@@ -50,7 +50,7 @@ func TestQuackCutsStampedCardsThatAlternateTiersAndPassTheLint(t *testing.T) {
 	require.Len(t, first, 6)
 	rs, err := swarm.ReadChildRules(rules)
 	require.NoError(t, err)
-	stamp := first[0][len("quack-") : len("quack-")+6]
+	stamp := first[0][len("quack-") : len("quack-")+12]
 	for _, s := range []string{"a", "b"} {
 		for i, tier := range []string{"flash", "pro", "flash"} {
 			id := "quack-" + stamp + "-" + s + "-00" + string(rune('1'+i))
@@ -70,7 +70,7 @@ func TestQuackCutsStampedCardsThatAlternateTiersAndPassTheLint(t *testing.T) {
 	for _, id := range second {
 		assert.False(t, slices.Contains(first, id), "%s is new across passes", id)
 	}
-	assert.NotEqual(t, stamp, second[0][len("quack-"):len("quack-")+6], "each pass has its own stamp")
+	assert.NotEqual(t, stamp, second[0][len("quack-"):len("quack-")+12], "each pass has its own stamp")
 }
 
 // One run names every problem: no streams, no count, no repository, a tier
@@ -87,4 +87,29 @@ func TestQuackRefusesEveryMissingInputAtOnce(t *testing.T) {
 	}
 	assert.Equal(t, before, ta.applies(), "a refusal writes nothing")
 	assert.True(t, strings.HasPrefix(errs, "nova-sprint quack: "), errs)
+}
+
+// The --op contract (docs/SPEC-SPRINT.md section 11): the same quack call
+// retried with the same --op (a reply lost) replays the recorded result and
+// changes nothing; other arguments under that op are refused; a fresh op is a
+// new pass with new ids.
+func TestQuackReviewRetriesTheSameOperation(t *testing.T) {
+	t.Parallel()
+	ta := newTestApp(t)
+	ta.ok("init --readers reader-a,reader-b --members m1")
+	const line = "quack --streams a,b --count 1 --repo https://example.com/quack.git --op quack-pass-one"
+	first, _ := ta.quackCards(line)
+	require.Len(t, first, 2)
+	writes := ta.applies()
+	again, _ := ta.quackCards(line)
+	assert.Equal(t, first, again, "the retry names the recorded cards")
+	assert.Equal(t, writes, ta.applies(), "the retry writes nothing")
+	code, _, errs := ta.do("quack --streams a,b --count 2 --repo https://example.com/quack.git --op quack-pass-one")
+	assert.NotEqual(t, 0, code, "other arguments under the same op are refused")
+	assert.Contains(t, errs, "quack-pass-one")
+	fresh, _ := ta.quackCards("quack --streams a,b --count 1 --repo https://example.com/quack.git --op quack-pass-two")
+	require.Len(t, fresh, 2)
+	for _, id := range fresh {
+		assert.False(t, slices.Contains(first, id), "%s: a fresh op is a new pass", id)
+	}
 }
