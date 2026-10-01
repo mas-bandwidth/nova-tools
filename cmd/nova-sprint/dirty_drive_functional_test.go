@@ -15,11 +15,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/fn"
 	"github.com/mas-bandwidth/nova-tools/internal/nsprint/testutil"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/store"
-	"github.com/redis/go-redis/v9"
 )
 
 // The dirty-driven tick driven on a store (the owner's shape of 2026-09-30:
@@ -37,6 +40,21 @@ const (
 	driveMembers   = 8
 	driveWidth     = 64
 	driveSample    = 50 // ticks between two samples of the streams (every tick before the 50th)
+	// MaxTickWall is the gate every tick of the drive is held to, the owner's
+	// law of 2026-09-30: "the whole intent is sub-second ticks. This is a
+	// requirement." A tick over it fails the drive, named with its parts,
+	// where the drive runs against a bench's store (GateStoreEnv).
+	MaxTickWall = time.Second
+	// GateStoreEnv, set to 1, says the drive runs against a real store on a
+	// bench, and the wall-clock bound is asserted: the certification tier
+	// sets it (.github/workflows/certification.yml, tick-gate). Everywhere
+	// else the bound is printed, not asserted: the functional container is
+	// not the store, its two CPUs shared by the redis-server, the loop and the
+	// world driver playing every 10 ms, whose operations hold the fence the
+	// loop's parts wait behind. The invariants (every card landed, no table
+	// read whole after the first tick, the twin never off the store's counts)
+	// are asserted everywhere.
+	GateStoreEnv = "NOVA_SPRINT_GATE_STORE"
 )
 
 // driveTick is one tick of the loop as it was told of: what started it, what
@@ -51,7 +69,11 @@ type driveTick struct {
 	queued int // entries in the work queue when the tick ended
 	err    string
 	wall   time.Duration
+	took   time.Duration    // the tick's own wall time (TickResult.Took): the gate's
 	times  []store.PartTime // what the tick spent its time on, part by part
+	cost   store.PartTime   // the tick's cost summed: its trips, whole-table reads, records, mismatches
+	load   string           // the machine's load averages as the tick ended
+	said   []string         // what the tick said once (a NOTE): why a table was read whole
 }
 
 // driveSampleAt is the landed count of each stream, every driveSample ticks.
@@ -67,9 +89,8 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 	defer c.Close()
 	ctx, stop := context.WithTimeout(context.Background(), 12*time.Minute)
 	defer stop()
-	if err := fn.Load(ctx, c); err != nil {
-		t.Fatal(err)
-	}
+	err := fn.Load(ctx, c)
+	require.NoError(t, err)
 	env := map[string]string{"NOVA_SPRINT_REDIS": addr, "NOVA_SPRINT_ACTOR": "coordinator"}
 	getenv := func(k string) string { return env[k] }
 	world, coord, loop, machines := newApp(getenv), newApp(getenv), newApp(getenv), newApp(getenv)
@@ -80,9 +101,8 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 	do := func(a *app, args ...string) string {
 		t.Helper()
 		var out, errb bytes.Buffer
-		if code := a.run(args, &out, &errb); code != 0 {
-			t.Fatalf("%v: %d %s", args, code, errb.String())
-		}
+		code := a.run(args, &out, &errb)
+		require.Zero(t, code, "%v: %d %s", args, code, errb.String())
 		return out.String()
 	}
 	var members, spec []string
@@ -100,9 +120,7 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 	do(world, "start")
 
 	st, _, code := loop.machineVerb("run", nil, &bytes.Buffer{})
-	if st == nil {
-		t.Fatalf("run: %d", code)
-	}
+	require.NotNil(t, st, "run: %d", code)
 
 	// the coordinator: once for each tick that addressed them, the inbox is
 	// read and its cursor moved; a judgment is not expected, none is open to
@@ -226,9 +244,13 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 			began := time.Now()
 			res, err := st.Tick(lctx)
 			q, _ := st.B.QueueRead(lctx)
-			tk := driveTick{n: i, why: why, idle: res.Idle, parts: len(res.Parts), order: len(res.Order), end: res.TickEnd, queued: len(q), wall: time.Since(began), times: res.Times}
+			tk := driveTick{n: i, why: why, idle: res.Idle, parts: len(res.Parts), order: len(res.Order), end: res.TickEnd, queued: len(q), wall: time.Since(began), took: res.Took, times: res.Times, cost: res.Cost(), load: machineLoad(), said: res.Said}
 			if err != nil && lctx.Err() == nil {
 				tk.err = err.Error()
+			}
+			if m := res.Cost().Mismatch; m > 0 && tk.err == "" {
+				// the loop's twin did not add up to the store's own counts
+				tk.err = fmt.Sprintf("the twin read %d tables whole on a count mismatch: %s", m, res.TimesLine())
 			}
 			ticks = append(ticks, tk)
 			// a sample every driveSample ticks, and at every tick while the loop
@@ -277,6 +299,9 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 		}
 	}()
 
+	// the watchdog reads through a store of its own: its whole reads are its
+	// own, not counted as the loop's (the gate counts the loop's)
+	watch := &store.Store{B: st.B, Names: st.Names, Actor: st.Actor, Now: st.Now, NewID: st.NewID, Sleep: st.Sleep}
 	// a stall watchdog: the landed count not moving for a minute of polls ends
 	// the drive with the tables, the inbox and the check printed
 	stalled := make(chan string, 1)
@@ -291,7 +316,7 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 			case <-poll.C:
 			}
 			n := 0
-			if snap, err := st.Load(ctx, store.All, nil); err == nil {
+			if snap, err := watch.Load(ctx, store.All, nil); err == nil {
 				for _, s := range streams {
 					n += snap.Work.Count(s, sprint.Landed)
 				}
@@ -337,22 +362,16 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 	<-loopDone
 	close(wake)
 	<-coordDone
-	if code != 0 {
-		t.Fatalf("play: %d\n%s\n%s", code, tail(pout.String(), 30), perr.String())
-	}
+	require.Zero(t, code, "play: %d\n%s\n%s", code, tail(pout.String(), 30), perr.String())
 
 	// ---- what the drive asserts -------------------------------------------------
 	snap, err := st.Load(ctx, store.All, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	landed := 0
 	for _, s := range streams {
 		landed += snap.Work.Count(s, sprint.Landed)
 	}
-	if landed != total {
-		t.Fatalf("%d of %d landed", landed, total)
-	}
+	require.Equal(t, total, landed, "%d of %d landed", landed, total)
 
 	// the streams land together: no stream ahead of another by more than 10% of
 	// the total at any sample, and the last sample's spread is printed
@@ -366,20 +385,16 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 			maxSpread, at = hi-lo, s.tick
 		}
 	}
-	if len(samples) == 0 {
-		t.Errorf("the loop took no sample of the streams")
-	}
-	if limit := total / 10; maxSpread > limit {
-		t.Errorf("a stream was %d cards ahead of another at tick %d, over 10%% of the total (%d)", maxSpread, at, limit)
-	}
+	assert.NotEmpty(t, samples, "the loop took no sample of the streams")
+	limit := total / 10
+	assert.LessOrEqual(t, maxSpread, limit, "a stream was %d cards ahead of another at tick %d, over 10%% of the total (%d)", maxSpread, at, limit)
 
 	// every machine's work is within 5% of the mean of the machines that were
 	// never down during the run; a machine that lapsed is reported, with the
 	// seconds it was down, and not asserted
 	shape, err := st.B.Shapes(ctx, []string{st.Names.Table(sprint.Fleet)})
-	if err != nil || len(shape) == 0 {
-		t.Fatalf("the fleet table: %v", err)
-	}
+	require.NoError(t, err, "the fleet table: %v", err)
+	require.NotEmpty(t, shape, "the fleet table: %v", err)
 	col := shape[0].Column(sprint.DoneOK)
 	done := map[string]int{}
 	sum := 0
@@ -391,9 +406,7 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 	}
 	mean := float64(sum) / float64(len(members))
 	allNotes, _, err := st.B.NotesSince(ctx, "", 1000000)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	end := time.Now()
 	downs, downFor := map[string]int{}, map[string]time.Duration{}
 	since := map[string]time.Time{}
@@ -440,14 +453,12 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 	if len(steady) > 0 {
 		steadyMean := float64(steadySum) / float64(len(steady))
 		for _, m := range steady {
-			if d := float64(done[m]) - steadyMean; d > steadyMean*0.05 || -d > steadyMean*0.05 {
-				t.Errorf("%s did %d cards, the mean of the machines never down is %.1f: over 5%% off", m, done[m], steadyMean)
-			}
+			d := float64(done[m]) - steadyMean
+			assert.LessOrEqual(t, d, steadyMean*0.05, "%s did %d cards, the mean of the machines never down is %.1f: over 5%% off", m, done[m], steadyMean)
+			assert.LessOrEqual(t, -d, steadyMean*0.05, "%s did %d cards, the mean of the machines never down is %.1f: over 5%% off", m, done[m], steadyMean)
 		}
 	}
-	if sum == 0 {
-		t.Errorf("no machine's done count is on the fleet table")
-	}
+	assert.NotZero(t, sum, "no machine's done count is on the fleet table")
 
 	// the tick-end notes: one for each tick that addressed the coordinator, none
 	// for an idle tick; every tick of the loop ended, none failed
@@ -456,14 +467,10 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 	var slowest time.Duration
 	for i, tk := range ticks {
 		whyCount[tk.why]++
-		if tk.err != "" {
-			t.Errorf("tick %d failed: %s", tk.n, tk.err)
-		}
+		assert.Empty(t, tk.err, "tick %d failed: %s", tk.n, tk.err)
 		if tk.end > 0 {
 			wroteNote++
-			if tk.idle {
-				t.Errorf("tick %d was idle and wrote a tick-end note", tk.n)
-			}
+			assert.False(t, tk.idle, "tick %d was idle and wrote a tick-end note", tk.n)
 		}
 		if tk.idle {
 			idle++
@@ -476,8 +483,8 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 		maxOrder = max(maxOrder, tk.order)
 		slowest = max(slowest, tk.wall)
 		// W12: the queue a tick leaves starts the next tick, never the clock
-		if tk.queued > 0 && i+1 < len(ticks) && ticks[i+1].why != tickLog {
-			t.Errorf("tick %d left %d entries in the work queue and tick %d began on %q, not the log", tk.n, tk.queued, tk.n+1, ticks[i+1].why)
+		if tk.queued > 0 && i+1 < len(ticks) {
+			assert.Equal(t, tickLog, ticks[i+1].why, "tick %d left %d entries in the work queue and tick %d began on %q, not the log", tk.n, tk.queued, tk.n+1, ticks[i+1].why)
 		}
 	}
 	tickEnds := 0
@@ -486,9 +493,7 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 			tickEnds++
 		}
 	}
-	if tickEnds != wroteNote {
-		t.Errorf("%d tick-end notes on the inbox and %d ticks that addressed the coordinator: want one each", tickEnds, wroteNote)
-	}
+	assert.Equal(t, wroteNote, tickEnds, "%d tick-end notes on the inbox and %d ticks that addressed the coordinator: want one each", tickEnds, wroteNote)
 	mu.Lock()
 	reads, judged, accepted, refused := coordReads, append([]string(nil), judgments...), accepts, acceptRefused
 	var seen []string
@@ -497,8 +502,50 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 	}
 	mu.Unlock()
 	sort.Strings(seen)
-	if len(judged) > 0 {
-		t.Errorf("the coordinator met %d judgments in a sprint with no gates, needs or chances: %v", len(judged), judged)
+	assert.Empty(t, judged, "the coordinator met %d judgments in a sprint with no gates, needs or chances: %v", len(judged), judged)
+
+	// THE GATE: every tick under MaxTickWall; after the first tick the loop
+	// reads no table whole (its twin catches up from the change streams), and
+	// its twin never disagrees with the store's counts
+	var over []string
+	var sumTook, maxTook time.Duration
+	whole := int64(0)
+	var loads, why []string
+	for i, tk := range ticks {
+		sumTook += tk.took
+		maxTook = max(maxTook, tk.took)
+		if i > 0 {
+			whole += tk.cost.Reads
+		}
+		for _, n := range tk.said {
+			why = append(why, fmt.Sprintf("tick %d: %s", tk.n, n))
+		}
+		if tk.took > MaxTickWall && tk.err == "" {
+			var parts []string
+			for _, pt := range tk.times {
+				if pt.Took >= 50*time.Millisecond {
+					parts = append(parts, fmt.Sprintf("%s/%s %s %dt", pt.Table, pt.Name, pt.Took.Round(time.Millisecond), pt.Trips))
+				}
+			}
+			over = append(over, fmt.Sprintf("tick %d took %s (load %s): %s", tk.n, tk.took.Round(time.Millisecond), tk.load, strings.Join(parts, ", ")))
+		}
+		if i%10 == 0 {
+			loads = append(loads, tk.load)
+		}
+	}
+	gate := fmt.Sprintf("THE GATE: %d ticks, mean %s, max %s, %d over %s; whole-table reads after the first tick %d; machine load %s",
+		len(ticks), (sumTook / time.Duration(max(len(ticks), 1))).Round(time.Millisecond), maxTook.Round(time.Millisecond), len(over), MaxTickWall, whole, strings.Join(loads, " | "))
+	fmt.Fprintln(os.Stderr, gate)
+	for _, o := range over {
+		if os.Getenv(GateStoreEnv) == "1" {
+			assert.Fail(t, fmt.Sprintf("over the gate of %s: %s", MaxTickWall, o))
+		} else {
+			fmt.Fprintf(os.Stderr, "NOTE over the gate of %s (asserted only against a bench's store, %s=1): %s\n", MaxTickWall, GateStoreEnv, o)
+		}
+	}
+	assert.Zero(t, whole, "the loop read %d tables whole after its first tick: its twin did not catch up; it said: %s", whole, strings.Join(why, "; "))
+	for _, w := range why {
+		fmt.Fprintln(os.Stderr, "NOTE "+w)
 	}
 
 	report := fmt.Sprintf("DIRTY-TICK DRIVE: %d cards in %d streams on %d machines of width %d: all landed in %s over %d ticks (%.1f ticks/s)\n"+
@@ -524,7 +571,19 @@ func TestTheDirtyTickDriveOnAStore(t *testing.T) {
 		}
 	}
 	fmt.Fprintln(os.Stderr, report)
-	t.Log("\n" + report)
+	t.Log("\n" + report + "\n  " + gate)
+}
+
+// machineLoad is the machine's load averages, as the kernel says them in
+// /proc/loadavg ("" where there is none): the gate is read beside them.
+func machineLoad() string {
+	if b, err := os.ReadFile("/proc/loadavg"); err == nil {
+		f := strings.Fields(string(b))
+		if len(f) >= 3 {
+			return strings.Join(f[:3], " ")
+		}
+	}
+	return "" // the container's kernel says it in /proc; no other is asked
 }
 
 func tail(s string, n int) string {

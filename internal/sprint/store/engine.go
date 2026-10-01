@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/cardlimits"
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
@@ -73,11 +74,24 @@ type Store struct {
 	// Updates is the tick's table updates, in order; nil is the tick's own
 	// (sprint.TickTables). A test gives its own.
 	Updates []sprint.TableUpdate
-	root    Backend   // the backend before pinning
-	epoch   uint64    // the epoch the store is pinned to
-	cleared time.Time // when the pinned epoch began
-	pinned  bool
-	old     bool // pinned to an earlier epoch, for reading
+	// Stats is what the store's reads cost (stats.go); nil is made on the
+	// first tick. Its pinned copies share it.
+	Stats *Stats
+	// CheckTwin, when set (a test), is given every snapshot a step planned on
+	// from the tick's twin with a fresh read of the same generation: an error
+	// fails the step (twin.go).
+	CheckTwin func(twin, fresh *sprint.Snapshot) error
+	tw        *Twin // the store's twin (twin.go): kept from one tick to the next
+	// LockAfterLoss has a part of the tick that lost a try take the fence
+	// before its next read (lock.go). The program's stores set it; a test
+	// harness whose other writers write from inside a part's plan (a writer
+	// that would wait on the lock its own caller holds) leaves it off.
+	LockAfterLoss bool
+	root          Backend   // the backend before pinning
+	epoch         uint64    // the epoch the store is pinned to
+	cleared       time.Time // when the pinned epoch began
+	pinned        bool
+	old           bool // pinned to an earlier epoch, for reading
 }
 
 // Step is one verb's step: the tables its plan reads, any records it reads
@@ -111,6 +125,16 @@ type Step struct {
 	// drain: it reads the queue with its tables and its commit takes what it
 	// read off the queue (sprint.Drain).
 	Pump, Drain bool
+	// Halts, when set (a part of the tick), makes the step begin nothing when
+	// (tla/DirtyTickRead.tla, Begin and BeganRunning)
+	// the machine's state, read with its first fence, is STOPPED: its result
+	// says Halted, and it writes nothing (the stop's rule: the part in flight
+	// finishes, and no part begins after the flag says STOPPED).
+	Halts bool
+	// Twin, when set, is the tick's twin (twin.go): a step that loads the four
+	// tables plans on it while the fence is at its generation, instead of
+	// reading them, and applies its receipts to it when it commits.
+	Twin *Twin
 	// DrainMax, above zero, is the most entries of the queue's head a drain
 	// takes: the pump's second drain takes only what its first requeued.
 	DrainMax int
@@ -186,6 +210,9 @@ type Result struct {
 	// it planned (a STOPPED machine's queue, or one a step left after a
 	// pump's first read): each is a move of the work table, and said.
 	Drained []Result `json:"drained,omitempty"`
+	// Halted says a step that Halts found the machine STOPPED as it read the
+	// sprint, and began nothing.
+	Halted bool `json:"-"`
 }
 
 // ErrUnknown is a write the store did not confirm: changed=unknown.
@@ -279,11 +306,7 @@ func (st *Store) fencedRead(ctx context.Context, tables []string, extras func(*s
 			}
 			continue
 		}
-		snap, err := st.Load(ctx, tables, extras)
-		if err != nil {
-			return nil, 0, Fence{}, err
-		}
-		f2, err := st.B.ReadFence(ctx)
+		snap, f2, err := st.PipelinedLoadWithFence(ctx, tables, extras)
 		if err != nil {
 			return nil, 0, Fence{}, err
 		}
@@ -320,9 +343,41 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 	rowsAdded := false
 	drains := 0
 	plans := st.retry(ctx)
+	// a twin the step does not leave as the state it committed is dropped:
+	// the next step reads the store (twin.go; tla/DirtyTickRead.tla, Commit
+	// and Drop: the Acquire at the generation read is the one guard)
+	tw, release := st.stepTwin(step)
+	defer release()
+	twinKept := true
+	defer func() {
+		if tw != nil && !twinKept {
+			tw.drop("the step " + step.Verb + " ended without knowing what its write did")
+		}
+	}()
+	// A part of the tick that lost a try to another writer takes the fence
+	// before its next read (lock.go): held across that read, its plan and its
+	// write, released on any other end.
+	var lock *OpRecord
+	wantLock, locked := false, false
+	defer func() {
+		if lock != nil {
+			// ignored: a lock left behind is released unwritten past its grace (finishOp)
+			_ = st.B.Release(context.WithoutCancel(ctx), *lock, false)
+		}
+	}()
 	for res.Attempts < st.attempts() {
 		res.Attempts++
-		snap, fence, err := st.fenced(ctx, step.Load, step.Extras, &res.Repaired)
+		if wantLock && lock == nil && !locked {
+			if lock, err = st.takeLock(ctx, step, family); err != nil {
+				return res, err
+			}
+			locked = lock != nil
+		}
+		mine := ""
+		if lock != nil {
+			mine = lock.ID
+		}
+		snap, fence, err := st.fencedStep(ctx, tw, step, &res.Repaired, mine)
 		gen := fence.Gen
 		if errors.Is(err, errCleared) && step.Epoch == nil {
 			// The sprint was cleared while this step read it: read the new
@@ -351,6 +406,12 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 				return r, err
 			}
 		}
+		if step.Halts && !fence.Running && res.Attempts == 1 {
+			// a part that began (its first read found the machine RUNNING)
+			// finishes: only its first read halts it
+			res.Halted = true
+			return res, nil
+		}
 		if fence.Queued > 0 && !step.Pump && !fence.Running && drains < MaxDrains {
 			// A STOPPED machine has no next tick: the queue it left is drained
 			// before any step, which then writes the work table itself. Past
@@ -369,7 +430,7 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		}
 		var held map[string]bool // work cards a queued change names: a pump part leaves them
 		if step.Drain || fence.Queued > 0 {
-			q, err := st.B.QueueRead(ctx)
+			q, err := st.twinQueue(ctx, tw, fence.Queued)
 			if err != nil {
 				return res, err
 			}
@@ -414,7 +475,7 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		}
 		// The fence is free: a stuck operation's judgment rides with this
 		// step, once.
-		stuck, isStuck, err := st.stuck(ctx)
+		stuck, isStuck, err := stuckOf(fence)
 		if err != nil {
 			return res, err
 		}
@@ -477,7 +538,20 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 		if n := recordSize(op); n > MaxOpRecord {
 			return refuseWhole(res, plan, fmt.Sprintf("the step's record is %d bytes, over the bound of %d bytes one write to the store takes; nothing was changed; do it in parts (fewer cards at once)", n, MaxOpRecord))
 		}
-		ok, err := st.B.Acquire(ctx, gen, op)
+		twinKept = false
+		var ok bool
+		commitGen := gen + 1
+		if lock != nil {
+			// the fence is the step's since its lock: the operation takes it
+			// over, and the generation is the one the lock set
+			ok, err = st.B.(Relocker).Relock(ctx, lock.ID, op)
+			if ok {
+				lock = nil
+			}
+			commitGen = gen
+		} else {
+			ok, err = st.B.Acquire(ctx, gen, op)
+		}
 		if err != nil {
 			// A write the store did not take leaves the fence without this
 			// operation: nothing was changed, and the store's reason says why.
@@ -488,12 +562,21 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			return res, fmt.Errorf("%w: acquiring the fence for %s: %v; run: nova-sprint repair", ErrUnknown, op.ID, err)
 		}
 		if !ok {
+			// nothing of this try was written: the twin is still the state it
+			// read, only older (the next read catches it up)
+			twinKept = true
+			// lost to another writer: a part of the tick with a twin takes
+			// the fence before its next read, once (tla/DirtyTickRead.tla, Lock)
+			if _, can := st.B.(Relocker); can && st.LockAfterLoss && tw != nil && step.Halts {
+				wantLock = true
+				continue
+			}
 			if !plans.wait() {
 				break
 			}
 			continue
 		}
-		applied, err := st.apply(ctx, op)
+		applied, receipts, err := st.apply(ctx, op)
 		var bound *boundError
 		var cut *CutError
 		if (errors.As(err, &cut) || err == nil && !applied) && st.finishedElsewhere(ctx, op) {
@@ -509,6 +592,8 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			return res, err
 		}
 		if !applied {
+			// the first manifest was refused: nothing of the step applied
+			twinKept = true
 			if err := st.B.Release(ctx, op, false); err != nil {
 				res.Pending = op.ID
 				return res, fmt.Errorf("%w: releasing %s after its first manifest was refused: %v; run: nova-sprint repair", ErrUnknown, op.ID, err)
@@ -523,6 +608,10 @@ func (st *Store) Run(ctx context.Context, step Step) (Result, error) {
 			res.Pending = op.ID
 			return res, fmt.Errorf("%w: the commit of %s: %v; run: nova-sprint repair", ErrUnknown, op.ID, err)
 		}
+		// the twin is the state this plan read with the operation applied, at
+		// the generation its Acquire set
+		st.twinCommitted(tw, op, receipts, commitGen)
+		twinKept = true
 		return st.after(ctx, step, res)
 	}
 	var keys []string
@@ -712,9 +801,26 @@ type entryKey struct{ table, id string }
 // sent again against a fresher one.
 const manifestBudget = ntable.LimitManifestBytes - 64
 
-// MaxCardTextBytes bounds each text field a card carries (CardTextFields): a
-// step that would write a longer one is refused before anything is written.
+// MaxCardTextBytes bounds each text field a card carries (CardTextFields),
+// the brief excepted (MaxBriefBytes): a step that would write a longer one is
+// refused before anything is written.
 const MaxCardTextBytes = 8 << 10
+
+// MaxBriefBytes bounds the brief field: cardlimits.MaxBriefBytes, the number the card
+// lint names too and read from the one package that holds it (nothing behind it, so the lint
+// reads it without the store). A brief is a child's whole brief; the bound sits above the
+// lint's advice (cardlimits.BriefAdvisoryBytes) and under the table layer's field bound
+// (ntable.LimitFieldValueBytes, 64 KiB, which the table function library enforces too). A
+// bound is a constant of the model (tla/SprintEvents.tla), which does not change with it.
+const MaxBriefBytes = cardlimits.MaxBriefBytes
+
+// TextBound is the bound of one card text field, in bytes.
+func TextBound(field string) int {
+	if field == "brief" {
+		return MaxBriefBytes
+	}
+	return MaxCardTextBytes
+}
 
 // CardTextFields are the text fields a card carries.
 var CardTextFields = []string{"brief", "fix", "finding", "report", "reason", "note", "return_reason", "ci_note", "did"}
@@ -726,8 +832,12 @@ func unwritable(plan sprint.Plan, op OpRecord) string {
 	for _, u := range plan.Units {
 		for _, c := range u.Changes {
 			for _, f := range CardTextFields {
-				if v, ok := c.Entry.Set[f]; ok && len(v) > MaxCardTextBytes {
-					return fmt.Sprintf("card %s: field %s is %d bytes, over the bound of %d bytes; shorten it, or point to a file or a comment", c.Entry.ID, f, len(v), MaxCardTextBytes)
+				if v, ok := c.Entry.Set[f]; ok && len(v) > TextBound(f) {
+					why := "shorten it, or point to a file or a comment"
+					if f == "brief" {
+						why = fmt.Sprintf("a brief is a child's whole brief, up to %d KiB, and the card lint advises at most %d bytes; %s", MaxBriefBytes>>10, cardlimits.BriefAdvisoryBytes, why)
+					}
+					return fmt.Sprintf("card %s: field %s is %d bytes, over the bound of %d bytes; %s", c.Entry.ID, f, len(v), TextBound(f), why)
 				}
 			}
 		}
@@ -1225,29 +1335,85 @@ func (e *boundError) Error() string {
 
 // apply sends the operation's manifests in order. applied is false when the
 // first manifest was refused: nothing of the operation applied.
-func (st *Store) apply(ctx context.Context, op OpRecord) (bool, error) {
+// The receipts are each manifest's, in order, when the store gave one with
+// its account of the batch (a manifest another writer had applied gives
+// none): the tick's twin applies them (twin.go).
+func (st *Store) apply(ctx context.Context, op OpRecord) (bool, []receipt, error) {
+	var receipts []receipt
+	sent := 0 // the manifests applied in one exchange (BatchApplier) so far
 	for i, man := range op.Manifests {
-		_, err := st.send(ctx, man)
-		if err == nil || refusalCode(err) == "OPCONFLICT" {
+		if i < sent {
+			continue
+		}
+		if n := st.applyTogether(ctx, op.Manifests, i, &receipts); n > 0 {
+			sent = i + n
+			continue
+		}
+		rc, err := st.send(ctx, man)
+		if err == nil {
+			if rc.BatchDelta != nil {
+				receipts = append(receipts, receipt{man: man, rc: rc})
+			}
+			continue
+		}
+		if refusalCode(err) == "OPCONFLICT" {
 			continue
 		}
 		if errors.Is(err, ErrUnknown) {
-			return false, fmt.Errorf("%w: %s at table %s: %v; run: nova-sprint repair, then nova-sprint check", ErrUnknown, man.OperationID, man.Table, err)
+			return false, nil, fmt.Errorf("%w: %s at table %s: %v; run: nova-sprint repair, then nova-sprint check", ErrUnknown, man.OperationID, man.Table, err)
 		}
 		if refusalCode(err) == "REVISION" {
-			if _, err = st.resendFresh(ctx, man, err); err == nil {
+			if rc, err = st.resendFresh(ctx, man, err); err == nil {
+				if rc.BatchDelta != nil {
+					receipts = append(receipts, receipt{man: man, rc: rc})
+				}
 				continue
 			}
 		}
 		if i == 0 && (ntable.IsRefusal(err) || errors.Is(err, ntable.ErrMalformedManifest)) {
 			if !curable(err, man) {
-				return false, &boundError{Table: man.Table, Cause: err}
+				return false, nil, &boundError{Table: man.Table, Cause: err}
 			}
-			return false, nil
+			return false, nil, nil
 		}
-		return false, &CutError{Op: op.ID, Table: man.Table, Cause: err}
+		return false, nil, &CutError{Op: op.ID, Table: man.Table, Cause: err}
 	}
-	return true, nil
+	return true, receipts, nil
+}
+
+// BatchApplier is a store that applies several manifests of one table in
+// one round trip, each its own batch, none between them (Redis's
+// MULTI/EXEC).
+type BatchApplier interface {
+	ApplyAll(ctx context.Context, ms []ntable.BatchManifest) ([]ntable.Receipt, []error)
+}
+
+// applyTogether applies the run of manifests of one table from index i in one
+// exchange, where the store can and the run holds more than one: it returns
+// how many applied, their receipts appended. A manifest the store refused, or
+// did not confirm, is sent again one at a time (apply's own handling, which
+// sends the same bytes: the table layer applies a batch once); every one
+// after it in the run was refused on the table revision it expected, and is
+// sent again after it.
+func (st *Store) applyTogether(ctx context.Context, ms []ntable.BatchManifest, i int, receipts *[]receipt) int {
+	ba, ok := st.B.(BatchApplier)
+	if !ok {
+		return 0
+	}
+	j := i + 1
+	for j < len(ms) && ms[j].Table == ms[i].Table {
+		j++
+	}
+	if j-i < 2 {
+		return 0
+	}
+	rcs, errs := ba.ApplyAll(ctx, ms[i:j])
+	n := 0
+	for n < len(rcs) && errs[n] == nil && rcs[n].BatchDelta != nil {
+		*receipts = append(*receipts, receipt{man: ms[i+n], rc: rcs[n]})
+		n++
+	}
+	return n
 }
 
 // unreadableReceipt says the store answered with a receipt this build cannot
@@ -1327,7 +1493,7 @@ func (st *Store) stillExpected(ctx context.Context, man ntable.BatchManifest) (u
 	found := map[string]ntable.ReadSetMember{}
 	for start := 0; start < len(ids); start += ntable.LimitReadSetMembers {
 		end := min(start+ntable.LimitReadSetMembers, len(ids))
-		rs, err := st.B.ReadSet(ctx, man.Table, ids[start:end])
+		rs, err := st.readSet(ctx, man.Table, ids[start:end])
 		if err != nil {
 			return 0, err
 		}
@@ -1424,6 +1590,18 @@ func (st *Store) finish(ctx context.Context, op OpRecord) (RepairResult, error) 
 
 func (st *Store) finishOp(ctx context.Context, op OpRecord) (RepairResult, error) {
 	r := RepairResult{Op: op.ID, Verb: op.Verb, Done: RepairFinished}
+	if op.Lock {
+		// a part's lock (lock.go): its writer holds the fence within the
+		// grace, as any operation in flight; past it the lock is a dead
+		// writer's, released unwritten
+		if st.now().Sub(op.At) < st.grace() {
+			return RepairResult{Op: op.ID, Verb: op.Verb, Done: RepairOpen, Detail: "a part of the tick holds the fence"}, nil
+		}
+		if err := st.B.Release(ctx, op, false); err != nil {
+			return r, err
+		}
+		return RepairResult{Op: op.ID, Verb: op.Verb, Done: RepairAbandoned, Detail: "a lock past its grace, released unwritten"}, nil
+	}
 	var skips []Skip
 	// barred is the work-table entries the lifecycle refuses, judged once,
 	// when the first manifest goes entry by entry: a later manifest holding
@@ -1540,7 +1718,7 @@ func (st *Store) applyEntries(ctx context.Context, man ntable.BatchManifest, bar
 		one.OperationID = fmt.Sprintf("%s.e%d", man.OperationID, j+1)
 		outcome := ""
 		for a := 0; a < st.attempts() && outcome == ""; a++ {
-			rs, err := st.B.ReadSet(ctx, man.Table, []string{e.ID})
+			rs, err := st.readSet(ctx, man.Table, []string{e.ID})
 			if err != nil {
 				return nil, err
 			}

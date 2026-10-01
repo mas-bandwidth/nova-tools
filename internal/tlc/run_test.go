@@ -4,11 +4,13 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestRunArgsKeepTheFixedOrder(t *testing.T) {
@@ -20,14 +22,12 @@ func TestRunArgsKeepTheFixedOrder(t *testing.T) {
 	}
 	want := []string{"-XX:+UseParallelGC", "-Xmx2g", "-Djava.io.tmpdir=/scratch", "-cp", "/j/tla2tools.jar", "tlc2.TLC",
 		"-lncheck", "final", "-workers", "2", "-deadlock", "-metadir", "/scratch/states", "-config", "MCA.cfg", "MCA.tla"}
-	if got := full.Args(); !reflect.DeepEqual(got, want) {
-		t.Fatalf("args = %v\nwant   %v", got, want)
-	}
+	got := full.Args()
+	require.Equal(t, want, got, "args = %v\nwant   %v", got, want)
 	bare := Run{Jar: "j.jar", Workers: 1, Config: "c.cfg", Module: "m.tla"}
 	want = []string{"-cp", "j.jar", "tlc2.TLC", "-workers", "1", "-config", "c.cfg", "m.tla"}
-	if got := bare.Args(); !reflect.DeepEqual(got, want) {
-		t.Fatalf("bare args = %v, want %v", got, want)
-	}
+	got = bare.Args()
+	require.Equal(t, want, got, "bare args = %v, want %v", got, want)
 }
 
 func TestRunArgsDoNotShareTheCallersFlags(t *testing.T) {
@@ -36,9 +36,8 @@ func TestRunArgsDoNotShareTheCallersFlags(t *testing.T) {
 	jvm[0] = "-Xmx1g"
 	r := Run{JVM: jvm, Jar: "j", Workers: 1, Config: "c", Module: "m"}
 	_ = r.Args()
-	if got := jvm[:2][1]; got != "" {
-		t.Fatalf("Args wrote into the caller's slice: %q", got)
-	}
+	got := jvm[:2][1]
+	require.Empty(t, got, "Args wrote into the caller's slice: %q", got)
 }
 
 // The helper is the test binary itself, run in place of java: everything after
@@ -61,9 +60,7 @@ func TestExecuteHelper(t *testing.T) {
 func helperRun(t *testing.T, exit int) Run {
 	t.Helper()
 	exe, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return Run{Java: exe, Dir: t.TempDir(), Jar: "j", Workers: 1, Config: "c", Module: "m",
 		JVM: []string{"-test.run=^TestExecuteHelper$", "tlc-helper-exit=" + strconv.Itoa(exit), "--"}}
 }
@@ -73,9 +70,8 @@ func TestExecutePassesTheExitStatusAndKeepsTheOutput(t *testing.T) {
 	for _, want := range []int{0, 12, 13} {
 		run := helperRun(t, want)
 		log := filepath.Join(run.Dir, "out.log")
-		if got := Execute(context.Background(), run, log); got != want {
-			t.Errorf("exit = %d, want %d", got, want)
-		}
+		got := Execute(context.Background(), run, log)
+		assert.Equal(t, want, got, "exit = %d, want %d", got, want)
 		raw, err := os.ReadFile(log)
 		if err != nil || !strings.Contains(string(raw), "helper output") {
 			t.Errorf("log for exit %d = %q, %v", want, raw, err)
@@ -89,16 +85,12 @@ func TestExecuteReportsATimeoutWithoutStartingAnything(t *testing.T) {
 	cancel()
 	run := helperRun(t, 0)
 	log := filepath.Join(run.Dir, "out.log")
-	if got := Execute(ctx, run, log); got != ExitTimeout {
-		t.Fatalf("exit = %d, want %d", got, ExitTimeout)
-	}
+	got := Execute(ctx, run, log)
+	require.Equal(t, ExitTimeout, got, "exit = %d, want %d", got, ExitTimeout)
 	raw, _ := os.ReadFile(log)
-	if strings.Contains(string(raw), "helper output") || !strings.Contains(string(raw), "budget exhausted before starting") {
-		t.Fatalf("log = %q", raw)
-	}
-	if Parse(string(raw)).HasStats() {
-		t.Fatal("the note was read as a result")
-	}
+	require.NotContains(t, string(raw), "helper output", "log = %q", raw)
+	require.Contains(t, string(raw), "budget exhausted before starting", "log = %q", raw)
+	require.False(t, Parse(string(raw)).HasStats(), "the note was read as a result")
 }
 
 func TestExecuteReportsAProgramThatDoesNotStart(t *testing.T) {
@@ -106,20 +98,16 @@ func TestExecuteReportsAProgramThatDoesNotStart(t *testing.T) {
 	dir := t.TempDir()
 	log := filepath.Join(dir, "out.log")
 	got := Execute(context.Background(), Run{Java: filepath.Join(dir, "no-such-java"), Dir: dir, Jar: "j", Workers: 1}, log)
-	if got != ExitNoStart {
-		t.Fatalf("exit = %d, want %d", got, ExitNoStart)
-	}
-	if raw, _ := os.ReadFile(log); len(raw) == 0 {
-		t.Fatal("the failure to start left no note in the log")
-	}
+	require.Equal(t, ExitNoStart, got, "exit = %d, want %d", got, ExitNoStart)
+	raw, _ := os.ReadFile(log)
+	require.NotEmpty(t, raw, "the failure to start left no note in the log")
 }
 
 func TestExecuteRefusesALogItCannotCreate(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
-	if got := Execute(context.Background(), helperRun(t, 0), filepath.Join(dir, "missing", "out.log")); got != ExitNoStart {
-		t.Fatalf("exit = %d, want %d", got, ExitNoStart)
-	}
+	got := Execute(context.Background(), helperRun(t, 0), filepath.Join(dir, "missing", "out.log"))
+	require.Equal(t, ExitNoStart, got, "exit = %d, want %d", got, ExitNoStart)
 }
 
 func TestCheckLimits(t *testing.T) {
@@ -142,12 +130,9 @@ func TestCheckLimits(t *testing.T) {
 	}
 	for _, tc := range tests {
 		d, err := parseDuration(tc.budget)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got := CheckLimits(d, tc.workers, tc.manual); (got == nil) != tc.ok {
-			t.Errorf("CheckLimits(%s, %d, manual=%v) = %v, want ok=%v", tc.budget, tc.workers, tc.manual, got, tc.ok)
-		}
+		require.NoError(t, err)
+		got := CheckLimits(d, tc.workers, tc.manual)
+		assert.Equal(t, tc.ok, got == nil, "CheckLimits(%s, %d, manual=%v) = %v, want ok=%v", tc.budget, tc.workers, tc.manual, got, tc.ok)
 	}
 }
 
@@ -161,40 +146,29 @@ func TestARelativeOverrideRunsInAnotherWorkingDirectory(t *testing.T) {
 		t.Skip("symlinks need a privilege the Windows path does not have")
 	}
 	exe, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	owned := t.TempDir()
-	if err := os.Mkdir(filepath.Join(owned, "bin"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink(exe, filepath.Join(owned, "bin", "java")); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.Mkdir(filepath.Join(owned, "bin"), 0o755))
+	require.NoError(t, os.Symlink(exe, filepath.Join(owned, "bin", "java")))
 	cwd, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	relative, err := filepath.Rel(cwd, filepath.Join(owned, "bin", "java"))
 	if err != nil || filepath.IsAbs(relative) {
 		t.Skipf("no relative path from %s to %s", cwd, owned)
 	}
 	java, err := FindHelper("java", relative, LookPath)
-	if err != nil || !filepath.IsAbs(java) {
-		t.Fatalf("override %q resolved to %q, %v", relative, java, err)
-	}
+	require.NoError(t, err, "override %q resolved to %q, %v", relative, java, err)
+	require.True(t, filepath.IsAbs(java), "override %q resolved to %q, %v", relative, java, err)
 	private := t.TempDir() // the private working directory the program starts in
 	run := Run{Java: java, Dir: private, Jar: "j", Workers: 1, Config: "c", Module: "m",
 		JVM: []string{"-test.run=^TestExecuteHelper$", "tlc-helper-exit=13", "--"}}
-	if got := Execute(context.Background(), run, filepath.Join(private, "out.log")); got != 13 {
-		t.Fatalf("exit = %d, want 13 (127 is a program that did not start)", got)
-	}
+	got := Execute(context.Background(), run, filepath.Join(private, "out.log"))
+	require.Equal(t, 13, got, "exit = %d, want 13 (127 is a program that did not start)", got)
 }
 
 func TestAPathFoundOnPATHIsAbsoluteToo(t *testing.T) {
 	t.Parallel()
 	got, err := FindHelper("java", "", func(string) (string, error) { return filepath.Join("bin", "java"), nil })
-	if err != nil || !filepath.IsAbs(got) {
-		t.Fatalf("path = %q, %v", got, err)
-	}
+	require.NoError(t, err, "path = %q, %v", got, err)
+	require.True(t, filepath.IsAbs(got), "path = %q, %v", got, err)
 }

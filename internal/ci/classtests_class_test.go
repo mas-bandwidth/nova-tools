@@ -9,6 +9,7 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -36,37 +37,42 @@ func guardedByMergeRule(rel string) bool {
 // and what it declared. For a pull request's merge ref and a merge-queue
 // commit the first parent is the base branch's tip, so Deleted is exactly
 // what merging the change takes away from dev; for a squash on dev it is
-// the squash's effect; for a plain commit, that commit's. A promotion of dev
-// to main is the one change the comparison does not fit: its first parent is
-// main's tip, so Deleted is every deletion dev accumulated since the last
-// promotion, each already declared in the change that made it on dev; the
-// class test recognises that pull request (promotionSkip) and does not run
-// the comparison on it. Once the promotion has landed, a main run (mainRun:
-// push, workflow_dispatch or schedule on refs/heads/main, or a local run on
-// main) at a merge commit keeps the first-parent comparison and excuses what
-// dev's own history deleted (excuseDevDeletions), and checks the merge's own
-// change against its second parent (Beyond).
+// the squash's effect; for a plain commit, that commit's. A promotion (dev
+// to main, or sprint/foundation to dev) is the change the comparison does
+// not fit: its first parent is the base branch's tip, so Deleted is every
+// deletion the head branch accumulated since the last promotion, each already
+// declared in the change that made it on that branch; the class test
+// recognises that pull request (promotionSkip) and does not run the comparison
+// on it. Once the promotion has landed, a landing run (landingRun) at a merge
+// commit keeps the first-parent comparison and excuses what the side branch's
+// own history deleted (excuseDevDeletions), and checks the merge's own change
+// against its second parent (Beyond): a main run (mainRun: push,
+// workflow_dispatch or schedule on refs/heads/main, or a local run on main)
+// excuses dev's history; a dev run (devRun: a merge-queue group for dev, a
+// push or workflow_dispatch on refs/heads/dev, or a local run on dev)
+// excuses sprint/foundation's.
 type mergeDeletions struct {
 	Head, Parent, Subject string
 	// Deleted is every path gone from the tree, renames excluded (-M).
 	Deleted []string
 	// Declared is path -> why for the rows this commit added to the log.
 	Declared map[string]string
-	// Beyond, on a main run at a merge commit, is the second-parent
-	// comparison's own findings: a guarded path dev's tip has and HEAD lacks
-	// with no row added beyond dev, and a row added beyond dev naming no
-	// deletion.
+	// Beyond, on a landing run at a merge commit, is the second-parent
+	// comparison's own findings: a guarded path the side branch's tip has and
+	// HEAD lacks with no row added beyond it, and a row added beyond it
+	// naming no deletion.
 	Beyond []string
-	// Incomplete, on a main run at a merge commit whose second parent or its
-	// ancestry is not in the checkout, is a finding of its own, always: what
-	// dev's history deleted cannot be excused, and the line names the fetch.
-	// A main run never passes on an unreadable history.
+	// Incomplete, on a landing run at a merge commit whose second parent or
+	// its ancestry is not in the checkout, is a finding of its own, always:
+	// what the side branch's history deleted cannot be excused, and the line
+	// names the fetch. A landing run never passes on an unreadable history.
 	Incomplete string
 }
 
 // devHistoryFetch completes the second parent's ancestry in a depth-2
 // checkout: commits and trees only (blob:none), the whole history
-// (--unshallow). The main-run steps of ci.yml and certification.yml run it.
+// (--unshallow). The main-run steps of ci.yml and certification.yml run it
+// through `ci fetch-ancestry dev` (TestAncestryFetchesAreOneVerb).
 const devHistoryFetch = "git fetch --no-tags --filter=blob:none --unshallow origin +dev:refs/remotes/origin/dev"
 
 // readMergeDeletions compares HEAD's tree with its first parent's, through
@@ -120,7 +126,8 @@ func readCommitDeletions(root, commit, event, ref, branch string) (*mergeDeletio
 	if err != nil {
 		return nil, "", err
 	}
-	if !mainRun(event, ref, branch) {
+	lg, ok := landingRun(event, ref, branch)
+	if !ok {
 		return m, "", nil
 	}
 	where := event + " on " + ref
@@ -128,25 +135,26 @@ func readCommitDeletions(root, commit, event, ref, branch string) (*mergeDeletio
 		where = "a local run on " + branch
 	}
 	if len(parents) == 1 {
-		return m, "NOTE: " + where + " is a main run at a one-parent commit: HEAD is compared with its parent as everywhere", nil
+		return m, "NOTE: " + where + " is a " + lg.kind + " at a one-parent commit: HEAD is compared with its parent as everywhere", nil
 	}
 	second := parents[1]
 	if err := parentInCheckout(root, second); err != nil {
-		m.Incomplete = fmt.Sprintf("%s (%s): %s is a main run at a merge commit, but the second parent %s is not in this checkout, so what dev's history deleted cannot be excused and the merge's own change cannot be read: every workflow checks out with fetch-depth: 2, then `%s`", head, subject, where, second[:9], devHistoryFetch)
-		return m, "NOTE: " + where + " is a main run at a merge commit whose second parent is not in this checkout: the first-parent comparison ran, and the missing history is a finding", nil
+		m.Incomplete = fmt.Sprintf("%s (%s): %s is a %s at a merge commit, but the second parent %s is not in this checkout, so what %s's history deleted cannot be excused and the merge's own change cannot be read: every workflow checks out with fetch-depth: 2, then `%s`", head, subject, where, lg.kind, second[:9], lg.from, lg.fetch)
+		return m, "NOTE: " + where + " is a " + lg.kind + " at a merge commit whose second parent is not in this checkout: the first-parent comparison ran, and the missing history is a finding", nil
 	}
-	// The history must be readable, then it must be dev's. In this order,
-	// so a shallow checkout gets the line naming the fetch: origin/dev
-	// present; the second parent's ancestry complete; origin/dev's ancestry
-	// complete; the second parent an ancestor of origin/dev (control 4: only
-	// dev's history excuses, which dev's non-fast-forward rule keeps true for
-	// every promotion; a branch merged into main is not dev, and declares
-	// what it deletes like any change); a merge base for the range.
-	const devRef = "refs/remotes/origin/dev"
+	// The history must be readable, then it must be the side branch's. In
+	// this order, so a shallow checkout gets the line naming the fetch: the
+	// side branch's ref present; the second parent's ancestry complete; the
+	// ref's ancestry complete; the second parent an ancestor of the ref
+	// (control 4: only the side branch's history excuses, which its
+	// non-fast-forward rule keeps true for every promotion; a branch merged
+	// into main is not dev, and declares what it deletes like any change);
+	// a merge base for the range.
+	devRef := lg.ref
 	devTip, devErr := gitOut(root, "rev-parse", "--verify", "-q", devRef+"^{commit}")
 	devTip = strings.TrimSpace(devTip)
 	if devErr != nil {
-		m.Incomplete = fmt.Sprintf("%s (%s): %s is a main run at a merge commit, but %s is not in this checkout, so the second parent %s cannot be confirmed as dev's history and nothing is excused: fetch dev for a main run, `%s`", head, subject, where, devRef, second[:9], devHistoryFetch)
+		m.Incomplete = fmt.Sprintf("%s (%s): %s is a %s at a merge commit, but %s is not in this checkout, so the second parent %s cannot be confirmed as %s's history and nothing is excused: fetch %s for a %s, `%s`", head, subject, where, lg.kind, devRef, second[:9], lg.from, lg.from, lg.kind, lg.fetch)
 	}
 	if m.Incomplete == "" {
 		graft, err := shallowCut(root, second)
@@ -154,7 +162,7 @@ func readCommitDeletions(root, commit, event, ref, branch string) (*mergeDeletio
 			return nil, "", err
 		}
 		if graft != "" {
-			m.Incomplete = fmt.Sprintf("%s (%s): %s is a main run at a merge commit, but the second parent %s's ancestry is cut by a shallow graft at %s in this checkout, so what dev's history deleted cannot be excused: fetch dev's full ancestry for a main run, `%s`", head, subject, where, second[:9], graft[:9], devHistoryFetch)
+			m.Incomplete = fmt.Sprintf("%s (%s): %s is a %s at a merge commit, but the second parent %s's ancestry is cut by a shallow graft at %s in this checkout, so what %s's history deleted cannot be excused: fetch %s's full ancestry for a %s, `%s`", head, subject, where, lg.kind, second[:9], graft[:9], lg.from, lg.from, lg.kind, lg.fetch)
 		}
 	}
 	if m.Incomplete == "" {
@@ -163,12 +171,18 @@ func readCommitDeletions(root, commit, event, ref, branch string) (*mergeDeletio
 			return nil, "", err
 		}
 		if graft != "" {
-			m.Incomplete = fmt.Sprintf("%s (%s): %s is a main run at a merge commit, but %s (%s)'s ancestry is cut by a shallow graft at %s in this checkout, so it cannot vouch for the second parent %s and nothing is excused: fetch dev's full ancestry for a main run, `%s`", head, subject, where, devRef, devTip[:9], graft[:9], second[:9], devHistoryFetch)
+			m.Incomplete = fmt.Sprintf("%s (%s): %s is a %s at a merge commit, but %s (%s)'s ancestry is cut by a shallow graft at %s in this checkout, so it cannot vouch for the second parent %s and nothing is excused: fetch %s's full ancestry for a %s, `%s`", head, subject, where, lg.kind, devRef, devTip[:9], graft[:9], second[:9], lg.from, lg.kind, lg.fetch)
 		}
 	}
 	if m.Incomplete == "" {
 		if _, err := gitOut(root, "merge-base", "--is-ancestor", second, devRef); err != nil {
-			m.Incomplete = fmt.Sprintf("%s (%s): %s is a main run at a merge commit, but the second parent %s is not an ancestor of %s (%s) in this checkout: a branch merged into main, or origin/dev stale or shallow here; only a promotion of dev is excused on main; fetch dev for a main run, `%s`", head, subject, where, second[:9], devRef, devTip[:9], devHistoryFetch)
+			if !lg.strict {
+				// A merge commit on dev whose second parent is not
+				// sprint/foundation's is not a promotion: nothing is
+				// excused, and the ordinary comparison is the whole rule.
+				return m, fmt.Sprintf("NOTE: %s is a %s at a merge commit whose second parent %s is not an ancestor of %s (%s): not a promotion of %s, so nothing is excused and HEAD is compared with its first parent as everywhere", where, lg.kind, second[:9], devRef, devTip[:9], lg.from), nil
+			}
+			m.Incomplete = fmt.Sprintf("%s (%s): %s is a %s at a merge commit, but the second parent %s is not an ancestor of %s (%s) in this checkout: a branch merged into %s, or origin/%s stale or shallow here; only a promotion of %s is excused on %s; fetch %s for a %s, `%s`", head, subject, where, lg.kind, second[:9], devRef, devTip[:9], lg.onto, lg.from, lg.from, lg.onto, lg.from, lg.kind, lg.fetch)
 		}
 	}
 	var history, tree map[string]bool
@@ -176,11 +190,12 @@ func readCommitDeletions(root, commit, event, ref, branch string) (*mergeDeletio
 	var since string
 	if m.Incomplete == "" {
 		if mb, err := gitOut(root, "merge-base", parents[0], second); err != nil {
-			m.Incomplete = fmt.Sprintf("%s (%s): %s is a main run at a merge commit, but the parents %s and %s have no merge base in this checkout, so dev's history since the last promotion cannot be read and nothing is excused: `%s`", head, subject, where, parents[0][:9], second[:9], devHistoryFetch)
+			m.Incomplete = fmt.Sprintf("%s (%s): %s is a %s at a merge commit, but the parents %s and %s have no merge base in this checkout, so %s's history since the last promotion cannot be read and nothing is excused: `%s`", head, subject, where, lg.kind, parents[0][:9], second[:9], lg.from, lg.fetch)
 		} else {
-			// The excusing history is dev since the last promotion,
-			// merge-base..second: a path dev deleted before that and main
-			// holds again is main's, and its loss is the merge's own.
+			// The excusing history is the side branch since the last
+			// promotion, merge-base..second: a path it deleted before that
+			// and the base branch holds again is the base branch's, and its
+			// loss is the merge's own.
 			since = strings.TrimSpace(mb)
 			if history, err = deletedInAncestry(root, since+".."+second); err != nil {
 				return nil, "", err
@@ -211,11 +226,59 @@ func readCommitDeletions(root, commit, event, ref, branch string) (*mergeDeletio
 	beyond.Deleted = rest
 	m.Beyond = beyond.findings()
 	if m.Incomplete != "" {
-		return m, fmt.Sprintf("NOTE: %s is a main run at a merge commit whose history could not be read here: nothing excused, the first-parent comparison and the second parent's tree comparison ran (%d findings beyond the second parent), and the unreadable history is a finding", where, len(m.Beyond)), nil
+		return m, fmt.Sprintf("NOTE: %s is a %s at a merge commit whose history could not be read here: nothing excused, the first-parent comparison and the second parent's tree comparison ran (%d findings beyond the second parent), and the unreadable history is a finding", where, lg.kind, len(m.Beyond)), nil
 	}
-	note := fmt.Sprintf("NOTE: %s is a main run at a merge commit: HEAD is compared with its first parent %s as everywhere; dev's history (the second parent %s's ancestry since the merge base %s, %d paths deleted) excused %d guarded deletions and %d declaration rows it made, each gated on dev's queue change by change, none of them a path dev's tip still has; and what HEAD lacks that dev's tip has is checked as the merge's own change (%d findings)",
-		where, parents[0][:9], second[:9], since[:9], len(history), excused, excusedRows, len(m.Beyond))
+	note := fmt.Sprintf("NOTE: %s is a %s at a merge commit: HEAD is compared with its first parent %s as everywhere; %s's history (the second parent %s's ancestry since the merge base %s, %d paths deleted) excused %d guarded deletions and %d declaration rows it made, each gated on %s's queue change by change, none of them a path %s's tip still has; and what HEAD lacks that %s's tip has is checked as the merge's own change (%d findings)",
+		where, lg.kind, parents[0][:9], lg.from, second[:9], since[:9], len(history), excused, excusedRows, lg.from, lg.from, lg.from, len(m.Beyond))
 	return m, note, nil
+}
+
+// landing is a run at the tip a promotion has just landed on: the branch it
+// landed on (onto), the branch it came from (from) and that branch's ref in
+// the checkout, the fetch that completes its history, and whether a merge
+// commit whose second parent is not that branch's is a finding (strict) or
+// an ordinary merge (dev takes squashes, so a merge commit there that is not
+// a promotion is compared as everywhere).
+type landing struct {
+	kind, onto, from, ref, fetch string
+	strict                       bool
+}
+
+// foundationHistoryFetch completes sprint/foundation's ancestry in a depth-2
+// checkout, as devHistoryFetch does dev's. The promotion steps of ci.yml and
+// certification.yml run it, through `ci fetch-ancestry --promotion
+// sprint/foundation`, on a merge-queue group and a push to dev whose HEAD is a
+// merge commit, and on the promotion pull request itself.
+const foundationHistoryFetch = "git fetch --no-tags --filter=blob:none --unshallow origin +sprint/foundation:refs/remotes/origin/sprint/foundation"
+
+// landingRun reports the landing a run audits, if any: a main run (mainRun)
+// is the landed promotion of dev; a dev run (devRun) is the landed promotion
+// of sprint/foundation, the same shape one branch down.
+func landingRun(event, ref, branch string) (landing, bool) {
+	switch {
+	case mainRun(event, ref, branch):
+		return landing{kind: "main run", onto: "main", from: "dev", ref: "refs/remotes/origin/dev", fetch: devHistoryFetch, strict: true}, true
+	case devRun(event, ref, branch):
+		return landing{kind: "dev run", onto: "dev", from: "sprint/foundation", ref: "refs/remotes/origin/sprint/foundation", fetch: foundationHistoryFetch}, true
+	}
+	return landing{}, false
+}
+
+// devRun reports whether a run audits what landed on dev: GitHub's push or
+// workflow_dispatch event on refs/heads/dev, a merge-queue group for dev
+// (ref refs/heads/gh-readonly-queue/dev/...), or no GitHub environment at all
+// with dev checked out. A pull request's merge ref is not a dev run: its
+// promotion is skipped by promotionSkip.
+func devRun(event, ref, branch string) bool {
+	switch event {
+	case "push", "workflow_dispatch":
+		return ref == "refs/heads/dev"
+	case "merge_group":
+		return strings.HasPrefix(ref, "refs/heads/gh-readonly-queue/dev/")
+	case "":
+		return ref == "" && branch == "dev"
+	}
+	return false
 }
 
 // mainRun reports whether a run audits main: GitHub's push, workflow_dispatch
@@ -403,25 +466,71 @@ func parentInCheckout(root, parent string) error {
 	return nil
 }
 
-// promotionSkip recognises a promotion of dev to main from GitHub's own event
-// environment: GITHUB_EVENT_NAME, GITHUB_BASE_REF and GITHUB_HEAD_REF, as the
-// `test` jobs receive them, and the pull request's head repository from the
-// event payload (pullRequestHeadRepo) against GITHUB_REPOSITORY. It is true
-// exactly for the pull_request event whose base is main and whose head is
-// this repository's own dev, and the note says why the comparison does not
-// run there: every commit such a merge brings landed through dev's queue,
-// where this rule ran on each change against dev's tip. GITHUB_HEAD_REF is a
-// bare branch name, so a fork's branch named dev is refused by the head
-// repository, and an absent or unreadable payload refuses too. main takes
-// pull requests only (its ruleset has no merge queue), so no other event
-// carries a promotion. Anything else, an empty environment included, is the
-// ordinary comparison: a pull request into dev, a merge-queue group, a push,
-// a local run.
+// isPromotion reports whether a pull request promotes an integration branch:
+// dev into main, or sprint/foundation into dev.
+func isPromotion(base, head string) bool {
+	return (base == "main" && head == "dev") || (base == "dev" && head == "sprint/foundation")
+}
+
+// promotionSkip recognises a promotion (dev to main, or sprint/foundation to dev)
+// from GitHub's own event environment: GITHUB_EVENT_NAME, GITHUB_BASE_REF and
+// GITHUB_HEAD_REF, as the `test` jobs receive them, and the pull request's head
+// repository from the event payload (pullRequestHeadRepo) against GITHUB_REPOSITORY.
+// It is true exactly for the pull_request event whose base is main and whose head
+// is this repository's own dev, or whose base is dev and whose head is this
+// repository's own sprint/foundation, and the note says why the comparison does
+// not run there: every commit such a merge brings landed through that branch's
+// queue, where this rule ran on each change against that branch's tip.
+// GITHUB_HEAD_REF is a bare branch name, so a fork's branch named dev or
+// sprint/foundation is refused by the head repository, and an absent or unreadable
+// payload refuses too. The skip is the pull request's alone: a merge-queue
+// group carries no head branch name, so the landed promotion is read from git
+// by the landing run (landingRun), in the group and on the push, as a merge
+// commit whose second parent is the promoted branch. Anything else, an empty environment included, is the
+// ordinary comparison: a feature pull request into dev, a merge-queue group, a
+// push, a local run. On sprint/foundation to dev the skip has one precondition
+// more, read from git (promotionBaseCheck): dev's tip is an ancestor of the
+// head.
 func promotionSkip(event, base, head, headRepo, repo string) (bool, string) {
-	if event != "pull_request" || base != "main" || head != "dev" || repo == "" || headRepo != repo {
+	if event != "pull_request" || !isPromotion(base, head) || repo == "" || headRepo != repo {
 		return false, ""
 	}
-	return true, "NOTE: pull_request " + headRepo + ":" + head + " -> " + base + " is a promotion: its first parent is main's tip, so the comparison would see every deletion dev accumulated since the last promotion; each of those landed through dev's queue, where this rule ran on the change that made it, so the comparison does not run here"
+	return true, "NOTE: pull_request " + headRepo + ":" + head + " -> " + base + " is a promotion: its first parent is " + base + "'s tip, so the comparison would see every deletion " + head + " accumulated since the last promotion; each of those landed through " + head + "'s queue, where this rule ran on the change that made it, so the comparison does not run here"
+}
+
+// promotionBaseCheck is the skip's one precondition, read from git: on the
+// promotion of sprint/foundation to dev the base branch's tip (the merge
+// ref's first parent) must be an ancestor of the head (its second parent),
+// the way the promotion is built: dev is merged into sprint/foundation before
+// the promotion, so the comparison the skip drops would have seen only what
+// foundation declared. A head that lacks commits dev has is a stale base: a
+// squash of it would undo them, so the skip is refused, the full comparison
+// runs and the note says why. An ancestry cut by a shallow graft cannot
+// answer: the skip is refused and the note names the fetch (fail closed).
+// Every other promotion (dev to main, whose tip is a merge commit dev does
+// not contain) has no such precondition and is ok.
+func promotionBaseCheck(root, base string) (ok bool, note string, err error) {
+	if base != "dev" {
+		return true, "", nil
+	}
+	parents, err := commitParents(root, "HEAD")
+	if err != nil {
+		return false, "NOTE: the promotion's checkout has no readable parents (" + err.Error() + "), so the base cannot be compared with the head: the skip is not taken and the full comparison runs", nil
+	}
+	if len(parents) != 2 {
+		return false, "NOTE: the promotion's checkout is not a pull request's merge ref (HEAD has " + strconv.Itoa(len(parents)) + " parents), so the base cannot be compared with the head: the skip is not taken and the full comparison runs", nil
+	}
+	if _, err := gitOut(root, "merge-base", "--is-ancestor", parents[0], parents[1]); err == nil {
+		return true, "", nil
+	}
+	graft, err := shallowCut(root, parents[1])
+	if err != nil {
+		return false, "", err
+	}
+	if graft != "" {
+		return false, "NOTE: the promotion's head " + parents[1][:9] + " has its ancestry cut by a shallow graft at " + graft[:9] + " in this checkout, so whether dev's tip " + parents[0][:9] + " is in it cannot be read: the skip is not taken and the full comparison runs; fetch the head's history, `" + foundationHistoryFetch + "`", nil
+	}
+	return false, "NOTE: dev's tip " + parents[0][:9] + " is not an ancestor of the promotion's head " + parents[1][:9] + ": dev has commits the head lacks, a squash of it would undo them, so the skip is not taken and the full comparison runs; merge dev into sprint/foundation, then promote", nil
 }
 
 // pullRequestHeadRepo is the head repository's full name from the event
@@ -466,6 +575,21 @@ func declaredRowsAdded(diff string) map[string]string {
 		rows[p] = strings.TrimSpace(why)
 	}
 	return rows
+}
+
+// distinctRows drops a row whose text an earlier row repeats. The log merges by
+// union (.gitattributes), so two changes that each add the same row leave it
+// twice; a row is read once, in any order.
+func distinctRows(rows []allowlist.Row) []allowlist.Row {
+	seen := map[string]bool{}
+	var out []allowlist.Row
+	for _, row := range rows {
+		if !seen[row.Text] {
+			seen[row.Text] = true
+			out = append(out, row)
+		}
+	}
+	return out
 }
 
 // findings are the rule's red lines: a guarded file deleted with no row of
@@ -515,10 +639,10 @@ func (m *mergeDeletions) ordinaryFindings() []string {
 // is read from git and compared with what the same change declared, so a
 // squash from a stale base — a tree that lacks files dev had, with nothing
 // in the change saying so — is red on the pull request, in the merge queue
-// and on dev. On the promotion of dev to main (promotionSkip) the
-// comparison does not run and the run says so; on a main run at the landed
-// promotion (mainRun) it runs with what dev's history deleted excused, and
-// the merge's own change checked against dev's tip. 2026-09-26: #4346 (rowan/functional-tag) was rebased onto
+// and on dev. On the promotion of dev to main or sprint/foundation to dev
+// (promotionSkip) the comparison does not run and the run says so; on a main
+// run at the landed promotion (mainRun) it runs with what dev's history deleted
+// excused, and the merge's own change checked against dev's tip. 2026-09-26: #4346 (rowan/functional-tag) was rebased onto
 // #4344 with a tree that lacked the four files #4344 had added (the silent
 // class test, its allowlist, two of its controls) and undid #4344's
 // live-path fixes with them; every check was green, because a rule that is
@@ -528,15 +652,22 @@ func TestNoMergeDeletesATestFileUndeclared(t *testing.T) {
 	t.Parallel()
 
 	log := loadAllowlist(t, "testdata/deleted-tests.txt", allowlist.Options{})
-	for _, row := range log.Rows() {
+	for _, row := range distinctRows(log.Rows()) {
 		if _, why, _ := strings.Cut(row.Text, " "); strings.TrimSpace(why) == "" {
 			t.Errorf("%s: %q carries no why", deletedTestsLogPath, row.Text)
 		}
 	}
 	if skip, note := promotionSkip(os.Getenv("GITHUB_EVENT_NAME"), os.Getenv("GITHUB_BASE_REF"), os.Getenv("GITHUB_HEAD_REF"),
 		pullRequestHeadRepo(os.Getenv("GITHUB_EVENT_PATH")), os.Getenv("GITHUB_REPOSITORY")); skip {
-		t.Log(note)
-		return
+		ok, baseNote, err := promotionBaseCheck(repoTree(t).Root, os.Getenv("GITHUB_BASE_REF"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ok {
+			t.Log(note)
+			return
+		}
+		t.Log(baseNote)
 	}
 	m, note, err := readMergeDeletionsFor(repoTree(t).Root, os.Getenv("GITHUB_EVENT_NAME"), os.Getenv("GITHUB_REF"))
 	if err != nil {
@@ -627,11 +758,11 @@ func TestMergeRuleReadsTheDeletionOutOfGit(t *testing.T) {
 }
 
 // TestPromotionSkipReadsTheEvent pins the one shape that skips the
-// comparison, the promotion pull request from this repository's dev to main,
-// against its reversed witnesses: the same event into dev, a feature branch
-// into main, a fork's branch named dev, an absent payload, a push carrying
-// the same refs, a merge-queue group (main has none; dev's carries no
-// promotion), and no environment at all.
+// comparison, the promotion pull request from this repository's dev to main
+// or sprint/foundation to dev, against its reversed witnesses: the same event
+// into dev from a feature branch, a feature branch into main, a fork's branch,
+// an absent payload, a push carrying the same refs, a merge-queue group
+// (main has none; dev's carries no promotion), and no environment at all.
 func TestPromotionSkipReadsTheEvent(t *testing.T) {
 	t.Parallel()
 	const repo = "mas-bandwidth/nova-tools"
@@ -640,10 +771,17 @@ func TestPromotionSkipReadsTheEvent(t *testing.T) {
 		skip                                    bool
 	}{
 		{"the promotion", "pull_request", "main", "dev", repo, repo, true},
+		{"the sprint foundation promotion", "pull_request", "dev", "sprint/foundation", repo, repo, true},
 		{"a pull request into dev from dev", "pull_request", "dev", "dev", repo, repo, false},
 		{"a feature branch into main", "pull_request", "main", "feature", repo, repo, false},
+		{"a feature branch into dev", "pull_request", "dev", "feature", repo, repo, false},
+		{"sprint/foundation into main", "pull_request", "main", "sprint/foundation", repo, repo, false},
+		{"another sprint branch into dev", "pull_request", "dev", "sprint/other", repo, repo, false},
+		{"dev into sprint/foundation", "pull_request", "sprint/foundation", "dev", repo, repo, false},
 		{"a fork's branch named dev", "pull_request", "main", "dev", "someone/nova-tools", repo, false},
+		{"a fork's branch named sprint/foundation", "pull_request", "dev", "sprint/foundation", "someone/nova-tools", repo, false},
 		{"an absent payload", "pull_request", "main", "dev", "", repo, false},
+		{"an absent payload on sprint foundation promotion", "pull_request", "dev", "sprint/foundation", "", repo, false},
 		{"no GITHUB_REPOSITORY", "pull_request", "main", "dev", repo, "", false},
 		{"a push with the promotion's refs", "push", "main", "dev", repo, repo, false},
 		{"a merge-queue group", "merge_group", "", "", "", repo, false},
@@ -654,8 +792,8 @@ func TestPromotionSkipReadsTheEvent(t *testing.T) {
 		if skip != tc.skip {
 			t.Errorf("%s: promotionSkip(%q, %q, %q, %q, %q) = %v, want %v", tc.name, tc.event, tc.base, tc.head, tc.headRepo, tc.repo, skip, tc.skip)
 		}
-		if skip && (!strings.HasPrefix(note, "NOTE: ") || !strings.Contains(note, "dev's queue")) {
-			t.Errorf("%s: note = %q; want a NOTE naming dev's queue as where the rule ran", tc.name, note)
+		if skip && (!strings.HasPrefix(note, "NOTE: ") || !strings.Contains(note, tc.head+"'s queue")) {
+			t.Errorf("%s: note = %q; want a NOTE naming %s's queue as where the rule ran", tc.name, note, tc.head)
 		}
 		if !skip && note != "" {
 			t.Errorf("%s: note = %q; want none when the comparison runs", tc.name, note)
@@ -1028,6 +1166,307 @@ func TestMainRunNeverPassesOnAShallowAncestry(t *testing.T) {
 	if len(got) != 2 || !strings.Contains(all, "deletes new_test.go, which its parent "+devTip[:9]+" had") ||
 		!strings.Contains(all, "nothing is excused") || !strings.Contains(all, devHistoryFetch) || !strings.Contains(note, "could not be read") {
 		t.Errorf("shallow clone of the bad merge: findings = %q, note = %q; want new_test.go against the second parent and the unreadable history naming the fetch", got, note)
+	}
+}
+
+// foundationRepo is the dev landing's witnesses' repository, the shape of
+// promotionRepo one branch down: a base with the ledger; foundation deletes
+// gone_test.go with a row, deletes x_test.go with a row and restores it,
+// trims the log, and adds new_test.go and f.txt; dev (devTip) is the base
+// with dev_only_test.go added; refs/remotes/origin/sprint/foundation is
+// foundation's tip. Every file has a body of its own, so git's rename
+// detection never pairs a deletion with an addition.
+type foundationRepo struct {
+	*scratchRepo
+	base, devTip, foundationTip string
+}
+
+func buildFoundationRepo(t *testing.T) *foundationRepo {
+	t.Helper()
+	r := &foundationRepo{scratchRepo: newScratchRepo(t, "dev")}
+	body := func(name string) string {
+		return "package a\n\n" + strings.Repeat("// "+name+": a line of its own so no other file resembles it\n", 4)
+	}
+	r.write(deletedTestsLogPath, "# the log\n")
+	r.write("keep_test.go", body("keep"))
+	r.write("x_test.go", body("x"))
+	r.write("gone_test.go", body("gone"))
+	r.base = r.commit("base")
+	r.write("dev_only_test.go", body("dev only"))
+	r.devTip = r.commit("dev adds dev_only_test.go")
+	r.git("checkout", "-q", "-b", "sprint/foundation", r.base)
+	r.write("f.txt", "f\n")
+	r.remove("gone_test.go")
+	r.write(deletedTestsLogPath, "# the log\ngone_test.go moved to the functional tier\n")
+	r.stage("foundation deletes gone_test.go, declared")
+	r.remove("x_test.go")
+	r.write(deletedTestsLogPath, "# the log\ngone_test.go moved to the functional tier\nx_test.go moved too\n")
+	r.stage("foundation deletes x_test.go, declared")
+	r.write("x_test.go", body("x"))
+	r.write("new_test.go", body("new"))
+	r.write(deletedTestsLogPath, "# the log\n")
+	r.foundationTip = r.commit("foundation restores x_test.go, trims the log, adds new_test.go")
+	r.git("update-ref", "refs/remotes/origin/sprint/foundation", r.foundationTip)
+	r.git("checkout", "-q", "dev")
+	return r
+}
+
+// land is the commit a promotion's landing makes on dev: foundation's tree
+// plus dev's own file, parents dev's tip and, with merge, foundation's tip.
+func (r *foundationRepo) land(subject string, merge bool, edit func(index func(args ...string))) string {
+	r.t.Helper()
+	r.git("read-tree", r.foundationTip)
+	r.git("update-index", "--add", "--cacheinfo", "100644,"+r.git("rev-parse", r.devTip+":dev_only_test.go")+",dev_only_test.go")
+	if edit != nil {
+		edit(r.git0)
+	}
+	args := []string{"commit-tree", r.git("write-tree"), "-p", r.devTip}
+	if merge {
+		args = append(args, "-p", r.foundationTip)
+	}
+	return r.git(append(args, "-m", subject)...)
+}
+
+// git0 is git with no result, for the tree edits a witness hands to land.
+func (r *foundationRepo) git0(args ...string) { r.t.Helper(); r.git(args...) }
+
+// dev-landing shapes: a merge-queue group for dev and a push to dev.
+var devLandingEvents = []struct{ name, event, ref string }{
+	{"merge_group", "merge_group", "refs/heads/gh-readonly-queue/dev/pr-4871-0123456789abcdef"},
+	{"push on dev", "push", "refs/heads/dev"},
+	{"no environment on dev", "", ""},
+}
+
+// TestDevLandingExcusesWhatFoundationDeleted is the dev-side equivalent of
+// TestMainRunExcusesOnlyDevsHistory's promotion: the landed promotion (a
+// merge commit on dev whose second parent is sprint/foundation's tip) has no
+// findings under the merge-queue group, the push and a local run on dev,
+// gone_test.go excused because foundation deleted it with a row in the change
+// that made it; the same tree as a squash (one parent) is the ordinary
+// comparison, red for gone_test.go.
+func TestDevLandingExcusesWhatFoundationDeleted(t *testing.T) {
+	t.Parallel()
+	r := buildFoundationRepo(t)
+	merge := r.land("promotion landed as a merge commit", true, nil)
+	squash := r.land("promotion landed as a squash", false, nil)
+	for _, tc := range devLandingEvents {
+		branch := ""
+		if tc.event == "" {
+			branch = "dev"
+		}
+		got, note := r.run(merge, tc.event, tc.ref, branch)
+		if len(got) != 0 || !strings.Contains(note, "is a dev run at a merge commit") || !strings.Contains(note, "excused 1 guarded deletions and 0 declaration rows") || !strings.Contains(note, "(0 findings)") {
+			t.Errorf("%s, the landed merge: findings = %q, note = %q; want none, gone_test.go excused", tc.name, got, note)
+		}
+		got, note = r.run(squash, tc.event, tc.ref, branch)
+		exactlyOne(t, tc.name+", the same tree as a squash", got, "gone_test.go")
+		if !strings.Contains(note, "one-parent commit") {
+			t.Errorf("%s: note = %q; want the one-parent note", tc.name, note)
+		}
+	}
+	// Off dev the same merge is the ordinary comparison: a pull request's
+	// merge ref, a feature branch with no environment.
+	for _, tc := range []struct{ name, event, ref, branch string }{
+		{"a pull request's merge ref", "pull_request", "refs/pull/4871/merge", ""},
+		{"a push to a feature branch", "push", "refs/heads/feature", ""},
+		{"a merge-queue group for main", "merge_group", "refs/heads/gh-readonly-queue/main/pr-1-aaaa", ""},
+		{"a local run on a feature branch", "", "", "feature"},
+	} {
+		got, note := r.run(merge, tc.event, tc.ref, tc.branch)
+		exactlyOne(t, tc.name, got, "gone_test.go")
+		if note != "" {
+			t.Errorf("%s: note = %q; want none off dev", tc.name, note)
+		}
+	}
+}
+
+// TestDevLandingHoldsItsTreeControls is controls 1 and 2 on dev: the landed
+// merge minus x_test.go, which foundation deleted but its tip still has, is
+// red for it; minus new_test.go, which dev never had, red for it against the
+// second parent; minus dev's own dev_only_test.go, which foundation never
+// had, red against the first parent.
+func TestDevLandingHoldsItsTreeControls(t *testing.T) {
+	t.Parallel()
+	r := buildFoundationRepo(t)
+	for _, tc := range []struct{ name, file string }{
+		{"control 1: x_test.go, deleted once on foundation and restored", "x_test.go"},
+		{"control 2: new_test.go, which dev never had", "new_test.go"},
+		{"dev's own file, which foundation never had", "dev_only_test.go"},
+	} {
+		lost := r.land("landing minus "+tc.file, true, func(index func(args ...string)) {
+			index("update-index", "--force-remove", tc.file)
+		})
+		got, _ := r.run(lost, "merge_group", devLandingEvents[0].ref, "")
+		exactlyOne(t, tc.name, got, tc.file)
+	}
+}
+
+// TestDevLandingExcusesOnlyFoundationsHistory is control 4 on dev: a merge
+// commit on dev whose second parent is a feature branch, not foundation, is
+// not a promotion and excuses nothing: the ordinary comparison, red for the
+// file the branch deletes, with no finding for the merge shape itself (dev
+// takes squashes, a merge commit there that is not a promotion is compared as
+// everywhere).
+func TestDevLandingExcusesOnlyFoundationsHistory(t *testing.T) {
+	t.Parallel()
+	r := buildFoundationRepo(t)
+	r.git("read-tree", r.base)
+	r.git("update-index", "--force-remove", "keep_test.go")
+	feature := r.git("commit-tree", r.git("write-tree"), "-p", r.base, "-m", "feature deletes keep_test.go")
+	r.git("read-tree", feature)
+	r.git("update-index", "--add", "--cacheinfo", "100644,"+r.git("rev-parse", r.devTip+":dev_only_test.go")+",dev_only_test.go")
+	merged := r.git("commit-tree", r.git("write-tree"), "-p", r.devTip, "-p", feature, "-m", "feature merged into dev")
+	got, note := r.run(merged, "push", "refs/heads/dev", "")
+	exactlyOne(t, "a feature branch merged into dev", got, "keep_test.go")
+	if !strings.Contains(note, "not a promotion of sprint/foundation") {
+		t.Errorf("note = %q; want it named as not a promotion", note)
+	}
+}
+
+// TestDevLandingFailsClosedOnAnUnreadableHistory is control 3 on dev: the
+// landed merge in a depth-2 clone, where foundation's ancestry is cut, excuses
+// nothing and reports the shallow history as a finding naming the fetch; with
+// no origin/sprint/foundation at all the same; after the fetch the landed
+// merge passes.
+func TestDevLandingFailsClosedOnAnUnreadableHistory(t *testing.T) {
+	t.Parallel()
+	r := buildFoundationRepo(t)
+	merge := r.land("promotion landed as a merge commit", true, nil)
+	r.git("update-ref", "refs/heads/witness-landed", merge)
+	r.git("update-ref", "refs/heads/witness-foundation", r.foundationTip)
+	shallow := filepath.Join(t.TempDir(), "shallow")
+	r.git("clone", "-q", "--depth", "2", "--no-single-branch", "--branch", "witness-landed", "file://"+r.root, shallow)
+	c := &scratchRepo{t: t, root: shallow}
+	ref := devLandingEvents[0].ref
+	c.git("update-ref", "-d", "refs/remotes/origin/sprint/foundation")
+
+	m, note, err := readMergeDeletionsFor(shallow, "merge_group", ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	all := strings.Join(m.findings(), "\n")
+	if !strings.Contains(all, "deletes gone_test.go,") || !strings.Contains(all, "refs/remotes/origin/sprint/foundation is not in this checkout") || !strings.Contains(all, foundationHistoryFetch) || !strings.Contains(note, "could not be read") {
+		t.Errorf("no origin/sprint/foundation: findings = %q, note = %q; want gone_test.go unexcused and the missing ref naming the fetch", all, note)
+	}
+
+	c.git("update-ref", "refs/remotes/origin/sprint/foundation", r.foundationTip)
+	m, note, err = readMergeDeletionsFor(shallow, "merge_group", ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	all = strings.Join(m.findings(), "\n")
+	if !strings.Contains(all, "deletes gone_test.go,") || !strings.Contains(all, "ancestry is cut by a shallow graft at") || !strings.Contains(all, foundationHistoryFetch) {
+		t.Errorf("shallow ancestry: findings = %q, note = %q; want gone_test.go unexcused and the shallow history naming the fetch", all, note)
+	}
+
+	c.git("fetch", "-q", "--no-tags", "--unshallow", "origin", "+witness-foundation:refs/remotes/origin/sprint/foundation")
+	m, note, err = readMergeDeletionsFor(shallow, "merge_group", ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := m.findings(); len(got) != 0 || !strings.Contains(note, "excused 1 guarded deletions") {
+		t.Errorf("after the fetch: findings = %q, note = %q; want none, gone_test.go excused", got, note)
+	}
+}
+
+// TestDevRunReadsTheEventRefAndBranch pins which runs audit what landed on
+// dev against its reversed witnesses: a pull request's merge ref, main's
+// events, another branch's queue, a local run elsewhere, a half-set
+// environment.
+func TestDevRunReadsTheEventRefAndBranch(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, event, ref, branch string
+		want                     bool
+	}{
+		{"merge_group on dev's queue ref", "merge_group", "refs/heads/gh-readonly-queue/dev/pr-1-aaaa", "", true},
+		{"push on dev", "push", "refs/heads/dev", "", true},
+		{"workflow_dispatch on dev", "workflow_dispatch", "refs/heads/dev", "", true},
+		{"a local run on dev", "", "", "dev", true},
+		{"merge_group on main's queue ref", "merge_group", "refs/heads/gh-readonly-queue/main/pr-1-aaaa", "", false},
+		{"merge_group on a dev-prefixed branch's queue ref", "merge_group", "refs/heads/gh-readonly-queue/devel/pr-1-aaaa", "", false},
+		{"push on main", "push", "refs/heads/main", "", false},
+		{"push on sprint/foundation", "push", "refs/heads/sprint/foundation", "", false},
+		{"schedule on dev", "schedule", "refs/heads/dev", "", false},
+		{"a pull request's merge ref", "pull_request", "refs/pull/4871/merge", "", false},
+		{"a local run on a feature branch", "", "", "feature", false},
+		{"a ref with no event", "", "refs/heads/dev", "dev", false},
+		{"an event with no ref", "push", "", "dev", false},
+	} {
+		if got := devRun(tc.event, tc.ref, tc.branch); got != tc.want {
+			t.Errorf("%s: devRun(%q, %q, %q) = %v, want %v", tc.name, tc.event, tc.ref, tc.branch, got, tc.want)
+		}
+	}
+}
+
+// TestPromotionBaseCheckReadsTheAncestry pins the skip's precondition over a
+// pull request's merge ref, built as GitHub builds it (a merge commit of the
+// base tip and the head): dev's tip an ancestor of the head passes; a head
+// that lacks a commit dev has is refused, naming dev's tip; a depth-2 clone
+// of the same, whose head ancestry is cut, is refused naming the fetch until
+// the fetch is done; dev to main has no such precondition; a checkout that is
+// not a merge ref is refused.
+func TestPromotionBaseCheckReadsTheAncestry(t *testing.T) {
+	t.Parallel()
+	r := newScratchRepo(t, "dev")
+	r.write("a.txt", "a\n")
+	base := r.commit("base")
+	r.write("b.txt", "b\n")
+	devTip := r.commit("dev moves")
+	r.git("checkout", "-q", "-b", "sprint/foundation", devTip)
+	r.write("c.txt", "c\n")
+	r.commit("foundation work")
+	r.write("d.txt", "d\n")
+	r.commit("foundation work 2")
+	current := r.git("rev-parse", "HEAD")
+	r.git("update-ref", "refs/remotes/origin/sprint/foundation", current)
+	r.git("checkout", "-q", "-b", "stale", base)
+	r.write("e.txt", "e\n")
+	stale := r.commit("a head cut from before dev moved")
+	mergeRef := func(basetip, head string) string {
+		r.git("read-tree", head)
+		return r.git("commit-tree", r.git("write-tree"), "-p", basetip, "-p", head, "-m", "merge ref")
+	}
+	check := func(commit, base string) (bool, string) {
+		t.Helper()
+		r.git("update-ref", "refs/heads/witness-check", commit)
+		r.git("checkout", "-q", "-f", "witness-check")
+		ok, note, err := promotionBaseCheck(r.root, base)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return ok, note
+	}
+
+	if ok, note := check(mergeRef(devTip, current), "dev"); !ok || note != "" {
+		t.Errorf("dev's tip an ancestor of the head: ok = %v, note = %q; want ok", ok, note)
+	}
+	if ok, note := check(mergeRef(devTip, stale), "dev"); ok || !strings.Contains(note, "dev's tip "+devTip[:9]+" is not an ancestor") || !strings.Contains(note, "the full comparison runs") {
+		t.Errorf("a stale head: ok = %v, note = %q; want refused naming dev's tip", ok, note)
+	}
+	if ok, note := check(mergeRef(devTip, stale), "main"); !ok || note != "" {
+		t.Errorf("dev to main: ok = %v, note = %q; want no precondition", ok, note)
+	}
+	if ok, note := check(current, "dev"); ok || !strings.Contains(note, "not a pull request's merge ref") {
+		t.Errorf("a one-parent checkout: ok = %v, note = %q; want refused", ok, note)
+	}
+
+	good := mergeRef(devTip, current)
+	r.git("update-ref", "refs/heads/witness-good", good)
+	r.git("update-ref", "refs/heads/witness-foundation", current)
+	shallow := filepath.Join(t.TempDir(), "shallow")
+	r.git("clone", "-q", "--depth", "2", "--no-single-branch", "--branch", "witness-good", "file://"+r.root, shallow)
+	ok, note, err := promotionBaseCheck(shallow, "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok || !strings.Contains(note, "cut by a shallow graft") || !strings.Contains(note, foundationHistoryFetch) {
+		t.Errorf("a depth-2 checkout: ok = %v, note = %q; want refused naming the fetch", ok, note)
+	}
+	c := &scratchRepo{t: t, root: shallow}
+	c.git("fetch", "-q", "--no-tags", "--unshallow", "origin", "+witness-foundation:refs/remotes/origin/sprint/foundation")
+	if ok, note, err := promotionBaseCheck(shallow, "dev"); err != nil || !ok || note != "" {
+		t.Errorf("after the fetch: ok = %v, note = %q, err = %v; want ok", ok, note, err)
 	}
 }
 

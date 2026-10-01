@@ -517,10 +517,17 @@ func resolvePlan(s *Snapshot, r ResolveReq) Plan {
 	var p Plan
 	p.on(s)
 	chosen := pick(&p, r.Sel, s.Work.Column(Waiting), rowOf, func(c *Card) string { return inState(c, Waiting) }, s.primaryCard)
+	// each card's open judgments, found by an index built once, not by a
+	// walk of every open judgment for each card (the owner's rule: never a
+	// row at a time); each list keeps the judgments' order
+	bySubject := map[string][]Open{}
+	for _, o := range s.Open {
+		bySubject[o.Subject()] = append(bySubject[o.Subject()], o)
+	}
 	for _, c := range chosen {
 		// A missing prerequisite that now exists is no longer a missing-need
 		// judgment; it still has to land before the primary can move.
-		for _, o := range s.Open {
+		for _, o := range bySubject[c.ID] {
 			if o.Note.Type == NMissingNeed && o.Subject() == c.ID && len(o.Note.Needs) > 0 && len(missingNeeds(s, o.Note.Needs)) == 0 {
 				p.Closes = append(p.Closes, o)
 			}
@@ -536,7 +543,7 @@ func resolvePlan(s *Snapshot, r ResolveReq) Plan {
 			}
 		}
 		if len(missing) > 0 {
-			if left := unblocked(s.Open, c.ID, missing, NMissingNeed); len(left) > 0 {
+			if left := unblocked(bySubject[c.ID], c.ID, missing, NMissingNeed); len(left) > 0 {
 				n := judgment(NMissingNeed, c.Row, s.Now, 0, c.ID)
 				n.What, n.Who, n.Needs = c.ID+" needs "+Preview(left, ",")+", not on the table", r.Who, left
 				p.Notes = append(p.Notes, n)
@@ -546,7 +553,7 @@ func resolvePlan(s *Snapshot, r ResolveReq) Plan {
 			}
 		}
 		if len(dropped) > 0 {
-			if left := unblocked(s.Open, c.ID, dropped, NBlocked); len(left) > 0 {
+			if left := unblocked(bySubject[c.ID], c.ID, dropped, NBlocked); len(left) > 0 {
 				p.Notes = append(p.Notes, blockedNote(s, c.Row, c.ID, r.Who, left))
 			}
 			if len(r.IDs) > 0 {
@@ -643,7 +650,7 @@ func dealPlan(s *Snapshot, r DealReq, rr *round) (Plan, roundMoves) {
 	next := func() string { return rr.next(up, q, widths, "", true) }
 	for _, c := range chosen {
 		if wc := s.Fleet.Placed(WorkCardID(c.ID, c.Int("attempt"))); wc != nil && wc.Col == Withdrawn {
-			if wc.Int("redeals") >= MaxRedeals {
+			if redealBound(wc) {
 				p.refuse(c.ID, fmt.Sprintf("%s was redealt %d times, its bound: rework it with a fix, or drop it", wc.ID, wc.Int("redeals")))
 				continue
 			}
@@ -702,15 +709,20 @@ func deal(s *Snapshot, c *Card, fix, m string, q map[string]int, set map[string]
 }
 
 // redeal deals a withdrawn work card again, into the ready queue of the up
-// member m (the deal's next round the fleet), at a new generation bound to that
-// member, and moves its primary to working on it. The attempt, the fix and the
-// score are the card's own, unchanged.
+// member m (the deal's next round the fleet, no member avoided: the avoid of a
+// rework is for a new attempt), at a new generation bound to that member, and
+// moves its primary to working on it. The attempt, the fix and the score are
+// the card's own, unchanged. The redeal counts only when a take of the card
+// ended (FieldTakeEnded): a card withdrawn while ready keeps its count
+// (tla/DirtyTick.tla DealOne).
 func redeal(s *Snapshot, c, wc *Card, m string, q map[string]int) Unit {
 	q[m]++
 	set := nextGen(wc, m, s.Now)
-	set["redeals"] = itoa(wc.Int("redeals") + 1)
+	if wc.F(FieldTakeEnded) != "" {
+		set["redeals"] = itoa(wc.Int("redeals") + 1)
+	}
 	return Unit{Key: c.ID, Stream: c.Row, Changes: []Change{
-		change(Fleet, moveEntry(wc, m, Ready, set, "withdrawn")),
+		change(Fleet, moveEntry(wc, m, Ready, set, "withdrawn", FieldTakeEnded)),
 		change(Work, moveEntry(c, c.Row, Working, map[string]string{"work": wc.ID}, "result")),
 	}, Moved: fmt.Sprintf("%s %s -> working card=%s member=%s gen=%d (dealt again)", c.ID, c.Col, wc.ID, m, wc.Int("gen")+1)}
 }
@@ -1115,8 +1127,12 @@ func fleetStepPlan(s *Snapshot, r FleetReq, rr *round, moves roundMoves) Plan {
 
 // downPlan is one member going down (or held): its control card, and its
 // unfinished work cards, ready and working, dealt round the members of up
-// below their width (else the next up) at a new generation, or withdrawn when
-// none is up or a card is at its redeal bound. q and widths are the
+// below their width at a new generation, or withdrawn when none has room or a
+// working card is at its redeal bound. A working card's take ended without a
+// finish: its redeal counts (redeals + 1), and withdrawn it carries
+// FieldTakeEnded for the deal that places it again to count; a ready card was
+// never taken and keeps its count (tla/DirtyTick.tla ApplyF "lapse" and
+// RedealsAreEndedTakes). q and widths are the
 // receivers' loads and widths, counted on as cards are dealt: a tick that
 // takes several members down in one plan (presence) shares them, so every
 // down member's cards go round the fleet together (the owner's rule: every
@@ -1161,7 +1177,8 @@ func downPlan(s *Snapshot, r FleetReq, up []string, rr *round, moves roundMoves,
 	cards := append(append([]*Card{}, s.Fleet.Cell(r.Member, Ready)...), s.Fleet.Cell(r.Member, Working)...)
 	SortCards(cards)
 	for _, c := range cards {
-		if len(up) > 0 && c.Int("redeals") < MaxRedeals {
+		taken := c.Col == Working
+		if len(up) > 0 && !(taken && c.Int("redeals") >= MaxRedeals) {
 			// the next member round the fleet below its width (round.go), the
 			// index moved past it; with none below its width the card is
 			// withdrawn, and the next deal places it where there is room: a
@@ -1171,7 +1188,9 @@ func downPlan(s *Snapshot, r FleetReq, up []string, rr *round, moves roundMoves,
 				moves[c.ID] = m
 				q[m]++
 				set := nextGen(c, m, s.Now)
-				set["redeals"] = itoa(c.Int("redeals") + 1)
+				if taken {
+					set["redeals"] = itoa(c.Int("redeals") + 1)
+				}
 				p.Units = append(p.Units, Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, m, Ready, set, "taken"))},
 					Moved: fmt.Sprintf("%s %s:%s -> %s:ready gen=%d; %s down", c.ID, c.Row, c.Col, m, c.Int("gen")+1, r.Member)})
 				continue
@@ -1179,6 +1198,9 @@ func downPlan(s *Snapshot, r FleetReq, up []string, rr *round, moves roundMoves,
 		}
 		set := nextGen(c, "", s.Now)
 		set["withdrawn"] = stamp(s.Now)
+		if taken {
+			set[FieldTakeEnded] = stamp(s.Now)
+		}
 		u := Unit{Key: c.ID, Stream: c.F("stream"), Changes: []Change{change(Fleet, moveEntry(c, c.Row, Withdrawn, set, "taken", "dealt"))},
 			Moved: fmt.Sprintf("%s withdrawn gen=%d", c.ID, c.Int("gen")+1)}
 		if pr := s.Work.Placed(c.F("primary")); pr != nil && pr.Col == Working && pr.F("work") == c.ID {

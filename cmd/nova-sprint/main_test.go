@@ -4,11 +4,14 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
@@ -39,6 +42,13 @@ func newTestApp(t *testing.T) *testApp {
 	// run's wait on a quiet log steps the clock by the time it may take
 	ta.m.LogWait = func(d time.Duration) { ta.a.sleep(d) }
 	ta.a.meter = hostload.Source{NCPU: 4, Load1: func() (float64, bool) { return 1, true }}
+	// every part a tick plans on its twin is checked against a fresh read
+	ta.a.checkTwin = func(twin, fresh *sprint.Snapshot) error {
+		if d := store.TwinDiff(twin, fresh); d != "" {
+			return errors.New(d)
+		}
+		return nil
+	}
 	return ta
 }
 
@@ -425,9 +435,8 @@ func TestVerbLineOnAStoppedMachineHasNoETA(t *testing.T) {
 		t.Fatalf("add on a running machine: last line %q in %s", last, out)
 	}
 	out = ta.ok("tick")
-	if last := lastLine(out); !strings.HasPrefix(last, "0/4 0.0% -> ETA") {
-		t.Fatalf("the tick after an add on a running machine: last line %q in %s", last, out)
-	}
+	last := lastLine(out)
+	require.True(t, strings.HasPrefix(last, "0/4 0.0% -> ETA"), "the tick after an add on a running machine: last line %q in %s", last, out)
 }
 
 func lastLine(out string) string {

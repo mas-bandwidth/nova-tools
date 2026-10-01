@@ -11,10 +11,11 @@
 package main
 
 import (
-	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/bounded"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // SLOW: 7.5 s on hetzner at dev 64b9bec48, over the five-second line.
@@ -25,21 +26,12 @@ func TestStatusCountsAllAndListsAtMostMax(t *testing.T) {
 
 	box := crowdedBox(t, 300)
 	exit, stdout, stderr := runFuse(t, "status", "--box", box)
-	if exit != 0 {
-		t.Fatalf("exit = %d, want 0; stderr: %s", exit, stderr)
-	}
+	require.Equal(t, 0, exit, "exit = %d, want 0; stderr: %s", exit, stderr)
 	// The count line, twenty listed, one MORE line.
-	if got := countLines(stdout); got != bounded.Default+2 {
-		t.Errorf("stdout is %d lines, want %d listed + count + MORE:\n%s", got, bounded.Default, stdout)
-	}
+	got := countLines(stdout)
+	assert.Equal(t, int(bounded.Default+2), got, "stdout is %d lines, want %d listed + count + MORE:\n%s", got, bounded.Default, stdout)
 	// THE COUNT IS NEVER CAPPED: this is the number the verb exists to report.
-	if !strings.Contains(stdout, "STATUS OK lockdown=clear quarantines=300") {
-		t.Errorf("the count line does not carry the whole total:\n%s", stdout)
-	}
-	if !strings.Contains(stdout, "STATUS MORE kind=quarantine shown=20 total=300") {
-		t.Errorf("no MORE line naming the total:\n%s", stdout)
-	}
-	if !strings.Contains(stdout, "--max") {
-		t.Errorf("the MORE line names no remedy:\n%s", stdout)
-	}
+	assert.Contains(t, stdout, "STATUS OK lockdown=clear quarantines=300", "the count line does not carry the whole total:\n%s", stdout)
+	assert.Contains(t, stdout, "STATUS MORE kind=quarantine shown=20 total=300", "no MORE line naming the total:\n%s", stdout)
+	assert.Contains(t, stdout, "--max", "the MORE line names no remedy:\n%s", stdout)
 }

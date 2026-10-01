@@ -19,12 +19,11 @@
 
 age-keygen	source	age
 ansible-inventory	absent	the one test that runs it reads only a wrapper script and skips when it is not installed; ansible is a control-node tool, not carried by the runner image
+ansible-playbook	absent	the fleet plays' check test skips when it is not installed; ansible is a control-node tool, run on a bench with ansible against the check fixture
 bash	base	bash
 c++	absent	only the macOS sandbox tests compile with it; the darwin body is skipped on Linux by design
 cmd.exe	absent	Windows only; a Linux container has no Windows shell
 diskutil	absent	macOS only; the volume tests that call it are darwin tests
-docker	absent	a container engine is never run inside the container; the swarm engine probe finds none and picks none
-echo	base	coreutils
 gh	absent	reaches the forge over the network, which the container has none of; the tier fakes it
 git	apt	git
 go	source	fetch
@@ -35,25 +34,17 @@ lsof	apt	lsof
 make	apt	make
 mkdir	base	coreutils
 nc	absent	only the darwin sandbox socket test dials with it and that test skips on Linux
-nova-bus	tree	built from the checkout by the tests, or stubbed by them; never expected on the PATH
 nova-check	tree	built from the checkout by the tests, or stubbed by them; never expected on the PATH
-nova-secrets	tree	built from the checkout by the tests, or stubbed by them; never expected on the PATH
-nova-swarm	tree	built from the checkout by the tests, or stubbed by them; never expected on the PATH
 opencode	absent	the vendor harness binary belongs to the card image; the tier drives a fake harness
 pg_ctl	apt	postgresql-16
-podman	absent	a container engine is never run inside the container; the swarm engine probe finds none and picks none
 ps	apt	procps
 python3	apt	python3
 redis-server	source	redis-build
-rsync	absent	reaches another host, and the container has no network
 sandbox-exec	absent	macOS only; the sandbox tests that need it skip on Linux by design
-sbcl	absent	one swarm prewarm test skips without it; the Lisp toolchain belongs to the card image
-scp	absent	reaches another host, and the container has no network
 sh	base	dash
 sleep	base	coreutils
 sops	source	sops
 sqlite3	apt	sqlite3
-ssh	absent	reaches another host, and the container has no network
 ssh-keygen	absent	only the nova-secrets keygen path for ssh keys calls it and its tests use a stand-in
 stty	absent	reads a password from a terminal; the tier has no terminal
 tailscale	absent	machine self asks the tailnet for this host's name only where the program is installed; the tier has no tailnet, and the tests that resolve a name hand in the status

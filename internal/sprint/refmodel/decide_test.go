@@ -7,6 +7,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 	"github.com/mas-bandwidth/nova-tools/internal/sprint/refmodel"
 )
@@ -250,27 +253,38 @@ func TestDealTellsOnceWhenNoMemberIsUp(t *testing.T) {
 	}
 }
 
-// A card is dealt again after its member goes down up to three times: at three
-// redeals the tick deals it no more and says so, and at two it is still dealt
-// (here no member is up, so it waits, and the sprint is told there is none).
+// A card is dealt again after a take of it ended up to three times: withdrawn
+// after a fourth (its take ended, its count at three) the tick deals it no more
+// and says so; at two it is still dealt, and so is a card at three that was
+// withdrawn while ready, never taken (here no member is up, so it waits, and
+// the sprint is told there is none).
 func TestDealStopsAtTheRedealBound(t *testing.T) {
 	t.Parallel()
-	for redeals, want := range map[string]string{
-		"2": "open no fleet member is up [stream:]",
-		"3": "open a card reached its bound [s1-1]",
+	for _, tc := range []struct {
+		redeals string
+		ended   bool
+		want    string
+	}{
+		{"2", true, "open no fleet member is up [stream:]"},
+		{"3", false, "open no fleet member is up [stream:]"},
+		{"3", true, "open a card reached its bound [s1-1]"},
 	} {
 		w := sprintOf(t, "m1", "m2")
 		w.add(t, "s1", 1)
 		w.deal(t, "s1-1")
 		w.must(t, sprint.FleetStep(w.s, sprint.FleetReq{Op: "hold", Member: "m1", Who: coordinator}))
 		w.must(t, sprint.FleetStep(w.s, sprint.FleetReq{Op: "hold", Member: "m2", Who: coordinator}))
-		// no member up: the card is withdrawn; make it the one that has been redealt that many times
+		// no member up: the card is withdrawn; make it the one that has been
+		// redealt that many times, and, ended, the one whose take just ended
 		wc := w.s.Fleet.Card("s1-1.w1")
-		wc.Fields["redeals"] = redeals
+		wc.Fields["redeals"] = tc.redeals
+		if tc.ended {
+			wc.Fields[sprint.FieldTakeEnded] = "2026-09-30T00:00:00Z"
+		}
 		w.s.Fleet.Put(wc)
 		got := refmodel.DealMoves(w.snapshot(nil), later(0))
-		expect(t, got, want)
-		if redeals == "3" && !slices.Equal(got[0].Decisions, []string{"rework with a fix", "drop", "wait"}) {
+		expect(t, got, tc.want)
+		if tc.ended && tc.redeals == "3" && !slices.Equal(got[0].Decisions, []string{"rework with a fix", "drop", "wait"}) {
 			t.Errorf("the decisions offered at the bound: %q", got[0].Decisions)
 		}
 	}
@@ -325,13 +339,9 @@ func TestAcceptMovesAPrimaryWithTwoOkReadsToMergingAndTellsTheCoordinatorOnce(t 
 	w.report(t, "s1-1", "ok")
 	w.report(t, "s1-2", "broken") // a broken read is not two ok reads
 	got := refmodel.AcceptMoves(w.snapshot(w.fresh()), later(0))
-	if len(got) == 0 {
-		t.Fatal("a primary in review with two ok reads is accepted by the tick")
-	}
+	require.NotEmpty(t, got, "a primary in review with two ok reads is accepted by the tick")
 	for _, m := range got {
-		if m.Card == "s1-2" {
-			t.Errorf("a primary with a broken read is accepted:%s", show(got))
-		}
+		assert.NotEqual(t, "s1-2", m.Card, "a primary with a broken read is accepted:%s", show(got))
 	}
 	notices := 0
 	for _, m := range got {
@@ -339,9 +349,7 @@ func TestAcceptMovesAPrimaryWithTwoOkReadsToMergingAndTellsTheCoordinatorOnce(t 
 			notices++
 		}
 	}
-	if notices != 1 {
-		t.Errorf("the coordinator is told %d times that a stream is ready to merge, want once:%s", notices, show(got))
-	}
+	assert.Equal(t, 1, notices, "the coordinator is told %d times that a stream is ready to merge, want once:%s", notices, show(got))
 }
 
 func TestAskTellsOnceWhenFewerThanTwoReadersAreFree(t *testing.T) {

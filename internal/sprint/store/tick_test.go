@@ -773,3 +773,32 @@ func TestAMachineThatNeverTickedIsSilentFromItsStart(t *testing.T) {
 	}
 	t.Fatalf("no machine:silent group: %+v", v.Groups)
 }
+
+// A part the store refuses whole on a bound moves nothing, so the tick names no
+// row of the tables as changed: the rows are the rows a part's step moved.
+func TestATickPartRefusedWholeNamesNoRows(t *testing.T) {
+	t.Parallel()
+	h := newHarness(t)
+	h.setup(2)
+	h.startMachine()
+	st := *h.st
+	r := &refusing{Mem: h.m, table: "t-fleet"}
+	st.B = r
+	res, err := st.Tick(h.ctx)
+	if err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if r.calls == 0 || len(res.Parts) == 0 {
+		t.Fatalf("the store refused %d manifests, the tick ran parts %+v", r.calls, res.Parts)
+	}
+	for _, p := range res.Parts {
+		if len(p.Moved) != 0 {
+			t.Fatalf("part %s moved %v through a refused manifest", p.Name, p.Moved)
+		}
+	}
+	for _, tb := range res.Tables {
+		if len(tb.Rows) != 0 {
+			t.Errorf("the tick names rows %v of %s as changed, and nothing moved", tb.Rows, tb.Table)
+		}
+	}
+}

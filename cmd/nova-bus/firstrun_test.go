@@ -24,7 +24,7 @@ func TestNovaBusIsNotExemptFromTheOnboardingStandard(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := onboarding.FirstRun(string(raw), "nova-bus"); err != nil {
-		t.Fatalf("%v\n(docs/ONBOARDING.md point 5(c))", err)
+		t.Fatalf("%v\n(docs/STANDARD.md, onboarding point 5(c))", err)
 	}
 	// The walk is a functional test since #4372 (it builds and runs every command).
 	walk, err := os.ReadFile(filepath.Join("..", "..", "internal", "ci", "onboarding_functional_test.go"))

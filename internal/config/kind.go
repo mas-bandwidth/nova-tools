@@ -12,7 +12,9 @@
 package config
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"regexp"
 	"sort"
@@ -40,6 +42,15 @@ const (
 	// TypeRef is the name of a row of another kind (Field.Ref), stored as
 	// text with a foreign key.
 	TypeRef Type = "ref"
+	// TypeBool is true or false, stored as boolean.
+	TypeBool Type = "bool"
+	// TypeKeys is a comma list of environment variable names (letters,
+	// digits and underscores, not starting with a digit), deduplicated and
+	// sorted, stored as text: the names of secrets, never their values.
+	TypeKeys Type = "keys"
+	// TypeArgv is a command as a JSON array of strings, the program first,
+	// stored as text in its compact JSON spelling.
+	TypeArgv Type = "argv"
 )
 
 // Field is one column of a kind: the flag `--<Name>` on add and set, the
@@ -57,6 +68,10 @@ type Field struct {
 	Ref string
 	// Help is the flag's help line, one sentence.
 	Help string
+	// Default is the canonical value add stores for a field it is not
+	// given. "" means the type's zero: 0 for an int, false for a bool, the
+	// empty value for the rest.
+	Default string
 }
 
 // Kind is one kind of configuration. See the package comment.
@@ -85,6 +100,16 @@ type Kind struct {
 	// number is written first. nil keeps name order. Friends put the
 	// coordinator first so ns_friend_roles' bootstrap has one.
 	ApplyOrder func(r Row) int
+	// Check, when set, is the rule across a row's fields that no one field
+	// can say (a loop runs every n seconds or is kept alive, never both).
+	// add runs it on the new row before any store is opened; every store
+	// runs it on the row a set would leave, and refuses the set with
+	// ErrInvalid. nil checks nothing. add also runs it when some other
+	// field is already refused, so one refusal names every problem; a
+	// field that failed its own validation is then absent from r.Fields,
+	// and a rule that needs it is skipped (the field's own refusal says
+	// what is wrong).
+	Check func(r Row) error
 }
 
 // NamePattern is the shape of a row key: lower-case, digits and dashes, the
@@ -95,12 +120,23 @@ var NamePattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]*$`)
 // any case.
 var namesPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9-]*$`)
 
-// The four kinds of this cut (docs/SPEC-CONFIG.md lists the planned ones).
+// keyPattern is a word of a TypeKeys list: an environment variable's name.
+var keyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// The bounds of a TypeArgv value: a command is at most MaxArgs words and
+// MaxArgvBytes bytes in its canonical spelling, refused before any write.
+const (
+	MaxArgs      = 64
+	MaxArgvBytes = 4096
+)
+
+// The kinds of this cut (docs/SPEC-CONFIG.md, "The kinds of this cut").
 const (
 	KindMachine = "machine"
 	KindFleet   = "fleet"
 	KindFriend  = "friend"
 	KindSprint  = "sprint"
+	KindLoop    = "loop"
 )
 
 // FriendRoles are the roles someone decides for a friend. The coordinator
@@ -119,8 +155,8 @@ const CoordinatorRole = "coordinator"
 
 // Kinds is the registry, in apply order: machines first, the fleet row next
 // (it names machines, and a friend's desired slots are charged to the
-// fleet's coordinator machine when her beat names none), friends, and the
-// sprint row last (it names a friend).
+// fleet's coordinator machine when her beat names none), friends, the
+// sprint row (it names a friend), and loops last (each names a machine).
 //
 // A machine's record is exactly the declared facts something reads, one
 // reader each, and nothing invented (Glenn 2026-09-27: "I only want the
@@ -137,7 +173,7 @@ var Kinds = []*Kind{
 		Doc:   "a machine of the fleet, named by its tailnet host: the login, the seat, and how many cards and runners it takes",
 		Fields: []Field{
 			{Name: "user", Type: TypeText, Required: true, Help: "the login the plays and seals use on it (ssh <user>@<name>)"},
-			{Name: "seat", Type: TypeText, Required: true, Help: "its nova-secrets seat (studio, swarm-hulk, ...)"},
+			{Name: "seat", Type: TypeText, Required: true, Help: "its nova-secrets seat: the identity it opens secrets as, one <seat>.yaml in the store"},
 			{Name: "slots", Type: TypeInt, Required: true, Help: "how many cards it may run at once, the machine ceiling (machine:<m>:ceiling); 0 runs none"},
 			{Name: "runners", Type: TypeInt, Help: "how many CI runners it hosts; 0 (the default) hosts none"},
 		},
@@ -183,6 +219,63 @@ var Kinds = []*Kind{
 			{Name: "coordinator", Type: TypeRef, Ref: KindFriend, Help: "the friend who holds the coordinator role (a friend row), or empty; set it to hand over"},
 		},
 	},
+	{
+		// A loop is a supervised process on one machine: the command, the
+		// seat it opens its secrets from and the names of the secrets it
+		// needs, and how it runs (every n seconds, or kept alive). Every
+		// value is data in the row; the code names no machine, seat or
+		// secret (docs/SPEC-CONFIG.md, "loop"). The plays render one unit
+		// per row from the Redis view apply writes; the log path is derived
+		// from the name (LoopLog), never typed.
+		Name:  KindLoop,
+		Table: "loops",
+		Doc:   "a supervised loop on one machine: its command, the seat and secret names it opens, and how it runs (every n seconds or kept alive)",
+		Fields: []Field{
+			{Name: "machine", Type: TypeRef, Ref: KindMachine, Required: true, Help: "the machine it runs on (a machine row)"},
+			{Name: "argv", Type: TypeArgv, Required: true, Help: `the command as a JSON array of strings, the program first: '["/path/prog","--flag","v"]'; never a secret, which goes by name in --keys`},
+			{Name: "seat", Type: TypeText, Help: "the nova-secrets seat on that machine it opens its secrets from, or empty when it needs none"},
+			{Name: "keys", Type: TypeKeys, Help: "comma list of the names of the secrets it needs from the seat (API_KEY,...), never a value; empty when none"},
+			{Name: "every", Type: TypeInt, Help: "seconds between runs of a periodic loop; 0 (the default) when it is kept alive"},
+			{Name: "keepalive", Type: TypeBool, Help: "true for a long-running unit restarted when it exits; false (the default) when it runs --every n"},
+			{Name: "width", Type: TypeInt, Help: "the child cap of a member loop; 0 (the default) for any other loop"},
+			{Name: "enabled", Type: TypeBool, Default: "true", Help: "false writes the unit and does not start it; true (the default) runs it"},
+		},
+		Check: checkLoop,
+	},
+}
+
+// LoopLog is where a loop's unit writes its output on its machine, derived
+// from the name and never typed: ~/nova-bench/loops/<name>.log. apply writes
+// it into the loop's Redis hash beside the row's fields.
+func LoopLog(name string) string { return "~/nova-bench/loops/" + name + ".log" }
+
+// checkLoop is the loop kind's Check: exactly one of every and keepalive
+// says how it runs, and secret names need a seat to open them from.
+func checkLoop(r Row) error {
+	var problems []string
+	// A field absent from the row failed its own validation in add; a rule
+	// that needs it is skipped and the field's refusal stands alone.
+	_, everyOK := r.Fields["every"]
+	_, keepOK := r.Fields["keepalive"]
+	if everyOK && keepOK {
+		periodic := r.Int("every") > 0
+		kept := r.Fields["keepalive"] == "true"
+		switch {
+		case periodic && kept:
+			problems = append(problems, fmt.Sprintf("loop %s has --every %s and --keepalive true; a loop runs every n seconds or is kept alive, so set one: --every 0 or --keepalive false", r.Name, r.Fields["every"]))
+		case !periodic && !kept:
+			problems = append(problems, fmt.Sprintf("loop %s has neither --every nor --keepalive; want --every <seconds> for a periodic loop or --keepalive true for a long-running one", r.Name))
+		}
+	}
+	_, keysOK := r.Fields["keys"]
+	_, seatOK := r.Fields["seat"]
+	if keysOK && seatOK && r.Fields["keys"] != "" && r.Fields["seat"] == "" {
+		problems = append(problems, fmt.Sprintf("loop %s names secrets (--keys %s) and no --seat to open them from; want --seat <seat>", r.Name, r.Fields["keys"]))
+	}
+	if len(problems) > 0 {
+		return fmt.Errorf("%s", strings.Join(problems, "; "))
+	}
+	return nil
 }
 
 // deriveCoordinator is the friend kind's Derive: the sprint row's
@@ -333,6 +426,25 @@ func (f Field) Canonical(raw string) (string, error) {
 			}
 		}
 		return strings.Join(words, ","), nil
+	case TypeBool:
+		b, err := strconv.ParseBool(raw)
+		if err != nil {
+			return "", fmt.Errorf("--%s %q: want true or false", f.Name, raw)
+		}
+		return strconv.FormatBool(b), nil
+	case TypeKeys:
+		words, err := splitList(raw)
+		if err != nil {
+			return "", fmt.Errorf("--%s: %v (a secret goes by name, never by value)", f.Name, err)
+		}
+		for _, w := range words {
+			if !keyPattern.MatchString(w) {
+				return "", fmt.Errorf("--%s %q: want a comma list of variable names (letters, digits and underscores, not starting with a digit)", f.Name, w)
+			}
+		}
+		return strings.Join(words, ","), nil
+	case TypeArgv:
+		return canonicalArgv(f.Name, raw)
 	case TypeRef:
 		if raw == "" {
 			if f.Required {
@@ -346,6 +458,63 @@ func (f Field) Canonical(raw string) (string, error) {
 		return raw, nil
 	}
 	return "", fmt.Errorf("--%s: unknown field type %q", f.Name, f.Type)
+}
+
+// canonicalArgv validates a command given as a JSON array of strings and
+// returns its compact JSON spelling: at least the program, a non-empty
+// program, no line break or NUL in any word, at most MaxArgs words and
+// MaxArgvBytes bytes.
+func canonicalArgv(field, raw string) (string, error) {
+	const want = `want the command as a JSON array of strings, the program first, like '["/path/prog","--flag","v"]'`
+	if !strings.HasPrefix(raw, "[") {
+		return "", fmt.Errorf("--%s: %s", field, want)
+	}
+	var words []string
+	dec := json.NewDecoder(strings.NewReader(raw))
+	if err := dec.Decode(&words); err != nil || dec.More() {
+		return "", fmt.Errorf("--%s: %s", field, want)
+	}
+	switch {
+	case len(words) == 0 || words[0] == "":
+		return "", fmt.Errorf("--%s: the command names no program; %s", field, want)
+	case len(words) > MaxArgs:
+		return "", fmt.Errorf("--%s: %d words, over the maximum of %d", field, len(words), MaxArgs)
+	}
+	for i, w := range words {
+		if strings.ContainsAny(w, "\n\r\x00") {
+			return "", fmt.Errorf("--%s: word %d holds a line break or a NUL; want one line per word", field, i)
+		}
+	}
+	out, err := marshalArgv(words)
+	if err != nil {
+		return "", fmt.Errorf("--%s: %v", field, err)
+	}
+	if len(out) > MaxArgvBytes {
+		return "", fmt.Errorf("--%s: %d bytes, over the maximum of %d", field, len(out), MaxArgvBytes)
+	}
+	return string(out), nil
+}
+
+// marshalArgv is the compact JSON spelling of the words with & < > written as
+// themselves: json.Marshal turns them into \u0026 \u003c \u003e, which makes
+// a command like '["sh","-c","a && b > c"]' unreadable in list and show.
+func marshalArgv(words []string) ([]byte, error) {
+	var b bytes.Buffer
+	enc := json.NewEncoder(&b)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(words); err != nil {
+		return nil, err
+	}
+	return bytes.TrimSuffix(b.Bytes(), []byte("\n")), nil
+}
+
+// Argv decodes a canonical TypeArgv value ("" is none).
+func Argv(canonical string) []string {
+	var words []string
+	if canonical == "" || json.Unmarshal([]byte(canonical), &words) != nil {
+		return nil
+	}
+	return words
 }
 
 // splitList splits a comma (or space) list into sorted, deduplicated words.
@@ -399,11 +568,7 @@ func (k *Kind) NewRow(name string, raw map[string]string) (Row, error) {
 			if f.Required {
 				problems = append(problems, fmt.Sprintf("--%s is required: %s", f.Name, f.Help))
 			}
-			if f.Type == TypeInt {
-				row.Fields[f.Name] = "0"
-			} else {
-				row.Fields[f.Name] = ""
-			}
+			row.Fields[f.Name] = f.zero()
 			continue
 		}
 		c, err := f.Canonical(v)
@@ -418,11 +583,30 @@ func (k *Kind) NewRow(name string, raw map[string]string) (Row, error) {
 			problems = append(problems, fmt.Sprintf("--%s is not a %s field; the fields are %s", name, k.Name, strings.Join(k.FieldNames(), ", ")))
 		}
 	}
+	if k.Check != nil {
+		if err := k.Check(row); err != nil {
+			problems = append(problems, err.Error())
+		}
+	}
 	if len(problems) > 0 {
 		sort.Strings(problems)
 		return Row{}, fmt.Errorf("%s", strings.Join(problems, "; "))
 	}
 	return row, nil
+}
+
+// zero is the canonical value add stores for a field it is not given:
+// Default when the field has one, else the type's zero.
+func (f Field) zero() string {
+	switch {
+	case f.Default != "":
+		return f.Default
+	case f.Type == TypeInt:
+		return "0"
+	case f.Type == TypeBool:
+		return "false"
+	}
+	return ""
 }
 
 // Changes validates the named fields of a set and returns their canonical

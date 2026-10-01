@@ -16,7 +16,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // gitOutputAtMost is for read paths whose protocol has a concrete response bound.  The
@@ -44,11 +46,9 @@ func gitOutputPrefixAtMost(dir string, limit int, args ...string) (string, bool,
 		return "", false, fmt.Errorf("git output limit must be positive")
 	}
 	full := append([]string{"-C", dir}, args...)
-	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout())
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", full...)
-	cmd.Env = append(cmd.Environ(), gitEnv...)
-	cmd.WaitDelay = killGrace
+	bounded := gitrun.Prepare(context.Background(), busGit(dir), args...)
+	defer bounded.Cancel()
+	cmd, ctx := bounded.Cmd, bounded.Ctx
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return "", false, err
@@ -60,7 +60,9 @@ func gitOutputPrefixAtMost(dir string, limit int, args ...string) (string, bool,
 	}
 	out, readErr := io.ReadAll(io.LimitReader(stdout, int64(limit)+1))
 	if len(out) > limit {
+		// ignored: the child is killed for writing past the limit, which is reported as the truncated flag
 		_ = cmd.Process.Kill()
+		// ignored: the child was killed on the line above; its exit status is that kill
 		_ = cmd.Wait()
 		return string(out[:limit]), true, nil
 	}
@@ -83,11 +85,9 @@ func gitOutputPrefixAtMost(dir string, limit int, args ...string) (string, bool,
 // A consumer error stops Git before returning the parser's explicit refusal.
 func gitReadBounded(dir string, consume func(io.Reader) error, args ...string) error {
 	full := append([]string{"-C", dir}, args...)
-	ctx, cancel := context.WithTimeout(context.Background(), gitTimeout())
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", full...)
-	cmd.Env = append(cmd.Environ(), gitEnv...)
-	cmd.WaitDelay = killGrace
+	bounded := gitrun.Prepare(context.Background(), busGit(dir), args...)
+	defer bounded.Cancel()
+	cmd, ctx := bounded.Cmd, bounded.Ctx
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return err
@@ -99,7 +99,9 @@ func gitReadBounded(dir string, consume func(io.Reader) error, args ...string) e
 	}
 	consumeErr := consume(stdout)
 	if consumeErr != nil {
+		// ignored: the child is killed because the consumer failed; the consume error is the one returned
 		_ = cmd.Process.Kill()
+		// ignored: the child was killed on the line above; its exit status is that kill
 		_ = cmd.Wait()
 		return consumeErr
 	}
@@ -121,6 +123,7 @@ func (b *limitedGitBuffer) Write(p []byte) (int, error) {
 		if remain > len(p) {
 			remain = len(p)
 		}
+		// ignored: a bytes.Buffer write never returns an error
 		_, _ = b.Buffer.Write(p[:remain])
 	}
 	return len(p), nil
@@ -242,29 +245,27 @@ var gitEnv = []string{
 	"GIT_EDITOR=true", "GIT_SEQUENCE_EDITOR=true",
 }
 
+// busGit is how every git of this tool runs: in dir, bounded by gitTimeout, under the
+// no-prompt environment above -- a push that needs a credential must FAIL rather than
+// block a tool a person is waiting on, and a pager must never open under a tool whose
+// output is a grammar -- and with killGrace as its WaitDelay.
+func busGit(dir string) gitrun.Options {
+	return gitrun.Options{C: dir, Env: append(os.Environ(), gitEnv...), Timeout: gitTimeout(), WaitDelay: killGrace}
+}
+
+// git runs one git for this tool through internal/gitrun: bounded by gitTimeout, under the
+// no-prompt environment above, with WaitDelay (killGrace) so a killed call returns even
+// when git's own child holds the pipe open. The grace is for git's own last words, which
+// are the reason the output is captured at all.
 func git(dir string, args ...string) (string, error) {
-	full := append([]string{"-C", dir}, args...)
 	budget := gitTimeout()
-	ctx, cancel := context.WithTimeout(context.Background(), budget)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", full...)
-	// A push that needs a credential must FAIL rather than block a tool a person is
-	// waiting on, and a pager must never open under a tool whose output is a grammar.
-	cmd.Env = append(cmd.Environ(), gitEnv...)
-	// WaitDelay is what makes the budget real. Killing the process on the deadline is not
-	// enough on its own: CombinedOutput reads the pipe until it CLOSES, and git's own
-	// children -- an ssh, a credential helper, a pager -- inherit that pipe and hold it
-	// open after git is gone, so a killed call still blocked for as long as its child chose
-	// to live. WaitDelay closes the pipes a bounded time after the kill and lets the call
-	// return. The grace is for git's own last words, which are the reason the output is
-	// captured at all.
-	cmd.WaitDelay = killGrace
-	out, err := cmd.CombinedOutput()
-	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+	out, err := gitrun.Combined(context.Background(), busGit(dir), args...)
+	var timedOut *subproc.TimeoutError
+	if errors.As(err, &timedOut) {
 		return string(out), fmt.Errorf("git %s did not finish within %s and was killed; nothing was left half-done by this tool, and a longer budget is --git-timeout <seconds>", strings.Join(args, " "), budget)
 	}
 	if err != nil {
-		return string(out), &gitError{args: full, err: err, output: string(out)}
+		return string(out), &gitError{args: append([]string{"-C", dir}, args...), err: err, output: string(out)}
 	}
 	return string(out), nil
 }
@@ -967,12 +968,9 @@ func isAncestorOf(dir, ancestor, descendant string) (bool, error) {
 		}
 	}
 	budget := gitTimeout()
-	ctx, cancel := context.WithTimeout(context.Background(), budget)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", "-C", dir, "merge-base", "--is-ancestor", ancestor, descendant)
-	cmd.Env = append(cmd.Environ(), gitEnv...)
-	err := cmd.Run()
-	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+	_, err := gitrun.Run(context.Background(), busGit(dir), "merge-base", "--is-ancestor", ancestor, descendant)
+	var timedOut *subproc.TimeoutError
+	if errors.As(err, &timedOut) {
 		return false, fmt.Errorf("git merge-base --is-ancestor did not finish within %s and was killed; a longer budget is --git-timeout <seconds>", budget)
 	}
 	if err != nil {

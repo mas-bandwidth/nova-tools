@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
@@ -58,9 +60,8 @@ func TestPlayWithACoordinatorLandsEveryStream(t *testing.T) {
 		if ta.tickDone() { // the machine: every mechanical move
 			var w whereView
 			ta.json("where", &w)
-			if w.Landed != 45 || w.All != 45 {
-				t.Fatalf("done with %d landed of %d", w.Landed, w.All)
-			}
+			require.EqualValues(t, 45, w.Landed, "done with %d landed of %d", w.Landed, w.All)
+			require.EqualValues(t, 45, w.All, "done with %d landed of %d", w.Landed, w.All)
 			return
 		}
 		out := ta.ok(fmt.Sprintf("play --seed %d --ticks 1 --every 1s --fail 0.1 --broken 0.05 --stuck 0.1 --cross 0 --batch 10 --take 20 --reads 20", round))

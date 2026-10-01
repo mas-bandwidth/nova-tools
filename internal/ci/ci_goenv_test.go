@@ -212,3 +212,21 @@ func TestGoEnvClassRuleHoldsOverTheRepository(t *testing.T) {
 		t.Fatalf("%s", res.FailLine())
 	}
 }
+
+// A child `go` started through internal/subproc with no environment of its own is refused
+// like exec.Command("go", ...).
+func TestGoEnvRefusesAChildGoStartedThroughSubproc(t *testing.T) {
+	t.Parallel()
+
+	root := goEnvFixtureTree(t, "subproc_inherit.go.txt")
+	res, err := CheckGoEnv(root, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Refused() != 1 || len(res.Findings) != 1 {
+		t.Fatalf("a subproc go with no Env is one refusal, got %d: %+v", res.Refused(), res.Findings)
+	}
+	if f := res.Findings[0]; f.Kind != "inherit" || f.Func != "listDeps" {
+		t.Fatalf("finding %+v", f)
+	}
+}

@@ -7,11 +7,10 @@ package ntable_test
 // the values it expects; the table read carries them back.
 
 import (
-	"errors"
-	"reflect"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/stretchr/testify/require"
 )
 
 func propBatch(rev, op string, members []ntable.BatchMemberEntry) ntable.BatchManifest {
@@ -28,25 +27,19 @@ func TestPropWriteAndReadWithTheMembers(t *testing.T) {
 		{ID: "a", Expect: &ntable.MemberExpect{Absent: true}, Create: &ntable.MemberCreateOp{Row: "build", Col: "ready", Score: 1}}})
 	m.Props, m.PropAbsent = map[string]string{"deal_index": "build"}, []string{"deal_index"}
 	rc, err := ntable.ApplyBatch(ctx, c, m)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if rc.Outcome != "changed" || rc.BatchDelta == nil || !reflect.DeepEqual(rc.BatchDelta.Props, map[string]string{"deal_index": "build"}) {
-		t.Fatalf("receipt %+v, delta %+v", rc, rc.BatchDelta)
-	}
+	require.NoError(t, err)
+	require.Equal(t, "changed", rc.Outcome, "receipt %+v, delta %+v", rc, rc.BatchDelta)
+	require.NotNil(t, rc.BatchDelta, "receipt %+v", rc)
+	require.Equal(t, map[string]string{"deal_index": "build"}, rc.BatchDelta.Props, "receipt %+v, delta %+v", rc, rc.BatchDelta)
 	tb, err := ntable.Read(ctx, c, "demo")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !reflect.DeepEqual(tb.Props, map[string]string{"deal_index": "build"}) {
-		t.Fatalf("props read back %v", tb.Props)
-	}
+	require.NoError(t, err)
+	require.Equal(t, map[string]string{"deal_index": "build"}, tb.Props, "props read back %v", tb.Props)
 	// the same value again, alone: no change
 	same := propBatch(probeRev(ctx, c), "again", nil)
 	same.Props, same.PropExpect = map[string]string{"deal_index": "build"}, map[string]string{"deal_index": "build"}
-	if rc, err := ntable.ApplyBatch(ctx, c, same); err != nil || rc.Outcome != "noop" {
-		t.Fatalf("the same value: %+v %v", rc, err)
-	}
+	rc, err = ntable.ApplyBatch(ctx, c, same)
+	require.NoError(t, err, "the same value: %+v", rc)
+	require.Equal(t, "noop", rc.Outcome, "the same value: %+v", rc)
 }
 
 func TestRefusePROPGUARDWritesNothing(t *testing.T) {
@@ -54,9 +47,8 @@ func TestRefusePROPGUARDWritesNothing(t *testing.T) {
 	c, ctx := probeTable(t)
 	set := propBatch(probeRev(ctx, c), "set", nil)
 	set.Props = map[string]string{"deal_index": "build"}
-	if _, err := ntable.ApplyBatch(ctx, c, set); err != nil {
-		t.Fatal(err)
-	}
+	_, err := ntable.ApplyBatch(ctx, c, set)
+	require.NoError(t, err)
 	for name, m := range map[string]ntable.BatchManifest{
 		"expect": func() ntable.BatchManifest {
 			m := propBatch(probeRev(ctx, c), "x1", []ntable.BatchMemberEntry{
@@ -74,12 +66,10 @@ func TestRefusePROPGUARDWritesNothing(t *testing.T) {
 		before := storeImage(t, c)
 		_, err := ntable.ApplyBatch(ctx, c, m)
 		var r *ntable.Refusal
-		if !errors.As(err, &r) || r.Code != "PROPGUARD" || !errors.Is(err, ntable.ErrPropGuard) {
-			t.Fatalf("%s: %v", name, err)
-		}
-		if !reflect.DeepEqual(before, storeImage(t, c)) {
-			t.Fatalf("%s: a refused batch changed the store", name)
-		}
+		require.ErrorAs(t, err, &r, "%s: %v", name, err)
+		require.Equal(t, "PROPGUARD", r.Code, "%s: %v", name, err)
+		require.ErrorIs(t, err, ntable.ErrPropGuard, "%s: %v", name, err)
+		require.Equal(t, before, storeImage(t, c), "%s: a refused batch changed the store", name)
 	}
 }
 
@@ -91,17 +81,13 @@ func TestPropLimitAndValidation(t *testing.T) {
 	for i := 0; i < ntable.LimitManifestProps; i++ {
 		m.Props["p"+string(rune('a'+i%26))+string(rune('a'+i/26))] = "v"
 	}
-	if _, err := ntable.ApplyBatch(ctx, c, m); err != nil {
-		t.Fatalf("64 properties: %v", err)
-	}
+	_, err := ntable.ApplyBatch(ctx, c, m)
+	require.NoError(t, err, "64 properties")
 	more := propBatch(probeRev(ctx, c), "more", nil)
 	more.Props = map[string]string{"one_more": "v"}
-	if _, err := ntable.ApplyBatch(ctx, c, more); !errors.Is(err, ntable.ErrLimit) {
-		t.Fatalf("a 65th property: %v", err)
-	}
+	_, err = ntable.ApplyBatch(ctx, c, more)
+	require.ErrorIs(t, err, ntable.ErrLimit, "a 65th property: %v", err)
 	raw := `{"schema":1,"table":"demo","epoch":"0","expected_table_revision":"` + probeRev(ctx, c) + `","operation_id":"bad","members":[],"props":{"bad name":"v"}}`
 	ans, err := rawApply(ctx, c, raw)
-	if err != nil || len(ans) < 2 || ans[0] != "REFUSED" {
-		t.Fatalf("an invalid property name: %v %v", ans, err)
-	}
+	require.True(t, replyOpens(ans, err, "REFUSED"), "an invalid property name: %v %v", ans, err)
 }

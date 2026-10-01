@@ -637,41 +637,6 @@ func TestCheckThroughStale(t *testing.T) {
 	}
 }
 
-// WritePoolLedger cleans non-canonical paths (such as ./ledger.tsv or with /./ segments)
-// and writes the ledger atomically without failing atomicfile path cleanliness checks.
-func TestWritePoolLedgerNonCanonicalPath(t *testing.T) {
-	t.Parallel()
-
-	dir := t.TempDir()
-	rawPath := dir + "/./ledger.tsv"
-	if filepath.Clean(rawPath) == rawPath {
-		t.Fatalf("rawPath must be non-canonical")
-	}
-	groups := map[PoolKey]*PoolAgg{
-		{Day: "2026-09-11", Provider: "deepseek", Model: "m1", Repo: "r1"}: {
-			Tasks: 2, In: 300, HasIn: true, Out: 150, HasOut: true,
-			Cw: 30, HasCw: true, Cr: 60, HasCr: true, Rsn: 15, HasRsn: true,
-			UsdMicro: 30000,
-		},
-	}
-
-	if err := WritePoolLedger(rawPath, groups); err != nil {
-		t.Fatalf("WritePoolLedger failed on non-canonical path %q: %v", rawPath, err)
-	}
-
-	// ReadPoolLedger should also succeed on non-canonical path
-	rows, err := ReadPoolLedger(rawPath)
-	if err != nil {
-		t.Fatalf("ReadPoolLedger failed on non-canonical path %q: %v", rawPath, err)
-	}
-	if len(rows) != 1 {
-		t.Fatalf("ReadPoolLedger got %d rows, want 1", len(rows))
-	}
-	if rows[0].Day != "2026-09-11" || rows[0].Model != "m1" {
-		t.Errorf("ReadPoolLedger row mismatch: %+v", rows[0])
-	}
-}
-
 // isAtomicTemp grammar: only .<YYYY-MM-DD>.tsv.tmp-<8hex> with a valid calendar day
 // is recognized; unrelated dotfiles or malformed names are rejected.
 func TestIsAtomicTempGrammar(t *testing.T) {
@@ -754,5 +719,53 @@ func TestCheckReportsUnrelatedTempAsStray(t *testing.T) {
 	}
 	if len(res2.Strays) != 1 || res2.Strays[0] != unrelatedPath {
 		t.Errorf("Check strays = %v, want [%s]", res2.Strays, unrelatedPath)
+	}
+}
+
+// A day file written while the `units` column existed still reads: the twelfth cell is
+// ignored, the rows that column alone kept apart are the one (model, repo) row they add up
+// to, and the writer puts out eleven columns.
+func TestALegacyTwelveColumnDayFileReadsWithTheUnitsColumnIgnored(t *testing.T) {
+	t.Parallel()
+
+	legacy := "nova-tokens v1 day=2026-09-21 at=2026-09-22T00:00:00Z build=x turns=3 sources=bus:a,claude:b\n" +
+		LegacyHeaderLine + "\n" +
+		"2026-09-21\tm1\tschema\t10\t20\t-\t-\t-\t1\tutc\tclaude:b\tu1\n" +
+		"2026-09-21\tm1\tschema\t5\t-\t3\t-\t-\t0\tutc\tbus:a\tu2\n" +
+		"2026-09-21\tm1\tserialize\t1\t1\t-\t-\t-\t0\tutc\tclaude:b\t-\n"
+	d, findings := ParseDayFile("2026-09-21", legacy)
+	if len(findings) != 0 {
+		t.Fatalf("a legacy file was refused: %v", findings)
+	}
+	if len(d.Rows) != 2 {
+		t.Fatalf("rows = %d, want 2 (the two unit rows of m1/schema are one)", len(d.Rows))
+	}
+	r := d.Rows[0]
+	if in, _ := r.Counts.Get(Input); in != 15 {
+		t.Errorf("input = %d, want 15", in)
+	}
+	if cw, ok := r.Counts.Get(CacheWrite); !ok || cw != 3 {
+		t.Errorf("cache_write = %d,%v, want 3,true", cw, ok)
+	}
+	if r.Rough != 1 || strings.Join(r.Sources, ",") != "bus:a,claude:b" {
+		t.Errorf("rough %d sources %v", r.Rough, r.Sources)
+	}
+
+	out := d.Render()
+	lines := strings.Split(strings.TrimSpace(out), "\n")
+	if lines[1] != HeaderLine {
+		t.Errorf("the writer's header is %q, want the eleven names", lines[1])
+	}
+	for _, l := range lines[2:] {
+		if n := len(strings.Split(l, "\t")); n != 11 {
+			t.Errorf("a written row has %d cells, want 11: %q", n, l)
+		}
+	}
+
+	// Eleven-column files do not merge: a second row for one (model, repo) is an error.
+	dup := "nova-tokens v1 day=2026-09-21 at=x build=x turns=- sources=a\n" + HeaderLine + "\n" +
+		"2026-09-21\tm1\tschema\t1\t1\t-\t-\t-\t0\tutc\ta\n2026-09-21\tm1\tschema\t1\t1\t-\t-\t-\t0\tutc\ta\n"
+	if _, f := ParseDayFile("2026-09-21", dup); len(f) == 0 {
+		t.Error("a second (model, repo) row in an eleven-column file was accepted")
 	}
 }

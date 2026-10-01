@@ -27,29 +27,11 @@ import (
 // what it deliberately does not do, "It does not pull the bus, fetch, push, run git, or
 // talk to a network. It reads a checkout as files."
 //
-// What was enforced was narrower than what was stated, in three places:
-//
-//  1. TestTheOnlySubprocessIsSqlite3AndThereIsNoNetwork reads internal/tokens and nothing
-//     else. cmd/nova-tokens/main.go could import net/http, import os/exec, or name "git",
-//     and every test in this repository stayed green.
-//  2. Its reader and rule 9's skip directory entries, so both stop at a package's top
-//     level. A publisher landing in internal/tokens/publish -- the path the format packet's
-//     `records publish` verb would want -- could import net, run git, and call
-//     os.RemoveAll, and the suite would be green.
-//  3. The no-git BEHAVIOUR was asserted for one verb, `fold --bus`, over a checkout with no
-//     remote. Nothing pinned report, sources, sum, check or version, and nothing pinned a
-//     checkout that HAS a remote, which is the only kind a push could reach.
-//
-// That gap matters more than an ordinary hole, because publication is under review right
-// now: docs/PROPOSAL-TOKENS-FORMAT.md proposes `nova-tokens records publish --batch <dir>
-// --ledger <git-checkout> --remote <name> --branch <name>`, and says of itself "not shipped
-// behavior"; PR #124, which merged it, says "the publication interface remain[s an]
-// explicit spec gate[]". So the next hand in this file may be holding a git publisher, and
-// the tests decide whether v1's read-only promise is a wall or a sentence in a document.
-// These are the wall.
+// These tests hold the whole binary to it: every package the binary reaches and every
+// directory the tool owns (a publisher cannot hide in a subpackage), and every verb, over a
+// checkout that has a remote, with a fake git on PATH that must never run.
 
-// binaryPackages returns every first-party package reachable from cmd/nova-tokens, plus the
-// records core, which nothing imports yet and which is where a publisher would grow.
+// binaryPackages returns every first-party package reachable from cmd/nova-tokens.
 //
 // It walks imports rather than naming directories, so a package added anywhere in the
 // binary's graph is covered the day it is added, with nobody remembering to widen a list.
@@ -75,12 +57,11 @@ func binaryPackages(t *testing.T) []string {
 		}
 	}
 	walk("cmd/nova-tokens")
-	walk("internal/records")
 	// Plus every subpackage under the two this tool owns: a package no import reaches yet
 	// is still source that ships in this repository, and the point of the walk is that a
 	// publisher cannot hide in a directory.
 	root := repoRoot(t)
-	for _, owned := range []string{"internal/tokens", "cmd/nova-tokens", "internal/records"} {
+	for _, owned := range []string{"internal/tokens", "cmd/nova-tokens"} {
 		err := filepath.WalkDir(filepath.Join(root, owned), func(path string, d fs.DirEntry, err error) error {
 			if err != nil || !d.IsDir() {
 				return err
@@ -103,11 +84,11 @@ func binaryPackages(t *testing.T) []string {
 		}
 	}
 	sort.Strings(order)
-	// The floor: the five packages of the binary's own graph plus the records core. Fewer
+	// The floor: the five packages of the binary's own graph. Fewer
 	// than that and the walk found nothing and this test would pass by checking nothing.
 	for _, must := range []string{
 		"cmd/nova-tokens", "internal/tokens", "internal/oneline",
-		"internal/bounded", "internal/buildinfo", "internal/records",
+		"internal/bounded", "internal/buildinfo",
 	} {
 		if !seen[must] {
 			t.Fatalf("the import walk did not reach %s; it was looking in the wrong place and would have passed by checking nothing (found %v)", must, order)
@@ -570,16 +551,10 @@ func TestDiffTreesReportsDifferences(t *testing.T) {
 	}
 }
 
-// The records namespace is not a verb, and that is the current answer rather than an
-// oversight. docs/PROPOSAL-TOKENS-FORMAT.md proposes `records collect|check|view|publish`
-// and calls itself "not shipped behavior"; PR #124's merge says the publication interface
-// remains an explicit spec gate; SPEC-TOKENS' own verb list has five verbs and none of
-// them writes anywhere but the day file.
-//
-// So this tool refuses it as an unknown subcommand, exit 2, and writes nothing. The test is
-// here so that the day somebody implements it, they change this line deliberately and the
-// spec in the same hand -- rather than discovering afterwards that a verb which pushes to a
-// git remote landed in a tool whose spec says it runs no git.
+// The records namespace is not a verb. SPEC-TOKENS' verb list has none that writes
+// anywhere but the day file, so this tool refuses `records` as an unknown subcommand,
+// exit 2, and writes nothing. A verb that publishes changes this test and the spec in the
+// same hand.
 func TestTheRecordsNamespaceIsNotAVerbUntilItsGateIsDecided(t *testing.T) {
 	t.Parallel()
 

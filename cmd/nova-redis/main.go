@@ -66,7 +66,15 @@ const (
 	fieldExpires = "expires_ms"
 )
 
-const usage = `nova-redis — owns the local Redis instance and its scratch verbs (docs/SPEC-REDIS.md)
+const usage = `nova-redis: run a local Redis store, and keep short-lived named values in it
+
+how it works: serve runs redis-server on loopback or tailnet addresses only,
+with its data in --dir. spill writes a value under <owner>:<name> with a
+required expiry, and recall reads it back (exit 1 once it has expired). fn load
+and fn check install and verify the functions nova-table and nova-sprint call.
+Passwords come from an environment variable, never from an argument.
+first run: needs a Redis you may write to; the lines under example: expect one
+at 127.0.0.1:6379 (redis-server --port 6379 in another terminal is enough).
 
 usage:
   nova-redis serve  --bind <addr>[,<addr>...] --port <port> --dir <store-dir>
@@ -74,6 +82,9 @@ usage:
   nova-redis recall --addr <host:port> [--user <name>] [--password-env <NAME>] --owner <owner> --name <name>
   nova-redis fn load  --addr <host:port> [--user <name>] [--password-env <NAME>]
   nova-redis fn check --addr <host:port> [--user <name>] [--password-env <NAME>]
+  nova-redis acl render
+  nova-redis acl check --addr <host:port> [--user <name>] [--password-env <NAME>]
+  nova-redis acl apply --addr <host:port> [--user <name>] [--password-env <NAME>] [--dry-run]
   nova-redis version
   nova-redis help
 
@@ -101,6 +112,15 @@ line on stderr with the remedy for its cause: exit 1 when the store answered
 with a refusal (NOPERM, a library it would not take), exit 2 when no answer
 came or the login was refused. fn load is for the one place that deploys: it
 replaces other code under the library's name.
+acl render prints, with no store, one ACL SETUSER line per role of the fleet
+store (coordinator, member, table, friend): its key families, its command
+categories and FCALL of exactly the functions this binary's library registers
+in the role's files, FCALL_RO of the no-writes ones. acl check (an
+inspection) compares the store's live ACL with them: ACL OK, ACL DRIFT with
+what apply would add and remove, or ACL MISSING per user, exit 1 on any.
+acl apply (a store write) sets the users that differ and saves the ACL file
+when the store keeps one; --dry-run writes nothing. No acl verb sets or reads
+a password: log in as a user that may run ACL.
 serve runs redis-server in the foreground, bound only to loopback and tailnet
 addresses (100.64.0.0/10, fd7a:115c:a1e0::/48); --bind has no default and a
 wildcard, public or LAN address is refused (exit 2). The password reaches
@@ -110,10 +130,17 @@ restart on the same --dir keeps every key. A bench runs it as
 nova-secrets exec --only NOVA_REDIS_PASSWORD -- nova-redis serve
 --bind 127.0.0.1,100.101.102.103 --port 6379 --dir /var/lib/nova-redis
 
+exit codes: 0 done (spill written, recall found, fn load done, fn check finds the
+library loaded, serve stopped); 1 ran and said NO (a recall of a missing, expired
+or unbounded key, fn check STALE or MISSING, a spill whose reply was lost, a
+refusal by the store, a serve that could not start); 2 could not run (a usage
+error, a flag refused before dialling, a store that did not answer or a login it
+refused).
+
 example:
   nova-redis version
-  nova-redis spill --addr 127.0.0.1:6379 --owner rowan --name note --ttl 10m --value hi
-  nova-redis recall --addr 127.0.0.1:6379 --owner rowan --name note
+  nova-redis spill --addr 127.0.0.1:6379 --owner ada --name note --ttl 10m --value hi
+  nova-redis recall --addr 127.0.0.1:6379 --owner ada --name note
 `
 
 // deps are the seams run() reaches the world through: the clock and the
@@ -153,7 +180,7 @@ func run(args []string, stdout, stderr io.Writer, d deps) (code int) {
 	// before anything is dialed, launched or written (the CLI style's rule (b), #4505).
 	defer verbflag.Recover(stdout, "nova-redis", usage, &code)
 	if len(args) == 0 {
-		return refuse(stderr, "", "no verb given; serve runs the instance, spill writes scratch, recall reads it, fn loads or checks the function library")
+		return refuse(stderr, "", "no verb given; serve runs the instance, spill writes scratch, recall reads it, fn loads or checks the function library, acl renders, checks or applies the store's users")
 	}
 	switch args[0] {
 	case "spill":
@@ -164,6 +191,8 @@ func run(args []string, stdout, stderr io.Writer, d deps) (code int) {
 		return cmdServe(args[1:], stdout, stderr, d)
 	case "fn":
 		return cmdFn(args[1:], stdout, stderr, d)
+	case "acl":
+		return cmdACL(args[1:], stdout, stderr, d)
 	case "version", "--version":
 		verbflag.HelpIfAsked(args[1:], "version")
 		if len(args) > 1 {
@@ -238,6 +267,7 @@ func cmdSpill(args []string, stdout, stderr io.Writer, d deps) int {
 	if err != nil {
 		return failed(stderr, "SPILL", *owner+":"+*name, err, store, d)
 	}
+	// ignored: a deferred close after the verb's answer is printed; the answer is the report
 	defer func() { _ = conn.Close() }()
 	s := &scratch{rdb: conn.Client(), now: d.now}
 	key, err := s.spill(ctx, *owner, *name, *value, ttl)
@@ -279,6 +309,7 @@ func cmdRecall(args []string, stdout, stderr io.Writer, d deps) int {
 	if err != nil {
 		return failed(stderr, "RECALL", key, err, store, d)
 	}
+	// ignored: a deferred close after the verb's answer is printed; the answer is the report
 	defer func() { _ = conn.Close() }()
 	s := &scratch{rdb: conn.Client(), now: d.now}
 	v, err := s.recall(ctx, *owner, *name)

@@ -8,6 +8,9 @@ import (
 	"testing"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // u spells a code point as a string, and esc spells its escaped form, without putting
@@ -61,21 +64,14 @@ func TestEscapeEveryControlCharacter(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := Escape(tc.in)
-			if got != tc.want {
-				t.Errorf("Escape(%q) = %q, want %q", tc.in, got, tc.want)
+			assert.Equal(t, tc.want, got, "Escape(%q) = %q, want %q", tc.in, got, tc.want)
+			assert.False(t, strings.ContainsFunc(got, unicode.IsControl), "Escape(%q) = %q still holds a control character", tc.in, got)
+			assert.False(t, strings.ContainsFunc(got, reordersALine), "Escape(%q) = %q still holds a separator or a bidi control", tc.in, got)
+			assert.False(t, strings.ContainsFunc(got, breaksALine), "Escape(%q) = %q still holds a separator or a bidi control", tc.in, got)
+			if tc.in != "" {
+				assert.NotEmpty(t, got, "Escape(%q) emptied the text; a reason must never vanish", tc.in)
 			}
-			if strings.ContainsFunc(got, unicode.IsControl) {
-				t.Errorf("Escape(%q) = %q still holds a control character", tc.in, got)
-			}
-			if strings.ContainsFunc(got, reordersALine) || strings.ContainsFunc(got, breaksALine) {
-				t.Errorf("Escape(%q) = %q still holds a separator or a bidi control", tc.in, got)
-			}
-			if tc.in != "" && got == "" {
-				t.Errorf("Escape(%q) emptied the text; a reason must never vanish", tc.in)
-			}
-			if again := Escape(tc.in); again != got {
-				t.Errorf("Escape(%q) is not deterministic: %q then %q", tc.in, got, again)
-			}
+			assert.Equal(t, got, Escape(tc.in), "Escape(%q) is not deterministic", tc.in)
 		})
 	}
 }
@@ -97,12 +93,10 @@ func TestEveryBidiControlIsEscapedAndNoOtherFormatCharacterIs(t *testing.T) {
 		if unicode.IsControl(r) || r == 0x2028 || r == 0x2029 {
 			continue
 		}
-		got := Escape(u(r))
-		if escaped[r] && got == u(r) {
-			t.Errorf("U+%04X is a bidi control and passed through", r)
-		}
-		if !escaped[r] && got != u(r) {
-			t.Errorf("U+%04X is not a bidi control and was escaped to %q", r, got)
+		if escaped[r] {
+			assert.NotEqual(t, u(r), Escape(u(r)), "U+%04X is a bidi control and passed through", r)
+		} else {
+			assert.Equal(t, u(r), Escape(u(r)), "U+%04X is not a bidi control and was escaped", r)
 		}
 	}
 }
@@ -136,21 +130,14 @@ func TestFieldIsOneTokenHoldingNoEquals(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got := Field(tc.in)
-			if got != tc.want {
-				t.Errorf("Field(%q) = %q, want %q", tc.in, got, tc.want)
+			assert.Equal(t, tc.want, got, "Field(%q) = %q, want %q", tc.in, got, tc.want)
+			assert.False(t, strings.ContainsFunc(got, unicode.IsSpace), "Field(%q) = %q is not one token", tc.in, got)
+			assert.False(t, strings.ContainsFunc(got, unicode.IsControl), "Field(%q) = %q is not one token", tc.in, got)
+			assert.False(t, strings.ContainsRune(got, '='), "Field(%q) = %q still holds an equals sign, so a key=value search could match inside it", tc.in, got)
+			if tc.in != "" {
+				assert.NotEmpty(t, got, "Field(%q) emptied the text", tc.in)
 			}
-			if strings.ContainsFunc(got, unicode.IsSpace) || strings.ContainsFunc(got, unicode.IsControl) {
-				t.Errorf("Field(%q) = %q is not one token", tc.in, got)
-			}
-			if strings.ContainsRune(got, '=') {
-				t.Errorf("Field(%q) = %q still holds an equals sign, so a key=value search could match inside it", tc.in, got)
-			}
-			if tc.in != "" && got == "" {
-				t.Errorf("Field(%q) emptied the text", tc.in)
-			}
-			if again := Field(tc.in); again != got {
-				t.Errorf("Field(%q) is not deterministic: %q then %q", tc.in, got, again)
-			}
+			assert.Equal(t, got, Field(tc.in), "Field(%q) is not deterministic", tc.in)
 		})
 	}
 }
@@ -165,9 +152,8 @@ func TestFieldAgreesWithEscapeOnEverythingEscapeTouches(t *testing.T) {
 		if r == 0xfffd {
 			continue
 		}
-		e, f := Escape(u(r)), Field(u(r))
-		if e != u(r) && f != e {
-			t.Errorf("U+%04X: Escape = %q but Field = %q", r, e, f)
+		if e := Escape(u(r)); e != u(r) {
+			assert.Equal(t, e, Field(u(r)), "U+%04X: Field spells it unlike Escape", r)
 		}
 	}
 }
@@ -175,13 +161,11 @@ func TestFieldAgreesWithEscapeOnEverythingEscapeTouches(t *testing.T) {
 func TestErrRendersTheTextAndSpellsNilLikeFmt(t *testing.T) {
 	t.Parallel()
 
-	if got := Err(nil); got != "<nil>" {
-		t.Errorf("Err(nil) = %q, want <nil>", got)
-	}
+	got := Err(nil)
+	assert.Equal(t, "<nil>", got, "Err(nil) = %q, want <nil>", got)
 	err := errors.New("open a\nFUSE OK lockdown=clear: no such file")
-	if got, want := Err(err), `open a\x0aFUSE OK lockdown=clear: no such file`; got != want {
-		t.Errorf("Err = %q, want %q", got, want)
-	}
+	got, want := Err(err), `open a\x0aFUSE OK lockdown=clear: no such file`
+	assert.Equal(t, want, got, "Err = %q, want %q", got, want)
 }
 
 // Quote is the third rendering, and it exists because Field was wrong for the one kind of
@@ -195,16 +179,12 @@ func TestQuoteIsPasteableAndStillOneLine(t *testing.T) {
 
 	// The specimen: a roster name with a space in it, which Field renders \x20 and nobody
 	// can paste back into a To line.
-	if got, want := Quote("Ada Vale"), `"Ada Vale"`; got != want {
-		t.Fatalf("Quote(%q) = %s, want %s", "Ada Vale", got, want)
-	}
-	if Field("Ada Vale") == Quote("Ada Vale") {
-		t.Fatal("Quote is Field; the whole point is that Field escapes the space")
-	}
+	got, want := Quote("Ada Vale"), `"Ada Vale"`
+	require.Equal(t, want, got, "Quote(%q) = %s, want %s", "Ada Vale", got, want)
+	require.NotEqual(t, Quote("Ada Vale"), Field("Ada Vale"), "Quote is Field; the whole point is that Field escapes the space")
 	// Non-ASCII that a person types stays as it is: this is not an ASCII escape.
-	if got, want := Quote("Zo\u00eb"), "\"Zo\u00eb\""; got != want {
-		t.Fatalf("Quote = %s, want %s", got, want)
-	}
+	got, want = Quote("Zo\u00eb"), "\"Zo\u00eb\""
+	require.Equal(t, want, got, "Quote = %s, want %s", got, want)
 	// ONE LINE, whatever it holds. Every character that could end a line for a reader that
 	// follows Unicode, or reorder one for a reader that follows bidi, is escaped inside the
 	// quotes -- and so are the quote and the backslash, which is what makes this injective
@@ -217,18 +197,14 @@ func TestQuoteIsPasteableAndStillOneLine(t *testing.T) {
 		"a\"b", "a" + bs + "b", "a\x00b",
 	} {
 		got := Quote(s)
-		if strings.ContainsAny(got, breaks) {
-			t.Fatalf("Quote(%q) = %s, which is more than one line", s, got)
-		}
-		if !strings.HasPrefix(got, `"`) || !strings.HasSuffix(got, `"`) {
-			t.Fatalf("Quote(%q) = %s, which is not delimited", s, got)
-		}
+		require.False(t, strings.ContainsAny(got, breaks), "Quote(%q) = %s, which is more than one line", s, got)
+		require.True(t, strings.HasPrefix(got, `"`), "Quote(%q) = %s, which is not delimited", s, got)
+		require.True(t, strings.HasSuffix(got, `"`), "Quote(%q) = %s, which is not delimited", s, got)
 		// It round-trips, which Escape deliberately does not -- and that is what proves the
 		// delimiters do not lie: a quote inside the value is escaped, or this fails.
 		back, err := strconv.Unquote(got)
-		if err != nil || back != s {
-			t.Fatalf("Quote(%q) = %s, which unquotes to %q %v", s, got, back, err)
-		}
+		require.NoError(t, err, "Quote(%q) = %s, which unquotes to %q %v", s, got, back, err)
+		require.Equal(t, s, back, "Quote(%q) = %s, which unquotes to %q %v", s, got, back, err)
 	}
 }
 
@@ -238,9 +214,8 @@ func TestCapLeavesAnythingUnderTheCeilingAlone(t *testing.T) {
 	t.Parallel()
 
 	for _, s := range []string{"", "a", strings.Repeat("x", TailBytes-1), strings.Repeat("x", TailBytes)} {
-		if got := Cap(s, TailBytes); got != s {
-			t.Errorf("Cap(%d bytes) changed it to %d bytes", len(s), len(got))
-		}
+		got := Cap(s, TailBytes)
+		assert.Equal(t, s, got, "Cap(%d bytes) changed it to %d bytes", len(s), len(got))
 	}
 }
 
@@ -251,23 +226,14 @@ func TestCapMarksWhatItDropped(t *testing.T) {
 
 	s := strings.Repeat("x", 1000)
 	got := Cap(s, 100)
-	if len(got) > 100 {
-		t.Errorf("Cap(1000, 100) returned %d bytes", len(got))
-	}
-	if !strings.HasPrefix(got, "xxxx") {
-		t.Errorf("the head of the tail is gone: %q", got[:20])
-	}
+	assert.LessOrEqual(t, len(got), 100, "Cap(1000, 100) returned %d bytes", len(got))
+	assert.True(t, strings.HasPrefix(got, "xxxx"), "the head of the tail is gone: %q", got)
 	i := strings.Index(got, "...+")
-	if i < 0 {
-		t.Fatalf("no mark in %q", got)
-	}
+	require.GreaterOrEqual(t, i, 0, "no mark in %q", got)
 	var n int
-	if _, err := fmt.Sscanf(got[i:], "...+%dB", &n); err != nil {
-		t.Fatalf("mark %q does not parse: %v", got[i:], err)
-	}
-	if i+n != 1000 {
-		t.Errorf("kept %d bytes and claims %d dropped, which is %d of a 1000-byte tail", i, n, i+n)
-	}
+	_, err := fmt.Sscanf(got[i:], "...+%dB", &n)
+	require.NoError(t, err, "mark %q does not parse: %v", got[i:], err)
+	assert.Equal(t, 1000, i+n, "kept %d bytes and claims %d dropped, which is %d of a 1000-byte tail", i, n, i+n)
 }
 
 // The mark holds no whitespace and no "=", so a capped value is still ONE token when it
@@ -276,12 +242,8 @@ func TestCapMarkSurvivesFieldAsOneToken(t *testing.T) {
 	t.Parallel()
 
 	got := Field(Cap(strings.Repeat("y", 2000), 40))
-	if strings.ContainsAny(got, " \t=") {
-		t.Errorf("a capped value is not one token through Field: %q", got)
-	}
-	if !strings.Contains(got, "...+") {
-		t.Errorf("Field mangled the mark: %q", got)
-	}
+	assert.False(t, strings.ContainsAny(got, " \t="), "a capped value is not one token through Field: %q", got)
+	assert.Contains(t, got, "...+", "Field mangled the mark: %q", got)
 }
 
 // Cap runs before Escape and cuts on a rune boundary, so what Escape sees is well-formed
@@ -295,12 +257,8 @@ func TestCapCutsOnARuneBoundary(t *testing.T) {
 	for n := 8; n < 120; n++ {
 		got := Cap(s, n)
 		head := got[:strings.Index(got, "...+")]
-		if !utf8.ValidString(head) {
-			t.Fatalf("Cap(_, %d) cut inside a rune: %q", n, head)
-		}
-		if strings.Contains(Escape(got), `\x`) {
-			t.Fatalf("Cap(_, %d) produced bytes Escape had to escape: %q", n, Escape(got))
-		}
+		require.True(t, utf8.ValidString(head), "Cap(_, %d) cut inside a rune: %q", n, head)
+		require.NotContains(t, Escape(got), `\x`, "Cap(_, %d) produced bytes Escape had to escape: %q", n, Escape(got))
 	}
 }
 
@@ -310,9 +268,7 @@ func TestCapNeverReturnsNothingFromSomething(t *testing.T) {
 	t.Parallel()
 
 	for _, n := range []int{-100, -1, 0, 1, 2, 5} {
-		if got := Cap("一 a long tail that will certainly be cut", n); got == "" {
-			t.Errorf("Cap(_, %d) returned nothing", n)
-		}
+		assert.NotEmpty(t, Cap("一 a long tail that will certainly be cut", n), "Cap(_, %d) returned nothing", n)
 	}
 }
 
@@ -323,13 +279,7 @@ func TestCapOnInvalidUTF8(t *testing.T) {
 
 	s := strings.Repeat("\xff\xfe", 500)
 	got := Cap(s, 60)
-	if len(got) > 60 {
-		t.Errorf("returned %d bytes for a 60-byte ceiling", len(got))
-	}
-	if !strings.Contains(got, "...+") {
-		t.Errorf("no mark: %q", got)
-	}
-	if strings.Contains(Escape(got), "\n") {
-		t.Errorf("Escape over a capped invalid tail is not one line")
-	}
+	assert.LessOrEqual(t, len(got), 60, "returned %d bytes for a 60-byte ceiling", len(got))
+	assert.Contains(t, got, "...+", "no mark: %q", got)
+	assert.NotContains(t, Escape(got), "\n", "Escape over a capped invalid tail is not one line")
 }

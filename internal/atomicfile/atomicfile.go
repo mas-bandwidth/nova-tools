@@ -168,6 +168,7 @@ func defaultSyncDir(dir string) error {
 		return nil
 	}
 	defer dirFile.Close()
+	// ignored: a directory fsync is best effort where the platform does not support it; the rename already landed
 	_ = dirFile.Sync()
 	return nil
 }
@@ -361,6 +362,7 @@ func writeWithHooks(path string, data []byte, perm os.FileMode, h *hooks, opts .
 	cleaned := false
 	defer func() {
 		if !closed {
+			// ignored: a deferred close on the failure path; the error that got here is the one returned
 			_ = f.Close()
 		}
 		if !cleaned {
@@ -387,6 +389,7 @@ func writeWithHooks(path string, data []byte, perm os.FileMode, h *hooks, opts .
 
 	closed = true
 	if err := h.close(f); err != nil {
+		// ignored: a second close after the hook's close failed; the hook's error is the one returned
 		_ = f.Close()
 		return wrapErr(fmt.Sprintf("atomicfile: close %q", path), err)
 	}
@@ -409,6 +412,7 @@ func writeWithHooks(path string, data []byte, perm os.FileMode, h *hooks, opts .
 	// Parent directory fsync (best-effort): flush directory entry to media so that
 	// rename is durable across power loss on filesystems that require it.
 	// Ignore errors on platforms or filesystems where directory fsync is unsupported.
+	// ignored: a directory fsync is best effort where the platform does not support it (see the comment above)
 	_ = h.syncDir(dir)
 
 	return publishedErr

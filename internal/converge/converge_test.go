@@ -17,6 +17,8 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/dogfood"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // ---------------------------------------------------------------------------
@@ -70,9 +72,7 @@ func (g fakeGit) Show(ctx context.Context, rev, path string) (string, error) {
 func at(t *testing.T, s string) time.Time {
 	t.Helper()
 	v, err := time.Parse(time.RFC3339, s)
-	if err != nil {
-		t.Fatalf("bad fixture time %q: %v", s, err)
-	}
+	require.NoError(t, err, "bad fixture time %q: %v", s, err)
 	return v.UTC()
 }
 
@@ -97,28 +97,18 @@ func specWith(n int) string {
 func writeFile(t *testing.T, dir, name, body string) string {
 	t.Helper()
 	path := filepath.Join(dir, name)
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(path, []byte(body), 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o644))
 	return path
 }
 
 // writeReceipt writes one dogfood receipt into a receipts directory.
 func writeReceipt(t *testing.T, dir, name string, r dogfood.Receipt) {
 	t.Helper()
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.MkdirAll(dir, 0o755))
 	raw, err := json.Marshal(r)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, name), raw, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, name), raw, 0o644))
 }
 
 // fixture is a whole reading's worth of sources, all of them fakes.
@@ -232,9 +222,7 @@ func newFixture(t *testing.T) *fixture {
 func (f *fixture) read(t *testing.T) Report {
 	t.Helper()
 	r, err := Read(context.Background(), f.opts)
-	if err != nil {
-		t.Fatalf("Read: %v", err)
-	}
+	require.NoError(t, err, "Read")
 	return r
 }
 
@@ -246,7 +234,7 @@ func stream(t *testing.T, r Report, name string) Stream {
 			return s
 		}
 	}
-	t.Fatalf("no %s stream in the reading; got %d streams", name, len(r.Streams))
+	require.Failf(t, "no such stream", "no %s stream in the reading; got %d streams", name, len(r.Streams))
 	return Stream{}
 }
 
@@ -258,8 +246,16 @@ func field(t *testing.T, line, key string) string {
 			return v
 		}
 	}
-	t.Fatalf("no %s= field in %q", key, line)
+	require.Failf(t, "no such field", "no %s= field in %q", key, line)
 	return ""
+}
+
+// assertField checks one key=value extra of a printed line; msg is the failure
+// message and takes the value read as its one %s.
+func assertField(t *testing.T, line, key, want, msg string) {
+	t.Helper()
+	got := field(t, line, key)
+	assert.Equal(t, want, got, msg, got)
 }
 
 // ---------------------------------------------------------------------------
@@ -271,22 +267,16 @@ func TestConvergencePrintsOneLinePerStream(t *testing.T) {
 
 	f := newFixture(t)
 	lines := f.read(t).Lines()
-	if len(lines) != len(Order)+1 {
-		t.Fatalf("want %d stream lines and one verdict, got %d:\n%s", len(Order), len(lines), strings.Join(lines, "\n"))
-	}
+	require.Len(t, lines, len(Order)+1, "want %d stream lines and one verdict, got %d:\n%s", len(Order), len(lines), strings.Join(lines, "\n"))
 	for i, name := range Order {
 		want := "CONVERGENCE " + name + " "
-		if !strings.HasPrefix(lines[i], want) {
-			t.Errorf("line %d is %q, want it to start %q", i, lines[i], want)
-		}
+		assert.True(t, strings.HasPrefix(lines[i], want), "line %d is %q, want it to start %q", i, lines[i], want)
 		for _, key := range []string{"now", "before", "ratio", "trend"} {
 			field(t, lines[i], key)
 		}
 	}
 	last := lines[len(lines)-1]
-	if !strings.HasPrefix(last, "CONVERGENCE OK ") && !strings.HasPrefix(last, "CONVERGENCE WARN ") {
-		t.Errorf("verdict line is %q", last)
-	}
+	assert.True(t, strings.HasPrefix(last, "CONVERGENCE OK ") || strings.HasPrefix(last, "CONVERGENCE WARN "), "verdict line is %q", last)
 	for _, key := range []string{"streams", "contracting", "widening", "absent"} {
 		field(t, last, key)
 	}
@@ -313,9 +303,8 @@ func TestATrendIsTheDirectionTheStreamConverges(t *testing.T) {
 		{"unmoved class tests", 27, 27, false, Flat},
 	} {
 		s := Stream{Name: "X", Now: tc.now, Before: tc.before, HaveNow: true, HaveBefore: true, Lower: tc.lower}
-		if got := s.Trend(); got != tc.want {
-			t.Errorf("%s: trend %s, want %s", tc.name, got, tc.want)
-		}
+		got := s.Trend()
+		assert.Equal(t, tc.want, got, "%s: trend %s, want %s", tc.name, got, tc.want)
 	}
 }
 
@@ -328,18 +317,13 @@ func TestRatioIsAlwaysNowOverBefore(t *testing.T) {
 
 	for _, lower := range []bool{true, false} {
 		s := Stream{Now: 3, Before: 4, HaveNow: true, HaveBefore: true, Lower: lower}
-		if !strings.Contains(s.Line(), "ratio=0.75") {
-			t.Errorf("lower=%v: %q wants ratio=0.75", lower, s.Line())
-		}
+		assert.Contains(t, s.Line(), "ratio=0.75", "lower=%v: %q wants ratio=0.75", lower, s.Line())
 	}
 	zero := Stream{Now: 3, Before: 0, HaveNow: true, HaveBefore: true, Lower: true}
-	if !strings.Contains(zero.Line(), "ratio=-") {
-		t.Errorf("a before of zero printed %q; an infinity is not a measurement", zero.Line())
-	}
+	assert.Contains(t, zero.Line(), "ratio=-", "a before of zero printed %q; an infinity is not a measurement", zero.Line())
 	both := Stream{Now: 0, Before: 0, HaveNow: true, HaveBefore: true, Lower: true}
-	if !strings.Contains(both.Line(), "ratio=1") || both.Trend() != Flat {
-		t.Errorf("zero against zero printed %q trend %s", both.Line(), both.Trend())
-	}
+	assert.Contains(t, both.Line(), "ratio=1", "zero against zero printed %q trend %s", both.Line(), both.Trend())
+	assert.Equal(t, Flat, both.Trend(), "zero against zero printed %q trend %s", both.Line(), both.Trend())
 }
 
 // ---------------------------------------------------------------------------
@@ -361,12 +345,8 @@ func TestLandingReadsRoundsFromTheBodyAndTheLogs(t *testing.T) {
 
 	s := stream(t, f.read(t), "LANDING")
 	// #3 at 3 rounds (logs) and #4 at 4 rounds (body) is a mean of 3.5.
-	if s.Now != 3.5 {
-		t.Errorf("rounds per batch now=%v, want 3.5 (logs beat the body)", s.Now)
-	}
-	if got := field(t, s.Line(), "batches"); got != "2" {
-		t.Errorf("batches=%s, want 2", got)
-	}
+	assert.Equal(t, 3.5, s.Now, "rounds per batch now=%v, want 3.5 (logs beat the body)", s.Now)
+	assertField(t, s.Line(), "batches", "2", "batches=%s, want 2")
 }
 
 func TestLandingComparesTheWindowWithTheOneBefore(t *testing.T) {
@@ -374,22 +354,13 @@ func TestLandingComparesTheWindowWithTheOneBefore(t *testing.T) {
 
 	f := newFixture(t)
 	s := stream(t, f.read(t), "LANDING")
-	if s.Now != 3 { // #3 round 2 and #4 round 4
-		t.Errorf("now=%v, want 3", s.Now)
-	}
-	if s.Before != 6 { // #5, merged in the twelve hours before --since
-		t.Errorf("before=%v, want 6 (the batch in the window before --since)", s.Before)
-	}
-	if s.Trend() != Contracting {
-		t.Errorf("trend %s, want contracting: fewer rounds per batch is landing getting cheaper", s.Trend())
-	}
+	assert.Equal(t, float64(3), s.Now, "now=%v, want 3", s.Now) // #3 round 2 and #4 round 4
+	// #5, merged in the twelve hours before --since
+	assert.Equal(t, float64(6), s.Before, "before=%v, want 6 (the batch in the window before --since)", s.Before)
+	assert.Equal(t, Contracting, s.Trend(), "trend %s, want contracting: fewer rounds per batch is landing getting cheaper", s.Trend())
 	line := s.Line()
-	if got := field(t, line, "per-hour"); got != "0.17" {
-		t.Errorf("per-hour=%s, want 0.17 (two batches in twelve hours)", got)
-	}
-	if got := field(t, line, "prev-batches"); got != "1" {
-		t.Errorf("prev-batches=%s, want 1", got)
-	}
+	assertField(t, line, "per-hour", "0.17", "per-hour=%s, want 0.17 (two batches in twelve hours)")
+	assertField(t, line, "prev-batches", "1", "prev-batches=%s, want 1")
 }
 
 // ---------------------------------------------------------------------------
@@ -401,15 +372,10 @@ func TestClassesCountsTheIndexEntriesAtBothRevisions(t *testing.T) {
 
 	f := newFixture(t)
 	s := stream(t, f.read(t), "CLASSES")
-	if s.Now != 29 || s.Before != 27 {
-		t.Fatalf("now=%v before=%v, want 29 and 27; the `###` outside the index must not be counted", s.Now, s.Before)
-	}
-	if s.Trend() != Contracting {
-		t.Errorf("trend %s, want contracting: a class made mechanical cannot come back", s.Trend())
-	}
-	if got := field(t, s.Line(), "rev"); got != "abc123456789" {
-		t.Errorf("rev=%s, want the revision the fake git named", got)
-	}
+	require.Equal(t, float64(29), s.Now, "now=%v before=%v, want 29 and 27; the `###` outside the index must not be counted", s.Now, s.Before)
+	require.Equal(t, float64(27), s.Before, "now=%v before=%v, want 29 and 27; the `###` outside the index must not be counted", s.Now, s.Before)
+	assert.Equal(t, Contracting, s.Trend(), "trend %s, want contracting: a class made mechanical cannot come back", s.Trend())
+	assertField(t, s.Line(), "rev", "abc123456789", "rev=%s, want the revision the fake git named")
 }
 
 // ---------------------------------------------------------------------------
@@ -421,15 +387,9 @@ func TestScriptsCountsWhatIsLeftAndWhatTheWindowRetired(t *testing.T) {
 
 	f := newFixture(t)
 	s := stream(t, f.read(t), "SCRIPTS")
-	if s.Now != 3 {
-		t.Errorf("now=%v, want 3: two .sh, one shebang, and neither the binary nor the subdirectory", s.Now)
-	}
-	if s.Before != 5 {
-		t.Errorf("before=%v, want 5: three left plus the two rows dated inside the window", s.Before)
-	}
-	if got := field(t, s.Line(), "retired-in-window"); got != "2" {
-		t.Errorf("retired-in-window=%s, want 2", got)
-	}
+	assert.Equal(t, float64(3), s.Now, "now=%v, want 3: two .sh, one shebang, and neither the binary nor the subdirectory", s.Now)
+	assert.Equal(t, float64(5), s.Before, "before=%v, want 5: three left plus the two rows dated inside the window", s.Before)
+	assertField(t, s.Line(), "retired-in-window", "2", "retired-in-window=%s, want 2")
 }
 
 func TestRetiredRowsInheritTheNearestDateAbove(t *testing.T) {
@@ -447,16 +407,11 @@ func TestRetiredRowsInheritTheNearestDateAbove(t *testing.T) {
 		"| b.sh | 1 | outside it |",
 	}, "\n")
 	rows := ParseRetired(md)
-	if len(rows) != 3 {
-		t.Fatalf("parsed %d rows, want 3: %+v", len(rows), rows)
-	}
-	if rows[0].HaveDate {
-		t.Errorf("the row above every date carries %v; a row nobody dated is not this window's", rows[0].Date)
-	}
+	require.Len(t, rows, 3, "parsed %d rows, want 3: %+v", len(rows), rows)
+	assert.False(t, rows[0].HaveDate, "the row above every date carries %v; a row nobody dated is not this window's", rows[0].Date)
 	in, undated := RetiredInWindow(rows, at(t, windowSince), at(t, windowNow))
-	if in != 1 || undated != 1 {
-		t.Errorf("in-window=%d undated=%d, want 1 and 1", in, undated)
-	}
+	assert.Equal(t, 1, in, "in-window=%d undated=%d, want 1 and 1", in, undated)
+	assert.Equal(t, 1, undated, "in-window=%d undated=%d, want 1 and 1", in, undated)
 }
 
 // ---------------------------------------------------------------------------
@@ -468,20 +423,12 @@ func TestPRsCountsWhatWasOpenAtSince(t *testing.T) {
 
 	f := newFixture(t)
 	s := stream(t, f.read(t), "PRS")
-	if s.Now != 2 {
-		t.Errorf("now=%v, want 2 open", s.Now)
-	}
+	assert.Equal(t, float64(2), s.Now, "now=%v, want 2 open", s.Now)
 	// #1 open and older than --since, plus #6 created before it and closed inside.
-	if s.Before != 2 {
-		t.Errorf("before=%v, want 2", s.Before)
-	}
+	assert.Equal(t, float64(2), s.Before, "before=%v, want 2", s.Before)
 	line := s.Line()
-	if got := field(t, line, "opened"); got != "1" {
-		t.Errorf("opened=%s, want 1", got)
-	}
-	if got := field(t, line, "closed"); got != "3" {
-		t.Errorf("closed=%s, want 3 (two batches and one plain pull request)", got)
-	}
+	assertField(t, line, "opened", "1", "opened=%s, want 1")
+	assertField(t, line, "closed", "3", "closed=%s, want 3 (two batches and one plain pull request)")
 }
 
 // ---------------------------------------------------------------------------
@@ -495,31 +442,17 @@ func TestEdgesIsTheGateAndTheRounds(t *testing.T) {
 	s := stream(t, f.read(t), "EDGES")
 	// Stella's Edges: note and Rowan's older one are open; the not-ok receipt
 	// has an issue and is not.
-	if s.Now != 2 {
-		t.Errorf("now=%v, want 2 open edges", s.Now)
-	}
-	if s.Before != 1 {
-		t.Errorf("before=%v, want 1: only the receipt written before --since", s.Before)
-	}
+	assert.Equal(t, float64(2), s.Now, "now=%v, want 2 open edges", s.Now)
+	assert.Equal(t, float64(1), s.Before, "before=%v, want 1: only the receipt written before --since", s.Before)
 	line := s.Line()
-	if got := field(t, line, "rounds"); got != "2" {
-		t.Errorf("rounds=%s, want 2 friends in the window", got)
-	}
-	if got := field(t, line, "not-ok"); got != "1" {
-		t.Errorf("not-ok=%s, want 1", got)
-	}
-	if got := field(t, line, "not-ok-per-round"); got != "0.50" {
-		t.Errorf("not-ok-per-round=%s, want 0.50", got)
-	}
+	assertField(t, line, "rounds", "2", "rounds=%s, want 2 friends in the window")
+	assertField(t, line, "not-ok", "1", "not-ok=%s, want 1")
+	assertField(t, line, "not-ok-per-round", "0.50", "not-ok-per-round=%s, want 0.50")
 
 	f.opts.By = []string{"Stella"}
 	narrowed := stream(t, f.read(t), "EDGES")
-	if got := field(t, narrowed.Line(), "rounds"); got != "1" {
-		t.Errorf("--by Stella left rounds=%s, want 1", got)
-	}
-	if narrowed.Now != 1 {
-		t.Errorf("--by Stella left now=%v, want 1", narrowed.Now)
-	}
+	assertField(t, narrowed.Line(), "rounds", "1", "--by Stella left rounds=%s, want 1")
+	assert.Equal(t, float64(1), narrowed.Now, "--by Stella left now=%v, want 1", narrowed.Now)
 }
 
 // ---------------------------------------------------------------------------
@@ -531,30 +464,21 @@ func TestFleetIsTheUnitsOffTheMajorityStamp(t *testing.T) {
 
 	f := newFixture(t)
 	s := stream(t, f.read(t), "FLEET")
-	if s.Now != 1 {
-		t.Errorf("now=%v, want 1 machine off the one build", s.Now)
-	}
-	if got := field(t, s.Line(), "certified"); got != "2/4" {
-		t.Errorf("certified=%s, want 2/4", got)
-	}
+	assert.Equal(t, float64(1), s.Now, "now=%v, want 1 machine off the one build", s.Now)
+	assertField(t, s.Line(), "certified", "2/4", "certified=%s, want 2/4")
 
 	one := "machine\tstamp\na\tv1\nb\tv1\nc\tv1\nd\tv1\ne\tv1"
 	rows, err := ParseVersions("roll.tsv", one)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := Fleet(rows, 0, 0, false); got.Now != 0 {
-		t.Errorf("a fleet on one build read %v, want 0", got.Now)
-	}
+	require.NoError(t, err)
+	got := Fleet(rows, 0, 0, false)
+	assert.Equal(t, float64(0), got.Now, "a fleet on one build read %v, want 0", got.Now)
 
 	snap := "name\tstamp\trevision\tplatform\nnova-bus\tv1\tabc\tdarwin/arm64\nnova-check\tv1\tabc\tdarwin/arm64"
 	snapRows, err := ParseVersions("snapshot.tsv", snap)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(snapRows) != 2 || snapRows[0].Unit != "nova-bus" || snapRows[0].Stamp != "v1" {
-		t.Errorf("the snapshot header read as %+v", snapRows)
-	}
+	require.NoError(t, err)
+	require.Len(t, snapRows, 2, "the snapshot header read as %+v", snapRows)
+	assert.Equal(t, "nova-bus", snapRows[0].Unit, "the snapshot header read as %+v", snapRows)
+	assert.Equal(t, "v1", snapRows[0].Stamp, "the snapshot header read as %+v", snapRows)
 }
 
 // ---------------------------------------------------------------------------
@@ -568,12 +492,8 @@ func TestFleetAndLedgerTakeTheirBeforeFromTheState(t *testing.T) {
 	report := f.read(t)
 	for _, name := range []string{"FLEET", "LEDGER"} {
 		s := stream(t, report, name)
-		if s.HaveBefore {
-			t.Errorf("%s had a before with no state; a snapshot is one instant", name)
-		}
-		if s.Trend() != Flat {
-			t.Errorf("%s trend %s on a first tick, want flat", name, s.Trend())
-		}
+		assert.False(t, s.HaveBefore, "%s had a before with no state; a snapshot is one instant", name)
+		assert.Equal(t, Flat, s.Trend(), "%s trend %s on a first tick, want flat", name, s.Trend())
 	}
 
 	st := State{Streams: map[string]StreamState{
@@ -582,16 +502,12 @@ func TestFleetAndLedgerTakeTheirBeforeFromTheState(t *testing.T) {
 	}}
 	applied, _, _ := report.Apply(st, at(t, windowNow))
 	fleet := stream(t, applied, "FLEET")
-	if fleet.Before != 3 || fleet.Trend() != Contracting {
-		t.Errorf("FLEET before=%v trend=%s, want 3 and contracting", fleet.Before, fleet.Trend())
-	}
-	if got := field(t, fleet.Line(), "before-from"); got != "state" {
-		t.Errorf("before-from=%s, want state", got)
-	}
+	assert.Equal(t, float64(3), fleet.Before, "FLEET before=%v trend=%s, want 3 and contracting", fleet.Before, fleet.Trend())
+	assert.Equal(t, Contracting, fleet.Trend(), "FLEET before=%v trend=%s, want 3 and contracting", fleet.Before, fleet.Trend())
+	assertField(t, fleet.Line(), "before-from", "state", "before-from=%s, want state")
 	ledger := stream(t, applied, "LEDGER")
-	if ledger.Before != 2 || ledger.Trend() != Widening {
-		t.Errorf("LEDGER before=%v trend=%s, want 2 and widening (three open rows now)", ledger.Before, ledger.Trend())
-	}
+	assert.Equal(t, float64(2), ledger.Before, "LEDGER before=%v trend=%s, want 2 and widening (three open rows now)", ledger.Before, ledger.Trend())
+	assert.Equal(t, Widening, ledger.Trend(), "LEDGER before=%v trend=%s, want 2 and widening (three open rows now)", ledger.Before, ledger.Trend())
 }
 
 // ---------------------------------------------------------------------------
@@ -603,16 +519,11 @@ func TestLedgerCountsTheRowsNotYetPass(t *testing.T) {
 
 	f := newFixture(t)
 	s := stream(t, f.read(t), "LEDGER")
-	if got := field(t, s.Line(), "rows"); got != "5" {
-		t.Errorf("rows=%s, want 5", got)
-	}
-	if s.Now != 3 {
-		t.Errorf("open=%v, want 3: PARTIAL, TODO and NEEDS WORK; `FAIL then PASS` is closed", s.Now)
-	}
+	assertField(t, s.Line(), "rows", "5", "rows=%s, want 5")
+	assert.Equal(t, float64(3), s.Now, "open=%v, want 3: PARTIAL, TODO and NEEDS WORK; `FAIL then PASS` is closed", s.Now)
 	rows, open := LedgerRows("not a table\n\n| a | PASS |\n")
-	if rows != 1 || open != 0 {
-		t.Errorf("rows=%d open=%d over one row and one paragraph, want 1 and 0", rows, open)
-	}
+	assert.Equal(t, 1, rows, "rows=%d open=%d over one row and one paragraph, want 1 and 0", rows, open)
+	assert.Equal(t, 0, open, "rows=%d open=%d over one row and one paragraph, want 1 and 0", rows, open)
 }
 
 // ---------------------------------------------------------------------------
@@ -631,26 +542,18 @@ func TestAStreamWithNoSourceIsAbsentNotZero(t *testing.T) {
 
 	for name, want := range map[string]string{"SCRIPTS": "--bin", "CLASSES": "--repo-dir", "FLEET": "--versions"} {
 		s := stream(t, report, name)
-		if !s.Absent() || s.Trend() != AbsentTrend {
-			t.Errorf("%s read as %v with no source; an unread stream is not zero", name, s.Now)
-		}
+		assert.True(t, s.Absent(), "%s read as %v with no source; an unread stream is not zero", name, s.Now)
+		assert.Equal(t, AbsentTrend, s.Trend(), "%s read as %v with no source; an unread stream is not zero", name, s.Now)
 		line := s.Line()
-		if !strings.Contains(line, "now=- before=- ratio=-") {
-			t.Errorf("%s printed %q", name, line)
-		}
-		if got := field(t, line, "source"); got != want {
-			t.Errorf("%s source=%s, want %s", name, got, want)
-		}
+		assert.Contains(t, line, "now=- before=- ratio=-", "%s printed %q", name, line)
+		got := field(t, line, "source")
+		assert.Equal(t, want, got, "%s source=%s, want %s", name, got, want)
 	}
 	verdict := report.VerdictLine()
-	if got := field(t, verdict, "streams"); got != "4" {
-		t.Errorf("streams=%s, want 4 measured", got)
-	}
+	assertField(t, verdict, "streams", "4", "streams=%s, want 4 measured")
 	absent := field(t, verdict, "absent")
 	for _, name := range []string{"CLASSES", "SCRIPTS", "FLEET"} {
-		if !strings.Contains(absent, name) {
-			t.Errorf("absent=%s does not name %s", absent, name)
-		}
+		assert.Contains(t, absent, name, "absent=%s does not name %s", absent, name)
 	}
 }
 
@@ -670,25 +573,17 @@ func TestExitOneOnlyOnTheSecondConsecutiveWidening(t *testing.T) {
 	st := State{Streams: map[string]StreamState{}}
 
 	_, st, streak := widening(5, 3).Apply(st, tick)
-	if streak {
-		t.Fatalf("one widening tick is a WARN, not an exit 1")
-	}
-	if st.Streams["EDGES"].Widening != 1 {
-		t.Fatalf("the first widening was not counted: %+v", st.Streams["EDGES"])
-	}
+	require.False(t, streak, "one widening tick is a WARN, not an exit 1")
+	require.Equal(t, 1, st.Streams["EDGES"].Widening, "the first widening was not counted: %+v", st.Streams["EDGES"])
 
 	_, st, streak = widening(7, 5).Apply(st, tick.Add(time.Hour))
-	if !streak {
-		t.Fatalf("two consecutive widening ticks is the one exit-1 condition")
-	}
+	require.True(t, streak, "two consecutive widening ticks is the one exit-1 condition")
 
 	_, st, streak = widening(2, 7).Apply(st, tick.Add(2*time.Hour))
-	if streak || st.Streams["EDGES"].Widening != 0 {
-		t.Fatalf("a contracting tick must reset the streak: %+v", st.Streams["EDGES"])
-	}
-	if _, _, streak = widening(4, 2).Apply(st, tick.Add(3*time.Hour)); streak {
-		t.Fatalf("after a reset, one widening tick is a WARN again")
-	}
+	require.False(t, streak, "a contracting tick must reset the streak: %+v", st.Streams["EDGES"])
+	require.Equal(t, 0, st.Streams["EDGES"].Widening, "a contracting tick must reset the streak: %+v", st.Streams["EDGES"])
+	_, _, streak = widening(4, 2).Apply(st, tick.Add(3*time.Hour))
+	require.False(t, streak, "after a reset, one widening tick is a WARN again")
 }
 
 // The edge the first real run of this verb found: two invocations over one
@@ -701,25 +596,18 @@ func TestTheSameTickReadTwiceIsNotTwoTicks(t *testing.T) {
 	st := State{Streams: map[string]StreamState{}}
 
 	_, st, streak := widening(5, 3).Apply(st, tick)
-	if streak || st.Streams["EDGES"].Widening != 1 {
-		t.Fatalf("the first tick: streak=%v state=%+v", streak, st.Streams["EDGES"])
-	}
+	require.False(t, streak, "the first tick: streak=%v state=%+v", streak, st.Streams["EDGES"])
+	require.Equal(t, 1, st.Streams["EDGES"].Widening, "the first tick: streak=%v state=%+v", streak, st.Streams["EDGES"])
 	for i := 0; i < 3; i++ {
 		var again State
 		_, again, streak = widening(5, 3).Apply(st, tick)
-		if streak {
-			t.Fatalf("re-reading the same tick %d times went red", i+1)
-		}
-		if again.Streams["EDGES"].Widening != 1 {
-			t.Fatalf("re-reading the same tick counted it again: %+v", again.Streams["EDGES"])
-		}
+		require.False(t, streak, "re-reading the same tick %d times went red", i+1)
+		require.Equal(t, 1, again.Streams["EDGES"].Widening, "re-reading the same tick counted it again: %+v", again.Streams["EDGES"])
 		st = again
 	}
 	// A tick of the clock later, the same widening IS the second one.
 	_, _, streak = widening(6, 3).Apply(st, tick.Add(time.Hour))
-	if !streak {
-		t.Fatalf("a later tick that widens again is the exit-1 condition")
-	}
+	require.True(t, streak, "a later tick that widens again is the exit-1 condition")
 }
 
 func TestWithNoStateNothingIsRemembered(t *testing.T) {
@@ -727,27 +615,17 @@ func TestWithNoStateNothingIsRemembered(t *testing.T) {
 
 	tick := at(t, windowNow)
 	st, err := LoadState("")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	for i := 0; i < 2; i++ {
 		var streak bool
 		_, st, streak = widening(5, 3).Apply(State{Streams: map[string]StreamState{}}, tick)
-		if streak {
-			t.Fatalf("tick %d exited 1 with nothing remembered", i)
-		}
+		require.False(t, streak, "tick %d exited 1 with nothing remembered", i)
 	}
 	dir := t.TempDir()
-	if err := (State{}).Save(""); err != nil {
-		t.Fatalf("saving no state is not an error: %v", err)
-	}
+	require.NoError(t, (State{}).Save(""), "saving no state is not an error")
 	entries, err := os.ReadDir(dir)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(entries) != 0 {
-		t.Fatalf("a run with no --state wrote %d files", len(entries))
-	}
+	require.NoError(t, err)
+	require.Empty(t, entries, "a run with no --state wrote %d files", len(entries))
 	_ = st
 }
 
@@ -756,19 +634,12 @@ func TestStateSurvivesARoundTrip(t *testing.T) {
 
 	path := filepath.Join(t.TempDir(), "state.json")
 	st := State{Streams: map[string]StreamState{"EDGES": {Now: 4, At: windowNow, Widening: 1}}}
-	if err := st.Save(path); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, st.Save(path))
 	back, err := LoadState(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if back.Streams["EDGES"] != st.Streams["EDGES"] {
-		t.Fatalf("round trip gave %+v, want %+v", back.Streams["EDGES"], st.Streams["EDGES"])
-	}
-	if _, err := LoadState(filepath.Join(t.TempDir(), "never-written.json")); err != nil {
-		t.Fatalf("a state file that is not there is an empty state, not an error: %v", err)
-	}
+	require.NoError(t, err)
+	require.Equal(t, st.Streams["EDGES"], back.Streams["EDGES"], "round trip gave %+v, want %+v", back.Streams["EDGES"], st.Streams["EDGES"])
+	_, err = LoadState(filepath.Join(t.TempDir(), "never-written.json"))
+	require.NoError(t, err, "a state file that is not there is an empty state, not an error")
 }
 
 // ---------------------------------------------------------------------------
@@ -780,24 +651,18 @@ func TestParseSinceTakesBothSpellingsAndRefusesTheRest(t *testing.T) {
 
 	now := at(t, windowNow)
 	got, err := ParseSince(windowSince, now)
-	if err != nil || !got.Equal(at(t, windowSince)) {
-		t.Errorf("RFC3339: %v %v", got, err)
-	}
+	require.NoError(t, err, "RFC3339: %v %v", got, err)
+	assert.True(t, got.Equal(at(t, windowSince)), "RFC3339: %v %v", got, err)
 	got, err = ParseSince("24h", now)
-	if err != nil || !got.Equal(now.Add(-24*time.Hour)) {
-		t.Errorf("duration: %v %v", got, err)
-	}
+	require.NoError(t, err, "duration: %v %v", got, err)
+	assert.True(t, got.Equal(now.Add(-24*time.Hour)), "duration: %v %v", got, err)
 	for _, bad := range []string{"yesterday", "2026-13-40T00:00:00Z", "", "-3h"} {
-		if _, err := ParseSince(bad, now); err == nil {
-			t.Errorf("--since %q was accepted", bad)
-		}
+		_, err := ParseSince(bad, now)
+		assert.Error(t, err, "--since %q was accepted", bad)
 	}
 	future, err := ParseSince("2026-09-19T00:00:00Z", now)
-	if err == nil {
-		t.Errorf("a --since after the clock gave %v; a window cannot end before it starts", future)
-	} else if !strings.Contains(err.Error(), "after the clock") {
-		t.Errorf("the refusal does not name the clock: %v", err)
-	}
+	require.Error(t, err, "a --since after the clock gave %v; a window cannot end before it starts", future)
+	assert.ErrorContains(t, err, "after the clock", "the refusal does not name the clock: %v", err)
 }
 
 // ---------------------------------------------------------------------------
@@ -814,21 +679,15 @@ func TestConvergenceRefusesAVersionsFileItDoesNotKnow(t *testing.T) {
 		{"empty", ""},
 	} {
 		_, err := ParseVersions("versions.tsv", tc.body)
-		if err == nil {
-			t.Errorf("%s was accepted", tc.name)
+		if !assert.Error(t, err, "%s was accepted", tc.name) {
 			continue
 		}
-		if !strings.Contains(err.Error(), "versions.tsv") {
-			t.Errorf("%s: the refusal does not name the file: %v", tc.name, err)
-		}
+		assert.ErrorContains(t, err, "versions.tsv", "%s: the refusal does not name the file: %v", tc.name, err)
 	}
-	if _, err := ParseVersions("v.tsv", "host\tbuild\na\tv1"); err == nil ||
-		!strings.Contains(err.Error(), "machine<TAB>stamp") {
-		t.Errorf("the refusal does not name the headers it reads: %v", err)
-	}
-	if _, _, err := ParseCerts("certs.tsv", "name\tcertified\na\tyes"); err == nil {
-		t.Errorf("a certs file with the wrong header was accepted")
-	}
+	_, err := ParseVersions("v.tsv", "host\tbuild\na\tv1")
+	assert.ErrorContains(t, err, "machine<TAB>stamp", "the refusal does not name the headers it reads")
+	_, _, err = ParseCerts("certs.tsv", "name\tcertified\na\tyes")
+	assert.Error(t, err, "a certs file with the wrong header was accepted")
 }
 
 // ---------------------------------------------------------------------------
@@ -857,16 +716,10 @@ func TestEveryFieldSurvivesAHostileValue(t *testing.T) {
 	f.opts.By = []string{hostile}
 
 	for _, line := range f.read(t).Lines() {
-		if strings.ContainsAny(line, "\n\r\t") {
-			t.Errorf("a line carried a control character: %q", line)
-		}
-		if strings.Contains(line, "\u202e") {
-			t.Errorf("a line carried a bidi override: %q", line)
-		}
+		assert.False(t, strings.ContainsAny(line, "\n\r\t"), "a line carried a control character: %q", line)
+		assert.NotContains(t, line, "\u202e", "a line carried a bidi override: %q", line)
 		for _, tok := range strings.Fields(line) {
-			if strings.Count(tok, "=") > 1 {
-				t.Errorf("a field holds a second `=`: %q in %q", tok, line)
-			}
+			assert.LessOrEqual(t, strings.Count(tok, "="), 1, "a field holds a second `=`: %q in %q", tok, line)
 		}
 	}
 }
@@ -881,36 +734,25 @@ func TestJSONCarriesTheSameReadingAsTheLines(t *testing.T) {
 	f := newFixture(t)
 	report := f.read(t)
 	raw, err := json.Marshal(report.AsJSON(at(t, windowNow), at(t, windowSince)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(raw), "CONVERGENCE") {
-		t.Errorf("the JSON object carries a line: %s", raw)
-	}
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), "CONVERGENCE", "the JSON object carries a line: %s", raw)
 	var back JSON
-	if err := json.Unmarshal(raw, &back); err != nil {
-		t.Fatal(err)
-	}
-	if len(back.Streams) != len(Order) {
-		t.Fatalf("the object holds %d streams, the lines print %d", len(back.Streams), len(Order))
-	}
+	require.NoError(t, json.Unmarshal(raw, &back))
+	require.Len(t, back.Streams, len(Order), "the object holds %d streams, the lines print %d", len(back.Streams), len(Order))
 	for i, row := range back.Streams {
 		s := report.Streams[i]
-		if row.Name != s.Name || row.Trend != string(s.Trend()) {
-			t.Errorf("%s: object says %s/%s", s.Name, row.Name, row.Trend)
-		}
-		if s.HaveNow != (row.Now != nil) {
-			t.Errorf("%s: a number the verb does not have must be null, not zero", s.Name)
-		}
-		if row.Now != nil && *row.Now != s.Now {
-			t.Errorf("%s: now %v in the object, %v on the line", s.Name, *row.Now, s.Now)
+		assert.Equal(t, s.Name, row.Name, "%s: object says %s/%s", s.Name, row.Name, row.Trend)
+		assert.Equal(t, string(s.Trend()), row.Trend, "%s: object says %s/%s", s.Name, row.Name, row.Trend)
+		assert.Equal(t, s.HaveNow, row.Now != nil, "%s: a number the verb does not have must be null, not zero", s.Name)
+		if row.Now != nil {
+			assert.Equal(t, s.Now, *row.Now, "%s: now %v in the object, %v on the line", s.Name, *row.Now, s.Now)
 		}
 	}
 	measured, contracting, wide, absent := report.Verdict()
-	if back.Measured != measured || back.Contracting != contracting ||
-		len(back.Widening) != len(wide) || len(back.Absent) != len(absent) {
-		t.Errorf("the object's verdict is %+v, the line's is %d/%d/%v/%v", back, measured, contracting, wide, absent)
-	}
+	assert.Equal(t, measured, back.Measured, "the object's verdict is %+v, the line's is %d/%d/%v/%v", back, measured, contracting, wide, absent)
+	assert.Equal(t, contracting, back.Contracting, "the object's verdict is %+v, the line's is %d/%d/%v/%v", back, measured, contracting, wide, absent)
+	assert.Len(t, back.Widening, len(wide), "the object's verdict is %+v, the line's is %d/%d/%v/%v", back, measured, contracting, wide, absent)
+	assert.Len(t, back.Absent, len(absent), "the object's verdict is %+v, the line's is %d/%d/%v/%v", back, measured, contracting, wide, absent)
 }
 
 // ---------------------------------------------------------------------------
@@ -922,17 +764,14 @@ func TestEveryChildIsBounded(t *testing.T) {
 
 	f := newFixture(t)
 	f.opts.Forge = fakeForge{hang: true}
-	if _, err := Read(context.Background(), f.opts); err == nil {
-		t.Fatalf("a forge that hangs past the deadline was read as a reading")
-	} else if !strings.Contains(err.Error(), "--timeout") {
-		t.Errorf("the refusal does not name the deadline: %v", err)
-	}
+	_, err := Read(context.Background(), f.opts)
+	require.Error(t, err, "a forge that hangs past the deadline was read as a reading")
+	assert.ErrorContains(t, err, "--timeout", "the refusal does not name the deadline: %v", err)
 
 	f = newFixture(t)
 	f.opts.Git = fakeGit{err: errors.New("git rev-list ran past --timeout 1s and was killed")}
-	if _, err := Read(context.Background(), f.opts); err == nil {
-		t.Fatalf("a git that hangs past the deadline was read as a reading")
-	}
+	_, err = Read(context.Background(), f.opts)
+	require.Error(t, err, "a git that hangs past the deadline was read as a reading")
 }
 
 // ---------------------------------------------------------------------------
@@ -955,12 +794,9 @@ func TestReadRefusesAnUnreadableSource(t *testing.T) {
 		f := newFixture(t)
 		tc.set(&f.opts)
 		_, err := Read(context.Background(), f.opts)
-		if err == nil {
-			t.Errorf("%s: an unreadable source was read as a reading", tc.name)
+		if !assert.Error(t, err, "%s: an unreadable source was read as a reading", tc.name) {
 			continue
 		}
-		if !strings.Contains(err.Error(), tc.name) {
-			t.Errorf("%s: the refusal does not name the flag: %v", tc.name, err)
-		}
+		assert.ErrorContains(t, err, tc.name, "%s: the refusal does not name the flag: %v", tc.name, err)
 	}
 }

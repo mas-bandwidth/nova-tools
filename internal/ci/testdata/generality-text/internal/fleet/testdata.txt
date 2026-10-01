@@ -1,0 +1,10 @@
+# Migrated counted package ledger; original row keys preserved.
+# ceiling: 8
+internal/fleet/testdata/machines.tsv:batman 2
+internal/fleet/testdata/machines.tsv:glenn 3
+internal/fleet/testdata/machines.tsv:hulk 4
+internal/fleet/testdata/machines.tsv:mini 2
+internal/fleet/testdata/machines.tsv:space 3
+internal/fleet/testdata/machines.tsv:studio 4
+internal/fleet/testdata/machines.tsv:superman 2
+internal/fleet/testdata/machines.tsv:vision 4

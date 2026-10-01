@@ -6,6 +6,8 @@ import (
 	"math"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 )
 
 var t0 = time.Date(2030, 1, 2, 3, 4, 5, 0, time.UTC)
@@ -18,56 +20,43 @@ func near(a, b float64) bool { return math.Abs(a-b) < 0.05 }
 func TestProcStatBusyPercent(t *testing.T) {
 	t.Parallel()
 	a, ok := ParseProcStat("cpu  100 0 100 700 100 0 0 0 0 0\ncpu0 1 2 3 4 5 6 7 8 9 10\n")
-	if !ok || a.Busy != 200 || a.Total != 1000 {
-		t.Fatalf("reading a = %+v %v", a, ok)
-	}
+	require.True(t, ok && a.Busy == 200 && a.Total == 1000, "reading a = %+v %v", a, ok)
 	b, _ := ParseProcStat("cpu  400 0 200 900 100 0 0 0 0 0\n")
 	// busy 200 -> 600 (+400) over total 1000 -> 1600 (+600): 66.7%
-	if pct, ok := BusyPercent(a, b); !ok || !near(pct, 66.67) {
-		t.Fatalf("busy = %v %v, want 66.7", pct, ok)
-	}
-	if _, ok := BusyPercent(a, a); ok {
-		t.Fatal("the same reading twice has no interval and must not report")
-	}
-	if _, ok := BusyPercent(b, a); ok {
-		t.Fatal("counters that went back must not report")
-	}
-	if _, ok := ParseProcStat("intr 1 2 3\n"); ok {
-		t.Fatal("no cpu line must not report")
-	}
-	if _, ok := ParseProcStat("cpu  1 2 x 4 5\n"); ok {
-		t.Fatal("a cpu line with a word that is not a number must not report")
-	}
+	pct, ok := BusyPercent(a, b)
+	require.True(t, ok && near(pct, 66.67), "busy = %v %v, want 66.7", pct, ok)
+	_, ok = BusyPercent(a, a)
+	require.False(t, ok, "the same reading twice has no interval and must not report")
+	_, ok = BusyPercent(b, a)
+	require.False(t, ok, "counters that went back must not report")
+	_, ok = ParseProcStat("intr 1 2 3\n")
+	require.False(t, ok, "no cpu line must not report")
+	_, ok = ParseProcStat("cpu  1 2 x 4 5\n")
+	require.False(t, ok, "a cpu line with a word that is not a number must not report")
 }
 
 // TestTopCPULine: darwin's top line gives 100 minus idle.
 func TestTopCPULine(t *testing.T) {
 	t.Parallel()
 	pct, ok := ParseTopCPU("Processes: 900 total\nCPU usage: 13.22% user, 37.47% sys, 49.31% idle\nSharedLibs: 1M\n")
-	if !ok || !near(pct, 50.69) {
-		t.Fatalf("top busy = %v %v, want 50.69", pct, ok)
-	}
-	if _, ok := ParseTopCPU("no usage line\n"); ok {
-		t.Fatal("a missing line must not report")
-	}
-	if _, ok := ParseTopCPU("CPU usage: 1% user, 2% sys, x% idle\n"); ok {
-		t.Fatal("an idle that is not a number must not report")
-	}
+	require.True(t, ok, "top busy = %v %v, want 50.69", pct, ok)
+	require.True(t, near(pct, 50.69), "top busy = %v %v, want 50.69", pct, ok)
+	_, ok = ParseTopCPU("no usage line\n")
+	require.False(t, ok, "a missing line must not report")
+	_, ok = ParseTopCPU("CPU usage: 1% user, 2% sys, x% idle\n")
+	require.False(t, ok, "an idle that is not a number must not report")
 }
 
 // TestProcLoadavg: Linux's /proc/loadavg gives its first field.
 func TestProcLoadavg(t *testing.T) {
 	t.Parallel()
-	if v, ok := ParseProcLoadavg("0.52 0.58 0.59 1/389 12345\n"); !ok || v != 0.52 {
-		t.Fatalf("load1 = %v %v, want 0.52", v, ok)
-	}
-	if v, ok := ParseProcLoadavg("21.07 19.50 18.00 30/2000 999\n"); !ok || v != 21.07 {
-		t.Fatalf("load1 = %v %v, want 21.07", v, ok)
-	}
+	v, ok := ParseProcLoadavg("0.52 0.58 0.59 1/389 12345\n")
+	require.True(t, ok && v == 0.52, "load1 = %v %v, want 0.52", v, ok)
+	v, ok = ParseProcLoadavg("21.07 19.50 18.00 30/2000 999\n")
+	require.True(t, ok && v == 21.07, "load1 = %v %v, want 21.07", v, ok)
 	for _, bad := range []string{"", "  \n", "x 1 2", "-1 0 0"} {
-		if _, ok := ParseProcLoadavg(bad); ok {
-			t.Fatalf("%q must not report", bad)
-		}
+		_, ok := ParseProcLoadavg(bad)
+		require.False(t, ok, "%q must not report", bad)
 	}
 }
 
@@ -90,18 +79,14 @@ func vmLoadavg(scale uint64, avgs ...float64) []byte {
 // with the reply's cut trailing NULs padded back.
 func TestVMLoadavg(t *testing.T) {
 	t.Parallel()
-	if v, ok := ParseVMLoadavg(vmLoadavg(2048, 17.36, 21.31, 19.56)); !ok || !near(v, 17.36) {
-		t.Fatalf("load1 = %v %v, want 17.36", v, ok)
-	}
-	if v, ok := ParseVMLoadavg(vmLoadavg(2048, 1.5)); !ok || v != 1.5 {
-		t.Fatalf("load1 = %v %v, want 1.5", v, ok)
-	}
-	if _, ok := ParseVMLoadavg(nil); ok {
-		t.Fatal("an empty reply has no scale and must not report")
-	}
-	if _, ok := ParseVMLoadavg(make([]byte, 25)); ok {
-		t.Fatal("a reply longer than the struct must not report")
-	}
+	v, ok := ParseVMLoadavg(vmLoadavg(2048, 17.36, 21.31, 19.56))
+	require.True(t, ok && near(v, 17.36), "load1 = %v %v, want 17.36", v, ok)
+	v, ok = ParseVMLoadavg(vmLoadavg(2048, 1.5))
+	require.True(t, ok && v == 1.5, "load1 = %v %v, want 1.5", v, ok)
+	_, ok = ParseVMLoadavg(nil)
+	require.False(t, ok, "an empty reply has no scale and must not report")
+	_, ok = ParseVMLoadavg(make([]byte, 25))
+	require.False(t, ok, "a reply longer than the struct must not report")
 }
 
 // TestMeasureLinux: the first reading has no interval, so it falls back to the
@@ -114,14 +99,10 @@ func TestMeasureLinux(t *testing.T) {
 		ProcStat: func() (string, error) { return stat, nil },
 		Load1:    func() (float64, bool) { return 2, true }}
 	pct, how, st, ok := Measure(src, State{}, t0)
-	if !ok || how != HowLoad1 || pct != 25 || st.Ticks == nil || st.Ticks.Total != 1000 {
-		t.Fatalf("first = %v %s %+v %v, want 25%% by load1 and the counters kept", pct, how, st, ok)
-	}
+	require.True(t, ok && how == HowLoad1 && pct == 25 && st.Ticks != nil && st.Ticks.Total == 1000, "first = %v %s %+v %v, want 25%% by load1 and the counters kept", pct, how, st, ok)
 	stat = "cpu  400 0 200 900 100 0 0 0 0 0\n"
 	pct, how, st, ok = Measure(src, st, t0.Add(time.Second))
-	if !ok || how != HowCPU || !near(pct, 66.67) || st.Ticks.Total != 1600 {
-		t.Fatalf("second = %v %s %+v %v, want 66.7%% by cpu", pct, how, st, ok)
-	}
+	require.True(t, ok && how == HowCPU && near(pct, 66.67) && st.Ticks.Total == 1600, "second = %v %s %+v %v, want 66.7%% by cpu", pct, how, st, ok)
 }
 
 // TestMeasureDarwin: top runs at most once every TopEvery; between runs the
@@ -134,23 +115,17 @@ func TestMeasureDarwin(t *testing.T) {
 		Top:   func() (string, error) { runs++; return line, nil },
 		Load1: func() (float64, bool) { return 6, true }}
 	pct, how, st, ok := Measure(src, State{}, t0)
-	if !ok || how != HowCPU || !near(pct, 30) || runs != 1 {
-		t.Fatalf("first = %v %s %v runs=%d, want 30%% by cpu from one top", pct, how, ok, runs)
-	}
+	require.True(t, ok && how == HowCPU && near(pct, 30) && runs == 1, "first = %v %s %v runs=%d, want 30%% by cpu from one top", pct, how, ok, runs)
 	line = "CPU usage: 50.00% user, 40.00% sys, 10.00% idle\n"
 	pct, _, st, _ = Measure(src, st, t0.Add(TopEvery-time.Second))
-	if !near(pct, 30) || runs != 1 {
-		t.Fatalf("within TopEvery = %v runs=%d, want the last reading and no new top", pct, runs)
-	}
+	require.True(t, near(pct, 30), "within TopEvery = %v runs=%d, want the last reading and no new top", pct, runs)
+	require.Equal(t, 1, runs, "within TopEvery = %v runs=%d, want the last reading and no new top", pct, runs)
 	pct, _, st, _ = Measure(src, st, t0.Add(TopEvery))
-	if !near(pct, 90) || runs != 2 {
-		t.Fatalf("after TopEvery = %v runs=%d, want 90%% from a second top", pct, runs)
-	}
+	require.True(t, near(pct, 90), "after TopEvery = %v runs=%d, want 90%% from a second top", pct, runs)
+	require.Equal(t, 2, runs, "after TopEvery = %v runs=%d, want 90%% from a second top", pct, runs)
 	src.Top = func() (string, error) { return "", errors.New("no top") }
 	pct, how, _, ok = Measure(src, st, t0.Add(3*TopEvery))
-	if !ok || how != HowLoad1 || pct != 150 {
-		t.Fatalf("failed top = %v %s %v, want 150%% by load1", pct, how, ok)
-	}
+	require.True(t, ok && how == HowLoad1 && pct == 150, "failed top = %v %s %v, want 150%% by load1", pct, how, ok)
 }
 
 // TestMeasureCapsAndNothing: a load average far past the cores is capped; a
@@ -158,12 +133,10 @@ func TestMeasureDarwin(t *testing.T) {
 func TestMeasureCapsAndNothing(t *testing.T) {
 	t.Parallel()
 	src := Source{NCPU: 1, Load1: func() (float64, bool) { return 500, true }}
-	if pct, _, _, ok := Measure(src, State{}, t0); !ok || pct != MaxPercent {
-		t.Fatalf("pct = %v %v, want the cap %v", pct, ok, MaxPercent)
-	}
-	if _, _, _, ok := Measure(Source{}, State{}, t0); ok {
-		t.Fatal("a source with no reading must measure nothing")
-	}
+	pct, _, _, ok := Measure(src, State{}, t0)
+	require.True(t, ok && pct == MaxPercent, "pct = %v %v, want the cap %v", pct, ok, MaxPercent)
+	_, _, _, ok = Measure(Source{}, State{}, t0)
+	require.False(t, ok, "a source with no reading must measure nothing")
 }
 
 // TestLocalMeasures: this machine, on Linux and darwin, measures a percent in
@@ -177,7 +150,5 @@ func TestLocalMeasures(t *testing.T) {
 	// top is a process; the test reads the load average alone.
 	src.Top, src.ProcStat = nil, nil
 	pct, how, _, ok := Measure(src, State{}, time.Now())
-	if !ok || how != HowLoad1 || pct < 0 || pct > MaxPercent {
-		t.Fatalf("local = %v %s %v", pct, how, ok)
-	}
+	require.True(t, ok && how == HowLoad1 && pct >= 0 && pct <= MaxPercent, "local = %v %s %v", pct, how, ok)
 }

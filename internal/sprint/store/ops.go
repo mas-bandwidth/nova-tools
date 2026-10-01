@@ -229,10 +229,11 @@ func (st *Store) SyncMirrors(ctx context.Context) error {
 		if len(ids) == 0 {
 			continue
 		}
-		rs, err := st.B.ReadSet(ctx, shape.Name, ids)
+		rs, err := st.readSet(ctx, shape.Name, ids)
 		if err != nil {
 			return err
 		}
+		diffs := map[string]map[string]string{}
 		for _, row := range shape.Rows {
 			ctl, _ := rs.Member(st.sid(sprint.CtlID(row.Key)))
 			want := map[string]string{
@@ -240,9 +241,12 @@ func (st *Store) SyncMirrors(ctx context.Context) error {
 				sprint.StateCol: dash(ctl.Fields["state"]),
 				sprint.Since:    clock(ctl.Fields["since"]),
 			}
-			if _, err := syncRow(ctx, st, shape, row, want); err != nil {
-				return err
+			if d := rowDiff(row, want); len(d) > 0 {
+				diffs[row.Key] = d
 			}
+		}
+		if err := st.setRows(ctx, shape.Name, diffs); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -460,7 +464,7 @@ func (st *Store) StreamClocks(ctx context.Context) ([]sprint.StreamClock, error)
 	if len(ids) == 0 {
 		return nil, nil
 	}
-	rs, err := st.B.ReadSet(ctx, name, ids)
+	rs, err := st.readSet(ctx, name, ids)
 	if err != nil {
 		return nil, err
 	}

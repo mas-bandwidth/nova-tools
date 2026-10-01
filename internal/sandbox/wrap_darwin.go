@@ -11,11 +11,14 @@
 package sandbox
 
 import (
+	"context"
 	"io"
 	"os"
 	"os/exec"
 	"os/signal"
 	"syscall"
+
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // Backend is what the SANDBOX OK line names on this platform.
@@ -92,7 +95,11 @@ func Run(p *Policy, env []string, stdin io.Reader, stdout, stderr io.Writer, okL
 	argv = append(argv, "--")
 	argv = append(argv, p.Argv...)
 
-	cmd := exec.Command(backend, argv...)
+	// A long-lived child: the wrapped command runs as long as it runs, under a cancellable
+	// context and no deadline; signals reach it through the forwarder below.
+	ctx, stop := context.WithCancel(context.Background())
+	defer stop()
+	cmd := subproc.Long(ctx, backend, argv...)
 	cmd.Dir = p.Cwd
 	cmd.Env = env
 	cmd.Stdin = stdin
@@ -130,6 +137,7 @@ func Run(p *Policy, env []string, stdin io.Reader, stdout, stderr io.Writer, okL
 				if sig, ok := s.(syscall.Signal); ok && cmd.Process != nil {
 					// The CHILD, not -pid: with no group of its own, -pid would name a
 					// process group this tool never created and does not own.
+					// ignored: a signal passed on to a child that may already have exited; the child's exit is the report
 					_ = cmd.Process.Signal(sig)
 				}
 			case <-done:

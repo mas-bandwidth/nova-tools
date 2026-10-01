@@ -292,6 +292,7 @@ func Run(p *Policy, env []string, stdin io.Reader, stdout, stderr io.Writer, okL
 				if sig, ok := s.(syscall.Signal); ok && cmd.Process != nil {
 					// The CHILD, not -pid: with no group of its own, -pid would name a
 					// process group this tool never created and does not own.
+					// ignored: a signal passed on to a child that may already have exited; the child's exit is the report
 					_ = cmd.Process.Signal(sig)
 				}
 			case <-done:
@@ -325,11 +326,13 @@ func addRules(rulesetFd int, p *Policy, abi int) error {
 	// the mask above has to be right: this loop cannot tell a missing file from a
 	// malformed rule, and it was a malformed rule that let `> /dev/null` be denied.
 	for _, dev := range linuxWriteFiles {
+		// ignored: a rule that is not added denies more, never less; a device absent on this machine is the common case
 		_ = addPathRule(rulesetFd, dev, fileWriteSubset(abi))
 	}
 	// The optional roots the policy resolved for this machine, plus the directory of the
 	// resolved command, read-only.
 	for _, root := range p.OptRoots {
+		// ignored: a rule that is not added denies more, never less; an optional root absent on this machine is the common case
 		_ = addPathRule(rulesetFd, root, read)
 	}
 	// The caller's paths. These are rule 5 paths: Build resolved them and proved they

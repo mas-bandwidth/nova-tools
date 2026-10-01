@@ -99,7 +99,7 @@ func TestRefusalsNameTheFlag(t *testing.T) {
 		{[]string{"verify"}, 2, []string{"--tree is required", "run: nova-work verify -h"}},
 		{[]string{"verify", "--tree", "/nonexistent/t.lisp"}, 2, []string{"VERIFY FAIL"}},
 		{[]string{"frob"}, 2, []string{"unknown verb", "import verify"}},
-		{[]string{}, 2, []string{"usage:"}},
+		{[]string{}, 2, []string{"no verb", "run: nova-work help"}},
 	} {
 		code, out, errs := do(t, nil, c.args...)
 		if code != c.code {
@@ -116,5 +116,27 @@ func TestRefusalsNameTheFlag(t *testing.T) {
 		if code != 0 || !strings.Contains(out, "nova-work") {
 			t.Fatalf("%v: exit %d\n%s", args, code, out)
 		}
+	}
+}
+
+// Both spellings of the build identity print the one line at exit 0, like
+// every other tool's version verb and its --version alias.
+func TestVersionAndItsAliasPrintTheBuildIdentity(t *testing.T) {
+	t.Parallel()
+	for _, arg := range []string{"version", "--version"} {
+		code, out, errb := do(t, nil, arg)
+		if code != 0 || !strings.HasPrefix(out, "nova-work ") || errb != "" {
+			t.Errorf("%s: exit %d, stdout %q, stderr %q; want the identity line at exit 0", arg, code, out, errb)
+		}
+	}
+}
+
+// TestABareCommandRefusesInOneLine (ONBOARDING.md point 1): no verb is exit 2
+// and one stderr line naming the verbs and the door, never the whole banner.
+func TestABareCommandRefusesInOneLine(t *testing.T) {
+	t.Parallel()
+	code, out, errs := do(t, nil)
+	if code != 2 || out != "" || errs != "nova-work: no verb; verbs: import verify help version; run: nova-work help\n" {
+		t.Fatalf("bare nova-work: exit %d, stdout %q, stderr %q", code, out, errs)
 	}
 }

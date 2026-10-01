@@ -257,7 +257,7 @@ Fixture: `cmd/nova-check/testdata/example-self`.
 
 ```
 $ nova-check quickstart --dir ./self
-QUICKSTART OK dir=./self checks=2: links, then nocode
+QUICKSTART RUN dir=./self checks=2: links, then nocode
 LINKS OK files=4 links=3 excluded=0
 NOCODE OK files=5 clean deny-list=floor-list
 QUICKSTART OK done=2 worst-exit=0 next=kernel,attest,floors,corpus (each wants a budget, a manifest or a ledger of yours: nova-check help)
@@ -349,6 +349,14 @@ SELFTALK RULEDOC ./pages/RULES.md: rule documents: a finding here is a self-verd
 SELFTALK DATED n=1 files=2
 SELFTALK FAIL files=2 claims=2 standing=1 installations=2 dated=1 shown=3
 SELFTALK NOTE catches known SHAPES only: register, irony and quoted-specimen context are invisible to grammar, and a quoted verdict is a true positive on the grammar and a false one on the meaning. A green clears the known shapes, never the file.
+
+$ nova-self-talk --skip RULES.md ./pages/RULES.md ./pages/journal.md   # Stderr: whole
+SELFTALK SKIP ./pages/RULES.md (--skip)
+! SELFTALK FAIL ./pages/journal.md:4: STANDING: I cannot check my own work, so the second read went to someone else.
+! SELFTALK FAIL ./pages/journal.md:10: INSTALLATION RANKING: It is the worst habit I have, and the reason the checklist exists at all.
+SELFTALK DATED n=1 files=1
+SELFTALK FAIL files=1 claims=2 standing=1 installations=1 dated=1 shown=2
+SELFTALK NOTE catches known SHAPES only: register, irony and quoted-specimen context are invisible to grammar, and a quoted verdict is a true positive on the grammar and a false one on the meaning. A green clears the known shapes, never the file.
 ```
 
 ## nova-fuse
@@ -435,8 +443,8 @@ MEMORY NOTE a hit in a dated log class is evidence the event was recorded, not t
 
 Fixture: owned directories under `t.TempDir()` and fake harnesses. The transcript
 comparators invoke the dispatcher with fixture paths and compare its output with
-the examples below. The [quickstart guide](nova-swarm-quickstart.md) includes a
-complete local batch fixture using a synthetic runner.
+the examples below. The [quickstart guide](nova-swarm-quickstart.md) shows a
+`native` run and a sprint member.
 
 ### The budget word on the native route
 
@@ -630,8 +638,8 @@ SUM PAIR model=gemini-2.5-pro repo=schema input=123456 output=7890 cache_write=-
 SUM PAIR model=claude-fable-5-1 repo=serialize input=430 output=58 cache_write=- cache_read=4000 reasoning=- rough=0 dashes=0,0,1,0,1 nonutc=0 days=1
 SUM MODEL model=claude-fable-5-1 input=1338 output=1593 cache_write=1200 cache_read=246000 reasoning=- rough=0 dashes=0,0,1,0,2 nonutc=0 repos=2
 SUM MODEL model=gemini-2.5-pro input=123456 output=7890 cache_write=- cache_read=- reasoning=- rough=0 dashes=0,0,1,1,1 nonutc=0 repos=1
-SUM TOTAL input=124794 output=9483 cache_write=1200 cache_read=246000 reasoning=- rough=0 dashes=0,0,2,1,3 nonutc=0 turns=3 pairs=3 models=2 units=1
-SUM OK month=2026-09 days=1 missing=0 pairs=3 models=2 units=1 nonutc=0
+SUM TOTAL input=124794 output=9483 cache_write=1200 cache_read=246000 reasoning=- rough=0 dashes=0,0,2,1,3 nonutc=0 turns=3 pairs=3 models=2
+SUM OK month=2026-09 days=1 missing=0 pairs=3 models=2 nonutc=0
 ```
 
 
@@ -682,7 +690,8 @@ CONFIG KIND name=machine table=config.machines fields=user,seat,slots,runners re
 CONFIG KIND name=fleet table=config.fleet fields=store,coordinator required=- rows=one
 CONFIG KIND name=friend table=config.friends fields=slots,tiers,roles required=slots,tiers rows=many
 CONFIG KIND name=sprint table=config.sprint fields=coordinator required=- rows=one
-CONFIG KINDS count=4
+CONFIG KIND name=loop table=config.loops fields=machine,argv,seat,keys,every,keepalive,width,enabled required=machine,argv rows=many
+CONFIG KINDS count=5
 
 $ nova-config migrate --print
 MIGRATION version=1 file=0001_schema.sql lines=23
@@ -690,7 +699,21 @@ MIGRATION version=2 file=0002_machine.sql lines=16
 MIGRATION version=3 file=0003_friend.sql lines=13
 MIGRATION version=4 file=0004_fleet.sql lines=14
 MIGRATION version=5 file=0005_sprint.sql lines=12
-CONFIG MIGRATE print=5 pg=-
+MIGRATION version=6 file=0006_loop.sql lines=27
+CONFIG MIGRATE print=6 pg=-
+
+$ nova-config machine add -h
+usage: nova-config machine add [flags]
+from `nova-config help`:
+  nova-config machine add -h
+flags:
+  --as <string>  the friend making the change (env NOVA_FRIEND); every write records it in config.history
+  --pg <string>  Postgres DSN postgres://user@host:port/db with no password (env NOVA_PG_DSN); the password comes from the variable NOVA_PG_PASSWORD_ENV names
+  --runners <string>  how many CI runners it hosts; 0 (the default) hosts none
+  --seat <string>  its nova-secrets seat: the identity it opens secrets as, one <seat>.yaml in the store
+  --slots <string>  how many cards it may run at once, the machine ceiling (machine:<m>:ceiling); 0 runs none
+  --user <string>  the login the plays and seals use on it (ssh <user>@<name>)
+exit codes: 0 done, 1 refused, 2 usage
 ```
 
 `kinds` is one line per kind: its table under schema `config`, its fields in
@@ -721,8 +744,8 @@ $ nova-cairn append --store ./cairns --session s1 --entry e1 --text "the words t
 APPEND OK session=s1 entry=e1 source=bench-a/session-7#L3 persisted=true published=false publish=manual duplicate=false stamp=2026-09-17T12:05:00Z
 
 $ nova-cairn index --store ./cairns
+INDEX OK sessions=1 entries=1
 INDEX ENTRY session=s1 entry=e1 stamp=2026-09-17T12:05:00Z bytes=17 source=bench-a/session-7#L3
-INDEX COVERAGE sessions=1 entries=1 shown=1
 
 $ nova-cairn receipt --store ./cairns --session s1 --entry e1
 RECEIPT OK session=s1 entry=e1 stamp=2026-09-17T12:05:00Z bytes=17 source=bench-a/session-7#L3 persisted=true published=false publish=manual
@@ -823,3 +846,151 @@ build |     1 |       1 |    0
 ------+-------+---------+-----
       |     1 |       1 |    0
 ```
+
+## nova-sprint
+
+The first run needs no Redis: `--redis mem:<file>` runs every verb against an
+in-memory twin of the store kept in a file (for learning and tests, not for a
+fleet), and the sitting below is the card flow `nova-sprint help` shows, one
+process a line, with `NOVA_SPRINT_REDIS=mem:sprint.twin` and
+`NOVA_SPRINT_ACTOR=boss` set; the help's last two lines, the tick after the
+merge and where, land the card and show the sprint, and are left out here
+because the time a finished sprint took and the instant where prints are the
+clock's. A verb's move of a card is queued for the work table and shown by the
+next tick's pump (`MOVED drain`), and a member that comes up in a tick is dealt
+to in the tick after it. It is run by
+`cmd/nova-sprint/firstrun_test.go`, in the unit tier, over a twin file in a
+temporary directory (a twin counts its operation ids, `t1`, `t2`, so they read
+the same on every run); the functional tests beside it
+(`cmd/nova-sprint/*_functional_test.go`) run the same verbs against a real
+store. Nothing is normalised: every value on every line reproduces.
+
+### First run
+
+```text
+$ nova-sprint init --readers reader-a,reader-b --members m1
+INIT OK tables=work,readers,merge,fleet view=sprint
+MOVED m1 added, down until it beats
+FLEET-UP OK moved=1 refused=0 notes=0 op=fleet-release-t1-1
+STOPPED
+
+$ nova-sprint add --stream s1 --count 1
+MOVED s1-1 -> ready stream=s1 score=1
+ADD OK moved=1 refused=0 notes=0 op=add-t2-1
+STOPPED  0/1 0.0%
+
+$ nova-sprint start
+START OK before=STOPPED after=RUNNING changed
+nothing is ticking between commands in a twin: tick by hand: nova-sprint tick
+0/1 0.0% -> ETA  machine: running
+
+$ nova-sprint tick
+MOVED presence: m1 up
+TABLES rows changed: work=0 readers=0 merge=0 fleet=1
+TICK OK state=RUNNING idle=no moved=1 notes=2
+0/1 0.0% -> ETA  machine: running
+
+$ nova-sprint tick
+MOVED deal: s1-1 ready -> working card=s1-1.w1 member=m1
+TABLES rows changed: work=1 readers=0 merge=0 fleet=1
+TICK OK state=RUNNING idle=no moved=1 notes=1
+0/1 0.0% -> ETA  machine: running
+
+$ nova-sprint take --as m1 --epoch 0
+MOVED s1-1.w1 ready -> working member=m1 gen=1
+PACKET s1-1.w1 attempt=1 gen=1 epoch=0
+  branch: sprint/s1-1.w1
+  base: the stream's base
+  notes: none
+  report it: nova-sprint finish --as m1 s1-1.w1@1 --epoch 0 --branch sprint/s1-1.w1 --report '<what you did>' [--failed]
+TAKE OK moved=1 refused=0 notes=0 op=take-t25-1
+0/1 0.0% -> ETA  machine: running
+
+$ nova-sprint finish --as m1 s1-1.w1@1 --epoch 0 --report done
+MOVED s1-1.w1 working -> done ok; s1-1 working -> review
+FINISH OK moved=1 refused=0 notes=1 op=finish-t26-1
+0/1 0.0% -> ETA  machine: running
+
+$ nova-sprint tick
+MOVED drain: s1-1.w1 working -> done ok; s1-1 working -> review (finish by boss)
+MOVED ask: s1-1 asked of reader-a, reader-b
+TABLES rows changed: work=1 readers=2 merge=0 fleet=0
+TICK OK state=RUNNING idle=no moved=2 notes=0
+0/1 0.0% -> ETA  machine: running
+
+$ nova-sprint read --as reader-a --begin --epoch 0
+MOVED s1-1.r1.reader-a asked -> reading
+READ OK moved=1 refused=0 notes=0 op=read-t29-1
+0/1 0.0% -> ETA  machine: running
+
+$ nova-sprint read --as reader-b --begin --epoch 0
+MOVED s1-1.r1.reader-b asked -> reading
+READ OK moved=1 refused=0 notes=0 op=read-t30-1
+0/1 0.0% -> ETA  machine: running
+
+$ nova-sprint read --as reader-a --ok --epoch 0
+MOVED s1-1.r1.reader-a reading -> ok
+READ OK moved=1 refused=0 notes=0 op=read-t31-1
+0/1 0.0% -> ETA  machine: running
+
+$ nova-sprint read --as reader-b --ok --epoch 0
+MOVED s1-1.r1.reader-b reading -> ok
+READ OK moved=1 refused=0 notes=0 op=read-t32-1
+0/1 0.0% -> ETA  machine: running
+
+$ nova-sprint tick
+MOVED drain: s1-1 asked of reader-a, reader-b (tick ask by machine)
+MOVED accept: s1-1 review -> merging queued (ok from reader-a, reader-b)
+TABLES rows changed: work=1 readers=0 merge=1 fleet=0
+TICK OK state=RUNNING idle=no moved=2 notes=2
+0/1 0.0% -> ETA  machine: running
+
+$ nova-sprint merge --stream s1 --batch 1
+MOVED s1-1 merging -> landed
+MERGE OK moved=1 refused=0 notes=2 op=merge-t36-1
+0/1 0.0% -> ETA  machine: running
+```
+
+## nova-work
+
+Run by `cmd/nova-work/firstrun_test.go` against a recorded conversation with
+GitHub (`internal/workgh/testdata/reliable`: one public repository of twenty
+issues, read at fifteen a page), so no network is used. `$ORG` and `$REPO` are
+yours: the test stands them for the recording's organization and repository,
+and the counts below are that repository's. The first line of every run names
+the gh it found; yours is the gh on your PATH, and here it is `./gh`, a stand-in
+that answers each call from the recording. The `sha256` is the tree file's, and
+the tree records the instant it was fetched, so it differs on every real run;
+the test fixes its clock so the value below reproduces. `./tree.lisp` is a file
+in a directory of the test's own. The usage banner's `example:` block is this
+same sitting, line for line.
+
+Requires: a gh login that can read the repository (`gh auth status`); import
+and verify read GitHub through gh and write nothing there.
+
+### First run
+
+```text
+$ nova-work import --org $ORG --repo $ORG/$REPO --page-size 15 --dry-run
+GH OK path=./gh
+PLAN OK org=$ORG repos=1 issues=20 est_calls=3 max_calls=1500 page_size=15
+REPO OK repo=$ORG/$REPO issues=20 comments=74 references=4 linked_prs=2 calls=2
+IMPORT OK org=$ORG out=- repos=1 issues=20 comments=74 references=4 linked_prs=2 bytes=65206 sha256=492ee7e0aaeb987b3c8935a01dd5194bb8826f9742d20575d24d090d04fb4a71 calls=3 points=3 rest=0 seconds=0.0 dry_run=true
+
+$ nova-work import --org $ORG --repo $ORG/$REPO --page-size 15 --out ./tree.lisp
+GH OK path=./gh
+PLAN OK org=$ORG repos=1 issues=20 est_calls=3 max_calls=1500 page_size=15
+REPO OK repo=$ORG/$REPO issues=20 comments=74 references=4 linked_prs=2 calls=2
+IMPORT OK org=$ORG out=./tree.lisp repos=1 issues=20 comments=74 references=4 linked_prs=2 bytes=65206 sha256=492ee7e0aaeb987b3c8935a01dd5194bb8826f9742d20575d24d090d04fb4a71 calls=3 points=3 rest=0 seconds=0.0 dry_run=false
+
+$ nova-work verify --tree ./tree.lisp --repo $ORG/$REPO --page-size 15
+GH OK path=./gh
+VERIFY OK tree=./tree.lisp sha256=492ee7e0aaeb987b3c8935a01dd5194bb8826f9742d20575d24d090d04fb4a71 repos=1 issues=20 comments=74 calls=3 points=3 rest=0 seconds=0.0 differences=0
+```
+
+The dry run is the plan and nothing else: `est_calls` is the calls the import
+will spend, checked against `max_calls` before any issue is read, and `out=-`
+says no file was written. The import prints the same plan, one `REPO OK` per
+repository, and the `sha256` of the file it wrote; verify names the same
+`sha256` and prints one `MISSING`, `EXTRA` or `DRIFT` line per difference above
+its summary. `differences=0` is the proof the tree holds what GitHub holds.

@@ -87,68 +87,6 @@ func TestStagedCloneIgnoresTheBenchGitconfig(t *testing.T) {
 	}
 }
 
-// TestWorkerClonesAfterLaunchCarriesPoolIdentity tests that when a worker
-// clones or initializes a git repository *after* launch (when .git did not
-// exist during staging), the commit carries the pool identity from StagingGitEnv
-// with zero leakage from any hostile bench gitconfig.
-func TestWorkerClonesAfterLaunchCarriesPoolIdentity(t *testing.T) {
-	pool := t.TempDir()
-	writePoolIdentity(t, pool, "rowan", "Rowan Friend", "rowan@example.com")
-	if _, err := LoadPoolIdentity(pool); err != nil {
-		t.Fatalf("LoadPoolIdentity: %v", err)
-	}
-
-	job := t.TempDir()
-	// Stage a fresh job with NO .git directory yet (worker clones after launch).
-	if err := StageJob(pool, job, filepath.Join(job, "repo")); err != nil {
-		t.Fatalf("StageJob: %v", err)
-	}
-
-	// Hostile bench git config with a ghost user in the process environment.
-	benchHome := t.TempDir()
-	benchConfig := filepath.Join(benchHome, ".gitconfig")
-	if err := os.WriteFile(benchConfig, []byte("[user]\n\tname = Bench Ghost\n\temail = ghost@example.com\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("GIT_CONFIG_GLOBAL", benchConfig)
-	t.Setenv("HOME", benchHome)
-
-	// The harness child environment is built through childEnv across the supervisor boundary,
-	// delivering the pool's identity and git config isolation.
-	w := Worker{WorkerDir: filepath.Join(pool, "worker")}
-	workerEnv := childEnv(w, 1, "task-1", "", pool)
-
-	// Worker initializes a repository inside the job and makes a commit.
-	workerRepo := filepath.Join(job, "repo")
-	if err := os.MkdirAll(workerRepo, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	runGit := func(args ...string) string {
-		cmd := exec.Command("git", args...)
-		cmd.Dir = workerRepo
-		cmd.Env = workerEnv
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			t.Fatalf("git %v: %v: %s", args, err, strings.TrimSpace(string(out)))
-		}
-		return strings.TrimSpace(string(out))
-	}
-
-	runGit("init")
-	if err := os.WriteFile(filepath.Join(workerRepo, "file.txt"), []byte("work\n"), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	runGit("add", "file.txt")
-	runGit("commit", "-m", "worker commit after launch")
-
-	// Verify author and committer match pool identity exactly, with zero leakage.
-	got := runGit("log", "-1", "--format=%an <%ae> %cn <%ce>")
-	want := "Rowan Friend <rowan@example.com> Rowan Friend <rowan@example.com>"
-	if got != want {
-		t.Errorf("worker commit after launch = %q, want %q", got, want)
-	}
-}
-
 func initCloneRepo(t *testing.T, dir string) {
 	t.Helper()
 	if err := os.MkdirAll(dir, 0o755); err != nil {

@@ -125,6 +125,10 @@ type Fence struct {
 	// pump queues its work-table changes (queue.go).
 	Running bool
 	Queued  int
+	// Stuck is the stuck record (stuck.go) as it was read with the fence, ""
+	// for none: the step that writes next carries its judgment, and reads no
+	// record of its own for it.
+	Stuck string
 }
 
 // OpRecord is a step's operation, held in the fence while it applies: its
@@ -132,7 +136,10 @@ type Fence struct {
 // logical commit, the release: the notifications, the answers, the streams it
 // moved, and its result under the caller's operation id.
 type OpRecord struct {
-	ID        string                 `json:"id"`
+	ID string `json:"id"`
+	// Lock says the operation is a part's lock (lock.go): no manifests, in
+	// flight within its grace, released unwritten past it.
+	Lock      bool                   `json:"lock,omitempty"`
 	Verb      string                 `json:"verb"`
 	At        time.Time              `json:"at"`
 	Manifests []ntable.BatchManifest `json:"manifests"`

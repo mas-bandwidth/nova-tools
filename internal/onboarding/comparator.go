@@ -36,6 +36,9 @@ func CompareTranscript(doc []Step, got []Result, volatile []Field) []Problem {
 	if len(doc) == 0 {
 		return []Problem{{Message: "the transcript holds no command, so this comparison would pass by comparing nothing"}}
 	}
+	if refusals := recordedRefusals(doc, volatile); len(refusals) > 0 {
+		return refusals
+	}
 	if len(got) != len(doc) {
 		return []Problem{{Message: fmt.Sprintf(
 			"the document writes %d command(s) and the run produced %d result(s); every documented command is run, in order, in one sitting",
@@ -46,6 +49,46 @@ func CompareTranscript(doc []Step, got []Result, volatile []Field) []Problem {
 		problems = append(problems, Compare(s, got[i], norms)...)
 	}
 	return problems
+}
+
+// shellVariable is the one spelling a recorded name's Doc may take: the shell
+// variable a reader sets.
+var shellVariable = regexp.MustCompile(`^\$[A-Z][A-Z0-9_]*$`)
+
+// recordedRefusals holds each `recorded` declaration to the document it
+// normalises: the variable is one a documented command types, and the recorded
+// name appears nowhere in the document as written. A name the document also
+// prints literally would be rewritten on the tool's side and not on the
+// document's, and a variable no command types stands for nothing the reader
+// set.
+func recordedRefusals(doc []Step, volatile []Field) []Problem {
+	var refusals []Problem
+	for _, f := range volatile {
+		entry, ok := volatileEntry(f.Name)
+		if !ok || !entry.Repeatable {
+			continue
+		}
+		typed := false
+		word := regexp.MustCompile(`\b` + regexp.QuoteMeta(f.Run) + `\b`)
+		literal := ""
+		for _, s := range doc {
+			typed = typed || strings.Contains(s.Line, f.Doc)
+			for _, line := range append([]string{s.Line}, s.Want...) {
+				if literal == "" && word.MatchString(line) {
+					literal = line
+				}
+			}
+		}
+		if !typed {
+			refusals = append(refusals, Problem{Message: fmt.Sprintf(
+				"the recorded name %q is written %s, and no documented command types %s; a recorded name stands for a variable the reader sets on the command line", f.Run, f.Doc, f.Doc)})
+		}
+		if literal != "" {
+			refusals = append(refusals, Problem{Message: fmt.Sprintf(
+				"the recorded name %q appears in the document as written:\n  %s\nso rewriting it as %s on the tool's side would compare two different things; a recorded name is one the document never prints", f.Run, literal, f.Doc)})
+		}
+	}
+	return refusals
 }
 
 // Field names one entry of the Volatile table for one transcript.
@@ -69,10 +112,14 @@ type VolatileField struct {
 	Name string
 	// What a reader of a failing test is told is not compared.
 	What string
-	// NeedsPath is true for the one kind of value a pattern must not guess at: a
-	// path, whose two spellings the test supplies. A pattern broad enough to
-	// match any path would swallow the documented paths a reader types.
+	// NeedsPath is true for the kinds of value a pattern must not guess at: a
+	// path, or a recorded name, whose two spellings the test supplies. A pattern
+	// broad enough to match any path would swallow the documented paths a reader
+	// types.
 	NeedsPath bool
+	// Repeatable is true for an entry a transcript may name more than once, once
+	// per documented spelling: a recorded fixture carries more than one name.
+	Repeatable bool
 
 	// norm builds the normalisation applied to both sides of the comparison.
 	norm func(f Field) Norm
@@ -83,9 +130,9 @@ type VolatileField struct {
 // green" means the same in every binary. Growing it is a reading, not a call
 // site's decision -- which is what the refusal below is for.
 //
-// The six entries are the ones docs/SPEC-TOOLWORK.md documents rule 2 names: `at=`,
-// `took=`, `created=`, a temporary directory, a fresh sha, and the stamp on a
-// `branch=` nova-secrets seals on.
+// The seven entries are the ones docs/SPEC-TOOLWORK.md documents rule 2 names:
+// `at=`, `took=`, `created=`, a temporary directory, a fresh sha, a name a
+// recorded fixture carries, and the stamp on a `branch=` nova-secrets seals on.
 //
 // FIVE OF THE SIX ARE TOKEN-ANCHORED, and the sixth says why it is not. A norm
 // that names a field replaces only a whitespace-delimited token spelled
@@ -157,6 +204,20 @@ var Volatile = []VolatileField{
 		},
 	},
 	{
+		Name:       "recorded",
+		What:       "a name a recorded fixture carries, written in the document as the variable the reader sets",
+		NeedsPath:  true,
+		Repeatable: true,
+		// A transcript run against a RECORDING (nova-work's GitHub fixture, a
+		// public repository of the project's own organization) prints the names
+		// the recording carries, and the reader's run prints theirs: the document
+		// writes the shell variable the reader sets ($ORG), the test names the
+		// recorded spelling. Only that whole name is replaced -- at a word
+		// boundary before it, and before `/`, a blank, `,` or the end after it --
+		// so a longer name that merely contains it is compared as written.
+		norm: func(f Field) Norm { return Recorded(f.Doc, f.Run) },
+	},
+	{
 		Name: "branch",
 		What: "branch= (the seal branch this run stamped with its instant)",
 		// nova-secrets carries a change on `seal/<seat>-<NAMES>-<stamp>` and names
@@ -224,13 +285,32 @@ func volatileNorms(fields []Field) ([]Norm, []Problem) {
 				f.Name, strings.Join(VolatileNames(), ", "))})
 			continue
 		}
-		if seen[f.Name] {
+		key := f.Name
+		if entry.Repeatable {
+			// A recorded name is named once, by one variable: a second entry for
+			// the same variable, or the same recorded name under a second
+			// variable, is refused as a declaration made twice.
+			if !shellVariable.MatchString(f.Doc) {
+				refusals = append(refusals, Problem{Message: fmt.Sprintf(
+					"the onboarding.Volatile entry %q is %s: its Doc is the shell variable the reader sets, `$NAME` in capitals, and this declaration gives Doc=%q.\nAny other spelling would let a declaration turn one value of the document into another.",
+					f.Name, entry.What, f.Doc)})
+				continue
+			}
+			if seen[f.Name+"\x01"+f.Run] && f.Run != "" {
+				refusals = append(refusals, Problem{Message: fmt.Sprintf(
+					"the transcript names the recorded name %q from the onboarding.Volatile table twice; one recorded name is written as one variable", f.Run)})
+				continue
+			}
+			seen[f.Name+"\x01"+f.Run] = true
+			key += "\x00" + f.Doc
+		}
+		if seen[key] {
 			refusals = append(refusals, Problem{Message: fmt.Sprintf(
 				"the transcript names %q from the onboarding.Volatile table twice; one declaration is the whole of what is not compared for that value",
 				f.Name)})
 			continue
 		}
-		seen[f.Name] = true
+		seen[key] = true
 		switch {
 		case entry.NeedsPath && (f.Doc == "" || f.Run == ""):
 			refusals = append(refusals, Problem{Message: fmt.Sprintf(

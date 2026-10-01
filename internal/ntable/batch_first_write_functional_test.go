@@ -9,15 +9,15 @@ package ntable_test
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"reflect"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func hashOf(t *testing.T, c *redis.Client, key string) map[string]string {
@@ -35,35 +35,25 @@ func TestBatchFirstWriteSnapshotMatchesOrdinaryWrite(t *testing.T) {
 	run := func(mode string) result {
 		c, tb := epochFixture(t)
 		ctx := context.Background()
-		if err := c.HSet(ctx, tb.EpochKey, "n", 1).Err(); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, c.HSet(ctx, tb.EpochKey, "n", 1).Err())
 		rev := c.HGet(ctx, ntable.DefKey(tb.Name)+":revision", "n").Val()
 		switch mode {
 		case "ordinary":
-			if err := ntable.MemberCreate(ctx, c, tb.Name, "f", ntable.WriteOptions{Epoch: 1}); err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, ntable.MemberCreate(ctx, c, tb.Name, "f", ntable.WriteOptions{Epoch: 1}))
 		case "batch-noop":
 			raw := `{"schema":1,"table":"epoch-test","epoch":"1","expected_table_revision":"` + rev + `","operation_id":"e1","actor":"p","members":[{"id":"f","expect":{"absent":true}}]}`
-			if ans, err := c.FCall(ctx, ntable.FnApply, []string{ntable.DefKey(tb.Name)}, tb.Name, raw).Slice(); err != nil || len(ans) == 0 || ans[0] != "OK" {
-				t.Fatalf("%s: %v %v", mode, trunc(ans), err)
-			}
+			ans, err := c.FCall(ctx, ntable.FnApply, []string{ntable.DefKey(tb.Name)}, tb.Name, raw).Slice()
+			require.True(t, replyOpens(ans, err, "OK"), "%s: %v: %v", mode, trunc(ans), err)
 		}
 		snap := hashOf(t, c, "table:epoch-test:1:definition")
-		if err := c.HSet(ctx, tb.EpochKey, "n", 2).Err(); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, c.HSet(ctx, tb.EpochKey, "n", 2).Err())
 		_, err := ntable.ReadAt(ctx, c, tb.Name, 1)
 		return result{snap, err}
 	}
 	o, b := run("ordinary"), run("batch-noop")
-	if !reflect.DeepEqual(o.snap, b.snap) {
-		t.Errorf("epoch-1 definition snapshots differ")
-	}
-	if o.read != nil || b.read != nil {
-		t.Errorf("ReadAt(1) after the epoch advanced: ordinary %v, batch %v", o.read, b.read)
-	}
+	assert.Equal(t, b.snap, o.snap, "epoch-1 definition snapshots differ")
+	assert.NoError(t, o.read, "ReadAt(1) after the epoch advanced: ordinary %v, batch %v", o.read, b.read)
+	assert.NoError(t, b.read, "ReadAt(1) after the epoch advanced: ordinary %v, batch %v", o.read, b.read)
 }
 
 // A batch as the first write of epoch 2, after an ordinary epoch 1, snapshots
@@ -72,36 +62,24 @@ func TestBatchFirstWriteOfALaterEpochKeepsBothHistories(t *testing.T) {
 	t.Parallel()
 	c, tb := epochFixture(t)
 	ctx := context.Background()
-	if err := c.HSet(ctx, tb.EpochKey, "n", 1).Err(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ntable.RowAdd(ctx, c, tb.Name, "build", ntable.RowSpec{}, ntable.WriteOptions{Epoch: 1}); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, c.HSet(ctx, tb.EpochKey, "n", 1).Err())
+	_, err := ntable.RowAdd(ctx, c, tb.Name, "build", ntable.RowSpec{}, ntable.WriteOptions{Epoch: 1})
+	require.NoError(t, err)
 	s1 := hashOf(t, c, "table:epoch-test:1:definition")
-	if err := c.HSet(ctx, tb.EpochKey, "n", 2).Err(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, c.HSet(ctx, tb.EpochKey, "n", 2).Err())
 	rev := c.HGet(ctx, ntable.DefKey(tb.Name)+":revision", "n").Val()
 	raw := `{"schema":1,"table":"epoch-test","epoch":"2","expected_table_revision":"` + rev + `","operation_id":"e2","actor":"p","members":[{"id":"g","expect":{"absent":true}}]}`
-	if ans, err := c.FCall(ctx, ntable.FnApply, []string{ntable.DefKey(tb.Name)}, tb.Name, raw).Slice(); err != nil || len(ans) == 0 || ans[0] != "OK" {
-		t.Fatalf("apply at epoch 2: %v %v", trunc(ans), err)
-	}
+	ans, err := c.FCall(ctx, ntable.FnApply, []string{ntable.DefKey(tb.Name)}, tb.Name, raw).Slice()
+	require.True(t, replyOpens(ans, err, "OK"), "apply at epoch 2: %v: %v", trunc(ans), err)
 	s2 := hashOf(t, c, "table:epoch-test:2:definition")
 	delete(s1, "_revision")
 	delete(s2, "_revision")
-	if !reflect.DeepEqual(s1, s2) {
-		t.Errorf("epoch-2 snapshot from a batch differs from epoch-1 snapshot from an ordinary write")
-	}
-	if err := c.HSet(ctx, tb.EpochKey, "n", 3).Err(); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := ntable.ReadAt(ctx, c, tb.Name, 2); err != nil {
-		t.Errorf("ReadAt(2): %v", err)
-	}
-	if _, err := ntable.ReadAt(ctx, c, tb.Name, 1); err != nil {
-		t.Errorf("ReadAt(1): %v", err)
-	}
+	assert.Equal(t, s2, s1, "epoch-2 snapshot from a batch differs from epoch-1 snapshot from an ordinary write")
+	require.NoError(t, c.HSet(ctx, tb.EpochKey, "n", 3).Err())
+	_, err = ntable.ReadAt(ctx, c, tb.Name, 2)
+	assert.NoError(t, err, "ReadAt(2)")
+	_, err = ntable.ReadAt(ctx, c, tb.Name, 1)
+	assert.NoError(t, err, "ReadAt(1)")
 }
 
 func batchRaw(ctx context.Context, c *redis.Client, rev, op, members string) ([]any, error) {
@@ -116,25 +94,18 @@ func TestBatchRestoresAMissingIdentity(t *testing.T) {
 	var images [2]map[string]string
 	for i, viaApply := range []bool{false, true} {
 		c, ctx := probeTable(t)
-		if err := c.Del(ctx, ntable.DefKey("demo")+":identity").Err(); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, c.Del(ctx, ntable.DefKey("demo")+":identity").Err())
 		if viaApply {
 			ans, err := batchRaw(ctx, c, probeRev(ctx, c), "id", `{"id":"q","expect":{"absent":true},"create":{"row":"build","col":"ready","score":1}}`)
-			if err != nil || len(ans) == 0 || ans[0] != "OK" {
-				t.Fatalf("apply: %v %v", trunc(ans), err)
-			}
-		} else if _, err := ntable.CellAdd(ctx, c, "demo", "build", "ready", "q", 1); err != nil {
-			t.Fatal(err)
+			require.True(t, replyOpens(ans, err, "OK"), "apply: %v %v", trunc(ans), err)
+		} else {
+			_, err := ntable.CellAdd(ctx, c, "demo", "build", "ready", "q", 1)
+			require.NoError(t, err)
 		}
 		images[i] = c.HGetAll(ctx, ntable.DefKey("demo")+":identity").Val()
-		if len(images[i]) == 0 {
-			t.Errorf("viaApply=%v: identity not restored", viaApply)
-		}
+		assert.NotEmpty(t, images[i], "viaApply=%v: identity not restored", viaApply)
 	}
-	if !reflect.DeepEqual(images[0], images[1]) {
-		t.Errorf("identity after ordinary write %v, after batch %v", images[0], images[1])
-	}
+	assert.Equal(t, images[1], images[0], "identity after ordinary write %v, after batch %v", images[0], images[1])
 }
 
 // A missing template and its catalog entry are met by a batch exactly as by an
@@ -142,24 +113,15 @@ func TestBatchRestoresAMissingIdentity(t *testing.T) {
 func TestBatchMissingTemplateMatchesOrdinaryWrite(t *testing.T) {
 	t.Parallel()
 	c, ctx := probeTable(t)
-	if err := c.Del(ctx, ntable.DefKey("demo")).Err(); err != nil {
-		t.Fatal(err)
-	}
-	if err := c.SRem(ctx, "tables", "demo").Err(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, c.Del(ctx, ntable.DefKey("demo")).Err())
+	require.NoError(t, c.SRem(ctx, "tables", "demo").Err())
 	before := storeImage(t, c)
 	_, ordinary := ntable.CellAdd(ctx, c, "demo", "build", "ready", "q", 1)
 	ans, err := batchRaw(ctx, c, "0", "tpl", `{"id":"q","expect":{"absent":true},"create":{"row":"build","col":"ready","score":1}}`)
-	if ordinary == nil || !errors.Is(ordinary, ntable.ErrNoTable) {
-		t.Fatalf("ordinary write on a missing template: %v", ordinary)
-	}
-	if err != nil || len(ans) < 2 || ans[0] != "REFUSED" || ans[1] != "NOTABLE" {
-		t.Errorf("batch on a missing template: %v %v, want REFUSED NOTABLE", trunc(ans), err)
-	}
-	if !reflect.DeepEqual(before, storeImage(t, c)) {
-		t.Errorf("a refused write changed the store")
-	}
+	require.Error(t, ordinary, "ordinary write on a missing template: %v", ordinary)
+	require.ErrorIs(t, ordinary, ntable.ErrNoTable, "ordinary write on a missing template: %v", ordinary)
+	assert.True(t, replyOpens(ans, err, "REFUSED", "NOTABLE"), "batch on a missing template: %v %v, want REFUSED NOTABLE", trunc(ans), err)
+	assert.Equal(t, before, storeImage(t, c), "a refused write changed the store")
 }
 
 // A thousand unset fields are one commit: one revision step, one change event,
@@ -172,9 +134,7 @@ func TestBatchUnsetOfAThousandFieldsIsOneCommit(t *testing.T) {
 	for i := 0; i < ntable.LimitUnsetFields; i++ {
 		fields[fmt.Sprintf("u%d", i)] = "v"
 	}
-	if err := c.HSet(ctx, ntable.MemberKey("a"), fields).Err(); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, c.HSet(ctx, ntable.MemberKey("a"), fields).Err())
 	rev := probeRev(ctx, c)
 	events := c.XLen(ctx, ntable.DefKey("demo")+":changes").Val()
 	names := make([]string, ntable.LimitUnsetFields)
@@ -182,26 +142,19 @@ func TestBatchUnsetOfAThousandFieldsIsOneCommit(t *testing.T) {
 		names[i] = fmt.Sprintf(`"u%d"`, i)
 	}
 	ans, err := batchRaw(ctx, c, rev, "chunk", `{"id":"a","expect":{},"unset":[`+strings.Join(names, ",")+`]}`)
-	if err != nil || len(ans) == 0 || ans[0] != "OK" {
-		t.Fatalf("unset: %v %v", trunc(ans), err)
-	}
-	if left := c.HLen(ctx, ntable.MemberKey("a")).Val(); left != 4 { // epoch, place:demo, revision, role
-		t.Errorf("fields left = %d, want 4", left)
-	}
+	require.True(t, replyOpens(ans, err, "OK"), "unset: %v %v", trunc(ans), err)
+	left := c.HLen(ctx, ntable.MemberKey("a")).Val()
+	assert.Equal(t, int64(4), left, "fields left, want 4 (epoch, place:demo, revision, role)")
 	after := probeRev(ctx, c)
-	if n, m := mustUint(t, rev), mustUint(t, after); m != n+1 {
-		t.Errorf("table revision %s -> %s, want one step", rev, after)
-	}
-	if got := c.XLen(ctx, ntable.DefKey("demo")+":changes").Val() - events; got != 1 {
-		t.Errorf("%d change events, want 1", got)
-	}
+	n, m := mustUint(t, rev), mustUint(t, after)
+	assert.Equal(t, n+1, m, "table revision %s -> %s, want one step", rev, after)
+	got := c.XLen(ctx, ntable.DefKey("demo")+":changes").Val() - events
+	assert.Equal(t, int64(1), got, "%d change events, want 1", got)
 }
 
 func mustUint(t *testing.T, s string) uint64 {
 	t.Helper()
 	n, err := strconv.ParseUint(s, 10, 64)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return n
 }

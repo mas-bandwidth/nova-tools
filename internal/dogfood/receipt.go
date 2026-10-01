@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 )
 
 // Receipt is one person saying: I ran this verb, on this day, on real work, and
@@ -231,24 +233,7 @@ func Record(dir string, r Receipt) (string, error) {
 		slug(r.Tool), slug(r.Verb), slug(r.By), sum)
 	final := filepath.Join(dir, name)
 
-	tmp, err := os.CreateTemp(dir, ".receipt-*.tmp")
-	if err != nil {
-		return "", fmt.Errorf("receipts: %w", err)
-	}
-	tmpName := tmp.Name()
-	defer os.Remove(tmpName) // no-op once the rename has taken it away
-	if _, err := tmp.Write(line); err != nil {
-		tmp.Close()
-		return "", fmt.Errorf("receipts: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		return "", fmt.Errorf("receipts: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return "", fmt.Errorf("receipts: %w", err)
-	}
-	if err := os.Rename(tmpName, final); err != nil {
+	if err := atomicfile.Write(filepath.Clean(final), line, 0o600, atomicfile.ExactMode()); err != nil {
 		return "", fmt.Errorf("receipts: %w", err)
 	}
 	return final, nil

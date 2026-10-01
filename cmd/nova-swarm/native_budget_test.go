@@ -17,12 +17,9 @@ import (
 //
 // THE CLAUSES OF 13d THIS FILE HOLDS:
 //
-//	"`native` without `--tokens` is exit 2 naming the flag and makes no directory,
-//	 `--tokens 0` is refused, and `batch --cards` without it is exit 2 before any card
-//	 starts"
+//	"`native` without `--tokens` is exit 2 naming the flag and makes no directory, and
+//	 `--tokens 0` is refused"
 //	"`--tokens unmetered` prints `budget=unmetered`"
-//	"the batch's local and remote `native` argv both carry `--tokens` with the batch's own
-//	 word, and a `--runner` receives it as its sixth argument"
 //
 // The rest of 13d -- the sampler, the stop, the two-launch accounting, the packet -- comes
 // in the slices after this one, and each is red from its own clause before it is green.

@@ -47,9 +47,25 @@ const (
 )
 
 // MaxRedeals is how many times one attempt's work card is dealt again after
-// its member went down or away (its redeals counter, which no take resets):
-// past it the card stays withdrawn, and the bound's judgment names it.
+// a take of it ended without a finish, its member down or away while the card
+// was working (its redeals counter, which no take resets). A card that was
+// ready, never taken, is dealt again and keeps its count: a card is retired
+// for repeated failure at members, never for members flapping while it sat
+// ready. A working card whose member goes down with its count at the bound
+// stays withdrawn, and the bound's judgment names it (docs/SPEC-SPRINT.md
+// section 2, the work card's redeals; tla/DirtyTick.tla RedealsAreEndedTakes
+// and RedealBoundHolds).
 const MaxRedeals = 3
+
+// FieldTakeEnded is the work card's mark that a take of it ended without a
+// finish and it was withdrawn (no member had room, or it is at its bound):
+// the deal that places it again counts that take, and unsets the mark.
+const FieldTakeEnded = "take_ended"
+
+// FieldReturnedAttempt is the primary's attempt when the coordinator last
+// returned it to review (return): at that attempt the pump does not accept
+// it, and the judgment "returned to review" decides it.
+const FieldReturnedAttempt = "returned_attempt"
 
 // The tick's own notification types.
 const (
@@ -229,6 +245,9 @@ func TickAccept(s *Snapshot, r TickReq) (Plan, int) {
 		if c.F("result") == "failed" || len(okReaders(s, c)) < 2 {
 			return "not two ok reads"
 		}
+		if why := AcceptHeld(c); why != "" {
+			return why
+		}
 		if s.Held[c.ID] {
 			return "a change is queued for it"
 		}
@@ -267,6 +286,42 @@ func TickAccept(s *Snapshot, r TickReq) (Plan, int) {
 		p.Notes = append(p.Notes, n)
 	}
 	return p, 0
+}
+
+// AcceptHeld is why the pump leaves a primary in review that has ok reads
+// from two different readers at its head for the coordinator, "" when it
+// accepts it (R9's two holds, docs/SPEC-SPRINT.md section 6):
+//   - its CI is red at its head (CIRedAtHead): "ci red on a primary" is the
+//     coordinator's to decide (rework, return, drop, ack); the coordinator's
+//     accept still takes it;
+//   - it was returned to review at its attempt (ReturnedAtAttempt): the
+//     coordinator sent it back, and "returned to review" decides it (rework,
+//     accept, drop); its reads stand, but only a new attempt's two reads are
+//     the pump's to accept.
+//
+// The holder of a primary in review (reviewAccepts) and reviewJudgment read
+// the same holds, so no primary in review is silent. The model is
+// tla/DirtyTick.tla Held and AcceptHolds.
+func AcceptHeld(c *Card) string {
+	switch {
+	case CIRedAtHead(c):
+		return "its CI is red at its head " + orDash(c.F("head"))
+	case ReturnedAtAttempt(c):
+		return "it was returned to review at attempt " + c.F("attempt")
+	}
+	return ""
+}
+
+// CIRedAtHead says the primary's last CI observation is red, for its current
+// head (a red for an older head is not about the work in review).
+func CIRedAtHead(c *Card) bool {
+	return c.F("ci") == "red" && c.F("ci_head") == c.F("head")
+}
+
+// ReturnedAtAttempt says the coordinator returned the primary to review at
+// its current attempt.
+func ReturnedAtAttempt(c *Card) bool {
+	return c.F(FieldReturnedAttempt) != "" && c.Int(FieldReturnedAttempt) == c.Int("attempt")
 }
 
 // Empty says a plan writes nothing.
@@ -397,16 +452,25 @@ func TickDeal(s *Snapshot, r TickReq) (Plan, int) {
 }
 
 // AtRedealBound is the primary's withdrawn work card when it is at its
-// redeal bound: the tick deals it no more. nil when it is not.
+// redeal bound: a take of it ended (FieldTakeEnded) with its count at
+// MaxRedeals, so the deal that would place it again would pass the bound. The
+// tick deals it no more. nil when it is not: a card withdrawn while ready
+// keeps its count and is dealt again (tla/DirtyTick.tla AtRB).
 func AtRedealBound(s *Snapshot, pr *Card) *Card {
 	if pr == nil || pr.Col != Ready {
 		return nil
 	}
 	wc := s.Fleet.Placed(WorkCardID(pr.ID, pr.Int("attempt")))
-	if wc != nil && wc.Col == Withdrawn && wc.Int("redeals") >= MaxRedeals {
+	if wc != nil && wc.Col == Withdrawn && redealBound(wc) {
 		return wc
 	}
 	return nil
+}
+
+// redealBound says the withdrawn work card's next deal would count a take
+// past MaxRedeals.
+func redealBound(wc *Card) bool {
+	return wc.F(FieldTakeEnded) != "" && wc.Int("redeals") >= MaxRedeals
 }
 
 // T4. TickLevel evens the up members' ready queues when two differ by more

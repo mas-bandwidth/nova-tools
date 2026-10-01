@@ -290,20 +290,11 @@ func ParseDenyList(spec string) ([]string, error) {
 // exempt lists elsewhere in this repo obey. The deny-list runs the other way:
 // it is a floor that ships with the tool, because a narrowing that goes
 // missing fails open and a floor that ships cannot.
-//
-// Stage selects the read substrate: false (the default) walks the tree
-// under Dir; true reads the staged content of Dir as the index carries
-// it. The two paths share the same floor lists, the same --allow
-// prefixing, and the same NAME/LOCATION/EXTENSION rules — the substrate
-// is only what feeds the executable-bit check (the walk's perm, the
-// index's DstMode) and the shebang check (the walk's Peek(2) on the
-// file, the index's first two bytes through ONE cat-file --batch pipe).
 type NoCodeOptions struct {
 	Dir        string   // root of the tree being guarded (required)
 	Allow      []string // path prefixes where machinery may live; empty by default
 	DenyExt    []string // effective deny-list; empty means the floor list
 	DenySource string   // provenance; required when DenyExt is set
-	Stage      bool     // read the index, not the working tree
 }
 
 // NoCode reports every file that is machinery living inside a prose-only tree.
@@ -322,14 +313,6 @@ type NoCodeOptions struct {
 // A file that cannot be read produces a finding rather than a pass. Making a
 // file less readable must not make this gate greener.
 func NoCode(opts NoCodeOptions) (scanned int, findings []Failure, err error) {
-	if opts.Stage {
-		// The index path keeps the same call surface and the same
-		// flag set; only the substrate changes. The cmd/nova-check
-		// nocode command reaches for this entry today for the walk;
-		// a future `--staged` flag would set opts.Stage and reach
-		// the audit's index counterpart from the same line.
-		return noCodeStaged(opts)
-	}
 	rules, err := newNoCodeRules(opts)
 	if err != nil {
 		return 0, nil, err
@@ -435,13 +418,10 @@ func isAllowed(rel string, allow []string) bool {
 // Its two substrate-bound inputs are supplied by the caller (docs/SPEC.md,
 // "What called unchanged costs"): the permission-bit value, and a reader for
 // the first two bytes with its read error. The walk supplies them from the
-// filesystem (peekTwoFile), a staged/index caller from the index record and
-// the blob (readFirstTwo over the blob's bytes), and both call this one
-// function, so parity holds by construction rather than by transcription.
+// filesystem (peekTwoFile); a test supplies them from a blob's bytes.
 //
-// The PATH-SIDE rules (name, location, extension) are the stream's
-// `pathOnlyReasons`, shared with the index-side classifier in
-// nocode_staged.go (SPEC.md 858).
+// The PATH-SIDE rules (name, location, extension) are `pathOnlyReasons`
+// (SPEC.md 858).
 //
 // peekTwo returns AT MOST the first two bytes: fewer for a short or empty
 // file, which is not an error. Whether those bytes are "#!" is decided here
@@ -474,12 +454,31 @@ func classifyParametrised(rel string, perm os.FileMode, isLink bool, denySet map
 	return reasons
 }
 
+// pathOnlyReasons returns the path-side reasons: name, location and
+// extension. The spec pins them to one statement (SPEC.md 858).
+func pathOnlyReasons(rel string, denySet map[string]bool, source string, denyNames map[string]bool, denyPrefixes []string) []string {
+	var reasons []string
+	if base := strings.TrimSpace(strings.ToLower(filepath.Base(rel))); denyNames[base] {
+		reasons = append(reasons, fmt.Sprintf("build machinery by name %s (floor name list)", base))
+	}
+	lowerRel := strings.ToLower(rel)
+	for _, pre := range denyPrefixes {
+		if lowerRel == pre || strings.HasPrefix(lowerRel, pre+"/") {
+			reasons = append(reasons, fmt.Sprintf("machinery by location %s/ (floor name list)", pre))
+			break
+		}
+	}
+	if ext := strings.TrimSpace(strings.ToLower(filepath.Ext(rel))); denySet[ext] {
+		reasons = append(reasons, fmt.Sprintf("code extension %s (%s)", ext, source))
+	}
+	return reasons
+}
+
 // noCodeRules is everything NoCode resolves once per run before it looks at a
 // single file: the effective extension deny-set and its provenance
 // (--deny-ext replaces the floor, --deny-ext-add extends it), the name and
 // path floors, and the --allow prefixes. The walk builds it from
-// NoCodeOptions; a staged/index caller builds it from the same options, so the
-// flags act identically on both substrates.
+// NoCodeOptions.
 type noCodeRules struct {
 	denySet      map[string]bool
 	source       string

@@ -5,10 +5,12 @@ import (
 	"encoding/hex"
 	"os"
 	"path/filepath"
-	"reflect"
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestModuleReferencesReadsEveryFormAndNothingElse(t *testing.T) {
@@ -50,9 +52,7 @@ func TestModuleReferencesReadsEveryFormAndNothingElse(t *testing.T) {
 	}
 	for _, tc := range tests {
 		got := ModuleReferences([]byte(tc.text))
-		if !reflect.DeepEqual(got, tc.want) {
-			t.Errorf("%s: %v, want %v", tc.name, got, tc.want)
-		}
+		assert.Equal(t, tc.want, got, "%s: %v, want %v", tc.name, got, tc.want)
 	}
 }
 
@@ -91,9 +91,7 @@ func paths(in []Input) []string {
 func testSource(t *testing.T, root string) Source {
 	t.Helper()
 	plan, err := os.ReadFile(filepath.Join(root, "tla", CasesFile))
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	return Source{TLADir: filepath.Join(root, "tla"), Plan: plan, Runner: map[string][]byte{"internal/tlc/run.go": []byte("runner\n")}}
 }
 
@@ -101,31 +99,22 @@ func TestInputsAreTheCasesConfigurationItsModulesAndItsRow(t *testing.T) {
 	t.Parallel()
 	src := testSource(t, inputsTree(t))
 	got, err := src.Inputs("MCTop.cfg")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	want := []string{
 		"internal/tlc/run.go", "tla/CASES.tsv#MCTop.cfg", "tla/Cyc.tla", "tla/Leaf.tla", "tla/MCTop.cfg",
 		"tla/MCTop.tla", "tla/Mid.tla", "tla/Shared.tla",
 	}
-	if !reflect.DeepEqual(paths(got), want) {
-		t.Fatalf("inputs %v, want %v", paths(got), want)
-	}
+	require.Equal(t, want, paths(got), "inputs %v, want %v", paths(got), want)
 	// Another case of the same module reads the same models and its own row.
 	broken, err := src.Inputs("MCTopBroken.cfg")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	wantBroken := append([]string(nil), want...)
 	wantBroken[1], wantBroken[4] = "tla/CASES.tsv#MCTopBroken.cfg", "tla/MCTopBroken.cfg"
 	sort.Strings(wantBroken)
-	if !reflect.DeepEqual(paths(broken), wantBroken) {
-		t.Fatalf("inputs %v, want %v", paths(broken), wantBroken)
-	}
+	require.Equal(t, wantBroken, paths(broken), "inputs %v, want %v", paths(broken), wantBroken)
 	lone, err := src.Inputs("MCLone.cfg")
-	if err != nil || !reflect.DeepEqual(paths(lone), []string{"internal/tlc/run.go", "tla/CASES.tsv#MCLone.cfg", "tla/MCLone.cfg", "tla/MCLone.tla"}) {
-		t.Fatalf("inputs %v, %v", paths(lone), err)
-	}
+	require.NoError(t, err, "inputs %v, %v", paths(lone), err)
+	require.Equal(t, []string{"internal/tlc/run.go", "tla/CASES.tsv#MCLone.cfg", "tla/MCLone.cfg", "tla/MCLone.tla"}, paths(lone), "inputs %v, %v", paths(lone), err)
 }
 
 // The digest is over each input's path and the hash of its bytes, in path
@@ -134,28 +123,22 @@ func TestDigestIsThePathsAndHashesInOrder(t *testing.T) {
 	t.Parallel()
 	src := testSource(t, inputsTree(t))
 	in, err := src.Inputs("MCLone.cfg")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	hash := func(s string) string { h := sha256.Sum256([]byte(s)); return hex.EncodeToString(h[:]) }
 	row := "config\tmodule\texpected\tproperty\tdeadlock\tgroup\tgate\tdebt\nMCLone.cfg\tMCLone.tla\tpass\t-\tcheck\tbeta\trequired\t-\n"
 	text := "internal/tlc/run.go\x00" + hash("runner\n") + "\n" +
 		"tla/CASES.tsv#MCLone.cfg\x00" + hash(row) + "\n" +
 		"tla/MCLone.cfg\x00" + hash("SPECIFICATION Spec\n") + "\n" +
 		"tla/MCLone.tla\x00" + hash("EXTENDS FiniteSets\n====\n") + "\n"
-	if got := Digest(in); got != hash(text) {
-		t.Fatalf("digest %s, by hand %s", got, hash(text))
-	}
+	got := Digest(in)
+	require.Equal(t, hash(text), got, "digest %s, by hand %s", got, hash(text))
 	// Order of the list does not change it, and nothing but path and bytes
 	// does: the same tree in another directory has the same digest.
 	reversed := []Input{in[3], in[2], in[1], in[0]}
-	if Digest(reversed) != Digest(in) {
-		t.Fatal("the digest depends on the order it is handed the inputs in")
-	}
+	require.Equal(t, Digest(in), Digest(reversed), "the digest depends on the order it is handed the inputs in")
 	other := testSource(t, inputsTree(t))
-	if a, b := Digest(in), func() string { x, _ := other.Inputs("MCLone.cfg"); return Digest(x) }(); a != b {
-		t.Fatalf("the same files in another directory: %s and %s", a, b)
-	}
+	a, b := Digest(in), func() string { x, _ := other.Inputs("MCLone.cfg"); return Digest(x) }()
+	require.Equal(t, a, b, "the same files in another directory: %s and %s", a, b)
 	if fp, n, err := src.Fingerprint("MCLone.cfg"); err != nil || fp != Digest(in) || n != 4 {
 		t.Fatalf("fingerprint %s over %d files (%v)", fp, n, err)
 	}
@@ -185,9 +168,7 @@ func TestInputsRefuseACaseTheyCannotResolve(t *testing.T) {
 		{"a module the plan names that is not a file", files(nil), "MCNoModule.cfg", "its module MCNoModule.tla cannot be read"},
 		{"a configuration that is not a file", func() Source {
 			s := files(nil)
-			if err := os.Remove(filepath.Join(s.TLADir, "MCTop.cfg")); err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, os.Remove(filepath.Join(s.TLADir, "MCTop.cfg")))
 			return s
 		}(), "MCTop.cfg", "its configuration cannot be read"},
 		{"an extended module that is not a file and not standard", files(map[string]string{"MCTop.tla": "EXTENDS Naturals, Nowhere\n"}), "MCTop.cfg", "module MCTop.tla names Nowhere, which is neither tla/Nowhere.tla nor one of TLC's standard modules"},
@@ -198,9 +179,8 @@ func TestInputsRefuseACaseTheyCannotResolve(t *testing.T) {
 		{"a case named twice", files(map[string]string{"CASES.tsv": header + row("MCTop.cfg", "MCTop.tla", "pass", "-", "check", "alpha", "required", "-") + row("MCTop.cfg", "MCTop.tla", "pass", "-", "check", "alpha", "required", "-")}), "MCTop.cfg", "names MCTop.cfg twice"},
 	}
 	for _, tc := range tests {
-		if _, err := tc.src.Inputs(tc.config); err == nil || !strings.Contains(err.Error(), tc.want) {
-			t.Errorf("%s: %v, want %q", tc.name, err, tc.want)
-		}
+		_, err := tc.src.Inputs(tc.config)
+		assert.ErrorContains(t, err, tc.want, "%s: %v, want %q", tc.name, err, tc.want)
 	}
 }
 
@@ -212,9 +192,8 @@ func TestAFileUnderTlaShadowsAStandardModule(t *testing.T) {
 		"MCA.tla":   "EXTENDS Naturals\n", "MCA.cfg": "c\n", "Naturals.tla": "own\n",
 	})
 	got, err := testSource(t, root).Inputs("MCA.cfg")
-	if err != nil || !strings.Contains(strings.Join(paths(got), " "), "tla/Naturals.tla") {
-		t.Fatalf("inputs %v, %v", paths(got), err)
-	}
+	require.NoError(t, err, "inputs %v, %v", paths(got), err)
+	require.Contains(t, strings.Join(paths(got), " "), "tla/Naturals.tla", "inputs %v, %v", paths(got), err)
 }
 
 // The repository's own plan: every case resolves, every case reads the runner
@@ -224,13 +203,9 @@ func TestEveryCaseOfTheRepositoryResolvesToItsOwnInputs(t *testing.T) {
 	t.Parallel()
 	root := filepath.Join("..", "..")
 	cases, err := LoadCases(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	src, err := SourceAt(root)
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	reads := map[string][]string{}
 	for _, c := range cases {
 		in, err := src.Inputs(c.Config)
@@ -241,19 +216,15 @@ func TestEveryCaseOfTheRepositoryResolvesToItsOwnInputs(t *testing.T) {
 		reads[c.Config] = paths(in)
 		joined := " " + strings.Join(paths(in), " ") + " "
 		for _, need := range []string{"tla/" + c.Config, "tla/" + c.Module, CasesRowPath(c.Config), "internal/tlc/run.go", "internal/tlc/outcome.go", "internal/tlc/suite.go"} {
-			if !strings.Contains(joined, " "+need+" ") {
-				t.Errorf("%s does not read %s", c.Config, need)
-			}
+			assert.Contains(t, joined, " "+need+" ", "%s does not read %s", c.Config, need)
 		}
 	}
 	for config, read := range reads {
 		for _, name := range BookkeepingFiles {
-			if slicesContains(read, RunnerDir+"/"+name) {
-				t.Errorf("%s reads %s, a bookkeeping file: extending it must stale nothing", config, name)
-			}
+			assert.False(t, slicesContains(read, RunnerDir+"/"+name), "%s reads %s, a bookkeeping file: extending it must stale nothing", config, name)
 		}
 	}
-	if strings.Contains(strings.Join(reads["MCFileLock.cfg"], " "), "MemberTable") || strings.Contains(strings.Join(reads["MCMemberTable.cfg"], " "), "FileLock") {
+	if strings.Contains(strings.Join(reads["MCFirstConn.cfg"], " "), "MemberTable") || strings.Contains(strings.Join(reads["MCMemberTable.cfg"], " "), "FirstConn") {
 		t.Error("two models that share nothing read each other's files")
 	}
 }
@@ -277,21 +248,13 @@ func TestOnlyTheResultFilesOfTheRunnerAreInputs(t *testing.T) {
 		src.Runner[RunnerDir+"/"+n] = []byte(n + "\n")
 	}
 	before, _, err := src.Fingerprint("MCLone.cfg")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	built, err := RunnerFiles()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(built) != len(ResultFiles) {
-		t.Fatalf("the binary carries %d runner files, %d are result files", len(built), len(ResultFiles))
-	}
+	require.NoError(t, err)
+	require.Len(t, built, len(ResultFiles), "the binary carries %d runner files, %d are result files", len(built), len(ResultFiles))
 	for name := range built {
 		base := filepath.Base(name)
-		if !slicesContains(ResultFiles, base) {
-			t.Errorf("%s is embedded and is not a result file", name)
-		}
+		assert.True(t, slicesContains(ResultFiles, base), "%s is embedded and is not a result file", name)
 	}
 	for _, n := range ResultFiles {
 		other := testSource(t, inputsTree(t))
@@ -300,9 +263,8 @@ func TestOnlyTheResultFilesOfTheRunnerAreInputs(t *testing.T) {
 			other.Runner[k] = v
 		}
 		other.Runner[RunnerDir+"/"+n] = []byte("edited\n")
-		if after, _, _ := other.Fingerprint("MCLone.cfg"); after == before {
-			t.Errorf("editing the result file %s left the fingerprint unchanged", n)
-		}
+		after, _, _ := other.Fingerprint("MCLone.cfg")
+		assert.NotEqual(t, before, after, "editing the result file %s left the fingerprint unchanged", n)
 	}
 }
 
@@ -315,22 +277,14 @@ func TestUnknownModuleRefusalNamesTheNextAction(t *testing.T) {
 		"MCA.tla":   "EXTENDS Naturals, Nowhere\n", "MCA.cfg": "c\n",
 	})
 	_, err := testSource(t, root).Inputs("MCA.cfg")
-	if err == nil {
-		t.Fatal("refused nothing")
-	}
+	require.Error(t, err, "refused nothing")
 	for _, want := range []string{"neither tla/Nowhere.tla nor one of TLC's standard modules", "add the module file tla/Nowhere.tla", "add the name to standardModules in internal/tlc/inputs.go"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("%q lacks %q", err, want)
-		}
+		assert.ErrorContains(t, err, want, "%q lacks %q", err, want)
 	}
 	for _, name := range []string{"Bags", "FiniteSets", "Integers", "Naturals", "Randomization", "RealTime", "Reals", "Sequences", "TLC", "Toolbox"} {
-		if !standardModules[name] {
-			t.Errorf("%s is bundled by the jar and is not in standardModules", name)
-		}
+		assert.True(t, standardModules[name], "%s is bundled by the jar and is not in standardModules", name)
 	}
-	if len(standardModules) != 10 {
-		t.Errorf("standardModules holds %d names; the jar bundles ten", len(standardModules))
-	}
+	assert.Len(t, standardModules, 10, "standardModules holds %d names; the jar bundles ten", len(standardModules))
 }
 
 // A module reached through a nested module's closing line is still followed to
@@ -343,9 +297,8 @@ func TestInputsFollowAModuleNamedAfterANestedModule(t *testing.T) {
 		"C.tla":     "EXTENDS Naturals\n====\n", "MCA.cfg": "c\n",
 	})
 	got, err := testSource(t, root).Inputs("MCA.cfg")
-	if err != nil || !slicesContains(paths(got), "tla/C.tla") {
-		t.Fatalf("inputs %v, %v", paths(got), err)
-	}
+	require.NoError(t, err, "inputs %v, %v", paths(got), err)
+	require.True(t, slicesContains(paths(got), "tla/C.tla"), "inputs %v, %v", paths(got), err)
 }
 
 // A module's references are parsed once per distinct text, however many cases
@@ -361,51 +314,37 @@ func TestAModulesReferencesAreParsedOncePerText(t *testing.T) {
 	for _, name := range []string{"MCTop", "Mid", "Leaf", "Shared", "Cyc", "MCLone"} {
 		path := filepath.Join(root, "tla", name+".tla")
 		raw, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, err)
 		texts[name] = append([]byte(mark+name+"\n"), raw...)
-		if err := os.WriteFile(path, texts[name], 0o644); err != nil {
-			t.Fatal(err)
-		}
+		require.NoError(t, os.WriteFile(path, texts[name], 0o644))
 	}
 	src := testSource(t, root)
 	var first []string
 	for round := 0; round < 3; round++ {
 		for _, config := range []string{"MCTop.cfg", "MCTopBroken.cfg", "MCLone.cfg"} {
 			in, err := src.Inputs(config)
-			if err != nil {
-				t.Fatal(err)
-			}
+			require.NoError(t, err)
 			if config == "MCTop.cfg" && round == 0 {
 				first = paths(in)
 			}
 		}
 	}
 	for name, text := range texts {
-		if got := referencesParsedCount(text); got != 1 {
-			t.Errorf("%s was parsed %d times by nine fingerprints, want once", name, got)
-		}
+		got := referencesParsedCount(text)
+		assert.Equal(t, int64(1), got, "%s was parsed %d times by nine fingerprints, want once", name, got)
 	}
 	// An edit that adds a reference is seen at once, and the edited text is
 	// parsed once, as is the module it newly names.
 	edited := []byte(mark + "EXTENDS Shared, Unread\n====\n")
-	if err := os.WriteFile(filepath.Join(root, "tla", "Leaf.tla"), edited, 0o644); err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, os.WriteFile(filepath.Join(root, "tla", "Leaf.tla"), edited, 0o644))
 	for i := 0; i < 2; i++ {
 		in, err := src.Inputs("MCTop.cfg")
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !slicesContains(paths(in), "tla/Unread.tla") || slicesContains(first, "tla/Unread.tla") {
-			t.Fatalf("the edited module's new reference: before %v, after %v", first, paths(in))
-		}
+		require.NoError(t, err)
+		require.True(t, slicesContains(paths(in), "tla/Unread.tla"), "the edited module's new reference: before %v, after %v", first, paths(in))
+		require.False(t, slicesContains(first, "tla/Unread.tla"), "the edited module's new reference: before %v, after %v", first, paths(in))
 	}
-	if got := referencesParsedCount(edited); got != 1 {
-		t.Errorf("the edited text was parsed %d times, want once", got)
-	}
-	if got := referencesParsedCount(texts["Leaf"]); got != 1 {
-		t.Errorf("the text before the edit was parsed %d times, want the once it was", got)
-	}
+	got := referencesParsedCount(edited)
+	assert.Equal(t, int64(1), got, "the edited text was parsed %d times, want once", got)
+	got = referencesParsedCount(texts["Leaf"])
+	assert.Equal(t, int64(1), got, "the text before the edit was parsed %d times, want the once it was", got)
 }

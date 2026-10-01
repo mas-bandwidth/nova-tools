@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/mas-bandwidth/nova-tools/internal/sprint"
 )
 
@@ -66,15 +68,11 @@ func TestEveryMemberWhoseBeatLapsedGoesDownInOneTick(t *testing.T) {
 		}
 	}
 	d := h.dealtTo()
-	if d["m1"] != 0 || d["m2"] != 0 || d["m3"] != 8 || d["m4"] != 8 {
-		t.Fatalf("after one tick: dealt %v, want m3 and m4 at their width of 8 and nothing on m1 and m2", d)
+	for m, want := range map[string]int{"m1": 0, "m2": 0, "m3": 8, "m4": 8} {
+		require.Equal(t, want, d[m], "after one tick: dealt %v, want m3 and m4 at their width of 8 and nothing on m1 and m2", d)
 	}
-	if n := len(s.Fleet.Column(sprint.Withdrawn)); n != 12 {
-		t.Fatalf("%d cards withdrawn, want 12", n)
-	}
-	if n := len(s.Work.Column(sprint.Ready)); n != 12 {
-		t.Fatalf("%d primaries ready again, want the 12 withdrawn cards' primaries", n)
-	}
+	require.Len(t, s.Fleet.Column(sprint.Withdrawn), 12, "%d cards withdrawn, want 12", len(s.Fleet.Column(sprint.Withdrawn)))
+	require.Len(t, s.Work.Column(sprint.Ready), 12, "%d primaries ready again, want the 12 withdrawn cards' primaries", len(s.Work.Column(sprint.Ready)))
 	if got := tableRows(res, sprint.Fleet); !slices.Equal(got, ms) {
 		t.Fatalf("the tick names the fleet rows %v, want every member's", got)
 	}

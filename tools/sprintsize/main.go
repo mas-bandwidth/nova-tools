@@ -23,8 +23,11 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"os/signal"
 	"strings"
 	"time"
+
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // step is one operation of the run and its limit (0: none).
@@ -67,7 +70,8 @@ func run() []step {
 // local store only (localStore), and the teardown that follows fails loudly on
 // a store that cannot be reached.
 func sprintExists(bin string, env []string) bool {
-	cmd := exec.Command(bin, "where")
+	cmd, cancel := subproc.Command(context.Background(), subproc.Tool, bin, "where")
+	defer cancel()
 	cmd.Env = env
 	return cmd.Run() == nil
 }
@@ -83,36 +87,7 @@ func main() {
 	redis := flag.String("redis", "127.0.0.1:6401", "the store, host:port (a local one: the limits are for a local store)")
 	replace := flag.Bool("replace", false, "tear down a sprint that already exists on the store, which the run does first")
 	keep := flag.Bool("keep", false, "leave the sprint on the store for a look")
-	tsetOwned := flag.Bool("tset-owned-container", false, "opt in to the L1 size run on a disposable Redis container you own")
-	tsetRedis := flag.String("tset-redis", "", "explicit direct Redis host:port for the L1 size run; no default")
-	tsetProxy := flag.String("tset-proxy-redis", "", "optional 128ms-each-way proxy host:port for the same owned Redis container")
-	tsetSpace := flag.String("tset-space", "", "fresh dev- namespace ending in ':' for the L1 size run")
-	tsetMemoryOnly := flag.Bool("tset-memory-only", false, "separate L1 memory diagnostic; loads a test-only GC function, never times gates")
-	tsetMemoryCards := flag.Int("tset-memory-cards", 0, "required with --tset-memory-only: exactly 100000 or 1000000 cards on a fresh owned container")
 	flag.Parse()
-	if *tsetOwned || *tsetRedis != "" || *tsetProxy != "" || *tsetSpace != "" || *tsetMemoryOnly || *tsetMemoryCards != 0 {
-		cfg := tsetSizeConfig{redisAddr: *tsetRedis, proxyAddr: *tsetProxy, space: *tsetSpace, owned: *tsetOwned}
-		if err := cfg.validate(); err != nil {
-			fmt.Fprintln(os.Stderr, "sprintsize:", err)
-			os.Exit(2)
-		}
-		if *tsetMemoryOnly {
-			if err := tsetMemoryCLI(context.Background(), cfg, *tsetMemoryCards, os.Stdout); err != nil {
-				fmt.Fprintln(os.Stderr, "sprintsize:", err)
-				os.Exit(1)
-			}
-			return
-		}
-		if *tsetMemoryCards != 0 {
-			fmt.Fprintln(os.Stderr, "sprintsize: --tset-memory-cards requires --tset-memory-only")
-			os.Exit(2)
-		}
-		if err := tsetSizeCLI(context.Background(), cfg, os.Stdout); err != nil {
-			fmt.Fprintln(os.Stderr, "sprintsize:", err)
-			os.Exit(1)
-		}
-		return
-	}
 	if *bin == "" || !localStore(*redis) {
 		fmt.Fprintln(os.Stderr, "sprintsize: wants --bin <nova-sprint> and a local --redis (127.0.0.1, localhost or [::1]): the run tears the sprint on it down")
 		os.Exit(2)
@@ -122,6 +97,10 @@ func main() {
 		fmt.Fprintln(os.Stderr, "sprintsize: a sprint already exists on "+*redis+"; the run tears it down first. Pass --replace to tear it down")
 		os.Exit(2)
 	}
+	// Each step is a long-lived child: it runs under a context an interrupt cancels and no
+	// deadline (the step's own limit is a column of the report, not a kill).
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
 	steps := run()
 	if !*keep {
 		steps = append(steps, step{"teardown", "110,000", 0, []string{"teardown", "--confirm", "sprint"}, nil})
@@ -130,7 +109,7 @@ func main() {
 	failed := false
 	fmt.Fprintf(&out, "| operation | size | time | limit | result |\n|---|---|---|---|---|\n")
 	for _, st := range steps {
-		cmd := exec.Command(*bin, st.args...)
+		cmd := subproc.Long(ctx, *bin, st.args...)
 		cmd.Env = env
 		var o, e bytes.Buffer
 		cmd.Stdout, cmd.Stderr = &o, &e
