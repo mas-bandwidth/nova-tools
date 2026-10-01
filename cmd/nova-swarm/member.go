@@ -289,7 +289,10 @@ func memberLoop(m *member.Member, every time.Duration, limit int, stamp func() s
 			fmt.Fprintf(stderr, "nova-swarm member: tick %d: %s\n", n, oneline.Escape(err.Error()))
 		}
 		if acted > 0 || err != nil {
-			fmt.Fprintf(stdout, "tick %d acted=%d running=%d %s\n", n, acted, m.Running(), oneline.Field(time.Now().Format("15:04:05")))
+			// where the pass's time went, by part: a lane freed during a pass waits for the rest of it
+			spent := m.LastPass()
+			fmt.Fprintf(stdout, "tick %d acted=%d running=%d live=%d %s queue=%.1fs push=%.1fs report=%.1fs fill=%.1fs\n", n, acted, m.Running(), m.Live(), oneline.Field(time.Now().Format("15:04:05")),
+				spent.Queue.Seconds(), spent.Push.Seconds(), spent.Report.Seconds(), spent.Fill.Seconds())
 		}
 		if limit > 0 && n >= limit {
 			return n, false
