@@ -16,7 +16,7 @@ import (
 
 // remedyAllowlistPath is the shrink-only ledger of the refusal sites in cmd/
 // that print no remedy yet: one `file:function:kind` per row, a reason after it.
-const remedyAllowlistPath = "testdata/remedy_allowlist.txt"
+const remedyAllowlistPath = "testdata/remedy"
 
 // refusalWordRe is how a refusal line is found: its words.
 var refusalWordRe = regexp.MustCompile(`REFUSED|refused|refusing|cannot`)

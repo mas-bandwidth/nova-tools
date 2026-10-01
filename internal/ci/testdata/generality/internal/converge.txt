@@ -1,0 +1,6 @@
+# Migrated counted package ledger; original row keys preserved.
+# ceiling: 4
+internal/converge/converge.go:glenn 1
+internal/converge/converge.go:rowan 1
+internal/converge/sources.go:hulk 1
+internal/converge/streams.go:glenn 1

@@ -31,14 +31,12 @@ func TestTableOverTheColumnBoundCanShrink(t *testing.T) {
 	assert.Equal(t, before, storeImage(t, c), "a refused col add changed the store")
 	// shrinking works, twice, down to the bound
 	for _, name := range []string{"x1", "x2"} {
-		if _, err := ntable.Set(ctx, c, "wide", ntable.SetOpts{ColDel: name}); err != nil {
-			t.Fatalf("col del %s on a table over the bound: %v", name, err)
-		}
+		_, err := ntable.Set(ctx, c, "wide", ntable.SetOpts{ColDel: name})
+		require.NoError(t, err, "col del %s on a table over the bound", name)
 	}
 	tb, err := ntable.Read(ctx, c, "wide")
-	if err != nil || len(tb.Columns) != ntable.LimitColumns {
-		t.Errorf("after two deletes: %d columns, %v; want %d", len(tb.Columns), err, ntable.LimitColumns)
-	}
+	assert.NoError(t, err, "after two deletes")
+	assert.Len(t, tb.Columns, ntable.LimitColumns, "after two deletes")
 	// and at the bound it grows no more
 	_, err = ntable.Set(ctx, c, "wide", ntable.SetOpts{ColAdd: &ntable.Column{Name: "x3", Projection: "count", Fold: "sum"}})
 	requireLimit(t, "col add at the bound", err, "columns per table", ntable.LimitColumns, ntable.LimitColumns+1)
@@ -65,9 +63,9 @@ func TestTableOverTheRowBoundStaysAndShrinks(t *testing.T) {
 	requireLimit(t, "row add on 100,001 rows", err, "rows per table", ntable.LimitRows, ntable.LimitRows+2)
 	_, err = ntable.RowsAdd(ctx, c, "tall", []string{"new1", "new2"})
 	requireLimit(t, "rows add on 100,001 rows", err, "rows per table", ntable.LimitRows, ntable.LimitRows+3)
-	if ok, err := ntable.RowDel(ctx, c, "tall", "r0"); err != nil || !ok {
-		t.Fatalf("row del on a table over the bound: %v %v", ok, err)
-	}
+	ok, err := ntable.RowDel(ctx, c, "tall", "r0")
+	require.NoError(t, err, "row del on a table over the bound")
+	require.True(t, ok, "row del on a table over the bound")
 	n := c.ZCard(ctx, rows).Val()
 	require.Equal(t, int64(ntable.LimitRows), n, "%d rows after a delete", n)
 	_, err = ntable.RowAdd(ctx, c, "tall", "r0", ntable.RowSpec{})

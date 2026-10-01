@@ -44,7 +44,7 @@ usage:
                       CI-SLOW line exit 2 (the nightly reference leg only).
   nova-ci local [--base origin/dev] [--functional]
                       the unit tier CI runs for this diff, on this machine:
-                      the packages .github/scripts/select-packages.sh picks
+                      the packages CI's selection picks
                       against the merge base of --base and HEAD, run through
                       the Makefile's test target (its go test flags and its
                       slowtests budgets) under nice -n 15 at -p 2, GOMAXPROCS=2
@@ -133,7 +133,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) (code int) {
 	case "slowtests":
 		return cmdSlowtests(args[1:], stdin, stdout, stderr)
 	case "local":
-		return cmdLocal(args[1:], stdout, stderr, execLocal)
+		return cmdLocal(args[1:], stdout, stderr, execLocal, localSelectThrough(execLocal))
 	case "functional":
 		return cmdFunctional(args[1:], stdout, stderr)
 	case "new-rule":

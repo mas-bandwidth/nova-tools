@@ -23,9 +23,8 @@ func TestBindRefusesOmittedTextUntilCleared(t *testing.T) {
 			ctx := context.Background()
 			orderTable(t, c)
 			if standing {
-				if _, err := ntable.Set(ctx, c, "t", ntable.SetOpts{RowSort: &ntable.Sort{By: "name", Keep: true}}); err != nil {
-					t.Fatal(err)
-				}
+				_, err := ntable.Set(ctx, c, "t", ntable.SetOpts{RowSort: &ntable.Sort{By: "name", Keep: true}})
+				require.NoError(t, err)
 			}
 			tab, err := ntable.Read(ctx, c, "t")
 			require.NoError(t, err)
