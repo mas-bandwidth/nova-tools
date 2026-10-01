@@ -439,7 +439,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 					why = EndStaging + ": " + oneLine(r.Staging) // the stage's reason, to the inbox
 				}
 				reason := cut(fmt.Sprintf("no verdict (ran=%t verdict=%q): %s", r.Ran, r.Verdict, why))
-				args := append([]string{"read", "--as", m.cfg.As, "--return", id, "--reason", reason}, launched...)
+				args := append(append([]string{"read", "--as", m.cfg.As, "--return", id, "--reason", reason}, usageArgs(r)...), launched...)
 				code, out := m.sprint.Run(args...)
 				fmt.Fprintf(m.out, "read %s: returned exit=%d: %s\n", id, code, reason)
 				if code == 2 {
@@ -458,7 +458,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 			if r.Verdict == "broken" {
 				word = "--broken"
 			}
-			args = append([]string{"read", "--as", m.cfg.As, word, id, "--finding", oneLine(r.Report)}, launched...)
+			args = append(append([]string{"read", "--as", m.cfg.As, word, id, "--finding", oneLine(r.Report)}, usageArgs(r)...), launched...)
 		} else {
 			pu := *l.push
 			fin, why := Judge(r, pu)
@@ -495,9 +495,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 			if fin != FinishOK {
 				args = append(args, "--failed")
 			}
-			if r.Usage != "" {
-				args = append(args, "--usage", r.Usage)
-			}
+			args = append(args, usageArgs(r)...)
 			ok = fin == FinishOK
 			args = append(args, launched...)
 		}
@@ -806,4 +804,13 @@ func routeWords(p Packet) string {
 		return "" // the member's override, said once on its MEMBER line
 	}
 	return " route=" + p.Route + " model=" + p.Model
+}
+
+// usageArgs is the --usage a finish or a read reports: what the run spent, the card's
+// cost record (internal/cardcost), kept on the card; none when the child reported nothing.
+func usageArgs(r Result) []string {
+	if r.Usage == "" {
+		return nil
+	}
+	return []string{"--usage", r.Usage}
 }

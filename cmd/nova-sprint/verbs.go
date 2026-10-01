@@ -47,10 +47,10 @@ func init() {
 		{"goal show", "[<name>]", "goal show friend-a", (*app).cmdGoalShow},
 		{"goal drop", "<name>", "goal drop friend-a", (*app).cmdGoalDrop},
 		{"take", "--as <member> [<card>@<gen>...] [--epoch <n>] [--limit <n>]", "take --as m1 s1-1.w1@1 --epoch 0", (*app).cmdTake},
-		{"finish", "--as <member> <card>@<gen>... --epoch <n> [--failed] [--head <h>] [--report <text>]", "finish --as m1 s1-1.w1@1 --epoch 0 --report 'tests green'", (*app).cmdFinish},
+		{"finish", "--as <member> <card>@<gen>... --epoch <n> [--failed] [--head <h>] [--report <text>] [--usage <text>]", "finish --as m1 s1-1.w1@1 --epoch 0 --report 'tests green'", (*app).cmdFinish},
 		{"ask", "[<id>... | --group <id> [--expect <n>]] [--stream <s>] [--limit <n>] [--another] [--answers <note>]", "ask", (*app).cmdAsk},
 		{"queue", "--as <reader|member> | --stream <s>", "queue --as reader-a", (*app).cmdQueue},
-		{"read", "--as <reader> (--begin | --ok | --broken) [<card>...] --epoch <n> [--limit <n>] [--finding <text>] | --as <reader> --return <card> --reason <text> --epoch <n>", "read --as reader-a --ok --limit 5 --epoch 0", (*app).cmdRead},
+		{"read", "--as <reader> (--begin | --ok | --broken) [<card>...] --epoch <n> [--limit <n>] [--finding <text>] [--usage <text>] | --as <reader> --return <card> --reason <text> --epoch <n> [--usage <text>]", "read --as reader-a --ok --limit 5 --epoch 0", (*app).cmdRead},
 		{"accept", "(<id>... | --stream <s> | --read-ok | --group <id> [--expect <n>]) [--answers <note>]", "accept --read-ok", (*app).cmdAccept},
 		{"rework", "(<id>... | --group <id> [--expect <n>]) [--fix <text>] [--answers <note>]", "rework s1-4 --fix 'handle the empty case'", (*app).cmdRework},
 		{"return", "(<id>... | --group <id> [--expect <n>]) [--reason <text>] [--answers <note>]", "return s1-7 --reason 'suspect of the red batch'", (*app).cmdReturn},
@@ -1354,7 +1354,7 @@ func (a *app) cmdFinish(args []string, stdout, stderr io.Writer) int {
 	report := fs.String("report", "", "the worker's report")
 	branch := fs.String("branch", "", "the branch the work is on (its packet names the one to use)")
 	baseBranch := fs.String("base", "", "the branch the work started from")
-	usage := fs.String("usage", "", "what the run spent, one line (the member passes its child's budget and wall): kept on the attempt's record")
+	usage := fs.String("usage", "", "what the run spent, one line (the member passes its child's budget, wall, tokens by class and cost): kept on the attempt's record, timed and priced")
 	words, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "finish", err.Error())
@@ -1396,6 +1396,7 @@ func (a *app) cmdRead(args []string, stdout, stderr io.Writer) int {
 	limit := fs.Int("limit", 0, "the first n of the reader's queue (default 1)")
 	ret := fs.String("return", "", "hand back a read the reader holds and has no verdict on: the next tick asks it of another reader up; no finding against the work")
 	reason := fs.String("reason", "", "with --return: why the read has no verdict (it reaches the inbox)")
+	usage := fs.String("usage", "", "with --ok, --broken or --return: what the read spent, one line (the reader passes its child's tokens, wall and cost): kept on the read card, timed and priced")
 	ids, err := parse(fs, args)
 	if err != nil {
 		return refuse(stderr, "read", err.Error())
@@ -1426,7 +1427,7 @@ func (a *app) cmdRead(args []string, stdout, stderr io.Writer) int {
 		return refuse(stderr, "read", err.Error())
 	}
 	return a.runStep("read", *c, st, store.ReadStep(sprint.ReadReq{Sel: sprint.Sel{IDs: ids, Limit: *limit}, As: *as, Begin: *begin,
-		Verdict: verdict, Finding: *finding, Return: *ret != "", Reason: *reason, Who: *as}), stdout, stderr)
+		Verdict: verdict, Finding: *finding, Return: *ret != "", Reason: *reason, Usage: *usage, Who: *as}), stdout, stderr)
 }
 
 func (a *app) cmdAccept(args []string, stdout, stderr io.Writer) int {
