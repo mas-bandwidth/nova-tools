@@ -1,73 +1,87 @@
 package sprint
 
 import (
+	"fmt"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 )
 
-// A read card asked again of its reader after a return keeps the one card id (a
-// return is not a read), so each run's record is numbered (FieldReadTake) and the
-// verdict run's is the card's usage: every run counts in the producer's total.
-func TestEveryRunOfAReadCardCountsInTheTotal(t *testing.T) {
+// The producer card carries what it cost (cost.go): one record per consumer key,
+// set once, the total kept exactly with it, and past MaxCostRecords the total still
+// exact and the list cut.
+
+// book adds the consumers to the primary as steps would, one step each.
+func book(pr *Card, cons ...Consumer) {
+	for _, c := range cons {
+		set := map[string]string{}
+		addConsumer(pr, set, c)
+		for k, v := range set {
+			pr.Fields[k] = v
+		}
+	}
+}
+
+func consumerOf(key, at, usage string) Consumer {
+	return Consumer{Kind: "read", Card: "s1-1.r1.reader-a", Attempt: 1, Who: "reader-a", End: "ok", At: at, Key: key, Usage: cardcost.ParseUsage(usage)}
+}
+
+func TestTheProducerKeepsOneRecordPerConsumerAndAnExactTotal(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
-		name   string
-		fields map[string]string
-		ends   []string
-		input  int64
+		name    string
+		cons    []Consumer
+		records int
+		input   int64
+		charged string
 	}{
-		{name: "two returned runs and the verdict run", fields: map[string]string{
-			FieldReadTake + "1": "input=10 actual_usd=0.1 actual_by=harness cost=actual",
-			FieldReadTake + "2": "input=20 actual_usd=0.2 actual_by=harness cost=actual",
-			FieldUsage:          "input=30 actual_usd=0.3 actual_by=harness cost=actual",
-			"read":              "2026-10-01T12:00:00Z", "verdict": "ok"},
-			ends: []string{"returned", "returned", "ok"}, input: 60},
-		{name: "a returned run, asked again and not yet read", fields: map[string]string{
-			FieldReadTake + "1": "input=10 cost=none"},
-			ends: []string{"returned"}, input: 10},
-		{name: "a gap ends the runs: the numbering is dense", fields: map[string]string{
-			FieldReadTake + "1": "input=10 cost=none", FieldReadTake + "3": "input=99 cost=none"},
-			ends: []string{"returned"}, input: 10},
+		{name: "two consumers", cons: []Consumer{consumerOf("a#v", "2026-10-01T12:00:01Z", "input=10 actual_usd=0.1"), consumerOf("b#v", "2026-10-01T12:00:00Z", "input=20 predicted_usd=0.2")},
+			records: 2, input: 30, charged: "0.3"},
+		{name: "a consumer added twice counts once", cons: []Consumer{consumerOf("a#v", "2026-10-01T12:00:00Z", "input=10 actual_usd=0.1"), consumerOf("a#v", "2026-10-01T12:00:00Z", "input=10 actual_usd=0.1")},
+			records: 1, input: 10, charged: "0.1"},
+		{name: "a consumer with no cost is in the history and not in charged", cons: []Consumer{consumerOf("a#v", "2026-10-01T12:00:00Z", "input=5")},
+			records: 1, input: 5, charged: ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			f := map[string]string{"reader": "reader-a", "attempt": "1"}
-			for k, v := range tc.fields {
-				f[k] = v
-			}
-			v := CardCost(nil, []*Card{{ID: "s1-1.r1.reader-a", Fields: f}})
-			require.Len(t, v.Consumers, len(tc.ends))
-			for i, end := range tc.ends {
-				assert.Equal(t, end, v.Consumers[i].End)
-			}
+			pr := &Card{ID: "s1-1", Fields: map[string]string{}}
+			book(pr, tc.cons...)
+			v := CardCostOf(pr)
+			assert.Len(t, v.Consumers, tc.records)
+			assert.Equal(t, tc.records, v.Total.Records)
 			assert.Equal(t, tc.input, v.Total.Tokens.Input)
+			assert.Equal(t, tc.charged, v.Total.Charged)
+			for i := 1; i < len(v.Consumers); i++ {
+				assert.LessOrEqual(t, v.Consumers[i-1].At, v.Consumers[i].At, "the history is in the order the consumers ended")
+			}
 		})
 	}
 }
 
-func TestNextTakeIsOnePastTheLastRecord(t *testing.T) {
+func TestPastTheBoundTheTotalStaysExactAndTheListIsCut(t *testing.T) {
 	t.Parallel()
-	assert.Equal(t, 1, nextTake(&Card{Fields: map[string]string{}}, FieldReadTake))
-	assert.Equal(t, 3, nextTake(&Card{Fields: map[string]string{FieldReadTake + "1": "x", FieldReadTake + "2": "y"}}, FieldReadTake))
+	pr := &Card{ID: "s1-1", Fields: map[string]string{}}
+	t0 := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	for i := 0; i < MaxCostRecords+3; i++ {
+		book(pr, consumerOf(fmt.Sprintf("c%03d#v", i), t0.Add(time.Duration(i)*time.Second).Format(time.RFC3339), "input=1 actual_usd=0.001"))
+	}
+	v := CardCostOf(pr)
+	require.Len(t, v.Consumers, MaxCostRecords)
+	assert.Equal(t, 3, v.Cut)
+	assert.Equal(t, MaxCostRecords+3, v.Total.Records, "the total holds every consumer")
+	assert.Equal(t, "0.067", v.Total.Charged)
+	assert.Contains(t, v.CostLines()[len(v.CostLines())-1], " cut=3", "the total line says the list was cut")
 }
 
-// LandingExtras names the kept records over the placed ones only, as a fresh
-// read does: a retired read card or work card an earlier merge step of the
-// same process showed in the twin's table (there, but not placed) is named
-// again, so the twin keeps it and plans the cost with it.
-func TestLandingExtrasNamesAKeptRecordAnEarlierStepShowed(t *testing.T) {
+func TestARecordReadsBackAsTheConsumer(t *testing.T) {
 	t.Parallel()
-	s := &Snapshot{Work: NewTable(Work), Merge: NewTable(Merge), Fleet: NewTable(Fleet), Readers: NewTable(Readers)}
-	s.Readers.SetRows([]string{"reader-a"})
-	s.Merge.Put(&Card{ID: "s1-1", Row: "s1", Col: Queued})
-	s.Work.Put(&Card{ID: "s1-1", Row: "s1", Col: Merging, Fields: map[string]string{"attempt": "2"}})
-	s.Fleet.Put(&Card{ID: "s1-1.w1"})            // kept, shown by an earlier step
-	s.Readers.Put(&Card{ID: "s1-1.r1.reader-a"}) // kept, shown by an earlier step
-	s.Readers.Put(&Card{ID: "s1-1.r2.reader-a", Row: "reader-a", Col: OK})
-	got := LandingExtras("s1")(s)
-	assert.ElementsMatch(t, []string{"s1-1.w1", "s1-1.w2"}, got[Fleet])
-	assert.ElementsMatch(t, []string{"s1-1.r1.reader-a"}, got[Readers])
+	c := Consumer{Kind: "work", Card: "s1-1.w2", Attempt: 2, Take: 1, Gen: 3, Who: "m1", Route: "flash-a", Model: "opencode/m", End: "provider failure",
+		At: "2026-10-01T12:00:00Z", Key: "s1-1.w2#g3", Usage: cardcost.ParseUsage("input=10 actual_usd=0.1 actual_by=harness wait=2s run=9s")}
+	got := parseConsumer(c.Key, c.line())
+	assert.Equal(t, c, got)
 }

@@ -945,7 +945,7 @@ READ OK moved=1 refused=0 notes=0 op=read-t32-1
 0/1 0.0% -> ETA  machine: running
 
 $ nova-sprint tick
-MOVED drain: s1-1 asked of reader-a, reader-b (tick ask by machine)
+MOVED drain: s1-1 asked of reader-a, reader-b (tick ask by machine); s1-1.r1.reader-a reading -> ok (read by boss); s1-1.r1.reader-b reading -> ok (read by boss)
 MOVED accept: s1-1 review -> merging queued (ok from reader-a, reader-b)
 TABLES rows changed: work=1 readers=0 merge=1 fleet=0
 TICK OK state=RUNNING idle=no moved=2 notes=2
