@@ -151,7 +151,7 @@ func PullStore(o StorePullOptions) (string, error) {
 	}
 	env = append(env, "GIT_SSH_COMMAND="+sshCmd, "GIT_TERMINAL_PROMPT=0")
 	run := func(args ...string) (string, error) {
-		res, err := gitrun.Run(context.Background(), gitrun.Options{Bin: gitBin, C: o.StoreDir, Env: env},
+		res, err := gitrun.Run(context.Background(), gitrun.Options{Bin: gitBin, C: o.StoreDir, Env: env, OwnRepo: true},
 			append([]string{"-c", "core.sshCommand=" + sshCmd}, args...)...)
 		if err != nil {
 			return "", fmt.Errorf("store pull: git %s: %w: %s", strings.Join(args, " "), err, strings.TrimSpace(string(res.Stderr)))
