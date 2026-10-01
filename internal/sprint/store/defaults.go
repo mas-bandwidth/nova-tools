@@ -134,6 +134,7 @@ func (st *Store) newID() string {
 // random bytes, in letters, digits and '-'.
 func NewID() string {
 	var b [8]byte
+	// ignored: crypto/rand.Read never returns an error on the supported platforms (Go 1.24+ panics instead)
 	_, _ = rand.Read(b[:])
 	return strconv.FormatInt(time.Now().UnixNano(), 36) + "-" + strconv.Itoa(os.Getpid()) + "-" + hex.EncodeToString(b[:])
 }

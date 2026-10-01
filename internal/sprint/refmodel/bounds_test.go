@@ -63,15 +63,18 @@ func TestResolveMovesTwoThousandAndLeavesTheRestDue(t *testing.T) {
 	}
 }
 
-func TestDeadlinesWriteFiftyJudgmentsAndLeaveTheRestDue(t *testing.T) {
+// The judgments of a part have no bound but the step's: every judgment a part
+// finds is written in its tick, none left due (the owner's rule: never a row
+// at a time).
+func TestDeadlinesWriteEveryJudgmentTheyFindInTheTick(t *testing.T) {
 	t.Parallel()
 	for late, want := range map[int]struct {
 		opened int
 		due    string
 	}{
 		50: {50, ""},
-		51: {50, "due=1"},
-		60: {50, "due=10"},
+		51: {51, ""},
+		60: {60, ""},
 	} {
 		w := sprintOf(t, "m1")
 		w.add(t, "s1", late)

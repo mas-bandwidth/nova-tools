@@ -11,6 +11,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // JarEnv is the environment variable that names the TLC jar when --jar is not
@@ -111,7 +113,7 @@ func JavaVersion(output string) (string, error) {
 // ReadJavaVersion runs `java -version`, bounded by ctx, and returns its
 // version. It runs java, so it belongs on a bench.
 func ReadJavaVersion(ctx context.Context, java string) (string, error) {
-	out, err := exec.CommandContext(ctx, java, "-version").CombinedOutput()
+	out, err := subproc.Context(ctx, java, "-version").CombinedOutput()
 	if err != nil {
 		return "", fmt.Errorf("%s -version failed: %v", java, err)
 	}

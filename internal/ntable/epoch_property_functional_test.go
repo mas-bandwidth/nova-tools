@@ -18,6 +18,8 @@ import (
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
 	"github.com/redis/go-redis/v9"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // The original property harness deliberately stays transplantable to the old
@@ -117,6 +119,12 @@ func (h *epochProperty) fail(format string, args ...any) {
 	h.t.Helper()
 	h.t.Fatalf("%s\naction trace:\n%s", fmt.Sprintf(format, args...), strings.Join(h.trace, "\n"))
 }
+
+// Errorf, FailNow and Helper make the harness a require.TestingT: a failed
+// require.X(h, ...) check exits through fail, with the action trace.
+func (h *epochProperty) Errorf(format string, args ...any) { h.t.Helper(); h.fail(format, args...) }
+func (h *epochProperty) FailNow()                          { h.t.FailNow() }
+func (h *epochProperty) Helper()                           { h.t.Helper() }
 
 func epochMember(epoch uint64, index int) string { return fmt.Sprintf("e%d-m%d", epoch, index) }
 
@@ -272,9 +280,8 @@ func (h *epochProperty) predict(a epochAction) (*epochTableState, string) {
 
 func (h *epochProperty) event(c *redis.Client, table string) redis.XMessage {
 	events, err := c.XRevRangeN(h.ctx, ntable.ChangesKey(table), "+", "-", 1).Result()
-	if err != nil || len(events) != 1 {
-		h.fail("missing receipt for %s: %v", table, err)
-	}
+	require.NoError(h, err, "missing receipt for %s", table)
+	require.Len(h, events, 1, "missing receipt for %s", table)
 	return events[0]
 }
 
@@ -284,28 +291,20 @@ func (h *epochProperty) receipt(a epochAction, opts ntable.WriteOptions, r ntabl
 		"fence": opts.Fence, "idem": opts.Idem, "rev_before": strconv.FormatUint(h.revision[a.table], 10),
 		"rev_after": strconv.FormatUint(h.revision[a.table]+1, 10)}
 	for field, value := range want {
-		if v[field] != value {
-			h.fail("%s receipt %s=%v, want %s", epochActionNames[a.verb], field, v[field], value)
-		}
+		require.Equal(h, value, v[field], "%s receipt %s", epochActionNames[a.verb], field)
 	}
-	if r.ID != event.ID || r.Epoch != opts.Epoch || r.Before != h.revision[a.table] || r.After != r.Before+1 || r.Outcome != v["outcome"] {
-		h.fail("returned receipt differs from stream: %+v / %+v", r, event)
-	}
+	require.Equal(h, event.ID, r.ID, "returned receipt differs from stream: %+v / %+v", r, event)
+	require.Equal(h, opts.Epoch, r.Epoch, "returned receipt differs from stream: %+v / %+v", r, event)
+	require.Equal(h, h.revision[a.table], r.Before, "returned receipt differs from stream: %+v / %+v", r, event)
+	require.Equal(h, r.Before+1, r.After, "returned receipt differs from stream: %+v / %+v", r, event)
+	require.Equal(h, v["outcome"], r.Outcome, "returned receipt differs from stream: %+v / %+v", r, event)
 	var args []string
-	if err := json.Unmarshal([]byte(fmt.Sprint(v["args"])), &args); err != nil {
-		h.fail("receipt args: %v", err)
-	}
+	require.NoError(h, json.Unmarshal([]byte(fmt.Sprint(v["args"])), &args), "receipt args")
 	expected := a.wire()
-	if len(args) != len(expected) {
-		h.fail("receipt args=%v, want %v", args, expected)
-	}
+	require.Len(h, args, len(expected), "receipt args=%v, want %v", args, expected)
 	for i, value := range expected {
-		if args[i] == value {
-			continue
-		}
-		var gotJSON, wantJSON any
-		if json.Unmarshal([]byte(args[i]), &gotJSON) != nil || json.Unmarshal([]byte(value), &wantJSON) != nil || !reflect.DeepEqual(gotJSON, wantJSON) {
-			h.fail("receipt arg %d=%s, want %s", i, args[i], value)
+		if args[i] != value {
+			require.JSONEq(h, value, args[i], "receipt arg %d", i)
 		}
 	}
 	type change struct{ ID, From, To, Score string }
@@ -322,42 +321,34 @@ func (h *epochProperty) receipt(a epochAction, opts ntable.WriteOptions, r ntabl
 		}
 	}
 	var changes []change
-	if err := json.Unmarshal([]byte(fmt.Sprint(v["members"])), &changes); err != nil {
-		h.fail("receipt members: %v", err)
-	}
+	require.NoError(h, json.Unmarshal([]byte(fmt.Sprint(v["members"])), &changes), "receipt members")
 	slices.SortFunc(changes, func(a, b change) int { return strings.Compare(a.ID, b.ID) })
-	if !slices.Equal(changes, expectedChanges) {
-		h.fail("receipt member delta=%v, want %v", changes, expectedChanges)
-	}
+	require.Equal(h, expectedChanges, changes, "receipt member delta")
 	var cells []string
-	if err := json.Unmarshal([]byte(fmt.Sprint(v["cells"])), &cells); err != nil {
-		h.fail("receipt cells: %v", err)
-	}
+	require.NoError(h, json.Unmarshal([]byte(fmt.Sprint(v["cells"])), &cells), "receipt cells")
 	for _, row := range []string{"r1", "r2"} {
 		for _, col := range []string{"a", "b"} {
 			at := row + ":" + col
-			if (slices.Contains(before.rows, row) != slices.Contains(after.rows, row) || !reflect.DeepEqual(before.cells[at], after.cells[at])) && !slices.Contains(cells, at) {
-				h.fail("receipt omits affected cell %s", at)
+			if slices.Contains(before.rows, row) != slices.Contains(after.rows, row) || !reflect.DeepEqual(before.cells[at], after.cells[at]) {
+				require.Contains(h, cells, at, "receipt omits affected cell %s", at)
 			}
 		}
 	}
-	if v["outcome"] != "changed" && v["outcome"] != "noop" || v["outcome"] == "noop" && !reflect.DeepEqual(before, after) {
-		h.fail("invalid outcome %v for model transition", v["outcome"])
+	require.Contains(h, []string{"changed", "noop"}, v["outcome"], "invalid outcome %v for model transition", v["outcome"])
+	if v["outcome"] == "noop" {
+		require.Equal(h, before, after, "invalid outcome %v for model transition", v["outcome"])
 	}
 }
 
 func (h *epochProperty) step(a epochAction) {
 	h.t.Helper()
 	h.trace = append(h.trace, fmt.Sprintf("%d %s writer=%d seen=%d active=%d args=%s", len(h.trace), epochActionNames[a.verb], a.actor, h.seen[a.actor], h.active, epochJSON(a.wire())))
-	if epochActionNames[a.verb] == "" {
-		h.fail("action lacks TLA mapping: %s", a.verb)
-	}
+	require.NotEmpty(h, epochActionNames[a.verb], "action lacks TLA mapping: %s", a.verb)
 	if a.verb == "read_epoch" {
 		for i, c := range h.stores {
 			epoch, err := c.HGet(h.ctx, epochPropertyKey, "n").Uint64()
-			if err != nil || epoch != h.active {
-				h.fail("store%d ReadEpoch=%d (%v), want %d", i, epoch, err, h.active)
-			}
+			require.NoError(h, err, "store%d ReadEpoch", i)
+			require.Equal(h, h.active, epoch, "store%d ReadEpoch", i)
 			h.seen[a.actor] = epoch
 		}
 		h.coverage[a.verb]++
@@ -365,25 +356,20 @@ func (h *epochProperty) step(a epochAction) {
 		return
 	}
 	if a.verb == "advance" {
-		if h.seen[a.actor] != h.active || h.active >= 3 {
-			h.fail("invalid model Advance precondition")
-		}
+		require.Equal(h, h.active, h.seen[a.actor], "invalid model Advance precondition")
+		require.Less(h, h.active, uint64(3), "invalid model Advance precondition")
 		for i, c := range h.stores {
-			image := memberStoreImage(h.t, c)
+			image := storeImage(h.t, c)
 			for key, value := range image {
 				if strings.HasPrefix(key, "table::member:"+fmt.Sprintf("e%d-", h.active)) || strings.Contains(key, fmt.Sprintf(":%d:", h.active)) {
 					h.frozen[i][key] = value
 				}
 			}
-			if err := c.HSet(h.ctx, epochPropertyKey, "n", h.active+1).Err(); err != nil {
-				h.fail("advance: %v", err)
-			}
+			require.NoError(h, c.HSet(h.ctx, epochPropertyKey, "n", h.active+1).Err(), "advance")
 			delete(image, epochPropertyKey)
-			after := memberStoreImage(h.t, c)
+			after := storeImage(h.t, c)
 			delete(after, epochPropertyKey)
-			if !reflect.DeepEqual(image, after) {
-				h.fail("Advance changed more than the epoch register")
-			}
+			require.Equal(h, image, after, "Advance changed more than the epoch register")
 		}
 		h.active++
 		for _, table := range propTables {
@@ -399,7 +385,7 @@ func (h *epochProperty) step(a epochAction) {
 	opts := ntable.WriteOptions{Epoch: h.seen[a.actor], Actor: fmt.Sprintf("w%d", a.actor+1), Fence: "fixture", Idem: strconv.Itoa(len(h.trace)), Receipt: &receipt}
 	var sourceEvent redis.XMessage
 	for i, c := range h.stores {
-		image := memberStoreImage(h.t, c)
+		image := storeImage(h.t, c)
 		var err error
 		if i == 0 || want != "ok" {
 			err = a.call(h.ctx, c, opts)
@@ -407,45 +393,36 @@ func (h *epochProperty) step(a epochAction) {
 			// Replay only the validated durable receipt; never a.wire().
 			v := sourceEvent.Values
 			var args []string
-			if err := json.Unmarshal([]byte(fmt.Sprint(v["args"])), &args); err != nil {
-				h.fail("replay args: %v", err)
-			}
+			require.NoError(h, json.Unmarshal([]byte(fmt.Sprint(v["args"])), &args), "replay args")
 			wire := make([]any, len(args), len(args)+1)
 			for j := range args {
 				wire[j] = args[j]
 			}
 			wire = append(wire, epochJSON(map[string]any{"epoch": v["epoch"], "actor": v["actor"], "fence": v["fence"], "idem": v["idem"]}))
 			reply, replayErr := c.FCall(h.ctx, "ns_table_"+fmt.Sprint(v["verb"]), []string{ntable.DefKey(a.table)}, wire...).Slice()
-			if replayErr != nil || len(reply) == 0 || reply[0] == "REFUSED" {
-				h.fail("receipt replay refused: %v / %v", reply, replayErr)
-			}
+			require.NoError(h, replayErr, "receipt replay refused: %v", reply)
+			require.NotEmpty(h, reply, "receipt replay refused")
+			require.NotEqual(h, "REFUSED", reply[0], "receipt replay refused: %v", reply)
 		}
 		got := classify(err).kind
 		if errors.Is(err, ntable.ErrMemberEpoch) {
 			got = "member-epoch"
 		}
-		if got != want {
-			h.fail("store%d action=%s result=%s (%v), model=%s", i, a.verb, got, err, want)
-		}
+		require.Equal(h, want, got, "store%d action=%s err=%v", i, a.verb, err)
 		if want != "ok" {
-			if !reflect.DeepEqual(image, memberStoreImage(h.t, c)) || receipt.ID != "" {
-				h.fail("refusal wrote state or returned a receipt")
-			}
+			require.Equal(h, image, storeImage(h.t, c), "refusal wrote state")
+			require.Empty(h, receipt.ID, "refusal returned a receipt")
 		} else {
 			allowed := h.writeKeys(a, before, after)
-			afterStore := memberStoreImage(h.t, c)
+			afterStore := storeImage(h.t, c)
 			if image["tables"] != afterStore["tables"] {
-				if h.template[a.table] || (a.verb != "create" && a.verb != "bind") {
-					h.fail("store%d action %s unexpectedly modified tables registry", i, a.verb)
-				}
+				require.False(h, h.template[a.table], "store%d action %s unexpectedly modified tables registry", i, a.verb)
+				require.Contains(h, []string{"create", "bind"}, a.verb, "store%d action %s unexpectedly modified tables registry", i, a.verb)
 				keyType, err := c.Type(h.ctx, "tables").Result()
-				if err != nil || keyType != "set" {
-					h.fail("store%d tables registry type = %s (%v), want set", i, keyType, err)
-				}
+				require.NoError(h, err, "store%d tables registry type", i)
+				require.Equal(h, "set", keyType, "store%d tables registry type", i)
 				members, err := c.SMembers(h.ctx, "tables").Result()
-				if err != nil {
-					h.fail("store%d read tables registry: %v", i, err)
-				}
+				require.NoError(h, err, "store%d read tables registry", i)
 				var wantMembers []string
 				for t, ok := range h.template {
 					if ok {
@@ -455,30 +432,26 @@ func (h *epochProperty) step(a epochAction) {
 				if !slices.Contains(wantMembers, a.table) {
 					wantMembers = append(wantMembers, a.table)
 				}
-				slices.Sort(wantMembers)
-				slices.Sort(members)
-				if !slices.Equal(members, wantMembers) {
-					h.fail("store%d tables registry membership mismatch: got %v, want %v", i, members, wantMembers)
-				}
+				require.ElementsMatch(h, wantMembers, members, "store%d tables registry membership", i)
 				delete(image, "tables")
 				delete(afterStore, "tables")
 			}
-			if keys := unexpectedEpochWrites(image, afterStore, allowed); len(keys) != 0 {
-				h.fail("store%d accepted action changed keys outside model: %v", i, keys)
-			}
+			require.Empty(h, unexpectedEpochWrites(image, afterStore, allowed), "store%d accepted action changed keys outside model", i)
 			if !h.template[a.table] && (a.verb == "create" || a.verb == "bind") {
 				idKey := ntable.DefKey(a.table) + ":identity"
 				idHash, err := c.HGetAll(h.ctx, idKey).Result()
-				if err != nil || len(idHash) != 3 || idHash["epoch_key"] != epochPropertyKey || idHash["epoch_field"] != "n" || idHash["member_prefix"] != "table::member:" {
-					h.fail("store%d table %s identity invalid: %v (%v)", i, a.table, idHash, err)
-				}
+				require.NoError(h, err, "store%d table %s identity invalid: %v", i, a.table, idHash)
+				require.Len(h, idHash, 3, "store%d table %s identity invalid: %v", i, a.table, idHash)
+				require.Equal(h, epochPropertyKey, idHash["epoch_key"], "store%d table %s identity invalid: %v", i, a.table, idHash)
+				require.Equal(h, "n", idHash["epoch_field"], "store%d table %s identity invalid: %v", i, a.table, idHash)
+				require.Equal(h, "table::member:", idHash["member_prefix"], "store%d table %s identity invalid: %v", i, a.table, idHash)
 			}
 			event := h.event(c, a.table)
 			if i == 0 {
 				h.receipt(a, opts, receipt, event, before, after)
 				sourceEvent = event
-			} else if !reflect.DeepEqual(event.Values, sourceEvent.Values) {
-				h.fail("replayed receipt payload differs: %v / %v", event.Values, sourceEvent.Values)
+			} else {
+				require.Equal(h, sourceEvent.Values, event.Values, "replayed receipt payload differs")
 			}
 		}
 	}
@@ -563,19 +536,16 @@ func unexpectedEpochWrites(before, after map[string]string, allowed map[string]b
 func (h *epochProperty) verify() {
 	h.t.Helper()
 	for i, c := range h.stores {
-		image := memberStoreImage(h.t, c)
+		image := storeImage(h.t, c)
 		var wantCatalog []string
 		for _, table := range propTables {
 			if h.template[table] {
 				wantCatalog = append(wantCatalog, table)
 			}
 		}
-		slices.Sort(wantCatalog)
 		catalog, err := c.SMembers(h.ctx, "tables").Result()
-		slices.Sort(catalog)
-		if err != nil || !slices.Equal(catalog, wantCatalog) {
-			h.fail("store%d catalog=%v (%v), model=%v", i, catalog, err, wantCatalog)
-		}
+		require.NoError(h, err, "store%d catalog", i)
+		require.ElementsMatch(h, wantCatalog, catalog, "store%d catalog", i)
 		historical := map[string]string{}
 		for key, value := range image {
 			for epoch := uint64(1); epoch < h.active; epoch++ {
@@ -588,9 +558,7 @@ func (h *epochProperty) verify() {
 				}
 			}
 		}
-		if !reflect.DeepEqual(historical, h.frozen[i]) {
-			h.fail("store%d historical namespace changed", i)
-		}
+		require.Equal(h, h.frozen[i], historical, "store%d historical namespace changed", i)
 		for _, table := range propTables {
 			wantTemplate, wantIdentity := map[string]string{}, map[string]string{}
 			if h.template[table] {
@@ -602,18 +570,18 @@ func (h *epochProperty) verify() {
 				want map[string]string
 			}{{ntable.DefKey(table), wantTemplate}, {ntable.DefKey(table) + ":identity", wantIdentity}} {
 				got, err := c.HGetAll(h.ctx, metadata.key).Result()
-				if err != nil || !reflect.DeepEqual(got, metadata.want) {
-					h.fail("store%d registration %s=%v (%v), model=%v", i, metadata.key, got, err, metadata.want)
-				}
+				require.NoError(h, err, "store%d registration %s", i, metadata.key)
+				require.Equal(h, metadata.want, got, "store%d registration %s", i, metadata.key)
 			}
 			s := h.state[table]
 			tb, err := ntable.Read(h.ctx, c, table)
 			if !s.present {
-				if !errors.Is(err, ntable.ErrNoTable) {
-					h.fail("read absent %s = %v", table, err)
-				}
-			} else if err != nil || tb.Epoch != h.active || !slices.Equal(rowKeys(tb), s.rows) {
-				h.fail("read %s = epoch%d rows%v err%v; model epoch%d rows%v", table, tb.Epoch, rowKeys(tb), err, h.active, s.rows)
+				require.ErrorIs(h, err, ntable.ErrNoTable, "read absent %s", table)
+			} else {
+				require.NoError(h, err, "read %s", table)
+				require.Equal(h, h.active, tb.Epoch, "read %s", table)
+				// append normalizes a nil model row list: rowKeys is never nil.
+				require.Equal(h, append([]string{}, s.rows...), rowKeys(tb), "read %s", table)
 			}
 			placed := map[string]string{}
 			for _, row := range []string{"r1", "r2"} {
@@ -621,24 +589,26 @@ func (h *epochProperty) verify() {
 					at := row + ":" + col
 					key := ntable.CellKeyAt(table, row, col, h.active)
 					zs, err := c.ZRangeWithScores(h.ctx, key, 0, -1).Result()
-					if err != nil || !sameZset(zsetOf(zs), s.cells[at]) {
-						h.fail("cell %s = %v (%v), model %v", key, zs, err, s.cells[at])
-					}
+					require.NoError(h, err, "cell %s", key)
+					require.True(h, sameZset(zsetOf(zs), s.cells[at]), "cell %s = %v, model %v", key, zs, s.cells[at])
 					for _, z := range zs {
 						id := z.Member.(string)
-						if placed[id] != "" || !strings.HasPrefix(id, fmt.Sprintf("e%d-", h.active)) {
-							h.fail("duplicate or cross-epoch placement: %s", id)
-						}
+						require.Empty(h, placed[id], "duplicate or cross-epoch placement: %s", id)
+						require.True(h, strings.HasPrefix(id, fmt.Sprintf("e%d-", h.active)), "duplicate or cross-epoch placement: %s", id)
 						placed[id] = at
 					}
 					if s.present && slices.Contains(s.rows, row) {
 						members, err := ntable.CellMembers(h.ctx, c, table, row, col)
-						if err != nil || len(members) != len(zs) {
-							h.fail("members at %s = %v (%v)", key, members, err)
-						}
+						require.NoError(h, err, "members at %s", key)
+						require.Len(h, members, len(zs), "members at %s = %v", key, members)
 						for j, member := range members {
-							if member.Member != zs[j].Member || member.Score != zs[j].Score || j > 0 && (members[j-1].Score > member.Score || members[j-1].Score == member.Score && members[j-1].Member >= member.Member) {
-								h.fail("members not in score/ID order at %s: %v", key, members)
+							require.Equal(h, zs[j].Member, member.Member, "members not in score/ID order at %s: %v", key, members)
+							require.Equal(h, zs[j].Score, member.Score, "members not in score/ID order at %s: %v", key, members)
+							if j > 0 {
+								require.LessOrEqual(h, members[j-1].Score, member.Score, "members not in score/ID order at %s: %v", key, members)
+								if members[j-1].Score == member.Score {
+									require.Less(h, members[j-1].Member, member.Member, "members not in score/ID order at %s: %v", key, members)
+								}
 							}
 						}
 					}
@@ -650,38 +620,31 @@ func (h *epochProperty) verify() {
 				for n := 1; n <= 3; n++ {
 					id := epochMember(epoch, n)
 					record, err := c.HGetAll(h.ctx, ntable.MemberKey(id)).Result()
-					if err != nil || record["epoch"] != strconv.FormatUint(epoch, 10) || record["place:"+table] != placed[id] {
-						h.fail("member record %s = %v (%v), placement=%s", id, record, err, placed[id])
-					}
+					require.NoError(h, err, "member record %s", id)
+					require.Equal(h, strconv.FormatUint(epoch, 10), record["epoch"], "member record %s = %v, placement=%s", id, record, placed[id])
+					require.Equal(h, placed[id], record["place:"+table], "member record %s = %v, placement=%s", id, record, placed[id])
 				}
 			}
 			count, err := c.XLen(h.ctx, ntable.ChangesKey(table)).Result()
-			if err != nil || count != int64(h.revision[table]) {
-				h.fail("receipt count %s = %d (%v), want %d", table, count, err, h.revision[table])
-			}
+			require.NoError(h, err, "receipt count %s", table)
+			require.Equal(h, int64(h.revision[table]), count, "receipt count %s", table)
 			if s.present {
 				report, err := ntable.Check(h.ctx, c, table)
-				if err != nil || report.Epoch != h.active || report.Revision != h.revision[table] {
-					h.fail("Check %s = %+v (%v)", table, report, err)
-				}
+				require.NoError(h, err, "Check %s", table)
+				require.Equal(h, h.active, report.Epoch, "Check %s = %+v", table, report)
+				require.Equal(h, h.revision[table], report.Revision, "Check %s = %+v", table, report)
 			}
 		}
-		if !reflect.DeepEqual(image, memberStoreImage(h.t, c)) {
-			h.fail("verification read mutated store%d", i)
-		}
+		require.Equal(h, image, storeImage(h.t, c), "verification read mutated store%d", i)
 	}
 }
 
 func TestTableEpochActionsAndReceiptReplay(t *testing.T) {
 	t.Parallel()
 	model, err := os.ReadFile("../../tla/EpochMemberTable.tla")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	for verb, action := range epochActionNames {
-		if !strings.Contains(string(model), "\n"+action+"(") {
-			t.Fatalf("%s maps to missing model action %s", verb, action)
-		}
+		require.Contains(t, string(model), "\n"+action+"(", "%s maps to missing model action %s", verb, action)
 	}
 	// One owned source/replay pair per test, reset between reproducible seeds.
 	_, source := live(t)
@@ -697,20 +660,12 @@ func TestTableEpochActionsAndReceiptReplay(t *testing.T) {
 				state: map[string]*epochTableState{}, template: map[string]bool{}, revision: map[string]uint64{}, coverage: coverage,
 				frozen: [2]map[string]string{{}, {}}}
 			for _, c := range h.stores {
-				if err := c.FlushAll(h.ctx).Err(); err != nil {
-					t.Fatal(err)
-				}
-				if err := c.HSet(h.ctx, "fixture:unrelated", "n", "unchanged").Err(); err != nil {
-					t.Fatal(err)
-				}
-				if err := c.HSet(h.ctx, epochPropertyKey, "n", 1).Err(); err != nil {
-					t.Fatal(err)
-				}
+				require.NoError(t, c.FlushAll(h.ctx).Err())
+				require.NoError(t, c.HSet(h.ctx, "fixture:unrelated", "n", "unchanged").Err())
+				require.NoError(t, c.HSet(h.ctx, epochPropertyKey, "n", 1).Err())
 				for epoch := uint64(1); epoch <= 3; epoch++ {
 					for n := 1; n <= 3; n++ {
-						if err := c.HSet(h.ctx, ntable.MemberKey(epochMember(epoch, n)), "epoch", epoch).Err(); err != nil {
-							t.Fatal(err)
-						}
+						require.NoError(t, c.HSet(h.ctx, ntable.MemberKey(epochMember(epoch, n)), "epoch", epoch).Err())
 					}
 				}
 			}
@@ -770,13 +725,10 @@ func TestTableEpochActionsAndReceiptReplay(t *testing.T) {
 	}
 	for _, verb := range verbs {
 		for _, outcome := range []string{"ok", "stale"} {
-			if coverage[verb+":"+outcome] == 0 {
-				t.Errorf("generator missed %s:%s", verb, outcome)
-			}
+			assert.NotEqual(t, 0, coverage[verb+":"+outcome], "generator missed %s:%s", verb, outcome)
 		}
 	}
-	if coverage["cell_add:member-epoch"] == 0 || coverage["advance"] != 16 {
-		t.Errorf("generator missed epoch boundaries: %v", coverage)
-	}
+	assert.NotZero(t, coverage["cell_add:member-epoch"], "generator missed epoch boundaries: %v", coverage)
+	assert.Equal(t, 16, coverage["advance"], "generator missed epoch boundaries: %v", coverage)
 	t.Logf("model-action coverage: %v", coverage)
 }

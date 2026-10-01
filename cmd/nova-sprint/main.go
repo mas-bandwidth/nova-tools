@@ -51,7 +51,8 @@ type app struct {
 	backend func(ctx context.Context, addr string, names sprint.Names) (store.Backend, error)
 	conns   map[string]*redisconn.Conn
 	cached  map[string]store.Backend
-	meter   hostload.Source // how fleet beat measures this machine
+	twins   map[string]*twin // the open `--redis mem:<file>` twins (twin.go)
+	meter   hostload.Source  // how fleet beat measures this machine
 	// inventory reads the machines of nova-config and their widths (fleet
 	// sync): tests give it the config's in-memory store.
 	inventory inventoryFn
@@ -66,6 +67,16 @@ type app struct {
 	// began, and why (the loop's start, a line on the log, the clock of a
 	// quiet log, a retry).
 	ticked func(n int, began time.Time, why string)
+	// profiled, when set, is told of each tick run finished, by its count:
+	// run --cpuprofile ends its profile at the last tick it covers.
+	profiled func(n int)
+	// checkTwin, when set (a test), is every store's CheckTwin: each part a
+	// tick plans on its twin is checked against a fresh read (store/twin.go).
+	checkTwin func(held, fresh *sprint.Snapshot) error
+	// readTwins is the process's read twin of each store, by address: what
+	// its verbs last read, so a verb after the first reads only what changed
+	// (store/twin.go). It is not the mem twin above, which is a store.
+	readTwins map[string]*store.Twin
 }
 
 func newApp(getenv func(string) string) *app {
@@ -77,6 +88,7 @@ func newApp(getenv func(string) string) *app {
 
 func (a *app) close() {
 	for _, c := range a.conns {
+		// ignored: a close at the end of the run, after every answer is printed
 		_ = c.Close()
 	}
 }
@@ -85,6 +97,9 @@ func (a *app) close() {
 // address, then NOVA_SPRINT_REDIS_USER and the variable
 // NOVA_SPRINT_REDIS_PASSWORD_ENV names.
 func (a *app) redisBackend(ctx context.Context, addr string, names sprint.Names) (store.Backend, error) {
+	if isTwin(addr) {
+		return a.twinBackend(addr)
+	}
 	key := addr
 	if b, ok := a.cached[key]; ok {
 		return b, nil
@@ -97,12 +112,14 @@ func (a *app) redisBackend(ctx context.Context, addr string, names sprint.Names)
 			return nil, err
 		}
 		if err := libraryMatches(ctx, conn.Client(), addr); err != nil {
+			// ignored: a close on the failure path; the library mismatch error is the one returned
 			_ = conn.Close()
 			return nil, err
 		}
 		a.conns[addr] = conn
 	}
 	b := &store.Redis{C: conn.Client(), Names: names, Now: a.now}
+	b.CountTrips() // a tick's cost says its round trips (store/stats.go)
 	a.cached[key] = b
 	return b, nil
 }
@@ -160,7 +177,7 @@ type common struct {
 }
 
 func (c *common) register(fs flagSet, getenv func(string) string) {
-	fs.StringVar(&c.redis, "redis", firstEnv(getenv, "NOVA_SPRINT_REDIS", "NOVA_REDIS_ADDR"), "the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR)")
+	fs.StringVar(&c.redis, "redis", firstEnv(getenv, "NOVA_SPRINT_REDIS", "NOVA_REDIS_ADDR"), "the Redis address, host:port (else NOVA_SPRINT_REDIS, then NOVA_REDIS_ADDR); mem:<file> is the in-memory twin kept in that file, for learning and tests, not for a fleet (nova-sprint help, trying it without Redis)")
 	fs.StringVar(&c.actor, "actor", getenv("NOVA_SPRINT_ACTOR"), "who is acting, recorded with every change (else NOVA_SPRINT_ACTOR; no default: a verb that writes wants one; a worker's verb is its --as name's)")
 	fs.StringVar(&c.op, "op", "", "the caller's operation id: the same id again returns the recorded result and changes nothing")
 	fs.BoolVar(&c.json, "json", false, "print one JSON object for a program instead of the lines")
@@ -201,9 +218,27 @@ func (a *app) storeCtx(ctx context.Context, c common) (*store.Store, error) {
 	if err != nil {
 		return nil, err
 	}
-	st := &store.Store{B: b, Names: names, Actor: c.actor, Now: a.now, NewID: store.NewID, Sleep: a.sleep}
+	st := &store.Store{B: b, Names: names, Actor: c.actor, Now: a.now, NewID: store.NewID, Sleep: a.sleep, CheckTwin: a.checkTwin}
+	// every verb this process runs on the store reads through one twin: a
+	// verb after the first reads only what changed (store/twin.go)
+	if a.readTwins == nil {
+		a.readTwins = map[string]*store.Twin{}
+	}
+	if a.readTwins[c.redis] == nil {
+		a.readTwins[c.redis] = store.NewTwin()
+	}
+	st.ShareTwin(a.readTwins[c.redis])
+	st.LockAfterLoss = true // a part that lost a try locks (store/lock.go)
+	if t := a.twins[c.redis]; t != nil {
+		st.NewID = t.newID
+	}
 	if st, err = st.Pinned(ctx); err != nil {
 		return nil, err
+	}
+	if a.twinOpen(c.redis) {
+		if err := a.beatTwin(ctx, st); err != nil {
+			return nil, err
+		}
 	}
 	if why, err := coordinatorOnly(ctx, st, c); err != nil || why != "" {
 		if err == nil {
@@ -217,7 +252,15 @@ func (a *app) storeCtx(ctx context.Context, c common) (*store.Store, error) {
 // run is the one entry point: the command line, and the driver, which runs
 // every verb it plays through it with an argument list.
 func (a *app) run(args []string, stdout, stderr io.Writer) (code int) {
-	defer verbflag.Recover(stdout, prog, banner(), &code)
+	defer verbflag.RecoverWith(stdout, prog, banner(), &code, verbExample)
+	defer func() {
+		// a twin is saved after every verb (twin.go); a verb that could not
+		// save it has not finished, whatever it printed
+		if err := a.saveTwins(); err != nil {
+			fmt.Fprintf(stderr, "%s: %s\n", prog, oneline.Escape(err.Error()))
+			code = 2
+		}
+	}()
 	if len(args) == 0 {
 		return refuse(stderr, "", "no verb; available: "+strings.Join(verbNames(), ", ")+"; run: nova-sprint help")
 	}
@@ -255,9 +298,11 @@ const noPrefix = "there is no prefix: the tables are always work, merge, readers
 var errNoPrefix = errors.New(noPrefix)
 
 // argErr is what a verb refuses its arguments with: the words, then the error;
-// a --prefix flag is the one line errNoPrefix, alone.
+// a --prefix flag is the one line errNoPrefix, alone, and a flag refusal (flagError)
+// is its own line.
 func argErr(words string, err error) string {
-	if errors.Is(err, errNoPrefix) {
+	var fe *flagError
+	if errors.Is(err, errNoPrefix) || errors.As(err, &fe) {
 		return err.Error()
 	}
 	return fmt.Sprint(words, err)

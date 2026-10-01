@@ -284,7 +284,7 @@ budgets makes the verdict depend on the load instead. So:
   reason when it cannot be read) are printed, and the exit is 0 on them.
 - **Enforced only on the nightly whole-tree run on the space legs:** ci.yml's
   `test` job runs on `schedule` too, test-packages deals that tree onto the
-  space shards only, and the test step's schedule branch runs `make test
+  space shards only, and `ci unit-test` on the nightly leg runs `make test
   GOTEST_COUNT_FLAG=-count=1 SLOWTESTS_ENFORCE=1`, which passes `--enforce`: a
   CI-SLOW line is exit 2 there and nowhere else. A red schedule run blocks
   nothing (ci-ok does not run on schedule); it is evidence, and its raw times
@@ -310,80 +310,6 @@ verb end to end:
 5. The slowest list is sorted and capped at three.
 6. More than one package over budget prints one line each, worst first, an order
    that does not depend on map iteration.
-## The COST line of a run
-
-**The verb.** `nova-ci cost` is where a run's job-seconds went:
-
-```
-cost  read the forge's job listing for a run on stdin; print one COST line with
-      job-seconds per job, their total, and spin (the seconds of the failed,
-      cancelled and rerun jobs); --redis appends the same entry to ci:cost
-```
-
-It takes the run receipt's flags (`--repo`, `--sha`, `--run-id`, `--workflow`,
-`--conclusion`, `--pr`, `--at`), spelt as `nova-ci github receipt` takes them,
-so the `ci-ok` step that writes the receipt writes the cost from the same
-context, and the listing it reads is the body of
-`repos/<owner>/<name>/actions/runs/<id>/jobs`: one JSON object whose `jobs`
-array holds exactly `total_count` jobs (one complete page, or the pages' jobs
-combined into one object; raw concatenated pages are refused). A complete
-listing is required before writing a run-total entry; partial listings are
-refused before any dial. The verb makes no call of its own: what fetched the
-listing is the caller's business, and everything on stdin is data from a host.
-
-**The invariant.** A job's seconds are its `completed_at` minus its
-`started_at` as the forge stamped them, whole seconds; `total` is the seconds
-of every job whose stamps are known; `spin` is, of those, the seconds of the
-jobs whose seconds bought no verdict: a red conclusion (`failed`; `cancelled`
-named as such, in either of the forge's spellings), a `run_attempt` above one
-(`rerun`), or an earlier attempt of a job the listing also holds a later
-attempt of (`superseded`, since the forge lists every attempt under
-`filter=all`). A job with no `completed_at` is still running: its seconds are
-unknown, printed `-`, counted in `unknown=` and never summed as zero, and a
-stamp out of order is unknown too, never negative. The engine is
-`internal/cicost`: `ParseJobs` turns the bytes into jobs, `FromJobs` turns
-jobs into seconds, `Line` prints them, and nothing reads a file, the clock or
-the network.
-
-**Its one-line output.** `COST repo=<owner/name> sha=<sha> run=<id>
-workflow=<name> conclusion=<word> pr=<n|-> jobs=<n> total=<s> spin=<s>
-unknown=<n> job=<name>:<seconds>:<conclusion>:<attempt>:<ok|failed|cancelled|rerun|superseded>
-... ev=<stream id|->`, one `job=` field per job in the listing's order, every
-value one token (a job named `test (linux)` prints `test\x20(linux)`), on
-stdout, so one `COST` grep reads a log. With `--redis` the entry is appended to
-the `ci:cost` stream first, the receipt's fields, the totals and one
-`job:<name>:<attempt>` field per job, in one XADD that touches no other key,
-and the line ends in the entry's id; a reader joins the entry to the run's
-`ev:github` row by `repo`, `sha` and `run_id`. The write goes through the
-receipt's own `Validate`, so a cost never names a run the receipt could not.
-
-**Its refusals.** Exit 2 before any dial, one line each ending `run: nova-ci
-help`: a flag the receipt refuses (its own remedy, `--sha wants the 40-hex head
-the run tested`), an empty stdin (`it wants the run's job listing`), bytes that
-are not the forge's JSON, a listing holding no jobs, a partial or
-count-mismatched listing (`listing is partial (<n> jobs read, <m> expected); page
-through the forge's listing, or pass every page`), a positional argument.
-Exit 1, the receipt's code for the same failure, when the store would not take
-the entry: one line naming the cause and ending `the COST entry was not
-written: fix the store or the bench seat and rerun ci-ok`, never a line that
-pretends the entry landed. If an XADD write succeeds but closing the connection
-subsequently fails, stdout retains the COST line with its write event ID, stderr
-reports the close failure (`nova-ci cost: close: <err>`), and the command exits 1
-without instructing the caller to rerun the write (preventing duplicate writes).
-
-**The mistake it prevents.** A CI bill is read as a total, and a total hides
-the part that bought nothing: the red job's minutes, the rerun's, the attempt a
-rerun superseded. One line per run, on the receipt's identity, is what lets a
-reader sum spin over a day and name the job that spent it.
-
-**Its tests.** `internal/cicost/cicost_test.go` prices the fixture listing
-`internal/cicost/testdata/jobs.json` (one failed job at 42 s, one rerun at
-33 s: `spin=75`, `total=150`), every attempt of a rerun, a cancelled job in
-both spellings, unknown seconds, and the entry's field set through a fake
-writer; `cmd/nova-ci/cost_test.go` runs the verb end to end through `run()`,
-every refusal, the store seam, and executes the `### cost` transcript of
-docs/CLI.md line for line through `onboarding.CompareTranscript`.
-
 ## The CI class test against a real network host on the CI path
 
 **The help line.** The class test is entered in the CI check roster and in help
@@ -671,9 +597,11 @@ CI path*.
 
 ### `goenv` — a child `go` never inherits the caller's environment
 
-**The rule.** Every `exec.Command("go", …)` in `cmd/` and `internal/` sets
-`cmd.Env` from `goenv.Clean(...)`; a tool that reads the output of a `go` it
-started must not let the caller choose that output's shape.
+**The rule.** Every `exec.Command("go", …)` in `cmd/` and `internal/`, and
+every `subproc.Command`, `subproc.CommandFor`, `subproc.Context` and
+`subproc.Long` given the literal `"go"`, sets `cmd.Env` from `goenv.Clean(...)`;
+a tool that reads the output of a `go` it started must not let the caller choose
+that output's shape.
 **The mistake it prevents.** CI's `make test` exports `GOFLAGS=-json`; an
 inner `go test` that inherits it answers in JSON with no `--- PASS:` line, and a
 parser counting those lines reports a green unit as red.
@@ -691,6 +619,78 @@ a helper that sets `Env` one frame away is refused rather than trusted (a false
 positive it accepts), and a `go` spawned through a variable command name or a
 shell is not seen at all. Full section: *The CI class test against a child `go`
 that inherits the environment*.
+
+### `subproc` — every child process has a bound or a cancellable context
+
+**The rule.** Production code under `cmd/`, `internal/` and `tools/` starts a
+child through `internal/subproc` or `internal/gitrun` and never through a bare
+`exec.Command`. A one-shot child (git, gh, ssh, sops, tailscale, go tooling, ps)
+runs under `subproc.Command` or `gitrun`: the caller's own context deadline when
+it is sooner, else the named default of its kind (git 60 s, and 300 s for a git
+that goes to the network or moves a whole tree; gh 120 s; ssh 300 s; go tooling
+300 s; other tools 60 s), and `WaitDelay` of 5 s. A long-lived child (a harness
+run, a member's native child, a server) runs under `subproc.Long`: a cancellable
+context, no deadline. An `exec.CommandContext` outside those two packages stands
+only in a function that assigns a `WaitDelay`. `subproc.Context` and
+`subproc.Long` are never handed `context.Background()`, `context.TODO()` or
+`nil`, directly or through a local: the caller's context, or one derived with
+`context.WithCancel`, goes in.
+**The mistake it prevents.** A hung git, ssh or sops blocked its caller for as
+long as the child chose to live; and a killed child whose own child kept the
+pipe open still blocked `Output`, because the kill ends the process and not the
+pipe.
+**The test.** `TestEveryChildProcessGoesThroughTheSubprocDoor`
+(`internal/ci/subprocess_bound_class_test.go`), with
+`TestSubprocessClassTestRefusesItsProbes`, which pins each shape it refuses (a
+`Background`/`TODO`/`nil` context, a `WaitDelay` that is only a comment or a
+string or sits in another function, an aliased or dot-imported `os/exec`).
+**Its allowlist.** `subprocBackgroundAllowed` in the test, a `file:Func` and a
+reason each; empty, because every long-lived child derives its context.
+**Its remedy lines.** The message names the file, the line and the door to use.
+**Its narrowings.** It reads call sites by import path, so a child started
+through `os.StartProcess` or an `exec.Cmd` literal is not seen, and it asks that
+the function assign `WaitDelay`, not that it be the very command.
+
+### `gitoperand` — a card-derived git operand follows `--`
+
+**The rule.** A git call under `internal/swarm` and `cmd/nova-swarm` puts every
+operand that is not a literal behind `--`, or behind `--end-of-options` for a rev
+that `--` would turn into a path. Git 2.43, the oldest the benches carry, honours
+`--end-of-options` in `rev-parse --verify`, `cat-file`, `show`, `ls-tree`, `rev-list` and
+`switch`; it does not in `git checkout` (the rev is read as a path) or `git grep` (the
+tree-ish is read as a revision), so staging switches to the card's sha with
+`git switch -C`, and the one `git grep` takes a tree-ish only in the 40 hex digits
+`rev-parse` printed. A card is untrusted input: its `base-repo:`,
+`base-sha:`, `BASE:` ref and `PR-HEAD:` reach git, and a value that starts with `-`
+is read as an option when nothing separates it. Staging also refuses such a value
+by name before any git runs.
+**The mistake it prevents.** `git remote set-url origin <base-repo>` read a
+`base-repo: --bogus` as a flag, and the regression test for the set-url step relied
+on exactly that (ideas#829).
+**The test.** `TestCardDerivedGitOperandsFollowTheSeparator`
+(`internal/ci/gitoperand_class_test.go`), with
+`TestGitOperandClassTestRefusesItsProbes`, which pins each shape it refuses and its
+neighbour that is fine, and reads the real `stage.go` with its `--` removed, and
+`TestGitOperandClassTestSeesTheCatFileSeparatorInStage`, which strips the separator from
+the `cat-file -e` call there, where `-e` takes no value, and must go red. A git
+call is a swarm git helper (`stageGit`, `baseGit`, `gitOut`, `gitOutput`), a `gitrun`
+runner found by import path, `exec.Command` or `exec.CommandContext` of the literal
+`"git"`, or an argv built apart from its call (a `[]string` literal that starts with a
+git subcommand, and `append` onto it). An argument is fine when it is a literal, the
+value of an option that takes one (`-C`, `-B`, `--reference`, and `-e` after `grep`
+only: `cat-file -e` takes no value), after the
+separator, or a concatenation that begins with a literal that does not start with
+`-`.
+**Its allowlist.** `gitOperandAllowed` in the test, a `file:Func` and a reason each:
+`testDefinedAt` (the `git grep` above, which refuses any tree that is not a full hex
+sha before it runs).
+**Its remedy lines.** The message names the file and the line and the separator to
+add.
+**Its narrowings.** It reads the syntax: a final `args...` spread is read where the
+argv is built, not at the call, and an argv assembled through a path it cannot see (a
+function that returns a slice built elsewhere) is not followed. It does not know which
+values a card supplies, so every non-literal operand in these two packages is held to
+the rule.
 
 ### `slowtests` — no package over the per-package time budget
 
@@ -1108,19 +1108,20 @@ what is enforced on every leg is static (`unitwaits`).
 real blocker for merging: when every PR's shards each take the whole of a box,
 every test file starts its own redis-server, and tests run over a second, the
 queue waits on CI.
-**The test.** `TestUnitTierRefusesRedisServer` (runs the shim step: exit 86
-and its line), `TestStartFailsClosedOnTheUnitTierShim` (functional-tagged, in
+**The test.** `TestUnitTierRefusesRedisServer` (writes the shim the way `ci unit-tier-shim`
+does and runs it: exit 86 and its line), `TestStartFailsClosedOnTheUnitTierShim` (functional-tagged, in
 `internal/ci/redis_ci_test.go`: `testutil.Start` against that shim fails
-closed), `TestUnitLegTakesAtMostTwoCores` (runs the share
-step with one runner on the box), `TestFunctionalTierRunsOnlyAsStreamsMerge` and
+closed), `TestUnitLegTakesAtMostTwoCores` (the share
+function, `pkgselect.RunnerShare`, with one runner on any box), `TestFunctionalTierRunsOnlyAsStreamsMerge` and
 `TestSlowAllowlistRowsNameTheirMeasurement`,
 `TestSlowAllowlistRatchetRefusesAnUnmeasuredRow`,
 `TestUnitBudgetsJudgeTheTestNotTheLoad` (a 1.4 s test is exit 0 with its
 CI-SLOW and CI-LOAD lines at load 2, at load 20 and unread, and exit 2 at all
 three under enforce; an unledgered SLEEPS skip is red at all three on both
 legs), `TestNightlySpaceLegIsTheOnlyEnforcingLeg` (ci.yml's test job runs on
-schedule, deals it onto space only and passes SLOWTESTS_ENFORCE=1 only from
-that branch; nothing spells SLOWTESTS_ENFORCE=0; the Makefile reads it only to
+schedule, the fan-out deals it onto the Linux legs only and
+`pkgselect.UnitMakeArgs` passes SLOWTESTS_ENFORCE=1 only for that leg; nothing
+spells SLOWTESTS_ENFORCE=0; the Makefile reads it only to
 pass --enforce and carries slowtests' exit through) and
 `TestMeasuredBenchesAreCIRunners` (every bench a row may name is one ci.yml
 names) (`internal/ci/unit_tier_class_test.go`); through make itself,
@@ -1178,12 +1179,49 @@ bounds; the class tests do not time a hosted leg, dev's push run does.
 The heavy list is named from one reader measurement, not from a hosted
 per-package timing.
 
+### `darwin-gate` — the darwin unit shards run only where the target branch is dev or main
+
+**The rule.** ci.yml's `test-packages` deals the unit matrix with `ci test-matrix`,
+and the darwin shards are dealt only when `pkgselect.DarwinOn(event, target)` says
+so: always on `schedule` and `workflow_dispatch`; otherwise only when `--target-branch`
+(a pull_request's `github.base_ref`, the merge queue's `github.event.merge_group.base_ref`,
+a push's `github.ref_name`; a `refs/heads/` prefix is cut) is one of
+`pkgselect.DarwinBranches` (`main`, `dev`, the integration list of the concurrency
+group in short form). With the gate off every selected package rides the Linux
+shards, the darwin-only packages (`cmd/nova-sandbox`, `internal/sandbox`) are dropped
+before the nothing-to-test check and have no leg, the darwin-sensitivity analysis
+does not run, and a change that selected only darwin-only packages gets the one leg
+that prints "nothing to test for this change". Linux shards are unchanged, `ci-ok`
+reads the `test` job whose matrix has no darwin entry on a working branch, and
+certification.yml (which runs on pushes to dev, nightly and on dispatch, and certifies
+on darwin) is untouched. A change that touches only darwin-only packages gets no test
+run until it reaches dev. No ruleset applies to a working branch, so no darwin check
+is required there.
+**The mistake it prevents.** The Go is the same Go on both OSes and the darwin legs
+are the slowest and the scarcest: cancelled at the two-minute cap whenever their
+host is loaded, they turned a working-branch pull request red for a reason the
+change did not cause and held the queue behind them.
+**The test.** `TestDarwinOn` and `TestFanoutWithTheDarwinLegsOffIsLinuxOnly`
+(`internal/pkgselect`) hold the gate over the events and the targets, prefixed and
+bare; the `test-matrix` tests in `tools/ci/sel_test.go` hold the verb with the gate off.
+`TestDarwinShardsRunOnlyForIntegrationBranches` (`internal/ci/darwin_gate_class_test.go`)
+reads ci.yml: `pkgselect.DarwinBranches` equals the integration list, the list step
+hands the verb each event's own target branch, and no other job carries a macOS label
+on a `runs-on` list (any position, quoted or block form, any case) or runs macos-latest
+on a pull_request or merge_group. `TestMacOSRunnerMatchCatchesEveryPosition` holds that
+label match itself.
+**Its allowlist.** None.
+**Its remedy line.** Add the branch to the integration list and to
+`pkgselect.DarwinBranches` together.
+**Its narrowings.** It reads the workflow as text and does not run the step; the
+branch expressions are GitHub's.
+
 ### `cert-race-shards` — the whole-tree race run meets the cap by shards, its cache saved before the tests
 
 **The rule.** certification.yml's `test` job keeps `timeout-minutes: 2` and meets
 it by shard count: ubuntu-latest and macos-latest each run shards 1..8, every leg
 carrying its OS's `shards`. Its `deal this shard's packages` step is test-hosted's
-deal over the live packages (`live-packages.sh`), with the measured heavy list
+deal over the live packages (`go run ./tools/ci deal`), with the measured heavy list
 (`internal/ci`, `cmd/nova-tokens`, `cmd/nova-sandbox`,
 `cmd/nova-self-talk`, `internal/update`, `cmd/nova-secrets`, `internal/bus`) dealt
 first, one per shard. Every shard
@@ -1216,14 +1254,14 @@ its shard is the macOS and Linux compile of the race build.
 ### `release-legs` — the release and its dry run build one leg per platform and sum the whole set on one machine
 
 **The rule.** release.yml's `build` and certification.yml's `release-build` are a
-matrix of one leg per line of `.github/scripts/release-targets`, the same list in
-all three places. Each leg's only compile is `.github/scripts/release-build.sh
+matrix of one leg per line of `tools/ghrelease/release-targets`, the same list in
+all three places. Each leg's only compile is `go run ./tools/ghrelease build
 <stamp> <goos> <goarch> dist` (every `cmd/*/` tool, `-trimpath`, `CGO_ENABLED=0`,
-the ldflags `release-ldflags.sh` composes, named `<tool>_<stamp>_<goos>_<goarch>[.exe]`),
+the ldflags `ghrelease ldflags` composes, named `<tool>_<stamp>_<goos>_<goarch>[.exe]`),
 and each uploads the artifact `release-<goos>-<goarch>`. release.yml's `release`
 and certification.yml's `release-dry-run` need those legs, download every
-`release-*` artifact into one directory, run `assert-version-stamp.sh` over the
-linux/amd64 binaries, and then run `.github/scripts/release-sums.sh`, which
+`release-*` artifact into one directory, run `ghrelease stamp` over the
+linux/amd64 binaries, and then run `ghrelease sums`, which
 refuses a directory that is not exactly the shipped set and writes and verifies
 `SHA256SUMS` over the whole of it. In release.yml that runs in the step that
 attaches the set to the release. release.yml restores the certification build
@@ -1233,21 +1271,28 @@ does not fit the two-minute cap: the cap cancels it inside that build, and
 release.yml's build is the same loop. Two copies of
 a target list drift, and a dry run that builds differently from the release proves
 nothing about the release.
-**The test.** `TestReleaseMatricesAreTheTargetsFile` and
-`TestReleaseSumsAreOneMachineOverTheWholeSet`
+**The test.** `TestReleaseMatricesAreTheTargetsFile`,
+`TestReleaseSumsAreOneMachineOverTheWholeSet`,
+`TestEveryJobThatRunsGhreleaseSetsUpGoFirst` (a job that runs `go run ./tools/ghrelease`
+carries the pinned `actions/setup-go` with `go-version-file: go.mod` before its first
+call) and `TestNoWorkflowStepRunsAReleaseScript` (no release or certification step runs a
+release shell script; the verbs are `tools/ghrelease`)
 (`internal/ci/release_matrix_class_test.go`): both matrices equal the targets
-file; no `go build` in a build leg, one `release-build.sh` call over the matrix
+file; no `go build` in a build leg, one `ghrelease build` call over the matrix
 target, one `release-<goos>-<goarch>` upload; no cache save in release.yml; the
 final job needs the legs and downloads every `release-*` artifact, asserts the
-stamp, then runs `release-sums.sh`, in release.yml in the attaching step.
-**Its allowlist.** None. The targets file is the list.
-**Its remedy line.** A platform is added or dropped in `release-targets` and in
-both matrices in one change; a compile change goes into `release-build.sh`.
+stamp, then runs `ghrelease sums`, in release.yml in the attaching step
+(`ghrelease attach`).
+**Its allowlist.** None. The targets file is the list, embedded in `tools/ghrelease`.
+**Its remedy line.** A platform is added or dropped in `tools/ghrelease/release-targets`
+and in both matrices in one change; a compile change goes into `tools/ghrelease/build.go`.
 **Its narrowings.** The tests read the workflow text; whether a leg fits the cap is
-measured by a certification run. The negative controls of the release scripts
-(stamp refusals, tag alphabet, certified gate, upload boundary) run in
-certification.yml's `release-checks`, which builds its fixtures on the
-linux-amd64 leg's cache; they are fixtures and are never summed or shipped.
+measured by a certification run. The negative controls of the release verbs that
+need no binary (stamp refusals, tag alphabet, certified gate, upload boundary) are
+unit tests of `tools/ghrelease`; the ones that need this tree's real binaries (an
+unstamped build, a tool that loses its stamp) are `ghrelease controls`, run in
+certification.yml's `release-checks`, which builds them on the linux-amd64 leg's
+cache; they are fixtures and are never summed or shipped.
 
 ### `onboarding` — every command meets the onboarding standard
 
@@ -1375,8 +1420,8 @@ repository's own top-level directories (`cmd`, `internal`, `docs`, `tools`,
 `scripts`, `testdata`, `fleet`, `infra`, `.github`) and carries a slash must
 name a file or a directory that is in the tree, or be named in the allowlist
 with its reason.
-**The mistake it prevents.** A comment that places `bench-standard.sh` under
-`scripts/` when the file is `tools/bench-standard.sh` sends a friend following it to
+**The mistake it prevents.** A comment that places the bench standard's witness under
+`scripts/` when it is `tools/benchstandard` sends a friend following it to
 nothing, because a path inside a comment or a string is just text to Go and
 nothing else in CI has an opinion about it. Prompts give positive instructions
 with EXACT paths; the text a friend reads IS the mechanism, so a dead path is
@@ -1582,7 +1627,7 @@ build the image.
 the repository's one Redis version, the one the functional image builds, the
 image `make test-functional-container` runs the functional tier in. Every other
 place that names a Redis version equals it: the CI installer's source build
-(`.github/scripts/install-redis-server.sh`), the image's README,
+(`tools/ci/installredis.go`), the image's README,
 `docs/nova-table/README.md`, and every phrase of the living tree that writes a
 three-part version right after the word Redis (`Redis <v>`, `Redis (<v>)`,
 `redis-server <v>`, `--redis-version <v>`, `redis-<v>.tar.gz`,
@@ -1682,24 +1727,23 @@ about commands it does not run.
 ### `selection` — `internal/ci` is always in the selected packages
 
 **The rule.** `./internal/ci` is added to the package set on every selection —
-by `.github/scripts/select-packages.sh` — never only as a fallback when the diff
-selected nothing.
+by `internal/pkgselect`'s `Select` (`go run ./tools/ci select-packages`) — never
+only as a fallback when the diff selected nothing.
 **The mistake it prevents.** `internal/ci` scans the tree instead of importing
 what it guards, so nothing in a diff ever "touches" it: an edit to any package
 selects no shard that would run the class tests unless the selection adds it.
 Every rule in this document is worth exactly as much as this line. The other
-edge: when the diff has ALREADY selected `internal/ci`, a bare append runs it
-twice in every shard of every leg, so the append sits in a `case` arm — a guard
-that prevents a DUPLICATE keeps the rule.
+edge: when the diff has ALREADY selected `internal/ci`, the package is in the
+set once, never twice in every shard of every leg.
 **The test.** `TestSelectPackagesAlwaysAddsInternalCI`
 (`internal/ci/ci_selection_test.go`).
 **Its allowlist.** None.
-**Its remedy line.** `select-packages.sh does not add ./internal/ci to want
+**Its remedy line.** `pkgselect.Select does not add ./internal/ci to want
 unconditionally; internal/ci scans the tree instead of importing what it guards,
 so an edit elsewhere selects no shard to run its class tests`.
-**Its narrowings.** The selection is pinned by a regular expression over
-`select-packages.sh`; another path into the package set would need its own row
-here, and the test cannot know it exists.
+**Its narrowings.** The selection is run over a fixture and pinned by a regular
+expression over `internal/pkgselect/select.go`; another path into the package set
+would need its own row here, and the test cannot know it exists.
 
 ### `toolchainroots` — the bench standard and the wall name one list per OS, with one kind each
 
@@ -1711,9 +1755,9 @@ execute, `~/go/bin` granted under neither, and on darwin the installed trees
 `/opt/homebrew/opt/openjdk`, `/Library/Java/JavaVirtualMachines`,
 `/usr/local/share/dotnet`) read **and execute**, never a launcher directory.
 The linux side of the agreement is the linux provisioning standard:
-`tools/bench-standard.sh` carries the linux names between its
-`NOVA_TOOLCHAIN_ROOTS` markers and drifts on a missing one. A Mac bench has no
-script standard, because a Mac's toolchains are installed rather than
+`tools/benchstandard` carries the linux names between its
+`NOVA_TOOLCHAIN_ROOTS` markers (in `checks.go`) and drifts on a missing one. A Mac bench has no
+witness, because a Mac's toolchains are installed rather than
 provisioned into a home, so the darwin side is the wall's list alone.
 The granted roots are the one list in `internal/swarm/toolchain.go`
 (`toolchainRoots`, per GOOS, each with its kind).
@@ -1753,18 +1797,18 @@ Cellar prefix is read off the launcher rather than guessed by
 
 ### `walltoolchain` — a toolchain on PATH is a toolchain the WALL can execute
 
-**The rule.** `tools/bench-standard.sh` check **(3c)** resolves each of `go` and
-`sbcl` off PATH with `readlink -f` and drifts unless the real path lies under a
+**The rule.** `tools/benchstandard`'s executable-root check resolves each of `go` and
+`sbcl` off PATH, links followed, and drifts unless the real path lies under a
 read root the sandbox wall grants: the WHOLE linux system table
 (`linuxReadRoots` in `internal/sandbox/wrap_linux.go`, copied between the
-`NOVA_WALL_READ_ROOTS` markers — `/usr /bin /sbin /lib /lib64 /etc
+`NOVA_WALL_READ_ROOTS` markers of `tools/benchstandard/checks.go` — `/usr /bin /sbin /lib /lib64 /etc
 /run/systemd/resolve /opt /dev /proc`, every one landlock's read subset, which
 carries execute), the directory `/etc/resolv.conf` resolves to on this machine
-(the wall's `linuxRoots`; `NOVA_RESOLV_CONF` is the script's test seam
+(the wall's `linuxRoots`; `NOVA_RESOLV_CONF` is the witness's test seam
 for that file), and `$HOME/sdk` from `internal/swarm/toolchain.go`. The line names the PATH entry, the path it really
 resolves to, the granted home, and the remedy — `$HOME/sdk/<tool>-<ver>/` — so
-the finding carries its own fix. `(3c)` is about EXECUTABILITY INSIDE THE WALL
-and is a separate line from `(3)`'s `sbcl not on PATH`, which is about presence:
+the finding carries its own fix. That check is about EXECUTABILITY INSIDE THE WALL
+and is a separate line from `sbcl not on PATH`, which is about presence:
 a bench can fail either, both, or neither.
 **The mistake it prevents.** `command -v sbcl` answers about the bench user's
 own shell. A card runs behind the wall, and an interpreter at
@@ -1773,20 +1817,19 @@ to the card — so the bench passes the standard and every card on it dies, and
 the work crowds onto the one bench whose toolchain happens to sit under a
 granted root. Moved under `$HOME/sdk/<tool>-<ver>/`, the same toolchain runs
 inside the wall.
-**The test.** `TestBenchStandardDriftsOnAToolTheWallCannotExecute` and
-`TestBenchStandardAcceptsAToolUnderAGrantedRoot`
-(`internal/ci/benchstandard_wall_toolchain_test.go`), in the shape
-`benchstandard_disk_functional_test.go` already uses: run the REAL script with a FAKE PATH
-layout and a HOME of its own. The negative half puts the tool at
+**The test.** The witness's own tests, in `tools/benchstandard/wall_test.go`, run
+the witness against a FAKE bench: a real directory tree under a HOME of its own
+and a host whose processes answer from a script. The negative half puts the tool at
 `$HOME/.local/bin` — a real misplacement — and demands exactly
 one DRIFT line carrying the remedy. The positive half puts it at
 `$HOME/sdk/<tool>-<ver>/bin` and demands NO line, which is the half that catches
 a check written as "always drift".
-`TestBenchStandardAndTheWallNameTheSameReadRoots` holds the script's marker
+`TestBenchStandardAndTheWallNameTheSameReadRoots`
+(`internal/ci/benchstandard_wall_toolchain_test.go`) holds the witness's marker
 block equal, in order, to `linuxReadRoots` read from the wall's source, and the
-root loop to reading it — a hand-picked subset without `/etc`,
+check to reading it — a hand-picked subset without `/etc`,
 `/run/systemd/resolve`, `/dev` or `/proc` rejects a conforming bench.
-`TestBenchStandardGrantsTheResolverDirectoryTheWallGrants` is the dynamic root:
+The same file holds the dynamic root:
 a WSL2-shaped symlinked resolver config makes a tool under its directory
 accepted, and the same layout with no resolver pointing there drifts.
 **Its allowlist.** None. Both tools are held to the same rule by one loop; a
@@ -1801,7 +1844,7 @@ would in fact grant execute on that root — `toolchainroots` holds the kinds, a
 only `sdk` is the execute kind, so `go/pkg/mod` is deliberately not a root this
 check accepts; it covers `go` and `sbcl` only, so a third toolchain added to a
 bench is invisible until it joins the loop; and the root list here is the LINUX
-one, because `tools/bench-standard.sh` is the linux bench's standard.
+one, because `tools/benchstandard` is the linux bench's witness.
 
 ### `ciworkspace` — the workspace cleanup never fails a job before checkout
 
@@ -1878,6 +1921,53 @@ shrinks; NOVA_CI_UPDATE=1 does both)`.
 does not count, a test that opens with `t.Parallel()` and then races a shared
 resource is not seen (that is `go test -race`'s job), and subtests are not
 required to call it.
+
+### `testify` — every Go test uses testify
+
+**The rule.** Every Go test under `cmd/` and `internal/` uses
+`github.com/stretchr/testify` (docs/STANDARD.md, section 8): `require` for setup and
+preconditions, `assert` inside table rows, a testify suite or a testkit helper struct
+for a shared rig, `testify/mock` for a fake with expectations, `ErrorIs`, `ErrorAs`,
+`ErrorContains`, `Eventually`, `JSONEq`, `ElementsMatch`, `FileExists` and `Panics`
+over their hand-written equivalents, named cases under `t.Run`, `t.Parallel()` in
+every test, and the environment and working directory injected through the code's
+config.
+Opening every test with `t.Parallel()` is held by `parallel`
+(`TestEveryTestOpensWithTParallel` and `serial-tests_allowlist.txt`); this check does
+not count it a second time.
+**The mistake it prevents.** A test that stops at its first bad row hides the rest; a
+hand-written `if got != want { t.Errorf }` prints less than the assertion it imitates;
+`t.Setenv` and a Chdir forbid `t.Parallel()`, so the package's tests queue.
+**The test.** `TestTestsUseTestify` (`internal/ci/testify_class_test.go`); the
+detector is pinned by `TestTestifyLedgerMeasuresEachShape` and the ledger's
+judgement by `TestTestifyLedgerOnlyFalls` (`internal/ci/testify_shapes_test.go`).
+It counts, per package and per kind: `assert`, an `if` whose body calls `t.Fatal`,
+`t.Fatalf`, `t.Error`, `t.Errorf`, `t.Fail` or `t.FailNow` directly (the shapes
+`if err != nil`, `if got != want`, `if !strings.Contains(...)`, a `reflect.DeepEqual`
+guard and every other bool); `env`, a `t.Setenv`, `t.Chdir` or `os.Chdir` call.
+**Its allowlist.** `internal/ci/testdata/testify_allowlist.txt`, one
+`<package>:<kind> <sites> <reason>` row per package and kind (`assert`, `env`) still short. The count
+only falls: a package measuring more sites than its row, a package with a site and
+no row, and a row above what the package measures are each a red run, and
+`NOVA_CI_UPDATE=1` lowers the counts and drops the rows at zero, never raises a
+count and never adds a row.
+**Its remedy lines.** One per kind, and per site the testify call for its shape:
+`require.NoError` and `require.Error` for an err guard, `assert.Equal` and
+`assert.NotEqual` for a comparison, `assert.Nil` and `assert.NotNil`, `assert.Len`
+and `assert.Empty` for a length, `assert.Contains` for a substring guard,
+`assert.Equal`, `assert.ElementsMatch` or `assert.JSONEq` for a `reflect.DeepEqual`
+guard, `assert.True` and `assert.False` for any other bool.
+**Its narrowings.** It reads the syntax only: an assertion that fails the test by
+another route (a `panic`, a helper that calls `t.Fatal` without an `if`) is not seen,
+a receiver is taken as a testing value when it is named `t` or `tb` or is a
+parameter typed `*testing.T`, `*testing.B` or `testing.TB`, a test that uses testify
+for some checks and a bare `if` for others is counted for the bare ones, and
+`os.Setenv` is not counted (a `TestMain` may set the process environment once).
+Shapes the matcher does not count yet: a failing call in an `else { ... }` block (an
+`else if` is an `if` and is counted), a failing call inside a loop or a nested block
+under the `if`, a failing call in a `switch` or `select` case body, and a helper in a
+non-test file that takes a `testing.TB` and fails it. Each is a bare assertion the
+ledger does not see, so the ledger's count is a floor, not the whole of the work.
 
 ### `slowwaits` — no per-commit test sleeps over a second or waits out a deadline
 
@@ -2080,12 +2170,7 @@ Every class test reads this repository's own text — `.go` files, `.github/work
 36. `TestSharedRepoTreeSkipsTheGitDirectory` — `.git` is never walked into.
 38. `TestSpecCIIndexesEveryClassTest` — every class test is named by the index and every indexed `Test…` name exists.
 39. `TestNoGhInAnyBrief` / `TestBriefRuleCatchesEachSpelling` — no brief this repository ships tells a child to call GitHub (GitHub is a git remote only). **The mistake it prevents:** one PR can cost ~60 REST calls, and a token's hourly budget spent freezes every merge for an hour; a brief that says `gh api`, `gh pr`, GraphQL or a bare remote clone teaches the next child to spend the budget again. **The sweep:** `internal/swarm/templates.go` and every card fixture under `cmd/nova-swarm/testdata/cards/*.md` (an empty glob is a red run, so a source that moves must move in the list too); a line matching `gh ` as a command (line start or after a non-word, non-path character, so "through " does not match), `graphql` in any case, or a `git clone` of any remote (`https://`, `ssh://`, `git@`) without `--reference` on the same line is refused. **No allowlist:** the remedy is the verb, not an exception. **The remedy line:** `<file>:<line>: gh  in a brief: <line>` (or `GraphQL in a brief`, or `a remote clone without the bench mirror as --reference`), with the fix named once: the verbs that read a brief or a post, or a clone with `--reference ~/nova-bench/mirror/<repo>.git`. **The control:** `TestBriefRuleCatchesEachSpelling` feeds the scanner one brief per spelling and wants exactly one finding at that line, and a brief carrying the verbs, a mirror-referenced clone and the words "through" and "high" wants none.
-40. `TestTaskCardsHaveOneWriter` — no non-test Go file under `cmd/` or `internal/` writes a task card's sets or record (`ws:<stream>:<where>`, `friend:<f>:cards:<where>`, both also under the sprint epoch, `ws:<e>:<stream>:<where>` and `friend:<f>:<e>:cards:<where>`; the friend-queue idx sets, `task:<id>`) with a direct Redis call; every move is one FCALL of the one writer, `ns_tcard_move` in `internal/nsprint/fn/lua/02_card_move.lua` (a card is only ever in no set, or in one of these sets; several writers keeping the sets let a table's counts drift from the cards). Fixtures that seed a throwaway store (a `*fixture*.go` file) are the only exceptions. Its Lua twin is `TestTaskCardOneWriter` in `internal/nsprint/fn`.
-41. `TestTableSetsHaveOneWriter` / `TestTableSetsRuleCatchesAnInjectedWriter` — nothing but the one move file, `internal/nsprint/fn/lua/02_card_move.lua`, writes a set behind the three tables: `ws:<stream>:<where>` (the stream table's primaries), `bench:<b>:cards:<col>` and `friend:<f>:cards:<col>` (the host and friend tables' copies), the dealer's lists `s:<S>:pool|waiting`, each also under the sprint epoch (`ws:<e>:...`, `<kind>:<name>:<e>:cards:...`, `s:<S>:<e>:...`: the scanner knows the literals and every epoch-keyed helper, `ws.KeyAt`, `ConsumerKeyAt`, `SprintListAt` and their package twins in Go, `NS.card.ckey|wskey|skey`, `CARD.*`, `cm_*`, `DF.*` and `wskey` in Lua), and the bench lease ledgers `bench:<b>:living|starting` being folded into `bench:<b>:cards:working` (the links between a table and its cards are always valid). **The mistake it prevents:** a table printing counts no card record can account for, because several files each keep their own copy of a set, so a move in one leaves a stale member in another. **The sweep:** every Lua file under `internal/nsprint/fn/lua` (a ZADD, ZREM, SADD, SREM, SMOVE, pop, range removal, store, DEL, UNLINK or RENAME of one of those keys, directly or through a local bound to one) and every non-test Go file under `cmd/` and `internal/` (the go-redis write methods and raw command lists on the same keys). **The allowlist:** fixtures (`*fixture*.go`) seed a throwaway store; `knownTableWriters` is a ratchet that only goes down, holding `ns_card_resume`'s pool write in `card_pool.lua` until it folds into the one move; the legacy ledger writers are a ratchet (`legacyLedgerWriters` in `internal/ci/tablemoves_class_test.go`), empty: any write of an old ledger fails. **The remedy line:** `a second writer of a table set (the one writer is 02_card_move.lua ...): <file>:<line>`, or the ratchet's `lower legacyLedgerWriters[...]`. **The control:** `TestTableSetsRuleCatchesAnInjectedWriter` feeds the scanner Lua and Go writers of the table sets and the ledgers and wants each found, and wants the move file, a fixture and a ZCARD read left alone.
-42. `TestNoOldLeaseLedgerLeft` — nothing reads or writes the old lease ledgers `bench:<b>:living|starting` and `friend:<f>:living|starting`, in the Lua library or in any non-test Go file: they fold into `<consumer>:cards:working`, the one lease ledger, and the width in use is its ZCARD. **The mistake it prevents:** a bench or friend keeping two ledgers beside its working set, so the width a table prints, the width a take is refused at and the width the dealer reserves against can each read a different set. **The sweep:** every Lua file under `internal/nsprint/fn/lua` (code before a `--` comment) and every non-test Go file under `cmd/` and `internal/`, for a string spelling of a bench or friend key ending `:living` or `:starting`. **No allowlist:** fixtures seed the consumer sets. **The remedy line:** `an old lease ledger key (folded into <consumer>:cards:working ...): <file>:<line>: <line>`; hold and drop a friend-queue lease with `NS.moves.hold` / `NS.moves.drop` (02_card_move.lua) and read width as ZCARD `<consumer>:cards:working`. **The control:** the test feeds the pattern a Lua ZCARD of a friend's `:starting`, a Go ZCard of a bench's `:living` and a fixture ZADD of a friend's `:living` and wants each found, and wants `bench:<b>:cards:working` left alone.
-43. `TestCopiesRunNiced` — every path that execs a copy's harness, or a coordinator child's local test run, steps its OWN process down to nice 15 (`internal/yield`, `Nice = 15`: `setpriority(PRIO_PROCESS, 0, n)` on darwin, where a nice belongs to the process, and on Linux, where a nice belongs to a THREAD and a child forked from an un-niced thread inherits 0, `setpriority(PRIO_PROCESS, tid, n)` over every thread in `/proc/self/task`, repeated until a pass sets none — the one-thread form leaves most children of a wrapper at nice 0) BEFORE the exec: `cmdLocal` (`cmd/nova-ci/local.go`, before its first `localCapture(`; its `nice -n` is pinned to `yield.Nice`), and no production caller sets a `Yield` of its own (CI over work is a permanent setting: work creates more CI, so without it the fleet is unstable). **The mistake it prevents:** copies at nice 0 share the cores evenly with the CI legs on the same machines, so with the slots raised the load per core climbs past 4 and a CI shard nears the two-minute cap: more work means slower CI means more work waiting. **The sweep:** the named exec path, read as text: the yield call's index in the function body against the exec call's. **No allowlist:** a new worker kind gets its nice by calling `yield.ToCI` before its exec and joining the list. **The remedy line:** `<file> <func>: no <yield> call: a copy or a local test run must yield to CI before it execs`, or `<yield> stands after <exec>: a yield after the exec yields nothing`, or `nice_linux.go: the one-thread form setpriority(PRIO_PROCESS, 0, n) nices the calling thread only`. **The control:** `internal/yield/yield_test.go` reads the process's own priority back after `ToCI`; `internal/yield/child_test.go` starts sixteen children from fresh goroutines after `ToCI` and wants each to read its own nice as 15 (the one-thread form fails it).
-44. `TestSlotsShrinkByCILegs` — no slot computation, a bench's or a friend's, ignores the CI legs running on the machine: the bench beat and the friend beat write the count measured there as `ci` every beat (`ns_bench_beat` args[21] and `ns_friend_beat` args[5] in `presence.lua`, measured with `life.CILegsNow`, one `Runner.Worker` process per running job; a friend is not free of legs, a machine can host friends and CI both), and every slot subtraction in Go and Lua in the live packages under `cmd/` and `internal/` (the reading CI's selection uses, deprecated/PACKAGES) — `slots - ...`, or the desired hash's slots read as a number and subtracted from, the form `ns_card_deal`'s in-Redis re-check used (`deal.lua`) — names `ci`, `CI` or `TM.ci_legs(`: `ns_cm_work`'s fill and `TM.room`'s read route in `02_card_move.lua`, `ns_card_deal`'s re-check, and `DF.take` and `DF.open` in `deal_friend.lua` (a bench's free slots are its declared slots minus the CI legs running on it). **The mistake it prevents:** a deal that fills every bench to its declared slots whether or not a CI leg is already on it lands a leg beside a full bench, and the copies take its cores. **The sweep:** every non-test `.go` and `.lua` under the two trees, code lines only (a `//` or `--` line is not a computation), for `[sS]lots\s*-\s*<name or paren>` or `desired ... ) - <name or paren>`; at least six such lines must be found, or one has moved out of reach. **No allowlist:** a friend's slots shrink by its own beat's `ci` like a bench's. **The remedy line:** `<file>:<line>: "<line>" computes free slots without the CI legs running on the bench ...`, or `the beat must write the CI leg count as ci (args[21]) every beat`.
-45. `TestEveryTableSetIsNamedByTheEpochRule` / `TestEpochNameRuleCatchesAnInjectedName` — no Lua file of the library and no non-test Go file under `cmd/` or `internal/` (fixtures included) spells a table set's name but through the epoch rule: a literal `ws:<s>:...` (`'ws:' ..`, `"ws:"+`, `"ws:%`, a two-segment ws literal), `<kind>:<name>:cards:` (or a bare `:cards:` piece) or `s:<S>:pool|waiting`, and no epoch-0 helper (`StreamKey`, `FriendKey`, `BenchCardsKey`, `BenchWorkingKey`, `WSKey`, `FriendCardsKey`, `PoolViewKey`, `keyPool`, `keyWaiting`, `ws.Key`, `Consumer.Key`) appears (numbers from an async writer that are not of the current table's sequence display as zero). **The mistake it prevents:** one path that names a set literally rather than through the epoch — a deal pass reading `s:<S>:pool` — reads epoch 0 after the first clear and never sees a card pushed after it, and a guard that matches one name shape is off from epoch 1. **The allowlist:** `epochRuleLines`, the rule's own lines only (`cm_ckey`, `cm_wskey` in `02_card_move.lua`), each a whole line, and a row whose line is gone fails (the list only shrinks). The global ws keys (`ws:order`, `ws:names`, `ws:log`, `ws:checkpoint`, `ws:done0`) are one segment and not table sets. **The remedy line:** `a table set named outside the epoch rule (name it through ws.KeyAt|ConsumerKeyAt|SprintListAt, or NS.card.ckey|wskey|skey, keyed by the epoch ...): <file>:<line>: <code>`. **The control:** `TestEpochNameRuleCatchesAnInjectedName` feeds every known spelling and each epoch-0 helper and wants each caught, and wants the helpers keyed by the epoch, the global ws keys, a comment and `ci:<repo>:<head>:waiting` left alone.
+40. `TestCopiesRunNiced` — every path that execs a copy's harness, or a coordinator child's local test run, steps its OWN process down to nice 15 (`internal/yield`, `Nice = 15`: `setpriority(PRIO_PROCESS, 0, n)` on darwin, where a nice belongs to the process, and on Linux, where a nice belongs to a THREAD and a child forked from an un-niced thread inherits 0, `setpriority(PRIO_PROCESS, tid, n)` over every thread in `/proc/self/task`, repeated until a pass sets none — the one-thread form leaves most children of a wrapper at nice 0) BEFORE the exec: `cmdLocal` (`cmd/nova-ci/local.go`, before its first `localCapture(`; its `nice -n` is pinned to `yield.Nice`), and no production caller sets a `Yield` of its own (CI over work is a permanent setting: work creates more CI, so without it the fleet is unstable). **The mistake it prevents:** copies at nice 0 share the cores evenly with the CI legs on the same machines, so with the slots raised the load per core climbs past 4 and a CI shard nears the two-minute cap: more work means slower CI means more work waiting. **The sweep:** the named exec path, read as text: the yield call's index in the function body against the exec call's. **No allowlist:** a new worker kind gets its nice by calling `yield.ToCI` before its exec and joining the list. **The remedy line:** `<file> <func>: no <yield> call: a copy or a local test run must yield to CI before it execs`, or `<yield> stands after <exec>: a yield after the exec yields nothing`, or `nice_linux.go: the one-thread form setpriority(PRIO_PROCESS, 0, n) nices the calling thread only`. **The control:** `internal/yield/yield_test.go` reads the process's own priority back after `ToCI`; `internal/yield/child_test.go` starts sixteen children from fresh goroutines after `ToCI` and wants each to read its own nice as 15 (the one-thread form fails it).
 
 ### `cap` — every job two minutes, permanently, on every platform
 
@@ -2105,7 +2190,7 @@ does not land, and nothing else stops the test creep.
 reads every workflow file, `.yml` and `.yaml`, and refuses a job over the cap, a
 job with no literal job-level cap (a step-level timeout does not count), or a
 `timeout-minutes` expression. `TestShardGoTestTimeoutIsUnderTheJobCap`
-keeps `go test -timeout` (the workflow's `GOTEST_TIMEOUT` and the Makefile's
+keeps `go test -timeout` (`pkgselect.ShardGoTestTimeout` and the Makefile's
 `GOTEST_TIMEOUT`, `MERGE_TIMEOUT`, `DARWIN_TIMEOUT`, `SHORT_TIMEOUT`) under the
 cap, and `TestEveryMakeTimeoutIsUnderTheJobCap` reads every `-timeout` in every
 Makefile recipe, expanded, and refuses one at or over the cap (test-short, the
@@ -2132,7 +2217,7 @@ and no brief source (the `briefSources` the no-gh rule reads) spells `go test`, 
 or over one of the three trees that are most of it (`./cmd/...`,
 `./internal/...`, `./tools/...`).
 The door is `nova-ci local`: the packages
-`.github/scripts/select-packages.sh` picks against the merge base of the base
+`go run ./tools/ci select-packages` picks against the merge base of the base
 and `HEAD`, run through the Makefile's `test` target under `nice -n 15` at
 `-p 2`, with the unit budgets, exiting as CI would ([TESTING.md](../TESTING.md)).
 **The mistake it prevents.** CPU is for real work: children test the packages
@@ -2544,10 +2629,19 @@ the original failed measurement.
 
 **The rule.** No living Go file under `cmd/` or `internal/` (outside `testdata/`, `vendor/`, `deprecated/`, and `_test.go` files) carries a reference to our fleet machines, hostnames, tailnet nodes, friend or person names, or GitHub accounts (Rule 1: everything must be general; concepts like machine, bench, coordinator, friend, seat, store, route, pool, card, stream, repo, issue, entry are what code knows; fleet specifics belong in configuration or receipts, not in code, contracts, defaults or refusals).
 **The mistake it prevents.** Code written with hardcoded machine names, friend identities or private accounts cannot be reused or operated as a general platform, leaks private infrastructure details into public source, and prevents running the tool suite against different fleets or configurations.
-**The test.** `TestGeneralityGuardrail` (`internal/ci/generality_class_test.go`), with `TestGeneralityTokenExtraction` for token extraction heuristics and boundary controls, `TestTSetNamespaceGeneralityBoundary` for the exact namespace exception, `TestGeneralityOccurrenceWitness` for proving that adding an occurrence of an allowed token to an already-allowed file fails the check, and `TestGeneralityAllowlistUpdate` for proving allowlist update refuses growth and cleanly writes on shrinking.
+**The test.** `TestGeneralityGuardrail` (`internal/ci/generality_class_test.go`), with `TestGeneralityTokenExtraction` for token extraction heuristics and boundary controls, `TestGeneralitySpaceHasNoSyntaxException` for a machine name counted in every syntax position, `TestGeneralityOccurrenceWitness` for proving that adding an occurrence of an allowed token to an already-allowed file fails the check, and `TestGeneralityAllowlistUpdate` for proving allowlist update refuses growth and cleanly writes on shrinking.
 **Its allowlist.** `internal/ci/testdata/generality_allowlist.txt`, existing occurrences across the living tree, formatted as `path/to/file.go:token count`; sorted, shrink-only with ceiling.
 **Its remedy lines.** `remedy="remove the host, tailnet or person name; make the reference general or read it from configuration; docs/SPEC-CI.md#generality"`, and for an unlisted or grown count: `remedy="shrink the allowlist count; the list only shrinks"`.
-**Its narrowings.** It scans living `.go` files under `cmd/` and `internal/` only, skipping `testdata/`, `vendor/`, `deprecated/`, and `_test.go` files. It excludes Go package `import` statements (including `github.com/mas-bandwidth/...` imports) and marked documentation examples in comments (lines with `e.g.` or `example:`). Boundary controls ensure substring words like `miniredis`, `revision`, `deterministic`, `minimum`, `studios`, `whitespace`, and compound words like `TrimSpace` are not matched. In `internal/tset` and files that directly import it, the exact Go identifiers `space` and `Space` and the JSON field tag `json:"space"` denote a deployment namespace, so the scanner exempts those syntax nodes. In `internal/tset/wire.go`, it also exempts the literal JSON key `"space"` only in its map-to-`.Space`, `strictObject`, and `unmarshalRequired` schema contexts. Compound identifiers, other tag keys, comments, and ordinary string literals still count when they name a machine. This does not expand the token inventory or the shrink-only allowlist ceiling.
+**Its narrowings.** It scans living `.go` files under `cmd/` and `internal/` only, skipping `testdata/`, `vendor/`, `deprecated/`, and `_test.go` files. It excludes Go package `import` statements (including `github.com/mas-bandwidth/...` imports) and marked documentation examples in comments (lines with `e.g.` or `example:`). Boundary controls ensure substring words like `miniredis`, `revision`, `deterministic`, `minimum`, `studios`, `whitespace`, and compound words like `TrimSpace` are not matched. A machine name counts wherever it appears in Go syntax: identifiers, struct tags, comments and string literals.
+
+### `tool-standard` — every tool built on internal/tool is held to the standard its definition alone can break
+
+**The rule.** A package that builds a `tool.Tool` has a test that calls its `Problems()` and fails on each: every verb's effect is inspection, local write or delivery (optionally with a clause), and the how text is at most five lines of at most 100 characters. The rest of the banner standard (the what line, usage, exit codes, the example block last, `-h` per verb) holds by construction in `internal/tool`.
+**The mistake it prevents.** The first two tools on the skeleton shipped how texts of 11 and 12 lines, and `help <verb>` printed `effect: unstated`, while every test was green: nothing checked what only the definition says.
+**The test.** `TestEveryToolDefinitionIsHeldToTheStandard` (`internal/ci/toolstandard_class_test.go`); `Problems()` itself is pinned by `internal/tool` `TestProblems`.
+**Its allowlist.** None.
+**Its remedy line.** `remedy="add a test that fails on each of its Problems() (as cmd/nova-cairn TestCairnToolMeetsTheStandard)"`.
+**Its narrowings.** It reads non-test `.go` files under `cmd/` and `internal/` for a `tool.Tool{` literal, outside `testdata/` and `internal/tool` itself, and asks that a `_test.go` file in the same directory call `.Problems()`.
 
 ### `generality-text` — the same rule over every living text file that is not Go
 
@@ -2557,6 +2651,42 @@ the original failed measurement.
 **What is found.** The name inventory of `generality_class_test.go` (no name is added by this test), and three patterns: `tailnet-address` (an IPv4 address in `100.64.0.0/10`, an IPv6 address under the tailnet prefix, a `.ts.net` hostname; the two ranges written as CIDRs are the concept and pass), `home-path` (`/Users/<name>`, `/home/<name>`, `C:\Users\<name>` whose name is not a generic one: a documented placeholder, a container user this repository defines, a hosted runner's), and any reference to the organisation's account other than the project's own public links, which are its identity and not fleet names (a documented pattern, not list rows): the repository's own path (the module path and issue references), the seed repository it grows from, the secrets store design's repository, (each anchored on the left: the start of a line, a character that cannot continue a path, or a URL prefix, so a longer path that merely ends in one does not pass), and the project's two published contact addresses, those exact addresses and no other local part, in `docs/SECURITY.md` only.
 **Its lists.** `internal/ci/testdata/generality_text_fixtures_allowlist.txt`, `path reason`, whole files that are recorded data (captured output, a verbatim excerpt of a real record, a recorded reply of a public repository), a reason on every row; and `internal/ci/testdata/generality_text_allowlist.txt`, `path:token count`, the debt that existed when the scan was widened. Both only shrink: an unlisted finding, a rising count, a falling count and a stale row each fail, and `NOVA_CI_UPDATE=1` removes rows and never adds one.
 **Its narrowings.** The scan reads the files the shared walk finds with a suffix of `.lua .tsv .yml .yaml .j2 .md .sh .json .txt .ini .tmpl .tla .lisp .sexp .cfg .card .sql .py .ps1 .jsonl .log .notes`, and the files named `Makefile` and `Containerfile`; `.go` files are the other test's, and `deprecated/` and `.git` are never read. There is no marked-example exemption: a doc example is written with a generic name. A `[:space:]` character class is syntax and not a finding.
+
+### `remedy` — every refusal in the tools names its next step
+
+**The rule.** The owner's rule for every tool (2026-09-30): "they should never fail silently, and they should always provide helpful breadcrumbs how to fix anything going wrong." Every refusal site in a non-test `.go` file under `cmd/` prints a remedy in the house form: `run: <command>` (a malformed invocation's is `<tool> <verb> -h`), `remedy=` on an event line, `wants <x>`, `see <where>`, `rerun`, or an imperative naming the flag, the file or the value (`pass --overwrite`, `give 1 to 64`). The forms are one list, `oneline.HasRemedy`, which the rule and the printers share; a printer ends a line that names none with `oneline.WithRemedy(what, next)`.
+**The mistake it prevents.** A refusal that says what is wrong and nothing about what to do: `DRAFT REFUSED: write <path>: permission denied`, `nova-sandbox version` exiting 0 over a flag it never read, `SECRETS EXEC FAIL invocation: missing '--' delimiter` with no pointer to the form.
+**The test.** `TestEveryRefusalCarriesARemedy` (`internal/ci/remedy_class_test.go`), with the three sites proved over source in `TestRemedyRuleReadsTheThreeSites`. It finds a refusal three ways: a call to the package's refusal printer (a function with an `io.Writer` parameter whose name holds `refus`; it is clear when the printer prints a remedy itself, directly or through another printer, or when its arguments do); a `fmt` print whose text holds `REFUSED`, `refused`, `refusing` or `cannot`; and an exit-2 path (`return 2`, `os.Exit(2)`), read with the prints just before it in its block. The runtime half is `testverbhelp.RefusalProblems`, run by every tool's verb-help test: each verb handed `--no-such-flag-breadcrumb` exits non-zero, says something on stderr that names the flag, the usage or a remedy, closes no stdout line with OK, and writes nothing.
+**Its allowlist.** `internal/ci/testdata/remedy_allowlist.txt`, `file:function:kind <sites> <why>`, kind `refuse-call`, `refuse-print` or `exit-2`; `<sites>` is how many unremedied sites the row covers. Shrink-only by site and by row: a new site under a listed key makes the measured count exceed the row's and the run is red; a fixed site leaves the count too high and the run is red until it is lowered (`NOVA_CI_UPDATE=1` lowers a count and drops a row with no site left, and never raises a count or adds a row); the row count has a `# ceiling:`; a row with no reason is red.
+**Its remedy line.** `` <file:function:kind> prints no remedy (<text>); end the line with `; run: <command>` (or `remedy:`, `wants <x>`, `see <tool> help <verb>`) so the reader knows the next step``; for a row whose count is exceeded, `<ledger> lists <key> at <n> sites, but <m> are there now (<the sites>)`; for a row whose count is too high, `lower the row's count to <m>`; for a stale row, `delete the stale row (the list only shrinks; NOVA_CI_UPDATE=1 drops it)`. A remedy is what `oneline.HasRemedy` reads: `run:`, `remedy:`, `fix:`, `wants`, a help pointer (`nova-<tool> help <verb>`), an imperative that names a flag, or `see`/`retry`/`try`/`want` followed by a flag or a command in backticks; the bare words `see`, `want`, `retry` and `help` in a sentence are not one.
+**Its narrowings.** The text read is the call's string literals and the package's string constants: a remedy carried inside an error's own text (redisconn's `next:` step) is not seen, and a line built into a variable before it is printed is read as no line. An exit 2 inside `if <check>(..., stderr) { return 2 }`, after `fs.Parse`, or on a flag an earlier printed refusal set (`bad = true`, `if bad { return 2 }`) is judged where the line was printed. A print that says `usage` or runs to three lines is help, not a refusal. Fixtures under `testdata/` are not read.
+
+### `no-ok-on-failure` — a failed run's last word is never OK
+
+**The rule.** An OK line is never followed by a non-zero exit, and a FAIL or REFUSED line never by exit 0 (docs/CLI-STYLE.md (e): the closing status of a failed run is FAIL). A line printed OK on every outcome and then an exit code carried in a variable is the same mistake.
+**The mistake it prevents.** `QUICKSTART OK done=2 worst-exit=1` over two failed checks: a reader who stops at the word reads a pass.
+**The test.** `TestNoOKOnFailure` (`internal/ci/okonfailure_class_test.go`), with `TestOKOnFailureRuleReadsBothWays` over source. In every block of a non-test `.go` file under `cmd/` it pairs each `return <n>` or `os.Exit(<n>)` with the `fmt` prints just before it: the word that counts is the last status line the run printed (the last line holding an OK event word, or a FAIL or REFUSED word): an OK event line (upper-case tokens, then `OK`) then a non-zero literal is `ok-nonzero`, a FAIL or REFUSED line then 0 is `fail-zero`, and an OK line then `return code` (a variable named for an exit) is `ok-carried`. An OK printed after a REFUSED, then `return 2`, is `ok-nonzero`. The runtime half is `testverbhelp.RefusalProblems` (see `remedy`).
+**Its allowlist.** `internal/ci/testdata/okonfailure_allowlist.txt`, `file:function:kind <sites> <why>`, shrink-only by site and by row as in `remedy`.
+**Its remedy line.** `prints "<line>", then exits <n>; a failed run's last word is FAIL or REFUSED, never OK`, and for `ok-carried`, `print OK only when <code> is 0, FAIL otherwise`.
+**Its narrowings.** Only prints that stand directly before the exit in the same block are read, and only literal exit codes (or, for `ok-carried`, a variable named `code`, `worst`, `exit`, `rc`, `status` or `result`); an OK printed by a helper, or a code decided far from its line, is not seen.
+
+### `discarded` — no error thrown away without its reason
+
+**The rule.** In every non-test `.go` file under `cmd/`, `internal/` and `tools/`, three shapes carry `// ignored: <reason>` on their line or the line above: `_ = <call>` and `_, _ = <call>` (every left side blank) and `_ = err`; `if err != nil { ... return }` with a bare return and no read of `err`; and `err = nil`. The reason is real (a best-effort cleanup whose failure path returns the error that matters, a close after a read that already succeeded, a kill of a process that may already be gone); a failure that hides is fixed instead: returned, or printed as one line with its remedy.
+**The mistake it prevents.** A staged checkout whose origin still named the mirror; a secrets invariant that skipped a file it could not read and passed over it; a decision-log row and a usage row lost with no line.
+**The test.** `TestNoErrorIsDiscarded` (`internal/ci/discarded_class_test.go`), with `TestDiscardedRuleReadsTheThreeShapes` over source and `TestSiteLedgerShrinksBySiteNotByRow` for the counted ledger the four never-silent rules (`remedy`, `no-ok-on-failure`, `discarded`, `script-hide`) share.
+**Its allowlist.** `internal/ci/testdata/discarded_allowlist.txt`, `file:function:shape <sites> <why>`, shape `blank`, `bare-return` or `err-nil`; each row a failure that goes silent today and wants more than a comment (a writer the function does not have, a caller that drops what it returns, a design call). Shrink-only by site and by row as in `remedy`: a discard with no `// ignored:` under a listed function raises the function's count and the run is red, so a site leaves the ledger by gaining its reason or its fix, and then its count is lowered. A row with no reason is red.
+**Its remedy line.** `the call's error is dropped; return it, print it as one line with its remedy, or say why it is safe with `// ignored: <reason>` on this line or the one above` (and the same for the other two shapes).
+**Its narrowings.** The rule reads syntax, not types: `_ = <call>` is read whatever the call returns, except a builtin, a conversion and a flag definition (`fs.String(name, value, usage)`, which returns a pointer); a call whose error is dropped as a bare statement (`f.Close()`, `defer f.Close()`) is not read. A comment in `internal/tlc/suite.go` restales every TLC record, so that site waits in the ledger for the next TLC run.
+
+### `script-hide` — no script or play hides a failure without its reason
+
+**The rule.** Every line of a script or a play under `fleet/`, `scripts/`, `infra/` and `tools/` (`.sh`, `.yml`, `.yaml`, `.j2`, `.ps1`; `*_test.sh` and `testdata/` aside) that forces an exit to success (`|| true`), sends an error stream nowhere (`2>/dev/null`, `&>/dev/null`, `>/dev/null 2>&1`, `2>$null`), or makes a task unable to fail (`failed_when: false`, `ignore_errors: true`) carries `# ignored: <reason>` on the line or the line above. `command -v x >/dev/null 2>&1` asks a question whose answer is the exit and is not read.
+**The mistake it prevents.** A bench check that runs `nova-secrets check >/dev/null 2>&1` and prints its own line, dropping the check's reason and remedy; a sweep whose `rm -rf` errors go nowhere while the disk stays full; a formatter whose parse errors read as formatted.
+**The test.** `TestNoScriptHidesAFailure` (`internal/ci/discarded_class_test.go`), with `TestScriptHideRuleReadsTheShapes` for the line reader.
+**Its allowlist.** `internal/ci/testdata/scripthide_allowlist.txt`, `file:shape <sites> <why>`, shape `or-true`, `stderr-null`, `failed-when-false` or `ignore-errors`; the reason names the lines that hide a failure the operator should see. `fleet/` is being reworked, so its rows wait for that. Shrink-only by site and by row as in `remedy`: a new `|| true` or `2>/dev/null` in a listed file raises that file's count for the shape and the run is red, and a line leaves the ledger by gaining its `# ignored: <reason>` or its fix, after which the row's count is lowered.
+**Its remedy line.** `"<line>" throws a failure away; let it show, or say why it is safe with `# ignored: <reason>` on this line or the one above`.
+**Its narrowings.** Keyed by file and shape and counted by line: each unreasoned line of a listed shape in a listed file is a site. A Go string literal holding a script (`tools/functionalrun`) is the `silent` rule's, on the live path only.
 
 ## How the class tests read the tree: one walk, one parse, in parallel
 

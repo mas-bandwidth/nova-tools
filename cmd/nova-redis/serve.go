@@ -26,7 +26,6 @@ import (
 	"io/fs"
 	"net/netip"
 	"os"
-	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"strconv"
@@ -34,6 +33,7 @@ import (
 	"syscall"
 
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 )
 
 // redisServerProgram is the instance program, found on PATH.
@@ -63,7 +63,7 @@ type launchSpec struct {
 // fsyncs the AOF, saves the RDB and exits 0, and that is a stop, not a failure
 // (exec reports the cancelled context even when the child exited 0).
 func launchRedis(ctx context.Context, spec launchSpec, stdout, stderr io.Writer) error {
-	cmd := exec.CommandContext(ctx, spec.Program, spec.Args...)
+	cmd := subproc.Long(ctx, spec.Program, spec.Args...)
 	cmd.Cancel = func() error { return cmd.Process.Signal(syscall.SIGTERM) }
 	cmd.Env = spec.Env
 	cmd.Dir = spec.Dir

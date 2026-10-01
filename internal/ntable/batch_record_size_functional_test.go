@@ -11,6 +11,8 @@ import (
 	"testing"
 
 	"github.com/mas-bandwidth/nova-tools/internal/ntable"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // eventBound and recordBound are the bounds the specification states for the
@@ -34,9 +36,7 @@ func TestBatchEventAndRecordStayWithinTheirBoundsAtTheLargestActor(t *testing.T)
 		seedTwo(t, ctx, c)
 		size := func(op string, n int) (delta, event, record int) {
 			ans, err := rawApply(ctx, c, manifestWithActor(probeRev(ctx, c), op, strings.Repeat(tc.char, n), `{"id":"a","expect":{}}`))
-			if err != nil || ans[0] != "OK" {
-				t.Fatalf("%s: %.200v %v", tc.name, ans, err)
-			}
+			require.True(t, replyOpens(ans, err, "OK"), "%s: %.200v %v", tc.name, ans, err)
 			delta = len(fmt.Sprint(ans[1].([]any)[6]))
 			for _, v := range c.XRevRangeN(ctx, ntable.DefKey("demo")+":changes", "+", "-", 1).Val()[0].Values {
 				event += len(fmt.Sprint(v))
@@ -47,12 +47,10 @@ func TestBatchEventAndRecordStayWithinTheirBoundsAtTheLargestActor(t *testing.T)
 		n := 1000 + (ntable.LimitReceiptBytes-d0)/tc.grows
 		delta, event, record := size("op-l", n)
 		t.Logf("%s actor of %d bytes: delta %d, event %d, record %d", tc.name, n, delta, event, record)
-		if delta > ntable.LimitReceiptBytes || delta < ntable.LimitReceiptBytes-tc.grows {
-			t.Errorf("%s: the delta is %d, want the bound %d", tc.name, delta, ntable.LimitReceiptBytes)
-		}
-		if event > eventBound || record > recordBound {
-			t.Errorf("%s: event %d (bound %d), record %d (bound %d)", tc.name, event, eventBound, record, recordBound)
-		}
+		assert.LessOrEqual(t, delta, ntable.LimitReceiptBytes, "%s: the delta is %d, want the bound %d", tc.name, delta, ntable.LimitReceiptBytes)
+		assert.GreaterOrEqual(t, delta, ntable.LimitReceiptBytes-tc.grows, "%s: the delta is %d, want the bound %d", tc.name, delta, ntable.LimitReceiptBytes)
+		assert.LessOrEqual(t, event, eventBound, "%s: event %d (bound %d)", tc.name, event, eventBound)
+		assert.LessOrEqual(t, record, recordBound, "%s: record %d (bound %d)", tc.name, record, recordBound)
 	}
 }
 
@@ -75,20 +73,16 @@ func TestBatchRecordStaysWithinItsBoundAtTheLargestEscapedDelta(t *testing.T) {
 		return strings.Join(ents, ",")
 	}
 	ans, err := rawApply(ctx, c, manifestWithActor(probeRev(ctx, c), "largest", "p", entries(26)))
-	if err != nil || ans[0] != "OK" {
-		t.Fatalf("26 fields on 128 members: %.200v %v", ans, err)
-	}
+	require.True(t, replyOpens(ans, err, "OK"), "26 fields on 128 members: %.200v %v", ans, err)
 	event := 0
 	for _, v := range c.XRevRangeN(ctx, ntable.DefKey("demo")+":changes", "+", "-", 1).Val()[0].Values {
 		event += len(fmt.Sprint(v))
 	}
 	record := int(c.HStrLen(ctx, ntable.DefKey("demo")+":ops", "0:largest").Val())
 	t.Logf("delta %d, event %d, record %d", len(fmt.Sprint(ans[1].([]any)[6])), event, record)
-	if event > eventBound || record > recordBound {
-		t.Errorf("event %d (bound %d), record %d (bound %d)", event, eventBound, record, recordBound)
-	}
+	assert.LessOrEqual(t, event, eventBound, "event %d (bound %d)", event, eventBound)
+	assert.LessOrEqual(t, record, recordBound, "record %d (bound %d)", record, recordBound)
 	over, err := rawApply(ctx, c, manifestWithActor(probeRev(ctx, c), "over", "p", entries(27)))
-	if err != nil || over[0] != "REFUSED" || over[2] != "receipt bytes" {
-		t.Errorf("27 fields on 128 members: %.200v %v; want a receipt refusal", over, err)
-	}
+	require.True(t, replyOpens(over, err, "REFUSED"), "27 fields on 128 members: %.200v; want a receipt refusal: %v", over, err)
+	assert.Equal(t, "receipt bytes", over[2], "27 fields on 128 members: %.200v; want a receipt refusal", over)
 }

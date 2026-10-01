@@ -707,7 +707,7 @@ func TestALaneStateFileIsReplacedByRenameAndLeavesNoPartialFile(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, e := range entries {
-		if strings.HasSuffix(e.Name(), TempSuffix) {
+		if isLaneStateTemp(e.Name()) {
 			t.Fatalf("%s is still in the lane after the write", e.Name())
 		}
 	}
@@ -722,6 +722,8 @@ func TestAStrandedTemporaryIsIgnoredByTheLaneWalk(t *testing.T) {
 	files["from-bo/CURSOR"] = "1111111111111111111111111111111111111111 2026-09-09T12:00:00Z open=0\n"
 	files["from-bo/CURSOR"+TempSuffix] = "22222222222222222222222222222222222222"
 	files["from-bo/OPEN"+TempSuffix] = "bo-abcdef012345 from-bo/half-a-l"
+	// atomicfile's own temporary: `.<state file>.tmp-<8 hex>`.
+	files["from-bo/.CURSOR.tmp-0a1b2c3d"] = "22222222222222222222222222222222222"
 	tab := loadBus(t, writeBus(t, files))
 	if n := len(tab.Notes); n != len(fixture()) {
 		t.Fatalf("the lane walk read %d notes, want %d: a temporary was read as a note", n, len(fixture()))

@@ -186,7 +186,9 @@ func TestALatenessStaysRaisedUntilItsAttemptEnds(t *testing.T) {
 	for i := 0; i < 3; i++ {
 		h.live = []string{"m1"}
 		h.tick(time.Second)
-		h.machine() // back: redealt, ready
+		h.machine() // back: its presence is the fleet's update, after the pump
+		h.tick(time.Second)
+		h.machine() // the next pump redeals the card: ready
 		if l := late(); len(l) != 1 || l[0].Note.ID != first[0].Note.ID {
 			t.Fatalf("lap %d, redealt: the lateness %+v, want %s still open", i, l, first[0].Note.ID)
 		}

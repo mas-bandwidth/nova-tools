@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/onboarding"
+	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
@@ -284,15 +285,13 @@ func TestUsageBannerExamplesRunThroughTheComparator(t *testing.T) {
 	// otherwise leave this test running less than the stranger pastes.
 	linesOfTheBanner := []string{
 		"nova-swarm template --name read-pr",
+		"nova-swarm template --name worker",
+		"nova-swarm lint --rules",
 	}
 	got := examples(t)
 	if strings.Join(got, "\n") != strings.Join(linesOfTheBanner, "\n") {
 		t.Fatalf("the banner's example block is not the sitting this test runs\nbanner:\n  %s\nwant:\n  %s",
 			strings.Join(got, "\n  "), strings.Join(linesOfTheBanner, "\n  "))
-	}
-	body, err := swarm.Template("read-pr")
-	if err != nil {
-		t.Fatal(err)
 	}
 	pool := filepath.Join(t.TempDir(), "pool")
 	norms := []onboarding.Norm{onboarding.Path("./pool", pool)}
@@ -300,10 +299,25 @@ func TestUsageBannerExamplesRunThroughTheComparator(t *testing.T) {
 	for _, ex := range got {
 		step, ok := documented[ex]
 		if !ok {
-			if !strings.HasPrefix(ex, "nova-swarm template ") {
-				t.Fatalf("the banner example %q is in no `### First run` block of docs/CLI.md and prints no template", ex)
+			// A line the command reference does not show prints a template or
+			// the lint's rule set: what it must print is that template's body,
+			// or one LINT RULE line per rule with its remedy, in order.
+			var want []string
+			switch name, isTemplate := strings.CutPrefix(ex, "nova-swarm template --name "); {
+			case isTemplate:
+				body, err := swarm.Template(name)
+				if err != nil {
+					t.Fatal(err)
+				}
+				want = strings.Split(strings.TrimSuffix(body, "\n"), "\n")
+			case ex == "nova-swarm lint --rules":
+				for _, rule := range cardLintRuleNames() {
+					want = append(want, "LINT RULE "+oneline.Field(rule)+" remedy="+oneline.Escape(cardLintRemedies[rule]))
+				}
+			default:
+				t.Fatalf("the banner example %q is in no `### First run` block of docs/CLI.md and prints neither a template nor the rule set", ex)
 			}
-			step = onboarding.Step{Line: "$ " + ex, Args: strings.Fields(ex)[1:], Want: strings.Split(strings.TrimSuffix(body, "\n"), "\n")}
+			step = onboarding.Step{Line: "$ " + ex, Args: strings.Fields(ex)[1:], Want: want}
 		}
 		step.Args = localize(t, pool, step.Args)
 		res, err := run(step)

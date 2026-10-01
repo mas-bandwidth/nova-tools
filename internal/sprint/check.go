@@ -77,7 +77,10 @@ func (p *Pending) ranking(primary string, a, b float64) bool {
 // rule 7 against a pending rank's own new scores.
 func Check(s *Snapshot, pending *Pending) []Violation {
 	var out []Violation
-	quiet := pending == nil
+	// The work table's queue is between the tables as a pending operation
+	// is: the rules that compare the work table with another hold once the
+	// pump has drained it (queue.go).
+	quiet := pending == nil && s.QueueLen == 0
 	// 1. One place in each table: the loaded cards are keyed by id, so a card
 	// seen in two cells is caught by the loader; here, every placed card is on
 	// a declared row.
@@ -183,7 +186,7 @@ func Check(s *Snapshot, pending *Pending) []Violation {
 			if t == s.Merge {
 				pid = c.ID
 			}
-			if pr := s.Work.Card(pid); pr != nil && pr.Placed() && pr.Score != c.Score && !pending.ranking(pid, pr.Score, c.Score) {
+			if pr := s.Work.Card(pid); pr != nil && pr.Placed() && pr.Score != c.Score && !pending.ranking(pid, pr.Score, c.Score) && s.QueueLen == 0 {
 				out = append(out, Violation{7, fmt.Sprintf("%s: %s has score %s and its primary %s has %s", t.Name, c.ID, fmtScore(c.Score), pid, fmtScore(pr.Score))})
 			}
 		}

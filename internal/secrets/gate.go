@@ -3,13 +3,14 @@ package secrets
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"fmt"
-	"os/exec"
 	"regexp"
 	"sort"
 	"strings"
 
 	"github.com/mas-bandwidth/nova-tools/internal/fleet"
+	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 )
 
@@ -334,8 +335,8 @@ func gateResolveCommit(storeDir, flagName, ref string) (string, error) {
 	if strings.HasPrefix(ref, "-") {
 		return "", fmt.Errorf("%s %s begins with \"-\", the shape of an option, not a git ref", flagName, oneline.Field(ref))
 	}
-	out, err := exec.Command("git", "-C", storeDir, "rev-parse", "--verify", "--quiet", "--end-of-options", ref+"^{commit}").Output()
-	sha := strings.TrimSpace(string(out))
+	res, err := gitrun.Run(context.Background(), gitrun.Options{C: storeDir}, "rev-parse", "--verify", "--quiet", "--end-of-options", ref+"^{commit}")
+	sha := strings.TrimSpace(string(res.Stdout))
 	if err != nil || sha == "" || strings.HasPrefix(sha, "-") {
 		return "", fmt.Errorf("%s %s does not name a commit in the store %s", flagName, oneline.Field(ref), oneline.Field(storeDir))
 	}
@@ -344,27 +345,28 @@ func gateResolveCommit(storeDir, flagName, ref string) (string, error) {
 
 // gitChangedFiles lists the files that differ between base and head.
 func gitChangedFiles(storeDir, base, head string) ([]string, error) {
-	out, err := exec.Command("git", "-C", storeDir, "diff", "--name-only", "--end-of-options", base, head, "--").Output()
+	res, err := gitrun.Run(context.Background(), gitrun.Options{C: storeDir}, "diff", "--name-only", "--end-of-options", base, head, "--")
 	if err != nil {
 		return nil, fmt.Errorf("git diff %s %s failed: %v", base, head, err)
 	}
-	return splitLines(out), nil
+	return splitLines(res.Stdout), nil
 }
 
 // gitTreeFiles lists every path in the tree at ref.
 func gitTreeFiles(storeDir, ref string) ([]string, error) {
-	out, err := exec.Command("git", "-C", storeDir, "ls-tree", "-r", "--name-only", "--end-of-options", ref).Output()
+	res, err := gitrun.Run(context.Background(), gitrun.Options{C: storeDir}, "ls-tree", "-r", "--name-only", "--end-of-options", ref)
 	if err != nil {
 		return nil, err
 	}
-	files := splitLines(out)
+	files := splitLines(res.Stdout)
 	sort.Strings(files)
 	return files, nil
 }
 
 // gitShowFile reads one file's bytes out of the tree at ref.
 func gitShowFile(storeDir, ref, path string) ([]byte, error) {
-	return exec.Command("git", "-C", storeDir, "show", "--end-of-options", ref+":"+path).Output()
+	res, err := gitrun.Run(context.Background(), gitrun.Options{C: storeDir}, "show", "--end-of-options", ref+":"+path)
+	return res.Stdout, err
 }
 
 func splitLines(out []byte) []string {

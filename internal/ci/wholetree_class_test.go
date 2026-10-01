@@ -20,7 +20,7 @@ import (
 // hand timing scripts. A doc or a card that spells `go test ./...` teaches the
 // next child to do it again, on a bench shared with the work it tests. The
 // door is `nova-ci local`: exactly the unit tier CI runs for the diff (the
-// packages select-packages.sh picks, `make test` at -p 2 with the budgets).
+// packages CI's selection picks, `make test` at -p 2 with the budgets).
 //
 // The rule reads, as text: every Markdown file in the tree outside testdata
 // (the docs, AGENTS.md, TESTING.md, READMEs), every card template
@@ -36,7 +36,7 @@ import (
 var wholeTreeGoTestRe = regexp.MustCompile(`\bgo test(?:\s+-\S+(?:\s+[^\s\-./` + "`" + `|][^\s` + "`" + `|]*)?)*\s+\./(?:(?:cmd|internal|tools)/)?\.\.\.(?:[^\w/]|$)`)
 
 // wholeTreeRemedy is the one thing to do instead.
-const wholeTreeRemedy = "run `nova-ci local` (the unit tier CI runs for this diff: select-packages.sh, make test at -p 2, the budgets) or name the packages you touched: nice -n 15 go test -p 2 -count=1 ./cmd/<tool>"
+const wholeTreeRemedy = "run `nova-ci local` (the unit tier CI runs for this diff: its package selection, make test at -p 2, the budgets) or name the packages you touched: nice -n 15 go test -p 2 -count=1 ./cmd/<tool>"
 
 // wholeTreeViolations returns "line: text" for every whole-tree go test in src.
 func wholeTreeViolations(src []byte) []string {

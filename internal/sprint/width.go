@@ -25,11 +25,9 @@ const (
 	// MaxWidth is the widest a member may be: a width over it is refused
 	// before anything is written.
 	MaxWidth = 1024
-	// TickMaxDeal is the most cards one deal moves (T3, R6): one Layer 1
-	// write's member candidates (stepbuild.LimitCandidates, the contract's
-	// section 6: 2,000). The deal is one plan and one step; the step builder
-	// (and the present store's apply) cuts it into parts under the table
-	// layer's entry bounds, so the deal refuses nothing by size under this.
+	// TickMaxDeal is the most cards one deal moves (T3, R6). The deal is one
+	// plan; the store's apply cuts it into parts under the table layer's
+	// entry bounds, so the deal refuses nothing by size under this.
 	TickMaxDeal = 2000
 )
 

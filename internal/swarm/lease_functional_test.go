@@ -5,6 +5,7 @@ package swarm
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -199,4 +200,17 @@ func staleRecord(t *testing.T, job, how string) {
 	default:
 		t.Fatalf("no such abandoned record: %s", how)
 	}
+}
+
+// deadPID returns a pid no process holds: a child that has already been reaped. The child is
+// the package's own fake runner doing nothing -- `/bin/sh` is not a program windows has, and
+// a test that only needs a process to start and stop has no business naming one shell.
+func deadPID(t *testing.T) int {
+	t.Helper()
+	bin := runnerDoing(t, t.TempDir(), "throwaway", runnerStep{Op: "exit", N: 0})
+	cmd := exec.Command(bin, "throwaway", "1", "model", filepath.Join(t.TempDir(), "no.card"), t.TempDir(), "unmetered")
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("starting a throwaway child: %v", err)
+	}
+	return cmd.Process.Pid
 }

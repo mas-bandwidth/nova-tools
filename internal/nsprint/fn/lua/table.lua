@@ -266,6 +266,8 @@ do
   -- T.utf8(n): n is well-formed UTF-8 (no overlong forms, surrogates or
   -- code points past U+10FFFF).
   function T.utf8(n)
+    -- all ASCII is valid UTF-8: one scan in C, not one byte at a time in Lua
+    if not string.find(n, '[\128-\255]') then return true end
     local i = 1
     local function continuation(v) return v and v >= 128 and v <= 191 end
     while i <= #n do
@@ -354,13 +356,16 @@ do
       local start = pos
       pos = pos + 1
       while pos <= len do
-        local ch = string.sub(raw, pos, pos)
-        if ch == '\\' then pos = pos + 2
-        elseif ch == '"' then
-          pos = pos + 1
+        -- the next quote or backslash, found in C: the characters between
+        -- are the string's own
+        local at = string.find(raw, '["\\]', pos)
+        if not at then pos = len + 1; break end
+        if string.byte(raw, at) == 92 then pos = at + 2
+        else
+          pos = at + 1
           local ok, decoded = pcall(cjson.decode, string.sub(raw, start, pos - 1))
           return ok and decoded or nil
-        else pos = pos + 1 end
+        end
       end
     end
     local value
@@ -703,6 +708,100 @@ do
       end
     end
     return nil
+  end
+  -- T.place_index(d, ids): which of the ids each owned cell of the table
+  -- holds, read in one pass over the cells (one ZMSCORE of every id per
+  -- cell), for T.index_drift to answer T.check_placement and T.unindexed
+  -- from. A read set or a batch checks each of its members against every cell
+  -- of the table: one pass for all of them, not one per member (the owner's
+  -- rule of 2026-09-30, "there is NO REASON to ever do a row at a time"). The
+  -- cells, the order they are looked at and the refusals are the ones the
+  -- per-member checks give: a cell of the wrong type is named when a member's
+  -- check reaches it, as T.check_placement names it.
+  function T.place_index(d, ids)
+    -- where[id] is the places (in cell order) of the cells holding the id;
+    -- wrong the places of the cells of the wrong type; row_of each cell's row
+    -- index, for the row hashes T.unindexed reads
+    local idx = {cells = {}, d = d, hashed = {}, where = {}, wrong = {}, rows = {}}
+    local rows = redis.call('ZRANGE', T.rowskey(d), 0, -1)
+    for r, row in ipairs(rows) do
+      idx.rows[r] = row
+      for _, col in ipairs(d.cols) do
+        local key = T.cellkey(d, row, col.name)
+        local cell = {row = row, r = r, col = col.name, place = T.place(row, col.name), key = key}
+        idx.cells[#idx.cells + 1] = cell
+        local at = #idx.cells
+        for start = 1, #ids, 1000 do
+          local argv = {'ZMSCORE', key}
+          for i = start, math.min(start + 999, #ids) do argv[#argv + 1] = ids[i] end
+          local res = redis.pcall(unpack(argv))
+          if type(res) == 'table' and res.err then
+            if not string.find(res.err, 'WRONGTYPE') then T.rethrow(res) end
+            local t = redis.call('TYPE', key)
+            cell.wrongtype = (type(t) == 'table' and t.ok) and t.ok or t
+            idx.wrong[#idx.wrong + 1] = at
+            break
+          end
+          for i, score in ipairs(res) do
+            if score then
+              local id = argv[i + 2]
+              local w = idx.where[id]
+              if not w then w = {}; idx.where[id] = w end
+              w[#w + 1] = at
+            end
+          end
+        end
+      end
+    end
+    return idx
+  end
+  -- T.index_drift(idx, id, expected, tag): T.check_placement (expected is the
+  -- member's place) or T.unindexed (expected nil, with its tag) over the
+  -- index: the first cell, in row and column order, that holds the id and is
+  -- not its place, or that is of the wrong type; found from the cells that
+  -- hold the id, not by a walk of every cell.
+  function T.index_drift(idx, id, expected, tag)
+    local first
+    for _, at in ipairs(idx.where[id] or {}) do
+      if idx.cells[at].place ~= expected then first = at; break end
+    end
+    for _, at in ipairs(idx.wrong) do
+      if idx.cells[at].place ~= expected then
+        if not first or at < first then first = at end
+        break
+      end
+    end
+    if expected == nil then
+      -- T.unindexed reads each row's hash before its cells: a row that is
+      -- not a hash is refused as it refuses it
+      local last = first and idx.cells[first].r or #idx.rows
+      for r = 1, last do
+        if not idx.hashed[r] then
+          T.hash(T.rowkey(idx.d, idx.rows[r]))
+          idx.hashed[r] = true
+        end
+      end
+    end
+    if not first then return nil end
+    local cell = idx.cells[first]
+    if cell.wrongtype then return T.refuse('WRONGTYPE', cell.key, cell.wrongtype, 'zset') end
+    local refusal = T.refuse('DRIFT', cell.row, cell.col, id)
+    if tag then refusal[#refusal + 1] = tag end
+    return refusal
+  end
+  -- T.cell_once(d, row, col, write): T.cell, looked up once per call of a
+  -- function and kept: a read set or a batch names a cell for each member,
+  -- and the rows and their bindings do not change before its writes.
+  function T.cell_once(d, row, col, write)
+    d.cell_memo = d.cell_memo or {}
+    local k = row .. '\0' .. col .. '\0' .. (write and '1' or '0')
+    local m = d.cell_memo[k]
+    if not m then
+      local cell, why = T.cell(d, row, col, write)
+      m = {cell = cell, why = why}
+      d.cell_memo[k] = m
+    end
+    return m.cell, m.why
   end
   function T.rowfields(d, row, spec)
     if not T.row(row) or type(spec) ~= 'table' then return nil, T.refuse('ROW') end
@@ -1761,11 +1860,13 @@ do
     if over then return over end
     local members_out = {}
     local missing = {}
+    local idx
     for _, id in ipairs(target_ids) do
       local h, exists, why = T.member(d, id)
       if why then return why end
       if not exists then
-        local drift = T.unindexed(d, id, 'set-only')
+        idx = idx or T.place_index(d, target_ids)
+        local drift = T.index_drift(idx, id, nil, 'set-only')
         if drift then return drift end
         missing[#missing + 1] = id
       else
@@ -1776,17 +1877,19 @@ do
         if place then
           local r, c = string.match(place, '^(.*):([^:]+)$')
           if not r or not c then return T.refuse('DRIFT', id, place) end
-          local cell = T.cell(d, r, c, false)
+          local cell = T.cell_once(d, r, c, false)
           if not cell then return T.refuse('DRIFT', id, place) end
           local s = redis.call('ZSCORE', cell.key, id)
           if not s then return T.refuse('DRIFT', r, c, id) end
-          local drift = T.check_placement(d, id, place)
+          idx = idx or T.place_index(d, target_ids)
+          local drift = T.index_drift(idx, id, place)
           if drift then return drift end
           placed = '1'
           row, col = r, c
           score = tostring(s)
         else
-          local drift = T.unindexed(d, id, 'set-only')
+          idx = idx or T.place_index(d, target_ids)
+          local drift = T.index_drift(idx, id, nil, 'set-only')
           if drift then return drift end
         end
         local fields = {}
@@ -1837,16 +1940,17 @@ do
       local start = pos
       pos = pos + 1
       while pos <= len do
-        local ch = string.sub(raw, pos, pos)
-        if ch == '\\' then
-          pos = pos + 2
-        elseif ch == '"' then
-          pos = pos + 1
+        -- the next quote or backslash, found in C: the characters between
+        -- are the string's own
+        local at = string.find(raw, '["\\]', pos)
+        if not at then pos = len + 1; break end
+        if string.byte(raw, at) == 92 then
+          pos = at + 2
+        else
+          pos = at + 1
           local ok, s = pcall(cjson.decode, string.sub(raw, start, pos - 1))
           if not ok then return nil, "invalid string escape" end
           return s
-        else
-          pos = pos + 1
         end
       end
       return nil, "unterminated string"
@@ -2415,6 +2519,8 @@ do
       end
     end
 
+    local idx
+    local index_ids
     for _, entry in ipairs(members_list) do
       local id = entry.id
       local record, exists, why = T.member_head(d, id)
@@ -2426,7 +2532,7 @@ do
       if current_place then
         local r, c = string.match(current_place, '^(.*):([^:]+)$')
         if not r or not c then return T.refuse('DRIFT', id, current_place) end
-        local cell, cell_err = T.cell(d, r, c, true)
+        local cell, cell_err = T.cell_once(d, r, c, true)
         if not cell then return at_member(cell_err, id) end
         local score = redis.pcall('ZSCORE', cell.key, id)
         if type(score) == 'table' and score.err then
@@ -2434,13 +2540,23 @@ do
           T.rethrow(score)
         end
         if not score then return T.refuse('DRIFT', r, c, id) end
-        local drift = T.check_placement(d, id, current_place)
+        if not idx then
+          index_ids = {}
+          for _, e in ipairs(members_list) do index_ids[#index_ids + 1] = e.id end
+          idx = T.place_index(d, index_ids)
+        end
+        local drift = T.index_drift(idx, id, current_place)
         if drift then return drift end
         member_places[id] = current_place
         member_scores[id] = tonumber(score)
         member_score_text[id] = score
       else
-        local drift = T.unindexed(d, id, 'set-only')
+        if not idx then
+          index_ids = {}
+          for _, e in ipairs(members_list) do index_ids[#index_ids + 1] = e.id end
+          idx = T.place_index(d, index_ids)
+        end
+        local drift = T.index_drift(idx, id, nil, 'set-only')
         if drift then return drift end
       end
 

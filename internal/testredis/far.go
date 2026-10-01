@@ -70,6 +70,7 @@ func (l launch) far(t testing.TB, target string, delay time.Duration, opts delay
 	}
 	p, err := delayproxy.Serve(ln, target, delay, opts)
 	if err != nil {
+		// ignored: a close on the failure path; t.Fatalf on the next line reports the Serve error
 		_ = ln.Close()
 		t.Fatalf("testredis: Far(%q, %v): %v", target, delay, err)
 	}

@@ -137,7 +137,7 @@ func TestPreflightComparesTheStampOfABinaryThatPrintsThenHangs(t *testing.T) {
 		defer close(done)
 		dcode = env.cmdDoctor(nil, &out, &derr)
 	}()
-	code, stop := env.preflight([]string{"batch", "--tokens", "unmetered"}, &errOut)
+	code, stop := env.preflight([]string{"native", "--tokens", "unmetered"}, &errOut)
 	<-done
 	if code != 2 || !stop {
 		t.Fatalf("preflight(exit=%d, stop=%v), want (2, true)\n%s", code, stop, errOut.String())
