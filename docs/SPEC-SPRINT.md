@@ -320,7 +320,8 @@ and it is the coordinator's decision, receipted.
   while another remains and draws the same one only when none does, and
   `routes` counts the take against the route it ran on: an attempt, failed,
   and a provider failure. The 5xx hand-back above is finished the same way,
-  its own line the reason (`provider: PROVIDER-5XX label=... ref=...`).
+  its line's cause the reason (`provider: class=<class> status=<status|-> msg=<words>`,
+  docs/SPEC-CARD-CONTRACT.md section 4).
 - The machine's tick deals every ready primary the fleet has room for in one
   step, in stream turns (each stream's oldest first by score), one card at a
   time to the next up member round the fleet (the rolling index `deal_index`)

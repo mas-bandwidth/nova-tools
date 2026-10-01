@@ -149,18 +149,21 @@ func ParseIostat(s string) (float64, bool) {
 }
 
 // iostatIdle is the id column of one data row. iostat prints us, sy and id each
-// %3.0f, so an idle of 100 runs into the column before it ("  0  0100") and the row
-// does not split on spaces; the first nine characters are cut in threes, and a row
-// that is not so laid out is split on spaces.
+// %3.0f on some releases, so an idle of 100 runs into the column before it
+// ("  0  0100"). Read complete whitespace-separated fields first; only a packed
+// row needs the first nine characters cut in threes. Cutting a spaced row first
+// can truncate its idle value ("  0  0 100" becomes idle 10).
 func iostatIdle(line string) (float64, bool) {
-	cols := make([]string, 0, 3)
-	if len(line) >= 9 {
+	cols := strings.Fields(line)
+	if len(cols) < 3 || !iostatCols(cols) {
+		if len(line) < 9 {
+			return 0, false
+		}
+		cols = make([]string, 0, 3)
 		for i := 0; i < 9; i += 3 {
 			cols = append(cols, strings.TrimSpace(line[i:i+3]))
 		}
-	}
-	if !iostatCols(cols) {
-		if cols = strings.Fields(line); len(cols) < 3 || !iostatCols(cols[:3]) {
+		if !iostatCols(cols) {
 			return 0, false
 		}
 	}
