@@ -23,7 +23,7 @@ import (
 	"github.com/mas-bandwidth/nova-tools/internal/cardcost"
 	"github.com/mas-bandwidth/nova-tools/internal/cardhdr"
 	"github.com/mas-bandwidth/nova-tools/internal/hostload"
-	novalog "github.com/mas-bandwidth/nova-tools/internal/log"
+	"github.com/mas-bandwidth/nova-tools/internal/log"
 	"github.com/mas-bandwidth/nova-tools/internal/member"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
@@ -312,7 +312,7 @@ func (s *execSprint) Run(args ...string) (int, []byte) {
 // half keeps room for the other, and secret-shaped values never reach the member log.
 func sprintFailureOutput(stdout, stderr []byte) []byte {
 	clean := func(raw []byte, n int) string {
-		return oneline.Cap(oneline.Escape(novalog.Redact(strings.TrimSpace(string(raw)))), n)
+		return oneline.Cap(oneline.Escape(log.Redact(strings.TrimSpace(string(raw)))), n)
 	}
 	if len(strings.TrimSpace(string(stdout))) == 0 {
 		return []byte(clean(stderr, oneline.TailBytes))
