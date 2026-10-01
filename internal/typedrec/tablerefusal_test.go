@@ -58,6 +58,7 @@ func TestParseTableRefusal(t *testing.T) {
 		{"PLACEGUARD", typedrec.TableRefusalPlaceGuard},
 		{"PROPGUARD", typedrec.TableRefusalPropGuard},
 		{"ORPHAN", typedrec.TableRefusalOrphan},
+		{"RESIDUE", typedrec.TableRefusalResidue},
 		{"UNRECOGNIZED", typedrec.TableRefusalUnknown},
 	}
 	for _, tc := range cases {

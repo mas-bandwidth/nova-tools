@@ -228,15 +228,14 @@ func (r *Redis) DeleteKeys(ctx context.Context, keys []string) (int, error) {
 }
 
 // memResidue is what the table layer's drop keeps of a table: the residue
-// keys not yet deleted, and the table itself: its earlier epochs' rows and
-// cells, and its member records (those of the dropped epoch unplaced).
+// keys not yet deleted, and the table itself: its member records, unplaced.
 type memResidue struct {
 	keys  map[string]bool
 	table *memTable
 }
 
 // keepResidue keeps a dropped table's residue as a drop in the store does:
-// the active epoch's rows and cells go, its members unplaced. The caller
+// the rows and cells of every epoch go, the members unplaced. The caller
 // holds m.mu.
 func (m *Mem) keepResidue(table string) {
 	t := m.tables[table]
@@ -247,18 +246,15 @@ func (m *Mem) keepResidue(table string) {
 	for _, s := range residueSuffixes[:3] {
 		r.keys[ntable.DefKey(table)+s] = true
 	}
-	a := m.active(t)
 	for _, mm := range t.members {
-		if mm.epoch == a {
-			mm.placed, mm.row, mm.col = false, "", ""
-		}
+		mm.placed, mm.row, mm.col = false, "", ""
 	}
-	delete(t.epochs, a)
+	clear(t.epochs)
 	m.dropped[table] = r
 }
 
 // takeResidue gives a table created again under a dropped name what its drop
-// kept, as the store does: its records and earlier epochs, and its revision.
+// kept, as the store does: its records and its revision.
 // The caller holds m.mu.
 func (m *Mem) takeResidue(t *memTable) {
 	r := m.dropped[t.def.Name]

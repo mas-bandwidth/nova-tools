@@ -563,10 +563,11 @@ JSON escapes; 4,175,647 bytes for 128 members each setting 26 fields of 64 `/`
 characters). Records do not expire, so a record holds that much for as long as the
 table exists. One key keeps the
 work of removing them bounded. `drop <table>` and `drop <table> --definition` treat
-them alike: each removes the whole hash in the same atomic call as the drop, so a table
-created again under the name is a new table and no operation of the old one replays
-against it; the two verbs differ only in what they always differed in, the saved
-column definition. `clear <table>` removes no record and does not itself
+them alike: each removes the whole hash in the same atomic call as the drop, so no
+operation of the old table replays against a table created again under the name; the
+two verbs differ in what else they remove: `--definition` takes the saved column
+definition, the identity hash and the rows of every epoch too, and the revision
+counter and the change log continue across a drop and a create. `clear <table>` removes no record and does not itself
 advance the configured external epoch. If that epoch advances separately, an
 earlier operation still replays with its original receipt, epoch and revisions.
 Epoch snapshots that a drop keeps readable are not operation records and stay. A

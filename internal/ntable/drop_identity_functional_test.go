@@ -130,3 +130,122 @@ func TestAnOrphanIdentityIsNamedAndRemovedByDropDefinition(t *testing.T) {
 	other.MemberPrefix = "new:member:"
 	assert.NoError(t, ntable.Create(ctx, c, other, now), "create after the repair")
 }
+
+// epochedStore is an epoched table with a row and a placed member at epoch 0
+// and at epoch 1, the epoch key at 1, the writer's options at epoch 1.
+func epochedStore(t *testing.T) (*redis.Client, ntable.Table, ntable.WriteOptions) {
+	t.Helper()
+	c, _ := store(t)
+	ctx := context.Background()
+	tb := demo()
+	tb.EpochKey = "domain:epoch"
+	newTable(t, c, tb).rows("old0").cell("old0", "ready", "m0", 1)
+	require.NoError(t, c.HSet(ctx, tb.EpochKey, "n", 1).Err())
+	opts := ntable.WriteOptions{Epoch: 1}
+	_, err := ntable.RowAdd(ctx, c, "demo", "new1", ntable.RowSpec{}, opts)
+	require.NoError(t, err)
+	_, err = ntable.CellAdd(ctx, c, "demo", "new1", "ready", "m1", 1, opts)
+	require.NoError(t, err)
+	return c, tb, opts
+}
+
+func TestDropDefinitionAtALaterEpochLeavesNoRowsToAdopt(t *testing.T) {
+	t.Parallel()
+	c, _, opts := epochedStore(t)
+	ctx := context.Background()
+	var keys []string
+	for e := uint64(0); e <= 1; e++ {
+		keys = append(keys, ntable.RowsKeyAt("demo", e), ntable.PropsKeyAt("demo", e))
+		for _, r := range []string{"old0", "new1"} {
+			keys = append(keys, ntable.RowKeyAt("demo", r, e))
+			for _, col := range []string{"ready", "working", "done", "who"} {
+				keys = append(keys, ntable.CellKeyAt("demo", r, col, e))
+			}
+		}
+	}
+	require.Subset(t, existing(ctx, c, keys), []string{ntable.RowsKeyAt("demo", 0), ntable.RowsKeyAt("demo", 1), ntable.CellKeyAt("demo", "old0", "ready", 0), ntable.CellKeyAt("demo", "new1", "ready", 1)})
+
+	_, err := ntable.DropDefinition(ctx, c, "demo", opts)
+	require.NoError(t, err)
+	assert.Empty(t, existing(ctx, c, keys), "rows of an epoch are left after drop --definition")
+	for _, id := range []string{"m0", "m1"} {
+		assert.False(t, c.HExists(ctx, ntable.MemberKey(id), "place:demo").Val(), "member %s is still placed in a cell that is gone", id)
+	}
+
+	// a table created again, with no epoch key, adopts nothing
+	again := demo()
+	require.NoError(t, ntable.Create(ctx, c, again, now))
+	got, err := ntable.Read(ctx, c, "demo")
+	require.NoError(t, err)
+	assert.Empty(t, got.Rows, "the new table holds the old table's rows")
+	loc, err := ntable.MemberFind(ctx, c, "demo", "m0")
+	require.NoError(t, err)
+	assert.NotEqual(t, "placed", loc.State, "member find places a member of the old table")
+	_, err = ntable.Check(ctx, c, "demo")
+	assert.NoError(t, err)
+}
+
+func TestCreateRefusesTheRowsAnEarlierTableLeft(t *testing.T) {
+	t.Parallel()
+	c, _ := store(t)
+	ctx := context.Background()
+	require.NoError(t, c.ZAdd(ctx, ntable.RowsKey("demo"), redis.Z{Score: 1, Member: "old0"}).Err())
+	require.NoError(t, c.HSet(ctx, ntable.PropsKeyAt("demo", 0), "k", "v").Err())
+	err := ntable.Create(ctx, c, demo(), now)
+	require.ErrorIs(t, err, ntable.ErrResidue)
+	assert.ErrorContains(t, err, "table:demo:rows, table:demo:props")
+	assert.ErrorContains(t, err, "; run: nova-table drop 'demo' --definition")
+	assert.Zero(t, c.Exists(ctx, ntable.DefKey("demo"), ntable.IdentityKey("demo")).Val(), "a refused create wrote")
+}
+
+func TestCreateOnAnOrphanIdentityNamesItWithAnotherConfiguration(t *testing.T) {
+	t.Parallel()
+	c, _ := store(t)
+	ctx := context.Background()
+	require.NoError(t, c.HSet(ctx, ntable.IdentityKey("demo"), "epoch_key", "", "epoch_field", "n", "member_prefix", "old:member:").Err())
+	other := demo()
+	other.MemberPrefix = "new:member:"
+	err := ntable.Create(ctx, c, other, now)
+	require.ErrorIs(t, err, ntable.ErrOrphan)
+	assert.NotContains(t, err.Error(), "CONFIG")
+	same := demo()
+	same.MemberPrefix = "old:member:"
+	assert.NoError(t, ntable.Create(ctx, c, same, now), "the same configuration takes the identity back")
+}
+
+func TestAnEpochedOrphanNamesAnEpochItsRemedyCanUse(t *testing.T) {
+	t.Parallel()
+	c, _ := store(t)
+	ctx := context.Background()
+	require.NoError(t, c.HSet(ctx, "domain:epoch", "n", "3").Err())
+	require.NoError(t, c.HSet(ctx, ntable.IdentityKey("demo"), "epoch_key", "domain:epoch", "epoch_field", "n", "member_prefix", "table::member:").Err())
+	_, err := ntable.Read(ctx, c, "demo")
+	require.ErrorIs(t, err, ntable.ErrOrphan)
+	assert.ErrorContains(t, err, "; run: nova-table drop 'demo' --definition --epoch 3")
+	other := demo()
+	other.EpochKey = "domain:epoch"
+	other.MemberPrefix = "new:member:"
+	err = ntable.Create(ctx, c, other, now, ntable.WriteOptions{Epoch: 3})
+	require.ErrorIs(t, err, ntable.ErrOrphan)
+	assert.ErrorContains(t, err, "--definition --epoch 3")
+	_, err = ntable.DropDefinition(ctx, c, "demo", ntable.WriteOptions{Epoch: 3})
+	require.NoError(t, err, "the remedy the refusal printed")
+	assert.Zero(t, c.Exists(ctx, ntable.IdentityKey("demo")).Val())
+}
+
+func TestTheRevisionAndTheChangeLogContinueAcrossADropAndACreate(t *testing.T) {
+	t.Parallel()
+	c, _ := store(t)
+	ctx := context.Background()
+	newTable(t, c, demo()).rows("build")
+	before, err := c.HGet(ctx, ntable.RevisionKey("demo"), "n").Uint64()
+	require.NoError(t, err)
+	events := c.XLen(ctx, ntable.ChangesKey("demo")).Val()
+	_, err = ntable.DropDefinition(ctx, c, "demo")
+	require.NoError(t, err)
+	require.NoError(t, ntable.Create(ctx, c, demo(), now))
+	after, err := c.HGet(ctx, ntable.RevisionKey("demo"), "n").Uint64()
+	require.NoError(t, err)
+	assert.Greater(t, after, before, "the revision starts again")
+	assert.Greater(t, c.XLen(ctx, ntable.ChangesKey("demo")).Val(), events, "the change log continues")
+}

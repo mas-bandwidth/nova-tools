@@ -1910,7 +1910,7 @@ first, connection flags next, epoch and receipt metadata last. For example,
 | --- | --- |
 | `create <table> --columns <spec>` | Creates a definition; repeated identical creates are accepted; another shape points to `set --columns` |
 | `set <table>` | Edits footer, columns, visibility or name; see `help set` |
-| `drop <table> [--definition]` | Removes active rows/owned cells; `--definition` also removes the saved column definition and the table's identity hash (it also repairs a store left with the identity alone); snapshots from earlier epochs stay |
+| `drop <table> [--definition]` | Removes active rows/owned cells; `--definition` also removes the saved column definition and the table's identity hash and the rows of every epoch (it also repairs a store left with the identity alone); the definition snapshots of earlier epochs stay |
 | `list` | Lists active tables with row and column counts |
 | `row add <table> <row>...` | Adds one or many rows; optional label, exclusion, owner and bound cells |
 | `row set <table> <row> <col>=<value>...` | Writes text values; `col=` clears one |

@@ -66,6 +66,9 @@ var (
 	// ErrOrphan is a table that is gone while its identity record is left: a
 	// verb on it refuses, and drop --definition removes the record.
 	ErrOrphan = errors.New("orphan table identity")
+	// ErrResidue is a create refused because rows of an earlier table of the
+	// name are left at the epoch it would open at.
+	ErrResidue = errors.New("rows of an earlier table are left")
 	// ErrUnknownOutcome is a transport failure: the store did not answer, so the
 	// batch may or may not have been applied (changed=unknown). Send the same
 	// manifest again with the same operation id.
@@ -239,6 +242,17 @@ func memberReadCommand(table, member string, flags ...string) string {
 	return "nova-table member read " + strings.Join(append(flags, args...), " ")
 }
 
+// dropDefinitionCommand is the drop --definition that removes what an earlier
+// table of the name left, at the epoch the store is at (reply[0], when it is
+// not 0): a stale epoch is refused, so the epoch is part of the remedy.
+func dropDefinitionCommand(table string, epoch []any) string {
+	cmd := "nova-table drop " + shellWord(table) + " --definition"
+	if len(epoch) > 0 && fmt.Sprint(epoch[0]) != "0" {
+		cmd += " --epoch " + fmt.Sprint(epoch[0])
+	}
+	return cmd
+}
+
 // words joins the detail elements of a refusal reply.
 func words(detail []any) string {
 	parts := make([]string, len(detail))
@@ -324,7 +338,13 @@ func (o operation) refused(reply []any) error {
 		}
 	case typedrec.TableRefusalOrphan:
 		cause = say(ErrOrphan, "no such table, but %s is left behind by a dropped definition", IdentityKey(o.table))
-		remedy = "nova-table drop " + shellWord(o.table) + " --definition"
+		remedy = dropDefinitionCommand(o.table, reply[2:])
+	case typedrec.TableRefusalResidue:
+		if len(reply) < 4 {
+			return fmt.Errorf("%s: malformed residue refusal", o.location())
+		}
+		cause = say(ErrResidue, "keys of an earlier table of this name are left: %s", strings.Join(strings.Fields(words(reply[3:])), ", "))
+		remedy = dropDefinitionCommand(o.table, reply[2:3])
 	case typedrec.TableRefusalExists:
 		cause = ErrExists
 		remedy = "nova-table set " + shellWord(o.table) + " --columns <columns>"

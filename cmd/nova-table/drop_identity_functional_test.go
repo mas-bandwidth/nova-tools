@@ -63,3 +63,29 @@ func TestShowNamesAnOrphanIdentityAndDropDefinitionRepairsIt(t *testing.T) {
 	assert.Equal(t, 1, code)
 	assert.Contains(t, stderr, "no such table; run: nova-table create")
 }
+
+// TestAnEpochedOrphanLineCarriesTheEpochItsRemedyNeeds: the remedy the line
+// prints runs as printed (a stale epoch would be refused), and create with
+// another configuration prints the same line.
+func TestAnEpochedOrphanLineCarriesTheEpochItsRemedyNeeds(t *testing.T) {
+	t.Parallel()
+	addr := firstRunStore(t)
+	c := redis.NewClient(&redis.Options{Addr: addr})
+	t.Cleanup(func() { assert.NoError(t, c.Close()) })
+	ctx := context.Background()
+	require.NoError(t, c.HSet(ctx, "domain:epoch", "n", "3").Err())
+	require.NoError(t, c.HSet(ctx, ntable.IdentityKey("fleet"), "epoch_key", "domain:epoch", "epoch_field", "n", "member_prefix", "table::member:").Err())
+
+	const remedy = "run: nova-table drop 'fleet' --definition --epoch 3\n"
+	code, _, stderr := runTable(at(addr, "show", "fleet")...)
+	assert.Equal(t, 1, code)
+	assert.Contains(t, stderr, remedy)
+	code, _, stderr = runTable(at(addr, "create", "fleet", "--columns", "a", "--epoch-key", "domain:epoch", "--member-prefix", "new:member:", "--epoch", "3")...)
+	assert.Equal(t, 1, code)
+	assert.Contains(t, stderr, remedy)
+	assert.NotContains(t, stderr, "CONFIG")
+
+	code, stdout, stderr := runTable(at(addr, "drop", "fleet", "--definition", "--epoch", "3")...)
+	assert.Equal(t, 0, code, stderr)
+	assert.Equal(t, "TABLE DROP table=fleet rows=0 trips=1\n", stdout)
+}

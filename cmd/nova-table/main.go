@@ -30,9 +30,9 @@ const usageDetails = `Table write verbs take --epoch <observed epoch> (default 0
 --idem (receipt metadata) and --receipt. create also takes --epoch-key,
 --epoch-field (default n), and --member-prefix (default table::member:).
 A stale epoch is refused. drop keeps the saved column definition and the
-table's identity unless --definition is given, which removes both (and repairs
-a store left with the identity alone); snapshots from earlier epochs remain
-available.
+table's identity unless --definition is given, which removes both and the rows
+of every epoch (and repairs a store left with the identity alone); the
+definition snapshots of earlier epochs remain available.
 View configuration has no table epoch or receipt.
 Quote column specs containing parentheses, for example 'done,pct:pct(done)'.
 

@@ -165,15 +165,22 @@ cells belong to one epoch. Advancing the domain exposes that template with
 empty rows while preserving historical data and member links. `clear` empties
 only the active epoch. `drop` removes its active rows and owned cells but keeps
 the saved column definition, which is reused in later epochs. `drop --definition`
-also removes that saved definition and the identity hash, in the same call.
-Snapshots from earlier epochs remain, and `show`/`render --at-epoch <n>` (module
-`ReadAt`) can inspect its history. While the table exists, an identity hash
-retains the epoch domain and member prefix, preventing template recreation from
-silently reassigning old records to a different namespace; a table created again
-after `drop --definition` is a new table with its own. A store that holds the
-identity hash of a table that is gone (an earlier build's `drop --definition`
-kept it) says so on every verb, `show` included, and
-`nova-table drop <table> --definition` removes it. `show` reports epoch and
+also removes that saved definition, the identity hash and the rows of every
+epoch (with their owned cells and properties, the members' places unset), in the
+same call, and is refused beyond 1000 epochs. The definition snapshots of
+earlier epochs remain, and `show`/`render --at-epoch <n>` (module `ReadAt`)
+read them, with no rows. While the table exists, an identity hash retains the
+epoch domain and member prefix, preventing template recreation from silently
+reassigning old records to a different namespace. A table created again after
+`drop --definition` has its own configuration and no rows, and its revision
+counter and change log continue from the dropped table's (the change log is
+untrimmed, so a reader chains across the drop). A `create` refuses, naming the
+keys, when the rows or properties of an earlier table are left at the epoch it
+opens at. A store that holds the identity hash of a table that is gone (an
+earlier build's `drop --definition` kept it) says so on every verb, `show`
+included, and a `create` with another configuration says so too; the line
+carries `nova-table drop <table> --definition`, with `--epoch <n>` at the epoch
+the store is at, and that removes it. `show` reports epoch and
 revision; `render` and `watch` retain their plain table display.
 
 `check` verifies both directions of record/set membership, duplicate places,
@@ -293,7 +300,7 @@ nova-table watch <table>[,<table>...] | --view <name> [--every <duration>] [--ou
 | verb | prints |
 | --- | --- |
 | `create` | `TABLE CREATE table=<t> columns=<n>`; an existing table with the same definition is left; another definition is refused |
-| `drop` | `TABLE DROP table=<t> rows=<n>`; active rows and owned cells go; the saved column definition and the identity hash stay unless `--definition`, which removes both and the operation records; the revision counter, the change log, earlier epoch snapshots and external bound sets stay |
+| `drop` | `TABLE DROP table=<t> rows=<n>`; active rows and owned cells go; the saved column definition and the identity hash stay unless `--definition`, which removes both, the rows of every epoch and the operation records; the revision counter, the change log, the definition snapshots of earlier epochs and external bound sets stay |
 | `list` | `TABLE LIST tables=<n>`, then `TABLE table=<t> columns=<n> rows=<n>` per table |
 | `row add` | `TABLE ROW ADD table=<t> row=<r> cols=<n> bound=<n>`; a row already there keeps its place and its cells; a binding wants `--owner` |
 | `row del` | `TABLE ROW DEL table=<t> row=<r> existed=<0\|1>`; its owned cells go with it; a missing row succeeds with `existed=0` and a no-op receipt |
