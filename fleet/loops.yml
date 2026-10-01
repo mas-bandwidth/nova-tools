@@ -12,10 +12,13 @@
 # its GUI domain on darwin, a systemd user unit on linux (group_vars:
 # nova_launchd_domain, nova_systemd_scope choose the system place instead). A
 # record with enabled false has its unit written and not loaded. A unit of
-# ours (com.nova.loop.<name>.plist, nova-loop-<name>.service) is retired, unloaded
-# and its file removed, when no record on the host names it, and wherever it
-# stands in the other place; --check lists each as WOULD-RETIRE with its file
-# and changes nothing. A loop logs to its record's log, under ~/nova-bench/loops.
+# ours (com.nova.loop.<name>.plist, nova-loop-<name>.service, carrying this
+# play's mark) is retired, unloaded and its file removed, when no record on the
+# host names it, and wherever it stands in the other place; a unit of another
+# tool's of the same shape is left alone with a NOTE, unless a record of its
+# name takes it over or nova_retire_units names it. --check lists each as
+# WOULD-RETIRE with its file and changes nothing. A loop logs to its record's
+# log, under ~/nova-bench/loops.
 - name: loop units from the loop records
   hosts: all
   gather_facts: true
@@ -31,6 +34,8 @@
     loop_pattern: "{{ 'com.nova.loop.*.plist' if loop_darwin else 'nova-loop-*.service' }}"
     loop_names: "{{ nova_loops | map(attribute='name') | list }}"
     loop_runtime: { XDG_RUNTIME_DIR: "/run/user/{{ ansible_user_uid }}" }
+    # The mark every unit this play writes carries (its templates' first comment).
+    loop_mark: written by fleet/loops.yml from the loop record
   tasks:
     - name: the inventory carries this machine's loop records
       ansible.builtin.assert:
@@ -46,6 +51,24 @@
 
     - name: the log directory
       ansible.builtin.file: { path: "{{ nova_home }}/nova-bench/loops", state: directory, mode: "0755" }
+
+    - name: the sops binary (nova_sops, else the first of nova_sops_candidates on the machine)
+      ansible.builtin.stat: { path: "{{ item }}" }
+      loop: "{{ nova_sops_candidates }}"
+      register: loop_sops
+      when: nova_sops is not defined
+
+    - name: the sops a loop with keys opens its seat with
+      ansible.builtin.set_fact:
+        nova_sops: >-
+          {{ nova_sops if nova_sops is defined else (loop_sops.results | selectattr('stat', 'defined')
+             | selectattr('stat.exists') | map(attribute='item') | first | default('')) }}
+
+    - name: a machine with a loop that opens secrets has sops
+      ansible.builtin.assert:
+        that: nova_sops != '' or nova_loops | selectattr('keys') | list | length == 0
+        fail_msg: "{{ inventory_hostname }} has no sops at any of {{ nova_sops_candidates | join(', ') }}; install it or set nova_sops in host_vars"
+        quiet: true
 
     - name: one unit per record
       ansible.builtin.template:
@@ -72,27 +95,47 @@
       become: "{{ loop_system }}"
       register: loop_units
 
-    - name: the units of ours in either place
+    - name: the units in either place
       ansible.builtin.find: { paths: "{{ item }}", patterns: "{{ loop_pattern }}" }
       loop: ["{{ loop_dir }}", "{{ loop_other_dir }}"]
       register: loop_present
 
-    # Retired: a unit in this machine's place no record names, and every unit
-    # of ours in the other place. system says which domain or scope holds it.
-    - name: the units to retire
+    - name: the units this play wrote (they carry its mark)
+      ansible.builtin.find: { paths: "{{ item }}", patterns: "{{ loop_pattern }}", contains: "{{ loop_mark }}" }
+      loop: ["{{ loop_dir }}", "{{ loop_other_dir }}"]
+      register: loop_marked
+
+    # Retired: a unit this play wrote that no record on the host names, every
+    # unit it wrote in the other place, and a unit nova_retire_units names
+    # (a unit of another tool's, retired on purpose). A unit of another tool's
+    # is otherwise left alone and named in a NOTE; a record of the same name
+    # takes it over. system says which domain or scope holds a unit.
+    - name: the units to retire, and the units of other tools
       ansible.builtin.set_fact:
+        loop_ours: "{{ loop_marked.results | map(attribute='files') | flatten | map(attribute='path') | list }}"
         loop_retire: >-
           {%- set out = [] -%}
+          {%- set ours = loop_marked.results | map(attribute='files') | flatten | map(attribute='path') | list -%}
           {%- for found in loop_present.results -%}
           {%- set here = found.item == loop_dir -%}
           {%- for f in found.files -%}
-          {%- set name = f.path | basename | regex_replace('^com[.]nova[.]loop[.](.*)[.]plist$|^nova-loop-(.*)[.]service$', '\1\2') -%}
-          {%- if not here or name not in loop_names -%}
+          {%- set name = f.path | basename | regex_replace('^com[.]nova[.]loop[.](.*)[.]plist$|^nova-loop-(.*)[.]service$', '\\1\\2') -%}
+          {%- if (f.path in ours and (not here or name not in loop_names)) or (name in nova_retire_units and not (here and name in loop_names)) -%}
           {%- set _ = out.append({'name': name, 'file': f.path, 'system': ((loop_system | bool) if here else not (loop_system | bool))}) -%}
           {%- endif -%}
           {%- endfor -%}
           {%- endfor -%}
           {{ out }}
+
+    - name: the units of other tools, left alone
+      ansible.builtin.debug:
+        msg: >-
+          NOTE {{ inventory_hostname }} {{ item | basename }} was not written by this play and no record or
+          nova_retire_units names it: left as it is ({{ item }})
+      loop: >-
+        {{ loop_present.results | map(attribute='files') | flatten | map(attribute='path')
+           | reject('in', loop_ours) | reject('in', loop_retire | map(attribute='file') | list)
+           | reject('in', loop_names | map('regex_replace', '^(.*)$', loop_dir ~ '/' ~ ('com.nova.loop.\\1.plist' if loop_darwin else 'nova-loop-\\1.service')) | list) | list }}
 
     - name: what --check would retire
       ansible.builtin.debug:
@@ -107,6 +150,7 @@
       loop: "{{ loop_names }}"
       register: loop_loaded
       changed_when: false
+      # ignored: a non-zero exit is the answer "launchd does not hold it", read as .rc by the tasks below
       failed_when: false
       check_mode: false
       become: "{{ loop_system }}"
@@ -114,6 +158,7 @@
 
     - name: unload the disabled and the changed (darwin)
       ansible.builtin.command: "launchctl bootout {{ loop_domain }}/com.nova.loop.{{ item.item }}"
+      changed_when: true
       loop: "{{ loop_loaded.results | default([]) }}"
       loop_control: { label: "{{ item.item }}" }
       become: "{{ loop_system }}"
@@ -124,6 +169,7 @@
 
     - name: load the enabled (darwin)
       ansible.builtin.command: "launchctl bootstrap {{ loop_domain }} {{ loop_dir }}/com.nova.loop.{{ item.name }}.plist"
+      changed_when: true
       loop: "{{ nova_loops | selectattr('enabled') | list }}"
       loop_control: { label: "{{ item.name }}" }
       become: "{{ loop_system }}"

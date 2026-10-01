@@ -37,6 +37,24 @@
           '--only', nova_redis_admin_password_key, '--require=' ~ nova_redis_admin_password_key, '--'] }}
     redis_flags: [--addr, "{{ nova_redis_addr }}", --user, "{{ nova_redis_admin_user }}", --password-env, "{{ nova_redis_admin_password_key }}"]
   tasks:
+    - name: the sops binary (nova_sops, else the first of nova_sops_candidates on the machine)
+      ansible.builtin.stat: { path: "{{ item }}" }
+      loop: "{{ nova_sops_candidates }}"
+      register: redis_sops
+      when: nova_sops is not defined
+
+    - name: the sops the seat is opened with
+      ansible.builtin.set_fact:
+        nova_sops: >-
+          {{ nova_sops if nova_sops is defined else (redis_sops.results | selectattr('stat', 'defined')
+             | selectattr('stat.exists') | map(attribute='item') | first | default('')) }}
+
+    - name: the store_deployer machine has sops
+      ansible.builtin.assert:
+        that: nova_sops != ''
+        fail_msg: "{{ inventory_hostname }} has no sops at any of {{ nova_sops_candidates | join(', ') }}; install it or set nova_sops in host_vars"
+        quiet: true
+
     - name: acl check (the diff against the live ACL; writes nothing)
       ansible.builtin.command:
         argv: "{{ redis_login + [nova_bin_dir ~ '/nova-redis', 'acl', 'check'] + redis_flags }}"

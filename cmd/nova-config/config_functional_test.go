@@ -5,7 +5,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"net"
 	"os"
@@ -352,48 +351,15 @@ func TestApplyEndToEnd(t *testing.T) {
 	}
 }
 
-// A lock held on the machines table blocks the inventory read; the verb gives
-// up at its --timeout with a refusal instead of waiting for ever.
-func TestInventoryTimesOutBehindALockOnTheMachinesTable(t *testing.T) {
-	t.Parallel()
-
-	r := newReal(t, false)
-	r.run(t, 0, "migrate")
-	r.run(t, 0, "machine", "add", "bench-alpha", "--user", "user-a", "--seat", "seat-alpha", "--slots", "4", "--as", "operator")
-
-	ctx := context.Background()
-	db, err := sql.Open("pgx", r.env["NOVA_PG_DSN"])
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer db.Close()
-	tx, err := db.BeginTx(ctx, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := tx.ExecContext(ctx, `LOCK TABLE config.machines IN ACCESS EXCLUSIVE MODE`); err != nil {
-		t.Fatal(err)
-	}
-	out, errs := r.run(t, 2, "inventory", "--timeout", "300ms")
-	_ = tx.Rollback()
-	if out != "" || !strings.HasPrefix(errs, "nova-config inventory: timed out after 300ms waiting for the store while reading the machines and the fleet row; check that nothing holds a lock on config.machines or config.fleet; run: nova-config inventory --timeout 900ms") {
-		t.Fatalf("stdout %q stderr %q", out, errs)
-	}
-	// Released, the same verb answers.
-	out, _ = r.run(t, 0, "inventory", "--timeout", "5s")
-	if !strings.Contains(out, "bench-alpha") {
-		t.Fatalf("after the lock: %q", out)
-	}
-}
-
-// The wrapper the help prints, run with the built binary against the
-// throwaway Postgres, is a working inventory script.
+// The wrapper the help prints, run with the built binary against a store
+// apply wrote, is a working inventory script.
 func TestInventoryWrapperFromTheHelpRunsWithTheBuiltBinary(t *testing.T) {
 	t.Parallel()
 
-	r := newReal(t, false)
+	r := newReal(t, true)
 	r.run(t, 0, "migrate")
 	r.run(t, 0, "machine", "add", "bench-alpha", "--user", "user-a", "--seat", "seat-alpha", "--slots", "4", "--as", "operator")
+	r.run(t, 0, "apply", "--as", "operator")
 
 	help, _ := r.run(t, 0, "inventory", "-h")
 	printf, chmod := helpCommands(t, help)
@@ -408,7 +374,7 @@ func TestInventoryWrapperFromTheHelpRunsWithTheBuiltBinary(t *testing.T) {
 		t.Helper()
 		cmd := exec.Command("/bin/sh", "-c", script)
 		cmd.Dir = dir
-		cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "NOVA_PG_DSN="+r.env["NOVA_PG_DSN"])
+		cmd.Env = append(os.Environ(), "PATH="+dir+":"+os.Getenv("PATH"), "NOVA_SPRINT_REDIS="+r.env["NOVA_SPRINT_REDIS"], "NOVA_PG_DSN=postgres://nobody@127.0.0.1:1/none")
 		out, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("%s: %v\n%s", script, err, out)
@@ -423,20 +389,6 @@ func TestInventoryWrapperFromTheHelpRunsWithTheBuiltBinary(t *testing.T) {
 			t.Fatalf("./nova-inventory %s: %v\n%s", args, err, out)
 		}
 	}
-}
-
-// A database nothing has migrated has no config schema: inventory names the
-// migrate command instead of the raw SQL error.
-func TestInventoryOnAnUnmigratedDatabaseRefusesWithMigrate(t *testing.T) {
-	t.Parallel()
-
-	r := newReal(t, false)
-	out, errs := r.run(t, 1, "inventory")
-	if out != "" || !strings.HasPrefix(errs, "nova-config inventory: schema config is at version 0 and this binary carries ") || !strings.HasSuffix(errs, "; run: nova-config migrate\n") {
-		t.Fatalf("stdout %q stderr %q", out, errs)
-	}
-	r.run(t, 0, "migrate")
-	r.run(t, 0, "inventory")
 }
 
 // stallingListener accepts TCP connections and never writes, like a store
@@ -471,21 +423,19 @@ func stallingListener(t *testing.T) string {
 	return l.Addr().String()
 }
 
-// The flag governs the wait for the connection: the verb waits for its own
-// deadline, and when it expires it prints the timed-out refusal naming the
-// stage, whether the flag is shorter or longer than other verbs' bound. (That
-// no fixed bound caps a longer wait is the package's own test,
-// TestOpenPGBoundsByTheFallbackOnlyWithoutADeadline.)
+// The flag governs the wait for the store: a Redis that accepts and never
+// answers is given up at the verb's own deadline, with the timed-out refusal
+// naming the address and the stage.
 func TestInventoryTimeoutFlagGovernsTheConnection(t *testing.T) {
 	t.Parallel()
 
 	addr := stallingListener(t)
 	r := newReal(t, false)
-	r.env["NOVA_PG_DSN"] = "postgres://nova_config@" + addr + "/nova"
+	r.env["NOVA_SPRINT_REDIS"] = addr
 	for flag, again := range map[string]string{"100ms": "300ms", "250ms": "750ms"} {
 		var out, errb bytes.Buffer
 		code := run([]string{"inventory", "--timeout", flag}, &out, &errb, r.deps())
-		want := "nova-config inventory: timed out after " + flag + " waiting for the store while connecting; check that the store answers on its host and port; run: nova-config inventory --timeout " + again + "\n"
+		want := "nova-config inventory: timed out after " + flag + " waiting for the store at " + addr + " while connecting; check that Redis answers there; run: nova-config inventory --timeout " + again + "\n"
 		if code != 2 || out.String() != "" || errb.String() != want {
 			t.Fatalf("--timeout %s: exit %d stdout %q stderr %q\nwant 2, nothing, %q", flag, code, out.String(), errb.String(), want)
 		}

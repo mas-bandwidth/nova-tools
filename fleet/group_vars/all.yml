@@ -1,8 +1,9 @@
-# The defaults of the fleet plays (tools.yml, redis.yml, loops.yml). These are
-# the lowest-precedence values ansible reads: the inventory nova-config prints
-# (its host variables and all.vars) and an adopter's own group_vars beside the
-# inventory override every one. No value here names a machine, a seat or a
-# person; those come from nova-config (docs/FLEET.md).
+# The defaults of the fleet plays (tools.yml, redis.yml, loops.yml). The
+# inventory nova-config prints (its host variables) overrides each, and so do
+# a group_vars/<group>.yml (benches.yml) and host_vars/<machine>.yml beside the
+# inventory; a group_vars/all.yml beside the inventory does not (this file is
+# read after it). No value here names a machine, a seat or a person; those
+# come from nova-config (docs/FLEET.md).
 
 # Where a machine keeps the tools and the fleet's files: its login's home.
 nova_home: "{{ ansible_env.HOME }}"
@@ -15,19 +16,26 @@ nova_build_file: "{{ nova_home }}/.config/nova/build"
 # The PATH a loop unit runs with.
 nova_loop_path: "{{ nova_bin_dir }}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin"
 # A darwin machine's loops are LaunchAgents in the login's GUI domain (gui) or
-# LaunchDaemons dropped to the login (system), for a login that is never the
-# console user; a linux machine's are systemd user units (user) or system
-# units dropped to the login (system).
+# LaunchDaemons dropped to the login (system: set it in host_vars for a login
+# that is never the console user, which has no GUI domain; it needs sudo); a
+# linux machine's are systemd user units (user, with linger) or system units
+# dropped to the login (system).
 nova_launchd_domain: gui
 nova_systemd_scope: user
+# Units of another tool's (com.nova.loop.<name>.plist, nova-loop-<name>.service
+# not written by loops.yml) to retire by name; every other such unit is left
+# alone and listed.
+nova_retire_units: []
 
 # The nova-secrets layout a loop with keys opens its secrets through: the
-# store, the directory of seat keys (<seat>.key) and the sops binary.
+# store, the directory of seat keys (<seat>.key) and the sops binary: nova_sops
+# when a host sets it, else the first of these that exists on the machine.
 nova_secrets_store: "{{ nova_home }}/nova-bench/secrets"
 nova_secrets_key_dir: "{{ nova_home }}/.config/nova-secrets"
-nova_sops: /usr/local/bin/sops
+nova_sops_candidates: ["{{ nova_home }}/.local/bin/sops", /opt/homebrew/bin/sops, /usr/local/bin/sops]
 
-# The store: the fleet row's store machine (all.vars nova_store) on this port.
+# The store: the fleet row's store machine (all.vars nova_store) on this port
+# (a fleet whose Redis listens elsewhere sets it in group_vars/benches.yml).
 nova_redis_port: 6379
 nova_redis_addr: "{{ nova_store | default('') }}:{{ nova_redis_port }}"
 # Who loads the function library (fn load) and who writes the ACL (acl
@@ -49,4 +57,5 @@ nova_pg_password_key: NOVA_PG_CONFIG_PASSWORD
 # nova_release_out. nova_release_gate_args is passed to the build as is, for
 # its definition-of-done gate (--cli <file> --receipts <dir>).
 nova_release_out: "{{ lookup('env', 'HOME') }}/nova-bench/release-build"
+nova_release_gocache: "{{ lookup('env', 'HOME') }}/nova-bench/release-gocache"
 nova_release_gate_args: []

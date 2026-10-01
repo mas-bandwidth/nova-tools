@@ -10,8 +10,9 @@
 # every platform in one call; each machine installs its platform's directory
 # with that release's own `nova-update release install`, which verifies the
 # SHA256SUMS whole and skips a tool already answering the version, and every
-# nova-* in the bin directory that the checkout does not ship (no cmd/<tool>)
-# is removed; --check lists each as WOULD-REMOVE. The configuration store is
+# tool nova-tools once shipped and ships no more (fleet/retired-tools.txt, by
+# exact name) is removed from the bin directory; --check lists each as
+# WOULD-REMOVE. A platform already built at the version is not built again. The configuration store is
 # migrated to the build's schema (`nova-config migrate`) before the library
 # is loaded by the store_deployer machine (the fleet's coordinator) with
 # `nova-redis fn load`, under the seat that holds the deploy user's password;
@@ -39,22 +40,32 @@
         fail_msg: "name the build: -e nova_version=<v> -e nova_source=<a nova-tools checkout at the commit to install>"
         quiet: true
 
-    - name: build every platform in one call
+    - name: the platforms already built at this version (a SHA256SUMS each)
+      ansible.builtin.stat: { path: "{{ nova_release_out }}/{{ nova_version }}/{{ item }}/SHA256SUMS" }
+      loop: "{{ tools_platforms }}"
+      register: tools_built
+
+    - name: build the missing platforms in one call, niced, with its own Go cache
       ansible.builtin.command:
-        argv: "{{ ['nova-update', 'release', 'build', '--version', nova_version, '--out', nova_release_out, '--source', nova_source,
-                   '--platform', tools_platforms | join(',')] + nova_release_gate_args }}"
+        argv: "{{ ['nice', '-n', '19', 'nova-update', 'release', 'build', '--version', nova_version, '--out', nova_release_out,
+                   '--source', nova_source, '--platform', tools_missing | join(',')] + nova_release_gate_args }}"
+      environment: { GOMAXPROCS: "4", GOCACHE: "{{ nova_release_gocache }}" }
+      vars:
+        tools_missing: "{{ tools_built.results | rejectattr('stat.exists') | map(attribute='item') | list }}"
       register: tools_build
       changed_when: "'RELEASE BUILD OK' in tools_build.stdout"
-      when: tools_platforms | length > 0
+      when: tools_missing | length > 0
 
-    - name: what --check would build
+    - name: what the build makes or finds
       ansible.builtin.debug:
-        msg: "WOULD-BUILD version={{ nova_version }} platforms={{ tools_platforms | join(',') }} out={{ nova_release_out }}"
-      when: ansible_check_mode
+        msg: >-
+          {{ 'WOULD-BUILD' if ansible_check_mode else 'BUILD' }} version={{ nova_version }} out={{ nova_release_out }}
+          built={{ tools_built.results | selectattr('stat.exists') | map(attribute='item') | join(',') or 'none' }}
+          missing={{ tools_built.results | rejectattr('stat.exists') | map(attribute='item') | join(',') or 'none' }}
 
-    - name: the tools the checkout ships (cmd/nova-*)
-      ansible.builtin.find: { paths: "{{ nova_source }}/cmd", patterns: "nova-*", file_type: directory }
-      register: tools_shipped
+    - name: the tools nova-tools no longer ships (fleet/retired-tools.txt)
+      ansible.builtin.set_fact:
+        tools_retired: "{{ lookup('ansible.builtin.file', playbook_dir ~ '/retired-tools.txt').splitlines() | reject('match', '^\\s*(#|$)') | map('trim') | list }}"
 
 - name: the build in ~/.local/bin on every machine
   hosts: all
@@ -62,9 +73,10 @@
   vars:
     tools_stage: "{{ nova_release_dir }}/{{ nova_version }}/{{ nova_platform }}"
   tasks:
-    - name: the build installed now (the nova_build fact)
+    - name: the build installed now (the build fact)
       ansible.builtin.slurp: { src: "{{ nova_build_file }}" }
       register: tools_was
+      # ignored: a machine never installed by this play has no fact file; the receipt says was=none
       failed_when: false
 
     - name: the release directory
@@ -84,16 +96,14 @@
       register: tools_install
       changed_when: "tools_install.stdout is search('RELEASE INSTALLED .*tools=[1-9]')"
 
-    - name: the nova-* in the bin directory
-      ansible.builtin.find: { paths: "{{ nova_bin_dir }}", patterns: "nova-*", file_type: any }
+    - name: the retired tools in the bin directory, by exact name
+      ansible.builtin.stat: { path: "{{ nova_bin_dir }}/{{ item }}" }
+      loop: "{{ hostvars['localhost'].tools_retired }}"
       register: tools_present
 
-    - name: the ones the build does not ship
+    - name: the ones present
       ansible.builtin.set_fact:
-        tools_retire: >-
-          {{ tools_present.files | map(attribute='path')
-             | reject('regex_search', '/(' ~ (hostvars['localhost'].tools_shipped.files | map(attribute='path') | map('basename') | join('|')) ~ ')$')
-             | list }}
+        tools_retire: "{{ tools_present.results | selectattr('stat.exists') | map(attribute='stat.path') | list }}"
 
     - name: what --check would remove
       ansible.builtin.debug: { msg: "WOULD-REMOVE {{ item }} on {{ inventory_hostname }}" }
@@ -104,7 +114,7 @@
       ansible.builtin.file: { path: "{{ item }}", state: absent }
       loop: "{{ tools_retire }}"
 
-    - name: the nova_build fact
+    - name: the build fact
       ansible.builtin.copy:
         content: "{{ nova_version }}\n"
         dest: "{{ nova_build_file }}"
@@ -125,6 +135,24 @@
       {{ [nova_bin_dir ~ '/nova-secrets', 'exec', '--store', nova_secrets_store, '--as', nova_seat,
           '--key', nova_secrets_key_dir ~ '/' ~ nova_seat ~ '.key', '--sops', nova_sops] }}
   tasks:
+    - name: the sops binary (nova_sops, else the first of nova_sops_candidates on the machine)
+      ansible.builtin.stat: { path: "{{ item }}" }
+      loop: "{{ nova_sops_candidates }}"
+      register: tools_sops
+      when: nova_sops is not defined
+
+    - name: the sops the seat is opened with
+      ansible.builtin.set_fact:
+        nova_sops: >-
+          {{ nova_sops if nova_sops is defined else (tools_sops.results | selectattr('stat', 'defined')
+             | selectattr('stat.exists') | map(attribute='item') | first | default('')) }}
+
+    - name: the store_deployer machine has sops
+      ansible.builtin.assert:
+        that: nova_sops != ''
+        fail_msg: "{{ inventory_hostname }} has no sops at any of {{ nova_sops_candidates | join(', ') }}; install it or set nova_sops in host_vars"
+        quiet: true
+
     - name: nova-config migrate (the schema the build's kinds need)
       ansible.builtin.command:
         argv: "{{ tools_seat + ['--only', nova_pg_password_key, '--require=' ~ nova_pg_password_key, '--',
