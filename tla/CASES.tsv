@@ -249,3 +249,6 @@ MCCardContractBrokenProviderFailed.cfg	MCCardContract.tla	invariant	ProviderIsNo
 MCCardContractBrokenSameRoute.cfg	MCCardContract.tla	invariant	RedealAvoidsFailedRoute	ignore-terminal	cardcontract	required	-
 MCCardContractBrokenUnbounded.cfg	MCCardContract.tla	invariant	RedealBound	ignore-terminal	cardcontract	required	-
 MCCardContractBrokenPreviousOnly.cfg	MCCardContract.tla	invariant	NoPushedWorkUnreachable	ignore-terminal	cardcontract	required	-
+MCMerger.cfg	MCMerger.tla	pass	-	ignore-terminal	merger	required	-
+MCMergerBrokenLandRed.cfg	MCMerger.tla	invariant	RedNeverLands	ignore-terminal	merger	required	-
+MCMergerBrokenPassStuck.cfg	MCMerger.tla	invariant	StuckIsABarrier	ignore-terminal	merger	required	-

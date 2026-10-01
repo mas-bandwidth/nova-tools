@@ -438,7 +438,8 @@ accepts.
 
 `since` is the clock time the state last changed. The merge step is mechanical
 and is given its facts by the caller (what merged, what conflicted, ci result);
-it never decides. Causes of a stop: conflict on a card; stream branch red; a
+it never decides. The caller is the merger, `nova-swarm member --merger`, one per
+store (docs/SPEC-SWARM.md, `member --merger`; tla/Merger.tla). Causes of a stop: conflict on a card; stream branch red; a
 card needs a card of another stream first; the merge queue rejected.
 
 A cross-stream need is recorded as data on the stuck card (the needed card and
