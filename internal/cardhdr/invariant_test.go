@@ -3,9 +3,11 @@ package cardhdr
 import (
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // goodCard is one invariant: every rule keeps it. Each row of
@@ -68,17 +70,12 @@ func TestLintOneInvariantRefusesEachRule(t *testing.T) {
 		{RuleBuildList, cardWith("BUILD:", "BUILD:\n- the parser\n- the linter"), "BUILD:", RemedyParent},
 		{RulePlanChildren, cardWith("KIND:", "KIND: plan"), "KIND: plan", remedyPlanChildren},
 	}
-	if len(rows) != len(rules) {
-		t.Fatalf("%d rows for %d rules: every rule has its own row", len(rows), len(rules))
-	}
+	require.Len(t, rows, len(rules), "%d rows for %d rules: every rule has its own row", len(rows), len(rules))
 	for i, row := range rows {
-		if rules[i].name != row.rule {
-			t.Fatalf("row %d is %s, rule %d is %s: one row per rule, in rule order", i, row.rule, i, rules[i].name)
-		}
+		require.Equal(t, row.rule, rules[i].name, "row %d is %s, rule %d is %s: one row per rule, in rule order", i, row.rule, i, rules[i].name)
 		want := Refusals{{Rule: row.rule, Line: row.line, Remedy: row.remedy}}
-		if got := LintOneInvariant(Card{Text: row.text}); !reflect.DeepEqual(got, want) {
-			t.Errorf("%s: refusals\n%v\nwant\n%v", row.rule, got, want)
-		}
+		got := LintOneInvariant(Card{Text: row.text})
+		assert.Equal(t, want, got, "%s: refusals\n%v\nwant\n%v", row.rule, got, want)
 		// mutation: the linter without this rule accepts the row's card
 		var without []rule
 		for _, r := range rules {
@@ -86,17 +83,14 @@ func TestLintOneInvariantRefusesEachRule(t *testing.T) {
 				without = append(without, r)
 			}
 		}
-		if got := lintWith(Card{Text: row.text}, without); got != nil {
-			t.Errorf("%s: without its rule the card is still refused (%v): the row does not isolate its rule", row.rule, got)
-		}
+		got = lintWith(Card{Text: row.text}, without)
+		assert.Nil(t, got, "%s: without its rule the card is still refused (%v): the row does not isolate its rule", row.rule, got)
 	}
-	if got := LintOneInvariant(Card{Text: cardWith("", "")}); got != nil {
-		t.Errorf("the good card is refused:\n%v", got)
-	}
+	got := LintOneInvariant(Card{Text: cardWith("", "")})
+	assert.Nil(t, got, "the good card is refused:\n%v", got)
 	line := Refusal{Rule: RuleBuildList, Line: "BUILD:", Remedy: RemedyParent}.String()
-	if want := `REFUSED card-lint rule=build-list line="BUILD:" remedy="cut as a parent with children: card cut --parent"`; line != want {
-		t.Errorf("refusal line %q, want %q", line, want)
-	}
+	want := `REFUSED card-lint rule=build-list line="BUILD:" remedy="cut as a parent with children: card cut --parent"`
+	assert.Equal(t, want, line, "refusal line %q, want %q", line, want)
 }
 
 // TestLintOneInvariantReadsIssueText: a card cut from an issue quotes it under
@@ -105,13 +99,11 @@ func TestLintOneInvariantRefusesEachRule(t *testing.T) {
 func TestLintOneInvariantReadsIssueText(t *testing.T) {
 	t.Parallel()
 	quoted := "RESULT: x sha=0\nKIND: fix\n" + strings.Join(goodCardLines[2:7], "\n") + "\n\n> BUILD:\n> 1. one\n> 2. two\n"
-	if got := LintOneInvariant(Card{Text: quoted}); got.Rules() != RuleBuildList {
-		t.Errorf("quoted BUILD list: rules %q, want build-list", got.Rules())
-	}
+	got := LintOneInvariant(Card{Text: quoted})
+	assert.Equal(t, RuleBuildList, got.Rules(), "quoted BUILD list: rules %q, want build-list", got.Rules())
 	fenced := cardWith("", "") + "```\nBUILD:\n- one\n- two\nbuild issue #1 as written\n```\n"
-	if got := LintOneInvariant(Card{Text: fenced}); got.Rules() != RuleBuildList {
-		t.Errorf("a fenced block: rules %q, want build-list alone (a fenced build-issue line is no card line)", got.Rules())
-	}
+	got = LintOneInvariant(Card{Text: fenced})
+	assert.Equal(t, RuleBuildList, got.Rules(), "a fenced block: rules %q, want build-list alone (a fenced build-issue line is no card line)", got.Rules())
 }
 
 // TestLintOneInvariantExemptsPlanNotStitch: a KIND plan (taskcard.KindPlan,
@@ -127,12 +119,10 @@ func TestLintOneInvariantExemptsPlanNotStitch(t *testing.T) {
 	plan = strings.Replace(plan, goodCardLines[6]+"\n", "", 1) // no DONE-WHEN
 	plan = strings.Replace(plan, goodCardLines[3], "PATHS: a/b/x.go, a/c/, a/d/, a/e/", 1)
 	plan = strings.Replace(plan, goodCardLines[8], "BUILD:\n1. the child card-lint-a\n2. the child card-lint-b", 1)
-	if got := LintOneInvariant(Card{Text: plan}); got != nil {
-		t.Errorf("KIND: plan (no DONE-WHEN, no CLASS-TEST, four packages, a BUILD: list of its children) is refused:\n%v", got)
-	}
-	if got := LintOneInvariant(Card{Text: strings.Replace(plan, "KIND: plan", "KIND: plan\nDONE-WHEN: the children land. The stitch lands.", 1)}); got != nil {
-		t.Errorf("KIND: plan with a two-sentence DONE-WHEN is refused:\n%v", got)
-	}
+	got := LintOneInvariant(Card{Text: plan})
+	assert.Nil(t, got, "KIND: plan (no DONE-WHEN, no CLASS-TEST, four packages, a BUILD: list of its children) is refused:\n%v", got)
+	got = LintOneInvariant(Card{Text: strings.Replace(plan, "KIND: plan", "KIND: plan\nDONE-WHEN: the children land. The stitch lands.", 1)})
+	assert.Nil(t, got, "KIND: plan with a two-sentence DONE-WHEN is refused:\n%v", got)
 	// a plan with no children (no BUILD: item) is refused plan-children
 	for _, build := range []string{"BUILD: the children, later.", ""} {
 		noKids := strings.Replace(plan, "BUILD:\n1. the child card-lint-a\n2. the child card-lint-b", build, 1)
@@ -142,17 +132,15 @@ func TestLintOneInvariantExemptsPlanNotStitch(t *testing.T) {
 	}
 	for _, kind := range []string{"KIND: fix", "KIND: parent"} {
 		want := RuleDoneWhenMissing + "," + RuleClassTestMissing + "," + RulePathsPackages + "," + RuleBuildList
-		if got := LintOneInvariant(Card{Text: strings.Replace(plan, "KIND: plan", kind, 1)}); got.Rules() != want {
-			t.Errorf("the plan card as %s: rules %q, want %s", kind, got.Rules(), want)
-		}
+		got := LintOneInvariant(Card{Text: strings.Replace(plan, "KIND: plan", kind, 1)})
+		assert.Equal(t, want, got.Rules(), "the plan card as %s: rules %q, want %s", kind, got.Rules(), want)
 	}
 	stitch := "KIND: stitch\nPATHS: a/b/x.go a/c/ a/d/ a/e/ a/f/\nDONE-WHEN: the children land. The stitch lands.\n\n" +
 		"Build issue #4352, as written.\n\nBUILD:\n- child one\n- child two\n"
 	want := "invariant-missing,done-when-sentences,class-test-missing,paths-packages,build-issue,build-list"
 	for _, kind := range []string{"KIND: stitch", "KIND: fix"} {
-		if got := LintOneInvariant(Card{Text: strings.Replace(stitch, "KIND: stitch", kind, 1)}); got.Rules() != want {
-			t.Errorf("the hand-written stitch as %s: rules %q, want %s", kind, got.Rules(), want)
-		}
+		got := LintOneInvariant(Card{Text: strings.Replace(stitch, "KIND: stitch", kind, 1)})
+		assert.Equal(t, want, got.Rules(), "the hand-written stitch as %s: rules %q, want %s", kind, got.Rules(), want)
 	}
 }
 
@@ -175,15 +163,13 @@ func TestLintOneInvariantReadsLetteredBuildList(t *testing.T) {
 		"I.":   "BUILD:\nI. the parser\nII. the linter",
 		"1)":   "BUILD:\n1) the parser\n2) the linter",
 	} {
-		if got := LintOneInvariant(Card{Text: cardWith("BUILD:", list)}); got.Rules() != RuleBuildList {
-			t.Errorf("%s: rules %q, want build-list", name, got.Rules())
-		}
+		got := LintOneInvariant(Card{Text: cardWith("BUILD:", list)})
+		assert.Equal(t, RuleBuildList, got.Rules(), "%s: rules %q, want build-list", name, got.Rules())
 	}
 	for _, one := range []string{"BUILD:\nA. the parser.", "BUILD: the parser.\nA good test names the rule.",
 		"BUILD:\na. the parser.", "BUILD:\n(i) the parser.\ne.g. the linter reads it.\nivory is no numeral."} {
-		if got := LintOneInvariant(Card{Text: cardWith("BUILD:", one)}); got != nil {
-			t.Errorf("%q: refused %q, want accepted (one item)", one, got.Rules())
-		}
+		got := LintOneInvariant(Card{Text: cardWith("BUILD:", one)})
+		assert.Nil(t, got, "%q: refused %q, want accepted (one item)", one, got.Rules())
 	}
 }
 
@@ -203,9 +189,8 @@ func TestLintOneInvariantReadsBuildIssueForms(t *testing.T) {
 		"Rebuild issue #4352 as written.":                 false,
 	} {
 		got := LintOneInvariant(Card{Text: cardWith("BUILD:", line)})
-		if want := map[bool]string{true: RuleBuildIssue, false: ""}[refused]; got.Rules() != want {
-			t.Errorf("%q: rules %q, want %q", line, got.Rules(), want)
-		}
+		want := map[bool]string{true: RuleBuildIssue, false: ""}[refused]
+		assert.Equal(t, want, got.Rules(), "%q: rules %q, want %q", line, got.Rules(), want)
 	}
 }
 
@@ -217,12 +202,10 @@ func TestLintOneInvariantReadsAbbreviationsAsOneSentence(t *testing.T) {
 	done := "DONE-WHEN: the class test passes on each platform, e.g. darwin, i.e. the Studio, vs. linux, etc. in under 2 s."
 	inv := "INVARIANT: every push path (e.g. card push, i.e. the one writer, vs. task push, etc.) lints the card."
 	card := strings.Replace(cardWith("DONE-WHEN:", done), goodCardLines[2], inv, 1)
-	if got := LintOneInvariant(Card{Text: card}); got != nil {
-		t.Errorf("abbreviations counted as sentence ends:\n%v", got)
-	}
-	if got := LintOneInvariant(Card{Text: cardWith("DONE-WHEN:", done+" Then it lands.")}); got.Rules() != RuleDoneWhenSentences {
-		t.Errorf("a second sentence after the abbreviations: rules %q, want done-when-sentences", got.Rules())
-	}
+	got := LintOneInvariant(Card{Text: card})
+	assert.Nil(t, got, "abbreviations counted as sentence ends:\n%v", got)
+	got = LintOneInvariant(Card{Text: cardWith("DONE-WHEN:", done+" Then it lands.")})
+	assert.Equal(t, RuleDoneWhenSentences, got.Rules(), "a second sentence after the abbreviations: rules %q, want done-when-sentences", got.Rules())
 }
 
 // TestSentences pins the count. A boundary inside a `code span` is opaque
@@ -254,9 +237,8 @@ func TestSentences(t *testing.T) {
 		"E.g. a plan holds. Its children land": 2,
 		"lists a, b, etc.":                     1,
 	} {
-		if got := Sentences(s); got != want {
-			t.Errorf("Sentences(%q) = %d, want %d", s, got, want)
-		}
+		got := Sentences(s)
+		assert.Equal(t, want, got, "Sentences(%q) = %d, want %d", s, got, want)
 	}
 }
 
@@ -273,13 +255,11 @@ func TestPackagesCountsDistinctPackages(t *testing.T) {
 		// a directory spans every package below it
 		"internal/nsprint/...": {"internal/nsprint/card", "internal/nsprint/task"},
 	} {
-		if got := Packages(paths, tree); !reflect.DeepEqual(got, want) {
-			t.Errorf("Packages(%q) = %v, want %v", paths, got, want)
-		}
+		got := Packages(paths, tree)
+		assert.Equal(t, want, got, "Packages(%q) = %v, want %v", paths, got, want)
 	}
-	if got := Packages("a/b/x.go (new), a/b/y.go and docs/x.md, ./c/", nil); !reflect.DeepEqual(got, []string{"a/b", "c"}) {
-		t.Errorf("Packages by shape = %v, want [a/b c]", got)
-	}
+	got := Packages("a/b/x.go (new), a/b/y.go and docs/x.md, ./c/", nil)
+	assert.Equal(t, []string{"a/b", "c"}, got, "Packages by shape = %v, want [a/b c]", got)
 }
 
 // TestPackagesTreeDirWithNoGoFileIsNoPackage: with the tree, a directory in
@@ -296,36 +276,30 @@ func TestPackagesTreeDirWithNoGoFileIsNoPackage(t *testing.T) {
 		"pkg/a/ pkg/b/ pkg/c/ docs/":        {"pkg/a", "pkg/b", "pkg/c"},
 		"pkg/a/ pkg/b/ pkg/c/ pkg/d/new.go": {"pkg/a", "pkg/b", "pkg/c", "pkg/d"},
 	} {
-		if got := Packages(paths, tree); !reflect.DeepEqual(got, want) {
-			t.Errorf("Packages(%q) = %v, want %v", paths, got, want)
-		}
+		got := Packages(paths, tree)
+		assert.Equal(t, want, got, "Packages(%q) = %v, want %v", paths, got, want)
 	}
 	card := cardWith("PATHS:", "PATHS: pkg/a/a.go, pkg/b/, pkg/c/, pkg/d/")
-	if got := LintOneInvariant(Card{Text: card, Files: tree}); got.Rules() != RulePathsPackages {
-		t.Errorf("four packages, two new: rules %q, want paths-packages", got.Rules())
-	}
-	if got := LintOneInvariant(Card{Text: cardWith("PATHS:", "PATHS: pkg/a/a.go, pkg/b/, pkg/c/, docs/"), Files: tree}); got != nil {
-		t.Errorf("three packages and docs/: refused %q", got.Rules())
-	}
+	got := LintOneInvariant(Card{Text: card, Files: tree})
+	assert.Equal(t, RulePathsPackages, got.Rules(), "four packages, two new: rules %q, want paths-packages", got.Rules())
+	got = LintOneInvariant(Card{Text: cardWith("PATHS:", "PATHS: pkg/a/a.go, pkg/b/, pkg/c/, docs/"), Files: tree})
+	assert.Nil(t, got, "three packages and docs/: refused %q", got.Rules())
 }
 
 func TestParseTypedLines(t *testing.T) {
 	t.Parallel()
-	if _, err := ParseClassTest("TestA_b1"); err != nil {
-		t.Error(err)
-	}
-	if _, err := ParseClassTest("./x TestA"); err == nil || !strings.Contains(err.Error(), "CLASS-TEST:") {
-		t.Errorf("ParseClassTest error %v, want one naming CLASS-TEST:", err)
-	}
+	_, err := ParseClassTest("TestA_b1")
+	assert.NoError(t, err)
+	_, err = ParseClassTest("./x TestA")
+	assert.ErrorContains(t, err, "CLASS-TEST:", "ParseClassTest error %v, want one naming CLASS-TEST:", err)
 	for v, ok := range map[string]bool{"darwin,linux": true, "linux": true, "linux, darwin": true, "": false,
 		"darwin,darwin": false, "darwin,windows": false, "darwin linux": false} {
 		if _, err := ParsePlatforms(v); (err == nil) != ok || (err != nil && !strings.Contains(err.Error(), "PLATFORMS:")) {
 			t.Errorf("ParsePlatforms(%q) = %v, want ok=%v naming PLATFORMS:", v, err, ok)
 		}
 	}
-	if _, err := ParseInvariant("one. two."); err == nil || !strings.Contains(err.Error(), "INVARIANT:") {
-		t.Errorf("ParseInvariant error %v, want one naming INVARIANT:", err)
-	}
+	_, err = ParseInvariant("one. two.")
+	assert.ErrorContains(t, err, "INVARIANT:", "ParseInvariant error %v, want one naming INVARIANT:", err)
 }
 
 // TestLintOneInvariantOverTreeFixtures runs the linter over every card
@@ -335,9 +309,7 @@ func TestParseTypedLines(t *testing.T) {
 func TestLintOneInvariantOverTreeFixtures(t *testing.T) {
 	t.Parallel()
 	root, err := filepath.Abs("../..")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
 		t.Skipf("no module root at %s", root)
 	}
@@ -390,15 +362,13 @@ func TestSentencesEndAtClosingQuoteOrBracket(t *testing.T) {
 		"A holds `x.\nB holds. C` holds": 3,
 		"A holds `x. y` then.":           1,
 	} {
-		if got := Sentences(s); got != want {
-			t.Errorf("Sentences(%q) = %d, want %d", s, got, want)
-		}
+		got := Sentences(s)
+		assert.Equal(t, want, got, "Sentences(%q) = %d, want %d", s, got, want)
 	}
 	for _, done := range []string{`DONE-WHEN: A prints "done." B prints ok.`, "DONE-WHEN: A passes (see x.) B passes.",
 		"DONE-WHEN: `go test ./x passes. B holds."} {
-		if got := LintOneInvariant(Card{Text: cardWith("DONE-WHEN:", done)}); got.Rules() != RuleDoneWhenSentences {
-			t.Errorf("%q: rules %q, want done-when-sentences", done, got.Rules())
-		}
+		got := LintOneInvariant(Card{Text: cardWith("DONE-WHEN:", done)})
+		assert.Equal(t, RuleDoneWhenSentences, got.Rules(), "%q: rules %q, want done-when-sentences", done, got.Rules())
 	}
 }
 
@@ -420,9 +390,8 @@ func TestLintOneInvariantReadsContinuationLines(t *testing.T) {
 		"list after":            {cardWith("DONE-WHEN:", done+"\n- one receipt line."), ""},
 		"key after":             {cardWith("DONE-WHEN:", done+"\nNOTE: a note. Two."), ""},
 	} {
-		if got := LintOneInvariant(Card{Text: c.text}); got.Rules() != c.rules {
-			t.Errorf("%s: rules %q, want %q\n%s", name, got.Rules(), c.rules, c.text)
-		}
+		got := LintOneInvariant(Card{Text: c.text})
+		assert.Equal(t, c.rules, got.Rules(), "%s: rules %q, want %q\n%s", name, got.Rules(), c.rules, c.text)
 	}
 }
 
@@ -441,19 +410,16 @@ func TestLintOneInvariantReadsBuildListAnyForm(t *testing.T) {
 		"one line (1)":  "BUILD: (1) the parser (2) the linter",
 		"line and list": "BUILD: 1. the parser\n2. the linter",
 	} {
-		if got := LintOneInvariant(Card{Text: cardWith("BUILD:", list)}); got.Rules() != RuleBuildList {
-			t.Errorf("%s: rules %q, want build-list", name, got.Rules())
-		}
+		got := LintOneInvariant(Card{Text: cardWith("BUILD:", list)})
+		assert.Equal(t, RuleBuildList, got.Rules(), "%s: rules %q, want build-list", name, got.Rules())
 	}
 	for _, one := range []string{"Build: the parser, go 1.27.", "BUILD: 1. the parser", "```\nBuild:\n- the parser\n```"} {
-		if got := LintOneInvariant(Card{Text: cardWith("BUILD:", one)}); got != nil {
-			t.Errorf("%q: refused %q, want accepted (one item)", one, got.Rules())
-		}
+		got := LintOneInvariant(Card{Text: cardWith("BUILD:", one)})
+		assert.Nil(t, got, "%q: refused %q, want accepted (one item)", one, got.Rules())
 	}
 	// a plan's children may sit on its BUILD: line
-	if got := LintOneInvariant(Card{Text: "KIND: plan\nINVARIANT: x holds.\n\nBuild: 1. child-a 2. child-b\n"}); got != nil {
-		t.Errorf("plan with inline children: refused %q", got.Rules())
-	}
+	got := LintOneInvariant(Card{Text: "KIND: plan\nINVARIANT: x holds.\n\nBuild: 1. child-a 2. child-b\n"})
+	assert.Nil(t, got, "plan with inline children: refused %q", got.Rules())
 }
 
 // TestLintTitleKind (#4396, the third read's task push probes): KIND stitch
@@ -478,16 +444,13 @@ func TestLintTitleKind(t *testing.T) {
 		{"", "", false, ""},
 		{"fix", "Rebuild issue #4352 as written", false, ""},
 	} {
-		if got := LintTitleKind(c.kind, c.title, c.card); got.Rules() != c.rules {
-			t.Errorf("LintTitleKind(%q, %q, %v) = %q, want %q", c.kind, c.title, c.card, got.Rules(), c.rules)
-		}
+		got := LintTitleKind(c.kind, c.title, c.card)
+		assert.Equal(t, c.rules, got.Rules(), "LintTitleKind(%q, %q, %v) = %q, want %q", c.kind, c.title, c.card, got.Rules(), c.rules)
 	}
 	rs := LintTitleKind("work", "Build issue #1 as written", false)
-	if want := `REFUSED card-lint rule=build-issue line="--title Build issue #1 as written" remedy="cut as a parent with children: card cut --parent"`; rs.Error() != want {
-		t.Errorf("line %q, want %q", rs.Error(), want)
-	}
+	want := `REFUSED card-lint rule=build-issue line="--title Build issue #1 as written" remedy="cut as a parent with children: card cut --parent"`
+	assert.Equal(t, want, rs.Error(), "line %q, want %q", rs.Error(), want)
 	body := LintOneInvariant(Card{Text: cardWith("BUILD:", "Build issue #1 as written.")})
-	if got := body.Merge(rs).Rules(); got != RuleBuildIssue {
-		t.Errorf("merge = %q, want one build-issue", got)
-	}
+	got := body.Merge(rs).Rules()
+	assert.Equal(t, RuleBuildIssue, got, "merge = %q, want one build-issue", got)
 }
