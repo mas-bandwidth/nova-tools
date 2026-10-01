@@ -85,9 +85,7 @@ func TestASecretNamedVariablesValueIsCaughtByLengthAndName(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, found, 1, "want one finding, got %d: %v", len(found), found)
 	f := found[0]
-	if f.Shape != "env-value" || f.Name != "SEAT_PROVIDER_KEY" || f.Line != 2 || f.Len != len(value) {
-		t.Fatalf("finding = %+v", f)
-	}
+	require.Equal(t, []any{"env-value", "SEAT_PROVIDER_KEY", 2, len(value)}, []any{f.Shape, f.Name, f.Line, f.Len}, "finding = %+v", f)
 	require.NotContains(t, f.String(), value, "the finding quotes the value: %s", f.String())
 }
 
