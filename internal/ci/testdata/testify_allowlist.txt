@@ -18,7 +18,7 @@ cmd/nova-check:assert 623 bare assertions to convert to testify
 cmd/nova-check:env 1 t.Setenv and Chdir sites to inject through config
 cmd/nova-ci:assert 160 bare assertions to convert to testify
 cmd/nova-ci:env 1 t.Setenv and Chdir sites to inject through config
-cmd/nova-config:assert 271 bare assertions to convert to testify
+cmd/nova-config:assert 189 bare assertions to convert to testify
 cmd/nova-fuse:assert 338 bare assertions to convert to testify
 cmd/nova-fuse:env 3 t.Setenv and Chdir sites to inject through config
 cmd/nova-memory:assert 249 bare assertions to convert to testify
@@ -54,7 +54,7 @@ internal/ci/functional:assert 9 bare assertions to convert to testify
 internal/ci/slowtests:assert 37 bare assertions to convert to testify
 internal/ci/timing:assert 16 bare assertions to convert to testify
 internal/cireceipt:assert 16 bare assertions to convert to testify
-internal/config:assert 377 bare assertions to convert to testify
+internal/config:assert 330 bare assertions to convert to testify
 internal/converge:assert 103 bare assertions to convert to testify
 internal/delayproxy:assert 70 bare assertions to convert to testify
 internal/docs:assert 166 bare assertions to convert to testify

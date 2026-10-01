@@ -16,7 +16,7 @@
 # - A count that falls, or a row with no finding, fails until the row shrinks.
 # - NOVA_CI_UPDATE=1 removes such rows and never adds one.
 #
-# ceiling: 220
+# ceiling: 219
 # certification.yml:space, the third: the bench runner label for the tick-gate job; labels live in workflows
 .github/workflows/certification.yml:space 3
 .github/workflows/certification.yml:studio 4
@@ -149,7 +149,6 @@ docs/nova-table/README.md:space 1
 docs/nova-table/README.md:stella 2
 docs/nova-table/README.md:studio 2
 fleet/roles/container-runtime/tasks/subid.yml:space 1
-fleet/templates/nova-loop.plist.j2:rowan 1
 infra/image/README.md:studio 1
 infra/image/egress.txt:johnny 1
 internal/ci/sleeps-skips_allowlist.txt:glenn 1
