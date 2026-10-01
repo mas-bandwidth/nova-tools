@@ -66,7 +66,7 @@ func TestThreeFailedTicksWithOneErrorLeaveOneNote(t *testing.T) {
 	require.Equal(t, h.st.Actor, n.To)
 	require.Contains(t, n.What, "fleet: no such column")
 	require.Contains(t, n.What, "tick 2 failed at "+h.now.Add(-2*time.Second).UTC().Format(time.RFC3339))
-	require.Contains(t, h.st.MachineLine(h.ctx), "last tick failed: ")
+	require.Equal(t, "machine: running", h.st.MachineLine(h.ctx))
 }
 
 // A different error text is a different failure: one more note, and the same
