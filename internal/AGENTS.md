@@ -10,6 +10,7 @@ Do not edit. `make map` regenerates this file. Root: [AGENTS.md](../AGENTS.md). 
 | `bus/` | append-only coordination bus | `go test ./internal/bus` | `go test ./internal/bus` |
 | `cairn/` | memory distillation and cairn builder | `go test ./internal/cairn` | `go test ./internal/cairn` |
 | `cardhdr/` | card header vocabulary and one-invariant lint | `go test ./internal/cardhdr` | `go test ./internal/cardhdr` |
+| `cardlimits/` | a card brief's refusal bound and the lint's size advice: two constants, no dependencies | `go test ./internal/cardlimits` | `go test ./internal/cardlimits` |
 | `check/` | hygiene rules and tree checkers | `go test ./internal/check` | `go test ./internal/check` |
 | `ci/` | class tests and CI budget invariants | `go test ./internal/ci` | `go test ./internal/ci` |
 | `cireceipt/` | ci-ok's run receipt: one ev:github row of the workflow_run shape | `go test ./internal/cireceipt` | `go test -tags functional ./internal/cireceipt` |
