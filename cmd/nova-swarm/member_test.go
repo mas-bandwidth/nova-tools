@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
 	"github.com/mas-bandwidth/nova-tools/internal/member"
 	"github.com/mas-bandwidth/nova-tools/internal/testbin"
 )
@@ -118,6 +119,12 @@ func TestNewestResultPicksTheNewestOfTwo(t *testing.T) {
 	}
 }
 
+// fullSha and pushedSha are two commits a result or the git shim names.
+const (
+	fullSha   = "0123456789abcdef0123456789abcdef01234567"
+	pushedSha = "89abcdef0123456789abcdef0123456789abcdef"
+)
+
 // TestNativeChildReadsHowItEnded pins Result: the verdict word, rc and
 // harness word of the NATIVE line decide ok, and the report falls back to a
 // sentence that names the log when the child published none.
@@ -133,12 +140,15 @@ func TestNativeChildReadsHowItEnded(t *testing.T) {
 		name, log, result string
 		ok                bool
 		head, report      string
+		pushed            string // what the git shim recorded in the job
 	}{
-		{"ok with a result", native("OK", 0, "ok"), "rev: abc\n## One line\nall good\n", true, "abc", "all good"},
-		{"ok without a one-line report", native("OK", 0, "ok"), "", true, "", "finished; the child published no one-line report"},
-		{"incomplete", native("INCOMPLETE", 0, "silent"), "", false, "", "the child ended without a result (see LOG)"},
-		{"ok word with rc 1", native("OK", 1, "ok"), "## One line\nhalf\n", false, "", "half"},
-		{"no NATIVE line", "the child died\n", "", false, "", "the child ended without a result (see LOG)"},
+		{"ok with a result", native("OK", 0, "ok"), "rev: abc\n## One line\nall good\n", true, "abc", "all good", ""},
+		{"ok without a one-line report", native("OK", 0, "ok"), "", true, "", "finished; the child published no one-line report", ""},
+		{"incomplete", native("INCOMPLETE", 0, "silent"), "", false, "", "the child ended without a result (see LOG)", ""},
+		{"ok word with rc 1", native("OK", 1, "ok"), "## One line\nhalf\n", false, "", "half", ""},
+		{"no NATIVE line", "the child died\n", "", false, "", "the child ended without a result (see LOG)", ""},
+		{"the contract's shape", native("OK", 0, "ok"), "head: " + fullSha + "\nbranch: b\nverdict: ok\ngate: -\noutput: -\nreport: shaped\ntitle: T\n\n## Body\n\nB\n", true, fullSha, "shaped", ""},
+		{"a shape naming no head, a push recorded", native("OK", 0, "ok"), "head: -\nbranch: b\nverdict: not-done\ngate: -\noutput: -\nreport: stuck\n", true, pushedSha, "stuck", "sprint/c1\t" + pushedSha + "\t/j/repo\n"},
 	} {
 		dir := t.TempDir()
 		logPath := filepath.Join(dir, "c1.native.log")
@@ -147,7 +157,9 @@ func TestNativeChildReadsHowItEnded(t *testing.T) {
 		if tc.result != "" {
 			write(t, filepath.Join(results, "run", "1", "RESULT.md"), tc.result)
 		}
-		c := &nativeChild{card: "c1", logPath: logPath, results: results, done: done}
+		job := filepath.Join(dir, "job")
+		write(t, filepath.Join(job, cardcontract.PushedName), tc.pushed)
+		c := &nativeChild{card: "c1", logPath: logPath, results: results, job: job, done: done}
 		if !c.Done() {
 			t.Fatalf("%s: a child whose done channel is closed is done", tc.name)
 		}

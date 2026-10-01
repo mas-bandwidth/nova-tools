@@ -4,15 +4,18 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
 	"github.com/mas-bandwidth/nova-tools/internal/gitrun"
 	"github.com/mas-bandwidth/nova-tools/internal/member"
+	"github.com/mas-bandwidth/nova-tools/internal/subproc"
 	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
@@ -33,13 +36,16 @@ import (
 // The rule is docs/SPEC-SWARM.md's `member`.
 type gitPusher struct {
 	root, slots, sprintBin string
+	// gh is the GitHub CLI the member opens a card's pull request with, as itself,
+	// outside the wall, when the child's result asks for one (gh pr create inside it).
+	gh string
 	// git runs one git; gitrun.Run, or a test's fake.
 	git func(ctx context.Context, o gitrun.Options, args ...string) (gitrun.Result, error)
 	mu  sync.Mutex // the push repository's creation and its alternates
 }
 
 func newGitPusher(root, slots, sprintBin string) *gitPusher {
-	return &gitPusher{root: root, slots: slots, sprintBin: sprintBin, git: gitrun.Run}
+	return &gitPusher{root: root, slots: slots, sprintBin: sprintBin, gh: "gh", git: gitrun.Run}
 }
 
 // pushHeadRE is a head a push names: a sha, as RESULT.md's `rev:` line gives it.
@@ -60,7 +66,8 @@ func (g *gitPusher) Push(p member.Packet, r member.Result) member.Push {
 	}
 	// the repository staging cloned: read from the card the member wrote, never
 	// from the checkout's configuration
-	url := swarm.ReadCardBase([]byte(member.CardText(p, g.sprintBin))).Repo
+	cb := swarm.ReadCardBase([]byte(member.CardText(p, g.sprintBin)))
+	url := cb.Repo
 	if url == "" {
 		return member.Push{None: "the card names no repository"}
 	}
@@ -75,7 +82,9 @@ func (g *gitPusher) Push(p member.Packet, r member.Result) member.Push {
 	ctx := context.Background()
 	ns := "refs/member/" + launchName(p)
 	defer g.drop(ctx, repo, ns)
-	fetch := []string{"fetch", "-q", "--no-tags", "--no-write-fetch-head", "--", checkout, "+refs/heads/*:" + ns + "/heads/*", "+refs/remotes/origin/*:" + ns + "/origin/*"}
+	// every branch and the HEAD of the checkout: the child's commit is on whichever branch
+	// it made, in the checkout or in a clone the git shim linked to it (docs/SPEC-CARD-CONTRACT.md)
+	fetch := []string{"fetch", "-q", "--no-tags", "--no-write-fetch-head", "--", checkout, "+HEAD:" + ns + "/HEAD", "+refs/heads/*:" + ns + "/heads/*", "+refs/remotes/origin/*:" + ns + "/origin/*"}
 	if res, err := g.run(ctx, repo, nil, fetch...); err != nil {
 		return member.Push{Refused: "fetch from the checkout: " + gitLine(res, err)}
 	}
@@ -106,7 +115,65 @@ func (g *gitPusher) Push(p member.Packet, r member.Result) member.Push {
 	if res, err := g.run(ctx, repo, nil, push...); err != nil {
 		return member.Push{Refused: gitLine(res, err)}
 	}
-	return member.Push{Sha: full}
+	pu := member.Push{Sha: full}
+	if strings.TrimSpace(r.Title) != "" {
+		pu.PR, pu.PRNote = g.openPR(url, cb.Ref, p.Branch, r.Title, r.Body)
+	}
+	return pu
+}
+
+// prBudget bounds the member's gh pr create: one call to the forge, and a stuck one is a
+// tick that never ends.
+const prBudget = 60 * time.Second
+
+// openPR opens the card's pull request as the member, outside the wall, from the branch the
+// push landed on into the card's base, with the title and body the child's gh pr create
+// gave (docs/SPEC-CARD-CONTRACT.md section 4). It returns the address gh prints, or why
+// none was opened: the finish stands either way, since the work is on origin.
+func (g *gitPusher) openPR(url, base, branch, title, body string) (pr, note string) {
+	bin, err := exec.LookPath(g.gh)
+	if err != nil {
+		return "", "no " + g.gh + " on this machine's PATH: " + oneLineOf(err.Error())
+	}
+	args := []string{"pr", "create", "--repo", prRepo(url), "--head", branch, "--title", title, "--body-file", "-"}
+	if base != "" {
+		args = append(args, "--base", base)
+	}
+	cmd, cancel := subproc.CommandFor(context.Background(), prBudget, bin, args...)
+	defer cancel()
+	cmd.Stdin = strings.NewReader(body)
+	cmd.Env = append(os.Environ(), "GH_PROMPT_DISABLED=1")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", "gh pr create: " + oneLineOf(lastLine(string(out))+" "+err.Error())
+	}
+	return oneLineOf(lastLine(string(out))), ""
+}
+
+// prRepo is the [host/]owner/name gh names a repository by: a GitHub URL's owner/name,
+// another host's host/owner/name, a local path as it is.
+func prRepo(url string) string {
+	if strings.HasPrefix(url, "/") {
+		return url
+	}
+	u := strings.TrimSuffix(strings.TrimSuffix(url, "/"), ".git")
+	if i := strings.Index(u, "://"); i >= 0 {
+		u = u[i+3:]
+	}
+	if i := strings.Index(u, "@"); i >= 0 && !strings.Contains(u[:i], "/") {
+		u = u[i+1:]
+	}
+	u = strings.Replace(u, ":", "/", 1)
+	return strings.TrimPrefix(u, githubHost+"/")
+}
+
+// githubHost is the forge whose repositories gh names by owner/name alone.
+const githubHost = "github.com"
+
+// lastLine is the last non-empty line of text.
+func lastLine(s string) string {
+	lines := strings.Split(strings.TrimSpace(s), "\n")
+	return strings.TrimSpace(lines[len(lines)-1])
 }
 
 // repo is the member's push repository, made once: a bare repository with no

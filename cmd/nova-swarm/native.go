@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/mas-bandwidth/nova-tools/internal/atomicfile"
+	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
@@ -123,6 +124,9 @@ type nativeRunConfig struct {
 	benchName string
 	// stageTimeout is the hard timeout for staging (default 120s).
 	stageTimeout time.Duration
+	// frame, when set, is the member's frame of this launch (docs/SPEC-CARD-CONTRACT.md):
+	// staging stages its commit on its branch, and its profile writes JOB.md and the shims.
+	frame *cardcontract.Frame
 }
 
 // nativeRunResult is what one run records when the child has gone.
@@ -635,6 +639,14 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 		BenchName: bench,
 		Timeout:   cfg.stageTimeout,
 	}
+	if fr := cfg.frame; fr != nil && fr.Repo != "" {
+		url := swarm.CardRepoURL(fr.Repo)
+		if url == "" {
+			url = fr.Repo
+		}
+		stageOpts.Base = &swarm.CardBase{Repo: url, Sha: fr.StageSha, Ref: fr.BaseRef, Named: fr.Repo}
+		stageOpts.Branch = fr.Branch
+	}
 	stageRes, stageErr := swarm.StageCard(stageOpts)
 	if stageErr != nil {
 		if stageRes.TimedOut {
@@ -692,6 +704,19 @@ func nativeRun(cfg nativeRunConfig, errOut io.Writer) (_ nativeRunResult, code i
 	// the full 135s -- printed STAGE UNSEEN on every #3050 launch. One line, on success.
 	fmt.Fprintf(os.Stdout, "STAGE OK bench=%s repo=%s base=%s secs=%.0f\n",
 		oneline.Field(bench), oneline.Field(stageRes.BaseRepo), oneline.Field(swarm.Version8(stageRes.BaseSha)), stageRes.Wall.Seconds())
+
+	// (4f) THE FRAME (docs/SPEC-CARD-CONTRACT.md layers 2 and 3). A framed launch whose
+	// checkout is staged gets JOB.md in the job directory and its family's shims first on
+	// its PATH (git push recorded, the clone of its own repository a link to the checkout,
+	// gh pr create its finish), so the child meets the frame through the commands it knows.
+	// A frame that cannot be installed refuses the launch: a child outside its frame is the
+	// defect the frame closes.
+	if cfg.frame != nil && stageRes.Staged {
+		if err := installFrame(cfg, jobDir, stageRes.BaseSha); err != nil {
+			refuseNative(errOut, fmt.Sprintf("%s the card's frame could not be installed: %s", oneline.Field(cfg.label), oneline.Err(err)))
+			return nativeRunResult{}, 2
+		}
+	}
 
 	// (5) THE WALL (slice 11). Every native run is walled unless the caller typed --no-wall:
 	// the wall is never implied away (SPEC-SANDBOX rule 1). A --sandbox name is used as typed;
@@ -2035,8 +2060,37 @@ var launchArgvFor = swarm.LaunchArgvFor
 // card's sha256 stays the sha of the card text alone.
 func nativeLaunchArgv(bin string, cfg nativeRunConfig, provider string) ([]string, error) {
 	return launchArgvFor(swarm.LaunchRow(provider), benchOS(cfg), swarm.LaunchRequest{
-		Harness: bin, Model: cfg.model, Title: cfg.label, Prompt: swarm.CardPrompt(cfg.card),
+		Harness: bin, Model: cfg.model, Title: cfg.label, Prompt: nativePrompt(cfg),
 	})
+}
+
+// nativePrompt is the card as the harness is handed it: a framed card's prompt begins with
+// its JOB.md (docs/SPEC-CARD-CONTRACT.md section 2), any other is the card as written.
+func nativePrompt(cfg nativeRunConfig) string {
+	if cfg.frame == nil {
+		return swarm.CardPrompt(cfg.card)
+	}
+	return cardcontract.Prompt(filepath.Join(cfg.slotDir, "jobs", cfg.label), swarm.CardPrompt(cfg.card))
+}
+
+// installFrame writes a framed launch's JOB.md and its family's shims into <slot>/shim,
+// the shims handing through to this machine's real git and gh.
+func installFrame(cfg nativeRunConfig, jobDir, head string) error {
+	git, err := exec.LookPath("git")
+	if err != nil {
+		return fmt.Errorf("no git on PATH for the shims to hand through to: %w", err)
+	}
+	if git, err = filepath.Abs(git); err != nil {
+		return err
+	}
+	gh := "" // a machine with no gh: the shims say so for the reads they hand through
+	if p, err := exec.LookPath("gh"); err == nil {
+		if abs, aerr := filepath.Abs(p); aerr == nil {
+			gh = abs
+		}
+	}
+	st := cardcontract.Staged{Job: jobDir, Repo: filepath.Join(jobDir, swarm.JobRepo), Head: head, Git: git, Gh: gh}
+	return cardcontract.Install(cardcontract.For(cardcontract.FamilyOf(cfg.model)), *cfg.frame, st, nativeShellShimDir(cfg.slotDir))
 }
 
 // providerOf splits a native model id on its single slash and reports whether it

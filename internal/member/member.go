@@ -55,11 +55,14 @@ type Pusher interface {
 	Push(p Packet, r Result) Push
 }
 
-// Push is how a push ended: exactly one of the three is set.
+// Push is how a push ended: exactly one of Sha, None and Refused is set. A push that
+// landed may also have opened the card's pull request (PR) or said why not (PRNote).
 type Push struct {
 	Sha     string // pushed: the full sha origin's branch now holds
-	None    string // not pushed, and not a failure: why (the child committed nothing)
+	None    string // not pushed: why (the child committed nothing); the finish is failed, no commit
 	Refused string // the push failed: git's own line; the finish is a failure
+	PR      string // the pull request the member opened for the pushed head, "" when none
+	PRNote  string // why a pull request the result asked for was not opened, "" when none was asked or it opened
 }
 
 // pushWidth is the most pushes one tick runs at once: each is one git to
@@ -71,12 +74,44 @@ const pushWidth = 8
 // a read's, the reader's `verdict: ok` in RESULT.md. A read whose child did
 // not run or gave no verdict has no finding to report: the read is left as it
 // is for the sprint's lateness rule, never filed as broken against the work.
+// Shaped is whether RESULT.md has the contract's shape (docs/SPEC-CARD-CONTRACT.md
+// section 3); a work card's finish is ok only with it (Judge).
 type Result struct {
 	Ran     bool
 	OK      bool
-	Verdict string // a read's: "ok", "broken", or "" when the reader gave none
+	Shaped  bool
+	Verdict string // a work card's "ok" or "not-done"; a read's "ok", "broken", or "" when the reader gave none
 	Head    string
 	Report  string
+	Title   string // the pull request the child asked for (gh pr create), "" when none
+	Body    string
+}
+
+// Finish is how a work launch ended, as the member judges it (tla/CardContract.tla).
+type Finish string
+
+const (
+	FinishOK     Finish = "ok"     // reported: the result's head, pushed
+	FinishFailed Finish = "failed" // reported --failed, with the reason
+	FinishReaped Finish = "reaped" // never reported: the claim moved, or the card left the queue
+)
+
+// Judge is a work card's finish from its result and its push, in one place
+// (docs/SPEC-CARD-CONTRACT.md section 4; tla/CardContract.tla, Judge): ok only
+// when the result has the shape, its verdict is ok, and the member pushed a
+// commit the child made; otherwise failed, with the reason.
+func Judge(r Result, pu Push) (Finish, string) {
+	switch {
+	case pu.Refused != "":
+		return FinishFailed, "push refused: " + pu.Refused
+	case !r.Shaped:
+		return FinishFailed, "no RESULT.md shape"
+	case r.Verdict != "ok":
+		return FinishFailed, "verdict " + r.Verdict
+	case pu.Sha == "":
+		return FinishFailed, "no commit: " + pu.None
+	}
+	return FinishOK, ""
 }
 
 // Packet is what a card hands the member, as `nova-sprint queue --json` and
@@ -95,6 +130,7 @@ type Packet struct {
 	Notes      []string `json:"notes"`
 	Branch     string   `json:"branch,omitempty"`
 	Base       string   `json:"base,omitempty"`
+	BaseHead   string   `json:"base_head,omitempty"`
 	Worker     string   `json:"worker,omitempty"`
 	Head       string   `json:"head,omitempty"`
 	WorkBranch string   `json:"work_branch,omitempty"`
@@ -222,7 +258,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 			if !l.child.Done() {
 				continue
 			}
-			fmt.Fprintf(m.out, "reap %s: the claim moved (epoch %d gen %d attempt %d, now epoch %d gen %d attempt %d)\n", id, l.epoch, l.gen, l.attempt, c.Packet.Epoch, c.Packet.Gen, c.Packet.Attempt)
+			fmt.Fprintf(m.out, "%s %s: the claim moved (epoch %d gen %d attempt %d, now epoch %d gen %d attempt %d)\n", FinishReaped, id, l.epoch, l.gen, l.attempt, c.Packet.Epoch, c.Packet.Gen, c.Packet.Attempt)
 			delete(m.running, id)
 			ours = false
 		}
@@ -259,29 +295,42 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 			}
 			args = append([]string{"read", "--as", m.cfg.As, word, id, "--finding", oneLine(r.Report)}, launched...)
 		} else {
-			report, head, failed := oneLine(r.Report), r.Head, !r.OK
-			switch pu := *l.push; {
+			pu := *l.push
+			fin, why := Judge(r, pu)
+			report := oneLine(r.Report)
+			switch {
 			case pu.Sha != "":
 				// the report carries the push first, so the 500-byte cut never takes it
-				report, head = cut("pushed="+pu.Sha+" to "+l.branch+": "+report), pu.Sha
+				said := "pushed=" + pu.Sha + " to " + l.branch
+				if pu.PR != "" {
+					said += " pr=" + pu.PR
+				}
+				report = cut(said + ": " + report)
 				fmt.Fprintf(m.out, "push %s pushed=%s branch=%s\n", id, pu.Sha, l.branch)
+				if pu.PRNote != "" {
+					fmt.Fprintf(m.out, "NOTE pr %s not opened: %s\n", id, oneLine(pu.PRNote))
+				}
 			case pu.Refused != "":
-				report, failed = cut("push refused: "+pu.Refused+"; "+report), true
 				fmt.Fprintf(m.out, "NOTE push %s refused: %s\n", id, pu.Refused)
 			default:
 				fmt.Fprintf(m.out, "push %s: not pushed: %s\n", id, pu.None)
 			}
+			if fin != FinishOK {
+				report = cut(why + "; " + report)
+				fmt.Fprintf(m.out, "NOTE finish %s failed: %s\n", id, why)
+			}
 			args = []string{"finish", "--as", m.cfg.As, id + "@" + strconv.Itoa(l.gen), "--report", report}
-			if head != "" {
-				args = append(args, "--head", head)
+			// the head and the branch are the push's: a finish names only what origin holds
+			if pu.Sha != "" {
+				args = append(args, "--head", pu.Sha)
+				if l.branch != "" {
+					args = append(args, "--branch", l.branch)
+				}
 			}
-			if l.branch != "" {
-				args = append(args, "--branch", l.branch)
-			}
-			if failed {
+			if fin != FinishOK {
 				args = append(args, "--failed")
 			}
-			ok = !failed
+			ok = fin == FinishOK
 			args = append(args, launched...)
 		}
 		code, out := m.sprint.Run(args...)
@@ -298,7 +347,7 @@ func (m *Member) Tick(now time.Time) (acted int, err error) {
 	for id, l := range m.running {
 		if _, listed := byID[id]; !listed && l.child.Done() {
 			delete(m.running, id)
-			fmt.Fprintf(m.out, "drop %s: no longer in the queue\n", id)
+			fmt.Fprintf(m.out, "%s %s: no longer in the queue (dropped or returned)\n", FinishReaped, id)
 		}
 	}
 	// 2. Take (begin) up to the width, in one verb, and start each.
@@ -408,7 +457,7 @@ func (m *Member) pushEnded(ids []string, byID map[string]queueCard) {
 		r := l.child.Result()
 		switch {
 		case r.Head == "":
-			pushes[i] = Push{None: "the child's result names no commit (no rev: line)"}
+			pushes[i] = Push{None: "the child's result names no commit (no head: line, no push recorded)"}
 		case l.branch == "":
 			pushes[i] = Push{None: "the packet names no branch to push to"}
 		case m.pusher == nil:
@@ -484,13 +533,8 @@ func CardText(p Packet, sprintBin string) string {
 		}
 	} else {
 		fmt.Fprintf(&b, "This is %s: attempt %d of %s (stream %s).", p.Card, p.Attempt, p.Primary, p.Stream)
-		if p.Base != "" {
-			fmt.Fprintf(&b, " The work is branch %s from %s; commit there and put the head you finished at in RESULT.md's Head as `rev: <sha>`.", p.Branch, p.Base)
-		} else {
-			b.WriteString(" Work in the directory you start in and nowhere else; when the work is a commit, put the head you finished at in RESULT.md's Head as `rev: <sha>`.")
-		}
 		if p.Branch != "" {
-			fmt.Fprintf(&b, " When you end, the member pushes that commit to origin's branch %s; push nothing yourself (the wall holds no credential).", p.Branch)
+			fmt.Fprintf(&b, " The checkout is on branch %s; JOB.md, which the prompt names first, says where it is and how this card ends. When you end, the member pushes your commit to origin's branch %s from outside the wall.", p.Branch, p.Branch)
 		}
 		b.WriteString("\n\n")
 	}
@@ -503,9 +547,9 @@ func CardText(p Packet, sprintBin string) string {
 		}
 	}
 	if p.Kind == "read" {
-		b.WriteString("Your verdict goes in RESULT.md's Head as one line, `verdict: ok` or `verdict: broken` (broken means the work is wrong for the card, with the finding in your One line; a problem of your own run is not a verdict, leave the line out). ")
+		b.WriteString("Your verdict is RESULT.md's `verdict: ok` or `verdict: broken` (broken means the work is wrong for the card, with the finding as your report; a problem of your own run is not a verdict, leave the line out). ")
 	}
-	b.WriteString("Your RESULT.md's One line is what the sprint records as your report; the member reports it for you as:\n\n")
+	b.WriteString("Your RESULT.md's `report:` line is what the sprint records as your report; the member reports it for you as:\n\n")
 	if p.Kind == "read" {
 		fmt.Fprintf(&b, "    %s read --as %s (--ok | --broken) %s --epoch %d --finding '<one line>'\n", sprintBin, p.As, p.Card, p.Epoch)
 	} else {

@@ -1,0 +1,117 @@
+# The card contract: the frame around a card's task
+
+A card's author writes the task: what to change, the gate, what to report. Everything around
+the task is the sprint's: which repository, at which commit, on which branch, where the child
+works, how its commit leaves the machine, how its pull request is opened, and how its end is
+judged. The sprint writes that frame from the card's data, never from the brief's prose, and
+the child meets it through the commands it already knows: `git push` works, `gh pr create`
+finishes the card, `gh pr review` finishes a read. The child pushes nothing and opens nothing;
+the member does both, outside the wall, with its own credential.
+
+The code is `internal/cardcontract` (the frame, the result shape, the profiles and their shims),
+`internal/member` (the finish), `cmd/nova-swarm` (native installs the frame; the member pushes
+and opens the pull request). The model is `tla/CardContract.tla`.
+
+## 1. The layers, bottom up
+
+| layer | what it guarantees | checked by |
+|---|---|---|
+| 1. the frame | the member writes `<slot>.frame.json` from the packet and the brief's header lines: the repository, the base ref, the commit to stage (the base, or for attempt 2 and later the previous attempt's pushed head, `base_head` in the packet, or for a read the head under read), the branch, the attempt, the previous head and the readers' finding, the tier, the model | `TestTheFrameIsThePackets`, `TestALaterAttemptStartsFromThePreviousPushedHead` |
+| 2. staging | `native --frame` stages that commit on that branch (never the brief's prose, never a branch name that never reached origin) and writes `JOB.md` into the job directory | `TestStageCardStagesTheFramesCommitOnItsBranch` (functional tier) |
+| 3. the profile | the child's model family picks a profile; the profile writes the shims first on the child's `PATH` and the text of `JOB.md` | `internal/cardcontract`: unit tests of the text and the shape, functional tests of every shim verb form |
+| 4. the finish | the member reads the result shape, pushes the head, opens the pull request, and judges the finish: ok, failed with its reason, or reaped | `TestJudgeIsTheFinishRule` and the push tests of `internal/member`, the twin tests of `cmd/nova-sprint`, `tla/CardContract.tla` |
+| 5. end to end | a scripted child (clone, branch, commit, push, `gh pr create`) runs under the real member and native on the mem twin with a local bare origin, once per profile | `TestTheScriptedChildEndToEnd` (functional tier) |
+
+## 2. The frame and JOB.md
+
+`JOB.md` is the first thing the child reads: the harness prompt begins `Read <job>/JOB.md
+first.` and then carries the card. It says, in the profile's words: the repository, the branch
+and the commit the checkout is at, the base it came from, that the child works there and
+commits as usual, how its commit and its pull request leave (the sprint does both), the test
+environment (`GOCACHE=<job>/gocache`, niced, `-count=1 -timeout`), the attempt, and for attempt
+2 and later the previous head and the reader's finding. A read's `JOB.md` says to review the
+change on the branch against its base as a pull request is reviewed. A frame that carries a
+RULES paragraph ends JOB.md with it; the card's own RULES paragraph stays in the brief, where
+the add lint holds it.
+
+## 3. The result shape
+
+The child's end is `<job>/RESULT.md` in one shape, one `key: value` per line, then free text:
+
+```
+head: <the commit, full sha>
+branch: <the branch it is on>
+verdict: ok | not-done          (a read: ok | broken)
+gate: <the gate command, or ->
+output: <the path of the gate's output, or ->
+report: <one line>
+title: <a pull request title>   (optional)
+
+## Body
+
+<the pull request body, or a review's findings with file:line>
+```
+
+`gh pr create` and `gh pr review` write it in the claude profile; a plain child writes it
+itself. A result without the six keys is no result.
+
+## 4. The finish
+
+A work card's finish is judged in one place, `member.Judge`, cited from the model's `Finish`:
+
+- **ok** only when the result has the shape, its verdict is `ok`, its head is a commit no
+  branch of origin held at staging (the child committed), and the member's push of it to the
+  card's branch succeeded;
+- **failed** otherwise, with the reason: `no RESULT.md shape`, `verdict <word>`, `no commit`,
+  `push refused: <git's line>`; a failed finish passes `--failed` and opens the failed-work
+  judgment, never review, and passes `--branch` only when a push landed;
+- **reaped** when the claim moved under the child (a clear, a redeal) or the card left the
+  member's queue (a drop, a return): nothing is reported, because the result is nobody's.
+
+The head the member pushes is the result's `head`, else the last head the git shim recorded.
+The member pushes from its own bare repository, fetching every branch and the `HEAD` of the
+staged checkout, so a commit on any branch the child made, in the checkout or in a clone the
+shim redirected to it, is found. When the result carries a `title`, the member opens the pull
+request after the push, as itself, from the card's branch into the base ref, with the title and
+the body, and the finish's report carries its address.
+
+## 5. Profiles
+
+A profile is keyed by model family, derived from the model id the member runs the child on:
+`claude`, `openai`, `gemini`, `grok`, `deepseek`, and `plain`, the fallback for any other.
+`claude` and `plain` are built; `openai`, `gemini`, `grok` and `deepseek` are named and serve
+`plain` until one is written.
+
+| profile | git | gh | JOB.md asks for |
+|---|---|---|---|
+| `plain` | `push` recorded and answered as a push; everything else passes through | refused, one line | commit on the branch, write RESULT.md in the shape |
+| `claude` | `push` recorded and answered as a push; `clone` of the card's repository (https, ssh, scp form, `.git` or not) becomes a link to the staged checkout, any other clone is refused; `checkout -b`, `switch -c`, `branch`, `fetch` and `pull` pass through | `pr create` writes the result and finishes; `pr review --approve` / `--request-changes` writes a read's verdict; `pr diff`, `pr view` and `pr checks` answer from the staged checkout against the base; `pr list`, `issue view/list` and `repo view` pass through; everything that writes is refused, one line | work as on any pull request: branch, commit, push, `gh pr create`; a read reviews with `gh pr review` |
+
+### Writing a profile
+
+A profile is a value of `cardcontract.Profile`:
+
+```go
+type Profile interface {
+	Family() string                  // the family it serves
+	JobText(f Frame, s Staged) string // the whole of JOB.md
+	Shims(f Frame, s Staged) []Shim   // the scripts first on the child's PATH, by command name
+}
+```
+
+It is registered in `profiles` by its family. Its shims are POSIX `sh` scripts written into
+`<slot>/shim`, which the wall lets the child run and not rewrite. Whatever its commands look
+like, a profile keeps the contract: a push leaves nothing but a line in `<job>/pushed.tsv`
+(`branch`, `head`, `top`, tab separated); the child's end is `<job>/RESULT.md` in the shape above;
+nothing reaches a forge from inside the wall. `cardcontract.ContractShim` is the push recorder
+every profile may reuse.
+
+A profile is done when it passes the harness every profile passes: `TestEveryProfileKeepsTheContract`
+(the shims answer every verb form the profile claims) and `TestTheScriptedChildEndToEnd`, the
+scripted child of section 1 layer 5, which runs once per family in `cardcontract.Families`
+with `internal/cardcontract/testdata/scripted/<family>.sh` as the harness (`plain.sh` for a
+family with none): write the script the family's models follow (how they clone, branch,
+commit, push and finish), and the test asserts the member pushed the child's commit to the
+card's branch on origin and, when the child ran `gh pr create`, opened the pull request with
+its title and body. Run it with `go test -tags functional -run TestTheScriptedChildEndToEnd
+./cmd/nova-swarm/`; it needs no store and no network.

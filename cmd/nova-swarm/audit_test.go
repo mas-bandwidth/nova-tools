@@ -168,6 +168,11 @@ var swarmAudit = audit.Config{
 		// of this binary: the one line it holds is the gh script's own stderr, written by
 		// that script in the card's shell, never by nova-swarm.
 		`"github.com/mas-bandwidth/nova-tools/internal/nogh"`,
+		// cardcontract (docs/SPEC-CARD-CONTRACT.md) writes FILES -- the frame, JOB.md and the
+		// profile's shims into <slot>/shim -- through atomicfile, and reads RESULT.md and
+		// pushed.tsv into values. It prints nothing to any stream of this binary; the lines
+		// the shims print are their own, in the card's shell, never nova-swarm's.
+		`"github.com/mas-bandwidth/nova-tools/internal/cardcontract"`,
 		// atomicfile writes one FILE whole (a temporary beside it, fsync, rename): it takes a
 		// path and the bytes of the file and puts no byte on any stream of this binary. The
 		// audit's Write check lets atomicfile.Write by its package name for that reason.

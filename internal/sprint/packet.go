@@ -22,6 +22,10 @@ type Packet struct {
 	Notes   []string `json:"notes"`
 	Branch  string   `json:"branch,omitempty"`
 	Base    string   `json:"base,omitempty"`
+	// BaseHead is the commit a later attempt starts from: the head the attempt before
+	// finished ok at (pushed by its member), never a branch name that may not have reached
+	// origin (docs/SPEC-CARD-CONTRACT.md layer 1).
+	BaseHead string `json:"base_head,omitempty"`
 	// A read's: the work it reads.
 	Worker     string `json:"worker,omitempty"`
 	Head       string `json:"head,omitempty"`
@@ -53,6 +57,9 @@ func PacketOf(prefix string, epoch uint64, c, primary, prevWork, work *Card) Pac
 			p.Base = prevWork.F("branch")
 			if p.Base == "" {
 				p.Base = BranchOf(prefix, prevWork.ID)
+			}
+			if prevWork.F("ok") == "yes" && isSha(prevWork.F("head")) {
+				p.BaseHead = prevWork.F("head")
 			}
 		}
 		return p
@@ -90,4 +97,17 @@ func PacketCards(c *Card) (primary, prevWork, work string) {
 		return primary, prevAttempt(primary, c.Int("attempt")), ""
 	}
 	return primary, "", WorkCardID(primary, c.Int("attempt"))
+}
+
+// isSha is a full commit id: forty lowercase hex digits.
+func isSha(s string) bool {
+	if len(s) != 40 {
+		return false
+	}
+	for _, c := range s {
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			return false
+		}
+	}
+	return true
 }

@@ -17,10 +17,12 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/mas-bandwidth/nova-tools/internal/cardcontract"
 	"github.com/mas-bandwidth/nova-tools/internal/member"
 	"github.com/mas-bandwidth/nova-tools/internal/oneline"
 	"github.com/mas-bandwidth/nova-tools/internal/safepath"
 	"github.com/mas-bandwidth/nova-tools/internal/subproc"
+	"github.com/mas-bandwidth/nova-tools/internal/swarm"
 )
 
 // cmdMember is `nova-swarm member`: this machine as one member of a sprint's
@@ -51,6 +53,7 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	config := fs.String("config", "", "")
 	workerFile := fs.String("worker", "", "")
 	noWall := fs.Bool("no-wall", false, "")
+	ghBin := fs.String("gh", "gh", "")
 	if !f.parse(args, stderr) {
 		return 2
 	}
@@ -104,7 +107,9 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 	// finish (memberpush.go); a read pushes nothing
 	var pu member.Pusher
 	if !*reader {
-		pu = newGitPusher(*root, *slots, *sprintBin)
+		gp := newGitPusher(*root, *slots, *sprintBin)
+		gp.gh = *ghBin
+		pu = gp
 	}
 	m := member.New(member.Config{As: *as, Width: *width, Reader: *reader}, sp, rn, pu, stdout)
 	kind := "member"
@@ -136,6 +141,7 @@ func cmdMember(args []string, stdout, stderr io.Writer) int {
 // environment, never the member's).
 type execSprint struct {
 	bin, actor string
+	env        []string // added to this process's environment: none in production, a test's store address
 }
 
 // sprintVerbBudget is how long one sprint verb may run before the member stops waiting
@@ -146,7 +152,7 @@ const sprintVerbBudget = 120 * time.Second
 func (s *execSprint) Run(args ...string) (int, []byte) {
 	cmd, cancel := subproc.CommandFor(context.Background(), sprintVerbBudget, s.bin, args...)
 	defer cancel()
-	cmd.Env = append(os.Environ(), "NOVA_SPRINT_ACTOR="+s.actor)
+	cmd.Env = append(append(os.Environ(), s.env...), "NOVA_SPRINT_ACTOR="+s.actor)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	err := cmd.Run()
@@ -184,8 +190,9 @@ func (r *nativeRunner) Start(p member.Packet) (member.Child, error) {
 	results := filepath.Join(r.resultsRoot, name)
 	logPath := filepath.Join(r.slots, name+".native.log")
 	pidPath := filepath.Join(r.slots, name+".pid")
+	job := filepath.Join(slot, "jobs", p.Card)
 	if pid := livePID(pidPath); pid > 0 {
-		c := &nativeChild{card: p.Card, logPath: logPath, results: results, done: make(chan struct{})}
+		c := &nativeChild{card: p.Card, logPath: logPath, results: results, job: job, done: make(chan struct{})}
 		go func() {
 			for processAlive(pid) {
 				time.Sleep(time.Second)
@@ -204,7 +211,11 @@ func (r *nativeRunner) Start(p member.Packet) (member.Child, error) {
 	if err := os.WriteFile(cardPath, []byte(member.CardText(p, r.sprintBin)), 0o644); err != nil {
 		return nil, err
 	}
-	args := []string{"native", "--harness", r.harness, "--model", r.model, "--card", cardPath, "--slot", slot,
+	framePath := filepath.Join(r.slots, name+cardcontract.FrameName)
+	if err := cardcontract.WriteFrame(framePath, frameOf(p, r.model)); err != nil {
+		return nil, err
+	}
+	args := []string{"native", "--harness", r.harness, "--model", r.model, "--card", cardPath, "--frame", framePath, "--slot", slot,
 		"--root", r.root, "--deadline", r.deadline.String(), "--tokens", r.tokens, "--label", p.Card, "--results-root", results}
 	if r.auth != "" {
 		args = append(args, "--auth", r.auth)
@@ -234,7 +245,7 @@ func (r *nativeRunner) Start(p member.Packet) (member.Child, error) {
 		return nil, err
 	}
 	_ = os.WriteFile(pidPath, []byte(strconv.Itoa(cmd.Process.Pid)+"\n"), 0o644)
-	c := &nativeChild{card: p.Card, logPath: logPath, results: results, done: make(chan struct{})}
+	c := &nativeChild{card: p.Card, logPath: logPath, results: results, job: job, done: make(chan struct{})}
 	go func() {
 		c.err = cmd.Wait()
 		release()
@@ -280,11 +291,11 @@ func processAlive(pid int) bool {
 }
 
 type nativeChild struct {
-	card, logPath, results string
-	done                   chan struct{}
-	err                    error
-	once                   sync.Once
-	result                 member.Result
+	card, logPath, results, job string
+	done                        chan struct{}
+	err                         error
+	once                        sync.Once
+	result                      member.Result
 }
 
 func (c *nativeChild) Done() bool {
@@ -298,9 +309,11 @@ func (c *nativeChild) Done() bool {
 
 var nativeRC = regexp.MustCompile(`\bNATIVE (\S+) .*\brc=(-?\d+)\b.*\bharness=(\S+)`)
 
-// Result reads how the child ended: the NATIVE line's rc and harness word,
-// and the newest RESULT.md under the card's results (its `rev:` line is the
-// head, its "One line" section the report).
+// Result reads how the child ended: the NATIVE line's rc and harness word, and
+// the newest RESULT.md under the card's results in the contract's shape
+// (docs/SPEC-CARD-CONTRACT.md section 3). The head is the result's, else the
+// last push the git shim recorded in the job, else an older result's `rev:`
+// line; a read's verdict and report fall back to the older shape too.
 func (c *nativeChild) Result() member.Result {
 	c.once.Do(func() {
 		ran := false
@@ -309,7 +322,28 @@ func (c *nativeChild) Result() member.Result {
 				ran = string(m[1]) == "OK" && string(m[2]) == "0" && string(m[3]) == "ok"
 			}
 		}
-		head, verdict, report := readResult(newestResult(c.results))
+		path := newestResult(c.results)
+		var raw []byte
+		if path != "" {
+			raw, _ = os.ReadFile(path) // ignored: an unreadable result reads as no result, which the finish judges failed
+		}
+		cr := cardcontract.ParseResult(raw)
+		head, verdict, report := cr.Head, cr.Verdict, cr.Report
+		if head == "" {
+			_, head = cardcontract.LastPushed(c.job)
+		}
+		if !cr.Shaped {
+			lh, lv, lr := readResult(path)
+			if head == "" {
+				head = lh
+			}
+			if verdict == "" {
+				verdict = lv
+			}
+			if report == "" {
+				report = lr
+			}
+		}
 		if report == "" {
 			if ran {
 				report = "finished; the child published no one-line report"
@@ -317,9 +351,39 @@ func (c *nativeChild) Result() member.Result {
 				report = "the child ended without a result (see " + c.logPath + ")"
 			}
 		}
-		c.result = member.Result{Ran: ran, OK: ran, Verdict: verdict, Head: head, Report: report}
+		c.result = member.Result{Ran: ran, OK: ran, Shaped: cr.Shaped, Verdict: verdict, Head: head, Report: report, Title: cr.Title, Body: cr.Body}
 	})
 	return c.result
+}
+
+// tierRE is the tier a brief's line 1 names: `tier: <word>`.
+var tierRE = regexp.MustCompile(`\btier:\s*([A-Za-z0-9_-]+)`)
+
+// frameOf is a launch's frame (docs/SPEC-CARD-CONTRACT.md layer 1): the repository and
+// base the brief's header names, the packet's branch and attempt, and the commit to stage:
+// a read's head under read, a later attempt's previous pushed head, else the base's sha.
+func frameOf(p member.Packet, model string) cardcontract.Frame {
+	cb := swarm.ReadCardBase([]byte(p.Brief))
+	first, _, _ := strings.Cut(p.Brief, "\n")
+	f := cardcontract.Frame{Kind: p.Kind, Card: p.Card, Attempt: p.Attempt, Model: model,
+		Repo: cb.Repo, BaseRef: cb.Ref, StageSha: cb.Sha, Branch: p.Branch, Finding: p.Fix}
+	if m := tierRE.FindStringSubmatch(first); m != nil {
+		f.Tier = m[1]
+	}
+	if p.Kind == "read" {
+		f.Branch, f.ReviewBase = p.WorkBranch, cb.Ref
+		if p.WorkBase != "" {
+			f.ReviewBase = p.WorkBase
+		}
+		if pushHeadRE.MatchString(p.Head) && len(p.Head) == 40 {
+			f.StageSha = p.Head
+		}
+		return f
+	}
+	if p.BaseHead != "" {
+		f.StageSha, f.PrevHead = p.BaseHead, p.BaseHead
+	}
+	return f
 }
 
 // newestResult is the newest RESULT.md under dir, "" when none.
