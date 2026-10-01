@@ -479,6 +479,11 @@ and is given its facts by the caller (what merged, what conflicted, ci result);
 it never decides. Causes of a stop: conflict on a card; stream branch red; a
 card needs a card of another stream first; the merge queue rejected.
 
+`land` is the coordinator's landing step as one command (section 11): it
+merges each batch's heads in work order onto a branch cut from the base, checks
+and pushes it, and reports it through this merge step, with the facts above
+when it cannot; it adds no state of its own.
+
 A cross-stream need is recorded as data on the stuck card (the needed card and
 its stream); it is resolved when that card has landed, and ranking the needed
 card is not landing it. The notification names both streams and both cards.
@@ -812,7 +817,7 @@ result; recorded for another verb or other arguments it is a conflict and is
 refused), `--json` and `--max`. `--actor` has no default: it is `--actor`, else
 NOVA_SPRINT_ACTOR, and a verb that writes with neither is refused. Every verb
 has one class of who may run it. The coordinator's verbs (init, add, release,
-resolve, start, stop, ask, accept, rework, return, drop, rank, resume, fleet
+resolve, start, stop, ask, accept, rework, return, drop, rank, resume, land, fleet
 up, fleet down, fleet level, reader add, reader away, reader up, reader remove, wait, ack, clear, teardown, repair,
 goal set, goal drop, play) are the sprint's coordinator's alone: the first
 init names the coordinator (`--coordinator`, else the actor), a later init is
@@ -859,6 +864,7 @@ command that loads it.
 | drop | off the table with the reason |
 | rank | changes a score and every copy |
 | merge | one mechanical merge step for a stream: `--batch n`, given facts; `--red [--suspect <id>...]` |
+| land | the coordinator's landing step as one command, an external delivery (a git push) and a store write (the merge step): for each stream named (`--stream`, again for more; default every stream with cards queued and not stopped), in stream order, the merge queue up to its first stuck card, in work order, cut into batches of consecutive cards whose briefs name one repository and one base (`REPO:` and `BASE:`, read as staging reads them; `--base` for a card naming none); each batch's heads merged `--no-ff` with the message `land <id> (sprint stream <s>)` onto a branch cut from the base's tip on origin, in a clone (`--repo-dir`, whose origin must be the repository the cards name, else a clone kept under the directory each line names); `--check <command>` run once per batch in the clone before the push; the push plain, never forced, and on a rejection the base fetched and the batch rebuilt on its new tip once; then the batch reported by the merge step `merge --stream s --batch n` runs. A head missing or in conflict ends its batch before it, the cards before it land, and it is reported with `--conflict` and git's words as the note; a check that fails, with `--red`, nothing pushed; a second rejected push, with `--rejected`. A push that landed and a report that did not is `LAND FAILED`, exit 2, with the `merge` command to run. One line per batch, `LAND OK|REFUSED|FAILED stream= cards= base= tip= ids=<first>..<last>`, then `LAND DONE batches= cards= refused=`; `--dry-run` reads the store only and changes nothing; `--json` |
 | resume | a stopped stream moves again, with what was done; refused while a cause is unresolved |
 | fleet | `up|down <member>`, `level` |
 | reader add | declares readers |

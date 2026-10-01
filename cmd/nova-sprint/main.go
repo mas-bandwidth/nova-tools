@@ -80,12 +80,22 @@ type app struct {
 	// its verbs last read, so a verb after the first reads only what changed
 	// (store/twin.go). It is not the mem twin above, which is a store.
 	readTwins map[string]*store.Twin
+	// landRoot is the directory land keeps its clones under when it is given
+	// no --repo-dir (land.go): os.UserCacheDir's nova-sprint/land.
+	landRoot func() (string, error)
+	// gitEnv is the environment land's git and check run in: nil is the
+	// caller's, untouched (a test gives git an identity and no global config).
+	gitEnv []string
+	// beforePush, when set (a test), runs before each push land makes, with
+	// the attempt (1, then 2 after the base moved).
+	beforePush func(attempt int)
 }
 
 func newApp(getenv func(string) string) *app {
 	a := &app{getenv: getenv, now: time.Now, sleep: time.Sleep, conns: map[string]*redisconn.Conn{}, cached: map[string]store.Backend{}, meter: hostload.Local(), notify: interruptContext, screen: screenSize}
 	a.backend = a.redisBackend
 	a.inventory = a.readInventory
+	a.landRoot = defaultLandRoot
 	return a
 }
 
